@@ -56,7 +56,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 ## 3. 항목 (각 1 cycle)
 
 ### ITEM-01 · NL→SQL 평가 harness (RAGAS + LLM-as-Judge)
-- **status**: pending
+- **status**: done
+- **note**: harness 코드 완성+단위검증(스모크 14, fixture 멱등, ground-truth 검산, end-to-end 리포트/회귀 산출) + 적대리뷰 BLOCKER 흡수(생성SQL root 재실행 제거→agent 샌드박스 CSV 비교). **measured generation accuracy 는 스택 Bedrock 인증 다운(2026-06-19 IAM 제거)으로 보류 — 자격증명 복구 후 `make eval` 로 AC-1602/1603 라이브 수치 산출.** CHG/REV-20260619T172843-eval-harness.
 - **feature_id**: feature-0002-agent-core
 - **dimension**: performance
 - **risk_grade**: Major
@@ -104,7 +105,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: 배포 = web+ask-worker. 코어 환류 코드(feature-0002)는 primary unit MODIFY 에 cross-ref.
 
 ### ITEM-04 · 데이터소스 비즈니스 컨텍스트 필드
-- **status**: pending
+- **status**: done
+- **note**: 2026-06-23 드레인. read-side+schema 완료(WebDatasources Description/DomainTags → _row_to_ds → describe() → 멀티DS 그라운딩 주입). 단위 43 통과, 적대 backend 리뷰 SHIP. write-path(admin 편집 UI) 는 ITEM-11(거버넌스 포탈) follow-up — 현재 nullable·SQL 설정 가능. 라이브 그라운딩 e2e 는 bedrock-auth 복구 후. CHG/REV-20260623T101031-ds-business-context.
 - **feature_id**: feature-0002-agent-core   <!-- registry primary. admin 편집 UI 는 feature-0003 — cross-ref -->
 - **dimension**: structural
 - **risk_grade**: Minor
@@ -256,6 +258,7 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | F-014 (결과 차트 시각화) | **defer** | frontend Minor·가치 중간. 정확도 항목 후순위. 재검토 트리거: 사용자 요청 누적 시. |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 0 · in-progress 0 · pending 12 · blocked 0
-- 다음 ready(pending ∧ deps 충족; Phase asc → risk asc → id asc): **ITEM-01**
-  - 무인(/loop·cron) 모드 주의: ITEM-01 은 Major → 사람 plan 승인 필요(무인 시 blocked). Minor·deps-free 인 **ITEM-04** 가 무인 자율 진행 가능한 첫 항목.
+- 총 12 항목 · done 2 · in-progress 0 · pending 10 · blocked 0
+- 완료: **ITEM-01**(2026-06-19) — harness 코드+단위검증, measured 수치는 bedrock-auth 복구 후. **ITEM-04**(2026-06-23) — DS 비즈니스 컨텍스트 read-side+schema(단위검증, write-path 는 ITEM-11 follow-up).
+- 다음 ready(pending ∧ deps 충족): ITEM-02·07·09·10(deps-free) 중 정렬 1순위 = **ITEM-02**(P1, Major) — 단, 임베딩(Titan/Bedrock) 의존이라 ⚠ 블로커 영향. LLM/임베딩 무관하게 verify 완결 가능한 신규 ready 없음.
+- ⚠ **환경 블로커 (2026-06-19)**: 스택 전반 **Bedrock 인증 다운**(IAM 제거, 게이트웨이 401 "Unable to locate credentials"). 측정/임베딩이 LLM·Titan 에 의존하는 항목(ITEM-02 임베딩, ITEM-05/06/07/12 측정 게이트, 그 의존 ITEM-03/08/11)은 자격증명 복구 전 verify 불가 → 드레인은 사용자 지시로 **LLM 무관 항목만**(ITEM-04) 진행, 나머지는 복구 후 재개.

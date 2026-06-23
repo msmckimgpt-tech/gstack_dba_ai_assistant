@@ -120,6 +120,9 @@ class _DatasourceRouter:
                 "engine": str(ds.get("engine") or "mysql"),
                 "is_primary": bool(ds.get("_is_primary")),
                 "schemas": list(ds.get("_allow_schemas") or []),
+                # ITEM-04: 비즈니스 컨텍스트(이 datasource 가 무슨 사업데이터인가) — 라우팅 그라운딩.
+                "description": (ds.get("description") or None),
+                "domain_tags": list(ds.get("domain_tags") or []),
             })
         return out
 

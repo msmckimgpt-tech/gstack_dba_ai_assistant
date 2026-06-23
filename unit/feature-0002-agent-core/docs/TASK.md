@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260623T101031-ds-business-context (current cycle) — ITEM-04 데이터소스 비즈니스 컨텍스트 필드 (Minor §12.3, ROADMAP dba-ai-nl2sql)
+- 출처: `docs/improvements/dba-ai-nl2sql/ROADMAP.md` ITEM-04(P1, feature-0002-agent-core primary, feature-0003 schema cross-ref). `/_dqa:improve_cycle` 드레인 — Minor 자율 진행.
+- what: `WebDatasources` 에 `Description`(TEXT)·`DomainTags`(VARCHAR plaintext) 추가 → registry 병합(`_row_to_ds`) → 멀티DS 그라운딩 프롬프트 주입(어느 datasource 가 무슨 사업데이터인지 LLM 라우팅 그라운딩).
+- acceptance: AC-1640 멀티DS 질문에서 datasource 설명이 그라운딩 프롬프트에 노출 · AC-1641 단일DS 제품 무영향 · AC-1642 구 스키마 graceful(컬럼 부재 시 None/[]) · AC-1643 verify-completion PASS.
+- [x] feature-0002: `datasources._db_datasource`(Description/DomainTags SELECT + 구 스키마 legacy 폴백, fresh-cursor·진단로그) + `_row_to_ds`(매핑, len-가드 graceful) + `tools._DatasourceRouter.describe()`(노출, 좌표/비밀 비노출) + `agent_core._format_multi_ds_grounding()`(헬퍼 추출·설명/도메인 주입).
+- [x] feature-0003 (schema cross-ref): `app.py` WebDatasources CREATE + 멱등 ALTER 로 Description/DomainTags 컬럼(InsightEnabled 선례 미러).
+- [x] 단위테스트 `test_datasource_business_context.py` 7(매핑/graceful/describe 비밀비노출/그라운딩 설명노출/단일DS 빈문자열/설명생략) + multi_datasource 회귀 36 = 43 통과. py_compile.
+- [x] 적대 backend 리뷰 REV-20260623T101031 **SHIP**(BLOCKER/MAJOR 0; MINOR 진단로그 흡수).
+- [ ] **write-path(admin UI/API 로 Description/DomainTags 편집) follow-up** → ITEM-11(거버넌스 포탈, 메타데이터 편집 허브)에서. 현재는 nullable·SQL 로 설정 가능, read-side graceful.
+- verify-completion PASS. worktree `ai/claude/feature-0002-agent-core`.
+
+## TASK-20260619T172843-eval-harness (current cycle) — ITEM-01 NL→SQL 평가 harness (Major §12.3, ROADMAP dba-ai-nl2sql)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-19 -->
+- 출처: `docs/improvements/dba-ai-nl2sql/ROADMAP.md` ITEM-01(P0 측정기반, feature-0002-agent-core). `/_dqa:improve_cycle` 드레인 — Major 항목 plan-review 사용자 승인 후 구현.
+
+### §2.1 Implementation Plan
+- **영향 파일**: `src/agent_core.py`(`run_agent`/`_run_agent_core` — `eval_datasource` None-gated seam), `tests/eval/*`(신규 harness), `Makefile`(`eval` 타깃).
+- **symbol**: `run_agent(eval_datasource=…)` · `_run_agent_core(eval_datasource=…)` · `tests/eval/{runner,metrics.result_equiv,fixture_provision.ensure_fixture}`.
+- **접근**: golden 질문(≥20) → 실제 파이프라인(temp-0 결정 경로) → 생성SQL 수집 → fixture 에 생성SQL·정답SQL 실행 후 **execution-accuracy**(결과셋 set 동치, LLM 무관 결정적) + retrieval P/R(ground-truth 있을 때) → 타임스탬프 회귀 리포트(`artifacts/.../eval/`).
+- **acceptance**: AC-1601 golden≥20 · AC-1602 `make eval` 가 retrieval/generation 수치+리포트 산출 · AC-1603 지표 *계산*은 결정적(정규화 set-동치 백본, LLM 무관); end-to-end 2회 동일은 temp-0 SQL 생성이 동일할 때(provider bit-결정 아님 — best-effort) · AC-1604 가드(fixture-only datasource · actual=agent CSV[sql_guard+allowlist 샌드박스]이라 harness 는 생성SQL 재실행 안 함 · expected_sql read-only insurance · judge cap) · AC-1605 verify-completion PASS.
+- **위험도**: **Major** — 신규 offline harness + 핵심 run 경로에 None-gated seam(운영 0 변경) + eval 시 외부 LLM 비용(judge cap).
+- [x] fixture 스키마+시드(결정적 합성 e-commerce, prod 무관/PII 없음) + golden 24문항(`expected_sql` ground-truth 라이브 검산 일치).
+- [x] `tests/eval/{fixture_provision,metrics,runner,test_eval_harness}.py` + `run_agent` `eval_datasource` seam(None-gated, product/registry 라우팅 우회·운영 동작 0 변경).
+- [x] `make eval` 타깃(라이브 스택 네트워크 + `AGENT_MULTI_DATASOURCE_ENABLED=1`) + pytest 스모크 11/11 통과(정규화/equiv/retrieval P·R/read-only 가드/golden 무결성).
+- [x] fixture 멱등 provision + harness end-to-end 실행 + 리포트(JSON+MD)+직전대비 회귀 산출 확인.
+- [ ] **measured generation accuracy 보류** — 스택 전반 Bedrock 인증 다운(2026-06-19 IAM 제거, 게이트웨이 401 "Unable to locate credentials"). 자격증명 복구 후 `make eval` 로 AC-1602/1603 라이브 수치 산출. harness 는 결함 없이 실패를 정직 보고(0.0).
+- verify-completion(코드 게이트) PASS. worktree `ai/claude/feature-0002-agent-core`(base e1cf077).
+
 ## TASK-0304 (current cycle) — 무거운 쿼리 사전 감지 → LLM 이 더 가벼운 쿼리로 재작성해 목적 달성 (Major §12.3, REQ-20260618-0304)
 - 사용자 요청: "차단하기보다, LLM 이 무거운 쿼리를 미리 감지해 되도록 부하 적은 쿼리 구성으로 목적을 달성하도록 동작". (TASK-0299 SHOWPLAN 부하추정 활용 — gate=하드차단/warn=사후경고 둘 다 의도와 불일치.)
 - 결정(AskUserQuestion): "가로채고 LLM 재작성" — 무거운 원본은 실행 전 가로채되 LLM 이 tool 루프에서 더 가벼운 쿼리로 재작성→목적 달성. 최종 사용자엔 차단 미노출(효율적 답변만).

@@ -1,0 +1,163 @@
+# ITEM-01 NL→SQL 평가 golden set — datasource=eval_fixture (합성, prod 무관).
+#
+# 스키마: tests/eval/fixtures/schema.sql (customers / products / orders / order_items).
+# 각 항목:
+#   id                 : 안정 식별자(리포트 추적용)
+#   nl_question        : 평가 입력(자연어)
+#   expected_sql       : 정답 SQL(정본). harness 가 fixture 에 실행해 ground-truth
+#                        결과셋을 도출 → 생성SQL 결과셋과 정규화 비교(execution accuracy).
+#   tags               : 패턴 분류(per-tag 집계용)
+#   relevant_kb_ids    : RAGAS retrieval precision/recall 의 ground-truth(선택).
+#                        fixture KB 가 비어있는 초기엔 [](= retrieval N/A). ITEM-02/05/10
+#                        이후 KB 자산이 생기면 채워 retrieval 지표가 의미를 갖는다.
+#
+# 비교 규약: 결과셋은 행 순서 무관 정규화(정렬 후 set 비교). 명시 정렬(ORDER BY)
+# 질문은 expected_sql 에 ORDER BY 를 둬도 비교는 set 동치 기준(과대평가 방지: 표준
+# execution-accuracy 관례). 숫자/Decimal 은 정규화 후 비교.
+
+datasource: eval_fixture
+
+questions:
+  - id: q01
+    nl_question: "활성 고객(is_active)이 몇 명인가요?"
+    expected_sql: "SELECT COUNT(*) FROM eval_fixture.customers WHERE is_active = 1;"
+    tags: [count, filter]
+    relevant_kb_ids: []
+
+  - id: q02
+    nl_question: "전체 고객 수는 몇 명인가요?"
+    expected_sql: "SELECT COUNT(*) FROM eval_fixture.customers;"
+    tags: [count]
+    relevant_kb_ids: []
+
+  - id: q03
+    nl_question: "국가 코드가 KR인 고객의 이름을 알려줘."
+    expected_sql: "SELECT name FROM eval_fixture.customers WHERE country = 'KR';"
+    tags: [filter, projection]
+    relevant_kb_ids: []
+
+  - id: q04
+    nl_question: "국가별 고객 수를 보여줘."
+    expected_sql: "SELECT country, COUNT(*) AS cnt FROM eval_fixture.customers GROUP BY country;"
+    tags: [group-by, count]
+    relevant_kb_ids: []
+
+  - id: q05
+    nl_question: "가장 비싼 제품의 이름은 무엇인가요?"
+    expected_sql: "SELECT name FROM eval_fixture.products ORDER BY price DESC LIMIT 1;"
+    tags: [sort, limit]
+    relevant_kb_ids: []
+
+  - id: q06
+    nl_question: "electronics 카테고리 제품은 몇 개인가요?"
+    expected_sql: "SELECT COUNT(*) FROM eval_fixture.products WHERE category = 'electronics';"
+    tags: [count, filter]
+    relevant_kb_ids: []
+
+  - id: q07
+    nl_question: "전체 제품의 평균 가격은 얼마인가요?"
+    expected_sql: "SELECT AVG(price) FROM eval_fixture.products;"
+    tags: [aggregate]
+    relevant_kb_ids: []
+
+  - id: q08
+    nl_question: "재고(stock)가 100개 이상인 제품의 이름을 알려줘."
+    expected_sql: "SELECT name FROM eval_fixture.products WHERE stock >= 100;"
+    tags: [filter, projection]
+    relevant_kb_ids: []
+
+  - id: q09
+    nl_question: "배송 완료(delivered) 상태의 주문은 몇 건인가요?"
+    expected_sql: "SELECT COUNT(*) FROM eval_fixture.orders WHERE status = 'delivered';"
+    tags: [count, filter]
+    relevant_kb_ids: []
+
+  - id: q10
+    nl_question: "취소(cancelled)된 주문의 총액 합계는 얼마인가요?"
+    expected_sql: "SELECT SUM(total) FROM eval_fixture.orders WHERE status = 'cancelled';"
+    tags: [aggregate, filter]
+    relevant_kb_ids: []
+
+  - id: q11
+    nl_question: "2024년에 발생한 주문은 몇 건인가요?"
+    expected_sql: "SELECT COUNT(*) FROM eval_fixture.orders WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01';"
+    tags: [count, time-range]
+    relevant_kb_ids: []
+
+  - id: q12
+    nl_question: "고객별 주문 건수를 보여줘."
+    expected_sql: "SELECT customer_id, COUNT(*) AS cnt FROM eval_fixture.orders GROUP BY customer_id;"
+    tags: [group-by, count]
+    relevant_kb_ids: []
+
+  - id: q13
+    nl_question: "주문을 가장 많이 한 고객의 이름은 무엇인가요?"
+    expected_sql: "SELECT c.name FROM eval_fixture.customers c JOIN eval_fixture.orders o ON o.customer_id = c.id GROUP BY c.id, c.name ORDER BY COUNT(*) DESC LIMIT 1;"
+    tags: [join, group-by, sort, limit]
+    relevant_kb_ids: []
+
+  - id: q14
+    nl_question: "각 고객의 이름과 주문 총액 합계를 보여줘."
+    expected_sql: "SELECT c.name, SUM(o.total) AS total_sum FROM eval_fixture.customers c JOIN eval_fixture.orders o ON o.customer_id = c.id GROUP BY c.id, c.name;"
+    tags: [join, group-by, aggregate]
+    relevant_kb_ids: []
+
+  - id: q15
+    nl_question: "비활성(inactive) 고객의 이름을 알려줘."
+    expected_sql: "SELECT name FROM eval_fixture.customers WHERE is_active = 0;"
+    tags: [filter, projection]
+    relevant_kb_ids: []
+
+  - id: q16
+    nl_question: "Keyboard 제품이 포함된 주문의 주문 ID를 알려줘."
+    expected_sql: "SELECT DISTINCT o.id FROM eval_fixture.orders o JOIN eval_fixture.order_items i ON i.order_id = o.id JOIN eval_fixture.products p ON p.id = i.product_id WHERE p.name = 'Keyboard';"
+    tags: [join, distinct, filter]
+    relevant_kb_ids: []
+
+  - id: q17
+    nl_question: "카테고리별 제품 평균 가격을 보여줘."
+    expected_sql: "SELECT category, AVG(price) AS avg_price FROM eval_fixture.products GROUP BY category;"
+    tags: [group-by, aggregate]
+    relevant_kb_ids: []
+
+  - id: q18
+    nl_question: "모든 주문의 total 합계는 얼마인가요?"
+    expected_sql: "SELECT SUM(total) FROM eval_fixture.orders;"
+    tags: [aggregate]
+    relevant_kb_ids: []
+
+  - id: q19
+    nl_question: "2024년 3월에 발생한 주문은 몇 건인가요?"
+    expected_sql: "SELECT COUNT(*) FROM eval_fixture.orders WHERE order_date >= '2024-03-01' AND order_date < '2024-04-01';"
+    tags: [count, time-range]
+    relevant_kb_ids: []
+
+  - id: q20
+    nl_question: "가장 최근에 가입한 고객의 이름은 무엇인가요?"
+    expected_sql: "SELECT name FROM eval_fixture.customers ORDER BY signup_date DESC LIMIT 1;"
+    tags: [sort, limit]
+    relevant_kb_ids: []
+
+  - id: q21
+    nl_question: "주문 상태별 주문 건수를 보여줘."
+    expected_sql: "SELECT status, COUNT(*) AS cnt FROM eval_fixture.orders GROUP BY status;"
+    tags: [group-by, count]
+    relevant_kb_ids: []
+
+  - id: q22
+    nl_question: "재고가 가장 적은 제품의 이름과 재고 수량을 알려줘."
+    expected_sql: "SELECT name, stock FROM eval_fixture.products ORDER BY stock ASC LIMIT 1;"
+    tags: [sort, limit, projection]
+    relevant_kb_ids: []
+
+  - id: q23
+    nl_question: "전체 평균 가격보다 비싼 제품의 이름을 알려줘."
+    expected_sql: "SELECT name FROM eval_fixture.products WHERE price > (SELECT AVG(price) FROM eval_fixture.products);"
+    tags: [subquery, filter]
+    relevant_kb_ids: []
+
+  - id: q24
+    nl_question: "주문 항목(order_items)의 총 판매 수량은 얼마인가요?"
+    expected_sql: "SELECT SUM(quantity) FROM eval_fixture.order_items;"
+    tags: [aggregate]
+    relevant_kb_ids: []

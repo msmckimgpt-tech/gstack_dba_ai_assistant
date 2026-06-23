@@ -4093,6 +4093,8 @@ def _ensure_web_datasources_schema(conn) -> None:
                 EncryptionVersion INT NOT NULL DEFAULT 1,
                 IsActive TINYINT(1) NOT NULL DEFAULT 1,
                 InsightEnabled TINYINT(1) NOT NULL DEFAULT 1,
+                Description TEXT NULL,
+                DomainTags VARCHAR(512) NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UpdatedByAccountId BIGINT NULL
@@ -4104,6 +4106,16 @@ def _ensure_web_datasources_schema(conn) -> None:
             cur.execute("ALTER TABLE WebDatasources ADD COLUMN InsightEnabled TINYINT(1) NOT NULL DEFAULT 1")
         except Exception:
             pass
+        # ITEM-04: datasource 비즈니스 컨텍스트(멀티DS 그라운딩·DS picker 주입용). plaintext(비밀 아님).
+        # 멱등 ALTER — feature-0002 datasources._db_datasource 가 이 컬럼을 읽어 _row_to_ds 로 전달.
+        for _ddl in (
+            "ALTER TABLE WebDatasources ADD COLUMN Description TEXT NULL",
+            "ALTER TABLE WebDatasources ADD COLUMN DomainTags VARCHAR(512) NULL",
+        ):
+            try:
+                cur.execute(_ddl)
+            except Exception:
+                pass
     finally:
         cur.close()
 
