@@ -69,6 +69,7 @@ source_of_truth: true
   - [x] 라이브 UX 2차(gc-live-ux2): 적응형 폴링(기본 5s↔활성 1.5s) + 멘션 자동완성 TTL(10s, 신규 참여자 반영) + 피멘션 알림(토스트+OS Notification·백그라운드 감지)/하이라이트(.is-mention-me) + assistant 제품 아이콘 + 사이드바 카테고리화(멤버 그룹대화→내 대화). 전부 프론트, 캐시버스터 live-ux2 (CHG-0015/REV-0017).
   - [x] 메시지 프로필 아바타 Identicon 정합(gc-avatar-identicon): 미업로드 시 "맨 글자" 대신 헤더/프로필과 동일한 username Identicon, 업로드 계정은 실제 이미지, assistant auto=AI 배지. 캐시버스터 avatar-identicon (CHG-0016/REV-0018). **PB-0008 실제 Windows Chrome 실측 PASS**(사용자 요청 — 웹브라우저 실측 검증 보완).
   - [x] 멘션 하이라이트 표시 버그 + Windows 알림 재구성(gc-mention-hl-notify): ① 멘션 강조 CSS 특이도(0,3,0→0,5,0)로 타멤버 규칙(0,4,0) override → 하이라이트 표시. ② OS 알림 제목 `DQA : {대화명}`, 본문 `[발신자] : 메시지`. 캐시버스터 mention-hl-notify (CHG-0017/REV-0019). **PB-0008 실측 PASS**.
+  - [x] 그룹대화 authz·라우팅·식별 4종(gc-group-authz-flag, CHG-0018/REV-0020): #1 보관·제목변경 owner-only 2차 게이트(IDOR 누수 차단) · #2 owner 멤버십 보장+`/api/ask` 그룹비멘션 422 서버방어(공유 직후 assistant 오호출 해소) · #3 사이드바 그룹 배지(isGroupConversation) · #4 영구 플래그 `is_group`(alembic 0016, 공유 링크 생성 즉시 그룹 전환). **PB-0008 실측 PASS**. ★배포 alembic 0016 필수.
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연

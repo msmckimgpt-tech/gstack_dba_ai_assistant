@@ -219,3 +219,13 @@ source_of_truth: true
 - **PB-0008 실측 검증(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-mention-hl-notify.scenario.json` PASS. ① 하이라이트 computed style — 멘션 버블 `border-left 3px rgb(245,158,11)` + `background rgba(245,158,11,0.16)` vs 일반 타멤버 `1px 회색`+`흰색`, `highlightDiffers:true`. ② 알림 Notification stub 캡처 — title=`DQA : 운영 이슈 대응방`, body=`[mckim2] : @bootstrap_admin 이거 확인 부탁드려요`. 증거: `artifacts/pb0008-mention-hl-notify/01_highlight.png`(상단 멘션 버블 앰버 틴트+좌측 강조선 육안 확인). TEST.md §3 Run 2026-06-23-gc-mention-hl-notify.
 - Risks/Open: 없음. 사용자 보고 2건 모두 해소 + 실측 검증 완료.
 - Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청·PB-0008 PASS).
+
+## REV-20260623-0020 [SUBAGENT: 그룹대화 4종(보유자 authz·공유후 오호출·사이드바 가시성·공유시 그룹전환) §18.8 + PB-0008]
+- Related Change: CHG-20260623-0018
+- Risk Grade: **Major** — 백엔드 인가(#1 owner-only) + 메시지 라우팅(#2) + 스키마 마이그레이션(#4 is_group) + 프론트(#3). 보안 인접. 사용자 명시 4건 + #4 메커니즘(영구 플래그) 사전 확인. §7.1 Plan-Review-Execute → §12.3 Major.
+- 사전 조사(4영역 병렬): #2 진짜 원인 = owner 가 conversation_members 미삽입(member_count under-count), #1 = `_account_can_access_conversation` 열람게이트가 멤버 통과(IDOR류), #4 = 그룹 신호가 member_count>1 뿐.
+- 패널 결과(adversarial 3렌즈 subagent): **PASS-WITH-NITS, BLOCKING 없음**. authz(admin .any 우회 보존·owner 통과·0/NULL 오매칭 불가·일괄 delete 커버·1:1 무회귀) / 라우팅·스키마(0016 체인 정합·무손실·헬퍼 분기·add_member owner 강등없음·422 신규대화·멘션 오발동 없음·mentions parity·defensive 쿼리 폴백) / 프론트(isGroupConversation 폴백·배지 XSS무관·422 토스트). **반영 nit**: ① NULL-owner lockout → 게이트 `owner_id is not None and owner_id!=actor` fail-open. ② 배지 1명표기 → 칩 `_gn>1`, 1명은 아이콘만.
+- **PB-0008 실측(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-group-authz.scenario.json` PASS. 공유 → `is_group:false→true`·`isGroupConversation()=true`(#4); 그룹+비멘션 `/api/ask`→`422 group_requires_mention`(#2 미실행); owner 리네임→`200`(#1 무회귀); 사이드바 `group_badge_count:1`(#3). 증거 `artifacts/pb0008-group-authz/01_sidebar_group_badge.png`.
+- 단위 테스트 무회귀: group_members 10/10·mentions 3/3·s2 8/8·history_merge 4/4.
+- Risks/Open: 기존 joinable 공유 대화는 다음 join/share 시점 전환(retroactive backfill 없음, member_count>1 OR-branch 보강). 배포 시 alembic 0016 필수.
+- Human Approval Needed: #4 메커니즘 사용자 확인 완료. 그 외 사용자 명시 요청 범위.

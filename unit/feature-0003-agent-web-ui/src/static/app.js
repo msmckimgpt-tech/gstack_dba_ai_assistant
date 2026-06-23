@@ -593,6 +593,12 @@ async function apiFetch(url, options = {}) {
     if (response.status === 403) {
       try { showToast(message || "요청을 수행할 수 없습니다.", true); } catch (_e) {}
     }
+    // feature-0009 gc-group-authz-flag (#2 서버 방어선): 그룹 대화 비멘션 메시지가 /api/ask 에
+    // 도달하면 서버가 422(code=group_requires_mention)로 거부. 정상 경로는 send-routing 게이트가
+    // 이미 store-only 로 보내므로 여기 도달은 stale 신호 등 예외 — 사용자에게 명확히 안내.
+    if (response.status === 422 && payload && payload.code === "group_requires_mention") {
+      try { showToast(message || "그룹 대화에서는 @assistant 를 멘션해야 AI 가 응답합니다.", true); } catch (_e) {}
+    }
     throw error;
   }
   return payload;
@@ -819,6 +825,14 @@ function canFinalizeConversation(conversation = currentConversation()) {
 
 function currentConversation() {
   return state.conversations.find((item) => item.id === state.activeConversationId) || null;
+}
+
+// feature-0009 gc-group-authz-flag: 그룹 대화 판정 — 서버 is_group 플래그(공유 링크 생성/join 시 set)
+// OR 멤버 2명 이상. send-routing(비멘션=사람채팅, #2)·사이드바 그룹 배지(#3)의 단일 신호.
+// 신호 부재(레거시/미적용)면 false(1:1 로 안전 폴백 — 오표시 방지).
+function isGroupConversation(item) {
+  if (!item) return false;
+  return Boolean(item.is_group) || Number(item.member_count || 0) > 1;
 }
 
 // feature-0007 (REQ-20260521-0001): readVaultState / writeVaultState /
@@ -2183,6 +2197,27 @@ function renderConversationList() {
     dateTip.className = "conv-item-date-tip";
     dateTip.textContent = formatDateTime(item.last_activity_at || item.created_at);
 
+    // feature-0009 gc-group-authz-flag (#3): 그룹 대화 식별 배지 — 사람-그룹 SVG 아이콘 + 멤버 수.
+    // 1:1 대화와 시각적으로 명확히 구분(isGroupConversation = is_group 플래그 OR 멤버 2+). 정적 SVG = XSS 무관.
+    let groupBadge = null;
+    if (isGroupConversation(item)) {
+      button.classList.add("is-group");
+      const _gn = Number(item.member_count || 0);
+      groupBadge = document.createElement("span");
+      groupBadge.className = "conv-item-group-badge";
+      groupBadge.innerHTML =
+        "<svg class='conv-group-ic' viewBox='0 0 16 16' aria-hidden='true' focusable='false'>" +
+        "<path fill='currentColor' d='M5.5 7.25a2.375 2.375 0 1 0 0-4.75 2.375 2.375 0 0 0 0 4.75Z'/>" +
+        "<path fill='currentColor' d='M11.25 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z'/>" +
+        "<path fill='currentColor' d='M1.25 12.4C1.25 10.46 3.15 9 5.5 9s4.25 1.46 4.25 3.4V13.5h-8.5V12.4Z'/>" +
+        "<path fill='currentColor' d='M10.95 9.06c1.9.13 3.3 1.5 3.3 3.18V13.5h-2.75v-1.1c0-1.27-.55-2.4-1.43-3.2.28-.08.57-.13.88-.14Z'/>" +
+        "</svg>" +
+        (_gn > 1 ? ("<span class='conv-group-count'>" + _gn + "</span>") : "");
+      // 멤버 1명(공유했지만 아직 join 전)은 카운트 칩 없이 그룹 아이콘만 — "멤버 1명" 표기 혼동 방지.
+      groupBadge.title = _gn > 1 ? ("그룹 대화 · 멤버 " + _gn + "명") : "그룹 대화(공유됨)";
+      groupBadge.setAttribute("aria-label", groupBadge.title);
+    }
+
     // TASK-0248: 참조 제품 삭제로 차단된 대화 — 목록에 "차단" 배지 + 행 dim.
     if (item.blocked) {
       button.classList.add("is-blocked");
@@ -2190,9 +2225,9 @@ function renderConversationList() {
       blockedBadge.className = "conv-item-blocked-badge";
       blockedBadge.textContent = "차단";
       blockedBadge.title = item.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.";
-      button.append(dot, titleEl, blockedBadge, dateTip);
+      button.append(dot, titleEl, ...(groupBadge ? [groupBadge] : []), blockedBadge, dateTip);
     } else {
-      button.append(dot, titleEl, dateTip);
+      button.append(dot, titleEl, ...(groupBadge ? [groupBadge] : []), dateTip);
     }
 
     // "···" menu trigger
@@ -6921,10 +6956,12 @@ async function sendPrompt() {
     showToast("파일 업로드가 완료될 때까지 기다려주세요.", true);
     return;
   }
-  // feature-0009: 그룹 대화(멤버 2+)에서 @assistant 멘션이 없으면 사람-사람 채팅 — AI 미호출, 저장만.
-  // 멘션이 있으면(또는 1:1) 종전대로 /api/ask 로 AI 호출.
+  // feature-0009: 그룹 대화에서 @assistant 멘션이 없으면 사람-사람 채팅 — AI 미호출, 저장만.
+  // 멘션이 있으면(또는 1:1) 종전대로 /api/ask 로 AI 호출. gc-group-authz-flag: 그룹 판정을
+  // isGroupConversation(is_group 플래그 OR 멤버 2+)으로 — 공유 링크 생성 즉시 그룹으로 인식되어,
+  // 공유 직후 비멘션 메시지가 assistant 로 오라우팅되던 버그(#2)를 막는다.
   if (
-    active && Number(active.member_count || 0) > 1 && state.activeConversationId &&
+    active && isGroupConversation(active) && state.activeConversationId &&
     window.Mentions && !window.Mentions.messageInvokesAssistant(message)
   ) {
     await _sendGroupChatMessage(active.id, message);

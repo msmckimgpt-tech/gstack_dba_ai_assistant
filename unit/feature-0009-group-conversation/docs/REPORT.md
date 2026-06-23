@@ -17,8 +17,9 @@ source_of_truth: false
 - **라이브 UX 1차(PR#370 배포완료)**: 실시간 폴링(4s)·@멘션 자동완성·발신자 아바타.
 - **라이브 UX 2차(gc-live-ux2, 배포완료 PR#371)**: 적응형 폴링(5s↔1.5s)·멘션 자동완성 TTL(신규 참여자 반영)·피멘션 알림(토스트+OS Notification·백그라운드)/하이라이트·assistant 제품 아이콘·사이드바 카테고리화. 전부 프론트, 캐시버스터 live-ux2. (CHG-0015/REV-0017)
 - **메시지 아바타 Identicon 정합(gc-avatar-identicon, 배포완료 PR#377)**: 사용자 보고("프로필 아이콘이 글자") 해소 — `_msgAvatarEl` 을 앱 전역 `applyAvatar`/`identiconSvg` 와 정합. 캐시버스터 avatar-identicon. **PB-0008 PASS**. (CHG-0016/REV-0018)
-- **멘션 하이라이트 + Windows 알림(gc-mention-hl-notify)**: 사용자 보고 2건 — ① 하이라이트 미표시(CSS 특이도 0,3,0<0,4,0) → 멘션 선택자 (0,5,0) override. ② OS 알림 제목 `DQA : {대화명}` + 본문 `[발신자] : 메시지`. 캐시버스터 mention-hl-notify. **PB-0008 실측 PASS**. (CHG-0017/REV-0019)
-- In Progress: gc-mention-hl-notify docs 반영 완료 → verify-completion → PR → 배포 → smoke.
+- **멘션 하이라이트 + Windows 알림(gc-mention-hl-notify, 배포완료 PR#380)**: ① 하이라이트 미표시(CSS 특이도) → (0,5,0) override. ② OS 알림 `DQA : {대화명}` / `[발신자] : 메시지`. **PB-0008 PASS**. (CHG-0017/REV-0019)
+- **그룹대화 authz·라우팅·식별 4종(gc-group-authz-flag)**: 사용자 보고 4건 — #1 보관·제목변경 owner-only(IDOR 누수 차단) · #2 공유 직후 assistant 오호출(근본: owner 멤버십 누락 → member_count under-count; 수정: owner 보장+`/api/ask` 그룹비멘션 422 서버방어) · #3 사이드바 그룹 배지 · #4 영구 플래그 `is_group`(alembic 0016, 공유 즉시 그룹 전환). **PB-0008 실측 PASS**(공유→is_group·422·owner무회귀·배지). ★배포 alembic 0016 필수. (CHG-0018/REV-0020)
+- In Progress: gc-group-authz-flag docs 반영 완료 → verify-completion → PR → 배포(alembic 0016) → smoke.
 - Deferred(배포 후 라이브): S5 run cap·llm_usage actor 귀속·LLM 화자 라벨 (REV-0012) / S6 스레드(별도 계획). [폴링 동기화는 ux2 적응형으로 해소]
 - 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (코어, 머지됨) + ux2(워크트리 ai/claude/gc-live-ux2, 커밋 전).
 
