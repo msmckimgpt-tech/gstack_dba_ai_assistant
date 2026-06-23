@@ -9,11 +9,12 @@ last_updated: 2026-06-23
 2026-06-23
 
 ## Key Recent Facts
-- insight-worker "DB 파악 진전 없음" 병목 = 2축: **축A 커버리지** 39 catalog DB 중 28개 RO 로그인 per-DB GRANT 누락(권한 18456/916) → 영구 스캔실패·status=degraded(서킷이 host:port 단위라 per-DB 권한실패 미격리). **1차 해결=운영 GRANT, 코드 아님**. **축B 처리량** RC3 force_scan latch + RC2 fingerprint churn 로 살아있는 DB 도 신규통찰 0.
+- 06-19~23 완료: 사용자 보안 보강 6종(공유만료·로그인제한·감사변조방지·LLM한도·인젝션방지·2FA), 그룹대화 feature-0009(멤버십·@assistant·열람≠발화·라이브UX), NL→SQL flywheel(eval·few-shot·self-reflection·glossary).
 
 ## Recent Changes
-- TASK-0305(insight.py): RC2 fingerprint casefold(VALUE 한정, 키 불변), RC3 진전기반 backoff(`_repair_backoff_active`/`_set`/`_clear`, per-scope KV — pending-only 무진전 spin 차단, 건강한 처리량·ANCHOR §3 보존), RC5 cycle summary `db_failed_{perm,circuit,other}` + 비-MSSQL ds 집계. 테스트 8 + 회귀 0, 적대 리뷰 ACCEPT. [[insight-worker]]
+- doc-sync(/_template:entry): 릴리즈노트 06-23 블록 + wiki(feature-0009 카드·overview·nl2sql-flywheel concept·Log) + STATUS 06-20~23 rollup + ARCHITECTURE 기능맵(0007~0009).
 
 ## Active Threads
-- 배포: agent 이미지 재빌드(insight-worker baked, 마이그 없음) → 라이브 검증(db_failed 사유분포·log_v2 진동 종식·tick spacing).
-- 사용자 조치(축A): RC5 배포 후 db_failed_perm 으로 GRANT 대상 특정 → bin/datasource-mssql-ro-bootstrap-multidb.sql. RC4(budget throughput) 전용 조사 deferred.
+- insight-worker(TASK-0305): RC5 배포 후 db_failed_perm 으로 GRANT 대상 특정 → 운영 GRANT 적용(1차 해결).
+- NL2SQL: titan 임베딩 복구 후 ITEM-01 harness 로 few-shot 효과 A/B 측정.
+- 그룹대화 S5(run cap·actor 귀속)·S6(스레드) deferred.

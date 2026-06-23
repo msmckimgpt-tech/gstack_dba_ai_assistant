@@ -19,7 +19,7 @@ ai_generated: true
 | 항목 | 값 |
 |---|---|
 | 분류 | `#wiki/index` |
-| 등록 concept | 12 |
+| 등록 concept | 13 |
 
 ## 목차
 
@@ -60,6 +60,7 @@ source 들에서 추출된 *반복 등장 개념* 의 page 누적 영역. `entit
 | Datasource-aware RAG (endpoint-hash scope) | pattern | `#rag #datasource` | [[datasource-aware-rag]] |
 | Insight Worker (통찰 + 완료율) | pattern | `#insight #worker` | [[insight-worker]] |
 | Ask-worker 큐 (out-of-process) | pattern | `#worker #queue` | [[ask-worker-queue]] |
+| NL→SQL 정확도 Flywheel (eval·few-shot·self-reflection) | framework | `#nl2sql #rag` | [[nl2sql-flywheel]] |
 
 ## 4. Skeleton
 
