@@ -4443,4 +4443,18 @@ source_of_truth: true
 - Why: ROADMAP dba-ai-nl2sql ITEM-03 — 피드백→KB 환류로 NL2SQL 검색 정확도를 운영 중 지속 개선.
 - Verification: test_sample_feedback_curation.py 15/15(R1·R2·S1~S3·U1·U2·A1~A3·L1·SC1) + test_permission_dependency_map.py·test_insight_reset.py·test_audit_rbac.py·test_admin_me_rbac.py 회귀 0 + full feature-0003+0002 suite 회귀 0(사전존재 product-delete·share-redaction 9건은 baseline stash 비교로 무관 확인) + node --check(app.js/admin.js) + CSS brace 1454 balanced + py_compile. **신규 RBAC = 보안 표면 → 메인 세션이 적대적 security 리뷰 후 마감**. UI 실렌더 정본=PB-0008(Windows-browser, 메인).
 - Rollback: kb.sample.curate 정의 + endpoint 4종 + admin.js/html 탭 + app.js 버튼 + styles.css 규칙 제거 → 환류 web 층 제거(코어 modules.sample_feedback 는 무영향, 미사용 상태로 잔존).
-- Deploy: web 재빌드(정적+엔드포인트). **선행조건**: PG(agent_kb)에 sample_feedback/sample_queries 스키마 + titan-embed 임베딩(1024-dim)이 가용해야 적재·승급 동작. 신규 RBAC 는 admin 자동 보유, 비-admin 검수자는 kb.sample.curate 명시 부여 필요(least-privilege).
+- Deploy: web 재빌드(정적+엔드포인트). **선행조건**: PG(agent_kb)에 sample_feedback/sample_queries 스키마 + titan-embed 임베딩(1024-dim, bge-m3 복구됨)이 가용해야 적재·승급 동작. 신규 RBAC 는 admin 자동 보유, 비-admin 검수자는 kb.sample.curate 명시 부여 필요(least-privilege).
+- **보안 fix 흡수(REV-20260623-0334 적대 security 리뷰 SHIP-WITH-FIXES)**: MAJOR-1 — 사용자 피드백 endpoint `post_sample_feedback` 에 `_search_rate_limit_check(account_id, max_per_min=10)`(429) 추가(큐 abuse/DoS 차단). **cross-ref feature-0002** `modules/sample_feedback.py`: MAJOR-2 — `promote_feedback` SELECT `FOR UPDATE` 행락 + UPDATE `AND status='pending'`(TOCTOU 이중승급 차단); MINOR-1 — `record_feedback` 가 nl_question 도 PII 마스킹(`_mask_sql`→`_mask_pii` 일반화); NIT-1 — `_mask_pii` fail-open 에 경고 로그. 보안 fix 후 회귀 0(flywheel 12 + curation 15 = 27 통과).
+
+## CHG-20260623T183803-item03-security-fixes
+- Date: 2026-06-23 (TASK-20260623T090440-...-sample-feedback-curation 후속 — 적대 security 리뷰 REV-20260623-0334 SHIP-WITH-FIXES 흡수). ITEM-03.
+- Scope: ITEM-03 web flywheel 의 보안 하드닝(이전 commit e5acb43 위). + ROADMAP ITEM-03 status→done.
+- 내용:
+  - **feature-0003** `src/app.py`: `post_sample_feedback` 에 per-account rate-limit(`_search_rate_limit_check`, max 10/min → 429) — 검수 큐 spam/DoS 차단(MAJOR-1).
+  - **cross-ref feature-0002** `src/modules/sample_feedback.py`: `promote_feedback` SELECT `FOR UPDATE`+UPDATE `AND status='pending'`(TOCTOU 이중승급 차단, MAJOR-2); `record_feedback` 가 nl_question 도 `_mask_pii`(MINOR-1, `_mask_sql`→`_mask_pii` 일반화); `_mask_pii` fail-open 경고 로그(NIT-1).
+  - docs/improvements/dba-ai-nl2sql/ROADMAP.md: ITEM-03 done + §5 갱신(임베딩 복구 반영).
+- Why: 신규 RBAC=보안 표면. 적대 security 리뷰가 적재 abuse·promote 경합·PII 비대칭을 적발 → 흡수.
+- Verification: test_sample_flywheel 12 + test_sample_feedback_curation 15 = 27 통과(회귀 0) + py_compile + `_mask_sql` 잔여참조 0(utils `_mask_sql_arg` 무관).
+- Files: src/app.py, ../feature-0002-agent-core/src/modules/sample_feedback.py(cross-ref), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
+- Rollback: rate-limit 호출 제거 / FOR UPDATE·status 가드 제거 / nl_question 마스킹 환원(각 독립, 비파괴).
+- Deploy: web + ask-worker 재빌드(app.py + 코어 sample_feedback baked). 마이그 없음.

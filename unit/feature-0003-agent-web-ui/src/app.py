@@ -14564,6 +14564,10 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
             conn, account, cid, "conversation.read.own", "conversation.read.any"
         ):
             return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # REV-…-item03-security MAJOR-1: 적재 endpoint per-account rate-limit — 미적용 시
+        # 열람자가 suggested 피드백을 spam 해 검수 큐를 채워 curator DoS. body-search 와 동형.
+        if not _search_rate_limit_check(int(account.get("id") or 0), max_per_min=10):
+            return _json_error("피드백 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
         scope_key = _conversation_scope_key(conn, cid)
     finally:
         conn.close()

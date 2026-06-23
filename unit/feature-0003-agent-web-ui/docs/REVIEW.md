@@ -3580,3 +3580,15 @@ source_of_truth: true
 - **마감 예정(메인 세션)**: 신규 RBAC=보안 표면이므로 **메인 세션이 적대적 security 리뷰(privilege-escalation·access-control 누출·cross-DB·scope 오염·abuse 표면) 를 별도 수행 후 마감**한다. 본 cycle 산출물은 구현+단위검증(15/15)+verify+commit/push 까지.
 - 검증: test_sample_feedback_curation.py 15/15 + 인접 RBAC/audit 회귀 0(test_permission_dependency_map·insight_reset·audit_rbac·admin_me_rbac) + full suite 회귀 0(사전존재 9건 baseline 무관) + node --check + py_compile + CSS brace 1454.
 - Cross-ref: CHG-20260623T090440-ai-claude-sample-feedback-curation / REQ-20260623-0333 / AC-0612·0613 / ROADMAP dba-ai-nl2sql ITEM-03.
+
+## REV-20260623-0334 [SUBAGENT:item03-adversarial-security-backend]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T090440-...-sample-feedback-curation (ITEM-03 피드백 flywheel web), **Major §12.3 + 보안 표면(신규 RBAC)**. 메인 세션이 self-check 위 잠재 표면을 적대적으로 재검토.
+- Trigger: §18.8 — auth/RBAC+API+UI → security+backend. (general-purpose outside voice, REFUTE: privilege-escalation·access-control·abuse·cross-ds·injection·XSS·audit·cross-DB·poisoning.)
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0) → fixes 흡수 후 SHIP.
+- Confirmed-safe(무혐의): admin endpoint 3종 모두 DB작업 전 `_require_permission("kb.sample.curate")`(privilege-escalation 차단) · 신규 권한 least-priv(admin seed 만, operator/sales/pending 미부여, `test_permission_dependency_map` 만족) · 사용자 적재 `_account_can_access_conversation`(임의 cid 주입→404) · SQLi 없음(%s) · **stored XSS 없음**(admin.js `_sfEsc` 로 nl_question/sql/scope escape) · promote admin-only·down 미승급·비-pending→409 · cross-ds: promote 가 feedback scope_key 상속(A→B 이동 불가) · blast 0(기존 endpoint 무변경, app.py 순수 additive).
+- **흡수한 MAJOR**: **M1(적재 abuse/큐 DoS)** — 사용자 피드백 endpoint rate-limit 부재 → `_search_rate_limit_check(account_id, max_per_min=10)` 추가(429), body-search 동형. **M2(promote TOCTOU 이중승급)** — 코어 `promote_feedback`(feature-0002, cross-ref)에 `SELECT … FOR UPDATE` 행락 + 최종 UPDATE `AND status='pending'` 추가(동시 approve 직렬화).
+- **흡수한 MINOR/NIT**: MINOR-1 nl_question PII 미마스킹 → 코어 `record_feedback` 가 nl_question 도 `_mask_pii`(구 `_mask_sql` 일반화). NIT-1 `_mask_pii` fail-open silent → 경고 로그(fail-loud). NIT-2 submit audit best-effort 는 user-endpoint 패턴(수용).
+- **수용(문서화)**: scope 'common' 폴백은 의도된 공통 스코프(검수 사람게이트로 완화). UI 실렌더는 PB-0008(Windows-browser) 메인 마감.
+- Verification: 보안 fix 후 test_sample_flywheel 12 + test_sample_feedback_curation 15 = **27 통과**(회귀 0) + py_compile + `_mask_sql` 잔여참조 0. cross-ref 코어 변경(feature-0002 sample_feedback.py)은 MODIFY 에 기록.
+- Cross-ref: CHG-20260623T090440-...-sample-feedback-curation / ROADMAP dba-ai-nl2sql ITEM-03.

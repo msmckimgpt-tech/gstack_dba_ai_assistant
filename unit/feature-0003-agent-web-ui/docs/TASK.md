@@ -17,8 +17,9 @@ source_of_truth: true
 - [x] UI: `app.js` 답변 말풍선 👍/👎/"샘플 등록" 버튼(클릭→적재 POST, 성공 시 비활성). `admin.js`+`admin.html` "샘플 검수" 탭(ADMIN_TAB_PERMISSIONS["sample-review"]=["kb.sample.curate"] + 큐 + 승인/거부). kb 그룹 메타(GROUP_ORDER/LABELS·ADMIN_PERMISSION_SECTIONS·PERMISSION_DEPENDENCIES). cache-buster 갱신.
 - [x] 테스트 `tests/test_sample_feedback_curation.py` 15케이스(R1·R2 카탈로그/seed · S1~S3 미보유 403+코어 미호출 · U1 404 · U2 적재+audit · A1~A3 승급/409/거부+audit · L1 직렬화 · SC1 scope). 라이브 DB 불요(FakeConn/monkeypatch — test_insight_reset.py mock 패턴 답습). 15/15 PASS.
 - [x] 회귀: test_permission_dependency_map.py(신규 deps 자동검증)·test_insight_reset.py·test_audit_rbac.py·test_admin_me_rbac.py PASS. full feature-0003+0002 suite 회귀 0(사전존재 실패 9건=product-delete·share-redaction 은 baseline stash 비교로 무관 확인). node --check + CSS brace balanced + py_compile.
-- [ ] unit 문서(TASK/MODIFY/FUNCTION/ANCHOR/REVIEW) → verify-completion --pre-commit PASS → commit + push(auto-sync).
-- [ ] **남은 마감(메인 세션)**: 적대적 security 리뷰(신규 RBAC 경계) · PB-0008(Windows-browser UI 실렌더) · PR 생성·머지·배포. (본 cycle 범위 밖)
+- [x] unit 문서(TASK/MODIFY/FUNCTION/ANCHOR/REVIEW) → verify-completion --pre-commit PASS → commit + push(auto-sync).
+- [x] **적대적 security 리뷰(신규 RBAC 경계) — REV-20260623-0334 SHIP-WITH-FIXES**: MAJOR-1(피드백 rate-limit)·MAJOR-2(promote FOR UPDATE, feature-0002 cross-ref)·MINOR-1(nl_question PII)·NIT-1 흡수. 회귀 0(27 통과).
+- [ ] **남은 마감(메인 세션)**: PB-0008(Windows-browser UI 실렌더 — WARN-only) · PR 생성·머지·배포. titan-embed(bge-m3 1024) 복구됨 → 적재·승급·주입 e2e 가능.
 
 ## TASK-20260623T031910-ai-claude-ds-conn-bg-decouple — 관리 콘솔 > 제품: 데이터소스 연결확인을 동기 render 경로에서 백그라운드로 분리 (REQ-20260623-ds-conn-bg-decouple, Major §12.3)
 - 보고(사용자, /_template:entry, 2026-06-23): `관리 콘솔 > 제품 > [각 항목]` 진입 시 연결이 불안정한 데이터소스 항목에 접근하면, 해당 데이터소스 연결이 timeout 될 때까지 나머지 UI 갱신이 진행되지 않음. → 모든 연결 확인을 백그라운드로 처리하고, 내부 UI 갱신 중 서비스 내부로 작동하는 부분과 분리.
