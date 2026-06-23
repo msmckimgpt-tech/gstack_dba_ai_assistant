@@ -198,3 +198,14 @@ source_of_truth: true
 - Impact: 아바타 업로드 계정(예 id35)은 실제 이미지 그대로(회귀 없음). 미업로드 계정은 헤더 프로필과 동일 Identicon. assistant auto 'AI' 배지 유지. XSS 안전(identiconSvg 는 seed 를 해시 숫자로만 사용).
 - Rollback Notes: `_msgAvatarEl`/헬퍼/`_assistantSeed`/CSS/캐시버스터 환원으로 가역.
 - 검증: `node --check` OK + 적대 패널 PASS-WITH-NITS(블로킹 0) + **PB-0008 실제 Windows Chrome 실측 PASS**(무아바타→identicon, id35→실제 이미지, auto→AI; TEST.md §3 Run 2026-06-23-gc-avatar-identicon, 스크린샷 artifacts/pb0008-avatar-identicon/).
+
+## CHG-20260623-0017
+- Date: 2026-06-23
+- Related Requirement: 사용자 보고 — ① 멘션 하이라이트가 나타나지 않음 ② Windows 알림 형식 재구성(제목 `DQA : [그룹대화명]`, 본문 `[사용자] : 메시지`).
+- Summary: 그룹 대화 멘션 UX 2건 — 피멘션 하이라이트 CSS 특이도 버그 수정 + OS(Windows) 알림 제목·본문 채팅형 재구성. 전부 프론트, 백엔드 무변경.
+- ① 하이라이트 Root cause + fix: 멘션 강조 규칙 `.message.is-mention-me .message-bubble`(특이도 0,3,0)이 타멤버 메시지 규칙 `.message.is-user.is-other-message .message-bubble`(0,4,0)에 background·border 모두 덮여 미표시. 멘션 선택자를 `.message.is-user.is-other-message.is-mention-me .message-bubble`(0,5,0)로 올려 override. dead `.bubble` 선택자 제거, dark-mode 블록 동일 처리, 틴트 0.10→0.16(dark 0.24) 가시성 보강.
+- ② 알림 재구성: `_notifyMentions` — OS Notification 제목 `"새 멘션 알림"` → `DQA : {conversation.topic}`(미설정 시 `DQA`), 본문 `"{who} 님이 회원님을 멘션했습니다: …"` → `[{who}]{ 외 N건} : {preview}`(채팅형, 토스트·OS 알림 공용).
+- Files: `static/styles.css`(멘션 강조 선택자 0,5,0) · `static/app.js`(`_notifyMentions` title/body) · `static/index.html`(캐시버스터 avatar-identicon → mention-hl-notify) · `tests/win-browser-mention-hl-notify.scenario.json`(PB-0008 시나리오 신규).
+- Impact: 멘션 메시지에 좌측 강조선+틴트 배경 표시(타멤버 일반 메시지와 구분). 알림이 대화방 단위 제목 + 채팅형 본문으로 표시. XSS 안전(showToast=textContent, Notification body=plain text). 기존 dedup(high-water)·내 메시지 제외 로직 무변경.
+- Rollback Notes: CSS 선택자/알림 문자열/캐시버스터 환원으로 가역.
+- 검증: `node --check` OK + 적대 패널 **PASS**(블로킹 0, nit 1 cosmetic) + **PB-0008 실제 Windows Chrome 실측 PASS**(하이라이트 3px/틴트 vs 일반 1px/흰색 `highlightDiffers:true`; 알림 title=`DQA : 운영 이슈 대응방` body=`[mckim2] : …`; TEST.md §3 Run 2026-06-23-gc-mention-hl-notify, 스크린샷 artifacts/pb0008-mention-hl-notify/).

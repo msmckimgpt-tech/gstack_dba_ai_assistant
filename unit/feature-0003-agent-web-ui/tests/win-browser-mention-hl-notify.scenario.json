@@ -1,0 +1,17 @@
+{
+  "name": "gc-mention-hl-notify — 멘션 하이라이트 표시 + Windows 알림 형식(DQA:대화명 / [발신자]:메시지) (authed, PB-0008)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-mention-hl-notify",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "#productChip", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{function mkRow(cls){var a=document.createElement('article');a.className=cls;var b=document.createElement('div');b.className='message-bubble';b.textContent='@bootstrap_admin 이 부분 확인 부탁드려요';a.appendChild(b);return {row:a,bubble:b};}var wrap=document.createElement('div');wrap.id='__pb_hl';wrap.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99999;background:#fff;padding:18px;border-bottom:2px solid #111;font:13px sans-serif;color:#111;';var t=document.createElement('div');t.textContent='gc-mention-hl-notify: 위=멘션(강조 보여야 함) / 아래=일반 타멤버';t.style.cssText='font-weight:700;margin-bottom:10px;';wrap.appendChild(t);var m=mkRow('message is-user is-other-message is-mention-me');var p=mkRow('message is-user is-other-message');[m,p].forEach(function(x){x.row.style.cssText='max-width:520px;margin:6px 0;';wrap.appendChild(x.row);});document.body.appendChild(wrap);await new Promise(r=>setTimeout(r,400));function st(b){var c=getComputedStyle(b);return {borderLeftWidth:c.borderLeftWidth,borderLeftColor:c.borderLeftColor,background:c.backgroundColor};}var mS=st(m.bubble),pS=st(p.bubble);return JSON.stringify({mention:mS,plain:pS,highlightDiffers:(mS.background!==pS.background||mS.borderLeftWidth!==pS.borderLeftWidth)});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_highlight.png", "full_page": false},
+
+    {"action": "eval", "script": "(()=>{if(typeof _notifyMentions!=='function')return JSON.stringify({error:'no _notifyMentions'});var cap=null;var Orig=window.Notification;function Stub(title,opts){cap={title:title,body:(opts&&opts.body)||null};}Stub.permission='granted';window.Notification=Stub;if(!state.user)state.user={id:1,username:'bootstrap_admin'};var hadConv=state.conversations.slice();var prevActive=state.activeConversationId;state.conversations=[{id:'__pb_test',topic:'운영 이슈 대응방'}].concat(state.conversations);state.activeConversationId='__pb_test';try{_notifyMentions([{id:99999001,role:'user',content:'@bootstrap_admin 이거 확인 부탁드려요',meta:{sender_username:'mckim2',sender_account_id:5}}],true);}finally{window.Notification=Orig;state.conversations=hadConv;state.activeConversationId=prevActive;}return JSON.stringify({notification:cap});})()", "stop_on_fail": false}
+  ]
+}

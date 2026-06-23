@@ -972,19 +972,22 @@ a { color: inherit; }
 /* feature-0009: 실제 아이콘/제품 이미지가 로드되면 폴백 배경을 중립(흰색)으로 — 투명 PNG 가독성. */
 .msg-avatar.has-img { background: #fff; color: transparent; }
 
-/* feature-0009: 나(현재 사용자)를 @멘션한 메시지 강조 — 좌측 강조선 + 옅은 하이라이트 배경. */
-.message.is-mention-me .bubble,
-.message.is-mention-me .message-bubble {
+/* feature-0009: 나(현재 사용자)를 @멘션한 (타 멤버) 메시지 강조 — 좌측 강조선 + 옅은 하이라이트 배경.
+   gc-mention-highlight: 타 멤버 메시지 규칙 `.message.is-user.is-other-message .message-bubble`(특이도 0,4,0)이
+   배경·테두리를 덮어써서(이전 멘션 규칙 0,3,0 이 패배 → 하이라이트 미표시 버그), 멘션 강조 선택자를
+   (0,5,0) 특이도로 올려 확실히 이긴다. */
+.message.is-mention-me .message-bubble,
+.message.is-user.is-other-message.is-mention-me .message-bubble {
   border-left: 3px solid var(--accent, #f59e0b);
-  background: var(--mention-highlight-bg, rgba(245, 158, 11, 0.10));
+  background: var(--mention-highlight-bg, rgba(245, 158, 11, 0.16));
 }
 .message.is-mention-me {
   scroll-margin-top: 12px;
 }
 @media (prefers-color-scheme: dark) {
-  .message.is-mention-me .bubble,
-  .message.is-mention-me .message-bubble {
-    background: rgba(245, 158, 11, 0.16);
+  .message.is-mention-me .message-bubble,
+  .message.is-user.is-other-message.is-mention-me .message-bubble {
+    background: rgba(245, 158, 11, 0.24);
   }
 }
 

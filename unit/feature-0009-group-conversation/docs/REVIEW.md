@@ -210,3 +210,12 @@ source_of_truth: true
 - **PB-0008 실측 검증(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-avatar-identicon.scenario.json` 실행 PASS. `_msgAvatarEl` 기능 — 무아바타 user=`identicon`, id35=`img:/api/avatars/35`, assistant(auto)=`text:AI`. 실제 대화 메시지 아바타 kinds=`[identicon, AI]`. 증거: `artifacts/pb0008-avatar-identicon/01_avatar_strip.png`(mckim2/mckim3/review_user01/admin/operator 고유 Identicon + id35 실제 이미지 + bootstrap_admin 프로필 Identicon 정합), `02_conversation_avatars.png`. TEST.md §3 Run 2026-06-23-gc-avatar-identicon 기록.
 - Risks/Open: 없음. 사용자 보고 결함 해소 + 실측 검증 완료.
 - Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청·PB-0008 PASS).
+
+## REV-20260623-0019 [SUBAGENT: 멘션 하이라이트 표시 버그 + Windows 알림 형식 재구성(gc-mention-hl-notify) §18.8 + PB-0008]
+- Related Change: CHG-20260623-0017
+- Risk Grade: **Minor** — 전부 프론트(styles.css/app.js/index.html + 테스트 시나리오) additive, 인증·인가·스키마·백엔드 무변경. §12.3 Minor.
+- Reason: 사용자 보고 — ① 멘션 하이라이트 미표시 ② Windows 알림 형식(제목 `DQA : 대화명`, 본문 `[발신자] : 메시지`). ① Root cause = CSS 특이도 충돌(멘션 0,3,0 < 타멤버 0,4,0 → background·border override). ② 알림 제목/본문 문자열 재구성.
+- 패널 결과(adversarial subagent): **PASS, BLOCKING 없음**. 검증: ① 타멤버 멘션 메시지는 항상 `message is-user is-other-message is-mention-me` 4클래스(app.js `is-mention-me` 는 `!msgIsOwn` 조건 → `is-other-message` 동반) → 새 선택자(0,5,0)가 충돌 규칙(0,4,0) 정상 override, `border-left:3px` 는 단축 `border:1px` 중 좌측만 덮고 top/right/bottom 유지. `is-pending` 은 assistant 전용이라 클래스 집합 상호배타(충돌 없음). ② `currentConversation()` 는 `_notifyMentions` 호출 시점(라이브 tick·hidden 경로) `state.activeConversationId`(폴링 대상) 기준 → 올바른 대화 반환, null 시 `DQA` 폴백. body XSS 불가(`showToast`=textContent, Notification body=plain text). 다중 멘션 `[who] 외 N건 : preview` 스펙 일치. high-water·내 메시지 제외 로직 무변경. NIT 1건(cosmetic): empty content 시 dangling separator(기존 동일).
+- **PB-0008 실측 검증(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-mention-hl-notify.scenario.json` PASS. ① 하이라이트 computed style — 멘션 버블 `border-left 3px rgb(245,158,11)` + `background rgba(245,158,11,0.16)` vs 일반 타멤버 `1px 회색`+`흰색`, `highlightDiffers:true`. ② 알림 Notification stub 캡처 — title=`DQA : 운영 이슈 대응방`, body=`[mckim2] : @bootstrap_admin 이거 확인 부탁드려요`. 증거: `artifacts/pb0008-mention-hl-notify/01_highlight.png`(상단 멘션 버블 앰버 틴트+좌측 강조선 육안 확인). TEST.md §3 Run 2026-06-23-gc-mention-hl-notify.
+- Risks/Open: 없음. 사용자 보고 2건 모두 해소 + 실측 검증 완료.
+- Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청·PB-0008 PASS).

@@ -63,5 +63,16 @@ source_of_truth: true
 - Pass/Fail: **PASS**
 - Notes: 헤더/프로필 `applyAvatar()`+`identiconSvg()` 와 동일 시드 해시 → 같은 사용자는 어디서나 같은 아이콘. 실제 아바타 업로드 계정은 이미지 그대로 표시(회귀 없음).
 
+### Run 2026-06-23-gc-mention-hl-notify
+- Date: 2026-06-23
+- Environment: Windows-browser
+- Runner: AI
+- Bridge: relay @ http://172.28.64.1:9223 (win-browser.py doctor ok=true, Windows Chrome/149)
+- Scenario: `unit/feature-0003-agent-web-ui/tests/win-browser-mention-hl-notify.scenario.json`
+- Evidence: `artifacts/pb0008-mention-hl-notify/01_highlight.png`
+- Result Summary: ① 멘션 하이라이트 — 멘션 메시지 버블 computed style `border-left 3px rgb(245,158,11)` + `background rgba(245,158,11,0.16)` vs 일반 타멤버 버블 `border-left 1px 회색` + `background 흰색`, `highlightDiffers:true`(이전엔 특이도 0,4,0 규칙에 덮여 미표시). ② Windows 알림 — Notification stub 캡처: title=`DQA : 운영 이슈 대응방`, body=`[mckim2] : @bootstrap_admin 이거 확인 부탁드려요`.
+- Pass/Fail: **PASS**
+- Notes: 하이라이트 선택자를 (0,5,0)으로 올려 타멤버 메시지 규칙(0,4,0)을 이김. 알림 제목=`DQA : {conversation.topic}`, 본문=`[발신자] : 메시지`(채팅형). 스크린샷 상단 멘션 버블 앰버 틴트+좌측 강조선 육안 확인.
+
 ## 4. Untested Areas
 - 아직 검증되지 않은 영역
