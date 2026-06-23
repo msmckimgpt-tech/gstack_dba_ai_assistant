@@ -147,5 +147,13 @@ def test_f1_admin_quota_ui_relocated():
     # 구 usage-탭 한도 패널 제거 확인.
     assert "loadQuotas" not in js
     assert "quotaRolesBox" not in js
+    # 회귀 가드: admin.html 은 app.js 를 로드하지 않아 escapeHtml 이 admin.js 스코프에 미정의.
+    #   buildQuotaEditor 가 escapeHtml 을 보간하면 production 에서 ReferenceError → 한도 섹션 미렌더.
+    #   비신뢰 값은 DOM 프로퍼티(.value/.textContent)로 주입해야 한다(코드/주석 외 실사용 0).
+    _qstart = js.index("function buildQuotaEditor")
+    _qend = js.index("\nfunction ", _qstart + 1)  # 다음 함수 정의 직전까지 = buildQuotaEditor 전체 본문
+    quota_block = js[_qstart:_qend]
+    assert "escapeHtml(" not in quota_block
+    assert ".admin-quota-daily\").value" in js and "note.textContent = opts.inheritNote" in js
     html = _read_static("admin.html")
     assert "quotaRolesBox" not in html and "quotaAcctSaveBtn" not in html

@@ -4395,3 +4395,12 @@ source_of_truth: true
 - Verification: test 11/11 + make test 회귀 0 + py_compile + node --check + CSS brace. 화면 정본=PB-0008.
 - Rollback: 직렬화 quota 필드 제거 + buildQuotaEditor 복원→loadQuotas + usageQuotaDetails 복원.
 - Deploy: web 재빌드(정적+직렬화).
+
+## CHG-20260623T021500-ai-claude-quota-editor-escapehtml-fix
+- Date: 2026-06-23 (buildQuotaEditor escapeHtml ReferenceError 수정 — PB-0008 적발 잠복 버그). quota-ui-relocate 후속.
+- Scope: feature-0003 `src/static/admin.js`(buildQuotaEditor: escapeHtml 보간 제거→DOM 프로퍼티 주입 input.value/note.textContent) + tests(F1 회귀 가드). 백엔드·엔드포인트·RBAC·스키마 무변경.
+- 내용: `escapeHtml` 은 app.js 전용인데 admin.html 이 app.js 미로드 → admin 페이지에서 `buildQuotaEditor` 의 escapeHtml 호출이 `ReferenceError` → 역할·계정 상세 "LLM 사용 한도" 섹션 미렌더. ④ 도입(05d58d1) 이래 구 loadQuotas 도 동일(잠복, production 무렌더). 비신뢰 값을 DOM 프로퍼티로 주입해 escapeHtml 의존 제거(XSS 안전성 강화).
+- Why: PB-0008 실 브라우저 검증에서 ReferenceError 적발 — 배포된 한도 편집기가 렌더 불가.
+- Verification: test_llm_usage_quota.py 11/11(F1 escapeHtml 부재 가드 추가) + node --check + outside-voice SHIP. 사전존재 실패 2건(product-delete·db_query_ux) 무관. 화면 정본=PB-0008.
+- Rollback: buildQuotaEditor DOM 주입 → escapeHtml 보간 복원(단 admin 페이지 재차 깨짐).
+- Deploy: web 재빌드(정적). cache-buster 갱신.

@@ -4406,4 +4406,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 백엔드(직렬화만, 엔드포인트/RBAC 무변경): `_list_roles` 에 역할 기본 한도(`quota_daily`/`quota_monthly`) 노출, `_fetch_account_rows`+`_serialize_account`(admin-context) 에 계정 override 노출. 기존 PUT `/api/admin/quotas/role|account/{id}` 재사용.
 - [x] 프론트: usage 탭 한도 패널(loadQuotas·usageQuotaDetails·계정ID free-text 폼) 제거. 공용 `buildQuotaEditor({scope,id,daily,monthly,inheritNote,onSaved})` 신설 → 역할 상세("LLM 사용 한도(역할 기본)") + 계정 상세("LLM 사용 한도(계정 개별 지정)", 역할 상속 안내 표시) 에 섹션 추가. 권한 게이트 console.manage(+account.update).
 - [x] 검증: `tests/test_llm_usage_quota.py` 11/11(B10 직렬화 노출 + F1 이전·구 패널 제거 가드 갱신) + make test 회귀 0(사전존재 product-delete·db_query_ux[feature-0009 병렬] 2건 무관) + py_compile + node --check + CSS brace 1438. cache-buster `?v=20260619-quota-relocate`.
-- [ ] 머지 → 배포(web) → PB-0008(역할·계정 상세 한도 섹션 + usage 탭 패널 제거) → 마감.
+- [x] 머지 → 배포(web) → PB-0008(역할·계정 상세 한도 섹션 + usage 탭 패널 제거) → 마감. (배포 fe81973)
+
+### TASK-20260623T021500-quota-editor-escapehtml-fix — buildQuotaEditor escapeHtml ReferenceError 수정 (잠복 버그, 2026-06-23)
+- **PB-0008 적발**: `buildQuotaEditor` 가 `escapeHtml(...)` 보간 → admin 페이지에서 `ReferenceError: escapeHtml is not defined` → 역할·계정 상세의 "LLM 사용 한도" 섹션이 렌더되지 않음. 원인: `escapeHtml` 은 `app.js:495` 에만 정의되는데 `admin.html`(<script> 633-637)은 `app.js` 를 로드하지 않음(admin.js·textarea-autogrow.js·release-notes만 로드).
+- **잠복 버그 확인(적대 리뷰)**: 이 결함은 ④ LLM 한도 도입(05d58d1) 이래 존재 — 제거된 구 `loadQuotas` 도 동일하게 admin 페이지에서 escapeHtml 5곳 보간 → usage 탭 한도 패널도 production 에서 한 번도 정상 렌더된 적 없음(latent, relocate 가 만든 회귀 아님). relocate 가 escapeHtml 의존을 그대로 옮겨와 노출됨.
+- [x] 수정: 비신뢰 값(한도 숫자·inheritNote)을 innerHTML 보간 대신 DOM 프로퍼티로 주입 — `input.value = fmtVal(...)`, `note.textContent = opts.inheritNote`. placeholder/힌트는 정적 문자열(scope 파생)이라 innerHTML 유지. escapeHtml 의존 0(실사용·주석 외 제거). XSS 안전성은 오히려 강화(동적 값이 innerHTML 경로를 전혀 타지 않음).
+- [x] 검증: `test_llm_usage_quota.py` F1 에 회귀 가드 추가(buildQuotaEditor 본문 슬라이스에 `escapeHtml(` 부재 + DOM 주입 패턴 존재) → 11/11. node --check OK. 사전존재 실패 2건(product-delete·db_query_ux) 무관 재확인.
+- [x] 적대 리뷰(outside-voice): **SHIP**. XSS-safe 확인, escapeHtml 미가용 crux 확인(app.js 미로드), admin.js 잔여 escapeHtml call-site 0(스코프 완전), 콜러(renderRoleDetail/renderAccountDetail) throw 제거로 상세 pane 전체 깨짐 위험 해소.
+- [ ] 머지 → 배포(web) → PB-0008(역할·계정 상세 "LLM 사용 한도" 섹션 실렌더 + 저장 동작) → 마감.
