@@ -1209,3 +1209,15 @@ source_of_truth: true
 - Files: src/modules/insight.py, tests/test_task0305_insight_bottleneck.py(신규), docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT}.md, wiki/concepts/insight-worker.md, wiki/Log.md, wiki/hot.md.
 - Rollback: insight.py 의 casefold(VALUE)·backoff 헬퍼+게이트·RC5 카운터 제거(전부 additive·KV 부재 시 기존 동작). 마이그/스키마 없음 — 코드 revert 만으로 원복.
 - Deploy: agent 이미지 재빌드(insight-worker·ask-worker 공유 — insight.py baked). 마이그 없음. RC2 는 배포 직후 1회 cutover 재생성 spike(전 스키마 fingerprint 재계산) 후 안정.
+
+## CHG-20260623T063500-insight-rc4-and-agentcore-test
+- Date: 2026-06-23 (TASK-0305 후속 — RC4 throughput 조사 결론 + agent_core 회귀정정). PLAN-APPROVED 연장.
+- Scope: **코드 변경은 테스트 1파일뿐**(`tests/test_db_query_ux.py`). RC4 는 조사 결과 document-only(런타임 코드 무변경). 나머지는 문서.
+- 내용:
+  - **RC4 (document-only, insight.py 무변경)**: 전용 적대 조사 워크플로(3각 + 검증) 결론 = `document_levers_only`. binding constraint = 단일 프로세스 직렬 블로킹 LLM(~11s) × DB-cycle 공유 budget(15s) → DB당 cycle당 ~2건(의도된 self-throttle; 과거 livelock TASK-0145/0146 방어). 안전한 코드 win 없음(병렬화 high-risk·fingerprint 게이팅 테스트 게이트 필요). 튜닝 레버 3종 전부 라이브 부하 데이터 전엔 기본값 변경 금지. REPORT.md/FUNCTION.md 에 constraint·레버·trade-off·카나리 계획 문서화.
+  - **agent_core 회귀정정 (`tests/test_db_query_ux.py`)**: `test_assemble_core_messages_under_budget_unchanged` 가 feature-0009 `_merge_consecutive_user_messages`(Bedrock role-교대 제약 대응) 도입으로 stale → 코드 정상 확인 후 테스트를 현행 병합동작에 맞춤 + 원 의도(under-budget pass-through)를 role-교대 fixture 로 보존 + `test_assemble_core_messages_merges_consecutive_user_turns` 신설(`_assistant_text_row` 헬퍼).
+- Why: 사용자 요청 "남은 일 및 agent_core 결함도 수정". RC4 는 deferred 항목 — 조사 결과 위험한 blind 변경 대신 문서화가 정답. agent_core 는 stale 테스트(코드 무결).
+- Verification: `test_db_query_ux.py` 13/13 + feature-0002 전체 회귀 GREEN(사전결함 해소). RC4 는 적대 워크플로(7 agent)가 검증 — 코드 무변경이라 신규 단위테스트 없음.
+- Files: tests/test_db_query_ux.py, docs/{TASK,MODIFY,FUNCTION,REPORT,REVIEW}.md. (insight.py·런타임 코드 무변경.)
+- Rollback: 테스트 파일 revert + 문서 entry 제거. 런타임 영향 0.
+- Deploy: 별도 배포 불필요(테스트·문서만). RC4 튜닝은 GRANT 후 라이브 데이터 기반 카나리로 진행(본 cycle 범위 밖).

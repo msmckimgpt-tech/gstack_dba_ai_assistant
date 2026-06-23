@@ -102,10 +102,27 @@ def test_assemble_core_messages_no_orphan_tool_at_start():
             assert m.get("tool_call_id") in open_ids, "orphan tool 메시지 발견"
 
 
+def _assistant_text_row(text):
+    return {"role": "assistant", "content": text, "tool_calls": None,
+            "tool_call_id": None, "name": None}
+
+
 def test_assemble_core_messages_under_budget_unchanged():
+    # 원 의도: 예산 이하 + role 교대 history 는 윈도잉/절단 없이 그대로 통과(보존).
+    # (TASK-0305 회귀정정) 종전엔 연속 user 2개로 검증했으나, feature-0009 의
+    # _merge_consecutive_user_messages 도입 후 연속 user 는 병합되므로 — 윈도잉 부재를
+    # 검증하려는 본 테스트의 의도는 role 교대 fixture 로 표현한다(아래 별도 테스트가 병합 검증).
+    rows = [_user_row("a"), _assistant_text_row("ok"), _user_row("b")]
+    out = agent_core._assemble_core_messages(rows, max_messages=10)
+    assert [m["content"] for m in out] == ["a", "ok", "b"]
+
+
+def test_assemble_core_messages_merges_consecutive_user_turns():
+    # feature-0009: 연속 user 턴은 Anthropic/Bedrock 의 role-교대 제약 때문에 빈 줄(\n\n)로
+    # 병합돼 단일 user 턴이 된다 (_merge_consecutive_user_messages). 예산 이하에서도 적용.
     rows = [_user_row("a"), _user_row("b")]
     out = agent_core._assemble_core_messages(rows, max_messages=10)
-    assert [m["content"] for m in out] == ["a", "b"]
+    assert [m["content"] for m in out] == ["a\n\nb"]
 
 
 # ── FIX 1: PG dispatch (_load_schema_list / _load_relevant_table_insights) ──

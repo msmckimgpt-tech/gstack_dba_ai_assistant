@@ -1084,3 +1084,15 @@ source_of_truth: true
 - 관찰(의도된 행동 변화·차단 아님): RC5 가 비-MSSQL datasource(예: MySQL ds) 연결 실패를 `db_failed>0`→cycle status='degraded' 로 승격. 과거 `_is_mssql_ds` 게이트 하에선 비집계라 status 무영향이었으나, "모든 등록 datasource 실패 집계 + 운영자 가시화" 의도와 정합하는 확장으로 판단.
 - Verification: `tests/test_task0305_insight_bottleneck.py` 8/8 + feature-0002 회귀 GREEN(사전존재 `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 1건은 base 에서도 실패하는 agent_core 무관 결함) + py_compile. 라이브 e2e 는 컨테이너 미가동으로 배포 후(db_failed 사유분포 로그·log_v2 진동 종식·tick spacing).
 - Cross-ref: CHG-20260623T061043-insight-bottleneck / TASK-0305 / ROADMAP(해당 없음 — 사용자 직접 보고 버그).
+
+## REV-20260623T063500-insight-rc4-and-agentcore-test [SUBAGENT:rc4-throughput-adversarial-workflow]
+- Date: 2026-06-23
+- Cycle: TASK-0305 후속 (RC4 throughput 조사 + agent_core 회귀정정), **Major §12.3**(RC4 잠재 코드영향) / 실제 코드변경은 테스트 1파일.
+- Trigger: §18.8 — performance/throughput keyword + 워커 scheduling seam. RC4 전용 적대 워크플로(7 agent: 3각 조사 constraint/safe-code/tuning + 각 적대검증 + 종합).
+- VERDICT: **document_levers_only** (코드/기본값 변경 0 권고 — 3각 + 검증 만장 수렴).
+- 확정(코드 1차 대조): binding constraint = 단일 프로세스 직렬 블로킹 LLM(~11s) × DB-cycle 공유 budget(15s) → DB당 cycle당 ~2건(`scan_start` 단일·budget PRE-check 공유, 동시성 grep 0, 직접 동기 create()). TABLE_LIMIT/MAX_SCHEMAS non-binding. 의도된 self-throttle(livelock TASK-0145/0146 방어), 버그 아님.
+- REJECTED(ship-now 부적격): ①LLM 병렬화 — high-risk(동시 write↔read-back 키 정합 충돌→partial_persist 오판→재생성 루프 livelock 재발, Bedrock rate-limit/비용 N배). 라이브 quota·지연 + read-back 직렬화 설계 + livelock 회귀테스트 전제 별도 TASK. ②fingerprint 재계산 budget-aware 게이팅 — medium-risk(미저장 시 changed 오판 루프), 테스트 게이트 선결. ③blind 기본값 상향(BUDGET/TICK) — 두 레버 모두 과거 livelock 안전장치(budget self-throttle·tick cadence) 약화 방향, `is_safe_without_live_data=false`.
+- 채택: 코드 무변경 + 레버 3종(BUDGET_SEC/TICK_SEC/MAX_SCHEMAS·TABLE_LIMIT) trade-off·정확수치·카나리 계획을 REPORT/FUNCTION 문서화. 원자료 수치오류 정정(BUDGET 이득 2→3, TICK floor max(5), inline fallback max(30,STALE)=30s).
+- agent_core 회귀정정 검증: `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 는 코드 버그 아님 — feature-0009 `_merge_consecutive_user_messages`(Bedrock role-교대 제약) 도입 후 stale 테스트(전 suite 중 1건만 실패가 방증). 코드 무수정, 테스트를 현행 병합동작에 정합 + 원 의도 보존 fixture + 병합검증 신설. 13/13 통과.
+- Verification: RC4 적대 워크플로(7 agent, 코드 1차 대조) + agent_core test_db_query_ux 13/13 + feature-0002 전체 회귀 GREEN. RC4 라이브 튜닝은 GRANT 후 카나리(범위 밖).
+- Cross-ref: CHG-20260623T063500-insight-rc4-and-agentcore-test / TASK-0305.
