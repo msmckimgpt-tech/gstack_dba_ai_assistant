@@ -45,7 +45,8 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
-- 잔여: S3c(발신자 UI 표시·LLM 라벨) · S5(run cap·llm_usage actor 귀속·폴링)
+- gc-live-ux2 (라이브 UX 2차): 코드 완료(워크트리 `ai/claude/gc-live-ux2`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 배포 → smoke 잔여.
+- 잔여: S3c(LLM 화자 라벨 라이브 검증) · S5(run cap·llm_usage actor 귀속) [폴링은 ux2 적응형으로 해소]
   - [x] 릴리즈 노트(그룹 대화) + 캐시버스터 (CHG-0007)
   - [x] send-routing 멘션 게이팅 사람 채팅 (CHG-0008, member_count/is_member 신호 + sendPrompt 분기)
   - [x] S3c 발신자 UI 표시(표시 store 미러 + renderMessages 발신자) + 연속 user 병합(CHG-0009). LLM 화자 라벨만 라이브 검증 잔여
@@ -65,6 +66,7 @@ source_of_truth: true
   - [x] 릴리즈 노트 개선 배포(멤버끼리 채팅 + @assistant 멘션 + 발신자 표시 반영, CHG-0012/REV-0014)
   - [x] 참여 모델 전환: 공유 링크 join(참여 허용 토글 기본 ON) 일원화 + 멤버 패널/초대 제거 (CHG-0013/REV-0015)
   - [x] 라이브 UX 3종: 실시간 폴링 동기화 + @멘션 자동완성 + 발신자 프로필 아이콘 (CHG-0014/REV-0016)
+  - [x] 라이브 UX 2차(gc-live-ux2): 적응형 폴링(기본 5s↔활성 1.5s) + 멘션 자동완성 TTL(10s, 신규 참여자 반영) + 피멘션 알림(토스트+OS Notification·백그라운드 감지)/하이라이트(.is-mention-me) + assistant 제품 아이콘 + 사이드바 카테고리화(멤버 그룹대화→내 대화). 전부 프론트, 캐시버스터 live-ux2 (CHG-0015/REV-0017). ⏳docs 반영 후 verify→PR→배포→smoke
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연

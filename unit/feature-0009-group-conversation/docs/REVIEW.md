@@ -192,3 +192,12 @@ source_of_truth: true
 - Risks/Open: 멤버 캐시는 대화 전환 시 갱신(동일 대화 내 신규 참여자는 전환 전까지 자동완성 미반영 — 경미).
   폴링 4s 주기(실시간성↔부하 균형). 실 브라우저 상호작용 PB-0008 은 배포 후.
 - Human Approval Needed: 아니오 (프론트 additive, 기존 엔드포인트 재사용, 사용자 요청).
+
+## REV-20260623-0017 [SUBAGENT: 라이브 UX 2차(gc-live-ux2) 적응형 폴링·멘션 자동완성·피멘션 알림 §18.8]
+- Related Change: CHG-20260623-0015
+- Risk Grade: **Minor** — 전부 프론트(app.js/styles.css/index.html) additive, 인증·인가·스키마·백엔드 무변경, 기존 엔드포인트(history/members/avatars) 재사용. PLAN-APPROVED feature 의 사용자 지시 연속(가시 동작 개선). §12.3 Minor = AI 자율 진행 + REVIEW.md 기록.
+- Reason: 직전 라이브 UX 1차(REV-0016)의 Open Issue 두 건(① 멤버 캐시 대화 전환 전까지 미반영 ② 폴링 4s 고정) 을 사용자 요청대로 해소 + 협업 가시성(피멘션 알림/하이라이트·발신자 식별) 보강. send/render 경로 인접이라 ux1(REV-0016)과 동일하게 적대적 패널 1회 실시.
+- 패널 결과(adversarial subagent): **PASS-WITH-NITS, BLOCKING 없음**. 검증 항목: ① 적응형 폴링 — `startLiveSync` 모듈 1회 호출, 재귀 setTimeout self-sustain(중복 루프/타이머 누수 없음), `_liveSyncInFlight` 재진입 가드 유지, hidden 탭은 `state.messages`/DOM 무변경(읽기만, 복귀 시 정상 tick 동기화). ② `_liveNotifiedMaxId` — 메시지 id 가 전역 IDENTITY 단조 시퀀스라 대화 전환에도 정상, 가시·백그라운드 경로 중복/누락 알림 없음. ③ `_notifyMentions` — `sender_account_id==myId` 로 내 메시지 제외, `window.Mentions`/`Notification` 부재 시 graceful. ④ `_msgAvatarEl` 4번째 인자 — 단일 호출부(3461) 4-arg 호출, optional 호환. ⑤ 멘션 TTL — cid 불일치 시 stale 멤버 비노출, in-flight 중복 fetch 차단. ⑥ `item.is_member` — 백엔드가 항상 boolean 으로 채워 1:1/레거시 회귀 없음. ⑦ XSS 없음(textContent/Notification body 문자열, 하이라이트는 class 부여만). 캐시버스터 app.js/styles.css `live-ux2` 일관 bump. `node --check` OK.
+- 적발 NIT 3건(전부 cosmetic): (a) assistant 배지가 비-pinned 대화에서 "AI"→"A" → **수정함**(`_assistantLabel` 비-pinned 시 ""→`_msgAvatarEl` 이 "AI" 폴백, 기존 UI 보존). (b) `.is-mention-me` 의 `prefers-color-scheme: dark` 오버라이드는 앱이 고정 light 팔레트라 미세 불일치 — 무해, 유지. (c) `.message.is-mention-me .bubble` dead selector(실 클래스 `.message-bubble` 가 적용) — 무해, 유지.
+- Risks/Open: OS Notification 권한 거부/미지원 환경은 토스트로 graceful degrade(설계). 적응형 폴링 하한 1.5s 는 활성 대화 한정(idle 복귀 5s) — 부하 경미. 실 Windows 브라우저 상호작용(PB-0008)·멀티 유저 라이브 검증은 배포 후(ux1 동일 정책).
+- Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청, 패널 BLOCKING 없음).

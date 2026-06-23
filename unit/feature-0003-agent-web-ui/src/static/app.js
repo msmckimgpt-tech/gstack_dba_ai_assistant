@@ -516,6 +516,53 @@ function showToast(message, isError = false) {
   }, 2200);
 }
 
+// feature-0009: 멘션 알림 — OS Notification 권한을 사용자 제스처(발화) 시점에 best-effort 로 요청.
+let _notifyPermAsked = false;
+function _maybeRequestNotifyPermission() {
+  try {
+    if (_notifyPermAsked || !window.Notification) return;
+    if (Notification.permission === "default") {
+      _notifyPermAsked = true;
+      const r = Notification.requestPermission();
+      if (r && typeof r.catch === "function") r.catch(() => {});
+    }
+  } catch (_e) { /* graceful */ }
+}
+
+// feature-0009: 이미 알린 멘션 메시지 id 의 high-water — 가시/백그라운드 경로 간 중복 알림 방지.
+let _liveNotifiedMaxId = 0;
+function _notifyMentions(incoming, hidden) {
+  const myName = String((state.user && state.user.username) || "").toLowerCase();
+  if (!myName || !Array.isArray(incoming) || !incoming.length) return;
+  const myId = Number((state.user && state.user.id) || 0);
+  const hits = incoming.filter((m) => {
+    const id = Number((m && m.id) || 0);
+    if (!id || id <= _liveNotifiedMaxId) return false;
+    if (m.role !== "user") return false;
+    const sid = Number((m.meta && m.meta.sender_account_id) || 0);
+    if (sid && myId && sid === myId) return false; // 내가 보낸 메시지는 제외
+    return _mentionsUser(m.content, myName);
+  });
+  if (!hits.length) return;
+  hits.forEach((m) => { const id = Number(m.id || 0); if (id > _liveNotifiedMaxId) _liveNotifiedMaxId = id; });
+  const last = hits[hits.length - 1];
+  const who = (last.meta && last.meta.sender_username) || "참여자";
+  const preview = String(last.content || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const text = hits.length > 1
+    ? `${who} 외 ${hits.length - 1}건이 회원님을 멘션했습니다`
+    : `${who} 님이 회원님을 멘션했습니다: ${preview}`;
+  if (!hidden) showToast(text);
+  try {
+    if (window.Notification && Notification.permission === "granted") {
+      const n = new Notification("새 멘션 알림", {
+        body: text,
+        tag: `mention-${state.activeConversationId || ""}`,
+      });
+      n.onclick = () => { try { window.focus(); n.close(); } catch (_e) {} };
+    }
+  } catch (_e) { /* graceful */ }
+}
+
 async function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
@@ -2019,7 +2066,10 @@ function renderConversationList() {
   const own = [];
   const others = [];
   state.conversations.forEach((item) => {
-    if (isOwnConversation(item)) own.push(item);
+    // feature-0009: 내가 소유했거나 멤버로 참여한 그룹 대화는 일반(내 대화) 카테고리로.
+    // 최근 갱신순(updated_at desc, 백엔드 정렬 + 날짜 그룹)이라 활발한 대화가 상단에 온다.
+    // owner·멤버 모두 아닌(관리자 .any 열람) 대화만 "타 계정 대화" 그룹.
+    if (isOwnConversation(item) || item.is_member) own.push(item);
     else others.push(item);
   });
 
@@ -3162,14 +3212,38 @@ function _buildMessageAttachChip(att) {
   return chip;
 }
 
-// feature-0009: 메시지 발신자 프로필 아이콘. user=계정 아바타(/api/avatars/{id}, 없으면 이니셜),
-// assistant=AI 배지. 같은 출처 이미지라 로그인 세션으로 로드되며 404 시 이니셜 폴백.
-function _msgAvatarEl(senderId, label, role) {
+// feature-0009: 텍스트가 주어진 (소문자) username 을 @멘션하는지 — canonical mentions.js 사용.
+function _mentionsUser(text, myNameLower) {
+  if (!text || !myNameLower || !window.Mentions) return false;
+  try {
+    const names = window.Mentions.parseMentions(text).mentionedUsernames || [];
+    return names.some((n) => String(n).toLowerCase() === myNameLower);
+  } catch (_e) {
+    return false;
+  }
+}
+
+// feature-0009: 메시지 발신자 프로필 아이콘. user=계정 실제 아바타(/api/avatars/{id}, 없으면 이니셜),
+// assistant=대화 제품(Product) 아이콘(없으면 'AI' 배지). 같은 출처 이미지 — 404 시 이니셜/AI 폴백.
+function _msgAvatarEl(senderId, label, role, assistantIcon) {
   const av = document.createElement("span");
   av.className = "msg-avatar" + (role === "assistant" ? " msg-avatar-assistant" : "");
   if (role === "assistant") {
-    av.textContent = "AI";
-    av.title = "Assistant";
+    const aInitial = String(label || "").trim().charAt(0).toUpperCase();
+    const aFallback = aInitial || "AI";
+    av.title = label || "Assistant";
+    if (assistantIcon) {
+      av.textContent = "";
+      const img = document.createElement("img");
+      img.src = assistantIcon;
+      img.alt = "";
+      img.loading = "lazy";
+      img.addEventListener("load", () => av.classList.add("has-img"));
+      img.addEventListener("error", () => { try { img.remove(); } catch (_e) {} if (!av.textContent) av.textContent = aFallback; });
+      av.appendChild(img);
+    } else {
+      av.textContent = aFallback;
+    }
     return av;
   }
   const initial = String(label || "?").trim().charAt(0).toUpperCase() || "?";
@@ -3203,6 +3277,13 @@ function renderMessages() {
   const ownerLabel = conversation && conversation.owner_username ? conversation.owner_username : "사용자";
   const selfLabel = state.user && state.user.username ? `나 (${state.user.username})` : "나";
   const canFork = Boolean(state.activeConversationId) && can("conversation.create");
+  // feature-0009: assistant 아바타 = 이 대화의 제품(Product) 아이콘. 멘션 하이라이트용 내 username.
+  const _products = Array.isArray(state.products) ? state.products : [];
+  const _pinnedProd = _products.find((p) => Number(p.id) === Number(state.pinnedProductId));
+  const _assistantIcon = (state.productMode === "pinned" && _pinnedProd && _pinnedProd.icon_url) ? _pinnedProd.icon_url : "";
+  // feature-0009 ux2: pinned 제품이면 그 이름(아이콘/이니셜 소스), 비-pinned(auto)면 빈 라벨 → _msgAvatarEl 이 "AI" 배지로 폴백(기존 UI 보존).
+  const _assistantLabel = _pinnedProd ? (_pinnedProd.name || _pinnedProd.product_key || "") : "";
+  const _myName = String((state.user && state.user.username) || "").toLowerCase();
 
   // REQ-20260518-0001: Slack 패턴 — 날짜 분기선 click 으로 캘린더 popover anchored 오픈.
   let lastDateKey = "";
@@ -3242,6 +3323,10 @@ function renderMessages() {
     const classes = [`message`, `is-${role}`];
     if (role === "user") {
       classes.push(msgIsOwn ? "is-own-message" : "is-other-message");
+    }
+    // feature-0009: 나를 @멘션한 (타인의) 메시지는 하이라이트해 쉽게 찾도록 한다.
+    if (role === "user" && !msgIsOwn && _myName && _mentionsUser(message.content, _myName)) {
+      classes.push("is-mention-me");
     }
     row.className = classes.join(" ");
 
@@ -3372,7 +3457,12 @@ function renderMessages() {
         : Number((conversation && conversation.owner_account_id) || 0);
       _avLabel = msgIsOwn ? ((state.user && state.user.username) || "나") : (ownerLabel || "사용자");
     }
-    meta.prepend(_msgAvatarEl(_avSenderId, _avLabel, role));
+    meta.prepend(_msgAvatarEl(
+      role === "assistant" ? 0 : _avSenderId,
+      role === "assistant" ? _assistantLabel : _avLabel,
+      role,
+      role === "assistant" ? _assistantIcon : "",
+    ));
 
     row.append(meta, bubble);
     messageLogEl.appendChild(row);
@@ -6709,6 +6799,8 @@ async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
   if (isCurrentConvBusy()) return;
+  // feature-0009: 사용자 제스처 시점에 멘션 알림 권한 best-effort 요청(그룹 대화 협업용).
+  _maybeRequestNotifyPermission();
   if (!can("conversation.ask")) {
     showPermissionDeniedToast("conversation.ask");
     return;
@@ -8254,31 +8346,46 @@ _bindSearchModalListeners();
 // 그룹 대화에서 타 멤버가 보낸 메시지가 즉시 보이도록 활성 대화를 주기적으로 폴링한다.
 // AI run 중(pendingBubble/busy)에는 기존 progress 폴링이 갱신하므로 건너뛴다.
 // 새 메시지(현 최대 id 초과)만 append → 사용자가 위로 스크롤해 과거를 읽는 중이면 위치 유지.
-const LIVE_SYNC_MS = 4000;
+// feature-0009: 적응형 주기 — 기본(idle) 5s, 새 메시지가 이어질수록 점진 단축(최소 1.5s),
+// 잠잠해지면 다시 5s 로 점진 복귀. setInterval 대신 setTimeout 재귀로 가변 주기를 적용한다.
+const LIVE_SYNC_BASE_MS = 5000;
+const LIVE_SYNC_MIN_MS = 1500;
 let _liveSyncTimer = null;
 let _liveSyncInFlight = false;
+let _liveSyncInterval = LIVE_SYNC_BASE_MS;
 async function _liveSyncTick() {
-  if (_liveSyncInFlight) return;
+  // returns true: 새 메시지 반영(활발). false: 변화 없음 / skip.
+  if (_liveSyncInFlight) return false;
   const cid = state.activeConversationId;
-  if (!cid) return;
-  if (state.pendingBubble || isCurrentConvBusy()) return;
-  if (state.searchModal && state.searchModal.open) return;
-  if (document.hidden) return;
+  if (!cid) return false;
+  if (state.pendingBubble || isCurrentConvBusy()) return false;
+  if (state.searchModal && state.searchModal.open) return false;
+  const hidden = document.hidden;
   _liveSyncInFlight = true;
   try {
     const params = new URLSearchParams({ conversation_id: cid, limit: "20" });
     const payload = await apiFetch(`/api/history?${params.toString()}`);
-    if (state.activeConversationId !== cid) return;
-    if (state.pendingBubble || isCurrentConvBusy()) return;
+    if (state.activeConversationId !== cid) return false;
     const fetched = (payload && payload.messages) || [];
-    if (!fetched.length) return;
+    if (!fetched.length) return false;
+    // feature-0009: 백그라운드(탭 숨김) — DOM/state 변경 없이 새 멘션만 감지해 OS 알림.
+    // 화면 갱신은 탭 복귀 후 정상 tick 이 처리한다.
+    if (hidden) {
+      const known = new Set(state.messages.filter((m) => m.id != null).map((m) => Number(m.id)));
+      let mx = 0;
+      state.messages.forEach((m) => { if (m.id != null && Number(m.id) > mx) mx = Number(m.id); });
+      const fresh = fetched.filter((m) => m.id != null && !known.has(Number(m.id)) && Number(m.id) > mx);
+      if (fresh.length) _notifyMentions(fresh, true);
+      return false;
+    }
+    if (state.pendingBubble || isCurrentConvBusy()) return false;
     const existingIds = new Set(state.messages.filter((m) => m.id != null).map((m) => Number(m.id)));
     let maxId = 0;
     state.messages.forEach((m) => { if (m.id != null && Number(m.id) > maxId) maxId = Number(m.id); });
     const incoming = fetched.filter(
       (m) => m.id != null && !existingIds.has(Number(m.id)) && Number(m.id) > maxId
     );
-    if (!incoming.length) return;
+    if (!incoming.length) return false;
     // 내 optimistic(id=null) 에코를 incoming 실 메시지(role+content 동일)와 중복 표시하지 않도록 제거.
     const echoKeys = new Set(incoming.map((m) => `${m.role} ${String(m.content || "").trim()}`));
     state.messages = state.messages.filter(
@@ -8288,17 +8395,29 @@ async function _liveSyncTick() {
     const nearBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 80;
     const prevTop = log.scrollTop;
     state.messages = [...state.messages, ...incoming];
+    _notifyMentions(incoming, false);  // feature-0009: 나를 멘션한 새 메시지 알림(토스트/OS)
     renderMessages();
     if (!nearBottom) log.scrollTop = prevTop;  // 과거 읽는 중이면 위치 유지(append 는 하단)
+    return true;
   } catch (_e) {
-    // best-effort: 폴링 실패는 다음 tick 재시도(조용히 무시).
+    return false;  // best-effort: 폴링 실패는 다음 tick 재시도.
   } finally {
     _liveSyncInFlight = false;
   }
 }
+async function _liveSyncLoop() {
+  let hadNew = false;
+  try { hadNew = await _liveSyncTick(); } catch (_e) { hadNew = false; }
+  // 적응형: 새 메시지 있으면 주기 단축(활발할수록 짧게), 없으면 기본(5s)으로 점진 복귀.
+  _liveSyncInterval = hadNew
+    ? Math.max(LIVE_SYNC_MIN_MS, Math.round(_liveSyncInterval * 0.6))
+    : Math.min(LIVE_SYNC_BASE_MS, Math.round(_liveSyncInterval * 1.4));
+  _liveSyncTimer = window.setTimeout(_liveSyncLoop, _liveSyncInterval);
+}
 function startLiveSync() {
   if (_liveSyncTimer) return;
-  _liveSyncTimer = window.setInterval(_liveSyncTick, LIVE_SYNC_MS);
+  _liveSyncInterval = LIVE_SYNC_BASE_MS;
+  _liveSyncTimer = window.setTimeout(_liveSyncLoop, _liveSyncInterval);
 }
 startLiveSync();
 
@@ -8307,14 +8426,25 @@ const mentionAcEl = document.getElementById("mentionAutocomplete");
 let _mentionAC = { open: false, items: [], index: 0, start: -1, end: -1 };
 let _mentionMembersCid = "";
 let _mentionMembers = [];
+let _mentionMembersAt = 0;
+let _mentionMembersInFlight = false;
+const MENTION_MEMBERS_TTL_MS = 10000;  // 같은 대화 내 신규 참여자도 ~10s 내 자동완성 반영.
 async function _ensureMentionMembers(cid) {
-  if (!cid || _mentionMembersCid === cid) return;
-  _mentionMembersCid = cid;
-  _mentionMembers = [];
+  if (!cid) return;
+  if (_mentionMembersCid && _mentionMembersCid !== cid) _mentionMembers = [];  // 대화 전환 — 타 대화 멤버 노출 방지
+  const fresh = _mentionMembersCid === cid && (Date.now() - _mentionMembersAt) < MENTION_MEMBERS_TTL_MS;
+  if (fresh || _mentionMembersInFlight) return;
+  _mentionMembersInFlight = true;
   try {
     const data = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members`);
     _mentionMembers = ((data && data.members) || []).map((m) => m.username).filter(Boolean);
-  } catch (_e) { _mentionMembers = []; }
+    _mentionMembersCid = cid;
+    _mentionMembersAt = Date.now();
+  } catch (_e) {
+    if (_mentionMembersCid !== cid) _mentionMembers = [];  // 대화 전환 직후 실패 시 stale 표시 방지
+  } finally {
+    _mentionMembersInFlight = false;
+  }
 }
 function _mentionCtx() {
   if (!promptInputEl) return null;

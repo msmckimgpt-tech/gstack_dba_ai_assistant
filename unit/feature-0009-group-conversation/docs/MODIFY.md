@@ -172,3 +172,18 @@ source_of_truth: true
   3. **프로필 아이콘**: `_msgAvatarEl` — 메시지별 발신자 아바타(/api/avatars/{sender_account_id}, 무아바타 404→이니셜), assistant=AI 배지. renderMessages 메타에 prepend.
 - Impact: 기존 백엔드 엔드포인트(history/members/avatars) 재사용, 코드 무변경. 폴링은 idle 시 무렌더(새 메시지 있을 때만).
 - Rollback Notes: 3 블록(live sync/mention AC/avatar)+CSS+캐시버스터 환원으로 가역.
+
+## CHG-20260623-0015
+- Date: 2026-06-23
+- Related Requirement: 라이브 협업 UX 2차(사용자 요청) — "실시간 갱신 주기 기본 5초·활발할수록 단축" + "멘션 자동완성 이슈 보완" (REV-0016 Open Issue 해소).
+- Summary: 그룹 대화 라이브 UX 2차 개선(gc-live-ux2, 전부 프론트·백엔드 무변경). 적응형 폴링 + 멘션 자동완성 TTL + 피멘션 알림/하이라이트 + assistant 제품 아이콘 + 사이드바 카테고리화.
+- Files: `static/app.js`, `static/styles.css`, `static/index.html` (+ 캐시버스터 20260623-live-ux → **20260623-live-ux2**: app.js/styles.css).
+  1. **적응형 폴링**: 기존 고정 4s `setInterval` 을 `setTimeout` 재귀 `_liveSyncLoop` 로 대체. `LIVE_SYNC_BASE_MS=5000`(idle) / `LIVE_SYNC_MIN_MS=1500`. `_liveSyncTick` 가 새 메시지 반영 시 true 반환 → 주기 ×0.6 단축(최소 1.5s), 변화 없으면 ×1.4 로 5s 복귀. (사용자 요청: 기본 5초, 활발할수록 단축)
+  2. **멘션 자동완성 보완(F7 잔여)**: `_ensureMentionMembers` 에 `MENTION_MEMBERS_TTL_MS=10000` + in-flight 가드 — 같은 대화 내 신규 참여자도 ~10s 내 자동완성 반영(기존엔 대화당 1회만 로드 → 전환 전까지 미반영, REV-0016 Open Issue). 대화 전환/실패 시 stale 멤버 노출 방지.
+  3. **피멘션 알림**: `_notifyMentions`(토스트 + OS `Notification`) — 나를 @멘션한 *타인* user 메시지 감지(canonical `window.Mentions.parseMentions`), 내가 보낸 메시지 제외, `_liveNotifiedMaxId` high-water 로 가시·백그라운드 경로 중복 방지. 탭 숨김 시 백그라운드 감지(DOM/state 무변경, OS 알림만). `_maybeRequestNotifyPermission`(발화 제스처 시 권한 1회 best-effort 요청).
+  4. **피멘션 하이라이트**: `renderMessages` 가 나를 멘션한 타인 메시지에 `.is-mention-me` 부여 + CSS(좌측 강조선 + 옅은 배경, `prefers-color-scheme: dark` 대응, scroll-margin).
+  5. **assistant 아바타 = 제품 아이콘**: `_msgAvatarEl(senderId, label, role, assistantIcon)` 확장 — assistant 아바타를 대화 pinned 제품(Product) `icon_url`(없으면 라벨 이니셜/`AI` 폴백)로. `.msg-avatar.has-img`(투명 PNG 가독성용 중립 배경).
+  6. **사이드바 카테고리화**: `renderConversationList` 가 `isOwnConversation || item.is_member` 를 "내 대화" 그룹으로(멤버 참여 그룹대화 상단 노출, 최근순 정렬은 백엔드).
+- Impact: 전부 프론트, 기존 엔드포인트(history/members/avatars) 재사용·백엔드 무변경. 폴링은 새 메시지 있을 때만 렌더. OS 알림은 사용자 권한 grant 시에만(미허용=토스트만, graceful).
+- Rollback Notes: 6 블록 + CSS(.is-mention-me/.has-img) + 캐시버스터(live-ux2→live-ux) 환원으로 가역. `_liveSyncLoop`→`setInterval(_liveSyncTick, 4000)` 복귀.
+- 검증: `node --check` app.js/mentions.js OK. ux2 심볼 전수 존재 확인. (실 브라우저 PB-0008 은 배포 후)
