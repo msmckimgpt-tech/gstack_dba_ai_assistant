@@ -1074,3 +1074,15 @@ source_of_truth: true
 - Confirmed-safe: SQLi 없음(4 execute 전부 %s/ANY(%s) 파라미터, 프롬프트 f-string 은 admin DB 값·datamark 경유). 프롬프트 펜스(datamark + "참고 데이터, 지시 아님") table_insights/schema_list 정합. 마이그 0013→0012 head 정합·멱등·GRANT 0011 선례·downgrade FK 무이슈. agent_core 주입 try/except·미매칭 무영향(common case 0 변경). owned-conn close finally 정확(누수/이중close 없음).
 - Verification: test_kb_glossary_enum.py 9/9 + KB 회귀(read_backend·ingest) 26 통과 + py_compile + 라이브 pg16 DDL 트랜잭션 dry-run(CREATE/index/trigger/GRANT/upsert/scoped-read → ROLLBACK). ENUM 정확도 라이브 측정은 bedrock-auth 복구 후(ITEM-01 harness).
 - Cross-ref: CHG-20260623T105344-kb-glossary-enum / REQ-20260623-1610 / AC-10a~10d / ROADMAP dba-ai-nl2sql ITEM-10.
+
+## REV-20260623T145444-sample-flywheel-core [SUBAGENT:sample-flywheel-adversarial-backend-security]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T145444-sample-flywheel-core (ROADMAP ITEM-02+03 샘플쿼리 flywheel PR-A 코어), **Major §12.3** + 보안 표면(PII·injection-only).
+- Trigger: §18.8 — schema/query/embedding(backend) + PII 마스킹·프롬프트 주입(security). 적대 코드리뷰(general-purpose outside voice, REFUTE: SQLi/injection-only/PII/ds-scope/approved gate/poisoning/연결/마이그/blast).
+- 초기 VERDICT: **SHIP-WITH-FIXES** → BLOCKER 흡수 후 SHIP.
+- **흡수한 BLOCKER (embedding ::vector 누락)**: `register_sample` INSERT 가 embedding list 를 캐스트 없는 `%s` 로 vector 컬럼에 바인딩 → psycopg3 가 float8[] 로 보내 타입 불일치 런타임 실패(write/promote 경로 무동작). FakeConn 단위·리터럴 dry-run 이 못 잡음. **수정**: `%s::vector`(search·kb_backend 선례 정합). **라이브 검증**: list 임베딩 register→search retrieval sim=1.0.
+- **흡수한 MINOR**: down-vote "검색 가중 강등" 주석이 미구현 동작 주장 → 정정(현재 down 은 승급 거부만, 자동 가중 강등은 follow-up).
+- **수용(문서화 한계)**: ①`ux_sample_queries_scope_nl` UNIQUE on text — nl_question >~2704B 면 btree row-size 초과(NL 질문 짧아 저확률, 입력 cap follow-up). ②`_mask_prose` regex-only — 한국어 이름 등 free-form literal 통과(기존 문서화 한계; write-path 적용은 정확). PII 는 defense-in-depth(부분).
+- Confirmed-safe: SQLi 없음(전 param %s/named). **injection-only 확정**: 샘플 sql 은 load_example_queries_context 프롬프트 텍스트로만 읽힘 — execute_sql/커서 쿼리 전달 경로 0(grep). agent_core 예시-not-execute 펜스 + datamark. PII write-path 적용·승급 시 마스킹분 carry. ds-scope 캐스케이드. approved∧active∧embedding NOT NULL gate(기본 approved=false). poisoning: 승급 명시 호출만·down 미승급. 연결 owned-close finally. 마이그 0014→0013 head·멱등·GRANT 선례·ivfflat partial. agent_core blast: gate+try/except, embed None(titan 다운)→"" → 0 변경.
+- Verification: test_sample_flywheel.py 12/12 + py_compile + 라이브 pg16 dry-run + 라이브 ::vector register→search sim=1.0. **AC-d A/B 측정은 titan-embed 401 다운으로 보류**(복구 후 harness off/on).
+- Cross-ref: CHG-20260623T145444-sample-flywheel-core / REQ-20260623-1620·1621 / AC-a~e / ROADMAP dba-ai-nl2sql ITEM-02+03(PR-A).

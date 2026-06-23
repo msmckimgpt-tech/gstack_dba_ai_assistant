@@ -290,6 +290,62 @@ CREATE TRIGGER trg_enum_dictionary_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================================
+-- 8b. ITEM-02+03 (ROADMAP dba-ai-nl2sql): 샘플쿼리 few-shot 저장소 + 피드백 flywheel.
+--    sample_queries  — NL↔SQL 샘플(ds-scoped, 임베딩). approved∧active 만 검색·주입 대상.
+--                      flywheel-ready: source_type(provenance)·status(신선도)·weight(품질가중).
+--    sample_feedback — 답변 👍/👎/"샘플 등록" 원천. 승인 큐 경유로 sample_queries 승급
+--                      (자동학습 금지 — poisoning 방어). generated_sql 은 PII 마스킹 저장.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS sample_queries (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key     varchar(96)  NOT NULL DEFAULT 'common',   -- datasource 격리(fact_entries 컨벤션)
+    nl_question   text         NOT NULL,
+    sql           text         NOT NULL,                    -- 프롬프트 예시 전용(직접 실행 금지)
+    domain        varchar(64)  NOT NULL DEFAULT '',
+    weight        integer      NOT NULL DEFAULT 100,        -- 품질·사용 가중(검색 랭킹)
+    embedding     vector(1536),                             -- nl_question 임베딩(titan-embed)
+    source_type   varchar(24)  NOT NULL DEFAULT 'manual',   -- manual|feedback|auto-harvest|eval
+    status        varchar(16)  NOT NULL DEFAULT 'active',   -- active|stale|retired (신선도)
+    approved      boolean      NOT NULL DEFAULT false,      -- 큐레이션 게이트(검색은 approved 만)
+    created_by    varchar(64),
+    last_validated_at timestamptz,                          -- validate_sample_sql 최근 검증
+    created_at    timestamptz  NOT NULL DEFAULT now(),
+    updated_at    timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT ux_sample_queries_scope_nl UNIQUE (scope_key, nl_question)
+);
+CREATE INDEX IF NOT EXISTS ix_sample_queries_scope_appr
+    ON sample_queries (scope_key, approved, status);
+CREATE INDEX IF NOT EXISTS ix_sample_queries_embedding_ivfflat
+    ON sample_queries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 32)
+    WHERE embedding IS NOT NULL;
+DROP TRIGGER IF EXISTS trg_sample_queries_updated_at ON sample_queries;
+CREATE TRIGGER trg_sample_queries_updated_at
+    BEFORE UPDATE ON sample_queries
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS sample_feedback (
+    id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key          varchar(96)  NOT NULL DEFAULT 'common',
+    conversation_id    varchar(128),
+    run_id             varchar(64),
+    nl_question        text         NOT NULL,
+    generated_sql      text,                                -- PII 마스킹 후 저장
+    vote               varchar(8)   NOT NULL DEFAULT 'up',  -- up|down
+    suggested          boolean      NOT NULL DEFAULT false, -- "샘플로 등록" 요청 동반
+    status             varchar(16)  NOT NULL DEFAULT 'pending',  -- pending|promoted|rejected
+    promoted_sample_id bigint,                              -- 승급된 sample_queries.id
+    created_by         varchar(64),
+    created_at         timestamptz  NOT NULL DEFAULT now(),
+    updated_at         timestamptz  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_sample_feedback_status ON sample_feedback (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_sample_feedback_scope ON sample_feedback (scope_key);
+DROP TRIGGER IF EXISTS trg_sample_feedback_updated_at ON sample_feedback;
+CREATE TRIGGER trg_sample_feedback_updated_at
+    BEFORE UPDATE ON sample_feedback
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================================
 -- 9. T3-10: 슬로우 쿼리 모니터링 뷰 (pg_stat_statements 기반).
 --    agent_kb_ro 와 agent_kb_rw 가 조회 가능하도록 권한 부여.
 -- ============================================================================
@@ -318,7 +374,8 @@ BEGIN
         GRANT USAGE ON SCHEMA public TO agent_kb_rw;
         GRANT SELECT, INSERT, UPDATE, DELETE
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
-                      kb_invalidations, kb_glossary, enum_dictionary TO agent_kb_rw;
+                      kb_invalidations, kb_glossary, enum_dictionary,
+                      sample_queries, sample_feedback TO agent_kb_rw;
         GRANT SELECT ON TABLE kb_slow_queries TO agent_kb_rw;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_kb_rw;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -331,7 +388,8 @@ BEGIN
         GRANT USAGE ON SCHEMA public TO agent_kb_ro;
         GRANT SELECT
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
-                      kb_invalidations, kb_glossary, enum_dictionary, kb_slow_queries TO agent_kb_ro;
+                      kb_invalidations, kb_glossary, enum_dictionary,
+                      sample_queries, sample_feedback, kb_slow_queries TO agent_kb_ro;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT ON TABLES TO agent_kb_ro;
     END IF;
