@@ -234,6 +234,18 @@ PERMISSION_DEFINITIONS = (
         "group": "quota",
     },
     {
+        # TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03, AC-0612):
+        # 피드백 → 샘플쿼리 KB 환류 flywheel 의 검수 권한. 사용자 답변 피드백(👍/👎/"샘플 등록")으로
+        # 적재된 sample_feedback(pending) 큐를 검토해 sample_queries(approved)로 승급(promote)하거나
+        # 거부(reject)할 수 있다. 승급은 KB(검색 정확도)에 직접 영향 → poisoning 방어상 명시 검수만
+        # 허용(자동학습 금지). 도메인 전문가/검수자 한정 권한 — console.access 하위(관리 콘솔 진입 필요).
+        # admin seed(=set(PERMISSION_CODES)) 자동 보유. operator/sales/pending 미부여(least-privilege).
+        "code": "kb.sample.curate",
+        "label": "샘플 검수/승급",
+        "description": "답변 피드백으로 적재된 샘플쿼리 후보(pending)를 검토해 KB(sample_queries)로 승급하거나 거부할 수 있다. 승급은 검색 정확도에 직접 영향하므로 명시 검수만 허용된다 (도메인 전문가/검수자 전용).",
+        "group": "kb",
+    },
+    {
         "code": "conversation.create",
         "label": "대화 생성",
         "description": "새 대화를 생성할 수 있다.",
@@ -14483,6 +14495,144 @@ async def post_group_chat_message(cid: str, request: Request) -> JSONResponse:
         conn.close()
 
 
+# ── TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03) ──────
+# 답변 피드백 → 샘플쿼리 KB 환류 flywheel 의 web 층. 사용자가 답변에 👍/👎 또는 "샘플 등록"
+# 하면 sample_feedback(pending) 에 적재 → 관리 콘솔 "샘플 검수" 큐에서 도메인 전문가가
+# 명시 승급(promote) 하면 sample_queries(approved) 로 들어가 검색 정확도에 기여한다.
+# 코어(적재/승급 정본)는 feature-0002 modules.sample_feedback — web 은 RBAC/audit/scope 경계만
+# 강제하고 코어를 in-process import 한다(재구현 금지).
+
+def _conversation_scope_key(conn, conversation_id: str) -> str:
+    """대화의 활성 데이터소스 scope_key 를 해석한다 (샘플 피드백 적재용).
+
+    대화 → pinned product → datasource → `_dsr.scope_key`(insight/RAG write 와 동일 식별자)
+    경로로 해석한다. 미고정(auto)/미바인딩/해석 실패 시 'common'(공통 스코프)으로 폴백한다.
+    'common' 은 특정 데이터소스에 묶이지 않은 일반 샘플의 기본 스코프(코어 _normalize_scope_key 와 정합).
+    """
+    try:
+        prod_meta = _load_conversation_product(conn, conversation_id) if conversation_id else None
+    except Exception:
+        prod_meta = None
+    if not prod_meta or prod_meta.get("product_mode") != "pinned" or not prod_meta.get("product_id"):
+        return "common"
+    try:
+        pid = int(prod_meta["product_id"])
+        product = next((p for p in _list_products(conn, include_inactive=True) if int(p.get("id") or 0) == pid), None)
+        if not product:
+            return "common"
+        resolved = _resolve_product_insight_scope(conn, product)
+        scope = resolved.get("scope") if resolved and resolved.get("ok") else None
+        return str(scope).strip() if scope else "common"
+    except Exception:
+        return "common"
+
+
+@app.post("/api/conversations/{cid}/sample-feedback")
+async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
+    """답변 피드백 적재 (👍/👎 + "샘플 등록"). sample_feedback(pending) 에 기록.
+
+    권한: 대화 접근(멤버/owner/read.any) — 발화 권한과 무관(피드백은 열람자도 가능).
+    body: {vote: "up"|"down", suggested: bool, nl_question: str, generated_sql?: str}.
+    generated_sql 은 코어(record_feedback)가 PII 마스킹 후 저장한다.
+    승급(promote)은 별도 관리 콘솔 검수 큐(명시 호출)만 — 본 endpoint 는 적재까지(자동학습 금지).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        return _json_error("invalid body", 400)
+    vote = "down" if str(data.get("vote") or "up").strip().lower() in ("down", "negative", "0", "false") else "up"
+    suggested = bool(data.get("suggested"))
+    nl_question = str(data.get("nl_question") or "").strip()
+    generated_sql = str(data.get("generated_sql") or "")
+    if not nl_question:
+        return _json_error("nl_question 은 필수입니다.", 400)
+    if len(nl_question) > 8000:
+        return _json_error("질문이 너무 깁니다.", 400)
+    if len(generated_sql) > 100_000:
+        return _json_error("SQL 본문이 너무 깁니다.", 400)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # REV-…-item03-security MAJOR-1: 적재 endpoint per-account rate-limit — 미적용 시
+        # 열람자가 suggested 피드백을 spam 해 검수 큐를 채워 curator DoS. body-search 와 동형.
+        if not _search_rate_limit_check(int(account.get("id") or 0), max_per_min=10):
+            return _json_error("피드백 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        scope_key = _conversation_scope_key(conn, cid)
+    finally:
+        conn.close()
+
+    # 적재는 PG(agent_kb) conn — 코어 정본 modules.sample_feedback.record_feedback.
+    from modules import sample_feedback as _sfb
+    from modules.db import _pg_connect
+    feedback_id: int | None = None
+    try:
+        # autocommit=False — INSERT + lastval() 을 한 트랜잭션으로 묶어 id 회수 정확성 보장.
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("피드백 저장소(PG) 연결 실패", 503)
+    try:
+        _sfb.record_feedback(
+            pg, scope_key, nl_question, generated_sql,
+            vote=vote, suggested=suggested, conversation_id=cid,
+            created_by=str((account or {}).get("username") or "") or None,
+        )
+        try:
+            cur = pg.cursor()
+            cur.execute("SELECT lastval()")
+            row = cur.fetchone()
+            feedback_id = int(row[0]) if row and row[0] is not None else None
+            cur.close()
+        except Exception:
+            feedback_id = None
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        import sys as _sys
+        _sys.stderr.write(f"[ITEM-03] sample-feedback 적재 실패 cid={cid}: {exc}\n")
+        return _json_error("피드백 저장 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+    # best-effort audit (user endpoint 패턴, fail-open — 적재 성공을 막지 않는다).
+    try:
+        mconn = _connect_memory()
+        try:
+            record_audit_event(
+                mconn,
+                actor=_build_actor_from_request(request, account, actor_type="account"),
+                action="sample.feedback.submit",
+                resource_type="sample_feedback",
+                resource_id=str(feedback_id) if feedback_id is not None else None,
+                change_json={"vote": vote, "suggested": suggested,
+                             "scope_key": scope_key, "conversation_id": cid,
+                             "has_sql": bool(generated_sql)},
+            )
+            mconn.commit()
+        finally:
+            mconn.close()
+    except Exception:
+        pass
+
+    return JSONResponse({"ok": True, "feedback_id": feedback_id})
+
+
 @app.get("/api/conversations/{cid}/shares")
 def list_conversation_shares(cid: str, request: Request) -> JSONResponse:
     """해당 대화의 share 목록 (활성 + revoked 모두). 조회 권한: read.own/any."""
@@ -23728,6 +23878,218 @@ def admin_archived_conversations(request: Request) -> JSONResponse:
             conn.close()
         except Exception:
             pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03)
+#   피드백 → 샘플쿼리 KB 환류 flywheel 의 검수 큐 (관리 콘솔). RBAC kb.sample.curate.
+#   · GET  /api/admin/sample-feedback              — pending 큐 목록(검수 대상)
+#   · POST /api/admin/sample-feedback/{id}/approve — sample_queries 로 승급(promote)
+#   · POST /api/admin/sample-feedback/{id}/reject  — 거부(reject)
+#   설계: 적재/승급 로직 정본 = feature-0002 modules.sample_feedback(PG/agent_kb conn).
+#   web 은 RBAC(kb.sample.curate) + audit(memory conn) 경계만 강제하고 코어를 in-process
+#   호출한다. 승급은 명시 호출만(자동학습 금지 — poisoning 방어). PG conn(작업) ↔ memory
+#   conn(auth/audit) 을 분리한다.
+# ════════════════════════════════════════════════════════════════════════════
+_SAMPLE_FEEDBACK_LIMIT = 100
+
+
+@app.get("/api/admin/sample-feedback")
+def admin_list_sample_feedback(request: Request) -> JSONResponse:
+    """검수 큐 — pending 샘플 피드백 목록. 권한: kb.sample.curate.
+
+    PG(agent_kb) 의 sample_feedback(status='pending') 을 코어 list_pending_feedback 로 조회한다.
+    generated_sql 은 적재 시점에 이미 PII 마스킹돼 저장됨(추가 마스킹 불필요). scope_key 쿼리로 ds 한정 가능.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_permission(request, conn, "kb.sample.curate")
+        if error:
+            return error
+    finally:
+        conn.close()
+
+    scope_key = (request.query_params.get("scope_key") or "").strip() or None
+    try:
+        limit = int(request.query_params.get("limit", str(_SAMPLE_FEEDBACK_LIMIT)))
+    except Exception:
+        limit = _SAMPLE_FEEDBACK_LIMIT
+    limit = max(1, min(_SAMPLE_FEEDBACK_LIMIT, limit))
+
+    from modules import sample_feedback as _sfb
+    from modules.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("피드백 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _sfb.list_pending_feedback(pg, scope_key=scope_key, limit=limit)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_sample_feedback: 조회 실패", exc_info=True)
+        return _json_error("샘플 피드백 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        # row: (id, scope_key, conversation_id, nl_question, generated_sql, vote, suggested, created_at)
+        items.append({
+            "id": int(r[0]),
+            "scope_key": str(r[1] or ""),
+            "conversation_id": (str(r[2]) if r[2] is not None else None),
+            "nl_question": str(r[3] or ""),
+            "generated_sql": str(r[4] or ""),
+            "vote": str(r[5] or "up"),
+            "suggested": bool(r[6]),
+            "created_at": (r[7].isoformat() if hasattr(r[7], "isoformat") else (str(r[7]) if r[7] is not None else None)),
+        })
+    return JSONResponse({"items": items, "count": len(items), "truncated": len(items) >= limit})
+
+
+@app.post("/api/admin/sample-feedback/{feedback_id}/approve")
+async def admin_approve_sample_feedback(feedback_id: int, request: Request) -> JSONResponse:
+    """샘플 피드백 승급(promote) — sample_queries(approved=true, source_type='feedback'). 권한: kb.sample.curate.
+
+    코어 promote_feedback(PG/agent_kb conn). 👎(down)/비-pending 은 승급 대상 아님(sample_id=None).
+    embedding 미지정 → 코어가 titan-embed(1024-dim)로 임베딩. audit(memory conn) 분리 기록.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_permission(request, conn, "kb.sample.curate")
+        if error:
+            return error
+    finally:
+        conn.close()
+
+    try:
+        body_raw = await request.body()
+        data = (await request.json()) if body_raw else {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    domain = str(data.get("domain") or "").strip()
+    try:
+        weight = int(data.get("weight") or 100)
+    except Exception:
+        weight = 100
+    weight = max(1, min(1000, weight))
+
+    from modules import sample_feedback as _sfb
+    from modules.db import _pg_connect
+    try:
+        # autocommit=False — register_sample(INSERT+임베딩) + status UPDATE 를 한 트랜잭션으로 묶어
+        # 부분 적용(승급은 됐는데 status 미갱신, 또는 그 반대)을 방지(원자성). 실패 시 전체 rollback.
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("피드백 저장소(PG) 연결 실패", 503)
+    try:
+        sample_id = _sfb.promote_feedback(
+            pg, feedback_id, approved_by=str((account or {}).get("username") or "") or None,
+            weight=weight, domain=domain,
+        )
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_approve_sample_feedback 실패 id=%s: %s", feedback_id, exc, exc_info=True)
+        return _json_error("샘플 승급 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+    if sample_id is None:
+        # 비-pending(이미 처리됨) 또는 👎(down, 승급 비대상). audit 없이 409 로 명시.
+        return _json_error("승급 대상이 아닙니다 (이미 처리되었거나 👎 피드백입니다).", 409)
+
+    # same-tx 아닌 별도 memory conn 으로 audit (작업은 PG, audit 은 MySQL — cross-DB 분리).
+    try:
+        mconn = _connect_memory()
+        try:
+            record_audit_event(
+                mconn,
+                actor=_build_actor_from_request(request, account, actor_type="account"),
+                action="sample.feedback.approve",
+                resource_type="sample_feedback",
+                resource_id=str(feedback_id),
+                change_json={"promoted_sample_id": sample_id, "weight": weight, "domain": domain},
+            )
+            mconn.commit()
+        finally:
+            mconn.close()
+    except Exception:
+        logging.getLogger(__name__).warning("sample.feedback.approve audit 실패 id=%s", feedback_id, exc_info=True)
+
+    return JSONResponse({"ok": True, "feedback_id": feedback_id, "sample_id": sample_id})
+
+
+@app.post("/api/admin/sample-feedback/{feedback_id}/reject")
+async def admin_reject_sample_feedback(feedback_id: int, request: Request) -> JSONResponse:
+    """샘플 피드백 거부(reject) — status='rejected'. sample_queries 미반영(poisoning 방어). 권한: kb.sample.curate."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_permission(request, conn, "kb.sample.curate")
+        if error:
+            return error
+    finally:
+        conn.close()
+
+    from modules import sample_feedback as _sfb
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("피드백 저장소(PG) 연결 실패", 503)
+    try:
+        _sfb.reject_feedback(pg, feedback_id)
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_reject_sample_feedback 실패 id=%s: %s", feedback_id, exc, exc_info=True)
+        return _json_error("샘플 거부 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+    try:
+        mconn = _connect_memory()
+        try:
+            record_audit_event(
+                mconn,
+                actor=_build_actor_from_request(request, account, actor_type="account"),
+                action="sample.feedback.reject",
+                resource_type="sample_feedback",
+                resource_id=str(feedback_id),
+                change_json={"status": "rejected"},
+            )
+            mconn.commit()
+        finally:
+            mconn.close()
+    except Exception:
+        logging.getLogger(__name__).warning("sample.feedback.reject audit 실패 id=%s", feedback_id, exc_info=True)
+
+    return JSONResponse({"ok": True, "feedback_id": feedback_id})
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -90,8 +90,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: pgvector·임베딩·KB 검색 경로 재사용 → 신규 비용 낮음. 배포 = ask-worker(+ 등록 UI 시 web, ITEM-11 과 묶음 가능).
 
 ### ITEM-03 · 피드백 → KB 환류 flywheel
-- **status**: pending
-- **note**: 코어 환류 로직(feature-0002 — sample_feedback 테이블 + record(PII 마스킹)/promote/reject, 자동학습 금지)은 PR-A(2026-06-23, CHG-20260623T145444-sample-flywheel-core)에 랜딩. **남은 PR-B(primary feature-0003)**: 신규 RBAC `kb.sample.curate` + 피드백 endpoint(👍/👎/등록) + 검수 큐 admin UI + audit + Windows-browser. **PR-B 는 titan-embed(임베딩) 복구 후** — 승급된 샘플이 임베딩돼야 검색·주입되어 flywheel 이 실효.
+- **status**: done
+- **note**: 2026-06-23 드레인. PR-A(코어 record/promote/reject, CHG-20260623T145444) + **PR-B(web: 신규 RBAC `kb.sample.curate` + 피드백 endpoint(👍/👎/등록) + 검수 큐 admin UI + audit, CHG-20260623T090440)** 완료. titan-embed(bge-m3 1024) 복구로 승급 샘플 임베딩·주입 가능. 단위 27(curation 15+flywheel 12) + 적대 security 리뷰 REV-20260623-0334 **SHIP-WITH-FIXES**(MAJOR-1 rate-limit·MAJOR-2 promote FOR UPDATE·MINOR-1 nl_question PII 흡수). 잔여: PB-0008 Windows-browser UI 실렌더(WARN-only).
 - **feature_id**: feature-0003-agent-web-ui   <!-- primary(UI+endpoint). 코어 환류는 feature-0002 — MODIFY.md cross-ref -->
 - **dimension**: structural
 - **risk_grade**: Major
@@ -264,11 +264,10 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | **ITEM-09** (무거운쿼리 경량대안+승인) | **reject(subsumed)** | shipped TASK-0299/0304 가 무거운쿼리를 LLM tool-루프 silent rewrite 로 이미 처리(agent_core.py:120-128). ITEM-09 의 사용자-노출 승인 라운드트립은 TASK-0304 의 사용자-승인된 "차단 미노출(효율적 답변만)" 결정을 **역전**하는 설계 충돌 → 임의 구현 안 함. 사용자 결정(2026-06-23) subsumed. 재검토 트리거: 승인-UX 가 silent-rewrite 보다 낫다는 근거 + TASK-0304 재논의(plan-ceo/eng-review). |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 5 · rejected 1 · in-progress 0 · pending 6 · blocked 0
-- 완료: **ITEM-01**(harness, measured 보류) · **ITEM-04**(DS 컨텍스트) · **ITEM-10**(용어/ENUM 구조부) · **ITEM-02**(샘플 저장소 PR-A — A/B·등록UI 보류) · **ITEM-07**(self-reflection 자가수정 — 회복률 측정 보류).
-- 기각: **ITEM-09**(subsumed — shipped TASK-0304 silent-rewrite 와 충돌, §4).
-- 남은 pending 6: **전부 임베딩(titan-embed) 의존 → titan-embed 복구 전 진행 불가**. ITEM-05(하이브리드 검색)·ITEM-06(reranker)·ITEM-12(retrieval 튜닝)·ITEM-03 PR-B(피드백 web — 승급 샘플 임베딩 필요)·ITEM-08(Fix-with-AI 버튼, deps ITEM-07✓ 이나 web)·ITEM-11(거버넌스 포탈 web, deps 02✓10✓ — 샘플/용어/ENUM CRUD 가 임베딩 자산 전제).
-- ⚠ **환경 상태 (2026-06-23)**: chat(claude-*) ✓ / **임베딩(titan-embed) 401 AUTH-DOWN ✗**. chat-의존 항목(07 done, 09 reject)은 소진.
-- **임베딩 복구 결정 = 경로 B(로컬 임베딩)** 검토 완료: "전환"이 chat 을 Anthropic-direct(OAuth)로 옮겼으나 Anthropic 은 임베딩 미제공 → titan-embed 만 Bedrock(AWS 키 제거)에 남아 401. 권장 = **B1-a 로컬 1024-dim 임베딩**(bge-m3 등, 폐쇄망 무-egress, texts(1024) 정합 → 재임베딩 불요). 성능 검토: 품질 titan 동등↑(강한국어 1024 모델 한정)·지연/비용 무시 가능·인프라 헤드룸만 운영자 확인. **운영자 작업**: 로컬 게이트웨이(`local-llm-gateway`, 현재 /embeddings 404)에 1024 임베딩 모델 pull + 라우트 활성 → litellm `titan-embed` alias 교체 → restart. (코드측 차원 정렬 = **마이그 0015, sample_queries.embedding 1024 완료**.)
-- **임베딩 복구 후** `/_dqa:improve_cycle dba-ai-nl2sql` 재호출로 재개 — ITEM-01 harness A/B(02·05·06·07·12 측정)·ITEM-02 retrieval·ITEM-03 PR-B(승급 샘플 임베딩)·ITEM-05/06/12 일괄 풀림. (잔여 flag: schema.sql:68 texts·kb_backend:940 주석 stale 1536 — 별도 cleanup.)
-- ⚠ **환경 상태 (2026-06-23 갱신)**: **chat 모델(claude-*) 복구 ✓ / 임베딩(titan-embed) 여전히 401 AUTH-DOWN ✗**. ① **chat 의존(verify 가능)**: ITEM-07(self-reflection)·ITEM-09(무거운쿼리 재작성) — harness 측정 chat 으로 동작. ② **임베딩 의존(보류)**: ITEM-02 라이브 retrieval·A/B · ITEM-05(하이브리드)·ITEM-06(reranker)·ITEM-12(retrieval 튜닝) · ITEM-03 PR-B(승급 샘플 임베딩 필요). 드레인은 사용자 지시로 **chat 항목(07/09) 진행**, 임베딩 클러스터는 titan-embed 복구 후.
+- 총 12 항목 · done 6 · rejected 1 · in-progress 0 · pending 5 · blocked 0
+- 완료: **ITEM-01**(harness, A/B 측정 보류) · **ITEM-02**(샘플 저장소) · **ITEM-03**(피드백 flywheel PR-A코어+PR-B web, security SHIP-WITH-FIXES) · **ITEM-04**(DS 컨텍스트) · **ITEM-07**(self-reflection, 회복률 측정 보류) · **ITEM-10**(용어/ENUM).
+- 기각: **ITEM-09**(subsumed — shipped TASK-0304 silent-rewrite, §4).
+- ✅ **환경 (2026-06-23, 갱신)**: chat(claude-*, Anthropic-direct OAuth) ✓ · **임베딩 titan-embed→로컬 Ollama bge-m3(1024) 복구 ✓**(end-to-end 검증, PR#385). 임베딩 클러스터 차단 해소.
+- 다음 ready(정렬 Phase asc→risk asc→id asc): **ITEM-05**(P2 Major 하이브리드 검색) → 이후 ITEM-12(P2 Minor)·ITEM-06(P2 Major)(deps 05) · ITEM-08(P3 Minor Fix-with-AI) · ITEM-11(P4 Major 거버넌스 포탈).
+- 보류 측정(임베딩 복구로 이제 가능): ITEM-01/02 A/B·retrieval precision/recall — 해당 후속 항목(05 등) 측정 시 함께 수행.
+- 잔여 flag(별도 cleanup): schema.sql:68 texts·kb_backend:940 주석 stale `vector(1536)`(정본 1024). bge-m3 provenance(embedding_model alias 기록).

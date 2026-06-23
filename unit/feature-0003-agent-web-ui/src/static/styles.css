@@ -7499,3 +7499,66 @@ a { color: inherit; }
   .rn-item { flex-direction: column; gap: 6px; }
   .rn-item-badges { flex-direction: row; width: auto; }
 }
+
+/* TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03) — 답변 피드백 + 검수 큐 */
+.message-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.message-feedback-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.message-feedback[data-done="1"] .message-feedback-btn {
+  opacity: .4;
+  pointer-events: none;
+}
+/* 검수 큐(샘플 검수 탭) */
+.admin-sf-row {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.admin-sf-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.admin-sf-row-head .sf-vote { font-size: 15px; }
+.admin-sf-scope {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.sf-badge-suggested {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(16,185,129,.12);
+  color: #047857;
+}
+.admin-sf-ts { margin-left: auto; font-variant-numeric: tabular-nums; }
+.admin-sf-q { font-size: 14px; font-weight: 500; color: var(--text); }
+.admin-sf-sql {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--code-bg, #0f172a);
+  color: var(--code-fg, #e2e8f0);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.admin-sf-nosql { font-size: 12px; font-style: italic; }
+.admin-sf-actions { display: flex; gap: 8px; }
