@@ -3513,3 +3513,15 @@ source_of_truth: true
 - **수용(문서화)**: 콜러 try/catch 방어는 선택(throw 제거로 moot, belt-and-suspenders 차원만).
 - Verification: test_llm_usage_quota.py 11/11(F1 회귀 가드) + node --check OK. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260623T021500-ai-claude-quota-editor-escapehtml-fix / REQ-20260623-0331 / AC-0609.
+
+## REV-20260623T030418-ai-claude-quota-rbac-permission [SUBAGENT:quota-rbac-adversarial]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T030418-quota-rbac-permission (LLM 사용 한도 조회/조절 전용 권한), **Major §12.3 — 보안 경계(RBAC)**.
+- Panel: outside-voice(general-purpose, REFUTE) — privilege-escalation·access-control 누출·manage⊃read 집행 집중([[feedback_outside_voice_for_rbac]]).
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 2[흡수], MINOR 1[수용]). 6 probe.
+- 확인(REFUTED clean): admin seed(set(PERMISSION_CODES)) 신규 2종 자동 보유→무lockout·console bootstrap 정상 / strip 헬퍼 non-no-op(actor=_require_account→_decorate_account_rows 로 permissions dict 채워짐, dict/list 양형 in-place 안전) / self-session(/api/session·/api/auth/me)=include_permissions 없음→quota 무노출 / _load_role_by_id 단건=quota 미포함(role create/update/delete 응답 무누출) / 프론트 readOnly=defense-in-depth(실 경계=백엔드 PUT).
+- **흡수한 MAJOR-1**: PATCH `/api/admin/accounts/{id}`(`admin_update_account`) 응답 `_serialize_account(include_permissions=True)` 가 strip 미적용 → account.update 보유·quota.read 미보유 actor 가 no-op PATCH 로 한도값 회수(read-gate 무력) → 응답에 `_strip_quota_fields_if_unpermitted(payload, actor)` 추가. (유일 미커버 include_permissions 사이트, admin_accounts/admin_me 는 기존 커버.)
+- **흡수한 MAJOR-2**: "조절은 조회 종속"이 admin.js PERMISSION_DEPENDENCIES(가시성 힌트)에만 존재 — PUT role/account 가 quota.manage 만 검사 → quota.manage 단독 보유 시 GET·직렬화는 strip 되나 PUT 은 통과(blind-write). 사용자 요구가 enforcement 레이어에서 미성립 → PUT 게이트에 **quota.read + quota.manage 동시 요구**(서버 집행).
+- **수용(문서화)**: MINOR(console.manage 분리로 quota.manage 보유자가 console.manage/account.update 없이 한도 변경 가능=접근 확대) — 전용 위임 권한의 의도된 설계. 스톡 seed(operator/sales/pending) 미보유라 즉시 확대 없음·grant escalation 은 _enforce_override_self_scope 로 bound. MODIFY/SECURITY 이행주의 명시.
+- Verification: test_llm_usage_quota.py 18/18(B8 양권한·B11/B12 MAJOR 가드·F2/F3) + test_permission_dependency_map.py 자동검증 + make test 회귀 0 + node --check + py_compile. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260623T030418-ai-claude-quota-rbac-permission / REQ-20260623-0332 / AC-0610·0611 / SECURITY.md §6.
