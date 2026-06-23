@@ -2228,6 +2228,10 @@ a { color: inherit; }
 .share-expiry-panel { max-width: 420px; }
 .share-expiry-desc { padding: 14px 20px 4px; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
 .share-expiry-opts { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px 20px; }
+/* feature-0009: 공유 링크 '참여 허용' 토글(기본 ON) */
+.share-joinable-row { display: flex; align-items: center; gap: 8px; padding: 14px 20px 0; font-size: 13px; color: var(--text); cursor: pointer; }
+.share-joinable-row input { width: 16px; height: 16px; cursor: pointer; }
+.share-joinable-hint { color: var(--text-muted); font-size: 12px; }
 .share-expiry-opt { flex: 1 1 auto; min-width: 72px; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
 
 /* TASK-0158: 첨부 scopeAll 토글 (attach 사이드패널) */
@@ -7393,116 +7397,3 @@ a { color: inherit; }
   .rn-item { flex-direction: column; gap: 6px; }
   .rn-item-badges { flex-direction: row; width: auto; }
 }
-
-/* feature-0009: 그룹 대화 멤버 패널(roster) */
-.members-panel {
-  position: absolute;
-  top: 56px;
-  right: 16px;
-  z-index: 40;
-  width: 320px;
-  max-width: calc(100vw - 32px);
-  background: var(--surface, #fff);
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.members-panel.hidden { display: none; }
-.members-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.members-panel-close {
-  border: none;
-  background: transparent;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  color: var(--text-muted, #64748b);
-}
-.members-panel-note {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted, #64748b);
-}
-.members-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 260px;
-  overflow-y: auto;
-}
-.members-list-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
-}
-.members-list-item:hover { background: var(--surface-muted, #f1f5f9); }
-.members-list-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-}
-.members-list-role {
-  font-size: 11px;
-  color: var(--text-muted, #64748b);
-  flex-shrink: 0;
-}
-.members-list-remove {
-  border: 1px solid var(--border, #e2e8f0);
-  background: transparent;
-  border-radius: 6px;
-  font-size: 12px;
-  padding: 2px 8px;
-  cursor: pointer;
-  color: var(--text-muted, #64748b);
-  flex-shrink: 0;
-}
-.members-list-remove:hover { color: #dc2626; border-color: #dc2626; }
-.members-list-empty {
-  font-size: 13px;
-  color: var(--text-muted, #64748b);
-  padding: 6px 8px;
-}
-.members-invite {
-  display: flex;
-  gap: 6px;
-}
-.members-invite input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 14px;
-}
-.members-invite-btn {
-  border: none;
-  background: var(--accent, #2563eb);
-  color: #fff;
-  border-radius: 8px;
-  padding: 6px 14px;
-  font-size: 14px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.members-panel-msg {
-  font-size: 12px;
-  color: var(--text-muted, #64748b);
-  min-height: 16px;
-}
-.members-panel-msg.is-error { color: #dc2626; }
-

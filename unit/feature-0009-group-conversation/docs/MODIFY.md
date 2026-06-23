@@ -147,3 +147,17 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`(그룹대화 title/detail 개선) + index.html·admin.html `release-notes-data.js?v=20260619-group-conv-v2` bump.
 - Impact: 정적 데이터(읽기전용). 문체=사용자 결과 중심, "@assistant 안 넣으면 사람끼리 대화" 명시(이제 실동작), 내부동작(RBAC/PG/멤버십테이블) 비노출(AC-0579).
 - Rollback Notes: 텍스트/캐시버스터 환원.
+
+## CHG-20260623-0013
+- Date: 2026-06-23
+- Related Requirement: 참여 모델 변경(사용자 결정) — 공유 링크 join 으로 일원화.
+- Summary: 그룹 대화 참여를 **공유 링크(참여 허용)** 로 일원화. username 직접 초대 + 멤버 패널 제거.
+- Files:
+  - `app.py`: WebConversationShares `Joinable TINYINT(1) DEFAULT 1` 컬럼(_ensure_web_share_links_joinable_column, fast/slow path 등록) + share create `joinable`(기본 ON) + `_share_load_active` SELECT Joinable + public_share_view viewer.can_join/already_member/joinable + **신규 `POST /api/share/{token}/join`**(로그인+활성+미만료+Joinable+비차단 게이트, group_members.add_member, audit conversation.member.join). **제거**: `POST /api/conversations/{cid}/members`(초대) + `_resolve_member_target_account_id`. GET/DELETE members 는 유지(roster/leave API).
+  - `static/index.html`: 멤버 버튼·패널 제거. `static/app.js`: 멤버 패널 JS(_bindMembersPanel/_loadMembers/_removeMember/closeMembersPanel) + renderConversationHeader 훅 제거. `static/styles.css`: .members-panel CSS 제거 + .share-joinable-row 추가.
+  - `static/share.html`+`share.js`: "대화에 참여" 버튼 + doJoin(POST join → /?conversation= 이동). `share.css`: .share-join-btn.
+  - share 생성 모달(promptShareExpiry)에 "참여 허용" 체크박스(기본 ON) + body.joinable.
+  - 캐시버스터 bump: app.js/styles.css/share.js/share.css = 20260623-share-join.
+  - `tests/test_group_conversation_s2.py`: POST 초대 제거·join 엔드포인트·Joinable 기본 ON 반영(8 통과).
+- Impact: 참여 = 공유 링크 클릭(로그인). 기본 ON 이라 조인가능 링크 보유자는 누구나 참여→대화 전체 열람(AR-1, 사용자 수용). 멤버십 백본·접근제어·send-routing·S4 무변경.
+- Rollback Notes: join 엔드포인트/Joinable 컬럼/share.js 버튼 제거 + 멤버 패널 복원으로 가역.

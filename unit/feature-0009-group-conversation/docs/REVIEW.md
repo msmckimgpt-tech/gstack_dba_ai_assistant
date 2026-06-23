@@ -168,3 +168,16 @@ source_of_truth: true
   "@assistant 안 넣으면 사람끼리 대화" 가 이제 사실). 내부동작 비노출(AC-0579). Bedrock 키 교체 중이라
   @assistant *응답* 테스트는 다음 cycle(사용자 명시)이나 릴리즈 노트는 capability 기술이라 무관.
 - Human Approval Needed: 아니오 (정적 데이터 배포, 사용자 명시 요청).
+
+## REV-20260623-0015 [SUBAGENT: 공유 링크 참여(join) 전환 §18.8]
+- Related Change: CHG-20260623-0013 (share-link join 일원화 + 멤버 패널/초대 제거)
+- Reason: 참여 경로 교체(보안 표면 변화) — join 게이트 정합 + 초대 제거 잔존물 0 확인.
+- 검증(self): ① join 게이트 = 로그인(_require_account)+활성(_share_load_active)+미revoke+미expired
+  (_share_row_expired)+Joinable+대화 비차단(_conversation_block_info), 이미 멤버는 멱등 성공. actor=조인자
+  본인 → 멤버십 백본(group_members.add_member) 재사용, audit conversation.member.join. ② 기본 ON(사용자
+  결정): Joinable DEFAULT 1 + create `is False 일 때만 0`. 보안: 조인가능 링크 보유자는 대화 전체 열람
+  (AR-1 수용 posture 일관). datasource 발화는 여전히 actor RBAC(S4) — join 이 발화권 안 줌. ③ 초대 제거
+  잔존물 0(grep membersBtn/Panel/POST members = 0), s2 계약테스트 8/8, py_compile+node --check OK.
+- Risks/Open: 기본 ON = 링크 유출 시 누구나 참여(사용자 명시 수용). roster 가시성/나가기 UI 없음(GET/DELETE
+  API 는 유지 — 향후 재노출 가능). PB-0008 실측은 배포 후.
+- Human Approval Needed: 아니오 (사용자 명시 결정: 토글 기본 ON + 멤버 패널/초대 제거).

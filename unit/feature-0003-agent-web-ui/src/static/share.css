@@ -65,6 +65,7 @@
 
 .share-actions { flex: 0 0 auto; display: flex; gap: 8px; align-items: center; }
 
+.share-join-btn,
 .share-fork-btn,
 .share-login-link {
   display: inline-block;
@@ -79,7 +80,12 @@
   text-decoration: none;
 }
 
+/* feature-0009: 참여 버튼은 주 액션 — fork 보다 강조(진한 배경) */
+.share-join-btn { background: #2563eb; font-weight: 600; }
+
+.share-join-btn:disabled,
 .share-fork-btn:disabled { opacity: 0.6; cursor: wait; }
+.share-join-btn:hover:not(:disabled),
 .share-fork-btn:hover:not(:disabled),
 .share-login-link:hover { filter: brightness(0.95); }
 

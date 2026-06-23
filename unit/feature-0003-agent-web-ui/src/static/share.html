@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex,nofollow" />
   <title>공유된 대화</title>
-  <link rel="stylesheet" href="/static/share.css?v=20260619-share-expiry" />
+  <link rel="stylesheet" href="/static/share.css?v=20260623-share-join" />
 </head>
 <body class="share-body">
   <div class="share-container">
@@ -22,8 +22,10 @@
       </div>
       <div class="share-actions">
         <button type="button" id="shareCopyLinkBtn" class="share-copy-link-btn">링크 복사</button>
+        <!-- feature-0009: 공유 링크로 그룹 대화 참여(join) -->
+        <button type="button" id="shareJoinBtn" class="share-join-btn hidden">대화에 참여</button>
         <button type="button" id="shareForkBtn" class="share-fork-btn hidden">내 계정에서 fork</button>
-        <a href="/" class="share-login-link hidden" id="shareLoginLink">로그인하고 fork</a>
+        <a href="/" class="share-login-link hidden" id="shareLoginLink">로그인하고 참여 · fork</a>
       </div>
     </header>
     <main id="shareMessages" class="share-messages">
@@ -36,7 +38,7 @@
   </div>
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/share.js?v=20260619-share-expiry"></script>
+  <script src="/static/share.js?v=20260623-share-join"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>
