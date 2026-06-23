@@ -937,8 +937,8 @@ class PgKbBackend(KbBackend):
         limit: int = 200,
     ) -> list[tuple]:
         """TASK-0135 (#13, 결정 B): pgvector cosine(`<=>`) 시맨틱 검색. trigram 보다 한국어
-        의미 검색에 강하다. texts.embedding(vector(1536), OpenAI text-embedding-3-small;
-        AGENT_KB_EMBEDDING_MODEL) 기준. embedding IS NOT NULL 만 대상(미임베딩 row 는 trigram
+        의미 검색에 강하다. texts.embedding(vector(1024), titan-embed v2 / 경로B local 1024-dim;
+        AGENT_KB_EMBEDDING_MODEL/_DIM) 기준. embedding IS NOT NULL 만 대상(미임베딩 row 는 trigram
         fallback 이 커버). ft_score = 1 - cosine_distance(유사도). 반환 tuple shape 은
         search_rag_documents 와 동일(_normalize_rag_doc_rows 호환).
         (TASK-20260617T082131: 구 'vector(1024) Titan v2' 주석은 stale 오기였음 — 정정.)"""

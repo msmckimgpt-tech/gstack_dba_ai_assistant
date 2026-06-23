@@ -17,13 +17,26 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# TASK-0306: 멱등 가드. 종전엔 무조건 DROP+ADD 라 (이미 1024 인) 적재 임베딩을 손실시킬 수 있었다
+# (라이브 split-brain 정합 시 위험으로 식별). 컬럼이 이미 vector(1024) 면 재생성을 skip(데이터 보존),
+# 1536(또는 부재)일 때만 정렬 — fresh-install 의 1536→1024 정렬 동작은 그대로 유지된다.
 UPGRADE_SQL = r"""
-DROP INDEX IF EXISTS ix_sample_queries_embedding_ivfflat;
-ALTER TABLE sample_queries DROP COLUMN IF EXISTS embedding;
-ALTER TABLE sample_queries ADD COLUMN embedding vector(1024);
-CREATE INDEX IF NOT EXISTS ix_sample_queries_embedding_ivfflat
-    ON sample_queries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 32)
-    WHERE embedding IS NOT NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid AND c.relname = 'sample_queries'
+        WHERE a.attname = 'embedding' AND a.attnum > 0 AND NOT a.attisdropped
+          AND format_type(a.atttypid, a.atttypmod) = 'vector(1024)'
+    ) THEN
+        DROP INDEX IF EXISTS ix_sample_queries_embedding_ivfflat;
+        ALTER TABLE sample_queries DROP COLUMN IF EXISTS embedding;
+        ALTER TABLE sample_queries ADD COLUMN embedding vector(1024);
+        CREATE INDEX ix_sample_queries_embedding_ivfflat
+            ON sample_queries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 32)
+            WHERE embedding IS NOT NULL;
+    END IF;
+END $$;
 """
 
 DOWNGRADE_SQL = r"""

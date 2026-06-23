@@ -65,7 +65,7 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS texts (
     text_hash      char(64) PRIMARY KEY,
     text_content   text NOT NULL,
-    embedding      vector(1536),                  -- text-embedding-3-small default dim
+    embedding      vector(1024),                  -- titan-embed v2 / 경로B local (1024-dim) — AGENT_KB_EMBEDDING_DIM 정합 (alembic 0001 baseline=1024). TASK-0306: stale 1536 정정(fresh-install 차원 불일치 해저드 제거)
     embedding_model varchar(64),                  -- 어떤 모델로 embed 됐는지 추적
     embedded_at    timestamptz,                   -- embedding 생성 시각 (NULL = 미생성)
     created_at     timestamptz NOT NULL DEFAULT now()

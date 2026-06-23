@@ -51,10 +51,15 @@ case "$ACTION" in
     head_rev="${head_rev:-0001_baseline}"
     echo "stamp → ${head_rev}"
     psql_super <<SQL
+-- TASK-0306: version_num 을 VARCHAR(128) 로 (alembic 기본 32 아님). 본 프로젝트 revision id
+-- 가 길어(예: 0015_sample_queries_embed_dim_1024 = 34자) 32 를 초과 → 32 면 stamp/upgrade 시
+-- 'value too long' 로 기록 실패(라이브에서 0015 stamp 가 이 사유로 막혔음). 기존 테이블이 32 면
+-- 아래 ALTER 가 폭을 넓힌다(멱등·데이터 보존).
 CREATE TABLE IF NOT EXISTS alembic_version (
-    version_num VARCHAR(32) NOT NULL,
+    version_num VARCHAR(128) NOT NULL,
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
+ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(128);
 INSERT INTO alembic_version (version_num)
 SELECT '${head_rev}'
 WHERE NOT EXISTS (SELECT 1 FROM alembic_version);

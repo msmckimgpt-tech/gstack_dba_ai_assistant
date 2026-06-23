@@ -1271,3 +1271,18 @@ source_of_truth: true
 - Files: docs/LEARNINGS.md, unit/feature-0002-agent-core/docs/{REPORT,TASK,MODIFY,REVIEW}.md, wiki/concepts/insight-worker.md.
 - Rollback: 문서 entry 제거. 런타임 영향 없음.
 - Deploy: 불필요(문서만).
+
+## CHG-20260623T180000-migration-split-brain-hygiene
+- Date: 2026-06-23 (TASK-0306 — 마이그 split-brain 해소 + 재발 방지, Major §12.3). PLAN-APPROVED.
+- Scope: 라이브 DB 정합(별도 운영 적용·완료) + fresh-install/재발 방지 코드 hygiene.
+- 내용(코드):
+  - `src/scripts/agent_kb_schema.sql`: texts.embedding `vector(1536)`→`vector(1024)` + 주석(titan-embed v2/경로B 1024-dim, baseline 0001 정합). fresh-install 시 1536 컬럼에 1024 INSERT 차원 불일치로 RAG 임베딩 전면 실패하던 latent 블로커 제거(IF NOT EXISTS 라 기존 라이브 무영향).
+  - `alembic/versions/20260623_0015_*.py`: UPGRADE_SQL 을 무조건 DROP+ADD → **멱등 가드**(DO 블록 + `format_type(...)='vector(1024)'` 검사: 이미 1024 면 skip 해 적재 임베딩 보존, 1536/부재면 정렬). downgrade(1024→1536)는 방향별 정확성으로 유지.
+  - `bin/alembic-migrate.sh`(repo-level): `alembic_version.version_num` CREATE `VARCHAR(32)`→`VARCHAR(128)` + 무조건 ALTER. revision id `0015_sample_queries_embed_dim_1024`(34자)가 32 초과 → 기록 'value too long' 으로 막히던 latent 버그(라이브 stamp 가 이 사유로 실패) 해소.
+  - `src/modules/kb_backend.py`: 시맨틱 검색 docstring 의 stale `vector(1536)/OpenAI` → `vector(1024)/titan-embed v2` 정정(NIT-1).
+- 내용(라이브 운영 — 코드 아님, 이미 적용·완료): 0013 UPGRADE_SQL 을 postgres superuser 로 적용(kb_glossary/enum_dictionary 생성+GRANT) → version_num 32→128 확장 → alembic_version 0012→0015 stamp. 파괴적 0015 DROP+ADD 는 실행 안 함(stamp). ITEM-10 glossary/ENUM 기능 silent-dead 복구.
+- Why: TASK-0305 후속 내부 진단에서 부트스트랩(_ensure_pg_schema)↔alembic split-brain 발견 — merge 된 ITEM-10(0013)이 silent 미적용. 사용자 "HIGH 포함 전부".
+- Verification: 0015 py_compile + alembic-migrate.sh bash -n + 적대 backend 리뷰 REV-20260623T180000 ACCEPT-WITH-NITS(라이브 PG 실측 검증). 라이브 0013 적용·stamp·기능복구 검증 완료.
+- Files: src/scripts/agent_kb_schema.sql, alembic/versions/20260623_0015_sample_queries_embed_dim_1024.py, src/modules/kb_backend.py, bin/alembic-migrate.sh(repo), docs/LEARNINGS.md(repo), unit/feature-0002-agent-core/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 코드 3건 revert(전부 멱등·additive·방어적). 라이브 0013 테이블은 비어있어 DROP 무손실이나 기능 위해 유지 권장.
+- Deploy: ask-worker/web 재빌드(schema.sql·kb_backend baked) — 단 라이브 DB 는 이미 정합돼 즉시 효과(glossary 기능 동작 중). 0015 멱등화/script 폭은 fresh-install·차기 ops 안전망.

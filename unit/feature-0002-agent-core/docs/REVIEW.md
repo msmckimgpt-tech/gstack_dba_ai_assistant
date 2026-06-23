@@ -1139,3 +1139,13 @@ source_of_truth: true
 - 정정 내용: 머지 docs 의 "축 A=GRANT 지배" 서술에 라이브 정정(=네트워크) 추가(이력 보존), 교훈 LRN-20260623-0001/0002 영속, wiki §5 진단 순서 보강.
 - Verification: docs-only — 빌드/테스트 무관. 정정의 사실 근거는 위 라이브 실측.
 - Cross-ref: CHG-20260623T170000-task0305-followup-docs / TASK-0305.
+
+## REV-20260623T180000-migration-split-brain-hygiene [SUBAGENT:migration-hygiene-adversarial-backend]
+- Date: 2026-06-23
+- Cycle: TASK-0306 (마이그 split-brain 해소 + 재발 방지 hygiene), **Major §12.3**.
+- Trigger: §18.8 — schema/migration keyword → backend dispatch. 적대 코드리뷰(general-purpose outside voice, REFUTE: 0015 가드 정확성/체인/varchar/downgrade 대칭) + **라이브 PG 실측 검증**.
+- VERDICT: **ACCEPT-WITH-NITS** (BLOCKER 0, MAJOR 0).
+- 라이브 실측 통과: ①pgvector `format_type(atttypid,atttypmod)` 가 정확히 `'vector(1024)'`/`'vector(1536)'`/`'vector'` 반환 확인 → 가드 문자열 비교 정확. 1536 모사 테이블 dry-run 으로 REGENERATE 분기, 실 1024 로 SKIP 분기 발화 확인. DO $$ 블록 실행(rollback) 유효. fresh-install(0014=1536→0015) 정렬 동작 보존. `CREATE INDEX`(IF NOT EXISTS 제거)는 DROP COLUMN 직후 분기 안에서만 실행→충돌 잔존 인덱스 불가, 안전. ②schema.sql 1024 는 baseline 0001(=1024)·live·config(AGENT_KB_EMBEDDING_DIM=1024) 와 일치(새 drift 아님). ③alembic_version 라이브 이미 VARCHAR(128)·값 34자 보유, ALTER 멱등·PK 충돌 없음, down_revision 체인 0001→…→0015 단일 선형. ④downgrade 1024→1536 비대칭은 방향별 정확성(0014 복원)으로 정당.
+- NIT(LOW, 차단 아님): NIT-1 `kb_backend.py:940` stale 1536 주석 → **본 PR 에서 같이 정정**. NIT-2 wiki `nl2sql-flywheel.md`/`docs/STATUS.md` 의 1536 서술 → doc-sync 후속(TASK 에 기록).
+- Verification: 0015 py_compile + alembic-migrate.sh bash -n + 라이브 0013 적용·stamp·glossary 기능복구 검증.
+- Cross-ref: CHG-20260623T180000-migration-split-brain-hygiene / TASK-0306 / LRN-20260623-0003.
