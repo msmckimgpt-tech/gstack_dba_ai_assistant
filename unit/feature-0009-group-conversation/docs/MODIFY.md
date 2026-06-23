@@ -139,3 +139,11 @@ source_of_truth: true
 - ★DEPLOY TRAP(0011 동형): superuser 적용이라 신규 테이블 명시 GRANT 필수(누락 시 permission denied 조용한 실패).
 - Rollback Notes: alembic downgrade 0012→0011(DROP table + DROP columns).
 - 검증: py_compile OK + revision chain(0012→0011→0010) 정합.
+
+## CHG-20260619-0012
+- Date: 2026-06-19
+- Related Requirement: 릴리즈 노트 개선(사용자 요청) — send-routing 배포 반영.
+- Summary: 그룹 대화 릴리즈 노트를 완전한 capability 로 개선(멤버끼리 채팅 + @assistant 멘션 호출 + 발신자 표시). 최초 노트는 send-routing 미배선이라 축약했으나 이제 배포됨.
+- Files: `static/release-notes-data.js`(그룹대화 title/detail 개선) + index.html·admin.html `release-notes-data.js?v=20260619-group-conv-v2` bump.
+- Impact: 정적 데이터(읽기전용). 문체=사용자 결과 중심, "@assistant 안 넣으면 사람끼리 대화" 명시(이제 실동작), 내부동작(RBAC/PG/멤버십테이블) 비노출(AC-0579).
+- Rollback Notes: 텍스트/캐시버스터 환원.

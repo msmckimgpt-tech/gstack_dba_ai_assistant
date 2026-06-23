@@ -160,3 +160,11 @@ source_of_truth: true
   parity(멱등 CREATE/ALTER 동일) + DEPLOY TRAP(명시 GRANT agent_kb_rw/ro) 반영(0011 동형). downgrade 완비.
 - Risks: 기존 데이터 무손실(IF NOT EXISTS, nullable ADD). FK CASCADE 는 core_conversations 삭제 시 멤버 정리(정합).
 - Human Approval Needed: 아니오 (배포 필수 정합 보정, PLAN-APPROVED + deploy_scope:included).
+
+## REV-20260619-0014 [SKIPPED: 릴리즈 노트 개선 정적 데이터]
+- Related Change: CHG-20260619-0012 (릴리즈 노트 개선 + 배포)
+- Reason: 패널 skip — 정적 큐레이션 데이터(읽기전용), 코드/동작 변경 없음.
+- 검증: node --check OK + 캐시버스터 양 페이지 bump. 콘텐츠=shipped 동작에 정확(send-routing 배포 완료라
+  "@assistant 안 넣으면 사람끼리 대화" 가 이제 사실). 내부동작 비노출(AC-0579). Bedrock 키 교체 중이라
+  @assistant *응답* 테스트는 다음 cycle(사용자 명시)이나 릴리즈 노트는 capability 기술이라 무관.
+- Human Approval Needed: 아니오 (정적 데이터 배포, 사용자 명시 요청).
