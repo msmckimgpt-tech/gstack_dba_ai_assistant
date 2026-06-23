@@ -48,3 +48,10 @@
   - **MINOR-2** (STOP 분기 `continue` 누락·진행성 가드 일반화) → `continue` + `no_progress` 카운터로 교착 종료.
 - **verdict (2차, 조치 후)**: SHIP-WITH-FIXES — MAJOR/MINOR 전건 반영. 단건 모드 회귀 없음(reviewer 통과).
 - **note**: 드레인은 orchestration 만 자동화, 거버넌스 게이트(Major plan-review·Critical confirm·PR/deploy)는 항목별 유지 — "전체 자동 구현"이되 §7.1/§12.3/외부영향 confirm 불변.
+
+## REV-20260623T055339-resume-codex-mirror [SKIPPED:additive-meta-tooling-codex-mirror]
+- **cycle**: ai/claude/META-0001-resume-codex-mirror — `/_template:resume` 정본(personas submodule)의 소비자측 동기화 = submodule 포인터 bump + Codex 미러 2종.
+- **changeset (pure-meta)**: `.claude/commands/_template`(gitlink 7f3ae74→a08bf56, personas PR#3 머지 반영) · `.codex/commands/_template/resume.md`(Codex shim, 정본 포인터) · `.codex/skills/_template-resume/SKILL.md`(Codex skill discovery wrapper) · `meta/REVIEW.md`(본 entry).
+- **panel SKIP 사유**: 정본 `resume.md` 의 설계·정확성은 personas PR#3 직전 **5개 적대적 리뷰어 패널**(요구사항·거버넌스·스니펫 실측·엣지케이스·project-agnostic)로 이미 검증·수정 완료(FAIL 1 + leak 4 + nit 다수 반영). 본 소비자측 changeset 은 (a) 검증된 정본을 가리키는 thin shim/wrapper + (b) 머지된 업스트림 커밋으로의 포인터 bump 뿐 — 신규 로직 0, 행동 차이 0. §18.8 additive-meta-tooling 경량 경로 → SKIPPED.
+- **verification**: Codex shim 상대경로(`../../../.claude/commands/_template/resume.md`) resolve 확인, SKILL.md `name: _template-resume`(하이픈)·description 형식이 기존 `_template-entry` 와 정합. gitlink 대상 a08bf56 은 personas origin/main(PR#3 머지)에 존재 → submodule fetch 가능.
+- **Human Approval Needed**: 아니오 (additive meta tooling, 정본 패널 검증 완료, 사용자 전체 전파 승인).
