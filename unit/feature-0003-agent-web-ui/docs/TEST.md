@@ -297,6 +297,17 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-06-23 (TASK-20260623T021500-quota-editor-escapehtml-fix — buildQuotaEditor escapeHtml ReferenceError 수정[잠복 버그], **Minor §12.3** — **PB-0008 Windows-browser PASS**; CHG/REV-20260623T021500 evidence):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `9e7ec24`(PR #367) → `docker compose build web`(캐시) + `up -d web`(repo-web-1 Up healthy). 서빙 admin.html `admin.js?v=20260623-quota-escapehtml-fix`, 컨테이너 baked admin.js 에 `escapeHtml(` **0건**·`note.textContent = opts.inheritNote` 1건·`input.value` DOM 주입 확인.
+  - **Runner: AI** (win-browser eval — 이전 ReferenceError 로 실패했던 정확한 호출 재현 + 실 DOM 주입 computed style 계측).
+  - **★근본 원인 실측 확정**: 배포 admin 페이지에서 `typeof escapeHtml === "undefined"`(**escapeHtmlAvail: false**) — `escapeHtml` 은 app.js 전용이고 admin.html 이 app.js 미로드 → 구 코드의 escapeHtml 보간은 실제로 `ReferenceError` throw. ④ 도입(05d58d1) 이래 잠복(한도 UI production 무렌더), relocate 가 노출.
+  - **PB-0008 PASS (배포본 main `9e7ec24`)**:
+    - **재현(핵심)**: 이전 실패 호출 `buildQuotaEditor({scope:"account", id:5, daily:null, monthly:1000, inheritNote:...})` 가 **render.ok: true**(throw 제거) — `cls="admin-quota-editor"`, daily/monthly input·저장 버튼 렌더, `dailyVal=""`(null→상속)·`monthlyVal="1000"`(`.value` DOM 주입).
+    - **실 DOM 주입 computed**: 역할 editor `roleDailyVal="50000"`·`roleMonthlyVal=""`(무제한), 계정 editor inheritNote 표시(acctNoteShown), `.admin-quota-fields` computed `display:flex`(styles.css 해석), 저장 버튼 "한도 저장".
+    - **XSS-safe 실측**: inheritNote 에 `<b>x</b>` 주입 시 `note.textContent` 로 텍스트 보존(innerHTML 에 `&lt;b&gt;` — HTML 미파싱).
+    - **구 패널 제거**: `#usageQuotaDetails` false·`#quotaRolesBox` false(usage 탭 한도 패널 제거 확인).
+  - **Pass/Fail: PASS** — 배포된 시스템에서 역할·계정 상세 "LLM 사용 한도" 편집기가 escapeHtml ReferenceError 없이 실 Windows 브라우저에서 렌더·동작함을 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
+  - CHG/REV-20260623T021500-ai-claude-quota-editor-escapehtml-fix / AC-0609.
 - 2026-06-19 (TASK-20260619T120000-db-rule-pending-batch — 정규식 자동 규칙 pending → "모두 적용" 재배선, **Major §12.3 — 보안 경계**):
   - **Environment: CLI/jsdom + py_compile**. 신규 `tests/verify_db_rule_pending.mjs` **jsdom 18/18 PASS**(Node18 + jsdom@22): 키 정규화(`1::maindb`)·`_ensureDbRulePending` 빈 구조·`_dbRulePendingEntryEmpty`·**스테이징(create push) 시 apiFetch 호출 0**(즉시 반영 금지 회귀 게이트)·`productDbRuleDirtyCount`·`pendingChangeCount` 포함·`_settleDbRulePending` 빈 엔트리 제거·`applyAllPending` 추가 POST/수정 PUT/승인 approve-pending/삭제 DELETE?strip=1 호출·body 전달·**순서 추가<수정<승인<삭제**·성공 시 `pending.productDbRules` 정리·pending 0 시 no-op. `node --check admin.js` PASS, `python3 -m py_compile app.py` PASS, CSS brace balance 1417/1417.
   - **make test (컨테이너 전체/통합)**: <결과는 verify 단계에서 기록>.
