@@ -1845,6 +1845,9 @@ def _serialize_account(
         payload["permissions"] = _account_permissions(account)
         # 실패 횟수는 admin-context 에만 노출(자기 세션 /api/auth/me 비노출 — outside-voice NIT 흡수).
         payload["failed_login_attempts"] = int(account.get("failed_login_attempts") or 0)
+        # TASK-20260623T014626-quota-ui-relocate: 계정 특수 LLM 토큰 한도(override, null=역할 기본 상속). admin 계정 상세 편집용.
+        payload["quota_daily"] = int(account["quota_daily"]) if account.get("quota_daily") is not None else None
+        payload["quota_monthly"] = int(account["quota_monthly"]) if account.get("quota_monthly") is not None else None
     return payload
 
 
@@ -1965,6 +1968,8 @@ SELECT
     a.LockedUntilAt AS locked_until_at,
     (a.LockedUntilAt IS NOT NULL AND a.LockedUntilAt > NOW()) AS is_locked,
     COALESCE((SELECT t.Enabled FROM WebAccountTotp t WHERE t.AccountId = a.Id LIMIT 1), 0) AS totp_enabled,
+    (SELECT q.TokenLimit FROM WebAccountTokenQuotas q WHERE q.AccountId = a.Id AND q.QuotaType='daily' LIMIT 1) AS quota_daily,
+    (SELECT q.TokenLimit FROM WebAccountTokenQuotas q WHERE q.AccountId = a.Id AND q.QuotaType='monthly' LIMIT 1) AS quota_monthly,
     a.AvatarObjectKey AS avatar_object_key,
     a.Email AS email,
     a.AuthProvider AS auth_provider,
@@ -9834,7 +9839,10 @@ SELECT
     r.IconObjectKey AS icon_object_key,
     r.CreatedAt AS created_at,
     r.UpdatedAt AS updated_at,
-    COUNT(CASE WHEN a.DeletedAt IS NULL THEN 1 END) AS member_count
+    COUNT(CASE WHEN a.DeletedAt IS NULL THEN 1 END) AS member_count,
+    -- TASK-20260623T014626-quota-ui-relocate: 역할 기본 LLM 토큰 한도(역할 상세 화면 편집용).
+    (SELECT q.TokenLimit FROM WebRoleTokenQuotas q WHERE q.RoleId = r.Id AND q.QuotaType='daily' LIMIT 1) AS quota_daily,
+    (SELECT q.TokenLimit FROM WebRoleTokenQuotas q WHERE q.RoleId = r.Id AND q.QuotaType='monthly' LIMIT 1) AS quota_monthly
 FROM WebRoles r
 LEFT JOIN WebAccounts a
   ON a.RoleId = r.Id
@@ -9881,6 +9889,9 @@ ORDER BY
                 "member_count": int(row.get("member_count") or 0),
                 "permission_codes": sorted(granted_codes),
                 "permissions": {code: code in granted_codes for code in catalog_codes},
+                # TASK-20260623T014626-quota-ui-relocate: 역할 기본 LLM 토큰 한도(null=미설정 무제한).
+                "quota_daily": int(row["quota_daily"]) if row.get("quota_daily") is not None else None,
+                "quota_monthly": int(row["quota_monthly"]) if row.get("quota_monthly") is not None else None,
             }
         )
     return items

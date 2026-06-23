@@ -4386,3 +4386,12 @@ source_of_truth: true
 - Verification: node --check(release-notes-data.js) + 금지 용어 스캔 clean. 렌더 정본=PB-0008.
 - Rollback: 6 항목 제거 + summary/캐시버스터 복원.
 - Deploy: web 재빌드(정적 콘텐츠).
+
+## CHG-20260623T014626-ai-claude-quota-ui-relocate
+- Date: 2026-06-23 (LLM 한도 UI 를 역할·계정 상세로 이전 — 사용자 보고 수정). ④ 후속.
+- Scope: feature-0003 `src/app.py`(_list_roles·_fetch_account_rows·_serialize_account 에 quota 노출, read-only) + `src/static/admin.js`(loadQuotas 제거→buildQuotaEditor 공용 + 역할/계정 상세 섹션, usage 탭 호출 제거) + `admin.html`(usageQuotaDetails 제거) + `styles.css`(.admin-quota-row→.admin-quota-editor/-fields/-hint) + admin/index.html(cache-buster) + tests.
+- 내용: LLM 한도 설정 위치를 '감사>LLM 사용량'(모니터링 전용)에서 '계정'·'역할' 상세 화면으로 이전. 한도는 역할/계정의 속성이므로 각 상세에서 구성. 백엔드 PUT 엔드포인트·RBAC 게이트·집행 로직 무변경(직렬화 read-only 추가 + UI 위치만).
+- Why: 사용자 보고 — 감사 목적 화면에 한도 설정은 부적절.
+- Verification: test 11/11 + make test 회귀 0 + py_compile + node --check + CSS brace. 화면 정본=PB-0008.
+- Rollback: 직렬화 quota 필드 제거 + buildQuotaEditor 복원→loadQuotas + usageQuotaDetails 복원.
+- Deploy: web 재빌드(정적+직렬화).

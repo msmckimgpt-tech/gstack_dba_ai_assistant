@@ -4400,3 +4400,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 내부 동작 비노출(AC-0579): 암호화/해시체인/TOTP secret/인젝션/RBAC/PG/quota 등 금지 용어 0(자가 스캔 clean). 사용자 보이는 결과 중심(2FA 켜기·공유 만료·로그인 잠금·사용 한도·무결성 검증 버튼·보안 처리 강화 추상화).
 - [x] index/admin cache-buster `release-notes-data.js?v=20260619-security-6`. node --check valid.
 - [ ] 머지 → 배포(web) → PB-0008(양 화면 노트 렌더) → 마감.
+
+### TASK-20260623T014626-quota-ui-relocate — LLM 사용 한도 UI 를 역할·계정 상세로 이전 (REQ-20260623-0331, AC-0609, Minor §12.3, 2026-06-23)
+- 사용자 보고: ④ LLM 한도가 `관리 콘솔 > 감사 > LLM 사용량`(감사·조회 목적 화면)에 추가돼 한도 설정 위치로 부적절. `계정`·`역할` 상세에서 각 항목 속성으로 구성하도록 수정 요청.
+- [x] 백엔드(직렬화만, 엔드포인트/RBAC 무변경): `_list_roles` 에 역할 기본 한도(`quota_daily`/`quota_monthly`) 노출, `_fetch_account_rows`+`_serialize_account`(admin-context) 에 계정 override 노출. 기존 PUT `/api/admin/quotas/role|account/{id}` 재사용.
+- [x] 프론트: usage 탭 한도 패널(loadQuotas·usageQuotaDetails·계정ID free-text 폼) 제거. 공용 `buildQuotaEditor({scope,id,daily,monthly,inheritNote,onSaved})` 신설 → 역할 상세("LLM 사용 한도(역할 기본)") + 계정 상세("LLM 사용 한도(계정 개별 지정)", 역할 상속 안내 표시) 에 섹션 추가. 권한 게이트 console.manage(+account.update).
+- [x] 검증: `tests/test_llm_usage_quota.py` 11/11(B10 직렬화 노출 + F1 이전·구 패널 제거 가드 갱신) + make test 회귀 0(사전존재 product-delete·db_query_ux[feature-0009 병렬] 2건 무관) + py_compile + node --check + CSS brace 1438. cache-buster `?v=20260619-quota-relocate`.
+- [ ] 머지 → 배포(web) → PB-0008(역할·계정 상세 한도 섹션 + usage 탭 패널 제거) → 마감.
