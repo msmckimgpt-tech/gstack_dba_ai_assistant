@@ -536,6 +536,9 @@ AGENT_KB_EMBEDDING_MODEL = (
     or "text-embedding-3-small"
 )
 AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1536") or "1536")
+# ITEM-02: 샘플쿼리 few-shot 주입 토글(기본 ON). OFF 면 _build_knowledge_context 가 EXAMPLE
+# QUERIES 섹션을 주입 안 함 — ITEM-01 harness A/B(샘플 off/on) 측정 + 안전 롤백 스위치.
+AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
 AGENT_KB_EMBEDDING_TIMEOUT_SEC = int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60")
 AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
