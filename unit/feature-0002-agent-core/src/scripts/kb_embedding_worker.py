@@ -257,5 +257,55 @@ def main() -> int:
             pass
 
 
+def run_embedding_pass(max_rows: "int | None" = None) -> dict:
+    """TASK-0307: bounded embedding 백필 1회 — NULL embedding texts 를 max_rows 까지 임베딩.
+
+    main() 의 CLI 루프와 동일 batch 로직을 라이브러리로 노출(insight-worker tick 재사용).
+    **fail-soft**: batch(임베딩/UPDATE) 실패 시 그 batch 에서 중단하고 지금까지 처리분 + 에러를
+    dict 로 반환(예외 전파 안 함 — caller 루프를 깨지 않음). resumable(WHERE embedding IS NULL).
+    max_rows=None 이면 모두, 0/음수면 no-op. 반환: {processed, failed, error, remaining}.
+    """
+    if max_rows is not None and max_rows <= 0:
+        return {"processed": 0, "failed": 0, "error": "", "remaining": None}
+    settings = get_settings()
+    model = settings["model"]
+    batch_size = settings["batch_size"]
+    conn = open_pg_conn()
+    processed = 0
+    failed = 0
+    error = ""
+    remaining = None
+    try:
+        while True:
+            remaining_budget = (max_rows - processed) if max_rows else None
+            this_batch = batch_size if remaining_budget is None else min(batch_size, remaining_budget)
+            if this_batch <= 0:
+                break
+            batch = fetch_pending_batch(conn, this_batch)
+            if not batch:
+                break
+            hashes = [h for h, _ in batch]
+            texts = [t or "" for _, t in batch]
+            try:
+                embeddings = call_openai_embeddings(
+                    texts, model, settings["timeout"], settings["max_attempts"],
+                )
+                processed += update_embeddings(conn, hashes, embeddings, model)
+            except Exception as exc:  # fail-soft — 그 batch 중단, caller 다음 tick 재진입
+                failed = len(batch)
+                error = str(exc)[:200]
+                break
+        try:
+            remaining = count_pending(conn)
+        except Exception:
+            remaining = None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return {"processed": processed, "failed": failed, "error": error, "remaining": remaining}
+
+
 if __name__ == "__main__":
     sys.exit(main())

@@ -1061,4 +1061,13 @@ TASK-0015 (plan-review):
 - [x] 검증: 0015 py_compile + alembic-migrate.sh bash -n + 적대 backend 리뷰(REV-20260623T180000) **ACCEPT-WITH-NITS**(라이브 PG 실측: format_type='vector(1024)' 가드 정확·체인 선형·varchar 확장 안전; NIT 2건 LOW 문서drift). 마이그/차원/스크립트는 라이브 dry-run(rollback) 확인.
 - [x] 교훈 `docs/LEARNINGS.md` LRN-20260623-0003(부트스트랩↔alembic split-brain + revision-id 길이) 기록.
 - [ ] 후속(범위 밖·doc-sync): wiki `nl2sql-flywheel.md`·`docs/STATUS.md` 의 sample_queries 임베딩 1536 서술 1024 로 갱신.
-- [ ] 별도 확인 후: texts.embedding 백필(40,200 NULL) — kb_embedding_worker 스케줄러 부재(MEDIUM, 사용자 확인 대기).
+- [x] texts.embedding 백필 + 자동화 → TASK-0307 로 분리 진행(사용자 "백필+자동화" 승인).
+
+### TASK-0307 — texts 임베딩 백필 + 자동 백필 데몬 (Major §12.3, 2026-06-23)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 ("백필 + 자동화 (권장)") -->
+- 발견(TASK-0305 후속 진단 MEDIUM): `kb_embedding_worker` 에 스케줄러/호출처가 없어 신규 texts 가 영구 NULL embedding → `texts` 41,076 중 40,200(98%) 미임베딩, 06-17 이후 정체. provider(titan-embed via bedrock-gateway, 1024-dim)는 정상. grounding 은 trigram 폴백 동작하나 의미검색 recall 저하·확대.
+- [x] **1회 백필(운영, sudo)**: dry-run 확인(40,200행, ~$0.40) 후 `kb_embedding_worker` 실행. titan-embed 가 batch 100당 ~25초로 느려 전수 소진은 수 시간 → 아래 자동 데몬이 이어받아 자율 처리(별도 babysit 불요).
+- [x] **자동화(코드)**: `kb_embedding_worker.run_embedding_pass(max_rows)` 추가(기존 batch 함수 재사용, fail-soft dict 반환). insight-worker 가 **별도 데몬 스레드**(`_embedding_backfill_loop`/`_start_embedding_backfill_thread`, conn_health 모니터와 동형)로 `AGENT_KB_EMBEDDING_INTERVAL_SEC`(60s)마다 `AGENT_KB_EMBEDDING_BATCH_MAX_ROWS`(100) 임베딩. **tick(스캔) 루프 비블로킹** — titan-embed 가 batch당 수십 초라 per-tick 동기 호출하면 본업 블로킹(REV F1). `AGENT_KB_EMBEDDING_AUTO=0` 비활성. config 3 knob + __all__.
+- [x] 검증: py_compile(insight/config/kb_embedding_worker) + run_embedding_pass import/early-return 라이브 확인 + 적대 backend 리뷰 2회(F1 REQUEST-CHANGES→데몬 분리 재설계→**ACCEPT-WITH-NITS**, REV-20260623T190000; 라이브 임베딩 레이턴시 실측·스레드 안전성 확인).
+- [ ] 배포: insight-worker 재빌드·재시작(데몬 스레드 활성). **1회 백필 완료/중단 후 배포**(동시 중복 F2 회피 — 재시작이 수동 backfill 종료). 배포 후 검증: 로그 `embedding_backfill processed=...` + texts NULL 감소.
+- 참고: redeploy 중 in-flight pass 유실은 resumable(WHERE embedding IS NULL)이라 무해(REV N1). HNSW per-row autocommit 비용(REV N3/F3)은 기존 CLI 동작·범위 밖.
