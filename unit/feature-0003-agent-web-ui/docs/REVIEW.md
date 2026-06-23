@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260623T031910-ai-claude-ds-conn-bg-decouple [SUBAGENT:frontend-degraded-banner + AI-inline:backend-async-correctness] **SHIP** (TASK-20260623T031910, REQ-20260623-ds-conn-bg-decouple, Major §12.3)
+- Date: 2026-06-23
+- 분류: **리뷰 대상**(Major — 관리 콘솔 async 동작 변경, 다중 파일). §18.8 적대적 검증 패널 2-lens(frontend + backend) 실행. frontend 서브에이전트 완주 → **NO REAL FUNCTIONAL ISSUES**. backend 서브에이전트는 세션 한도로 미완 → 백엔드 핵심 리스크는 구현 중 AI inline 으로 file:line 직접 검증(아래).
+- frontend 패널 검증 결과(반증 시도 후 무결):
+  1. **closure/TDZ 무결**: `pickerWrap`(const, admin.js:7154, 7174 append)이 `_setAccessDbDegraded`(7450)·`_refreshAccessibleDbs`(첫 호출 7839) 정의·호출보다 선행. `_refreshAccessibleDbs` 는 6799 no-op forward-decl → 7478 재할당, 첫 실호출은 한참 후. TDZ/undefined 0.
+  2. **DOM lifecycle 무결**: `renderProductDetail` 가 매 진입 `paneEl.innerHTML=""`(6612)로 이전 subtree(배너·closure dbEditorWrap 포함) 폐기 → 배너가 타 제품으로 누수 불가. `_setAccessDbDegraded` 가 매 호출 기존 `.admin-db-degraded-note` 제거 후 재삽입 → 중복 0.
+  3. **기존 호출자 호환**: `_refreshAccessibleDbs(nk)`(7545)·`(next)`(7573)·`(_selectedDatasourceKey)`(7839) 단일인자 — 새 `(key, opts={})` 가 `force=false` 로 무회귀.
+  4. **force-retry 루프 없음**: 성공(degraded:false → 배너 제거)·재degrade(배너 재생성, 버튼 enabled)·throw(apiFetch 가 !ok 시 throw, admin.js:398 → catch → degraded=true → 배너 재생성) 모두 terminal. 클릭 시 `disabled=true` 동기 설정으로 중복클릭 차단. 무한루프·stuck "확인 중…" 0.
+  5. **정상경로 무회귀**: classified/userDbs/lockedChips(MySQL 메타 4종 / MSSQL 시스템칩) 로직이 else 블록으로 재들여쓰기 byte-equivalent, `availableUserDbs=userDbs` 여전히 비-degraded 경로 말미 실행. catch 는 `degraded=true` 1줄 추가만(의도).
+- backend AI inline 검증(반증 시도 후 무결):
+  a. **conn 핸드오프 thread-safety**: `await asyncio.to_thread(_reconcile_one_db_rule, conn, …)` 는 await 동안 worker 스레드 단독 소유(이벤트 루프 동시접근 0) — 본 코드베이스 기존 선례 `await asyncio.to_thread(_build_ask_status_snapshot, conn, conv_id)`(app.py:10895)와 동형. mysql.connector 순차 cross-thread 사용 안전.
+  b. **scope_key 정합**: `_ch.status_for(ds)` → `_scope_key_of` → `_dsr.scope_key(ds)`, 모니터 등록(`health_probe_provider`→`all_datasources`)·`resolve` 모두 `_row_to_ds` 가 채운 동일 `scope_key` 사용 → 일치. 불일치해도 None→UNKNOWN→to_thread connect(Layer1 유지)로 **안전 degrade**(오작동 아님).
+  c. **모니터 startup 와이어링**: `_start_conn_health_monitor` = `@app.on_event("startup")`(app.py:808) → web 프로세스가 _STATE 채움 → Layer2 게이트 활성.
+  d. **응답 shape 호환**: `conn_status`/`degraded` 키 **추가만**, degraded 시 빈 `databases`/`databases_classified`. 서버측 타 소비자 0(프론트가 유일 소비자, degraded 처리). 하위호환.
+  e. **`record_foreground_result(ds, False, None, "list_databases_failed")`**: 시그니처 `(ds, ok, elapsed_ms=None, err="")` 일치, try/except 래핑(double-fault 0). 실패 피드백 → 다음 요청 캐시 fast-path.
+  f. **UNSTABLE+DOWN 게이트**: 데이터플레인은 unstable(느리지만 alive) 허용 정책이나, 본 control-plane 조회는 8s 블록 회피 위해 unstable 도 skip + `?force=1` escape 로 명시 재시도 보장 — 합당.
+  g. **잔여 동기 connect 0**: 제품 진입 경로의 3 async 핸들러 전부 오프로드. `/db-insights` 는 sync def(FastAPI threadpool) + PG insight 읽기라 live datasource connect 아님 → 무관.
+- 패널 minor(비차단) 반영/메모:
+  - minor#1(degraded 배너 a11y 미announce) → **본 cycle 반영**: `note.setAttribute("role","status")` 추가(서버 degraded 경로는 toast 없음 → SR 안내 보강).
+  - minor#2(collapsed 기본뷰에서 배너가 off-DOM `dbEditorWrap` 에 생성 → 행 펼칠 때 노출) → by-design(배너가 편집기와 함께 이동, 펼침 시 정확히 노출). 후속 개선 후보: collapsed accordion head 에도 degraded 신호 표면화.
+- base: worktree base 14d8b13. **잔여**: verify-completion --pre-commit → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(불안정 데이터소스 제품 진입 시 타 UI 비차단 + degraded 배너 + 새로고침 실열거).
+- Verdict: **SHIP**.
+
 ## REV-20260619T120000-ai-claude-db-rule-pending-batch [SUBAGENT:db-rule-pending-security] **SHIP** (TASK-20260619T120000, REQ-20260619-0331, Major §12.3 — 보안 경계/RBAC 인접)
 - Date: 2026-06-19
 - 분류: **리뷰 대상**(보안 경계 = 접근 가능 DB allowlist 변경 경로 재배선). §18.8 적대적 검증 패널(security+correctness 서브에이전트) 실행 → **SHIP**. 6개 주장 모두 적대 검증·반증 시도 후 무결 확인 + jsdom 18+19 PASS 재확인.

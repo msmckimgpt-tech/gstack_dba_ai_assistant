@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260623T031910-ai-claude-ds-conn-bg-decouple (TASK-20260623T031910, REQ-20260623-ds-conn-bg-decouple, Major §12.3)
+- Date: 2026-06-23
+- 요청(사용자, /_template:entry): `관리 콘솔 > 제품 > [각 항목]` 진입 시 연결 불안정 데이터소스 접근 시 timeout 까지 나머지 UI 갱신이 멈춤 → 모든 연결 확인을 백그라운드로 처리하고 내부 UI 갱신과 분리.
+- 범위 결정(AskUserQuestion): 전체 분리(Layer 1+2) — 이벤트 루프 차단 해소 + conn_health 캐시 게이트 + 프론트 비차단 렌더/배지.
+- 진단: `admin_datasource_databases`(GET `/api/admin/datasources/{key}/databases`, 제품 항목 진입 시 `_refreshAccessibleDbs` 호출)가 `async def` 안에서 동기 `_db.list_server_databases_classified()`(live connect, db.py 기본 8s)를 `asyncio.to_thread` 없이 호출 → FastAPI 이벤트 루프 전체 8s 블록 = 모든 요청 정지. preview + rule create/update 의 `_reconcile_one_db_rule`(async 핸들러서 동기 호출)도 동일. 백그라운드 `conn_health`(TASK-0250 캐시 3-state) 미사용 + `should_fast_fail` 은 `down` 만 즉시실패.
+- 변경:
+  - `src/app.py` — `admin_datasource_databases`: `from modules import conn_health as _ch` 추가. SSRF 후 `_ch.status_for(ds)` 캐시 먼저 읽어 `unstable`/`down` 이면 live connect 생략·`{databases:[], databases_classified:[], conn_status, degraded:true}` 즉시 반환(`?force=1` 시에만 실제 열거). 실제 열거 `await asyncio.to_thread(_db.list_server_databases_classified, …)` 오프로드 + 예외 시 `_ch.record_foreground_result(ds, False, None, "list_databases_failed")` 피드백 후 502. 성공 응답에 `conn_status`/`degraded:false` 추가(기존 `databases`/`databases_classified` 보존). `admin_create_product_db_rule`·`admin_update_product_db_rule`: `_reconcile_one_db_rule(conn, …)` 호출을 `await asyncio.to_thread(…)` 로 오프로드. `admin_preview_product_db_rule`: `list_server_databases_classified` 호출을 `await asyncio.to_thread(…)` 로 오프로드.
+  - `src/static/admin.js` — `renderProductDetail` 내 신규 `_setAccessDbDegraded(info)`(picker 위 `.admin-db-degraded-note` 배너 "연결 불안정/끊김 — DB 목록 보류 + [새로고침]", `role="status"`, 클릭 시 `?force=1` 재시도). `_refreshAccessibleDbs(key, opts={})` — `opts.force` 시 `?force=1` 부착, `r.degraded` 응답 시 빈 목록 + 배너, catch 시 `degraded=true` 로 재시도 배너 유지. 정상 경로 classified/lockedChips 로직은 else 블록으로 재배치(byte-equivalent).
+  - `src/static/styles.css` — `.admin-db-degraded-note` + `.admin-db-degraded-refresh`(danger 토큰 기반 배너/버튼).
+  - `src/static/admin.html` — 캐시버스터 `styles.css?v=20260623-ds-conn-bg-decouple` + `admin.js?v=20260623-ds-conn-bg-decouple`.
+- 비변경: `_reconcile_one_db_rule` 내부 로직(M3/M4/M5)·`conn_health` 모듈·RBAC·스키마·엔드포인트 contract·`/db-insights`(sync def → 이미 threadpool, PG insight 읽기라 live datasource connect 아님) 0.
+
+
 ## CHG-20260619T120000-ai-claude-db-rule-pending-batch (TASK-20260619T120000, REQ-20260619-0331, Major §12.3 — 보안 경계)
 - Date: 2026-06-19
 - 요청(사용자, /_template:entry): 관리 콘솔 모든 변경을 pending → 일괄적용으로 구성·정책에 검증과정 명시·프로젝트 메모리 기억. 보고된 위배 = 정규식 자동 규칙 수정 시 즉시 반영.
