@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260623T010000-ai-claude-db-rule-pending-evidence [SKIPPED:docs-only-pb0008-evidence] (TASK-20260619T120000 후속 — 배포 + PB-0008 실측 기록)
+- Date: 2026-06-23 (cycle REV-20260619T120000-ai-claude-db-rule-pending-batch 의 배포·시각검증 evidence)
+- 분류 근거: docs 전용(TEST.md §3 Windows-browser Run 추가). 코드·자산·RBAC·스키마 무변경 → 리뷰 SKIP. 대상 코드는 본 cycle REV-20260619T120000 (SUBAGENT SHIP) 에서 점검 완료.
+- 배포: main `147d040`(PR #365) → `make -o init web` web 재빌드+재기동(서빙 `?v=20260619-db-rule-pending`·baked staging·view-reconcile 0). PROJECT.md §8.5 사람 승인 후 진행.
+- PB-0008 PASS(실 Windows Chrome/149): 규칙 추가 클릭 → "추가 대기" 배지 + "1건 pending" + **서버 규칙 unchanged**(즉시 반영 금지 = 보고된 버그 해소 실증) / 조회만으로 미변경 / backend create persist round-trip(POST 200·persist·DELETE 정리) + jsdom 18/18 로 apply 경로 확정 / 프로덕션 무흔적. 증거 `artifacts/pb0008-db-rule-pending/*.png`.
+- 잔여: 없음(cycle 완전 마감).
+
 ## REV-20260623T031910-ai-claude-ds-conn-bg-decouple [SUBAGENT:frontend-degraded-banner + AI-inline:backend-async-correctness] **SHIP** (TASK-20260623T031910, REQ-20260623-ds-conn-bg-decouple, Major §12.3)
 - Date: 2026-06-23
 - 분류: **리뷰 대상**(Major — 관리 콘솔 async 동작 변경, 다중 파일). §18.8 적대적 검증 패널 2-lens(frontend + backend) 실행. frontend 서브에이전트 완주 → **NO REAL FUNCTIONAL ISSUES**. backend 서브에이전트는 세션 한도로 미완 → 백엔드 핵심 리스크는 구현 중 AI inline 으로 file:line 직접 검증(아래).
