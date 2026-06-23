@@ -248,6 +248,48 @@ CREATE TABLE IF NOT EXISTS kb_invalidations (
 );
 
 -- ============================================================================
+-- 8. ITEM-10 (ROADMAP dba-ai-nl2sql): 용어사전 + ENUM 코드사전 (semantic-lite).
+--    도메인 용어 정의·컬럼 열거형 코드↔라벨 매핑을 ds-scoped(scope_key) 로 저장.
+--    질문/스키마 매칭 시 _build_knowledge_context 가 프롬프트에 datamark 주입.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS kb_glossary (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key   varchar(96)  NOT NULL DEFAULT 'common',  -- datasource 격리(fact_entries 동일 컨벤션)
+    term        varchar(128) NOT NULL,
+    definition  text         NOT NULL,
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    updated_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT ux_kb_glossary_scope_term UNIQUE (scope_key, term)
+);
+CREATE INDEX IF NOT EXISTS ix_kb_glossary_scope ON kb_glossary (scope_key);
+CREATE INDEX IF NOT EXISTS ix_kb_glossary_term_trgm ON kb_glossary USING gin (term gin_trgm_ops);
+DROP TRIGGER IF EXISTS trg_kb_glossary_updated_at ON kb_glossary;
+CREATE TRIGGER trg_kb_glossary_updated_at
+    BEFORE UPDATE ON kb_glossary
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS enum_dictionary (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key   varchar(96)  NOT NULL DEFAULT 'common',
+    schema_name varchar(128) NOT NULL DEFAULT '',
+    table_name  varchar(128) NOT NULL,
+    column_name varchar(128) NOT NULL,
+    code        varchar(128) NOT NULL,   -- 컬럼 raw 값(상태코드 등)
+    label       text         NOT NULL,   -- 사람이 읽는 의미
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    updated_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT ux_enum_dictionary_scope_col_code
+        UNIQUE (scope_key, schema_name, table_name, column_name, code)
+);
+CREATE INDEX IF NOT EXISTS ix_enum_dictionary_scope ON enum_dictionary (scope_key);
+CREATE INDEX IF NOT EXISTS ix_enum_dictionary_col
+    ON enum_dictionary (scope_key, table_name, column_name);
+DROP TRIGGER IF EXISTS trg_enum_dictionary_updated_at ON enum_dictionary;
+CREATE TRIGGER trg_enum_dictionary_updated_at
+    BEFORE UPDATE ON enum_dictionary
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================================
 -- 9. T3-10: 슬로우 쿼리 모니터링 뷰 (pg_stat_statements 기반).
 --    agent_kb_ro 와 agent_kb_rw 가 조회 가능하도록 권한 부여.
 -- ============================================================================
@@ -276,7 +318,7 @@ BEGIN
         GRANT USAGE ON SCHEMA public TO agent_kb_rw;
         GRANT SELECT, INSERT, UPDATE, DELETE
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
-                      kb_invalidations TO agent_kb_rw;
+                      kb_invalidations, kb_glossary, enum_dictionary TO agent_kb_rw;
         GRANT SELECT ON TABLE kb_slow_queries TO agent_kb_rw;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_kb_rw;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -289,7 +331,7 @@ BEGIN
         GRANT USAGE ON SCHEMA public TO agent_kb_ro;
         GRANT SELECT
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
-                      kb_invalidations, kb_slow_queries TO agent_kb_ro;
+                      kb_invalidations, kb_glossary, enum_dictionary, kb_slow_queries TO agent_kb_ro;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT ON TABLES TO agent_kb_ro;
     END IF;

@@ -202,7 +202,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: deps 없어 조기 착수 가능. 배포 = web+ask-worker.
 
 ### ITEM-10 · 용어사전 + ENUM 코드사전 (semantic-lite)
-- **status**: pending
+- **status**: done
+- **note**: 2026-06-23 드레인(PLAN-APPROVED). 구조부(kb_glossary/enum_dictionary PG 테이블+마이그 0013 + ds-scoped upsert/read + `_build_knowledge_context` datamark 주입) 완료. 단위 9 + KB회귀 26 + 라이브 pg16 DDL dry-run, 적대 backend 리뷰 BLOCKER(ds-scope 격리) 흡수. write-path(admin UI)·반자동 ENUM 추출·ENUM 정확도 측정(ITEM-01 harness)은 follow-up(측정은 bedrock-auth 복구 후). CHG/REV-20260623T105344-kb-glossary-enum.
 - **feature_id**: feature-0002-agent-core
 - **dimension**: structural
 - **risk_grade**: Major
@@ -258,7 +259,7 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | F-014 (결과 차트 시각화) | **defer** | frontend Minor·가치 중간. 정확도 항목 후순위. 재검토 트리거: 사용자 요청 누적 시. |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 2 · in-progress 0 · pending 10 · blocked 0
-- 완료: **ITEM-01**(2026-06-19) — harness 코드+단위검증, measured 수치는 bedrock-auth 복구 후. **ITEM-04**(2026-06-23) — DS 비즈니스 컨텍스트 read-side+schema(단위검증, write-path 는 ITEM-11 follow-up).
-- 다음 ready(pending ∧ deps 충족): ITEM-02·07·09·10(deps-free) 중 정렬 1순위 = **ITEM-02**(P1, Major) — 단, 임베딩(Titan/Bedrock) 의존이라 ⚠ 블로커 영향. LLM/임베딩 무관하게 verify 완결 가능한 신규 ready 없음.
+- 총 12 항목 · done 3 · in-progress 0 · pending 9 · blocked 0
+- 완료: **ITEM-01**(2026-06-19) — harness 코드+단위검증, measured 수치는 bedrock-auth 복구 후. **ITEM-04**(2026-06-23) — DS 비즈니스 컨텍스트 read-side+schema. **ITEM-10**(2026-06-23) — 용어/ENUM 사전 구조부(저장+읽기+주입; 추출/UI/측정 follow-up).
+- 다음 ready(pending ∧ deps 충족): ITEM-02·07·09(deps-free) + ITEM-05(deps ITEM-01 ✓) 중 정렬 1순위 = **ITEM-02**(P1, Major). **단 전부 bedrock-auth(임베딩/측정/생성) 의존** — LLM/임베딩 무관하게 verify 완결 가능한 신규 ready 없음(ITEM-04/10 으로 소진). 복구 후 재개.
 - ⚠ **환경 블로커 (2026-06-19)**: 스택 전반 **Bedrock 인증 다운**(IAM 제거, 게이트웨이 401 "Unable to locate credentials"). 측정/임베딩이 LLM·Titan 에 의존하는 항목(ITEM-02 임베딩, ITEM-05/06/07/12 측정 게이트, 그 의존 ITEM-03/08/11)은 자격증명 복구 전 verify 불가 → 드레인은 사용자 지시로 **LLM 무관 항목만**(ITEM-04) 진행, 나머지는 복구 후 재개.

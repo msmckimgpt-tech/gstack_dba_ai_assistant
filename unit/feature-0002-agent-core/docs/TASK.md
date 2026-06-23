@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260623T105344-kb-glossary-enum (current cycle) — ITEM-10 용어사전 + ENUM 코드사전 (Major §12.3, ROADMAP dba-ai-nl2sql)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
+- 출처: `docs/improvements/dba-ai-nl2sql/ROADMAP.md` ITEM-10. `/_dqa:improve_cycle` 드레인 — Major plan-review 승인 후 **구조부**(저장+읽기+주입) 구현. 측정(ENUM 정확도)은 bedrock-auth 복구 후 보류.
+
+### §2.1 Implementation Plan
+- **영향 파일**: `src/scripts/agent_kb_schema.sql`(+kb_glossary/enum_dictionary +GRANT), `alembic/versions/20260623_0013_*`(마이그), `src/modules/kb_glossary.py`(신규), `src/agent_core.py`(`_build_knowledge_context` 주입), 테스트.
+- **symbol**: `kb_glossary.{upsert_glossary_term,upsert_enum_entry,load_glossary_enum_context}` · `_build_knowledge_context`.
+- **접근**: agent_kb(PG)에 ds-scoped(scope_key) 용어/ENUM 저장 → 질문/스키마 매칭 시 `_build_knowledge_context` 가 datamark+펜스로 주입. scope 는 활성 datasource(`get_active_datasource`)로 도출(격리).
+- **위험도**: **Major** — 신규 PG 테이블+마이그 + 프롬프트 경로 주입.
+- **acceptance**: AC-10a 용어/ENUM upsert 후 ds-scoped read 매칭(scope 격리, FakeConn 단위) · AC-10b 관련 질문에서 프롬프트 datamark 주입(문자열 단위) · AC-10c verify PASS+회귀0 · AC-10d(보류) ITEM-01 harness 로 ENUM 정확도 측정 — bedrock-auth 복구 후.
+- [x] 스키마 kb_glossary/enum_dictionary(scope_key 컨벤션·인덱스·트리거·GRANT) + alembic 0013(head 0012→0013, 멱등) + 라이브 pg16 트랜잭션 dry-run(CREATE/index/trigger/GRANT/upsert/scoped-read → ROLLBACK) 검증.
+- [x] `kb_glossary.py` upsert(RW)+ds-scoped read(RO, get_active_datasource scope) + `_build_knowledge_context` 주입(datamark, 미매칭/미가용 "").
+- [x] 단위 `test_kb_glossary_enum.py` 9(upsert SQL/매칭/조립/**ds 격리**/운영 default scope/미매칭·빈) + KB 회귀(read_backend·ingest) 26 통과. py_compile.
+- [x] 적대 backend 리뷰 REV-20260623T105344 — **BLOCKER B1 흡수**(scope 를 CURRENT_FACT_SCOPE_KEY→get_active_datasource 로 수정: 미수정 시 ds-scoped 죽거나 cross-ds 누수) + M1(운영-path 테스트)·Mi2(_ro_conn try) 흡수.
+- [ ] write-path(admin 편집 UI) + 반자동 ENUM 추출(describe/sample) = ITEM-11 follow-up. ENUM 정확도 측정 = bedrock 복구 후.
+- verify-completion PASS. worktree `ai/claude/feature-0002-agent-core`(base 147d040).
+
 ## TASK-20260623T101031-ds-business-context (current cycle) — ITEM-04 데이터소스 비즈니스 컨텍스트 필드 (Minor §12.3, ROADMAP dba-ai-nl2sql)
 - 출처: `docs/improvements/dba-ai-nl2sql/ROADMAP.md` ITEM-04(P1, feature-0002-agent-core primary, feature-0003 schema cross-ref). `/_dqa:improve_cycle` 드레인 — Minor 자율 진행.
 - what: `WebDatasources` 에 `Description`(TEXT)·`DomainTags`(VARCHAR plaintext) 추가 → registry 병합(`_row_to_ds`) → 멀티DS 그라운딩 프롬프트 주입(어느 datasource 가 무슨 사업데이터인지 LLM 라우팅 그라운딩).
