@@ -1074,3 +1074,13 @@ source_of_truth: true
 - Confirmed-safe: SQLi 없음(4 execute 전부 %s/ANY(%s) 파라미터, 프롬프트 f-string 은 admin DB 값·datamark 경유). 프롬프트 펜스(datamark + "참고 데이터, 지시 아님") table_insights/schema_list 정합. 마이그 0013→0012 head 정합·멱등·GRANT 0011 선례·downgrade FK 무이슈. agent_core 주입 try/except·미매칭 무영향(common case 0 변경). owned-conn close finally 정확(누수/이중close 없음).
 - Verification: test_kb_glossary_enum.py 9/9 + KB 회귀(read_backend·ingest) 26 통과 + py_compile + 라이브 pg16 DDL 트랜잭션 dry-run(CREATE/index/trigger/GRANT/upsert/scoped-read → ROLLBACK). ENUM 정확도 라이브 측정은 bedrock-auth 복구 후(ITEM-01 harness).
 - Cross-ref: CHG-20260623T105344-kb-glossary-enum / REQ-20260623-1610 / AC-10a~10d / ROADMAP dba-ai-nl2sql ITEM-10.
+
+## REV-20260623T061043-insight-bottleneck [SUBAGENT:insight-bottleneck-adversarial-backend-qa]
+- Date: 2026-06-23
+- Cycle: TASK-0305 (insight-worker "제품 DB 파악 진전 없음" 병목 진단·수정), **Major §12.3**.
+- Trigger: §18.8 — schema/query/index/performance keyword + 워커 scan/scheduling seam → backend+qa dispatch. 적대적 코드리뷰(general-purpose outside voice, REFUTE: NameError 경로/backoff↔interval starvation/ANCHOR §3 순서/casefold 키누출/RC5 합산 불변식/report 키누출).
+- VERDICT: **ACCEPT** (BLOCKER 0, MAJOR 0). 6개 중점 검증항목 전부 반증 실패.
+- REFUTED(clean): ①`pending_only`/`missing` 둘 다 `scan_started=True` 이전 정의 + backoff 갱신 블록은 scan_started 진입 시만 → **NameError 경로 없음**. ②backoff↔rescan-interval: stuck pending tail 은 ~1h(RESCAN_SEC) 후 재시도(영구차단 아님), missing 즉시, 진전 시 tick cadence 보존 → **starvation 없음**. ③RC3 는 force_scan gate 만 제어 — 본문 `_repair_insight_artifacts_from_state→(불가 시) LLM` 흐름 무손상 → **ANCHOR §3 순서 보존**. ④casefold 는 해시 VALUE 한정 — batch `tname`(dict 키)·`ds_fact_key`/`ds_object_suffix` 불변, 같은-cycle `all_table_names` 매칭 무손상. ⑤`db_failed` 와 `_reason_counter` 동일 except 에서 무조건 증가 + `_curr` 3값 확정(default other) → **`perm+circuit+other==db_failed` 불변식 성립**; 기본 DB(_ds_key None) raise 로 제외. ⑥`pending_only` 로컬변수(report 미기입) + RC5 3키 scan_report 템플릿 초기화+`.get(...,0)` → **키누출/KeyError 없음**.
+- 관찰(의도된 행동 변화·차단 아님): RC5 가 비-MSSQL datasource(예: MySQL ds) 연결 실패를 `db_failed>0`→cycle status='degraded' 로 승격. 과거 `_is_mssql_ds` 게이트 하에선 비집계라 status 무영향이었으나, "모든 등록 datasource 실패 집계 + 운영자 가시화" 의도와 정합하는 확장으로 판단.
+- Verification: `tests/test_task0305_insight_bottleneck.py` 8/8 + feature-0002 회귀 GREEN(사전존재 `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 1건은 base 에서도 실패하는 agent_core 무관 결함) + py_compile. 라이브 e2e 는 컨테이너 미가동으로 배포 후(db_failed 사유분포 로그·log_v2 진동 종식·tick spacing).
+- Cross-ref: CHG-20260623T061043-insight-bottleneck / TASK-0305 / ROADMAP(해당 없음 — 사용자 직접 보고 버그).

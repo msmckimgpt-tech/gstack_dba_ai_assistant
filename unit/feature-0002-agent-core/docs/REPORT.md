@@ -277,3 +277,27 @@ fast-fail 정상). 단 잔존 3건 발견·수정:
 app.py 조회실패 debug 로그) 반영.
 
 **배포 함정**: agent 이미지(insight-worker·ask-worker 공유)+web 각 dc-build, PG 마이그 0006 은 superuser 명시 GRANT 포함.
+
+---
+
+## TASK-0305 — insight-worker "제품 DB 파악 진전 없음" 병목 진단·수정 (Major §12.3, 2026-06-23)
+
+**사용자 보고**: insight-worker 가 제품의 DB 를 파악하는데 진전이 없는 것처럼 나타남. 병목 진단·해결 요청.
+
+**진단(다중 가설 5개 + 가설당 3-렌즈 적대 검증 워크플로)**. 로그(`artifacts/shared/logs/<date>/insight_worker.log`·`insight_route.log`)·코드·config 대조. 증상이 **2축**으로 분리됨:
+
+- **축 A — 커버리지(지배적)**: `db_targets=39` 중 `db_failed=28`(72%)이 100% cycle 에서 권한 실패. RO 로그인이 28개 catalog DB 에 per-DB GRANT 가 없음(MSSQL 18456/916). conn_health 서킷은 `engine:host:port` 엔드포인트 단위라 host 가 살아있는 per-DB 권한실패를 격리 못 하고, `_is_connect_breaker_failure` 가 인증 에러를 서킷 피드백에서 제외 → 서킷 영구 미개방 → 28개를 매 cycle 재시도. **1차 해결은 운영(GRANT)** — 코드 아님. (적대 검증이 "RC1 이 시간예산을 훔친다"는 초기 가정을 반증: 권한 에러는 1회 fast-fail 이라 예산 비점유 — 커버리지는 막지만 throughput 0 의 원인은 아님.)
+- **축 B — 처리량**: 살아있는 11개 DB 조차 신규 통찰 0(`schemas_generated=0`/`tables_generated=0` 매 cycle). 원인 RC3(force_scan latch) + RC2(fingerprint churn).
+
+**수정(코드 3건, insight.py 한정 — 스키마/마이그 없음)**:
+- **RC2 (Minor)** fingerprint casefold(VALUE 한정): MSSQL information_schema 케이스 진동으로 `log_v2` 스키마가 매 cycle 11초 LLM 재생성되던 churn 제거(route 로그에서 TF_ErrorLog↔tf_errorlog 진동 관측, ~132s/day 낭비). 저장 키 불변(TASK-0220 정합).
+- **RC3 (Major)** 진전 기반 backoff: 무경계 `_detect_pending_insight_repairs` 가 budget(15s) 못 닿는 미완성 tail 을 pending 으로 영구 집계 → force_scan 매 8s tick 영구 latch(수천 테이블 fingerprint spin) 차단. pending-only 무진전 스캔이면 per-scope backoff(최소 60s/기본 1h). missing·interval·진전은 그대로 → 건강한 처리량 보존. force_scan gate 만 제어 — ANCHOR §3 repair→generate 순서 무손상.
+- **RC5 (Minor)** 관측성: cycle summary 에 `db_failed_{perm,circuit,other}` 노출 + 비-MSSQL ds 실패도 db_failed/db_targets 집계. → 28개 중 perm(GRANT) vs network 분리를 **로그만으로 특정**(축 A 진단 blocker 해소).
+
+**검증**: 신규 단위테스트 8 + feature-0002 회귀 0(사전존재 `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 1건은 base 에서도 실패하는 agent_core 무관 결함, 범위 밖) + py_compile. 적대 backend+qa 코드리뷰 **ACCEPT**(REV-20260623T061043, 6 검증항목 반증 실패·BLOCKER 0).
+
+**배포**: agent 이미지 재빌드(insight-worker baked, 마이그 없음). 라이브 검증은 배포 후 — db_failed 사유분포 로그 노출 / log_v2 `fingerprint_changed` 진동 종식 / force_scan tick spacing(무진전 시 cycle 간격 확대). 컨테이너 미가동 dev 환경이라 본 cycle 은 단위검증·코드대조로 acceptance 충족.
+
+**남은 작업**: 축 A GRANT(운영, RC5 데이터로 대상 특정 후), RC4(구조적 budget throughput) 전용 조사 = deferred.
+
+**base 주의**: 본 worktree 는 로컬 HEAD(=origin/main bf60a72, feature-0002 코드 무변경) 기반. cycle-init 의 main pull 은 무관한 `.codex/*` untracked 파일 충돌로 중단됐으나 feature-0002 코드 정합엔 영향 없음.

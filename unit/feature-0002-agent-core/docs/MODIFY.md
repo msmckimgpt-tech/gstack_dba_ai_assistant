@@ -1196,3 +1196,16 @@ source_of_truth: true
 - Files: src/scripts/agent_kb_schema.sql, alembic/versions/20260623_0013_kb_glossary_enum_dictionary.py(new), src/modules/kb_glossary.py(new), src/agent_core.py, tests/test_kb_glossary_enum.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
 - Rollback: 마이그 0013 downgrade(DROP 2 테이블) + kb_glossary.py/주입 블록 제거(주입은 try/except·미매칭 ""라 무해). 스키마 테이블은 미사용 시 잔존 무해.
 - Deploy: ask-worker + web 재빌드(agent_core baked) + 마이그 0013 적용(superuser, GRANT load-bearing). 등록 UI·추출은 ITEM-11 follow-up.
+
+## CHG-20260623T061043-insight-bottleneck
+- Date: 2026-06-23 (TASK-0305 — insight-worker "제품 DB 파악 진전 없음" 병목, Major §12.3). PLAN-APPROVED.
+- Scope: insight-worker 처리량/관측성 결함 수정(코드 한정, 스키마/마이그 없음). 지배적 커버리지 원인(28/39 DB GRANT 누락)은 운영 조치로 별도.
+- 내용:
+  - `src/modules/insight.py` **RC2** — `_compute_schema_fingerprint`/`_compute_table_fingerprint`/`_compute_table_fingerprints_batch` 가 해시할 식별자 토큰을 `casefold()` 정규화(VALUE 한정). MSSQL information_schema 의 케이스 진동(TF_ErrorLog↔tf_errorlog)으로 schema fingerprint 가 흔들려 같은 스키마를 매 cycle 11초 LLM 으로 재생성하던 churn 제거. batch 의 `tname`(dict 키)·`ds_fact_key`/`ds_object_suffix`(저장 키)는 불변 — TASK-0220 write/read-back/grounding 정합 보존.
+  - `src/modules/insight.py` **RC3** — `_scan_instance_schema_insights` 에 진전 기반 backoff. 무경계 `_detect_pending_insight_repairs` 가 budget(15s)로 못 닿는 미완성 artifact tail 을 pending 으로 영구 집계 → `force_scan` 이 매 8s tick 영구 latch 되어 도달가능 DB 의 수천-테이블 fingerprint 스캔을 spin 하던 문제. 신규 헬퍼 `_repair_backoff_active`/`_set_repair_backoff`/`_clear_repair_backoff`(per-scope KV `schema_instance_repair_backoff_until`). `pending_only`(=not missing & pending) 스캔이 무진전(생성·복구 0)이면 backoff(최소 60s, 기본 `AGENT_SCHEMA_INSIGHT_RESCAN_SEC`=3600) 동안 pending-only force 억제. missing(새 스키마)·rescan interval(`EVERY_SEC`) 경과·진전 시는 그대로 스캔 → 건강한 처리량 tick cadence 보존. KV 부재=기존 동작.
+  - `src/modules/insight.py` **RC5** — `run_insight_cycle` cycle summary 에 `db_failed_perm`/`db_failed_circuit`/`db_failed_other`(TASK-0255 분류 재사용) 추가. `db_failed` 집계에서 `_is_mssql_ds` 게이트 제거(모든 등록 datasource 실패 집계) + 비-MSSQL datasource 도 `db_targets` 1 집계(기본 DB= control-plane 은 제외). 부수: 비-MSSQL ds 실패도 `db_failed>0`→degraded 승격(의도된 가시화).
+- Why: TASK-0305 진단(다중 가설+적대 검증). 축 B 처리량(살아있는 DB 의 신규 통찰 0)의 코드 결함 RC2/RC3, 축 A 커버리지(28 DB 권한실패)의 진단 blocker 였던 관측성 공백 RC5. 축 A 의 1차 해결은 GRANT(운영).
+- Verification: `tests/test_task0305_insight_bottleneck.py` 8 + feature-0002 회귀 0(사전존재 `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 1건은 agent_core 무관·base 에서도 실패, 범위 밖) + py_compile. 적대 backend+qa 리뷰 REV-20260623T061043-insight-bottleneck **ACCEPT**(BLOCKER 0). 컨테이너 미가동 dev 환경이라 라이브 e2e 는 배포 후.
+- Files: src/modules/insight.py, tests/test_task0305_insight_bottleneck.py(신규), docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT}.md, wiki/concepts/insight-worker.md, wiki/Log.md, wiki/hot.md.
+- Rollback: insight.py 의 casefold(VALUE)·backoff 헬퍼+게이트·RC5 카운터 제거(전부 additive·KV 부재 시 기존 동작). 마이그/스키마 없음 — 코드 revert 만으로 원복.
+- Deploy: agent 이미지 재빌드(insight-worker·ask-worker 공유 — insight.py baked). 마이그 없음. RC2 는 배포 직후 1회 cutover 재생성 spike(전 스키마 fingerprint 재계산) 후 안정.

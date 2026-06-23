@@ -995,3 +995,16 @@ TASK-0015 (plan-review):
 - [x] outside-voice 적대 리뷰 **SHIP-WITH-FIXES**(BLOCKER 0). **MAJOR 흡수**: ①guard notice 가 "쿼리 실행 결과" 보호 광고하나 execute_sql tool 결과 미-datamark(최대 벡터)→`_run_agent_core` tool_msg content datamark ②KB schema_list/table_insights "authoritative/trust" 단정+미-datamark→datamark+설명문 비신뢰 명시. **MINOR 흡수**: 과대표현(무력화→best-effort 확률적 완화·보장 아님 명시). **수용**: fence breakout(이미 `_number_file_lines` 줄prefix 로 ``` 비-줄머리화 완화)·proximity·i18n·history 과거 raw.
 - [x] 검증: `tests/test_prompt_injection_defense.py` 10/10(B1 datamark strip 실 동작·B1b breakout 차단·B7 tool·B8 KB + inspect.getsource) + make test 회귀 0(사전존재 product-delete 2건 제외) + py_compile.
 - [ ] 머지 → 배포(**web + ask-worker 재빌드** — agent_core 변경) → 라이브(첨부/결과 인젝션 시도 무시 확인) → 마감.
+
+### TASK-0305 — insight-worker "제품 DB 파악 진전 없음" 병목 진단·수정 (Major §12.3, 2026-06-23)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 (scope: Minor RC2/RC5 + Major RC3) -->
+- 사용자 보고: insight-worker 가 제품의 DB 를 파악하는데 진전이 없는 것처럼 나타남. 다중 가설 + 적대적 검증 진단.
+- 진단(2축 분리): **축 A 커버리지** = 39 catalog DB 중 28개가 RO 로그인 per-DB GRANT 누락(권한 18456/916)으로 영구 스캔 실패 → status=degraded 고정, 완료율 정체. **운영(GRANT)이 1차 해결** — 코드 아님. **축 B 처리량** = 살아있는 11개 DB 조차 신규 통찰 0 (RC3 force_scan latch + RC2 fingerprint churn).
+- [x] **RC2 (Minor)**: `_compute_schema_fingerprint`/`_compute_table_fingerprint`/`_compute_table_fingerprints_batch` 에 casefold 를 **해시 VALUE 한정** 적용 — MSSQL information_schema 케이스 진동(TF_ErrorLog↔tf_errorlog)에 의한 schema fingerprint churn(11초 LLM 무의미 재생성, ~132s/day) 제거. 키 생성(ds_fact_key/ds_object_suffix) 불변 → TASK-0220 정합 보존.
+- [x] **RC3 (Major)**: `_scan_instance_schema_insights` 진전 기반 backoff — 무경계 `_detect_pending_insight_repairs` 가 budget(15s) 닿지 못하는 미완성 artifact tail 을 pending 으로 영구 집계 → force_scan 매 8s tick 영구 latch(도달가능 DB 의 수천 테이블 fingerprint 스캔 spin) 차단. pending-only 무진전 스캔이면 `_set_repair_backoff`(per-scope KV, 최소 60s, 기본 RESCAN_SEC=3600). missing(새 스키마)·rescan interval 경과·진전 시는 그대로 스캔(건강한 처리량 보존). ANCHOR §3 repair→generate 순서 무손상.
+- [x] **RC5 (Minor)**: cycle summary 에 db_failed 사유 분포(`db_failed_perm`/`circuit`/`other`) 노출 + db_failed 가 비-MSSQL datasource 실패도 집계(과거 `_is_mssql_ds` 게이트 제거) + 비-MSSQL ds db_targets 집계. → 28개 중 perm(GRANT) vs network 분리를 **로그만으로 특정** 가능(관측성 공백 해소). 부수: 비-MSSQL ds 실패도 degraded 승격(의도된 가시화).
+- [x] 단위테스트 `tests/test_task0305_insight_bottleneck.py` 8개(RC2 케이스 불변·실변경 감지·키 보존 / RC3 backoff set·clear·만료·최소바닥) + feature-0002 회귀 0(사전존재 `test_db_query_ux::test_assemble_core_messages` 1건은 agent_core 무관 결함, 본 작업 범위 밖). py_compile.
+- [x] 적대 코드리뷰(backend+qa outside voice) → REV-20260623T061043-insight-bottleneck **ACCEPT**(6 검증항목 반증 실패, BLOCKER 0).
+- [ ] **운영(축 A, 사용자 조치)**: RC5 배포 후 cycle summary 의 `db_failed_perm` 으로 GRANT 대상 DB 특정 → `bin/datasource-mssql-ro-bootstrap-multidb.sql` 적용. (코드 아님 — DBA/자격증명 작업.)
+- [ ] 배포: agent 이미지 재빌드(insight-worker baked, 마이그 없음) → 라이브 검증(db_failed 사유 분포 로그 노출 + log_v2 fingerprint_changed 진동 종식 + force_scan tick spacing).
+- [ ] 후속(deferred): RC4(구조적 budget=15s/TABLE_LIMIT throughput) 전용 조사 — RC5 데이터 확보 후.

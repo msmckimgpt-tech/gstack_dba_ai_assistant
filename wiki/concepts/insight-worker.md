@@ -15,7 +15,7 @@ ai_generated: true
 concept_category: pattern
 aliases: [insight worker, insight-worker, schema 통찰 워커, 분석 완료율]
 tags: [insight, worker, rag, coverage, postgres]
-last_updated: 2026-06-12
+last_updated: 2026-06-23
 ---
 
 # Insight Worker (schema 통찰 + 분석 완료율)
@@ -56,6 +56,7 @@ last_updated: 2026-06-12
 
 - **livelock**: cutover 가 read-back 2경로(artifact verify + fingerprint KV)를 DROP 된 MySQL 에 남겨 무한 재생성 → ollama 코어 연속 점유 (TASK-0145/0146 수정).
 - `app.py _log` 는 일부 함수 로컬 import → 신규 함수는 `logging.getLogger` 선언 (F821 hotfix).
+- **"DB 파악 진전 없음" = 2축 (TASK-0305)**: ① **커버리지** — `insight_worker.log` cycle summary 의 `db_failed`(/`db_targets`)가 크면 등록 catalog DB 다수가 스캔 실패. 대개 RO 로그인이 그 DB 에 per-DB `GRANT` 안 된 권한실패(MSSQL 18456/916). conn_health 서킷은 `engine:host:port` **엔드포인트 단위**라 host 가 살아있는 per-DB 권한실패를 격리 못 하고, 인증 에러는 서킷 피드백에서 제외돼 영구 재시도 → status=degraded 고정·완료율 정체. **조치는 운영 GRANT**(`bin/datasource-mssql-ro-bootstrap-multidb.sql` 을 실패 DB 마다) — 코드 아님. TASK-0305 RC5 가 `db_failed_{perm,circuit,other}` 를 cycle summary 에 노출하므로 perm(GRANT 대상) vs network(circuit/other) 를 로그로 구분. ② **fingerprint churn** — `insight_route.log` 에 같은 schema 가 `reason=fingerprint_changed` 로 반복 재생성되고 테이블명이 대/소문자로 진동(TF_ErrorLog↔tf_errorlog)하면, MSSQL information_schema 케이스 불안정. TASK-0305 RC2 가 fingerprint 해시 VALUE 에 `casefold` 적용해 안정화(저장 키 불변). ③ **force_scan spin** — `pending_table_repairs`>0 이 영구 유지되며 cycle 이 매 8s tick 마다 도는데 `tables_generated=0` 이면, 무경계 detector 가 budget(15s) 못 닿는 미완성 tail 로 force_scan 을 영구 latch 한 것. TASK-0305 RC3 진전기반 backoff 가 pending-only 무진전 스캔을 backoff(미완성 tail 의 spin 차단, 건강한 처리량은 보존).
 
 ## 6. 인용 source
 

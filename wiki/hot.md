@@ -1,22 +1,19 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-06-17
+last_updated: 2026-06-23
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-06-17
+2026-06-23
 
 ## Key Recent Facts
-- 서비스 소개 프레젠테이션: `docs/presentation/index.html`(자기완결 HTML 덱, 15슬라이드/7섹션, 전체 대상) + `SCENARIO.md`(발표 스크립트).
-- **실무자 전용 덱: `docs/presentation/practitioner.html`(9슬라이드) — 관리 콘솔·아키텍처 제외, 실제 사용 흐름만**. index.html 프레임워크(팝업·Ctrl glow·scale-to-fit) 재사용.
-- 공격적 질문 대응은 발표자 전용 `docs/presentation/OBJECTION-HANDLING.md` 로 분리(덱에는 미노출 — 청중 불편 방지).
+- insight-worker "DB 파악 진전 없음" 병목 = 2축: **축A 커버리지** 39 catalog DB 중 28개 RO 로그인 per-DB GRANT 누락(권한 18456/916) → 영구 스캔실패·status=degraded(서킷이 host:port 단위라 per-DB 권한실패 미격리). **1차 해결=운영 GRANT, 코드 아님**. **축B 처리량** RC3 force_scan latch + RC2 fingerprint churn 로 살아있는 DB 도 신규통찰 0.
 
 ## Recent Changes
-- 덱 상호작용 발견성: **Ctrl 키 누르면 클릭 가능 항목 주위 glow 가 천천히 fade-in/out**(outline 제거, `@keyframes findglow` `filter:drop-shadow` alpha 0↔.55, prefers-reduced-motion 정적 폴백). **keyup/blur 해제는 snap 아닌 fade-out**(현재 glow 값 inline 고정→애니메이션 중단→reflow→`filter:none` base `transition:filter .5s`로 점진 감소, 재누름 시 타이머 clear+inline reset). + **팝업 열린 채 다른 항목 클릭 시 교체**(`.pop{pointer-events:none}`/`.pop-card{auto}` 오버레이 통과, 빈 곳 클릭=팝업만 닫힘·페이지 유지).
-- 덱 정합/표현 보완: mock UI 실제 라벨·"예시 화면" 표기·과장 절제·scale-to-fit(scroll=0)·모든 항목 클릭 상세 팝업(data-explain)·우측 말풍선(딤 없음).
-- wiki overview/feature-0002·0003/datasource-registry 2026-06-16 동작 정합화 유지.
+- TASK-0305(insight.py): RC2 fingerprint casefold(VALUE 한정, 키 불변), RC3 진전기반 backoff(`_repair_backoff_active`/`_set`/`_clear`, per-scope KV — pending-only 무진전 spin 차단, 건강한 처리량·ANCHOR §3 보존), RC5 cycle summary `db_failed_{perm,circuit,other}` + 비-MSSQL ds 집계. 테스트 8 + 회귀 0, 적대 리뷰 ACCEPT. [[insight-worker]]
 
 ## Active Threads
-- 정식 배포 불필요(웹 비-서빙 정적 산출물) · 보안 Phase 1~3 로드맵.
+- 배포: agent 이미지 재빌드(insight-worker baked, 마이그 없음) → 라이브 검증(db_failed 사유분포·log_v2 진동 종식·tick spacing).
+- 사용자 조치(축A): RC5 배포 후 db_failed_perm 으로 GRANT 대상 특정 → bin/datasource-mssql-ro-bootstrap-multidb.sql. RC4(budget throughput) 전용 조사 deferred.
