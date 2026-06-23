@@ -484,7 +484,12 @@ services:
       - "/app/config.yaml"
       - "--port"
       - "8080"
-    networks: [dbnet]
+    # CHG-20260623: titan-embed alias 를 로컬 Ollama bge-m3 로 전환(litellm_config.yaml).
+    # litellm 이 api_base http://ollama-edge:11434 (llm-shared 내 local-llm-edge alias)
+    # 로 임베딩을 직접 호출하려면 bedrock-gateway 가 llm-shared 에 attach 돼야 한다.
+    # dbnet(앱·DB)은 master_key 인증 트래픽(앱→gateway)용으로 유지. Bedrock 자격
+    # 복구 시 llm-shared 는 그대로 둬도 무해(Bedrock 라우팅은 외부 AWS endpoint).
+    networks: [dbnet, llm-shared]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health/liveliness',timeout=2).status==200 else 1)"]
       interval: 10s

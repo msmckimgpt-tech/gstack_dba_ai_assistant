@@ -396,3 +396,19 @@ source_of_truth: true
 - Open Questions: 본 cycle 의 ship 후 운영 환경에서 실 마이그레이션 검증 필요.
 - Human Approval Needed: 사용자 결정 (2026-05-22) 의 follow-up cycle 명시 진행
   + scope (모든 secret 영역 분리 + OpenAI 폐기) 결정. 별 confirm 불요.
+
+## REV-20260623-0001 [SUBAGENT:backend] — PASS
+- Related TASK: feature-0007-bedrock-llm-provider (CHG-20260623-0001)
+- Trigger: code change (config/infra) → backend dispatch (임무 명시; embedding/임베딩
+  + network/네트워크 신호). litellm ollama embedding 라우팅 + docker network 정합 검증.
+- Timestamp: 2026-06-23T08:42:02Z
+- Verdict: PASS
+- Artifact: unit/feature-0007-bedrock-llm-provider/docs/reviews/20260623T084202Z-backend.md
+- Critical issue (if BLOCK/CONCERN): 없음 — 통상 BLOCK 사유(임베딩 공간 혼선)는
+  texts/sample_queries embedding 컬럼이 실 데이터 0건이라 실증적으로 무효. litellm
+  `ollama/bge-m3`+`api_base` 문법 정확, 네트워크 변경 non-breaking, end-to-end dim=1024.
+- Non-blocking follow-ups: ① 배포 후 backfill 실행(현재 vector 검색 trigram-only)
+  ② embedding_model provenance 라벨(alias=titan-embed vs 실 bge-m3)
+  ③ bge-m3 모델 의존 추적(fresh host provisioning) + litellm 이미지 핀.
+- Human Approval Needed: no (사용자 임무 지시로 본 전환 명시 위임. PR 생성·머지·
+  gateway restart 는 메인 세션 마감 — 본 cycle scope 외).

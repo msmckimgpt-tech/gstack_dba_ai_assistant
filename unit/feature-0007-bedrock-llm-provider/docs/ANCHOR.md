@@ -89,6 +89,4 @@ gating (역할별 더 비싼 모델 허용 여부) 이 도입될 수 있지만, 
 
 ## §4. 외부 검증 로그 (append-only)
 
-(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. 본 cycle 은 plan-review 단계
-에서 사용자 PLAN-APPROVED 마커로 충분하며, release/milestone 검증이 필요한 단계
-에 다다르면 사용자가 직접 entry 를 append 한다.)
+(엔트리 없음 — 일반 TASK cycle 완료 조건 아님. 본 cycle 은 plan-review 단계에서 사용자 PLAN-APPROVED 마커로 충분하며, release/milestone 검증 시점에 사용자가 직접 entry 를 append 한다. §4 는 append-only + source `human:<name>` only 이므로 AI 가 갱신하지 않는다.)

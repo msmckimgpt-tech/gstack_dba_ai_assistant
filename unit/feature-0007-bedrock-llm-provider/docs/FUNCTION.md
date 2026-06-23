@@ -140,10 +140,22 @@ source_of_truth: true
 ### 외부 의존성
 - AWS Bedrock (`ap-northeast-2` Seoul region) — Claude Sonnet 4.x / Haiku 4.x
   model access 활성화 필요 (AWS console → Bedrock → Model access).
+  (현행 2026-06-23: chat 은 Anthropic-direct(claude-corp OAuth)로 운영 중 —
+  litellm_config.yaml 의 claude-* 항목이 `anthropic/...` 로 토글됨. Bedrock 2줄은
+  배포 복구용 주석 보존.)
 - LiteLLM proxy (또는 동등 OSS — Bedrock Access Gateway 등). Docker image 직접
   pull.
 - AWS IAM credential — `AmazonBedrockFullAccess` 또는 `bedrock:InvokeModel` 권한
-  포함 IAM user / role.
+  포함 IAM user / role. (현행 임베딩 경로는 AWS 자격 불요 — 아래 Ollama 사용.)
+- **KB 임베딩 (titan-embed alias) — 로컬 Ollama bge-m3 (CHG-20260623-0001)**:
+  litellm 이 `model: ollama/bge-m3` + `api_base: http://ollama-edge:11434` 로
+  Ollama (`local-llm-edge` 컨테이너, `llm-shared` network alias `ollama-edge`)
+  의 `/api/embeddings` 를 직접 호출 → 1024-dim 벡터. bedrock-gateway 가
+  `llm-shared` 에 attach 돼 있어야 도달 (docker-compose `networks: [dbnet,
+  llm-shared]`). bge-m3 모델은 Ollama 에 사전 `ollama pull bge-m3` 필요 (runtime
+  볼륨 상주, git 미추적). local-llm-gateway 는 chat 전용(/v1/embeddings 404)이라
+  임베딩은 Ollama 백엔드 직접 지정으로 우회. Bedrock Titan v2 복구 시 차원 동일
+  (1024) 이라 스키마/백필 호환.
 
 ### shared 모듈 의존성
 - 없음 (본 변경은 feature-0002 / feature-0003 의 local module 만 수정).

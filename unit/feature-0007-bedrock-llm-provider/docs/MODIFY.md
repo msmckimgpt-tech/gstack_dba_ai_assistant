@@ -382,3 +382,56 @@ source_of_truth: true
   - `_select_llm_provider()` 의 분기 3 복원으로 회귀 가능. 단 사용자 결정 위반.
 - Verification:
   - `python3 -m py_compile config.py` PASS.
+
+## CHG-20260623-0001
+- Date: 2026-06-23
+- Related Requirement: REQ-20260521-0001 (LLM 호출 gateway 일원화) 후속 — KB
+  임베딩 가용성 복구 (TASK-0135 #13 의 운영 연속성).
+- Summary: `titan-embed` 임베딩 alias 를 Bedrock(`bedrock/amazon.titan-embed-text-v2:0`)
+  에서 **로컬 Ollama bge-m3 (1024-dim)** 로 전환. "전환"으로 chat 은 Anthropic-direct
+  (claude-corp OAuth)로 이동했으나 Anthropic API 는 임베딩 미제공 → titan-embed 만
+  Bedrock 에 잔존, AWS 키 제거 후 401(credential 부재)로 실패. Bedrock 의존 없이
+  로컬 Ollama bge-m3 로 대체해 KB 벡터 임베딩 경로를 복구. 차원은 1024 로 동일 →
+  texts/sample_queries 의 vector(1024) 스키마 및 기존 백필과 호환 (재임베딩 불필요
+  여부는 모델 변경에 따른 임베딩 공간 차이로 운영 판단 — 본 변경은 인프라 경로 복구
+  범위, 재백필 정책은 메인 세션 결정).
+- Files:
+  - 수정: `unit/feature-0007-bedrock-llm-provider/src/config/litellm_config.yaml`
+    — `titan-embed` model_list 항목을 `model: ollama/bge-m3` +
+    `api_base: http://ollama-edge:11434` 로 교체. 기존 Bedrock 2줄
+    (`bedrock/amazon.titan-embed-text-v2:0` / `aws_region_name: ap-northeast-2`)
+    은 "배포 복구용" 주석으로 보존 (AWS_* 자격 확보 후 토글 복구, 차원 동일 1024).
+    claude-sonnet-4 / claude-haiku-4 항목은 무변경.
+  - 수정: `docker-compose.yml` — `bedrock-gateway` 서비스 `networks: [dbnet]` →
+    `networks: [dbnet, llm-shared]`. litellm 이 `api_base` 의 `ollama-edge:11434`
+    (llm-shared 내 local-llm-edge 컨테이너 alias) 로 임베딩을 직접 호출하려면
+    bedrock-gateway 가 llm-shared 에 attach 돼야 함. dbnet(앱·DB 인증 트래픽)은 유지.
+  - 인프라 (코드 외, 영속): `local-llm-edge` Ollama 에 `ollama pull bge-m3`
+    (1.2GB, F16, embedding length 1024) — git 미추적, 컨테이너 볼륨 상주.
+- Impact:
+  - 운영: AWS Bedrock 자격 없이 KB 임베딩 동작. bge-m3 는 BAAI 다국어 임베딩으로
+    한국어 입력 정상 (실측 dim=1024). chat(Anthropic-direct)과 임베딩(로컬 Ollama)
+    이 서로 다른 provider 로 분리됨.
+  - 네트워크: bedrock-gateway 가 llm-shared 에도 합류 (앱 컨테이너 web/ask/insight
+    와 동일 패턴). Bedrock 복구 시에도 llm-shared 잔류는 무해 (Bedrock 라우팅은
+    외부 AWS endpoint).
+  - 호환: 임베딩 차원 1024 불변 → 스키마(vector(1024)) 호환. 단 모델이 다르면
+    임베딩 벡터 공간이 달라 기존 백필 벡터와 신규 쿼리 벡터의 cosine 정합성은
+    저하 가능 — 일관성 위해 재백필(kb_embedding_worker)이 권장될 수 있음(메인 세션
+    운영 판단).
+- Rollback Notes:
+  - litellm_config.yaml 의 titan-embed 항목을 주석 보존된 Bedrock 2줄로 복원 +
+    docker-compose.yml networks 를 `[dbnet]` 으로 환원 + AWS_* 자격 재주입으로
+    원복. 차원 동일(1024)이라 스키마 변경 불필요.
+- Verification:
+  - `ollama show bge-m3`: embedding length 1024 (F16).
+  - Ollama 직접 `/api/embeddings` (영어/한국어) dim=1024, OpenAI-compat
+    `/v1/embeddings` dim=1024 (2026-06-23 host probe).
+  - reachability: `repo-bedrock-gateway-1` 을 llm-shared 에 임시 connect 후
+    `http://ollama-edge:11434/api/tags` 에 bge-m3 노출 + embeddings dim=1024 확인
+    → 검증 후 disconnect 원복 (compose 미적용 상태로 런타임 복원).
+  - end-to-end: 신규 config 로 일회성 litellm 컨테이너(llm-shared) 기동 →
+    `/v1/embeddings {"model":"titan-embed"}` 영어/한국어 모두 dim=1024,
+    응답 model=titan-embed (2026-06-23). 검증 후 컨테이너 제거.
+  - `docker compose config` (env symlink 보강) PASS — bedrock-gateway networks =
+    [dbnet, llm-shared] 파싱 확인.

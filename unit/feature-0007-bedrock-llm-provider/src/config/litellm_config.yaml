@@ -50,18 +50,37 @@ model_list:
         type: "enabled"
         budget_tokens: 5000
 
-  # ── Titan Embeddings v2 (KB 벡터, 1024-dim) — TASK-0135 (#13) ────────
-  # texts.embedding(vector(1024)) 백필 + `<=>` cosine 검색용. amazon.titan-embed-text-v2:0
-  # 는 Seoul region 접근 가능 확인(2026-06-02 boto3 probe, dim=1024). kb_embedding_worker
-  # 가 본 alias 로 /v1/embeddings 호출 → LiteLLM 이 Bedrock 으로 라우팅. AGENT_KB_EMBEDDING_MODEL
-  # =titan-embed, AGENT_KB_EMBEDDING_DIM=1024 (.env).
-  # ⚠ 개발 단계 비활성 (2026-06-23): Anthropic API 는 임베딩 미제공 → claude-corp OAuth
-  #   로 호출 불가. KB 벡터 검색(kb_retrieval)은 Bedrock 자격(AWS_*) 확보 후 복구.
-  #   현재 호출 시 credential 부재로 실패 — 단 최근 트래픽 0건이라 당장 영향 없음.
+  # ── KB 임베딩 alias `titan-embed` (1024-dim) — TASK-0135 (#13) ────────
+  # texts.embedding(vector(1024)) + sample_queries.embedding(vector(1024)) 백필
+  # + `<=>` cosine 검색용. kb_embedding_worker / kb_retrieval 이 본 alias 로
+  # /v1/embeddings 호출 → LiteLLM 이 아래 provider 로 라우팅.
+  # AGENT_KB_EMBEDDING_MODEL=titan-embed, AGENT_KB_EMBEDDING_DIM=1024 (.env).
+  #
+  # ── 현행 (2026-06-23): 로컬 Ollama bge-m3 (1024-dim) ──────────────────
+  # "전환"으로 chat 은 Anthropic-direct(OAuth)로 이동했으나 Anthropic API 는
+  # 임베딩 미제공 → titan-embed 만 Bedrock 에 남아 AWS 키 제거 후 401(credential
+  # 부재)로 실패. 이를 Bedrock 의존 없이 로컬 Ollama bge-m3 로 대체한다.
+  #   - bge-m3 = BAAI 다국어 임베딩, F16, embedding length 1024 (한국어 포함
+  #     실측 dim=1024, 2026-06-23 ollama show + /api/embeddings probe 확인).
+  #   - LiteLLM ollama provider 는 `model: ollama/<name>` + `api_base` 로 Ollama
+  #     HTTP (/api/embeddings) 를 직접 호출한다. local-llm-gateway 는 chat 전용
+  #     라우터라 /v1/embeddings 404 → gateway 우회하고 Ollama 백엔드 직접 지정.
+  #   - api_base 의 ollama-edge:11434 는 `llm-shared` 네트워크 내 local-llm-edge
+  #     컨테이너 alias. bedrock-gateway 가 도달하려면 docker-compose.yml 에서
+  #     bedrock-gateway 서비스가 llm-shared 에 attach 돼 있어야 한다(본 cycle 에서
+  #     `networks: [dbnet, llm-shared]` 로 추가).
   - model_name: titan-embed
     litellm_params:
-      model: bedrock/amazon.titan-embed-text-v2:0
-      aws_region_name: ap-northeast-2
+      model: ollama/bge-m3
+      api_base: http://ollama-edge:11434
+  # ── 배포 복구용 (Bedrock Titan v2, Seoul) — AWS_* 자격 확보 후 위 3줄과 토글 ──
+  # amazon.titan-embed-text-v2:0 는 Seoul region 접근 가능 확인(2026-06-02 boto3
+  # probe, dim=1024). Bedrock 자격(AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)을
+  # 컨테이너 env 로 복구하면 아래 2줄로 되돌린다(차원 동일 1024 — 백필 호환).
+  # - model_name: titan-embed
+  #   litellm_params:
+  #     model: bedrock/amazon.titan-embed-text-v2:0
+  #     aws_region_name: ap-northeast-2
 
 # ── 인증 ──────────────────────────────────────────────────────────────
 # backend 가 보내는 Authorization 헤더의 Bearer token 을 BEDROCK_GATEWAY_API_KEY
