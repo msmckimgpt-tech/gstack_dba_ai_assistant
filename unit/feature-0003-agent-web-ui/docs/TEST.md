@@ -297,6 +297,18 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-06-23 (TASK-20260623T031910-ds-conn-bg-decouple — 데이터소스 연결확인을 동기 render 경로에서 백그라운드로 분리, **Major §12.3** — **PB-0008 Windows-browser PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay, `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (win-browser eval + UI 구동 — 배포본 main `b2236fe`, `docker compose build web` + `up -d --no-deps web`, repo-web-1 Up healthy. 서빙 `admin.js?v=20260623-ds-conn-bg-decouple` + app.py conn_health 게이트·to_thread baked).
+  - **실 환경 datasource 상태**: 등록 19개 중 `down` 다수(`mysql-gz-qa-kr`, `mysql-kr-an2-*`, `mssql-qa-idc/web-qa` 등) + `healthy`(`mysql-local`, `mysql-gz-dev`, `mssql_local` 등) 공존 — degraded 경로 실측 가능.
+  - **① 이벤트 루프 비차단(핵심) PASS**: down `mysql-gz-qa-kr` 에 `?force=1`(live connect, to_thread) 가 **8024ms** 블록(502)되는 *동안* 동시 발사한 healthy `mysql-local` 요청은 **44ms** 완료. 수정 전이라면 동기 connect 가 이벤트 루프를 점유해 동시 요청도 ~8s 대기 → "나머지 UI 갱신 멈춤" 의 근본 해소 실증.
+  - **② degraded fast-path PASS**: down `mysql-gz-qa-kr/databases`(no force) → **38ms**, status 200, `degraded:true`, `conn_status:down`, db 0 — live connect 없이 백그라운드 캐시 상태 즉시 반환.
+  - **③ healthy 무회귀 PASS**: `mysql-local/databases` → 26ms, `degraded:false`, `conn_status:healthy`, **db 14개** 실목록. 제품 id=1(킹스레이드-로컬) 선택 시 배너 없음·DB picker 정상.
+  - **④ 시각 배너 PASS**: 제품 id=95(건즈 국내 QA, 단일 down `mysql-gz-qa-kr`) 선택 + 데이터소스 아코디언 펼침 → picker 위 빨간 배너 **"데이터소스 연결 끊김 — DB 목록 로드를 보류했습니다(연결 상태는 백그라운드에서 점검 중)."** + **[새로고침]** 버튼 렌더(`role="status"`, visible). 좌측 제품 목록·시스템 프롬프트 등 나머지 UI 정상 렌더(차단 0).
+  - **⑤ 새로고침(force) 버튼 PASS**: 클릭 즉시 `disabled + "확인 중…"`(중복클릭 차단) → force connect ~8s timeout(502) 후 배너 유지 + 버튼 재활성("새로고침", 재시도 가능, stuck 0).
+  - **Evidence:** `artifacts/pb0008-ds-conn-bg-decouple/degraded-banner-down-ds.png`(빨간 배너+새로고침, 나머지 UI 정상) · `healthy-product-no-banner.png`(대조군).
+  - **Pass/Fail: PASS** — 배포 시스템에서 이벤트 루프 비차단·degraded fast-path·healthy 무회귀·시각 배너·force 재시도를 실제 Windows 브라우저로 실측 통과. CHECK#13 충족.
+  - **Notes:** §18.8 적대 패널(frontend NO REAL ISSUES + backend inline 7축) SHIP. minor a11y `role="status"` 반영. REV-20260623T031910-ai-claude-ds-conn-bg-decouple.
 - 2026-06-23 (TASK-20260623T030418-quota-rbac-permission — 계정·역할 LLM 사용 한도 조회/조절 전용 권한 + admin catchup lockout 수정, **Major §12.3 — 보안 경계(RBAC)** — **PB-0008 Windows-browser PASS**; CHG/REV-20260623T030418 + CHG-20260623T053000 evidence):
   - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `3cda161`(PR #373 권한 + #375 catchup) → `docker compose build web`(캐시) + `up -d web`(repo-web-1 Up healthy). 서빙 admin.js 에 `can("quota.read")` 게이트·`opts.readOnly` 분기 baked. app.py `_ensure_seed_roles` quota catchup baked.
   - **Runner: AI** (win-browser eval — 실 배포 renderRoleDetail/renderAccountDetail + buildQuotaEditor 를 3-tier permission 으로 구동, DOM 실측).
