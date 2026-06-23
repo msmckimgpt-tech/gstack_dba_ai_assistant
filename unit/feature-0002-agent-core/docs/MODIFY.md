@@ -1246,3 +1246,14 @@ source_of_truth: true
 - Files: src/agent_core.py, src/modules/config.py, tests/test_self_reflection.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
 - Rollback: `AGENT_SELF_REFLECTION_ENABLED=0`(즉시 비활성) 또는 helper/훅 제거(gate off 면 동작 0 변경).
 - Deploy: ask-worker + web 재빌드(agent_core baked). 마이그 없음. 임베딩 무관(chat-only).
+
+## CHG-20260623T163242-sample-embed-dim-1024
+- Date: 2026-06-23 (TASK-20260623T163242-sample-embed-dim-1024 — ITEM-02 PR-A 후속 fix, Minor §12.3). 사용자 결정(경로 B 로컬 1024 임베딩 전제).
+- Scope: sample_queries.embedding 차원 1536→1024 정렬(0014 의 오설정 교정 — 실 임베딩 모델 1024-dim).
+- 내용: 마이그 `20260623_0015`(DROP INDEX/DROP COLUMN IF EXISTS/ADD COLUMN vector(1024)/ivfflat 재생성, downgrade 대칭) · `agent_kb_schema.sql` sample_queries 1024 · `config.py` AGENT_KB_EMBEDDING_DIM 기본 1536→1024(texts/titan/로컬 일치).
+- Why: 0014 가 sample_queries.embedding 을 vector(1536) 로 생성했으나 titan-embed v2 및 경로B 로컬 모델은 1024-dim(texts 정본=alembic 0001 vector(1024)). 1024 벡터 INSERT 시 차원 불일치 실패 → register/promote 무동작. 라이브 검증(register[1024]→search sim=1.0).
+- Verification: 라이브 pg16 0015 적용(컬럼 0행 안전) + 1024 register→search sim=1.0 + test_sample_flywheel 12 회귀 0(FakeConn dim-agnostic) + py_compile. 적대 backend 리뷰 REV-20260623T163242 SHIP(BLOCKER/MAJOR 0).
+- Files: alembic/versions/20260623_0015_sample_queries_embed_dim_1024.py(new), src/scripts/agent_kb_schema.sql, src/modules/config.py, src/modules/sample_queries.py(docstring), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 마이그 0015 downgrade(vector(1536) 복귀, 대칭). 컬럼 비어있어 무손실.
+- Deploy: 마이그 0015 적용(superuser). ask-worker/web 재빌드(config baked). 임베딩 모델 1024 확정(경로B bge-m3 등) 후 retrieval 동작.
+- **Flag(범위 밖, 기존 drift)**: `agent_kb_schema.sql:68` texts + `kb_backend.py:940` 주석이 여전히 `vector(1536)` — 정본 alembic 0001 texts=1024 와 불일치. texts 는 라이브/정본 1024 라 동작 무관하나 fresh-install bootstrap(schema.sql 우선 실행 시) 해저드 → 별도 cleanup 권장.

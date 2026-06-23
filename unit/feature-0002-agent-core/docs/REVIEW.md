@@ -1118,3 +1118,14 @@ source_of_truth: true
 - Confirmed-safe: bounded(reflection_count run당 0 초기화·cap 미만만 증가 → ≤cap, MAX=0 무력화) · max_steps/similar-retry 와 직교(이중 증폭 없음) · 라이브 execute_sql guard 메시지(보안차단/접근불가/내부차단/시스템스키마) 전부 제외(우회 유도 없음) · 프롬프트인젝션(넛지는 kind+last_sql[≤400]+고정 힌트만, 에러 raw text 미삽입·datamark 이후 동봉) · last_sql 은 동일 execute_sql 호출분(stale 아님) · gate off → 바이트 동일.
 - Verification: test_self_reflection.py 7/7(실제 'SQL 실행 오류:' shape 포함) + prompt-injection 회귀 10 + py_compile. 라이브: describe-first agent 가 무에러 교정 → reflection 백스톱(단순 fixture 미발동). **AC-b 정량 회복률 보류**(에러유발 traffic/error-injection 모드 필요).
 - Cross-ref: CHG-20260623T151643-self-reflection / REQ-20260623-1670 / AC-a~d / ROADMAP dba-ai-nl2sql ITEM-07.
+
+## REV-20260623T163242-sample-embed-dim-1024 [SUBAGENT:embed-dim-fix-adversarial-backend]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T163242-sample-embed-dim-1024 (ITEM-02 PR-A 후속 — sample_queries.embedding 1536→1024 정렬), **Minor §12.3**.
+- Trigger: §18.8 — schema/migration → backend. 적대 코드리뷰(general-purpose, REFUTE: 마이그 정합/다운그레이드/차원 일관/blast/cascade).
+- VERDICT: **SHIP** (BLOCKER 0, MAJOR 0).
+- Confirmed-safe: 마이그 0015 down_revision=0014(단일 head, branch 없음) · DROP COLUMN+ADD 비파괴(컬럼 0행·FK/view/generated 의존 0, ivfflat 만 의존→명시 drop 후 재생성 byte-identical) · 멱등(IF EXISTS 가드) · downgrade 대칭(1024→1536) · 차원 일관(schema.sql/config/live/baseline texts 모두 1024) · search ::vector dim-agnostic · vector_cosine_ops dim-무관 · config 기본 변경 blast 0(AGENT_KB_EMBEDDING_DIM 유일 소비자 kb_embedding_worker 가 settings dict 에 넣되 미사용·dimensions param 미전달; live .env 이미 1024) · DROP COLUMN 비-CASCADE.
+- 흡수한 NIT: sample_queries.py docstring 1536→1024.
+- **Flag(범위 밖·기존 drift)**: schema.sql:68 texts + kb_backend.py:940 주석이 stale vector(1536)(정본 alembic 0001 texts=1024). 동작 무관(라이브/정본 1024)하나 fresh-install bootstrap 정합 cleanup 권장 — 별도 follow-up.
+- Verification: 라이브 pg16 0015 적용 + 1024 register→search sim=1.0 + test_sample_flywheel 12 회귀 0 + py_compile.
+- Cross-ref: CHG-20260623T163242-sample-embed-dim-1024 / ROADMAP dba-ai-nl2sql ITEM-02.

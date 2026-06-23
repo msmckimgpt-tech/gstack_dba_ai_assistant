@@ -535,7 +535,7 @@ AGENT_KB_EMBEDDING_MODEL = (
     os.getenv("AGENT_KB_EMBEDDING_MODEL", "text-embedding-3-small").strip()
     or "text-embedding-3-small"
 )
-AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1536") or "1536")
+AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1024") or "1024")  # titan-embed v2 / 로컬 1024 모델·alembic 0001 texts 정본 일치(구 1536 기본은 stale)
 # ITEM-02: 샘플쿼리 few-shot 주입 토글(기본 ON). OFF 면 _build_knowledge_context 가 EXAMPLE
 # QUERIES 섹션을 주입 안 함 — ITEM-01 harness A/B(샘플 off/on) 측정 + 안전 롤백 스위치.
 AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
