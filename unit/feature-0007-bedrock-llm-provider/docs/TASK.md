@@ -245,6 +245,24 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 - [x] TASK-H3 SECURITY.md §6.1 reanchor + DECISIONS.md ADR-0026 addendum +
       STATUS entry.
 
+### Phase I — titan-embed 임베딩 alias 로컬 Ollama bge-m3 전환 (CHG-20260623-0001)
+- [x] TASK-I1 `litellm_config.yaml` 의 `titan-embed` alias 를 Bedrock
+      (`bedrock/amazon.titan-embed-text-v2:0`) → 로컬 Ollama bge-m3
+      (`model: ollama/bge-m3` + `api_base: http://ollama-edge:11434`) 로 교체.
+      Bedrock 2줄은 "배포 복구용" 주석 보존. claude-* 항목 무변경. (CHG-20260623-0001)
+- [x] TASK-I2 `docker-compose.yml` 의 `bedrock-gateway` 서비스를 llm-shared 에
+      attach (`networks: [dbnet, llm-shared]`) — litellm 이 llm-shared 내
+      ollama-edge:11434 로 임베딩 직접 호출하기 위함. (CHG-20260623-0001)
+- [x] TASK-I3 `local-llm-edge` Ollama 에 `ollama pull bge-m3` (1.2GB, F16,
+      embedding length 1024). `ollama list` 확인.
+- [x] TASK-I4 1024-dim 실증 — Ollama 직접 /api/embeddings (영/한) dim=1024,
+      OpenAI-compat /v1/embeddings dim=1024. litellm end-to-end (titan-embed
+      alias, 일회성 컨테이너) 영/한 dim=1024, model=titan-embed. reachability
+      (bedrock-gateway→ollama-edge) 임시 connect 검증 후 disconnect 원복.
+- [ ] TASK-I5 (메인 세션 마감) PR 검토 → merge → `git -C repo pull` →
+      `docker compose restart bedrock-gateway` (또는 `up -d` 로 networks 반영) →
+      titan-embed end-to-end 검증 (앱 경유 KB 임베딩). 재백필 정책 판단.
+
 ## 4. In Progress
 - 없음 (Phase A 진입 직전 정지 상태 — 다음 turn 의 user 지시로 시작).
 
