@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 8 (feature-0001 ~ feature-0008) |
+| Feature 수 | 9 (feature-0001 ~ feature-0009) |
 
 ## 목차
 
@@ -79,6 +79,7 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0006-lan-proxy-access\|feature-0006-lan-proxy-access]] | Caddy TLS + Windows LAN proxy |
 | [[../Features/feature-0007-bedrock-llm-provider\|feature-0007-bedrock-llm-provider]] | AWS Bedrock (Claude) gateway |
 | [[../Features/feature-0008-windows-browser-testing\|feature-0008-windows-browser-testing]] | 실제 Windows 브라우저 AI 자동 검증 (PB-0008) |
+| [[../Features/feature-0009-group-conversation\|feature-0009-group-conversation]] | 그룹 대화 — 멤버십 · `@assistant` 멘션 · 열람≠발화 분리 |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -90,6 +91,7 @@ unit/feature-NNNN-<purpose>/
 | feature-0005 | feature-0001, feature-0002, feature-0004 | uses | Compose + agent + browser smoke |
 | feature-0006 | feature-0001 | uses | Web/TLS 운영 자산 공유 |
 | feature-0007 | feature-0002, feature-0003 | uses | LLM 호출 단일 진입점 통합 |
+| feature-0009 | feature-0003, feature-0002 | uses | Web UI(공유·첨부·avatar) + ask_jobs 큐(`@assistant`) 위 그룹 대화 |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 
@@ -100,6 +102,8 @@ unit/feature-NNNN-<purpose>/
 - **AI 위임 친화**: AI 가 작업 시 `AGENTS.md` 우선 read + 각 feature 의 `docs/` 자동 참조.
 - **멀티 데이터소스 (2026-06)**: data plane 이 단일 MySQL → N 개 데이터소스 (MySQL·MSSQL) 로 일반화. dialect 추상화 + envelope 암호화 registry + DB-단위 접근. 상세 [[Data-Flow]] §2.5 · [[../concepts/multi-datasource]].
 - **storage 단일화 (2026-05-27)**: agent runtime + KB 모두 Postgres 단독 (`agent_kb`/`agent_runtime`). MySQL 은 `web*` 18 테이블만 (Phase 3 대상). [[../Decisions/ADR-0027-agent-runtime-pg-schema]] · [[../Decisions/ADR-0028-runtime-mysql-cleanup]].
+- **그룹 대화 + 보안 보강 (2026-06-19~23)**: 단일 owner 대화 → 멤버십 기반(feature-0009, **열람 ≠ 발화** RBAC 분리). 사용자 보안 보강 6종(공유 만료·로그인 제한·감사 변조방지·LLM 한도·인젝션 방지·2FA) 완료. [[../Features/feature-0009-group-conversation]] · [[../../docs/SECURITY|SECURITY.md]].
+- **NL→SQL 정확도 flywheel (2026-06)**: 평가 harness + 샘플쿼리 few-shot(pgvector) + self-reflection + 용어/ENUM 사전. [[../concepts/nl2sql-flywheel]].
 
 ## 4. 관련 문서
 

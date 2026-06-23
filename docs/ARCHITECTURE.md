@@ -48,6 +48,9 @@ ai_read_priority: 4
 | feature-0004-browser-automation | Playwright 브라우저 제어 |
 | feature-0005-qa-mcp | MCP 테스트와 QA 스크립트 |
 | feature-0006-lan-proxy-access | Caddy 및 Windows LAN 프록시 자산 + `_get_client_ip` X-Forwarded-For trust 정책 (SECURITY.md §9.7) |
+| feature-0007-bedrock-llm-provider | AWS Bedrock (Claude) gateway — per-user OpenAI key 폐기, service-managed LLM provider (ADR-0026) |
+| feature-0008-windows-browser-testing | 실제 Windows 브라우저 AI 자동 검증 (PB-0008 · ADR-0029) |
+| feature-0009-group-conversation | 그룹 대화 — 멤버십·`@assistant` 멘션·**열람 ≠ 발화** RBAC 분리·라이브 UX (2026-06-19~23) |
 
 ## 5. source of truth 원칙
 동일한 사실을 여러 문서에 중복 확정하지 않는다.
@@ -69,6 +72,8 @@ ai_read_priority: 4
 | feature-0005-qa-mcp | feature-0002-agent-core | uses | 에이전트/MCP 모드 검증 |
 | feature-0005-qa-mcp | feature-0004-browser-automation | uses | 브라우저 제어 smoke 검증 |
 | feature-0006-lan-proxy-access | feature-0001-platform-runtime | uses | Web/TLS 운영 자산 공유 |
+| feature-0007-bedrock-llm-provider | feature-0002-agent-core, feature-0003-agent-web-ui | uses | LLM 호출 단일 진입점 통합 |
+| feature-0009-group-conversation | feature-0003-agent-web-ui, feature-0002-agent-core | uses | Web UI(공유·첨부·avatar) + ask_jobs 큐(`@assistant`) 위에 그룹 대화 |
 
 ### 의존 유형 정의
 - `requires`: 대상 기능이 완성되어야 구현 가능
