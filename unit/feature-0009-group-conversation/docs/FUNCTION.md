@@ -31,7 +31,9 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - REQ-GC-R8: read-state(last_read 커서) + @mention 표시 + per-conversation 동시실행/비용 상한.
 
 ## 3. In Scope
-- `conversation_members` 멤버십 테이블 + 멤버 관리(초대/제거/나가기) 엔드포인트.
+- `conversation_members` 멤버십 테이블. **참여(join)는 공유 링크('참여 허용' 토글, 기본 ON)로 일원화**
+  (`POST /api/share/{token}/join`). username 직접 초대 + 멤버 패널은 **제거됨**(CHG-20260623-0013).
+  roster 조회(GET)·제거/나가기(DELETE) 엔드포인트는 API 로 유지.
 - `core_messages.sender_account_id`(발신자 귀속) + `thread_root_message_id`(스레드 컬럼 훅, 동작 미연동).
 - 멘션 파싱(FE/BE canonical 공유) + @assistant 만 ask_jobs enqueue(actor=발신자).
 - 멤버십 기반 열람 접근제어(전 conversation-scope 엔드포인트 IDOR 방지).
@@ -45,7 +47,9 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
   `(conversation_id, key)` 단일 키라 스레드별 run 은 `(conversation, thread)` 재키잉이
   필요(ENG #1). v1 은 thread_root 컬럼만 추가하고 run 직렬화는 **대화당** 유지.
 - WebSocket/pubsub 실시간 — v1 은 폴링으로 충분.
-- 공개 링크 참여 — account 직접 초대로 대체(기존 읽기전용 share-link 는 유지).
+- ~~공개 링크 참여 — account 직접 초대로 대체~~ → **반전(CHG-20260623-0013)**: 참여는 공유 링크
+  '참여 허용'(기본 ON)으로 일원화, username 직접 초대 폐지. [수용 위험] 조인가능 링크 보유자는 누구나
+  참여→대화 전체 열람(AR-1 연장, 사용자 결정).
 - **[수용 위험] view ≠ invoke 데이터 노출**: 무권한 멤버가 방 안에서 권한 멤버가 생성한
   실제 datasource 쿼리 결과·SQL 을 열람(의도된 RBAC 우회, 사용자 sign-off). docs/SECURITY.md 참조.
 - **[수용 위험] fork 반출**: 무권한 멤버가 그룹대화를 fork 하면 그 결과를 본인 소유 사본에

@@ -146,12 +146,19 @@
       }
     }
 
+    const joinBtn = document.getElementById("shareJoinBtn");
     const forkBtn = document.getElementById("shareForkBtn");
     const loginLink = document.getElementById("shareLoginLink");
+    // feature-0009: 참여(join) — 링크 Joinable + 로그인 + 아직 멤버 아님일 때.
+    if (joinBtn && viewer.is_authenticated && viewer.can_join) {
+      joinBtn.classList.remove("hidden");
+      joinBtn.addEventListener("click", () => doJoin(tok, joinBtn));
+    }
     if (forkBtn && viewer.is_authenticated && viewer.can_fork) {
       forkBtn.classList.remove("hidden");
       forkBtn.addEventListener("click", () => doFork(tok, forkBtn));
-    } else if (loginLink && !viewer.is_authenticated) {
+    }
+    if (loginLink && !viewer.is_authenticated) {
       loginLink.classList.remove("hidden");
     }
   }
@@ -689,6 +696,35 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  async function doJoin(tok, btn) {
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = "참여 중...";
+    try {
+      const res = await fetch(`/api/share/${encodeURIComponent(tok)}/join`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const errMsg = body && body.error ? body.error : `참여 실패 (${res.status})`;
+        window.alert(errMsg);
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+        return;
+      }
+      const body = await res.json();
+      const cid = body && body.conversation_id ? body.conversation_id : "";
+      window.location.href = cid ? `/?conversation=${encodeURIComponent(cid)}` : "/";
+    } catch (e) {
+      window.alert(`참여 실패: ${e && e.message ? e.message : e}`);
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
   }
 
   async function doFork(tok, btn) {

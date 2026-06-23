@@ -4867,6 +4867,27 @@ def _ensure_web_share_links_expiry_column(conn) -> None:
         cur.close()
 
 
+def _ensure_web_share_links_joinable_column(conn) -> None:
+    """feature-0009-group-conversation: WebConversationShares 에 `Joinable TINYINT(1)` column 추가.
+
+    공유 링크를 통한 그룹 대화 **참여(join)** 허용 여부. 기본 1(ON, 사용자 결정) — 링크를 가진
+    로그인 사용자가 '참여' 로 해당 대화의 멤버가 될 수 있다(열람 ≠ 발화, AR-1: 멤버는 대화 전체를
+    열람). owner 가 링크별로 OFF 가능. 기존 share row 는 DEFAULT 1 로 채워져 참여 가능해진다.
+
+    PolicyVersion/ExpiresAt 헬퍼 idiom 동형 — fast/slow path 양쪽에서 호출되어 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "ALTER TABLE WebConversationShares ADD COLUMN Joinable TINYINT(1) NOT NULL DEFAULT 1"
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
 def _ensure_web_conversation_attachments_schema(conn) -> None:
     """TASK-0094 Sprint 1 Phase 2: WebConversationAttachments 테이블 idempotent CREATE.
 
@@ -5903,6 +5924,7 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_web_share_links_policy_version_column(conn)
     # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column ALTER.
     _ensure_web_share_links_expiry_column(conn)
+    _ensure_web_share_links_joinable_column(conn)  # feature-0009: 공유 링크 참여 허용 컬럼
     # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
     # derived join + provider files lifecycle 4 신규 테이블 fast-path 보정.
     _ensure_web_conversation_attachments_schema(conn)
@@ -6132,6 +6154,7 @@ def _ensure_web_tables():
         _ensure_web_share_links_policy_version_column(conn)
         # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column (slow path).
         _ensure_web_share_links_expiry_column(conn)
+        _ensure_web_share_links_joinable_column(conn)  # feature-0009: 공유 링크 참여 허용 컬럼
         # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 (slow path).
         _ensure_login_lockout_schema(conn)
         # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (slow path).
@@ -13809,7 +13832,8 @@ def _share_load_active(conn, token: str) -> dict[str, Any] | None:
         cur.execute(
             """
 SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId,
-       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion, ExpiresAt
+       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion, ExpiresAt,
+       Joinable
 FROM WebConversationShares
 WHERE Token = %s
 LIMIT 1
@@ -14028,6 +14052,8 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
     scope_mode = str(data.get("scope_mode") or "full").strip().lower()
     if scope_mode not in ("full", "anchored"):
         return _json_error("invalid scope_mode", 400)
+    # feature-0009: 공유 링크 참여(join) 허용 여부. 기본 ON(사용자 결정) — 명시 false 일 때만 OFF.
+    joinable = 0 if (data.get("joinable") is False) else 1
     raw_anchor = data.get("anchor_message_id")
     anchor_id: int | None = None
     if scope_mode == "anchored":
@@ -14090,8 +14116,8 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
                 cur.execute(
                     f"""
 INSERT INTO WebConversationShares
-    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion, ExpiresAt)
-VALUES (%s, %s, %s, %s, %s, %s, {expires_expr})
+    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion, Joinable, ExpiresAt)
+VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
                     """,
                     (
                         cid,
@@ -14100,6 +14126,7 @@ VALUES (%s, %s, %s, %s, %s, %s, {expires_expr})
                         int(anchor_id) if anchor_id is not None else None,
                         int(account["id"]),
                         SHARE_POLICY_VERSION_CURRENT,
+                        int(joinable),
                         *expires_params,
                     ),
                 )
@@ -14161,40 +14188,13 @@ VALUES (%s, %s, %s, %s, %s, %s, {expires_expr})
 
 
 # ============================================================================
-# feature-0009-group-conversation S2: 그룹 대화 멤버 관리 엔드포인트.
+# feature-0009-group-conversation: 그룹 대화 멤버 엔드포인트.
 #   - GET    /api/conversations/{cid}/members         roster 조회 (대화 접근자)
-#   - POST   /api/conversations/{cid}/members         멤버 추가/초대 (owner 또는 member.manage)
 #   - DELETE /api/conversations/{cid}/members/{aid}   멤버 제거 또는 본인 나가기
+# ★참여(join)는 공유 링크로 일원화: POST /api/share/{token}/join (username 직접 초대 폐지).
 # 멤버십 정본은 PG agent_runtime.conversation_members (modules.group_members).
 # "열람 ≠ 발화": 멤버는 datasource 권한 없어도 대화 전체 열람. 발화 게이트는 S3/S4.
 # ============================================================================
-
-def _resolve_member_target_account_id(conn, data: dict) -> tuple[int | None, str | None]:
-    """body 의 account_id 또는 username 으로 대상 account 해석. returns (account_id, error)."""
-    raw_id = data.get("account_id")
-    if raw_id is not None and str(raw_id).strip() != "":
-        try:
-            aid = int(raw_id)
-        except Exception:
-            return None, "invalid account_id"
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT Id FROM WebAccounts WHERE Id = %s AND DeletedAt IS NULL LIMIT 1", (aid,)
-        )
-        row = cur.fetchone()
-        cur.close()
-        return (aid, None) if row else (None, "대상 계정을 찾을 수 없습니다.")
-    uname = str(data.get("username") or "").strip()
-    if uname:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT Id FROM WebAccounts WHERE Username = %s AND DeletedAt IS NULL LIMIT 1", (uname,)
-        )
-        row = cur.fetchone()
-        cur.close()
-        return (int(row[0]), None) if row else (None, "대상 계정을 찾을 수 없습니다.")
-    return None, "account_id 또는 username 이 필요합니다."
-
 
 @app.get("/api/conversations/{cid}/members")
 def list_conversation_members(cid: str, request: Request) -> JSONResponse:
@@ -14247,70 +14247,6 @@ def list_conversation_members(cid: str, request: Request) -> JSONResponse:
         return JSONResponse(
             {"conversation_id": cid, "owner_account_id": owner_id, "members": members}
         )
-    finally:
-        conn.close()
-
-
-@app.post("/api/conversations/{cid}/members")
-async def add_conversation_member(cid: str, request: Request) -> JSONResponse:
-    """그룹 대화 멤버 추가(초대). 권한: owner 또는 conversation.member.manage + 대화 접근.
-
-    ⚠ 초대된 멤버는 대화 전체(권한 멤버가 생성한 datasource 결과·SQL 포함)를 열람한다
-    (열람 ≠ 발화). 초대 = 데이터 노출 행위 → audit conversation.member.add (CSO F2/AR-1).
-    """
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    role = str(data.get("role") or "member").strip().lower()
-    if role not in ("owner", "member"):
-        return _json_error("invalid role", 400)
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn, account, cid, "conversation.read.own", "conversation.read.any"
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        actor_id = int(account["id"])
-        is_owner = _conversation_owned_by_account(conn, cid, actor_id)
-        if not (is_owner or _account_has_permission(account, "conversation.member.manage")):
-            return _json_error("멤버를 관리할 권한이 없습니다.", 403)
-        target_id, terr = _resolve_member_target_account_id(conn, data)
-        if terr:
-            code = 404 if "찾을 수 없" in terr else 400
-            return _json_error(terr, code)
-        try:
-            from modules.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                group_members.add_member(
-                    pg, cid, target_id, role=role, invited_by_account_id=actor_id
-                )
-            finally:
-                pg.close()
-        except Exception:
-            return _json_error("멤버 추가 실패", 500)
-        _audit_user_action(
-            conn,
-            request,
-            account,
-            action="conversation.member.add",
-            resource_type="conversation_member",
-            resource_id=str(target_id),
-            request_ctx={
-                "conversation_id": cid,
-                "target_account_id": target_id,
-                "role": role,
-            },
-        )
-        return JSONResponse({"conversation_id": cid, "account_id": target_id, "role": role})
     finally:
         conn.close()
 
@@ -14709,6 +14645,13 @@ WHERE Token = %s AND RevokedAt IS NULL
         # 로그인 상태 + conversation.create 보유 시 fork 가능 flag.
         viewer = _optional_account(request, conn)
         can_fork = bool(viewer and _account_has_permission(viewer, "conversation.create"))
+        # feature-0009: 공유 링크 참여(join) — 링크가 Joinable + 로그인 + 아직 멤버/소유자 아님일 때 가능.
+        joinable = bool(int(share.get("Joinable") if share.get("Joinable") is not None else 1))
+        already_member = bool(viewer) and (
+            _conversation_owned_by_account(conn, conversation_id, int(viewer["id"]))
+            or _account_is_conversation_member(conversation_id, int(viewer["id"]))
+        )
+        can_join = bool(viewer) and joinable and not already_member
         created_at = share.get("CreatedAt")
         last_viewed = share.get("LastViewedAt")
         share_expires_at = share.get("ExpiresAt")
@@ -14753,9 +14696,77 @@ WHERE Token = %s AND RevokedAt IS NULL
                 "viewer": {
                     "is_authenticated": bool(viewer),
                     "can_fork": can_fork,
+                    "can_join": can_join,
+                    "already_member": already_member,
+                    "joinable": joinable,
                 },
             }
         )
+    finally:
+        conn.close()
+
+
+@app.post("/api/share/{token}/join")
+def join_conversation_via_share(token: str, request: Request) -> JSONResponse:
+    """feature-0009: 공유 링크로 그룹 대화에 **참여(join)** — 로그인 viewer 를 멤버로 추가.
+
+    조건(전부 충족): 로그인 + 링크 활성(revoked/expired 아님) + Joinable=1 + 대화 비차단/비보관.
+    참여 시 발신자(actor)는 대화 전체(권한 멤버가 만든 datasource 결과 포함)를 열람하게 된다
+    (열람 ≠ 발화, AR-1). datasource 발화/쿼리는 여전히 본인 RBAC 게이트(S4). audit: conversation.member.join.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        share = _share_load_active(conn, token)
+        if not share:
+            return _json_error("공유 링크를 찾을 수 없습니다.", 404)
+        if share.get("RevokedAt") is not None:
+            return _json_error("이 공유 링크는 취소되었습니다.", 410)
+        if _share_row_expired(conn, int(share.get("Id") or 0)):
+            return _json_error("이 공유 링크는 만료되었습니다.", 410)
+        if not bool(int(share.get("Joinable") if share.get("Joinable") is not None else 1)):
+            return _json_error("이 공유 링크는 대화 참여가 허용되지 않습니다.", 403)
+        cid = str(share.get("ConversationId") or "")
+        if not cid or not _conversation_exists(cid, conn=conn):
+            return _json_error("대화를 찾을 수 없습니다.", 404)
+        _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
+        if _is_blocked:
+            return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
+        actor_id = int(account["id"])
+        # 이미 소유자/멤버면 멱등 성공(중복 참여 무해).
+        already = _conversation_owned_by_account(conn, cid, actor_id) or _account_is_conversation_member(cid, actor_id)
+        if not already:
+            try:
+                from modules.db import _pg_connect
+                from modules import group_members
+                pg = _pg_connect()
+                try:
+                    inviter = int(share.get("CreatedBy")) if share.get("CreatedBy") is not None else None
+                    group_members.add_member(pg, cid, actor_id, role="member", invited_by_account_id=inviter)
+                finally:
+                    pg.close()
+            except Exception:
+                return _json_error("대화 참여에 실패했습니다.", 500)
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="conversation.member.join",
+                resource_type="conversation_member",
+                resource_id=str(actor_id),
+                request_ctx={
+                    "conversation_id": cid,
+                    "via": "share_link",
+                    "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                    "token_prefix": str(token)[:8],
+                },
+            )
+        return JSONResponse({"ok": True, "conversation_id": cid, "already_member": already})
     finally:
         conn.close()
 

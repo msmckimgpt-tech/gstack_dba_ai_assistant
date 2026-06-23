@@ -63,6 +63,7 @@ source_of_truth: true
 - alembic 0012 적용(bin/alembic-migrate.sh upgrade head) → 배포(web + ask-worker 재빌드) → 라이브 smoke. 이후 S5 잔여 라이브 폴리시(REV-0012).
   - [x] ★배포 필수 alembic 0012 마이그레이션(conversation_members + core_messages 컬럼 + GRANT, CHG-0011/REV-0013)
   - [x] 릴리즈 노트 개선 배포(멤버끼리 채팅 + @assistant 멘션 + 발신자 표시 반영, CHG-0012/REV-0014)
+  - [x] 참여 모델 전환: 공유 링크 join(참여 허용 토글 기본 ON) 일원화 + 멤버 패널/초대 제거 (CHG-0013/REV-0015)
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연
