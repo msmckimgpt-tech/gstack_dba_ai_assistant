@@ -14,9 +14,11 @@ source_of_truth: false
 
 ## 2. Progress
 - **코어 완성(배포 대기)**: S1 Foundations · S2 Membership(백엔드+roster UI) · S3(멘션 파서·발신자 귀속·사람채팅·F1·send-routing·발신자 표시·연속 user 병합) · S4 Security(멤버 @assistant actor RBAC) · 릴리즈 노트.
-- In Progress: 없음 (코어 완료 → push/PR/배포).
-- Deferred(배포 후 라이브): S5 run cap·llm_usage actor 귀속·폴링·LLM 화자 라벨 (REV-0012) / S6 스레드(별도 계획).
-- 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (+ 본 docs).
+- **라이브 UX 1차(PR#370 배포완료)**: 실시간 폴링(4s)·@멘션 자동완성·발신자 아바타.
+- **라이브 UX 2차(gc-live-ux2, 코드 완료·커밋 전)**: 적응형 폴링(5s↔1.5s)·멘션 자동완성 TTL(신규 참여자 반영)·피멘션 알림(토스트+OS Notification·백그라운드)/하이라이트·assistant 제품 아이콘·사이드바 카테고리화. 전부 프론트(app.js/styles.css/index.html), 백엔드 무변경, 캐시버스터 live-ux2. (CHG-0015/REV-0017)
+- In Progress: gc-live-ux2 docs 반영 완료 → verify-completion → PR → 배포 → smoke.
+- Deferred(배포 후 라이브): S5 run cap·llm_usage actor 귀속·LLM 화자 라벨 (REV-0012) / S6 스레드(별도 계획). [폴링 동기화는 ux2 적응형으로 해소]
+- 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (코어, 머지됨) + ux2(워크트리 ai/claude/gc-live-ux2, 커밋 전).
 
 ## 3. Recent Changes
 - PG `agent_runtime_schema.sql`: `conversation_members` 테이블 + `core_messages.sender_account_id`/`thread_root_message_id` + 인덱스 2.
