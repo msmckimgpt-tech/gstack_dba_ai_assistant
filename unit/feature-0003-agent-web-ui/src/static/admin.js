@@ -155,7 +155,7 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // TASK-0288: datasource 그룹 신설(관리 콘솔 데이터소스 권한) + 제품 권한 2축 분리 —
 //   product(제품 관리, 관리 콘솔 구성: product.read/manage) ↔ product_access(제품 사용,
 //   작업 화면에서 요청 전송: 동적 product.access.<key>). 사용자 결정 2026-06-16.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "datasource", "audit", "settings", "product", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "datasource", "kb", "audit", "settings", "product", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
@@ -163,6 +163,8 @@ const PERMISSION_GROUP_LABELS = {
   // TASK-20260623T030418-quota-rbac-permission: LLM 토큰 사용 한도(역할 기본·계정 특수)의 조회/조절 권한 그룹.
   quota: "LLM 사용 한도",
   datasource: "데이터소스",
+  // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수.
+  kb: "지식베이스(KB) 검수",
   conversation_own: "내 대화 권한",
   conversation_any: "전체 대화 권한",
   product: "제품 관리",
@@ -181,7 +183,7 @@ const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
   // TASK-0288: datasource(데이터소스 관리) + product(제품 관리, 관리 콘솔 구성)는 관리 권한 section.
   // TASK-20260623T030418-quota-rbac-permission: LLM 사용 한도(quota) 그룹도 관리 권한 section.
-  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · LLM 사용 한도 · 데이터소스 · 제품 관리 · 감사 · 시스템 설정", groups: ["console", "account", "role", "quota", "datasource", "audit", "settings", "product"] },
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · LLM 사용 한도 · 데이터소스 · KB 검수 · 제품 관리 · 감사 · 시스템 설정", groups: ["console", "account", "role", "quota", "datasource", "kb", "audit", "settings", "product"] },
   // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
   // TASK-0288: 작업 화면 제품 사용(product_access)은 운영 권한 section — 관리 콘솔 제품 관리(product)와 분리.
   { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 사용 · 첨부", groups: ["conversation_own", "conversation_any", "product_access", "attachment"] },
@@ -226,6 +228,8 @@ const PERMISSION_DEPENDENCIES = {
   // TASK-0288: 데이터소스 — datasource.read 가 그룹 게이트(console.access 하위), manage 는 read 선행.
   "datasource.read": "console.access",
   "datasource.manage": "datasource.read",
+  // TASK-20260623T090440-sample-feedback-curation: KB 샘플 검수/승급 — console.access 하위(콘솔 진입 필요).
+  "kb.sample.curate": "console.access",
   // TASK-0288: 제품 관리 — product.read 가 그룹 게이트(console.access 하위), manage/프롬프트는 read 선행.
   "product.read": "console.access",
   "product.manage": "product.read",
@@ -1979,6 +1983,8 @@ const ADMIN_TAB_PERMISSIONS = {
   audits: ["audit.read.own", "audit.read.any"],
   usage: ["console.usage.read"],
   archives: ["conversation.archive.read.any"],
+  // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수 큐.
+  "sample-review": ["kb.sample.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2066,6 +2072,11 @@ function switchTab(tabName) {
   if (tabName === "archives" && !adminState.archivesInitialized) {
     adminState.archivesInitialized = true;
     loadArchivedConversations();
+  }
+  // TASK-20260623T090440-sample-feedback-curation: 샘플 검수 tab 첫 진입 시 큐 로드.
+  if (tabName === "sample-review" && !adminState.sampleReviewInitialized) {
+    adminState.sampleReviewInitialized = true;
+    loadSampleFeedback();
   }
   // 릴리즈 노트 — 정적 콘텐츠라 진입 시 렌더(가벼움). 렌더러는 release-notes.js, 작업 화면과 공유.
   if (tabName === "release-notes" && window.ReleaseNotes) {
@@ -2183,6 +2194,109 @@ function renderArchiveDetail(id) {
       </dl>
       <p class="admin-archive-detail-note">보관된 대화는 소유 계정 목록에서 숨겨지고 새 메시지 진행이 차단됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조(fork)에 사용됩니다. 본문은 본 화면에서 표시하지 않습니다(메타데이터 전용).</p>
     </div>`;
+}
+
+/* ── TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03) ──────
+ * "샘플 검수" 탭 — 사용자 답변 피드백(👍/👎/"샘플 등록")으로 적재된 sample_feedback(pending)
+ * 큐를 검토해 KB(sample_queries)로 승급(approve)하거나 거부(reject)한다. 권한 kb.sample.curate.
+ *   GET  /api/admin/sample-feedback              — 큐 목록
+ *   POST /api/admin/sample-feedback/{id}/approve — 승급(promote)
+ *   POST /api/admin/sample-feedback/{id}/reject  — 거부(reject)
+ * 승급은 검색 정확도에 직접 영향 → 명시 검수만(자동학습 금지). generated_sql 은 적재 시점에
+ * PII 마스킹돼 저장됨(표시 안전). */
+adminState.sampleReview = { items: [], loading: false, truncated: false };
+
+function _sfEsc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function _sfFmtDt(s) {
+  if (!s) return "—";
+  try { const d = new Date(s); return isNaN(d.getTime()) ? _sfEsc(s) : d.toLocaleString(); } catch (_) { return _sfEsc(s); }
+}
+
+async function loadSampleFeedback() {
+  const listEl = document.getElementById("sampleReviewList");
+  if (!listEl) return;
+  adminState.sampleReview.loading = true;
+  listEl.innerHTML = '<div class="admin-list-empty">로딩 중…</div>';
+  try {
+    const data = await apiFetch("/api/admin/sample-feedback");
+    adminState.sampleReview.items = (data && data.items) || [];
+    adminState.sampleReview.truncated = Boolean(data && data.truncated);
+  } catch (err) {
+    adminState.sampleReview.items = [];
+    listEl.innerHTML = `<div class="admin-list-empty">${_sfEsc((err && err.message) || "샘플 피드백 조회 실패")}</div>`;
+    return;
+  } finally {
+    adminState.sampleReview.loading = false;
+  }
+  renderSampleFeedbackList();
+}
+
+function renderSampleFeedbackList() {
+  const listEl = document.getElementById("sampleReviewList");
+  const countEl = document.getElementById("sampleReviewCount");
+  if (!listEl) return;
+  const items = adminState.sampleReview.items;
+  if (countEl) countEl.textContent = `${items.length}건${adminState.sampleReview.truncated ? "+" : ""} 검수 대기`;
+  const canCurate = can("kb.sample.curate");
+  if (!items.length) {
+    listEl.innerHTML = '<div class="admin-list-empty">검수 대기 중인 샘플 피드백이 없습니다.</div>';
+    return;
+  }
+  listEl.innerHTML = items.map((it) => {
+    const voteBadge = it.vote === "down"
+      ? '<span class="sf-vote sf-vote-down" title="부정 피드백">👎</span>'
+      : '<span class="sf-vote sf-vote-up" title="긍정 피드백">👍</span>';
+    const suggestedBadge = it.suggested ? '<span class="sf-badge-suggested">샘플 등록 요청</span>' : "";
+    const sql = (it.generated_sql || "").trim();
+    // 👎 는 승급 불가(코어 promote_feedback 이 down 을 거부) → 승인 버튼 미노출, 거부만.
+    const approveBtn = (canCurate && it.vote !== "down")
+      ? `<button type="button" class="btn-primary sf-approve" data-sf-id="${it.id}">승인(KB 등록)</button>`
+      : "";
+    const rejectBtn = canCurate
+      ? `<button type="button" class="btn-secondary sf-reject" data-sf-id="${it.id}">거부</button>`
+      : "";
+    return `
+      <div class="admin-sf-row" data-sf-row="${it.id}">
+        <div class="admin-sf-row-head">
+          ${voteBadge}
+          <span class="admin-sf-scope" title="데이터소스 스코프">${_sfEsc(it.scope_key || "common")}</span>
+          ${suggestedBadge}
+          <span class="admin-sf-ts">${_sfEsc(_sfFmtDt(it.created_at))}</span>
+        </div>
+        <div class="admin-sf-q">${_sfEsc(it.nl_question || "")}</div>
+        ${sql ? `<pre class="admin-sf-sql"><code>${_sfEsc(sql)}</code></pre>` : '<div class="admin-sf-nosql muted">생성 SQL 없음</div>'}
+        <div class="admin-sf-actions">${approveBtn}${rejectBtn}</div>
+      </div>`;
+  }).join("");
+
+  listEl.querySelectorAll(".sf-approve").forEach((btn) => {
+    btn.addEventListener("click", () => _sampleFeedbackAction(btn, "approve"));
+  });
+  listEl.querySelectorAll(".sf-reject").forEach((btn) => {
+    btn.addEventListener("click", () => _sampleFeedbackAction(btn, "reject"));
+  });
+}
+
+async function _sampleFeedbackAction(btn, action) {
+  const id = btn.dataset.sfId;
+  if (!id) return;
+  if (action === "reject" && !window.confirm("이 피드백을 거부합니다. (sample_queries 에 반영되지 않습니다)")) return;
+  const row = document.querySelector(`[data-sf-row="${id}"]`);
+  if (row) row.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  try {
+    await apiFetch(`/api/admin/sample-feedback/${encodeURIComponent(id)}/${action}`, { method: "POST", body: "{}" });
+    // 처리된 항목 제거 + 재렌더(낙관적 제거 후 목록 정합).
+    adminState.sampleReview.items = adminState.sampleReview.items.filter((it) => String(it.id) !== String(id));
+    renderSampleFeedbackList();
+    if (typeof showToast === "function") {
+      showToast(action === "approve" ? "샘플 쿼리(KB)로 승급했습니다." : "피드백을 거부했습니다.");
+    }
+  } catch (err) {
+    if (row) row.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    if (typeof showToast === "function") showToast((err && err.message) || "처리 실패", true);
+  }
 }
 
 /* ── TASK-0205/0207: 데이터소스 관리 pane (CRUD, 자격증명 DB 암호화 저장) ─────────────
@@ -8444,6 +8558,12 @@ async function initialize() {
   if (archiveRefreshBtn && !archiveRefreshBtn.dataset.bound) {
     archiveRefreshBtn.dataset.bound = "1";
     archiveRefreshBtn.addEventListener("click", () => loadArchivedConversations());
+  }
+  // TASK-20260623T090440-sample-feedback-curation: 샘플 검수 새로고침.
+  const sampleReviewRefreshBtn = $("sampleReviewRefreshBtn");
+  if (sampleReviewRefreshBtn && !sampleReviewRefreshBtn.dataset.bound) {
+    sampleReviewRefreshBtn.dataset.bound = "1";
+    sampleReviewRefreshBtn.addEventListener("click", () => loadSampleFeedback());
   }
   const archiveSearch = $("archiveSearch");
   if (archiveSearch && !archiveSearch.dataset.bound) {

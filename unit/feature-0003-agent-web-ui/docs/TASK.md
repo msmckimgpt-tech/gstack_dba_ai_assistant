@@ -8,7 +8,19 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260623T031910-ai-claude-ds-conn-bg-decouple (current cycle) — 관리 콘솔 > 제품: 데이터소스 연결확인을 동기 render 경로에서 백그라운드로 분리 (REQ-20260623-ds-conn-bg-decouple, Major §12.3)
+## TASK-20260623T090440-sample-feedback-curation (current cycle) — 답변 피드백 → 샘플쿼리 KB 환류 flywheel (web 층, ROADMAP dba-ai-nl2sql ITEM-03, REQ-20260623-0333, AC-0612·0613, Major §12.3 — 보안 경계)
+- **PLAN-APPROVED** (사용자, 2026-06-23). 임무: ROADMAP dba-ai-nl2sql ITEM-03(피드백→KB 환류 flywheel 의 web 층)을 feature-0003 worktree 에 구현. 코어(feature-0002 `modules.sample_feedback`)는 재사용(재구현 금지) — web 은 RBAC/audit/scope/cross-DB conn 분리 경계만.
+- 등급: **Major §12.3 — 보안 경계(신규 RBAC `kb.sample.curate`)**. 신규 RBAC = 보안 표면 → 메인 세션이 적대적 security 리뷰 후 마감(본 cycle 은 구현+단위검증+verify+commit/push 까지).
+- [x] 신규 RBAC `kb.sample.curate`(group kb, label "샘플 검수/승급") — PERMISSION_DEFINITIONS 추가. admin seed 자동 보유 / operator·sales·pending 미부여. 종속성 console.access.
+- [x] 사용자 피드백 endpoint POST `/api/conversations/{cid}/sample-feedback`(대화 접근 검증 + ds-scope 도출(`_conversation_scope_key`: pinned product→_resolve_product_insight_scope.scope, 폴백 'common') + PG `record_feedback` + best-effort audit `sample.feedback.submit`). body {vote,suggested,nl_question,generated_sql?}.
+- [x] 검수 큐 admin endpoints 3종(RBAC kb.sample.curate): GET `/api/admin/sample-feedback`(list_pending_feedback, RO PG) · POST `/api/admin/sample-feedback/{id}/approve`(promote_feedback, audit `sample.feedback.approve`, sample_id=None→409) · POST `/api/admin/sample-feedback/{id}/reject`(reject_feedback, audit `sample.feedback.reject`). PG(작업)+memory(auth/audit) conn 분리, PG write autocommit=False(원자성). 승급=명시 호출만(자동학습 금지).
+- [x] UI: `app.js` 답변 말풍선 👍/👎/"샘플 등록" 버튼(클릭→적재 POST, 성공 시 비활성). `admin.js`+`admin.html` "샘플 검수" 탭(ADMIN_TAB_PERMISSIONS["sample-review"]=["kb.sample.curate"] + 큐 + 승인/거부). kb 그룹 메타(GROUP_ORDER/LABELS·ADMIN_PERMISSION_SECTIONS·PERMISSION_DEPENDENCIES). cache-buster 갱신.
+- [x] 테스트 `tests/test_sample_feedback_curation.py` 15케이스(R1·R2 카탈로그/seed · S1~S3 미보유 403+코어 미호출 · U1 404 · U2 적재+audit · A1~A3 승급/409/거부+audit · L1 직렬화 · SC1 scope). 라이브 DB 불요(FakeConn/monkeypatch — test_insight_reset.py mock 패턴 답습). 15/15 PASS.
+- [x] 회귀: test_permission_dependency_map.py(신규 deps 자동검증)·test_insight_reset.py·test_audit_rbac.py·test_admin_me_rbac.py PASS. full feature-0003+0002 suite 회귀 0(사전존재 실패 9건=product-delete·share-redaction 은 baseline stash 비교로 무관 확인). node --check + CSS brace balanced + py_compile.
+- [ ] unit 문서(TASK/MODIFY/FUNCTION/ANCHOR/REVIEW) → verify-completion --pre-commit PASS → commit + push(auto-sync).
+- [ ] **남은 마감(메인 세션)**: 적대적 security 리뷰(신규 RBAC 경계) · PB-0008(Windows-browser UI 실렌더) · PR 생성·머지·배포. (본 cycle 범위 밖)
+
+## TASK-20260623T031910-ai-claude-ds-conn-bg-decouple — 관리 콘솔 > 제품: 데이터소스 연결확인을 동기 render 경로에서 백그라운드로 분리 (REQ-20260623-ds-conn-bg-decouple, Major §12.3)
 - 보고(사용자, /_template:entry, 2026-06-23): `관리 콘솔 > 제품 > [각 항목]` 진입 시 연결이 불안정한 데이터소스 항목에 접근하면, 해당 데이터소스 연결이 timeout 될 때까지 나머지 UI 갱신이 진행되지 않음. → 모든 연결 확인을 백그라운드로 처리하고, 내부 UI 갱신 중 서비스 내부로 작동하는 부분과 분리.
 - 등급: **Major §12.3** — 관리 콘솔 동작 변경 + async 리팩터(다중 파일). read-side 조회(DB 목록 열거)라 인증/데이터/스키마 영향 0 → Critical 아님.
 - 범위 결정(AskUserQuestion, 사용자 2026-06-23): **전체 분리(Layer 1+2)** — 이벤트 루프 차단 해소 + 백그라운드 conn_health 캐시 게이트 + 프론트 비차단 렌더/캐시 배지.

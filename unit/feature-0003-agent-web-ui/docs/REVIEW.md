@@ -3563,3 +3563,20 @@ source_of_truth: true
 - 적발 경위: 본 cycle(REV-20260623T030418) PB-0008 라이브 검증에서 bootstrap_admin quota.read=false → 게이트 전환 후 admin lockout 확인(DB WebRolePermissions RoleId=3 quota.read=0). outside-voice 가 "admin seed=set(PERMISSION_CODES)" 는 확인했으나 기존 배포 row 의 retroactive 미적용(catchup 필요)은 정적 리뷰로 미검출 — PB-0008 의 가치.
 - 검증: test_llm_usage_quota.py 16/16(B13 catchup 소스 가드) + make test 회귀 0. 화면 정본=재PB-0008.
 - Cross-ref: CHG-20260623T053000-ai-claude-quota-admin-catchup / TASK-20260623T030418-quota-rbac-permission / AC-0610.
+
+## REV-20260623T090440-sample-feedback-curation [SUBAGENT:item03-impl-selfcheck]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T090440-sample-feedback-curation (답변 피드백 → 샘플쿼리 KB 환류 flywheel 의 web 층, ROADMAP dba-ai-nl2sql ITEM-03), **Major §12.3 — 보안 경계(신규 RBAC `kb.sample.curate`)**.
+- 리뷰어: 구현 subagent 본인의 self-check(item03-impl-selfcheck). **자기 구현에 대한 self-review 는 적대성 한계가 있음**(작성자 편향 — 같은 가정을 공유하면 누락도 공유). 따라서 본 entry 는 **마감 verdict 가 아니라 구현 자체 점검 + 메인 세션 적대 리뷰 예정 명시**다.
+- Self-check(구현자 관점, 확인된 것):
+  - **RBAC 게이트 위치**: 검수 endpoint 3종(GET/approve/reject) 모두 `_require_permission(request, conn, "kb.sample.curate")` 가 작업(코어 호출) **이전**에 실행 — 미보유 시 403 후 즉시 return, 코어(list/promote/reject) 미호출(테스트 S1~S3 가 코어 호출 부재까지 단언). 사용자 적재는 `_account_can_access_conversation`(read.own/any) 게이트로 타 대화 적재 차단(U1=404).
+  - **cross-DB conn 분리**: 적재/승급/거부=PG(`_pg_connect`/`_pg_connect_ro`), auth/audit=memory(`_connect_memory`) — 각 conn 은 별도 try/finally 로 close. PG write 는 autocommit=False + 명시 commit/rollback(원자성). audit 실패는 best-effort(작업 성공을 막지 않음, fail-open) — submit 은 user-endpoint 패턴, approve/reject 는 작업 성공 후 별도 memory conn.
+  - **poisoning 방어**: 승급은 명시 호출(approve)만 — 사용자 적재는 pending 까지. 👎/비-pending 승급 시도는 코어가 None 반환 → 409(audit 미기록, A2 가 단언). generated_sql PII 마스킹은 코어 record_feedback 책임(web 무가공 전달).
+- **self-check 한계(메인 적대 리뷰가 봐야 할 잠재 표면)**:
+  - scope_key 도출(`_conversation_scope_key`)이 'common' 폴백을 쓴다 — 무권한/오분류 product 의 피드백이 'common' 스코프로 섞일 가능성(검색 오염 측면)은 정적 self-check 로 단정 못 함. 검수 단계가 사람 게이트라 즉시 위험은 낮으나 적대 검토 필요.
+  - 사용자 적재 endpoint 가 대화 **열람자**(read.own/any, 발화 권한 없는 그룹 멤버 포함)에게 열려 있음 — 의도된 설계(피드백은 열람자도)이나, 대량 적재(spam/DoS)·scope 오염 벡터는 rate-limit 부재. 적대 리뷰에서 abuse 표면 점검 권장.
+  - generated_sql/nl_question 길이 상한(100k/8k)·마스킹은 코어 의존 — 코어 마스킹 우회(특수 PII 패턴) 여부는 feature-0002 책임이나 경계 신뢰 가정은 적대 검토 대상.
+  - UI(app.js 버튼·admin.js 탭)는 jsdom/headless 미검증 — **실렌더 정본=PB-0008(Windows-browser)**, 메인 세션 마감.
+- **마감 예정(메인 세션)**: 신규 RBAC=보안 표면이므로 **메인 세션이 적대적 security 리뷰(privilege-escalation·access-control 누출·cross-DB·scope 오염·abuse 표면) 를 별도 수행 후 마감**한다. 본 cycle 산출물은 구현+단위검증(15/15)+verify+commit/push 까지.
+- 검증: test_sample_feedback_curation.py 15/15 + 인접 RBAC/audit 회귀 0(test_permission_dependency_map·insight_reset·audit_rbac·admin_me_rbac) + full suite 회귀 0(사전존재 9건 baseline 무관) + node --check + py_compile + CSS brace 1454.
+- Cross-ref: CHG-20260623T090440-ai-claude-sample-feedback-curation / REQ-20260623-0333 / AC-0612·0613 / ROADMAP dba-ai-nl2sql ITEM-03.
