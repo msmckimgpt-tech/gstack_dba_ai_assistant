@@ -131,7 +131,8 @@ def ensure_dek(mem_conn) -> "tuple[int, bytes] | None":
 # ── 레지스트리 (DB + .env 병합) ───────────────────────────────────────────────
 def _row_to_ds(mem_conn, row) -> "dict | None":
     """WebDatasources row → datasource dict(password 복호 포함). 복호 실패 시 None(그 키만 skip)."""
-    # row: (DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion[, InsightEnabled])
+    # row: (DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion
+    #       [, InsightEnabled[, Description[, DomainTags]]])  — 뒤 3개는 구 스키마 graceful.
     key = str(row[0]).strip().lower()
     password = ""
     enc = row[5]
@@ -158,6 +159,10 @@ def _row_to_ds(mem_conn, row) -> "dict | None":
         "default_db": (str(row[6]).strip() if row[6] else None),
         # TASK-0215: insight-worker 탐색 토글(컬럼 부재 구 스키마는 True 로 간주 — 기존 동작 보존).
         "insight_enabled": (bool(int(row[8])) if len(row) > 8 and row[8] is not None else True),
+        # ITEM-04: datasource 비즈니스 컨텍스트(멀티DS 그라운딩·DS picker 주입). 구 스키마(컬럼 부재)는 None/[].
+        "description": (str(row[9]).strip() if len(row) > 9 and row[9] else None),
+        "domain_tags": ([t.strip() for t in str(row[10]).split(",") if t.strip()]
+                        if len(row) > 10 and row[10] else []),
         # TASK-0219: 라벨(key)과 분리된 안정 스코프 키(엔드포인트 해시). fact/RAG 스코핑 식별자.
         "scope_key": compute_scope_key(engine, host, port),
         "_source": "db",
@@ -165,18 +170,34 @@ def _row_to_ds(mem_conn, row) -> "dict | None":
 
 
 def _db_datasource(mem_conn, key: str) -> "dict | None":
-    cur = mem_conn.cursor()
-    try:
-        cur.execute(
-            "SELECT DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, EncryptionVersion, InsightEnabled "
-            "FROM WebDatasources WHERE DatasourceKey=%s AND IsActive=1 LIMIT 1",
-            (str(key).strip().lower(),),
-        )
-        row = cur.fetchone()
-    except Exception:
-        return None  # 테이블 부재 graceful
-    finally:
-        cur.close()
+    k = str(key).strip().lower()
+    _cols_ext = ("DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, "
+                 "EncryptionVersion, InsightEnabled, Description, DomainTags")
+    _cols_legacy = ("DatasourceKey, Engine, Host, Port, DbUser, PasswordEnc, DefaultDb, "
+                    "EncryptionVersion, InsightEnabled")
+    # ITEM-04: Description/DomainTags 포함 SELECT 우선, 구 스키마(컬럼 부재) 면 legacy 폴백.
+    # 각 시도는 fresh cursor(실패-후-재실행 상태오염 회피). 둘 다 실패=테이블 부재 → None(.env 폴백).
+    row = None
+    _last_exc = None
+    for _cols in (_cols_ext, _cols_legacy):
+        cur = mem_conn.cursor()
+        try:
+            cur.execute(
+                f"SELECT {_cols} FROM WebDatasources WHERE DatasourceKey=%s AND IsActive=1 LIMIT 1",
+                (k,),
+            )
+            row = cur.fetchone()
+            _last_exc = None
+            break  # 성공
+        except Exception as exc:
+            _last_exc = exc  # 컬럼/테이블 부재 또는 transient → 다음 시도
+            row = None
+        finally:
+            cur.close()
+    if _last_exc is not None:
+        # 두 SELECT 모두 실패(테이블 부재 또는 transient). missing-column 은 legacy 가 잡으므로
+        # 여기 도달은 테이블 부재/transient — 진단 로그 후 .env 폴백(REV MINOR).
+        _log.debug("datasource_db_read_failed key=%s err=%r — .env 폴백", k, _last_exc)
     # row 가 8 컬럼(정상 WebDatasources) 아니면 None → .env 폴백(테이블 부재·stub conn 방어).
     if not row or len(row) < 8:
         return None

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260623T101031-ds-business-context (current cycle) — ITEM-04 데이터소스 비즈니스 컨텍스트 필드 (Minor §12.3, ROADMAP dba-ai-nl2sql)
+- 출처: `docs/improvements/dba-ai-nl2sql/ROADMAP.md` ITEM-04(P1, feature-0002-agent-core primary, feature-0003 schema cross-ref). `/_dqa:improve_cycle` 드레인 — Minor 자율 진행.
+- what: `WebDatasources` 에 `Description`(TEXT)·`DomainTags`(VARCHAR plaintext) 추가 → registry 병합(`_row_to_ds`) → 멀티DS 그라운딩 프롬프트 주입(어느 datasource 가 무슨 사업데이터인지 LLM 라우팅 그라운딩).
+- acceptance: AC-1640 멀티DS 질문에서 datasource 설명이 그라운딩 프롬프트에 노출 · AC-1641 단일DS 제품 무영향 · AC-1642 구 스키마 graceful(컬럼 부재 시 None/[]) · AC-1643 verify-completion PASS.
+- [x] feature-0002: `datasources._db_datasource`(Description/DomainTags SELECT + 구 스키마 legacy 폴백, fresh-cursor·진단로그) + `_row_to_ds`(매핑, len-가드 graceful) + `tools._DatasourceRouter.describe()`(노출, 좌표/비밀 비노출) + `agent_core._format_multi_ds_grounding()`(헬퍼 추출·설명/도메인 주입).
+- [x] feature-0003 (schema cross-ref): `app.py` WebDatasources CREATE + 멱등 ALTER 로 Description/DomainTags 컬럼(InsightEnabled 선례 미러).
+- [x] 단위테스트 `test_datasource_business_context.py` 7(매핑/graceful/describe 비밀비노출/그라운딩 설명노출/단일DS 빈문자열/설명생략) + multi_datasource 회귀 36 = 43 통과. py_compile.
+- [x] 적대 backend 리뷰 REV-20260623T101031 **SHIP**(BLOCKER/MAJOR 0; MINOR 진단로그 흡수).
+- [ ] **write-path(admin UI/API 로 Description/DomainTags 편집) follow-up** → ITEM-11(거버넌스 포탈, 메타데이터 편집 허브)에서. 현재는 nullable·SQL 로 설정 가능, read-side graceful.
+- verify-completion PASS. worktree `ai/claude/feature-0002-agent-core`.
+
 ## TASK-20260619T172843-eval-harness (current cycle) — ITEM-01 NL→SQL 평가 harness (Major §12.3, ROADMAP dba-ai-nl2sql)
 <!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-19 -->
 - 출처: `docs/improvements/dba-ai-nl2sql/ROADMAP.md` ITEM-01(P0 측정기반, feature-0002-agent-core). `/_dqa:improve_cycle` 드레인 — Major 항목 plan-review 사용자 승인 후 구현.

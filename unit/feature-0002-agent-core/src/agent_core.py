@@ -2468,6 +2468,39 @@ def _resolve_product_datasources(mem_conn, product_id) -> "list[dict]":
     return out if len(out) >= 2 else []
 
 
+def _format_multi_ds_grounding(ds_desc: "list[dict]") -> str:
+    """멀티 datasource grounding 프롬프트 섹션 조립(_DatasourceRouter.describe() 산물 → 시스템
+    프롬프트 텍스트). 좌표/비밀번호는 노출하지 않는다(라벨·엔진·접근DB·비즈니스 설명·도메인만).
+
+    ITEM-04: 각 datasource 의 비즈니스 설명(Description)·도메인 태그(DomainTags)를 노출해 LLM 이
+    "이 datasource 가 무슨 사업데이터인가"를 알고 올바른 대상으로 라우팅하도록 그라운딩한다.
+    빈 입력이면 "" 반환(단일DS/미바인딩 제품 무영향)."""
+    if not ds_desc:
+        return ""
+    lines = ["\n\n## ACCESSIBLE DATASOURCES (multi-datasource)\n"]
+    lines.append(
+        "이 제품은 여러 데이터소스에 연결돼 있다. 각 도구(execute_sql/describe_table/…) 호출 시 "
+        "`datasource` 인자에 아래 **라벨**을 넣어 대상을 고른다(미지정 시 기본=primary). 한 질문이 "
+        "여러 데이터소스를 참조하면 도구를 데이터소스별로 나눠 호출하라. 데이터소스 간 직접 JOIN 은 "
+        "불가하다(각각 조회 후 결과를 합쳐 분석).\n"
+    )
+    for d in ds_desc:
+        eng = str(d.get("engine") or "mysql")
+        schemas = d.get("schemas") or []
+        tag = " (기본/primary)" if d.get("is_primary") else ""
+        dbs = ", ".join(f"`{s}`" for s in schemas) if schemas else "(접근 가능 DB 미설정)"
+        line = f"- **{d.get('label')}**{tag} — 엔진 {eng}, 접근 가능 DB: {dbs}"
+        # ITEM-04: 비즈니스 컨텍스트 — 어느 datasource 가 무슨 사업데이터인지 라우팅 그라운딩.
+        desc = (str(d.get("description") or "")).strip()
+        dtags = d.get("domain_tags") or []
+        if desc:
+            line += f"\n  - 설명: {desc}"
+        if dtags:
+            line += f"\n  - 도메인: {', '.join(str(t) for t in dtags)}"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
 # ══════════════════════════════════════════════════════════════════
 #  메인 에이전트 루프
 # ══════════════════════════════════════════════════════════════════
@@ -2913,21 +2946,7 @@ def _run_agent_core(
             _ds_desc = _ds_router.describe()
         except Exception:
             _ds_desc = []
-        if _ds_desc:
-            _lines = ["\n\n## ACCESSIBLE DATASOURCES (multi-datasource)\n"]
-            _lines.append(
-                "이 제품은 여러 데이터소스에 연결돼 있다. 각 도구(execute_sql/describe_table/…) 호출 시 "
-                "`datasource` 인자에 아래 **라벨**을 넣어 대상을 고른다(미지정 시 기본=primary). 한 질문이 "
-                "여러 데이터소스를 참조하면 도구를 데이터소스별로 나눠 호출하라. 데이터소스 간 직접 JOIN 은 "
-                "불가하다(각각 조회 후 결과를 합쳐 분석).\n"
-            )
-            for d in _ds_desc:
-                _eng = str(d.get("engine") or "mysql")
-                _schemas = d.get("schemas") or []
-                _tag = " (기본/primary)" if d.get("is_primary") else ""
-                _dbs = ", ".join(f"`{s}`" for s in _schemas) if _schemas else "(접근 가능 DB 미설정)"
-                _lines.append(f"- **{d.get('label')}**{_tag} — 엔진 {_eng}, 접근 가능 DB: {_dbs}")
-            system_content += "\n".join(_lines) + "\n"
+        system_content += _format_multi_ds_grounding(_ds_desc)
 
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:

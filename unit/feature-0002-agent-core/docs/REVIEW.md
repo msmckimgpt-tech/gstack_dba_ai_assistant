@@ -1051,3 +1051,14 @@ source_of_truth: true
 - 핵심 정직성: **measured generation accuracy 는 스택 Bedrock 인증 다운(2026-06-19 IAM 제거)으로 미산출** — harness 코드/단위 검증 완료, 라이브 수치는 자격증명 복구 후 `make eval`. 0.0 은 환경 탓(harness 결함 아님).
 - Verification: pytest 스모크 14/14(정규화/equiv/retrieval P·R/read-only 가드[+OUTFILE/LOAD_FILE/REPLACE]/CSV 리더/golden 무결성) + fixture 멱등 provision + expected_sql ground-truth 라이브 검산 일치 + harness end-to-end 실행→리포트(JSON+MD)+회귀 산출. py_compile.
 - Cross-ref: CHG-20260619T172843-eval-harness / REQ-20260619-1601 / AC-1601~1605 / ROADMAP dba-ai-nl2sql ITEM-01.
+
+## REV-20260623T101031-ds-business-context [SUBAGENT:ds-business-context-adversarial-backend]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T101031-ds-business-context (ROADMAP ITEM-04 datasource 비즈니스 컨텍스트 필드), **Minor §12.3**.
+- Trigger: §18.8 — schema/migration/datasource keyword → backend dispatch. 적대적 코드리뷰(general-purpose outside voice, REFUTE: 폴백 정합/인덱싱/하위호환/보안/스키마).
+- VERDICT: **SHIP** (BLOCKER 0, MAJOR 0).
+- REFUTED(clean): ①`_db_datasource` fresh-cursor 폴백 정합(autocommit·unbuffered 라 실패 후 재실행 안전, break 로직 정확 — ext 성공-무행이 legacy 불필요한 경우 올바르게 break). ②`_row_to_ds` len-가드 IndexError 없음·DomainTags split 공백/빈조각 정확 제거·구 스키마 None/[] 정확. ③하위호환: 그라운딩은 `elif _multi_ds_list`(≥2 바인딩)에서만 → **단일DS 무영향 confirmed**; `.env` DATASOURCES dict 는 `.get()` 라 KeyError 없음. ④`describe()` 좌표/비밀번호 **비노출 confirmed**. ⑤멱등 ALTER try/except 안전 + CREATE/ALTER 양처 중복-안전(InsightEnabled 선례).
+- 흡수한 MINOR: `_db_datasource` 가 두 SELECT 모두 실패(테이블 부재/transient) 시 silent → **debug 진단 로그 추가**(missing-column 은 legacy 가 흡수하므로 도달=테이블부재/transient).
+- 수용(문서화): ①DS Description 은 admin-authored directive 라 attachment/tool-result 와 달리 datamark 미적용(label/schemas 와 동일 — 의도적 신뢰 채널; write 경로 admin RBAC 게이트). ②**write-path 미포함** — Description/DomainTags 편집 admin UI/API 는 ITEM-11(거버넌스 포탈) follow-up. 컬럼 nullable·read-side graceful 라 read 배관만 먼저 랜딩 안전.
+- Verification: test_datasource_business_context.py 7/7 + multi_datasource 회귀 36 = 43 통과 + py_compile(datasources/tools/agent_core/app). 라이브 그라운딩 e2e 는 LLM 의존(bedrock-auth 복구 후) — 본 cycle 은 프롬프트 조립 문자열 단위검증으로 acceptance 충족.
+- Cross-ref: CHG-20260623T101031-ds-business-context / REQ-20260623-1604 / AC-1640~1643 / ROADMAP dba-ai-nl2sql ITEM-04.
