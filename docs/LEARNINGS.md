@@ -26,6 +26,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Mistake: `surface-card` 요소를 세로로 쌓으면 콘텐츠 총 높이 > 100vh가 되어 페이지 전체 스크롤이 발생한다. 이는 AI 채팅 앱에서 치명적인 UX 결함이다.
 - Correct approach: `app-shell`을 `100vh grid`로 고정하고, 스크롤은 메시지 목록(`.messages { flex:1; overflow-y:auto }`) 영역에만 허용한다. 나머지 영역(topbar, sidebar, composer)은 고정 높이/flex-shrink:0으로 처리한다.
 
+### LRN-20260623-0001 — fingerprint 알고리즘을 바꾸면(casefold 등) 반드시 fp backfill 을 동반해야 — 안 그러면 전수 통찰 재생성 폭주
+- Source: TASK-0305 RC2 (insight fingerprint casefold) 라이브 배포 (2026-06-23)
+- verified: true
+- Mistake: insight-worker 의 schema/table fingerprint 해시 함수(`_compute_schema_fingerprint`/`_compute_table_fingerprints_batch`)에 casefold 정규화를 추가해 배포했더니, **기존에 저장된 8,833개 fingerprint 가 전부 새 해시와 불일치** → 도달가능 datasource 의 모든 테이블이 `reason=fingerprint_changed` 로 판정돼 LLM 재생성(cutover)이 시작됐다. 도달가능분만 ~1,979 테이블 × ~수 시간 + ~2,000 LLM 호출 + 그동안 cutover cycle 이 길어(>180s heartbeat 임계) 워커 health=unhealthy. 코드는 정확했지만 데이터 마이그레이션을 빠뜨린 것이 incident 를 유발.
+- Correct approach: fingerprint(또는 해시 키) 계산식을 바꾸는 변경은 **반드시 1회성 backfill 을 동반**한다 — 기존 artifact 는 그대로 두고, 새 알고리즘으로 fingerprint 만 재계산해 KV(`schema_fp:*`/`table_fp:*`)에 덮어쓰면 워커가 "unchanged" 로 skip 해 재생성이 0 이 된다. backfill 은 워커의 **동일 함수**(`_compute_*_fingerprint` + `ds_fact_key`/`ds_object_suffix` + `_save_fingerprint`)와 동일 datasource 컨텍스트(`set_active_datasource`/`set_active_database`)로 작성해야 키·값이 정확히 일치한다(샘플 stored==recomputed 검증 필수). 검증법: 배포 후 `tables_generated` 가 급증하면 cutover 발생 신호 — 즉시 backfill. 도달불가 datasource 는 backfill 대상 아님(어차피 재생성 안 됨).
+- Trade-off: backfill 의 downside 는 낮다(키가 틀리면 무효과일 뿐 무해, 라이브 워커와 병행해도 같은 값 저장이라 수렴). casefold 자체의 benefit(log_v2 같은 케이스 진동 churn ~132s/일 제거)은 작으므로, 기존 fingerprint 가 대량(수천)인 환경에선 "casefold + backfill" 을 한 세트로 계획해야 비용 역전이 안 난다.
+
 ## Category: pattern
 
 ### LRN-20260605-0001 — DB cutover 의 read-back 누락은 워커뿐 아니라 "사용자 대면 grounding 경로"까지 조용히 무력화한다
@@ -254,6 +261,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Anti-pattern (주의): "버튼 클릭 = 즉시 backend POST" 모델은 단순하지만 사용자가 실수로 누르거나 마음을 바꾸면 빈 entity 가 남는다. 또한 destructive cleanup (NOT EXISTS subquery 로 빈 row 삭제) 으로 보정하면 §12.1 사람 승인이 필요한 작업으로 격상된다 — 신규 누적 차단을 client-side lazy 로 해결하는 것이 비용/위험이 가장 낮다.
 - Trade-off: lazy create 단계 호출이 timeout/네트워크 오류로 실패하면 backend 가 cid 를 만들었는데 client 는 모르는 buried orphan 케이스가 1 발생 가능. 이는 사이드바 새로고침으로 visible 하게 되므로 데이터 유실은 아니지만 사용자 혼란 가능 — 실패 토스트가 "재시도/사이드바 새로고침" 을 명시해 회복 경로를 안내한다.
 - Applies to: 모든 "신규 entity 생성" UX. 특히 LLM 요청처럼 시간이 오래 걸리거나 사용자가 의도를 확정 전에 버튼만 눌러볼 가능성이 있는 흐름. PATCH race 가드 같은 mutation 보호 로직과는 자연스럽게 호환된다 (cid 가 발급되기 전엔 PATCH 가 불가하므로).
+
+### LRN-20260623-0002 — insight-worker 의 "DB 파악 진전 없음" 은 권한(GRANT)보다 네트워크 단절이 지배적일 수 있다 — 사유 telemetry 없이 단정 금지
+- Source: TASK-0305 진단 + RC5 라이브 배포 (2026-06-23)
+- verified: true
+- Pattern: insight-worker 가 등록 datasource 다수를 스캔 못 해 `db_failed` 가 크고 status=degraded 일 때, 코드 주석/직관은 "RO 로그인 per-DB GRANT 누락(perm)" 을 가장 흔한 원인으로 가리킨다(실제로 `bin/datasource-mssql-ro-bootstrap*.sql` 힌트도 그렇다). 그러나 라이브 검증 결과 이 배포에서는 **실패의 100%가 `circuit_open`/`timeout`(네트워크 도달 불가)이고 perm 은 0** 이었다(kr-apne2 지역·내부 QA 망 datasource 가 며칠째 down). GRANT 는 단 하나도 못 고치고, timeout 서버엔 접속이 안 돼 GRANT 실행조차 불가능하다.
+- 진단 원칙: db_failed 가 크면 **먼저 사유 분포를 본다** — RC5 가 cycle summary 에 `db_failed_perm`/`db_failed_circuit`/`db_failed_other` 를 노출하고, `agent_runtime.datasource_health.last_scan_outcome`(+`last_error_tag`)에 datasource 별 분류가 영속된다. `perm_failed` 만 GRANT 대상, `circuit_open`/`timeout` 은 네트워크/인프라(터널·방화벽·원격 서버 상태)이며 코드·DB 권한으로 해결 불가. 사유 telemetry 가 없던 게 이 오진을 가능케 한 관측성 공백이었고(RC5 가 메움), 배포 즉시 진실이 드러났다.
+- Applies to: insight 커버리지/완료율 정체 진단 전반. "스캔 실패 = GRANT 문제" 로 점프하지 말고 perm vs network 를 먼저 가른다.
 
 ## Category: quirk
 

@@ -1129,3 +1129,13 @@ source_of_truth: true
 - **Flag(범위 밖·기존 drift)**: schema.sql:68 texts + kb_backend.py:940 주석이 stale vector(1536)(정본 alembic 0001 texts=1024). 동작 무관(라이브/정본 1024)하나 fresh-install bootstrap 정합 cleanup 권장 — 별도 follow-up.
 - Verification: 라이브 pg16 0015 적용 + 1024 register→search sim=1.0 + test_sample_flywheel 12 회귀 0 + py_compile.
 - Cross-ref: CHG-20260623T163242-sample-embed-dim-1024 / ROADMAP dba-ai-nl2sql ITEM-02.
+
+## REV-20260623T170000-task0305-followup-docs [SKIPPED:docs-only-no-code]
+- Date: 2026-06-23
+- Cycle: TASK-0305 후속 (라이브 배포 검증 정정 + 교훈 기록), **docs-only(런타임 코드 0)**.
+- Trigger: §18.8 panel 비대상 — code 변경 없음(LEARNINGS/REPORT/TASK/MODIFY/wiki 문서만). 라이브 배포 검증 자체가 1차 증거(실측 review).
+- VERDICT: **SHIP** (docs 정확성 정정, 런타임 영향 0).
+- 근거(라이브 실측, 본 cycle): sudo 배포 후 RC5 cycle summary `db_failed:38 perm:0 circuit:38 other:0` + `agent_runtime.datasource_health` down 12개 전부 circuit_open/timeout → 축 A 가 GRANT(perm) 아니라 네트워크임을 확정. fingerprint backfill 후 샘플 stored==recomputed 10/10 일치 + tables_generated 0 복귀 + 통찰 8,833/238 무손실.
+- 정정 내용: 머지 docs 의 "축 A=GRANT 지배" 서술에 라이브 정정(=네트워크) 추가(이력 보존), 교훈 LRN-20260623-0001/0002 영속, wiki §5 진단 순서 보강.
+- Verification: docs-only — 빌드/테스트 무관. 정정의 사실 근거는 위 라이브 실측.
+- Cross-ref: CHG-20260623T170000-task0305-followup-docs / TASK-0305.
