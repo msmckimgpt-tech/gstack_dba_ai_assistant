@@ -521,3 +521,38 @@ FUNCTION.md AC-0600~0601. **인증 변경은 §3 의 사람 승인 대상** — 
   보장이 필요하면 별 cycle 에서 single-use(서버 nonce) 도입.
 - TOTP 코드는 30초 step 내 재사용 가능(RFC 표준·산업 관행).
 - KEK 부재 시 Enabled=1 계정은 fail-closed(로그인 2단계 통과 불가) — 관리자 강제 해제로 복구.
+
+## 17. Google Drive 연동 토큰 저장 (feature-0010, TASK-20260623T190000-gdrive-foundation)
+
+각 계정이 본인 Google Drive 를 연결하는 멀티테넌트 연동의 인증 토대. **본 cycle 은 "연동 미수행"
+범위 — 구조만 구축하고 기본 비활성**(외부 Google 호출 0건). 활성화·외부배포는 §3(승인 필요 변경)에
+따라 사람 승인. 정합 정본 = feature-0010 FUNCTION.md AC-0001~0006.
+
+### 17.1 비파괴 기본 비활성 (secure-by-default OFF)
+- `WEB_GDRIVE_ENABLED=0`(기본) 또는 client_id/secret/redirect_uri 미설정 → `_gdrive_configured()=False`
+  → `/api/integrations/google-drive/{connect,callback}` 은 404(런타임 인증 경로 무영향). status/disconnect
+  는 로그인 게이트 후 항상 가용. docker-compose `gdrive-mcp` 서비스는 profile `gdrive` 미지정 시 미기동.
+- 로그인 OAuth(§15)와 **별개 레이어** — Drive 는 drive scope + `access_type=offline`(refresh_token) +
+  계정별 토큰 영속 저장. 같은 GCP 클라이언트 공유 가능(WEB_GDRIVE_CLIENT_ID 비우면 §15 값 fallback).
+
+### 17.2 토큰 저장 (envelope 암호화)
+- `WebGoogleDriveTokens`: 계정별 `AccessTokenEnc`/`RefreshTokenEnc`(평문 미저장) + 만료/scope/연결상태.
+- `cred_crypto`(DEK 를 KEK 로 wrap, AESGCM, **AAD=`gdrive:{account_id}`**) — TOTP(§16)/datasource(§6) 동형.
+  AAD 로 계정간 암호문 재사용 차단. KEK(`.env.secret`) 부재 시 저장 fail-closed(토큰 미저장).
+- client_secret 등 자격증명은 `.env.oauth`(gitignore) — **web 서비스만** inherit(OAuth 교환 수행). `gdrive-mcp`
+  서비스는 `.env`(비-secret)만 inherit — seam(A)에서 MCP 서버는 client_secret 이 아닌 계정별 user 토큰을
+  호출시 주입받으므로 client_secret 불필요(§6.1 least-privilege). `/status` 는 메타데이터만(토큰값/암호문 비노출).
+
+### 17.3 흐름 + CSRF/교차연동 방어
+- connect: PKCE(S256) + 서명 state(개시 계정 `aid` 포함) + 단명 bind 쿠키(httponly/samesite=lax/secure).
+- callback: state 서명/TTL + bind 쿠키 일치 + **개시 계정 == 현재 로그인 계정** 강제(교차 연동 차단) →
+  백채널 TLS code→token 교환 → 암호화 저장. 모든 라우트 `_get_authenticated_account` 귀속(본인 계정 한정).
+
+### 17.4 알려진 한계 — 활성화/배포 전 강화 TODO
+- (a) access_token 만료 시 **refresh_token 회전** 미구현(`gdrive_mcp_seam.refresh_access_token`=TODO).
+- (b) disconnect 는 **로컬 토큰 삭제만** — Google **revoke endpoint 백채널** 호출 미구현(외부 토큰은
+  Google 측 만료까지 유효).
+- (c) id_token/access_token **서명(JWKS) 검증** 미강화(§15.3 와 동일 — 백채널 TLS+claim 으로 토대 방어).
+- (d) per-account MCP seam(A): 활성화 시 **Authorization 헤더 로그 마스킹** + scope(drive.readonly 기본,
+  쓰기 승격 시 사람 재승인) 보장 필요.
+- (e) state HMAC 비밀(`WEB_OAUTH_STATE_SECRET`) 미설정 시 프로세스 기동마다 임의값(멀티워커 영속 X).

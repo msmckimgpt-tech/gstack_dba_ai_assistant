@@ -393,6 +393,40 @@ services:
       mysql:
         condition: service_healthy
 
+  # === Google Drive MCP (feature-0010, SCAFFOLD — 연동 미수행 / 기본 비활성) ============
+  # TASK-20260623T190000-gdrive-foundation. profile 'gdrive' 미지정 시 기동 안 함(기본 배포 무영향).
+  # 각 계정이 본인 Drive 에 연결하는 멀티테넌트 연동의 MCP 서버 자리표. 단일 자격증명 서버가
+  # 아니라 per-account 토큰 주입(seam A)을 쓴다 — 정본:
+  #   unit/feature-0010-google-drive-integration/docs/DECISIONS.md (ADR seam A)
+  #   unit/feature-0010-google-drive-integration/src/gdrive_mcp_seam.py
+  # 활성화는 operator opt-in(GDRIVE_MCP_IMAGE/GDRIVE_MCP_CMD 지정 + SECURITY.md §16 강화 TODO 충족).
+  gdrive-mcp:
+    image: ${GDRIVE_MCP_IMAGE:-alpine:3.20}
+    profiles: ["gdrive"]
+    restart: "no"
+    logging: *default-logging
+    mem_limit: 512m
+    pids_limit: 256
+    # env_file = .env(비-secret GDRIVE_MCP_* 만). seam(A)에서 MCP 서버는 client_secret 이 아니라
+    # 계정별 user access_token 을 호출시 주입받으므로 .env.oauth(client_secret) 불필요(least-privilege).
+    # 활성화 cycle 에서 서버가 client 자격증명을 요구하면 그때 `- path: .env.oauth`/`required: false` 추가.
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ}
+      GDRIVE_MCP_ENABLED: ${GDRIVE_MCP_ENABLED:-0}
+      GDRIVE_MCP_PORT: ${GDRIVE_MCP_PORT:-8090}
+      GDRIVE_MCP_CMD: ${GDRIVE_MCP_CMD:-}
+    # 토대 placeholder — GDRIVE_MCP_CMD 미지정 시 안내만 출력 후 종료(비상주). operator 가 실제
+    # Drive MCP 서버 커맨드를 지정하면 bin/gdrive-mcp.sh 가 기동(런처 동형 경로).
+    command:
+      - /bin/sh
+      - -c
+      - "echo '[gdrive-mcp] SCAFFOLD (feature-0010 토대): GDRIVE_MCP_CMD 미지정 — 미기동. 활성화는 docs/DECISIONS.md(seam A) + bin/gdrive-mcp.sh 참조'; exit 0"
+    networks: [dbnet]
+    # 활성화 시(HTTP MCP): 에이전트가 GDRIVE_MCP_URL=http://gdrive-mcp:${GDRIVE_MCP_PORT} 로 접근.
+    # 호스트 포트 노출(ports)은 사내망 한정 — 필요 시 operator 가 추가.
+
   web:
     <<: *agent-common
     restart: unless-stopped

@@ -9,12 +9,11 @@ last_updated: 2026-06-23
 2026-06-23
 
 ## Key Recent Facts
-- 06-19~23 완료: 사용자 보안 보강 6종(공유만료·로그인제한·감사변조방지·LLM한도·인젝션방지·2FA), 그룹대화 feature-0009(멤버십·@assistant·열람≠발화·라이브UX), NL→SQL flywheel(eval·few-shot·self-reflection·glossary).
+- feature-0010 신설(토대): 계정별 Google Drive 연동 인증 구조 + MCP 구성. `WebGoogleDriveTokens`(cred_crypto AAD=gdrive:{account_id}) + connect/callback/status/disconnect(flag OFF→404) + gdrive-mcp seam A. 연동 미수행/비활성/외부호출 0.
 
 ## Recent Changes
-- doc-sync(/_template:entry): 릴리즈노트 06-23 블록 + wiki(feature-0009 카드·overview·nl2sql-flywheel concept·Log) + STATUS 06-20~23 rollup + ARCHITECTURE 기능맵(0007~0009).
+- app.py(feature-0003) 인라인 인증 코드 + bin/gdrive-mcp.sh + docker-compose gdrive-mcp(profile gdrive) + src/gdrive_mcp_seam.py + .env.oauth/.env + SECURITY §16 + ARCHITECTURE 기능맵(0010).
 
 ## Active Threads
-- insight-worker(TASK-0305): RC5 배포 후 db_failed_perm 으로 GRANT 대상 특정 → 운영 GRANT 적용(1차 해결).
-- NL2SQL: titan 임베딩 복구 후 ITEM-01 harness 로 few-shot 효과 A/B 측정.
-- 그룹대화 S5(run cap·actor 귀속)·S6(스레드) deferred.
+- feature-0010 활성화 cycle 이월: 라이브 토큰교환·refresh 회전·Google revoke·설정 UI·mcp_client seam 배선.
+- insight-worker(TASK-0305) GRANT 적용 · NL2SQL few-shot A/B.
