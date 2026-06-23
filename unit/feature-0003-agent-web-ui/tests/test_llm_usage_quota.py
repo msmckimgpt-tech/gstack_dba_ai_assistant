@@ -109,10 +109,13 @@ def test_b8_admin_endpoints():
     for fn in ("admin_list_quotas", "admin_set_role_quota", "admin_set_account_quota"):
         assert hasattr(app, fn), fn
     role_src = inspect.getsource(app.admin_set_role_quota)
-    assert "console.manage" in role_src
+    # TASK-20260623T030418-quota-rbac-permission: console.manage → quota.manage(조절 전용 권한).
+    #   outside-voice MAJOR-2 흡수: "조절은 조회 종속" 서버 집행 → quota.read + quota.manage 동시 요구.
+    assert "quota.manage" in role_src and "quota.read" in role_src and "console.manage" not in role_src
     assert "_quota_upsert" in role_src
     assert "quota.role.update" in role_src
     acct_src = inspect.getsource(app.admin_set_account_quota)
+    assert "quota.manage" in acct_src and "quota.read" in acct_src and "console.manage" not in acct_src
     assert "quota.account.update" in acct_src
     upsert_src = inspect.getsource(app._quota_upsert)
     assert "ON DUPLICATE KEY UPDATE" in upsert_src
@@ -133,6 +136,53 @@ def test_b10_quota_exposed_in_serialization():
     assert "WebAccountTokenQuotas" in fetch and "quota_daily" in fetch
     ser = inspect.getsource(app._serialize_account)
     assert '"quota_daily"' in ser and '"quota_monthly"' in ser
+
+
+def test_b11_quota_permissions_registered():
+    # TASK-20260623T030418-quota-rbac-permission: 전용 권한 2종(조회/조절) 카탈로그 등재 + group=quota.
+    assert "quota.read" in app.PERMISSION_CODES
+    assert "quota.manage" in app.PERMISSION_CODES
+    qmap = {d["code"]: d for d in app.PERMISSION_DEFINITIONS if d["code"].startswith("quota.")}
+    assert qmap["quota.read"]["group"] == "quota"
+    assert qmap["quota.manage"]["group"] == "quota"
+    # admin seed(=set(PERMISSION_CODES))는 신규 권한 자동 보유 → lockout 없음.
+    admin_perms = {r["key"]: r["permissions"] for r in app.SEED_ROLE_DEFINITIONS}["admin"]
+    assert "quota.read" in admin_perms and "quota.manage" in admin_perms
+    # 기본 비-admin seed(operator/sales/pending)는 미보유(least-privilege).
+    by_key = {r["key"]: r["permissions"] for r in app.SEED_ROLE_DEFINITIONS}
+    for k in ("operator", "sales", "pending"):
+        assert "quota.read" not in by_key[k] and "quota.manage" not in by_key[k]
+
+
+def test_b12_quota_strip_helper_and_gates():
+    # 직렬화 strip 헬퍼: quota.read 미보유 actor 에 한도 필드 제거.
+    assert hasattr(app, "_strip_quota_fields_if_unpermitted")
+    strip_src = inspect.getsource(app._strip_quota_fields_if_unpermitted)
+    assert '"quota.read"' in strip_src
+    assert 'pop("quota_daily"' in strip_src and 'pop("quota_monthly"' in strip_src
+    # 엔드포인트들이 strip 헬퍼 + 조회 게이트를 호출.
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_accounts)
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_roles)
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_me)
+    # outside-voice MAJOR-1 흡수: PATCH 응답(include_permissions=True)도 strip — account.update 만으로 한도 열람 우회 차단.
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_update_account)
+    # GET /api/admin/quotas 는 quota.read 게이트.
+    assert "quota.read" in inspect.getsource(app.admin_list_quotas)
+
+    # 실 동작: list/dict 양형 + 보유 시 무변경.
+    # _account_has_permission → _account_permissions 는 account["permissions"](code→bool) 를 읽는다.
+    no_quota = {"permissions": {"console.access": True, "account.read": True, "quota.read": False}}
+    with_quota = {"permissions": {"console.access": True, "quota.read": True}}
+    rows = [{"id": 1, "quota_daily": 100, "quota_monthly": 200}]
+    app._strip_quota_fields_if_unpermitted(rows, no_quota)
+    assert "quota_daily" not in rows[0] and "quota_monthly" not in rows[0]
+    rows2 = [{"id": 2, "quota_daily": 5, "quota_monthly": 6}]
+    app._strip_quota_fields_if_unpermitted(rows2, with_quota)
+    assert rows2[0].get("quota_daily") == 5 and rows2[0].get("quota_monthly") == 6
+    # 단건 dict 도 지원.
+    single = {"quota_daily": 9, "quota_monthly": 9}
+    app._strip_quota_fields_if_unpermitted(single, no_quota)
+    assert "quota_daily" not in single and "quota_monthly" not in single
 
 
 # ── F: frontend ─────────────────────────────────────────────────────────────
@@ -157,3 +207,31 @@ def test_f1_admin_quota_ui_relocated():
     assert ".admin-quota-daily\").value" in js and "note.textContent = opts.inheritNote" in js
     html = _read_static("admin.html")
     assert "quotaRolesBox" not in html and "quotaAcctSaveBtn" not in html
+
+
+def test_f2_quota_permission_ui_gating():
+    # TASK-20260623T030418-quota-rbac-permission: 섹션 표시=quota.read, 편집=quota.manage(readOnly).
+    js = _read_static("admin.js")
+    # 상세 섹션 게이트가 quota.read 로 전환(구 console.manage/account.update 게이트 제거).
+    assert 'can("quota.read")' in js
+    # 편집 가능 여부 = quota.manage(없으면 readOnly).
+    assert "readOnly: !can(\"quota.manage\")" in js
+    # buildQuotaEditor 가 readOnly 분기(입력 disable + 저장 버튼 미렌더) 지원.
+    assert "const readOnly = Boolean(opts.readOnly)" in js
+    assert "dailyInput.disabled = true" in js
+    # 종속성 맵: quota.read→console.access, quota.manage→quota.read.
+    assert '"quota.read": "console.access"' in js
+    assert '"quota.manage": "quota.read"' in js
+    # 그룹 메타 등재.
+    assert 'quota: "LLM 사용 한도"' in js
+    assert '"quota"' in js  # PERMISSION_GROUP_ORDER / 섹션 groups 배열
+
+
+def test_f3_permission_dependency_map_consistency():
+    # admin.js PERMISSION_DEPENDENCIES 의 quota.* key/value 가 실제 권한 code 와 정합.
+    js = _read_static("admin.js")
+    codes = set(app.PERMISSION_CODES)
+    assert "quota.read" in codes and "quota.manage" in codes
+    # console.usage.read(사용량 집계 조회)와 quota.read(한도 조회)는 별개 권한 — 혼동 금지.
+    assert "console.usage.read" in codes
+    assert "quota.read" != "console.usage.read"

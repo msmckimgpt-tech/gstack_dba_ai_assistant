@@ -98,6 +98,7 @@ ai_read_priority: 4
   `_select_llm_provider()` helper 가 paired tuple 로 결정. provider URL 만
   설정 + key 미설정 시 silent misroute 차단 (다음 provider 로 fallback).
 - ~~본 cycle 범위 외: per-user / per-role token quota (배포 후 별 cycle).~~ **→ 구현 완료 (TASK-20260619T030500-llm-usage-quota, 2026-06-19)**: `WebRoleTokenQuotas`(역할 기본)+`WebAccountTokenQuotas`(계정 특수) daily/monthly 토큰 한도 + `/api/ask` 사전 게이트(초과 429, fail-open, 미설정=무제한). 정합 정본 = feature-0003 FUNCTION.md AC-0596~0599.
+  - **한도 조회/조절 전용 권한 (TASK-20260623T030418-quota-rbac-permission, 2026-06-23)**: 한도 관리를 `console.manage` 에서 분리해 `quota.read`(조회)·`quota.manage`(조절, read 선행) 전용 권한으로 위임. 백엔드 게이트 GET `/api/admin/quotas`=quota.read·PUT role/account=quota.manage, 직렬화 노출도 quota.read 없으면 strip(`_strip_quota_fields_if_unpermitted`). UI 는 quota.read 없으면 한도 섹션 미렌더, quota.manage 없으면 readOnly. `console.usage.read`(사용량 *집계* 조회)와 별개 — quota.read 는 한도 *설정값* 조회. **이행 주의(least-privilege)**: admin 은 seed 전권으로 무영향이나, console.manage 만 가진 커스텀 역할은 quota.read/manage 를 명시 부여해야 한도 접근 가능(datasource.read/product.read 도입 선례 동형). 정합 정본 = AC-0610·0611.
 
 ## 7. Anonymous 접근 허용 경로 (allowlist)
 

@@ -4404,3 +4404,12 @@ source_of_truth: true
 - Verification: test_llm_usage_quota.py 11/11(F1 escapeHtml 부재 가드 추가) + node --check + outside-voice SHIP. 사전존재 실패 2건(product-delete·db_query_ux) 무관. 화면 정본=PB-0008.
 - Rollback: buildQuotaEditor DOM 주입 → escapeHtml 보간 복원(단 admin 페이지 재차 깨짐).
 - Deploy: web 재빌드(정적). cache-buster 갱신.
+
+## CHG-20260623T030418-ai-claude-quota-rbac-permission
+- Date: 2026-06-23 (계정별·역할별 LLM 사용 한도 조회/조절 전용 권한). 사용자 요청.
+- Scope: feature-0003 `src/app.py`(PERMISSION_DEFINITIONS +quota.read/quota.manage·GET quotas 게이트 quota.read·PUT role/account 게이트 **quota.read+quota.manage**·_strip_quota_fields_if_unpermitted 헬퍼 + admin_me/admin_accounts/admin_roles/**admin_update_account** 적용) + `src/static/admin.js`(PERMISSION_DEPENDENCIES·그룹 메타·buildQuotaEditor readOnly·역할/계정 상세 섹션 게이트) + `admin.html`(cache-buster) + tests.
+- 내용: LLM 사용 한도(역할 기본·계정 특수)의 조회/조절을 console.manage 에서 분리. quota.read(조회)·quota.manage(조절, read 선행) 전용 권한. 조회 권한 없으면 한도 섹션 미렌더 + 직렬화 노출 차단(GET·계정/역할 리스트·**PATCH 응답** 전부 strip). 조회만 있으면 readOnly(값 표시·편집 불가). **조절은 서버에서도 조회 종속 집행(PUT=quota.read+quota.manage)**. admin 무영향(seed 전권).
+- Why: 사용자 요청 — 한도 조회/조절을 역할·계정 단위로 위임 가능하게. 조절은 조회 종속.
+- Verification: test 18/18(B8 양권한 게이트·B11/B12 MAJOR 가드·F2/F3 신설) + deps map 자동검증 + make test 회귀 0 + node --check + py_compile + outside-voice SHIP-WITH-FIXES(2 MAJOR 흡수). 화면 정본=PB-0008.
+- Rollback: quota.read/manage 정의 + deps + 게이트 + strip 헬퍼 + readOnly 제거 → console.manage 게이트 복원.
+- Deploy: web 재빌드(정적+직렬화). **이행 주의**: console.manage 만 가진 비-admin 커스텀 역할은 quota.read/manage 명시 부여 필요(least-privilege).
