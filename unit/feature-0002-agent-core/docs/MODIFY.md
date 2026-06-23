@@ -1182,3 +1182,17 @@ source_of_truth: true
 - Files: src/modules/{datasources,tools}.py, src/agent_core.py, ../feature-0003-agent-web-ui/src/app.py(cross-ref schema), tests/test_datasource_business_context.py(신규), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
 - Rollback: SELECT/매핑/describe/grounding 추가분 제거(순수 additive, 구 스키마 graceful 라 컬럼 유지돼도 무해) + feature-0003 ALTER 는 nullable 컬럼이라 잔존 무해.
 - Deploy: web + ask-worker 재빌드(agent_core/datasources/tools baked + WebDatasources 부트스트랩 ALTER). write-path(admin UI) 는 ITEM-11 follow-up.
+
+## CHG-20260623T105344-kb-glossary-enum
+- Date: 2026-06-23 (TASK-20260623T105344-kb-glossary-enum — ROADMAP dba-ai-nl2sql **ITEM-10**, Major §12.3). `/_dqa:improve_cycle` 드레인, PLAN-APPROVED.
+- Scope: 용어사전 + ENUM 코드사전(semantic-lite) — agent_kb(PG) ds-scoped 저장 + 질문 매칭 프롬프트 주입. 구조부(저장+읽기+주입); 추출/UI/측정 보류.
+- 내용:
+  - `src/scripts/agent_kb_schema.sql` §8: `kb_glossary(id,scope_key,term,definition,…)` + `enum_dictionary(id,scope_key,schema_name,table_name,column_name,code,label,…)` (scope_key 컨벤션·UNIQUE·trgm/scope 인덱스·set_updated_at 트리거) + GRANT(agent_kb_rw/ro) 추가.
+  - `alembic/versions/20260623_0013_kb_glossary_enum_dictionary.py`(신규): head 0012→0013. UPGRADE(CREATE+INDEX+TRIGGER+GRANT, 멱등)/DOWNGRADE(DROP). 라이브 pg16 트랜잭션 dry-run 검증(ROLLBACK).
+  - `src/modules/kb_glossary.py`(신규): `upsert_glossary_term`/`upsert_enum_entry`(RW, ON CONFLICT) + `load_glossary_enum_context(user_message, scope_key, conn)`(RO, ds-scoped 매칭→프롬프트 본문). scope 미지정 시 **`cfg.get_active_datasource()`** 로 도출(멀티DS 격리).
+  - `src/agent_core.py` `_build_knowledge_context`: 매칭된 용어/ENUM 을 `## GLOSSARY & ENUM VALUES` 섹션에 `_datamark_untrusted`+펜스로 주입(table insights 뒤). 미매칭/미가용 무영향(try/except).
+- Why: ROADMAP ITEM-10(F-007) — 도메인 용어·상태코드 매핑 부재로 NL→SQL 이 코드값/약어 해석 실패. Wren 풀 semantic 은 기각, subset(용어+ENUM)만 채택.
+- Verification: `tests/test_kb_glossary_enum.py` 9(upsert SQL/매칭/조립/ds 격리/운영 default scope/미매칭·빈) + KB 회귀(read_backend·ingest) 26 통과 + py_compile + **라이브 pg16 DDL dry-run**(CREATE/index/trigger/GRANT/upsert/scoped-read→ROLLBACK). 적대 backend 리뷰 REV-20260623T105344(NO-SHIP→SHIP-WITH-FIXES, BLOCKER B1 흡수).
+- Files: src/scripts/agent_kb_schema.sql, alembic/versions/20260623_0013_kb_glossary_enum_dictionary.py(new), src/modules/kb_glossary.py(new), src/agent_core.py, tests/test_kb_glossary_enum.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
+- Rollback: 마이그 0013 downgrade(DROP 2 테이블) + kb_glossary.py/주입 블록 제거(주입은 try/except·미매칭 ""라 무해). 스키마 테이블은 미사용 시 잔존 무해.
+- Deploy: ask-worker + web 재빌드(agent_core baked) + 마이그 0013 적용(superuser, GRANT load-bearing). 등록 UI·추출은 ITEM-11 follow-up.
