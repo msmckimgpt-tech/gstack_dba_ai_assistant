@@ -45,6 +45,26 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
     작성.
 
 ## 3. Recent Changes
+- **CHG-20260623-0001** (2026-06-23): 개발 단계 LLM provider 임시 전환 — AWS Bedrock
+  → claude-corp Anthropic OAuth (회사 발급 Claude Team 계정 `masangsoft.com`). 배포 전
+  개발 운용 목적 (Bedrock API 키 / Console API key 미발급 상황). 변경: litellm_config.yaml
+  의 `claude-sonnet-4` / `claude-haiku-4` 를 `anthropic/` provider 로 전환 (배포용 Bedrock
+  라인은 주석 보존), `titan-embed` 비활성 주석 (Anthropic 임베딩 미제공 → KB 검색 보류,
+  최근 트래픽 0). `.env.bedrock` 에 `ANTHROPIC_API_KEY` (sk-ant-oat OAuth token) 주입 —
+  litellm 1.85.1 이 OAuth 토큰 감지해 `Authorization: Bearer` + `oauth-2025-04-20` 로 전송.
+  토큰 생명주기: claude-corp 의 VSCode Claude Code 가 access token 자동 refresh →
+  `bin/refresh-claude-oauth-token.sh` (host root cron 30분 주기) 가 `credentials.json` 의
+  최신 토큰을 게이트웨이에 반영 (토큰 변경 시에만 `up -d --force-recreate`). 검증: 앱 →
+  게이트웨이 → Anthropic (claude-corp 계정) HTTP 200 성공, thinking 정상.
+  ⚠ **개발용 임시** — 구독 OAuth 는 약관 / rate limit 상 서비스 운영 부적합. 전제: claude-corp
+  VSCode Claude Code 세션 유지 (토큰 refresh 주체).
+  **배포 복구 절차**: (1) litellm_config.yaml `model:` 주석 토글 (anthropic → bedrock 2줄),
+  (2) `.env.bedrock` 의 `AWS_BEARER_TOKEN_BEDROCK` 에 Bedrock 장기 API 키 채움, (3) `crontab`
+  에서 `refresh-claude-oauth` 라인 제거, (4) `docker compose up -d --force-recreate
+  bedrock-gateway`. git: `litellm_config.yaml`(M) + `bin/refresh-claude-oauth-token.sh`(신규)
+  는 환경 특정 개발 구성이라 commit 안 함 (로컬 유지). 선행 작업: 동 cycle 에서 의도치 않은
+  IAM access key (`mckim` AKIA…) 인증 경로 제거 → bearer 방식 전환 (`.env.bedrock` IAM 키
+  삭제). 기존 IAM 키 AWS 콘솔 Deactivate→Delete 는 사용자 후속.
 - **CHG-20260522-0001** (2026-05-22): codex review P1 fix — `/api/session` 의
   default_model fallback 3 사이트가 `os.getenv("OPENAI_MODEL", "auto")` →
   `os.getenv("OPENAI_MODEL", API_DEFAULT_MODEL)`. ship 직후 첫 사용자 turn
@@ -55,7 +75,7 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
 - **CHG-20260521-0001** (2026-05-21): AWS Bedrock LLM provider 통합 + API Vault
   전면 폐기. 18 파일 변경 (인프라 3 + backend 5 + frontend 3 + 정책 doc 3 +
   feature-0007 docs 4). py_compile + node --check + YAML schema PASS.
-- 총 변경 횟수: 3
+- 총 변경 횟수: 4
 
 ## 4. Open Issues
 - ~~**Claude 4.x 실 model ID 미확정**~~: **Phase E 검증으로 확정** —

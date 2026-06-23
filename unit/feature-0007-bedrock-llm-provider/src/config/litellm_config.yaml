@@ -26,8 +26,13 @@ model_list:
   # temperature 는 LiteLLM 내부에서 1로 고정 (Anthropic 요구사항).
   - model_name: claude-sonnet-4
     litellm_params:
-      model: bedrock/global.anthropic.claude-sonnet-4-6
-      aws_region_name: ap-northeast-2
+      # ── 개발 단계 (2026-06-23): claude-corp OAuth 계정(masangsoft.com)으로 Anthropic
+      #    direct 호출. ANTHROPIC_API_KEY 에 OAuth access token 주입 → litellm 이
+      #    sk-ant-oat 토큰을 감지해 Authorization: Bearer + oauth-2025-04-20 로 전송.
+      #    배포 시 아래 Bedrock 2줄(model/aws_region_name)로 주석 토글 복구. ──
+      model: anthropic/claude-sonnet-4-6
+      # model: bedrock/global.anthropic.claude-sonnet-4-6   # 배포용 (Bedrock)
+      # aws_region_name: ap-northeast-2                       # 배포용 (Bedrock)
       thinking:
         type: "enabled"
         budget_tokens: 16000
@@ -37,8 +42,10 @@ model_list:
   # extended thinking 을 지원한다. thinking 활성화 시 temperature 는 1로 고정.
   - model_name: claude-haiku-4
     litellm_params:
-      model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0
-      aws_region_name: ap-northeast-2
+      # 개발 단계 (2026-06-23): claude-corp OAuth → Anthropic direct. 배포 시 Bedrock 복구.
+      model: anthropic/claude-haiku-4-5
+      # model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0   # 배포용 (Bedrock)
+      # aws_region_name: ap-northeast-2                                   # 배포용 (Bedrock)
       thinking:
         type: "enabled"
         budget_tokens: 5000
@@ -48,6 +55,9 @@ model_list:
   # 는 Seoul region 접근 가능 확인(2026-06-02 boto3 probe, dim=1024). kb_embedding_worker
   # 가 본 alias 로 /v1/embeddings 호출 → LiteLLM 이 Bedrock 으로 라우팅. AGENT_KB_EMBEDDING_MODEL
   # =titan-embed, AGENT_KB_EMBEDDING_DIM=1024 (.env).
+  # ⚠ 개발 단계 비활성 (2026-06-23): Anthropic API 는 임베딩 미제공 → claude-corp OAuth
+  #   로 호출 불가. KB 벡터 검색(kb_retrieval)은 Bedrock 자격(AWS_*) 확보 후 복구.
+  #   현재 호출 시 credential 부재로 실패 — 단 최근 트래픽 0건이라 당장 영향 없음.
   - model_name: titan-embed
     litellm_params:
       model: bedrock/amazon.titan-embed-text-v2:0
