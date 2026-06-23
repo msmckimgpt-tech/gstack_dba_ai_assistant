@@ -3525,3 +3525,11 @@ source_of_truth: true
 - **수용(문서화)**: MINOR(console.manage 분리로 quota.manage 보유자가 console.manage/account.update 없이 한도 변경 가능=접근 확대) — 전용 위임 권한의 의도된 설계. 스톡 seed(operator/sales/pending) 미보유라 즉시 확대 없음·grant escalation 은 _enforce_override_self_scope 로 bound. MODIFY/SECURITY 이행주의 명시.
 - Verification: test_llm_usage_quota.py 18/18(B8 양권한·B11/B12 MAJOR 가드·F2/F3) + test_permission_dependency_map.py 자동검증 + make test 회귀 0 + node --check + py_compile. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260623T030418-ai-claude-quota-rbac-permission / REQ-20260623-0332 / AC-0610·0611 / SECURITY.md §6.
+
+## REV-20260623T053000-ai-claude-quota-admin-catchup [SKIPPED:idempotent-admin-catchup-no-new-gate-no-rbac-surface]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T030418-quota-rbac-permission follow-up (admin catchup lockout 수정), Major §12.3 후속.
+- Panel 생략 근거(§18.8): 신규 엔드포인트·게이트·RBAC 표면 변화 0. 기존 `_ensure_seed_roles` admin catchup 리스트(TASK-0288 datasource.read/manage·product.read 동형 선례)에 quota.read/quota.manage 2줄 추가(INSERT IGNORE 멱등 backfill). admin 은 정의상 set(PERMISSION_CODES) 전권 — catchup 은 그 invariant 복원이라 권한 확대 아님(seed 의도와 정합). 비-admin seed 무변경.
+- 적발 경위: 본 cycle(REV-20260623T030418) PB-0008 라이브 검증에서 bootstrap_admin quota.read=false → 게이트 전환 후 admin lockout 확인(DB WebRolePermissions RoleId=3 quota.read=0). outside-voice 가 "admin seed=set(PERMISSION_CODES)" 는 확인했으나 기존 배포 row 의 retroactive 미적용(catchup 필요)은 정적 리뷰로 미검출 — PB-0008 의 가치.
+- 검증: test_llm_usage_quota.py 16/16(B13 catchup 소스 가드) + make test 회귀 0. 화면 정본=재PB-0008.
+- Cross-ref: CHG-20260623T053000-ai-claude-quota-admin-catchup / TASK-20260623T030418-quota-rbac-permission / AC-0610.
