@@ -3307,6 +3307,87 @@ function _fillMsgIdenticon(av, seed) {
   av.innerHTML = identiconSvg(seed, 100);
 }
 
+// ── ITEM-03 (sample-feedback-curation): 답변 피드백 컨트롤(👍/👎/"샘플 등록") ──────────
+// assistant 답변에 부착. 클릭 → POST /api/conversations/{cid}/sample-feedback. 성공 시 비활성.
+// nl_question = 직전 user 메시지. generated_sql = 답변 본문의 첫 SQL 코드블록(best-effort, 서버가 PII 마스킹).
+function _extractSqlFromContent(content) {
+  const text = String(content || "");
+  // ```sql ... ``` 또는 ``` ... ``` 의 첫 코드블록.
+  const fenced = text.match(/```(?:sql)?\s*([\s\S]*?)```/i);
+  if (fenced && fenced[1] && fenced[1].trim()) return fenced[1].trim();
+  return "";
+}
+function _precedingUserQuestion(msgIdx) {
+  const msgs = Array.isArray(state.messages) ? state.messages : [];
+  for (let i = Math.min(msgIdx, msgs.length) - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m && m.role === "user" && String(m.content || "").trim()) {
+      return String(m.content).trim();
+    }
+  }
+  return "";
+}
+function _buildSampleFeedbackControls(message, msgIdx) {
+  const wrap = document.createElement("span");
+  wrap.className = "message-feedback";
+  const nlQuestion = _precedingUserQuestion(msgIdx);
+  const generatedSql = _extractSqlFromContent(message.content);
+  const cid = state.activeConversationId;
+
+  const status = document.createElement("span");
+  status.className = "message-feedback-status";
+
+  async function send(vote, suggested) {
+    if (wrap.dataset.done === "1") return;
+    if (!nlQuestion) {
+      showToast("이 답변에 연결된 질문을 찾지 못해 피드백을 보낼 수 없습니다.", true);
+      return;
+    }
+    wrap.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    try {
+      await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
+        method: "POST",
+        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql }),
+      });
+      wrap.dataset.done = "1";
+      status.textContent = suggested ? "샘플 등록 요청됨 (검수 대기)" : (vote === "up" ? "피드백 감사합니다 👍" : "피드백 감사합니다 👎");
+    } catch (error) {
+      wrap.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+      showToast((error && error.message) || "피드백 전송에 실패했습니다.", true);
+    }
+  }
+
+  const upBtn = document.createElement("button");
+  upBtn.type = "button";
+  upBtn.className = "message-action-btn message-feedback-btn";
+  upBtn.textContent = "👍";
+  upBtn.title = "이 답변이 도움이 되었습니다.";
+  upBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("up", false); });
+
+  const downBtn = document.createElement("button");
+  downBtn.type = "button";
+  downBtn.className = "message-action-btn message-feedback-btn";
+  downBtn.textContent = "👎";
+  downBtn.title = "이 답변이 부정확/불충분합니다.";
+  downBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("down", false); });
+
+  wrap.appendChild(upBtn);
+  wrap.appendChild(downBtn);
+
+  // "샘플 등록" — 좋은 질문↔SQL 쌍을 KB 후보로 제출(검수 큐 경유 승급). SQL 이 있을 때만 노출.
+  if (generatedSql) {
+    const sampleBtn = document.createElement("button");
+    sampleBtn.type = "button";
+    sampleBtn.className = "message-action-btn message-feedback-btn";
+    sampleBtn.textContent = "샘플 등록";
+    sampleBtn.title = "이 질문↔SQL 쌍을 샘플 쿼리(KB) 후보로 제출합니다. 검수 후 반영됩니다.";
+    sampleBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("up", true); });
+    wrap.appendChild(sampleBtn);
+  }
+  wrap.appendChild(status);
+  return wrap;
+}
+
 function renderMessages() {
   messageLogEl.innerHTML = "";
   const hasPendingBubble = Boolean(state.pendingBubble);
@@ -3335,7 +3416,7 @@ function renderMessages() {
 
   // REQ-20260518-0001: Slack 패턴 — 날짜 분기선 click 으로 캘린더 popover anchored 오픈.
   let lastDateKey = "";
-  state.messages.forEach((message) => {
+  state.messages.forEach((message, _msgIdx) => {
     const createdAt = message.created_at ? new Date(message.created_at) : null;
     if (createdAt && !isNaN(createdAt.getTime())) {
       const key = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, "0")}-${String(createdAt.getDate()).padStart(2, "0")}`;
@@ -3451,11 +3532,17 @@ function renderMessages() {
       bubble.appendChild(attachRow);
     }
 
-    // 말풍선 단위 분기 / 공유 버튼.
+    // 말풍선 단위 분기 / 공유 / 피드백 버튼.
     const canShareHere = can("conversation.share.create") && message.id != null;
-    if ((canFork && message.id != null) || canShareHere) {
+    // ITEM-03 (sample-feedback-curation): assistant 답변에 👍/👎 + "샘플 등록" 피드백 버튼.
+    // 적재 endpoint 는 대화 접근자면 누구나 가능(열람자 포함) → 게이트는 활성 대화 + assistant + id.
+    const canFeedbackHere = role === "assistant" && message.id != null && Boolean(state.activeConversationId);
+    if ((canFork && message.id != null) || canShareHere || canFeedbackHere) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
+      if (canFeedbackHere) {
+        actions.appendChild(_buildSampleFeedbackControls(message, _msgIdx));
+      }
       if (canFork && message.id != null) {
         const forkBtn = document.createElement("button");
         forkBtn.type = "button";

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260623-ds-conn-bg-decouple" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260623-sample-feedback-curation" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -61,6 +61,11 @@
         <!-- TASK-0273: 보관 대화 tab (conversation.archive.read.any 없으면 숨김) -->
         <button type="button" class="admin-tab" data-admin-tab="archives" id="adminTabArchives" style="display:none">
           <span class="admin-tab-label">보관 대화</span>
+        </button>
+
+        <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 샘플 검수 tab (kb.sample.curate 없으면 숨김) -->
+        <button type="button" class="admin-tab" data-admin-tab="sample-review" id="adminTabSampleReview" style="display:none">
+          <span class="admin-tab-label">샘플 검수</span>
         </button>
 
         <!-- TASK-0095: 설정 tab — 전역 시스템 프롬프트 + 차후 운영 항목 확장 -->
@@ -540,6 +545,25 @@
         </div>
       </section>
 
+      <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03):
+           피드백 → 샘플쿼리 KB 환류 flywheel 검수 큐. 권한 kb.sample.curate. 사용자 답변
+           피드백(👍/👎/"샘플 등록")으로 적재된 pending 항목을 검토해 KB(sample_queries)로
+           승급(approve)하거나 거부(reject)한다. 승급은 명시 검수만(자동학습 금지). -->
+      <section class="admin-pane" data-admin-pane="sample-review">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">KB Curation</div>
+            <h2>샘플 검수</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <span class="admin-list-count" id="sampleReviewCount" aria-live="polite"></span>
+            <button type="button" id="sampleReviewRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <p class="admin-archive-detail-note">사용자가 답변에 남긴 피드백(👍/👎 · "샘플 등록")이 검수 대기 큐에 쌓입니다. 검토 후 <strong>승인(KB 등록)</strong>하면 해당 질문↔SQL 쌍이 샘플 쿼리(sample_queries)로 승급되어 향후 답변 정확도에 반영됩니다. <strong>거부</strong>하면 반영되지 않습니다. 생성 SQL 의 개인정보(PII)는 적재 시점에 자동 마스킹됩니다. 승급은 명시 검수만 가능합니다(자동학습 없음).</p>
+        <div class="admin-list" id="sampleReviewList" role="list" aria-label="샘플 검수 대기 목록"></div>
+      </section>
+
       <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
            새 항목은 list row <button data-settings-tab="X"> + detail panel <article data-settings-panel="X"> 한 쌍 추가로 확장.
            panel 마운트는 admin.js 의 SETTINGS_PANEL_MOUNTERS 맵에 (key, mount fn) 등록. -->
@@ -630,7 +654,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260623-ds-conn-bg-decouple"></script>
+  <script src="/static/admin.js?v=20260623-sample-feedback-curation"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260623-rn-0623"></script>

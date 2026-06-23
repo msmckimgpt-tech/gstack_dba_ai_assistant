@@ -16,13 +16,15 @@ from modules.utils import _normalize_scope_key
 _log = logging.getLogger("sample_feedback")
 
 
-def _mask_sql(sql):
-    """generated_sql 의 PII(이메일·RRN·전화·IP·장숫자) 마스킹. kb_scope 미가용 시 원문(best-effort)."""
+def _mask_pii(text):
+    """PII(이메일·RRN·전화·IP·장숫자) 마스킹 — generated_sql·nl_question 공통(REV MINOR-1: 질문도
+    마스킹). kb_scope 미가용 시 원문 반환하되 **경고 로그**(REV NIT-1: silent fail-open PII 누출 방지)."""
     try:
         from modules.kb_scope import _mask_prose
-        return _mask_prose(str(sql or ""))
-    except Exception:
-        return str(sql or "")
+        return _mask_prose(str(text or ""))
+    except Exception as exc:
+        _log.warning("sample_feedback_pii_mask_unavailable err=%r — 원문 저장(PII 누출 위험)", exc)
+        return str(text or "")
 
 
 def record_feedback(conn, scope_key, nl_question, generated_sql, *, vote="up",
@@ -36,7 +38,7 @@ def record_feedback(conn, scope_key, nl_question, generated_sql, *, vote="up",
             "(scope_key, conversation_id, run_id, nl_question, generated_sql, vote, suggested, created_by) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (_normalize_scope_key(scope_key), conversation_id, run_id,
-             str(nl_question).strip(), _mask_sql(generated_sql), vote_n,
+             _mask_pii(str(nl_question).strip()), _mask_pii(generated_sql), vote_n,
              bool(suggested), created_by),
         )
     finally:
@@ -74,9 +76,13 @@ def promote_feedback(conn, feedback_id, *, approved_by=None, weight=100, domain=
 
     cur = conn.cursor()
     try:
+        # REV-…-item03-security MAJOR-2: FOR UPDATE 로 피드백 행 락 → 동시 approve 직렬화.
+        # 락 없으면 두 트랜잭션이 pending 을 동시 통과해 register_sample 2회(이중 승급/중복).
+        # 호출측(web approve endpoint)은 PG write conn(autocommit=False)이라 commit 까지 락 유지 →
+        # 두번째 트랜잭션은 여기서 대기 후 status!='pending' 보고 None 반환.
         cur.execute(
             "SELECT scope_key, nl_question, generated_sql, vote FROM sample_feedback "
-            "WHERE id = %s AND status = 'pending'",
+            "WHERE id = %s AND status = 'pending' FOR UPDATE",
             (int(feedback_id),),
         )
         row = cur.fetchone()
@@ -99,7 +105,7 @@ def promote_feedback(conn, feedback_id, *, approved_by=None, weight=100, domain=
         sample_id = int(srow[0]) if srow else None
         cur.execute(
             "UPDATE sample_feedback SET status = 'promoted', promoted_sample_id = %s, updated_at = now() "
-            "WHERE id = %s",
+            "WHERE id = %s AND status = 'pending'",  # 방어심층: 락+상태가드 이중 보호
             (sample_id, int(feedback_id)),
         )
         return sample_id
