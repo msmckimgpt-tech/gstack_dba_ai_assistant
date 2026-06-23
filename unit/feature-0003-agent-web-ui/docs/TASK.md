@@ -8,7 +8,29 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260619T120000-ai-claude-db-rule-pending-batch (current cycle) — 정규식 자동 규칙 편집을 pending → "모두 적용" 으로 재배선 (REQ-20260619-0331, AC-0609, Major §12.3 — 보안 경계)
+## TASK-20260623T031910-ai-claude-ds-conn-bg-decouple (current cycle) — 관리 콘솔 > 제품: 데이터소스 연결확인을 동기 render 경로에서 백그라운드로 분리 (REQ-20260623-ds-conn-bg-decouple, Major §12.3)
+- 보고(사용자, /_template:entry, 2026-06-23): `관리 콘솔 > 제품 > [각 항목]` 진입 시 연결이 불안정한 데이터소스 항목에 접근하면, 해당 데이터소스 연결이 timeout 될 때까지 나머지 UI 갱신이 진행되지 않음. → 모든 연결 확인을 백그라운드로 처리하고, 내부 UI 갱신 중 서비스 내부로 작동하는 부분과 분리.
+- 등급: **Major §12.3** — 관리 콘솔 동작 변경 + async 리팩터(다중 파일). read-side 조회(DB 목록 열거)라 인증/데이터/스키마 영향 0 → Critical 아님.
+- 범위 결정(AskUserQuestion, 사용자 2026-06-23): **전체 분리(Layer 1+2)** — 이벤트 루프 차단 해소 + 백그라운드 conn_health 캐시 게이트 + 프론트 비차단 렌더/캐시 배지.
+- 진단: ① `app.py admin_datasource_databases`(GET `/api/admin/datasources/{key}/databases`, 제품 항목 진입 시 `_refreshAccessibleDbs` 가 호출)가 **`async def` 안에서 동기 `_db.list_server_databases_classified()`**(live connect, db.py 기본 8s timeout)를 `asyncio.to_thread` 없이 호출 → **FastAPI 이벤트 루프 전체를 8s 블록** = 그동안 모든 요청 정지("나머지 UI 갱신 멈춤"의 정체). ② 같은 동기-블록이 `admin_preview_product_db_rule`(preview) + rule create/update 의 `_reconcile_one_db_rule`(둘 다 `async def` 에서 동기 호출)에도 존재. ③ 백그라운드 `conn_health` 모니터(TASK-0250, 캐시 3-state)가 이미 있는데 이 경로가 안 쓰고 매번 live connect + circuit breaker `should_fast_fail` 은 `down` 만 즉시실패·`unstable` 은 8s 대기.
+- 수정: (a) backend `app.py` — `admin_datasource_databases`: SSRF 후 `conn_health.status_for(ds)` 캐시 먼저 읽어 `unstable`/`down` 이면 live connect 생략·`{degraded:true, conn_status}` 즉시 반환(`?force=1` 시에만 실제 열거), 실제 열거는 `await asyncio.to_thread(...)` 로 오프로드 + 실패 시 `record_foreground_result(False)` 피드백. preview + rule create/update 의 reconcile 호출을 `await asyncio.to_thread(...)` 로 오프로드. (b) frontend `admin.js` — `_refreshAccessibleDbs(key, {force})` 가 `degraded` 응답 처리(빈 목록 + `_setAccessDbDegraded` 배너 "연결 불안정/끊김 — DB 목록 보류 + [새로고침]" → `?force=1` 재시도), 제품 상세는 기존대로 즉시 렌더(fire-and-forget). (c) `styles.css` `.admin-db-degraded-note`/`.admin-db-degraded-refresh`. **비변경**: `_reconcile_one_db_rule` 내부 로직(M3/M4/M5)·RBAC·스키마·엔드포인트 shape·conn_health 모듈·`/db-insights`(sync def → 이미 threadpool) 0.
+
+### §2.1 Implementation Plan (PLAN)
+- 영향 파일: `unit/feature-0003-agent-web-ui/src/app.py`(3 async 경로) · `src/static/admin.js`(`_refreshAccessibleDbs`+`_setAccessDbDegraded`) · `src/static/styles.css`(배너).
+- 변경 symbol: `admin_datasource_databases`, `admin_preview_product_db_rule`, `admin_create_product_db_rule`, `admin_update_product_db_rule`(app.py); `_refreshAccessibleDbs`/신규 `_setAccessDbDegraded`(admin.js).
+- 접근: 동기 live-connect 를 `asyncio.to_thread` 로 이벤트 루프 밖으로 + 렌더 경로(#1)는 백그라운드 `conn_health` 캐시 게이트로 불안정/끊김 시 connect 생략.
+- 완료 판정(acceptance):
+  1. 불안정/끊김 데이터소스 제품 항목 진입 시 다른 UI 갱신/요청이 8s 멈추지 않는다(이벤트 루프 비차단).
+  2. 불안정/끊김 데이터소스의 DB 목록 호출이 live connect 없이 캐시 상태로 즉시(<100ms) 반환된다(`degraded:true`).
+  3. `?force=1`(새로고침) 시에만 실제 열거를 시도하고, 그 connect 도 이벤트 루프 밖에서 수행된다.
+  4. 정상 데이터소스의 DB 목록 동작·기존 응답 shape(`databases`/`databases_classified`)는 무회귀(필드 추가만).
+- 위험도: Major §12.3.
+- 검증: `py_compile app.py` PASS · `node --check admin.js` PASS · CSS brace balance · conn_health 모니터 web startup 와이어링 + scope_key 정합 확인. (PB-0008 Windows-browser 시각검증은 배포 후.)
+- [x] 구현(backend `app.py` 3 async 경로 to_thread + `admin_datasource_databases` conn_health 캐시 게이트 + `?force=1`; frontend `admin.js` degraded 배너 + force 재시도; `styles.css` 배너; `admin.html` 캐시버스터) + `py_compile app.py`·`node --check admin.js`·CSS brace balance PASS.
+- [x] §18.8 적대적 검증 패널 → **SHIP**(REV-20260623T031910 [SUBAGENT:frontend-degraded-banner + AI-inline:backend-async-correctness]; frontend NO REAL ISSUES, backend inline 7축[conn 핸드오프·scope_key·startup·shape·foreground feedback·게이트·잔여 connect] 무결; minor a11y `role="status"` 반영).
+- [ ] verify-completion --pre-commit PASS → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(불안정 데이터소스 제품 진입 시 타 UI 비차단 + degraded 배너 + 새로고침 실열거).
+
+## TASK-20260619T120000-ai-claude-db-rule-pending-batch — 정규식 자동 규칙 편집을 pending → "모두 적용" 으로 재배선 (REQ-20260619-0331, AC-0609, Major §12.3 — 보안 경계)
 - 보고(사용자, /_template:entry, 2026-06-19): "관리 콘솔 내에서 작업되는 모든 변경은 pending 후 일괄적용으로 구성되도록 정책에 검증과정 명시 + 프로젝트 메모리 기억." + `관리 콘솔 > 제품 > [각 제품] > '데이터 소스 & 접근 가능 데이터베이스' > 정규식 자동 규칙` 수정 시 **별도 Pending 없이 즉시 반영**됨을 확인.
 - 등급: **Major §12.3** — 접근 가능 DB allowlist(보안 경계) 변경 경로 + 의도된 "안전 하이브리드(outside-voice B1)" 설계를 시정. 비파괴(스테이징 모델 추가, 엔드포인트/스키마 무변경).
 - 범위 결정(AskUserQuestion, 사용자 2026-06-19): **범위 A** — 규칙 *편집 동작*(추가/수정/삭제/승인)만 pending 화하고, 확정된 규칙의 *백그라운드 자동 동기화*(잦은 DB 변경 자동 반영, 과거 요청 기능)는 보존. (범위 B = allowlist 변경 전부 pending·자율성 제거 는 미채택.)

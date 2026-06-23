@@ -3608,6 +3608,33 @@ a { color: inherit; }
   color: var(--text-muted, #888);
 }
 
+/* ds-conn-bg-decouple: 연결 불안정/끊김으로 DB 목록 로드를 보류했을 때 picker 위 상태 배너. */
+.admin-db-degraded-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--danger, #dc2626);
+  background: rgba(220, 38, 38, .07);
+  border: 1px solid rgba(220, 38, 38, .25);
+  border-radius: 6px;
+}
+.admin-db-degraded-note > span { flex: 1 1 auto; min-width: 0; }
+.admin-db-degraded-refresh {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--danger, #dc2626);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--danger, #dc2626);
+  cursor: pointer;
+}
+.admin-db-degraded-refresh:hover { background: var(--danger, #dc2626); color: #fff; }
+.admin-db-degraded-refresh:disabled { opacity: .55; cursor: default; }
+
 /* TASK-0242: 추가 picker 항목 — [체크박스 · DB명(flex) · 도메인힌트 · 분석상태칩]. */
 .admin-db-picker-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-db-picker-domain {

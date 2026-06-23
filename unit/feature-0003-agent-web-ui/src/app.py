@@ -13698,6 +13698,7 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
     """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). datasource.read. SSRF 차단."""
     from modules import datasources as _dsr
     from modules import db as _db
+    from modules import conn_health as _ch
     try:
         conn = _connect_memory()
     except Exception:
@@ -13720,10 +13721,33 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
     okssrf, reason, _pin = _ssrf_check_host(ds.get("host"))
     if not okssrf:
         return _json_error(f"호스트 차단(SSRF): {reason}", 400)
+    # ds-conn-bg-decouple: 연결 확인을 동기 render 경로에서 분리한다. 백그라운드 conn_health
+    # 모니터가 미리 계산해 둔 상태를 먼저 읽어, unstable/down 이면 live connect(최대 8s 이벤트
+    # 루프 블록)를 시도하지 않고 캐시 상태만 즉시 반환한다 — 제품 항목 진입 시 다른 UI 갱신이
+    # 멈추지 않는다. 명시적 새로고침(?force=1)일 때만 실제 열거를 강제한다.
+    force = str(request.query_params.get("force") or "").strip().lower() in ("1", "true", "yes")
+    cached = _ch.status_for(ds) or {}
+    conn_status = cached.get("status") or _ch.UNKNOWN
+    if not force and conn_status in (_ch.UNSTABLE, _ch.DOWN):
+        return JSONResponse({
+            "key": str(key).strip().lower(),
+            "engine": ds.get("engine"),
+            "databases": [],
+            "databases_classified": [],
+            "conn_status": conn_status,
+            "degraded": True,
+        })
     try:
         # TASK-0206 §3.4: 시스템/사용자 DB 구분(`[{name, system}]`). UI 가 시스템 DB 는 고정칩으로.
-        classified = _db.list_server_databases_classified({**ds, "host": _pin})  # MAJOR-2: pinned IP
+        # 실제 DB 열거는 살아있는 연결이 필요 → 이벤트 루프 블로킹 방지 위해 to_thread 로 오프로드.
+        classified = await asyncio.to_thread(
+            _db.list_server_databases_classified, {**ds, "host": _pin})  # MAJOR-2: pinned IP
     except Exception:
+        # 실패를 conn_health 에 피드백 — 다음 요청이 즉시 캐시 상태로 fast-path(8s 재낭비 차단).
+        try:
+            _ch.record_foreground_result(ds, False, None, "list_databases_failed")
+        except Exception:
+            pass
         return _json_error("DB 목록 조회 실패(연결/권한 확인).", 502)
     # 하위호환: 기존 `databases`(사용자 DB 이름 배열) 유지 + 신규 `databases_classified`.
     user_names = [d["name"] for d in classified if not d.get("system")]
@@ -13732,6 +13756,8 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
         "engine": ds.get("engine"),
         "databases": user_names,
         "databases_classified": classified,
+        "conn_status": conn_status,
+        "degraded": False,
     })
 
 
@@ -21244,7 +21270,9 @@ async def admin_create_product_db_rule(product_id: int, key: str, request: Reque
             conn.rollback()
             return _json_error(f"audit write failed: {audit_exc}", 500)
         rule = _get_db_rule_by_id(conn, new_rule_id)
-        recon = _reconcile_one_db_rule(conn, rule, actor_account=account, can_manage=True, trigger="rule-save") if rule else {}
+        # ds-conn-bg-decouple: reconcile 는 live DB 열거(connect) 포함 → 이벤트 루프 밖(to_thread)에서.
+        recon = (await asyncio.to_thread(
+            _reconcile_one_db_rule, conn, rule, actor_account=account, can_manage=True, trigger="rule-save")) if rule else {}
         return JSONResponse({"ok": True, "rule_id": new_rule_id, "reconcile": recon})
     finally:
         conn.close()
@@ -21296,7 +21324,9 @@ async def admin_update_product_db_rule(product_id: int, key: str, rule_id: int, 
             conn.rollback()
             return _json_error(f"audit write failed: {audit_exc}", 500)
         fresh = _get_db_rule_by_id(conn, int(rule_id))
-        recon = _reconcile_one_db_rule(conn, fresh, actor_account=account, can_manage=True, trigger="rule-save") if fresh else {}
+        # ds-conn-bg-decouple: reconcile 는 live DB 열거(connect) 포함 → 이벤트 루프 밖(to_thread)에서.
+        recon = (await asyncio.to_thread(
+            _reconcile_one_db_rule, conn, fresh, actor_account=account, can_manage=True, trigger="rule-save")) if fresh else {}
         return JSONResponse({"ok": True, "reconcile": recon})
     finally:
         conn.close()
@@ -21364,7 +21394,9 @@ async def admin_preview_product_db_rule(product_id: int, key: str, request: Requ
             okssrf, _r, _pin = _ssrf_check_host(ds.get("host"))
             if not okssrf:
                 return JSONResponse({"ok": False, "error": "SSRF 차단", "matched": [], "new": []})
-            classified = _db.list_server_databases_classified({**ds, "host": _pin})
+            # ds-conn-bg-decouple: 명시적 dry-run preview 의 live connect 도 이벤트 루프 밖(to_thread)에서.
+            classified = await asyncio.to_thread(
+                _db.list_server_databases_classified, {**ds, "host": _pin})
         except Exception:
             return JSONResponse({"ok": False, "error": "DB 목록 조회 실패", "matched": [], "new": []})
         engine = str(ds.get("engine") or "mysql").strip().lower()

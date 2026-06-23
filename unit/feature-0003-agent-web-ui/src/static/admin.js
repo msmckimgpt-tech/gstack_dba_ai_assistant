@@ -7471,9 +7471,40 @@ function renderProductDetail() {
     });
   };
 
+  // ds-conn-bg-decouple: 연결 불안정/끊김으로 DB 목록 로드를 보류했을 때, picker 위에 상태
+  // 배너 + '새로고침'(force) 버튼을 노출/제거한다. 동기 연결확인이 UI 를 막지 않고, 사용자가
+  // 원할 때만 명시적으로 live connect 를 재시도(?force=1)하게 한다.
+  const _setAccessDbDegraded = (info) => {
+    const host = pickerWrap && pickerWrap.parentNode;
+    if (!host) return;
+    const prev = host.querySelector(".admin-db-degraded-note");
+    if (prev) prev.remove();
+    if (!info) return;
+    const note = document.createElement("div");
+    note.className = "admin-db-degraded-note";
+    note.setAttribute("role", "status");   // degraded 상태를 보조기술에 알림(서버 degraded 경로는 toast 없음).
+    const label = info.connStatus === "down" ? "연결 끊김" : "연결 불안정";
+    const span = document.createElement("span");
+    span.textContent = `데이터소스 ${label} — DB 목록 로드를 보류했습니다(연결 상태는 백그라운드에서 점검 중).`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "admin-db-degraded-refresh";
+    btn.textContent = "새로고침";
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      btn.textContent = "확인 중…";
+      _refreshAccessibleDbs(info.key, { force: true });
+    });
+    note.append(span, btn);
+    host.insertBefore(note, pickerWrap);
+  };
+
   // TASK-0206: 선택 datasource 의 DB 목록으로 접근가능 DB(고정 시스템칩 + 사용자 picker)을 갱신.
   // 등록 datasource 면 /databases(classified) 사용; 미바인딩이면 데이터 MySQL 기본값으로 환원.
-  _refreshAccessibleDbs = async (key) => {
+  // ds-conn-bg-decouple: 기본 호출은 백그라운드 conn_health 캐시 게이트를 통과한 응답(불안정/끊김이면
+  // degraded=true 로 즉시 반환 — live connect 안 함)을 받고, opts.force 시에만 ?force=1 로 실제 열거.
+  _refreshAccessibleDbs = async (key, opts = {}) => {
+    const force = !!(opts && opts.force);
     const ds = (adminState.datasources || []).find((d) => d.key === key);
     if (!key || !ds) {
       // 미바인딩(또는 미등록) → 데이터 MySQL 기본값.
@@ -7482,32 +7513,45 @@ function renderProductDetail() {
       dsCaseInsensitive = false;
       redrawChips();
       buildPicker();
+      _setAccessDbDegraded(null);
       _ensureDbInsights();   // TASK-0242: 기본(미바인딩) scope 의 DB 설명/상태 로드.
       return;
     }
     const isMssql = String(ds.engine || "mysql").toLowerCase() === "mssql";
     dsCaseInsensitive = isMssql;
+    let degraded = false, connStatus = null;
     try {
-      const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/databases`);
-      const classified = (r && r.databases_classified) || null;
-      const userDbs = classified ? classified.filter((d) => !d.system).map((d) => d.name) : ((r && r.databases) || []);
-      if (isMssql) {
-        // MSSQL: 시스템 DB(master/model/msdb)를 고정칩으로(catalog 접근 — sys 스키마는 런타임 차단).
-        lockedChips = classified
-          ? classified.filter((d) => d.system).map((d) => ({ name: d.name, present: true }))
-          : [];
+      const qs = force ? "?force=1" : "";
+      const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/databases${qs}`);
+      if (r && r.degraded) {
+        // 백그라운드 모니터가 불안정/끊김으로 판정 → 동기 열거 생략(다른 UI 갱신 비차단). 캐시 상태만.
+        degraded = true;
+        connStatus = r.conn_status || null;
+        lockedChips = isMssql ? [] : _defaultLocked.slice();
+        availableUserDbs = [];
       } else {
-        // MySQL: 메타데이터 4종(information_schema 등)을 고정칩으로 유지(DB==스키마, 시스템 스키마 경계).
-        lockedChips = _defaultLocked.slice();
+        const classified = (r && r.databases_classified) || null;
+        const userDbs = classified ? classified.filter((d) => !d.system).map((d) => d.name) : ((r && r.databases) || []);
+        if (isMssql) {
+          // MSSQL: 시스템 DB(master/model/msdb)를 고정칩으로(catalog 접근 — sys 스키마는 런타임 차단).
+          lockedChips = classified
+            ? classified.filter((d) => d.system).map((d) => ({ name: d.name, present: true }))
+            : [];
+        } else {
+          // MySQL: 메타데이터 4종(information_schema 등)을 고정칩으로 유지(DB==스키마, 시스템 스키마 경계).
+          lockedChips = _defaultLocked.slice();
+        }
+        availableUserDbs = userDbs;
       }
-      availableUserDbs = userDbs;
     } catch (e) {
       lockedChips = isMssql ? [] : _defaultLocked.slice();
       availableUserDbs = [];
+      degraded = true;   // 연결/권한 실패 — 재시도 affordance 유지.
       showToast("데이터소스 DB 목록 조회 실패 — 연결/권한 확인.", true);
     }
     redrawChips();
     buildPicker();
+    _setAccessDbDegraded(degraded ? { key, connStatus } : null);
     _ensureDbInsights();   // TASK-0242: 이 datasource scope 의 DB 설명/상태 로드(완료 시 재렌더).
   };
 
