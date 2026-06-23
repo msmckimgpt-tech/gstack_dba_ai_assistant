@@ -52,5 +52,16 @@ source_of_truth: true
 - Pass/Fail:
 - Notes:
 
+### Run 2026-06-23-gc-avatar-identicon
+- Date: 2026-06-23
+- Environment: Windows-browser
+- Runner: AI
+- Bridge: relay @ http://172.28.64.1:9223 (win-browser.py doctor ok=true, Windows Chrome/149.0.7827.116)
+- Scenario: `unit/feature-0003-agent-web-ui/tests/win-browser-avatar-identicon.scenario.json`
+- Evidence: `artifacts/pb0008-avatar-identicon/01_avatar_strip.png`, `02_conversation_avatars.png`
+- Result Summary: 그룹 대화 메시지 프로필 아바타 Identicon 정합 검증. `_msgAvatarEl` 기능 결과 — 무아바타 user=`identicon`(이전 맨 글자), 업로드 계정(id35)=`img:/api/avatars/35`(실제 이미지), assistant(auto)=`text:AI`(배지 유지). 실제 대화 열람 시 메시지 아바타 kinds=`[identicon, AI]`. 스크린샷 01: mckim2/mckim3/review_user01/admin/operator 모두 고유 컬러 Identicon, id35 실제 이미지, 좌하단 bootstrap_admin 프로필 Identicon 과 동일 렌더러로 정합.
+- Pass/Fail: **PASS**
+- Notes: 헤더/프로필 `applyAvatar()`+`identiconSvg()` 와 동일 시드 해시 → 같은 사용자는 어디서나 같은 아이콘. 실제 아바타 업로드 계정은 이미지 그대로 표시(회귀 없음).
+
 ## 4. Untested Areas
 - 아직 검증되지 않은 영역

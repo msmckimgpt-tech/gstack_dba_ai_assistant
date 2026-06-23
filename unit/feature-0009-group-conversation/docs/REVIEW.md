@@ -201,3 +201,12 @@ source_of_truth: true
 - 적발 NIT 3건(전부 cosmetic): (a) assistant 배지가 비-pinned 대화에서 "AI"→"A" → **수정함**(`_assistantLabel` 비-pinned 시 ""→`_msgAvatarEl` 이 "AI" 폴백, 기존 UI 보존). (b) `.is-mention-me` 의 `prefers-color-scheme: dark` 오버라이드는 앱이 고정 light 팔레트라 미세 불일치 — 무해, 유지. (c) `.message.is-mention-me .bubble` dead selector(실 클래스 `.message-bubble` 가 적용) — 무해, 유지.
 - Risks/Open: OS Notification 권한 거부/미지원 환경은 토스트로 graceful degrade(설계). 적응형 폴링 하한 1.5s 는 활성 대화 한정(idle 복귀 5s) — 부하 경미. 실 Windows 브라우저 상호작용(PB-0008)·멀티 유저 라이브 검증은 배포 후(ux1 동일 정책).
 - Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청, 패널 BLOCKING 없음).
+
+## REV-20260623-0018 [SUBAGENT: 그룹 대화 프로필 아바타 Identicon 정합(gc-avatar-identicon) §18.8 + PB-0008]
+- Related Change: CHG-20260623-0016
+- Risk Grade: **Minor** — 전부 프론트(app.js/styles.css/index.html + 테스트 시나리오) additive, 인증·인가·스키마·백엔드 무변경, 기존 엔드포인트(/api/avatars) 재사용. §12.3 Minor.
+- Reason: 사용자 보고 — 그룹 대화 메시지 프로필 아이콘이 실제 이미지가 아닌 "맨 글자". Root cause = 앱 전역 `applyAvatar`/`identiconSvg` 는 미업로드 시 Identicon 폴백인데 그룹챗 `_msgAvatarEl` 만 bare initial 폴백(불일치, 라이브 DB 로 확인: 37계정 중 1개만 아바타). 동일 Identicon 폴백으로 정합.
+- 패널 결과(adversarial subagent): **PASS-WITH-NITS, BLOCKING 없음**. 검증: ① XSS 안전 — `identiconSvg(seed)` 는 seed 를 `_identiconHash`(DJB2 숫자)로만 사용, raw username 이 SVG 마크업에 미삽입(제품칩/applyAvatar 와 동일 패턴). ② onerror 루프 없음 — img 1개 제거 후 SVG/텍스트 주입, svg 엔 error listener 없음. ③ 단일 호출부(3470) 5-arg 호환. ④ auto 모드(`_assistantSeed=""`+icon="") → "AI" 배지 유지. ⑤ CSS `.msg-avatar > svg` 가 22px 원형 채움, `.has-img` 가 SVG 가림 없음. ⑥ 실제 아바타 계정(id35) 회귀 없음(error 시에만 identicon). ⑦ `identiconSvg`/`_identiconHash` 무변경 → 헤더/프로필과 동일 시드=동일 아이콘(정합 목적 달성). NIT 2건(cosmetic, 무해 유지): assistant degenerate(product_key 빈 값) 시드 발산 / own-message 폴백 title 로컬라이즈.
+- **PB-0008 실측 검증(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-avatar-identicon.scenario.json` 실행 PASS. `_msgAvatarEl` 기능 — 무아바타 user=`identicon`, id35=`img:/api/avatars/35`, assistant(auto)=`text:AI`. 실제 대화 메시지 아바타 kinds=`[identicon, AI]`. 증거: `artifacts/pb0008-avatar-identicon/01_avatar_strip.png`(mckim2/mckim3/review_user01/admin/operator 고유 Identicon + id35 실제 이미지 + bootstrap_admin 프로필 Identicon 정합), `02_conversation_avatars.png`. TEST.md §3 Run 2026-06-23-gc-avatar-identicon 기록.
+- Risks/Open: 없음. 사용자 보고 결함 해소 + 실측 검증 완료.
+- Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청·PB-0008 PASS).
