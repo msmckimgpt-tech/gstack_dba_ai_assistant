@@ -542,6 +542,19 @@ AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").st
 AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
 AGENT_KB_EMBEDDING_TIMEOUT_SEC = int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60")
 AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
+# ITEM-05 (하이브리드 검색 — 벡터+키워드 score fusion). gate ON(기본) 시 PG read path
+# (_load_rag_documents_for_request_pg) 가 벡터(cosine)+trigram(pg_trgm) 검색을 둘 다 수행해
+# (conversation_id, fact_key) union 병합 후 score = ALPHA·vec_sim + BETA·trigram_sim 으로 단일
+# 랭킹한다. gate OFF 면 기존 2-tier(vector-OR-trigram fallback) 경로 — 안전 롤백 스위치.
+# 벡터 미임베딩/임베딩 실패(qvec None) 시엔 gate 무관하게 trigram-only 폴백 보존.
+AGENT_KB_HYBRID_ENABLED = os.getenv("AGENT_KB_HYBRID_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+# fusion 가중치 — vec 우선(0.6) + trigram 보강(0.4).
+AGENT_KB_HYBRID_ALPHA = float(os.getenv("AGENT_KB_HYBRID_ALPHA", "0.6") or "0.6")
+AGENT_KB_HYBRID_BETA = float(os.getenv("AGENT_KB_HYBRID_BETA", "0.4") or "0.4")
+# fusion 스케일 정규화(기본 ON). 측정상 bge-m3 cosine(~0.4~0.8)과 한국어 pg_trgm
+# similarity(~0.01~0.2)는 척도가 달라 raw 가중합이 vec 에 지배된다. 각 신호를 query-단위
+# min-max([0,1])로 정규화 후 가중합하면 α/β 가 의도대로 두 신호를 섞는다. OFF=raw 가중합(롤백/비교).
+AGENT_KB_HYBRID_NORMALIZE = os.getenv("AGENT_KB_HYBRID_NORMALIZE", "1").strip().lower() not in ("0", "false", "no", "")
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(

@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260623T191241-item05-hybrid-search (current cycle) — ITEM-05 하이브리드 검색 (벡터+키워드 score fusion) (Major §12.3, ROADMAP dba-ai-nl2sql)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
+- 출처: ROADMAP dba-ai-nl2sql ITEM-05(P2 Major). depends_on ITEM-01(eval harness). 현 2-tier fallback(벡터 OR trigram)을 단일 fusion 랭킹으로. PLAN-APPROVED(+ KB retrieval eval set 구축).
+
+### §2.1 Implementation Plan
+- **영향 파일**: `modules/kb_retrieval.py`(`_load_rag_documents_for_request_pg` 분기 + `_fuse_rag_documents` 신규) · `modules/config.py`(AGENT_KB_HYBRID_ENABLED/ALPHA/BETA/NORMALIZE) · `tests/test_hybrid_search.py`(신규) · `tests/eval/kb_eval/*`(retrieval eval 자산 신규) · `Makefile`(kb-retrieval-eval 타깃).
+- **접근**: gate ON(기본) + qvec 존재 시 vector(cosine)+trigram(pg_trgm) **둘 다** 수행 → (conversation_id, fact_key) union 병합 → score = α·vec_sim + β·trigram_sim → 내림차순 → `_normalize_rag_doc_rows`. **폴백 보존**: qvec None→trigram-only, vec·trg 둘 다 0→trigram-only fall-through. gate OFF→기존 2-tier 그대로(롤백 안전).
+- **위험도**: Major(핵심 KB read 랭킹 경로 + 측정 게이트). 단, env gate + 폴백 보존으로 blast 격리.
+- **acceptance**: AC-a fusion 점수 결합·정렬·한쪽매칭·qvec None·gate off 단위검증. AC-b retrieval A/B(fusion vs 2-tier) 라이브 측정·회귀 없음. AC-c verify PASS·인접 회귀 0.
+- [x] `_fuse_rag_documents` + gate 분기(폴백 보존) + config 4종(ENABLED/ALPHA/BETA/NORMALIZE).
+- [x] **스케일 정규화(NORMALIZE, 기본 ON)**: 측정상 bge-m3 cosine(~0.4~0.8)과 한국어 pg_trgm sim(~0.01~0.2)은 척도가 달라 raw 가중합이 vec 에 지배(벡터-only 와 사실상 동일) — query-단위 min-max([0,1]) 후 가중합으로 α/β 가 실제 의도대로 두 신호를 섞도록. OFF=raw(롤백/비교).
+- [x] 단위 `tests/test_hybrid_search.py` 10개(fusion 결합·정렬·union 병합키·vec-only·trg-only·정규화 ON/OFF 대조·both-empty 폴백·qvec None→trigram·gate off 2종) 통과 + py_compile.
+- [x] KB retrieval eval set: `tests/eval/kb_eval/{provision_kb.py,golden_retrieval.yaml,retrieval_eval.py,__init__.py}` — evalkb scope 격리(운영 KB 무오염, --purge 정리) 12 docs(핵심 8 + distractor 4, bge-m3 1024 임베딩) + 7 질문 ground-truth + precision/recall@k + MRR A/B 리포트. `make kb-retrieval-eval`.
+- [x] **라이브 A/B 측정(bge-m3, k=3)**: fusion vs 2-tier — mean_precision 0.4286=0.4286, mean_recall 0.9286=0.9286, mean_f1 0.5714=0.5714, MRR 1.0=1.0 (Δ 전부 +0.0000). **verdict NEUTRAL(회귀 없음)**. 정규화 ON 은 하위 순위(2~3위 distractor)를 재랭킹하나, bge-m3 가 이미 MRR=1.0 로 정답을 1위에 두어 headline 지표 상승 헤드룸 없음. raw(NORMALIZE=0)도 동일 NEUTRAL. **유의 상승 미관측 — 강한 임베더가 깨끗한 합성 KB 에서 retrieval 을 포화. fusion 은 키워드-recall 보험으로 비회귀 안전.** (은폐 없이 그대로 보고; REPORT.md 상세.)
+- [ ] **적대 backend 리뷰 예정**(메인 주관): fusion 병합/정규화 정합·폴백 보존·gate 롤백·tuple shape 호환·eval scope 격리 적대 검증.
+- [ ] **잔여 마감**: 적대 리뷰 흡수 → PR/머지 → 배포(ask-worker + insight-worker, agent_core baked) → 라이브 KB read fusion 확인.
+- verify PASS. worktree `ai/claude/feature-0002-agent-core`.
+
 ## TASK-20260623T163242-sample-embed-dim-1024 (current cycle) — ITEM-02 sample_queries 임베딩 차원 1536→1024 정렬 (fix, Minor §12.3)
 - 출처: ITEM-02 PR-A 후속 fix. titan-embed/경로B(로컬 1024) 검토 중 발견 — 0014 가 sample_queries.embedding 을 vector(1536) 로 만들었으나 실제 임베딩 모델은 1024-dim(AGENT_KB_EMBEDDING_DIM=1024, texts 정본=alembic 0001 vector(1024)). 1024 벡터 INSERT 시 차원 불일치 런타임 실패. 사용자 결정(2026-06-23): 지금 1024 정렬.
 - [x] 마이그 0015(sample_queries.embedding 1536→1024, DROP+ADD 빈컬럼 안전, ivfflat 재생성) + schema.sql sample_queries 1024 + config 기본 1024 정렬.

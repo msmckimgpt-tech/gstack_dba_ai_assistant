@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260623T191241-item05-hybrid-search (TASK-20260623T191241 — ITEM-05 하이브리드 검색 score fusion)
+- Date: 2026-06-23 (TASK-20260623T191241, **Major §12.3** — 핵심 KB read 랭킹 경로 변경 + 측정 게이트)
+- 변경:
+  - `modules/kb_retrieval.py`: `_load_rag_documents_for_request_pg` 를 2-tier(vector-OR-trigram fallback) → **fusion** 으로. gate `AGENT_KB_HYBRID_ENABLED`(기본 ON) + qvec 존재 시 신규 `_fuse_rag_documents` 호출(vector+trigram 둘 다 → (conversation_id, fact_key) union 병합 → score=α·vec+β·trigram → 내림차순 → `_normalize_rag_doc_rows`). gate OFF 면 기존 2-tier 경로 그대로(롤백 안전). 폴백 보존: qvec None→trigram-only(기존), vec·trg 둘 다 0→None 반환 후 trigram-only fall-through.
+  - 스케일 정규화: 측정상 vec(cosine)·trigram(pg_trgm) sim 의 분포 척도가 달라(한국어 trigram 은 ~0.01~0.2 低대역) raw 가중합이 vec 에 지배 → `AGENT_KB_HYBRID_NORMALIZE`(기본 ON)로 각 신호 query-단위 min-max([0,1]) 후 가중합. OFF=raw.
+  - `modules/config.py`: `AGENT_KB_HYBRID_ENABLED`(ON) · `AGENT_KB_HYBRID_ALPHA`(0.6) · `AGENT_KB_HYBRID_BETA`(0.4) · `AGENT_KB_HYBRID_NORMALIZE`(ON) 추가. (__all__ 미등록 — 직접 import.)
+  - `tests/test_hybrid_search.py`(신규, FakeConn/monkeypatch — 라이브 DB·임베딩 불요) 10 케이스.
+  - `tests/eval/kb_eval/{provision_kb,golden_retrieval.yaml,retrieval_eval,__init__}`(신규): evalkb scope 격리 KB retrieval A/B eval set(ITEM-01 자산 인접). `Makefile` `kb-retrieval-eval` 타깃.
+- 불변/보존: tuple shape(8-col …,ft_score)·`_normalize_rag_doc_rows`·병합키((conversation_id, fact_key))·scope 필터(blank/NULL 등가)·`_pg_connect_ro` least-priv read. feature-0002 외 코어·gateway/litellm·ROADMAP 무변경.
+- 측정: 라이브 bge-m3 k=3 — fusion vs 2-tier Δ(precision/recall/f1/MRR) 전부 +0.0000(NEUTRAL, 회귀 없음). 강한 임베더가 깨끗한 합성 KB 를 포화 → headline 상승 헤드룸 없음(REPORT.md 상세, 은폐 없음).
+- 롤백: `AGENT_KB_HYBRID_ENABLED=0`(2-tier 복귀) / `AGENT_KB_HYBRID_NORMALIZE=0`(raw 가중합).
+
 ## CHG-20260618-0318 (TASK-0304 — 무거운 쿼리 사전 감지 + LLM 재작성 코칭)
 - Date: 2026-06-18 (TASK-0304, **Major §12.3** — datasource 실행 거동 + LLM 행동(시스템 프롬프트))
 - Scope: TASK-0299 SHOWPLAN/EXPLAIN 부하추정을 활용해, 무거운 쿼리를 실행 전 가로채고 LLM 이 더 가벼운 쿼리로 재작성해 목적을 달성하도록 거동 변경. 추정/게이트 *메커니즘*은 불변(TASK-0299), 메시지 프레이밍 + 시스템 프롬프트 + 운영 모드(gate)만 변경. 보안경계(allowlist/sql_guard/RBAC) 변경 0.

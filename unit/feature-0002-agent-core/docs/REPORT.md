@@ -87,6 +87,9 @@ source_of_truth: false
 - Done: 누락 원인 재현, worker 완전성 검사 추가, 상세 route log 추가, 일자별 로그 디렉토리/보관 압축 구현, 실제 cycle/보관/no-op 억제 검증
 
 ## 3. Recent Changes
+- 2026-06-23 (TASK-20260623T191241, ITEM-05 하이브리드 검색): `_load_rag_documents_for_request_pg` 를 2-tier(벡터 OR trigram) → **fusion**(`_fuse_rag_documents`)으로. gate `AGENT_KB_HYBRID_ENABLED`(ON) + qvec 존재 시 vector+trigram 둘 다 → (conversation_id, fact_key) union 병합 → `score=α·vec+β·trigram`(0.6/0.4) → 내림차순. 폴백 보존(qvec None·둘 다 0→trigram-only; gate OFF→2-tier). config 4종 + `AGENT_KB_HYBRID_NORMALIZE`(ON, query-단위 min-max 정규화 — vec/trigram 척도차 보정).
+  - **라이브 retrieval A/B(bge-m3, k=3, evalkb scope 12 docs / 7Q)**: fusion vs 2-tier — precision 0.4286=0.4286, recall 0.9286=0.9286, f1 0.5714=0.5714, MRR 1.0=1.0 (**Δ 전부 +0.0000, NEUTRAL, 회귀 없음**). 근본원인: bge-m3 가 깨끗한 합성 KB 에서 정답을 항상 1위(MRR=1.0)에 두어 fusion 의 headline 상승 헤드룸이 없음. 정규화 ON 은 하위 순위(distractor 2~3위)를 재랭킹하지만 정답 위치 불변. raw(NORMALIZE=0)도 동일 NEUTRAL. trigram 한국어 sim 이 ~0.01~0.2 低대역이라 raw 가중합으로는 vec 가 지배(실측). **유의 상승 미관측 — 은폐 없이 그대로 보고. fusion 은 키워드-recall 보험으로 비회귀 안전하며, 임베더가 약한 실데이터/OOV·코드 토큰에서 가치(단위테스트로 메커니즘 입증).**
+  - 단위 `tests/test_hybrid_search.py` 10 + KB eval set(`tests/eval/kb_eval/`) + `make kb-retrieval-eval`. 적대 backend 리뷰는 메인 주관 예정.
 - 2026-05-15: Account scope prompt 조립 변경. Account `전 Product 공통` prompt 는 fallback 이 아니라 공통 누적 지침이며, Product 전용 Account prompt 가 있으면 뒤에 추가된다. `tests/test_compose_system_prompt.py`가 Product → Role → Account 순서와 마지막 user request 보존을 함께 확인한다.
 - 2026-05-15: `agent_core.compose_system_prompt()` Role prompt 조립 변경. `전 Product 공통` Role prompt는 fallback 이 아니라 공통 누적 지침이며, Product 전용 Role prompt가 있으면 같은 Role guidance 블록 아래에 추가된다. `tests/test_compose_system_prompt.py` 신규 추가.
 - `insight.py` 에서 후보 선정 기준을 `fingerprint` 단독에서 `artifact completeness + fingerprint + refresh` 순서로 변경

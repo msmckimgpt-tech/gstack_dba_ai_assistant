@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260623T191241-item05-hybrid-search [SUBAGENT:item05-impl-selfcheck — fusion 병합·정규화·폴백·gate·tuple shape·eval scope] — SELF-CHECK PASS (적대 backend 리뷰 예정)
+- Date: 2026-06-23 (TASK-20260623T191241, ITEM-05 fusion). 본 엔트리는 **구현 self-check**(작성자 자기검증)다. **메인이 적대 backend 리뷰를 별도 수행 예정** — 본 PASS 는 적대 리뷰를 대체하지 않는다.
+- 자기검증 항목/결과:
+  1. **fusion 점수 결합**: score=α·vec+β·trigram, 한쪽만 매칭 시 누락 신호 0. 단위 5종(결합·정렬·union 병합키·vec-only·trg-only) PASS.
+  2. **스케일 정규화 정합**: query-단위 min-max([0,1]), span≈0(분산 0) 시 0(상수항 무영향). NORMALIZE ON/OFF 대조 단위 PASS. (라이브: vec~0.4~0.8 vs trgram~0.01~0.2 척도차 실측 — 정규화 근거 데이터로 확보.)
+  3. **폴백 보존**: qvec None→trigram-only(기존), vec·trg 둘 다 0→trigram-only fall-through, gate OFF→2-tier. 단위 4종 PASS + 기존 `test_kb_read_backend` 9 회귀 0.
+  4. **tuple shape 호환**: fused row 8-col(…,ft_score), `_normalize_rag_doc_rows` 무변경 통과 — dedup·trim·updated_at iso 보존.
+  5. **eval scope 격리**: provision/검색 모두 evalkb scope + `__evalkb__` conversation 한정 — 운영 KB 무오염, `--purge` 정리 가능. `_pg_connect_ro` least-priv read 유지.
+  6. **롤백 안전**: AGENT_KB_HYBRID_ENABLED=0(2-tier) / NORMALIZE=0(raw) env 1줄.
+- 측정: 라이브 A/B(bge-m3 k=3) NEUTRAL(Δ 전부 0, 회귀 없음). headline 상승 미관측 — 강한 임베더 포화(은폐 없이 보고).
+- 적대 리뷰가 점검할 표면(메인): ① union 병합 시 base row 선택(vec/trg 동형 가정)의 엣지 — 동일 (conv,fact) 가 서로 다른 content_hash 로 2 행일 때 ② 정규화가 단일후보(span 0)에서 0 으로 죽는 동작이 랭킹에 미치는 영향 ③ vec·trg 결과 집합 비대칭(한쪽 200 cap, 한쪽 전체) 시 누락 신호 0 처리의 편향 ④ gate OFF 경로가 기존과 byte-identical 인지(롤백 무손상) ⑤ eval set 합성 KB 가 fusion 효과를 가릴 만큼 쉬운지(측정 타당성).
+
 ## REV-20260618-0318 [SUBAGENT:adversarial — 게이트 로직 회귀 / 토큰 보존 / 프롬프트 충돌 / confirm_heavy 약화 / 라이브 적용 / 사용자 노출] — SHIP
 - Date: 2026-06-18
 - Cycle: TASK-0304 (무거운 쿼리 사전 감지 → LLM 재작성 코칭 — 시스템 프롬프트 + 게이트 메시지 프레이밍, Major §12.3).

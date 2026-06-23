@@ -453,10 +453,21 @@ def _load_rag_documents_for_request_pg(
     conn = _pg_connect_ro()
     try:
         backend = PgKbBackend()
-        # TASK-0135 (#13, 결정 B): 벡터 검색 우선 (titan-embed 임베딩, 한국어 의미검색 강함).
+        # TASK-0135 (#13, 결정 B): 벡터 검색 우선 (bge-m3 임베딩, 한국어 의미검색 강함).
         # 쿼리 임베딩 실패/미설정 또는 벡터 결과 없음(미임베딩) 시 trigram 으로 fallback.
         qvec = _embed_query_vector(query_text) if query_text else None
-        if qvec is not None:
+        # ITEM-05 (하이브리드 검색): qvec 존재 + gate ON 시 vector + trigram score fusion.
+        # gate OFF 시 기존 2-tier(vector-OR-trigram fallback) 경로 — 롤백 안전.
+        from .config import AGENT_KB_HYBRID_ENABLED
+        if AGENT_KB_HYBRID_ENABLED and qvec is not None:
+            fused = _fuse_rag_documents(
+                backend, conn, conversation_ids, query_text, qvec, scope_keys,
+            )
+            if fused is not None:
+                return fused
+            # _fuse_rag_documents 가 None → 벡터·trigram 둘 다 결과 0 → trigram-only fall-through
+        elif qvec is not None:
+            # 기존 2-tier 경로(gate OFF): 벡터 우선, 결과 있으면 그대로.
             vrows = backend.search_rag_documents_vector(
                 conn,
                 conversation_ids=conversation_ids,
@@ -477,6 +488,109 @@ def _load_rag_documents_for_request_pg(
             conn.close()
         except Exception:
             pass
+def _fuse_rag_documents(
+    backend,
+    conn,
+    conversation_ids: list[str],
+    query_text: str,
+    qvec: list[float],
+    scope_keys: list[str],
+) -> "Optional[list[dict[str, Any]]]":
+    """ITEM-05 하이브리드 검색 — 벡터(cosine) + trigram(pg_trgm) score fusion.
+
+    설계:
+    - 벡터 검색(`search_rag_documents_vector`, ft_score = cosine 유사도)과 trigram 검색
+      (`search_rag_documents`, ft_score = pg_trgm similarity)을 **둘 다** 수행.
+    - 병합 키 = `(conversation_id, fact_key)`. 두 결과를 union 병합한다.
+    - 결합 점수 `score = α·vec_sim + β·trigram_sim` (AGENT_KB_HYBRID_ALPHA/BETA).
+      한쪽에만 매칭되면 그쪽 sim×해당 가중치만 반영(누락 쪽 sim=0).
+
+    스케일 정규화 (AGENT_KB_HYBRID_NORMALIZE, 기본 ON):
+    - 두 신호의 척도가 다르다 — 측정상 bge-m3 cosine 은 ~0.4~0.8 의 좁고 높은 대역,
+      한국어 pg_trgm similarity 는 ~0.01~0.2 의 낮은 대역에 분포한다. raw 가중합을 그대로
+      쓰면 큰 vec 항이 항상 지배해 trigram(β) 이 랭킹에 거의 기여하지 못한다(벡터-only 와
+      사실상 동일). 이를 보정하기 위해 **각 신호를 후보 집합 내에서 query-단위 min-max
+      정규화([0,1])** 한 뒤 가중합한다. 그래야 α/β 가 실제 의도대로 두 신호를 섞는다.
+      OFF 면 raw sim 그대로 가중합(스케일 미보정) — 비교/롤백용.
+    - score 내림차순 정렬(동점 시 weight DESC, updated_at DESC) → `_normalize_rag_doc_rows`
+      에 fused ft_score 를 실어 넘긴다(MySQL path 와 동일 8-tuple shape).
+
+    폴백:
+    - 벡터·trigram 둘 다 결과 0 → None 반환 → caller 가 trigram-only fall-through.
+      (벡터 결과 0 + trigram 결과 있음 케이스는 fusion 안에서 trigram-only union 으로 자연 처리.)
+    """
+    from .config import (
+        AGENT_KB_HYBRID_ALPHA,
+        AGENT_KB_HYBRID_BETA,
+        AGENT_KB_HYBRID_NORMALIZE,
+    )
+    alpha = float(AGENT_KB_HYBRID_ALPHA)
+    beta = float(AGENT_KB_HYBRID_BETA)
+    normalize = bool(AGENT_KB_HYBRID_NORMALIZE)
+    vrows = backend.search_rag_documents_vector(
+        conn,
+        conversation_ids=conversation_ids,
+        query_vector=qvec,
+        scope_keys=scope_keys,
+    ) or []
+    trows = backend.search_rag_documents(
+        conn,
+        conversation_ids=conversation_ids,
+        query_text=query_text,
+        scope_keys=scope_keys,
+    ) or []
+    if not vrows and not trows:
+        return None
+
+    def _sim(row: tuple) -> float:
+        if len(row) > 7 and row[7] is not None:
+            try:
+                return max(0.0, float(row[7]))
+            except Exception:
+                return 0.0
+        return 0.0
+
+    # 병합 키 = (conversation_id, fact_key). base row 는 두 결과 중 먼저 본 것을 유지
+    # (content/weight/메타는 동일 doc 이라 동형 — 동일 (conv,fact) 는 같은 row).
+    merged: dict[tuple, dict[str, Any]] = {}
+    for row, kind in [(r, "vec") for r in vrows] + [(r, "trg") for r in trows]:
+        conv_id = str(row[0] or "").strip()
+        fact_key = str(row[1] or "").strip()
+        key = (conv_id, fact_key)
+        entry = merged.get(key)
+        if entry is None:
+            entry = {"row": row, "vec": 0.0, "trg": 0.0}
+            merged[key] = entry
+        entry[kind] = _sim(row)
+
+    if normalize:
+        # query-단위 min-max 정규화 — 각 신호를 후보 집합 내 [0,1] 로. 분산 0(모두 동일)이면
+        # 변별력 없으므로 0 으로 둔다(상수항은 랭킹에 무영향). 한쪽 신호에만 존재하는 doc 의
+        # 누락 신호는 0 으로 두며, 0 은 정규화 후에도 최저값으로 그대로 의미 보존.
+        def _minmax(values: list[float]) -> tuple[float, float]:
+            lo, hi = min(values), max(values)
+            return lo, hi
+        vec_vals = [e["vec"] for e in merged.values()]
+        trg_vals = [e["trg"] for e in merged.values()]
+        v_lo, v_hi = _minmax(vec_vals)
+        t_lo, t_hi = _minmax(trg_vals)
+        v_span = v_hi - v_lo
+        t_span = t_hi - t_lo
+        for e in merged.values():
+            e["vec_n"] = ((e["vec"] - v_lo) / v_span) if v_span > 1e-9 else 0.0
+            e["trg_n"] = ((e["trg"] - t_lo) / t_span) if t_span > 1e-9 else 0.0
+    else:
+        for e in merged.values():
+            e["vec_n"], e["trg_n"] = e["vec"], e["trg"]
+
+    fused_rows: list[tuple] = []
+    for entry in merged.values():
+        score = alpha * entry["vec_n"] + beta * entry["trg_n"]
+        base = entry["row"]
+        # base row(7-or-8-col)에서 앞 7 col 보존 + fused score 를 8번째 col 로.
+        fused_rows.append((base[0], base[1], base[2], base[3], base[4], base[5], base[6], score))
+    fused_rows.sort(key=lambda r: (r[7], int(r[3] or 0), str(r[6] or "")), reverse=True)
+    return _normalize_rag_doc_rows(fused_rows)
 def _embed_query_vector(text: str) -> "Optional[list[float]]":
     """TASK-0135 (#13): 쿼리 텍스트를 gateway 임베딩(AGENT_KB_EMBEDDING_MODEL=titan-embed)으로
     벡터화. 미설정/빈텍스트/실패 시 None → caller 가 trigram fallback. 티어 라우터가 임베딩

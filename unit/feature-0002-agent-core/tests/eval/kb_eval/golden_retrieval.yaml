@@ -1,0 +1,47 @@
+# ITEM-05 KB retrieval golden set — 하이브리드 검색(fusion) vs 2-tier A/B 측정용.
+#
+# 각 질문은 provision_kb.py 의 EVAL_DOCS fact_key 중 ground-truth(relevant_doc_keys)를
+# 지정한다. retrieval_eval.py 가 retrieval 함수를 직접 호출해 반환 doc keys vs relevant 로
+# precision/recall@k + MRR 를 계산, fusion ON/OFF 양쪽 수치를 리포트한다.
+#
+# scope 격리: 모든 검색은 evalkb scope + __evalkb__ conversation 으로만 수행(운영 KB 무관).
+#
+# 질문 설계: distractor docs(payment/delivery status, gross revenue, dormant account)와
+# 의미가 겹치도록 작성. 벡터-only 는 distractor 를 정답 위로 올릴 수 있고, 정답 doc 의 고유
+# 키워드(주문 상태/순매출/이탈 등)로 trigram 이 변별을 보태 fusion 이 재랭킹한다.
+questions:
+  - id: Q1
+    nl_question: "지난 석 달 안에 구매한 적 있는 사람을 활성 사용자로 보면 되나요?"
+    # 동의어 우회('석 달'≈90일) + dormant_account distractor 와 의미 인접('휴면 계정').
+    relevant_doc_keys: [def_active_customer]
+
+  - id: Q2
+    nl_question: "주문 상태 코드 2번은 무슨 뜻이고 매출 집계에는 어떤 주문 상태가 포함되나요?"
+    # '주문 상태 코드' vs distractor 'payment_status_codes'/'delivery_status_codes' —
+    # 벡터는 status 코드 3종을 모두 가깝게 보지만 '주문 상태' 키워드로 정답 변별.
+    relevant_doc_keys: [order_status_codes, revenue_definition]
+
+  - id: Q3
+    nl_question: "순매출은 어떻게 계산하나요? 환불은 어떻게 반영되죠?"
+    # '순매출(net)' vs distractor 'gross_revenue_definition(총매출)' — 의미 인접, 키워드 변별.
+    relevant_doc_keys: [revenue_definition, refund_policy]
+
+  - id: Q4
+    nl_question: "고객이 한동안 안 사면 언제부터 이탈 고객으로 보나요?"
+    # 'churn(이탈)' vs distractor 'dormant_account(휴면)' — 둘 다 비활동 의미라 벡터 혼동 가능.
+    relevant_doc_keys: [churn_window]
+
+  - id: Q5
+    nl_question: "GOLD 등급 회원이 받는 혜택과 멤버십 등급 기준이 궁금합니다."
+    relevant_doc_keys: [membership_tiers]
+
+  - id: Q6
+    nl_question: "카테고리 코드 200번대는 어떤 상품군이고 도서산간 배송은 어떻게 되나요?"
+    # 두 분리 토픽(카테고리 매핑 + 배송 권역) 동시 — 멀티-doc recall.
+    relevant_doc_keys: [product_category_map, shipping_regions]
+
+  - id: Q7
+    nl_question: "배송 추적 상태 D3은 무슨 단계인가요?"
+    # 'delivery_status_codes' 가 정답. order/payment status distractor 와 벡터상 인접 —
+    # 'D3'/'배송 추적' 키워드 trigram 이 결정적.
+    relevant_doc_keys: [delivery_status_codes]
