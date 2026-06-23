@@ -548,14 +548,17 @@ function _notifyMentions(incoming, hidden) {
   const last = hits[hits.length - 1];
   const who = (last.meta && last.meta.sender_username) || "참여자";
   const preview = String(last.content || "").replace(/\s+/g, " ").trim().slice(0, 80);
-  const text = hits.length > 1
-    ? `${who} 외 ${hits.length - 1}건이 회원님을 멘션했습니다`
-    : `${who} 님이 회원님을 멘션했습니다: ${preview}`;
-  if (!hidden) showToast(text);
+  // feature-0009 gc-mention-notify: 채팅형 본문 "[발신자] : 메시지" (다중 시 " 외 N건"). 토스트·OS 알림 공용.
+  const more = hits.length > 1 ? ` 외 ${hits.length - 1}건` : "";
+  const body = `[${who}]${more} : ${preview}`;
+  if (!hidden) showToast(body);
   try {
     if (window.Notification && Notification.permission === "granted") {
-      const n = new Notification("새 멘션 알림", {
-        body: text,
+      // OS(Windows) 알림 제목 = "DQA : {그룹대화 명칭}" (대화명 = conversation.topic, 미설정 시 "DQA").
+      const _conv = currentConversation();
+      const _convName = (_conv && _conv.topic) ? String(_conv.topic).trim() : "";
+      const n = new Notification(_convName ? `DQA : ${_convName}` : "DQA", {
+        body,
         tag: `mention-${state.activeConversationId || ""}`,
       });
       n.onclick = () => { try { window.focus(); n.close(); } catch (_e) {} };
