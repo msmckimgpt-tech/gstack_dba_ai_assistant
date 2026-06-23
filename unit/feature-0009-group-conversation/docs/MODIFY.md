@@ -187,3 +187,14 @@ source_of_truth: true
 - Impact: 전부 프론트, 기존 엔드포인트(history/members/avatars) 재사용·백엔드 무변경. 폴링은 새 메시지 있을 때만 렌더. OS 알림은 사용자 권한 grant 시에만(미허용=토스트만, graceful).
 - Rollback Notes: 6 블록 + CSS(.is-mention-me/.has-img) + 캐시버스터(live-ux2→live-ux) 환원으로 가역. `_liveSyncLoop`→`setInterval(_liveSyncTick, 4000)` 복귀.
 - 검증: `node --check` app.js/mentions.js OK. ux2 심볼 전수 존재 확인. (실 브라우저 PB-0008 은 배포 후)
+
+## CHG-20260623-0016
+- Date: 2026-06-23
+- Related Requirement: 사용자 보고 — 그룹 대화 메시지 프로필 아이콘이 "실제 아이콘 이미지가 아닌 글자" + 실제 프로필과 정합 요구 + 웹브라우저 실측 검증 누락 보완.
+- Summary: 그룹 대화 메시지 발신자 아바타(`_msgAvatarEl`)를 앱 전역(`applyAvatar()`/`identiconSvg()` — 헤더·프로필·제품칩)과 동일한 **Identicon 폴백**으로 정합. 아바타 미업로드 시 "맨 글자" 대신 username 시드 컬러 Identicon → 실제 프로필(헤더)과 동일 아이콘. 전부 프론트, 백엔드 무변경.
+- Root cause: 앱 전역은 `applyAvatar` 가 미업로드 시 `identiconSvg(seed)` 폴백인데 그룹챗 메시지 아바타만 bare initial(textContent)로 폴백 → 불일치. (라이브 DB: 37계정 중 1개만 아바타 업로드 → 나머지는 헤더=Identicon vs 그룹챗=글자.)
+- Files: `static/app.js`(`_msgAvatarEl` 5번째 인자 seed + `_fillMsgAvatar`/`_fillMsgIdenticon` 헬퍼 + renderMessages `_assistantSeed`=product_key 전달) · `static/styles.css`(`.msg-avatar > svg` 원형 채움) · `static/index.html`(캐시버스터 20260623-live-ux2 → 20260623-avatar-identicon) · `tests/win-browser-avatar-identicon.scenario.json`(PB-0008 시나리오 신규).
+  - user: `/api/avatars/{id}` 이미지 → 실패/없음 시 `identiconSvg(username)`. assistant: 제품 아이콘 → 실패/없음 시 `identiconSvg(product_key)`(제품 칩과 동일 시드) → 제품 없음(auto) 시 'AI' 배지.
+- Impact: 아바타 업로드 계정(예 id35)은 실제 이미지 그대로(회귀 없음). 미업로드 계정은 헤더 프로필과 동일 Identicon. assistant auto 'AI' 배지 유지. XSS 안전(identiconSvg 는 seed 를 해시 숫자로만 사용).
+- Rollback Notes: `_msgAvatarEl`/헬퍼/`_assistantSeed`/CSS/캐시버스터 환원으로 가역.
+- 검증: `node --check` OK + 적대 패널 PASS-WITH-NITS(블로킹 0) + **PB-0008 실제 Windows Chrome 실측 PASS**(무아바타→identicon, id35→실제 이미지, auto→AI; TEST.md §3 Run 2026-06-23-gc-avatar-identicon, 스크린샷 artifacts/pb0008-avatar-identicon/).

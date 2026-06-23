@@ -3223,42 +3223,50 @@ function _mentionsUser(text, myNameLower) {
   }
 }
 
-// feature-0009: 메시지 발신자 프로필 아이콘. user=계정 실제 아바타(/api/avatars/{id}, 없으면 이니셜),
-// assistant=대화 제품(Product) 아이콘(없으면 'AI' 배지). 같은 출처 이미지 — 404 시 이니셜/AI 폴백.
-function _msgAvatarEl(senderId, label, role, assistantIcon) {
+// feature-0009: 메시지 발신자 프로필 아이콘. user=계정 실제 아바타(/api/avatars/{id}), 없으면 username Identicon.
+// assistant=대화 제품(Product) 아이콘, 없으면 제품 Identicon(제품 칩과 동일 시드), 제품 자체가 없으면(auto) 'AI' 배지.
+// 헤더/프로필의 applyAvatar()/identiconSvg() 와 동일한 Identicon 폴백을 써서, 아바타 미업로드 시에도 "맨 글자"가 아니라
+// 실제 프로필과 정합하는 컬러 아이콘으로 표시한다 (gc-avatar-identicon).
+function _msgAvatarEl(senderId, label, role, assistantIcon, seed) {
   const av = document.createElement("span");
   av.className = "msg-avatar" + (role === "assistant" ? " msg-avatar-assistant" : "");
+  av.title = label || (role === "assistant" ? "Assistant" : "");
+  const idSeed = String(seed || label || "");
   if (role === "assistant") {
-    const aInitial = String(label || "").trim().charAt(0).toUpperCase();
-    const aFallback = aInitial || "AI";
-    av.title = label || "Assistant";
     if (assistantIcon) {
-      av.textContent = "";
-      const img = document.createElement("img");
-      img.src = assistantIcon;
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("load", () => av.classList.add("has-img"));
-      img.addEventListener("error", () => { try { img.remove(); } catch (_e) {} if (!av.textContent) av.textContent = aFallback; });
-      av.appendChild(img);
+      _fillMsgAvatar(av, assistantIcon, idSeed, "AI");        // 제품 아이콘 → 실패 시 제품 Identicon → "AI"
+    } else if (idSeed) {
+      _fillMsgIdenticon(av, idSeed);                          // 제품은 있으나 아이콘 미설정 → 제품 Identicon
     } else {
-      av.textContent = aFallback;
+      av.textContent = "AI";                                  // 제품 없음(auto) → 'AI' 배지
     }
     return av;
   }
-  const initial = String(label || "?").trim().charAt(0).toUpperCase() || "?";
-  av.textContent = initial;
-  av.title = label || "";
   if (senderId) {
-    const img = document.createElement("img");
-    img.src = `/api/avatars/${encodeURIComponent(senderId)}`;
-    img.alt = "";
-    img.loading = "lazy";
-    img.addEventListener("load", () => av.classList.add("has-img"));
-    img.addEventListener("error", () => { try { img.remove(); } catch (_e) {} });
-    av.appendChild(img);
+    _fillMsgAvatar(av, `/api/avatars/${encodeURIComponent(senderId)}`, idSeed, "");  // 실제 아바타 → 실패 시 Identicon
+  } else {
+    _fillMsgIdenticon(av, idSeed);                            // senderId 없음 → username Identicon
   }
   return av;
+}
+// <img> 로드 시도 → 성공 시 표시, 실패(404 등) 시 Identicon(seed) 또는 텍스트로 폴백. applyAvatar() 와 동형.
+function _fillMsgAvatar(av, url, seed, textFallback) {
+  const img = document.createElement("img");
+  img.src = url;
+  img.alt = "";
+  img.loading = "lazy";
+  img.addEventListener("load", () => av.classList.add("has-img"));
+  img.addEventListener("error", () => {
+    try { img.remove(); } catch (_e) {}
+    if (seed) _fillMsgIdenticon(av, seed);
+    else if (textFallback) av.textContent = textFallback;
+  });
+  av.appendChild(img);
+}
+// Identicon SVG 로 채운다 (headers/profile 의 identiconSvg 와 동일 시드 해시 → 같은 사용자/제품은 같은 아이콘).
+function _fillMsgIdenticon(av, seed) {
+  av.classList.add("has-img");
+  av.innerHTML = identiconSvg(seed, 100);
 }
 
 function renderMessages() {
@@ -3281,8 +3289,10 @@ function renderMessages() {
   const _products = Array.isArray(state.products) ? state.products : [];
   const _pinnedProd = _products.find((p) => Number(p.id) === Number(state.pinnedProductId));
   const _assistantIcon = (state.productMode === "pinned" && _pinnedProd && _pinnedProd.icon_url) ? _pinnedProd.icon_url : "";
-  // feature-0009 ux2: pinned 제품이면 그 이름(아이콘/이니셜 소스), 비-pinned(auto)면 빈 라벨 → _msgAvatarEl 이 "AI" 배지로 폴백(기존 UI 보존).
+  // feature-0009 ux2: pinned 제품이면 그 이름(아이콘/라벨 소스), 비-pinned(auto)면 빈 라벨 → _msgAvatarEl 이 "AI" 배지로 폴백(기존 UI 보존).
   const _assistantLabel = _pinnedProd ? (_pinnedProd.name || _pinnedProd.product_key || "") : "";
+  // gc-avatar-identicon: assistant Identicon 시드 = product_key(제품 칩 identiconSvg 와 동일 시드 → 같은 제품은 같은 아이콘).
+  const _assistantSeed = _pinnedProd ? (_pinnedProd.product_key || _pinnedProd.name || "") : "";
   const _myName = String((state.user && state.user.username) || "").toLowerCase();
 
   // REQ-20260518-0001: Slack 패턴 — 날짜 분기선 click 으로 캘린더 popover anchored 오픈.
@@ -3462,6 +3472,7 @@ function renderMessages() {
       role === "assistant" ? _assistantLabel : _avLabel,
       role,
       role === "assistant" ? _assistantIcon : "",
+      role === "assistant" ? _assistantSeed : _avLabel,  // gc-avatar-identicon: Identicon 시드(user=username, assistant=product_key)
     ));
 
     row.append(meta, bubble);

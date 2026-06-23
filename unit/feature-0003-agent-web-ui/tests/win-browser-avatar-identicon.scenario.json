@@ -1,0 +1,20 @@
+{
+  "name": "gc-avatar-identicon — 그룹 대화 메시지 프로필 아바타 Identicon 정합 (authed, PB-0008)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-avatar-identicon",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "#productChip", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(()=>{if(typeof _msgAvatarEl!=='function')return JSON.stringify({error:'_msgAvatarEl not global'});function kind(el){return el.querySelector('img')?('img:'+(el.querySelector('img').getAttribute('src')||'')):(el.querySelector('svg')?'identicon':('text:'+el.textContent.trim()));}var noAv=_msgAvatarEl(0,'mckim2','user','','mckim2');var realAv=_msgAvatarEl(35,'dgwe','user','','dgwe');var asstAuto=_msgAvatarEl(0,'','assistant','','');return JSON.stringify({noAvatarUser:kind(noAv),realAvatarUser:kind(realAv),assistantAuto:kind(asstAuto)});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{var users=['mckim2','mckim3','review_user01','admin','operator'];var strip=document.createElement('div');strip.id='__pb_strip';strip.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99999;background:#fff;padding:16px;display:flex;gap:18px;align-items:flex-start;border-bottom:2px solid #111;font:12px sans-serif;color:#111;';var title=document.createElement('div');title.textContent='gc-avatar-identicon: 무아바타=Identicon, id35=실제 이미지';title.style.cssText='width:100%;font-weight:700;margin-bottom:8px;';strip.appendChild(title);function cell(el,lbl){var w=document.createElement('div');w.style.cssText='display:flex;flex-direction:column;align-items:center;gap:5px;';el.style.width='44px';el.style.height='44px';el.style.marginRight='0';w.appendChild(el);var s=document.createElement('span');s.textContent=lbl;w.appendChild(s);return w;}users.forEach(function(u){strip.appendChild(cell(_msgAvatarEl(0,u,'user','',u),u));});strip.appendChild(cell(_msgAvatarEl(35,'dgwe','user','','dgwe'),'id35(업로드)'));strip.appendChild(cell(_msgAvatarEl(0,'','assistant','',''),'assistant(auto)'));document.body.appendChild(strip);await new Promise(r=>setTimeout(r,700));return JSON.stringify({stripRendered:true,cells:users.length+2});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_avatar_strip.png", "full_page": false},
+
+    {"action": "eval", "script": "(async()=>{var items=[...document.querySelectorAll('#conversationList .conversation-item, #conversationList [data-conversation-id]')];if(!items.length)return JSON.stringify({conversations:0});items[0].click();await new Promise(r=>setTimeout(r,1800));var avs=[...document.querySelectorAll('#messageLog .msg-avatar')];var kinds=avs.slice(0,8).map(function(a){return a.querySelector('img')?'img':(a.querySelector('svg')?'identicon':'text:'+a.textContent.trim());});return JSON.stringify({openedConversation:true,msgAvatarCount:avs.length,kinds:kinds});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "02_conversation_avatars.png", "full_page": false}
+  ]
+}
