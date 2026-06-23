@@ -181,3 +181,14 @@ source_of_truth: true
 - Risks/Open: 기본 ON = 링크 유출 시 누구나 참여(사용자 명시 수용). roster 가시성/나가기 UI 없음(GET/DELETE
   API 는 유지 — 향후 재노출 가능). PB-0008 실측은 배포 후.
 - Human Approval Needed: 아니오 (사용자 명시 결정: 토글 기본 ON + 멤버 패널/초대 제거).
+
+## REV-20260623-0016 [SUBAGENT: 라이브 UX 3종(폴링·멘션자동완성·아바타) §18.8]
+- Related Change: CHG-20260623-0014
+- Reason: 프론트 UX 추가(핵심 send/render 경로 인접) — 무회귀 + 충돌 없음 확인.
+- 검증(self): ① 폴링은 새 id 있을 때만 renderMessages, AI run/검색/숨김 시 skip, dedup(optimistic echo)
+  + 스크롤 위치 보존(과거 읽는 중 방해 안 함). _liveSyncInFlight 재진입 가드. ② 멘션 keydown 은 capture+
+  stopImmediatePropagation 으로 send(Enter)보다 우선, dropdown 닫힘 시 무간섭(기존 입력 무회귀). lazy 멤버
+  fetch(cid 캐시). ③ 아바타는 기존 /api/avatars(404→이니셜) 재사용, meta.prepend(레이아웃 inline). node --check OK.
+- Risks/Open: 멤버 캐시는 대화 전환 시 갱신(동일 대화 내 신규 참여자는 전환 전까지 자동완성 미반영 — 경미).
+  폴링 4s 주기(실시간성↔부하 균형). 실 브라우저 상호작용 PB-0008 은 배포 후.
+- Human Approval Needed: 아니오 (프론트 additive, 기존 엔드포인트 재사용, 사용자 요청).
