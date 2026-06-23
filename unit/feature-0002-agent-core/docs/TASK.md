@@ -8,6 +8,39 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260623T151643-self-reflection (current cycle) — ITEM-07 Self-Reflection 자가수정 루프 (Major §12.3, ROADMAP dba-ai-nl2sql)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
+- 출처: ROADMAP ITEM-07. chat 의존(임베딩 무관). PLAN-APPROVED.
+
+### §2.1 Implementation Plan
+- **영향 파일**: `agent_core.py`(helper `_is_fixable_sql_error`/`_classify_sql_error`/`_sql_reflection_nudge` + tool 루프 훅 + per-run `reflection_count`) · `config.py`(AGENT_SELF_REFLECTION_ENABLED/MAX).
+- **접근**: tool 루프에서 `execute_sql` 가 **수정 가능한** 실패(`오류:`/`SQL 실행 오류:`/`도구 실행 오류`) 반환 시, cap(N≤2~3) 미만이면 구조화 정정 넛지(에러 분류+원 SQL+표적 힌트)를 tool 결과에 동봉. 보안 가드 차단은 제외(우회 유도 금지). max_steps·circuit-breaker 중첩으로 폭주 차단. env gate(A/B·롤백).
+- **위험도**: Major(핵심 run 루프 제어흐름 + 에러시 프롬프트 동봉) + 보안(guard 제외).
+- **acceptance**: AC-a 에러 시 ≤cap 넛지 후 중단(폭주 없음, 단위). AC-b(측정) harness on/off 회복률 — **보류**(describe-first agent 가 단순 fixture 에서 거의 에러 안 남 → 1차 실패 부재; 에러유발 production traffic/error-injection 모드 필요). AC-c guard 제외(보안). AC-d verify PASS.
+- [x] config 플래그 + helper 3종 + tool 루프 훅(가드 제외·cap·gate) + per-run 카운터.
+- [x] 단위 `test_self_reflection.py` 7(분류/넛지/guard 제외/**실제 'SQL 실행 오류:' shape**/cap 표기/truncate) 통과 + prompt-injection 회귀 10 통과 + py_compile.
+- [x] 적대 backend+security 리뷰 REV-20260623T151643 — **MAJOR(M1: 실제 'SQL 실행 오류:' prefix 미매칭→near-inert) 흡수** + M2(테스트 보강)·N1(guard 토큰)·N2(분류 순서) 흡수.
+- [x] 라이브 관찰: describe-first agent 가 `amount`→`total` 을 **에러 없이** 교정(645.00 정답) → reflection 은 백스톱(단순 fixture 미발동).
+- [ ] **AC-b 정량 회복률 보류** — 에러유발 golden Q/error-injection harness 모드 필요(follow-up). 메커니즘은 단위검증 + 실제 에러 경로 매칭 확정.
+- verify PASS. worktree `ai/claude/feature-0002-agent-core`.
+
+## TASK-20260623T145444-sample-flywheel-core (current cycle) — ITEM-02+03 샘플쿼리 flywheel PR-A 코어 (Major §12.3, ROADMAP dba-ai-nl2sql)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
+- 출처: ROADMAP ITEM-02(저장소)+ITEM-03(피드백 flywheel) 결합. 사용자 지시 "성장 루프까지 앞당김". 순차 2-PR 중 **PR-A(feature-0002 코어)**. PR-B(feature-0003 웹 UI/RBAC/audit)는 후속.
+
+### §2.1 Implementation Plan
+- **영향 파일**: `agent_kb_schema.sql`+`alembic 0014`(sample_queries/sample_feedback) · `modules/sample_queries.py`(신규) · `modules/sample_feedback.py`(신규) · `agent_core.py`(EXAMPLE QUERIES 주입) · `config.py`(AGENT_SAMPLE_QUERIES_ENABLED).
+- **symbol**: `sample_queries.{register_sample,search_samples,load_example_queries_context,validate_sample_sql}` · `sample_feedback.{record_feedback,promote_feedback,reject_feedback}`.
+- **접근**: ds-scoped sample_queries(임베딩 vector(1536)) approved∧active cosine top-K(weight 가중) → `## EXAMPLE QUERIES` few-shot 주입(예시-only 펜스). sample_feedback 은 👍/👎/등록 원천 → 승인 큐 → promote_feedback 로 approved 승급(자동학습 금지). flywheel-ready 필드(source_type/status/weight/last_validated_at) + 신선도 validate_sample_sql.
+- **위험도**: **Major** + 보안 표면(PII 마스킹·injection-only).
+- **acceptance**: AC-a 등록→유사질문 approved∧active top-K 주입(단위·ds격리·미승인/stale 비주입·weight). AC-b 피드백 PII 마스킹 적재→promote→approved 승급(코어 로직 단위). AC-c injection-only(샘플 실행 금지 펜스). **AC-d(측정) 보류** — titan-embed(임베딩) 다운으로 라이브 retrieval/A/B 불가(복구 후). AC-e verify PASS.
+- [x] 스키마 sample_queries/sample_feedback + alembic 0014 + 라이브 pg16 dry-run(테이블·ivfflat·cosine sim=1·upsert·GRANT, ROLLBACK).
+- [x] sample_queries.py(register `%s::vector`·search approved∧active∧weighted·load·validate) + sample_feedback.py(record PII-mask·promote·reject) + agent_core EXAMPLE QUERIES 주입(gate·datamark·예시-only) + config flag.
+- [x] 단위 `test_sample_flywheel.py` 12(등록/검색 SQL/주입/PII/승급/거부/신선도) 통과 + py_compile + **라이브 register(list 임베딩)→search retrieval sim=1.0 검증**(::vector BLOCKER 흡수).
+- [x] 적대 backend+security 리뷰 REV-20260623T145444 — **BLOCKER(embedding ::vector 누락) 흡수** + MINOR 정정.
+- [ ] **AC-d A/B 측정 보류** — titan-embed 401 AUTH-DOWN(chat 만 복구). 임베딩 복구 후 `make eval` 샘플 off/on. **PR-B(웹 UI/RBAC/audit) + 임베딩 클러스터(05/06/12)도 복구 후.**
+- verify PASS. worktree `ai/claude/feature-0002-agent-core`.
+
 ## TASK-20260623T105344-kb-glossary-enum (current cycle) — ITEM-10 용어사전 + ENUM 코드사전 (Major §12.3, ROADMAP dba-ai-nl2sql)
 <!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
 - 출처: `docs/improvements/dba-ai-nl2sql/ROADMAP.md` ITEM-10. `/_dqa:improve_cycle` 드레인 — Major plan-review 승인 후 **구조부**(저장+읽기+주입) 구현. 측정(ENUM 정확도)은 bedrock-auth 복구 후 보류.

@@ -73,7 +73,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: 이후 모든 성능 cycle 의 acceptance 가 이 harness 수치를 인용. 배포 불필요(개발 도구).
 
 ### ITEM-02 · 샘플쿼리(NL↔SQL) few-shot 저장소
-- **status**: pending
+- **status**: done
+- **note**: 2026-06-23 드레인(PR-A). 저장소(sample_queries 테이블+마이그0014, 임베딩 vector(1536), approved∧active∧weight cosine 검색, ## EXAMPLE QUERIES 예시-only 주입, flywheel-ready 필드+신선도 validate_sample_sql) 완료. 단위 12 + 라이브 pg16 dry-run + register(::vector)→search sim=1.0, 적대 backend+security 리뷰 BLOCKER(embedding ::vector) 흡수 SHIP. **AC-d A/B 측정은 titan-embed(임베딩) 다운으로 보류 — 복구 후 harness off/on.** 등록 UI 는 ITEM-03 PR-B/ITEM-11. CHG/REV-20260623T145444-sample-flywheel-core.
 - **feature_id**: feature-0002-agent-core
 - **dimension**: structural
 - **risk_grade**: Major
@@ -90,6 +91,7 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 
 ### ITEM-03 · 피드백 → KB 환류 flywheel
 - **status**: pending
+- **note**: 코어 환류 로직(feature-0002 — sample_feedback 테이블 + record(PII 마스킹)/promote/reject, 자동학습 금지)은 PR-A(2026-06-23, CHG-20260623T145444-sample-flywheel-core)에 랜딩. **남은 PR-B(primary feature-0003)**: 신규 RBAC `kb.sample.curate` + 피드백 endpoint(👍/👎/등록) + 검수 큐 admin UI + audit + Windows-browser. **PR-B 는 titan-embed(임베딩) 복구 후** — 승급된 샘플이 임베딩돼야 검색·주입되어 flywheel 이 실효.
 - **feature_id**: feature-0003-agent-web-ui   <!-- primary(UI+endpoint). 코어 환류는 feature-0002 — MODIFY.md cross-ref -->
 - **dimension**: structural
 - **risk_grade**: Major
@@ -154,7 +156,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: 지연 민감 — 측정으로 on/off 정책 결정.
 
 ### ITEM-07 · Self-Reflection 명시 자가수정 루프
-- **status**: pending
+- **status**: done
+- **note**: 2026-06-23 드레인(chat). execute_sql 수정가능 실패에 cap(2) 걸린 구조화 자가수정 넛지(분류+원SQL+표적힌트, 보안가드 제외, env gate). 단위 7 + prompt-injection 회귀 10, 적대 backend+security 리뷰 MAJOR(M1 실제 'SQL 실행 오류:' prefix 미매칭) 흡수 SHIP. **AC-b 정량 회복률 보류** — describe-first agent 가 단순 fixture 에서 1차 실패 거의 없어 측정 불가(에러유발 production traffic/error-injection harness 모드 필요, follow-up). 메커니즘+실제 에러경로 매칭 검증 완료. CHG/REV-20260623T151643-self-reflection.
 - **feature_id**: feature-0002-agent-core
 - **dimension**: performance
 - **risk_grade**: Major
@@ -259,7 +262,7 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | F-014 (결과 차트 시각화) | **defer** | frontend Minor·가치 중간. 정확도 항목 후순위. 재검토 트리거: 사용자 요청 누적 시. |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 3 · in-progress 0 · pending 9 · blocked 0
-- 완료: **ITEM-01**(2026-06-19) — harness 코드+단위검증, measured 수치는 bedrock-auth 복구 후. **ITEM-04**(2026-06-23) — DS 비즈니스 컨텍스트 read-side+schema. **ITEM-10**(2026-06-23) — 용어/ENUM 사전 구조부(저장+읽기+주입; 추출/UI/측정 follow-up).
-- 다음 ready(pending ∧ deps 충족): ITEM-02·07·09(deps-free) + ITEM-05(deps ITEM-01 ✓) 중 정렬 1순위 = **ITEM-02**(P1, Major). **단 전부 bedrock-auth(임베딩/측정/생성) 의존** — LLM/임베딩 무관하게 verify 완결 가능한 신규 ready 없음(ITEM-04/10 으로 소진). 복구 후 재개.
-- ⚠ **환경 블로커 (2026-06-19)**: 스택 전반 **Bedrock 인증 다운**(IAM 제거, 게이트웨이 401 "Unable to locate credentials"). 측정/임베딩이 LLM·Titan 에 의존하는 항목(ITEM-02 임베딩, ITEM-05/06/07/12 측정 게이트, 그 의존 ITEM-03/08/11)은 자격증명 복구 전 verify 불가 → 드레인은 사용자 지시로 **LLM 무관 항목만**(ITEM-04) 진행, 나머지는 복구 후 재개.
+- 총 12 항목 · done 5 · in-progress 0 · pending 7 · blocked 0
+- 완료: **ITEM-01**(harness, measured 보류) · **ITEM-04**(DS 컨텍스트) · **ITEM-10**(용어/ENUM 구조부) · **ITEM-02**(샘플 저장소 PR-A — A/B·등록UI 보류) · **ITEM-07**(2026-06-23, self-reflection 자가수정 — 회복률 측정 보류).
+- 다음 ready(pending ∧ deps 충족): **ITEM-09**(P3, Major — 무거운쿼리 경량대안+승인, **chat 의존 → 진행 가능**) · ITEM-05(P2, 임베딩 의존 → 보류) · ITEM-11(deps 02✓,10✓ — 거버넌스 포탈 web).
+- ⚠ **환경 상태 (2026-06-23 갱신)**: **chat 모델(claude-*) 복구 ✓ / 임베딩(titan-embed) 여전히 401 AUTH-DOWN ✗**. ① **chat 의존(verify 가능)**: ITEM-07(self-reflection)·ITEM-09(무거운쿼리 재작성) — harness 측정 chat 으로 동작. ② **임베딩 의존(보류)**: ITEM-02 라이브 retrieval·A/B · ITEM-05(하이브리드)·ITEM-06(reranker)·ITEM-12(retrieval 튜닝) · ITEM-03 PR-B(승급 샘플 임베딩 필요). 드레인은 사용자 지시로 **chat 항목(07/09) 진행**, 임베딩 클러스터는 titan-embed 복구 후.

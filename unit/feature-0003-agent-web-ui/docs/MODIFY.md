@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260623T031910-ai-claude-ds-conn-bg-decouple (TASK-20260623T031910, REQ-20260623-ds-conn-bg-decouple, Major §12.3)
+- Date: 2026-06-23
+- 요청(사용자, /_template:entry): `관리 콘솔 > 제품 > [각 항목]` 진입 시 연결 불안정 데이터소스 접근 시 timeout 까지 나머지 UI 갱신이 멈춤 → 모든 연결 확인을 백그라운드로 처리하고 내부 UI 갱신과 분리.
+- 범위 결정(AskUserQuestion): 전체 분리(Layer 1+2) — 이벤트 루프 차단 해소 + conn_health 캐시 게이트 + 프론트 비차단 렌더/배지.
+- 진단: `admin_datasource_databases`(GET `/api/admin/datasources/{key}/databases`, 제품 항목 진입 시 `_refreshAccessibleDbs` 호출)가 `async def` 안에서 동기 `_db.list_server_databases_classified()`(live connect, db.py 기본 8s)를 `asyncio.to_thread` 없이 호출 → FastAPI 이벤트 루프 전체 8s 블록 = 모든 요청 정지. preview + rule create/update 의 `_reconcile_one_db_rule`(async 핸들러서 동기 호출)도 동일. 백그라운드 `conn_health`(TASK-0250 캐시 3-state) 미사용 + `should_fast_fail` 은 `down` 만 즉시실패.
+- 변경:
+  - `src/app.py` — `admin_datasource_databases`: `from modules import conn_health as _ch` 추가. SSRF 후 `_ch.status_for(ds)` 캐시 먼저 읽어 `unstable`/`down` 이면 live connect 생략·`{databases:[], databases_classified:[], conn_status, degraded:true}` 즉시 반환(`?force=1` 시에만 실제 열거). 실제 열거 `await asyncio.to_thread(_db.list_server_databases_classified, …)` 오프로드 + 예외 시 `_ch.record_foreground_result(ds, False, None, "list_databases_failed")` 피드백 후 502. 성공 응답에 `conn_status`/`degraded:false` 추가(기존 `databases`/`databases_classified` 보존). `admin_create_product_db_rule`·`admin_update_product_db_rule`: `_reconcile_one_db_rule(conn, …)` 호출을 `await asyncio.to_thread(…)` 로 오프로드. `admin_preview_product_db_rule`: `list_server_databases_classified` 호출을 `await asyncio.to_thread(…)` 로 오프로드.
+  - `src/static/admin.js` — `renderProductDetail` 내 신규 `_setAccessDbDegraded(info)`(picker 위 `.admin-db-degraded-note` 배너 "연결 불안정/끊김 — DB 목록 보류 + [새로고침]", `role="status"`, 클릭 시 `?force=1` 재시도). `_refreshAccessibleDbs(key, opts={})` — `opts.force` 시 `?force=1` 부착, `r.degraded` 응답 시 빈 목록 + 배너, catch 시 `degraded=true` 로 재시도 배너 유지. 정상 경로 classified/lockedChips 로직은 else 블록으로 재배치(byte-equivalent).
+  - `src/static/styles.css` — `.admin-db-degraded-note` + `.admin-db-degraded-refresh`(danger 토큰 기반 배너/버튼).
+  - `src/static/admin.html` — 캐시버스터 `styles.css?v=20260623-ds-conn-bg-decouple` + `admin.js?v=20260623-ds-conn-bg-decouple`.
+- 비변경: `_reconcile_one_db_rule` 내부 로직(M3/M4/M5)·`conn_health` 모듈·RBAC·스키마·엔드포인트 contract·`/db-insights`(sync def → 이미 threadpool, PG insight 읽기라 live datasource connect 아님) 0.
+
+
 ## CHG-20260619T120000-ai-claude-db-rule-pending-batch (TASK-20260619T120000, REQ-20260619-0331, Major §12.3 — 보안 경계)
 - Date: 2026-06-19
 - 요청(사용자, /_template:entry): 관리 콘솔 모든 변경을 pending → 일괄적용으로 구성·정책에 검증과정 명시·프로젝트 메모리 기억. 보고된 위배 = 정규식 자동 규칙 수정 시 즉시 반영.
@@ -4404,3 +4417,21 @@ source_of_truth: true
 - Verification: test_llm_usage_quota.py 11/11(F1 escapeHtml 부재 가드 추가) + node --check + outside-voice SHIP. 사전존재 실패 2건(product-delete·db_query_ux) 무관. 화면 정본=PB-0008.
 - Rollback: buildQuotaEditor DOM 주입 → escapeHtml 보간 복원(단 admin 페이지 재차 깨짐).
 - Deploy: web 재빌드(정적). cache-buster 갱신.
+
+## CHG-20260623T030418-ai-claude-quota-rbac-permission
+- Date: 2026-06-23 (계정별·역할별 LLM 사용 한도 조회/조절 전용 권한). 사용자 요청.
+- Scope: feature-0003 `src/app.py`(PERMISSION_DEFINITIONS +quota.read/quota.manage·GET quotas 게이트 quota.read·PUT role/account 게이트 **quota.read+quota.manage**·_strip_quota_fields_if_unpermitted 헬퍼 + admin_me/admin_accounts/admin_roles/**admin_update_account** 적용) + `src/static/admin.js`(PERMISSION_DEPENDENCIES·그룹 메타·buildQuotaEditor readOnly·역할/계정 상세 섹션 게이트) + `admin.html`(cache-buster) + tests.
+- 내용: LLM 사용 한도(역할 기본·계정 특수)의 조회/조절을 console.manage 에서 분리. quota.read(조회)·quota.manage(조절, read 선행) 전용 권한. 조회 권한 없으면 한도 섹션 미렌더 + 직렬화 노출 차단(GET·계정/역할 리스트·**PATCH 응답** 전부 strip). 조회만 있으면 readOnly(값 표시·편집 불가). **조절은 서버에서도 조회 종속 집행(PUT=quota.read+quota.manage)**. admin 무영향(seed 전권).
+- Why: 사용자 요청 — 한도 조회/조절을 역할·계정 단위로 위임 가능하게. 조절은 조회 종속.
+- Verification: test 18/18(B8 양권한 게이트·B11/B12 MAJOR 가드·F2/F3 신설) + deps map 자동검증 + make test 회귀 0 + node --check + py_compile + outside-voice SHIP-WITH-FIXES(2 MAJOR 흡수). 화면 정본=PB-0008.
+- Rollback: quota.read/manage 정의 + deps + 게이트 + strip 헬퍼 + readOnly 제거 → console.manage 게이트 복원.
+- Deploy: web 재빌드(정적+직렬화). **이행 주의**: console.manage 만 가진 비-admin 커스텀 역할은 quota.read/manage 명시 부여 필요(least-privilege).
+
+## CHG-20260623T053000-ai-claude-quota-admin-catchup
+- Date: 2026-06-23 (admin 역할 quota.read/manage catchup — PB-0008 적발 lockout 수정). quota-rbac-permission follow-up.
+- Scope: feature-0003 `src/app.py`(`_ensure_seed_roles` admin catchup 리스트에 quota.read/quota.manage 추가) + tests(B13).
+- 내용: 한도 게이트를 console.manage→quota.read/quota.manage 로 전환했으나 신규 권한이 기존 배포 admin 역할(WebRolePermissions RoleId=3)에 미부여 → admin 포함 전원 한도 접근 불가(lockout). seed=set(PERMISSION_CODES)는 role 생성 시점만 적용. admin catchup(TASK-0288 datasource 선례 동형, INSERT IGNORE 멱등)으로 재시작 시 backfill.
+- Why: PB-0008 라이브 검증에서 bootstrap_admin quota.read=false 적발 — 기능 자체가 동작 불가.
+- Verification: test 16/16(B13 catchup 가드) + make test 회귀 0 + py_compile. 배포 후 재PB-0008(admin 한도 편집 가능 + 3-tier).
+- Rollback: catchup 2줄 제거(단 기존 admin 다시 lockout).
+- Deploy: web 재빌드 + 재시작(시작 시 _ensure_seed_roles backfill 실행).

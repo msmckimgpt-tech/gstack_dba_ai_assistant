@@ -155,11 +155,13 @@ function systemPromptPendingKey({ scope, productId = null, roleId = null, accoun
 // TASK-0288: datasource 그룹 신설(관리 콘솔 데이터소스 권한) + 제품 권한 2축 분리 —
 //   product(제품 관리, 관리 콘솔 구성: product.read/manage) ↔ product_access(제품 사용,
 //   작업 화면에서 요청 전송: 동적 product.access.<key>). 사용자 결정 2026-06-16.
-const PERMISSION_GROUP_ORDER = ["console", "account", "role", "datasource", "audit", "settings", "product", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
+const PERMISSION_GROUP_ORDER = ["console", "account", "role", "quota", "datasource", "audit", "settings", "product", "conversation_own", "conversation_any", "product_access", "attachment", "misc"];
 const PERMISSION_GROUP_LABELS = {
   console: "관리 콘솔",
   account: "계정",
   role: "역할",
+  // TASK-20260623T030418-quota-rbac-permission: LLM 토큰 사용 한도(역할 기본·계정 특수)의 조회/조절 권한 그룹.
+  quota: "LLM 사용 한도",
   datasource: "데이터소스",
   conversation_own: "내 대화 권한",
   conversation_any: "전체 대화 권한",
@@ -178,7 +180,8 @@ const ADMIN_PERMISSION_SECTIONS = [
   // TASK-0073 Phase C: audit 그룹은 관리 권한 section 의 admin 콘솔 책임 — console / account / role 와 같이 배치.
   // TASK-0095: settings 그룹은 시스템 운영 (전역 시스템 프롬프트 등) — manage 와 함께.
   // TASK-0288: datasource(데이터소스 관리) + product(제품 관리, 관리 콘솔 구성)는 관리 권한 section.
-  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · 데이터소스 · 제품 관리 · 감사 · 시스템 설정", groups: ["console", "account", "role", "datasource", "audit", "settings", "product"] },
+  // TASK-20260623T030418-quota-rbac-permission: LLM 사용 한도(quota) 그룹도 관리 권한 section.
+  { id: "manage", title: "관리 권한", description: "콘솔 진입 · 계정 · 역할 · LLM 사용 한도 · 데이터소스 · 제품 관리 · 감사 · 시스템 설정", groups: ["console", "account", "role", "quota", "datasource", "audit", "settings", "product"] },
   // TASK-0094 Sprint 1 Phase 12: attachment 그룹은 운영 권한 묶음에 포함.
   // TASK-0288: 작업 화면 제품 사용(product_access)은 운영 권한 section — 관리 콘솔 제품 관리(product)와 분리.
   { id: "operate", title: "운영 권한", description: "내 대화 · 전체 대화 · 제품 사용 · 첨부", groups: ["conversation_own", "conversation_any", "product_access", "attachment"] },
@@ -216,6 +219,10 @@ const PERMISSION_DEPENDENCIES = {
   "role.update": "role.read",
   "role.delete": "role.read",
   "role.permission.manage": "role.read",
+  // TASK-20260623T030418-quota-rbac-permission: LLM 사용 한도 — quota.read 가 그룹 게이트(console.access
+  //   하위), quota.manage(조절) 는 quota.read(조회) 선행. 조회 없이는 조절 불가.
+  "quota.read": "console.access",
+  "quota.manage": "quota.read",
   // TASK-0288: 데이터소스 — datasource.read 가 그룹 게이트(console.access 하위), manage 는 read 선행.
   "datasource.read": "console.access",
   "datasource.manage": "datasource.read",
@@ -1368,9 +1375,12 @@ adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPa
 
 // TASK-20260623T014626-quota-ui-relocate: LLM 토큰 사용 한도 편집기 — 역할 상세 / 계정 상세 공용.
 // (감사>LLM 사용량 화면에서 각 역할/계정 상세 속성으로 이전.)
-//   opts = { scope: "role"|"account", id, daily, monthly, onSaved, inheritNote? }
+//   opts = { scope: "role"|"account", id, daily, monthly, onSaved, inheritNote?, readOnly? }
 //   값: 빈칸=상속(역할 기본은 무제한, 계정은 역할 기본 사용), 0=무제한(명시), 1 이상=한도, 1=사실상 차단.
+//   TASK-20260623T030418-quota-rbac-permission: readOnly=true(quota.read 만 보유, quota.manage 없음)
+//     → 입력 비활성 + 저장 버튼 제거 + "조회 전용" 안내. 섹션 자체는 quota.read 없으면 호출측이 미렌더.
 function buildQuotaEditor(opts) {
+  const readOnly = Boolean(opts.readOnly);
   const fmtVal = (v) => (v === null || v === undefined ? "" : String(v));
   const wrap = document.createElement("div");
   wrap.className = "admin-quota-editor";
@@ -1385,15 +1395,27 @@ function buildQuotaEditor(opts) {
     `  <label class="admin-quota-field"><span>월간 한도</span><input type="number" min="0" class="admin-search admin-quota-monthly" placeholder="${monthlyPlaceholder}" /></label>` +
     '</div>' +
     `<p class="admin-quota-hint">토큰 수 기준. 빈칸=${opts.scope === "account" ? "역할 기본값 사용" : "무제한"}, 0=무제한(명시), <strong>전면 차단은 1</strong>. 초과 시 해당 사용자의 새 요청이 일시 제한됩니다.</p>` +
-    '<button type="button" class="btn-secondary admin-quota-save">한도 저장</button>';
-  wrap.querySelector(".admin-quota-daily").value = fmtVal(opts.daily);
-  wrap.querySelector(".admin-quota-monthly").value = fmtVal(opts.monthly);
+    (readOnly ? "" : '<button type="button" class="btn-secondary admin-quota-save">한도 저장</button>');
+  const dailyInput = wrap.querySelector(".admin-quota-daily");
+  const monthlyInput = wrap.querySelector(".admin-quota-monthly");
+  dailyInput.value = fmtVal(opts.daily);
+  monthlyInput.value = fmtVal(opts.monthly);
   const saveBtn = wrap.querySelector(".admin-quota-save");
   if (opts.inheritNote) {
     const note = document.createElement("p");
     note.className = "admin-quota-hint";
     note.textContent = opts.inheritNote;
-    wrap.insertBefore(note, saveBtn);
+    wrap.insertBefore(note, saveBtn || null);
+  }
+  if (readOnly) {
+    // 조회 전용 — 입력 비활성 + 안내. 저장 버튼은 애초에 렌더하지 않음(quota.manage 미보유).
+    dailyInput.disabled = true;
+    monthlyInput.disabled = true;
+    const ro = document.createElement("p");
+    ro.className = "admin-quota-hint admin-quota-readonly";
+    ro.textContent = "조회 전용입니다 — 한도를 변경하려면 ‘LLM 사용 한도 조절’ 권한이 필요합니다.";
+    wrap.appendChild(ro);
+    return wrap;
   }
   saveBtn.addEventListener("click", async () => {
     const d = wrap.querySelector(".admin-quota-daily").value.trim();
@@ -4688,7 +4710,9 @@ function renderAccountDetail() {
   }
 
   // TASK-20260623T014626-quota-ui-relocate: 계정 특수 LLM 사용 한도 (감사>LLM 사용량에서 이전).
-  if (!base.deleted_at && !merged._isNew && can("console.manage") && can("account.update")) {
+  // TASK-20260623T030418-quota-rbac-permission: 표시=quota.read, 편집=quota.manage(없으면 readOnly).
+  //   조회 권한 없으면 섹션 자체 미렌더(account.update 종속 제거 — 한도는 독립 권한).
+  if (!base.deleted_at && !merged._isNew && can("quota.read")) {
     const roleObj = adminState.roles.find((r) => Number(r.id) === Number(merged.role_id));
     const roleName = roleObj ? (roleObj.name || roleObj.key) : "역할";
     const fmtInherit = (v) => (v === null || v === undefined ? "무제한" : `${Number(v).toLocaleString()} 토큰`);
@@ -4707,6 +4731,7 @@ function renderAccountDetail() {
       daily: base.quota_daily,
       monthly: base.quota_monthly,
       inheritNote: inheritNote,
+      readOnly: !can("quota.manage"),
       onSaved: async () => { await loadAdminData(); renderAccountDetail(); },
     }));
     paneEl.appendChild(qSection);
@@ -5397,7 +5422,8 @@ function renderRoleDetail() {
   }
 
   // TASK-20260623T014626-quota-ui-relocate: 역할 기본 LLM 사용 한도 (감사>LLM 사용량에서 이전).
-  if (!merged._isNew && !merged._delete && can("console.manage")) {
+  // TASK-20260623T030418-quota-rbac-permission: 표시=quota.read, 편집=quota.manage(없으면 readOnly).
+  if (!merged._isNew && !merged._delete && can("quota.read")) {
     const qSection = document.createElement("div");
     qSection.className = "admin-detail-section";
     const qTitle = document.createElement("div");
@@ -5413,6 +5439,7 @@ function renderRoleDetail() {
       id: merged.id,
       daily: merged.quota_daily,
       monthly: merged.quota_monthly,
+      readOnly: !can("quota.manage"),
       onSaved: async () => { await loadAdminData(); renderRoleDetail(); },
     }));
     paneEl.appendChild(qSection);
@@ -7444,9 +7471,40 @@ function renderProductDetail() {
     });
   };
 
+  // ds-conn-bg-decouple: 연결 불안정/끊김으로 DB 목록 로드를 보류했을 때, picker 위에 상태
+  // 배너 + '새로고침'(force) 버튼을 노출/제거한다. 동기 연결확인이 UI 를 막지 않고, 사용자가
+  // 원할 때만 명시적으로 live connect 를 재시도(?force=1)하게 한다.
+  const _setAccessDbDegraded = (info) => {
+    const host = pickerWrap && pickerWrap.parentNode;
+    if (!host) return;
+    const prev = host.querySelector(".admin-db-degraded-note");
+    if (prev) prev.remove();
+    if (!info) return;
+    const note = document.createElement("div");
+    note.className = "admin-db-degraded-note";
+    note.setAttribute("role", "status");   // degraded 상태를 보조기술에 알림(서버 degraded 경로는 toast 없음).
+    const label = info.connStatus === "down" ? "연결 끊김" : "연결 불안정";
+    const span = document.createElement("span");
+    span.textContent = `데이터소스 ${label} — DB 목록 로드를 보류했습니다(연결 상태는 백그라운드에서 점검 중).`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "admin-db-degraded-refresh";
+    btn.textContent = "새로고침";
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      btn.textContent = "확인 중…";
+      _refreshAccessibleDbs(info.key, { force: true });
+    });
+    note.append(span, btn);
+    host.insertBefore(note, pickerWrap);
+  };
+
   // TASK-0206: 선택 datasource 의 DB 목록으로 접근가능 DB(고정 시스템칩 + 사용자 picker)을 갱신.
   // 등록 datasource 면 /databases(classified) 사용; 미바인딩이면 데이터 MySQL 기본값으로 환원.
-  _refreshAccessibleDbs = async (key) => {
+  // ds-conn-bg-decouple: 기본 호출은 백그라운드 conn_health 캐시 게이트를 통과한 응답(불안정/끊김이면
+  // degraded=true 로 즉시 반환 — live connect 안 함)을 받고, opts.force 시에만 ?force=1 로 실제 열거.
+  _refreshAccessibleDbs = async (key, opts = {}) => {
+    const force = !!(opts && opts.force);
     const ds = (adminState.datasources || []).find((d) => d.key === key);
     if (!key || !ds) {
       // 미바인딩(또는 미등록) → 데이터 MySQL 기본값.
@@ -7455,32 +7513,45 @@ function renderProductDetail() {
       dsCaseInsensitive = false;
       redrawChips();
       buildPicker();
+      _setAccessDbDegraded(null);
       _ensureDbInsights();   // TASK-0242: 기본(미바인딩) scope 의 DB 설명/상태 로드.
       return;
     }
     const isMssql = String(ds.engine || "mysql").toLowerCase() === "mssql";
     dsCaseInsensitive = isMssql;
+    let degraded = false, connStatus = null;
     try {
-      const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/databases`);
-      const classified = (r && r.databases_classified) || null;
-      const userDbs = classified ? classified.filter((d) => !d.system).map((d) => d.name) : ((r && r.databases) || []);
-      if (isMssql) {
-        // MSSQL: 시스템 DB(master/model/msdb)를 고정칩으로(catalog 접근 — sys 스키마는 런타임 차단).
-        lockedChips = classified
-          ? classified.filter((d) => d.system).map((d) => ({ name: d.name, present: true }))
-          : [];
+      const qs = force ? "?force=1" : "";
+      const r = await apiFetch(`/api/admin/datasources/${encodeURIComponent(key)}/databases${qs}`);
+      if (r && r.degraded) {
+        // 백그라운드 모니터가 불안정/끊김으로 판정 → 동기 열거 생략(다른 UI 갱신 비차단). 캐시 상태만.
+        degraded = true;
+        connStatus = r.conn_status || null;
+        lockedChips = isMssql ? [] : _defaultLocked.slice();
+        availableUserDbs = [];
       } else {
-        // MySQL: 메타데이터 4종(information_schema 등)을 고정칩으로 유지(DB==스키마, 시스템 스키마 경계).
-        lockedChips = _defaultLocked.slice();
+        const classified = (r && r.databases_classified) || null;
+        const userDbs = classified ? classified.filter((d) => !d.system).map((d) => d.name) : ((r && r.databases) || []);
+        if (isMssql) {
+          // MSSQL: 시스템 DB(master/model/msdb)를 고정칩으로(catalog 접근 — sys 스키마는 런타임 차단).
+          lockedChips = classified
+            ? classified.filter((d) => d.system).map((d) => ({ name: d.name, present: true }))
+            : [];
+        } else {
+          // MySQL: 메타데이터 4종(information_schema 등)을 고정칩으로 유지(DB==스키마, 시스템 스키마 경계).
+          lockedChips = _defaultLocked.slice();
+        }
+        availableUserDbs = userDbs;
       }
-      availableUserDbs = userDbs;
     } catch (e) {
       lockedChips = isMssql ? [] : _defaultLocked.slice();
       availableUserDbs = [];
+      degraded = true;   // 연결/권한 실패 — 재시도 affordance 유지.
       showToast("데이터소스 DB 목록 조회 실패 — 연결/권한 확인.", true);
     }
     redrawChips();
     buildPicker();
+    _setAccessDbDegraded(degraded ? { key, connStatus } : null);
     _ensureDbInsights();   // TASK-0242: 이 datasource scope 의 DB 설명/상태 로드(완료 시 재렌더).
   };
 

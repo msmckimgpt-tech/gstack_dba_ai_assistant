@@ -8,7 +8,29 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260619T120000-ai-claude-db-rule-pending-batch (current cycle) — 정규식 자동 규칙 편집을 pending → "모두 적용" 으로 재배선 (REQ-20260619-0331, AC-0609, Major §12.3 — 보안 경계)
+## TASK-20260623T031910-ai-claude-ds-conn-bg-decouple (current cycle) — 관리 콘솔 > 제품: 데이터소스 연결확인을 동기 render 경로에서 백그라운드로 분리 (REQ-20260623-ds-conn-bg-decouple, Major §12.3)
+- 보고(사용자, /_template:entry, 2026-06-23): `관리 콘솔 > 제품 > [각 항목]` 진입 시 연결이 불안정한 데이터소스 항목에 접근하면, 해당 데이터소스 연결이 timeout 될 때까지 나머지 UI 갱신이 진행되지 않음. → 모든 연결 확인을 백그라운드로 처리하고, 내부 UI 갱신 중 서비스 내부로 작동하는 부분과 분리.
+- 등급: **Major §12.3** — 관리 콘솔 동작 변경 + async 리팩터(다중 파일). read-side 조회(DB 목록 열거)라 인증/데이터/스키마 영향 0 → Critical 아님.
+- 범위 결정(AskUserQuestion, 사용자 2026-06-23): **전체 분리(Layer 1+2)** — 이벤트 루프 차단 해소 + 백그라운드 conn_health 캐시 게이트 + 프론트 비차단 렌더/캐시 배지.
+- 진단: ① `app.py admin_datasource_databases`(GET `/api/admin/datasources/{key}/databases`, 제품 항목 진입 시 `_refreshAccessibleDbs` 가 호출)가 **`async def` 안에서 동기 `_db.list_server_databases_classified()`**(live connect, db.py 기본 8s timeout)를 `asyncio.to_thread` 없이 호출 → **FastAPI 이벤트 루프 전체를 8s 블록** = 그동안 모든 요청 정지("나머지 UI 갱신 멈춤"의 정체). ② 같은 동기-블록이 `admin_preview_product_db_rule`(preview) + rule create/update 의 `_reconcile_one_db_rule`(둘 다 `async def` 에서 동기 호출)에도 존재. ③ 백그라운드 `conn_health` 모니터(TASK-0250, 캐시 3-state)가 이미 있는데 이 경로가 안 쓰고 매번 live connect + circuit breaker `should_fast_fail` 은 `down` 만 즉시실패·`unstable` 은 8s 대기.
+- 수정: (a) backend `app.py` — `admin_datasource_databases`: SSRF 후 `conn_health.status_for(ds)` 캐시 먼저 읽어 `unstable`/`down` 이면 live connect 생략·`{degraded:true, conn_status}` 즉시 반환(`?force=1` 시에만 실제 열거), 실제 열거는 `await asyncio.to_thread(...)` 로 오프로드 + 실패 시 `record_foreground_result(False)` 피드백. preview + rule create/update 의 reconcile 호출을 `await asyncio.to_thread(...)` 로 오프로드. (b) frontend `admin.js` — `_refreshAccessibleDbs(key, {force})` 가 `degraded` 응답 처리(빈 목록 + `_setAccessDbDegraded` 배너 "연결 불안정/끊김 — DB 목록 보류 + [새로고침]" → `?force=1` 재시도), 제품 상세는 기존대로 즉시 렌더(fire-and-forget). (c) `styles.css` `.admin-db-degraded-note`/`.admin-db-degraded-refresh`. **비변경**: `_reconcile_one_db_rule` 내부 로직(M3/M4/M5)·RBAC·스키마·엔드포인트 shape·conn_health 모듈·`/db-insights`(sync def → 이미 threadpool) 0.
+
+### §2.1 Implementation Plan (PLAN)
+- 영향 파일: `unit/feature-0003-agent-web-ui/src/app.py`(3 async 경로) · `src/static/admin.js`(`_refreshAccessibleDbs`+`_setAccessDbDegraded`) · `src/static/styles.css`(배너).
+- 변경 symbol: `admin_datasource_databases`, `admin_preview_product_db_rule`, `admin_create_product_db_rule`, `admin_update_product_db_rule`(app.py); `_refreshAccessibleDbs`/신규 `_setAccessDbDegraded`(admin.js).
+- 접근: 동기 live-connect 를 `asyncio.to_thread` 로 이벤트 루프 밖으로 + 렌더 경로(#1)는 백그라운드 `conn_health` 캐시 게이트로 불안정/끊김 시 connect 생략.
+- 완료 판정(acceptance):
+  1. 불안정/끊김 데이터소스 제품 항목 진입 시 다른 UI 갱신/요청이 8s 멈추지 않는다(이벤트 루프 비차단).
+  2. 불안정/끊김 데이터소스의 DB 목록 호출이 live connect 없이 캐시 상태로 즉시(<100ms) 반환된다(`degraded:true`).
+  3. `?force=1`(새로고침) 시에만 실제 열거를 시도하고, 그 connect 도 이벤트 루프 밖에서 수행된다.
+  4. 정상 데이터소스의 DB 목록 동작·기존 응답 shape(`databases`/`databases_classified`)는 무회귀(필드 추가만).
+- 위험도: Major §12.3.
+- 검증: `py_compile app.py` PASS · `node --check admin.js` PASS · CSS brace balance · conn_health 모니터 web startup 와이어링 + scope_key 정합 확인. (PB-0008 Windows-browser 시각검증은 배포 후.)
+- [x] 구현(backend `app.py` 3 async 경로 to_thread + `admin_datasource_databases` conn_health 캐시 게이트 + `?force=1`; frontend `admin.js` degraded 배너 + force 재시도; `styles.css` 배너; `admin.html` 캐시버스터) + `py_compile app.py`·`node --check admin.js`·CSS brace balance PASS.
+- [x] §18.8 적대적 검증 패널 → **SHIP**(REV-20260623T031910 [SUBAGENT:frontend-degraded-banner + AI-inline:backend-async-correctness]; frontend NO REAL ISSUES, backend inline 7축[conn 핸드오프·scope_key·startup·shape·foreground feedback·게이트·잔여 connect] 무결; minor a11y `role="status"` 반영).
+- [x] verify-completion --pre-commit PASS(9) → 머지(PR #374, main `b2236fe`; base-behind rebase 충돌해소 admin.html 캐시버스터·FUNCTION.md append keep-both) → web 재배포(deploy_scope: included, `docker compose build web`+`up -d --no-deps web`, repo-web-1 Up healthy, 서빙 `admin.js?v=20260623-ds-conn-bg-decouple`·conn_health 게이트·to_thread baked) → **PB-0008 Windows-browser PASS**(실 Chrome/149: ①이벤트 루프 비차단 — down `?force=1` 8024ms 블록 중 동시 healthy 44ms 완료 ②degraded fast-path 38ms `degraded:true` ③healthy 무회귀 db14 ④시각 배너 "연결 끊김 — DB 목록 보류 + 새로고침"(`role=status`, 제품95 건즈국내QA) ⑤force 버튼 disabled→확인중→재활성). evidence `artifacts/pb0008-ds-conn-bg-decouple/{degraded-banner-down-ds,healthy-product-no-banner}.png`. **cycle 완료.**
+
+## TASK-20260619T120000-ai-claude-db-rule-pending-batch — 정규식 자동 규칙 편집을 pending → "모두 적용" 으로 재배선 (REQ-20260619-0331, AC-0609, Major §12.3 — 보안 경계)
 - 보고(사용자, /_template:entry, 2026-06-19): "관리 콘솔 내에서 작업되는 모든 변경은 pending 후 일괄적용으로 구성되도록 정책에 검증과정 명시 + 프로젝트 메모리 기억." + `관리 콘솔 > 제품 > [각 제품] > '데이터 소스 & 접근 가능 데이터베이스' > 정규식 자동 규칙` 수정 시 **별도 Pending 없이 즉시 반영**됨을 확인.
 - 등급: **Major §12.3** — 접근 가능 DB allowlist(보안 경계) 변경 경로 + 의도된 "안전 하이브리드(outside-voice B1)" 설계를 시정. 비파괴(스테이징 모델 추가, 엔드포인트/스키마 무변경).
 - 범위 결정(AskUserQuestion, 사용자 2026-06-19): **범위 A** — 규칙 *편집 동작*(추가/수정/삭제/승인)만 pending 화하고, 확정된 규칙의 *백그라운드 자동 동기화*(잦은 DB 변경 자동 반영, 과거 요청 기능)는 보존. (범위 B = allowlist 변경 전부 pending·자율성 제거 는 미채택.)
@@ -4414,4 +4436,20 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 수정: 비신뢰 값(한도 숫자·inheritNote)을 innerHTML 보간 대신 DOM 프로퍼티로 주입 — `input.value = fmtVal(...)`, `note.textContent = opts.inheritNote`. placeholder/힌트는 정적 문자열(scope 파생)이라 innerHTML 유지. escapeHtml 의존 0(실사용·주석 외 제거). XSS 안전성은 오히려 강화(동적 값이 innerHTML 경로를 전혀 타지 않음).
 - [x] 검증: `test_llm_usage_quota.py` F1 에 회귀 가드 추가(buildQuotaEditor 본문 슬라이스에 `escapeHtml(` 부재 + DOM 주입 패턴 존재) → 11/11. node --check OK. 사전존재 실패 2건(product-delete·db_query_ux) 무관 재확인.
 - [x] 적대 리뷰(outside-voice): **SHIP**. XSS-safe 확인, escapeHtml 미가용 crux 확인(app.js 미로드), admin.js 잔여 escapeHtml call-site 0(스코프 완전), 콜러(renderRoleDetail/renderAccountDetail) throw 제거로 상세 pane 전체 깨짐 위험 해소.
-- [ ] 머지 → 배포(web) → PB-0008(역할·계정 상세 "LLM 사용 한도" 섹션 실렌더 + 저장 동작) → 마감.
+- [x] 머지 → 배포(web) → PB-0008(역할·계정 상세 "LLM 사용 한도" 섹션 실렌더 + 저장 동작) → 마감. (main 9e7ec24, PB-0008 d6a3ccd)
+
+### TASK-20260623T030418-quota-rbac-permission — 계정별·역할별 LLM 사용 한도 조회/조절 전용 권한 (REQ-20260623-0332, AC-0610·0611, Major §12.3 — 보안 경계, 2026-06-23)
+- 사용자 요청: 계정별·역할별 LLM 사용 한도의 "조회 및 조절" 권한을 구성. 조절은 조회에 종속(조회 없으면 조절 불가). 조회 권한 없으면 UI 표시도 미노출.
+- 결정: quota 를 `console.manage` 에서 **분리**해 전용 권한 2종 신설 — `quota.read`(조회, 그룹 게이트=console.access 하위)·`quota.manage`(조절, quota.read 선행). admin seed(=set(PERMISSION_CODES)) 자동 보유 → 무lockout. console.manage 만 가진 커스텀 역할은 명시 부여 전까지 한도 접근 불가(least-privilege, datasource.read/product.read 도입 선례 동형).
+- [x] 백엔드: `PERMISSION_DEFINITIONS` 에 quota.read/quota.manage(group=quota) 추가. GET `/api/admin/quotas` console.manage→**quota.read**, PUT `/api/admin/quotas/role|account/{id}` console.manage→**quota.manage**. 직렬화 strip 헬퍼 `_strip_quota_fields_if_unpermitted`(actor quota.read 미보유 시 quota_daily/monthly 제거) — `admin_me`·`admin_accounts`·`admin_roles` 적용(defense-in-depth, 노출 차단).
+- [x] 프론트: `PERMISSION_DEPENDENCIES` quota.read→console.access·quota.manage→quota.read. 그룹 메타(`PERMISSION_GROUP_ORDER`/`PERMISSION_GROUP_LABELS` "LLM 사용 한도"/`ADMIN_PERMISSION_SECTIONS` manage). 역할/계정 상세 한도 섹션 게이트 console.manage(+account.update)→**can("quota.read")**, 편집=**readOnly:!can("quota.manage")**. `buildQuotaEditor` `readOnly` 옵션 신설(입력 disable + 저장 버튼 미렌더 + "조회 전용" 안내). cache-buster `?v=20260623-quota-rbac-permission`.
+- [x] 검증: `test_llm_usage_quota.py` B8 게이트 갱신 + B11(권한 등재·admin seed·least-privilege)·B12(strip 헬퍼 실동작 list/dict)·F2(UI 게이트 read=표시/manage=readOnly)·F3(권한 정합) 신설 → 16/16. `test_permission_dependency_map.py` 가 신규 deps 자동 검증 통과. make test 회귀 0(사전존재 product-delete·db_query_ux 3건 무관). node --check + py_compile OK.
+- [x] 적대 리뷰(outside-voice, 보안 경계 필수): **SHIP-WITH-FIXES** → 2 MAJOR 흡수. **MAJOR-1**(PATCH `/api/admin/accounts/{id}` 응답이 strip 미적용 → account.update 만으로 한도 열람 우회) → `admin_update_account` 응답에 `_strip_quota_fields_if_unpermitted` 추가. **MAJOR-2**("조절은 조회 종속"이 UI-only — PUT 이 quota.manage 만 검사해 blind-write 가능) → PUT role/account 게이트에 quota.read **동시 요구**(서버 집행). MINOR(console.manage 분리=접근 확대)=의도된 설계, 문서화. 재검증 31/31.
+- [x] verify-completion → 머지 → 배포(web) → PB-0008(quota.read만=readOnly / quota.manage=편집 / 무권한=미표시 3-tier) → 마감. (main cede0a4 머지·배포)
+
+### TASK-20260623T030418-quota-rbac-permission follow-up — admin catchup 누락 lockout 수정 (PB-0008 적발, 2026-06-23)
+- **PB-0008 적발**: 배포 후 실 Windows 브라우저에서 `bootstrap_admin`(role=admin, console.manage 보유) 의 `adminState.me.permissions["quota.read"]`=**false** → 한도 게이트를 console.manage→quota.read/manage 로 전환한 탓에 admin 포함 전원이 한도 섹션 접근 불가. DB 확인: WebRolePermissions(RoleId=3) quota.read=0/quota.manage=0.
+- **근본**: 신규 권한은 role 생성 시 seed(=set(PERMISSION_CODES))로만 부여 → **기존 배포 admin row 에는 retroactive 미적용**. `_ensure_seed_roles` 의 admin catchup 리스트(TASK-0288 datasource.read 등 선례)에 quota.read/manage 미등록이 원인.
+- [x] 수정: `_ensure_seed_roles` admin catchup 에 `quota.read`/`quota.manage` 추가(INSERT IGNORE 멱등, 재시작 시 기존 admin 역할 backfill). 회귀 가드 B13(catchup 소스에 quota.read/manage 단언).
+- [x] 검증: test 16/16(B13 신설) + make test 회귀 0 + py_compile. 배포 후 재PB-0008(admin=quota.read/manage 보유→편집 가능 + 3-tier 게이트).
+- [ ] verify → 머지 → 배포 → 재PB-0008 → 마감.

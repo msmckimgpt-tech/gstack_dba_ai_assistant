@@ -216,6 +216,24 @@ PERMISSION_DEFINITIONS = (
         "group": "role",
     },
     {
+        # TASK-20260623T030418-quota-rbac-permission (REQ-20260623-0332, AC-0610):
+        # LLM 토큰 사용 한도 전용 권한 — 역할별 기본·계정별 특수 한도의 "조회". console.usage.read
+        # (사용량/비용 *집계* 조회)와 별개로, 한도 *설정값* 의 열람을 분리 위임한다.
+        # quota.read 가 그룹 게이트(console.access 하위)이며, 한도 섹션 표시·직렬화 노출의 기준.
+        "code": "quota.read",
+        "label": "LLM 사용 한도 조회",
+        "description": "역할별 기본 / 계정별 특수 LLM 토큰 사용 한도를 조회할 수 있다.",
+        "group": "quota",
+    },
+    {
+        # TASK-20260623T030418-quota-rbac-permission (AC-0610): 한도 "조절"(설정·해제).
+        # 조회(quota.read) 선행 — 조회 없이 조절 불가(PERMISSION_DEPENDENCIES quota.manage→quota.read).
+        "code": "quota.manage",
+        "label": "LLM 사용 한도 조절",
+        "description": "역할별 기본 / 계정별 특수 LLM 토큰 사용 한도를 설정하거나 해제할 수 있다. 조회 권한이 선행되어야 한다.",
+        "group": "quota",
+    },
+    {
         "code": "conversation.create",
         "label": "대화 생성",
         "description": "새 대화를 생성할 수 있다.",
@@ -1846,8 +1864,24 @@ def _serialize_account(
         # 실패 횟수는 admin-context 에만 노출(자기 세션 /api/auth/me 비노출 — outside-voice NIT 흡수).
         payload["failed_login_attempts"] = int(account.get("failed_login_attempts") or 0)
         # TASK-20260623T014626-quota-ui-relocate: 계정 특수 LLM 토큰 한도(override, null=역할 기본 상속). admin 계정 상세 편집용.
+        # TASK-20260623T030418-quota-rbac-permission: 노출은 actor 의 quota.read 가 있을 때만
+        #   (_strip_quota_fields_if_unpermitted 가 엔드포인트에서 strip). 직렬화는 값을 싣되, 게이트는 호출측.
         payload["quota_daily"] = int(account["quota_daily"]) if account.get("quota_daily") is not None else None
         payload["quota_monthly"] = int(account["quota_monthly"]) if account.get("quota_monthly") is not None else None
+    return payload
+
+
+def _strip_quota_fields_if_unpermitted(payload, actor):
+    """TASK-20260623T030418-quota-rbac-permission: actor 가 quota.read 미보유 시
+    직렬화에서 LLM 한도 필드(quota_daily/quota_monthly)를 제거한다(노출 차단, defense-in-depth).
+    payload 는 dict(단건) 또는 list[dict]. quota.read 보유 시 무변경 후 그대로 반환."""
+    if _account_has_permission(actor, "quota.read"):
+        return payload
+    items = payload if isinstance(payload, list) else [payload]
+    for item in items:
+        if isinstance(item, dict):
+            item.pop("quota_daily", None)
+            item.pop("quota_monthly", None)
     return payload
 
 
@@ -2571,6 +2605,12 @@ def _ensure_seed_roles(conn) -> None:
             "datasource.read",
             "datasource.manage",
             "product.read",
+            # TASK-20260623T030418-quota-rbac-permission: admin 의 LLM 사용 한도 조회/조절 catchup. **필수** —
+            # 한도 게이트를 console.manage→quota.read/manage 로 전환했으므로, 기존 배포 admin 역할이
+            # 본 catchup 없이는 한도 조회·조절권을 잃는다(lockout, PB-0008 적발). 신규 권한은 role 생성
+            # 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 admin row 에는 retroactive 미적용.
+            "quota.read",
+            "quota.manage",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -13664,6 +13704,7 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
     """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). datasource.read. SSRF 차단."""
     from modules import datasources as _dsr
     from modules import db as _db
+    from modules import conn_health as _ch
     try:
         conn = _connect_memory()
     except Exception:
@@ -13686,10 +13727,33 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
     okssrf, reason, _pin = _ssrf_check_host(ds.get("host"))
     if not okssrf:
         return _json_error(f"호스트 차단(SSRF): {reason}", 400)
+    # ds-conn-bg-decouple: 연결 확인을 동기 render 경로에서 분리한다. 백그라운드 conn_health
+    # 모니터가 미리 계산해 둔 상태를 먼저 읽어, unstable/down 이면 live connect(최대 8s 이벤트
+    # 루프 블록)를 시도하지 않고 캐시 상태만 즉시 반환한다 — 제품 항목 진입 시 다른 UI 갱신이
+    # 멈추지 않는다. 명시적 새로고침(?force=1)일 때만 실제 열거를 강제한다.
+    force = str(request.query_params.get("force") or "").strip().lower() in ("1", "true", "yes")
+    cached = _ch.status_for(ds) or {}
+    conn_status = cached.get("status") or _ch.UNKNOWN
+    if not force and conn_status in (_ch.UNSTABLE, _ch.DOWN):
+        return JSONResponse({
+            "key": str(key).strip().lower(),
+            "engine": ds.get("engine"),
+            "databases": [],
+            "databases_classified": [],
+            "conn_status": conn_status,
+            "degraded": True,
+        })
     try:
         # TASK-0206 §3.4: 시스템/사용자 DB 구분(`[{name, system}]`). UI 가 시스템 DB 는 고정칩으로.
-        classified = _db.list_server_databases_classified({**ds, "host": _pin})  # MAJOR-2: pinned IP
+        # 실제 DB 열거는 살아있는 연결이 필요 → 이벤트 루프 블로킹 방지 위해 to_thread 로 오프로드.
+        classified = await asyncio.to_thread(
+            _db.list_server_databases_classified, {**ds, "host": _pin})  # MAJOR-2: pinned IP
     except Exception:
+        # 실패를 conn_health 에 피드백 — 다음 요청이 즉시 캐시 상태로 fast-path(8s 재낭비 차단).
+        try:
+            _ch.record_foreground_result(ds, False, None, "list_databases_failed")
+        except Exception:
+            pass
         return _json_error("DB 목록 조회 실패(연결/권한 확인).", 502)
     # 하위호환: 기존 `databases`(사용자 DB 이름 배열) 유지 + 신규 `databases_classified`.
     user_names = [d["name"] for d in classified if not d.get("system")]
@@ -13698,6 +13762,8 @@ async def admin_datasource_databases(key: str, request: Request) -> JSONResponse
         "engine": ds.get("engine"),
         "databases": user_names,
         "databases_classified": classified,
+        "conn_status": conn_status,
+        "degraded": False,
     })
 
 
@@ -18138,9 +18204,11 @@ def admin_me(request: Request) -> JSONResponse:
         conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     conn.close()
+    user_payload = _serialize_account(account, include_permissions=True) or {}
+    _strip_quota_fields_if_unpermitted(user_payload, account)
     return JSONResponse({
         "ok": True,
-        "user": _serialize_account(account, include_permissions=True),
+        "user": user_payload,
     })
 
 
@@ -18158,6 +18226,8 @@ def admin_accounts(request: Request) -> JSONResponse:
         conn.close()
         return _json_error("관리 콘솔 조회 권한이 필요합니다.", 403)
     accounts = _list_admin_accounts(conn)
+    # TASK-20260623T030418-quota-rbac-permission: quota.read 미보유 actor 에는 한도 필드 비노출.
+    _strip_quota_fields_if_unpermitted(accounts, account)
     summary = {
         "total": len(accounts),
         "active": sum(1 for item in accounts if item.get("is_active") and not item.get("deleted_at")),
@@ -18335,6 +18405,9 @@ WHERE Id = %s
     # TASK-0098: admin context — 권한 정보 명시 포함.
     payload = _serialize_account(updated, include_permissions=True) or {}
     payload["permission_overrides"] = dict((updated or {}).get("permission_overrides") or {})
+    # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-1 흡수): PATCH 응답도
+    #   quota.read 미보유 actor 에는 한도 필드 비노출(account.update 만으로 한도 열람 우회 차단).
+    _strip_quota_fields_if_unpermitted(payload, actor)
     return JSONResponse({"ok": True, "account": payload})
 
 
@@ -18635,6 +18708,8 @@ def admin_roles(request: Request) -> JSONResponse:
         conn.close()
         return _json_error("역할 조회 권한이 필요합니다.", 403)
     roles = _list_roles(conn)
+    # TASK-20260623T030418-quota-rbac-permission: quota.read 미보유 actor 에는 역할 기본 한도 비노출.
+    _strip_quota_fields_if_unpermitted(roles, account)
     conn.close()
     return JSONResponse({"roles": roles})
 
@@ -21201,7 +21276,9 @@ async def admin_create_product_db_rule(product_id: int, key: str, request: Reque
             conn.rollback()
             return _json_error(f"audit write failed: {audit_exc}", 500)
         rule = _get_db_rule_by_id(conn, new_rule_id)
-        recon = _reconcile_one_db_rule(conn, rule, actor_account=account, can_manage=True, trigger="rule-save") if rule else {}
+        # ds-conn-bg-decouple: reconcile 는 live DB 열거(connect) 포함 → 이벤트 루프 밖(to_thread)에서.
+        recon = (await asyncio.to_thread(
+            _reconcile_one_db_rule, conn, rule, actor_account=account, can_manage=True, trigger="rule-save")) if rule else {}
         return JSONResponse({"ok": True, "rule_id": new_rule_id, "reconcile": recon})
     finally:
         conn.close()
@@ -21253,7 +21330,9 @@ async def admin_update_product_db_rule(product_id: int, key: str, rule_id: int, 
             conn.rollback()
             return _json_error(f"audit write failed: {audit_exc}", 500)
         fresh = _get_db_rule_by_id(conn, int(rule_id))
-        recon = _reconcile_one_db_rule(conn, fresh, actor_account=account, can_manage=True, trigger="rule-save") if fresh else {}
+        # ds-conn-bg-decouple: reconcile 는 live DB 열거(connect) 포함 → 이벤트 루프 밖(to_thread)에서.
+        recon = (await asyncio.to_thread(
+            _reconcile_one_db_rule, conn, fresh, actor_account=account, can_manage=True, trigger="rule-save")) if fresh else {}
         return JSONResponse({"ok": True, "reconcile": recon})
     finally:
         conn.close()
@@ -21321,7 +21400,9 @@ async def admin_preview_product_db_rule(product_id: int, key: str, request: Requ
             okssrf, _r, _pin = _ssrf_check_host(ds.get("host"))
             if not okssrf:
                 return JSONResponse({"ok": False, "error": "SSRF 차단", "matched": [], "new": []})
-            classified = _db.list_server_databases_classified({**ds, "host": _pin})
+            # ds-conn-bg-decouple: 명시적 dry-run preview 의 live connect 도 이벤트 루프 밖(to_thread)에서.
+            classified = await asyncio.to_thread(
+                _db.list_server_databases_classified, {**ds, "host": _pin})
         except Exception:
             return JSONResponse({"ok": False, "error": "DB 목록 조회 실패", "matched": [], "new": []})
         engine = str(ds.get("engine") or "mysql").strip().lower()
@@ -22884,7 +22965,8 @@ def _quota_parse_limit(raw) -> "int | None":
 
 @app.get("/api/admin/quotas")
 def admin_list_quotas(request: Request) -> JSONResponse:
-    """역할별 기본 + 계정별 특수 LLM 토큰 한도 목록. 권한: console.manage(admin)."""
+    """역할별 기본 + 계정별 특수 LLM 토큰 한도 목록.
+    TASK-20260623T030418-quota-rbac-permission: 권한 quota.read(조회 전용 위임 가능)."""
     try:
         conn = _connect_memory()
     except Exception:
@@ -22893,8 +22975,8 @@ def admin_list_quotas(request: Request) -> JSONResponse:
         actor, error = _require_account(request, conn)
         if error:
             return error
-        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
-            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "quota.read"):
+            return _json_error("LLM 사용 한도 조회 권한이 필요합니다.", 403)
         cur = conn.cursor(dictionary=True)
         try:
             cur.execute(
@@ -22932,7 +23014,8 @@ def admin_list_quotas(request: Request) -> JSONResponse:
 
 @app.put("/api/admin/quotas/role/{role_id}")
 async def admin_set_role_quota(role_id: int, request: Request) -> JSONResponse:
-    """역할 기본 LLM 토큰 한도 설정. body {daily?, monthly?} — null/생략=상속 해제, 0=무제한."""
+    """역할 기본 LLM 토큰 한도 설정. body {daily?, monthly?} — null/생략=상속 해제, 0=무제한.
+    TASK-20260623T030418-quota-rbac-permission: 권한 quota.manage(조절, quota.read 선행)."""
     try:
         data = await request.json()
     except Exception:
@@ -22945,8 +23028,10 @@ async def admin_set_role_quota(role_id: int, request: Request) -> JSONResponse:
         actor, error = _require_account(request, conn)
         if error:
             return error
-        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
-            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): "조절은 조회 종속"을
+        #   서버에서 집행 — quota.manage 만으로 blind-write 불가. quota.read + quota.manage 동시 필요.
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "quota.read") or not _account_has_permission(actor, "quota.manage"):
+            return _json_error("LLM 사용 한도 조절 권한이 필요합니다.", 403)
         cur = conn.cursor()
         try:
             cur.execute("SELECT RoleKey FROM WebRoles WHERE Id = %s LIMIT 1", (int(role_id),))
@@ -22981,7 +23066,8 @@ async def admin_set_role_quota(role_id: int, request: Request) -> JSONResponse:
 
 @app.put("/api/admin/quotas/account/{account_id}")
 async def admin_set_account_quota(account_id: int, request: Request) -> JSONResponse:
-    """계정 특수(override) LLM 토큰 한도. body {daily?, monthly?} — null/생략=override 해제(역할 상속)."""
+    """계정 특수(override) LLM 토큰 한도. body {daily?, monthly?} — null/생략=override 해제(역할 상속).
+    TASK-20260623T030418-quota-rbac-permission: 권한 quota.manage(조절, quota.read 선행)."""
     try:
         data = await request.json()
     except Exception:
@@ -22994,8 +23080,9 @@ async def admin_set_account_quota(account_id: int, request: Request) -> JSONResp
         actor, error = _require_account(request, conn)
         if error:
             return error
-        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "console.manage"):
-            return _json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
+        # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): 조절은 조회 종속.
+        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "quota.read") or not _account_has_permission(actor, "quota.manage"):
+            return _json_error("LLM 사용 한도 조절 권한이 필요합니다.", 403)
         target = _load_account_by_id(conn, int(account_id))
         if not target:
             return _json_error("account not found", 404)

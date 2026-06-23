@@ -297,6 +297,29 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-06-23 (TASK-20260623T031910-ds-conn-bg-decouple — 데이터소스 연결확인을 동기 render 경로에서 백그라운드로 분리, **Major §12.3** — **PB-0008 Windows-browser PASS**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay, `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면.
+  - **Runner: AI** (win-browser eval + UI 구동 — 배포본 main `b2236fe`, `docker compose build web` + `up -d --no-deps web`, repo-web-1 Up healthy. 서빙 `admin.js?v=20260623-ds-conn-bg-decouple` + app.py conn_health 게이트·to_thread baked).
+  - **실 환경 datasource 상태**: 등록 19개 중 `down` 다수(`mysql-gz-qa-kr`, `mysql-kr-an2-*`, `mssql-qa-idc/web-qa` 등) + `healthy`(`mysql-local`, `mysql-gz-dev`, `mssql_local` 등) 공존 — degraded 경로 실측 가능.
+  - **① 이벤트 루프 비차단(핵심) PASS**: down `mysql-gz-qa-kr` 에 `?force=1`(live connect, to_thread) 가 **8024ms** 블록(502)되는 *동안* 동시 발사한 healthy `mysql-local` 요청은 **44ms** 완료. 수정 전이라면 동기 connect 가 이벤트 루프를 점유해 동시 요청도 ~8s 대기 → "나머지 UI 갱신 멈춤" 의 근본 해소 실증.
+  - **② degraded fast-path PASS**: down `mysql-gz-qa-kr/databases`(no force) → **38ms**, status 200, `degraded:true`, `conn_status:down`, db 0 — live connect 없이 백그라운드 캐시 상태 즉시 반환.
+  - **③ healthy 무회귀 PASS**: `mysql-local/databases` → 26ms, `degraded:false`, `conn_status:healthy`, **db 14개** 실목록. 제품 id=1(킹스레이드-로컬) 선택 시 배너 없음·DB picker 정상.
+  - **④ 시각 배너 PASS**: 제품 id=95(건즈 국내 QA, 단일 down `mysql-gz-qa-kr`) 선택 + 데이터소스 아코디언 펼침 → picker 위 빨간 배너 **"데이터소스 연결 끊김 — DB 목록 로드를 보류했습니다(연결 상태는 백그라운드에서 점검 중)."** + **[새로고침]** 버튼 렌더(`role="status"`, visible). 좌측 제품 목록·시스템 프롬프트 등 나머지 UI 정상 렌더(차단 0).
+  - **⑤ 새로고침(force) 버튼 PASS**: 클릭 즉시 `disabled + "확인 중…"`(중복클릭 차단) → force connect ~8s timeout(502) 후 배너 유지 + 버튼 재활성("새로고침", 재시도 가능, stuck 0).
+  - **Evidence:** `artifacts/pb0008-ds-conn-bg-decouple/degraded-banner-down-ds.png`(빨간 배너+새로고침, 나머지 UI 정상) · `healthy-product-no-banner.png`(대조군).
+  - **Pass/Fail: PASS** — 배포 시스템에서 이벤트 루프 비차단·degraded fast-path·healthy 무회귀·시각 배너·force 재시도를 실제 Windows 브라우저로 실측 통과. CHECK#13 충족.
+  - **Notes:** §18.8 적대 패널(frontend NO REAL ISSUES + backend inline 7축) SHIP. minor a11y `role="status"` 반영. REV-20260623T031910-ai-claude-ds-conn-bg-decouple.
+- 2026-06-23 (TASK-20260623T030418-quota-rbac-permission — 계정·역할 LLM 사용 한도 조회/조절 전용 권한 + admin catchup lockout 수정, **Major §12.3 — 보안 경계(RBAC)** — **PB-0008 Windows-browser PASS**; CHG/REV-20260623T030418 + CHG-20260623T053000 evidence):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `3cda161`(PR #373 권한 + #375 catchup) → `docker compose build web`(캐시) + `up -d web`(repo-web-1 Up healthy). 서빙 admin.js 에 `can("quota.read")` 게이트·`opts.readOnly` 분기 baked. app.py `_ensure_seed_roles` quota catchup baked.
+  - **Runner: AI** (win-browser eval — 실 배포 renderRoleDetail/renderAccountDetail + buildQuotaEditor 를 3-tier permission 으로 구동, DOM 실측).
+  - **★라이브 버그 적발(PB-0008 가치) — admin lockout**: 게이트를 console.manage→quota.read/quota.manage 로 전환했으나 신규 권한이 기존 배포 admin 역할(WebRolePermissions RoleId=3)에 미부여 → `bootstrap_admin` 의 `adminState.me.permissions["quota.read"]`=false (DB quota.read=0/quota.manage=0). seed=set(PERMISSION_CODES)는 role 생성 시점만 적용. **정적 outside-voice 미검출**(admin=전권 invariant 만 확인) → `_ensure_seed_roles` admin catchup 에 quota.read/manage 추가(#375). 재배포 후 DB quota.read=1/quota.manage=1·adminState.me read=true/manage=true 복구.
+  - **PB-0008 PASS (배포본 main `3cda161`)**:
+    - **역할 상세 3-tier**(roleId=1, 실 renderRoleDetail): tier3(quota.read+manage)=섹션 표시·저장버튼 O·입력 활성·readonly note X / tier2(quota.read만)=섹션 표시·저장버튼 X·입력 disabled·"조회 전용" note O / tier1(무권한)=섹션 미표시.
+    - **계정 상세 3-tier**(acctId=39 ijkim, 실 renderAccountDetail): tier3=편집 가능·역할 상속 안내 O / tier2=readOnly·상속 안내 O / tier1=미표시. 동일 게이트 동작.
+    - **buildQuotaEditor 직접**: readOnly=false→저장버튼+입력활성·value 주입, readOnly=true→입력 disabled+저장버튼 미렌더+조회전용 note.
+    - **백엔드 게이트**: GET `/api/admin/quotas` admin(quota.read 보유) **200** + roles(8)·account_overrides·enforce=true. PUT=quota.read+quota.manage 동시 요구(B8 단위).
+  - **Pass/Fail: PASS** — 배포된 시스템에서 "조절은 조회 종속, 조회 없으면 UI 미표시" 가 역할·계정 상세 모두에서 실 Windows 브라우저로 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
+  - CHG/REV-20260623T030418-ai-claude-quota-rbac-permission + CHG-20260623T053000-ai-claude-quota-admin-catchup / REQ-20260623-0332 / AC-0610·0611.
 - 2026-06-23 (TASK-20260623T021500-quota-editor-escapehtml-fix — buildQuotaEditor escapeHtml ReferenceError 수정[잠복 버그], **Minor §12.3** — **PB-0008 Windows-browser PASS**; CHG/REV-20260623T021500 evidence):
   - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `9e7ec24`(PR #367) → `docker compose build web`(캐시) + `up -d web`(repo-web-1 Up healthy). 서빙 admin.html `admin.js?v=20260623-quota-escapehtml-fix`, 컨테이너 baked admin.js 에 `escapeHtml(` **0건**·`note.textContent = opts.inheritNote` 1건·`input.value` DOM 주입 확인.
   - **Runner: AI** (win-browser eval — 이전 ReferenceError 로 실패했던 정확한 호출 재현 + 실 DOM 주입 computed style 계측).
@@ -310,9 +333,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - CHG/REV-20260623T021500-ai-claude-quota-editor-escapehtml-fix / AC-0609.
 - 2026-06-19 (TASK-20260619T120000-db-rule-pending-batch — 정규식 자동 규칙 pending → "모두 적용" 재배선, **Major §12.3 — 보안 경계**):
   - **Environment: CLI/jsdom + py_compile**. 신규 `tests/verify_db_rule_pending.mjs` **jsdom 18/18 PASS**(Node18 + jsdom@22): 키 정규화(`1::maindb`)·`_ensureDbRulePending` 빈 구조·`_dbRulePendingEntryEmpty`·**스테이징(create push) 시 apiFetch 호출 0**(즉시 반영 금지 회귀 게이트)·`productDbRuleDirtyCount`·`pendingChangeCount` 포함·`_settleDbRulePending` 빈 엔트리 제거·`applyAllPending` 추가 POST/수정 PUT/승인 approve-pending/삭제 DELETE?strip=1 호출·body 전달·**순서 추가<수정<승인<삭제**·성공 시 `pending.productDbRules` 정리·pending 0 시 no-op. `node --check admin.js` PASS, `python3 -m py_compile app.py` PASS, CSS brace balance 1417/1417.
-  - **make test (컨테이너 전체/통합)**: <결과는 verify 단계에서 기록>.
-  - **잔여(Windows-browser 최종 게이트)**: 머지·배포 후 PB-0008 — 규칙 추가/수정/삭제/승인 클릭 시 대기 배지만(즉시 미반영) → "모두 적용" 일괄 반영 → 조회만으로 allowlist 미변경 실측.
-  - REV-20260619T120000-ai-claude-db-rule-pending-batch.
+  - **make test (컨테이너 전체/통합)**: backend `verify_db_rule_logic.py` **30/30 PASS**(패턴 매칭·인젝션 제외·audit 등록 — 본 cycle 무변경 회귀 0). CI "test" 워크플로 fail 은 모든 PR 공통 zombie(`PermissionError: /shared` — runner 컨테이너 경로 부재, collection 단계; #362·#363·#364 도 fail 채 머지, PROJECT.md §10 CI 폐기) — 본 변경 무관.
+  - **Environment: Windows-browser** (실 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay, endpoint `http://172.28.64.1:9223`, https://localhost:18080). 배포: main `147d040`(PR #365) → `make -o init web`(web 이미지 재빌드+재기동, init 의 KB-pg 단계는 타 세션 pg cutover 정황이라 `-o init` 우회; 서빙 `admin.js?v=20260619-db-rule-pending`·baked `productDbRules`·`trigger="view"`=0 확인).
+  - **Runner: AI** (관리 콘솔 `/admin` → 제품 109(DK_DEV, datasource `mssql-dk-dev`) → 데이터소스 accordion 펼침 → 정규식 자동 규칙 에디터).
+  - **PB-0008 PASS (배포본 main `147d040`)**:
+    - **즉시 반영 금지(핵심, 보고된 버그)**: "+ 규칙 추가" 저장 버튼 라벨 = **"추가 대기"**. 패턴 `^pb0008_zzz_notreal_` 입력 후 클릭 → `.cov-db-rule-card.is-staged-create` + 배지 **"추가 대기"** + 패턴 표시 + 하단 **"1건 pending"** + "모두 적용" 활성화. 동시에 라이브 `GET …/db-rules` = **서버 규칙 1개(원본 `(^GameLog_[0-9]{3}$)|…`)만, 스테이징 패턴 서버 부재** → **편집이 즉시 반영되지 않음 실증**(보고된 "Pending 없이 즉시 반영" 해소).
+    - **조회=무변경**: 에디터 조회(GET)만으로 allowlist/규칙 미변동(view-reconcile 제거 실증).
+    - **"모두 적용"=실제 적용 경로**: 라이브 backend round-trip(POST `…/db-rules` → `status 200`·rule_id 13 생성·`presentAfterCreate=true` → DELETE`?strip=1` 200 → `presentAfterDelete=false`)로 create 가 실제 persist 함을 확인. applyAllPending 의 client replay 는 jsdom 18/18(엔드포인트·body·순서) 로 고정 — 합성 검증 완료.
+    - **프로덕션 무흔적**: 최종 서버 규칙 1개(원본만), 테스트 규칙 0 — 검증 후 정리 완료.
+  - 증거: `artifacts/pb0008-db-rule-pending/{pb0008-dbrule-01-editor,02-staged-add,03-applied}.png`. 비고: 라이브 UI 의 "모두 적용" 1회 round-trip 읽기는 win-browser relay transient drop(이 환경 알려진 이슈)으로 1회 오염됐으나, backend persist round-trip + jsdom client 검증으로 apply 경로 확정.
+  - REV-20260619T120000-ai-claude-db-rule-pending-batch / REV-20260623T010000-ai-claude-db-rule-pending-evidence [SKIPPED:docs-only-pb0008-evidence].
 - 2026-06-18 (TASK-20260618T061520-ai-claude-release-notes-scope-scroll — 작업 화면 관리 콘솔 영역 숨김 + 관리 콘솔 스크롤, **Minor §12.3**):
   - **Environment: CLI/jsdom** (frontend-only). `tests/verify_release_notes.mjs` **34/34 PASS** (Node18 + jsdom@22): TEST-0128(작업화면 admin 0건·표시=work+common 43·칩 3개[전체/작업/공통]·'관리 콘솔' 칩 부재·그룹 11·관리 콘솔 기본 admin 노출 회귀 없음), TEST-0129(styles.css release-notes pane `overflow-y:auto` 소스 단언) + 기존 27건(접힘 가드·필터·XSS 등). `node --check` PASS. REV-20260618T061520-ai-claude-release-notes-scope-scroll [SKIPPED:frontend-ui-scope-scroll-no-backend-no-rbac].
   - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay, endpoint `http://172.28.64.1:9223`, https://localhost:18080). 배포: main `e812c9d`(PR #345) → `docker compose build web` + `up -d --no-deps web`(repo-web-1 Up healthy, mysql_ok·pg_ok). 서빙 `styles.css/app.js/release-notes.js ?v=20260618-rn-scope-scroll` baked.

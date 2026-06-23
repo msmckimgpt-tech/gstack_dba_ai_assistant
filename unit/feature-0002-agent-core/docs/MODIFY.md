@@ -1221,3 +1221,28 @@ source_of_truth: true
 - Files: tests/test_db_query_ux.py, docs/{TASK,MODIFY,FUNCTION,REPORT,REVIEW}.md. (insight.py·런타임 코드 무변경.)
 - Rollback: 테스트 파일 revert + 문서 entry 제거. 런타임 영향 0.
 - Deploy: 별도 배포 불필요(테스트·문서만). RC4 튜닝은 GRANT 후 라이브 데이터 기반 카나리로 진행(본 cycle 범위 밖).
+## CHG-20260623T145444-sample-flywheel-core
+- Date: 2026-06-23 (TASK-20260623T145444-sample-flywheel-core — ROADMAP **ITEM-02+03** flywheel **PR-A 코어**, Major §12.3). PLAN-APPROVED, 사용자 "성장 루프 앞당김".
+- Scope: NL↔SQL 샘플쿼리 저장소(임베딩·검색·주입) + 피드백 flywheel 코어(record/promote/reject·PII). feature-0002 코어; web(RBAC/UI/audit)=PR-B.
+- 내용:
+  - `agent_kb_schema.sql` §8b + `alembic 0014`: `sample_queries`(scope_key·nl_question·sql·domain·weight·`embedding vector(1536)`·source_type·status·approved·last_validated_at, ivfflat partial 인덱스) + `sample_feedback`(👍/👎/등록 원천·status·promoted_sample_id) + GRANT.
+  - `modules/sample_queries.py`(신규): `register_sample`(임베딩 upsert, **`%s::vector` 캐스트**) · `search_samples`(approved∧active∧ds-scoped cosine, **weight 가중**) · `load_example_queries_context`(scope=get_active_datasource, 미가용/미매칭/임베딩실패 "") · `validate_sample_sql`(신선도).
+  - `modules/sample_feedback.py`(신규): `record_feedback`(**PII `_mask_prose`**) · `list_pending_feedback`(검수 큐) · `promote_feedback`(승인→approved 샘플 승급, 👎 미승급) · `reject_feedback`. 자동학습 금지.
+  - `agent_core.py` `_build_knowledge_context`: `## EXAMPLE QUERIES`(few-shot) 주입 — env `AGENT_SAMPLE_QUERIES_ENABLED` 게이트 + datamark + **"예시이지 실행 대상 아님" 펜스**(injection-only). `config.py` 플래그.
+- Why: ROADMAP ITEM-02(F-001, BroQuery 최대 정확도 레버 ±90%) + ITEM-03(F-002, 사용이 정확도를 키우는 순환). 사용자 "샘플이 서비스와 함께 개선되어야".
+- Verification: `tests/test_sample_flywheel.py` 12 통과 + py_compile + **라이브 pg16 dry-run**(테이블·ivfflat·cosine sim=1·upsert, ROLLBACK) + **라이브 register(list 임베딩)→search retrieval sim=1.0**(::vector BLOCKER 검증). 적대 backend+security 리뷰 REV-20260623T145444 SHIP-WITH-FIXES(BLOCKER 흡수). **AC-d A/B 측정은 titan-embed(임베딩) 401 다운으로 보류 — 복구 후 `make eval` 샘플 off/on.**
+- Files: src/scripts/agent_kb_schema.sql, alembic/versions/20260623_0014_sample_queries_feedback.py(new), src/modules/{sample_queries,sample_feedback}.py(new), src/agent_core.py, src/modules/config.py, tests/test_sample_flywheel.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
+- Rollback: 마이그 0014 downgrade(DROP 2 테이블) + 신규 모듈/주입 블록 제거(주입 try/except·gate·미매칭 ""라 무해). 플래그 OFF 면 즉시 비활성.
+- Deploy: ask-worker + web 재빌드(agent_core baked) + 마이그 0014 적용(superuser, GRANT load-bearing). 샘플 등록·피드백 UI·RBAC·audit = PR-B(feature-0003). 임베딩(titan-embed) 복구 전엔 retrieval 무동작(embed None→주입 "").
+
+## CHG-20260623T151643-self-reflection
+- Date: 2026-06-23 (TASK-20260623T151643-self-reflection — ROADMAP **ITEM-07**, Major §12.3). PLAN-APPROVED. chat 의존(임베딩 무관).
+- Scope: execute_sql 실패 시 명시 bounded 자가수정 넛지(기존 LLM 자율 경로·similar-retry 보강).
+- 내용:
+  - `agent_core.py`: 모듈 helper `_is_fixable_sql_error`(수정가능 오류 prefix `오류:`/`SQL 실행 오류:`/`도구 실행 오류`, **보안 가드 차단 제외**) · `_classify_sql_error`(syntax 우선→column→table→execution) · `_sql_reflection_nudge`(분류+원SQL[≤400]+표적 힌트, n/cap 표기). tool 루프(tool_msg 조립)에 훅: execute_sql 수정가능 실패 + `reflection_count < cap` 이면 넛지 동봉 + 카운터 증가. per-run `reflection_count=0` 초기화.
+  - `config.py`: `AGENT_SELF_REFLECTION_ENABLED`(기본 ON, gate) + `AGENT_SELF_REFLECTION_MAX`(기본 2, cap).
+- Why: ROADMAP ITEM-07(F-006) — 에러 되먹임이 LLM 자율 의존 → 명시 bounded 루프로 성공률↑.
+- Verification: `tests/test_self_reflection.py` 7(분류/넛지/guard 제외/**실제 'SQL 실행 오류:' shape**/cap/truncate) + prompt-injection 회귀 10 통과 + py_compile. 라이브 관찰(describe-first agent 가 amount→total 무에러 교정 → reflection 백스톱). 적대 backend+security 리뷰 REV-20260623T151643 SHIP-WITH-FIXES: **MAJOR M1(실제 'SQL 실행 오류:' prefix 미매칭 → 주 대상 near-inert) 흡수** + M2/N1/N2. **AC-b 정량 회복률은 에러유발 traffic 필요 — follow-up.**
+- Files: src/agent_core.py, src/modules/config.py, tests/test_self_reflection.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
+- Rollback: `AGENT_SELF_REFLECTION_ENABLED=0`(즉시 비활성) 또는 helper/훅 제거(gate off 면 동작 0 변경).
+- Deploy: ask-worker + web 재빌드(agent_core baked). 마이그 없음. 임베딩 무관(chat-only).

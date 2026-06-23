@@ -8,6 +8,36 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260623T010000-ai-claude-db-rule-pending-evidence [SKIPPED:docs-only-pb0008-evidence] (TASK-20260619T120000 후속 — 배포 + PB-0008 실측 기록)
+- Date: 2026-06-23 (cycle REV-20260619T120000-ai-claude-db-rule-pending-batch 의 배포·시각검증 evidence)
+- 분류 근거: docs 전용(TEST.md §3 Windows-browser Run 추가). 코드·자산·RBAC·스키마 무변경 → 리뷰 SKIP. 대상 코드는 본 cycle REV-20260619T120000 (SUBAGENT SHIP) 에서 점검 완료.
+- 배포: main `147d040`(PR #365) → `make -o init web` web 재빌드+재기동(서빙 `?v=20260619-db-rule-pending`·baked staging·view-reconcile 0). PROJECT.md §8.5 사람 승인 후 진행.
+- PB-0008 PASS(실 Windows Chrome/149): 규칙 추가 클릭 → "추가 대기" 배지 + "1건 pending" + **서버 규칙 unchanged**(즉시 반영 금지 = 보고된 버그 해소 실증) / 조회만으로 미변경 / backend create persist round-trip(POST 200·persist·DELETE 정리) + jsdom 18/18 로 apply 경로 확정 / 프로덕션 무흔적. 증거 `artifacts/pb0008-db-rule-pending/*.png`.
+- 잔여: 없음(cycle 완전 마감).
+
+## REV-20260623T031910-ai-claude-ds-conn-bg-decouple [SUBAGENT:frontend-degraded-banner + AI-inline:backend-async-correctness] **SHIP** (TASK-20260623T031910, REQ-20260623-ds-conn-bg-decouple, Major §12.3)
+- Date: 2026-06-23
+- 분류: **리뷰 대상**(Major — 관리 콘솔 async 동작 변경, 다중 파일). §18.8 적대적 검증 패널 2-lens(frontend + backend) 실행. frontend 서브에이전트 완주 → **NO REAL FUNCTIONAL ISSUES**. backend 서브에이전트는 세션 한도로 미완 → 백엔드 핵심 리스크는 구현 중 AI inline 으로 file:line 직접 검증(아래).
+- frontend 패널 검증 결과(반증 시도 후 무결):
+  1. **closure/TDZ 무결**: `pickerWrap`(const, admin.js:7154, 7174 append)이 `_setAccessDbDegraded`(7450)·`_refreshAccessibleDbs`(첫 호출 7839) 정의·호출보다 선행. `_refreshAccessibleDbs` 는 6799 no-op forward-decl → 7478 재할당, 첫 실호출은 한참 후. TDZ/undefined 0.
+  2. **DOM lifecycle 무결**: `renderProductDetail` 가 매 진입 `paneEl.innerHTML=""`(6612)로 이전 subtree(배너·closure dbEditorWrap 포함) 폐기 → 배너가 타 제품으로 누수 불가. `_setAccessDbDegraded` 가 매 호출 기존 `.admin-db-degraded-note` 제거 후 재삽입 → 중복 0.
+  3. **기존 호출자 호환**: `_refreshAccessibleDbs(nk)`(7545)·`(next)`(7573)·`(_selectedDatasourceKey)`(7839) 단일인자 — 새 `(key, opts={})` 가 `force=false` 로 무회귀.
+  4. **force-retry 루프 없음**: 성공(degraded:false → 배너 제거)·재degrade(배너 재생성, 버튼 enabled)·throw(apiFetch 가 !ok 시 throw, admin.js:398 → catch → degraded=true → 배너 재생성) 모두 terminal. 클릭 시 `disabled=true` 동기 설정으로 중복클릭 차단. 무한루프·stuck "확인 중…" 0.
+  5. **정상경로 무회귀**: classified/userDbs/lockedChips(MySQL 메타 4종 / MSSQL 시스템칩) 로직이 else 블록으로 재들여쓰기 byte-equivalent, `availableUserDbs=userDbs` 여전히 비-degraded 경로 말미 실행. catch 는 `degraded=true` 1줄 추가만(의도).
+- backend AI inline 검증(반증 시도 후 무결):
+  a. **conn 핸드오프 thread-safety**: `await asyncio.to_thread(_reconcile_one_db_rule, conn, …)` 는 await 동안 worker 스레드 단독 소유(이벤트 루프 동시접근 0) — 본 코드베이스 기존 선례 `await asyncio.to_thread(_build_ask_status_snapshot, conn, conv_id)`(app.py:10895)와 동형. mysql.connector 순차 cross-thread 사용 안전.
+  b. **scope_key 정합**: `_ch.status_for(ds)` → `_scope_key_of` → `_dsr.scope_key(ds)`, 모니터 등록(`health_probe_provider`→`all_datasources`)·`resolve` 모두 `_row_to_ds` 가 채운 동일 `scope_key` 사용 → 일치. 불일치해도 None→UNKNOWN→to_thread connect(Layer1 유지)로 **안전 degrade**(오작동 아님).
+  c. **모니터 startup 와이어링**: `_start_conn_health_monitor` = `@app.on_event("startup")`(app.py:808) → web 프로세스가 _STATE 채움 → Layer2 게이트 활성.
+  d. **응답 shape 호환**: `conn_status`/`degraded` 키 **추가만**, degraded 시 빈 `databases`/`databases_classified`. 서버측 타 소비자 0(프론트가 유일 소비자, degraded 처리). 하위호환.
+  e. **`record_foreground_result(ds, False, None, "list_databases_failed")`**: 시그니처 `(ds, ok, elapsed_ms=None, err="")` 일치, try/except 래핑(double-fault 0). 실패 피드백 → 다음 요청 캐시 fast-path.
+  f. **UNSTABLE+DOWN 게이트**: 데이터플레인은 unstable(느리지만 alive) 허용 정책이나, 본 control-plane 조회는 8s 블록 회피 위해 unstable 도 skip + `?force=1` escape 로 명시 재시도 보장 — 합당.
+  g. **잔여 동기 connect 0**: 제품 진입 경로의 3 async 핸들러 전부 오프로드. `/db-insights` 는 sync def(FastAPI threadpool) + PG insight 읽기라 live datasource connect 아님 → 무관.
+- 패널 minor(비차단) 반영/메모:
+  - minor#1(degraded 배너 a11y 미announce) → **본 cycle 반영**: `note.setAttribute("role","status")` 추가(서버 degraded 경로는 toast 없음 → SR 안내 보강).
+  - minor#2(collapsed 기본뷰에서 배너가 off-DOM `dbEditorWrap` 에 생성 → 행 펼칠 때 노출) → by-design(배너가 편집기와 함께 이동, 펼침 시 정확히 노출). 후속 개선 후보: collapsed accordion head 에도 degraded 신호 표면화.
+- base: worktree base 14d8b13. **잔여**: verify-completion --pre-commit → 머지 → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 시각검증(불안정 데이터소스 제품 진입 시 타 UI 비차단 + degraded 배너 + 새로고침 실열거).
+- Verdict: **SHIP**.
+
 ## REV-20260619T120000-ai-claude-db-rule-pending-batch [SUBAGENT:db-rule-pending-security] **SHIP** (TASK-20260619T120000, REQ-20260619-0331, Major §12.3 — 보안 경계/RBAC 인접)
 - Date: 2026-06-19
 - 분류: **리뷰 대상**(보안 경계 = 접근 가능 DB allowlist 변경 경로 재배선). §18.8 적대적 검증 패널(security+correctness 서브에이전트) 실행 → **SHIP**. 6개 주장 모두 적대 검증·반증 시도 후 무결 확인 + jsdom 18+19 PASS 재확인.
@@ -3513,3 +3543,23 @@ source_of_truth: true
 - **수용(문서화)**: 콜러 try/catch 방어는 선택(throw 제거로 moot, belt-and-suspenders 차원만).
 - Verification: test_llm_usage_quota.py 11/11(F1 회귀 가드) + node --check OK. 화면 정본=PB-0008(배포 후).
 - Cross-ref: CHG-20260623T021500-ai-claude-quota-editor-escapehtml-fix / REQ-20260623-0331 / AC-0609.
+
+## REV-20260623T030418-ai-claude-quota-rbac-permission [SUBAGENT:quota-rbac-adversarial]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T030418-quota-rbac-permission (LLM 사용 한도 조회/조절 전용 권한), **Major §12.3 — 보안 경계(RBAC)**.
+- Panel: outside-voice(general-purpose, REFUTE) — privilege-escalation·access-control 누출·manage⊃read 집행 집중([[feedback_outside_voice_for_rbac]]).
+- VERDICT: **SHIP-WITH-FIXES** (BLOCKER 0, MAJOR 2[흡수], MINOR 1[수용]). 6 probe.
+- 확인(REFUTED clean): admin seed(set(PERMISSION_CODES)) 신규 2종 자동 보유→무lockout·console bootstrap 정상 / strip 헬퍼 non-no-op(actor=_require_account→_decorate_account_rows 로 permissions dict 채워짐, dict/list 양형 in-place 안전) / self-session(/api/session·/api/auth/me)=include_permissions 없음→quota 무노출 / _load_role_by_id 단건=quota 미포함(role create/update/delete 응답 무누출) / 프론트 readOnly=defense-in-depth(실 경계=백엔드 PUT).
+- **흡수한 MAJOR-1**: PATCH `/api/admin/accounts/{id}`(`admin_update_account`) 응답 `_serialize_account(include_permissions=True)` 가 strip 미적용 → account.update 보유·quota.read 미보유 actor 가 no-op PATCH 로 한도값 회수(read-gate 무력) → 응답에 `_strip_quota_fields_if_unpermitted(payload, actor)` 추가. (유일 미커버 include_permissions 사이트, admin_accounts/admin_me 는 기존 커버.)
+- **흡수한 MAJOR-2**: "조절은 조회 종속"이 admin.js PERMISSION_DEPENDENCIES(가시성 힌트)에만 존재 — PUT role/account 가 quota.manage 만 검사 → quota.manage 단독 보유 시 GET·직렬화는 strip 되나 PUT 은 통과(blind-write). 사용자 요구가 enforcement 레이어에서 미성립 → PUT 게이트에 **quota.read + quota.manage 동시 요구**(서버 집행).
+- **수용(문서화)**: MINOR(console.manage 분리로 quota.manage 보유자가 console.manage/account.update 없이 한도 변경 가능=접근 확대) — 전용 위임 권한의 의도된 설계. 스톡 seed(operator/sales/pending) 미보유라 즉시 확대 없음·grant escalation 은 _enforce_override_self_scope 로 bound. MODIFY/SECURITY 이행주의 명시.
+- Verification: test_llm_usage_quota.py 18/18(B8 양권한·B11/B12 MAJOR 가드·F2/F3) + test_permission_dependency_map.py 자동검증 + make test 회귀 0 + node --check + py_compile. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260623T030418-ai-claude-quota-rbac-permission / REQ-20260623-0332 / AC-0610·0611 / SECURITY.md §6.
+
+## REV-20260623T053000-ai-claude-quota-admin-catchup [SKIPPED:idempotent-admin-catchup-no-new-gate-no-rbac-surface]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T030418-quota-rbac-permission follow-up (admin catchup lockout 수정), Major §12.3 후속.
+- Panel 생략 근거(§18.8): 신규 엔드포인트·게이트·RBAC 표면 변화 0. 기존 `_ensure_seed_roles` admin catchup 리스트(TASK-0288 datasource.read/manage·product.read 동형 선례)에 quota.read/quota.manage 2줄 추가(INSERT IGNORE 멱등 backfill). admin 은 정의상 set(PERMISSION_CODES) 전권 — catchup 은 그 invariant 복원이라 권한 확대 아님(seed 의도와 정합). 비-admin seed 무변경.
+- 적발 경위: 본 cycle(REV-20260623T030418) PB-0008 라이브 검증에서 bootstrap_admin quota.read=false → 게이트 전환 후 admin lockout 확인(DB WebRolePermissions RoleId=3 quota.read=0). outside-voice 가 "admin seed=set(PERMISSION_CODES)" 는 확인했으나 기존 배포 row 의 retroactive 미적용(catchup 필요)은 정적 리뷰로 미검출 — PB-0008 의 가치.
+- 검증: test_llm_usage_quota.py 16/16(B13 catchup 소스 가드) + make test 회귀 0. 화면 정본=재PB-0008.
+- Cross-ref: CHG-20260623T053000-ai-claude-quota-admin-catchup / TASK-20260623T030418-quota-rbac-permission / AC-0610.
