@@ -1376,15 +1376,25 @@ function buildQuotaEditor(opts) {
   wrap.className = "admin-quota-editor";
   const dailyPlaceholder = opts.scope === "account" ? "일일(역할 기본 상속)" : "일일(무제한)";
   const monthlyPlaceholder = opts.scope === "account" ? "월간(역할 기본 상속)" : "월간(무제한)";
+  // 비신뢰 값(한도 숫자·inheritNote)은 innerHTML 보간 대신 DOM 프로퍼티(.value/.textContent)로 주입.
+  //   admin.html 은 app.js 를 로드하지 않아 escapeHtml 이 admin.js 스코프에 미정의 — 보간 시 ReferenceError.
+  //   placeholder/힌트는 정적 문자열(scope 파생)이라 안전, 사용자 값은 DOM 프로퍼티로 분리한다.
   wrap.innerHTML =
     '<div class="admin-quota-fields">' +
-    `  <label class="admin-quota-field"><span>일일 한도</span><input type="number" min="0" class="admin-search admin-quota-daily" placeholder="${dailyPlaceholder}" value="${escapeHtml(fmtVal(opts.daily))}" /></label>` +
-    `  <label class="admin-quota-field"><span>월간 한도</span><input type="number" min="0" class="admin-search admin-quota-monthly" placeholder="${monthlyPlaceholder}" value="${escapeHtml(fmtVal(opts.monthly))}" /></label>` +
+    `  <label class="admin-quota-field"><span>일일 한도</span><input type="number" min="0" class="admin-search admin-quota-daily" placeholder="${dailyPlaceholder}" /></label>` +
+    `  <label class="admin-quota-field"><span>월간 한도</span><input type="number" min="0" class="admin-search admin-quota-monthly" placeholder="${monthlyPlaceholder}" /></label>` +
     '</div>' +
     `<p class="admin-quota-hint">토큰 수 기준. 빈칸=${opts.scope === "account" ? "역할 기본값 사용" : "무제한"}, 0=무제한(명시), <strong>전면 차단은 1</strong>. 초과 시 해당 사용자의 새 요청이 일시 제한됩니다.</p>` +
-    (opts.inheritNote ? `<p class="admin-quota-hint">${escapeHtml(opts.inheritNote)}</p>` : "") +
     '<button type="button" class="btn-secondary admin-quota-save">한도 저장</button>';
+  wrap.querySelector(".admin-quota-daily").value = fmtVal(opts.daily);
+  wrap.querySelector(".admin-quota-monthly").value = fmtVal(opts.monthly);
   const saveBtn = wrap.querySelector(".admin-quota-save");
+  if (opts.inheritNote) {
+    const note = document.createElement("p");
+    note.className = "admin-quota-hint";
+    note.textContent = opts.inheritNote;
+    wrap.insertBefore(note, saveBtn);
+  }
   saveBtn.addEventListener("click", async () => {
     const d = wrap.querySelector(".admin-quota-daily").value.trim();
     const m = wrap.querySelector(".admin-quota-monthly").value.trim();

@@ -3501,3 +3501,15 @@ source_of_truth: true
 - Panel 생략 근거(§18.8): 신규 엔드포인트 0·RBAC 게이트 변경 0·집행 로직 변경 0. 기존 PUT `/api/admin/quotas/role|account/{id}`(console.manage 게이트, ④ REV-20260619T030500 에서 SHIP-WITH-FIXES 검증 완료) 재사용 + UI 위치 이동. 추가는 read-only 직렬화 필드(역할 한도=role.read admin 게이트 /api/admin/roles, 계정 override=include_permissions admin-context 한정 — 자기 /api/auth/me 비노출, failed_login_attempts idiom 동형). 비-admin 노출 0.
 - 검증: test_llm_usage_quota.py 11/11. 화면 정본=PB-0008.
 - Cross-ref: CHG-20260623T014626-ai-claude-quota-ui-relocate / REQ-20260623-0331 / AC-0609.
+
+## REV-20260623T021500-ai-claude-quota-editor-escapehtml-fix [SUBAGENT:escapehtml-referenceerror-adversarial]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T021500-quota-editor-escapehtml-fix (buildQuotaEditor escapeHtml ReferenceError 수정), Minor §12.3 frontend-only.
+- Panel: outside-voice(general-purpose, REFUTE) — XSS·렌더 안전성·잠복여부·스코프 완전성 집중.
+- VERDICT: **SHIP** (BLOCKER 0, MAJOR 0, MINOR 2[흡수 1·수용 1]). 6 probe.
+- 확인(REFUTED clean): XSS-safe(`input.value=`·`note.textContent=` DOM 프로퍼티는 HTML 미파싱·fmtVal 은 ""/String(number) 뿐·동적 값 innerHTML 미경유) · escapeHtml 미가용 crux 확정(admin.html <script> 633-637 에 app.js 부재·escapeHtml=app.js:495 전용) · admin.js 잔여 escapeHtml call-site 0(스코프 완전, 구 loadQuotas 가 보유했던 5곳 전부 제거) · 콜러(renderRoleDetail 5411·renderAccountDetail 4704) throw 제거로 상세 pane 전체 깨짐 위험 해소.
+- **잠복 버그 확인(적대 리뷰 핵심)**: ④ LLM 한도 도입(05d58d1) 이래 구 loadQuotas 도 admin 페이지에서 동일 escapeHtml ReferenceError → 한도 UI 가 production 에서 한 번도 정상 렌더된 적 없음. relocate 회귀가 아니라 latent 결함을 PB-0008 이 적발.
+- **흡수한 MINOR**: 테스트 가드 1400자 고정 윈도가 함수(2372자) 전체 미포함 → 슬라이스를 다음 `\nfunction ` 경계까지로 정정(buildQuotaEditor 본문 전체 escapeHtml 부재 보장).
+- **수용(문서화)**: 콜러 try/catch 방어는 선택(throw 제거로 moot, belt-and-suspenders 차원만).
+- Verification: test_llm_usage_quota.py 11/11(F1 회귀 가드) + node --check OK. 화면 정본=PB-0008(배포 후).
+- Cross-ref: CHG-20260623T021500-ai-claude-quota-editor-escapehtml-fix / REQ-20260623-0331 / AC-0609.
