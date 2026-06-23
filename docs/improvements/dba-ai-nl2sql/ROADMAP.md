@@ -189,7 +189,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: Minor → 무인 cycle 자율. 배포 = web.
 
 ### ITEM-09 · 무거운 쿼리 → 경량 대안 plan + 승인
-- **status**: pending
+- **status**: rejected (subsumed)
+- **note**: 2026-06-23 드레인. **shipped TASK-0299/0304 와 충돌·subsumed** → reject. 무거운 쿼리 처리는 이미 main 에 구현됨(agent_core.py:120-128: 부하 gate 감지 → LLM 이 tool 루프에서 자동으로 더 가벼운 동등 쿼리로 재작성, "user only sees final efficient answer, never a blocked message", confirm_heavy 최후수단). ITEM-09 의 "경량 대안 사용자 노출 + 1클릭 승인"은 TASK-0304 의 사용자-승인된 **silent-rewrite 결정("최종 사용자엔 차단 미노출")을 역전**하는 것이라, 설계 충돌. 사용자 결정(2026-06-23): subsumed 로 종료. §4 기록. 승인-UX 재도입을 원하면 별도 plan-ceo/eng-review 로 TASK-0304 결정 재검토.
 - **feature_id**: feature-0002-agent-core   <!-- gate primary. 승인 UI 는 feature-0003 — cross-ref -->
 - **dimension**: functional
 - **risk_grade**: Major
@@ -260,9 +261,12 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | F-012 (명시 planner/DAG, LangGraph) | **reject(전면)** | ask-worker 큐+ReAct 로 충분. 전면 그래프 재작성은 복잡도 과다·blast radius 큼. 필요한 "복잡 질문 분해"는 ITEM-09 로 좁게 흡수. 재검토 트리거: ITEM-01 측정에서 다단계 질문 실패율이 구조적으로 높을 때. |
 | F-013 (자동 리포트/스케줄/품질알림) | **defer** | 신규 스케줄러 subsystem(규모 大). 현 flywheel·정확도 우선. 재검토 트리거: P1~P3 안정화 후. insight-worker 패턴 재사용 가능. |
 | F-014 (결과 차트 시각화) | **defer** | frontend Minor·가치 중간. 정확도 항목 후순위. 재검토 트리거: 사용자 요청 누적 시. |
+| **ITEM-09** (무거운쿼리 경량대안+승인) | **reject(subsumed)** | shipped TASK-0299/0304 가 무거운쿼리를 LLM tool-루프 silent rewrite 로 이미 처리(agent_core.py:120-128). ITEM-09 의 사용자-노출 승인 라운드트립은 TASK-0304 의 사용자-승인된 "차단 미노출(효율적 답변만)" 결정을 **역전**하는 설계 충돌 → 임의 구현 안 함. 사용자 결정(2026-06-23) subsumed. 재검토 트리거: 승인-UX 가 silent-rewrite 보다 낫다는 근거 + TASK-0304 재논의(plan-ceo/eng-review). |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 5 · in-progress 0 · pending 7 · blocked 0
-- 완료: **ITEM-01**(harness, measured 보류) · **ITEM-04**(DS 컨텍스트) · **ITEM-10**(용어/ENUM 구조부) · **ITEM-02**(샘플 저장소 PR-A — A/B·등록UI 보류) · **ITEM-07**(2026-06-23, self-reflection 자가수정 — 회복률 측정 보류).
-- 다음 ready(pending ∧ deps 충족): **ITEM-09**(P3, Major — 무거운쿼리 경량대안+승인, **chat 의존 → 진행 가능**) · ITEM-05(P2, 임베딩 의존 → 보류) · ITEM-11(deps 02✓,10✓ — 거버넌스 포탈 web).
+- 총 12 항목 · done 5 · rejected 1 · in-progress 0 · pending 6 · blocked 0
+- 완료: **ITEM-01**(harness, measured 보류) · **ITEM-04**(DS 컨텍스트) · **ITEM-10**(용어/ENUM 구조부) · **ITEM-02**(샘플 저장소 PR-A — A/B·등록UI 보류) · **ITEM-07**(self-reflection 자가수정 — 회복률 측정 보류).
+- 기각: **ITEM-09**(subsumed — shipped TASK-0304 silent-rewrite 와 충돌, §4).
+- 남은 pending 6: **전부 임베딩(titan-embed) 의존 → titan-embed 복구 전 진행 불가**. ITEM-05(하이브리드 검색)·ITEM-06(reranker)·ITEM-12(retrieval 튜닝)·ITEM-03 PR-B(피드백 web — 승급 샘플 임베딩 필요)·ITEM-08(Fix-with-AI 버튼, deps ITEM-07✓ 이나 web)·ITEM-11(거버넌스 포탈 web, deps 02✓10✓ — 샘플/용어/ENUM CRUD 가 임베딩 자산 전제).
+- ⚠ **환경 상태 (2026-06-23)**: chat(claude-*) ✓ / **임베딩(titan-embed) 401 AUTH-DOWN ✗**. chat-의존 항목(07 done, 09 reject)은 소진. **임베딩 클러스터는 titan-embed 복구 후 `/_dqa:improve_cycle dba-ai-nl2sql` 재호출로 재개** — ITEM-01 harness A/B(02·05·06·07·12 측정)·ITEM-02 retrieval·ITEM-03 PR-B 일괄 풀림.
 - ⚠ **환경 상태 (2026-06-23 갱신)**: **chat 모델(claude-*) 복구 ✓ / 임베딩(titan-embed) 여전히 401 AUTH-DOWN ✗**. ① **chat 의존(verify 가능)**: ITEM-07(self-reflection)·ITEM-09(무거운쿼리 재작성) — harness 측정 chat 으로 동작. ② **임베딩 의존(보류)**: ITEM-02 라이브 retrieval·A/B · ITEM-05(하이브리드)·ITEM-06(reranker)·ITEM-12(retrieval 튜닝) · ITEM-03 PR-B(승급 샘플 임베딩 필요). 드레인은 사용자 지시로 **chat 항목(07/09) 진행**, 임베딩 클러스터는 titan-embed 복구 후.
