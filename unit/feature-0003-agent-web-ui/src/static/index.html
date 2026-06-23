@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260623-share-join" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260623-live-ux" />
 </head>
 <body>
 
@@ -294,6 +294,8 @@
               placeholder="예) 최근 7일 신규 사용자 수와 평균 접속 시간을 보여줘"
               autocomplete="off"
             ></textarea>
+            <!-- feature-0009: @멘션 자동완성(참가자 + Assistant). 입력 중 동적 표시. -->
+            <div class="mention-ac hidden" id="mentionAutocomplete" role="listbox" aria-label="멘션 자동완성"></div>
             <!-- TASK-0158: 즉시 답변 — 처리 중에만 노출 (send 버튼 좌측). -->
             <button type="button" class="composer-finalize-btn hidden" id="composerFinalizeBtn" title="즉시 답변 — 지금까지 모은 정보로 답변을 생성합니다">즉시 답변</button>
             <button type="button" class="send-btn" id="sendBtn" title="전송 (Ctrl+Enter)">
@@ -544,7 +546,7 @@
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/mentions.js?v=20260619-group-conversation"></script>
-  <script src="/static/app.js?v=20260623-share-join"></script>
+  <script src="/static/app.js?v=20260623-live-ux"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 관리 콘솔과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260619-gc-v2-security-6"></script>

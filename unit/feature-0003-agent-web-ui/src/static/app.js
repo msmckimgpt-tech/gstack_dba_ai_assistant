@@ -3162,6 +3162,31 @@ function _buildMessageAttachChip(att) {
   return chip;
 }
 
+// feature-0009: 메시지 발신자 프로필 아이콘. user=계정 아바타(/api/avatars/{id}, 없으면 이니셜),
+// assistant=AI 배지. 같은 출처 이미지라 로그인 세션으로 로드되며 404 시 이니셜 폴백.
+function _msgAvatarEl(senderId, label, role) {
+  const av = document.createElement("span");
+  av.className = "msg-avatar" + (role === "assistant" ? " msg-avatar-assistant" : "");
+  if (role === "assistant") {
+    av.textContent = "AI";
+    av.title = "Assistant";
+    return av;
+  }
+  const initial = String(label || "?").trim().charAt(0).toUpperCase() || "?";
+  av.textContent = initial;
+  av.title = label || "";
+  if (senderId) {
+    const img = document.createElement("img");
+    img.src = `/api/avatars/${encodeURIComponent(senderId)}`;
+    img.alt = "";
+    img.loading = "lazy";
+    img.addEventListener("load", () => av.classList.add("has-img"));
+    img.addEventListener("error", () => { try { img.remove(); } catch (_e) {} });
+    av.appendChild(img);
+  }
+  return av;
+}
+
 function renderMessages() {
   messageLogEl.innerHTML = "";
   const hasPendingBubble = Boolean(state.pendingBubble);
@@ -3337,6 +3362,17 @@ function renderMessages() {
       row.dataset.messageId = String(message.id);
       row.dataset.messageRole = role;
     }
+
+    // feature-0009: 발신자 프로필 아이콘(참가자 식별 용이). user=발신자 아바타, assistant=AI 배지.
+    let _avSenderId = senderId;
+    let _avLabel = senderUsername || speaker;
+    if (role === "user" && !_avSenderId) {
+      _avSenderId = msgIsOwn
+        ? Number((state.user && state.user.id) || 0)
+        : Number((conversation && conversation.owner_account_id) || 0);
+      _avLabel = msgIsOwn ? ((state.user && state.user.username) || "나") : (ownerLabel || "사용자");
+    }
+    meta.prepend(_msgAvatarEl(_avSenderId, _avLabel, role));
 
     row.append(meta, bubble);
     messageLogEl.appendChild(row);
@@ -8213,6 +8249,159 @@ function _bindSearchModalListeners() {
 }
 
 _bindSearchModalListeners();
+
+// ── feature-0009: 실시간 메시지 동기화(폴링) ──────────────────────────────
+// 그룹 대화에서 타 멤버가 보낸 메시지가 즉시 보이도록 활성 대화를 주기적으로 폴링한다.
+// AI run 중(pendingBubble/busy)에는 기존 progress 폴링이 갱신하므로 건너뛴다.
+// 새 메시지(현 최대 id 초과)만 append → 사용자가 위로 스크롤해 과거를 읽는 중이면 위치 유지.
+const LIVE_SYNC_MS = 4000;
+let _liveSyncTimer = null;
+let _liveSyncInFlight = false;
+async function _liveSyncTick() {
+  if (_liveSyncInFlight) return;
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  if (state.pendingBubble || isCurrentConvBusy()) return;
+  if (state.searchModal && state.searchModal.open) return;
+  if (document.hidden) return;
+  _liveSyncInFlight = true;
+  try {
+    const params = new URLSearchParams({ conversation_id: cid, limit: "20" });
+    const payload = await apiFetch(`/api/history?${params.toString()}`);
+    if (state.activeConversationId !== cid) return;
+    if (state.pendingBubble || isCurrentConvBusy()) return;
+    const fetched = (payload && payload.messages) || [];
+    if (!fetched.length) return;
+    const existingIds = new Set(state.messages.filter((m) => m.id != null).map((m) => Number(m.id)));
+    let maxId = 0;
+    state.messages.forEach((m) => { if (m.id != null && Number(m.id) > maxId) maxId = Number(m.id); });
+    const incoming = fetched.filter(
+      (m) => m.id != null && !existingIds.has(Number(m.id)) && Number(m.id) > maxId
+    );
+    if (!incoming.length) return;
+    // 내 optimistic(id=null) 에코를 incoming 실 메시지(role+content 동일)와 중복 표시하지 않도록 제거.
+    const echoKeys = new Set(incoming.map((m) => `${m.role} ${String(m.content || "").trim()}`));
+    state.messages = state.messages.filter(
+      (m) => !(m.id == null && echoKeys.has(`${m.role} ${String(m.content || "").trim()}`))
+    );
+    const log = messageLogEl;
+    const nearBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 80;
+    const prevTop = log.scrollTop;
+    state.messages = [...state.messages, ...incoming];
+    renderMessages();
+    if (!nearBottom) log.scrollTop = prevTop;  // 과거 읽는 중이면 위치 유지(append 는 하단)
+  } catch (_e) {
+    // best-effort: 폴링 실패는 다음 tick 재시도(조용히 무시).
+  } finally {
+    _liveSyncInFlight = false;
+  }
+}
+function startLiveSync() {
+  if (_liveSyncTimer) return;
+  _liveSyncTimer = window.setInterval(_liveSyncTick, LIVE_SYNC_MS);
+}
+startLiveSync();
+
+// ── feature-0009: @멘션 자동완성(참가자 roster + Assistant) ────────────────
+const mentionAcEl = document.getElementById("mentionAutocomplete");
+let _mentionAC = { open: false, items: [], index: 0, start: -1, end: -1 };
+let _mentionMembersCid = "";
+let _mentionMembers = [];
+async function _ensureMentionMembers(cid) {
+  if (!cid || _mentionMembersCid === cid) return;
+  _mentionMembersCid = cid;
+  _mentionMembers = [];
+  try {
+    const data = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members`);
+    _mentionMembers = ((data && data.members) || []).map((m) => m.username).filter(Boolean);
+  } catch (_e) { _mentionMembers = []; }
+}
+function _mentionCtx() {
+  if (!promptInputEl) return null;
+  const pos = promptInputEl.selectionStart;
+  const text = promptInputEl.value.slice(0, pos);
+  const m = /(?:^|[^A-Za-z0-9_@])@([A-Za-z0-9._-]*)$/.exec(text);
+  if (!m) return null;
+  const token = m[1];
+  return { token, start: pos - token.length - 1, end: pos };
+}
+function _mentionCandidates(token) {
+  const t = String(token || "").toLowerCase();
+  const names = ["assistant", ..._mentionMembers];
+  const seen = new Set();
+  const out = [];
+  for (const n of names) {
+    const key = String(n).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!t || key.startsWith(t)) out.push(n);
+  }
+  return out.slice(0, 8);
+}
+function _closeMentionAC() {
+  _mentionAC.open = false;
+  if (mentionAcEl) mentionAcEl.classList.add("hidden");
+}
+function _renderMentionAC() {
+  if (!mentionAcEl) return;
+  mentionAcEl.innerHTML = "";
+  _mentionAC.items.forEach((name, i) => {
+    const item = document.createElement("div");
+    item.className = "mention-ac-item" + (i === _mentionAC.index ? " is-active" : "");
+    item.setAttribute("role", "option");
+    item.textContent = String(name).toLowerCase() === "assistant" ? "@assistant — 어시스턴트(AI)" : "@" + name;
+    item.addEventListener("mousedown", (e) => { e.preventDefault(); _applyMention(name); });
+    mentionAcEl.appendChild(item);
+  });
+  mentionAcEl.classList.remove("hidden");
+}
+function _openMentionAC(ctx) {
+  const items = _mentionCandidates(ctx.token);
+  if (!items.length) { _closeMentionAC(); return; }
+  _mentionAC = { open: true, items, index: 0, start: ctx.start, end: ctx.end };
+  _renderMentionAC();
+}
+function _applyMention(name) {
+  if (!promptInputEl || _mentionAC.start < 0) return;
+  const v = promptInputEl.value;
+  const before = v.slice(0, _mentionAC.start);
+  const after = v.slice(_mentionAC.end);
+  const insert = "@" + name + " ";
+  promptInputEl.value = before + insert + after;
+  const caret = (before + insert).length;
+  promptInputEl.setSelectionRange(caret, caret);
+  _closeMentionAC();
+  promptInputEl.focus();
+  try { promptInputEl.dispatchEvent(new Event("input", { bubbles: true })); } catch (_e) {}
+}
+if (promptInputEl) {
+  promptInputEl.addEventListener("input", () => {
+    const ctx = _mentionCtx();
+    if (!ctx) { _closeMentionAC(); return; }
+    _ensureMentionMembers(state.activeConversationId).finally(() => {
+      const c2 = _mentionCtx();
+      if (c2) _openMentionAC(c2); else _closeMentionAC();
+    });
+  });
+  // capture 단계 — dropdown 열린 동안 Enter/Tab/방향키를 send 핸들러보다 먼저 가로챈다.
+  promptInputEl.addEventListener("keydown", (e) => {
+    if (!_mentionAC.open || !_mentionAC.items.length) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault(); e.stopImmediatePropagation();
+      _mentionAC.index = (_mentionAC.index + 1) % _mentionAC.items.length; _renderMentionAC();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault(); e.stopImmediatePropagation();
+      _mentionAC.index = (_mentionAC.index - 1 + _mentionAC.items.length) % _mentionAC.items.length; _renderMentionAC();
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault(); e.stopImmediatePropagation();
+      _applyMention(_mentionAC.items[_mentionAC.index]);
+    } else if (e.key === "Escape") {
+      e.preventDefault(); e.stopImmediatePropagation();
+      _closeMentionAC();
+    }
+  }, true);
+  promptInputEl.addEventListener("blur", () => { window.setTimeout(_closeMentionAC, 120); });
+}
 
 initialize().catch((error) => {
   showToast(error.message || "페이지 초기화에 실패했습니다.", true);

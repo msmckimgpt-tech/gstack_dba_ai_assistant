@@ -161,3 +161,14 @@ source_of_truth: true
   - `tests/test_group_conversation_s2.py`: POST 초대 제거·join 엔드포인트·Joinable 기본 ON 반영(8 통과).
 - Impact: 참여 = 공유 링크 클릭(로그인). 기본 ON 이라 조인가능 링크 보유자는 누구나 참여→대화 전체 열람(AR-1, 사용자 수용). 멤버십 백본·접근제어·send-routing·S4 무변경.
 - Rollback Notes: join 엔드포인트/Joinable 컬럼/share.js 버튼 제거 + 멤버 패널 복원으로 가역.
+
+## CHG-20260623-0014
+- Date: 2026-06-23
+- Related Requirement: 실시간 협업 UX(사용자 요청 3종) — S5 폴링 + F7 멘션 자동완성 + S3c 아바타.
+- Summary: 그룹 대화 라이브 UX 3종(전부 프론트, 백엔드 무변경).
+- Files: `static/app.js`, `static/styles.css`, `static/index.html` (+ 캐시버스터 20260623-live-ux: app.js/styles.css, index·admin).
+  1. **실시간 폴링**: `startLiveSync`/`_liveSyncTick`(4s) — 활성 대화에서 새 메시지(현 최대 id 초과)만 fetch(/api/history)·append. AI run 중(pendingBubble/busy)·검색모달·탭 숨김 시 skip. 과거 스크롤 중이면 위치 유지, 하단 근처면 자동 스크롤. 내 optimistic 에코 dedup.
+  2. **@멘션 자동완성**: composer `#mentionAutocomplete` 드롭다운 — `@` 입력 시 참가자(GET /members, lazy 캐시)+assistant 후보, 방향키/Enter/Tab 선택(capture keydown 으로 send 보다 우선), Esc/blur 닫기. mentions.js 와 동일 ASCII 토큰 규칙.
+  3. **프로필 아이콘**: `_msgAvatarEl` — 메시지별 발신자 아바타(/api/avatars/{sender_account_id}, 무아바타 404→이니셜), assistant=AI 배지. renderMessages 메타에 prepend.
+- Impact: 기존 백엔드 엔드포인트(history/members/avatars) 재사용, 코드 무변경. 폴링은 idle 시 무렌더(새 메시지 있을 때만).
+- Rollback Notes: 3 블록(live sync/mention AC/avatar)+CSS+캐시버스터 환원으로 가역.
