@@ -3392,6 +3392,17 @@ a { color: inherit; }
   background: color-mix(in srgb, var(--primary, #2563eb) 8%, transparent); padding: 1px 6px; border-radius: 4px;
 }
 .cov-db-rule-card-cap { flex: 0 0 auto; font-size: 11px; color: var(--text-muted, #888); }
+/* TASK-20260619 (§10.7): 규칙 편집 스테이징 상태 — 추가/수정/삭제 대기 + 승인 대기 토글. */
+.cov-db-rule-card.is-staged-create { border-left-color: var(--success, #16a34a); background: color-mix(in srgb, var(--success, #16a34a) 5%, var(--surface, #fff)); }
+.cov-db-rule-card.is-staged-update { border-left-color: var(--warning, #d97706); background: color-mix(in srgb, var(--warning, #d97706) 5%, var(--surface, #fff)); }
+.cov-db-rule-card.is-staged-delete { border-left-color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 5%, var(--surface, #fff)); opacity: .72; }
+.cov-db-rule-card.is-staged-delete .cov-db-rule-card-pat { text-decoration: line-through; }
+.cov-db-rule-card-badge { flex: 0 0 auto; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+.cov-db-rule-card-badge.is-create { color: var(--success, #16a34a); background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent); }
+.cov-db-rule-card-badge.is-update { color: var(--warning, #b45309); background: color-mix(in srgb, var(--warning, #d97706) 16%, transparent); }
+.cov-db-rule-card-badge.is-delete { color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent); }
+.cov-db-rule-approve.is-staged { background: color-mix(in srgb, var(--success, #16a34a) 10%, transparent); border-color: var(--success, #16a34a); color: var(--success, #16a34a); }
+.cov-db-rule-pending-tag { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 999px; color: var(--success, #16a34a); background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent); }
 .cov-db-rule-edit, .cov-db-rule-addbtn {
   flex: 0 0 auto; font-size: 11px; padding: 3px 10px; border: 1px solid var(--border, rgba(0,0,0,.2));
   border-radius: 6px; background: #fff; color: var(--text); cursor: pointer;

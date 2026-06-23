@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260619T120000-ai-claude-db-rule-pending-batch (TASK-20260619T120000, REQ-20260619-0331, Major §12.3 — 보안 경계)
+- Date: 2026-06-19
+- 요청(사용자, /_template:entry): 관리 콘솔 모든 변경을 pending → 일괄적용으로 구성·정책에 검증과정 명시·프로젝트 메모리 기억. 보고된 위배 = 정규식 자동 규칙 수정 시 즉시 반영.
+- 범위 결정(AskUserQuestion): 범위 A — 규칙 편집 동작만 pending, 확정 규칙의 백그라운드 자동 동기화는 보존.
+- 변경:
+  - `src/static/admin.js` — `adminState.pending.productDbRules` 스토어 + 헬퍼(`_dbRuleStageKey`/`_ensureDbRulePending`/`_getDbRulePending`/`_dbRulePendingEntryEmpty`/`_settleDbRulePending`/`productDbRuleDirtyCount`) 신설. `pendingChangeCount`·`refreshPendingUI`(detail "제품 규칙 N")·`buildPendingWidgetBody`·`cancelAllPending`·loadAdminData stale GC 에 통합. 규칙 에디터(`renderProductDetail` 내 `cov-db-rule`)의 add/edit/delete/approve 핸들러를 즉시 `apiFetch` → pending 스테이징으로 재배선. `_buildRuleCard` optimistic 오버레이(수정 대기=새 패턴+배지+수정취소 / 삭제 대기=dim+삭제취소 / 승인 대기 토글) + `_buildStagedCreateCard`(추가 대기). `applyAllPending` 에 dbRuleEntries replay(creates POST → updates PUT → approves approve-pending → deletes DELETE, entryFailed 아니면 정리) + early-return guard 포함. `reloadProductAfterRuleChange`(즉시 reload 헬퍼) 제거.
+  - `src/static/styles.css` — `.cov-db-rule-card.is-staged-{create,update,delete}` + `.cov-db-rule-card-badge.is-{create,update,delete}` + `.cov-db-rule-approve.is-staged` + `.cov-db-rule-pending-tag`.
+  - `src/static/admin.html` — admin.js 캐시버스터 `?v=20260619-llm-quota` → `?v=20260619-db-rule-pending`.
+  - `src/app.py` — `admin_list_product_db_rules`(GET `/db-rules`)에서 `_reconcile_product_db_rules(trigger="view")` 블록 제거(조회는 allowlist 무변경). docstring 갱신. (`_reconcile_product_db_rules` 헬퍼 자체는 백그라운드 경로용으로 보존 — 현재 호출자 0, REVIEW 기록.)
+  - `tests/verify_db_rule_pending.mjs` — jsdom 단위 테스트 신설(18).
+  - `docs/CONVENTIONS.md §10.7` 신설(정책 본체는 repo docs).
+- 비변경: rule reconcile/preview 로직·on-write reconcile·백그라운드 reconcile 루프(`_start_db_rule_reconcile_loop`)·RBAC 카탈로그·DB 스키마·엔드포인트 shape.
+
 ## CHG-20260618T062406-ai-claude-release-notes-scope-scroll-evidence (TASK-20260618T061520 후속 docs-only — PB-0008 evidence)
 - Date: 2026-06-18
 - Scope: docs 전용(TEST §4 Run PASS + TASK 마감). 코드·자산·RBAC 0.

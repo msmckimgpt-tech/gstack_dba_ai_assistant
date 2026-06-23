@@ -76,6 +76,7 @@ const adminState = {
     productDatabases: new Map(),  // productId -> draft array (user schemas only; metadata 4종 자동 bypass)
     productDatasources: new Map(),// TASK-0239: productId -> {baseline:[{key,is_primary}], desired:[{key,is_primary}]} (바인딩 추가/제거/기본지정 일괄 적용)
     systemPrompts: new Map(),     // key "scope:productId:roleId:accountId" -> {scope, productId, roleId, accountId, content}
+    productDbRules: new Map(),    // TASK-20260619 (§10.7): "productId::dsKey" -> {creates:[{tempId,include_pattern,exclude_pattern,cap}], updates:{ruleId:{...}}, deletes:{ruleId:{strip}}, approves:{ruleId:[schema,...]}} (정규식 자동 규칙 편집 = pending → "모두 적용")
   },
   nextTempRoleId: 1,
 };
@@ -1058,6 +1059,7 @@ function pendingChangeCount() {
     adminState.pending.productMeta.size +
     adminState.pending.productDatabases.size +
     datasourceDirtyProductCount() +
+    productDbRuleDirtyCount() +
     adminState.pending.systemPrompts.size
   );
 }
@@ -1109,6 +1111,47 @@ function setProductDatabasesPending(productId, draft, dsKey) {
   snapshot._dsKey = dk;
   adminState.pending.productDatabases.set(pkey, snapshot);
   refreshPendingUI();
+}
+
+// TASK-20260619 (§10.7): 정규식 자동 규칙(db-rule) 편집을 즉시 API 대신 pending 에 스테이징.
+//  키 = `${productId}::${dsKey}`. ops: creates[{tempId,include_pattern,exclude_pattern,cap}],
+//  updates{ruleId:{...}}, deletes{ruleId:{strip}}, approves{ruleId:[schema,...]}.
+//  footer "모두 적용"(applyAllPending)이 일괄 확정한다. (확정된 규칙의 백그라운드 자동 동기화는 보존 = 범위 A.)
+function _dbRuleStageKey(productId, dsKey) {
+  return `${Number(productId) || 0}::${String(dsKey || "").trim().toLowerCase()}`;
+}
+function _ensureDbRulePending(productId, dsKey) {
+  const k = _dbRuleStageKey(productId, dsKey);
+  let e = adminState.pending.productDbRules.get(k);
+  if (!e) {
+    e = { creates: [], updates: {}, deletes: {}, approves: {} };
+    adminState.pending.productDbRules.set(k, e);
+  }
+  return e;
+}
+function _getDbRulePending(productId, dsKey) {
+  return adminState.pending.productDbRules.get(_dbRuleStageKey(productId, dsKey)) || null;
+}
+function _dbRulePendingEntryEmpty(e) {
+  if (!e) return true;
+  return (e.creates || []).length === 0
+    && Object.keys(e.updates || {}).length === 0
+    && Object.keys(e.deletes || {}).length === 0
+    && Object.keys(e.approves || {}).length === 0;
+}
+// 빈 엔트리는 제거(dirty 해소). UI 갱신.
+function _settleDbRulePending(productId, dsKey) {
+  const k = _dbRuleStageKey(productId, dsKey);
+  if (_dbRulePendingEntryEmpty(adminState.pending.productDbRules.get(k))) {
+    adminState.pending.productDbRules.delete(k);
+  }
+  refreshPendingUI();
+}
+// 스테이징된 규칙 편집이 있는 (product, datasource) 수.
+function productDbRuleDirtyCount() {
+  let n = 0;
+  adminState.pending.productDbRules.forEach((e) => { if (!_dbRulePendingEntryEmpty(e)) n += 1; });
+  return n;
 }
 
 // TASK-0239: datasource 바인딩 desired-state 헬퍼 — 추가/제거/기본지정을 즉시 API 대신 pending 에 스테이징.
@@ -3932,6 +3975,19 @@ function buildPendingWidgetBody() {
     const c = Array.isArray(draft) ? draft.length : 0;
     addRow(`제품 DB · ${base ? base.name : `#${id}`}${dk ? ` · [${dk}]` : ""} · ${c} schema`);
   });
+  adminState.pending.productDbRules.forEach((e, k) => {
+    if (_dbRulePendingEntryEmpty(e)) return;
+    const _ps = String(k).split("::");
+    const id = Number(_ps[0]);
+    const dk = (_ps.length > 1 ? _ps[1] : "");
+    const base = adminState.products.find((p) => Number(p.id) === Number(id));
+    const parts = [];
+    if ((e.creates || []).length) parts.push(`추가 ${e.creates.length}`);
+    const nu = Object.keys(e.updates || {}).length; if (nu) parts.push(`수정 ${nu}`);
+    const nd = Object.keys(e.deletes || {}).length; if (nd) parts.push(`삭제 ${nd}`);
+    const na = Object.values(e.approves || {}).reduce((s, a) => s + (a ? a.length : 0), 0); if (na) parts.push(`승인 ${na}`);
+    addRow(`제품 규칙 · ${base ? base.name : `#${id}`}${dk ? ` · [${dk}]` : ""} · ${parts.join(" · ")}`);
+  });
   adminState.pending.systemPrompts.forEach((entry) => {
     const scopeLabel = { product: "제품", role: "역할", account: "계정" }[entry.scope] || entry.scope;
     const target = entry.productId
@@ -5386,6 +5442,8 @@ function refreshPendingUI() {
   if (adminState.pending.productDatabases.size) detail.push(`제품 DB ${adminState.pending.productDatabases.size}`);
   const dsDirty = datasourceDirtyProductCount();
   if (dsDirty) detail.push(`데이터소스 바인딩 ${dsDirty}`);
+  const ruleDirty = productDbRuleDirtyCount();
+  if (ruleDirty) detail.push(`제품 규칙 ${ruleDirty}`);
   if (adminState.pending.systemPrompts.size) detail.push(`프롬프트 ${adminState.pending.systemPrompts.size}`);
   $("commitBarDetail").textContent = detail.length ? `(${detail.join(" · ")})` : "";
 
@@ -5405,6 +5463,9 @@ async function applyAllPending() {
   // TASK-0239: datasource 바인딩 — desired≠baseline 인 제품만(실제 변경).
   const datasourceEntries = Array.from(adminState.pending.productDatasources.entries())
     .filter(([, e]) => e && !_dsBindEqual(e.baseline, e.desired));
+  // TASK-20260619 (§10.7): 정규식 자동 규칙 편집 — 비어있지 않은 (product, datasource) 만.
+  const dbRuleEntries = Array.from(adminState.pending.productDbRules.entries())
+    .filter(([, e]) => !_dbRulePendingEntryEmpty(e));
 
   if (
     !accountEntries.length
@@ -5413,6 +5474,7 @@ async function applyAllPending() {
     && !productMetaEntries.length
     && !productDbEntries.length
     && !datasourceEntries.length
+    && !dbRuleEntries.length
     && !systemPromptEntries.length
   ) return;
 
@@ -5617,6 +5679,46 @@ async function applyAllPending() {
     }
   }
 
+  // TASK-20260619 (§10.7): 정규식 자동 규칙 편집(추가/수정/승인/삭제)을 일괄 확정.
+  //  순서: ① 추가(POST) → ② 수정(PUT) → ③ 승인(approve-pending) → ④ 삭제(DELETE, 마지막 — 다른
+  //  op 의 rule_id 참조 보존). 각 엔드포인트는 확정 시점에 reconcile 하므로 여기가 allowlist 적용 지점.
+  for (const [k, e] of dbRuleEntries) {
+    const _ps = String(k).split("::");
+    const pid = Number(_ps[0]);
+    const dsk = _ps.length > 1 ? _ps[1] : "";
+    const ruleBase = `/api/admin/products/${pid}/datasources/${encodeURIComponent(dsk)}/db-rules`;
+    let entryFailed = false;
+    for (const c of (e.creates || [])) {
+      try {
+        await apiFetch(ruleBase, { method: "POST", body: JSON.stringify({
+          include_pattern: c.include_pattern, exclude_pattern: c.exclude_pattern || "", cap: Number(c.cap) || 3 }) });
+        ok += 1;
+      } catch (error) { entryFailed = true; failures.push({ kind: "product_db_rule", id: pid, error }); }
+    }
+    for (const [ruleId, patch] of Object.entries(e.updates || {})) {
+      try {
+        await apiFetch(`${ruleBase}/${Number(ruleId)}`, { method: "PUT", body: JSON.stringify({
+          include_pattern: patch.include_pattern, exclude_pattern: patch.exclude_pattern || "", cap: Number(patch.cap) || 3 }) });
+        ok += 1;
+      } catch (error) { entryFailed = true; failures.push({ kind: "product_db_rule", id: pid, error }); }
+    }
+    for (const [ruleId, schemas] of Object.entries(e.approves || {})) {
+      if (!schemas || !schemas.length) continue;
+      try {
+        await apiFetch(`${ruleBase}/${Number(ruleId)}/approve-pending`, { method: "POST", body: JSON.stringify({ schemas }) });
+        ok += 1;
+      } catch (error) { entryFailed = true; failures.push({ kind: "product_db_rule", id: pid, error }); }
+    }
+    for (const [ruleId, meta] of Object.entries(e.deletes || {})) {
+      try {
+        const q = (meta && meta.strip) ? "?strip=1" : "";
+        await apiFetch(`${ruleBase}/${Number(ruleId)}${q}`, { method: "DELETE" });
+        ok += 1;
+      } catch (error) { entryFailed = true; failures.push({ kind: "product_db_rule", id: pid, error }); }
+    }
+    if (!entryFailed) adminState.pending.productDbRules.delete(k);
+  }
+
   // System prompts (product / role / account scope)
   for (const [key, entry] of systemPromptEntries) {
     try {
@@ -5662,6 +5764,7 @@ function cancelAllPending() {
   adminState.pending.productMeta.clear();
   adminState.pending.productDatabases.clear();
   adminState.pending.productDatasources.clear();
+  adminState.pending.productDbRules.clear();
   adminState.pending.systemPrompts.clear();
   adminState.productDbDraft.clear();
   if (adminState.selectedRoleId && String(adminState.selectedRoleId).startsWith("new:")) {
@@ -5774,6 +5877,10 @@ async function loadAdminData() {
   // TASK-0239: 삭제된 제품의 datasource 바인딩 pending GC.
   Array.from(adminState.pending.productDatasources.keys()).forEach((id) => {
     if (!productIds.has(Number(id))) adminState.pending.productDatasources.delete(id);
+  });
+  // TASK-20260619: 삭제된 제품의 정규식 자동 규칙 pending GC(키 `productId::dsKey`).
+  Array.from(adminState.pending.productDbRules.keys()).forEach((k) => {
+    if (!productIds.has(Number(String(k).split("::")[0]))) adminState.pending.productDbRules.delete(k);
   });
   // GC system prompt pending entries that point to deleted product/role/account.
   const roleIdSet = new Set(adminState.roles.map((r) => Number(r.id)));
@@ -7063,22 +7170,21 @@ function renderProductDetail() {
   redrawChips();
   buildPicker();
 
-  // ── TASK-20260618T044318: 정규식 자동 규칙 에디터 + pending 승인 (per (product, datasource)) ──
-  //  규칙을 한 번 저장하면 데이터소스 DB 변화 시 일치 DB 가 (반)자동 반영된다(cap 이하·명확=자동,
-  //  초과·권한보류=pending 승인). allowlist 는 보안 경계라 안전 하이브리드(outside-voice B1).
+  // ── TASK-20260618T044318 / TASK-20260619: 정규식 자동 규칙 에디터 ──
+  //  규칙을 한 번 확정하면 데이터소스 DB 변화 시 일치 DB 가 (반)자동 반영된다(cap 이하·명확=자동,
+  //  초과·권한보류=pending 승인). allowlist 는 보안 경계.
+  //  TASK-20260619 (§10.7): 규칙 추가/수정/삭제/승인은 즉시 서버 반영하지 않고 adminState.pending
+  //  .productDbRules 에 스테이징한다. footer "모두 적용"(applyAllPending)이 일괄 확정한다. 읽기성
+  //  preview 만 즉시 호출. (확정된 규칙의 백그라운드 자동 동기화는 보존 = 범위 A.)
   const ruleWrap = document.createElement("div");
   ruleWrap.className = "cov-db-rule";
   dbEditorWrap.appendChild(ruleWrap);
-
-  const reloadProductAfterRuleChange = async () => {
-    try { await loadAdminData(); } catch (e) { /* ignore */ }
-    renderProductDetail();  // 갱신된 product.databases(rule 행 포함)로 상세 재렌더.
-  };
 
   // TASK-20260618T061703: 다중 규칙 — (product, datasource) 당 여러 규칙. 각 규칙 카드에 그 규칙이
   //  추가한 DB 를 중첩 표시(DB 가 규칙에 종속돼 보이게). manual DB 는 위 cov-db-list 에 그대로.
   let _renderRuleEditor = () => {};
   if (canManage) {
+    let _ruleTempSeq = 1;  // staged create 임시 id 시퀀스(이 카드의 추가-대기 식별).
     const _ruleBase = () => `/api/admin/products/${product.id}/datasources/${encodeURIComponent(String(_editDsKey || "").trim().toLowerCase())}/db-rules`;
     // 정규식 입력 폼(추가/수정 공용). onSubmit(payload) 반환 시 호출. existing=수정 대상 규칙(없으면 추가).
     const _buildRuleForm = (existing, onSubmit, submitLabel) => {
@@ -7127,42 +7233,81 @@ function renderProductDetail() {
       return form;
     };
     // 한 규칙 카드: 요약/수정 토글 + 그 규칙이 추가한 DB(중첩) + 그 규칙의 pending.
+    //  TASK-20260619: 스테이징 오버레이 — 수정 대기는 새 패턴/한도를, 삭제 대기는 dim + 취소 버튼을,
+    //  pending 승인은 승인 대기/취소 토글을 반영. 실제 반영은 "모두 적용".
     const _buildRuleCard = (rule, idx) => {
       const dsk = String(_editDsKey || "").trim().toLowerCase();
-      const card = document.createElement("div"); card.className = "cov-db-rule-card";
-      // 헤더(요약 + 수정/삭제).
+      const e = _getDbRulePending(product.id, _editDsKey);
+      const upd = e && e.updates[String(rule.id)];      // 수정 대기 패치(있으면 화면에 반영).
+      const del = !!(e && e.deletes[String(rule.id)]);  // 삭제 대기 여부.
+      const view = upd || rule;                         // 표시 패턴/한도 = 스테이징 우선.
+      const card = document.createElement("div");
+      card.className = "cov-db-rule-card" + (del ? " is-staged-delete" : (upd ? " is-staged-update" : ""));
+      // 헤더(요약 + 수정/삭제 또는 취소 + 대기 배지).
       const hd = document.createElement("div"); hd.className = "cov-db-rule-card-head";
       const title = document.createElement("span"); title.className = "cov-db-rule-card-title";
       title.textContent = `규칙 ${idx + 1}`;
       const pat = document.createElement("code"); pat.className = "cov-db-rule-card-pat";
-      pat.textContent = rule.include_pattern + (rule.exclude_pattern ? `  (제외: ${rule.exclude_pattern})` : "");
-      const capPill = document.createElement("span"); capPill.className = "cov-db-rule-card-cap"; capPill.textContent = `한도 ${rule.cap}`;
-      const editBtn = document.createElement("button"); editBtn.type = "button"; editBtn.className = "cov-db-rule-edit"; editBtn.textContent = "수정";
-      const delBtn = document.createElement("button"); delBtn.type = "button"; delBtn.className = "cov-db-rule-del"; delBtn.textContent = "삭제";
-      hd.append(title, pat, capPill, editBtn, delBtn);
+      pat.textContent = view.include_pattern + (view.exclude_pattern ? `  (제외: ${view.exclude_pattern})` : "");
+      const capPill = document.createElement("span"); capPill.className = "cov-db-rule-card-cap"; capPill.textContent = `한도 ${view.cap}`;
+      hd.append(title, pat, capPill);
+      if (del || upd) {
+        const badge = document.createElement("span");
+        badge.className = "cov-db-rule-card-badge " + (del ? "is-delete" : "is-update");
+        badge.textContent = del ? "삭제 대기" : "수정 대기";
+        hd.appendChild(badge);
+      }
+      const editHost = document.createElement("div"); editHost.className = "cov-db-rule-edit-host hidden";
+      if (del) {
+        const undo = document.createElement("button"); undo.type = "button"; undo.className = "cov-db-rule-edit"; undo.textContent = "삭제 취소";
+        undo.addEventListener("click", () => {
+          const ee = _ensureDbRulePending(product.id, _editDsKey);
+          delete ee.deletes[String(rule.id)];
+          _settleDbRulePending(product.id, _editDsKey);
+          _renderRuleEditor();
+        });
+        hd.appendChild(undo);
+      } else {
+        const editBtn = document.createElement("button"); editBtn.type = "button"; editBtn.className = "cov-db-rule-edit"; editBtn.textContent = "수정";
+        const delBtn = document.createElement("button"); delBtn.type = "button"; delBtn.className = "cov-db-rule-del"; delBtn.textContent = "삭제";
+        hd.append(editBtn, delBtn);
+        if (upd) {
+          const undo = document.createElement("button"); undo.type = "button"; undo.className = "cov-db-rule-edit"; undo.textContent = "수정 취소";
+          undo.addEventListener("click", () => {
+            const ee = _ensureDbRulePending(product.id, _editDsKey);
+            delete ee.updates[String(rule.id)];
+            _settleDbRulePending(product.id, _editDsKey);
+            _renderRuleEditor();
+          });
+          hd.appendChild(undo);
+        }
+        editBtn.addEventListener("click", () => {
+          if (!editHost.classList.contains("hidden")) { editHost.classList.add("hidden"); editHost.innerHTML = ""; return; }
+          editHost.innerHTML = "";
+          editHost.appendChild(_buildRuleForm(view, (payload) => {
+            const ee = _ensureDbRulePending(product.id, _editDsKey);
+            ee.updates[String(rule.id)] = { ...payload };
+            _settleDbRulePending(product.id, _editDsKey);
+            showToast("규칙 수정 대기 — '모두 적용' 시 반영됩니다.");
+            _renderRuleEditor();
+          }, "수정 대기"));
+          editHost.classList.remove("hidden");
+        });
+        delBtn.addEventListener("click", () => {
+          if (!confirm(`'규칙 ${idx + 1}' (${rule.include_pattern}) 을 삭제 대기에 담을까요?`)) return;
+          const strip = confirm("이 규칙이 추가한 DB 접근 행도 함께 삭제할까요?\n확인=행도 삭제 · 취소=규칙만 삭제(행 유지)\n('모두 적용' 시 실제 반영)");
+          const ee = _ensureDbRulePending(product.id, _editDsKey);
+          delete ee.updates[String(rule.id)];   // 수정 대기와 상충 — 삭제가 우선.
+          delete ee.approves[String(rule.id)];  // 승인 대기도 정리 — 삭제될 규칙의 pending 승인은 무의미(리뷰 minor#1).
+          ee.deletes[String(rule.id)] = { strip: !!strip };
+          _settleDbRulePending(product.id, _editDsKey);
+          showToast("규칙 삭제 대기 — '모두 적용' 시 반영됩니다.");
+          _renderRuleEditor();
+        });
+      }
       card.appendChild(hd);
-      // 수정 폼(접힘).
-      const editHost = document.createElement("div"); editHost.className = "cov-db-rule-edit-host hidden"; card.appendChild(editHost);
-      editBtn.addEventListener("click", () => {
-        if (!editHost.classList.contains("hidden")) { editHost.classList.add("hidden"); editHost.innerHTML = ""; return; }
-        editHost.innerHTML = "";
-        editHost.appendChild(_buildRuleForm(rule, async (payload) => {
-          const r = await apiFetch(`${_ruleBase()}/${rule.id}`, { method: "PUT", body: JSON.stringify(payload) });
-          const rec = (r && r.reconcile) || {};
-          showToast(`규칙 수정 — 자동 추가 ${(rec.auto_added || []).length}개${(rec.pending || []).length ? `, 승인 대기 ${(rec.pending || []).length}개` : ""}.`);
-          await reloadProductAfterRuleChange();
-        }, "수정 저장"));
-        editHost.classList.remove("hidden");
-      });
-      delBtn.addEventListener("click", async () => {
-        if (!confirm(`'규칙 ${idx + 1}' (${rule.include_pattern}) 을 삭제할까요?`)) return;
-        const strip = confirm("이 규칙이 추가한 DB 접근 행도 함께 삭제할까요?\n확인=행도 삭제 · 취소=규칙만 삭제(행 유지)");
-        try {
-          await apiFetch(`${_ruleBase()}/${rule.id}${strip ? "?strip=1" : ""}`, { method: "DELETE" });
-          showToast("규칙 삭제됨.");
-          await reloadProductAfterRuleChange();
-        } catch (e) { showToast("삭제 실패: " + (e.message || "오류"), true); }
-      });
+      card.appendChild(editHost);
+      if (del) return card;  // 삭제 대기 카드는 종속 DB/pending 영역 생략(곧 사라질 규칙).
       // 이 규칙이 추가한 DB(종속 중첩 표시).
       const dbWrap = document.createElement("div"); dbWrap.className = "cov-db-rule-dblist";
       const ruleDbs = (product.databases || []).filter((d) =>
@@ -7182,29 +7327,62 @@ function renderProductDetail() {
         dbWrap.appendChild(em);
       }
       card.appendChild(dbWrap);
-      // 이 규칙의 pending(승인 대기).
+      // 이 규칙의 pending(승인 대기) — 승인은 즉시 반영 아니라 "승인 대기" 스테이징(토글).
       const pend = (rule.pending || []);
       if (pend.length) {
         const pw = document.createElement("div"); pw.className = "cov-db-rule-pending";
         const ph = document.createElement("div"); ph.className = "cov-db-rule-pending-head";
         ph.textContent = `승인 대기 ${pend.length}개 (한도 초과/권한 보류)`;
         pw.appendChild(ph);
+        const appr = (e && e.approves && e.approves[String(rule.id)]) || [];
         pend.forEach((p) => {
           const it = document.createElement("div"); it.className = "cov-db-rule-pending-item";
           const nm = document.createElement("span"); nm.className = "cov-db-rule-pending-name"; nm.textContent = p.schema_name;
-          const ap = document.createElement("button"); ap.type = "button"; ap.className = "cov-db-rule-approve"; ap.textContent = "승인";
-          ap.addEventListener("click", async () => {
-            ap.disabled = true;
-            try {
-              await apiFetch(`${_ruleBase()}/${rule.id}/approve-pending`, { method: "POST", body: JSON.stringify({ schemas: [p.schema_name] }) });
-              showToast(`'${p.schema_name}' 승인 — 접근 목록에 추가됨.`);
-              await reloadProductAfterRuleChange();
-            } catch (e) { showToast("승인 실패: " + (e.message || "오류"), true); ap.disabled = false; }
+          const staged = appr.includes(p.schema_name);
+          const ap = document.createElement("button"); ap.type = "button";
+          ap.className = "cov-db-rule-approve" + (staged ? " is-staged" : "");
+          ap.textContent = staged ? "승인 취소" : "승인";
+          ap.addEventListener("click", () => {
+            const ee = _ensureDbRulePending(product.id, _editDsKey);
+            ee.approves[String(rule.id)] = ee.approves[String(rule.id)] || [];
+            const arr = ee.approves[String(rule.id)];
+            const i = arr.indexOf(p.schema_name);
+            if (i >= 0) { arr.splice(i, 1); if (!arr.length) delete ee.approves[String(rule.id)]; }
+            else { arr.push(p.schema_name); }
+            _settleDbRulePending(product.id, _editDsKey);
+            _renderRuleEditor();
           });
-          it.append(nm, ap); pw.appendChild(it);
+          if (staged) {
+            const tag = document.createElement("span"); tag.className = "cov-db-rule-pending-tag"; tag.textContent = "승인 대기";
+            it.append(nm, tag, ap);
+          } else {
+            it.append(nm, ap);
+          }
+          pw.appendChild(it);
         });
         card.appendChild(pw);
       }
+      return card;
+    };
+
+    // 추가 대기(staged create) 카드 — 아직 서버에 없는 규칙.
+    const _buildStagedCreateCard = (create, ord) => {
+      const card = document.createElement("div"); card.className = "cov-db-rule-card is-staged-create";
+      const hd = document.createElement("div"); hd.className = "cov-db-rule-card-head";
+      const title = document.createElement("span"); title.className = "cov-db-rule-card-title"; title.textContent = `규칙 (신규 ${ord})`;
+      const pat = document.createElement("code"); pat.className = "cov-db-rule-card-pat";
+      pat.textContent = create.include_pattern + (create.exclude_pattern ? `  (제외: ${create.exclude_pattern})` : "");
+      const capPill = document.createElement("span"); capPill.className = "cov-db-rule-card-cap"; capPill.textContent = `한도 ${create.cap}`;
+      const badge = document.createElement("span"); badge.className = "cov-db-rule-card-badge is-create"; badge.textContent = "추가 대기";
+      const undo = document.createElement("button"); undo.type = "button"; undo.className = "cov-db-rule-edit"; undo.textContent = "추가 취소";
+      undo.addEventListener("click", () => {
+        const ee = _ensureDbRulePending(product.id, _editDsKey);
+        ee.creates = (ee.creates || []).filter((c) => c.tempId !== create.tempId);
+        _settleDbRulePending(product.id, _editDsKey);
+        _renderRuleEditor();
+      });
+      hd.append(title, pat, capPill, badge, undo);
+      card.appendChild(hd);
       return card;
     };
 
@@ -7214,19 +7392,21 @@ function renderProductDetail() {
       if (!dsk) return;  // 미바인딩(기본 단일 MySQL)에는 규칙 미지원.
       const head = document.createElement("div"); head.className = "cov-db-rule-head"; head.textContent = "정규식 자동 규칙";
       const hint = document.createElement("div"); hint.className = "cov-db-rule-hint";
-      hint.textContent = "여러 규칙을 둘 수 있습니다. 각 규칙과 일치하는 DB 를 데이터소스 변화 시 자동 반영하며, 그 규칙에 종속돼 아래에 묶여 표시됩니다(한도 초과/권한 보류분은 승인 대기).";
+      hint.textContent = "여러 규칙을 둘 수 있습니다. 규칙 추가/수정/삭제/승인은 즉시 반영되지 않고 하단 '모두 적용' 시 일괄 반영됩니다. 확정된 규칙은 데이터소스 변화 시 일치 DB 를 자동 동기화하며(한도 초과/권한 보류분은 승인 대기), 그 규칙에 종속돼 아래에 묶여 표시됩니다.";
       const cardsWrap = document.createElement("div"); cardsWrap.className = "cov-db-rule-cards";
       const addBtn = document.createElement("button"); addBtn.type = "button"; addBtn.className = "cov-db-rule-addbtn"; addBtn.textContent = "+ 규칙 추가";
       const addHost = document.createElement("div"); addHost.className = "cov-db-rule-add-host hidden";
       addBtn.addEventListener("click", () => {
         if (!addHost.classList.contains("hidden")) { addHost.classList.add("hidden"); addHost.innerHTML = ""; return; }
         addHost.innerHTML = "";
-        addHost.appendChild(_buildRuleForm(null, async (payload) => {
-          const r = await apiFetch(_ruleBase(), { method: "POST", body: JSON.stringify(payload) });
-          const rec = (r && r.reconcile) || {};
-          showToast(`규칙 추가 — 자동 추가 ${(rec.auto_added || []).length}개${(rec.pending || []).length ? `, 승인 대기 ${(rec.pending || []).length}개` : ""}.`);
-          await reloadProductAfterRuleChange();
-        }, "규칙 추가"));
+        addHost.appendChild(_buildRuleForm(null, (payload) => {
+          const ee = _ensureDbRulePending(product.id, _editDsKey);
+          ee.creates.push({ tempId: `new:${_ruleTempSeq++}`, ...payload });
+          _settleDbRulePending(product.id, _editDsKey);
+          addHost.classList.add("hidden"); addHost.innerHTML = "";
+          showToast("규칙 추가 대기 — '모두 적용' 시 반영됩니다.");
+          _renderRuleEditor();
+        }, "추가 대기"));
         addHost.classList.remove("hidden");
       });
       ruleWrap.append(head, hint, cardsWrap, addBtn, addHost);
@@ -7234,12 +7414,15 @@ function renderProductDetail() {
       let data = null;
       try { data = await apiFetch(`${_ruleBase()}`); } catch (e) { data = null; }
       const rules = (data && data.rules) || [];
-      if (!rules.length) {
+      const e = _getDbRulePending(product.id, dsk);
+      const creates = (e && e.creates) || [];
+      if (!rules.length && !creates.length) {
         const em = document.createElement("div"); em.className = "cov-db-rule-empty";
         em.textContent = "설정된 규칙이 없습니다. '+ 규칙 추가' 로 첫 규칙을 만드세요.";
         cardsWrap.appendChild(em);
       } else {
         rules.forEach((rule, i) => cardsWrap.appendChild(_buildRuleCard(rule, i)));
+        creates.forEach((c, i) => cardsWrap.appendChild(_buildStagedCreateCard(c, i + 1)));
       }
     };
     _renderRuleEditor();

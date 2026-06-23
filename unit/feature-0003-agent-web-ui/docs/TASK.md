@@ -8,7 +8,26 @@ source_of_truth: true
 
 # Task
 
-## TASK-20260618T061520-ai-claude-release-notes-scope-scroll (current cycle) — 릴리즈 노트: 작업 화면서 관리 콘솔 영역 숨김 + 관리 콘솔 pane 스크롤 (REQ-20260618-0323, AC-0582·0583, Minor §12.3)
+## TASK-20260619T120000-ai-claude-db-rule-pending-batch (current cycle) — 정규식 자동 규칙 편집을 pending → "모두 적용" 으로 재배선 (REQ-20260619-0331, AC-0609, Major §12.3 — 보안 경계)
+- 보고(사용자, /_template:entry, 2026-06-19): "관리 콘솔 내에서 작업되는 모든 변경은 pending 후 일괄적용으로 구성되도록 정책에 검증과정 명시 + 프로젝트 메모리 기억." + `관리 콘솔 > 제품 > [각 제품] > '데이터 소스 & 접근 가능 데이터베이스' > 정규식 자동 규칙` 수정 시 **별도 Pending 없이 즉시 반영**됨을 확인.
+- 등급: **Major §12.3** — 접근 가능 DB allowlist(보안 경계) 변경 경로 + 의도된 "안전 하이브리드(outside-voice B1)" 설계를 시정. 비파괴(스테이징 모델 추가, 엔드포인트/스키마 무변경).
+- 범위 결정(AskUserQuestion, 사용자 2026-06-19): **범위 A** — 규칙 *편집 동작*(추가/수정/삭제/승인)만 pending 화하고, 확정된 규칙의 *백그라운드 자동 동기화*(잦은 DB 변경 자동 반영, 과거 요청 기능)는 보존. (범위 B = allowlist 변경 전부 pending·자율성 제거 는 미채택.)
+- 진단: ① `admin.js` 규칙 에디터(`cov-db-rule`, TASK-20260618T044318)의 add/edit/delete/approve 핸들러가 클릭 즉시 `apiFetch(POST/PUT/DELETE/approve-pending)` → 즉시 reconcile → allowlist 즉변. ② `app.py` GET `/db-rules` 가 `trigger="view"` lazy reconcile → **조회만으로 GRANT**. 둘 다 전역 pending → "모두 적용" 모델(admin.js "pending changes + bulk commit", TASK-0029/0239) 우회.
+- 수정: (a) frontend `admin.js` — `adminState.pending.productDbRules`(키 `productId::dsKey`, ops creates/updates/deletes/approves) + helpers(`_ensureDbRulePending`/`_settleDbRulePending`/`productDbRuleDirtyCount`/`_getDbRulePending`) + `pendingChangeCount`·`refreshPendingUI`·`buildPendingWidgetBody`·`cancelAllPending`·stale GC 통합 + 규칙 에디터 핸들러를 스테이징으로 재배선 + 카드 optimistic 오버레이(추가/수정/삭제/승인 대기 배지·취소) + `applyAllPending` replay(creates→updates→approves→deletes). (b) `styles.css` staged 배지 스타일. (c) `admin.html` 캐시버스터 `?v=20260619-db-rule-pending`. (d) backend `app.py` — GET `/db-rules` 의 view-trigger reconcile 블록 제거(조회=무변경). **비변경**: rule reconcile/preview 로직·백그라운드 루프·RBAC·스키마·엔드포인트 shape 0.
+- 정책: `docs/CONVENTIONS.md §10.7`(변경 적용 모델 — Pending → 일괄 적용 강제 + 검증 체크리스트 + 자율 동기화 carve-out) 신설. 프로젝트 메모리 `project_admin_pending_batch_apply.md`.
+- 검증: `node --check admin.js` + `py_compile app.py` + CSS brace balance + 신규 `tests/verify_db_rule_pending.mjs` **jsdom 18/18 PASS**(스테이징 시 쓰기 0 / "모두 적용"만 쓰기 / 엔드포인트·body·순서·정리) + make test(컨테이너). worktree `ai/claude/db-rule-pending-batch`(base 28e76d6).
+- 완료 체크리스트:
+  - [x] frontend staging(`productDbRules`) + helpers + `applyAllPending` replay + optimistic 렌더
+  - [x] backend GET `/db-rules` view-reconcile 제거(조회=무변경)
+  - [x] CSS staged 배지 + 캐시버스터(admin.js·styles.css) bump
+  - [x] 단위 테스트: `verify_db_rule_pending.mjs` 18/18 + `verify_db_rule_ui.mjs` 19/19 + `verify_db_rule_logic.py` 30/30 + node --check + py_compile + CSS brace
+  - [x] §18.8 적대적 검증 패널(서브에이전트) → SHIP, REVIEW.md `[SUBAGENT:db-rule-pending-security]` 기록
+  - [x] CONVENTIONS.md §10.7 + 프로젝트 메모리 + feature 문서 6종
+  - [ ] 머지 전 main(+21 commit) rebase
+  - [ ] 머지 → web 재배포(deploy_scope: included)
+  - [ ] PB-0008 Windows-browser 시각검증(규칙 편집 대기 배지 + "모두 적용" 일괄 반영 + 조회만으로 미반영)
+
+## TASK-20260618T061520-ai-claude-release-notes-scope-scroll — 릴리즈 노트: 작업 화면서 관리 콘솔 영역 숨김 + 관리 콘솔 pane 스크롤 (REQ-20260618-0323, AC-0582·0583, Minor §12.3)
 - 보고(사용자, 2026-06-18): ① 작업 화면에서는 관리 콘솔에 대한 릴리즈 노트를 숨겨 달라. ② 관리 콘솔에서 릴리즈 노트 스크롤이 없어 하단 항목을 볼 수 없다.
 - 등급: **Minor §12.3** — frontend-only(렌더러 옵션 + 호출 1 + CSS 1규칙 + 캐시버스터). 백엔드·RBAC·스키마·데이터 0. 비파괴.
 - 수정:

@@ -26,10 +26,18 @@ ok("multi: 복수형 엔드포인트 베이스(_ruleBase → /db-rules)", /\/db-
 ok("multi: 규칙 카드 빌더 _buildRuleCard", /_buildRuleCard\s*=/.test(adminJs));
 ok("multi: 규칙 폼 빌더 _buildRuleForm(추가/수정 공용)", /_buildRuleForm\s*=/.test(adminJs));
 ok("multi: '+ 규칙 추가' 버튼", /\+ 규칙 추가/.test(adminJs) && /cov-db-rule-addbtn/.test(adminJs));
-ok("multi: 규칙 생성 POST(_ruleBase())", /apiFetch\(_ruleBase\(\), \{ method: "POST"/.test(flat));
-ok("multi: 규칙 수정 PUT(/db-rules/{id})", /\$\{_ruleBase\(\)\}\/\$\{rule\.id\}`, \{ method: "PUT"/.test(flat));
-ok("multi: 규칙 삭제 DELETE(/db-rules/{id})", /\$\{_ruleBase\(\)\}\/\$\{rule\.id\}\$\{strip/.test(adminJs));
-ok("multi: 규칙별 approve-pending(/db-rules/{id}/approve-pending)", /\/\$\{rule\.id\}\/approve-pending`/.test(adminJs));
+// TASK-20260619 (§10.7): 규칙 편집은 즉시 apiFetch 가 아니라 pending 스테이징 → "모두 적용" replay.
+//   따라서 CRUD 호출은 에디터 핸들러가 아니라 applyAllPending 안에서 발생한다.
+ok("multi: 규칙 생성 — 스테이징(creates.push) + applyAllPending POST replay",
+  /\.creates\.push\(\{ tempId:/.test(adminJs) && /apiFetch\(ruleBase, \{ method: "POST"/.test(flat));
+ok("multi: 규칙 수정 — 스테이징(updates) + applyAllPending PUT replay",
+  /\.updates\[String\(rule\.id\)\] = \{ \.\.\.payload \}/.test(adminJs) && /\$\{ruleBase\}\/\$\{Number\(ruleId\)\}`, \{ method: "PUT"/.test(flat));
+ok("multi: 규칙 삭제 — 스테이징(deletes{strip}) + applyAllPending DELETE replay",
+  /\.deletes\[String\(rule\.id\)\] = \{ strip:/.test(adminJs) && /\$\{ruleBase\}\/\$\{Number\(ruleId\)\}\$\{q\}`, \{ method: "DELETE"/.test(flat) && /\?strip=1/.test(adminJs));
+ok("multi: 규칙별 approve-pending — 스테이징(approves) + applyAllPending replay",
+  /\.approves\[String\(rule\.id\)\]/.test(adminJs) && /\$\{ruleBase\}\/\$\{Number\(ruleId\)\}\/approve-pending`/.test(flat));
+ok("multi: 스테이징 시 에디터 핸들러는 즉시 apiFetch 안 함(전역 pending 경유)",
+  /adminState\.pending\.productDbRules/.test(adminJs) && /_ensureDbRulePending\(product\.id, _editDsKey\)/.test(adminJs));
 ok("multi: preview(/db-rules/preview)", /\$\{_ruleBase\(\)\}\/preview`/.test(adminJs));
 
 // ── DB 종속(중첩) ──
@@ -45,7 +53,7 @@ ok("CSS: .cov-db-rule-card-pat 정의", /\.cov-db-rule-card-pat\s*\{/.test(admin
 ok("CSS: .cov-db-rule-addbtn 정의", /\.cov-db-rule-addbtn[\s,]/.test(adminCss));
 
 // ── cache-buster ──
-ok("cache-buster: admin.html db-rule-multi", /admin\.js\?v=20260618-db-rule-multi/.test(adminHtml) && /styles\.css\?v=20260618-db-rule-multi/.test(adminHtml));
+ok("cache-buster: admin.html db-rule-pending(admin.js + styles.css)", /admin\.js\?v=20260619-db-rule-pending/.test(adminHtml) && /styles\.css\?v=20260619-db-rule-pending/.test(adminHtml));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

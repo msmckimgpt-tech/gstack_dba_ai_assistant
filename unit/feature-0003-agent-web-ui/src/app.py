@@ -21091,16 +21091,17 @@ def _rule_to_public(rule: dict) -> dict:
 
 @app.get("/api/admin/products/{product_id}/datasources/{key}/db-rules")
 async def admin_list_product_db_rules(product_id: int, key: str, request: Request) -> JSONResponse:
-    """(product, datasource) 의 **모든** 규칙 + 규칙별 pending. M6: lazy reconcile(전 규칙, product.manage 게이트 내부)."""
+    """(product, datasource) 의 **모든** 규칙 + 규칙별 pending. 읽기 전용 — 조회는 allowlist 를 바꾸지 않는다."""
     conn, account, dsk, error = _db_rule_gate(request, product_id, key)
     if error:
         return error
+    _ = account  # gate 가 권한 검증을 이미 수행(조회는 추가 reconcile 안 함).
     try:
-        try:
-            _reconcile_product_db_rules(conn, int(product_id), dsk,
-                                        actor_account=account, can_manage=True, trigger="view")
-        except Exception:
-            pass
+        # TASK-20260619 (CONVENTIONS.md §10.7): 조회(view)는 더 이상 자동 reconcile/GRANT 하지 않는다.
+        #   관리 콘솔 편집은 pending → "모두 적용" 으로만 allowlist 를 바꾼다(범위 A). 단순히 규칙
+        #   에디터를 여는 것만으로 접근 가능 DB 가 늘어나던 우회 경로를 제거한다. 확정된 규칙의 자동
+        #   동기화는 백그라운드 reconcile 루프(_start_db_rule_reconcile_loop)와 규칙 확정 시
+        #   on-write reconcile 가 계속 담당하므로 "잦은 DB 변경 자동 반영" 기능 자체는 보존된다.
         rules = _get_product_db_rules(conn, int(product_id), dsk)
         pending = _list_db_rule_pending(conn, int(product_id), dsk)
         # pending 을 rule_id 별로 그룹(미귀속=None 키 0).
