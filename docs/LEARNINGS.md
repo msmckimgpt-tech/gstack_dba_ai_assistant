@@ -33,6 +33,13 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Correct approach: fingerprint(또는 해시 키) 계산식을 바꾸는 변경은 **반드시 1회성 backfill 을 동반**한다 — 기존 artifact 는 그대로 두고, 새 알고리즘으로 fingerprint 만 재계산해 KV(`schema_fp:*`/`table_fp:*`)에 덮어쓰면 워커가 "unchanged" 로 skip 해 재생성이 0 이 된다. backfill 은 워커의 **동일 함수**(`_compute_*_fingerprint` + `ds_fact_key`/`ds_object_suffix` + `_save_fingerprint`)와 동일 datasource 컨텍스트(`set_active_datasource`/`set_active_database`)로 작성해야 키·값이 정확히 일치한다(샘플 stored==recomputed 검증 필수). 검증법: 배포 후 `tables_generated` 가 급증하면 cutover 발생 신호 — 즉시 backfill. 도달불가 datasource 는 backfill 대상 아님(어차피 재생성 안 됨).
 - Trade-off: backfill 의 downside 는 낮다(키가 틀리면 무효과일 뿐 무해, 라이브 워커와 병행해도 같은 값 저장이라 수렴). casefold 자체의 benefit(log_v2 같은 케이스 진동 churn ~132s/일 제거)은 작으므로, 기존 fingerprint 가 대량(수천)인 환경에선 "casefold + backfill" 을 한 세트로 계획해야 비용 역전이 안 난다.
 
+### LRN-20260623-0003 — 런타임 부트스트랩(_ensure_pg_schema)과 alembic 이 스키마를 이중 생성하면 split-brain — merge 된 마이그가 silent 미적용되고 긴 revision id 는 기록조차 안 됨
+- Source: TASK-0306 (insight 내부 진단 중 alembic split-brain 발견) (2026-06-23)
+- verified: true
+- Mistake: 본 프로젝트는 PG 스키마를 **두 경로**로 만든다 — (1) `modules/memory.py:_ensure_pg_schema` 가 부트 시 `agent_kb_schema.sql` 을 적용, (2) `bin/alembic-migrate.sh` 가 alembic 마이그를 적용. 둘이 어긋나면 `alembic_version` 이 코드 head 보다 뒤처진 split-brain 이 된다. 실측: live `alembic_version=0012` 인데 코드 head=0015. 부트스트랩이 0014/0015 의 **테이블 shape 는 만들었지만**(sample_queries 등), 0013 의 `kb_glossary`/`enum_dictionary` 는 schema.sql 에 없어 **안 만들어짐** → merge 된 ITEM-10 용어/ENUM 기능이 `agent_core` 의 `except Exception` 에 삼켜져 **로그 한 줄 없이 silent dead**. 게다가 `alembic_version.version_num VARCHAR(32)` 인데 revision id `0015_sample_queries_embed_dim_1024`(34자)가 초과 → stamp/upgrade 시 'value too long' 으로 **기록 자체가 불가**(0013=32·0014=28 은 우연히 맞아 가려져 있었음).
+- Correct approach: (1) **마이그 적용을 배포 파이프라인의 명시 단계로** — 부트스트랩이 스키마를 만들더라도 `bin/alembic-migrate.sh upgrade`(또는 stamp)를 배포마다 실행해 `alembic_version` 을 head 와 정합. (2) split-brain 해소는 **upgrade head 를 무턱대고 돌리지 말고**(파괴적 마이그가 섞일 수 있음 — 0015 가 무조건 DROP+ADD 였음) 누락분만 타깃 적용(`alembic upgrade <prev>:<rev>`) 후 기존 shape 분은 `stamp` 로 정합. (3) **revision id 길이 ≤ alembic_version 컬럼폭**(기본 32) 유지하거나 컬럼을 넓혀라(본 cycle 에서 128 로 확장 + alembic-migrate.sh CREATE 도 128 로 수정). (4) 기능 호출부의 광범위 `except Exception` 은 **로깅을 동반**해 테이블 부재 같은 환경 결함이 silent dead 되지 않게. (5) 정본 schema.sql 과 alembic 마이그의 객체/차원이 일치하는지 주기 점검(`bin/kb-schema-compare.sh`).
+- Applies to: 부트스트랩 SQL + alembic 을 병용하는 모든 스키마 관리. 특히 새 테이블을 추가하는 마이그는 schema.sql 정본에도 반영하지 않으면 fresh-install 과 alembic 경로가 갈린다.
+
 ## Category: pattern
 
 ### LRN-20260605-0001 — DB cutover 의 read-back 누락은 워커뿐 아니라 "사용자 대면 grounding 경로"까지 조용히 무력화한다
