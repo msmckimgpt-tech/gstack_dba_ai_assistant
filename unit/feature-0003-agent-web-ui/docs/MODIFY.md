@@ -4384,7 +4384,7 @@ source_of_truth: true
 
 ## CHG-20260619T040000-ai-claude-two-factor-auth
 - Date: 2026-06-19 (TASK-20260619T040000-two-factor-auth — 2단계 인증 TOTP). 사용자 보안 보강 6종 중 ⑥(마지막).
-- Scope: feature-0003 `src/app.py`(TOTP stdlib 헬퍼·`WebAccountTotp` 스키마+양 경로·cred_crypto 암호화·등록 3EP·로그인 2단계+`auth_login_totp`·admin 해제·audit 4 action·`_serialize_account`/`_fetch_account_rows` totp_enabled·brute-force 흡수·백업코드 row-lock) + `src/static/app.js`(showTotpLoginPrompt·renderProfileTotp)+`admin.js`(triggerAccountTotpDisableFlow·2FA 배지)+`index.html`(프로필 2FA 섹션)+`styles.css`(.is-2fa)+cache-buster + `tests/test_two_factor_auth.py`(신규 10) + docs(SECURITY.md §15).
+- Scope: feature-0003 `src/app.py`(TOTP stdlib 헬퍼·`WebAccountTotp` 스키마+양 경로·cred_crypto 암호화·등록 3EP·로그인 2단계+`auth_login_totp`·admin 해제·audit 4 action·`_serialize_account`/`_fetch_account_rows` totp_enabled·brute-force 흡수·백업코드 row-lock) + `src/static/app.js`(showTotpLoginPrompt·renderProfileTotp)+`admin.js`(triggerAccountTotpDisableFlow·2FA 배지)+`index.html`(프로필 2FA 섹션)+`styles.css`(.is-2fa)+cache-buster + `tests/test_two_factor_auth.py`(신규 10) + docs(SECURITY.md §16).
 - 내용: RFC 6238 TOTP(stdlib), secret cred_crypto 암호화(AAD 계정 바인딩), 로그인 2단계(pending token=DEK-HMAC), 백업코드(1회용 row-lock), self-service 등록/해제 + 관리자 강제 해제. 기본 미설정=2FA off(무회귀). brute-force 방어=IP throttle+계정 잠금(②) 2FA 단계 적용 + 비번-통과-리셋 증폭 차단.
 - Why: 사용자 요청 — 로그인 2차 인증.
 - Verification: test 10/10(TOTP roundtrip 실 동작) + make test 회귀 0 + py_compile + node --check. outside-voice SHIP-WITH-FIXES(MAJOR brute-force 흡수 + MINOR 백업코드 race 흡수).

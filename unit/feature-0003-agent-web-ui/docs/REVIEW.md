@@ -3516,7 +3516,7 @@ source_of_truth: true
 - **흡수한 MINOR**: 백업코드 소비 race(autocommit read-modify-write 중복 소비) → `SELECT ... FOR UPDATE` 명시 tx 원자화.
 - **수용(문서화)**: pending token TTL(300s) 내 재사용(유효 코드 필요 + 이중 throttle 로 bound)·30s step 내 TOTP 코드 재사용(RFC 표준·산업관행)·KEK 부재 시 Enabled=1 계정 fail-closed(admin disable 복구)·`_runtime_tables_available` probe 에 WebAccountTotp 미등록(catchup 무조건 생성이라 무영향).
 - Verification: test_two_factor_auth.py 10/10(B1 roundtrip+drift·B9 흡수 가드) + make test 회귀 0 + py_compile + node --check. 화면 정본=PB-0008(배포 후).
-- Cross-ref: CHG-20260619T040000-ai-claude-two-factor-auth / REQ-20260619-0329 / AC-0604~0607 / docs/SECURITY.md §15.
+- Cross-ref: CHG-20260619T040000-ai-claude-two-factor-auth / REQ-20260619-0329 / AC-0604~0607 / docs/SECURITY.md §16.
 
 ## REV-20260619T084227-ai-claude-release-notes-security-6 [SKIPPED:release-notes-content-curation-no-logic-no-rbac]
 - Date: 2026-06-19
