@@ -4426,3 +4426,12 @@ source_of_truth: true
 - Verification: test 18/18(B8 양권한 게이트·B11/B12 MAJOR 가드·F2/F3 신설) + deps map 자동검증 + make test 회귀 0 + node --check + py_compile + outside-voice SHIP-WITH-FIXES(2 MAJOR 흡수). 화면 정본=PB-0008.
 - Rollback: quota.read/manage 정의 + deps + 게이트 + strip 헬퍼 + readOnly 제거 → console.manage 게이트 복원.
 - Deploy: web 재빌드(정적+직렬화). **이행 주의**: console.manage 만 가진 비-admin 커스텀 역할은 quota.read/manage 명시 부여 필요(least-privilege).
+
+## CHG-20260623T053000-ai-claude-quota-admin-catchup
+- Date: 2026-06-23 (admin 역할 quota.read/manage catchup — PB-0008 적발 lockout 수정). quota-rbac-permission follow-up.
+- Scope: feature-0003 `src/app.py`(`_ensure_seed_roles` admin catchup 리스트에 quota.read/quota.manage 추가) + tests(B13).
+- 내용: 한도 게이트를 console.manage→quota.read/quota.manage 로 전환했으나 신규 권한이 기존 배포 admin 역할(WebRolePermissions RoleId=3)에 미부여 → admin 포함 전원 한도 접근 불가(lockout). seed=set(PERMISSION_CODES)는 role 생성 시점만 적용. admin catchup(TASK-0288 datasource 선례 동형, INSERT IGNORE 멱등)으로 재시작 시 backfill.
+- Why: PB-0008 라이브 검증에서 bootstrap_admin quota.read=false 적발 — 기능 자체가 동작 불가.
+- Verification: test 16/16(B13 catchup 가드) + make test 회귀 0 + py_compile. 배포 후 재PB-0008(admin 한도 편집 가능 + 3-tier).
+- Rollback: catchup 2줄 제거(단 기존 admin 다시 lockout).
+- Deploy: web 재빌드 + 재시작(시작 시 _ensure_seed_roles backfill 실행).

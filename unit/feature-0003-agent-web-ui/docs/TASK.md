@@ -4445,4 +4445,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 프론트: `PERMISSION_DEPENDENCIES` quota.read→console.access·quota.manage→quota.read. 그룹 메타(`PERMISSION_GROUP_ORDER`/`PERMISSION_GROUP_LABELS` "LLM 사용 한도"/`ADMIN_PERMISSION_SECTIONS` manage). 역할/계정 상세 한도 섹션 게이트 console.manage(+account.update)→**can("quota.read")**, 편집=**readOnly:!can("quota.manage")**. `buildQuotaEditor` `readOnly` 옵션 신설(입력 disable + 저장 버튼 미렌더 + "조회 전용" 안내). cache-buster `?v=20260623-quota-rbac-permission`.
 - [x] 검증: `test_llm_usage_quota.py` B8 게이트 갱신 + B11(권한 등재·admin seed·least-privilege)·B12(strip 헬퍼 실동작 list/dict)·F2(UI 게이트 read=표시/manage=readOnly)·F3(권한 정합) 신설 → 16/16. `test_permission_dependency_map.py` 가 신규 deps 자동 검증 통과. make test 회귀 0(사전존재 product-delete·db_query_ux 3건 무관). node --check + py_compile OK.
 - [x] 적대 리뷰(outside-voice, 보안 경계 필수): **SHIP-WITH-FIXES** → 2 MAJOR 흡수. **MAJOR-1**(PATCH `/api/admin/accounts/{id}` 응답이 strip 미적용 → account.update 만으로 한도 열람 우회) → `admin_update_account` 응답에 `_strip_quota_fields_if_unpermitted` 추가. **MAJOR-2**("조절은 조회 종속"이 UI-only — PUT 이 quota.manage 만 검사해 blind-write 가능) → PUT role/account 게이트에 quota.read **동시 요구**(서버 집행). MINOR(console.manage 분리=접근 확대)=의도된 설계, 문서화. 재검증 31/31.
-- [ ] verify-completion → 머지 → 배포(web) → PB-0008(quota.read만=readOnly / quota.manage=편집 / 무권한=미표시 3-tier) → 마감.
+- [x] verify-completion → 머지 → 배포(web) → PB-0008(quota.read만=readOnly / quota.manage=편집 / 무권한=미표시 3-tier) → 마감. (main cede0a4 머지·배포)
+
+### TASK-20260623T030418-quota-rbac-permission follow-up — admin catchup 누락 lockout 수정 (PB-0008 적발, 2026-06-23)
+- **PB-0008 적발**: 배포 후 실 Windows 브라우저에서 `bootstrap_admin`(role=admin, console.manage 보유) 의 `adminState.me.permissions["quota.read"]`=**false** → 한도 게이트를 console.manage→quota.read/manage 로 전환한 탓에 admin 포함 전원이 한도 섹션 접근 불가. DB 확인: WebRolePermissions(RoleId=3) quota.read=0/quota.manage=0.
+- **근본**: 신규 권한은 role 생성 시 seed(=set(PERMISSION_CODES))로만 부여 → **기존 배포 admin row 에는 retroactive 미적용**. `_ensure_seed_roles` 의 admin catchup 리스트(TASK-0288 datasource.read 등 선례)에 quota.read/manage 미등록이 원인.
+- [x] 수정: `_ensure_seed_roles` admin catchup 에 `quota.read`/`quota.manage` 추가(INSERT IGNORE 멱등, 재시작 시 기존 admin 역할 backfill). 회귀 가드 B13(catchup 소스에 quota.read/manage 단언).
+- [x] 검증: test 16/16(B13 신설) + make test 회귀 0 + py_compile. 배포 후 재PB-0008(admin=quota.read/manage 보유→편집 가능 + 3-tier 게이트).
+- [ ] verify → 머지 → 배포 → 재PB-0008 → 마감.

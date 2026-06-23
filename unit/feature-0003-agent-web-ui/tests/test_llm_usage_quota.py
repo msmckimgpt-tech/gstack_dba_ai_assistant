@@ -185,6 +185,15 @@ def test_b12_quota_strip_helper_and_gates():
     assert "quota_daily" not in single and "quota_monthly" not in single
 
 
+def test_b13_admin_catchup_grants_quota_permissions():
+    # TASK-20260623T030418 follow-up(PB-0008 적발 lockout): 게이트를 console.manage→quota.read/manage 로
+    #   전환했으므로 기존 배포 admin 역할에 신규 권한을 catchup 부여해야 한다(seed=set(PERMISSION_CODES)는
+    #   role 생성 시점만 적용 → 기존 admin row 는 retroactive 미부여 → lockout).
+    src = inspect.getsource(app._ensure_seed_roles)
+    assert '"quota.read"' in src and '"quota.manage"' in src
+    # datasource catchup(TASK-0288 선례)도 그대로 존재 — 회귀 가드.
+    assert '"datasource.read"' in src
+
 # ── F: frontend ─────────────────────────────────────────────────────────────
 def test_f1_admin_quota_ui_relocated():
     # TASK-20260623T014626-quota-ui-relocate: 한도 UI 가 'LLM 사용량'(조회 전용) 화면에서 역할/계정 상세로 이전.

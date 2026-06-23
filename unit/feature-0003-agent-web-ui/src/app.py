@@ -2605,6 +2605,12 @@ def _ensure_seed_roles(conn) -> None:
             "datasource.read",
             "datasource.manage",
             "product.read",
+            # TASK-20260623T030418-quota-rbac-permission: admin 의 LLM 사용 한도 조회/조절 catchup. **필수** —
+            # 한도 게이트를 console.manage→quota.read/manage 로 전환했으므로, 기존 배포 admin 역할이
+            # 본 catchup 없이는 한도 조회·조절권을 잃는다(lockout, PB-0008 적발). 신규 권한은 role 생성
+            # 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 admin row 에는 retroactive 미적용.
+            "quota.read",
+            "quota.manage",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
