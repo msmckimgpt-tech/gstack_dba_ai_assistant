@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260623T163242-sample-embed-dim-1024 (current cycle) — ITEM-02 sample_queries 임베딩 차원 1536→1024 정렬 (fix, Minor §12.3)
+- 출처: ITEM-02 PR-A 후속 fix. titan-embed/경로B(로컬 1024) 검토 중 발견 — 0014 가 sample_queries.embedding 을 vector(1536) 로 만들었으나 실제 임베딩 모델은 1024-dim(AGENT_KB_EMBEDDING_DIM=1024, texts 정본=alembic 0001 vector(1024)). 1024 벡터 INSERT 시 차원 불일치 런타임 실패. 사용자 결정(2026-06-23): 지금 1024 정렬.
+- [x] 마이그 0015(sample_queries.embedding 1536→1024, DROP+ADD 빈컬럼 안전, ivfflat 재생성) + schema.sql sample_queries 1024 + config 기본 1024 정렬.
+- [x] 라이브 pg16 적용 + 1024 register(list)→search retrieval sim=1.0 정합 검증. 단위 test_sample_flywheel 12 회귀 0(FakeConn dim-agnostic). py_compile.
+- [x] 적대 backend 리뷰 REV-20260623T163242 **SHIP**(마이그 정합·다운그레이드 대칭·blast 0; config 기본은 informational). NIT(docstring) 흡수.
+- [ ] **flag(범위 밖)**: texts schema.sql:68 + kb_backend.py:940 의 stale `vector(1536)` 주석(정본 alembic 0001 = 1024). texts 는 라이브/정본 1024 라 동작 무관하나 fresh-install bootstrap 정합 위해 별도 cleanup 권장.
+- verify PASS. worktree `ai/claude/feature-0002-agent-core`.
+
 ## TASK-20260623T151643-self-reflection (current cycle) — ITEM-07 Self-Reflection 자가수정 루프 (Major §12.3, ROADMAP dba-ai-nl2sql)
 <!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
 - 출처: ROADMAP ITEM-07. chat 의존(임베딩 무관). PLAN-APPROVED.

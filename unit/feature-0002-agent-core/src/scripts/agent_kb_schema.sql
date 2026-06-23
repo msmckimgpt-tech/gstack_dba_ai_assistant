@@ -303,7 +303,7 @@ CREATE TABLE IF NOT EXISTS sample_queries (
     sql           text         NOT NULL,                    -- 프롬프트 예시 전용(직접 실행 금지)
     domain        varchar(64)  NOT NULL DEFAULT '',
     weight        integer      NOT NULL DEFAULT 100,        -- 품질·사용 가중(검색 랭킹)
-    embedding     vector(1536),                             -- nl_question 임베딩(titan-embed)
+    embedding     vector(1024),                             -- nl_question 임베딩(titan-embed v2 = 1024-dim; alembic 0001 texts 정본과 일치)
     source_type   varchar(24)  NOT NULL DEFAULT 'manual',   -- manual|feedback|auto-harvest|eval
     status        varchar(16)  NOT NULL DEFAULT 'active',   -- active|stale|retired (신선도)
     approved      boolean      NOT NULL DEFAULT false,      -- 큐레이션 게이트(검색은 approved 만)

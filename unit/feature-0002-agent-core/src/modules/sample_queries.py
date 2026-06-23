@@ -1,6 +1,6 @@
 """ITEM-02 (ROADMAP dba-ai-nl2sql): 샘플쿼리 few-shot 저장소 — 등록·검색·주입·신선도.
 
-NL↔SQL 샘플을 agent_kb(PG)에 ds-scoped(scope_key) + 임베딩(titan-embed, vector(1536))으로
+NL↔SQL 샘플을 agent_kb(PG)에 ds-scoped(scope_key) + 임베딩(titan-embed, vector(1024))으로
 저장하고, 사용자 질문 임베딩으로 **approved∧active** 샘플을 cosine top-K(weight 가중) 검색해
 _build_knowledge_context 가 `## EXAMPLE QUERIES` 로 주입한다.
 
