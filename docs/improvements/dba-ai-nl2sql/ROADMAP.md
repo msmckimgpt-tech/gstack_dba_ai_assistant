@@ -156,7 +156,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: 지연 민감 — 측정으로 on/off 정책 결정.
 
 ### ITEM-07 · Self-Reflection 명시 자가수정 루프
-- **status**: pending
+- **status**: done
+- **note**: 2026-06-23 드레인(chat). execute_sql 수정가능 실패에 cap(2) 걸린 구조화 자가수정 넛지(분류+원SQL+표적힌트, 보안가드 제외, env gate). 단위 7 + prompt-injection 회귀 10, 적대 backend+security 리뷰 MAJOR(M1 실제 'SQL 실행 오류:' prefix 미매칭) 흡수 SHIP. **AC-b 정량 회복률 보류** — describe-first agent 가 단순 fixture 에서 1차 실패 거의 없어 측정 불가(에러유발 production traffic/error-injection harness 모드 필요, follow-up). 메커니즘+실제 에러경로 매칭 검증 완료. CHG/REV-20260623T151643-self-reflection.
 - **feature_id**: feature-0002-agent-core
 - **dimension**: performance
 - **risk_grade**: Major
@@ -261,7 +262,7 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | F-014 (결과 차트 시각화) | **defer** | frontend Minor·가치 중간. 정확도 항목 후순위. 재검토 트리거: 사용자 요청 누적 시. |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 4 · in-progress 0 · pending 8 · blocked 0
-- 완료: **ITEM-01**(harness, measured 보류) · **ITEM-04**(DS 컨텍스트) · **ITEM-10**(용어/ENUM 구조부) · **ITEM-02**(2026-06-23, 샘플 저장소 PR-A — A/B 측정·등록UI 보류).
-- 다음 ready(pending ∧ deps 충족): **ITEM-07**(P3, Major — self-reflection, **chat 의존 → 진행 가능**) · ITEM-09(P3, Major — chat) · ITEM-05(P2, 임베딩-의존 → 보류) · ITEM-11(deps 02✓,10✓ — 거버넌스 포탈 web).
+- 총 12 항목 · done 5 · in-progress 0 · pending 7 · blocked 0
+- 완료: **ITEM-01**(harness, measured 보류) · **ITEM-04**(DS 컨텍스트) · **ITEM-10**(용어/ENUM 구조부) · **ITEM-02**(샘플 저장소 PR-A — A/B·등록UI 보류) · **ITEM-07**(2026-06-23, self-reflection 자가수정 — 회복률 측정 보류).
+- 다음 ready(pending ∧ deps 충족): **ITEM-09**(P3, Major — 무거운쿼리 경량대안+승인, **chat 의존 → 진행 가능**) · ITEM-05(P2, 임베딩 의존 → 보류) · ITEM-11(deps 02✓,10✓ — 거버넌스 포탈 web).
 - ⚠ **환경 상태 (2026-06-23 갱신)**: **chat 모델(claude-*) 복구 ✓ / 임베딩(titan-embed) 여전히 401 AUTH-DOWN ✗**. ① **chat 의존(verify 가능)**: ITEM-07(self-reflection)·ITEM-09(무거운쿼리 재작성) — harness 측정 chat 으로 동작. ② **임베딩 의존(보류)**: ITEM-02 라이브 retrieval·A/B · ITEM-05(하이브리드)·ITEM-06(reranker)·ITEM-12(retrieval 튜닝) · ITEM-03 PR-B(승급 샘플 임베딩 필요). 드레인은 사용자 지시로 **chat 항목(07/09) 진행**, 임베딩 클러스터는 titan-embed 복구 후.

@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260623T151643-self-reflection (current cycle) — ITEM-07 Self-Reflection 자가수정 루프 (Major §12.3, ROADMAP dba-ai-nl2sql)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
+- 출처: ROADMAP ITEM-07. chat 의존(임베딩 무관). PLAN-APPROVED.
+
+### §2.1 Implementation Plan
+- **영향 파일**: `agent_core.py`(helper `_is_fixable_sql_error`/`_classify_sql_error`/`_sql_reflection_nudge` + tool 루프 훅 + per-run `reflection_count`) · `config.py`(AGENT_SELF_REFLECTION_ENABLED/MAX).
+- **접근**: tool 루프에서 `execute_sql` 가 **수정 가능한** 실패(`오류:`/`SQL 실행 오류:`/`도구 실행 오류`) 반환 시, cap(N≤2~3) 미만이면 구조화 정정 넛지(에러 분류+원 SQL+표적 힌트)를 tool 결과에 동봉. 보안 가드 차단은 제외(우회 유도 금지). max_steps·circuit-breaker 중첩으로 폭주 차단. env gate(A/B·롤백).
+- **위험도**: Major(핵심 run 루프 제어흐름 + 에러시 프롬프트 동봉) + 보안(guard 제외).
+- **acceptance**: AC-a 에러 시 ≤cap 넛지 후 중단(폭주 없음, 단위). AC-b(측정) harness on/off 회복률 — **보류**(describe-first agent 가 단순 fixture 에서 거의 에러 안 남 → 1차 실패 부재; 에러유발 production traffic/error-injection 모드 필요). AC-c guard 제외(보안). AC-d verify PASS.
+- [x] config 플래그 + helper 3종 + tool 루프 훅(가드 제외·cap·gate) + per-run 카운터.
+- [x] 단위 `test_self_reflection.py` 7(분류/넛지/guard 제외/**실제 'SQL 실행 오류:' shape**/cap 표기/truncate) 통과 + prompt-injection 회귀 10 통과 + py_compile.
+- [x] 적대 backend+security 리뷰 REV-20260623T151643 — **MAJOR(M1: 실제 'SQL 실행 오류:' prefix 미매칭→near-inert) 흡수** + M2(테스트 보강)·N1(guard 토큰)·N2(분류 순서) 흡수.
+- [x] 라이브 관찰: describe-first agent 가 `amount`→`total` 을 **에러 없이** 교정(645.00 정답) → reflection 은 백스톱(단순 fixture 미발동).
+- [ ] **AC-b 정량 회복률 보류** — 에러유발 golden Q/error-injection harness 모드 필요(follow-up). 메커니즘은 단위검증 + 실제 에러 경로 매칭 확정.
+- verify PASS. worktree `ai/claude/feature-0002-agent-core`.
+
 ## TASK-20260623T145444-sample-flywheel-core (current cycle) — ITEM-02+03 샘플쿼리 flywheel PR-A 코어 (Major §12.3, ROADMAP dba-ai-nl2sql)
 <!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
 - 출처: ROADMAP ITEM-02(저장소)+ITEM-03(피드백 flywheel) 결합. 사용자 지시 "성장 루프까지 앞당김". 순차 2-PR 중 **PR-A(feature-0002 코어)**. PR-B(feature-0003 웹 UI/RBAC/audit)는 후속.
