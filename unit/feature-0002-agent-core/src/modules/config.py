@@ -792,6 +792,10 @@ AGENT_MASK_PII = os.getenv("AGENT_MASK_PII", "1").strip().lower() in ("1", "true
 AGENT_ERROR_AUTO_RECOVERY = os.getenv("AGENT_ERROR_AUTO_RECOVERY", "1").strip().lower() in ("1", "true", "yes")
 AGENT_SIMILAR_RETRY_LIMIT = int(os.getenv("AGENT_SIMILAR_RETRY_LIMIT", "2"))
 AGENT_SIMILAR_RETRY_THRESHOLD = float(os.getenv("AGENT_SIMILAR_RETRY_THRESHOLD", "0.85"))
+# ITEM-07: execute_sql 실패 시 명시 bounded 자가수정 넛지(기존 LLM 자율 경로 보강, similar-retry
+# 가드 공존). 기본 ON. cap=run 당 최대 넛지 수(폭주 차단; max_steps·circuit-breaker 와 중첩).
+AGENT_SELF_REFLECTION_ENABLED = os.getenv("AGENT_SELF_REFLECTION_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_SELF_REFLECTION_MAX = int(os.getenv("AGENT_SELF_REFLECTION_MAX", "2") or "2")
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────

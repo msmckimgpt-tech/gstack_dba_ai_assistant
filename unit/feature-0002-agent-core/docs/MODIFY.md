@@ -1210,3 +1210,15 @@ source_of_truth: true
 - Files: src/scripts/agent_kb_schema.sql, alembic/versions/20260623_0014_sample_queries_feedback.py(new), src/modules/{sample_queries,sample_feedback}.py(new), src/agent_core.py, src/modules/config.py, tests/test_sample_flywheel.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
 - Rollback: 마이그 0014 downgrade(DROP 2 테이블) + 신규 모듈/주입 블록 제거(주입 try/except·gate·미매칭 ""라 무해). 플래그 OFF 면 즉시 비활성.
 - Deploy: ask-worker + web 재빌드(agent_core baked) + 마이그 0014 적용(superuser, GRANT load-bearing). 샘플 등록·피드백 UI·RBAC·audit = PR-B(feature-0003). 임베딩(titan-embed) 복구 전엔 retrieval 무동작(embed None→주입 "").
+
+## CHG-20260623T151643-self-reflection
+- Date: 2026-06-23 (TASK-20260623T151643-self-reflection — ROADMAP **ITEM-07**, Major §12.3). PLAN-APPROVED. chat 의존(임베딩 무관).
+- Scope: execute_sql 실패 시 명시 bounded 자가수정 넛지(기존 LLM 자율 경로·similar-retry 보강).
+- 내용:
+  - `agent_core.py`: 모듈 helper `_is_fixable_sql_error`(수정가능 오류 prefix `오류:`/`SQL 실행 오류:`/`도구 실행 오류`, **보안 가드 차단 제외**) · `_classify_sql_error`(syntax 우선→column→table→execution) · `_sql_reflection_nudge`(분류+원SQL[≤400]+표적 힌트, n/cap 표기). tool 루프(tool_msg 조립)에 훅: execute_sql 수정가능 실패 + `reflection_count < cap` 이면 넛지 동봉 + 카운터 증가. per-run `reflection_count=0` 초기화.
+  - `config.py`: `AGENT_SELF_REFLECTION_ENABLED`(기본 ON, gate) + `AGENT_SELF_REFLECTION_MAX`(기본 2, cap).
+- Why: ROADMAP ITEM-07(F-006) — 에러 되먹임이 LLM 자율 의존 → 명시 bounded 루프로 성공률↑.
+- Verification: `tests/test_self_reflection.py` 7(분류/넛지/guard 제외/**실제 'SQL 실행 오류:' shape**/cap/truncate) + prompt-injection 회귀 10 통과 + py_compile. 라이브 관찰(describe-first agent 가 amount→total 무에러 교정 → reflection 백스톱). 적대 backend+security 리뷰 REV-20260623T151643 SHIP-WITH-FIXES: **MAJOR M1(실제 'SQL 실행 오류:' prefix 미매칭 → 주 대상 near-inert) 흡수** + M2/N1/N2. **AC-b 정량 회복률은 에러유발 traffic 필요 — follow-up.**
+- Files: src/agent_core.py, src/modules/config.py, tests/test_self_reflection.py(new), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
+- Rollback: `AGENT_SELF_REFLECTION_ENABLED=0`(즉시 비활성) 또는 helper/훅 제거(gate off 면 동작 0 변경).
+- Deploy: ask-worker + web 재빌드(agent_core baked). 마이그 없음. 임베딩 무관(chat-only).

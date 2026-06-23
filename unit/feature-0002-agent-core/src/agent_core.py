@@ -2570,6 +2570,60 @@ def _resolve_product_datasources(mem_conn, product_id) -> "list[dict]":
     return out if len(out) >= 2 else []
 
 
+# ── ITEM-07: Self-Reflection 자가수정 루프 헬퍼 ──────────────────────────────
+# 보안 가드 차단(의도적)은 자가수정 대상이 아니다 — 우회 유도 금지.
+# 보안 가드 차단(의도적)은 자가수정 대상이 아니다 — 우회 유도 금지. 메시지 wording drift 에
+# 강인하도록 안정 토큰(예: "시스템 스키마") 위주(REV N1).
+_REFLECT_GUARD_MARKERS = (
+    "보안 정책상 차단", "접근이 영구 차단", "접근이 허용되지 않은", "직접 조회가 차단",
+    "접근 가능한 데이터베이스가 없", "내부 데이터베이스 직접 조회가 차단", "시스템 스키마",
+)
+# 수정 가능한 SQL 오류 prefix — tools.py 의 실제 반환형. "오류:"(freeform 가드/사전판정),
+# "SQL 실행 오류:"(raw_execute_sql 예외 — unknown column/table/syntax 의 주 경로, REV M1),
+# "도구 실행 오류"(generic wrapper).
+_REFLECT_ERROR_PREFIXES = ("오류", "SQL 실행 오류", "도구 실행 오류")
+
+
+def _is_fixable_sql_error(result: "str | None") -> bool:
+    """execute_sql 결과가 **수정 가능한** SQL 오류인가(자가수정 넛지 대상).
+    실제 DB 실행 실패는 'SQL 실행 오류:' 로 시작(REV M1 — '오류' 시작만 보면 주 대상 누락).
+    보안 가드 차단은 제외(의도적 차단 — 우회 유도 금지)."""
+    s = (result or "").lstrip()
+    if not any(s.startswith(p) for p in _REFLECT_ERROR_PREFIXES):
+        return False
+    if any(m in s for m in _REFLECT_GUARD_MARKERS):
+        return False
+    return True
+
+
+def _classify_sql_error(result: "str | None") -> str:
+    r = (result or "").lower()
+    if "syntax" in r or "구문" in r:               # syntax 우선(REV N2: 'near table' 오분류 방지)
+        return "syntax"
+    if "unknown column" in r or "컬럼" in r or "column" in r:
+        return "unknown-column"
+    if "doesn't exist" in r or "unknown table" in r or "테이블" in r or "table" in r:
+        return "unknown-table"
+    return "execution"
+
+
+def _sql_reflection_nudge(result: str, last_sql: "str | None", n: int, cap: int) -> str:
+    """SQL 실패에 대한 구조화된 자가수정 지침(에러 분류 + 원 SQL + 표적 힌트). bounded(n/cap)."""
+    kind = _classify_sql_error(result)
+    hint = {
+        "unknown-column": "describe_table 로 정확한 컬럼명을 확인한 뒤 컬럼을 교정하라.",
+        "unknown-table": "search_tables/describe_table 로 정확한 테이블/스키마명을 확인한 뒤 교정하라.",
+        "syntax": "SQL 구문(따옴표·괄호·예약어·방언)을 점검해 교정하라.",
+        "execution": "에러 메시지를 읽고 원인을 교정하라.",
+    }.get(kind, "에러 메시지를 읽고 원인을 교정하라.")
+    return (
+        f"[자가수정 {n}/{cap}] 직전 execute_sql 이 실패했다(분류: {kind}). "
+        f"원 SQL: {str(last_sql or '')[:400]} — {hint} "
+        f"**같은 SQL 을 그대로 재실행하지 말 것**(다르게 교정). {n}회째 시도이며 {cap}회 후엔 "
+        f"현재까지 확인된 사실로 정직하게 답하라(추측 금지)."
+    )
+
+
 def _format_multi_ds_grounding(ds_desc: "list[dict]") -> str:
     """멀티 datasource grounding 프롬프트 섹션 조립(_DatasourceRouter.describe() 산물 → 시스템
     프롬프트 텍스트). 좌표/비밀번호는 노출하지 않는다(라벨·엔진·접근DB·비즈니스 설명·도메인만).
@@ -3083,6 +3137,7 @@ def _run_agent_core(
     steps: list[dict[str, Any]] = []
     step_count = 0
     empty_retries = 0
+    reflection_count = 0  # ITEM-07: run 당 SQL 자가수정 넛지 횟수(cap=AGENT_SELF_REFLECTION_MAX)
     llm_round = 0  # TASK-0289: LLM 추론 호출 회차(activity 노출용)
 
     while step_count < max_steps:
@@ -3326,9 +3381,19 @@ def _run_agent_core(
             # outside-voice MAJOR 흡수): execute_sql 결과는 공격자 데이터(예: notes 컬럼의
             # "이전 지시 무시" 류)를 담을 수 있는 최대 인젝션 벡터 → LLM-facing 결과를 datamark
             # sentinel 로 구획(guard notice 의 "쿼리 실행 결과" 약속을 실제 이행). 저장 copy 는 원문 유지.
+            _tool_content = _datamark_untrusted(tool_result, f"도구 결과 {tool_name}")
+            # ITEM-07: execute_sql 의 **수정 가능한** 실패에 명시 bounded 자가수정 넛지를 결과에
+            # 동봉(cap=AGENT_SELF_REFLECTION_MAX). 보안 가드 차단은 대상 아님(우회 유도 금지).
+            # cap·max_steps·circuit-breaker 중첩으로 폭주 차단. 기존 LLM 자율 경로·similar-retry 공존.
+            if (cfg.AGENT_SELF_REFLECTION_ENABLED and tool_name == "execute_sql"
+                    and _is_fixable_sql_error(tool_result)
+                    and reflection_count < cfg.AGENT_SELF_REFLECTION_MAX):
+                reflection_count += 1
+                _tool_content += "\n\n" + _sql_reflection_nudge(
+                    tool_result, last_sql, reflection_count, cfg.AGENT_SELF_REFLECTION_MAX)
             tool_msg = {
                 "role": "tool",
-                "content": _datamark_untrusted(tool_result, f"도구 결과 {tool_name}"),
+                "content": _tool_content,
                 "tool_call_id": tc.id,
             }
             messages.append(tool_msg)
