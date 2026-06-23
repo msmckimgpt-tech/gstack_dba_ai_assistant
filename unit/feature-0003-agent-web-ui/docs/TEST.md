@@ -297,6 +297,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-06-19 (TASK-20260619T120000-db-rule-pending-batch — 정규식 자동 규칙 pending → "모두 적용" 재배선, **Major §12.3 — 보안 경계**):
+  - **Environment: CLI/jsdom + py_compile**. 신규 `tests/verify_db_rule_pending.mjs` **jsdom 18/18 PASS**(Node18 + jsdom@22): 키 정규화(`1::maindb`)·`_ensureDbRulePending` 빈 구조·`_dbRulePendingEntryEmpty`·**스테이징(create push) 시 apiFetch 호출 0**(즉시 반영 금지 회귀 게이트)·`productDbRuleDirtyCount`·`pendingChangeCount` 포함·`_settleDbRulePending` 빈 엔트리 제거·`applyAllPending` 추가 POST/수정 PUT/승인 approve-pending/삭제 DELETE?strip=1 호출·body 전달·**순서 추가<수정<승인<삭제**·성공 시 `pending.productDbRules` 정리·pending 0 시 no-op. `node --check admin.js` PASS, `python3 -m py_compile app.py` PASS, CSS brace balance 1417/1417.
+  - **make test (컨테이너 전체/통합)**: <결과는 verify 단계에서 기록>.
+  - **잔여(Windows-browser 최종 게이트)**: 머지·배포 후 PB-0008 — 규칙 추가/수정/삭제/승인 클릭 시 대기 배지만(즉시 미반영) → "모두 적용" 일괄 반영 → 조회만으로 allowlist 미변경 실측.
+  - REV-20260619T120000-ai-claude-db-rule-pending-batch.
 - 2026-06-18 (TASK-20260618T061520-ai-claude-release-notes-scope-scroll — 작업 화면 관리 콘솔 영역 숨김 + 관리 콘솔 스크롤, **Minor §12.3**):
   - **Environment: CLI/jsdom** (frontend-only). `tests/verify_release_notes.mjs` **34/34 PASS** (Node18 + jsdom@22): TEST-0128(작업화면 admin 0건·표시=work+common 43·칩 3개[전체/작업/공통]·'관리 콘솔' 칩 부재·그룹 11·관리 콘솔 기본 admin 노출 회귀 없음), TEST-0129(styles.css release-notes pane `overflow-y:auto` 소스 단언) + 기존 27건(접힘 가드·필터·XSS 등). `node --check` PASS. REV-20260618T061520-ai-claude-release-notes-scope-scroll [SKIPPED:frontend-ui-scope-scroll-no-backend-no-rbac].
   - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay, endpoint `http://172.28.64.1:9223`, https://localhost:18080). 배포: main `e812c9d`(PR #345) → `docker compose build web` + `up -d --no-deps web`(repo-web-1 Up healthy, mysql_ok·pg_ok). 서빙 `styles.css/app.js/release-notes.js ?v=20260618-rn-scope-scroll` baked.

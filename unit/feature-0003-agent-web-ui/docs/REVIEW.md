@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260619T120000-ai-claude-db-rule-pending-batch [SUBAGENT:db-rule-pending-security] **SHIP** (TASK-20260619T120000, REQ-20260619-0331, Major §12.3 — 보안 경계/RBAC 인접)
+- Date: 2026-06-19
+- 분류: **리뷰 대상**(보안 경계 = 접근 가능 DB allowlist 변경 경로 재배선). §18.8 적대적 검증 패널(security+correctness 서브에이전트) 실행 → **SHIP**. 6개 주장 모두 적대 검증·반증 시도 후 무결 확인 + jsdom 18+19 PASS 재확인.
+- 패널 검증 결과(반증 시도 후 무결):
+  1. **스테이징 ≠ 쓰기**: 규칙 에디터 add/edit/delete/approve 핸들러에 잔여 즉시 `apiFetch` 0 — 읽기성(`/preview` dry-run·GET list)만 남음. 유일 쓰기 경로 = `applyAllPending`.
+  2. **replay 정확성**: create POST / update PUT{id} / approve POST{id}/approve-pending{schemas} / delete DELETE{id}?strip=1 — body·method·param 이 기존 즉시 경로와 동일(app.py 핸들러 contract 일치). 순서 create→update→approve→delete(삭제 마지막=rule_id 참조 보존) 적정. 빈 schemas skip.
+  3. **보안 게이트 무손상**: `_db_rule_gate`(product.manage+바인딩)·`_validate_db_rule_pattern`·cap clamp·SSRF·`_DB_RULE_NAME_INJECT_RE`·audit 무변경 — 스테이징은 호출 시점만 늦출 뿐 서버 검증 우회 0. 클라이언트가 구 UI 로 못 보내던 것을 보낼 수 없음.
+  4. **view-reconcile 제거 안전**: GET `/db-rules` 는 읽기만, pending 큐는 백그라운드 루프(`_start_db_rule_reconcile_loop`)+on-write reconcile(create/update) 가 계속 채움. `account` 명시 소비(`_ = account`)로 lint 무손상. 제거는 오히려 "에디터 열기만으로 GRANT" escalation 차단.
+  5. **optimistic desync 없음**: 수정 대기 후 삭제 시 `delete updates[id]`(+본 cycle 보강 `delete approves[id]`) 후 삭제 staged → 삭제 카드는 undo 만 노출(공존 불가, 삭제 우선). staged-create `tempId` 는 서버 미전송, apply 후 엔트리 삭제 → 충돌·중복제출 0.
+  6. **GC/staleness**: `cancelAllPending`·`loadAdminData` stale GC(키 `productId::dsKey` 파싱)·`_settleDbRulePending` 빈 엔트리 제거·성공 시 엔트리 삭제·실패 시 `entryFailed` 보존 재시도 — reload 후 누수/중복적용 0.
+- 패널 minor(비차단) 반영/메모:
+  - minor#1(같은 규칙 approve+delete 의도 모호) → **본 cycle 반영**: delBtn 핸들러에서 `updates` 와 함께 `approves[rule.id]` 도 정리(삭제될 규칙의 승인 대기 제거).
+  - minor#2(`split("::")` 키 파싱) → 실제 datasource 키는 `{engine}-{hash12}`(예 `mysql-3f2a1b9c7e41`)로 `::` 불포함 → 도달 불가(방어심층 nit, 무조치).
+  - `_reconcile_product_db_rules`(app.py) 호출자 0(view-reconcile 제거 결과) — (product,ds) 일괄 reconcile 유틸로 보존, 후속 cleanup 시 제거 가능(기능 영향 0).
+- base-behind-main: 본 worktree base 28e76d6 가 현재 main(51d69c4, +21 commit, 타 세션 머지)보다 뒤짐 — 내 diff 는 12파일/+353/−69 로 scoped(2FA/feature-0009 등은 내 변경 아님, main-ahead). 머지 전 rebase 필요(commit/finalize 단계).
+- 추가 메모: ① 부분 실패 — dbRule 엔트리는 op별 try/catch + `entryFailed` 시 엔트리 미정리(loadAdminData 가 서버 정본 재동기화), 다른 pending 섹션과 동형. ② 범위 A carve-out — 확정 규칙의 백그라운드 자동 동기화는 의도 보존(§10.7 "시스템 동작 ≠ 콘솔 편집"). ③ 라이브 round-trip(클릭→대기 배지→"모두 적용" 반영→조회만으로 미반영)은 PB-0008 Windows-browser 가 머지·배포 후 최종 게이트로 검증.
+
 ## REV-20260618T062406-ai-claude-release-notes-scope-scroll-evidence [SKIPPED:docs-only-pb0008-evidence]
 - Date: 2026-06-18 (TASK-20260618T061520 후속 docs-only — PB-0008 evidence)
 - 분류 근거: docs 전용(TEST §4 Run + TASK 마감 + MODIFY/REVIEW). 코드·자산·RBAC·스키마 무변경 → 리뷰 SKIP. 대상 코드는 본 cycle REV-20260618T061520 에서 점검 완료.
