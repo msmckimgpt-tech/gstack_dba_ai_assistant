@@ -17,7 +17,7 @@ __all__ = [
 """Schema/table insight scanning, bootstrap, background worker."""
 from .config import *
 import hashlib, json, logging, random, re, time, uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import dialects as _dialects  # P7: insight 컬럼 핑거프린트 dialect 분기(MSSQL)
@@ -38,7 +38,12 @@ def _compute_schema_fingerprint(db_conn, schema: str) -> str:
             (schema,),
         )
         rows = cur.fetchall() or []
-        names = sorted(str(r[0]).strip() for r in rows if r and r[0])
+        # TASK-0305 (RC2): casefold 로 케이스 정규화한 뒤 해시한다. MSSQL information_schema 가
+        # 같은 논리 테이블을 cycle 마다 대문자(TF_ErrorLog) ↔ 소문자(tf_errorlog)로 번갈아 반환하면
+        # fingerprint 가 진동 → schema_structure_changed 가 매 cycle True → 같은 스키마를 11초짜리
+        # LLM 으로 무의미하게 재생성하던 churn 을 제거한다. casefold 는 해시 VALUE 에만 적용 —
+        # ds_fact_key/ds_object_suffix 키 생성은 건드리지 않아 TASK-0220 write/read-back/grounding 정합 보존.
+        names = sorted(str(r[0]).strip().casefold() for r in rows if r and r[0])
         return hashlib.sha256("|".join(names).encode()).hexdigest()[:32]
     finally:
         cur.close()
@@ -58,7 +63,9 @@ def _compute_table_fingerprint(db_conn, schema: str, table: str) -> str:
         rows = cur.fetchall() or []
         parts = []
         for r in rows:
-            parts.append(":".join(str(c or "").strip() for c in r))
+            # TASK-0305 (RC2): casefold 케이스 정규화(해시 VALUE 한정) — 컬럼명/타입 케이스 진동에 의한
+            # table fingerprint churn 방지.
+            parts.append(":".join(str(c or "").strip().casefold() for c in r))
         return hashlib.sha256("|".join(parts).encode()).hexdigest()[:32]
     finally:
         cur.close()
@@ -81,10 +88,13 @@ def _compute_table_fingerprints_batch(db_conn, schema: str, tables: list[str]) -
         rows = cur.fetchall() or []
         table_parts: dict[str, list[str]] = {}
         for r in rows:
+            # tname(r[0]) 은 dict KEY — 같은 cycle 의 all_table_names(information_schema 케이스)와
+            # 매칭해야 하므로 casefold 하지 않는다. 해시 VALUE(part = 컬럼명/타입)에만 casefold 적용
+            # (TASK-0305 RC2 — 케이스 진동 churn 방지, 키 정합 보존).
             tname = str(r[0] or "").strip()
             if not tname:
                 continue
-            part = ":".join(str(c or "").strip() for c in r[1:])
+            part = ":".join(str(c or "").strip().casefold() for c in r[1:])
             table_parts.setdefault(tname, []).append(part)
         result = {}
         for tname, parts in table_parts.items():
@@ -841,6 +851,63 @@ ORDER BY TABLE_NAME
         pass
 
 
+# ── TASK-0305 (RC3): pending-repair 무진전 backoff ───────────────────────────
+# 무경계 _detect_pending_insight_repairs 가 budget(15s)로 도달 못 하는 미완성 artifact tail 을
+# pending 으로 영구 집계 → force_scan 이 매 8s tick 영구 latch → 도달가능 DB 의 무거운 fingerprint
+# 스캔(수천 테이블)을 매 tick 반복하던 spin 을 유발했다. '직전 pending-only 스캔이 무진전(생성·복구
+# 0)'이면 짧은 backoff 동안 pending-only 트리거를 억제한다(missing= 새 스키마는 영향 없음 — 즉시 스캔).
+# 진전이 있으면 backoff 해제 → 건강한 시스템의 테이블 채움 처리량은 tick cadence 로 보존. backoff_until
+# KV 는 per-scope(ds_scope_name) — 데이터소스별 독립. KV 부재 = 기존 동작(backoff 없음).
+def _repair_backoff_active(mem_conn) -> bool:
+    """pending-repair 무진전 backoff 활성 여부(backoff_until 이 미래면 True)."""
+    if not mem_conn:
+        return False
+    try:
+        raw = load_memory_kv(
+            mem_conn, GLOBAL_CONVERSATION_ID,
+            ds_scope_name("schema_instance_repair_backoff_until"),
+        )
+        if not raw:
+            return False
+        until = _parse_iso_time(str(raw))
+        if not until:
+            return False
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) < until
+    except Exception:
+        return False
+
+
+def _set_repair_backoff(mem_conn, backoff_sec: int) -> None:
+    """pending-only 스캔이 무진전이면 backoff_until = now + backoff_sec(>=60s) 로 설정."""
+    if not mem_conn:
+        return
+    try:
+        until = datetime.now(timezone.utc) + timedelta(seconds=max(60, int(backoff_sec)))
+        save_memory_kv(
+            mem_conn, GLOBAL_CONVERSATION_ID,
+            ds_scope_name("schema_instance_repair_backoff_until"),
+            until.isoformat(),
+        )
+    except Exception:
+        pass
+
+
+def _clear_repair_backoff(mem_conn) -> None:
+    """진전이 생기면(또는 missing 스캔) backoff 해제(빈 값 = 비활성)."""
+    if not mem_conn:
+        return
+    try:
+        save_memory_kv(
+            mem_conn, GLOBAL_CONVERSATION_ID,
+            ds_scope_name("schema_instance_repair_backoff_until"),
+            "",
+        )
+    except Exception:
+        pass
+
+
 def _scan_instance_schema_insights(
     db_conn,
     mem_conn,
@@ -911,11 +978,20 @@ def _scan_instance_schema_insights(
     pending_repairs = _detect_pending_insight_repairs(db_conn, mem_conn, candidates)
     report["pending_schema_repairs"] = int(pending_repairs.get("pending_schema_repairs", 0) or 0)
     report["pending_table_repairs"] = int(pending_repairs.get("pending_table_repairs", 0) or 0)
+    # TASK-0305 (RC3): pending(미완성 artifact)만으로 트리거된 스캔인지 — 새 스키마(missing)는 항상 즉시.
+    pending_only = bool(
+        not missing
+        and (report["pending_schema_repairs"] or report["pending_table_repairs"])
+    )
     force_scan = bool(
         missing
         or report["pending_schema_repairs"]
         or report["pending_table_repairs"]
     )
+    # TASK-0305 (RC3): 직전 pending-only 스캔이 무진전이면 backoff 동안 pending-only 트리거를 억제해
+    # 매 tick spin 을 막는다. backoff 중이라도 missing(새 스키마)과 rescan interval 경과는 그대로 스캔.
+    if pending_only and _repair_backoff_active(mem_conn):
+        force_scan = bool(missing)  # missing 없으면 False → 아래 interval gate 로 위임
     if not force_scan:
         try:
             last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"))
@@ -1442,6 +1518,19 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
     try:
         if report.get("scan_started"):
             save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"), utc_now_iso())
+            # TASK-0305 (RC3): 진전 기반 backoff 갱신. 생성·복구가 1건이라도 있으면(또는 missing 스캔)
+            # backoff 해제 → 건강한 처리량 tick cadence 보존. pending-only 스캔이 무진전이면 backoff 설정
+            # → 도달 못 하는 미완성 tail 의 매-tick spin 차단(rescan interval 동안 pending-only 억제).
+            made_progress = (
+                int(report.get("schemas_generated", 0) or 0)
+                + int(report.get("schemas_repaired", 0) or 0)
+                + int(report.get("tables_generated", 0) or 0)
+                + int(report.get("tables_repaired", 0) or 0)
+            ) > 0
+            if made_progress or missing:
+                _clear_repair_backoff(mem_conn)
+            elif pending_only:
+                _set_repair_backoff(mem_conn, AGENT_SCHEMA_INSIGHT_RESCAN_SEC)
     except Exception:
         pass
     return report
@@ -1756,6 +1845,12 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         # 탐색되지 못한 것(주로 RO 로그인이 해당 DB 에 GRANT 안 됨) → status='degraded'.
         "db_targets": 0,
         "db_failed": 0,
+        # TASK-0305 (RC5): db_failed 의 사유 분포를 cycle summary 로 표면화한다. 과거엔 분류
+        # (TASK-0255)가 ds_health(PG)에만 영속되고 cycle 로그에는 안 남아, "28개 중 몇 개가 GRANT 로
+        # 풀리는 perm 이고 몇 개가 network 문제인지"를 로그만으로 알 수 없었다(관측성 공백).
+        "db_failed_perm": 0,     # 권한/인증 거부 (login failed 18456 / cannot open database 916 등) — GRANT 로 해결
+        "db_failed_circuit": 0,  # 서킷 open (엔드포인트 도달 불가 확정) — 네트워크/호스트 다운
+        "db_failed_other": 0,    # 그 외 (드라이버/쿼리 시점 오류 등)
     }
     timing = _timing_breakdown_template(
         cycle_run_id, AGENT_INSIGHT_WORKER_CONVERSATION_ID, "__insight_worker__"
@@ -1834,6 +1929,11 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                     scan_report["db_targets"] = int(scan_report.get("db_targets", 0) or 0) + len(_db_targets)
                 else:
                     _db_targets = [None]  # MySQL/기본 DB: database 차원 없음
+                    # TASK-0305 (RC5): 비-MSSQL '데이터소스'(예: MySQL ds)도 1개 타깃으로 집계 —
+                    # 과거엔 MSSQL 만 db_targets 에 누적돼 비-MSSQL ds 실패가 비가시였다. 기본 DB
+                    # (_ds_key is None, 워커 자체 control-plane)는 제품 DB 가 아니므로 제외.
+                    if _ds_key is not None:
+                        scan_report["db_targets"] = int(scan_report.get("db_targets", 0) or 0) + 1
 
                 for _db_name in _db_targets:
                     _ds_conn = None
@@ -1889,12 +1989,11 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         # scan 을 막지 않는다. 기본 DB(ds=None) 실패는 바깥 except 로 전파(기존 동작).
                         if _ds_key is None:
                             raise
-                        # TASK-0226: per-DB 실패를 커버리지 telemetry 에 집계(가시화). 과거엔 warning
-                        # 로그만 남기고 조용히 다음 대상으로 넘어가, 등록 DB 중 RO 로그인 GRANT 누락
-                        # 으로 탐색 못 한 DB 가 운영자에게 안 보였다. _is_mssql_ds 일 때만 집계
-                        # (db_targets 도 MSSQL 에서만 누적 — MySQL 기본 DB 는 db 차원 없음).
-                        if _is_mssql_ds:
-                            scan_report["db_failed"] = int(scan_report.get("db_failed", 0) or 0) + 1
+                        # TASK-0226 / TASK-0305 (RC5): per-DB 실패를 커버리지 telemetry 에 집계(가시화).
+                        # 과거엔 _is_mssql_ds 일 때만 db_failed 를 누적해, 비-MSSQL 데이터소스(예: MySQL ds)
+                        # 실패가 운영자에게 안 보였다. 이 지점은 이미 `_ds_key is None`(기본 DB)이 위에서
+                        # re-raise 로 걸러진 곳이라, 남은 실패는 모두 등록 datasource(+DB) 실패 → 무조건 집계.
+                        scan_report["db_failed"] = int(scan_report.get("db_failed", 0) or 0) + 1
                         # TASK-0255: 실패 분류 — circuit_open 을 _is_perm 판정보다 **먼저** 판정한다.
                         # DatasourceCircuitOpen 의 한국어 메시지가 _is_perm 토큰과 우연 겹치지 않게(결합 차단).
                         if isinstance(_ds_exc, _db.DatasourceCircuitOpen):
@@ -1912,6 +2011,13 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                                 or bool(re.search(r"\b(18456|916|229|297)\b", _err_s))
                             )
                             _curr = "perm_failed" if _is_perm else "other_failed"
+                        # TASK-0305 (RC5): 사유별 분포 카운터를 cycle summary 로 표면화 — GRANT 로 풀리는
+                        # perm 과 네트워크성 circuit/other 를 로그만으로 구분 가능하게 한다(GRANT 대상 특정).
+                        _reason_counter = {
+                            "perm_failed": "db_failed_perm",
+                            "circuit_open": "db_failed_circuit",
+                        }.get(_curr, "db_failed_other")
+                        scan_report[_reason_counter] = int(scan_report.get(_reason_counter, 0) or 0) + 1
                         # TASK-0255 R2: datasource 연결 health 행 누적(PG 영속 — 관리콘솔 가시화).
                         _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, _curr)
                         # TASK-0255 R1: edge-trigger — 상태 전이(직전 cycle 대비) 시에만 WARNING, 지속은 DEBUG.
@@ -2055,6 +2161,10 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             # TASK-0226: MSSQL per-DB 커버리지.
             "db_targets": int(scan_report.get("db_targets", 0) or 0),
             "db_failed": int(scan_report.get("db_failed", 0) or 0),
+            # TASK-0305 (RC5): db_failed 사유 분포 — perm 은 GRANT 로, circuit/other 는 네트워크/인프라로.
+            "db_failed_perm": int(scan_report.get("db_failed_perm", 0) or 0),
+            "db_failed_circuit": int(scan_report.get("db_failed_circuit", 0) or 0),
+            "db_failed_other": int(scan_report.get("db_failed_other", 0) or 0),
         }
     )
     should_log = status != "ok" or bool(scan_report.get("scan_started"))

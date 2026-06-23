@@ -277,3 +277,45 @@ fast-fail 정상). 단 잔존 3건 발견·수정:
 app.py 조회실패 debug 로그) 반영.
 
 **배포 함정**: agent 이미지(insight-worker·ask-worker 공유)+web 각 dc-build, PG 마이그 0006 은 superuser 명시 GRANT 포함.
+
+---
+
+## TASK-0305 — insight-worker "제품 DB 파악 진전 없음" 병목 진단·수정 (Major §12.3, 2026-06-23)
+
+**사용자 보고**: insight-worker 가 제품의 DB 를 파악하는데 진전이 없는 것처럼 나타남. 병목 진단·해결 요청.
+
+**진단(다중 가설 5개 + 가설당 3-렌즈 적대 검증 워크플로)**. 로그(`artifacts/shared/logs/<date>/insight_worker.log`·`insight_route.log`)·코드·config 대조. 증상이 **2축**으로 분리됨:
+
+- **축 A — 커버리지(지배적)**: `db_targets=39` 중 `db_failed=28`(72%)이 100% cycle 에서 권한 실패. RO 로그인이 28개 catalog DB 에 per-DB GRANT 가 없음(MSSQL 18456/916). conn_health 서킷은 `engine:host:port` 엔드포인트 단위라 host 가 살아있는 per-DB 권한실패를 격리 못 하고, `_is_connect_breaker_failure` 가 인증 에러를 서킷 피드백에서 제외 → 서킷 영구 미개방 → 28개를 매 cycle 재시도. **1차 해결은 운영(GRANT)** — 코드 아님. (적대 검증이 "RC1 이 시간예산을 훔친다"는 초기 가정을 반증: 권한 에러는 1회 fast-fail 이라 예산 비점유 — 커버리지는 막지만 throughput 0 의 원인은 아님.)
+- **축 B — 처리량**: 살아있는 11개 DB 조차 신규 통찰 0(`schemas_generated=0`/`tables_generated=0` 매 cycle). 원인 RC3(force_scan latch) + RC2(fingerprint churn).
+
+**수정(코드 3건, insight.py 한정 — 스키마/마이그 없음)**:
+- **RC2 (Minor)** fingerprint casefold(VALUE 한정): MSSQL information_schema 케이스 진동으로 `log_v2` 스키마가 매 cycle 11초 LLM 재생성되던 churn 제거(route 로그에서 TF_ErrorLog↔tf_errorlog 진동 관측, ~132s/day 낭비). 저장 키 불변(TASK-0220 정합).
+- **RC3 (Major)** 진전 기반 backoff: 무경계 `_detect_pending_insight_repairs` 가 budget(15s) 못 닿는 미완성 tail 을 pending 으로 영구 집계 → force_scan 매 8s tick 영구 latch(수천 테이블 fingerprint spin) 차단. pending-only 무진전 스캔이면 per-scope backoff(최소 60s/기본 1h). missing·interval·진전은 그대로 → 건강한 처리량 보존. force_scan gate 만 제어 — ANCHOR §3 repair→generate 순서 무손상.
+- **RC5 (Minor)** 관측성: cycle summary 에 `db_failed_{perm,circuit,other}` 노출 + 비-MSSQL ds 실패도 db_failed/db_targets 집계. → 28개 중 perm(GRANT) vs network 분리를 **로그만으로 특정**(축 A 진단 blocker 해소).
+
+**검증**: 신규 단위테스트 8 + feature-0002 회귀 0(사전존재 `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 1건은 base 에서도 실패하는 agent_core 무관 결함, 범위 밖) + py_compile. 적대 backend+qa 코드리뷰 **ACCEPT**(REV-20260623T061043, 6 검증항목 반증 실패·BLOCKER 0).
+
+**배포**: agent 이미지 재빌드(insight-worker baked, 마이그 없음). 라이브 검증은 배포 후 — db_failed 사유분포 로그 노출 / log_v2 `fingerprint_changed` 진동 종식 / force_scan tick spacing(무진전 시 cycle 간격 확대). 컨테이너 미가동 dev 환경이라 본 cycle 은 단위검증·코드대조로 acceptance 충족.
+
+**남은 작업**: 축 A GRANT(운영, RC5 데이터로 대상 특정 후), RC4(구조적 budget throughput) 전용 조사 = deferred.
+
+**base 주의**: 본 worktree 는 로컬 HEAD(=origin/main bf60a72, feature-0002 코드 무변경) 기반. cycle-init 의 main pull 은 무관한 `.codex/*` untracked 파일 충돌로 중단됐으나 feature-0002 코드 정합엔 영향 없음.
+
+### TASK-0305 후속 — RC4(throughput) 조사 결론 + agent_core 회귀정정 (2026-06-23)
+
+**RC4 (구조적 throughput) — 전용 적대 조사 결론: document-only, 런타임 코드 변경 0.**
+3각 조사(constraint/safe-code/tuning) + 가설별 적대 검증 워크플로(7 agent)가 모두 수렴:
+- **Binding constraint**: 단일 insight-worker 프로세스의 **직렬 블로킹 LLM 호출(~11s/건) × per-DB-cycle 공유 budget(15s)** → DB당 cycle당 ~2건. 근거: `scan_start` 단일 설정 + schema/table 루프 budget PRE-check 공유, insight.py 동시성 grep 0, `llm_table/schema_insight` 직접 동기 `create()`. `TABLE_LIMIT=12`/`MAX_SCHEMAS=20` 은 budget 가 먼저 break → **non-binding**. 이는 과거 무한재생성·코어점유 livelock(TASK-0145/0146) 방어용 **의도된 self-throttle** 이지 결함이 아님.
+- **Full-coverage 추정**: 정상 GRANT·LLM ~11s 가정, 단일 DB ~138~277 테이블/시간; 3천 테이블 ≈ 12~26h, 1만 ≈ 1.7~3.5일; 다중 datasource 는 단일 직렬 워커 round-robin 이라 총 소요가 DB 수에 선형. (컨테이너 미가동 — 라이브 미측정, Bedrock 실지연에 ±2배 민감.)
+- **안전한 코드 변경 = 없음**. 병렬화는 high-risk(livelock 재발: 동시 호출이 mem_conn write↔read-back 키 정합과 충돌 시 partial_persist 오판→재생성 루프; Bedrock rate-limit/비용 N배) → 라이브 quota·지연 데이터 + read-back 직렬화 설계 + livelock 회귀테스트 전제 별도 TASK. fingerprint 재계산 budget-aware 게이팅은 medium-risk(미저장 시 changed 오판 루프) → 테스트 게이트 선결.
+- **튜닝 레버 (라이브 부하 데이터 전엔 기본값 변경 금지 — `change_default_now=false`)**:
+  - `AGENT_SCHEMA_INSTANCE_SCAN_BUDGET_SEC`(15): ↑→ DB당 cycle당 생성↑(25~30s ≈ +30~50%). trade-off: gateway 점유×ds수→Bedrock rate-limit/비용; cycle wall>30s 시 inline fallback 중복스캔 → `AGENT_INSIGHT_WORKER_STALE_SEC` 동반 상향 필요.
+  - `AGENT_INSIGHT_WORKER_TICK_SEC`(8): ↓→ 시간당 cycle↑(8→5 ≈ +12%, floor max(5)). trade-off: missing/changed 잔존 동안 매 tick fingerprint 재계산 DB 부하↑.
+  - `MAX_SCHEMAS`/`TABLE_LIMIT`(20/12): 현 budget 하 throughput 무효과(budget 가 먼저 끊음) — BUDGET 동반 상향 시에만 의미.
+- **하지 말 것**: 라이브 데이터 없는 blind 기본값 변경, 지금 병렬화 머지, force_scan/RC3 backoff·fingerprint gate 수정, 미검증 fingerprint 게이팅 ship.
+- **다음 단계**: RC1 GRANT 완료 후 1~2일 라이브 텔레메트리(tables_generated/cycle·LLM duration_ms 분포·gateway 큐잉 — 이미 cycle summary + route 로그로 관측 가능) 수집 → 단일 datasource **카나리**로 BUDGET 데이터기반 조정.
+
+**agent_core 회귀정정 (drive-by)**: `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 가 base 에서도 실패하던 건 — 코드 버그가 아니라 **feature-0009 의 `_merge_consecutive_user_messages`(Anthropic/Bedrock role-교대 제약 대응: 연속 user 턴 `\n\n` 병합) 도입 후 stale 해진 테스트**. 코드는 정상(전체 suite 중 이 1건만 실패가 방증). 코드 무수정, 테스트를 현행 병합동작에 맞추고 원 의도(under-budget pass-through)는 role-교대 fixture 로 보존 + 병합 검증 테스트 신설. 13/13 통과.
+
+**배포·GRANT 차단 (이 환경)**: docker 데몬 접근 권한 없음(`permission denied /var/run/docker.sock`) → agent 이미지 재빌드/배포 불가. insight-worker 미가동 → RC5 telemetry 미산출 → GRANT 대상(perm/network) 미식별. 둘 다 권한 있는 호스트/DBA 의 운영 작업 — 런북·명령으로 인계.

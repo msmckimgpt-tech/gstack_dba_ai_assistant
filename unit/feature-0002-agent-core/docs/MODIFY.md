@@ -1197,6 +1197,30 @@ source_of_truth: true
 - Rollback: 마이그 0013 downgrade(DROP 2 테이블) + kb_glossary.py/주입 블록 제거(주입은 try/except·미매칭 ""라 무해). 스키마 테이블은 미사용 시 잔존 무해.
 - Deploy: ask-worker + web 재빌드(agent_core baked) + 마이그 0013 적용(superuser, GRANT load-bearing). 등록 UI·추출은 ITEM-11 follow-up.
 
+## CHG-20260623T061043-insight-bottleneck
+- Date: 2026-06-23 (TASK-0305 — insight-worker "제품 DB 파악 진전 없음" 병목, Major §12.3). PLAN-APPROVED.
+- Scope: insight-worker 처리량/관측성 결함 수정(코드 한정, 스키마/마이그 없음). 지배적 커버리지 원인(28/39 DB GRANT 누락)은 운영 조치로 별도.
+- 내용:
+  - `src/modules/insight.py` **RC2** — `_compute_schema_fingerprint`/`_compute_table_fingerprint`/`_compute_table_fingerprints_batch` 가 해시할 식별자 토큰을 `casefold()` 정규화(VALUE 한정). MSSQL information_schema 의 케이스 진동(TF_ErrorLog↔tf_errorlog)으로 schema fingerprint 가 흔들려 같은 스키마를 매 cycle 11초 LLM 으로 재생성하던 churn 제거. batch 의 `tname`(dict 키)·`ds_fact_key`/`ds_object_suffix`(저장 키)는 불변 — TASK-0220 write/read-back/grounding 정합 보존.
+  - `src/modules/insight.py` **RC3** — `_scan_instance_schema_insights` 에 진전 기반 backoff. 무경계 `_detect_pending_insight_repairs` 가 budget(15s)로 못 닿는 미완성 artifact tail 을 pending 으로 영구 집계 → `force_scan` 이 매 8s tick 영구 latch 되어 도달가능 DB 의 수천-테이블 fingerprint 스캔을 spin 하던 문제. 신규 헬퍼 `_repair_backoff_active`/`_set_repair_backoff`/`_clear_repair_backoff`(per-scope KV `schema_instance_repair_backoff_until`). `pending_only`(=not missing & pending) 스캔이 무진전(생성·복구 0)이면 backoff(최소 60s, 기본 `AGENT_SCHEMA_INSIGHT_RESCAN_SEC`=3600) 동안 pending-only force 억제. missing(새 스키마)·rescan interval(`EVERY_SEC`) 경과·진전 시는 그대로 스캔 → 건강한 처리량 tick cadence 보존. KV 부재=기존 동작.
+  - `src/modules/insight.py` **RC5** — `run_insight_cycle` cycle summary 에 `db_failed_perm`/`db_failed_circuit`/`db_failed_other`(TASK-0255 분류 재사용) 추가. `db_failed` 집계에서 `_is_mssql_ds` 게이트 제거(모든 등록 datasource 실패 집계) + 비-MSSQL datasource 도 `db_targets` 1 집계(기본 DB= control-plane 은 제외). 부수: 비-MSSQL ds 실패도 `db_failed>0`→degraded 승격(의도된 가시화).
+- Why: TASK-0305 진단(다중 가설+적대 검증). 축 B 처리량(살아있는 DB 의 신규 통찰 0)의 코드 결함 RC2/RC3, 축 A 커버리지(28 DB 권한실패)의 진단 blocker 였던 관측성 공백 RC5. 축 A 의 1차 해결은 GRANT(운영).
+- Verification: `tests/test_task0305_insight_bottleneck.py` 8 + feature-0002 회귀 0(사전존재 `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 1건은 agent_core 무관·base 에서도 실패, 범위 밖) + py_compile. 적대 backend+qa 리뷰 REV-20260623T061043-insight-bottleneck **ACCEPT**(BLOCKER 0). 컨테이너 미가동 dev 환경이라 라이브 e2e 는 배포 후.
+- Files: src/modules/insight.py, tests/test_task0305_insight_bottleneck.py(신규), docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT}.md, wiki/concepts/insight-worker.md, wiki/Log.md, wiki/hot.md.
+- Rollback: insight.py 의 casefold(VALUE)·backoff 헬퍼+게이트·RC5 카운터 제거(전부 additive·KV 부재 시 기존 동작). 마이그/스키마 없음 — 코드 revert 만으로 원복.
+- Deploy: agent 이미지 재빌드(insight-worker·ask-worker 공유 — insight.py baked). 마이그 없음. RC2 는 배포 직후 1회 cutover 재생성 spike(전 스키마 fingerprint 재계산) 후 안정.
+
+## CHG-20260623T063500-insight-rc4-and-agentcore-test
+- Date: 2026-06-23 (TASK-0305 후속 — RC4 throughput 조사 결론 + agent_core 회귀정정). PLAN-APPROVED 연장.
+- Scope: **코드 변경은 테스트 1파일뿐**(`tests/test_db_query_ux.py`). RC4 는 조사 결과 document-only(런타임 코드 무변경). 나머지는 문서.
+- 내용:
+  - **RC4 (document-only, insight.py 무변경)**: 전용 적대 조사 워크플로(3각 + 검증) 결론 = `document_levers_only`. binding constraint = 단일 프로세스 직렬 블로킹 LLM(~11s) × DB-cycle 공유 budget(15s) → DB당 cycle당 ~2건(의도된 self-throttle; 과거 livelock TASK-0145/0146 방어). 안전한 코드 win 없음(병렬화 high-risk·fingerprint 게이팅 테스트 게이트 필요). 튜닝 레버 3종 전부 라이브 부하 데이터 전엔 기본값 변경 금지. REPORT.md/FUNCTION.md 에 constraint·레버·trade-off·카나리 계획 문서화.
+  - **agent_core 회귀정정 (`tests/test_db_query_ux.py`)**: `test_assemble_core_messages_under_budget_unchanged` 가 feature-0009 `_merge_consecutive_user_messages`(Bedrock role-교대 제약 대응) 도입으로 stale → 코드 정상 확인 후 테스트를 현행 병합동작에 맞춤 + 원 의도(under-budget pass-through)를 role-교대 fixture 로 보존 + `test_assemble_core_messages_merges_consecutive_user_turns` 신설(`_assistant_text_row` 헬퍼).
+- Why: 사용자 요청 "남은 일 및 agent_core 결함도 수정". RC4 는 deferred 항목 — 조사 결과 위험한 blind 변경 대신 문서화가 정답. agent_core 는 stale 테스트(코드 무결).
+- Verification: `test_db_query_ux.py` 13/13 + feature-0002 전체 회귀 GREEN(사전결함 해소). RC4 는 적대 워크플로(7 agent)가 검증 — 코드 무변경이라 신규 단위테스트 없음.
+- Files: tests/test_db_query_ux.py, docs/{TASK,MODIFY,FUNCTION,REPORT,REVIEW}.md. (insight.py·런타임 코드 무변경.)
+- Rollback: 테스트 파일 revert + 문서 entry 제거. 런타임 영향 0.
+- Deploy: 별도 배포 불필요(테스트·문서만). RC4 튜닝은 GRANT 후 라이브 데이터 기반 카나리로 진행(본 cycle 범위 밖).
 ## CHG-20260623T145444-sample-flywheel-core
 - Date: 2026-06-23 (TASK-20260623T145444-sample-flywheel-core — ROADMAP **ITEM-02+03** flywheel **PR-A 코어**, Major §12.3). PLAN-APPROVED, 사용자 "성장 루프 앞당김".
 - Scope: NL↔SQL 샘플쿼리 저장소(임베딩·검색·주입) + 피드백 flywheel 코어(record/promote/reject·PII). feature-0002 코어; web(RBAC/UI/audit)=PR-B.
