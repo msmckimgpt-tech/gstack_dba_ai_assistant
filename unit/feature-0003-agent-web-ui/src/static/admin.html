@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260619-db-rule-pending" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260619-quota-relocate" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -498,22 +498,8 @@
             </div>
           </div>
         </details>
-        <!-- TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용 한도 (역할 기본 + 계정 특수). -->
-        <details class="admin-usage-details" id="usageQuotaDetails">
-          <summary>사용 한도 설정 · 역할 기본 · 계정 특수</summary>
-          <div class="admin-usage-card admin-usage-table-card" style="margin-top:12px;">
-            <p class="admin-usage-caption">한도는 토큰 수. 빈칸=상속(역할은 무제한, 계정은 역할 기본 사용), 0=무제한(명시). <strong>전면 차단하려면 1</strong> 로 설정하세요. 초과 시 새 요청이 일시 차단됩니다.</p>
-            <div id="quotaRolesBox" aria-live="polite">로딩 중…</div>
-            <h4 class="admin-usage-h4" style="margin-top:14px;">계정 특수 한도</h4>
-            <div class="admin-quota-acct-add">
-              <input type="number" id="quotaAcctId" class="admin-search" placeholder="계정 ID" min="1" style="max-width:120px" />
-              <input type="number" id="quotaAcctDaily" class="admin-search" placeholder="일일 한도" min="0" style="max-width:140px" />
-              <input type="number" id="quotaAcctMonthly" class="admin-search" placeholder="월간 한도" min="0" style="max-width:140px" />
-              <button type="button" id="quotaAcctSaveBtn" class="btn-secondary">계정 한도 저장</button>
-            </div>
-            <div id="quotaAcctBox" aria-live="polite"></div>
-          </div>
-        </details>
+        <!-- TASK-20260623T014626-quota-ui-relocate: LLM 사용 한도 설정은 '감사>LLM 사용량'(모니터링 목적)에서
+             '계정' / '역할' 상세 화면으로 이전됨(각 항목 속성으로 구성). 이 화면은 사용량 조회 전용. -->
       </section>
 
       <!-- TASK-0273: 보관 대화 pane (conversation.archive.read.any) — 오용 방지 감사 조회 -->
@@ -644,7 +630,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260619-db-rule-pending"></script>
+  <script src="/static/admin.js?v=20260619-quota-relocate"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260619-gc-v2-security-6"></script>

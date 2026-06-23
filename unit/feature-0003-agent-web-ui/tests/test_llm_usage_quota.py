@@ -125,13 +125,27 @@ def test_b9_audit_builder():
     assert 'action == "quota.account.update"' in src
 
 
+def test_b10_quota_exposed_in_serialization():
+    # TASK-20260623T014626-quota-ui-relocate: 한도가 역할/계정 직렬화에 노출(상세 화면 편집용).
+    roles = inspect.getsource(app._list_roles)
+    assert "WebRoleTokenQuotas" in roles and '"quota_daily"' in roles and '"quota_monthly"' in roles
+    fetch = inspect.getsource(app._fetch_account_rows)
+    assert "WebAccountTokenQuotas" in fetch and "quota_daily" in fetch
+    ser = inspect.getsource(app._serialize_account)
+    assert '"quota_daily"' in ser and '"quota_monthly"' in ser
+
+
 # ── F: frontend ─────────────────────────────────────────────────────────────
-def test_f1_admin_quota_ui():
+def test_f1_admin_quota_ui_relocated():
+    # TASK-20260623T014626-quota-ui-relocate: 한도 UI 가 'LLM 사용량'(조회 전용) 화면에서 역할/계정 상세로 이전.
     js = _read_static("admin.js")
-    assert "function loadQuotas" in js
-    assert "/api/admin/quotas" in js
-    assert "/api/admin/quotas/role/" in js
-    assert "/api/admin/quotas/account/" in js
+    assert "function buildQuotaEditor" in js
+    # 엔드포인트는 템플릿 리터럴 `/api/admin/quotas/${opts.scope}/${id}` 사용.
+    assert "/api/admin/quotas/${opts.scope}/" in js
+    assert 'scope: "role"' in js and 'scope: "account"' in js
+    assert "LLM 사용 한도" in js
+    # 구 usage-탭 한도 패널 제거 확인.
+    assert "loadQuotas" not in js
+    assert "quotaRolesBox" not in js
     html = _read_static("admin.html")
-    assert 'id="quotaRolesBox"' in html
-    assert 'id="quotaAcctSaveBtn"' in html
+    assert "quotaRolesBox" not in html and "quotaAcctSaveBtn" not in html

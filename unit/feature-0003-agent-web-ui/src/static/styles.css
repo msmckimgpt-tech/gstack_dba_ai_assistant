@@ -4921,11 +4921,13 @@ a { color: inherit; }
 .admin-usage-table th.num, .admin-usage-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .admin-usage-table tbody tr:hover { background: var(--bg); }
 .admin-usage-details { margin-top: 24px; }
-/* TASK-20260619T030500-llm-usage-quota (보안 ④): 사용 한도 편집 행. */
-.admin-quota-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
-.admin-quota-row:last-child { border-bottom: none; }
-.admin-quota-name { min-width: 140px; font-weight: 600; font-size: 13px; }
-.admin-quota-acct-add { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+/* TASK-20260623T014626-quota-ui-relocate: LLM 사용 한도 편집기 (역할/계정 상세 공용). */
+.admin-quota-editor { margin-top: 4px; }
+.admin-quota-fields { display: flex; gap: 12px; flex-wrap: wrap; }
+.admin-quota-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); }
+.admin-quota-field input { max-width: 180px; }
+.admin-quota-hint { font-size: 12px; color: var(--text-muted); margin: 8px 0 0; line-height: 1.5; }
+.admin-detail-section-hint { font-size: 12px; color: var(--text-muted); margin: 2px 0 10px; line-height: 1.5; }
 .admin-usage-details > summary {
   cursor: pointer;
   color: var(--text-2);

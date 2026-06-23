@@ -3494,3 +3494,10 @@ source_of_truth: true
 - Panel 생략 근거(§18.8): 로직·RBAC·스키마·엔드포인트 변경 0 — 정적 릴리즈 노트 데이터(`release-notes-data.js`) 콘텐츠 추가 + 캐시버스터만. 보안 표면 변화 없음.
 - 대신 AC-0579 내부 동작 비노출 자가 검증: 신규 6 항목에 암호화/해시체인/TOTP secret/인젝션/datamarking/RBAC/PG/quota/체인/token 등 금지 용어 0(스캔 clean). 사용자 보이는 결과만.
 - Cross-ref: CHG-20260619T084227-ai-claude-release-notes-security-6 / REQ-20260619-0330 / AC-0608.
+
+## REV-20260623T014626-ai-claude-quota-ui-relocate [SKIPPED:ui-relocation-readonly-serialize-no-new-rbac-no-endpoint]
+- Date: 2026-06-23
+- Cycle: TASK-20260623T014626-quota-ui-relocate (LLM 한도 UI 역할·계정 상세 이전), Minor §12.3.
+- Panel 생략 근거(§18.8): 신규 엔드포인트 0·RBAC 게이트 변경 0·집행 로직 변경 0. 기존 PUT `/api/admin/quotas/role|account/{id}`(console.manage 게이트, ④ REV-20260619T030500 에서 SHIP-WITH-FIXES 검증 완료) 재사용 + UI 위치 이동. 추가는 read-only 직렬화 필드(역할 한도=role.read admin 게이트 /api/admin/roles, 계정 override=include_permissions admin-context 한정 — 자기 /api/auth/me 비노출, failed_login_attempts idiom 동형). 비-admin 노출 0.
+- 검증: test_llm_usage_quota.py 11/11. 화면 정본=PB-0008.
+- Cross-ref: CHG-20260623T014626-ai-claude-quota-ui-relocate / REQ-20260623-0331 / AC-0609.
