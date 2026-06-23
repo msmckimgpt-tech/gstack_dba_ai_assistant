@@ -297,6 +297,17 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-06-23 (TASK-20260623T030418-quota-rbac-permission — 계정·역할 LLM 사용 한도 조회/조절 전용 권한 + admin catchup lockout 수정, **Major §12.3 — 보안 경계(RBAC)** — **PB-0008 Windows-browser PASS**; CHG/REV-20260623T030418 + CHG-20260623T053000 evidence):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `3cda161`(PR #373 권한 + #375 catchup) → `docker compose build web`(캐시) + `up -d web`(repo-web-1 Up healthy). 서빙 admin.js 에 `can("quota.read")` 게이트·`opts.readOnly` 분기 baked. app.py `_ensure_seed_roles` quota catchup baked.
+  - **Runner: AI** (win-browser eval — 실 배포 renderRoleDetail/renderAccountDetail + buildQuotaEditor 를 3-tier permission 으로 구동, DOM 실측).
+  - **★라이브 버그 적발(PB-0008 가치) — admin lockout**: 게이트를 console.manage→quota.read/quota.manage 로 전환했으나 신규 권한이 기존 배포 admin 역할(WebRolePermissions RoleId=3)에 미부여 → `bootstrap_admin` 의 `adminState.me.permissions["quota.read"]`=false (DB quota.read=0/quota.manage=0). seed=set(PERMISSION_CODES)는 role 생성 시점만 적용. **정적 outside-voice 미검출**(admin=전권 invariant 만 확인) → `_ensure_seed_roles` admin catchup 에 quota.read/manage 추가(#375). 재배포 후 DB quota.read=1/quota.manage=1·adminState.me read=true/manage=true 복구.
+  - **PB-0008 PASS (배포본 main `3cda161`)**:
+    - **역할 상세 3-tier**(roleId=1, 실 renderRoleDetail): tier3(quota.read+manage)=섹션 표시·저장버튼 O·입력 활성·readonly note X / tier2(quota.read만)=섹션 표시·저장버튼 X·입력 disabled·"조회 전용" note O / tier1(무권한)=섹션 미표시.
+    - **계정 상세 3-tier**(acctId=39 ijkim, 실 renderAccountDetail): tier3=편집 가능·역할 상속 안내 O / tier2=readOnly·상속 안내 O / tier1=미표시. 동일 게이트 동작.
+    - **buildQuotaEditor 직접**: readOnly=false→저장버튼+입력활성·value 주입, readOnly=true→입력 disabled+저장버튼 미렌더+조회전용 note.
+    - **백엔드 게이트**: GET `/api/admin/quotas` admin(quota.read 보유) **200** + roles(8)·account_overrides·enforce=true. PUT=quota.read+quota.manage 동시 요구(B8 단위).
+  - **Pass/Fail: PASS** — 배포된 시스템에서 "조절은 조회 종속, 조회 없으면 UI 미표시" 가 역할·계정 상세 모두에서 실 Windows 브라우저로 실측 통과. CHECK#13(PB-0008 Windows-browser) **충족**.
+  - CHG/REV-20260623T030418-ai-claude-quota-rbac-permission + CHG-20260623T053000-ai-claude-quota-admin-catchup / REQ-20260623-0332 / AC-0610·0611.
 - 2026-06-23 (TASK-20260623T021500-quota-editor-escapehtml-fix — buildQuotaEditor escapeHtml ReferenceError 수정[잠복 버그], **Minor §12.3** — **PB-0008 Windows-browser PASS**; CHG/REV-20260623T021500 evidence):
   - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.116 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.28.64.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. 배포: main `9e7ec24`(PR #367) → `docker compose build web`(캐시) + `up -d web`(repo-web-1 Up healthy). 서빙 admin.html `admin.js?v=20260623-quota-escapehtml-fix`, 컨테이너 baked admin.js 에 `escapeHtml(` **0건**·`note.textContent = opts.inheritNote` 1건·`input.value` DOM 주입 확인.
   - **Runner: AI** (win-browser eval — 이전 ReferenceError 로 실패했던 정확한 호출 재현 + 실 DOM 주입 computed style 계측).
