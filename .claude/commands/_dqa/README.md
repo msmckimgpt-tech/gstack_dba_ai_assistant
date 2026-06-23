@@ -43,6 +43,19 @@ docs/improvements/
 
 ROADMAP 의 각 항목 `status` 필드: `pending → in-progress → done`(또는 `blocked`). improve_cycle 이 이를 갱신하므로, ROADMAP.md 자체가 **단일 진행 원장**이다(별도 ledger 불필요). "다음 ready 항목" = (status=pending ∧ depends_on 전부 done) 중 (Phase asc → risk_grade asc → id asc). **드레인 모드는 항목이 done·머지될 때마다 이 집합을 재계산**해 풀린 deps 를 잡는다(매 반복 main 최신본 ROADMAP 기준).
 
+## 부가: 유지보수 persona (doc_sync)
+
+위 1→2→3 파이프라인과 **별개**로, 같은 묶음에 머지된 작업↔문서 drift 를 정합하는 maintenance persona 를 둔다. **파이프라인 단계가 아니므로 핸드오프 표에 넣지 않는다**(자동 후속 chain 없음 — 사람·스케줄이 필요 시 호출).
+
+| skill | 호출 | 입력 | 산출 |
+|---|---|---|---|
+| `doc_sync` | 사람·스케줄(maintenance) | 타깃(릴리즈노트\|wiki\|정책문서) 또는 기준일(선택) | 정책문서·wiki·릴리즈노트 색인/서사/사용자향 노출 갱신 (정본 비대체) |
+
+- **무엇을 정합**: 정본(`unit/<id>/docs/*`·`docs/DECISIONS.md`)은 그대로 두고, 그 **색인·서사·사용자향 표면**(`docs/STATUS.md`·wiki·릴리즈노트)만 최신화한다. 정본과 모순되면 정본을 진실로 삼아 색인을 고친다.
+- **commit 분류 주의**: wiki(`wiki/*`)·정책문서(`docs/*`)는 META path → doc-only 분리 commit + verify META mode. **릴리즈노트가 owning feature 의 `unit/<feature>/src/static/...` 에 살면 operational** 이라 META mode 가 아니다 — 별도 commit + owning feature operational gate(check #9 는 `unit/<fid>/docs/REVIEW.md`). 자세한 분기는 `doc_sync.md` Phase 4.
+- **산출물 위치 규약**: 본 persona 는 새 산출물 경로를 만들지 않는다(기존 `docs/`·`wiki/`·릴리즈노트 산출물 in-place 갱신). META REVIEW index 는 project-wide 규약(`meta/REVIEW.md` + `meta/reviews/<ts>-<agent>.md`, §18.10.1) 또는 operational 시 `unit/<fid>/docs/REVIEW.md`.
+- **`.codex` 미러 없음**: 본 묶음 정책대로 `doc_sync.md` 도 `.claude/commands/_dqa/` 에만 둔다.
+
 ## 비고 (계약·제약)
 
 - **feature_id 계약(필수)**: ROADMAP 각 항목은 `feature_id`(기존 `unit/<feature>` 확장이면 그 id, 신규면 `feature-NNNN-<slug>`)를 갖는다. improve_cycle 이 `cycle-init --feature` 와 `verify-completion <feature-id>` 양쪽에 이 값을 쓴다. ITEM-id(`ITEM-02`)는 verify-completion 정규식(`^(feature|META)-[0-9]+...`)에 안 맞으므로 cycle 인자로 쓰지 않는다.

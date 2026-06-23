@@ -55,3 +55,25 @@
 - **panel SKIP 사유**: 정본 `resume.md` 의 설계·정확성은 personas PR#3 직전 **5개 적대적 리뷰어 패널**(요구사항·거버넌스·스니펫 실측·엣지케이스·project-agnostic)로 이미 검증·수정 완료(FAIL 1 + leak 4 + nit 다수 반영). 본 소비자측 changeset 은 (a) 검증된 정본을 가리키는 thin shim/wrapper + (b) 머지된 업스트림 커밋으로의 포인터 bump 뿐 — 신규 로직 0, 행동 차이 0. §18.8 additive-meta-tooling 경량 경로 → SKIPPED.
 - **verification**: Codex shim 상대경로(`../../../.claude/commands/_template/resume.md`) resolve 확인, SKILL.md `name: _template-resume`(하이픈)·description 형식이 기존 `_template-entry` 와 정합. gitlink 대상 a08bf56 은 personas origin/main(PR#3 머지)에 존재 → submodule fetch 가능.
 - **Human Approval Needed**: 아니오 (additive meta tooling, 정본 패널 검증 완료, 사용자 전체 전파 승인).
+
+
+## REV-20260623T092428-doc-sync-skill [SKIPPED:additive-meta-tooling-docs]
+
+- **cycle**: ai/claude/doc-sync-skill — `/_dqa` 묶음에 standalone maintenance persona `doc_sync` 신설(머지 작업↔정책문서·wiki·릴리즈노트 drift 정합)
+- **changeset (pure-meta)**:
+  - `.claude/commands/_dqa/doc_sync.md` (신규 skill 본문 — frontmatter~종료조건)
+  - `.claude/commands/_dqa/README.md` (`## 부가: 유지보수 persona (doc_sync)` 섹션 추가 — 파이프라인 표/다이어그램 불변)
+  - `CLAUDE.md` (Skill routing 의 `/_dqa` 블록에 doc_sync 라우팅 1줄)
+- **panel skipped 사유 (§18.4 doc/meta-tooling carve-out)**: skill 정의(.md)·README·CLAUDE.md 라우팅의 비파괴 additive 추가로, 신규 production 동작 0·코드 무변경. 신규 standalone persona 의 거버넌스 정합성은 독립 fit/convention/agnostic/repro 리뷰(아래 findings)로 이미 검증됨 → 별도 패널 불요.
+- **review findings → 조치 (BLOCKER/MAJOR 전건 반영)**:
+  - **B1·B2(repro·fit, verify META-mode 전제 거짓)**: 릴리즈노트는 `unit/feature-NNNN/src/static/...`(operational) 라 META mode 아님(`is_meta_path` 폴스루 실측). 불변 제약에 "타깃별 commit 분류" 신설 + Phase 4 를 (a)pure-meta META mode / (b)릴리즈노트 포함 operational gate 두 갈래로 재서술. 릴리즈노트 commit 은 owning feature-id 로 verify, 충족 불가 시 owning cycle 위임 정직 보고.
+  - **B3(fit·repro, verify 인자 `META`)**: bare `META`/`<feature-id-or-META>` 가 `validate_feature_id` 정규식 미충족(die). 정규식 적합 `META-NNNN-<slug>` 발급 의무 + pure-meta short-circuit 발화 순서(`:1180`<`:1210`) 명시. bare META 예시 전면 제거.
+  - **B4(repro, REVIEW entry path)**: pure-meta → `meta/REVIEW.md`, operational feature-bound → `unit/<fid>/docs/REVIEW.md` 분리 명시. entry 헤더 정규식(`REV-YYYYMMDDThhmmss-<branch> [SKIPPED|CODEX|...]`) 박음.
+  - **M(convention, README/CLAUDE.md 미등록)**: README 에 maintenance 전용 섹션(파이프라인 표 밖) 추가, CLAUDE.md `/_dqa` 블록에 라우팅 1줄 추가.
+  - **M(agnostic, project-specific 토큰 하드코딩)**: `feature-0009`·`WEB_PORT=18080`·`pgbouncer`·`repo-web-1`·`?v=20260623-rn-0623`·`verify_release_notes.mjs`·`WIKI_FEATURE_CARD`·`releases[0]`·`work/admin/common` enum·`/healthz` 전부 제거 → 카테고리 일반 서술 + "매번 discovery" 행동지시로 치환.
+  - **M(repro, Phase 6 TLS/서비스 discovery)**: TLS 종단 discovery + `curl -k https→http fallback` + 서비스키/컨테이너명 discovery(`docker compose ps`) + `--no-deps` surgical rebuild + make-init 우회 명시.
+  - **M(repro, no-delta 종결)**: 전 타깃 delta 0 시 브랜치·commit·verify 없이 early-exit("모두 최신") — 빈 changeset landing 도달 금지(불변 제약 + Phase 1 + 종료조건).
+  - **MINOR/NIT 반영**: §13.1 ARCHITECTURE 색인 한정·신규 ADR 본문 금지(색인만); `/_template:entry`·`/document-release` 와 idempotency 경계 단락; §13.2.7 canonical worktree add(repo-상대 path) 인용; SKIP 토큰 `[SKIPPED:non-policy-doc]` vs `[SKIPPED:<슬러그>]` 구분; `git add -A/./-u` 금지 + `.env*.bak*`·`artifacts/`·`.worktrees/` 디코이 명시 + `git status` 확인; ACL setfacl 은 EACCES+`getfacl` 검출 게이트 후에만; wiki feature 수 정합 grep recipe(`ls -d unit/feature-*|wc -l` ground-truth) 명시; 정책문서 미구성/first-sync skip 분기; `pipeline_stage: standalone (maintenance)` + persona intro 어휘를 sibling("파이프라인") 정합.
+- **잔여 MINOR(미반영, 사유)**: frontmatter `target_project: mysql_ai_delegated_dev` 유지(sibling 3종 동일 house-style — 묶음 일관성 우선, 런타임 무영향). `pipeline_stage` 자유형 값(`standalone (maintenance)`)은 의도적(번호 단계 아님 — 기존 `N/3` parser 와 불일치는 수용).
+- **verdict**: SHIP-WITH-FIXES — BLOCKER 4 + MAJOR 7 전건 반영, MINOR/NIT 합리적 항목 전건 반영. 잔여는 house-style 메타데이터 2건(behavioral over-fit 아님).
+- **note**: 비파괴 메타-도구(skill 정의) 추가. 실제 doc 정합 실행은 각 `/_dqa:doc_sync` 호출이 changeset 분류대로 verify-completion 게이트(META mode 또는 operational gate)를 직접 거친다.
