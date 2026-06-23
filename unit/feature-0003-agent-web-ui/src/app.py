@@ -6355,6 +6355,14 @@ def _ensure_web_tables():
                 )
             except Exception:
                 pass
+            # feature-0009 gc-group-authz-flag: 그룹 대화 영구 플래그. PG 정본(alembic 0016)의
+            # MySQL 폴백 parity (production 은 PG 라 보통 미경유). 공유 생성/join 시 1 로 set.
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversations ADD COLUMN is_group TINYINT(1) NOT NULL DEFAULT 0"
+                )
+            except Exception:
+                pass
             # feature-0009-group-conversation (TASK-20260619T023140): 그룹 대화 — MySQL parity.
             # core_messages/멤버십 정본은 PG(agent_runtime). 본 블록은 READ_BACKEND != postgres
             # 레거시 경로 parity 유지(try/except 멱등). production(PG)에서는 본 가드가 skip 된다.
@@ -6989,6 +6997,7 @@ LEFT JOIN agent_runtime.kv kv_topic
         run_id_map: dict[str, str] = {}
         # feature-0009: 멤버십 신호(member_count + viewer is_member) — 프론트 send 게이트/멘션 라우팅용.
         member_map: dict[str, dict[str, Any]] = {}
+        group_flag_set: set[str] = set()  # feature-0009 gc-group-authz-flag: is_group=true 인 cid 집합
         if conv_ids:
             with pg.cursor() as pgcur:
                 placeholders_pg = ",".join(["%s"] * len(conv_ids))
@@ -7006,6 +7015,20 @@ GROUP BY conversation_id
                         member_map[str(cid)] = {"count": int(cnt or 0), "is_member": bool(ismem)}
                 except Exception:
                     member_map = {}
+                # feature-0009 gc-group-authz-flag: 그룹 플래그(is_group) — 공유/join 시 set.
+                # 별도 defensive 쿼리(마이그레이션 미적용 시 컬럼 부재 → except 로 빈 set 폴백 = 비그룹).
+                try:
+                    pgcur.execute(
+                        f"""
+SELECT conversation_id FROM agent_runtime.core_conversations
+WHERE conversation_id IN ({placeholders_pg}) AND COALESCE(is_group, false) = true
+                        """,
+                        tuple(conv_ids),
+                    )
+                    for (gcid,) in pgcur.fetchall() or []:
+                        group_flag_set.add(str(gcid))
+                except Exception:
+                    group_flag_set = set()
                 pgcur.execute(
                     f"""
 SELECT conversation_id, key, value FROM agent_runtime.kv
@@ -7078,6 +7101,9 @@ GROUP BY conversation_id
             _mm = member_map.get(item["id"], {})
             item["member_count"] = int(_mm.get("count", 0))
             item["is_member"] = bool(_mm.get("is_member", False))
+            # feature-0009 gc-group-authz-flag: 그룹 판정 = is_group 플래그(공유/join) OR 멤버 2+.
+            # 프론트 send-routing(#2)·사이드바 배지(#3)의 단일 그룹 신호.
+            item["is_group"] = (item["id"] in group_flag_set) or (int(_mm.get("count", 0)) > 1)
 
         return items
     finally:
@@ -7644,6 +7670,106 @@ def _account_can_access_conversation(
     # feature-0009: 그룹 대화 멤버도 열람 가능 (열람 ≠ 발화, CSO F6 — 멤버십이 열람 경계).
     # @assistant 발화/datasource 쿼리는 별도 actor RBAC 게이트(S3/S4)로 막는다.
     return _account_is_conversation_member(conversation_id, acct_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# feature-0009 gc-group-authz-flag: 그룹 대화 영구 플래그(is_group) 헬퍼.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mark_conversation_group(conversation_id: str) -> None:
+    """대화를 그룹으로 영구 전환 (is_group=true). 공유 링크(joinable) 생성·join 시 호출.
+    PG 정본 + MySQL 폴백 parity. best-effort (실패는 로깅 후 무시 — 라우팅은 member_count 로도 보강)."""
+    if not conversation_id:
+        return
+    if _runtime_backend_is_pg():
+        try:
+            from modules.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations SET is_group = true WHERE conversation_id = %s",
+                        (conversation_id,),
+                    )
+                pg.commit()
+            finally:
+                pg.close()
+        except Exception:
+            logging.getLogger(__name__).warning("_mark_conversation_group(pg) failed", exc_info=True)
+        return
+    try:
+        conn = _connect_memory()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE AgentCoreConversations SET is_group = 1 WHERE conversation_id = %s",
+                (conversation_id,),
+            )
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
+    except Exception:
+        logging.getLogger(__name__).warning("_mark_conversation_group(mysql) failed", exc_info=True)
+
+
+def _ensure_owner_membership(conversation_id: str) -> None:
+    """대화 owner 를 conversation_members 에 멱등 보장 (role='owner'). 공유 생성·join 시 호출.
+    owner 가 멤버 테이블에 누락되면 member_count under-count → 공유 직후 비멘션 메시지가 assistant 로
+    오라우팅되는 버그(#2)가 발생하므로, 그룹 전환 시점에 owner 행을 자가치유한다. best-effort."""
+    if not conversation_id:
+        return
+    try:
+        from modules.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT owner_account_id FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                row = cur.fetchone()
+            owner_id = int(row[0]) if row and row[0] else 0
+            if owner_id:
+                # role='owner' 고정 — ON CONFLICT DO UPDATE 가 기존 owner 를 member 로 강등하지 않도록.
+                group_members.add_member(
+                    pg, conversation_id, owner_id, role="owner", invited_by_account_id=owner_id,
+                )
+        finally:
+            pg.close()
+    except Exception:
+        logging.getLogger(__name__).warning("_ensure_owner_membership failed", exc_info=True)
+
+
+def _conversation_is_group(conversation_id: str) -> bool:
+    """그룹 대화 판정 = is_group 플래그(공유/join 시 set) OR 멤버 2명 이상. 정본 PG.
+    조회 실패 시 False(보수적, 비그룹)로 폴백 — /api/ask 서버 방어선(#2)이 사용."""
+    if not conversation_id:
+        return False
+    try:
+        from modules.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT COALESCE(is_group, false) FROM agent_runtime.core_conversations "
+                    "WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                row = cur.fetchone()
+                if row and bool(row[0]):
+                    return True
+                cur.execute(
+                    "SELECT COUNT(*) FROM agent_runtime.conversation_members WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+                crow = cur.fetchone()
+                return bool(crow and int(crow[0] or 0) > 1)
+        finally:
+            pg.close()
+    except Exception:
+        return False
 
 
 # ============================================================================
@@ -11108,6 +11234,25 @@ async def ask(request: Request) -> JSONResponse:
         if _is_blocked:
             conn.close()
             return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
+        # feature-0009 gc-group-authz-flag (#2 서버 방어선): 그룹 대화에서 @assistant 멘션이 없는
+        # 메시지는 사람-사람 채팅이므로 assistant 를 실행하지 않는다. 클라이언트 send-routing 이 이미
+        # store-only 로 보내지만(is_group/member_count), stale·직접 API 호출로 /api/ask 에 도달하면
+        # 여기서 거부(422 code=group_requires_mention)해 오호출을 차단한다(단일 실패점 제거). 멘션
+        # 판정은 서버측 재파싱(클라이언트 플래그 불신). 클라이언트는 이 code 수신 시 store-only 로 재라우팅.
+        try:
+            from modules.mentions import message_invokes_assistant as _msg_invokes_assistant
+            _server_invokes_assistant = bool(_msg_invokes_assistant(message))
+        except Exception:
+            _server_invokes_assistant = True  # 파서 장애 시 보수적으로 통과(기존 동작 유지)
+        if not _server_invokes_assistant and _conversation_is_group(request_conversation_id):
+            conn.close()
+            return JSONResponse(
+                {
+                    "error": "그룹 대화에서는 @assistant 를 멘션해야 AI 가 응답합니다. (멘션 없는 메시지는 참여자 간 채팅으로 전송됩니다.)",
+                    "code": "group_requires_mention",
+                },
+                status_code=422,
+            )
         conv_id = request_conversation_id
     else:
         if not _account_has_permission(account, "conversation.create"):
@@ -14204,6 +14349,12 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
                 continue
         if not share_id:
             return _json_error("공유 링크 생성 실패", 500)
+        # feature-0009 gc-group-authz-flag: joinable 공유 링크 생성 = 협업(그룹) 의도 → 대화를 즉시
+        # 그룹으로 전환한다(#4). owner 멤버십 보장(member_count 정합 — 공유 직후 비멘션 메시지가
+        # assistant 로 오라우팅되는 #2 버그 예방) + is_group 플래그 set. best-effort(헬퍼가 예외 무시).
+        if joinable:
+            _ensure_owner_membership(cid)
+            _mark_conversation_group(cid)
         # 응답/감사에 실제 ExpiresAt (DB 계산값) 반환 — DATE_ADD 결과를 read-back.
         expires_at_iso: str | None = None
         if expires_in_seconds is not None:
@@ -14803,6 +14954,11 @@ def join_conversation_via_share(token: str, request: Request) -> JSONResponse:
         _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
         if _is_blocked:
             return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
+        # feature-0009 gc-group-authz-flag: join = 그룹 협업 확정 → owner 멤버십 보장(member_count
+        # under-count → 공유 직후 assistant 오호출 #2 자가치유) + is_group 플래그 set(#4). 기존
+        # backfill 미적용 대화도 이 시점에 정상화. best-effort(헬퍼가 예외 무시).
+        _ensure_owner_membership(cid)
+        _mark_conversation_group(cid)
         actor_id = int(account["id"])
         # 이미 소유자/멤버면 멱등 성공(중복 참여 무해).
         already = _conversation_owned_by_account(conn, cid, actor_id) or _account_is_conversation_member(cid, actor_id)
@@ -16685,6 +16841,18 @@ def _delete_conversation_impl(
         "conversation.delete.any",
     ):
         return {"status": "failed", "reason": "forbidden"}
+    # feature-0009 gc-group-authz-flag (#1): 보관(archive)은 대화 보유자(owner) 전용. 위 게이트는
+    # 그룹 대화 '열람' 경계(멤버 포함, '열람 ≠ 발화')라 conversation.delete.own 권한 멤버도 통과하므로,
+    # 소유 메타 변경(보관)에는 2차 owner 게이트를 둔다. admin(.any)은 오용 방지 관리 일관성으로 우회 허용.
+    # owner_account_id 가 *확정된* 대화에서 actor 가 그 owner 가 아닐 때만 차단 — owner 미기록(NULL)
+    # 레거시 대화는 1차 게이트(소유/멤버) 판정을 존중해 fail-open(실소유자 lockout 방지).
+    _archive_owner_id = _conversation_owner_account_id(conn, conversation_id)
+    if (
+        not _account_has_permission(account, "conversation.delete.any")
+        and _archive_owner_id is not None
+        and _archive_owner_id != int(account.get("id") or 0)
+    ):
+        return {"status": "failed", "reason": "forbidden"}
     try:
         cleanup_pending_delete_conversations(conn)
         acct_id = int(account.get("id") or 0)
@@ -16845,6 +17013,18 @@ async def rename_conversation_title(conversation_id: str, request: Request) -> J
     ):
         conn.close()
         return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+    # feature-0009 gc-group-authz-flag (#1): 제목 변경은 대화 보유자(owner) 전용. 위 게이트는 그룹
+    # 대화 '열람' 경계(멤버 포함)라 conversation.rename.own 권한 멤버도 통과하므로, 소유 메타 변경(제목)
+    # 에는 2차 owner 게이트를 둔다. (delete 와 동일 패턴이나, update_conversation_product 와 달리
+    # admin(.any) 우회를 허용한다.) owner 미기록(NULL) 레거시 대화는 1차 게이트 판정을 존중해 fail-open.
+    _rename_owner_id = _conversation_owner_account_id(conn, conversation_id)
+    if (
+        not _account_has_permission(account, "conversation.rename.any")
+        and _rename_owner_id is not None
+        and _rename_owner_id != int(account.get("id") or 0)
+    ):
+        conn.close()
+        return _json_error("소유자만 대화 제목을 변경할 수 있습니다.", 403)
     # AR-M5 cutover: AgentCoreConversations MySQL 테이블이 DROP 됨. raw UPDATE 는 500 →
     # 이미 PG 라우팅된 게이트 헬퍼 _conv_update_topic 재사용(PG agent_runtime.core_conversations).
     try:

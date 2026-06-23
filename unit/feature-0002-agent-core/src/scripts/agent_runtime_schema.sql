@@ -80,7 +80,11 @@ CREATE TABLE IF NOT EXISTS agent_runtime.core_conversations (
     -- TASK-20260617T082131: fork 본 식별 마커. fork 는 소스(타 계정 가능) 메시지를 복사하고
     -- owner 를 포크계정으로 재귀속하므로, owner 격리만으론 콘텐츠 출처 격리가 안 됨. account
     -- insight 추출·회상은 forked_from_conversation_id IS NULL 만 대상(cross-account 누출 차단).
-    forked_from_conversation_id varchar(128)
+    forked_from_conversation_id varchar(128),
+    -- feature-0009 gc-group-authz-flag: 그룹 대화 영구 플래그. 공유 링크(joinable) 생성 또는
+    -- join 시 true 로 확정 — send-routing(비멘션=사람채팅)·사이드바 배지의 그룹 판정 신호.
+    -- 정본은 alembic 0016_core_conv_is_group.
+    is_group               boolean NOT NULL DEFAULT false
 );
 
 -- TASK-0248: 기존 테이블(이미 생성됨)에도 멱등 적용 — alembic 미적용 환경 self-heal.
@@ -96,6 +100,9 @@ ALTER TABLE agent_runtime.core_conversations
 -- TASK-20260617T082131: fork 마커 멱등 ALTER (alembic 미적용 환경 self-heal).
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS forked_from_conversation_id varchar(128);
+-- feature-0009 gc-group-authz-flag: is_group 멱등 ALTER (alembic 0016 미적용 환경 self-heal).
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS is_group boolean NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS ix_core_conv_owner
     ON agent_runtime.core_conversations (owner_account_id);

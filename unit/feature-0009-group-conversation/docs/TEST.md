@@ -74,5 +74,16 @@ source_of_truth: true
 - Pass/Fail: **PASS**
 - Notes: 하이라이트 선택자를 (0,5,0)으로 올려 타멤버 메시지 규칙(0,4,0)을 이김. 알림 제목=`DQA : {conversation.topic}`, 본문=`[발신자] : 메시지`(채팅형). 스크린샷 상단 멘션 버블 앰버 틴트+좌측 강조선 육안 확인.
 
+### Run 2026-06-23-gc-group-authz
+- Date: 2026-06-23
+- Environment: Windows-browser
+- Runner: AI
+- Bridge: relay @ http://172.28.64.1:9223 (win-browser.py doctor ok=true, Windows Chrome/149)
+- Scenario: `unit/feature-0003-agent-web-ui/tests/win-browser-group-authz.scenario.json`
+- Evidence: `artifacts/pb0008-group-authz/01_sidebar_group_badge.png`
+- Result Summary: 그룹 대화 4종 라이브 검증. ① **#4 공유→그룹전환**: 1:1 대화(is_group=false) 에 joinable 공유 링크 생성 → `is_group=true`, 클라 `isGroupConversation()=true`. ② **#2 서버 방어선**: 그룹+비멘션 메시지를 `/api/ask` 직접 호출 → `422 code=group_requires_mention`(assistant 미실행). ③ **#1 owner 무회귀**: owner 본인 제목변경(PATCH title) → `200 ok`. ④ **#3 사이드바 배지**: 공유 후 목록 재렌더 → `.conv-item-group-badge` 1건·`.conv-item.is-group` 1건(공유 대화에만, 1:1 미표시). 스크린샷에서 공유 대화 제목 옆 그룹(사람) 배지 육안 확인.
+- Pass/Fail: **PASS**
+- Notes: is_group 컬럼은 검증 전 라이브 PG 에 멱등 적용(= alembic 0016 DDL), worktree 코드는 컨테이너 hot-swap(docker cp + restart) 후 검증. 정식 배포는 PR 머지 후 agent 재빌드 → `bin/alembic-migrate.sh upgrade`(0016 stamp) → web 재빌드. #1 의 *비-owner 차단* 은 admin(.any) 우회 때문에 bootstrap_admin 단독으로 직접 실측 불가 — 적대 패널 + 단위로 검증(owner 무회귀만 브라우저 실측).
+
 ## 4. Untested Areas
 - 아직 검증되지 않은 영역
