@@ -1257,3 +1257,17 @@ source_of_truth: true
 - Rollback: 마이그 0015 downgrade(vector(1536) 복귀, 대칭). 컬럼 비어있어 무손실.
 - Deploy: 마이그 0015 적용(superuser). ask-worker/web 재빌드(config baked). 임베딩 모델 1024 확정(경로B bge-m3 등) 후 retrieval 동작.
 - **Flag(범위 밖, 기존 drift)**: `agent_kb_schema.sql:68` texts + `kb_backend.py:940` 주석이 여전히 `vector(1536)` — 정본 alembic 0001 texts=1024 와 불일치. texts 는 라이브/정본 1024 라 동작 무관하나 fresh-install bootstrap(schema.sql 우선 실행 시) 해저드 → 별도 cleanup 권장.
+
+## CHG-20260623T170000-task0305-followup-docs
+- Date: 2026-06-23 (TASK-0305 후속 — 라이브 배포 검증 정정 + 교훈 기록). **docs-only, 런타임 코드 변경 0**.
+- Scope: 사용자 요청 — sudo 배포로 드러난 라이브 발견을 머지된 문서에 정정 반영 + 교훈 2건 기록.
+- 내용:
+  - `docs/LEARNINGS.md`(repo-level): LRN-20260623-0001(mistake — fingerprint 알고리즘 변경은 fp backfill 동반 필수; casefold 단독 배포가 8,833 fp 무효화→재생성 폭주 유발) + LRN-20260623-0002(pattern — insight db_failed 는 GRANT 보다 네트워크가 지배적일 수 있음, 사유 telemetry 로 perm vs circuit 먼저 가를 것). 둘 다 verified: true.
+  - `unit/feature-0002-agent-core/docs/REPORT.md`: "TASK-0305 라이브 배포 검증 + 정정" 섹션 — 축 A 가 GRANT 가 아니라 네트워크(perm:0/circuit:38)임을 라이브 RC5 로 정정 + RC2 cutover 사고·backfill 완화 기록(이력 보존, 정정 명시).
+  - `unit/feature-0002-agent-core/docs/TASK.md`: 배포 `[x]`, 축 A 정정 `[x]`, cutover backfill `[x]` 로 갱신.
+  - `wiki/concepts/insight-worker.md` §5: db_failed 진단 시 perm(GRANT) vs circuit(네트워크) 를 먼저 가르도록 보강 + 라이브 실측(perm:0/circuit:38) 주의.
+- Why: 머지된 docs 가 "축 A=GRANT" 로 서술했으나 라이브 배포가 네트워크 단절(perm:0)로 정정. 동종 재발 방지 위해 교훈 영속.
+- Verification: docs-only — 런타임 영향 0. 라이브 근거는 본 cycle 의 배포·datasource_health·RC5 cycle summary(REPORT 기재).
+- Files: docs/LEARNINGS.md, unit/feature-0002-agent-core/docs/{REPORT,TASK,MODIFY,REVIEW}.md, wiki/concepts/insight-worker.md.
+- Rollback: 문서 entry 제거. 런타임 영향 없음.
+- Deploy: 불필요(문서만).

@@ -319,3 +319,12 @@ app.py 조회실패 debug 로그) 반영.
 **agent_core 회귀정정 (drive-by)**: `test_db_query_ux::test_assemble_core_messages_under_budget_unchanged` 가 base 에서도 실패하던 건 — 코드 버그가 아니라 **feature-0009 의 `_merge_consecutive_user_messages`(Anthropic/Bedrock role-교대 제약 대응: 연속 user 턴 `\n\n` 병합) 도입 후 stale 해진 테스트**. 코드는 정상(전체 suite 중 이 1건만 실패가 방증). 코드 무수정, 테스트를 현행 병합동작에 맞추고 원 의도(under-budget pass-through)는 role-교대 fixture 로 보존 + 병합 검증 테스트 신설. 13/13 통과.
 
 **배포·GRANT 차단 (이 환경)**: docker 데몬 접근 권한 없음(`permission denied /var/run/docker.sock`) → agent 이미지 재빌드/배포 불가. insight-worker 미가동 → RC5 telemetry 미산출 → GRANT 대상(perm/network) 미식별. 둘 다 권한 있는 호스트/DBA 의 운영 작업 — 런북·명령으로 인계.
+
+### TASK-0305 라이브 배포 검증 + 정정 (2026-06-23, sudo)
+
+위 진단·수정을 사용자 승인 하 `sudo` 로 라이브 스택에 배포·검증하면서 **사전 진단의 "축 A=GRANT" 가정이 라이브 데이터로 정정**되었다. 이력 보존 차원에서 위 서술은 남기되, 아래가 라이브 확정 결론이다.
+
+- **배포(sudo)**: 스택은 실제 가동 중이었다(권한 부재로 `docker ps` 가 안 보였을 뿐). `sudo docker compose build/up insight-worker` 로 새 코드 배포, 컨테이너 내부 insight.py 검증, 워커 healthy 복귀.
+- **🔴 축 A 정정 — GRANT 가 아니라 네트워크 단절**: 배포된 RC5 가 라이브 cycle summary 에 사유 분포를 노출 — **`db_failed: 38, perm: 0, circuit: 38, other: 0`**. `agent_runtime.datasource_health` 도 down 12개 전부 `last_scan_outcome=circuit_open` / `last_error_tag=timeout`. 즉 **실패의 100%가 네트워크 도달 불가이고 권한 실패는 0**. 사전에 "perm/GRANT 누락(28건)" 으로 본 것은 RC5 부재(관측성 공백)로 인한 오진이었고, RC5 배포가 즉시 진실을 드러냈다. **GRANT(`bin/datasource-mssql-ro-bootstrap*.sql`)는 비적용** — 원인이 권한이 아니며, timeout 서버엔 접속이 안 돼 실행도 불가. 영향 datasource: `mysql-kr-an2-*`(kr-apne2, port 8475 — 터널/프록시 추정) 7, `mysql-mv-qa-*` 3, `mssql-web-qa`, `mysql-web-global-qa` 등. **실제 조치는 네트워크/인프라 도달성 복구**(코드·DB 권한 영역 밖); 복구 시 새 코드가 자동 스캔.
+- **🟠 RC2 cutover 사고 + 완화**: casefold(RC2)가 기존 8,833 fingerprint 를 전부 무효화 → 도달가능 ~1,979 테이블 LLM 재생성 폭주 + 워커 장시간 unhealthy 를 유발(코드 정확, 데이터 마이그레이션 누락이 원인 — docs/LEARNINGS.md LRN-20260623-0001). **fingerprint backfill**(워커 동일 함수로 새-해시 fp 3,917 table + 205 schema 재계산·저장, LLM 0)로 완화 — 샘플 stored==recomputed 10/10 일치 검증, `tables_generated` 0 복귀, health 회복, 통찰 데이터(8,833/238) 무손실. **교훈**: fingerprint 알고리즘 변경은 backfill 동반 필수.
+- **현 정상 상태**: 워커 healthy, 도달가능 datasource 전수 커버(추가 생성 0), `status=degraded` 는 정직한 신호(38개 DB 네트워크 단절을 perm:0/circuit:38 로 명시). 유일 잔여 = 네트워크 복구(인프라).
