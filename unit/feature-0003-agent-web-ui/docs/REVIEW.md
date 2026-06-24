@@ -3592,3 +3592,10 @@ source_of_truth: true
 - **수용(문서화)**: scope 'common' 폴백은 의도된 공통 스코프(검수 사람게이트로 완화). UI 실렌더는 PB-0008(Windows-browser) 메인 마감.
 - Verification: 보안 fix 후 test_sample_flywheel 12 + test_sample_feedback_curation 15 = **27 통과**(회귀 0) + py_compile + `_mask_sql` 잔여참조 0. cross-ref 코어 변경(feature-0002 sample_feedback.py)은 MODIFY 에 기록.
 - Cross-ref: CHG-20260623T090440-...-sample-feedback-curation / ROADMAP dba-ai-nl2sql ITEM-03.
+
+## REV-20260624T020000-product-insight-status-badge [SKIPPED:ui-tweak-user-approved-mockup]
+- Date: 2026-06-24
+- Cycle: TASK-0308 (제품 탭 데이터소스 인사이트 탐색 상태 표시), **Minor §12.3** — frontend only(admin.js+styles.css), 백엔드 0.
+- Panel skip 사유(§18.4): (1) 표현계층 전용 변경(렌더 헤더에 상태 아이콘 추가 + primary 표기를 텍스트배지→엔진색), 비파괴·additive. (2) `insight_enabled` 는 datasources API 기존 필드라 신규 데이터 경로/권한 0. (3) admin.js `node --check` 통과. (4) **사용자가 Artifact 목업(실 CSS·아이콘 렌더)으로 디자인을 직접 검토·승인**(아이콘 design "모범적" 확인 + '기본' 텍스트→엔진색 조정 지시 반영). a11y: 색 단독 의존 회피(켜짐 눈/꺼짐 빗금눈 형태 차이 + title/aria-label).
+- 잔여 검증: UI 실렌더 정본은 PB-0008(Windows-browser, 배포 후) — gstack /browse(WSL headless)는 보조.
+- Cross-ref: CHG-20260624T020000-product-insight-status-badge / TASK-0308.

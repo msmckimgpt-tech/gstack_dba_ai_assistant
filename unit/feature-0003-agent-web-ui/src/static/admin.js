@@ -7824,15 +7824,32 @@ function renderProductDetail() {
         name.className = "ds-acc-name"; name.textContent = b.datasource_key;
         head.appendChild(name);
 
-        // 메타: 엔진 + primary 배지(상태 = pill, 액션 아님).
+        // 메타: 엔진 배지(상태 = pill, 액션 아님).
+        // TASK-0308: 기본(primary) 표시는 별도 '기본' 텍스트 배지 대신 **엔진 배지 색상**으로 한다.
+        //  조건부 '기본' 배지가 뒤따르는 인사이트 아이콘의 x-위치를 행마다 어긋나게 하던 문제를 제거
+        //  (engine 배지는 항상 존재 → 아이콘 위치 일관). 색 단독 의존을 피해 primary 는 title 로도 명시.
         const eng = document.createElement("span");
-        eng.className = "ds-acc-engine"; eng.textContent = (meta.engine || "mysql");
+        eng.className = "ds-acc-engine" + (b.is_primary ? " is-primary" : "");
+        eng.textContent = (meta.engine || "mysql");
+        if (b.is_primary) eng.title = "기본(primary) 데이터소스";
         head.appendChild(eng);
-        if (b.is_primary) {
-          const pb = document.createElement("span");
-          pb.className = "ds-acc-primary"; pb.textContent = "기본";
-          head.appendChild(pb);
-        }
+        // TASK-0308: 인사이트 탐색(InsightEnabled) 상태 표시 — 제품 탭에서 이 데이터소스가
+        //  insight-worker 에 의해 스캔되는지 한눈에. OFF(스캔 안 함)는 amber 로 두드러지게 표기해
+        //  '제품·접근DB 만 보고 탐색 토글을 놓치는' 실수를 방지(상태 표시 전용 — 토글은 데이터소스
+        //  관리 탭). insight_enabled 는 meta(=adminState.datasources)에서 온다(bool, 기본 true).
+        const _insOn = meta.insight_enabled !== false;
+        const ins = document.createElement("span");
+        ins.className = "ds-acc-insight " + (_insOn ? "is-on" : "is-off");
+        ins.setAttribute("role", "img");
+        const _insLabel = _insOn
+          ? "인사이트 탐색 켜짐 — 이 데이터소스의 스키마·테이블이 자동 탐색됩니다"
+          : "인사이트 탐색 꺼짐 — 이 데이터소스는 탐색/분석되지 않습니다 (데이터소스 관리 탭에서 켤 수 있습니다)";
+        ins.title = _insLabel;
+        ins.setAttribute("aria-label", _insLabel);
+        ins.innerHTML = _insOn
+          ? '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.4 8S3.7 3.6 8 3.6 14.6 8 14.6 8 12.3 12.4 8 12.4 1.4 8 1.4 8Z"/><circle cx="8" cy="8" r="2.1"/></svg>'
+          : '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 9.9A2.1 2.1 0 0 1 6.1 6.1M6.5 3.9A6.6 6.6 0 0 1 8 3.6C12.3 3.6 14.6 8 14.6 8a11.6 11.6 0 0 1-1.8 2.3M3.5 5.2A11.4 11.4 0 0 0 1.4 8S3.7 12.4 8 12.4a6.6 6.6 0 0 0 2.3-.4"/><line x1="2.4" y1="2.4" x2="13.6" y2="13.6"/></svg>';
+        head.appendChild(ins);
         row.appendChild(head);
 
         if (canDs) row.appendChild(_buildDsMenu(b));

@@ -4466,3 +4466,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 수정: `_ensure_seed_roles` admin catchup 에 `quota.read`/`quota.manage` 추가(INSERT IGNORE 멱등, 재시작 시 기존 admin 역할 backfill). 회귀 가드 B13(catchup 소스에 quota.read/manage 단언).
 - [x] 검증: test 16/16(B13 신설) + make test 회귀 0 + py_compile. 배포 후 재PB-0008(admin=quota.read/manage 보유→편집 가능 + 3-tier 게이트).
 - [ ] verify → 머지 → 배포 → 재PB-0008 → 마감.
+
+### TASK-0308 — 제품 탭에 데이터소스 인사이트 탐색 상태 표시 (Minor §12.3, 2026-06-24)
+<!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-24 (목업 디자인 확인) -->
+- 사용자 보고: 제품 > '데이터 소스 & 접근 가능 데이터베이스' 만 보고 insight 탐색 토글(InsightEnabled) 상태를 못 봐 mssql-qa-idc 가 비활성인 걸 놓침(별도 데이터소스 관리 탭에만 표시됐음). 재발 방지로 제품 탭에 상태를 단순 UI(텍스트 아님)로.
+- [x] **frontend only**(`admin.js`+`styles.css`, 백엔드 0 — `insight_enabled` 는 이미 datasources API 가 내려줌): `_renderDsAccordion` 행 헤더에 `.ds-acc-insight` 아이콘. 켜짐=은은한 눈, **꺼짐=amber 칩+빗금 눈(두드러지게 — 놓치던 OFF 강조)**. 색 단독 의존 회피(아이콘 형태 차이 + title/aria-label).
+- [x] **사용자 조정 반영**: 조건부 '기본' 텍스트 배지가 인사이트 아이콘 위치를 행마다 흔드는 문제 → '기본' 텍스트 제거, primary 는 **엔진 배지를 primary 색(`.ds-acc-engine.is-primary`)** 으로 표기(엔진 배지는 항상 존재 → 아이콘 위치 일관) + title "기본(primary) 데이터소스".
+- [x] 검증: admin.js `node --check` + Artifact 목업(실 CSS·아이콘 렌더, BEFORE/AFTER) 사용자 디자인 승인. UI 실렌더 정본=PB-0008(Windows-browser).
+- [ ] verify → 머지 → web 재배포 → PB-0008(Windows-browser 시각 검증) → 마감.
