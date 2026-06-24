@@ -19,7 +19,8 @@ pipeline_stage: standalone (maintenance)
 
 ## 불변 제약
 
-- **정본 우선 / STATUS 는 색인**: 정본은 `unit/<feature_id>/docs/{TASK,REPORT,REVIEW,FUNCTION,MODIFY}.md` 와 `docs/DECISIONS.md`(ADR) 에 있다. `docs/STATUS.md`·wiki·릴리즈노트는 그 **색인·서사·사용자향 표면**일 뿐 — 정본과 모순되면 정본을 진실로 삼아 색인을 고친다. doc_sync 가 정본을 새로 쓰지 않는다(정본 변경이 필요하면 그건 feature cycle 의 일).
+- **정본 우선 / 참조는 복제하지 않는다 / STATUS 는 색인**: 정본은 `unit/<feature_id>/docs/{TASK,REPORT,REVIEW,FUNCTION,MODIFY}.md` 와 `docs/DECISIONS.md`(ADR) 에 있다. `docs/STATUS.md`·wiki·릴리즈노트는 그 **색인·서사·사용자향 표면**(mirror)일 뿐 — 정본과 모순되면 정본을 진실로 삼아 표면을 고친다. doc_sync 가 정본을 새로 쓰지 않는다(정본 변경은 feature cycle 의 일).
+  - **SSOT 계약 준수(채택 시 — MUST)**: 프로젝트가 SSOT 계약(도메인→정본 지도 `docs/DOC_REGISTRY.md`·`bin/ssot-lint.sh`·STATUS 인덱스화 ADR 등)을 채택했는지 **Phase 0 에서 discovery** 한다. 채택 시 ① mirror 문서는 정본 내용을 **재서술하지 않고** `mirrors:`/`sources:` frontmatter 포인터로 가리킨다, ② **STATUS 는 인덱스** — 셀에 rollup/상세를 누적하지 않는다(상세 정본=unit docs, 누적 이력=STATUS archive). 위반은 lint 가 차단한다.
 - **타깃별 commit 분류 — 모든 타깃이 META 인 것은 아니다(BLOCKER 방지)**: doc-only 라고 무조건 verify META mode 로 통과한다고 단정하지 말 것. commit 게이트 분류는 **변경된 각 파일의 path** 로 결정된다(`bin/verify-completion.sh` `is_meta_path()`):
   - **wiki(`wiki/*`) · 정책문서(`docs/*`) · `.claude/commands/*` · `bin/*` · `meta/*`** = META path → 그 파일만 담은 commit 은 pure-meta → verify META mode(check #1~#8 skip, #9 만).
   - **릴리즈노트** = 이 프로젝트에선 owning feature 의 **operational static source**(`unit/<feature>/src/static/...`)다. `unit/<feature>/src/*` 는 `is_meta_path()` 에서 META 가 **아니다**(폴스루 → operational). 따라서 릴리즈노트를 건드린 commit 은(다른 META 파일과 섞여도) **pure-meta 가 아니라 full operational gate** 를 받는다 — META mode 가 아니다. 처리법은 Phase 4 분기 참조.
@@ -55,6 +56,7 @@ Arguments: `$ARGUMENTS` (선택):
    - **릴리즈노트**: 릴리즈노트 산출물(데이터 JS/JSON·CHANGELOG·전용 페이지)이 어디에 어떤 스키마로 있는지 탐색. 발견되면 그 **path 가 META 인지 operational(feature src 하위)인지** 도 함께 기록(이후 Phase 4 commit 분류에 쓴다).
    - **wiki**: wiki 디렉토리가 있는지 + 진입/인덱스/로그/hot 상당 파일을 discovery 로 매핑. **표준 파일명이 없으면 wiki 루트 구조를 먼저 훑어 등가 파일을 매핑**하고, 매핑 불가하면 wiki 타깃 skip.
    - **정책문서**: `docs/` 와 그 안의 STATUS/ARCHITECTURE/SECURITY/DECISIONS 상당 문서가 있는지 확인. **`docs/` 미구성 또는 STATUS 상당 문서 부재면** 해당 sub-타깃 skip(또는 first-sync 로 처리 — 5 참조).
+   - **SSOT 모델 판정(STATUS 처리 분기 결정 — MUST)**: ① 도메인→정본 지도(`docs/DOC_REGISTRY.md` 류) 존재? ② STATUS frontmatter 가 인덱스 성격(`source_of_truth: false` 또는 본문에 "인덱스" 선언)인가, 누적 정본(`source_of_truth: true` + dated rollup 비대)인가? ③ STATUS archive(`docs/archive/STATUS_ARCHIVE.md` 류) + `bin/ssot-lint.sh` 존재? 위 신호 ≥1 이면 **인덱스 모델**(Phase 3 분기 (a)), 전무하고 STATUS 가 dated rollup 누적형이면 **누적 모델**(분기 (b)). 판정 결과를 기록.
    - **배포**: `make`·`docker-compose*.yml`·CD hook 등 배포 진입점 탐색(Phase 6 용).
    없는 타깃은 이후 Phase 에서 silent skip.
 5. **first-sync 처리**: 정책문서 STATUS 상당 문서가 없는 갓-init 프로젝트면 해당 sub-타깃을 skip 하거나, 사용자가 정합을 원하면 **전체 git 이력을 delta 로 삼는 first-sync** 로 처리(마지막 sync 지점이 없으므로).
@@ -72,7 +74,7 @@ Arguments: `$ARGUMENTS` (선택):
 3. **작업→타깃 매핑**:
    - user-facing 변경 → 릴리즈노트.
    - 신규 feature → wiki feature 카드 + feature 인덱스 카운트.
-   - 모든 작업 → STATUS rollup.
+   - 모든 작업 → STATUS 갱신(**인덱스 모델**: 해당 feature 인덱스 행의 상태·최종 갱신·요지 1줄 + 신규 머지 feature 행 추가; **누적 모델**: rollup). 모델은 Phase 0 판정.
    - 아키텍처/결정 변화 → ARCHITECTURE 기능맵 / DECISIONS(ADR 색인).
    - 보안 경계 변화 → SECURITY(변화 없으면 무변경 보고).
 
@@ -85,9 +87,9 @@ Arguments: `$ARGUMENTS` (선택):
 
 - **릴리즈노트**: 누락된 user-facing 머지 기능 목록. **분류 축(type/area 등)·각 축의 값 집합은 모두 discovery 한 스키마 따름 — 프로젝트마다 다르다**(릴리즈노트가 JS window 객체가 아니라 JSON·MD·CHANGELOG 인 프로젝트도 있다). 화면/도메인 구분 enum 이 있으면 그 프로젝트의 구분을 따르고, 임의 enum 을 강제하지 않는다.
 - **wiki**: (a) 신규 feature 카드 누락(feature 인덱스 카드 수 < `unit/feature-*` 수) (b) overview/index/architecture 상당 문서의 feature 수·시대 서사 stale (c) 누락 concept (d) 로그 append 필요분 (e) hot 상당 파일 (f) 이미 해소됐는데 "미구현"으로 남은 stale 한계.
-- **정책문서**: STATUS rollup 필요분, ARCHITECTURE 기능맵 누락 feature, SECURITY 가 이미 최신인지, DECISIONS 신규 ADR **색인** 필요 여부, PROJECT 정체성 drift.
+- **정책문서**: STATUS 갱신 필요분(**인덱스 모델**=stale 행/누락 feature 행/머지된 worktree note; **누적 모델**=rollup), ARCHITECTURE 기능맵 누락 feature, SECURITY 가 이미 최신인지, DECISIONS 신규 ADR **색인** 필요 여부, PROJECT 정체성 drift.
 
-**스코프 확정 질문(genuine fork 만)**: 결정이 갈리는 지점(예: STATUS 깊이 = 통합 rollup vs per-task backfill, 신규 ADR 색인 추가 여부)만 사용자에게 묻는다. 자명한 정합은 묻지 않고 진행.
+**스코프 확정 질문(genuine fork 만)**: 결정이 갈리는 지점(예: **누적 모델** STATUS 깊이 = 통합 rollup vs per-task backfill, 신규 ADR 색인 추가 여부)만 사용자에게 묻는다. **인덱스 모델**은 행 갱신이 자명해 STATUS 깊이 fork 가 없다. 자명한 정합은 묻지 않고 진행.
 
 > **AskUserQuestion 분리 패턴(사용자 환경 규칙 — MUST)**: 호출 **직전** 결정 brief 본문을 **prose 로 먼저 출력**(Issue / Recommendation / Trade-off, 마크다운 자유). 이어서 짧은 질문 + 짧은 옵션만 — `question` ≤80자 action-oriented 1문장, option `label` 1~5단어 chip, `description` ≤200자 1~2줄(핵심 trade-off 한 줄). 금지: ELI10/Stakes/Net/pros·cons 전체를 `description` 에 packing, 마크다운 헤딩·코드블록 삽입, 긴 한글로 인코딩 깨짐. **1턴 1회**: 미응답 시 동일 재호출 금지 — 다음 사용자 턴 대기. 빈/미수신은 승인 아님(fail-closed).
 
@@ -104,7 +106,10 @@ Arguments: `$ARGUMENTS` (선택):
   - 신규 concept = 기존 concept frontmatter + 개요/메커니즘/source/관련. concept 인덱스 등록+카운트.
   - 로그 append(기존 로그 컨벤션 따름). hot 상당 파일 전체 덮어쓰기(≤500자) — **잔존 actionable thread 를 보존**(단일 작업 snapshot 으로 덮어 중요 thread 잃지 말 것).
 - **정책문서**:
-  - `STATUS.md` rollup blockquote(최상단, reverse-chron) — Phase 2 에서 확정한 깊이대로.
+  - `STATUS.md` — **Phase 0 판정 모델대로**:
+    - **(a) 인덱스 모델(SSOT 계약 채택 시 — MUST)**: 인덱스 행만 정합 — 머지된 feature 의 상태·최종 갱신·요지 1줄 갱신, 신규 머지 feature 행 추가, **미머지 활성 worktree 는 표 아래 note 로만**(머지 시 행 승격). **rollup/상세 blockquote 를 STATUS 에 누적하지 않는다**(SSOT 계약 위반 — 예 ADR-0031 §1; 상세는 unit docs 정본, 누적 이력은 STATUS archive 에만). frontmatter `sources:` 포인터 유지.
+    - **(b) 누적 모델(SSOT 계약 미채택 프로젝트만)**: 기존대로 rollup blockquote(최상단, reverse-chron) — Phase 2 확정 깊이.
+    - 두 모델 모두 정본 재서술 금지(요지·링크만). 모델 불명이면 **인덱스 모델로 보수 처리**(누적이 계약 위반 위험 더 큼).
   - `ARCHITECTURE.md`: **색인/기능맵 정합 갱신에 한정**(구조 결정 변경이 아니다). 새 구조 결정·ADR 본문 작성은 §13.1 대로 feature cycle/사람이 반영하며, doc_sync 는 **이미 결정된 ADR 의 색인·참조만 정합**한다(필요 시 `DECISIONS.md` 에 기존 결정의 색인 라인 추가, 신규 결정 본문 작성 금지). §13.1 "프로젝트 수준 rewrite 문서는 동시에 하나의 AI만 수정" 경계 준수.
   - 이미 최신인 문서(예 SECURITY)는 **무변경**(정직 보고). 억지 편집 금지.
 
@@ -117,7 +122,7 @@ cross-cutting doc 정합은 단일 feature-id 가 없어 feature-mode verify 가
 1. **타깃별 실질 검증**:
    - 릴리즈노트: 릴리즈노트 전용 테스트(discovery 로 찾은 것) 실행 + 데이터 파일 문법검사(JS 면 `node --check`, JSON 이면 파서 검증 등 포맷에 맞게).
    - wiki: 신규 wikilink 대상 파일 존재 확인 + **feature 수 전 파일 정합 grep**. 정합 recipe: ground-truth = `ls -d unit/feature-* | wc -l`, 그 수를 narrative 파일(overview·index·architecture 상당·feature 인덱스)에서 grep 해 stale 카운트가 0(전부 일치)인지 기계 확인(예 `grep -rn '기능 [0-9]*개\|[0-9]* features' <wiki 파일들>` 후 ground-truth 와 대조).
-   - 정책문서: §-참조/anchor 무결성 — **삽입한 §참조가 실제 heading 으로 resolve 되는지, anchor 존재, 표/링크 정합을 기계적으로 1회 점검**(이것이 doc 정합의 핵심 검증 — bundle reviewer 가 못 메우는 영역).
+   - 정책문서: §-참조/anchor 무결성 — **삽입한 §참조가 실제 heading 으로 resolve 되는지, anchor 존재, 표/링크 정합을 기계적으로 1회 점검**(doc 정합의 핵심 검증 — bundle reviewer 가 못 메우는 영역). **SSOT 계약 채택 시 추가**: `bin/ssot-lint.sh`(있으면) 실행해 PASS 확인 + 인덱스 모델 STATUS 는 **rollup blockquote 미누적**(셀 누적 0)·인덱스 행이 ground-truth(`ls -d unit/feature-*`)와 정합인지 기계 점검.
 
 2. **changeset 분류(commit 직전 — MUST)**: verify 호출 전에 변경 파일을 `is_meta_path` 의미로 분류한다(`bin/verify-completion.sh` 와 동일 규칙: `docs/*`·`wiki/*`·`.claude/*`·`bin/*`·`meta/*` = META; `unit/<feature>/src/**`(릴리즈노트 static 포함) = operational). 두 경로로 갈린다:
 
@@ -172,6 +177,7 @@ cross-cutting doc 정합은 단일 feature-id 가 없어 feature-mode verify 가
 - [ ] 처리한 각 타깃의 마지막 sync 지점부터 오늘까지 delta 를 검출하고 작업→타깃 매핑 완료(타깃 한정/기준일 인자 반영).
 - [ ] 존재하지 않는 타깃(wiki 미구성·릴리즈노트 부재·정책문서 미구성·배포 미존재)은 silent skip, 구체 사실(릴리즈노트 위치·wiki 레이아웃·배포 진입점·헬스 방식)은 discovery(하드코딩 없음).
 - [ ] 릴리즈노트는 사용자향 평이화(내부동작 비노출). wiki hot 파일은 잔존 actionable thread 보존. 정본 모순 시 정본을 진실로 색인 정정. ARCHITECTURE 는 색인/기능맵 정합만(구조 결정 변경 아님 — §13.1).
+- [ ] STATUS = Phase 0 SSOT 모델 판정대로 처리(**인덱스 모델**=행 갱신만·rollup 누적 금지·미머지 worktree note; **누적 모델**=rollup). mirror 문서는 정본 재서술 없이 `mirrors:`/`sources:` 포인터. SSOT 계약 채택 시 `bin/ssot-lint.sh` PASS.
 - [ ] 이미 최신인 문서는 무변경 정직 보고(억지 편집 없음).
 - [ ] 타깃별 실질 검증(릴리즈노트 테스트·wiki feature 수 정합 grep·정책문서 §참조/anchor 무결성) 완료 + verify 한계(deferred check #1/#5) 명시.
 - [ ] **changeset 분류 후 commit**: wiki·정책문서(META) = 별도 commit → verify META mode check #9(`meta/REVIEW.md` panel/`[CODEX:*]`/`[SKIPPED:non-policy-doc]`/`[SKIPPED:<슬러그>]`), verify 인자는 정규식 적합 `META-NNNN-<slug>`(bare `META` 금지). 릴리즈노트(operational) = owning feature-id 로 operational gate, check #9 는 `unit/<fid>/docs/REVIEW.md` — 충족 불가 시 owning feature cycle 위임 정직 보고. 코드 비동봉.
