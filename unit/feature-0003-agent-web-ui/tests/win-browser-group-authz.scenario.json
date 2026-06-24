@@ -1,0 +1,25 @@
+{
+  "name": "gc-group-authz-flag — 공유→그룹전환·사이드바 배지·그룹 비멘션 서버방어·owner 리네임 (authed, PB-0008)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-group-authz",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "#productChip", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const lr=await fetch('/api/conversations',{headers:{'Accept':'application/json'}});const lj=await lr.json();const items=(lj.conversations||lj.items||lj||[]);const own=items.filter(c=>Number(c.owner_account_id||0)===Number((state.user&&state.user.id)||-1));const c=own[0]||items[0];if(!c)return JSON.stringify({error:'no conversation'});window.__pb_cid=c.id;window.__pb_topic=c.topic;return JSON.stringify({cid:c.id,topic:c.topic,is_group_before:Boolean(c.is_group),member_count_before:Number(c.member_count||0)});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=window.__pb_cid;const r=await fetch('/api/conversations/'+encodeURIComponent(cid)+'/share',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope_mode:'full',joinable:true})});const j=await r.json();window.__pb_share_token=(j.token||j.share_token||'');return JSON.stringify({share_status:r.status,share_ok:r.ok,token_prefix:String(window.__pb_share_token).slice(0,8)});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=window.__pb_cid;const lr=await fetch('/api/conversations');const lj=await lr.json();const items=(lj.conversations||lj.items||lj||[]);const c=items.find(x=>String(x.id)===String(cid));const isG=(typeof isGroupConversation==='function')?isGroupConversation(c):null;return JSON.stringify({cid:cid,is_group_after:Boolean(c&&c.is_group),member_count_after:Number((c&&c.member_count)||0),isGroupConversation_helper:isG});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=window.__pb_cid;const model=(state&&(state.selectedModel||state.model))|| (window.MODELS&&window.MODELS[0])||'';const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:cid,message:'팀 여러분 안녕하세요 (멘션 없는 사람채팅)',model:model})});let body=null;try{body=await r.json();}catch(e){}return JSON.stringify({ask_status:r.status,ask_code:(body&&body.code)||null,model_used:model,note:'그룹+비멘션 → 422 group_requires_mention 이면 assistant 미실행(#2 서버방어)'});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=window.__pb_cid;const r=await fetch('/api/conversations/'+encodeURIComponent(cid)+'/title',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:String(window.__pb_topic||'대화')})});return JSON.stringify({owner_rename_status:r.status,owner_rename_ok:r.ok,note:'owner 본인 리네임은 통과해야 함(#1 무회귀)'});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{ if(typeof loadConversations==='function'){try{await loadConversations();}catch(e){}} if(typeof renderConversationList==='function'){try{renderConversationList();}catch(e){}} await new Promise(r=>setTimeout(r,800)); const badges=document.querySelectorAll('#conversationList .conv-item-group-badge'); const groupItems=document.querySelectorAll('#conversationList .conv-item.is-group'); return JSON.stringify({group_badge_count:badges.length, is_group_item_count:groupItems.length, note:'사이드바 그룹 배지(#3)'});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_sidebar_group_badge.png", "full_page": false}
+  ]
+}

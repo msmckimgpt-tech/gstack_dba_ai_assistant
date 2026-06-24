@@ -1175,3 +1175,14 @@ source_of_truth: true
 - NIT(LOW, 차단 아님): NIT-1 `kb_backend.py:940` stale 1536 주석 → **본 PR 에서 같이 정정**. NIT-2 wiki `nl2sql-flywheel.md`/`docs/STATUS.md` 의 1536 서술 → doc-sync 후속(TASK 에 기록).
 - Verification: 0015 py_compile + alembic-migrate.sh bash -n + 라이브 0013 적용·stamp·glossary 기능복구 검증.
 - Cross-ref: CHG-20260623T180000-migration-split-brain-hygiene / TASK-0306 / LRN-20260623-0003.
+
+## REV-20260623T190000-embedding-auto-backfill [SUBAGENT:embed-autotick-adversarial-backend]
+- Date: 2026-06-23
+- Cycle: TASK-0307 (texts 임베딩 백필 + 자동 백필 데몬), **Major §12.3**.
+- Trigger: §18.8 — embedding/worker keyword → backend dispatch. 적대 코드리뷰 **2-round** + 라이브 실측.
+- Round 1 VERDICT: **REQUEST-CHANGES** — **F1(CRITICAL)**: 초기 설계는 `run_embedding_pass(200)` 를 insight tick(8s)에 **동기** 호출. 라이브 측정 titan-embed batch 100당 23-33초 → tick 당 50-60초 블로킹 → insight 스캔 본업 직렬 지연. (F2 동시백필 중복=비용낭비, F3 HNSW per-row autocommit=기존동작 동반 지적.)
+- 재설계: per-tick 동기 호출 제거 → **별도 데몬 스레드**(`_embedding_backfill_loop`, conn_health 모니터와 동형 daemon)로 분리, tick 루프 비블로킹.
+- Round 2 VERDICT: **ACCEPT-WITH-NITS** (BLOCKER 0). F1 구조적 해소(코드+라이브 확인: tick 8s 복원, 임베딩 HTTP 가 본 루프 미경유). 스레드 안전성 신규 결함 0 — pass 자체 PG conn open/close(메인 mem_conn/db_conn 비공유), 공유 global/advisory-lock 무접촉(grep), fail-soft 이중(pass dict + 루프 except), daemon=True 정리. degraded 가드는 메인 cycle 만 게이트(임베딩은 PG만 필요해 일반 degraded 에서도 적절히 동작).
+- NIT(INFO, 비차단): N1 redeploy 중 in-flight pass 유실=resumable 무해. N2 sys.path 중복 prepend=양성(GIL atomic). N3 1회 백필↔데몬 동시 시 중복(idempotent)=배포 시퀀싱(백필 후 배포)으로 회피.
+- Verification: py_compile 3 + import/early-return 라이브 + run_embedding_pass(이전 round ACCEPT) + 데몬 import 라이브 resolve 확인.
+- Cross-ref: CHG-20260623T190000-embedding-auto-backfill / TASK-0307.

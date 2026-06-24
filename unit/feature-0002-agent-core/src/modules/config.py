@@ -231,6 +231,9 @@ __all__ = [
     "AGENT_KB_EMBEDDING_BATCH_SIZE",
     "AGENT_KB_EMBEDDING_TIMEOUT_SEC",
     "AGENT_KB_EMBEDDING_MAX_ATTEMPTS",
+    "AGENT_KB_EMBEDDING_AUTO",
+    "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS",
+    "AGENT_KB_EMBEDDING_INTERVAL_SEC",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -566,6 +569,15 @@ AGENT_KB_HYBRID_BETA = float(os.getenv("AGENT_KB_HYBRID_BETA", "0.4") or "0.4")
 AGENT_KB_HYBRID_NORMALIZE = os.getenv("AGENT_KB_HYBRID_NORMALIZE", "1").strip().lower() not in ("0", "false", "no", "")
 # ITEM-05 REV MINOR-1: trigram sim 절대 하한 — 미만은 신호 0(정규화 부풀림 차단, 무관 distractor 상위 노출 방지).
 AGENT_KB_HYBRID_TRIGRAM_FLOOR = float(os.getenv("AGENT_KB_HYBRID_TRIGRAM_FLOOR", "0.05") or "0.05")
+# TASK-0307: insight-worker 의 **백그라운드 데몬 스레드**가 NULL embedding texts 를 주기적으로
+# 소량 임베딩해 따라잡는다(kb_embedding_worker 스케줄러 부재로 신규 texts 가 정체→의미검색 recall
+# 저하하던 것 해소). **본 tick(스캔) 루프를 절대 블로킹하지 않음** — titan-embed 가 batch 당 수십 초라
+# tick(8s)에 동기 호출하면 워커 본업이 막히기 때문(REV-20260623T190000 F1). 별도 데몬 스레드로 분리.
+#   AUTO=0 → 비활성(수동 백필만). BATCH_MAX_ROWS → pass 당 행수(≈ embedding 호출 1~2배치).
+#   INTERVAL_SEC → pass 사이 sleep. 백로그 없으면 fetch 0건 cheap no-op.
+AGENT_KB_EMBEDDING_AUTO = os.getenv("AGENT_KB_EMBEDDING_AUTO", "1").strip().lower() in ("1", "true", "yes")
+AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "100") or "100")
+AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC", "60") or "60")
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(

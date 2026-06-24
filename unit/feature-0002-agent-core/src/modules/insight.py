@@ -2318,6 +2318,46 @@ LIMIT %s
     return report
 
 
+def _embedding_backfill_loop() -> None:
+    """TASK-0307: NULL embedding texts 를 주기적으로 소량 임베딩하는 백그라운드 루프.
+
+    별도 데몬 스레드에서 돈다 — titan-embed 가 batch 당 수십 초라(REV F1) insight tick(8s)에
+    동기 호출하면 스캔 본업을 블로킹하기 때문. pass 당 BATCH_MAX_ROWS 만 처리하고 INTERVAL_SEC
+    sleep. 백로그 없으면 fetch 0건 cheap no-op. fail-soft(스레드 죽지 않음)."""
+    interval = max(5, int(AGENT_KB_EMBEDDING_INTERVAL_SEC))
+    per_pass = max(1, int(AGENT_KB_EMBEDDING_BATCH_MAX_ROWS))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from scripts.kb_embedding_worker import run_embedding_pass
+            rep = run_embedding_pass(max_rows=per_pass)
+            if int(rep.get("processed") or 0) > 0 or rep.get("error"):
+                _log.info(
+                    "embedding_backfill processed=%s failed=%s remaining=%s err=%s",
+                    rep.get("processed"), rep.get("failed"), rep.get("remaining"),
+                    str(rep.get("error") or "")[:120],
+                )
+        except Exception as exc:  # 스레드 보호 — 어떤 예외도 루프를 죽이지 않음
+            _log.warning("embedding_backfill pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_embedding_backfill_thread() -> None:
+    """AUTO 켜짐 시 embedding 백필 데몬 스레드 1회 기동(conn_health 모니터와 동형 daemon)."""
+    if not AGENT_KB_EMBEDDING_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_embedding_backfill_loop, name="kb-embedding-backfill", daemon=True)
+        t.start()
+        logging.getLogger("insight").info(
+            "embedding_backfill 스레드 기동(interval=%ss, batch_max=%s)",
+            AGENT_KB_EMBEDDING_INTERVAL_SEC, AGENT_KB_EMBEDDING_BATCH_MAX_ROWS,
+        )
+    except Exception as exc:
+        logging.getLogger("insight").warning("embedding_backfill 스레드 기동 실패(무시): %s", exc)
+
+
 def run_insight_worker_loop() -> None:
     if not AGENT_INSIGHT_WORKER_ENABLED:
         console.print("insight worker disabled: AGENT_INSIGHT_WORKER_ENABLED=0")
@@ -2335,6 +2375,8 @@ def run_insight_worker_loop() -> None:
         conn_health.start_monitor(_ds.health_probe_provider())
     except Exception as exc:
         logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)
+    # TASK-0307: embedding 백필 데몬 스레드 기동(본 tick 루프와 분리 — 블로킹 방지).
+    _start_embedding_backfill_thread()
     while True:
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()

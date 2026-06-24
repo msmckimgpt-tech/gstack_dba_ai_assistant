@@ -1314,3 +1314,17 @@ source_of_truth: true
 - Files: src/scripts/agent_kb_schema.sql, alembic/versions/20260623_0015_sample_queries_embed_dim_1024.py, src/modules/kb_backend.py, bin/alembic-migrate.sh(repo), docs/LEARNINGS.md(repo), unit/feature-0002-agent-core/docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 코드 3건 revert(전부 멱등·additive·방어적). 라이브 0013 테이블은 비어있어 DROP 무손실이나 기능 위해 유지 권장.
 - Deploy: ask-worker/web 재빌드(schema.sql·kb_backend baked) — 단 라이브 DB 는 이미 정합돼 즉시 효과(glossary 기능 동작 중). 0015 멱등화/script 폭은 fresh-install·차기 ops 안전망.
+
+## CHG-20260623T190000-embedding-auto-backfill
+- Date: 2026-06-23 (TASK-0307 — texts 임베딩 백필 + 자동 백필 데몬, Major §12.3). PLAN-APPROVED("백필+자동화").
+- Scope: NULL embedding texts 자동 따라잡기(코드) + 1회 백필(운영). kb_embedding_worker 스케줄러 부재로 신규 texts 가 정체하던 것 해소.
+- 내용(코드):
+  - `src/scripts/kb_embedding_worker.py`: `run_embedding_pass(max_rows)` 추가 — main() CLI batch 로직을 라이브러리로 노출(get_settings/open_pg_conn/fetch_pending_batch/call_openai_embeddings/update_embeddings/count_pending 재사용). **fail-soft**(batch 실패 시 dict 반환·예외 미전파), resumable. main() 무변경.
+  - `src/modules/insight.py`: `_embedding_backfill_loop`(별도 **데몬 스레드** — `run_embedding_pass(BATCH_MAX_ROWS)` → `sleep(INTERVAL_SEC)` 반복) + `_start_embedding_backfill_thread`(conn_health 모니터와 동형 daemon). `run_insight_worker_loop` 시작 시 1회 기동. **tick 루프 비블로킹**(per-tick 동기 호출은 titan-embed 수십초 지연으로 본업 블로킹 — REV F1 회피).
+  - `src/modules/config.py`: `AGENT_KB_EMBEDDING_AUTO`(기본1) + `_BATCH_MAX_ROWS`(100) + `_INTERVAL_SEC`(60) + __all__.
+- 내용(운영, sudo): dry-run(40,200행·~$0.40) 후 1회 백필 실행(titan-embed 느려 수 시간 → 데몬이 이어받음).
+- Why: TASK-0305 후속 진단 MEDIUM — 의미검색 recall 저하·확대. 사용자 "백필+자동화".
+- Verification: py_compile 3종 + run_embedding_pass import/early-return 라이브 확인 + 적대 backend 리뷰 2회(REQUEST-CHANGES[F1 tick 블로킹, 라이브 batch당 25s 실측]→데몬 분리→**ACCEPT-WITH-NITS** REV-20260623T190000).
+- Files: src/scripts/kb_embedding_worker.py, src/modules/insight.py, src/modules/config.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: `AGENT_KB_EMBEDDING_AUTO=0`(즉시 비활성) 또는 코드 3건 revert(전부 additive·fail-soft). 임베딩 데이터는 그대로(유익).
+- Deploy: insight-worker 재빌드·재시작(데몬 활성). **1회 백필 완료/중단 후 배포**(F2 동시중복 회피 — 재시작이 수동 backfill 종료). degraded_readback/error 외엔 데몬 정상 동작(임베딩은 datasource 무관·PG만 필요).

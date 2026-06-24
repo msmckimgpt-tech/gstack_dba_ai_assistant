@@ -704,6 +704,26 @@ a { color: inherit; }
   border: 1px solid rgba(220,38,38,.22);
 }
 
+/* feature-0009 gc-group-authz-flag (#3): 그룹 대화 식별 배지 — 사람-그룹 아이콘 + 멤버 수.
+   1:1 대화와 시각적으로 명확히 구분(.conv-item-blocked-badge 패턴 차용, primary 톤). */
+.conv-item-group-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: var(--primary-soft, #eff6ff);
+  color: var(--primary, #2563eb);
+  border: 1px solid rgba(37,99,235,.22);
+}
+.conv-item-group-badge .conv-group-ic { width: 11px; height: 11px; display: block; }
+.conv-item-group-badge .conv-group-count { font-variant-numeric: tabular-nums; }
+
 .conv-item-title {
   font-size: 12.5px;
   font-weight: 500;
