@@ -20,8 +20,9 @@ source_of_truth: false
 - **멘션 하이라이트 + Windows 알림(gc-mention-hl-notify, 배포완료 PR#380)**: ① 하이라이트 미표시(CSS 특이도) → (0,5,0) override. ② OS 알림 `DQA : {대화명}` / `[발신자] : 메시지`. **PB-0008 PASS**. (CHG-0017/REV-0019)
 - **그룹대화 authz·라우팅·식별 4종(gc-group-authz-flag, 배포완료 PR#389, alembic 0016)**: #1 보관·제목변경 owner-only(IDOR 누수 차단) · #2 공유 직후 assistant 오호출(근본: owner 멤버십 누락 → member_count under-count; 수정: owner 보장+`/api/ask` 그룹비멘션 422 서버방어) · #3 사이드바 그룹 배지 · #4 영구 플래그 `is_group`(공유 즉시 그룹 전환). **PB-0008 PASS**. (CHG-0018/REV-0020)
 - **공유 직후 메시지 사람채팅 전환(gc-share-group-sync, 배포완료 PR#393)**: CHG-0018 의 클라이언트 stale 잔여 — 공유 후 active.is_group=false 로 비멘션 메시지가 assistant 오호출→422 block. 수정: ① 공유 시 로컬 is_group 즉시 전환+loadConversations ② 422 graceful store-only 재라우팅(유실 없음). **PB-0008 PASS**. (CHG-0019/REV-0021)
-- **Windows 알림 발신자 대괄호 제거(gc-notify-sender-nobracket)**: 사용자 요청 — 알림 본문 "[보낸사용자] : …" → "보낸사용자 : …". 1줄 문자열, 로직 무변경. **PB-0008 실측 PASS**. (CHG-0020/REV-0022)
-- In Progress: gc-notify-sender-nobracket docs 반영 완료 → verify-completion → PR → 배포(web) → smoke.
+- **Windows 알림 발신자 대괄호 제거(gc-notify-sender-nobracket, 배포완료 PR#394)**: 사용자 요청 — 알림 본문 "[보낸사용자] : …" → "보낸사용자 : …". 1줄 문자열, 로직 무변경. **PB-0008 실측 PASS**. (CHG-0020/REV-0022)
+- **설정/알림 UI 정리(gc-settings-notif)**: 사용자 요청 — 알림 동작 사용자 제어 + UI 정리. [알림] 클라이언트 localStorage 환경설정(`getNotifyPrefs`/음소거 `isConversationMuted`) — `_notifyMentions` 가 마스터(멘션) OFF·데스크톱(OS) OFF·대화 음소거 게이트. 프로필>계정>알림(멘션/데스크톱 토글+권한 요청) + 대화 ···>설정(제목 변경+음소거). [UI] 대화 ··· 메뉴 [공유(생성+관리 단일 팝업)·설정(제목변경+음소거)·보관] — 복사·공유 관리·제목 변경 통합/제거(공유 발급은 `_issueConversationShare` 공통 헬퍼). 프로필 탭 [릴리즈 노트 최좌측·프롬프트·계정], '보안 및 계정'→'계정'+사용 내역 병합. 전부 프론트, 캐시버스터 settings-notif. **PB-0008 실측 PASS**(17 step). (CHG-0021/REV-0023)
+- In Progress: gc-settings-notif docs 반영 완료 → verify-completion → PR → 배포(web) → smoke.
 - Deferred(배포 후 라이브): S5 run cap·llm_usage actor 귀속·LLM 화자 라벨 (REV-0012) / S6 스레드(별도 계획). [폴링 동기화는 ux2 적응형으로 해소]
 - 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (코어, 머지됨) + ux2(워크트리 ai/claude/gc-live-ux2, 커밋 전).
 

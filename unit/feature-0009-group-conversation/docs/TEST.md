@@ -106,5 +106,16 @@ source_of_truth: true
 - Pass/Fail: **PASS**
 - Notes: trivial cosmetic 문자열 변경(로직 무변경), 프론트 전용 → web 재빌드만. 토스트도 동일 본문 사용(일관).
 
+### Run 2026-06-24-settings-notif
+- Date: 2026-06-24
+- Environment: Windows-browser
+- Runner: AI
+- Bridge: relay @ http://172.28.64.1:9223 (win-browser.py doctor ok=true, Windows Chrome/149.0.7827.116)
+- Scenario: `unit/feature-0003-agent-web-ui/tests/win-browser-settings-notif.scenario.json`
+- Result Summary: 설정/알림 UI 정리 17/17 step PASS. ① 알림 게이팅(`_notifyMentions`): `{default_on:1, master_off:0, desktop_off:0, muted:0, unmuted:1, pass:true}` — 마스터(멘션)/데스크톱(OS)/대화 음소거 게이트 정확, 기본 ON 동작 보존. ② 대화 ··· 메뉴 items=`["공유","설정","보관"]`(복사·공유 관리·제목 변경 제거). ③ 통합 공유 팝업: 제목 "공유" + 생성영역(참여 허용 토글/만료 select/링크 생성 버튼) + 소제목 + 발급 목록. ④ 대화 설정 팝업: 제목 "대화 설정", 제목 입력(값 보존) + 음소거 토글, 섹션 `["제목","알림"]`. ⑤ 프로필 탭 순서 `["릴리즈 노트","프롬프트","계정"]`(release_first), '계정' 라벨, 알림 섹션(멘션/데스크톱 체크박스)·사용 내역 차트 모두 계정 탭 내부, usage 탭 제거.
+- Evidence: `artifacts/pb0008-settings-notif/01_share_dialog.png` · `02_conv_settings.png`(대화 설정: 제목 입력+'이 대화 음소거' 토글 육안 확인) · `03_profile_account.png`(계정 탭: 활동→알림[멘션/데스크톱 토글+권한 요청 버튼]→사용 내역 차트 육안 확인)
+- Pass/Fail: **PASS**
+- Notes: 전부 프론트(app.js/index.html/styles.css) → web 컨테이너 정적 반영(docker cp)으로 실측, 병합 후 이미지 재빌드. 알림 제어는 클라이언트 localStorage(OS 권한 origin·디바이스 단위라 서버 동기화 무의미). 적대 패널 PASS(blocking 0).
+
 ## 4. Untested Areas
 - 아직 검증되지 않은 영역

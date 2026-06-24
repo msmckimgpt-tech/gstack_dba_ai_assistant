@@ -43,11 +43,10 @@ const loadMoreBtn = document.getElementById("loadMoreBtn");
 // REQ-20260608-0158 (TASK-0158): 즉시 답변 진입점을 composer 로 재배치. 구 #cancelBtn/#finalizeBtn 은
 // 영구 숨김 #progressCard 안 고아였음 — 제거. 중단은 send-버튼 모핑(TASK-0157)으로 이미 노출.
 const composerFinalizeBtn = document.getElementById("composerFinalizeBtn");
-// REQ-20260518-0003: 헤더의 대화 복사 / 공유 / 제목 변경 / 삭제 4 버튼은
-// 좌측 conv-item "···" menu 로 일원화되어 제거됨. 동일 action 의 backend
-// helper (createConversationShare / renameCurrentConversation /
-// deleteConversation / duplicateConversationFromMenu) 는 menu 가 cid 인자로
-// 직접 호출하므로 유지된다.
+// REQ-20260518-0003 / gc-settings-notif: 헤더의 대화 버튼들은 좌측 conv-item "···" menu 로 일원화.
+// 현재 메뉴 항목: 공유(openShareDialog — 발급+관리 통합) / 설정(openConversationSettings — 제목 변경 +
+// 대화 알림 음소거) / 보관(deleteConversation, soft-archive). '복사'·별도 '공유 관리'·'제목 변경'
+// 항목은 제거·통합됨(메시지 '여기서 분기'가 복제 역할, 제목 변경은 설정 팝업으로 이동).
 const composerTitleEl = document.getElementById("composerTitle");
 const composerHintEl = document.getElementById("composerHint");
 const promptInputEl = document.getElementById("promptInput");
@@ -219,6 +218,53 @@ const SEND_MODE_LS_KEY = "mad.sendMode.v1";
 // 대화목록 "타 계정 대화" 그룹의 접힘 키 + "처음 진입 시 접힘" 1회 seed 플래그.
 const OTHERS_GROUP_KEY = "__others__";
 const OTHERS_COLLAPSED_SEED_LS_KEY = "mad.othersCollapsedSeed.v1";
+
+// feature-0009 gc-settings-notif: 멘션 알림 동작의 사용자 제어 (프로필>계정>알림 + 대화 설정).
+// 알림은 본질적으로 브라우저·디바이스 로컬(OS Notification API 권한도 origin·디바이스 단위)이라
+// 서버 동기화가 의미 없다. 기존 환경설정(sendMode/productPref/collapsedGroups)과 동일하게
+// localStorage 에 영속한다. 백엔드/스키마 변경 없음.
+const NOTIFY_PREFS_LS_KEY = "mad.notifyPrefs.v1";
+const MUTED_CONVS_LS_KEY = "mad.mutedConversations.v1";
+
+// 전역 알림 환경설정. mentions=마스터(토스트+OS 알림 전체), desktop=OS Notification 사용 여부.
+// 기본 둘 다 ON(기존 동작 유지). 저장값은 명시 false 일 때만 OFF 로 해석(키 부재 시 ON).
+function getNotifyPrefs() {
+  try {
+    const raw = localStorage.getItem(NOTIFY_PREFS_LS_KEY);
+    if (!raw) return { mentions: true, desktop: true };
+    const p = JSON.parse(raw) || {};
+    return { mentions: p.mentions !== false, desktop: p.desktop !== false };
+  } catch (_) {
+    return { mentions: true, desktop: true };
+  }
+}
+function setNotifyPrefs(patch) {
+  const next = { ...getNotifyPrefs(), ...(patch || {}) };
+  try { localStorage.setItem(NOTIFY_PREFS_LS_KEY, JSON.stringify(next)); } catch (_) {}
+  return next;
+}
+
+// 음소거(mute)한 대화 id 집합(문자열 정규화). 대화 설정 팝업에서 토글하며,
+// _notifyMentions 가 active 대화가 음소거 상태면 토스트·OS 알림을 건너뛴다.
+function _loadMutedConvs() {
+  try {
+    const raw = localStorage.getItem(MUTED_CONVS_LS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+function isConversationMuted(cid) {
+  if (cid == null || cid === "") return false;
+  return _loadMutedConvs().has(String(cid));
+}
+function setConversationMuted(cid, muted) {
+  if (cid == null || cid === "") return;
+  const set = _loadMutedConvs();
+  if (muted) set.add(String(cid)); else set.delete(String(cid));
+  try { localStorage.setItem(MUTED_CONVS_LS_KEY, JSON.stringify(Array.from(set))); } catch (_) {}
+}
 
 // Restore collapsed groups from localStorage
 try {
@@ -534,6 +580,12 @@ let _liveNotifiedMaxId = 0;
 function _notifyMentions(incoming, hidden) {
   const myName = String((state.user && state.user.username) || "").toLowerCase();
   if (!myName || !Array.isArray(incoming) || !incoming.length) return;
+  // gc-settings-notif: 사용자 알림 환경설정 게이트. 마스터(mentions) OFF 또는 현재 대화 음소거면
+  // 토스트·OS 알림 모두 생략(high-water 미전진 — 재활성 시 그 이후 새 메시지만 알림). 멘션은 항상
+  // active 대화에서만 발생하므로 active 대화 id 로 음소거 판정.
+  const _nprefs = getNotifyPrefs();
+  if (!_nprefs.mentions) return;
+  if (isConversationMuted(state.activeConversationId)) return;
   const myId = Number((state.user && state.user.id) || 0);
   const hits = incoming.filter((m) => {
     const id = Number((m && m.id) || 0);
@@ -554,7 +606,8 @@ function _notifyMentions(incoming, hidden) {
   const body = `${who}${more} : ${preview}`;
   if (!hidden) showToast(body);
   try {
-    if (window.Notification && Notification.permission === "granted") {
+    // gc-settings-notif: 데스크톱(OS) 알림은 별도 환경설정으로 추가 게이트(기본 ON).
+    if (_nprefs.desktop && window.Notification && Notification.permission === "granted") {
       // OS(Windows) 알림 제목 = "DQA : {그룹대화 명칭}" (대화명 = conversation.topic, 미설정 시 "DQA").
       const _conv = currentConversation();
       const _convName = (_conv && _conv.topic) ? String(_conv.topic).trim() : "";
@@ -921,10 +974,11 @@ function switchProfileTab(tab) {
   // 있어 첫 진입(기본 prompt 탭) 시 promptProductSelect(제품 범위) 가 비어 있었다.
   if (tab === "prompt") {
     initAccountPromptEditor().catch(() => {});
-  } else if (tab === "usage") {
-    loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역 lazy 로드
   } else if (tab === "security-and-account") {
+    // gc-settings-notif: '계정' 탭으로 통합 — 2FA + 사용 내역(병합) + 알림 환경설정을 한 번에 렌더.
     renderProfileTotp(); // TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 상태 렌더.
+    loadProfileUsage().catch(() => {}); // TASK-0184: 내 사용 내역(계정 탭으로 병합) lazy 로드.
+    renderNotifyPrefs(); // gc-settings-notif: 알림 환경설정(멘션/데스크톱) 상태·권한 렌더.
   } else if (tab === "release-notes") {
     // 릴리즈 노트 — 정적 콘텐츠라 매 진입 렌더(가벼움). 렌더러는 release-notes.js.
     // 작업 화면은 '관리 콘솔' 영역 노트를 숨긴다(work/common 만 노출).
@@ -1988,6 +2042,46 @@ async function loadProfileUsage() {
   const cmap = profileUsageColorMap(ms);
   renderProfileUsageStacked(dayEl, data.by_day_model, cmap);
   renderProfileUsageDonut(modelEl, data.by_model, cmap);
+}
+
+// gc-settings-notif: 알림 환경설정 패널(프로필>계정>알림) 렌더. 체크박스 상태 + 데스크톱 알림
+// 권한 상태/요청 버튼을 그린다. getNotifyPrefs/setNotifyPrefs(localStorage) 와 _notifyMentions 게이트가 동일 소스.
+function renderNotifyPrefs() {
+  const prefs = getNotifyPrefs();
+  const mChk = document.getElementById("notifyMentionsChk");
+  const dChk = document.getElementById("notifyDesktopChk");
+  const permEl = document.getElementById("profileNotifyPerm");
+  if (mChk) mChk.checked = prefs.mentions;
+  if (dChk) {
+    dChk.checked = prefs.desktop;
+    // 마스터(멘션 알림) OFF 면 데스크톱 토글은 의미 없으므로 비활성.
+    dChk.disabled = !prefs.mentions;
+  }
+  if (!permEl) return;
+  permEl.innerHTML = "";
+  if (!window.Notification) {
+    permEl.textContent = "이 브라우저는 데스크톱 알림을 지원하지 않습니다.";
+    return;
+  }
+  const perm = Notification.permission;
+  if (perm === "granted") {
+    permEl.textContent = "데스크톱 알림 권한이 허용되어 있습니다.";
+  } else if (perm === "denied") {
+    permEl.textContent = "데스크톱 알림이 브라우저에서 차단되어 있습니다. 사이트 알림 설정에서 허용으로 변경해 주세요.";
+  } else {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-secondary";
+    btn.textContent = "데스크톱 알림 권한 요청";
+    btn.addEventListener("click", async () => {
+      try {
+        const r = await Notification.requestPermission();
+        if (r === "granted") showToast("데스크톱 알림 권한이 허용되었습니다.");
+      } catch (_e) { /* graceful */ }
+      renderNotifyPrefs();
+    });
+    permEl.appendChild(btn);
+  }
 }
 
 function openProfile(tab = "prompt") {
@@ -5342,22 +5436,16 @@ function shareExpiryLabel(seconds) {
   return match ? match.label : `${Math.round(Number(seconds) / 86400)}일`;
 }
 
-async function createConversationShare({ anchorMessageId = null, conversationId = null } = {}) {
-  const cid = conversationId || state.activeConversationId;
-  if (!cid) return null;
-  if (!can("conversation.share.create")) {
-    showPermissionDeniedToast("conversation.share.create");
-    return null;
-  }
-  // 만료 기간 선택 (취소 시 생성 중단).
-  const choice = await promptShareExpiry();
-  if (!choice || choice.cancelled) return null;
+// 공유 링크 발급 공통 처리: POST /share → (joinable 시) is_group 즉시 전환 + 목록 재동기화 →
+// 절대 URL 을 clipboard 에 복사 + toast. createConversationShare(앵커/만료 prompt 경로)와
+// openShareDialog(통합 팝업 폼 경로)가 공용으로 호출 — 발급 로직 단일화로 drift 방지.
+async function _issueConversationShare({ cid, scopeMode = "full", anchorMessageId = null, joinable = true, seconds = null }) {
   const body = anchorMessageId != null
     ? { scope_mode: "anchored", anchor_message_id: Number(anchorMessageId) }
-    : { scope_mode: "full" };
-  if (choice.seconds != null) body.expires_in_seconds = Number(choice.seconds);
+    : { scope_mode: scopeMode };
+  if (seconds != null) body.expires_in_seconds = Number(seconds);
   // feature-0009: 참여 허용 여부(기본 ON). 명시 false 일 때만 OFF 로 전달.
-  body.joinable = choice.joinable !== false;
+  body.joinable = joinable !== false;
   const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/share`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -5377,7 +5465,7 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
     try { await loadConversations(); } catch (_e) { /* best-effort */ }
   }
   const absoluteUrl = `${window.location.origin}${payload.url}`;
-  const expirySuffix = choice.seconds != null ? ` (만료: ${shareExpiryLabel(choice.seconds)})` : "";
+  const expirySuffix = seconds != null ? ` (만료: ${shareExpiryLabel(seconds)})` : "";
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(absoluteUrl);
@@ -5391,10 +5479,31 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
   return payload;
 }
 
-// REQ-20260608-0158 (TASK-0158): 공유 링크 관리 — 발급된 공유 링크 목록 조회 + 취소(revoke).
-// 기존엔 생성(createConversationShare)만 가능했고 목록/취소 UI 가 없어 백엔드
-// GET /api/conversations/{cid}/shares + DELETE /api/share/{id} 가 진입점 부재였다.
-async function openShareManager(cid) {
+async function createConversationShare({ anchorMessageId = null, conversationId = null } = {}) {
+  const cid = conversationId || state.activeConversationId;
+  if (!cid) return null;
+  if (!can("conversation.share.create")) {
+    showPermissionDeniedToast("conversation.share.create");
+    return null;
+  }
+  // 만료 기간 선택 (취소 시 생성 중단). 앵커 공유(메시지 '여기까지 공유') 진입점.
+  const choice = await promptShareExpiry();
+  if (!choice || choice.cancelled) return null;
+  return _issueConversationShare({
+    cid,
+    scopeMode: "full", // 비앵커 케이스 명시(앵커면 _issueConversationShare 가 anchored 로 무시). openShareDialog 호출부와 대칭.
+    anchorMessageId,
+    joinable: choice.joinable !== false,
+    seconds: choice.seconds,
+  });
+}
+
+// gc-settings-notif UI 정리 (REQ-20260608-0158 / TASK-0158 통합): 공유 링크 '생성'과
+// '관리(목록 조회 + 취소)'를 단일 팝업으로 합친다. 기존 createConversationShare 만료선택 prompt +
+// openShareManager 목록 모달 2개 진입점을 좌측 conv-item ··· 메뉴의 '공유' 한 항목으로 일원화.
+// 백엔드: POST /api/conversations/{cid}/share(발급) · GET …/shares(목록) · DELETE /api/share/{id}(취소).
+async function openShareDialog(cid) {
+  const canCreate = can("conversation.share.create");
   const backdrop = document.createElement("div");
   backdrop.className = "share-mgr-backdrop";
   backdrop.setAttribute("role", "dialog");
@@ -5402,9 +5511,11 @@ async function openShareManager(cid) {
   backdrop.innerHTML =
     '<div class="share-mgr-panel">' +
     '  <div class="share-mgr-head">' +
-    '    <h3 class="share-mgr-title">공유 링크 관리</h3>' +
+    '    <h3 class="share-mgr-title">공유</h3>' +
     '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
     '  </div>' +
+    '  <div class="share-create-sec"></div>' +
+    '  <div class="share-mgr-subhead">발급된 공유 링크</div>' +
     '  <div class="share-mgr-body" aria-live="polite"></div>' +
     '</div>';
   const close = () => {
@@ -5488,7 +5599,152 @@ async function openShareManager(cid) {
       body.appendChild(row);
     });
   };
+
+  // 공유 링크 생성 영역(통합 팝업 상단). 생성 권한 없으면 안내만 표시하고 목록만 노출.
+  const createSec = backdrop.querySelector(".share-create-sec");
+  if (!canCreate) {
+    createSec.innerHTML = '<div class="share-mgr-msg">공유 링크를 생성할 권한이 없습니다. 발급된 링크만 확인할 수 있습니다.</div>';
+  } else {
+    const expiryOpts = SHARE_EXPIRY_PRESETS
+      .map((p, i) => `<option value="${i}">${escapeHtml(p.label)}</option>`)
+      .join("");
+    createSec.innerHTML =
+      '<label class="share-joinable-row"><input type="checkbox" id="shareDialogJoinableChk" checked /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>' +
+      '<div class="share-create-row">' +
+      '  <label class="share-expiry-field">만료 <select id="shareExpirySel" class="btn-secondary">' + expiryOpts + '</select></label>' +
+      '  <button type="button" class="btn-primary" id="shareCreateBtn">링크 생성</button>' +
+      '</div>';
+    const createBtn = createSec.querySelector("#shareCreateBtn");
+    createBtn.addEventListener("click", async () => {
+      const chk = createSec.querySelector("#shareDialogJoinableChk");
+      const joinable = chk ? chk.checked !== false : true;
+      const sel = createSec.querySelector("#shareExpirySel");
+      const preset = SHARE_EXPIRY_PRESETS[Number(sel && sel.value) || 0] || SHARE_EXPIRY_PRESETS[0];
+      createBtn.disabled = true;
+      try {
+        await _issueConversationShare({ cid, scopeMode: "full", joinable, seconds: preset.seconds });
+        await load(); // 발급 직후 목록 갱신 — 단일 팝업 내 일관 UX.
+      } catch (err) {
+        showToast(err.message || "공유 링크 생성에 실패했습니다.", true);
+      } finally {
+        createBtn.disabled = false;
+      }
+    });
+  }
+
   await load();
+}
+
+// gc-settings-notif UI 정리: 대화 설정 팝업 — 좌측 conv-item ··· 메뉴의 '설정' 항목.
+// (1) 제목 변경(기존 메뉴 '제목 변경' 항목을 여기로 이동, owner/권한 게이트 동일 PATCH /title 경로)
+// (2) 이 대화 알림 음소거(클라이언트 localStorage, _notifyMentions 가 active 대화 음소거 시 skip).
+async function openConversationSettings(cid) {
+  const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
+  if (!conversation) return;
+  const canRename = canRenameConversation(conversation);
+  const backdrop = document.createElement("div");
+  backdrop.className = "share-mgr-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.innerHTML =
+    '<div class="share-mgr-panel conv-settings-panel">' +
+    '  <div class="share-mgr-head">' +
+    '    <h3 class="share-mgr-title">대화 설정</h3>' +
+    '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+    '  </div>' +
+    '  <div class="conv-settings-body"></div>' +
+    '</div>';
+  const close = () => {
+    if (backdrop.parentNode) document.body.removeChild(backdrop);
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+  backdrop.querySelector(".share-mgr-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(backdrop);
+
+  const bodyEl = backdrop.querySelector(".conv-settings-body");
+
+  // (1) 제목 변경 섹션
+  const titleSec = document.createElement("div");
+  titleSec.className = "conv-settings-sec";
+  const titleHead = document.createElement("div");
+  titleHead.className = "conv-settings-sec-title";
+  titleHead.textContent = "제목";
+  titleSec.appendChild(titleHead);
+  const titleRow = document.createElement("div");
+  titleRow.className = "conv-settings-title-row";
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.className = "conv-settings-input";
+  titleInput.value = conversation.topic || "";
+  titleInput.placeholder = "대화 제목";
+  titleInput.disabled = !canRename;
+  const titleSaveBtn = document.createElement("button");
+  titleSaveBtn.type = "button";
+  titleSaveBtn.className = "btn-primary";
+  titleSaveBtn.textContent = "저장";
+  titleSaveBtn.disabled = !canRename;
+  const saveTitle = async () => {
+    if (!canRename) { showPermissionDeniedToast("conversation.rename", conversation); return; }
+    const trimmed = String(titleInput.value || "").trim();
+    if (!trimmed) { showToast("제목을 입력하세요.", true); return; }
+    if (trimmed === String(conversation.topic || "")) { close(); return; }
+    titleSaveBtn.disabled = true;
+    // PATCH 실패(모달 열린 상태)와 그 후 refreshWorkspace 실패를 분리한다 — 성공 토스트 후
+    // 이미 닫힌(detached) 모달의 버튼 재활성화/중복 에러 토스트를 피하려 close 전에 PATCH 만 await.
+    try {
+      await apiFetch(`/api/conversations/${encodeURIComponent(conversation.id)}/title`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: trimmed }),
+      });
+    } catch (err) {
+      titleSaveBtn.disabled = false;
+      showToast(err.message || "제목 변경에 실패했습니다.", true);
+      return;
+    }
+    showToast("대화 제목을 변경했습니다.");
+    close();
+    refreshWorkspace(conversation.id).catch(() => {}); // best-effort 동기화(모달은 이미 닫힘).
+  };
+  titleSaveBtn.addEventListener("click", saveTitle);
+  titleInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveTitle(); } });
+  titleRow.append(titleInput, titleSaveBtn);
+  titleSec.appendChild(titleRow);
+  if (!canRename) {
+    const hint = document.createElement("div");
+    hint.className = "conv-settings-hint";
+    hint.textContent = "이 대화의 보유자만 제목을 변경할 수 있습니다.";
+    titleSec.appendChild(hint);
+  }
+  bodyEl.appendChild(titleSec);
+
+  // (2) 알림 음소거 섹션 (클라이언트 환경설정)
+  const notifSec = document.createElement("div");
+  notifSec.className = "conv-settings-sec";
+  const notifHead = document.createElement("div");
+  notifHead.className = "conv-settings-sec-title";
+  notifHead.textContent = "알림";
+  notifSec.appendChild(notifHead);
+  const muteRow = document.createElement("label");
+  muteRow.className = "conv-settings-toggle-row";
+  const muteChk = document.createElement("input");
+  muteChk.type = "checkbox";
+  muteChk.checked = isConversationMuted(cid);
+  muteChk.addEventListener("change", () => {
+    setConversationMuted(cid, muteChk.checked);
+    showToast(muteChk.checked ? "이 대화의 멘션 알림을 음소거했습니다." : "이 대화의 멘션 알림 음소거를 해제했습니다.");
+  });
+  const muteText = document.createElement("span");
+  muteText.textContent = "이 대화 음소거";
+  muteRow.append(muteChk, muteText);
+  notifSec.appendChild(muteRow);
+  const muteHint = document.createElement("div");
+  muteHint.className = "conv-settings-hint";
+  muteHint.textContent = "음소거하면 이 대화에서 나를 멘션해도 알림(토스트·데스크톱)을 받지 않습니다.";
+  notifSec.appendChild(muteHint);
+  bodyEl.appendChild(notifSec);
 }
 
 async function forkConversation({ fromMessageId = null } = {}) {
@@ -5514,27 +5770,9 @@ async function forkConversation({ fromMessageId = null } = {}) {
   await refreshWorkspace(newId);
 }
 
-async function renameCurrentConversation(targetCid = "") {
-  const conversation = targetCid
-    ? state.conversations.find((c) => String(c.id) === String(targetCid)) || null
-    : currentConversation();
-  if (!conversation) return;
-  if (!canRenameConversation(conversation)) {
-    showPermissionDeniedToast("conversation.rename", conversation);
-    return;
-  }
-  const nextTitle = window.prompt("새 대화 제목을 입력하세요.", conversation.topic || "");
-  if (nextTitle == null) return;
-  const trimmed = nextTitle.trim();
-  if (!trimmed) return;
-  await apiFetch(`/api/conversations/${encodeURIComponent(conversation.id)}/title`, {
-    method: "PATCH",
-    body: JSON.stringify({ title: trimmed }),
-  });
-  showToast("대화 제목을 변경했습니다.");
-  await refreshWorkspace(conversation.id);
-}
-
+// gc-settings-notif: 제목 변경은 openConversationSettings(대화 설정 팝업) 의 인라인 입력으로
+// 이동(기존 window.prompt 기반 renameCurrentConversation 제거). owner/권한 게이트는 동일
+// canRenameConversation + PATCH /api/conversations/{cid}/title 경로를 유지한다.
 async function deleteConversation(targetCid = "") {
   const cid = targetCid || state.activeConversationId;
   if (!cid) return;
@@ -5575,33 +5813,9 @@ async function deleteConversation(targetCid = "") {
   }
 }
 
-// REQ-20260518-0001: per-conversation "···" menu 의 "복사" action.
-// `_fork_conversation_impl` 기반이므로 active 대화 자동 전환은 backend 가 처리 (Codex risk 4 — 사용자 의도와 정합).
-async function duplicateConversationFromMenu(targetCid) {
-  const cid = String(targetCid || "").trim();
-  if (!cid) return;
-  const conversation = state.conversations.find((c) => String(c.id) === cid) || null;
-  if (!hasAnyPermission(requiredPermissionsFor("conversation.duplicate", conversation).codes)) {
-    showPermissionDeniedToast("conversation.duplicate", conversation);
-    return;
-  }
-  if (!can("conversation.create")) {
-    showPermissionDeniedToast("conversation.create");
-    return;
-  }
-  try {
-    const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/duplicate`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-    const newId = payload && payload.conversation_id ? String(payload.conversation_id) : "";
-    const copied = Number(payload && payload.copied) || 0;
-    showToast(`대화를 복사했습니다 (${copied}개 메시지).`);
-    await refreshWorkspace(newId);
-  } catch (error) {
-    showToast(`복사 실패: ${error.message || error}`, true);
-  }
-}
+// gc-settings-notif UI 정리: 좌측 conv-item ··· 메뉴의 '복사'(대화 전체 복제) 항목 제거.
+// 메시지 액션 '여기서 분기'(forkConversation)가 복제 역할을 대체하므로 메뉴 중복을 없앤다.
+// 백엔드 POST /api/conversations/{cid}/duplicate 는 잔존하나 프론트 진입점은 더 이상 없음.
 
 // REQ-20260518-0001: per-conversation "···" menu 의 lifecycle 관리.
 // menu 는 body 에 mount 하여 conv-item overflow 에 묶이지 않게 한다. ESC / outside click / scroll / resize 닫기.
@@ -5649,12 +5863,11 @@ function openConversationItemMenu(cid, triggerEl) {
     return item;
   };
 
-  menu.appendChild(makeItem("복사", "conversation.duplicate", () => duplicateConversationFromMenu(cid)));
-  menu.appendChild(makeItem("공유", "conversation.share", async () => {
-    await createConversationShare({ conversationId: cid });
-  }));
-  menu.appendChild(makeItem("공유 관리", "conversation.read", () => openShareManager(cid)));
-  menu.appendChild(makeItem("제목 변경", "conversation.rename", () => renameCurrentConversation(cid)));
+  // gc-settings-notif UI 정리: '복사' 제거(메시지 '여기서 분기'가 복제 역할 대체),
+  // '공유'+'공유 관리'를 단일 팝업(openShareDialog)으로 통합, '설정'(제목 변경 + 대화 알림 음소거)
+  // 추가, 기존 '제목 변경' 항목은 설정으로 이동. 최종 순서: 공유 | 설정 | 보관(danger).
+  menu.appendChild(makeItem("공유", "conversation.share", () => openShareDialog(cid)));
+  menu.appendChild(makeItem("설정", "conversation.read", () => openConversationSettings(cid)));
   menu.appendChild(makeItem("보관", "conversation.delete", () => deleteConversation(cid), { danger: true }));
 
   document.body.appendChild(menu);
@@ -7881,7 +8094,7 @@ async function initialize() {
 
   // 프로필 탭 전환
   document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
-    // lazy 콘텐츠 적재는 switchProfileTab() 내부에서 단일 디스패치 (prompt/usage).
+    // lazy 콘텐츠 적재는 switchProfileTab() 내부에서 단일 디스패치 (prompt / security-and-account[2FA·사용내역·알림] / release-notes).
     btn.addEventListener("click", () => switchProfileTab(btn.dataset.profileTab));
   });
   const profileUsageDaysSel = document.getElementById("profileUsageDays");
@@ -7891,6 +8104,25 @@ async function initialize() {
   const profileUsageGranSel = document.getElementById("profileUsageGran");
   if (profileUsageGranSel) {
     profileUsageGranSel.addEventListener("change", () => loadProfileUsage().catch(() => {}));
+  }
+
+  // gc-settings-notif: 프로필>계정>알림 토글 배선. 마스터(멘션)/데스크톱(OS) 환경설정을 localStorage 에
+  // 저장(_notifyMentions 가 동일 소스를 읽어 게이트). 켤 때 OS 권한이 미요청(default)이면 요청 트리거.
+  const notifyMentionsChk = document.getElementById("notifyMentionsChk");
+  if (notifyMentionsChk) {
+    notifyMentionsChk.addEventListener("change", () => {
+      setNotifyPrefs({ mentions: notifyMentionsChk.checked });
+      if (notifyMentionsChk.checked) _maybeRequestNotifyPermission();
+      renderNotifyPrefs();
+    });
+  }
+  const notifyDesktopChk = document.getElementById("notifyDesktopChk");
+  if (notifyDesktopChk) {
+    notifyDesktopChk.addEventListener("change", () => {
+      setNotifyPrefs({ desktop: notifyDesktopChk.checked });
+      if (notifyDesktopChk.checked) _maybeRequestNotifyPermission();
+      renderNotifyPrefs();
+    });
   }
 
   const savePromptBtn = document.getElementById("savePromptBtn");
@@ -8024,10 +8256,10 @@ async function initialize() {
       });
     });
   }
-  // REQ-20260518-0003: 헤더 4 버튼 (대화 복사 / 공유 / 제목 변경 / 삭제) 의 click handler 도 정리.
-  // 동일 backend helper (deleteConversation / renameCurrentConversation / forkConversation /
-  // createConversationShare / duplicateConversationFromMenu) 는 좌측 conv-item "···" menu 에서
-  // cid 인자로 직접 호출된다 (openConversationItemMenu 의 makeItem handler).
+  // REQ-20260518-0003 / gc-settings-notif: 대화 lifecycle 동작은 좌측 conv-item "···" menu 에서
+  // cid 인자로 직접 호출된다 (openConversationItemMenu 의 makeItem handler) — 공유(openShareDialog) /
+  // 설정(openConversationSettings: 제목 변경 + 알림 음소거) / 보관(deleteConversation). 별도 헤더
+  // 버튼·click handler 없음.
 
   // REQ-20260518-0001: 캘린더는 메시지 날짜 분기선 click 으로 진입. prev/next 는 popover header 의 calendarNav 가 동적 렌더.
   // 외부 click 으로 닫기 — anchor 가 분기선이 될 수도 있으므로 messageLog 내 분기선 click 은 그 자체로 toggle 처리.
