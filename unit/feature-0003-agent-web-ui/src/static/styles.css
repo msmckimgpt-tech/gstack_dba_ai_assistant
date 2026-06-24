@@ -2295,7 +2295,7 @@ a { color: inherit; }
   background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: var(--r-xs);
 }
 .share-mgr-close:hover { background: var(--border-subtle); color: var(--text); }
-.share-mgr-body { padding: 12px 20px 18px; overflow-y: auto; }
+.share-mgr-body { padding: 12px 20px 18px; overflow-y: auto; flex: 1; min-height: 0; }
 .share-mgr-msg { padding: 24px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
 .share-mgr-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -2328,6 +2328,46 @@ a { color: inherit; }
 .share-joinable-row input { width: 16px; height: 16px; cursor: pointer; }
 .share-joinable-hint { color: var(--text-muted); font-size: 12px; }
 .share-expiry-opt { flex: 1 1 auto; min-width: 72px; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+
+/* gc-settings-notif: 통합 공유 팝업 — 상단 '생성' 영역 + 구분 소제목 + 하단 '발급된 링크' 목록. */
+.share-create-sec { padding: 14px 20px 4px; }
+.share-create-row { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; flex-wrap: wrap; }
+.share-expiry-field { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+.share-expiry-field select { font-size: 13px; padding: 5px 8px; }
+.share-mgr-subhead {
+  padding: 6px 20px 0; margin-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: none;
+}
+
+/* gc-settings-notif: 대화 설정 팝업 (제목 변경 + 알림 음소거). share-mgr-panel 골격 재사용. */
+.conv-settings-panel { max-width: 440px; }
+.conv-settings-body { padding: 8px 20px 18px; overflow-y: auto; }
+.conv-settings-sec { padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
+.conv-settings-sec:last-child { border-bottom: none; }
+.conv-settings-sec-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.conv-settings-title-row { display: flex; align-items: center; gap: 8px; }
+.conv-settings-input {
+  flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text);
+}
+.conv-settings-input:disabled { opacity: .6; cursor: not-allowed; }
+.conv-settings-toggle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+.conv-settings-toggle-row input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
+.conv-settings-hint { font-size: 12px; color: var(--text-muted); line-height: 1.45; margin-top: 6px; }
+
+/* gc-settings-notif: 프로필>계정>알림 — 토글 행 + 데스크톱 권한 상태. */
+.profile-toggle-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 0; cursor: pointer;
+}
+.profile-toggle-row input { width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; cursor: pointer; accent-color: var(--primary); }
+.profile-toggle-row input:disabled { cursor: not-allowed; }
+.profile-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
+.profile-toggle-text .helper-text { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
+.profile-notify-perm { margin-top: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.profile-notify-perm .btn-secondary { font-size: 12px; padding: 5px 10px; }
 
 /* TASK-0158: 첨부 scopeAll 토글 (attach 사이드패널) */
 .attach-scope-all {

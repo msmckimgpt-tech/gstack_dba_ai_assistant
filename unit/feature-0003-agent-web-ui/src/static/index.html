@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260624-notify-nobracket" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260624-settings-notif" />
 </head>
 <body>
 
@@ -350,11 +350,11 @@
     <div class="step-side-panel-body" id="stepSidePanelBody" aria-live="polite"></div>
   </aside>
 
-  <!-- ─── Profile Drawer (탭: 프롬프트 / 보안 및 계정) ──────────────
-       feature-0007 (REQ-20260521-0001): "API Vault" 탭 제거. LLM 자격증명은
-       서비스 단일 env (BEDROCK_GATEWAY_API_KEY) 가 보유하며 사용자는 별도 키
-       입력 없이 즉시 사용한다. TASK-0105: 내 감사 로그 탭도 일반 사용자 비노출
-       정책으로 제거됨 → 2 탭만 [프롬프트, 보안 및 계정].
+  <!-- ─── Profile Drawer ───────────────────────────────────────────
+       gc-settings-notif UI 정리: 탭 순서 [릴리즈 노트 · 프롬프트 · 계정]. '보안 및 계정' →
+       '계정' 으로 개명하며 기존 '사용 내역'(usage) 탭과 알림 환경설정을 이 탭으로 병합.
+       (feature-0007 REQ-20260521-0001: "API Vault" 탭 제거 — LLM 자격증명은 서비스 단일 env
+       BEDROCK_GATEWAY_API_KEY 보유, 사용자 입력 불필요. TASK-0105: 내 감사 로그 탭 비노출 제거.)
   -->
   <div class="drawer-bg hidden" id="profileBackdrop"></div>
   <aside class="drawer hidden" id="profileDrawer">
@@ -383,44 +383,16 @@
     </div>
 
     <div class="drawer-tabs">
-      <button type="button" class="drawer-tab is-active" data-profile-tab="prompt">프롬프트</button>
-      <!-- TASK-0184: 내 사용 내역 (본인 LLM 사용량 간소 차트). 모든 로그인 사용자에 노출. -->
-      <button type="button" class="drawer-tab" data-profile-tab="usage">사용 내역</button>
-      <button type="button" class="drawer-tab" data-profile-tab="security-and-account">보안 및 계정</button>
-      <!-- 릴리즈 노트: 모든 로그인 사용자에게 노출. 콘텐츠는 release-notes-data.js(정적 큐레이션). -->
+      <!-- gc-settings-notif: 릴리즈 노트를 최좌측으로 이동(모든 로그인 사용자 노출, 콘텐츠는 release-notes-data.js). -->
       <button type="button" class="drawer-tab" data-profile-tab="release-notes">릴리즈 노트</button>
+      <button type="button" class="drawer-tab is-active" data-profile-tab="prompt">프롬프트</button>
+      <!-- gc-settings-notif: '보안 및 계정' → '계정'. 사용 내역(TASK-0184) + 알림 환경설정을 이 탭으로 병합.
+           탭 키(data-profile-tab)는 switchProfileTab 디스패치/패널 매칭 호환을 위해 security-and-account 유지. -->
+      <button type="button" class="drawer-tab" data-profile-tab="security-and-account">계정</button>
     </div>
 
-    <!-- TASK-0184: 내 사용 내역 — 본인 LLM 토큰/모델/요청 (GET /api/profile/usage). 간소판(추정 비용 비노출).
-         TASK-0158 의 '내 활동 기록' 탭은 의도치 않은 노출이라 제거됨(엔드포인트는 호출처 없이 잔존). -->
-    <div class="drawer-pane hidden" data-profile-pane="usage">
-      <div class="profile-usage-head">
-        <div class="profile-section-title">내 사용 내역</div>
-        <div class="profile-usage-controls">
-          <!-- 집계 단위 (시간별/일별/월별) — 백엔드 /api/profile/usage 의 gran 파라미터(hour/day/month) -->
-          <select id="profileUsageGran" class="btn-secondary profile-usage-days" aria-label="집계 단위">
-            <option value="hour">시간별</option>
-            <option value="day" selected>일별</option>
-            <option value="month">월별</option>
-          </select>
-          <select id="profileUsageDays" class="btn-secondary profile-usage-days" aria-label="기간">
-            <option value="7">최근 7일</option>
-            <option value="30" selected>최근 30일</option>
-            <option value="90">최근 90일</option>
-          </select>
-        </div>
-      </div>
-      <div id="profileUsageSummary" class="profile-usage-summary"></div>
-      <div class="profile-usage-card">
-        <div class="profile-usage-h"><span id="profileUsageTrendTitle">일별</span> 토큰 사용량 <span class="profile-usage-caption">· 모델별 누적</span></div>
-        <div id="profileUsageDayChart" class="profile-usage-chart"></div>
-      </div>
-      <div class="profile-usage-card">
-        <div class="profile-usage-h">모델별 비중</div>
-        <div id="profileUsageModelChart" class="profile-usage-chart"></div>
-      </div>
-    </div><!-- /usage -->
-
+    <!-- gc-settings-notif: '계정' 탭(키 security-and-account). 활동 → 알림 → 사용 내역 → 비밀번호 → 2FA → 로그아웃.
+         기존 별도 '사용 내역'(usage) 탭/패널을 이 탭으로 병합(차트 id 동일, loadProfileUsage 무변경). -->
     <div class="drawer-pane hidden" data-profile-pane="security-and-account">
 
       <div class="profile-section">
@@ -430,6 +402,51 @@
           <dt>최근 로그인</dt><dd id="profileLastLogin">—</dd>
           <dt>권한 부여</dt><dd id="profileApprovedAt">—</dd>
         </dl>
+      </div>
+
+      <!-- gc-settings-notif: 알림 환경설정 — 멘션 알림 마스터 + 데스크톱(OS) 알림 + 권한 상태/요청.
+           상태·권한 렌더는 renderNotifyPrefs(), 저장은 localStorage(getNotifyPrefs/setNotifyPrefs). -->
+      <div class="profile-section" id="profileNotifySection">
+        <div class="profile-section-title">알림</div>
+        <label class="profile-toggle-row">
+          <input type="checkbox" id="notifyMentionsChk" />
+          <span class="profile-toggle-text">멘션 알림 받기<span class="helper-text">대화에서 나를 멘션하면 알림(토스트·데스크톱)을 표시합니다.</span></span>
+        </label>
+        <label class="profile-toggle-row">
+          <input type="checkbox" id="notifyDesktopChk" />
+          <span class="profile-toggle-text">데스크톱 알림<span class="helper-text">브라우저 OS 알림으로도 표시합니다(브라우저 권한 필요).</span></span>
+        </label>
+        <div class="profile-notify-perm helper-text" id="profileNotifyPerm" aria-live="polite"></div>
+      </div>
+
+      <!-- TASK-0184: 내 사용 내역 — 본인 LLM 토큰/모델/요청 (GET /api/profile/usage). 간소판(추정 비용 비노출).
+           gc-settings-notif: 별도 '사용 내역' 탭에서 '계정' 탭으로 병합(차트/컨트롤 id 동일 — loadProfileUsage 무변경). -->
+      <div class="profile-section">
+        <div class="profile-usage-head">
+          <div class="profile-section-title">사용 내역</div>
+          <div class="profile-usage-controls">
+            <!-- 집계 단위 (시간별/일별/월별) — 백엔드 /api/profile/usage 의 gran 파라미터(hour/day/month) -->
+            <select id="profileUsageGran" class="btn-secondary profile-usage-days" aria-label="집계 단위">
+              <option value="hour">시간별</option>
+              <option value="day" selected>일별</option>
+              <option value="month">월별</option>
+            </select>
+            <select id="profileUsageDays" class="btn-secondary profile-usage-days" aria-label="기간">
+              <option value="7">최근 7일</option>
+              <option value="30" selected>최근 30일</option>
+              <option value="90">최근 90일</option>
+            </select>
+          </div>
+        </div>
+        <div id="profileUsageSummary" class="profile-usage-summary"></div>
+        <div class="profile-usage-card">
+          <div class="profile-usage-h"><span id="profileUsageTrendTitle">일별</span> 토큰 사용량 <span class="profile-usage-caption">· 모델별 누적</span></div>
+          <div id="profileUsageDayChart" class="profile-usage-chart"></div>
+        </div>
+        <div class="profile-usage-card">
+          <div class="profile-usage-h">모델별 비중</div>
+          <div id="profileUsageModelChart" class="profile-usage-chart"></div>
+        </div>
       </div>
 
       <div class="profile-section">
@@ -546,7 +563,7 @@
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/mentions.js?v=20260619-group-conversation"></script>
-  <script src="/static/app.js?v=20260624-notify-nobracket"></script>
+  <script src="/static/app.js?v=20260624-settings-notif"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 관리 콘솔과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260623-rn-0623"></script>

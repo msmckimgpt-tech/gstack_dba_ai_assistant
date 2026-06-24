@@ -72,6 +72,7 @@ source_of_truth: true
   - [x] 그룹대화 authz·라우팅·식별 4종(gc-group-authz-flag, CHG-0018/REV-0020): #1 보관·제목변경 owner-only 2차 게이트(IDOR 누수 차단) · #2 owner 멤버십 보장+`/api/ask` 그룹비멘션 422 서버방어(공유 직후 assistant 오호출 해소) · #3 사이드바 그룹 배지(isGroupConversation) · #4 영구 플래그 `is_group`(alembic 0016, 공유 링크 생성 즉시 그룹 전환). **PB-0008 실측 PASS**. ★배포 alembic 0016 필수.
   - [x] 공유 직후 메시지 사람채팅 전환(gc-share-group-sync, CHG-0019/REV-0021): 공유 후 클라 is_group stale 로 비멘션 메시지가 assistant 오호출→422 block 되던 이슈 — ① 공유 시 로컬 is_group 즉시 전환 + loadConversations, ② 422 graceful store-only 재라우팅(메시지 유실 없음). 프론트 전용. **PB-0008 실측 PASS**(block 없이 채팅 전송).
   - [x] Windows 알림 본문 발신자 대괄호 제거(gc-notify-sender-nobracket, CHG-0020/REV-0022): "[보낸사용자] : …" → "보낸사용자 : …"(사용자 요청). 1줄 문자열, 로직 무변경. **PB-0008 실측 PASS**.
+  - [x] 설정/알림 UI 정리(gc-settings-notif, CHG-0021/REV-0023): 알림 동작 사용자 제어(프로필>계정>알림 멘션 마스터+데스크톱 토글·권한, 대화 ···>설정 음소거 — 클라이언트 localStorage, `_notifyMentions` 게이트) + UI 정리(대화 ··· 메뉴 [공유(생성+관리 통합)·설정(제목변경+음소거)·보관], 복사·공유 관리·제목 변경 통합/제거 / 프로필 탭 [릴리즈 노트 최좌측·프롬프트·계정], '보안 및 계정'→'계정'+사용 내역 병합). 전부 프론트, 캐시버스터 settings-notif. **PB-0008 실측 PASS**(17 step).
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연
