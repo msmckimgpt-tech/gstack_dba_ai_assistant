@@ -52,7 +52,15 @@ sources: [<정본경로>...]          # 참조 문서
 - unit/<feature>/docs/* 는 (feature_id, doc_type) 쌍으로 정본 유일성이 이미 결정됨 → domain 부여 불요.
 - wiki/* 는 전역 `source_of_truth: false` (예외: wiki/Log.md = wiki 자체 ledger).
 
-## 미해소 (P1~P5 에서 정리)
-- STATUS.md 가 아직 현황을 셀에 누적(290KB) — P1 에서 인덱스화.
-- wiki 의 `source_of_truth: true` 는 `wiki/Log.md`(자체 ledger, 정당) 1건뿐 — `bin/ssot-lint.sh --check wiki-sot` 로 확인. (적대 리뷰가 지목한 ADR-0005/Module-Map 은 실제 `sot:false`로 이미 정합 — P4 는 신규 카드의 sot:false 일관성 유지 + mirrors 백필에 집중.)
-- 🔴 tracked secret 백업 3건 — P3(rotation 선행).
+## In-flight worktree 현황 흡수 (Phase 2)
+- **정책**: 미머지 worktree 의 작업 현황 정본 = 그 worktree 의 `unit/<feature>/docs/{TASK,REPORT}.md`.
+  STATUS.md 인덱스는 **main 머지 기준** 상태를 반영하고, 미머지 활성 worktree 는 표 아래 note 로만 표기(예: feature-0010).
+  머지 시 STATUS 행이 갱신된다. STATUS 인덱스는 셀 누적이 없어 worktree 머지 시 conflict 표면이 작다(인덱스화의 부수 효과).
+- **현 상태(2026-06-24)**: 충돌 위험 0 — 현행 worktree(feature-0002, gc-share-group-sync)는 `ahead=0`(작업 main 머지 완료). 미머지 in-flight 작업 없음.
+- **stale leftover**(attach-cutover / conn-health / task0232 — 258~417 commit behind, 06-12~15 방치, ahead 0~1): 흡수 대상 아님 → 운영 잔재 정리에서 `bin/cycle-finalize.sh` 또는 `git worktree remove` 대상.
+
+## 미해소 (잔여 Phase)
+- 🔴 tracked secret 백업 3건 — **P3 rotation(사용자) 선행 후** repo 위생. 런북: `docs/improvements/ssot-consolidation/SECRET-ROTATION-RUNBOOK.md`.
+- 거버넌스 포인터화(CONVENTIONS §3.1·§7 ↔ AGENTS §3.1 중복 흡수) — **P1c** (정책문서 → §18.8.1 codex 검토).
+- wiki mirrors/sources frontmatter 백필 + 동기화 메커니즘 — **P4** (sot:false 일관성은 이미 양호, lint 확인).
+- 제품 코드 재배치(shared dedup·feature-0009 cross-cut·Dockerfile) — **P5** (import 그래프 실측 + 결정 #4/#5 선행).

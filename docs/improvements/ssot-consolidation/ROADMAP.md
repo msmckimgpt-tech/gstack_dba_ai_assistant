@@ -73,7 +73,7 @@ P1 ──▶ P5(코드 재배치+검증) [import 그래프 실측 선행]
 - **gate**: ssot-lint(도메인당 SOT 1) + 링크 무결성 + STATUS<30KB + check #9 + in-flight TASK 'active' 링크 정확
 
 ### ITEM-P2 · 활성 worktree 정본 흡수 + in-flight TASK 마이그레이션
-- **status**: pending
+- **status**: done (정책 명문화 — DOC_REGISTRY "In-flight worktree 현황 흡수". 현 충돌 위험 0: 현행 worktree ahead=0, stale leftover 는 정리 대상)
 - **risk_grade**: Major
 - **depends_on**: [ITEM-P1]
 - **작업**: 활성 worktree(attach-cutover/conn-health/feature-0002/feature-0010/task0234) 미머지 TASK 를 STATUS 인덱스가 'active' 링크로 표기; STATUS 재작성 vs doc-sync rollup 동시편집 충돌 방지(동결창/머지순서); 흡수 마이그레이션 가이드.

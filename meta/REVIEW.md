@@ -131,3 +131,12 @@
 - **노출 분류 (값 비노출)**: `.env.bak-task0211/0279` = MySQL/PG/admin/LLM/MSSQL 자격증명, `.env.secret.bak-task0228` = `AGENT_DATASOURCE_KEK_V1`. `.env.secret` 본체·MinIO 비밀값은 추적 안 됨(무해). origin = 외부 GitHub.
 - **AI 자율 비실행 근거**: ① 라이브 데이터 보호 자격증명(오조작=DB 잠김) ② KEK = re-encryption 마이그레이션(값만 교체 시 데이터소스 cred 전소실) ③ 외부 계정(MSSQL/AWS/GitHub). → 런북으로 turnkey 화, 실행은 eyes-on.
 - **Human Approval Needed**: rotation 실행은 사용자(또는 feature-owner cycle, KEK re-wrap). 본 commit(런북 문서)은 비파괴 prep.
+
+## REV-20260624T013734-META-0003-ssot-consolidation [SKIPPED:additive-meta-docs]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 2** (in-flight worktree 현황 흡수 정책 명문화)
+- **changeset (pure-meta)**: `docs/DOC_REGISTRY.md`("In-flight worktree 현황 흡수" 정책 + 미해소 잔여 갱신) · `docs/improvements/ssot-consolidation/ROADMAP.md`(ITEM-P2 status→done) · `meta/REVIEW.md` 본 entry
+- **조사 결과(실측)**: `git worktree list` + ahead/behind 측정 — 현행 worktree(feature-0002, gc-share-group-sync, 06-24)는 **ahead=0**(작업 main 머지 완료) → 미머지 in-flight 작업 0, STATUS 인덱스화와 **충돌 위험 0**. stale leftover 3개(attach-cutover/conn-health/task0232, 258~417 behind, 06-12~15 방치)는 흡수 대상 아닌 정리 대상.
+- **정책**: 미머지 worktree 현황 정본 = 그 worktree 의 unit TASK/REPORT; STATUS 인덱스는 main 머지 기준 + 미머지는 note 표기; 머지 시 행 갱신. (적대 리뷰 #11 의 "in-flight 마이그레이션 규칙 부재" 해소)
+- **panel SKIP 사유**: 비파괴 additive 정책 문서. 코드/secret 무변경. 흡수할 실제 in-flight 작업이 없음(ahead=0)을 실측 확인.
+- **Human Approval Needed**: 아니오 (정책 명문화). stale worktree 정리(`worktree remove`)는 운영 잔재 정리 시 별도 수행.
