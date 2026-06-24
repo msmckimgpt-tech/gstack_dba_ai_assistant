@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.34.1
+template_version: v3.35.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -168,6 +168,20 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 
 - `REPORT.md`에 "총 변경 횟수: N, 최근 변경 요약" 형태의 압축 정보를 유지한다.
 
+### §5.6 거버넌스 문서 hygiene (분량·staleness)
+
+append-only / 현재상태 문서가 무한 성장하면 §10.1 priming read-set 의 signal-to-noise 가
+떨어지고, AI 가 stale·과대 문서를 읽느라 현행 작업을 놓친다 (실측: STATUS/DECISIONS/LEARNINGS
+가 수십~수백 KB 로 누적된 소비자에서 "작업이 정립되지 못함" 보고). 다음 hygiene 를 적용한다:
+
+- **분량 임계**: 단일 거버넌스 문서가 **~50KB 또는 ~400줄** (또는 단일 셀/라인 4KB+) 를
+  초과하면 통합·아카이빙 플래그를 세운다 (§5.5 아카이빙 + §10.3 ARCHIVED 물리 이탈 규약 연동).
+  임계는 도메인별로 조정 가능하나, "읽으면 현행 판단을 흐리는 분량" 을 넘으면 작업으로 본다.
+- **staleness**: 현재상태 문서(§5.1)가 실제 코드/작업과 어긋나면 (예: 완료된 작업을 "진행 중"
+  으로 기술) 같은 cycle 에서 rewrite 한다 — stale 현재상태 문서는 ARCHIVED 라벨 없이도 AI 를
+  완료작업 재구현으로 오도한다.
+- hygiene 위반 발견 시 별도 사용자 요청을 기다리지 않고 SSOT 통합·아카이빙을 작업 항목으로 제안한다.
+
 ## §6. 추적성 규칙
 
 가능하면 아래 식별자를 사용한다.
@@ -325,6 +339,14 @@ skip.
 - 다른 기능의 문서
 - 아카이브 파일 (`_archive/`)
 - `/repo/docs/DECISIONS.md` (결정 확인 필요 시에만)
+
+**불변식 — ARCHIVED 라벨 ⇒ 물리적 read-path 이탈 (MUST)**: 문서 헤더가 `ARCHIVED` /
+`superseded` / `deprecated` 를 선언하면, **같은 변경에서** 그 파일을 `_archive/` 로 이전
+(또는 `.aiignore` 에 등재)해 §10.1 필수 읽기(priming read-set)에서 물리적으로 빠지게 한다.
+라벨만 붙이고 파일을 repo 루트·active 디렉토리에 남기는 것은 **위반**이다 — ARCHIVED 인데
+read-path 에 남은 문서(예: 루트의 `GOAL.md`)는 AI 가 priming 단계에서 읽어 **이미 완료된
+작업을 재구현**하게 만든다 (실측 마찰). 라벨(논리적 폐기)과 위치(물리적 read-path)의 정합을
+한 불변식으로 보장한다. (§5.5 아카이빙 절차 + §5.6 hygiene 와 연동.)
 
 ### §10.4 컨텍스트 제외 (.aiignore)
 
@@ -546,6 +568,11 @@ confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-appr
 | **Critical** | 인증/인가, 파괴적 데이터, 개인정보 | 반드시 사람 승인 |
 | **Major** | 외부 비용, 롤백 어려운 마이그레이션, 보안 저하 | 사전 승인 없으면 사람 승인 |
 | **Minor** | 비파괴적 스키마 추가, 내부 API 변경 | AI 자율 진행 + `REVIEW.md` 기록 |
+
+> **2차-효과 비용 주의 (v3.35.0)**: 위 "외부 비용 = Major" 는 **1차 diff 가 양성으로 보여도**
+> 적용된다. 특히 **cache-key/fingerprint/hash 계산을 바꾸는 변경**은 1차 diff(예: 문자열 정규화)는
+> 작지만, 그로 인해 무효화되는 캐시·파생 산출물의 재생성이 큰 외부 비용을 유발한다. 배포 전 §16.3
+> 의 blast-radius 사전측정 게이트로 무효화 규모를 추정해 Major 격상 여부를 판정한다.
 
 ## §13. 다중 AI 협업
 
@@ -1390,6 +1417,15 @@ bash bin/cycle-finalize.sh --pr <PR-NUMBER> \
 `--dry-run` 으로 사전 검증 후 실제 호출. idempotent (이미 머지된 PR / 이미
 삭제된 worktree 호출 시 step 별 skip).
 
+> **실행 위치 (v3.35.0)**: cycle-finalize 는 **finalize 대상 worktree 안에서 실행**하도록
+> 설계됐다 (Step 6.3 가 자기 worktree 내부면 자동으로 main 으로 cd 후 remove). 제거 대상
+> worktree 를 cwd 로 둘 수 없다는 이유로 **main 에서 실행하면 `self == main` 판정 →
+> worktree/branch 정리가 skip** 되어 머지된 feature worktree 가 stale 로 남는다. main 에서
+> named worktree 를 정리하려면 `--target-worktree <path>` (또는 `--branch <name>`) 로 대상을
+> **명시**한다 — 이 때 SELF 대신 그 worktree 를 정리 대상으로 삼는다 (target ≠ main 가드·clean
+> 검증 유지). 대상 미지정 + `self == main` 이면 silent skip 대신 actionable 경고를 출력한다
+> (leftover 누적 차단).
+
 #### SPOF 대응 (bypass 금지)
 
 `verify-completion.sh`는 모든 commit의 gate이며 bypass 경로를 제공하지 않는다
@@ -1402,6 +1438,26 @@ worktree 환경에서는 main worktree stale 위험이 추가되며, 이에 대�
 **Normative source: §13.2.5 (Manual Parallel AI Worktree Isolation Addendum)** 에
 정의된다. ai/* PR 머지 후 main worktree 에서의 일회성 `git fetch && git pull
 --ff-only` 권유 및 fetch 실패 처리 (WARN + 계속) 룰은 그곳을 참조한다.
+
+#### 캐시-키/fingerprint 변경의 blast-radius 사전측정 (v3.35.0)
+
+**적용 대상**: cache-key / fingerprint / content-hash 계산식을 바꾸는 변경 (예: 정규화 규칙 추가,
+해시 입력 필드 변경, 직렬화 포맷 변경). dev/staging 분리가 없는 **라이브=운영** 소비자에 특히 중요하다.
+
+**원칙**: 1차 diff 가 양성(예: casefold 정규화)으로 보여 §12.3 Major("외부 비용") 게이트가
+트리거되지 않더라도, **fingerprint 가 바뀌면 그 키에 묶인 모든 캐시·파생 산출물이 무효화**되어
+대량 재생성으로 번질 수 있다 (실측: 정규화 1건 배포 → 도달가능 ~1,979 테이블 전수 LLM 재생성
+~2,000 호출 폭주). 따라서 이런 변경을 **라이브에 적용하기 전** 다음을 수행한다:
+
+1. **무효화 규모 추정**: 바뀐 fingerprint 로 무효화될 캐시/파생 산출물 수를 추정한다
+   (예: 영향 테이블·문서·임베딩 수).
+2. **재생성 단가 곱산**: 추정 수 × 산출물당 재생성 비용(LLM 호출·외부 API·연산)으로 예상 외부
+   비용을 산출한다.
+3. **임계 판정**: 예상 외부 비용이 임계를 초과하면 **Major 로 격상**(§12.3) — 사람 승인 후 배포.
+   임계 이하면 자율 진행하되 추정치를 `REVIEW.md` 에 기록한다.
+
+이 게이트는 §22.6 spawn blast-radius·§13.2.9 deploy-stage isolation 과 보완 관계다 — 그것들은
+fan-out 규모·배포 단계를 다루고, 본 게이트는 **변경 자체의 2차 무효화 비용**을 다룬다.
 
 #### deploy-backed 소비자 완료 기준 (v3.28.0)
 
@@ -2769,6 +2825,14 @@ const merged = await agent(`다음 수집 결과를 구조화: ${raw.filter(Bool
                            {schema: FLAT_SCHEMA})                            // 단일·flat
 ```
 
+**harness bound — schema 검증실패 ≤5회 abort (v2.1.186+)**: `agent(prompt, {schema})` /
+`Agent({schema})` subagent 는 StructuredOutput 검증에 **무한히** 매달리지 않는다 — v2.1.186+
+부터 검증실패가 **5회에 도달하면 abort** 한다. 따라서 실패 agent 는 *bounded 비용*(≤5 시도) 후
+종료하고 `null` 을 반환한다. 이는 위 "부분 실패 내성" 가이드와 정합한다: 실패는 무한루프가 아니라
+bounded-then-null 이므로, `.filter(Boolean)` 로 거른 뒤 **거른 개수를 반드시 카운팅**해야 전멸을
+"전부 성공" 으로 오인하지 않는다. 운영자 mental model 을 "무한루프 우려" → "≤5회 abort 후 null"
+로 정정하되, text-first·schema 단순화 경감 패턴은 (여전히 비용·품질상 우선이므로) 유지한다.
+
 #### §22.3.2 Subagent lifecycle — quota 만료/세션 종료 시 비재개 원칙
 
 Subagent(및 workflow 가 spawn 한 agent)는 **부모 세션에 종속된 비영속 프로세스**다.
@@ -3217,3 +3281,58 @@ resolve 될 수 있다. worktree cwd 에서 호출한 스킬이 의도와 다른
   SENTINEL 이 실행을 차단한다 — nested resolution 우선순위에 격리를 의존하지 않는다. 신규 `.claude/`
   배치 시 maintainer-only 명령명과 충돌하지 않는지 확인한다.
 - 충돌이 의심되면 listing 의 `<dir>:<name>` 표기로 어떤 디렉토리 정의가 우선됐는지 확인한다.
+
+### §22.12 headless / cron 자기위임 recipe (v3.35.0)
+
+본 템플릿의 핵심 use case 는 **AI 위임 개발**이며, 소비자가 자체 스케줄(cron)로 스킬을 자기위임
+실행하는 것(이 인프라의 `scheduled-inspection/run.sh` 와 동형)은 일급 패턴이다. headless/cron 호출의
+보편 제약을 매번 경험적으로 재발견하지 않도록 아래를 정본으로 둔다.
+
+**1. `--dangerously-skip-permissions` 는 root/sudo 로 실행 거부 (하드 제약)**
+
+`claude --dangerously-skip-permissions` 는 **root 또는 sudo 권한으로는 실행을 거부**한다
+(verbatim: `--dangerously-skip-permissions cannot be used with root/sudo privileges for security
+reasons`). 따라서 cron 에서 `sudo claude …` (claude 프로세스를 root 로) 형태는 불가하다. 대안:
+
+- claude 프로세스는 **비-root 소유자**로 실행한다 (cron 라인을 해당 user 의 crontab 에 둔다).
+- 권한이 필요한 작업(예: root-소유 디렉토리 정리)은 claude 프로세스 *내부*에서 **scoped NOPASSWD
+  sudo** 로 한정 호출한다 — 프로세스 전체를 root 로 올리지 않는다. sudoers 는 **특정 바이너리/래퍼
+  스크립트로 좁혀** 등재한다 (예: `NOPASSWD: /path/to/cleanup-worktrees`). `NOPASSWD: ALL` 이나
+  무제한 `rm` 은 비-root 프로세스를 사실상 root-동등으로 만들어 격리를 무력화한다 — 금지.
+- 권한 우회가 꼭 필요 없으면 `--dangerously-skip-permissions` 대신 **`--allowed-tools` 화이트
+  리스트**로 최소 권한을 부여한다 (reference 구현: `scheduled-inspection/run.sh` — skip-permissions
+  미사용 + `--allowed-tools Bash Edit Write Read …`).
+
+**2. headless invocation — `--print --effort <tier>`**
+
+비대화 실행은 `claude --print`(non-interactive) 로 한다. 입력은 stdin 파이프 또는 프롬프트 파일.
+reasoning 깊이는 `--effort <low|medium|high|max>` 로 전달한다.
+
+```bash
+cat prompt.md | claude --print --effort max --allowed-tools Bash Edit Read >out.log 2>err.log
+```
+
+**3. cron clean-env hygiene**
+
+cron 은 로그인 셸이 아니라 최소 환경에서 돈다. 자기위임 실행 전 다음을 주입/확인한다:
+
+- **git identity**: `git config user.name/user.email` (commit 산출 시) — clean env 엔 없을 수 있다.
+- **TZ**: 타임존 (예: `TZ=Asia/Seoul`) — 리포트/로그 timestamp 정합.
+- **per-user credentials**: claude 인증(`~/.claude` / credentials.json)이 실행 user 소유로 존재하고
+  **소유자 전용 권한(`chmod 600`)** 이어야 한다 — world-readable 이면 토큰이 누출된다. cron job 은 그
+  자격증명의 **소유 user 로 실행**한다; 읽기 실패를 권한 완화(world-read)로 우회하지 않는다.
+- **flock**: 중복 실행 방지 (`flock -n <lockfile> -c '<cmd>'`) — cron 간격보다 작업이 길어질 때.
+
+**4. `.worktrees/` root-소유 orphan 정리**
+
+worktree 디렉토리가 root 소유로 생성되면(예: root 컨텍스트에서 cycle-init), 비-root 세션이
+`git worktree remove` 시 물리 디렉토리 삭제가 `Permission denied` 로 실패한다. 권장:
+
+- worktree 는 **실행 세션 소유자**로 생성·정리한다 (소유자 일관).
+- 이미 root-소유 orphan 이 생겼으면 **우선 `cycle-finalize.sh --target-worktree <path>` 로 대상을
+  명시해 main 에서 정리**한다 (§16.3 Step 6 참조). sudo 가 불가피하면 위 §1 의 scoped NOPASSWD
+  (특정 정리 래퍼 한정)로만 호출한다.
+
+**범위 밖 (비-actionable)**: 모델-tier 강제(예: ultracode 기본화)는 harness/모델 설정이지 코드
+템플릿이 강제할 수 있는 대상이 아니다. 본 recipe 는 **CLI/env 보편 사실의 문서화**에 한정하고,
+어떤 effort/모델로 돌릴지는 소비자 정책에 위임한다.
