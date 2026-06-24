@@ -2,7 +2,7 @@
 
 본 파일은 Codex CLI 호환을 위한 shim 입니다. **정본은** [`.claude/commands/_template/resume.md`](../../../.claude/commands/_template/resume.md).
 
-Codex CLI 의 `/_template:resume <대상>` 호출 시 정본의 Phase 1~7 workflow(세션·worktree 추적 → 중단 지점 복원 → 거버넌스 게이트 따라 재개·완수)를 따릅니다. 인자가 비면 `/root/.claude` 최근 세션을 순서대로 제시(read-only).
+Codex CLI 의 `/_template:resume <대상>` 호출 시 정본의 Phase 1~7 workflow(세션·worktree 추적 → 중단 지점 복원 → 거버넌스 게이트 따라 재개·완수)를 따릅니다. 인자가 비면 `/root/.claude`·`/home/claude-corp/.claude` 최근 세션을 순서대로 제시(read-only).
 
 ## 호출
 

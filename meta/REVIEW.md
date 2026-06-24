@@ -2,6 +2,15 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260624T115856-resume-claude-corp-root [SKIPPED:additive-meta-tooling]
+
+- **cycle**: META-0006-resume-claude-corp-root — `/_template:resume` 가 스캔하는 세션 루트에 `/home/claude-corp/.claude` 추가
+- **changeset (pure-meta)**:
+  - `.claude/commands/_template` gitlink a08bf56→ff723fe (personas PR#4) — 정본 `resume.md`: no-arg 목록·arg-given 키워드 추적·Phase 1 slug surface·Phase 3A·3B bash·권한 서술을 두 Claude home 루트(`/root/.claude`, `/home/claude-corp/.claude`) 합산으로 확장(brace-expansion `{/root,/home/claude-corp}`)
+  - `.codex/commands/_template/resume.md` (Codex shim) — no-arg 설명 동기화
+- **panel skipped 사유 (§18.4 additive meta-tooling carve-out)**: 스킬 문서에 2번째 세션 루트 경로를 additive 추가. 신규 판단 로직·production 동작 0, 없는 루트는 `2>/dev/null` 로 무해(project-agnostic 유지). 비파괴·additive·meta-class 라 독립 패널 불요.
+- **note**: 실측상 본 소비자 프로젝트 세션이 `/home/claude-corp/.claude/projects/` 에 저장돼 있어 기존 단일 루트(`/root/.claude`) 스캔이 통째로 누락하던 것을 교정. `.codex/skills/_template-resume/SKILL.md` 는 경로 미언급(정본 위임)이라 변경 불요.
+
 ## REV-20260619T024257-dqa-skill-suite [SUBAGENT:dqa-skill-design-review]
 
 - **cycle**: ai/claude/dqa-skill-suite — `/_dqa` 개선 파이프라인 스킬 3종 + 부속 구조 신설
