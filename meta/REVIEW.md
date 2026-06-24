@@ -122,3 +122,12 @@
 - **panel SKIP 사유**: 비파괴 — 전문 verbatim 보존(`cmp -s` IDENTICAL, rollup 159줄 유지)으로 **정보 손실 0**. STATUS 는 정책문서(AGENTS/CONVENTIONS/SECURITY) 아님(§18.8.1 경량 대상). 신규 production 동작 0. 정본 위계는 ADR-0031 + DOC_REGISTRY 가 정의.
 - **verification**: STATUS.md 4,682 bytes(<30KB 성공기준 충족). 내부 링크 6개(unit TASK ×9, STATUS_ARCHIVE, DOC_REGISTRY, DECISIONS, ARCHITECTURE) 전부 타깃 존재 확인. ssot-lint archived 0건(STATUS_ARCHIVE 가 docs/archive/ 내 → skip), secret 3건 잔존(P3). feature-0009 cross-cut·feature-0010 worktree 미병합 명시.
 - **Human Approval Needed**: 아니오 (사용자 plan-review + 미결정 #2 승인 완료, verbatim 보존으로 비가역성 없음). 원복 = git revert(미머지).
+
+## REV-20260624T013056-META-0003-ssot-consolidation [SKIPPED:additive-meta-docs]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 3 prep** (secret 노출 종료 turnkey 런북)
+- **changeset (pure-meta)**: `docs/improvements/ssot-consolidation/SECRET-ROTATION-RUNBOOK.md` 신규 + `meta/REVIEW.md` 본 entry
+- **panel SKIP 사유**: 비파괴 additive 문서(런북). 코드/secret/config 무변경 — 실제 rotation 은 사용자/feature-owner cycle 이 수행. 노출 표면은 값 비노출로 키 이름만 확인(`git show HEAD:<bak> | sed 'KEY 추출'`).
+- **노출 분류 (값 비노출)**: `.env.bak-task0211/0279` = MySQL/PG/admin/LLM/MSSQL 자격증명, `.env.secret.bak-task0228` = `AGENT_DATASOURCE_KEK_V1`. `.env.secret` 본체·MinIO 비밀값은 추적 안 됨(무해). origin = 외부 GitHub.
+- **AI 자율 비실행 근거**: ① 라이브 데이터 보호 자격증명(오조작=DB 잠김) ② KEK = re-encryption 마이그레이션(값만 교체 시 데이터소스 cred 전소실) ③ 외부 계정(MSSQL/AWS/GitHub). → 런북으로 turnkey 화, 실행은 eyes-on.
+- **Human Approval Needed**: rotation 실행은 사용자(또는 feature-owner cycle, KEK re-wrap). 본 commit(런북 문서)은 비파괴 prep.
