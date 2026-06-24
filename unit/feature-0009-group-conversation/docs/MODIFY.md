@@ -253,3 +253,16 @@ source_of_truth: true
 - Impact: 사용자가 멘션 알림(마스터)·데스크톱 알림·대화별 음소거를 직접 제어. 대화 메뉴 간결화(3항목), 공유 생성/관리 1팝업, 프로필 계정 통합. 기본값(둘 다 ON)이라 알림 동작 무회귀. 1:1·멘션·라우팅·공유 발급/그룹전환·owner 게이트 무변경.
 - Rollback Notes: 프론트 3파일 환원 + 캐시버스터 환원으로 가역(스키마/마이그레이션 없음). localStorage 키는 잔존해도 무해(기본값 ON 해석).
 - 검증: `node --check` OK + 적대 패널 3렌즈 **PASS**(블로킹 0 — regression 패널 1건 blocking 은 적대 검증서 기각: can() 이 인자 무시 stub[TASK-0098]이라 진입점 차단 미발생, view-only 분기는 기존 패턴대로 dead; profile-drawer PASS; edge nit 3건[share-mgr-body flex·shareJoinableChk id 격리·saveTitle refresh best-effort] 반영). **PB-0008 실제 Windows Chrome 실측 PASS**: 17 step 전부 ok — 알림 게이팅 {default_on:1,master_off:0,desktop_off:0,muted:0,unmuted:1}, kebab ["공유","설정","보관"], 공유 팝업(생성+목록 통합), 대화 설정(제목+음소거 ["제목","알림"]), 프로필 탭 ["릴리즈 노트","프롬프트","계정"]+알림/사용내역 계정 병합+usage 탭 제거. TEST.md §3 Run 2026-06-24-settings-notif, 스크린샷 artifacts/pb0008-settings-notif/(01_share_dialog/02_conv_settings/03_profile_account).
+
+## CHG-20260624T031337-gc-settings-archive-leave (cross-feature → feature-0003, Minor §12.3)
+- Date: 2026-06-24 (CHG-0022/REV-0024). **frontend only**. 코드/문서 정본=feature-0003-agent-web-ui (`docs/{MODIFY,FUNCTION,REVIEW,TEST}.md`) — 본 항목은 feature-0009 cross-feature 추적.
+- Reason: gc-settings-notif 직후, 대화 ··· 메뉴의 '보관'을 '설정' 팝업으로 이동하고 보관 권한 없는 그룹 참여자에게는 '나가기'를 제공하라는 사용자 요청.
+- 변경(feature-0003 `static/`):
+  - `app.js` `openConversationItemMenu`: '보관'(danger) 항목 제거 → 메뉴 [공유 · 설정].
+  - `app.js` `openConversationSettings`: 하단 '대화 관리'(`.conv-settings-sec-danger`) 섹션. `canDeleteConversation`(대화 보유자/admin `.any`) → '보관'(기존 `deleteConversation`). 아니면서 `isGroupConversation` → '나가기'(신규 `leaveConversation`). 둘 다 아니면 미렌더.
+  - `app.js` 신규 `leaveConversation(cid)`: `DELETE /api/conversations/{cid}/members/{state.user.id}` self-leave(백엔드 `remove_conversation_member` 기존·무변경, `is_self_leave` 게이트) + confirm + 토스트 + `refreshWorkspace("")`.
+  - `styles.css` `.conv-settings-sec-danger`/`.conv-settings-danger-btn`, `index.html` 캐시버스터 `archive-leave`.
+- Why(authz 정합): gc-group-authz-flag 의 보관 owner-only 2차 게이트 때문에 비보유 그룹 멤버에게 '보관'은 항상 거부되는 허울 버튼이었다. 보관을 설정으로 옮기고 비보유 참여자에겐 실제 가능한 self-leave 를 노출. 프론트 게이팅은 cosmetic — archive/leave 모두 backend 가 권한 authoritative 재검증(우회 불가, IDOR 없음=self id only).
+- Impact: 1:1·멘션·라우팅·공유·owner 게이트·backend 무변경. 그룹 비보유 멤버가 처음으로 UI 에서 대화 나가기 가능(backend leave 엔드포인트는 기존, 진입점만 신설).
+- Rollback Notes: feature-0003 app.js/styles.css/index.html revert + 신규 함수·테스트 제거. 스키마/마이그/backend 0.
+- 검증: `node --check` + `verify_settings_archive_leave.mjs` 22/22 + 적대 3렌즈(security/correctness/UX) 결함 0(feature-0003 REVIEW REV-20260624T031337). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).

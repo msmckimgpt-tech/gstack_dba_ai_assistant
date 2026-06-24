@@ -297,6 +297,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-06-24 (TASK-20260624-item11-metadata-glossary-enum — 메타데이터 거버넌스 MVP-1(용어/ENUM CRUD), **Major §12.3 + 보안 경계(신규 RBAC)** — **PB-0008 Windows-browser DEFERRED(배포 후)**):
+  - **Environment: python/node 단위 + 적대 backend+security 리뷰** — 라이브 web 서버 미기동(드레인 cycle)이라 실 Windows 브라우저 검증은 배포 후로 연기. CHECK#13 WARN-only.
+  - **단위 PASS**: `tests/test_metadata_glossary_enum.py` **13/13**(PYTHONPATH=동일 worktree feature-0002/src:feature-0003/src — R1/R2 권한카탈로그·seed·least-priv · G403/E403 8 엔드포인트 권한게이트(코어 미호출) · GC/GU/GD·EC/EU CRUD(404/멱등/audit) · SV scope 400 · IV 입력검증 400 · LST 직렬화). 회귀 sample-feedback 15/15·permission-dependency-map 16/16 무영향. py_compile(app.py·kb_glossary.py)+node --check(admin.js).
+  - **적대 backend+security 리뷰 PASS(SHIP)**: BLOCKER/MAJOR 0 — RBAC(8/8 게이트·코어 미호출·least-priv)·scope 누수/IDOR(`WHERE id+scope_key` 격리·allowlist fail-safe·scope 미재배정)·SQLi(`%s` 전수)·XSS(textContent)·원자성(commit/rollback/close) 전수 안전. MINOR-2(scope 드롭다운 init race) 흡수. MINOR-1(audit cross-DB best-effort) 수용. REV-20260624T130000 상세.
+  - **배포 후 PB-0008 잔여**: web 재빌드·배포 후 실 Windows 브라우저로 — ① kb.ingest.manual 보유 계정에 "메타데이터" 탭 노출(미보유 숨김+서버 403) ② 용어/ENUM 서브탭 전환·scope 드롭다운(활성 ds + 공용) ③ 생성/수정/삭제(confirm) 동작 + 목록 갱신 ④ scope 격리(타 scope 비변경) 실 DB 확인 ⑤ ENUM UNIQUE 충돌 409.
+  - **Pass/Fail: PARTIAL(단위·적대 리뷰 PASS, 라이브 PB-0008 배포 후 잔여)**.
 - 2026-06-24 (TASK-20260624T105228-item08-fix-with-ai — "AI 로 고치기" 표적 재수정, **Major §12.3 + 보안 표면** — **PB-0008 Windows-browser DEFERRED(배포 후)**):
   - **Environment: node/python 단위 + 적대 리뷰** — 라이브 web 서버가 본 dev 셸에 미기동(드레인 cycle, 미배포 worktree)이라 **실 Windows 브라우저 렌더 검증은 배포 후로 연기**. CHECK#13 WARN-only.
   - **단위/로직 검증 PASS**: `tests/test_fix_with_ai.py` **10/10**(PYTHONPATH=feature-0002:feature-0003 — 가드 404/403/429·입력검증 400·정정문 1회 dispatch+원본NL 미전송+audit·**M1 인젝션 봉인 탈출 차단**·내부request 빌더) + M1 순수함수 독립 검증 + `py_compile`(app.py) + `node --check`(app.js) + CSS brace balanced.
@@ -1181,3 +1187,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **검증 기법: 운영자 실 화면 육안 검증** — 제품 상세 '데이터 소스 & 접근 가능 데이터베이스' accordion 각 datasource 행 헤더에 인사이트 탐색 상태 아이콘(켜짐=눈 은은 / 꺼짐=빗금눈 amber 칩)이 표시되고, 기본(primary) 데이터소스가 엔진 배지 색(파랑)으로 구분되며, '기본' 텍스트 배지 제거로 아이콘 위치가 행마다 일정함을 확인. 사전 Artifact 목업(실 CSS·아이콘 렌더)으로 디자인 승인 → 배포 후 실 화면 일치 확인.
   - **Pass/Fail: PASS** — 배포된 시스템에서 인사이트 탐색 상태 표시 + primary 엔진색이 실제 Windows 화면으로 정상 동작함을 운영자 직접 확인. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** frontend only(admin.js·styles.css·admin.html cache-buster), 백엔드/마이그 0(insight_enabled 는 datasources API 기존 필드). OFF(amber) 표시는 insight 탐색이 꺼진 datasource 가 있을 때 노출(현재 mssql-qa-idc 는 TASK-0307 에서 활성화되어 ON 표시).
+
+- 2026-06-24 (feature-0009 cycle `gc-settings-archive-leave` — 대화 ··· 메뉴 '보관' → 설정 팝업 이동 + 그룹 참여자 '나가기', **Minor §12.3**; CHG/REV-20260624T031337 evidence):
+  - **Environment: CLI** (정적 소스 단언 + 적대적 리뷰; frontend-only, layout 비의존). 실렌더/클릭 동작의 최종 확인은 PB-0008(Windows-browser, 배포 후) — 본 변경은 worktree(WSL)에서 작성되어 PB-0008 미실행(메인 세션/배포 후 권장).
+  - **정적**: `node --check static/app.js` PASS + CSS brace 균형 1489=1489.
+  - **신규 jsdom-less 정적 테스트** `tests/verify_settings_archive_leave.mjs` **22/22 PASS**(함수 본문 중괄호 추출 + 문자열 단언):
+    - openConversationItemMenu: '보관' 항목 제거 / '공유'·'설정' 유지.
+    - openConversationSettings: '대화 관리' 섹션 + `canDeleteConversation`/`isGroupConversation` 판정 + `if (canArchive)` 분기 + 보관→`deleteConversation(cid)` / 나가기→`leaveConversation(cid)` + `(canArchive || isGroup)` 가드 + `.conv-settings-sec-danger`.
+    - leaveConversation: `/members/` 엔드포인트 + `method:"DELETE"` + 본인 `state.user.id` + `window.confirm` + `refreshWorkspace`.
+    - styles.css `.conv-settings-sec-danger` 규칙 존재.
+  - **적대적 3-렌즈 리뷰(security/authz·correctness·UX)**: 실질 결함 0건(REVIEW.md REV-20260624T031337). client gate cosmetic(backend authoritative)·IDOR 없음(self id only)·버튼-권한 매핑 정합 확인. 1건 LOW 는 기존 환경의존(`is_group` PG-only, 본 변경 비도입).
+  - **Pass/Fail: PASS**(정적 게이트). 백엔드/스키마/RBAC 무변경 — backend leave/archive 엔드포인트는 기존, 본 변경은 프론트 진입점·UI 재배치만. [SKIPPED:frontend-ui-archive-leave-relocation-no-backend-no-rbac for backend regression; CHECK#13 PB-0008 배포 후 권장].

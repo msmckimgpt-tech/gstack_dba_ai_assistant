@@ -3630,3 +3630,45 @@ source_of_truth: true
 - Cycle: TASK-0308 마감(PB-0008 검증 기록 + 체크박스 닫기), docs-only(TASK.md+TEST.md+MODIFY.md), 코드 0.
 - Panel skip 사유(§18.4): 코드/런타임 변경 없는 cycle-close 문서화. 검증 사실은 **사용자 직접 PB-0008 Windows-browser PASS**(TEST.md §4 기재) — AI 가 배포·서빙·정적검증 수행, 운영자가 실 화면 육안 확인. 새 코드 경로/리스크 0.
 - Cross-ref: CHG-20260624T024500-task0308-pb0008-close / TASK-0308.
+
+## REV-20260624T130000-item11-metadata-glossary-enum [SUBAGENT:impl-selfcheck + adversarial-backend-security] — SHIP (MINOR-2 흡수)
+- Date: 2026-06-24
+- Cycle: TASK-20260624-item11-metadata-glossary-enum (메타데이터 거버넌스 MVP-1 — 용어/ENUM CRUD), **Major §12.3 — 보안 경계(신규 RBAC `kb.ingest.manual` + KB 적재 표면)**. 본 worktree 는 구현+단위검증+self-check 까지; **적대 security 리뷰·verify-completion·머지·배포·PB-0008 = 메인 세션**(PLAN-APPROVED 위임 경계 — commit/push/PR/merge/deploy 금지).
+- Self-check 결과(구현자 자기검증, 적대 아님):
+  - RBAC: 8 엔드포인트 전부 `_metadata_resolve_account`(=`_require_permission(…, "kb.ingest.manual")`)를 코어 호출 **전에** 통과해야 진행. 단위테스트 G403/E403 이 4×2 엔드포인트에서 미보유 → 403 + 코어 미호출(`called["hit"] is False`)을 단언. 신규 권한은 PERMISSION_DEFINITIONS(group kb) + admin seed(set(PERMISSION_CODES)) + `_ensure_seed_roles` catchup(retroactive). operator/sales/pending 미부여(R2).
+  - scope 격리(핵심 위험): admin CRUD 는 **단일 scope** + **by id + scope 가드 SQL**(`WHERE id=%s AND scope_key=%s`) → 타-scope 행 비변경(cross-scope 오작용 차단). 허용 scope = 등록 datasource 키 ∪ common(미허용/빈값 400, SV 테스트). CURRENT_FACT_SCOPE_KEY 미사용(BLOCKER 회피) — 요청 명시 scope_key.
+  - KB poisoning 면: 등록은 명시 권한 + 명시 입력만(자동학습/부트스트랩 없음). 입력 trim+길이 cap(IV 테스트). 삭제 멱등(이미 없음=200, audit 미기록).
+  - cross-DB: CRUD=PG(agent_kb, `_pg_connect`/`_pg_connect_ro`, write autocommit=False+rollback), audit=memory(MySQL, `_connect_memory`) — conn 분리(sample-feedback 동형).
+  - XSS: 프론트 전 경로 textContent/DOM API(createElement/replaceChildren), innerHTML 무사용. scope `<option>`·목록 행·폼 입력 모두 사용자 데이터 escape.
+  - 무결성: py_compile(app.py·kb_glossary.py) + node --check(admin.js) OK. 단위 13/13. 회귀 sample-feedback 15/15·permission-dependency-map 16/16(권한 카탈로그 정합) 무영향.
+- 미해결/위험(정직):
+  - (1) **적대 security 리뷰 미수행** — 본 cycle 은 self-check 만. 신규 RBAC + KB 적재(검색/답변 직접 영향)는 보안 표면이라 메인의 적대 리뷰 필수(권한 우회·scope 누수·인젝션 재확인).
+  - (2) **UI 실렌더 미검증** — PB-0008(Windows-browser) 미수행(배포 후 메인). gstack /browse(WSL headless)도 미수행. 탭 노출/서브탭 전환/scope 드롭다운/CRUD 폼/삭제 confirm 의 실 화면 동작은 PB-0008 에서 확정.
+  - (3) `_metadata_valid_scope_keys` 가 매 mutation 요청마다 `all_datasources(memory conn)` 1회 조회(추가 MySQL 왕복) — 단순/보수적이나 캐시 미적용(저빈도 admin 경로라 수용). datasources 조회 실패 시 common 만 허용 → 정상 datasource scope 가 일시 400 날 수 있음(fail-safe 방향 — 미지 scope 적재 차단 우선).
+  - (4) ENUM update UNIQUE 충돌 409 는 예외 클래스명(`UniqueViolation`/`IntegrityError`) 매칭 — psycopg 버전/래핑에 따라 달라질 수 있어 메인이 실 PG 에서 확인 권장(미스 시 500 으로 떨어지나 데이터 무손상).
+  - (5) Phase 2(테이블/컬럼 설명·describe_table 부트스트랩·샘플 admin) 미구현 — ITEM-11 부분 진행. ROADMAP 갱신은 메인.
+
+### 적대 backend+security 리뷰 결과 (2026-06-24, general-purpose REFUTE) — VERDICT: SHIP
+- **BLOCKER/MAJOR 0.** 핵심 표면 전수 점검 후 결함 미적발 — RBAC·IDOR/scope 누수·SQLi·XSS·원자성·입력검증 모두 **REFUTE 실패(=안전)**.
+- **RBAC(안전)**: 8/8 엔드포인트가 코어 호출 전 `_require_permission(…, "kb.ingest.manual")` — 빠진 핸들러 0, 권한명 전수 일치(정의·seed·catchup·엔드포인트·프론트), operator/sales/pending 미부여(least-priv). G403/E403 테스트가 403 시 코어 미호출 단언.
+- **scope 누수/IDOR(안전)**: update/delete 전부 `WHERE id=%s AND scope_key=%s` 격리 + UPDATE 가 scope_key 미재배정(타 scope 이동 벡터 없음) + allowlist(등록 ds ∪ common, 조회 실패 시 common-only fail-safe) + strip/lower/빈값 400. **명시**: `kb.ingest.manual` 보유자는 모든 등록 scope 편집 가능 — 기존 `kb.sample.curate` 와 동일 flat KB-curation RBAC(per-ds 큐레이션은 향후 follow-up). MVP 의도 수용.
+- **SQLi(안전)**: 6 코어 + 엔드포인트 전부 `%s`(식별자/값/LIMIT 포함), f-string/format/% 주입 0.
+- **원자성(안전)**: 각 mutation `_pg_connect(autocommit=False)`+commit/rollback+`finally close`, 404 경로도 rollback, RO list `_pg_connect_ro`, ENUM 409 매칭 미스도 rollback+close(누수 0). audit memory conn 도 close.
+- **XSS(안전)**: 신규 admin.js 전 경로 createElement/textContent, innerHTML 0. 탭 게이트 + 버튼 게이트 + 서버 403 이중.
+- **흡수 — MINOR-2(scope 드롭다운 init race)**: 첫 탭 진입이 datasources 로드 전이면 드롭다운에 common 만 남던 race → **메타데이터 탭 재진입 시 `_metaPopulateScopeSelect` 재호출**(선택 보존)로 fix(admin.js switchTab). node --check OK, test 13/13 유지.
+- **수용 — MINOR-1(audit cross-DB best-effort)**: PG mutation(agent_kb)과 audit(MySQL memory)은 cross-DB 라 한 트랜잭션 불가 → audit 은 별도 conn best-effort(실패 시 warning, mutation 은 이미 commit). "모든 mutation audit 보장"이 cross-DB 제약상 엄밀히는 미충족 — 동기 롤백 불가하므로 설계 수용, 운영 가시성(warning 로그) 유지. (sample-feedback 등 기존 admin mutation 과 동일 한계.)
+- **NIT(미흡수, 무해)**: `_metaEsc` dead code(호출 0, textContent 사용) · create-audit `resource_id` 64자 절단(term 전체는 change_json 보존, cosmetic).
+- Verification(흡수 후): test 13/13(PYTHONPATH=동일 worktree feature-0002/src:feature-0003/src) + py_compile + node --check.
+- Cross-ref: CHG-20260624T130000-item11-metadata-glossary-enum / FUNCTION REQ-20260624-item11 / (feature-0002) kb_glossary.py admin CRUD 6함수. 라이브 UI 정본=PB-0008(메인, 배포 후).
+## REV-20260624T031337-gc-settings-archive-leave [SUBAGENT:adversarial-3lens-PASS]
+- Date: 2026-06-24
+- Cycle: feature-0009 group-conversation `gc-settings-archive-leave` (CHG-20260624T031337), **Minor §12.3** — frontend only(app.js+styles.css+index.html), 백엔드/스키마/RBAC 0.
+- Panel: 적대적 3-렌즈 서브에이전트 리뷰(security/authz · correctness/edge-case · UX). 목적=결함 적발. backend 게이트(app.py `_delete_conversation_impl` 17153–17213 / `remove_conversation_member` 14487–14548)와 프론트 게이팅을 교차 검증.
+- **판정: 실질 결함 0건(SHIP)**. 핵심 근거:
+  - **[HIGH] not-real — client gate cosmetic**: archive(POST `/api/delete_conversation`)·leave(DELETE `.../members/{id}`) 둘 다 backend 가 권한을 독립 재검증(archive=owner/`.any` 2차 게이트, leave=`is_self_leave or is_owner or member.manage`). 보관 대신 나가기를 보여줘도 권한 상승 없음.
+  - **[HIGH] not-real — IDOR 없음**: `leaveConversation` 이 대상 id 를 `state.user.id` 로만 도출(roster/URL 입력 무사용) → 타인 강제 퇴장 불가. backend 도 동일 게이트.
+  - **[MED] not-real — owner→'보관', admin(.any)→'보관', 비보유 그룹멤버→'나가기', 타인 1:1→미렌더**: 모든 버튼-권한 매핑이 backend accept/reject 와 정확히 일치. owner 는 `canArchive` true 라 위험한 409(owner 제거 차단) 경로에 도달하지 않음.
+  - **[MED] not-real — `refreshWorkspace("")` 안전**: leave 응답에 `current` 없음 → "" 로 기본 대화 재선택(의도적, deleteConversation 의 `payload.current` 와의 차이는 정당).
+  - **[LOW] real(기존 환경의존, 본 변경 비도입)**: `is_group`/`member_count` 는 PG read 경로(`_list_conversations_pg`)에서만 채워짐 — MySQL-only read backend 면 '나가기' 분기가 dead. 단 사이드바 그룹 배지(기존)도 동일 필드 의존이고 그룹대화는 PG-native(feature-0009)라 영향권 밖. 추적만.
+- Verification: `node --check app.js` PASS + `tests/verify_settings_archive_leave.mjs` 22/22 PASS(정적). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL)에서 미실행, 메인 세션/배포 후 권장.
+- Cross-ref: CHG-20260624T031337-gc-settings-archive-leave / FUNCTION '대화 ··· 메뉴 보관→설정 이동' / feature-0009 TASK §7.

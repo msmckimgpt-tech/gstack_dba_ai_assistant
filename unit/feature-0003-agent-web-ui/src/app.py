@@ -246,6 +246,19 @@ PERMISSION_DEFINITIONS = (
         "group": "kb",
     },
     {
+        # TASK-20260624-item11-metadata-glossary-enum (ROADMAP dba-ai-nl2sql ITEM-11 MVP-1):
+        # 메타데이터 거버넌스 — 용어사전(kb_glossary) / ENUM 코드사전(enum_dictionary) 의 수동
+        # 등록·편집·삭제 권한. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 **검색·답변
+        # 정확도에 직접 영향**(KB poisoning 면) → 명시 권한 보유자만 편집(자동학습 없음). 도메인
+        # 전문가/큐레이터 한정. console.access 하위(관리 콘솔 진입 필요). admin seed(=set(PERMISSION_CODES))
+        # 자동 보유 + 기존 admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여.
+        # operator/sales/pending 미부여(least-privilege).
+        "code": "kb.ingest.manual",
+        "label": "메타데이터 수동 등록/편집",
+        "description": "용어사전·ENUM 코드사전 항목을 수동으로 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향하므로 명시 권한 보유자(도메인 전문가/큐레이터)만 편집할 수 있다.",
+        "group": "kb",
+    },
+    {
         "code": "conversation.create",
         "label": "대화 생성",
         "description": "새 대화를 생성할 수 있다.",
@@ -2623,6 +2636,11 @@ def _ensure_seed_roles(conn) -> None:
             # 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 admin row 에는 retroactive 미적용.
             "quota.read",
             "quota.manage",
+            # TASK-20260624-item11-metadata-glossary-enum (ITEM-11 MVP-1): admin 의 메타데이터 수동
+            # 등록/편집 권한 catchup. **필수** — 신규 권한은 role 생성 시 seed=set(PERMISSION_CODES)로만
+            # 부여되어 기존 배포 admin row 에는 retroactive 미적용. 미보정 시 콘솔에 메타데이터 탭이
+            # 노출되지 않는다(kb.ingest.manual 게이트).
+            "kb.ingest.manual",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -24819,6 +24837,488 @@ async def admin_reject_sample_feedback(feedback_id: int, request: Request) -> JS
         logging.getLogger(__name__).warning("sample.feedback.reject audit 실패 id=%s", feedback_id, exc_info=True)
 
     return JSONResponse({"ok": True, "feedback_id": feedback_id})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TASK-20260624-item11-metadata-glossary-enum (ROADMAP dba-ai-nl2sql ITEM-11 MVP-1) —
+#   메타데이터 거버넌스 콘솔: 용어사전(kb_glossary) / ENUM 코드사전(enum_dictionary) CRUD.
+#   · GET/POST           /api/admin/metadata/glossary        — 목록(?scope_key=) / 생성
+#   · PUT/DELETE         /api/admin/metadata/glossary/{id}   — 수정 / 삭제
+#   · GET/POST           /api/admin/metadata/enums           — 목록(?scope_key=) / 생성
+#   · PUT/DELETE         /api/admin/metadata/enums/{id}      — 수정 / 삭제
+# 경계: web 은 RBAC(kb.ingest.manual) + scope_key 검증 + 입력 검증 + audit(memory conn) 만 강제하고
+#   CRUD 정본은 feature-0002 modules.kb_glossary 코어를 agent_kb(PG) conn 으로 in-process 호출한다.
+#   등록 내용은 질문/스키마 매칭 시 프롬프트에 주입(검색 정확도 직접 영향) → 명시 권한 편집만(자동학습 없음).
+# scope: 용어/ENUM 의 scope_key 는 **datasource key(소문자) 또는 'common'** 네임스페이스
+#   (modules.config._ACTIVE_DATASOURCE_KEY 가 ds key 를 소문자로 set → glossary scope 와 동일).
+#   admin 은 요청 body/쿼리의 scope_key 를 명시 사용 — CURRENT_FACT_SCOPE_KEY(멀티DS 미갱신, BLOCKER)는 안 씀.
+# ════════════════════════════════════════════════════════════════════════════
+
+_METADATA_FIELD_CAPS = {
+    # 입력 길이 cap — KB 본문 비대화/UI 깨짐/저장소 남용 방어. PG 컬럼은 text 라 DB 강제는 없으니 web 가 cap.
+    "scope_key": 64, "term": 200, "definition": 4000,
+    "schema_name": 128, "table_name": 128, "column_name": 128, "code": 256, "label": 1000,
+}
+
+
+def _metadata_resolve_account(request: Request):
+    """RBAC(kb.ingest.manual) 게이트. (account, None) 또는 (None, JSONResponse[401/403/500])."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return None, _json_error("db connection failed", 500)
+    try:
+        account, error = _require_permission(request, conn, "kb.ingest.manual")
+        if error:
+            return None, error
+        return account, None
+    finally:
+        conn.close()
+
+
+def _metadata_valid_scope_keys() -> set[str]:
+    """허용 scope_key 집합 — 등록된 datasource key(소문자) ∪ {'common'}.
+
+    glossary/enum 의 scope_key 는 datasource **key**(modules.config._ACTIVE_DATASOURCE_KEY 가
+    소문자 ds key 를 set) 또는 'common' 네임스페이스다(= datasources.all_datasources 의 dict 키).
+    datasources.compute_scope_key(engine/host/port 해시)와는 다른 축이니 혼동 금지.
+    멀티DS 비활성/조회 실패여도 'common' 은 항상 허용(공용 사전). datasource 조회 best-effort —
+    실패 시 'common' 만 허용해 미지(未知) scope 적재로 인한 누수/오염을 막는다(보수적).
+    """
+    keys = {"common"}
+    conn = None
+    try:
+        from modules import datasources as _dsr
+        try:
+            conn = _connect_memory()
+        except Exception:
+            conn = None
+        for k in (_dsr.all_datasources(conn) or {}).keys():
+            kk = str(k or "").strip().lower()
+            if kk:
+                keys.add(kk)
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    # 폴백: 활성 datasource(ContextVar) 도 허용에 포함(요청 컨텍스트 한정).
+    try:
+        from modules import config as _cfg
+        active = str(_cfg.get_active_datasource() or "").strip().lower()
+        if active:
+            keys.add(active)
+    except Exception:
+        pass
+    return keys
+
+
+def _metadata_check_scope(scope_key: str):
+    """scope_key 검증 → (normalized, None) 또는 (None, JSONResponse[400]). 빈값/미허용 거부."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk:
+        return None, _json_error("scope_key 는 필수입니다.", 400)
+    if len(sk) > _METADATA_FIELD_CAPS["scope_key"]:
+        return None, _json_error("scope_key 가 너무 깁니다.", 400)
+    allowed = _metadata_valid_scope_keys()
+    if sk not in allowed:
+        return None, _json_error("허용되지 않은 scope_key 입니다 (등록된 datasource 또는 'common').", 400)
+    return sk, None
+
+
+def _metadata_str_field(data: dict, key: str, *, required: bool = True):
+    """문자열 필드 추출+trim+cap 검증 → (value, None) 또는 (None, JSONResponse[400])."""
+    val = str((data or {}).get(key) or "").strip()
+    if required and not val:
+        return None, _json_error(f"{key} 는 필수입니다.", 400)
+    cap = _METADATA_FIELD_CAPS.get(key)
+    if cap is not None and len(val) > cap:
+        return None, _json_error(f"{key} 가 너무 깁니다 (최대 {cap}자).", 400)
+    return val, None
+
+
+async def _metadata_read_json(request: Request) -> dict:
+    try:
+        body_raw = await request.body()
+        data = (await request.json()) if body_raw else {}
+    except Exception:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def _metadata_audit(request, account, *, action, resource_id, change_json):
+    """audit(memory conn, 별도) — CRUD 는 PG, audit 은 MySQL(cross-DB 분리). best-effort."""
+    try:
+        mconn = _connect_memory()
+        try:
+            record_audit_event(
+                mconn,
+                actor=_build_actor_from_request(request, account, actor_type="account"),
+                action=action,
+                resource_type="kb_metadata",
+                resource_id=(str(resource_id) if resource_id is not None else None),
+                change_json=change_json,
+            )
+            mconn.commit()
+        finally:
+            mconn.close()
+    except Exception:
+        logging.getLogger(__name__).warning("metadata audit 실패 action=%s id=%s", action, resource_id, exc_info=True)
+
+
+def _metadata_iso(v):
+    return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v is not None else None)
+
+
+# ── 용어사전(kb_glossary) ─────────────────────────────────────────────────────
+
+@app.get("/api/admin/metadata/glossary")
+def admin_list_glossary(request: Request) -> JSONResponse:
+    """용어 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
+    if serr:
+        return serr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _kg.list_glossary_admin(pg, scope_key)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_glossary 조회 실패", exc_info=True)
+        return _json_error("용어 목록 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "term": str(r[2] or ""),
+        "definition": str(r[3] or ""),
+        "created_at": _metadata_iso(r[4]), "updated_at": _metadata_iso(r[5]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+
+
+@app.post("/api/admin/metadata/glossary")
+async def admin_create_glossary(request: Request) -> JSONResponse:
+    """용어 생성(upsert). 권한 kb.ingest.manual. body: scope_key, term, definition."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    term, terr = _metadata_str_field(data, "term")
+    if terr:
+        return terr
+    definition, derr = _metadata_str_field(data, "definition")
+    if derr:
+        return derr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        _kg.upsert_glossary_term(pg, scope_key, term, definition)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_create_glossary 실패", exc_info=True)
+        return _json_error("용어 등록 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="glossary.term.create",
+                    resource_id=f"{scope_key}:{term}",
+                    change_json={"scope_key": scope_key, "term": term})
+    return JSONResponse({"ok": True, "scope_key": scope_key, "term": term})
+
+
+@app.put("/api/admin/metadata/glossary/{term_id}")
+async def admin_update_glossary(term_id: int, request: Request) -> JSONResponse:
+    """용어 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, term, definition."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    term, terr = _metadata_str_field(data, "term")
+    if terr:
+        return terr
+    definition, derr = _metadata_str_field(data, "definition")
+    if derr:
+        return derr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.update_glossary_term(pg, int(term_id), scope_key, term, definition)
+        if affected <= 0:
+            pg.rollback()
+            return _json_error("해당 용어를 찾을 수 없습니다.", 404)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_update_glossary 실패 id=%s", term_id, exc_info=True)
+        return _json_error("용어 수정 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="glossary.term.update",
+                    resource_id=int(term_id),
+                    change_json={"scope_key": scope_key, "term": term})
+    return JSONResponse({"ok": True, "id": int(term_id)})
+
+
+@app.delete("/api/admin/metadata/glossary/{term_id}")
+def admin_delete_glossary(term_id: int, request: Request) -> JSONResponse:
+    """용어 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
+    if serr:
+        return serr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.delete_glossary_term(pg, int(term_id), scope_key)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_delete_glossary 실패 id=%s", term_id, exc_info=True)
+        return _json_error("용어 삭제 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # 멱등 — affected=0(이미 없음)도 성공. audit 은 실제 삭제(affected>0)만 기록.
+    if affected > 0:
+        _metadata_audit(request, account, action="glossary.term.delete",
+                        resource_id=int(term_id), change_json={"scope_key": scope_key})
+    return JSONResponse({"ok": True, "id": int(term_id), "deleted": int(affected)})
+
+
+# ── ENUM 코드사전(enum_dictionary) ────────────────────────────────────────────
+
+@app.get("/api/admin/metadata/enums")
+def admin_list_enums(request: Request) -> JSONResponse:
+    """ENUM 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
+    if serr:
+        return serr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _kg.list_enum_admin(pg, scope_key)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_enums 조회 실패", exc_info=True)
+        return _json_error("ENUM 목록 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+        "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
+        "code": str(r[5] or ""), "label": str(r[6] or ""),
+        "created_at": _metadata_iso(r[7]), "updated_at": _metadata_iso(r[8]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+
+
+def _metadata_enum_fields(data: dict):
+    """ENUM 공통 필드 추출/검증 → (dict, None) 또는 (None, JSONResponse[400]).
+
+    schema_name 은 선택(빈 문자열 허용 — 단일 스키마 DB), 나머지는 필수.
+    """
+    table_name, e = _metadata_str_field(data, "table_name")
+    if e:
+        return None, e
+    column_name, e = _metadata_str_field(data, "column_name")
+    if e:
+        return None, e
+    code, e = _metadata_str_field(data, "code")
+    if e:
+        return None, e
+    label, e = _metadata_str_field(data, "label")
+    if e:
+        return None, e
+    schema_name, e = _metadata_str_field(data, "schema_name", required=False)
+    if e:
+        return None, e
+    return {"table_name": table_name, "column_name": column_name, "code": code,
+            "label": label, "schema_name": schema_name}, None
+
+
+@app.post("/api/admin/metadata/enums")
+async def admin_create_enum(request: Request) -> JSONResponse:
+    """ENUM 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, code, label, schema_name?."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    fields, ferr = _metadata_enum_fields(data)
+    if ferr:
+        return ferr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        _kg.upsert_enum_entry(pg, scope_key, fields["table_name"], fields["column_name"],
+                              fields["code"], fields["label"], schema_name=fields["schema_name"])
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_create_enum 실패", exc_info=True)
+        return _json_error("ENUM 등록 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="enum.entry.create",
+                    resource_id=f"{scope_key}:{fields['table_name']}.{fields['column_name']}={fields['code']}",
+                    change_json={"scope_key": scope_key, "table_name": fields["table_name"],
+                                 "column_name": fields["column_name"], "code": fields["code"]})
+    return JSONResponse({"ok": True, "scope_key": scope_key})
+
+
+@app.put("/api/admin/metadata/enums/{entry_id}")
+async def admin_update_enum(entry_id: int, request: Request) -> JSONResponse:
+    """ENUM 수정(by id, scope 가드). 권한 kb.ingest.manual. body 동일."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    fields, ferr = _metadata_enum_fields(data)
+    if ferr:
+        return ferr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.update_enum_entry(
+            pg, int(entry_id), scope_key, fields["table_name"], fields["column_name"],
+            fields["code"], fields["label"], schema_name=fields["schema_name"])
+        if affected <= 0:
+            pg.rollback()
+            return _json_error("해당 ENUM 항목을 찾을 수 없습니다.", 404)
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        # UNIQUE(scope,schema,table,column,code) 충돌 → 409 (다른 행과 key 중복).
+        if exc.__class__.__name__ in ("UniqueViolation", "IntegrityError"):
+            return _json_error("동일 key(스키마/테이블/컬럼/코드)의 ENUM 항목이 이미 있습니다.", 409)
+        logging.getLogger(__name__).warning("admin_update_enum 실패 id=%s", entry_id, exc_info=True)
+        return _json_error("ENUM 수정 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="enum.entry.update",
+                    resource_id=int(entry_id),
+                    change_json={"scope_key": scope_key, "table_name": fields["table_name"],
+                                 "column_name": fields["column_name"], "code": fields["code"]})
+    return JSONResponse({"ok": True, "id": int(entry_id)})
+
+
+@app.delete("/api/admin/metadata/enums/{entry_id}")
+def admin_delete_enum(entry_id: int, request: Request) -> JSONResponse:
+    """ENUM 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
+    if serr:
+        return serr
+    from modules import kb_glossary as _kg
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.delete_enum_entry(pg, int(entry_id), scope_key)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_delete_enum 실패 id=%s", entry_id, exc_info=True)
+        return _json_error("ENUM 삭제 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        _metadata_audit(request, account, action="enum.entry.delete",
+                        resource_id=int(entry_id), change_json={"scope_key": scope_key})
+    return JSONResponse({"ok": True, "id": int(entry_id), "deleted": int(affected)})
 
 
 # ════════════════════════════════════════════════════════════════════════════

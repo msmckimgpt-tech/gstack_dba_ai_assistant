@@ -4492,3 +4492,35 @@ source_of_truth: true
 - Files: docs/TASK.md, docs/TEST.md, docs/MODIFY.md, docs/REVIEW.md.
 - Rollback: 문서 entry 제거(런타임 영향 0).
 - Deploy: 불필요(문서만).
+
+## CHG-20260624T130000-item11-metadata-glossary-enum
+- Date: 2026-06-24 (메타데이터 거버넌스 MVP-1 — 용어/ENUM CRUD. ROADMAP dba-ai-nl2sql ITEM-11, Major §12.3 보안 경계). PLAN-APPROVED.
+- Scope: feature-0003 web(primary) + feature-0002 agent-core(secondary, cross-ref). 기존 PG 테이블 `kb_glossary`·`enum_dictionary` 재사용 → **마이그레이션 없음**. **gateway·credential·ROADMAP·embedding provider 무변경.**
+- **Cross-ref (feature-0002 secondary 변경)**: `unit/feature-0002-agent-core/src/modules/kb_glossary.py` — admin CRUD 코어 신규 6함수: `list_glossary_admin(conn, scope_key, limit=1000)`·`list_enum_admin(conn, scope_key, limit=1000)`(id 포함, **단일 scope**, read 의 common 캐스케이드 없음), `update_glossary_term(conn, term_id, scope_key, term, definition)`·`update_enum_entry(conn, entry_id, scope_key, table_name, column_name, code, label, schema_name="")`(by id + scope 가드, `cur.rowcount` 반환), `delete_glossary_term(conn, term_id, scope_key)`·`delete_enum_entry(conn, entry_id, scope_key)`(by id + scope 가드, 멱등 rowcount). 전부 `%s` 파라미터·scope 격리. 기존 `upsert_glossary_term`/`upsert_enum_entry`/read 경로 **무변경**(create 는 upsert 재사용). → feature-0002 MODIFY.md 에도 동 변경 기록 필요(메인이 cross-feature 정합 시).
+- 내용(feature-0003 `src/app.py`): 신규 RBAC `kb.ingest.manual`(group kb, label "메타데이터 수동 등록/편집") — `PERMISSION_DEFINITIONS`(kb.sample.curate 다음) + `_ensure_seed_roles` admin catchup(retroactive backfill). 8 엔드포인트 `/api/admin/metadata/glossary`·`/enums` 각 GET(목록 ?scope_key=)·POST(생성=upsert)·PUT/{id}(수정)·DELETE/{id}(삭제, 멱등). 공용 헬퍼: `_metadata_resolve_account`(RBAC 게이트), `_metadata_valid_scope_keys`(datasources.all_datasources 키 ∪ common — best-effort, 실패 시 common 만 보수), `_metadata_check_scope`(빈값/미허용/길이 400), `_metadata_str_field`(trim+cap), `_metadata_enum_fields`(ENUM 공통 필드, schema 선택), `_metadata_read_json`, `_metadata_audit`(memory conn, resource_type=kb_metadata), `_metadata_iso`. PG write `_pg_connect(autocommit=False)`+commit/rollback(원자성), RO list `_pg_connect_ro`. audit action: glossary.term.{create,update,delete}·enum.entry.{create,update,delete}. ENUM update UNIQUE(scope,schema,table,column,code) 충돌 → 409.
+  - `src/static/admin.html`: "메타데이터" 탭 버튼(`data-admin-tab="metadata"`, display:none 게이트) + pane(scope `<select>`·2 서브탭(용어/ENUM)·생성/수정 폼·목록). cache-buster `?v=20260624-item11-metadata`(styles+admin.js).
+  - `src/static/admin.js`: `ADMIN_TAB_PERMISSIONS["metadata"]=["kb.ingest.manual"]` + `switchTab` 진입 `initMetadataTab` + `adminState.metadata`{subTab,scopeKey,items,editing}. `_METADATA_FIELDS`(서브탭별 필드 정의) 기반 폼 렌더. scope 드롭다운 = `adminState.datasources`(기존 fetch 재사용) + 공용(common). load/render/submit/delete + `_metaEsc`. **XSS: 전 사용자 데이터 DOM API(createElement/replaceChildren/textContent)·innerHTML 무사용**.
+  - `src/static/styles.css`: `.admin-meta-*`(scope select·서브탭·폼·행) 추가(기존 CSS 변수 사용).
+  - `src/static/index.html`: styles.css cache-buster `?v=20260624-item11-metadata`(스타일만 변경 — app.js 무변경이라 미bump).
+  - `tests/test_metadata_glossary_enum.py`: 신규 13 케이스.
+- Why: ROADMAP dba-ai-nl2sql ITEM-11(메타데이터 거버넌스). 용어/ENUM 사전을 운영자가 콘솔에서 직접 등록·편집 → 질문/스키마 매칭 시 프롬프트 주입(답변 정확도). 기존엔 코어 upsert/read 만 있고 admin list/update/delete + UI 부재였음.
+- 보안: 전 mutation RBAC `kb.ingest.manual` 게이트(미보유 403, 코어 미호출 — 단위테스트 G403/E403 검증). KB poisoning 면 → 명시 권한 편집만(자동학습 없음). scope_key 는 datasource key(소문자) 또는 'common' — **요청 body/쿼리 명시 사용**(CURRENT_FACT_SCOPE_KEY 멀티DS 미갱신 BLOCKER 회피). 미허용/빈 scope → 400. 수정/삭제 by id + **scope 가드**(타-scope 행 비변경, 비존재 404, 삭제 멱등 200). 입력검증(필수누락/길이 cap). audit(memory conn, PG 작업과 cross-DB 분리). **XSS: 프론트 전 경로 textContent/DOM API**.
+- Verification: `tests/test_metadata_glossary_enum.py` **13/13**(PYTHONPATH=feature-0002/src:feature-0003/src 실측). 회귀: sample-feedback 15/15·permission-dependency-map 16/16 무영향. py_compile(app.py·kb_glossary.py) + node --check(admin.js) OK. 적대 security 리뷰 + UI 실렌더 PB-0008 = 메인(본 worktree 는 commit/push/PR/merge/deploy 금지).
+- Phase 2 연기(미구현): 테이블/컬럼 설명 CRUD · describe_table 부트스트랩 · 샘플 admin 직접 편집. ROADMAP 갱신은 메인.
+- Rollback: app.py(권한 1·catchup 1줄·8 엔드포인트+헬퍼) / admin.{html,js} 메타데이터 블록 / styles.css `.admin-meta-*` / index.html cache-buster / kb_glossary.py 6 함수 / 테스트 제거 → 메타데이터 탭·CRUD 제거(기존 upsert/read 경로 무영향).
+- Deploy: web 재빌드(정적+엔드포인트). 마이그 없음(기존 테이블 재사용). 기존 배포 admin 역할은 재시작 시 `_ensure_seed_roles` catchup 으로 kb.ingest.manual 백필.
+- Files: src/app.py, src/static/admin.html, src/static/admin.js, src/static/styles.css, src/static/index.html, tests/test_metadata_glossary_enum.py, (feature-0002) unit/feature-0002-agent-core/src/modules/kb_glossary.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+## CHG-20260624T031337-gc-settings-archive-leave (feature-0009 cycle, Minor §12.3)
+- Date: 2026-06-24 (feature-0009 group-conversation cycle `gc-settings-archive-leave`, CHG-0022/REV-0024). **frontend only**.
+- Scope: 대화 사이드바 `··· > [탭 목록]` 메뉴의 '보관'을 '설정' 팝업의 '대화 관리' 섹션으로 이동 + 보관 권한 없는 그룹 대화 참여자에게는 보관 대신 '나가기'(self-leave) 제공. 백엔드/스키마/RBAC 무변경.
+- 내용:
+  - `static/app.js` `openConversationItemMenu`: ··· 메뉴에서 '보관'(danger) 항목 제거 — 최종 순서 `공유 | 설정`.
+  - `static/app.js` `openConversationSettings`: 팝업 하단에 '대화 관리'(`.conv-settings-sec-danger`) 섹션 추가. `canArchive = canDeleteConversation(conversation)` true(대화 보유자 또는 admin `.any`) → '보관' 버튼(기존 `deleteConversation` — 자체 confirm + refreshWorkspace 보존). 아니면서 `isGroupConversation(conversation)`(보관 권한 없는 그룹 참여자) → '나가기' 버튼(신규 `leaveConversation`). 둘 다 아니면(타인 1:1 열람 등) 섹션 미렌더.
+  - `static/app.js` 신규 `leaveConversation(cid)`: `DELETE /api/conversations/{cid}/members/{state.user.id}` self-leave(백엔드 `remove_conversation_member` 기존, `is_self_leave` 게이트) + `window.confirm` + 성공 토스트 + `refreshWorkspace("")`(leave 응답에 `current` 없음 — 기본 대화 재선택).
+  - `static/styles.css`: `.conv-settings-sec-danger .conv-settings-sec-title{color:var(--danger)}` + `.conv-settings-danger-btn{margin-top:2px}`(버튼은 기존 `.btn-danger` 재사용).
+  - `static/index.html`: app.js·styles.css cache-buster `?v=20260624-settings-notif` → `?v=20260624-archive-leave`.
+- Why: feature-0009 `gc-group-authz-flag` 로 보관(archive)은 owner/admin 전용 2차 게이트라, 비보유 그룹 멤버에게 ··· 메뉴 '보관'을 노출해도 backend 가 항상 거부했다(허울 버튼). 보관을 설정 팝업으로 옮기고, 비보유 참여자에게는 실제 수행 가능한 행동(멤버십에서 빠지는 '나가기')을 노출해 UI-권한 정합. 백엔드 leave 엔드포인트는 이미 존재했으나 프론트 진입점이 없었다.
+- Verification: `node --check app.js` PASS + 신규 `tests/verify_settings_archive_leave.mjs` **22/22 PASS**(정적 소스 단언 — 메뉴 보관 제거·공유/설정 유지·설정 보관/나가기 분기·`(canArchive||isGroup)` 가드·self-leave members DELETE·본인 id·confirm·refreshWorkspace·CSS brace 1489=1489) + 적대적 3-렌즈(security/authz·correctness·UX) 서브에이전트 리뷰 **실질 결함 0**(REVIEW.md REV-…-gc-settings-archive-leave). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree 에서 미실행).
+- Files: `static/app.js`, `static/styles.css`, `static/index.html`, `tests/verify_settings_archive_leave.mjs`, `docs/{MODIFY,FUNCTION,REVIEW,TEST}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
+- Rollback: app.js/styles.css/index.html revert + 신규 `leaveConversation`·테스트 제거(표현계층·additive). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.

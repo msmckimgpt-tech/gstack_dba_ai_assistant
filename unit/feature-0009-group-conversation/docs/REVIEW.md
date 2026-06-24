@@ -255,3 +255,11 @@ source_of_truth: true
 - **PB-0008 실측(실제 Windows Chrome/149, relay@9223)**: scenario `tests/win-browser-settings-notif.scenario.json` 17/17 step PASS. ① 알림 게이팅 logic — {default_on:1, master_off:0, desktop_off:0, muted:0, unmuted:1, pass:true}(마스터/데스크톱/음소거 게이트 정확·기본 ON 보존). ② kebab items=["공유","설정","보관"](복사/공유 관리/제목 변경 제거). ③ 공유 팝업=생성영역(참여허용+만료+생성버튼)+소제목+목록 통합. ④ 대화 설정=제목 입력+음소거 토글, 섹션 ["제목","알림"]. ⑤ 프로필 탭=["릴리즈 노트","프롬프트","계정"]·release_first·알림/사용내역 계정 병합·usage 탭 제거. 증거: artifacts/pb0008-settings-notif/03_profile_account.png(계정 탭 활동→알림→사용 내역 육안 확인), 02_conv_settings.png(대화 설정 팝업), 01_share_dialog.png. TEST.md §3 Run 2026-06-24-settings-notif.
 - Risks/Open: 없음. 알림 기본값 ON 으로 무회귀. 비-active 대화 음소거는 해당 대화 전환 시 적용(데이터는 per-cid 즉시 저장 — 의도된 동작).
 - Human Approval Needed: 아니오 (Minor·프론트·사용자 명시 요청·PB-0008 PASS).
+
+## REV-20260624T031337-gc-settings-archive-leave [SUBAGENT:cross-ref-feature-0003]
+- Date: 2026-06-24
+- Cycle: gc-settings-archive-leave (CHG-0022/REV-0024) — 보관 ··· 메뉴 → 설정 팝업 이동 + 보관 권한 없는 그룹 참여자 '나가기'. **Minor §12.3**, frontend only.
+- 정본: 코드/리뷰 정본 = feature-0003 `docs/REVIEW.md` REV-20260624T031337(적대적 3-렌즈 서브에이전트 — security/authz·correctness·UX, **실질 결함 0건 SHIP**). 본 entry 는 cross-feature 추적.
+- 핵심 판정: client gate cosmetic(backend `_delete_conversation_impl`·`remove_conversation_member` authoritative 재검증), IDOR 없음(self-leave `state.user.id` only), 버튼-권한 매핑 정합(owner→보관/admin→보관/비보유 그룹멤버→나가기/타인 1:1→미렌더). LOW 1건은 기존 `is_group` PG-only 환경의존(본 변경 비도입).
+- Verification: `node --check` + `verify_settings_archive_leave.mjs` 22/22. PB-0008 미실측(worktree WSL — 배포 후 권장).
+- Human Approval Needed: 아니오 (Minor·프론트·사용자 명시 요청·backend 무변경).

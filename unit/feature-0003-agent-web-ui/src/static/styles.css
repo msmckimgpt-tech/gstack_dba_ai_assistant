@@ -2356,6 +2356,9 @@ a { color: inherit; }
 .conv-settings-toggle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
 .conv-settings-toggle-row input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
 .conv-settings-hint { font-size: 12px; color: var(--text-muted); line-height: 1.45; margin-top: 6px; }
+/* gc-settings-archive-leave: 대화 설정 팝업의 '대화 관리'(보관/나가기) danger 섹션. 버튼은 .btn-danger 재사용. */
+.conv-settings-sec-danger .conv-settings-sec-title { color: var(--danger); }
+.conv-settings-danger-btn { margin-top: 2px; }
 
 /* gc-settings-notif: 프로필>계정>알림 — 토글 행 + 데스크톱 권한 상태. */
 .profile-toggle-row {
@@ -7651,3 +7654,70 @@ a { color: inherit; }
 }
 .admin-sf-nosql { font-size: 12px; font-style: italic; }
 .admin-sf-actions { display: flex; gap: 8px; }
+
+/* TASK-20260624-item11-metadata-glossary-enum (ITEM-11 MVP-1): 메타데이터 거버넌스 탭 */
+.admin-meta-scope-label { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
+.admin-meta-scope-select {
+  padding: 6px 10px;
+  border-radius: var(--r-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.admin-meta-subtabs {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.admin-meta-subtab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color .13s, border-color .13s;
+}
+.admin-meta-subtab:hover { color: var(--text); }
+.admin-meta-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.admin-meta-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+  background: var(--bg);
+}
+.admin-meta-form-grid { display: flex; flex-direction: column; gap: 10px; }
+.admin-meta-field { display: flex; flex-direction: column; gap: 4px; }
+.admin-meta-field-label { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); }
+.admin-meta-input {
+  padding: 9px 11px;
+  border-radius: var(--r-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inherit; }
+.admin-meta-input:focus { outline: none; border-color: var(--primary); }
+.admin-meta-form-actions { display: flex; gap: 8px; }
+.admin-meta-list { margin-top: 4px; }
+.admin-meta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.admin-meta-row-title { font-size: 14px; font-weight: 600; color: var(--text); word-break: break-word; }
+.admin-meta-row-body { font-size: 13px; color: var(--text-2, var(--text-muted)); word-break: break-word; white-space: pre-wrap; }
+.admin-meta-row-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.admin-meta-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.admin-meta-del:hover { border-color: var(--danger, #dc2626); color: var(--danger, #dc2626); }
