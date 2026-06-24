@@ -174,7 +174,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: deps 없어 조기 착수 가능. 배포 = ask-worker.
 
 ### ITEM-08 · "Fix with AI" 표적 재수정 버튼
-- **status**: pending
+- **status**: done
+- **note**: 2026-06-24 드레인(chat, PR#TBD). 실패 execute_sql 결과 카드의 "AI 로 고치기" 버튼 → 신규 `POST /api/conversations/{cid}/fix-with-ai`(가드 = sample-feedback 동형: access 404·rate-limit 429·`conversation.ask` 403·audit)가 **서버 구성 정정 지시문**(client SQL/error 는 nonce-봉인 데이터 블록)을 **동일 cid 로 기존 `/api/ask` 에 1회 재dispatch** → ITEM-07 self-reflection(agent_core 무변경)이 표적 정정. 원본 NL 재질문 회피. 적대 backend+security 리뷰 SHIP-WITH-FIXES — **MAJOR M1(인젝션 방어가 백틱만 막고 개행/라벨 탈출 허용) → nonce-봉인 흡수**, MINOR(rate-bucket·검증순서)는 house-consistent 수용, `_make_internal_ask_request` 안전 확인. test 10/10. **UI 라이브 렌더 검증(PB-0008)은 배포 후**(web). CHG/REV-20260624T105228.
 - **feature_id**: feature-0003-agent-web-ui
 - **dimension**: functional
 - **risk_grade**: Minor
@@ -240,7 +241,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: ITEM-02/10 의 입력 허브. 배포 = web.
 
 ### ITEM-12 · Retrieval 파라미터 튜닝 (측정 기반)
-- **status**: pending
+- **status**: blocked (deferred — measurement substrate gap)
+- **note**: 2026-06-24 사용자 결정(드레인) — defer. 이 항목의 guard "측정 선행 · 추측 튜닝 금지"가 현 합성 harness 로는 **충족 불가**: ITEM-05 마감 측정에서 ① 하이브리드 α/β sweep 7조합 전부 flat(fusion no-lift) ② ivfflat/top-K 는 합성 KB(12~24 docs)에서 sub-scale(ivfflat 사실상 exact)·saturated(recall 1.0)라 **측정 신호 0**. 즉 ITEM-05 와 동일한 substrate gap. 추측 튜닝은 guard 위반이므로 강행 안 함. **재개 트리거**: 라이브 운영 질의 로그 / 실규모 corpus 확보(임베더가 실제로 헛짚는 케이스) → 그 위에서 grid 탐색. select_next_ready 에서 제외(blocked).
 - **feature_id**: feature-0002-agent-core
 - **dimension**: performance
 - **risk_grade**: Minor
@@ -265,10 +267,11 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | **ITEM-09** (무거운쿼리 경량대안+승인) | **reject(subsumed)** | shipped TASK-0299/0304 가 무거운쿼리를 LLM tool-루프 silent rewrite 로 이미 처리(agent_core.py:120-128). ITEM-09 의 사용자-노출 승인 라운드트립은 TASK-0304 의 사용자-승인된 "차단 미노출(효율적 답변만)" 결정을 **역전**하는 설계 충돌 → 임의 구현 안 함. 사용자 결정(2026-06-23) subsumed. 재검토 트리거: 승인-UX 가 silent-rewrite 보다 낫다는 근거 + TASK-0304 재논의(plan-ceo/eng-review). |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 7 · rejected 1 · in-progress 0 · pending 4 · blocked 0
-- 완료: **ITEM-01**(harness, A/B 측정 보류) · **ITEM-02**(샘플 저장소) · **ITEM-03**(피드백 flywheel PR-A코어+PR-B web, security SHIP-WITH-FIXES) · **ITEM-04**(DS 컨텍스트) · **ITEM-05**(하이브리드 fusion — 구현·리뷰 done, acceptance 반증→**gated-OFF dormant**) · **ITEM-07**(self-reflection, 회복률 측정 보류) · **ITEM-10**(용어/ENUM).
+- 총 12 항목 · done 8 · rejected 1 · in-progress 0 · pending 1 · blocked 1
+- 완료: **ITEM-01**(harness, A/B 측정 보류) · **ITEM-02**(샘플 저장소) · **ITEM-03**(피드백 flywheel PR-A코어+PR-B web, security SHIP-WITH-FIXES) · **ITEM-04**(DS 컨텍스트) · **ITEM-05**(하이브리드 fusion — 구현·리뷰 done, acceptance 반증→**gated-OFF dormant**) · **ITEM-07**(self-reflection, 회복률 측정 보류) · **ITEM-08**("AI 로 고치기" 표적 정정, 적대 리뷰 SHIP-WITH-FIXES M1 흡수) · **ITEM-10**(용어/ENUM).
 - 기각: **ITEM-09**(subsumed — shipped TASK-0304 silent-rewrite, §4).
+- 보류(blocked): **ITEM-12**(retrieval 파라미터 튜닝 — measurement substrate gap, 라이브 질의 로그 확보 후 재개. select_next_ready 제외).
 - ✅ **환경 (2026-06-23, 갱신)**: chat(claude-*, Anthropic-direct OAuth) ✓ · **임베딩 titan-embed→로컬 Ollama bge-m3(1024) 복구 ✓**(end-to-end 검증, PR#385). 임베딩 클러스터 차단 해소.
-- 다음 ready(정렬 Phase asc→risk asc→id asc): **ITEM-12**(P2 Minor retrieval 튜닝, deps 01·05 done) → **ITEM-06**(P2 Major reranker, deps 01·05 done) · ITEM-08(P3 Minor Fix-with-AI) · ITEM-11(P4 Major 거버넌스 포탈). ※ ITEM-12 튜닝은 ITEM-05 적대 corpus 측정상 현 합성 KB 론 근거 박약 — 라이브 운영 질의 로그 확보 후 착수가 타당(항목 차례에 재검토).
-- 보류 측정(임베딩 복구로 이제 가능): ITEM-01/02 A/B·retrieval precision/recall — 해당 후속 항목 측정 시 함께 수행. ITEM-05 fusion 실가치는 라이브 질의 로그 필요(합성 KB 반증).
+- 다음 ready(정렬 Phase asc→risk asc→id asc): **ITEM-06**(P2 Major reranker, deps 01·05 done) · ITEM-11(P4 Major 거버넌스 포탈). 둘 다 Major → 그 차례에 plan-review(PLAN-APPROVED) 필요. ※ ITEM-06 도 acceptance 가 harness 측정(정밀도↑ vs 지연) 의존 → ITEM-05/12 와 동일 substrate gap 가능성, 착수 시 검토.
+- 보류 측정(임베딩 복구로 이제 가능): ITEM-01/02 A/B·retrieval precision/recall — 해당 후속 항목 측정 시 함께 수행. ITEM-05 fusion 실가치·ITEM-12 튜닝은 라이브 질의 로그 필요(합성 KB 반증).
 - 잔여 flag(별도 cleanup): kb_backend:940 주석 stale `vector(1536)`(정본 1024; schema.sql:68 texts 는 CHG-20260623T180000 으로 1024 정정 완료). bge-m3 provenance(embedding_model alias 기록).

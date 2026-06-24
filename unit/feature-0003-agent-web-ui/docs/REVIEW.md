@@ -3593,6 +3593,31 @@ source_of_truth: true
 - Verification: 보안 fix 후 test_sample_flywheel 12 + test_sample_feedback_curation 15 = **27 통과**(회귀 0) + py_compile + `_mask_sql` 잔여참조 0. cross-ref 코어 변경(feature-0002 sample_feedback.py)은 MODIFY 에 기록.
 - Cross-ref: CHG-20260623T090440-...-sample-feedback-curation / ROADMAP dba-ai-nl2sql ITEM-03.
 
+## REV-20260624T105228-item08-fix-with-ai [SUBAGENT:item08-impl-selfcheck + adversarial-backend-security] — SHIP-WITH-FIXES (M1 흡수)
+- Cycle: TASK-20260624T105228-item08-fix-with-ai ("AI 로 고치기" 표적 재수정, ROADMAP dba-ai-nl2sql ITEM-08). **Major §12.3 + 보안 표면(신규 엔드포인트 = 프롬프트 인젝션/RBAC)**.
+- 上단(점검 결과/self-check 한계)은 구현 subagent self-check, 下단(§적대 backend+security 리뷰)이 별도 적대 리뷰(general-purpose REFUTE) — self-check 가 예고한 표면이 실제 MAJOR(M1)로 적중, fix 흡수.
+- 점검 결과(통과):
+  - 가드 순서가 `post_sample_feedback` 와 동형(account → access 404 → rate-limit 429 → scope 403 → audit). test G1~G3 가 각 거부 경로에서 `ask` 미dispatch 를 단언.
+  - 프롬프트 인젝션: 지시문은 서버 고정, client 입력은 데이터 블록에만 + 백틱 무력화 + cap. test P1/P2 통과.
+  - 새 run 전체 재질문 회피: 동일 cid + 정정문만 전달(원본 NL 미전송). test D1 이 `original_nl not in body["message"]` 단언.
+  - 1회 dispatch: `post_fix_with_ai` 는 `ask` 를 정확히 1회 호출, 추가 루프 없음(self-reflection 내부 cap 상속).
+  - agent_core·ask-worker·gateway·credential·ROADMAP 무변경(git diff 가 feature-0003 web 만 — app.py/app.js/styles.css/index.html/tests).
+- **self-check 한계(메인 적대 리뷰가 봐야 할 잠재 표면)**:
+  - `_make_internal_ask_request` 가 `request._receive`(Starlette private) 위임 — 본 Starlette 버전에서 `_receive` 존재 확인(import 시 inspect 로 검증)했으나, 버전 업그레이드 시 깨질 수 있는 결합. worker-mode attach 의 `is_disconnected` 실제 동작은 정적 self-check 로 단정 못 함(라이브 검증=PB-0008/메인).
+  - 백틱→'ˋ'(U+02CB) 치환은 코드펜스 인식 차단이 목적이나, LLM 이 'ˋ' 를 시각적으로 백틱처럼 해석할 가능성(모델 의존)은 정적으로 단정 불가. 데이터 블록 명시 부정문이 1차 방어선.
+  - 정정 dispatch 가 `API_DEFAULT_MODEL` 로 고정 — 원본 대화가 다른 모델이었어도 web 기본 모델로 정정(의도된 동작이나 사용자 기대와의 괴리는 메인 판단).
+  - UI `can("conversation.ask")` 는 표시 게이트(로그인 시 true) — 실제 발화 거부는 서버 403 + apiFetch toast. 무권한 멤버에게 버튼이 보이나 클릭 시 403(설계상 의도, sample-feedback 패턴 동형).
+- Verification(self-check 시점): test_fix_with_ai.py 9/9 + test_sample_feedback_curation.py 15/15 회귀 0 + py_compile + node --check.
+
+### 적대 backend+security 리뷰 결과 (2026-06-24, general-purpose REFUTE) — VERDICT: SHIP-WITH-FIXES
+- **MAJOR M1(흡수)** — 프롬프트 인젝션 방어가 엉뚱한 구분자를 막음: 정정 지시문은 데이터 블록을 **코드펜스(```)가 아니라 `[실패한 SQL]` 라벨+개행**으로 구분하는데 sanitizer 는 **백틱만** 무력화. 공격자는 백틱 없이 **개행+가짜 라벨+가짜 마감문**으로 데이터 블록을 탈출 가능(실측: `newline injection survived: True`). 엔드포인트가 client `executed_sql`/`error_message` 를 DB 대조 없이 신뢰하므로 `conversation.ask` 사용자가 임의 텍스트 주입 가능(단 실행은 sql_guard/RBAC/own-scope 로 제한 → 권한상승 아닌 정보유출/self-reflection 오용 → MAJOR). **fix(흡수)**: nonce-봉인 데이터 블록 — 매요청 `secrets.token_hex(8)` nonce 로 `«SQL-{nonce}»`…`«/SQL-{nonce}»` 봉인, sanitizer 가 입력에서 `«·»`+nonce 제거 → client 가 닫는 마커 위조 불가(개행/가짜라벨 봉인 블록 안에 갇힘). 회귀 테스트 `test_message_seals_against_newline_and_fake_marker_escape` +1.
+- **MINOR(수용, house-consistent)**: m1 rate-limit 버킷이 search/feedback 와 공유(전역 dict) — sample-feedback 동형 기존 패턴 + 혼합 시 더 보수적(비용 안전 방향)이라 수용. m2 멀티워커 시 워커당 한도(account 단위 차단은 정상, IP 우회 불가) — 기존 모든 rate-limit 과 동일 한계. m3 입력검증이 auth 앞(400 vs 401) — sample-feedback 동형. m4 클릭당 audit 2건(trigger+ask) + 403 시 toast 2회 — 무해 UX.
+- **NIT**: n1 U+02CB 주석(가시문자, nonce 봉인 후 보조), n2 정정은 `API_DEFAULT_MODEL` 고정(의도).
+- **REFUTE 실패(=확인된 안전)**: `_make_internal_ask_request`(private `_receive`) — 실측상 ① body 정확히 1회 공급(Starlette 캐싱, 원본 `_receive` 호출 0) ② worker-mode `is_disconnected` 는 취소된 CancelScope 안 await 라 즉시 False(hang/조기중단 없음; client-disconnect abort 반응성만 저하, backstop 이 슬롯 회수) ③ scope headers 복제로 **동일 세션→동일 계정**(cross-account dispatch 없음) ④ 슬롯 1회 획득(중복 enqueue 없음). RBAC/IDOR(2중 방어: 엔드포인트 access-gate + 위임 ask 재검증), XSS(textContent only), 입력검증, 회귀/blast 모두 안전.
+- 평가: 신규 엔드포인트의 인젝션 방어를 nonce 봉인으로 근본 교정 후 SHIP. 재dispatch 우회는 실측상 안전·수용 가능.
+- Verification(흡수 후): test_fix_with_ai.py **10/10** PYTHONPATH=feature-0002:feature-0003 실측 + M1 순수함수 독립 검증 + py_compile + node --check. 전체 suite=`make test`(agent 이미지).
+- Cross-ref: CHG-20260624T105228-item08-fix-with-ai / FUNCTION REQ-20260624-0334 / ROADMAP dba-ai-nl2sql ITEM-08(→done). 라이브 UI 렌더 정본=PB-0008(Windows-browser, 배포 후).
+
 ## REV-20260624T020000-product-insight-status-badge [SKIPPED:ui-tweak-user-approved-mockup]
 - Date: 2026-06-24
 - Cycle: TASK-0308 (제품 탭 데이터소스 인사이트 탐색 상태 표시), **Minor §12.3** — frontend only(admin.js+styles.css), 백엔드 0.
