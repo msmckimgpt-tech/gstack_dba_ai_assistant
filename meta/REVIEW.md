@@ -163,3 +163,18 @@
 - **deferred(점진)**: 85파일 mirrors/sources frontmatter 백필 + stale 카드(0001/0004~0007) 라벨 = `/_dqa:doc_sync` 가 주기 수행(mechanical, 저가치-고노력이라 일괄 미실행).
 - **panel SKIP 사유**: 비파괴 additive 정책 문서 + 검증. 코드/secret 무변경.
 - **Human Approval Needed**: 아니오.
+
+## REV-20260624T024525-doc-sync-ssot-align [SKIPPED:additive-meta-tooling-docs]
+
+- **cycle**: ai/claude/META-0005-doc-sync-ssot-align — `/_dqa:doc_sync` 스킬을 ADR-0031 SSOT 계약(STATUS=인덱스)에 정합
+- **배경**: doc_sync(PR#386)는 STATUS=누적 rollup 전제로 작성됐으나, 이후 ADR-0031(PR#395, META-0003)이 STATUS 를 290KB rollup → 4.6KB **인덱스**로 강등(상세 정본=unit docs, 누적 이력=`docs/archive/STATUS_ARCHIVE.md`, 도메인→정본 지도=`docs/DOC_REGISTRY.md`, drift 강제=`bin/ssot-lint.sh`). 2026-06-24 cron 수동 검증에서 doc_sync 가 인덱스 STATUS 위에 rollup 을 또 얹어 **ADR-0031 §1 위반 산출물**(브랜치 doc-sync-0624 — 미머지 폐기)을 만든 것이 적발됨.
+- **changeset (pure-meta)**: `.claude/commands/_dqa/doc_sync.md`
+- **변경 요지**:
+  - 불변 제약: "참조는 복제하지 않는다"(§2) + SSOT 계약 준수(STATUS 인덱스·셀 누적 금지·mirror 포인터) 추가.
+  - Phase 0: SSOT 모델 판정(DOC_REGISTRY/STATUS frontmatter/archive/ssot-lint 신호 → 인덱스 vs 누적) discovery 추가.
+  - Phase 3 STATUS: "rollup blockquote 추가" → **(a) 인덱스 모델**(행 갱신만·rollup 누적 금지·미머지 worktree note) / **(b) 누적 모델**(기존 rollup) 2분기. 불명 시 인덱스 보수 처리.
+  - Phase 1/2: STATUS 매핑·스코프 질문 모델별 분기. Phase 4: ssot-lint PASS + 인덱스 rollup 미누적·행 ground-truth 정합 점검. 종료조건 항목 추가.
+- **project-agnostic 유지**: ADR-0031 하드코딩 아님 — "SSOT 계약 채택 여부 discovery" + 누적 모델 fallback(SSOT 미채택 프로젝트 호환).
+- **panel skipped 사유 (§18.4 carve-out)**: 검증된 기존 스킬을 신규 머지 ADR 에 맞추는 비파괴 alignment, 신규 production 동작 0. ADR-0031 §1~§4 · DOC_REGISTRY · STATUS.md 인덱스 포맷 정본 실측 대조.
+- **verification**: grep — 무조건 "모든 작업 → STATUS rollup" 잔존 0, 인덱스/누적 2분기 공존, DOC_REGISTRY·ssot-lint 참조. verify-completion META mode.
+- **Human Approval Needed**: 아니오 (additive meta-tooling alignment, 사용자 지시).
