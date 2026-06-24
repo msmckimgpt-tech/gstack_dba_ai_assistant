@@ -4473,4 +4473,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **frontend only**(`admin.js`+`styles.css`, 백엔드 0 — `insight_enabled` 는 이미 datasources API 가 내려줌): `_renderDsAccordion` 행 헤더에 `.ds-acc-insight` 아이콘. 켜짐=은은한 눈, **꺼짐=amber 칩+빗금 눈(두드러지게 — 놓치던 OFF 강조)**. 색 단독 의존 회피(아이콘 형태 차이 + title/aria-label).
 - [x] **사용자 조정 반영**: 조건부 '기본' 텍스트 배지가 인사이트 아이콘 위치를 행마다 흔드는 문제 → '기본' 텍스트 제거, primary 는 **엔진 배지를 primary 색(`.ds-acc-engine.is-primary`)** 으로 표기(엔진 배지는 항상 존재 → 아이콘 위치 일관) + title "기본(primary) 데이터소스".
 - [x] 검증: admin.js `node --check` + Artifact 목업(실 CSS·아이콘 렌더, BEFORE/AFTER) 사용자 디자인 승인. UI 실렌더 정본=PB-0008(Windows-browser).
-- [ ] verify → 머지 → web 재배포 → PB-0008(Windows-browser 시각 검증) → 마감.
+- [x] verify → 머지(PR #396) → web 재배포(main `6606b8e`, static baked + cache-buster `v=20260624-product-insight-badge`) → **PB-0008 Windows-browser 시각 검증 PASS**(사용자 직접 확인, 2026-06-24 — 제품 탭 '데이터 소스 & 접근 가능 데이터베이스' 행에 인사이트 탐색 상태 아이콘 + primary 엔진색 정상 표시) → **마감**. (TEST.md §4 기록.)

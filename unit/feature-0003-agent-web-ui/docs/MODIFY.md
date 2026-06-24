@@ -4470,3 +4470,13 @@ source_of_truth: true
 - Files: static/admin.js, static/styles.css, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: 두 파일 revert(순수 additive·표현계층). 동작 회귀 없음.
 - Deploy: web 재빌드(static baked) + cache-buster. 마이그/백엔드 없음.
+
+## CHG-20260624T024500-task0308-pb0008-close
+- Date: 2026-06-24 (TASK-0308 마감 — PB-0008 Windows-browser 검증 기록 + 체크박스 닫기). docs-only.
+- Scope: TASK-0308(제품 탭 인사이트 탐색 상태 표시) 의 UI 실렌더 검증 결과 기록 + cycle 마감. 코드 무변경.
+- 내용: `docs/TEST.md` §4 에 PB-0008 Windows-browser PASS 항목 추가(2026-06-24, **사용자 직접 시각 검증** — win-browser relay 아님; 배포=main `6606b8e`/PR #396, AI 가 서빙·정적검증 수행). `docs/TASK.md` TASK-0308 의 verify→PB-0008 체크박스 닫기(마감).
+- Why: 저장소 관례(§15.4.1, UI 완료 게이트=PB-0008) — UI 변경의 실 화면 검증 결과를 TEST.md §4 에 남기고 cycle 을 마감.
+- Verification: docs-only. 사실 근거 = 사용자 육안 검증 PASS + 직전 cycle 의 배포·서빙·정적 검증(TEST.md 기재).
+- Files: docs/TASK.md, docs/TEST.md, docs/MODIFY.md, docs/REVIEW.md.
+- Rollback: 문서 entry 제거(런타임 영향 0).
+- Deploy: 불필요(문서만).
