@@ -289,6 +289,55 @@ CREATE TRIGGER trg_enum_dictionary_updated_at
     BEFORE UPDATE ON enum_dictionary
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- ----------------------------------------------------------------------------
+-- 8a. ITEM-11 Phase 2 (ROADMAP dba-ai-nl2sql): 테이블/컬럼 설명 사전 (semantic-lite).
+--     사람이 작성한 테이블·컬럼 의미 설명을 ds-scoped(scope_key) 로 저장한다. 두 경로로 주입:
+--       (B) _build_knowledge_context 가 질문 매칭 행을 grounding 섹션에 datamark 주입.
+--       (A) describe_table 가 native COLUMN_COMMENT 가 빈 컬럼을 KB 설명으로 오버레이
+--           (MSSQL 빈 comment gap, dialects.py describe_columns row[6]='' 해소).
+--     enum_dictionary 컨벤션(scope_key/schema_name 기본값·UNIQUE·트리거) 그대로 모사한다.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS table_descriptions (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key   varchar(96)  NOT NULL DEFAULT 'common',  -- datasource 격리(enum_dictionary 동일 컨벤션)
+    schema_name varchar(128) NOT NULL DEFAULT '',
+    table_name  varchar(128) NOT NULL,
+    description text         NOT NULL,
+    source      varchar(24)  NOT NULL DEFAULT 'manual',  -- manual|bootstrap (provenance)
+    created_by  varchar(64),
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    updated_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT ux_table_descriptions_scope_tbl
+        UNIQUE (scope_key, schema_name, table_name)
+);
+CREATE INDEX IF NOT EXISTS ix_table_descriptions_scope ON table_descriptions (scope_key);
+DROP TRIGGER IF EXISTS trg_table_descriptions_updated_at ON table_descriptions;
+CREATE TRIGGER trg_table_descriptions_updated_at
+    BEFORE UPDATE ON table_descriptions
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS column_descriptions (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key   varchar(96)  NOT NULL DEFAULT 'common',
+    schema_name varchar(128) NOT NULL DEFAULT '',
+    table_name  varchar(128) NOT NULL,
+    column_name varchar(128) NOT NULL,
+    description text         NOT NULL,
+    source      varchar(24)  NOT NULL DEFAULT 'manual',
+    created_by  varchar(64),
+    created_at  timestamptz  NOT NULL DEFAULT now(),
+    updated_at  timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT ux_column_descriptions_scope_col
+        UNIQUE (scope_key, schema_name, table_name, column_name)
+);
+CREATE INDEX IF NOT EXISTS ix_column_descriptions_scope ON column_descriptions (scope_key);
+CREATE INDEX IF NOT EXISTS ix_column_descriptions_col
+    ON column_descriptions (scope_key, table_name, column_name);
+DROP TRIGGER IF EXISTS trg_column_descriptions_updated_at ON column_descriptions;
+CREATE TRIGGER trg_column_descriptions_updated_at
+    BEFORE UPDATE ON column_descriptions
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- ============================================================================
 -- 8b. ITEM-02+03 (ROADMAP dba-ai-nl2sql): 샘플쿼리 few-shot 저장소 + 피드백 flywheel.
 --    sample_queries  — NL↔SQL 샘플(ds-scoped, 임베딩). approved∧active 만 검색·주입 대상.
@@ -375,6 +424,7 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
                       kb_invalidations, kb_glossary, enum_dictionary,
+                      table_descriptions, column_descriptions,
                       sample_queries, sample_feedback TO agent_kb_rw;
         GRANT SELECT ON TABLE kb_slow_queries TO agent_kb_rw;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_kb_rw;
@@ -389,6 +439,7 @@ BEGIN
         GRANT SELECT
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
                       kb_invalidations, kb_glossary, enum_dictionary,
+                      table_descriptions, column_descriptions,
                       sample_queries, sample_feedback, kb_slow_queries TO agent_kb_ro;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT ON TABLES TO agent_kb_ro;

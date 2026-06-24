@@ -12989,6 +12989,11 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
                 } if _h else {"status": "unknown", "elapsed_ms": None, "checked_at": None}),
                 # TASK-0255 R2: insight-worker 스캔 관점(PG 정본) — 미커버 사유 구분(연결 불안정/권한). None=insight 미기록.
                 "insight_health": (_insight_health.get(_sk) if _sk else None),
+                # scope-key-unify: 메타데이터 admin scope 드롭다운이 쓸 scope 식별자 — **질의 시점 read 와
+                # 동일 해소값**(`scope_key 필드 or 라벨`: DB-등록 ds=해시, .env 레거시=라벨). 위 health 용
+                # `_sk`(=_dsr.scope_key, .env 도 해시 계산)와 달리 read 축을 그대로 노출해야 write==read 가 된다
+                # (라벨 ≠ 해시 死data 및 .env 역방향 死data 동시 회피). host/port 는 이미 노출 → 파생값 신규 누출 없음.
+                "scope_key": (v.get("scope_key") or v.get("key")),
             })
         datasources.sort(key=lambda d: d["key"])
         cur = conn.cursor()
@@ -24858,6 +24863,8 @@ _METADATA_FIELD_CAPS = {
     # 입력 길이 cap — KB 본문 비대화/UI 깨짐/저장소 남용 방어. PG 컬럼은 text 라 DB 강제는 없으니 web 가 cap.
     "scope_key": 64, "term": 200, "definition": 4000,
     "schema_name": 128, "table_name": 128, "column_name": 128, "code": 256, "label": 1000,
+    # ITEM-11 Phase 2: 테이블/컬럼 설명·샘플 필드 cap. description 은 definition 과 동일(4000).
+    "description": 4000, "nl_question": 2000, "domain": 64,
 }
 
 
@@ -24877,13 +24884,19 @@ def _metadata_resolve_account(request: Request):
 
 
 def _metadata_valid_scope_keys() -> set[str]:
-    """허용 scope_key 집합 — 등록된 datasource key(소문자) ∪ {'common'}.
+    """허용 scope_key 집합 — 등록된 datasource 의 **질의 시점 read 와 동일한 scope 해소값** ∪ {'common'}.
 
-    glossary/enum 의 scope_key 는 datasource **key**(modules.config._ACTIVE_DATASOURCE_KEY 가
-    소문자 ds key 를 set) 또는 'common' 네임스페이스다(= datasources.all_datasources 의 dict 키).
-    datasources.compute_scope_key(engine/host/port 해시)와는 다른 축이니 혼동 금지.
-    멀티DS 비활성/조회 실패여도 'common' 은 항상 허용(공용 사전). datasource 조회 best-effort —
-    실패 시 'common' 만 허용해 미지(未知) scope 적재로 인한 누수/오염을 막는다(보수적).
+    scope-key-unify(死data 수정): 메타데이터/샘플 admin write 의 scope_key 축을 **질의 시점 read 와
+    똑같은 식**으로 통일한다. read 는 `agent_core` 가 `cfg.set_active_datasource(_ds.get('scope_key') or
+    _ds.get('key'))` 로 활성 scope 를 잡고(= **scope_key 필드 우선, 없으면 라벨**), tools/insight 도 동일
+    규약(`ds.get('scope_key') or ds.get('key')`)이다. 즉 DB-등록 ds 는 `scope_key` 필드(compute_scope_key
+    해시), .env 레거시 ds 는 그 필드가 없어 **라벨**로 해소된다.
+
+    ⚠️ 주의(BLOCKER 회피): write 를 `_dsr.scope_key(ds)` 로 잡으면 안 된다 — 그 헬퍼는 .env ds(host 필수)에서
+    해시를 *계산*하지만 read 는 필드 부재 시 라벨로 떨어지므로, .env ds 에서 write(해시)≠read(라벨) 死data 가
+    역으로 재발한다. 그래서 read 와 **동일한 식** `ds.get('scope_key') or ds.get('key')` 를 그대로 쓴다.
+    과거엔 admin write 가 datasource **라벨**(all_datasources dict 키)만 저장해 DB-등록 ds 에서 라벨 ≠ 해시
+    死data 였다. 'common' 은 항상 허용(공용 사전). 조회 실패 시 'common' 만 허용(보수적).
     """
     keys = {"common"}
     conn = None
@@ -24893,10 +24906,11 @@ def _metadata_valid_scope_keys() -> set[str]:
             conn = _connect_memory()
         except Exception:
             conn = None
-        for k in (_dsr.all_datasources(conn) or {}).keys():
-            kk = str(k or "").strip().lower()
-            if kk:
-                keys.add(kk)
+        for k, ds in (_dsr.all_datasources(conn) or {}).items():
+            # read(agent_core.set_active_datasource)와 동일 해소: scope_key 필드(DB ds=해시) 우선, 없으면 라벨.
+            sk = str((ds.get("scope_key") or ds.get("key") or k) or "").strip().lower()
+            if sk:
+                keys.add(sk)
     except Exception:
         pass
     finally:
@@ -25319,6 +25333,751 @@ def admin_delete_enum(entry_id: int, request: Request) -> JSONResponse:
         _metadata_audit(request, account, action="enum.entry.delete",
                         resource_id=int(entry_id), change_json={"scope_key": scope_key})
     return JSONResponse({"ok": True, "id": int(entry_id), "deleted": int(affected)})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TASK-20260624-item11-metadata-phase2 (ROADMAP dba-ai-nl2sql ITEM-11 Phase 2) —
+#   메타데이터 거버넌스 콘솔 확장: 테이블/컬럼 설명 사전 · 샘플 admin CRUD · 스키마 부트스트랩.
+#   · GET/POST/PUT/{id}/DELETE/{id}  /api/admin/metadata/tables    — 테이블 설명(RBAC kb.ingest.manual)
+#   · GET/POST/PUT/{id}/DELETE/{id}  /api/admin/metadata/columns   — 컬럼 설명(RBAC kb.ingest.manual)
+#   · GET/PUT/{id}/DELETE/{id}       /api/admin/metadata/samples   — 샘플 수정/삭제(RBAC kb.sample.curate)
+#   · GET  /api/admin/metadata/bootstrap/schemas                   — 선택 DS 의 schema 목록
+#   · POST /api/admin/metadata/bootstrap                           — schema 골격(미영속, prefill 용)
+# 경계: MVP-1 동형 — web 은 RBAC + scope 검증 + 입력 cap + audit 만 강제하고 CRUD 정본은
+#   feature-0002 modules.kb_metadata / modules.sample_queries 코어를 agent_kb(PG) conn 으로
+#   in-process 호출한다. 부트스트랩은 데이터소스(RO) introspection — 사람이 설명 빈칸을 채워
+#   tables/columns POST 로 저장(미영속). 샘플 임베딩=하이브리드 C(nl 변경 시 동기 임베딩 시도→
+#   실패면 status='stale'). scope_key = datasource key(소문자) ∪ 'common'(MVP-1 화이트리스트 재사용).
+# ════════════════════════════════════════════════════════════════════════════
+
+_SAMPLE_WEIGHT_MIN, _SAMPLE_WEIGHT_MAX = 1, 1000
+_BOOTSTRAP_MAX_TABLES = 500
+_BOOTSTRAP_MAX_COLS_PER_TABLE = 200
+
+
+# ── 테이블 설명(table_descriptions) ───────────────────────────────────────────
+
+@app.get("/api/admin/metadata/tables")
+def admin_list_table_desc(request: Request) -> JSONResponse:
+    """테이블 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
+    if serr:
+        return serr
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _km.list_table_desc_admin(pg, scope_key)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_table_desc 조회 실패", exc_info=True)
+        return _json_error("테이블 설명 목록 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # row: (id, scope_key, schema_name, table_name, description, source, created_at, updated_at)
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+        "table_name": str(r[3] or ""), "description": str(r[4] or ""), "source": str(r[5] or ""),
+        "created_at": _metadata_iso(r[6]), "updated_at": _metadata_iso(r[7]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+
+
+@app.post("/api/admin/metadata/tables")
+async def admin_create_table_desc(request: Request) -> JSONResponse:
+    """테이블 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, description, schema_name?."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    table_name, e = _metadata_str_field(data, "table_name")
+    if e:
+        return e
+    description, e = _metadata_str_field(data, "definition" if "definition" in data else "description")
+    if e:
+        return e
+    schema_name, e = _metadata_str_field(data, "schema_name", required=False)
+    if e:
+        return e
+    source = "manual" if str(data.get("source") or "").strip().lower() != "bootstrap" else "bootstrap"
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        _km.upsert_table_desc(pg, scope_key, table_name, description,
+                              schema_name=schema_name, source=source,
+                              created_by=str((account or {}).get("username") or "") or None)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_create_table_desc 실패", exc_info=True)
+        return _json_error("테이블 설명 등록 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="table_desc.create",
+                    resource_id=f"{scope_key}:{schema_name}.{table_name}",
+                    change_json={"scope_key": scope_key, "schema_name": schema_name,
+                                 "table_name": table_name, "source": source})
+    return JSONResponse({"ok": True, "scope_key": scope_key, "table_name": table_name})
+
+
+@app.put("/api/admin/metadata/tables/{desc_id}")
+async def admin_update_table_desc(desc_id: int, request: Request) -> JSONResponse:
+    """테이블 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?, table_name?."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    description, e = _metadata_str_field(data, "definition" if "definition" in data else "description")
+    if e:
+        return e
+    # key 컬럼(schema/table)은 선택 — 둘 다 주어질 때만 key 수정(부분 제공 거부).
+    has_schema = "schema_name" in data
+    has_table = "table_name" in data
+    schema_name = table_name = None
+    if has_table:
+        table_name, e = _metadata_str_field(data, "table_name")
+        if e:
+            return e
+        schema_name, e = _metadata_str_field(data, "schema_name", required=False)
+        if e:
+            return e
+    elif has_schema:
+        return _json_error("table_name 없이 schema_name 만 수정할 수 없습니다.", 400)
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _km.update_table_desc(pg, int(desc_id), scope_key, description,
+                                         schema_name=schema_name, table_name=table_name)
+        if affected <= 0:
+            pg.rollback()
+            return _json_error("해당 테이블 설명을 찾을 수 없습니다.", 404)
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        if exc.__class__.__name__ in ("UniqueViolation", "IntegrityError"):
+            return _json_error("동일 (스키마/테이블)의 설명이 이미 있습니다.", 409)
+        logging.getLogger(__name__).warning("admin_update_table_desc 실패 id=%s", desc_id, exc_info=True)
+        return _json_error("테이블 설명 수정 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="table_desc.update",
+                    resource_id=int(desc_id), change_json={"scope_key": scope_key})
+    return JSONResponse({"ok": True, "id": int(desc_id)})
+
+
+@app.delete("/api/admin/metadata/tables/{desc_id}")
+def admin_delete_table_desc(desc_id: int, request: Request) -> JSONResponse:
+    """테이블 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
+    if serr:
+        return serr
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _km.delete_table_desc(pg, int(desc_id), scope_key)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_delete_table_desc 실패 id=%s", desc_id, exc_info=True)
+        return _json_error("테이블 설명 삭제 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        _metadata_audit(request, account, action="table_desc.delete",
+                        resource_id=int(desc_id), change_json={"scope_key": scope_key})
+    return JSONResponse({"ok": True, "id": int(desc_id), "deleted": int(affected)})
+
+
+# ── 컬럼 설명(column_descriptions) — /tables 동형 + column_name 필드 ────────────
+
+@app.get("/api/admin/metadata/columns")
+def admin_list_column_desc(request: Request) -> JSONResponse:
+    """컬럼 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
+    if serr:
+        return serr
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _km.list_column_desc_admin(pg, scope_key)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_column_desc 조회 실패", exc_info=True)
+        return _json_error("컬럼 설명 목록 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # row: (id, scope_key, schema_name, table_name, column_name, description, source, created_at, updated_at)
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+        "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
+        "description": str(r[5] or ""), "source": str(r[6] or ""),
+        "created_at": _metadata_iso(r[7]), "updated_at": _metadata_iso(r[8]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+
+
+@app.post("/api/admin/metadata/columns")
+async def admin_create_column_desc(request: Request) -> JSONResponse:
+    """컬럼 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, description, schema_name?."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    table_name, e = _metadata_str_field(data, "table_name")
+    if e:
+        return e
+    column_name, e = _metadata_str_field(data, "column_name")
+    if e:
+        return e
+    description, e = _metadata_str_field(data, "definition" if "definition" in data else "description")
+    if e:
+        return e
+    schema_name, e = _metadata_str_field(data, "schema_name", required=False)
+    if e:
+        return e
+    source = "manual" if str(data.get("source") or "").strip().lower() != "bootstrap" else "bootstrap"
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        _km.upsert_column_desc(pg, scope_key, table_name, column_name, description,
+                               schema_name=schema_name, source=source,
+                               created_by=str((account or {}).get("username") or "") or None)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_create_column_desc 실패", exc_info=True)
+        return _json_error("컬럼 설명 등록 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="column_desc.create",
+                    resource_id=f"{scope_key}:{schema_name}.{table_name}.{column_name}",
+                    change_json={"scope_key": scope_key, "schema_name": schema_name,
+                                 "table_name": table_name, "column_name": column_name, "source": source})
+    return JSONResponse({"ok": True, "scope_key": scope_key, "table_name": table_name, "column_name": column_name})
+
+
+@app.put("/api/admin/metadata/columns/{desc_id}")
+async def admin_update_column_desc(desc_id: int, request: Request) -> JSONResponse:
+    """컬럼 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?/table_name?/column_name?."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+    description, e = _metadata_str_field(data, "definition" if "definition" in data else "description")
+    if e:
+        return e
+    has_table = "table_name" in data
+    has_column = "column_name" in data
+    schema_name = table_name = column_name = None
+    if has_table or has_column:
+        # key 수정 시 table+column 둘 다 필수(부분 제공 거부).
+        table_name, e = _metadata_str_field(data, "table_name")
+        if e:
+            return e
+        column_name, e = _metadata_str_field(data, "column_name")
+        if e:
+            return e
+        schema_name, e = _metadata_str_field(data, "schema_name", required=False)
+        if e:
+            return e
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _km.update_column_desc(pg, int(desc_id), scope_key, description,
+                                          schema_name=schema_name, table_name=table_name,
+                                          column_name=column_name)
+        if affected <= 0:
+            pg.rollback()
+            return _json_error("해당 컬럼 설명을 찾을 수 없습니다.", 404)
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        if exc.__class__.__name__ in ("UniqueViolation", "IntegrityError"):
+            return _json_error("동일 (스키마/테이블/컬럼)의 설명이 이미 있습니다.", 409)
+        logging.getLogger(__name__).warning("admin_update_column_desc 실패 id=%s", desc_id, exc_info=True)
+        return _json_error("컬럼 설명 수정 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="column_desc.update",
+                    resource_id=int(desc_id), change_json={"scope_key": scope_key})
+    return JSONResponse({"ok": True, "id": int(desc_id)})
+
+
+@app.delete("/api/admin/metadata/columns/{desc_id}")
+def admin_delete_column_desc(desc_id: int, request: Request) -> JSONResponse:
+    """컬럼 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
+    if serr:
+        return serr
+    from modules import kb_metadata as _km
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _km.delete_column_desc(pg, int(desc_id), scope_key)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_delete_column_desc 실패 id=%s", desc_id, exc_info=True)
+        return _json_error("컬럼 설명 삭제 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        _metadata_audit(request, account, action="column_desc.delete",
+                        resource_id=int(desc_id), change_json={"scope_key": scope_key})
+    return JSONResponse({"ok": True, "id": int(desc_id), "deleted": int(affected)})
+
+
+# ── 샘플 admin(sample_queries) — RBAC kb.sample.curate ─────────────────────────
+
+def _samples_resolve_account(request: Request):
+    """RBAC(kb.sample.curate) 게이트. (account, None) 또는 (None, JSONResponse[401/403/500]).
+
+    _metadata_resolve_account 와 동형이되 권한 코드만 kb.sample.curate(샘플 큐레이션 권한).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return None, _json_error("db connection failed", 500)
+    try:
+        account, error = _require_permission(request, conn, "kb.sample.curate")
+        if error:
+            return None, error
+        return account, None
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/metadata/samples")
+def admin_list_samples(request: Request) -> JSONResponse:
+    """샘플 목록 — 단일 scope. 권한 kb.sample.curate. ?scope_key= (기본 'common')."""
+    account, error = _samples_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
+    if serr:
+        return serr
+    from modules import sample_queries as _sq
+    from modules.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("샘플 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _sq.list_samples_admin(pg, scope_key)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_samples 조회 실패", exc_info=True)
+        return _json_error("샘플 목록 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # row: (id, scope_key, nl_question, sql, domain, weight, approved, status, source_type, created_at, updated_at)
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "nl_question": str(r[2] or ""),
+        "sql": str(r[3] or ""), "domain": str(r[4] or ""), "weight": int(r[5] or 0),
+        "approved": bool(r[6]), "status": str(r[7] or ""), "source_type": str(r[8] or ""),
+        "created_at": _metadata_iso(r[9]), "updated_at": _metadata_iso(r[10]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+
+
+@app.put("/api/admin/metadata/samples/{sample_id}")
+async def admin_update_sample(sample_id: int, request: Request) -> JSONResponse:
+    """샘플 수정(by id, scope 가드). 권한 kb.sample.curate. body: scope_key, nl_question?, sql?, domain?, weight?, approved?.
+
+    하이브리드 C 임베딩: nl_question 변경 시에만 kb_retrieval._embed_query_vector 동기 시도 →
+    성공이면 embedding 갱신(status='active'), 실패면 embedding 무효화(status='stale', 재임베딩 대기).
+    nl 미변경 시 embedding touch 안 함. weight 1~1000 clamp. nl 중복(UNIQUE) → 409.
+    """
+    account, error = _samples_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
+    if serr:
+        return serr
+
+    # 부분 수정 — 본문에 키가 있을 때만 해당 필드 변경. 전부 미제공이면 400(no-op 거부).
+    kwargs: dict = {}
+    if "nl_question" in data:
+        nlq, e = _metadata_str_field(data, "nl_question")
+        if e:
+            return e
+        kwargs["nl_question"] = nlq
+    if "sql" in data:
+        sql_v = str(data.get("sql") or "").strip()
+        if not sql_v:
+            return _json_error("sql 은 비울 수 없습니다.", 400)
+        if len(sql_v) > 8000:  # 샘플 SQL 길이 cap(프롬프트 예시 전용 — 비대 방지)
+            return _json_error("sql 이 너무 깁니다 (최대 8000자).", 400)
+        kwargs["sql"] = sql_v
+    if "domain" in data:
+        kwargs["domain"] = str(data.get("domain") or "").strip()
+    if "weight" in data:
+        try:
+            w = int(data.get("weight"))
+        except Exception:
+            return _json_error("weight 는 정수여야 합니다.", 400)
+        kwargs["weight"] = max(_SAMPLE_WEIGHT_MIN, min(_SAMPLE_WEIGHT_MAX, w))  # 1~1000 clamp
+    if "approved" in data:
+        kwargs["approved"] = bool(data.get("approved"))
+    if not kwargs:
+        return _json_error("수정할 필드가 없습니다.", 400)
+
+    # 하이브리드 C: nl_question 변경 시에만 임베딩 동기 시도. 실패→None(코어가 status='stale').
+    embed_changed = "nl_question" in kwargs
+    embed_status = None  # 응답 진단용: 'active' | 'stale' | None(미변경)
+    if embed_changed:
+        vec = None
+        try:
+            from modules.kb_retrieval import _embed_query_vector
+            vec = _embed_query_vector(kwargs["nl_question"])  # dim=1024(titan-embed v2)
+        except Exception:
+            vec = None
+        kwargs["embedding"] = vec if vec else None
+        embed_status = "active" if vec else "stale"
+
+    from modules import sample_queries as _sq
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("샘플 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _sq.update_sample(pg, int(sample_id), scope_key, **kwargs)
+        if affected <= 0:
+            pg.rollback()
+            return _json_error("해당 샘플을 찾을 수 없습니다.", 404)
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        if exc.__class__.__name__ in ("UniqueViolation", "IntegrityError"):
+            return _json_error("동일 질문(nl_question)의 샘플이 이미 있습니다.", 409)
+        logging.getLogger(__name__).warning("admin_update_sample 실패 id=%s", sample_id, exc_info=True)
+        return _json_error("샘플 수정 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="sample.update",
+                    resource_id=int(sample_id),
+                    change_json={"scope_key": scope_key, "fields": sorted(k for k in kwargs if k != "embedding"),
+                                 "embedding": embed_status})
+    return JSONResponse({"ok": True, "id": int(sample_id), "embedding_status": embed_status})
+
+
+@app.delete("/api/admin/metadata/samples/{sample_id}")
+def admin_delete_sample(sample_id: int, request: Request) -> JSONResponse:
+    """샘플 삭제(by id, scope 가드, 멱등). 권한 kb.sample.curate. ?scope_key= 필수."""
+    account, error = _samples_resolve_account(request)
+    if error:
+        return error
+    scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
+    if serr:
+        return serr
+    from modules import sample_queries as _sq
+    from modules.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("샘플 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _sq.delete_sample(pg, int(sample_id), scope_key)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_delete_sample 실패 id=%s", sample_id, exc_info=True)
+        return _json_error("샘플 삭제 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        _metadata_audit(request, account, action="sample.delete",
+                        resource_id=int(sample_id), change_json={"scope_key": scope_key})
+    return JSONResponse({"ok": True, "id": int(sample_id), "deleted": int(affected)})
+
+
+# ── 스키마 부트스트랩(introspection) — RBAC kb.ingest.manual ───────────────────
+# read 경로: datasources.all_datasources(mem) 로 DS 검증 → db.connect(datasource=ds, RO) →
+# schema.load_known_schemas(conn) / dialect-aware 골격. **MSSQL**: config.set_active_datasource
+# (engine=) 로 dialect 먼저 활성화(미설정 시 백틱 폴백 오류). load_schema_metadata 는 MySQL 백틱
+# 하드코딩이라 골격은 dialect.describe_columns 경유(MSSQL 동치)로 만든다. RO 유저만·자동 샘플/
+# list_indexes 호출 금지(부하/PII). 골격은 **미영속** — UI 가 설명 빈칸 prefill, 사람이 채워 저장.
+
+def _bootstrap_resolve_datasource(ds_key: str):
+    """datasource key → (ds_dict, scope_key, None) 또는 (None, None, JSONResponse).
+
+    all_datasources(mem) 로 검증(미존재 404). scope_key 화이트리스트도 함께 통과시킨다.
+    """
+    key = str(ds_key or "").strip().lower()
+    if not key:
+        return None, None, _json_error("datasource 는 필수입니다.", 400)
+    if key == "common":
+        return None, None, _json_error("'common' 은 introspection 대상이 아닙니다.", 400)
+    from modules import datasources as _dsr
+    mem = None
+    try:
+        mem = _connect_memory()
+    except Exception:
+        mem = None
+    try:
+        ds_map = _dsr.all_datasources(mem) or {}
+    except Exception:
+        ds_map = {}
+    finally:
+        if mem is not None:
+            try:
+                mem.close()
+            except Exception:
+                pass
+    ds = ds_map.get(key)
+    if not ds:
+        return None, None, _json_error("해당 datasource 를 찾을 수 없습니다.", 404)
+    return ds, key, None
+
+
+def _bootstrap_activate_dialect(ds: dict, scope_key: str):
+    """introspection 전에 활성 dialect 를 설정(MSSQL 백틱 폴백 오류 방지). 끝나면 호출측이 리셋."""
+    from modules import config as _cfg
+    engine = str((ds or {}).get("engine") or "mysql").strip().lower()
+    default_db = (ds or {}).get("default_db")
+    _cfg.set_active_datasource(scope_key, engine=engine, default_db=default_db)
+    return engine
+
+
+@app.get("/api/admin/metadata/bootstrap/schemas")
+def admin_bootstrap_schemas(request: Request) -> JSONResponse:
+    """선택 datasource 의 schema 목록. 권한 kb.ingest.manual. ?datasource=<key>."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    ds, scope_key, derr = _bootstrap_resolve_datasource(request.query_params.get("datasource") or "")
+    if derr:
+        return derr
+    from modules import config as _cfg
+    from modules import db as _db
+    from modules import schema as _schema
+    conn = None
+    try:
+        _bootstrap_activate_dialect(ds, scope_key)
+        conn = _db.connect(datasource=ds, autocommit=True)  # RO 유저(데이터소스 좌표는 least-priv)
+        schemas = _schema.load_known_schemas(conn)  # dialect-aware(MySQL/MSSQL 분기 — schema.py:788)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_bootstrap_schemas 실패 ds=%s", scope_key, exc_info=True)
+        return _json_error("스키마 조회 실패", 503)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        try:
+            _cfg.set_active_datasource(None)  # 요청 컨텍스트 dialect 리셋
+        except Exception:
+            pass
+    return JSONResponse({"schemas": list(schemas or []), "datasource": scope_key})
+
+
+@app.post("/api/admin/metadata/bootstrap")
+async def admin_bootstrap(request: Request) -> JSONResponse:
+    """선택 datasource+schema 의 테이블/컬럼 골격(미영속). 권한 kb.ingest.manual. body: datasource, schema.
+
+    골격은 저장하지 않는다 — UI 가 설명 빈칸을 prefill, 사람이 채워 tables/columns POST(source='bootstrap')
+    로 저장한다. dialect-aware: MSSQL 은 set_active_datasource(engine=) 로 활성화 후 dialect.describe_columns
+    경유(MySQL 백틱 하드코딩 load_schema_metadata 우회). 자동 1행 샘플/list_indexes 호출 안 함(부하/PII).
+    """
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    ds, scope_key, derr = _bootstrap_resolve_datasource(data.get("datasource") or "")
+    if derr:
+        return derr
+    schema_name = str(data.get("schema") or "").strip()
+    if not schema_name:
+        return _json_error("schema 는 필수입니다.", 400)
+    if len(schema_name) > _METADATA_FIELD_CAPS["schema_name"]:
+        return _json_error("schema 가 너무 깁니다.", 400)
+
+    from modules import config as _cfg
+    from modules import db as _db
+    from modules import dialects as _dialects
+    from modules import schema as _schema
+    from modules.tools import _safe_ident as _safe_ident_fn
+    # REV B1(BLOCKER) — SQLi 차단: dialect.describe_schema_tables 는 schema 를 f-string 으로 SQL 에
+    # 삽입(dialects.py:251 `WHERE TABLE_SCHEMA = '{schema}'`)하므로, 구조화 도구(tools.py:732)와 동일하게
+    # ① _safe_ident 로 인용 구분자 제거 + ② load_known_schemas 멤버십 allowlist 로만 통과시킨다.
+    safe_schema = _safe_ident_fn(schema_name)
+    conn = None
+    try:
+        engine = _bootstrap_activate_dialect(ds, scope_key)
+        conn = _db.connect(datasource=ds, autocommit=True)
+        known_schemas = set(_schema.load_known_schemas(conn) or [])
+        if safe_schema not in known_schemas:
+            return _json_error("알 수 없는 schema 이거나 접근할 수 없습니다.", 404)
+        tables = _bootstrap_collect_skeleton(conn, _dialects, safe_schema)
+    except Exception:
+        logging.getLogger(__name__).warning("admin_bootstrap 실패 ds=%s schema=%s", scope_key, schema_name, exc_info=True)
+        return _json_error("스키마 골격 조회 실패", 503)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        try:
+            _cfg.set_active_datasource(None)
+        except Exception:
+            pass
+    return JSONResponse({"tables": tables, "datasource": scope_key, "schema": schema_name})
+
+
+def _bootstrap_collect_skeleton(conn, _dialects, schema_name: str) -> list:
+    """dialect-aware 골격 수집 — {schema_name, table_name, columns:[{column_name, data_type}]}.
+
+    테이블 목록은 dialect.describe_schema_tables(1쿼리), 각 테이블 컬럼은 dialect.describe_columns
+    (row[0]=name, row[1]=type). MySQL/MSSQL 둘 다 동일 인터페이스(dialects.py). 자동 샘플/인덱스
+    조회는 하지 않는다(부하/PII). cap: 테이블 500 / 테이블당 컬럼 200.
+    """
+    from modules.tools import _safe_ident as _safe_ident_fn
+    dialect = _dialects.active()
+    cur = conn.cursor()
+    table_names: list[str] = []
+    try:
+        cur.execute(dialect.describe_schema_tables(schema_name))
+        for row in (cur.fetchall() or []):
+            if row and row[0]:
+                table_names.append(str(row[0]))
+            if len(table_names) >= _BOOTSTRAP_MAX_TABLES:
+                break
+    finally:
+        cur.close()
+
+    out: list = []
+    for tname in table_names:
+        # REV B1 방어심층: tname 은 introspection 산출(DB 제어)이나 구조화 도구와 동일하게 _safe_ident 통과.
+        safe_tname = _safe_ident_fn(tname)
+        cols: list = []
+        ccur = conn.cursor()
+        try:
+            ccur.execute(dialect.describe_columns(schema_name, safe_tname))
+            for crow in (ccur.fetchall() or []):
+                if not crow or not crow[0]:
+                    continue
+                cols.append({"column_name": str(crow[0]),
+                             "data_type": str(crow[1] or "").lower()})
+                if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
+                    break
+        except Exception:
+            cols = []  # 단일 테이블 introspection 실패는 건너뜀(부분 골격 허용)
+        finally:
+            ccur.close()
+        out.append({"schema_name": schema_name, "table_name": tname, "columns": cols})
+    return out
 
 
 # ════════════════════════════════════════════════════════════════════════════

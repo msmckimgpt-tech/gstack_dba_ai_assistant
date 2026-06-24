@@ -226,8 +226,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: 배포 = ask-worker(+ 등록 UI 는 ITEM-11 과 묶음).
 
 ### ITEM-11 · 메타데이터 거버넌스 포탈 (CRUD UI)
-- **status**: in-progress (MVP-1 done · Phase 2 deferred)
-- **note**: 2026-06-24 드레인(chat, PLAN-APPROVED, PR#TBD). **MVP-1(용어/ENUM CRUD) 마감** — admin "메타데이터" 탭(용어·ENUM 2 서브뷰: scope 드롭다운+목록+생성/수정/삭제) + backend 8 엔드포인트(`/api/admin/metadata/{glossary,enums}`) + 신규 RBAC `kb.ingest.manual`(admin seed) + audit + cross-DB conn 분리. 기존 PG 테이블 재사용(마이그 없음). 적대 backend+security 리뷰 SHIP(BLOCKER/MAJOR 0 — RBAC·scope/IDOR·SQLi·XSS·원자성 안전; MINOR-2 scope 드롭다운 race 흡수). test 13/13. CHG/REV-20260624T130000. **Phase 2 잔여(별도)**: 테이블/컬럼 설명 CRUD · describe_table 부트스트랩 · 샘플 admin 편집. UI 라이브 검증(PB-0008)은 배포 후.
+- **status**: done (MVP-1 + Phase 2)
+- **note**: 2026-06-24 드레인(chat, PLAN-APPROVED). **MVP-1(용어/ENUM CRUD) 마감** — admin "메타데이터" 탭(용어·ENUM 2 서브뷰: scope 드롭다운+목록+생성/수정/삭제) + backend 8 엔드포인트(`/api/admin/metadata/{glossary,enums}`) + 신규 RBAC `kb.ingest.manual`(admin seed) + audit + cross-DB conn 분리. 기존 PG 테이블 재사용(마이그 없음). 적대 backend+security 리뷰 SHIP. test 13/13. CHG/REV-20260624T130000. **Phase 2 마감(2026-06-24, PLAN-APPROVED 2a+2b)** — 테이블/컬럼 설명 CRUD + KB datamark 주입 + describe_table overlay(native 빈 comment) + RO 스키마 부트스트랩(미영속) + 샘플 admin 검수(하이브리드 C). 신규 테이블 `table_descriptions`/`column_descriptions`(alembic 0017, 단일 head·멱등). RBAC `kb.ingest.manual`/`kb.sample.curate`. 적대 패널 2회 SHIP(B1 부트스트랩 SQLi + M2 alembic 위치 흡수 → BLOCKER/MAJOR 0). test 27/27 + 회귀 25(MVP-1 13 + sample_flywheel 12). CHG/REV-20260624T133000-item11-phase2. UI 라이브 검증(PB-0008)은 배포 후(WARN-only). **scope-key-unify 후속(2026-06-24, CHG/REV-20260624T160000)**: Phase 2 작동검증(`/_template:resume`) 중 구조 감사가 admin write(datasource 라벨) ≠ 질의 read(엔드포인트 해시) **scope-key 축 불일치 死data**(DB-등록 ds 의 ds-scoped 설명/샘플이 'common' 외 영영 안 읽힘) 적발 → admin write 축을 read 와 동일식(`scope_key 필드 or 라벨`)으로 통일 수정. **ITEM-10(용어/ENUM)·ITEM-03(샘플 검수) admin 도 동일 결함 공유 → 함께 수정**. KB 테이블 0행이라 손실 데이터 없던 잠복(라벨 行 백필 불요).
 - **feature_id**: feature-0003-agent-web-ui
 - **dimension**: structural / functional
 - **risk_grade**: Major
@@ -269,12 +269,12 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | **ITEM-09** (무거운쿼리 경량대안+승인) | **reject(subsumed)** | shipped TASK-0299/0304 가 무거운쿼리를 LLM tool-루프 silent rewrite 로 이미 처리(agent_core.py:120-128). ITEM-09 의 사용자-노출 승인 라운드트립은 TASK-0304 의 사용자-승인된 "차단 미노출(효율적 답변만)" 결정을 **역전**하는 설계 충돌 → 임의 구현 안 함. 사용자 결정(2026-06-23) subsumed. 재검토 트리거: 승인-UX 가 silent-rewrite 보다 낫다는 근거 + TASK-0304 재논의(plan-ceo/eng-review). |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 8 · rejected 1 · in-progress 1(ITEM-11 MVP-1 done·Phase 2 잔여) · pending 0 · blocked 2
-- 완료: **ITEM-01**(harness, A/B 측정 보류) · **ITEM-02**(샘플 저장소) · **ITEM-03**(피드백 flywheel PR-A코어+PR-B web, security SHIP-WITH-FIXES) · **ITEM-04**(DS 컨텍스트) · **ITEM-05**(하이브리드 fusion — 구현·리뷰 done, acceptance 반증→**gated-OFF dormant**) · **ITEM-07**(self-reflection, 회복률 측정 보류) · **ITEM-08**("AI 로 고치기" 표적 정정, 적대 리뷰 SHIP-WITH-FIXES M1 흡수) · **ITEM-10**(용어/ENUM).
-- 진행중: **ITEM-11**(메타데이터 거버넌스 포탈) — **MVP-1(용어/ENUM CRUD) done**(적대 리뷰 SHIP, RBAC `kb.ingest.manual`), Phase 2(테이블/컬럼 설명·describe 부트스트랩·샘플 admin) 잔여.
+- 총 12 항목 · done 9 · rejected 1 · in-progress 0 · pending 0 · blocked 2
+- 완료: **ITEM-01**(harness, A/B 측정 보류) · **ITEM-02**(샘플 저장소) · **ITEM-03**(피드백 flywheel PR-A코어+PR-B web, security SHIP-WITH-FIXES) · **ITEM-04**(DS 컨텍스트) · **ITEM-05**(하이브리드 fusion — 구현·리뷰 done, acceptance 반증→**gated-OFF dormant**) · **ITEM-07**(self-reflection, 회복률 측정 보류) · **ITEM-08**("AI 로 고치기" 표적 정정, 적대 리뷰 SHIP-WITH-FIXES M1 흡수) · **ITEM-10**(용어/ENUM) · **ITEM-11**(메타데이터 거버넌스 포탈 — MVP-1 용어/ENUM CRUD + Phase 2 테이블/컬럼 설명·주입·overlay·부트스트랩·샘플 admin, 적대 패널 2회 SHIP, RBAC `kb.ingest.manual`/`kb.sample.curate`).
+- 진행중: 없음 (ITEM-11 Phase 2 마감으로 in-progress 0).
 - 기각: **ITEM-09**(subsumed — shipped TASK-0304 silent-rewrite, §4).
 - 보류(blocked, select_next_ready 제외): **ITEM-12**(retrieval 파라미터 튜닝) · **ITEM-06**(reranker) — 둘 다 measurement substrate gap(bge-m3 가 합성 KB 포화 → 측정 신호 0), 라이브 운영 질의 로그 확보 후 재개.
 - ✅ **환경 (2026-06-23, 갱신)**: chat(claude-*, Anthropic-direct OAuth) ✓ · **임베딩 titan-embed→로컬 Ollama bge-m3(1024) 복구 ✓**(end-to-end 검증, PR#385). 임베딩 클러스터 차단 해소.
-- **드레인 종료 상태(2026-06-24)**: ready(pending ∧ deps done) 0 — 전 항목이 done(8)·in-progress(1, Phase 2 잔여)·blocked(2, 측정 gap)·rejected(1). 추가 진행은 ① ITEM-11 Phase 2(별도 cycle) ② ITEM-06/12 는 라이브 질의 로그 확보 후 재개 ③ 측정 보류분(ITEM-01/02 A/B·05 실가치) 라이브 로그 의존.
+- **드레인 종료 상태(2026-06-24, ITEM-11 Phase 2 마감 갱신)**: ready(pending ∧ deps done) 0 — 전 항목이 done(9)·blocked(2, 측정 gap)·rejected(1). 추가 진행은 ① ITEM-06/12 는 라이브 질의 로그 확보 후 재개 ② 측정 보류분(ITEM-01/02 A/B·05 실가치) 라이브 로그 의존.
 - 보류 측정(임베딩 복구로 이제 가능): ITEM-01/02 A/B·retrieval precision/recall — 해당 후속 측정 시 함께. ITEM-05 fusion 실가치·ITEM-06/12 는 라이브 질의 로그 필요(합성 KB 반증).
 - 잔여 flag(별도 cleanup): kb_backend:940 주석 stale `vector(1536)`(정본 1024; schema.sql:68 texts 는 CHG-20260623T180000 으로 1024 정정 완료). bge-m3 provenance(embedding_model alias 기록).

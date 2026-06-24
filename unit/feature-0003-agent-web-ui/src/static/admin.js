@@ -1986,7 +1986,10 @@ const ADMIN_TAB_PERMISSIONS = {
   // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수 큐.
   "sample-review": ["kb.sample.curate"],
   // TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1): 용어/ENUM 메타데이터 CRUD.
-  metadata: ["kb.ingest.manual"],
+  // scope-key-unify: samples 서브뷰는 kb.sample.curate 권한이라, 부모 탭 게이트도 OR 로 넓혀
+  // kb.sample.curate 단독 보유 큐레이터가 메타데이터 탭→samples 서브뷰에 도달 가능하게 한다
+  // (서브뷰별 가시성은 _METADATA_SUBTAB_PERM 가 별도 분기).
+  metadata: ["kb.ingest.manual", "kb.sample.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2086,8 +2089,10 @@ function switchTab(tabName) {
       adminState.metadataInitialized = true;
       initMetadataTab();
     } else {
-      // 재진입(REV MINOR-2): 첫 진입이 datasources 로드 전이었을 수 있으니 scope 드롭다운 재채움(선택 보존).
+      // 재진입(REV MINOR-2): 첫 진입이 datasources 로드 전이었을 수 있으니 scope/부트스트랩 DS 드롭다운 재채움(선택 보존).
       _metaPopulateScopeSelect();
+      _metaApplySubtabPermissions();
+      _metaSyncBootstrapVisibility();
     }
   }
   // 릴리즈 노트 — 정적 콘텐츠라 진입 시 렌더(가벼움). 렌더러는 release-notes.js, 작업 화면과 공유.
@@ -2312,20 +2317,48 @@ async function _sampleFeedbackAction(btn, action) {
 }
 
 /* ── TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1) ───────────────
- * 메타데이터 거버넌스 콘솔: 용어사전(glossary)/ENUM 코드사전(enums) 2 서브뷰 CRUD. 권한 kb.ingest.manual.
+ *    + TASK-20260624-item11-metadata-phase2 (Phase 2): 테이블/컬럼 설명·샘플쿼리·부트스트랩 추가.
+ * 메타데이터 거버넌스 콘솔 — 5 서브뷰:
+ *   glossary/enums/tables/columns = 권한 kb.ingest.manual,  samples = 권한 kb.sample.curate.
+ *   tables/columns 는 부트스트랩 UI(스키마 골격 가져와 설명 일괄 입력) 동반.
  * scope: 데이터소스 key(소문자) 또는 'common'(공용) — adminState.datasources(기존 fetch 재사용) + common.
  *        편집/삭제는 항상 현재 선택 scope 행에만 적용(백엔드 scope 가드와 정합).
- * XSS: 모든 사용자 데이터(term/definition/label/code/…)는 textContent/escape 로만 DOM 삽입(innerHTML 금지).
- * 백엔드: GET/POST /api/admin/metadata/{glossary|enums}, PUT/DELETE …/{id}. */
+ * XSS: 모든 사용자 데이터(term/definition/label/code/description/sql/…)는 textContent/escape 로만 DOM 삽입(innerHTML 금지).
+ * 백엔드: GET/POST/PUT/DELETE /api/admin/metadata/{glossary|enums|tables|columns},
+ *         GET/PUT/DELETE /api/admin/metadata/samples (POST 없음 — 검수 경로가 생성 정본),
+ *         GET /api/admin/metadata/bootstrap/schemas?datasource=, POST /api/admin/metadata/bootstrap. */
 adminState.metadata = {
-  subTab: "glossary",   // glossary | enums
+  subTab: "glossary",   // glossary | enums | tables | columns | samples
   scopeKey: "common",
   items: [],
   loading: false,
   editing: null,        // 수정 중인 항목(id 포함) 또는 null(=생성 모드)
+  // Phase 2 부트스트랩 상태(테이블/컬럼 서브뷰 전용).
+  bootstrap: {
+    open: false,
+    datasource: "",
+    schema: "",
+    schemas: [],
+    tables: [],         // {schema_name, table_name, columns:[{column_name, data_type}]}
+    loading: false,
+    saving: false,
+  },
 };
 
-// 서브뷰별 폼 필드 정의 — label/key/type/required/placeholder. 렌더/검증/payload 조립에 공용 사용.
+// 서브뷰별 권한 — 서브탭/버튼 표시 게이트(실제 거부는 서버 403). samples 만 kb.sample.curate.
+const _METADATA_SUBTAB_PERM = {
+  glossary: "kb.ingest.manual",
+  enums: "kb.ingest.manual",
+  tables: "kb.ingest.manual",
+  columns: "kb.ingest.manual",
+  samples: "kb.sample.curate",
+};
+
+// 생성 폼 비활성 서브뷰 — samples 는 검수 경로(ITEM-03)가 생성 정본이라 수정 전용.
+const _METADATA_NO_CREATE = { samples: true };
+
+// 서브뷰별 폼 필드 정의 — label/key/type/required/placeholder/min/max. 렌더/검증/payload 조립에 공용 사용.
+// type: text | textarea | number | checkbox.
 const _METADATA_FIELDS = {
   glossary: [
     { key: "term", label: "용어", required: true, type: "text", placeholder: "예: 활성 사용자" },
@@ -2337,6 +2370,27 @@ const _METADATA_FIELDS = {
     { key: "column_name", label: "컬럼", required: true, type: "text", placeholder: "예: status" },
     { key: "code", label: "코드", required: true, type: "text", placeholder: "예: 1" },
     { key: "label", label: "라벨(의미)", required: true, type: "text", placeholder: "예: 결제완료" },
+  ],
+  // 테이블 설명 — POST upsert(scope_key,schema_name,table_name). PUT 은 id+scope.
+  tables: [
+    { key: "schema_name", label: "스키마(선택)", required: false, type: "text", placeholder: "단일 스키마면 비워둠" },
+    { key: "table_name", label: "테이블", required: true, type: "text", placeholder: "예: orders" },
+    { key: "description", label: "설명", required: true, type: "textarea", placeholder: "이 테이블이 담는 데이터/용도" },
+  ],
+  // 컬럼 설명 — tables 동형 + column_name.
+  columns: [
+    { key: "schema_name", label: "스키마(선택)", required: false, type: "text", placeholder: "단일 스키마면 비워둠" },
+    { key: "table_name", label: "테이블", required: true, type: "text", placeholder: "예: orders" },
+    { key: "column_name", label: "컬럼", required: true, type: "text", placeholder: "예: status" },
+    { key: "description", label: "설명", required: true, type: "textarea", placeholder: "이 컬럼이 담는 값/의미" },
+  ],
+  // 샘플쿼리 — 수정 전용(생성 폼 없음). weight 1~1000 clamp, approved 체크박스.
+  samples: [
+    { key: "nl_question", label: "자연어 질문", required: true, type: "textarea", placeholder: "이 SQL 이 답하는 질문" },
+    { key: "sql", label: "SQL", required: true, type: "textarea", placeholder: "SELECT …" },
+    { key: "domain", label: "도메인(선택)", required: false, type: "text", placeholder: "예: sales" },
+    { key: "weight", label: "가중치(1~1000)", required: false, type: "number", min: 1, max: 1000, placeholder: "100" },
+    { key: "approved", label: "승인됨", required: false, type: "checkbox" },
   ],
 };
 
@@ -2350,12 +2404,35 @@ function _metaFmtDt(v) {
   try { return formatDateTime(v); } catch (e) { return String(v); }
 }
 
-// 탭 첫 진입 — scope 드롭다운 채우기 + 서브탭/폼 바인딩 + 최초 목록 로드.
+// 탭 첫 진입 — scope 드롭다운 채우기 + 서브탭 권한 게이트 + 폼 바인딩 + 최초 목록 로드.
 function initMetadataTab() {
   _metaPopulateScopeSelect();
+  _metaApplySubtabPermissions();
   _metaBindControls();
+  _metaBindBootstrap();
   _metaRenderForm();
+  _metaSyncBootstrapVisibility();
   loadMetadata();
+}
+
+// 서브탭 권한 게이트 — 미보유 서브탭 버튼 숨김. 현재 서브탭이 숨겨졌으면 첫 표시 서브탭으로 전환.
+// (서버가 실제 403 으로 거부하므로 이는 표시 게이트일 뿐.)
+function _metaApplySubtabPermissions() {
+  const btns = Array.from(document.querySelectorAll(".admin-meta-subtab"));
+  let curVisible = false;
+  let firstVisible = null;
+  for (const btn of btns) {
+    const sub = btn.dataset.metaSubtab;
+    const perm = _METADATA_SUBTAB_PERM[sub];
+    const visible = !perm || can(perm);
+    btn.style.display = visible ? "" : "none";
+    if (visible && !firstVisible) firstVisible = sub;
+    if (visible && sub === adminState.metadata.subTab) curVisible = true;
+  }
+  if (!curVisible && firstVisible) {
+    adminState.metadata.subTab = firstVisible;
+    for (const b of btns) b.classList.toggle("is-active", b.dataset.metaSubtab === firstVisible);
+  }
 }
 
 // scope 드롭다운: '공용(common)' + 등록된 datasource key 목록(기존 adminState.datasources 재사용).
@@ -2364,8 +2441,13 @@ function _metaPopulateScopeSelect() {
   if (!sel) return;
   const opts = [{ value: "common", label: "공용 (common)" }];
   for (const ds of (adminState.datasources || [])) {
-    const key = String((ds && ds.key) || "").trim().toLowerCase();
-    if (key) opts.push({ value: key, label: key });
+    const label = String((ds && ds.key) || "").trim().toLowerCase();
+    if (!label) continue;
+    // scope-key-unify(死data 수정): option value = 백엔드가 준 scope_key(= 질의 시점 read 와 동일 해소값:
+    // DB-등록 ds=엔드포인트 해시, .env 레거시=라벨). 이 값으로 저장해야 ds-scoped 설명/샘플이 읽힌다.
+    // 표시는 사람이 읽는 라벨(key). scope_key 가 비면(구버전 백엔드) 라벨로 폴백.
+    const scope = String((ds && ds.scope_key) || label).trim().toLowerCase();
+    opts.push({ value: scope, label: label });
   }
   // textContent 기반 option 생성(XSS 안전).
   sel.replaceChildren();
@@ -2403,6 +2485,7 @@ function _metaBindControls() {
       });
       _metaCancelEdit();
       _metaRenderForm();
+      _metaSyncBootstrapVisibility();
       loadMetadata();
     });
   });
@@ -2424,15 +2507,38 @@ function _metaBindControls() {
 }
 
 // 폼 필드 렌더(서브탭별). 수정 모드면 editing 값 채움. label/input 전부 DOM API(XSS 안전).
+// samples 등 생성 비활성 서브뷰는 수정 모드(editing)일 때만 폼을 표시한다(생성 폼 없음).
 function _metaRenderForm() {
   const wrap = document.getElementById("metadataFormFields");
   const submitBtn = document.getElementById("metadataSubmitBtn");
   const cancelBtn = document.getElementById("metadataCancelBtn");
+  const form = document.getElementById("metadataForm");
   if (!wrap) return;
-  const fields = _METADATA_FIELDS[adminState.metadata.subTab] || [];
+  const sub = adminState.metadata.subTab;
+  const fields = _METADATA_FIELDS[sub] || [];
   const editing = adminState.metadata.editing;
+  const noCreate = Boolean(_METADATA_NO_CREATE[sub]);
+  // 생성 비활성 서브뷰 + 비편집 상태 → 폼 자체를 숨김(목록의 '수정' 버튼으로만 진입).
+  if (form) form.style.display = (noCreate && !editing) ? "none" : "";
   wrap.replaceChildren();
   for (const f of fields) {
+    if (f.type === "checkbox") {
+      // 체크박스는 라벨을 input 우측에 배치(가로 정렬).
+      const field = document.createElement("label");
+      field.className = "admin-meta-field admin-meta-field-check";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.className = "admin-meta-check";
+      input.name = f.key;
+      if (editing && (editing[f.key] === true || editing[f.key] === "true" || editing[f.key] === 1)) input.checked = true;
+      const cap = document.createElement("span");
+      cap.className = "admin-meta-field-label";
+      cap.textContent = f.label;
+      field.appendChild(input);
+      field.appendChild(cap);
+      wrap.appendChild(field);
+      continue;
+    }
     const field = document.createElement("label");
     field.className = "admin-meta-field";
     const cap = document.createElement("span");
@@ -2440,7 +2546,13 @@ function _metaRenderForm() {
     cap.textContent = f.label + (f.required ? " *" : "");
     field.appendChild(cap);
     const input = f.type === "textarea" ? document.createElement("textarea") : document.createElement("input");
-    if (f.type !== "textarea") input.type = "text";
+    if (f.type === "number") {
+      input.type = "number";
+      if (f.min != null) input.min = String(f.min);
+      if (f.max != null) input.max = String(f.max);
+    } else if (f.type !== "textarea") {
+      input.type = "text";
+    }
     input.className = "admin-meta-input";
     input.name = f.key;
     input.placeholder = f.placeholder || "";
@@ -2457,11 +2569,15 @@ function _metaCancelEdit() {
   _metaRenderForm();
 }
 
+// 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)
 function _metaFormValues() {
   const wrap = document.getElementById("metadataFormFields");
   const out = {};
   if (!wrap) return out;
-  wrap.querySelectorAll("input, textarea").forEach((el) => { out[el.name] = (el.value || "").trim(); });
+  wrap.querySelectorAll("input, textarea").forEach((el) => {
+    if (el.type === "checkbox") out[el.name] = el.checked;
+    else out[el.name] = (el.value || "").trim();
+  });
   return out;
 }
 
@@ -2494,19 +2610,29 @@ async function loadMetadata() {
   renderMetadataList();
 }
 
+// 서브뷰별 빈 상태 안내 문구.
+const _METADATA_EMPTY_MSG = {
+  glossary: "등록된 용어가 없습니다.",
+  enums: "등록된 ENUM 항목이 없습니다.",
+  tables: "등록된 테이블 설명이 없습니다.",
+  columns: "등록된 컬럼 설명이 없습니다.",
+  samples: "등록된 샘플쿼리가 없습니다. (피드백 검수 경로로 생성됩니다)",
+};
+
 function renderMetadataList() {
   const listEl = document.getElementById("metadataList");
   const countEl = document.getElementById("metadataCount");
   if (!listEl) return;
   const items = adminState.metadata.items;
   const sub = adminState.metadata.subTab;
-  const canEdit = can("kb.ingest.manual");
+  // 서브뷰별 편집 권한 — samples 는 kb.sample.curate, 나머지는 kb.ingest.manual.
+  const canEdit = can(_METADATA_SUBTAB_PERM[sub] || "kb.ingest.manual");
   if (countEl) countEl.textContent = `${items.length}건`;
   listEl.replaceChildren();
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "admin-list-empty";
-    empty.textContent = sub === "glossary" ? "등록된 용어가 없습니다." : "등록된 ENUM 항목이 없습니다.";
+    empty.textContent = _METADATA_EMPTY_MSG[sub] || "등록된 항목이 없습니다.";
     listEl.appendChild(empty);
     return;
   }
@@ -2522,13 +2648,46 @@ function renderMetadataList() {
     if (sub === "glossary") {
       title.textContent = it.term || "";
       body.textContent = it.definition || "";
-    } else {
+    } else if (sub === "enums") {
       const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
       title.textContent = `${loc}  ·  ${it.code || ""}`;
       body.textContent = it.label || "";
+    } else if (sub === "tables") {
+      const loc = [it.schema_name, it.table_name].filter(Boolean).join(".");
+      title.textContent = loc || (it.table_name || "");
+      body.textContent = it.description || "";
+    } else if (sub === "columns") {
+      const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
+      title.textContent = loc || (it.column_name || "");
+      body.textContent = it.description || "";
+    } else if (sub === "samples") {
+      title.textContent = it.nl_question || "";
+      body.textContent = it.sql || "";
+      // SQL 은 monospace 로 표시(가독성).
+      body.classList.add("admin-meta-row-code");
     }
     main.appendChild(title);
     main.appendChild(body);
+    // samples 전용 — 가중치/도메인/승인/status 배지.
+    if (sub === "samples") {
+      const tags = document.createElement("div");
+      tags.className = "admin-meta-row-tags";
+      const mkTag = (text, cls) => {
+        const t = document.createElement("span");
+        t.className = "admin-meta-tag" + (cls ? " " + cls : "");
+        t.textContent = text;
+        return t;
+      };
+      if (it.domain) tags.appendChild(mkTag(`도메인: ${it.domain}`));
+      if (it.weight != null) tags.appendChild(mkTag(`가중치 ${it.weight}`));
+      tags.appendChild(mkTag(it.approved ? "승인됨" : "미승인", it.approved ? "admin-meta-tag-ok" : "admin-meta-tag-warn"));
+      if (String(it.status || "").toLowerCase() === "stale") {
+        tags.appendChild(mkTag("stale", "admin-meta-tag-stale"));
+      } else if (it.status) {
+        tags.appendChild(mkTag(String(it.status)));
+      }
+      main.appendChild(tags);
+    }
     const meta = document.createElement("div");
     meta.className = "admin-meta-row-meta";
     meta.textContent = it.updated_at ? `수정 ${_metaFmtDt(it.updated_at)}` : "";
@@ -2568,15 +2727,38 @@ async function _metaSubmitForm(e) {
   const scope = adminState.metadata.scopeKey || "common";
   const fields = _METADATA_FIELDS[sub] || [];
   const vals = _metaFormValues();
-  // 클라 필수 검증(백엔드도 검증 — 이중 안전).
+  const editing = adminState.metadata.editing;
+  // 생성 비활성 서브뷰(samples)는 PUT(수정)만 허용 — POST 경로 차단(검수 경로가 생성 정본).
+  if (_METADATA_NO_CREATE[sub] && !(editing && editing.id != null)) {
+    if (typeof showToast === "function") showToast("이 항목은 검수 경로로만 생성됩니다.", true);
+    return;
+  }
+  // 클라 필수 검증(백엔드도 검증 — 이중 안전). checkbox 는 필수 검증 제외.
   for (const f of fields) {
+    if (f.type === "checkbox") continue;
     if (f.required && !vals[f.key]) {
       if (typeof showToast === "function") showToast(`${f.label} 는 필수입니다.`, true);
       return;
     }
   }
-  const editing = adminState.metadata.editing;
-  const payload = { scope_key: scope, ...vals };
+  // 타입별 payload 조립 — number clamp, checkbox boolean, 빈 선택 필드는 생략.
+  const payload = { scope_key: scope };
+  for (const f of fields) {
+    const raw = vals[f.key];
+    if (f.type === "checkbox") {
+      payload[f.key] = Boolean(raw);
+    } else if (f.type === "number") {
+      if (raw === "" || raw == null) continue;            // 빈 number → 미전송(백엔드 default)
+      let n = parseInt(raw, 10);
+      if (Number.isNaN(n)) continue;
+      if (f.min != null) n = Math.max(f.min, n);
+      if (f.max != null) n = Math.min(f.max, n);          // weight 1~1000 clamp
+      payload[f.key] = n;
+    } else {
+      if (!f.required && (raw === "" || raw == null)) continue;  // 빈 선택 텍스트 생략(schema_name/domain)
+      payload[f.key] = raw;
+    }
+  }
   const submitBtn = document.getElementById("metadataSubmitBtn");
   if (submitBtn) submitBtn.disabled = true;
   try {
@@ -2603,13 +2785,26 @@ async function _metaSubmitForm(e) {
 function _metaResetInputs() {
   const wrap = document.getElementById("metadataFormFields");
   if (!wrap) return;
-  wrap.querySelectorAll("input, textarea").forEach((el) => { el.value = ""; });
+  wrap.querySelectorAll("input, textarea").forEach((el) => {
+    if (el.type === "checkbox") el.checked = false;
+    else el.value = "";
+  });
+}
+
+// 서브뷰별 삭제 confirm 라벨.
+function _metaDeleteLabel(sub, it) {
+  if (sub === "glossary") return it.term || "이 용어";
+  if (sub === "enums") return `${it.table_name || ""}.${it.column_name || ""}=${it.code || ""}`;
+  if (sub === "tables") return [it.schema_name, it.table_name].filter(Boolean).join(".") || "이 테이블 설명";
+  if (sub === "columns") return [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".") || "이 컬럼 설명";
+  if (sub === "samples") return it.nl_question || "이 샘플쿼리";
+  return "이 항목";
 }
 
 async function _metaDelete(it) {
   const sub = adminState.metadata.subTab;
   const scope = adminState.metadata.scopeKey || "common";
-  const label = sub === "glossary" ? (it.term || "이 용어") : `${it.table_name || ""}.${it.column_name || ""}=${it.code || ""}`;
+  const label = _metaDeleteLabel(sub, it);
   if (!window.confirm(`삭제하시겠습니까?\n\n${label}\n\n등록 내용이 답변 프롬프트에서 제외됩니다.`)) return;
   try {
     await apiFetch(`/api/admin/metadata/${sub}/${encodeURIComponent(it.id)}?scope_key=${encodeURIComponent(scope)}`, {
@@ -2620,6 +2815,320 @@ async function _metaDelete(it) {
     if (typeof showToast === "function") showToast("삭제했습니다.");
   } catch (err) {
     if (typeof showToast === "function") showToast((err && err.message) || "삭제 실패", true);
+  }
+}
+
+/* ── TASK-20260624-item11-metadata-phase2: 부트스트랩 UI (테이블/컬럼 서브뷰 전용) ───────
+ * 흐름: [datasource 선택] → [schema 선택(GET …/bootstrap/schemas?datasource=)] → "골격 가져오기"
+ *       (POST …/bootstrap {datasource,schema}) → 응답 골격을 트리/목록으로 표시(설명 빈칸 입력란) →
+ *       사람이 description 입력 → 저장 시 tables/columns POST(각 행). 골격은 미영속 — 저장 전까지 DB 무반영.
+ * 권한 게이트: kb.ingest.manual(서브뷰가 이미 게이트됨). XSS: 모든 식별자 textContent/value 로만 삽입. */
+
+// 현재 서브탭(tables/columns)에 한해 부트스트랩 패널을 노출. 진입 시 DS 드롭다운 채움.
+function _metaSyncBootstrapVisibility() {
+  const panel = document.getElementById("metadataBootstrap");
+  if (!panel) return;
+  const sub = adminState.metadata.subTab;
+  const show = (sub === "tables" || sub === "columns") && can("kb.ingest.manual");
+  panel.style.display = show ? "" : "none";
+  if (show) _metaBootstrapPopulateDs();
+}
+
+// 부트스트랩 컨트롤 바인딩(idempotent).
+function _metaBindBootstrap() {
+  const toggle = document.getElementById("metadataBootstrapToggle");
+  if (toggle && !toggle.dataset.bound) {
+    toggle.dataset.bound = "1";
+    toggle.addEventListener("click", () => {
+      const body = document.getElementById("metadataBootstrapBody");
+      adminState.metadata.bootstrap.open = !adminState.metadata.bootstrap.open;
+      const open = adminState.metadata.bootstrap.open;
+      if (body) body.style.display = open ? "" : "none";
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.textContent = open ? "스키마 골격 가져오기 ▴" : "스키마 골격 가져오기 ▾";
+    });
+  }
+  const dsSel = document.getElementById("metadataBootstrapDs");
+  if (dsSel && !dsSel.dataset.bound) {
+    dsSel.dataset.bound = "1";
+    dsSel.addEventListener("change", () => {
+      adminState.metadata.bootstrap.datasource = dsSel.value || "";
+      adminState.metadata.bootstrap.schema = "";
+      adminState.metadata.bootstrap.tables = [];
+      _metaBootstrapRenderResult();
+      _metaBootstrapLoadSchemas();
+    });
+  }
+  const schemaSel = document.getElementById("metadataBootstrapSchema");
+  if (schemaSel && !schemaSel.dataset.bound) {
+    schemaSel.dataset.bound = "1";
+    schemaSel.addEventListener("change", () => {
+      adminState.metadata.bootstrap.schema = schemaSel.value || "";
+      const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
+      if (fetchBtn) fetchBtn.disabled = !adminState.metadata.bootstrap.schema;
+    });
+  }
+  const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
+  if (fetchBtn && !fetchBtn.dataset.bound) {
+    fetchBtn.dataset.bound = "1";
+    fetchBtn.addEventListener("click", () => _metaBootstrapFetch());
+  }
+  const saveBtn = document.getElementById("metadataBootstrapSaveBtn");
+  if (saveBtn && !saveBtn.dataset.bound) {
+    saveBtn.dataset.bound = "1";
+    saveBtn.addEventListener("click", () => _metaBootstrapSave());
+  }
+}
+
+// DS 드롭다운 — 등록된 datasource key 목록(common 은 실제 스키마가 없으므로 제외).
+function _metaBootstrapPopulateDs() {
+  const sel = document.getElementById("metadataBootstrapDs");
+  if (!sel) return;
+  const cur = adminState.metadata.bootstrap.datasource || "";
+  const keys = [];
+  for (const ds of (adminState.datasources || [])) {
+    const key = String((ds && ds.key) || "").trim().toLowerCase();
+    if (key) keys.push(key);
+  }
+  sel.replaceChildren();
+  const ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = "데이터소스 선택…";
+  sel.appendChild(ph);
+  for (const k of keys) {
+    const el = document.createElement("option");
+    el.value = k;
+    el.textContent = k;
+    sel.appendChild(el);
+  }
+  sel.value = keys.includes(cur) ? cur : "";
+  adminState.metadata.bootstrap.datasource = sel.value;
+  const schemaSel = document.getElementById("metadataBootstrapSchema");
+  if (schemaSel && !sel.value) { schemaSel.disabled = true; schemaSel.replaceChildren(); }
+  const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
+  if (fetchBtn) fetchBtn.disabled = true;
+}
+
+function _metaBootstrapStatus(text, isError) {
+  const el = document.getElementById("metadataBootstrapStatus");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("is-error", Boolean(isError));
+}
+
+// 선택 DS 의 schema 목록 로드 → 스키마 드롭다운 채움.
+async function _metaBootstrapLoadSchemas() {
+  const ds = adminState.metadata.bootstrap.datasource;
+  const schemaSel = document.getElementById("metadataBootstrapSchema");
+  const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
+  if (schemaSel) { schemaSel.replaceChildren(); schemaSel.disabled = true; }
+  if (fetchBtn) fetchBtn.disabled = true;
+  if (!ds) { _metaBootstrapStatus(""); return; }
+  _metaBootstrapStatus("스키마 목록 로딩 중…");
+  try {
+    const data = await apiFetch(`/api/admin/metadata/bootstrap/schemas?datasource=${encodeURIComponent(ds)}`);
+    const schemas = (data && Array.isArray(data.schemas)) ? data.schemas : [];
+    adminState.metadata.bootstrap.schemas = schemas;
+    if (schemaSel) {
+      const ph = document.createElement("option");
+      ph.value = "";
+      ph.textContent = schemas.length ? "스키마 선택…" : "스키마 없음";
+      schemaSel.appendChild(ph);
+      for (const s of schemas) {
+        const el = document.createElement("option");
+        el.value = String(s);
+        el.textContent = String(s);
+        schemaSel.appendChild(el);
+      }
+      schemaSel.disabled = !schemas.length;
+    }
+    _metaBootstrapStatus(schemas.length ? `${schemas.length}개 스키마` : "스키마가 없습니다.");
+  } catch (err) {
+    adminState.metadata.bootstrap.schemas = [];
+    _metaBootstrapStatus((err && err.message) || "스키마 조회 실패", true);
+  }
+}
+
+// 골격 가져오기 — POST /bootstrap {datasource,schema}. 응답 tables 를 입력 트리로 렌더.
+async function _metaBootstrapFetch() {
+  const bs = adminState.metadata.bootstrap;
+  if (!bs.datasource || !bs.schema) {
+    _metaBootstrapStatus("데이터소스와 스키마를 선택하세요.", true);
+    return;
+  }
+  const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
+  if (fetchBtn) fetchBtn.disabled = true;
+  bs.loading = true;
+  bs.tables = [];
+  _metaBootstrapRenderResult();
+  _metaBootstrapStatus("골격 가져오는 중… (큰 스키마는 시간이 걸릴 수 있습니다)");
+  try {
+    const data = await apiFetch("/api/admin/metadata/bootstrap", {
+      method: "POST",
+      body: JSON.stringify({ datasource: bs.datasource, schema: bs.schema }),
+    });
+    bs.tables = (data && Array.isArray(data.tables)) ? data.tables : [];
+    const tcount = bs.tables.length;
+    const ccount = bs.tables.reduce((a, t) => a + ((t.columns && t.columns.length) || 0), 0);
+    _metaBootstrapStatus(tcount ? `${tcount}개 테이블 · ${ccount}개 컬럼` : "테이블이 없습니다.");
+  } catch (err) {
+    bs.tables = [];
+    _metaBootstrapStatus((err && err.message) || "골격 조회 실패", true);
+  } finally {
+    bs.loading = false;
+    if (fetchBtn) fetchBtn.disabled = !bs.schema;
+    _metaBootstrapRenderResult();
+  }
+}
+
+// 골격 결과 렌더 — 현재 서브탭(tables vs columns)에 따라 입력란 형태가 다르다.
+//   tables: 테이블별 설명 1줄.  columns: 테이블 트리 아래 컬럼별 설명.
+// 모든 식별자/타입은 textContent, 입력값은 value(=신규 입력)로만 다룸(XSS 안전).
+function _metaBootstrapRenderResult() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  const saveActions = document.getElementById("metadataBootstrapSaveActions");
+  if (!wrap) return;
+  wrap.replaceChildren();
+  const bs = adminState.metadata.bootstrap;
+  const sub = adminState.metadata.subTab;
+  const mode = sub === "columns" ? "columns" : "tables";  // 부트스트랩은 tables/columns 서브뷰에서만 노출
+  if (bs.loading) {
+    if (saveActions) saveActions.style.display = "none";
+    const l = document.createElement("div");
+    l.className = "admin-list-empty";
+    l.textContent = "로딩 중…";
+    wrap.appendChild(l);
+    return;
+  }
+  if (!bs.tables.length) {
+    if (saveActions) saveActions.style.display = "none";
+    return;
+  }
+  for (const t of bs.tables) {
+    const schemaName = t.schema_name || bs.schema || "";
+    const tableName = t.table_name || "";
+    const block = document.createElement("div");
+    block.className = "admin-meta-bs-table";
+    block.dataset.schema = schemaName;
+    block.dataset.table = tableName;
+    const head = document.createElement("div");
+    head.className = "admin-meta-bs-table-head";
+    const name = document.createElement("span");
+    name.className = "admin-meta-bs-table-name";
+    name.textContent = [schemaName, tableName].filter(Boolean).join(".");
+    head.appendChild(name);
+    block.appendChild(head);
+    if (mode === "tables") {
+      // 테이블 설명 입력 1줄.
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.className = "admin-meta-input admin-meta-bs-desc";
+      inp.placeholder = "테이블 설명 입력…";
+      inp.dataset.kind = "table";
+      block.appendChild(inp);
+    } else {
+      // 컬럼별 설명 입력 트리.
+      const cols = Array.isArray(t.columns) ? t.columns : [];
+      if (!cols.length) {
+        const none = document.createElement("div");
+        none.className = "admin-meta-bs-col-none";
+        none.textContent = "컬럼 없음";
+        block.appendChild(none);
+      }
+      for (const c of cols) {
+        const colName = c.column_name || "";
+        const row = document.createElement("div");
+        row.className = "admin-meta-bs-col";
+        row.dataset.column = colName;
+        const cn = document.createElement("span");
+        cn.className = "admin-meta-bs-col-name";
+        cn.textContent = colName;
+        const dt = document.createElement("span");
+        dt.className = "admin-meta-bs-col-type";
+        dt.textContent = c.data_type ? `(${c.data_type})` : "";
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.className = "admin-meta-input admin-meta-bs-desc";
+        inp.placeholder = "컬럼 설명 입력…";
+        inp.dataset.kind = "column";
+        row.appendChild(cn);
+        row.appendChild(dt);
+        row.appendChild(inp);
+        block.appendChild(row);
+      }
+    }
+    wrap.appendChild(block);
+  }
+  if (saveActions) saveActions.style.display = "";
+  const info = document.getElementById("metadataBootstrapSaveInfo");
+  if (info) info.textContent = "설명을 입력한 행만 저장됩니다.";
+}
+
+// 부트스트랩 저장 — 설명이 입력된 행만 tables/columns POST(각 행). scope = 현재 메타데이터 scope.
+async function _metaBootstrapSave() {
+  const bs = adminState.metadata.bootstrap;
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  const sub = adminState.metadata.subTab;
+  const mode = sub === "columns" ? "columns" : "tables";
+  const scope = adminState.metadata.scopeKey || "common";
+  // 입력된 행 수집(DOM 순회 — 입력값은 value, 식별자는 dataset).
+  const rows = [];
+  wrap.querySelectorAll(".admin-meta-bs-table").forEach((block) => {
+    const schemaName = block.dataset.schema || "";
+    const tableName = block.dataset.table || "";
+    if (mode === "tables") {
+      const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
+      const desc = inp ? (inp.value || "").trim() : "";
+      if (desc) rows.push({ schema_name: schemaName, table_name: tableName, description: desc });
+    } else {
+      block.querySelectorAll(".admin-meta-bs-col").forEach((colRow) => {
+        const inp = colRow.querySelector(".admin-meta-bs-desc[data-kind='column']");
+        const desc = inp ? (inp.value || "").trim() : "";
+        if (desc) {
+          rows.push({
+            schema_name: schemaName, table_name: tableName,
+            column_name: colRow.dataset.column || "", description: desc,
+          });
+        }
+      });
+    }
+  });
+  if (!rows.length) {
+    if (typeof showToast === "function") showToast("설명을 입력한 행이 없습니다.", true);
+    return;
+  }
+  const saveBtn = document.getElementById("metadataBootstrapSaveBtn");
+  if (saveBtn) saveBtn.disabled = true;
+  bs.saving = true;
+  _metaBootstrapStatus(`저장 중… (0/${rows.length})`);
+  let ok = 0; let fail = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const payload = { scope_key: scope, source: "bootstrap" };
+    payload.schema_name = rows[i].schema_name;
+    payload.table_name = rows[i].table_name;
+    if (mode === "columns") payload.column_name = rows[i].column_name;
+    payload.description = rows[i].description;
+    try {
+      await apiFetch(`/api/admin/metadata/${mode}`, { method: "POST", body: JSON.stringify(payload) });
+      ok += 1;
+    } catch (err) {
+      fail += 1;
+    }
+    _metaBootstrapStatus(`저장 중… (${i + 1}/${rows.length})`);
+  }
+  bs.saving = false;
+  if (saveBtn) saveBtn.disabled = false;
+  _metaBootstrapStatus(`저장 완료 — 성공 ${ok}건${fail ? `, 실패 ${fail}건` : ""}`, fail > 0);
+  if (typeof showToast === "function") {
+    showToast(fail ? `저장 ${ok}건 성공, ${fail}건 실패` : `${ok}건 저장했습니다.`, fail > 0);
+  }
+  // 저장된 행은 입력란 비움(중복 저장 방지).
+  if (ok > 0) {
+    wrap.querySelectorAll(".admin-meta-bs-desc").forEach((inp) => {
+      if ((inp.value || "").trim()) inp.value = "";
+    });
+    await loadMetadata();  // 목록 갱신
   }
 }
 
