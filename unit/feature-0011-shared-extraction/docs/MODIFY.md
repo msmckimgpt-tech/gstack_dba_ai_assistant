@@ -29,3 +29,21 @@ source_of_truth: true
   은 본 변경 무관·main 165906b 에서도 동일 실패).
 - Rollback Notes: 단일 commit revert 로 model_catalog 가 modules/ 로 복귀. 이미지 재빌드만 필요
   (스키마/데이터 변경 없음). 라이브 web-1 은 재배포 전까지 무영향.
+
+## CHG-20260624-0002
+- Date: 2026-06-24
+- Related Requirement: P5a Step 2 — config 추출 (순서 재설계: /plan-eng-review decision 5cc24689,
+  config-first 위상정렬. config 는 L0 foundation: 내부의존 0·fan-in 25, db 의 `from .config import *` 강결합 선행 해소).
+- Summary: 정본 `modules/config.py`(1187줄)를 `shared/config.py` 로 이동(git mv, history 보존)하고,
+  `modules/config.py` 를 **모듈 alias shim** 으로 교체 — `sys.modules[__name__] = shared.config` 로
+  `modules.config` 와 `shared.config` 를 *동일 객체* 화. 사이트 재배선 0(모든 import 형태가 alias 로 자동 보존).
+  **설계 전환 기록**: 처음엔 `from shared.config import *` + 명시 re-export(__all__ 밖 public 9 + underscore 8)
+  shim 을 썼으나, config 의 **annotated assignment** 심볼(`_ACTIVE_DEFAULT_DB: ContextVar`)을 enumeration 이
+  놓쳐 `test_mssql_security_boundary` 10건 회귀 발생 → 271+ 심볼·monkeypatch 를 완전 보존하는 alias 로 전환.
+- Files (cross-feature changeset):
+  - `shared/config.py` (← `unit/feature-0002-agent-core/src/modules/config.py`, git mv)
+  - `unit/feature-0002-agent-core/src/modules/config.py` (alias shim 신규 본문)
+- Impact: 런타임 동작 불변(alias = 동일 객체). 16개 wildcard importer·다수 모듈객체 접근(`cfg.X`)·
+  monkeypatch·db 경유 재노출 체인(`from modules.db import AGENT_KB_PG_PORT`) 전부 보존. `make test` 회귀 0
+  (baseline 2건만). /app alias 완전성 smoke PASS(`modules.config is shared.config`, annotated 심볼 접근, db 체인).
+- Rollback Notes: 단일 commit revert 로 config 가 modules/ 로 복귀. 이미지 재빌드만(스키마/데이터 무변경).
