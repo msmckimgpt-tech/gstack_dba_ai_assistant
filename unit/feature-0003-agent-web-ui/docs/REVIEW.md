@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260624T170757-metadata-ai-autocomplete [SUBAGENT:adversarial-2lens(backend-security+frontend-css)] — SHIP (BLOCKING 2건 흡수) (TASK-20260624-metadata-ai-autocomplete, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC 표면)
+- Date: 2026-06-24
+- Cycle: 중단 세션 resume — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정. 백엔드 2 엔드포인트는 기 작성(미커밋), 본 cycle 은 CSS(스크롤+버튼)·테스트·docs·§18.8 panel·완료 게이트.
+- §18.8 verification panel = 2-lens 적대(general-purpose REFUTE): (A) backend-security, (B) frontend/css.
+- **(A) backend-security — VERDICT: BLOCK → 수정 후 SHIP**:
+  - BLOCKING-1: samples 의 `sql` 입력이 `_METADATA_FIELD_CAPS` 에 키 부재 → cap=None 무제한 길이가 프롬프트에 raw 삽입(토큰/비용 폭주). **수정**: `"sql": 8000` 추가(`_metadata_str_field` 강제). 회귀 가드 test_samples_sql_input_capped_400.
+  - BLOCKING-2: 신규 LLM dispatch 엔드포인트 2개에 rate-limit 부재(코드베이스 fix-with-ai 등은 `_search_rate_limit_check` 강제). **수정**: 두 핸들러에 `_search_rate_limit_check(max_per_min=_METADATA_AI_RATE_PER_MIN=20)`(RBAC 통과 후·LLM 전, 429). 회귀 가드 test_suggest_rate_limited_429·test_bootstrap_rate_limited_429(LLM 미호출 단언).
+  - 안전 확인(REFUTE 실패): RBAC 우회(게이트가 LLM/introspection 전·sub 정규화 후 정확매칭·samples 강등 불가), SQLi(introspection schema=allowlist 멤버십·`_safe_ident` string-literal 컨텍스트), 응답 신뢰경계(parse/shape isinstance 가드·cap·영속 안 함). NIT(introspect table allowlist 방어심화·LLM 예외 메시지 노출=기존 패턴)는 수용.
+- **(B) frontend/css — VERDICT: SHIP**: XSS 없음(생성물 input.value 전용·자동영속 없음), 스크롤 수정 정확(metadata pane 한정·타 pane 무영향·내부 nested 스크롤 충돌 없음), 이벤트 바인딩 정적 버튼+dataset.bound 가드 안전, target↔폼필드 5 서브뷰 전수 일치, disable/복구 try/finally 보장, color-mix 선례 다수. NIT(서브탭 전환 후 골격 mode 불일치=기존 저장 경로 약점 상속·회귀 아님 / samples 단건 도달성 / disabled hover 미관)는 수용.
+- 무결성: test 18/18(수정 후) + py_compile(app.py) OK. UI 실렌더 정본=PB-0008(배포 후).
+
 ## REV-20260624T160000-scope-key-unify [SUBAGENT:scope-key-unify-review] **SHIP** (TASK-20260624-scope-key-unify, REQ-20260624-scope-key-unify, Major §12.3 — scope 경계 死data 수정)
 - Date: 2026-06-24
 - 분류: **리뷰 대상**(Major — admin write 의 scope_key 축 변경, ITEM-10/11/03 admin 공유 경로). §18.8 적대적 패널 2-lens(scope 정합 + 회귀) + 종합 + 교정 후 재확인 agent.

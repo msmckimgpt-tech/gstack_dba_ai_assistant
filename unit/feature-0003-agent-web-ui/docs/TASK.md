@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260624-metadata-ai-autocomplete — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정 (중단 세션 resume, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC)
+- 출처: 사용자 요청(entry persona) "관리 콘솔 > 메타데이터를 실제 관리자가 처음 쓰기 까다롭다 — 모든 탭에 AI 자동완성" + "창이 길어지면 스크롤이 없어 하단 항목을 못 본다". 원본 세션이 session limit 으로 프론트 일괄 함수 삽입 직후 중단 → 본 cycle 이 resume 으로 잔여(CSS·테스트·docs·panel·게이트) 완수.
+- 범위: feature-0003 web only. 마이그 없음, agent-core·gateway·credential·ROADMAP 무변경. 기존 metadata 거버넌스(ITEM-11) 폼/부트스트랩에 AI 채움 버튼 추가.
+- [x] 백엔드(기 작성, 미커밋): suggest(단건 5 서브뷰)·bootstrap/describe(골격 일괄) 엔드포인트 + 헬퍼(grounding/프롬프트/JSON parse/shape/LLM). RBAC 서브뷰별(samples=kb.sample.curate, 나머지=kb.ingest.manual). 영속 안 함.
+- [x] 프론트(기 작성, 미커밋): `_metaSuggestFill`·`_metaBootstrapAiFill`·`_metaBootstrapApplyDescriptions` + 버튼 2개. XSS input.value. dataset.bound 가드.
+- [x] CSS: metadata pane `overflow-y:auto`(스크롤 수정 — dashboard 동형, 타 pane 무영향) + `.admin-meta-ai-btn` 강조. cache-buster bump(`?v=20260624-metadata-ai-autocomplete`).
+- [x] 테스트(신규 18): RBAC·라우팅·입력검증·정상(definition/nl_question)·cap·LLM오류·bootstrap 정형·parse 단위 + sql cap·rate-limit 429. 18/18 PASS.
+- [x] §18.8 panel(2-lens 적대): backend BLOCKING 2건(sql cap·rate-limit) 적발→수정+회귀가드, frontend SHIP. REV-20260624T170757.
+- [ ] verify-completion → commit(Task-Cycle trailer) → push → PR → 머지 → web 재배포(deploy_scope: included) → PB-0008(5 서브뷰 AI 버튼 동작 + 스크롤) → 마감.
+
 ## TASK-20260624-scope-key-unify — 메타데이터/샘플 admin scope_key 축을 read 축으로 통일 (ds-scoped 死data 수정 + RISK/NIT) (REQ-20260624-scope-key-unify, AC-0618~0619, Major §12.3 — scope 경계, ITEM-10/11/03 공유 admin 경로)
 - [x] 死data 확정: `/_template:resume` ITEM-11 Phase 2 작동검증 중 구조 감사(4 dim)가 scope-key 축 불일치 적발 → 라이브 재현(라벨 'mysql-local' 저장 → 질의시점 해시 'mysql-ddae8975d793' 읽기 MISS). 배포 DS 20+ 전부 WebDatasources(.env 0개), KB 테이블 전부 0행(손실 데이터 없는 잠복).
 - [x] fix: app.py `_metadata_valid_scope_keys`(라벨→`ds.get('scope_key') or ds.get('key')` read축) + `/api/admin/datasources` 응답 scope_key(read축) 노출 / admin.js scope 드롭다운 value=read축·표시=라벨. read(feature-0002 agent_core/kb_metadata/insight) 무변경(이미 해시) — write 를 read 에 맞춤.

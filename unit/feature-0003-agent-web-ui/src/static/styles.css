@@ -4074,10 +4074,14 @@ a { color: inherit; }
 /* TASK-0167: dashboard·usage pane 은 list-detail(내부 admin-list 스크롤)이 아니라 단순
    세로 흐름이라 pane 자체에 세로 스크롤이 필요. admin-shell/admin-workspace 가
    overflow:hidden + height:100vh 이므로, 누락 시 작은 화면에서 하단(차트·표)이 잘린다.
-   다른 pane(accounts/roles/products/audits)은 내부 admin-list 가 스크롤하므로 제외. */
+   다른 pane(accounts/roles/products/audits)은 내부 admin-list 가 스크롤하므로 제외.
+   TASK-20260624-metadata-ai-autocomplete: metadata pane 도 list-detail 이 아니라 scope+서브탭+
+   부트스트랩 패널+폼+리스트의 단순 세로 흐름이라, 창이 길어지면 하단(폼/리스트)이 잘려 보였다 →
+   dashboard 와 동일하게 pane 자체에 세로 스크롤 부여. */
 .admin-pane[data-admin-pane="dashboard"].is-active,
 .admin-pane[data-admin-pane="usage"].is-active,
-.admin-pane[data-admin-pane="release-notes"].is-active {
+.admin-pane[data-admin-pane="release-notes"].is-active,
+.admin-pane[data-admin-pane="metadata"].is-active {
   overflow-y: auto;
   /* TASK-0198: 좌우 스크롤 차단 — 카드 min-width 누적/SVG 폭/표 넓이로 가로 넘침이 발생하던 회귀 차단.
      내부 요소는 min-width:min(Npx,100%) + 표는 카드 내부 스크롤로 흡수(아래). */
@@ -7822,3 +7826,16 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-bs-table .admin-meta-bs-desc { margin-top: 0; }
 .admin-meta-bootstrap-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .admin-meta-bootstrap-saveinfo { font-size: 12px; color: var(--text-muted); }
+
+/* TASK-20260624-metadata-ai-autocomplete: AI 자동완성 버튼(단건 #metadataSuggestBtn ·
+   일괄 #metadataBootstrapAiBtn) — btn-secondary 위에 옅은 primary 강조로 ✨ AI 액션임을
+   시각 구분. 생성 중(disabled)에는 progress 커서로 대기 상태 표면화. */
+.admin-meta-ai-btn {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  color: var(--primary);
+}
+.admin-meta-ai-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.admin-meta-ai-btn:disabled { opacity: .6; cursor: progress; }

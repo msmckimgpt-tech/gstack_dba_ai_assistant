@@ -2504,6 +2504,88 @@ function _metaBindControls() {
     refreshBtn.dataset.bound = "1";
     refreshBtn.addEventListener("click", () => loadMetadata());
   }
+  // AI 단건 자동완성 — 식별 필드 → 설명/정의/라벨/질문 생성(검토 후 등록).
+  const suggestBtn = document.getElementById("metadataSuggestBtn");
+  if (suggestBtn && !suggestBtn.dataset.bound) {
+    suggestBtn.dataset.bound = "1";
+    suggestBtn.addEventListener("click", () => _metaSuggestFill(suggestBtn));
+  }
+}
+
+// 현재 메타데이터 scope(scope_key)에 대응하는 datasource 사람-라벨(key) 반환 — tables/columns
+// grounding 시 백엔드 introspection 대상 식별용. 'common' 또는 미매칭이면 빈 문자열(=ungrounded).
+function _metaScopeDatasourceKey() {
+  const scope = adminState.metadata.scopeKey || "common";
+  if (scope === "common") return "";
+  for (const ds of (adminState.datasources || [])) {
+    const label = String((ds && ds.key) || "").trim().toLowerCase();
+    const sk = String((ds && ds.scope_key) || label).trim().toLowerCase();
+    if (sk === scope || label === scope) return label;
+  }
+  return "";
+}
+
+// AI 단건 자동완성 — 폼의 식별 필드를 백엔드로 보내 설명 필드를 생성하고, 대상 입력란에 채운다.
+// 생성물은 영속 안 함 — 사용자가 검토 후 '등록/수정 저장' 으로 저장. (XSS: 결과는 input.value 로만.)
+async function _metaSuggestFill(btn) {
+  const sub = adminState.metadata.subTab;
+  const wrap = document.getElementById("metadataFormFields");
+  if (!wrap) return;
+  const vals = _metaFormValues();
+  // 서브뷰별 최소 식별 입력 검증(백엔드와 동치) — 빈 식별자 날조 방지.
+  const REQUIRES = {
+    glossary: ["term"], enums: ["table_name", "column_name", "code"],
+    tables: ["table_name"], columns: ["table_name", "column_name"], samples: ["sql"],
+  };
+  const LABELS = {
+    term: "용어", table_name: "테이블", column_name: "컬럼", code: "코드", sql: "SQL",
+  };
+  const missing = (REQUIRES[sub] || []).filter((k) => !String(vals[k] || "").trim());
+  if (missing.length) {
+    if (typeof showToast === "function") {
+      showToast(`먼저 ${missing.map((k) => LABELS[k] || k).join(", ")} 을(를) 입력하세요.`, true);
+    }
+    return;
+  }
+  const payload = { scope_key: adminState.metadata.scopeKey || "common" };
+  for (const k of ["term", "schema_name", "table_name", "column_name", "code", "sql", "nl_question"]) {
+    if (vals[k] != null && String(vals[k]).trim()) payload[k] = String(vals[k]).trim();
+  }
+  if (sub === "tables" || sub === "columns") {
+    const dsKey = _metaScopeDatasourceKey();
+    if (dsKey) payload.datasource = dsKey;
+  }
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "AI 생성 중…";
+  try {
+    const data = await apiFetch(`/api/admin/metadata/${encodeURIComponent(sub)}/suggest`, {
+      method: "POST", body: JSON.stringify(payload),
+    });
+    const target = data && data.target;
+    const suggestion = (data && data.suggestion) || "";
+    const input = target ? wrap.querySelector(`[name="${target}"]`) : null;
+    if (!input) {
+      if (typeof showToast === "function") showToast("자동완성 대상 필드를 찾을 수 없습니다.", true);
+      return;
+    }
+    if (!suggestion) {
+      if (typeof showToast === "function") showToast("AI 가 생성한 내용이 비어 있습니다. 다시 시도하세요.", true);
+      return;
+    }
+    input.value = suggestion;
+    input.focus();
+    try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) {}
+    const grounded = data && data.meta && data.meta.grounded;
+    if (typeof showToast === "function") {
+      showToast(grounded ? "AI 자동완성 완료(실제 스키마 반영) — 검토 후 등록하세요." : "AI 자동완성 완료 — 검토 후 등록하세요.");
+    }
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "AI 자동완성 실패", true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
 }
 
 // 폼 필드 렌더(서브탭별). 수정 모드면 editing 값 채움. label/input 전부 DOM API(XSS 안전).
@@ -2878,6 +2960,12 @@ function _metaBindBootstrap() {
     saveBtn.dataset.bound = "1";
     saveBtn.addEventListener("click", () => _metaBootstrapSave());
   }
+  // AI 일괄 자동완성 — 골격의 빈 설명 입력란을 AI 가 채움(검토 후 저장).
+  const aiBtn = document.getElementById("metadataBootstrapAiBtn");
+  if (aiBtn && !aiBtn.dataset.bound) {
+    aiBtn.dataset.bound = "1";
+    aiBtn.addEventListener("click", () => _metaBootstrapAiFill(aiBtn));
+  }
 }
 
 // DS 드롭다운 — 등록된 datasource key 목록(common 은 실제 스키마가 없으므로 제외).
@@ -3130,6 +3218,102 @@ async function _metaBootstrapSave() {
     });
     await loadMetadata();  // 목록 갱신
   }
+}
+
+// 부트스트랩 AI 일괄 자동완성 — 골격을 청크 단위로 백엔드에 보내 설명을 생성하고,
+// 비어 있는 설명 입력란에만 채운다(사용자 수동 입력 보존). 생성물은 영속 안 함 — 기존
+// '설명 입력분 저장' 으로만 저장된다. 청크 분할로 진행률 표면화 + 단일 호출 지연/부하 분산.
+async function _metaBootstrapAiFill(btn) {
+  const bs = adminState.metadata.bootstrap;
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap || !bs.tables || !bs.tables.length) {
+    if (typeof showToast === "function") showToast("먼저 스키마 골격을 가져오세요.", true);
+    return;
+  }
+  const mode = adminState.metadata.subTab === "columns" ? "columns" : "tables";
+  const CHUNK = mode === "columns" ? 6 : 12;  // columns 는 출력량↑ → 청크 작게.
+  const tables = bs.tables.map((t) => ({
+    schema_name: t.schema_name || bs.schema || "",
+    table_name: t.table_name || "",
+    columns: Array.isArray(t.columns)
+      ? t.columns.map((c) => (mode === "columns"
+          ? { column_name: c.column_name, data_type: c.data_type }
+          : { column_name: c.column_name }))
+      : [],
+  })).filter((t) => t.table_name);
+  if (!tables.length) {
+    if (typeof showToast === "function") showToast("처리할 테이블이 없습니다.", true);
+    return;
+  }
+  const chunks = [];
+  for (let i = 0; i < tables.length; i += CHUNK) chunks.push(tables.slice(i, i + CHUNK));
+
+  const saveBtn = document.getElementById("metadataBootstrapSaveBtn");
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "AI 생성 중…";
+  if (saveBtn) saveBtn.disabled = true;
+  bs.saving = true;
+  let filled = 0;
+  let done = 0;
+  let failedTables = 0;
+  try {
+    for (const chunk of chunks) {
+      _metaBootstrapStatus(`AI 생성 중… (${done}/${tables.length} 테이블, ${filled}건 채움)`);
+      try {
+        const data = await apiFetch("/api/admin/metadata/bootstrap/describe", {
+          method: "POST",
+          body: JSON.stringify({ mode, schema: bs.schema, tables: chunk }),
+        });
+        const results = (data && Array.isArray(data.results)) ? data.results : [];
+        filled += _metaBootstrapApplyDescriptions(wrap, mode, results);
+      } catch (err) {
+        failedTables += chunk.length;
+      }
+      done += chunk.length;
+    }
+    if (failedTables) {
+      _metaBootstrapStatus(
+        `AI 자동완성: ${filled}건 채움 · 테이블 ${failedTables}개 실패. 빈 칸만 채웠습니다.`,
+        failedTables >= tables.length,
+      );
+    } else {
+      _metaBootstrapStatus(`AI 자동완성 완료: ${filled}건 채움. 검토 후 '설명 입력분 저장' 을 누르세요.`);
+    }
+    if (typeof showToast === "function" && filled) {
+      showToast(`AI 가 ${filled}건의 설명을 채웠습니다 — 검토 후 저장하세요.`);
+    } else if (typeof showToast === "function" && !filled) {
+      showToast("채울 빈 칸이 없거나 생성 결과가 비었습니다.", true);
+    }
+  } finally {
+    bs.saving = false;
+    btn.disabled = false;
+    btn.textContent = origLabel;
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+// AI 결과를 비어 있는 설명 입력란에만 채운다(수동 입력 보존). 반환=채운 건수. (XSS: input.value 로만.)
+function _metaBootstrapApplyDescriptions(wrap, mode, results) {
+  let n = 0;
+  const blocks = Array.from(wrap.querySelectorAll(".admin-meta-bs-table"));
+  for (const r of results) {
+    if (!r || !r.description) continue;
+    const block = blocks.find((b) =>
+      (b.dataset.table || "") === (r.table_name || "") &&
+      (!r.schema_name || !b.dataset.schema || b.dataset.schema === r.schema_name));
+    if (!block) continue;
+    if (mode === "tables") {
+      const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
+      if (inp && !(inp.value || "").trim()) { inp.value = String(r.description); n += 1; }
+    } else {
+      const rows = Array.from(block.querySelectorAll(".admin-meta-bs-col"));
+      const row = rows.find((rw) => (rw.dataset.column || "") === (r.column_name || ""));
+      const inp = row ? row.querySelector(".admin-meta-bs-desc[data-kind='column']") : null;
+      if (inp && !(inp.value || "").trim()) { inp.value = String(r.description); n += 1; }
+    }
+  }
+  return n;
 }
 
 /* ── TASK-0205/0207: 데이터소스 관리 pane (CRUD, 자격증명 DB 암호화 저장) ─────────────
