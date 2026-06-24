@@ -9,20 +9,21 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-P5a Step 1(model_catalog) + Step 2(config) 완료. 순서는 /plan-eng-review 로 재설계 — config-first
-위상정렬(config L0 foundation 이 db 보다 먼저). config 는 `modules.config`→`shared.config` **모듈 alias**
-로 추출돼 271+ 심볼·monkeypatch·wildcard·db 재노출 체인을 동일 객체로 완전 보존. make test 회귀 0.
-다음은 Step 3(db) — db 의 config 의존이 shared/config 로 해소됨.
+P5a Step 1(model_catalog) + Step 2(config) + Step 3(db) 완료. config-first 위상정렬(/plan-eng-review).
+config·db 모두 `modules.X`→`shared.X` **모듈 alias** 로 추출돼 모든 심볼(annotated 포함)·monkeypatch·
+wildcard·모듈객체접근·재노출 체인을 동일 객체로 완전 보존. db 의 lazy datasources/conn_health 참조는
+`from modules import`(전이적 back-dep, Step 4 정리). make test 회귀 0. 다음은 Step 4(L1 conn_health/datasources).
 
 ## 2. Progress
-- Planned: P5a Step 3(db) → Step 4(L1 conn_health/datasources) → Step 5(점진 마이그) → Step 6(Dockerfile 분리), 동반 doc
+- Planned: P5a Step 4(L1 conn_health/datasources + db back-dep 정리) → Step 5(점진 마이그) → Step 6(Dockerfile 분리), 동반 doc
 - In Progress: 없음
-- Done: Step 1 (model_catalog) · Step 2 (config alias)
+- Done: Step 1 (model_catalog) · Step 2 (config alias) · Step 3 (db alias)
 
 ## 3. Recent Changes
 - CHG-20260624-0001: shared/ 패키지 + model_catalog 추출
-- CHG-20260624-0002: config → shared/config + 모듈 alias shim (enumeration→alias 전환: annotated 심볼 완전성)
-- 총 변경 횟수: 2
+- CHG-20260624-0002: config → shared/config + 모듈 alias shim
+- CHG-20260624-0003: db → shared/db + 모듈 alias shim (lazy datasources/conn_health back-dep, Step 4 정리)
+- 총 변경 횟수: 3
 
 ## 4. Open Issues
 - **기존 baseline 실패(본 변경 무관)**: `test_product_delete_block_conv.py` 2건이 clean main(165906b)

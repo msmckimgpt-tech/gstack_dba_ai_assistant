@@ -63,3 +63,20 @@ source_of_truth: true
     (3) __pycache__ 이미지 유입 — Step 1 동일 NIT, gitignored·무해(수용).
 - Risks: config 는 최대 fan-in foundation 이나 alias = 동일 객체라 런타임 동작 불변. 단일 commit revert 가능.
 - Human Approval Needed: PR 생성·deploy confirm (외부영향). deploy_scope:included 로 머지 후 자동 배포.
+
+## REV-20260624-0003 [SUBAGENT:db-alias-step3]
+- Related Change: CHG-20260624-0003 (db → shared/db + 모듈 alias shim, P5a Step 3)
+- Reason: db(repo 최다결합, fan-in 17)를 shared/ 로 추출. config-first(Step 2) 덕에 db 의
+  `from .config import *` 가 shared.config 로 해소. config 와 동일 alias 패턴으로 모듈객체접근·
+  underscore·AnnAssign(`_POOL_REGISTRY`)·__all__·monkeypatch·config 재노출 체인 완전 보존.
+- lazy back-dep: shared/db.py 의 `from . import datasources/conn_health`(lazy) → `from modules import`
+  재배선(두 모듈 아직 modules/, Step 4 정리). db↔conn_health 상호 lazy 는 alias 로 db 단일객체 유지.
+- §18.8 Adversarial Panel: Workflow `db-alias-adversarial-verify` (집중 3렌즈, 신규 위험면 표적). 전부 완료.
+  - **결과: BLOCKING 0 / NIT 1.**
+  - lazy-backdep-runtime-cycle = **SAFE**(런타임 db↔conn_health↔datasources lazy cycle 무한루프/부분초기화 없음 실측).
+  - alias-completeness-config-reexport = **SAFE**(30 심볼·__all__·underscore·AnnAssign·db→config 재노출 체인 보존).
+  - live-redeploy-git-tree = **DEFECT_NIT**: **Step 2 untracked-shim BLOCKING 클래스 재공격 → clean 확인**
+    (선제 staging 으로 staged delta = `A shared/db.py` + `M modules/db.py` 정확, committed-tree import 실증).
+    NIT = 패널 에이전트의 smoke 스크립트 leftover(`probe*.py`, untracked·Dockerfile 미COPY·미스테이징 — 배포/커밋 무위험) → **정리 완료**(수용).
+- Risks: db 는 foundational 이나 alias = 동일 객체라 런타임 동작 불변. lazy back-dep 은 함수내부(import-time cycle 0). 단일 commit revert 가능.
+- Human Approval Needed: PR 생성·deploy confirm. deploy_scope:included 로 머지 후 자동 배포.

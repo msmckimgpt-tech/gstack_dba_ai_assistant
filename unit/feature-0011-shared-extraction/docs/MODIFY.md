@@ -47,3 +47,25 @@ source_of_truth: true
   monkeypatch·db 경유 재노출 체인(`from modules.db import AGENT_KB_PG_PORT`) 전부 보존. `make test` 회귀 0
   (baseline 2건만). /app alias 완전성 smoke PASS(`modules.config is shared.config`, annotated 심볼 접근, db 체인).
 - Rollback Notes: 단일 commit revert 로 config 가 modules/ 로 복귀. 이미지 재빌드만(스키마/데이터 무변경).
+
+## CHG-20260624-0003
+- Date: 2026-06-24
+- Related Requirement: P5a Step 3 — db 추출 (config-first 위상정렬상 L1; config(Step 2) 이동으로
+  db 의 `from .config import *` 강결합이 shared/config 로 해소됨).
+- Summary: 정본 `modules/db.py`(967줄, repo 최다결합 모듈)를 `shared/db.py` 로 git mv 하고,
+  `modules/db.py` 를 **모듈 alias shim**(`sys.modules[__name__] = shared.db`)으로 교체 — config 와
+  동일 패턴. db 의 모듈객체 접근(`from . import db as _db`)·underscore 심볼(`_pg_connect` 등 9+)·
+  AnnAssign(`_POOL_REGISTRY`)·__all__(15)·`from .db import *`·monkeypatch·config 재노출 체인을 동일
+  객체로 완전 보존. 사이트 재배선 0.
+- lazy back-dep 처리: shared/db.py 의 `from .config import *`(line 21)는 shared.config 로 해석(무변경).
+  단 lazy `from . import datasources`(116)·`from . import conn_health`(402)는 두 모듈이 아직 modules/
+  라 `from modules import ...` 로 재배선(전이적 back-dep, 함수내부 lazy 라 import-time cycle 없음).
+  db↔conn_health 상호 lazy 참조는 alias 로 db 단일객체 유지. Step 4 에서 두 모듈 이동 시 `from shared import` 로 정리.
+- Files (cross-feature changeset):
+  - `shared/db.py` (← `unit/feature-0002-agent-core/src/modules/db.py`, git mv + lazy back-dep 2줄 재배선)
+  - `unit/feature-0002-agent-core/src/modules/db.py` (alias shim 신규 본문)
+- Impact: 런타임 동작 불변(alias = 동일 객체). fan-in 17(내부 14+외부 3) 전부 보존. `make test` 회귀 0
+  (baseline 2건만, db-heavy 테스트 conn_health·multi_datasource·controlplane_timeout pass). /app db alias
+  완전성 smoke PASS(modules.db is shared.db, _POOL_REGISTRY·_pg_* 접근, AGENT_KB_PG_PORT 재노출, conn_health/datasources import).
+  committed-tree import 실증(modules/db.py shim + shared/db.py 둘 다 tree 에 — Step 2 untracked-shim BLOCKING 선제 차단).
+- Rollback Notes: 단일 commit revert 로 db 가 modules/ 로 복귀. 이미지 재빌드만(스키마/데이터 무변경).
