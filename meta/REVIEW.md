@@ -77,3 +77,89 @@
 - **잔여 MINOR(미반영, 사유)**: frontmatter `target_project: mysql_ai_delegated_dev` 유지(sibling 3종 동일 house-style — 묶음 일관성 우선, 런타임 무영향). `pipeline_stage` 자유형 값(`standalone (maintenance)`)은 의도적(번호 단계 아님 — 기존 `N/3` parser 와 불일치는 수용).
 - **verdict**: SHIP-WITH-FIXES — BLOCKER 4 + MAJOR 7 전건 반영, MINOR/NIT 합리적 항목 전건 반영. 잔여는 house-style 메타데이터 2건(behavioral over-fit 아님).
 - **note**: 비파괴 메타-도구(skill 정의) 추가. 실제 doc 정합 실행은 각 `/_dqa:doc_sync` 호출이 changeset 분류대로 verify-completion 게이트(META mode 또는 operational gate)를 직접 거친다.
+
+## REV-20260624T005709-META-0003-ssot-consolidation [AGENT-TEAM:ssot-plan-redteam]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — SSOT 통합 initiative **Phase 0** (계약·레지스트리·lint 골격)
+- **changeset (pure-meta)**:
+  - `docs/DECISIONS.md` — ADR-0031 (SSOT 계약 4조) append
+  - `docs/DOC_REGISTRY.md` — 신규 (도메인→정본 단일 지도, 기계가독)
+  - `bin/ssot-lint.sh` — 신규 (WARN-only 골격 + `--selftest`)
+  - `docs/improvements/ssot-consolidation/{RESEARCH,ROADMAP}.md` — 신규 (진단 + 0~5 강화 plan)
+  - `meta/REVIEW.md` — 본 entry
+- **panel (AGENT-TEAM)**: SSOT plan 적대 리뷰 workflow — 6 렌즈(SSOT 정합성·거버넌스 준수·런타임 안전성·누락·secret 처리·순서/실현성) × 독립 비평가, 적대 검증(refute 시도, 불확실시 기각), 강화 합성. 42 에이전트, raw 35 finding.
+- **verdict**: SHIP-WITH-FIXES (Phase 0 한정) — 확정 16 / 기각 19, **BLOCKER 1**.
+- **findings → 조치 (Phase 0 반영분)**:
+  - **BLOCKER (#12 secret)**: 노출 secret `rm-only` 무의미(이미 origin/main+원격 브랜치+머지 PR push) → ADR-0031 §4 + `ssot-lint` 가 'tracked `.env*.bak*` 0건' 가드로 포착. rotation 1순위는 **Phase 3(META-0004, 사용자 rotation 진행 의사 확인)** 로 명시. Phase 0 자체는 secret 무변경.
+  - **#9 (check #9 게이트 누락)**: 전 Phase 게이트에 verify-completion check #9(REVIEW.md) 추가 — 본 entry 가 첫 적용.
+  - **#10/#16 (secret grep false pass/fail)**: ssot-lint 패턴 `(^|/)\.env[^/]*\.bak|\.bak-task[0-9]|\.secret\.bak` 로 3건 전수 검출 + `.example` 오탐 0 (`--selftest` 검증).
+  - **#15 (.gitignore 글롭 부재)**: Phase 3 작업으로 명시.
+  - **리뷰 오류 정정 (lint=ground truth)**: 리뷰가 지목한 wiki '거짓 SOT 2건(ADR-0005·Module-Map)' 은 실측 결과 `sot:false` — wiki `sot:true` 는 `wiki/Log.md` 1건뿐(정당). RESEARCH/ROADMAP/DOC_REGISTRY 정정.
+- **gate**: `bash bin/ssot-lint.sh --selftest` **PASS**(오탐·미탐 0) + 실제 스캔이 secret 3건 + GOAL.md(archived) 검출(baseline — P1·P3 해소 예정). 신규 문서만 추가(비파괴).
+- **Human Approval Needed**: Phase 0 = 비파괴 계약/골격 (사용자 "commit 후 Phase 1 계속" 승인). Major(P1 STATUS 인덱스화)·Critical(P3 secret)은 차례에 §12 별도 승인.
+- **note**: 적대 리뷰 전문: `docs/improvements/ssot-consolidation/RESEARCH.md §4`. Phase 0 는 계약·강제 도구만 — 실제 정본 정리/노출 종료/코드 재배치는 P1~P5 가 각자 게이트를 거친다.
+
+## REV-20260624T010743-META-0003-ssot-consolidation [SKIPPED:meta-docs-archive]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 1a** (stale 문서 아카이빙 + archive 위치 교정)
+- **changeset (pure-meta)**:
+  - `GOAL.md`(루트) → `docs/archive/GOAL.md` (R100 rename), `docs/OBSERVATIONS.md` → `docs/archive/OBSERVATIONS.md` (R100) + frontmatter `lifecycle: archived`
+  - `docs/archive/README.md` 신규 (아카이브 보관소 색인)
+  - `docs/DECISIONS.md` — ADR-0031 Addendum (archive 위치 `docs/_archive/`→`docs/archive/` 교정, 사유: `.gitignore:27` `_archive/` 무시)
+  - `docs/DOC_REGISTRY.md` · `docs/improvements/ssot-consolidation/ROADMAP.md` · `bin/ssot-lint.sh` — `_archive`→`archive` 정합
+- **panel SKIP 사유 (§18.4 doc/meta carve-out)**: 신규 production 동작 0. (1) GOAL.md 아카이빙은 STATUS.md(TASK-0133)가 이미 결정·기록한 의도의 물리적 완성(정본 변경 아님), (2) OBSERVATIONS 는 stale 스냅샷 격리, (3) archive 위치 교정은 gitignore 충돌 해소(기계적). rename R100(내용 무변경) + frontmatter only.
+- **verification**: `bash bin/ssot-lint.sh --selftest` **PASS**. 실제 스캔 archived **0건**(이전 GOAL.md 1건 해소), secret 3건은 Phase 3(META-0004) 대상으로 잔존. staged changeset pure-meta(루트 비-meta 0). GOAL/OBSERVATIONS 참조는 전부 과거 이력 prose(코드 import 0) — 링크 무결성 영향 없음.
+- **Human Approval Needed**: 아니오 (비파괴 아카이빙, 정본 무변경). Major(P1b STATUS 인덱스화)·Critical(P3 secret)은 차례에 §12 별도 승인.
+
+## REV-20260624T012043-META-0003-ssot-consolidation [SKIPPED:status-index-verbatim-preserved]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 1b** (STATUS.md 인덱스화, Major §12.3)
+- **changeset (pure-meta)**:
+  - `docs/STATUS.md` — 290KB → **4.6KB** lean 인덱스(feature별 상태 1줄 + 정본 링크 + 1줄 요지). 누적 rollup·heavy 셀 제거
+  - `docs/archive/STATUS_ARCHIVE.md` 신규 — 인덱스화 이전 STATUS verbatim 보존(cmp IDENTICAL) + archived frontmatter
+  - `meta/REVIEW.md` — 본 entry
+- **risk**: Major (정본 재정의 — 현황 상세 정본을 STATUS→`unit/<f>/docs/{TASK,REPORT}` 로 명시 이동). **plan-review 수행**(사용자 미결정 #2 = "STATUS_ARCHIVE 보존 후 인덱스화" 선택).
+- **panel SKIP 사유**: 비파괴 — 전문 verbatim 보존(`cmp -s` IDENTICAL, rollup 159줄 유지)으로 **정보 손실 0**. STATUS 는 정책문서(AGENTS/CONVENTIONS/SECURITY) 아님(§18.8.1 경량 대상). 신규 production 동작 0. 정본 위계는 ADR-0031 + DOC_REGISTRY 가 정의.
+- **verification**: STATUS.md 4,682 bytes(<30KB 성공기준 충족). 내부 링크 6개(unit TASK ×9, STATUS_ARCHIVE, DOC_REGISTRY, DECISIONS, ARCHITECTURE) 전부 타깃 존재 확인. ssot-lint archived 0건(STATUS_ARCHIVE 가 docs/archive/ 내 → skip), secret 3건 잔존(P3). feature-0009 cross-cut·feature-0010 worktree 미병합 명시.
+- **Human Approval Needed**: 아니오 (사용자 plan-review + 미결정 #2 승인 완료, verbatim 보존으로 비가역성 없음). 원복 = git revert(미머지).
+
+## REV-20260624T013056-META-0003-ssot-consolidation [SKIPPED:additive-meta-docs]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 3 prep** (secret 노출 종료 turnkey 런북)
+- **changeset (pure-meta)**: `docs/improvements/ssot-consolidation/SECRET-ROTATION-RUNBOOK.md` 신규 + `meta/REVIEW.md` 본 entry
+- **panel SKIP 사유**: 비파괴 additive 문서(런북). 코드/secret/config 무변경 — 실제 rotation 은 사용자/feature-owner cycle 이 수행. 노출 표면은 값 비노출로 키 이름만 확인(`git show HEAD:<bak> | sed 'KEY 추출'`).
+- **노출 분류 (값 비노출)**: `.env.bak-task0211/0279` = MySQL/PG/admin/LLM/MSSQL 자격증명, `.env.secret.bak-task0228` = `AGENT_DATASOURCE_KEK_V1`. `.env.secret` 본체·MinIO 비밀값은 추적 안 됨(무해). origin = 외부 GitHub.
+- **AI 자율 비실행 근거**: ① 라이브 데이터 보호 자격증명(오조작=DB 잠김) ② KEK = re-encryption 마이그레이션(값만 교체 시 데이터소스 cred 전소실) ③ 외부 계정(MSSQL/AWS/GitHub). → 런북으로 turnkey 화, 실행은 eyes-on.
+- **Human Approval Needed**: rotation 실행은 사용자(또는 feature-owner cycle, KEK re-wrap). 본 commit(런북 문서)은 비파괴 prep.
+
+## REV-20260624T013734-META-0003-ssot-consolidation [SKIPPED:additive-meta-docs]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 2** (in-flight worktree 현황 흡수 정책 명문화)
+- **changeset (pure-meta)**: `docs/DOC_REGISTRY.md`("In-flight worktree 현황 흡수" 정책 + 미해소 잔여 갱신) · `docs/improvements/ssot-consolidation/ROADMAP.md`(ITEM-P2 status→done) · `meta/REVIEW.md` 본 entry
+- **조사 결과(실측)**: `git worktree list` + ahead/behind 측정 — 현행 worktree(feature-0002, gc-share-group-sync, 06-24)는 **ahead=0**(작업 main 머지 완료) → 미머지 in-flight 작업 0, STATUS 인덱스화와 **충돌 위험 0**. stale leftover 3개(attach-cutover/conn-health/task0232, 258~417 behind, 06-12~15 방치)는 흡수 대상 아닌 정리 대상.
+- **정책**: 미머지 worktree 현황 정본 = 그 worktree 의 unit TASK/REPORT; STATUS 인덱스는 main 머지 기준 + 미머지는 note 표기; 머지 시 행 갱신. (적대 리뷰 #11 의 "in-flight 마이그레이션 규칙 부재" 해소)
+- **panel SKIP 사유**: 비파괴 additive 정책 문서. 코드/secret 무변경. 흡수할 실제 in-flight 작업이 없음(ahead=0)을 실측 확인.
+- **Human Approval Needed**: 아니오 (정책 명문화). stale worktree 정리(`worktree remove`)는 운영 잔재 정리 시 별도 수행.
+
+## REV-20260624T015428-META-0003-ssot-consolidation [SKIPPED:meta-verify-and-scope]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 1c**(거버넌스 포인터 검증) + **ROADMAP P5a/P5b 분리**(사용자 요청)
+- **changeset (pure-meta)**:
+  - `docs/improvements/ssot-consolidation/ROADMAP.md` — ITEM-P5 → **P5a(코드 파편화/SSOT 중복·경계, Major)** + **P5b(코드 비대화/모놀리스 분할, Critical, 신규)**; Phase 표·종속성 그래프·ITEM-P1 status 갱신
+  - `CLAUDE.md`·`GEMINI.md` — `lifecycle:reference` + `source_of_truth:false` + `sources:[AGENTS.md]` frontmatter 추가(기계가독 포인터 선언)
+  - `docs/DOC_REGISTRY.md` — AI 운영 정책 행 정정
+  - `meta/REVIEW.md` — 본 entry
+- **Phase 1c ground-truth 결과 (3번째 phantom 교정)**: "CONVENTIONS §3.1/§7 ↔ AGENTS §3.1 중복 흡수"는 **실재하지 않음** — CONVENTIONS 에 §3.1 자체가 없고 §7 "AI 에이전트 매핑"은 이미 깨끗한 포인터("정본=../AGENTS.md"); GEMINI.md line35 "AGENTS.md 를 가리키는 참조 역할만"; AGENTS.md 의 ADR 언급 8건 전부 **참조 링크**(본문 복제 0). → **거버넌스 dedup 불요, AGENTS.md 본문 무편집**(우려한 §18.8.1 codex-review 트리거 미해당). 실제 작업 = 포인터 문서 reference frontmatter 추가뿐.
+- **P5 분리 근거 (사용자 검토 승인)**: 실측 `app.py` 25,823줄/146 endpoint(모듈 5개), 프론트 admin/app.js·styles.css ~25K. "비대화된 코드"는 사용자 원 요청 포함이나 **SSOT(중복) 아닌 모듈화 문제** → P5b(Critical, 라이브 web app, test 54파일 안전망, 점진 추출, 별도 cycle/initiative). doc-SSOT cycle 번들 금지.
+- **panel SKIP 사유**: 검증(ground-truth) + 비파괴 frontmatter/계획 문서. 코드·정책 semantic 무변경.
+- **Human Approval Needed**: 아니오. P5b 실제 실행은 Critical → 별도 cycle plan-review + §12 승인.
+
+## REV-20260624T015752-META-0003-ssot-consolidation [SKIPPED:additive-meta-docs]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 4** (wiki 참조-only 체계화)
+- **changeset (pure-meta)**: `wiki/README.md`(§5.1 신설) · `wiki/Log.md`(append, wiki 규약) · `docs/improvements/ssot-consolidation/ROADMAP.md`(ITEM-P4 done) · `meta/REVIEW.md` 본 entry
+- **ground-truth 결과**: wiki 는 **이미 reference-only** — README §2/§6 이 "wiki 는 source of truth 아님, 정본 우선" 명시, 전역 `sot:false`(lint: 위반 0, 예외 Log.md ledger). 거버넌스·STATUS 와 동일하게 코어는 이미 양호.
+- **실제 작업(gap 메움)**: README §5.1 신설 — SSOT 계약(ADR-0031)·정본 지도(DOC_REGISTRY) 연결 + **동기화 메커니즘 명시**(정본 변경→wiki 갱신 = `/_dqa:doc_sync` persona, 결정론 렌더러 없음 = LLM-persona 유지[적대 리뷰 권고 b], 구조 drift = `wiki-lint`) + stale 카드 maturity 라벨 정책.
+- **deferred(점진)**: 85파일 mirrors/sources frontmatter 백필 + stale 카드(0001/0004~0007) 라벨 = `/_dqa:doc_sync` 가 주기 수행(mechanical, 저가치-고노력이라 일괄 미실행).
+- **panel SKIP 사유**: 비파괴 additive 정책 문서 + 검증. 코드/secret 무변경.
+- **Human Approval Needed**: 아니오.

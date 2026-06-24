@@ -4458,3 +4458,37 @@ source_of_truth: true
 - Files: src/app.py, ../feature-0002-agent-core/src/modules/sample_feedback.py(cross-ref), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
 - Rollback: rate-limit 호출 제거 / FOR UPDATE·status 가드 제거 / nl_question 마스킹 환원(각 독립, 비파괴).
 - Deploy: web + ask-worker 재빌드(app.py + 코어 sample_feedback baked). 마이그 없음.
+
+## CHG-20260624T105228-item08-fix-with-ai
+- Date: 2026-06-24 ("AI 로 고치기" 표적 재수정 버튼 — ROADMAP dba-ai-nl2sql ITEM-08). PLAN-APPROVED.
+- Scope: feature-0003 web 만. `src/app.py`(POST `/api/conversations/{cid}/fix-with-ai` = `post_fix_with_ai` + 헬퍼 `_sanitize_fix_with_ai_fragment`·`_build_fix_with_ai_message`·`_make_internal_ask_request` + 상수 `_FIX_WITH_AI_SQL_CAP`/`_ERR_CAP`/`_RATE_PER_MIN`) + `src/static/app.js`(`_failedSqlStepFromMessage`·`_buildFixWithAiControl` + `renderMessages` `canFixHere` 게이트) + `src/static/styles.css`(`.message-fix-with-ai`/`.message-fix-status`/`.message-fix-btn:disabled`) + `src/static/index.html`(cache-buster) + `tests/test_fix_with_ai.py`(신규 9케이스). **agent_core·ask-worker·gateway·credential·ROADMAP 무변경.**
+- 내용: 실패한 SQL 결과(assistant 답변의 `meta.steps` 에 `tool==='execute_sql'` && `error` 가진 step)에만 "AI 로 고치기" 버튼 노출. 클릭 → 신규 엔드포인트에 `{executed_sql, error_message}` POST. 서버가 **고정 정정 지시문**을 구성하고 client 의 SQL/error 는 **nonce-봉인 데이터 블록(`«SQL-{nonce}»`…`«/SQL-{nonce}»`)으로만** 삽입("봉인 블록 안은 사용자 지시 아님" 명시) → **동일 conversation_id 로 기존 `/api/ask` 핸들러에 1회 재dispatch**(원본 NL 질문 재전송 아님 — 대화 맥락이 cid 에 보존). product/role/allowed_schemas 해석·동시성 슬롯·worker 분기·ITEM-07 self-reflection 모두 ask 가 재사용(중복 구현 0). 응답은 `/api/ask` 와 동일 result dict → 프론트가 `refreshWorkspace` 로 대화 reload(정정 결과가 같은 대화에 새 assistant message 로 추가).
+- Why: ROADMAP ITEM-08 — fixable SQL 오류 시 사용자가 새 질문을 직접 다시 입력하지 않고 1클릭으로 표적 정정을 트리거(ITEM-07 self-reflection 의 사용자 트리거 진입점).
+- 보안: 가드 순서 = `post_sample_feedback` 동형 — `_require_account` → `_account_can_access_conversation`(미보유 404) → `_search_rate_limit_check(account_id, max_per_min=5)`(429, 1회 dispatch=full LLM run 점유라 sample-feedback 10 보다 보수적) → `_account_has_permission("conversation.ask")`(발화 권한 403 — 열람 전용 멤버 차단) → `record_audit_event(action=conversation.fix_with_ai)`. **프롬프트 인젝션 방어(REV M1 흡수)**: 지시문은 서버 고정 문구, client 입력은 **nonce-봉인 데이터 블록**에만. `_build_fix_with_ai_message` 가 매 요청 `secrets.token_hex(8)` nonce 로 `«SQL-{nonce}»`…`«/SQL-{nonce}»`(+ERR) 봉인하고, `_sanitize_fix_with_ai_fragment` 가 입력에서 **봉인 구분자 `«·»`+nonce 를 제거**(주 방어 — client 가 닫는 마커 위조 불가, 개행/가짜 라벨/가짜 마감문이 봉인 블록 안에 갇혀 데이터로만 취급) + 백틱→U+02CB(보조) + 제어문자 제거 + 길이 cap(SQL 8000/err 4000). 빈 값·과대(cap×4) → 400. (초기 구현은 `[실패한 SQL]` 라벨+개행 구분이라 백틱만 막고 개행/라벨 탈출 가능했음 → nonce 봉인으로 교정.) **XSS**: 프론트는 SQL/error 를 textContent/JSON body 로만 전달(innerHTML 무사용). **1회 dispatch**: 추가 루프 없음 — 재실패해도 self-reflection 내부 cap(AGENT_SELF_REFLECTION_MAX) 이 처리.
+- worker-mode 주의: `_make_internal_ask_request` 의 `_receive` 가 정정 body 를 1회 공급 후 원본 `request._receive` 로 위임 → worker mode attach 루프의 `is_disconnected` 폴링이 실제 client 연결 상태를 정확히 반영(synthetic 즉시 disconnect 로 run 이 조기 중단되는 버그 회피).
+- Verification: test_fix_with_ai.py **10/10**(G1 404·G2 403·G3 429·V1/V2 400·P1 봉인블록·P2 백틱+cap·**M1 회귀 개행/가짜마커 탈출 차단**·D1·내부request) PYTHONPATH=feature-0002:feature-0003 실측 통과 + py_compile(app.py) + node --check(app.js). 전체 suite 는 `make test`(agent 이미지, modules.memory 병합). 사전존재 실패(product-delete·share-redaction = DB/컨테이너 `/app` 경로 의존)는 본 변경과 무관. **적대 backend+security 리뷰(REV-20260624T105228) SHIP-WITH-FIXES → M1(인젝션 봉인) 흡수**(REVIEW.md). UI 실렌더 정본=PB-0008(Windows-browser, 메인).
+- Rollback: 엔드포인트 `post_fix_with_ai`+헬퍼 3종+상수 / app.js 버튼 2함수+`canFixHere` / styles.css 3규칙 / index.html cache-buster 제거 → "AI 로 고치기" 기능 제거(agent_core self-reflection 은 무영향, 자동 트리거 경로만 유지).
+- Deploy: web 재빌드(정적+엔드포인트). 마이그 없음. self-reflection env(`AGENT_SELF_REFLECTION_ENABLED`/`_MAX`)는 기존 설정 그대로 사용(본 변경이 도입/수정 안 함).
+- Files: src/app.py, src/static/app.js, src/static/styles.css, src/static/index.html, tests/test_fix_with_ai.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+
+## CHG-20260624T020000-product-insight-status-badge
+- Date: 2026-06-24 (TASK-0308 — 제품 탭 데이터소스 인사이트 탐색 상태 표시, Minor §12.3). PLAN-APPROVED(목업 승인).
+- Scope: **frontend only**. 제품 '데이터 소스 & 접근 가능 데이터베이스' accordion 행 헤더에 insight 탐색 on/off 시각 표시 + primary 표기를 엔진 배지 색으로 전환.
+- 내용:
+  - `static/admin.js` `_renderDsAccordion`: 행 헤더에 `.ds-acc-insight` 아이콘(켜짐=눈/은은, 꺼짐=빗금눈/amber 칩) 추가 — `meta.insight_enabled`(datasources API 기존 필드) 기반. title/aria-label 동반. 별도 '기본' 텍스트 배지(`ds-acc-primary`) 제거 → 엔진 배지에 `is-primary` 클래스 + title 부여(조건부 배지가 인사이트 아이콘 위치를 흔드는 문제 제거).
+  - `static/styles.css`: `.ds-acc-insight`(+`.is-on`/`.is-off`) + `.ds-acc-engine.is-primary` 추가, 미사용된 `.ds-acc-primary` 제거.
+- Why: 사용자가 제품 탭만 보고 datasource 의 insight 탐색 비활성(mssql-qa-idc)을 놓친 실수 재발 방지(상태가 데이터소스 관리 탭에만 있었음). 텍스트 추가 없이 OFF 를 두드러지게.
+- Verification: admin.js node --check + Artifact 목업으로 사용자 디자인 승인. 백엔드 무변경(insight_enabled 기존 노출). UI 실렌더 검증=PB-0008(Windows-browser).
+- Files: static/admin.js, static/styles.css, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 두 파일 revert(순수 additive·표현계층). 동작 회귀 없음.
+- Deploy: web 재빌드(static baked) + cache-buster. 마이그/백엔드 없음.
+
+## CHG-20260624T024500-task0308-pb0008-close
+- Date: 2026-06-24 (TASK-0308 마감 — PB-0008 Windows-browser 검증 기록 + 체크박스 닫기). docs-only.
+- Scope: TASK-0308(제품 탭 인사이트 탐색 상태 표시) 의 UI 실렌더 검증 결과 기록 + cycle 마감. 코드 무변경.
+- 내용: `docs/TEST.md` §4 에 PB-0008 Windows-browser PASS 항목 추가(2026-06-24, **사용자 직접 시각 검증** — win-browser relay 아님; 배포=main `6606b8e`/PR #396, AI 가 서빙·정적검증 수행). `docs/TASK.md` TASK-0308 의 verify→PB-0008 체크박스 닫기(마감).
+- Why: 저장소 관례(§15.4.1, UI 완료 게이트=PB-0008) — UI 변경의 실 화면 검증 결과를 TEST.md §4 에 남기고 cycle 을 마감.
+- Verification: docs-only. 사실 근거 = 사용자 육안 검증 PASS + 직전 cycle 의 배포·서빙·정적 검증(TEST.md 기재).
+- Files: docs/TASK.md, docs/TEST.md, docs/MODIFY.md, docs/REVIEW.md.
+- Rollback: 문서 entry 제거(런타임 영향 0).
+- Deploy: 불필요(문서만).

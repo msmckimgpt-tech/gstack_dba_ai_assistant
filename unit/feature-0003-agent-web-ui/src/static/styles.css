@@ -3400,13 +3400,26 @@ a { color: inherit; }
   border-radius: var(--r-sm);
   padding: 1px 6px;
 }
-.ds-acc-primary {
-  font-size: 11px;
-  font-weight: 600;
+/* TASK-0308: 기본(primary) 데이터소스는 별도 '기본' 텍스트 배지 대신 엔진 배지를 primary 색으로
+   표기(조건부 배지가 인사이트 아이콘 위치를 흔들지 않도록 제거). non-primary 는 위 muted 기본형. */
+.ds-acc-engine.is-primary {
   color: var(--primary);
+  font-weight: 600;
   background: var(--primary-soft);
+  border-color: var(--primary);
+}
+/* TASK-0308: 인사이트 탐색 상태 아이콘. 켜짐=은은(정상), 꺼짐=amber 칩으로 두드러지게(놓치기
+   쉬운 문제 상태를 시각적으로 강조). 색 단독 의존 아님 — 켜짐(눈) vs 꺼짐(눈+빗금) 아이콘 형태가
+   다르고 title/aria-label 동반. */
+.ds-acc-insight { display: inline-flex; align-items: center; flex: none; line-height: 0; }
+.ds-acc-insight svg { display: block; }
+.ds-acc-insight.is-on { color: var(--text-2); opacity: .6; }
+.ds-acc-insight.is-off {
+  color: var(--warning);
+  background: #fdf3e3;
+  border: 1px solid #f3d7a4;
   border-radius: var(--r-sm);
-  padding: 1px 7px;
+  padding: 2px 5px;
 }
 .ds-acc-body {
   padding: 0 12px 10px;
@@ -7574,6 +7587,22 @@ a { color: inherit; }
 }
 .message-feedback[data-done="1"] .message-feedback-btn {
   opacity: .4;
+  pointer-events: none;
+}
+/* ITEM-08: "AI 로 고치기" 표적 재수정 버튼 (실패 SQL 결과에만 노출) */
+.message-fix-with-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.message-fix-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.message-fix-btn:disabled {
+  opacity: .5;
   pointer-events: none;
 }
 /* 검수 큐(샘플 검수 탭) */

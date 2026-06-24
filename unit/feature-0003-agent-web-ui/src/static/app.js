@@ -3420,6 +3420,80 @@ function _precedingUserQuestion(msgIdx) {
   }
   return "";
 }
+// ── ITEM-08 (fix-with-ai): "AI 로 고치기" 표적 재수정 버튼 ──────────────────────────
+// 실패한 execute_sql step(= tool==='execute_sql' && error 존재)을 가진 assistant 답변에만 노출.
+// 클릭 → POST /api/conversations/{cid}/fix-with-ai {executed_sql, error_message}. 서버가 정정
+// 지시문을 구성해 동일 cid 로 1회 dispatch(원본 NL 질문 재질문 아님) → self-reflection 이 표적 정정.
+// 성공 시 refreshWorkspace 로 대화를 reload(수정된 결과가 같은 대화에 새 assistant message 로 추가됨).
+function _failedSqlStepFromMessage(message) {
+  // 가장 최근(마지막) 실패 execute_sql step 을 반환. 없으면 null.
+  const steps = Array.isArray(message?.meta?.steps) ? message.meta.steps : [];
+  let found = null;
+  steps.forEach((s) => {
+    if (String(s?.tool || "") === "execute_sql" && String(s?.error || "").trim()) {
+      found = s;
+    }
+  });
+  return found;
+}
+function _buildFixWithAiControl(message) {
+  const failedStep = _failedSqlStepFromMessage(message);
+  if (!failedStep) return null;
+  const cid = state.activeConversationId;
+  if (!cid) return null;
+
+  const wrap = document.createElement("span");
+  wrap.className = "message-fix-with-ai";
+
+  const status = document.createElement("span");
+  status.className = "message-fix-status";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "message-action-btn message-fix-btn";
+  btn.textContent = "AI 로 고치기";
+  btn.title = "실패한 SQL 의 오류를 AI 가 진단해 자동으로 수정·재실행합니다.";
+
+  btn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (wrap.dataset.busy === "1") return;  // 더블클릭 가드(요청 중 재진입 차단).
+    wrap.dataset.busy = "1";
+    btn.disabled = true;
+    const _label = btn.textContent;
+    btn.textContent = "AI 가 고치는 중…";
+    status.textContent = "";
+    try {
+      // executed_sql / error_message 는 실패 step 에서 그대로 — 서버가 데이터 인용 블록으로만 삽입.
+      const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/fix-with-ai`, {
+        method: "POST",
+        body: JSON.stringify({
+          executed_sql: String(failedStep.sql || ""),
+          error_message: String(failedStep.error || ""),
+        }),
+      });
+      // 성공 응답(= /api/ask 와 동일 result dict)이 또 error 를 담을 수 있음(정정 실패) — 안내.
+      if (payload && String(payload.error || "").trim()) {
+        showToast(`수정에 실패했습니다: ${payload.error}`, true);
+      } else {
+        showToast("AI 가 수정한 결과를 추가했습니다.");
+      }
+      // 대화를 reload → 수정된 결과(같은 cid 의 새 assistant message)가 부분 추가/갱신된다.
+      const newCid = String((payload && payload.conversation_id) || cid || "");
+      await refreshWorkspace(newCid);
+      return;  // refreshWorkspace 가 renderMessages 를 다시 그리므로 이 wrap 은 폐기됨.
+    } catch (error) {
+      showToast((error && error.message) || "수정 요청에 실패했습니다.", true);
+      btn.disabled = false;
+      btn.textContent = _label;
+      wrap.dataset.busy = "0";
+    }
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(status);
+  return wrap;
+}
 function _buildSampleFeedbackControls(message, msgIdx) {
   const wrap = document.createElement("span");
   wrap.className = "message-feedback";
@@ -3630,9 +3704,19 @@ function renderMessages() {
     // ITEM-03 (sample-feedback-curation): assistant 답변에 👍/👎 + "샘플 등록" 피드백 버튼.
     // 적재 endpoint 는 대화 접근자면 누구나 가능(열람자 포함) → 게이트는 활성 대화 + assistant + id.
     const canFeedbackHere = role === "assistant" && message.id != null && Boolean(state.activeConversationId);
-    if ((canFork && message.id != null) || canShareHere || canFeedbackHere) {
+    // ITEM-08: 실패한 execute_sql step 을 가진 assistant 답변 + 발화 권한 보유 시 "AI 로 고치기" 노출.
+    // (열람 전용 멤버는 발화 불가 → 서버도 403 으로 거부하므로 UI 도 동일 게이트.)
+    const canFixHere = role === "assistant"
+      && Boolean(state.activeConversationId)
+      && can("conversation.ask")
+      && Boolean(_failedSqlStepFromMessage(message));
+    if ((canFork && message.id != null) || canShareHere || canFeedbackHere || canFixHere) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
+      if (canFixHere) {
+        const fixCtl = _buildFixWithAiControl(message);
+        if (fixCtl) actions.appendChild(fixCtl);
+      }
       if (canFeedbackHere) {
         actions.appendChild(_buildSampleFeedbackControls(message, _msgIdx));
       }
