@@ -38,7 +38,14 @@ class _Cursor:
         self._store.setdefault("executed", []).append(s)
         self._store["last_params"] = params
         self._rows = []
-        if "count(*) from agentcoreconversations" in s:
+        if "select isdefault from webproducts where id" in s:
+            # TASK-0302: 핸들러가 삭제 전 제품 존재/기본여부를 먼저 확인한다(미존재 404, 기본 409).
+            # 기존 테스트 시나리오 유지 — 미설정 시 비-기본 제품이 존재하는 것으로 응답.
+            if self._store.get("product_missing"):
+                self._rows = []
+            else:
+                self._rows = [(int(self._store.get("is_default", 0)),)]
+        elif "count(*) from agentcoreconversations" in s:
             assert "blocked_at is null" in s, "차단 대상 COUNT 는 미차단 대화만 세어야 함"
             self._rows = [(int(self._store.get("referencing", 0)),)]
         elif "select id from webpermissions" in s:

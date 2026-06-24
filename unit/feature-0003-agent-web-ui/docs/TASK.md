@@ -4544,3 +4544,6 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - **Phase 2 연기(본 cycle 미구현 — ROADMAP ITEM-11 잔여)**: (a) 테이블/컬럼 설명(table/column description) CRUD, (b) `describe_table` 부트스트랩(스키마 introspection → 메타데이터 초기 시드), (c) 샘플 쿼리 admin 편집(샘플 검수 탭과 별개의 직접 편집). 본 MVP-1 은 용어/ENUM 만. ROADMAP 갱신은 메인이 수행(본 worktree 무변경).
 - [x] **적대 backend+security 리뷰(REV-20260624T130000, SHIP)**: BLOCKER/MAJOR 0 — RBAC(8/8 게이트·코어 미호출·least-priv)·scope 누수/IDOR(`WHERE id+scope_key` 격리·allowlist fail-safe·scope 미재배정)·SQLi(`%s` 전수)·XSS(textContent)·원자성 모두 REFUTE 실패=안전. **MINOR-2 흡수**: scope 드롭다운 init race → 탭 재진입 시 재채움(선택 보존). **MINOR-1 수용**: audit cross-DB best-effort(동기 롤백 불가, 기존 admin mutation 동일 한계, warning 유지). 흡수 후 test 13/13.
 - [ ] (메인) verify-completion → 머지 → 배포(web) → PB-0008(탭 노출/CRUD/scope 격리/권한 게이트) → 마감.
+
+### CI green 복구 (ci-pytest-green-fix, 별도 worktree, Minor §12.3 — CI/test maintenance)
+- [x] `.github/workflows/ci.yml` pytest PYTHONPATH 에 repo 루트(`.`) 추가(`import shared` collection 해소) + `web→feature-0003 src` 심링크(컨테이너 `import web.app` 가정 테스트 해소) + `test_product_delete_block_conv` fake 에 TASK-0302 `SELECT IsDefault` 분기. CI 동일 환경 전체 suite **green(exit 0)**, main CI 장기 red 해소. (CHG/REV-20260624T090534-ci-pytest-green)

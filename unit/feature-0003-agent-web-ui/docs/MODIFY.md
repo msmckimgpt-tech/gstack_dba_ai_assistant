@@ -4593,3 +4593,13 @@ source_of_truth: true
 - Files: `static/app.js`, `static/styles.css`, `static/index.html`, `tests/verify_share_participants.mjs`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
 - Rollback: app.js(`loadParticipants`+팝업 골격 2줄+갱신 2줄)/styles.css(`.share-participant*`)/index.html(캐시버스터) revert + 테스트 제거(순수 additive·표현계층). 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.
+
+## CHG-20260624T090534-ci-pytest-green (CI infra + test-fake fix, Minor §12.3)
+- Date: 2026-06-24. **CI/test maintenance** — 제품·런타임 코드 무변경. 별도 worktree `ai/claude/ci-pytest-green-fix`.
+- Reason: `.github/workflows/ci.yml` 의 pytest PYTHONPATH 에 repo 루트가 빠져 `app.py` 의 `import shared` 가 collection 단계에서 실패 → feature-0003 테스트 84개 일괄 ERROR(main CI 장기 red). 부수적으로 TASK-0302(삭제 전 `SELECT IsDefault` 존재 가드, 미존재 404) 도입 후 `test_product_delete_block_conv` 의 fake 가 해당 쿼리를 미처리해 404→stale 실패.
+- 변경:
+  - `.github/workflows/ci.yml` "Unit tests (pytest)" step: ① PYTHONPATH 에 `:.`(repo 루트) 추가(`shared` 해소 — Makefile `test` 의 `…:/work` 와 동형) ② pytest 전 `ln -sfn unit/feature-0003-agent-web-ui/src web`(컨테이너 `/app/web` 레이아웃 가정 `import web.app` 테스트 해소 — repo 미커밋, CI 런타임 전용) ③ `sudo mkdir -p /shared && chmod 777 /shared`(app.py import 시 `SESSION_DIR(/shared/web_sessions).mkdir()` — bare-runner 엔 `/shared` 부재로 `PermissionError`, 컨테이너 `/shared` 볼륨과 동형화).
+  - `tests/test_product_delete_block_conv.py` `_Cursor` fake: `select isdefault from webproducts where id` 분기 추가(기본값 비-기본 제품 존재, `product_missing`/`is_default` store 키 지원) → TASK-0302 핸들러와 정합.
+- 검증: CI 동일 재현(web 심링크 + repo루트 PYTHONPATH) 전체 suite **all green(exit 0)** + ruff PASS. 84 collection ERROR + 2 stale fail → **0**. 런타임/스키마/마이그 0.
+- Rollback: ci.yml step + 테스트 fake 분기 revert. 제품 영향 0.
+- Deploy: 없음(CI 전용·테스트 전용).

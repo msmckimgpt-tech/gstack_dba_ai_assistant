@@ -3712,6 +3712,14 @@ source_of_truth: true
 - Verification: `node --check app.js` PASS + `tests/verify_settings_archive_leave.mjs` 22/22 PASS(정적). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL)에서 미실행, 메인 세션/배포 후 권장.
 - Cross-ref: CHG-20260624T031337-gc-settings-archive-leave / FUNCTION '대화 ··· 메뉴 보관→설정 이동' / feature-0009 TASK §7.
 
+## REV-20260624T090534-ci-pytest-green [SKIPPED: CI 워크플로 설정 + 테스트 stub 정합 — 제품·런타임·인가·스키마 무변경, 적대 패널 불요]
+- Date: 2026-06-24
+- Cycle: ci-pytest-green-fix (CHG-20260624T090534-ci-pytest-green). Minor §12.3.
+- 변경: `.github/workflows/ci.yml` pytest PYTHONPATH 에 repo 루트 + `web` 심링크(shared·web.app collection 해소) / `test_product_delete_block_conv.py` fake 에 TASK-0302 `SELECT IsDefault` 분기.
+- SKIP 사유(§18.4): 변경이 (a) CI 워크플로 설정, (b) 테스트 stub fake 정합뿐 — 제품/런타임 로직·인가·스키마 무변경. 적대 패널 불요.
+- 검증: CI 동일 환경 전체 pytest **all green(exit 0)** + ruff PASS. 84 collection ERROR + 2 stale fail → 0. main CI 장기 red 해소.
+- Human Approval Needed: 아니오.
+
 ## REV-20260624T075458-gc-share-participants [SUBAGENT:adversarial-3lens-PASS] — SHIP (MINOR 2 + NIT 1 흡수) (TASK-20260624T075458-gc-share-participants, REQ-20260624-gc-share-participants, Minor §12.3 — frontend-only, feature-0009 cross-cut)
 - Date: 2026-06-24
 - 분류: **리뷰 대상**(Minor — frontend-only 표현계층 추가, 기존 게이트된 read 엔드포인트 재사용, 신규 백엔드/스키마/RBAC 0). §18.8 UI/membership 키워드 → 적대적 3-렌즈(security·authz / correctness / UX) 서브에이전트 패널 1회.
