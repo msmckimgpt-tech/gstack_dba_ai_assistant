@@ -70,6 +70,8 @@ source_of_truth: true
   - [x] 메시지 프로필 아바타 Identicon 정합(gc-avatar-identicon): 미업로드 시 "맨 글자" 대신 헤더/프로필과 동일한 username Identicon, 업로드 계정은 실제 이미지, assistant auto=AI 배지. 캐시버스터 avatar-identicon (CHG-0016/REV-0018). **PB-0008 실제 Windows Chrome 실측 PASS**(사용자 요청 — 웹브라우저 실측 검증 보완).
   - [x] 멘션 하이라이트 표시 버그 + Windows 알림 재구성(gc-mention-hl-notify): ① 멘션 강조 CSS 특이도(0,3,0→0,5,0)로 타멤버 규칙(0,4,0) override → 하이라이트 표시. ② OS 알림 제목 `DQA : {대화명}`, 본문 `[발신자] : 메시지`. 캐시버스터 mention-hl-notify (CHG-0017/REV-0019). **PB-0008 실측 PASS**.
   - [x] 그룹대화 authz·라우팅·식별 4종(gc-group-authz-flag, CHG-0018/REV-0020): #1 보관·제목변경 owner-only 2차 게이트(IDOR 누수 차단) · #2 owner 멤버십 보장+`/api/ask` 그룹비멘션 422 서버방어(공유 직후 assistant 오호출 해소) · #3 사이드바 그룹 배지(isGroupConversation) · #4 영구 플래그 `is_group`(alembic 0016, 공유 링크 생성 즉시 그룹 전환). **PB-0008 실측 PASS**. ★배포 alembic 0016 필수.
+  - [x] 공유 직후 메시지 사람채팅 전환(gc-share-group-sync, CHG-0019/REV-0021): 공유 후 클라 is_group stale 로 비멘션 메시지가 assistant 오호출→422 block 되던 이슈 — ① 공유 시 로컬 is_group 즉시 전환 + loadConversations, ② 422 graceful store-only 재라우팅(메시지 유실 없음). 프론트 전용. **PB-0008 실측 PASS**(block 없이 채팅 전송).
+  - [x] Windows 알림 본문 발신자 대괄호 제거(gc-notify-sender-nobracket, CHG-0020/REV-0022): "[보낸사용자] : …" → "보낸사용자 : …"(사용자 요청). 1줄 문자열, 로직 무변경. **PB-0008 실측 PASS**.
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연

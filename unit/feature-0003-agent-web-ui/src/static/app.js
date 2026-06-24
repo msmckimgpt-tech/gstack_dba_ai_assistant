@@ -548,9 +548,10 @@ function _notifyMentions(incoming, hidden) {
   const last = hits[hits.length - 1];
   const who = (last.meta && last.meta.sender_username) || "참여자";
   const preview = String(last.content || "").replace(/\s+/g, " ").trim().slice(0, 80);
-  // feature-0009 gc-mention-notify: 채팅형 본문 "[발신자] : 메시지" (다중 시 " 외 N건"). 토스트·OS 알림 공용.
+  // feature-0009 gc-mention-notify: 채팅형 본문 "발신자 : 메시지" (다중 시 " 외 N건"). 토스트·OS 알림 공용.
+  // gc-notify-sender-nobracket: 발신자명 대괄호 제거(사용자 요청) — "[보낸사용자] : …" → "보낸사용자 : …".
   const more = hits.length > 1 ? ` 외 ${hits.length - 1}건` : "";
-  const body = `[${who}]${more} : ${preview}`;
+  const body = `${who}${more} : ${preview}`;
   if (!hidden) showToast(body);
   try {
     if (window.Notification && Notification.permission === "granted") {
@@ -594,11 +595,9 @@ async function apiFetch(url, options = {}) {
       try { showToast(message || "요청을 수행할 수 없습니다.", true); } catch (_e) {}
     }
     // feature-0009 gc-group-authz-flag (#2 서버 방어선): 그룹 대화 비멘션 메시지가 /api/ask 에
-    // 도달하면 서버가 422(code=group_requires_mention)로 거부. 정상 경로는 send-routing 게이트가
-    // 이미 store-only 로 보내므로 여기 도달은 stale 신호 등 예외 — 사용자에게 명확히 안내.
-    if (response.status === 422 && payload && payload.code === "group_requires_mention") {
-      try { showToast(message || "그룹 대화에서는 @assistant 를 멘션해야 AI 가 응답합니다.", true); } catch (_e) {}
-    }
+    // 도달하면 서버가 422(code=group_requires_mention)로 거부. 여기서는 토스트를 띄우지 않는다 —
+    // 호출자(sendPrompt)가 이 code 를 받아 사람채팅(store-only)으로 graceful 재라우팅하므로(gc-share-
+    // group-sync), 사용자에겐 오류 없이 메시지가 채팅으로 전송된 것으로 보인다. error.payload.code 보존.
     throw error;
   }
   return payload;
@@ -5282,6 +5281,17 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
   if (!payload || !payload.url) {
     throw new Error("공유 링크 응답이 비어 있습니다.");
   }
+  // feature-0009 gc-share-group-sync: joinable 공유 = 그룹 전환. 서버가 is_group=true 로 set 하므로
+  // 클라이언트 로컬 대화 상태도 *즉시* 갱신한다 — 공유 직후 보낸 (비멘션) 메시지가 stale is_group(=false)
+  // 로 /api/ask 에 오라우팅돼 422 block 되지 않고, 곧바로 사람채팅(store-only)으로 전송되게 한다.
+  if (body.joinable !== false) {
+    try {
+      const _shared = state.conversations.find((it) => String(it.id) === String(cid));
+      if (_shared) _shared.is_group = true;
+    } catch (_e) { /* best-effort */ }
+    // 서버 신호(member_count/is_group)·사이드바 그룹 배지 재동기화 (best-effort, 비차단).
+    try { await loadConversations(); } catch (_e) { /* best-effort */ }
+  }
   const absoluteUrl = `${window.location.origin}${payload.url}`;
   const expirySuffix = choice.seconds != null ? ` (만료: ${shareExpiryLabel(choice.seconds)})` : "";
   try {
@@ -7277,6 +7287,28 @@ async function sendPrompt() {
       _syncConversationAttachmentsToBucket(newCid || state.activeConversationId).catch(() => {});
     }
   } catch (error) {
+    // feature-0009 gc-share-group-sync (#2 graceful fallback): 그룹 대화의 비멘션 메시지가 stale
+    // is_group 으로 /api/ask 에 도달해 서버가 422(group_requires_mention)로 거부하면, block/오류 대신
+    // 사람채팅(store-only)으로 즉시 재라우팅한다 — 메시지 유실·차단 없음. 로컬 그룹 신호도 동기화해
+    // 다음 전송부터 곧바로 store-only 로 간다. (정상 경로는 send-routing 게이트가 이미 store-only.)
+    if (error && error.status === 422 && error.payload && error.payload.code === "group_requires_mention") {
+      try { const _gc = currentConversation(); if (_gc) _gc.is_group = true; } catch (_e) {}
+      state.pendingBubble = null;
+      // sendPrompt 가 추가한 optimistic user 메시지 제거 — _sendGroupChatMessage 가 다시 추가하므로
+      // 중복 버블(잠깐 2개 표시) 방지. refreshWorkspace 가 곧 서버 메시지로 일괄 교체.
+      try { state.messages = state.messages.filter((m) => m !== optimisticUserMessage); } catch (_e) {}
+      if (isLazyCreate && state.pendingSentinel === busyKey) {
+        state.pendingNewConversation = false;
+        state.pendingSentinel = null;
+      }
+      try { state.pendingConversationEntries.delete(busyKey); } catch (_e) {}
+      try { renderMessages(); } catch (_e) {}
+      const _reCid = (earlyCidActivated ? state.activeConversationId : targetConvId) || state.activeConversationId;
+      promptInputEl.value = "";
+      promptInputEl.style.height = "auto";
+      if (_reCid) { try { await _sendGroupChatMessage(_reCid, message); } catch (_e) {} }
+      return;  // finally 가 busy/abort 정리
+    }
     // TASK-0241: 사용자가 "중단" 으로 이 send 를 취소한 경우 — abort 로 await 가 풀린 것이므로
     // 에러 토스트/타임아웃 복구 다이얼로그를 띄우지 않는다(UI 는 cancelCurrentRun 이 optimistic 으로
     // 이미 정리). lazy-create 였다면 사이드바의 optimistic pending entry 만 마저 정리한다.

@@ -85,5 +85,26 @@ source_of_truth: true
 - Pass/Fail: **PASS**
 - Notes: is_group 컬럼은 검증 전 라이브 PG 에 멱등 적용(= alembic 0016 DDL), worktree 코드는 컨테이너 hot-swap(docker cp + restart) 후 검증. 정식 배포는 PR 머지 후 agent 재빌드 → `bin/alembic-migrate.sh upgrade`(0016 stamp) → web 재빌드. #1 의 *비-owner 차단* 은 admin(.any) 우회 때문에 bootstrap_admin 단독으로 직접 실측 불가 — 적대 패널 + 단위로 검증(owner 무회귀만 브라우저 실측).
 
+### Run 2026-06-24-share-group-sync
+- Date: 2026-06-24
+- Environment: Windows-browser
+- Runner: AI
+- Bridge: relay @ http://172.28.64.1:9223 (win-browser.py doctor ok=true, Windows Chrome/149)
+- Scenario: `unit/feature-0003-agent-web-ui/tests/win-browser-share-group-sync.scenario.json`
+- Evidence: `artifacts/pb0008-share-group-sync/01_share_then_send_chat.png`
+- Result Summary: 공유 직후 메시지 assistant 오호출/422 block 이슈 수정 검증. 공유(joinable)로 서버 is_group=true 만든 뒤 클라 active.is_group=false 강제(stale 버그 재현) → 비멘션 메시지 sendPrompt → `reroute_no_error_toast:true`(오류/block 없음), `conv_is_group_after:true`(catch 가 is_group 동기화), `composer_cleared:true`, `pendingBubble_null:true`(assistant 미실행), 메시지가 사람채팅으로 저장(last_user_msg 일치). 스크린샷: 파란 사용자 채팅 버블 표시·AI 응답/오류 없음.
+- Pass/Fail: **PASS**
+- Notes: 1차 수정(공유 시 optimistic is_group 전환)은 실제 createConversationShare 경로(모달)로 stale 윈도 자체를 닫음 — 본 시나리오는 그 보강선인 422 graceful 재라우팅(safety net)을 stale 강제로 직접 실측. 프론트 전용(백엔드 무변경) → web 재빌드만(alembic 불요).
+
+### Run 2026-06-24-notify-nobracket
+- Date: 2026-06-24
+- Environment: Windows-browser
+- Runner: AI
+- Bridge: relay @ http://172.28.64.1:9223 (win-browser.py doctor ok=true, Windows Chrome/149)
+- Scenario: `unit/feature-0003-agent-web-ui/tests/win-browser-notify-nobracket.scenario.json`
+- Result Summary: Windows 알림 본문 발신자 대괄호 제거 검증. Notification stub 캡처 — body=`mckim2 : @bootstrap_admin 이거 확인 부탁드려요`(`starts_with_sender:true`, `has_no_leading_bracket:true`), title=`DQA : 운영 이슈 대응방` 유지. "[보낸사용자] : …" → "보낸사용자 : …" 전환 확인.
+- Pass/Fail: **PASS**
+- Notes: trivial cosmetic 문자열 변경(로직 무변경), 프론트 전용 → web 재빌드만. 토스트도 동일 본문 사용(일관).
+
 ## 4. Untested Areas
 - 아직 검증되지 않은 영역

@@ -5993,6 +5993,8 @@ def _ensure_seed_catchup(conn) -> None:
     _ensure_oauth_identity_schema(conn)
     # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 테이블 (fast path).
     _ensure_web_account_totp_schema(conn)
+    # TASK-20260623T190000-gdrive-foundation (feature-0010): 계정별 Google Drive 토큰 테이블 (fast path).
+    _ensure_web_gdrive_tokens_schema(conn)
     # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
     _ensure_avatar_icon_schema(conn)
     # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
@@ -6215,6 +6217,8 @@ def _ensure_web_tables():
         _ensure_oauth_identity_schema(conn)
         # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 테이블 (slow path).
         _ensure_web_account_totp_schema(conn)
+        # TASK-20260623T190000-gdrive-foundation (feature-0010): 계정별 Google Drive 토큰 테이블 (slow path).
+        _ensure_web_gdrive_tokens_schema(conn)
         # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
         # derived join + provider files lifecycle 4 신규 테이블 (slow path).
         _ensure_web_conversation_attachments_schema(conn)
@@ -18509,6 +18513,370 @@ def auth_oauth_google_callback(request: Request) -> Any:
     resp = _oauth_callback_redirect(request, "/")
     _set_session_cookie(resp, request, session_token)
     return resp
+
+
+# ===========================================================================
+# Google Drive 연동 토대 (TASK-20260623T190000-gdrive-foundation, feature-0010)
+# ---------------------------------------------------------------------------
+# 각 계정이 본인의 Google Drive 를 연결하는 멀티테넌트 연동의 "인증 구조" 토대.
+# 본 cycle 범위 = 연동 미수행(no live connection) — 구조만 구축하고 기본 비활성
+# (WEB_GDRIVE_ENABLED=0). _gdrive_configured()=False 면 connect/callback 은 404 로
+# 런타임 인증 경로에 무영향(로그인 OAuth 토대 TASK-20260619T034522 와 동일 posture).
+#
+# 로그인 OAuth(SSO) 와의 차이 — 별개 레이어:
+#   - 로그인 OAuth: openid/email/profile, id_token claim 만 사용, 토큰 미저장.
+#   - Drive 연동:   drive scope + access_type=offline(refresh_token) + 계정별 토큰 영속 저장.
+# 토큰은 cred_crypto(KEK/DEK envelope, AAD=gdrive:{account_id}) 로 암호화 — TOTP/datasource
+# 선례 동형. 모든 라우트는 _get_authenticated_account 로 로그인 사용자에 귀속(본인 계정 한정).
+#
+# MCP 구성: 본 토대는 "인증/토큰 저장"만 담당. Google Drive MCP 서버 자체는
+#   bin/gdrive-mcp.sh + docker-compose 'gdrive-mcp' 서비스(profile gated, 기본 비활성)로
+#   scaffold. 에이전트→MCP per-account 토큰 주입 seam(A)은 feature-0010 docs/DECISIONS.md
+#   + src/gdrive_mcp_seam.py 참조. 본 cycle 은 미연결(seam 만 명세).
+# 보안 강화 TODO(SECURITY.md §16 — 활성화/배포 전): (a) access_token 만료 시 refresh_token
+#   회전, (b) disconnect 시 Google revoke endpoint 백채널 호출, (c) state 영속 비밀(멀티워커),
+#   (d) drive.readonly 이상 scope 승격 시 사람 재승인.
+# ===========================================================================
+
+# --- 설정(env) — 기본 비활성. client_id/secret 미설정 시 로그인 OAuth 클라이언트 공유(동일 GCP 프로젝트). ---
+GDRIVE_ENABLED = str(os.getenv("WEB_GDRIVE_ENABLED", "0") or "").strip().lower() in ("1", "true", "yes", "on")
+GDRIVE_CLIENT_ID = str(os.getenv("WEB_GDRIVE_CLIENT_ID", "") or "").strip() or OAUTH_GOOGLE_CLIENT_ID
+GDRIVE_CLIENT_SECRET = str(os.getenv("WEB_GDRIVE_CLIENT_SECRET", "") or "") or OAUTH_GOOGLE_CLIENT_SECRET
+GDRIVE_REDIRECT_URI = str(os.getenv("WEB_GDRIVE_REDIRECT_URI", "") or "").strip()
+# 기본 scope = drive.readonly(읽기 전용 — 최소권한). 쓰기가 필요하면 운영자가 명시 승격.
+GDRIVE_SCOPES = str(os.getenv("WEB_GDRIVE_SCOPES", "") or "").strip() or "https://www.googleapis.com/auth/drive.readonly"
+GDRIVE_PROVIDER = "google_drive"
+GDRIVE_AAD_PREFIX = "gdrive:"
+
+
+def _ensure_web_gdrive_tokens_schema(conn) -> None:
+    """feature-0010 (TASK-20260623T190000-gdrive-foundation): 계정별 Google Drive OAuth 토큰
+    저장 테이블 (멱등 CREATE). fast+slow 양 경로 호출(_ensure_web_account_totp_schema 동형).
+
+    `WebGoogleDriveTokens`: 계정별 암호화된 access/refresh 토큰 + 만료/scope/연결상태.
+    AccessTokenEnc/RefreshTokenEnc 는 cred_crypto AESGCM 암호문(AAD=gdrive:{AccountId}).
+    UNIQUE(AccountId, Provider) — 계정×provider 1행(향후 다른 provider 확장 여지). 미존재 행 =
+    미연동(무회귀). 평문 토큰은 어떤 컬럼에도 저장하지 않는다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebGoogleDriveTokens (
+                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                AccountId BIGINT NOT NULL,
+                Provider VARCHAR(32) NOT NULL DEFAULT 'google_drive',
+                AccessTokenEnc TEXT NULL,
+                RefreshTokenEnc TEXT NULL,
+                TokenExpiresAt DATETIME NULL,
+                GrantedScopes VARCHAR(1024) NULL,
+                EncryptionVersion INT NOT NULL,
+                IsConnected TINYINT(1) NOT NULL DEFAULT 0,
+                FirstConnectedAt DATETIME NULL,
+                RevokedAt DATETIME NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY UX_WebGoogleDriveTokens_Account_Provider (AccountId, Provider),
+                INDEX IX_WebGoogleDriveTokens_Expires (TokenExpiresAt)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
+    except Exception:
+        pass
+    finally:
+        cur.close()
+
+
+def _gdrive_configured() -> bool:
+    """Drive 연동 활성 조건: flag ON + client_id/secret/redirect_uri 모두 설정. 하나라도 빠지면 404."""
+    return bool(GDRIVE_ENABLED and GDRIVE_CLIENT_ID and GDRIVE_CLIENT_SECRET and GDRIVE_REDIRECT_URI)
+
+
+def _gdrive_dek(conn):
+    """(_cc, ver, dek) 또는 None. _totp_dek 동형 — KEK 미설정/DEK 부재 시 None(토큰 저장 불가)."""
+    try:
+        from modules import cred_crypto as _cc
+        from modules import datasources as _dsr
+    except Exception:
+        return None
+    if not _cc.enc_available():
+        return None
+    try:
+        got = _dsr.ensure_dek(conn)
+    except Exception:
+        return None
+    if not got:
+        return None
+    ver, dek = got
+    return (_cc, int(ver), dek)
+
+
+def _gdrive_store_tokens(conn, account_id: int, *, access_token: str, refresh_token: "str | None",
+                         expires_in: int, scopes: str) -> bool:
+    """계정별 Drive 토큰 암호화 upsert. AAD=gdrive:{account_id}. DEK 미가용 시 False.
+
+    refresh_token 은 Google 이 최초 동의(prompt=consent + access_type=offline)에서만 발급될 수
+    있어 None 허용 — None 이면 기존 RefreshTokenEnc 보존(COALESCE). access_token 은 매번 갱신.
+    """
+    d = _gdrive_dek(conn)
+    if not d:
+        return False
+    _cc, ver, dek = d
+    aad = f"{GDRIVE_AAD_PREFIX}{int(account_id)}"
+    try:
+        access_enc = _cc.encrypt_password(dek, str(access_token), aad) if access_token else None
+        refresh_enc = _cc.encrypt_password(dek, str(refresh_token), aad) if refresh_token else None
+    except Exception:
+        return False
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))).replace(tzinfo=None) \
+        if int(expires_in or 0) > 0 else None
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO WebGoogleDriveTokens
+                (AccountId, Provider, AccessTokenEnc, RefreshTokenEnc, TokenExpiresAt,
+                 GrantedScopes, EncryptionVersion, IsConnected, FirstConnectedAt, RevokedAt)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 1, CURRENT_TIMESTAMP, NULL)
+            ON DUPLICATE KEY UPDATE
+                AccessTokenEnc = VALUES(AccessTokenEnc),
+                RefreshTokenEnc = COALESCE(VALUES(RefreshTokenEnc), RefreshTokenEnc),
+                TokenExpiresAt = VALUES(TokenExpiresAt),
+                GrantedScopes = VALUES(GrantedScopes),
+                EncryptionVersion = VALUES(EncryptionVersion),
+                IsConnected = 1,
+                RevokedAt = NULL,
+                FirstConnectedAt = COALESCE(FirstConnectedAt, CURRENT_TIMESTAMP)
+            """,
+            (int(account_id), GDRIVE_PROVIDER, access_enc, refresh_enc, expires_at,
+             str(scopes or ""), int(ver)),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        cur.close()
+
+
+def _gdrive_connection_status(conn, account_id: int) -> dict:
+    """계정의 Drive 연결 상태(메타데이터만 — 평문/암호문 토큰 절대 미노출)."""
+    cur = conn.cursor(dictionary=True)
+    row = None
+    try:
+        cur.execute(
+            "SELECT IsConnected, TokenExpiresAt, GrantedScopes, FirstConnectedAt, RevokedAt "
+            "FROM WebGoogleDriveTokens WHERE AccountId = %s AND Provider = %s LIMIT 1",
+            (int(account_id), GDRIVE_PROVIDER),
+        )
+        row = cur.fetchone()
+    except Exception:
+        row = None
+    finally:
+        cur.close()
+    connected = bool(row and int(row.get("IsConnected") or 0) == 1 and not row.get("RevokedAt"))
+    exp = row.get("TokenExpiresAt") if row else None
+    first = row.get("FirstConnectedAt") if row else None
+    return {
+        "provider": GDRIVE_PROVIDER,
+        "configured": _gdrive_configured(),
+        "connected": connected,
+        "scopes": (str(row.get("GrantedScopes")) if row and row.get("GrantedScopes") else None),
+        "token_expires_at": (exp.isoformat() if hasattr(exp, "isoformat") else None),
+        "first_connected_at": (first.isoformat() if hasattr(first, "isoformat") else None),
+    }
+
+
+def _gdrive_delete_tokens(conn, account_id: int) -> bool:
+    """계정 Drive 토큰 삭제(연결 해제) — 저장 암호문 제거.
+
+    보안 강화 TODO(§16): 활성화 시 삭제 전 Google revoke endpoint 백채널 호출로 refresh_token 을
+    무효화해야 한다(현 토대는 로컬 삭제만 — 외부 토큰은 Google 측 만료까지 유효).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "DELETE FROM WebGoogleDriveTokens WHERE AccountId = %s AND Provider = %s",
+            (int(account_id), GDRIVE_PROVIDER),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        cur.close()
+
+
+def _gdrive_authorize_url(state: str, challenge: str) -> str:
+    """Google authz redirect URL. access_type=offline + prompt=consent 로 refresh_token 발급 보장."""
+    import urllib.parse
+    params = urllib.parse.urlencode({
+        "client_id": GDRIVE_CLIENT_ID,
+        "redirect_uri": GDRIVE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": GDRIVE_SCOPES,
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    })
+    return f"{OAUTH_GOOGLE_AUTH_ENDPOINT}?{params}"
+
+
+def _gdrive_exchange_code(code: str, code_verifier: str) -> dict:
+    """authorization code → token (백채널 POST, client_secret over TLS). 로그인 토대 동형(stdlib urllib).
+
+    _gdrive_configured()=False 면 라우트가 호출 전 404 로 차단하므로, 미활성 토대 상태에서는
+    본 함수의 외부 네트워크 호출이 발생하지 않는다(연동 미수행 보장).
+    """
+    import urllib.request
+    import urllib.parse
+    data = urllib.parse.urlencode({
+        "code": code,
+        "client_id": GDRIVE_CLIENT_ID,
+        "client_secret": GDRIVE_CLIENT_SECRET,
+        "redirect_uri": GDRIVE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+        "code_verifier": code_verifier,
+    }).encode("ascii")
+    req = urllib.request.Request(
+        OAUTH_GOOGLE_TOKEN_ENDPOINT, data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 (고정 https endpoint)
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _gdrive_callback_redirect(request: Request, location: str) -> Any:
+    """Drive callback redirect — 단명 OAuth 바인딩 쿠키를 항상 정리(1회용, 로그인 토대 동형)."""
+    resp = RedirectResponse(location, status_code=302)
+    resp.delete_cookie(OAUTH_BIND_COOKIE, httponly=True, samesite="lax", secure=_request_is_https(request))
+    return resp
+
+
+@app.get("/api/integrations/google-drive/status")
+def gdrive_status(request: Request) -> JSONResponse:
+    """현재 로그인 계정의 Drive 연결 상태(메타데이터만). 비로그인=401. flag 무관 항상 가용."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        return JSONResponse(_gdrive_connection_status(conn, int(account["id"])))
+    finally:
+        conn.close()
+
+
+@app.get("/api/integrations/google-drive/connect")
+def gdrive_connect(request: Request) -> Any:
+    """Drive 연동 개시 — 로그인 계정에 바인딩된 서명 state + PKCE 로 Google 동의 화면으로 redirect.
+
+    미활성(_gdrive_configured()=False) 시 404(연동 미수행 토대 기본값).
+    """
+    if not _gdrive_configured():
+        return _json_error("Google Drive 연동이 활성화되어 있지 않습니다.", 404)
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        account_id = int(account["id"])
+    finally:
+        conn.close()
+    verifier, challenge = _oauth_pkce_pair()
+    bind = _oauth_b64url(secrets.token_bytes(16))
+    # state 에 개시 계정(aid)+종류(k=gdrive)+bind 를 서명 포함 — callback 에서 동일 계정·동일 브라우저만 수락.
+    state = _oauth_state_encode({
+        "v": verifier, "b": bind, "aid": account_id, "k": "gdrive",
+        "ts": int(datetime.now(timezone.utc).timestamp()),
+    })
+    resp = RedirectResponse(_gdrive_authorize_url(state, challenge), status_code=302)
+    resp.set_cookie(OAUTH_BIND_COOKIE, bind, max_age=OAUTH_STATE_TTL_SEC,
+                    httponly=True, samesite="lax", secure=_request_is_https(request))
+    return resp
+
+
+@app.get("/api/integrations/google-drive/callback")
+def gdrive_callback(request: Request) -> Any:
+    """Drive 동의 callback — state 검증 → code→token 교환 → 계정별 암호화 저장 → '/' redirect.
+
+    미활성 시 404. 개시 계정(state.aid)과 현재 로그인 계정 일치를 강제(교차 연동 차단).
+    """
+    if not _gdrive_configured():
+        return _json_error("Google Drive 연동이 활성화되어 있지 않습니다.", 404)
+    if str(request.query_params.get("error") or "").strip():
+        return _gdrive_callback_redirect(request, "/?gdrive_error=denied")
+    code = str(request.query_params.get("code") or "").strip()
+    state = _oauth_state_decode(str(request.query_params.get("state") or "").strip())
+    if not code or not state or str(state.get("k") or "") != "gdrive":
+        return _gdrive_callback_redirect(request, "/?gdrive_error=state")
+    bind_cookie = str(request.cookies.get(OAUTH_BIND_COOKIE) or "")
+    if not bind_cookie or not hmac.compare_digest(bind_cookie, str(state.get("b") or "")):
+        return _gdrive_callback_redirect(request, "/?gdrive_error=state")
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _gdrive_callback_redirect(request, "/?gdrive_error=server")
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return _gdrive_callback_redirect(request, "/?gdrive_error=login")
+        account_id = int(account["id"])
+        if int(state.get("aid") or 0) != account_id:
+            return _gdrive_callback_redirect(request, "/?gdrive_error=account")
+        try:
+            tokens = _gdrive_exchange_code(code, str(state.get("v") or ""))
+        except Exception:
+            return _gdrive_callback_redirect(request, "/?gdrive_error=exchange")
+        access_token = str(tokens.get("access_token") or "")
+        refresh_token = str(tokens.get("refresh_token") or "")
+        scopes = str(tokens.get("scope") or GDRIVE_SCOPES)
+        expires_in = int(tokens.get("expires_in") or 0)
+        if not access_token:
+            return _gdrive_callback_redirect(request, "/?gdrive_error=token")
+        stored = _gdrive_store_tokens(
+            conn, account_id, access_token=access_token,
+            refresh_token=(refresh_token or None), expires_in=expires_in, scopes=scopes,
+        )
+        if not stored:
+            return _gdrive_callback_redirect(request, "/?gdrive_error=store")
+    finally:
+        conn.close()
+    return _gdrive_callback_redirect(request, "/?gdrive_connected=1")
+
+
+@app.post("/api/integrations/google-drive/disconnect")
+def gdrive_disconnect(request: Request) -> JSONResponse:
+    """현재 로그인 계정의 Drive 연결 해제(저장 토큰 삭제). 비로그인=401. flag 무관 항상 가용."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        ok = _gdrive_delete_tokens(conn, int(account["id"]))
+        return JSONResponse({"ok": bool(ok), "connected": False})
+    finally:
+        conn.close()
 
 
 @app.get("/api/admin/me")

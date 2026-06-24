@@ -222,3 +222,22 @@ source_of_truth: true
 - Impact: 공유 = 그룹 전환(owner 비멘션 메시지도 사람채팅). assistant 는 그룹 비멘션에 실행 안 함(클라+서버 2중). 비-owner 멤버는 보관·제목변경 차단(서버). 사이드바에서 그룹 식별 가능. 공유 안 한 1:1 은 무변경(is_group=false → 종전 AI 호출). **★배포: alembic 0016 upgrade 필수**(컬럼 ADD; 컬럼 부재 시 list 신호 쿼리는 except→비그룹 폴백이라 안전하나 정본 적용 필요).
 - Rollback Notes: alembic downgrade 0016(DROP is_group) + 헬퍼/게이트/프론트 환원. 데이터 무손실(컬럼 ADD only).
 - 검증: py_compile + node --check OK. 단위 테스트 무회귀(group_members 10/10·mentions 3/3·s2 8/8·history_merge 4/4). 적대 패널 3렌즈 **PASS-WITH-NITS**(블로킹 0; NULL-owner lockout·배지 1명표기 nit 반영). **PB-0008 실제 Windows Chrome 실측 PASS**: 공유→is_group=true·isGroupConversation=true(#4), 그룹+비멘션 /api/ask→422 group_requires_mention(#2), owner 리네임 200(#1 무회귀), 사이드바 그룹 배지 1건(#3). TEST.md §3 Run 2026-06-23-gc-group-authz, 스크린샷 artifacts/pb0008-group-authz/.
+
+## CHG-20260624-0019
+- Date: 2026-06-24
+- Related Requirement: 사용자 보고 — 공유 직후 즉시 메시지 전송 시, 사람채팅으로 가지 않고 assistant 로 오라우팅돼 block + 오류 메시지 발생. "공유 시작 즉시 메시지 전송 전환" 요구. (CHG-0018 의 #2/#4 후속 — 클라이언트 stale 잔여 윈도.)
+- Summary: 공유 생성 시점에 클라이언트 그룹 상태를 *즉시* 전환 + 그래도 stale 로 /api/ask 에 도달하면 graceful 재라우팅. 전부 프론트, 백엔드 무변경.
+- Root cause: 공유 생성은 서버 is_group=true 로 set 하지만, 클라이언트의 active 대화 객체는 공유 전 상태(is_group=false)로 **stale** → send-routing 게이트가 `/api/ask` 로 보냄 → 서버(fresh is_group=true) 422 group_requires_mention block. CHG-0018 의 422 서버방어가 의도대로 작동했으나, 클라가 store-only 로 안 보내 사용자에겐 오류로 노출.
+- Files: `static/app.js`(① `createConversationShare`: joinable 공유 성공 시 로컬 `state.conversations` 의 is_group=true 즉시 set + `loadConversations()` 재동기화 → 공유 직후 곧바로 사람채팅 라우팅. ② sendPrompt catch: 422 `group_requires_mention` 수신 시 optimistic user 메시지 정리 후 `_sendGroupChatMessage` 로 graceful 재라우팅(메시지 유실·block 없음) + is_group 동기화. ③ apiFetch 422 토스트 제거(호출자가 graceful 처리)) · `static/index.html`(캐시버스터 group-authz → 20260624-share-group-sync).
+- Impact: 공유 직후 비멘션 메시지가 오류 없이 사람채팅(store-only)으로 전송. assistant 미실행. 422 서버방어는 backstop 으로 유지(직접 API·multi-tab). 1:1·멘션·신규대화 무변경. 무한루프 없음(store-only 엔드포인트는 422 미발생).
+- Rollback Notes: createConversationShare optimistic 블록 + sendPrompt catch reroute + apiFetch 토스트 복원 + 캐시버스터 환원으로 가역.
+- 검증: `node --check` OK + 적대 패널 **PASS-WITH-NITS**(블로킹 0; 중복 버블 flicker nit 반영 — optimistic user 메시지 splice). **PB-0008 실제 Windows Chrome 실측 PASS**: 공유+stale 강제 후 비멘션 sendPrompt → 오류 토스트 없음·is_group 동기화·composer cleared·pendingBubble null(assistant 미실행)·메시지 사람채팅 저장. TEST.md §3 Run 2026-06-24-share-group-sync, 스크린샷 artifacts/pb0008-share-group-sync/.
+
+## CHG-20260624-0020
+- Date: 2026-06-24
+- Related Requirement: 사용자 요청 — Windows 알림 본문에서 발신자명 대괄호 제거. "[보낸사용자] : @받는사용자 메세지" → "보낸사용자 : @받는사용자 메세지".
+- Summary: `_notifyMentions` 채팅형 본문(토스트·OS 알림 공용)의 발신자명 대괄호 제거. 1줄 문자열 포맷 변경, 로직 무변경.
+- Files: `static/app.js`(`const body = \`${who}${more} : ${preview}\`` — 기존 `[${who}]…` 에서 `[` `]` 제거 + 주석) · `static/index.html`(캐시버스터 share-group-sync → 20260624-notify-nobracket).
+- Impact: 멘션 알림 본문이 `발신자 : @받는사용자 메시지` 로 표시(대괄호 없음). 제목(`DQA : {대화명}`)·다중 시 ` 외 N건`·high-water·dedup 무변경.
+- Rollback Notes: `${who}` → `[${who}]` 환원.
+- 검증: `node --check` OK. **PB-0008 실제 Windows Chrome 실측 PASS**: Notification stub 캡처 body=`mckim2 : @bootstrap_admin 이거 확인 부탁드려요`(starts_with_sender=true, 선행 대괄호 없음), title=`DQA : 운영 이슈 대응방` 유지. TEST.md §3 Run 2026-06-24-notify-nobracket, 스크린샷 디렉토리 artifacts/pb0008-notify-nobracket/.

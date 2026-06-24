@@ -229,3 +229,19 @@ source_of_truth: true
 - 단위 테스트 무회귀: group_members 10/10·mentions 3/3·s2 8/8·history_merge 4/4.
 - Risks/Open: 기존 joinable 공유 대화는 다음 join/share 시점 전환(retroactive backfill 없음, member_count>1 OR-branch 보강). 배포 시 alembic 0016 필수.
 - Human Approval Needed: #4 메커니즘 사용자 확인 완료. 그 외 사용자 명시 요청 범위.
+
+## REV-20260624-0021 [SUBAGENT: 공유 직후 메시지 사람채팅 전환(gc-share-group-sync) §18.8 + PB-0008]
+- Related Change: CHG-20260624-0019
+- Risk Grade: **Minor** — 전부 프론트(app.js/index.html) additive, 백엔드·스키마 무변경. CHG-0018 클라이언트 stale 잔여 윈도 보강. §12.3 Minor.
+- Reason: 사용자 보고 — 공유 직후 메시지가 assistant 로 오라우팅돼 422 block. Root cause = 공유 후 클라 active.is_group stale(false) → /api/ask → 서버 422. 수정 = ① 공유 시 로컬 is_group 즉시 전환(primary) ② 422 graceful store-only 재라우팅(safety net, 메시지 유실 없음).
+- 패널 결과(adversarial subagent): **PASS-WITH-NITS, BLOCKING 없음**. catch reroute↔finally(busy/abort) 충돌 없음(_sendGroupChatMessage busy 미터치, return→finally 단일 정리); 무한루프 없음(store-only 엔드포인트 422 미발생); `_reCid=targetConvId`(422 는 기존 대화만, isLazyCreate=false); apiFetch 토스트 제거 안전(/api/ask 유일 호출자=sendPrompt); createConversationShare optimistic try/catch·joinable!==false 정확. **반영 nit**: 재라우팅 중복 user 버블 flicker → optimistic user 메시지 splice.
+- **PB-0008 실측(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-share-group-sync.scenario.json` PASS. 공유 후 is_group=false 강제(stale 재현) → 비멘션 sendPrompt → `reroute_no_error_toast:true`·`conv_is_group_after:true`·`composer_cleared:true`·`pendingBubble_null:true`·사람채팅 저장. 증거 `artifacts/pb0008-share-group-sync/01_share_then_send_chat.png`(파란 사용자 채팅 버블, assistant 응답·오류 없음).
+- Risks/Open: 없음. block/오류 제거 + 메시지 유실 없음.
+- Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청·PB-0008 PASS).
+
+## REV-20260624-0022 [SKIPPED: 알림 본문 발신자 대괄호 제거 — trivial cosmetic 문자열, 로직 무변경]
+- Related Change: CHG-20260624-0020
+- Risk Grade: **Minor (trivial)** — `_notifyMentions` body 템플릿에서 `[` `]` 2글자 제거(`[${who}]` → `${who}`). 신규 로직·분기·상태 변경 0. §18.8 단순 변경 → 적대 패널 SKIP(사유 기록).
+- 자가 검증: `node --check` OK. 제목/다중표기/high-water/dedup/라우팅 무변경. XSS 무관(textContent/Notification body=plain text).
+- **PB-0008 실측(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-notify-nobracket.scenario.json` PASS. Notification stub body=`mckim2 : @bootstrap_admin 이거 확인 부탁드려요`(starts_with_sender=true, has_no_leading_bracket=true), title=`DQA : 운영 이슈 대응방` 유지.
+- Human Approval Needed: 아니오 (trivial cosmetic·사용자 명시 요청·PB-0008 PASS).
