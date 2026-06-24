@@ -201,3 +201,20 @@
 - **panel skipped 사유 (§18.4 carve-out)**: 검증된 기존 스킬을 신규 머지 ADR 에 맞추는 비파괴 alignment, 신규 production 동작 0. ADR-0031 §1~§4 · DOC_REGISTRY · STATUS.md 인덱스 포맷 정본 실측 대조.
 - **verification**: grep — 무조건 "모든 작업 → STATUS rollup" 잔존 0, 인덱스/누적 2분기 공존, DOC_REGISTRY·ssot-lint 참조. verify-completion META mode.
 - **Human Approval Needed**: 아니오 (additive meta-tooling alignment, 사용자 지시).
+
+## REV-20260624T080555-ai-claude-META-0008-presentation-remove-fix-with-ai [SUBAGENT:design]
+
+- **cycle**: ai/claude/META-0008-presentation-remove-fix-with-ai — 발표자료(`docs/presentation/*`) 개선 (사용자 직접 지시)
+- **changeset (pure-meta)**: `docs/presentation/index.html` · `docs/presentation/practitioner.html` · `docs/presentation/SCENARIO.md` · `meta/REVIEW.md`(본 entry). (영업/소개용 정적 발표자료 — 제품 코드·secret 무변경.)
+- **작업 1 — ‘AI 로 고치기’(fix-with-ai) 발표자료 전면 제거**: index 슬라이드 `[4b]`(작업 화면 4/7) + practitioner 슬라이드 `[5b]` 삭제, index 작업화면 kicker **7장→6장 재번호**(1/6~6/6), 마무리 타임라인·EXPLAIN(fx-* 7+4키)·SCENARIO 대본(시퀀스 F)·목차(7장→6장)·정합성 주석·덱 라우팅에서 관련 언급 제거. 사유(사용자): 내부 방어적 기능이라 클라이언트가 미완성/불안정 서비스로 받아들일 소지. 검증: 4파일 `grep "AI 로 고치기|fix-with-ai|fx-"` = 0, EXPLAIN JSON 유효성(index 66키·practitioner 32키, fx-키 0).
+- **작업 2 — 그룹 대화 시각 결함 3건 수정**:
+  - (a) `@assistant` 멘션이 파란 말풍선(--bubble-user #2563eb) 위 파랑 글자(--primary #2563eb)로 **불가시** → 동료 메시지를 좌측 흰 말풍선(`.msg.peer`)으로 분리 + 멘션 `.mention` pill(흰 배경=primary, 파란 배경=흰색)로 대비 확보.
+  - (b) 발신자 **프로필 아바타 부재** → 각 메시지에 원형 아바타 + 발신자행(`.msg-sender`/`.msg-av`) 추가(소=초록·민=주황 이니셜, AI=파랑 그라데이션). 본인(소라)=우측 파란, 동료(민준)=좌측 흰, AI=좌측.
+  - (c) 우상단 ‘⋯ 공유·설정’ 버튼이 **실제 제품과 불일치**(사용자 추가 지적) → 실제(feature-0003 `app.js:5938-5939`: 공유·설정이 사이드바 대화 `···` 메뉴로 일원화)에 맞춰 상단 버튼 제거 + 사이드바 대화에 `···`(gc-share) 이동, gc-share/tip 설명도 정합 수정. 상단 우측은 참여자 아바타 스택.
+- **실제 제품 정합 검증 (Explore, feature-0003-agent-web-ui)**: 공유·설정=사이드바 `···` 메뉴(`app.js:5938`), 메시지 멘션=marked.js 평문 렌더(발표는 교육 목적상 강조 유지+대비 확보로 정합), 발신자=`.msg-avatar`(이미지/Identicon, AI=파랑). 상단 멤버 텍스트는 실제 미확인이라 아바타 스택으로 대체.
+- **design 패널 (SUBAGENT, adversarial, 스크린샷 3장 정밀 검토)**: 판정 **FIX-FIRST**.
+  - **반영**: 헤더 ‘멤버 2 · assistant’ 카운트 모호성(사람2+AI를 2토큰으로 뭉갬 + 실제 미확인 추측) → **참여자 아바타 스택**(소·민·AI 겹침)으로 교체. 재캡처 확인.
+  - **deferred (발표 의도/전역 패턴 — 미반영, 근거 기록)**: ① 본인(파란) 말풍선의 멘션 케이스는 데모 시나리오(민준이 AI 호출)상 미등장 → `.msg.user .bubble .mention` 흰색 규칙은 방어적 보존. ② Assistant 말풍선 폭은 `.bubble` 전역 패턴(BEFORE부터) — 그룹대화 단독 변경 시 타 슬라이드와 불일치 우려로 보류. ③ 두 덱 제목/카피 차이는 **청중 차별화 의도**(index=일반 의사결정자, practitioner=실무자 온보딩).
+- **시각 검증**: WSL Playwright headless chromium 으로 index·practitioner 그룹대화 슬라이드 before/after 캡처 — 멘션 가독성·발신자 구분·헤더 정상 확인(`/tmp/pcap/`). PB-0008 Windows 브리지는 relay 미기동(`doctor` ok:false)이나, 정적 발표 HTML 의 색·레이아웃 검증엔 headless 로 충분(화면 괴리 최소). 슬라이드 수 index 20→19·practitioner 12→11(슬라이드 삭제 반영).
+- **panel**: SUBAGENT design 1관점(§18.8 UI/화면 → ux·design 매칭). 비파괴 발표자료, Minor.
+- **Human Approval Needed**: 아니오 (Minor, 비파괴 docs, 사용자 직접 지시).
