@@ -3711,3 +3711,15 @@ source_of_truth: true
   - **[LOW] real(기존 환경의존, 본 변경 비도입)**: `is_group`/`member_count` 는 PG read 경로(`_list_conversations_pg`)에서만 채워짐 — MySQL-only read backend 면 '나가기' 분기가 dead. 단 사이드바 그룹 배지(기존)도 동일 필드 의존이고 그룹대화는 PG-native(feature-0009)라 영향권 밖. 추적만.
 - Verification: `node --check app.js` PASS + `tests/verify_settings_archive_leave.mjs` 22/22 PASS(정적). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL)에서 미실행, 메인 세션/배포 후 권장.
 - Cross-ref: CHG-20260624T031337-gc-settings-archive-leave / FUNCTION '대화 ··· 메뉴 보관→설정 이동' / feature-0009 TASK §7.
+
+## REV-20260624T075458-gc-share-participants [SUBAGENT:adversarial-3lens-PASS] — SHIP (MINOR 2 + NIT 1 흡수) (TASK-20260624T075458-gc-share-participants, REQ-20260624-gc-share-participants, Minor §12.3 — frontend-only, feature-0009 cross-cut)
+- Date: 2026-06-24
+- 분류: **리뷰 대상**(Minor — frontend-only 표현계층 추가, 기존 게이트된 read 엔드포인트 재사용, 신규 백엔드/스키마/RBAC 0). §18.8 UI/membership 키워드 → 적대적 3-렌즈(security·authz / correctness / UX) 서브에이전트 패널 1회.
+- 변경 요지: 공유 팝업(`openShareDialog`)에 그 대화 참여 멤버 roster(`GET /api/conversations/{cid}/members` 재사용) 칩 표시. owner 우선·'소유자' 배지·아바타 `_msgAvatarEl` 재사용·사용자명 textContent.
+- 적대 패널 결과 — **BLOCKER/MAJOR 0**:
+  - **[MINOR] authz 주석 부정확 → 흡수**: 공유 메뉴 가시성 게이트는 `conversation.share.create`, members 엔드포인트는 `conversation.read.own/.any`+멤버십 — 두 게이트가 다르다. 원 주석("팝업을 여는 actor 는 이미 대화 접근 권한 보유")의 전제가 항상 참은 아님. → 주석을 사실에 맞게 정정(read 불가 actor 는 members **404** → 로컬 catch 가 우아하게 안내, roster 미노출, 같은 게이트인 `/shares` 도 동반 실패). **privacy 신규 노출 없음**(이미 대화 전체 열람 가능한 자만 roster 를 봄, ANCHOR §1·§3 정합).
+  - **[MINOR] 스크롤 부재 → 흡수**: `.share-participants` 가 `max-height`/`overflow` 없어 참여자 多 시 패널(80vh) 내 발급 링크 영역을 압박 → `max-height:132px; overflow-y:auto; flex-shrink:0` 부여.
+  - **[NIT] 빈상태 문구 → 흡수**: 비그룹/미공유 대화에서 owner 자신도 roster 에 없어 "참여 중인 사용자가 없습니다"가 혼동 유발 → "아직 참여 중인 **다른** 사용자가 없습니다…"로 정정.
+  - **방어 확인(not-real)**: XSS(username textContent·아바타 DOM API), use-after-close(detached `participantsBox` 쓰기는 무해 no-op), joinable 생성 직후 roster race(`_ensure_owner_membership` 트랜잭션 내 보장·순차 await), owner_account_id null(`ownerId!=null` 가드 + role OR), 빈 username 폴백, 403 더블토스트(엔드포인트는 404 반환 → apiFetch 403 자동토스트 미발동).
+- Verification: `node --check app.js` PASS + CSS brace 1549=1549 + `tests/verify_share_participants.mjs` **17/17 PASS**(정적 소스 단언). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL) 미실행.
+- Cross-ref: CHG-20260624T075458-gc-share-participants / FUNCTION REQ-20260624-gc-share-participants(AC-0620) / feature-0009 TASK §7 · MODIFY cross-ref.

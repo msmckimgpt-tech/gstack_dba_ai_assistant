@@ -4578,3 +4578,18 @@ source_of_truth: true
 - Files: `static/app.js`, `static/styles.css`, `static/index.html`, `tests/verify_settings_archive_leave.mjs`, `docs/{MODIFY,FUNCTION,REVIEW,TEST}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
 - Rollback: app.js/styles.css/index.html revert + 신규 `leaveConversation`·테스트 제거(표현계층·additive). 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.
+
+## CHG-20260624T075458-gc-share-participants (feature-0009 cycle, Minor §12.3)
+- Date: 2026-06-24 (feature-0009 group-conversation cross-cut cycle `gc-share-participants`). **frontend only**. 코드/문서 정본=feature-0003-agent-web-ui — feature-0009 `docs/{TASK,MODIFY}.md` 에 cross-ref.
+- Scope: 공유 팝업(`작업 화면 > 대화 탭 > ··· > 공유`)에 그 대화에 참여 중인 멤버 roster 를 함께 표시. 백엔드/스키마/RBAC/엔드포인트 무변경(기존 게이트된 read 엔드포인트 재사용).
+- 내용:
+  - `static/app.js` `openShareDialog(cid)`: 팝업 골격에 '참여 중인 사용자' subhead + `<div class="share-participants">` 추가(링크 생성 섹션과 '발급된 공유 링크' 목록 사이). 신규 `loadParticipants()` 헬퍼가 `GET /api/conversations/${cid}/members`(기존, `conversation.read.own/.any` + 멤버십 게이트) 를 호출해 `{members:[{account_id,username,role}], owner_account_id}` 를 칩으로 렌더. owner(`role==='owner'` 또는 `account_id===owner_account_id`) 우선 정렬 후 username 정렬, owner 에 '소유자' 배지. 아바타는 기존 `_msgAvatarEl(account_id, name, "user", null, seed)`(실아바타→Identicon 폴백, gc-avatar-identicon 정합) 재사용. 사용자명은 `textContent`(XSS), 빈 username 은 `사용자 {id}` 폴백.
+  - 갱신 배선: 팝업 진입 시 `await load(); await loadParticipants();`. joinable 링크 생성 성공 직후에도 `await loadParticipants()`(joinable 생성이 `_ensure_owner_membership` 로 owner 를 멤버로 자가치유 → roster 즉시 반영). 빈(`아직 참여 중인 다른 사용자가 없습니다…`)·로딩(`불러오는 중…`)·에러(`참여자 목록을 불러오지 못했습니다.`) 상태 처리.
+  - `static/styles.css`: `.share-participants`(flex-wrap + `max-height:132px; overflow-y:auto` 스크롤 cap), `.share-participant`(칩), `.share-participant-name`(ellipsis), `.share-participant-role`(소유자 배지), `.share-participant .msg-avatar{margin-right:0}`. 기존 CSS 변수 재사용(fallback 포함).
+  - `static/index.html`: app.js·styles.css 캐시버스터 → `?v=20260624-share-participants`(둘 다 변경).
+- Why: feature-0009 그룹 대화에서 공유 팝업은 "누가 이 대화에 들어와 있나"를 보여주지 않아, 공유한 사람이 현재 참여자 구성을 확인할 수 없었다. 멤버 roster 엔드포인트는 이미 존재했으나(설정 패널 제거 이후 API-only) 프론트 표면이 없었다. live-presence(실시간 접속) 는 제품 미구현 — feature-0009 멤버십 모델상 "참여 중" = 멤버 roster 이므로 그걸 노출(신규 데이터 경로/노출 경계 없음, ANCHOR §1·§3 "멤버십=열람 경계" 정합).
+- 보안/authz: members 엔드포인트 게이트(`conversation.read.own/.any`)를 그대로 재사용 — 이미 대화 전체를 볼 수 있는 자만 roster 를 본다(신규 privacy 노출 0). 공유 메뉴 가시성 게이트(`conversation.share.create`)와 권한이 다를 수 있으나, read 불가 actor 는 members 가 **404** 반환 → 로컬 catch 가 우아하게 안내(roster 미노출, 같은 게이트인 `/shares` 도 동반 실패). 아바타는 기존 `/api/avatars/{id}`(로그인 요구, 신규 노출 아님).
+- Verification: `node --check app.js` PASS + CSS brace 균형 1549=1549 + 신규 `tests/verify_share_participants.mjs` **17/17 PASS**(정적 소스 단언). **§18.8 적대적 3-렌즈(security/authz·correctness·UX) 서브에이전트 리뷰 — BLOCKER/MAJOR 0**: MINOR 2(주석 부정확·스크롤 부재)+NIT 1(빈상태 문구) 적발 → 전부 흡수. XSS·use-after-close(detached 노드 no-op)·joinable race·owner null·빈 username 방어 확인(REVIEW REV-20260624T075458-gc-share-participants). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree=WSL 미실행).
+- Files: `static/app.js`, `static/styles.css`, `static/index.html`, `tests/verify_share_participants.mjs`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
+- Rollback: app.js(`loadParticipants`+팝업 골격 2줄+갱신 2줄)/styles.css(`.share-participant*`)/index.html(캐시버스터) revert + 테스트 제거(순수 additive·표현계층). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.

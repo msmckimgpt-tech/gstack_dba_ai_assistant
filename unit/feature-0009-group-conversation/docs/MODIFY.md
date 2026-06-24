@@ -266,3 +266,15 @@ source_of_truth: true
 - Impact: 1:1·멘션·라우팅·공유·owner 게이트·backend 무변경. 그룹 비보유 멤버가 처음으로 UI 에서 대화 나가기 가능(backend leave 엔드포인트는 기존, 진입점만 신설).
 - Rollback Notes: feature-0003 app.js/styles.css/index.html revert + 신규 함수·테스트 제거. 스키마/마이그/backend 0.
 - 검증: `node --check` + `verify_settings_archive_leave.mjs` 22/22 + 적대 3렌즈(security/correctness/UX) 결함 0(feature-0003 REVIEW REV-20260624T031337). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).
+
+## CHG-20260624T075458-gc-share-participants (cross-feature → feature-0003, Minor §12.3)
+- Date: 2026-06-24 (CHG-0023/REV-0025). **frontend only**. 코드/문서 정본=feature-0003-agent-web-ui (`docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`) — 본 항목은 feature-0009 cross-feature 추적.
+- Reason: 사용자 요청(`/_template:entry`) — `작업 화면 > 대화 탭 > ··· > 공유` 팝업에서, 해당 공유대화에 참석 중인 사용자 목록도 같이 UI에 출력.
+- 변경(feature-0003 `static/`):
+  - `app.js` `openShareDialog`: 팝업에 '참여 중인 사용자' subhead + `.share-participants` 컨테이너 + 신규 `loadParticipants()`. 기존 게이트된 `GET /api/conversations/{cid}/members` 재사용 → `{members,owner_account_id}` 칩 렌더. owner 우선 정렬 + '소유자' 배지, 아바타 `_msgAvatarEl`(아바타→Identicon 폴백) 재사용, 사용자명 textContent. 팝업 진입 + joinable 링크 생성 직후(`_ensure_owner_membership`) roster 갱신.
+  - `styles.css` `.share-participant*`(칩 + 스크롤 cap), `index.html` 캐시버스터 `share-participants`.
+- Why("참여 중" 해석): feature-0009 멤버십 모델상 "참여 중인 사용자" = 그룹 대화 멤버 roster. live-presence(실시간 접속)는 제품 미구현이며 추가 시 Redis/세션 추적이 필요(out of scope). 멤버 roster 엔드포인트는 이미 존재(설정 패널 제거 후 API-only)했고 프론트 표면만 신설.
+- 보안/authz: members 게이트(`conversation.read.own/.any` + 멤버십)를 그대로 재사용 — 이미 대화 전체 열람 가능한 자만 roster 를 봄(신규 privacy 노출 0, ANCHOR §1·§3 "멤버십=열람 경계" 정합). 공유 메뉴 게이트(`share.create`)와 권한이 달라 read 불가 actor 는 members 404 → catch 우아 처리(roster 미노출).
+- Impact: 1:1·멘션·라우팅·공유 링크 생성/취소·owner 게이트·backend/스키마/마이그 무변경. 순수 additive 표현계층.
+- Rollback Notes: feature-0003 app.js/styles.css/index.html revert + 신규 `loadParticipants`·테스트 제거. backend/스키마/마이그 0.
+- 검증: `node --check app.js` + CSS brace 1549=1549 + `verify_share_participants.mjs` 17/17 + 적대 3렌즈(security/authz·correctness·UX) BLOCKER/MAJOR 0(MINOR 2: 주석·스크롤 + NIT 1: 빈문구 흡수)(feature-0003 REVIEW REV-20260624T075458-gc-share-participants). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).
