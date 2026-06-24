@@ -54,6 +54,10 @@ jobs:
           DB_PASSWORD: test
           AGENT_MEMORY_DB: agent_memory
         run: |
+          # app.py 는 import 시점에 SESSION_DIR(기본 /shared/web_sessions).mkdir() 을 호출한다.
+          # 컨테이너엔 /shared 볼륨이 있지만 bare-runner 엔 없어 PermissionError 가 난다.
+          # 러너에 쓰기 가능한 /shared 를 만들어 컨테이너 레이아웃과 동형으로 맞춘다(CI 전용).
+          sudo mkdir -p /shared && sudo chmod 777 /shared
           # 일부 테스트(예: test_share_redaction_invariant)는 컨테이너 `/app/web` 레이아웃을 가정해
           # `import web.app` 을 직접 호출한다. bare-runner 에선 repo 루트에 `web` 네임스페이스가 없어
           # collection 이 실패하므로, web → feature-0003 src 심링크로 컨테이너와 동형 경로를 만든다.

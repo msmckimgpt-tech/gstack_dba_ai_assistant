@@ -1172,4 +1172,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
   - 권한 정합: 프론트 게이팅은 **표현계층(cosmetic)** 일 뿐, archive/leave 둘 다 backend 가 권한을 authoritative 하게 재검증한다(client gate 우회해도 backend 거부). frontend only(app.js+styles.css+index.html cache-buster `?v=20260624-archive-leave`). 검증: `node --check` + `tests/verify_settings_archive_leave.mjs` 22/22 + 적대적 3-렌즈 리뷰 결함 0. UI 실렌더 정본=PB-0008(배포 후). REV-20260624T031337-gc-settings-archive-leave.
 
 ## (ci-pytest-green) CI pytest 실행 경로 정합
-- `.github/workflows/ci.yml` 의 bare-runner pytest 는 PYTHONPATH 에 **repo 루트(`.`)** 를 포함해야 `app.py` 의 최상위 `import shared` 가 해소된다(누락 시 feature-0003 테스트 collection 일괄 ERROR). 컨테이너 `/app/web` 레이아웃을 가정해 `import web.app` 을 직접 호출하는 테스트(예: `test_share_redaction_invariant`)는 CI step 의 `web → unit/feature-0003-agent-web-ui/src` 심링크(런타임 전용, repo 미커밋)로 해소한다. Makefile `test` 타깃(agent 컨테이너 PYTHONPATH `…:/work`)과 의미 동형. (CHG-20260624T090534-ci-pytest-green)
+- `.github/workflows/ci.yml` 의 bare-runner pytest 는 컨테이너(`make test`, agent 이미지) 가 제공하던 3가지 전제를 보완해야 동형으로 green 이 된다:
+  - **PYTHONPATH 에 repo 루트(`.`)** — `app.py` 의 최상위 `import shared` 해소(누락 시 feature-0003 테스트 collection 일괄 ERROR `No module named 'shared'`). Makefile 의 `…:/work` 와 동형.
+  - **`web → unit/feature-0003-agent-web-ui/src` 심링크**(런타임 전용, repo 미커밋) — 컨테이너 `/app/web` 레이아웃을 가정해 `import web.app` 을 직접 호출하는 테스트(예: `test_share_redaction_invariant`) 해소.
+  - **쓰기 가능한 `/shared`** (`sudo mkdir -p /shared && chmod 777`) — `app.py` 가 import 시점에 `SESSION_DIR(/shared/web_sessions).mkdir()` 을 호출. 컨테이너엔 `/shared` 볼륨이 있으나 bare-runner 엔 없어 `PermissionError: '/shared'` 가 난다. (CHG-20260624T090534-ci-pytest-green)
