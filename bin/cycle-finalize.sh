@@ -23,6 +23,8 @@
 #     [--merge-strategy merge|squash|rebase]   (default: merge)
 #     [--keep-worktree]                        (cleanup step 5 skip)
 #     [--keep-branch]                          (local branch 보존)
+#     [--target-worktree <path>]               (main 에서 named worktree 정리 — cwd 파생 SELF override)
+#     [--branch <name>]                        (--target-worktree 대안: branch 로 worktree 지정)
 #     [--dry-run]                              (mutation 명령 출력만)
 #     [--help]
 #
@@ -41,6 +43,8 @@ MERGE_STRATEGY="merge"
 KEEP_WORKTREE=0
 KEEP_BRANCH=0
 DRY_RUN=0
+TARGET_WORKTREE=""   # v3.35.0 — main 에서 정리할 named worktree (cwd 파생 SELF override)
+TARGET_BRANCH=""     # v3.35.0 — --target-worktree 대안: branch 로 worktree 지정
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 log_info()  { printf "[cycle-finalize] %s\n"           "$*" >&2; }
@@ -61,7 +65,7 @@ run_or_dryrun() {
 }
 
 show_help() {
-  sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────
@@ -73,6 +77,10 @@ while [ $# -gt 0 ]; do
     --merge-strategy=*) MERGE_STRATEGY="${1#--merge-strategy=}"; shift ;;
     --keep-worktree)   KEEP_WORKTREE=1; shift ;;
     --keep-branch)     KEEP_BRANCH=1; shift ;;
+    --target-worktree) TARGET_WORKTREE="${2:-}"; shift 2 ;;
+    --target-worktree=*) TARGET_WORKTREE="${1#--target-worktree=}"; shift ;;
+    --branch)          TARGET_BRANCH="${2:-}"; shift 2 ;;
+    --branch=*)        TARGET_BRANCH="${1#--branch=}"; shift ;;
     --dry-run)         DRY_RUN=1; shift ;;
     --help|-h)         show_help; exit 0 ;;
     *)                 usage_die "Unknown arg: $1" ;;
@@ -101,6 +109,48 @@ SELF_BRANCH="$(git -C "$SELF_WORKTREE_PATH" branch --show-current)"
 MAIN_WORKTREE_PATH="$(git -C "$SELF_WORKTREE_PATH" worktree list --porcelain \
   | awk '/^worktree /{print substr($0,10); exit}')"
 [ -n "$MAIN_WORKTREE_PATH" ] || die "main worktree path resolution failed (git worktree list returned empty)."
+
+# ── target worktree override (v3.35.0) ────────────────────────────────────
+# --target-worktree/--branch 지정 시 cwd 파생 SELF 대신 그 worktree 를 정리 대상으로 삼는다.
+# main 에서 머지된 named worktree 를 정리할 때 사용 (self==main silent-skip 회피).
+if [ -n "$TARGET_BRANCH" ] && [ -z "$TARGET_WORKTREE" ]; then
+  # branch → worktree path 해석. prunable(디렉토리 소실 stale 엔트리)·locked 엔트리는
+  # 제외하고, 같은 branch 가 복수 worktree 에 checkout 됐으면 모호하므로 거부한다
+  # (잘못된 대상 정리 방지 — review META-CYCLE-043 backend HIGH).
+  # porcelain record 단위 buffer 후 record 경계(빈 줄/EOF)에서 판정 —
+  # prunable/locked 속성 줄은 branch 줄 *뒤*에 오므로 branch 줄 즉시 print 는 skip 을 놓친다.
+  _tw_matches="$(git -C "$MAIN_WORKTREE_PATH" worktree list --porcelain \
+    | awk -v b="refs/heads/$TARGET_BRANCH" '
+        /^worktree /{wt=substr($0,10); br=""; skip=0}
+        /^branch /{br=$2}
+        /^prunable/{skip=1}
+        /^locked/{skip=1}
+        /^$/{if(br==b && skip==0 && wt!="") print wt; wt=""; br=""; skip=0}
+        END{if(br==b && skip==0 && wt!="") print wt}')"
+  _tw_count=$(printf '%s\n' "$_tw_matches" | grep -c . || true)
+  if [ "$_tw_count" -eq 0 ]; then
+    die "--branch '$TARGET_BRANCH' 에 해당하는 live worktree 를 찾지 못함 (prunable/locked 제외 — git worktree list 확인)."
+  elif [ "$_tw_count" -gt 1 ]; then
+    die "--branch '$TARGET_BRANCH' 가 복수 worktree 에 매칭됨 — --target-worktree <path> 로 대상을 명시하세요: $(printf '%s' "$_tw_matches" | tr '\n' ' ')"
+  fi
+  TARGET_WORKTREE="$_tw_matches"
+fi
+if [ -n "$TARGET_WORKTREE" ]; then
+  TARGET_REAL="$(cd "$TARGET_WORKTREE" 2>/dev/null && pwd -P || true)"
+  [ -n "$TARGET_REAL" ] || die "--target-worktree '$TARGET_WORKTREE' 디렉토리 부재."
+  # 등록된 worktree 인지 검증 (임의 디렉토리 정리 방지)
+  git -C "$MAIN_WORKTREE_PATH" worktree list --porcelain \
+    | awk '/^worktree /{print substr($0,10)}' | grep -qxF "$TARGET_REAL" \
+    || die "--target-worktree '$TARGET_REAL' 는 등록된 worktree 가 아님 (git worktree list 확인)."
+  # main 정리 거부 (main 은 절대 삭제 대상 아님)
+  if [ "$TARGET_REAL" = "$(cd "$MAIN_WORKTREE_PATH" && pwd -P)" ]; then
+    die "--target-worktree 가 main worktree 를 가리킴 — main 은 정리 대상이 아닙니다."
+  fi
+  SELF_WORKTREE_PATH="$TARGET_REAL"
+  SELF_BRANCH="$(git -C "$SELF_WORKTREE_PATH" branch --show-current)"
+  [ -n "$SELF_BRANCH" ] || die "target worktree '$SELF_WORKTREE_PATH' 가 detached HEAD — named branch 필요."
+  log_info "target-worktree 지정 — 정리 대상을 cwd 대신 $SELF_WORKTREE_PATH (branch: $SELF_BRANCH) 로 설정."
+fi
 
 log_info "self worktree:  $SELF_WORKTREE_PATH (branch: $SELF_BRANCH)"
 log_info "main worktree:  $MAIN_WORKTREE_PATH"
@@ -178,7 +228,12 @@ if [ "$KEEP_WORKTREE" -eq 1 ]; then
   log_info "--keep-worktree 지정 — Step 3~5 skip."
 else
   if [ "$SELF_WORKTREE_PATH" = "$MAIN_WORKTREE_PATH" ]; then
-    log_warn "self worktree == main worktree. Cleanup step 4~5 (worktree remove + branch delete) skip — main worktree 는 삭제하지 않습니다."
+    log_warn "self worktree == main worktree — worktree/branch 정리(Step 5)를 건너뜁니다."
+    log_warn "  main 에서 cycle-finalize 를 실행하면 제거 대상 worktree 가 cwd 가 아니라, 머지된"
+    log_warn "  feature worktree 가 정리되지 않고 stale 로 남습니다 (leftover 누적)."
+    log_warn "  정리하려면 둘 중 하나로 재실행하세요:"
+    log_warn "    (a) 그 worktree 안에서:  cd <worktree> && bash bin/cycle-finalize.sh --pr $PR_NUMBER …"
+    log_warn "    (b) main 에서 대상 명시:  bash bin/cycle-finalize.sh --pr $PR_NUMBER --target-worktree <path>"
     KEEP_WORKTREE=1
     KEEP_BRANCH=1  # main branch 도 보존
   else
