@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260624-item11-phase2 — 메타데이터 거버넌스 포탈 Phase 2 (테이블/컬럼 설명+주입+부트스트랩 / 샘플 admin) (REQ-20260624-item11-phase2, AC-0614~0617, ROADMAP dba-ai-nl2sql ITEM-11 Phase 2 → ITEM-11 done, Major §12.3 — 보안 경계, PLAN-APPROVED 2a+2b)
+- [x] backend(feature-0002 cross-feature): 신규 테이블 `table_descriptions`/`column_descriptions`(agent_kb_schema.sql + alembic 0017, 멱등·단일 head·GRANT rw/ro) + `modules/kb_metadata.py`(read `load_table_column_descriptions` / overlay `load_column_descriptions_for_table` / admin CRUD 6함수, id+scope_key 가드·ON CONFLICT) + `sample_queries.py`(list/update/delete admin, 하이브리드 C) + `agent_core.py` 설명 datamark 주입 + `tools.py` describe_table overlay(빈 comment 충전).
+- [x] frontend(feature-0003): `/api/admin/metadata/{tables,columns}`(kb.ingest.manual) + `/samples`(kb.sample.curate, POST 없음) + `/bootstrap/schemas`·`/bootstrap`(kb.ingest.manual) 엔드포인트 + admin "메타데이터" 탭 테이블/컬럼/샘플 3 서브뷰 + 부트스트랩 UI(DS→schema→골격→prefill→저장). XSS textContent. cache-buster `?v=20260624-item11-phase2`.
+- [x] 테스트 `tests/test_metadata_phase2.py` 27케이스(RBAC 403·scope 400/격리·affected 404·멱등·audit·입력 cap·샘플 weight clamp·nl 중복 409·임베딩 3분기·부트스트랩 RBAC/DS/**SQLi 거부**·주입 datamark) → **27/27 PASS**. MVP-1 회귀 13/13 + sample_flywheel 회귀 12/12 PASS.
+- [x] **§18.8 적대적 검증 패널 2회 — REV-20260624T133000-item11-phase2 [SUBAGENT:item11-phase2-backend+security+injection] SHIP**: 1차(구현 세션) BLOCKER B1(부트스트랩 SQLi)+MAJOR M2(alembic 위치) 적발→본 cycle 흡수, 2차(resume 재검증, 최종 staged) 3-lens 전원 SHIP·BLOCKER 0. 회귀 0.
+- [x] 정본 docs(MODIFY/REVIEW/FUNCTION/TASK/REPORT + feature-0002 cross-ref MODIFY) + ROADMAP ITEM-11→done 갱신.
+- [ ] **남은 마감**: verify-completion --pre-commit PASS → commit/push(auto-sync) → PR 생성·머지 → web+ask-worker 재배포(deploy_scope: included, 마이그 0017 적용) → PB-0008 Windows-browser UI 시각검증(배포 후, WARN-only).
+
 ## TASK-20260624T031337-gc-settings-archive-leave — 대화 ··· 메뉴 '보관' → 설정 팝업 이동 + 그룹 참여자 '나가기' (feature-0009 cross-cut cycle, 코드 거주=feature-0003, Minor §12.3)
 - 사용자 요청: `대화 탭 > ··· > [탭 목록]` 의 '보관'을 '설정' 팝업 내부로 구성 + 보관 권한 없는 그룹 대화 참여자는 보관 대신 '나가기' 버튼. cycle owner=feature-0009(group-conversation), 코드/정본 문서=feature-0003.
 - [x] `app.js` `openConversationItemMenu`: ··· 메뉴에서 '보관'(danger) 제거 → [공유 · 설정].

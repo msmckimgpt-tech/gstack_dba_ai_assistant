@@ -77,6 +77,101 @@ def set_sample_status(conn, sample_id, status) -> None:
         cur.close()
 
 
+# ── 관리(RW) — 샘플 거버넌스 콘솔 CRUD (ITEM-11 Phase 2) ───────────────────────
+# admin 콘솔(feature-0003 /api/admin/metadata/samples)이 호출. **단일 scope_key 만** 다룬다
+# (검색의 common 캐스케이드 없음) — 편집/삭제는 정확히 그 scope 행에만 적용돼야 ds 격리가
+# 안 깨진다. id(PK)+scope_key 가드로 cross-scope 오작용 차단. POST(생성) 정본은 ITEM-03 피드백
+# 검수 승급 경로(promote_feedback) — 여기는 수정/삭제/목록만. register_sample/set_sample_status/
+# search_samples 는 무변경. 호출측(web)이 RBAC(kb.sample.curate)·audit·commit·conn 수명을 책임진다.
+_SAMPLE_ADMIN_LIMIT = 1000
+_EMBED_SENTINEL = object()  # update_sample 의 embedding 미지정(=touch 안 함) 구분용
+
+
+def list_samples_admin(conn, scope_key, limit=_SAMPLE_ADMIN_LIMIT):
+    """admin 목록 — 단일 scope 의 샘플 행(id 포함). 최신 갱신 우선. 검색과 달리 캐스케이드 없음.
+
+    embedding 본문은 제외(직렬화 부하/불필요). status(신선도)·approved(큐레이션)·weight(가중) 노출.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, nl_question, sql, domain, weight, approved, status, "
+            "source_type, created_at, updated_at FROM sample_queries WHERE scope_key = %s "
+            "ORDER BY updated_at DESC, id DESC LIMIT %s",
+            (_normalize_scope_key(scope_key), int(limit)),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
+def update_sample(conn, sample_id, scope_key, *, nl_question=None, sql=None, domain=None,
+                  weight=None, approved=None, embedding=_EMBED_SENTINEL) -> int:
+    """샘플 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 호출측 404).
+
+    부분 수정 — None 인 필드는 미수정. nl_question 변경 시에만 embedding 인자를 반영한다
+    (하이브리드 C: 호출측이 nl 변경 시 동기 임베딩 시도, 실패면 None 전달 → status='stale').
+      · embedding=벡터  → embedding 갱신(+status='active')
+      · embedding=None  → embedding 무효화(NULL) + status='stale' (재임베딩 대기)
+      · embedding 미지정(_EMBED_SENTINEL) → embedding/status touch 안 함(nl 미변경 경로)
+    nl_question 변경이 기존 (scope,nl) UNIQUE 와 충돌하면 호출측이 IntegrityError 를 409 로 변환.
+    """
+    sets: list[str] = []
+    params: list = []
+    if nl_question is not None:
+        sets.append("nl_question = %s")
+        params.append(str(nl_question).strip())
+    if sql is not None:
+        sets.append("sql = %s")
+        params.append(str(sql).strip())
+    if domain is not None:
+        sets.append("domain = %s")
+        params.append(str(domain or "").strip())
+    if weight is not None:
+        sets.append("weight = %s")
+        params.append(int(weight))
+    if approved is not None:
+        sets.append("approved = %s")
+        params.append(bool(approved))
+    if embedding is not _EMBED_SENTINEL:
+        if embedding:
+            # %s::vector 캐스트 필수(register_sample 선례) — psycopg3 list→float8[] 불일치 방지.
+            sets.append("embedding = %s::vector")
+            sets.append("status = 'active'")
+            params.append(list(embedding))
+        else:
+            # 임베딩 실패/무효화 → 검색 대상에서 제외(stale). NULL embedding 은 search WHERE 가 거른다.
+            sets.append("embedding = NULL")
+            sets.append("status = 'stale'")
+    if not sets:
+        return 0  # 변경 필드 없음 — no-op(호출측은 404 아님; 입력검증에서 차단 권장)
+    sets.append("updated_at = now()")
+    params.extend([int(sample_id), _normalize_scope_key(scope_key)])
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE sample_queries SET " + ", ".join(sets)
+            + " WHERE id = %s AND scope_key = %s",
+            tuple(params),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
+def delete_sample(conn, sample_id, scope_key) -> int:
+    """샘플 삭제(by id, scope 가드, 멱등). 반영 행 수 반환(0=이미 없음 → 멱등 성공)."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "DELETE FROM sample_queries WHERE id = %s AND scope_key = %s",
+            (int(sample_id), _normalize_scope_key(scope_key)),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
 # ── 검색(RO) — approved∧active, ds-scoped, weight 가중 cosine top-K ──────────
 def search_samples(conn, query_vector, scope_key, top_k=_DEFAULT_TOP_K):
     """approved∧active∧ds-scoped 샘플을 (유사도 × weight/100) 내림차순 top-K. 임베딩 없으면 []."""

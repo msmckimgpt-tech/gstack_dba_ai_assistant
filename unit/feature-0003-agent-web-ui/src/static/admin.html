@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260624-item11-metadata" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260624-item11-phase2" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -585,12 +585,43 @@
             <button type="button" id="metadataRefreshBtn" class="btn-secondary">새로고침</button>
           </div>
         </header>
-        <p class="admin-archive-detail-note">용어사전(도메인 용어↔정의)과 ENUM 코드사전(컬럼 코드↔라벨)을 데이터소스별로 등록합니다. 등록 내용은 질문/스키마와 매칭될 때 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다. <strong>공용(common)</strong> 스코프는 모든 데이터소스에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
+        <p class="admin-archive-detail-note">용어사전(도메인 용어↔정의)·ENUM 코드사전(컬럼 코드↔라벨)·테이블/컬럼 설명·샘플쿼리를 데이터소스별로 관리합니다. 등록 내용은 질문/스키마와 매칭될 때 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다. <strong>공용(common)</strong> 스코프는 모든 데이터소스에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
+        <!-- TASK-20260624-item11-metadata-phase2: 5 서브뷰 — 용어/ENUM(MVP-1) + 테이블/컬럼/샘플(Phase 2).
+             테이블/컬럼/부트스트랩 = kb.ingest.manual, 샘플 = kb.sample.curate. admin.js 가 권한별로 서브탭을 숨긴다. -->
         <div class="admin-meta-subtabs" role="tablist" aria-label="메타데이터 서브뷰">
           <button type="button" class="admin-meta-subtab is-active" data-meta-subtab="glossary" role="tab">용어사전</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="enums" role="tab">ENUM 코드사전</button>
+          <button type="button" class="admin-meta-subtab" data-meta-subtab="tables" role="tab">테이블 설명</button>
+          <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
+          <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
         </div>
-        <!-- 편집 폼(생성/수정 공용) — 서브탭에 따라 admin.js 가 필드를 토글한다. -->
+        <!-- 부트스트랩 패널 — 테이블/컬럼 서브뷰에서만 admin.js 가 노출(kb.ingest.manual). DS+스키마 골격을 가져와 설명 빈칸 채워 일괄 저장. -->
+        <section class="admin-meta-bootstrap" id="metadataBootstrap" style="display:none" aria-label="스키마 골격 부트스트랩">
+          <header class="admin-meta-bootstrap-head">
+            <button type="button" class="admin-meta-bootstrap-toggle" id="metadataBootstrapToggle" aria-expanded="false">스키마 골격 가져오기 ▾</button>
+          </header>
+          <div class="admin-meta-bootstrap-body" id="metadataBootstrapBody" style="display:none">
+            <p class="admin-meta-bootstrap-note">데이터소스의 실제 스키마에서 테이블/컬럼 골격을 가져와 설명만 채워 일괄 저장합니다. 골격은 저장 전까지 영속되지 않습니다(미영속). 큰 스키마는 가져오는 데 시간이 걸릴 수 있습니다.</p>
+            <div class="admin-meta-bootstrap-controls">
+              <label class="admin-meta-field">
+                <span class="admin-meta-field-label">데이터소스 *</span>
+                <select id="metadataBootstrapDs" class="admin-meta-input" aria-label="부트스트랩 데이터소스"></select>
+              </label>
+              <label class="admin-meta-field">
+                <span class="admin-meta-field-label">스키마 *</span>
+                <select id="metadataBootstrapSchema" class="admin-meta-input" aria-label="부트스트랩 스키마" disabled></select>
+              </label>
+              <button type="button" class="btn-primary admin-meta-bootstrap-fetch" id="metadataBootstrapFetchBtn" disabled>골격 가져오기</button>
+            </div>
+            <div class="admin-meta-bootstrap-status" id="metadataBootstrapStatus" aria-live="polite"></div>
+            <div class="admin-meta-bootstrap-result" id="metadataBootstrapResult"></div>
+            <div class="admin-meta-bootstrap-actions" id="metadataBootstrapSaveActions" style="display:none">
+              <button type="button" class="btn-primary" id="metadataBootstrapSaveBtn">설명 입력분 저장</button>
+              <span class="admin-meta-bootstrap-saveinfo" id="metadataBootstrapSaveInfo"></span>
+            </div>
+          </div>
+        </section>
+        <!-- 편집 폼(생성/수정 공용) — 서브탭에 따라 admin.js 가 필드를 토글한다. 샘플 서브뷰는 생성 비활성(수정 전용). -->
         <form id="metadataForm" class="admin-meta-form" autocomplete="off">
           <div class="admin-meta-form-grid" id="metadataFormFields"></div>
           <div class="admin-meta-form-actions">
@@ -691,7 +722,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260624-item11-metadata"></script>
+  <script src="/static/admin.js?v=20260624-item11-phase2"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260623-rn-0623"></script>
