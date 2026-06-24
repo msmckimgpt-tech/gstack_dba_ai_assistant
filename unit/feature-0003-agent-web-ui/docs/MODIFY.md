@@ -4458,3 +4458,15 @@ source_of_truth: true
 - Files: src/app.py, ../feature-0002-agent-core/src/modules/sample_feedback.py(cross-ref), docs/{TASK,MODIFY,FUNCTION,REVIEW}.md, docs/improvements/dba-ai-nl2sql/ROADMAP.md.
 - Rollback: rate-limit 호출 제거 / FOR UPDATE·status 가드 제거 / nl_question 마스킹 환원(각 독립, 비파괴).
 - Deploy: web + ask-worker 재빌드(app.py + 코어 sample_feedback baked). 마이그 없음.
+
+## CHG-20260624T020000-product-insight-status-badge
+- Date: 2026-06-24 (TASK-0308 — 제품 탭 데이터소스 인사이트 탐색 상태 표시, Minor §12.3). PLAN-APPROVED(목업 승인).
+- Scope: **frontend only**. 제품 '데이터 소스 & 접근 가능 데이터베이스' accordion 행 헤더에 insight 탐색 on/off 시각 표시 + primary 표기를 엔진 배지 색으로 전환.
+- 내용:
+  - `static/admin.js` `_renderDsAccordion`: 행 헤더에 `.ds-acc-insight` 아이콘(켜짐=눈/은은, 꺼짐=빗금눈/amber 칩) 추가 — `meta.insight_enabled`(datasources API 기존 필드) 기반. title/aria-label 동반. 별도 '기본' 텍스트 배지(`ds-acc-primary`) 제거 → 엔진 배지에 `is-primary` 클래스 + title 부여(조건부 배지가 인사이트 아이콘 위치를 흔드는 문제 제거).
+  - `static/styles.css`: `.ds-acc-insight`(+`.is-on`/`.is-off`) + `.ds-acc-engine.is-primary` 추가, 미사용된 `.ds-acc-primary` 제거.
+- Why: 사용자가 제품 탭만 보고 datasource 의 insight 탐색 비활성(mssql-qa-idc)을 놓친 실수 재발 방지(상태가 데이터소스 관리 탭에만 있었음). 텍스트 추가 없이 OFF 를 두드러지게.
+- Verification: admin.js node --check + Artifact 목업으로 사용자 디자인 승인. 백엔드 무변경(insight_enabled 기존 노출). UI 실렌더 검증=PB-0008(Windows-browser).
+- Files: static/admin.js, static/styles.css, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+- Rollback: 두 파일 revert(순수 additive·표현계층). 동작 회귀 없음.
+- Deploy: web 재빌드(static baked) + cache-buster. 마이그/백엔드 없음.
