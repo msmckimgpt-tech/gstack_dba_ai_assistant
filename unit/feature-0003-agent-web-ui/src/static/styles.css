@@ -2356,6 +2356,9 @@ a { color: inherit; }
 .conv-settings-toggle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
 .conv-settings-toggle-row input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
 .conv-settings-hint { font-size: 12px; color: var(--text-muted); line-height: 1.45; margin-top: 6px; }
+/* gc-settings-archive-leave: 대화 설정 팝업의 '대화 관리'(보관/나가기) danger 섹션. 버튼은 .btn-danger 재사용. */
+.conv-settings-sec-danger .conv-settings-sec-title { color: var(--danger); }
+.conv-settings-danger-btn { margin-top: 2px; }
 
 /* gc-settings-notif: 프로필>계정>알림 — 토글 행 + 데스크톱 권한 상태. */
 .profile-toggle-row {

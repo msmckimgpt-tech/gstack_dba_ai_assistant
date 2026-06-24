@@ -1187,3 +1187,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **검증 기법: 운영자 실 화면 육안 검증** — 제품 상세 '데이터 소스 & 접근 가능 데이터베이스' accordion 각 datasource 행 헤더에 인사이트 탐색 상태 아이콘(켜짐=눈 은은 / 꺼짐=빗금눈 amber 칩)이 표시되고, 기본(primary) 데이터소스가 엔진 배지 색(파랑)으로 구분되며, '기본' 텍스트 배지 제거로 아이콘 위치가 행마다 일정함을 확인. 사전 Artifact 목업(실 CSS·아이콘 렌더)으로 디자인 승인 → 배포 후 실 화면 일치 확인.
   - **Pass/Fail: PASS** — 배포된 시스템에서 인사이트 탐색 상태 표시 + primary 엔진색이 실제 Windows 화면으로 정상 동작함을 운영자 직접 확인. CHECK#13(PB-0008 Windows-browser) **충족**.
   - **Notes:** frontend only(admin.js·styles.css·admin.html cache-buster), 백엔드/마이그 0(insight_enabled 는 datasources API 기존 필드). OFF(amber) 표시는 insight 탐색이 꺼진 datasource 가 있을 때 노출(현재 mssql-qa-idc 는 TASK-0307 에서 활성화되어 ON 표시).
+
+- 2026-06-24 (feature-0009 cycle `gc-settings-archive-leave` — 대화 ··· 메뉴 '보관' → 설정 팝업 이동 + 그룹 참여자 '나가기', **Minor §12.3**; CHG/REV-20260624T031337 evidence):
+  - **Environment: CLI** (정적 소스 단언 + 적대적 리뷰; frontend-only, layout 비의존). 실렌더/클릭 동작의 최종 확인은 PB-0008(Windows-browser, 배포 후) — 본 변경은 worktree(WSL)에서 작성되어 PB-0008 미실행(메인 세션/배포 후 권장).
+  - **정적**: `node --check static/app.js` PASS + CSS brace 균형 1489=1489.
+  - **신규 jsdom-less 정적 테스트** `tests/verify_settings_archive_leave.mjs` **22/22 PASS**(함수 본문 중괄호 추출 + 문자열 단언):
+    - openConversationItemMenu: '보관' 항목 제거 / '공유'·'설정' 유지.
+    - openConversationSettings: '대화 관리' 섹션 + `canDeleteConversation`/`isGroupConversation` 판정 + `if (canArchive)` 분기 + 보관→`deleteConversation(cid)` / 나가기→`leaveConversation(cid)` + `(canArchive || isGroup)` 가드 + `.conv-settings-sec-danger`.
+    - leaveConversation: `/members/` 엔드포인트 + `method:"DELETE"` + 본인 `state.user.id` + `window.confirm` + `refreshWorkspace`.
+    - styles.css `.conv-settings-sec-danger` 규칙 존재.
+  - **적대적 3-렌즈 리뷰(security/authz·correctness·UX)**: 실질 결함 0건(REVIEW.md REV-20260624T031337). client gate cosmetic(backend authoritative)·IDOR 없음(self id only)·버튼-권한 매핑 정합 확인. 1건 LOW 는 기존 환경의존(`is_group` PG-only, 본 변경 비도입).
+  - **Pass/Fail: PASS**(정적 게이트). 백엔드/스키마/RBAC 무변경 — backend leave/archive 엔드포인트는 기존, 본 변경은 프론트 진입점·UI 재배치만. [SKIPPED:frontend-ui-archive-leave-relocation-no-backend-no-rbac for backend regression; CHECK#13 PB-0008 배포 후 권장].

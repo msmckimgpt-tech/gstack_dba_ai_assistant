@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260624T031337-gc-settings-archive-leave — 대화 ··· 메뉴 '보관' → 설정 팝업 이동 + 그룹 참여자 '나가기' (feature-0009 cross-cut cycle, 코드 거주=feature-0003, Minor §12.3)
+- 사용자 요청: `대화 탭 > ··· > [탭 목록]` 의 '보관'을 '설정' 팝업 내부로 구성 + 보관 권한 없는 그룹 대화 참여자는 보관 대신 '나가기' 버튼. cycle owner=feature-0009(group-conversation), 코드/정본 문서=feature-0003.
+- [x] `app.js` `openConversationItemMenu`: ··· 메뉴에서 '보관'(danger) 제거 → [공유 · 설정].
+- [x] `app.js` `openConversationSettings`: 하단 '대화 관리'(`.conv-settings-sec-danger`) 섹션 — `canDeleteConversation`(보유자/admin)→'보관'(`deleteConversation`), 아니면서 `isGroupConversation`→'나가기'(신규 `leaveConversation`), 둘 다 아니면 미렌더.
+- [x] `app.js` 신규 `leaveConversation(cid)`: `DELETE /api/conversations/{cid}/members/{state.user.id}` self-leave(백엔드 `remove_conversation_member` 기존·무변경) + confirm + 토스트 + `refreshWorkspace("")`.
+- [x] `styles.css` `.conv-settings-sec-danger`/`.conv-settings-danger-btn` + `index.html` 캐시버스터 `archive-leave`.
+- [x] `node --check app.js` PASS + 신규 `tests/verify_settings_archive_leave.mjs` **22/22 PASS** + 적대적 3-렌즈(security/authz·correctness·UX) 서브에이전트 리뷰 **실질 결함 0**(REVIEW REV-20260624T031337).
+- [x] 문서: feature-0003 `{MODIFY,FUNCTION,REVIEW,TEST}.md` + feature-0009 `{TASK,MODIFY,REVIEW}.md` cross-ref.
+- [ ] **남은 마감(메인 세션/배포 후)**: PB-0008(Windows-browser UI 실렌더 — worktree=WSL 미실측) · PR 생성·머지·web 재배포(static baked + 캐시버스터).
+
 ## TASK-20260623T090440-sample-feedback-curation (current cycle) — 답변 피드백 → 샘플쿼리 KB 환류 flywheel (web 층, ROADMAP dba-ai-nl2sql ITEM-03, REQ-20260623-0333, AC-0612·0613, Major §12.3 — 보안 경계)
 - **PLAN-APPROVED** (사용자, 2026-06-23). 임무: ROADMAP dba-ai-nl2sql ITEM-03(피드백→KB 환류 flywheel 의 web 층)을 feature-0003 worktree 에 구현. 코어(feature-0002 `modules.sample_feedback`)는 재사용(재구현 금지) — web 은 RBAC/audit/scope/cross-DB conn 분리 경계만.
 - 등급: **Major §12.3 — 보안 경계(신규 RBAC `kb.sample.curate`)**. 신규 RBAC = 보안 표면 → 메인 세션이 적대적 security 리뷰 후 마감(본 cycle 은 구현+단위검증+verify+commit/push 까지).

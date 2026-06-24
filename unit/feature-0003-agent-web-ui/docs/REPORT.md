@@ -1360,3 +1360,14 @@ System Prompt 를 Product → Role → Account 3 계층으로 조립하도록 �
 
 ### 6. 잔여 (활성화 cycle — 사용자 후속 결정)
 Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + flag=1 → JWKS 서명 검증 추가 → web 배포 → 라이브 e2e + PB-0008 → outside-voice 본 리뷰.
+
+---
+
+## gc-settings-archive-leave (feature-0009 cross-cut cycle) — Git 동기화 결과
+- 작업: 대화 ··· 메뉴 '보관' → 설정 팝업 '대화 관리' 섹션 이동 + 보관 권한 없는 그룹 참여자 '나가기'(self-leave). frontend only(app.js·styles.css·index.html), 백엔드/스키마 무변경. CHG/REV-20260624T031337.
+- 커밋: `ai/claude/gc-settings-archive-leave` worktree 의 cycle commit (hash=push 후 git log).
+- verify-completion: **PASS** (feature-0003 9/9 + feature-0009 9/9, wiki·windows-browser informational PASS). 재시도 1회(CHECK#2 checkbox delta 보강).
+- Push: **자동 진행**(§16.3 Step 4 — BLOCKED 없음 + Critical/Major 승인 대기 없음). branch `ai/claude/gc-settings-archive-leave` → origin.
+- main 병합: **보류**(PR 생성·머지·web 배포는 외부 영향 — 사용자 confirm 후 진행).
+- 충돌 해결: 없음(신규 branch, base main `165906b`).
+- 잔여: PR 생성·머지(cycle-finalize) · web 재배포(static baked + 캐시버스터 `archive-leave`) · PB-0008 Windows-browser 실렌더 검증.
