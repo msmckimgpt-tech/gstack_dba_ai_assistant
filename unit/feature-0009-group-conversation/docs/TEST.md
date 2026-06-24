@@ -96,5 +96,15 @@ source_of_truth: true
 - Pass/Fail: **PASS**
 - Notes: 1차 수정(공유 시 optimistic is_group 전환)은 실제 createConversationShare 경로(모달)로 stale 윈도 자체를 닫음 — 본 시나리오는 그 보강선인 422 graceful 재라우팅(safety net)을 stale 강제로 직접 실측. 프론트 전용(백엔드 무변경) → web 재빌드만(alembic 불요).
 
+### Run 2026-06-24-notify-nobracket
+- Date: 2026-06-24
+- Environment: Windows-browser
+- Runner: AI
+- Bridge: relay @ http://172.28.64.1:9223 (win-browser.py doctor ok=true, Windows Chrome/149)
+- Scenario: `unit/feature-0003-agent-web-ui/tests/win-browser-notify-nobracket.scenario.json`
+- Result Summary: Windows 알림 본문 발신자 대괄호 제거 검증. Notification stub 캡처 — body=`mckim2 : @bootstrap_admin 이거 확인 부탁드려요`(`starts_with_sender:true`, `has_no_leading_bracket:true`), title=`DQA : 운영 이슈 대응방` 유지. "[보낸사용자] : …" → "보낸사용자 : …" 전환 확인.
+- Pass/Fail: **PASS**
+- Notes: trivial cosmetic 문자열 변경(로직 무변경), 프론트 전용 → web 재빌드만. 토스트도 동일 본문 사용(일관).
+
 ## 4. Untested Areas
 - 아직 검증되지 않은 영역
