@@ -7536,6 +7536,22 @@ a { color: inherit; }
   opacity: .4;
   pointer-events: none;
 }
+/* ITEM-08: "AI 로 고치기" 표적 재수정 버튼 (실패 SQL 결과에만 노출) */
+.message-fix-with-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.message-fix-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.message-fix-btn:disabled {
+  opacity: .5;
+  pointer-events: none;
+}
 /* 검수 큐(샘플 검수 탭) */
 .admin-sf-row {
   padding: 12px 14px;
