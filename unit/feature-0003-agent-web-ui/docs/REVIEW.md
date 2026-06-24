@@ -3599,3 +3599,9 @@ source_of_truth: true
 - Panel skip 사유(§18.4): (1) 표현계층 전용 변경(렌더 헤더에 상태 아이콘 추가 + primary 표기를 텍스트배지→엔진색), 비파괴·additive. (2) `insight_enabled` 는 datasources API 기존 필드라 신규 데이터 경로/권한 0. (3) admin.js `node --check` 통과. (4) **사용자가 Artifact 목업(실 CSS·아이콘 렌더)으로 디자인을 직접 검토·승인**(아이콘 design "모범적" 확인 + '기본' 텍스트→엔진색 조정 지시 반영). a11y: 색 단독 의존 회피(켜짐 눈/꺼짐 빗금눈 형태 차이 + title/aria-label).
 - 잔여 검증: UI 실렌더 정본은 PB-0008(Windows-browser, 배포 후) — gstack /browse(WSL headless)는 보조.
 - Cross-ref: CHG-20260624T020000-product-insight-status-badge / TASK-0308.
+
+## REV-20260624T024500-task0308-pb0008-close [SKIPPED:docs-only-cycle-close]
+- Date: 2026-06-24
+- Cycle: TASK-0308 마감(PB-0008 검증 기록 + 체크박스 닫기), docs-only(TASK.md+TEST.md+MODIFY.md), 코드 0.
+- Panel skip 사유(§18.4): 코드/런타임 변경 없는 cycle-close 문서화. 검증 사실은 **사용자 직접 PB-0008 Windows-browser PASS**(TEST.md §4 기재) — AI 가 배포·서빙·정적검증 수행, 운영자가 실 화면 육안 확인. 새 코드 경로/리스크 0.
+- Cross-ref: CHG-20260624T024500-task0308-pb0008-close / TASK-0308.

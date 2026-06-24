@@ -1168,3 +1168,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **정적**: `python3 -m py_compile app.py` OK.
 - **Pass/Fail: PASS** (토대 단계). 배포·라이브 e2e(Google Cloud Console OAuth Client 등록 필요)·PB-0008(버튼 노출/로그인 화면)·ID token 서명검증은 활성화 cycle TODO(SECURITY.md §14.3).
 - **Notes:** 기본 비활성(flag OFF)이라 라이브 OAuth round-trip 은 credential 주입 후에만 가능 — 토대 검증은 단위(순수 helper + FakeConn + flag-gating)로 완결. ID token 서명 미검증은 의도적 trade-off(§14.3 정직 기록).
+
+- 2026-06-24 (TASK-0308 제품 탭 데이터소스 인사이트 탐색 상태 표시, **Minor §12.3** — **PB-0008 Windows-browser PASS**; CHG/REV-20260624T020000 evidence):
+  - **Environment: Windows-browser** (실제 Windows 브라우저 — **사용자 직접 시각 검증**, 2026-06-24). win-browser.py relay/eval 가 아닌 운영자 본인의 실 화면 확인이며, 본 AI 세션은 배포·서빙·정적검증까지 수행. WSL headless 아님.
+  - **배포**: main `6606b8e`(PR #396 머지) → `docker compose build web` + `up -d web`(repo-web-1 Up healthy). 서빙 검증(HTTP, 브라우저 캐시 무관, AI 수행): web 컨테이너 baked `/app/web/static/admin.js` 에 `ds-acc-insight` 1건 + 엔진 primary 색 분기(`ds-acc-engine" + (b.is_primary`) 1건 + `ds-acc-primary`(구 '기본' 텍스트 배지) **0건**(제거 확인), `/app/web/static/styles.css` 에 `ds-acc-insight` 4건, `admin.html` cache-buster `v=20260624-product-insight-badge`.
+  - **검증 기법: 운영자 실 화면 육안 검증** — 제품 상세 '데이터 소스 & 접근 가능 데이터베이스' accordion 각 datasource 행 헤더에 인사이트 탐색 상태 아이콘(켜짐=눈 은은 / 꺼짐=빗금눈 amber 칩)이 표시되고, 기본(primary) 데이터소스가 엔진 배지 색(파랑)으로 구분되며, '기본' 텍스트 배지 제거로 아이콘 위치가 행마다 일정함을 확인. 사전 Artifact 목업(실 CSS·아이콘 렌더)으로 디자인 승인 → 배포 후 실 화면 일치 확인.
+  - **Pass/Fail: PASS** — 배포된 시스템에서 인사이트 탐색 상태 표시 + primary 엔진색이 실제 Windows 화면으로 정상 동작함을 운영자 직접 확인. CHECK#13(PB-0008 Windows-browser) **충족**.
+  - **Notes:** frontend only(admin.js·styles.css·admin.html cache-buster), 백엔드/마이그 0(insight_enabled 는 datasources API 기존 필드). OFF(amber) 표시는 insight 탐색이 꺼진 datasource 가 있을 때 노출(현재 mssql-qa-idc 는 TASK-0307 에서 활성화되어 ON 표시).
