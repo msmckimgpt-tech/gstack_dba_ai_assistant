@@ -1985,6 +1985,8 @@ const ADMIN_TAB_PERMISSIONS = {
   archives: ["conversation.archive.read.any"],
   // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수 큐.
   "sample-review": ["kb.sample.curate"],
+  // TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1): 용어/ENUM 메타데이터 CRUD.
+  metadata: ["kb.ingest.manual"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2077,6 +2079,16 @@ function switchTab(tabName) {
   if (tabName === "sample-review" && !adminState.sampleReviewInitialized) {
     adminState.sampleReviewInitialized = true;
     loadSampleFeedback();
+  }
+  // TASK-20260624-item11-metadata-glossary-enum: 메타데이터 tab 첫 진입 시 scope 드롭다운+목록 초기화.
+  if (tabName === "metadata") {
+    if (!adminState.metadataInitialized) {
+      adminState.metadataInitialized = true;
+      initMetadataTab();
+    } else {
+      // 재진입(REV MINOR-2): 첫 진입이 datasources 로드 전이었을 수 있으니 scope 드롭다운 재채움(선택 보존).
+      _metaPopulateScopeSelect();
+    }
   }
   // 릴리즈 노트 — 정적 콘텐츠라 진입 시 렌더(가벼움). 렌더러는 release-notes.js, 작업 화면과 공유.
   if (tabName === "release-notes" && window.ReleaseNotes) {
@@ -2296,6 +2308,318 @@ async function _sampleFeedbackAction(btn, action) {
   } catch (err) {
     if (row) row.querySelectorAll("button").forEach((b) => { b.disabled = false; });
     if (typeof showToast === "function") showToast((err && err.message) || "처리 실패", true);
+  }
+}
+
+/* ── TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1) ───────────────
+ * 메타데이터 거버넌스 콘솔: 용어사전(glossary)/ENUM 코드사전(enums) 2 서브뷰 CRUD. 권한 kb.ingest.manual.
+ * scope: 데이터소스 key(소문자) 또는 'common'(공용) — adminState.datasources(기존 fetch 재사용) + common.
+ *        편집/삭제는 항상 현재 선택 scope 행에만 적용(백엔드 scope 가드와 정합).
+ * XSS: 모든 사용자 데이터(term/definition/label/code/…)는 textContent/escape 로만 DOM 삽입(innerHTML 금지).
+ * 백엔드: GET/POST /api/admin/metadata/{glossary|enums}, PUT/DELETE …/{id}. */
+adminState.metadata = {
+  subTab: "glossary",   // glossary | enums
+  scopeKey: "common",
+  items: [],
+  loading: false,
+  editing: null,        // 수정 중인 항목(id 포함) 또는 null(=생성 모드)
+};
+
+// 서브뷰별 폼 필드 정의 — label/key/type/required/placeholder. 렌더/검증/payload 조립에 공용 사용.
+const _METADATA_FIELDS = {
+  glossary: [
+    { key: "term", label: "용어", required: true, type: "text", placeholder: "예: 활성 사용자" },
+    { key: "definition", label: "정의", required: true, type: "textarea", placeholder: "이 용어의 의미/판정 기준" },
+  ],
+  enums: [
+    { key: "schema_name", label: "스키마(선택)", required: false, type: "text", placeholder: "단일 스키마면 비워둠" },
+    { key: "table_name", label: "테이블", required: true, type: "text", placeholder: "예: orders" },
+    { key: "column_name", label: "컬럼", required: true, type: "text", placeholder: "예: status" },
+    { key: "code", label: "코드", required: true, type: "text", placeholder: "예: 1" },
+    { key: "label", label: "라벨(의미)", required: true, type: "text", placeholder: "예: 결제완료" },
+  ],
+};
+
+// XSS — 사용자 데이터는 textContent 로만. (innerHTML 절대 미사용 경로.) sample-review _sfEsc 와 동일 규약.
+function _metaEsc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function _metaFmtDt(v) {
+  if (!v) return "";
+  try { return formatDateTime(v); } catch (e) { return String(v); }
+}
+
+// 탭 첫 진입 — scope 드롭다운 채우기 + 서브탭/폼 바인딩 + 최초 목록 로드.
+function initMetadataTab() {
+  _metaPopulateScopeSelect();
+  _metaBindControls();
+  _metaRenderForm();
+  loadMetadata();
+}
+
+// scope 드롭다운: '공용(common)' + 등록된 datasource key 목록(기존 adminState.datasources 재사용).
+function _metaPopulateScopeSelect() {
+  const sel = document.getElementById("metadataScopeSelect");
+  if (!sel) return;
+  const opts = [{ value: "common", label: "공용 (common)" }];
+  for (const ds of (adminState.datasources || [])) {
+    const key = String((ds && ds.key) || "").trim().toLowerCase();
+    if (key) opts.push({ value: key, label: key });
+  }
+  // textContent 기반 option 생성(XSS 안전).
+  sel.replaceChildren();
+  for (const o of opts) {
+    const el = document.createElement("option");
+    el.value = o.value;
+    el.textContent = o.label;
+    sel.appendChild(el);
+  }
+  // 현재 선택 보존(없으면 common).
+  const cur = adminState.metadata.scopeKey || "common";
+  sel.value = opts.some((o) => o.value === cur) ? cur : "common";
+  adminState.metadata.scopeKey = sel.value;
+}
+
+function _metaBindControls() {
+  const sel = document.getElementById("metadataScopeSelect");
+  if (sel && !sel.dataset.bound) {
+    sel.dataset.bound = "1";
+    sel.addEventListener("change", () => {
+      adminState.metadata.scopeKey = sel.value || "common";
+      _metaCancelEdit();
+      loadMetadata();
+    });
+  }
+  document.querySelectorAll(".admin-meta-subtab").forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const sub = btn.dataset.metaSubtab;
+      if (!sub || sub === adminState.metadata.subTab) return;
+      adminState.metadata.subTab = sub;
+      document.querySelectorAll(".admin-meta-subtab").forEach((b) => {
+        b.classList.toggle("is-active", b.dataset.metaSubtab === sub);
+      });
+      _metaCancelEdit();
+      _metaRenderForm();
+      loadMetadata();
+    });
+  });
+  const form = document.getElementById("metadataForm");
+  if (form && !form.dataset.bound) {
+    form.dataset.bound = "1";
+    form.addEventListener("submit", _metaSubmitForm);
+  }
+  const cancelBtn = document.getElementById("metadataCancelBtn");
+  if (cancelBtn && !cancelBtn.dataset.bound) {
+    cancelBtn.dataset.bound = "1";
+    cancelBtn.addEventListener("click", () => { _metaCancelEdit(); });
+  }
+  const refreshBtn = document.getElementById("metadataRefreshBtn");
+  if (refreshBtn && !refreshBtn.dataset.bound) {
+    refreshBtn.dataset.bound = "1";
+    refreshBtn.addEventListener("click", () => loadMetadata());
+  }
+}
+
+// 폼 필드 렌더(서브탭별). 수정 모드면 editing 값 채움. label/input 전부 DOM API(XSS 안전).
+function _metaRenderForm() {
+  const wrap = document.getElementById("metadataFormFields");
+  const submitBtn = document.getElementById("metadataSubmitBtn");
+  const cancelBtn = document.getElementById("metadataCancelBtn");
+  if (!wrap) return;
+  const fields = _METADATA_FIELDS[adminState.metadata.subTab] || [];
+  const editing = adminState.metadata.editing;
+  wrap.replaceChildren();
+  for (const f of fields) {
+    const field = document.createElement("label");
+    field.className = "admin-meta-field";
+    const cap = document.createElement("span");
+    cap.className = "admin-meta-field-label";
+    cap.textContent = f.label + (f.required ? " *" : "");
+    field.appendChild(cap);
+    const input = f.type === "textarea" ? document.createElement("textarea") : document.createElement("input");
+    if (f.type !== "textarea") input.type = "text";
+    input.className = "admin-meta-input";
+    input.name = f.key;
+    input.placeholder = f.placeholder || "";
+    if (editing && editing[f.key] != null) input.value = String(editing[f.key]);
+    field.appendChild(input);
+    wrap.appendChild(field);
+  }
+  if (submitBtn) submitBtn.textContent = editing ? "수정 저장" : "등록";
+  if (cancelBtn) cancelBtn.style.display = editing ? "" : "none";
+}
+
+function _metaCancelEdit() {
+  adminState.metadata.editing = null;
+  _metaRenderForm();
+}
+
+function _metaFormValues() {
+  const wrap = document.getElementById("metadataFormFields");
+  const out = {};
+  if (!wrap) return out;
+  wrap.querySelectorAll("input, textarea").forEach((el) => { out[el.name] = (el.value || "").trim(); });
+  return out;
+}
+
+async function loadMetadata() {
+  const listEl = document.getElementById("metadataList");
+  if (!listEl) return;
+  const sub = adminState.metadata.subTab;
+  const scope = adminState.metadata.scopeKey || "common";
+  adminState.metadata.loading = true;
+  listEl.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "admin-list-empty";
+  loading.textContent = "로딩 중…";
+  listEl.appendChild(loading);
+  try {
+    const url = `/api/admin/metadata/${sub}?scope_key=${encodeURIComponent(scope)}`;
+    const data = await apiFetch(url);
+    adminState.metadata.items = (data && data.items) || [];
+  } catch (err) {
+    adminState.metadata.items = [];
+    listEl.replaceChildren();
+    const e = document.createElement("div");
+    e.className = "admin-list-empty";
+    e.textContent = (err && err.message) || "메타데이터 조회 실패";
+    listEl.appendChild(e);
+    return;
+  } finally {
+    adminState.metadata.loading = false;
+  }
+  renderMetadataList();
+}
+
+function renderMetadataList() {
+  const listEl = document.getElementById("metadataList");
+  const countEl = document.getElementById("metadataCount");
+  if (!listEl) return;
+  const items = adminState.metadata.items;
+  const sub = adminState.metadata.subTab;
+  const canEdit = can("kb.ingest.manual");
+  if (countEl) countEl.textContent = `${items.length}건`;
+  listEl.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-list-empty";
+    empty.textContent = sub === "glossary" ? "등록된 용어가 없습니다." : "등록된 ENUM 항목이 없습니다.";
+    listEl.appendChild(empty);
+    return;
+  }
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "admin-meta-row";
+    const main = document.createElement("div");
+    main.className = "admin-meta-row-main";
+    const title = document.createElement("div");
+    title.className = "admin-meta-row-title";
+    const body = document.createElement("div");
+    body.className = "admin-meta-row-body";
+    if (sub === "glossary") {
+      title.textContent = it.term || "";
+      body.textContent = it.definition || "";
+    } else {
+      const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
+      title.textContent = `${loc}  ·  ${it.code || ""}`;
+      body.textContent = it.label || "";
+    }
+    main.appendChild(title);
+    main.appendChild(body);
+    const meta = document.createElement("div");
+    meta.className = "admin-meta-row-meta";
+    meta.textContent = it.updated_at ? `수정 ${_metaFmtDt(it.updated_at)}` : "";
+    main.appendChild(meta);
+    row.appendChild(main);
+    if (canEdit) {
+      const actions = document.createElement("div");
+      actions.className = "admin-meta-row-actions";
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "btn-secondary admin-meta-edit";
+      editBtn.textContent = "수정";
+      editBtn.addEventListener("click", () => _metaStartEdit(it));
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn-secondary admin-meta-del";
+      delBtn.textContent = "삭제";
+      delBtn.addEventListener("click", () => _metaDelete(it));
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+      row.appendChild(actions);
+    }
+    listEl.appendChild(row);
+  }
+}
+
+function _metaStartEdit(it) {
+  adminState.metadata.editing = { ...it };
+  _metaRenderForm();
+  const form = document.getElementById("metadataForm");
+  if (form && form.scrollIntoView) form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function _metaSubmitForm(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const sub = adminState.metadata.subTab;
+  const scope = adminState.metadata.scopeKey || "common";
+  const fields = _METADATA_FIELDS[sub] || [];
+  const vals = _metaFormValues();
+  // 클라 필수 검증(백엔드도 검증 — 이중 안전).
+  for (const f of fields) {
+    if (f.required && !vals[f.key]) {
+      if (typeof showToast === "function") showToast(`${f.label} 는 필수입니다.`, true);
+      return;
+    }
+  }
+  const editing = adminState.metadata.editing;
+  const payload = { scope_key: scope, ...vals };
+  const submitBtn = document.getElementById("metadataSubmitBtn");
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    if (editing && editing.id != null) {
+      await apiFetch(`/api/admin/metadata/${sub}/${encodeURIComponent(editing.id)}`, {
+        method: "PUT", body: JSON.stringify(payload),
+      });
+    } else {
+      await apiFetch(`/api/admin/metadata/${sub}`, { method: "POST", body: JSON.stringify(payload) });
+    }
+    adminState.metadata.editing = null;
+    _metaRenderForm();
+    // 폼 초기화(생성 모드면 입력 비움).
+    _metaResetInputs();
+    await loadMetadata();
+    if (typeof showToast === "function") showToast(editing ? "수정했습니다." : "등록했습니다.");
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "저장 실패", true);
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+function _metaResetInputs() {
+  const wrap = document.getElementById("metadataFormFields");
+  if (!wrap) return;
+  wrap.querySelectorAll("input, textarea").forEach((el) => { el.value = ""; });
+}
+
+async function _metaDelete(it) {
+  const sub = adminState.metadata.subTab;
+  const scope = adminState.metadata.scopeKey || "common";
+  const label = sub === "glossary" ? (it.term || "이 용어") : `${it.table_name || ""}.${it.column_name || ""}=${it.code || ""}`;
+  if (!window.confirm(`삭제하시겠습니까?\n\n${label}\n\n등록 내용이 답변 프롬프트에서 제외됩니다.`)) return;
+  try {
+    await apiFetch(`/api/admin/metadata/${sub}/${encodeURIComponent(it.id)}?scope_key=${encodeURIComponent(scope)}`, {
+      method: "DELETE",
+    });
+    adminState.metadata.items = adminState.metadata.items.filter((x) => String(x.id) !== String(it.id));
+    renderMetadataList();
+    if (typeof showToast === "function") showToast("삭제했습니다.");
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "삭제 실패", true);
   }
 }
 

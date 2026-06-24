@@ -68,6 +68,108 @@ def upsert_enum_entry(conn, scope_key, table_name, column_name, code, label, sch
         cur.close()
 
 
+# ── 관리(RW) — 메타데이터 거버넌스 콘솔 CRUD (ITEM-11 MVP-1) ──────────────────
+# admin 콘솔(feature-0003 /api/admin/metadata/*)이 호출. 읽기(load_glossary_enum_context)와 달리
+# **단일 scope_key 만** 다룬다(common 캐스케이드 없음) — 편집/삭제는 정확히 그 scope 행에만 적용돼야
+# ds 격리가 깨지지 않는다. 전부 id(PK) 기준 + scope_key 가드로 cross-scope 오작용을 차단한다.
+# 호출측(web)이 RBAC(kb.ingest.manual)·audit·commit·conn 수명을 책임진다(코어는 SQL 만).
+_GLOSSARY_ADMIN_LIMIT = 1000
+_ENUM_ADMIN_LIMIT = 1000
+
+
+def list_glossary_admin(conn, scope_key, limit=_GLOSSARY_ADMIN_LIMIT):
+    """admin 목록 — 단일 scope 의 용어 행(id 포함). 최신 갱신 우선. read 와 달리 캐스케이드 없음."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, term, definition, created_at, updated_at "
+            "FROM kb_glossary WHERE scope_key = %s "
+            "ORDER BY updated_at DESC, id DESC LIMIT %s",
+            (_normalize_scope_key(scope_key), int(limit)),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
+def list_enum_admin(conn, scope_key, limit=_ENUM_ADMIN_LIMIT):
+    """admin 목록 — 단일 scope 의 ENUM 행(id 포함). table/column/code 순."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, schema_name, table_name, column_name, code, label, "
+            "created_at, updated_at FROM enum_dictionary WHERE scope_key = %s "
+            "ORDER BY table_name, column_name, code, id LIMIT %s",
+            (_normalize_scope_key(scope_key), int(limit)),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
+def update_glossary_term(conn, term_id, scope_key, term, definition) -> int:
+    """용어 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 호출측 404)."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE kb_glossary SET term = %s, definition = %s, updated_at = now() "
+            "WHERE id = %s AND scope_key = %s",
+            (str(term).strip(), str(definition).strip(),
+             int(term_id), _normalize_scope_key(scope_key)),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
+def update_enum_entry(conn, entry_id, scope_key, table_name, column_name,
+                      code, label, schema_name="") -> int:
+    """ENUM 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 404).
+
+    key 컬럼(schema/table/column/code)까지 수정 허용 — UNIQUE(scope,schema,table,column,code)
+    충돌 시 호출측이 IntegrityError 를 409 로 변환한다.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE enum_dictionary SET schema_name = %s, table_name = %s, "
+            "column_name = %s, code = %s, label = %s, updated_at = now() "
+            "WHERE id = %s AND scope_key = %s",
+            (str(schema_name or "").strip(), str(table_name).strip(),
+             str(column_name).strip(), str(code).strip(), str(label).strip(),
+             int(entry_id), _normalize_scope_key(scope_key)),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
+def delete_glossary_term(conn, term_id, scope_key) -> int:
+    """용어 삭제(by id, scope 가드, 멱등). 반영 행 수 반환(0=이미 없음 → 멱등 성공)."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "DELETE FROM kb_glossary WHERE id = %s AND scope_key = %s",
+            (int(term_id), _normalize_scope_key(scope_key)),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
+def delete_enum_entry(conn, entry_id, scope_key) -> int:
+    """ENUM 삭제(by id, scope 가드, 멱등). 반영 행 수 반환(0=이미 없음 → 멱등 성공)."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "DELETE FROM enum_dictionary WHERE id = %s AND scope_key = %s",
+            (int(entry_id), _normalize_scope_key(scope_key)),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
 # ── 읽기(RO) — ds-scoped ────────────────────────────────────────────────────
 def _fetch_glossary(conn, scopes):
     cur = conn.cursor()
