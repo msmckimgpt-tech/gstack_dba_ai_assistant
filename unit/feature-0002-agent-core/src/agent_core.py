@@ -56,7 +56,7 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from modules.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
+from shared.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary, read_csv_preview

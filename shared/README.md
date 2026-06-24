@@ -2,7 +2,14 @@
 
 ## 목적
 여러 기능에서 실제로 공통으로 쓰는 코드가 생겼을 때만 이 디렉토리에 둔다.
-현재 이 프로젝트는 기능별 코드를 우선 분리하고, 공용 코드는 아직 승격하지 않았다.
+`from shared.<module> import ...` 형식으로 import 하며, 동작 조건은 **shared/ 의 부모
+디렉토리가 sys.path 에 있을 것**이다 — 컨테이너는 WORKDIR `/app`(Dockerfile `COPY shared
+/app/shared`), `make test`/eval 은 PYTHONPATH 의 `/work`(repo 루트, shared 의 부모).
+
+## 현재 승격된 모듈 (feature-0011-shared-extraction, P5a 진행 중)
+- `model_catalog` — LLM 모델 카탈로그(순수 stdlib). agent-core·web 양 feature 가 공유하는
+  첫 승격 모듈(P5a Step 1). 이력: `unit/feature-0011-shared-extraction/docs/MODIFY.md`.
+- (예정) db.py, config/memory/llm 등 — P5a Step 2~4 에서 점진 승격.
 
 ## 거버넌스 규칙
 1. shared 코드를 변경하는 AI는 자신의 기능 `MODIFY.md`에 변경을 기록한다.

@@ -11,7 +11,7 @@
 에서 다룬다.
 """
 
-from modules.model_catalog import (
+from shared.model_catalog import (
     max_tokens_for_model,
     _CLAUDE_MAX_TOKENS,
     _LOCAL_LLM_MAX_TOKENS,

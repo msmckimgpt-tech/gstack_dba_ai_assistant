@@ -44,7 +44,7 @@ from modules.memory import (
     mark_finalize_requested,
     set_run_status,
 )
-from modules.model_catalog import (
+from shared.model_catalog import (
     API_DEFAULT_MODEL,
     PUBLIC_API_MODEL_OPTIONS,
     is_allowed_api_model,
