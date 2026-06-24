@@ -1,0 +1,19 @@
+{
+  "name": "gc-share-group-sync — 공유 직후 비멘션 메시지가 block 없이 사람채팅으로 전송 (graceful reroute, PB-0008)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-share-group-sync",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "#productChip", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1500, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const lr=await fetch('/api/conversations');const lj=await lr.json();const items=(lj.conversations||lj.items||lj||[]);const own=items.filter(c=>Number(c.owner_account_id||0)===Number((state.user&&state.user.id)||-1)&&!c.blocked);const c=own[0];if(!c)return JSON.stringify({error:'no own conv'});window.__cid=c.id;const sr=await fetch('/api/conversations/'+encodeURIComponent(c.id)+'/share',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope_mode:'full',joinable:true})});return JSON.stringify({cid:c.id,share_status:sr.status});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=window.__cid;if(typeof loadConversations==='function'){try{await loadConversations();}catch(e){}}await new Promise(r=>setTimeout(r,400));state.activeConversationId=cid;if(typeof selectConversation==='function'){try{await selectConversation(cid);}catch(e){}}await new Promise(r=>setTimeout(r,800));const c=state.conversations.find(x=>String(x.id)===String(cid));if(c)c.is_group=false;return JSON.stringify({cid:cid,forced_stale_is_group:(c?c.is_group:null),server_is_group:'true(shared)',note:'stale 상태 강제 — 클라 게이트가 /api/ask 로 보낼 조건'});})()", "stop_on_fail": false},
+
+    {"action": "eval", "script": "(async()=>{const cid=window.__cid;const before=(state.messages||[]).length;promptInputEl.value='팀 여러분 안녕하세요 (멘션 없는 사람채팅)';if(typeof renderComposer==='function'){try{renderComposer();}catch(e){}}try{await sendPrompt();}catch(e){}await new Promise(r=>setTimeout(r,2500));const errToast=document.querySelector('.toast.is-error, .toast--error, .toast.error');const c=state.conversations.find(x=>String(x.id)===String(cid));const msgs=(state.messages||[]);const lastUser=[...msgs].reverse().find(m=>m.role==='user');return JSON.stringify({reroute_no_error_toast:!errToast,conv_is_group_after:Boolean(c&&c.is_group),composer_cleared:(promptInputEl.value===''),pendingBubble_null:(state.pendingBubble==null),last_user_msg:(lastUser?String(lastUser.content||'').slice(0,30):null),note:'block/오류 없이 사람채팅 저장 + is_group 동기화면 PASS'});})()", "stop_on_fail": false},
+    {"action": "screenshot", "path": "01_share_then_send_chat.png", "full_page": false}
+  ]
+}
