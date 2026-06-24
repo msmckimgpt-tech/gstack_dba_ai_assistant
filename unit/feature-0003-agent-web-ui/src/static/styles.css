@@ -2340,6 +2340,21 @@ a { color: inherit; }
   font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: none;
 }
 
+/* feature-0009 share-participants: 공유 팝업 내 '참여 중인 사용자' 칩 목록. */
+.share-participants { padding: 8px 20px 4px; display: flex; flex-wrap: wrap; gap: 8px; max-height: 132px; overflow-y: auto; flex-shrink: 0; }
+.share-participants .share-mgr-msg { width: 100%; padding: 8px 0; text-align: left; }
+.share-participant {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 3px 10px 3px 4px; border: 1px solid var(--border-subtle); border-radius: 999px;
+  background: var(--surface-muted, #f6f5f1); font-size: 12px; color: var(--text);
+}
+.share-participant .msg-avatar { margin-right: 0; }
+.share-participant-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.share-participant-role {
+  font-size: 10px; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+  background: var(--primary-soft, #eef2ff); color: var(--primary-dark, #3730a3);
+}
+
 /* gc-settings-notif: 대화 설정 팝업 (제목 변경 + 알림 음소거). share-mgr-panel 골격 재사용. */
 .conv-settings-panel { max-width: 440px; }
 .conv-settings-body { padding: 8px 20px 18px; overflow-y: auto; }

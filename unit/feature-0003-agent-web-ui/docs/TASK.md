@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260624T075458-gc-share-participants — 공유 팝업에 '참여 중인 사용자' roster 표시 (feature-0009 cross-cut cycle, 코드 거주=feature-0003, Minor §12.3)
+- 사용자 요청(`/_template:entry`): `작업 화면 > 대화 탭 > '···' > 공유` 팝업에서, 해당 공유대화에 참석 중인 사용자 목록도 같이 UI에 출력. cycle owner=feature-0009(group-conversation), 코드/정본 문서=feature-0003.
+- 해석: "참석 중인 사용자" = feature-0009 멤버십 모델의 그룹 대화 멤버(roster). live-presence(현재 접속) 개념은 제품 미구현(추가 시 Redis/세션 추적 필요 — out of scope). → 기존 멤버 roster 재사용이 정합.
+- [x] `app.js` `openShareDialog`: 팝업 골격에 '참여 중인 사용자' subhead + `.share-participants` 컨테이너 추가 + 신규 `loadParticipants()` 헬퍼. 기존 게이트된 `GET /api/conversations/{cid}/members`(conversation.read.own/.any + 멤버십) **재사용 — 신규 백엔드/엔드포인트/스키마/RBAC 0**.
+- [x] roster 렌더: owner 우선 정렬 + '소유자' 배지, 아바타는 기존 `_msgAvatarEl`(아바타→Identicon 폴백) 재사용, 사용자명 `textContent`(XSS 안전), 빈/로딩/에러 상태 처리. 초기 로드 + joinable 링크 생성 직후(`_ensure_owner_membership` 로 owner 멤버십 보장) roster 갱신.
+- [x] `styles.css` `.share-participant*` 칩 스타일(`max-height:132px; overflow-y:auto` 스크롤 cap) + `index.html` app.js/styles.css 캐시버스터 `20260624-share-participants`.
+- [x] `node --check app.js` PASS + CSS brace 균형(1549=1549) + 신규 `tests/verify_share_participants.mjs` **17/17 PASS**(섹션·헬퍼·엔드포인트 재사용·owner 정렬·XSS textContent·빈/에러 상태·갱신 배선·CSS·캐시버스터).
+- [x] **§18.8 적대적 3-렌즈(security·authz / correctness / UX) 서브에이전트 리뷰 — BLOCKER/MAJOR 0**. 반영: ① 주석 정정(공유 메뉴 게이트=share.create vs members=read 비대칭 명시, read 불가 actor 는 members 404→catch 우아 처리, privacy 신규 노출 없음) ② `.share-participants` 스크롤 cap(참여자 多 시 패널 압박) ③ 빈상태 문구 정정("다른 사용자"). XSS·use-after-close·race·owner null·빈 username 모두 방어 확인. REVIEW REV-20260624T075458-gc-share-participants.
+- [x] 문서: feature-0003 `{TASK,MODIFY,FUNCTION,REVIEW}.md` + feature-0009 `{TASK,MODIFY}.md` cross-ref.
+- [ ] **남은 마감(배포 후)**: verify-completion --pre-commit → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked + 캐시버스터) → PB-0008 Windows-browser UI 실렌더 검증(worktree=WSL 미실측, WARN-only).
+
 ## TASK-20260624-scope-key-unify — 메타데이터/샘플 admin scope_key 축을 read 축으로 통일 (ds-scoped 死data 수정 + RISK/NIT) (REQ-20260624-scope-key-unify, AC-0618~0619, Major §12.3 — scope 경계, ITEM-10/11/03 공유 admin 경로)
 - [x] 死data 확정: `/_template:resume` ITEM-11 Phase 2 작동검증 중 구조 감사(4 dim)가 scope-key 축 불일치 적발 → 라이브 재현(라벨 'mysql-local' 저장 → 질의시점 해시 'mysql-ddae8975d793' 읽기 MISS). 배포 DS 20+ 전부 WebDatasources(.env 0개), KB 테이블 전부 0행(손실 데이터 없는 잠복).
 - [x] fix: app.py `_metadata_valid_scope_keys`(라벨→`ds.get('scope_key') or ds.get('key')` read축) + `/api/admin/datasources` 응답 scope_key(read축) 노출 / admin.js scope 드롭다운 value=read축·표시=라벨. read(feature-0002 agent_core/kb_metadata/insight) 무변경(이미 해시) — write 를 read 에 맞춤.

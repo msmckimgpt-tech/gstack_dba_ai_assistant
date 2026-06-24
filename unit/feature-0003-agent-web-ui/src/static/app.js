@@ -5515,6 +5515,8 @@ async function openShareDialog(cid) {
     '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
     '  </div>' +
     '  <div class="share-create-sec"></div>' +
+    '  <div class="share-mgr-subhead">참여 중인 사용자</div>' +
+    '  <div class="share-participants" aria-live="polite"></div>' +
     '  <div class="share-mgr-subhead">발급된 공유 링크</div>' +
     '  <div class="share-mgr-body" aria-live="polite"></div>' +
     '</div>';
@@ -5600,6 +5602,56 @@ async function openShareDialog(cid) {
     });
   };
 
+  // feature-0009 share-participants: 이 공유 대화에 참여 중인 멤버 roster 표시.
+  // 기존 게이트된 엔드포인트(GET /api/conversations/{cid}/members, conversation.read.own/.any
+  // + 멤버십)를 재사용한다 — 신규 데이터 경로 없음(이미 대화 전체 열람 가능한 자만 roster 를 봄).
+  // 공유 메뉴 가시성 게이트(conversation.share.create)와는 권한이 다르므로, read 불가 actor 가
+  // 팝업을 열면 members 가 404 → 아래 catch 가 우아하게 안내(roster 미노출). owner 를 맨 앞에 정렬.
+  const participantsBox = backdrop.querySelector(".share-participants");
+  const loadParticipants = async () => {
+    participantsBox.innerHTML = '<div class="share-mgr-msg">불러오는 중…</div>';
+    let mdata;
+    try {
+      mdata = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members`);
+    } catch (err) {
+      participantsBox.innerHTML = '<div class="share-mgr-msg">참여자 목록을 불러오지 못했습니다.</div>';
+      return;
+    }
+    const members = (mdata && mdata.members) || [];
+    if (!members.length) {
+      participantsBox.innerHTML = '<div class="share-mgr-msg">아직 참여 중인 다른 사용자가 없습니다. (참여 허용 링크를 공유하면 참여자가 여기에 표시됩니다.)</div>';
+      return;
+    }
+    const ownerId = mdata && mdata.owner_account_id;
+    const isOwnerMember = (m) => m.role === "owner" || (ownerId != null && m.account_id === ownerId);
+    const sorted = members.slice().sort((a, b) => {
+      const ao = isOwnerMember(a) ? 0 : 1;
+      const bo = isOwnerMember(b) ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      return String(a.username || "").localeCompare(String(b.username || ""));
+    });
+    participantsBox.innerHTML = "";
+    sorted.forEach((m) => {
+      const name = m.username || `사용자 ${m.account_id}`;
+      const chip = document.createElement("div");
+      chip.className = "share-participant";
+      chip.title = name;
+      // _msgAvatarEl: 메시지 발신자 아이콘과 동일한 아바타→Identicon 폴백 재사용(gc-avatar-identicon 정합).
+      chip.appendChild(_msgAvatarEl(m.account_id, name, "user", null, m.username || String(m.account_id)));
+      const nameEl = document.createElement("span");
+      nameEl.className = "share-participant-name";
+      nameEl.textContent = name;  // textContent → XSS 방지(escapeHtml 동등).
+      chip.appendChild(nameEl);
+      if (isOwnerMember(m)) {
+        const roleEl = document.createElement("span");
+        roleEl.className = "share-participant-role";
+        roleEl.textContent = "소유자";
+        chip.appendChild(roleEl);
+      }
+      participantsBox.appendChild(chip);
+    });
+  };
+
   // 공유 링크 생성 영역(통합 팝업 상단). 생성 권한 없으면 안내만 표시하고 목록만 노출.
   const createSec = backdrop.querySelector(".share-create-sec");
   if (!canCreate) {
@@ -5624,6 +5676,7 @@ async function openShareDialog(cid) {
       try {
         await _issueConversationShare({ cid, scopeMode: "full", joinable, seconds: preset.seconds });
         await load(); // 발급 직후 목록 갱신 — 단일 팝업 내 일관 UX.
+        await loadParticipants(); // joinable 링크 생성은 owner 멤버십 보장(_ensure_owner_membership) → roster 갱신.
       } catch (err) {
         showToast(err.message || "공유 링크 생성에 실패했습니다.", true);
       } finally {
@@ -5633,6 +5686,7 @@ async function openShareDialog(cid) {
   }
 
   await load();
+  await loadParticipants();
 }
 
 // gc-settings-notif / gc-settings-archive-leave: 대화 설정 팝업 — 좌측 conv-item ··· 메뉴의 '설정' 항목.
