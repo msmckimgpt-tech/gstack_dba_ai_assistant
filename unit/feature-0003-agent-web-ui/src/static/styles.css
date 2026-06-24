@@ -2327,6 +2327,9 @@ a { color: inherit; }
 .share-joinable-row { display: flex; align-items: center; gap: 8px; padding: 14px 20px 0; font-size: 13px; color: var(--text); cursor: pointer; }
 .share-joinable-row input { width: 16px; height: 16px; cursor: pointer; }
 .share-joinable-hint { color: var(--text-muted); font-size: 12px; }
+/* feature-0009-share-joinable-guard: 비소유자에겐 '참여 허용' 토글을 잠금(비활성)으로 표시. */
+.share-joinable-row.is-locked { cursor: not-allowed; color: var(--text-muted); }
+.share-joinable-row.is-locked input { cursor: not-allowed; opacity: 0.5; }
 .share-expiry-opt { flex: 1 1 auto; min-width: 72px; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
 
 /* gc-settings-notif: 통합 공유 팝업 — 상단 '생성' 영역 + 구분 소제목 + 하단 '발급된 링크' 목록. */
