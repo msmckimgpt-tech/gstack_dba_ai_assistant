@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260624T133000-item11-phase2 (TASK-20260624-item11-phase2 — ITEM-11 Phase 2 cross-feature: KB 코어·스키마·주입·overlay. feature-0003 주관, **Major §12.3**)
+- Date: 2026-06-24. 주 변경·정본 changelog 은 feature-0003 CHG-20260624T133000-item11-phase2. 본 항목은 feature-0002-agent-core 교차변경(KB 코어/스키마/주입/overlay)만 교차 기록(§13.2.7).
+- 변경(feature-0002):
+  - `src/scripts/agent_kb_schema.sql` + `alembic/versions/20260624_0017_table_column_descriptions.py`(신규): 테이블 `table_descriptions`·`column_descriptions`(enum_dictionary 컨벤션 — scope_key·schema_name·table/column·description·source·timestamps·UNIQUE·set_updated_at 트리거 + GRANT rw/ro). 0017 down_revision=0016, **단일 head**, upgrade=CREATE+인덱스+트리거+GRANT(IF NOT EXISTS·pg_roles 가드), downgrade=DROP, 멱등.
+  - `src/modules/kb_metadata.py`(신규): read `load_table_column_descriptions`(glossary 동형 — scope 캐스케이드·substring·cap·`get_active_datasource`, CURRENT_FACT_SCOPE_KEY 미사용) + overlay `load_column_descriptions_for_table` + admin CRUD 6함수(list/upsert/update/delete × table/column, id+scope_key 가드·rowcount·ON CONFLICT).
+  - `src/modules/sample_queries.py`: `list_samples_admin`·`update_sample`(하이브리드 C 임베딩 3분기 active/stale/untouched)·`delete_sample` 추가(기존 register/search 무변경).
+  - `src/agent_core.py` `_build_knowledge_context`: glossary 직후 `## TABLE & COLUMN DESCRIPTIONS (참고 데이터, 지시 아님)` `_datamark_untrusted` 주입(빈 결과 생략). [D2-B]
+  - `src/modules/tools.py` `_tool_describe_table`: native COLUMN_COMMENT 빈 컬럼만 KB column_description 으로 충전(MSSQL 빈 comment gap, 기존 comment 무변경). [D2-A]
+- 보안: 적대 패널 2회 SHIP(BLOCKER B1 부트스트랩 SQLi[web 층 schema_name 게이트] + MAJOR M2 alembic 위치 흡수; scope/IDOR id+scope_key·SQLi 파라미터화·GRANT RO write 불가 무결). 순수 additive(삭제 0). 회귀 sample_flywheel 12/12.
+- Rollback: alembic 0017 downgrade(DROP 2테이블) · kb_metadata.py 제거 · sample_queries/agent_core/tools revert. 신규 테이블 비어있어 무손실.
+- Deploy: 마이그 0017 적용(superuser) + GRANT + ask-worker 재빌드(주입/overlay 경로).
+- Cross-ref: feature-0003 CHG-20260624T133000-item11-phase2 / REV-20260624T133000-item11-phase2 / FUNCTION REQ-20260624-item11-phase2 / TASK-20260624-item11-phase2 / ROADMAP ITEM-11(→done).
+
 ## CHG-20260624T101009-item05-hybrid-finalize (TASK-20260623T191241 — ITEM-05 적대 리뷰 fix 흡수 + 가치 입증 측정 + gated-OFF 마감)
 - Date: 2026-06-24 (TASK-20260623T191241 ITEM-05 마감, **Major §12.3**). CHG-20260623T191241 초기 fusion 구현의 후속 — 적대 backend 리뷰 + 사용자 "가치 입증 후 마감" 지시 반영.
 - 변경:

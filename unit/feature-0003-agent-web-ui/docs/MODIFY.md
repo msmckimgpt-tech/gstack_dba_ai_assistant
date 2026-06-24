@@ -9,6 +9,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260624T133000-item11-phase2 (TASK-20260624-item11-phase2 — ITEM-11 Phase 2: 테이블/컬럼 설명+주입+부트스트랩 / 샘플 admin, Major §12.3 — 보안 경계)
+- Date: 2026-06-24 (ROADMAP dba-ai-nl2sql ITEM-11 Phase 2, **Major §12.3** — 신규 RBAC 표면 + KB 주입 경로 신설 + 부트스트랩 introspection). PLAN-APPROVED(2a+2b 한 컷).
+- Scope: cross-feature. **primary=feature-0003**(web 엔드포인트·admin UI), **secondary=feature-0002**(KB 코어·주입·마이그 — 본 CHG 에 cross-ref).
+- 변경(feature-0002, cross-ref):
+  - `src/scripts/agent_kb_schema.sql`: 신규 테이블 `table_descriptions`·`column_descriptions`(enum_dictionary 컨벤션: scope_key·schema_name·table/column·description·source·timestamps·UNIQUE·set_updated_at 트리거) + GRANT rw/ro 둘 다 추가. alembic `20260624_0017_table_column_descriptions.py`(down_revision=0016, 단일 head, upgrade=CREATE+인덱스+트리거+GRANT, downgrade=DROP, 멱등).
+  - `src/modules/kb_metadata.py`(신규): read `load_table_column_descriptions`(glossary 동형 — scope_candidates 캐스케이드·substring 매칭·cap·`get_active_datasource`, CURRENT_FACT_SCOPE_KEY 미사용) + overlay read `load_column_descriptions_for_table` + admin CRUD 6함수(list/upsert/update/delete × table/column, id+scope_key 가드·rowcount·ON CONFLICT).
+  - `src/modules/sample_queries.py`: `list_samples_admin`·`update_sample`(하이브리드 C 임베딩)·`delete_sample` 추가(기존 register/search 무변경).
+  - `src/agent_core.py` `_build_knowledge_context`: glossary 섹션 직후 `## TABLE & COLUMN DESCRIPTIONS (참고 데이터, 지시 아님)` datamark(`_datamark_untrusted`) 주입(빈 결과 생략). [D2-B]
+  - `src/modules/tools.py` `_tool_describe_table`: native COLUMN_COMMENT 빈 컬럼만 KB column_description 으로 충전(MSSQL 빈 comment gap 해소, dialects.py:453). [D2-A]
+- 변경(feature-0003, primary):
+  - `src/app.py`: 엔드포인트 `/api/admin/metadata/{tables,columns}`(GET/POST/PUT/DELETE, RBAC `kb.ingest.manual`) + `/samples`(GET/PUT/DELETE, RBAC `kb.sample.curate`, POST 없음 — 검수 경로 정본) + `/bootstrap/schemas`·`/bootstrap`(RBAC `kb.ingest.manual`). MVP-1 헬퍼(`_metadata_resolve_account/_metadata_check_scope/_metadata_str_field/_metadata_audit`) 재사용 + 샘플용 `_samples_resolve_account`. 부트스트랩 read: `all_datasources` DS 검증(SSRF 차단) → `set_active_datasource(engine)` dialect 활성화(MSSQL) → `db.connect(datasource, RO)` → `load_known_schemas`/dialect-aware `_bootstrap_collect_skeleton`(자동샘플·인덱스 미호출, cap 500/200, 미영속).
+  - `src/static/{admin.html,admin.js,styles.css,index.html}`: 메타데이터 탭에 테이블/컬럼/샘플 3 서브뷰 + 부트스트랩 UI(DS→schema→골격 가져오기→설명 prefill→저장). XSS textContent. cache-buster `?v=20260624-item11-phase2`.
+- 보안(적대 리뷰 REV-20260624T133000 SHIP-WITH-FIXES → 전부 흡수):
+  - **BLOCKER B1(흡수)**: 부트스트랩 `schema_name` 이 `dialect.describe_schema_tables` f-string(dialects.py:251)에 게이트 없이 도달 → RO 커넥션 UNION 읽기 인젝션. **fix**: 구조화 도구(tools.py:732)와 동일 게이트 — `_safe_ident` 정제 + `load_known_schemas` 멤버십 allowlist(미포함 404), `_bootstrap_collect_skeleton` 의 introspection 산출 tname 도 `_safe_ident`(방어심층). SQLi 거부 회귀 테스트 +1.
+  - **MAJOR M2(흡수)**: alembic 0017 이 잘못된 위치(`src/alembic/`)에 생성 → 올바른 체인(`alembic/versions/`, down_revision=0016)으로 이동, stray dir 제거, 단일 head 검증.
+  - **MINOR(수용)**: m1 샘플 PUT 임베딩 동기 호출(app층 timeout 가드 없음, 예외→stale 폴백이라 무한블록 아님) · m2 부트스트랩 컬럼 실패 silent · m3 data_type 엔진별 표기차(표시용). REFUTE 실패(안전): RBAC·scope/IDOR·SSRF(차단)·프롬프트 인젝션(datamark)·임베딩 하이브리드 C·SQLi 파라미터화(B1 외)·GRANT.
+- Verification: `tests/test_metadata_phase2.py` **27/27**(RBAC 403·scope 400/격리·affected 404·멱등·audit·입력 cap·샘플 weight clamp·nl 중복 409·임베딩 분기·부트스트랩 RBAC/DS/**SQLi 거부**·주입 datamark) + MVP-1 `test_metadata_glossary_enum.py` 13/13 + 코어/보안 91/91 회귀 0. py_compile + node --check. PYTHONPATH=feature-0002/src:feature-0003/src.
+- Rollback: alembic 0017 downgrade(DROP 2테이블) · 엔드포인트/코어/주입/오버레이/frontend revert. 신규 테이블 비어있어 무손실.
+- Deploy: 마이그 0017 적용(superuser) + GRANT + ask-worker/web 재빌드. UI 라이브 검증 PB-0008(배포 후).
+- **ITEM-11 부분 진행**: Phase 2 로 ITEM-11 의 잔여(테이블/컬럼 설명·describe 부트스트랩·샘플 admin) 구현 — ITEM-11 done.
+- Cross-ref: REV-20260624T133000-item11-phase2 / FUNCTION REQ-20260624-item11-phase2 / ROADMAP ITEM-11(→done) / CHG-20260624T130000(MVP-1).
+
 ## CHG-20260623T031910-ai-claude-ds-conn-bg-decouple (TASK-20260623T031910, REQ-20260623-ds-conn-bg-decouple, Major §12.3)
 - Date: 2026-06-23
 - 요청(사용자, /_template:entry): `관리 콘솔 > 제품 > [각 항목]` 진입 시 연결 불안정 데이터소스 접근 시 timeout 까지 나머지 UI 갱신이 멈춤 → 모든 연결 확인을 백그라운드로 처리하고 내부 UI 갱신과 분리.

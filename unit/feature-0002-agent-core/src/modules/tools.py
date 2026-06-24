@@ -771,6 +771,19 @@ def _tool_describe_table(conn, args: dict) -> str:
     except Exception:
         idx_results = []
 
+    # ITEM-11 Phase 2 (오버레이 A): native COLUMN_COMMENT 가 빈 컬럼을 KB(column_descriptions)
+    # 설명으로 채운다. MSSQL describe_columns 는 row[6]='' 하드코딩(dialects.py) → comment gap
+    # 해소가 목적. PG 읽기 실패는 graceful({}) — 기존 출력 그대로 유지. scope=활성 datasource.
+    kb_col_desc: dict = {}
+    try:
+        from modules import config as _cfg
+        from modules.kb_metadata import load_column_descriptions_for_table
+        kb_col_desc = load_column_descriptions_for_table(
+            schema, table, scope_key=_cfg.get_active_datasource()
+        )
+    except Exception:
+        kb_col_desc = {}
+
     parts = [f"## `{schema}`.`{table}` 구조\n"]
     parts.append("### 컬럼")
     parts.append("| column | type | nullable | key | default | extra | comment |")
@@ -779,7 +792,11 @@ def _tool_describe_table(conn, args: dict) -> str:
         if kind == "rows" and rows:
             for row in rows:
                 default_val = str(row[4]) if row[4] is not None else ""
-                comment = str(row[6] or "")[:30]
+                comment = str(row[6] or "").strip()
+                if not comment:
+                    # native comment 가 빈 경우에만 KB 설명으로 채운다(native 우선).
+                    comment = str(kb_col_desc.get(str(row[0]).strip(), "") or "")
+                comment = comment[:30]
                 parts.append(
                     f"| {row[0]} | {row[1]} | {row[2]} | {row[3]} | "
                     f"{default_val} | {row[5]} | {comment} |"

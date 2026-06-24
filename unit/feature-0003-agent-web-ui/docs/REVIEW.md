@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260624T133000-item11-phase2 [SUBAGENT:item11-phase2-backend+security+injection] **SHIP** (TASK-20260624-item11-phase2, REQ-20260624-item11-phase2, Major §12.3 — 신규 RBAC 표면 + KB 주입 경로 신설 + 부트스트랩 introspection)
+- Date: 2026-06-24
+- 분류: **리뷰 대상**(Major — 신규 RBAC 권한 표면 `kb.ingest.manual`/`kb.sample.curate` 게이트, KB 주입 경로 신설, 부트스트랩 introspection sink). §18.8 적대적 검증 패널 **2회**.
+- **1차 패널(구현 세션) — SHIP-WITH-FIXES → 전부 흡수**: backend+security 적대 리뷰가 BLOCKER B1 + MAJOR M2 적발 → 본 cycle 내 수정:
+  - **BLOCKER B1(흡수)**: 부트스트랩 `schema_name` 이 `dialect.describe_schema_tables` f-string(dialects.py:251)에 게이트 없이 도달 → RO 커넥션 UNION 읽기 인젝션. fix: `_safe_ident` 정제 + `load_known_schemas` 멤버십 allowlist(미포함 404) + `_bootstrap_collect_skeleton` 산출 tname 도 `_safe_ident`(방어심층). SQLi 거부 회귀 테스트 +1.
+  - **MAJOR M2(흡수)**: alembic 0017 이 잘못된 위치(`src/alembic/`)에 생성 → 올바른 체인(`alembic/versions/`, down_revision=0016)으로 이동, stray 제거, 단일 head 검증.
+  - MINOR(수용): 샘플 PUT 동기 임베딩(app 층 timeout 가드 없음, 예외→stale 폴백이라 무한블록 아님) · 부트스트랩 컬럼 실패 silent · data_type 엔진별 표기차(표시용).
+- **2차 패널(resume 재검증, 최종 staged 상태 — `/_template:resume`)**: B1/M2 fix 의 실제 코드 적용 + 신규 BLOCKER 부재를 3-lens 적대 서브에이전트로 final diff 에서 반증 시도 → **전원 SHIP, BLOCKER/MAJOR 0**:
+  - **security lens**(반증 후 무결): B1 SQLi fix 실재·계층화 확인 — `safe_schema=_safe_ident(schema_name)` → `if safe_schema not in set(load_known_schemas(conn)): 404` → safe_schema 만 sink 도달(`dbo' UNION...--` → `dbo UNION...--` → 미존재 schema 404). raw schema_name 은 로깅/echo 만, SQL 미도달. RBAC 모든 엔드포인트 선차단(403, 코어 미호출), wildcard 우회 없음, `kb.ingest.manual` 단독으로 sample 권한 미부여. scope/IDOR: update/delete 전부 `WHERE id=%s AND scope_key=%s`+rowcount→404, scope allowlist(datasource keys ∪ 'common'). SSRF: 부트스트랩 DS 는 `all_datasources` 멤버십만(미존재 404, 'common' 400), 좌표는 등록 record(사용자 입력 아님), SELECT-only. XSS: admin.js 메타데이터/부트스트랩 렌더 전부 textContent/replaceChildren. GRANT rw/ro 정합(RO write 불가).
+  - **backend lens**(반증 후 무결): alembic 0017 유일 head·올바른 위치·멱등(IF NOT EXISTS / pg_roles 가드 GRANT / downgrade DROP IF EXISTS). CRUD 원자성(ON CONFLICT 단일 statement · rollback/404 · UniqueViolation→409). 하이브리드 C 임베딩 3분기(active/stale/untouched). 주입 read glossary 동형(get_active_datasource · 캐스케이드 · cap). overlay non-destructive(native 빈 comment 만 충전). 순수 additive(삭제 0). 테스트 27 신뢰성(tautology 아님 — 코어 미호출·affected·임베딩 길이·SQLi 404 단언).
+  - **prompt-injection lens**(반증 후 무결): `_datamark_untrusted` 펜스 + "참고 데이터, 지시 아님" 가드, sentinel strip 으로 breakout-proof("Ignore previous instructions" 도 untrusted 데이터로만 전달). 빈 결과 섹션 생략. 부트스트랩 미영속(POST 만 영속) · heavy introspection 없음(샘플/인덱스 미호출, cap 500/200). overlay 결과도 datamark fence.
+- **독립 테스트 재실행(resume)**: phase2 **27/27** + MVP-1 회귀 **13/13** + sample_flywheel 회귀 **12/12** PASS (PYTHONPATH=feature-0002/src:feature-0003/src:worktree-root, pytest 9.0.3).
+- 패널 minor(비차단, 수용/follow-up): substring 매칭 짧은 이름 오매칭(기존 glossary 동형 — 신규 회귀 아님; 단어경계/최소길이 follow-up) · RO env(`AGENT_KB_PG_USER_RO`) 미설정 시 RW 폴백(ADR-0021 기록, SQL 은 SELECT-only) · 위 구현세션 MINOR 3건.
+- base: worktree base b652dc1. **잔여**: verify-completion --pre-commit → 머지(PR) → web+ask-worker 재배포(deploy_scope: included, 마이그 0017 superuser 적용+GRANT) → PB-0008 Windows-browser UI 시각검증(배포 후, WARN-only).
+- Verdict: **SHIP**.
+
 ## REV-20260623T010000-ai-claude-db-rule-pending-evidence [SKIPPED:docs-only-pb0008-evidence] (TASK-20260619T120000 후속 — 배포 + PB-0008 실측 기록)
 - Date: 2026-06-23 (cycle REV-20260619T120000-ai-claude-db-rule-pending-batch 의 배포·시각검증 evidence)
 - 분류 근거: docs 전용(TEST.md §3 Windows-browser Run 추가). 코드·자산·RBAC·스키마 무변경 → 리뷰 SKIP. 대상 코드는 본 cycle REV-20260619T120000 (SUBAGENT SHIP) 에서 점검 완료.
