@@ -297,6 +297,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-06-24 (TASK-20260624-item11-metadata-glossary-enum — 메타데이터 거버넌스 MVP-1(용어/ENUM CRUD), **Major §12.3 + 보안 경계(신규 RBAC)** — **PB-0008 Windows-browser DEFERRED(배포 후)**):
+  - **Environment: python/node 단위 + 적대 backend+security 리뷰** — 라이브 web 서버 미기동(드레인 cycle)이라 실 Windows 브라우저 검증은 배포 후로 연기. CHECK#13 WARN-only.
+  - **단위 PASS**: `tests/test_metadata_glossary_enum.py` **13/13**(PYTHONPATH=동일 worktree feature-0002/src:feature-0003/src — R1/R2 권한카탈로그·seed·least-priv · G403/E403 8 엔드포인트 권한게이트(코어 미호출) · GC/GU/GD·EC/EU CRUD(404/멱등/audit) · SV scope 400 · IV 입력검증 400 · LST 직렬화). 회귀 sample-feedback 15/15·permission-dependency-map 16/16 무영향. py_compile(app.py·kb_glossary.py)+node --check(admin.js).
+  - **적대 backend+security 리뷰 PASS(SHIP)**: BLOCKER/MAJOR 0 — RBAC(8/8 게이트·코어 미호출·least-priv)·scope 누수/IDOR(`WHERE id+scope_key` 격리·allowlist fail-safe·scope 미재배정)·SQLi(`%s` 전수)·XSS(textContent)·원자성(commit/rollback/close) 전수 안전. MINOR-2(scope 드롭다운 init race) 흡수. MINOR-1(audit cross-DB best-effort) 수용. REV-20260624T130000 상세.
+  - **배포 후 PB-0008 잔여**: web 재빌드·배포 후 실 Windows 브라우저로 — ① kb.ingest.manual 보유 계정에 "메타데이터" 탭 노출(미보유 숨김+서버 403) ② 용어/ENUM 서브탭 전환·scope 드롭다운(활성 ds + 공용) ③ 생성/수정/삭제(confirm) 동작 + 목록 갱신 ④ scope 격리(타 scope 비변경) 실 DB 확인 ⑤ ENUM UNIQUE 충돌 409.
+  - **Pass/Fail: PARTIAL(단위·적대 리뷰 PASS, 라이브 PB-0008 배포 후 잔여)**.
 - 2026-06-24 (TASK-20260624T105228-item08-fix-with-ai — "AI 로 고치기" 표적 재수정, **Major §12.3 + 보안 표면** — **PB-0008 Windows-browser DEFERRED(배포 후)**):
   - **Environment: node/python 단위 + 적대 리뷰** — 라이브 web 서버가 본 dev 셸에 미기동(드레인 cycle, 미배포 worktree)이라 **실 Windows 브라우저 렌더 검증은 배포 후로 연기**. CHECK#13 WARN-only.
   - **단위/로직 검증 PASS**: `tests/test_fix_with_ai.py` **10/10**(PYTHONPATH=feature-0002:feature-0003 — 가드 404/403/429·입력검증 400·정정문 1회 dispatch+원본NL 미전송+audit·**M1 인젝션 봉인 탈출 차단**·내부request 빌더) + M1 순수함수 독립 검증 + `py_compile`(app.py) + `node --check`(app.js) + CSS brace balanced.
