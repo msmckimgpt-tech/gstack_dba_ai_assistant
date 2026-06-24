@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260624-scope-key-unify" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260624-metadata-ai-autocomplete" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -616,6 +616,8 @@
             <div class="admin-meta-bootstrap-status" id="metadataBootstrapStatus" aria-live="polite"></div>
             <div class="admin-meta-bootstrap-result" id="metadataBootstrapResult"></div>
             <div class="admin-meta-bootstrap-actions" id="metadataBootstrapSaveActions" style="display:none">
+              <!-- AI 일괄 자동완성 — 빈 설명 입력란을 AI 가 채움(검토 후 저장). source='bootstrap' 저장 흐름 그대로. -->
+              <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataBootstrapAiBtn">✨ AI 로 설명 일괄 생성</button>
               <button type="button" class="btn-primary" id="metadataBootstrapSaveBtn">설명 입력분 저장</button>
               <span class="admin-meta-bootstrap-saveinfo" id="metadataBootstrapSaveInfo"></span>
             </div>
@@ -626,6 +628,8 @@
           <div class="admin-meta-form-grid" id="metadataFormFields"></div>
           <div class="admin-meta-form-actions">
             <button type="submit" class="btn-primary" id="metadataSubmitBtn">등록</button>
+            <!-- AI 단건 자동완성 — 식별 필드 입력 후 클릭하면 설명/정의/라벨/질문을 AI 가 채움(검토 후 등록). -->
+            <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataSuggestBtn">✨ AI 자동완성</button>
             <button type="button" class="btn-secondary" id="metadataCancelBtn" style="display:none">취소</button>
           </div>
         </form>
@@ -722,7 +726,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260624-scope-key-unify"></script>
+  <script src="/static/admin.js?v=20260624-metadata-ai-autocomplete"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260623-rn-0623"></script>

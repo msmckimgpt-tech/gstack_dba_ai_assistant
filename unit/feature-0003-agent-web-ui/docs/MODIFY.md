@@ -9,6 +9,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260624T170757-metadata-ai-autocomplete (TASK-20260624-metadata-ai-autocomplete — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC 표면)
+- Date: 2026-06-24. 사용자 요청(entry persona): "관리 콘솔 > 메타데이터를 실제 관리자가 처음 쓰기 까다롭다 — 모든 탭에 AI 자동완성" + "창이 길어지면 스크롤이 없어 하단 항목을 못 본다". **중단 세션 resume** — 원본 세션이 session limit 으로 프론트 일괄 함수 삽입 직후 중단 → 본 cycle 이 잔여(CSS·테스트·docs·panel·게이트) 완수.
+- Scope: feature-0003 web only. 마이그레이션 없음, gateway·credential·ROADMAP·embedding provider·agent-core 무변경. 기존 metadata 거버넌스(ITEM-11) 폼/부트스트랩 UI 에 AI 채움 버튼만 추가.
+- 내용(`src/app.py`): 신규 엔드포인트 2개 —
+  - `POST /api/admin/metadata/{sub}/suggest`(단건): 5 서브뷰(glossary→definition·enums→label·tables/columns→description·samples→nl_question)의 식별 필드 → 설명 1건 생성. RBAC 서브뷰별(glossary/enums/tables/columns=kb.ingest.manual, samples=kb.sample.curate). tables/columns 는 datasource 지정 시 실제 스키마(컬럼) best-effort grounding(부트스트랩 introspection 재사용 — `_safe_ident`+`load_known_schemas` allowlist). **생성물 영속 안 함**(기존 등록/수정 저장 흐름).
+  - `POST /api/admin/metadata/bootstrap/describe`(일괄): 골격(테이블/컬럼)을 1 LLM 호출로 설명 생성, 프론트가 청크 단위 호출. RBAC kb.ingest.manual. 식별자는 프롬프트 텍스트로만(SQL 미사용). 결과 {schema,table[,column],description} 리스트, 빈 입력란만 채움.
+  - 헬퍼: `_metadata_resolve_account_perm`(perm 가변 RBAC)·`_metadata_introspect_table`(grounding)·`_metadata_suggest_messages`/`_metadata_bulk_describe_messages`(프롬프트)·`_metadata_parse_json_object`(코드펜스/전후텍스트 허용 JSON 추출)·`_metadata_bulk_shape_results`(대소문자·공백무시 매칭)·`_metadata_llm_complete`(비스트리밍 공용 호출).
+  - **비용/DoS 방어(§18.8 panel BLOCKING 적발 수정)**: `_METADATA_FIELD_CAPS` 에 `"sql": 8000` 추가(samples sql 이 프롬프트에 raw 삽입 → 입력 cap 으로 거대 프롬프트 차단, `_metadata_str_field` 강제) + 두 엔드포인트에 `_search_rate_limit_check(max_per_min=_METADATA_AI_RATE_PER_MIN=20)`(per-account 비용 DoS, RBAC 통과 후·LLM 전, 429 — fix-with-ai 동형).
+- 내용(`src/static/admin.html`): 단건 버튼 `#metadataSuggestBtn`(폼 액션) + 일괄 버튼 `#metadataBootstrapAiBtn`(부트스트랩 저장 액션). cache-buster `?v=20260624-metadata-ai-autocomplete`(styles+admin.js).
+- 내용(`src/static/admin.js`): `_metaSuggestFill`(단건 — 서브뷰별 REQUIRES 검증·scope datasource grounding·target 필드 채움·진행 disable/복구)·`_metaScopeDatasourceKey`·`_metaBootstrapAiFill`(일괄 — 청크 순차·진행률·부분실패 카운트)·`_metaBootstrapApplyDescriptions`(빈 입력란만, 수동입력 보존). 이벤트 바인딩 `dataset.bound` 가드. **XSS: 생성물은 input.value 로만(innerHTML 무사용)**.
+- 내용(`src/static/styles.css`): (1) **스크롤 수정** — `.admin-pane[data-admin-pane="metadata"].is-active` 를 dashboard/usage/release-notes 와 동일한 `overflow-y:auto; overflow-x:hidden` 목록(TASK-0167)에 추가. metadata pane 은 scope+서브탭+부트스트랩+폼+리스트의 단순 세로 흐름인데 `.admin-workspace`(overflow:hidden+100vh) 하위에서 pane 자체 스크롤이 없어 창이 길면 하단이 잘렸음 → 해소. 셀렉터 속성 한정이라 타 pane 무영향. (2) `.admin-meta-ai-btn` — btn-secondary 위 옅은 primary 강조(color-mix, 선례 다수) + disabled progress 커서.
+- 내용(`tests/test_metadata_ai_autocomplete.py`, 신규): 18 케이스 — RBAC(서브뷰별·samples=sample.curate)·U404·필수필드 400·정상(definition/nl_question)·cap·LLM오류 전파·bootstrap RBAC/mode/빈tables/정형(tables·columns)·미파싱 502·parse_json 단위 + **sql cap 400·rate-limit 429(LLM 미호출 단언)**.
+- 보안: RBAC 서브뷰별 게이트(LLM/introspection 전 검사) · 입력 cap 전 필드(+sql) · per-account rate-limit · 생성물 영속 안 함(검토 후 별도 저장) · XSS input.value · introspection allowlist(부트스트랩 SQLi 방어 재사용) · LLM 응답 신뢰경계(parse/shape isinstance 가드·cap). §18.8 2-lens 적대(backend-security+frontend/css): 백엔드 BLOCKING 2건(sql cap·rate-limit) 적발→수정, 프론트 SHIP.
+- Verification: `tests/test_metadata_ai_autocomplete.py` **18/18**(PYTHONPATH=feature-0002:feature-0003 실측). py_compile(app.py) OK. UI 실렌더 = PB-0008(배포 후).
+- Deploy: deploy_scope: included(프로젝트 전역) — web 재빌드(정적+엔드포인트). cache-buster bump 로 신규 admin.js/styles.css 강제 로드. 마이그 없음.
+- Rollback: app.py(엔드포인트 2+헬퍼+cap+rate) / admin.{html,js} 버튼·핸들러 / styles.css metadata overflow+버튼 / 테스트 제거 → AI 자동완성·스크롤 수정 제거(기존 metadata CRUD 무영향).
+- Files: src/app.py, src/static/admin.html, src/static/admin.js, src/static/styles.css, tests/test_metadata_ai_autocomplete.py, docs/{TASK,MODIFY,REVIEW,REPORT}.md.
+
 ## CHG-20260624T160000-scope-key-unify (TASK-20260624-scope-key-unify — 메타데이터/샘플 admin scope_key 축을 read 축으로 통일: ds-scoped 死data 수정, Major §12.3 — scope 경계)
 - Date: 2026-06-24. `/_template:resume` 의 ITEM-11 Phase 2 작동검증 중 구조 감사(4 dim)가 적발한 scope-key 축 불일치 死data 수정. ITEM-10(용어/ENUM)·ITEM-11(테이블/컬럼 설명)·ITEM-03(샘플 검수) admin **공유 경로**.
 - 死data: admin write=datasource **라벨**(all_datasources dict 키), 질의 read=`agent_core.set_active_datasource(_ds.get('scope_key') or _ds.get('key'))`=DB-등록 ds 의 compute_scope_key **해시** → 라벨≠해시 로 DB ds 의 ds-scoped 설명/샘플이 'common' 외 영영 안 읽힘(라이브 재현: 라벨 'mysql-local' 저장 → 질의시점 해시 'mysql-ddae8975d793' 읽기 MISS). 배포 DS 20+ 전부 WebDatasources(.env 0), KB 테이블 전부 0행이라 손실 데이터 없는 잠복.

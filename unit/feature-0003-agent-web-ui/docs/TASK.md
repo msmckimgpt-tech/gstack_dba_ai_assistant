@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260624-metadata-ai-autocomplete — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정 (중단 세션 resume, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC)
+- 출처: 사용자 요청(entry persona) "관리 콘솔 > 메타데이터를 실제 관리자가 처음 쓰기 까다롭다 — 모든 탭에 AI 자동완성" + "창이 길어지면 스크롤이 없어 하단 항목을 못 본다". 원본 세션이 session limit 으로 프론트 일괄 함수 삽입 직후 중단 → 본 cycle 이 resume 으로 잔여(CSS·테스트·docs·panel·게이트) 완수.
+- 범위: feature-0003 web only. 마이그 없음, agent-core·gateway·credential·ROADMAP 무변경. 기존 metadata 거버넌스(ITEM-11) 폼/부트스트랩에 AI 채움 버튼 추가.
+- [x] 백엔드(기 작성, 미커밋): suggest(단건 5 서브뷰)·bootstrap/describe(골격 일괄) 엔드포인트 + 헬퍼(grounding/프롬프트/JSON parse/shape/LLM). RBAC 서브뷰별(samples=kb.sample.curate, 나머지=kb.ingest.manual). 영속 안 함.
+- [x] 프론트(기 작성, 미커밋): `_metaSuggestFill`·`_metaBootstrapAiFill`·`_metaBootstrapApplyDescriptions` + 버튼 2개. XSS input.value. dataset.bound 가드.
+- [x] CSS: metadata pane `overflow-y:auto`(스크롤 수정 — dashboard 동형, 타 pane 무영향) + `.admin-meta-ai-btn` 강조. cache-buster bump(`?v=20260624-metadata-ai-autocomplete`).
+- [x] 테스트(신규 18): RBAC·라우팅·입력검증·정상(definition/nl_question)·cap·LLM오류·bootstrap 정형·parse 단위 + sql cap·rate-limit 429. 18/18 PASS.
+- [x] §18.8 panel(2-lens 적대): backend BLOCKING 2건(sql cap·rate-limit) 적발→수정+회귀가드, frontend SHIP. REV-20260624T170757.
+- [ ] verify-completion → commit(Task-Cycle trailer) → push → PR → 머지 → web 재배포(deploy_scope: included) → PB-0008(5 서브뷰 AI 버튼 동작 + 스크롤) → 마감.
 ## TASK-20260624T075458-gc-share-participants — 공유 팝업에 '참여 중인 사용자' roster 표시 (feature-0009 cross-cut cycle, 코드 거주=feature-0003, Minor §12.3)
 - 사용자 요청(`/_template:entry`): `작업 화면 > 대화 탭 > '···' > 공유` 팝업에서, 해당 공유대화에 참석 중인 사용자 목록도 같이 UI에 출력. cycle owner=feature-0009(group-conversation), 코드/정본 문서=feature-0003.
 - 해석: "참석 중인 사용자" = feature-0009 멤버십 모델의 그룹 대화 멤버(roster). live-presence(현재 접속) 개념은 제품 미구현(추가 시 Redis/세션 추적 필요 — out of scope). → 기존 멤버 roster 재사용이 정합.

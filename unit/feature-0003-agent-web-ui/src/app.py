@@ -24865,7 +24865,15 @@ _METADATA_FIELD_CAPS = {
     "schema_name": 128, "table_name": 128, "column_name": 128, "code": 256, "label": 1000,
     # ITEM-11 Phase 2: 테이블/컬럼 설명·샘플 필드 cap. description 은 definition 과 동일(4000).
     "description": 4000, "nl_question": 2000, "domain": 64,
+    # samples 자동완성 입력 — SQL 본문은 _metadata_suggest_messages 에서 프롬프트에 raw 삽입되므로
+    # 입력 cap 으로 거대 프롬프트/토큰·비용 폭주를 차단(다른 식별 필드와 동일하게 _metadata_str_field 가 강제).
+    "sql": 8000,
 }
+
+# 메타데이터 AI 자동완성(suggest·bootstrap) per-account rate-limit — LLM dispatch 당 비용이 발생하므로
+# fix-with-ai(_FIX_WITH_AI_RATE_PER_MIN)와 동일 패턴으로 비용 DoS 를 차단한다. bootstrap 은 청크 순차
+# 호출이라 단건보다 여유 있게 잡되, 무한 연사는 막는다.
+_METADATA_AI_RATE_PER_MIN = 20
 
 
 def _metadata_resolve_account(request: Request):
@@ -26078,6 +26086,409 @@ def _bootstrap_collect_skeleton(conn, _dialects, schema_name: str) -> list:
             ccur.close()
         out.append({"schema_name": schema_name, "table_name": tname, "columns": cols})
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TASK-20260624-item11-metadata-ai-autocomplete — 메타데이터 AI 자동완성
+#   관리자가 식별 필드(용어/테이블/컬럼/코드/SQL)만 입력하면 설명·정의·라벨·질문을
+#   AI 가 채워 첫 사용 부담을 낮춘다(영속 안 함 — 검토 후 사람이 등록/저장).
+#   · POST /api/admin/metadata/{sub}/suggest        — 단건 자동완성(5 서브뷰)
+#   · POST /api/admin/metadata/bootstrap/describe    — 골격 일괄 자동완성(테이블/컬럼)
+# LLM 경로는 제품 프롬프트 자동작성(admin_generate_product_prompt)과 동일 재사용
+# (_get_llm_client + OpenAI 호환 chat.completions.create). tables/columns 는 실제
+# 스키마(컬럼)에 best-effort grounding 해 날조를 줄인다. RBAC: glossary/enums/tables/
+# columns=kb.ingest.manual, samples=kb.sample.curate(서브뷰별 게이트). 생성물은 어디에도
+# 저장되지 않으며 기존 CRUD/부트스트랩 저장 경로(명시 권한 편집)로만 영속된다.
+# ════════════════════════════════════════════════════════════════════════════
+
+# 자동완성 대상 필드(서브뷰 → 생성할 설명 필드) — 프론트가 이 키에 결과를 채운다.
+_METADATA_SUGGEST_TARGET = {
+    "glossary": "definition",
+    "enums": "label",
+    "tables": "description",
+    "columns": "description",
+    "samples": "nl_question",
+}
+
+# 자동완성에 필요한 최소 식별 입력(없으면 400) — 빈 식별자로 날조 생성 방지.
+_METADATA_SUGGEST_REQUIRES = {
+    "glossary": ["term"],
+    "enums": ["table_name", "column_name", "code"],
+    "tables": ["table_name"],
+    "columns": ["table_name", "column_name"],
+    "samples": ["sql"],
+}
+
+# 서버측 서브뷰별 RBAC — admin.js _METADATA_SUBTAB_PERM 과 동치. samples 만 kb.sample.curate.
+_METADATA_SUBTAB_PERM_SERVER = {
+    "glossary": "kb.ingest.manual",
+    "enums": "kb.ingest.manual",
+    "tables": "kb.ingest.manual",
+    "columns": "kb.ingest.manual",
+    "samples": "kb.sample.curate",
+}
+
+# 부트스트랩 일괄 자동완성 — 1 호출당 처리 테이블 상한. 프론트가 청크로 분할 호출해
+# 진행률을 표면화하고 단일 호출 지연·토큰 폭주를 막는다.
+_METADATA_BULK_MAX_TABLES = 20
+
+
+def _metadata_resolve_account_perm(request: Request, perm: str):
+    """서브뷰별 RBAC 게이트 — (account, None) 또는 (None, JSONResponse[401/403/500]).
+    _metadata_resolve_account(kb.ingest.manual 고정)의 perm 가변 버전(samples=kb.sample.curate)."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return None, _json_error("db connection failed", 500)
+    try:
+        account, error = _require_permission(request, conn, perm)
+        if error:
+            return None, error
+        return account, None
+    finally:
+        conn.close()
+
+
+def _metadata_qualname(schema_name, table_name) -> str:
+    return ".".join([p for p in [str(schema_name or "").strip(), str(table_name or "").strip()] if p])
+
+
+def _metadata_introspect_table(datasource_key: str, schema_name: str, table_name: str):
+    """tables/columns 자동완성 grounding — 대상 테이블의 실제 컬럼 목록을 best-effort 조회.
+
+    부트스트랩 introspection 경로 재사용(RO 유저·dialect-aware·schema allowlist). datasource 미지정
+    /'common'/schema 미지정/조회 실패 시 None(=ungrounded — 일반 설명으로 진행). 식별자는
+    _safe_ident + load_known_schemas 멤버십으로만 통과(부트스트랩 SQLi 방어와 동일).
+    """
+    key = str(datasource_key or "").strip().lower()
+    schema_name = str(schema_name or "").strip()
+    table_name = str(table_name or "").strip()
+    if not key or key == "common" or not table_name or not schema_name:
+        return None
+    ds, scope_key, derr = _bootstrap_resolve_datasource(key)
+    if derr or not ds:
+        return None
+    from modules import config as _cfg
+    from modules import db as _db
+    from modules import dialects as _dialects
+    from modules import schema as _schema
+    from modules.tools import _safe_ident as _safe_ident_fn
+    conn = None
+    try:
+        _bootstrap_activate_dialect(ds, scope_key)
+        conn = _db.connect(datasource=ds, autocommit=True)
+        known = set(_schema.load_known_schemas(conn) or [])
+        safe_schema = _safe_ident_fn(schema_name)
+        if safe_schema not in known:
+            return None
+        safe_table = _safe_ident_fn(table_name)
+        dialect = _dialects.active()
+        cols: list = []
+        cur = conn.cursor()
+        try:
+            cur.execute(dialect.describe_columns(safe_schema, safe_table))
+            for crow in (cur.fetchall() or []):
+                if crow and crow[0]:
+                    cols.append({"column_name": str(crow[0]), "data_type": str(crow[1] or "").lower()})
+                if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
+                    break
+        finally:
+            cur.close()
+        return {"schema_name": schema_name, "table_name": table_name, "columns": cols} if cols else None
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "metadata suggest introspection 실패 ds=%s schema=%s table=%s", key, schema_name, table_name, exc_info=True
+        )
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        try:
+            _cfg.set_active_datasource(None)
+        except Exception:
+            pass
+
+
+def _metadata_grounding_cols_line(grounding) -> str:
+    if not grounding or not grounding.get("columns"):
+        return ""
+    cols = grounding["columns"][:60]
+    names = ", ".join(
+        (f"{c['column_name']}({c['data_type']})" if c.get("data_type") else c["column_name"]) for c in cols
+    )
+    return f"이 테이블의 실제 컬럼: {names}\n"
+
+
+def _metadata_grounding_coltype(grounding, column_name) -> str:
+    if not grounding or not column_name:
+        return ""
+    target = str(column_name).strip().lower()
+    for c in (grounding.get("columns") or []):
+        if str(c.get("column_name") or "").strip().lower() == target:
+            return c.get("data_type") or ""
+    return ""
+
+
+def _metadata_suggest_messages(sub: str, fields: dict, grounding) -> list:
+    """서브뷰별 자동완성 프롬프트 — 식별 필드 → 설명/정의/라벨/질문 1건. 본문만 출력하도록 지시."""
+    f = fields
+    if sub == "glossary":
+        body = (
+            "당신은 사내 데이터 분석 용어사전을 작성하는 전문가입니다.\n"
+            f"다음 도메인 용어의 '정의'를 한국어 1~3문장으로 간결하게 작성하세요.\n"
+            f"용어: {f.get('term', '')}\n"
+            "판정 기준·계산 방식이 있으면 한 줄로 포함하세요. 정의 본문만 출력하고 따옴표·머리말을 붙이지 마세요."
+        )
+    elif sub == "enums":
+        body = (
+            "당신은 데이터베이스 코드값의 의미 라벨을 다는 전문가입니다.\n"
+            f"테이블 {f.get('table_name', '')}, 컬럼 {f.get('column_name', '')} 의 코드 값 "
+            f"'{f.get('code', '')}' 가 의미하는 한국어 라벨(짧은 명사구)을 출력하세요.\n"
+            "라벨 텍스트만 출력하고 설명·따옴표·머리말을 붙이지 마세요."
+        )
+    elif sub == "tables":
+        cols_line = _metadata_grounding_cols_line(grounding)
+        body = (
+            "당신은 데이터베이스 테이블 카탈로그를 작성하는 전문가입니다.\n"
+            f"테이블 {_metadata_qualname(f.get('schema_name'), f.get('table_name'))} 가 담는 데이터와 용도를 "
+            "한국어 1~3문장으로 설명하세요.\n"
+            f"{cols_line}"
+            "설명 본문만 출력하고 머리말·따옴표를 붙이지 마세요. 실제 컬럼이 주어졌으면 그에 근거하고, "
+            "없으면 일반적이되 단정적이지 않게 작성하세요."
+        )
+    elif sub == "columns":
+        dtype = _metadata_grounding_coltype(grounding, f.get("column_name"))
+        body = (
+            "당신은 데이터베이스 컬럼 사전을 작성하는 전문가입니다.\n"
+            f"컬럼 {_metadata_qualname(f.get('schema_name'), f.get('table_name'))}.{f.get('column_name', '')}"
+            f"{(' (' + dtype + ')') if dtype else ''} 이 담는 값과 의미를 한국어 1~2문장으로 설명하세요.\n"
+            "설명 본문만 출력하고 머리말·따옴표를 붙이지 마세요."
+        )
+    else:  # samples
+        body = (
+            "당신은 SQL 의 의도를 자연어 질문으로 옮기는 전문가입니다.\n"
+            "다음 SQL 이 답하는 자연어 질문을 한국어 1문장으로 작성하세요.\n"
+            f"SQL:\n{f.get('sql', '')}\n"
+            "질문 문장만 출력하고 머리말·따옴표·SQL 재출력을 하지 마세요."
+        )
+    return [{"role": "user", "content": body}]
+
+
+def _metadata_bulk_describe_messages(mode: str, tables: list) -> list:
+    """골격 일괄 자동완성 프롬프트 — JSON 객체로만 응답하도록 강하게 지시."""
+    lines = []
+    for t in tables:
+        q = _metadata_qualname(t.get("schema_name"), t.get("table_name"))
+        if mode == "columns":
+            cols = ", ".join(
+                (f"{c['column_name']}({c['data_type']})" if c.get("data_type") else c["column_name"])
+                for c in (t.get("columns") or [])
+            )
+            lines.append(f"- {q}: {cols or '(컬럼 정보 없음)'}")
+        else:
+            cols = ", ".join(c["column_name"] for c in (t.get("columns") or [])[:40])
+            lines.append(f"- {q} (컬럼: {cols or '없음'})")
+    skeleton = "\n".join(lines)
+    if mode == "tables":
+        instruction = (
+            "각 테이블이 담는 데이터/용도를 한국어 1~2문장으로 설명하세요.\n"
+            "반드시 아래 JSON 객체로만 출력하세요(키=테이블 이름, 값=설명 문자열). 코드펜스·다른 텍스트 금지:\n"
+            '{"테이블이름": "설명", ...}'
+        )
+    else:
+        instruction = (
+            "각 컬럼이 담는 값/의미를 한국어 1문장으로 설명하세요.\n"
+            "반드시 아래 중첩 JSON 객체로만 출력하세요(키=테이블 이름, 값={컬럼 이름: 설명}). 코드펜스·다른 텍스트 금지:\n"
+            '{"테이블이름": {"컬럼이름": "설명", ...}, ...}'
+        )
+    body = (
+        "당신은 데이터베이스 카탈로그를 작성하는 전문가입니다. 아래 스키마 골격에 설명을 작성합니다.\n\n"
+        f"=== 골격 ===\n{skeleton}\n\n{instruction}"
+    )
+    return [{"role": "user", "content": body}]
+
+
+def _metadata_parse_json_object(text):
+    """LLM 출력에서 JSON 객체 추출 — 코드펜스/전후 텍스트 허용. 실패 시 None."""
+    if not text:
+        return None
+    s = str(text).strip()
+    if s.startswith("```"):
+        # ```json ... ``` 또는 ``` ... ``` 펜스 제거.
+        parts = s.split("```")
+        if len(parts) >= 2:
+            s = parts[1]
+            if s.lstrip()[:4].lower() == "json":
+                s = s.lstrip()[4:]
+    s = s.strip()
+    try:
+        obj = json.loads(s)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        pass
+    try:
+        i = s.index("{")
+        j = s.rindex("}")
+        obj = json.loads(s[i:j + 1])
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def _metadata_bulk_shape_results(mode: str, tables: list, parsed: dict) -> list:
+    """LLM JSON 응답을 프론트가 입력란에 매칭할 수 있는 리스트로 정형(대소문자/공백 무시 매칭)."""
+    out: list = []
+    pidx = {str(k).strip().lower(): v for k, v in parsed.items()} if isinstance(parsed, dict) else {}
+    cap = _METADATA_FIELD_CAPS["description"]
+    for t in tables:
+        tname = t["table_name"]
+        pv = pidx.get(tname.strip().lower())
+        if mode == "tables":
+            if isinstance(pv, str) and pv.strip():
+                out.append({"schema_name": t.get("schema_name", ""), "table_name": tname,
+                            "description": pv.strip()[:cap]})
+        else:
+            if isinstance(pv, dict):
+                cidx = {str(k).strip().lower(): v for k, v in pv.items()}
+                for c in (t.get("columns") or []):
+                    cv = cidx.get(c["column_name"].strip().lower())
+                    if isinstance(cv, str) and cv.strip():
+                        out.append({"schema_name": t.get("schema_name", ""), "table_name": tname,
+                                    "column_name": c["column_name"], "description": cv.strip()[:cap]})
+    return out
+
+
+async def _metadata_llm_complete(messages: list, *, task: str = "summary", temperature: float = 0.3):
+    """메타데이터 AI 자동완성 공용 LLM 호출(비스트리밍). (text, meta, None) 또는 (None, None, JSONResponse).
+
+    admin_generate_product_prompt 비스트리밍 경로와 동일 패턴 — 단일 uvicorn 루프를 막지 않도록
+    run_in_executor 로 동기 호출을 오프로드. task = max_tokens cap 키('summary'=단건, 'prompt_gen'=일괄).
+    """
+    from modules.llm import _get_llm_client
+    llm_model = _resolve_session_default_model()
+    client = _get_llm_client(model=llm_model)
+    if client is None:
+        return None, None, _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
+    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 60}
+    mt = max_tokens_for_model(llm_model, task)
+    if mt is not None:
+        create_kwargs["max_tokens"] = mt
+    if model_supports_temperature(llm_model):
+        create_kwargs["temperature"] = temperature
+    try:
+        resp = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: client.chat.completions.create(**create_kwargs)
+        )
+        choice = resp.choices[0]
+        text = (choice.message.content or "").strip()
+        truncated = getattr(choice, "finish_reason", None) == "length"
+    except Exception as exc:  # noqa: BLE001 — 어떤 LLM 오류든 502 로 변환
+        return None, None, _json_error(f"LLM 생성 실패: {exc}", 502)
+    return text, {"model": llm_model, "truncated": truncated}, None
+
+
+@app.post("/api/admin/metadata/{sub}/suggest")
+async def admin_metadata_suggest(sub: str, request: Request) -> JSONResponse:
+    """메타데이터 단건 AI 자동완성 — 식별 필드 → 설명/정의/라벨/질문 1건(영속 안 함).
+
+    RBAC 는 서브뷰별(glossary/enums/tables/columns=kb.ingest.manual, samples=kb.sample.curate).
+    tables/columns 는 datasource 지정 시 실제 스키마(컬럼)에 best-effort grounding.
+    """
+    sub = str(sub or "").strip().lower()
+    target = _METADATA_SUGGEST_TARGET.get(sub)
+    if not target:
+        return _json_error("알 수 없는 메타데이터 서브뷰입니다.", 404)
+    perm = _METADATA_SUBTAB_PERM_SERVER.get(sub, "kb.ingest.manual")
+    account, error = _metadata_resolve_account_perm(request, perm)
+    if error:
+        return error
+    # per-account rate-limit(429) — LLM dispatch 비용 DoS 방어(fix-with-ai 와 동일 패턴). RBAC 통과 후 검사.
+    if not _search_rate_limit_check(int(account.get("id") or 0), max_per_min=_METADATA_AI_RATE_PER_MIN):
+        return _json_error("자동완성 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+    data = await _metadata_read_json(request)
+    fields: dict = {}
+    for k in ("term", "schema_name", "table_name", "column_name", "code", "sql", "nl_question"):
+        if k in data:
+            v, ferr = _metadata_str_field(data, k, required=False)
+            if ferr:
+                return ferr
+            fields[k] = v
+    for req_k in _METADATA_SUGGEST_REQUIRES.get(sub, []):
+        if not fields.get(req_k):
+            return _json_error(f"자동완성하려면 먼저 '{req_k}' 를 입력하세요.", 400)
+    grounding = None
+    if sub in ("tables", "columns"):
+        grounding = _metadata_introspect_table(
+            str(data.get("datasource") or ""), fields.get("schema_name") or "", fields.get("table_name") or ""
+        )
+    messages = _metadata_suggest_messages(sub, fields, grounding)
+    text, meta, lerr = await _metadata_llm_complete(messages, task="summary")
+    if lerr:
+        return lerr
+    cap = _METADATA_FIELD_CAPS.get(target)
+    suggestion = text or ""
+    if cap and len(suggestion) > cap:
+        suggestion = suggestion[:cap].rstrip()
+    return JSONResponse({
+        "target": target,
+        "suggestion": suggestion,
+        "meta": {**(meta or {}), "grounded": bool(grounding and grounding.get("columns"))},
+    })
+
+
+@app.post("/api/admin/metadata/bootstrap/describe")
+async def admin_metadata_bootstrap_describe(request: Request) -> JSONResponse:
+    """부트스트랩 일괄 AI 자동완성 — 골격(테이블/컬럼)의 설명을 1 LLM 호출로 생성(영속 안 함).
+
+    프론트가 청크 단위(≤_METADATA_BULK_MAX_TABLES)로 호출해 진행률을 표면화한다. RBAC kb.ingest.manual.
+    골격 식별자는 프롬프트 텍스트로만 사용(SQL 미사용)하므로 클라 제공 골격을 cap 후 신뢰한다.
+    반환 results 는 {schema_name, table_name[, column_name], description} 리스트 — 프론트가 입력란에 채움.
+    """
+    account, error = _metadata_resolve_account(request)  # kb.ingest.manual
+    if error:
+        return error
+    # per-account rate-limit(429) — 청크 일괄 LLM dispatch 비용 DoS 방어. RBAC 통과 후 검사.
+    if not _search_rate_limit_check(int(account.get("id") or 0), max_per_min=_METADATA_AI_RATE_PER_MIN):
+        return _json_error("일괄 자동완성 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+    data = await _metadata_read_json(request)
+    mode = str(data.get("mode") or "tables").strip().lower()
+    if mode not in ("tables", "columns"):
+        return _json_error("mode 는 tables/columns 중 하나여야 합니다.", 400)
+    raw_tables = data.get("tables")
+    if not isinstance(raw_tables, list) or not raw_tables:
+        return _json_error("tables 골격이 필요합니다.", 400)
+    if len(raw_tables) > _METADATA_BULK_MAX_TABLES:
+        return _json_error(f"1회 호출은 테이블 {_METADATA_BULK_MAX_TABLES}개 이하만 처리합니다.", 400)
+    tables: list = []
+    for t in raw_tables:
+        if not isinstance(t, dict):
+            continue
+        tname = str(t.get("table_name") or "").strip()[:128]
+        if not tname:
+            continue
+        sname = str(t.get("schema_name") or "").strip()[:128]
+        cols: list = []
+        for c in (t.get("columns") or [])[:_BOOTSTRAP_MAX_COLS_PER_TABLE]:
+            if not isinstance(c, dict):
+                continue
+            cn = str(c.get("column_name") or "").strip()[:128]
+            if cn:
+                cols.append({"column_name": cn, "data_type": str(c.get("data_type") or "").strip()[:64]})
+        tables.append({"schema_name": sname, "table_name": tname, "columns": cols})
+    if not tables:
+        return _json_error("유효한 테이블이 없습니다.", 400)
+    messages = _metadata_bulk_describe_messages(mode, tables)
+    text, meta, lerr = await _metadata_llm_complete(messages, task="prompt_gen", temperature=0.2)
+    if lerr:
+        return lerr
+    parsed = _metadata_parse_json_object(text)
+    if parsed is None:
+        return _json_error("AI 응답을 해석할 수 없습니다. 다시 시도하세요.", 502)
+    results = _metadata_bulk_shape_results(mode, tables, parsed)
+    return JSONResponse({"mode": mode, "results": results, "meta": {**(meta or {}), "count": len(results)}})
 
 
 # ════════════════════════════════════════════════════════════════════════════
