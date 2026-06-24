@@ -34,14 +34,14 @@ source_of_truth: true
 - [x] TASK-0011-5 make test green(회귀 0) + 프로덕션(/app) import smoke 검증
 <!-- 순서 재설계(/plan-eng-review, decision 5cc24689): config 가 db 보다 먼저 — db 의 from .config import * 강결합 때문. config(L0 leaf)→db(L1)→레이어순, 모듈 1개/step. -->
 - [x] TASK-0011-6 **P5a Step 2 — config → shared/config 이동 + modules/config alias shim (비파괴)**
-- [ ] TASK-0011-7 P5a Step 3 — db.py → shared/db.py 이동 + modules/db.py shim(비파괴) [후속 PR]
-- [ ] TASK-0011-8 P5a Step 4 — conn_health·datasources 등 L1 cross-feature 공통 (레이어순) [후속]
+- [x] TASK-0011-7 **P5a Step 3 — db.py → shared/db.py 이동 + modules/db.py alias shim (비파괴)**
+- [ ] TASK-0011-8 P5a Step 4 — conn_health·datasources 등 L1 cross-feature 공통 (레이어순; db 의 lazy back-dep 정리) [후속]
 - [ ] TASK-0011-9 P5a Step 5 — import 점진 마이그레이션 + shim 제거 [후속]
 - [ ] TASK-0011-10 P5a Step 6 — feature 단위 Dockerfile 분리 + 브라우저 QA [후속]
 - [ ] TASK-0011-11 동반(저위험) — #4 GDPR gap 문서화 + CODEBASE_MAP stale 정정(0007~0010 누락·shared 구식) [후속]
 
 ## 4. In Progress
-- 없음 (Step 2=config 완료; Step 3=db 부터 별도 cycle/PR)
+- 없음 (Step 3=db 완료; Step 4=conn_health/datasources 부터 별도 cycle/PR)
 
 ## 5. Blocked
 - 없음
@@ -54,14 +54,14 @@ source_of_truth: true
   271+ 심볼·monkeypatch 완전 보존. make test 회귀 0, /app alias 완전성 smoke PASS.
 
 ## 7. Next Action
-- P5a Step 3 (db.py → shared/db.py + shim) 을 별도 Critical cycle/PR 로. db 의 config 의존은 이제 shared/config 로 해소됨.
+- P5a Step 4 (conn_health·datasources 등 L1 을 shared 로 + db 의 lazy back-dep `from modules import` → `from shared import` 정리) 을 별도 cycle/PR 로.
 
-## 8. Completion Checklist (P5a Step 2 = config cycle)
-- [x] AC(alias 가 두 feature·컨테이너·monkeypatch 보존)가 구현되었다
+## 8. Completion Checklist (P5a Step 3 = db cycle)
+- [x] AC(alias 가 db 모듈객체접근·underscore·__all__·config 재노출 체인·monkeypatch 보존)가 구현되었다
 - [x] 단위 테스트(make test)가 통과한다 — 회귀 0 (baseline 실패 2건만 잔존, 본 변경 무관)
-- [x] FUNCTION.md가 현재 동작과 일치한다 (shared/ 추출 — config 포함)
-- [x] MODIFY.md에 변경 이력이 기록되었다 (CHG-20260624-0002)
-- [x] REVIEW.md에 판단 근거가 기록되었다 (§18.8 다중렌즈 패널 — BLOCKING 1 수정 / NIT 3 수용, REV-0002)
+- [x] FUNCTION.md가 현재 동작과 일치한다 (shared/ 추출 — db 포함)
+- [x] MODIFY.md에 변경 이력이 기록되었다 (CHG-20260624-0003)
+- [x] REVIEW.md에 판단 근거가 기록되었다 (§18.8 db 집중 패널 — BLOCKING 0 / NIT 1 수용, REV-0003)
 - [x] REPORT.md에 최종 상태가 반영되었다
 - [ ] BLOCKED 항목이 없거나 사람에게 전달되었다
 - [ ] Git 커밋이 완료되었다
