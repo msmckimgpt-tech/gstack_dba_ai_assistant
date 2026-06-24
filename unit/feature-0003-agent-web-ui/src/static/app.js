@@ -5635,9 +5635,10 @@ async function openShareDialog(cid) {
   await load();
 }
 
-// gc-settings-notif UI 정리: 대화 설정 팝업 — 좌측 conv-item ··· 메뉴의 '설정' 항목.
+// gc-settings-notif / gc-settings-archive-leave: 대화 설정 팝업 — 좌측 conv-item ··· 메뉴의 '설정' 항목.
 // (1) 제목 변경(기존 메뉴 '제목 변경' 항목을 여기로 이동, owner/권한 게이트 동일 PATCH /title 경로)
 // (2) 이 대화 알림 음소거(클라이언트 localStorage, _notifyMentions 가 active 대화 음소거 시 skip).
+// (3) 대화 관리 — '보관'(··· 메뉴에서 이동) 또는 보관 권한 없는 그룹 참여자용 '나가기'(self-leave).
 async function openConversationSettings(cid) {
   const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
   if (!conversation) return;
@@ -5745,6 +5746,50 @@ async function openConversationSettings(cid) {
   muteHint.textContent = "음소거하면 이 대화에서 나를 멘션해도 알림(토스트·데스크톱)을 받지 않습니다.";
   notifSec.appendChild(muteHint);
   bodyEl.appendChild(notifSec);
+
+  // (3) 대화 관리 섹션 (gc-settings-archive-leave)
+  //  - 보관 권한 보유(대화 보유자 또는 admin .any): '보관' 버튼 — ··· 메뉴에서 이곳으로 이동.
+  //  - 보관 권한 없는 그룹 대화 참여자(비보유 멤버): 보관 대신 '나가기'(self-leave).
+  //    보관은 feature-0009 gc-group-authz-flag 로 owner/admin 전용이라, 비보유 멤버에게
+  //    보관을 노출하면 항상 거부된다 — 대신 멤버십에서 빠지는 '나가기'를 제공한다.
+  //  - 둘 다 해당 없음(타인 1:1 열람 등)이면 섹션 자체를 렌더링하지 않는다.
+  const canArchive = canDeleteConversation(conversation);
+  const isGroup = isGroupConversation(conversation);
+  if (canArchive || isGroup) {
+    const manageSec = document.createElement("div");
+    manageSec.className = "conv-settings-sec conv-settings-sec-danger";
+    const manageHead = document.createElement("div");
+    manageHead.className = "conv-settings-sec-title";
+    manageHead.textContent = "대화 관리";
+    manageSec.appendChild(manageHead);
+
+    const dangerBtn = document.createElement("button");
+    dangerBtn.type = "button";
+    dangerBtn.className = "btn-danger conv-settings-danger-btn";
+    const dangerHint = document.createElement("div");
+    dangerHint.className = "conv-settings-hint";
+
+    if (canArchive) {
+      dangerBtn.textContent = "보관";
+      dangerHint.textContent = "보관하면 목록에서 사라지고 더 이상 진행할 수 없습니다. 데이터는 보존됩니다.";
+      dangerBtn.addEventListener("click", () => {
+        // deleteConversation 이 자체 확인 다이얼로그 + refreshWorkspace 를 수행한다.
+        // 기존 ··· 메뉴 패턴과 동일하게 모달을 먼저 닫고 호출한다.
+        close();
+        deleteConversation(cid).catch((err) => showToast(err.message || "보관에 실패했습니다.", true));
+      });
+    } else {
+      dangerBtn.textContent = "나가기";
+      dangerHint.textContent = "이 그룹 대화에서 나갑니다. 다시 초대받기 전까지 새 메시지를 볼 수 없습니다.";
+      dangerBtn.addEventListener("click", () => {
+        close();
+        leaveConversation(cid).catch((err) => showToast(err.message || "나가기에 실패했습니다.", true));
+      });
+    }
+    manageSec.appendChild(dangerBtn);
+    manageSec.appendChild(dangerHint);
+    bodyEl.appendChild(manageSec);
+  }
 }
 
 async function forkConversation({ fromMessageId = null } = {}) {
@@ -5813,6 +5858,29 @@ async function deleteConversation(targetCid = "") {
   }
 }
 
+// gc-settings-archive-leave: 그룹 대화 '나가기'(self-leave). 설정 팝업의 '대화 관리' 섹션에서,
+// 보관 권한이 없는 그룹 참여자에게만 노출된다. 백엔드 DELETE /api/conversations/{cid}/members/{accountId}
+// 는 대상이 본인 account_id 일 때 is_self_leave 로 허용한다(메시지·첨부는 tombstone 으로 보존하고
+// 접근만 차단). 응답에 current 가 없으므로 refreshWorkspace("") 로 기본 대화를 다시 선택한다.
+async function leaveConversation(targetCid = "") {
+  const cid = targetCid || state.activeConversationId;
+  if (!cid) return;
+  const accountId = Number((state.user && state.user.id) || 0);
+  if (!accountId) {
+    showToast("로그인 정보를 확인할 수 없습니다.", true);
+    return;
+  }
+  if (!window.confirm("이 그룹 대화에서 나가시겠습니까? (다시 초대받기 전까지 새 메시지를 볼 수 없습니다)")) {
+    return;
+  }
+  await apiFetch(
+    `/api/conversations/${encodeURIComponent(cid)}/members/${encodeURIComponent(accountId)}`,
+    { method: "DELETE" },
+  );
+  showToast("그룹 대화에서 나갔습니다.");
+  await refreshWorkspace("");
+}
+
 // gc-settings-notif UI 정리: 좌측 conv-item ··· 메뉴의 '복사'(대화 전체 복제) 항목 제거.
 // 메시지 액션 '여기서 분기'(forkConversation)가 복제 역할을 대체하므로 메뉴 중복을 없앤다.
 // 백엔드 POST /api/conversations/{cid}/duplicate 는 잔존하나 프론트 진입점은 더 이상 없음.
@@ -5863,12 +5931,12 @@ function openConversationItemMenu(cid, triggerEl) {
     return item;
   };
 
-  // gc-settings-notif UI 정리: '복사' 제거(메시지 '여기서 분기'가 복제 역할 대체),
-  // '공유'+'공유 관리'를 단일 팝업(openShareDialog)으로 통합, '설정'(제목 변경 + 대화 알림 음소거)
-  // 추가, 기존 '제목 변경' 항목은 설정으로 이동. 최종 순서: 공유 | 설정 | 보관(danger).
+  // gc-settings-archive-leave UI 정리: '보관'을 ··· 메뉴에서 제거하고 '설정' 팝업의
+  // '대화 관리' 섹션(openConversationSettings)으로 이동한다. 보관 권한이 없는 그룹 대화
+  // 참여자에게는 같은 섹션에서 보관 대신 '나가기'(self-leave)를 노출한다. '복사' 제거(메시지
+  // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 설정.
   menu.appendChild(makeItem("공유", "conversation.share", () => openShareDialog(cid)));
   menu.appendChild(makeItem("설정", "conversation.read", () => openConversationSettings(cid)));
-  menu.appendChild(makeItem("보관", "conversation.delete", () => deleteConversation(cid), { danger: true }));
 
   document.body.appendChild(menu);
 

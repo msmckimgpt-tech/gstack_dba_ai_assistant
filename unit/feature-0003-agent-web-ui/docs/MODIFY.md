@@ -4510,3 +4510,17 @@ source_of_truth: true
 - Rollback: app.py(권한 1·catchup 1줄·8 엔드포인트+헬퍼) / admin.{html,js} 메타데이터 블록 / styles.css `.admin-meta-*` / index.html cache-buster / kb_glossary.py 6 함수 / 테스트 제거 → 메타데이터 탭·CRUD 제거(기존 upsert/read 경로 무영향).
 - Deploy: web 재빌드(정적+엔드포인트). 마이그 없음(기존 테이블 재사용). 기존 배포 admin 역할은 재시작 시 `_ensure_seed_roles` catchup 으로 kb.ingest.manual 백필.
 - Files: src/app.py, src/static/admin.html, src/static/admin.js, src/static/styles.css, src/static/index.html, tests/test_metadata_glossary_enum.py, (feature-0002) unit/feature-0002-agent-core/src/modules/kb_glossary.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
+## CHG-20260624T031337-gc-settings-archive-leave (feature-0009 cycle, Minor §12.3)
+- Date: 2026-06-24 (feature-0009 group-conversation cycle `gc-settings-archive-leave`, CHG-0022/REV-0024). **frontend only**.
+- Scope: 대화 사이드바 `··· > [탭 목록]` 메뉴의 '보관'을 '설정' 팝업의 '대화 관리' 섹션으로 이동 + 보관 권한 없는 그룹 대화 참여자에게는 보관 대신 '나가기'(self-leave) 제공. 백엔드/스키마/RBAC 무변경.
+- 내용:
+  - `static/app.js` `openConversationItemMenu`: ··· 메뉴에서 '보관'(danger) 항목 제거 — 최종 순서 `공유 | 설정`.
+  - `static/app.js` `openConversationSettings`: 팝업 하단에 '대화 관리'(`.conv-settings-sec-danger`) 섹션 추가. `canArchive = canDeleteConversation(conversation)` true(대화 보유자 또는 admin `.any`) → '보관' 버튼(기존 `deleteConversation` — 자체 confirm + refreshWorkspace 보존). 아니면서 `isGroupConversation(conversation)`(보관 권한 없는 그룹 참여자) → '나가기' 버튼(신규 `leaveConversation`). 둘 다 아니면(타인 1:1 열람 등) 섹션 미렌더.
+  - `static/app.js` 신규 `leaveConversation(cid)`: `DELETE /api/conversations/{cid}/members/{state.user.id}` self-leave(백엔드 `remove_conversation_member` 기존, `is_self_leave` 게이트) + `window.confirm` + 성공 토스트 + `refreshWorkspace("")`(leave 응답에 `current` 없음 — 기본 대화 재선택).
+  - `static/styles.css`: `.conv-settings-sec-danger .conv-settings-sec-title{color:var(--danger)}` + `.conv-settings-danger-btn{margin-top:2px}`(버튼은 기존 `.btn-danger` 재사용).
+  - `static/index.html`: app.js·styles.css cache-buster `?v=20260624-settings-notif` → `?v=20260624-archive-leave`.
+- Why: feature-0009 `gc-group-authz-flag` 로 보관(archive)은 owner/admin 전용 2차 게이트라, 비보유 그룹 멤버에게 ··· 메뉴 '보관'을 노출해도 backend 가 항상 거부했다(허울 버튼). 보관을 설정 팝업으로 옮기고, 비보유 참여자에게는 실제 수행 가능한 행동(멤버십에서 빠지는 '나가기')을 노출해 UI-권한 정합. 백엔드 leave 엔드포인트는 이미 존재했으나 프론트 진입점이 없었다.
+- Verification: `node --check app.js` PASS + 신규 `tests/verify_settings_archive_leave.mjs` **22/22 PASS**(정적 소스 단언 — 메뉴 보관 제거·공유/설정 유지·설정 보관/나가기 분기·`(canArchive||isGroup)` 가드·self-leave members DELETE·본인 id·confirm·refreshWorkspace·CSS brace 1489=1489) + 적대적 3-렌즈(security/authz·correctness·UX) 서브에이전트 리뷰 **실질 결함 0**(REVIEW.md REV-…-gc-settings-archive-leave). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree 에서 미실행).
+- Files: `static/app.js`, `static/styles.css`, `static/index.html`, `tests/verify_settings_archive_leave.mjs`, `docs/{MODIFY,FUNCTION,REVIEW,TEST}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
+- Rollback: app.js/styles.css/index.html revert + 신규 `leaveConversation`·테스트 제거(표현계층·additive). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.

@@ -3660,3 +3660,15 @@ source_of_truth: true
 - **NIT(미흡수, 무해)**: `_metaEsc` dead code(호출 0, textContent 사용) · create-audit `resource_id` 64자 절단(term 전체는 change_json 보존, cosmetic).
 - Verification(흡수 후): test 13/13(PYTHONPATH=동일 worktree feature-0002/src:feature-0003/src) + py_compile + node --check.
 - Cross-ref: CHG-20260624T130000-item11-metadata-glossary-enum / FUNCTION REQ-20260624-item11 / (feature-0002) kb_glossary.py admin CRUD 6함수. 라이브 UI 정본=PB-0008(메인, 배포 후).
+## REV-20260624T031337-gc-settings-archive-leave [SUBAGENT:adversarial-3lens-PASS]
+- Date: 2026-06-24
+- Cycle: feature-0009 group-conversation `gc-settings-archive-leave` (CHG-20260624T031337), **Minor §12.3** — frontend only(app.js+styles.css+index.html), 백엔드/스키마/RBAC 0.
+- Panel: 적대적 3-렌즈 서브에이전트 리뷰(security/authz · correctness/edge-case · UX). 목적=결함 적발. backend 게이트(app.py `_delete_conversation_impl` 17153–17213 / `remove_conversation_member` 14487–14548)와 프론트 게이팅을 교차 검증.
+- **판정: 실질 결함 0건(SHIP)**. 핵심 근거:
+  - **[HIGH] not-real — client gate cosmetic**: archive(POST `/api/delete_conversation`)·leave(DELETE `.../members/{id}`) 둘 다 backend 가 권한을 독립 재검증(archive=owner/`.any` 2차 게이트, leave=`is_self_leave or is_owner or member.manage`). 보관 대신 나가기를 보여줘도 권한 상승 없음.
+  - **[HIGH] not-real — IDOR 없음**: `leaveConversation` 이 대상 id 를 `state.user.id` 로만 도출(roster/URL 입력 무사용) → 타인 강제 퇴장 불가. backend 도 동일 게이트.
+  - **[MED] not-real — owner→'보관', admin(.any)→'보관', 비보유 그룹멤버→'나가기', 타인 1:1→미렌더**: 모든 버튼-권한 매핑이 backend accept/reject 와 정확히 일치. owner 는 `canArchive` true 라 위험한 409(owner 제거 차단) 경로에 도달하지 않음.
+  - **[MED] not-real — `refreshWorkspace("")` 안전**: leave 응답에 `current` 없음 → "" 로 기본 대화 재선택(의도적, deleteConversation 의 `payload.current` 와의 차이는 정당).
+  - **[LOW] real(기존 환경의존, 본 변경 비도입)**: `is_group`/`member_count` 는 PG read 경로(`_list_conversations_pg`)에서만 채워짐 — MySQL-only read backend 면 '나가기' 분기가 dead. 단 사이드바 그룹 배지(기존)도 동일 필드 의존이고 그룹대화는 PG-native(feature-0009)라 영향권 밖. 추적만.
+- Verification: `node --check app.js` PASS + `tests/verify_settings_archive_leave.mjs` 22/22 PASS(정적). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL)에서 미실행, 메인 세션/배포 후 권장.
+- Cross-ref: CHG-20260624T031337-gc-settings-archive-leave / FUNCTION '대화 ··· 메뉴 보관→설정 이동' / feature-0009 TASK §7.
