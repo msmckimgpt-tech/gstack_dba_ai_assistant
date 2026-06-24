@@ -2,6 +2,20 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260624T154711-META-0007-presentation-tiering [AGENT-TEAM:presentation-tiering-verify]
+
+- **cycle**: ai/claude/META-0007-presentation-tiering — `repo/docs/presentation/*` 발표자료 갱신 + **클라이언트별 기능 분류**(작업 화면 + 관리 콘솔 / 작업 화면 only 2-덱 티어링). `/_template:resume` 로 중단 세션(ac9c0072, session-limit)의 기존 의도 재개·완수.
+- **changeset (pure-meta, docs-only → verify-completion META mode)**:
+  - `docs/presentation/index.html` (풀 덱) — 15→20 슬라이드. 작업화면 면 +3(실패 결과 ‘AI 로 고치기’·답변 피드백·그룹 대화) + 릴리즈 노트 chip, 관리콘솔 면 +2(메타데이터 용어/ENUM 사전·샘플 검수 큐) + 정리 일꾼 슬라이드에 DB별 분석 상태 카드. EXPLAIN 팝업 +27키(46→73), work/admin kicker 재번호(1/7·1/5), 표지·목차·chrome 배지에 대상 클라이언트(작업 화면 + 관리 콘솔) 명시, outro 로드맵 갱신.
+  - `docs/presentation/practitioner.html` (작업화면 only) — 9→12 슬라이드. 작업화면 면 신규 3(실패 고치기·피드백·그룹 대화) + 릴리즈 노트 tip. EXPLAIN +13키(23→36). 관리콘솔 면 기능 **미포함**(티어 분리). 표지·목차 대상 명시 보강.
+  - `docs/presentation/SCENARIO.md` — §0.5 덱 라우팅 가이드(어느 덱을 누구에게) 신설 + 신규 기능 스크립트(작업화면 F/G/H, 관리콘솔 3-7/3-8) + §1 인덱스·§5 정합성 주석·§6 로드맵 갱신.
+  - `docs/presentation/OBJECTION-HANDLING.md` — §6.5 신규 기능 Q&A 3건(그룹 대화 데이터 노출·피드백 학습 오염·메타데이터 오등록) + §7 빠른참조 표 3행.
+- **grounding (정합성)**: 모든 신규 기능을 실제 구현과 대조 — 그룹 대화(feature-0009 라이브) · ‘AI 로 고치기’(ITEM-08 `POST /api/conversations/{cid}/fix-with-ai`, 1회 dispatch·nonce 봉인 인젝션 방어) · 답변 피드백→샘플 검수 큐(sample feedback flywheel, `kb.sample.curate`, 자동학습 없음) · 메타데이터(ITEM-11 glossary/enum, `kb.ingest.manual` 게이트) · 제품 인사이트(db-insights 3-state). Google Drive(비활성 scaffold)·하이브리드 검색(gated-OFF)은 **로드맵에만 정직 표기**(구현된 것처럼 미서술).
+- **panel (AGENT-TEAM, 적대적 4축)**: ① 정합성(구현 대조) 0 BLOCKING — do_not_claim 가드 전부 준수(AR-1 열람≠발화 정확, 1회 재실행, 👎 자동강등 미구현 미주장 등). ② 티어 분리 0 BLOCKING — practitioner 에 관리콘솔 UI 누출 0, ‘admin’ 어휘 0. ③ HTML/JS 유효성 — BLOCKING 1(검수큐 ‘승인’ 버튼 `.composer .send` 스코프 밖 → primary 채움 누락) **수정**(인라인 background/color 명시). ④ 톤/카피 — BLOCKING 1(표지 본문에 발표자向 명령문 ‘…안내하세요’+파일명 노출) **수정**(청중 대상 서술형으로 교체, 발표자 라우팅은 SCENARIO §0.5 로 일원화). NIT(o-prog/o-todo 팝업 동기화·알림=브라우저 명확화·md-accuracy 확률적 표현·fb-vote best-effort·예시화면 중복·admin-link→topbtn·발신자 이름 대비) 전부 수정. 수용 NIT: info-overload(frag 단계공개로 통제, 렌더 확인) · message-actions 클래스 미정의이나 인라인 스타일 동반(정상 렌더).
+- **render-verified**: Playwright(chromium) headless 로 양 덱 로드 — **콘솔 에러 0**, 슬라이드 20/12, totNum 동적, data-explain↔EXPLAIN 1:1(차집합 0), 팝업 개폐 정상, 신규 슬라이드 9종 스크린샷 육안 확인(레이아웃 무파손).
+- **Human Approval Needed**: 아니오 (additive 발표 docs, 사용자 지시 resume — 기존 의도 완수, 신규 scope 없음).
+- **deploy**: 해당 없음 — `docs/presentation/*` 는 라이브 서빙 자산 아님(배포 스크립트 무참조). 완료 = main 병합.
+
 ## REV-20260624T115856-resume-claude-corp-root [SKIPPED:additive-meta-tooling]
 
 - **cycle**: META-0006-resume-claude-corp-root — `/_template:resume` 가 스캔하는 세션 루트에 `/home/claude-corp/.claude` 추가
