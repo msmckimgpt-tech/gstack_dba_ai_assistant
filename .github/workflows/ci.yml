@@ -46,8 +46,16 @@ jobs:
 
       - name: Unit tests (pytest)
         env:
-          PYTHONPATH: unit/feature-0002-agent-core/src:unit/feature-0003-agent-web-ui/src
+          # PYTHONPATH 에 repo 루트(.) 포함 — app.py 가 import 하는 최상위 `shared` 패키지 해소.
+          # (Makefile `test` 타깃의 컨테이너 PYTHONPATH `…:/work` 와 동일 의미. 누락 시 `No module
+          #  named 'shared'` 로 feature-0003 테스트 일괄 collection 실패.)
+          PYTHONPATH: unit/feature-0002-agent-core/src:unit/feature-0003-agent-web-ui/src:.
           DB_USER: root
           DB_PASSWORD: test
           AGENT_MEMORY_DB: agent_memory
-        run: pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests
+        run: |
+          # 일부 테스트(예: test_share_redaction_invariant)는 컨테이너 `/app/web` 레이아웃을 가정해
+          # `import web.app` 을 직접 호출한다. bare-runner 에선 repo 루트에 `web` 네임스페이스가 없어
+          # collection 이 실패하므로, web → feature-0003 src 심링크로 컨테이너와 동형 경로를 만든다.
+          ln -sfn unit/feature-0003-agent-web-ui/src web
+          pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests
