@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>DQA · 데이터 질문 어시스턴트 — 서비스 소개</title>
+<title>DQA · 데이터베이스 쿼리 어시스턴트 — 서비스 소개</title>
 <meta name="description" content="말로 물어보면 '조회 전용'으로 데이터를 찾아 정리해 주는 사내 AI 어시스턴트" />
 <style>
 /* ============================================================
@@ -365,7 +365,7 @@ body.find-explain [data-explain]{animation:findglow 2.1s ease-in-out infinite}
 <div class="topbar"><div class="progress" id="progress"></div></div>
 <div class="chrome">
   <div class="menu-btn" id="menuBtn" role="button" aria-label="목차 열기"><span class="bars"><i></i><i></i><i></i></span>목차</div>
-  <div class="brandmini"><span class="logo">Q</span>DQA · 데이터 질문 어시스턴트<span class="tagrole">작업 화면 + 관리 콘솔</span></div>
+  <div class="brandmini"><span class="logo">Q</span>DQA · 데이터베이스 쿼리 어시스턴트<span class="tagrole">작업 화면 + 관리 콘솔</span></div>
   <div class="counter"><span id="curNum">1</span> / <span id="totNum">14</span></div>
 </div>
 
@@ -381,7 +381,7 @@ body.find-explain [data-explain]{animation:findglow 2.1s ease-in-out infinite}
   <section class="slide" data-section="cover" data-name="표지">
     <div class="cover-wrap">
       <div class="cover-logo">Q</div>
-      <h1>데이터 질문 어시스턴트</h1>
+      <h1>데이터베이스 쿼리 어시스턴트</h1>
       <div class="sub">말로 물어보면, ‘조회 전용’으로 데이터를 찾아 정리해 드립니다</div>
       <div class="cover-meta">
         <span class="chip" data-explain="c-nl"><span class="ic" style="background:var(--primary)"></span>자연어로 질문</span>
@@ -1016,7 +1016,7 @@ WHERE email='***' AND created_at &gt;= ...</code></pre>
   var sections=[], seen={};
   slides.forEach(function(s,i){var sec=s.getAttribute('data-section');if(!seen[sec]){seen[sec]=true;sections.push({sec:sec,first:i});}});
   var NAME={cover:'표지',why:'왜 필요한가',work:'작업 화면',admin:'관리 콘솔',arch:'전체 구성 + 일꾼',security:'안전장치',outro:'마무리 · 다음 단계'};
-  var DESC={cover:'데이터 질문 어시스턴트 소개',why:'데이터가 궁금한 사람과 DB 사이의 다리',work:'질문 → 단계별 과정 → 표 답변',admin:'데이터소스·권한·사용량·기록을 한 화면에서',arch:'요청이 흐르는 길 + 질문 일꾼·정리 일꾼',security:'적용된 방어 + 부족한 점과 보완안',outro:'정리와 도입 제안'};
+  var DESC={cover:'데이터베이스 쿼리 어시스턴트 소개',why:'데이터가 궁금한 사람과 DB 사이의 다리',work:'질문 → 단계별 과정 → 표 답변',admin:'데이터소스·권한·사용량·기록을 한 화면에서',arch:'요청이 흐르는 길 + 질문 일꾼·정리 일꾼',security:'적용된 방어 + 부족한 점과 보완안',outro:'정리와 도입 제안'};
   var idxList=document.getElementById('idxList');
   sections.forEach(function(sec,n){
     var el=document.createElement('div');
