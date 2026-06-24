@@ -1986,7 +1986,10 @@ const ADMIN_TAB_PERMISSIONS = {
   // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수 큐.
   "sample-review": ["kb.sample.curate"],
   // TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1): 용어/ENUM 메타데이터 CRUD.
-  metadata: ["kb.ingest.manual"],
+  // scope-key-unify: samples 서브뷰는 kb.sample.curate 권한이라, 부모 탭 게이트도 OR 로 넓혀
+  // kb.sample.curate 단독 보유 큐레이터가 메타데이터 탭→samples 서브뷰에 도달 가능하게 한다
+  // (서브뷰별 가시성은 _METADATA_SUBTAB_PERM 가 별도 분기).
+  metadata: ["kb.ingest.manual", "kb.sample.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2438,8 +2441,13 @@ function _metaPopulateScopeSelect() {
   if (!sel) return;
   const opts = [{ value: "common", label: "공용 (common)" }];
   for (const ds of (adminState.datasources || [])) {
-    const key = String((ds && ds.key) || "").trim().toLowerCase();
-    if (key) opts.push({ value: key, label: key });
+    const label = String((ds && ds.key) || "").trim().toLowerCase();
+    if (!label) continue;
+    // scope-key-unify(死data 수정): option value = 백엔드가 준 scope_key(= 질의 시점 read 와 동일 해소값:
+    // DB-등록 ds=엔드포인트 해시, .env 레거시=라벨). 이 값으로 저장해야 ds-scoped 설명/샘플이 읽힌다.
+    // 표시는 사람이 읽는 라벨(key). scope_key 가 비면(구버전 백엔드) 라벨로 폴백.
+    const scope = String((ds && ds.scope_key) || label).trim().toLowerCase();
+    opts.push({ value: scope, label: label });
   }
   // textContent 기반 option 생성(XSS 안전).
   sel.replaceChildren();
@@ -3096,7 +3104,7 @@ async function _metaBootstrapSave() {
   _metaBootstrapStatus(`저장 중… (0/${rows.length})`);
   let ok = 0; let fail = 0;
   for (let i = 0; i < rows.length; i++) {
-    const payload = { scope_key: scope };
+    const payload = { scope_key: scope, source: "bootstrap" };
     payload.schema_name = rows[i].schema_name;
     payload.table_name = rows[i].table_name;
     if (mode === "columns") payload.column_name = rows[i].column_name;

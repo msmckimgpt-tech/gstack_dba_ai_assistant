@@ -122,7 +122,10 @@ def _audit_capture(monkeypatch):
 def _allow_scopes(monkeypatch, scopes=("common", "default")):
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     import modules.datasources as _dsr
-    ds_map = {k: {"engine": "mysql"} for k in scopes if k != "common"}
+    # scope-key-unify: _metadata_valid_scope_keys 는 dict 키(라벨)가 아니라 _dsr.scope_key(ds)(해시 축)를
+    # 허용한다. fake ds 는 scope_key 필드를 그 scope 이름으로 채워 해당 scope 가 valid 가 되게 한다
+    # (real _dsr.scope_key 는 scope_key 필드 우선 — write/read 축 일치 검증용).
+    ds_map = {k: {"key": k, "engine": "mysql", "scope_key": k} for k in scopes if k != "common"}
     monkeypatch.setattr(_dsr, "all_datasources", lambda conn: ds_map)
 
 
@@ -594,3 +597,52 @@ def test_injection_section_wrapped_by_datamark(monkeypatch):
     ctx = _ac._build_knowledge_context(_BenignConn(), "orders 분석", [])
     assert "TABLE & COLUMN DESCRIPTIONS" in ctx
     assert "주문" in ctx
+
+
+# ── scope-key-unify 회귀(死data 방지): admin write 의 허용 scope = 해시 축(read 와 동일) ──────────────
+def test_valid_scope_keys_uses_hash_axis_not_label(monkeypatch):
+    """死data 회귀 가드 — admin write 가 허용/저장하는 scope_key 는 datasource **안정 scope_key**
+    (_dsr.scope_key = compute_scope_key 해시; .env 레거시는 라벨 폴백)이지, datasource 라벨(dict 키)이
+    아니다. 질의 시점 read(get_active_datasource = agent_core 가 _ds['scope_key'] 채택)와 **동일 축**이라야
+    DB-등록 ds 의 ds-scoped 설명/샘플이 읽힌다. 과거(라벨 저장)엔 라벨≠해시 로 영영 안 읽히는 死data 였다.
+    이 테스트는 WebDatasources 경로(라벨≠해시)를 모사해 그 회귀를 잡는다(기존 27 케이스는 .env 동형 fake)."""
+    monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
+    import modules.datasources as _dsr
+    # DB-등록 ds 모사: 라벨(dict 키/key) 'prod_mysql' 과 안정 해시 scope_key 'mysql-deadbeef0001' 이 다름.
+    ds_map = {"prod_mysql": {"key": "prod_mysql", "engine": "mysql", "host": "db.internal",
+                             "port": 3306, "scope_key": "mysql-deadbeef0001", "_source": "db"}}
+    monkeypatch.setattr(_dsr, "all_datasources", lambda conn: ds_map)
+
+    valid = app._metadata_valid_scope_keys()
+    assert "mysql-deadbeef0001" in valid, "read 와 동일한 해시 축이 허용돼야 한다(死data 해소)"
+    assert "prod_mysql" not in valid, "라벨(과거 死data 축)은 더 이상 허용하지 않는다"
+    assert "common" in valid, "'common' 공용 scope 는 항상 허용"
+
+    # _metadata_check_scope 도 해시는 통과(200), 라벨은 거부(400)해야 한다.
+    norm, err = app._metadata_check_scope("mysql-deadbeef0001")
+    assert err is None and norm == "mysql-deadbeef0001"
+    _norm2, err2 = app._metadata_check_scope("prod_mysql")
+    assert err2 is not None and getattr(err2, "status_code", None) == 400
+
+
+def test_valid_scope_keys_env_legacy_uses_label_not_hash(monkeypatch):
+    """死data **역방향** 회귀 가드 — .env 레거시 datasource(scope_key 필드 부재 + host 보유)에서 admin write 의
+    허용 scope 는 **라벨**이어야 한다. 질의 시점 read(agent_core.set_active_datasource = `_ds.get('scope_key')
+    or _ds.get('key')`)가 필드 부재 시 라벨로 떨어지므로, write 도 동일해야 일치한다. write 를 `_dsr.scope_key`
+    (host 보유 .env 에서 해시 *계산*)로 잡으면 write(해시)≠read(라벨) 死data 가 역으로 재발 → 이 테스트가 잡는다."""
+    monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
+    import modules.datasources as _dsr
+    # .env 레거시 모사: scope_key 필드 없음 + host 보유(.env 는 host 필수). dict 키 = 라벨.
+    ds_map = {"reporting": {"key": "reporting", "engine": "mysql", "host": "rep.internal", "port": 3306}}
+    monkeypatch.setattr(_dsr, "all_datasources", lambda conn: ds_map)
+
+    valid = app._metadata_valid_scope_keys()
+    assert "reporting" in valid, ".env 레거시는 라벨로 허용(read 와 동일 축)"
+    # _dsr.scope_key 가 계산했을 해시는 허용 집합에 없어야 한다(역방향 死data 방지).
+    import hashlib
+    hashed = "mysql-" + hashlib.sha256(b"mysql:rep.internal:3306").hexdigest()[:12]
+    assert hashed not in valid, "write 가 _dsr.scope_key(해시)로 새면 read(라벨)와 어긋나 死data 역재발"
+    assert "common" in valid
+    # read 동치 확인: write 허용 라벨 == read 가 잡는 활성 scope(scope_key or key).
+    _ds = ds_map["reporting"]
+    assert (_ds.get("scope_key") or _ds.get("key")) == "reporting"
