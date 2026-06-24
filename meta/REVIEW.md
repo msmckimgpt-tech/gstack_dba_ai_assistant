@@ -218,3 +218,13 @@
 - **시각 검증**: WSL Playwright headless chromium 으로 index·practitioner 그룹대화 슬라이드 before/after 캡처 — 멘션 가독성·발신자 구분·헤더 정상 확인(`/tmp/pcap/`). PB-0008 Windows 브리지는 relay 미기동(`doctor` ok:false)이나, 정적 발표 HTML 의 색·레이아웃 검증엔 headless 로 충분(화면 괴리 최소). 슬라이드 수 index 20→19·practitioner 12→11(슬라이드 삭제 반영).
 - **panel**: SUBAGENT design 1관점(§18.8 UI/화면 → ux·design 매칭). 비파괴 발표자료, Minor.
 - **Human Approval Needed**: 아니오 (Minor, 비파괴 docs, 사용자 직접 지시).
+
+## REV-20260624T090355-ai-root-META-0009-presentation-title-rename [SKIPPED:trivial-text-rename]
+
+- **cycle**: ai/root/META-0009-presentation-title-rename — 발표자료 제품명(제목) 표기 변경 (사용자 직접 지시)
+- **changeset (pure-meta)**: `docs/presentation/index.html` · `docs/presentation/practitioner.html` · `meta/REVIEW.md`(본 entry). (영업/소개용 정적 발표자료 — 제품 코드·secret 무변경.)
+- **변경 요지**: 제품명 한글 표기 **‘데이터 질문 어시스턴트’ → ‘데이터베이스 쿼리 어시스턴트’** (영문 ‘Database Query Assistant’ = DQA 의 직역). 제품명 표기 7곳 치환 — index.html 4곳(`<title>`·상단 브랜드·표지 `<h1>`·DESC.cover), practitioner.html 3곳(`<title>`·상단 브랜드·표지 `<h1>`).
+- **유지(치환 안 함)**: 일반명사 ‘데이터 질문’(예: "사내 데이터 질문을 돕는", "대부분의 데이터 질문을 해결", 감사로그 액션 라벨, SCENARIO 대본) 4곳은 제품명이 아니므로 보존 — `grep` 으로 컨텍스트 확인 후 분리.
+- **검증**: 구 제품명 잔존 0, 신 제품명 7곳(index 4·practitioner 3). WSL Playwright headless 로 표지 슬라이드 캡처 확인(브랜드·h1 정상 반영, `/tmp/pcap/title_after.png`).
+- **panel SKIP 사유 (§18.4)**: 단순 표기 치환, 비파괴, 신규 동작 0. 구/신 문자열 분리(제품명 vs 일반명사)를 ground-truth grep 으로 검증.
+- **Human Approval Needed**: 아니오 (Minor, 비파괴 docs, 사용자 직접 지시).
