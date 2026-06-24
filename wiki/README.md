@@ -86,6 +86,13 @@ wiki/
 - 정본 (`docs/`, `unit/<id>/docs/`) 과 wiki 가 충돌하면 **정본 우선** — wiki 가 따라간다.
 - vault 외부의 파일 (예: `unit/<id>/docs/FUNCTION.md`) 로 link 할 때는 relative path 사용.
 
+### 5.1 SSOT 계약 내 wiki 위치 (v3.34.1+, ADR-0031)
+
+- **wiki = 참조(reference) 레이어** — 정본이 아니다. 정본 지도: [[../docs/DOC_REGISTRY|DOC_REGISTRY.md]], SSOT 계약: [[../docs/DECISIONS|DECISIONS.md]] ADR-0031.
+- 전역 `source_of_truth: false` (예외: [[Log]] = wiki 자체 append-only ledger). 검증: `bash bin/ssot-lint.sh --check wiki-sot` (현재 위반 0건).
+- **동기화 메커니즘**: 정본(`docs/`·`unit/<id>/docs/`) 변경 → wiki mirror 갱신은 `/_dqa:doc_sync` persona 가 수행(사람 호출·스케줄 가능). 구조 drift 는 `bin/wiki-lint.sh`. *결정론적 렌더러는 없음* — mirror 는 요약 판단이 필요해 LLM-persona 로 유지(자동 재생성 대신 doc_sync 주기 정합).
+- **stale 카드 정책**: 진행 정지 feature 카드(예: 0001/0004~0007)는 doc_sync 시 백필하거나 `maturity: stale` / '완료-동결' 라벨로 명시 — drift 를 숨기지 않는다.
+
 ## 6. 안 하는 것
 
 - **이 vault 에서 정책 변경 금지** — 정책은 `repo/AGENTS.md` 와 `repo/docs/*.md`. wiki 는 그것의 시각적 입구이지 source of truth 가 아니다.
