@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # TASK-0133 (#7): agent_cli.py(216KB) 삭제 — entrypoint/import 0 의 죽은 레거시. live loop 는 agent_core.py.
 COPY unit/feature-0002-agent-core/src/agent_core.py ./agent_core.py
 COPY unit/feature-0002-agent-core/src/modules /app/modules
+# feature-0011 (P5a Step 1): shared/ 공통 패키지를 /app/shared 로 배치 — agent_core·web 양
+# 서비스가 `from shared.X` 로 import (모든 서비스가 WORKDIR /app 을 sys.path 에 가짐).
+# 회귀 게이트: make test (PYTHONPATH 에 /work=shared 의 부모 추가). 첫 추출: model_catalog.
+COPY shared /app/shared
 COPY unit/feature-0002-agent-core/src/scripts /app/scripts
 # TASK-0149 (#15): alembic 프레임워크를 이미지에 baking — `make migrate`/`migrate-stamp` 가
 # 빌드 이미지(`/app`)에서 동작하도록(이전엔 src/ 밖이라 미포함=프로덕션 미동작). alembic.ini 의

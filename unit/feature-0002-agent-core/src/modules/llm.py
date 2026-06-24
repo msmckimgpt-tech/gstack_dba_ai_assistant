@@ -49,7 +49,7 @@ __all__ = [
 """OpenAI client, prompt templates, LLM call functions."""
 from .config import *
 from . import config as cfg
-from .model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model
+from shared.model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model
 from .utils import append_log_line
 import json, os, time
 from typing import Any

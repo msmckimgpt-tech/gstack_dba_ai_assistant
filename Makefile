@@ -189,7 +189,7 @@ test:  ## ci: 단위 테스트(pytest) + 린트(ruff) — agent 이미지 격리
 	@$(MAKE) -s dc-build SERVICE=agent
 	@$(DC_QUIET) run --rm --no-deps -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
 	  pip install -q --no-cache-dir pytest ruff >/tmp/pip-dev.log 2>&1 || { cat /tmp/pip-dev.log; exit 1; }; \
-	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0003-agent-web-ui/src; \
+	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0003-agent-web-ui/src:/work; \
 	  echo "=== pytest ==="; \
 	  python -m pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests; rc=$$?; \
 	  echo "=== ruff (참고용, 비차단) ==="; \
@@ -203,7 +203,7 @@ eval:  ## ci: NL→SQL 평가 harness (ITEM-01) — golden 질문을 실제 파�
 	  -e EVAL_MAX_JUDGE_CALLS=$${EVAL_MAX_JUDGE_CALLS:-25} \
 	  -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
 	  pip install -q --no-cache-dir pyyaml >/tmp/pip-eval.log 2>&1 || { cat /tmp/pip-eval.log; exit 1; }; \
-	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0002-agent-core/tests/eval; \
+	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0002-agent-core/tests/eval:/work; \
 	  python /work/unit/feature-0002-agent-core/tests/eval/runner.py $(EVAL_ARGS); \
 	'
 
@@ -212,7 +212,7 @@ kb-retrieval-eval:  ## ci: KB retrieval A/B (ITEM-05) — fusion vs 2-tier preci
 	@$(DC_QUIET) run --rm \
 	  -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
 	  pip install -q --no-cache-dir pyyaml >/tmp/pip-kbeval.log 2>&1 || { cat /tmp/pip-kbeval.log; exit 1; }; \
-	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0002-agent-core/tests/eval; \
+	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0002-agent-core/tests/eval:/work; \
 	  python -m kb_eval.retrieval_eval $(KB_EVAL_ARGS); \
 	'
 
