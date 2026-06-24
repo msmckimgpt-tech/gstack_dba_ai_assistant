@@ -110,3 +110,15 @@
 - **panel SKIP 사유 (§18.4 doc/meta carve-out)**: 신규 production 동작 0. (1) GOAL.md 아카이빙은 STATUS.md(TASK-0133)가 이미 결정·기록한 의도의 물리적 완성(정본 변경 아님), (2) OBSERVATIONS 는 stale 스냅샷 격리, (3) archive 위치 교정은 gitignore 충돌 해소(기계적). rename R100(내용 무변경) + frontmatter only.
 - **verification**: `bash bin/ssot-lint.sh --selftest` **PASS**. 실제 스캔 archived **0건**(이전 GOAL.md 1건 해소), secret 3건은 Phase 3(META-0004) 대상으로 잔존. staged changeset pure-meta(루트 비-meta 0). GOAL/OBSERVATIONS 참조는 전부 과거 이력 prose(코드 import 0) — 링크 무결성 영향 없음.
 - **Human Approval Needed**: 아니오 (비파괴 아카이빙, 정본 무변경). Major(P1b STATUS 인덱스화)·Critical(P3 secret)은 차례에 §12 별도 승인.
+
+## REV-20260624T012043-META-0003-ssot-consolidation [SKIPPED:status-index-verbatim-preserved]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 1b** (STATUS.md 인덱스화, Major §12.3)
+- **changeset (pure-meta)**:
+  - `docs/STATUS.md` — 290KB → **4.6KB** lean 인덱스(feature별 상태 1줄 + 정본 링크 + 1줄 요지). 누적 rollup·heavy 셀 제거
+  - `docs/archive/STATUS_ARCHIVE.md` 신규 — 인덱스화 이전 STATUS verbatim 보존(cmp IDENTICAL) + archived frontmatter
+  - `meta/REVIEW.md` — 본 entry
+- **risk**: Major (정본 재정의 — 현황 상세 정본을 STATUS→`unit/<f>/docs/{TASK,REPORT}` 로 명시 이동). **plan-review 수행**(사용자 미결정 #2 = "STATUS_ARCHIVE 보존 후 인덱스화" 선택).
+- **panel SKIP 사유**: 비파괴 — 전문 verbatim 보존(`cmp -s` IDENTICAL, rollup 159줄 유지)으로 **정보 손실 0**. STATUS 는 정책문서(AGENTS/CONVENTIONS/SECURITY) 아님(§18.8.1 경량 대상). 신규 production 동작 0. 정본 위계는 ADR-0031 + DOC_REGISTRY 가 정의.
+- **verification**: STATUS.md 4,682 bytes(<30KB 성공기준 충족). 내부 링크 6개(unit TASK ×9, STATUS_ARCHIVE, DOC_REGISTRY, DECISIONS, ARCHITECTURE) 전부 타깃 존재 확인. ssot-lint archived 0건(STATUS_ARCHIVE 가 docs/archive/ 내 → skip), secret 3건 잔존(P3). feature-0009 cross-cut·feature-0010 worktree 미병합 명시.
+- **Human Approval Needed**: 아니오 (사용자 plan-review + 미결정 #2 승인 완료, verbatim 보존으로 비가역성 없음). 원복 = git revert(미머지).
