@@ -12989,6 +12989,11 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
                 } if _h else {"status": "unknown", "elapsed_ms": None, "checked_at": None}),
                 # TASK-0255 R2: insight-worker 스캔 관점(PG 정본) — 미커버 사유 구분(연결 불안정/권한). None=insight 미기록.
                 "insight_health": (_insight_health.get(_sk) if _sk else None),
+                # scope-key-unify: 메타데이터 admin scope 드롭다운이 쓸 scope 식별자 — **질의 시점 read 와
+                # 동일 해소값**(`scope_key 필드 or 라벨`: DB-등록 ds=해시, .env 레거시=라벨). 위 health 용
+                # `_sk`(=_dsr.scope_key, .env 도 해시 계산)와 달리 read 축을 그대로 노출해야 write==read 가 된다
+                # (라벨 ≠ 해시 死data 및 .env 역방향 死data 동시 회피). host/port 는 이미 노출 → 파생값 신규 누출 없음.
+                "scope_key": (v.get("scope_key") or v.get("key")),
             })
         datasources.sort(key=lambda d: d["key"])
         cur = conn.cursor()
@@ -24879,13 +24884,19 @@ def _metadata_resolve_account(request: Request):
 
 
 def _metadata_valid_scope_keys() -> set[str]:
-    """허용 scope_key 집합 — 등록된 datasource key(소문자) ∪ {'common'}.
+    """허용 scope_key 집합 — 등록된 datasource 의 **질의 시점 read 와 동일한 scope 해소값** ∪ {'common'}.
 
-    glossary/enum 의 scope_key 는 datasource **key**(modules.config._ACTIVE_DATASOURCE_KEY 가
-    소문자 ds key 를 set) 또는 'common' 네임스페이스다(= datasources.all_datasources 의 dict 키).
-    datasources.compute_scope_key(engine/host/port 해시)와는 다른 축이니 혼동 금지.
-    멀티DS 비활성/조회 실패여도 'common' 은 항상 허용(공용 사전). datasource 조회 best-effort —
-    실패 시 'common' 만 허용해 미지(未知) scope 적재로 인한 누수/오염을 막는다(보수적).
+    scope-key-unify(死data 수정): 메타데이터/샘플 admin write 의 scope_key 축을 **질의 시점 read 와
+    똑같은 식**으로 통일한다. read 는 `agent_core` 가 `cfg.set_active_datasource(_ds.get('scope_key') or
+    _ds.get('key'))` 로 활성 scope 를 잡고(= **scope_key 필드 우선, 없으면 라벨**), tools/insight 도 동일
+    규약(`ds.get('scope_key') or ds.get('key')`)이다. 즉 DB-등록 ds 는 `scope_key` 필드(compute_scope_key
+    해시), .env 레거시 ds 는 그 필드가 없어 **라벨**로 해소된다.
+
+    ⚠️ 주의(BLOCKER 회피): write 를 `_dsr.scope_key(ds)` 로 잡으면 안 된다 — 그 헬퍼는 .env ds(host 필수)에서
+    해시를 *계산*하지만 read 는 필드 부재 시 라벨로 떨어지므로, .env ds 에서 write(해시)≠read(라벨) 死data 가
+    역으로 재발한다. 그래서 read 와 **동일한 식** `ds.get('scope_key') or ds.get('key')` 를 그대로 쓴다.
+    과거엔 admin write 가 datasource **라벨**(all_datasources dict 키)만 저장해 DB-등록 ds 에서 라벨 ≠ 해시
+    死data 였다. 'common' 은 항상 허용(공용 사전). 조회 실패 시 'common' 만 허용(보수적).
     """
     keys = {"common"}
     conn = None
@@ -24895,10 +24906,11 @@ def _metadata_valid_scope_keys() -> set[str]:
             conn = _connect_memory()
         except Exception:
             conn = None
-        for k in (_dsr.all_datasources(conn) or {}).keys():
-            kk = str(k or "").strip().lower()
-            if kk:
-                keys.add(kk)
+        for k, ds in (_dsr.all_datasources(conn) or {}).items():
+            # read(agent_core.set_active_datasource)와 동일 해소: scope_key 필드(DB ds=해시) 우선, 없으면 라벨.
+            sk = str((ds.get("scope_key") or ds.get("key") or k) or "").strip().lower()
+            if sk:
+                keys.add(sk)
     except Exception:
         pass
     finally:

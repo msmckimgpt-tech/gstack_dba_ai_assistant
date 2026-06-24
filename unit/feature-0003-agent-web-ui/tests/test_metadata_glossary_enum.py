@@ -120,10 +120,14 @@ def _audit_capture(monkeypatch):
 
 
 def _allow_scopes(monkeypatch, scopes=("common", "default")):
-    """_metadata_valid_scope_keys 가 부르는 datasources.all_datasources 를 fake — 허용 scope 집합 고정."""
+    """_metadata_valid_scope_keys 가 부르는 datasources.all_datasources 를 fake — 허용 scope 집합 고정.
+
+    scope-key-unify: valid scope 는 dict 키(라벨)가 아니라 _dsr.scope_key(ds)(해시 축)다. fake ds 의
+    scope_key 필드를 scope 이름으로 채워 그 scope 가 허용되게 한다(real _dsr.scope_key 는 scope_key 우선).
+    """
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     import modules.datasources as _dsr
-    ds_map = {k: {} for k in scopes if k != "common"}
+    ds_map = {k: {"key": k, "engine": "mysql", "scope_key": k} for k in scopes if k != "common"}
     monkeypatch.setattr(_dsr, "all_datasources", lambda conn: ds_map)
 
 

@@ -9,6 +9,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260624T160000-scope-key-unify (TASK-20260624-scope-key-unify — 메타데이터/샘플 admin scope_key 축을 read 축으로 통일: ds-scoped 死data 수정, Major §12.3 — scope 경계)
+- Date: 2026-06-24. `/_template:resume` 의 ITEM-11 Phase 2 작동검증 중 구조 감사(4 dim)가 적발한 scope-key 축 불일치 死data 수정. ITEM-10(용어/ENUM)·ITEM-11(테이블/컬럼 설명)·ITEM-03(샘플 검수) admin **공유 경로**.
+- 死data: admin write=datasource **라벨**(all_datasources dict 키), 질의 read=`agent_core.set_active_datasource(_ds.get('scope_key') or _ds.get('key'))`=DB-등록 ds 의 compute_scope_key **해시** → 라벨≠해시 로 DB ds 의 ds-scoped 설명/샘플이 'common' 외 영영 안 읽힘(라이브 재현: 라벨 'mysql-local' 저장 → 질의시점 해시 'mysql-ddae8975d793' 읽기 MISS). 배포 DS 20+ 전부 WebDatasources(.env 0), KB 테이블 전부 0행이라 손실 데이터 없는 잠복.
+- 변경(feature-0003):
+  - `src/app.py` `_metadata_valid_scope_keys`: 허용 scope 를 dict 키(라벨)가 아닌 **read 동일식** `ds.get('scope_key') or ds.get('key')`(DB=해시·.env=라벨)로. (⚠️ `_dsr.scope_key` 미사용 — 그 헬퍼는 .env(host 보유) 시 해시를 *계산*해 read 라벨과 어긋나 死data 가 역재발한다. 적대 패널이 이 함정을 BLOCKER 로 적발 → 교정.)
+  - `src/app.py` `/api/admin/datasources` 응답: 메타데이터 드롭다운용 `scope_key`(=read 해소값 `scope_key or key`) 노출. health 용 `_sk`(=`_dsr.scope_key` 항상-해시)와 분리.
+  - `src/static/admin.js`: scope 드롭다운 value=노출 scope_key(read축)·표시=라벨. 메타데이터 탭 게이트 `kb.ingest.manual`→`+kb.sample.curate` OR(RISK 해소 — 샘플 큐레이터 도달). bootstrap 저장 `source:'bootstrap'`(NIT 해소 — provenance). cache-buster `?v=20260624-scope-key-unify`(admin.html/index.html).
+  - `tests/test_metadata_phase2.py`·`test_metadata_glossary_enum.py`: `_allow_scopes` fake 가 scope_key 필드 제공(write==read 축 모사). scope **양방향** 회귀 2 신규(DB=해시 허용·라벨 거부 / .env=라벨 허용·해시 거부 — v1 _dsr.scope_key 로직선 FAIL 하는 유효 가드).
+- 비변경: read 측(feature-0002 agent_core/kb_metadata/sample_queries/insight) 0 — write 를 기존 read 축에 맞춤. write/read/insight 3자 동일 축(`scope_key 필드 or 라벨`).
+- 보안: 적대 패널 2-lens 가 첫 fix 의 .env 축 반전 BLOCKER 적발 → 교정 → 재확인 agent RESOLVED(7항목, BLOCKER/MAJOR 0). 라벨 직접 POST 우회는 `_metadata_check_scope` 400 차단.
+- Rollback: 3 지점(valid_scope_keys·datasources 응답·드롭다운) revert. 신규 테이블 0행이라 데이터 영향 없음(라벨 行 orphan 없음 — 백필 불요).
+- Deploy: web 재빌드(app.py·admin.js·html). 마이그 없음. 死data 수정은 배포 후 라벨/해시 정합 라이브 재검증.
+- Cross-ref: REV-20260624T160000-scope-key-unify / FUNCTION REQ-20260624-scope-key-unify / TASK-20260624-scope-key-unify / CHG-20260624T133000-item11-phase2(死data 잠복 도입) / ROADMAP ITEM-11·ITEM-10·ITEM-03.
+
 ## CHG-20260624T133000-item11-phase2 (TASK-20260624-item11-phase2 — ITEM-11 Phase 2: 테이블/컬럼 설명+주입+부트스트랩 / 샘플 admin, Major §12.3 — 보안 경계)
 - Date: 2026-06-24 (ROADMAP dba-ai-nl2sql ITEM-11 Phase 2, **Major §12.3** — 신규 RBAC 표면 + KB 주입 경로 신설 + 부트스트랩 introspection). PLAN-APPROVED(2a+2b 한 컷).
 - Scope: cross-feature. **primary=feature-0003**(web 엔드포인트·admin UI), **secondary=feature-0002**(KB 코어·주입·마이그 — 본 CHG 에 cross-ref).
