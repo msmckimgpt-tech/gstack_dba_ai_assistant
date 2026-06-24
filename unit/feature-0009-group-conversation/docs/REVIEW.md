@@ -263,3 +263,18 @@ source_of_truth: true
 - 핵심 판정: client gate cosmetic(backend `_delete_conversation_impl`·`remove_conversation_member` authoritative 재검증), IDOR 없음(self-leave `state.user.id` only), 버튼-권한 매핑 정합(owner→보관/admin→보관/비보유 그룹멤버→나가기/타인 1:1→미렌더). LOW 1건은 기존 `is_group` PG-only 환경의존(본 변경 비도입).
 - Verification: `node --check` + `verify_settings_archive_leave.mjs` 22/22. PB-0008 미실측(worktree WSL — 배포 후 권장).
 - Human Approval Needed: 아니오 (Minor·프론트·사용자 명시 요청·backend 무변경).
+
+## REV-20260624T081516-gc-share-joinable-guard [SUBAGENT:security]
+- Date: 2026-06-24
+- Cycle: gc-share-joinable-guard (CHG-20260624T081516) — 공유 '참여 허용' 토글 owner-only 게이트. **Critical §12.3 (인가)**, 별도 worktree `ai/claude/feature-0009-share-joinable-guard`.
+- Related Change: feature-0003 `src/app.py`(`create_conversation_share` owner 게이트 403) + `static/`(FE disabled + joinable 강제 false) + 신규 `tests/test_share_joinable_owner_guard.py` (6).
+- Reason: Critical 인가 변경 — 비소유자의 joinable 링크 발급 차단이 실제 우회 불가능한지 적대적 검증 필요(§18.8 security dispatch).
+- 결정(AskUserQuestion): D1=403 거부, D2=소유자만 엄격(admin/`conversation.read.any` 예외 없음).
+- 적대적 검증(security 서브에이전트, 우회 2시도):
+  - 게이트 우회 불가 — `joinable` truthiness 코어션 fail-secure(`{joinable:false}` 만 0, 그 외 8 페이로드 전부 1 수렴), 게이트가 INSERT·`_ensure_owner_membership`·`_mark_conversation_group` 보다 선행, `account["id"]` 는 세션 유도(body 위조 불가).
+  - owner 판정 fail-closed — `owner_account_id` NULL/0 → `None` → 거부(비소유자 오판 없음).
+  - 단일 mutation 경로 — `Joinable=1` 쓰기는 `create_conversation_share` 1곳(join/revoke/view/fork 미해당, grep 전수).
+  - FE/BE 기준 동일(`isOwnConversation` ↔ `_conversation_owned_by_account`), 403 메시지 정보누설 없음, 회귀 없음.
+- 핵심 판정: **SHIP**. 블로커 결함 0. P3 2건 = (a) 레거시 backfill 소급 미폐쇄(의도된 scope-out, D 결정과 정합) + (b) PG/MySQL owner 폴백 분기(기존 코드, 본 변경 무관) — 둘 다 비블로커, MODIFY.md 에 기록.
+- Verification: pytest 신규 6/6 + 관련 share 20/20 + `node --check` + `py_compile`. PB-0008 미실측(worktree WSL — 배포 후 권장).
+- Human Approval Needed: 아니오 (사용자 명시 요청 + AskUserQuestion D1/D2 반영, backend authz 강화·무회귀).

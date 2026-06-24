@@ -278,3 +278,18 @@ source_of_truth: true
 - Impact: 1:1·멘션·라우팅·공유 링크 생성/취소·owner 게이트·backend/스키마/마이그 무변경. 순수 additive 표현계층.
 - Rollback Notes: feature-0003 app.js/styles.css/index.html revert + 신규 `loadParticipants`·테스트 제거. backend/스키마/마이그 0.
 - 검증: `node --check app.js` + CSS brace 1549=1549 + `verify_share_participants.mjs` 17/17 + 적대 3렌즈(security/authz·correctness·UX) BLOCKER/MAJOR 0(MINOR 2: 주석·스크롤 + NIT 1: 빈문구 흡수)(feature-0003 REVIEW REV-20260624T075458-gc-share-participants). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).
+
+## CHG-20260624T081516-gc-share-joinable-guard (cross-feature → feature-0003, Critical §12.3)
+- Date: 2026-06-24 (REV-20260624T081516). **별도 worktree** `ai/claude/feature-0009-share-joinable-guard`. 코드 정본=feature-0003-agent-web-ui — 본 항목은 feature-0009 cross-feature 추적(FUNCTION.md §13 사전승인).
+- Reason: `대화 ··· > 설정 > 공유`의 "이 링크로 대화 참여 허용" 토글을 **대화 생성자(owner)만** 변경 가능하게. 비소유자는 비활성 표시 + 브라우저 조작으로 활성화해도 backend 차단 요청(사용자).
+- 결정(AskUserQuestion): **D1=비소유자 joinable=true → 403 거부**(조용한 강등 아님). **D2=소유자만 엄격**(admin/conversation.read.any 예외 없음).
+- 변경(feature-0003 `src/`):
+  - `app.py` `create_conversation_share`: access 체크 직후 owner 게이트 — `if joinable and not _conversation_owned_by_account(conn, cid, int(account["id"])): return _json_error("참여 허용 링크는 대화 생성자만 만들 수 있습니다.", 403)`. INSERT·`_ensure_owner_membership`·`_mark_conversation_group` 보다 **선행** → 비소유자 joinable 행/그룹전환 도달 불가.
+  - `static/app.js` `openShareDialog`·`promptShareExpiry`(+`createConversationShare`): `isOwnConversation` 으로 owner 판정 → 비소유자 체크박스 `disabled` + 안내("대화 생성자만 변경할 수 있습니다") + 발급 시 joinable 강제 false.
+  - `static/styles.css` `.share-joinable-row.is-locked`(잠금 표시), `index.html` 캐시버스터 `share-joinable-guard`(app.js/styles.css).
+  - 신규 `tests/test_share_joinable_owner_guard.py` (6 — BE 게이트 INSERT 선행·owner 엄격·admin 우회 없음, FE disabled·강제 false·owner flag 전달).
+- Why(이중 방어): FE disable 은 UX, backend 403 이 권위 — `account["id"]` 는 세션 쿠키 유도(`_get_authenticated_account`)라 body 위조 불가. owner 판정 fail-closed(owner_account_id NULL/0 → 거부).
+- Impact: 소유자 joinable 발급·비소유자 view-only(joinable=0) 발급 **무회귀**. 1:1·멘션·라우팅·기존 발급 링크 무변경. 스키마/마이그 0.
+- Accepted scope-out (security 리뷰 P3): 본 가드 *이전에* 비소유자가 발급한 기존 joinable 링크(backfill DEFAULT 1)는 소급 폐쇄 안 함 — 신규 발급만 통제(D 결정 "기존 링크 영향 밖"과 정합). 전면 폐쇄 필요 시 별도 backfill `UPDATE … SET Joinable=0 WHERE CreatedBy<>owner_account_id`.
+- Rollback Notes: feature-0003 app.py/app.js/styles.css/index.html revert + 신규 테스트 제거. backend 스키마 0.
+- 검증: `py_compile` app.py + `node --check` app.js + pytest 신규 **6/6** + 관련 share 테스트 **20/20**(redaction 7건은 `import web.app` 선존 환경이슈, 본 변경 무관) + 적대적 **security 서브에이전트 SHIP**(우회 시도 2건 실패, fail-secure coercion). **PB-0008 미실측**(worktree=WSL — 배포 후 권장).

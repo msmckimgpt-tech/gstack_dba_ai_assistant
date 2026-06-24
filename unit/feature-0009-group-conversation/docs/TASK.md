@@ -50,6 +50,7 @@ source_of_truth: true
   - [x] 릴리즈 노트(그룹 대화) + 캐시버스터 (CHG-0007)
   - [x] send-routing 멘션 게이팅 사람 채팅 (CHG-0008, member_count/is_member 신호 + sendPrompt 분기)
   - [x] S3c 발신자 UI 표시(표시 store 미러 + renderMessages 발신자) + 연속 user 병합(CHG-0009). LLM 화자 라벨만 라이브 검증 잔여
+  - [x] **gc-share-joinable-guard** (별도 worktree `ai/claude/feature-0009-share-joinable-guard`, Critical 인가): 공유 '참여 허용' 토글 owner-only — 비소유자 backend 403 게이트 + FE disabled/강제 false + test 6/6 + security 서브에이전트 SHIP (CHG/REV-20260624T081516)
 
 ## 5. Blocked
 - 없음

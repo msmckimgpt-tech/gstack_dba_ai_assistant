@@ -14345,6 +14345,13 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
             "conversation.read.any",
         ):
             return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # feature-0009-share-joinable-guard: '참여 허용(joinable)' 링크는 대화 생성자(owner)만
+        # 발급할 수 있다. 프런트는 비소유자에게 체크박스를 disabled 로 표시하지만, 브라우저
+        # 조작으로 joinable=true 를 보내도 백엔드에서 무조건 차단(403)한다. owner-only 엄격 적용
+        # — admin(conversation.read.any) 도 본인이 생성한 대화가 아니면 예외 없음(사용자 결정).
+        # joinable=0(view-only) 링크는 기존대로 conversation.share.create 권한자 누구나 발급 가능.
+        if joinable and not _conversation_owned_by_account(conn, cid, int(account["id"])):
+            return _json_error("참여 허용 링크는 대화 생성자만 만들 수 있습니다.", 403)
         if anchor_id is not None and not _share_anchor_belongs_to_conversation(conn, cid, anchor_id):
             return _json_error("anchor_message_id 가 대화에 속하지 않습니다.", 400)
         # Token UNIQUE 충돌 retry loop (확률은 극히 낮지만 cheap).

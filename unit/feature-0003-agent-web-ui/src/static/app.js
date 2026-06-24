@@ -5387,20 +5387,25 @@ const SHARE_EXPIRY_PRESETS = [
   { label: "30일", seconds: 2592000 },
 ];
 
-// 만료 기간 선택 모달. resolve({ cancelled, seconds }). seconds=null → 무기한.
-function promptShareExpiry() {
+// 만료 기간 선택 모달. resolve({ cancelled, seconds, joinable }). seconds=null → 무기한.
+// feature-0009-share-joinable-guard: canToggleJoinable=false(비소유자) 면 참여 허용 토글을
+// disabled 로 표시하고 joinable 을 강제 false 로 resolve 한다(백엔드도 403 으로 이중 방어).
+function promptShareExpiry({ canToggleJoinable = true } = {}) {
   return new Promise((resolve) => {
     const backdrop = document.createElement("div");
     backdrop.className = "share-mgr-backdrop";
     backdrop.setAttribute("role", "dialog");
     backdrop.setAttribute("aria-modal", "true");
+    const joinableRow = canToggleJoinable
+      ? '  <label class="share-joinable-row"><input type="checkbox" id="shareJoinableChk" checked /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>'
+      : '  <label class="share-joinable-row is-locked"><input type="checkbox" id="shareJoinableChk" disabled /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(대화 생성자만 변경할 수 있습니다)</span></label>';
     backdrop.innerHTML =
       '<div class="share-mgr-panel share-expiry-panel">' +
       '  <div class="share-mgr-head">' +
       '    <h3 class="share-mgr-title">공유 링크 설정</h3>' +
       '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
       '  </div>' +
-      '  <label class="share-joinable-row"><input type="checkbox" id="shareJoinableChk" checked /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>' +
+      joinableRow +
       '  <div class="share-expiry-desc">링크가 자동으로 만료될 기간을 선택하세요. 만료 후에는 더 이상 열 수 없습니다.</div>' +
       '  <div class="share-expiry-opts"></div>' +
       '</div>';
@@ -5422,7 +5427,9 @@ function promptShareExpiry() {
       btn.textContent = p.label;
       btn.addEventListener("click", () => {
         const chk = backdrop.querySelector("#shareJoinableChk");
-        finish({ cancelled: false, seconds: p.seconds, joinable: chk ? chk.checked : true });
+        // 비소유자(canToggleJoinable=false)는 토글 disabled → joinable 강제 false.
+        const joinable = canToggleJoinable && chk ? chk.checked : false;
+        finish({ cancelled: false, seconds: p.seconds, joinable });
       });
       opts.appendChild(btn);
     });
@@ -5486,8 +5493,11 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
     showPermissionDeniedToast("conversation.share.create");
     return null;
   }
+  // feature-0009-share-joinable-guard: '참여 허용' 토글은 대화 생성자(owner)만 변경 가능.
+  const _shareConv = state.conversations.find((it) => String(it.id) === String(cid));
+  const isOwner = isOwnConversation(_shareConv);
   // 만료 기간 선택 (취소 시 생성 중단). 앵커 공유(메시지 '여기까지 공유') 진입점.
-  const choice = await promptShareExpiry();
+  const choice = await promptShareExpiry({ canToggleJoinable: isOwner });
   if (!choice || choice.cancelled) return null;
   return _issueConversationShare({
     cid,
@@ -5504,6 +5514,11 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
 // 백엔드: POST /api/conversations/{cid}/share(발급) · GET …/shares(목록) · DELETE /api/share/{id}(취소).
 async function openShareDialog(cid) {
   const canCreate = can("conversation.share.create");
+  // feature-0009-share-joinable-guard: '참여 허용' 토글은 대화 생성자(owner)만 변경 가능.
+  // 비소유자에겐 체크박스를 비활성(disabled) + 해제 상태로 표시하고, 발급 시 joinable 을
+  // 강제 false 로 보낸다. 백엔드(POST …/share)가 동일 규칙을 403 으로 강제(이중 방어).
+  const _shareConv = state.conversations.find((it) => String(it.id) === String(cid));
+  const isOwner = isOwnConversation(_shareConv);
   const backdrop = document.createElement("div");
   backdrop.className = "share-mgr-backdrop";
   backdrop.setAttribute("role", "dialog");
@@ -5660,8 +5675,11 @@ async function openShareDialog(cid) {
     const expiryOpts = SHARE_EXPIRY_PRESETS
       .map((p, i) => `<option value="${i}">${escapeHtml(p.label)}</option>`)
       .join("");
+    const joinableRow = isOwner
+      ? '<label class="share-joinable-row"><input type="checkbox" id="shareDialogJoinableChk" checked /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>'
+      : '<label class="share-joinable-row is-locked"><input type="checkbox" id="shareDialogJoinableChk" disabled /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(대화 생성자만 변경할 수 있습니다)</span></label>';
     createSec.innerHTML =
-      '<label class="share-joinable-row"><input type="checkbox" id="shareDialogJoinableChk" checked /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>' +
+      joinableRow +
       '<div class="share-create-row">' +
       '  <label class="share-expiry-field">만료 <select id="shareExpirySel" class="btn-secondary">' + expiryOpts + '</select></label>' +
       '  <button type="button" class="btn-primary" id="shareCreateBtn">링크 생성</button>' +
@@ -5669,7 +5687,8 @@ async function openShareDialog(cid) {
     const createBtn = createSec.querySelector("#shareCreateBtn");
     createBtn.addEventListener("click", async () => {
       const chk = createSec.querySelector("#shareDialogJoinableChk");
-      const joinable = chk ? chk.checked !== false : true;
+      // 비소유자는 토글이 disabled 이므로 항상 joinable=false 로 강제(백엔드도 403 으로 차단).
+      const joinable = isOwner && chk ? chk.checked !== false : false;
       const sel = createSec.querySelector("#shareExpirySel");
       const preset = SHARE_EXPIRY_PRESETS[Number(sel && sel.value) || 0] || SHARE_EXPIRY_PRESETS[0];
       createBtn.disabled = true;

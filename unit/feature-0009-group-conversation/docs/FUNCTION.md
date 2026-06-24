@@ -34,6 +34,9 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - `conversation_members` 멤버십 테이블. **참여(join)는 공유 링크('참여 허용' 토글, 기본 ON)로 일원화**
   (`POST /api/share/{token}/join`). username 직접 초대 + 멤버 패널은 **제거됨**(CHG-20260623-0013).
   roster 조회(GET)·제거/나가기(DELETE) 엔드포인트는 API 로 유지.
+  - **'참여 허용' 토글은 대화 생성자(owner)만 설정 가능**(CHG-20260624T081516-gc-share-joinable-guard).
+    비소유자는 FE 에서 체크박스 비활성 + 발급 시 joinable 강제 false, backend `create_conversation_share`
+    가 `joinable=true && !owner` 를 403 으로 차단(이중 방어, owner 판정 fail-closed). admin 예외 없음(D2).
 - `core_messages.sender_account_id`(발신자 귀속) + `thread_root_message_id`(스레드 컬럼 훅, 동작 미연동).
 - 멘션 파싱(FE/BE canonical 공유) + @assistant 만 ask_jobs enqueue(actor=발신자).
 - 멤버십 기반 열람 접근제어(전 conversation-scope 엔드포인트 IDOR 방지).
