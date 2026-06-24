@@ -140,3 +140,16 @@
 - **정책**: 미머지 worktree 현황 정본 = 그 worktree 의 unit TASK/REPORT; STATUS 인덱스는 main 머지 기준 + 미머지는 note 표기; 머지 시 행 갱신. (적대 리뷰 #11 의 "in-flight 마이그레이션 규칙 부재" 해소)
 - **panel SKIP 사유**: 비파괴 additive 정책 문서. 코드/secret 무변경. 흡수할 실제 in-flight 작업이 없음(ahead=0)을 실측 확인.
 - **Human Approval Needed**: 아니오 (정책 명문화). stale worktree 정리(`worktree remove`)는 운영 잔재 정리 시 별도 수행.
+
+## REV-20260624T015428-META-0003-ssot-consolidation [SKIPPED:meta-verify-and-scope]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 1c**(거버넌스 포인터 검증) + **ROADMAP P5a/P5b 분리**(사용자 요청)
+- **changeset (pure-meta)**:
+  - `docs/improvements/ssot-consolidation/ROADMAP.md` — ITEM-P5 → **P5a(코드 파편화/SSOT 중복·경계, Major)** + **P5b(코드 비대화/모놀리스 분할, Critical, 신규)**; Phase 표·종속성 그래프·ITEM-P1 status 갱신
+  - `CLAUDE.md`·`GEMINI.md` — `lifecycle:reference` + `source_of_truth:false` + `sources:[AGENTS.md]` frontmatter 추가(기계가독 포인터 선언)
+  - `docs/DOC_REGISTRY.md` — AI 운영 정책 행 정정
+  - `meta/REVIEW.md` — 본 entry
+- **Phase 1c ground-truth 결과 (3번째 phantom 교정)**: "CONVENTIONS §3.1/§7 ↔ AGENTS §3.1 중복 흡수"는 **실재하지 않음** — CONVENTIONS 에 §3.1 자체가 없고 §7 "AI 에이전트 매핑"은 이미 깨끗한 포인터("정본=../AGENTS.md"); GEMINI.md line35 "AGENTS.md 를 가리키는 참조 역할만"; AGENTS.md 의 ADR 언급 8건 전부 **참조 링크**(본문 복제 0). → **거버넌스 dedup 불요, AGENTS.md 본문 무편집**(우려한 §18.8.1 codex-review 트리거 미해당). 실제 작업 = 포인터 문서 reference frontmatter 추가뿐.
+- **P5 분리 근거 (사용자 검토 승인)**: 실측 `app.py` 25,823줄/146 endpoint(모듈 5개), 프론트 admin/app.js·styles.css ~25K. "비대화된 코드"는 사용자 원 요청 포함이나 **SSOT(중복) 아닌 모듈화 문제** → P5b(Critical, 라이브 web app, test 54파일 안전망, 점진 추출, 별도 cycle/initiative). doc-SSOT cycle 번들 금지.
+- **panel SKIP 사유**: 검증(ground-truth) + 비파괴 frontmatter/계획 문서. 코드·정책 semantic 무변경.
+- **Human Approval Needed**: 아니오. P5b 실제 실행은 Critical → 별도 cycle plan-review + §12 승인.

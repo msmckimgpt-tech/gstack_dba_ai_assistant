@@ -29,7 +29,7 @@ AI 세션이 "무엇이 진실인지" 판정에 실패 → 작업 미정립. 목
 ```
 P0(계약·lint·registry) ──requires──▶ P1(문서정본) ──▶ P2(worktree 흡수) ──▶ P4(wiki 참조-only)
 P0 ──▶ P3(secret/clutter, CRITICAL) [rotation 선행=사용자]
-P1 ──▶ P5(코드 재배치+검증) [import 그래프 실측 선행]
+P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대화 분할, Critical) [import 실측 선행]
 ```
 - P3 는 P0(글롭 가드·registry) 후 가능하나 rotation(사용자/외부) 완료 전 secret 단계 진행 금지.
 - P4 는 P1(docs 정본 확정) 의존(mirror 출처 고정 후 동기화 의미 성립).
@@ -43,7 +43,8 @@ P1 ──▶ P5(코드 재배치+검증) [import 그래프 실측 선행]
 | P2 | 활성 worktree 정본 흡수·in-flight TASK | medium | P1 | 〃 |
 | P3 | secret 노출 종료·clutter | **critical** | P0 + **rotation(사용자)** | ai/claude/META-0004-secret-cleanup (별도 PR) |
 | P4 | wiki 참조-only·자동 동기화 | medium | P1 | 〃 ssot-consolidation |
-| P5 | 코드 재배치·전역 검증/회귀 | major | P1 + import 실측 | 단위별 독립 PR |
+| P5a | 코드 파편화(SSOT 중복·경계: shared·0009·reconciliation·Dockerfile) | major | P1 + import 실측 | 단위별 독립 PR |
+| P5b | 코드 비대화(모놀리스 분할: app.py 25.8K·프론트) | **critical** | P5a | 별도 cycle/initiative |
 
 > P0·P1·P2·P4 는 본 worktree 공유(순차 commit). P3·P5 단위는 격리 PR(롤백 단위 분리, §13.2.7).
 
@@ -65,7 +66,7 @@ P1 ──▶ P5(코드 재배치+검증) [import 그래프 실측 선행]
 - **gate**: `bash bin/ssot-lint.sh --selftest` 통과(오탐 0) + verify-completion check #9(REVIEW.md entry) + 신규 문서만(비파괴)
 
 ### ITEM-P1 · 문서 정본 정리
-- **status**: pending
+- **status**: done (1a 아카이빙 cc5ce41 · 1b STATUS 인덱스화 3f35e46 · 1c 거버넌스 포인터 검증=이미 clean[CONVENTIONS§7·GEMINI·CLAUDE 포인터, AGENTS ADR=참조]+CLAUDE/GEMINI reference frontmatter. 전 문서 frontmatter 백필은 점진)
 - **feature_id**: META-0003-ssot-consolidation
 - **risk_grade**: Major   <!-- STATUS 정본 재정의 → plan-review -->
 - **depends_on**: [ITEM-P0]
@@ -101,19 +102,34 @@ P1 ──▶ P5(코드 재배치+검증) [import 그래프 실측 선행]
 - **작업**: wiki 전역 sot:false 일관성 검증(`ssot-lint --check wiki-sot` — 현재 Log.md 1건만 sot:true, 정당; 리뷰의 ADR-0005/Module-Map '거짓 SOT' 는 실제 sot:false 로 오판이었음); 신규 카드 mirrors/sources 백필; mirror 자동 재생성 hook/CI; stale 카드(0001/0004~0007) 백필/동결 라벨; concepts→docs/improvements 승격 검토; hot/Index/overview frontmatter 정규화 + wiki-lint 의무화.
 - **gate**: wiki-lint + drift 0(정본 mtime ≤ mirror mtime) + check #9
 
-### ITEM-P5 · 제품 코드 재배치 + 전역 검증/회귀
+### ITEM-P5a · 코드 파편화 정리 (SSOT/중복·경계)
 - **status**: pending
-- **feature_id**: META-0003-ssot-consolidation (코드 단위는 별도 feature-NNNN cycle 로 분기)
+- **feature_id**: (코드 단위 별도 feature-NNNN cycle)
 - **risk_grade**: Major
 - **depends_on**: [ITEM-P1]
+- **dimension**: structural (SSOT — *중복/경계*)
 - **작업**:
   - 선행: import 의존성 그래프 실측(app.py 148 `from modules.*`).
   - shared/ 추출(modules.→shared. 재정의 + 148 import + 두 이미지 빌드 컨텍스트)을 Dockerfile 분리의 전제로 — 분리 자체는 선행 없이는 비실행.
-  - attachment_reconciliation 'dedup' 폐기: live 0003판 무변경, 0002판 GDPR(admin_purge/legal, 미배선) 사양 여부 결정, env키(POLL_SEC vs INTERVAL_SEC) 정본 ADR 후 alias. 단순 합치기 금지.
+  - attachment_reconciliation 'dedup' 폐기: live 0003판 무변경, 0002판 GDPR(admin_purge/legal, 미배선) 사양 여부 결정(**미결정 #4**), env키(POLL_SEC vs INTERVAL_SEC) 정본 ADR 후 alias. 단순 합치기 금지.
   - feature-0009 '코드 이동' 옵션 삭제 → cross-cut 을 ANCHOR/CODEBASE_MAP 에 명시만. skeleton(0005/0008/0009) '코드 없음/계획' 라벨.
-  - 각 단위 독립 PR + 롤백 경로(이미지 태그 보존 + compose 기준점 + revert + 이전 이미지 redeploy + 롤백 리허설 1회).
-  - 전역 회귀: `make test`(pytest unit/feature-0002·0003/tests + ruff) + 전체 docker compose build + browser 검증.
+  - 단일 Dockerfile 분리 여부 = **미결정 #5**.
 - **gate**: make test PASS + 전체 build + browser + 롤백 리허설 + plan-review 승인 + check #9 + 단독 cycle
+
+### ITEM-P5b · 코드 비대화 해소 (모놀리스 분할/모듈화) — 신규
+- **status**: pending
+- **feature_id**: (코드 단위 별도 feature-NNNN cycle, 라이브 web app)
+- **risk_grade**: **Critical** (라이브 web app, 146 endpoint, 런타임 회귀)
+- **depends_on**: [ITEM-P5a]   <!-- import 실측·shared 추출 선행과 정합 -->
+- **dimension**: structural (모듈화 — *파일 크기/유지보수*, SSOT-중복 아님)
+- **why**: 사용자 원 요청 "비대화된 코드들". 실측: `app.py` **25,823줄/146 endpoint/554 함수**(모듈 5개뿐), 프론트 `admin.js`(8.8K)·`app.js`(8.7K)·`styles.css`(7.6K). AI 전체 로드·정확 편집 어려움 → "요청 미수행" 증상 기여.
+- **모델**: feature-0002(38 모듈, agent_core 는 오케스트레이터)를 패턴으로. **안전망**: feature-0003 테스트 54파일/11K줄.
+- **작업**:
+  - app.py → APIRouter/모듈 **점진 추출**(router-by-router, 도메인별: auth/conversation/admin/attachment/datasource/share…), 각 추출마다 `make test` + 브라우저 QA. big-bang 금지.
+  - 프론트(admin.js/app.js/styles.css) 모듈 분할(번들 또는 ES module).
+  - CONVENTIONS 에 *code-modularity* 컨벤션(파일 크기 임계 → 추출 trigger) 추가 — SSOT 계약과 sibling 인 code-health 규약(재발 방지).
+- **gate**: 각 추출 단위 make test PASS + 브라우저 QA + 롤백 리허설 + plan-review(Critical) + check #9. **별도 cycle, doc-SSOT cycle 에 번들 금지.**
+- **note**: SSOT(중복/정본)와 구분되는 *모듈화* 문제. 본 SSOT initiative 의 산출(정본 명확화)과 독립 추진 가능 — 별도 initiative(`docs/improvements/code-modularity`)로 분리해도 무방.
 
 ## 4. Open Decisions (사용자 입력)
 1. secret rotation 범위 + history rewrite 추가 수행 여부(+저장소 public/private 확인)

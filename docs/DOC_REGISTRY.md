@@ -25,7 +25,7 @@ ai_read_priority: 3
 
 | domain | **canonical (SSOT)** | lifecycle | reference / mirror (복제 금지) | archive |
 |---|---|---|---|---|
-| AI 운영 정책 | `AGENTS.md` | active(rewrite) | CLAUDE.md · GEMINI.md · CONTRIBUTING.md · CONVENTIONS.md §3.1·§7 (→ 포인터화 P1) | — |
+| AI 운영 정책 | `AGENTS.md` | active(rewrite) | CLAUDE.md·GEMINI.md (`lifecycle:reference`, `sources:[AGENTS.md]` — P1c 완료), CONVENTIONS §7(이미 포인터). ※CONTRIBUTING/README 는 포인터 아닌 별개 내용 | — |
 | 의사결정(ADR) | `docs/DECISIONS.md` | ledger(append-only) | AGENTS.md §18(링크) · wiki/Decisions/*(mirror) | — |
 | 프로젝트 현황 | `unit/<feature>/docs/{TASK,REPORT}` | active(feature) | `docs/STATUS.md`(인덱스 only, P1) · wiki/Features/*(카드 mirror) | — |
 | 아키텍처 | `docs/ARCHITECTURE.md` | active(rewrite) | wiki/Architecture/*(mirror) · ~~wrapper Architecture/~~(삭제 P1) | — |
