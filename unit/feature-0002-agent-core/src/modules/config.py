@@ -542,12 +542,21 @@ AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").st
 AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
 AGENT_KB_EMBEDDING_TIMEOUT_SEC = int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60")
 AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
-# ITEM-05 (하이브리드 검색 — 벡터+키워드 score fusion). gate ON(기본) 시 PG read path
+# ITEM-05 (하이브리드 검색 — 벡터+키워드 score fusion). gate ON 시 PG read path
 # (_load_rag_documents_for_request_pg) 가 벡터(cosine)+trigram(pg_trgm) 검색을 둘 다 수행해
-# (conversation_id, fact_key) union 병합 후 score = ALPHA·vec_sim + BETA·trigram_sim 으로 단일
-# 랭킹한다. gate OFF 면 기존 2-tier(vector-OR-trigram fallback) 경로 — 안전 롤백 스위치.
+# (conversation_id, fact_key, content) union 병합 후 score = ALPHA·vec_sim + BETA·trigram_sim 으로
+# 단일 랭킹한다. gate OFF(기본) 면 기존 2-tier(vector-OR-trigram fallback) 경로.
 # 벡터 미임베딩/임베딩 실패(qvec None) 시엔 gate 무관하게 trigram-only 폴백 보존.
-AGENT_KB_HYBRID_ENABLED = os.getenv("AGENT_KB_HYBRID_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+#
+# 기본 OFF 사유 (ITEM-05 가치 입증 측정 결과 — 은폐 없이 기록):
+#   적대적 retrieval corpus(24 docs/12 질문, rare-token·opaque-code·검증된 vector-miss 3 tier)로
+#   fusion ON vs 2-tier A/B + 파라미터 sweep(NORM on/off × α/β 7조합) 실측 → 모든 지표 +0.0000
+#   (MRR 1.0 both). 근본 원인: bge-m3 가 subword/char 인지라 질문의 rare token 이 정답 doc 의
+#   cosine 도 함께 끌어올려(벡터·trigram 同방향 합의) fusion 이 바꿀 top rank 가 없음. 즉 현
+#   임베더+합성 KB 조합에선 retrieval 정확도 lift 가 반증됨. fusion 은 비회귀(안전)하나 가치는
+#   임베더-장애/미임베딩 폴백(이미 위 qvec None 폴백이 커버)에 국한 → 운영 거동 불변 위해 기본 OFF
+#   dormant 보존. 실가치 재측정은 라이브 운영 질의 로그(임베더가 실제로 헛짚는 케이스) 필요.
+AGENT_KB_HYBRID_ENABLED = os.getenv("AGENT_KB_HYBRID_ENABLED", "0").strip().lower() not in ("0", "false", "no", "")
 # fusion 가중치 — vec 우선(0.6) + trigram 보강(0.4).
 AGENT_KB_HYBRID_ALPHA = float(os.getenv("AGENT_KB_HYBRID_ALPHA", "0.6") or "0.6")
 AGENT_KB_HYBRID_BETA = float(os.getenv("AGENT_KB_HYBRID_BETA", "0.4") or "0.4")
@@ -555,6 +564,8 @@ AGENT_KB_HYBRID_BETA = float(os.getenv("AGENT_KB_HYBRID_BETA", "0.4") or "0.4")
 # similarity(~0.01~0.2)는 척도가 달라 raw 가중합이 vec 에 지배된다. 각 신호를 query-단위
 # min-max([0,1])로 정규화 후 가중합하면 α/β 가 의도대로 두 신호를 섞는다. OFF=raw 가중합(롤백/비교).
 AGENT_KB_HYBRID_NORMALIZE = os.getenv("AGENT_KB_HYBRID_NORMALIZE", "1").strip().lower() not in ("0", "false", "no", "")
+# ITEM-05 REV MINOR-1: trigram sim 절대 하한 — 미만은 신호 0(정규화 부풀림 차단, 무관 distractor 상위 노출 방지).
+AGENT_KB_HYBRID_TRIGRAM_FLOOR = float(os.getenv("AGENT_KB_HYBRID_TRIGRAM_FLOOR", "0.05") or "0.05")
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(

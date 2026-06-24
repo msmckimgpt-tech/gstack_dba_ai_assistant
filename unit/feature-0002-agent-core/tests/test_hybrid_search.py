@@ -204,9 +204,29 @@ def test_fusion_normalize_off_vec_dominates(pg_mock):
 
     out = knowledge._load_rag_documents_for_request_pg(["c1"], "쿼리", ["common", ""])
     by_key = {d["key"]: d["ft_score"] for d in out}
-    # raw: docHi=0.5*0.80+0.5*0.02=0.41, docLo=0.5*0.78+0.5*0.20=0.49.
-    assert by_key["docHi"] == pytest.approx(0.41, abs=1e-6)
+    # raw + trigram floor(0.05, REV MINOR-1): docHi trg 0.02 < floor → 0 → 0.5*0.80+0.5*0=0.40.
+    # docLo trg 0.20 ≥ floor → 유지 → 0.5*0.78+0.5*0.20=0.49. (floor 이전 docHi=0.41 이었음)
+    assert by_key["docHi"] == pytest.approx(0.40, abs=1e-6)
     assert by_key["docLo"] == pytest.approx(0.49, abs=1e-6)
+
+
+def test_fusion_same_factkey_different_content_not_merged(pg_mock):
+    """REV MAJOR: 같은 (conv,fact_key) 라도 content 다르면 별 엔트리(스키마 unique 는
+    content_hash 포함). 병합키에 content 미포함 시 두 문서 신호가 한 엔트리로 섞임."""
+    knowledge = _knowledge()
+    monkeypatch = pg_mock
+    monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
+    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
+    # 같은 (c1, dup) 인데 content 가 다른 두 행(스키마상 정상 공존).
+    vec_rows = [_row("c1", "dup", "내용 A", 5, 0.80), _row("c1", "dup", "내용 B", 5, 0.60)]
+    _install_backend(monkeypatch, vec_rows=vec_rows, trg_rows=[])
+    out = knowledge._load_rag_documents_for_request_pg(["c1"], "쿼리", ["common", ""])
+    # content 가 키에 포함 → 2 엔트리 보존(병합 안 됨). (conv,fact)만 키였다면 1개로 뭉개짐.
+    assert len(out) == 2
+    # 두 행이 별 엔트리이므로 vec sim(0.80/0.60) 차이가 ft_score 에 각각 보존(뭉개지면 1개·max만).
+    scores = sorted(d["ft_score"] for d in out)
+    assert len(scores) == 2 and scores[0] != scores[1]
 
 
 def test_fusion_both_empty_falls_through_to_trigram(pg_mock):

@@ -8,8 +8,8 @@ source_of_truth: true
 
 # Review Log
 
-## REV-20260623T191241-item05-hybrid-search [SUBAGENT:item05-impl-selfcheck — fusion 병합·정규화·폴백·gate·tuple shape·eval scope] — SELF-CHECK PASS (적대 backend 리뷰 예정)
-- Date: 2026-06-23 (TASK-20260623T191241, ITEM-05 fusion). 본 엔트리는 **구현 self-check**(작성자 자기검증)다. **메인이 적대 backend 리뷰를 별도 수행 예정** — 본 PASS 는 적대 리뷰를 대체하지 않는다.
+## REV-20260623T191241-item05-hybrid-search [SUBAGENT:item05-impl-selfcheck + adversarial-backend] — SHIP-WITH-FIXES (적대 리뷰 완료, fix 흡수)
+- Date: 2026-06-23 구현 self-check → 2026-06-24 적대 backend 리뷰 완료. 본 엔트리 上단은 **구현 self-check**(작성자 자기검증), 下단(§적대 리뷰 결과)이 **적대 backend 리뷰**다. self-check 가 예고한 점검 표면 ①②가 실제 MAJOR/MINOR-2 로 적중 — fix 전부 흡수.
 - 자기검증 항목/결과:
   1. **fusion 점수 결합**: score=α·vec+β·trigram, 한쪽만 매칭 시 누락 신호 0. 단위 5종(결합·정렬·union 병합키·vec-only·trg-only) PASS.
   2. **스케일 정규화 정합**: query-단위 min-max([0,1]), span≈0(분산 0) 시 0(상수항 무영향). NORMALIZE ON/OFF 대조 단위 PASS. (라이브: vec~0.4~0.8 vs trgram~0.01~0.2 척도차 실측 — 정규화 근거 데이터로 확보.)
@@ -19,6 +19,20 @@ source_of_truth: true
   6. **롤백 안전**: AGENT_KB_HYBRID_ENABLED=0(2-tier) / NORMALIZE=0(raw) env 1줄.
 - 측정: 라이브 A/B(bge-m3 k=3) NEUTRAL(Δ 전부 0, 회귀 없음). headline 상승 미관측 — 강한 임베더 포화(은폐 없이 보고).
 - 적대 리뷰가 점검할 표면(메인): ① union 병합 시 base row 선택(vec/trg 동형 가정)의 엣지 — 동일 (conv,fact) 가 서로 다른 content_hash 로 2 행일 때 ② 정규화가 단일후보(span 0)에서 0 으로 죽는 동작이 랭킹에 미치는 영향 ③ vec·trg 결과 집합 비대칭(한쪽 200 cap, 한쪽 전체) 시 누락 신호 0 처리의 편향 ④ gate OFF 경로가 기존과 byte-identical 인지(롤백 무손상) ⑤ eval set 합성 KB 가 fusion 효과를 가릴 만큼 쉬운지(측정 타당성).
+
+### 적대 backend 리뷰 결과 (2026-06-24, general-purpose REFUTE) — VERDICT: SHIP-WITH-FIXES → 전부 흡수
+- **MAJOR(①적중)**: 병합키 `(conv,fact)` 가 schema unique `(conversation_id,fact_key)` 와 어긋남 — 동일 factkey·다른 content 2 행이면 뒤 행이 앞 행을 덮어써 정답 유실. **fix**: 병합키 `(conv,fact,content)` + 동일 키 내 max 누적. 회귀 테스트 `test_fusion_same_factkey_different_content_not_merged`(len==2·distinct ft_score) +1.
+- **MINOR-1**: trigram 무관 distractor(sim~0.02)가 정규화 후 상위로 부풀려질 수 있음. **fix**: `AGENT_KB_HYBRID_TRIGRAM_FLOOR`(0.05) 절대 하한 — 미만은 신호 0. 기존 `test_fusion_normalize_off_vec_dominates` 기대값 0.41→0.40(floor 의도 동작) 갱신.
+- **MINOR-2(②적중)**: 정규화 span-0(단일 후보) 시 ft_score 0 처리가 랭킹 왜곡. **fix**: span-0 → raw 값 fallback(`vec_n=vec`, `trg_n=trg`).
+- Confirmed-safe(REFUTE 실패=안전): ③ 비대칭 집합은 누락 신호 0 + max 누적으로 편향 없음 · ④ gate OFF 경로 기존 2-tier 와 동치(분기 진입 전 early branch) · `_pg_connect_ro` least-priv·tuple 8-shape·scope 격리 보존.
+- 회귀: `tests/test_hybrid_search.py` 11/11 PASS(PYTHONPATH=src) + py_compile.
+
+### 가치 입증 측정 (사용자 "가치 입증 후 마감" 지시) — VERDICT: lift 반증(REFUTED) → gated-OFF dormant
+- self-check ⑤(측정 타당성) 정면 대응: 깨끗한 합성 KB 가 fusion 효과를 가린다는 가설로 **적대적 corpus** 구축(`evalkb_adv` 격리, 24 docs/12 질문 = rare-token·opaque-code·검증된 vector-miss 3 tier, 정답에만 rare exact token + token-없는 의미-유사 distractor — fusion-favorable 의도 설계).
+- A/B(fusion ON vs 2-tier) + 파라미터 sweep(NORM on/off × α/β = 0.6/0.4·0.5/0.5·0.7/0.3·0.3/0.7·0.4/0.6, 총 7조합): **모든 지표 +0.0000(MRR 1.0 both), 12/12 질문 fusion·2-tier 공히 정답 rank=1**. lift 내는 파라미터 영역 없음.
+- 근본 원인(격리 cosine 실측): bge-m3 가 subword/char 인지라 질문의 rare token 이 정답 doc cosine 도 함께 끌어올림(예 C1 정답 vec=0.827 vs distractor 0.748) → 벡터·trigram 同방향 합의 → fusion 이 바꿀 top rank 없음. 격리 cosine 으로 distractor 우위(0.726<0.761)를 만든 C1 조차 질문에 코드가 들어가는 순간 정답 우위로 역전 — **fusion-favorable 과 vector-miss 가 양립 불가**.
+- 판정: fusion 은 **비회귀(안전)하나 retrieval 정확도 lift 없음**(현 bge-m3 + 합성 KB). 가치는 임베더-장애/미임베딩 폴백(이미 qvec None 폴백 커버)에 국한. **마감(사용자 2026-06-24): gated-OFF dormant + done** — 기본 `AGENT_KB_HYBRID_ENABLED` OFF(운영 거동 불변), fusion 코드·eval 자산은 폴백 보험으로 보존. ITEM-12 튜닝 근거 현 corpus 론 없음 — 실가치 재측정은 라이브 운영 질의 로그 필요.
+- Cross-ref: CHG-20260623T191241-item05-hybrid-search / ROADMAP dba-ai-nl2sql ITEM-05(→done) / REPORT.md.
 
 ## REV-20260618-0318 [SUBAGENT:adversarial — 게이트 로직 회귀 / 토큰 보존 / 프롬프트 충돌 / confirm_heavy 약화 / 라이브 적용 / 사용자 노출] — SHIP
 - Date: 2026-06-18

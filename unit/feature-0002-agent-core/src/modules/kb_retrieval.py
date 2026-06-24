@@ -550,18 +550,28 @@ def _fuse_rag_documents(
                 return 0.0
         return 0.0
 
-    # 병합 키 = (conversation_id, fact_key). base row 는 두 결과 중 먼저 본 것을 유지
-    # (content/weight/메타는 동일 doc 이라 동형 — 동일 (conv,fact) 는 같은 row).
+    # 병합 키 = (conversation_id, fact_key, content). 스키마 unique 는 (conv, scope, fact,
+    # content_hash) 라 동일 (conv,fact) 에 content 다른 행이 정상 공존 → content 로 구분해야
+    # 서로 다른 문서의 신호가 한 엔트리로 섞이지 않는다(REV MAJOR). 동일 키 중복(intra-search)은
+    # max 누적(덮어쓰기 시 더 낮은 sim 잔존 방지). vec·trg 같은 doc 은 같은 key 로 정상 fusion.
+    from .config import AGENT_KB_HYBRID_TRIGRAM_FLOOR as _TRG_FLOOR
     merged: dict[tuple, dict[str, Any]] = {}
     for row, kind in [(r, "vec") for r in vrows] + [(r, "trg") for r in trows]:
         conv_id = str(row[0] or "").strip()
         fact_key = str(row[1] or "").strip()
-        key = (conv_id, fact_key)
+        content = str(row[2] or "")
+        key = (conv_id, fact_key, content)
         entry = merged.get(key)
         if entry is None:
             entry = {"row": row, "vec": 0.0, "trg": 0.0}
             merged[key] = entry
-        entry[kind] = _sim(row)
+        sim = _sim(row)
+        # trigram 절대 하한(REV MINOR-1): 미미한 trigram sim 이 query-단위 정규화로 1.0 까지
+        # 부풀려져 무관 distractor 를 상위로 올리는 것 차단. floor 미만은 신호 0(=비기여).
+        if kind == "trg" and sim < _TRG_FLOOR:
+            sim = 0.0
+        if sim > entry[kind]:
+            entry[kind] = sim
 
     if normalize:
         # query-단위 min-max 정규화 — 각 신호를 후보 집합 내 [0,1] 로. 분산 0(모두 동일)이면
@@ -576,9 +586,11 @@ def _fuse_rag_documents(
         t_lo, t_hi = _minmax(trg_vals)
         v_span = v_hi - v_lo
         t_span = t_hi - t_lo
+        # span 0(후보 1건 또는 모든 sim 동일)이면 min-max 가 정의 안 됨 → raw sim 으로 폴백.
+        # 0 으로 두면 단일 강매칭 doc 의 ft_score 가 0(="관련도 없음")으로 LLM 에 잘못 전달됨(REV MINOR-2).
         for e in merged.values():
-            e["vec_n"] = ((e["vec"] - v_lo) / v_span) if v_span > 1e-9 else 0.0
-            e["trg_n"] = ((e["trg"] - t_lo) / t_span) if t_span > 1e-9 else 0.0
+            e["vec_n"] = ((e["vec"] - v_lo) / v_span) if v_span > 1e-9 else e["vec"]
+            e["trg_n"] = ((e["trg"] - t_lo) / t_span) if t_span > 1e-9 else e["trg"]
     else:
         for e in merged.values():
             e["vec_n"], e["trg_n"] = e["vec"], e["trg"]
