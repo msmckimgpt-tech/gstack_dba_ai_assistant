@@ -22,7 +22,7 @@ AI 세션이 "무엇이 진실인지" 판정에 실패 → 작업 미정립. 목
 ## SSOT 계약 4조 (ADR-0031 정본)
 1. 한 도메인 = 한 정본. `source_of_truth: true` 는 도메인당 정확히 1개.
 2. 참조는 복제 금지 — `mirrors:`/`sources:` 로 정본 경로 선언.
-3. archived 는 `docs/_archive/` 로 격리(루트 오염 금지).
+3. archived 는 `docs/archive/` 로 격리(루트 오염 금지).
 4. drift 는 lint 가 강제(도메인당 SOT 1개 / 참조의 source 선언 / archived 위치 / tracked secret 0).
 
 ## 1. 종속성 그래프
@@ -69,7 +69,7 @@ P1 ──▶ P5(코드 재배치+검증) [import 그래프 실측 선행]
 - **feature_id**: META-0003-ssot-consolidation
 - **risk_grade**: Major   <!-- STATUS 정본 재정의 → plan-review -->
 - **depends_on**: [ITEM-P0]
-- **작업**: GOAL/OBSERVATIONS → docs/_archive/; STATUS 인덱스화(상태+최근 TASK 3링크); CONVENTIONS §3.1·§7→포인터, AGENTS §18 ADR본문→DECISIONS 링크, CLAUDE/GEMINI/CONTRIBUTING/README 포인터화; WIKI.md vs wiki/README.md 정본 1개; cross-cut(0009) 정본 보정 + TASK/REPORT §1 stale 라인 정합; frontmatter(mirrors/sources/lifecycle) 백필.
+- **작업**: GOAL/OBSERVATIONS → docs/archive/; STATUS 인덱스화(상태+최근 TASK 3링크); CONVENTIONS §3.1·§7→포인터, AGENTS §18 ADR본문→DECISIONS 링크, CLAUDE/GEMINI/CONTRIBUTING/README 포인터화; WIKI.md vs wiki/README.md 정본 1개; cross-cut(0009) 정본 보정 + TASK/REPORT §1 stale 라인 정합; frontmatter(mirrors/sources/lifecycle) 백필.
 - **gate**: ssot-lint(도메인당 SOT 1) + 링크 무결성 + STATUS<30KB + check #9 + in-flight TASK 'active' 링크 정확
 
 ### ITEM-P2 · 활성 worktree 정본 흡수 + in-flight TASK 마이그레이션

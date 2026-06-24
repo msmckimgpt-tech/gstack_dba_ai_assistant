@@ -697,3 +697,10 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   - **현상 유지**: drift·비대화 누적이 작업 미정립의 직접 원인 → 폐기.
   - **wiki 완전 폐기**: Log/hot/concepts 고유 가치 손실 → 참조-only + 자동 동기화로 대체.
   - **secret rm-only**: 이미 push 된 노출을 제거 못 함 → rotation 1순위로 격상(P3).
+
+### ADR-0031 Addendum — archive 위치 = `docs/archive/` (2026-06-24, Phase 1a)
+
+- §3 의 archive 격리 위치를 `docs/_archive/` → **`docs/archive/`** 로 교정한다.
+- 사유: `.gitignore:27` 의 `_archive/` 패턴이 모든 `_archive` 디렉토리를 무시한다(템플릿의 로컬 임시
+  보관 관례). SSOT 의 archive 는 **git 추적 보존**(이력 유지)이 목적이므로 gitignore 되는 `_archive/` 는
+  부적합. `docs/archive/`(추적됨)로 확정. `bin/ssot-lint.sh` 의 archived 검사도 `*/archive/*` 로 정합.

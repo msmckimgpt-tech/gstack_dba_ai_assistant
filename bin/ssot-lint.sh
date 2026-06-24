@@ -6,7 +6,7 @@
 #
 # 현재 = 골격(WARN-only). 구현 완료 check:
 #   - secret   : tracked .env 백업/.bak-task 0건 (#15/#16, 노출 종료 게이트의 워킹트리 부분)
-#   - archived : status|lifecycle: archived 문서가 docs/_archive/ 밖에 있으면 위반
+#   - archived : status|lifecycle: archived 문서가 docs/archive/ 밖에 있으면 위반
 #   - wiki-sot : wiki/ 의 source_of_truth:true 가 allowlist(Log.md) 밖이면 거짓 SOT
 # TODO(P1+): registry(도메인당 sot=true 1개) 정밀 검사 — DOC_REGISTRY 파싱 후 구현.
 #
@@ -53,15 +53,15 @@ check_secret() {
   fi
 }
 
-check_archived() {
-  hdr "archived — status|lifecycle: archived 가 docs/_archive/ 밖 (ADR-0031 §3)"
+checkarchived() {
+  hdr "archived — status|lifecycle: archived 가 docs/archive/ 밖 (ADR-0031 §3)"
   local f hd
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    case "$f" in */_archive/*) continue;; esac
+    case "$f" in */archive/*) continue;; esac
     hd="$(head -20 "$f" 2>/dev/null)"
     if printf '%s' "$hd" | grep -qiE '^(status|lifecycle): *archived'; then
-      warn "archived 문서가 _archive/ 밖: ${f#$REPO_ROOT/}  → docs/_archive/ 로 이동"
+      warn "archived 문서가 archive/ 밖: ${f#$REPO_ROOT/}  → docs/archive/ 로 이동"
     fi
   done < <(find "$REPO_ROOT" -name '*.md' -not -path '*/.git/*' -not -path '*/.template-backups/*' 2>/dev/null)
 }
@@ -83,9 +83,9 @@ check_wiki_sot() {
 run_checks() {
   case "$ONLY_CHECK" in
     secret)   check_secret;;
-    archived) check_archived;;
+    archived) checkarchived;;
     wiki-sot) check_wiki_sot;;
-    "")       check_secret; check_archived; check_wiki_sot;;
+    "")       check_secret; checkarchived; check_wiki_sot;;
     *) echo "unknown --check: $ONLY_CHECK" >&2; exit 2;;
   esac
   printf '\n총 %d건 발견.\n' "$TOTAL"

@@ -18,7 +18,7 @@ ai_read_priority: 3
 ## SSOT 계약 4조 (요약 — 정본 ADR-0031)
 1. 한 도메인 = `source_of_truth: true` 문서 정확히 1개.
 2. reference/mirror(`source_of_truth: false`)는 `mirrors:` 또는 `sources:` 로 정본 경로 선언, 내용 재서술 금지.
-3. `status|lifecycle: archived` 는 `docs/_archive/` 에 위치.
+3. `status|lifecycle: archived` 는 `docs/archive/` 에 위치.
 4. `bin/ssot-lint.sh` 가 1~3 + 'tracked .env*.bak* 0건' 을 강제.
 
 ## 도메인 → 정본 지도
@@ -33,12 +33,12 @@ ai_read_priority: 3
 | 코드 규약 | `docs/CONVENTIONS.md` | active(rewrite) | (AGENTS 중복 흡수 P1) | — |
 | 용어(Glossary) | `docs/CONVENTIONS.md §9` | active | wiki/Glossary/*(mirror) | — |
 | 학습 이력 | `docs/LEARNINGS.md` | ledger(append-only) | wiki(미러 예정) | — |
-| 관측 이력 | — | — | — | `docs/_archive/OBSERVATIONS.md`(P1, stale) |
-| 진입점 | `FIRST_REQUEST.md`(전역) | active | README.md(들) = 포인터 | `docs/_archive/GOAL.md`(P1) |
+| 관측 이력 | — | — | — | `docs/archive/OBSERVATIONS.md`(P1, stale) |
+| 진입점 | `FIRST_REQUEST.md`(전역) | active | README.md(들) = 포인터 | `docs/archive/GOAL.md`(P1) |
 | 제품 코드 | `unit/<feature>/src` (경계=디렉토리) | active | cross-cut(예 0009)은 소유 feature src + `unit/<x>/docs/ANCHOR.md` 위치 매핑 | — |
 | 공통 코드 | `shared/` | active | (feature 복제 dedup P5) | — |
 | 런타임 산출물 | wrapper `artifacts/`(gitignore, 1곳) | transient | — | — |
-| 마이그레이션 메모 | `docs/MIGRATION_*.md`(진행 중) | draft | — | (완료 시 `docs/_archive/`) |
+| 마이그레이션 메모 | `docs/MIGRATION_*.md`(진행 중) | draft | — | (완료 시 `docs/archive/`) |
 | doc 레지스트리 | `docs/DOC_REGISTRY.md` (본 문서) | active(rewrite) | — | — |
 
 ## frontmatter 계약 (모든 .md)

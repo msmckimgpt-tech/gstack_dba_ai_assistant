@@ -98,3 +98,15 @@
 - **gate**: `bash bin/ssot-lint.sh --selftest` **PASS**(오탐·미탐 0) + 실제 스캔이 secret 3건 + GOAL.md(archived) 검출(baseline — P1·P3 해소 예정). 신규 문서만 추가(비파괴).
 - **Human Approval Needed**: Phase 0 = 비파괴 계약/골격 (사용자 "commit 후 Phase 1 계속" 승인). Major(P1 STATUS 인덱스화)·Critical(P3 secret)은 차례에 §12 별도 승인.
 - **note**: 적대 리뷰 전문: `docs/improvements/ssot-consolidation/RESEARCH.md §4`. Phase 0 는 계약·강제 도구만 — 실제 정본 정리/노출 종료/코드 재배치는 P1~P5 가 각자 게이트를 거친다.
+
+## REV-20260624T010743-META-0003-ssot-consolidation [SKIPPED:meta-docs-archive]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 1a** (stale 문서 아카이빙 + archive 위치 교정)
+- **changeset (pure-meta)**:
+  - `GOAL.md`(루트) → `docs/archive/GOAL.md` (R100 rename), `docs/OBSERVATIONS.md` → `docs/archive/OBSERVATIONS.md` (R100) + frontmatter `lifecycle: archived`
+  - `docs/archive/README.md` 신규 (아카이브 보관소 색인)
+  - `docs/DECISIONS.md` — ADR-0031 Addendum (archive 위치 `docs/_archive/`→`docs/archive/` 교정, 사유: `.gitignore:27` `_archive/` 무시)
+  - `docs/DOC_REGISTRY.md` · `docs/improvements/ssot-consolidation/ROADMAP.md` · `bin/ssot-lint.sh` — `_archive`→`archive` 정합
+- **panel SKIP 사유 (§18.4 doc/meta carve-out)**: 신규 production 동작 0. (1) GOAL.md 아카이빙은 STATUS.md(TASK-0133)가 이미 결정·기록한 의도의 물리적 완성(정본 변경 아님), (2) OBSERVATIONS 는 stale 스냅샷 격리, (3) archive 위치 교정은 gitignore 충돌 해소(기계적). rename R100(내용 무변경) + frontmatter only.
+- **verification**: `bash bin/ssot-lint.sh --selftest` **PASS**. 실제 스캔 archived **0건**(이전 GOAL.md 1건 해소), secret 3건은 Phase 3(META-0004) 대상으로 잔존. staged changeset pure-meta(루트 비-meta 0). GOAL/OBSERVATIONS 참조는 전부 과거 이력 prose(코드 import 0) — 링크 무결성 영향 없음.
+- **Human Approval Needed**: 아니오 (비파괴 아카이빙, 정본 무변경). Major(P1b STATUS 인덱스화)·Critical(P3 secret)은 차례에 §12 별도 승인.
