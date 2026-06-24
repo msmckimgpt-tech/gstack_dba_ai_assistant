@@ -18,6 +18,8 @@ sources:
   - unit/feature-0007-bedrock-llm-provider/docs/TASK.md
   - unit/feature-0008-windows-browser-testing/docs/TASK.md
   - unit/feature-0009-group-conversation/docs/TASK.md
+  - unit/feature-0010-google-drive-integration/docs/TASK.md
+  - unit/feature-0011-shared-extraction/docs/TASK.md
 ---
 
 # Project Status (인덱스)
@@ -33,16 +35,18 @@ sources:
 | 기능 ID | 상태 | 최종 갱신 | 정본(상세) | 최근 작업 요지 |
 |---|---|---|---|---|
 | feature-0001-platform-runtime | in-progress | 2026-05-18 | [TASK](../unit/feature-0001-platform-runtime/docs/TASK.md) | MySQL redo log 1GiB 상향·restart policy 정렬 (TASK-0064/0059) |
-| feature-0002-agent-core | in-progress | 2026-06-23 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | NL→SQL 정확도 flywheel (`dba-ai-nl2sql` ROADMAP 드레인) |
-| feature-0003-agent-web-ui | in-progress | 2026-06-23 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | LLM 사용량 한도 RBAC·UI, 첨부 lifecycle·diff (TASK-0284~0286) |
+| feature-0002-agent-core | in-progress | 2026-06-24 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | ITEM-11 메타데이터 컨텍스트 주입·ITEM-05 KB fusion 마감 / NL→SQL flywheel |
+| feature-0003-agent-web-ui | in-progress | 2026-06-24 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 관리콘솔 메타데이터 거버넌스 포탈(용어·ENUM·설명·AI 자동완성, ITEM-11) + scope_key 통일 |
 | feature-0004-browser-automation | in-progress | 2026-04-06 | [TASK](../unit/feature-0004-browser-automation/docs/TASK.md) | 구조 이관 완료, smoke 검증 예정 |
 | feature-0005-qa-mcp | in-progress | 2026-04-06 | [TASK](../unit/feature-0005-qa-mcp/docs/TASK.md) | 스켈레톤 — MCP 기동 검증 예정 |
 | feature-0006-lan-proxy-access | in-progress | 2026-04-06 | [TASK](../unit/feature-0006-lan-proxy-access/docs/TASK.md) | caddy 운영 자산 이관 완료 |
 | feature-0007-bedrock-llm-provider | in-progress | 2026-05-21 | [TASK](../unit/feature-0007-bedrock-llm-provider/docs/TASK.md) | AWS Bedrock(Seoul) provider 통합, API Vault 폐기 (ADR-0022) |
 | feature-0008-windows-browser-testing | review | 2026-06-04 | [TASK](../unit/feature-0008-windows-browser-testing/docs/TASK.md) | Windows 브라우저 자동 구동 + Playwright MCP (PB-0008) |
-| feature-0009-group-conversation | in-progress | 2026-06-23 | [TASK](../unit/feature-0009-group-conversation/docs/TASK.md) | 그룹 대화 라이브 UX (cross-cut — 코드 거주: 0002/0003, ANCHOR 매핑) |
+| feature-0009-group-conversation | in-progress | 2026-06-24 | [TASK](../unit/feature-0009-group-conversation/docs/TASK.md) | 라이브 UX — 참여자 roster·보관 이동·나가기·공유 참여 owner 게이트 (cross-cut: 0002/0003) |
+| feature-0010-google-drive-integration | in-progress | 2026-06-23 | [TASK](../unit/feature-0010-google-drive-integration/docs/TASK.md) | Google Drive 연동 토대 — 계정별 OAuth 토큰 암호화 + MCP 구성 seam (연동 미수행/비활성 scaffold) |
+| feature-0011-shared-extraction | in-progress | 2026-06-24 | [TASK](../unit/feature-0011-shared-extraction/docs/TASK.md) | `shared/` 공통 코드 점진 추출 P5a Step1~3 (model_catalog·config·db alias, make test 회귀 0) |
 
-> **feature-0010-google-drive-integration**: 활성 worktree(`ai/claude/feature-0010-google-drive-integration`) 진행 중 — main `unit/` 미병합. 병합 시 본 표에 행 추가.
+> **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
 > 상세 TASK 이력을 셀에 누적하지 않는다(ADR-0031 §1) — 상세는 정본 링크의 unit TASK.md / 인덱스화 이전 분은 STATUS_ARCHIVE.md.
 
 ### 상태 값 정의
@@ -56,6 +60,8 @@ sources:
 - feature-0006 → feature-0001
 - feature-0008 → feature-0003(검증대상), feature-0004(headless 보조)
 - feature-0009 (cross-cut) → 코드 거주 feature-0002(mentions/group_members)·feature-0003(app.py)
+- feature-0010 → feature-0003(인증/라우트 인라인), feature-0002(`modules/cred_crypto`)
+- feature-0011 (refactor) → feature-0002·feature-0003 공통 코드 `shared/` 추출 (양 feature import 재배선)
 
 ## 3. 블로킹 항목
 - **SSOT 통합(META-0003) Phase 3** — tracked secret 노출 종료(`.env.secret.bak-task0228` 등)는 **rotation(사용자) 선행** 필요. 근거: ADR-0031 §4 / [DOC_REGISTRY.md](./DOC_REGISTRY.md).
@@ -66,6 +72,6 @@ sources:
 - 기능별 테스트 정본: `unit/<feature>/docs/TEST.md`.
 
 ## 5. 전체 진행률
-- 등록 기능(main `unit/`): 9 (+ feature-0010 worktree 진행 중)
-- review 1 (feature-0008) · in-progress 8 · done 0 · blocked 0
+- 등록 기능(main `unit/`): 11
+- review 1 (feature-0008) · in-progress 10 · done 0 · blocked 0
 - 상세 진척·이력: 각 unit TASK.md / [STATUS_ARCHIVE.md](./archive/STATUS_ARCHIVE.md)

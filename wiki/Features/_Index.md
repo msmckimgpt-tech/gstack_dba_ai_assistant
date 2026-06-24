@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 10 active |
+| Feature 수 | 11 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-10 개 active feature 의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+11 개 active feature 의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -55,6 +55,7 @@ sources:
 | feature-0008-windows-browser-testing | active | 실제 Windows 브라우저 AI 자동 검증 (PB-0008 · ADR-0029) | [[feature-0008-windows-browser-testing]] | `unit/feature-0008-windows-browser-testing/docs/FUNCTION.md` |
 | feature-0009-group-conversation | active | 그룹 대화 — 멤버십·@assistant 멘션·열람≠발화 분리·라이브 UX | [[feature-0009-group-conversation]] | `unit/feature-0009-group-conversation/docs/FUNCTION.md` |
 | feature-0010-google-drive-integration | active (토대) | Google Drive 연동 토대 — 계정별 OAuth 토큰 암호화 저장 + MCP 구성 seam (연동 미수행/비활성) | [[feature-0010-google-drive-integration]] | `unit/feature-0010-google-drive-integration/docs/FUNCTION.md` |
+| feature-0011-shared-extraction | active (리팩터) | 공통 코드 `shared/` 점진 추출 — model_catalog·config·db 모듈 alias (P5a, 회귀 0) | [[feature-0011-shared-extraction]] | `unit/feature-0011-shared-extraction/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 
