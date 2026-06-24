@@ -2,6 +2,9 @@
 doc_type: GOAL
 scope: feature-0003-agent-web-ui
 status: archived
+lifecycle: archived
+archived_at: 2026-06-24
+archived_by: META-0003-ssot-consolidation (TASK-0133 의 아카이브 의도를 물리 이동으로 완성)
 updated_at: 2026-06-02
 source_of_truth: false
 ---

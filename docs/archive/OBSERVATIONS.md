@@ -1,12 +1,19 @@
 ---
 doc_type: OBSERVATIONS
 scope: project
-status: active
+status: archived
+lifecycle: archived
+archived_at: 2026-06-24
+archived_by: META-0003-ssot-consolidation (2026-03~04 스냅샷 — 50일+ stale, 이력 보존용)
 edit_policy: append
 source_of_truth: false
 ---
 
-# 사용 이력 관측 리포트 — agent_memory 기반
+# 사용 이력 관측 리포트 — agent_memory 기반 (ARCHIVED)
+
+> **⚠️ ARCHIVED (META-0003-ssot-consolidation, 2026-06-24)** — 본 문서는 2026-03-26~04-22 시점의
+> 사용 이력 스냅샷이다. 현재 운영 현황의 정본이 아니며 이력 참고용으로만 보존한다.
+> 최신 현황 정본: `docs/STATUS.md`(인덱스) + `unit/<feature>/docs/{TASK,REPORT}`.
 
 > 목적: 내부 테스트 단계의 `gstack_dba_ai_assistant` 사용 이력을 수치화해
 > gap 분석·사례집·VP 데모의 원천 근거를 확보한다.

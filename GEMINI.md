@@ -1,3 +1,12 @@
+---
+doc_type: AI_AGENT_POINTER
+scope: project
+status: active
+lifecycle: reference
+source_of_truth: false
+sources: [AGENTS.md]
+---
+
 # GEMINI.md
 
 이 저장소의 공식 에이전트 운영 규칙은 `/repo/AGENTS.md` 를 따릅니다.

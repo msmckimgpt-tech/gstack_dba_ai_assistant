@@ -3617,3 +3617,10 @@ source_of_truth: true
 - 평가: 신규 엔드포인트의 인젝션 방어를 nonce 봉인으로 근본 교정 후 SHIP. 재dispatch 우회는 실측상 안전·수용 가능.
 - Verification(흡수 후): test_fix_with_ai.py **10/10** PYTHONPATH=feature-0002:feature-0003 실측 + M1 순수함수 독립 검증 + py_compile + node --check. 전체 suite=`make test`(agent 이미지).
 - Cross-ref: CHG-20260624T105228-item08-fix-with-ai / FUNCTION REQ-20260624-0334 / ROADMAP dba-ai-nl2sql ITEM-08(→done). 라이브 UI 렌더 정본=PB-0008(Windows-browser, 배포 후).
+
+## REV-20260624T020000-product-insight-status-badge [SKIPPED:ui-tweak-user-approved-mockup]
+- Date: 2026-06-24
+- Cycle: TASK-0308 (제품 탭 데이터소스 인사이트 탐색 상태 표시), **Minor §12.3** — frontend only(admin.js+styles.css), 백엔드 0.
+- Panel skip 사유(§18.4): (1) 표현계층 전용 변경(렌더 헤더에 상태 아이콘 추가 + primary 표기를 텍스트배지→엔진색), 비파괴·additive. (2) `insight_enabled` 는 datasources API 기존 필드라 신규 데이터 경로/권한 0. (3) admin.js `node --check` 통과. (4) **사용자가 Artifact 목업(실 CSS·아이콘 렌더)으로 디자인을 직접 검토·승인**(아이콘 design "모범적" 확인 + '기본' 텍스트→엔진색 조정 지시 반영). a11y: 색 단독 의존 회피(켜짐 눈/꺼짐 빗금눈 형태 차이 + title/aria-label).
+- 잔여 검증: UI 실렌더 정본은 PB-0008(Windows-browser, 배포 후) — gstack /browse(WSL headless)는 보조.
+- Cross-ref: CHG-20260624T020000-product-insight-status-badge / TASK-0308.

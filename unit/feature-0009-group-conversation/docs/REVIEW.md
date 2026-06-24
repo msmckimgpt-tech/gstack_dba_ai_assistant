@@ -238,3 +238,10 @@ source_of_truth: true
 - **PB-0008 실측(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-share-group-sync.scenario.json` PASS. 공유 후 is_group=false 강제(stale 재현) → 비멘션 sendPrompt → `reroute_no_error_toast:true`·`conv_is_group_after:true`·`composer_cleared:true`·`pendingBubble_null:true`·사람채팅 저장. 증거 `artifacts/pb0008-share-group-sync/01_share_then_send_chat.png`(파란 사용자 채팅 버블, assistant 응답·오류 없음).
 - Risks/Open: 없음. block/오류 제거 + 메시지 유실 없음.
 - Human Approval Needed: 아니오 (Minor·프론트 additive·사용자 명시 요청·PB-0008 PASS).
+
+## REV-20260624-0022 [SKIPPED: 알림 본문 발신자 대괄호 제거 — trivial cosmetic 문자열, 로직 무변경]
+- Related Change: CHG-20260624-0020
+- Risk Grade: **Minor (trivial)** — `_notifyMentions` body 템플릿에서 `[` `]` 2글자 제거(`[${who}]` → `${who}`). 신규 로직·분기·상태 변경 0. §18.8 단순 변경 → 적대 패널 SKIP(사유 기록).
+- 자가 검증: `node --check` OK. 제목/다중표기/high-water/dedup/라우팅 무변경. XSS 무관(textContent/Notification body=plain text).
+- **PB-0008 실측(실제 Windows Chrome, relay@9223)**: scenario `tests/win-browser-notify-nobracket.scenario.json` PASS. Notification stub body=`mckim2 : @bootstrap_admin 이거 확인 부탁드려요`(starts_with_sender=true, has_no_leading_bracket=true), title=`DQA : 운영 이슈 대응방` 유지.
+- Human Approval Needed: 아니오 (trivial cosmetic·사용자 명시 요청·PB-0008 PASS).
