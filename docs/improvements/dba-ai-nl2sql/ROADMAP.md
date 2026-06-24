@@ -124,7 +124,8 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 - **notes**: deps 없어 조기 착수 가능(Minor → 무인 cycle 자율 진행 가능). 배포 = web+ask-worker.
 
 ### ITEM-05 · 하이브리드 검색 (벡터+키워드 score fusion)
-- **status**: pending
+- **status**: done
+- **note**: 2026-06-24 마감(PR#TBD). fusion 구현 + 적대 backend 리뷰(SHIP-WITH-FIXES: MAJOR 병합키·MINOR-1 trigram floor·MINOR-2 span-0 전부 흡수) + KB retrieval eval set(evalkb/evalkb_adv). **acceptance("precision/recall 유의 상승")는 충실 측정 결과 반증(REFUTED)** — 적대 corpus(24 docs/12 질문 fusion-favorable 설계) + 파라미터 sweep 에서도 Δ 전부 +0.0000(MRR 1.0). 근본: bge-m3 가 subword/char 인지라 질문 rare token 이 정답 cosine 도 함께 끌어올려 fusion 이 바꿀 top rank 없음(fusion-favorable·vector-miss 양립 불가). 사용자 결정: **gated-OFF dormant** — `AGENT_KB_HYBRID_ENABLED` 기본 OFF(운영 거동 불변), 코드·eval 자산은 비회귀 안전 + 임베더-장애 폴백 보험으로 보존. 실가치 재측정은 라이브 운영 질의 로그 필요(ITEM-12 튜닝 근거 현 corpus 론 없음).
 - **feature_id**: feature-0002-agent-core
 - **dimension**: performance
 - **risk_grade**: Major
@@ -264,10 +265,10 @@ DAG 검증: 순환 없음. 측정(ITEM-01)이 모든 성능항목의 선행.
 | **ITEM-09** (무거운쿼리 경량대안+승인) | **reject(subsumed)** | shipped TASK-0299/0304 가 무거운쿼리를 LLM tool-루프 silent rewrite 로 이미 처리(agent_core.py:120-128). ITEM-09 의 사용자-노출 승인 라운드트립은 TASK-0304 의 사용자-승인된 "차단 미노출(효율적 답변만)" 결정을 **역전**하는 설계 충돌 → 임의 구현 안 함. 사용자 결정(2026-06-23) subsumed. 재검토 트리거: 승인-UX 가 silent-rewrite 보다 낫다는 근거 + TASK-0304 재논의(plan-ceo/eng-review). |
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
-- 총 12 항목 · done 6 · rejected 1 · in-progress 0 · pending 5 · blocked 0
-- 완료: **ITEM-01**(harness, A/B 측정 보류) · **ITEM-02**(샘플 저장소) · **ITEM-03**(피드백 flywheel PR-A코어+PR-B web, security SHIP-WITH-FIXES) · **ITEM-04**(DS 컨텍스트) · **ITEM-07**(self-reflection, 회복률 측정 보류) · **ITEM-10**(용어/ENUM).
+- 총 12 항목 · done 7 · rejected 1 · in-progress 0 · pending 4 · blocked 0
+- 완료: **ITEM-01**(harness, A/B 측정 보류) · **ITEM-02**(샘플 저장소) · **ITEM-03**(피드백 flywheel PR-A코어+PR-B web, security SHIP-WITH-FIXES) · **ITEM-04**(DS 컨텍스트) · **ITEM-05**(하이브리드 fusion — 구현·리뷰 done, acceptance 반증→**gated-OFF dormant**) · **ITEM-07**(self-reflection, 회복률 측정 보류) · **ITEM-10**(용어/ENUM).
 - 기각: **ITEM-09**(subsumed — shipped TASK-0304 silent-rewrite, §4).
 - ✅ **환경 (2026-06-23, 갱신)**: chat(claude-*, Anthropic-direct OAuth) ✓ · **임베딩 titan-embed→로컬 Ollama bge-m3(1024) 복구 ✓**(end-to-end 검증, PR#385). 임베딩 클러스터 차단 해소.
-- 다음 ready(정렬 Phase asc→risk asc→id asc): **ITEM-05**(P2 Major 하이브리드 검색) → 이후 ITEM-12(P2 Minor)·ITEM-06(P2 Major)(deps 05) · ITEM-08(P3 Minor Fix-with-AI) · ITEM-11(P4 Major 거버넌스 포탈).
-- 보류 측정(임베딩 복구로 이제 가능): ITEM-01/02 A/B·retrieval precision/recall — 해당 후속 항목(05 등) 측정 시 함께 수행.
-- 잔여 flag(별도 cleanup): schema.sql:68 texts·kb_backend:940 주석 stale `vector(1536)`(정본 1024). bge-m3 provenance(embedding_model alias 기록).
+- 다음 ready(정렬 Phase asc→risk asc→id asc): **ITEM-12**(P2 Minor retrieval 튜닝, deps 01·05 done) → **ITEM-06**(P2 Major reranker, deps 01·05 done) · ITEM-08(P3 Minor Fix-with-AI) · ITEM-11(P4 Major 거버넌스 포탈). ※ ITEM-12 튜닝은 ITEM-05 적대 corpus 측정상 현 합성 KB 론 근거 박약 — 라이브 운영 질의 로그 확보 후 착수가 타당(항목 차례에 재검토).
+- 보류 측정(임베딩 복구로 이제 가능): ITEM-01/02 A/B·retrieval precision/recall — 해당 후속 항목 측정 시 함께 수행. ITEM-05 fusion 실가치는 라이브 질의 로그 필요(합성 KB 반증).
+- 잔여 flag(별도 cleanup): kb_backend:940 주석 stale `vector(1536)`(정본 1024; schema.sql:68 texts 는 CHG-20260623T180000 으로 1024 정정 완료). bge-m3 provenance(embedding_model alias 기록).

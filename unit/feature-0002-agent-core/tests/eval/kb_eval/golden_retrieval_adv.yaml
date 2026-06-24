@@ -1,0 +1,88 @@
+# ITEM-05 **적대적** KB retrieval golden set — fusion(벡터+trigram) 의 가치가 드러나도록 설계.
+#
+# 각 질문은 rare exact token(컬럼명·상태enum·약어·코드)을 포함하며, 정답 doc 은 그 토큰을
+# 정확히 가지나, 같은 토픽의 distractor doc 은 그 토큰 없이 의미만 유사하다. 순수 벡터(bge-m3)는
+# distractor 를 정답 위/근처로 올릴 수 있고(자연스러운 under-rank), trigram 이 exact-token
+# 매칭으로 정답을 끌어올려 fusion 이 재랭킹하는지를 측정한다.
+#
+# scope 격리: evalkb_adv scope + __evalkb_adv__ conversation.
+# 각 질문의 의도(왜 fusion-favorable 인지)를 1줄로 명시한다.
+questions:
+  - id: A1
+    nl_question: "사용자 활성 여부를 판정하는 is_active_flag 컬럼은 어떻게 정의되어 있나요?"
+    # 의도: rare 컬럼명 is_active_flag — 정답에만 존재. 'active_user_narrative'(활성 사용자 서술)가
+    #       벡터상 더 가까워 보일 수 있어 벡터-only 가 under-rank, trigram 이 컬럼명 매칭으로 끌어올림.
+    relevant_doc_keys: [is_active_flag_def]
+
+  - id: A2
+    nl_question: "주문 상태값 ORD_CANCELLED 는 무슨 의미이고 매출 집계에 포함되나요?"
+    # 의도: enum 문자열 ORD_CANCELLED — 정답에만 존재. 'cancellation_policy_prose'(취소 정책 서술)와
+    #       의미 인접(취소·환불). 벡터가 정책 서술을 가깝게 보지만 enum 토큰은 trigram 이 변별.
+    relevant_doc_keys: [order_status_enum]
+
+  - id: A3
+    nl_question: "결제 진행 단계를 저장하는 txn_status 컬럼 값의 의미가 궁금합니다."
+    # 의도: 컬럼명 txn_status — 정답에만 존재. 'payment_flow_prose'(승인·정산 서술)가 의미상 인접해
+    #       벡터가 비슷하게/높이 랭크. trigram 이 컬럼명 exact-match 로 정답 변별.
+    relevant_doc_keys: [txn_status_column]
+
+  - id: A4
+    nl_question: "MAU 지표는 어떻게 집계하나요? 중복은 어떻게 처리하죠?"
+    # 의도: 약어 MAU(OOV) — 정답에만 존재. 'monthly_engagement_prose'(월간 참여도 서술)가 의미 인접해
+    #       벡터가 약어를 풀어 쓴 서술 doc 을 더 가깝게 볼 수 있음. trigram 이 'MAU' 토큰 매칭으로 변별.
+    relevant_doc_keys: [mau_definition]
+
+  - id: A5
+    nl_question: "배송 추적에서 D3 단계는 무슨 상태이고 언제 알림이 가나요?"
+    # 의도: 코드 식별자 D3 — 정답에만 존재. 'shipping_journey_prose'(배송 출발 서술)가 의미 인접
+    #       (배송 출발). 벡터가 서술 doc 을 가깝게 보지만 'D3' 코드는 trigram 이 변별.
+    relevant_doc_keys: [delivery_tracking_codes]
+
+  - id: A6
+    nl_question: "부분환불 상태 RFND_PARTIAL 은 어떤 경우에 쓰나요?"
+    # 의도: enum RFND_PARTIAL — 정답에만 존재. 'refund_handling_prose'(부분 반품 처리 서술)와 의미
+    #       매우 인접(일부 품목 반품). 벡터 혼동 가능, trigram 이 enum 토큰으로 정답 변별.
+    relevant_doc_keys: [refund_status_enum]
+
+  - id: A7
+    nl_question: "GOLD 등급과 VIP 등급 회원이 받는 혜택이 어떻게 다른가요?"
+    # 의도: 비-적대 대조(벡터가 잘 맞춰야 하는 케이스). 고유명 GOLD/VIP 가 정답에 있고 distractor는
+    #       일반론이라 벡터도 정답을 맞춤. fusion 이 이 케이스를 깨지 않는지(비회귀) 확인용.
+    relevant_doc_keys: [membership_grade_table]
+
+  # ═══ v2 opaque-code 적대 — 코드가 유일 변별자, 자연어는 distractor 쪽으로 기울게 설계 ═══
+  - id: B1
+    nl_question: "정산 배치가 테이블 잠금 타임아웃으로 실패해서 재시도되는데 E5021 이게 뭔가요?"
+    # 의도: 질문의 자연어('정산 배치 실패/잠금 타임아웃/재시도')가 distractor(batch_failure_generic)와
+    #       더 많이 겹침 → 벡터가 distractor 를 정답 위로 올릴 소지. opaque 코드 E5021 은 의미 없는
+    #       토큰이라 벡터 변별 약함, trigram 만 exact-match → fusion-favorable.
+    relevant_doc_keys: [batch_error_e5021]
+
+  - id: B2
+    nl_question: "대시보드에 나오는 CTR 지표가 정확히 뭘 세는 건가요? 비율 같은 건가요?"
+    # 의도: '지표/비율/전환' 자연어가 일반적 클릭률(clickthrough_rate_prose)과 더 가까움 → 벡터가
+    #       통념대로 클릭률 doc 을 올릴 소지. 정답은 사내 약어 CTR=contract 정의(의미 충돌).
+    #       trigram 의 'CTR' exact-match 가 사내 정의 doc 을 변별해야 fusion 이 산다.
+    relevant_doc_keys: [ctr_contract_metric]
+
+  - id: B3
+    nl_question: "새 결제 플로우를 단일 페이지로 보여주는 기능은 어떤 플래그로 켜고 끄나요?"
+    # 의도: '새 결제 플로우/단일 페이지' 자연어가 distractor(new_checkout_flow_prose)와 강하게 겹침
+    #       → 벡터가 distractor 우위. 정답의 변별자는 플래그 키 ff_new_checkout_v3(opaque) 뿐 →
+    #       trigram exact-match 가 결정. fusion-favorable.
+    relevant_doc_keys: [feature_flag_checkout_v3]
+
+  # ═══ v3 검증된 vector-miss 적대 — 직접 cosine 측정상 distractor 가 정답을 능가하도록 설계 ═══
+  - id: C1
+    nl_question: "결제가 자꾸 중간에 끊기고 카드 승인이 안 떨어지는데 로그에 ERR_PG_TIMEOUT 떠요 왜죠?"
+    # 의도: 질문의 증상 자연어가 distractor(payment_stuck_prose)와 매우 강하게 겹침 → bge-m3 가
+    #       distractor 를 정답(코드+한 문장)보다 가깝게/비슷하게 봄(직접 cosine 0.726<0.761 확인).
+    #       trigram 의 ERR_PG_TIMEOUT exact-match 가 정답을 끌어올려야 fusion 이 산다. fusion-favorable.
+    relevant_doc_keys: [err_pg_timeout_def]
+
+  - id: C2
+    nl_question: "판매 가능 수량이랑 창고 실제 재고가 안 맞는데 SYNC_INV_07 잡을 다시 돌리면 되나요?"
+    # 의도: 질문의 '재고 안 맞음/동기화' 증상 자연어가 distractor(stock_mismatch_prose)와 강하게 겹침
+    #       → 벡터가 distractor 를 정답 근처로 올림. 정답 변별자는 잡 ID SYNC_INV_07(opaque) →
+    #       trigram exact-match 가 결정. fusion-favorable.
+    relevant_doc_keys: [inv_sync_job_def]

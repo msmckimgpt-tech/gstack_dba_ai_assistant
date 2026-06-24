@@ -207,6 +207,15 @@ eval:  ## ci: NL→SQL 평가 harness (ITEM-01) — golden 질문을 실제 파�
 	  python /work/unit/feature-0002-agent-core/tests/eval/runner.py $(EVAL_ARGS); \
 	'
 
+kb-retrieval-eval:  ## ci: KB retrieval A/B (ITEM-05) — fusion vs 2-tier precision/recall@k. evalkb scope 격리 + 라이브 bge-m3 임베딩. 옵션: KB_EVAL_ARGS="--provision --purge-after --k 5"
+	@$(MAKE) -s dc-build SERVICE=agent
+	@$(DC_QUIET) run --rm \
+	  -v "$(CURDIR):/work" -w /work --entrypoint sh agent -lc '\
+	  pip install -q --no-cache-dir pyyaml >/tmp/pip-kbeval.log 2>&1 || { cat /tmp/pip-kbeval.log; exit 1; }; \
+	  export PYTHONPATH=/work/unit/feature-0002-agent-core/src:/work/unit/feature-0002-agent-core/tests/eval; \
+	  python -m kb_eval.retrieval_eval $(KB_EVAL_ARGS); \
+	'
+
 backup:  ## ops: 플랫폼 정본 데이터 논리 백업 (PG agent_kb + MySQL agent_memory) — TASK-0130
 	@bash bin/backup.sh
 
