@@ -77,3 +77,24 @@
 - **잔여 MINOR(미반영, 사유)**: frontmatter `target_project: mysql_ai_delegated_dev` 유지(sibling 3종 동일 house-style — 묶음 일관성 우선, 런타임 무영향). `pipeline_stage` 자유형 값(`standalone (maintenance)`)은 의도적(번호 단계 아님 — 기존 `N/3` parser 와 불일치는 수용).
 - **verdict**: SHIP-WITH-FIXES — BLOCKER 4 + MAJOR 7 전건 반영, MINOR/NIT 합리적 항목 전건 반영. 잔여는 house-style 메타데이터 2건(behavioral over-fit 아님).
 - **note**: 비파괴 메타-도구(skill 정의) 추가. 실제 doc 정합 실행은 각 `/_dqa:doc_sync` 호출이 changeset 분류대로 verify-completion 게이트(META mode 또는 operational gate)를 직접 거친다.
+
+## REV-20260624T005709-META-0003-ssot-consolidation [AGENT-TEAM:ssot-plan-redteam]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — SSOT 통합 initiative **Phase 0** (계약·레지스트리·lint 골격)
+- **changeset (pure-meta)**:
+  - `docs/DECISIONS.md` — ADR-0031 (SSOT 계약 4조) append
+  - `docs/DOC_REGISTRY.md` — 신규 (도메인→정본 단일 지도, 기계가독)
+  - `bin/ssot-lint.sh` — 신규 (WARN-only 골격 + `--selftest`)
+  - `docs/improvements/ssot-consolidation/{RESEARCH,ROADMAP}.md` — 신규 (진단 + 0~5 강화 plan)
+  - `meta/REVIEW.md` — 본 entry
+- **panel (AGENT-TEAM)**: SSOT plan 적대 리뷰 workflow — 6 렌즈(SSOT 정합성·거버넌스 준수·런타임 안전성·누락·secret 처리·순서/실현성) × 독립 비평가, 적대 검증(refute 시도, 불확실시 기각), 강화 합성. 42 에이전트, raw 35 finding.
+- **verdict**: SHIP-WITH-FIXES (Phase 0 한정) — 확정 16 / 기각 19, **BLOCKER 1**.
+- **findings → 조치 (Phase 0 반영분)**:
+  - **BLOCKER (#12 secret)**: 노출 secret `rm-only` 무의미(이미 origin/main+원격 브랜치+머지 PR push) → ADR-0031 §4 + `ssot-lint` 가 'tracked `.env*.bak*` 0건' 가드로 포착. rotation 1순위는 **Phase 3(META-0004, 사용자 rotation 진행 의사 확인)** 로 명시. Phase 0 자체는 secret 무변경.
+  - **#9 (check #9 게이트 누락)**: 전 Phase 게이트에 verify-completion check #9(REVIEW.md) 추가 — 본 entry 가 첫 적용.
+  - **#10/#16 (secret grep false pass/fail)**: ssot-lint 패턴 `(^|/)\.env[^/]*\.bak|\.bak-task[0-9]|\.secret\.bak` 로 3건 전수 검출 + `.example` 오탐 0 (`--selftest` 검증).
+  - **#15 (.gitignore 글롭 부재)**: Phase 3 작업으로 명시.
+  - **리뷰 오류 정정 (lint=ground truth)**: 리뷰가 지목한 wiki '거짓 SOT 2건(ADR-0005·Module-Map)' 은 실측 결과 `sot:false` — wiki `sot:true` 는 `wiki/Log.md` 1건뿐(정당). RESEARCH/ROADMAP/DOC_REGISTRY 정정.
+- **gate**: `bash bin/ssot-lint.sh --selftest` **PASS**(오탐·미탐 0) + 실제 스캔이 secret 3건 + GOAL.md(archived) 검출(baseline — P1·P3 해소 예정). 신규 문서만 추가(비파괴).
+- **Human Approval Needed**: Phase 0 = 비파괴 계약/골격 (사용자 "commit 후 Phase 1 계속" 승인). Major(P1 STATUS 인덱스화)·Critical(P3 secret)은 차례에 §12 별도 승인.
+- **note**: 적대 리뷰 전문: `docs/improvements/ssot-consolidation/RESEARCH.md §4`. Phase 0 는 계약·강제 도구만 — 실제 정본 정리/노출 종료/코드 재배치는 P1~P5 가 각자 게이트를 거친다.

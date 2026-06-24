@@ -665,3 +665,35 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   - **CIDR allowlist**(`10.0.0.0/8` 등): 대역 전체 허용이라 토글 OFF 와 노출 표면 유사하나, 경계 ON
     상태로 위장돼 정책 의도가 코드에 드러나지 않음 → 명시적 토글이 감사·복원에 유리.
   - **SSRF 검증 코드 삭제**: 복원 불가 → 사용자 "태그로 기억하고 이후 복원" 요구 위배 → 폐기.
+
+## ADR-0031
+
+- Status: accepted (initiative: ssot-consolidation, 2026-06-23, **META 층위 §18.4 — 사용자 주도**)
+- Context: 거버넌스(메타)·제품 두 레이어가 14개월 누적되며 정본이 다중화·비대화·stale 화되어,
+  AI 세션이 "무엇이 진실인지(정본)" 판정에 실패 → 작업이 정립되지 못하고 요청을 제대로 수행하지 못하는
+  증상이 보고됨. 진단(증거): `docs/improvements/ssot-consolidation/RESEARCH.md`. 적대 리뷰(42 에이전트,
+  확정 16/기각 19, blocker 1)로 강화한 실행 계획: 동 디렉토리 `ROADMAP.md`.
+  핵심 위반: 의사결정 정본 3곳(DECISIONS+AGENTS §18+wiki), 현황 3곳(unit TASK+STATUS 290KB+wiki),
+  아키텍처 3곳, 운영정책 2곳; STATUS.md 290KB·AGENTS.md 189KB 비대화; GOAL.md(archived) 잔존이 실제
+  중복구현 사고 유발; wiki 98% mirror 가 자동 동기화 없이 drift; tracked secret 백업 3건이 origin/main+
+  원격 브랜치+머지 PR 에 노출(BLOCKER).
+- Decision: **Single Source of Truth 계약 4조를 프로젝트 불변 규칙으로 채택한다.**
+  1. **한 도메인 = 한 정본.** `source_of_truth: true` 는 도메인당 정확히 1개 문서. 도메인→정본 지도는
+     `docs/DOC_REGISTRY.md`(본 ADR 의 운영 정본)가 단일 답.
+  2. **참조는 복제하지 않는다.** `source_of_truth: false` 문서(mirror/요약)는 `mirrors:` 또는 `sources:`
+     frontmatter 로 정본 경로를 선언하고 정본 내용을 재서술하지 않는다.
+  3. **끝난 것은 루트에서 사라진다.** `status|lifecycle: archived` 자산은 `docs/_archive/` 로 격리한다.
+  4. **drift 는 기계가 강제한다.** `bin/ssot-lint.sh` 가 (1)~(3) + 'tracked `.env*.bak*`/`*.bak-task*` 0건'
+     (노출 자산 가드)을 검사한다. 현재 WARN-only 골격, P1+ 에서 도메인 유일성 정밀 검사로 확장.
+  - 적용 순서: Phase 0(본 ADR + DOC_REGISTRY + lint 골격) → P1 문서정본 → P2 worktree 흡수 →
+    P3 secret(rotation 1순위, Critical) → P4 wiki 참조-only → P5 코드 재배치+검증.
+  - 이 initiative 는 META 층위(§18.4)이므로 각 Phase 는 ai/* worktree + PR + verify-completion check #9
+    (REVIEW.md accepted entry)를 거치며, Critical(P3)·Major(P5)는 §12 사람 최종 승인을 받는다.
+- Consequences:
+  - 신규 AI 세션이 "정본이 어디?" 를 `docs/DOC_REGISTRY.md` 1곳으로 해소 → 컨텍스트 로드 실패·중복작업 감소.
+  - 정책/현황을 두 곳에 쓰던 관례 종료(참조는 포인터만) → 갱신 시 drift 가 lint 에서 차단.
+  - STATUS.md 는 정본에서 인덱스로 강등(P1) — 상세 현황 정본은 `unit/<feature>/docs/{TASK,REPORT}`.
+- Alternatives 검토 후 폐기:
+  - **현상 유지**: drift·비대화 누적이 작업 미정립의 직접 원인 → 폐기.
+  - **wiki 완전 폐기**: Log/hot/concepts 고유 가치 손실 → 참조-only + 자동 동기화로 대체.
+  - **secret rm-only**: 이미 push 된 노출을 제거 못 함 → rotation 1순위로 격상(P3).
