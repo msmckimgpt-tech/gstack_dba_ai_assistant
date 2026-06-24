@@ -548,9 +548,10 @@ function _notifyMentions(incoming, hidden) {
   const last = hits[hits.length - 1];
   const who = (last.meta && last.meta.sender_username) || "참여자";
   const preview = String(last.content || "").replace(/\s+/g, " ").trim().slice(0, 80);
-  // feature-0009 gc-mention-notify: 채팅형 본문 "[발신자] : 메시지" (다중 시 " 외 N건"). 토스트·OS 알림 공용.
+  // feature-0009 gc-mention-notify: 채팅형 본문 "발신자 : 메시지" (다중 시 " 외 N건"). 토스트·OS 알림 공용.
+  // gc-notify-sender-nobracket: 발신자명 대괄호 제거(사용자 요청) — "[보낸사용자] : …" → "보낸사용자 : …".
   const more = hits.length > 1 ? ` 외 ${hits.length - 1}건` : "";
-  const body = `[${who}]${more} : ${preview}`;
+  const body = `${who}${more} : ${preview}`;
   if (!hidden) showToast(body);
   try {
     if (window.Notification && Notification.permission === "granted") {

@@ -1,0 +1,14 @@
+{
+  "name": "gc-notify-sender-nobracket — Windows 알림 본문 발신자 대괄호 제거 ('보낸사용자 : …') (authed, PB-0008)",
+  "base_url": "https://localhost:18080",
+  "shot_dir": "/root/download/docker/mysql_ai_delegated_dev/artifacts/pb0008-notify-nobracket",
+  "steps": [
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "eval", "script": "(async()=>{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'bootstrap_admin',password:'ChangeThisBootstrapPass_2026!'})});const j=await r.json();return JSON.stringify({login_ok:j.ok});})()", "stop_on_fail": false},
+    {"action": "goto", "url": "/", "wait_until": "domcontentloaded"},
+    {"action": "wait_for", "selector": "#productChip", "timeout_ms": 20000},
+    {"action": "wait_for", "timeout_ms": 1200, "stop_on_fail": false},
+
+    {"action": "eval", "script": "(()=>{if(typeof _notifyMentions!=='function')return JSON.stringify({error:'no _notifyMentions'});var cap=null;var Orig=window.Notification;function Stub(title,opts){cap={title:title,body:(opts&&opts.body)||null};}Stub.permission='granted';window.Notification=Stub;if(!state.user)state.user={id:1,username:'bootstrap_admin'};var prevA=state.activeConversationId;var prevC=state.conversations.slice();state.conversations=[{id:'__pb',topic:'운영 이슈 대응방'}].concat(state.conversations);state.activeConversationId='__pb';try{_notifyMentions([{id:99990101,role:'user',content:'@bootstrap_admin 이거 확인 부탁드려요',meta:{sender_username:'mckim2',sender_account_id:5}}],true);}finally{window.Notification=Orig;state.activeConversationId=prevA;state.conversations=prevC;}var b=(cap&&cap.body)||'';return JSON.stringify({title:(cap&&cap.title),body:b,starts_with_sender:b.indexOf('mckim2 : ')===0,has_no_leading_bracket:b.charAt(0)!=='['});})()", "stop_on_fail": false}
+  ]
+}

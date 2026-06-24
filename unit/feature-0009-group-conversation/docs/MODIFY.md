@@ -232,3 +232,12 @@ source_of_truth: true
 - Impact: 공유 직후 비멘션 메시지가 오류 없이 사람채팅(store-only)으로 전송. assistant 미실행. 422 서버방어는 backstop 으로 유지(직접 API·multi-tab). 1:1·멘션·신규대화 무변경. 무한루프 없음(store-only 엔드포인트는 422 미발생).
 - Rollback Notes: createConversationShare optimistic 블록 + sendPrompt catch reroute + apiFetch 토스트 복원 + 캐시버스터 환원으로 가역.
 - 검증: `node --check` OK + 적대 패널 **PASS-WITH-NITS**(블로킹 0; 중복 버블 flicker nit 반영 — optimistic user 메시지 splice). **PB-0008 실제 Windows Chrome 실측 PASS**: 공유+stale 강제 후 비멘션 sendPrompt → 오류 토스트 없음·is_group 동기화·composer cleared·pendingBubble null(assistant 미실행)·메시지 사람채팅 저장. TEST.md §3 Run 2026-06-24-share-group-sync, 스크린샷 artifacts/pb0008-share-group-sync/.
+
+## CHG-20260624-0020
+- Date: 2026-06-24
+- Related Requirement: 사용자 요청 — Windows 알림 본문에서 발신자명 대괄호 제거. "[보낸사용자] : @받는사용자 메세지" → "보낸사용자 : @받는사용자 메세지".
+- Summary: `_notifyMentions` 채팅형 본문(토스트·OS 알림 공용)의 발신자명 대괄호 제거. 1줄 문자열 포맷 변경, 로직 무변경.
+- Files: `static/app.js`(`const body = \`${who}${more} : ${preview}\`` — 기존 `[${who}]…` 에서 `[` `]` 제거 + 주석) · `static/index.html`(캐시버스터 share-group-sync → 20260624-notify-nobracket).
+- Impact: 멘션 알림 본문이 `발신자 : @받는사용자 메시지` 로 표시(대괄호 없음). 제목(`DQA : {대화명}`)·다중 시 ` 외 N건`·high-water·dedup 무변경.
+- Rollback Notes: `${who}` → `[${who}]` 환원.
+- 검증: `node --check` OK. **PB-0008 실제 Windows Chrome 실측 PASS**: Notification stub 캡처 body=`mckim2 : @bootstrap_admin 이거 확인 부탁드려요`(starts_with_sender=true, 선행 대괄호 없음), title=`DQA : 운영 이슈 대응방` 유지. TEST.md §3 Run 2026-06-24-notify-nobracket, 스크린샷 디렉토리 artifacts/pb0008-notify-nobracket/.
