@@ -153,3 +153,13 @@
 - **P5 분리 근거 (사용자 검토 승인)**: 실측 `app.py` 25,823줄/146 endpoint(모듈 5개), 프론트 admin/app.js·styles.css ~25K. "비대화된 코드"는 사용자 원 요청 포함이나 **SSOT(중복) 아닌 모듈화 문제** → P5b(Critical, 라이브 web app, test 54파일 안전망, 점진 추출, 별도 cycle/initiative). doc-SSOT cycle 번들 금지.
 - **panel SKIP 사유**: 검증(ground-truth) + 비파괴 frontmatter/계획 문서. 코드·정책 semantic 무변경.
 - **Human Approval Needed**: 아니오. P5b 실제 실행은 Critical → 별도 cycle plan-review + §12 승인.
+
+## REV-20260624T015752-META-0003-ssot-consolidation [SKIPPED:additive-meta-docs]
+
+- **cycle**: ai/claude/META-0003-ssot-consolidation — **Phase 4** (wiki 참조-only 체계화)
+- **changeset (pure-meta)**: `wiki/README.md`(§5.1 신설) · `wiki/Log.md`(append, wiki 규약) · `docs/improvements/ssot-consolidation/ROADMAP.md`(ITEM-P4 done) · `meta/REVIEW.md` 본 entry
+- **ground-truth 결과**: wiki 는 **이미 reference-only** — README §2/§6 이 "wiki 는 source of truth 아님, 정본 우선" 명시, 전역 `sot:false`(lint: 위반 0, 예외 Log.md ledger). 거버넌스·STATUS 와 동일하게 코어는 이미 양호.
+- **실제 작업(gap 메움)**: README §5.1 신설 — SSOT 계약(ADR-0031)·정본 지도(DOC_REGISTRY) 연결 + **동기화 메커니즘 명시**(정본 변경→wiki 갱신 = `/_dqa:doc_sync` persona, 결정론 렌더러 없음 = LLM-persona 유지[적대 리뷰 권고 b], 구조 drift = `wiki-lint`) + stale 카드 maturity 라벨 정책.
+- **deferred(점진)**: 85파일 mirrors/sources frontmatter 백필 + stale 카드(0001/0004~0007) 라벨 = `/_dqa:doc_sync` 가 주기 수행(mechanical, 저가치-고노력이라 일괄 미실행).
+- **panel SKIP 사유**: 비파괴 additive 정책 문서 + 검증. 코드/secret 무변경.
+- **Human Approval Needed**: 아니오.

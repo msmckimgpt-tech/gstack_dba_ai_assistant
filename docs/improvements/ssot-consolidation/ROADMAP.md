@@ -95,7 +95,7 @@ P1 ──▶ P5a(코드 파편화: 중복·경계) ──▶ P5b(코드 비대�
 - **rm-only 금지** — 이미 push 된 노출은 rm 으로 제거 불가.
 
 ### ITEM-P4 · wiki 참조-only 체계화
-- **status**: pending
+- **status**: done (핵심 — wiki/README §5.1 에 SSOT 계약 연결 + 동기화 메커니즘 명시. sot:false 이미 양호[lint 확인, Log.md 만 예외]. 85파일 mirrors frontmatter 백필·stale 카드 라벨은 /_dqa:doc_sync 점진 위임)
 - **feature_id**: META-0003-ssot-consolidation
 - **risk_grade**: Major
 - **depends_on**: [ITEM-P1]
