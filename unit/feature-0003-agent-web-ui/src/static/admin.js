@@ -8234,8 +8234,11 @@ function renderProductDetail() {
     draft.forEach((entry, idx) => {
       // TASK-20260618T061703: 규칙(rule) 행은 이 메인 목록이 아니라 각 규칙 카드에 종속 표시 → 여기선 제외.
       //   (manual 수동 추가 DB 만 이 목록에 남긴다.)
+      // feature-0003-rule-db-coverage: 단, 규칙 카드(_renderRuleEditor)는 canManage 일 때만 렌더된다.
+      //   read-only 뷰어(product.read 만, product.manage 없음)는 규칙 카드를 못 보므로, 그 경우엔
+      //   규칙 DB 도 이 메인 목록에 남겨 분석 여부·완료율이 어디서든 노출되게 한다(요청 불변식).
       const _isRuleRow = String((entry && entry.source) || "manual") === "rule";
-      if (_isRuleRow) return;
+      if (_isRuleRow && canManage) return;
       const rowEl = document.createElement("div");
       rowEl.className = "cov-db-row";
       const covRow = covByDb.get(String(entry.schema_name).toLowerCase()) || null;
@@ -8480,11 +8483,26 @@ function renderProductDetail() {
       dbHead.textContent = `이 규칙으로 추가된 DB ${ruleDbs.length}개`;
       dbWrap.appendChild(dbHead);
       if (ruleDbs.length) {
+        // feature-0003-rule-db-coverage: 규칙으로 추가된 DB 도 수동 등록 DB(메인 목록)와 동일하게
+        //   insight 분석 여부(DB✓/✗)·완료율(테이블 ta/tt 마이크로바)을 표시한다. 백엔드
+        //   per_db[] 는 Source(manual/rule) 무관 전체 접근 DB 의 coverage 를 담으므로
+        //   (app.py _compute_product_insight_coverage), 여기서 db명으로 1:1 매칭만 하면 된다.
+        const _ruleCov = adminState.productCoverage.get(Number(product.id));
+        const _ruleCovByDb = new Map();
+        if (_ruleCov && Array.isArray(_ruleCov.per_db)) {
+          _ruleCov.per_db.forEach((c) => { if (c && c.db) _ruleCovByDb.set(String(c.db).toLowerCase(), c); });
+        }
+        const _ruleMeasuring = _isProductCoverageLoading(product.id);
         ruleDbs.forEach((d) => {
           const it = document.createElement("div"); it.className = "cov-db-rule-dbitem";
           const dot = document.createElement("span"); dot.className = "cov-db-rule-dbdot"; dot.textContent = "└";
           const nm = document.createElement("span"); nm.className = "cov-db-rule-dbname"; nm.textContent = d.schema_name; nm.title = d.schema_name;
-          it.append(dot, nm); dbWrap.appendChild(it);
+          const covRow = _ruleCovByDb.get(String(d.schema_name).toLowerCase()) || null;
+          if (covRow && covRow.connected === false) it.classList.add("is-offline");
+          it.append(dot, nm);
+          // 진척 셀(마이크로바 + 통계 + 상태칩) — 메인 목록 행과 동일 helper 재사용.
+          it.appendChild(buildDbCoverageCells(covRow, _ruleMeasuring));
+          dbWrap.appendChild(it);
         });
       } else {
         const em = document.createElement("div"); em.className = "cov-db-rule-dbempty"; em.textContent = "(아직 없음 — 데이터소스에 일치 DB 가 생기면 자동 추가)";

@@ -3608,6 +3608,12 @@ a { color: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cov-db-rule-dbempty { font-size: 11px; color: var(--text-muted, #aaa); font-style: italic; padding: 1px 0; }
+/* feature-0003-rule-db-coverage: 규칙 종속 DB 항목에도 분석 진척 셀(마이크로바+통계+상태칩)을 붙인다.
+   메인 목록(.cov-db-row)은 grid 라 컬럼이 폭을 주지만, 규칙 항목(.cov-db-rule-dbitem)은 flex 라
+   마이크로바에 명시 폭이 없으면 0 으로 접힌다 → flex 컨텍스트용 폭/우측정렬을 못박는다. */
+.cov-db-rule-dbitem .cov-microbar { width: 52px; flex: 0 0 auto; margin-left: auto; }
+.cov-db-rule-dbitem .cov-db-stat { flex: 0 0 auto; min-width: 38px; }
+.cov-db-rule-dbitem .cov-db-status { flex: 0 0 auto; }
 
 .admin-chip-locked-hint {
   font-size: 10px;
