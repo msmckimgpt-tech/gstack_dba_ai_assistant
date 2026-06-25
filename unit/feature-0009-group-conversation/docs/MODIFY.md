@@ -315,3 +315,12 @@ source_of_truth: true
 - Impact: app.js 칩 DOM(`.share-participant > .share-participant-acts`)·핸들러·권한 게이트 무변경(순수 CSS). 기능/엔드포인트/스키마 0.
 - Rollback Notes: feature-0003 styles.css 그리드+hover 블록 + 캐시버스터 + 테스트 revert. JS/백엔드/스키마 0.
 - 검증: CSS brace 1571=1571 + `verify_member_actions_hover.mjs` 15/15 + 기존 `verify_member_kick_ban.mjs` 무회귀(JS/DOM 불변). 패널 SKIP(순수 CSS 표현계층·로직/보안 0, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).
+
+## CHG-20260625T065430-gc-other-msg-left (cross-feature → feature-0003, Minor §12.3 — frontend CSS-only)
+- Date: 2026-06-25 (CHG-20260625T065430/REV-20260625T065430). worktree `ai/claude/gc-other-msg-left`. 코드/문서 정본=feature-0003-agent-web-ui(`static/styles.css`·`index.html`·`docs/*`) — 본 항목은 feature-0009 cross-feature 추적.
+- Reason: 사용자 요청(`/_template:entry`) — 그룹대화에서 자신의 메시지 버블은 (기존처럼) 우측, assistant 와 상대방의 대화는 좌측에 출력하도록 구성.
+- 변경(feature-0003 `static/styles.css`): 신규 `.message.is-user.is-other-message { align-self: flex-start; align-items: flex-start; }`(기존 `.message.is-user` 0,2,0 의 `flex-end` 를 0,3,0 으로 override → 상대방 메시지 좌측) + `.message.is-user.is-other-message .message-bubble` 에 `border-bottom-right-radius:14px; border-bottom-left-radius:var(--r-xs)`(꼬리 좌측 하단화). `index.html` 캐시버스터 `gc-other-msg-left`.
+- Why(설계): app.js `renderMessages()` 가 이미 발신자 귀속으로 `is-own-message`(내 메시지)/`is-other-message`(타 참여자)/`is-assistant` 를 정확히 부여 → JS 무변경, CSS 정렬 규칙만 분기. 그룹채팅 관례(내=우측/타인=좌측)와 정합, 들여쓰기 0 으로 assistant 와 좌측 기준선 통일. 공유 대화 열람(owner≠나, sender meta 부재)도 owner 메시지가 `is-other-message`로 좌측 — 요청("상대방=좌측")과 정합.
+- Impact: 1:1 본인 대화(`is-own-message` 우측) 무회귀. JS/DOM/핸들러/엔드포인트/RBAC/스키마 0. 순수 표현계층.
+- Rollback Notes: feature-0003 styles.css 2블록 + index.html 캐시버스터 revert. JS/백엔드/스키마 0.
+- 검증: `node --check static/app.js` PASS(무변경) + 충실한 mock 렌더(실 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측(rightGap 25)/other·assistant=좌측(leftGap 25 동일 기준선)/멘션 하이라이트 상대방 좌측+강조선. 패널 SKIP(순수 CSS, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 실 그룹대화 권장).

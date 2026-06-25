@@ -1216,3 +1216,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - cache-buster — admin.html styles.css/admin.js `?v=20260625-rule-db-coverage`.
   - **적대적 frontend 리뷰(6 렌즈: scope·데이터정합·orphan·null안전·CSS·staleness)**: BLOCKER 0 / **MAJOR 1 흡수**(M1 read-only 뷰어 orphan — 메인 목록 skip canManage 조건부화) / MINOR 2 수용(다중 ds 동명 DB 이름키·규칙 DB 초기화 버튼 미노출). REVIEW.md REV-20260625T021924-rule-db-coverage [SUBAGENT:adversarial-frontend-PASS] SHIP.
   - **Pass/Fail: PASS**(정적+jsdom 게이트). 백엔드/스키마/RBAC 무변경 — 백엔드 `_compute_product_insight_coverage` 는 이미 Source 무관 전체 DB coverage 를 `per_db[]` 로 제공, 본 변경은 표현계층 매칭만. CHECK#13 PB-0008(규칙 카드 분석 진척 표시) 배포 후 사용자 시각 검증 권장.
+
+- 2026-06-25 (feature-0009 cycle `gc-other-msg-left` — 그룹대화 상대방 메시지 좌측 정렬, **Minor §12.3** — frontend CSS-only; CHG/REV-20260625T065430 evidence):
+  - **Environment: Headless-render-mock** (실제 styles.css + `renderMessages()` DOM 구조 재현, Chromium headless; frontend CSS-only). 실 그룹대화 다수 참여자 메시지의 라이브 최종 확인은 PB-0008(Windows-browser, 배포 후) — 본 변경은 worktree(WSL)에서 작성돼 PB-0008 미실행(배포 후 사용자 시각 확인 권장).
+  - **정적**: `node --check static/app.js` PASS(무변경 확인 — JS 미수정) + CSS brace 균형.
+  - **충실한 mock 렌더 측정**: `scratchpad/bubble-align-mock.html`(실 styles.css 링크 + 5개 메시지 row: own·other·assistant·own·other+mention) 를 Chromium headless 로 렌더 후 각 버블의 좌/우 여백(px) 측정:
+    - `is-user is-own-message` (내 메시지): leftGap 447/558, **rightGap 25 → 우측** (요청대로 유지).
+    - `is-user is-other-message` (상대방): **leftGap 25 → 좌측**, rightGap 304.
+    - `is-assistant`: **leftGap 25 → 좌측**, rightGap 73. (상대방과 동일 좌측 기준선 25px 확인.)
+    - `is-user is-other-message is-mention-me` (멘션 하이라이트 상대방): **leftGap 25 → 좌측** + 주황 강조선 정상.
+  - 증거: `artifacts/pb0008-gc-other-msg-left/bubble-align-result.png`(내 파란 버블 우측·상대방 회색 버블/assistant 흰 버블 좌측·멘션 주황 강조선 좌측, 육안 확인).
+  - **Pass/Fail: PASS**(headless mock 게이트). 내 메시지=우측, 상대방·assistant=좌측 동일 기준선으로 사용자 요청 충족. JS/백엔드/스키마/RBAC 무변경. [SKIPPED:frontend-css-presentation-no-logic for backend/panel; CHECK#13 PB-0008 배포 후 실 그룹대화 권장].
