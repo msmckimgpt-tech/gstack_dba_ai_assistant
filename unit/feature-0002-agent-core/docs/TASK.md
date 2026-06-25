@@ -1090,3 +1090,6 @@ TASK-0015 (plan-review):
 - [x] 검증: py_compile(insight/config/kb_embedding_worker) + run_embedding_pass import/early-return 라이브 확인 + 적대 backend 리뷰 2회(F1 REQUEST-CHANGES→데몬 분리 재설계→**ACCEPT-WITH-NITS**, REV-20260623T190000; 라이브 임베딩 레이턴시 실측·스레드 안전성 확인).
 - [ ] 배포: insight-worker 재빌드·재시작(데몬 스레드 활성). **1회 백필 완료/중단 후 배포**(동시 중복 F2 회피 — 재시작이 수동 backfill 종료). 배포 후 검증: 로그 `embedding_backfill processed=...` + texts NULL 감소.
 - 참고: redeploy 중 in-flight pass 유실은 resumable(WHERE embedding IS NULL)이라 무해(REV N1). HNSW per-row autocommit 비용(REV N3/F3)은 기존 CLI 동작·범위 밖.
+
+### kb-pg-superuser-host — KB-PG DDL superuser pgbouncer 우회 (deploy infra, Minor §12.3, 2026-06-25)
+- [x] `make up` memory-init `FATAL: bouncer config error` 해소: `_ensure_pg_schema`(memory.py:854) superuser DDL 이 `AGENT_KB_PG_SUPERUSER_HOST` 미설정 시 pgbouncer 상속 → superuser 인증 불가(userlist=agent_kb_rw only). `.env.example` 에 `AGENT_KB_PG_SUPERUSER_HOST=postgres`(직결) + 주석. 런타임 `.env` 동일 적용 후 `make up` **exit 0** 검증. (CHG/REV-20260625T012217-kb-pg-superuser-host)
