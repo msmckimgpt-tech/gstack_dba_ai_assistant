@@ -186,8 +186,11 @@ ORDER BY created_at DESC
 LIMIT %(limit)s
 """
 
+# gc-assistant-dialect-context (RC-2): sender_account_id 를 함께 로드한다 — 그룹대화에서 LLM 이
+# 누가 무슨 말을 했는지(발신자 라벨)를 맥락으로 받도록(REQ-GC-R5). 유일 소비처는 agent_core
+# _load_conversation_messages 의 PG read path (tuple index 5 로 매핑).
 _PG_LOAD_CORE_MESSAGES = """
-SELECT role, content, tool_calls, tool_call_id, name
+SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
 FROM agent_runtime.core_messages
 WHERE conversation_id = %(conversation_id)s
 ORDER BY id ASC

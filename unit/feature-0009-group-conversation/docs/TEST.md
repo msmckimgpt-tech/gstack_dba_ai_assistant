@@ -143,3 +143,12 @@ source_of_truth: true
 ## gc-unread-read-fix (CHG-20260625T194159) — 읽음 커서 전진 누락 보정
 - `node --check`(app.js) PASS.
 - 라이브(배포 후 PB-0008): ① 안 읽은 배지 있는 그룹 대화에서 **새로고침** → 그 대화가 복원 active → 사이드바 배지 0 으로 감소. ② 다른 대화 보다가 그 대화 재클릭 → 배지 0. ③ DB `last_read_message_id` 가 conv_max 로 전진 확인.
+
+## gc-assistant-dialect-context (CHG-20260625T202843) — SQL dialect 교정 + 발신자 맥락
+- Environment: WSL-headless(CLI) — 순수 함수 단위 테스트(라이브 DB 비의존). 화면 검증은 PB-0008(배포 후).
+- 단위 테스트 신규 6 (`tests/test_gc_dialect_context.py`):
+  - RC-2: `test_group_sender_labels_attached_and_preserved_through_merge`(연속 user 3건 병합 후에도 `[mckim]:`/`[admin]:` 라벨 보존) / `test_non_group_none_no_labels_regression`(sender_labels=None → 라벨 0, 무회귀) / `test_label_skipped_for_unknown_sender`(미상 발신자 원문 유지).
+  - RC-1: `test_dialect_hint_mysql_corrects_tsql`(TOP/UNION/CONVERT/ISNULL/[..] → MySQL 교정) / `test_dialect_hint_mssql_corrects_mysql`(LIMIT/backtick → T-SQL 교정) / `test_dialect_hint_clean_query_head_only`(오용 마커 0 → 거짓 교정 없음).
+- 회귀: `test_db_query_ux`(히스토리 조립·user-turn 보존) + `test_runtime_read_backend`(PG read backend) 통과. 합계 **48 PASS**, `py_compile`+`ruff` clean.
+- 적대 패널 §18.8 2렌즈(회귀·정확성 / 보안·prompt-injection) **SHIP-WITH-FIXES**(BLOCKING 0, NON-BLOCKING 2건 반영) — REV-20260625T202843 참조.
+- 라이브(배포 후 PB-0008): MySQL 제품 그룹대화에서 @assistant 가 (a) `SELECT TOP`/`UNION`/`[brackets]` 없이 `LIMIT`·단일 SELECT·backtick 생성, (b) 거부 시 엔진별 교정 힌트 수신, (c) "이 DB/직전 결과/바꾼 제품" 류 지시어를 멘션 직전 사람-사람 맥락에서 능동 해석(과도 재질문 감소), (d) 발신자 라벨로 화자 구분 — 실측 권장.

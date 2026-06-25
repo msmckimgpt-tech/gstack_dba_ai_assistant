@@ -963,6 +963,46 @@ def _apply_query_cap(conn) -> None:
         pass
 
 
+def _dialect_correction_hint(sql: str) -> str:
+    """gc-assistant-dialect-context (RC-1): 거부된 SQL 의 방언 오용을 활성 엔진 기준으로 교정 안내.
+
+    활성 datasource 엔진(mysql|mssql)을 명시하고, 반대 엔진의 흔한 마커(TOP/[..]/UNION/CONVERT 등)가
+    SQL 에 보이면 올바른 형태를 짚어 준다. LLM 이 같은 dialect 로 맹목 재시도하는 thrashing 을 끊는다.
+    """
+    try:
+        eng = str(_dialects.active().name).lower()
+    except Exception:
+        eng = "mysql"
+    s = (sql or "")
+    su = s.upper()
+    tips: list[str] = []
+    if eng == "mysql":
+        if "[" in s and "]" in s:
+            tips.append("식별자는 `[브래킷]` 이 아니라 백틱 `` `db`.`table` `` 또는 평문 db.table 을 쓰세요")
+        if " TOP " in (" " + su + " ") or su.startswith("SELECT TOP"):
+            tips.append("`SELECT TOP n` 대신 `... LIMIT n` 을 쓰세요")
+        if "UNION" in su:
+            tips.append("최상위 `UNION`/`UNION ALL` 은 허용되지 않습니다 — 쿼리를 나누거나 `SUM(CASE WHEN …)` 조건집계로 합치세요")
+        if "CONVERT(" in su or "DATEADD" in su or "GETDATE(" in su:
+            tips.append("날짜/형변환은 T-SQL `CONVERT/DATEADD/GETDATE` 가 아니라 MySQL `DATE_FORMAT/DATE_ADD/CAST(x AS DATE)/NOW()` 를 쓰세요")
+        if "ISNULL(" in su:
+            tips.append("`ISNULL(x, y)`(2-인자 T-SQL) 대신 MySQL `IFNULL(x, y)` 또는 `COALESCE(x, y)` 를 쓰세요")
+        head = "이 데이터소스는 **MySQL** 입니다 — MySQL 문법으로 작성하세요."
+    elif eng == "mssql":
+        if "`" in s:
+            tips.append("식별자는 백틱이 아니라 `[schema].[table]` 또는 평문 schema.table 을 쓰세요")
+        if " LIMIT " in (" " + su + " "):
+            tips.append("`LIMIT n` 대신 `SELECT TOP n ...` 또는 `OFFSET … FETCH` 를 쓰세요")
+        if "DATE_FORMAT" in su or "DATE_ADD" in su or "DATE_SUB" in su or "NOW(" in su:
+            tips.append("날짜 함수는 MySQL 형이 아니라 T-SQL `CONVERT/FORMAT/DATEADD/GETDATE()` 를 쓰세요")
+        head = "이 데이터소스는 **SQL Server(T-SQL)** 입니다 — T-SQL 문법으로 작성하세요."
+    else:
+        return ""
+    if tips:
+        return head + " " + " / ".join(tips) + "."
+    return head
+
+
 def _tool_execute_sql(conn, args: dict) -> str:
     sql = str(args.get("sql", "")).strip()
     if not sql:
@@ -979,10 +1019,15 @@ def _tool_execute_sql(conn, args: dict) -> str:
         sql, forbidden_schemas=_INTERNAL_SCHEMAS, dialect=_dialects.active().sqlglot
     )
     if not guard.ok:
+        # gc-assistant-dialect-context (RC-1): 거부 사유에 **엔진 인지형 방언 교정 힌트**를 덧붙인다.
+        # 라이브(group conv 20260625…)에서 LLM 이 MySQL datasource 에 T-SQL(`TOP`/`UNION`/`[..]`/
+        # `CONVERT`)을 생성→거부될 때, 단순 "차단됨"만 돌려주면 같은 dialect 로 재시도하며 thrashing 했다.
+        # 거부 메시지에 "이 datasource 는 <엔진> 이니 <올바른 형태>" 를 명시해 self-correct 를 유도한다.
         return (
             f"오류: 보안 정책상 차단된 SQL — {guard.error_reason}. "
             f"execute_sql 은 단일 SELECT/CTE 분석 쿼리만 허용됩니다 "
-            f"(스키마 구조 탐색은 list_schemas/describe_table 등 전용 도구 사용)."
+            f"(스키마 구조 탐색은 list_schemas/describe_table 등 전용 도구 사용). "
+            f"{_dialect_correction_hint(sql)}"
         )
     # Product 단위 스키마 allowlist (교차 product 격리) — P6: AST 추출 + 무자격/cross-DB 정책.
     err = _freeform_sql_access_error(sql)
