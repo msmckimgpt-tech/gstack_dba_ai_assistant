@@ -51,3 +51,56 @@ def test_tokens_carry_positions():
 
 def got_substr_at(text: str, token: dict) -> str:
     return text[token["start"]:token["end"]]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# feature-0009 gc-unread-badge: sql_mention_regex 가 parse_mentions 와 동일 경계를
+# 인식하는지 — 사이드바 "안 읽은 @멘션" 카운트(SQL ~* / REGEXP)가 파서와 갈리면 배지 숫자가
+# 틀린다. 같은 _CANONICAL_CASES 표로 SQL regex(파이썬 re, IGNORECASE=대소문자무시 미러)를 검증.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re
+
+# 실제 계정 username 류 후보(예약어 'assistant' 는 제외 — parse_mentions 가 별도 토큰으로
+# 빼므로 sql_mention_regex 의 literal 매칭과 의도적으로 다르다. unread-멘션은 실사용자 대상).
+_REGEX_CANDIDATES = ["alice", "bob", "Alice", "BOB", "user_name-1.x", "user_name", "bob2"]
+
+
+def _sql_re_match(username: str, text: str) -> bool:
+    pat = mentions.sql_mention_regex(username)
+    if pat is None:
+        return False
+    return re.search(pat, text or "", re.IGNORECASE) is not None
+
+
+def test_sql_mention_regex_agrees_with_parser():
+    """각 케이스에서 '이 username 을 멘션했나' 가 parse_mentions(정본)과 SQL regex 가 일치."""
+    for text, _want_assistant, want_users in _CANONICAL_CASES:
+        truth = {u.lower() for u in want_users}
+        for cand in _REGEX_CANDIDATES:
+            expect = cand.lower() in truth
+            got = _sql_re_match(cand, text)
+            assert got == expect, (
+                f"text={text!r} cand={cand!r} expect={expect} got={got} "
+                f"pat={mentions.sql_mention_regex(cand)!r}"
+            )
+
+
+def test_sql_mention_regex_none_for_empty():
+    assert mentions.sql_mention_regex("") is None
+    assert mentions.sql_mention_regex(None) is None
+
+
+def test_sql_mention_regex_word_boundary_edges():
+    # @bob 이 @bob2/@bob.kim(이름 charset 연속) 에 오매칭 안 함, a@bob(이메일류) 안 함.
+    assert _sql_re_match("bob", "@bob hi") is True
+    assert _sql_re_match("bob", "hey @bob please") is True
+    assert _sql_re_match("bob", "@bob") is True            # 문자열 끝 경계
+    assert _sql_re_match("bob", "@bob, ok") is True         # 구두점 종료
+    assert _sql_re_match("bob", "(@bob)") is True           # 괄호 앞뒤 경계
+    assert _sql_re_match("bob", "@bob2 nope") is False      # 이름 연속(숫자)
+    assert _sql_re_match("bob", "@bob.kim") is False        # 이름 연속(.)
+    assert _sql_re_match("bob", "a@bob") is False           # @ 앞 단어문자(이메일류)
+    # 특수문자 포함 username escape (정규식 메타 안전).
+    assert _sql_re_match("user_name-1.x", "@user_name-1.x ok") is True
+    assert _sql_re_match("user_name", "@user_name-1.x ok") is False  # greedy charset 경계

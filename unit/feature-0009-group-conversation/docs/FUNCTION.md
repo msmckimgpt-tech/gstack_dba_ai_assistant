@@ -41,7 +41,9 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - 멘션 파싱(FE/BE canonical 공유) + @assistant 만 ask_jobs enqueue(actor=발신자).
 - 멤버십 기반 열람 접근제어(전 conversation-scope 엔드포인트 IDOR 방지).
 - 발신자-한정 첨부 LLM 주입, 구조적 sender 라벨 + sanitize + 연속 user 턴 병합.
-- read-state 커서·@mention 표시·폴링 동기화.
+- read-state 커서·@mention 표시·폴링 동기화. **(구현 gc-unread-badge, 2026-06-25)**: 멤버별
+  `conversation_members.last_read_message_id` 커서 + 사이드바 **안 읽은(새) 메세지/@멘션 배지**
+  (형식 `<안읽음>[ / @<멘션>]`, 그룹 대화 한정, 본인 발신 제외) + 읽음 API(`POST /api/conversations/{cid}/read`).
 - per-conversation run cap + llm_usage actor 귀속.
 - 멤버 add/remove + @assistant actor 감사(audit) 액션.
 

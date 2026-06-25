@@ -278,3 +278,27 @@ source_of_truth: true
 - 핵심 판정: **SHIP**. 블로커 결함 0. P3 2건 = (a) 레거시 backfill 소급 미폐쇄(의도된 scope-out, D 결정과 정합) + (b) PG/MySQL owner 폴백 분기(기존 코드, 본 변경 무관) — 둘 다 비블로커, MODIFY.md 에 기록.
 - Verification: pytest 신규 6/6 + 관련 share 20/20 + `node --check` + `py_compile`. PB-0008 미실측(worktree WSL — 배포 후 권장).
 - Human Approval Needed: 아니오 (사용자 명시 요청 + AskUserQuestion D1/D2 반영, backend authz 강화·무회귀).
+
+## REV-20260625T065840-gc-unread-badge [SUBAGENT:authz·correctness·perf 3렌즈 §18.8]
+- Date: 2026-06-25 (패널 2026-06-25, resume 세션에서 완료)
+- Cycle: gc-unread-badge (CHG-20260625T065840) — 사이드바 "안 읽은(새) 메세지 + 안 읽은 @멘션" 배지. **Major §12.3** (스키마 추가+백엔드 쿼리+프론트 다중 파일, deploy-backed). 사용자 `/_template:entry` 요청 + Major plan 사전 승인("바로 구현").
+- Related Change: alembic 0019(PG 컬럼) + schema.sql/app.py parity + group_members read-state + mentions.sql_mention_regex + app.py 읽음 API/집계 + FE 배지/읽음처리/주기갱신 + test_mentions 파리티.
+- 요구 해석: "진행된 메세지 개수" 1차 해석은 누적 총계였으나 사용자 명확화("실제 메신저처럼 새 메세지 기준")로 **unread(안 읽은) 집계**로 확정 → read cursor 인프라 신설(기존 미구현 REQ-GC-R8 완성).
+- 설계 근거(대안 비교):
+  - read cursor 저장: (택) `conversation_members.last_read_message_id` 컬럼 — 멤버별 1행, 자연스러운 위치(REQ-R8 설계와 정합). vs KV(`(conversation,key)` 단일키라 account 별 분리 불가) 기각.
+  - cursor 단위: (택) message_id(단조 증가, 시계 skew 무관) vs last_read_at(timestamp, 동시각 경합) 기각.
+  - unread 정의: 본인 미발신(`sender IS DISTINCT FROM me`) + last_read 이후 user/assistant + content 비어있지 않음. assistant 응답도 "새 메세지"로 포함(메신저 관례, 헤더 message_count 와 동일 role 집합).
+  - 멘션 카운트: canonical `parse_mentions` 단어경계를 `sql_mention_regex` 로 미러(lookbehind 미지원 POSIX/ICU → `(^|[^A-Za-z0-9_@])`/`([^A-Za-z0-9._-]|$)` 변환). FE↔BE↔SQL 단일 문법 — test_mentions 파리티로 고정.
+  - 커서 전진만(GREATEST): 폴링/재진입이 더 작은 id 로 되돌리지 않음(이미 읽은 메세지 부활 방지).
+- 보안/인가: 읽음 API 는 기존 `_account_can_access_conversation`(read.own/.any) 멤버십 게이트 재사용 — IDOR 부재(AC-GC-A7 정합). 비멤버 admin(.any) 열람은 멤버 행 없어 set_last_read no-op(타인 커서 오염 불가). 멘션 regex 는 파라미터 바인딩 + username escape(SQL/regex 인젝션 차단). unread 집계는 `conversation_members(본인) JOIN` 이라 멤버인 대화만 노출(타 대화 카운트 누설 0).
+- 수용/한계: ① 멘션 카운트는 username 기준(예약어 'assistant' 미해당 — 실사용자 대상). ② MySQL 경로는 레거시 parity(production=PG). ③ 배지 라이브 동작은 alembic 0019 적용 후에만 데이터 발생 → **PB-0008 실측은 배포 후**(worktree WSL 한계 + 데이터 의존, 본 feature 의 기존 PB-0008-after-deploy 패턴과 정합).
+- 적대 패널(§18.8, SUBAGENT 3렌즈 병렬 — 통과가 아닌 결함 적발 목적): **종합 SHIP, BLOCKING 0**.
+  - **보안/authz 렌즈 → SHIP**: 우회 4경로 전부 차단 — ① body-forged account_id IDOR(신원은 세션 `account["id"]` 유도, body 는 `last_read_message_id` 만) ② 비멤버 타인 커서 오염(게이트가 set 선행 + WHERE `account_id=세션` → rowcount 0 no-op) ③ admin(.any) 비멤버 열람 시 멤버 행 부재로 set_last_read no-op ④ regex/SQL 인젝션(username `USERNAME_RE` + `_sanitize_username` charset 제한 + `sql_mention_regex` 메타문자 escape + `%s` 파라미터 바인딩, ReDoS 200k~5ms). cross-conv 누설 0(이중 멤버십 JOIN). 0012 GRANT 가 0019 ADD COLUMN 에 자동 상속 — "추가 GRANT 불요" 주장 정확.
+  - **정확성 렌즈 → SHIP**: 커서 경계 strict `>`(방금 읽은 메세지 재집계 없음, 읽음 후 0) · 멘션 파리티 `sql_mention_regex`↔`parse_mentions` 14 canonical + 20+ edge(이메일·연속 @@·코드블록·멀티라인·대소문자) 전부 P==SQL · 불변식 `unread_mention ≤ unread`(엄격 부분집합) · NULL last_read=전부 unread(COALESCE 0) · PG `IS DISTINCT FROM`↔MySQL `<=>` 동치 · FE 0-숨김(`if(_unread>0)`/멘션 0 시 ` / @0` 미부착) · 캐시버스터 app.js+styles.css 둘 다 bump 확인.
+  - **성능/회귀 렌즈 → SHIP-WITH-NITS**: N+1 없음(단일 GROUP BY, limit 200, regex 는 CASE 3번째 AND 단축평가로 unread+미발신 행만) · 인덱스 정합(`ix_core_messages_conv_id(conversation_id,id)` + members PK 커버, 신규 컬럼 인덱스 불요) · 마이그레이션 멱등·체인 0018→0019 정합·nullable ADD COLUMN 락 짧음 · 커넥션 누수 없음(finally close) · payload 신규 키 2개 충돌 0, 1:1/비그룹 미영향.
+- 수용된 NIT (가시 회귀 0 — 본 cycle 미적용, 후속 개선 후보):
+  - **N1 (성능, 실질)**: `_maybeSyncConversationListUnread` 가 탭 가시 상태 7s(`SIDEBAR_UNREAD_SYNC_MS`)마다 `/api/conversations`(200건 unread 집계) 신규 상시 폴링 — 활성 1인당 ~8.6 req/min. throttle·`document.hidden` 가드는 있음. → **별도 최적화 cycle 권고**(그룹대화 0건 skip / 7s→15s 상향 / 경량 `/api/conversations/unread` 분리). 본 cycle(배지 표시) scope 외 — resume 의도 완결 우선.
+  - **N2 (정확성, 회귀가드)**: off-by-one·NULL 초기동작·PG/MySQL 집계 동치·멀티라인 멘션 파리티의 in-container 단위 테스트 부재(DB 의존 → `make test`/PB-0008 배포 후 커버). 파리티 regression 케이스(멀티라인·trailing-newline) 명시 추가 권고. 패널이 수동 실측으로 통과 확인.
+  - **N3 (보안, 무해)**: MySQL parity `_mention_re.lower()` 가 charset `[A-Za-z0-9_@]`→소문자 변형(범위 보존 + content `LOWER()` 로 경계 유지, prod=PG 영향 0).
+- Verification: py_compile(app.py·group_members·mentions·alembic) + node --check(app.js·mentions.js) + CSS brace 1576=1576 + test_mentions 6/6 PASS. group_members/s2 DB 의존 테스트는 컨테이너 make test(배포 경로).
+- Human Approval Needed: 아니오 (Major plan 사전 승인 "바로 구현" + additive·무회귀). **배포(alembic 0019 + web 재빌드)는 외부영향 — 별도 confirm**(§16.3 deploy-backed).

@@ -117,5 +117,20 @@ source_of_truth: true
 - Pass/Fail: **PASS**
 - Notes: 전부 프론트(app.js/index.html/styles.css) → web 컨테이너 정적 반영(docker cp)으로 실측, 병합 후 이미지 재빌드. 알림 제어는 클라이언트 localStorage(OS 권한 origin·디바이스 단위라 서버 동기화 무의미). 적대 패널 PASS(blocking 0).
 
+### Run 2026-06-25-gc-unread-badge (CLI 단위 — Windows-browser 는 배포 후)
+- Date: 2026-06-25
+- Environment: CLI
+- Runner: AI
+- Scope: `sql_mention_regex` ↔ `parse_mentions` 단어경계 파리티 + 코드 정적 검증.
+- Result Summary: `test_mentions.py` 6/6 PASS (기존 canonical 3 + 신규 `sql_mention_regex` 파리티 3 — `_CANONICAL_CASES` 전수에서 "이 username 을 멘션했나"가 파서와 SQL regex 일치, `@bob`↛`@bob2`/`@bob.kim`/`a@bob` 경계, username escape). py_compile(app.py·group_members·mentions·alembic 0019) OK + node --check(app.js·mentions.js) OK + CSS brace 1576=1576.
+- Pass/Fail: **PASS** (CLI 범위 — 서버 계약·파서 파리티만)
+- Notes: unread 집계 SQL(PG `~*`/MySQL `REGEXP`) 과 배지 렌더는 **실 DB + 라이브 데이터** 필요 → 아래 Windows-browser Run 으로 배포 후 실측.
+
+### Run (PENDING) gc-unread-badge — Windows-browser (배포 후 필수)
+- Environment: Windows-browser (예정)
+- 사유: 본 변경은 **alembic 0019(conversation_members.last_read_message_id) 적용 + web 재빌드** 후에야 배지에 표시할 unread 데이터가 발생한다(WSL worktree 단독으로는 라이브 그룹 대화 데이터 부재). §15.4.1 게이트 충족을 위해 **배포 직후** PB-0008(`bin/win-browser.py`)로 실측 예정.
+- 시나리오(예정): 멤버 2계정 그룹 대화에서 (a) 상대가 일반 메세지 N개 전송 → 사이드바 배지 `N`, (b) 상대가 `@나` 멘션 M개 포함 → `N / @M`(멘션 danger 톤), (c) 대화 열람 → 배지 사라짐(읽음), (d) 본인 발신은 카운트 미증가, (e) 비활성 대화 새 메세지 ~7s 내 배지 증가(주기 갱신).
+
 ## 4. Untested Areas
+- gc-unread-badge: 실 PG unread/mention 집계 + FE 배지 라이브 동작 — **배포(alembic 0019) 후 PB-0008 Windows-browser 실측 예정**(위 PENDING Run).
 - 아직 검증되지 않은 영역

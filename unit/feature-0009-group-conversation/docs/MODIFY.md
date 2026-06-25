@@ -324,3 +324,22 @@ source_of_truth: true
 - Impact: 1:1 본인 대화(`is-own-message` 우측) 무회귀. JS/DOM/핸들러/엔드포인트/RBAC/스키마 0. 순수 표현계층.
 - Rollback Notes: feature-0003 styles.css 2블록 + index.html 캐시버스터 revert. JS/백엔드/스키마 0.
 - 검증: `node --check static/app.js` PASS(무변경) + 충실한 mock 렌더(실 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측(rightGap 25)/other·assistant=좌측(leftGap 25 동일 기준선)/멘션 하이라이트 상대방 좌측+강조선. 패널 SKIP(순수 CSS, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 실 그룹대화 권장).
+
+## CHG-20260625T065840-gc-unread-badge (REQ-GC-R8 read-state, Major §12.3 — 스키마 추가+백엔드+프론트)
+- Date: 2026-06-25. 사용자 요청(`/_template:entry`): "그룹 대화 사이드바에 진행된 메세지 개수 표시, 자신의 멘션은 별개 집계, 형식 `<전체>[ / @<멘션>]`" + 명확화 "(실제 메신저처럼) **새 메세지(안 읽은) 기준**".
+- Related Requirement: REQ-GC-R8 (read-state 커서 + @mention 표시 — S3/S5 미구현분 완성), AC-GC-A10.
+- Summary: 그룹 대화 사이드바에 **안 읽은(새) 메세지 수 + 안 읽은 @멘션 수** 배지(`<안읽음>[ / @<멘션>]`). 멤버별 read cursor(`conversation_members.last_read_message_id`) 신규 + 읽음 API + 목록 unread 집계 + FE 배지/읽음처리/준실시간 갱신.
+- Files:
+  - `unit/feature-0002-agent-core/alembic/versions/20260625_0019_conversation_member_last_read.py` (신규): PG `conversation_members.last_read_message_id bigint` ADD COLUMN(0012 에서 이미 agent_kb_rw UPDATE GRANT 보유 → 추가 GRANT 불요). down_revision=0018.
+  - `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql` (cross-feature): 부트스트랩 DDL parity — 동일 컬럼 멱등 ALTER.
+  - `unit/feature-0002-agent-core/src/modules/group_members.py` (cross-feature): `get_last_read`/`set_last_read`(전진만 GREATEST) + SQL 상수 2.
+  - `unit/feature-0002-agent-core/src/modules/mentions.py` (cross-feature): `sql_mention_regex(username)` — parse_mentions 단어경계 문법을 SQL regex(PG `~*`/MySQL `REGEXP`)로 미러(파서·FE·SQL 카운트 단일 문법 앵커).
+  - `unit/feature-0003-agent-web-ui/src/app.py` (cross-feature): MySQL parity ALTER(`AgentCoreConversationMembers.last_read_message_id`), 신규 `POST /api/conversations/{cid}/read`(멤버십 게이트 read.own/.any, 커서 전진), `_list_conversations_pg`/`_list_conversations` 에 `unread_count`/`unread_mention_count` 집계(본인 미발신 + last_read 이후 + @멘션 regex), `_mention_count_regex` 는 canonical 모듈 위임 래퍼.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `buildCompactItem` 그룹 대화 배지 렌더(0이면 숨김), `markConversationRead`/`_markActiveConversationRead`/`_latestLoadedMessageId`, selectConversation+live-sync 읽음처리, `_maybeSyncConversationListUnread`(비활성 대화 배지 7s throttle 준실시간 갱신).
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.conv-item-unread`(+`.has-mention` danger 톤) 배지 스타일.
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: 캐시버스터 `gc-unread-badge`(app.js+styles.css).
+  - `unit/feature-0002-agent-core/tests/test_mentions.py`: `sql_mention_regex` ↔ parse_mentions 파리티 3 테스트.
+- 설계 결정: ① "새 메세지 기준"=unread(누적 총계 아님) → read cursor 필요. ② cursor=`last_read_message_id`(core_messages.id 단조증가, 시계 무관). ③ 읽음=대화 열람 시 + 활성 대화 새 메세지 도착 시 전진(메신저 관례). ④ 본인 발신 메세지는 unread 미포함(`sender IS DISTINCT FROM me`). ⑤ unread=0 이면 배지 미표시. ⑥ 그룹 대화 한정(1:1 미표시). ⑦ 멘션 카운트는 canonical 파서와 동일 단어경계(`sql_mention_regex`)로 SQL 집계 → FE↔BE↔SQL 동일 문법.
+- Impact: 순수 additive — 신규 nullable 컬럼 1(기존 멤버 last_read=NULL=전부 unread→열람 시 0), 신규 엔드포인트 1(멤버십 게이트), 목록 payload 필드 2 추가. 기존 동작 무변경(배지는 그룹 대화에만 신규 표면). production=PG 경로 정본, MySQL 은 레거시 parity(try/except).
+- Rollback Notes: alembic downgrade(DROP COLUMN) + schema.sql/app.py ALTER 제거 + group_members 2함수 + mentions.sql_mention_regex + app.py 엔드포인트/집계 + app.js/styles.css/index.html FE + 테스트 revert. 데이터 무손실(컬럼 ADD 만).
+- 검증: py_compile(app.py·group_members·mentions·migration) OK + node --check(app.js·mentions.js) OK + CSS brace 1576=1576 + test_mentions 6/6(기존 3 + sql_mention_regex 파리티 3) PASS + §18.8 적대 패널 3렌즈(authz·correctness·perf) SHIP(BLOCKING 0). **PB-0008 미실측**(본 worktree=WSL + 배지 동작은 alembic 0019 적용 후 라이브에서만 데이터 발생 → 배포 후 실측 권장, TEST.md §3). **★배포 alembic 0019 필수.**
