@@ -66,6 +66,17 @@ def test_status_429_is_throttled():
     assert lph.classify_llm_provider_error(exc)["kind"] == lph.KIND_THROTTLED
 
 
+def test_throttled_message_is_service_level_without_provider_name():
+    # 요청량 한도(throttle) 메시지는 "서비스 자체" 한도임을 명시하고 provider 이름
+    # (AWS Bedrock 등)을 노출하지 않는다 — 계정 당 사용 한도와 주체를 구분한다.
+    # (credential/auth/unavailable 등 다른 kind 는 관리자 진단용 provider 라벨 유지.)
+    exc = FakeAPIError("ThrottlingException: Rate exceeded")
+    r = lph.classify_llm_provider_error(exc, provider="bedrock")
+    assert r["kind"] == lph.KIND_THROTTLED
+    assert "Bedrock" not in r["message"]
+    assert "서비스" in r["message"]
+
+
 # ── unavailable ─────────────────────────────────────────────────────────
 def test_status_503_is_unavailable():
     exc = FakeAPIError("boom", status_code=503)

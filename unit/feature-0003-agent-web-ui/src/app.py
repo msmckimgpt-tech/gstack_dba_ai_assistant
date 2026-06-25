@@ -5840,9 +5840,11 @@ def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
             continue  # 무제한/미설정
         used = _account_period_usage_tokens(account_id, qtype)
         if used >= int(limit):
+            # 주체 구분: "계정의 ... 한도" 로 명시 — 서비스 자체 요청량 한도
+            # (llm_provider_health KIND_THROTTLED)와 도달 주체를 구분한다.
             return (
                 False,
-                f"{_label.get(qtype, qtype)} LLM 토큰 한도({int(limit):,})를 초과했습니다. "
+                f"계정의 {_label.get(qtype, qtype)} LLM 토큰 사용 한도({int(limit):,})를 초과했습니다. "
                 f"현재 사용량 {int(used):,}. 관리자에게 문의하거나 한도 초기화 시점까지 기다려 주세요.",
             )
     return (True, "")

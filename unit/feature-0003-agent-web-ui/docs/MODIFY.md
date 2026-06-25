@@ -4704,3 +4704,14 @@ source_of_truth: true
 - Files: `static/styles.css`, `static/index.html`, `tests/verify_member_actions_hover.mjs`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
 - Rollback: styles.css `.share-participant*`/`.share-bans` 그리드+hover 블록 revert(직전 always-visible) + 캐시버스터·테스트 제거. JS/백엔드/스키마 0.
 - Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.
+
+## CHG-20260625T045450-limit-subject-msg (계정 당 토큰 한도 초과 메시지 주체 명시 — cross-feature, feature-0002 주관, Minor §12.3)
+- Date: 2026-06-25. 별도 worktree `ai/claude/limit-subject-msg`(base main). 서비스 메시지 정본·changelog = feature-0002 CHG-20260625T045450-limit-subject-msg. 본 항목은 feature-0003 계정 메시지 변경 기록.
+- 변경(feature-0003):
+  - `src/app.py` `_check_account_token_quota` 한도 초과 반환 메시지: `f"{_label} LLM 토큰 한도({limit:,})를 초과했습니다. 현재 사용량 {used:,}. 관리자에게 문의하거나 한도 초기화 시점까지 기다려 주세요."` 앞에 "계정의" + "사용" 추가 → `f"계정의 {_label} LLM 토큰 사용 한도(...)를 초과했습니다. ..."`. 도달 주체가 **계정**임을 명시(서비스 자체 요청량 한도와 구분). 사유 주석 2줄.
+- Why: "요청량 한도"가 계정 한도(토큰 사용량)인지 서비스 한도(provider throttle)인지 모호 → 주체 명시로 구분. feature-0002 의 서비스 메시지("서비스 자체의 요청량 한도...")와 짝.
+- Impact: `_check_account_token_quota` 게이트 로직(역할 기본/계정 override·일일/월간·fail-open)·HTTP 429·`/api/ask` 사전 차단 무변경. 순수 사용자 노출 텍스트. 메시지 텍스트 단언 테스트 부재(무회귀).
+- Verification: py_compile(app.py) PASS. (전체 suite 는 Docker `make test` — 본 변경은 문자열만이라 게이트 영향 0.)
+- Files: `src/app.py`, `docs/{TASK,MODIFY,REVIEW}.md`. (+ feature-0002 정본)
+- Rollback: app.py 메시지 1곳 revert. 로직 영향 0.
+- Deploy: web 재빌드·재시작(app.py). 마이그/스키마/static 없음.

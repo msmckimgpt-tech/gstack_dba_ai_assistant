@@ -3813,3 +3813,12 @@ source_of_truth: true
 - 설계 근거(대안 비교): flex-wrap 인라인 확장 = 같은 줄 형제 reflow(요구 위반) / 세로 스택 = 우측 여백 낭비(사용자 2차 지적) / **그리드** = 셀 고정(reflow 0) + 이름 flex 채움(여백 0) + 다열(세로 단축) 동시 충족. 셀 내부 펼침이라 absolute 오버레이의 스크롤 컨테이너 클리핑·이웃 칩 겹침 문제도 없음.
 - Verification: CSS brace 1571=1571 + 신규 `tests/verify_member_actions_hover.mjs` **15/15 PASS**(grid·다열·접힘 기본값·hover/focus 펼침·transition·`@media (hover:none)` 터치 폴백·캐시버스터). 기존 `verify_member_kick_ban.mjs`(JS/DOM 불변) 무회귀. 라이브 시각/애니메이션 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree=WSL 미실행).
 - Cross-ref: CHG-20260625T030242-gc-member-actions-hover / FUNCTION REQ-20260625-gc-member-actions-hover(AC-20260625T030242-gc-member-actions-hover-1·-2) / feature-0009 TASK·MODIFY cross-ref.
+
+## REV-20260625T045450-limit-subject-msg [SKIPPED:message-text-only-no-logic] (Minor §12.3 — 계정 한도 메시지 문구)
+- Date: 2026-06-25
+- Cycle: limit-subject-msg (CHG-20260625T045450-limit-subject-msg). cross-feature(feature-0002 주관 / feature-0003 계정 메시지).
+- 변경: `app.py` `_check_account_token_quota` 한도 초과 메시지에 "계정의 ... 사용 한도" 주체 명시.
+- SKIP 사유(§18.4/§18.8): 사용자 노출 메시지 문구만 — 429 게이트 로직·RBAC(quota.read/manage)·스키마·엔드포인트 무변경. 보안/인가/데이터 표면 0. 메시지 텍스트 단언 테스트 부재(무회귀).
+- Verification: py_compile(app.py) PASS.
+- Human Approval Needed: 아니오 (Minor — 비파괴 문구 변경).
+- Cross-ref: CHG-20260625T045450-limit-subject-msg / TASK limit-subject-msg / feature-0002 CHG·REV-20260625T045450-limit-subject-msg.

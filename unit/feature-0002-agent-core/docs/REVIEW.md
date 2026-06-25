@@ -1193,3 +1193,12 @@ source_of_truth: true
 - NIT(INFO, 비차단): N1 redeploy 중 in-flight pass 유실=resumable 무해. N2 sys.path 중복 prepend=양성(GIL atomic). N3 1회 백필↔데몬 동시 시 중복(idempotent)=배포 시퀀싱(백필 후 배포)으로 회피.
 - Verification: py_compile 3 + import/early-return 라이브 + run_embedding_pass(이전 round ACCEPT) + 데몬 import 라이브 resolve 확인.
 - Cross-ref: CHG-20260623T190000-embedding-auto-backfill / TASK-0307.
+
+## REV-20260625T045450-limit-subject-msg [SKIPPED:message-text-only-no-logic] (Minor §12.3 — 요청량 한도 메시지 문구)
+- Date: 2026-06-25
+- Cycle: limit-subject-msg (CHG-20260625T045450-limit-subject-msg). cross-feature(feature-0002 주관 / feature-0003 cross-ref).
+- 변경: `llm_provider_health.py` KIND_THROTTLED 메시지에서 provider 라벨(AWS Bedrock 등) 제거 → "서비스 자체의 요청량 한도..." 로 주체 명시 + 회귀 테스트 1건.
+- SKIP 사유(§18.4/§18.8): 사용자 노출 메시지 문구만 — 분류 kind/HTTP 429/retryable/error_tag/응답 dict shape 무변경, 로직·인가·데이터·외부비용·스키마 0 표면. 자격증명 비유출 원칙은 본 변경으로 오히려 강화(backend 명칭 비노출). 회귀 테스트(message 비유출·서비스 명시) 추가·통과 → 적대 패널 불요.
+- Verification: py_compile + `pytest test_llm_provider_health.py` 19/19 PASS(신규 test_throttled_message_is_service_level_without_provider_name 포함).
+- Human Approval Needed: 아니오 (Minor — 비파괴 문구 변경).
+- Cross-ref: CHG-20260625T045450-limit-subject-msg / TASK limit-subject-msg / feature-0003 CHG·REV-20260625T045450-limit-subject-msg.

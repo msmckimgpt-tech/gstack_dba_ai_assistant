@@ -4622,3 +4622,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **적대 리뷰(REV-20260625T021924-rule-db-coverage [SUBAGENT:adversarial-frontend] — SHIP) MAJOR 1 흡수**: **M1** — 규칙 카드(`_renderRuleEditor`)는 `if (canManage)` 게이트라 read-only 뷰어(product.read 만, product.manage 없음)는 카드를 못 보는데 메인 목록은 rule 행을 무조건 제외 → 규칙 DB 가 **어디에도 안 보임**(요청 불변식 위반). → 메인 목록 skip 을 `if (_isRuleRow && canManage) return;` 로 조건부화(read-only 뷰어는 규칙 DB 를 메인 목록에 coverage 와 함께 노출). 흡수 후 SHIP. MINOR(다중 datasource 동명 DB 이름키 lookup — 메인 목록과 동일 기존 한계 / 규칙 DB 초기화 버튼 의도적 미노출)는 수용.
 - [x] **검증**: `node --check admin.js` PASS + 신규 `tests/verify_rule_db_coverage.mjs` **20/20 PASS**(jsdom 으로 buildDbCoverageCells 분석여부·완료율 렌더 + 규칙 카드 wiring + M1 조건부 skip + CSS + cache-buster). 인접 회귀 `verify_dbpicker_search_regex.mjs` 영향 없음(기존 cache-buster 단언 1건은 본 cycle 이전부터 stale — pre-existing).
 - [ ] verify-completion → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked) → **PB-0008 Windows-browser 시각 검증**(제품 상세 '데이터 소스 & 접근 가능 데이터베이스' > 규칙 카드의 '이 규칙으로 추가된 DB' 항목에 분석 여부·완료율 표시) → 마감. (WSL worktree 라 PB-0008 미실행 — 배포 후 사용자 확인.)
+
+### limit-subject-msg — 계정 당 토큰 한도 초과 메시지 주체 명시 (cross-feature, feature-0002 주관, Minor §12.3, 2026-06-25)
+- 사용자 요청(/_template:entry): 요청량 한도 도달 시 주체 구분(계정 당 / 서비스 자체). 본 feature 는 **계정 당** 한도 메시지 담당(서비스 메시지·정본 = feature-0002).
+- 등급: **Minor §12.3** — 사용자 노출 메시지 문구만(429 게이트 로직·RBAC·스키마 무변경).
+- [x] **`src/app.py` `_check_account_token_quota`**: 토큰 한도 초과 메시지 `f"{일일/월간} LLM 토큰 한도(N)를 초과했습니다..."` → `f"계정의 {일일/월간} LLM 토큰 사용 한도(N)를 초과했습니다..."`. "계정의" 주체 명시로 서비스 자체 요청량 한도(feature-0002 KIND_THROTTLED)와 구분. 사유 주석 2줄.
+- [x] 검증: py_compile(app.py) PASS. 메시지 텍스트 단언 테스트 부재(test_llm_usage_quota L82=allowed 케이스 msg=="" / test_auto_account_prompt=stub) → 무회귀.
+- [x] 리뷰(REVIEW REV-20260625T045450-limit-subject-msg [SKIPPED]): 메시지 문구만 → 적대 패널 불요.
+- [ ] verify-completion → commit/push → (PR·머지·배포는 사용자 confirm) → 마감.
