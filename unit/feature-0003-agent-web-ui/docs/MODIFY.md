@@ -4812,3 +4812,15 @@ source_of_truth: true
 - Files: `static/app.js`, `static/styles.css`, `static/index.html`, `docs/{TASK,MODIFY,REVIEW}.md`.
 - Rollback: app.js 코디네이터+배선 revert, styles.css 2블록 revert, index.html cache-buster revert. additive·비파괴 — 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 정적 자산(app.js/styles.css/index.html) 변경. 마이그/백엔드 없음.
+
+## CHG-20260626T080501-doc-sync-rn-0626 (TASK-20260626T080501-doc-sync-rn-0626 — 릴리즈노트 06-25 후속 머지분(6건) + cache-buster bump, 비-정책 doc-only)
+- Date: 2026-06-26 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260626-080501, base 3e553e9).
+- 배경: 릴리즈노트 마지막 sync(a29a2f0 @ 06-25 19:36) 이후 main 병합된 06-25 user-facing 변경 6종이 릴리즈노트 미반영(drift).
+- 내용:
+  - `static/release-notes-data.js`: 기존 '2026-06-25' 블록 items 끝에 6항목 추가(14→20) — 단계 보기 버튼 소실 수정·대화 전환 크로스페이드·공유 링크 참여 불가 수정·안 읽음 배지 미감소 수정·입력창 미클리어 수정·그룹 AI 답변 정확도 개선 + generated 2026-06-25→2026-06-26.
+  - `static/index.html`·`static/admin.html`: 릴리즈노트 cache-buster `release-notes-data.js?v=20260625c-rn-0625`→`?v=20260626-rn-0626`(콘텐츠 변경 전파 — app.py `?v=` 가 유일 무효화 경로). app.js/styles.css 토큰(conv-switch-fade) 무변경.
+- Why: 현실↔릴리즈노트 정합(사용자 노출 표면 최신화). 평이한 한국어·내부 비노출.
+- Verification: `node --check release-notes-data.js` PASS + 항목 스키마 정합 + 머지 6건 1:1 대조(ULTRACODE 적대검증 CLEAN).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: 6항목 + generated + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.

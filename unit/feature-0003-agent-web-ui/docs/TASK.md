@@ -4700,3 +4700,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **검증**: `node --check app.js` PASS + CSS brace balance 1585/1585 + 적대 리뷰 SHIP. (전환은 CSS transition/transitionend·timer 기반이라 jsdom 단위테스트 부적합 — 정적검사+적대리뷰로 대체, steps-btn-pending-persist cycle 선례 동일.)
 - [x] verify-completion PASS(9/9) → commit 1da8b07 → main drift(#452 dialect, 무충돌) 위로 rebase 8728ade → main ff-merge(`2c348f0..8728ade` origin push) → web 재배포(`sudo make web`, repo-web-1 healthy, baked GIT_COMMIT 8728ade, 서빙 index.html cache-buster `conv-switch-fade`·app.js 크로스페이드 함수 baked 확인). PR 미생성(global 정책: main 병합 auto / PR 생성 confirm — 로컬 ff 병합).
 - [ ] **PB-0008 Windows-browser 시각 검증**(대화 전환 시 fade-out/in 크로스페이드 + 빠른 로딩 시 가속) — WSL worktree 라 미실행, **배포 후 사용자 확인 필요**.
+
+### TASK-20260626T080501-doc-sync-rn-0626 — 릴리즈노트 06-25 후속 머지분(6건) 정합 + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-26)
+- 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃). 릴리즈노트 마지막 sync(a29a2f0 @ 2026-06-25 19:36) 이후 main 병합된 06-25 user-facing 변경을 기존 '2026-06-25' 블록에 추가(items 14→20) + `index.html`·`admin.html` cache-buster `?v=20260625c-rn-0625`→`?v=20260626-rn-0626` + generated 2026-06-25→2026-06-26.
+- [x] 대상 머지(6, 평이화·내부 비노출): [fixed work] 단계 보기 버튼 소실 수정(998376b) · [improved work] 좌측 대화 전환 크로스페이드(8728ade) · [fixed work] 공유 링크 대화 참여 불가(92753ab) · [fixed work] 읽은 그룹 대화 안 읽음 배지 미감소/되살아남(9b1dc16·36ad138·d90e1e2 통합) · [fixed work] @assistant 전송 후 입력창 미클리어(bec35bd) · [improved work] 그룹 대화 AI 답변 정확도 — 데이터 종류 맞춤 조회+대화 맥락(feca44f).
+- [x] 콘텐츠 데이터만 — 렌더 로직·백엔드·스키마·RBAC 무변경. ULTRACODE 3축 워크플로(분석→적대검증→완전성 비평) VERDICT pass/go-with-fixes, 머지 6건 1:1 대조 CLEAN. 비-user-facing(c2ed580 캐시버스터·7c89b7d META skill 정책·3a7da05 cycle 마감) 제외 확인.
+- [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + 06-25 블록 14→20.
+- [x] META(STATUS·wiki) 별도 commit 분리. verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.

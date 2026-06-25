@@ -1237,3 +1237,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **견고성 불변식**: 네트워크 실패(use_conversation/history) 시에도 가시성을 복원(고스트 제거 + 메시지 영역 opacity 1)한 뒤 에러를 전파해 빈 화면(opacity 0 stuck)이 남지 않는다. 빠른 연속 전환 시 직전 고스트는 새 전환 시작 시 정리되어 최대 1개만 존재한다. 고스트는 `pointer-events:none`·`#messagePointRail` 보다 아래(rail `z-index:4`)이므로 클릭·rail dot 표시를 가리지 않는다.
 - 백엔드/인가/스키마/응답계약 무변경 — frontend `static/app.js`(코디네이터 4함수 + `selectConversation` 배선) + `static/styles.css`(`.messages-switch-ghost`·rail z-index) 만. CHG/REV-20260625T204254-conv-switch-fade [SUBAGENT:adversarial-frontend, SHIP-WITH-FIXES → 흡수 후 SHIP]. UI 실렌더 정본=PB-0008(배포 후).
 - 배포 전파: app.js·styles.css cache-buster `?v=20260625-conv-switch-fade` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d).
+
+## (doc-sync-rn-0626, 2026-06-26) 릴리즈노트 콘텐츠 — 06-25 후속 머지분(6건) 추가
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 '2026-06-25' 블록에 06-25 후속 user-facing 변경 6건을 평이한 한국어로 추가(items 14→20): 답변 '단계 보기' 버튼 소실 수정 · 대화 전환 크로스페이드 · 공유 링크 대화 참여 불가 수정 · 읽은 대화 안 읽음 배지 미감소 수정 · @assistant 전송 후 입력창 미클리어 수정 · 그룹 대화 AI 답변 정확도 개선. generated 메타 2026-06-26.
+- 내부 구현·feature-id·테이블/함수명 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260626-rn-0626` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d). CHG/REV-20260626T080501-doc-sync-rn-0626.

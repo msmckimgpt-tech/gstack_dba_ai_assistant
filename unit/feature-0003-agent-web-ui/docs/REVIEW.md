@@ -3893,3 +3893,11 @@ source_of_truth: true
 - 검증: app.js 는 index.html 에서만 로드(grep 확인) — 단일 진입점 bump 으로 충분.
 - Human Approval Needed: 아니오.
 - Cross-ref: CHG-20260625T105417-steps-btn-cachebust / CHG-20260625T103503-steps-btn-pending-persist(전파 대상).
+
+## REV-20260626T080501-doc-sync-rn-0626 [SKIPPED:non-policy-doc] (TASK-20260626T080501-doc-sync-rn-0626, 비-정책 doc-only — 릴리즈노트 콘텐츠 + cache-buster)
+- Date: 2026-06-26 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260626-080501).
+- 변경: `static/release-notes-data.js` 06-25 블록 6항목 추가(14→20) + generated 06-26 + `index.html`·`admin.html` cache-buster `?v=20260625c-rn-0625`→`?v=20260626-rn-0626`.
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터/응답계약 무영향. 제품 로직 변화 0 → 적대 verification 패널 불요(비-정책 doc 경량 cycle). 사실 정확성·평이화는 ULTRACODE 3축 워크플로(release-notes 분석→적대검증 verdict pass + 완전성 비평 go-with-fixes)로 머지 6건 1:1 대조 CLEAN, 내부용어 누출 0.
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 머지 6건(998376b/8728ade/92753ab/9b1dc16+36ad138+d90e1e2/bec35bd/feca44f) 1:1 대조. 비-user-facing(c2ed580/7c89b7d/3a7da05) 의도적 제외 확인.
+- Human Approval Needed: 아니오.
+- Cross-ref: CHG-20260626T080501-doc-sync-rn-0626 / TASK-20260626T080501-doc-sync-rn-0626 / FUNCTION '릴리즈노트 콘텐츠 — 06-25 후속 머지분(6건) 추가' / META commit(STATUS feature-0003·0009 행 + wiki hot.md·Log.md·feature-0009 카드 §7).
