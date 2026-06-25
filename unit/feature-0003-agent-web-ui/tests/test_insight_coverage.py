@@ -63,7 +63,7 @@ def _install(monkeypatch, *, db_rows, scope_by_ds, live_by_host, rag_by_scope,
     """
     monkeypatch.setattr(app, "_list_product_databases", lambda conn, product_id: list(db_rows))
     monkeypatch.setattr(app, "_ssrf_check_host", lambda host: (True, "", host))
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _FakePgConn(rag_by_scope))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _FakePgConn(rag_by_scope))
 
     def _resolve(conn, product):
         ds = product.get("datasource_key")
@@ -84,7 +84,7 @@ def _install(monkeypatch, *, db_rows, scope_by_ds, live_by_host, rag_by_scope,
             return list(all_pairs)
         wanted = {str(s).strip().lower() for s in (schemas or [])}
         return [(s, t) for (s, t) in all_pairs if str(s).strip().lower() in wanted]
-    monkeypatch.setattr("modules.db.list_information_schema_tables", _list_tables)
+    monkeypatch.setattr("shared.db.list_information_schema_tables", _list_tables)
 
     return {"id": pid, "name": "킹스레이드 - 국내 QA", "datasource_key": primary_ds}
 

@@ -147,3 +147,24 @@ source_of_truth: true
   eager 체인 OK · db/memory shim 유지 · agent_core/web app import OK · config 재노출 체인(`from modules import GLOBAL_CONVERSATION_ID`·`from modules.db import AGENT_KB_PG_PORT`) OK. §18.8 3렌즈(missed-ref/correctness/deploy,
   실 이미지 baked-layout 빌드·실행) BLOCKING 0/NIT 0.
 - Rollback Notes: 단일 commit revert 로 53 파일 import 복원 + config shim 재생성. 이미지 재빌드만(스키마/데이터 무변경).
+
+## CHG-20260625-0007
+- Date: 2026-06-25
+- Related Requirement: P5a Step 5c — db 소비처를 modules.db alias → shared.db 정본 경로로 마이그레이션 +
+  modules/db.py alias shim 제거 (TASK-0011-9 부분; Step 5 의 마지막 sub-step). **4개 alias shim(config·db·
+  conn_health·datasources) 전부 제거 완료 → shared/ 점진 추출 구조 완성.**
+- Summary: db(repo 최다결합, fan-in 17; `_pg_connect`/`_pg_connect_ro`/`_POOL_REGISTRY` 등 underscore 9+;
+  modules/__init__ eager)의 **모든 소비처(219 ref/52 파일 — app.py 112 포함)**를 `from modules import db`·
+  `from modules.db import X`·`import modules.db`·`from .db import *`·dynamic(`sys.modules["modules.db"]`·
+  `monkeypatch.setattr("modules.db._pg_connect")`)·**+ bin/kb-pg-healthcheck.sh 의 docker-exec embedded python**
+  에서 `shared.db` 로 마이그레이션하고 `modules/db.py` shim 삭제. modules/__init__ eager+wildcard 재노출 체인 보존
+  (db 이름 shared.db 재바인딩; underscore 심볼 __all__ 재노출 유지).
+- Files: 52 .py consumer files (M) + `bin/kb-pg-healthcheck.sh` (M — .sh-embedded python) +
+  `unit/feature-0002-agent-core/src/modules/db.py` (D, 마지막 shim). shared/db.py 정본 +
+  shared/{conn_health,datasources}.py 의 lazy `from . import db`(=shared.db) 무편집.
+- Impact: 런타임 동작 불변(shared.db = 직전 alias 동일 객체). `make test` **회귀 0**(전체 green). **residual grep 0
+  (전 파일 — .py + .sh + config/yml)**. baked-layout smoke: `from shared import db` OK · `import modules.db`→
+  ModuleNotFoundError · modules 재노출(AGENT_KB_PG_PORT·underscore) OK · cross-module lazy(db↔conn_health/datasources) OK.
+  §18.8 3렌즈(실 이미지 baked-layout 빌드·실행): **BLOCKING 1 발견·수정**(kb-pg-healthcheck.sh:121 .sh-embedded
+  `from modules.db import` — .py-only 마이그가 놓침 → shared.db 로 수정·전파일 재grep 0) / correctness NIT 0 / deploy SAFE.
+- Rollback Notes: 단일 commit revert 로 52파일+healthcheck import 복원 + db shim 재생성. 이미지 재빌드만(스키마/데이터 무변경).

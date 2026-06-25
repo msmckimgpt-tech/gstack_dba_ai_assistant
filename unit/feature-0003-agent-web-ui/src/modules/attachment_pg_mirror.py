@@ -195,7 +195,7 @@ def _attach_row_to_params(row: dict[str, Any]) -> dict[str, Any]:
 
 # ── PG 연결(지연 import — 모듈 import 가 PG 를 요구하지 않도록) ──────────────────
 def _pg():
-    from modules.db import _pg_connect  # type: ignore[import-not-found]
+    from shared.db import _pg_connect  # type: ignore[import-not-found]
     return _pg_connect()
 
 

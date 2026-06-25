@@ -528,7 +528,7 @@ def _get_pg_runtime_backend() -> PgRuntimeBackend:
 
 def _get_pg_runtime_conn():
     """매 호출마다 Postgres connection open (RW). process-level pool 은 M3+ cycle 책임."""
-    from .db import _pg_available, _pg_connect
+    from shared.db import _pg_available, _pg_connect
     if not _pg_available():
         return None
     try:
@@ -545,7 +545,7 @@ def _get_pg_runtime_conn_ro():
 
     _pg_connect_ro() 미설정 시 _pg_connect() fallback (같은 패턴: KB M4 _pg_connect_ro).
     """
-    from .db import _pg_available, _pg_connect_ro, _pg_connect
+    from shared.db import _pg_available, _pg_connect_ro, _pg_connect
     if not _pg_available():
         return None
     try:

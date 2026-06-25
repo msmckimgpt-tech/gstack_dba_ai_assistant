@@ -15,9 +15,10 @@ feature-0002(agent-core)·feature-0003(web-ui) 두 feature 와 격리 컨테이�
 config(Step 2, L0 foundation) → db(Step 3, L1 최다결합) → conn_health·datasources(Step 4, L1
 cross-feature). Step 2 부터는 고결합 모듈을 **모듈 alias shim**(`sys.modules[__name__]=shared.X`)으로
 옮겨 `modules.X` 와 `shared.X` 를 동일 객체화 → 소비처 재배선 0 으로 비파괴 추출.
-**Step 5(점진 마이그레이션)**: 비파괴 추출이 끝난 모듈의 소비처를 정본 `shared.*` 경로로 수렴시키고 alias shim 을
-제거(per-module sub-step). Step 5a(conn_health·datasources)·5b(config) 완료 = 소비처 전수 마이그레이션 + 해당
-alias shim 제거 → 이 셋은 이제 shim 없이 `shared.*` 단일 경로. **db 만 아직 alias shim 유지(5c 후속).**
+**Step 5(점진 마이그레이션, 완료)**: 비파괴 추출이 끝난 모듈의 소비처를 정본 `shared.*` 경로로 수렴시키고 alias shim 을
+제거(per-module sub-step 5a/5b/5c). 5a(conn_health·datasources)·5b(config)·5c(db) 전부 완료 →
+**4개 alias shim 전부 제거, config·db·conn_health·datasources 는 shim 없이 `shared.*` 단일 경로로만 존재**
+(model_catalog 는 Step 1 부터 직접). shared/ 점진 추출 구조 완성.
 
 ## 2. Goal
 - REQ-001: repo 루트 `shared/` 를 import 가능한 Python 패키지로 확립(`__init__.py`).
@@ -40,13 +41,15 @@ alias shim 제거 → 이 셋은 이제 shim 없이 `shared.*` 단일 경로. **
 - **Step 5b 마이그레이션**: config 소비처(~150 ref/53 파일 — 정적+`from .config import *` wildcard+dynamic)를
   `from shared import config`/`from shared.config import …`/`shared.config` 로 전환하고 `modules/config.py` alias shim 제거.
   modules/__init__ 의 eager `from . import config`·wildcard `from .config import *` 도 shared 로 전환(재노출 체인 보존).
+- **Step 5c 마이그레이션**: db 소비처(219 ref/52 파일 — app.py 112 + underscore 심볼 + dynamic + **bin/kb-pg-healthcheck.sh
+  .sh-embedded python**)를 `shared.db` 로 전환하고 `modules/db.py` alias shim 제거. modules/__init__ eager+wildcard
+  재노출 체인 보존. → **4개 alias shim 전부 제거, shared/ 추출 완성.**
 - Dockerfile: `COPY shared /app/shared` (Step 1, 이후 wholesale 라 추가 배선 불요).
 - Makefile: test/eval/kb-retrieval-eval PYTHONPATH 에 `/work`(shared 의 부모) 추가 (Step 1).
 
 ## 4. Out of Scope (후속 step / 별도 cycle)
 - cred_crypto·memory·llm 등 추가 공통 모듈 추출 (후속 step).
-- Step 5c: db 소비처 `shared.db` 마이그레이션 + modules/db alias shim 제거 (app.py 84 sites 최대; Step 5a/5b 와 동일 패턴, 후속 cycle).
-- feature 단위 Dockerfile 분리 (Step 6).
+- feature 단위 Dockerfile 분리 (Step 6) + 브라우저 QA.
 - app.py router 분할 (P5b, 별도 Critical cycle).
 - attachment_reconciliation GDPR legal-erasure wiring (별도 compliance 결정).
 

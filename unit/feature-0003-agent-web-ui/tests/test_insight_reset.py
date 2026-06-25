@@ -123,7 +123,7 @@ def _patch_resolve(monkeypatch, *, scope="main_mysql", allow_null=True, engine="
 def _patch_catalog(monkeypatch, pairs):
     """라이브 카탈로그 조회 + SSRF 가드를 monkeypatch (reset 이 (schema,table) 쌍을 얻음)."""
     monkeypatch.setattr(app, "_ssrf_check_host", lambda host: (True, "", host))
-    monkeypatch.setattr("modules.db.list_information_schema_tables", lambda *a, **k: list(pairs))
+    monkeypatch.setattr("shared.db.list_information_schema_tables", lambda *a, **k: list(pairs))
 
 
 def _patch_product(monkeypatch, *, pid=1, dbs=("account_db",), datasource_key=None):
@@ -252,7 +252,7 @@ def test_reset_dry_run_counts(monkeypatch):
     # 라이브 카탈로그: account_db 에 테이블 1개 → pairs=[(account_db,t1)], schemas={account_db}.
     _patch_catalog(monkeypatch, [("account_db", "t1")])
     # COUNT 쿼리 순서: fact_entries, rag_documents, rag_objects(table 노드), rag_objects(schema 노드), kv.
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _CountingPgConn([7, 7, 10, 4, 17]))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _CountingPgConn([7, 7, 10, 4, 17]))
 
     resp = asyncio.run(
         app.admin_product_insight_reset(_FakeRequest({"db": "account_db", "dry_run": True}), 1)
@@ -280,7 +280,7 @@ def test_reset_catalog_unreachable_aborts(monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("connection refused")
-    monkeypatch.setattr("modules.db.list_information_schema_tables", _boom)
+    monkeypatch.setattr("shared.db.list_information_schema_tables", _boom)
     resp = asyncio.run(
         app.admin_product_insight_reset(_FakeRequest({"db": "account_db", "dry_run": True}), 1)
     )

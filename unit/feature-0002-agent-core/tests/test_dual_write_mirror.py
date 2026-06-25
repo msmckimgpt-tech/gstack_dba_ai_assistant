@@ -45,7 +45,7 @@ def test_mirror_silent_noop_when_pg_unavailable(monkeypatch):
     """M0~M2-a 핵심 invariant: postgres 미가동 환경에서 caller flow 무영향."""
     kb = _load_kb_backend()
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_available",
         lambda: False,
         raising=True,
@@ -71,7 +71,7 @@ def test_mirror_silent_log_when_required_zero_and_pg_call_fails(monkeypatch):
     """M0~M2-a 의 graceful skip: AGENT_KB_PG_REQUIRED=0 시 mirror 실패 silent."""
     kb = _load_kb_backend()
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_available",
         lambda: True,
         raising=True,
@@ -83,7 +83,7 @@ def test_mirror_silent_log_when_required_zero_and_pg_call_fails(monkeypatch):
     def _connect_fails(*a, **kw):
         raise RuntimeError("simulated connection failure")
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_connect",
         _connect_fails,
         raising=True,
@@ -103,7 +103,7 @@ def test_mirror_fail_loud_when_required_one_and_pg_call_fails(monkeypatch):
     """M2-b 의 fail-loud invariant: AGENT_KB_PG_REQUIRED=1 시 mirror 실패 propagate."""
     kb = _load_kb_backend()
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_available",
         lambda: True,
         raising=True,
@@ -114,7 +114,7 @@ def test_mirror_fail_loud_when_required_one_and_pg_call_fails(monkeypatch):
     def _connect_fails(*a, **kw):
         raise RuntimeError("simulated connection failure")
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_connect",
         _connect_fails,
         raising=True,
@@ -133,7 +133,7 @@ def test_mirror_calls_pg_backend_on_success(monkeypatch):
     """dual-write 정합: mirror 가 PgKbBackend.upsert_text 호출 + connection close."""
     kb = _load_kb_backend()
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_available",
         lambda: True,
         raising=True,
@@ -164,7 +164,7 @@ def test_mirror_calls_pg_backend_on_success(monkeypatch):
 
     fake_conn = FakeConn()
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_connect",
         lambda *a, **kw: fake_conn,
         raising=True,
@@ -214,7 +214,7 @@ def test_get_backends_returns_cached_instance(monkeypatch):
     """outside-voice REV-20260520-0007 Nice-to-have: process-level cache."""
     kb = _load_kb_backend()
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_available",
         lambda: True,
         raising=True,
@@ -354,7 +354,7 @@ def test_mirror_silent_log_emits_warning(monkeypatch, caplog):
 
     kb = _load_kb_backend()
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_available",
         lambda: True,
         raising=True,
@@ -365,7 +365,7 @@ def test_mirror_silent_log_emits_warning(monkeypatch, caplog):
     def _connect_fails(*a, **kw):
         raise RuntimeError("simulated pg connect fail")
     monkeypatch.setattr(
-        sys.modules["modules.db"],
+        sys.modules["shared.db"],
         "_pg_connect",
         _connect_fails,
         raising=True,
@@ -441,7 +441,7 @@ def test_mirror_metrics_counter(monkeypatch):
     kb = _load_kb_backend()
     kb.reset_mirror_metrics()
     monkeypatch.setattr(
-        sys.modules["modules.db"], "_pg_available", lambda: True, raising=True,
+        sys.modules["shared.db"], "_pg_available", lambda: True, raising=True,
     )
 
     class FakeCursor:
@@ -456,7 +456,7 @@ def test_mirror_metrics_counter(monkeypatch):
         def close(self): pass
 
     monkeypatch.setattr(
-        sys.modules["modules.db"], "_pg_connect",
+        sys.modules["shared.db"], "_pg_connect",
         lambda *a, **kw: FakeConn(), raising=True,
     )
     monkeypatch.setattr(kb, "_log_kb_write_audit", lambda **kw: None, raising=True)

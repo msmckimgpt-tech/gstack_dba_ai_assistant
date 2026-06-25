@@ -27,7 +27,7 @@ import datetime
 import json
 
 import app
-import modules.db as _dbmod
+import shared.db as _dbmod
 import modules.sample_feedback as _sfb
 
 

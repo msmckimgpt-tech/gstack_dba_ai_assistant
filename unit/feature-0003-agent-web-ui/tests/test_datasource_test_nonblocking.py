@@ -77,7 +77,7 @@ def _install(monkeypatch, *, probe):
                         lambda conn, key: {"engine": "mysql", "host": "h", "port": 3306,
                                            "user": "u", "password": "p"})
     monkeypatch.setattr(app, "_ssrf_check_host", lambda host: (True, "", host))
-    monkeypatch.setattr("modules.db.probe_datasource", probe)
+    monkeypatch.setattr("shared.db.probe_datasource", probe)
 
 
 # ── T1: 정상 결과 전달 ──────────────────────────────────────────────────────────

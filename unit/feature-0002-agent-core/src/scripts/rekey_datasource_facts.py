@@ -175,7 +175,7 @@ def main() -> int:
     args = ap.parse_args()
     dry = args.dry_run
 
-    from modules.db import _pg_connect  # type: ignore
+    from shared.db import _pg_connect  # type: ignore
     mem = _connect_mem()
     try:
         rekey = _build_rekey_map(mem)

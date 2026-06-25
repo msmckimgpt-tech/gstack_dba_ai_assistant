@@ -814,7 +814,7 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
     # absolute import 로 fallback. `.db` 내부에서 발생한 실제 ImportError
     # (psycopg 부재 등) 까지 덮지 않도록 e.name 조건으로 범위 좁힘.
     try:
-        from .db import _pg_connect, _pg_available
+        from shared.db import _pg_connect, _pg_available
     except ImportError as _imp_err:
         if not (_imp_err.name is None or _imp_err.name == __package__):
             raise
@@ -856,7 +856,7 @@ def _ensure_pg_schema(conn=None, *, schema_sql_path: str | None = None) -> dict:
     su_pw   = _os.environ.get("AGENT_KB_PG_SUPERPASSWORD") or _os.environ.get("AGENT_KB_PG_PASSWORD", "")
     if su_pw:
         try:
-            from .db import _pg_connect, _pg_available, AGENT_KB_PG_PORT, AGENT_KB_PG_DB, AGENT_KB_PG_SSLMODE
+            from shared.db import _pg_connect, _pg_available, AGENT_KB_PG_PORT, AGENT_KB_PG_DB, AGENT_KB_PG_SSLMODE
         except ImportError as _imp_err:
             if not (_imp_err.name is None or _imp_err.name == __package__):
                 raise

@@ -153,7 +153,7 @@ def convo_search(
     # 로 라우팅한다(미라우팅 시 convo_search 도구 호출이 삭제된 테이블 조회로 throw — 에이전트의
     # "다른 대화 검색" 기능 사망). ILIKE = MySQL utf8mb4_unicode_ci case-insensitive 패리티.
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        from .db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:

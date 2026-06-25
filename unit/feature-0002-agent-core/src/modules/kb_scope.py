@@ -540,7 +540,7 @@ def _is_refresh_due(refresh_map: dict[str, str], key: str, interval_sec: int) ->
         # kb_global key 에만 적용 (글로벌 KB 캐시 채널).
         if "global_kb" in str(key).lower() or "global" in str(key).lower():
             try:
-                from .db import _pg_check_kb_invalidation
+                from shared.db import _pg_check_kb_invalidation
                 inv_epoch = _pg_check_kb_invalidation("kb_global")
                 if inv_epoch is not None and inv_epoch > last_refresh_epoch:
                     return True

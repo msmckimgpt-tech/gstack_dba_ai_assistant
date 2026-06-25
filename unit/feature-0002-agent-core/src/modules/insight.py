@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import dialects as _dialects  # P7: insight 컬럼 핑거프린트 dialect 분기(MSSQL)
-from . import db as _db              # P7 follow-up: datasource 지원 connect_with_retry 명시 사용
+from shared import db as _db              # P7 follow-up: datasource 지원 connect_with_retry 명시 사용
 
 
 # ---------------------------------------------------------------------------
@@ -2192,7 +2192,7 @@ def run_account_insight_pass(run_id: str | None = None) -> dict[str, Any]:
     report: dict[str, Any] = {"candidates": 0, "extracted": 0, "skipped_fp": 0, "empty": 0, "errors": 0}
     if not AGENT_ACCOUNT_INSIGHT_EXTRACT:
         return report
-    from .db import _pg_available, _pg_connect
+    from shared.db import _pg_available, _pg_connect
     from .kb_write import _publish_fact
     from .kb_scope import _mask_prose
     if not _pg_available():

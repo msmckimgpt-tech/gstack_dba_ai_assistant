@@ -167,3 +167,29 @@ source_of_truth: true
 - Risks: foundation·다수 소비처(app.py 라이브 web 포함)이나 동일 객체 수렴이라 동작 불변. shim 제거 안전망 소거됐으나
   3렌즈 baked-layout 실증 + make test green 으로 누락 0 확인. 단일 commit revert 가능. 배포 시 healthz/smoke 재확인.
 - Human Approval Needed: P5a PLAN-APPROVED(2026-06-24) 범위. deploy_scope:included 로 머지 후 자동 배포(첫 배포 1줄 표면화).
+
+## REV-20260625-0007 [SUBAGENT:db-migration-step5c]
+- Related Change: CHG-20260625-0007 (db 소비처 shared.db 마이그레이션 + modules/db shim 제거, P5a Step 5c — 마지막 sub-step)
+- Reason: db(repo 최다결합 fan-in 17) 소비처를 정본 shared.db 로 수렴 + 마지막 alias shim 제거 → 4개 shim
+  (config·db·conn_health·datasources) 전부 제거, shared/ 점진 추출 구조 완성. db underscore 심볼·모듈객체 접근·
+  __init__ 재노출 광범위라 적대 검증 집중.
+- §18.8 Adversarial Panel: Workflow `step5c-db-adversarial-panel` (3렌즈 high effort, **실 이미지 baked-layout 빌드·실행**).
+  - **결과: BLOCKING 1 (발견·수정·재검증) / NIT 0 / deploy SAFE.**
+  - **missed-ref hunt = DEFECT_BLOCKING → 수정 완료**: `bin/kb-pg-healthcheck.sh:121` 의
+    `docker exec ... python -c 'from modules.db import _pg_connect, _pg_available'` (라이브 agent 컨테이너 PG 헬스 smoke).
+    Step 5c 마이그가 **.py-only** 라 .sh-embedded python 참조를 놓침 → db shim 삭제로 ModuleNotFoundError 위험.
+    **`from shared.db import` 로 수정 후 전 파일(.py+.sh+config/yml) 재grep 0 확인.** (.py 런타임/테스트/모듈객체/
+    underscore 심볼(_pg_connect 등)·__init__ 재노출 체인은 실 이미지에서 전부 PASS.)
+  - migration correctness = SAFE(NIT 0): collateral 0(`git diff HEAD` 추가 shared. 라인 전부 db; shared.memory/utils
+    부재라 오마이그 시 즉시 crash — 안 남), app.py 112 add==112 remove 전부 shared.db swap, 12× `sys.modules['modules.db']`
+    →`['shared.db']` 등 string 타깃 정합(7개 고위험 테스트 실 이미지 pytest PASS), alias/placement 보존, __init__ 재노출 무결.
+  - deploy/runtime = SAFE: 워크트리 agent 이미지 빌드 후 baked-layout(마운트 없음·WORKDIR /app·PYTHONPATH 무설정):
+    `from shared import db`·shared.db underscore 심볼·`import modules`(AGENT_KB_PG_PORT 재노출)·agent_core·web.app·
+    attachment_pg_mirror._pg()·healthcheck 스크립트·cross-module lazy(db↔conn_health/datasources) 전부 해석.
+    `import modules.db`→ModuleNotFoundError 확인.
+- 교훈(재발 방지): 모듈 마이그레이션 sweep 은 .py 뿐 아니라 **.sh/.yml 등에 embedded 된 python(`docker exec ... python -c`)**
+  도 포함해야 함. 본 cycle 에서 db 만 .sh 참조 보유(config/conn_health/datasources 는 .sh 참조 0 — 패널·grep 확인).
+- residual: 전 파일 live `modules.{config,db,conn_health,datasources}` 참조 0(.md docs 만 historical 잔존).
+- Risks: 최다결합이나 동일 객체 수렴이라 동작 불변. shim 4개 전부 제거로 안전망 소거됐으나 3렌즈 baked-layout 실증
+  + make test green + BLOCKING 수정·재검증. 단일 commit revert 가능. 배포 시 healthz/smoke 재확인.
+- Human Approval Needed: P5a PLAN-APPROVED(2026-06-24) 범위. deploy_scope:included 로 머지 후 자동 배포(첫 배포 1줄 표면화).

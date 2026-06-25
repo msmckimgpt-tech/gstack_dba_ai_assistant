@@ -9,7 +9,7 @@ from unittest import mock
 import pytest
 
 from shared import config as cfg
-from modules import db
+from shared import db
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -63,7 +63,7 @@ def _worker_id() -> str:
 
 def _pg():
     """ask_jobs 용 PG 연결(psycopg3, autocommit). 단일문 atomic 연산이므로 autocommit 안전."""
-    from .db import _pg_connect
+    from shared.db import _pg_connect
     return _pg_connect()
 
 

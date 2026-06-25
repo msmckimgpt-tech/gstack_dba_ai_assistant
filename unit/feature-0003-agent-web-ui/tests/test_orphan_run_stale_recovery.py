@@ -61,7 +61,7 @@ def test_last_step_at_for_run_converts_aware_kst_to_utc_naive(monkeypatch):
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     kst = timezone(timedelta(hours=9))
     aware_kst = datetime(2026, 6, 8, 14, 33, 30, tzinfo=kst)  # = 05:33:30 UTC
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _FakeConn((aware_kst,)))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _FakeConn((aware_kst,)))
 
     result = app._last_step_at_for_run(None, "cid", "rid")
 
@@ -76,7 +76,7 @@ def test_last_step_at_for_run_passes_through_naive(monkeypatch):
     """이미 naive(UTC) 인 값은 그대로 통과 (MySQL 패리티 / 방어)."""
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     naive = datetime(2026, 6, 8, 5, 33, 30)
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _FakeConn((naive,)))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _FakeConn((naive,)))
     assert app._last_step_at_for_run(None, "cid", "rid") == naive
 
 

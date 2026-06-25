@@ -21,7 +21,7 @@ from unittest import mock
 import pytest
 
 from shared import conn_health as ch
-from modules import db
+from shared import db
 
 
 _DS = {"engine": "mysql", "host": "10.9.9.9", "port": 3306, "user": "ro", "password": "p", "key": "ds-a"}

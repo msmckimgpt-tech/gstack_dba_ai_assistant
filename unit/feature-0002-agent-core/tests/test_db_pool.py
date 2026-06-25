@@ -16,7 +16,7 @@ from unittest import mock
 import pytest
 from mysql.connector.errors import PoolError
 
-from modules import db
+from shared import db
 
 
 @pytest.fixture(autouse=True)

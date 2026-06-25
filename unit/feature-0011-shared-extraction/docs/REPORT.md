@@ -9,17 +9,17 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-P5a Step 1~4 추출 완료 + **Step 5a(conn_health·datasources)·5b(config) 마이그레이션+shim 제거** 완료.
-config-first 위상정렬(/plan-eng-review). Step 2~4 는 alias shim(`modules.X`=`shared.X` 동일 객체)으로 비파괴
-추출했고, Step 5(점진 마이그레이션)는 소비처를 정본 `shared.*` 로 수렴시키며 shim 을 제거한다(per-module sub-step:
-5a=conn_health/datasources·5b=config 완료, 5c=db 후속). Step 5b 후 conn_health/datasources/config 는 shim 없이
-shared.* 단일 경로; **db 만 아직 alias shim 유지**(5c). make test **회귀 0**, residual grep 0. 다음은 Step 5c(db 마이그·shim 제거).
+**P5a Step 1~5 전체 완료 — `shared/` 점진 추출 구조 완성.** config-first 위상정렬(/plan-eng-review). Step 1~4 는
+4개 공통 모듈(model_catalog·config·db·conn_health·datasources)을 alias shim(`modules.X`=`shared.X` 동일 객체)으로
+비파괴 추출했고, Step 5(점진 마이그레이션, sub-step 5a/5b/5c)는 모든 소비처를 정본 `shared.*` 로 수렴시키고
+**4개 alias shim(config·db·conn_health·datasources)을 전부 제거**했다. 이제 4개 모듈은 shim 없이 `shared/`
+단일 경로로만 존재(model_catalog 는 Step 1 부터 직접). make test **회귀 0**, 전 파일 residual grep 0.
+남은 것: Step 6(feature 단위 Dockerfile 분리 — P5b 토대) + 동반 저위험 doc.
 
 ## 2. Progress
-- Planned: Step 5c(db 마이그·shim 제거, app.py 84 sites 최대) → Step 6(feature 단위 Dockerfile 분리), 동반 doc
+- Planned: Step 6(feature 단위 Dockerfile 분리 + 브라우저 QA) + 동반 doc(GDPR gap·CODEBASE_MAP 정정)
 - In Progress: 없음
-- Done: Step 1(model_catalog)·2(config alias)·3(db alias)·4(conn_health·datasources alias + db back-dep)
-  · 5a(conn_health·datasources 소비처 마이그 + shim 2개 제거) · **5b(config 소비처 마이그 + config shim 제거)**
+- Done: Step 1~4(추출) · **Step 5 전체(5a conn_health/datasources · 5b config · 5c db 마이그레이션 + 4개 shim 제거)**
 
 ## 3. Recent Changes
 - CHG-20260624-0001: shared/ 패키지 + model_catalog 추출
@@ -28,7 +28,8 @@ shared.* 단일 경로; **db 만 아직 alias shim 유지**(5c). make test **회
 - CHG-20260625-0004: conn_health·datasources → shared/ + 모듈 alias shim + db lazy back-dep `from shared import` 정리
 - CHG-20260625-0005: conn_health·datasources 소비처 60 ref/18 파일 shared.* 마이그레이션 + alias shim 2개 제거 (Step 5a)
 - CHG-20260625-0006: config 소비처 ~150 ref/53 파일 shared.config 마이그레이션 + modules/config shim 제거 (Step 5b)
-- 총 변경 횟수: 6
+- CHG-20260625-0007: db 소비처 219 ref/52 파일(+.sh-embedded) shared.db 마이그레이션 + modules/db shim 제거 (Step 5c — 4개 shim 전부 제거)
+- 총 변경 횟수: 7
 
 ## 4. Open Issues
 - **기존 baseline 실패는 해소됨**: Step 3 시점 잔존하던 `test_product_delete_block_conv.py` 2건은 main 의
@@ -38,15 +39,18 @@ shared.* 단일 경로; **db 만 아직 alias shim 유지**(5c). make test **회
 
 ## 5. Test Status
 - 자동 테스트: `make test` — **회귀 0**(전체 green, 2 skip, F/E 0). 격리 agent 이미지 `--no-deps` pytest + ruff(All checks passed).
-- residual 검증(Step 5b): deterministic grep — 라이브 `modules.config` 참조 **0**(잔존은 shared/ 내부 정본 상대
-  import + modules/db.py shim 의 stale 주석 = 5c 에서 제거).
-- 수동 테스트(Step 5b): baked-layout smoke — `from shared import config` OK · `import modules.config`→
-  ModuleNotFoundError(shim 제거 확인) · modules 패키지+__init__ eager 체인 OK · db/memory shim 유지 ·
-  agent_core/app(web) import OK · config 재노출 체인(`from modules import GLOBAL_CONVERSATION_ID`·`from modules.db import AGENT_KB_PG_PORT`) OK · 단일 config 상태(split-brain 없음).
+- residual 검증(Step 5c): deterministic grep — **전 파일(.py + .sh + config/yml)** live `modules.{config,db,conn_health,datasources}`
+  참조 **0**(잔존은 shared/ 내부 정본 상대 import + .md docs 의 historical 멘션뿐).
+- 수동 테스트(Step 5c): baked-layout smoke — `from shared import {config,db,conn_health,datasources}` OK ·
+  `import modules.{config,db,conn_health,datasources}`→전부 ModuleNotFoundError(4개 shim 제거 확인) · modules 패키지+
+  __init__ eager 체인 OK · agent_core/app(web) import OK · db underscore 심볼(_pg_connect 등) + 재노출 체인
+  (`from modules import GLOBAL_CONVERSATION_ID`·`modules.AGENT_KB_PG_PORT`) OK · cross-module lazy(db↔conn_health/datasources) OK.
 - 적대 검증: §18.8 3렌즈 패널(missed-ref hunt·migration correctness·deploy/runtime, **실 이미지 baked-layout 빌드·실행**) —
-  BLOCKING 0 / NIT 0. 결과는 REVIEW.md REV-20260625-0006. (Step 5a 패널: REV-20260625-0005.)
+  **BLOCKING 1 발견·수정 / NIT 0**. missed-ref 렌즈가 `bin/kb-pg-healthcheck.sh:121` 의 .sh-embedded
+  `from modules.db import`(docker-exec smoke)을 적발 → `from shared.db import` 로 수정·전파일 재grep 0. 결과 REVIEW.md
+  REV-20260625-0007. (5b 패널: REV-20260625-0006, 5a: REV-20260625-0005.)
 - Windows-browser(PB-0008, verify-completion #13 WARN): **N/A — UI 표면 변경 없음**. feature-0003 app.py 변경은
-  전부 import 경로(`from modules import config` → `from shared import config`) 치환으로 렌더/라우트/템플릿 델타 0
+  전부 import 경로(`from modules import db` → `from shared import db`) 치환으로 렌더/라우트/템플릿 델타 0
   (§18.8 correctness 렌즈 behavior-identical 확인). 실 Windows 브라우저 검증이 보여줄 차이 없음 → 생략.
 - 미검증 항목: 라이브 배포 후 web-1/agent/insight-worker/ask-worker 헬스(배포 시 healthz/smoke 로 확인 예정).
 

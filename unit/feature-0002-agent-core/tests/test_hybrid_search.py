@@ -43,7 +43,7 @@ def _row(conv, fact, content, weight, score):
 def pg_mock(monkeypatch):
     """PG available + RO connect 를 FakeConn 으로. backend 검색은 테스트별 주입."""
     _FakeConn.closed = False
-    from modules import db as _db  # type: ignore  # ensure modules.db loaded
+    from shared import db as _db  # type: ignore  # ensure shared.db loaded
     monkeypatch.setattr(_db, "_pg_available", lambda: True, raising=True)
     monkeypatch.setattr(_db, "_pg_connect_ro", lambda *a, **k: _FakeConn(), raising=True)
     return monkeypatch

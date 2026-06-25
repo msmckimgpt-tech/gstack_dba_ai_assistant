@@ -125,7 +125,7 @@ def test_history_dates_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch):
             ("2026-05-19", "10:00"),
         ]
     )
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
     resp = app.history_dates(_DummyRequest(), conversation_id="conv-1")
     body = _body(resp)
@@ -146,7 +146,7 @@ def test_history_anchor_returns_pg_id(monkeypatch):
     monkeypatch.setattr(app, "_connect_memory", lambda: mem)
     _patch_auth(monkeypatch)
     pg = _FakePgConn(fetchone_row=(4242, "2026-05-18 14:30:00+09:00"))
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
     resp = app.history_anchor(
         _DummyRequest(), conversation_id="conv-1", at="2026-05-18 14:30:00"
@@ -173,7 +173,7 @@ def test_history_dates_legacy_mysql_path_when_backend_not_postgres(monkeypatch):
     def _boom():
         raise AssertionError("legacy 경로에서 PG 를 호출하면 안 됨")
 
-    monkeypatch.setattr("modules.db._pg_connect", _boom)
+    monkeypatch.setattr("shared.db._pg_connect", _boom)
 
     resp = app.history_dates(_DummyRequest(), conversation_id="conv-1")
     body = _body(resp)
@@ -194,7 +194,7 @@ def test_suggestions_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch):
         lambda limit=200, account=None, conn=None: [{"id": "c1"}, {"id": "c2"}],
     )
     pg = _FakePgConn(fetchall_rows=[("최근 사용자 질문입니다",), ("또 다른 사용자 질문",)])
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
     resp = app.suggestions(_DummyRequest(), limit=5)
     body = _body(resp)

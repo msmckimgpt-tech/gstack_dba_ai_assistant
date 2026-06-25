@@ -26,12 +26,12 @@ import sys
 def _imports():
     try:
         import web.app as A  # type: ignore
-        import modules.db as DB  # type: ignore
+        import shared.db as DB  # type: ignore
     except ModuleNotFoundError:
         # 컨테이너 실행 경로 보정 (uvicorn web.app:app 의 working_dir 와 동일).
         sys.path.insert(0, "/app")
         import web.app as A  # type: ignore
-        import modules.db as DB  # type: ignore
+        import shared.db as DB  # type: ignore
     return A, DB
 
 
