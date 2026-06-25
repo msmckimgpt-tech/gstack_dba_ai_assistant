@@ -186,6 +186,60 @@ Discover exact table/column names with describe_table/search_tables before query
 """
 
 
+# gc-assistant-dialect-context (RC-1): 활성 datasource 가 MySQL 일 때 system prompt 끝에 덧붙이는
+# MySQL 방언 지침. product/role custom prompt(websystemprompts)가 T-SQL 패턴(`TOP`/`UNION`/`[brackets]`/
+# `CONVERT(type,x)`/2-인자 `ISNULL`)을 권하는 경우가 있어(예: AI 자동생성 product 프롬프트 — websystemprompts
+# Id 32 마이크로볼츠), 그 지침이 base 뒤에 append 되면 LLM 이 MySQL datasource 에 T-SQL 을 생성 →
+# sql_guard·엔진이 거부하는 thrashing 이 라이브에서 관측됐다(group conv 20260625063340-4220125d:
+# "got Union"/"SELECT TOP"/"Cast 'to' missing"/"1582 ISNULL param count"/"1046 No database selected").
+# 본 지침을 compose_system_prompt(=base+product context) **뒤**(아래 주입 지점)에 덧붙여 엔진별
+# last-writer-wins 로 방언을 권위적으로 교정한다. MSSQL 대칭(_MSSQL_DIALECT_GUIDANCE).
+_MYSQL_DIALECT_GUIDANCE = """
+
+## SQL DIALECT — MySQL DATASOURCE (write MySQL, NOT SQL Server / T-SQL)
+This product's active (default) datasource is **MySQL**, so write **MySQL syntax** for queries against it.
+If earlier product-specific guidance above suggests SQL Server / T-SQL forms (`TOP`/`UNION`/`[brackets]`/
+`CONVERT(type,x)`) for this MySQL datasource, ignore that and use the MySQL forms below. (If the datasource
+list further below shows additional datasources, follow **each datasource's own engine/dialect**.) Critical rules:
+- **Row limiting**: use `... LIMIT n` (or `LIMIT offset, n`) — there is NO `SELECT TOP n` in MySQL; `TOP` is rejected.
+- **Identifier quoting**: use backticks `` `db`.`table` `` or plain `db.table` — NEVER SQL Server `[brackets]`.
+- **Single statement only**: `execute_sql` accepts ONE `SELECT`/CTE. A top-level `UNION`/`UNION ALL` is rejected
+  ("got Union") — split into separate queries, or combine with conditional aggregation (`SUM(CASE WHEN … END)`).
+  For schema/structure discovery use search_tables / describe_table / list_schemas, never a `UNION` probe.
+- **Qualify every table** as `` `database`.`table` `` (or `database.table`). Unqualified table names fail with
+  "No database selected".
+- **Functions**: use MySQL forms — `NOW()`/`CURDATE()` (not `GETDATE()`), `LENGTH()` (not `LEN()`),
+  `DATE_FORMAT()`/`DATE_ADD()`/`DATE_SUB()` (not `CONVERT(type,x)`/`DATEADD`), `CAST(x AS DATE)` or `DATE(x)`
+  (not `CONVERT(DATE, x)`), `IFNULL(x, y)` or `COALESCE(x, y)` (MySQL `ISNULL(x)` takes ONE argument — do NOT
+  use the 2-arg SQL Server form), `CONCAT()` for string concatenation.
+Discover exact table/column names with describe_table/search_tables before querying.
+"""
+
+
+# gc-assistant-dialect-context (RC-2): 그룹대화일 때만 system prompt 끝에 덧붙이는 다자 대화 맥락 지침.
+# 라이브(group conv 20260625063340-4220125d)에서 LLM 이 사람-사람 대화 맥락을 능동적으로 못 따라가
+# 과도하게 되묻고("요청이 명확하지 않습니다"), rate-limit 후 맥락을 잃고, 임의로 다른 DB 로 드리프트해
+# 사용자가 불만("명시적으로 정해줘야 찾을수있나보네요"/"능동적으로는 찾기 힘드네요"/"갑자기 또 다른 DB
+# 에서 가져오네요")을 표했다. 발신자 라벨(_format_core_messages)과 함께 본 지침으로 능동 해석을 유도한다.
+_GROUP_CONVERSATION_GUIDANCE = """
+
+## 그룹 대화 모드 — 여러 사람이 함께 대화 중입니다
+이 대화에는 **여러 명의 사람**이 참여하고 있으며, 당신(@assistant)은 멘션될 때만 호출됩니다.
+- 히스토리의 user 메시지 앞에는 `[발신자이름]:` 라벨이 붙어 있습니다. **누가 무슨 말을 했는지 구분**하세요.
+- 당신을 부른 멘션 바로 앞의 **사람-사람 대화에서 의도·지시대상을 능동적으로 해석**하세요. 사용자는
+  방금 나눈 대화를 당신이 읽었다고 가정합니다. "이 DB", "직전 결과", "아까 그거", "바꾼 제품",
+  "그쪽/저쪽", "최근 것" 같은 지시어는 **직전 대화 맥락에서 구체 대상으로 해석**해 진행하세요.
+- **과도하게 되묻지 마세요.** 맥락으로 합리적 추정이 가능하면 먼저 추정해 작업을 수행하고, 그 가정을
+  답변 첫 줄에 한 줄로 밝히세요(예: "직전 대화의 log_v2 채팅 로그 기준으로 집계했습니다 — 다르면 알려주세요").
+  정말로 추정 불가한 핵심 정보(대상 테이블/기간 등)가 빠졌을 때만, 한 번에 모아 간결히 질문하세요.
+- **데이터소스/주제 일관성**: 직전에 다루던 데이터소스·테이블·범위를 유지하세요. 사용자가 명시적으로
+  바꾸라고 하지 않았는데 다른 DB·다른 테이블로 임의 전환하지 마세요(혼선의 원인). 전환이 필요하면 먼저
+  근거를 한 줄로 밝히세요.
+- 일시적 오류(요청량 한도 등)로 중단된 뒤 다시 멘션되면, **처음부터 되묻지 말고** 직전까지의 맥락·진행
+  (찾은 테이블, 직전 의도)을 이어서 수행하세요.
+"""
+
+
 # TASK-0094 Sprint 2 (D13) — image inline 의 caller 책임 분리 정합.
 #
 # storage_minio.py 는 feature-0003-agent-web-ui 의 module 이라 cross-feature import
@@ -412,6 +466,60 @@ def _is_group_conversation(conversation_id: str | None) -> bool:
             pg.close()
     except Exception:
         return False
+
+
+def _resolve_group_sender_labels(mem_conn, conversation_id: str | None) -> dict[int, str] | None:
+    """gc-assistant-dialect-context (RC-2): 그룹대화 멤버 account_id → 표시명(Username) 매핑.
+
+    그룹(멤버 ≥ 2) 일 때만 dict 를 반환하고, 1:1·미백필·실패 시 None(라벨 미부착 → 무회귀).
+    멤버 목록은 PG `agent_runtime.conversation_members`, 표시명은 MySQL `agent_memory.WebAccounts.Username`
+    에서 가져온다. _load_conversation_messages 가 이 dict 로 user 메시지에 `[발신자]: ` 라벨을 붙여,
+    LLM 이 멘션 직전 사람-사람 대화에서 누가 무슨 말을 했는지 구분하도록 한다(REQ-GC-R5).
+    반환값이 None 이 아니면 곧 "그룹대화" 신호이기도 하다(run 경로에서 그룹 맥락 지침 주입 게이트로 사용).
+    """
+    if not conversation_id:
+        return None
+    member_ids: list[int] = []
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT account_id FROM agent_runtime.conversation_members "
+                    "WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+                member_ids = [
+                    int(r[0]) for r in (cur.fetchall() or [])
+                    if r and r[0] is not None
+                ]
+        finally:
+            pg.close()
+    except Exception:
+        return None
+    if len(member_ids) < 2:
+        return None  # 1:1 또는 미백필 — 발신자 라벨 불필요
+    labels: dict[int, str] = {}
+    try:
+        cur = mem_conn.cursor()
+        placeholders = ",".join(["%s"] * len(member_ids))
+        cur.execute(
+            f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({placeholders})",
+            tuple(member_ids),
+        )
+        for row in cur.fetchall() or []:
+            try:
+                _aid = int(row[0])
+                _name = str(row[1] or "").strip()
+            except (TypeError, ValueError):
+                continue
+            if _name:
+                labels[_aid] = _name
+        cur.close()
+    except Exception:
+        return None
+    return labels or None
 
 
 def _build_attachment_context_section(
@@ -1531,14 +1639,35 @@ def _compute_duration_breakdown(
 _USER_TURN_KEEP = 8
 
 
-def _format_core_messages(normalized: list[dict]) -> list[dict]:
-    """normalize 된 row 를 OpenAI 메시지 dict 로 변환."""
+def _format_core_messages(
+    normalized: list[dict], sender_labels: dict[int, str] | None = None
+) -> list[dict]:
+    """normalize 된 row 를 OpenAI 메시지 dict 로 변환.
+
+    gc-assistant-dialect-context (RC-2): sender_labels(account_id→표시명) 가 주어지면(그룹대화)
+    user 메시지 content 앞에 `[발신자]: ` 라벨을 붙인다 — 여러 사람의 발화를 LLM 이 구분해 멘션 직전
+    사람-사람 맥락을 능동 해석하도록(REQ-GC-R5). _merge_consecutive_user_messages 보다 **먼저** 적용해
+    연속 user 병합 후에도 각 발화의 발신자가 보존된다. 비그룹(sender_labels=None)은 무회귀.
+    """
     messages: list[dict] = []
     for row in normalized:
         msg: dict[str, Any] = {"role": row["role"]}
         parsed_tool_calls = row.get("_parsed_tool_calls")
         if row.get("content") and not parsed_tool_calls and not row.get("tool_calls"):
-            msg["content"] = row["content"]
+            _content = row["content"]
+            if (
+                sender_labels
+                and str(row.get("role") or "") == "user"
+                and isinstance(_content, str)
+            ):
+                try:
+                    _sid = row.get("sender_account_id")
+                    _label = sender_labels.get(int(_sid)) if _sid is not None else None
+                except (TypeError, ValueError):
+                    _label = None
+                if _label:
+                    _content = f"[{_label}]: {_content}"
+            msg["content"] = _content
         if parsed_tool_calls:
             msg["tool_calls"] = parsed_tool_calls
         if row.get("tool_call_id"):
@@ -1582,16 +1711,23 @@ def _merge_consecutive_user_messages(messages: list[dict]) -> list[dict]:
     return out
 
 
-def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
+def _assemble_core_messages(
+    rows: list[dict], max_messages: int, sender_labels: dict[int, str] | None = None
+) -> list[dict]:
     """normalize + truncate + format for OpenAI API. shared by MySQL and PG paths.
 
     단순 최근 N개 윈도우는 tool 메시지가 윈도우를 점유해 초기 user 의도를 떨어뜨린다.
     윈도우에서 탈락하는 standalone user 메시지를 최신순 _USER_TURN_KEEP 개까지 윈도우
     앞에 보존해 사용자가 앞서 말한 맥락을 유지한다 ("앞 내용을 왜 또 묻나" 완화).
+
+    gc-assistant-dialect-context (RC-2): sender_labels 는 그룹대화 발신자 라벨 부착용으로
+    _format_core_messages 에 전달한다(비그룹=None=무회귀).
     """
     normalized = _normalize_history_rows(rows)
     if len(normalized) <= max_messages:
-        return _merge_consecutive_user_messages(_format_core_messages(normalized))
+        return _merge_consecutive_user_messages(
+            _format_core_messages(normalized, sender_labels)
+        )
 
     window = normalized[-max_messages:]
     dropped = normalized[:-max_messages]
@@ -1605,11 +1741,21 @@ def _assemble_core_messages(rows: list[dict], max_messages: int) -> list[dict]:
         kept_users = kept_users[-_USER_TURN_KEEP:]
     # 재정규화: 윈도우 시작부의 orphan tool 메시지(짝 assistant 가 dropped) 정리.
     combined = _normalize_history_rows(kept_users + window)
-    return _merge_consecutive_user_messages(_format_core_messages(combined))
+    return _merge_consecutive_user_messages(
+        _format_core_messages(combined, sender_labels)
+    )
 
 
-def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 50) -> list[dict]:
-    """대화 메시지를 OpenAI 메시지 형식으로 로드."""
+def _load_conversation_messages(
+    conn, conversation_id: str, max_messages: int = 50,
+    sender_labels: dict[int, str] | None = None,
+) -> list[dict]:
+    """대화 메시지를 OpenAI 메시지 형식으로 로드.
+
+    gc-assistant-dialect-context (RC-2): sender_labels(account_id→표시명)가 주어지면(그룹대화)
+    각 user 메시지에 발신자 라벨을 부착한다(REQ-GC-R5). PG/MySQL 양 경로 모두 sender_account_id 를
+    함께 로드한다.
+    """
     raw_limit = max(int(max_messages or 50) * 4, 80)
 
     # M4: PG read path
@@ -1618,8 +1764,8 @@ def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 
         pg_rows = _read_runtime_pg("load_core_messages",
                                    conversation_id=conversation_id, limit=raw_limit)
         if pg_rows is not None:
-            # PG: (role, content, tool_calls, tool_call_id, name) — tool_calls is already
-            # a Python object (psycopg3 JSONB auto-parse). Serialize back to JSON string so
+            # PG: (role, content, tool_calls, tool_call_id, name, sender_account_id) — tool_calls is
+            # already a Python object (psycopg3 JSONB auto-parse). Serialize back to JSON string so
             # _normalize_history_rows/_parse_saved_tool_calls can process it uniformly.
             # PG rows are ASC ordered (ORDER BY id ASC) — no reverse needed.
             dict_rows = [
@@ -1627,14 +1773,15 @@ def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 
                     "role": r[0], "content": r[1],
                     "tool_calls": json.dumps(r[2], ensure_ascii=False) if r[2] is not None else None,
                     "tool_call_id": r[3], "name": r[4],
+                    "sender_account_id": (r[5] if len(r) > 5 else None),
                 }
                 for r in pg_rows
             ]
-            return _assemble_core_messages(dict_rows, max_messages)
+            return _assemble_core_messages(dict_rows, max_messages, sender_labels)
 
     cur = conn.cursor(dictionary=True)
     cur.execute(
-        """SELECT id, role, content, tool_calls, tool_call_id, name
+        """SELECT id, role, content, tool_calls, tool_call_id, name, sender_account_id
            FROM AgentCoreMessages
            WHERE conversation_id = %s
            ORDER BY id DESC LIMIT %s""",
@@ -1642,7 +1789,7 @@ def _load_conversation_messages(conn, conversation_id: str, max_messages: int = 
     )
     rows = cur.fetchall() or []
     cur.close()
-    return _assemble_core_messages(list(reversed(rows)), max_messages)
+    return _assemble_core_messages(list(reversed(rows)), max_messages, sender_labels)
 
 
 def _save_message(conn, conversation_id: str, role: str,
@@ -3024,7 +3171,16 @@ def _run_agent_core(
     _emit_activity("요청을 받았습니다 — 대화 맥락을 불러오는 중")
 
     # ── 대화 히스토리 로드 ──
-    history = _load_conversation_messages(mem_conn, cid, max_messages=50)
+    # gc-assistant-dialect-context (RC-2): 그룹대화면 발신자 라벨 사전을 만들어 user 메시지에
+    # `[발신자]: ` 라벨을 붙인다(REQ-GC-R5). 반환값 None = 1:1·미백필·실패 → 라벨 미부착(무회귀).
+    # _group_sender_labels 가 truthy 면 그룹대화 신호로, 아래 system prompt 의 그룹 맥락 지침 주입에도 쓴다.
+    try:
+        _group_sender_labels = _resolve_group_sender_labels(mem_conn, cid)
+    except Exception:
+        _group_sender_labels = None
+    history = _load_conversation_messages(
+        mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels
+    )
 
     # ── 사용자 메시지 저장 ──
     # feature-0009: 그룹 대화 발신자 귀속 — account_id(=actor, ask 호출자)를 sender 로 기록.
@@ -3163,6 +3319,12 @@ def _run_agent_core(
                 f"- Only these databases are queryable. System databases (master/model/msdb/tempdb), the `sys`/"
                 f"`guest` schemas, and server-info functions (SERVERPROPERTY/SUSER_SNAME/…) are blocked.\n"
             )
+    else:
+        # gc-assistant-dialect-context (RC-1): MySQL(또는 미지정 기본). product/role custom prompt 가
+        # T-SQL 패턴을 권하더라도 compose_system_prompt 뒤에 본 지침을 덧붙여 방언을 권위적으로 교정한다
+        # (last-writer-wins). base SYSTEM_PROMPT 도 MySQL 가정이라 무회귀이며, T-SQL 유도 product 프롬프트만
+        # 교정된다. 멀티 datasource 의 per-DS 엔진은 아래 _format_multi_ds_grounding 가 별도 안내.
+        system_content += _MYSQL_DIALECT_GUIDANCE
     # ── TASK-0228 (1:N): 멀티 datasource grounding ──────────────────────────────
     # 제품이 ≥2 datasource 에 바인딩되면, LLM 이 각 datasource 의 라벨·엔진·접근가능 DB 를 알아야
     # tool 호출 시 `datasource` 인자로 올바른 대상을 고른다. (사용자 요청: 제품 프롬프트/어시스턴트가
@@ -3173,6 +3335,13 @@ def _run_agent_core(
         except Exception:
             _ds_desc = []
         system_content += _format_multi_ds_grounding(_ds_desc)
+
+    # ── gc-assistant-dialect-context (RC-2): 그룹대화 맥락 지침 주입 ──────────────
+    # _group_sender_labels 가 truthy(멤버 ≥ 2)면 그룹대화 — 다자 대화에서 발신자 라벨로 누가 무슨 말을
+    # 했는지 구분하고, 멘션 직전 사람-사람 대화에서 의도를 능동 해석하며, 과도 재질문·데이터소스 드리프트를
+    # 억제하도록 지침을 덧붙인다. 1:1(None)은 무회귀.
+    if _group_sender_labels:
+        system_content += _GROUP_CONVERSATION_GUIDANCE
 
     # Inject conversation context (origin_request + thread_goal)
     if prev_origin or thread_goal:
@@ -3189,7 +3358,13 @@ def _run_agent_core(
         {"role": "system", "content": system_content},
     ]
     messages.extend(history)
-    messages.append({"role": "user", "content": user_message})
+    # gc-assistant-dialect-context (RC-2): 그룹대화면 현재(라이브) 멘션 메시지도 발신자 라벨을 붙여
+    # 히스토리(라벨 부착)와 형식을 일치시킨다 — LLM 이 "이번 요청은 누가 한 것"인지까지 명확히 인지.
+    # 저장(_save_message)은 라벨 없는 원문이며, 본 라벨은 LLM 전달용 in-memory 메시지에만 적용(무회귀).
+    _live_user_content = user_message
+    if _group_sender_labels and sender_username:
+        _live_user_content = f"[{sender_username}]: {user_message}"
+    messages.append({"role": "user", "content": _live_user_content})
 
     if output_mode == "console":
         console.print(f"\n[dim]대화: {cid[:20]}... | 모델: {model}[/dim]")
