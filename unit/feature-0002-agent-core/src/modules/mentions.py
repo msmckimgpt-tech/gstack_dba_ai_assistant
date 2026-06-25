@@ -68,3 +68,30 @@ def parse_mentions(text: str | None) -> dict[str, Any]:
 def message_invokes_assistant(text: str | None) -> bool:
     """편의 함수: 이 메시지가 LLM 응답을 트리거하는지(=@assistant 멘션 포함)."""
     return parse_mentions(text)["mentions_assistant"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# feature-0009 gc-unread-badge: 사이드바 "안 읽은 @멘션" 카운트용 SQL regex 미러.
+# parse_mentions 의 단어경계 문법을 SQL regex(PG POSIX ERE `~*` / MySQL ICU `REGEXP`)로
+# 옮긴 것 — 메세지 본문에 `@<username>` 멘션이 있는지를 SQL 집계로 세기 위함. lookbehind
+# 미지원(POSIX/ICU)이라 `(?<![A-Za-z0-9_@])` 를 `(^|[^A-Za-z0-9_@])` 로, 이름 뒤 charset
+# 경계를 `([^A-Za-z0-9._-]|$)` 로 옮긴다. 대소문자 무시는 호출측(PG `~*` / MySQL LOWER()).
+# 본 모듈에 두어 parse_mentions(파서)·static/mentions.js(FE)·SQL 카운트가 한 문법을 공유한다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# POSIX ERE / ICU 공통 메타문자 — username 에 섞여 있으면 escape. 이름 charset 은 보통
+# [A-Za-z0-9._-] 라 실질적으로 `.`/`-` 만 해당하나, 방어적으로 전체 집합을 escape.
+_SQL_RE_METACHARS = frozenset(r".^$*+?()[]{}|\-/")
+
+
+def sql_mention_regex(username: str | None) -> str | None:
+    """`@<username>` word-boundary 를 매칭하는 SQL regex 문자열. username 없으면 None.
+
+    예) username="bob" → r"(^|[^A-Za-z0-9_@])@bob([^A-Za-z0-9._-]|$)".
+    `@bob` 이 `@bob2`/`@bob.kim`(이름 charset 연속) 에는 매칭되지 않고, `a@bob`(이메일류)
+    에도 매칭되지 않는다 — parse_mentions 와 동일 경계. 대소문자 무시는 호출측이 담당한다.
+    """
+    if not username:
+        return None
+    esc = "".join(("\\" + ch) if ch in _SQL_RE_METACHARS else ch for ch in username)
+    return r"(^|[^A-Za-z0-9_@])@" + esc + r"([^A-Za-z0-9._-]|$)"

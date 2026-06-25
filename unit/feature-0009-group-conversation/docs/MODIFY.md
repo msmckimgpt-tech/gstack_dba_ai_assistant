@@ -338,3 +338,34 @@ source_of_truth: true
 - Rollback Notes: 3파일 revert(memory.py 가드 분기 marker 블록 / app.py 헬퍼+progress 해소 블록 / app.js 2블록). 스키마 변경 0(KV 키만, DDL 무변경). 이미 기록된 `run_term_*` 키는 무해 dead-data(다음 reader 무시).
 - 잔여(수용, §18.8 패널 기록): done/error 충돌 marker 의 일괄 TTL 정리는 미구현 — FUNCTION §4 S6 per-thread 재키잉에 흡수 이연. 충돌 시에만·tiny row 라 누적 완만.
 - 검증: `py_compile`(memory.py/app.py) + `node --check`(app.js) PASS. §18.8 적대적 패널 3(동시성/FE회귀/BE데이터) — 진짜 BLOCKING 0(REV 참조). **PB-0008 미실측**(본 worktree=WSL; 다중 사용자 동시 race 라 배포 후 라이브 그룹대화 검증 권장).
+
+## CHG-20260625T065840-gc-unread-badge (REQ-GC-R8 read-state, Major §12.3 — 스키마 추가+백엔드+프론트)
+- Date: 2026-06-25. 사용자 요청(`/_template:entry`): "그룹 대화 사이드바에 진행된 메세지 개수 표시, 자신의 멘션은 별개 집계, 형식 `<전체>[ / @<멘션>]`" + 명확화 "(실제 메신저처럼) **새 메세지(안 읽은) 기준**".
+- Related Requirement: REQ-GC-R8 (read-state 커서 + @mention 표시 — S3/S5 미구현분 완성), AC-GC-A10.
+- Summary: 그룹 대화 사이드바에 **안 읽은(새) 메세지 수 + 안 읽은 @멘션 수** 배지(`<안읽음>[ / @<멘션>]`). 멤버별 read cursor(`conversation_members.last_read_message_id`) 신규 + 읽음 API + 목록 unread 집계 + FE 배지/읽음처리/준실시간 갱신.
+- Files:
+  - `unit/feature-0002-agent-core/alembic/versions/20260625_0019_conversation_member_last_read.py` (신규): PG `conversation_members.last_read_message_id bigint` ADD COLUMN(0012 에서 이미 agent_kb_rw UPDATE GRANT 보유 → 추가 GRANT 불요). down_revision=0018.
+  - `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql` (cross-feature): 부트스트랩 DDL parity — 동일 컬럼 멱등 ALTER.
+  - `unit/feature-0002-agent-core/src/modules/group_members.py` (cross-feature): `get_last_read`/`set_last_read`(전진만 GREATEST) + SQL 상수 2.
+  - `unit/feature-0002-agent-core/src/modules/mentions.py` (cross-feature): `sql_mention_regex(username)` — parse_mentions 단어경계 문법을 SQL regex(PG `~*`/MySQL `REGEXP`)로 미러(파서·FE·SQL 카운트 단일 문법 앵커).
+  - `unit/feature-0003-agent-web-ui/src/app.py` (cross-feature): MySQL parity ALTER(`AgentCoreConversationMembers.last_read_message_id`), 신규 `POST /api/conversations/{cid}/read`(멤버십 게이트 read.own/.any, 커서 전진), `_list_conversations_pg`/`_list_conversations` 에 `unread_count`/`unread_mention_count` 집계(본인 미발신 + last_read 이후 + @멘션 regex), `_mention_count_regex` 는 canonical 모듈 위임 래퍼.
+  - `unit/feature-0003-agent-web-ui/src/static/app.js`: `buildCompactItem` 그룹 대화 배지 렌더(0이면 숨김), `markConversationRead`/`_markActiveConversationRead`/`_latestLoadedMessageId`, selectConversation+live-sync 읽음처리, `_maybeSyncConversationListUnread`(비활성 대화 배지 7s throttle 준실시간 갱신).
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.conv-item-unread`(+`.has-mention` danger 톤) 배지 스타일.
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`: 캐시버스터 `gc-unread-badge`(app.js+styles.css).
+  - `unit/feature-0002-agent-core/tests/test_mentions.py`: `sql_mention_regex` ↔ parse_mentions 파리티 3 테스트.
+- 설계 결정: ① "새 메세지 기준"=unread(누적 총계 아님) → read cursor 필요. ② cursor=`last_read_message_id`(core_messages.id 단조증가, 시계 무관). ③ 읽음=대화 열람 시 + 활성 대화 새 메세지 도착 시 전진(메신저 관례). ④ 본인 발신 메세지는 unread 미포함(`sender IS DISTINCT FROM me`). ⑤ unread=0 이면 배지 미표시. ⑥ 그룹 대화 한정(1:1 미표시). ⑦ 멘션 카운트는 canonical 파서와 동일 단어경계(`sql_mention_regex`)로 SQL 집계 → FE↔BE↔SQL 동일 문법.
+- Impact: 순수 additive — 신규 nullable 컬럼 1(기존 멤버 last_read=NULL=전부 unread→열람 시 0), 신규 엔드포인트 1(멤버십 게이트), 목록 payload 필드 2 추가. 기존 동작 무변경(배지는 그룹 대화에만 신규 표면). production=PG 경로 정본, MySQL 은 레거시 parity(try/except).
+- Rollback Notes: alembic downgrade(DROP COLUMN) + schema.sql/app.py ALTER 제거 + group_members 2함수 + mentions.sql_mention_regex + app.py 엔드포인트/집계 + app.js/styles.css/index.html FE + 테스트 revert. 데이터 무손실(컬럼 ADD 만).
+- 검증: py_compile(app.py·group_members·mentions·migration) OK + node --check(app.js·mentions.js) OK + CSS brace 1576=1576 + test_mentions 6/6(기존 3 + sql_mention_regex 파리티 3) PASS + §18.8 적대 패널 3렌즈(authz·correctness·perf) SHIP(BLOCKING 0). **PB-0008 미실측**(본 worktree=WSL + 배지 동작은 alembic 0019 적용 후 라이브에서만 데이터 발생 → 배포 후 실측 권장, TEST.md §3). **★배포 alembic 0019 필수.**
+
+## CHG-20260625T162000-gc-ask-sender-attrib (cross-feature → feature-0002+0003, Major §12.3)
+- Date: 2026-06-25 (CHG-20260625T162000/REV-20260625T162000). worktree `ai/claude/gc-ask-sender-attrib`.
+- Reason: 그룹 대화에서 멤버가 `@assistant` 를 호출하면 그 user 메시지가 표시 store 미러(/api/history 노출)에서 **대화 owner(생성자) 프로필로 오귀속**됐다. 사람-채팅 경로(`_save_group_chat_message_pg`)는 이미 미러 meta 에 발신자를 실어 올바로 표시하나, ask(@assistant) 경로의 user 턴은 미러 meta 가 없어 FE 가 owner 로 폴백 → 오귀속. 실제 발신 멤버(actor)로 귀속 수정.
+- 변경(feature-0002 `src/agent_core.py`): `run_agent`/`_run_agent_core` 에 `sender_username: str | None = None` 파라미터 추가(래퍼→코어 forward). user 메시지 저장 직후 `_mirror_message(..., meta=_user_mirror_meta)` 로 발신자 meta(`sender_account_id`/`sender_username`/`group_chat`) 부착 — 사람-채팅 경로와 **동일 키 집합**. 부착 게이트 `if (sender_username and account_id)` — 양용(1:1+그룹) 경로라 `sender_username` 유무로 그룹 판정(app.py 가 그룹에만 주입). 미주입(None=1:1/비그룹)이면 meta 미부착 → 기존 동작 무변경.
+- 변경(feature-0002 `src/modules/ask.py`): `_payload_to_kwargs` worker 복원에 `sender_username` 추가 — worker mode 에서도 inproc 와 동등 전달(미포함 시 worker 만 발신자 누락 → 두 모드 동작 분기).
+- 변경(feature-0003 `src/app.py`): ask dispatch 직전 `_sender_username_for_run` 계산 — `_conversation_is_group(conv_id or "")` 이면 `str(account.get("username") or "")`, 아니면 None. inproc run_kwargs 에 `sender_username=` 전달 + worker enqueue payload(`_dispatch_ask_run_worker`)에 `sender_username` 추가(주석 kwargs 12→13개).
+- 변경(feature-0002 `tests/test_ask_worker.py`): `_payload_to_kwargs` round-trip 에 sender_username 단언 + defaults 미주입 None 단언 + 신규 `test_run_agent_accepts_sender_username_param`(run_agent/_run_agent_core 시그니처·default None).
+- Why(설계): account_id 는 이미 actor(ask 호출자)로 user 메시지에 기록되고 있었음(feature-0009 S3) → 신규 authz 미도입. 이번 변경은 *표시*용 미러 meta 부착뿐. sender_username 출처는 서버 인증 actor(클라 입력 아님) → 위변조 불가.
+- Impact: 1:1·비그룹·신규 대화 무회귀(sender_username None → meta 미부착). 그룹 ask 만 user 메시지 발신자 표시 정정. 스키마/DDL/RBAC/엔드포인트 0(미러 meta jsonb 부착뿐).
+- Rollback Notes: 3파일 revert. 스키마/마이그레이션 0 → 무상태 롤백 가능. 캐시버스터 불요(FE 미변경 — 미러 meta 는 기존 user 분기 렌더가 이미 소비).
+- 검증: `test_ask_worker.py` 7/7 + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile` PASS. §18.8 적대 패널(general-purpose, correctness+security) BLOCKER 0/MAJOR 0(MINOR 1 ACCEPTED-as-is: `if account_id` 대칭화는 1:1 회귀 유발 → 현 가드 정답 / NIT 1 주석 정확화 반영). REV-20260625T162000 참조. **PB-0008 미실측**(백엔드 배선 — 표시 정정은 배포 후 라이브 그룹 대화 권장).

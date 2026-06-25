@@ -106,6 +106,22 @@ WHERE conversation_id = %(conversation_id)s
 ORDER BY banned_at DESC, account_id ASC
 """
 
+# ── feature-0009 gc-unread-badge: 멤버별 안 읽은 메세지 커서(last_read_message_id) ──
+# 읽음 처리는 커서를 전진(GREATEST)만 한다 — 폴링/재진입으로 더 작은 message_id 가 와도
+# 되돌리지 않는다(이미 읽은 메세지를 다시 unread 로 만들지 않음).
+_PG_GET_LAST_READ = """
+SELECT last_read_message_id
+FROM agent_runtime.conversation_members
+WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
+LIMIT 1
+"""
+
+_PG_SET_LAST_READ = """
+UPDATE agent_runtime.conversation_members
+SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0), %(message_id)s)
+WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
+"""
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data access (호출자가 pg_conn 제공)
@@ -263,3 +279,46 @@ def list_bans(pg_conn, conversation_id: str) -> list[dict[str, Any]]:
         }
         for r in rows
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# feature-0009 gc-unread-badge: 안 읽은 메세지 커서(last_read_message_id) 읽기/전진.
+# 사이드바 unread 배지의 멤버별 읽음 기준점. 읽음 API(POST /api/conversations/{cid}/read)가
+# set_last_read 로 커서를 전진시키고, _list_conversations 가 이 커서 이후 메세지를 unread 로 센다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_last_read(pg_conn, conversation_id: str, account_id: int) -> Optional[int]:
+    """멤버의 마지막 읽은 메세지 id. 멤버 아니거나 한 번도 안 읽었으면 None."""
+    if not conversation_id or not account_id:
+        return None
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            _PG_GET_LAST_READ,
+            {"conversation_id": conversation_id, "account_id": int(account_id)},
+        )
+        row = cur.fetchone()
+    if not row or row[0] is None:
+        return None
+    return int(row[0])
+
+
+def set_last_read(pg_conn, conversation_id: str, account_id: int, message_id: int) -> int:
+    """멤버의 읽음 커서를 message_id 로 전진(GREATEST). 멤버 행이 있을 때만 갱신.
+
+    되돌림 없음 — 더 작은 message_id 가 와도 기존 커서를 유지한다(폴링/재진입 경합 안전).
+    Returns: 갱신된 행 수(0 = 멤버 아님 → 호출자가 멤버십 게이트를 선행해야 함).
+    """
+    if not conversation_id or not account_id or message_id is None:
+        return 0
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            _PG_SET_LAST_READ,
+            {
+                "conversation_id": conversation_id,
+                "account_id": int(account_id),
+                "message_id": int(message_id),
+            },
+        )
+        updated = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+    pg_conn.commit()
+    return updated

@@ -180,6 +180,12 @@ CREATE TABLE IF NOT EXISTS agent_runtime.conversation_members (
 CREATE INDEX IF NOT EXISTS ix_conv_members_account
     ON agent_runtime.conversation_members (account_id);
 
+-- feature-0009 gc-unread-badge (alembic 0019): 멤버별 안 읽은 메세지 커서.
+--   last_read_message_id — 그 멤버가 마지막으로 읽은 core_messages.id. NULL=한 번도 안 읽음.
+--   사이드바 unread 배지 = id > last_read_message_id 인 (본인 미발신) user/assistant 메세지 수.
+ALTER TABLE agent_runtime.conversation_members
+    ADD COLUMN IF NOT EXISTS last_read_message_id bigint;
+
 -- ============================================================================
 -- 2c. conversation_member_bans — feature-0009 member-kick-ban
 --    소유자(owner)가 특정 account 를 이 대화에서 차단(ban) → 공유 링크로 재참여 영구 차단.

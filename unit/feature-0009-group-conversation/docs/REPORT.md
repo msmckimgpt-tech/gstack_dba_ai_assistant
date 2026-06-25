@@ -23,18 +23,21 @@ source_of_truth: false
 - **공유 직후 메시지 사람채팅 전환(gc-share-group-sync, 배포완료 PR#393)**: CHG-0018 의 클라이언트 stale 잔여 — 공유 후 active.is_group=false 로 비멘션 메시지가 assistant 오호출→422 block. 수정: ① 공유 시 로컬 is_group 즉시 전환+loadConversations ② 422 graceful store-only 재라우팅(유실 없음). **PB-0008 PASS**. (CHG-0019/REV-0021)
 - **Windows 알림 발신자 대괄호 제거(gc-notify-sender-nobracket, 배포완료 PR#394)**: 사용자 요청 — 알림 본문 "[보낸사용자] : …" → "보낸사용자 : …". 1줄 문자열, 로직 무변경. **PB-0008 실측 PASS**. (CHG-0020/REV-0022)
 - **설정/알림 UI 정리(gc-settings-notif)**: 사용자 요청 — 알림 동작 사용자 제어 + UI 정리. [알림] 클라이언트 localStorage 환경설정(`getNotifyPrefs`/음소거 `isConversationMuted`) — `_notifyMentions` 가 마스터(멘션) OFF·데스크톱(OS) OFF·대화 음소거 게이트. 프로필>계정>알림(멘션/데스크톱 토글+권한 요청) + 대화 ···>설정(제목 변경+음소거). [UI] 대화 ··· 메뉴 [공유(생성+관리 단일 팝업)·설정(제목변경+음소거)·보관] — 복사·공유 관리·제목 변경 통합/제거(공유 발급은 `_issueConversationShare` 공통 헬퍼). 프로필 탭 [릴리즈 노트 최좌측·프롬프트·계정], '보안 및 계정'→'계정'+사용 내역 병합. 전부 프론트, 캐시버스터 settings-notif. **PB-0008 실측 PASS**(17 step). (CHG-0021/REV-0023)
-- **그룹대화 상대방 메시지 좌측 정렬(gc-other-msg-left, 커밋 전, Minor frontend CSS-only)**: 사용자 요청 — 내 메시지(`is-own-message`)는 우측 유지, assistant 와 상대방(`is-other-message`)은 좌측 출력. app.js 가 이미 부여하는 class 그대로 사용, `styles.css` 정렬 규칙만 분기(`.message.is-user.is-other-message{align-self:flex-start}` + 버블 꼬리 좌측화). 캐시버스터 gc-other-msg-left. 충실한 mock 렌더(실 CSS+renderMessages DOM, Chromium headless) 수치/스크린샷 검증 PASS(own=우측/other·assistant=좌측 25px 동일 기준선). 패널 SKIP(순수 CSS). **PB-0008 미실측**(배포 후 실 그룹대화 권장). (CHG-20260625T065430/REV-20260625T065430)
+- **그룹대화 상대방 메시지 좌측 정렬(gc-other-msg-left, 배포 PR#435, Minor frontend CSS-only)**: 사용자 요청 — 내 메시지(`is-own-message`)는 우측 유지, assistant 와 상대방(`is-other-message`)은 좌측 출력. app.js 가 이미 부여하는 class 그대로 사용, `styles.css` 정렬 규칙만 분기(`.message.is-user.is-other-message{align-self:flex-start}` + 버블 꼬리 좌측화). 캐시버스터 gc-other-msg-left. 충실한 mock 렌더(실 CSS+renderMessages DOM, Chromium headless) 수치/스크린샷 검증 PASS(own=우측/other·assistant=좌측 25px 동일 기준선). 패널 SKIP(순수 CSS). **PB-0008 미실측**(배포 후 실 그룹대화 권장). (CHG-20260625T065430/REV-20260625T065430)
+- **사이드바 안 읽은 메세지 배지(gc-unread-badge, 배포 대기, Major §12.3, REQ-GC-R8)**: 사용자 요청(`/_template:entry`) — 그룹 대화 사이드바에 **안 읽은(새) 메세지 수 + 안 읽은 @멘션 수** 배지(`<안읽음>[ / @<멘션>]`, 멘션은 danger 톤, 0이면 숨김). 멤버별 read cursor 신설(`conversation_members.last_read_message_id`, alembic 0019) + 읽음 API(`POST /api/conversations/{cid}/read`, 멤버십 게이트) + 목록 `unread_count`/`unread_mention_count` 집계(본인 미발신·last_read 이후·canonical 멘션 regex) + FE 배지/읽음처리(열람·활성 도착 시)/비활성 대화 7s 주기 갱신. 멘션 카운트는 `mentions.sql_mention_regex`(파서·FE·SQL 단일 문법, test 파리티). test_mentions 6/6·node·CSS·py_compile PASS + §18.8 적대 패널 3렌즈 SHIP(BLOCKING 0). **★배포 alembic 0019 필수 + PB-0008 배포 후 실측(데이터 의존)**. (CHG-20260625T065840/REV-20260625T065840)
 - **그룹대화 '처리 중' 고착/채팅 블로킹 fix(gc-run-status-stuck, 커밋 전, Major 동시성)**: 사용자 보고 — UserA @assistant 처리 중 UserB 채팅 전송 시 완료가 영영 반영 안 돼 '처리 중' 고착·블로킹. 근본: run-status 가 대화 단위 단일 KV 슬롯인데 그룹대화는 계정별 동시 run 허용 → run1 done 이 supersede 가드로 skip(유실) + FE 가 foreign run 으로 버블 hijack. 수정(per-run 상태 해석): 충돌 시 done/error 를 per-run marker(`run_term_*:{rid}`) 보존(memory.py) + `/api/progress` 가 client_run_id 로 자기 run 해소(app.py) + FE client_run_id 항상 전송·foreign-run hijack 가드(app.js). py_compile/node --check PASS, §18.8 적대적 패널 3 진짜 BLOCKING 0(NIT 2 반영: marker done/error 한정·S6 정리 이연). 잔여: PB-0008(배포 후 라이브 다중사용자 race). (CHG-20260625T163744/REV-20260625T163744)
-- In Progress: gc-run-status-stuck docs 반영 완료 → verify-completion → PR → 배포(web) → smoke.
+- In Progress: gc-run-status-stuck — docs 반영·verify-completion PASS·commit·main 머지(docs 충돌 해소)·push → PR → 머지 → 라이브 배포(web) → smoke. (gc-unread-badge 는 main 에 머지됨 — 배포 alembic 0019 대기.)
 - Deferred(배포 후 라이브): S5 run cap·llm_usage actor 귀속·LLM 화자 라벨 (REV-0012) / S6 스레드(별도 계획). [폴링 동기화는 ux2 적응형으로 해소]
 - 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (코어, 머지됨) + ux2(워크트리 ai/claude/gc-live-ux2, 커밋 전).
 
 ## 3. Recent Changes
+- gc-unread-badge: alembic 0019 `conversation_members.last_read_message_id` + 읽음 API + 목록 unread/멘션 집계 + FE 배지/읽음처리/주기갱신 + `mentions.sql_mention_regex` + test_mentions 파리티 3. (CHG-20260625T065840)
 - PG `agent_runtime_schema.sql`: `conversation_members` 테이블 + `core_messages.sender_account_id`/`thread_root_message_id` + 인덱스 2.
 - MySQL parity: `AgentCoreConversationMembers` + `AgentCoreMessages` 컬럼(READ_BACKEND!=postgres 가드).
 - 신규 `modules/group_members.py`: backfill + 멤버 read/add/remove 헬퍼.
 - 신규 `tests/test_group_members.py`: 10 테스트(SQL 계약·멱등·검증·파싱).
-- 총 변경 횟수: 1 (CHG-20260619-0001)
+- 총 변경 횟수: 다수 — 상세는 MODIFY.md(최신 CHG-20260625T162000-gc-ask-sender-attrib).
+- (최신) CHG-20260625T162000-gc-ask-sender-attrib (Major): 그룹 `@assistant` user 메시지 발신자 귀속 정정 — agent_core `run_agent`/`_run_agent_core` 에 `sender_username` + user 미러 meta(사람-채팅 경로와 동일 키 집합, `sender_username and account_id` 게이트), ask.py `_payload_to_kwargs` worker 복원, app.py ask dispatch 그룹 한정 `sender_username` 배선(inproc+worker). 신규 authz/스키마/캐시버스터 0. 1:1·비그룹 무회귀.
 
 ## 4. Open Issues
 - backfill 호출 wiring(스키마 ensure 직후 1회 호출)은 S2 초입에서 연결 — 현재는 멱등 함수만 제공.
@@ -42,7 +45,8 @@ source_of_truth: false
 
 ## 5. Test Status
 - 자동 테스트: `test_group_members.py` 10/10 통과 (FakeConn, DB 불요). py_compile(모듈·테스트·app.py) OK.
-- 수동 테스트: 미수행(스키마 멱등성 실 DB 검증은 배포 환경에서).
+- gc-ask-sender-attrib: `test_ask_worker.py` 7/7(payload round-trip sender_username + 시그니처) + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 py_compile PASS. §18.8 적대 패널 BLOCKER 0/MAJOR 0.
+- 수동 테스트: 미수행(스키마 멱등성 실 DB 검증은 배포 환경에서). gc-ask-sender-attrib 발신자 표시 정정은 배포 후 라이브 그룹 대화에서 실측 권장(PB-0008 미실측).
 - 미검증 항목: 실 PG 에 대한 DDL 멱등 적용·backfill 행 수(라이브 검증은 S1 배포 시).
 
 ## 6. Blocked Items
