@@ -4674,3 +4674,18 @@ source_of_truth: true
 - Files: `static/admin.js`, `static/styles.css`, `static/admin.html`, `tests/verify_rule_db_coverage.mjs`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - Rollback: admin.js 의 규칙 카드 coverage 루프 + 메인 목록 조건부 skip + styles.css 3줄 + cache-buster revert(순수 additive 표시 변경). 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 규칙 카드 분석 진척 반영. 마이그/백엔드 없음.
+
+## CHG-20260625T030242-gc-member-actions-hover (feature-0009 cycle, Minor §12.3 — frontend CSS-only)
+- Date: 2026-06-25 (feature-0009 group-conversation cross-cut cycle `gc-member-actions-hover`). 코드/문서 정본=feature-0003 — feature-0009 cross-ref. gc-member-kick-ban UI 후속(사용자 2차 요청).
+- Scope: 공유 팝업 '참여 중인 사용자'/'차단된 사용자' 목록의 추방/차단/해제 버튼을 **기본 숨김 → 해당 칩 hover 시 애니메이션과 함께 펼침**(다른 칩 위치·구성 불변) + 목록을 **반응형 그리드**로 컴팩트화. **순수 CSS — JS/DOM/백엔드/엔드포인트 무변경**.
+- 내용(`static/styles.css`):
+  - `.share-participants`/`.share-bans`: `flex-wrap:wrap` → `display:grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap:6px 8px`. 셀이 그리드 트랙에 고정 → 한 셀 hover 확장이 다른 셀을 안 움직임(요구사항 "다른 사용자 위치 불변"). 다열이라 세로 길이 단축(사용자 2차 요청: 세로 스택 여백 낭비 해소). `.share-mgr-msg { grid-column: 1/-1 }`.
+  - `.share-participant`: `inline-flex` → `flex`(셀 폭 채움) + `min-width:0`. `.share-participant-name`: `flex:1 1 auto; min-width:0`(이름이 셀 폭을 채워 **평소 여백 0** + ellipsis). avatar/role `flex-shrink:0`.
+  - `.share-participant-acts`: 기본 `max-width:0; opacity:0; overflow:hidden; transform:translateX(-4px); pointer-events:none` → `.share-participant:hover>`/`:focus-within>` 시 `max-width:120px; opacity:1; transform:none; pointer-events:auto`. `transition: max-width .22s, opacity .18s, margin-left .22s, transform .22s`(자연스러운 펼침). `@media (hover:none)` 터치 기기 항상 노출(접근성). 칩 hover 시 배경/보더 미세 강조.
+  - `index.html`: styles.css 캐시버스터 `20260625-member-actions-hover`(CSS-only — app.js 미변경 미bump).
+- Why: gc-member-kick-ban 의 항상-노출 버튼이 칩 폭을 키워 "사용자당 공간 과도"(사용자 1차 지적). hover-reveal 로 컴팩트화하되, flex-wrap 인라인 확장은 형제를 reflow(요구 위반)하고 세로 스택은 우측 여백 낭비(사용자 2차 지적) → **그리드**가 셀 고정(reflow 0) + 이름 flex 채움(여백 0) + 다열(세로 단축)을 동시 충족.
+- Impact: app.js 의 칩 DOM 구조(`.share-participant > .share-participant-acts`) 그대로 재사용 — JS 무변경. 비-owner viewer(버튼 없음)·owner 자기 칩(소유자 배지)은 hover 효과 없이 이름만 표시. 기능/권한/엔드포인트 0 영향.
+- Verification: CSS brace 1571=1571 + 신규 `tests/verify_member_actions_hover.mjs` **15/15 PASS** + 기존 `verify_member_kick_ban.mjs`(JS·DOM 불변이라) 무회귀. 라이브 hover 애니메이션·셀 고정·여백 정본=PB-0008(배포 후 — worktree=WSL 미실행). 패널 SKIP: 순수 CSS 표현계층, 로직/보안/RBAC 무변경(REVIEW [SKIPPED:frontend-css-presentation-no-logic]).
+- Files: `static/styles.css`, `static/index.html`, `tests/verify_member_actions_hover.mjs`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
+- Rollback: styles.css `.share-participant*`/`.share-bans` 그리드+hover 블록 revert(직전 always-visible) + 캐시버스터·테스트 제거. JS/백엔드/스키마 0.
+- Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.

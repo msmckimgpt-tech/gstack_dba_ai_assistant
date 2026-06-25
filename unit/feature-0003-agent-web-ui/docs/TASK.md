@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260625T030242-gc-member-actions-hover — 공유 팝업 참여자 추방/차단 버튼 hover 펼침 + 그리드 컴팩트화 (feature-0009 cross-cut, 코드 거주=feature-0003, Minor §12.3 — frontend CSS-only)
+- 사용자 요청(`/_template:entry`, gc-member-kick-ban 후속): ① 추방/차단 버튼을 해당 사용자 hover 시 자연스러운 애니메이션과 함께 펼치기, 단 다른 사용자 UI 위치 불변. ② (1차 세로 스택 제안에 대해) 여백 낭비가 커지니 대안.
+- 결정/설계: 참여자/차단 목록을 **반응형 그리드**(`grid-template-columns: repeat(auto-fill, minmax(200px,1fr))`)로 — 셀이 그리드 트랙에 고정돼 한 셀에서 hover 로 버튼이 펼쳐져도(셀 내부에서 이름이 자리 양보) **다른 셀의 위치·구성은 불변**. 평소엔 이름 `flex:1` 으로 셀 폭을 채워 **여백 낭비 0**, 다열이라 세로 길이도 짧음. 액션은 `max-width:0→120px`+`opacity`+`transform` 트랜지션으로 부드럽게 펼침.
+- [x] `styles.css` `.share-participants`/`.share-bans` flex-wrap → `display:grid`(auto-fill minmax) + `.share-participant` flex(셀 채움)·`.share-participant-name` `flex:1; min-width:0`(이름 셀 폭 채움+ellipsis) + `.share-participant-acts` 기본 접힘(`max-width:0;opacity:0;pointer-events:none`)→`:hover>`/`:focus-within>` 펼침 + `@media (hover:none)` 터치 폴백.
+- [x] `index.html` styles.css 캐시버스터 `20260625-member-actions-hover`(CSS-only — app.js 무변경 미bump).
+- [x] 검증: CSS brace 1571=1571 + 신규 `tests/verify_member_actions_hover.mjs` **15/15 PASS**(grid·다열·접힘 기본값·hover/focus 펼침·트랜지션·터치 폴백·캐시버스터). 기존 `verify_member_kick_ban.mjs` 무회귀(구조 무변경 — JS·DOM 불변, CSS만).
+- [x] 문서: feature-0003 `{TASK,MODIFY,FUNCTION,REVIEW}.md`(신규 timestamp AC 형식 첫 적용) + feature-0009 `{TASK,MODIFY}.md` cross-ref.
+- [ ] **남은 마감(배포)**: verify-completion --pre-commit → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked + 캐시버스터) → PB-0008 Windows-browser 실렌더(hover 펼침 애니메이션·셀 고정·여백 — worktree=WSL 미실측, WARN-only).
+
 ## TASK-20260625T020249-admin-metadata-relocate — 관리 콘솔 사이드바 IA: '메타데이터' 탭을 '감사' 그룹에서 신설 '지식베이스' 그룹으로 재배치 (+ '샘플 검수' 동반 이동) (Minor §12.3 — 정적 DOM 재배치, JS/CSS/RBAC/스키마 무변경)
 - 사용자 요청(`/_template:entry`): `관리 콘솔`의 '메타데이터' 탭이 '감사'에 위치하는 게 어색 — `시스템 > 설정 > 메타데이터` 로 이동 검토·적용 + 더 좋은 구조도 검토. **IA 결정(AskUserQuestion)**: 사용자 원안('시스템' 그룹 이동) 대신 신설 '지식베이스' 그룹으로 메타데이터+샘플 검수를 묶음(둘 다 KB 거버넌스·kb.* 권한, '감사'=읽기전용 모니터링과 성격 상이). 결과 순서: [감사: 감사 로그·LLM 사용량·보관 대화] → [지식베이스: 메타데이터·샘플 검수] → [시스템: 설정·릴리즈 노트].
 - [x] `src/static/admin.html`: '감사' 그룹에서 `data-admin-tab="metadata"`/`"sample-review"` 버튼 제거 → 신설 `<div class="admin-tab-group-divider">`+`<div class="admin-tab-group-label">지식베이스</div>` 아래로 메타데이터→샘플 검수 순 재배치. 버튼 `data-admin-tab`/`id`/`style="display:none"` 속성 보존.
