@@ -302,3 +302,19 @@ source_of_truth: true
   - **N3 (보안, 무해)**: MySQL parity `_mention_re.lower()` 가 charset `[A-Za-z0-9_@]`→소문자 변형(범위 보존 + content `LOWER()` 로 경계 유지, prod=PG 영향 0).
 - Verification: py_compile(app.py·group_members·mentions·alembic) + node --check(app.js·mentions.js) + CSS brace 1576=1576 + test_mentions 6/6 PASS. group_members/s2 DB 의존 테스트는 컨테이너 make test(배포 경로).
 - Human Approval Needed: 아니오 (Major plan 사전 승인 "바로 구현" + additive·무회귀). **배포(alembic 0019 + web 재빌드)는 외부영향 — 별도 confirm**(§16.3 deploy-backed).
+
+## REV-20260625T162000-gc-ask-sender-attrib [SUBAGENT:correctness+security]
+- Date: 2026-06-25
+- Cycle: gc-ask-sender-attrib (CHG-20260625T162000) — 그룹 대화 `@assistant` 호출 시 user 메시지가 표시 store 미러에서 대화 owner(생성자) 프로필로 오귀속되던 것을 실제 발신 멤버(actor)로 귀속. **Major §12.3** (ask dispatch 경로·2+ 파일, 신규 authz 미도입 — account_id 는 기존 actor).
+- Related Change: feature-0002 `src/agent_core.py`(`run_agent`/`_run_agent_core` 에 `sender_username` + user 미러 meta) + `src/modules/ask.py`(`_payload_to_kwargs` worker 복원) + feature-0003 `src/app.py`(ask dispatch 그룹 한정 `sender_username` 계산 + inproc run_kwargs + worker enqueue payload) + `tests/test_ask_worker.py`(+3 보강/신규).
+- Reason: 코어 user 메시지 저장/미러 경로 인접 + 발신자 귀속(spoofing 표면) → §18.8 적대적 검증 dispatch.
+- 적대적 검증(general-purpose 서브에이전트, correctness+security 렌즈, 6항목 의심):
+  - end-to-end 무결성 — inproc(app.py run_kwargs→_run_agent_core)·worker(payload→ask_jobs jsonb→_payload_to_kwargs→run_agent→_run_agent_core) **양 경로 모두 sender_username 끝까지 도달**, run_agent 래퍼 forward 확인. 두 모드 동작 일치.
+  - spoofing 불가 — sender_username 출처가 클라 입력이 아닌 서버측 인증 actor `account.get("username")`, account_id/username 동일 row(WebAccounts) → 위장 경로 없음.
+  - 1:1 회귀 0 — 비그룹/신규는 `_conversation_is_group("")`=False → sender_username=None → meta 미부착 → 기존 동작 100% 동일. `int(account_id)` 캐스팅은 `sender_username and account_id` 가드 내부에서만 평가 → None/0 안전.
+  - jsonb 직렬화·이중미러 — None↔null round-trip 안전, ask 경로와 사람-채팅 경로(`_save_group_chat_message_pg`) 상호배타(그룹 비멘션 422) → 이중 미러 없음.
+- 핵심 판정: **SHIP. BLOCKER 0 / MAJOR 0**.
+  - MINOR(빈 username 비대칭, 패널 적발) **REJECTED-as-fix / ACCEPTED-as-is**: 패널 제안(`if account_id` 로 대칭화)은 역회귀 유발 — agent 경로는 1:1+그룹 양용이라 `sender_username` truthiness 가 그룹 게이트 proxy. `if account_id` 로 바꾸면 모든 1:1 에 `group_chat:True` meta 가 붙어 회귀. 비대칭은 의도적·필수. 추가로 `WebAccounts.Username` 은 `NOT NULL UNIQUE` 라 `""` actor 경로 자체가 비현실적. 현 `sender_username AND account_id` 가드가 정답.
+  - NIT(주석 "동일 shape") **수정 반영**: agent_core 주석을 "동일 키 집합 + 1:1/그룹 양용이라 sender_username 으로 게이트, account_id-only 게이트는 회귀" 로 정확화.
+- Verification: `test_ask_worker.py` 7/7 (보강 round_trip/defaults + 신규 sender_username 시그니처) + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile`. PB-0008 미실측(백엔드 배선 — 표시 동작은 배포 후 라이브 그룹 대화에서 권장).
+- Human Approval Needed: 아니오 (Major·backend 배선·신규 authz 미도입·무회귀, deploy_scope: included 사전승인).
