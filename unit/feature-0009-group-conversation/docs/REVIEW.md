@@ -284,6 +284,20 @@ source_of_truth: true
 - Cycle: gc-participant-product-select (CHG-20260625T163424) — 공유 대화 참가자(비-owner)의 per-message 제품 선택·발화. **Major §12.3** authz 경계, 코드 거주=feature-0003.
 - 정본: 코드/리뷰 정본 = feature-0003 `docs/REVIEW.md` REV-20260625T163424-gc-participant-product-select(적대적 authz 서브에이전트 — 6개 공격가설[권한우회·바인딩오염·owner회귀·view-only과다·FE정합·auto] 전부 REFUTED, **VERDICT SHIP, BLOCKING 0**). 본 entry 는 cross-feature 추적.
 - 핵심: ANCHOR §1 / REQ-GC-R7 보존 — 발화는 발신자 본인 RBAC 로만 게이트(권한 상속 없음), 대화 공통 바인딩 비파괴. authz 이중 게이트(parse + run-product 재확인).
+## REV-20260625T163744-gc-run-status-stuck [SUBAGENT:concurrency-run-status]
+- Date: 2026-06-25
+- Cycle: gc-run-status-stuck (CHG-20260625T163744) — 그룹대화 동시 run 충돌로 인한 '처리 중' 고착/채팅 블로킹 fix. **Major §12.3 (동시성·run-status 핵심 경로, 인가/파괴적 변경 없음)**, worktree `ai/claude/gc-run-status-stuck`.
+- Related Change: feature-0002 `modules/memory.py`(set_run_status per-run marker) + feature-0003 `app.py`(`_load_run_terminal_marker`+`/api/progress` 해소) + `static/app.js`(client_run_id 항상 전송+foreign-run hijack 가드).
+- Reason: 동시성·핵심 send/run-status 경로 인접 → §18.8 적대적 패널 필수. 라이브 자동 배포(deploy_scope: included)라 회귀 차단 검증 필요.
+- 적대적 검증(Explore 서브에이전트 3, lens 분리 — 동시성/FE회귀/BE데이터; "통과 아닌 결함 적발"):
+  - **동시성/race**: per-run marker 가 *살아있는* run 을 오해소하나 → 반증(run_id=`timestamp+uuid8` 고유, 클라이언트는 자기 run_id 로만 marker 조회 → 타 run 못 읽음). supersede 가드 회귀 없음(취소된 superseded run 은 새 run 추적 클라이언트가 조회 안 함).
+  - **FE 회귀**: early-return 이 자기 버블 step 갱신 누락 지적 → 동시 처리중 창에서 자기 *라이브 step* 미표시는 **의도된 동작**(이전엔 foreign step 오표시=버그; '처리중+elapsed' 표시 유지, 완료 즉시 해소). 1:1·관찰자·대화전환·취소-재요청 정상 흐름은 가드 미발동 확인.
+  - **BE 데이터**: 신규 KV 키 누수 0(대화목록 dump·`list_processing_conversation_ids`·orphan recovery 전부 명시 `IN(...)` allowlist, LIKE/prefix 없음). 키폭 OK(`varchar(128)`, ~57자). `/api/progress` after_step 재설정 로직 marker 해소 후 정합. `_compute_display_status` 가 non-processing 조기 return → terminal marker 가 stale 오판 안 됨.
+- 패널 반영(유효 NIT 2): ① 주석 "단일 run 키 누적 0" 부정확 + 1:1 취소-재요청 supersede 도 skip 분기 진입 → marker 를 **done/error 만** 기록하도록 tighten(canceled 미기록 → 1:1 누적 차단, 주석 정확화). ② marker TTL 정리 부재 → 충돌 시·tiny row 만 잔존, S6 per-thread 재키잉 이연 명시(MODIFY 기록).
+- 핵심 판정: **SHIP**. 진짜 BLOCKING 0(패널 "BLOCKING" 라벨은 false-positive[run_id 고유]·intended-behavior[foreign step 미표시]·본질적[첫 폴 run_id 미정] 으로 트리아지). 잔여는 수용 NIT.
+- Verification: `py_compile`(memory.py/app.py) + `node --check`(app.js) PASS. **PB-0008 미실측**(worktree=WSL; 다중 사용자 동시 race — 배포 후 라이브 그룹대화 검증 권장).
+- Human Approval Needed: 아니오 (사용자 명시 버그 보고 재개, 동시성 fix·무회귀, deploy_scope: included standing 승인).
+
 ## REV-20260625T065840-gc-unread-badge [SUBAGENT:authz·correctness·perf 3렌즈 §18.8]
 - Date: 2026-06-25 (패널 2026-06-25, resume 세션에서 완료)
 - Cycle: gc-unread-badge (CHG-20260625T065840) — 사이드바 "안 읽은(새) 메세지 + 안 읽은 @멘션" 배지. **Major §12.3** (스키마 추가+백엔드 쿼리+프론트 다중 파일, deploy-backed). 사용자 `/_template:entry` 요청 + Major plan 사전 승인("바로 구현").
