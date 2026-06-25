@@ -15911,6 +15911,13 @@ def join_conversation_via_share(token: str, request: Request) -> JSONResponse:
                 finally:
                     pg.close()
             except Exception:
+                # 진단 가시성: 실제 예외를 로깅(상위 ban 체크와 동일 정책). silent 500 은
+                # 근본원인 파악을 막는다(gc-join-ambiguous-param-fix 사례 — 멤버 INSERT 실패가
+                # 일반 500 으로만 표면화되어 진단이 지연됨).
+                logging.getLogger(__name__).warning(
+                    "join: add_member failed — conversation_id=%s actor_id=%s", cid, actor_id,
+                    exc_info=True,
+                )
                 return _json_error("대화 참여에 실패했습니다.", 500)
             _audit_user_action(
                 conn,
