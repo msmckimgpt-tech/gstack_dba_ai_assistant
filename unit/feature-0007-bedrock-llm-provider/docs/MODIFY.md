@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260625T171844
+- Date: 2026-06-25
+- Related Requirement: (운영 chore — 사용자 지시) DQA LLM 게이트 호출 주체 일시 우회
+- Summary: 개발 단계 LLM provider 호출 주체를 claude-corp 회사 OAuth → root 개인
+  OAuth (`/root/.claude`, subscriptionType `max`) 로 임시 전환. `refresh-claude-oauth-token.sh`
+  에 `CLAUDE_OAUTH_ACCOUNT` env var 기반 토큰 출처 계정 선택을 추가 (미지정 시
+  claude-corp = 기존 동작 유지). crontab 의 사전 배치된 root 라인 활성화 + claude-corp
+  라인 비활성화. 즉시 1회 실행으로 root 토큰 주입 + gateway force-recreate.
+- Files:
+  - 수정: `bin/refresh-claude-oauth-token.sh` — `ACCOUNT="${CLAUDE_OAUTH_ACCOUNT:-claude-corp}"`
+    + `case` 분기로 `CRED` 경로 선택 (root→`/root/.claude/.credentials.json`,
+    그 외→`/home/<name>/.claude/.credentials.json`). 헤더 주석·로그를 계정-중립화.
+  - (git 미추적) host `root` crontab — claude-corp 라인 주석 + `CLAUDE_OAUTH_ACCOUNT=root`
+    라인 주석 해제. 백업 `/tmp/crontab-backup-*.txt`.
+  - (git 미추적) `.env.bedrock` `ANTHROPIC_API_KEY` — 스크립트가 root 토큰으로 교체 (gitignored).
+- Verification: 게이트웨이 토큰 끝6자 == root 토큰 (≠ claude-corp), `bedrock-gateway`
+  health=healthy, root 토큰 만료 여유 ~5h. 토큰 생명주기는 claude-corp 때와 동일
+  메커니즘 (계정 주체만 상이 — root VSCode Claude Code refresh + cron 30분 재주입).
+- Rollback: crontab 두 라인 토글 역전 + `bash bin/refresh-claude-oauth-token.sh` (env 없이 → claude-corp).
+- Risk: Minor (§12.3) — backwards-compatible, auth/네트워크/보안 표면 변화 0, 비밀정보
+  미추적. ⚠ 개발용 임시 (구독 OAuth 는 서비스 운용 부적합).
+
 ## CHG-20260521-0001
 - Date: 2026-05-21
 - Related Requirement: REQ-20260521-0001, REQ-20260521-0002, REQ-20260521-0003

@@ -263,6 +263,18 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
       `docker compose restart bedrock-gateway` (또는 `up -d` 로 networks 반영) →
       titan-embed end-to-end 검증 (앱 경유 KB 임베딩). 재백필 정책 판단.
 
+### Phase J — LLM 호출 주체 계정 전환 claude-corp → root (CHG-20260625T171844)
+- [x] TASK-J1 `bin/refresh-claude-oauth-token.sh` 에 `CLAUDE_OAUTH_ACCOUNT` env var
+      지원 추가 — 토큰 출처 계정을 선택 (`root`→`/root/.claude`, 그 외
+      `<name>`→`/home/<name>/.claude`, 미지정→`claude-corp` = 기존 동작 유지).
+      로그/헤더 주석 계정-중립화. backwards-compatible. (CHG-20260625T171844)
+- [x] TASK-J2 host `root` crontab 토글 — claude-corp 라인 주석 + `CLAUDE_OAUTH_ACCOUNT=root`
+      라인 주석 해제 (git 미추적 runtime 상태, 백업 `/tmp/crontab-backup-*.txt`).
+- [x] TASK-J3 즉시 적용·검증 — `CLAUDE_OAUTH_ACCOUNT=root bash bin/refresh-claude-oauth-token.sh`
+      1회 실행 → `.env.bedrock` ANTHROPIC_API_KEY = root 토큰, bedrock-gateway
+      force-recreate. 게이트웨이 토큰 == root (≠ claude-corp), health=healthy,
+      root 토큰 만료 여유 ~5h (root VSCode Claude Code refresh 주체, cron 30분 재주입).
+
 ## 4. In Progress
 - 없음 (Phase A 진입 직전 정지 상태 — 다음 turn 의 user 지시로 시작).
 

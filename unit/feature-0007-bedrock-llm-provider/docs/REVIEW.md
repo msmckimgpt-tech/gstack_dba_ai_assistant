@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260625T171844-llm-account-root [SKIPPED:config-ops-chore]
+- Related Change: CHG-20260625T171844
+- Trigger: 사용자 지시 운영 chore — LLM 호출 주체 계정 claude-corp → root 일시 전환.
+- SKIP 근거 (§18.8 패널 면제): 변경 표면이 (1) `bin/refresh-claude-oauth-token.sh`
+  의 `CLAUDE_OAUTH_ACCOUNT` env var → 로컬 credential 파일 **경로 선택** (case 분기,
+  외부 입력 파싱 없음), (2) git 미추적 crontab 라인 토글 에 한정. auth/인가 로직 ·
+  네트워크 · 데이터 · 스키마 표면 변화 0. 미지정 시 claude-corp 으로 기존 동작
+  **완전 보존** (backwards-compatible). 비밀정보는 gitignored `.env.bedrock` 에만
+  존재 (추적 산출물 0). 토큰 주입·검증 메커니즘은 CHG-20260623-0001 (REV-20260623-0001
+  [SUBAGENT:backend] PASS) 에서 이미 검증된 경로와 동일하며 계정 주체만 상이.
+- 실증 검증 (자체): 게이트웨이 토큰 끝6자 == root 토큰 (≠ claude-corp), `bedrock-gateway`
+  health=healthy, root 토큰 만료 여유 ~5h. bash -n PASS + 계정 라우팅 단위 확인 3종.
+- Human Approval Needed: no — 사용자 명시 지시로 본 전환 위임. ⚠ 개발용 임시.
+
 ## REV-20260521-0001
 - Related Change: CHG-20260521-0001
 - Reason: 사용자 결정 5 항목 (사내 직원 전용 → 비용 책임 운영자 부담 / per-user

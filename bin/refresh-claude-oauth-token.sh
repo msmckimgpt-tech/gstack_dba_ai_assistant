@@ -2,13 +2,18 @@
 # =============================================================================
 # refresh-claude-oauth-token.sh — 개발 단계 전용 (2026-06-23)
 # =============================================================================
-# claude-corp 계정(masangsoft.com)의 Claude Code OAuth access token 을 읽어
+# 지정된 계정의 Claude Code OAuth access token 을 읽어
 # bedrock-gateway(litellm) 의 ANTHROPIC_API_KEY 로 주입한다.
 #
-# 배경: 정식 배포 전 개발 단계에서, 회사가 발급한 Claude Team 구독 계정으로
-#   LLM 백엔드를 운용한다(AGENTS.md / 사용자 지시). Anthropic OAuth access token
-#   은 short-lived(~수시간) 이므로 주기적으로 갱신해야 게이트웨이가 안 끊긴다.
-#   claude-corp 의 Claude Code 가 refresh token 으로 access token 을 자동 갱신하면,
+# 토큰 출처 계정은 CLAUDE_OAUTH_ACCOUNT 환경변수로 선택한다 (미지정 시 claude-corp):
+#   - claude-corp : 회사가 발급한 Claude Team 구독 계정 (/home/claude-corp/.claude)
+#   - root        : 개인 max 계정 (/root/.claude) — 회사 계정 일시 우회 시
+#   - <기타 name> : /home/<name>/.claude
+#
+# 배경: 정식 배포 전 개발 단계에서, 위 계정의 Claude Code OAuth 로 LLM 백엔드를
+#   운용한다(AGENTS.md / 사용자 지시). Anthropic OAuth access token 은
+#   short-lived(~수시간) 이므로 주기적으로 갱신해야 게이트웨이가 안 끊긴다.
+#   해당 계정의 Claude Code 가 refresh token 으로 access token 을 자동 갱신하면,
 #   본 스크립트가 그 최신 토큰을 게이트웨이에 반영한다.
 #
 # 토큰이 바뀐 경우에만 컨테이너를 재생성한다(불필요한 recreate 방지).
@@ -16,15 +21,20 @@
 # =============================================================================
 set -euo pipefail
 
-CRED="/home/claude-corp/.claude/.credentials.json"
+# 토큰 출처 계정 선택 (CLAUDE_OAUTH_ACCOUNT). 미지정 시 claude-corp — 기존 동작 유지.
+ACCOUNT="${CLAUDE_OAUTH_ACCOUNT:-claude-corp}"
+case "$ACCOUNT" in
+  root) CRED="/root/.claude/.credentials.json" ;;
+  *)    CRED="/home/$ACCOUNT/.claude/.credentials.json" ;;
+esac
 REPO="/root/download/docker/mysql_ai_delegated_dev/repo"
 ENV_FILE="$REPO/.env.bedrock"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [refresh-oauth] $*"; }
 
-[ -f "$CRED" ] || { log "ERROR: credentials 없음: $CRED"; exit 1; }
+[ -f "$CRED" ] || { log "ERROR: credentials 없음: $CRED (account=$ACCOUNT)"; exit 1; }
 
-# 1) claude-corp access token 추출 (출력에 토큰 노출 안 함)
+# 1) 선택된 계정의 access token 추출 (출력에 토큰 노출 안 함)
 TOKEN="$(python3 -c "import json,sys
 d=json.load(open('$CRED'))
 o=d.get('claudeAiOauth') or d
@@ -35,7 +45,7 @@ sys.stdout.write(t)")"
 # 2) 현재 게이트웨이가 들고 있는 토큰과 비교 → 변경 시에만 반영
 CUR="$(grep -m1 '^ANTHROPIC_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
 if [ "$TOKEN" = "$CUR" ]; then
-  log "토큰 변경 없음 — skip (recreate 안 함)"
+  log "[$ACCOUNT] 토큰 변경 없음 — skip (recreate 안 함)"
   exit 0
 fi
 
@@ -61,4 +71,4 @@ PY
 # 4) 토큰 변경 반영 — restart 는 env_file 재로드 안 하므로 반드시 재생성
 cd "$REPO"
 docker compose -f docker-compose.yml up -d --force-recreate bedrock-gateway >/dev/null 2>&1
-log "claude-corp OAuth 토큰 갱신됨 → bedrock-gateway 재생성 완료"
+log "[$ACCOUNT] OAuth 토큰 갱신됨 → bedrock-gateway 재생성 완료"

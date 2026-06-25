@@ -45,6 +45,25 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
     작성.
 
 ## 3. Recent Changes
+- **CHG-20260625T171844** (2026-06-25): 개발 단계 LLM provider **호출 주체** 임시 전환 —
+  claude-corp 회사 OAuth → **root 개인 OAuth** (`/root/.claude/.credentials.json`,
+  subscriptionType `max`). 사용자 지시 (DQA LLM 게이트를 개인 계정으로 일시 우회 —
+  crontab 의 사전 배치된 `CLAUDE_OAUTH_ACCOUNT=root` 라인 활성화 요청). 변경 2건:
+  **(1) `bin/refresh-claude-oauth-token.sh`** — `CLAUDE_OAUTH_ACCOUNT` env var 로 토큰 출처
+  계정 선택 추가. 미지정 시 `claude-corp` (= 기존 동작 유지, backwards-compatible),
+  `root`→`/root/.claude`, 그 외 `<name>`→`/home/<name>/.claude`. 로그·헤더 주석도
+  계정-중립화. 비밀정보 미포함 (토큰은 `.env.bedrock`=gitignored 에만 주입).
+  **(2) host `root` crontab** (git 미추적 runtime 상태) — 기존 claude-corp 라인 주석 처리 +
+  `CLAUDE_OAUTH_ACCOUNT=root` 라인 주석 해제. 백업 `/tmp/crontab-backup-*.txt`.
+  **즉시 적용**: `CLAUDE_OAUTH_ACCOUNT=root bash bin/refresh-claude-oauth-token.sh` 1회
+  실행 → `.env.bedrock` `ANTHROPIC_API_KEY` 를 root 토큰으로 교체 + `bedrock-gateway`
+  force-recreate. **검증**: 게이트웨이 토큰 == root 토큰 (≠ claude-corp 토큰), 컨테이너
+  `health=healthy`, root 토큰 만료 여유 ~5h. 토큰 생명주기: root 의 VSCode Claude Code 가
+  access token 자동 refresh → 동 cron(30분 주기)이 최신 토큰 재주입 (claude-corp 때와 동일
+  메커니즘, 계정만 상이). ⚠ **개발용 임시** — 구독 OAuth 는 약관/rate limit 상 서비스 운용
+  부적합. 전제: root VSCode Claude Code 세션 유지 (토큰 refresh 주체).
+  **claude-corp 복귀 절차**: crontab 두 라인 토글 역전 (root 라인 주석 + claude-corp 라인
+  주석 해제) + `bash bin/refresh-claude-oauth-token.sh` 1회 실행 (env var 없이 → claude-corp).
 - **CHG-20260623-0001** (2026-06-23): 개발 단계 LLM provider 임시 전환 — AWS Bedrock
   → claude-corp Anthropic OAuth (회사 발급 Claude Team 계정 `masangsoft.com`). 배포 전
   개발 운용 목적 (Bedrock API 키 / Console API key 미발급 상황). 변경: litellm_config.yaml
