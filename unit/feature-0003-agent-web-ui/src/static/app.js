@@ -7998,6 +7998,13 @@ async function sendPrompt() {
   };
   renderMessages();
   startElapsedTimer();
+  // composer-clear-input-on-send: @assistant 전송 시에도 (그룹채팅 `_sendGroupChatMessage` 경로처럼)
+  // 입력창을 *낙관적으로 즉시* 비운다 — message 는 이미 캡처됨(아래 askBody/optimistic 에서 사용).
+  // R1(composer-nonblock-interrupt)로 입력창이 처리 중에도 활성이라, 기존의 응답-시점 클리어(아래
+  // /api/ask 후·복구 경로)는 (a) 전송해도 입력창이 안 비워지는 회귀 + (b) 처리 중 새로 친 텍스트를
+  // 응답 도착 시 삭제하는 위험이 있었다. 낙관적 클리어로 일원화하고 응답-시점 클리어는 제거한다.
+  promptInputEl.value = "";
+  promptInputEl.style.height = "auto";
 
   renderComposer();
   if (!isLazyCreate && targetConvId) {
@@ -8158,8 +8165,8 @@ async function sendPrompt() {
       body: JSON.stringify(askBody),
       signal: askAbort.signal,
     });
-    promptInputEl.value = "";
-    promptInputEl.style.height = "auto";
+    // composer-clear-input-on-send: 입력창 클리어는 위 낙관적 시점으로 일원화(여기서 재클리어 안 함 —
+    // 처리 중 사용자가 새로 친 텍스트를 응답 도착 시 삭제하지 않도록).
     // UX-COMPACT: 전송 성공 시 new → session 전환 (버킷 유지 — 세션 컨텍스트 보존).
     // 파일은 삭제하지 않고 source 만 변경해 다음 요청에도 LLM 이 참조 가능하게 한다.
     const _clearKey = isLazyCreate
@@ -8249,8 +8256,7 @@ async function sendPrompt() {
       try { state.pendingConversationEntries.delete(busyKey); } catch (_e) {}
       try { renderMessages(); } catch (_e) {}
       const _reCid = (earlyCidActivated ? state.activeConversationId : targetConvId) || state.activeConversationId;
-      promptInputEl.value = "";
-      promptInputEl.style.height = "auto";
+      // composer-clear-input-on-send: 입력창은 낙관적 시점에 이미 비워짐(재클리어 안 함).
       if (_reCid) { try { await _sendGroupChatMessage(_reCid, message); } catch (_e) {} }
       return;  // finally 가 busy/abort 정리
     }
@@ -8343,10 +8349,17 @@ async function sendPrompt() {
           // dismiss — 진행 상태만 유지. progress polling 이 결과를 갱신할 것
           showToast("계속 서버에서 처리 중입니다. 상태는 상단에 표시됩니다.");
         }
-        promptInputEl.value = "";
-        promptInputEl.style.height = "auto";
+        // composer-clear-input-on-send: 입력창은 낙관적 시점에 이미 비워짐(재클리어 안 함).
       } else {
         showToast(`요청에 실패했습니다: ${error.message || error}`, true);
+        // composer-clear-input-on-send: 진짜 실패(run 미진행)면 낙관적으로 비운 입력을 복원해 재시도
+        // 가능하게 한다(기존 동작=성공 시에만 클리어 보존). 단 사용자가 그 사이 새로 입력했으면
+        // 덮어쓰지 않는다(빈 경우만 복원). user-cancel·422 reroute 는 위 분기에서 이미 처리(미도달).
+        if (!String((promptInputEl && promptInputEl.value) || "").trim()) {
+          promptInputEl.value = message;
+          promptInputEl.style.height = "auto";
+          try { renderComposer(); } catch (_e) { /* no-op */ }
+        }
       }
     }
   } finally {

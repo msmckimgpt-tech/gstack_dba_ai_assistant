@@ -68,6 +68,9 @@ source_of_truth: true
   - [x] R3 BE: /api/cancel preserve_reasoning → cancel_preserve → agent_core canceled 부분추론 메시지 보존 (app.py·memory.py·agent_core.py)
   - [x] 새로고침/resume myAskInFlight 복원(1:1) + 캐시버스터 composer-nonblock-interrupt
   - [ ] 라이브 배포 후 PB-0008 실측 (입력 비잠금·인터럽트·중복차단 다중 사용자)
+- **composer-clear-input-on-send** (R1 누락분 — @assistant 전송 시 입력창 미클리어 회귀, Minor): 사용자 보고. 낙관적 클리어 일원화 + 응답-시점 클리어 3 제거 + 진짜 실패 시 입력 복원. node PASS·§18.8 1렌즈 회귀 0. (CHG/REV-20260625T195400)
+  - [x] @assistant 낙관적 입력창 클리어(그룹채팅 동형) + 응답-시점 클리어 3곳 제거 + 실패 복원(빈 입력만) (app.js)
+  - [x] 캐시버스터 composer-clear-input
 - **gc-participant-product-select** (참가자 per-message 제품 선택·발화, cross-cut 코드거주=feature-0003, Major §12.3 authz): 중단 세션(372f8779) resume — 코드(B1 ask override·B2 session view-only·F1 드롭업 2그룹·F2 setActiveProduct/sendPrompt) 완료 + 칩 fallback·캐시버스터·검증·docs 완료. §18.8 적대 authz 패널 6가설 REFUTED SHIP(REV-20260625T163424). 잔여: verify-completion → PR → 배포(included) → PB-0008 실측.
 - **gc-run-status-stuck** (그룹대화 '처리 중' 고착/채팅 블로킹 버그, Major 동시성): 코드 완료(워크트리 `ai/claude/gc-run-status-stuck`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 라이브 배포 → smoke 잔여. 근본: run-status 단일 대화 슬롯 vs 계정별 동시 run → run1 done supersede 가드 skip(유실) + FE foreign run hijack. 수정(per-run 해석): 충돌 done/error per-run marker(memory.py) + `/api/progress` client_run_id 해소(app.py) + FE client_run_id 항상 전송·hijack 가드(app.js). §18.8 패널 3 BLOCKING 0. (CHG/REV-20260625T163744)
   - [x] BE write: set_run_status 충돌 skip 시 done/error per-run marker 기록 (feature-0002 memory.py)
