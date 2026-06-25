@@ -4128,6 +4128,14 @@ def _ensure_dynamic_permissions_schema(conn) -> None:
             cur.execute("ALTER TABLE WebProducts ADD COLUMN IconObjectKey VARCHAR(512) NULL")
         except Exception:
             pass
+        # TASK-0309: 제품 프롬프트 무인 자동완성 1회성 마커. insight 분석률이 임계(기본 95%)에
+        # 도달해 자동완성·저장이 1회 수행된 시각을 기록한다(NULL=미수행). insight 초기화
+        # (admin_product_insight_reset)는 PG insight 만 삭제하고 본 MySQL 컬럼은 보존하므로,
+        # reset 으로 분석률이 내려갔다 재상승해도 본 마커가 있으면 재실행하지 않는다(1회성 보장).
+        try:
+            cur.execute("ALTER TABLE WebProducts ADD COLUMN AutoPromptGeneratedAt DATETIME NULL")
+        except Exception:
+            pass
         # WebRoles.DefaultProductAccess (deprecated, 이전 설계 잔재) 의 ALTER 는 더 이상 추가하지 않는다.
         # 기존 deploy 에 컬럼이 이미 있다면 그대로 보존 (다음 cleanup cycle 의 DROP 대상).
     finally:
@@ -20348,6 +20356,294 @@ def admin_products_insight_coverage(request: Request) -> JSONResponse:
     return JSONResponse({"coverage": out})
 
 
+# ── TASK-0309: insight 분석률 95% 도달 시 제품 프롬프트 무인 자동완성 (1회성) ───────────────
+# 요청(2026-06-25): 관리 콘솔 > 제품의 각 제품에서 '제품 프롬프트'가 아직 입력되지 않은 항목을
+# 대상으로, insight 분석률(_compute_product_insight_coverage 의 pct)이 임계값(기본 95%)을 넘는
+# 순간 자체적으로 프롬프트를 자동완성·저장한다. 단 1회성 — insight 초기화로 분석률이 다시 내려갔다
+# 재상승해도 재실행하지 않는다(WebProducts.AutoPromptGeneratedAt 마커). 마커는 MySQL 에 있고
+# insight-reset 은 PG insight 만 지우므로 reset 을 견딘다.
+#
+# 트리거: web 컨테이너의 백그라운드 daemon thread(_start_auto_prompt_sweep_loop)가 주기적으로
+# sweep — 관리 콘솔 접속 여부와 무관하게 무인 동작('자체적으로'). 수동 '자동작성' 버튼
+# (POST/GET .../prompt/generate[/stream])은 그대로 유지되어 관리자가 언제든 재생성할 수 있다.
+try:
+    _AUTO_PROMPT_COVERAGE_THRESHOLD = float(
+        os.getenv("AGENT_AUTO_PROMPT_COVERAGE_THRESHOLD", "95") or "95"
+    )
+except Exception:
+    _AUTO_PROMPT_COVERAGE_THRESHOLD = 95.0
+# cycle 당 생성 상한 — 최초 활성화 시 이미 95% 이상·미입력 제품이 다수면 한 cycle 에서
+# 동기 LLM 호출이 버스트될 수 있어 시간축으로 분산한다(마커가 1회성이라 결국 전부 처리됨). 0=무제한.
+try:
+    _AUTO_PROMPT_MAX_PER_CYCLE = int(os.getenv("AGENT_AUTO_PROMPT_MAX_PER_CYCLE", "3") or "3")
+except Exception:
+    _AUTO_PROMPT_MAX_PER_CYCLE = 3
+# 실패(LLM 부재/오류/빈본문/저장실패) 제품 재시도 backoff(초). 마커는 성공 시에만 설정되므로,
+# 만성 실패 제품이 매 cycle LLM 을 재호출하는 비용 누수를 backoff 로 제한한다(성공 시 backoff 해제).
+try:
+    _AUTO_PROMPT_FAIL_BACKOFF_SEC = int(os.getenv("AGENT_AUTO_PROMPT_FAIL_BACKOFF_SEC", "3600") or "3600")
+except Exception:
+    _AUTO_PROMPT_FAIL_BACKOFF_SEC = 3600
+_AUTO_PROMPT_FAIL_UNTIL: dict[int, float] = {}   # pid -> monotonic ts(이전까지 skip)
+_AUTO_PROMPT_FAIL_LOCK = threading.Lock()
+
+
+def _product_prompt_present(conn, product_id: int) -> bool:
+    """제품 시스템 프롬프트(Scope='product')가 비어있지 않게 입력돼 있는지."""
+    sp = _load_system_prompt(conn, scope="product", product_id=int(product_id))
+    return bool(sp and str(sp.get("content") or "").strip())
+
+
+def _auto_prompt_eligible_product_ids(conn) -> list[int]:
+    """자동완성 후보 = 1회성 마커 미설정(AutoPromptGeneratedAt IS NULL) 제품 id.
+
+    프롬프트 입력 여부·분석률은 라이브 조회라 무거우므로 호출부(sweep)가 제품별로 추가 검사한다.
+    이미 자동완성된 제품(마커 보유)은 본 단계에서 영구 제외 — insight reset 후 분석률이 재상승해도
+    재실행되지 않는 1회성의 핵심 게이트.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "SELECT Id FROM WebProducts WHERE AutoPromptGeneratedAt IS NULL ORDER BY Id"
+            )
+        except Exception:
+            # 컬럼 부재(부트스트랩 직전) — _ensure_web_tables 의 멱등 ALTER 이후엔 항상 존재.
+            return []
+        return [int(r[0]) for r in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+
+
+def _autonomous_generate_product_prompt(product_id: int) -> dict:
+    """제품 1건의 프롬프트를 무인 자동완성·저장하고 1회성 마커를 기록한다.
+
+    호출 전 조건(프롬프트 미입력 + 분석률>=임계 + 마커 미설정)은 sweep 이 검사하지만, 저장
+    직전 마커 행을 `SELECT ... FOR UPDATE` 로 잠그고 '마커 미설정 + 프롬프트 미입력'을 재검사한다
+    (LLM 호출(수십초) 중 수동 입력/경합 보호 — TOCTOU). `_connect_memory` 는 autocommit=True 라
+    부분 commit 위험이 있어, 저장 동안만 `autocommit=False` 로 전환해 upsert+마커+audit 를 **단일
+    tx** 로 commit 한다(부분 실패 시 rollback → 마커/프롬프트 정합 = 1회성 불변식 보호), finally 환원.
+
+    반환: {status, product_id, ...}.
+      status ∈ {ok, skip_present, skip_marked, no_llm, no_body, error}.
+    """
+    log = logging.getLogger(__name__)
+
+    # 1) 조립 (request-less). 제품 부재/LLM 클라이언트 부재면 skip(마커 미설정 → 다음 cycle 재시도).
+    error, ctx = _assemble_product_prompt_llm_request(int(product_id))
+    if error is not None:
+        code = int(getattr(error, "status_code", 0) or 0)
+        return {
+            "status": "no_llm" if code == 503 else "error",
+            "product_id": product_id,
+            "reason": f"assemble:{code}",
+        }
+
+    # 2) LLM 호출 (동기 — sweep 은 daemon thread 컨텍스트라 이벤트 루프 블로킹 없음).
+    try:
+        resp = ctx["openai_client"].chat.completions.create(**ctx["create_kwargs"])
+        choice = resp.choices[0]
+        generated = (choice.message.content or "").strip()
+        truncated = getattr(choice, "finish_reason", None) == "length"
+    except Exception as exc:  # noqa: BLE001 — 어떤 LLM 오류든 skip(다음 cycle 재시도)
+        log.warning("auto_prompt LLM 생성 실패 product_id=%s err=%r", product_id, exc)
+        return {"status": "error", "product_id": product_id, "reason": "llm_failed"}
+
+    if not generated:
+        return {"status": "no_body", "product_id": product_id, "reason": "empty"}
+    if truncated:
+        log.warning(
+            "auto_prompt 본문 잘림(finish_reason=length) product_id=%s model=%s — 그대로 저장",
+            product_id, ctx.get("llm_model"),
+        )
+
+    # 3) 저장 — 마커 행 FOR UPDATE 잠금 + 재검사 후 upsert+마커+audit 를 단일 명시 tx 로.
+    conn = _connect_memory()
+    try:
+        conn.autocommit = False  # _connect_memory 기본 autocommit=True → 부분 commit 방지(B1).
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT AutoPromptGeneratedAt FROM WebProducts WHERE Id = %s FOR UPDATE",
+            (int(product_id),),
+        )
+        mrow = cur.fetchone()
+        cur.close()
+        if mrow is None:
+            conn.rollback()
+            return {"status": "error", "product_id": product_id, "reason": "product_gone"}
+        if mrow[0] is not None:
+            conn.rollback()
+            return {"status": "skip_marked", "product_id": product_id}
+        if _product_prompt_present(conn, product_id):
+            conn.rollback()
+            return {"status": "skip_present", "product_id": product_id}
+
+        _upsert_system_prompt(
+            conn,
+            scope="product",
+            content=generated,
+            product_id=int(product_id),
+            updated_by_account_id=None,  # system 주체
+        )
+        cur2 = conn.cursor()
+        cur2.execute(
+            "UPDATE WebProducts SET AutoPromptGeneratedAt = UTC_TIMESTAMP() WHERE Id = %s",
+            (int(product_id),),
+        )
+        cur2.close()
+        # audit (system actor) — 같은 tx, commit 시 함께 기록. 실패해도 본 흐름 유지.
+        try:
+            record_audit_event(
+                conn,
+                actor={"actor_type": "system"},
+                action="admin.product.prompt.autogenerate",
+                resource_type="product",
+                resource_id=str(product_id),
+                change_json={
+                    "trigger": "insight_coverage_threshold",
+                    "threshold": _AUTO_PROMPT_COVERAGE_THRESHOLD,
+                    "content_len": len(generated),
+                    "truncated": truncated,
+                    "grounded": bool(ctx.get("meta_base", {}).get("grounded")),
+                },
+            )
+        except Exception as aexc:  # noqa: BLE001
+            log.warning("auto_prompt audit 기록 실패(무시) product_id=%s err=%r", product_id, aexc)
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        log.warning("auto_prompt 저장 실패 product_id=%s err=%r", product_id, exc)
+        return {"status": "error", "product_id": product_id, "reason": "save_failed"}
+    finally:
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
+        conn.close()
+
+    log.info(
+        "auto_prompt 자동완성 저장 완료 product_id=%s content_len=%s (threshold=%s%%)",
+        product_id, len(generated), _AUTO_PROMPT_COVERAGE_THRESHOLD,
+    )
+    return {"status": "ok", "product_id": product_id, "content_len": len(generated)}
+
+
+def _auto_prompt_sweep_once() -> dict:
+    """후보 제품을 1회 sweep — 프롬프트 미입력 + 분석률>=임계 + 마커 미설정 → 자동완성.
+
+    반환: {scanned, generated, skipped, errors}. 라이브 DB/LLM 조회라 호출부(루프)가 간격을 둔다.
+    프롬프트 미입력 검사를 분석률(라이브 카탈로그 조회, 무거움)보다 **먼저** 수행해, 이미
+    프롬프트가 있는 제품의 불필요한 coverage 계산을 피한다.
+    """
+    log = logging.getLogger(__name__)
+    stats = {"scanned": 0, "generated": 0, "skipped": 0, "errors": 0}
+    try:
+        conn = _connect_memory()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("auto_prompt sweep: memory 연결 실패 — skip cycle: %r", exc)
+        return stats
+    try:
+        try:
+            candidate_ids = _auto_prompt_eligible_product_ids(conn)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("auto_prompt sweep: 후보 조회 실패: %r", exc)
+            return stats
+        if not candidate_ids:
+            return stats
+        import time as _t
+        now = _t.monotonic()
+        generated_this_cycle = 0
+        products = {int(p["id"]): p for p in _list_products(conn, include_inactive=True)}
+        for pid in candidate_ids:
+            product = products.get(pid)
+            if not product:
+                continue
+            stats["scanned"] += 1
+            # 1) 프롬프트 미입력만 대상 (이미 있으면 자동완성 안 함).
+            if _product_prompt_present(conn, pid):
+                stats["skipped"] += 1
+                continue
+            # 2) 실패 backoff — 직전 실패 제품은 backoff 창 동안 LLM 재호출 안 함(M1 비용 누수 차단).
+            with _AUTO_PROMPT_FAIL_LOCK:
+                fail_until = _AUTO_PROMPT_FAIL_UNTIL.get(pid, 0.0)
+            if fail_until > now:
+                stats["skipped"] += 1
+                continue
+            # 3) 분석률 — coverage API 와 동일 캐시(있으면 재사용, TTL 만료/부재 시 계산).
+            cache_key = (pid, product.get("datasource_key") or "")
+            cov = _insight_cov_cache_get(cache_key)
+            if cov is None:
+                cov = _compute_product_insight_coverage(conn, product)
+                _insight_cov_cache_put(cache_key, cov)
+            pct = cov.get("pct")
+            if pct is None or float(pct) < _AUTO_PROMPT_COVERAGE_THRESHOLD:
+                stats["skipped"] += 1
+                continue
+            # 4) cycle 당 생성 상한 — 비용 버스트 분산(M2). 남은 적격 제품은 다음 cycle 처리.
+            if _AUTO_PROMPT_MAX_PER_CYCLE > 0 and generated_this_cycle >= _AUTO_PROMPT_MAX_PER_CYCLE:
+                break
+            # 5) 자동완성·저장·마커.
+            res = _autonomous_generate_product_prompt(pid)
+            status = res.get("status")
+            if status == "ok":
+                stats["generated"] += 1
+                generated_this_cycle += 1
+                with _AUTO_PROMPT_FAIL_LOCK:
+                    _AUTO_PROMPT_FAIL_UNTIL.pop(pid, None)
+            elif status in ("skip_present", "skip_marked"):
+                stats["skipped"] += 1
+                with _AUTO_PROMPT_FAIL_LOCK:
+                    _AUTO_PROMPT_FAIL_UNTIL.pop(pid, None)
+            else:  # no_llm / no_body / error — 매 cycle 재호출 방지 backoff (M1).
+                stats["errors"] += 1
+                with _AUTO_PROMPT_FAIL_LOCK:
+                    _AUTO_PROMPT_FAIL_UNTIL[pid] = now + _AUTO_PROMPT_FAIL_BACKOFF_SEC
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if stats["generated"] or stats["errors"]:
+        log.info("auto_prompt sweep 완료: %s", stats)
+    return stats
+
+
+@app.on_event("startup")
+def _start_auto_prompt_sweep_loop() -> None:
+    """TASK-0309: insight 분석률 95% 도달 제품의 프롬프트 무인 자동완성 sweep 루프.
+
+    간격 AGENT_AUTO_PROMPT_SWEEP_SEC(기본 180, 0=비활성). 부팅 직후 jitter 후 주기 실행.
+    비용 안전장치: ① 성공 시 1회성 마커로 제품당 LLM 1회 영구 제외 ② cycle 당 생성 상한
+    AGENT_AUTO_PROMPT_MAX_PER_CYCLE(기본 3, 0=무제한) ③ 실패 제품 backoff
+    AGENT_AUTO_PROMPT_FAIL_BACKOFF_SEC(기본 3600) — 만성 실패의 매-cycle 재호출 차단.
+    (기존 daemon-thread startup 훅 _start_db_rule_reconcile_loop 패턴 답습.)"""
+    import logging
+    import threading
+    import time as _t
+    log = logging.getLogger(__name__)
+    try:
+        interval = int(os.getenv("AGENT_AUTO_PROMPT_SWEEP_SEC", "180") or "180")
+    except Exception:
+        interval = 180
+    if interval <= 0:
+        log.info("auto_prompt sweep 비활성(AGENT_AUTO_PROMPT_SWEEP_SEC<=0)")
+        return
+
+    def _run():
+        _t.sleep(min(45, interval))  # 부팅 직후 thundering-herd 회피.
+        while True:
+            try:
+                _auto_prompt_sweep_once()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("auto_prompt sweep loop 1 cycle 실패(무시): %s", exc)
+            _t.sleep(interval)
+
+    threading.Thread(target=_run, name="web-auto-product-prompt-sweep", daemon=True).start()
+
+
 # ── TASK-0242: 제품 datasource 별 DB insight 파악 내용 (관리 콘솔 > 제품 > 데이터소스) ──────
 # coverage(_compute_product_insight_coverage)가 '얼마나(완료율)'를 본다면, 아래는 '무엇을(역할/도메인)'을
 # rag_objects ⋈ texts 에서 DB(schema_name) 단위로 끌어와 각 DB 행에 한 줄 설명 + 추가 picker 상태로 표시한다.
@@ -22401,27 +22697,20 @@ async def admin_approve_product_db_rule_pending(product_id: int, key: str, rule_
         conn.close()
 
 
-async def _collect_product_prompt_context(product_id: int, request: Request):
-    """TASK-0237: 제품 프롬프트 자동작성의 수집·조립 단계를 공유 헬퍼로 추출.
+def _assemble_product_prompt_llm_request(product_id: int):
+    """TASK-0309: 제품 프롬프트 LLM 요청 조립 (request-less, 인증 비포함).
 
-    비스트리밍(POST /prompt/generate)과 스트리밍(GET /prompt/generate/stream) 양쪽이
-    동일한 ①MySQL 제품/스키마 조회 → ②PG 인사이트 수집 → ③knowledge_block 구성 →
-    ④messages/create_kwargs 조립을 공유한다(중복 제거).
+    TASK-0237 의 수집·조립을 인증에서 분리한 코어. 인증 게이트 경로
+    (`_collect_product_prompt_context`) 와 무인 자동완성 sweep
+    (`_autonomous_generate_product_prompt`) 양쪽이 동일한 ①MySQL 제품/스키마 조회 →
+    ②PG 인사이트 수집 → ③knowledge_block 구성 → ④messages/create_kwargs 조립을 공유한다.
 
     반환: (error_response, context)
-      - 인증/권한/제품부재 실패 시 (JSONResponse, None) — 호출부가 그대로 return.
-      - 성공 시 (None, dict) — dict 키: openai_client, create_kwargs, llm_model, meta_base.
+      - 제품부재(404)/LLM 클라이언트 부재(503) 시 (JSONResponse, None).
+      - 성공 시 (None, dict) — keys: openai_client, create_kwargs, llm_model, max_tokens, meta_base.
         meta_base 는 truncated 를 제외한 meta 전부(LLM 호출 후 truncated 만 덧붙임).
     """
     conn = _connect_memory()
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error, None
-    if not _account_has_permission(account, "product.manage"):
-        conn.close()
-        return _json_error("제품 관리 권한이 필요합니다.", 403), None
-
     try:
         cur = conn.cursor()
         cur.execute(
@@ -22771,6 +23060,29 @@ async def _collect_product_prompt_context(product_id: int, request: Request):
         "max_tokens": _mt,
         "meta_base": meta_base,
     }
+
+
+async def _collect_product_prompt_context(product_id: int, request: Request):
+    """TASK-0237: 제품 프롬프트 자동작성 수집·조립의 **인증 게이트** 래퍼.
+
+    인증/`product.manage` 권한을 확인한 뒤 request-less 코어
+    (`_assemble_product_prompt_llm_request`) 에 위임한다. 비스트리밍
+    (POST /prompt/generate)·스트리밍(GET /prompt/generate/stream) 엔드포인트가
+    본 함수를 await 한다(시그니처·반환계약 불변).
+
+    반환: (error_response, context) — 인증/권한 실패 시 (JSONResponse, None),
+    그 외는 코어 반환을 그대로 전달.
+    """
+    conn = _connect_memory()
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error, None
+        if not _account_has_permission(account, "product.manage"):
+            return _json_error("제품 관리 권한이 필요합니다.", 403), None
+    finally:
+        conn.close()
+    return _assemble_product_prompt_llm_request(product_id)
 
 
 def _sse_pack(event: str, payload: dict) -> str:
