@@ -390,3 +390,16 @@ source_of_truth: true
 - Impact: 순수 데이터 보정 + INSERT 1컬럼. 스키마 DDL 0(0019 컬럼 재사용), 엔드포인트/RBAC/FE 0. production=PG 정본(멤버 write PG 단일경로). MySQL=read parity(무영향).
 - Rollback: alembic downgrade 0019(backfill no-op) + add_member INSERT 컬럼 revert. 데이터 무손실(UPDATE 만).
 - 검증: py_compile(group_members·0020) OK + §18.8 적대 패널 2렌즈(데이터정확성·보안/회귀) **SHIP, BLOCKING 0**. 라이브 backfill 적용 + unread smoke + PB-0008 배포 후. **★배포 alembic 0020 필수.**
+
+## CHG-20260625T191040-composer-nonblock-interrupt (cross-feature → feature-0002+0003, Major §12.3 — composer/send 핵심 경로 동작 변경)
+- Date: 2026-06-25. worktree `ai/claude/composer-nonblock-interrupt`. 코드 정본=feature-0003-agent-web-ui(`static/app.js`·`static/index.html`·`app.py`)+feature-0002-agent-core(`modules/memory.py`·`agent_core.py`) — feature-0009 cross-feature 추적.
+- Reason: 사용자 지시 — gc-run-status 블로킹 버그의 근본 방지를 위한 composer 구조 개선 3건. (R1) 모든 대화에서 요청 전송 시 입력창 비활성화 구조 제거. (R2) R1 후 그룹 @assistant 중복실행 방어(사용감 저해 없이). (R3) 1:1 본인 대화는 처리 중 새 요청 시 앞 run 인터럽트 후 재요청 — 추론 내역·맥락 보존. AskUserQuestion: R2=중복 차단+안내 / R3=가시+다음 run 맥락.
+- 변경(FE `static/app.js`):
+  - **R1**: 신규 `state.myAskInFlight` Set(이 클라이언트가 띄운 @assistant run, busyKey 기준) + `_myAskInFlightHere()` 헬퍼 — busyConversations(loadHistory 가 글로벌 processing=타 멤버 run 으로도 set)와 분리해 "내 run" 만 판정. `renderComposer` 입력창 `disabled = isBlocked`(busy 제거 → 처리 중 입력 자유). 전송 버튼은 `myRun && 빈입력` 일 때만 '중단', 그 외 '전송'(입력 있으면 처리 중에도 전송). 클릭/Enter/mouseenter·input 리스너 동일 기준. finalize 버튼은 myRun 기준 노출.
+  - **R2**: sendPrompt 가 @assistant 경로(그룹 비멘션 채팅은 상위에서 store-only return)에서 `_myAskInFlightHere()` true + 그룹이면 toast 안내 후 return(중복 run 차단). 타 멤버 @assistant·채팅은 자유(myRun 기준이라 미차단). 백엔드 slot=WEB_PARALLEL_LIMIT(6) 라 FE 가 중복을 막음.
+  - **R3**: 1:1 + myRun 이면 `_interruptCurrentRunForResend(cid)` — 이전 run fetch abort + busy/myAskInFlight/pendingBubble/폴링 정리 + `await /api/cancel{preserve_reasoning:true}` 후 새 run 발사. 취소 권한 게이트(없으면 안내+return, 동시 run 미발생). await(network=macrotask)가 직전 aborted send 의 finally(microtask)를 먼저 드레인 → same-key(cid) 정리 경합 회피.
+  - 새로고침/resume 복원: 1:1 processing 복원 시 myAskInFlight 도 복원(중단·R3 유지). 그룹은 오귀속 방지로 제외.
+- 변경(BE): `app.py /api/cancel` 가 `preserve_reasoning` 읽어 `mark_cancel_requested(..., preserve_reasoning=)` (memory.py, 기본 False — 명시 '중단'은 폐기 유지) → KV `cancel_preserve`. `agent_core.py` canceled 분기가 `cancel_preserve=="1"` 이면 `result["rationale"]`(또는 answer)을 "(중단되어 진행분 보존)" assistant 메시지로 `_save_message`+`_mirror_message`(meta interrupted) 저장 → 가시(이력) + 다음 run 맥락. `_clear_cancel_request` 가 `cancel_preserve` 도 정리(위생).
+- Impact: 입력창이 더 이상 처리 중 잠기지 않아 gc-run-status 류 FE 고착이 사용자를 블로킹하지 않음(근본 방지). 1:1 무회귀(myRun 기준 + 권한 게이트). 그룹 채팅/타 멤버 발화 자유. preserve 저장 내용은 서버측 rationale/answer 뿐(클라 입력 아님 — 주입 안전). 신규 KV 키 `cancel_preserve` 는 cancel_* 와 동일 정리 경로.
+- Rollback Notes: 5파일 revert(app.js composer/send/myAskInFlight, app.py /api/cancel 1블록, memory.py mark_cancel_requested+_clear_cancel_request, agent_core canceled 분기, index.html 캐시버스터). 스키마 0.
+- 검증: `node --check`(app.js) + `py_compile`(app.py·agent_core·memory) PASS. §18.8 적대 패널 3렌즈(R1·R2 회귀 / R3·race·BE / 교차회귀) — 진짜 BLOCKING 0(REV 참조; 패널 적발 유효 4건 반영: refresh myAskInFlight 복원·툴팁 일관화·interrupt renderComposer·cancel_preserve 정리). **PB-0008 미실측**(worktree=WSL; 다중 사용자/인터럽트 동작은 배포 후 라이브 검증 권장). 캐시버스터 `composer-nonblock-interrupt`.

@@ -351,3 +351,17 @@ source_of_truth: true
   - add_member `MAX`↔`ON CONFLICT` TOCTOU 좁은 창 — 단일 statement, 자기 가입 기준이라 무시 가능.
 - Verification: py_compile(group_members·0020) + §18.8 패널 2렌즈 SHIP. backfill 라이브 적용 + unread smoke + PB-0008 배포 후.
 - Human Approval Needed: 아니오 (Major·사용자 명시 버그 보고·데이터 보정 멱등·무회귀, deploy_scope: included 사전승인).
+
+## REV-20260625T191040-composer-nonblock-interrupt [SUBAGENT:R1R2회귀·R3race·BE / 교차회귀 3렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: composer-nonblock-interrupt (CHG-20260625T191040) — 입력창 비잠금(R1) + 그룹 @assistant 중복 차단(R2) + 1:1 인터럽트 재요청·추론 보존(R3). **Major §12.3** (composer/send 핵심 경로 동작 변경, 인가/스키마 변경 없음). 사용자 지시 + AskUserQuestion(R2=중복차단+안내 / R3=가시+다음 run 맥락).
+- Related Change: feature-0003 `static/app.js`(myAskInFlight·renderComposer·sendPrompt R2/R3·_interruptCurrentRunForResend·resume/loadHistory 복원) + `app.py`(/api/cancel preserve_reasoning) + `static/index.html`(캐시버스터) + feature-0002 `modules/memory.py`(mark_cancel_requested+_clear_cancel_request) + `agent_core.py`(canceled 분기 부분추론 보존).
+- Reason: 핵심 send/cancel 경로 + 동시성(같은-계정 slot=6 동시 run) + 라이브 자동 배포(deploy_scope: included) → §18.8 적대 패널 필수.
+- 적대적 검증(Explore 서브에이전트 3, lens 분리 — R1/R2 회귀·R3/race/BE·교차회귀; "결함 적발"):
+  - **R1/R2 회귀**: myAskInFlight 생애주기·R2 오차단·버튼 thrash·dead code 점검. 버튼 thrash 반증(dataset.mode 가드로 모드 변동 시에만 innerHTML 교체). `busy` 변수는 dead 아님(composer 타이틀 'else if(busy)' 사용 — 유지).
+  - **R3/race/BE**: same-key 정리 race 반증(await /api/cancel macrotask 가 aborted send finally microtask 를 먼저 드레인 → 새 add 가 나중; 권한 게이트로 await-skip 차단). preserve 콘텐츠 주입 안전(서버측 rationale/answer 만). mark_cancel_requested 회귀 0(기본 False). supersede 가드로 canceled→new processing 클로버 없음.
+  - **교차회귀**: 1:1 정상·그룹 비멘션 채팅 자유·명시 중단·취소-재요청·전송후 입력clear 점검.
+- 패널 반영(유효 4 — 모두 적용): ① **새로고침/resume 후 myAskInFlight 미복원** → 1:1 processing 복원 시 myAskInFlight 복원(그룹은 오귀속 방지 제외) — 새로고침 후 중단 버튼·R3 동작 회복. ② mouseenter 툴팁이 isCurrentConvBusy(타 멤버 run 시 숨김) → `_myAskInFlightHere()&&빈입력` 으로 일관화. ③ `_interruptCurrentRunForResend` 후 renderComposer 추가(버튼 즉시 갱신). ④ `_clear_cancel_request` 가 cancel_preserve 도 정리(위생; stale read 는 mark_cancel_requested 원자적 재세팅으로 원래 없음).
+- 핵심 판정: **SHIP**. 진짜 BLOCKING 0(패널 "BLOCKING" 라벨 3건은 ①refresh 복원[수정]·②툴팁[NIT 수정]·③interrupt 렌더[NIT 수정] 로 트리아지·해소). 잔여 수용: 그룹 새로고침 직후 1회 한해 내 중복차단 완화(허용, slot=6 + gc-run-status 가 상태 정합).
+- Verification: `node --check`(app.js) + `py_compile`(app.py·agent_core·memory) PASS. **PB-0008 미실측**(worktree=WSL; 입력창 비잠금·인터럽트·중복차단은 배포 후 라이브 다중 사용자 검증 권장).
+- Human Approval Needed: 아니오 (사용자 명시 지시 + AskUserQuestion 반영, composer 동작 개선·1:1 무회귀, deploy_scope: included 사전승인).

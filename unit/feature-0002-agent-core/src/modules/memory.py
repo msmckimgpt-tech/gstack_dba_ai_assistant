@@ -345,13 +345,17 @@ WHERE `Key` = 'delete_requested'
     return ids
 
 
-def mark_cancel_requested(conn, conversation_id: str, run_id: str = "") -> None:
+def mark_cancel_requested(conn, conversation_id: str, run_id: str = "", preserve_reasoning: bool = False) -> None:
     if not conversation_id:
         return
     effective_run_id = str(run_id or "").strip() or load_memory_kv(conn, conversation_id, "last_status_run_id")
     save_memory_kv(conn, conversation_id, "cancel_requested", "1")
     save_memory_kv(conn, conversation_id, "cancel_run_id", str(effective_run_id or "").strip())
     save_memory_kv(conn, conversation_id, "cancel_at", utc_now_iso())
+    # composer-nonblock-interrupt R3: 1:1 인터럽트 재요청은 이 run 의 부분 추론을 폐기하지 않고 보존한다.
+    # run_agent 의 canceled 분기가 이 플래그(cancel_run_id 와 짝)를 읽어 부분 추론을 메시지로 저장한다.
+    # 명시 '중단'(preserve=False)은 "0" 으로 덮어 이전 인터럽트 잔재 플래그가 오해석되지 않게 한다.
+    save_memory_kv(conn, conversation_id, "cancel_preserve", "1" if preserve_reasoning else "0")
 
 
 def mark_delete_requested(conn, conversation_id: str, run_id: str = "") -> None:
@@ -396,6 +400,9 @@ def _clear_cancel_request(conn, conversation_id: str, run_id: str = "") -> None:
     save_memory_kv(conn, conversation_id, "cancel_requested", "")
     save_memory_kv(conn, conversation_id, "cancel_run_id", "")
     save_memory_kv(conn, conversation_id, "cancel_at", "")
+    # composer-nonblock-interrupt R3: preserve 플래그도 함께 정리(위생) — cancel_requested 와 짝으로
+    # 매 cancel 마다 mark_cancel_requested 가 새로 세팅하므로 stale read 는 없으나, lingering 키 누적을 차단.
+    save_memory_kv(conn, conversation_id, "cancel_preserve", "")
 
 
 def mark_finalize_requested(conn, conversation_id: str, run_id: str = "") -> None:

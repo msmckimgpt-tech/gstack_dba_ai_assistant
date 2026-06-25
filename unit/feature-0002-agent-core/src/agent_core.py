@@ -3542,6 +3542,24 @@ def _run_agent_core(
 
     if canceled_by_user:
         result["error"] = "요청이 취소되었습니다."
+        # composer-nonblock-interrupt R3: 1:1 인터럽트 재요청(preserve_reasoning)으로 취소된 run 은
+        # 부분 추론을 폐기하지 않고 assistant 메시지로 보존한다 — 가시(이력) + 다음 run 맥락.
+        # 명시 '중단' 버튼(cancel_preserve != "1")은 기존대로 답변 없이 종료(동작 무변경).
+        # _clear_cancel_request 가 cancel_* 플래그를 지우기 전에 먼저 읽는다.
+        try:
+            _preserve_reasoning = str(load_memory_kv(mem_conn, cid, "cancel_preserve") or "").strip() == "1"
+        except Exception:
+            _preserve_reasoning = False
+        if _preserve_reasoning and not pending_delete:
+            try:
+                if _writes_allowed(mem_conn, cid):
+                    _partial = str(result.get("rationale") or "").strip() or str(result.get("answer") or "").strip()
+                    if _partial:
+                        _kept = f"(이전 요청이 중단되어, 진행된 내용까지 보존합니다.)\n\n{_partial}"
+                        _save_message(mem_conn, cid, "assistant", content=_kept)
+                        _mirror_message(mem_conn, cid, "assistant", _kept, run_id, meta={"interrupted": True})
+            except Exception:
+                pass
         try:
             _clear_cancel_request(mem_conn, cid, run_id=run_id)
         except Exception:
