@@ -47,8 +47,8 @@ __all__ = [
 
 
 """OpenAI client, prompt templates, LLM call functions."""
-from .config import *
-from . import config as cfg
+from shared.config import *
+from shared import config as cfg
 from shared.model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model
 from .utils import append_log_line
 import json, os, time
@@ -563,7 +563,7 @@ _TIER_CLIENT_CACHE: "dict[tuple, Any]" = {}
 
 def _resolve_tier_endpoint(model: str | None) -> "tuple[str | None, str | None]":
     """model 의 tier 에 맞는 (base_url, api_key) 반환. 해당 tier creds 미설정 시 기본 provider 폴백."""
-    from .config import (
+    from shared.config import (
         LLM_BASE_URL, LLM_API_KEY,
         BEDROCK_GATEWAY_URL, BEDROCK_GATEWAY_API_KEY,
         LOCAL_LLM_API_BASE, LOCAL_LLM_API_KEY,

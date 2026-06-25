@@ -53,7 +53,7 @@ def open_pg_conn():
 
 def get_settings() -> dict:
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from modules import config  # type: ignore
+    from shared import config  # type: ignore
     return {
         "model": config.AGENT_KB_EMBEDDING_MODEL,
         "dim": config.AGENT_KB_EMBEDDING_DIM,

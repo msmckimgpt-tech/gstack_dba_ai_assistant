@@ -904,7 +904,7 @@ class PgKbBackend(KbBackend):
         # active_ds=None(기본 단일 MySQL) → datasource_key NULL 객체만, ds 설정 시 → 그 ds 객체만.
         # datasource 간 객체 교차노출 차단. 컬럼 부재(마이그 전) 시 except → 필터 생략(graceful).
         try:
-            from .config import get_active_datasource
+            from shared.config import get_active_datasource
             _active_ds = get_active_datasource()
         except Exception:
             _active_ds = None
@@ -1177,7 +1177,7 @@ def _log_kb_write_audit(
         )
 
     from .db import connect_with_retry  # noqa — circular import 회피
-    from .config import MEMORY_DB
+    from shared.config import MEMORY_DB
     # B-4: attempts=1 — best-effort. MySQL 일시 장애 시 caller block 방지.
     conn = connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)
     try:

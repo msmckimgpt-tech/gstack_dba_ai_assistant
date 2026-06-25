@@ -31,7 +31,7 @@ __all__ = [
 
 
 """Domain anchor, request analysis, follow-up detection."""
-from .config import *
+from shared.config import *
 import json, re
 from typing import Any
 

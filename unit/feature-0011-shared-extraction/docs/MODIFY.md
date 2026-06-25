@@ -123,3 +123,27 @@ source_of_truth: true
   modules.{conn_health,datasources}→ModuleNotFoundError(shim 제거 확인) · modules.{config,db} shim 유지 ·
   db back-dep · cred_crypto OK. §18.8 3렌즈(missed-ref/correctness/deploy) BLOCKING 0/NIT 0(실 이미지 배포 레이아웃 import 실증).
 - Rollback Notes: 단일 commit revert 로 18 파일 import 복원 + 2 shim 재생성. 이미지 재빌드만(스키마/데이터 무변경).
+
+## CHG-20260625-0006
+- Date: 2026-06-25
+- Related Requirement: P5a Step 5b — config 소비처를 modules.config alias → shared.config 정본 경로로
+  점진 마이그레이션 + modules/config.py alias shim 제거 (TASK-0011-9 부분; Step 5 의 두 번째 sub-step).
+- Summary: config 는 L0 foundation(fan-in 25; 16+ 모듈이 `from .config import *` 로 재노출;
+  `modules/__init__.py` eager-import). 모든 소비처(**~150 ref, 53 파일**)를 `from modules import config`·
+  `from modules.config import X`·`import modules.config`·`from . import config`·`from .config import *`·
+  dynamic(`sys.modules["modules.config"]`·mock.patch·importlib) 전 형태에서 `from shared import config`/
+  `from shared.config import …`/`shared.config` 로 일괄 마이그레이션하고, `modules/config.py` alias shim 을 **삭제**.
+  modules/__init__.py 의 eager `from . import config`→`from shared import config`, `from .config import *`→
+  `from shared.config import *` (재노출 체인·`_all_modules` 리스트 보존 — `config` 이름이 shared.config 로 재바인딩).
+- 마이그레이션 방식: subagent workflow 28파일 + 세션한도(2pm reset)로 미완된 26파일 중 21파일 결정적 스크립트
+  (정규식 `modules.config`→`shared.config`, `from modules import config`→`from shared import config`)로 보완.
+  나머지(tools.py 등)는 config 참조 0. config·conn_health·datasources 외 타 모듈(db/memory/render/utils 등)은 미변경.
+- Files: 53 consumer files (M — modules/* 17, scripts 6, tests 19, eval 7, agent_core.py, feature-0003 app.py 등)
+  + `unit/feature-0002-agent-core/src/modules/config.py` (D, shim 삭제). `shared/{db,conn_health,datasources}.py`
+  의 `from .config import *`/`from . import config` 는 `.`=shared 로 정본 해석(무편집).
+- Impact: 런타임 동작 불변(shared.config 는 직전 alias 가 가리키던 동일 객체 — 단일 상태, split-brain 없음). `make test`
+  **회귀 0**(전체 green, 2 skip, F/E 0). **residual grep 0**(라이브 modules.config 참조 0). deploy-layout smoke:
+  `from shared import config` OK · `import modules.config`→ModuleNotFoundError(shim 제거) · modules 패키지+__init__
+  eager 체인 OK · db/memory shim 유지 · agent_core/web app import OK · config 재노출 체인(`from modules import GLOBAL_CONVERSATION_ID`·`from modules.db import AGENT_KB_PG_PORT`) OK. §18.8 3렌즈(missed-ref/correctness/deploy,
+  실 이미지 baked-layout 빌드·실행) BLOCKING 0/NIT 0.
+- Rollback Notes: 단일 commit revert 로 53 파일 import 복원 + config shim 재생성. 이미지 재빌드만(스키마/데이터 무변경).

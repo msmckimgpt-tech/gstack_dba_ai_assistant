@@ -14,7 +14,7 @@ MSSQL datasource 를 실제 활성화하면 보안 게이트가 아직 MySQL 방
 """
 from __future__ import annotations
 
-from . import config as cfg
+from shared import config as cfg
 
 
 # ── 사전 부하추정 파서 (엔진별 결과 → 예상 처리 행수) ──────────────────────────

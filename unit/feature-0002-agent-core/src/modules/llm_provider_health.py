@@ -42,7 +42,7 @@ def _provider_label(provider: str | None) -> str:
 def current_provider() -> str:
     """런타임 활성 provider 판정(config env 기반). bedrock | local | openai."""
     try:
-        from . import config as cfg
+        from shared import config as cfg
         if getattr(cfg, "BEDROCK_GATEWAY_URL", None) and getattr(cfg, "BEDROCK_GATEWAY_API_KEY", None):
             return "bedrock"
         if getattr(cfg, "LOCAL_LLM_API_BASE", None) and getattr(cfg, "LOCAL_LLM_API_KEY", None):
@@ -361,7 +361,7 @@ def probe_provider(*, timeout_sec: int = 8, force: bool = False) -> "dict[str, A
     _PROBE_STATE["running"] = True
     _PROBE_STATE["ts"] = now
     try:
-        from . import config as cfg
+        from shared import config as cfg
         from .llm import _get_llm_client
         model = getattr(cfg, "OPENAI_MODEL", None) or "claude-sonnet-4"
         client = _get_llm_client(timeout_sec=timeout_sec, model=model)

@@ -34,8 +34,8 @@ __all__ = [
 
 
 """Memory table CRUD operations and conversation management."""
-from .config import *
-from . import config as cfg
+from shared.config import *
+from shared import config as cfg
 import json, re
 from datetime import datetime, timezone
 from typing import Any

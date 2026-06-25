@@ -29,7 +29,7 @@ import threading
 import time
 from typing import Any, Optional
 
-from .config import (
+from shared.config import (
     AGENT_ASK_WORKER_ENABLED,
     AGENT_ASK_WORKER_TICK_SEC,
     AGENT_ASK_WORKER_IDLE_POLL_SEC,

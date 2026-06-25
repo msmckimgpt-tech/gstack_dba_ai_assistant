@@ -17,7 +17,7 @@ import time
 
 logger = logging.getLogger("agent_core.knowledge")
 
-from .config import *
+from shared.config import *
 from .utils import _text_hash, _text_store_insert
 import difflib, hashlib, json, os, re, time
 from datetime import datetime, timezone

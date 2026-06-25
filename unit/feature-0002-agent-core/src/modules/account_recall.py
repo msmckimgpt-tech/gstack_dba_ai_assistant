@@ -20,7 +20,7 @@ G3(PII 마스커) 완료 후 별 cycle. 두 flag(RECALL/INJECT) 기본 OFF.
 import logging
 from typing import Any, Optional
 
-from .config import (
+from shared.config import (
     AGENT_ACCOUNT_INSIGHT_RECALL,
     AGENT_ACCOUNT_INSIGHT_INJECT,
     AGENT_ACCOUNT_INSIGHT_MAX_CONVS,

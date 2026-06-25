@@ -54,7 +54,7 @@ __all__ = [
 
 
 """Output formatting, result rendering, response building."""
-from .config import *
+from shared.config import *
 import csv, json, os, re, uuid
 from typing import Any
 from rich.table import Table

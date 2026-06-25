@@ -160,7 +160,7 @@ def open_mysql_conn():
     """기존 modules/db.py 의 connect_with_retry 사용."""
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from modules.db import connect_with_retry  # type: ignore
-    from modules.config import MEMORY_DB  # type: ignore
+    from shared.config import MEMORY_DB  # type: ignore
     return connect_with_retry(database=MEMORY_DB, autocommit=False, attempts=2)
 
 

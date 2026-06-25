@@ -76,11 +76,11 @@ def test_fusion_combines_and_ranks(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ALPHA", 0.6, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_BETA", 0.4, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ALPHA", 0.6, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_BETA", 0.4, raising=True)
     # raw 가중합 수식 검증 — 정규화 OFF 로 고정해 결정적으로 본다.
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
 
     # docA: vec=0.9, trg=0.1 → 0.6*0.9 + 0.4*0.1 = 0.58
     # docB: vec=0.2, trg=0.9 → 0.6*0.2 + 0.4*0.9 = 0.48
@@ -102,8 +102,8 @@ def test_fusion_union_merge_key_is_conv_fact(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
 
     vec_rows = [_row("c1", "docX", "동일 문서", 5, 0.8)]
     trg_rows = [_row("c1", "docX", "동일 문서", 5, 0.5)]
@@ -125,8 +125,8 @@ def test_fusion_vector_only_match(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
 
     vec_rows = [_row("c1", "vonly", "벡터만 매칭", 4, 0.7)]
     trg_rows = []  # trigram 결과 없음
@@ -143,8 +143,8 @@ def test_fusion_trigram_only_match(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
 
     vec_rows = []
     trg_rows = [_row("c1", "tonly", "키워드만 매칭", 2, 0.9)]
@@ -169,10 +169,10 @@ def test_fusion_normalize_rescales_signals(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ALPHA", 0.5, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_BETA", 0.5, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ALPHA", 0.5, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_BETA", 0.5, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_NORMALIZE", True, raising=True)
 
     # 두 doc, 두 신호. vec span=[0.78,0.80], trg span=[0.02,0.20].
     vec_rows = [_row("c1", "docHi", "벡터 우위", 5, 0.80), _row("c1", "docLo", "키워드 우위", 5, 0.78)]
@@ -193,10 +193,10 @@ def test_fusion_normalize_off_vec_dominates(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ALPHA", 0.5, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_BETA", 0.5, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ALPHA", 0.5, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_BETA", 0.5, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
 
     vec_rows = [_row("c1", "docHi", "벡터 우위", 5, 0.80), _row("c1", "docLo", "키워드 우위", 5, 0.78)]
     trg_rows = [_row("c1", "docHi", "벡터 우위", 5, 0.02), _row("c1", "docLo", "키워드 우위", 5, 0.20)]
@@ -216,8 +216,8 @@ def test_fusion_same_factkey_different_content_not_merged(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_NORMALIZE", False, raising=True)
     # 같은 (c1, dup) 인데 content 가 다른 두 행(스키마상 정상 공존).
     vec_rows = [_row("c1", "dup", "내용 A", 5, 0.80), _row("c1", "dup", "내용 B", 5, 0.60)]
     _install_backend(monkeypatch, vec_rows=vec_rows, trg_rows=[])
@@ -237,7 +237,7 @@ def test_fusion_both_empty_falls_through_to_trigram(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
     _install_backend(monkeypatch, vec_rows=[], trg_rows=[])
 
     out = knowledge._load_rag_documents_for_request_pg(["c1"], "쿼리", ["common", ""])
@@ -254,7 +254,7 @@ def test_qvec_none_uses_trigram_only(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: None)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", True, raising=True)
 
     vec_spy: list = []
     trg_spy: list = []
@@ -280,7 +280,7 @@ def test_gate_off_uses_legacy_2tier_vector_first(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", False, raising=True)
 
     vec_spy: list = []
     trg_spy: list = []
@@ -301,7 +301,7 @@ def test_gate_off_vector_empty_falls_back_to_trigram(pg_mock):
     knowledge = _knowledge()
     monkeypatch = pg_mock
     monkeypatch.setattr(knowledge, "_embed_query_vector", lambda *a, **k: [0.1] * 1024)
-    monkeypatch.setattr(sys.modules["modules.config"], "AGENT_KB_HYBRID_ENABLED", False, raising=True)
+    monkeypatch.setattr(sys.modules["shared.config"], "AGENT_KB_HYBRID_ENABLED", False, raising=True)
 
     trg_rows = [_row("c1", "tdoc", "트라이그램 결과", 3, 0.5)]
     _install_backend(monkeypatch, vec_rows=[], trg_rows=trg_rows)

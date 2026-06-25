@@ -78,7 +78,7 @@ class _StubConn:
 def test_resolve_env_fallback_when_no_db(monkeypatch):
     """DB 에 키 없음 → .env DATASOURCES 폴백(레거시 호환)."""
     from shared import datasources as dsr
-    from modules import config as cfg
+    from shared import config as cfg
     monkeypatch.setattr(cfg, "DATASOURCES", {"winsql": {"key": "winsql", "engine": "mssql", "host": "h"}})
     out = dsr.resolve(_StubConn(), "winsql")
     assert out and out["key"] == "winsql" and out["engine"] == "mssql"
@@ -90,7 +90,7 @@ def test_resolve_db_isolation_when_kek_absent(monkeypatch):
         if k.startswith("AGENT_DATASOURCE_KEK_V"):
             monkeypatch.delenv(k, raising=False)
     from shared import datasources as dsr
-    from modules import config as cfg
+    from shared import config as cfg
     monkeypatch.setattr(cfg, "DATASOURCES", {"winsql": {"key": "winsql", "engine": "mssql", "host": "h"}})
     # DB 에 다른 키(암호화됨)가 있어도 KEK 없어 skip — winsql(.env)는 영향 없음
     assert dsr.resolve(_StubConn(), "winsql")["key"] == "winsql"
@@ -99,7 +99,7 @@ def test_resolve_db_isolation_when_kek_absent(monkeypatch):
 
 def test_resolve_none_conn_uses_env(monkeypatch):
     from shared import datasources as dsr
-    from modules import config as cfg
+    from shared import config as cfg
     monkeypatch.setattr(cfg, "DATASOURCES", {"prod": {"key": "prod", "engine": "mysql"}})
     assert dsr.resolve(None, "prod")["engine"] == "mysql"
     assert dsr.resolve(None, "ghost") is None
@@ -107,7 +107,7 @@ def test_resolve_none_conn_uses_env(monkeypatch):
 
 # ── B1: effective default_db ContextVar ──────────────────────────────────────
 def test_b1_effective_default_db_injected():
-    from modules import config as cfg
+    from shared import config as cfg
 
     def check():
         cfg.set_active_datasource("winsql", engine="mssql", default_db="GameLog_151")
@@ -120,7 +120,7 @@ def test_b1_effective_default_db_injected():
 def test_b1_guard_reads_effective_not_static(monkeypatch):
     """TASK-0206 DB-단위: cross-DB 가드는 **product allowlist(DB명)** 를 catalog 허용집합으로 읽는다 —
     정적 DATASOURCES 의 default_db 가 아니다. (B1 단일-DB pin 모드 폐기 — DB-allowlist 가 대체.)"""
-    from modules import config as cfg
+    from shared import config as cfg
     from modules import tools
 
     def check():

@@ -267,7 +267,7 @@ def _text_hash(text: str) -> str:
 
 def provision() -> int:
     from modules.db import _pg_connect  # type: ignore
-    from modules import config as cfg  # type: ignore
+    from shared import config as cfg  # type: ignore
 
     conn = _pg_connect()
     n = 0

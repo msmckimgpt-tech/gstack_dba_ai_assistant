@@ -56,7 +56,7 @@ def _metrics(ranked: list[str], relevant: list[str], k: int) -> dict:
 
 
 def _retrieve(question: str, hybrid_enabled: bool) -> list[str]:
-    from modules import config as cfg  # type: ignore
+    from shared import config as cfg  # type: ignore
     from modules import kb_retrieval  # type: ignore
 
     prev = cfg.AGENT_KB_HYBRID_ENABLED
@@ -128,7 +128,7 @@ def _run_ab(questions: list[dict], ks: list[int]) -> dict:
 
 
 def _apply_cfg(normalize: bool, alpha: float, beta: float):
-    from modules import config as cfg  # type: ignore
+    from shared import config as cfg  # type: ignore
     prev = (cfg.AGENT_KB_HYBRID_NORMALIZE, cfg.AGENT_KB_HYBRID_ALPHA, cfg.AGENT_KB_HYBRID_BETA)
     cfg.AGENT_KB_HYBRID_NORMALIZE = bool(normalize)
     cfg.AGENT_KB_HYBRID_ALPHA = float(alpha)
@@ -137,7 +137,7 @@ def _apply_cfg(normalize: bool, alpha: float, beta: float):
 
 
 def _restore_cfg(prev):
-    from modules import config as cfg  # type: ignore
+    from shared import config as cfg  # type: ignore
     cfg.AGENT_KB_HYBRID_NORMALIZE, cfg.AGENT_KB_HYBRID_ALPHA, cfg.AGENT_KB_HYBRID_BETA = prev
 
 
@@ -151,7 +151,7 @@ def main(argv=None) -> int:
     p.add_argument("--out", default=None)
     args = p.parse_args(argv)
 
-    from modules import config as cfg  # type: ignore
+    from shared import config as cfg  # type: ignore
 
     if args.provision:
         print("[adv] provisioning evalkb_adv …", file=sys.stderr)

@@ -22,7 +22,7 @@ __all__ = [
 
 
 """SQL parsing, validation, auto-recovery, rewriting."""
-from .config import *
+from shared.config import *
 import json, re, time
 from typing import Any
 

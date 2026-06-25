@@ -29,8 +29,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
 
-from modules import config as cfg
-from modules.config import (
+from shared import config as cfg
+from shared.config import (
     OPENAI_MODEL,
     LLM_BASE_URL, LLM_API_KEY, LOCAL_LLM_API_KEY,
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_CONNECT_DB,
@@ -1261,7 +1261,7 @@ def _build_knowledge_context(
     # ITEM-02: 샘플쿼리 few-shot 주입(ds-scoped via 활성 datasource, approved∧active top-K).
     # **예시(few-shot)일 뿐 직접 실행 금지** — 패턴 참고용. env gate(A/B 측정·롤백용).
     try:
-        from modules.config import AGENT_SAMPLE_QUERIES_ENABLED
+        from shared.config import AGENT_SAMPLE_QUERIES_ENABLED
         examples_ctx = ""
         if AGENT_SAMPLE_QUERIES_ENABLED:
             from modules.sample_queries import load_example_queries_context
@@ -1278,7 +1278,7 @@ def _build_knowledge_context(
     # 답변을 막지 않는다(fail-soft). INJECT flag OFF 면 회상은 하되 컨텍스트엔 주입하지 않는다.
     try:
         from modules.account_recall import recall_account_conv_facts
-        from modules.config import AGENT_ACCOUNT_INSIGHT_INJECT
+        from shared.config import AGENT_ACCOUNT_INSIGHT_INJECT
         recalled = recall_account_conv_facts(
             account_id, user_message, exclude_conversation_id=conversation_id,
         )

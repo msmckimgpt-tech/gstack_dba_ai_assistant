@@ -11,7 +11,7 @@ import json
 import time
 from typing import Any
 
-from .config import AGENT_TOP_N, AGENT_MAX_SHOW
+from shared.config import AGENT_TOP_N, AGENT_MAX_SHOW
 from .db import execute_sql as _raw_execute_sql
 from .render import save_csv
 from . import dialects as _dialects  # Stage 2 P5: engine 별 introspection/sample SQL
@@ -142,7 +142,7 @@ class _DatasourceRouter:
 
     def activate(self, label: str) -> None:
         """선택된 datasource 의 allowlist·engine·default_db ContextVar 를 활성화(보안 게이트 기준)."""
-        import modules.config as _cfg
+        import shared.config as _cfg
         ds = self._by_label.get(label)
         if ds is None:
             return
@@ -231,7 +231,7 @@ def _freeform_sql_access_error(sql: str) -> str | None:
     backstop). 끝으로 schema 토큰을 Product allowlist 와 대조.
     """
     from . import sql_guard
-    import modules.config as _cfg
+    import shared.config as _cfg
     schemas, has_unqualified, catalogs = sql_guard.collect_schema_refs(
         sql, dialect=_dialects.active().sqlglot
     )
@@ -375,7 +375,7 @@ def _mssql_pin_gate() -> str | None:
     도구가 미허용 DB 에서 실행된다. 유효 allowlist = 저장 allowlist − 시스템 DB − 내부 DB. freeform·구조화
     도구(스키마 인자 유무 무관)가 공통 호출하는 단일 chokepoint.
     """
-    import modules.config as _cfg
+    import shared.config as _cfg
     if not (str(_dialects.active().name).lower() == "mssql" and _cfg.get_active_datasource()):
         return None
     allow = _ACTIVE_SCHEMA_ALLOWLIST.get()
@@ -392,7 +392,7 @@ def _mssql_pin_gate() -> str | None:
 
 
 def _cfg_get_active_datasource():
-    import modules.config as _cfg
+    import shared.config as _cfg
     return _cfg.get_active_datasource()
 
 
@@ -776,7 +776,7 @@ def _tool_describe_table(conn, args: dict) -> str:
     # 해소가 목적. PG 읽기 실패는 graceful({}) — 기존 출력 그대로 유지. scope=활성 datasource.
     kb_col_desc: dict = {}
     try:
-        from modules import config as _cfg
+        from shared import config as _cfg
         from modules.kb_metadata import load_column_descriptions_for_table
         kb_col_desc = load_column_descriptions_for_table(
             schema, table, scope_key=_cfg.get_active_datasource()
@@ -949,7 +949,7 @@ def _apply_query_cap(conn) -> None:
     에도 sticky 하게 적용된다 — generous 기본이라 빠른 도구엔 무해, 폭주만 차단. 매 호출
     재-SET 은 idempotent. 0/비활성이면 no-op, 실패 시 fail-open. "무거운 쿼리는 감수"
     정책상 기본 generous/off."""
-    import modules.config as _cfg
+    import shared.config as _cfg
     ms = int(getattr(_cfg, "AGENT_QUERY_MAX_EXECUTION_MS", 0) or 0)
     if ms <= 0:
         return
@@ -991,7 +991,7 @@ def _tool_execute_sql(conn, args: dict) -> str:
     # TASK-0172/0298: 무거운 쿼리 자가규제 — 실행 전 사전 부하추정(MySQL EXPLAIN / MSSQL SHOWPLAN)으로
     # 예상 처리 행수를 구해 임계 초과 시 gate(좁히기 유도) 또는 warn(비용 경고 prepend). confirm_heavy=true 면
     # 추정 무관 실행("무거운 쿼리는 감수" — LLM 이 필요 판단 시 override). guard off=현행.
-    import modules.config as _cfg
+    import shared.config as _cfg
     guard_mode = str(getattr(_cfg, "AGENT_QUERY_GUARD_MODE", "off") or "off").lower()
     # diff review M1: bool(args.get(...)) 은 LLM 이 문자열 "false" 를 보내면 truthy → 게이트
     # 우회. true/1/yes(대소문자) 또는 bool True 만 confirm 으로 인정.
@@ -1246,7 +1246,7 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
     router = _ACTIVE_DS_ROUTER.get()
     if router is not None:
         # 라우터 활성 — datasource 선택 + 그 컨텍스트 활성화. 작업 후 primary 로 복원(다음 tool 기본값 안정).
-        import modules.config as _cfg
+        import shared.config as _cfg
         requested = ""
         if isinstance(arguments, dict):
             requested = str(arguments.pop("datasource", "") or "").strip()

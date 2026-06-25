@@ -4606,7 +4606,7 @@ def _migrate_mssql_products_to_db_level(conn) -> None:
     유효 DB 가 이미 접근목록에 있으면(=신규 UI 구성) 건드리지 않는다(멱등 + 운영자 구성 보존).
     """
     try:
-        from modules import config as _cfg2
+        from shared import config as _cfg2
         _env_ds = getattr(_cfg2, "DATASOURCES", {}) or {}
     except Exception:
         _env_ds = {}
@@ -4688,7 +4688,7 @@ def _migrate_env_datasources_to_db(conn) -> None:
     try:
         from modules import cred_crypto as _cc
         from shared import datasources as _dsr
-        from modules import config as _cfg2
+        from shared import config as _cfg2
     except Exception:
         return
     if not _cc.enc_available():
@@ -10407,7 +10407,7 @@ def healthz() -> JSONResponse:
 
     if conn is not None:
         try:
-            from modules.config import GLOBAL_CONVERSATION_ID
+            from shared.config import GLOBAL_CONVERSATION_ID
 
             raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_cycle_at")
             if raw:
@@ -10964,7 +10964,7 @@ def _cleanup_orphan_conversations(conn, account_id: int) -> int:
 def _ask_execution_mode() -> str:
     """AGENT_ASK_EXECUTION_MODE — 'worker' 면 ask_jobs enqueue, 그 외(기본)는 inprocess."""
     try:
-        from modules.config import AGENT_ASK_EXECUTION_MODE
+        from shared.config import AGENT_ASK_EXECUTION_MODE
         return str(AGENT_ASK_EXECUTION_MODE or "inprocess").strip().lower()
     except Exception:
         return "inprocess"
@@ -10985,7 +10985,7 @@ def _ask_worker_ready(conn) -> bool:
     /api/ask 가 무한 대기(timeout)한다. enqueue 전에 gate 로 차단(503)해 빠른 실패 +
     명확한 안내를 준다(adversarial review M7 — no-worker hang)."""
     try:
-        from modules.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
+        from shared.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
         raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY)
         if not raw:
             return False
@@ -11020,7 +11020,7 @@ async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn, re
 async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, request=None) -> dict[str, Any]:
     from modules.db import _pg_connect
     from modules import ask_jobs as _aj
-    from modules.config import AGENT_ASK_WORKER_STALE_SEC
+    from shared.config import AGENT_ASK_WORKER_STALE_SEC
 
     account_id = int(account["id"])
     if not conv_id:
@@ -12946,7 +12946,7 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
 
     좌표/비밀번호는 절대 반환하지 않는다 (datasource_public 마스킹). 관리 콘솔 접근 권한 필요.
     """
-    from modules.config import AGENT_MULTI_DATASOURCE_ENABLED, DATASOURCES
+    from shared.config import AGENT_MULTI_DATASOURCE_ENABLED, DATASOURCES
     from shared import datasources as _dsr
     try:
         conn = _connect_memory()
@@ -20941,9 +20941,9 @@ def _insight_worker_liveness(conn) -> dict:
     반환: {"alive": bool, "age_sec": int|None, "status": str}.
     alive = last_status ∈ {ok, skip_locked} AND age ≤ max(30, STALE_SEC) (insight._is_*_heartbeat_fresh 와 정합).
     """
-    from modules.config import GLOBAL_CONVERSATION_ID
+    from shared.config import GLOBAL_CONVERSATION_ID
     try:
-        from modules.config import AGENT_INSIGHT_WORKER_STALE_SEC as _stale
+        from shared.config import AGENT_INSIGHT_WORKER_STALE_SEC as _stale
     except Exception:
         _stale = 15
     out = {"alive": False, "age_sec": None, "status": ""}
@@ -22395,7 +22395,7 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
             # re-gate(5차) MAJOR: WebDatasources 미존재 시 .env 레지스트리(config.DATASOURCES)도 확인 —
             # .env 기반 MSSQL datasource 가 MySQL 로 오판돼 금지목록이 잘못 적용되던 것 차단.
             try:
-                from modules import config as _cfg2
+                from shared import config as _cfg2
                 _envds = (getattr(_cfg2, "DATASOURCES", {}) or {}).get(_dskey)
                 if _envds and _envds.get("engine"):
                     _ds_engine = str(_envds.get("engine")).strip().lower()
@@ -25412,7 +25412,7 @@ async def admin_reject_sample_feedback(feedback_id: int, request: Request) -> JS
 #   CRUD 정본은 feature-0002 modules.kb_glossary 코어를 agent_kb(PG) conn 으로 in-process 호출한다.
 #   등록 내용은 질문/스키마 매칭 시 프롬프트에 주입(검색 정확도 직접 영향) → 명시 권한 편집만(자동학습 없음).
 # scope: 용어/ENUM 의 scope_key 는 **datasource key(소문자) 또는 'common'** 네임스페이스
-#   (modules.config._ACTIVE_DATASOURCE_KEY 가 ds key 를 소문자로 set → glossary scope 와 동일).
+#   (shared.config._ACTIVE_DATASOURCE_KEY 가 ds key 를 소문자로 set → glossary scope 와 동일).
 #   admin 은 요청 body/쿼리의 scope_key 를 명시 사용 — CURRENT_FACT_SCOPE_KEY(멀티DS 미갱신, BLOCKER)는 안 씀.
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -25486,7 +25486,7 @@ def _metadata_valid_scope_keys() -> set[str]:
                 pass
     # 폴백: 활성 datasource(ContextVar) 도 허용에 포함(요청 컨텍스트 한정).
     try:
-        from modules import config as _cfg
+        from shared import config as _cfg
         active = str(_cfg.get_active_datasource() or "").strip().lower()
         if active:
             keys.add(active)
@@ -26507,7 +26507,7 @@ def _bootstrap_resolve_datasource(ds_key: str):
 
 def _bootstrap_activate_dialect(ds: dict, scope_key: str):
     """introspection 전에 활성 dialect 를 설정(MSSQL 백틱 폴백 오류 방지). 끝나면 호출측이 리셋."""
-    from modules import config as _cfg
+    from shared import config as _cfg
     engine = str((ds or {}).get("engine") or "mysql").strip().lower()
     default_db = (ds or {}).get("default_db")
     _cfg.set_active_datasource(scope_key, engine=engine, default_db=default_db)
@@ -26523,7 +26523,7 @@ def admin_bootstrap_schemas(request: Request) -> JSONResponse:
     ds, scope_key, derr = _bootstrap_resolve_datasource(request.query_params.get("datasource") or "")
     if derr:
         return derr
-    from modules import config as _cfg
+    from shared import config as _cfg
     from modules import db as _db
     from modules import schema as _schema
     conn = None
@@ -26568,7 +26568,7 @@ async def admin_bootstrap(request: Request) -> JSONResponse:
     if len(schema_name) > _METADATA_FIELD_CAPS["schema_name"]:
         return _json_error("schema 가 너무 깁니다.", 400)
 
-    from modules import config as _cfg
+    from shared import config as _cfg
     from modules import db as _db
     from modules import dialects as _dialects
     from modules import schema as _schema
@@ -26725,7 +26725,7 @@ def _metadata_introspect_table(datasource_key: str, schema_name: str, table_name
     ds, scope_key, derr = _bootstrap_resolve_datasource(key)
     if derr or not ds:
         return None
-    from modules import config as _cfg
+    from shared import config as _cfg
     from modules import db as _db
     from modules import dialects as _dialects
     from modules import schema as _schema

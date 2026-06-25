@@ -26,7 +26,7 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from modules import config as cfg  # noqa: E402
+from shared import config as cfg  # noqa: E402
 
 import fixture_provision as fp  # noqa: E402
 import metrics as M  # noqa: E402

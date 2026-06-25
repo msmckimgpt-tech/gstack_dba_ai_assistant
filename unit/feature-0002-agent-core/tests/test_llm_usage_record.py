@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from modules import llm
-import modules.config as cfg
+import shared.config as cfg
 import modules.runtime_backend as rb
 
 

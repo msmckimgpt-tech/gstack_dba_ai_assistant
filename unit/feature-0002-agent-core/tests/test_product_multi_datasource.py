@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from modules import config as cfg
+from shared import config as cfg
 from modules import tools as tools_mod
 
 

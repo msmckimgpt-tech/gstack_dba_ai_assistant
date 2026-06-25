@@ -37,7 +37,7 @@ __all__ = [
 
 
 """File operations: search, read, CSV, SQL file restore."""
-from .config import *
+from shared.config import *
 import csv, io, json, os, re, shutil, stat, statistics, subprocess
 from typing import Any
 

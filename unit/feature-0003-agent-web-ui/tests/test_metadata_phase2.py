@@ -489,7 +489,7 @@ def test_bootstrap_schemas_happy(monkeypatch):
     _admin(monkeypatch)
     import modules.db as _db
     import modules.schema as _schema
-    import modules.config as _cfg
+    import shared.config as _cfg
     calls = []  # finally 의 reset(None) 까지 모든 호출 기록 — dialect 활성화→리셋 순서 확인.
     monkeypatch.setattr(_cfg, "set_active_datasource",
                         lambda key, engine=None, default_db=None: calls.append({"key": key, "engine": engine}))
@@ -515,7 +515,7 @@ def test_bootstrap_schema_sqli_rejected(monkeypatch):
     _admin(monkeypatch)
     import modules.db as _db
     import modules.schema as _schema
-    import modules.config as _cfg
+    import shared.config as _cfg
     monkeypatch.setattr(_cfg, "set_active_datasource", lambda *a, **k: None)
     monkeypatch.setattr(_db, "connect", lambda **k: _BenignConn())
     monkeypatch.setattr(_schema, "load_known_schemas", lambda conn: ["dbo", "sales"])
@@ -591,7 +591,7 @@ def test_injection_section_wrapped_by_datamark(monkeypatch):
     monkeypatch.setattr(_kg, "load_glossary_enum_context", lambda *a, **k: "")
     monkeypatch.setattr(_km, "load_table_column_descriptions", lambda *a, **k: "테이블 설명:\n- sales.orders — 주문")
     # 샘플/회상 경로는 무력화(섹션 격리).
-    import modules.config as _cfg
+    import shared.config as _cfg
     monkeypatch.setattr(_cfg, "AGENT_SAMPLE_QUERIES_ENABLED", False, raising=False)
 
     ctx = _ac._build_knowledge_context(_BenignConn(), "orders 분석", [])

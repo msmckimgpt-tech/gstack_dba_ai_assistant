@@ -212,7 +212,7 @@ def test_pg_read_failure_falls_back_to_mysql(monkeypatch):
 
     # AGENT_KB_READ_BACKEND=postgres 시뮬레이션
     monkeypatch.setattr(
-        sys.modules["modules.config"], "AGENT_KB_READ_BACKEND", "postgres", raising=True,
+        sys.modules["shared.config"], "AGENT_KB_READ_BACKEND", "postgres", raising=True,
     )
     # PG path 가 Exception raise — fail-soft 진입
     def _raise(*a, **kw):
