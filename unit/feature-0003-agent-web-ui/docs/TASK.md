@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260625T163424-gc-participant-product-select — 공유 대화 참가자(비-owner)의 per-message 제품 선택·발화 (feature-0009 cross-cut, 코드 거주=feature-0003, Major §12.3 — authz 경계: 참가자 발화 RBAC) — 중단 세션 resume
+- 맥락: 원본 작성 세션(372f8779)이 코드(B1 ask override·B2 session view-only·F1 드롭업 2그룹·F2 setActiveProduct/sendPrompt) 작성 직후 docs 직전 중단 → resume 으로 칩 fallback 확인·캐시버스터 bump·검증·docs·배포 마무리.
+- 결정(ANCHOR §1 / REQ-GC-R7 보존): 참가자는 대화 공통 고정 제품 접근권이 없어도 **본인 권한 제품**으로 per-message 질의 가능. 권한 상속 아님(발신자 본인 RBAC `_account_has_product_access` 게이트). 대화 공통 바인딩 비파괴(PATCH 는 owner 전용 유지). 생성자 제품은 드롭업 '열람 전용' 회색 그룹으로 분리 표시.
+- [x] B1 백엔드: `_parse_participant_product_override` + `/api/ask` member 분기 override 적용 + run-product 재게이트(L11571) + backfill skip(L11582)
+- [x] B2 백엔드: `_conversation_view_only_products_for` + `/api/session` `conversation_view_only_products` 반환(fail-closed)
+- [x] F1 프론트: 드롭업 2그룹 분리("내 제품" + "생성자 제품 열람전용" 회색·비활성) + `buildProductDropupItem` viewOnly 옵션
+- [x] F2 프론트: `isParticipantInSharedConversation` + setActiveProduct 로컬-only(PATCH 미호출) + sendPrompt per-message 동봉 + 칩 라벨 fallback(기존 renderProductChip graceful) + `state.conversationViewOnlyProducts` 초기화
+- [x] 캐시버스터 bump `20260625-gc-participant-product-select` (app.js·styles.css)
+- [x] 검증: node --check + py_compile + CSS brace 1577=1577 + §18.8 적대 authz 패널 6가설 REFUTED SHIP(REV-20260625T163424)
+- [x] docs: feature-0003 {TASK,MODIFY,FUNCTION,REVIEW} + feature-0009 {TASK,REPORT,MODIFY,REVIEW,FUNCTION} cross-ref
+- [ ] verify-completion → commit → push → PR → 머지 → 배포(included) → PB-0008 실측(배포 후)
+
 ## TASK-20260625-role-account-prompt-autogen — 역할 '전체 제품 프롬프트' + 프로필 '제품별 개인 프롬프트' 자동 작성 (Major §12.3 — 외부 LLM dispatch 2개 scope 확장 + 역할 scope 교차사용자 대화 집계)
 - 사용자 요청(/_template:entry): "`관리 콘솔 > 역할 > [각 항목] > 제품 사용 > 전체 제품 프롬프트` 와 `작업 화면 > 프로필 > 프롬프트 > [각 제품]` 의 프롬프트 자동 완성 기능 구성. 각 역할의 성격·소속 사용자 대화 내역을 점검해 모범 동작하도록. 각 프로필 프롬프트도 역할·선택 제품·대화 패턴에 따라 모범 작성되도록."
 - 결정(AskUserQuestion 2026-06-25): ① 트리거 = **on-demand 버튼만**(자율 sweep 미도입 — 개인 프롬프트 무동의 자동작성·LLM 비용 누수 회피). ② 범위 = **기능만 구성**(엔드포인트·UI·컨텍스트 조립; 실제 seed 역할/프로필 생성·저장은 운영자 라이브 수행).

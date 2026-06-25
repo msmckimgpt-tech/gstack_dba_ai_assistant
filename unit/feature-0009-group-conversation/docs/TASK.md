@@ -53,6 +53,7 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
+- **gc-participant-product-select** (참가자 per-message 제품 선택·발화, cross-cut 코드거주=feature-0003, Major §12.3 authz): 중단 세션(372f8779) resume — 코드(B1 ask override·B2 session view-only·F1 드롭업 2그룹·F2 setActiveProduct/sendPrompt) 완료 + 칩 fallback·캐시버스터·검증·docs 완료. §18.8 적대 authz 패널 6가설 REFUTED SHIP(REV-20260625T163424). 잔여: verify-completion → PR → 배포(included) → PB-0008 실측.
 - **gc-run-status-stuck** (그룹대화 '처리 중' 고착/채팅 블로킹 버그, Major 동시성): 코드 완료(워크트리 `ai/claude/gc-run-status-stuck`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 라이브 배포 → smoke 잔여. 근본: run-status 단일 대화 슬롯 vs 계정별 동시 run → run1 done supersede 가드 skip(유실) + FE foreign run hijack. 수정(per-run 해석): 충돌 done/error per-run marker(memory.py) + `/api/progress` client_run_id 해소(app.py) + FE client_run_id 항상 전송·hijack 가드(app.js). §18.8 패널 3 BLOCKING 0. (CHG/REV-20260625T163744)
   - [x] BE write: set_run_status 충돌 skip 시 done/error per-run marker 기록 (feature-0002 memory.py)
   - [x] BE read: `_load_run_terminal_marker` + `/api/progress` client_run_id per-run 해소 (feature-0003 app.py)

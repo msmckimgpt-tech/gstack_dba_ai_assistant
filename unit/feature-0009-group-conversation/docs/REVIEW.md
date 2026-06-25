@@ -279,6 +279,11 @@ source_of_truth: true
 - Verification: pytest 신규 6/6 + 관련 share 20/20 + `node --check` + `py_compile`. PB-0008 미실측(worktree WSL — 배포 후 권장).
 - Human Approval Needed: 아니오 (사용자 명시 요청 + AskUserQuestion D1/D2 반영, backend authz 강화·무회귀).
 
+## REV-20260625T163424-gc-participant-product-select [SUBAGENT:cross-ref-feature-0003]
+- Date: 2026-06-25 (중단 세션 resume).
+- Cycle: gc-participant-product-select (CHG-20260625T163424) — 공유 대화 참가자(비-owner)의 per-message 제품 선택·발화. **Major §12.3** authz 경계, 코드 거주=feature-0003.
+- 정본: 코드/리뷰 정본 = feature-0003 `docs/REVIEW.md` REV-20260625T163424-gc-participant-product-select(적대적 authz 서브에이전트 — 6개 공격가설[권한우회·바인딩오염·owner회귀·view-only과다·FE정합·auto] 전부 REFUTED, **VERDICT SHIP, BLOCKING 0**). 본 entry 는 cross-feature 추적.
+- 핵심: ANCHOR §1 / REQ-GC-R7 보존 — 발화는 발신자 본인 RBAC 로만 게이트(권한 상속 없음), 대화 공통 바인딩 비파괴. authz 이중 게이트(parse + run-product 재확인).
 ## REV-20260625T163744-gc-run-status-stuck [SUBAGENT:concurrency-run-status]
 - Date: 2026-06-25
 - Cycle: gc-run-status-stuck (CHG-20260625T163744) — 그룹대화 동시 run 충돌로 인한 '처리 중' 고착/채팅 블로킹 fix. **Major §12.3 (동시성·run-status 핵심 경로, 인가/파괴적 변경 없음)**, worktree `ai/claude/gc-run-status-stuck`.

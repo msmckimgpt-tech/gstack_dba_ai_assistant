@@ -316,6 +316,14 @@ source_of_truth: true
 - Rollback Notes: feature-0003 styles.css 그리드+hover 블록 + 캐시버스터 + 테스트 revert. JS/백엔드/스키마 0.
 - 검증: CSS brace 1571=1571 + `verify_member_actions_hover.mjs` 15/15 + 기존 `verify_member_kick_ban.mjs` 무회귀(JS/DOM 불변). 패널 SKIP(순수 CSS 표현계층·로직/보안 0, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).
 
+## CHG-20260625T163424-gc-participant-product-select (cross-feature → feature-0003, Major §12.3 — authz 경계: 참가자 발화 RBAC) — 중단 세션 resume
+- Date: 2026-06-25. 코드/문서 정본=feature-0003-agent-web-ui(`src/app.py`·`static/{app.js,styles.css,index.html}`·`docs/*`) — 본 항목은 feature-0009 cross-feature 추적. 원본 작성 세션(372f8779)이 docs 직전 중단 → resume 마무리.
+- Reason: REQ-GC-R7 구체화 — 공유 대화 참가자(비-owner)가 대화 공통 고정 제품 접근권이 없어 발화가 막히던 갭. '함께 보고 논의'하다 본인 권한 제품으로 이어 질의할 길을 per-message override 로 제공(권한 경계 불변).
+- 변경(feature-0003): 백엔드 `_parse_participant_product_override`(발신자 본인 RBAC 게이트, 무권한 403) + `_conversation_view_only_products_for`(생성자 제품 열람전용 1건, fail-closed) + `/api/session` `conversation_view_only_products` + `/api/ask` member 분기 override 적용·run-product 재게이트·backfill skip. 프론트 `isParticipantInSharedConversation` + 드롭업 2그룹 분리(view-only 회색·비활성) + setActiveProduct 로컬-only(PATCH 미호출) + sendPrompt per-message 동봉. 캐시버스터 `gc-participant-product-select`.
+- 설계 정합(ANCHOR §1): 발화는 발신자 본인 권한으로만 게이트(권한 상속 아님) + 대화 공통 바인딩 비파괴(per-message override). owner·1:1 무회귀.
+- Impact: owner/1:1 종전 PATCH 경로 유지. 스키마/마이그 0(순수 코드). 신규 RBAC/엔드포인트 0(기존 helper 재사용).
+- 검증: node --check + py_compile + CSS brace 1577=1577 + **§18.8 적대 authz 패널 6가설 REFUTED SHIP**(feature-0003 REV-20260625T163424). **PB-0008 미실측**(worktree=WSL — 배포 후 권장).
+- Cross-ref: feature-0003 CHG·REV-20260625T163424-gc-participant-product-select.
 ## CHG-20260625T065430-gc-other-msg-left (cross-feature → feature-0003, Minor §12.3 — frontend CSS-only)
 - Date: 2026-06-25 (CHG-20260625T065430/REV-20260625T065430). worktree `ai/claude/gc-other-msg-left`. 코드/문서 정본=feature-0003-agent-web-ui(`static/styles.css`·`index.html`·`docs/*`) — 본 항목은 feature-0009 cross-feature 추적.
 - Reason: 사용자 요청(`/_template:entry`) — 그룹대화에서 자신의 메시지 버블은 (기존처럼) 우측, assistant 와 상대방의 대화는 좌측에 출력하도록 구성.
