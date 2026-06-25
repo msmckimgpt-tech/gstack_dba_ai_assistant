@@ -88,6 +88,11 @@ const state = {
   nextBeforeId: null,
   // 대화별 요청 진행 여부 — 전역 busy 대신 대화 ID Set으로 관리하여 병렬 대화 허용
   busyConversations: new Set(),
+  // composer-nonblock-interrupt: *이 클라이언트가 직접 띄운* @assistant run 의 in-flight 집합
+  // (busyKey 기준). busyConversations 는 loadHistory 가 글로벌 last_status=processing(타 멤버 run
+  // 포함)으로도 set 하므로 "내 중복/인터럽트" 판정엔 부적합 → 내 send 에서만 set/clear 하는 별도 Set.
+  // R1(입력창 비잠금) 후 R2(그룹 내 @assistant 중복 차단)·R3(1:1 인터럽트)·전송/중단 버튼 모드 판정에 사용.
+  myAskInFlight: new Set(),
   // TASK-0241: in-flight /api/ask fetch 의 AbortController 를 busyKey 별로 보관. 사용자가
   // "중단" 을 누르면 cancelCurrentRun 이 해당 fetch 를 즉시 abort → sendPrompt 의 await 가
   // 곧바로 풀려 finally 가 busy/composer 를 정리하고 입력창이 즉시 재사용 가능해진다.
@@ -540,6 +545,16 @@ function isCurrentConvBusy() {
     return true;
   }
   return state.busyConversations.has(state.activeConversationId);
+}
+
+/** composer-nonblock-interrupt: *이 클라이언트가 직접 띄운* @assistant run 이 현재 활성 대화에서
+ *  in-flight 인지. isCurrentConvBusy 와 달리 글로벌 processing(타 멤버 run)에 오염되지 않는다 —
+ *  R2(그룹 중복 차단)·R3(1:1 인터럽트)·전송/중단 버튼 모드 판정의 진실원. */
+function _myAskInFlightHere() {
+  if (state.pendingNewConversation && state.pendingSentinel && state.myAskInFlight.has(state.pendingSentinel)) {
+    return true;
+  }
+  return state.myAskInFlight.has(state.activeConversationId);
 }
 
 function escapeHtml(value = "") {
@@ -5043,10 +5058,17 @@ function renderComposer() {
   // TASK-0047: composer busy 상태 변화에 따라 product chip 도 disabled 동기화.
   renderProductChip();
   // 전송 버튼: 권한이 없어도 클릭이 통과하여 토스트로 안내되도록 native disabled 대신 aria-disabled 사용.
-  // TASK-0248: 차단된 대화는 입력창도 비활성화 (진행 불가 — 이력 열람만).
-  promptInputEl.disabled = busy || isBlocked;
-  if (busy) {
-    // REQ-20260608-0157: 처리 중 → "중단" 버튼. native disabled 를 풀어 클릭이 통과하게 한다.
+  // composer-nonblock-interrupt R1: 처리 중이어도 입력창은 잠그지 않는다 — 전송이 막히지 않게.
+  // 차단된 대화(참조 제품 삭제)만 입력 비활성(이력 열람만).
+  promptInputEl.disabled = isBlocked;
+  // R1: 전송/중단 버튼 모드 — *내가 띄운* @assistant run 이 진행 중(myRun)이고 입력이 비어 있을 때만
+  // "중단"(명시적 취소). 입력에 글자가 있으면 처리 중이라도 "전송"(R3 1:1 인터럽트 / R2 그룹 가드로
+  // 라우팅). 타 멤버 run(글로벌 processing)으로는 중단 모드로 바뀌지 않는다(myRun 기준).
+  const myRun = _myAskInFlightHere();
+  const hasText = Boolean(String((promptInputEl && promptInputEl.value) || "").trim());
+  const stopMode = myRun && !hasText;
+  if (stopMode) {
+    // REQ-20260608-0157: 빈 입력 + 내 run 처리 중 → "중단" 버튼.
     const canCancel = canCancelConversation();
     sendBtn.disabled = false;
     sendBtn.classList.add("is-stop");
@@ -5064,13 +5086,8 @@ function renderComposer() {
       sendBtn.classList.add("is-access-blocked");
       sendBtn.title = "'대화 취소' 권한이 없습니다. 필요 권한: `conversation.cancel`";
     }
-    // REQ-20260608-0158: 즉시 답변 버튼 — 처리 중에만 노출 (구 #finalizeBtn 재배치).
-    if (composerFinalizeBtn) {
-      composerFinalizeBtn.classList.remove("hidden");
-      markAccessBlocked(composerFinalizeBtn, "conversation.finalize", currentConversation());
-    }
   } else {
-    // 정상 → "전송" 버튼.
+    // 정상/전송 → "전송" 버튼 (입력이 있으면 처리 중에도 전송 가능).
     sendBtn.disabled = false;
     sendBtn.classList.remove("is-stop");
     if (sendBtn.dataset.mode !== "send") {
@@ -5090,7 +5107,11 @@ function renderComposer() {
         ? (activeConv.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.")
         : "'대화 요청 실행' 권한이 없습니다. 필요 권한: `conversation.ask`";
     }
-    if (composerFinalizeBtn) composerFinalizeBtn.classList.add("hidden");
+  }
+  // REQ-20260608-0158: 즉시 답변 버튼 — 내 run 처리 중에는 (중단/전송 모드 무관) 노출.
+  if (composerFinalizeBtn) {
+    composerFinalizeBtn.classList.toggle("hidden", !myRun);
+    if (myRun) markAccessBlocked(composerFinalizeBtn, "conversation.finalize", currentConversation());
   }
   // 새 대화 버튼: 동일 패턴 — 클릭 시 토스트를 노출하기 위해 aria-disabled 로 표시.
   if (can("conversation.create")) {
@@ -5422,6 +5443,12 @@ async function loadHistory({ append = false } = {}) {
     // initializeWorkspace 가 아닌 loadHistory 경로로 처리 상태를 감지한 경우 pending bubble 복원.
     if (!state.pendingBubble) {
       state.busyConversations.add(state.activeConversationId);
+      // composer-nonblock-interrupt: 1:1(본인 대화)은 처리 중 run 이 곧 *내* run 이므로 새로고침/복원
+      // 시 myAskInFlight 도 복원 → 중단 버튼·R3 인터럽트가 새로고침 후에도 동작. 그룹은 타 멤버 run 일
+      // 수 있어 제외(오귀속 방지) — 그룹의 내 중복 차단은 새로고침 직후 1회 한해 완화(허용, slot=6).
+      if (!isGroupConversation(currentConversation())) {
+        state.myAskInFlight.add(state.activeConversationId);
+      }
       // 새로고침/복원 경로에서는 클라이언트 현재 시각이 아니라 서버가 알려준 run 시작
       // 시각(last_run_started_at = KV last_status_at)을 elapsed 기준점으로 쓴다. 이게
       // 없으면 새로고침할 때마다 경과시간이 0 으로 초기화된다. 서버 시각이 없거나
@@ -6495,6 +6522,7 @@ async function cancelCurrentRun() {
   cancelKeys.forEach((k) => {
     state.userCanceledKeys.add(k);             // sendPrompt 의 catch/발사-전 재확인이 '사용자 취소' 로 식별.
     state.busyConversations.delete(k);
+    state.myAskInFlight.delete(k);             // composer-nonblock-interrupt: 내 run in-flight 표시 해제.
     // in-flight /api/ask fetch 를 중단 → sendPrompt 의 await 가 즉시 풀려 finally 가 busy/composer 정리.
     const ctrl = state.askAbortControllers.get(k);
     if (ctrl) {
@@ -6526,6 +6554,39 @@ async function cancelCurrentRun() {
     }).catch((error) => {
       showToast(error.message || "취소 요청 전송에 실패했습니다.", true);
     });
+  }
+}
+
+/** composer-nonblock-interrupt R3: 1:1(본인 대화)에서 처리 중 새 요청 시 이전 run 을 인터럽트한다.
+ *  cancelCurrentRun 과 달리 (a) 취소 토스트/포커스를 띄우지 않고(곧 새 send 가 이어짐),
+ *  (b) `preserve_reasoning:true` 로 서버에 취소 → agent_core 가 이 run 의 부분 추론을 메시지로
+ *  보존(가시 + 다음 run 맥락)한다. /api/cancel 은 KV 플래그만 세팅하고 즉시 반환하므로 await 해도 빠르며,
+ *  이로써 새 run 이 시작되기 전에 취소-보존 의도가 서버에 기록된다(best-effort, 실패해도 새 send 는 진행). */
+async function _interruptCurrentRunForResend(cid) {
+  const keys = [];
+  if (state.activeConversationId) keys.push(String(state.activeConversationId));
+  if (state.pendingSentinel) keys.push(String(state.pendingSentinel));
+  keys.forEach((k) => {
+    state.userCanceledKeys.add(k);
+    state.busyConversations.delete(k);
+    state.myAskInFlight.delete(k);
+    const ctrl = state.askAbortControllers.get(k);
+    if (ctrl) { try { ctrl.abort(); } catch (_e) { /* no-op */ } }
+  });
+  // 이전 run 의 진행 추적/말풍선/타이머 정리 (보존된 추론은 서버 메시지로 다음 refresh 시 표시됨).
+  stopProgressPolling({ reset: true });
+  stopElapsedTimer();
+  clearPendingBubble();
+  renderMessages();
+  renderComposer();  // composer-nonblock-interrupt: 인터럽트 직후 버튼/입력 상태 즉시 갱신(시각 지연 방지).
+  const targetCid = cid || state.activeConversationId;
+  if (targetCid && canCancelConversation()) {
+    try {
+      await apiFetch("/api/cancel", {
+        method: "POST",
+        body: JSON.stringify({ conversation_id: targetCid, preserve_reasoning: true }),
+      });
+    } catch (_e) { /* best-effort — 새 요청은 계속 진행 */ }
   }
 }
 
@@ -7795,7 +7856,8 @@ async function _sendGroupChatMessage(cid, message) {
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
-  if (isCurrentConvBusy()) return;
+  // composer-nonblock-interrupt R1: 처리 중이어도 전송을 무시하지 않는다 — 그룹 비멘션 채팅 분기 이후
+  // (아래) 에서 R2(그룹 @assistant 중복 차단)·R3(1:1 인터럽트 재요청)로 라우팅한다.
   // feature-0009: 사용자 제스처 시점에 멘션 알림 권한 best-effort 요청(그룹 대화 협업용).
   _maybeRequestNotifyPermission();
   if (!can("conversation.ask")) {
@@ -7828,6 +7890,25 @@ async function sendPrompt() {
     await _sendGroupChatMessage(active.id, message);
     return;
   }
+  // composer-nonblock-interrupt R2/R3: 여기는 @assistant 호출 경로(1:1 또는 그룹 @멘션).
+  // 그룹 비멘션 채팅은 위에서 이미 처리. 내가 띄운 @assistant run 이 진행 중일 때만 분기.
+  if (_myAskInFlightHere()) {
+    if (active && isGroupConversation(active)) {
+      // R2: 그룹 — 내 @assistant run 진행 중 또 @assistant → 중복 run 차단 + 안내(입력창은 잠그지
+      // 않으므로 채팅·타 멤버 발화는 자유). 백엔드 slot=WEB_PARALLEL_LIMIT(6) 라 FE 가 중복을 막는다.
+      showToast("이전 @assistant 요청을 처리 중입니다. 완료된 뒤 다시 보내주세요.");
+      return;
+    }
+    // R3: 1:1(본인 대화) — 이전 run 을 인터럽트(추론 보존)하고 곧바로 새 요청을 보낸다.
+    // 취소 권한이 있어야 인터럽트 가능. 없으면 동시 run 을 띄우지 않고 안내(R2 와 동형).
+    if (!canCancelConversation()) {
+      showToast("이전 요청을 처리 중입니다. 완료된 뒤 다시 보내주세요.");
+      return;
+    }
+    // 인터럽트는 /api/cancel(network=macrotask)을 await 하므로, 직전 aborted send 의 finally
+    // (microtask)가 먼저 드레인된 뒤에야 아래에서 새 busyKey 를 add 한다 → same-key 정리 경합 회피.
+    await _interruptCurrentRunForResend(state.activeConversationId);
+  }
   // TASK-0048: pending 모드는 client-side 만 진입한 빈 대화 단계. cid 가 없으니 lazy create.
   const isPending = Boolean(state.pendingNewConversation);
   const isLazyCreate = isPending || !state.activeConversationId;
@@ -7858,6 +7939,9 @@ async function sendPrompt() {
     busyKey = targetConvId;
   }
   state.busyConversations.add(busyKey);
+  // composer-nonblock-interrupt: 이 send 는 @assistant 호출 경로(그룹 비멘션 채팅은 위에서 return).
+  // *내가 띄운* @assistant run 으로 표시 → R2/R3·전송/중단 버튼 모드의 진실원.
+  state.myAskInFlight.add(busyKey);
   // TASK-0241: 이 send 의 busyKey 에 남아있을 수 있는 stale 취소 flag 를 먼저 정리(같은 cid 재사용 시
   // 직전 취소 flag 가 새 send 의 정상 에러를 '사용자 취소' 로 오인하지 않도록).
   state.userCanceledKeys.delete(busyKey);
@@ -8267,6 +8351,9 @@ async function sendPrompt() {
     }
   } finally {
     state.busyConversations.delete(busyKey);
+    // composer-nonblock-interrupt: 내 @assistant run 수명 종료 → in-flight 표시 해제(전송/중단 버튼·R2/R3).
+    // busyConversations 와 동일 키(busyKey)로만 관리 → 일관성 유지.
+    state.myAskInFlight.delete(busyKey);
     // TASK-0241: 이 send 의 abort controller + 취소 flag 정리(수명 종료). early-cid 전환으로 키가
     // 두 값(sentinel/earlyCid)일 수 있으므로 양쪽 모두 정리한다.
     state.askAbortControllers.delete(askKey);
@@ -8566,6 +8653,11 @@ async function initializeWorkspace() {
       : await fetchAskStatus(resumeCid);
     if (status && status.is_processing) {
       state.busyConversations.add(resumeCid);
+      // composer-nonblock-interrupt: 1:1(본인 대화)은 이어받는 run 이 곧 내 run → myAskInFlight 복원
+      // (중단 버튼·R3). 그룹은 타 멤버 run 일 수 있어 제외(오귀속 방지). loadHistory 와 동형.
+      if (!isGroupConversation(currentConversation())) {
+        state.myAskInFlight.add(resumeCid);
+      }
       // 새로고침 후 pending bubble 복원 — polling 이 steps 를 채우면 갱신됨.
       if (!state.pendingBubble) {
         // loadHistory 경로와 대칭: 서버가 알려준 run 시작 시각(status_at = KV
@@ -8595,6 +8687,7 @@ async function initializeWorkspace() {
         .catch(() => {})
         .finally(() => {
           state.busyConversations.delete(resumeCid);
+          state.myAskInFlight.delete(resumeCid);  // composer-nonblock-interrupt: 이어받은 내 run 종료.
           renderComposer();
         });
     }
@@ -8754,8 +8847,10 @@ async function initialize() {
     });
   }
   sendBtn.addEventListener("click", () => {
-    // REQ-20260608-0157: 처리 중에는 전송 버튼이 "중단" 으로 동작한다.
-    if (isCurrentConvBusy()) {
+    // composer-nonblock-interrupt R1: 빈 입력 + 내 run 처리 중 → "중단". 그 외엔 "전송"
+    // (입력이 있으면 처리 중에도 전송 — sendPrompt 가 R2 그룹 가드 / R3 1:1 인터럽트로 라우팅).
+    const hasText = Boolean(String((promptInputEl && promptInputEl.value) || "").trim());
+    if (_myAskInFlightHere() && !hasText) {
       cancelCurrentRun().catch((error) => {
         showToast(error.message || "취소 요청에 실패했습니다.", true);
       });
@@ -8791,7 +8886,9 @@ async function initialize() {
       if (tip) tip.remove();
     };
     sendBtn.addEventListener("mouseenter", () => {
-      if (isCurrentConvBusy()) return; // REQ-20260608-0157: 중단 모드에서는 전송 모드 툴팁 숨김
+      // composer-nonblock-interrupt: 버튼이 '중단' 모드(내 run + 빈 입력)일 때만 전송 모드 툴팁 숨김.
+      // 타 멤버 run(글로벌 processing)으로는 숨기지 않는다(버튼은 여전히 '전송' 모드).
+      if (_myAskInFlightHere() && !String((promptInputEl && promptInputEl.value) || "").trim()) return;
       clearTimeout(_sendTipLeaveTimer);
       if (document.getElementById("sendModeTooltip")) return;
       const tip = document.createElement("div");
@@ -8861,6 +8958,9 @@ async function initialize() {
   promptInputEl.addEventListener("input", function () {
     this.style.height = "auto";
     this.style.height = Math.min(this.scrollHeight, 180) + "px";
+    // composer-nonblock-interrupt R1: 내 run 처리 중에는 입력 유무로 전송↔중단 버튼이 바뀌므로,
+    // 글자 입력/삭제 시 버튼 모드를 재동기화한다. (dataset.mode 변동 시에만 innerHTML 교체 → thrash 없음.)
+    if (_myAskInFlightHere()) renderComposer();
   });
 
   toggleAuthPane("login");

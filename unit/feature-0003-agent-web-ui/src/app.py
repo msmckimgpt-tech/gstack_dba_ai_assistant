@@ -18035,10 +18035,14 @@ async def cancel_request(request: Request) -> JSONResponse:
     ):
         conn.close()
         return _json_error("권한이 없습니다.", 403)
+    # composer-nonblock-interrupt R3: 1:1 인터럽트 재요청은 preserve_reasoning=true 로 취소 →
+    # agent_core 가 이 run 의 부분 추론을 메시지로 보존(가시 + 다음 run 맥락). 명시 '중단' 버튼(미지정)
+    # 은 기존대로 폐기 — 동작 무변경.
+    _preserve_reasoning = bool(data.get("preserve_reasoning"))
     try:
         run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         # running run 은 KV cancel_requested 플래그를 run_agent 가 폴링해 처리(§2.6 무변경).
-        mark_cancel_requested(conn, conversation_id, run_id=run_id)
+        mark_cancel_requested(conn, conversation_id, run_id=run_id, preserve_reasoning=_preserve_reasoning)
         # TASK-0169 (2g): worker mode 에서 아직 claim 안 된 pending job 은 run_id 매칭
         # 대상이 없어 KV 플래그가 유실된다. 큐 레벨로 취소(canceled)해 취소 유실 방지.
         if _is_worker_mode():

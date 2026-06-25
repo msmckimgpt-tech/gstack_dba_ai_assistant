@@ -61,6 +61,13 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
+- **composer-nonblock-interrupt** (입력창 비잠금 + 그룹 @assistant 중복차단 + 1:1 인터럽트 재요청, Major §12.3 composer/send): 사용자 지시 — gc-run-status 블로킹 근본 방지. 코드 완료(워크트리 `ai/claude/composer-nonblock-interrupt`, 커밋 전) → docs → verify-completion → PR → 라이브 배포 → PB-0008 잔여. §18.8 패널 3렌즈 BLOCKING 0(유효 4건 반영). (CHG/REV-20260625T191040)
+  - [x] R1: renderComposer 입력창 disable busy 제거 + 전송/중단 버튼 myAskInFlight·입력유무 기준 (app.js)
+  - [x] R2: 그룹 @assistant 중복 차단(내 run in-flight + 그룹 → 안내 return; 채팅·타멤버 자유) (app.js)
+  - [x] R3: 1:1 처리중 새 전송 → `_interruptCurrentRunForResend`(추론 보존) 후 재요청 + race 가드 (app.js)
+  - [x] R3 BE: /api/cancel preserve_reasoning → cancel_preserve → agent_core canceled 부분추론 메시지 보존 (app.py·memory.py·agent_core.py)
+  - [x] 새로고침/resume myAskInFlight 복원(1:1) + 캐시버스터 composer-nonblock-interrupt
+  - [ ] 라이브 배포 후 PB-0008 실측 (입력 비잠금·인터럽트·중복차단 다중 사용자)
 - **gc-participant-product-select** (참가자 per-message 제품 선택·발화, cross-cut 코드거주=feature-0003, Major §12.3 authz): 중단 세션(372f8779) resume — 코드(B1 ask override·B2 session view-only·F1 드롭업 2그룹·F2 setActiveProduct/sendPrompt) 완료 + 칩 fallback·캐시버스터·검증·docs 완료. §18.8 적대 authz 패널 6가설 REFUTED SHIP(REV-20260625T163424). 잔여: verify-completion → PR → 배포(included) → PB-0008 실측.
 - **gc-run-status-stuck** (그룹대화 '처리 중' 고착/채팅 블로킹 버그, Major 동시성): 코드 완료(워크트리 `ai/claude/gc-run-status-stuck`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 라이브 배포 → smoke 잔여. 근본: run-status 단일 대화 슬롯 vs 계정별 동시 run → run1 done supersede 가드 skip(유실) + FE foreign run hijack. 수정(per-run 해석): 충돌 done/error per-run marker(memory.py) + `/api/progress` client_run_id 해소(app.py) + FE client_run_id 항상 전송·hijack 가드(app.js). §18.8 패널 3 BLOCKING 0. (CHG/REV-20260625T163744)
   - [x] BE write: set_run_status 충돌 skip 시 done/error per-run marker 기록 (feature-0002 memory.py)
