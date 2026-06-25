@@ -150,3 +150,12 @@ source_of_truth: true
 - 진단/재현(라이브 컨테이너): web 로그 `POST /api/conversations/{cid}/read` 전부 **500**(`ModuleNotFoundError: modules.db`, 핸들러 `except`→500, frontend best-effort 삼킴) → DB 멤버 커서가 backfill 값에 고착(3466, conv_max 3655). 수정 import 로 `from shared.db import _pg_connect` + `group_members.set_last_read('20260625063340-4220125d', 10, 3466)` → rowcount=1(정상 UPDATE) 확인.
 - §18.8 적대 패널 1렌즈(general-purpose): SHIP/BLOCKING 0 — Q1 근본원인 정타·Q2 트랜잭션(autocommit+commit no-op) 정합·Q3 leak 0·Q4 다른 숨은 modules.db 0·Q5 추가 서버측 근본원인 없음(읽는 시점 커서 전진 경로 복구로 충분).
 - 라이브(배포 후, deploy-backed 완료 기준 필수): ① 읽음 처리 시 web 로그 read **200**(500 소멸) ② 고착 대화 멤버 커서가 conv_max 로 전진(DB 확인) ③ 대화 읽고 **새로고침** → 사이드바 unread 배지 복원 안 됨. PB-0008 Windows-browser 실측 권장(데이터 의존).
+
+## gc-assistant-dialect-context (CHG-20260625T202843) — SQL dialect 교정 + 발신자 맥락
+- Environment: WSL-headless(CLI) — 순수 함수 단위 테스트(라이브 DB 비의존). 화면 검증은 PB-0008(배포 후).
+- 단위 테스트 신규 6 (`tests/test_gc_dialect_context.py`):
+  - RC-2: `test_group_sender_labels_attached_and_preserved_through_merge`(연속 user 3건 병합 후에도 `[mckim]:`/`[admin]:` 라벨 보존) / `test_non_group_none_no_labels_regression`(sender_labels=None → 라벨 0, 무회귀) / `test_label_skipped_for_unknown_sender`(미상 발신자 원문 유지).
+  - RC-1: `test_dialect_hint_mysql_corrects_tsql`(TOP/UNION/CONVERT/ISNULL/[..] → MySQL 교정) / `test_dialect_hint_mssql_corrects_mysql`(LIMIT/backtick → T-SQL 교정) / `test_dialect_hint_clean_query_head_only`(오용 마커 0 → 거짓 교정 없음).
+- 회귀: `test_db_query_ux`(히스토리 조립·user-turn 보존) + `test_runtime_read_backend`(PG read backend) 통과. 합계 **48 PASS**, `py_compile`+`ruff` clean.
+- 적대 패널 §18.8 2렌즈(회귀·정확성 / 보안·prompt-injection) **SHIP-WITH-FIXES**(BLOCKING 0, NON-BLOCKING 2건 반영) — REV-20260625T202843 참조.
+- 라이브(배포 후 PB-0008): MySQL 제품 그룹대화에서 @assistant 가 (a) `SELECT TOP`/`UNION`/`[brackets]` 없이 `LIMIT`·단일 SELECT·backtick 생성, (b) 거부 시 엔진별 교정 힌트 수신, (c) "이 DB/직전 결과/바꾼 제품" 류 지시어를 멘션 직전 사람-사람 맥락에서 능동 해석(과도 재질문 감소), (d) 발신자 라벨로 화자 구분 — 실측 권장.

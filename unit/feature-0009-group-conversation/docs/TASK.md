@@ -55,6 +55,16 @@ source_of_truth: true
 - **완료 판정(AC)**: 새로고침으로 복원된 대화를 보면 배지 0 / 이미 열린 대화 재선택 시 배지 0 / 서버 cursor 가 conv_max 로 전진.
 <!-- 사용자 명시 버그 보고 — 즉시 수정(Minor frontend) on 2026-06-25 -->
 
+### 2.1.d Plan — gc-assistant-dialect-context (그룹대화 assistant 품질: dialect + 발신자 맥락, 2026-06-25)
+- **버그 보고**: 사용자(`/_template:entry`) — "그룹대화 중 assistant 사용 시 불만·마찰. 해당 대화 참조해 품질 이슈 근본원인 개선." 라이브 대화 `20260625063340-4220125d`(product 110 마이크로볼츠-개발=MySQL `mysql-mv-dev`, 멤버 mckim·admin) 조사.
+- **근본 원인 2건**:
+  - **RC-1 (SQL dialect thrashing)**: MySQL 데이터소스인데 LLM 이 T-SQL(`TOP`/`UNION`/`[brackets]`/`CONVERT`/2-arg `ISNULL`) 반복 생성→sql_guard·엔진 15회+ 거부. 원인: product 전용 prompt(websystemprompts Id 32)가 base 뒤 append 되며 "TOP N/UNION ALL/DESCRIBE [..]" 로 T-SQL 유도(base MySQL 규칙·MySQL 가드와 모순) + 거부 메시지에 dialect 교정 힌트 부재.
+  - **RC-2 (그룹 맥락 미활용)**: 히스토리 로드가 `sender_account_id` 누락 → LLM 이 다자 대화를 발신자 구분 없이 받음(REQ-GC-R5 위반) + 그룹 전용 맥락 지침 부재 → 과도 재질문·데이터소스 드리프트.
+- **해결**: RC-1 — `_MYSQL_DIALECT_GUIDANCE` 권위 주입(product context 뒤, 활성 MySQL DS 스코프) + `_dialect_correction_hint` 거부 메시지 교정. RC-2 — 히스토리에 발신자 라벨 `[이름]:` 부착(그룹 한정, 병합 전→보존) + `_GROUP_CONVERSATION_GUIDANCE` 주입.
+- **위험도**: Major (코어 LLM 컨텍스트 조립 경로 + backend SELECT, 비파괴·deploy-backed).
+- **완료 판정(AC)**: MySQL 제품에서 @assistant 가 LIMIT/단일 SELECT(backtick) 생성(TOP/UNION/[brackets] 미생성) / 거부 시 엔진별 교정 힌트 수신 / 그룹대화 히스토리에 발신자 라벨 노출 + 멘션 직전 사람-사람 맥락 능동 해석(과도 재질문 감소) / 1:1·비그룹 무회귀.
+<!-- 사용자 명시 품질 이슈 — 근본원인 개선(Major, deploy_scope 판정은 commit 후) on 2026-06-25 -->
+
 ## 3. Task Queue (슬라이스)
 - [x] **S1 Foundations** — DDL(conversation_members + sender_account_id + thread_root_message_id) + 멱등 backfill + members(account_id) 인덱스 + membership helper 모듈 (commit 489deb5)
 - [x] **S2 Membership** — ✅백엔드: 멤버십 열람 접근제어(중앙 게이트 + 첨부 게이트 OR, F6 sweep) + 멤버 엔드포인트 + audit + backfill wiring + 신규 권한. ✅roster UI(멤버 버튼·패널·초대·제거/나가기, CHG-0006, PB-0008 보류)
@@ -63,6 +73,8 @@ source_of_truth: true
   - [x] sender_account_id write 배선 (save_core_message + _save_message + _run_agent_core)
   - [x] 사람 채팅 store-only 엔드포인트 (POST /api/conversations/{cid}/messages)
   - [x] F1 발신자-한정 첨부 주입 (force_sender_scope + _is_group_conversation)
+  - [x] LLM 히스토리 발신자 라벨 (그룹 한정 `[이름]:` — _format_core_messages/_resolve_group_sender_labels + _GROUP_CONVERSATION_GUIDANCE, REQ-GC-R5) — gc-assistant-dialect-context CHG-20260625T202843
+  - [x] MySQL 데이터소스 dialect 교정 (LLM T-SQL 오생성 thrashing 해소 — _MYSQL_DIALECT_GUIDANCE + 거부 메시지 _dialect_correction_hint) — gc-assistant-dialect-context CHG-20260625T202843
 - [~] **S4 Security** — cross-account 감사(기존 ask audit actor). ⏳잔여: auto-mode 라이브 적대검증 · 멘션 자동완성 roster 한정(roster UI)
   - [x] actor datasource 발화 게이트 (멤버 @assistant 허용, pinned 이중게이트, 열람≠발화 완성)
 - [~] **S5 Realtime+Limits** — ✅멤버 제거/보존 정책(remove=membership 삭제·메시지/첨부 잔존, 설계상 완료). ⏳**배포 후 라이브 검증/폴리시로 이연**(아래 사유): per-conversation run cap(동시 멤버 @assistant) · llm_usage actor 귀속(F5) · 폴링 동기화 · LLM 화자 라벨

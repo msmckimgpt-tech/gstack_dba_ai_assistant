@@ -6325,9 +6325,30 @@ a { color: inherit; }
   flex: 1;
   min-width: 0;
 }
+/* conv-switch-fade: 대화 전환 크로스페이드용 "고스트" 오버레이.
+   selectConversation 진입 시 직전 화면의 스냅샷(messageLog clone)을 messages-wrap
+   위에 띄워 fade-out 시키고, 실제 messageLog 은 opacity 0 에서 목표 대화를 재구성한
+   뒤 fade-in 한다(app.js _beginConversationCrossfade / _commitConversationCrossfade).
+   geometry(left/top/width/height/opacity)와 scrollTop 은 app.js 가 인라인 주입. */
+.messages-switch-ghost {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  z-index: 3;
+  pointer-events: none;
+  margin: 0;
+  will-change: opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 모션 최소화: app.js 가 고스트를 생성하지 않지만(가드) 방어적으로 숨김. */
+  .messages-switch-ghost { display: none; }
+}
 /* TASK-0062: rail dot 위치를 scrollHeight 비례 (top: %) 로 배치 — relative + absolute */
 .message-point-rail {
   position: relative;
+  /* conv-switch-fade: 전환 고스트(.messages-switch-ghost, z-index 3)보다 위에 두어
+     fade 동안 rail dot 이 가려지지 않게 한다(고스트는 messageLog 폭만 덮지만 방어적). */
+  z-index: 4;
   width: 16px;
   padding: 0;
   border-left: 1px solid var(--border-soft, rgba(0, 0, 0, 0.06));

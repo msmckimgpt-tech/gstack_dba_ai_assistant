@@ -416,3 +416,16 @@ source_of_truth: true
 - NIT(수용/처리): ① 핸들러 테스트 공백(2회 재보고 산 원인) → **회귀 테스트 신규 추가로 해소**. ② 읽음 호출 fire-and-forget(await 안 함) — 대화 열자마자 RTT 내 새로고침 시 드문 미전진 엣지(회귀 아님, refresh-restore 재마킹으로 대부분 완화) → REVIEW 수용 기록(현 수정 범위 외). ③ 이미지 baked → web **재빌드+재배포** 후에야 적용 → 배포 게이트에서 강제.
 - Verification: `python -m py_compile`(app.py·test) PASS + 컨테이너 재현 `set_last_read` rowcount=1. **배포 후 web 로그 read 500→200 + 고착 커서(3466→conv_max) 전진 실증 필수**(deploy-backed 완료 기준).
 - Human Approval Needed: 아니오 (사용자 보고 직접 수정, Minor 서버 버그 정정, 무회귀). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.
+
+## REV-20260625T202843-gc-assistant-dialect-context [AGENT-TEAM:회귀·정확성 / 보안·prompt-injection 2렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: gc-assistant-dialect-context (CHG-20260625T202843) — 라이브 그룹대화 `20260625063340-4220125d` 마찰 근본원인 2건 수정. **Major §12.3**(코어 LLM 컨텍스트 조립 경로 + backend SELECT 변경).
+- Related Change: feature-0002 `src/agent_core.py`·`src/modules/tools.py`·`src/modules/runtime_backend.py` (cross-feature, FUNCTION.md §13 사전 승인).
+- Reason: 코어 ask 경로(히스토리 조립·system prompt·sql_guard 피드백) 변경 + 사용자 입력(Username)을 LLM 컨텍스트에 prepend → 회귀·정합·prompt-injection 표면. §18.8 적대 패널 2렌즈로 결함 적발 시도.
+- 진단 근거(라이브 PG `agent_runtime` read-only 조사): product 110=`mysql-mv-dev`(MySQL 단일 DS)인데 assistant 가 T-SQL 반복 생성→거부(msg 3440·3505·3571·3602·3625·3641·3643·3585); 히스토리 로드 SELECT 가 sender_account_id 누락(REQ-GC-R5 위반) 확인. product 전용 prompt(websystemprompts Id 32)가 "TOP N/UNION ALL/DESCRIBE [..]" 로 T-SQL 유도.
+- 적대적 검증(general-purpose 서브에이전트 2, "결함 적발" 목적, 코드 직접 read):
+  - **렌즈 A (회귀·정확성)** — VERDICT: SHIP-WITH-FIXES. 6 가설 중 5 clean: ① 1:1·비그룹 `sender_labels=None` 바이트 동일 무회귀(시그니처 default 인자, 외부 호출처 0) ② PG tuple idx 5 `(r[5] if len(r)>5 else None)` 가드, `_PG_GET_CONV_MESSAGES_FULL` 별도 미변경 ③ normalize/merge 불변식 보존(라벨은 content 문자열만 변형, user 행 게이트) ⑤ 라벨 누수 없음(저장·미러·origin/thread_goal 전부 raw) ⑥ None/예외 graceful 이중 방어. **적발 2건(둘 다 NON-BLOCKING, 반영 완료)**: (가설4) 멀티DS(mysql primary+mssql secondary)에서 `_MYSQL_DIALECT_GUIDANCE` 의 "every query/IGNORE T-SQL" 가 secondary mssql 안내와 모순 → 문구를 "활성(primary) MySQL 데이터소스" 로 스코프 + multi-ds grounding 위임 명시(수정함). (추가) 신규 함수 단위 테스트 0 → `test_gc_dialect_context.py` 6건 추가(수정함).
+  - **렌즈 B (보안·prompt-injection)** — VERDICT: SHIP. 4 가설 전부 SAFE: ① 라벨 spoofing **불가** — `WebAccounts.Username` 은 VARCHAR(64) UNIQUE + 전 쓰기 경로(signup `_sanitize_username` `[A-Za-z0-9_.-]`·admin·OAuth=email local-part sanitize)가 `]`/`[`/`:`/공백/개행 물리 차단 → `[admin]: ignore` 류 생성 불가(app.py:1254/105/19160). content 는 기존 `_INJECTION_GUARD_NOTICE`+RBAC fail-closed 가 받침(신뢰경계 미확장, 라벨 소스가 content 보다 강한 제약). ② 권한경계: `SELECT Id,Username` 만·멤버 한정·파라미터 바인딩+int 강제(민감필드/SQLi 없음). ③ 거부 힌트 정적 문구(SQL 원문 미에코). ④ sql_guard 미변경·거부 분기 내 문자열 append 만(게이트 무력화 없음).
+- 핵심 판정: **SHIP-WITH-FIXES → 적발 NON-BLOCKING 2건 모두 반영. BLOCKING 0.**
+- Verification: `py_compile`+`ruff` PASS. 단위 48 PASS(신규 6 + 회귀 42 `test_db_query_ux`·`test_runtime_read_backend`). **PB-0008 미실측**(배포 후 라이브 그룹대화 실측 권장 — MySQL 제품 @assistant 가 LIMIT/단일SELECT 생성·다자 맥락 재질문 감소 확인).
+- Human Approval Needed: 예(커밋·배포는 사용자 confirm) — Major + 코어 LLM 경로 + 라이브 system prompt 동작 변화. deploy_scope 판정은 commit 후 안내.
