@@ -15164,9 +15164,11 @@ async def mark_conversation_read(cid: str, request: Request) -> JSONResponse:
     """그룹 대화 읽음 처리 — 멤버의 last_read_message_id 커서를 전진(GREATEST) (feature-0009 gc-unread-badge).
 
     사이드바 "안 읽은 메세지" 배지의 기준점. 대화를 열거나 활성 상태에서 새 메세지를 받으면
-    프론트가 본인이 본 마지막 메세지 id 로 호출한다. body 의 last_read_message_id 가 없거나
-    유효하지 않으면 서버가 그 대화 core_messages 의 최대 id(=전부 읽음)로 처리한다. 커서는
-    전진만(set_last_read 의 GREATEST) — 폴링/재진입 경합에도 되돌리지 않는다.
+    프론트가 호출한다. **서버는 요청 body 의 last_read_message_id 를 신뢰하지 않고, 항상 그 대화
+    core_messages 의 최대 id(=현재까지 전부 읽음)로 커서를 전진시킨다** (gc-unread-read-idspace-fix).
+    이유: FE 가 보내는 id 는 표시 store(agent_runtime.messages) 공간이고 읽음 커서·unread 집계는
+    core_messages 공간이라 두 id 공간이 분리되어, FE 값을 쓰면 GREATEST 가 항상 전진을 거부했다.
+    커서는 전진만(set_last_read 의 GREATEST) — 폴링/재진입 경합에도 되돌리지 않는다.
 
     멤버십 게이트(read.own/.any) 통과 + 멤버 행이 있을 때만 갱신된다. 멤버가 아닌 admin(.any)
     열람은 멤버 행이 없어 no-op (그들은 unread 추적 대상이 아님 — FE 도 본인/멤버 그룹대화만 배지 표시).
@@ -15183,30 +15185,31 @@ async def mark_conversation_read(cid: str, request: Request) -> JSONResponse:
             conn, account, cid, "conversation.read.own", "conversation.read.any"
         ):
             return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
-        try:
-            requested = int(data.get("last_read_message_id"))
-        except (TypeError, ValueError):
-            requested = None
         account_id = int(account["id"])
         try:
             from shared.db import _pg_connect
             from modules import group_members
             pg = _pg_connect()
             try:
-                target_id = requested
-                if target_id is None or target_id <= 0:
-                    with pg.cursor() as _cur:
-                        _cur.execute(
-                            "SELECT COALESCE(MAX(id), 0) FROM agent_runtime.core_messages "
-                            "WHERE conversation_id = %s",
-                            (cid,),
-                        )
-                        _row = _cur.fetchone()
-                        target_id = int(_row[0]) if _row and _row[0] is not None else 0
+                # feature-0009 gc-unread-read-idspace-fix: 읽음 커서(conversation_members.last_read_message_id)
+                # 와 unread 집계는 agent_runtime.core_messages.id 공간을 기준으로 한다. 그러나 FE 가 읽음
+                # 처리로 보내던 last_read_message_id 는 /api/history 가 채운 표시 store(agent_runtime.messages)
+                # 의 id 였고, 두 테이블은 별개 base table 로 id 공간이 분리(disjoint)되어 있다(같은 대화라도
+                # messages 는 수백 단위, core_messages 는 수천 단위). 그래서 FE 가 보낸 값은 커서보다 항상
+                # 작아 set_last_read 의 GREATEST(되돌림 방지)가 전진을 영구 거부했다 — 읽어도 사이드바 unread
+                # 배지가 줄지 않고 대화 전환 시 회귀하던 근본 원인. 대화 열람은 "현재까지 전부 읽음"이므로,
+                # FE 가 보낸 값과 무관하게 항상 이 대화 core_messages 의 MAX(id) 로 커서를 전진시킨다.
+                # (표시/카운트 store 가 분리된 현 구조상 FE 는 정확한 core id 를 알 수 없어 부분 읽음은
+                #  원래 불가능 — '열면 전부 읽음' 시맨틱. set_last_read 의 GREATEST 는 그대로 두어 폴링/
+                #  재진입 경합에도 커서가 되돌아가지 않는다.)
+                with pg.cursor() as _cur:
+                    _cur.execute(
+                        "SELECT COALESCE(MAX(id), 0) FROM agent_runtime.core_messages "
+                        "WHERE conversation_id = %s",
+                        (cid,),
+                    )
+                    _row = _cur.fetchone()
+                    target_id = int(_row[0]) if _row and _row[0] is not None else 0
                 updated = group_members.set_last_read(pg, cid, account_id, target_id)
             finally:
                 pg.close()
