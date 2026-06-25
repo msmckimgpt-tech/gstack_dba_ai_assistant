@@ -45,6 +45,10 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - read-state 커서·@mention 표시·폴링 동기화. **(구현 gc-unread-badge, 2026-06-25)**: 멤버별
   `conversation_members.last_read_message_id` 커서 + 사이드바 **안 읽은(새) 메세지/@멘션 배지**
   (형식 `<안읽음>[ / @<멘션>]`, 그룹 대화 한정, 본인 발신 제외) + 읽음 API(`POST /api/conversations/{cid}/read`).
+  **(보정 gc-unread-baseline, 2026-06-25)**: last_read baseline 은 가입/배포 *이전* 메세지를
+  읽음으로 간주한다 — 멤버 가입 시 `add_member` 가 가입 시점 `MAX(core_messages.id)` 로 커서를
+  초기화하고, 기존 데이터는 alembic 0020 이 대화별 `MAX(id)` 로 backfill. 따라서 배지는 "읽지
+  않은 *신규* 메세지"만 센다(과거 전체 메세지가 unread 로 잡히지 않음). 메세지 0건 대화는 NULL→첫 메세지부터 unread.
 - per-conversation run cap + llm_usage actor 귀속.
 - 멤버 add/remove + @assistant actor 감사(audit) 액션.
 

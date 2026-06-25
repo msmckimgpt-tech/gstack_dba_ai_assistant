@@ -337,3 +337,17 @@ source_of_truth: true
   - NIT(주석 "동일 shape") **수정 반영**: agent_core 주석을 "동일 키 집합 + 1:1/그룹 양용이라 sender_username 으로 게이트, account_id-only 게이트는 회귀" 로 정확화.
 - Verification: `test_ask_worker.py` 7/7 (보강 round_trip/defaults + 신규 sender_username 시그니처) + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile`. PB-0008 미실측(백엔드 배선 — 표시 동작은 배포 후 라이브 그룹 대화에서 권장).
 - Human Approval Needed: 아니오 (Major·backend 배선·신규 authz 미도입·무회귀, deploy_scope: included 사전승인).
+
+## REV-20260625T165320-gc-unread-baseline [SUBAGENT:데이터정확성·보안/회귀 2렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: gc-unread-baseline (CHG-20260625T165320) — unread 배지 baseline 누락 버그(읽은 대화에 전체 개수 표시) 수정. **Major §12.3** (데이터 마이그레이션 + 멤버 INSERT, deploy-backed). 사용자 명시 버그 보고 → 즉시 수정.
+- 원인/해결: 0019 가 baseline backfill 누락(137행 NULL→전체 unread). 0020 backfill(NULL→대화별 MAX id) + add_member INSERT baseline(가입 시점 MAX).
+- 적대 패널(§18.8, SUBAGENT 2렌즈 병렬 — 결함 적발 목적): **종합 SHIP, BLOCKING 0**.
+  - 데이터 정확성/안전 → SHIP-WITH-NITS: per-conversation MAX 스코핑(core_messages.id 전역 단조·유일) · `IS NULL` 멱등 가드(전진 커서 미복귀) · strict `>` 경계(off-by-one 0) · 메세지 0건=NULL 유지 · `ON CONFLICT` role-only(재참여 커서 보존) · 단일 add_member funnel.
+  - 보안/회귀 → SHIP: 파라미터 바인딩(서브쿼리 `%(conversation_id)s`) · cross-conv 누설 0 · add_member 호출처(`_ensure_owner_membership`·share join) 시그니처 무변경(서브쿼리가 기존 param 재사용) · 권한(agent_kb_rw SELECT/UPDATE 커버) · owner 자기발신 `sender IS DISTINCT FROM self` 제외 · MySQL read-only 무영향 · 체인 0018→0019→0020 선형.
+- 수용 NIT (가시 회귀 0 — 미적용):
+  - backfill `MAX(id)` 가 role 필터 없이 전체 max(집계는 user/assistant+content 필터) — id 단조라 **결과 동치**(baseline 이하 전부 읽음, 이후 신규 정상) — 무해.
+  - MySQL backfill parity 부재 — production=PG 정본, MySQL 폴백 미운용. 운용 시 동일 UPDATE 필요(기록).
+  - add_member `MAX`↔`ON CONFLICT` TOCTOU 좁은 창 — 단일 statement, 자기 가입 기준이라 무시 가능.
+- Verification: py_compile(group_members·0020) + §18.8 패널 2렌즈 SHIP. backfill 라이브 적용 + unread smoke + PB-0008 배포 후.
+- Human Approval Needed: 아니오 (Major·사용자 명시 버그 보고·데이터 보정 멱등·무회귀, deploy_scope: included 사전승인).

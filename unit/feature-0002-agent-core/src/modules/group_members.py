@@ -59,11 +59,17 @@ WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
 LIMIT 1
 """
 
+# feature-0009 gc-unread-baseline: 신규 가입 멤버의 last_read_message_id 를 가입 시점
+# 대화 MAX(core_messages.id) 로 초기화한다 — 가입 *이전* 메세지는 unread 로 세지 않는다
+# ("읽지 않은 신규 메세지만" 표시). 메세지 없는 대화면 MAX=NULL → 첫 메세지부터 unread.
+# ON CONFLICT DO UPDATE 는 role 만 갱신 — 기존 멤버 재참여 시 이미 전진한 커서를 보존한다
+# (last_read 를 덮어쓰지 않음). 기존 데이터 일괄 보정은 alembic 0020 backfill.
 _PG_ADD_MEMBER = """
 INSERT INTO agent_runtime.conversation_members
-    (conversation_id, account_id, role, invited_by_account_id)
+    (conversation_id, account_id, role, invited_by_account_id, last_read_message_id)
 VALUES
-    (%(conversation_id)s, %(account_id)s, %(role)s, %(invited_by_account_id)s)
+    (%(conversation_id)s, %(account_id)s, %(role)s, %(invited_by_account_id)s,
+     (SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conversation_id)s))
 ON CONFLICT (conversation_id, account_id) DO UPDATE SET
     role = EXCLUDED.role
 """

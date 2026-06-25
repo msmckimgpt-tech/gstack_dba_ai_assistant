@@ -377,3 +377,16 @@ source_of_truth: true
 - Impact: 1:1·비그룹·신규 대화 무회귀(sender_username None → meta 미부착). 그룹 ask 만 user 메시지 발신자 표시 정정. 스키마/DDL/RBAC/엔드포인트 0(미러 meta jsonb 부착뿐).
 - Rollback Notes: 3파일 revert. 스키마/마이그레이션 0 → 무상태 롤백 가능. 캐시버스터 불요(FE 미변경 — 미러 meta 는 기존 user 분기 렌더가 이미 소비).
 - 검증: `test_ask_worker.py` 7/7 + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile` PASS. §18.8 적대 패널(general-purpose, correctness+security) BLOCKER 0/MAJOR 0(MINOR 1 ACCEPTED-as-is: `if account_id` 대칭화는 1:1 회귀 유발 → 현 가드 정답 / NIT 1 주석 정확화 반영). REV-20260625T162000 참조. **PB-0008 미실측**(백엔드 배선 — 표시 정정은 배포 후 라이브 그룹 대화 권장).
+
+## CHG-20260625T165320-gc-unread-baseline (REQ-GC-R8 read-state 보정, Major §12.3 — 데이터 마이그레이션 + 멤버 baseline)
+- Date: 2026-06-25. 사용자 보고: "그룹 대화에서 읽은 상태일 경우 전체 메세지 개수(회색)가 출력되는 부분은 의도하지 않음 — 읽지 않은 신규 메세지·멘션 개수만 표현되도록."
+- Related: gc-unread-badge(CHG-20260625T065840) 후속 결함 수정. REQ-GC-R8.
+- **원인**: alembic 0019 가 `last_read_message_id` 컬럼을 ADD 만 하고 baseline backfill 을 누락 → 기존 `conversation_members` 137행 전부 NULL → unread 집계 `m.id > COALESCE(last_read,0)` 에서 *기존 메세지 전체*가 unread → 읽은 대화에도 "전체 개수" 회색 배지 표시.
+- Summary: (a) **alembic 0020 backfill** — NULL 멤버 커서를 대화별 `MAX(core_messages.id)` 로 초기화(배포 이전 메세지=읽음 간주). (b) **group_members.add_member INSERT 에 last_read baseline**=가입 시점 `MAX(id)` (재발 방지). frontend 무변경(배지 로직 정상 — 데이터 보정).
+- Files:
+  - `unit/feature-0002-agent-core/alembic/versions/20260625_0020_conversation_member_last_read_backfill.py` (신규): NULL 행 `UPDATE`→대화별 `MAX(id)`(GROUP BY conversation_id). down_revision=0019. 멱등(`IS NULL` 가드). downgrade no-op(원래 NULL 행 식별 불가).
+  - `unit/feature-0002-agent-core/src/modules/group_members.py` (cross-feature): `_PG_ADD_MEMBER` INSERT 에 `last_read_message_id = (SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conversation_id)s)`. `ON CONFLICT … DO UPDATE SET role` 은 role 만 갱신(재참여 시 커서 보존).
+- 설계: 가입/배포 *이전* 메세지는 "신규 아님"=읽음. cursor=message_id, 집계 strict `>` 라 baseline 이하=unread 0, 이후 신규만 집계. 메세지 0건 대화=NULL 유지(첫 메세지부터 unread). 모든 멤버 INSERT 경로(owner 자가치유·share join)가 add_member 단일 funnel → baseline 우회 없음.
+- Impact: 순수 데이터 보정 + INSERT 1컬럼. 스키마 DDL 0(0019 컬럼 재사용), 엔드포인트/RBAC/FE 0. production=PG 정본(멤버 write PG 단일경로). MySQL=read parity(무영향).
+- Rollback: alembic downgrade 0019(backfill no-op) + add_member INSERT 컬럼 revert. 데이터 무손실(UPDATE 만).
+- 검증: py_compile(group_members·0020) OK + §18.8 적대 패널 2렌즈(데이터정확성·보안/회귀) **SHIP, BLOCKING 0**. 라이브 backfill 적용 + unread smoke + PB-0008 배포 후. **★배포 alembic 0020 필수.**
