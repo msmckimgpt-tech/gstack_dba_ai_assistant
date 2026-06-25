@@ -9,6 +9,21 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260625-role-account-prompt-autogen (TASK-20260625-role-account-prompt-autogen — 역할 '전체 제품 프롬프트' + 프로필 '제품별 개인 프롬프트' 자동 작성, Major §12.3 — 외부 LLM dispatch 2개 scope 확장)
+- Date: 2026-06-25. 사용자 요청(/_template:entry): "`관리 콘솔 > 역할 > 제품 사용 > 전체 제품 프롬프트` 와 `작업 화면 > 프로필 > 프롬프트 > [각 제품]` 의 자동 완성 기능 구성 — 역할 성격·소속 사용자 대화 내역, 프로필은 역할·제품·대화 패턴 반영." 결정: on-demand 버튼만 + 기능만 구성(seed 라이브 생성은 운영자).
+- Scope: feature-0003 web only. **스키마 변경 0**(기존 `WebSystemPrompts` scope='role'/'account' 행 재사용 — 합성은 agent-core `compose_system_prompt` 가 이미 처리). PG·gateway·credential·RBAC 카탈로그 무변경. 기존 제품 자동작성 엔드포인트·UI 동작 보존.
+- 내용(`src/app.py`):
+  - 신규 컨텍스트 헬퍼: `_collect_conversation_signals_pg(*, product_id=None, account_ids=None, topic_limit, summary_limit)` — 제품 경로가 인라인 수집하던 topic·summary 를 필터 일반화. **빈 account_ids → PG 미접근 + 빈 결과**(cross-scope 누출 가드), account_ids=None → 전체. 원문 메시지 아닌 집계 메타만.
+  - 신규: `_describe_role_character`(권한코드→성격 서술, `_ROLE_CAPABILITY_HINTS` — ask 없으면 '조회 전용' 명시) · `_assemble_role_prompt_llm_request(role_id)`(역할 정의/권한 + 소속 계정 대화 패턴 + 접근 가능 제품 → role-scope meta-prompt) · `_assemble_account_prompt_llm_request(account_id, role_id, product_id)`(역할 성격 + 제품 용도 + 본인 대화 패턴 → 개인 선호 레이어 meta-prompt; 스키마 세부 미중복).
+  - 공유 응답 헬퍼 추출(중복 제거): `_prompt_generate_json_response(ctx, *, log_label, log_ctx)`(비스트리밍) · `_prompt_generate_stream_response(ctx, *, log_label, log_ctx)`(SSE 별스레드+Queue 브릿지). **제품 비스트리밍/스트리밍 엔드포인트도 동일 헬퍼로 리팩터** — 동작·SSE 이벤트·JSON shape 불변(계약 테스트가 self-contained 라 회귀 0).
+  - 신규 엔드포인트 4종 + 인증 게이트: `_collect_role_prompt_context`(`system_prompt.manage.role.any`) → `POST|GET /api/admin/roles/{id}/prompt/generate[/stream]` · `_collect_account_prompt_context`(본인 + 제품 지정 시 `_account_has_product_access`) → `POST|GET /api/auth/me/system-prompt/generate[/stream]`.
+- 내용(정적 자산): admin.js `buildSystemPromptEditor` 에 `autoGenerateRoleId` 추가(스트림 URL = role 이면 roles/{id}) + `applyAutoGenMeta` scope-aware(role=소속 사용자·대화주제) + 역할 '전체 제품 프롬프트' 카드가 `autoGenerateRoleId` 전달. index.html 프로필 프롬프트 탭 `#generatePromptBtn` 추가. app.js `generateAccountPrompt()` SSE 핸들러(admin 핸들러와 동형, 선택 제품 query, 생성 후 검토→'저장').
+- privacy/비용: 역할 scope 는 교차사용자 집계지만 **원문 미사용·집계 메타만**(제품 경로와 동일 house style) + admin 게이트. account 는 본인 데이터만 + **LLM 토큰 quota 게이트**(아래 적대리뷰 MAJOR-1). on-demand 전용 — 자율 백그라운드 생성·자동 저장 없음(사용자 결정).
+- **적대 리뷰(REV-20260625T173000-role-account-prompt-autogen, §18.8 2렌즈) MAJOR 2 + MINOR 2 흡수**: **MAJOR-1**(self-service account 자동작성 quota 우회 → `_collect_account_prompt_context` 에 `_check_account_token_quota` 게이트=429) · **MAJOR-2**(프로필 에디터 dirty 미추적 → 자동작성 본문이 제품 전환 시 silent 소실 → `initAccountPromptEditor` `_lastLoaded`/`_prevValue` + `window.confirm` dirty 가드) · MINOR(재진입 가드 `_streamAbort===controller`로 app.js·admin.js 동시 수정 · 프로필 메타 `.helper-text-warn` 강조) · NIT(done 스크롤 보존). 반증 실패=안전 확인: IDOR 없음(account 는 authed id 만)·privacy 빈 account_ids PG 미접근 가드·SQLi 없음·리팩터 byte-equivalent.
+- 정적 자산 캐시버스터: index.html `styles.css`/`app.js` + admin.html `styles.css`/`admin.js` → `?v=20260625-role-account-prompt-autogen`.
+- 검증: `tests/test_auto_role_prompt.py`(7) + `tests/test_auto_account_prompt.py`(5) 신규 + 회귀(`test_auto_product_prompt` 12·`test_prompt_generate_stream` 3·`test_prompt_generate_truncation` 4) = **33/33 PASS**(agent 이미지) + `py_compile` + ruff(app.py) PASS + `node --check` admin.js/app.js + CSS brace balance(1572/1572) PASS.
+- worktree `ai/claude/role-account-prompt-autogen`(base 7e6aab8). REVIEW REV-20260625T173000-role-account-prompt-autogen.
+
 ## CHG-20260625-auto-product-prompt (TASK-0309 — 제품 insight 분석률 95% 도달 시 제품 프롬프트 무인 자동완성(1회성), Major §12.3 — 자율 LLM dispatch + 자율 DB write)
 - Date: 2026-06-25. 사용자 요청(/_template:entry): "`관리 콘솔 > 제품`의 각 제품에서 '제품 프롬프트'가 미입력인 항목을 대상으로, 분석률이 95% 넘는 순간 자체적으로 자동완성·저장. 단 임의적 insight 초기화로 재상승해도 별도 분석 안 함(1회성)."
 - Scope: feature-0003 web only. **마이그레이션 = MySQL 멱등 ALTER 1컬럼**(`WebProducts.AutoPromptGeneratedAt`), PG·agent-core·gateway·credential·RBAC·정적자산 무변경. 수동 '자동작성' 엔드포인트(POST/GET `.../prompt/generate[/stream]`) 무변경 보존.

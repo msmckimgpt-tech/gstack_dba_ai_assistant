@@ -1477,6 +1477,13 @@ async function initAccountPromptEditor() {
     });
     selectEl.dataset.populated = "1";
     selectEl.addEventListener("change", () => {
+      // dirty guard: 자동 작성/편집한 미저장 본문이 있으면 제품 전환 전 확인(소실 방지).
+      const lastLoaded = selectEl._lastLoaded || "";
+      if (contentEl.value !== lastLoaded &&
+          !window.confirm("저장하지 않은 프롬프트 내용이 있습니다. 제품을 바꾸면 사라집니다. 계속할까요?")) {
+        selectEl.value = selectEl._prevValue || "";
+        return;
+      }
       reloadAccountPrompt().catch(() => {});
     });
   }
@@ -1484,16 +1491,16 @@ async function initAccountPromptEditor() {
 
   async function reloadAccountPrompt() {
     const pid = selectEl.value ? Number(selectEl.value) : null;
+    if (metaEl) metaEl.classList.remove("helper-text-warn");
     try {
       const payload = await fetchAccountPromptRow(pid);
       const row = payload.prompt;
-      if (row) {
-        contentEl.value = row.content || "";
-        if (metaEl) metaEl.textContent = `마지막 수정: ${row.updated_at || "-"}`;
-      } else {
-        contentEl.value = "";
-        if (metaEl) metaEl.textContent = "(저장된 프롬프트 없음)";
-      }
+      const loaded = row ? (row.content || "") : "";
+      contentEl.value = loaded;
+      // dirty guard 기준값 — 마지막으로 서버에서 적재한 본문 + 그때의 제품 선택값.
+      selectEl._lastLoaded = loaded;
+      selectEl._prevValue = selectEl.value;
+      if (metaEl) metaEl.textContent = row ? `마지막 수정: ${row.updated_at || "-"}` : "(저장된 프롬프트 없음)";
     } catch (error) {
       if (metaEl) metaEl.textContent = `조회 실패: ${error.message || error}`;
     }
@@ -1517,6 +1524,120 @@ async function saveAccountPrompt(forceDelete = false) {
   if (forceDelete) contentEl.value = "";
   showToast(forceDelete ? "프롬프트를 삭제했습니다." : "프롬프트를 저장했습니다.");
   await initAccountPromptEditor();
+}
+
+// TASK-20260625-role-account-prompt-autogen: 프로필 '제품별 개인 프롬프트' 자동 작성.
+// 선택된 제품(제품 무관 포함) 기준으로 LLM 토큰을 SSE 스트리밍 받아 #promptContent 에 실시간
+// 채운다. admin.js buildSystemPromptEditor 의 자동작성 핸들러와 동형 — 생성 후 사용자가 검토하고
+// '저장'을 눌러야 반영된다(자동 저장 안 함). self-service: 본인 계정·본인 대화 패턴만 사용.
+async function generateAccountPrompt(btn) {
+  const selectEl = document.getElementById("promptProductSelect");
+  const contentEl = document.getElementById("promptContent");
+  const metaEl = document.getElementById("promptMeta");
+  if (!selectEl || !contentEl) return;
+  // 재진입 방어 — 진행 중인 스트림이 있으면 중단.
+  if (btn && btn._streamAbort) {
+    try { btn._streamAbort.abort(); } catch (_) {}
+  }
+  const controller = new AbortController();
+  if (btn) {
+    btn._streamAbort = controller;
+    btn.disabled = true;
+    btn.textContent = "생성 중…";
+  }
+  const setMeta = (t, warn = false) => {
+    if (!metaEl) return;
+    metaEl.textContent = t;
+    metaEl.classList.toggle("helper-text-warn", !!warn);
+  };
+  setMeta("준비 중…");
+  let streamedAny = false;
+  const finish = () => {
+    // 재진입 가드: 이 호출이 소유한 controller 일 때만 버튼 복원 — 빠른 더블클릭 시
+    // 앞선 호출의 finally 가 뒤 호출의 진행 중 스트림 버튼을 재활성/abort 핸들 제거하지 않도록.
+    if (btn && btn._streamAbort === controller) {
+      btn.disabled = false;
+      btn.textContent = "자동 작성";
+      btn._streamAbort = null;
+    }
+  };
+
+  const handleFrame = (frame) => {
+    let ev = null, dataStr = null;
+    for (const line of frame.split("\n")) {
+      if (line.startsWith("event:")) ev = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataStr = line.slice(5).trim();
+    }
+    if (!dataStr) return;
+    let data;
+    try { data = JSON.parse(dataStr); } catch (_) { return; }
+    if (ev === "progress") {
+      setMeta(data.label || "생성 중…");
+    } else if (ev === "token") {
+      if (!streamedAny) { contentEl.value = ""; streamedAny = true; }
+      const atBottom =
+        contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight <= 8;
+      contentEl.value += data.text || "";
+      if (atBottom) contentEl.scrollTop = contentEl.scrollHeight;
+      setMeta(`생성 중… (${contentEl.value.length}자)`);
+    } else if (ev === "done") {
+      // 최종 본문 재할당 시 스크롤 위치 보존(admin.js 핸들러와 동형 — 최하단이면 새 최하단, 아니면 읽던 위치).
+      const atBottom =
+        contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight <= 8;
+      const prevTop = contentEl.scrollTop;
+      const finalText = (data.prompt != null ? data.prompt : contentEl.value);
+      if (contentEl.value !== finalText) contentEl.value = finalText;
+      const maxTop = Math.max(0, contentEl.scrollHeight - contentEl.clientHeight);
+      contentEl.scrollTop = atBottom ? maxTop : Math.min(prevTop, maxTop);
+      const m = data.meta || {};
+      let msg = m.grounded
+        ? `자동 생성됨 — 대화주제 ${m.topic_count || 0}건 반영. 검토 후 '저장'을 누르세요.`
+        : "자동 생성됨 — 대화 이력이 적어 역할 기반 형태입니다. 검토 후 '저장'을 누르세요.";
+      if (m.truncated) msg += " ⚠ 길이 제한으로 잘렸을 수 있습니다. 다시 생성할 수 있습니다.";
+      setMeta(msg, !!m.truncated);
+    } else if (ev === "error") {
+      setMeta(`자동 생성 실패: ${data.error || "알 수 없는 오류"}`, true);
+    }
+  };
+
+  try {
+    const pid = selectEl.value ? Number(selectEl.value) : null;
+    const qs = pid ? `?product_id=${pid}` : "";
+    const resp = await fetch(`/api/auth/me/system-prompt/generate/stream${qs}`, {
+      method: "GET",
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      // 인증/권한 등은 JSON 으로 도착(SSE 진입 전).
+      let msg = resp.statusText;
+      try { const j = await resp.json(); msg = j.error || msg; } catch (_) {}
+      setMeta(`자동 생성 실패: ${msg}`, true);
+      finish();
+      return;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        if (frame.trim()) handleFrame(frame);
+      }
+    }
+    if (buf.trim()) handleFrame(buf);
+  } catch (error) {
+    if (!(error && error.name === "AbortError")) {
+      setMeta(`자동 생성 중단됨(연결 오류): ${error.message || error}`, true);
+    }
+  } finally {
+    finish();
+  }
 }
 
 function buildPermissionPills(containerEl) {
@@ -8374,6 +8495,15 @@ async function initialize() {
       setNotifyPrefs({ desktop: notifyDesktopChk.checked });
       if (notifyDesktopChk.checked) _maybeRequestNotifyPermission();
       renderNotifyPrefs();
+    });
+  }
+
+  const generatePromptBtn = document.getElementById("generatePromptBtn");
+  if (generatePromptBtn) {
+    generatePromptBtn.addEventListener("click", () => {
+      generateAccountPrompt(generatePromptBtn).catch((error) => {
+        showToast(error.message || "자동 작성에 실패했습니다.", true);
+      });
     });
   }
 
