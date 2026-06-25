@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from shared.config import AGENT_TOP_N, AGENT_MAX_SHOW
-from shared.db import execute_sql as _raw_execute_sql
+from shared.db import execute_sql as _raw_execute_sql, DatasourceCircuitOpen
 from .render import save_csv
 from . import dialects as _dialects  # Stage 2 P5: engine 별 introspection/sample SQL
 
@@ -1259,6 +1259,10 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
             )
         try:
             ds_conn = router.conn_for(label)
+        except DatasourceCircuitOpen as e:
+            # 회로차단(연결 격리)은 일시 지연·자동복구 — "연결 실패" 프레이밍 회피(신뢰 보호,
+            # 보고 2026-06-25). label 접두어도 생략하고 안내형 문구만 LLM/사용자에게 전달.
+            return e.user_message()
         except Exception as e:
             return f"데이터소스 '{label}' 연결 실패: {e}"
         if ds_conn is None:

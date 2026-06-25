@@ -81,9 +81,27 @@ class DatasourceCircuitOpen(Exception):
     def __init__(self, scope_key: str, retry_after: float):
         self.scope_key = scope_key
         self.retry_after = max(0.0, float(retry_after))
+        # str(e)=기술/로그 메시지 — 변경 금지. insight.py 의 scan_outcome 분류는 예외 *타입*으로
+        # 판정하지만(circuit_open), 본 문자열을 로그·진단에서 그대로 읽으므로 안정 유지한다.
         super().__init__(
             f"데이터소스 연결이 일시적으로 불안정하여 차단되었습니다 "
             f"(약 {int(self.retry_after) + 1}초 후 자동 재시도)."
+        )
+
+    def user_message(self) -> str:
+        """사용자(대화) 화면 전용 문구. str(e)(기술/로그)와 분리한다.
+
+        회로차단은 *고장*이 아니라 한 datasource 의 일시 지연이 정상 datasource 요청까지
+        막지 않도록 격리하는 보호 동작이며 백그라운드 모니터가 자동 복구한다. 그런데
+        "DB 연결 실패 / 불안정 / 차단" 프레이밍은 서비스 자체가 고장난 것처럼 읽혀 신뢰를
+        떨어뜨린다(사용자 보고 2026-06-25). 그래서 (1) 지연 주체를 *연결된 데이터소스*로
+        명시하고 (2) 격리(다른 작업 보호) 이유와 (3) 자동 재연결·재시도 안내를 담는다.
+        surface(agent_core / tools)가 접두어 없이 이 문구만 그대로 노출한다."""
+        return (
+            "현재 연결된 데이터소스의 응답이 일시적으로 지연되고 있습니다. "
+            "다른 작업에 영향이 가지 않도록 잠시 대기하며, "
+            f"약 {int(self.retry_after) + 1}초 뒤 자동으로 재연결합니다. "
+            "잠시 후 다시 요청해 주세요."
         )
 
 
