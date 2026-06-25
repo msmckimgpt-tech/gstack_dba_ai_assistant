@@ -29,13 +29,16 @@ source_of_truth: false
 - CHG-20260625-0005: conn_health·datasources 소비처 60 ref/18 파일 shared.* 마이그레이션 + alias shim 2개 제거 (Step 5a)
 - CHG-20260625-0006: config 소비처 ~150 ref/53 파일 shared.config 마이그레이션 + modules/config shim 제거 (Step 5b)
 - CHG-20260625-0007: db 소비처 219 ref/52 파일(+.sh-embedded) shared.db 마이그레이션 + modules/db shim 제거 (Step 5c — 4개 shim 전부 제거)
-- 총 변경 횟수: 7
+- CHG-20260625-0008: docs/CODEBASE_MAP.md stale 정정(feature-0007~0011·shared/ 6모듈) + §7 Known Gaps(GDPR legal-erasure) 신설 (TASK-0011-11)
+- 총 변경 횟수: 8
 
 ## 4. Open Issues
 - **기존 baseline 실패는 해소됨**: Step 3 시점 잔존하던 `test_product_delete_block_conv.py` 2건은 main 의
   CI-fix(PYTHONPATH·/shared mkdir) 이후 본 Step 4 `make test` 에서 전체 green(F/E 0, 2 skip)으로 확인.
-- **후속 동반 doc(저위험, 미반영)**: #4 GDPR legal-erasure gap 의 CODEBASE_MAP 명시 + CODEBASE_MAP
-  자체 stale 정정(0007~0010 feature 누락, shared 구식 기술)은 본 PR 에 미포함 — TASK-0011-11 로 추적.
+- **동반 doc 완료(TASK-0011-11, CHG-0008)**: #4 GDPR legal-erasure gap 을 docs/CODEBASE_MAP.md §7 Known Gaps 에 명시 +
+  CODEBASE_MAP stale 정정(feature-0007~0011 추가, shared/ 6모듈 현행화, PB-0008). 해소됨.
+- **잔여(범위 밖)**: P5a Step 6(feature 단위 Dockerfile 분리, TASK-0011-10) — Critical, 완료 게이트 Windows 브라우저
+  QA(PB-0008)가 WSL env 불가라 별도 환경/세션 필요. Phase 3(secret rotation)은 사용자 보류 유지.
 
 ## 5. Test Status
 - 자동 테스트: `make test` — **회귀 0**(전체 green, 2 skip, F/E 0). 격리 agent 이미지 `--no-deps` pytest + ruff(All checks passed).

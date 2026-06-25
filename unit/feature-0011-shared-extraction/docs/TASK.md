@@ -42,7 +42,7 @@ source_of_truth: true
   - [x] 5c db 소비처 shared.db 마이그레이션(219 ref/52 파일, app.py 112 + .sh-embedded) + modules/db shim 제거 (최다결합)
         → 4개 alias shim(config·db·conn_health·datasources) 전부 제거, shared/ 추출 구조 완성
 - [ ] TASK-0011-10 P5a Step 6 — feature 단위 Dockerfile 분리 + 브라우저 QA [후속]
-- [ ] TASK-0011-11 동반(저위험) — #4 GDPR gap 문서화 + CODEBASE_MAP stale 정정(0007~0010 누락·shared 구식) [후속]
+- [x] TASK-0011-11 동반(저위험) — #4 GDPR gap CODEBASE_MAP 명시 + CODEBASE_MAP stale 정정(feature-0007~0011 추가·shared/ 6모듈·§7 Known Gaps 신설) [완료, CHG-0008]
 
 ## 4. In Progress
 - 없음 (Step 5b=config 마이그·shim제거 완료; Step 5c=db 마이그·shim제거 부터 별도 cycle/PR)
