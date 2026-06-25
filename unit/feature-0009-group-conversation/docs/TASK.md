@@ -69,6 +69,11 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
+- **gc-unread-read-500-fix** (읽음 API silent 500 → 새로고침 시 unread 배지 복원, Minor §12.3 서버 import 1줄): 사용자 재보고(resume) — gc-unread-read-fix 배포 후에도 "대화를 읽었어도 새로고침하면 회색 뱃지의 안 읽은 개수가 복원됨". **진짜 미해결 근본 원인**: `POST /api/conversations/{cid}/read` 핸들러가 web 컨테이너에 없는 `modules.db` 를 import → 매 호출 `ModuleNotFoundError`→500(frontend best-effort 삼킴, 화면만 0) → 서버 `last_read_message_id` 커서 미전진 → 새로고침 시 복원. 앞선 unread 수정 3건(badge/baseline/read-fix)이 전부 frontend/DB 만 건드려 이 서버 버그를 놓침. 수정=`modules.db`→`shared.db`(같은 파일 다른 9곳과 정합) + 핸들러 회귀 테스트 신설. (CHG/REV-20260625T202817)
+  - [x] 서버 `src/app.py` import 경로 수정 (modules.db→shared.db — POST /read 500 해소)
+  - [x] 회귀 가드 테스트 `tests/test_read_endpoint_pg_import.py` (정적: modules.db import 부재 / 런타임: shared.db resolvable)
+  - [x] `py_compile`(app.py·test) PASS + 컨테이너 재현 `set_last_read` rowcount=1 + §18.8 적대 패널 1렌즈 SHIP·BLOCKING 0
+  - [ ] verify-completion → PR → 라이브 배포(web 재빌드, deploy_scope included) → **web 로그 read 500→200 + 고착 커서(3466→conv_max) 전진 실증**
 - **composer-nonblock-interrupt** (입력창 비잠금 + 그룹 @assistant 중복차단 + 1:1 인터럽트 재요청, Major §12.3 composer/send): 사용자 지시 — gc-run-status 블로킹 근본 방지. 코드 완료(워크트리 `ai/claude/composer-nonblock-interrupt`, 커밋 전) → docs → verify-completion → PR → 라이브 배포 → PB-0008 잔여. §18.8 패널 3렌즈 BLOCKING 0(유효 4건 반영). (CHG/REV-20260625T191040)
   - [x] R1: renderComposer 입력창 disable busy 제거 + 전송/중단 버튼 myAskInFlight·입력유무 기준 (app.js)
   - [x] R2: 그룹 @assistant 중복 차단(내 run in-flight + 그룹 → 안내 return; 채팅·타멤버 자유) (app.js)

@@ -400,3 +400,19 @@ source_of_truth: true
 - 핵심 판정: **SHIP**. BLOCKING 0. 순수 client-render-only, 새 신뢰경계 미도입.
 - Verification: `node --check`(app.js) PASS + 발신자 귀속 결정부 4케이스 node 하니스(BEFORE 버그재현 / AFTER·hydrate 동일 / owner·1:1 무회귀). **PB-0008 미실측**(배포 후 라이브 그룹 대화 권장 — 비-owner 참가자 계정으로 @assistant 전송 직후 우측·본인 이름 확인).
 - Human Approval Needed: 아니오 (사용자 보고 직접 수정, Minor display-only, 무회귀, deploy_scope 판정은 commit 후 안내).
+
+## REV-20260625T202817-gc-unread-read-500-fix [SUBAGENT:근본원인·트랜잭션·leak·잔존근본원인 1렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: gc-unread-read-500-fix (CHG-20260625T202817) — 읽음 API `POST /api/conversations/{cid}/read` 가 web 컨테이너에 없는 `modules.db` 를 import → 매 호출 silent 500 → 읽음 커서 미전진 → 새로고침 시 unread 배지 복원. **Minor §12.3** (서버 import 경로 1줄 정정, 인가/스키마/계약/frontend 무변경).
+- Related Change: feature-0003 `src/app.py`(`modules.db`→`shared.db`) + 신규 회귀 테스트 `tests/test_read_endpoint_pg_import.py`.
+- Reason: 핵심 경로(읽음 처리 read endpoint) 인접 + 사용자 2회 재보고(앞선 frontend/DB 수정 3건이 실패) → §18.8 적대 패널 1렌즈로 "근본원인 정타 여부 + 잔존 근본원인" 적발 시도.
+- 적대적 검증(general-purpose 서브에이전트 1, "결함 적발" 목적, 컨테이너 Dockerfile 레이아웃·코드 직접 read):
+  - **Q1 근본원인 제거**: web 이미지(feature-0002 Dockerfile)가 `modules/`(feature-0002, `db.py` 부재)·`shared/` baked. app.py 가 import 하는 `modules.*` 13개 중 `db` 만 부재 → 깨진 게 정확히 그것. `shared/db.py:831 _pg_connect` 실재·resolvable. **정타**.
+  - **Q2 트랜잭션 정합**: `_pg_connect` default autocommit=True + `set_last_read` 명시 commit = psycopg3 무해(no-op). 누수/중복/누락 0. **OK**.
+  - **Q3 connection close**: `_connect_memory()`=외곽 finally, `_pg_connect()`=내부 finally. 1줄 수정이 close 경로 무변경 → 신규 leak 0. **OK**.
+  - **Q4 다른 숨은 modules.db**: web app.py 내 `modules.db` import 0(수정 후). 나머지 `modules.*` 전부 feature-0002 실재. **0건**.
+  - **Q5 잔존 근본원인(3차 재보고 방지 핵심)**: 커서는 **읽는 시점**(selectConversation `loadHistory` 후 5650 / refreshWorkspace 5543 / liveSyncTick 9647)에 전진·영속. import 복구로 이 경로 전부 작동 → 사용자가 실제로 읽은 모든 대화 커서 전진, 새로고침 후 unread 재계산(`m.id>COALESCE(last_read,0)`)이 영속 커서 기준이라 복원 안 됨. 새로고침 후 active 없음 경로는 mark 안 하지만 **그게 정상**(읽을 때 이미 전진). **추가 서버측 근본원인 없음**.
+- 핵심 판정: **SHIP**. BLOCKING 0. 1줄 import 정정이 진짜 근본 원인 정타, 부작용 0.
+- NIT(수용/처리): ① 핸들러 테스트 공백(2회 재보고 산 원인) → **회귀 테스트 신규 추가로 해소**. ② 읽음 호출 fire-and-forget(await 안 함) — 대화 열자마자 RTT 내 새로고침 시 드문 미전진 엣지(회귀 아님, refresh-restore 재마킹으로 대부분 완화) → REVIEW 수용 기록(현 수정 범위 외). ③ 이미지 baked → web **재빌드+재배포** 후에야 적용 → 배포 게이트에서 강제.
+- Verification: `python -m py_compile`(app.py·test) PASS + 컨테이너 재현 `set_last_read` rowcount=1. **배포 후 web 로그 read 500→200 + 고착 커서(3466→conv_max) 전진 실증 필수**(deploy-backed 완료 기준).
+- Human Approval Needed: 아니오 (사용자 보고 직접 수정, Minor 서버 버그 정정, 무회귀). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.

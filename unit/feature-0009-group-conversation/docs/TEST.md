@@ -143,3 +143,10 @@ source_of_truth: true
 ## gc-unread-read-fix (CHG-20260625T194159) — 읽음 커서 전진 누락 보정
 - `node --check`(app.js) PASS.
 - 라이브(배포 후 PB-0008): ① 안 읽은 배지 있는 그룹 대화에서 **새로고침** → 그 대화가 복원 active → 사이드바 배지 0 으로 감소. ② 다른 대화 보다가 그 대화 재클릭 → 배지 0. ③ DB `last_read_message_id` 가 conv_max 로 전진 확인.
+- ⚠️ 위 ①~③ 은 서버 `POST /read` 가 200 일 때만 성립 — gc-unread-read-500-fix 이전엔 500 이라 미충족(아래 참조). 이 read-fix(frontend 호출 보강)는 500-fix 배포 후에야 효과 발현.
+
+## gc-unread-read-500-fix (CHG-20260625T202817) — 읽음 API silent 500 (앞선 read-fix 무력화의 진짜 근본 원인)
+- 회귀(CLI, DB 불요): `tests/test_read_endpoint_pg_import.py` — ① web app.py 소스에 `from modules.db import`/`import modules.db` 부재(정적), ② `from shared.db import _pg_connect` resolvable(런타임). `py_compile`(app.py·test) PASS.
+- 진단/재현(라이브 컨테이너): web 로그 `POST /api/conversations/{cid}/read` 전부 **500**(`ModuleNotFoundError: modules.db`, 핸들러 `except`→500, frontend best-effort 삼킴) → DB 멤버 커서가 backfill 값에 고착(3466, conv_max 3655). 수정 import 로 `from shared.db import _pg_connect` + `group_members.set_last_read('20260625063340-4220125d', 10, 3466)` → rowcount=1(정상 UPDATE) 확인.
+- §18.8 적대 패널 1렌즈(general-purpose): SHIP/BLOCKING 0 — Q1 근본원인 정타·Q2 트랜잭션(autocommit+commit no-op) 정합·Q3 leak 0·Q4 다른 숨은 modules.db 0·Q5 추가 서버측 근본원인 없음(읽는 시점 커서 전진 경로 복구로 충분).
+- 라이브(배포 후, deploy-backed 완료 기준 필수): ① 읽음 처리 시 web 로그 read **200**(500 소멸) ② 고착 대화 멤버 커서가 conv_max 로 전진(DB 확인) ③ 대화 읽고 **새로고침** → 사이드바 unread 배지 복원 안 됨. PB-0008 Windows-browser 실측 권장(데이터 의존).
