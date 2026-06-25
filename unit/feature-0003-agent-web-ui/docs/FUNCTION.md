@@ -1209,3 +1209,9 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 
 ## (limit-subject-msg, 2026-06-25) 계정 당 LLM 토큰 한도 초과 메시지 주체 명시
 - `_check_account_token_quota`(LLM 토큰 사용량 사전 게이트, 초과 시 429) 의 한도 초과 메시지는 `"계정의 {일일|월간} LLM 토큰 사용 한도(N)를 초과했습니다. 현재 사용량 M. 관리자에게 문의하거나 한도 초기화 시점까지 기다려 주세요."` 로 도달 주체가 **계정**임을 명시한다 — 서비스 자체 요청량 한도(feature-0002 KIND_THROTTLED "서비스 자체의 요청량 한도…")와 구분. 게이트 로직(역할 기본/계정 override·일일/월간·fail-open)·HTTP 429·`/api/ask` 사전 차단·응답 계약 무변경. CHG/REV-20260625T045450-limit-subject-msg.
+
+## (TASK-20260625T165205-doc-sync-rn-0625) 릴리즈노트(업데이트 내역) 콘텐츠 — 06-25 머지분 반영
+- `static/release-notes-data.js` 는 사용자에게 노출되는 ‘업데이트 내역’ 화면의 **정적 큐레이션 데이터**(렌더는 `release-notes.js`). 동작/계약 무변경 — 표시 항목 목록만 직전 릴리즈노트(06-24 블록, 600f2b5) 이후 06-25 머지분 9종으로 갱신.
+- 항목(9): [new work] 사이드바 안 읽음/@멘션 배지 · 멤버 추방/차단/해제 · [improved work] 메시지 좌우 정렬 · [new admin] 역할/제품 프롬프트 AI 자동작성 · 제품 분석률 95% 자동완성 · [improved admin] 규칙 추가 DB insight 커버리지 · 지식베이스 메뉴 재편 · [improved common] 요청량 한도 메시지 주체 구분 · AI 준비 속도.
+- 비변경: 렌더/접기/탐색 로직(`release-notes.js`), 백엔드, 라우팅, RBAC, 스키마. 순수 콘텐츠 추가. (CHG/REV-20260625T165205-doc-sync-rn-0625 [SKIPPED])
+- 배포: `index.html`·`admin.html` 의 release-notes-data.js cache-buster `?v=20260625-rn-0625` → `?v=20260625b-rn-0625` bump — 06-25 블록이 캐시 무효화되어 사용자에게 노출(deploy_scope: included, web 재배포 시 반영).

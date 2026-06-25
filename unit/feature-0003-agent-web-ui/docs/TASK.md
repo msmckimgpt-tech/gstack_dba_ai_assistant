@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260625T165205-doc-sync-rn-0625 — 06-25 머지분 릴리즈노트 정합 + cache-buster bump (doc_sync maintenance, Minor §12.3 — 정적 콘텐츠)
+- 출처: `/_dqa:doc_sync` (resume from doc-sync-20260625-160433, session-limit 중단 재개). `src/static/release-notes-data.js`(사용자 노출 릴리즈노트, 정적 큐레이션 데이터)가 직전 릴리즈노트(06-24 블록, 600f2b5) 이후 main 병합된 06-25 user-facing 변경 9종을 미반영(doc/reality drift) → 새 `2026-06-25` 블록 prepend.
+- 범위: **릴리즈노트 콘텐츠 데이터만** — 렌더 로직(release-notes.js)·백엔드·스키마·RBAC 무변경. 사용자 평이화(내부 구현/feature-id/테이블명/엔드포인트 비노출).
+- [x] `release-notes-data.js`: `releases` head 에 `date: "2026-06-25"` 블록 prepend(9항목 — [new work] 안 읽음/@멘션 배지 · 멤버 추방/차단/해제 · [improved work] 메시지 좌우 정렬 · [new admin] 역할/제품 프롬프트 AI 자동작성 · 제품 분석률 95% 자동완성 · [improved admin] 규칙 추가 DB 커버리지 · 지식베이스 메뉴 재편 · [improved common] 한도 메시지 주체 구분 · AI 준비 속도). `generated` 는 `2026-06-25` 유지.
+- [x] cache-buster: `index.html`·`admin.html` release-notes-data.js `?v=20260625-rn-0625` → `?v=20260625b-rn-0625` bump(06-25 블록 캐시 무효화).
+- [x] 검증: `node --check release-notes-data.js` PASS + 스키마(type/area/title/detail) 정합 + 머지 커밋 10건 1:1 대조(09114ed·cc62773·1d83d94·29d1bbf·5c525db·4cd26e7·23b7175·874f15e·70c57f6·23fa679; hover 29d1bbf 는 추방/차단 항목 합산). 내부 리팩터(shared P5a Step4/5·codebase-map·template v3.35.1·spec-anchor)는 의도적 제외. 적대 사실검증(general-purpose, 5축) VERDICT CLEAN.
+- [x] **리뷰(REV-20260625T165205-doc-sync-rn-0625 [SKIPPED]):** 정적 사용자노출 콘텐츠 큐레이션 — 제품 로직·인가·스키마 무변경, 적대 패널 불요(§18.4 비-정책 doc 경량 cycle).
+- [ ] verify-completion → 머지 → web 재배포(static baked, deploy_scope: included) → 마감.
+
 ## TASK-20260625-role-account-prompt-autogen — 역할 '전체 제품 프롬프트' + 프로필 '제품별 개인 프롬프트' 자동 작성 (Major §12.3 — 외부 LLM dispatch 2개 scope 확장 + 역할 scope 교차사용자 대화 집계)
 - 사용자 요청(/_template:entry): "`관리 콘솔 > 역할 > [각 항목] > 제품 사용 > 전체 제품 프롬프트` 와 `작업 화면 > 프로필 > 프롬프트 > [각 제품]` 의 프롬프트 자동 완성 기능 구성. 각 역할의 성격·소속 사용자 대화 내역을 점검해 모범 동작하도록. 각 프로필 프롬프트도 역할·선택 제품·대화 패턴에 따라 모범 작성되도록."
 - 결정(AskUserQuestion 2026-06-25): ① 트리거 = **on-demand 버튼만**(자율 sweep 미도입 — 개인 프롬프트 무동의 자동작성·LLM 비용 누수 회피). ② 범위 = **기능만 구성**(엔드포인트·UI·컨텍스트 조립; 실제 seed 역할/프로필 생성·저장은 운영자 라이브 수행).

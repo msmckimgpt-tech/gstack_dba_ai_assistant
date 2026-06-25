@@ -3831,3 +3831,12 @@ source_of_truth: true
 - Verification: `node --check static/app.js` PASS(무변경 확인) + CSS brace 균형 + **충실한 mock 렌더 검증**(실제 styles.css + `renderMessages()` DOM 구조 재현, Chromium headless): 버블 좌우 위치 수치 측정 — `is-own-message` rightGap=25(우측), `is-other-message`/`is-assistant` leftGap=25(좌측 동일 기준선), 멘션 하이라이트 상대방도 좌측 + 주황 강조선 정상. 증거 `artifacts/pb0008-gc-other-msg-left/bubble-align-result.png`. 라이브 시각 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree=WSL 미실행, 실 그룹대화 다수 참여자 메시지 필요).
 - Human Approval Needed: 아니오 (Minor·프론트 CSS·사용자 명시 요청·비파괴 표현계층).
 - Cross-ref: CHG-20260625T065430-gc-other-msg-left / feature-0009 TASK·MODIFY·REPORT cross-ref.
+
+## REV-20260625T165205-doc-sync-rn-0625 [SKIPPED: 사용자 노출 릴리즈노트 정적 콘텐츠 큐레이션 — 제품 로직·인가·스키마·렌더로직 무변경, 적대 패널 불요] (TASK-20260625T165205-doc-sync-rn-0625, Minor §12.3)
+- Date: 2026-06-25
+- Cycle: `/_dqa:doc_sync` maintenance (CHG-20260625T165205-doc-sync-rn-0625, resume from doc-sync-20260625-160433). 직전 릴리즈노트(06-24 블록, 600f2b5) 이후 main 병합된 06-25 user-facing 변경 9종을 `static/release-notes-data.js` 에 반영(`date: "2026-06-25"` 블록 prepend) + `index.html`·`admin.html` cache-buster bump.
+- 변경: 릴리즈노트 **정적 큐레이션 데이터만** — 렌더 로직(`release-notes.js`)·백엔드·라우팅·RBAC·스키마 무변경. 사용자 평이화 문구(내부 구현/테이블명/feature-id/엔드포인트 비노출).
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터 경계 무영향. 제품 로직 변화 없음 → 적대적 verification 패널 불요(비-정책 doc 경량 cycle). 단 사실 정확성은 별도 general-purpose 적대 검증(환각/귀속/평이화/누락/STATUS정합 5축)으로 확인 — VERDICT CLEAN.
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 머지 커밋 10건(09114ed/cc62773/1d83d94/29d1bbf/5c525db/4cd26e7/23b7175/874f15e/70c57f6/23fa679) 1:1 대조. 내부/비-user-facing(shared P5a·codebase-map·template upgrade·spec-anchor id)은 의도적 제외 확인.
+- Human Approval Needed: 아니오.
+- Cross-ref: CHG-20260625T165205-doc-sync-rn-0625 / TASK-20260625T165205-doc-sync-rn-0625 / FUNCTION '릴리즈노트(업데이트 내역) 콘텐츠 — 06-25 머지분 반영' / META commit 5df5d9c(STATUS·wiki 06-25 정합).
