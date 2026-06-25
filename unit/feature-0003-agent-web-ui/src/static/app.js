@@ -155,6 +155,11 @@ const state = {
   lastCompletedRunSteps: null,  // null | { steps, runId, convId } — 완료된 run 의 단계 목록 (단계 보기 버튼용)
   messageAttachments: {},  // { messageId: attachment[] } — refreshWorkspace 이후에도 칩 유지용 persistent 맵
   stepSidePanelConvId: null,
+  // 실행 단계 패널이 현재 *라이브* run(state.pendingBubble)을 표시 중인지 여부.
+  // 폴링(refreshStepSidePanel)은 라이브 패널일 때만 덮어쓴다 — 진행 중 새 요청을
+  // 보낸 뒤 사용자가 이전 답변의 단계 패널을 열어두면, 라이브 폴링이 그 historical
+  // 패널을 라이브 step 으로 덮어쓰지 않도록 한다.
+  stepSidePanelLive: false,
   // 실행 단계 사이드 패널의 "결과 보기" 펼침 상태를 step 단위로 영속화한다.
   // 패널은 폴링으로 새 단계가 추가될 때마다 body.innerHTML 을 비우고 전부 재렌더하는데,
   // 펼침 여부가 DOM 로컬 상태로만 있으면 재렌더 시 닫혀버린다(사용자가 결과셋을 보던 중
@@ -3929,8 +3934,11 @@ function renderMessages() {
         bubble.appendChild(details);
       }
       // meta.steps 가 있는 모든 assistant 말풍선에 "단계 보기" 버튼 부착.
+      // 진행 중(state.pendingBubble) 여부와 무관하게 항상 부착한다 — 이전 답변의
+      // 영속 step 은 새 요청이 진행 중이어도 그대로 유효하므로, 대화 중 새 요청을
+      // 보낼 때 이전 답변의 "단계 보기" 버튼이 일시적으로 사라지던 회귀를 방지한다.
       const msgMetaSteps = Array.isArray(message.meta?.steps) ? message.meta.steps : [];
-      if (msgMetaSteps.length && !state.pendingBubble) {
+      if (msgMetaSteps.length) {
         const stepsBtn = document.createElement("button");
         stepsBtn.type = "button";
         stepsBtn.className = "bubble-steps-btn";
@@ -4039,7 +4047,10 @@ function renderMessages() {
 
   // 마지막 assistant 말풍선에 lastCompletedRunSteps 기반 "단계 보기" 버튼 보충.
   // meta.steps 없는 최신 run (현 세션에서 막 완료된 것) 을 위한 fallback.
-  if (!state.pendingBubble) {
+  // pending 여부와 무관하게 보충한다 — 새 요청 진행 중에도 직전 답변의 step 버튼이
+  // 유지되도록 한다. :not(.is-pending) 선택자가 진행 중 말풍선을 자동 제외하고,
+  // 아래 .bubble-steps-btn 존재 검사가 위 meta.steps 부착분과의 중복을 막는다.
+  {
     const cr = state.lastCompletedRunSteps;
     if (cr && cr.steps && cr.steps.length && cr.convId === state.activeConversationId) {
       const allMsgRows = messageLogEl.querySelectorAll("article.message.is-assistant:not(.is-pending)");
@@ -4519,6 +4530,9 @@ function openStepSidePanel(pending, { convId = null } = {}) {
   setupStepSidePanelResize();
   _applyStepSidePanelWidth(panel);
   state.stepSidePanelConvId = convId || (pending && pending.convId) || state.activeConversationId || null;
+  // 라이브 run(진행 중 pending bubble)을 연 경우에만 폴링 갱신 대상으로 표시.
+  // historical 패널(이전 답변의 meta.steps / lastCompletedRunSteps)은 폴링이 덮어쓰지 않는다.
+  state.stepSidePanelLive = Boolean(pending) && pending === state.pendingBubble;
   _renderStepSidePanelBody(pending);
   panel.classList.remove("hidden");
 }
@@ -4526,11 +4540,17 @@ function openStepSidePanel(pending, { convId = null } = {}) {
 function closeStepSidePanel() {
   const panel = document.getElementById("stepSidePanel");
   if (panel) panel.classList.add("hidden");
+  // 닫을 때 라이브 플래그를 내려 stale-true 가 남지 않게 한다(방어적 — 재오픈 시
+  // openStepSidePanel 이 어차피 재계산하지만 의도를 명시).
+  state.stepSidePanelLive = false;
 }
 
 function refreshStepSidePanel(pending) {
   const panel = document.getElementById("stepSidePanel");
   if (!panel || panel.classList.contains("hidden")) return;
+  // 사용자가 historical 패널(이전 답변 단계)을 열어 둔 동안에는 라이브 폴링이
+  // 그 내용을 덮어쓰지 않는다 — 라이브 run 패널을 보고 있을 때만 갱신.
+  if (!state.stepSidePanelLive) return;
   _renderStepSidePanelBody(pending);
 }
 
