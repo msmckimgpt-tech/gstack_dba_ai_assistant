@@ -1,12 +1,12 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-06-25
+last_updated: 2026-06-26
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-06-25
+2026-06-26
 
 ## Key Recent Facts
 - 그룹 대화 라이브 UX 확장(feature-0009, 06-25): 사이드바 안 읽음/@멘션 배지(read cursor, REQ-GC-R8 · alembic 0019) · 메시지 좌우 정렬(내 메시지 우측, 상대/`@assistant` 좌측) · 공유 팝업 owner 멤버 추방/차단/해제(kick/ban/unban, hover 액션) · 참가자 per-message 제품 선택(REQ-GC-R7, 발신자 RBAC) · 처리 중 composer 비잠금/1:1 인터럽트 재요청/그룹 @assistant 중복차단.
@@ -20,7 +20,8 @@ last_updated: 2026-06-25
 - shared/ P5a Step5 완료: 4개 alias shim(model_catalog 제외 config·db·conn_health·datasources) 소비처를 `shared.*` 로 직접 마이그레이션 후 `modules/*` shim 전량 제거.
 - 그룹 대화 06-25: 안 읽음/@멘션 배지·메시지 좌우 정렬·owner 멤버 추방/차단(앞선 06-24 참여자 roster·보관 설정팝업·참여자 나가기·'참여 허용' owner-only 게이트 위에).
 - 그룹 대화 06-25 잔여(doc_sync): 참가자 per-message 제품 선택·발화(PR#440)·처리 중 composer 비잠금/1:1 인터럽트 재요청/그룹 중복차단(PR#438·#444)·@assistant 발신자 표시 정정(PR#437)·datasource 회로차단 사용자 안내 문구 분리(PR#439, feature-0002).
-- 그룹 대화 06-25 후속(gc-optimistic-sender-attrib, 미머지): optimistic(전송 직후) 발신자 표시 정정 — 비-owner 참가자 메시지가 처리 중 동안 owner 로 잘못 표시되던 깜빡임 제거(`_selfSenderMeta()`를 optimistic 2지점에 부여). frontend display-only.
+- 그룹 대화 06-25 후속(gc-optimistic-sender-attrib, 머지): optimistic(전송 직후) 발신자 표시 정정 — 비-owner 참가자 메시지가 처리 중 동안 owner 로 잘못 표시되던 깜빡임 제거(`_selfSenderMeta()`를 optimistic 2지점에 부여). frontend display-only.
+- 그룹 대화 06-25 잔여(doc_sync, sync a29a2f0 이후): ① 안 읽음 배지 미감소 최종 근본원인 해소 — 읽음 커서/unread 집계가 `core_messages.id` 공간인데 FE 가 보낸 `last_read_message_id` 는 표시 store `messages.id` 공간이라 disjoint → 핸들러가 requested 무시·항상 `MAX(core_messages.id)` 로 전진(read-idspace-fix). 선행 read 500(`modules.db`→`shared.db`)·읽음 커서 전진 누락(refreshWorkspace/재선택)·입력창 즉시 클리어 보정 포함. ② 공유 대화 join 불가 수정 — PG named-param 타입 모순(AmbiguousParameter) 해소(group_members). ③ assistant SQL dialect 교정(MySQL DS T-SQL thrashing 차단 `_MYSQL_DIALECT_GUIDANCE`)+그룹 히스토리 발신자 맥락 라벨 `[이름]:`(feature-0002). ④ 좌측 대화 전환 크로스페이드(fade-out/in + 가속·reduced-motion no-op, frontend).
 
 ## Active Threads
 - feature-0011 P5a 잔여: Step6(feature 단위 Dockerfile 분리, Critical — Windows 브라우저 완료 게이트). app.py router 분할은 P5b 별도.

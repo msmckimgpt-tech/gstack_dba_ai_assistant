@@ -85,3 +85,4 @@ sources:
 - 2026-06-23: 초안 작성 (코어 + 라이브 UX 1·2차 + 아바타·멘션 알림 배포 후 wiki 정합).
 - 2026-06-25: 06-25 머지 정합 — 사이드바 안 읽음/@멘션 배지(REQ-GC-R8 read cursor, alembic 0019)·메시지 좌우 정렬·owner 멤버 추방/차단/해제(kick/ban/unban, hover 액션) 반영 (doc_sync).
 - 2026-06-25: 06-25 잔여 머지 정합 — 참가자 per-message 제품 선택·발화(REQ-GC-R7, PR#440)·처리 중 composer 비잠금/1:1 인터럽트 재요청/그룹 @assistant 중복차단(PR#438·#444)·@assistant 발신자 표시 정정(PR#437) 반영 (doc_sync).
+- 2026-06-26: 06-25 후속 버그픽스 정합(릴리즈노트 sync a29a2f0 이후) — 안 읽음 배지 미감소 최종 근본원인(읽음 커서 id-space 불일치: 항상 `MAX(core_messages.id)` 로 전진)·선행 read 500(`modules.db`→`shared.db`)·읽음 커서 전진 누락·입력창 즉시 클리어 / optimistic 발신자 표시 깜빡임 정정 / 공유 대화 join 불가(PG AmbiguousParameter) / assistant SQL dialect 교정 + 그룹 발신자 맥락 라벨(feature-0002) 반영 (doc_sync).
