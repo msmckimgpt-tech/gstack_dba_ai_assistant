@@ -4715,3 +4715,15 @@ source_of_truth: true
 - Files: `src/app.py`, `docs/{TASK,MODIFY,REVIEW}.md`. (+ feature-0002 정본)
 - Rollback: app.py 메시지 1곳 revert. 로직 영향 0.
 - Deploy: web 재빌드·재시작(app.py). 마이그/스키마/static 없음.
+
+## CHG-20260625T065430-gc-other-msg-left (feature-0009 cross-feature, Minor §12.3 — frontend CSS-only)
+- Date: 2026-06-25 (REV-20260625T065430-gc-other-msg-left). worktree `ai/claude/gc-other-msg-left`. 그룹대화 UX(feature-0009) — 코드 정본=feature-0003-agent-web-ui static.
+- Reason: 사용자 요청(`/_template:entry`) — 그룹대화에서 자신의 메시지 버블은 우측 유지, assistant 와 상대방(타 참여자) 대화는 좌측에 출력.
+- 변경(feature-0003 `static/`):
+  - `styles.css`: `.message.is-user.is-other-message { align-self: flex-start; align-items: flex-start; }` 신규(기존 `.message.is-user` 의 `flex-end` 를 특이도 0,3,0 으로 override) → 상대방 메시지 좌측 정렬. + `.message.is-user.is-other-message .message-bubble` 에 `border-bottom-right-radius:14px; border-bottom-left-radius:var(--r-xs)` 추가 → 꼬리(모서리)를 좌측 하단으로(좌측 정렬 정합). 내 메시지(`is-own-message`)·assistant 규칙 무변경.
+  - `index.html`: styles.css 캐시버스터 `v=20260625-role-account-prompt-autogen` → `v=20260625-gc-other-msg-left`.
+- Why(설계): app.js `renderMessages()` 가 이미 발신자 귀속으로 `is-own-message`(내 메시지)/`is-other-message`(타 참여자)/`is-assistant` class 를 정확히 부여 중 → JS 변경 없이 CSS 정렬 규칙만 분기. 그룹채팅 관례(내=우측/타인=좌측)와 정합. 공유 대화 열람 시(owner≠나, sender meta 부재)도 owner 메시지가 `is-other-message`로 좌측 표시 — 요청("상대방=좌측")과 정합.
+- Impact: 1:1 본인 대화(`is-own-message` 우측) 무회귀. JS/DOM/핸들러/엔드포인트/RBAC/스키마 0. 순수 표현계층.
+- Rollback Notes: `styles.css` 2블록 + `index.html` 캐시버스터 revert. JS/백엔드/스키마 0.
+- 검증: `node --check static/app.js` PASS(무변경) + 충실한 mock 렌더(실제 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측, other·assistant=좌측 동일 기준선. 패널 SKIP(순수 CSS, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 실 그룹대화 권장).
+- Files: `static/styles.css`, `static/index.html`, `docs/{TASK,MODIFY,REVIEW,TEST}.md` (+ feature-0009 cross-ref).
