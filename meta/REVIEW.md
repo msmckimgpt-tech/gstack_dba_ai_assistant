@@ -2,6 +2,22 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260625T013000-META-0010-doc-sync-0625 [SKIPPED:doc-sync-index-mirror-alignment]
+
+> ID 주: 본 cycle 은 당초 `META-0009-doc-sync-0624` 로 시작했으나, 동시 진행된 `ai/root/META-0009-presentation-title-rename`(#414)이 먼저 머지돼 META-0009 를 선점 → 충돌 회피 위해 **META-0010-doc-sync-0625** 로 리넘버(본 ledger 하단 그 entry 와 구분).
+
+- **cycle**: ai/claude/META-0010-doc-sync-0625 — `/_dqa:doc_sync`(no-arg, maintenance) 가 06-24 머지 작업과 정책문서·wiki 간 drift 를 정합. 정본(`unit/<id>/docs/*`)을 새로 쓰지 않고 **색인·미러·서사 표면만** 최신화(SSOT 인덱스 모델 — ADR-0031).
+- **delta 근거**: main `unit/` = 11 feature(0001~0011)인데 STATUS 인덱스/wiki narrative 가 9~10 에 정체. feature-0010-google-drive-integration(06-23 19:04 landing, 비활성 scaffold)이 STATUS 에 "미머지 worktree note" 로 stale, feature-0011-shared-extraction(06-24 landing, P5a Step1~3)은 전 표면 부재. 0002/0003/0009 는 06-24 머지로 행 stale.
+- **changeset (pure-meta, docs/* + wiki/* → verify-completion META mode)**:
+  - `docs/STATUS.md`(인덱스) — feature-0010·0011 행 승격/신설 + 0002/0003/0009 06-24 최종갱신·요지 정합 + §2 의존요약 0010/0011 + §5 진행률(9→11, in-progress 8→10) + sources frontmatter 0010/0011. **rollup blockquote 미누적**(ADR-0031 §1 셀 누적 0 유지). worktree note 를 "미머지 활성 worktree 없음(ahead=0)"으로 정정.
+  - `docs/ARCHITECTURE.md` §4 기능맵 + §6 의존맵 — feature-0011 행 추가(색인/기능맵 정합 한정, 구조 결정 변경 아님 §13.1).
+  - `wiki/` — `Features/feature-0011-shared-extraction.md` 카드 신설 + `Features/_Index`(10→11 + 행) · `overview.md`(9→11 ×2 + 06-24 서사) · `Index.md`(9-feature→11 ×2) · `Architecture/Overview.md`(Feature 수 9→11 + 기능맵·의존맵 0010/0011 미러 backfill + 진화 06-24 bullet) · `hot.md` refresh(feature-0011·메타데이터 거버넌스 반영, feature-0010 활성화·insight-worker thread **보존**) · `Log.md` append(append-only).
+- **panel skipped 사유 (§18.8 — 정책-doc 이나 패널 불요)**: 전 changeset 이 정본을 재서술하지 않는 **additive 색인/미러/서사 정합**. 정책 의미(보안 경계·구조 결정·ADR)는 무변경 — SECURITY/DECISIONS 무수정(이미 최신, 정직 무변경 보고). 새 판단 로직·production 동작 0. precedent: `REV-20260623T092428-doc-sync-skill [SKIPPED:additive-meta-tooling-docs]`.
+- **타깃별 실질 검증(verify check #1/#5 deferred 대체)**: ① wiki feature 수 정합 — ground-truth `ls -d unit/feature-* | wc -l`=11, narrative 전 파일(overview·Index·Features/_Index·Architecture/Overview) stale 9/10 잔존 0 으로 기계 확인. ② 신규 wikilink/STATUS 링크 대상(unit/feature-0011/docs/*·card) 존재 확인. ③ `bin/ssot-lint.sh` PASS(잔존 4 WARN = 기존 tracked secret 백업, P3 rotation 대기 — STATUS §3 기록된 알려진 blocker, 본 변경과 무관·신규 위반 0). ④ STATUS 인덱스 rollup 셀 누적 0 유지.
+- **릴리즈노트 타깃 분리**: `unit/feature-0003/src/static/release-notes-data.js` 는 operational(is_meta_path 비META, code-file → check #4 FUNCTION.md 강제) — 본 META commit 과 **별도 처리/사용자 판단**. 본 entry 범위 아님.
+- **Human Approval Needed**: 아니오 (additive index/mirror 정합, 정본·정책 의미 무변경).
+- **deploy**: 해당 없음 — `docs/*`·`wiki/*` 는 라이브 서빙 자산 아님. 완료 = main 병합.
+
 ## REV-20260624T154711-META-0007-presentation-tiering [AGENT-TEAM:presentation-tiering-verify]
 
 - **cycle**: ai/claude/META-0007-presentation-tiering — `repo/docs/presentation/*` 발표자료 갱신 + **클라이언트별 기능 분류**(작업 화면 + 관리 콘솔 / 작업 화면 only 2-덱 티어링). `/_template:resume` 로 중단 세션(ac9c0072, session-limit)의 기존 의도 재개·완수.
