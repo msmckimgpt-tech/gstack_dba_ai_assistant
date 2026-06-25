@@ -440,6 +440,16 @@ source_of_truth: true
 - Rollback Notes: 2지점 `meta: _selfSenderMeta()` → `meta: {}` + 헬퍼 제거 + 캐시버스터 revert. 완전 가역, 데이터 무손실.
 - 검증: `node --check`(app.js) PASS + 발신자 귀속 결정부 추출 4케이스 node 하니스(참가자 전송직후 BEFORE=`LEFT|alice`(버그재현)→AFTER=`RIGHT|나 (bob)`=hydrate 동일 / owner·1:1 무회귀) + §18.8 적대 패널 1렌즈(spoofing·hydrate정합·회귀·422) **SHIP, BLOCKING 0**. **PB-0008 미실측**(배포 후 라이브 그룹 대화 권장).
 
+## CHG-20260625T202817-gc-unread-read-500-fix (cross-feature → feature-0003, Minor §12.3 — 읽음 API PG 연결 import 경로 silent 500 수정)
+- Date: 2026-06-25. worktree `ai/claude/feature-0009-group-conversation`. 코드 정본=feature-0003-agent-web-ui(`src/app.py`) — feature-0009 cross-feature 추적. 사용자 재보고(resume): "대화를 읽었어도 브라우저 새로고침하면 회색 뱃지의 안 읽은 개수가 다시 복원됨" (gc-unread-read-fix 배포 후에도 잔존).
+- Related: gc-unread-badge(CHG-20260625T065840, 읽음 API 신설)·gc-unread-baseline(CHG-20260625T165320)·gc-unread-read-fix(CHG-20260625T194159, frontend 호출 보강)의 **진짜 미해결 근본 원인**. 앞선 3건이 전부 frontend/DB 만 건드려 서버 import 버그를 놓침.
+- **근본 원인(서버)**: 읽음 핸들러 `mark_conversation_read`(`POST /api/conversations/{cid}/read`)가 PG 연결을 `from modules.db import _pg_connect` 로 import. web 컨테이너는 feature-0002 의 `modules/` 를 baked 하는데 거기에 `db.py` 가 없어 매 호출 `ModuleNotFoundError` → 핸들러 `except Exception: return _json_error("읽음 처리 실패", 500)` 로 **항상 500**. frontend `markConversationRead` 가 best-effort try/catch 로 500 을 삼켜 화면엔 배지 0 으로 보이지만 서버 `conversation_members.last_read_message_id` 커서는 전진 못 함 → 새로고침하면 미전진 커서 기준으로 unread 재계산 → 배지 복원. (라이브 web 로그: 해당 read 요청 전부 500. DB: 활발 대화 `20260625063340-4220125d` 멤버 커서가 backfill 값 3466 에 고착, conv_max 3655, unread 166~167.)
+- 수정(서버 `src/app.py` 1줄): `from modules.db import _pg_connect` → `from shared.db import _pg_connect` (같은 파일의 다른 PG 연결 9곳과 정합 — 전부 `shared.db`). 결함 출처 커밋 09114ed(gc-unread-badge, 읽음 API 최초 신설).
+- 회귀 가드(신규 테스트 `unit/feature-0003-agent-web-ui/tests/test_read_endpoint_pg_import.py`): ① web app.py 소스에 `from modules.db import`/`import modules.db` 부재(정적), ② `from shared.db import _pg_connect` resolvable(런타임). 이 버그가 2회 재보고까지 산 원인이 핸들러 테스트 공백 — 정적+런타임 양면 가드.
+- Impact: 서버 읽음 처리 PG 연결 복구. 인가(멤버십 게이트)·스키마·엔드포인트 계약·frontend 무변경. `set_last_read` 는 GREATEST 전진(되돌림 0). 1:1·비그룹 무영향. `shared.db._pg_connect` autocommit=True + `set_last_read` 명시 commit = psycopg3 무해(no-op).
+- Rollback Notes: import 1줄 revert + 테스트 삭제. 완전 가역, 데이터 무손실. (기존 고착 커서는 배포 후 사용자가 대화 열람/새로고침 시 자동 전진 — 별도 backfill 불요.)
+- 검증: `python -m py_compile`(app.py·test) PASS. 컨테이너 재현 `from shared.db import _pg_connect` + `group_members.set_last_read(...)` → rowcount=1(정상 전진). §18.8 적대 패널 1렌즈(general-purpose) **SHIP, BLOCKING 0**(Q1~Q5: 근본원인 정타·트랜잭션정합·leak 0·다른 숨은 modules.db 0·추가 서버측 근본원인 없음). **배포 후 web 로그 read 500→200 + 고착 커서 전진 실증 필요**.
+
 ## CHG-20260625T202843-gc-assistant-dialect-context (cross-feature → feature-0002, Major §12.3 — 그룹대화 assistant 품질: SQL dialect 교정 + 발신자 맥락)
 - Date: 2026-06-25. worktree `ai/claude/gc-assistant-dialect-context`. 코드 정본=feature-0002-agent-core(`src/agent_core.py`·`src/modules/tools.py`·`src/modules/runtime_backend.py`) — feature-0009 cross-feature 추적(FUNCTION.md §13 사전 승인).
 - Reason: 라이브 그룹대화(`20260625063340-4220125d` "로그 데이터 집계 요청", product 110 마이크로볼츠-개발 / 데이터소스 `mysql-mv-dev`=MySQL)에서 두 사용자(mckim·admin)가 @assistant 사용 중 마찰을 직접 표명("명시적으로 정해줘야 찾을수있나보네요"/"능동적으로는 찾기 힘드네요"/"@assistant 대화 맥락에서 확인해주세요"/"갑자기 또 다른 DB에서 가져오네요"). 근본 원인 2건:

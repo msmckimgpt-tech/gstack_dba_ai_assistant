@@ -15193,7 +15193,7 @@ async def mark_conversation_read(cid: str, request: Request) -> JSONResponse:
             requested = None
         account_id = int(account["id"])
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             from modules import group_members
             pg = _pg_connect()
             try:
