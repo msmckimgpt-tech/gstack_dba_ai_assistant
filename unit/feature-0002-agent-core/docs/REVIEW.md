@@ -1212,3 +1212,14 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (BLOCKER/MAJOR 0, 라이브 검증 통과).
 - Verification: GPU/latency 라이브 실측 + 단위테스트(account_recall·sample_flywheel 통과; attachment_idor 4건 사전존재·무관) + titan-embed gateway e2e 0.13s + chat 라우팅 정상.
 - Cross-ref: CHG-20260625T035655-init-embedding-latency / TASK init-embedding-latency / feature-0007 litellm_config.yaml·embed-ollama.
+
+## REV-20260625T164701-ds-conn-circuit-msg [SUBAGENT:ds-conn-circuit-adversarial-backend]
+- Date: 2026-06-25
+- Cycle: ds-conn-circuit-msg (CHG-20260625T164701-ds-conn-circuit-msg), **Minor §12.3** — datasource 회로차단 사용자 안내 문구 분리(cross-feature, feature-0002 주관, shared/db.py).
+- Trigger: §18.8 — 핵심 경로(연결/에러 surface) 인접 코드 변경 → backend dispatch. 적대 코드리뷰(general-purpose outside voice, REFUTE 6축: ① `e` 바인딩 정확성/NameError, ② except 순서, ③ 누락 surface(옛 프레이밍 잔존), ④ 비밀 노출, ⑤ `str(e)` 안정성/insight 분류, ⑥ 테스트 회귀).
+- VERDICT: **ACCEPT** (BLOCKING 0).
+- 검증 통과(코드+런타임): ① 단일 fallback `isinstance(e,...)` 의 `e` 는 바깥 `except Exception as e`(첫 시도)에 바인딩 — NameError 불가. `connect_with_retry` 가 circuit 을 **게이트 단계**(연결 시도 전, breaker key=host:port·database 무관)에서 raise → 회로 열림 시 첫 시도가 즉시 circuit → 올바른 분류. 멀티 primary 경로는 단일 try/except 라 모호성 자체 없음. ② tools.py `except DatasourceCircuitOpen` → `except Exception` 특정→일반 순서 정상. ③ circuit 운영 도달 경로 3곳(멀티 primary·단일 fallback·tool conn_for) 전부 분기 적용; 메모리/control-plane 은 `datasource=None`(게이트 미적용)이라 circuit 미발생, eval 경로 운영 미도달 — 옛 프레이밍 잔존 없음. web-ui 는 `result["error"]` 를 prefix 없이 verbatim 렌더. ④ `user_message()`·`str(e)` 모두 host/port/scope_key/password 무노출(런타임 확인). ⑤ insight.py scan_outcome 은 `isinstance(..., DatasourceCircuitOpen)` 타입 분류 + 생성자 문자열 미변경 → 분류 무회귀. ⑥ circuit surface 문자열 단언 테스트 0건; `test_conn_health.py:195` 는 예외 타입만 단언. 실행: conn_health/ask_worker 33 PASS + tool/insight/datasource 153 PASS, py_compile 3파일 OK, ruff All passed.
+- NIT(LOW, 차단 아님): N1 tools.py circuit 안내는 사용자 직접이 아니라 LLM tool-result 로 전달 → LLM 재프레이밍 여지(리터럴 "연결 실패" 접두어 제거는 정확히 달성, 톤 보장만 약함; 후속으로 tool-result 에 "그대로 전달" 지시 가능). N2 agent_core 안쪽 `except Exception:` 이 둘째 시도 예외를 버림(기존 동작 — 첫 시도가 비-circuit·둘째만 circuit 인 드문 순서에선 첫 오류 노출이나 의미상 수용). 둘 다 REVIEW 수용 기록.
+- Human Approval Needed: 아니오 (Minor — 비파괴 문구 분리, BLOCKING 0).
+- Verification: §18.8 적대 패널 + py_compile + ruff + 회귀 테스트(상기).
+- Cross-ref: CHG-20260625T164701-ds-conn-circuit-msg / FUNCTION ds-conn-circuit-msg / TASK-20260625T164701-ds-conn-circuit-msg.

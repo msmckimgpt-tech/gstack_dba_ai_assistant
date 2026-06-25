@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260625T164701-ds-conn-circuit-msg (current cycle) — datasource 회로차단 사용자 안내 문구 분리 (Minor §12.3, cross-feature feature-0002 주관) — done
+- 출처: 사용자 보고(2026-06-25) "WEB_QA 데이터소스 연결 불안정/오류 메시지 개선". `DatasourceCircuitOpen` 회로차단(일시 지연 격리·자동복구)이 "DB 연결 실패/불안정/차단" 으로 노출돼 서비스 고장으로 오인. 사용자 결정: 톤=투명형, 용어="데이터소스". 원본 entry 세션 중단(API Overloaded) → resume 로 재개.
+- [x] `shared/db.py` `DatasourceCircuitOpen.user_message()` 신설(사용자 화면 전용, 기술 `str(e)` 분리·미변경).
+- [x] `agent_core` 멀티 primary·단일 fallback except 2곳 + `tools.execute_tool` 1곳 `isinstance`/`except DatasourceCircuitOpen` 분기로 안내 문구 노출(circuit 외 기존 문구 유지).
+- [x] main drift 흡수: 재개 시 worktree 를 현재 main 으로 ff-merge(`df97f47`/TASK-0011-9 db import `modules.db`→`shared.db` 마이그레이션·`modules/db.py` 삭제 반영) 후 `shared.db` 경로 기준 재적용.
+- [x] §18.8 적대 패널(6축 REFUTE) BLOCKING 0 — REV-20260625T164701-ds-conn-circuit-msg. py_compile + ruff All passed + 회귀 153 PASS.
+- [x] docs: MODIFY CHG-20260625T164701 · FUNCTION ds-conn-circuit-msg · REVIEW REV-20260625T164701 · REPORT Recent Changes.
+- [ ] verify PASS → commit → push → PR → merge → deploy(deploy_scope: included, ask-worker/web 재빌드) → smoke.
+
 ## TASK-20260623T191241-item05-hybrid-search (current cycle) — ITEM-05 하이브리드 검색 (벡터+키워드 score fusion) (Major §12.3, ROADMAP dba-ai-nl2sql)
 <!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-23 -->
 - 출처: ROADMAP dba-ai-nl2sql ITEM-05(P2 Major). depends_on ITEM-01(eval harness). 현 2-tier fallback(벡터 OR trigram)을 단일 fusion 랭킹으로. PLAN-APPROVED(+ KB retrieval eval set 구축).

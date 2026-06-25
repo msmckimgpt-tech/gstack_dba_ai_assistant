@@ -38,7 +38,7 @@ from shared.config import (
     AGENT_LOG_DIR, AGENT_MEMORY_CLEAR_KEEP_IDS,
     AGENT_OPENAI_MAX_RETRIES,
 )
-from shared.db import connect_with_retry, execute_sql as raw_execute_sql
+from shared.db import connect_with_retry, execute_sql as raw_execute_sql, DatasourceCircuitOpen
 from modules.memory import (
     _cancel_requested,
     _clear_cancel_request,
@@ -2941,7 +2941,11 @@ def _run_agent_core(
             db_conn = _ds_router.conn_for(_ds_router.resolve_label(None))  # primary lazy 연결
         except Exception as e:
             cfg.CURRENT_RUN_ID = ""
-            result["error"] = f"DB 연결 실패(멀티 datasource primary): {e}"
+            # 회로차단은 일시 지연·자동복구 — "실패" 프레이밍 회피(신뢰 보호, 보고 2026-06-25).
+            if isinstance(e, DatasourceCircuitOpen):
+                result["error"] = e.user_message()
+            else:
+                result["error"] = f"DB 연결 실패(멀티 datasource primary): {e}"
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             return result
@@ -2967,7 +2971,12 @@ def _run_agent_core(
                 db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
             except Exception:
                 cfg.CURRENT_RUN_ID = ""
-                result["error"] = f"DB 연결 실패: {e}"
+                # 회로차단(연결 격리)은 일시 지연·자동복구라 "실패/차단" 프레이밍을 쓰지 않는다 —
+                # 사용자 신뢰 보호(보고 2026-06-25). 그 외 연결 오류만 "DB 연결 실패" 로 표기.
+                if isinstance(e, DatasourceCircuitOpen):
+                    result["error"] = e.user_message()
+                else:
+                    result["error"] = f"DB 연결 실패: {e}"
                 if output_mode == "console":
                     console.print(Panel.fit(result["error"], title="오류"))
                 return result
