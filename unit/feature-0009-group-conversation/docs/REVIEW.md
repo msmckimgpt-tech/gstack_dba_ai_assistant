@@ -366,6 +366,18 @@ source_of_truth: true
 - Verification: `node --check`(app.js) + `py_compile`(app.py·agent_core·memory) PASS. **PB-0008 미실측**(worktree=WSL; 입력창 비잠금·인터럽트·중복차단은 배포 후 라이브 다중 사용자 검증 권장).
 - Human Approval Needed: 아니오 (사용자 명시 지시 + AskUserQuestion 반영, composer 동작 개선·1:1 무회귀, deploy_scope: included 사전승인).
 
+## REV-20260625T195400-composer-clear-input-on-send [SUBAGENT:입력창 클리어 회귀 1렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: composer-clear-input-on-send (CHG-20260625T195400) — @assistant 전송 시 입력창 미클리어 회귀(R1 누락분) 수정 — 낙관적 클리어 일원화 + 응답-시점 클리어 제거 + 실패 복원. **Minor §12.3** (composer 전송 표현계층, 로직/스키마/authz 무변경). 사용자 보고.
+- Related Change: feature-0003 `static/app.js`(sendPrompt 낙관 클리어/응답 클리어 3 제거/실패 복원) + `static/index.html`(캐시버스터).
+- Reason: 핵심 send 경로(sendPrompt) 인접 → §18.8 적대 검증(scoped 1렌즈 — 입력창 클리어 회귀).
+- 적대적 검증(Explore 서브에이전트, 라인별 추적 9항목): **회귀 0**.
+  - message 캡처 안전(const, 클리어 이후 askBody/optimistic 가 사용) · 버튼 모드 순서 정확(myAskInFlight.add → 클리어 → renderComposer 빈입력+myRun=중단) · 실패 복원 분기 분리(user-cancel[userCanceledKeys]·422 reroute 는 조기 분기로 미도달 → 의도적 비복원) · 새 입력 보호(`if(!입력.trim())` 빈 경우만 복원) · 제거 3곳 안전(전부 낙관 클리어 선행 → 재클리어 불필요) · 그룹채팅 독립(별도 함수, 무영향) · 첨부/lazy-create/height-autogrow 무충돌.
+  - lazy-create 초기 실패 미복원 = 의도된 설계(실패 pending 버블에 메시지 표시) — 수용.
+- 핵심 판정: **SHIP**. BLOCKING 0.
+- Verification: `node --check`(app.js) PASS. **PB-0008 미실측**(배포 후 라이브 실측 권장 — 전송 즉시 비움·실패 복원).
+- Human Approval Needed: 아니오 (사용자 명시 버그 보고·표현계층·무회귀, deploy_scope: included 사전승인).
+
 ## REV-20260625T194159-gc-unread-read-fix [SKIPPED:frontend 읽음처리 누락 보정·비핵심경로·신규표면 0]
 - Date: 2026-06-25
 - Cycle: gc-unread-read-fix (CHG-20260625T194159) — 읽은 대화의 unread 배지가 안 줄던 버그. **Minor §12.3** frontend-only.

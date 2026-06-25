@@ -403,6 +403,19 @@ source_of_truth: true
 - Impact: 입력창이 더 이상 처리 중 잠기지 않아 gc-run-status 류 FE 고착이 사용자를 블로킹하지 않음(근본 방지). 1:1 무회귀(myRun 기준 + 권한 게이트). 그룹 채팅/타 멤버 발화 자유. preserve 저장 내용은 서버측 rationale/answer 뿐(클라 입력 아님 — 주입 안전). 신규 KV 키 `cancel_preserve` 는 cancel_* 와 동일 정리 경로.
 - Rollback Notes: 5파일 revert(app.js composer/send/myAskInFlight, app.py /api/cancel 1블록, memory.py mark_cancel_requested+_clear_cancel_request, agent_core canceled 분기, index.html 캐시버스터). 스키마 0.
 - 검증: `node --check`(app.js) + `py_compile`(app.py·agent_core·memory) PASS. §18.8 적대 패널 3렌즈(R1·R2 회귀 / R3·race·BE / 교차회귀) — 진짜 BLOCKING 0(REV 참조; 패널 적발 유효 4건 반영: refresh myAskInFlight 복원·툴팁 일관화·interrupt renderComposer·cancel_preserve 정리). **PB-0008 미실측**(worktree=WSL; 다중 사용자/인터럽트 동작은 배포 후 라이브 검증 권장). 캐시버스터 `composer-nonblock-interrupt`.
+
+## CHG-20260625T195400-composer-clear-input-on-send (cross-feature → feature-0003, Minor §12.3 — composer 전송 입력창 클리어 일원화)
+- Date: 2026-06-25. worktree `ai/claude/composer-clear-input-on-send`. 코드 정본=feature-0003-agent-web-ui(`static/app.js`·`static/index.html`) — feature-0009 cross-feature 추적.
+- Reason: 사용자 보고 — @assistant 에게 요청 전송 시 텍스트박스가 초기화되지 않음. CHG-20260625T191040(R1 입력창 비잠금) 누락분: @assistant 경로(sendPrompt)는 입력창을 **응답 후**(/api/ask 성공·422 reroute·timeout 복구)에만 클리어해, 입력창이 비활성이던 옛 동작에선 안 보였으나 R1(입력창 활성) 후 "전송해도 안 비워짐"이 드러남. 게다가 R1 으로 처리 중 새 입력이 가능해져, 늦은 클리어가 새로 친 텍스트를 응답 도착 시 삭제할 위험도 있었음.
+- 변경(feature-0003 `static/app.js` sendPrompt):
+  - 낙관적 렌더 직후(`renderMessages`/`startElapsedTimer` 다음, `renderComposer` 전) `promptInputEl.value=""`+height reset 추가 — 그룹채팅 `_sendGroupChatMessage`(7839, 기존 낙관적)와 동형. message 는 이미 const 캡처라 유실 없음. renderComposer 가 빈 입력+myRun → '중단' 버튼으로 정합 렌더.
+  - 응답-시점 클리어 3곳 제거(/api/ask 성공 후·422 reroute·timeout 복구) — 낙관적 클리어가 항상 선행해 재클리어 불필요 + 처리 중 새 입력 보호.
+  - 진짜-실패 else(`요청에 실패했습니다` 분기, 비-lazy)에서 입력이 비어있으면 `promptInputEl.value = message` 복원 — 기존 동작(성공 시에만 클리어→실패 시 재시도 가능) 보존. 새로 친 텍스트는 덮어쓰지 않음(빈 경우만). user-cancel·422·lazy-create 분기는 분리돼 미도달(의도).
+  - `index.html` 캐시버스터 `composer-clear-input`.
+- Impact: @assistant 전송 즉시 입력창 비움(표준 챗 UX 회복). 그룹 비멘션 채팅 무영향(별도 함수). 1:1·그룹 ask 동일 적용. 진짜 실패 시 입력 복원(재시도). lazy-create 초기 실패는 복원 안 함(실패 pending 버블에 메시지 표시 — 수용).
+- Rollback Notes: app.js 4지점(낙관 클리어 추가/응답 클리어 3 제거 복원/실패 복원) + index.html 캐시버스터 revert.
+- 검증: `node --check`(app.js) PASS. §18.8 적대 패널 1렌즈(입력창 클리어 회귀, scoped) — 회귀 0/BLOCKING 0(message 캡처·버튼 순서·cancel/422 분리·새 입력 보호·제거 안전 전부 SAFE). **PB-0008 미실측**(배포 후 라이브 실측 권장).
+
 ## CHG-20260625T194159-gc-unread-read-fix (cross-feature → feature-0003, Minor §12.3 — frontend 읽음 처리 누락 보정)
 - Date: 2026-06-25. 사용자 보고: "해당 대화를 최근에 읽었음에도 회색 배지의 개수가 유지되는 버그."
 - Related: gc-unread-badge(CHG-20260625T065840)/gc-unread-baseline(CHG-20260625T165320) 후속 — 읽음 커서 전진 누락.
