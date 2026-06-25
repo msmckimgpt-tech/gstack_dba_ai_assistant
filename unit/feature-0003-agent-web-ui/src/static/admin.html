@@ -63,14 +63,20 @@
           <span class="admin-tab-label">보관 대화</span>
         </button>
 
-        <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 샘플 검수 tab (kb.sample.curate 없으면 숨김) -->
-        <button type="button" class="admin-tab" data-admin-tab="sample-review" id="adminTabSampleReview" style="display:none">
-          <span class="admin-tab-label">샘플 검수</span>
-        </button>
-
+        <!-- admin-metadata-relocate: 메타데이터/샘플 검수는 '감사'(읽기전용 모니터링)가 아닌
+             지식베이스(KB) 거버넌스(kb.* 권한)라 별도 그룹으로 분리한다. 그룹 경계는
+             admin.js applyAdminTabVisibility() 가 DOM 순서로 동적 계산하고 권한 게이팅은
+             data-admin-tab 키 단위로 독립 적용되므로, 버튼 이동만으로 게이팅·서브탭 로직 불변.
+             그룹 내 탭이 모두 권한 미보유로 숨겨지면 '지식베이스' 라벨+직전 divider 도 자동 숨김. -->
+        <div class="admin-tab-group-divider"></div>
+        <div class="admin-tab-group-label">지식베이스</div>
         <!-- TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1): 메타데이터 tab (kb.ingest.manual 없으면 숨김) -->
         <button type="button" class="admin-tab" data-admin-tab="metadata" id="adminTabMetadata" style="display:none">
           <span class="admin-tab-label">메타데이터</span>
+        </button>
+        <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 샘플 검수 tab (kb.sample.curate 없으면 숨김) -->
+        <button type="button" class="admin-tab" data-admin-tab="sample-review" id="adminTabSampleReview" style="display:none">
+          <span class="admin-tab-label">샘플 검수</span>
         </button>
 
         <!-- TASK-0095: 설정 tab — 전역 시스템 프롬프트 + 차후 운영 항목 확장 -->
