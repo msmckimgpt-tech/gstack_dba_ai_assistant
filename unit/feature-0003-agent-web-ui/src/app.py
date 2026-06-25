@@ -11145,7 +11145,9 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         return {"error": "요청 처리 워커가 일시적으로 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.",
                 "conversation_id": conv_id, "_http_status": 503}
 
-    # enqueue payload = run_agent kwargs 12개 (conv_file/temperature/api_key/output_mode 제외).
+    # enqueue payload = run_agent kwargs 13개 (conv_file/temperature/api_key/output_mode 제외).
+    # gc-ask-sender-attrib: sender_username(그룹 발신자 귀속)도 worker 경로로 동등 전달 — 미포함 시
+    # worker mode 에서만 발신자 미러 meta 가 누락돼 inproc 와 동작이 갈린다(_payload_to_kwargs 복원).
     payload = {
         "user_message": run_kwargs.get("user_message", ""),
         "conversation_id": conv_id,
@@ -11153,6 +11155,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         "product_id": run_kwargs.get("product_id"),
         "role_id": run_kwargs.get("role_id"),
         "account_id": account_id,
+        "sender_username": run_kwargs.get("sender_username"),
         "allowed_schemas": run_kwargs.get("allowed_schemas"),
         "product_mode": run_kwargs.get("product_mode", "pinned"),
         "attachment_ids": run_kwargs.get("attachment_ids") or [],
@@ -11807,6 +11810,15 @@ async def ask(request: Request) -> JSONResponse:
                 text_inline_path = None
         # TASK-0137: inline text path 는 contextvar kwarg (text_inline_path) 로 전달.
 
+        # gc-ask-sender-attrib (feature-0009): 그룹 대화 발신이면 actor username 을 sender_username
+        # 으로 실어, _run_agent_core 의 user 메시지 표시 store 미러 meta 가 실제 발신자 프로필로
+        # 표시되게 한다(미주입 시 FE 가 대화 owner=생성자 프로필로 폴백 → 오귀속). 1:1·신규 대화는
+        # None → 기존 동작(미러 meta 없음) 무변경. 조회 실패 시 _conversation_is_group=False 폴백.
+        _sender_username_for_run = (
+            str(account.get("username") or "")
+            if _conversation_is_group(conv_id or "") else None
+        )
+
         # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
         # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
         agent_result = await _dispatch_ask_run(
@@ -11825,6 +11837,7 @@ async def ask(request: Request) -> JSONResponse:
                 product_id=product_id_for_run,
                 role_id=role_id_for_run,
                 account_id=int(account["id"]),
+                sender_username=_sender_username_for_run,  # gc-ask-sender-attrib: 그룹 한정 발신자 귀속
                 allowed_schemas=allowed_schemas_for_run,
                 product_mode=product_mode_for_run,
                 # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.

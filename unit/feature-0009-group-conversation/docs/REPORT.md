@@ -30,12 +30,13 @@ source_of_truth: false
 - 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (코어, 머지됨) + ux2(워크트리 ai/claude/gc-live-ux2, 커밋 전).
 
 ## 3. Recent Changes
-- (최신) gc-unread-badge: alembic 0019 `conversation_members.last_read_message_id` + 읽음 API + 목록 unread/멘션 집계 + FE 배지/읽음처리/주기갱신 + `mentions.sql_mention_regex` + test_mentions 파리티 3. (CHG-20260625T065840)
+- gc-unread-badge: alembic 0019 `conversation_members.last_read_message_id` + 읽음 API + 목록 unread/멘션 집계 + FE 배지/읽음처리/주기갱신 + `mentions.sql_mention_regex` + test_mentions 파리티 3. (CHG-20260625T065840)
 - PG `agent_runtime_schema.sql`: `conversation_members` 테이블 + `core_messages.sender_account_id`/`thread_root_message_id` + 인덱스 2.
 - MySQL parity: `AgentCoreConversationMembers` + `AgentCoreMessages` 컬럼(READ_BACKEND!=postgres 가드).
 - 신규 `modules/group_members.py`: backfill + 멤버 read/add/remove 헬퍼.
 - 신규 `tests/test_group_members.py`: 10 테스트(SQL 계약·멱등·검증·파싱).
-- 총 변경 횟수: 다수 — 상세는 MODIFY.md(최신 CHG-20260625T065840-gc-unread-badge).
+- 총 변경 횟수: 다수 — 상세는 MODIFY.md(최신 CHG-20260625T162000-gc-ask-sender-attrib).
+- (최신) CHG-20260625T162000-gc-ask-sender-attrib (Major): 그룹 `@assistant` user 메시지 발신자 귀속 정정 — agent_core `run_agent`/`_run_agent_core` 에 `sender_username` + user 미러 meta(사람-채팅 경로와 동일 키 집합, `sender_username and account_id` 게이트), ask.py `_payload_to_kwargs` worker 복원, app.py ask dispatch 그룹 한정 `sender_username` 배선(inproc+worker). 신규 authz/스키마/캐시버스터 0. 1:1·비그룹 무회귀.
 
 ## 4. Open Issues
 - backfill 호출 wiring(스키마 ensure 직후 1회 호출)은 S2 초입에서 연결 — 현재는 멱등 함수만 제공.
@@ -43,7 +44,8 @@ source_of_truth: false
 
 ## 5. Test Status
 - 자동 테스트: `test_group_members.py` 10/10 통과 (FakeConn, DB 불요). py_compile(모듈·테스트·app.py) OK.
-- 수동 테스트: 미수행(스키마 멱등성 실 DB 검증은 배포 환경에서).
+- gc-ask-sender-attrib: `test_ask_worker.py` 7/7(payload round-trip sender_username + 시그니처) + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 py_compile PASS. §18.8 적대 패널 BLOCKER 0/MAJOR 0.
+- 수동 테스트: 미수행(스키마 멱등성 실 DB 검증은 배포 환경에서). gc-ask-sender-attrib 발신자 표시 정정은 배포 후 라이브 그룹 대화에서 실측 권장(PB-0008 미실측).
 - 미검증 항목: 실 PG 에 대한 DDL 멱등 적용·backfill 행 수(라이브 검증은 S1 배포 시).
 
 ## 6. Blocked Items

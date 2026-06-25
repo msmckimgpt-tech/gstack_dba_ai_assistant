@@ -93,6 +93,7 @@ def _payload_to_kwargs(payload: dict[str, Any], account_id: int, run_id: str) ->
         "product_id": payload.get("product_id"),
         "role_id": payload.get("role_id"),
         "account_id": account_id,
+        "sender_username": payload.get("sender_username"),  # gc-ask-sender-attrib: 그룹 발신자 귀속(worker 경로)
         "allowed_schemas": payload.get("allowed_schemas"),
         "product_mode": payload.get("product_mode", "pinned"),
         "attachment_ids": payload.get("attachment_ids") or [],
