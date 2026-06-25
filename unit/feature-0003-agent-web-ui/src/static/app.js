@@ -124,6 +124,10 @@ const state = {
   productMode: "auto",
   pinnedProductId: null,
   activeProductId: null,
+  // feature-0009 gc-participant-product-select: 공유 대화 '생성자 제품 — 열람 전용' 목록(본인 접근권
+  //  없는 대화 고정 제품). /api/session 의 conversation_view_only_products 로 hydrate, 드롭업 하단
+  //  회색·비활성 그룹으로 분리 렌더. 비-공유/접근가능/owner 면 []. (applyProductHydration 가 갱신)
+  conversationViewOnlyProducts: [],
   // TASK-0048: "새 대화" 버튼은 즉시 backend row 를 만들지 않는다. client-side 만 pending 상태로 진입했다가
   // 첫 메시지 전송 시 /api/ask 가 lazy 생성한다. cid 가 없는 동안의 busy/sentinel 식별자.
   pendingNewConversation: false,
@@ -887,6 +891,13 @@ function isGroupConversation(item) {
   return Boolean(item.is_group) || Number(item.member_count || 0) > 1;
 }
 
+// feature-0009 gc-participant-product-select: 현재 actor 가 공유 대화의 '참가자'(비-owner 멤버)인지.
+//  참가자는 제품을 per-message 로만 바꾼다(대화 공통 바인딩 PATCH 는 owner 전용). owner·1:1 대화는 false.
+function isParticipantInSharedConversation(conversation = currentConversation()) {
+  if (!conversation) return false;
+  return isGroupConversation(conversation) && !isOwnConversation(conversation);
+}
+
 // feature-0007 (REQ-20260521-0001): readVaultState / writeVaultState /
 // clearVaultState / isVaultCryptoAvailable / computeVaultReadiness /
 // updateVaultReadiness / syncVaultSteps / renderVaultSavedCard / refreshVaultUI
@@ -1104,11 +1115,15 @@ function renderProductDropupMenu() {
   const currentPid = mode === "pinned" ? Number(state.pinnedProductId) : null;
   const products = Array.isArray(state.products) ? state.products : [];
   const pinned = products.filter((p) => Number(p.id));
+  // feature-0009 gc-participant-product-select: 공유 대화 '생성자 제품 — 열람 전용' 목록.
+  //  본인 접근권 없는 대화 고정 제품을 하단 회색·비활성 그룹으로 분리(<생성자 + 참가자> 명시 분리).
+  const viewOnly = (Array.isArray(state.conversationViewOnlyProducts) ? state.conversationViewOnlyProducts : [])
+    .filter((p) => Number(p.id));
 
-  // section head
+  // section head — view-only 그룹이 있으면 상단을 "내 제품"으로 명시해 생성자 그룹과 구분한다.
   const head = document.createElement("div");
   head.className = "product-dropup-section-head";
-  head.textContent = "이 대화의 제품";
+  head.textContent = viewOnly.length ? "내 제품" : "이 대화의 제품";
   menu.appendChild(head);
 
   // 제품 명칭 검색 필터 — 제품이 많아 탐색이 번거로워질 때만 노출(사용자 요청).
@@ -1154,6 +1169,30 @@ function renderProductDropupMenu() {
     empty.className = "product-dropup-empty";
     empty.textContent = "접근 가능한 제품이 없습니다";
     menu.appendChild(empty);
+  }
+
+  // feature-0009 gc-participant-product-select: '공유 대화 생성자 제품 — 열람 전용' 그룹(하단).
+  //  본인 접근권이 없어 선택·발화는 불가하나, 대화가 어떤 제품 컨텍스트인지 확인할 수 있게 분리 표시.
+  if (viewOnly.length) {
+    const voHead = document.createElement("div");
+    voHead.className = "product-dropup-section-head product-dropup-section-head--viewonly";
+    voHead.textContent = "공유 대화 생성자 제품 (열람 전용)";
+    menu.appendChild(voHead);
+    viewOnly.forEach((p) => {
+      menu.appendChild(buildProductDropupItem({
+        mode: "pinned",
+        pid: Number(p.id),
+        label: `(${p.product_key}) ${p.name}`,
+        selected: false,
+        datasourceKey: p.datasource_key || null,
+        datasources: Array.isArray(p.datasources) ? p.datasources : null,
+        connStatusOverall: p.conn_status_overall || null,
+        iconUrl: p.icon_url || null,
+        productKey: p.product_key || "",
+        viewOnly: true,
+        viewOnlyReason: p.view_only_reason || "공유 대화 생성자가 고정한 제품 — 본인 접근권이 없어 열람만 가능합니다.",
+      }));
+    });
   }
 }
 
@@ -1206,7 +1245,7 @@ function connStatusMeta(status) {
   }
 }
 
-function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources, connStatusOverall, iconUrl, productKey }) {
+function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, datasources, connStatusOverall, iconUrl, productKey, viewOnly, viewOnlyReason }) {
   const item = document.createElement("button");
   item.type = "button";
   item.className = "product-dropup-item";
@@ -1216,6 +1255,14 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   // 명칭 검색용 haystack — 라벨(product_key + 제품명)을 소문자로 보관. filterProductDropupItems 가 사용.
   item.dataset.search = String(label || "").toLowerCase();
   if (selected) item.classList.add("is-selected");
+  // feature-0009 gc-participant-product-select: 공유 대화 '생성자 제품'(본인 접근권 없음)은
+  // 열람 전용 — 회색·비활성·선택 불가(ANCHOR §1: 본인 권한 밖 제품으로는 발화하지 못함).
+  if (viewOnly) {
+    item.classList.add("is-view-only");
+    item.disabled = true;
+    item.setAttribute("aria-disabled", "true");
+    if (viewOnlyReason) item.title = viewOnlyReason;
+  }
 
   // profile-icon 정합: 사용자 요청 항목 순서 — ① 네트워크 상태 배지(dot) → ② 프로필 아이콘 →
   //   ③ 제품 명칭 → ④ 데이터소스. (과거엔 아이콘이 dot 앞이었고, 아이콘은 icon_url 설정 시에만 노출됐음.)
@@ -1255,6 +1302,14 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   labelEl.textContent = label;
   item.appendChild(labelEl);
 
+  // 열람 전용 배지 — '생성자 제품' 그룹 항목임을 명시(선택 불가).
+  if (viewOnly) {
+    const voBadge = document.createElement("span");
+    voBadge.className = "product-dropup-item-viewonly";
+    voBadge.textContent = "열람 전용";
+    item.appendChild(voBadge);
+  }
+
   // ④ 데이터소스 — 멀티 datasource (P2/TASK-0228 1:N): 바인딩된 datasource 를 배지로 표시.
   //  - 1개: 라벨 그대로. 2개 이상: "N개 데이터소스" + 전체 목록 tooltip.
   //  TASK-0261: tooltip 에 각 datasource 의 연결 상태도 함께 표기.
@@ -1290,15 +1345,18 @@ function buildProductDropupItem({ mode, pid, label, selected, datasourceKey, dat
   check.appendChild(path);
   item.appendChild(check);
 
-  item.addEventListener("click", (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    closeProductDropup();
-    setActiveProduct({
-      mode,
-      pinnedId: pid,
-    }).catch((error) => showToast(error.message || "제품 변경 실패", true));
-  });
+  // 열람 전용 항목은 disabled 라 클릭 이벤트가 발화하지 않는다(선택 경로 자체를 막음).
+  if (!viewOnly) {
+    item.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeProductDropup();
+      setActiveProduct({
+        mode,
+        pinnedId: pid,
+      }).catch((error) => showToast(error.message || "제품 변경 실패", true));
+    });
+  }
   return item;
 }
 
@@ -1367,19 +1425,42 @@ function writeProductPrefToLocal(mode, pinnedId) {
   } catch (_) { /* private mode etc.: ignore */ }
 }
 
-/** 서버 hydrate(/api/session 의 product_pref / conversation_product) 결과를 state 에 반영한다. */
-function applyProductHydration({ pref, conversationProduct }) {
+/** 서버 hydrate(/api/session 의 product_pref / conversation_product / conversation_view_only_products) 결과를 state 에 반영한다. */
+function applyProductHydration({ pref, conversationProduct, viewOnlyProducts }) {
+  // feature-0009 gc-participant-product-select: 공유 대화 '생성자 제품 — 열람 전용' 목록 적재.
+  //  키가 전달된 호출만 갱신(대화 전환·초기 hydrate 는 항상 fresh 값을 넘긴다).
+  if (viewOnlyProducts !== undefined) {
+    state.conversationViewOnlyProducts = Array.isArray(viewOnlyProducts) ? viewOnlyProducts : [];
+  }
   // 1) 우선 localStorage 미러 → 깜빡임 방지용 즉시 표시.
   const local = readProductPrefFromLocal();
   if (local) {
     state.productMode = local.mode;
     state.pinnedProductId = local.pinned_id;
   }
-  // 2) 대화별 product 가 있으면 그것이 우선(대화 컨텍스트는 대화의 진실).
-  if (conversationProduct && conversationProduct.product_mode) {
-    state.productMode = conversationProduct.product_mode === "pinned" ? "pinned" : "auto";
-    state.pinnedProductId = conversationProduct.product_id || null;
-    state.activeProductId = conversationProduct.product_id || null;
+  // 대화 고정 제품에 본인 접근권이 있는지(작업화면 products 목록 기준 = 백엔드 product.access 필터).
+  const cMode = (conversationProduct && conversationProduct.product_mode)
+    ? (conversationProduct.product_mode === "pinned" ? "pinned" : "auto") : null;
+  const cPid = conversationProduct ? (conversationProduct.product_id || null) : null;
+  const cAccessible = cMode === "auto"
+    || (cPid != null && (Array.isArray(state.products) ? state.products : []).some((p) => Number(p.id) === Number(cPid)));
+  // 2) 접근 가능한 대화 product 면 그것이 우선(대화 컨텍스트는 대화의 진실 — '참가한 제품' 반영).
+  if (cMode && cAccessible) {
+    state.productMode = cMode;
+    state.pinnedProductId = cMode === "pinned" ? cPid : null;
+    state.activeProductId = cPid;
+  } else if (cMode === "pinned" && cPid != null && !cAccessible) {
+    // feature-0009 gc-participant-product-select: 접근권 없는 '생성자 제품'은 active 선택으로 채택하지
+    //  않는다(열람 전용 — Q2). 대화 컨텍스트로만 보관(activeProductId)하고, 발화는 본인 권한 제품으로 한다.
+    //  현재 선택(localStorage)이 본인 접근 가능 제품이면 유지, 아니면 auto 로 강등(항상 발화 가능).
+    state.activeProductId = cPid;
+    const curOk = state.productMode === "auto"
+      || (state.pinnedProductId != null
+          && (Array.isArray(state.products) ? state.products : []).some((p) => Number(p.id) === Number(state.pinnedProductId)));
+    if (!curOk) {
+      state.productMode = "auto";
+      state.pinnedProductId = null;
+    }
   }
   // 3) account-level 선호 — 대화 product 가 없을 때(신규/fork 직후) 적용.
   if (pref && (!conversationProduct || conversationProduct.product_id == null)) {
@@ -1412,6 +1493,18 @@ async function setActiveProduct({ mode, pinnedId }) {
   state.pinnedProductId = normPid;
   writeProductPrefToLocal(normMode, normPid);
   renderProductChip();
+  // feature-0009 gc-participant-product-select: 공유 대화 참가자(비-owner 멤버)는 대화 공통 product
+  //  바인딩을 바꾸지 않는다(PATCH 는 owner 전용 → 403). 선택은 로컬 상태로만 두고, sendPrompt 가 이
+  //  요청에 한해 product_id/product_mode 를 함께 실어 보낸다(per-message override). activeProductId 는
+  //  '대화의 제품'(생성자 고정) 컨텍스트 표시용이라 건드리지 않는다.
+  if (isParticipantInSharedConversation()) {
+    showToast(
+      normMode === "auto"
+        ? "auto 로 바꿨어요. 이 대화에서 보내는 다음 메시지부터 적용됩니다."
+        : "제품을 바꿨어요. 이 대화에서 보내는 다음 메시지부터 적용됩니다.",
+    );
+    return;
+  }
   const cid = state.activeConversationId;
   try {
     if (cid) {
@@ -5358,6 +5451,7 @@ async function refreshWorkspace(preferredConversationId = "", opts = {}) {
       applyProductHydration({
         pref: fresh.product_pref || null,
         conversationProduct: fresh.conversation_product || null,
+        viewOnlyProducts: fresh.conversation_view_only_products || [],
       });
     }
   } catch (_) { /* network blip: state 유지 */ }
@@ -5404,6 +5498,7 @@ async function selectConversation(conversationId) {
       applyProductHydration({
         pref: fresh.product_pref || null,
         conversationProduct: fresh.conversation_product || null,
+        viewOnlyProducts: fresh.conversation_view_only_products || [],
       });
     }
   } catch (_) { /* ignore */ }
@@ -7770,6 +7865,16 @@ async function sendPrompt() {
       askBody.product_mode === "pinned" && state.pinnedProductId
         ? Number(state.pinnedProductId)
         : null;
+  } else if (isParticipantInSharedConversation()) {
+    // feature-0009 gc-participant-product-select: 기존 공유 대화에서 참가자(비-owner 멤버)는
+    //  composer 에서 고른 제품을 이 요청에 한해 함께 보낸다(per-message override). 백엔드(B1)가 발신자
+    //  본인 RBAC 로 게이트하고 대화 공통 바인딩은 바꾸지 않는다. owner·1:1 대화는 종전대로 미포함(대화
+    //  product 사용) — owner 의 제품 변경은 PATCH 단일 경로 유지.
+    askBody.product_mode = state.productMode === "pinned" ? "pinned" : "auto";
+    askBody.product_id =
+      askBody.product_mode === "pinned" && state.pinnedProductId
+        ? Number(state.pinnedProductId)
+        : null;
   }
   // TASK-0094 Sprint 1 Phase 6 (D16, R-F5): attachment selection snapshot.
   // sendPrompt 시작 시점의 selected attachment_ids 와 scope_all 토글을 askBody 에
@@ -8331,6 +8436,7 @@ async function initializeWorkspace() {
   applyProductHydration({
     pref: state.session.product_pref || null,
     conversationProduct: state.session.conversation_product || null,
+    viewOnlyProducts: state.session.conversation_view_only_products || [],
   });
   renderAccountState();
   renderAccessNotice();

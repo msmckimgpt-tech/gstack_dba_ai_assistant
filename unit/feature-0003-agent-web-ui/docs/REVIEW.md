@@ -3822,3 +3822,19 @@ source_of_truth: true
 - Verification: py_compile(app.py) PASS.
 - Human Approval Needed: 아니오 (Minor — 비파괴 문구 변경).
 - Cross-ref: CHG-20260625T045450-limit-subject-msg / TASK limit-subject-msg / feature-0002 CHG·REV-20260625T045450-limit-subject-msg.
+
+## REV-20260625T163424-gc-participant-product-select [SUBAGENT:adversarial-authz-6hypothesis-PASS] — SHIP (BLOCKER/MAJOR/MINOR 0, 참고 1 수용) (TASK-20260625T163424-gc-participant-product-select, REQ-20260625-gc-participant-product-select, Major §12.3 — authz 경계: 참가자 발화 RBAC, feature-0009 cross-cut 코드거주=feature-0003)
+- Date: 2026-06-25 (중단 세션 resume — 원본 작성 세션 372f8779 docs 직전 중단분 마무리).
+- Scope: 공유 대화 참가자(비-owner 멤버)의 per-message 제품 선택·발화. 인가 경계 변경(발신자 본인 RBAC 로 제품 게이트, 권한 상속 없음, 대화 공통 바인딩 비파괴).
+- 검증 방식(§18.8): 적대적 서브에이전트 패널 1회 — authz 핵심경로(`/api/ask` + RBAC helper) 인접이라 SKIP 불가. 리뷰어에게 "통과가 아니라 결함 적발" 지시 + 6개 공격가설 강제.
+- 결과(전부 코드 라인 근거 + REFUTED):
+  - ① 권한 우회 → REFUTED. 이중 게이트: parse 시 `_account_has_product_access`(app.py L3525) + run-product 적용 후 재확인(L11571). 타입혼동(auto early-return)·0/음수/str/None pid 전부 fail-closed(403 또는 override 미적용).
+  - ② 대화 바인딩 오염 → REFUTED. backfill UPDATE 가드 `_participant_product_override is None`(L11582). override 가 대화 공통 product 를 persist 하는 경로 없음.
+  - ③ owner/1:1 회귀 → REFUTED. override 는 member-only 분기(L11357-11370)에서만 채움. FE `isParticipantInSharedConversation`(L894) owner/1:1 false.
+  - ④ view-only 과다 노출 → REFUTED. `_conversation_view_only_products_for` fail-closed + 대화 고정 1건 한정(L3569). except 는 노출 축소 방향.
+  - ⑤ FE 정합 → REFUTED. 참가자 setActiveProduct PATCH 미호출(L1496-1505 return), view-only 항목 disabled + click listener 미등록(L1349), sendPrompt per-message 동봉(L7868-7877).
+  - ⑥ auto 모드 → REFUTED. product_id_for_run=None + allowed_schemas_for_run=[] (메타 스키마만), default 자동채움 미수행.
+- VERDICT: **SHIP** (BLOCKING 0).
+- 참고(비-blocking, 본 변경 도입 아님 — 수용): run-product 재조회(L11524-11536) 가 예외로 row_p=None 이 되어도 override 적용 시 L11571 RBAC 재확인이 걸려 권한 우회·노출 없음. 정보용 기록.
+- Human Approval Needed: 아니오 (PLAN-APPROVED feature-0009 슬라이스 + 기존 RBAC helper 재사용 + 패널 SHIP).
+- Cross-ref: CHG-20260625T163424-gc-participant-product-select / feature-0009 REV-20260625T163424-gc-participant-product-select (cross-ref).

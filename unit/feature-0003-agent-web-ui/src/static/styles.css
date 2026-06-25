@@ -2166,6 +2166,30 @@ a { color: inherit; }
   letter-spacing: .04em;
 }
 
+/* feature-0009 gc-participant-product-select: '공유 대화 생성자 제품 — 열람 전용' 그룹.
+   상단 '내 제품'(선택 가능)과 시각적으로 구분되도록 구분선 + 별도 헤더색. */
+.product-dropup-section-head--viewonly {
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle, #eef2f7);
+  padding-top: 8px;
+}
+/* 열람 전용 항목 — 회색·비활성(선택/발화 불가). 본인 접근권 밖 제품(ANCHOR §1). */
+.product-dropup-item.is-view-only {
+  cursor: not-allowed;
+  opacity: .55;
+}
+.product-dropup-item.is-view-only:hover { background: transparent; }
+.product-dropup-item.is-view-only .product-dropup-item-label { color: var(--text-muted); }
+.product-dropup-item-viewonly {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--border-subtle, #eef2f7);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* TASK-0295: 역할에 제품 접근 권한이 없어 picker 에 표시할 제품이 없을 때 안내. */
 .product-dropup-empty {
   padding: 8px 10px;
