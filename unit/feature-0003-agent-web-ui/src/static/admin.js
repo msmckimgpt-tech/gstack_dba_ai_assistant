@@ -9235,8 +9235,9 @@ function buildRoleProductCardList(role, disabled, opts = {}) {
       scope: "role",
       roleId: Number(role.id),
       title: "전체 제품 프롬프트",
-      hint: "모든 제품에 적용됩니다.",
+      hint: "모든 제품에 적용됩니다. '자동 작성'은 역할 성격과 소속 사용자 대화 패턴을 반영합니다.",
       fixedProductId: 0, // 0 = product 무관 (Phase 1B catalog 의 NULL 매칭)
+      autoGenerateRoleId: Number(role.id), // TASK-20260625: 역할 전체 제품 프롬프트 자동작성
     });
     body.appendChild(editor);
     genericCard.appendChild(body);
@@ -9332,7 +9333,7 @@ function buildAccountProductOverrideList(account, disabled, opts = {}) {
 
 /* ── System prompt editor (공용 — role / product / account scope) ────── */
 
-function buildSystemPromptEditor({ scope, productId = null, roleId = null, accountId = null, title, hint, fixedProductId = null, autoGenerateProductId = null }) {
+function buildSystemPromptEditor({ scope, productId = null, roleId = null, accountId = null, title, hint, fixedProductId = null, autoGenerateProductId = null, autoGenerateRoleId = null }) {
   const section = document.createElement("div");
   section.className = "admin-detail-section";
   const sectionTitle = document.createElement("div");
@@ -9396,7 +9397,12 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
   // 비스트리밍/스트리밍 done 양쪽이 공유.
   const applyAutoGenMeta = (m) => {
     m = m || {};
-    if (m.grounded) {
+    if (scope === "role") {
+      // 역할 '전체 제품 프롬프트' — schema/table 이 아닌 소속 사용자·대화주제 기준 메타.
+      metaEl.textContent = m.grounded
+        ? `(자동 생성됨 — 소속 사용자 ${m.member_count || 0}명·대화주제 ${m.topic_count || 0}건 반영. 검토 후 저장하세요)`
+        : "(자동 생성됨 — 이 역할의 대화 이력이 아직 적어 권한·정의 기반 형태입니다. 검토 후 저장하세요)";
+    } else if (m.grounded) {
       metaEl.textContent =
         `(자동 생성됨 — 스키마 ${m.schema_insight_count || 0}개·테이블 ${m.table_insight_count || 0}개·` +
         `대화주제 ${m.topic_count || 0}건 반영. 검토 후 저장하세요)`;
@@ -9413,7 +9419,11 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
     }
   };
 
-  if (autoGenerateProductId) {
+  if (autoGenerateProductId || autoGenerateRoleId) {
+    // 자동작성 스트림 URL — 역할 scope 면 roles/{id}, 그 외(제품)면 products/{id}.
+    const autoStreamUrl = autoGenerateRoleId
+      ? `/api/admin/roles/${autoGenerateRoleId}/prompt/generate/stream`
+      : `/api/admin/products/${autoGenerateProductId}/prompt/generate/stream`;
     const autoBtn = document.createElement("button");
     autoBtn.type = "button";
     autoBtn.className = "btn-secondary";
@@ -9434,6 +9444,9 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
       let streamedAny = false;
 
       const finish = () => {
+        // 재진입 가드: 이 호출이 소유한 controller 일 때만 복원 — 빠른 더블클릭 시 앞선 호출의
+        // finally 가 뒤 호출의 진행 중 스트림 버튼을 재활성/abort 핸들 제거하지 않도록.
+        if (autoBtn._streamAbort !== controller) return;
         autoBtn.disabled = false;
         autoBtn.textContent = "자동 작성";
         autoBtn._streamAbort = null;
@@ -9486,7 +9499,7 @@ function buildSystemPromptEditor({ scope, productId = null, roleId = null, accou
 
       try {
         const resp = await fetch(
-          `/api/admin/products/${autoGenerateProductId}/prompt/generate/stream`,
+          autoStreamUrl,
           { method: "GET", credentials: "same-origin", signal: controller.signal },
         );
         if (!resp.ok) {

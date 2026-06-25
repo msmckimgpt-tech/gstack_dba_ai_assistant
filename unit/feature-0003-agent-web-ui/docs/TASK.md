@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260625-role-account-prompt-autogen — 역할 '전체 제품 프롬프트' + 프로필 '제품별 개인 프롬프트' 자동 작성 (Major §12.3 — 외부 LLM dispatch 2개 scope 확장 + 역할 scope 교차사용자 대화 집계)
+- 사용자 요청(/_template:entry): "`관리 콘솔 > 역할 > [각 항목] > 제품 사용 > 전체 제품 프롬프트` 와 `작업 화면 > 프로필 > 프롬프트 > [각 제품]` 의 프롬프트 자동 완성 기능 구성. 각 역할의 성격·소속 사용자 대화 내역을 점검해 모범 동작하도록. 각 프로필 프롬프트도 역할·선택 제품·대화 패턴에 따라 모범 작성되도록."
+- 결정(AskUserQuestion 2026-06-25): ① 트리거 = **on-demand 버튼만**(자율 sweep 미도입 — 개인 프롬프트 무동의 자동작성·LLM 비용 누수 회피). ② 범위 = **기능만 구성**(엔드포인트·UI·컨텍스트 조립; 실제 seed 역할/프로필 생성·저장은 운영자 라이브 수행).
+- 설계: 기존 제품 프롬프트 자동작성(TASK-0309/0237, `scope='product'`)을 role/account 두 scope 로 확장. 컨텍스트 grounding 은 scope 별 차등 — role=역할 성격(정의·권한 특성)+소속 사용자 대화 패턴(집계), account=사용자 역할+선택 제품 용도+본인 대화 패턴(집계). privacy: 원문 메시지가 아닌 **집계 메타(대화 제목·요약)** 만 사용(제품 경로와 동일 house style). role 은 `owner_account_id` 필터(admin `system_prompt.manage.role.any` 게이트), account 는 본인 계정만(self-service). 개인 프롬프트는 제품/역할 프롬프트 위 **선호 레이어**라 스키마 세부 미중복. 스키마/RBAC 카탈로그 변경 0.
+- [x] 백엔드(`src/app.py`): `_collect_conversation_signals_pg`(product_id/account_ids 필터 일반화, 빈 account_ids→PG 미접근 누출 가드) · `_describe_role_character`(권한코드→성격 서술) · `_assemble_role_prompt_llm_request` · `_assemble_account_prompt_llm_request`(둘 다 (error,ctx) 동형 계약, prompt_gen cap·temp 0.3).
+- [x] 백엔드 엔드포인트 4종: `POST|GET /api/admin/roles/{id}/prompt/generate[/stream]`(role, `system_prompt.manage.role.any`) · `POST|GET /api/auth/me/system-prompt/generate[/stream]`(account, self+product access). 공유 응답 헬퍼 `_prompt_generate_json_response`/`_prompt_generate_stream_response` 추출 — 제품 2개 엔드포인트도 동일 헬퍼로 리팩터(SSE 브릿지 중복 제거, 회귀 0).
+- [x] admin.js: `buildSystemPromptEditor` 에 `autoGenerateRoleId` 파라미터 추가 + 역할 '전체 제품 프롬프트' 카드에 '자동 작성' 버튼 + scope-aware meta 렌더(역할 = 소속 사용자·대화주제 기준).
+- [x] app.js + index.html: 프로필 프롬프트 탭에 '자동 작성' 버튼(`#generatePromptBtn`) + `generateAccountPrompt()` SSE 핸들러(선택 제품 기준 스트리밍, 생성 후 검토→'저장'; 자동 저장 안 함).
+- [x] §18.8 적대 검증 패널(2렌즈: 백엔드+보안/프라이버시, 프론트/UX) — SHIP-WITH-FIXES ×2. **MAJOR 2 흡수**(account 자동작성 quota 게이트 `_check_account_token_quota`=429 · 프로필 에디터 dirty 가드로 자동작성 본문 제품전환 소실 방지) + MINOR 2(재진입 가드 `===controller` app.js·admin.js · `.helper-text-warn` 강조) + NIT(done 스크롤 보존). REVIEW REV-20260625T173000-role-account-prompt-autogen.
+- [x] 정적 캐시버스터 bump(`?v=20260625-role-account-prompt-autogen`): index.html styles.css·app.js + admin.html styles.css·admin.js.
+- [x] 검증: `tests/test_auto_role_prompt.py`(7) + `tests/test_auto_account_prompt.py`(5) 신규 + 회귀(`test_auto_product_prompt` 12·`test_prompt_generate_stream` 3·`test_prompt_generate_truncation` 4) = **33/33 PASS**(agent 이미지). `py_compile app.py` + ruff(app.py) + `node --check` admin.js/app.js + CSS brace(1572/1572) PASS.
+- [ ] **남은 마감(배포)**: verify-completion --pre-commit → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked + 캐시버스터) → PB-0008 Windows-browser 실렌더(역할 카드·프로필 자동작성 버튼·SSE 스트리밍 — worktree=WSL 미실측, WARN-only).
+
 ## TASK-20260625T030242-gc-member-actions-hover — 공유 팝업 참여자 추방/차단 버튼 hover 펼침 + 그리드 컴팩트화 (feature-0009 cross-cut, 코드 거주=feature-0003, Minor §12.3 — frontend CSS-only)
 - 사용자 요청(`/_template:entry`, gc-member-kick-ban 후속): ① 추방/차단 버튼을 해당 사용자 hover 시 자연스러운 애니메이션과 함께 펼치기, 단 다른 사용자 UI 위치 불변. ② (1차 세로 스택 제안에 대해) 여백 낭비가 커지니 대안.
 - 결정/설계: 참여자/차단 목록을 **반응형 그리드**(`grid-template-columns: repeat(auto-fill, minmax(200px,1fr))`)로 — 셀이 그리드 트랙에 고정돼 한 셀에서 hover 로 버튼이 펼쳐져도(셀 내부에서 이름이 자리 양보) **다른 셀의 위치·구성은 불변**. 평소엔 이름 `flex:1` 으로 셀 폭을 채워 **여백 낭비 0**, 다열이라 세로 길이도 짧음. 액션은 `max-width:0→120px`+`opacity`+`transform` 트랜지션으로 부드럽게 펼침.

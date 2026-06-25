@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260625T173000-role-account-prompt-autogen [SUBAGENT:adversarial-2lens(backend+security/privacy, frontend/ux)] — SHIP (BLOCKER 0 + MAJOR 2 흡수 + MINOR 2 흡수) (TASK-20260625-role-account-prompt-autogen, Major §12.3 — 외부 LLM dispatch 2개 scope 확장)
+- Date: 2026-06-25
+- Cycle: 역할 '전체 제품 프롬프트' + 프로필 '제품별 개인 프롬프트' 자동작성. worktree `ai/claude/role-account-prompt-autogen`(base 7e6aab8). CHG-20260625-role-account-prompt-autogen.
+- §18.8 verification panel = 적대적 코드 리뷰 2렌즈(general-purpose REFUTE). 통과가 아니라 결함 적발 목적. **VERDICT: SHIP-WITH-FIXES ×2 → 수정 후 SHIP**.
+- **MAJOR-1 (백엔드/비용 — 수정)**: self-service 계정 프롬프트 자동작성(`/api/auth/me/system-prompt/generate[/stream]`)이 로그인만으로 호출 가능한데 LLM 토큰 quota 를 우회(`_check_account_token_quota` 미호출) — 임의 로그인 사용자가 무제한 ~20k 토큰(prompt_gen cap) LLM 호출 가능. 기존 product/role 경로는 admin 게이트라 blast radius 제한이었으나 self-service 로 확장하며 노출 증가. **수정**: `_collect_account_prompt_context` 에 `_check_account_token_quota(conn, account)` 게이트 추가(초과 시 429, /api/ask 와 동일). 회귀 가드 `test_collect_account_prompt_context_quota_exceeded`. (admin-gated role/product 경로는 기존 acceptance 유지 — `_record_llm_usage` 미기록은 수동경로 동일 feature-wide 기존 갭, 후속 분리.)
+- **MAJOR-2 (프론트/UX — 수정)**: 프로필 프롬프트 에디터에 dirty 상태가 없어, 자동 작성으로 채운 미저장 본문이 있는 상태에서 `#promptProductSelect` 제품 전환 시 `reloadAccountPrompt()` 가 서버값으로 덮어써 **생성 본문 silent 소실**("검토 후 저장" 안내와 모순). **수정**: `initAccountPromptEditor` 에 `_lastLoaded`/`_prevValue` 추적 + 제품 전환 change 핸들러에 dirty 시 `window.confirm`(취소 시 선택값 복원·전환 중단).
+- **MINOR (수정)**: ① 빠른 더블클릭 시 앞선 호출 finally 가 뒤 호출 스트림 버튼을 재활성/abort 핸들 제거하던 재진입 가드 결함 — `finish()` 를 `_streamAbort === controller` 일 때만 동작하도록(app.js·admin.js 양쪽 — 패널이 admin 기존 패턴 결함도 지적). ② 프로필 `#promptMeta`(.helper-text)는 admin `.admin-meta-warn` 같은 강조가 없어 실패·잘림 메시지가 muted — `.helper-text-warn`(var(--danger)) 추가 + 에러/truncated 시 토글.
+- **NIT**: ① done 재할당 시 스크롤 위치 보존(admin 동형) 적용. ② `"int | None"` quoted annotation 은 파일 기존 스타일(app.py 1508/5771/24883/25251 등 다수)과 **일치** → 무변경(거짓 불일치). ③ outer `.catch` 도달불가(방어적, save/clear 패턴과 동일) → 무변경.
+- **반증 실패=안전 확인**: ① 인가/IDOR — role=`system_prompt.manage.role.any`(role PUT 과 동일 게이트), account=request-supplied account_id 없음(authed caller 의 id 만 사용) → 타계정 대화 접근 경로 없음. ② privacy — 역할 교차사용자 집계는 `owner_account_id` 필터 + **빈 account_ids 면 PG 미접근 빈 결과**(전체 누출 가드, `test_collect_signals_empty_accounts_short_circuits`) + 집계 메타(제목·요약)만. ③ SQLi — `_collect_conversation_signals_pg` filter_sql 은 고정 컬럼 조각 + `%s` placeholder·int 캐스팅(사용자 텍스트 미보간). ④ 리팩터 회귀 — 공유 응답 헬퍼는 원본 인라인과 byte-equivalent(SSE 이벤트·JSON shape·헤더·truncation 로그 불변). ⑤ 연결 누수 없음.
+- 검증(수정 후): `test_auto_role_prompt.py`(7) + `test_auto_account_prompt.py`(5) 신규 + 회귀(product prompt 12·stream 3·truncation 4) = **33/33 PASS**(agent 이미지) + `py_compile app.py` + ruff(app.py) PASS + `node --check` app.js/admin.js + CSS brace balance(1572/1572).
+- Human Approval Needed: 외부 영향(PR 생성·머지·배포)은 사용자 confirm. 코드 자체는 SHIP.
+- Cross-ref: TASK-20260625-role-account-prompt-autogen / CHG-20260625-role-account-prompt-autogen / FUNCTION REQ-20260625-role-account-prompt-autogen(AC-RAP-1~3).
+
 ## REV-20260625T161500-auto-product-prompt [SUBAGENT:adversarial-1lens(security+cost+correctness+ops)] — SHIP (BLOCKER 1 + MAJOR 2 흡수) (TASK-0309, Major §12.3 — 자율 LLM dispatch + 자율 DB write)
 - Date: 2026-06-25
 - Cycle: 제품 insight 분석률 95% 도달 시 제품 프롬프트 무인 자동완성(1회성). worktree `ai/claude/auto-product-prompt`(base 262a065). CHG-20260625-auto-product-prompt.

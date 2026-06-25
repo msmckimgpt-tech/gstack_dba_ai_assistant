@@ -23300,6 +23300,365 @@ def _assemble_product_prompt_llm_request(product_id: int):
     }
 
 
+# =============================================================================
+# TASK-20260625-role-account-prompt-autogen: 역할 '전체 제품 프롬프트'(role scope) +
+# 프로필 '제품별 개인 프롬프트'(account scope) 자동작성.
+#
+# 제품 프롬프트 자동작성(`_assemble_product_prompt_llm_request`, TASK-0309/0237)이
+# scope='product' 에만 있던 것을 두 scope 로 확장한다. 컨텍스트 grounding 은 scope 마다
+# 다르다:
+#   - role  : 역할 성격(정의·권한 특성) + 그 역할 소속 사용자들의 실제 대화 패턴(집계)
+#   - account: 사용자의 역할 성격 + 선택 제품의 용도 + 본인의 실제 대화 패턴(집계)
+# 둘 다 (error, ctx) 반환 계약을 제품 경로와 동일하게 유지해, 비스트리밍/스트리밍 공유
+# 응답 헬퍼(`_prompt_generate_json_response`/`_prompt_generate_stream_response`)를 재사용한다.
+#
+# privacy 경계: 제품 경로와 동일하게 **원문 메시지가 아니라 집계 메타(대화 제목·요약)**
+# 만 컨텍스트로 사용한다. role scope 는 거기에 `owner_account_id` 필터(해당 역할 계정
+# 집합)만 더한다 — admin(`system_prompt.manage.role.any`) 게이트. account scope 는 본인
+# 계정으로만 필터(self-service) — 타인 데이터 미접근.
+# =============================================================================
+
+
+def _collect_conversation_signals_pg(
+    *,
+    product_id: "int | None" = None,
+    account_ids: "list[int] | None" = None,
+    topic_limit: int = 40,
+    summary_limit: int = 5,
+):
+    """대화 패턴 집계 — topic(제목) 목록 + summary(요약) 샘플.
+
+    `_assemble_product_prompt_llm_request` 가 product_id 로 인라인 수집하던 것과 동형이되
+    역할/계정 scope 를 위해 필터를 일반화한다:
+      - product_id: 그 제품의 대화만 (None = 제품 무관).
+      - account_ids: 그 계정들이 **소유**(owner_account_id)한 대화만.
+    둘 다 주면 AND. account_ids 가 **빈 list** 면 (대상 계정 없음) 빈 결과를 반환한다 —
+    전체 대화로 fallback 하지 않는다(cross-scope 누출 방지). account_ids 가 None 이면
+    계정 필터 없음(제품 scope 처럼 전체).
+
+    원문 메시지가 아닌 집계 메타(제목·요약)만 반환한다 — 제품 경로와 동일 privacy 경계.
+    반환: (topic_lines, summary_lines).
+    """
+    topic_lines: list[str] = []
+    summary_lines: list[str] = []
+    # account_ids 가 명시(빈 list)됐는데 대상이 없으면 — 조회 자체를 생략(전체 누출 방지).
+    if account_ids is not None and len(account_ids) == 0:
+        return topic_lines, summary_lines
+
+    filters: list[str] = []
+    params: list[Any] = []
+    if product_id:
+        filters.append("c.product_id = %s")
+        params.append(int(product_id))
+    if account_ids:
+        placeholders = ",".join(["%s"] * len(account_ids))
+        filters.append(f"c.owner_account_id IN ({placeholders})")
+        params.extend(int(a) for a in account_ids)
+    filter_sql = "".join(f" AND {f}" for f in filters)
+
+    try:
+        from modules.db import _pg_connect
+        pg_conn = _pg_connect()
+        pg_cur = pg_conn.cursor()
+        # topic 집계: 대화 제목 최신순.
+        pg_cur.execute(
+            f"""
+            SELECT COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) AS t
+            FROM agent_runtime.core_conversations c
+            LEFT JOIN agent_runtime.kv kv
+              ON kv.conversation_id = c.conversation_id AND kv.key = 'topic'
+            WHERE COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) IS NOT NULL
+              {filter_sql}
+            ORDER BY c.updated_at DESC
+            LIMIT %s
+            """,
+            (*params, int(topic_limit)),
+        )
+        for (t,) in pg_cur.fetchall():
+            if t:
+                topic_lines.append(t)
+        # summary 샘플: 대화 요약 최신순.
+        pg_cur.execute(
+            f"""
+            SELECT s.summary
+            FROM agent_runtime.summary s
+            JOIN agent_runtime.core_conversations c
+              ON c.conversation_id = s.conversation_id
+            WHERE s.summary IS NOT NULL AND TRIM(s.summary) <> ''
+              {filter_sql}
+            ORDER BY s.updated_at DESC
+            LIMIT %s
+            """,
+            (*params, int(summary_limit)),
+        )
+        for (sm,) in pg_cur.fetchall():
+            if sm:
+                summary_lines.append(sm[:600])
+        pg_conn.close()
+    except Exception as pg_exc:
+        logging.getLogger(__name__).warning("_collect_conversation_signals_pg PG error: %s", pg_exc)
+    return topic_lines, summary_lines
+
+
+# 역할 성격 서술용 — 시스템 프롬프트 작성에 유의미한 권한 코드만 사람이 읽는 특성 문장으로
+# 매핑한다(전체 권한 코드 나열 회피). 순서대로 평가해 보유분만 노출.
+_ROLE_CAPABILITY_HINTS: "list[tuple[str, str]]" = [
+    ("conversation.ask", "어시스턴트에게 질의·분석 요청 가능"),
+    ("conversation.create", "새 대화 생성 가능"),
+    ("conversation.read.any", "전체 사용자 대화 열람(관리 범위)"),
+    ("conversation.share.create", "대화 공유 가능"),
+    ("conversation.attachment.upload.own", "파일 첨부 업로드 가능"),
+    ("product.manage", "제품 구성 관리(관리자)"),
+    ("console.access", "관리 콘솔 접근(관리자)"),
+    ("system_prompt.manage.role.any", "역할/시스템 프롬프트 거버넌스(관리자)"),
+]
+
+
+def _describe_role_character(role: "dict[str, Any]") -> str:
+    """역할 dict(`_load_role_by_id` 산출)의 권한 특성을 LLM 이 이해할 성격 서술로 변환."""
+    codes = set(role.get("permission_codes") or [])
+    traits = [phrase for code, phrase in _ROLE_CAPABILITY_HINTS if code in codes]
+    if "conversation.ask" not in codes:
+        traits.insert(0, "질의 권한 없음 — 조회 전용 성격")
+    lines: list[str] = []
+    if role.get("description"):
+        lines.append(f"역할 설명: {role['description']}")
+    if traits:
+        lines.append("주요 권한 특성: " + ", ".join(traits))
+    return "\n".join(lines)
+
+
+def _assemble_role_prompt_llm_request(role_id: int):
+    """역할 '전체 제품 프롬프트'(role scope, ProductId NULL) LLM 요청 조립 (request-less).
+
+    제품 프롬프트 자동작성과 동형 계약((error, ctx) 반환). 컨텍스트는 **역할 성격**
+    (정의·설명·권한 특성) + **그 역할 소속 사용자들의 실제 대화 패턴**(집계 topic·summary).
+    생성물은 모든 제품에 공통 누적되는 role-scope 가이드 프롬프트 본문.
+    """
+    conn = _connect_memory()
+    try:
+        role = _load_role_by_id(conn, int(role_id))
+        if not role:
+            return _json_error("역할을 찾을 수 없습니다.", 404), None
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id FROM WebAccounts WHERE RoleId = %s AND DeletedAt IS NULL",
+            (int(role_id),),
+        )
+        account_ids = [int(r[0]) for r in (cur.fetchall() or [])]
+        cur.close()
+        # 이 역할이 접근 가능한 제품(product.access.<key> 권한 보유분) — "전체 제품" 맥락.
+        role_codes = set(role.get("permission_codes") or [])
+        accessible_products: list[str] = []
+        for prod in _list_products(conn):
+            code = _product_permission_code(str(prod.get("product_key") or ""))
+            if code in role_codes:
+                accessible_products.append(f"({prod.get('product_key')}) {prod.get('name')}")
+    finally:
+        conn.close()
+
+    member_count = len(account_ids)
+    topic_lines, summary_lines = _collect_conversation_signals_pg(account_ids=account_ids)
+
+    sections: list[str] = []
+    sections.append(f"역할 키: {role.get('key')}")
+    sections.append(f"역할 이름: {role.get('name')}")
+    role_character = _describe_role_character(role)
+    if role_character:
+        sections.append(role_character)
+    sections.append(f"이 역할에 속한 사용자 수: {member_count}명")
+    if accessible_products:
+        sections.append("이 역할이 접근 가능한 제품: " + ", ".join(accessible_products))
+    if topic_lines:
+        sections.append(
+            "\n## 이 역할 사용자가 실제로 요청한 주제 (최근 대화 기준)\n"
+            + "\n".join(f"- {t}" for t in topic_lines)
+        )
+    if summary_lines:
+        sections.append(
+            "\n## 이 역할 사용자의 실제 분석 사례 요약 (과거 대화 결과)\n"
+            + "\n\n---\n".join(summary_lines)
+        )
+    knowledge_block = "\n\n".join(sections)
+
+    has_signals = bool(topic_lines or summary_lines)
+    if has_signals:
+        grounding_rule = (
+            "절대 규칙:\n"
+            "1. 위 '실제로 요청한 주제'·'분석 사례 요약'에 드러난 이 역할 사용자의 실제 사용 패턴을 "
+            "반영해, 그 유형의 요청에 어떻게 응대할지 구체적 가이드를 포함하세요.\n"
+            "2. 특정 제품의 테이블/컬럼명을 지어내지 마세요 — 이 프롬프트는 모든 제품에 공통 적용되므로 "
+            "제품 비의존적이어야 합니다(스키마 세부는 제품별 프롬프트가 담당).\n"
+            "3. 역할 권한 특성(조회 전용/질의 가능/관리 등)에 어긋나는 동작을 지시하지 마세요."
+        )
+    else:
+        grounding_rule = (
+            "주의: 이 역할의 대화 이력이 아직 충분하지 않습니다. 역할 정의와 권한 특성에 근거해 이 역할 "
+            "사용자에게 적용할 공통 응대 원칙을 작성하되, 특정 제품의 테이블/컬럼명이나 구체 데이터를 "
+            "지어내지 마세요."
+        )
+
+    llm_model = _resolve_session_default_model()
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "당신은 사내 DB 분석 AI 어시스턴트의 '역할(role) 공통 시스템 프롬프트'를 작성하는 전문가입니다.\n"
+                "아래 역할 정보와 이 역할 사용자들의 실제 대화 패턴을 바탕으로, 이 역할에 속한 모든 사용자에게 "
+                "(제품과 무관하게) 공통 적용할 한국어 시스템 프롬프트를 작성하세요.\n\n"
+                "시스템 프롬프트에는 다음을 포함하세요:\n"
+                "- 이 역할 사용자의 성격과 어시스턴트가 취할 기본 응대 태도\n"
+                "- 이 역할에서 자주 나오는 요청 유형과 그에 대한 응대 방침\n"
+                "- 역할 권한 특성에 맞는 경계(예: 조회 전용 역할이면 쓰기/심층분석 이관 안내 방침)\n"
+                "- 답변 형식·톤·주의사항\n\n"
+                f"{grounding_rule}\n\n"
+                "실무에서 바로 적용 가능한, 구체적이고 완성된 시스템 프롬프트를 작성하세요. "
+                "메타 설명 없이 시스템 프롬프트 본문만 출력하세요.\n\n"
+                f"=== 역할 정보 ===\n{knowledge_block}"
+            ),
+        }
+    ]
+
+    from modules.llm import _get_llm_client
+    openai_client = _get_llm_client(model=llm_model)
+    if openai_client is None:
+        return _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
+
+    _mt = max_tokens_for_model(llm_model, "prompt_gen")
+    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 90}
+    if _mt is not None:
+        create_kwargs["max_tokens"] = _mt
+    if model_supports_temperature(llm_model):
+        create_kwargs["temperature"] = 0.3
+
+    meta_base = {
+        "member_count": member_count,
+        "product_count": len(accessible_products),
+        "topic_count": len(topic_lines),
+        "summary_count": len(summary_lines),
+        "grounded": has_signals,
+    }
+    return None, {
+        "openai_client": openai_client,
+        "create_kwargs": create_kwargs,
+        "llm_model": llm_model,
+        "max_tokens": _mt,
+        "meta_base": meta_base,
+    }
+
+
+def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_id: "int | None"):
+    """프로필 '제품별 개인 프롬프트'(account scope) LLM 요청 조립 (request-less).
+
+    계정의 역할 성격 + (선택 제품의 이름·용도) + **본인의 실제 대화 패턴**(집계 topic·summary,
+    제품 지정 시 그 제품으로 필터) → 이 사용자가 이 제품을 쓸 때 적용할 개인 프롬프트.
+    개인 프롬프트는 제품/역할 프롬프트 위에 얹히는 **개인 선호·스타일 레이어**이므로 제품 스키마
+    세부를 중복 서술하지 않는다(그건 제품 프롬프트 담당). 동형 계약((error, ctx) 반환).
+    """
+    conn = _connect_memory()
+    try:
+        role = _load_role_by_id(conn, int(role_id)) if role_id else None
+        prod_key = prod_name = prod_desc = None
+        if product_id:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT ProductKey, Name, Description FROM WebProducts WHERE Id = %s",
+                (int(product_id),),
+            )
+            prow = cur.fetchone()
+            cur.close()
+            if prow:
+                prod_key, prod_name, prod_desc = prow
+    finally:
+        conn.close()
+
+    topic_lines, summary_lines = _collect_conversation_signals_pg(
+        account_ids=[int(account_id)],
+        product_id=int(product_id) if product_id else None,
+    )
+
+    sections: list[str] = []
+    if role:
+        sections.append(f"사용자 역할: ({role.get('key')}) {role.get('name')}")
+        role_character = _describe_role_character(role)
+        if role_character:
+            sections.append(role_character)
+    if product_id and prod_name:
+        line = f"대상 제품: ({prod_key}) {prod_name}"
+        if prod_desc:
+            line += f" — {prod_desc}"
+        sections.append(line)
+    else:
+        sections.append("대상 제품: 제품 무관 — 모든 제품에 공통 적용되는 개인 프롬프트")
+    if topic_lines:
+        sections.append(
+            "\n## 내가 실제로 자주 요청한 주제 (최근 대화 기준)\n"
+            + "\n".join(f"- {t}" for t in topic_lines)
+        )
+    if summary_lines:
+        sections.append(
+            "\n## 내 과거 분석 사례 요약\n"
+            + "\n\n---\n".join(summary_lines)
+        )
+    knowledge_block = "\n\n".join(sections)
+
+    has_signals = bool(topic_lines or summary_lines)
+    grounding_rule = (
+        "절대 규칙:\n"
+        "1. 이것은 제품/역할 프롬프트 위에 얹히는 **개인 선호 레이어**입니다. 제품의 테이블/컬럼 "
+        "구조나 분석 방법론을 중복 서술하지 마세요 — 그건 제품 프롬프트가 담당합니다.\n"
+        "2. 위 '내가 자주 요청한 주제'에 드러난 이 사용자의 관심사·반복 패턴을 반영해, 답변 형식·"
+        "기본 가정·자주 보는 지표 등 개인화된 선호를 간결히 기술하세요.\n"
+        "3. 대화 이력이 부족하면 역할 성격에 맞는 일반적 개인 선호(형식·톤·단위 등)만 제안하세요."
+    )
+
+    llm_model = _resolve_session_default_model()
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "당신은 사내 DB 분석 AI 어시스턴트 사용자의 '개인 프롬프트'를 작성하는 전문가입니다.\n"
+                "개인 프롬프트는 그 사용자의 답변 선호·스타일·기본 가정을 어시스턴트에게 알려주는, "
+                "제품/역할 프롬프트 위에 누적되는 개인 레이어입니다.\n"
+                "아래 사용자 정보와 실제 대화 패턴을 바탕으로, 이 사용자에게 맞는 한국어 개인 프롬프트를 작성하세요.\n\n"
+                "개인 프롬프트에는 다음을 포함하세요:\n"
+                "- 이 사용자가 자주 다루는 주제·관심 지표\n"
+                "- 선호하는 답변 형식·톤·상세도(예: 표/요약/단위 표기)\n"
+                "- 반복적으로 전제하면 좋은 기본 가정\n\n"
+                f"{grounding_rule}\n\n"
+                "간결하고 바로 적용 가능한 개인 프롬프트 본문만 출력하세요. 메타 설명은 넣지 마세요.\n\n"
+                f"=== 사용자 정보 ===\n{knowledge_block}"
+            ),
+        }
+    ]
+
+    from modules.llm import _get_llm_client
+    openai_client = _get_llm_client(model=llm_model)
+    if openai_client is None:
+        return _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
+
+    _mt = max_tokens_for_model(llm_model, "prompt_gen")
+    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 90}
+    if _mt is not None:
+        create_kwargs["max_tokens"] = _mt
+    if model_supports_temperature(llm_model):
+        create_kwargs["temperature"] = 0.3
+
+    meta_base = {
+        "topic_count": len(topic_lines),
+        "summary_count": len(summary_lines),
+        "product_scoped": bool(product_id),
+        "grounded": has_signals,
+    }
+    return None, {
+        "openai_client": openai_client,
+        "create_kwargs": create_kwargs,
+        "llm_model": llm_model,
+        "max_tokens": _mt,
+        "meta_base": meta_base,
+    }
+
+
 async def _collect_product_prompt_context(product_id: int, request: Request):
     """TASK-0237: 제품 프롬프트 자동작성 수집·조립의 **인증 게이트** 래퍼.
 
@@ -23328,16 +23687,14 @@ def _sse_pack(event: str, payload: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-@app.post("/api/admin/products/{product_id}/prompt/generate")
-async def admin_generate_product_prompt(product_id: int, request: Request) -> JSONResponse:
-    """비스트리밍 자동작성(기존 호환 경로). 실시간 진행률이 필요하면 GET .../stream 사용."""
-    error, ctx = await _collect_product_prompt_context(product_id, request)
-    if error:
-        return error
+async def _prompt_generate_json_response(ctx: dict, *, log_label: str, log_ctx: str) -> JSONResponse:
+    """자동작성 비스트리밍 코어 — ctx(create_kwargs 등)로 LLM 1회 호출 후 {prompt, meta} 반환.
 
+    product/role/account 엔드포인트가 공유한다. log_label/log_ctx 는 잘림 경고 로그 식별용
+    (예: log_label='admin_generate_role_prompt_stream', log_ctx='role_id=3').
+    """
     openai_client = ctx["openai_client"]
     create_kwargs = ctx["create_kwargs"]
-
     try:
         resp = await asyncio.get_event_loop().run_in_executor(
             None, lambda: openai_client.chat.completions.create(**create_kwargs)
@@ -23349,34 +23706,36 @@ async def admin_generate_product_prompt(product_id: int, request: Request) -> JS
         truncated = finish_reason == "length"
         if truncated:
             logging.getLogger(__name__).warning(
-                "admin_generate_product_prompt truncated (finish_reason=length, model=%s, max_tokens=%s, product_id=%s)",
-                ctx["llm_model"], ctx["max_tokens"], product_id,
+                "%s truncated (finish_reason=length, model=%s, max_tokens=%s, %s)",
+                log_label, ctx["llm_model"], ctx["max_tokens"], log_ctx,
             )
     except Exception as llm_exc:
         return _json_error(f"LLM 생성 실패: {llm_exc}", 502)
-
     return JSONResponse(
-        {
-            "prompt": generated.strip(),
-            "meta": {**ctx["meta_base"], "truncated": truncated},
-        }
+        {"prompt": generated.strip(), "meta": {**ctx["meta_base"], "truncated": truncated}}
     )
 
 
-@app.get("/api/admin/products/{product_id}/prompt/generate/stream")
-async def admin_generate_product_prompt_stream(product_id: int, request: Request):
-    """TASK-0237: 자동작성 LLM 토큰 스트리밍(SSE). textarea 에 본문이 실시간으로 차오르게 한다.
-
-    인증·수집은 generator 진입 **전**에 완료(export_audit_events_csv 패턴) — 실패 시 JSON
-    403/404/503 으로 나가고 SSE 진입 안 함. LLM stream(동기 generator)은 단일 uvicorn
-    이벤트 루프를 막지 않도록 **별 스레드 + asyncio.Queue 브릿지**로 소비한다.
-
-    SSE event: progress(stage/label) → token(text 증분, 다수) → done(prompt+meta) | error.
-    """
+@app.post("/api/admin/products/{product_id}/prompt/generate")
+async def admin_generate_product_prompt(product_id: int, request: Request) -> JSONResponse:
+    """비스트리밍 자동작성(기존 호환 경로). 실시간 진행률이 필요하면 GET .../stream 사용."""
     error, ctx = await _collect_product_prompt_context(product_id, request)
     if error:
         return error
+    return await _prompt_generate_json_response(
+        ctx, log_label="admin_generate_product_prompt", log_ctx=f"product_id={product_id}"
+    )
 
+
+def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str):
+    """자동작성 LLM 토큰 스트리밍(SSE) 코어 — product/role/account 엔드포인트 공유.
+
+    LLM stream(동기 generator)은 단일 uvicorn 이벤트 루프를 막지 않도록 **별 스레드 +
+    asyncio.Queue 브릿지**로 소비한다. 인증·수집은 호출부에서 이 함수 진입 **전**에 완료
+    (실패 시 JSON 403/404/503, SSE 미진입).
+
+    SSE event: progress(stage/label) → token(text 증분, 다수) → done(prompt+meta) | error.
+    """
     openai_client = ctx["openai_client"]
     create_kwargs = ctx["create_kwargs"]
     meta_base = ctx["meta_base"]
@@ -23439,8 +23798,8 @@ async def admin_generate_product_prompt_stream(product_id: int, request: Request
 
         if truncated:
             logging.getLogger(__name__).warning(
-                "admin_generate_product_prompt_stream truncated (finish_reason=length, model=%s, max_tokens=%s, product_id=%s)",
-                llm_model, _mt, product_id,
+                "%s truncated (finish_reason=length, model=%s, max_tokens=%s, %s)",
+                log_label, llm_model, _mt, log_ctx,
             )
         yield _sse_pack("done", {
             "prompt": "".join(accumulated).strip(),
@@ -23451,6 +23810,124 @@ async def admin_generate_product_prompt_stream(product_id: int, request: Request
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/admin/products/{product_id}/prompt/generate/stream")
+async def admin_generate_product_prompt_stream(product_id: int, request: Request):
+    """TASK-0237: 제품 프롬프트 자동작성 LLM 토큰 스트리밍(SSE). textarea 에 본문이 실시간으로 차오른다.
+
+    인증·수집은 generator 진입 **전**에 완료 — 실패 시 JSON 403/404/503 으로 나가고 SSE 미진입.
+    """
+    error, ctx = await _collect_product_prompt_context(product_id, request)
+    if error:
+        return error
+    return _prompt_generate_stream_response(
+        ctx, log_label="admin_generate_product_prompt_stream", log_ctx=f"product_id={product_id}"
+    )
+
+
+# ── TASK-20260625-role-account-prompt-autogen: 역할 '전체 제품 프롬프트' 자동작성 ──────
+# 관리 콘솔 > 역할 > [각 항목] > 제품 사용 > 전체 제품 프롬프트 의 '자동 작성' 버튼.
+# 권한: system_prompt.manage.role.any (역할 시스템 프롬프트 관리와 동일 게이트).
+
+
+async def _collect_role_prompt_context(role_id: int, request: Request):
+    """역할 프롬프트 자동작성의 **인증 게이트** 래퍼 — `system_prompt.manage.role.any` 확인 후
+    request-less 코어(`_assemble_role_prompt_llm_request`)에 위임. 반환: (error, ctx)."""
+    conn = _connect_memory()
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error, None
+        if not _account_has_permission(account, "system_prompt.manage.role.any"):
+            return _json_error("역할 시스템 프롬프트 관리 권한이 필요합니다.", 403), None
+    finally:
+        conn.close()
+    return _assemble_role_prompt_llm_request(int(role_id))
+
+
+@app.post("/api/admin/roles/{role_id}/prompt/generate")
+async def admin_generate_role_prompt(role_id: int, request: Request) -> JSONResponse:
+    """비스트리밍 역할 프롬프트 자동작성(호환 경로). 실시간 진행률은 GET .../stream."""
+    error, ctx = await _collect_role_prompt_context(role_id, request)
+    if error:
+        return error
+    return await _prompt_generate_json_response(
+        ctx, log_label="admin_generate_role_prompt", log_ctx=f"role_id={role_id}"
+    )
+
+
+@app.get("/api/admin/roles/{role_id}/prompt/generate/stream")
+async def admin_generate_role_prompt_stream(role_id: int, request: Request):
+    """역할 '전체 제품 프롬프트' 자동작성 LLM 토큰 스트리밍(SSE)."""
+    error, ctx = await _collect_role_prompt_context(role_id, request)
+    if error:
+        return error
+    return _prompt_generate_stream_response(
+        ctx, log_label="admin_generate_role_prompt_stream", log_ctx=f"role_id={role_id}"
+    )
+
+
+# ── TASK-20260625-role-account-prompt-autogen: 프로필 '제품별 개인 프롬프트' 자동작성 ──
+# 작업 화면 > 프로필 > 프롬프트 > [각 제품] 의 '자동 작성' 버튼. self-service — 본인 계정·
+# 본인 대화 패턴만 사용. product_id 지정 시 그 제품 접근 권한 확인.
+
+
+async def _collect_account_prompt_context(product_id: "int | None", request: Request):
+    """프로필 개인 프롬프트 자동작성의 **인증 게이트** 래퍼 — 본인 인증 + (제품 지정 시) 제품
+    접근 권한 확인 + LLM 토큰 quota 게이트 후 request-less 코어
+    (`_assemble_account_prompt_llm_request`)에 위임."""
+    conn = _connect_memory()
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error, None
+        if product_id is not None and int(product_id) > 0:
+            if not _account_has_product_access(account, int(product_id), conn=conn):
+                return _json_error("요청을 수행할 수 없습니다.", 403), None
+        # 자동작성은 LLM 토큰을 직접 소비(에이전트 경로 우회)하므로, self-service 남용 방지를 위해
+        # /api/ask 와 동일한 계정 토큰 quota 게이트를 적용한다(REV 적대리뷰 MAJOR 흡수).
+        _q_ok, _q_msg = _check_account_token_quota(conn, account)
+        if not _q_ok:
+            return _json_error(_q_msg, 429), None
+        acc_id = int(account["id"])
+        role_id = int(account.get("role_id") or 0)
+    finally:
+        conn.close()
+    return _assemble_account_prompt_llm_request(acc_id, role_id, int(product_id) if product_id else None)
+
+
+@app.post("/api/auth/me/system-prompt/generate")
+async def me_generate_account_prompt(request: Request) -> JSONResponse:
+    """비스트리밍 개인 프롬프트 자동작성(호환 경로). body: {product_id?}."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    pid_raw = (data or {}).get("product_id")
+    product_id: "int | None" = None
+    if pid_raw is not None and str(pid_raw).strip() != "":
+        try:
+            product_id = int(pid_raw)
+        except Exception:
+            return _json_error("invalid product_id", 400)
+    error, ctx = await _collect_account_prompt_context(product_id, request)
+    if error:
+        return error
+    return await _prompt_generate_json_response(
+        ctx, log_label="me_generate_account_prompt", log_ctx=f"account_prompt product_id={product_id}"
+    )
+
+
+@app.get("/api/auth/me/system-prompt/generate/stream")
+async def me_generate_account_prompt_stream(request: Request, product_id: "int | None" = None):
+    """프로필 '제품별 개인 프롬프트' 자동작성 LLM 토큰 스트리밍(SSE)."""
+    error, ctx = await _collect_account_prompt_context(product_id, request)
+    if error:
+        return error
+    return _prompt_generate_stream_response(
+        ctx, log_label="me_generate_account_prompt_stream", log_ctx=f"account_prompt product_id={product_id}"
     )
 
 
