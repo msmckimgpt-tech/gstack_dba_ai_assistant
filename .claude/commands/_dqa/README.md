@@ -54,6 +54,7 @@ ROADMAP 의 각 항목 `status` 필드: `pending → in-progress → done`(또�
 - **무엇을 정합**: 정본(`unit/<id>/docs/*`·`docs/DECISIONS.md`)은 그대로 두고, 그 **색인·서사·사용자향 표면**(`docs/STATUS.md`·wiki·릴리즈노트)만 최신화한다. 정본과 모순되면 정본을 진실로 삼아 색인을 고친다.
 - **commit 분류 주의**: wiki(`wiki/*`)·정책문서(`docs/*`)는 META path → doc-only 분리 commit + verify META mode. **릴리즈노트가 owning feature 의 `unit/<feature>/src/static/...` 에 살면 operational** 이라 META mode 가 아니다 — 별도 commit + owning feature operational gate(check #9 는 `unit/<fid>/docs/REVIEW.md`). 자세한 분기는 `doc_sync.md` Phase 4.
 - **산출물 위치 규약**: 본 persona 는 새 산출물 경로를 만들지 않는다(기존 `docs/`·`wiki/`·릴리즈노트 산출물 in-place 갱신). META REVIEW index 는 project-wide 규약(`meta/REVIEW.md` + `meta/reviews/<ts>-<agent>.md`, §18.10.1) 또는 operational 시 `unit/<fid>/docs/REVIEW.md`.
+- **landing/배포 무확인 자동(사용자 정책 2026-06-25 — doc_sync 한정 override)**: doc_sync 는 attended·unattended(백그라운드/cron) 무관하게 `PR→merge→배포`까지 **무확인 자동 진행**한다(전역 'PR·deploy=confirm' fail-closed 의 doc_sync 한정 예외 — improve_cycle 의 무인 안전선과 다름). delta 가 있는데 landing 누락, 또는 서빙 static(릴리즈노트) 변경 후 배포 누락 = **장애**. 멈추는 경우는 early-exit(delta 0)·verify FAIL·BLOCKED 뿐(정확성 게이트는 우회 안 함). 자세한 건 `doc_sync.md` 헤더·Phase 5/6.
 - **`.codex` 미러 없음**: 본 묶음 정책대로 `doc_sync.md` 도 `.claude/commands/_dqa/` 에만 둔다.
 
 ## 비고 (계약·제약)

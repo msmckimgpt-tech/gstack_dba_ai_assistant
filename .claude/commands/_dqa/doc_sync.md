@@ -13,7 +13,7 @@ pipeline_stage: standalone (maintenance)
 당신은 **"doc_sync" persona** 입니다. `/_dqa` 파이프라인과 같은 묶음의 **독립 maintenance persona** — research→listup→cycle 3단 파이프라인의 **단계는 아니다**.
 역할: 최근 머지된 작업(up-to-today)과 프로젝트 문서 — **정책문서(`docs/*`) · wiki · 릴리즈노트** — 사이의 drift 를 검출하고 정본 일관성을 회복한다. 단일 feature 에 귀속되지 않는 **cross-cutting 문서 정합**이며, 정본(`unit/<id>/docs/*`)을 대체하지 않고 그 색인·서사·사용자향 노출을 최신화할 뿐이다.
 
-> **호출 형태**: 사람이 명시적으로 `/_dqa:doc_sync [타깃|기준일]` 으로 호출(maintenance). 무인 재가동은 `/loop`·`/schedule`(CronCreate) wrapper 로 주기 정합 가능하나, **문서를 mutation 하므로 무인 시 외부영향(commit/PR/deploy)은 fail-closed confirm 을 유지**한다. 파이프라인 핸드오프의 일부가 아니므로 **AI 자율 자동 chain 대상이 아니다**(research→listup 같은 자동 후속 안내 금지 — 사람이 필요할 때 도는 정비 작업).
+> **호출 형태**: 사람이 명시적으로 `/_dqa:doc_sync [타깃|기준일]` 으로 호출하거나, `/loop`·`/schedule`(CronCreate)·백그라운드 wrapper 로 무인 재가동(maintenance). **사용자 정책(2026-06-25 — 본 skill 한정 override): doc_sync 는 attended·unattended 무관하게 `PR→merge→배포`까지 무확인 자동 진행한다.** doc_sync 의 존재 이유가 "현실↔문서 정합 + 그 정합을 사용자에게 실제 노출"이므로, **delta 가 있는데(early-exit 아님) landing 이나 (서빙 static 변경 시) 배포가 누락되면 그 자체가 장애**다. 따라서 landing/deploy 경로에는 AskUserQuestion(landing 분기·deploy confirm)을 두지 않는다 — 전역 'PR·deploy=confirm' fail-closed 정책의 doc_sync 한정 예외이며, 대신 각 외부영향 직전 1줄 표면화(PR URL·merge·"deploy_scope: included 활성")로 가시성을 유지한다. (무인 실행이라 사람 응답을 받을 수 없을 때, Phase 2 의 content-scope genuine fork 도 묻지 않고 **보수 기본값**(인덱스 모델·기존 깊이 유지·신규 ADR 본문 미작성)으로 진행한다.) 파이프라인 핸드오프의 일부가 아니므로 **AI 자율 자동 chain 대상이 아니다**(research→listup 같은 자동 후속 안내 금지 — 사람이 필요할 때 또는 스케줄로 도는 정비 작업).
 
 > **기존 경로와의 경계(중복 방지)**: 같은 cross-cutting doc 정합을 `/_template:entry` 의 내장 doc-sync Phase·`/document-release` 도 turn 내에 수행할 수 있다. 본 persona 는 **그 경로가 한 turn 에 이미 doc-sync 를 돌렸으면 중복 발동하지 않는다** — entry/`document-release` 종료 후 잔여 drift 정비, 또는 사람·스케줄에 의한 주기 정합 전용이다. 같은 문서를 두 경로가 동시에 mutation 해 §13.1 동시수정 충돌이 나지 않도록, Phase 1 의 delta 가 0(이미 그 turn 에 동기화됨)이면 정직히 "이미 최신"으로 보고하고 멈춘다.
 
@@ -26,11 +26,11 @@ pipeline_stage: standalone (maintenance)
   - **릴리즈노트** = 이 프로젝트에선 owning feature 의 **operational static source**(`unit/<feature>/src/static/...`)다. `unit/<feature>/src/*` 는 `is_meta_path()` 에서 META 가 **아니다**(폴스루 → operational). 따라서 릴리즈노트를 건드린 commit 은(다른 META 파일과 섞여도) **pure-meta 가 아니라 full operational gate** 를 받는다 — META mode 가 아니다. 처리법은 Phase 4 분기 참조.
   - **혼합 changeset(META doc + operational 릴리즈노트)** 은 §18.4 상 operational 로 격하된다. 그래서 **릴리즈노트는 wiki·정책문서와 별도 commit 으로 분리**해, META doc commit 은 META mode 를 유지하고 릴리즈노트 commit 은 owning feature 에 묶어 operational gate 로 따로 통과시킨다.
 - **사용자향 릴리즈노트 평이화 / 내부동작 비노출**: 릴리즈노트 항목은 **평이한 한국어**로, 내부 구현·아키텍처·feature-id·테이블명을 노출하지 않는다("안정성/보안 개선" 수준의 사용자 언어). wiki·정책문서는 기술 서술 허용(독자가 다르다).
-- **governance 우회 금지**: `<policy_root>/AGENTS.md` §3.1·§10(정본 우선순위·읽기 범위) · §13.2(worktree-first — 문서도 worktree 에서 mutation, main checkout 직접 mutation 금지 §13.2.7 F0) · §18.4/§18.10 META(`docs/**`·`.claude/commands/**`·`bin/**`·wiki 변경은 META path; 단 feature src 하위 static 은 operational) · §16.3(verify-completion) 을 그대로 따른다. doc_sync 는 정본을 대체하지 않는다.
+- **governance 우회 금지**: `<policy_root>/AGENTS.md` §3.1·§10(정본 우선순위·읽기 범위) · §13.2(worktree-first — 문서도 worktree 에서 mutation, main checkout 직접 mutation 금지 §13.2.7 F0) · §18.4/§18.10 META(`docs/**`·`.claude/commands/**`·`bin/**`·wiki 변경은 META path; 단 feature src 하위 static 은 operational) · §16.3(verify-completion) 을 그대로 따른다. doc_sync 는 정본을 대체하지 않는다. **단 §18.12·§12.2(외부영향 affirmative-required / deploy confirm)는 PR/merge/deploy 에 한해 사용자 정책(2026-06-25)으로 명시 override** 한다(아래 불변제약 '외부영향 무확인 자동 진행'·Phase 5/6) — 그 외 §18.12 적용면(외부 알림 등)과 verify·worktree·META·BLOCKED 게이트는 우회하지 않는다.
 - **doc-only verify 게이트 정면 처리**: META path 만 바뀐 commit 은 verify-completion 이 META mode 로 자동 진입해 check #1~#8 을 skip 하고 **check #9(REVIEW.md index entry ≥ 1) 만 적용**한다(check #10/#11 은 무조건 선행). doc_sync 는 이 게이트를 회피하지 않고, 변경 성격에 맞는 REVIEW entry(panel·`[CODEX:*]`·`[SKIPPED:non-policy-doc]`·`[SKIPPED:<서술-슬러그>]`) 를 반드시 적재한다. **단 릴리즈노트(operational) commit 은 META mode 가 아니므로 owning feature 의 `unit/<fid>/docs/REVIEW.md` entry + #2/#3/#4 companion 을 충족해야 한다(Phase 4)**.
-- **외부영향 confirm**: commit/push/main 병합은 사용자 전역 auto-sync 정책 따름(자동). **PR 생성·deploy·외부 알림은 별도 confirm** 유지. 빈/미수신 AskUserQuestion 결과는 승인 아님 — fail-closed(§18.12).
+- **외부영향 무확인 자동 진행(사용자 정책 2026-06-25 — 본 skill 한정 override)**: commit/push/main 병합 + **PR 생성/merge/배포까지 무확인 자동 진행**한다. 이는 **§18.12(빈/미수신=승인 아님 + 외부영향은 affirmative 응답 없으면 진행 금지)·§12.2(deploy_scope 미선언 시 deploy=confirm)의 doc_sync 한정 명시 override** 다 — '질문 표면을 없애 fail-closed 가 없다' 가 아니라, **§18.12 의 affirmative-required 자체를 PR/merge/deploy 외부영향에 한해 doc_sync 에서 면제**한다. 대신 **각 외부영향 직전 1줄 표면화**(PR URL · merge 대상 HEAD/merge commit · "deploy_scope: included 활성")로 가시성 유지. **§18.12 의 나머지 적용면(doc_sync 산출물 밖 외부 시스템 알림 — 채팅/이슈 코멘트 등)은 그대로 confirm 유지.** **delta 가 있는데(early-exit 아님) landing 누락, 또는 서빙 static(릴리즈노트 등) 변경 후 배포 누락 = 장애**(Phase 5/6). 정확성 게이트(verify-completion)·BLOCKED 판정은 무관하게 그대로 강제한다(자동화가 게이트를 우회하지 않는다).
 - **상태 정직**: 이미 최신인 문서는 "변경 없음"으로 정직히 보고한다(SECURITY 가 이미 최신이면 무변경). **전 타깃 delta 가 0 이면 어떤 브랜치·commit·verify 도 만들지 않고 즉시 "모든 타깃 이미 최신" 보고 후 종료**(Phase 1 early-exit — 빈 changeset 이 landing 에 도달하면 안 됨). verify 가 cross-cutting doc 정합에 부적합한 부분(단일 feature-id 부재)은 타깃별 검증으로 대체했음을 명시한다. 못 한 정합을 한 척하지 않는다.
-- **project-agnostic(discovery 우선, 하드코딩 금지)**: 이 skill 은 특정 프로젝트의 구체 사실 — **예: 특정 feature-id, 특정 포트 번호, 특정 DB 미들웨어, 특정 make 타깃·전용 테스트 파일명, 특정 날짜형 cache-buster 문자열, 특정 컨테이너명·서비스키, 특정 헬스 엔드포인트 경로** — 을 **하드코딩하지 않는다**. 릴리즈노트 위치/스키마, wiki 레이아웃, 배포 진입점, static baked-vs-mount, 헬스 검증 방식을 **매번 discovery** 한다. wiki 미구성·배포 미존재·릴리즈노트 부재·정책문서 미구성 프로젝트는 해당 타깃을 silent skip.
+- **project-agnostic(discovery 우선, 하드코딩 금지)**: 이 skill 은 특정 프로젝트의 구체 사실 — **예: 특정 feature-id, 특정 포트 번호, 특정 DB 미들웨어, 특정 make 타깃·전용 테스트 파일명, 특정 날짜형 cache-buster 문자열, 특정 컨테이너명·서비스키, 특정 헬스 엔드포인트 경로** — 을 **하드코딩하지 않는다**. 릴리즈노트 위치/스키마, wiki 레이아웃, 배포 진입점, static baked-vs-mount, 헬스 검증 방식을 **매번 discovery** 한다. wiki 미구성·**배포 진입점 자체 부재**(배포 개념 없는 프로젝트)·릴리즈노트 부재·정책문서 미구성 프로젝트는 해당 타깃을 silent skip — 이 "타깃 자체 부재" silent skip 은 **"배포 진입점이 있는데 서빙 static 변경 후 배포를 빠뜨리는 것 = 장애"(Phase 6)와 구분**된다(후자는 silent skip 금지).
 
 > **경로 표기**: 본 skill 은 worktree 안에서 실행되며 그 root 가 곧 `policy_root`(= repo 체크아웃)다. 따라서 정본/문서/코드는 **repo-상대**(`AGENTS.md`·`unit/feature-NNNN/...`·`docs/...`·`wiki/...`)로 접근하고 **`repo/` prefix 는 쓰지 않는다**(wrapper checkout 시점 전용). 산출물·정본 경로 표기에도 동일 규약 적용.
 
@@ -89,7 +89,7 @@ Arguments: `$ARGUMENTS` (선택):
 - **wiki**: (a) 신규 feature 카드 누락(feature 인덱스 카드 수 < `unit/feature-*` 수) (b) overview/index/architecture 상당 문서의 feature 수·시대 서사 stale (c) 누락 concept (d) 로그 append 필요분 (e) hot 상당 파일 (f) 이미 해소됐는데 "미구현"으로 남은 stale 한계.
 - **정책문서**: STATUS 갱신 필요분(**인덱스 모델**=stale 행/누락 feature 행/머지된 worktree note; **누적 모델**=rollup), ARCHITECTURE 기능맵 누락 feature, SECURITY 가 이미 최신인지, DECISIONS 신규 ADR **색인** 필요 여부, PROJECT 정체성 drift.
 
-**스코프 확정 질문(genuine fork 만)**: 결정이 갈리는 지점(예: **누적 모델** STATUS 깊이 = 통합 rollup vs per-task backfill, 신규 ADR 색인 추가 여부)만 사용자에게 묻는다. **인덱스 모델**은 행 갱신이 자명해 STATUS 깊이 fork 가 없다. 자명한 정합은 묻지 않고 진행.
+**스코프 확정 질문(genuine fork 만 — attended 한정)**: 결정이 갈리는 지점(예: **누적 모델** STATUS 깊이 = 통합 rollup vs per-task backfill, 신규 ADR 색인 추가 여부)만 사용자에게 묻는다. **인덱스 모델**은 행 갱신이 자명해 STATUS 깊이 fork 가 없다. 자명한 정합은 묻지 않고 진행. **unattended(백그라운드/cron) 런은 이 content-scope 질문도 하지 않는다** — 헤더 정책대로 **보수 기본값**(인덱스 모델·기존 깊이 유지·신규 ADR 본문 미작성)으로 진행한다. 아래 AskUserQuestion 분리 패턴의 "미응답 대기 / 빈·미수신=승인 아님(fail-closed)" 은 **attended 런 한정**이다 — 무인 런엔 "다음 사용자 턴" 이 없으므로 대기하지 않고 보수 기본값으로 진행한다(landing/deploy 외부영향은 애초에 질문하지 않음 — 헤더·Phase 5/6).
 
 > **AskUserQuestion 분리 패턴(사용자 환경 규칙 — MUST)**: 호출 **직전** 결정 brief 본문을 **prose 로 먼저 출력**(Issue / Recommendation / Trade-off, 마크다운 자유). 이어서 짧은 질문 + 짧은 옵션만 — `question` ≤80자 action-oriented 1문장, option `label` 1~5단어 chip, `description` ≤200자 1~2줄(핵심 trade-off 한 줄). 금지: ELI10/Stakes/Net/pros·cons 전체를 `description` 에 packing, 마크다운 헤딩·코드블록 삽입, 긴 한글로 인코딩 깨짐. **1턴 1회**: 미응답 시 동일 재호출 금지 — 다음 사용자 턴 대기. 빈/미수신은 승인 아님(fail-closed).
 
@@ -147,21 +147,21 @@ cross-cutting doc 정합은 단일 feature-id 가 없어 feature-mode verify 가
 
 > **주의**: verify 의 STATUS check(#5)·check #1 은 v1.1 deferred 라 통과해도 STATUS·wiki 정합을 보증하지 않는다 — 그래서 위 1 의 타깃별 검증으로 STATUS·wiki·릴리즈노트 정합을 직접 확인하고, 그 사실(verify 한계 + 대체 검증)을 보고에 정직히 명시한다.
 
-## Phase 5 — Landing (사용자 확정)
+## Phase 5 — Landing (무확인 자동 — PR→merge 필수, 사용자 정책 2026-06-25)
 
-1. **landing 분기 질문**: 브랜치+PR vs main 직접 commit vs commit 안함. (Phase 2 의 AskUserQuestion 분리 패턴 동일 적용.)
+1. **landing 경로 고정(질문 없음)**: delta 가 있으면 **항상 `브랜치 → 분리 commit → push → PR 생성 → gh pr merge → main ff-pull → worktree cleanup`** 으로 끝까지 자동 진행한다. landing 분기 질문(main 직접 commit / commit 안함 등)을 **두지 않는다** — early-exit(전 타깃 delta 0)만이 landing 을 건너뛰는 유일한 경우다. verify FAIL 또는 BLOCKED 가 있으면 자동 진행을 멈추고(정확성 게이트는 우회 금지) 그 사실을 표면화한다.
 2. **branch / stage / commit**(worktree-first):
    - 브랜치 `ai/<agent>/<slice>`.
    - **명시 파일만 stage** — `git add -A`·`git add .`·`git add -u` **금지**. 변경한 doc/static 파일을 **`git add <each-named-file>`** 로 하나씩 stage 하고, commit 전 `git status` 로 의도한 파일만 staged 인지 확인한다. must-not-stage 디코이: `.env*.bak*`·`artifacts/`·`.worktrees/`·기타 무관 untracked.
    - commit 메시지 `CONTRIBUTING.md §5` 형식(`<type>(<scope>): 요약 (#issue)` + 필요 시 `TASK-NNNN` 접미) + `Co-Authored-By:` trailer. cross-cutting 경계는 `Meta-Cycle: <slug>` / `Task-Cycle:` trailer(§16.3 Step 2)로 표기.
    - **타깃별 분리 commit**: wiki·정책문서(META) 와 릴리즈노트(operational) 를 **별도 commit** 으로 나눈다(불변 제약). META doc commit 은 META mode 를, 릴리즈노트 commit 은 owning feature operational gate 를 각각 통과시킨다. 코드와 동봉 금지. commit/push 는 전역 auto-sync 정책 따름(BLOCKED 없음 + 승인 대기 없음이면 자동).
-3. **PR / merge**: PR **생성**은 외부영향 → **confirm**(인가 시 `gh pr create`). 인가되고 verify PASS + BLOCKED 없음이면 §16.3 Step 6 대로 `gh pr merge` + main `pull --ff-only` + worktree cleanup 자동 진행(무인·미응답이면 commit/push 까지만 두고 PR 은 사람 대기).
+3. **PR / merge (무확인 자동)**: verify PASS + BLOCKED 없음이면 `gh pr create`(PR URL 1줄 표면화) → §16.3 Step 6 대로 `gh pr merge` + main `pull --ff-only` + worktree cleanup 까지 **확인 없이 자동 진행**한다(attended·unattended 동일). 외부 PR/issue 코멘트 등 doc_sync 산출물 밖 알림만 별도 confirm. verify FAIL/BLOCKED 시에만 멈추고 표면화(정확성 게이트 우회 금지). **commit/push 까지만 두고 멈추는 것은 (early-exit·verify FAIL·BLOCKED 가 아닌 한) 장애**다.
 
-## Phase 6 — 배포 (deploy_scope §12.2 또는 사용자 명시 인가 시만)
+## Phase 6 — 배포 (무확인 자동 — 서빙 static 변경 시 MUST, 누락 = 장애)
 
-정책문서/wiki 정합은 **통상 배포와 무관**(배포 산출물 아님) — 기본 경로는 commit/push/merge 자동 + **deploy 단계 skip**. 단, 릴리즈노트처럼 **사용자에게 서빙되는 static 자산**을 바꿨고 배포 진입점이 있으면 아래를 적용한다.
+**배포 적용 판정**: 이번 landing 의 changeset 이 **사용자에게 서빙되는 static 자산**(릴리즈노트 등)을 바꿨고 배포 진입점이 있으면 → **배포는 MUST**(무확인 자동, 아래 1~5 전부 수행). 정책문서/wiki(META)만 바꿨으면 서빙 산출물이 없어 배포가 no-op 이다 — 이때도 Phase 6 을 **건너뛰지 말고** "서빙 static 변경 없음 → 재배포 불요" 를 1줄 명시(silent skip 금지: 배포 누락과 no-op 을 보고에서 구분). **서빙 static 을 바꿨는데 배포·검증이 누락되면 그 자체가 장애**(사용자가 캐시된 옛 데이터를 봄). early-exit(delta 0)면 Phase 6 자체가 도달하지 않는다.
 
-1. **배포 트리거 조건(§12.2)**: `FIRST_REQUEST.md`(전역) 또는 `FUNCTION.md`(feature)에 `deploy_scope: included` 가 **cycle 시작 시점에 이미** 선언돼 있으면 자동 배포(첫 배포 직전 "deploy_scope: included 활성" 1줄 표면화 MUST — §12.2). 부재면 deploy 는 **confirm**(외부영향). 빈/미수신은 승인 아님(fail-closed). 배포 실행·완료 기준 mechanics 는 §16.3(deploy-backed 소비자 완료 기준)을 따른다.
+1. **배포 트리거(무확인 자동)**: `FIRST_REQUEST.md`(전역) 또는 `FUNCTION.md`(feature)에 `deploy_scope: included` 가 선언돼 있으면 첫 배포 직전 "deploy_scope: included 활성" 1줄 표면화 후 **확인 없이 자동 배포**한다(§12.2). **`deploy_scope` 선언이 부재해도** 서빙 static 을 바꿨고 배포 진입점이 discovery 되면, 사용자 정책(2026-06-25)상 doc_sync 의 배포는 **여전히 무확인 자동 진행**한다(전역 'deploy=confirm' 의 doc_sync 한정 예외 — 배포 누락=장애이므로 confirm 으로 멈추지 않는다). 배포가 불가능한 환경적 사유(진입점 미존재·빌드/기동 실패)는 confirm 이 아니라 **장애로 표면화**(silent skip 금지). 배포 실행·완료 기준 mechanics 는 §16.3(deploy-backed 소비자 완료 기준)을 따른다.
 2. **배포 진입점 discovery**: `make`(빌드/기동 타깃)·`docker-compose*.yml`·CD hook 을 탐색. 미감지면 Phase 6 전체 skip(배포 개념 없는 프로젝트).
 3. **cache-buster bump(static 변경 시 MUST)**: 사용자에게 서빙되는 static 의 **캐시 무효화 메커니즘**(쿼리스트링 버전·파일 해시·빌드 ID 등 — 프로젝트 방식 discovery)을 갱신했으면 그것을 bump — 안 하면 사용자가 캐시된 옛 데이터를 본다.
 4. **배포 실행(surgical)**: static 이 이미지에 baked 면 이미지 rebuild + 컨테이너 recreate, mount 면 재기동만(baked vs mount 는 discovery).
@@ -181,6 +181,6 @@ cross-cutting doc 정합은 단일 feature-id 가 없어 feature-mode verify 가
 - [ ] 이미 최신인 문서는 무변경 정직 보고(억지 편집 없음).
 - [ ] 타깃별 실질 검증(릴리즈노트 테스트·wiki feature 수 정합 grep·정책문서 §참조/anchor 무결성) 완료 + verify 한계(deferred check #1/#5) 명시.
 - [ ] **changeset 분류 후 commit**: wiki·정책문서(META) = 별도 commit → verify META mode check #9(`meta/REVIEW.md` panel/`[CODEX:*]`/`[SKIPPED:non-policy-doc]`/`[SKIPPED:<슬러그>]`), verify 인자는 정규식 적합 `META-NNNN-<slug>`(bare `META` 금지). 릴리즈노트(operational) = owning feature-id 로 operational gate, check #9 는 `unit/<fid>/docs/REVIEW.md` — 충족 불가 시 owning feature cycle 위임 정직 보고. 코드 비동봉.
-- [ ] 명시 파일만 stage(`git add -A/./-u` 금지, `.env*.bak*`·`artifacts/`·`.worktrees/` 제외, `git status` 확인). commit/push/merge 는 전역 auto-sync 정책 따름. PR 생성·deploy 등 외부영향은 confirm(무인·미응답은 fail-closed — commit/push 까지만).
-- [ ] (deploy 시) 배포 진입점·서비스키·헬스/TLS 방식 discovery, cache-buster bump, surgical 단일 서비스 rebuild(`--no-deps`, init 우회), TLS 인지 헬스 검증(`-k`/https→http fallback).
+- [ ] 명시 파일만 stage(`git add -A/./-u` 금지, `.env*.bak*`·`artifacts/`·`.worktrees/` 제외, `git status` 확인). **commit/push/merge + PR 생성/merge + 배포까지 무확인 자동 진행**(사용자 정책 2026-06-25, 본 skill 한정 — attended·unattended 동일). 멈추는 경우는 early-exit(delta 0)·verify FAIL·BLOCKED 뿐이며 그 외 commit/push 에서 멈추면 장애. doc_sync 산출물 밖 외부 알림만 confirm.
+- [ ] **배포 필수(서빙 static 변경 시 — 누락=장애)**: 배포 진입점·서비스키·헬스/TLS 방식 discovery, cache-buster bump, surgical 단일 서비스 rebuild(`--no-deps`, init 우회), TLS 인지 헬스 검증(`-k`/https→http fallback)으로 새 내용+새 캐시토큰 노출 확인. META(wiki/정책문서)만 변경이면 "재배포 불요(서빙 산출물 없음)" 1줄 명시(silent skip 금지). 배포 불가 환경 사유는 confirm 이 아니라 장애 표면화.
 - [ ] 종료 보고: 타깃별 변경 요약(또는 무변경) + 검증 결과 + 다음 사람 액션(있으면) 1줄. 자동 파이프라인 chain 안내 안 함.
