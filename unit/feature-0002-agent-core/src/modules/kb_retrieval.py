@@ -603,17 +603,21 @@ def _fuse_rag_documents(
         fused_rows.append((base[0], base[1], base[2], base[3], base[4], base[5], base[6], score))
     fused_rows.sort(key=lambda r: (r[7], int(r[3] or 0), str(r[6] or "")), reverse=True)
     return _normalize_rag_doc_rows(fused_rows)
-def _embed_query_vector(text: str) -> "Optional[list[float]]":
+def _embed_query_vector(text: str, timeout_sec: "int | None" = None) -> "Optional[list[float]]":
     """TASK-0135 (#13): 쿼리 텍스트를 gateway 임베딩(AGENT_KB_EMBEDDING_MODEL=titan-embed)으로
     벡터화. 미설정/빈텍스트/실패 시 None → caller 가 trigram fallback. 티어 라우터가 임베딩
-    모델명을 Bedrock gateway 로 보낸다(is_local_llm_model=False)."""
+    모델명을 Bedrock gateway 로 보낸다(is_local_llm_model=False).
+
+    CHG-20260625: timeout_sec 미지정 시 기존 동작(_get_llm_client 가 AGENT_TIMEOUT_SEC
+    사용). 상호작용 grounding 경로는 짧은 값(AGENT_KB_QUERY_EMBED_TIMEOUT_SEC)을 넘겨,
+    임베딩 백엔드 지연 시 init 을 길게 블로킹하지 않고 빠르게 trigram 으로 폴백한다."""
     from shared.config import AGENT_KB_EMBEDDING_MODEL
     model = str(AGENT_KB_EMBEDDING_MODEL or "").strip()
     if not model or not str(text or "").strip():
         return None
     try:
         from .llm import _get_llm_client
-        client = _get_llm_client(model=model)
+        client = _get_llm_client(model=model, timeout_sec=timeout_sec)
         if client is None:
             return None
         resp = client.embeddings.create(model=model, input=[text])

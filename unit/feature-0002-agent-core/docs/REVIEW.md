@@ -1202,3 +1202,13 @@ source_of_truth: true
 - Verification: py_compile + `pytest test_llm_provider_health.py` 19/19 PASS(신규 test_throttled_message_is_service_level_without_provider_name 포함).
 - Human Approval Needed: 아니오 (Minor — 비파괴 문구 변경).
 - Cross-ref: CHG-20260625T045450-limit-subject-msg / TASK limit-subject-msg / feature-0003 CHG·REV-20260625T045450-limit-subject-msg.
+## REV-20260625T035655-init-embedding-latency [SUBAGENT:init-embed-latency-adversarial-backend]
+- Date: 2026-06-25
+- Cycle: init-embedding-latency (CHG-20260625T035655-init-embedding-latency), **Major §12.3** — LLM provider/인프라·성능, cross-feature 0002·0007.
+- Trigger: §18.8 — performance/latency/caching keyword → backend dispatch. 적대 코드리뷰(general-purpose outside voice, REFUTE: 캐싱 정확성·sentinel 백워드호환·account_recall 게이트 순서·의미 동등성·timeout·GPU 경합·ds-scope 격리) + 라이브 실측.
+- VERDICT: **ACCEPT-WITH-NITS** (BLOCKER 0, MAJOR 0).
+- 검증 통과(라이브+코드): ① 캐싱/sentinel — `_shared_qvec is None` 시 sample 은 `and _shared_qvec` 게이트로 skip, recall 은 `if not qvec: return []` 단락 → 재임베딩 없음. sentinel per-module 이나 agent_core 가 전달 안 해 식별자 혼동 없음. standalone(`_QVEC_UNSET`) 경로 테스트 통과. ② account_recall 순서 — `git show main` 으로 conv_ids 게이트가 구코드에서도 임베딩보다 선행 확인(회귀 없음), 벡터-only fail-closed 보존. ③ 의미 동등성 — bge-m3 실측 cosine(raw-whitespace, normalized)=**1.000000**(account_recall 도 동일 정규화). 검색 품질 회귀 없음. ④ ds-scope — 임베딩=f(text), scope 는 SQL `scope_key = ANY(...)`·`_scope_candidates()` 에서 강제 → 벡터 공유 안전. ⑤ timeout 배선 — `_get_llm_client(timeout_sec=20)`→timeout_val=20, 캐시키에 timeout 포함(별도 클라이언트). ⑥ cold-load vs 20s — 전용 인스턴스 cold reload **실측 3.63초**(27~37s 는 경합 공유 인스턴스 한정), KEEP_ALIVE=-1 재핀. 20s 여유 충분. ⑦ volume 분리(named vs bind 별 경로) 동시쓰기 충돌 없음. ⑧ mem_limit 4g 여유(라이브 1.7/4GB).
+- NIT(LOW, 차단 아님): N1 gateway→embed-ollama `depends_on` 부재 → 최초 cold-boot(빈 volume pull ~180s) 동안 grounding graceful-skip(무크래시·1회성). N2 GPU 경합(bge-m3 1.2GB 핀 ↔ 공유 gemma4 — gemma4 는 7.8GB 라 본래 CPU/GPU 스플릿, 핀이 CPU 비중 소폭 증가, 별 `local_llm` 보조 프로젝트라 본 앱 chat 무관) — diff 주석에 trade-off 명시, 수용. N3 주석의 "AGENT_TIMEOUT_SEC(300s)" 는 `.env` 운영값(코드 기본 60s) — cosmetic. N4 `kb_retrieval.py:458`(agent-run RAG retrieval, 준비 단계 아님)은 timeout 미적용 300s 유지 — 범위 밖 후속. N5 init-script `set -u` only(`ollama serve` 사망 시 restart=unless-stopped 복구, warm-up best-effort) — 라이브 "warm-up 완료" 확인, 무해.
+- Human Approval Needed: 아니오 (BLOCKER/MAJOR 0, 라이브 검증 통과).
+- Verification: GPU/latency 라이브 실측 + 단위테스트(account_recall·sample_flywheel 통과; attachment_idor 4건 사전존재·무관) + titan-embed gateway e2e 0.13s + chat 라우팅 정상.
+- Cross-ref: CHG-20260625T035655-init-embedding-latency / TASK init-embedding-latency / feature-0007 litellm_config.yaml·embed-ollama.

@@ -101,7 +101,7 @@ def _setup_recall(monkeypatch, normalized_rows, *, embed=(0.1, 0.2, 0.3), opted_
     monkeypatch.setattr(account_recall, "_account_recall_opted_out", lambda *a, **k: opted_out)
     monkeypatch.setattr("modules.db._pg_available", lambda: True)
     monkeypatch.setattr("modules.db._pg_connect_ro", lambda *a, **k: _FakeConn([]))
-    monkeypatch.setattr("modules.kb_retrieval._embed_query_vector", lambda q: (list(embed) if embed else None))
+    monkeypatch.setattr("modules.kb_retrieval._embed_query_vector", lambda q, **k: (list(embed) if embed else None))
 
     class _FakeBackend:
         def search_rag_documents_vector(self, *a, **k):
