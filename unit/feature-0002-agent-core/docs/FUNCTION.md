@@ -12,6 +12,7 @@ source_of_truth: true
 자연어 요청을 받아 SQL 작성, 실행, 메모리 관리, 지식 관리, 복구 로직을 담당하는 핵심 에이전트 기능이다.
 
 ## 2. Goal
+- REQ-20260625-gc-member-ban-data (TASK-20260625T020410-gc-member-kick-ban, **Critical §12.3 — 접근제어**, feature-0003 주관 cross-feature 데이터 계층): 공유 대화 owner 의 멤버 차단(ban) 기능이 소비할 코어 데이터 계층. `modules/group_members.py` 에 `ban_member`/`unban_member`/`is_banned`/`list_bans` 와 신규 PG 테이블 `agent_runtime.conversation_member_bans`(alembic 0018, GRANT 명시)을 추가한다. 차단=멤버 제거(기존 `remove_member`) + 본 테이블 등재, web 의 join/fork 게이트가 `is_banned` 로 재참여를 거부한다. 정본 동작/엔드포인트는 feature-0003 FUNCTION REQ-20260625-gc-member-kick-ban — 본 항목은 코어 데이터 계층만. (검증 `tests/test_member_kick_ban.py` 8 PASS.)
 - REQ-0001: agent 코어 코드를 feature 구조로 이관한다.
 - REQ-0002: 새 Dockerfile과 루트 실행 파일이 코어를 정상 참조하게 한다.
 - REQ-20260515-0002: Role scope 시스템 프롬프트에서 `ProductId IS NULL`로 저장된 "전 Product 공통" 지침은 특정 Product를 선택한 대화에서도 항상 누적 적용된다. Product 전용 Role 지침이 있으면 공통 지침 뒤에 추가된다.

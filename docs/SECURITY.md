@@ -556,3 +556,40 @@ FUNCTION.md AC-0600~0601. **인증 변경은 §3 의 사람 승인 대상** — 
 - (d) per-account MCP seam(A): 활성화 시 **Authorization 헤더 로그 마스킹** + scope(drive.readonly 기본,
   쓰기 승격 시 사람 재승인) 보장 필요.
 - (e) state HMAC 비밀(`WEB_OAUTH_STATE_SECRET`) 미설정 시 프로세스 기동마다 임의값(멀티워커 영속 X).
+
+## 18. 그룹 대화 멤버 추방/차단 접근제어 (feature-0009, TASK-20260625T020410-gc-member-kick-ban)
+
+공유 대화 소유자(owner)가 참여자의 접근을 통제하는 owner-controlled 접근제어. feature-0009 의
+멤버십=열람경계 모델(§ANCHOR §1·§3)에서 owner 가 경계를 좁히는 권한을 추가한다.
+
+### 18.1 권한 모델 — 엄격 owner 전용
+- 추방(kick)/차단(ban)/해제(unban)/차단목록 조회는 **대화 소유자만** 수행 가능(사용자 결정).
+  `conversation.member.manage` 보유자·admin(`.read.any`) 도 ban/unban/bans 엔드포인트에서 끝내 403.
+- 게이트 = `_conversation_owned_by_account(conn, cid, actor_id)`. `owner_account_id` 가 null 이면
+  누구도 통과 못 함(fail-closed, 위조 불가). owner 는 자신/소유자를 차단 불가(409), `target_id<=0` 400.
+- 엔드포인트: `POST /api/conversations/{cid}/members/{id}/ban`, `DELETE …/ban`(unban),
+  `GET /api/conversations/{cid}/bans`. audit: `conversation.member.{ban,unban}`.
+- **MINOR 수용**: `.read.any` admin 은 owner-only 엔드포인트에서 404(비접근) 대신 403(접근가능·비owner)을
+  받아 대화 존재여부가 노출된다. admin 은 이미 cross-account enumerate 가능이라 실害 무시(403 유지).
+
+### 18.2 차단(ban) 강제 — 재참여 양 경로 fail-closed 게이트
+- ban = 멤버 제거 + `agent_runtime.conversation_member_bans`(PK conversation_id+account_id) 등재.
+  (비원자 2-쿼리지만 `ban_member` 먼저→`remove_member` 나중으로 fail-window 를 "차단됨+멤버잔존"
+  안전 방향으로.) 추방(kick)은 제거만 — 재참여 가능.
+- 차단된 account 의 재진입 경로를 **전수 차단**:
+  - `POST /api/share/{token}/join` — `is_banned`→403 + audit `join_blocked`(add_member 도달 전).
+  - `POST /api/public/share/{token}/fork` — `is_banned`→403 + audit `fork_blocked`. **이 게이트 부재 시
+    차단된 사용자가 share-token fork 로 대화 메시지·첨부를 자기 계정으로 전량 복제(exfiltrate)** 가능했다
+    (적대 보안 패널 BLOCKER, REV-20260625T020410). fork 가 `_account_can_access_conversation` 를
+    의도적 우회하므로 별도 is_banned 게이트가 필요.
+  - 다른 fork 경로(`/api/fork_conversation`·`/api/conversations/{cid}/duplicate`)는
+    `_account_can_access_conversation` 게이트라 차단된 비-멤버는 404 — 우회 없음.
+- 두 게이트 모두 **fail-closed**: `is_banned` 조회가 PG 예외 시 거부(join 500 / fork 403). 가용성보다
+  ban 무결성 우선. join/fork 후속 작업이 동일 PG 를 요구하므로 추가 가용성 손실은 PG 장애 구간에 한정.
+
+### 18.3 알려진 한계 / 의도된 동작
+- unban 은 ban 목록에서만 제거 — **멤버십 자동 복원 없음**(해제된 account 는 공유 링크로 재참여해야 함).
+- ban 후 그 account 가 이미 보낸 메시지·첨부는 **잔존**(remove_member tombstone, 기존 kick 정책 동일).
+  이미 fork 해 둔 사본은 회수 불가(fork 시점 스냅샷) — ban 은 이후 접근만 차단.
+- `conversation_member_bans` 는 account FK 없음(conversation FK CASCADE 만) — 유령 account_id ban 은
+  무해(join 매칭 안 됨), `target_id<=0` 만 거부.

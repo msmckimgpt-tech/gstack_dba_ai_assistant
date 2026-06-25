@@ -3767,3 +3767,16 @@ source_of_truth: true
 - Verification: diff 검수(admin.html 11+/5-) + 3-렌즈 적대 서브에이전트 코드근거 확인(클릭 바인딩 admin.js:9581-9583 data-admin-tab 기반 포함). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — worktree=WSL 미실행, WARN-only.
 - Human Approval Needed: 아니오(Minor — 인증/인가/파괴/외부비용 무관).
 - Cross-ref: CHG-20260625T020249-admin-metadata-relocate / TASK 동일 / FUNCTION REQ-20260625-admin-metadata-relocate(AC-0625).
+## REV-20260625T020410-gc-member-kick-ban [SUBAGENT:adversarial-security-authz + reverify] — SHIP (BLOCKER 1 + MINOR 3 + NIT 1 흡수) (TASK-20260625T020410-gc-member-kick-ban, REQ-20260625-gc-member-kick-ban, Critical §12.3 — 접근제어, cross-feature feature-0003+0002)
+- Date: 2026-06-25
+- 분류: **리뷰 대상**(Critical — 신규 멤버십 접근제어 표면: ban 엔드포인트 4 + join/fork 재참여 게이트 + 신규 PG 테이블). §18.8 적대적 보안/authz 패널 1회 + 수정 후 재검증 1회.
+- 변경 요지: 공유 대화 owner 가 참여자 추방(kick=제거)/차단(ban=제거+재참여 영구 차단)/해제(unban). 엄격 owner 전용(사용자 결정). 차단=신규 `conversation_member_bans` + join/fork is_banned 게이트.
+- **적대 패널 결과 — BLOCKER 1 적발 → 수정**:
+  - **[BLOCKER][authz/exfiltration] `public_share_fork` ban 우회 → 수정**: 차단된 account 가 share-token 을 보유하면 `POST /api/public/share/{token}/fork` 로 원본 대화 메시지+첨부를 자기 계정으로 전량 복제 가능했다(fork 가 `_account_can_access_conversation` 를 의도적 우회, is_banned 미체크). ban 의 목적("추가 접근 영구 차단") 무력화. → fork 에 `is_banned` 게이트 추가(403 + audit `conversation.member.fork_blocked`, `_fork_conversation_impl` 호출 전, **fail-closed**). 재검증: 다른 fork 경로 `/api/fork_conversation`·`/api/conversations/{cid}/duplicate` 는 `_account_can_access_conversation` 게이트라 차단 비-멤버는 404 — 우회 없음 확인.
+  - **[MINOR][일관성] ban 비원자 커밋 순서 → 수정**: remove_member(자체 commit)→ban_member(별도 commit) 순이라 ban 실패 시 "제거됨+미차단=자유 재참여"(fail-open). → 순서 역전(ban_member 먼저→remove_member 나중) — fail-window 가 "차단 등재됨+멤버 잔존"(안전 방향)으로.
+  - **[MINOR][입력] account 무검증 → 수정**: `target_id<=0` 거부(400) 가드 추가.
+  - **[NIT→수정][fail-open] join is_banned PG 예외 → fail-closed**: 예외 시 `_is_banned=False`(fail-open)였던 것을 500 반환(거부)으로. add_member 도 동일 PG 요구라 추가 가용성 손실 없음.
+  - **[MINOR][정보누출] 404 vs 403 — 수용**: ban/unban/bans 의 read.any admin 은 404 게이트 통과 후 owner 403 → 대화 존재여부 누출. admin 은 이미 enumerate 가능이라 실害 낮음 → 403 유지(의미상 정확), 문서화.
+  - **방어 확인(not-real)**: owner_account_id null fail-closed(누구도 owner 게이트 통과 못 함), SQLi 전수 `%(...)s`, reason 512cap 이중, 멤버 추가 경로 전수(add_member: owner backfill + join-only — ban 우회 재등재 없음), unban 멤버십 미복원(의도), ban 후 메시지/첨부 tombstone(기존 정책).
+- Verification: `py_compile`(app.py·group_members.py·alembic 0018) + `node --check app.js` + CSS brace 1561=1561 + `test_member_kick_ban.py` 8 + `test_member_ban_endpoints.py` 5(ast 계약 — owner-only·가드·fork BLOCKER 회귀·join 순서) + `verify_member_kick_ban.mjs` 19 + 회귀(group_members 10·share-participants 17·settings-archive-leave 22) 전부 PASS. 라이브 authz/UI 정본=PB-0008 + 배포 후(본 worktree=WSL 미실행).
+- Cross-ref: CHG-20260625T020410-gc-member-kick-ban / FUNCTION REQ-20260625-gc-member-kick-ban(AC-0626~0629) / feature-0002 MODIFY·FUNCTION / feature-0009 TASK·MODIFY / docs/SECURITY.md 멤버 차단.

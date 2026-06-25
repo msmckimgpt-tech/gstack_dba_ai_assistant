@@ -5532,6 +5532,8 @@ async function openShareDialog(cid) {
     '  <div class="share-create-sec"></div>' +
     '  <div class="share-mgr-subhead">참여 중인 사용자</div>' +
     '  <div class="share-participants" aria-live="polite"></div>' +
+    '  <div class="share-mgr-subhead share-bans-head hidden">차단된 사용자</div>' +
+    '  <div class="share-bans hidden" aria-live="polite"></div>' +
     '  <div class="share-mgr-subhead">발급된 공유 링크</div>' +
     '  <div class="share-mgr-body" aria-live="polite"></div>' +
     '</div>';
@@ -5617,12 +5619,67 @@ async function openShareDialog(cid) {
     });
   };
 
-  // feature-0009 share-participants: 이 공유 대화에 참여 중인 멤버 roster 표시.
-  // 기존 게이트된 엔드포인트(GET /api/conversations/{cid}/members, conversation.read.own/.any
-  // + 멤버십)를 재사용한다 — 신규 데이터 경로 없음(이미 대화 전체 열람 가능한 자만 roster 를 봄).
-  // 공유 메뉴 가시성 게이트(conversation.share.create)와는 권한이 다르므로, read 불가 actor 가
-  // 팝업을 열면 members 가 404 → 아래 catch 가 우아하게 안내(roster 미노출). owner 를 맨 앞에 정렬.
+  // feature-0009 share-participants / member-kick-ban: 참여 멤버 roster + (owner 전용) 추방/차단/해제.
+  // roster=GET /members(conversation.read.own/.any + 멤버십, 기존). 차단목록=GET /bans(owner 전용).
+  // owner viewer 만 추방('DELETE /members/{id}' 재사용)·차단('POST .../ban')·해제('DELETE .../ban') 컨트롤을 본다
+  // — 프론트 게이트는 cosmetic, 차단/해제/목록은 백엔드가 owner 전용 authoritative 재검증(우회 불가).
+  // read 불가 actor 가 팝업을 열면 members 가 404 → catch 가 우아하게 안내(roster 미노출).
   const participantsBox = backdrop.querySelector(".share-participants");
+  const bansHead = backdrop.querySelector(".share-bans-head");
+  const bansBox = backdrop.querySelector(".share-bans");
+
+  // 차단된 사용자 목록(owner 전용). loadParticipants 가 viewer=owner 일 때만 호출 + 섹션 노출.
+  const loadBans = async () => {
+    bansHead.classList.remove("hidden");
+    bansBox.classList.remove("hidden");
+    bansBox.innerHTML = '<div class="share-mgr-msg">불러오는 중…</div>';
+    let bdata;
+    try {
+      bdata = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/bans`);
+    } catch (err) {
+      bansBox.innerHTML = '<div class="share-mgr-msg">차단 목록을 불러오지 못했습니다.</div>';
+      return;
+    }
+    const bans = (bdata && bdata.bans) || [];
+    if (!bans.length) {
+      bansBox.innerHTML = '<div class="share-mgr-msg">차단된 사용자가 없습니다.</div>';
+      return;
+    }
+    bansBox.innerHTML = "";
+    bans.forEach((b) => {
+      const name = b.username || `사용자 ${b.account_id}`;
+      const chip = document.createElement("div");
+      chip.className = "share-participant is-banned";
+      chip.title = b.reason ? `${name} · 사유: ${b.reason}` : name;
+      chip.appendChild(_msgAvatarEl(b.account_id, name, "user", null, b.username || String(b.account_id)));
+      const nameEl = document.createElement("span");
+      nameEl.className = "share-participant-name";
+      nameEl.textContent = name;
+      chip.appendChild(nameEl);
+      const acts = document.createElement("span");
+      acts.className = "share-participant-acts";
+      const unbanBtn = document.createElement("button");
+      unbanBtn.type = "button";
+      unbanBtn.className = "share-participant-btn";
+      unbanBtn.textContent = "차단 해제";
+      unbanBtn.addEventListener("click", async () => {
+        if (!window.confirm(`${name} 님의 차단을 해제하시겠습니까?\n해제 후 이 사용자는 공유 링크로 다시 참여할 수 있습니다.`)) return;
+        unbanBtn.disabled = true;
+        try {
+          await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members/${encodeURIComponent(b.account_id)}/ban`, { method: "DELETE" });
+          showToast("차단을 해제했습니다.");
+          await loadBans();
+        } catch (err) {
+          unbanBtn.disabled = false;
+          showToast(err.message || "차단 해제에 실패했습니다.", true);
+        }
+      });
+      acts.appendChild(unbanBtn);
+      chip.appendChild(acts);
+      bansBox.appendChild(chip);
+    });
+  };
+
   const loadParticipants = async () => {
     participantsBox.innerHTML = '<div class="share-mgr-msg">불러오는 중…</div>';
     let mdata;
@@ -5630,41 +5687,95 @@ async function openShareDialog(cid) {
       mdata = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members`);
     } catch (err) {
       participantsBox.innerHTML = '<div class="share-mgr-msg">참여자 목록을 불러오지 못했습니다.</div>';
+      bansHead.classList.add("hidden");
+      bansBox.classList.add("hidden");
       return;
     }
     const members = (mdata && mdata.members) || [];
-    if (!members.length) {
-      participantsBox.innerHTML = '<div class="share-mgr-msg">아직 참여 중인 다른 사용자가 없습니다. (참여 허용 링크를 공유하면 참여자가 여기에 표시됩니다.)</div>';
-      return;
-    }
     const ownerId = mdata && mdata.owner_account_id;
     const isOwnerMember = (m) => m.role === "owner" || (ownerId != null && m.account_id === ownerId);
-    const sorted = members.slice().sort((a, b) => {
-      const ao = isOwnerMember(a) ? 0 : 1;
-      const bo = isOwnerMember(b) ? 0 : 1;
-      if (ao !== bo) return ao - bo;
-      return String(a.username || "").localeCompare(String(b.username || ""));
-    });
-    participantsBox.innerHTML = "";
-    sorted.forEach((m) => {
-      const name = m.username || `사용자 ${m.account_id}`;
-      const chip = document.createElement("div");
-      chip.className = "share-participant";
-      chip.title = name;
-      // _msgAvatarEl: 메시지 발신자 아이콘과 동일한 아바타→Identicon 폴백 재사용(gc-avatar-identicon 정합).
-      chip.appendChild(_msgAvatarEl(m.account_id, name, "user", null, m.username || String(m.account_id)));
-      const nameEl = document.createElement("span");
-      nameEl.className = "share-participant-name";
-      nameEl.textContent = name;  // textContent → XSS 방지(escapeHtml 동등).
-      chip.appendChild(nameEl);
-      if (isOwnerMember(m)) {
-        const roleEl = document.createElement("span");
-        roleEl.className = "share-participant-role";
-        roleEl.textContent = "소유자";
-        chip.appendChild(roleEl);
-      }
-      participantsBox.appendChild(chip);
-    });
+    // viewer 가 이 대화의 owner 인지 — owner 만 추방/차단/해제 컨트롤·차단목록을 본다(백엔드도 owner 전용 강제).
+    const viewerIsOwner = ownerId != null && state.user && String(state.user.id) === String(ownerId);
+    if (!members.length) {
+      participantsBox.innerHTML = '<div class="share-mgr-msg">아직 참여 중인 다른 사용자가 없습니다. (참여 허용 링크를 공유하면 참여자가 여기에 표시됩니다.)</div>';
+    } else {
+      const sorted = members.slice().sort((a, b) => {
+        const ao = isOwnerMember(a) ? 0 : 1;
+        const bo = isOwnerMember(b) ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+        return String(a.username || "").localeCompare(String(b.username || ""));
+      });
+      participantsBox.innerHTML = "";
+      sorted.forEach((m) => {
+        const name = m.username || `사용자 ${m.account_id}`;
+        const targetIsOwner = isOwnerMember(m);
+        const chip = document.createElement("div");
+        chip.className = "share-participant";
+        chip.title = name;
+        // _msgAvatarEl: 메시지 발신자 아이콘과 동일한 아바타→Identicon 폴백 재사용(gc-avatar-identicon 정합).
+        chip.appendChild(_msgAvatarEl(m.account_id, name, "user", null, m.username || String(m.account_id)));
+        const nameEl = document.createElement("span");
+        nameEl.className = "share-participant-name";
+        nameEl.textContent = name;  // textContent → XSS 방지(escapeHtml 동등).
+        chip.appendChild(nameEl);
+        if (targetIsOwner) {
+          const roleEl = document.createElement("span");
+          roleEl.className = "share-participant-role";
+          roleEl.textContent = "소유자";
+          chip.appendChild(roleEl);
+        }
+        // owner viewer 전용 추방/차단 — 대상이 소유자가 아닐 때만(소유자는 추방/차단 불가, 백엔드 409).
+        if (viewerIsOwner && !targetIsOwner) {
+          const acts = document.createElement("span");
+          acts.className = "share-participant-acts";
+          const kickBtn = document.createElement("button");
+          kickBtn.type = "button";
+          kickBtn.className = "share-participant-btn";
+          kickBtn.textContent = "추방";
+          kickBtn.title = "이 대화에서 내보냅니다(공유 링크로 재참여 가능).";
+          kickBtn.addEventListener("click", async () => {
+            if (!window.confirm(`${name} 님을 이 대화에서 추방하시겠습니까?\n추방된 사용자는 공유 링크로 다시 참여할 수 있습니다.`)) return;
+            kickBtn.disabled = true;
+            try {
+              await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members/${encodeURIComponent(m.account_id)}`, { method: "DELETE" });
+              showToast(`${name} 님을 추방했습니다.`);
+              await loadParticipants();
+            } catch (err) {
+              kickBtn.disabled = false;
+              showToast(err.message || "추방에 실패했습니다.", true);
+            }
+          });
+          const banBtn = document.createElement("button");
+          banBtn.type = "button";
+          banBtn.className = "share-participant-btn is-danger";
+          banBtn.textContent = "차단";
+          banBtn.title = "내보내고, 공유 링크로도 재참여를 막습니다.";
+          banBtn.addEventListener("click", async () => {
+            if (!window.confirm(`${name} 님을 차단하시겠습니까?\n차단된 사용자는 추방되며 공유 링크로도 다시 참여할 수 없습니다.`)) return;
+            banBtn.disabled = true;
+            try {
+              await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/members/${encodeURIComponent(m.account_id)}/ban`, { method: "POST", body: JSON.stringify({}) });
+              showToast(`${name} 님을 차단했습니다.`);
+              await loadParticipants();
+              await loadBans();
+            } catch (err) {
+              banBtn.disabled = false;
+              showToast(err.message || "차단에 실패했습니다.", true);
+            }
+          });
+          acts.append(kickBtn, banBtn);
+          chip.appendChild(acts);
+        }
+        participantsBox.appendChild(chip);
+      });
+    }
+    // 차단 목록은 owner 에게만(백엔드도 owner 전용). 비-owner 면 섹션 숨김 유지.
+    if (viewerIsOwner) {
+      await loadBans();
+    } else {
+      bansHead.classList.add("hidden");
+      bansBox.classList.add("hidden");
+    }
   };
 
   // 공유 링크 생성 영역(통합 팝업 상단). 생성 권한 없으면 안내만 표시하고 목록만 노출.

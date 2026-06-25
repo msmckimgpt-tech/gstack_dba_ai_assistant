@@ -73,6 +73,39 @@ DELETE FROM agent_runtime.conversation_members
 WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
 """
 
+# ── feature-0009 member-kick-ban: 차단(ban) 목록 ─────────────────────────────
+# ban = 멤버 제거(remove_member) + 이 테이블 등재. 재참여(join) 시 is_banned 로 거부.
+# 재차단(re-ban)은 ON CONFLICT DO UPDATE 로 banned_at/by/reason 갱신(멱등).
+_PG_BAN_MEMBER = """
+INSERT INTO agent_runtime.conversation_member_bans
+    (conversation_id, account_id, banned_by_account_id, reason)
+VALUES
+    (%(conversation_id)s, %(account_id)s, %(banned_by_account_id)s, %(reason)s)
+ON CONFLICT (conversation_id, account_id) DO UPDATE SET
+    banned_at            = now(),
+    banned_by_account_id = EXCLUDED.banned_by_account_id,
+    reason               = EXCLUDED.reason
+"""
+
+_PG_UNBAN_MEMBER = """
+DELETE FROM agent_runtime.conversation_member_bans
+WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
+"""
+
+_PG_IS_BANNED = """
+SELECT 1
+FROM agent_runtime.conversation_member_bans
+WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
+LIMIT 1
+"""
+
+_PG_LIST_BANS = """
+SELECT account_id, banned_at, banned_by_account_id, reason
+FROM agent_runtime.conversation_member_bans
+WHERE conversation_id = %(conversation_id)s
+ORDER BY banned_at DESC, account_id ASC
+"""
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data access (호출자가 pg_conn 제공)
@@ -157,3 +190,76 @@ def remove_member(pg_conn, conversation_id: str, account_id: int) -> int:
         removed = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
     pg_conn.commit()
     return removed
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# feature-0009 member-kick-ban: 차단(ban) — owner 가 특정 account 의 재참여를 영구 차단.
+# 추방(kick)=remove_member(재참여 가능). 차단(ban)=ban_member(+ remove_member, 엔드포인트에서).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def ban_member(
+    pg_conn,
+    conversation_id: str,
+    account_id: int,
+    banned_by_account_id: Optional[int] = None,
+    reason: Optional[str] = None,
+) -> None:
+    """account 를 이 대화에서 차단(ban) — 공유 링크 재참여를 거부 목록에 등재.
+
+    멤버십 제거(remove_member)는 호출자(엔드포인트)가 별도 수행한다 — 본 함수는 ban 목록만
+    담당(단일 책임). 재차단은 ON CONFLICT 로 banned_at/by/reason 갱신(멱등).
+    """
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            _PG_BAN_MEMBER,
+            {
+                "conversation_id": conversation_id,
+                "account_id": int(account_id),
+                "banned_by_account_id": (
+                    int(banned_by_account_id) if banned_by_account_id is not None else None
+                ),
+                "reason": (str(reason)[:512] if reason else None),
+            },
+        )
+    pg_conn.commit()
+
+
+def unban_member(pg_conn, conversation_id: str, account_id: int) -> int:
+    """차단 해제 — ban 목록에서 제거. Returns: 삭제된 행 수(0 = 차단 아니었음)."""
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            _PG_UNBAN_MEMBER,
+            {"conversation_id": conversation_id, "account_id": int(account_id)},
+        )
+        removed = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+    pg_conn.commit()
+    return removed
+
+
+def is_banned(pg_conn, conversation_id: str, account_id: int) -> bool:
+    """account 가 이 대화에서 차단되었는지 여부 (join 거부 게이트가 소비)."""
+    if not conversation_id or not account_id:
+        return False
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            _PG_IS_BANNED,
+            {"conversation_id": conversation_id, "account_id": int(account_id)},
+        )
+        row = cur.fetchone()
+    return row is not None
+
+
+def list_bans(pg_conn, conversation_id: str) -> list[dict[str, Any]]:
+    """대화의 차단 목록 (banned_at 최신순). '차단된 사용자' UI 가 소비."""
+    with pg_conn.cursor() as cur:
+        cur.execute(_PG_LIST_BANS, {"conversation_id": conversation_id})
+        rows = cur.fetchall() or []
+    return [
+        {
+            "account_id": int(r[0]),
+            "banned_at": r[1].isoformat() if r[1] is not None else None,
+            "banned_by_account_id": (int(r[2]) if r[2] is not None else None),
+            "reason": (str(r[3]) if r[3] is not None else None),
+        }
+        for r in rows
+    ]

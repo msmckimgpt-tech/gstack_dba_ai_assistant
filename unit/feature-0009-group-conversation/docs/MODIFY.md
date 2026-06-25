@@ -293,3 +293,16 @@ source_of_truth: true
 - Accepted scope-out (security 리뷰 P3): 본 가드 *이전에* 비소유자가 발급한 기존 joinable 링크(backfill DEFAULT 1)는 소급 폐쇄 안 함 — 신규 발급만 통제(D 결정 "기존 링크 영향 밖"과 정합). 전면 폐쇄 필요 시 별도 backfill `UPDATE … SET Joinable=0 WHERE CreatedBy<>owner_account_id`.
 - Rollback Notes: feature-0003 app.py/app.js/styles.css/index.html revert + 신규 테스트 제거. backend 스키마 0.
 - 검증: `py_compile` app.py + `node --check` app.js + pytest 신규 **6/6** + 관련 share 테스트 **20/20**(redaction 7건은 `import web.app` 선존 환경이슈, 본 변경 무관) + 적대적 **security 서브에이전트 SHIP**(우회 시도 2건 실패, fail-secure coercion). **PB-0008 미실측**(worktree=WSL — 배포 후 권장).
+## CHG-20260625T020410-gc-member-kick-ban (cross-feature → feature-0003+0002, Critical §12.3 — 접근제어)
+- Date: 2026-06-25 (CHG-0024/REV-0026). 코드/문서 정본=feature-0003-agent-web-ui(엔드포인트·프론트) + feature-0002-agent-core(group_members·schema·alembic 0018) — 본 항목은 feature-0009 cross-feature 추적.
+- Reason: 사용자 요청(`/_template:entry`, share-participants 후속) — 공유 팝업에서 소유자가 특정 참여자를 kick/ban 처리하는 구조. 결정(AskUserQuestion): 엄격 owner 전용 + unban/차단목록 UI 포함.
+- 변경 요지:
+  - 추방(kick)=기존 `DELETE /api/conversations/{cid}/members/{id}`(owner 의 타인 제거) 재사용 — 재참여 가능.
+  - 차단(ban)=신규 owner 전용 `POST /members/{id}/ban`(멤버 제거 + `conversation_member_bans` 등재). 재참여 차단 게이트 2곳(fail-closed): `POST /share/{token}/join`(is_banned→403 join_blocked), `POST /public/share/{token}/fork`(is_banned→403 fork_blocked — **적대 리뷰 BLOCKER**: fork 우회 콘텐츠 exfiltrate 차단).
+  - 해제(unban)=owner 전용 `DELETE /members/{id}/ban` + `GET /bans`(차단목록). 멤버십 자동 복원 없음.
+  - 코어(feature-0002): `group_members.{ban_member,unban_member,is_banned,list_bans}` + `conversation_member_bans`(alembic 0018, GRANT 명시).
+  - 프론트(feature-0003): 공유 팝업 참여자 칩 owner 전용 추방/차단 버튼 + '차단된 사용자' 섹션(unban). 캐시버스터 member-kick-ban.
+- Why(설계 정합): "owner 가 접근 경계를 좁힌다"는 ANCHOR §1·§3 멤버십=열람경계 모델의 owner-통제 강화. 기존 수용위험("joinable 링크 보유자는 누구나 참여")에 owner 가 명시 차단하는 예외를 추가. ban 은 join+fork 양 경로 차단으로 "추가 접근 영구 차단" 보장(부분 우회 없음 — 다른 fork 경로는 `_account_can_access_conversation`로 비-멤버 404).
+- Impact: 멤버십 read/add/remove·열람 게이트·기존 share/join 무변경(순수 additive, owner 전용 신규 표면). ban 후 메시지/첨부 잔존(tombstone, kick 동일). 신규 PG 테이블 1개(배포 alembic 0018).
+- Rollback Notes: feature-0003 엔드포인트 4 + join/fork 게이트 + static + 테스트 제거 / feature-0002 group_members 4함수 + alembic downgrade(DROP TABLE). 추방은 기존 경로라 무영향.
+- 검증: py_compile + node --check + CSS brace 1561=1561 + test_member_kick_ban 8 + test_member_ban_endpoints 5(fork BLOCKER 회귀 포함) + verify_member_kick_ban 19 + 회귀(group_members 10·share-participants 17·settings-archive-leave 22) PASS. **§18.8 적대 보안/authz 패널 + 재검증 잔여 결함 0**(feature-0003 REVIEW REV-20260625T020410-gc-member-kick-ban). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).

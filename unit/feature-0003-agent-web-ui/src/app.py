@@ -14586,6 +14586,186 @@ def remove_conversation_member(cid: str, account_id: int, request: Request) -> J
         conn.close()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# feature-0009 member-kick-ban: 차단(ban)/해제(unban)/차단목록 — **소유자(owner) 전용**.
+# 추방(kick)은 위 DELETE /members/{id}(owner 의 타인 제거 경로) 재사용 + 프론트 owner 게이트.
+# 차단(ban)은 멤버 제거 + ban 목록 등재 → 공유 링크 재참여를 join 엔드포인트가 거부한다.
+# 권한: 사용자 결정(엄격 owner 전용) — conversation.member.manage 보유자도 ban/unban 불가.
+# ─────────────────────────────────────────────────────────────────────────────
+@app.post("/api/conversations/{cid}/members/{account_id}/ban")
+async def ban_conversation_member(cid: str, account_id: int, request: Request) -> JSONResponse:
+    """그룹 대화 멤버 차단(ban) — 멤버십 제거 + 재참여 차단 목록 등재. **소유자 전용**.
+
+    추방(kick=DELETE /members/{id}, 재참여 가능)과 달리, 차단은 공유 링크로도 재참여 불가
+    (POST /api/share/{token}/join 의 is_banned 게이트). owner 자신/소유자는 차단 불가(409).
+    body: {reason?: str(<=512)}. audit: conversation.member.ban.
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        actor_id = int(account["id"])
+        target_id = int(account_id)
+        if target_id <= 0:
+            return _json_error("유효하지 않은 대상입니다.", 400)
+        # 엄격 owner 전용(사용자 결정) — conversation.member.manage 보유자도 불가.
+        if not _conversation_owned_by_account(conn, cid, actor_id):
+            return _json_error("대화 소유자만 멤버를 차단할 수 있습니다.", 403)
+        conv_owner = _conversation_owner_account_id(conn, cid)
+        if conv_owner is not None and target_id == int(conv_owner):
+            return _json_error("대화 소유자는 차단할 수 없습니다.", 409)
+        if target_id == actor_id:
+            return _json_error("자기 자신은 차단할 수 없습니다.", 409)
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        reason = (str(data.get("reason") or "").strip()[:512]) or None
+        try:
+            from modules.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                # ban 먼저, remove 나중 — 비원자 fail-window 를 안전 방향(차단 등재됨+멤버 잔존)으로.
+                # remove 먼저였다면 ban 실패 시 "제거됨+미차단=자유 재참여"(fail-open)였다(적대 리뷰 MINOR).
+                group_members.ban_member(
+                    pg, cid, target_id, banned_by_account_id=actor_id, reason=reason
+                )
+                removed = group_members.remove_member(pg, cid, target_id)
+            finally:
+                pg.close()
+        except Exception:
+            return _json_error("멤버 차단 실패", 500)
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.member.ban",
+            resource_type="conversation_member",
+            resource_id=str(target_id),
+            request_ctx={
+                "conversation_id": cid,
+                "target_account_id": target_id,
+                "removed": removed,
+                "reason": reason or "",
+            },
+        )
+        return JSONResponse(
+            {"conversation_id": cid, "account_id": target_id, "banned": True, "removed": removed}
+        )
+    finally:
+        conn.close()
+
+
+@app.delete("/api/conversations/{cid}/members/{account_id}/ban")
+def unban_conversation_member(cid: str, account_id: int, request: Request) -> JSONResponse:
+    """그룹 대화 멤버 차단 해제(unban). **소유자 전용**. audit: conversation.member.unban.
+
+    해제만 수행 — 멤버십 자동 복원은 없다(account 가 다시 공유 링크로 참여할 수 있게 될 뿐).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        actor_id = int(account["id"])
+        target_id = int(account_id)
+        if not _conversation_owned_by_account(conn, cid, actor_id):
+            return _json_error("대화 소유자만 차단을 해제할 수 있습니다.", 403)
+        try:
+            from modules.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                removed = group_members.unban_member(pg, cid, target_id)
+            finally:
+                pg.close()
+        except Exception:
+            return _json_error("차단 해제 실패", 500)
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.member.unban",
+            resource_type="conversation_member",
+            resource_id=str(target_id),
+            request_ctx={"conversation_id": cid, "target_account_id": target_id, "unbanned": removed},
+        )
+        return JSONResponse(
+            {"conversation_id": cid, "account_id": target_id, "unbanned": removed}
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/api/conversations/{cid}/bans")
+def list_conversation_bans(cid: str, request: Request) -> JSONResponse:
+    """그룹 대화 차단(ban) 목록. **소유자 전용** — '차단된 사용자' UI 가 소비."""
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        actor_id = int(account["id"])
+        if not _conversation_owned_by_account(conn, cid, actor_id):
+            return _json_error("대화 소유자만 차단 목록을 조회할 수 있습니다.", 403)
+        try:
+            from modules.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                bans = group_members.list_bans(pg, cid)
+            finally:
+                pg.close()
+        except Exception:
+            return _json_error("차단 목록 조회 실패", 500)
+        uname_map: dict[int, str] = {}
+        ban_ids = [int(b["account_id"]) for b in bans]
+        if ban_ids:
+            cur = conn.cursor()
+            ph = ",".join(["%s"] * len(ban_ids))
+            cur.execute(
+                f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(ban_ids)
+            )
+            for mid, un in cur.fetchall() or []:
+                uname_map[int(mid)] = str(un or "")
+            cur.close()
+        out = [
+            {
+                "account_id": b["account_id"],
+                "username": uname_map.get(b["account_id"], ""),
+                "banned_at": b["banned_at"],
+                "reason": b["reason"] or "",
+            }
+            for b in bans
+        ]
+        return JSONResponse({"conversation_id": cid, "bans": out})
+    finally:
+        conn.close()
+
+
 def _save_group_chat_message_pg(
     conversation_id: str, account_id: int, content: str, username: str | None = None
 ) -> int:
@@ -15333,6 +15513,35 @@ def join_conversation_via_share(token: str, request: Request) -> JSONResponse:
         _ensure_owner_membership(cid)
         _mark_conversation_group(cid)
         actor_id = int(account["id"])
+        # feature-0009 member-kick-ban: 차단된 account 는 공유 링크로 재참여 불가(owner ban).
+        # owner 는 차단 불가(ban 엔드포인트 가드)라 owner self-join 은 영향 없음. _ensure_owner_membership
+        # 위에서 이미 owner 멤버십을 보장했고, 본 게이트는 차단된 비-owner actor 만 막는다.
+        try:
+            from modules.db import _pg_connect as _pg_connect_ban
+            from modules import group_members as _gm_ban
+            _pg_b = _pg_connect_ban()
+            try:
+                _is_banned = _gm_ban.is_banned(_pg_b, cid, actor_id)
+            finally:
+                _pg_b.close()
+        except Exception:
+            # 보안 게이트 fail-closed — 차단 여부 불명 시 참여 거부(가용성보다 ban 무결성 우선).
+            # join 은 어차피 add_member(동일 PG)를 요구하므로 PG 장애 시 추가 가용성 손실 없음.
+            logging.getLogger(__name__).warning(
+                "join: is_banned check failed — fail-closed", exc_info=True
+            )
+            return _json_error("참여 처리 중 오류가 발생했습니다. 다시 시도해 주세요.", 500)
+        if _is_banned:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="conversation.member.join_blocked",
+                resource_type="conversation_member",
+                resource_id=str(actor_id),
+                request_ctx={"conversation_id": cid, "via": "share_link", "reason": "banned"},
+            )
+            return _json_error("이 대화에서 차단되어 참여할 수 없습니다.", 403)
         # 이미 소유자/멤버면 멱등 성공(중복 참여 무해).
         already = _conversation_owned_by_account(conn, cid, actor_id) or _account_is_conversation_member(cid, actor_id)
         if not already:
@@ -15392,6 +15601,35 @@ def public_share_fork(token: str, request: Request) -> JSONResponse:
         if _share_row_expired(conn, int(share.get("Id") or 0)):
             return _json_error("이 공유 링크는 만료되었습니다.", 410)
         conversation_id = str(share.get("ConversationId") or "")
+        # feature-0009 member-kick-ban: 원본 대화에서 차단(ban)된 account 는 fork 로도 콘텐츠를
+        # 회수할 수 없다 — ban 의 목적("추가 접근 영구 차단")을 share-token fork 우회로부터 보호한다.
+        # (적대 리뷰 BLOCKER: fork 는 멤버십/join 을 거치지 않고 콘텐츠를 복제하므로 별도 게이트 필요.)
+        # 보안 게이트라 fail-closed — 차단 여부 불명(PG 오류) 시 거부(가용성보다 ban 무결성 우선).
+        _fk_actor_id = int(account["id"])
+        try:
+            from modules.db import _pg_connect as _pg_connect_fk
+            from modules import group_members as _gm_fk
+            _pg_fk = _pg_connect_fk()
+            try:
+                _fk_banned = _gm_fk.is_banned(_pg_fk, conversation_id, _fk_actor_id)
+            finally:
+                _pg_fk.close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "public_share_fork: is_banned check failed — fail-closed", exc_info=True
+            )
+            _fk_banned = True
+        if _fk_banned:
+            _audit_user_action(
+                conn,
+                request,
+                account,
+                action="conversation.member.fork_blocked",
+                resource_type="conversation",
+                resource_id=str(conversation_id),
+                request_ctx={"conversation_id": conversation_id, "via": "share_fork", "reason": "banned"},
+            )
+            return _json_error("이 대화에서 차단되어 복제(fork)할 수 없습니다.", 403)
         anchor_id = share.get("AnchorMessageId")
         anchor_id_int = int(anchor_id) if anchor_id is not None else None
         payload, err = _fork_conversation_impl(conn, account, conversation_id, anchor_id_int)
