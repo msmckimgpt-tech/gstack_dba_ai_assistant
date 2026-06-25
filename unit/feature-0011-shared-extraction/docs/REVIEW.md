@@ -80,3 +80,35 @@ source_of_truth: true
     NIT = 패널 에이전트의 smoke 스크립트 leftover(`probe*.py`, untracked·Dockerfile 미COPY·미스테이징 — 배포/커밋 무위험) → **정리 완료**(수용).
 - Risks: db 는 foundational 이나 alias = 동일 객체라 런타임 동작 불변. lazy back-dep 은 함수내부(import-time cycle 0). 단일 commit revert 가능.
 - Human Approval Needed: PR 생성·deploy confirm. deploy_scope:included 로 머지 후 자동 배포.
+
+## REV-20260625-0004 [SUBAGENT:conn-health-datasources-alias-step4]
+- Related Change: CHG-20260625-0004 (conn_health·datasources → shared/ + 모듈 alias shim + db back-dep 정리, P5a Step 4)
+- Reason: L1 cross-feature 공통 모듈 conn_health(474)·datasources(282)를 shared/ 로 추출. config·db
+  (Step 2/3)와 동일 alias 패턴으로 모듈객체접근·underscore·모듈상태(모니터/_DEK_CACHE)·monkeypatch 완전 보존.
+  db 의 lazy back-dep `from modules import` → `from shared import` 정리(두 모듈 이동 완료). datasources 의
+  cred_crypto 는 범위 밖이라 `from modules import cred_crypto` back-dep 유지(stdlib-only → cycle 없음).
+- §18.8 Adversarial Panel: general-purpose 적대적 리뷰어 3렌즈(병렬, 신규 위험면 표적 — "통과 아니라 결함 적발").
+  - **결과: BLOCKING 0 / NIT 0.**
+  - **import-cycle/runtime = SAFE**: 신규 import-time cycle 0. 모든 back-dep 함수내부 lazy 확인(col 0 검증).
+    유일 top-level cross-pkg edge(`shared/datasources.py:19 from modules import cred_crypto`)는 cred_crypto
+    가 stdlib만 의존 + `modules/__init__` eager 16모듈 어느 것도 datasources/conn_health top-level import 없음
+    → 부분초기화 cycle 불가. 실제 agent 이미지에서 최악 import 순서(shared.datasources/conn_health/db 단독
+    선import) 실행 OK. **`conn_health._scope_key_of(ds) == db._breaker_key(ds)` 키 계약 보존 실측**.
+  - **alias-completeness = SAFE**: 모든 소비처(`from modules import`/`from . import`/`import modules.X`/
+    `importlib.import_module`) alias 해석 확인. 모듈상태 단일 인스턴스 실측(`sch._STATE is mch._STATE`,
+    `sds._DEK_CACHE is mds._DEK_CACHE` = True — 모니터 중복/DEK 캐시 분열 없음). monkeypatch 타깃 동일 객체
+    착지. `modules/__init__` 가 두 모듈 재노출/star-export 0(enumeration fragility 비해당). 111 테스트 green.
+  - **deploy/build = SAFE**: 단일 Dockerfile(`unit/feature-0002-agent-core/src/Dockerfile`)이 `COPY modules`+
+    `COPY shared` 둘 다 `/app` 하위 → web/agent/insight-worker/ask-worker 전 서비스에서 shared↔modules 양방향
+    coupling(`shared.datasources`의 `from modules import cred_crypto`, shim 의 `import shared.X`) 해석.
+    build/deploy/CI/Makefile 에 옛 경로(`modules/{conn_health,datasources}.py`) 참조 0. Step 2/3 동일 wholesale
+    `COPY shared` 라 추가 빌드 배선 불필요. `/shared` 런타임 볼륨 ≠ `/app/shared` 패키지(충돌 없음).
+- committed-tree 무결성: staged delta = `A shared/{conn_health,datasources}.py` + `M shared/db.py` +
+  `M modules/{conn_health,datasources}.py`(shim), `git status` clean(untracked/unstaged 0) → committed tree =
+  smoke 통과한 working tree. Step 2 untracked-shim BLOCKING 클래스 선제 차단.
+- Alternatives Considered: cred_crypto 동반 추출(범위 확장 → Resume≠Re-scope 반려, 락된 플랜=conn_health/datasources만).
+  enumeration shim(config Step 2 의 annotated-symbol 누락 교훈 → alias 우선).
+- Risks: 라이브 db 인접(연결 health 게이트 경로)이나 alias = 동일 객체라 런타임 동작 불변. lazy back-dep
+  함수내부(import-time cycle 0). 단일 commit revert 가능. 배포 시 healthz/smoke 로 재확인.
+- Human Approval Needed: P5a Step 4 는 P5a PLAN-APPROVED(2026-06-24) 범위. PR 생성·deploy 는 외부영향이나
+  deploy_scope:included 로 머지 후 자동 배포(첫 배포 직전 1줄 표면화).

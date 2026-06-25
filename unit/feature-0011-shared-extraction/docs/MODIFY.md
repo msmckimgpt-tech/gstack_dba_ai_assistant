@@ -69,3 +69,34 @@ source_of_truth: true
   완전성 smoke PASS(modules.db is shared.db, _POOL_REGISTRY·_pg_* 접근, AGENT_KB_PG_PORT 재노출, conn_health/datasources import).
   committed-tree import 실증(modules/db.py shim + shared/db.py 둘 다 tree 에 — Step 2 untracked-shim BLOCKING 선제 차단).
 - Rollback Notes: 단일 commit revert 로 db 가 modules/ 로 복귀. 이미지 재빌드만(스키마/데이터 무변경).
+
+## CHG-20260625-0004
+- Date: 2026-06-25
+- Related Requirement: P5a Step 4 — L1 cross-feature 공통 모듈 conn_health·datasources 추출 +
+  db 의 lazy back-dep `from modules import` → `from shared import` 정리 (TASK-0011-8).
+- Summary: 정본 `modules/conn_health.py`(474줄)·`modules/datasources.py`(282줄)를 `shared/` 로
+  git mv(history 보존)하고, 두 `modules/` 경로를 **모듈 alias shim**(`sys.modules[__name__] = shared.X`)
+  으로 교체 — config·db(Step 2/3)와 동일 패턴. 사이트 재배선 0(`from modules import …`·`from . import …`·
+  `import modules.X`·`importlib.import_module("modules.X")` 모든 형태가 alias 로 자동 보존). conn_health 의
+  백그라운드 모니터 상태(`_STATE`/`_MONITOR`)·datasources 의 `_DEK_CACHE`/`_CONFLICT_WARNED` 단일 인스턴스 보존.
+- back-dep 정리(Step 4 핵심 과업):
+  - `shared/db.py` 의 lazy `from modules import datasources`(116)·`from modules import conn_health`(402)
+    → `from shared import …`(두 모듈 이동 완료 → 정본 경로로 정리). 함수내부 lazy 라 import-time cycle 없음.
+  - `shared/conn_health.py` 의 `from .config import *`·lazy `from . import datasources/db`, `shared/datasources.py`
+    의 `from . import config`·lazy `from . import db` 는 `.`=shared 로 자동 해석(무편집).
+  - `shared/datasources.py` 의 top-level `from . import cred_crypto` → `from modules import cred_crypto`:
+    cred_crypto 는 Step 4 범위 밖(아직 modules/)이라 shared→modules **back-dep** 유지. cred_crypto 는
+    stdlib(base64/os/cryptography)만 의존(datasources/db 미참조) → import-time cycle 없음. 후속 step 정리.
+- Files (cross-feature changeset — feature-0011 cycle 가 0002 modules/·루트 shared/ 편집):
+  - `shared/conn_health.py` (← `unit/feature-0002-agent-core/src/modules/conn_health.py`, git mv)
+  - `shared/datasources.py` (← `unit/feature-0002-agent-core/src/modules/datasources.py`, git mv + cred_crypto back-dep 1줄)
+  - `shared/db.py` (lazy back-dep 2줄 `from modules`→`from shared`)
+  - `unit/feature-0002-agent-core/src/modules/conn_health.py` (alias shim 신규 본문)
+  - `unit/feature-0002-agent-core/src/modules/datasources.py` (alias shim 신규 본문)
+- Impact: 런타임 동작 불변(alias = 동일 객체). conn_health 30+ 소비처(app.py·insight·ask·agent_core·tests)·
+  datasources 40+ 소비처 전부 보존. `make test` **회귀 0**(전체 green, 2 skip, F/E 0 — Step 3 시점 baseline
+  2건은 main CI-fix 로 해소됨). /app alias 완전성 smoke PASS(`modules.conn_health is shared.conn_health`·
+  `modules.datasources is shared.datasources`·db back-dep→shared·cred_crypto back-dep→modules·단일상태·config 체인).
+  committed-tree 무결성 확인(shim 2개 staged: `M modules/{conn_health,datasources}.py` — untracked-shim BLOCKING 선제 차단).
+- Rollback Notes: 단일 commit revert 로 두 모듈이 modules/ 로 복귀(db back-dep 도 동반 복원). 이미지 재빌드만
+  (스키마/데이터 무변경). 라이브는 재배포 전까지 무영향.
