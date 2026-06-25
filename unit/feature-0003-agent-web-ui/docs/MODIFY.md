@@ -4799,3 +4799,16 @@ source_of_truth: true
 - Files: `static/index.html`, `docs/{TASK,MODIFY,REVIEW,FUNCTION}.md`.
 - Rollback: `?v=` 문자열 1줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked) — index.html 정적 자산 변경. 마이그/백엔드 없음.
+
+## CHG-20260625T204254-conv-switch-fade (TASK-20260625T204254-conv-switch-fade — 대화 전환 크로스페이드(fade-out/in + 가속), Minor §12.3 — frontend-only)
+- Date: 2026-06-25 (/_template:entry dispatch, worktree ai/claude/feature-0003-agent-web-ui, base 2666738).
+- 배경: 좌측 사이드 대화 전환 시 클릭→약간의 텀→곧바로 교체(동작 정상이나 "딜레이+무전환"이 성능 이슈로 인식). `selectConversation` 이 `/api/use_conversation`+`/api/history` 두 await 동안 직전 대화를 화면에 남겼다가 `renderMessages` 로 즉시 교체 → 전환 효과 부재.
+- 내용:
+  - `static/app.js`: 크로스페이드 코디네이터 4함수 신설(`_beginConversationCrossfade` / `_commitConversationCrossfade` / `_removeSwitchGhost` / `_prefersReducedMotion`) + `selectConversation` 배선(클릭 즉시 begin → 네트워크 try/catch → commit). 고스트(messageLog clone) 오버레이 fade-out + 실제 로그 opacity 0 재구성 → fade-in, 목표가 먼저 준비되면 남은 fade-out 가속(ACCEL 90ms). 에러 경로도 commit 후 rethrow(빈 화면 방지). fade-in 후 인라인 opacity/transition 잔류 정리.
+  - `static/styles.css`: `.messages-switch-ghost` 규칙 + reduced-motion display:none + `.message-point-rail` z-index:4(고스트 비가림 보강).
+  - `static/index.html`: app.js·styles.css cache-buster → `?v=20260625-conv-switch-fade`.
+- Why: 전환 효과 부재 → 사용자가 체감 성능 저하로 인식. 크로스페이드로 "즉시 반응 + 부드러운 등장" 체감 개선. 가속으로 빠른 로딩 시 불필요한 대기 없음. reduced-motion 사용자는 기존 즉시 교체 보존.
+- Verification: `node --check app.js` PASS + CSS brace balance 1585/1585 + 적대적 frontend 리뷰(REV-20260625T204254-conv-switch-fade, SUBAGENT adversarial-frontend, H1~H8 8가설 반증 시도) VERDICT SHIP-WITH-FIXES → MAJOR(rail z-index)·MINOR(inline 잔류) 흡수 후 SHIP.
+- Files: `static/app.js`, `static/styles.css`, `static/index.html`, `docs/{TASK,MODIFY,REVIEW}.md`.
+- Rollback: app.js 코디네이터+배선 revert, styles.css 2블록 revert, index.html cache-buster revert. additive·비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 정적 자산(app.js/styles.css/index.html) 변경. 마이그/백엔드 없음.

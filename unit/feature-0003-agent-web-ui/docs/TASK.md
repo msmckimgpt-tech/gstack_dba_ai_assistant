@@ -4687,3 +4687,15 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **index.html**: `app.js?v=20260625-gc-unread-read-fix` → `?v=20260625-steps-btn-pending-persist`. (app.js 는 index.html 에서만 로드 — admin/share 무관)
 - [x] 검증: 새 `?v=` 가 강제 재요청 유발 → 모든 사용자가 수정된 app.js 수신. REVIEW [SKIPPED:cache-buster-only-no-logic].
 - [ ] verify-completion → commit/push → PR·머지 → web 재배포 → 마감.
+
+### TASK-20260625T204254-conv-switch-fade — 작업 화면 좌측 대화 전환 크로스페이드(fade-out/in + 가속) (Minor §12.3, frontend-only, 2026-06-25)
+- 사용자 요청(/_template:entry): 좌측 사이드 대화 전환 시 클릭 후 약간의 텀 뒤 대화가 곧바로 나타남(동작 정상·일반 메신저 동작이나 "딜레이+무전환"이 성능 이슈로 인식될 수 있음). 개선: ① 전환 시 기존 화면 즉시 부드러운 fade-out, ② 목표 대화도 부드러운 효과로 등장, ③ 목표가 fade 효과보다 빨리 로딩되면 이전 효과를 가속해 자연스럽게 전환.
+- 진단(Read+코드 검증): `selectConversation`(static/app.js)이 `/api/use_conversation`→`loadHistory`(`/api/history`)→`renderMessages`(messageLog.innerHTML 재구성)의 두 await 동안 직전 대화를 화면에 남겼다가 갑자기 교체 → 전환 효과 부재가 체감 성능 저하로 인식. 등급 **Minor §12.3**(frontend `static/{app.js,styles.css,index.html}` 비파괴 — 백엔드/스키마/RBAC/엔드포인트 0).
+- [x] **app.js 코디네이터 신설**: `_beginConversationCrossfade`(클릭 즉시 현재 messageLog 를 cloneNode 한 "고스트"를 messages-wrap 위 absolute 오버레이로 띄워 fade-out 시작 + 실제 messageLog 즉시 opacity 0 → 목표 대화 invisible 재구성), `_commitConversationCrossfade`(콘텐츠 준비 후 목표 fade-in + 남은 고스트 fade-out 가속), `_removeSwitchGhost`(transitionend/fallback 타이머 정리), `_prefersReducedMotion`. 상수 `MSG_FADE_OUT_MS=150 / IN=200 / ACCEL=90`.
+- [x] **app.js selectConversation 배선**: 같은-대화 재클릭 가드 직후 begin 호출(클릭 즉시 fade-out), use_conversation+loadHistory+pending 복원을 try/catch 로 감싸 정상/에러 양쪽에서 commit(가시성 복원) — 네트워크 실패 시 빈 화면(opacity 0 stuck) 방지 후 에러 전파.
+- [x] **styles.css**: `.messages-switch-ghost`(position absolute · box-sizing border-box · overflow hidden · z-index 3 · pointer-events none · will-change opacity) + `@media (prefers-reduced-motion: reduce)` display:none. `.message-point-rail` 에 `z-index:4`(고스트 위 — rail dot 비가림 보강, 적대 리뷰 MAJOR 흡수).
+- [x] **index.html cache-buster**: `styles.css?v=…gc-participant-product-select`·`app.js?v=…composer-clear-input` → 둘 다 `?v=20260625-conv-switch-fade`(정적 자산 전파 — app.py TASK-0256d: `?v=` 가 유일 전파 경로).
+- [x] **reduced-motion 보존**: prefers-reduced-motion 사용자에게는 begin/commit no-op → 기존(즉시 교체) 동작 그대로 유지.
+- [x] **적대 리뷰(REV-20260625T204254-conv-switch-fade [SUBAGENT:adversarial-frontend-8hypothesis] — SHIP-WITH-FIXES → 흡수 후 SHIP)**: H4 결함 적발 — **MAJOR(방어)** 고스트 z-index 가 point-rail(z-index auto) 가릴 fragility → rail z-index:4 흡수. **MINOR** fade-in 후 messageLog 인라인 opacity/transition 잔류 → transitionend 에서 정리 흡수. H1(연속전환 누수)·H2(가속 transitionend 어긋남)·H3(에러/empty/pending stuck)·H5(중복 id getElementById, 고스트가 DOM 후순위라 real 노드 우선)·H6(비전환 renderMessages 부작용)·H7·H8 전부 반증 실패=안전.
+- [x] **검증**: `node --check app.js` PASS + CSS brace balance 1585/1585 + 적대 리뷰 SHIP. (전환은 CSS transition/transitionend·timer 기반이라 jsdom 단위테스트 부적합 — 정적검사+적대리뷰로 대체, steps-btn-pending-persist cycle 선례 동일.)
+- [ ] verify-completion → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked) → **PB-0008 Windows-browser 시각 검증**(대화 전환 시 fade-out/in 크로스페이드 + 빠른 로딩 시 가속) → 마감. (WSL worktree 라 PB-0008 미실행 — 배포 후 사용자 확인.)

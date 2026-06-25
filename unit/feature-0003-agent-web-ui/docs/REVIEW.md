@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260625T204254-conv-switch-fade [SUBAGENT:adversarial-frontend-8hypothesis] — SHIP-WITH-FIXES → 흡수 후 SHIP (TASK-20260625T204254-conv-switch-fade, Minor §12.3 — frontend-only 대화 전환 크로스페이드)
+- Date: 2026-06-25
+- Cycle: 좌측 사이드 대화 전환 크로스페이드(fade-out/in + 목표 우선 로딩 시 가속). worktree `ai/claude/feature-0003-agent-web-ui`(base 2666738). CHG-20260625T204254-conv-switch-fade.
+- §18.8 verification panel = 적대적 frontend 코드 리뷰(general-purpose REFUTE, H1~H8 8가설 반증 시도). 통과가 아니라 결함 적발 목적. **VERDICT: SHIP-WITH-FIXES → 2건 흡수 후 SHIP**.
+- **MAJOR(방어 — 수정)**: 고스트(`.messages-switch-ghost` z-index:3)가 `#messagePointRail`(z-index auto) 위에 페인트될 fragility — geometry 상 고스트 폭(logRect.width)이 16px rail 을 제외해 실제 겹치지 않으나, 향후 레이아웃 변경 시 occlusion 위험. **수정**: `.message-point-rail` 에 `z-index:4` 부여(고스트보다 위 — rail dot 항상 노출 보장).
+- **MINOR(수정)**: fade-in 완료 후 `messageLogEl` 에 인라인 `opacity:1`+`transition:opacity` 영구 잔류(현재 다른 코드가 messageLog opacity 미접근이라 무해하나 latent). **수정**: fade-in `transitionend`(once)에서 opacity 가 여전히 "1" 이면 인라인 opacity/transition 제거(새 전환이 선점했으면 no-op).
+- **반증 실패=안전 확인**: H1(연속 A→B→C 전환) — begin 이 `_removeSwitchGhost()` 선행 + 매 commit 가 opacity 복원, 재클릭은 begin 전 return → 최대 1 고스트·stuck 없음. H2(가속 transitionend 어긋남) — 동일 고스트·동일 `{once}` 리스너 재발화 + `MSG_FADE_OUT_MS+250` fallback 타이머 미해제로 누수 차단. H3(에러/empty-state/pending 복원 stuck) — try/catch 양 분기 commit + empty/pending 도 opacity 0 재구성 후 fade-in. H5(중복 `message-<id>`) — 고스트가 `#messageLog` 보다 DOM 후순위라 `getElementById` 는 real 노드 우선(rail jump·검색·steps 버튼 query 전부 real 스코프). H6(비전환 renderMessages) — 크로스페이드 함수가 `_msgSwitchGhost` null-guard, renderMessages 는 상태 미참조. H7(인라인 잔류) — MINOR 로 흡수. H8(scrollTop 점프) — 고스트 scrollTop=live 복제, real 로그 하단스크롤은 opacity 0 하에서 invisible.
+- 검증(수정 후): `node --check app.js` PASS + CSS brace balance 1585/1585. (전환은 CSS transition/transitionend·timer 기반 → jsdom 단위테스트 부적합, 정적검사+적대리뷰로 대체 — steps-btn-pending-persist cycle 선례 동일.)
+- Human Approval Needed: 외부 영향(PR 생성)은 사용자 confirm. commit/push/main 병합·배포(deploy_scope: included)는 자동 동기화 정책. 코드 자체는 SHIP.
+- Cross-ref: TASK-20260625T204254-conv-switch-fade / CHG-20260625T204254-conv-switch-fade.
+
 ## REV-20260625T173000-role-account-prompt-autogen [SUBAGENT:adversarial-2lens(backend+security/privacy, frontend/ux)] — SHIP (BLOCKER 0 + MAJOR 2 흡수 + MINOR 2 흡수) (TASK-20260625-role-account-prompt-autogen, Major §12.3 — 외부 LLM dispatch 2개 scope 확장)
 - Date: 2026-06-25
 - Cycle: 역할 '전체 제품 프롬프트' + 프로필 '제품별 개인 프롬프트' 자동작성. worktree `ai/claude/role-account-prompt-autogen`(base 7e6aab8). CHG-20260625-role-account-prompt-autogen.

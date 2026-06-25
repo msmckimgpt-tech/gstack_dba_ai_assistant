@@ -5592,6 +5592,103 @@ function _markActiveConversationRead() {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 대화 전환 크로스페이드 (conv-switch-fade)
+// selectConversation 은 use_conversation + history 두 번의 await 동안 직전 대화를
+// 화면에 남겼다가 갑자기 교체한다 — 동작은 정상이나 "딜레이 + 무전환"이라 사용자
+// 입장에서 성능 이슈처럼 보였다. 아래 코디네이터가:
+//   (1) 클릭 즉시 직전 화면의 스냅샷("고스트")을 띄워 fade-out 을 시작하고,
+//   (2) 실제 messageLog 은 opacity 0 에서 목표 대화를 재구성한 뒤 fade-in 하며,
+//   (3) 목표 대화가 fade-out 보다 먼저 준비되면 남은 fade-out 을 가속해 자연스럽게
+//       크로스페이드한다.
+// loadHistory 가 한 번에 ≤20개만 로드하므로 cloneNode 비용은 저렴하다.
+// prefers-reduced-motion 사용자에게는 전부 no-op → 기존(즉시 교체) 동작을 유지한다.
+const MSG_FADE_OUT_MS = 150;
+const MSG_FADE_IN_MS = 200;
+const MSG_FADE_ACCEL_MS = 90; // 목표가 먼저 준비됐을 때 남은 fade-out 을 압축할 상한
+let _msgSwitchGhost = null;
+
+function _prefersReducedMotion() {
+  try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+  catch (_) { return false; }
+}
+
+// 클릭 즉시 호출 — 직전 화면 스냅샷 fade-out 시작 + 실제 로그 투명화.
+function _beginConversationCrossfade() {
+  if (_prefersReducedMotion() || !messageLogEl) return;
+  const wrap = messageLogEl.closest(".messages-wrap");
+  if (!wrap) return;
+  _removeSwitchGhost(); // 직전 고스트가 남아 있으면(빠른 연속 전환) 먼저 정리
+  const startOpacity = getComputedStyle(messageLogEl).opacity || "1";
+  const ghost = messageLogEl.cloneNode(true);
+  ghost.removeAttribute("id");
+  ghost.classList.add("messages-switch-ghost");
+  const wrapRect = wrap.getBoundingClientRect();
+  const logRect = messageLogEl.getBoundingClientRect();
+  ghost.style.left = `${logRect.left - wrapRect.left}px`;
+  ghost.style.top = `${logRect.top - wrapRect.top}px`;
+  ghost.style.width = `${logRect.width}px`;
+  ghost.style.height = `${logRect.height}px`;
+  ghost.style.transition = "none";
+  ghost.style.opacity = startOpacity; // 사용자가 지금 보는 상태에서 출발
+  wrap.appendChild(ghost);
+  ghost.scrollTop = messageLogEl.scrollTop; // 스크롤 위치까지 동일하게
+  // 실제 로그는 즉시 투명화 → 목표 대화 재구성(renderMessages)이 보이지 않게.
+  messageLogEl.style.transition = "none";
+  messageLogEl.style.opacity = "0";
+  // 고스트 fade-out 시작.
+  void ghost.offsetWidth; // reflow → transition 적용 보장
+  ghost.style.transition = `opacity ${MSG_FADE_OUT_MS}ms ease`;
+  ghost.style.opacity = "0";
+  const cleanup = () => _removeSwitchGhost();
+  ghost.addEventListener("transitionend", cleanup, { once: true });
+  // 가속/취소로 transitionend 가 누락돼도 누수되지 않도록 보강 타이머.
+  const fallback = window.setTimeout(cleanup, MSG_FADE_OUT_MS + 250);
+  _msgSwitchGhost = { el: ghost, startedAt: performance.now(), cleanup, fallback };
+}
+
+function _removeSwitchGhost() {
+  const g = _msgSwitchGhost;
+  if (!g) return;
+  _msgSwitchGhost = null;
+  try { window.clearTimeout(g.fallback); } catch (_) {}
+  try { g.el.removeEventListener("transitionend", g.cleanup); } catch (_) {}
+  try { g.el.remove(); } catch (_) {}
+}
+
+// 목표 대화 콘텐츠가 준비된 직후 호출 — 새 화면 fade-in + 남은 fade-out 가속.
+function _commitConversationCrossfade() {
+  if (_prefersReducedMotion() || !messageLogEl) return;
+  const g = _msgSwitchGhost;
+  if (g) {
+    const elapsed = performance.now() - g.startedAt;
+    const remaining = MSG_FADE_OUT_MS - elapsed;
+    if (remaining > 0) {
+      // (3) 목표가 먼저 준비됨 → 남은 fade-out 을 짧게 압축(최대 ACCEL_MS)해 크로스페이드.
+      const accel = Math.min(remaining, MSG_FADE_ACCEL_MS);
+      const cur = getComputedStyle(g.el).opacity;
+      g.el.style.transition = "none";
+      g.el.style.opacity = cur; // 현재 값에 고정 후 가속 fade-out 재시작
+      void g.el.offsetWidth;
+      g.el.style.transition = `opacity ${accel}ms ease`;
+      g.el.style.opacity = "0";
+    }
+  }
+  // 목표 대화 fade-in.
+  messageLogEl.style.transition = `opacity ${MSG_FADE_IN_MS}ms ease`;
+  void messageLogEl.offsetWidth;
+  messageLogEl.style.opacity = "1";
+  // fade-in 완료 후 인라인 opacity/transition 잔류 제거(이후 다른 opacity 동작과의 잠재
+  // 충돌 방지). 새 전환이 먼저 시작돼 opacity 가 1 이 아니면 건드리지 않는다.
+  const _clearFadeResidue = () => {
+    if (messageLogEl.style.opacity === "1") {
+      messageLogEl.style.transition = "";
+      messageLogEl.style.opacity = "";
+    }
+  };
+  messageLogEl.addEventListener("transitionend", _clearFadeResidue, { once: true });
+}
+
 async function selectConversation(conversationId) {
   if (!conversationId) return;
   // feature-0009 gc-unread-read-fix: 이미 active 인 대화를 다시 클릭/선택해도 읽음 처리는 수행한다.
@@ -5601,6 +5698,9 @@ async function selectConversation(conversationId) {
     try { _markActiveConversationRead(); } catch (_) {}
     return;
   }
+  // conv-switch-fade: 클릭 즉시 직전 화면 fade-out 시작(목표 로딩 전). 콘텐츠 준비 후
+  // 아래에서 _commitConversationCrossfade 로 fade-in. 실패해도 전환 흐름은 막지 않는다.
+  try { _beginConversationCrossfade(); } catch (_) {}
   // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.
   if (state.pendingNewConversation) {
     state.pendingNewConversation = false;
@@ -5617,19 +5717,30 @@ async function selectConversation(conversationId) {
   // 렌더). beginPendingConversation 이 새 대화 진입 시 쓰는 것과 동일한 패턴이며,
   // 위에서 스냅샷을 _savedPendingBubbles 에 보존했으므로 복귀 시 복원 가능하다.
   stopProgressPolling({ reset: true });
-  await apiFetch("/api/use_conversation", {
-    method: "POST",
-    body: JSON.stringify({ conversation_id: conversationId }),
-  });
-  state.activeConversationId = conversationId;
-  renderConversationList();
-  renderConversationHeader();
-  await loadHistory();
-  // in-flight 이었던 대화로 복귀 시 pending bubble 복원
-  if (!state.pendingBubble && state._savedPendingBubbles?.[conversationId]) {
-    state.pendingBubble = state._savedPendingBubbles[conversationId];
-    delete state._savedPendingBubbles[conversationId];
-    renderMessages();
+  try {
+    await apiFetch("/api/use_conversation", {
+      method: "POST",
+      body: JSON.stringify({ conversation_id: conversationId }),
+    });
+    state.activeConversationId = conversationId;
+    renderConversationList();
+    renderConversationHeader();
+    await loadHistory();
+    // in-flight 이었던 대화로 복귀 시 pending bubble 복원
+    if (!state.pendingBubble && state._savedPendingBubbles?.[conversationId]) {
+      state.pendingBubble = state._savedPendingBubbles[conversationId];
+      delete state._savedPendingBubbles[conversationId];
+      renderMessages();
+    }
+    // conv-switch-fade: 목표 대화 콘텐츠(history + 복원된 pending)가 준비됨 → 새 화면
+    // fade-in. 목표가 fade-out 보다 먼저 준비됐으면 남은 fade-out 을 가속해 크로스페이드.
+    try { _commitConversationCrossfade(); } catch (_) {}
+  } catch (err) {
+    // conv-switch-fade 안전망: 네트워크 실패 등으로 목표 대화를 못 불러오면 messageLog 가
+    // opacity 0 으로 남아 빈 화면이 된다 — 가시성을 즉시 복원(고스트 제거 + opacity 1)하고
+    // 에러는 기존 의미대로 그대로 전파한다.
+    try { _commitConversationCrossfade(); } catch (_) {}
+    throw err;
   }
   // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
   try {
