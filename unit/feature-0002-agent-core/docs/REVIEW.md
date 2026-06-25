@@ -1176,6 +1176,13 @@ source_of_truth: true
 - Verification: 0015 py_compile + alembic-migrate.sh bash -n + 라이브 0013 적용·stamp·glossary 기능복구 검증.
 - Cross-ref: CHG-20260623T180000-migration-split-brain-hygiene / TASK-0306 / LRN-20260623-0003.
 
+## REV-20260625T012217-kb-pg-superuser-host [SKIPPED: deploy 설정값 1줄 — 코드·런타임 동작 무변경, 패널 불요]
+- Date: 2026-06-25
+- Cycle: kb-pg-superuser-host (CHG-20260625T012217-kb-pg-superuser-host). Minor §12.3.
+- 변경: `.env.example` `AGENT_KB_PG_SUPERUSER_HOST=postgres` + 주석(superuser DDL 은 pgbouncer 우회 직결).
+- SKIP 사유(§18.4): 설정 예시값 1줄 + 주석뿐 — 코드 무변경. 근본원인은 연결 실측(superuser 직결 OK / pgbouncer 경유 bouncer config error 재현 / rw@pgbouncer OK)으로 확증, fix 는 `make up` exit 0 으로 검증됨(라이브 게이트).
+- Human Approval Needed: 아니오.
+
 ## REV-20260623T190000-embedding-auto-backfill [SUBAGENT:embed-autotick-adversarial-backend]
 - Date: 2026-06-23
 - Cycle: TASK-0307 (texts 임베딩 백필 + 자동 백필 데몬), **Major §12.3**.

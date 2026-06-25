@@ -1341,3 +1341,12 @@ source_of_truth: true
 - Files: src/scripts/kb_embedding_worker.py, src/modules/insight.py, src/modules/config.py, docs/{TASK,MODIFY,FUNCTION,REVIEW}.md.
 - Rollback: `AGENT_KB_EMBEDDING_AUTO=0`(즉시 비활성) 또는 코드 3건 revert(전부 additive·fail-soft). 임베딩 데이터는 그대로(유익).
 - Deploy: insight-worker 재빌드·재시작(데몬 활성). **1회 백필 완료/중단 후 배포**(F2 동시중복 회피 — 재시작이 수동 backfill 종료). degraded_readback/error 외엔 데몬 정상 동작(임베딩은 datasource 무관·PG만 필요).
+
+## CHG-20260625T012217-kb-pg-superuser-host (deploy infra fix, Minor §12.3)
+- Date: 2026-06-25. **deploy/infra** — 코드·런타임 동작 무변경. 별도 worktree `ai/claude/kb-pg-superuser-host-fix`.
+- Reason: `make up`(배포) 의 memory-init 단계가 `KB Postgres schema 적용 실패: FATAL: bouncer config error` 로 exit 1. 근본 원인 — `_ensure_pg_schema`(memory.py:854) 의 superuser DDL 연결이 `AGENT_KB_PG_SUPERUSER_HOST` 미설정 시 `AGENT_KB_PG_HOST(=pgbouncer)` 를 상속하는데, pgbouncer userlist 엔 DML role `agent_kb_rw` 만 등록(auth_query 없음)되어 superuser `postgres` 인증 불가.
+- 진단(연결 실측): superuser `postgres` 직결(host=postgres)=OK / pgbouncer 경유=`bouncer config error` 재현 / 런타임 `agent_kb_rw`@pgbouncer=OK. KB 스키마는 이미 적용됨(15 tables, vector·pg_trgm) — 재적용 connect 만 실패하던 것.
+- 변경: `.env.example` `AGENT_KB_PG_SUPERUSER_HOST=` → `=postgres` + 사유 주석(DDL 은 superuser 직결, pgbouncer 우회). 코드(memory.py)는 이미 본 변수를 1순위로 지원(line 854) — 설정만 누락이었음.
+- 런타임 적용: 배포 환경 `.env`(gitignore, 본 PR 외)에 동일 라인 추가 후 `make up` **exit 0** 검증 완료(memory-init KB role/권한 검증 통과). `.env.example` 은 신규 배포 재발 방지용.
+- Rollback: `.env.example` 1줄 revert. 코드·스키마 영향 0.
+- Deploy: 없음(설정 문서). 런타임은 `.env` 수정 + `make up`(이미 수행).
