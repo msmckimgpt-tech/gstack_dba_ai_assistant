@@ -53,10 +53,11 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
-- **gc-run-status-stuck** (그룹대화 '처리 중' 고착/채팅 블로킹 버그, Major 동시성): 코드 완료(워크트리 `ai/claude/gc-run-status-stuck`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 라이브 배포 → smoke 잔여. 근본: run-status 단일 대화 슬롯 vs 계정별 동시 run → run1 done supersede 가드 skip(유실) + FE foreign run hijack. 수정(per-run 해석): 충돌 done/error per-run marker(memory.py) + `/api/progress` client_run_id 해소(app.py) + FE client_run_id 항상 전송·hijack 가드(app.js). §18.8 패널 3 BLOCKING 0. (CHG/REV-20260625T163744)
+- **gc-run-status-stuck** (그룹대화 '처리 중' 고착/채팅 블로킹 버그, Major 동시성): **PR #438 머지(main 507bb4d)·라이브 배포(web+ask-worker 재빌드, healthz PASS) 완료**. 근본: run-status 단일 대화 슬롯 vs 계정별 동시 run → run1 done supersede 가드 skip(유실) + FE foreign run hijack. 수정(per-run 해석): 충돌 done/error per-run marker(memory.py) + `/api/progress` client_run_id 해소(app.py) + FE client_run_id 항상 전송·hijack 가드(app.js). §18.8 패널 3 BLOCKING 0. (CHG/REV-20260625T163744)
   - [x] BE write: set_run_status 충돌 skip 시 done/error per-run marker 기록 (feature-0002 memory.py)
   - [x] BE read: `_load_run_terminal_marker` + `/api/progress` client_run_id per-run 해소 (feature-0003 app.py)
   - [x] FE: pollProgress client_run_id 항상 전송 + applyProgressPayload foreign-run hijack 가드 (feature-0003 app.js)
+  - [x] FE 캐시버스터 bump (`index.html` app.js `?v=20260625-gc-run-status-stuck`, gc-run-status-cachebust, CHG-20260625T165526) — FE fix 가 기존 사용자 캐시에 도달하도록
   - [ ] 라이브 배포 후 다중 사용자 동시 그룹대화 race 검증 (PB-0008 — 배포 후)
 - gc-live-ux2 (라이브 UX 2차): 코드 완료(워크트리 `ai/claude/gc-live-ux2`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 배포 → smoke 잔여.
 - 잔여: S3c(LLM 화자 라벨 라이브 검증) · S5(run cap·llm_usage actor 귀속) [폴링은 ux2 적응형으로 해소]

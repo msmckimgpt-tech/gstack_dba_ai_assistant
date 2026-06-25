@@ -332,3 +332,10 @@ source_of_truth: true
   - NIT(주석 "동일 shape") **수정 반영**: agent_core 주석을 "동일 키 집합 + 1:1/그룹 양용이라 sender_username 으로 게이트, account_id-only 게이트는 회귀" 로 정확화.
 - Verification: `test_ask_worker.py` 7/7 (보강 round_trip/defaults + 신규 sender_username 시그니처) + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile`. PB-0008 미실측(백엔드 배선 — 표시 동작은 배포 후 라이브 그룹 대화에서 권장).
 - Human Approval Needed: 아니오 (Major·backend 배선·신규 authz 미도입·무회귀, deploy_scope: included 사전승인).
+
+## REV-20260625T165526-gc-run-status-cachebust [SKIPPED:frontend-cachebuster-no-logic]
+- Date: 2026-06-25
+- Cycle: gc-run-status-cachebust (CHG-20260625T165526) — gc-run-status-stuck FE fix 의 `index.html` 캐시버스터 1줄 bump. **Minor §12.3** (표현계층, 무로직).
+- Reason: 패널 skip 사유 — `app.js?v=` 토큰 1개 교체뿐. 코드/동작/DOM 변경 0(FE 로직은 이미 CHG-20260625T163744 에서 §18.8 패널 통과). 적대 검증 대상 없음.
+- 검증: index.html `app.js?v=20260625-gc-run-status-stuck` 단일 토큰 bump grep 확인. styles.css 미변경(JS-only fix). 배포 후 새 토큰 200 서빙 권장.
+- Human Approval Needed: 아니오 (순수 캐시버스터, deploy_scope: included 사전승인).

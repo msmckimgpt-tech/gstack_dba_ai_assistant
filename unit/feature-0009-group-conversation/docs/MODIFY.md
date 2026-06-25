@@ -369,3 +369,11 @@ source_of_truth: true
 - Impact: 1:1·비그룹·신규 대화 무회귀(sender_username None → meta 미부착). 그룹 ask 만 user 메시지 발신자 표시 정정. 스키마/DDL/RBAC/엔드포인트 0(미러 meta jsonb 부착뿐).
 - Rollback Notes: 3파일 revert. 스키마/마이그레이션 0 → 무상태 롤백 가능. 캐시버스터 불요(FE 미변경 — 미러 meta 는 기존 user 분기 렌더가 이미 소비).
 - 검증: `test_ask_worker.py` 7/7 + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile` PASS. §18.8 적대 패널(general-purpose, correctness+security) BLOCKER 0/MAJOR 0(MINOR 1 ACCEPTED-as-is: `if account_id` 대칭화는 1:1 회귀 유발 → 현 가드 정답 / NIT 1 주석 정확화 반영). REV-20260625T162000 참조. **PB-0008 미실측**(백엔드 배선 — 표시 정정은 배포 후 라이브 그룹 대화 권장).
+
+## CHG-20260625T165526-gc-run-status-cachebust (cross-feature → feature-0003, Minor §12.3 — frontend 캐시버스터 only)
+- Date: 2026-06-25. worktree `ai/claude/gc-run-status-cachebust`. base 507bb4d(gc-run-status-stuck 머지 직후).
+- Reason: CHG-20260625T163744-gc-run-status-stuck 의 `static/app.js` FE fix(client_run_id 항상 전송·foreign-run hijack 가드)가 `index.html` 캐시버스터 미bump 로 기존 사용자 브라우저 캐시(`app.js?v=20260625-gc-unread-badge`)에 안 닿던 누락 보완.
+- 변경(feature-0003 `static/index.html`): `app.js?v=20260625-gc-unread-badge` → `?v=20260625-gc-run-status-stuck` (1줄). styles.css 미변경(본 fix 는 JS-only).
+- Impact: 표현계층 0 — 캐시버스터만. 모든 사용자가 다음 로드 시 gc-run-status-stuck FE fix 가 포함된 app.js 를 재fetch. 로직/DOM/엔드포인트 0.
+- Rollback Notes: index.html 1줄 revert.
+- 검증: 단일 `?v=` 토큰 bump 확인(grep). 패널 SKIP(순수 캐시버스터, 무로직 — REV [SKIPPED]). 배포 후 새 토큰 200 서빙 확인 권장.
