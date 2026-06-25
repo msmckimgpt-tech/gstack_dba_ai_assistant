@@ -1219,3 +1219,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 항목(9): [new work] 사이드바 안 읽음/@멘션 배지 · 멤버 추방/차단/해제 · [improved work] 메시지 좌우 정렬 · [new admin] 역할/제품 프롬프트 AI 자동작성 · 제품 분석률 95% 자동완성 · [improved admin] 규칙 추가 DB insight 커버리지 · 지식베이스 메뉴 재편 · [improved common] 요청량 한도 메시지 주체 구분 · AI 준비 속도.
 - 비변경: 렌더/접기/탐색 로직(`release-notes.js`), 백엔드, 라우팅, RBAC, 스키마. 순수 콘텐츠 추가. (CHG/REV-20260625T165205-doc-sync-rn-0625 [SKIPPED])
 - 배포: `index.html`·`admin.html` 의 release-notes-data.js cache-buster `?v=20260625-rn-0625` → `?v=20260625b-rn-0625` bump — 06-25 블록이 캐시 무효화되어 사용자에게 노출(deploy_scope: included, web 재배포 시 반영).
+
+## (TASK-20260625T192007-doc-sync-rn-0625b) 릴리즈노트 콘텐츠 — 06-25 잔여 머지분(5건) 추가
+- 직전 doc_sync(163929) 이후 main 병합된 06-25 user-facing 변경 5종을 기존 `2026-06-25` 블록 items 에 **추가**(9→14): [new work] 참가자 per-message 제품 선택 · [fixed work] 처리 중 입력/전송 안정화(동시 run 고착·블로킹 해소) · [improved work] 1:1 인터럽트 재요청 + 그룹 중복차단 · [fixed work] @assistant 발신자 표시 정정 · [improved common] datasource 회로차단 안내 문구 분리.
+- 비변경: 렌더/접기/탐색 로직(`release-notes.js`), 백엔드, 라우팅, RBAC, 스키마. 순수 콘텐츠 추가. (CHG/REV-20260625T192007-doc-sync-rn-0625b [SKIPPED])
+- 배포: cache-buster `?v=20260625b-rn-0625` → `?v=20260625c-rn-0625` bump — 추가 5항목이 캐시 무효화되어 사용자에게 노출(deploy_scope: included, web 재배포 시 반영).
