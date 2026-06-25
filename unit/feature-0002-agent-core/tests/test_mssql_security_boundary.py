@@ -18,7 +18,7 @@ from unittest import mock
 
 import pytest
 
-from modules import config as cfg
+from shared import config as cfg
 from modules import tools
 from modules.sql_guard import (
     collect_schema_refs,
@@ -224,7 +224,7 @@ def test_freeform_system_db_not_queryable_m1():
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(["appdb"])
-        import modules.config as _c
+        import shared.config as _c
         _c._ACTIVE_DEFAULT_DB.set("appdb")
         # 시스템 DB catalog 는 조회 불가(M1) — dbo 호환뷰 유출 차단
         for sql in (
@@ -249,7 +249,7 @@ def test_freeform_3part_function_cross_db_blocked():
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(["appdb"])
-        import modules.config as _c
+        import shared.config as _c
         _c._ACTIVE_DEFAULT_DB.set("appdb")
         assert tools._freeform_sql_access_error("SELECT forbidden.dbo.fnLeak()") is not None
         assert tools._freeform_sql_access_error("SELECT * FROM forbidden.dbo.fnTvf()") is not None
@@ -263,7 +263,7 @@ def test_freeform_2part_blocked_when_pin_not_allowlisted():
     def check2():
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(["appdb"])
-        import modules.config as _c
+        import shared.config as _c
         _c._ACTIVE_DEFAULT_DB.set("secret_db")  # pin ∉ allowlist
         err = tools._freeform_sql_access_error("SELECT * FROM dbo.Secrets")
         assert err is not None and "허용 목록" in err
@@ -323,7 +323,7 @@ def test_regate2_system_db_in_allowlist_still_blocked():
     def check():
         cfg.set_active_datasource("prod", engine="mssql", default_db="master")
         tools.set_active_schema_allowlist(["master", "appdb"])
-        import modules.config as _c
+        import shared.config as _c
         _c._ACTIVE_DEFAULT_DB.set("master")
         assert tools._freeform_sql_access_error("SELECT name FROM master.dbo.syslogins") is not None
         # pin=master 는 유효 allowlist 에서 제거되므로 2-part 도 차단
@@ -338,7 +338,7 @@ def test_regate2_agent_memory_function_blocked():
     def check():
         cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
         tools.set_active_schema_allowlist(["agent_memory", "appdb"])
-        import modules.config as _c
+        import shared.config as _c
         _c._ACTIVE_DEFAULT_DB.set("appdb")
         assert tools._freeform_sql_access_error("SELECT agent_memory.dbo.fnLeak()") is not None
     _run_isolated(check)
@@ -349,7 +349,7 @@ def test_regate2_struct_tool_pin_enforced():
     def check():
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(["appdb"])
-        import modules.config as _c
+        import shared.config as _c
         _c._ACTIVE_DEFAULT_DB.set(None)  # pin 미설정 → 로그인 기본 DB 로 샐 위험
         assert tools._struct_schema_access_error("dbo") is not None
         _c._ACTIVE_DEFAULT_DB.set("appdb")  # pin 유효 → 허용
@@ -386,7 +386,7 @@ def test_regate2_system_info_functions_denylist():
 def test_regate3_2part_scalar_udf_pin_enforced():
     """re-gate(3차) BLOCKER1: 무명세 scalar UDF(`SELECT dbo.fnLeak()` — schemas 비어 과거 우회)도 pin 검증."""
     def check():
-        import modules.config as _c
+        import shared.config as _c
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(["appdb"])
         _c._ACTIVE_DEFAULT_DB.set("secret_db")  # pin ∉ allowlist
@@ -423,7 +423,7 @@ def test_regate3_db_enumeration_functions_blocked():
 def test_regate3_cte_not_flagged_unqualified():
     """re-gate(3차) MAJOR: 정상 CTE(`WITH c AS(...) SELECT * FROM c`)가 무자격 테이블로 오판·차단되지 않는다."""
     def check():
-        import modules.config as _c
+        import shared.config as _c
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(["appdb"])
         _c._ACTIVE_DEFAULT_DB.set("appdb")
@@ -437,7 +437,7 @@ def test_regate3_cte_not_flagged_unqualified():
 def test_regate3_struct_pin_gate_helper():
     """re-gate(3차) BLOCKER3: _mssql_pin_gate — pin 무효/시스템DB pin 시 구조화 도구 거부."""
     def check():
-        import modules.config as _c
+        import shared.config as _c
         cfg.set_active_datasource("prod", engine="mssql")
         tools.set_active_schema_allowlist(["appdb"])
         _c._ACTIVE_DEFAULT_DB.set(None)
@@ -571,7 +571,7 @@ def test_regate7_udt_method_not_overblocked():
     def check():
         cfg.set_active_datasource("prod", engine="mssql", default_db="appdb")
         tools.set_active_schema_allowlist(["appdb"])
-        import modules.config as _c
+        import shared.config as _c
         _c._ACTIVE_DEFAULT_DB.set("appdb")
         for sql in (
             "SELECT p.SpatialLocation.STAsText() FROM appdb.dbo.Person AS p",

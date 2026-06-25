@@ -69,7 +69,7 @@ def _precision_recall_at_k(retrieved_keys: list[str], relevant: list[str], k: in
 
 def _retrieve(question: str, hybrid_enabled: bool) -> list[str]:
     """retrieval 함수 직접 호출 → 반환 doc keys(랭킹 순). hybrid_enabled 로 fusion/2-tier 토글."""
-    from modules import config as cfg  # type: ignore
+    from shared import config as cfg  # type: ignore
     from modules import kb_retrieval  # type: ignore
 
     prev = cfg.AGENT_KB_HYBRID_ENABLED
@@ -164,7 +164,7 @@ def main(argv=None) -> int:
     p.add_argument("--out", default=None, help="리포트 출력 디렉터리(기본 AGENT_OUT_DIR/eval)")
     args = p.parse_args(argv)
 
-    from modules import config as cfg  # type: ignore
+    from shared import config as cfg  # type: ignore
 
     if args.provision:
         print("[retrieval_eval] provisioning evalkb …", file=sys.stderr)

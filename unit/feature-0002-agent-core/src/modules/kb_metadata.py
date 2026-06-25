@@ -239,7 +239,7 @@ def load_table_column_descriptions(user_message, scope_key=None, conn=None) -> s
     # ds-scope: 명시 scope 없으면 **활성 datasource** 의 scope_key 사용. CURRENT_FACT_SCOPE_KEY 는
     # 멀티DS 에서 갱신되지 않아 ds 격리/매칭이 깨진다(kb_glossary BLOCKER) → get_active_datasource().
     if scope_key is None:
-        from modules import config as _cfg
+        from shared import config as _cfg
         scope_key = _cfg.get_active_datasource()
     c = None
     owned = False
@@ -294,7 +294,7 @@ def load_column_descriptions_for_table(schema_name, table_name, scope_key=None, 
     if not tb:
         return {}
     if scope_key is None:
-        from modules import config as _cfg
+        from shared import config as _cfg
         scope_key = _cfg.get_active_datasource()
     sch = str(schema_name or "").strip()
     c = None

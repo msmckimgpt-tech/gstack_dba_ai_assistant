@@ -12,7 +12,7 @@ from __future__ import annotations
 
 
 def test_degraded_false_when_mysql_backend(monkeypatch):
-    import modules.config as cfg
+    import shared.config as cfg
     import modules.runtime_backend as rb
     import modules.insight as insight
 
@@ -23,7 +23,7 @@ def test_degraded_false_when_mysql_backend(monkeypatch):
 
 
 def test_degraded_true_when_pg_unavailable(monkeypatch):
-    import modules.config as cfg
+    import shared.config as cfg
     import modules.insight as insight
 
     monkeypatch.setattr(cfg, "AGENT_KB_READ_BACKEND", "postgres", raising=False)
@@ -32,7 +32,7 @@ def test_degraded_true_when_pg_unavailable(monkeypatch):
 
 
 def test_degraded_true_when_pg_probe_fails(monkeypatch):
-    import modules.config as cfg
+    import shared.config as cfg
     import modules.insight as insight
 
     monkeypatch.setattr(cfg, "AGENT_KB_READ_BACKEND", "postgres", raising=False)
@@ -46,7 +46,7 @@ def test_degraded_true_when_pg_probe_fails(monkeypatch):
 
 
 def test_degraded_false_when_pg_probe_ok(monkeypatch):
-    import modules.config as cfg
+    import shared.config as cfg
     import modules.insight as insight
 
     monkeypatch.setattr(cfg, "AGENT_KB_READ_BACKEND", "postgres", raising=False)

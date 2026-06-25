@@ -17,7 +17,7 @@ import time
 
 logger = logging.getLogger("agent_core.knowledge")
 
-from .config import *
+from shared.config import *
 from .utils import _text_hash, _text_store_insert
 import difflib, hashlib, json, os, re, time
 from datetime import datetime, timezone
@@ -143,7 +143,7 @@ def _load_rag_objects_for_request(
     rows: list[tuple[Any, ...]] = []
     # TASK-0135 (#13): PG read 분기 — _load_rag_documents_for_request 와 동형. 이전엔 PG 분기가
     # 없어 DROP 된 MySQL AgentMemoryRagObjects 를 조회 → 항상 [] (D0-D3 스키마 routing 죽음).
-    from .config import AGENT_KB_READ_BACKEND
+    from shared.config import AGENT_KB_READ_BACKEND
     used_pg = False
     if AGENT_KB_READ_BACKEND == "postgres":
         try:
@@ -311,7 +311,7 @@ def _load_rag_documents_for_request(
     # search_rag_documents() (pg_trgm similarity) 사용. cutover invariant:
     # MySQL FULLTEXT 와 동일 row 반환 (rank ordering 은 score function 차이로 미세
     # 다를 수 있음 — make ask 회귀 5종 시나리오로 검증 게이트).
-    from .config import AGENT_KB_READ_BACKEND
+    from shared.config import AGENT_KB_READ_BACKEND
     if AGENT_KB_READ_BACKEND == "postgres":
         try:
             rows_pg = _load_rag_documents_for_request_pg(
@@ -322,7 +322,7 @@ def _load_rag_documents_for_request(
         except Exception as e:
             # cutover 진행 중 fail-soft: PG read 실패 시 MySQL fallback.
             # Stage A rollback (1줄 env 변경) 의 대안 — runtime 분기.
-            from . import config as _cfg
+            from shared import config as _cfg
             logger.warning(
                 "kb_read_pg_fallback",
                 extra={"error": str(e)[:200], "backend": _cfg.AGENT_KB_READ_BACKEND},
@@ -458,7 +458,7 @@ def _load_rag_documents_for_request_pg(
         qvec = _embed_query_vector(query_text) if query_text else None
         # ITEM-05 (하이브리드 검색): qvec 존재 + gate ON 시 vector + trigram score fusion.
         # gate OFF 시 기존 2-tier(vector-OR-trigram fallback) 경로 — 롤백 안전.
-        from .config import AGENT_KB_HYBRID_ENABLED
+        from shared.config import AGENT_KB_HYBRID_ENABLED
         if AGENT_KB_HYBRID_ENABLED and qvec is not None:
             fused = _fuse_rag_documents(
                 backend, conn, conversation_ids, query_text, qvec, scope_keys,
@@ -519,7 +519,7 @@ def _fuse_rag_documents(
     - 벡터·trigram 둘 다 결과 0 → None 반환 → caller 가 trigram-only fall-through.
       (벡터 결과 0 + trigram 결과 있음 케이스는 fusion 안에서 trigram-only union 으로 자연 처리.)
     """
-    from .config import (
+    from shared.config import (
         AGENT_KB_HYBRID_ALPHA,
         AGENT_KB_HYBRID_BETA,
         AGENT_KB_HYBRID_NORMALIZE,
@@ -554,7 +554,7 @@ def _fuse_rag_documents(
     # content_hash) 라 동일 (conv,fact) 에 content 다른 행이 정상 공존 → content 로 구분해야
     # 서로 다른 문서의 신호가 한 엔트리로 섞이지 않는다(REV MAJOR). 동일 키 중복(intra-search)은
     # max 누적(덮어쓰기 시 더 낮은 sim 잔존 방지). vec·trg 같은 doc 은 같은 key 로 정상 fusion.
-    from .config import AGENT_KB_HYBRID_TRIGRAM_FLOOR as _TRG_FLOOR
+    from shared.config import AGENT_KB_HYBRID_TRIGRAM_FLOOR as _TRG_FLOOR
     merged: dict[tuple, dict[str, Any]] = {}
     for row, kind in [(r, "vec") for r in vrows] + [(r, "trg") for r in trows]:
         conv_id = str(row[0] or "").strip()
@@ -607,7 +607,7 @@ def _embed_query_vector(text: str) -> "Optional[list[float]]":
     """TASK-0135 (#13): 쿼리 텍스트를 gateway 임베딩(AGENT_KB_EMBEDDING_MODEL=titan-embed)으로
     벡터화. 미설정/빈텍스트/실패 시 None → caller 가 trigram fallback. 티어 라우터가 임베딩
     모델명을 Bedrock gateway 로 보낸다(is_local_llm_model=False)."""
-    from .config import AGENT_KB_EMBEDDING_MODEL
+    from shared.config import AGENT_KB_EMBEDDING_MODEL
     model = str(AGENT_KB_EMBEDDING_MODEL or "").strip()
     if not model or not str(text or "").strip():
         return None

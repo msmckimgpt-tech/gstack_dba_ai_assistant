@@ -114,7 +114,7 @@ def test_scope_excludes_other_datasource():
 
 def test_default_scope_derives_from_active_datasource():
     # 운영 경로: scope_key 미지정 → cfg.get_active_datasource() 로 도출(CURRENT_FACT_SCOPE_KEY 아님).
-    from modules import config as cfg
+    from shared import config as cfg
     from modules.utils import _normalize_scope_key
     cfg.set_active_datasource("ds_sales")
     try:

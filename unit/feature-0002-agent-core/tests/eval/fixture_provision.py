@@ -12,7 +12,7 @@ import os
 
 import mysql.connector
 
-from modules import config as cfg
+from shared import config as cfg
 
 FIXTURE_DB = "eval_fixture"
 _SCHEMA_SQL = os.path.join(os.path.dirname(__file__), "fixtures", "schema.sql")

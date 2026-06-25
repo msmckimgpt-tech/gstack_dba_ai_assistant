@@ -10,7 +10,7 @@ datasource 내 여러 DB 가 구분된다. MySQL(schema==database)은 종전 2�
 
 실 DB 없이 ContextVar + 순수 함수로 검증.
 """
-from modules import config as cfg
+from shared import config as cfg
 from modules.utils import _infer_rag_object_from_fact
 from agent_core import _insight_object_group
 

@@ -21,7 +21,7 @@ THRESH = int(os.getenv("ASK_WORKER_HEARTBEAT_MAX_AGE_SEC", "60"))
 def main() -> int:
     try:
         from modules.db import _pg_connect
-        from modules.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
+        from shared.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
     except Exception:
         return 1
     conn = None

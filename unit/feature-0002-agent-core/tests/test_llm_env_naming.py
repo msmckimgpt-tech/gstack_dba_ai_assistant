@@ -13,7 +13,7 @@ import os
 import sys
 
 # conftest 가 src 를 sys.path 에 추가하지만, env 조작 후 reload 가 필요하므로 명시 import.
-import modules.config as config
+import shared.config as config
 
 
 def _reload_config():

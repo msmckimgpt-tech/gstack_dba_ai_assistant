@@ -38,13 +38,13 @@ source_of_truth: true
 - [x] TASK-0011-8 **P5a Step 4 — conn_health·datasources → shared/ + alias shim (비파괴) + db lazy back-dep `from modules`→`from shared` 정리**
 - [~] TASK-0011-9 P5a Step 5 — import 점진 마이그레이션 + shim 제거 [진행 중 — per-module sub-step]
   - [x] 5a conn_health·datasources 소비처 shared.* 마이그레이션(60 ref/18 파일) + alias shim 2개 제거
-  - [ ] 5b config 소비처 shared.config 마이그레이션 + modules/config shim 제거 (fan-in 25)
+  - [x] 5b config 소비처 shared.config 마이그레이션(~150 ref/53 파일) + modules/config shim 제거 (fan-in 25 foundation)
   - [ ] 5c db 소비처 shared.db 마이그레이션 + modules/db shim 제거 (app.py 84 sites — 최대)
 - [ ] TASK-0011-10 P5a Step 6 — feature 단위 Dockerfile 분리 + 브라우저 QA [후속]
 - [ ] TASK-0011-11 동반(저위험) — #4 GDPR gap 문서화 + CODEBASE_MAP stale 정정(0007~0010 누락·shared 구식) [후속]
 
 ## 4. In Progress
-- 없음 (Step 5a=conn_health/datasources 마이그·shim제거 완료; Step 5b=config 마이그·shim제거 부터 별도 cycle/PR)
+- 없음 (Step 5b=config 마이그·shim제거 완료; Step 5c=db 마이그·shim제거 부터 별도 cycle/PR)
 
 ## 5. Blocked
 - 없음
@@ -65,18 +65,23 @@ source_of_truth: true
   (app.py 26·agent_core 2·ask 3·insight 4·gdrive 1·rekey 1·테스트 12파일 dynamic 포함). config·db 등 타 모듈 미변경.
   make test **회귀 0**(전체 green), residual grep 0, /app smoke(shared.* OK·modules.{conn_health,datasources}
   ModuleNotFoundError·modules.{config,db} shim 유지), §18.8 3렌즈(missed-ref/correctness/deploy) BLOCKING 0/NIT 0.
+- P5a Step 5b (config 소비처 shared.config 마이그레이션 + modules/config shim 제거) — L0 foundation(fan-in 25,
+  16+ 모듈 wildcard 재노출, __init__ eager). ~150 ref/53 파일(modules/* 17·scripts 6·tests 19·eval 7·agent_core·app.py).
+  modules/__init__ eager+wildcard 재노출 체인 보존(config 이름 shared.config 재바인딩). subagent 28파일 + 세션한도
+  후 결정적 스크립트 21파일 보완. make test **회귀 0**, residual grep 0, baked-layout smoke(shared.config OK·
+  modules.config ModuleNotFoundError·재노출 체인 OK), §18.8 3렌즈 BLOCKING 0/NIT 0.
 
 ## 7. Next Action
-- P5a Step 5b (config 소비처를 `from shared.config`/`shared.config` 로 마이그레이션 후 modules/config alias shim 제거,
-  fan-in 25) → Step 5c (db, app.py 84 sites 최대). 이후 Step 6 (feature 단위 Dockerfile 분리 + 브라우저 QA).
+- P5a Step 5c (db 소비처를 `from shared.db`/`shared.db` 로 마이그레이션 후 modules/db alias shim 제거 — app.py 84 sites
+  포함 최대 결합). 이후 Step 6 (feature 단위 Dockerfile 분리 + 브라우저 QA) · 동반 doc(TASK-0011-11).
 
-## 8. Completion Checklist (P5a Step 5a = conn_health/datasources 마이그레이션·shim제거 cycle)
-- [x] AC(conn_health/datasources 전 소비처가 shared.* 정본 경로로 마이그레이션됨 — 정적+dynamic/string 포함)이 구현되었다
-- [x] modules/conn_health.py·datasources.py alias shim 2개가 제거되고, modules.{conn_health,datasources} 가 더는 import 되지 않는다(ModuleNotFoundError)
-- [x] 단위 테스트(make test)가 통과한다 — 회귀 0 (전체 green, 2 skip, F/E 0). residual grep 0(라이브 modules.* 참조 없음)
-- [x] FUNCTION.md가 현재 동작과 일치한다 (conn_health/datasources shim 제거, 소비처 shared.* 수렴 반영)
-- [x] MODIFY.md에 변경 이력이 기록되었다 (CHG-20260625-0005)
-- [x] REVIEW.md에 판단 근거가 기록되었다 (§18.8 3렌즈 패널 — BLOCKING 0 / NIT 0, REV-20260625-0005)
+## 8. Completion Checklist (P5a Step 5b = config 마이그레이션·shim제거 cycle)
+- [x] AC(config 전 소비처가 shared.config 정본 경로로 마이그레이션됨 — 정적+wildcard+dynamic/string 포함)이 구현되었다
+- [x] modules/config.py alias shim 이 제거되고, modules.config 가 더는 import 되지 않는다(ModuleNotFoundError); modules/__init__ 재노출 체인 보존
+- [x] 단위 테스트(make test)가 통과한다 — 회귀 0 (전체 green, 2 skip, F/E 0). residual grep 0(라이브 modules.config 참조 없음)
+- [x] FUNCTION.md가 현재 동작과 일치한다 (config shim 제거, 소비처 shared.config 수렴 반영)
+- [x] MODIFY.md에 변경 이력이 기록되었다 (CHG-20260625-0006)
+- [x] REVIEW.md에 판단 근거가 기록되었다 (§18.8 3렌즈 패널 — BLOCKING 0 / NIT 0, REV-20260625-0006)
 - [x] REPORT.md에 최종 상태가 반영되었다
 - [x] BLOCKED 항목이 없거나 사람에게 전달되었다
 - [ ] Git 커밋이 완료되었다

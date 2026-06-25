@@ -98,8 +98,8 @@ __all__ = [
 
 
 """Utility functions: logging, timing, sanitization, text processing."""
-from .config import *
-from . import config as cfg
+from shared.config import *
+from shared import config as cfg
 import concurrent.futures, csv, difflib, hashlib, io, json, os, random, re
 import shutil, stat, statistics, subprocess, time, urllib.error, urllib.request, uuid
 from datetime import datetime, timedelta, timezone

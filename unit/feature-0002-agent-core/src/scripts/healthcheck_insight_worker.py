@@ -19,7 +19,7 @@ THRESH = int(os.getenv("INSIGHT_HEARTBEAT_MAX_AGE_SEC", "180"))
 def main() -> int:
     try:
         from modules.db import _pg_connect
-        from modules.config import GLOBAL_CONVERSATION_ID
+        from shared.config import GLOBAL_CONVERSATION_ID
     except Exception:
         return 1
     conn = None

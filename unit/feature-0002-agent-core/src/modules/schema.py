@@ -49,7 +49,7 @@ __all__ = [
 
 
 """Schema metadata loading, preferences, detection."""
-from .config import *
+from shared.config import *
 import json, re, time
 from typing import Any
 

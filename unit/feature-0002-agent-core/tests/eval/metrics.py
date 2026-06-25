@@ -73,7 +73,7 @@ def llm_sql_judge(nl_question: str, expected_sql: str, generated_sql: str) -> "b
     """LLM 으로 SQL 동치 판정(temp 0). 실패/미가용 시 None. 호출측이 cap 관리."""
     try:
         from modules.llm import _get_llm_client
-        from modules.config import OPENAI_MODEL
+        from shared.config import OPENAI_MODEL
     except Exception:
         return None
     client = _get_llm_client()

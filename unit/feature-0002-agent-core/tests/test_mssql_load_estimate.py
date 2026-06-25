@@ -9,7 +9,7 @@ from __future__ import annotations
 import types
 
 import modules.tools as tools
-import modules.config as cfg
+import shared.config as cfg
 import modules.sql_guard as sql_guard
 import modules.dialects as dialects
 

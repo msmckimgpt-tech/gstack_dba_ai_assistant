@@ -5,7 +5,7 @@ All modules were originally a single file. This __init__.py:
 2. Injects cross-module names into each module's globals
 3. Re-exports everything for backward-compatible `from modules.X import *`
 """
-from . import config
+from shared import config
 from . import utils
 from . import db
 from . import memory
@@ -51,7 +51,7 @@ for _mod in _all_modules:
 __all__ = list(_all_names.keys())
 
 # Re-export all names into package namespace for agent_cli.py compatibility
-from .config import *
+from shared.config import *
 from .utils import *
 from .db import *
 from .memory import *

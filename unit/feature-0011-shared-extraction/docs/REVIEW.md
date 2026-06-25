@@ -140,3 +140,30 @@ source_of_truth: true
   3렌즈 실이미지 검증으로 누락 0 확인. 단일 commit revert 가능. 배포 시 healthz/smoke 재확인.
 - Human Approval Needed: P5a PLAN-APPROVED(2026-06-24) 범위. PR 생성·deploy 는 외부영향이나 deploy_scope:included
   로 머지 후 자동 배포(첫 배포 직전 1줄 표면화).
+
+## REV-20260625-0006 [SUBAGENT:config-migration-step5b]
+- Related Change: CHG-20260625-0006 (config 소비처 shared.config 마이그레이션 + modules/config shim 제거, P5a Step 5b)
+- Reason: L0 foundation config(fan-in 25, 16+ 모듈 wildcard 재노출, __init__ eager) 소비처를 정본 shared.config 로
+  수렴 + shim 제거 → 단일 import 경로. shim 제거로 alias 안전망 소거, foundation 이라 누락 시 전역 파급 → 적대 검증 집중.
+- §18.8 Adversarial Panel: Workflow `step5b-config-adversarial-panel` (3렌즈 병렬, high effort, **실 이미지 baked-layout 빌드·실행**).
+  - **결과: BLOCKING 0 / NIT 0.**
+  - **missed-ref hunt = SAFE**: 프로덕션 dynamic config 해석(importlib/__import__/getattr/sys.modules/pkgutil) 0.
+    `import modules` 후 config 상수(OPENAI_MODEL·DB_HOST·GLOBAL_CONVERSATION_ID·DATASOURCES·set/get_active_datasource)
+    hasattr PASS — wildcard 재노출 체인 무결. `modules.config is shared.config`(attr 바인딩) True. 단일 상태(set_active_datasource
+    mutation 이 모든 alias 에 반영·리셋) — split-brain 없음. (note: `import modules.config` 서브모듈 형태는 이제
+    ModuleNotFoundError — 그 형태 caller 0 확인, dormant.)
+  - **migration correctness = SAFE**: `git diff HEAD | grep '+from shared import' | grep -v 'config|conn_health|datasources|model_catalog'` = EMPTY(타 모듈 오마이그 0; shared.memory/render 부재라 오류 시 즉시 crash — 안 남).
+    14개 `from .config import *`→`from shared.config import *` 순수 path swap. multi-line import 블록(agent_core·account_recall·
+    ask·kb_retrieval·llm) 심볼 리스트 무변경. alias 1:1 보존. __init__ `_all_modules=[config,...]` 리스트 무결.
+  - **deploy/runtime = SAFE**: 워크트리에서 agent 이미지 빌드 후 **baked layout(마운트 없음·PYTHONPATH 무설정·WORKDIR /app)**:
+    `from shared import config` OK · `import modules.config`→ModuleNotFoundError(shim 제거) · import modules/agent_core/web.app OK ·
+    config 상수 8개 modules 재노출 identity match · 6개 worker/healthcheck 스크립트 import OK. Dockerfile COPY shared /app/shared 확인.
+- residual: 라이브 modules.config 참조 0(deterministic grep). 잔존 = shared/ 내부 정본 상대 import(=shared.config, 정상)
+  + modules/db.py 의 stale 주석 2줄(db shim, 5c 에서 제거).
+- 마이그 실행 노트: subagent workflow 28파일 완료 후 26 에이전트가 API 세션한도(2pm KST reset)로 실패 → 미완 파일을
+  결정적 정규식 스크립트(main-loop)로 보완(21파일/82 ref), 동일 검증 게이트 통과. 패널은 한도 reset 후 정상 실행.
+- Alternatives Considered: enumeration shim(annotated-symbol 누락 fragile — config Step 2 교훈) → 본 step 은 alias 가 아니라
+  소비처를 정본으로 옮기는 마이그라 무관. big-bang(반려, 5a REV 참조).
+- Risks: foundation·다수 소비처(app.py 라이브 web 포함)이나 동일 객체 수렴이라 동작 불변. shim 제거 안전망 소거됐으나
+  3렌즈 baked-layout 실증 + make test green 으로 누락 0 확인. 단일 commit revert 가능. 배포 시 healthz/smoke 재확인.
+- Human Approval Needed: P5a PLAN-APPROVED(2026-06-24) 범위. deploy_scope:included 로 머지 후 자동 배포(첫 배포 1줄 표면화).

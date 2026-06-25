@@ -201,7 +201,7 @@ def load_example_queries_context(user_message, scope_key=None, conn=None, top_k=
     if not str(user_message or "").strip():
         return ""
     if scope_key is None:
-        from modules import config as _cfg
+        from shared import config as _cfg
         scope_key = _cfg.get_active_datasource()
     qvec = _embed(user_message)
     if not qvec:

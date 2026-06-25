@@ -26,10 +26,10 @@ __all__ = [
 
 
 """MCP protocol client for DBHub MCP server."""
-from .config import *
+from shared.config import *
 import json, os, re, urllib.error, urllib.request
 from typing import Any
-from . import config as cfg
+from shared import config as cfg
 
 def _mcp_jsonrpc_request(method: str, params: dict[str, Any] | None = None, notify: bool = False):
 

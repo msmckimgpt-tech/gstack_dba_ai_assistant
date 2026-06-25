@@ -15,7 +15,7 @@ __all__ = [
 
 
 """Schema/table insight scanning, bootstrap, background worker."""
-from .config import *
+from shared.config import *
 import hashlib, json, logging, random, re, time, uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -431,7 +431,7 @@ def _load_insight_artifact_states(mem_conn, fact_keys: list[str]) -> dict[str, d
     # rag_objects/texts)다. MySQL AgentMemory* 테이블은 DROP 되어 더 이상 존재하지
     # 않으므로 영속 검증 read-back 도 동일 backend(PG)에서 읽어야 한다. 이 분기가
     # 없으면 매 사이클 4-part 전부 missing 으로 오판 → insight 무한 재생성(livelock).
-    from .config import AGENT_KB_READ_BACKEND
+    from shared.config import AGENT_KB_READ_BACKEND
     if AGENT_KB_READ_BACKEND == "postgres":
         pg_states = _load_insight_artifact_states_pg(keys)
         if pg_states is not None:
@@ -1586,7 +1586,7 @@ def _insight_readback_degraded() -> bool:
     재생성(과거 livelock 의 동력)을 반복한다. 이 함수가 True 면 cycle 은 생성을 skip 하고
     loop 는 길게 backoff 한다. MySQL 모드(postgres 미사용)면 read-back 이 live mem_conn
     을 쓰므로 불일치가 없어 False."""
-    from .config import AGENT_KB_READ_BACKEND
+    from shared.config import AGENT_KB_READ_BACKEND
     try:
         from .runtime_backend import AGENT_RUNTIME_READ_BACKEND
     except Exception:
