@@ -113,7 +113,7 @@ def _breaker_key(datasource: "dict | None") -> "str | None":
     if not datasource:
         return None
     try:
-        from modules import datasources as _ds  # feature-0011 P5a Step 3: datasources 는 아직 modules/ (Step 4 에서 shared 로). lazy 라 import-time cycle 없음.
+        from shared import datasources as _ds  # feature-0011 P5a Step 4: datasources → shared 이동 완료. lazy 라 import-time cycle 없음 (db↔datasources 상호참조).
         k = _ds.scope_key(datasource)
         if k:
             return str(k)
@@ -399,7 +399,7 @@ def connect_with_retry(
     _bkey = _breaker_key(datasource)
     if datasource and _bkey:
         try:
-            from modules import conn_health as _ch  # feature-0011 P5a Step 3: conn_health 는 아직 modules/ (Step 4). db↔conn_health lazy 상호참조 — alias 로 db 단일객체 유지.
+            from shared import conn_health as _ch  # feature-0011 P5a Step 4: conn_health → shared 이동 완료. db↔conn_health lazy 상호참조 — import-time cycle 없음.
         except Exception:
             _ch = None
         # conn-tristate: health down(연속 실패=도달 불가 확정) → 시도 없이 즉시 fail-fast(worker

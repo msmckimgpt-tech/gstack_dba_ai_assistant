@@ -10,9 +10,11 @@ source_of_truth: true
 
 ## 1. Summary
 feature-0002(agent-core)·feature-0003(web-ui) 두 feature 와 격리 컨테이너가 공유하는
-저결합 공통 코드를 repo 루트 `shared/` Python 패키지로 점진 추출한다. 첫 단계(P5a Step 1)는
-db.py 같은 고결합 모듈을 옮기기 전에 **저결합 모듈 하나(`model_catalog`)로 shared/ 플러밍을
-test-gated 로 증명**하는 것이다.
+공통 코드를 repo 루트 `shared/` Python 패키지로 **점진 추출**한다(big-bang 금지, 모듈 1개/step,
+각 step `make test` 회귀 0 게이트). 위상정렬 순서: model_catalog(Step 1, 저결합 플러밍 증명) →
+config(Step 2, L0 foundation) → db(Step 3, L1 최다결합) → conn_health·datasources(Step 4, L1
+cross-feature). Step 2 부터는 고결합 모듈을 **모듈 alias shim**(`sys.modules[__name__]=shared.X`)으로
+옮겨 `modules.X` 와 `shared.X` 를 동일 객체화 → 소비처 재배선 0 으로 비파괴 추출.
 
 ## 2. Goal
 - REQ-001: repo 루트 `shared/` 를 import 가능한 Python 패키지로 확립(`__init__.py`).
@@ -20,19 +22,23 @@ test-gated 로 증명**하는 것이다.
 - REQ-003: 컨테이너(Dockerfile)와 `make test`/eval(PYTHONPATH)이 `shared` 를 양 feature 에서
   import 가능하게 배선하고, `make test` 회귀 0 으로 증명.
 
-## 3. In Scope
-- `shared/__init__.py` 패키지 골격.
-- `model_catalog.py` 를 `modules/` → `shared/` 로 git mv(history 보존).
-- import 재배선: `from modules.model_catalog`/`from .model_catalog` → `from shared.model_catalog`
-  (agent_core.py·app.py·modules/llm.py·tests/test_prompt_gen_max_tokens.py).
-- Dockerfile: `COPY shared /app/shared`.
-- Makefile: test/eval/kb-retrieval-eval PYTHONPATH 에 `/work`(shared 의 부모) 추가.
+## 3. In Scope (누적 — Step 1~4 완료)
+- `shared/__init__.py` 패키지 골격 (Step 1).
+- `modules/` → `shared/` git mv(history 보존) + 추출 방식:
+  - `model_catalog.py` (Step 1, full 이동 + import 4사이트 재배선).
+  - `config.py` (Step 2, 모듈 alias shim — L0 foundation, fan-in 25).
+  - `db.py` (Step 3, 모듈 alias shim — L1 최다결합, fan-in 17).
+  - `conn_health.py`·`datasources.py` (Step 4, 모듈 alias shim — L1 cross-feature).
+- Step 4 back-dep 정리: `shared/db.py` 의 lazy `from modules import datasources/conn_health` →
+  `from shared import …`. `shared/datasources.py` 는 `from modules import cred_crypto` back-dep 유지
+  (cred_crypto 미추출 — 후속 step).
+- Dockerfile: `COPY shared /app/shared` (Step 1, 이후 wholesale 라 추가 배선 불요).
+- Makefile: test/eval/kb-retrieval-eval PYTHONPATH 에 `/work`(shared 의 부모) 추가 (Step 1).
 
-## 4. Out of Scope
-- db.py 추출 + shim (P5a Step 2).
-- import 점진 마이그레이션 + shim 제거 (Step 3).
-- config/memory/llm 등 추가 공통 모듈 (Step 4).
-- feature 단위 Dockerfile 분리 (Step 5).
+## 4. Out of Scope (후속 step / 별도 cycle)
+- cred_crypto·memory·llm 등 추가 공통 모듈 추출 (후속 step).
+- import 점진 마이그레이션(소비처를 `from shared import` 로) + alias shim 제거 (Step 5).
+- feature 단위 Dockerfile 분리 (Step 6).
 - app.py router 분할 (P5b, 별도 Critical cycle).
 - attachment_reconciliation GDPR legal-erasure wiring (별도 compliance 결정).
 
@@ -70,7 +76,10 @@ test-gated 로 증명**하는 것이다.
 - 없음 (model_catalog 은 순수 stdlib: os, typing).
 
 ### shared 모듈 의존성
-- shared.model_catalog (본 cycle 신규).
+- shared.model_catalog (Step 1) · shared.config (Step 2) · shared.db (Step 3) ·
+  shared.conn_health · shared.datasources (Step 4).
+- back-dep: shared.datasources → modules.cred_crypto (cred_crypto 미추출, stdlib-only·cycle 없음).
+- 내부 lazy 상호참조: db ↔ datasources ↔ conn_health (전부 함수내부 lazy → import-time cycle 0).
 
 ## 11. Acceptance Criteria
 - AC-0001: `from shared.model_catalog import ...` 가 두 feature 와 컨테이너(/app)에서 해석된다.
@@ -82,4 +91,5 @@ test-gated 로 증명**하는 것이다.
 - 프로덕션 import smoke: 컨테이너 `/app` 에서 `from shared.model_catalog` + `import modules.llm` 성공.
 
 ## 13. Pre-approved Changes
-- P5a Step 1 (본 cycle): 사용자 승인(P5a/P5b 진행, 2026-06-24).
+- P5a Step 1~4 (model_catalog·config·db·conn_health/datasources): 사용자 승인(P5a/P5b 진행, 2026-06-24 PLAN-APPROVED).
+- deploy_scope: included (프로젝트 전역 standing — 머지 후 자동 배포 + 첫 배포 1줄 표면화).
