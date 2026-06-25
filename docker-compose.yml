@@ -531,6 +531,52 @@ services:
       retries: 12
       start_period: 30s
 
+  # ── 전용 임베딩 Ollama (titan-embed 백엔드 = bge-m3) ──────────────────────────
+  # CHG-20260625: 임베딩 cold-reload 회귀(준비 4s→50s) 해소. 공유 Ollama
+  # (local-llm-edge, 별도 local_llm 프로젝트, MAX_LOADED_MODELS=1) 는 타 서비스
+  # chat 모델이 bge-m3 를 계속 축출해 매 임베딩이 cold 재로딩(실측 27~37s) 이었다.
+  # 본 컨테이너는 bge-m3 만 단독 상주(MAX_LOADED_MODELS=1 + KEEP_ALIVE=-1)시켜
+  # 영구 warm(실측 0.33s) 을 보장한다. bedrock-gateway 의 titan-embed alias 가
+  # api_base http://embed-ollama:11434 로 직접 호출(litellm_config.yaml). GPU 는
+  # local-llm-edge 와 동일한 WSL2 패스스루(/dev/dxg + wsl libs). bge-m3=1.2GB 로
+  # GTX 1660 SUPER(6GB) 에 100% GPU 적재됨(검증 완료). Bedrock Titan 자격 복구 시
+  # litellm_config.yaml 토글 후 본 서비스는 비활성화/제거 가능(무해).
+  embed-ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 4g
+    pids_limit: 256
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ}
+      # WSL2 GPU 패스스루 (local-llm-edge 와 동일 패턴)
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib
+      # bge-m3 단독 영구 상주 — 축출 없는 warm 보장이 본 컨테이너의 존재 이유.
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_FLASH_ATTENTION: 1
+      OLLAMA_NUM_PARALLEL: 2
+    volumes:
+      - embed_ollama_models:/root/.ollama
+      - /root/wsl-gpu/lib:/usr/lib/wsl/lib:ro
+      - /root/wsl-gpu/drivers:/usr/lib/wsl/drivers:ro
+      - ./unit/feature-0007-bedrock-llm-provider/src/scripts/embed-ollama-init.sh:/usr/local/bin/embed-ollama-init.sh:ro
+    devices:
+      - /dev/dxg:/dev/dxg
+    entrypoint: ["/usr/bin/env", "bash", "/usr/local/bin/embed-ollama-init.sh"]
+    networks: [dbnet]
+    healthcheck:
+      # bge-m3 가 적재(pull)된 후에만 healthy — 첫 pull(1.2GB) 시간 허용(start_period).
+      test: ["CMD-SHELL", "ollama show bge-m3 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
   # TASK-0094 (REQ-20260521-0001, Critical §12.3) Sprint 1 Phase 1 — ADR-0022
   # MinIO S3-compat 첨부 객체 스토리지. BRIEFING D1 사용자 직접 확정. 사내망
   # 다운로드는 signed URL (frontend 전용), 외부 LLM 송신은 server-side bytes
@@ -595,3 +641,8 @@ networks:
   replica-net:
     external: true
     name: ${REPLICA_NETWORK_NAME:-replica-net}
+
+volumes:
+  # 전용 임베딩 Ollama 의 모델 저장소(bge-m3). 공유 local_llm 의 models-edge 와
+  # 분리해 두 Ollama 데몬의 동시 쓰기 충돌을 피한다(축출 격리가 본 설계의 핵심).
+  embed_ollama_models:

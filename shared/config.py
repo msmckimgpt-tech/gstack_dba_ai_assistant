@@ -231,6 +231,7 @@ __all__ = [
     "AGENT_KB_EMBEDDING_BATCH_SIZE",
     "AGENT_KB_EMBEDDING_TIMEOUT_SEC",
     "AGENT_KB_EMBEDDING_MAX_ATTEMPTS",
+    "AGENT_KB_QUERY_EMBED_TIMEOUT_SEC",
     "AGENT_KB_EMBEDDING_AUTO",
     "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS",
     "AGENT_KB_EMBEDDING_INTERVAL_SEC",
@@ -545,6 +546,13 @@ AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").st
 AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
 AGENT_KB_EMBEDDING_TIMEOUT_SEC = int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60")
 AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
+# CHG-20260625: 상호작용(준비 단계) 질의 임베딩 전용 fast-fail timeout. 위
+# AGENT_KB_EMBEDDING_TIMEOUT_SEC(60s)/AGENT_TIMEOUT_SEC(300s) 는 오프라인 배치
+# (kb_embedding_worker)·긴 agent run 용 — 사용자 turn 의 grounding 임베딩이 임베딩
+# 백엔드 지연 시 그 길이만큼 init 을 블로킹하던 회귀(준비 50s)의 한 축이었다.
+# grounding 임베딩은 실패해도 trigram 으로 graceful degrade 되므로 짧게 끊어 빠르게
+# 폴백한다(전용 embed-ollama warm 실측 0.33s — 20s 면 cold·일시지연도 충분히 흡수).
+AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "20") or "20")
 # ITEM-05 (하이브리드 검색 — 벡터+키워드 score fusion). gate ON 시 PG read path
 # (_load_rag_documents_for_request_pg) 가 벡터(cosine)+trigram(pg_trgm) 검색을 둘 다 수행해
 # (conversation_id, fact_key, content) union 병합 후 score = ALPHA·vec_sim + BETA·trigram_sim 으로

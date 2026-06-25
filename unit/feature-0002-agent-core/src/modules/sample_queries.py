@@ -31,10 +31,11 @@ def _ro_conn(conn):
     return _pg_connect_ro(), True
 
 
-def _embed(text):
-    """nl_question/질문 임베딩(titan-embed). 미설정/실패 → None(graceful)."""
+def _embed(text, timeout_sec=None):
+    """nl_question/질문 임베딩(titan-embed). 미설정/실패 → None(graceful).
+    CHG-20260625: timeout_sec 전달 — 상호작용(질의) 경로는 fast-fail timeout 을 쓴다."""
     from modules.kb_retrieval import _embed_query_vector
-    return _embed_query_vector(text)
+    return _embed_query_vector(text, timeout_sec=timeout_sec)
 
 
 # ── 등록(RW) — 큐레이션 게이트 통과분만 approved=True ──────────────────────────
@@ -195,15 +196,27 @@ def search_samples(conn, query_vector, scope_key, top_k=_DEFAULT_TOP_K):
         cur.close()
 
 
-def load_example_queries_context(user_message, scope_key=None, conn=None, top_k=_DEFAULT_TOP_K) -> str:
+_QVEC_UNSET = object()  # "벡터 미제공 → 직접 임베딩" 과 "None 전달 → 임베딩 skip" 구분 sentinel
+
+
+def load_example_queries_context(user_message, scope_key=None, conn=None, top_k=_DEFAULT_TOP_K,
+                                 query_vector=_QVEC_UNSET) -> str:
     """질문 임베딩 → approved∧active∧ds-scoped 유사 샘플 top-K → 프롬프트 본문 조립.
-    미매칭/미가용/임베딩실패 → "". scope 미지정 시 활성 datasource(get_active_datasource)."""
+    미매칭/미가용/임베딩실패 → "". scope 미지정 시 활성 datasource(get_active_datasource).
+
+    CHG-20260625: query_vector 를 넘기면 그 벡터를 재사용한다(_build_knowledge_context 가
+    질의 임베딩을 1회만 계산해 few-shot·account recall 이 공유 → 준비 단계 중복 임베딩
+    제거). 미지정(sentinel) 시에만 직접 임베딩하되, 상호작용 fast-fail timeout 을 쓴다."""
     if not str(user_message or "").strip():
         return ""
     if scope_key is None:
         from shared import config as _cfg
         scope_key = _cfg.get_active_datasource()
-    qvec = _embed(user_message)
+    if query_vector is _QVEC_UNSET:
+        from shared.config import AGENT_KB_QUERY_EMBED_TIMEOUT_SEC
+        qvec = _embed(user_message, timeout_sec=AGENT_KB_QUERY_EMBED_TIMEOUT_SEC)
+    else:
+        qvec = query_vector
     if not qvec:
         return ""
     c = None

@@ -69,10 +69,18 @@ model_list:
   #     컨테이너 alias. bedrock-gateway 가 도달하려면 docker-compose.yml 에서
   #     bedrock-gateway 서비스가 llm-shared 에 attach 돼 있어야 한다(본 cycle 에서
   #     `networks: [dbnet, llm-shared]` 로 추가).
+  #
+  # ── CHG-20260625: 공유 Ollama → 전용 embed-ollama 로 전환 ──────────────────
+  # 공유 local-llm-edge 는 OLLAMA_MAX_LOADED_MODELS=1 이라 타 서비스 chat 모델이
+  # bge-m3 를 계속 축출 → 매 임베딩이 cold 재로딩(실측 27~37s) → 준비(init) 단계
+  # 2회 호출로 ~50s 회귀. 전용 embed-ollama(docker-compose `embed-ollama` 서비스,
+  # dbnet)는 bge-m3 만 단독 상주(KEEP_ALIVE=-1)시켜 영구 warm(실측 0.33s). 차원
+  # 동일(1024) 이라 백필/검색 호환. Bedrock Titan 복구 시 아래 토글로 되돌리고
+  # embed-ollama 서비스는 비활성화한다.
   - model_name: titan-embed
     litellm_params:
       model: ollama/bge-m3
-      api_base: http://ollama-edge:11434
+      api_base: http://embed-ollama:11434
   # ── 배포 복구용 (Bedrock Titan v2, Seoul) — AWS_* 자격 확보 후 위 3줄과 토글 ──
   # amazon.titan-embed-text-v2:0 는 Seoul region 접근 가능 확인(2026-06-02 boto3
   # probe, dim=1024). Bedrock 자격(AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)을

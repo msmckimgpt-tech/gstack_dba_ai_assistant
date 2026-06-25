@@ -123,10 +123,14 @@ LIMIT %s
                 pass
 
 
+_QVEC_UNSET = object()  # "벡터 미제공 → 직접 임베딩" 과 "None 전달 → 임베딩 skip" 구분 sentinel
+
+
 def recall_account_conv_facts(
     account_id: Optional[int],
     query_text: str,
     exclude_conversation_id: Optional[str] = None,
+    query_vector: Any = _QVEC_UNSET,
 ) -> list[dict[str, Any]]:
     """계정 과거 대화의 PII-free 인사이트(account_insight)를 의미 회상.
 
@@ -163,7 +167,14 @@ def recall_account_conv_facts(
     if not _pg_available():
         return []
     # 벡터-only fail-closed: 쿼리 임베딩 실패 시 회상 0 (trigram 으로 안 떨어진다).
-    qvec = _embed_query_vector(q)
+    # CHG-20260625: query_vector 를 넘기면 재사용(_build_knowledge_context 가 1회 계산해
+    # few-shot 과 공유 — 준비 단계 중복 임베딩 제거). 미지정 시에만 직접 임베딩하되
+    # 상호작용 fast-fail timeout 적용.
+    if query_vector is _QVEC_UNSET:
+        from shared.config import AGENT_KB_QUERY_EMBED_TIMEOUT_SEC
+        qvec = _embed_query_vector(q, timeout_sec=AGENT_KB_QUERY_EMBED_TIMEOUT_SEC)
+    else:
+        qvec = query_vector
     if not qvec:
         return []
 

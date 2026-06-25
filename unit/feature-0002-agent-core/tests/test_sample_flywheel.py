@@ -70,7 +70,7 @@ def test_search_samples_sql_approved_active_scoped_weighted():
 
 
 def test_load_example_context_injects_examples(monkeypatch):
-    monkeypatch.setattr(SQ, "_embed", lambda t: [0.1] * 4)
+    monkeypatch.setattr(SQ, "_embed", lambda t, **k: [0.1] * 4)
     conn = _FakeConn(search_rows=[
         ("활성 고객 수?", "SELECT count(*) FROM customers WHERE is_active=1", "customers", 100, 0.95),
     ])
@@ -80,13 +80,13 @@ def test_load_example_context_injects_examples(monkeypatch):
 
 
 def test_load_example_context_empty_when_embed_fails(monkeypatch):
-    monkeypatch.setattr(SQ, "_embed", lambda t: None)  # 임베딩 미가용
+    monkeypatch.setattr(SQ, "_embed", lambda t, **k: None)  # 임베딩 미가용
     conn = _FakeConn(search_rows=[("q", "SELECT 1", "d", 100, 0.9)])
     assert SQ.load_example_queries_context("질문", scope_key="ds:sales", conn=conn) == ""
 
 
 def test_load_example_context_empty_no_rows(monkeypatch):
-    monkeypatch.setattr(SQ, "_embed", lambda t: [0.1] * 4)
+    monkeypatch.setattr(SQ, "_embed", lambda t, **k: [0.1] * 4)
     conn = _FakeConn(search_rows=[])
     assert SQ.load_example_queries_context("질문", scope_key="ds:sales", conn=conn) == ""
 
