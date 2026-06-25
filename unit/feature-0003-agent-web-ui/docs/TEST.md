@@ -116,6 +116,12 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-0309 제품 프롬프트 무인 자동완성 (Major §12.3, 2026-06-25)
+- TEST: `tests/test_auto_product_prompt.py` 12/12 PASS (DB 없이 fake/monkeypatch, `make test` 격리).
+  T1 분석률<임계 무생성 · T2 >=임계+미입력 1회 생성·재sweep scanned 0 · **T3 insight reset 후 재상승 무재생성(1회성 핵심)** · T4 프롬프트 존재 skip · T5 pct None skip · T6 pct==95.0 경계 · T7 다제품 적격만 · T8 인증 게이트 위임 · **T9 명시 tx(autocommit False→복원)+commit** · **T10 마커 UPDATE 실패 rollback→미저장·마커 NULL(B1)** · **T11 LLM 실패 backoff(M1)** · **T12 cycle 생성 상한(M2)**.
+- 회귀: `test_insight_coverage.py` 5/5 무회귀 + `py_compile app.py` + ruff PASS.
+- **PB-0008 Windows-browser: N/A(사유 명시)** — 본 변경은 백엔드 백그라운드 sweep + MySQL 컬럼(`AutoPromptGeneratedAt`)만, HTML/CSS/JS 등 **UI 표면 변경 0**. 화면 렌더 검증 대상 없음 → CHECK#13 WARN-only 해당, 실 브라우저 검증 불요. 배포 후 라이브 확인은 "95% 제품 1회 자동완성 + insight reset 후 무재생성"(서버 로그/DB) 로 수행.
+
 ### 구조/문법 검증
 - TEST-0001: `python3 -m py_compile unit/feature-0003-agent-web-ui/src/app.py`
 - TEST-0002: `node --check unit/feature-0003-agent-web-ui/src/static/app.js`

@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260625T161500-auto-product-prompt [SUBAGENT:adversarial-1lens(security+cost+correctness+ops)] — SHIP (BLOCKER 1 + MAJOR 2 흡수) (TASK-0309, Major §12.3 — 자율 LLM dispatch + 자율 DB write)
+- Date: 2026-06-25
+- Cycle: 제품 insight 분석률 95% 도달 시 제품 프롬프트 무인 자동완성(1회성). worktree `ai/claude/auto-product-prompt`(base 262a065). CHG-20260625-auto-product-prompt.
+- §18.8 verification panel = 적대적 코드 리뷰(general-purpose REFUTE, lens: 보안/비용·정확성·운영/동시성). 통과가 아니라 결함 적발 목적. **VERDICT: BLOCK → 수정 후 SHIP**.
+- **BLOCKER B1 — 거짓 원자성(수정)**: `_connect_memory` 가 **autocommit=True** 라 docstring 의 "단일 tx commit / rollback 정합" 이 런타임에 미성립 — upsert·마커 UPDATE·audit 가 각자 즉시 commit 되고 끝의 `conn.commit()`/`rollback()` 은 no-op. 부분 실패(upsert 성공 후 마커 UPDATE 실패) 시 **프롬프트는 저장됐는데 마커 NULL** → 관리자가 프롬프트 삭제 시 1회성 불변식 붕괴(재생성). **수정**: 저장 블록 진입 시 `conn.autocommit = False`(기존 admin mutation 패턴, app.py 13666/21291/21410 선례) + 마커 행 `SELECT ... FOR UPDATE` 잠금 + 재검사 + 단일 commit, except rollback, finally autocommit 복원. 회귀 가드 test_save_uses_explicit_transaction·**test_marker_update_failure_rolls_back**(UPDATE 실패 주입 → 프롬프트 미저장·마커 NULL 검증).
+- **MAJOR M1 — 실패 경로 비용 누수(수정)**: 마커는 성공 시에만 설정되므로, 만성 실패 제품(LLM 권한/쿼터/빈본문)이 매 sweep cycle(180s)마다 LLM 재호출 → "제품당 1회뿐" 단언이 실패 케이스에서 무효. **수정**: in-process 실패 backoff(`_AUTO_PROMPT_FAIL_UNTIL`, `AGENT_AUTO_PROMPT_FAIL_BACKOFF_SEC` 기본 3600) — 실패 제품은 backoff 창 동안 재호출 안 함, 성공 시 해제. 회귀 가드 test_llm_failure_backoff.
+- **MAJOR M2 — cycle 생성 버스트(수정)**: 후보 전체를 한 cycle 에 동기 LLM 직렬 호출 → 최초 활성화 시 이미 95%·미입력 제품 다수면 비용 버스트. **수정**: cycle 당 생성 상한 `AGENT_AUTO_PROMPT_MAX_PER_CYCLE`(기본 3, 0=무제한) — 초과 시 break, 나머지는 다음 cycle(마커가 1회성이라 결국 전부 처리). 회귀 가드 test_max_per_cycle_cap.
+- **MINOR(수용)**: m1 자동 LLM 호출이 `_record_llm_usage`(비용 가시성 chokepoint) 우회 — **수동 '자동작성' 경로도 동일**(feature-wide 기존 갭, TASK-0309 신규 회귀 아님) → 후속 과제로 분리. m2 수동입력 lost-update 잔여 창 — FOR UPDATE + 저장직전 재검사로 축소(완전 차단은 WebSystemPrompts 공통 잠금 필요, 발생확률 낮음). m3 env 소수 임계 float 경계 — 기본 95.0 정확, 무해.
+- **반증 실패=안전 확인**: ① 1회성 reset 생존(`admin_product_insight_reset` 가 PG fact/rag/kv 만 삭제·WebProducts 무변경 코드 확인) ② SQLi(신규 3쿼리 정적/`%s`+int 캐스팅) ③ 인증 분리 누수 없음(엔드포인트가 `_collect_product_prompt_context` 에서 product.manage 강제 후 코어 위임, 코어는 `@app` 미노출) ④ system actor audit 적절(account/role NULL 보정) ⑤ 연결 누수 없음(sweep/auto conn 각 finally close, coverage 자체 PG conn finally close).
+- 검증(수정 후): `test_auto_product_prompt.py` **12/12 PASS**(T1~T12, B1/M1/M2 회귀 가드 포함) + `test_insight_coverage.py` 5/5 무회귀 + `py_compile` + ruff PASS.
+- Human Approval Needed: 아니오(자동 동기화 정책 — deploy_scope: included). 단 배포 후 라이브 확인(95% 제품 1회 자동완성 + reset 후 무재생성) 권장.
+- Cross-ref: TASK-0309 / CHG-20260625-auto-product-prompt / FUNCTION REQ-20260625-auto-product-prompt(AC-0623~AC-0624).
+
 ## REV-20260625T092403-doc-sync-release-notes [SKIPPED: 사용자 노출 릴리즈노트 정적 콘텐츠 큐레이션 — 제품 로직·인가·스키마·렌더로직 무변경, 적대 패널 불요] (TASK-20260625-doc-sync-release-notes, Minor §12.3)
 - Date: 2026-06-25
 - Cycle: `/_dqa:doc_sync` maintenance (CHG-20260625T092403-doc-sync-release-notes). 직전 릴리즈노트(0fd4ca9, 06-23 16:52) 이후 main 병합된 user-facing 변경 14건(late 06-23 + 06-24)을 `static/release-notes-data.js` 릴리즈노트 콘텐츠에 반영(`date: "2026-06-24"` 블록 prepend + `generated` 갱신).

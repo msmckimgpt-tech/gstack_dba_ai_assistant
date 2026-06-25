@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260625-auto-product-prompt (TASK-0309 — 제품 insight 분석률 95% 도달 시 제품 프롬프트 무인 자동완성(1회성), Major §12.3 — 자율 LLM dispatch + 자율 DB write)
+- Date: 2026-06-25. 사용자 요청(/_template:entry): "`관리 콘솔 > 제품`의 각 제품에서 '제품 프롬프트'가 미입력인 항목을 대상으로, 분석률이 95% 넘는 순간 자체적으로 자동완성·저장. 단 임의적 insight 초기화로 재상승해도 별도 분석 안 함(1회성)."
+- Scope: feature-0003 web only. **마이그레이션 = MySQL 멱등 ALTER 1컬럼**(`WebProducts.AutoPromptGeneratedAt`), PG·agent-core·gateway·credential·RBAC·정적자산 무변경. 수동 '자동작성' 엔드포인트(POST/GET `.../prompt/generate[/stream]`) 무변경 보존.
+- 내용(`src/app.py`):
+  - `_ensure_web_tables`: `ALTER TABLE WebProducts ADD COLUMN AutoPromptGeneratedAt DATETIME NULL`(try/except 멱등, 1회성 마커). insight reset 은 PG insight 만 지우고 본 컬럼 보존 → reset→재상승 무재실행.
+  - 리팩터: `_collect_product_prompt_context`(인증 게이트)에서 request-less 조립 코어 `_assemble_product_prompt_llm_request(product_id)` 분리. 인증·무인 경로 공유(중복 0). 시그니처/반환계약/await 무변경 → 비스트리밍·스트리밍 엔드포인트 blast-radius 0.
+  - 신규: `_product_prompt_present`(Scope='product' 비어있지 않음) · `_auto_prompt_eligible_product_ids`(마커 NULL 후보, 컬럼 부재 시 빈목록) · `_autonomous_generate_product_prompt`(조립→동기 LLM→마커 행 FOR UPDATE 잠금+재검사→upsert(system, updated_by NULL)+마커 UPDATE+audit `admin.product.prompt.autogenerate` 를 **autocommit=False 명시 tx** 로 commit, finally 복원) · `_auto_prompt_sweep_once`(미입력 검사 우선→backoff 체크→coverage 캐시→`pct>=임계`→cycle 상한 → 생성) · `@app.on_event("startup") _start_auto_prompt_sweep_loop`(daemon thread, `AGENT_AUTO_PROMPT_SWEEP_SEC` 기본 180·0=비활성, jitter min(45,interval), `_start_db_rule_reconcile_loop` 패턴).
+  - 설정: `_AUTO_PROMPT_COVERAGE_THRESHOLD`(기본 95.0) · `_AUTO_PROMPT_MAX_PER_CYCLE`(`AGENT_AUTO_PROMPT_MAX_PER_CYCLE` 기본 3, 0=무제한) · `_AUTO_PROMPT_FAIL_BACKOFF_SEC`(기본 3600) + in-process `_AUTO_PROMPT_FAIL_UNTIL`(실패 제품 backoff).
+- **적대 리뷰(REV-20260625T161500-auto-product-prompt) BLOCKER 1 + MAJOR 2 흡수**: **B1**(원자성) `_connect_memory` autocommit=True 라 "단일 tx" 거짓 → `conn.autocommit=False` + FOR UPDATE + finally 복원으로 진짜 단일 tx(부분실패 rollback → 마커/프롬프트 정합 = 1회성 불변식 보호). **M1**(비용 누수) 실패 경로 마커 미설정 매-cycle 재호출 → 실패 backoff. **M2**(버스트) cycle 생성 상한. MINOR(m1 `_record_llm_usage` 우회=수동경로 동일 기존갭/m2 lost-update 잔여창/m3 float 경계) 수용.
+- 비용/안전: 성공 시 1회성 마커로 제품당 LLM 1회 영구 제외 · 실패 시 backoff 로 재호출 제한(영구 손실 없음) · cycle 상한으로 버스트 분산 · 저장직전 FOR UPDATE+재검사로 수동입력/경합 보호 · audit(system actor) 추적 · env 로 전면 비활성 가능.
+- 검증: `tests/test_auto_product_prompt.py` 12/12 PASS(T1~T12 — T3 reset 생존·T10 마커 UPDATE 실패 rollback·T11 backoff·T12 cycle 상한 회귀 가드 포함) + `test_insight_coverage.py` 5/5 무회귀 + `py_compile app.py` + ruff PASS.
+- worktree `ai/claude/auto-product-prompt`(base 262a065). REVIEW REV-20260625T161500-auto-product-prompt.
+
 ## CHG-20260624T170757-metadata-ai-autocomplete (TASK-20260624-metadata-ai-autocomplete — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC 표면)
 - Date: 2026-06-24. 사용자 요청(entry persona): "관리 콘솔 > 메타데이터를 실제 관리자가 처음 쓰기 까다롭다 — 모든 탭에 AI 자동완성" + "창이 길어지면 스크롤이 없어 하단 항목을 못 본다". **중단 세션 resume** — 원본 세션이 session limit 으로 프론트 일괄 함수 삽입 직후 중단 → 본 cycle 이 잔여(CSS·테스트·docs·panel·게이트) 완수.
 - Scope: feature-0003 web only. 마이그레이션 없음, gateway·credential·ROADMAP·embedding provider·agent-core 무변경. 기존 metadata 거버넌스(ITEM-11) 폼/부트스트랩 UI 에 AI 채움 버튼만 추가.
