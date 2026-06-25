@@ -193,3 +193,13 @@ source_of_truth: true
 - Risks: 최다결합이나 동일 객체 수렴이라 동작 불변. shim 4개 전부 제거로 안전망 소거됐으나 3렌즈 baked-layout 실증
   + make test green + BLOCKING 수정·재검증. 단일 commit revert 가능. 배포 시 healthz/smoke 재확인.
 - Human Approval Needed: P5a PLAN-APPROVED(2026-06-24) 범위. deploy_scope:included 로 머지 후 자동 배포(첫 배포 1줄 표면화).
+
+## REV-20260625-0008 [SKIPPED:doc-only-codebase-map]
+- Related Change: CHG-20260625-0008 (TASK-0011-11 — CODEBASE_MAP stale 정정 + #4 GDPR gap 명시)
+- §18.8 Adversarial Panel: **SKIPPED — doc-only, 비핵심경로**. 변경은 `docs/CODEBASE_MAP.md`(프로젝트 참조 문서)
+  + feature-0011 docs 뿐, src/런타임/이미지 무영향. 적대 패널의 표적(import 깨짐·런타임·배포)이 부재.
+- 검증(결정적, main-loop): 추가한 사실의 정확성을 소스로 교차확인 — feature-0007~0011 역할은 docs/STATUS.md 표 +
+  각 feature FUNCTION.md §1 과 일치; shared/ 6모듈은 `ls shared/*.py` 실측; PB-0008 은 `playbooks/` 실측;
+  GDPR gap 문구는 feature-0011 ANCHOR §3 동반 메모와 일치. CODEBASE_MAP 내부 표 구조 보존(중복 행 없음).
+- Risks: 없음(doc-only, 배포 불요). 잘못된 기술 시 revert 1 commit.
+- Human Approval Needed: 없음(저위험 doc; PR 생성만 외부노출).

@@ -168,3 +168,16 @@ source_of_truth: true
   §18.8 3렌즈(실 이미지 baked-layout 빌드·실행): **BLOCKING 1 발견·수정**(kb-pg-healthcheck.sh:121 .sh-embedded
   `from modules.db import` — .py-only 마이그가 놓침 → shared.db 로 수정·전파일 재grep 0) / correctness NIT 0 / deploy SAFE.
 - Rollback Notes: 단일 commit revert 로 52파일+healthcheck import 복원 + db shim 재생성. 이미지 재빌드만(스키마/데이터 무변경).
+
+## CHG-20260625-0008
+- Date: 2026-06-25
+- Related Requirement: TASK-0011-11 (동반 저위험 doc) — docs/CODEBASE_MAP.md stale 정정 + #4 GDPR legal-erasure gap 명시.
+- Summary: CODEBASE_MAP 이 feature-0001~0006 까지만 반영하고 shared/ 를 "예약 영역"으로 기술하던 stale 상태를
+  현행화. (1) §1 디렉토리 트리: feature-0007~0011 추가, shared/ 설명을 실제 6모듈로, playbooks PB-0008 추가.
+  (2) §3 Shared Module Index: 예약-영역 1행을 실제 모듈 6행(__init__·model_catalog·config·db·conn_health·datasources)
+  + 추출/배선/shim-제거 맥락으로 교체. (3) §4 Feature File Index: feature-0007~0011 역할·주요소스 5행 추가.
+  (4) §7 Known Gaps 신설: #4 GDPR legal-erasure gap(feature-0002 attachment_reconciliation 미배선) 명시 —
+  코드 보존·dedup 금지·wiring 은 별도 compliance 결정(feature-0011 ANCHOR §3 동반 메모 출처).
+- Files: `docs/CODEBASE_MAP.md` (M, 프로젝트 doc — 본 cycle 유일 코드외 변경) + feature-0011 docs(MODIFY/REVIEW/TASK/REPORT).
+- Impact: 문서 전용(런타임/이미지 무영향, 배포 불요). CODEBASE_MAP 가 현행 11개 feature + shared/ 6모듈 + GDPR gap 을 반영.
+- Rollback Notes: 단일 commit revert(doc only).
