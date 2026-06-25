@@ -306,3 +306,12 @@ source_of_truth: true
 - Impact: 멤버십 read/add/remove·열람 게이트·기존 share/join 무변경(순수 additive, owner 전용 신규 표면). ban 후 메시지/첨부 잔존(tombstone, kick 동일). 신규 PG 테이블 1개(배포 alembic 0018).
 - Rollback Notes: feature-0003 엔드포인트 4 + join/fork 게이트 + static + 테스트 제거 / feature-0002 group_members 4함수 + alembic downgrade(DROP TABLE). 추방은 기존 경로라 무영향.
 - 검증: py_compile + node --check + CSS brace 1561=1561 + test_member_kick_ban 8 + test_member_ban_endpoints 5(fork BLOCKER 회귀 포함) + verify_member_kick_ban 19 + 회귀(group_members 10·share-participants 17·settings-archive-leave 22) PASS. **§18.8 적대 보안/authz 패널 + 재검증 잔여 결함 0**(feature-0003 REVIEW REV-20260625T020410-gc-member-kick-ban). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).
+
+## CHG-20260625T030242-gc-member-actions-hover (cross-feature → feature-0003, Minor §12.3 — frontend CSS-only)
+- Date: 2026-06-25. 코드/문서 정본=feature-0003-agent-web-ui(`static/styles.css`·`index.html`·`docs/*`) — 본 항목은 feature-0009 cross-feature 추적. gc-member-kick-ban UI 후속(사용자 2차 요청).
+- Reason: 추방/차단/해제 버튼 항상-노출이 칩 폭을 키워 사용자당 공간 과도(1차) → 기본 숨김 + 해당 칩 hover 시 애니메이션 펼침(다른 칩 위치 불변). 1차 세로 스택 제안의 우측 여백 낭비 지적(2차) → 반응형 그리드 대안.
+- 변경(feature-0003 `static/styles.css`): `.share-participants`/`.share-bans` `flex-wrap` → `display:grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr))`(셀 고정 → 형제 reflow 0, 다열 세로 단축) + `.share-participant-name flex:1`(셀 폭 채움, 평소 여백 0) + `.share-participant-acts` 기본 접힘(`max-width:0;opacity:0`)→`:hover>`/`:focus-within>` 펼침(transition) + `@media (hover:none)` 터치 폴백. `index.html` 캐시버스터 `member-actions-hover`.
+- Why(설계): flex-wrap 인라인 확장=형제 reflow(요구 위반)·세로 스택=여백 낭비(2차 지적) → 그리드가 셀 고정(reflow 0)+이름 flex 채움(여백 0)+다열(세로 단축) 동시 충족. 셀 내부 펼침이라 클리핑/겹침도 없음.
+- Impact: app.js 칩 DOM(`.share-participant > .share-participant-acts`)·핸들러·권한 게이트 무변경(순수 CSS). 기능/엔드포인트/스키마 0.
+- Rollback Notes: feature-0003 styles.css 그리드+hover 블록 + 캐시버스터 + 테스트 revert. JS/백엔드/스키마 0.
+- 검증: CSS brace 1571=1571 + `verify_member_actions_hover.mjs` 15/15 + 기존 `verify_member_kick_ban.mjs` 무회귀(JS/DOM 불변). 패널 SKIP(순수 CSS 표현계층·로직/보안 0, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).

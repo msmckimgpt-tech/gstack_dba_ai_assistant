@@ -3792,3 +3792,11 @@ source_of_truth: true
 - Verification: `node --check admin.js` PASS + `tests/verify_rule_db_coverage.mjs` **20/20 PASS**(jsdom buildDbCoverageCells 렌더 8 + wiring/M1 6 + CSS 3 + cache-buster 2 + helper 추출 1). UI 실렌더 정본 = PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL) 미실행.
 - Human Approval Needed: 아니오(Minor — 비파괴 표시 추가, 인증/데이터/외부비용 무관).
 - Cross-ref: CHG-20260625T021924-rule-db-coverage / FUNCTION REQ-20260625-rule-db-coverage / TASK-20260625T021924-rule-db-coverage / TEST 2026-06-25 Run.
+
+## REV-20260625T030242-gc-member-actions-hover [SKIPPED:frontend-css-presentation-no-logic] (TASK-20260625T030242-gc-member-actions-hover, REQ-20260625-gc-member-actions-hover, Minor §12.3 — frontend CSS-only)
+- Date: 2026-06-25
+- 분류: **패널 SKIP** — 순수 CSS 표현계층 변경. JS/DOM/핸들러/백엔드/엔드포인트/RBAC/스키마 무변경(app.js 의 칩 구조 그대로 재사용, CSS 셀렉터만 교체). 보안/인가/데이터 표면 0 → 적대 패널 불요.
+- 변경 요지: 공유 팝업 참여자/차단 목록을 반응형 그리드로 바꾸고, 추방/차단/해제 버튼을 기본 접힘 → 칩 hover/focus 시 `max-width`+`opacity`+`transform` 트랜지션으로 펼침. 그리드 셀 고정으로 형제 칩 위치 불변(요구), 이름 `flex:1` 로 평소 여백 0(사용자 2차 요청 충족).
+- 설계 근거(대안 비교): flex-wrap 인라인 확장 = 같은 줄 형제 reflow(요구 위반) / 세로 스택 = 우측 여백 낭비(사용자 2차 지적) / **그리드** = 셀 고정(reflow 0) + 이름 flex 채움(여백 0) + 다열(세로 단축) 동시 충족. 셀 내부 펼침이라 absolute 오버레이의 스크롤 컨테이너 클리핑·이웃 칩 겹침 문제도 없음.
+- Verification: CSS brace 1571=1571 + 신규 `tests/verify_member_actions_hover.mjs` **15/15 PASS**(grid·다열·접힘 기본값·hover/focus 펼침·transition·`@media (hover:none)` 터치 폴백·캐시버스터). 기존 `verify_member_kick_ban.mjs`(JS/DOM 불변) 무회귀. 라이브 시각/애니메이션 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree=WSL 미실행).
+- Cross-ref: CHG-20260625T030242-gc-member-actions-hover / FUNCTION REQ-20260625-gc-member-actions-hover(AC-20260625T030242-gc-member-actions-hover-1·-2) / feature-0009 TASK·MODIFY cross-ref.
