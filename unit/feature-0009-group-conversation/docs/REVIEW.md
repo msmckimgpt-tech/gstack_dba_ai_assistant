@@ -386,3 +386,17 @@ source_of_truth: true
 - 자체 검토: ① 커서 GREATEST 전진만(되돌림 0, 이미 읽은 메세지 부활 없음) ② `isGroupConversation` 게이트로 1:1 무영향 ③ refreshWorkspace 호출 빈도 낮음 + 커서 max 면 no-op(부하 무시) ④ best-effort try/catch(UI 흐름 비차단).
 - Verification: `node --check`(app.js) PASS. PB-0008 배포 후(새로고침→복원 대화→배지 0).
 - Human Approval Needed: 아니오 (Minor·frontend·사용자 명시 버그·무회귀).
+
+## REV-20260625T104906-gc-optimistic-sender-attrib [SUBAGENT:spoofing·hydrate·회귀·422 1렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: gc-optimistic-sender-attrib (CHG-20260625T104906) — optimistic user 메시지 발신자 귀속 정정(비-owner 참가자 메시지가 처리 중 owner 로 잘못 표시되던 깜빡임 제거). **Minor §12.3** (frontend display-only, 인가/스키마/신규권한 0, 서버 권위 발신자 무변경).
+- Related Change: feature-0003 `static/app.js`(`_selfSenderMeta()` 헬퍼 + optimistic 2지점 meta 부여) + `static/index.html`(캐시버스터).
+- Reason: 발신자 귀속 영역(ANCHOR §1 의 actor RBAC 와 표면 인접) → §18.8 적대 패널 1렌즈로 spoofing·정합·회귀 적발 시도.
+- 적대적 검증(general-purpose 서브에이전트 1, "결함 적발" 목적, 코드 직접 read):
+  - **Spoofing**: optimistic `meta` 는 client 메모리(`state.messages`)에만 존재. 실제 전송 본문(`_sendGroupChatMessage` body=`{content}`, `sendPrompt` askBody)에 `sender_*`/`meta` 키 없음. 서버는 `account["id"]`/`username`(인증 세션)에서만 발신자 결정 — app.py 에 `data.get("sender_account_id")`/`data.get("sender_username")`/`data.get("meta")` **0건**. 타인 위장 불가. **OK**.
+  - **Hydrate 정합**: `loadHistory(append=false)` 가 `state.messages` 전량 교체(id-merge 아님) → optimistic(`id:null`)·서버행 충돌/중복 없음. `_liveSyncTick` 에코 dedup 은 role+content 키(meta 무관)라 독립. 재-깜빡임 없음. **OK**.
+  - **회귀**: 1:1/owner 본인 = senderId=own id → `msgIsOwn=true`(기존 isOwn 폴백과 동일 결과). `state.user` 결측/id=0 → `_selfSenderMeta()={}` → 정확히 수정 전 `isOwn` 폴백(안전 degrade). 멘션 하이라이트(`!msgIsOwn`)·아바타 무회귀. **OK**.
+  - **422 재라우팅**: sendPrompt optimistic → 422 시 참조 동등성으로 제거 후 `_sendGroupChatMessage` 가 동일 `_selfSenderMeta()` 재생성 — 발신자 meta 일관. **OK**.
+- 핵심 판정: **SHIP**. BLOCKING 0. 순수 client-render-only, 새 신뢰경계 미도입.
+- Verification: `node --check`(app.js) PASS + 발신자 귀속 결정부 4케이스 node 하니스(BEFORE 버그재현 / AFTER·hydrate 동일 / owner·1:1 무회귀). **PB-0008 미실측**(배포 후 라이브 그룹 대화 권장 — 비-owner 참가자 계정으로 @assistant 전송 직후 우측·본인 이름 확인).
+- Human Approval Needed: 아니오 (사용자 보고 직접 수정, Minor display-only, 무회귀, deploy_scope 판정은 commit 후 안내).

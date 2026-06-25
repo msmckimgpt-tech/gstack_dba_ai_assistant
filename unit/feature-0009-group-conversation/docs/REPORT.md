@@ -36,6 +36,7 @@ source_of_truth: false
 - 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (코어, 머지됨) + ux2(워크트리 ai/claude/gc-live-ux2, 커밋 전).
 
 ## 3. Recent Changes
+- (최신) gc-optimistic-sender-attrib: optimistic(전송 직후) user 메시지 발신자 표시 정정 — 비-owner 참가자의 `@assistant`/채팅 메시지가 처리 중 동안 대화 owner 로 잘못 표시되던 깜빡임 제거. 신규 `_selfSenderMeta()`(현재 사용자 sender meta)를 optimistic 2지점(`_sendGroupChatMessage`·`sendPrompt`)에 부여. frontend display-only(서버 권위 발신자·client meta 미전송 무변경). (CHG-20260625T104906)
 - gc-unread-read-fix: `refreshWorkspace`·재선택 경로 읽음 커서 전진 누락 보정(frontend app.js). 복원된 대화도 읽음→배지 0. (CHG-20260625T194159)
 - gc-unread-baseline: alembic 0020 backfill(기존 멤버 last_read=대화별 `MAX(id)`) + `group_members.add_member` INSERT baseline(가입 시점 `MAX(id)`). 0019 baseline 누락 보정 — "읽지 않은 신규 메세지만" 집계. (CHG-20260625T165320)
 - gc-unread-badge: alembic 0019 `conversation_members.last_read_message_id` + 읽음 API + 목록 unread/멘션 집계 + FE 배지/읽음처리/주기갱신 + `mentions.sql_mention_regex` + test_mentions 파리티 3. (CHG-20260625T065840)

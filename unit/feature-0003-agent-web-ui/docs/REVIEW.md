@@ -3874,3 +3874,11 @@ source_of_truth: true
 - 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 머지 5건(908fade/1f370c4+334c858/1a69f70/c8637f2) 1:1 대조. 비-user-facing(6104bf6 개발용 LLM 호출주체 임시전환)은 의도적 제외 확인. PR#442(unread baseline)는 기존 안 읽음 배지 항목에 흡수.
 - Human Approval Needed: 아니오.
 - Cross-ref: CHG-20260625T192007-doc-sync-rn-0625b / TASK-20260625T192007-doc-sync-rn-0625b / FUNCTION '릴리즈노트 콘텐츠 — 06-25 잔여 머지분(5건) 추가' / META commit(STATUS·wiki·overview·hot·Log 06-25 잔여 정합).
+
+## REV-20260625T105417-steps-btn-cachebust [SKIPPED:cache-buster-only-no-logic] (TASK-20260625T105417-steps-btn-cachebust, Minor §12.3 — frontend-only)
+- Date: 2026-06-25 (/_template:entry dispatch 후속, worktree ai/claude/steps-btn-cachebust).
+- 변경: index.html 의 `app.js?v=20260625-gc-unread-read-fix` → `?v=20260625-steps-btn-pending-persist` 1줄. 직전 cycle(steps-btn-pending-persist)의 app.js 수정이 캐시된 사용자에게 전파되도록 cache-buster bump.
+- SKIP 사유(§18.4): 순수 캐시버스터 쿼리 문자열 변경 — JS/렌더/인가/스키마/응답계약 무변경. 적대 패널 불요. (정적 자산 전파 메커니즘은 app.py:10582 TASK-0256d 에 명세 — HTML no-cache + 정적 `?v=` 버스팅.)
+- 검증: app.js 는 index.html 에서만 로드(grep 확인) — 단일 진입점 bump 으로 충분.
+- Human Approval Needed: 아니오.
+- Cross-ref: CHG-20260625T105417-steps-btn-cachebust / CHG-20260625T103503-steps-btn-pending-persist(전파 대상).
