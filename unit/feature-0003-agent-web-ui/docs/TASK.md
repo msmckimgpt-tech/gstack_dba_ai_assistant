@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260625T192007-doc-sync-rn-0625b — 06-25 잔여 머지분 릴리즈노트 정합 + cache-buster bump (doc_sync maintenance, Minor §12.3 — 정적 콘텐츠)
+- 출처: `/_dqa:doc_sync` (no-arg 전 타깃 정합). 직전 doc_sync(doc-sync-20260625-163929, PR#420~#436 기준 16:55~17:01 콘텐츠 작성)가 그 **이후** main 병합된 06-25 user-facing 변경 5종을 미반영(브랜치 stale 잔여 drift) → 기존 `2026-06-25` 블록에 항목 추가(append — 신규 일자 블록 아님, 같은 날 머지분).
+- 대상 머지(5): PR#440(908fade) 참가자 per-message 제품 선택·발화 · PR#438(1f370c4)+PR#444(334c858 R1) 처리 중 입력창 비잠금/동시 run 고착·채팅 블로킹 해소 · PR#444(R3/R2) 1:1 인터럽트 재요청 + 그룹 @assistant 중복차단 · PR#437(1a69f70) @assistant 발신자 귀속 표시 정정 · PR#439(c8637f2) datasource 회로차단 사용자 안내 문구 분리.
+- 범위: **릴리즈노트 콘텐츠 데이터만** — 렌더 로직·백엔드·스키마·RBAC 무변경. 사용자 평이화(내부 구현/feature-id/테이블명/엔드포인트 비노출). PR#442(unread baseline 보정)는 06-25 안 읽음 배지 항목에 흡수(별도 항목 불요), 17:24 chore(개발용 LLM 호출주체 임시전환 CHG-20260625T171844)는 비-user-facing 제외.
+- [x] `release-notes-data.js`: 기존 `2026-06-25` 블록 items 9→14(work +4: per-message 제품 선택 · 처리 중 입력/전송 안정화 · 인터럽트 재요청 · 발신자 표시 정정 / common +1: 회로차단 안내) + summary 갱신. `generated` 2026-06-25 유지.
+- [x] cache-buster: `index.html`·`admin.html` release-notes-data.js `?v=20260625b-rn-0625` → `?v=20260625c-rn-0625` bump.
+- [x] 검증: `node --check release-notes-data.js` PASS + 스키마(type/area/title/detail) 정합 + 머지 5건 1:1 대조. 적대 사실검증(평이화·내부 비노출·과장 0).
+- [x] **리뷰(REV-20260625T192007-doc-sync-rn-0625b [SKIPPED]):** 정적 사용자노출 콘텐츠 큐레이션 — 제품 로직·인가·스키마 무변경, 적대 패널 불요(§18.4 비-정책 doc 경량 cycle).
+- [ ] verify-completion(operational, feature-0003) → 머지 → web 재배포(static baked, deploy_scope: included) → 마감.
+
 ## TASK-20260625T165205-doc-sync-rn-0625 — 06-25 머지분 릴리즈노트 정합 + cache-buster bump (doc_sync maintenance, Minor §12.3 — 정적 콘텐츠)
 - 출처: `/_dqa:doc_sync` (resume from doc-sync-20260625-160433, session-limit 중단 재개). `src/static/release-notes-data.js`(사용자 노출 릴리즈노트, 정적 큐레이션 데이터)가 직전 릴리즈노트(06-24 블록, 600f2b5) 이후 main 병합된 06-25 user-facing 변경 9종을 미반영(doc/reality drift) → 새 `2026-06-25` 블록 prepend.
 - 범위: **릴리즈노트 콘텐츠 데이터만** — 렌더 로직(release-notes.js)·백엔드·스키마·RBAC 무변경. 사용자 평이화(내부 구현/feature-id/테이블명/엔드포인트 비노출).

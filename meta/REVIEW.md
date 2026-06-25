@@ -271,3 +271,15 @@
 - **잔여 drift (정직 고지)**: `wiki/concepts/nl2sql-flywheel.md` §2 가 ITEM-08/ITEM-11 출시 미반영(stale) — 후속 doc_sync 1회 필요(hot.md Active Threads 기록). 본 run scope 외(06-25 머지 drift 에 집중).
 - **panel scope**: §18.8 — doc-only mirror/index 정합(핵심경로 코드 무변경)이나 사실 환각 위험이 있어 adversarial 1관점 수행. Minor·비파괴.
 - **Human Approval Needed**: 아니오 (additive doc-sync mirror/index 정합, 비파괴, 신규 production 동작 0, 전역 auto-sync 정책).
+
+## REV-20260625T192007-ai-claude-doc-sync-20260625-192007 [SUBAGENT:doc-sync]
+
+- **cycle**: ai/claude/doc-sync-20260625-192007 — `/_dqa:doc_sync` (no-arg 전 타깃 정합). 직전 doc_sync(163929, PR#420~#436 기준 16:55~17:01 콘텐츠 작성, 17:09 머지)가 그 **이후** main 병합된 06-25 user-facing 변경 5종을 브랜치 stale 로 누락 → 잔여 drift 정비. 베이스라인 HEAD=04862c0(PR#444 포함).
+- **changeset (pure-meta, META commit)**: `docs/STATUS.md` · `wiki/Features/feature-0009-group-conversation.md` · `wiki/overview.md` · `wiki/hot.md` · `wiki/Log.md` · `meta/REVIEW.md`(본 entry). (릴리즈노트 콘텐츠 + cache-buster + feature-0003 companion docs 는 `unit/feature-0003/src/static` operational → **별도 commit**, owning feature-0003 operational gate.)
+- **대상 머지(5)**: PR#440(908fade) 참가자 per-message 제품 선택·발화(REQ-GC-R7) · PR#438(1f370c4)+PR#444(334c858 R1) 처리 중 composer 비잠금/동시 run 고착·블로킹 해소 · PR#444(R3/R2) 1:1 인터럽트 재요청 + 그룹 @assistant 중복차단 · PR#437(1a69f70) @assistant 발신자 표시 정정 · PR#439(c8637f2) datasource 회로차단 사용자 안내 문구 분리(feature-0002).
+- **정합 요지**: ① STATUS 인덱스 — feature-0002 행에 "회로차단 안내 문구 분리(고장 오인 해소)" 추가, feature-0009 행 라이브UX 절에 "composer 비잠금·1:1 인터럽트 재요청·그룹 중복차단" 추가(per-message 제품 선택은 직전 sync 가 이미 적재). ② feature-0009 카드 §2 상태·§3 핵심모델(열람≠발화에 per-message override 명시)·§3 라이브UX·§7 변경이력 정합. ③ overview 06-25 서사 ⑦(per-message 제품·composer)·⑩(동시 처리 고착·회로차단 안내) 보강. ④ hot.md Key Recent Facts/Recent Changes 보강(Active Threads 보존) + Log append.
+- **SSOT 계약 준수**: STATUS 인덱스 모델 — rollup blockquote 추가 0(셀 누적 없음, ADR-0031 §1), 기존 행 요지에 절만 추가. mirror 정본 재서술 없이 요지·링크. `bin/ssot-lint.sh` WARN-only(기존 tracked secret 백업 4건 — STATUS §3 블로킹·rotation 선행, 본 변경 무관 / wiki-sot 거짓SOT 0 / archived 0).
+- **타깃별 검증**: `node --check` release-notes-data.js OK(06-25 블록 9→14) · wiki feature 수 ground-truth 정합(`ls unit/feature-*`=11 = overview "11 개 feature"/"11-feature" = Features 카드 11 = _Index "11 개") · 변경 파일 12건 의도대로(디코이 .env*.bak*/.worktrees/artifacts 0) · cache-buster index/admin 양쪽 `?v=20260625c-rn-0625`.
+- **panel (SUBAGENT, adversarial 사실검증)**: general-purpose 1관점 — 환각/귀속정확성/평이화·내부비노출/과장/누락 5축을 머지 본문 5건(908fade/1f370c4/c8637f2/1a69f70/334c858)과 전수 대조. **VERDICT CLEAN** (BLOCKING 0). 릴리즈노트 내부용어(myAskInFlight·_interruptCurrentRunForResend·KIND_THROTTLED 등) 누출 0, 누락 머지 0(PR#442 흡수·6104bf6 chore 제외 정당 확인).
+- **잔여 drift (정직 고지)**: `wiki/concepts/nl2sql-flywheel.md` §2 가 ITEM-08/ITEM-11 출시 미반영(stale) — 직전 sync 가 이미 고지한 항목, 본 run scope(06-25 머지 drift) 외. hot.md Active Threads 에 유지.
+- **Human Approval Needed**: 아니오 (additive doc-sync mirror/index 정합, 비파괴, 신규 production 동작 0, 전역 auto-sync 정책).
