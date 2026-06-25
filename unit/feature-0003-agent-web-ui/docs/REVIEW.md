@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260625T011816-doc-sync-release-notes [SKIPPED:release-notes-content-curation-no-backend-no-rbac] (TASK-20260624-doc-sync-release-notes, Minor §12.3 — 비기능 콘텐츠)
+- **cycle**: `/_dqa:doc_sync`(no-arg maintenance) 의 operational 타깃 — 릴리즈 노트(`src/static/release-notes-data.js`)에 06-24 user-facing 머지 변경 정합. cross-cutting doc_sync 의 META 정합(STATUS·wiki·ARCHITECTURE)은 별도 META commit(META-0009-doc-sync-0624)으로 분리, 본 commit 은 owning feature(feature-0003) operational.
+- **changeset**: `static/release-notes-data.js`(generated 06-23→06-24 + 06-24 블록 6항목 prepend) + `static/index.html`·`static/admin.html` 캐시버스터 `?v=20260623-rn-0623`→`?v=20260624-rn-0624` + `docs/{TASK,MODIFY,FUNCTION}.md` companion. **백엔드·스키마·RBAC·엔드포인트·JS 로직 0** — 순수 사용자향 콘텐츠 + 캐시 무효화.
+- **panel skipped 사유 (§18.8 — 비정책 doc, no backend/rbac)**: 릴리즈 노트는 큐레이션 정적 콘텐츠(비민감, 콘솔/로그인 진입자 노출, 권한 매핑 없음 — admin.html:82 주석 정합). 신규 판단 로직·데이터 경로·보안 경계 0. 적대 패널 불요. precedent: `REV-20260618T050409-ai-claude-release-notes [SKIPPED:frontend-css-collapse-hotfix-no-backend-no-rbac]`.
+- **검증 (타깃별)**: `node --check`(release-notes-data.js) PASS · 데이터 스키마/평이화 인라인 assert(generated=2026-06-24 · releases[0].date=2026-06-24 · 6 items type∈{new,improved,fixed}·area∈{work,admin,common} · 내부용어(feature-id/TASK-/app.py/RBAC/테이블명) 누출 0) PASS · 캐시버스터 ×2 정합. `tests/verify_release_notes.mjs`(jsdom 컨테이너 의존)는 본 worktree 미실행 — 배포 후 web 이미지에서 실행(TASK 메인 step, 정직 보고).
+- **사용자향 평이화**: 내부 동작 비노출 확인(스키마 §작성 원칙) — "안정성/보안 개선" 수준 언어, 화면 체감 변화만. FUNCTION §13 에 큐레이션 표준 + 반영 기준일 기록.
+- **Human Approval Needed**: 아니오 (additive 콘텐츠, 사용자 "지금 포함" 지시).
+- **deploy**: web static baked → 배포 시 재빌드 + 캐시버스터 반영(별도 deploy 단계). 완료 기준 = 릴리즈 노트 화면 06-24 블록 노출.
+
 ## REV-20260624T170757-metadata-ai-autocomplete [SUBAGENT:adversarial-2lens(backend-security+frontend-css)] — SHIP (BLOCKING 2건 흡수) (TASK-20260624-metadata-ai-autocomplete, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC 표면)
 - Date: 2026-06-24
 - Cycle: 중단 세션 resume — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정. 백엔드 2 엔드포인트는 기 작성(미커밋), 본 cycle 은 CSS(스크롤+버튼)·테스트·docs·§18.8 panel·완료 게이트.

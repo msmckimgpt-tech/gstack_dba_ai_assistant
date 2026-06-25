@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260624-doc-sync-release-notes — 릴리즈 노트 06-24 user-facing 정합 (doc_sync maintenance, Minor §12.3 — 비기능 콘텐츠, 백엔드·RBAC·스키마 무영향)
+- 출처: `/_dqa:doc_sync`(no-arg maintenance) — 릴리즈 노트 최신 블록이 06-23 에 정체, 06-24 머지 user-facing 변경(메타데이터 거버넌스·설명 AI 자동완성·그룹 대화 참여자 표시·보관/나가기·알림 제어·공유 owner 게이트) 누락 정합. cross-cutting doc_sync 의 operational 타깃(릴리즈노트=feature-0003 static)이라 owning feature cycle 규약으로 처리.
+- [x] `src/static/release-notes-data.js`: `generated` 06-23→06-24 + 최신 슬롯에 2026-06-24 블록(6 항목 — admin 2: 메타데이터 사전·설명 AI 자동완성 / work 4: 참여자 표시·보관·나가기·알림·owner 게이트) prepend. 사용자향 평이화(내부 동작·feature-id·테이블명 비노출), 항목 스키마(type/area/title/detail) 준수.
+- [x] 캐시버스터 bump: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260623-rn-0623` → `?v=20260624-rn-0624`.
+- [x] 검증: `node --check`(release-notes-data.js) + 데이터 스키마/평이화 단언(generated·releases[0].date·type/area enum·내부용어 누출 0) + 캐시버스터 ×2 정합. (`tests/verify_release_notes.mjs` 는 jsdom 컨테이너 의존 → 본 worktree 미실행, 배포 후 web 이미지에서 실행.)
+- [ ] (메인) verify-completion(feature-0003 operational) → 머지 → 배포(web, static baked + 캐시버스터) → 릴리즈 노트 화면 06-24 블록 노출 확인.
+
 ## TASK-20260624-metadata-ai-autocomplete — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정 (중단 세션 resume, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC)
 - 출처: 사용자 요청(entry persona) "관리 콘솔 > 메타데이터를 실제 관리자가 처음 쓰기 까다롭다 — 모든 탭에 AI 자동완성" + "창이 길어지면 스크롤이 없어 하단 항목을 못 본다". 원본 세션이 session limit 으로 프론트 일괄 함수 삽입 직후 중단 → 본 cycle 이 resume 으로 잔여(CSS·테스트·docs·panel·게이트) 완수.
 - 범위: feature-0003 web only. 마이그 없음, agent-core·gateway·credential·ROADMAP 무변경. 기존 metadata 거버넌스(ITEM-11) 폼/부트스트랩에 AI 채움 버튼 추가.

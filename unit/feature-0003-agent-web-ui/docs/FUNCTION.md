@@ -650,6 +650,7 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 
 ## 13. Pre-approved Changes
 - 비파괴적 경로 재배치와 이미지 복사 경로 수정
+- 릴리즈 노트 콘텐츠(`src/static/release-notes-data.js`)는 사용자향 큐레이션 정적 자산으로, 내부 동작·구현 명칭·feature-id·테이블명을 노출하지 않는 평이한 한국어로 유지한다(비기능 콘텐츠 갱신, 백엔드·RBAC·스키마 무영향). `/_dqa:doc_sync` maintenance 가 머지된 user-facing 변경을 정합하며, 변경 시 `index.html`·`admin.html` 의 `release-notes-data.js?v=` 캐시버스터를 동반 bump 한다. **최신 반영 기준일: 2026-06-24** (`?v=20260624-rn-0624`).
 
 - REQ-20260521-0001 (TASK-0094, **Critical** §12.3): 첨부 기능 multi-cycle (A CSV ingest + B DDL/KB + C Vision + D PDF RAG). BRIEFING-attachment-multi-cycle.md Revision 2 의 D1~D21 21 결정 정본. Codex outside-voice review 2 회 (REV-20260520-0001 1차 + REV-20260521-0002 2차) 흡수. Sprint 1 (Cycle 0 Foundation + Cycle 1 A CSV ingest) → 2 → 3 → 4 sprint 단위 진행. **D14 SQL allowlist guard 통과** 가 Sprint 1 ship 조건 (Phase 12). Sprint 1 의 AC 항목은 Phase 단위 누적 — Phase 1 (Pre-flight) 의 AC 는 인프라/정책만, Phase 2~12 진입 시 각 Phase 의 AC 추가.
   - AC-0205 (Phase 1 — Pre-flight): docker-compose.yml 에 `minio` service (image `minio/minio:RELEASE.2024-12-13T22-19-12Z`, api 9000 / console 9001, volume `../artifacts/minio-data:/data`, healthcheck `curl /minio/health/live`) + `minio-init` one-shot service (image `minio/mc`, entrypoint `/usr/local/bin/minio-init.sh`, depends_on minio service_healthy) 추가. compose service count +2.

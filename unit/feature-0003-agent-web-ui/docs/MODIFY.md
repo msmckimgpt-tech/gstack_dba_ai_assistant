@@ -4593,3 +4593,15 @@ source_of_truth: true
 - Files: `static/app.js`, `static/styles.css`, `static/index.html`, `tests/verify_share_participants.mjs`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md` (+ feature-0009 `docs/{TASK,MODIFY}.md` cross-ref).
 - Rollback: app.js(`loadParticipants`+팝업 골격 2줄+갱신 2줄)/styles.css(`.share-participant*`)/index.html(캐시버스터) revert + 테스트 제거(순수 additive·표현계층). 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked) + cache-buster 반영. 마이그/백엔드 없음.
+
+## CHG-20260625T011816-doc-sync-release-notes (doc_sync maintenance, Minor §12.3)
+- Scope: `/_dqa:doc_sync`(no-arg) 가 릴리즈 노트(`src/static/release-notes-data.js`)에 06-24 user-facing 머지 변경을 정합. 백엔드/스키마/RBAC/엔드포인트/JS 로직 무변경 — 데이터 콘텐츠 + 캐시버스터만.
+- 내용:
+  - `static/release-notes-data.js`: `generated` `"2026-06-23"`→`"2026-06-24"` + `releases` 최신 슬롯(head)에 `date:"2026-06-24"` 블록 prepend. 6 항목 — **admin 2**(데이터 용어·코드값 사전+표/컬럼 설명 관리 / 메타데이터 설명 AI 자동완성 초안), **work 4**(그룹 대화 공유 화면 참여자 표시 / '보관' 설정 메뉴 이동+'나가기' / 그룹 대화 알림 직접 제어 / 공유 '참여 허용' owner-only). 항목 스키마(`type∈{new,improved,fixed}`·`area∈{work,admin,common}`·`title`·`detail`) 준수.
+  - `static/index.html`(line 569)·`static/admin.html`(line 732): `release-notes-data.js?v=20260623-rn-0623`→`?v=20260624-rn-0624`(새 데이터 서빙용 캐시 무효화).
+- Why: 릴리즈 노트 최신 블록이 06-23 에 정체. 06-24 머지(ITEM-11 메타데이터 거버넌스·AI 자동완성, 그룹 대화 참여자 roster·보관 이동·나가기·알림 제어, 공유 owner 게이트)가 사용자에게 보이는 변화인데 릴리즈 노트에 부재. doc_sync 의 operational 타깃(릴리즈노트=feature-0003 static)이라 owning feature cycle 규약으로 정합.
+- 사용자향 평이화: 내부 동작·구현 명칭·feature-id·테이블명 비노출, 화면에서 체감하는 변화만 평이한 한국어로(스키마 주석 §작성 원칙 준수). FUNCTION §13 에 큐레이션 표준 + 반영 기준일(2026-06-24) 기록.
+- Verification: `node --check`(release-notes-data.js) PASS + 데이터 스키마/평이화 단언(generated·releases[0].date·type/area enum·내부용어 누출 0 — 인라인 node assert) PASS + 캐시버스터 ×2 정합. `tests/verify_release_notes.mjs` 는 jsdom(컨테이너 의존) 부재로 본 worktree 미실행 — 배포 후 web 이미지에서 실행(TASK 메인 step). verify-completion feature-0003 operational gate(#2/#3/#4/#9) 별도 통과.
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: 데이터 블록 + generated + 캐시버스터 ×2 revert(순수 콘텐츠·additive). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) + 캐시버스터 반영. 마이그/백엔드 없음.
