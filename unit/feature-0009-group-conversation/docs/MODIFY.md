@@ -414,3 +414,15 @@ source_of_truth: true
 - Impact: 순수 frontend 읽음 처리 호출 위치 보강. 백엔드/스키마/엔드포인트 0(`POST /read` 기존 재사용). 1:1·비그룹 무영향(`isGroupConversation` 게이트). 커서 이미 max 면 `set_last_read` GREATEST no-op(부하 무시).
 - Rollback: app.js 2곳 + index.html 캐시버스터 revert.
 - 검증: `node --check` PASS. 패널 SKIP(frontend 읽음처리 보강·로직 신설 0·비핵심경로·신규 표면 0). PB-0008 배포 후 실측(새로고침→복원 대화 읽음→배지 0).
+
+## CHG-20260625T104906-gc-optimistic-sender-attrib (feature-0003 frontend-only, Minor §12.3 — optimistic 발신자 표시 정정)
+- Date: 2026-06-25. worktree `ai/claude/gc-optimistic-sender-attrib`. 코드 정본=feature-0003-agent-web-ui(`static/app.js`·`static/index.html`) — feature-0009 cross-feature 추적.
+- Reason: 사용자 보고(`/_template:entry`) — 그룹 대화에서 비-owner 참가자가 `@assistant <메시지>` 전송 시, 전송 직후(처리 중) 말풍선이 "대화 owner 가 보낸 것"처럼 좌측·owner 이름으로 표시되고, 답변 완료(폴링 hydrate) 후 본인으로 복구되는 깜빡임.
+- 근본 원인: optimistic(서버 확인 전) user 메시지가 `meta: {}` 로 생성됨. `renderMessages()`(static/app.js ~3870-3894)는 user 메시지의 `meta.sender_account_id`/`meta.sender_username` 부재 시 `msgIsOwn = isOwnConversation(conversation)` 로 폴백 → 비-owner 참가자는 false → `is-other-message`(좌측) + speaker=ownerLabel(owner 이름) + 아바타도 owner 폴백. 폴링 hydrate 가 서버 mirror meta(정확한 발신자)를 싣고 나서야 본인으로 교체됨.
+- 변경(FE `static/app.js`):
+  - 신규 헬퍼 `_selfSenderMeta()` — 현재 사용자의 `{sender_account_id, sender_username}` 반환(id/username 결측 시 해당 키 생략 → 수정 전과 동일 `isOwn` 폴백으로 안전 degrade). 서버 mirror 와 동일 키 집합(`_save_group_chat_message_pg` / gc-ask-sender-attrib 정합).
+  - optimistic user 메시지 생성 2지점 `meta: {}` → `meta: _selfSenderMeta()`: ① `_sendGroupChatMessage`(그룹 사람-사람 채팅), ② `sendPrompt`(@assistant 경로). 발신자는 정의상 현재 사용자이므로 전송 시점에 본인 귀속 부여 → 우측·`나 (username)`·본인 아바타 즉시 표시, hydrate 후에도 동일 → 깜빡임 제거.
+  - index.html app.js 캐시버스터 `composer-nonblock-interrupt` → `gc-optimistic-sender-attrib`.
+- Impact: 순수 client-render-only. 서버는 sender_account_id 를 인증 세션(`account["id"]`)에서만 결정하며 client 가 보낸 meta 를 전송/참조하지 않음(spoofing 불가 — app.py 에 `data.get("sender_*")`/`data.get("meta")` 경로 0건). 1:1·owner 본인·멘션 하이라이트·아바타·422 재라우팅(sendPrompt→_sendGroupChatMessage 동일 헬퍼) 무회귀. 스키마/인가/신규 권한 0.
+- Rollback Notes: 2지점 `meta: _selfSenderMeta()` → `meta: {}` + 헬퍼 제거 + 캐시버스터 revert. 완전 가역, 데이터 무손실.
+- 검증: `node --check`(app.js) PASS + 발신자 귀속 결정부 추출 4케이스 node 하니스(참가자 전송직후 BEFORE=`LEFT|alice`(버그재현)→AFTER=`RIGHT|나 (bob)`=hydrate 동일 / owner·1:1 무회귀) + §18.8 적대 패널 1렌즈(spoofing·hydrate정합·회귀·422) **SHIP, BLOCKING 0**. **PB-0008 미실측**(배포 후 라이브 그룹 대화 권장).

@@ -7854,6 +7854,21 @@ function _bindComposerActionsEvents() {
   });
 }
 
+// feature-0009 gc-optimistic-sender-attrib: optimistic(전송 직후·서버 확인 전) user 메시지의 발신자 귀속 meta.
+// optimistic 메시지에는 서버가 부여하는 sender meta 가 아직 없어, renderMessages 가 meta.sender_* 부재 시
+// 대화 owner 로 폴백한다(line ~3870/3892) → 비-owner 참가자가 막 보낸 메시지가 잠시 "owner 가 보낸 것"처럼
+// 좌측·owner 이름으로 표시되다 폴링 hydrate 후 본인으로 복구되는 깜빡임이 발생한다. 발신자는 정의상 현재
+// 사용자이므로 전송 시점에 본인 귀속 meta 를 부여해 깜빡임을 제거한다(서버 mirror 와 동일 키 집합:
+// sender_account_id/sender_username — _save_group_chat_message_pg / gc-ask-sender-attrib 와 정합).
+function _selfSenderMeta() {
+  const meta = {};
+  const uid = Number((state.user && state.user.id) || 0);
+  if (uid) meta.sender_account_id = uid;
+  const uname = (state.user && state.user.username) || "";
+  if (uname) meta.sender_username = uname;
+  return meta;
+}
+
 // feature-0009: 그룹 대화 사람-사람 채팅 전송 (AI 미호출). @assistant 멘션 없는 메시지 경로.
 async function _sendGroupChatMessage(cid, message) {
   const optimistic = {
@@ -7861,7 +7876,7 @@ async function _sendGroupChatMessage(cid, message) {
     role: "user",
     content: message,
     created_at: new Date().toISOString(),
-    meta: {},
+    meta: _selfSenderMeta(),
     _optimistic: true,
   };
   state.messages = [...state.messages, optimistic];
@@ -8008,7 +8023,9 @@ async function sendPrompt() {
     role: "user",
     content: message,
     created_at: new Date().toISOString(),
-    meta: {},
+    // gc-optimistic-sender-attrib: 발신자(현재 사용자) 귀속 — 비-owner 참가자의 @assistant 메시지가
+    // 처리 중 동안 owner 로 잘못 표시되던 깜빡임 제거(renderMessages meta.sender_* 부재 폴백 회피).
+    meta: _selfSenderMeta(),
     _optimistic: true,
     _attachments: _sendAttachmentSnapshot.length ? _sendAttachmentSnapshot : undefined,
   };
