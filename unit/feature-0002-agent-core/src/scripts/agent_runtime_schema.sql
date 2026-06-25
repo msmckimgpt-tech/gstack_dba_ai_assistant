@@ -181,6 +181,26 @@ CREATE INDEX IF NOT EXISTS ix_conv_members_account
     ON agent_runtime.conversation_members (account_id);
 
 -- ============================================================================
+-- 2c. conversation_member_bans — feature-0009 member-kick-ban
+--    소유자(owner)가 특정 account 를 이 대화에서 차단(ban) → 공유 링크로 재참여 영구 차단.
+--    추방(kick)=conversation_members 에서 제거(재참여 가능). 차단(ban)=제거 + 이 테이블 등재
+--    (POST /api/share/{token}/join 가 is_banned 체크로 거부). 해제(unban)=이 테이블에서 제거.
+--    PK=(conversation_id, account_id) — account 당 1행. owner 는 차단 불가(엔드포인트 가드).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_runtime.conversation_member_bans (
+    conversation_id       varchar(128) NOT NULL,
+    account_id            bigint       NOT NULL,
+    banned_at             timestamptz  NOT NULL DEFAULT now(),
+    banned_by_account_id  bigint,
+    reason                varchar(512),
+    PRIMARY KEY (conversation_id, account_id),
+    CONSTRAINT fk_conv_member_bans_conv
+        FOREIGN KEY (conversation_id)
+        REFERENCES agent_runtime.core_conversations (conversation_id)
+        ON DELETE CASCADE
+);
+
+-- ============================================================================
 -- 3. kv — MySQL AgentMemoryKv 등가
 --    PK: (conversation_id, key) — composite (MySQL 원본과 동일)
 --    특이사항: __global__ scope 지원 (conversation_id='__global__')

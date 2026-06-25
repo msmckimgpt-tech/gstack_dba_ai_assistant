@@ -2357,6 +2357,19 @@ a { color: inherit; }
   font-size: 10px; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
   background: var(--primary-soft, #eef2ff); color: var(--primary-dark, #3730a3);
 }
+/* feature-0009 member-kick-ban: owner 전용 추방/차단/해제 컨트롤 + 차단 칩. */
+.share-bans { padding: 4px 20px 4px; display: flex; flex-wrap: wrap; gap: 8px; max-height: 110px; overflow-y: auto; flex-shrink: 0; }
+.share-bans .share-mgr-msg { width: 100%; padding: 8px 0; text-align: left; }
+.share-participant.is-banned { background: var(--danger-soft, #fef2f2); border-color: var(--danger-soft, #fecaca); }
+.share-participant-acts { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; }
+.share-participant-btn {
+  font-size: 11px; line-height: 1; padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface, #fff); color: var(--text-2, #555);
+}
+.share-participant-btn:hover { background: var(--primary-soft, #eef2ff); border-color: var(--primary, #2563eb); color: var(--primary-dark, #1d4ed8); }
+.share-participant-btn.is-danger { color: var(--danger, #dc2626); }
+.share-participant-btn.is-danger:hover { background: var(--danger-soft, #fef2f2); border-color: var(--danger, #dc2626); color: var(--danger, #dc2626); }
+.share-participant-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* gc-settings-notif: 대화 설정 팝업 (제목 변경 + 알림 음소거). share-mgr-panel 골격 재사용. */
 .conv-settings-panel { max-width: 440px; }

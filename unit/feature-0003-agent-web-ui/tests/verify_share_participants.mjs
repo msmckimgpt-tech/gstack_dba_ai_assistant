@@ -55,9 +55,9 @@ ok(initCalls >= 2, `loadParticipants 호출 ≥2 (초기 로드 + joinable 링�
 ok(/\.share-participant\s*\{/.test(cssTxt), ".share-participant chip 스타일");
 ok(/\.share-participant-role\s*\{/.test(cssTxt), ".share-participant-role 배지 스타일");
 
-// 8. 캐시버스터 bump(app.js + styles.css 둘 다 변경).
-ok(indexHtml.includes("app.js?v=20260624-share-participants"), "app.js 캐시버스터 bump");
-ok(indexHtml.includes("styles.css?v=20260624-share-participants"), "styles.css 캐시버스터 bump");
+// 8. 캐시버스터 존재(구체 값은 후속 cycle 마다 advance — 존재 여부만 회귀 가드).
+ok(/app\.js\?v=[0-9a-z-]+/.test(indexHtml), "app.js 캐시버스터 존재");
+ok(/styles\.css\?v=[0-9a-z-]+/.test(indexHtml), "styles.css 캐시버스터 존재");
 
 console.log(`\nverify_share_participants: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
