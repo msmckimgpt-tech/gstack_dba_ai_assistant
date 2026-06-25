@@ -77,7 +77,7 @@ class _StubConn:
 
 def test_resolve_env_fallback_when_no_db(monkeypatch):
     """DB 에 키 없음 → .env DATASOURCES 폴백(레거시 호환)."""
-    from modules import datasources as dsr
+    from shared import datasources as dsr
     from modules import config as cfg
     monkeypatch.setattr(cfg, "DATASOURCES", {"winsql": {"key": "winsql", "engine": "mssql", "host": "h"}})
     out = dsr.resolve(_StubConn(), "winsql")
@@ -89,7 +89,7 @@ def test_resolve_db_isolation_when_kek_absent(monkeypatch):
     for k in list(os.environ):
         if k.startswith("AGENT_DATASOURCE_KEK_V"):
             monkeypatch.delenv(k, raising=False)
-    from modules import datasources as dsr
+    from shared import datasources as dsr
     from modules import config as cfg
     monkeypatch.setattr(cfg, "DATASOURCES", {"winsql": {"key": "winsql", "engine": "mssql", "host": "h"}})
     # DB 에 다른 키(암호화됨)가 있어도 KEK 없어 skip — winsql(.env)는 영향 없음
@@ -98,7 +98,7 @@ def test_resolve_db_isolation_when_kek_absent(monkeypatch):
 
 
 def test_resolve_none_conn_uses_env(monkeypatch):
-    from modules import datasources as dsr
+    from shared import datasources as dsr
     from modules import config as cfg
     monkeypatch.setattr(cfg, "DATASOURCES", {"prod": {"key": "prod", "engine": "mysql"}})
     assert dsr.resolve(None, "prod")["engine"] == "mysql"
@@ -141,7 +141,7 @@ def test_scope_key_is_endpoint_hash_and_label_agnostic():
     """TASK-0219: scope_key(=fact/RAG 스코핑 식별자)는 엔드포인트(engine+host+port) 해시 —
     DatasourceKey 라벨과 독립(라벨 rename 에도 불변). web `_generate_datasource_key` 와 동일 공식."""
     import hashlib
-    from modules import datasources as dsr
+    from shared import datasources as dsr
 
     # web app.py `_generate_datasource_key` 공식과 비트-동일해야 레지스트리 자동키와 정합.
     def web_formula(engine, host, port):

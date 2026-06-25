@@ -44,7 +44,7 @@ def load_account_drive_access_token(mem_conn, account_id: int) -> Optional[str]:
     """
     try:
         from modules import cred_crypto as _cc  # feature-0002 unified ns (활성화 시 동일 컨테이너)
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
     except Exception as exc:  # pragma: no cover - 토대 단계에선 이 경로가 런타임 미도달
         raise GDriveTokenUnavailable(f"crypto modules unavailable: {exc}") from None
     if not _cc.enc_available():

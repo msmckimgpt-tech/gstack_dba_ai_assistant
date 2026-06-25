@@ -384,8 +384,8 @@ def run_ask_worker_loop() -> None:
     # conn-health-monitor: 직렬 ask-worker 가 1차 수혜 — 불안정 datasource 를 백그라운드로
     # 미리 판정해 agent 연결이 fast-fail 하게 한다(정상 datasource job 무지연). 종료 시 stop.
     try:
-        from . import conn_health
-        from . import datasources as _ds
+        from shared import conn_health
+        from shared import datasources as _ds
         conn_health.start_monitor(_ds.health_probe_provider())
     except Exception as exc:
         log.warning("ask-worker: conn_health 모니터 시작 실패(무시하고 진행): %s", exc)
@@ -427,7 +427,7 @@ def run_ask_worker_loop() -> None:
 
     log.info("ask-worker 종료: %s", worker_id)
     try:
-        from . import conn_health
+        from shared import conn_health
         conn_health.stop_monitor()
     except Exception:
         pass

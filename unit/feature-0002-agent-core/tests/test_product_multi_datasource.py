@@ -100,7 +100,7 @@ def test_multi_resolve_two_bindings_returns_list():
         return {"dsa": dict(DS_A), "dsb": dict(DS_B)}.get(key)
 
     with mock.patch.object(ac.cfg, "AGENT_MULTI_DATASOURCE_ENABLED", True), \
-         mock.patch("modules.datasources.resolve", side_effect=_fake_resolve):
+         mock.patch("shared.datasources.resolve", side_effect=_fake_resolve):
         out = ac._resolve_product_datasources(_FakeConn(store), 5)
     assert len(out) == 2
     labels = [d["_label"] for d in out]
@@ -139,7 +139,7 @@ def test_multi_resolve_skips_unregistered_key_but_needs_two():
         return dict(DS_A) if key == "dsa" else None  # ghost 미등록
 
     with mock.patch.object(ac.cfg, "AGENT_MULTI_DATASOURCE_ENABLED", True), \
-         mock.patch("modules.datasources.resolve", side_effect=_fake_resolve):
+         mock.patch("shared.datasources.resolve", side_effect=_fake_resolve):
         out = ac._resolve_product_datasources(_FakeConn(store), 5)
     assert out == []  # 1개만 살아남음 → 단일 경로로 폴백
 

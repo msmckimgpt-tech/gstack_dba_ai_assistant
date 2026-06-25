@@ -4,7 +4,7 @@ LLM 무관: registry row→ds 매핑, router.describe() 노출, 멀티DS 그라�
 순수 함수로 검증(acceptance: "설명이 그라운딩 프롬프트에 노출 · 단일DS 무영향").
 """
 import agent_core
-from modules import datasources as ds_mod
+from shared import datasources as ds_mod
 from modules import tools as tools_mod
 
 

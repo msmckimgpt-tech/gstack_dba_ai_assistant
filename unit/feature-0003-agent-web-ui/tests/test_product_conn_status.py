@@ -40,7 +40,7 @@ def _make_products():
 def _install_fakes(monkeypatch, *, health=None, raise_health=False, raise_resolve=False):
     """conn_health.snapshot 과 datasources.resolve/scope_key 를 가짜로 주입.
 
-    `_attach_product_conn_status` 는 `from modules import conn_health/datasources` 로
+    `_attach_product_conn_status` 는 `from shared import conn_health/datasources` 로
     실제 모듈 객체를 잡으므로, sys.modules 교체가 아니라 **실제 모듈의 함수 속성을
     monkeypatch.setattr** 로 바꾼다(전체 테스트 동시 실행 시 import 캐시 충돌 방지).
 
@@ -48,8 +48,8 @@ def _install_fakes(monkeypatch, *, health=None, raise_health=False, raise_resolv
     resolve(conn, key): 등록 키 → {'key':key, 'scope_key': 'sk_'+suffix} (미등록 키는 None).
     """
     import importlib
-    ch = importlib.import_module("modules.conn_health")
-    dsr = importlib.import_module("modules.datasources")
+    ch = importlib.import_module("shared.conn_health")
+    dsr = importlib.import_module("shared.datasources")
 
     if raise_health:
         def _snap():

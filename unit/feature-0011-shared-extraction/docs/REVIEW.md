@@ -112,3 +112,31 @@ source_of_truth: true
   함수내부(import-time cycle 0). 단일 commit revert 가능. 배포 시 healthz/smoke 로 재확인.
 - Human Approval Needed: P5a Step 4 는 P5a PLAN-APPROVED(2026-06-24) 범위. PR 생성·deploy 는 외부영향이나
   deploy_scope:included 로 머지 후 자동 배포(첫 배포 직전 1줄 표면화).
+
+## REV-20260625-0005 [SUBAGENT:conn-health-datasources-migration-step5a]
+- Related Change: CHG-20260625-0005 (conn_health·datasources 소비처 shared.* 마이그레이션 + shim 2개 제거, P5a Step 5a)
+- Reason: alias shim 비파괴 추출(Step 4) 이후 소비처를 정본 shared.* 로 수렴 + shim 제거 → 단일 import 경로 확립
+  (Step 6 Dockerfile 분리 전제). shim 제거로 alias 안전망이 사라져 누락 참조(특히 dynamic/string)는 즉시 런타임 깨짐 → 적대 검증 집중.
+- §18.8 Adversarial Panel: Workflow `step5a-adversarial-panel` (3렌즈 병렬, high effort, 실 이미지 실행 검증 — "통과 아니라 결함 적발").
+  - **결과: BLOCKING 0 / NIT 0.**
+  - **missed-ref hunt = SAFE**: 프로덕션 코드에 dynamic/computed import(importlib/__import__/sys.modules/pkgutil/
+    getattr)로 conn_health/datasources 도달 경로 0. string-literal 모듈 해석 0(app.py 의 'datasources' 문자열은
+    JSON key/탭 id/dict key). modules/__init__ 의 고정 _all_modules 에 두 모듈 부재(항상 lazy). 실 agent 이미지에서
+    shared.* import OK · modules.{conn_health,datasources}→ModuleNotFoundError · 전 소비처 import OK · lazy
+    cross-module body(conn_health._scope_key_of→shared.datasources, db→shared.conn_health/datasources) 해석.
+  - **migration correctness = SAFE**: `git diff | grep '^+.*from shared import' | grep -v 'conn_health|datasources'`
+    = EMPTY(타 모듈 오마이그레이션 0; shared.memory/render 부재라 오류 시 즉시 crash — 안 남). alias 이름 대칭,
+    함수-local 들여쓰기 보존(lazy→eager 승격 0), 중복/shadow import 0.
+  - **deploy/runtime = SAFE**: 단일 agent 이미지가 COPY shared+modules 를 /app 하위, WORKDIR /app → 5개 서비스
+    (agent/memory-init/insight-worker/ask-worker/web) 전부 sys.path 해석. 워크트리에서 이미지 빌드 후 **배포 레이아웃
+    (소스 마운트 없음·PYTHONPATH 무설정·cwd=/app)** 에서 실행: import agent_core·web.app·scripts.rekey_datasource_facts·
+    modules.ask·modules.insight OK, modules.{conn_health,datasources}→ModuleNotFoundError 확인.
+    (informational: gdrive-mcp 서비스는 scaffold stub(echo+exit 0, 미baked/미import) → 마이그레이션의 프로덕션 런타임 경로 없음.)
+- residual: 라이브 modules.conn_health/datasources 참조 0(deterministic grep). 잔존 = shared/ 내부 정본 상대 import
+  (=shared.*, 정상) + modules/db.py 의 stale 주석 1줄(db shim, 5c 에서 제거).
+- Alternatives Considered: Step 5 전체(config·db 포함 ~370 ref) big-bang(반려 — "점진" 위반·미커버 프로덕션 경로 깨짐 위험);
+  per-module sub-step(채택 — 5a=conn_health/datasources, 5b=config, 5c=db, 각 독립 검증·shim 1개씩 제거).
+- Risks: app.py(라이브 web) 등 다수 소비처 편집이나 동일 객체 수렴이라 동작 불변. shim 제거로 안전망 소거됐으나
+  3렌즈 실이미지 검증으로 누락 0 확인. 단일 commit revert 가능. 배포 시 healthz/smoke 재확인.
+- Human Approval Needed: P5a PLAN-APPROVED(2026-06-24) 범위. PR 생성·deploy 는 외부영향이나 deploy_scope:included
+  로 머지 후 자동 배포(첫 배포 직전 1줄 표면화).

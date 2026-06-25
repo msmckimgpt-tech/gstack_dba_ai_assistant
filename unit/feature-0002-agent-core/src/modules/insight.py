@@ -1740,7 +1740,7 @@ def _record_ds_health(rows: dict, scope_key, ds_coords, scan_outcome: str) -> No
         if not scope_key:
             return
         try:
-            from . import conn_health as _ch
+            from shared import conn_health as _ch
             _st = _ch.status_for(ds_coords) or {}
         except Exception:
             _st = {}
@@ -1890,7 +1890,7 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             if AGENT_MULTI_DATASOURCE_ENABLED:
                 # TASK-0205: DB 레지스트리(WebDatasources) + .env 병합. 정적 DATASOURCES 직접순회 폐기
                 # (DB CRUD 후 삭제분 미스캔·신규분 반영, M1). password 복호 포함.
-                from . import datasources as _datasources
+                from shared import datasources as _datasources
                 for _k, _v in _datasources.all_datasources(mem_conn).items():
                     # TASK-0215: insight 탐색 비활성(InsightEnabled=0) 데이터소스는 순회에서 제외(운영자 토글).
                     if _v and _v.get("insight_enabled") is False:
@@ -2370,8 +2370,8 @@ def run_insight_worker_loop() -> None:
     # conn-health-monitor: insight 스캔 연결도 health 게이트 수혜 — 불안정 datasource 를
     # 백그라운드로 미리 판정(daemon thread, 프로세스 종료 시 정리).
     try:
-        from . import conn_health
-        from . import datasources as _ds
+        from shared import conn_health
+        from shared import datasources as _ds
         conn_health.start_monitor(_ds.health_probe_provider())
     except Exception as exc:
         logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)

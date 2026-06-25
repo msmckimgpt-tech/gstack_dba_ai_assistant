@@ -87,7 +87,7 @@ def _patch_seed_env(monkeypatch):
     monkeypatch.setenv("AGENT_DATA_DB_USER", "agent_ro")
     monkeypatch.setenv("AGENT_DATA_DB_PASSWORD", "pw")
     import modules.cred_crypto as cc
-    import modules.datasources as dsr
+    import shared.datasources as dsr
     monkeypatch.setattr(cc, "enc_available", lambda: True, raising=True)
     monkeypatch.setattr(cc, "encrypt_password", lambda dek, pw, key: b"enc", raising=True)
     monkeypatch.setattr(cc, "decrypt_password", lambda dek, enc, key: "pw", raising=True)

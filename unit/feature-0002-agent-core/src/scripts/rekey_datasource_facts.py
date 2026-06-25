@@ -44,7 +44,7 @@ def _build_rekey_map(mem_conn) -> "dict[str, str]":
     엔드포인트)이면 옛 라벨 fact 가 엉뚱한 엔드포인트 scope 로 일괄 오병합될 수 있으므로,
     그 엔진의 옛-라벨 매핑은 **생략**(skip)하고 경고한다 — cross-ds 오병합 차단.
     """
-    from modules import datasources as dsr
+    from shared import datasources as dsr
     registry = dsr.all_datasources(mem_conn)
     engine_scopes: dict[str, set] = {}
     engine_to_scope: dict[str, str] = {}

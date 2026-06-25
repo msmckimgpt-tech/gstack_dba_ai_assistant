@@ -10,7 +10,7 @@ from modules import insight
 
 
 def test_record_ds_health_no_credentials(monkeypatch):
-    import modules.conn_health as ch
+    import shared.conn_health as ch
     monkeypatch.setattr(ch, "status_for", lambda ds: {
         "status": "unstable", "host": "10.1.1.1", "port": 3306, "engine": "mysql",
         "label": "ds-a", "fails": 3, "last_error": "errno=2003", "checked_at": 1234.5,
@@ -36,7 +36,7 @@ def test_record_ds_health_skips_when_no_scope():
 
 
 def test_record_ds_health_precedence(monkeypatch):
-    import modules.conn_health as ch
+    import shared.conn_health as ch
     monkeypatch.setattr(ch, "status_for", lambda ds: {})
     rows: dict = {}
     insight._record_ds_health(rows, "k", {"engine": "mysql"}, "ok")
@@ -47,7 +47,7 @@ def test_record_ds_health_precedence(monkeypatch):
 
 
 def test_record_ds_health_never_raises(monkeypatch):
-    import modules.conn_health as ch
+    import shared.conn_health as ch
 
     def _boom(ds):
         raise RuntimeError("status_for blew up")
