@@ -55,7 +55,8 @@ sources:
 | LEARNINGS.md | AI 학습 기록 (mistake/pattern/quirk/preference) append-only | AGENTS.md §11.2 |
 | CODEBASE_MAP.md | 저장소 파일 구조 요약 | [[../../docs/CODEBASE_MAP]] |
 | ADR | Architecture Decision Record (`docs/DECISIONS.md` entry) | [[../Decisions/_Index]] |
-| REQ-XXXX / TASK-XXXX | 요구사항 / 작업 단위 식별자 | CONVENTIONS §3 |
+| REQ/AC/ADR/TEST `<id>` | spec 앵커 — **timestamp+slug** `<PREFIX>-<YYYYMMDDTHHMMSS>-<slug>[-<n>]`(순번 `*-XXXX` fallback); 형식 정본 AGENTS.md §6·§13.1, ADR-20260625T023049-spec-anchor-timestamp-id | CONVENTIONS §3 |
+| TASK-`<id>` | 작업 단위 식별자 (timestamp+branch 권장) | CONVENTIONS §3 |
 | CHG-YYYYMMDD-XXXX | 변경 식별자 (`MODIFY.md` entry) | CONVENTIONS §3 |
 | REV-YYYYMMDD-XXXX | 리뷰 식별자 (`REVIEW.md` entry) | CONVENTIONS §3 |
 | WebAuditEvents | 본 프로젝트 audit 단일 테이블 | [[../Decisions/ADR-0019-web-audit-events]] |

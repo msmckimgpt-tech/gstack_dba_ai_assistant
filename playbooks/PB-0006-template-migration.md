@@ -38,9 +38,11 @@ scope: project
 7. **smoke 검증**:
    - `make help` / `make status` / 주요 빌드 타깃이 여전히 동작하는지 확인.
    - 깨진 교차 참조 grep: `grep -rn "§[0-9]" AGENTS.md docs/ *.md` 후 missing section 없음을 확인.
-8. **마이그레이션 ADR 기록** (`/repo/docs/DECISIONS.md`):
+8. **마이그레이션 ADR 기록** (`/repo/docs/DECISIONS.md`): ADR ID 는 **timestamp+slug**
+   `ADR-<YYYYMMDDTHHMMSS>-<slug>` (순번 `ADR-NNNN` fallback — AGENTS.md §6·§13.1,
+   ADR-20260625T023049-spec-anchor-timestamp-id):
    ```
-   ## ADR-NNNN
+   ## ADR-<YYYYMMDDTHHMMSS>-template-migration-vX-Y-Z
    - Status: accepted
    - Date: YYYY-MM-DD
    - Context: 템플릿 vX.Y.Z로 개선되어 <요약>

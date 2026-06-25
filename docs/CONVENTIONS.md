@@ -25,13 +25,15 @@ ai_read_priority: 3
 - 각 문서 상단에는 메타데이터 블록을 둔다.
 
 ## 3. 추적성 규칙
-문서와 코드에 아래 식별자 사용을 권장한다.
-- `REQ-XXXX`
-- `AC-XXXX`
-- `CHG-YYYYMMDD-XXXX`
-- `REV-YYYYMMDD-XXXX`
-- `ADR-XXXX`
-- `TEST-XXXX`
+문서와 코드에 아래 식별자 사용을 권장한다. **spec 앵커 `REQ`/`AC`/`ADR`/`TEST` 는
+timestamp+slug 형식으로 통일** (정본 AGENTS.md §6·§13.1, ADR-20260625T023049-spec-anchor-timestamp-id —
+병렬 cycle 머지 시 순번 충돌 제거). 기존 순번 `*-XXXX` 도 유효(fallback·기존 항목, 소급 재번호 없음).
+- `REQ-<YYYYMMDDTHHMMSS>-<slug>` (cycle 당 1개라 날짜형 `REQ-<YYYYMMDD>-<slug>` 도 허용; 순번 `REQ-XXXX` fallback)
+- `AC-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` (부모 REQ 의 timestamp+slug 공유, 다수 AC 는 `-<n>`; 순번 `AC-XXXX` fallback)
+- `CHG-YYYYMMDD-XXXX` (또는 timestamp+branch `CHG-<YYYYMMDDTHHMMSS>-<branch>`)
+- `REV-YYYYMMDD-XXXX` (또는 timestamp+branch `REV-<YYYYMMDDTHHMMSS>-<branch>`)
+- `ADR-<YYYYMMDDTHHMMSS>-<slug>` (순번 `ADR-XXXX` fallback·기존 항목)
+- `TEST-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` (순번 `TEST-XXXX` fallback)
 
 ## 4. 커밋 및 변경 단위
 - 하나의 의미 있는 작업 단위 안에서 코드와 문서를 함께 갱신한다.

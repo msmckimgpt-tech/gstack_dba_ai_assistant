@@ -27,13 +27,16 @@ source_of_truth: true
 > Windows-browser 검증 절차는 **PB-0008** (`playbooks/PB-0008-windows-browser-verification.md`).
 
 ## 2. Test Cases
-### TEST-0001
+<!-- TEST ID 형식: timestamp+slug 권장 `TEST-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` (REQ/AC/ADR/TEST 공통,
+     정본 AGENTS.md §6·§13.1, ADR-20260625T023049-spec-anchor-timestamp-id). 병렬 cycle 머지 시
+     순번 충돌 제거. 예: `TEST-20260625T185057-login-1`. 기존 순번 `TEST-0001` 도 유효(fallback). -->
+### TEST-<YYYYMMDDTHHMMSS>-<slug>-1
 - Purpose:
 - Preconditions:
 - Steps:
 - Expected Result:
 
-### TEST-0002
+### TEST-<YYYYMMDDTHHMMSS>-<slug>-2
 - Purpose:
 - Preconditions:
 - Steps:

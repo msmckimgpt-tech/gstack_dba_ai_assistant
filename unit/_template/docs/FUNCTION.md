@@ -65,9 +65,14 @@ source_of_truth: true
 - 없음
 
 ## 11. Acceptance Criteria
-- AC-0001:
-- AC-0002:
-- AC-0003:
+<!-- spec 앵커 ID 형식: timestamp+slug `<PREFIX>-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` (REQ/AC/ADR/TEST 공통).
+     AC 는 부모 REQ 의 timestamp+slug 를 공유하고, 한 REQ 가 다수 AC 면 `-<n>`(1-based) 으로 구분한다
+     (정본 AGENTS.md §6·§13.1, ADR-20260625T023049-spec-anchor-timestamp-id). 병렬 cycle 머지 시
+     순번 충돌을 제거한다. 예: REQ `REQ-20260625-login` → `AC-20260625T185057-login-1`, `-2`.
+     기존 순번 `AC-0001` 도 유효(fallback·소급 재번호 없음). -->
+- AC-<YYYYMMDDTHHMMSS>-<slug>-1:
+- AC-<YYYYMMDDTHHMMSS>-<slug>-2:
+- AC-<YYYYMMDDTHHMMSS>-<slug>-3:
 
 ## 12. Observability
 - 어떤 로그를 남기는지

@@ -2,6 +2,21 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260625T023049-meta-ac-timestamp-id [SUBAGENT:policy-coherence-adversarial + reverify] — SHIP (BLOCKER 2 + MAJOR 2 + MINOR 2 + 재검증 MAJOR 1 흡수)
+
+- **cycle**: ai/claude/meta-ac-timestamp-id — spec 앵커(`REQ`/`AC`/`ADR`/`TEST`) 식별자 형식을 순번 `*-XXXX` → **timestamp+slug** `<PREFIX>-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` 로 전환 (사용자 직접 지시 2건: "AC-NNNN 도 timestamp-slug 로" → "REQ, ADR, TEST 또한 같은 형식"). `feature-NNNN`/`META-NNNN` 은 순번 유지. 신규 ADR `ADR-20260625T023049-spec-anchor-timestamp-id`(본 형식의 첫 적용 예시).
+- **동기**: 고병렬 cycle 머지에서 순번 spec 앵커 충돌이 반복 관측(실측: `gc-member-kick-ban` rebase 중 `auto-product-prompt`/`admin-metadata-relocate` 와 AC-0625 연쇄 충돌 → 2회 재번호). v3.32.0 가 TASK/CHG/REV/LRN 에 이미 적용한 timestamp+branch 전환의 잔여 표면 해소.
+- **changeset (pure-meta, 전 파일 META path → verify-completion META mode)**:
+  - `AGENTS.md` §6(식별자 표 4행 REQ/AC/ADR/TEST + prose 의 spec 앵커 전환 단락) · §13.1(감지-후-재번호 대상을 feature/META 로 한정) · timestamp+branch 출처의 틀린 `ADR-0025` 인용 2곳(line 608·2000)을 §6/버전 참조로 정정.
+  - `docs/CONVENTIONS.md`(식별자 목록 REQ/AC/ADR/TEST) · `docs/DECISIONS.md`(신규 ADR + registry 주의) · `unit/_template/docs/{FUNCTION.md §11, TEST.md §2}`(템플릿 예시 주석) · `wiki/Glossary/_Index.md`(용어집 행) · `playbooks/PB-0006-template-migration.md`(ADR 작성 절차).
+  - `bin/verify-completion.sh` `is_meta_path()`: `playbooks/*` META-class 분류 누락 보강(프로세스 거버넌스 문서 — 본 changeset 의 PB-0006 포함을 pure-meta 로 정합화). bin/* 이 이미 META 라 pure-meta 불변.
+- **§18.8 적대 패널(정합성) + 재검증**:
+  - 1차 적발: **BLOCKER 2**(① 새 ADR/AGENTS 가 "ADR-0024 supersede·ADR-0025 확장" 으로 엉뚱한 ADR 인용 — DECISIONS.md 의 ADR-0024=Postgres 격리·ADR-0025=M5/pgvector 중복, 식별자 정책 아님 ② ADR-0025 중복 정의 pre-existing) + **MAJOR 2**(wiki/Glossary·PB-0006 순번 형식 잔존) + **MINOR 2**(부모 REQ↔자식 AC timestamp 예시 불일치 · `-<n>` 필수/선택 표기 불일치).
+  - 흡수: 특정 순번 ADR 번호 비인용(§6/§13.1 위치 + v3.32.0 버전 참조) + 새 ADR 상단 registry 주의(번호 불일치·중복을 전환 동기로 명시) + Glossary/PB-0006 갱신 + 예시를 "AC 는 부모 REQ slug 공유 + cycle 초 timestamp" 로 명확화 + `-<n>` 규칙 통일("AC 2개↑ 필수, 단일 생략").
+  - 재검증 1차: **MAJOR 1 NEW-ISSUE**(line 608·2000 의 동일 틀린 `ADR-0025` 인용 잔존) 적발 → 흡수(§6 참조로 정정). **재검증 2차 잔여 BLOCKER/MAJOR 0**.
+- **검증**: 식별자 ID 를 숫자(`[0-9]{4}`)로 파싱하는 스크립트 0건(bin/ 전수 grep — verify-completion/review-panel/anchor-migrate 무영향). 새 ADR id 7개 문서 8 인용처 오타 0. 기존 순번 ID 소급 재번호 0(additive). §6 표↔prose↔§13.1↔ADR 삼각 정합 확인.
+- **Human Approval Needed**: 아니오 (Minor governance, 비파괴 doc-only·additive, 사용자 직접 지시). 단 ADR 형식이 길어지는 가독성 trade-off 는 사용자 결정으로 수용.
+
 ## REV-20260625T013000-META-0010-doc-sync-0625 [SKIPPED:doc-sync-index-mirror-alignment]
 
 > ID 주: 본 cycle 은 당초 `META-0009-doc-sync-0624` 로 시작했으나, 동시 진행된 `ai/root/META-0009-presentation-title-rename`(#414)이 먼저 머지돼 META-0009 를 선점 → 충돌 회피 위해 **META-0010-doc-sync-0625** 로 리넘버(본 ledger 하단 그 entry 와 구분).
