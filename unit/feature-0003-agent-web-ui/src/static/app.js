@@ -5114,6 +5114,21 @@ function applyProgressPayload(payload = {}) {
   const incomingSteps = Array.isArray(payload.steps) ? payload.steps : [];
   const stepCount = Math.max(0, Number(payload.step_count || 0));
 
+  // feature-0009 그룹대화: 우리가 추적 중인 run 이 있는데 서버가 *다른* 아직-처리중 run 을 보고하면
+  // (다른 사용자의 동시 요청이 대화 상태 슬롯을 점유), 그 foreign run 으로 우리 버블을 갈아타지
+  // 않는다. 갈아타면 우리 버블이 남의 run 을 추적해 자기 run 의 완료(서버가 per-run 으로
+  // run_id=우리run+terminal 로 해소)를 영영 못 보고 '처리 중' 에 갇힌다. 우리 run 추적을 유지한 채
+  // 계속 폴링하면, 자기 run 이 종료되는 즉시 서버가 우리 run_id 로 terminal 을 돌려준다.
+  const _rawStatusEarly = String(payload.raw_status || payload.status || "").trim().toLowerCase();
+  if (
+    runId &&
+    state.progressRunId &&
+    runId !== state.progressRunId &&
+    _rawStatusEarly === "processing"
+  ) {
+    return;
+  }
+
   if (!runId || runId !== state.progressRunId) {
     state.progressRunId = runId;
     state.progressSteps = incomingSteps.slice();
@@ -5179,9 +5194,13 @@ async function pollProgress(seq = state.progressPollSeq) {
     const params = new URLSearchParams({
       conversation_id: state.activeConversationId,
     });
-    if (state.progressRunId && state.progressAfterStep > 0) {
+    // feature-0009 그룹대화: client_run_id 를 항상 보내, 다른 사용자의 동시 run 이 대화 상태 슬롯을
+    // 점유 중이어도 서버가 per-run marker 로 *자기 run* 의 종료를 해소하게 한다(after_step 유무와 무관).
+    if (state.progressRunId) {
       params.set("client_run_id", state.progressRunId);
-      params.set("after_step", String(state.progressAfterStep));
+      if (state.progressAfterStep > 0) {
+        params.set("after_step", String(state.progressAfterStep));
+      }
     }
     const payload = await apiFetch(`/api/progress?${params.toString()}`, {
       signal: controller.signal,
