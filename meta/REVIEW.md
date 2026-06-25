@@ -283,3 +283,13 @@
 - **panel (SUBAGENT, adversarial 사실검증)**: general-purpose 1관점 — 환각/귀속정확성/평이화·내부비노출/과장/누락 5축을 머지 본문 5건(908fade/1f370c4/c8637f2/1a69f70/334c858)과 전수 대조. **VERDICT CLEAN** (BLOCKING 0). 릴리즈노트 내부용어(myAskInFlight·_interruptCurrentRunForResend·KIND_THROTTLED 등) 누출 0, 누락 머지 0(PR#442 흡수·6104bf6 chore 제외 정당 확인).
 - **잔여 drift (정직 고지)**: `wiki/concepts/nl2sql-flywheel.md` §2 가 ITEM-08/ITEM-11 출시 미반영(stale) — 직전 sync 가 이미 고지한 항목, 본 run scope(06-25 머지 drift) 외. hot.md Active Threads 에 유지.
 - **Human Approval Needed**: 아니오 (additive doc-sync mirror/index 정합, 비파괴, 신규 production 동작 0, 전역 auto-sync 정책).
+
+## REV-20260625T194905-ai-claude-doc-sync-autoland-policy [SUBAGENT:policy-coherence]
+
+- **cycle**: ai/claude/doc-sync-autoland-policy-20260625-194905 — 사용자 직접 지시(2026-06-25): "`/_dqa:doc_sync` 는 백그라운드 실행 가능; 사용자 확인 없이 항상 PR→merge→배포까지 진행; 배포 누락은 장애." doc_sync 스킬 정의를 attended·unattended 무관 **외부영향 무확인 자동(PR→merge→deploy)** 로 전환하는 governance 정책 변경.
+- **changeset (pure-meta, META commit)**: `.claude/commands/_dqa/doc_sync.md`(헤더 호출형태·불변제약 외부영향·Phase 5 Landing·Phase 6 배포·Phase 2 attended 한정·종료조건) · `.claude/commands/_dqa/README.md`(doc_sync 서브섹션 정책 bullet). 둘 다 `.claude/commands/*` = META path → verify META mode.
+- **정책 요지**: ① landing/deploy 경로에서 AskUserQuestion(landing 분기·deploy confirm) 제거 — delta 있으면 `브랜치→분리 commit→push→PR→merge→ff-pull→cleanup` 끝까지 자동, 서빙 static 변경 시 배포 MUST. ② **§18.12(affirmative-required)·§12.2(deploy=confirm)의 doc_sync 한정 명시 override**(조문번호 인용) — '질문 표면 제거'가 아니라 affirmative-required 자체 면제. ③ 장애 경계 3분기: early-exit(delta 0)=정상 / META-only=배포 no-op 명시(silent skip 금지) / 서빙 static 변경 후 landing·배포 누락=장애. ④ unattended 시 Phase 2 content-scope fork 도 보수 기본값(질문 안 함), fail-closed 대기는 attended 한정.
+- **게이트 불변(중요)**: verify-completion·BLOCKED 판정·worktree-first(§13.2.7 F0)·META commit 분류는 그대로 강제 — 자동화가 정확성 게이트를 우회하지 않음을 line 29·31 에 명문화(오히려 보강). override 는 외부영향 confirm 에만 한정.
+- **panel (SUBAGENT, adversarial policy-coherence, 2 라운드)**: general-purpose 1관점 — 내부모순/과도완화/장애경계/참조정합(§18.12·§12.2·README·AGENTS)/표면화 5축. **1차 VERDICT ISSUES**(MAJOR 2: line16↔94 attended/unattended 정지 여지 + §18.12 조문 명시 override 부재·line29 열거 누락 / NIT 2: line33 silent-skip 모호·merge 표면화 토큰). **흡수 후 재검증 VERDICT CLEAN** — 4항목 전부 닫힘, 게이트 회귀 0(축2 게이트 방어는 명문화로 강화 확인).
+- **검증 한계**: 정책 텍스트 변경(런타임 코드 무변경)이라 verify-completion 은 META mode check #9/#10/#11 만 — 정책 self-coherence 는 위 adversarial 2라운드로 직접 확인.
+- **Human Approval Needed**: 아니오 (사용자 직접 지시의 skill-scoped 정책 변경, 텍스트-only·비파괴, 정확성 게이트 불변). 배포 불요(`.claude/commands/*` 는 서빙 산출물 아님).
