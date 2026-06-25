@@ -325,6 +325,20 @@ source_of_truth: true
 - Rollback Notes: feature-0003 styles.css 2블록 + index.html 캐시버스터 revert. JS/백엔드/스키마 0.
 - 검증: `node --check static/app.js` PASS(무변경) + 충실한 mock 렌더(실 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측(rightGap 25)/other·assistant=좌측(leftGap 25 동일 기준선)/멘션 하이라이트 상대방 좌측+강조선. 패널 SKIP(순수 CSS, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 실 그룹대화 권장).
 
+## CHG-20260625T163744-gc-run-status-stuck (cross-feature → feature-0002+0003, Major §12.3 — 동시성/run-status 핵심 경로)
+- Date: 2026-06-25 (CHG-20260625T163744/REV-20260625T163744). worktree `ai/claude/gc-run-status-stuck`. 코드 정본=feature-0002-agent-core(`modules/memory.py`)+feature-0003-agent-web-ui(`app.py`·`static/app.js`) — 본 항목은 feature-0009 cross-feature 추적.
+- Reason: 사용자 보고(`/_template:entry` → `/_template:resume` 재개) — 그룹대화에서 UserA 의 @assistant 요청 처리 중 UserB 가 채팅을 보내면, Assistant 가 '처리 중' 에서 완료 처리가 진행되지 않고(실제로 완료돼도) 다른 사용자의 채팅이 블로킹된다.
+- 근본 원인: run-status 가 `agent_runtime.kv` 의 대화 단위 **단일 슬롯**(`last_status`/`last_status_run_id`)인데, 그룹대화는 계정별 동시 run 이 설계상 허용(REQ-GC-R3; ask 슬롯 `account:{id}`). UserB 요청의 enqueue sentinel→run2 가 슬롯을 점유 → run1 완료 시 `set_run_status("done", run_id=run1, only_if_current_run=True)`(agent_core 3547)가 supersede 가드(`cur_rid=run2≠run1`, TASK-0241)로 **skip → run1 done 영영 미기록**. FE `applyProgressPayload`(app.js 5117)는 서버가 돌려준 foreign run_id 로 progressRunId 를 **갈아타** 자기 run1 완료를 영영 못 봄 → '처리 중' 고착 → composer(`loadHistory` 의 `last_status==processing`→`busyConversations`) 블로킹. (FUNCTION §4 가 이미 인지: run-status KV 단일 키, per-thread 재키잉은 S6 이연.)
+- 변경(per-run 상태 해석, 최소 침습 — S6 전면 재키잉 아님):
+  - feature-0002 `modules/memory.py` `set_run_status`: supersede 가드 skip 분기(다른 run 이 슬롯 점유)에서 **done/error** 종료 상태를 per-run marker `run_term_status:{rid}`/`run_term_at:{rid}` 로 기록(`save_memory_kv`, PG). canceled 는 작성자가 추적을 멈춘 상태라 미기록(1:1 취소-재요청 누적 차단).
+  - feature-0003 `app.py`: 신규 `_load_run_terminal_marker(conn,cid,rid)`(PG-우선·MySQL-폴백, `_load_progress_status` 패턴 동일) + `/api/progress` 가 `client_run_id != 슬롯 run_id` 이고 marker 존재 시 status/run_id 를 client 자기 run 으로 해소(`_compute_display_status`·fallback 보다 선행 → terminal 일관).
+  - feature-0003 `static/app.js`: `pollProgress` 가 `client_run_id` 항상 전송(기존 `after_step>0` 조건 제거). `applyProgressPayload` 선두에 가드 — 자기 progressRunId 추적 중 서버가 *다른* 아직-처리중 run 보고 시 early-return(foreign run 으로 버블 hijack 금지; 자기 run 완료는 서버가 per-run 으로 해소).
+- Why(설계): 직렬화(대화당 단일 run)는 REQ-GC-R3(발신 actor 별 응답)에 반함 → per-run 상태 해석 채택. 충돌로 유실되는 done/error 만 marker 로 보존하고 read-side(`/api/progress`)에서 client_run_id 로 해소 → 슬롯 모델/대다수 reader 무변경(blast radius 최소).
+- Impact: 1:1 단일 run 대화 무회귀(슬롯 run==progressRunId → FE 가드·marker 미발동, BE 일반 경로). 신규 KV 키는 명시 `IN(...)` allowlist 밖이라 대화목록 KV dump/`list_processing_conversation_ids`/orphan recovery 누수 0(LIKE/prefix 매칭 없음). 동시 처리중 창에서 자기 run 의 *라이브 step* 은 미표시('처리중+elapsed' 표시, 완료 즉시 해소) — 의도된 동작(이전엔 foreign step 오표시=버그).
+- Rollback Notes: 3파일 revert(memory.py 가드 분기 marker 블록 / app.py 헬퍼+progress 해소 블록 / app.js 2블록). 스키마 변경 0(KV 키만, DDL 무변경). 이미 기록된 `run_term_*` 키는 무해 dead-data(다음 reader 무시).
+- 잔여(수용, §18.8 패널 기록): done/error 충돌 marker 의 일괄 TTL 정리는 미구현 — FUNCTION §4 S6 per-thread 재키잉에 흡수 이연. 충돌 시에만·tiny row 라 누적 완만.
+- 검증: `py_compile`(memory.py/app.py) + `node --check`(app.js) PASS. §18.8 적대적 패널 3(동시성/FE회귀/BE데이터) — 진짜 BLOCKING 0(REV 참조). **PB-0008 미실측**(본 worktree=WSL; 다중 사용자 동시 race 라 배포 후 라이브 그룹대화 검증 권장).
+
 ## CHG-20260625T065840-gc-unread-badge (REQ-GC-R8 read-state, Major §12.3 — 스키마 추가+백엔드+프론트)
 - Date: 2026-06-25. 사용자 요청(`/_template:entry`): "그룹 대화 사이드바에 진행된 메세지 개수 표시, 자신의 멘션은 별개 집계, 형식 `<전체>[ / @<멘션>]`" + 명확화 "(실제 메신저처럼) **새 메세지(안 읽은) 기준**".
 - Related Requirement: REQ-GC-R8 (read-state 커서 + @mention 표시 — S3/S5 미구현분 완성), AC-GC-A10.

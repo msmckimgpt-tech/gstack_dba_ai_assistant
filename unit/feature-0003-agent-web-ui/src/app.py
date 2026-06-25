@@ -9018,6 +9018,48 @@ WHERE ConversationId = %s
     )
 
 
+def _load_run_terminal_marker(conn, conversation_id: str, run_id: str) -> tuple[str, str]:
+    """feature-0009 그룹대화 동시 run: 대화 상태 슬롯을 다른 run 이 점유해 terminal write 가 유실된
+    run 의 per-run 종료 상태를 반환. (status, status_at) — 없으면 ("", "").
+    agent_core set_run_status 의 충돌 skip 경로가 기록한 run_term_status:{rid} / run_term_at:{rid} 를
+    읽는다(_load_progress_status 와 동일한 PG-우선·MySQL-폴백 패턴)."""
+    rid = str(run_id or "").strip()
+    if not rid:
+        return "", ""
+    skey = f"run_term_status:{rid}"
+    akey = f"run_term_at:{rid}"
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT key, value FROM agent_runtime.kv "
+                    "WHERE conversation_id = %s AND key IN (%s, %s)",
+                    (conversation_id, skey, akey),
+                )
+                rows = pgcur.fetchall() or []
+            pg.close()
+            kv = {str(k or ""): str(v or "") for k, v in rows}
+            return str(kv.get(skey) or "").strip(), str(kv.get(akey) or "").strip()
+        except Exception:
+            return "", ""
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Key`, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s
+  AND `Key` IN (%s, %s)
+        """,
+        (conversation_id, skey, akey),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    kv = {str(k or ""): str(v or "") for k, v in rows}
+    return str(kv.get(skey) or "").strip(), str(kv.get(akey) or "").strip()
+
+
 _ASK_TERMINAL_STATUSES = frozenset({"done", "error", "canceled"})
 _ASK_SUCCESS_STATUSES = frozenset({"done", "canceled"})
 
@@ -18014,6 +18056,16 @@ def progress(
             conn.close()
             return empty
         status, status_at, run_id = _load_progress_status(conn, cid)
+        # feature-0009 그룹대화: 클라이언트가 추적 중인 run(client_run_id)이 대화의 현재 슬롯 run 과
+        # 다르면, 그 run 이 동시 run 충돌로 terminal write 를 잃었을 수 있다. per-run marker 로 자기
+        # run 의 종료를 해소해, 다른 사용자의 동시 run(슬롯 점유) 때문에 '처리 중' 에 갇히지 않게 한다.
+        _client_rid = str(client_run_id or "").strip()
+        if _client_rid and run_id and _client_rid != run_id:
+            _term_status, _term_at = _load_run_terminal_marker(conn, cid, _client_rid)
+            if _term_status:
+                run_id = _client_rid
+                status = _term_status
+                status_at = _term_at or status_at
         # KV 에 run_id 가 없는 경우 steps 테이블에서 최신 run 을 fallback 조회.
         fallback_status = ""
         if not run_id:
