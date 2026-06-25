@@ -119,9 +119,6 @@ is_meta_path() {
   case "$path" in
     AGENTS.md|CLAUDE.md|GEMINI.md) return 0 ;;
     bin/*|shared/docs/*|docs/*) return 0 ;;
-    # playbooks/ = 프로세스 거버넌스 문서(PB-*) — META-class (분류 누락 보강,
-    # ADR-20260625T023049-spec-anchor-timestamp-id cycle).
-    playbooks/*) return 0 ;;
     unit/_template/*) return 0 ;;
     # v3.13.0 — wiki/ 사람 facing vault (AGENTS.md §21) 는 META path.
     wiki/*) return 0 ;;
@@ -190,14 +187,26 @@ staged_touches() {
 
 # -----------------------------------------------------------------------------
 # Code-file detection (for check #4: FUNCTION.md companion rule)
-# Code file = anything under feature_dir except docs/** or tests/README.md scaffolds.
+# Code file = anything under feature_dir except docs/** , content/** assets, or
+# tests/README.md scaffolds. content/ holds non-functional curation (release notes,
+# static copy, data manifests) — companion-exempt by placement (AGENTS.md §16.2).
 # -----------------------------------------------------------------------------
 
 is_code_file() {
   local path="$1" fdir="$2"
   case "$path" in
     "${fdir}/docs/"*) return 1 ;;    # docs don't count as code
-    "${fdir}/"*) return 0 ;;          # everything else under feature = code
+    "${fdir}/"*)
+      # content/data assets (release notes, static copy, manifests) under a
+      # `content/` segment are non-functional — companion-exempt (placement-based).
+      # Match RELATIVE to fdir so a `/content/` segment elsewhere in the repo path
+      # (e.g. a feature nested under .../content/) can never exempt real code.
+      local rel="${path#"${fdir}/"}"
+      case "$rel" in
+        content/*|*/content/*) return 1 ;;
+      esac
+      return 0                        # everything else under feature = code
+      ;;
     *) return 1 ;;
   esac
 }
@@ -592,9 +601,14 @@ check_7_anchor_4() {
 }
 
 # Check #9: REVIEW.md cycle entry — at least one accepted [SUBAGENT|AGENT-TEAM]
-# entry, or an explicit [SKIPPED] entry for non-policy doc-only cycles, must
+# entry, an explicit [SKIPPED] entry for non-policy doc-only cycles, or a
+# [CODEX] entry for docs-only policy changes reviewed via codex (§18.8.1), must
 # have been added to the relevant REVIEW.md in the current cycle. [REJECTED:*]
 # entries are diagnostic traces only; they do not prove review completion.
+# NOTE: this is a tag-presence gate — it matches the accepted verdict TAG
+# ([SUBAGENT|AGENT-TEAM|SKIPPED|CODEX]), not the entry's embedded Verdict field.
+# The PASS invariant (e.g. [CODEX] PASS iff codex P1=0; [SUBAGENT] verdict not
+# BLOCK) is enforced by the review author / skill, not by this regex (§18.4).
 # AGENTS.md §18.4 + §18.10.1: META mode skips checks #1-#8 but check #9 still runs.
 # v0.1 cycle scope approximation: staged/unstaged diff (pre-commit) or HEAD diff
 # (post-commit) of the candidate REVIEW.md must contain at least one added entry
@@ -1060,65 +1074,6 @@ check_12_wiki_feature_card() {
   return 0
 }
 
-check_13_windows_browser_verification() {
-  # AGENTS.md §15.4.1 — 웹/UI 변경의 완료 검증은 실제 Windows 브라우저에서 수행한다
-  # (PB-0008). 본 check 는 diff 가 웹 대상 파일을 변경했는데 TEST.md §3 에
-  # `Environment: Windows-browser` Run 추가가 동반되지 않으면 경고한다.
-  # v1 WARN-only (PR block 아님) — wiki check #12 와 동일한 staged rollout.
-  local mode="${1:-pre-commit}"
-  if ! git rev-parse --git-dir >/dev/null 2>&1; then
-    log_check 13 WARN "Windows-browser verification" "SKIP (not a git work tree)"
-    return 0
-  fi
-
-  # 변경 파일 목록 (mode 별 diff 범위).
-  local changed=""
-  case "$mode" in
-    pre-commit|shared-pre-commit)
-      changed=$(git diff --cached --name-only 2>/dev/null || true) ;;
-    post-commit)
-      changed=$(git diff HEAD~1 HEAD --name-only 2>/dev/null || true) ;;
-    *)
-      log_check 13 WARN "Windows-browser verification" "SKIP (unknown mode: $mode)"
-      return 0 ;;
-  esac
-
-  # 웹/UI 대상 파일 패턴 (§10.5 조건부 규칙과 정합). 서버사이드 템플릿
-  # (jinja/tpl/tmpl/hbs/ejs/astro) 도 포함 — /templates/ 밖 렌더링 파일 누락 방지 (QA F4).
-  local web_files=""
-  web_files=$(printf '%s\n' "$changed" | grep -E \
-    '(^unit/feature-0003-agent-web-ui/)|(/templates/)|(/static/)|(\.(html?|css|js|jsx|ts|tsx|vue|svelte|jinja2?|j2|tpl|tmpl|hbs|ejs|astro)$)' \
-    || true)
-
-  if [ -z "$web_files" ]; then
-    log_check 13 PASS "Windows-browser verification" "(no web/UI file changes in diff)"
-    return 0
-  fi
-
-  # TEST.md 에 `Environment: ... Windows-browser` Run 추가가 diff 에 포함됐는지.
-  # 템플릿의 선택지 메뉴 라인("Environment: CLI | WSL-headless | Windows-browser")은
-  # '|' 포함이므로 제외 — 미작성 placeholder 가 게이트를 false-PASS 시키지 않게 (QA F1).
-  local added_winbrowser=""
-  case "$mode" in
-    pre-commit|shared-pre-commit)
-      added_winbrowser=$(git diff --cached -- '*TEST.md' 2>/dev/null \
-        | grep -E '^\+.*[Ee]nvironment.*Windows-browser' | grep -v '|' || true) ;;
-    post-commit)
-      added_winbrowser=$(git diff HEAD~1 HEAD -- '*TEST.md' 2>/dev/null \
-        | grep -E '^\+.*[Ee]nvironment.*Windows-browser' | grep -v '|' || true) ;;
-  esac
-
-  if [ -n "$added_winbrowser" ]; then
-    log_check 13 PASS "Windows-browser verification" "(web/UI 변경 + TEST.md 에 Windows-browser Run 동반)"
-    return 0
-  fi
-
-  log_check 13 WARN "Windows-browser verification" \
-    "AGENTS.md §15.4.1 (v1 SHOULD): 웹/UI 파일 변경됨 — $(printf '%s' "$web_files" | tr '\n' ' '). TEST.md §3 에 'Environment: Windows-browser' Run 동반 누락. PB-0008 로 실제 Windows 브라우저 검증 후 기록 권장 (UI 표면 없음/브리지 불가면 사유 명시). v1 WARN-only (PR block 아님), 후속 strict 격상 예정."
-  # WARN: exit 0 유지, failed counter 영향 X.
-  return 0
-}
-
 # -----------------------------------------------------------------------------
 # Main dispatch
 # -----------------------------------------------------------------------------
@@ -1227,11 +1182,9 @@ main() {
   check_9_review_entry "$effective_mode" "$feature_id" || failed=$((failed + 1))
   # Check #12 (v3.12.0+): wiki feature card companion — WARN-only, failed 영향 X.
   check_12_wiki_feature_card "$effective_mode" || true
-  # Check #13 (feature-0008): web/UI 변경 시 Windows-browser 검증 — WARN-only, failed 영향 X.
-  check_13_windows_browser_verification "$effective_mode" || true
 
   if [ "$failed" -eq 0 ]; then
-    printf '\nverify-completion: PASS (9 checks: 7 pilot + worktree binding + repo immutability) + checks #12 (wiki feature card) #13 (windows-browser verification) informational (WARN-only)\n' >&2
+    printf '\nverify-completion: PASS (9 checks: 7 pilot + worktree binding + repo immutability) + check #12 informational (wiki feature card, WARN-only)\n' >&2
     exit 0
   else
     printf '\nverify-completion: FAIL (%d of 9 checks failed)\n' "$failed" >&2

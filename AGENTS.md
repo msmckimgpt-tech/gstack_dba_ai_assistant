@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.35.0
+template_version: v3.35.1
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -635,6 +635,15 @@ confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-appr
   feature-scoped 확장). 다른 worktree 가 동일 path 의 read 는 허용. 충돌 발생
   시 §13.2.5 의 ai/\* main drift gate 가 보충. `bin/list-shared-paths.sh` 가
   feature-bound REPORT.md 를 동적으로 열거한다.
+- **공유 monotonic stamp 충돌 회피 — hand-edit 커밋 금지 (v3.35.1)**: 모든 병렬 세션이
+  공통으로 갱신하는 단일-라인 monotonic stamp(cache-buster `?v=YYYYMMDD-...`, build-id,
+  version 라인)는 머지마다 그 한 줄에서 결정적으로 충돌한다(위 식별자 충돌과 동일 facet —
+  단 배포/캐시무효화 자산). **1순위**: stamp 를 소스에 hand-edit 커밋하지 말고 build/deploy
+  시점에 **content-hash 로 자동 생성**한다(소스엔 placeholder, 빌드가 주입 — 충돌 표면 제거).
+  **2순위**(빌드 훅 부재): 그 stamp **라인만** 대상으로 하는 path-scoped custom merge
+  driver(`.gitattributes` 의 path 한정 `merge=<driver>`)를 둔다. **전체 파일 `merge=union`
+  은 금지** — 진짜 충돌(다른 코드 변경)에 양쪽 라인을 모두 남겨 중복을 만든다.
+  (timestamp+branch(v3.32.0)·감지-후-재번호(v3.25.0)와 동일 계열의 공유-라인 충돌 회피.)
 - 아래 마커를 지원한다.
 
 ```md
@@ -1269,6 +1278,18 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 - [ ] (웹 UI 프로젝트만) 웹 UI 변경 시 `/browse` 스킬로 Windows 브라우저 렌더링 시각적 확인 완료 — WSL curl/wget/playwright 응답만으로 완료 보고 금지 (§16.6)
 - [ ] (deploy-backed 소비자만) 라이브 재배포 검증 완료 — cycle-finalize(PR 머지) 후 `docker compose up --build` + healthz PASS + KEK/secret 주입 확인 (§16.3 deploy-backed 소비자 완료 기준)
 ```
+
+> **콘텐츠/데이터 자산의 companion 면제 (v3.35.1)**: verify-completion 의 code-file
+> 분류(check #4)는 feature 디렉토리 하위 `docs/**`·`content/**` 외 모든 파일을 코드로 보아
+> `FUNCTION.md` 등 companion 을 요구한다. 사용자향 **비기능 콘텐츠/데이터 자산**(릴리즈노트
+> 데이터·정적 카피·콘텐츠 매니페스트)은 동작 명세와 무관하므로 `unit/<feature>/.../content/`
+> 세그먼트 또는 `docs/` 하위에 배치해 companion 요구에서 면제한다. 면제는 **위치로만** 부여된다
+> — 임의 코드를 `content/` 에 두는 것은 가시적 오배치(리뷰에서 포착)이며 자연스러운 import
+> 경로도 아니라 게이트 우회 유인이 낮다. (per-file 마커·광범위 확장자 패턴은 trivially
+> gameable 이라 채택하지 않는다.) **단** `content/` 는 기능 모듈명으로도 자연스러우므로
+> (CMS·content 핸들러 등), 면제는 feature_dir **상대 경로**의 `content/` 세그먼트로만 적용하고
+> (repo 경로 어딘가의 `/content/` 가 feature 전체를 면제하지 않게 앵커링), `content/` 디렉토리가
+> 코드가 아닌 자산만 담는지는 **diff 리뷰에서 확인**한다 — 면제의 backstop 은 리뷰다.
 
 ### §16.3 Git 동기화 절차 (verify-completion 기반)
 
