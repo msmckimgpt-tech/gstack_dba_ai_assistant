@@ -4789,3 +4789,13 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
 - Rollback: 추가 5항목 + 2 cache-buster revert(순수 콘텐츠·additive). 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 새 릴리즈노트 화면 반영. 마이그/백엔드 없음.
+
+## CHG-20260625T105417-steps-btn-cachebust (TASK-20260625T105417-steps-btn-cachebust — app.js cache-buster bump, steps-btn-pending-persist 전파 보강, Minor §12.3 — frontend-only)
+- Date: 2026-06-25 (/_template:entry dispatch 후속, worktree ai/claude/steps-btn-cachebust). index.html script src 쿼리 1줄.
+- 배경: 직전 cycle(CHG-20260625T103503-steps-btn-pending-persist)이 `static/app.js` 내용을 바꿨으나 index.html 의 `app.js?v=` 를 bump 하지 않음 → 같은 `?v=20260625-gc-unread-read-fix` 로 app.js 를 캐시한 사용자에게 수정 미전파 가능. app.py:10582(TASK-0256d): 정적 자산은 `?v=` 가 유일 전파 메커니즘(HTML 만 no-cache, 정적은 휴리스틱 freshness).
+- 내용: `static/index.html` — `<script src="/static/app.js?v=20260625-gc-unread-read-fix">` → `?v=20260625-steps-btn-pending-persist`. (app.js 는 index.html 에서만 로드 — admin.html/share.html 무관.)
+- Why: 새 `?v=` 가 브라우저에 새 URL 로 인식되어 강제 재요청 → 전 사용자가 수정된 app.js 수신.
+- Verification: index.html grep 으로 단일 app.js 로드 확인. 순수 캐시버스터 — 로직 무변경 → 적대 패널 불요(REVIEW [SKIPPED]).
+- Files: `static/index.html`, `docs/{TASK,MODIFY,REVIEW,FUNCTION}.md`.
+- Rollback: `?v=` 문자열 1줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) — index.html 정적 자산 변경. 마이그/백엔드 없음.

@@ -4679,4 +4679,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **수정② app.js `renderMessages()`**: `lastCompletedRunSteps` fallback 블록의 `if (!state.pendingBubble)` → bare block(가드 제거, `cr` 스코프 유지). `:not(.is-pending)` 선택자 + `.bubble-steps-btn` 존재검사가 중복/오부착 차단하므로 안전.
 - [x] **수정③④ app.js step side panel**: `state.stepSidePanelLive` 필드 신설. `openStepSidePanel` 이 `pending === state.pendingBubble` 일 때만 live=true 로 표시, `refreshStepSidePanel` 은 live 일 때만 폴링 갱신 → 가드 제거로 생길 수 있는 새 엣지(진행 중 이전 답변 단계 패널을 열어둔 채 라이브 폴링이 덮어쓰기)를 차단. `closeStepSidePanel` 닫을 때 false 리셋(방어적).
 - [x] **검증**: `node --check app.js` PASS + 적대적 frontend 리뷰(REV-20260625T103503-steps-btn-pending-persist [SUBAGENT:adversarial-frontend-8hypothesis-PASS] — SHIP) BLOCKER/MAJOR/MINOR 0, NIT 2(NIT-1 흡수, NIT-2 pre-existing 보류). H1~H8 전부 반증 실패.
-- [ ] verify-completion → commit/push → PR·머지 → web 재배포(static baked) → **PB-0008 Windows-browser 시각 검증**(대화 중 새 요청 전송 시 이전 답변 "단계 보기" 버튼 유지 확인) → 마감. (WSL worktree 라 PB-0008 미실행 — 배포 후 사용자 확인.)
+- [x] verify-completion PASS → commit/push → PR #446 머지(main drift 충돌 해결: doc-sync PR#445 와 docs tail 양측 보존 머지, app.js 는 비겹침 자동머지) → web 재배포(`sudo make web`, repo-web-1 healthy). 단 **app.js cache-buster bump 누락** 발견 → 아래 후속 cycle.
+
+### steps-btn-cachebust — app.js cache-buster bump (steps-btn-pending-persist 전파 보강, Minor §12.3, frontend-only, 2026-06-25)
+- 배경: steps-btn-pending-persist 가 `static/app.js` 내용을 바꿨으나 index.html 의 `app.js?v=` 캐시버스터를 bump 하지 않아, 같은 `?v=20260625-gc-unread-read-fix` 로 app.js 를 이미 캐시한 사용자에게 수정이 전파되지 않을 수 있었음(app.py:10582 TASK-0256d: 정적 자산은 `?v=` 가 유일 전파 메커니즘, HTML 만 no-cache).
+- 등급: **Minor §12.3** — index.html script src 쿼리 문자열 1줄. 로직·백엔드·스키마 무변경.
+- [x] **index.html**: `app.js?v=20260625-gc-unread-read-fix` → `?v=20260625-steps-btn-pending-persist`. (app.js 는 index.html 에서만 로드 — admin/share 무관)
+- [x] 검증: 새 `?v=` 가 강제 재요청 유발 → 모든 사용자가 수정된 app.js 수신. REVIEW [SKIPPED:cache-buster-only-no-logic].
+- [ ] verify-completion → commit/push → PR·머지 → web 재배포 → 마감.
