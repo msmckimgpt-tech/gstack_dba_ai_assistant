@@ -119,6 +119,9 @@ is_meta_path() {
   case "$path" in
     AGENTS.md|CLAUDE.md|GEMINI.md) return 0 ;;
     bin/*|shared/docs/*|docs/*) return 0 ;;
+    # playbooks/ = 프로세스 거버넌스 문서(PB-*) — META-class (분류 누락 보강,
+    # ADR-20260625T023049-spec-anchor-timestamp-id cycle).
+    playbooks/*) return 0 ;;
     unit/_template/*) return 0 ;;
     # v3.13.0 — wiki/ 사람 facing vault (AGENTS.md §21) 는 META path.
     wiki/*) return 0 ;;

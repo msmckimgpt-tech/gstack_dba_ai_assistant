@@ -704,3 +704,51 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - 사유: `.gitignore:27` 의 `_archive/` 패턴이 모든 `_archive` 디렉토리를 무시한다(템플릿의 로컬 임시
   보관 관례). SSOT 의 archive 는 **git 추적 보존**(이력 유지)이 목적이므로 gitignore 되는 `_archive/` 는
   부적합. `docs/archive/`(추적됨)로 확정. `bin/ssot-lint.sh` 의 archived 검사도 `*/archive/*` 로 정합.
+
+## ADR-20260625T023049-spec-anchor-timestamp-id
+
+> 본 ADR 자체가 새 형식의 첫 적용 예시다 (기존 순번 ADR 은 소급 재번호 없이 보존).
+> **registry 주의**: AGENTS.md §6/§13.1 이 식별자 거버넌스 출처로 인용해 온 "ADR-0024"(순번 유지)·
+> "ADR-0025"(timestamp+branch) 번호는 **docs/DECISIONS.md 의 동명 ADR 과 불일치**한다 — 본 레지스트리의
+> ADR-0024 는 "Postgres database 격리", ADR-0025 는 두 번 정의(M5 cleanup·pgvector attachment RAG)로
+> 식별자 정책과 무관하다. 따라서 본 ADR 은 그 번호를 재인용하지 않고 **정책 위치(AGENTS.md §6·§13.1)와
+> 버전(v3.32.0 timestamp+branch 도입)** 으로 직접 참조한다. 이 순번 ADR 의 중복·오참조 자체가 본 전환의
+> 동기를 보강한다(순번은 병렬·이력에서 충돌·혼선을 만든다).
+
+- Status: accepted (META §18.4 — 사용자 주도, 2026-06-25). spec 앵커 `REQ`/`AC`/`ADR`/`TEST` 식별자
+  형식을 timestamp+slug 로 전환.
+- Context: spec 앵커(`REQ-`/`AC-`/`ADR-`/`TEST-`)가 AGENTS.md §6/§13.1 에서 "순번 spec 앵커"로 분류되어
+  순번 `*-XXXX` + 감지-후-재번호 규약을 따랐다. 그러나 `feature-0003` 처럼 여러 cycle 이 같은 날 병렬로
+  머지되는 고병렬 환경에서, 각 세션이 다음 순번을 독립 할당 → `origin/main` 머지 시 **동일 번호 충돌**이
+  반복 관측됨. 실측 사례(2026-06-25): `gc-member-kick-ban` cycle 의 rebase 중 `auto-product-prompt`
+  (AC-0623/0624) → `admin-metadata-relocate`(AC-0625) 와 연쇄 충돌하여 AC 를 2회(0625→0626~0629)
+  재번호해야 했다. AC 가 가장 빈번했으나 REQ/ADR/TEST 도 같은 순번 충돌 표면을 공유한다(본 레지스트리의
+  ADR-0025 중복 정의가 그 산 증거다). 이는 v3.32.0 timestamp+branch 전환이 `TASK-`/`CHG-`/`REV-`/`LRN-` 에
+  대해 이미 해소한 것과 동일한 마찰이며, spec 앵커만 순번으로 남아 있던 잔여 표면이었다(사용자 후속 요청:
+  "REQ, ADR, TEST 또한 같은 형식").
+- Decision: **신규 spec 앵커는 timestamp+slug 형식 `<PREFIX>-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` 로 할당한다**
+  (정본 AGENTS.md §6·§13.1):
+  - `REQ-<YYYYMMDDTHHMMSS>-<slug>` (cycle 당 1개라 날짜형 `REQ-<YYYYMMDD>-<slug>` 도 허용).
+  - `AC-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` — 부모 REQ 의 **slug 를 공유**하고 cycle 의 초 timestamp 를
+    붙인다. REQ 당 **AC 가 2개 이상이면 `-<n>`(1-based) 필수, 단일이면 생략 가능**(또는 `-1`). 예:
+    `REQ-20260625-gc-member-kick-ban` → `AC-20260625T020410-gc-member-kick-ban-1`,`-2`…(REQ 가 날짜형이어도
+    AC 는 cycle 의 초 timestamp `T020410` 을 사용).
+  - `ADR-<YYYYMMDDTHHMMSS>-<slug>` (본 ADR 이 첫 예시).
+  - `TEST-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` (다수면 `-<n>` 필수, 단일 생략 가능).
+  cycle 별 timestamp+slug 자연 분기가 병렬 점유-경합을 제거해 감지-후-재번호가 불필요해진다. 본 결정은
+  **AGENTS.md §6·§13.1 의 기존 "spec 앵커 순번 유지" 정책을 갱신**하며, v3.32.0 의 timestamp+branch
+  컨벤션(TASK/CHG/REV/LRN)을 spec 앵커로 확장한다(상단 registry 주의 참조 — 특정 순번 ADR 번호 비인용).
+- Scope/비대상: `feature-NNNN`/`META-NNNN` (수명 길고 추적 참조 많은 폴더/worktree/branch 식별자) 은
+  본 ADR 대상이 아니다 — 안정 순번 유지(이전 순번 정책 잔존). 이들만 §13.1 의 감지-후-재번호 대상으로 남는다.
+  **기존 순번 `REQ-XXXX`/`AC-NNNN`/`ADR-XXXX`/`TEST-XXXX` 는 소급 재번호하지 않는다** — additive 전환으로
+  과거 참조(다른 문서의 인용)는 보존되고 신규 항목부터 새 형식을 적용한다. CHG-/REV-/LRN-/TASK- 는 이미
+  timestamp(ADR-0025)라 무영향.
+- Consequences:
+  - 고병렬 cycle 머지에서 spec 앵커 충돌·재번호 마찰 제거(관찰된 주 마찰 지점 해소).
+  - `FUNCTION.md` 의 AC 가 부모 REQ 와 timestamp+slug 로 시각적으로 묶여 추적성 향상.
+  - 한 문서 안에 순번(과거)과 timestamp(신규) 항목이 혼재 — 의도된 additive 상태(형식 자체로 구분).
+  - ADR 가 timestamp+slug 형식이 되어 짧은 `ADR-XXXX` 토큰보다 길어진다(가독성 trade-off 수용 — 충돌
+    제거 우선, 사용자 결정). 기존 ADR 번호 참조는 그대로 유효.
+  - 정책 명시 위치: AGENTS.md §6(식별자 표)·§6 prose(spec 앵커 단락)·§13.1(감지-후-재번호 제외) +
+    docs/CONVENTIONS.md(식별자 목록) + unit/_template/docs/{FUNCTION.md §11, TEST.md §2}(템플릿 주석) +
+    wiki/Glossary/_Index.md(용어집 행) + playbooks/PB-0006-template-migration.md(ADR 작성 절차).
