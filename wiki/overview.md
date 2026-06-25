@@ -55,6 +55,7 @@ sources:
 > **2026-06 현재**: 초기 단일 MySQL replica → **멀티 데이터소스** (dialect 추상화 + envelope 암호화 registry + DB-단위 접근) 로 일반화. agent runtime + KB 는 Postgres 단독 정본 (2026-05-27 이관 완료). agent 실행은 ask-worker out-of-process 큐로 cutover.
 > **2026-06-19~23**: ① **사용자 보안 보강 6종** (공유 링크 만료·로그인 시도 제한·감사 변조방지·LLM 사용량 한도·프롬프트 인젝션 방지·2단계 인증) 전체 완료 — [[../docs/SECURITY|SECURITY.md]] §7.2·§12~§15. ② **그룹 대화** (feature-0009) — 멤버십·`@assistant` 멘션·열람≠발화 분리·라이브 UX. ③ **NL→SQL 정확도 flywheel** (eval harness·샘플쿼리 few-shot·self-reflection·용어/ENUM 사전) — `docs/improvements/dba-ai-nl2sql/ROADMAP.md`.
 > **2026-06-24**: ④ **관리 콘솔 메타데이터 거버넌스** (용어·ENUM·테이블/컬럼 설명·AI 자동완성, ITEM-11) 로 NL→SQL 컨텍스트 강화. ⑤ **feature-0010 Google Drive 연동 토대** — 계정별 OAuth 토큰 암호화 저장 + MCP 구성 seam (연동 미수행·비활성 scaffold). ⑥ **feature-0011 `shared/` 공통 코드 추출** (P5a — `model_catalog`·`config`·`db` 모듈 alias, `make test` 회귀 0).
+> **2026-06-25**: ⑦ **그룹 대화 라이브 UX 확장** (feature-0009) — 사이드바 안 읽음/@멘션 배지(read cursor)·메시지 좌우 정렬·owner 멤버 추방/차단/해제. ⑧ **관리 콘솔 프롬프트 자동화** (feature-0003) — 역할 '전체 제품 프롬프트'·프로필 '제품별 프롬프트' AI 자동 작성·제품 분석률 95% 시 제품프롬프트 자동완성·규칙 자동추가 DB insight 커버리지 UI·'지식베이스' 메뉴 재편. ⑨ **feature-0011 `shared/` 추출 P5a Step5 완료** — config·db·conn_health·datasources 소비처 마이그레이션 + alias shim 4종 전량 제거(회귀 0). ⑩ **안정성** — init "준비" 임베딩 지연 회귀 해소·요청량 한도 메시지 주체(서비스/계정) 구분.
 
 ## 2. 상세
 
@@ -71,6 +72,8 @@ sources:
 | feature-0007-bedrock-llm-provider | AWS Bedrock (Claude) gateway + per-user OpenAI key 폐기 | [[Features/feature-0007-bedrock-llm-provider\|카드]] |
 | feature-0008-windows-browser-testing | 실제 Windows 브라우저 AI 자동 검증 (PB-0008 · ADR-0029) | [[Features/feature-0008-windows-browser-testing\|카드]] |
 | feature-0009-group-conversation | 그룹 대화 — 멤버십·`@assistant` 멘션·열람≠발화 분리·라이브 UX | [[Features/feature-0009-group-conversation\|카드]] |
+| feature-0010-google-drive-integration | 계정별 Google Drive 연동 토대 — OAuth 토큰 암호화 + MCP 구성 seam (비활성 scaffold) | [[Features/feature-0010-google-drive-integration\|카드]] |
+| feature-0011-shared-extraction | 공통 코드 `shared/` 추출 리팩터 (model_catalog·config·db·conn_health·datasources) | [[Features/feature-0011-shared-extraction\|카드]] |
 
 ### 2.2 핵심 결정 (ADR)
 
