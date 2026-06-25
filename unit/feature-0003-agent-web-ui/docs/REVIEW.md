@@ -3753,3 +3753,17 @@ source_of_truth: true
   - **방어 확인(not-real)**: XSS(username textContent·아바타 DOM API), use-after-close(detached `participantsBox` 쓰기는 무해 no-op), joinable 생성 직후 roster race(`_ensure_owner_membership` 트랜잭션 내 보장·순차 await), owner_account_id null(`ownerId!=null` 가드 + role OR), 빈 username 폴백, 403 더블토스트(엔드포인트는 404 반환 → apiFetch 403 자동토스트 미발동).
 - Verification: `node --check app.js` PASS + CSS brace 1549=1549 + `tests/verify_share_participants.mjs` **17/17 PASS**(정적 소스 단언). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL) 미실행.
 - Cross-ref: CHG-20260624T075458-gc-share-participants / FUNCTION REQ-20260624-gc-share-participants(AC-0620) / feature-0009 TASK §7 · MODIFY cross-ref.
+
+## REV-20260625T020249-admin-metadata-relocate [SUBAGENT:adversarial-3lens-PASS] — SHIP (BLOCKER/MAJOR 0, MINOR 1 추적) (TASK-20260625T020249-admin-metadata-relocate, REQ-20260625-admin-metadata-relocate, AC-0625, Minor §12.3 — 정적 DOM 재배치)
+- Date: 2026-06-25
+- 분류: **리뷰 대상**(Minor — UI 표현계층 DOM 재배치, JS/CSS/RBAC/스키마/pane 본문 무변경). §18.8 UI/layout 키워드 → 적대적 3-렌즈(권한게이팅 회귀·IA정합·접근성) 서브에이전트 패널 1회.
+- 변경 요지: 관리 콘솔 사이드바에서 '메타데이터'/'샘플 검수' 버튼을 '감사' 그룹에서 신설 '지식베이스' 그룹으로 이동(admin.html only).
+- 적대 패널 결과 — **BLOCKER/MAJOR 0, verdict SHIP**:
+  - **[렌즈1 권한게이팅 회귀] 결함 없음**: `applyAdminTabVisibility()` 가 `btn.dataset.adminTab` 키로 `canSeeTab()` 호출 — DOM 그룹 위치 무관. `metadata`/`sample-review` 권한 매핑(kb.ingest.manual∪kb.sample.curate / kb.sample.curate) 불변. 신설 '지식베이스' 그룹 자동숨김(둘 다 미보유 시 라벨+divider hide) 정상, 축소된 '감사' 그룹(audits/usage/archives) collapse 정상.
+  - **[렌즈2 pane/switchTab] 결함 없음**: `switchTab()` 이 `data-admin-pane` 문자열 매칭, 초기화 분기(`tabName === "metadata"|"sample-review"`)·클릭 바인딩(`data-admin-tab`) 모두 위치 비의존. pane 본문(`data-admin-pane="metadata"|"sample-review"`) 무변경 존재.
+  - **[렌즈3 숨은 의존성] 결함 없음**: styles.css nth-child/nth-of-type 전무(.admin-tab-group-label/-divider 는 class 셀렉터), admin.js 배열 인덱스 접근 없음(전부 forEach/find), '감사' 라벨 텍스트 기반 탭배치 판정 코드 없음.
+  - **[렌즈4 IA정합] MINOR — 흡수(추적)**: admin.js:167 권한그룹 라벨 `kb:"지식베이스(KB) 검수"` vs 사이드바 신설 그룹 '지식베이스' 용어 미세 불일치(전자=curate 한정 뉘앙스, 후자=메타데이터 ingest 포괄 상위어). 기능 결함 아님 — 후속 용어 통일 시 정리. ship 차단 아님.
+  - **[렌즈5 접근성/렌더] 결함 없음**: 신설 라벨/divider 마크업이 기존 4개 그룹(계정/제품/감사/시스템)과 구조·class 동일. (기존 한계: nav.admin-tabs 에 role=tablist 부재 — 변경 전부터 동일, 신규 회귀 미도입.)
+- Verification: diff 검수(admin.html 11+/5-) + 3-렌즈 적대 서브에이전트 코드근거 확인(클릭 바인딩 admin.js:9581-9583 data-admin-tab 기반 포함). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후) — worktree=WSL 미실행, WARN-only.
+- Human Approval Needed: 아니오(Minor — 인증/인가/파괴/외부비용 무관).
+- Cross-ref: CHG-20260625T020249-admin-metadata-relocate / TASK 동일 / FUNCTION REQ-20260625-admin-metadata-relocate(AC-0625).

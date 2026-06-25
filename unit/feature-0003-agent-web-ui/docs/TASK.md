@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260625T020249-admin-metadata-relocate — 관리 콘솔 사이드바 IA: '메타데이터' 탭을 '감사' 그룹에서 신설 '지식베이스' 그룹으로 재배치 (+ '샘플 검수' 동반 이동) (Minor §12.3 — 정적 DOM 재배치, JS/CSS/RBAC/스키마 무변경)
+- 사용자 요청(`/_template:entry`): `관리 콘솔`의 '메타데이터' 탭이 '감사'에 위치하는 게 어색 — `시스템 > 설정 > 메타데이터` 로 이동 검토·적용 + 더 좋은 구조도 검토. **IA 결정(AskUserQuestion)**: 사용자 원안('시스템' 그룹 이동) 대신 신설 '지식베이스' 그룹으로 메타데이터+샘플 검수를 묶음(둘 다 KB 거버넌스·kb.* 권한, '감사'=읽기전용 모니터링과 성격 상이). 결과 순서: [감사: 감사 로그·LLM 사용량·보관 대화] → [지식베이스: 메타데이터·샘플 검수] → [시스템: 설정·릴리즈 노트].
+- [x] `src/static/admin.html`: '감사' 그룹에서 `data-admin-tab="metadata"`/`"sample-review"` 버튼 제거 → 신설 `<div class="admin-tab-group-divider">`+`<div class="admin-tab-group-label">지식베이스</div>` 아래로 메타데이터→샘플 검수 순 재배치. 버튼 `data-admin-tab`/`id`/`style="display:none"` 속성 보존.
+- [x] 회귀 분석: `admin.js` `applyAdminTabVisibility()`(그룹 경계=DOM순서 동적계산)·`ADMIN_TAB_PERMISSIONS`(키 기반)·`switchTab()`(`data-admin-pane` 매칭)·클릭 바인딩(`data-admin-tab`) 전부 그룹 위치 비의존 확인 → admin.js/styles.css/백엔드/RBAC/스키마/pane 본문 **무변경**. 권한 게이팅(metadata=kb.ingest.manual∪kb.sample.curate, sample-review=kb.sample.curate)·그룹 자동숨김 불변.
+- [x] **§18.8 적대적 3-렌즈(권한게이팅 회귀·IA정합·접근성) 서브에이전트 리뷰 — BLOCKER/MAJOR 0, SHIP**. MINOR 1(사이드바 '지식베이스' vs 권한그리드 admin.js:167 `kb:"지식베이스(KB) 검수"` 용어 미세 불일치 — ship 차단 아님, 후속 용어통일 추적). REV-20260625T020249-admin-metadata-relocate.
+- [ ] **남은 마감**: verify-completion --pre-commit → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked) → PB-0008 Windows-browser UI 실렌더 검증(worktree=WSL 미실측, WARN-only — 지식베이스 그룹 위치·권한별 가시성).
+
 ## TASK-20260624-metadata-ai-autocomplete — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정 (중단 세션 resume, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC)
 - 출처: 사용자 요청(entry persona) "관리 콘솔 > 메타데이터를 실제 관리자가 처음 쓰기 까다롭다 — 모든 탭에 AI 자동완성" + "창이 길어지면 스크롤이 없어 하단 항목을 못 본다". 원본 세션이 session limit 으로 프론트 일괄 함수 삽입 직후 중단 → 본 cycle 이 resume 으로 잔여(CSS·테스트·docs·panel·게이트) 완수.
 - 범위: feature-0003 web only. 마이그 없음, agent-core·gateway·credential·ROADMAP 무변경. 기존 metadata 거버넌스(ITEM-11) 폼/부트스트랩에 AI 채움 버튼 추가.

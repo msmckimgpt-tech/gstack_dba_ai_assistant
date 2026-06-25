@@ -4630,3 +4630,13 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
 - Rollback: release-notes-data.js 의 `2026-06-24` 블록 + generated 한 줄 revert(순수 콘텐츠·additive). 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked) — 새 릴리즈노트 화면 반영. 마이그/백엔드 없음.
+
+## CHG-20260625T020249-admin-metadata-relocate (관리 콘솔 사이드바 IA — 메타데이터/샘플 검수를 '감사'→신설 '지식베이스' 그룹 재배치, Minor §12.3)
+- Date: 2026-06-25 (`/_template:entry`). 전용 worktree `ai/claude/admin-metadata-relocate`(base 2a73c64). **정적 DOM 재배치만** — JS/CSS/백엔드/스키마/RBAC/pane 본문 무변경.
+- Reason: '메타데이터' 탭(용어/ENUM/테이블/컬럼 거버넌스 — kb.ingest.manual)이 '감사'(읽기전용 모니터링) 그룹에 위치해 의미 부정합(사용자 보고). 동 그룹의 '샘플 검수'(kb.sample.curate, 피드백→샘플쿼리 KB 환류 검수)도 동일하게 KB 거버넌스 성격. 사용자 원안('시스템>설정' 이동)보다, 둘을 신설 '지식베이스' 그룹으로 묶고 '감사'를 순수 모니터링(감사 로그·LLM 사용량·보관 대화)으로 정리하는 IA 가 더 정합(AskUserQuestion 확정).
+- 변경: `src/static/admin.html` 사이드바 nav — '감사' 그룹 라벨/divider 다음에 있던 `metadata`/`sample-review` 버튼 2개를 제거하고, '시스템' 그룹 직전에 `<div class="admin-tab-group-divider">`+`<div class="admin-tab-group-label">지식베이스</div>` 신설 후 메타데이터→샘플 검수 순으로 재배치. 버튼 속성(`data-admin-tab`,`id`,`style="display:none"`) 전부 보존.
+- 회귀 0 근거: `admin.js` 의 탭 가시성/그룹경계(`applyAdminTabVisibility` — DOM순서 동적), 권한 게이팅(`ADMIN_TAB_PERMISSIONS` 키 기반·`canSeeTab`), pane 매칭(`switchTab` — `data-admin-pane` 문자열), 클릭 바인딩(`data-admin-tab`), 탭 초기화(`tabName === "metadata"|"sample-review"`)가 전부 그룹 DOM 위치에 비의존. styles.css 에 nth-child/위치 셀렉터 없음. 그룹 자동숨김(visible 탭 0이면 라벨+직전 divider hide)이 신설 그룹에도 동일 적용.
+- Verification: diff 검수(admin.html 단일, 11+/5-) + §18.8 적대적 3-렌즈 서브에이전트(권한게이팅 회귀·pane 매칭·숨은 의존성·IA정합·접근성) **BLOCKER/MAJOR 0 SHIP**(MINOR 1: 사이드바 '지식베이스' vs admin.js:167 권한그룹 `kb:"지식베이스(KB) 검수"` 용어 미세 불일치 — 후속 통일 추적). UI 실렌더 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree=WSL 미실행, WARN-only).
+- Files: `src/static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT}.md`.
+- Rollback: admin.html 의 버튼 2개 위치 + '지식베이스' 그룹 라벨/divider revert(순수 표현계층·additive). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) — 사이드바 그룹 재배치 반영. admin.html 은 캐시버스터 쿼리 없이 직접 서빙(styles.css/admin.js 무변경이라 기존 캐시버스터 유지). 마이그/백엔드 없음.
