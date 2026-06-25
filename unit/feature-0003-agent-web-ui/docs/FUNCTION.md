@@ -1219,3 +1219,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 항목(9): [new work] 사이드바 안 읽음/@멘션 배지 · 멤버 추방/차단/해제 · [improved work] 메시지 좌우 정렬 · [new admin] 역할/제품 프롬프트 AI 자동작성 · 제품 분석률 95% 자동완성 · [improved admin] 규칙 추가 DB insight 커버리지 · 지식베이스 메뉴 재편 · [improved common] 요청량 한도 메시지 주체 구분 · AI 준비 속도.
 - 비변경: 렌더/접기/탐색 로직(`release-notes.js`), 백엔드, 라우팅, RBAC, 스키마. 순수 콘텐츠 추가. (CHG/REV-20260625T165205-doc-sync-rn-0625 [SKIPPED])
 - 배포: `index.html`·`admin.html` 의 release-notes-data.js cache-buster `?v=20260625-rn-0625` → `?v=20260625b-rn-0625` bump — 06-25 블록이 캐시 무효화되어 사용자에게 노출(deploy_scope: included, web 재배포 시 반영).
+
+## (steps-btn-pending-persist, 2026-06-25) 이전 답변 "단계 보기" 버튼은 새 요청 진행 중에도 유지된다
+- assistant 말풍선의 "단계 보기 (N)" 버튼은 해당 메시지의 영속 step 데이터(`message.meta.steps`, 또는 막 완료된 run 의 `state.lastCompletedRunSteps` fallback)에 근거하며, **대화 중 새 요청이 진행(`state.pendingBubble` 활성) 중인지와 무관하게 항상 표시된다.** 이전 답변의 step 내역은 새 요청 진행 여부와 독립적으로 유효하므로, 새 요청 전송 중 이전 답변 버튼이 일시 소실되지 않는다(이전 동작: `renderMessages()` 가 `!state.pendingBubble` 가드로 진행 중 버튼을 숨겨 완료+새로고침 전까지 사라짐 — 본 cycle 에서 정정). AC-0070~0072(REQ-20260515-0003)·AC-0421(REQ-20260612-0235)의 pending 말풍선 자체 "N단계 보기" 와 별개 surface.
+- 실행 단계 사이드 패널(`#stepSidePanel`)은 **라이브 run 패널일 때만**(pending 말풍선의 "N단계 보기" 로 연 경우) 진행 폴링이 본문을 실시간 갱신한다. 이전 답변의 historical 단계 패널을 연 동안에는 라이브 폴링이 그 내용을 덮어쓰지 않는다(`state.stepSidePanelLive` 로 구분). 백엔드/인가/스키마/응답계약 무변경 — frontend `static/app.js` 렌더 조건만. CHG/REV-20260625T103503-steps-btn-pending-persist.

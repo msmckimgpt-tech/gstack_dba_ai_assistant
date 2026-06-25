@@ -3855,3 +3855,13 @@ source_of_truth: true
 - 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 머지 커밋 10건(09114ed/cc62773/1d83d94/29d1bbf/5c525db/4cd26e7/23b7175/874f15e/70c57f6/23fa679) 1:1 대조. 내부/비-user-facing(shared P5a·codebase-map·template upgrade·spec-anchor id)은 의도적 제외 확인.
 - Human Approval Needed: 아니오.
 - Cross-ref: CHG-20260625T165205-doc-sync-rn-0625 / TASK-20260625T165205-doc-sync-rn-0625 / FUNCTION '릴리즈노트(업데이트 내역) 콘텐츠 — 06-25 머지분 반영' / META commit 5df5d9c(STATUS·wiki 06-25 정합).
+
+## REV-20260625T103503-steps-btn-pending-persist [SUBAGENT:adversarial-frontend-8hypothesis-PASS] — SHIP (BLOCKER/MAJOR/MINOR 0, NIT 1 흡수 + NIT 1 보류) (TASK-20260625T103503-steps-btn-pending-persist, REQ-20260625-steps-btn-pending-persist, Minor §12.3 — frontend-only `static/app.js` 렌더 조건)
+- Date: 2026-06-25 (/_template:entry dispatch, worktree ai/claude/fix-steps-btn-pending).
+- 변경: 대화 중 새 요청 전송 시 이전 답변 "단계 보기" 버튼 일시 소실 버그 수정. `renderMessages()` 의 버튼 부착/fallback 가드 `!state.pendingBubble` 2곳 제거 + step side panel `stepSidePanelLive` 라이브 판정 도입(폴링 덮어쓰기 엣지 차단). 백엔드·인가·스키마 무변경.
+- 패널(§18.8, UI/button dispatch → frontend): general-purpose 적대적 frontend 리뷰어가 8개 가설(H1 가드제거가 버그수정·호출경로 실재 / H2 중복버튼 / H3 bare block 스코프·중괄호 / H4 `pending===state.pendingBubble` ref 동일성·mutate-not-reassign / H5 라이브 패널 갱신 회귀 / H6 historical→live 복귀 / H7 close 후 stale-true / H8 null·그룹·복원 엣지)로 반증 시도 — **전부 반증 실패=안전**. 라인 인용 근거(버그경로 8006→8016, mutate-not-reassign 5318 등) 확인.
+- VERDICT: **SHIP**. BLOCKER 0 / MAJOR 0 / MINOR 0. NIT-1(`closeStepSidePanel` 미리셋) → **흡수**(false 리셋 1줄 추가). NIT-2(`stepSidePanelConvId` set-but-never-read) → **보류**: 본 diff 이전부터 존재하던 동작, 범위 밖.
+- 검증: `node --check app.js` PASS(흡수 후 재검사).
+- 등급 근거(§12.3 Minor): frontend 단일 파일 렌더 조건 로직, 비파괴, 인가/데이터/스키마 경계 무영향.
+- Human Approval Needed: 아니오 (Minor §12.3 — AI 자율 진행 + REVIEW 기록).
+- Cross-ref: CHG-20260625T103503-steps-btn-pending-persist / TASK-20260625T103503-steps-btn-pending-persist.

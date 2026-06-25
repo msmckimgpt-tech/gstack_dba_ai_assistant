@@ -4660,3 +4660,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: py_compile(app.py) PASS. 메시지 텍스트 단언 테스트 부재(test_llm_usage_quota L82=allowed 케이스 msg=="" / test_auto_account_prompt=stub) → 무회귀.
 - [x] 리뷰(REVIEW REV-20260625T045450-limit-subject-msg [SKIPPED]): 메시지 문구만 → 적대 패널 불요.
 - [ ] verify-completion → commit/push → (PR·머지·배포는 사용자 confirm) → 마감.
+
+### steps-btn-pending-persist — 새 요청 진행 중 이전 답변 "단계 보기" 버튼 소실 수정 (Minor §12.3, frontend-only, 2026-06-25)
+- 사용자 요청(/_template:entry): 대화 중 새 요청을 보내면 이전 assistant 답변의 "단계 보기 (N)" 버튼이 일시적으로 사라지고, 답변 완료+새로고침 후 다시 보이는 버그 수정. (REQ-20260625-steps-btn-pending-persist, TASK-20260625T103503-steps-btn-pending-persist)
+- 근본원인: `renderMessages()` 가 새 요청 시작(`sendPrompt` → `state.pendingBubble` 세팅 직후 재호출)될 때, 이전 답변의 "단계 보기" 버튼 부착 조건이 `&& !state.pendingBubble` 가드에 막혀 렌더되지 않음. 영속 step 데이터(`message.meta.steps`)는 pending 상태와 무관하게 유효하므로 가드가 오작동.
+- 등급: **Minor §12.3** — frontend `static/app.js` 단일 파일, 렌더 조건 로직만(비파괴·인가/스키마/백엔드 무변경).
+- [x] **수정① app.js `renderMessages()`**: meta.steps 버튼 부착 조건 `if (msgMetaSteps.length && !state.pendingBubble)` → `if (msgMetaSteps.length)`. 이전 답변의 영속 step 버튼은 진행 중에도 항상 표시.
+- [x] **수정② app.js `renderMessages()`**: `lastCompletedRunSteps` fallback 블록의 `if (!state.pendingBubble)` → bare block(가드 제거, `cr` 스코프 유지). `:not(.is-pending)` 선택자 + `.bubble-steps-btn` 존재검사가 중복/오부착 차단하므로 안전.
+- [x] **수정③④ app.js step side panel**: `state.stepSidePanelLive` 필드 신설. `openStepSidePanel` 이 `pending === state.pendingBubble` 일 때만 live=true 로 표시, `refreshStepSidePanel` 은 live 일 때만 폴링 갱신 → 가드 제거로 생길 수 있는 새 엣지(진행 중 이전 답변 단계 패널을 열어둔 채 라이브 폴링이 덮어쓰기)를 차단. `closeStepSidePanel` 닫을 때 false 리셋(방어적).
+- [x] **검증**: `node --check app.js` PASS + 적대적 frontend 리뷰(REV-20260625T103503-steps-btn-pending-persist [SUBAGENT:adversarial-frontend-8hypothesis-PASS] — SHIP) BLOCKER/MAJOR/MINOR 0, NIT 2(NIT-1 흡수, NIT-2 pre-existing 보류). H1~H8 전부 반증 실패.
+- [ ] verify-completion → commit/push → PR·머지 → web 재배포(static baked) → **PB-0008 Windows-browser 시각 검증**(대화 중 새 요청 전송 시 이전 답변 "단계 보기" 버튼 유지 확인) → 마감. (WSL worktree 라 PB-0008 미실행 — 배포 후 사용자 확인.)
