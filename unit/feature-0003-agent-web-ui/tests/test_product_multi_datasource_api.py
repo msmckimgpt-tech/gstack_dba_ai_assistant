@@ -119,7 +119,7 @@ def test_add_product_datasource_rejects_unregistered(monkeypatch):
     store = {"bindings": []}
     conn = _Conn(store)
     _patch(monkeypatch, conn)
-    monkeypatch.setattr("modules.datasources.resolve", lambda c, k: None)  # 미등록
+    monkeypatch.setattr("shared.datasources.resolve", lambda c, k: None)  # 미등록
     resp = asyncio.run(app.admin_add_product_datasource(5, _Req({"datasource_key": "ghost"})))
     assert resp.status_code == 400
 
@@ -128,7 +128,7 @@ def test_add_product_datasource_success(monkeypatch):
     store = {"bindings": [], "product_exists": True}
     conn = _Conn(store)
     _patch(monkeypatch, conn)
-    monkeypatch.setattr("modules.datasources.resolve", lambda c, k: {"key": k, "engine": "mysql"})
+    monkeypatch.setattr("shared.datasources.resolve", lambda c, k: {"key": k, "engine": "mysql"})
     resp = asyncio.run(app.admin_add_product_datasource(5, _Req({"datasource_key": "dsa"})))
     body = json.loads(resp.body)
     assert body["datasource_key"] == "dsa"

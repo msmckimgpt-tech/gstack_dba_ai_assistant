@@ -100,3 +100,26 @@ source_of_truth: true
   committed-tree 무결성 확인(shim 2개 staged: `M modules/{conn_health,datasources}.py` — untracked-shim BLOCKING 선제 차단).
 - Rollback Notes: 단일 commit revert 로 두 모듈이 modules/ 로 복귀(db back-dep 도 동반 복원). 이미지 재빌드만
   (스키마/데이터 무변경). 라이브는 재배포 전까지 무영향.
+
+## CHG-20260625-0005
+- Date: 2026-06-25
+- Related Requirement: P5a Step 5a — conn_health·datasources 소비처를 modules.* alias → shared.* 정본 경로로
+  점진 마이그레이션 + 두 alias shim 제거 (TASK-0011-9 부분; Step 5 의 첫 sub-step).
+- Summary: Step 4 에서 alias shim 으로 비파괴 추출했던 conn_health·datasources 의 **모든 소비처(60 ref, 18 파일)**
+  를 `from modules import …`·`from . import …`(modules 내부 상대형)·`import modules.X`·dynamic(importlib/
+  mock.patch/monkeypatch string) 전 형태에서 `from shared import …`/`shared.*` 로 일괄 마이그레이션하고,
+  `modules/conn_health.py`·`modules/datasources.py` alias shim 2개를 **삭제**. 정본 단일 경로(shared.*)로 수렴 —
+  Step 6(feature 단위 Dockerfile 분리)의 전제(소비처가 더는 modules.{conn_health,datasources} 에 의존 안 함).
+- 마이그레이션 surface (18 파일, 60 ref):
+  - 프로덕션: app.py(26 = conn_health 6 + datasources 20), agent_core.py(2), modules/ask.py(3 상대형),
+    modules/insight.py(4 상대형), gdrive_mcp_seam.py(1), scripts/rekey_datasource_facts.py(1).
+  - 테스트(12 파일): 정적 import + **dynamic 문자열 타깃**(`importlib.import_module("modules.conn_health/datasources")`,
+    `mock.patch("modules.datasources.resolve")`, `monkeypatch.setattr("modules.datasources.resolve")`)까지 전수.
+  - config·db·model_catalog 등 **타 모듈 참조는 미변경**(그들의 shim 유지 — 5b/5c 범위).
+- Files: 18 consumer files (M) + `unit/feature-0002-agent-core/src/modules/conn_health.py`·`datasources.py` (D, shim 삭제).
+  `shared/{conn_health,datasources}.py` 의 `from .` 상대 import 는 `.`=shared 로 정본 해석(무편집).
+- Impact: 런타임 동작 불변(shared.X 는 직전 alias 가 가리키던 동일 객체). `make test` **회귀 0**(전체 green, 2 skip,
+  F/E 0). **residual grep 0**(라이브 modules.conn_health/datasources 참조 0). /app smoke: shared.* import OK ·
+  modules.{conn_health,datasources}→ModuleNotFoundError(shim 제거 확인) · modules.{config,db} shim 유지 ·
+  db back-dep · cred_crypto OK. §18.8 3렌즈(missed-ref/correctness/deploy) BLOCKING 0/NIT 0(실 이미지 배포 레이아웃 import 실증).
+- Rollback Notes: 단일 commit revert 로 18 파일 import 복원 + 2 shim 재생성. 이미지 재빌드만(스키마/데이터 무변경).

@@ -126,7 +126,7 @@ def _allow_scopes(monkeypatch, scopes=("common", "default")):
     scope_key 필드를 scope 이름으로 채워 그 scope 가 허용되게 한다(real _dsr.scope_key 는 scope_key 우선).
     """
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    import modules.datasources as _dsr
+    import shared.datasources as _dsr
     ds_map = {k: {"key": k, "engine": "mysql", "scope_key": k} for k in scopes if k != "common"}
     monkeypatch.setattr(_dsr, "all_datasources", lambda conn: ds_map)
 

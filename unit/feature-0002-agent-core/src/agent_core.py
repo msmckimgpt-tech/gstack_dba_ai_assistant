@@ -2419,7 +2419,7 @@ def _resolve_product_datasource(mem_conn, product_id):
     if not key:
         return None  # 미바인딩 = 기본 DB (정상)
     # TASK-0205: DB 레지스트리(WebDatasources) 우선 + .env 레거시 폴백. password 복호 포함.
-    from modules import datasources as _datasources
+    from shared import datasources as _datasources
     ds = _datasources.resolve(mem_conn, key)
     if not ds:
         # 명시 바인딩 + 미등록(또는 복호 불가) 키 → fail-closed (운영 DB 로 silent 폴백 금지)
@@ -2561,7 +2561,7 @@ def _resolve_product_datasources(mem_conn, product_id) -> "list[dict]":
     keys = _product_datasource_keys(mem_conn, product_id)
     if len(keys) < 2:
         return []  # 0~1 바인딩 = 기존 단일 경로(_resolve_product_datasource)가 처리
-    from modules import datasources as _datasources
+    from shared import datasources as _datasources
     out: list[dict] = []
     for i, key in enumerate(keys):
         ds = _datasources.resolve(mem_conn, key)

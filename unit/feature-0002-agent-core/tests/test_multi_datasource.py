@@ -299,7 +299,7 @@ def test_ask_worker_grounding_scoped_by_endpoint_hash_not_label():
     """TASK-0221: ask-worker grounding(_load_schema_list/_load_relevant_table_insights via
     run_agent → set_active_datasource(scope_key))이 **라벨이 아닌 엔드포인트 해시**로 PG insight 를
     스코프함을 검증 — DatasourceKey 라벨을 rename 해도 ask-worker 가 같은 PG insight 를 계속 활용."""
-    from modules import datasources as dsr
+    from shared import datasources as dsr
 
     # 같은 엔드포인트, 다른 라벨 → 같은 scope_key(해시) → 같은 grounding 스코프
     ds_a = {"key": "mssql_local", "engine": "mssql", "host": "h", "port": 1433}

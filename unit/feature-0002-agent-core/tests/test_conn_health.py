@@ -20,7 +20,7 @@ from unittest import mock
 
 import pytest
 
-from modules import conn_health as ch
+from shared import conn_health as ch
 from modules import db
 
 

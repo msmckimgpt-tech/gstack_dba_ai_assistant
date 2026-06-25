@@ -73,7 +73,7 @@ def _install(monkeypatch, *, probe):
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     monkeypatch.setattr(app, "_account_has_permission", lambda account, perm: True)
     # resolve 는 좌표 dict 반환(host 포함). SSRF 는 통과 + pin=host.
-    monkeypatch.setattr("modules.datasources.resolve",
+    monkeypatch.setattr("shared.datasources.resolve",
                         lambda conn, key: {"engine": "mysql", "host": "h", "port": 3306,
                                            "user": "u", "password": "p"})
     monkeypatch.setattr(app, "_ssrf_check_host", lambda host: (True, "", host))

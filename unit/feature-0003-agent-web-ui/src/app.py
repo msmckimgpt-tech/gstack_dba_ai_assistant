@@ -855,8 +855,8 @@ def _start_conn_health_monitor() -> None:
     import logging
     log = logging.getLogger(__name__)
     try:
-        from modules import conn_health
-        from modules import datasources as _dsr
+        from shared import conn_health
+        from shared import datasources as _dsr
         conn_health.start_monitor(_dsr.health_probe_provider())
     except Exception as exc:
         log.warning("conn_health 모니터 시작 실패(무시하고 진행): %s", exc)
@@ -954,7 +954,7 @@ def _start_audit_seal_loop() -> None:
 @app.on_event("shutdown")
 def _stop_conn_health_monitor() -> None:
     try:
-        from modules import conn_health
+        from shared import conn_health
         conn_health.stop_monitor()
     except Exception:
         pass
@@ -1364,7 +1364,7 @@ def _totp_dek(conn):
     """(_cc, ver, dek) 또는 None. KEK 미설정/DEK 부재 시 None(2FA 불가)."""
     try:
         from modules import cred_crypto as _cc
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
     except Exception:
         return None
     if not _cc.enc_available():
@@ -1393,7 +1393,7 @@ def _totp_encrypt_secret(conn, account_id: int, secret_b32: str) -> "tuple[str, 
 def _totp_decrypt_secret(conn, account_id: int, enc: str, version: int) -> "str | None":
     try:
         from modules import cred_crypto as _cc
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
     except Exception:
         return None
     try:
@@ -3140,12 +3140,12 @@ def _attach_product_conn_status(conn, products: list[dict[str, Any]]) -> None:
     if not products:
         return
     try:
-        from modules import conn_health as _ch
+        from shared import conn_health as _ch
         _health = _ch.snapshot()
     except Exception:
         _health = {}
     try:
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
     except Exception:
         _dsr = None
     # datasource_key(소문자) → scope_key 캐시(제품 간 동일 키 재해석 방지).
@@ -4364,7 +4364,7 @@ def _seed_main_mysql_datasource(conn) -> None:
     """
     try:
         from modules import cred_crypto as _cc
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
     except Exception:
         return
     if not _cc.enc_available():
@@ -4687,7 +4687,7 @@ def _migrate_env_datasources_to_db(conn) -> None:
     """
     try:
         from modules import cred_crypto as _cc
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
         from modules import config as _cfg2
     except Exception:
         return
@@ -12947,7 +12947,7 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
     좌표/비밀번호는 절대 반환하지 않는다 (datasource_public 마스킹). 관리 콘솔 접근 권한 필요.
     """
     from modules.config import AGENT_MULTI_DATASOURCE_ENABLED, DATASOURCES
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     try:
         conn = _connect_memory()
     except Exception:
@@ -12971,7 +12971,7 @@ async def admin_list_datasources(request: Request) -> JSONResponse:
         # conn-health-monitor: 백그라운드 모니터가 미리 계산한 per-datasource 연결 상태를
         # 첨부 → admin.js 가 per-item /test lazy probe(세마포어 대기) 없이 즉시 표시.
         try:
-            from modules import conn_health as _ch
+            from shared import conn_health as _ch
             _health = _ch.snapshot()
         except Exception:
             _health = {}
@@ -13049,7 +13049,7 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
     조용한 기본 폴백 방지). 좌표/비밀번호는 저장하지 않는다 (키만 — security-first, secret in env).
     관리 콘솔 수정 권한(console.access + console.manage) 필요.
     """
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     if product_id <= 0:
         return _json_error("invalid product_id", 400)
     try:
@@ -13218,7 +13218,7 @@ async def admin_add_product_datasource(product_id: int, request: Request) -> JSO
     body: { datasource_key: str, is_primary?: bool }. 미등록 키 거부(레지스트리 검증). 첫 바인딩이면
     자동 primary. is_primary=true 면 기존 primary 해제 + WebProducts.DatasourceKey 포인터도 갱신
     (resolve/insight 의 primary 경로 정합)."""
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     if product_id <= 0:
         return _json_error("invalid product_id", 400)
     try:
@@ -13374,7 +13374,7 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     flag 활성화 *전* 운영자가 자격증명·연결성을 검증. 관리 콘솔 접근 권한 필요. password/host
     는 응답에 비노출(errno 만). flag 무관(명시 테스트).
     """
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     from modules import db as _db
     try:
         conn = _connect_memory()
@@ -13416,7 +13416,7 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     #  실패 = 끊김), 성공+느림(elapsed≥SLOW)은 unstable. background snapshot 의 누적 fails 분류와
     #  의미가 일치하도록 conn_health.classify 를 공용으로 재사용한다.
     try:
-        from modules import conn_health as _ch
+        from shared import conn_health as _ch
         _status = _ch.classify(bool(ok), elapsed_ms, fails=10 ** 6)
     except Exception:
         _status = "healthy" if ok else "down"
@@ -13597,7 +13597,7 @@ def _ds_audit_fields(data: dict) -> dict:
 async def admin_create_datasource(request: Request) -> JSONResponse:
     """datasource 생성 (자격증명 DB 암호화 저장, TASK-0205). console.manage. password 는 응답 비노출."""
     from modules import cred_crypto as _cc
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     conn, actor, data, error = await _ds_write_common(request)
     if error:
         return error
@@ -13656,7 +13656,7 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
 async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
     """datasource 수정 (TASK-0205). password 미입력 시 미변경. console.manage. 응답 password 비노출."""
     from modules import cred_crypto as _cc
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     conn, actor, data, error = await _ds_write_common(request)
     if error:
         return error
@@ -13894,9 +13894,9 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
 @app.get("/api/admin/datasources/{key}/databases")
 async def admin_datasource_databases(key: str, request: Request) -> JSONResponse:
     """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). datasource.read. SSRF 차단."""
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     from modules import db as _db
-    from modules import conn_health as _ch
+    from shared import conn_health as _ch
     try:
         conn = _connect_memory()
     except Exception:
@@ -19053,7 +19053,7 @@ def _gdrive_dek(conn):
     """(_cc, ver, dek) 또는 None. _totp_dek 동형 — KEK 미설정/DEK 부재 시 None(토큰 저장 불가)."""
     try:
         from modules import cred_crypto as _cc
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
     except Exception:
         return None
     if not _cc.enc_available():
@@ -20244,7 +20244,7 @@ def _resolve_product_insight_scope(conn, product: dict) -> dict:
     반환: {ok: bool, reason: str, scope: str|None, allow_null: bool, engine: str,
            default_db: str|None, coords: dict|None}. ok=False 면 reason 만 의미 있음.
     """
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     label = product.get("datasource_key")  # 라벨(소문자) 또는 None
     default_endpoint_scope = _dsr.compute_scope_key("mysql", DB_HOST, int(DB_PORT))
     out = {
@@ -22133,7 +22133,7 @@ def _reconcile_one_db_rule(conn, rule: dict, *,
         return result
     # 라이브 DB 열거 (M4: 모든 실패 = no-op — 빈 목록을 '전부 제거'로 해석 금지).
     try:
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
         from modules import db as _db
         ds = _dsr.resolve(conn, dsk)
         if not ds:
@@ -22835,7 +22835,7 @@ async def admin_preview_product_db_rule(product_id: int, key: str, request: Requ
         if not ok:
             return JSONResponse({"ok": False, "error": perr, "matched": [], "new": []})
         try:
-            from modules import datasources as _dsr
+            from shared import datasources as _dsr
             from modules import db as _db
             ds = _dsr.resolve(conn, dsk)
             if not ds:
@@ -22893,7 +22893,7 @@ async def admin_approve_product_db_rule_pending(product_id: int, key: str, rule_
             return JSONResponse({"ok": True, "approved": []})
         engine = "mysql"
         try:
-            from modules import datasources as _dsr
+            from shared import datasources as _dsr
             _ds = _dsr.resolve(conn, dsk)
             engine = str((_ds or {}).get("engine") or "mysql").strip().lower()
         except Exception:
@@ -25466,7 +25466,7 @@ def _metadata_valid_scope_keys() -> set[str]:
     keys = {"common"}
     conn = None
     try:
-        from modules import datasources as _dsr
+        from shared import datasources as _dsr
         try:
             conn = _connect_memory()
         except Exception:
@@ -26483,7 +26483,7 @@ def _bootstrap_resolve_datasource(ds_key: str):
         return None, None, _json_error("datasource 는 필수입니다.", 400)
     if key == "common":
         return None, None, _json_error("'common' 은 introspection 대상이 아닙니다.", 400)
-    from modules import datasources as _dsr
+    from shared import datasources as _dsr
     mem = None
     try:
         mem = _connect_memory()
