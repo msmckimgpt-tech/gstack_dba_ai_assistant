@@ -415,3 +415,15 @@ source_of_truth: true
 - Impact: @assistant 전송 즉시 입력창 비움(표준 챗 UX 회복). 그룹 비멘션 채팅 무영향(별도 함수). 1:1·그룹 ask 동일 적용. 진짜 실패 시 입력 복원(재시도). lazy-create 초기 실패는 복원 안 함(실패 pending 버블에 메시지 표시 — 수용).
 - Rollback Notes: app.js 4지점(낙관 클리어 추가/응답 클리어 3 제거 복원/실패 복원) + index.html 캐시버스터 revert.
 - 검증: `node --check`(app.js) PASS. §18.8 적대 패널 1렌즈(입력창 클리어 회귀, scoped) — 회귀 0/BLOCKING 0(message 캡처·버튼 순서·cancel/422 분리·새 입력 보호·제거 안전 전부 SAFE). **PB-0008 미실측**(배포 후 라이브 실측 권장).
+
+## CHG-20260625T194159-gc-unread-read-fix (cross-feature → feature-0003, Minor §12.3 — frontend 읽음 처리 누락 보정)
+- Date: 2026-06-25. 사용자 보고: "해당 대화를 최근에 읽었음에도 회색 배지의 개수가 유지되는 버그."
+- Related: gc-unread-badge(CHG-20260625T065840)/gc-unread-baseline(CHG-20260625T165320) 후속 — 읽음 커서 전진 누락.
+- **원인**: 읽음 처리(`_markActiveConversationRead`→`POST /read` 커서 전진)가 `selectConversation`(첫 전환)·`_liveSyncTick`(새 메세지 도착)에서만 호출됨. **`refreshWorkspace`(페이지 로드·복원·주기 갱신)로 진입/복원된 active 대화는 `loadHistory` 까지만 하고 읽음 처리 누락** + `selectConversation` 가드(이미 active 면 즉시 return)로 재클릭 시에도 누락 → 복원된 대화는 아무리 봐도 서버 커서 미전진 → 사이드바 unread 배지 유지. (DB 확인: cursor 가 backfill 값 3466 에 멈춤, conv_max 3590 과 격차 110.)
+- 수정(frontend `app.js`):
+  - `refreshWorkspace`: `loadHistory()` 후 `_markActiveConversationRead()` 추가 — 복원/갱신된 active 그룹 대화 읽음 처리.
+  - `selectConversation`: 이미 active 인 대화 재선택 시에도 `_markActiveConversationRead()` 수행 후 return(가드로 skip 하던 것 보정).
+  - `index.html`: 캐시버스터 gc-unread-read-fix(app.js).
+- Impact: 순수 frontend 읽음 처리 호출 위치 보강. 백엔드/스키마/엔드포인트 0(`POST /read` 기존 재사용). 1:1·비그룹 무영향(`isGroupConversation` 게이트). 커서 이미 max 면 `set_last_read` GREATEST no-op(부하 무시).
+- Rollback: app.js 2곳 + index.html 캐시버스터 revert.
+- 검증: `node --check` PASS. 패널 SKIP(frontend 읽음처리 보강·로직 신설 0·비핵심경로·신규 표면 0). PB-0008 배포 후 실측(새로고침→복원 대화 읽음→배지 0).

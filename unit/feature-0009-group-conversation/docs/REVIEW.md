@@ -377,3 +377,12 @@ source_of_truth: true
 - 핵심 판정: **SHIP**. BLOCKING 0.
 - Verification: `node --check`(app.js) PASS. **PB-0008 미실측**(배포 후 라이브 실측 권장 — 전송 즉시 비움·실패 복원).
 - Human Approval Needed: 아니오 (사용자 명시 버그 보고·표현계층·무회귀, deploy_scope: included 사전승인).
+
+## REV-20260625T194159-gc-unread-read-fix [SKIPPED:frontend 읽음처리 누락 보정·비핵심경로·신규표면 0]
+- Date: 2026-06-25
+- Cycle: gc-unread-read-fix (CHG-20260625T194159) — 읽은 대화의 unread 배지가 안 줄던 버그. **Minor §12.3** frontend-only.
+- 원인/해결: 읽음 커서 전진이 `selectConversation`(첫 전환)·`_liveSyncTick`(새 메세지)에서만 호출 → `refreshWorkspace`(복원/갱신) 진입 + 이미-active 재클릭 경로 누락. → refreshWorkspace `loadHistory` 후 + selectConversation 가드 시 `_markActiveConversationRead` 보강.
+- 패널 SKIP 근거: 순수 frontend 읽음 처리 호출 위치 보강(로직 신설 0, 기존 `_markActiveConversationRead`/`POST /read` 재사용), 신규 인가/스키마/엔드포인트 표면 0, 핵심 send/render 경로 무변경.
+- 자체 검토: ① 커서 GREATEST 전진만(되돌림 0, 이미 읽은 메세지 부활 없음) ② `isGroupConversation` 게이트로 1:1 무영향 ③ refreshWorkspace 호출 빈도 낮음 + 커서 max 면 no-op(부하 무시) ④ best-effort try/catch(UI 흐름 비차단).
+- Verification: `node --check`(app.js) PASS. PB-0008 배포 후(새로고침→복원 대화→배지 0).
+- Human Approval Needed: 아니오 (Minor·frontend·사용자 명시 버그·무회귀).

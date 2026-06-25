@@ -4762,6 +4762,20 @@ source_of_truth: true
 - Rollback: `2026-06-25` 블록 + 2 cache-buster revert(순수 콘텐츠·additive). 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 새 릴리즈노트 화면 반영. 마이그/백엔드 없음.
 
+## CHG-20260625T103503-steps-btn-pending-persist (TASK-20260625T103503-steps-btn-pending-persist — 새 요청 진행 중 이전 답변 "단계 보기" 버튼 소실 수정, Minor §12.3 — frontend-only)
+- Date: 2026-06-25 (/_template:entry dispatch, worktree ai/claude/fix-steps-btn-pending). frontend `static/app.js` 단일 파일 렌더 조건 로직만 — 백엔드·스키마·RBAC·라우팅 무변경.
+- 증상: 대화 중 새 요청 전송 시 이전 assistant 답변의 "단계 보기 (N)" 버튼이 일시 소실 → 답변 완료 + 새로고침 후 재표시.
+- 근본원인: `renderMessages()` 가 새 요청 시작 시(`sendPrompt` 가 `state.pendingBubble` 세팅 직후 호출) 이전 답변 버튼 부착을 `&& !state.pendingBubble` 가드로 막음. `message.meta.steps` 는 영속 데이터로 pending 과 무관하게 유효 → 가드가 오작동(완료+새로고침 시 `pendingBubble=null` 이라 복귀).
+- 내용:
+  - `static/app.js renderMessages()`: assistant meta.steps 버튼 부착 `if (msgMetaSteps.length && !state.pendingBubble)` → `if (msgMetaSteps.length)`.
+  - `static/app.js renderMessages()`: `lastCompletedRunSteps` fallback 의 `if (!state.pendingBubble)` → bare block `{}`(가드 제거, `cr` 스코프 유지). 진행 중에도 직전 답변 step 버튼 유지. `:not(.is-pending)` 선택자 + `.bubble-steps-btn` 존재검사로 중복/오부착 차단.
+  - `static/app.js`: state 에 `stepSidePanelLive` 필드 신설. `openStepSidePanel` 이 `pending === state.pendingBubble` 일 때만 live=true 설정, `refreshStepSidePanel` 은 live 일 때만 폴링 갱신. `closeStepSidePanel` 닫을 때 false 리셋. → 가드 제거로 생길 수 있는 새 엣지(진행 중 historical 단계 패널을 열어둔 채 라이브 폴링이 덮어쓰기)를 차단.
+- Why: 영속 step 버튼은 새 요청 진행 여부와 무관하게 항상 유효해야 함. 일시 소실은 사용자에게 "단계 내역이 사라졌다" 는 혼란 유발.
+- Verification: `node --check app.js` PASS + 적대적 frontend 리뷰(REV-20260625T103503-steps-btn-pending-persist, SUBAGENT adversarial-frontend, H1~H8 8가설 반증 시도 전부 실패=안전) VERDICT SHIP — BLOCKER/MAJOR/MINOR 0, NIT 2(NIT-1 흡수, NIT-2 pre-existing 보류).
+- Files: `static/app.js`, `docs/{TASK,MODIFY,REVIEW}.md`.
+- Rollback: app.js 4곳 revert(가드 복원 + state 필드/패널 가드 제거). additive·비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) — 정적 자산 변경. 마이그/백엔드 없음.
+
 ## CHG-20260625T192007-doc-sync-rn-0625b (TASK-20260625T192007-doc-sync-rn-0625b — 06-25 잔여 머지분 릴리즈노트 정합, Minor §12.3 — 사용자 노출 정적 콘텐츠)
 - Date: 2026-06-25 (`/_dqa:doc_sync` no-arg 전 타깃 정합). **콘텐츠 데이터만** — 렌더 로직·백엔드·스키마·RBAC 무변경.
 - Scope: 직전 doc_sync(163929, PR#420~#436 기준 콘텐츠 작성) **이후** main 병합된 06-25 user-facing 변경 5종이 릴리즈노트 미반영 → 기존 `date: "2026-06-25"` 블록 items 에 5항목 **추가**(prepend 아님 — 같은 날 머지분) + `index.html`·`admin.html` cache-buster bump.

@@ -47,6 +47,14 @@ source_of_truth: true
 - **완료 판정(AC)**: 읽은 그룹 대화 배지 사라짐(unread=0) / 신규 메세지·멘션만 카운트 / 배포 후 null_cursor=0 / 신규 가입자도 가입 이전 메세지 unread 미집계.
 <!-- 사용자 명시 버그 보고 — 즉시 수정(Major, deploy_scope: included) on 2026-06-25 -->
 
+### 2.1.c Plan — gc-unread-read-fix (읽음 커서 전진 누락 보정, 2026-06-25)
+- **버그 보고**: 사용자 — "해당 대화를 최근에 읽었음에도 회색 배지의 개수가 유지되는 버그." (배지 자체는 정상, 읽음 처리가 안 됨.)
+- **원인**: 읽음 처리(`_markActiveConversationRead`)가 `selectConversation`(첫 전환)·`_liveSyncTick`(새 메세지)에서만 호출 → `refreshWorkspace`(페이지 복원/갱신)·이미-active 재선택 경로 누락 → 서버 커서 미전진(DB: cursor 3466 backfill 값에 멈춤, conv_max 3590, unread 110).
+- **해결**: `refreshWorkspace` `loadHistory` 후 + `selectConversation` 가드 시 `_markActiveConversationRead` 보강. frontend(app.js)+캐시버스터.
+- **위험도**: Minor (frontend 읽음 처리 호출 보강, 로직 신설 0, 비파괴).
+- **완료 판정(AC)**: 새로고침으로 복원된 대화를 보면 배지 0 / 이미 열린 대화 재선택 시 배지 0 / 서버 cursor 가 conv_max 로 전진.
+<!-- 사용자 명시 버그 보고 — 즉시 수정(Minor frontend) on 2026-06-25 -->
+
 ## 3. Task Queue (슬라이스)
 - [x] **S1 Foundations** — DDL(conversation_members + sender_account_id + thread_root_message_id) + 멱등 backfill + members(account_id) 인덱스 + membership helper 모듈 (commit 489deb5)
 - [x] **S2 Membership** — ✅백엔드: 멤버십 열람 접근제어(중앙 게이트 + 첨부 게이트 OR, F6 sweep) + 멤버 엔드포인트 + audit + backfill wiring + 신규 권한. ✅roster UI(멤버 버튼·패널·초대·제거/나가기, CHG-0006, PB-0008 보류)
@@ -114,6 +122,7 @@ source_of_truth: true
   - [x] 그룹대화 @assistant 발신자 귀속(gc-ask-sender-attrib, CHG-20260625T162000/REV-20260625T162000, **Major §12.3 backend 배선**): 그룹 대화에서 멤버가 `@assistant` 를 호출한 user 메시지가 표시 store 미러에서 대화 owner(생성자) 프로필로 **오귀속**되던 것을 실제 발신 멤버(actor)로 귀속. 사람-채팅 경로(`_save_group_chat_message_pg`)는 이미 미러 meta 에 발신자를 실었으나 ask 경로 user 턴은 누락 → FE owner 폴백. 변경: feature-0002 `agent_core.py`(`run_agent`/`_run_agent_core` 에 `sender_username` + user 미러 meta, 사람-채팅과 동일 키 집합·`sender_username and account_id` 게이트로 1:1/그룹 분기) + `modules/ask.py`(`_payload_to_kwargs` worker 복원) + feature-0003 `app.py`(ask dispatch 그룹 한정 `sender_username=account.username` 계산 + inproc run_kwargs + worker enqueue payload). 신규 authz 0(account_id 는 기존 actor), 스키마/캐시버스터 0(표시용 미러 meta). 1:1·비그룹 무회귀. 검증: test_ask_worker 7/7 + 회귀(ask_jobs·group_history_merge) 20/20 + py_compile 3 + §18.8 적대 패널(correctness+security) BLOCKER 0/MAJOR 0(MINOR ACCEPTED-as-is: `if account_id` 대칭화는 1:1 회귀 유발). **PB-0008 미실측**(배포 후 라이브 그룹대화 권장). 코드 정본=feature-0002(+0003) docs.
   - [x] 그룹대화 상대방 메시지 좌측 정렬(gc-other-msg-left, CHG-20260625T065430/REV-20260625T065430, **Minor frontend CSS-only**): 사용자 요청(`/_template:entry`) — 그룹/공유 대화에서 자신의 메시지(`is-own-message`)는 우측 유지, assistant 와 상대방(타 참여자, `is-other-message`)은 좌측 출력. app.js `renderMessages()` 가 이미 부여하던 class 를 그대로 사용 → styles.css 정렬 규칙만 분기(`.message.is-user.is-other-message{align-self:flex-start}`, 특이도 0,3,0 override) + 좌측 정렬 버블 꼬리(border-radius) 좌측 하단화. 그룹채팅 관례(내=우측/타인=좌측)와 정합, assistant 와 좌측 기준선 통일. 순수 CSS(app.js·백엔드·스키마·RBAC 무변경), 캐시버스터 gc-other-msg-left. 검증: `node --check`(app.js 무변경) + 충실한 mock 렌더(실 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측(rightGap 25)/other·assistant=좌측(leftGap 25 동일 기준선). 패널 SKIP(표현계층·로직/보안 0). **PB-0008 미실측**(worktree WSL — 배포 후 실 그룹대화 권장). 코드/문서 정본=feature-0003 docs.
   - [x] 사이드바 안 읽은 메세지 baseline 보정(gc-unread-baseline, CHG-20260625T165320/REV-20260625T165320, **Major §12.3 — 데이터 마이그레이션**): 사용자 보고 — 읽은 그룹 대화에도 "전체 메세지 개수(회색)" 배지 출력. 원인=0019 가 baseline backfill 누락(`conversation_members` 137행 NULL → `m.id > COALESCE(last_read,0)` 전체 unread). 수정=alembic 0020 backfill(NULL→대화별 `MAX(id)`) + `group_members.add_member` INSERT baseline(가입 시점 `MAX(id)`, ON CONFLICT role-only 로 재참여 커서 보존). frontend 무변경(배지 로직 정상). 검증: py_compile(group_members·0020) + §18.8 적대 패널 2렌즈(데이터정확성·보안/회귀) SHIP·BLOCKING 0. **★배포 alembic 0020 필수 + PB-0008 배포 후**. 코드/문서 정본=feature-0009(+cross-feature 0002).
+  - [x] 읽음 커서 전진 누락 보정(gc-unread-read-fix, CHG-20260625T194159/REV-20260625T194159, **Minor frontend**): 사용자 보고 — 읽은 대화의 회색 unread 배지가 안 줄어듦(배지 자체는 정상). 원인=읽음 처리(`_markActiveConversationRead`)가 `selectConversation`(첫 전환)·`_liveSyncTick`(새 메세지)에서만 호출 → `refreshWorkspace`(복원/갱신)·이미-active 재선택 경로 누락 → 서버 커서 미전진(DB cursor 3466 멈춤, conv_max 3590). 수정=refreshWorkspace `loadHistory` 후 + selectConversation 가드 시 `_markActiveConversationRead` 보강. `node --check` PASS, 패널 SKIP(frontend·로직신설 0·비핵심경로·신규표면 0). 캐시버스터 gc-unread-read-fix. **PB-0008 배포 후 실측**. 코드/문서 정본=feature-0003.
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연
