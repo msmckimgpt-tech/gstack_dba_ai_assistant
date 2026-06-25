@@ -1093,3 +1093,14 @@ TASK-0015 (plan-review):
 
 ### kb-pg-superuser-host — KB-PG DDL superuser pgbouncer 우회 (deploy infra, Minor §12.3, 2026-06-25)
 - [x] `make up` memory-init `FATAL: bouncer config error` 해소: `_ensure_pg_schema`(memory.py:854) superuser DDL 이 `AGENT_KB_PG_SUPERUSER_HOST` 미설정 시 pgbouncer 상속 → superuser 인증 불가(userlist=agent_kb_rw only). `.env.example` 에 `AGENT_KB_PG_SUPERUSER_HOST=postgres`(직결) + 주석. 런타임 `.env` 동일 적용 후 `make up` **exit 0** 검증. (CHG/REV-20260625T012217-kb-pg-superuser-host)
+
+### limit-subject-msg — 요청량 한도 도달 주체 구분 + 서비스 한도 메시지 provider명 제거 (Minor §12.3, 2026-06-25)
+- 사용자 요청(/_template:entry): "① 요청량 한도 도달 시 주체 구분(계정 당 한도 / 서비스 자체 한도), ② 서비스 한도 도달 메시지에서 AWS Bedrock 언급 제거 — 서비스 자체의 한도 도달임을 명시."
+- 등급: **Minor §12.3** — 사용자 노출 메시지 문구만. 분류 kind/HTTP code(429)/retryable/error_tag/응답 shape 무변경, 로직·RBAC·스키마·엔드포인트 0.
+- 진단: 두 "요청량 한도" surface 존재 — (계정) `app.py:_check_account_token_quota` 토큰 사용 한도 초과(429), (서비스) `llm_provider_health.py:_build_restriction` KIND_THROTTLED(provider throttle/429). 후자가 `plabel`("AWS Bedrock")을 메시지에 노출 + 양쪽 모두 주체 미명시.
+- [x] **(서비스) `modules/llm_provider_health.py` KIND_THROTTLED 메시지**: `f"{plabel} 요청량 한도..."` → `"서비스 자체의 요청량 한도에 도달했습니다. 잠시 후 다시 시도해 주세요."`. provider명(AWS Bedrock 등) 비노출 + "서비스 자체" 명시. credential/auth/unavailable kind 는 관리자 진단용 provider 라벨 유지(범위 밖).
+- [x] **회귀 테스트**: `tests/test_llm_provider_health.py::test_throttled_message_is_service_level_without_provider_name` 추가 — message 에 "Bedrock" 부재 + "서비스" 포함 단언. 기존 throttle 테스트(kind/retryable) 무회귀.
+- [x] **(계정, cross-ref feature-0003)**: `app.py` 계정 토큰 한도 초과 메시지에 "계정의 ..." 주체 명시(정본 = feature-0003 CHG/REV-20260625T045450-limit-subject-msg).
+- [x] 검증: py_compile(llm_provider_health) + `pytest test_llm_provider_health.py` **19/19 PASS**(신규 1 포함) + 렌더 확인(throttle="서비스 자체의 요청량 한도...", credential=provider명 유지).
+- [x] 리뷰(REVIEW REV-20260625T045450-limit-subject-msg [SKIPPED:message-text-only-no-logic]): 메시지 문구만·계약 무변경·테스트 추가 → 적대 패널 불요(§18.4 경량 cycle).
+- [ ] verify-completion → commit/push → (PR·머지·배포는 사용자 confirm) → 마감.

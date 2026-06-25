@@ -136,7 +136,10 @@ def _build_restriction(
         msg = f"{plabel} 인증에 실패해 현재 AI 응답을 생성할 수 없습니다. 관리자에게 자격증명 확인을 요청하세요."
         retryable = False
     elif kind == KIND_THROTTLED:
-        msg = f"{plabel} 요청량 한도에 도달했습니다. 잠시 후 다시 시도해 주세요."
+        # 요청량 한도(throttle)는 "서비스 자체" 한도임을 명시 — 계정 당 사용 한도
+        # (app.py _check_account_token_quota)와 주체를 구분한다. provider 이름
+        # (AWS Bedrock 등)은 노출하지 않는다(서비스 한도임이 핵심, 내부 backend 비노출).
+        msg = "서비스 자체의 요청량 한도에 도달했습니다. 잠시 후 다시 시도해 주세요."
         retryable = True
     elif kind == KIND_UNAVAILABLE:
         msg = f"{plabel} 서비스가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해 주세요."
