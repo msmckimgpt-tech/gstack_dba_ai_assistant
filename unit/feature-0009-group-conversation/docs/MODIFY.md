@@ -403,3 +403,14 @@ source_of_truth: true
 - Impact: 입력창이 더 이상 처리 중 잠기지 않아 gc-run-status 류 FE 고착이 사용자를 블로킹하지 않음(근본 방지). 1:1 무회귀(myRun 기준 + 권한 게이트). 그룹 채팅/타 멤버 발화 자유. preserve 저장 내용은 서버측 rationale/answer 뿐(클라 입력 아님 — 주입 안전). 신규 KV 키 `cancel_preserve` 는 cancel_* 와 동일 정리 경로.
 - Rollback Notes: 5파일 revert(app.js composer/send/myAskInFlight, app.py /api/cancel 1블록, memory.py mark_cancel_requested+_clear_cancel_request, agent_core canceled 분기, index.html 캐시버스터). 스키마 0.
 - 검증: `node --check`(app.js) + `py_compile`(app.py·agent_core·memory) PASS. §18.8 적대 패널 3렌즈(R1·R2 회귀 / R3·race·BE / 교차회귀) — 진짜 BLOCKING 0(REV 참조; 패널 적발 유효 4건 반영: refresh myAskInFlight 복원·툴팁 일관화·interrupt renderComposer·cancel_preserve 정리). **PB-0008 미실측**(worktree=WSL; 다중 사용자/인터럽트 동작은 배포 후 라이브 검증 권장). 캐시버스터 `composer-nonblock-interrupt`.
+## CHG-20260625T194159-gc-unread-read-fix (cross-feature → feature-0003, Minor §12.3 — frontend 읽음 처리 누락 보정)
+- Date: 2026-06-25. 사용자 보고: "해당 대화를 최근에 읽었음에도 회색 배지의 개수가 유지되는 버그."
+- Related: gc-unread-badge(CHG-20260625T065840)/gc-unread-baseline(CHG-20260625T165320) 후속 — 읽음 커서 전진 누락.
+- **원인**: 읽음 처리(`_markActiveConversationRead`→`POST /read` 커서 전진)가 `selectConversation`(첫 전환)·`_liveSyncTick`(새 메세지 도착)에서만 호출됨. **`refreshWorkspace`(페이지 로드·복원·주기 갱신)로 진입/복원된 active 대화는 `loadHistory` 까지만 하고 읽음 처리 누락** + `selectConversation` 가드(이미 active 면 즉시 return)로 재클릭 시에도 누락 → 복원된 대화는 아무리 봐도 서버 커서 미전진 → 사이드바 unread 배지 유지. (DB 확인: cursor 가 backfill 값 3466 에 멈춤, conv_max 3590 과 격차 110.)
+- 수정(frontend `app.js`):
+  - `refreshWorkspace`: `loadHistory()` 후 `_markActiveConversationRead()` 추가 — 복원/갱신된 active 그룹 대화 읽음 처리.
+  - `selectConversation`: 이미 active 인 대화 재선택 시에도 `_markActiveConversationRead()` 수행 후 return(가드로 skip 하던 것 보정).
+  - `index.html`: 캐시버스터 gc-unread-read-fix(app.js).
+- Impact: 순수 frontend 읽음 처리 호출 위치 보강. 백엔드/스키마/엔드포인트 0(`POST /read` 기존 재사용). 1:1·비그룹 무영향(`isGroupConversation` 게이트). 커서 이미 max 면 `set_last_read` GREATEST no-op(부하 무시).
+- Rollback: app.js 2곳 + index.html 캐시버스터 revert.
+- 검증: `node --check` PASS. 패널 SKIP(frontend 읽음처리 보강·로직 신설 0·비핵심경로·신규 표면 0). PB-0008 배포 후 실측(새로고침→복원 대화 읽음→배지 0).

@@ -5517,6 +5517,10 @@ async function refreshWorkspace(preferredConversationId = "", opts = {}) {
   renderConversationHeader();
   renderAccessNotice();
   await loadHistory();
+  // feature-0009 gc-unread-read-fix: refreshWorkspace(페이지 로드·복원·주기 갱신)로 진입/복원된
+  // active 대화도 읽음 처리한다 — selectConversation 을 거치지 않아 커서가 전진하지 않던 누락 보정.
+  // (새로고침 후 복원된 대화는 아무리 봐도 사이드바 안 읽은 배지가 줄지 않던 버그.)
+  try { _markActiveConversationRead(); } catch (_) {}
   // TASK-0047: 활성 대화의 product_mode/product_id 를 별도 endpoint 없이 /api/session 재호출로 hydrate.
   try {
     const fresh = await apiFetch("/api/session");
@@ -5569,7 +5573,12 @@ function _markActiveConversationRead() {
 }
 
 async function selectConversation(conversationId) {
-  if (!conversationId || conversationId === state.activeConversationId) {
+  if (!conversationId) return;
+  // feature-0009 gc-unread-read-fix: 이미 active 인 대화를 다시 클릭/선택해도 읽음 처리는 수행한다.
+  // (가드로 바로 return 하던 탓에, 복원되어 이미 active 인 대화는 사용자가 다시 눌러도 커서가
+  //  전진하지 않아 안 읽은 배지가 영영 줄지 않던 누락 보정.)
+  if (conversationId === state.activeConversationId) {
+    try { _markActiveConversationRead(); } catch (_) {}
     return;
   }
   // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.

@@ -365,3 +365,12 @@ source_of_truth: true
 - 핵심 판정: **SHIP**. 진짜 BLOCKING 0(패널 "BLOCKING" 라벨 3건은 ①refresh 복원[수정]·②툴팁[NIT 수정]·③interrupt 렌더[NIT 수정] 로 트리아지·해소). 잔여 수용: 그룹 새로고침 직후 1회 한해 내 중복차단 완화(허용, slot=6 + gc-run-status 가 상태 정합).
 - Verification: `node --check`(app.js) + `py_compile`(app.py·agent_core·memory) PASS. **PB-0008 미실측**(worktree=WSL; 입력창 비잠금·인터럽트·중복차단은 배포 후 라이브 다중 사용자 검증 권장).
 - Human Approval Needed: 아니오 (사용자 명시 지시 + AskUserQuestion 반영, composer 동작 개선·1:1 무회귀, deploy_scope: included 사전승인).
+
+## REV-20260625T194159-gc-unread-read-fix [SKIPPED:frontend 읽음처리 누락 보정·비핵심경로·신규표면 0]
+- Date: 2026-06-25
+- Cycle: gc-unread-read-fix (CHG-20260625T194159) — 읽은 대화의 unread 배지가 안 줄던 버그. **Minor §12.3** frontend-only.
+- 원인/해결: 읽음 커서 전진이 `selectConversation`(첫 전환)·`_liveSyncTick`(새 메세지)에서만 호출 → `refreshWorkspace`(복원/갱신) 진입 + 이미-active 재클릭 경로 누락. → refreshWorkspace `loadHistory` 후 + selectConversation 가드 시 `_markActiveConversationRead` 보강.
+- 패널 SKIP 근거: 순수 frontend 읽음 처리 호출 위치 보강(로직 신설 0, 기존 `_markActiveConversationRead`/`POST /read` 재사용), 신규 인가/스키마/엔드포인트 표면 0, 핵심 send/render 경로 무변경.
+- 자체 검토: ① 커서 GREATEST 전진만(되돌림 0, 이미 읽은 메세지 부활 없음) ② `isGroupConversation` 게이트로 1:1 무영향 ③ refreshWorkspace 호출 빈도 낮음 + 커서 max 면 no-op(부하 무시) ④ best-effort try/catch(UI 흐름 비차단).
+- Verification: `node --check`(app.js) PASS. PB-0008 배포 후(새로고침→복원 대화→배지 0).
+- Human Approval Needed: 아니오 (Minor·frontend·사용자 명시 버그·무회귀).
