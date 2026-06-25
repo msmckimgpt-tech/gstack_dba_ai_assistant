@@ -429,3 +429,16 @@ source_of_truth: true
 - 핵심 판정: **SHIP-WITH-FIXES → 적발 NON-BLOCKING 2건 모두 반영. BLOCKING 0.**
 - Verification: `py_compile`+`ruff` PASS. 단위 48 PASS(신규 6 + 회귀 42 `test_db_query_ux`·`test_runtime_read_backend`). **PB-0008 미실측**(배포 후 라이브 그룹대화 실측 권장 — MySQL 제품 @assistant 가 LIMIT/단일SELECT 생성·다자 맥락 재질문 감소 확인).
 - Human Approval Needed: 예(커밋·배포는 사용자 confirm) — Major + 코어 LLM 경로 + 라이브 system prompt 동작 변화. deploy_scope 판정은 commit 후 안내.
+
+## REV-20260625T121352-gc-join-ambiguous-param-fix [AGENT-TEAM:correctness·회귀 / security·authz 2렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: gc-join-ambiguous-param-fix (CHG-20260625T121352-gc-join-ambiguous-param-fix) — 공유 대화 join 항상 500 실패("대화 참여에 실패했습니다") 근본원인 수정. **Minor §12.3**(backend PG bind-param 1곳 + 진단 로깅 1곳).
+- Related Change: feature-0002 `src/modules/group_members.py`(`_PG_ADD_MEMBER` 서브쿼리 별도 param + `add_member` dict 키), `tests/test_group_members.py`(회귀 2 신규), feature-0003 `src/app.py`(join 핸들러 silent except 로깅). cross-feature, FUNCTION.md §13 사전 승인.
+- Reason: 멤버십(authz-adjacent) + PG 쿼리 수정 → §18.8 dispatch(backend·qa·security). 적대 패널 2렌즈로 결함 적발.
+- 진단 근거(라이브 컨테이너 `repo-web-1` 재현, 데이터 무오염): 수정 전 `add_member` → `AmbiguousParameter: inconsistent types deduced for parameter $1 — text versus character varying`. web 로그에 `_ensure_owner_membership failed` + 동일 AmbiguousParameter 6건. 수정 SQL → INSERT 성공(last_read baseline 정상 set) + cleanup.
+- 적대적 검증(general-purpose 서브에이전트 2, "결함 적발" 목적, 컨테이너 직접 재현):
+  - **렌즈 A (correctness·회귀)** — VERDICT: **SHIP**, BLOCKING 0. Q1 별도 param 으로 두 placeholder 독립 타입추론 → AmbiguousParameter 제거 충분(명시 캐스트 불요, 컨테이너 OLD=오류/NEW=통과 실증). Q2 baseline=`MAX(core_messages.id)` 정확(RETURNING 확인), `conversation_id_lookup==conversation_id` 코드상 보장(동일 변수). Q3 ON CONFLICT DO UPDATE role 갱신·last_read 보존 무회귀(재참여 시뮬). Q4 호출처(_ensure_owner_membership·join) 영향 0(키는 add_member 내부 항상 주입 → KeyError 불가). Q5 회귀 테스트 실효(OLD SQL/dict 에 실제 FAIL 확인, 허울 아님). Q6 동일 named-param 재사용 패턴 worktree 전체 1곳뿐(이제 수정) — backfill·ban·set_last_read·alembic 0020 모두 무관. MINOR M1(테스트가 SQL 문자열 형태만 검사 — `--no-deps` 제약상 합리적, 컨테이너 재현이 런타임 커버). NIT(코멘트 메커니즘 설명 미세 — 결론·수정 정확).
+  - **렌즈 B (security·authz·injection)** — VERDICT: **SHIP**, BLOCKING 0. S1 join 게이트 체인(login→링크활성→미취소→미만료→Joinable→대화존재→비차단→ban fail-closed→멱등 short-circuit→`add_member(role="member")`) 전부 무변경(diff 가 게이트 로직 미수정). S2 SQL injection 표면 0(`conversation_id_lookup` 도 parameterized binding, f-string/format/concat 0). S3 로깅이 토큰·자격증명 미노출(conversation_id·actor_id 만, 인접 ban 체크 로그와 동일 정책). S4 신규 권한상승 0(role='member' 하드코딩, actor 영향 불가; `_ensure_owner_membership` 는 core_conversations 의 실제 owner 만 해석 → 가입자에 무권한 부여 0; AR-1 수용위험 무변경). S5 owner self-heal/member join 이 동일 SQL 공유라 대칭 복구(비대칭 우회 상태 없음), role 화이트리스트 검증 유지.
+- 핵심 판정: **SHIP. BLOCKING 0.** MINOR 1(M1, 수용)·NIT 2(수용). 비파괴 bind-param 수정, 재현·수정 모두 라이브 오염 없이 실증.
+- Verification: `python -m py_compile`(group_members·app) PASS + `test_group_members` 12/12(회귀 2 신규: distinct-param·lookup-equals-cid) + 컨테이너 재현 OLD/NEW 대조. **배포(web+ask-worker 이미지 재빌드) 후 라이브 공유 링크 join 200 + web 로그 `_ensure_owner_membership failed`/AmbiguousParameter 소거 실증 필수**(deploy-backed 완료 기준).
+- Human Approval Needed: 아니오 (사용자 보고 직접 수정, Minor 서버 버그 정정, 무회귀, 게이트 무변경). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.

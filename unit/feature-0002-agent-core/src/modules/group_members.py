@@ -64,12 +64,20 @@ LIMIT 1
 # ("읽지 않은 신규 메세지만" 표시). 메세지 없는 대화면 MAX=NULL → 첫 메세지부터 unread.
 # ON CONFLICT DO UPDATE 는 role 만 갱신 — 기존 멤버 재참여 시 이미 전진한 커서를 보존한다
 # (last_read 를 덮어쓰지 않음). 기존 데이터 일괄 보정은 alembic 0020 backfill.
+#
+# ⚠ gc-join-ambiguous-param-fix: 서브쿼리의 conversation_id 비교는 **별도 파라미터 이름**
+# (conversation_id_lookup)을 쓴다. INSERT VALUES 의 conversation_id 컬럼은 대상 타입
+# (varchar)으로 추론되지만, 서브쿼리 `WHERE conversation_id = %s` 의 `=` 비교는 text
+# 연산자를 거쳐 text 로 추론된다. 동일 named param 을 쓰면 psycopg3 가 둘을 같은 $1 로
+# 합쳐 보내 "AmbiguousParameter: text versus character varying" 로 INSERT 전체가 실패
+# (gc-unread-baseline 이 서브쿼리를 추가하며 발생한 회귀 — 공유 대화 join 불가 원인).
+# 파라미터를 분리하면 각 위치가 독립적으로 타입 추론되어 충돌이 사라진다.
 _PG_ADD_MEMBER = """
 INSERT INTO agent_runtime.conversation_members
     (conversation_id, account_id, role, invited_by_account_id, last_read_message_id)
 VALUES
     (%(conversation_id)s, %(account_id)s, %(role)s, %(invited_by_account_id)s,
-     (SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conversation_id)s))
+     (SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conversation_id_lookup)s))
 ON CONFLICT (conversation_id, account_id) DO UPDATE SET
     role = EXCLUDED.role
 """
@@ -188,6 +196,8 @@ def add_member(
             _PG_ADD_MEMBER,
             {
                 "conversation_id": conversation_id,
+                # gc-join-ambiguous-param-fix: 서브쿼리 비교용 별도 키(같은 값, 다른 $N).
+                "conversation_id_lookup": conversation_id,
                 "account_id": int(account_id),
                 "role": role,
                 "invited_by_account_id": (

@@ -125,11 +125,43 @@ def test_add_member_upserts_role_and_commits():
     assert "ON CONFLICT (conversation_id, account_id) DO UPDATE" in conn.last_sql()
     assert conn.last_params() == {
         "conversation_id": "conv-1",
+        # gc-join-ambiguous-param-fix: 서브쿼리 비교용 별도 키(값은 동일).
+        "conversation_id_lookup": "conv-1",
         "account_id": 10,
         "role": "member",
         "invited_by_account_id": 3,
     }
     assert conn.commits == 1
+
+
+# ── gc-join-ambiguous-param-fix 회귀 고정 ──────────────────────────────────
+# 회귀: _PG_ADD_MEMBER 가 INSERT VALUES(varchar 컬럼)와 서브쿼리(`WHERE ... = `, text
+# 추론) 양쪽에서 동일 named param `%(conversation_id)s` 를 재사용하면, psycopg3 가 둘을
+# 같은 $1 로 합쳐 보내 "AmbiguousParameter: text versus character varying" 로 INSERT
+# 전체가 실패 → 공유 대화 join 불가. 두 위치는 반드시 서로 다른 named param 이어야 한다.
+def test_add_member_subquery_uses_distinct_param_name():
+    sql = gm._PG_ADD_MEMBER
+    # last_read 서브쿼리(회귀 원천)가 존재하고 core_messages 를 조회한다.
+    assert "agent_runtime.core_messages" in sql
+    assert "last_read_message_id" in sql
+    # INSERT VALUES 의 conversation_id 와 서브쿼리 비교는 서로 다른 placeholder.
+    assert "%(conversation_id_lookup)s" in sql
+    # `%(conversation_id)s` 는 정확히 1회(INSERT VALUES)만 — 서브쿼리는 _lookup 을 쓴다.
+    # ('%(conversation_id_lookup)s' 와 겹세지 않도록 정규식으로 정확히 매칭.)
+    import re
+    exact = re.findall(r"%\(conversation_id\)s", sql)
+    assert len(exact) == 1, f"conversation_id placeholder 는 1회여야 함(서브쿼리는 _lookup): {len(exact)}"
+    lookup = re.findall(r"%\(conversation_id_lookup\)s", sql)
+    assert len(lookup) == 1, f"conversation_id_lookup placeholder 는 1회여야 함: {len(lookup)}"
+
+
+def test_add_member_lookup_param_equals_conversation_id():
+    conn = FakeConn()
+    gm.add_member(conn, "conv-xyz", 10, role="member")
+    params = conn.last_params()
+    # 두 키 모두 동일 conversation_id 값(서브쿼리가 같은 대화를 조회).
+    assert params["conversation_id"] == "conv-xyz"
+    assert params["conversation_id_lookup"] == "conv-xyz"
 
 
 def test_remove_member_returns_rowcount():
