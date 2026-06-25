@@ -259,3 +259,15 @@
 - **검증**: 구 제품명 잔존 0, 신 제품명 7곳(index 4·practitioner 3). WSL Playwright headless 로 표지 슬라이드 캡처 확인(브랜드·h1 정상 반영, `/tmp/pcap/title_after.png`).
 - **panel SKIP 사유 (§18.4)**: 단순 표기 치환, 비파괴, 신규 동작 0. 구/신 문자열 분리(제품명 vs 일반명사)를 ground-truth grep 으로 검증.
 - **Human Approval Needed**: 아니오 (Minor, 비파괴 docs, 사용자 직접 지시).
+
+## REV-20260625T165205-ai-claude-doc-sync-20260625-163929 [SUBAGENT:doc-sync]
+
+- **cycle**: ai/claude/doc-sync-20260625-163929 — `/_dqa:doc_sync` (06-25 머지 rollup, 베이스라인 e648ab0→HEAD b7862ef, PR#420~#436) 문서 정합. resume from doc-sync-20260625-160433(session-limit 중단 재개, 중단 세션은 delta 검출까지만·미커밋이라 idempotent 재실행).
+- **changeset (pure-meta, META commit)**: `docs/STATUS.md` · `wiki/overview.md` · `wiki/Features/feature-0009-group-conversation.md` · `wiki/Log.md` · `wiki/hot.md` · `meta/REVIEW.md`(본 entry). (릴리즈노트 콘텐츠 + cache-buster 는 feature-0003 src/static operational → **별도 commit**.)
+- **정합 요지**: ① STATUS 인덱스 행 0002(init 임베딩 지연 회귀 해소·한도 메시지 주체)·0003(역할/제품 프롬프트 자동작성·분석률 95% 자동완성·규칙 DB 커버리지·지식베이스 재편)·0011(P5a Step1~5c 완료·shim 4종 전량 제거) 06-25 승격 — 0009 는 자체 cycle 갱신분(09114ed) 유지. ② wiki/overview §2.1 표 **feature-0010/0011 행 누락 보강**(9→11행, ground-truth 정합) + 06-25 서사 ⑦~⑩. ③ feature-0009 카드 06-25 정합(안 읽음/@멘션 배지·메시지 좌우 정렬·owner 멤버 추방/차단). ④ Log append + hot.md refresh(actionable thread 보존).
+- **SSOT 계약 준수**: STATUS 인덱스 모델 — rollup blockquote 추가 0(셀 누적 없음, ADR-0031 §1). mirror 정본 재서술 없이 행 요지·링크만.
+- **타깃별 검증**: `node --check` release-notes-data.js OK · wiki feature 수 정합 grep(ground-truth `ls unit/feature-*`=11 = overview §2.1 표 11행 = Features 카드 11 = narrative "11-feature") · `bin/ssot-lint.sh` WARN-only(기존 tracked secret 백업 4건 — STATUS §3 블로킹·rotation 선행, 본 변경 무관 / wiki-sot 거짓SOT 0건) · 신규 wikilink 대상 카드(0010/0011) 존재 확인.
+- **panel (SUBAGENT, adversarial 사실검증)**: general-purpose 1관점 — 환각/사실정확성/평이화/누락/STATUS정합 5축 대조(머지 커밋 + REPORT 실측). **VERDICT CLEAN** (BLOCKING 0). 부수 확인: 기존 hot.md "model_catalog…alias shim" 부정확 서술을 본 sync 가 정정. NIT 3건 비차단(의도된 06-24 서사 보존·정직한 잔여 drift 고지).
+- **잔여 drift (정직 고지)**: `wiki/concepts/nl2sql-flywheel.md` §2 가 ITEM-08/ITEM-11 출시 미반영(stale) — 후속 doc_sync 1회 필요(hot.md Active Threads 기록). 본 run scope 외(06-25 머지 drift 에 집중).
+- **panel scope**: §18.8 — doc-only mirror/index 정합(핵심경로 코드 무변경)이나 사실 환각 위험이 있어 adversarial 1관점 수행. Minor·비파괴.
+- **Human Approval Needed**: 아니오 (additive doc-sync mirror/index 정합, 비파괴, 신규 production 동작 0, 전역 auto-sync 정책).

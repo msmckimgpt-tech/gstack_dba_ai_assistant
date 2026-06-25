@@ -39,8 +39,8 @@ sources:
 
 ## 2. 상태
 
-- **단계**: substantial — 코어(S1~S4) + 라이브 UX(1·2차) + 아바타·멘션 알림 배포 완료. S5(run cap·llm_usage actor 귀속)·S6(스레드 UI) deferred.
-- **마지막 갱신**: 2026-06-23
+- **단계**: substantial — 코어(S1~S4) + 라이브 UX(1·2차) + 아바타·멘션 알림 + 안 읽음/@멘션 배지·메시지 좌우 정렬·owner 멤버 추방/차단 배포 완료. S5(run cap·llm_usage actor 귀속)·S6(스레드 UI) deferred.
+- **마지막 갱신**: 2026-06-25
 - **AI 작업자**: claude (`ai/claude/feature-0009-group-conversation` 외 `gc-*` worktree 계열)
 - 계획은 `/plan-eng-review`(outside-voice) + `/cso` 위협모델 통과 (SHIP-WITH-FIXES).
 
@@ -54,7 +54,8 @@ sources:
 - **열람 ≠ 발화**: 멤버는 datasource 권한이 없어도 대화 전체 열람 가능. `@assistant` 로 datasource 쿼리/발화는 발신자 본인 RBAC 로만 게이트.
 - **참여 일원화**: username 직접 초대 폐지(CHG-20260623-0013) → 공유 링크 '참여 허용'(기본 ON)으로 join 일원화.
 - **첨부 격리**: 첨부는 멤버 전원 열람/다운로드 공유, 단 LLM 맥락 주입은 `@assistant` 발신자 본인 첨부로 한정(권한상승 방지, CSO F1).
-- 라이브 UX: 적응형 폴링(5s↔1.5s)·`@`멘션 자동완성(TTL)·발신자/제품 Identicon 아바타·피멘션 알림+하이라이트.
+- 라이브 UX: 적응형 폴링(5s↔1.5s)·`@`멘션 자동완성(TTL)·발신자/제품 Identicon 아바타·피멘션 알림+하이라이트·사이드바 안 읽음/@멘션 배지(read cursor, REQ-GC-R8)·메시지 좌우 정렬(내 메시지 우측, 상대/`@assistant` 좌측).
+- owner 멤버 관리: 공유 팝업에서 소유자가 멤버 추방/차단/해제(kick/ban/unban, hover 펼침 액션).
 
 ## 4. 관련 정본
 
@@ -82,3 +83,4 @@ sources:
 > append-only. 정본 변경은 `unit/feature-0009-group-conversation/docs/MODIFY.md` 에.
 
 - 2026-06-23: 초안 작성 (코어 + 라이브 UX 1·2차 + 아바타·멘션 알림 배포 후 wiki 정합).
+- 2026-06-25: 06-25 머지 정합 — 사이드바 안 읽음/@멘션 배지(REQ-GC-R8 read cursor, alembic 0019)·메시지 좌우 정렬·owner 멤버 추방/차단/해제(kick/ban/unban, hover 액션) 반영 (doc_sync).

@@ -4747,3 +4747,17 @@ source_of_truth: true
 - Rollback Notes: `styles.css` 2블록 + `index.html` 캐시버스터 revert. JS/백엔드/스키마 0.
 - 검증: `node --check static/app.js` PASS(무변경) + 충실한 mock 렌더(실제 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측, other·assistant=좌측 동일 기준선. 패널 SKIP(순수 CSS, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 실 그룹대화 권장).
 - Files: `static/styles.css`, `static/index.html`, `docs/{TASK,MODIFY,REVIEW,TEST}.md` (+ feature-0009 cross-ref).
+
+## CHG-20260625T165205-doc-sync-rn-0625 (TASK-20260625T165205-doc-sync-rn-0625 — 06-25 머지분 릴리즈노트 정합, Minor §12.3 — 사용자 노출 정적 콘텐츠)
+- Date: 2026-06-25 (`/_dqa:doc_sync` maintenance, resume from doc-sync-20260625-160433). **콘텐츠 데이터만** — 렌더 로직·백엔드·스키마·RBAC 무변경.
+- Scope: `src/static/release-notes-data.js` 가 직전 릴리즈노트(06-24 블록, 600f2b5) 이후 main 병합된 06-25 user-facing 변경을 미반영 → 새 `date: "2026-06-25"` 블록 prepend(9항목) + `index.html`·`admin.html` cache-buster bump.
+- 내용:
+  - `static/release-notes-data.js`: `releases` 배열 head 에 `2026-06-25` 블록(items 9 = work 3 + admin 4 + common 2). work: 안 읽음/@멘션 배지 / 메시지 좌우 정렬 / 멤버 추방·차단·해제. admin: 역할·제품 프롬프트 AI 자동작성 / 제품 분석률 95% 자동완성 / 규칙 추가 DB insight 커버리지 표시 / 지식베이스 메뉴 재편. common: 요청량 한도 메시지 주체 구분 / AI 준비 속도 개선.
+  - `index.html`·`admin.html`: `release-notes-data.js?v=20260625-rn-0625` → `?v=20260625b-rn-0625`.
+  - 사용자 평이화 — 내부 구현/테이블명/feature-id/엔드포인트/RBAC 비노출.
+- Why: 릴리즈노트가 직전 sync(06-24 블록) 이후 06-25 머지와 drift → 사용자 ‘업데이트 내역’ 화면 정합.
+- 대응 커밋(reality): 09114ed(안 읽음/@멘션 배지) · cc62773(메시지 좌우 정렬) · 1d83d94+29d1bbf(멤버 추방/차단/해제+hover) · 5c525db(역할/제품 프롬프트 자동작성) · 4cd26e7(제품 95% 자동완성) · 23b7175(규칙 DB 커버리지) · 874f15e(지식베이스 메뉴 재편) · 70c57f6(한도 메시지 주체) · 23fa679(init 임베딩 지연 회귀 해소). 제외(내부): feature-0011 shared P5a Step4/5·codebase-map·template v3.35.1·spec-anchor id·doc_sync META.
+- Verification: `node --check release-notes-data.js` PASS + 스키마(type/area/title/detail) 정합 + 머지 커밋 10건 1:1 대조 + 적대 사실검증(general-purpose, 환각/귀속/평이화/누락/STATUS 5축) VERDICT CLEAN. 로직 무변경 → 적대 패널 불요(REVIEW [SKIPPED]).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: `2026-06-25` 블록 + 2 cache-buster revert(순수 콘텐츠·additive). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 새 릴리즈노트 화면 반영. 마이그/백엔드 없음.
