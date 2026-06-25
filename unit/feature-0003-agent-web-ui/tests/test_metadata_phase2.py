@@ -30,7 +30,7 @@ import datetime
 import json
 
 import app
-import modules.db as _dbmod
+import shared.db as _dbmod
 import modules.kb_metadata as _km
 import modules.sample_queries as _sq
 
@@ -487,7 +487,7 @@ def test_bootstrap_common_rejected(monkeypatch):
 def test_bootstrap_schemas_happy(monkeypatch):
     _allow_scopes(monkeypatch, scopes=("common", "default"))
     _admin(monkeypatch)
-    import modules.db as _db
+    import shared.db as _db
     import modules.schema as _schema
     import shared.config as _cfg
     calls = []  # finally 의 reset(None) 까지 모든 호출 기록 — dialect 활성화→리셋 순서 확인.
@@ -513,7 +513,7 @@ def test_bootstrap_schema_sqli_rejected(monkeypatch):
     골격 수집(_bootstrap_collect_skeleton) 미도달. 정상 schema 는 통과."""
     _allow_scopes(monkeypatch, scopes=("common", "default"))
     _admin(monkeypatch)
-    import modules.db as _db
+    import shared.db as _db
     import modules.schema as _schema
     import shared.config as _cfg
     monkeypatch.setattr(_cfg, "set_active_datasource", lambda *a, **k: None)

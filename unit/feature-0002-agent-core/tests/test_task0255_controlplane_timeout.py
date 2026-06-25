@@ -6,7 +6,7 @@ data-plane(_dataplane_connect_timeout) 회귀 가드 포함. 실 DB 없이 conne
 """
 from __future__ import annotations
 
-from modules import db
+from shared import db
 
 
 def test_controlplane_timeout_default(monkeypatch):

@@ -38,7 +38,7 @@ from shared.config import (
     AGENT_LOG_DIR, AGENT_MEMORY_CLEAR_KEEP_IDS,
     AGENT_OPENAI_MAX_RETRIES,
 )
-from modules.db import connect_with_retry, execute_sql as raw_execute_sql
+from shared.db import connect_with_retry, execute_sql as raw_execute_sql
 from modules.memory import (
     _cancel_requested,
     _clear_cancel_request,
@@ -398,7 +398,7 @@ def _is_group_conversation(conversation_id: str | None) -> bool:
     if not conversation_id:
         return False
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as cur:
@@ -454,7 +454,7 @@ def _build_attachment_context_section(
     rows = None
     if os.environ.get("AGENT_RUNTIME_ATTACHMENTS_READ_BACKEND", "mysql").strip().lower() == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             _pg = _pg_connect()
             try:
                 _ph = ", ".join(["%s"] * len(attachment_ids))
@@ -950,7 +950,7 @@ def _global_insight_rows_pg(
         None — PG 미가용/예외. caller 가 레거시 MySQL 경로로 fallback 한다.
     """
     try:
-        from modules.db import _pg_available, _pg_connect_ro
+        from shared.db import _pg_available, _pg_connect_ro
     except Exception:
         return None
     if not _pg_available():
@@ -3728,7 +3728,7 @@ def init_memory():
     import os as _os
     _pg_required = (_os.getenv("AGENT_KB_PG_REQUIRED", "0").strip() or "0") in {"1", "true", "yes", "on"}
     try:
-        from modules.db import _pg_available
+        from shared.db import _pg_available
         if _pg_available():
             from modules.memory import _ensure_pg_schema
             result = _ensure_pg_schema()

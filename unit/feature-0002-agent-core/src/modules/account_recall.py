@@ -74,7 +74,7 @@ def _load_account_scoped_conv_ids(
     if cap <= 0:
         return []
 
-    from .db import _pg_available, _pg_connect_ro
+    from shared.db import _pg_available, _pg_connect_ro
     if not _pg_available():
         return []
 
@@ -155,7 +155,7 @@ def recall_account_conv_facts(
     conv_id_set = set(conv_ids)
 
     try:
-        from .db import _pg_available, _pg_connect_ro
+        from shared.db import _pg_available, _pg_connect_ro
         from .kb_retrieval import _embed_query_vector, _normalize_rag_doc_rows
         from .kb_backend import PgKbBackend
         from .kb_scope import _mask_prose
@@ -253,7 +253,7 @@ def _account_recall_opted_out(account_id: Optional[int]) -> bool:
         return False
     if aid <= 0:
         return False
-    from .db import _pg_available, _pg_connect_ro
+    from shared.db import _pg_available, _pg_connect_ro
     if not _pg_available():
         return False
     conn = None

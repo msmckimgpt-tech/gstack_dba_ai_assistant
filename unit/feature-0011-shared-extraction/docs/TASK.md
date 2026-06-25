@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in_progress (P5a Step 1~4 완료 + Step 5a(conn_health·datasources 마이그·shim제거) 완료, Step 5b/5c·6 후속)
+- State: in_progress (P5a Step 1~4 + Step 5(5a/5b/5c 마이그·shim제거) 완료 — 4개 alias shim 전부 제거, shared/ 추출 완성. Step 6·동반doc 후속)
 - Owner: AI / Human
 - Priority: high (Critical 등급 — 라이브 제품 구조 리팩터)
 - Last Updated: 2026-06-25
@@ -36,10 +36,11 @@ source_of_truth: true
 - [x] TASK-0011-6 **P5a Step 2 — config → shared/config 이동 + modules/config alias shim (비파괴)**
 - [x] TASK-0011-7 **P5a Step 3 — db.py → shared/db.py 이동 + modules/db.py alias shim (비파괴)**
 - [x] TASK-0011-8 **P5a Step 4 — conn_health·datasources → shared/ + alias shim (비파괴) + db lazy back-dep `from modules`→`from shared` 정리**
-- [~] TASK-0011-9 P5a Step 5 — import 점진 마이그레이션 + shim 제거 [진행 중 — per-module sub-step]
+- [x] TASK-0011-9 P5a Step 5 — import 점진 마이그레이션 + shim 제거 [완료 — per-module sub-step]
   - [x] 5a conn_health·datasources 소비처 shared.* 마이그레이션(60 ref/18 파일) + alias shim 2개 제거
   - [x] 5b config 소비처 shared.config 마이그레이션(~150 ref/53 파일) + modules/config shim 제거 (fan-in 25 foundation)
-  - [ ] 5c db 소비처 shared.db 마이그레이션 + modules/db shim 제거 (app.py 84 sites — 최대)
+  - [x] 5c db 소비처 shared.db 마이그레이션(219 ref/52 파일, app.py 112 + .sh-embedded) + modules/db shim 제거 (최다결합)
+        → 4개 alias shim(config·db·conn_health·datasources) 전부 제거, shared/ 추출 구조 완성
 - [ ] TASK-0011-10 P5a Step 6 — feature 단위 Dockerfile 분리 + 브라우저 QA [후속]
 - [ ] TASK-0011-11 동반(저위험) — #4 GDPR gap 문서화 + CODEBASE_MAP stale 정정(0007~0010 누락·shared 구식) [후속]
 
@@ -70,18 +71,23 @@ source_of_truth: true
   modules/__init__ eager+wildcard 재노출 체인 보존(config 이름 shared.config 재바인딩). subagent 28파일 + 세션한도
   후 결정적 스크립트 21파일 보완. make test **회귀 0**, residual grep 0, baked-layout smoke(shared.config OK·
   modules.config ModuleNotFoundError·재노출 체인 OK), §18.8 3렌즈 BLOCKING 0/NIT 0.
+- P5a Step 5c (db 소비처 shared.db 마이그레이션 + modules/db shim 제거) — repo 최다결합(fan-in 17, underscore
+  심볼 9+, __init__ eager). 219 ref/52 파일(app.py 112 포함) + **bin/kb-pg-healthcheck.sh .sh-embedded python**.
+  modules/__init__ eager+wildcard 재노출 체인 보존. make test **회귀 0**, residual grep 0(전 파일), baked-layout
+  smoke OK. §18.8 3렌즈: **BLOCKING 1 발견·수정**(.sh-embedded `from modules.db import` — .py-only 마이그가 놓침
+  → shared.db 로 수정·전파일 재grep 0) / NIT 0 / deploy SAFE. **→ 4개 alias shim 전부 제거, shared/ 추출 완성.**
 
 ## 7. Next Action
-- P5a Step 5c (db 소비처를 `from shared.db`/`shared.db` 로 마이그레이션 후 modules/db alias shim 제거 — app.py 84 sites
-  포함 최대 결합). 이후 Step 6 (feature 단위 Dockerfile 분리 + 브라우저 QA) · 동반 doc(TASK-0011-11).
+- Step 5(점진 마이그레이션) 완료. 남은 것: P5a Step 6 (feature 단위 Dockerfile 분리 + 브라우저 QA — 이 WSL env 는
+  Windows 브라우저 QA(PB-0008) 불가, 별도 처리 필요) · 동반 저위험 doc(TASK-0011-11 — GDPR gap + CODEBASE_MAP stale 정정).
 
-## 8. Completion Checklist (P5a Step 5b = config 마이그레이션·shim제거 cycle)
-- [x] AC(config 전 소비처가 shared.config 정본 경로로 마이그레이션됨 — 정적+wildcard+dynamic/string 포함)이 구현되었다
-- [x] modules/config.py alias shim 이 제거되고, modules.config 가 더는 import 되지 않는다(ModuleNotFoundError); modules/__init__ 재노출 체인 보존
-- [x] 단위 테스트(make test)가 통과한다 — 회귀 0 (전체 green, 2 skip, F/E 0). residual grep 0(라이브 modules.config 참조 없음)
-- [x] FUNCTION.md가 현재 동작과 일치한다 (config shim 제거, 소비처 shared.config 수렴 반영)
-- [x] MODIFY.md에 변경 이력이 기록되었다 (CHG-20260625-0006)
-- [x] REVIEW.md에 판단 근거가 기록되었다 (§18.8 3렌즈 패널 — BLOCKING 0 / NIT 0, REV-20260625-0006)
+## 8. Completion Checklist (P5a Step 5c = db 마이그레이션·shim제거 cycle — Step 5 종결)
+- [x] AC(db 전 소비처가 shared.db 정본 경로로 마이그레이션됨 — 정적+wildcard+dynamic/string+.sh-embedded 포함)이 구현되었다
+- [x] modules/db.py alias shim 이 제거되고 modules.db 가 더는 import 되지 않는다(ModuleNotFoundError); 4개 shim 전부 제거; modules/__init__ 재노출 체인 보존
+- [x] 단위 테스트(make test)가 통과한다 — 회귀 0 (전체 green, 2 skip, F/E 0). residual grep 0(전 파일 — .py+.sh+config, 라이브 modules.db 참조 없음)
+- [x] FUNCTION.md가 현재 동작과 일치한다 (db shim 제거, 소비처 shared.db 수렴, shared/ 추출 완성 반영)
+- [x] MODIFY.md에 변경 이력이 기록되었다 (CHG-20260625-0007)
+- [x] REVIEW.md에 판단 근거가 기록되었다 (§18.8 3렌즈 패널 — BLOCKING 1 발견·수정 / NIT 0, REV-20260625-0007)
 - [x] REPORT.md에 최종 상태가 반영되었다
 - [x] BLOCKED 항목이 없거나 사람에게 전달되었다
 - [ ] Git 커밋이 완료되었다

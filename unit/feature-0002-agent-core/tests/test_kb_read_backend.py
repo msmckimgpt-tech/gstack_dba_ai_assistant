@@ -143,7 +143,7 @@ def test_load_rag_documents_pg_returns_none_when_unavailable(monkeypatch):
     from modules import knowledge  # type: ignore
 
     monkeypatch.setattr(
-        sys.modules["modules.db"], "_pg_available", lambda: False, raising=True,
+        sys.modules["shared.db"], "_pg_available", lambda: False, raising=True,
     )
     result = knowledge._load_rag_documents_for_request_pg(
         ["conv1"], "request", ["common"],
@@ -156,7 +156,7 @@ def test_load_rag_documents_pg_calls_backend(monkeypatch):
     from modules import knowledge, kb_backend  # type: ignore
 
     monkeypatch.setattr(
-        sys.modules["modules.db"], "_pg_available", lambda: True, raising=True,
+        sys.modules["shared.db"], "_pg_available", lambda: True, raising=True,
     )
 
     class FakeConn:
@@ -165,7 +165,7 @@ def test_load_rag_documents_pg_calls_backend(monkeypatch):
 
     # REV-20260522-0012 B3 흡수: _pg_connect_ro 사용 확인.
     monkeypatch.setattr(
-        sys.modules["modules.db"], "_pg_connect_ro", lambda *a, **kw: FakeConn(), raising=True,
+        sys.modules["shared.db"], "_pg_connect_ro", lambda *a, **kw: FakeConn(), raising=True,
     )
 
     captured = []

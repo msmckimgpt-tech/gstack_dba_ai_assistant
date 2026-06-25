@@ -996,7 +996,7 @@ def get_backends() -> tuple[MysqlKbBackend, Optional[PgKbBackend]]:
     with _BACKENDS_LOCK:
         if _BACKENDS_CACHE is not None:
             return _BACKENDS_CACHE
-        from .db import _pg_available  # noqa — circular import 회피
+        from shared.db import _pg_available  # noqa — circular import 회피
         mysql_b = MysqlKbBackend()
         pg_b: Optional[PgKbBackend] = PgKbBackend() if _pg_available() else None
         _BACKENDS_CACHE = (mysql_b, pg_b)
@@ -1176,7 +1176,7 @@ def _log_kb_write_audit(
             ensure_ascii=False,
         )
 
-    from .db import connect_with_retry  # noqa — circular import 회피
+    from shared.db import connect_with_retry  # noqa — circular import 회피
     from shared.config import MEMORY_DB
     # B-4: attempts=1 — best-effort. MySQL 일시 장애 시 caller block 방지.
     conn = connect_with_retry(database=MEMORY_DB, autocommit=True, attempts=1)
@@ -1314,7 +1314,7 @@ class _DualWriteMirror:
 
     def _mirror(self, method_name: str, **kwargs):
         import time
-        from .db import _pg_available, _pg_connect
+        from shared.db import _pg_available, _pg_connect
 
         t0 = time.monotonic()
         if not _pg_available():
@@ -1357,7 +1357,7 @@ class _DualWriteMirror:
             _write_methods = {"upsert_fact_entry", "delete_fact_entry", "upsert_rag_document", "upsert_rag_object"}
             if method_name in _write_methods:
                 try:
-                    from .db import _pg_mark_kb_invalidation
+                    from shared.db import _pg_mark_kb_invalidation
                     _pg_mark_kb_invalidation(conn, "kb_global")
                 except Exception:
                     pass

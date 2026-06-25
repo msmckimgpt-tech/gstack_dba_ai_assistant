@@ -78,7 +78,7 @@ class _FakeMemConn:
 def test_collect_matched_excerpts_routes_to_pg(monkeypatch):
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     pg = _FakePgConn(fetchall_rows=[("c1", "dbgame 스키마를 조회한 결과입니다")])
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
     mem = _FakeMemConn()
 
     out = app._collect_matched_excerpts(mem, ["c1"], "dbgame")
@@ -98,7 +98,7 @@ def test_collect_matched_excerpts_routes_to_pg(monkeypatch):
 def test_conv_update_topic_routes_to_pg(monkeypatch):
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     pg = _FakePgConn()
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
     mem = _FakeMemConn()
 
     app._conv_update_topic(mem, "c1", "새 제목")

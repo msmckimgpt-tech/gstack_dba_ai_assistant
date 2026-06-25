@@ -47,7 +47,7 @@ PRICING_PER_1M_TOKENS = {
 
 def open_pg_conn():
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from modules.db import _pg_connect  # type: ignore
+    from shared.db import _pg_connect  # type: ignore
     return _pg_connect()
 
 

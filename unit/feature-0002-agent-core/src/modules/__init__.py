@@ -7,7 +7,7 @@ All modules were originally a single file. This __init__.py:
 """
 from shared import config
 from . import utils
-from . import db
+from shared import db
 from . import memory
 # TASK-0142: knowledge.py 분할 — kb_scope/kb_retrieval/kb_write 를 knowledge(facade)
 # 보다 먼저 로드해야 facade 의 `from .kb_* import *` 가 해석된다.
@@ -53,7 +53,7 @@ __all__ = list(_all_names.keys())
 # Re-export all names into package namespace for agent_cli.py compatibility
 from shared.config import *
 from .utils import *
-from .db import *
+from shared.db import *
 from .memory import *
 from .kb_scope import *
 from .kb_retrieval import *

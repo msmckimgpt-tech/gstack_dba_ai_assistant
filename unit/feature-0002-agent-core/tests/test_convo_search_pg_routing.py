@@ -81,7 +81,7 @@ def test_convo_search_routes_to_pg(monkeypatch):
         "kv": [("other-cid", "topic", "dbgame 주제", now, "topic")],
     }
     pg = _FakePgConn(rows)
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
     mem = _FakeMemConn()
 
     out = file_ops.convo_search(mem, "current-cid", query="dbgame", limit=10)
@@ -102,7 +102,7 @@ def test_convo_search_routes_to_pg(monkeypatch):
 def test_convo_search_escapes_like_metachars(monkeypatch):
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     pg = _FakePgConn({})  # 결과는 무관, 쿼리/파라미터만 검사
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
     file_ops.convo_search(_FakeMemConn(), "current-cid", query="100%_x!", limit=5)
 
@@ -115,7 +115,7 @@ def test_convo_search_escapes_like_metachars(monkeypatch):
 def test_convo_search_empty_query_matches_all_without_escape(monkeypatch):
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     pg = _FakePgConn({})
-    monkeypatch.setattr("modules.db._pg_connect", lambda: pg)
+    monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
     file_ops.convo_search(_FakeMemConn(), "current-cid", query="", limit=5)
 

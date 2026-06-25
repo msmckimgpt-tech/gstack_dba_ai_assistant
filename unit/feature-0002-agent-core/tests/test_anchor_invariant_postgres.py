@@ -218,12 +218,12 @@ def _setup_mock_mirror_env(monkeypatch):
     from modules import kb_backend as kb  # type: ignore
 
     monkeypatch.setattr(
-        sys.modules["modules.db"], "_pg_available", lambda: True, raising=True,
+        sys.modules["shared.db"], "_pg_available", lambda: True, raising=True,
     )
     captured: list = []
     fake_conn = _FakeConn(captured)
     monkeypatch.setattr(
-        sys.modules["modules.db"], "_pg_connect",
+        sys.modules["shared.db"], "_pg_connect",
         lambda *a, **kw: fake_conn, raising=True,
     )
     monkeypatch.setattr(
@@ -407,7 +407,7 @@ def test_anchor_invariant_negative(assertion, monkeypatch):
         from modules import kb_backend as kb  # type: ignore
 
         monkeypatch.setattr(
-            sys.modules["modules.db"],
+            sys.modules["shared.db"],
             "_pg_available",
             lambda: True,
             raising=True,
@@ -415,7 +415,7 @@ def test_anchor_invariant_negative(assertion, monkeypatch):
         captured: list = []
         fake_conn = _FakeConn(captured)
         monkeypatch.setattr(
-            sys.modules["modules.db"],
+            sys.modules["shared.db"],
             "_pg_connect",
             lambda *a, **kw: fake_conn,
             raising=True,

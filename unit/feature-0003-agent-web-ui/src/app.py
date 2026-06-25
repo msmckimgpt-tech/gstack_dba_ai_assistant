@@ -768,7 +768,7 @@ def _active_ask_job_conversation_ids() -> set[str]:
         return set()
     pg = None
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         with pg.cursor() as cur:
             cur.execute(
@@ -2239,7 +2239,7 @@ def _ensure_conversation_row(conn, conversation_id: str) -> None:
         return
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -2269,7 +2269,7 @@ def _assign_conversation_owner(conn, conversation_id: str, account_id: int, *, f
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         _ensure_conversation_row(conn, conversation_id)
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 if force:
@@ -2335,7 +2335,7 @@ def _mark_conversation_forked(conversation_id: str, source_conversation_id: str)
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
         return
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
@@ -3421,7 +3421,7 @@ def _load_conversation_product(conn, conversation_id: str) -> dict[str, Any] | N
         return None
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -3511,7 +3511,7 @@ def _last_step_at_for_run(conn, conversation_id: str, run_id: str) -> datetime |
         return None
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -3585,7 +3585,7 @@ def _conversation_is_processing(conn, conversation_id: str) -> bool:
         return False
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -5797,7 +5797,7 @@ def _account_period_usage_tokens(account_id: int, quota_type: str) -> int:
     'monthly'=달력 당월(date_trunc). best-effort(실패 시 0=무제한 취급, fail-open)."""
     trunc = "day" if quota_type == "daily" else "month"
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
     except Exception:
         return 0
@@ -6068,7 +6068,7 @@ def _backfill_group_conversation_members_once() -> None:
         _GROUP_MEMBERS_BACKFILL_DONE = True
         return
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         from modules import group_members
         pg = _pg_connect()
         try:
@@ -6775,7 +6775,7 @@ def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, st
     # PG 는 case-insensitive 매칭을 위해 ILIKE 사용(MySQL utf8mb4_unicode_ci 패리티).
     if _runtime_backend_is_pg():
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -6913,7 +6913,7 @@ def _list_conversations_pg(
     agent_runtime.core_conversations + agent_runtime.kv 를 PG 에서 읽고,
     owner_username 조회만 MySQL WebAccounts 에서 수행 (Phase 3 web* 이관 전까지).
     """
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect()
     except Exception:
@@ -7487,7 +7487,7 @@ def _conversation_exists(
         # AR-M4-T4: PG read path
         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
             try:
-                from modules.db import _pg_connect
+                from shared.db import _pg_connect
                 pg = _pg_connect()
                 with pg.cursor() as pgcur:
                     pgcur.execute(
@@ -7535,7 +7535,7 @@ def _conversation_block_info(
         return (False, "")
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -7596,7 +7596,7 @@ def _block_conversations_for_product(
     if not product_id or int(product_id) <= 0:
         return 0
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
@@ -7640,7 +7640,7 @@ def _conversation_owner_account_id(conn, conversation_id: str) -> int | None:
     # AR-M4-T4: PG read path
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -7681,7 +7681,7 @@ def _account_is_conversation_member(conversation_id: str, account_id: int) -> bo
     if not conversation_id or not account_id:
         return False
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         from modules import group_members
         pg = _pg_connect()
         try:
@@ -7727,7 +7727,7 @@ def _mark_conversation_group(conversation_id: str) -> None:
         return
     if _runtime_backend_is_pg():
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -7764,7 +7764,7 @@ def _ensure_owner_membership(conversation_id: str) -> None:
     if not conversation_id:
         return
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         from modules import group_members
         pg = _pg_connect()
         try:
@@ -7792,7 +7792,7 @@ def _conversation_is_group(conversation_id: str) -> bool:
     if not conversation_id:
         return False
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as cur:
@@ -8555,7 +8555,7 @@ def _update_assistant_message_content(conn, conversation_id: str, message_id: in
     if not message_id or not conversation_id:
         return
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
@@ -8739,7 +8739,7 @@ def _load_step_meta(
 ) -> dict[str, Any]:
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             pg_row = None
             with pg.cursor() as pgcur:
@@ -8839,7 +8839,7 @@ def _stringify_summary(value: Any) -> str:
 def _load_last_run_id(conn, conversation_id: str) -> str:
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -8869,7 +8869,7 @@ LIMIT 1
 def _load_progress_status(conn, conversation_id: str) -> tuple[str, str, str]:
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -8915,7 +8915,7 @@ def _load_run_meta_kv(conn, conversation_id: str) -> dict[str, str]:
     """status/duration/error 관련 KV 키를 단일 쿼리로 조회."""
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -8952,7 +8952,7 @@ def _load_step_count_for_run(conn, conversation_id: str, run_id: str) -> int:
         return 0
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -8992,7 +8992,7 @@ def _load_steps_for_run(
         return []
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             params_pg: list[Any] = [conversation_id, run_id]
             step_clause_pg = ""
@@ -9145,7 +9145,7 @@ def _load_steps_for_message(
         if run_id:
             return _load_steps_for_run(conn, conversation_id, run_id)
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -9282,7 +9282,7 @@ def _get_agent_core_history(
     fetch_limit = max(10, int(limit) * 3)
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 if before_id:
@@ -9523,7 +9523,7 @@ def _get_history(
         except Exception:
             return [], False, None, 0, 0
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 if before_id:
@@ -9745,7 +9745,7 @@ def _load_last_step_meta(conversation_id: str) -> dict[str, Any]:
         return {}
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -9852,7 +9852,7 @@ def _load_latest_assistant_message(conn, conversation_id: str) -> dict[str, Any]
     # PG routing (AR-M5: AgentMemoryMessages MySQL 테이블 삭제됨)
     rows: list = []
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         with pg.cursor() as pgcur:
             pgcur.execute(
@@ -10023,7 +10023,7 @@ def _list_admin_accounts(conn) -> list[dict[str, Any]]:
     rows = _decorate_account_rows(conn, rows)
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             with pg.cursor() as pgcur:
                 pgcur.execute(
@@ -10426,7 +10426,7 @@ def healthz() -> JSONResponse:
             pass
 
     try:
-        from modules.db import _pg_available
+        from shared.db import _pg_available
 
         pg_ok = bool(_pg_available())
     except Exception:
@@ -10920,7 +10920,7 @@ def _cleanup_orphan_conversations(conn, account_id: int) -> int:
     no_message_cids: list[str] = candidates
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             _pg = _pg_connect()
             with _pg.cursor() as _pgcur:
                 _ph = ", ".join(["%s"] * len(candidates))
@@ -11020,7 +11020,7 @@ async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn, re
 
 
 async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, request=None) -> dict[str, Any]:
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     from modules import ask_jobs as _aj
     from shared.config import AGENT_ASK_WORKER_STALE_SEC
 
@@ -11129,7 +11129,7 @@ def _get_ask_job_status(job_id: int) -> str | None:
 
     KV last_status 가 새 run 에 인계돼도 attach 가 자기 job 의 terminal 을 직접 보게 한다.
     """
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     from modules import ask_jobs as _aj
     pg = None
     try:
@@ -11152,7 +11152,7 @@ def _build_worker_agent_result(job_id: int, conv_id: str) -> dict[str, Any]:
     1순위: ask_jobs.result_json (worker 가 terminal 시 기록 — answer/executed_sql/steps/
     result_csv_paths/rationale/error). 부재(timeout 등) 시 KV snapshot 으로 fallback.
     """
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     from modules import ask_jobs as _aj
     base = {
         "answer": "", "conversation_id": conv_id, "steps": [],
@@ -11348,7 +11348,7 @@ async def ask(request: Request) -> JSONResponse:
                 if conv_id:
                     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
                         try:
-                            from modules.db import _pg_connect
+                            from shared.db import _pg_connect
                             _pg_tmp = _pg_connect()
                             with _pg_tmp.cursor() as _pgc:
                                 _pgc.execute(
@@ -11413,7 +11413,7 @@ async def ask(request: Request) -> JSONResponse:
             if conv_id:
                 if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
                     try:
-                        from modules.db import _pg_connect
+                        from shared.db import _pg_connect
                         _pg_tmp2 = _pg_connect()
                         with _pg_tmp2.cursor() as _pgc2:
                             _pgc2.execute(
@@ -11459,7 +11459,7 @@ async def ask(request: Request) -> JSONResponse:
                 if product_id_for_run and conv_id:
                     try:
                         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-                            from modules.db import _pg_connect
+                            from shared.db import _pg_connect
                             _pg_tmp3 = _pg_connect()
                             with _pg_tmp3.cursor() as _pgc3:
                                 _pgc3.execute(
@@ -12004,7 +12004,7 @@ async def new_conversation(request: Request) -> JSONResponse:
     _set_account_current_conversation(conn, int(account["id"]), cid)
     try:
         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             _pg_nc = _pg_connect()
             with _pg_nc.cursor() as _pgcnc:
                 _pgcnc.execute(
@@ -12116,7 +12116,7 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
 
     try:
         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             _pg_patch = _pg_connect()
             with _pg_patch.cursor() as _pgpatch:
                 _pgpatch.execute(
@@ -12188,7 +12188,7 @@ def _conv_load_topic(conn, conversation_id: str) -> str:
     """원본 대화 topic. core_conversations.topic 우선, kv 'topic' fallback. 실패 시 '새 대화'."""
     if _runtime_backend_is_pg():
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -12235,7 +12235,7 @@ def _conv_load_product(conn, conversation_id: str) -> tuple[int | None, Any]:
     row = None
     if _runtime_backend_is_pg():
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -12272,7 +12272,7 @@ def _conv_load_messages_raw(conn, conversation_id: str, upto_id: int | None) -> 
     MySQL(longtext)이면 str 로 올 수 있어 호출자가 _meta_json_to_dict 로 정규화한다.
     """
     if _runtime_backend_is_pg():
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
@@ -12316,7 +12316,7 @@ def _conv_message_exists(conn, conversation_id: str, message_id: int) -> bool:
     """message_id 가 conversation_id 의 메시지인지 검증."""
     if _runtime_backend_is_pg():
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -12345,7 +12345,7 @@ def _conv_update_topic_product(
 ) -> None:
     """새 대화 topic/product 갱신 (fork)."""
     if _runtime_backend_is_pg():
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
@@ -12373,7 +12373,7 @@ WHERE conversation_id = %s
 def _conv_update_topic(conn, conversation_id: str, topic: str) -> None:
     """대화 topic 만 갱신 (duplicate '사본:' prefix 적용)."""
     if _runtime_backend_is_pg():
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
@@ -12408,7 +12408,7 @@ def _conv_copy_messages(
     use_pg = _runtime_backend_is_pg()
     pg = None
     if use_pg:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         writer = pg.cursor()
     else:
@@ -12470,7 +12470,7 @@ def _conv_load_core_messages_raw(conn, conversation_id: str, upto_created_at) ->
     """
     if not _runtime_backend_is_pg():
         return []
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     pg = _pg_connect()
     try:
         with pg.cursor() as pgcur:
@@ -12503,7 +12503,7 @@ def _conv_copy_core_messages(conn, new_cid: str, src_core_rows: list[tuple]) -> 
     """
     if not _runtime_backend_is_pg() or not src_core_rows:
         return 0
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     pg = _pg_connect()
     writer = pg.cursor()
     copied = 0
@@ -12672,7 +12672,7 @@ def _conv_load_share_meta(conn, conversation_id: str) -> dict[str, Any]:
         product_id: int | None = None
         row = None
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -12901,7 +12901,7 @@ def _read_insight_datasource_health() -> dict:
     를 구분 표시하기 위함. graceful: PG 미가용/테이블 부재(fresh deploy 마이그 전)/조회 실패는 {} 반환(목록 무영향).
     RO 연결(least-privilege). 자격증명 비포함(테이블에 애초 비영속)."""
     try:
-        from modules.db import _pg_available, _pg_connect_ro
+        from shared.db import _pg_available, _pg_connect_ro
     except Exception:
         return {}
     if not _pg_available():
@@ -13084,7 +13084,7 @@ async def admin_set_product_datasource(product_id: int, request: Request) -> JSO
     # admin 이 RO 로그인 접근 밖 DB 를 지정하면 product 바인딩만으로 권한 없는 DB 조회가 되는 것을 차단.
     # datasource 의 RO 로그인이 실제 접근 가능한 DB 목록(list_server_databases)에 속해야 허용(대소문자 무관).
     if has_db_field and product_db and _bound_ds is not None:
-        from modules import db as _db
+        from shared import db as _db
         okssrf, reason, _pin = _ssrf_check_host(_bound_ds.get("host"))
         if not okssrf:
             conn.close()
@@ -13377,7 +13377,7 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     는 응답에 비노출(errno 만). flag 무관(명시 테스트).
     """
     from shared import datasources as _dsr
-    from modules import db as _db
+    from shared import db as _db
     try:
         conn = _connect_memory()
     except Exception:
@@ -13897,7 +13897,7 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
 async def admin_datasource_databases(key: str, request: Request) -> JSONResponse:
     """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). datasource.read. SSRF 차단."""
     from shared import datasources as _dsr
-    from modules import db as _db
+    from shared import db as _db
     from shared import conn_health as _ch
     try:
         conn = _connect_memory()
@@ -14485,7 +14485,7 @@ def list_conversation_members(cid: str, request: Request) -> JSONResponse:
         ):
             return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             from modules import group_members
             pg = _pg_connect()
             try:
@@ -14558,7 +14558,7 @@ def remove_conversation_member(cid: str, account_id: int, request: Request) -> J
         if conv_owner is not None and target_id == int(conv_owner):
             return _json_error("대화 소유자는 멤버에서 제거할 수 없습니다.", 409)
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             from modules import group_members
             pg = _pg_connect()
             try:
@@ -14632,7 +14632,7 @@ async def ban_conversation_member(cid: str, account_id: int, request: Request) -
             data = {}
         reason = (str(data.get("reason") or "").strip()[:512]) or None
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             from modules import group_members
             pg = _pg_connect()
             try:
@@ -14690,7 +14690,7 @@ def unban_conversation_member(cid: str, account_id: int, request: Request) -> JS
         if not _conversation_owned_by_account(conn, cid, actor_id):
             return _json_error("대화 소유자만 차단을 해제할 수 있습니다.", 403)
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             from modules import group_members
             pg = _pg_connect()
             try:
@@ -14734,7 +14734,7 @@ def list_conversation_bans(cid: str, request: Request) -> JSONResponse:
         if not _conversation_owned_by_account(conn, cid, actor_id):
             return _json_error("대화 소유자만 차단 목록을 조회할 수 있습니다.", 403)
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             from modules import group_members
             pg = _pg_connect()
             try:
@@ -14949,7 +14949,7 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
 
     # 적재는 PG(agent_kb) conn — 코어 정본 modules.sample_feedback.record_feedback.
     from modules import sample_feedback as _sfb
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     feedback_id: int | None = None
     try:
         # autocommit=False — INSERT + lastval() 을 한 트랜잭션으로 묶어 id 회수 정확성 보장.
@@ -15519,7 +15519,7 @@ def join_conversation_via_share(token: str, request: Request) -> JSONResponse:
         # owner 는 차단 불가(ban 엔드포인트 가드)라 owner self-join 은 영향 없음. _ensure_owner_membership
         # 위에서 이미 owner 멤버십을 보장했고, 본 게이트는 차단된 비-owner actor 만 막는다.
         try:
-            from modules.db import _pg_connect as _pg_connect_ban
+            from shared.db import _pg_connect as _pg_connect_ban
             from modules import group_members as _gm_ban
             _pg_b = _pg_connect_ban()
             try:
@@ -15548,7 +15548,7 @@ def join_conversation_via_share(token: str, request: Request) -> JSONResponse:
         already = _conversation_owned_by_account(conn, cid, actor_id) or _account_is_conversation_member(cid, actor_id)
         if not already:
             try:
-                from modules.db import _pg_connect
+                from shared.db import _pg_connect
                 from modules import group_members
                 pg = _pg_connect()
                 try:
@@ -15609,7 +15609,7 @@ def public_share_fork(token: str, request: Request) -> JSONResponse:
         # 보안 게이트라 fail-closed — 차단 여부 불명(PG 오류) 시 거부(가용성보다 ban 무결성 우선).
         _fk_actor_id = int(account["id"])
         try:
-            from modules.db import _pg_connect as _pg_connect_fk
+            from shared.db import _pg_connect as _pg_connect_fk
             from modules import group_members as _gm_fk
             _pg_fk = _pg_connect_fk()
             try:
@@ -17232,7 +17232,7 @@ def history_anchor(
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         row = None
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -17324,7 +17324,7 @@ def history_dates(
     # to_char(세션 tz) 기준으로 날짜/시각 라벨을 만들어 점프 매칭과 일관성을 보장한다.
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -17391,7 +17391,7 @@ def _archive_conversation(conn, conversation_id: str, account_id: int) -> bool:
     ok = False
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -17689,7 +17689,7 @@ async def cancel_request(request: Request) -> JSONResponse:
         # 대상이 없어 KV 플래그가 유실된다. 큐 레벨로 취소(canceled)해 취소 유실 방지.
         if _is_worker_mode():
             try:
-                from modules.db import _pg_connect
+                from shared.db import _pg_connect
                 from modules import ask_jobs as _aj
                 _pgc = _pg_connect()
                 try:
@@ -17768,7 +17768,7 @@ def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
     if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
         return "", False
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         with pg.cursor() as pgcur:
             pgcur.execute(
@@ -18083,7 +18083,7 @@ def suggestions(request: Request, limit: int = 40) -> JSONResponse:
     rows: list = []
     try:
         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
             try:
                 with pg.cursor() as pgcur:
@@ -20331,8 +20331,8 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
         base["measurable"] = True  # 측정됨 — 객체 0
         return base
 
-    from modules import db as _db
-    from modules.db import _pg_connect
+    from shared import db as _db
+    from shared.db import _pg_connect
 
     # ── TASK-0249: 멀티 datasource(1:N) 인식 ──
     # 각 접근 DB 는 자기 datasource(WebProductDatabases.DatasourceKey, 미설정 시 제품 primary)에 산다.
@@ -21023,7 +21023,7 @@ def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> di
     #  (schema 가 table 보다 먼저 와 DB 노드 통찰이 우선 보존).
     pg = None
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         pgc = pg.cursor()
         cond = "(o.datasource_key = %s" + (" OR o.datasource_key IS NULL" if allow_null else "") + ")"
@@ -21327,7 +21327,7 @@ async def admin_product_insight_reset(request: Request, pid: int) -> JSONRespons
         # (schema_name, table_name) 교집합** 으로 통일한다. object_key LIKE 방식은 MSSQL 2-tier 레거시
         # (catalog-less `{scope}:dbo.t`)를 놓쳐 "지웠는데 완료율 그대로" 를 유발했다(보안리뷰 M1).
         # live schema 목록은 fact/KV 의 2-tier 레거시 키 패턴(catalog-less) 생성에도 쓴다.
-        from modules import db as _db
+        from shared import db as _db
         live_pairs: set = set()       # {(schema_lower, table_lower)}
         live_schemas: set = set()     # {schema_lower}
         okssrf, _ssrf_reason, pin = _ssrf_check_host((coords or {}).get("host"))
@@ -21353,7 +21353,7 @@ async def admin_product_insight_reset(request: Request, pid: int) -> JSONRespons
         kv_patterns = _insight_reset_kv_key_patterns(db_name, scope_aliases, allow_null, live_schemas)
 
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
         except Exception as exc:
             logging.getLogger("app").warning("insight_reset pg connect fail pid=%s err=%r", pid, exc)
@@ -21833,7 +21833,7 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
     # AR-M5 cutover: AgentCoreConversations MySQL 테이블 DROP → COUNT 를 PG
     # agent_runtime.core_conversations 로 라우팅(미라우팅 시 SELECT 가 500).
     if _runtime_backend_is_pg():
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
@@ -22136,7 +22136,7 @@ def _reconcile_one_db_rule(conn, rule: dict, *,
     # 라이브 DB 열거 (M4: 모든 실패 = no-op — 빈 목록을 '전부 제거'로 해석 금지).
     try:
         from shared import datasources as _dsr
-        from modules import db as _db
+        from shared import db as _db
         ds = _dsr.resolve(conn, dsk)
         if not ds:
             result["status"] = "ds-unresolved"
@@ -22838,7 +22838,7 @@ async def admin_preview_product_db_rule(product_id: int, key: str, request: Requ
             return JSONResponse({"ok": False, "error": perr, "matched": [], "new": []})
         try:
             from shared import datasources as _dsr
-            from modules import db as _db
+            from shared import db as _db
             ds = _dsr.resolve(conn, dsk)
             if not ds:
                 return JSONResponse({"ok": False, "error": "datasource 해석 실패", "matched": [], "new": []})
@@ -23021,7 +23021,7 @@ def _assemble_product_prompt_llm_request(product_id: int):
     topic_lines: list[str] = []                   # 대화 topic (최신 50개)
     summary_lines: list[str] = []                 # 대화 summary 샘플 (최신 5개)
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg_conn = _pg_connect()
         pg_cur = pg_conn.cursor()
 
@@ -23359,7 +23359,7 @@ def _collect_conversation_signals_pg(
     filter_sql = "".join(f" AND {f}" for f in filters)
 
     try:
-        from modules.db import _pg_connect
+        from shared.db import _pg_connect
         pg_conn = _pg_connect()
         pg_cur = pg_conn.cursor()
         # topic 집계: 대화 제목 최신순.
@@ -25083,7 +25083,7 @@ def admin_llm_usage(request: Request) -> JSONResponse:
         bucket_expr = f"to_char(date_trunc('{gran}', created_at), '{gran_cfg['fmt']}')"
         bucket_limit = gran_cfg["limit"]
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
         except Exception as exc:
             logging.getLogger(__name__).warning("admin_usage: pg connect failed", exc_info=True)
@@ -25432,7 +25432,7 @@ def admin_usage_conversations(request: Request) -> JSONResponse:
                 # "(시스템)" 역할 — owner 없는 비대화 usage. 대화목록 비어있음.
                 return JSONResponse({"items": [], "truncated": False, "filter": p, "scope": "admin"})
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
         except Exception:
             logging.getLogger(__name__).warning("admin_usage_conversations: pg connect failed", exc_info=True)
@@ -25478,7 +25478,7 @@ def profile_usage_conversations(request: Request) -> JSONResponse:
             return _json_error("계정 식별 실패", 403)
         p = _parse_usage_conv_params(request)
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
         except Exception:
             logging.getLogger(__name__).warning("profile_usage_conversations: pg connect failed", exc_info=True)
@@ -25570,7 +25570,7 @@ def admin_archived_conversations(request: Request) -> JSONResponse:
         items: list[dict[str, Any]] = []
         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
             try:
-                from modules.db import _pg_connect
+                from shared.db import _pg_connect
                 pg = _pg_connect()
             except Exception:
                 logging.getLogger(__name__).warning("admin_archived: pg connect failed", exc_info=True)
@@ -25708,7 +25708,7 @@ def admin_list_sample_feedback(request: Request) -> JSONResponse:
     limit = max(1, min(_SAMPLE_FEEDBACK_LIMIT, limit))
 
     from modules import sample_feedback as _sfb
-    from modules.db import _pg_connect_ro
+    from shared.db import _pg_connect_ro
     try:
         pg = _pg_connect_ro()
     except Exception:
@@ -25773,7 +25773,7 @@ async def admin_approve_sample_feedback(feedback_id: int, request: Request) -> J
     weight = max(1, min(1000, weight))
 
     from modules import sample_feedback as _sfb
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         # autocommit=False — register_sample(INSERT+임베딩) + status UPDATE 를 한 트랜잭션으로 묶어
         # 부분 적용(승급은 됐는데 status 미갱신, 또는 그 반대)을 방지(원자성). 실패 시 전체 rollback.
@@ -25839,7 +25839,7 @@ async def admin_reject_sample_feedback(feedback_id: int, request: Request) -> JS
         conn.close()
 
     from modules import sample_feedback as _sfb
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26043,7 +26043,7 @@ def admin_list_glossary(request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect_ro
+    from shared.db import _pg_connect_ro
     try:
         pg = _pg_connect_ro()
     except Exception:
@@ -26083,7 +26083,7 @@ async def admin_create_glossary(request: Request) -> JSONResponse:
     if derr:
         return derr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26126,7 +26126,7 @@ async def admin_update_glossary(term_id: int, request: Request) -> JSONResponse:
     if derr:
         return derr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26165,7 +26165,7 @@ def admin_delete_glossary(term_id: int, request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26204,7 +26204,7 @@ def admin_list_enums(request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect_ro
+    from shared.db import _pg_connect_ro
     try:
         pg = _pg_connect_ro()
     except Exception:
@@ -26266,7 +26266,7 @@ async def admin_create_enum(request: Request) -> JSONResponse:
     if ferr:
         return ferr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26308,7 +26308,7 @@ async def admin_update_enum(entry_id: int, request: Request) -> JSONResponse:
     if ferr:
         return ferr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26353,7 +26353,7 @@ def admin_delete_enum(entry_id: int, request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_glossary as _kg
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26411,7 +26411,7 @@ def admin_list_table_desc(request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect_ro
+    from shared.db import _pg_connect_ro
     try:
         pg = _pg_connect_ro()
     except Exception:
@@ -26456,7 +26456,7 @@ async def admin_create_table_desc(request: Request) -> JSONResponse:
         return e
     source = "manual" if str(data.get("source") or "").strip().lower() != "bootstrap" else "bootstrap"
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26512,7 +26512,7 @@ async def admin_update_table_desc(desc_id: int, request: Request) -> JSONRespons
     elif has_schema:
         return _json_error("table_name 없이 schema_name 만 수정할 수 없습니다.", 400)
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26553,7 +26553,7 @@ def admin_delete_table_desc(desc_id: int, request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26591,7 +26591,7 @@ def admin_list_column_desc(request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect_ro
+    from shared.db import _pg_connect_ro
     try:
         pg = _pg_connect_ro()
     except Exception:
@@ -26640,7 +26640,7 @@ async def admin_create_column_desc(request: Request) -> JSONResponse:
         return e
     source = "manual" if str(data.get("source") or "").strip().lower() != "bootstrap" else "bootstrap"
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26697,7 +26697,7 @@ async def admin_update_column_desc(desc_id: int, request: Request) -> JSONRespon
         if e:
             return e
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26739,7 +26739,7 @@ def admin_delete_column_desc(desc_id: int, request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import kb_metadata as _km
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26795,7 +26795,7 @@ def admin_list_samples(request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import sample_queries as _sq
-    from modules.db import _pg_connect_ro
+    from shared.db import _pg_connect_ro
     try:
         pg = _pg_connect_ro()
     except Exception:
@@ -26877,7 +26877,7 @@ async def admin_update_sample(sample_id: int, request: Request) -> JSONResponse:
         embed_status = "active" if vec else "stale"
 
     from modules import sample_queries as _sq
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -26919,7 +26919,7 @@ def admin_delete_sample(sample_id: int, request: Request) -> JSONResponse:
     if serr:
         return serr
     from modules import sample_queries as _sq
-    from modules.db import _pg_connect
+    from shared.db import _pg_connect
     try:
         pg = _pg_connect(autocommit=False)
     except Exception:
@@ -27003,7 +27003,7 @@ def admin_bootstrap_schemas(request: Request) -> JSONResponse:
     if derr:
         return derr
     from shared import config as _cfg
-    from modules import db as _db
+    from shared import db as _db
     from modules import schema as _schema
     conn = None
     try:
@@ -27048,7 +27048,7 @@ async def admin_bootstrap(request: Request) -> JSONResponse:
         return _json_error("schema 가 너무 깁니다.", 400)
 
     from shared import config as _cfg
-    from modules import db as _db
+    from shared import db as _db
     from modules import dialects as _dialects
     from modules import schema as _schema
     from modules.tools import _safe_ident as _safe_ident_fn
@@ -27205,7 +27205,7 @@ def _metadata_introspect_table(datasource_key: str, schema_name: str, table_name
     if derr or not ds:
         return None
     from shared import config as _cfg
-    from modules import db as _db
+    from shared import db as _db
     from modules import dialects as _dialects
     from modules import schema as _schema
     from modules.tools import _safe_ident as _safe_ident_fn
@@ -28032,7 +28032,7 @@ def admin_overview(request: Request) -> JSONResponse:
         if ("conversations" in permitted) or ("usage" in permitted):
             pg = None
             try:
-                from modules.db import _pg_connect
+                from shared.db import _pg_connect
                 pg = _pg_connect()
             except Exception:
                 log.warning("admin_overview: pg connect failed", exc_info=True)
@@ -28159,7 +28159,7 @@ def profile_llm_usage(request: Request) -> JSONResponse:
         bucket_expr = f"to_char(date_trunc('{gran}', u.created_at), '{gran_cfg['fmt']}')"
         bucket_limit = gran_cfg["limit"]
         try:
-            from modules.db import _pg_connect
+            from shared.db import _pg_connect
             pg = _pg_connect()
         except Exception:
             logging.getLogger(__name__).warning("profile_usage: pg connect failed", exc_info=True)

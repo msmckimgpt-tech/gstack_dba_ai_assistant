@@ -7,7 +7,7 @@ FUNCTION.md §2 REQ-GC-R7).
 
 설계 원칙 (runtime_backend.py / memory.py 패턴 답습):
 - 본 모듈 함수는 호출자가 넘긴 psycopg connection(`pg_conn`)으로만 동작한다(순수 DB 접근,
-  연결 수명은 호출자 관리). 호출자는 `from modules.db import _pg_connect` 로 연결을 얻는다.
+  연결 수명은 호출자 관리). 호출자는 `from shared.db import _pg_connect` 로 연결을 얻는다.
 - 모든 SQL 은 `agent_runtime.` schema-qualified (ADR-0027, search_path 전역 변경 없음).
 - INSERT 는 ON CONFLICT DO NOTHING 으로 멱등 (append-only 멤버십).
 

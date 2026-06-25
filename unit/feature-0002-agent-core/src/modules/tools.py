@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from shared.config import AGENT_TOP_N, AGENT_MAX_SHOW
-from .db import execute_sql as _raw_execute_sql
+from shared.db import execute_sql as _raw_execute_sql
 from .render import save_csv
 from . import dialects as _dialects  # Stage 2 P5: engine 별 introspection/sample SQL
 

@@ -55,8 +55,8 @@ class _FakeConn:
 
 def _patch_pg(monkeypatch, rows, available=True):
     conn = _FakeConn(rows)
-    monkeypatch.setattr("modules.db._pg_available", lambda: available)
-    monkeypatch.setattr("modules.db._pg_connect_ro", lambda *a, **k: conn)
+    monkeypatch.setattr("shared.db._pg_available", lambda: available)
+    monkeypatch.setattr("shared.db._pg_connect_ro", lambda *a, **k: conn)
     return conn
 
 
@@ -99,8 +99,8 @@ def _setup_recall(monkeypatch, normalized_rows, *, embed=(0.1, 0.2, 0.3), opted_
     monkeypatch.setattr(account_recall, "AGENT_ACCOUNT_INSIGHT_TOP_K", 2)
     monkeypatch.setattr(account_recall, "_load_account_scoped_conv_ids", lambda *a, **k: list(conv_ids))
     monkeypatch.setattr(account_recall, "_account_recall_opted_out", lambda *a, **k: opted_out)
-    monkeypatch.setattr("modules.db._pg_available", lambda: True)
-    monkeypatch.setattr("modules.db._pg_connect_ro", lambda *a, **k: _FakeConn([]))
+    monkeypatch.setattr("shared.db._pg_available", lambda: True)
+    monkeypatch.setattr("shared.db._pg_connect_ro", lambda *a, **k: _FakeConn([]))
     monkeypatch.setattr("modules.kb_retrieval._embed_query_vector", lambda q, **k: (list(embed) if embed else None))
 
     class _FakeBackend:
@@ -198,7 +198,7 @@ def test_extract_pass_flag_off_noop(monkeypatch):
 def test_extract_pass_pg_unavailable_noop(monkeypatch):
     from modules import insight
     monkeypatch.setattr(insight, "AGENT_ACCOUNT_INSIGHT_EXTRACT", True)
-    monkeypatch.setattr("modules.db._pg_available", lambda: False)
+    monkeypatch.setattr("shared.db._pg_available", lambda: False)
     rep = insight.run_account_insight_pass()
     assert rep["candidates"] == 0 and rep["extracted"] == 0
 
@@ -208,9 +208,9 @@ def test_extract_pass_kv_source_no_summary(monkeypatch):
     from modules import insight
     monkeypatch.setattr(insight, "AGENT_ACCOUNT_INSIGHT_EXTRACT", True)
     monkeypatch.setattr(insight, "AGENT_ACCOUNT_INSIGHT_MIN_SUMMARY_LEN", 5)
-    monkeypatch.setattr("modules.db._pg_available", lambda: True)
+    monkeypatch.setattr("shared.db._pg_available", lambda: True)
     # 후보 쿼리: summary 빈 대화 1건.
-    monkeypatch.setattr("modules.db._pg_connect", lambda *a, **k: _FakeConn([("conv-x", "")]))
+    monkeypatch.setattr("shared.db._pg_connect", lambda *a, **k: _FakeConn([("conv-x", "")]))
     monkeypatch.setattr(insight, "connect_with_retry", lambda *a, **k: _FakeConn([]))
     monkeypatch.setattr(insight, "_load_kv_prefix_map", lambda *a, **k: {})
     kv = {"origin_request": "주문 테이블 일별 매출 추이 분석", "thread_goal": "매출 도메인 반복 조회", "topic": "sales"}

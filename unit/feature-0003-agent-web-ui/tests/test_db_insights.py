@@ -211,7 +211,7 @@ def test_compute_groups_by_db_and_counts(monkeypatch):
         ("table", "orders", "shipments", "배송", "shipments domain: 배송 / 출고", "main_mysql:orders.shipments"),
         ("schema", "users", None, "고객", "users domain: 고객 / 회원", "main_mysql:users"),
     ]
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _RowsPgConn(rows))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _RowsPgConn(rows))
     out = app._compute_product_db_insights(_BenignConn(), {"id": 1, "datasource_key": "main_mysql"})
     assert out["ok"] is True
     by = out["by_db"]
@@ -237,7 +237,7 @@ def test_compute_mssql_catalog_attribution(monkeypatch):
         ("schema", "dbo", None, "Misc", "dbo domain: Misc / 기타", "mssql-x:dbo"),
         ("table", "dbo", "A1016D80", "Misc", "dbo.A1016D80 domain: Misc / 해시테이블", "mssql-x:dbo.A1016D80"),
     ]
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _RowsPgConn(rows))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _RowsPgConn(rows))
     out = app._compute_product_db_insights(_BenignConn(), {"id": 91, "datasource_key": "mssql_local"})
     assert out["ok"] is True
     by = out["by_db"]

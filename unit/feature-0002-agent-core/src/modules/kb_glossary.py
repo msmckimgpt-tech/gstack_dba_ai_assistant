@@ -31,7 +31,7 @@ def _ro_conn(conn):
     """(conn, owned). conn 미지정이면 agent_kb RO 연결을 연다(owned=True → 호출측 close)."""
     if conn is not None:
         return conn, False
-    from modules.db import _pg_available, _pg_connect_ro
+    from shared.db import _pg_available, _pg_connect_ro
     if not _pg_available():
         return None, False
     return _pg_connect_ro(), True

@@ -111,7 +111,7 @@ def test_collect_signals_empty_accounts_short_circuits(monkeypatch):
     def _boom():
         raise AssertionError("_pg_connect must not be called for empty account_ids")
 
-    monkeypatch.setattr("modules.db._pg_connect", _boom)
+    monkeypatch.setattr("shared.db._pg_connect", _boom)
     topics, summaries = app._collect_conversation_signals_pg(account_ids=[])
     assert topics == [] and summaries == []
 
@@ -146,7 +146,7 @@ class _RecPgConn:
 
 def test_collect_signals_filters(monkeypatch):
     rec: list = []
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _RecPgConn(rec))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _RecPgConn(rec))
     topics, summaries = app._collect_conversation_signals_pg(account_ids=[1, 2], product_id=5)
     assert topics == ["주제A"]
     assert summaries == ["요약B"]

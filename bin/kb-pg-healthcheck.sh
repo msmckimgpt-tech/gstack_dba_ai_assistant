@@ -118,7 +118,7 @@ check_pg_connect() {
   fi
   local out
   if out="$(docker exec -i "$AGENT_CONTAINER" python -c '
-from modules.db import _pg_connect, _pg_available
+from shared.db import _pg_connect, _pg_available
 print(f"available={_pg_available()}")
 if not _pg_available():
     raise SystemExit(0)

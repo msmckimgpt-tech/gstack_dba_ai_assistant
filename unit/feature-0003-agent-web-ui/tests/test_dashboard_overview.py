@@ -76,7 +76,7 @@ def _body(resp):
 def _patch_common(monkeypatch, actor):
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _BenignConn())
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _BenignConn())
 
 
 # ── S1: overview RBAC 스코프 ─────────────────────────────────────────────────

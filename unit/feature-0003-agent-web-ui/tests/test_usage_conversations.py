@@ -233,7 +233,7 @@ def test_p1_profile_ignores_role_account(monkeypatch):
     captured = {}
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    monkeypatch.setattr("modules.db._pg_connect", lambda: _FakePG([], []))
+    monkeypatch.setattr("shared.db._pg_connect", lambda: _FakePG([], []))
 
     def _fake_query(pg, **kw):
         captured.update(kw)

@@ -445,7 +445,7 @@ def _load_rag_documents_for_request_pg(
     Returns: dict list (MySQL path 과 동일 shape) or None on PG unavailable.
     Raises: PG SELECT 실패 시 caller (`_load_rag_documents_for_request`) 가 MySQL fallback.
     """
-    from .db import _pg_available, _pg_connect_ro
+    from shared.db import _pg_available, _pg_connect_ro
     if not _pg_available():
         return None
     from .kb_backend import PgKbBackend
@@ -634,7 +634,7 @@ def _load_rag_objects_for_request_pg(
     `_load_rag_documents_for_request_pg` 와 동형 — `_pg_connect_ro()`(agent_kb_ro least-priv) +
     `PgKbBackend.search_rag_objects`. 18-col raw tuple 반환(caller _normalize_rag_object_rows 처리)
     또는 PG 미가용 시 None(caller MySQL fallback)."""
-    from .db import _pg_available, _pg_connect_ro
+    from shared.db import _pg_available, _pg_connect_ro
     if not _pg_available():
         return None
     from .kb_backend import PgKbBackend

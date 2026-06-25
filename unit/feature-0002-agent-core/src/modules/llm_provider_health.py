@@ -208,7 +208,7 @@ ON CONFLICT (provider) DO UPDATE SET
 
 
 def _pg():
-    from .db import _pg_available, _pg_connect
+    from shared.db import _pg_available, _pg_connect
     try:
         if not _pg_available():
             return None
