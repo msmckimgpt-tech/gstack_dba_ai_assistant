@@ -1181,3 +1181,4 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - `static/release-notes-data.js` 는 사용자에게 노출되는 ‘업데이트 내역’ 화면의 **정적 큐레이션 데이터**(렌더는 `release-notes.js`). 동작/계약 무변경 — 표시되는 항목 목록만 직전 릴리즈노트(0fd4ca9, 06-23 16:52) 이후(late 06-23 + 06-24) 머지분으로 갱신.
 - `releases` 배열 head 에 `date: "2026-06-24"` 블록(items 14: admin 5 + work 9) 추가, `generated` 스탬프 `2026-06-25` 로 갱신. 항목 스키마(type=new/improved/fixed, area=work/admin/common, title, detail) 및 사용자 평이화 작성원칙(내부 구현·테이블명·feature-id·엔드포인트 비노출) 준수.
 - 비변경: 렌더/접기/탐색 로직(`release-notes.js`), 백엔드, 라우팅, RBAC, 스키마. 순수 콘텐츠 추가. (CHG-20260625T092403-doc-sync-release-notes / REV [SKIPPED])
+- 배포 단계(무인 run 이 fail-closed 로 남긴 사람 단계): `index.html`·`admin.html` 의 release-notes-data.js cache-buster `?v=20260623-rn-0623` → `20260625-rn-0625` bump — 그래야 06-24 블록(14항목)이 캐시 무효화되어 사용자에게 노출. (CHG-20260625T092403 동반, web 재배포 시 반영)
