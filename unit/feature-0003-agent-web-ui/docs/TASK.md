@@ -4547,3 +4547,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 
 ### CI green 복구 (ci-pytest-green-fix, 별도 worktree, Minor §12.3 — CI/test maintenance)
 - [x] `.github/workflows/ci.yml` pytest PYTHONPATH 에 repo 루트(`.`) 추가(`import shared` collection 해소) + `web→feature-0003 src` 심링크(컨테이너 `import web.app` 가정 테스트 해소) + `test_product_delete_block_conv` fake 에 TASK-0302 `SELECT IsDefault` 분기. CI 동일 환경 전체 suite **green(exit 0)**, main CI 장기 red 해소. (CHG/REV-20260624T090534-ci-pytest-green)
+
+### TASK-20260625-doc-sync-release-notes — 직전 릴리즈노트(0fd4ca9, 06-23 16:52) 이후 머지분 릴리즈노트 정합 (doc_sync maintenance, Minor §12.3 — 정적 콘텐츠)
+- 출처: `/_dqa:doc_sync` 정기 정합. `src/static/release-notes-data.js`(사용자 노출 릴리즈노트, 정적 큐레이션 데이터)가 직전 sync(0fd4ca9, 2026-06-23 16:52) 의 06-23 블록에 멈춰 있어, 그 이후 main 병합된 user-facing 변경 14건(late 06-23 + 06-24)이 릴리즈노트에 미반영(doc/reality drift). **윈도 정의 = 직전 릴리즈노트 commit(0fd4ca9) 이후 전체 — 단순 '06-24' 가 아님(적대 검증 Lens B 가 late-06-23 16:52~19:16 머지 누락 적발 → 정정 반영).**
+- 범위: **릴리즈노트 콘텐츠 데이터만** — 렌더 로직(release-notes.js)·백엔드·스키마·RBAC 무변경. 사용자 평이화 문구(내부 구현/테이블명/feature-id/엔드포인트 비노출).
+- [x] `release-notes-data.js`: `releases` head 에 `date: "2026-06-24"` 블록 prepend(admin 5 · work 9 · 총 14 항목 — [new admin] 메타데이터 등록 / AI 자동작성 / 샘플 검수 / 인사이트 탐색 상태(관리 콘솔 제품 관리) · [new work] AI로고치기 / 공유 참여자 / 답변 피드백+샘플등록 / 멘션·데스크톱 알림 제어+음소거 · [improved work] 보관 이동+나가기(owner) / 참여허용 게이트 / 사이드바 그룹 구분 · [fixed admin] 미반영 fix · [fixed work] 알림 표기 / 공유 직후) + `generated` `2026-06-23`→`2026-06-25` 갱신.
+- [x] 검증: 사용자 평이화 원칙 준수(스키마 type/area/title/detail 정합) + `node --check release-notes-data.js`(JS 구문). 머지된 커밋 14건 대조(윈도=직전 릴리즈노트 0fd4ca9 이후 — late-06-23 e5acb43(답변 피드백)·43687e9(사이드바 구분) + 06-24 eb459e4(알림 제어) 포함) — 내부/비-user-facing(shared 추출·SSOT·CI·발표자료·doc_sync)은 의도적 제외.
+- [x] **리뷰(REVIEW REV-20260625T092403-doc-sync-release-notes [SKIPPED]):** 정적 사용자노출 콘텐츠 큐레이션 — 제품 로직·인가·스키마 무변경, 적대 패널 불요(§18.4 비-정책 doc 경량 cycle).
+- [ ] verify-completion → 머지 → web 재배포(static baked) → 마감.

@@ -4603,3 +4603,17 @@ source_of_truth: true
 - 검증: CI 동일 재현(web 심링크 + repo루트 PYTHONPATH) 전체 suite **all green(exit 0)** + ruff PASS. 84 collection ERROR + 2 stale fail → **0**. 런타임/스키마/마이그 0.
 - Rollback: ci.yml step + 테스트 fake 분기 revert. 제품 영향 0.
 - Deploy: 없음(CI 전용·테스트 전용).
+
+## CHG-20260625T092403-doc-sync-release-notes (TASK-20260625-doc-sync-release-notes — 직전 릴리즈노트(0fd4ca9, 06-23 16:52) 이후 머지분 릴리즈노트 정합, Minor §12.3 — 사용자 노출 정적 콘텐츠)
+- Date: 2026-06-25 (`/_dqa:doc_sync` maintenance). **콘텐츠 데이터만** — 렌더 로직·백엔드·스키마·RBAC 무변경.
+- Scope: `src/static/release-notes-data.js`(릴리즈노트 정적 큐레이션)가 직전 sync(0fd4ca9, 06-23 16:52) 의 06-23 블록에 멈춰 있어 그 이후 main 병합된 user-facing 변경(late 06-23 + 06-24)이 미반영 → 새 `date: "2026-06-24"` 블록 prepend + `generated` 스탬프 갱신. (윈도=직전 릴리즈노트 commit 이후 전체 — 적대 검증이 late-06-23 16:52~19:16 머지 누락 적발 → 정정.)
+- 내용:
+  - `static/release-notes-data.js`: `releases` 배열 head 에 `2026-06-24` 블록 추가(items 14 = admin 5 + work 9, type=new/improved/fixed). 항목(admin): 메타데이터(용어·코드·테이블·컬럼 설명) 콘솔 등록·수정 / 메타데이터 입력 AI 자동작성 / 샘플 검수 화면 / 관리 콘솔 제품 관리 인사이트 탐색 상태 표시 / 일부 데이터소스 의미정보·샘플 미반영 수정. 항목(work): 실패 조회 ‘AI 로 고치기’ / 공유 팝업 참여자 표시 / 답변 피드백+‘샘플 등록’ / 멘션·데스크톱 알림 제어+대화별 음소거 / 보관→설정 이동+그룹 나가기(보관·이름변경 owner-only) / 공유 참여허용 owner-only / 사이드바 1:1·그룹 구분 / 멘션 알림 발신자 표기 정리 / 공유 직후 첫 메시지 오류 수정.
+  - `generated`: `"2026-06-23"` → `"2026-06-25"`.
+  - 사용자 평이화 — 내부 구현/테이블명/feature-id/엔드포인트/RBAC 코드 비노출(파일 작성원칙 정합).
+- Why: 릴리즈노트가 직전 sync(0fd4ca9, 06-23 16:52) 이후 머지 작업과 drift. 사용자가 보는 ‘업데이트 내역’ 화면이 late-06-23 + 06-24 변경을 누락 → doc_sync 로 정합.
+- 대응 커밋(reality): 461506e+147426f(메타데이터 등록 admin) · 393d15c(메타데이터 AI 자동완성 admin) · e5acb43(답변 피드백+샘플 검수 admin/work, late 06-23) · 16746be(scope_key 死data fix admin) · 1ee5f1a(AI로고치기 work) · 4a9ab9b(인사이트 상태 work) · 2c35d57(공유 참여자 work) · eb459e4(멘션·데스크톱 알림 제어/음소거 work) · 5f4f45b(보관 이동/나가기 work) · dca8f81(공유 참여허용 게이트 work) · 43687e9(사이드바 그룹 구분+보관/제목 owner work, late 06-23) · 6df7fac(알림 표기 fix work) · eb46302(공유 직후 fix work). 제외(내부): feature-0011 shared 추출·SSOT consolidation·CI fix·발표자료·doc_sync.
+- Verification: `node --check release-notes-data.js` PASS(JS 구문) + 스키마(type/area/title/detail) 정합 + 머지 커밋 14건 1:1 대조(윈도=0fd4ca9 이후, 적대 검증 Lens B 누락 적발분 e5acb43/eb459e4/43687e9 보강). 로직 무변경(데이터 큐레이션) → 적대 패널 불요(REVIEW [SKIPPED]).
+- Files: `static/release-notes-data.js`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: release-notes-data.js 의 `2026-06-24` 블록 + generated 한 줄 revert(순수 콘텐츠·additive). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked) — 새 릴리즈노트 화면 반영. 마이그/백엔드 없음.
