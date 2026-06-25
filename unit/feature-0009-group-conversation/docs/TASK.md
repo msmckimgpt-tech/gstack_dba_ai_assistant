@@ -14,7 +14,7 @@ source_of_truth: true
 - Owner: AI (claude) / Human (sign-off 완료)
 - Priority: high
 - Risk: Critical (인가·cross-account·스키마 마이그레이션)
-- Last Updated: 2026-06-19
+- Last Updated: 2026-06-25 (gc-unread-badge — REQ-GC-R8 read-state 사이드바 안 읽은 메세지 배지)
 
 ## 2. Implementation Plan
 
@@ -30,6 +30,14 @@ source_of_truth: true
 - **검증:** `/plan-eng-review`(outside-voice) + `/cso` 통과(SHIP-WITH-FIXES). REVIEW.md 참조.
 
 <!-- PLAN-APPROVED by ms.mckim.gpt on 2026-06-19 (실행 진입 S1 선택) -->
+
+### 2.1.a Plan — gc-unread-badge (REQ-GC-R8 read-state, 2026-06-25)
+- **요청**: 그룹 대화 사이드바에 진행된 메세지 개수 표시 + 자신의 멘션 별도 집계, 형식 `<전체>[ / @<멘션>]`. 명확화: "(실제 메신저처럼) **새 메세지(안 읽은) 기준**".
+- **영향 파일**: feature-0002(`alembic 0019`·`scripts/agent_runtime_schema.sql`·`modules/group_members.py`·`modules/mentions.py`·`tests/test_mentions.py`) + feature-0003(`src/app.py`·`static/app.js`·`static/styles.css`·`static/index.html`).
+- **접근**: 멤버별 `conversation_members.last_read_message_id` 커서 → 목록 `unread_count`/`unread_mention_count` 집계(본인 미발신·last_read 이후·canonical 멘션 regex) → 사이드바 배지(그룹 한정, 0이면 숨김) + 읽음 처리(열람·활성 도착 시 커서 전진) + 비활성 대화 7s 주기 갱신. 멘션 카운트=`mentions.sql_mention_regex`(파서·FE·SQL 단일 문법).
+- **위험도**: Major (스키마 추가 + 백엔드 쿼리 + FE 다중, deploy-backed, additive·비파괴).
+- **완료 판정(AC)**: 그룹 대화 사이드바에 안 읽은 메세지 수 표시 / 안 읽은 @멘션 별도 표시 / 대화 열람 시 0 / 본인 발신 미포함 / 0이면 배지 숨김. (라이브 실측 = 배포 alembic 0019 후 PB-0008)
+<!-- PLAN-APPROVED by mckim (AskUserQuestion "바로 구현 (권장)") on 2026-06-25 -->
 
 ## 3. Task Queue (슬라이스)
 - [x] **S1 Foundations** — DDL(conversation_members + sender_account_id + thread_root_message_id) + 멱등 backfill + members(account_id) 인덱스 + membership helper 모듈 (commit 489deb5)
@@ -77,6 +85,7 @@ source_of_truth: true
   - [x] 보관 설정이동 + 그룹 참여자 나가기(gc-settings-archive-leave, CHG-0022/REV-0024): 대화 ··· 메뉴 [공유·설정·보관] → [공유·설정] 로 '보관'을 '설정' 팝업의 '대화 관리' 섹션으로 이동. 그 섹션은 `canDeleteConversation`(대화 보유자/admin) → '보관', 아니면서 `isGroupConversation`(보관 권한 없는 그룹 참여자) → '나가기'(신규 `leaveConversation` self-leave, `DELETE /members/{본인 id}`, 백엔드 `remove_conversation_member` 기존) 노출. gc-group-authz-flag 의 owner-only 보관 게이트와 UI 정합(비보유 멤버에게 허울 '보관' 대신 실제 가능한 '나가기'). 전부 프론트(app.js·styles.css·index.html), 캐시버스터 archive-leave. 검증: `node --check` + `verify_settings_archive_leave.mjs` 22/22 + 적대 3렌즈 결함 0. **PB-0008 미실측**(worktree WSL 작성 — 배포 후 권장). 코드/문서 정본=feature-0003 docs.
   - [x] 공유 팝업 참여자 roster(gc-share-participants, CHG-0023/REV-0025): `작업 화면 > 대화 탭 > ··· > 공유` 팝업에 그 대화에 참여 중인 멤버 roster 를 칩으로 표시(사용자 요청 `/_template:entry`). "참여 중"=멤버십 모델의 멤버 roster(live-presence 미구현 — out of scope). 기존 게이트된 `GET /api/conversations/{cid}/members`(conversation.read.own/.any + 멤버십) **재사용 — 신규 백엔드/스키마/RBAC 0**. owner 우선·'소유자' 배지·아바타 `_msgAvatarEl` 재사용·사용자명 textContent(XSS)·빈/로딩/에러 상태·스크롤 cap. 팝업 진입 + joinable 링크 생성 직후 갱신. 전부 프론트(app.js·styles.css·index.html), 캐시버스터 share-participants. 검증: `node --check` + `verify_share_participants.mjs` 17/17 + 적대 3렌즈 BLOCKER/MAJOR 0(MINOR 2+NIT 1 흡수: 주석·스크롤·빈문구). **PB-0008 미실측**(worktree WSL — 배포 후 권장). 코드/문서 정본=feature-0003 docs.
   - [x] 공유 팝업 멤버 추방/차단/해제(gc-member-kick-ban, CHG-0024/REV-0026, **Critical 접근제어**): 소유자가 공유 팝업에서 특정 참여자를 추방(kick=멤버 제거, 재참여 가능)·차단(ban=제거+재참여 영구 차단)·해제(unban). 사용자 결정 **엄격 owner 전용** + unban/차단목록 UI 포함. 추방=기존 `DELETE /members/{id}` 재사용. 차단=신규 `conversation_member_bans`(alembic 0018+GRANT) 등재 → `POST /share/{token}/join` + `POST /public/share/{token}/fork` 양 경로 is_banned 게이트(fail-closed, audit join_blocked/fork_blocked). 신규 owner 전용 엔드포인트 `POST/DELETE /members/{id}/ban` + `GET /bans`. 코어 `group_members.{ban,unban,is_banned,list_bans}`. 캐시버스터 member-kick-ban. **§18.8 적대 보안/authz 패널 — BLOCKER 1(fork 우회 exfiltrate) 적발→수정 + MINOR 3+NIT 1 흡수, 재검증 잔여 0**. 검증: test_member_kick_ban 8 + test_member_ban_endpoints 5 + verify_member_kick_ban 19 + 회귀 전부 PASS. **배포 alembic 0018 필수**. **PB-0008 미실측**(worktree WSL — 배포 후 권장). 코드/문서 정본=feature-0003(+0002 데이터 계층) docs.
+  - [x] 사이드바 안 읽은 메세지 배지(gc-unread-badge, CHG-20260625T065840/REV-20260625T065840, **Major §12.3 — REQ-GC-R8 read-state**): 사용자 `/_template:entry` 요청 — 그룹 대화 사이드바에 **안 읽은(새) 메세지 수 + 안 읽은 @멘션 수** 배지(`<안읽음>[ / @<멘션>]`, 그룹 한정·본인 발신 제외·0이면 숨김·멘션 danger 톤). 멤버별 read cursor `conversation_members.last_read_message_id`(alembic 0019) + 읽음 API `POST /api/conversations/{cid}/read`(멤버십 게이트) + 목록 `unread_count`/`unread_mention_count` 집계(PG `~*`/MySQL parity) + FE 배지/읽음처리(열람·활성 도착)/비활성 7s 주기 갱신. 멘션 카운트=`mentions.sql_mention_regex`(파서·FE·SQL 단일 문법). 검증: test_mentions 6/6 + node + CSS 1576 + py_compile PASS. **★배포 alembic 0019 필수 + PB-0008 배포 후 실측(데이터 의존)**. 코드/문서 정본=feature-0009(+cross-feature 0002/0003).
   - [x] 공유 팝업 추방/차단 버튼 hover 펼침 + 그리드 컴팩트화(gc-member-actions-hover, CHG-20260625T030242, **Minor frontend CSS-only**): kick/ban UI 후속(사용자 2차 요청) — 항상-노출 버튼이 칩 폭을 키워 "사용자당 공간 과도" → 기본 숨김 + 칩 hover/focus 시 애니메이션 펼침. 참여자/차단 목록을 **반응형 그리드**(셀 고정)로 — 한 셀 hover 확장이 다른 칩 위치를 안 바꿈(요구) + 이름 flex:1 로 평소 여백 0 + 다열 세로 단축(세로 스택 여백 대안). 순수 CSS(app.js DOM·핸들러·권한 무변경), 캐시버스터 member-actions-hover. 검증: CSS brace 1571=1571 + `verify_member_actions_hover.mjs` 15/15 + 기존 무회귀. 패널 SKIP(표현계층·로직/보안 0). **신규 timestamp+slug AC 형식 첫 적용**(ADR-20260625T023049-spec-anchor-timestamp-id). **PB-0008 미실측**(worktree WSL — 배포 후 권장). 코드/문서 정본=feature-0003 docs.
   - [x] 그룹대화 상대방 메시지 좌측 정렬(gc-other-msg-left, CHG-20260625T065430/REV-20260625T065430, **Minor frontend CSS-only**): 사용자 요청(`/_template:entry`) — 그룹/공유 대화에서 자신의 메시지(`is-own-message`)는 우측 유지, assistant 와 상대방(타 참여자, `is-other-message`)은 좌측 출력. app.js `renderMessages()` 가 이미 부여하던 class 를 그대로 사용 → styles.css 정렬 규칙만 분기(`.message.is-user.is-other-message{align-self:flex-start}`, 특이도 0,3,0 override) + 좌측 정렬 버블 꼬리(border-radius) 좌측 하단화. 그룹채팅 관례(내=우측/타인=좌측)와 정합, assistant 와 좌측 기준선 통일. 순수 CSS(app.js·백엔드·스키마·RBAC 무변경), 캐시버스터 gc-other-msg-left. 검증: `node --check`(app.js 무변경) + 충실한 mock 렌더(실 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측(rightGap 25)/other·assistant=좌측(leftGap 25 동일 기준선). 패널 SKIP(표현계층·로직/보안 0). **PB-0008 미실측**(worktree WSL — 배포 후 실 그룹대화 권장). 코드/문서 정본=feature-0003 docs.
 

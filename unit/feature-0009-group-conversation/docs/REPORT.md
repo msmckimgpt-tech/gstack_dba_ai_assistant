@@ -23,17 +23,19 @@ source_of_truth: false
 - **공유 직후 메시지 사람채팅 전환(gc-share-group-sync, 배포완료 PR#393)**: CHG-0018 의 클라이언트 stale 잔여 — 공유 후 active.is_group=false 로 비멘션 메시지가 assistant 오호출→422 block. 수정: ① 공유 시 로컬 is_group 즉시 전환+loadConversations ② 422 graceful store-only 재라우팅(유실 없음). **PB-0008 PASS**. (CHG-0019/REV-0021)
 - **Windows 알림 발신자 대괄호 제거(gc-notify-sender-nobracket, 배포완료 PR#394)**: 사용자 요청 — 알림 본문 "[보낸사용자] : …" → "보낸사용자 : …". 1줄 문자열, 로직 무변경. **PB-0008 실측 PASS**. (CHG-0020/REV-0022)
 - **설정/알림 UI 정리(gc-settings-notif)**: 사용자 요청 — 알림 동작 사용자 제어 + UI 정리. [알림] 클라이언트 localStorage 환경설정(`getNotifyPrefs`/음소거 `isConversationMuted`) — `_notifyMentions` 가 마스터(멘션) OFF·데스크톱(OS) OFF·대화 음소거 게이트. 프로필>계정>알림(멘션/데스크톱 토글+권한 요청) + 대화 ···>설정(제목 변경+음소거). [UI] 대화 ··· 메뉴 [공유(생성+관리 단일 팝업)·설정(제목변경+음소거)·보관] — 복사·공유 관리·제목 변경 통합/제거(공유 발급은 `_issueConversationShare` 공통 헬퍼). 프로필 탭 [릴리즈 노트 최좌측·프롬프트·계정], '보안 및 계정'→'계정'+사용 내역 병합. 전부 프론트, 캐시버스터 settings-notif. **PB-0008 실측 PASS**(17 step). (CHG-0021/REV-0023)
-- **그룹대화 상대방 메시지 좌측 정렬(gc-other-msg-left, 커밋 전, Minor frontend CSS-only)**: 사용자 요청 — 내 메시지(`is-own-message`)는 우측 유지, assistant 와 상대방(`is-other-message`)은 좌측 출력. app.js 가 이미 부여하는 class 그대로 사용, `styles.css` 정렬 규칙만 분기(`.message.is-user.is-other-message{align-self:flex-start}` + 버블 꼬리 좌측화). 캐시버스터 gc-other-msg-left. 충실한 mock 렌더(실 CSS+renderMessages DOM, Chromium headless) 수치/스크린샷 검증 PASS(own=우측/other·assistant=좌측 25px 동일 기준선). 패널 SKIP(순수 CSS). **PB-0008 미실측**(배포 후 실 그룹대화 권장). (CHG-20260625T065430/REV-20260625T065430)
-- In Progress: gc-settings-notif docs 반영 완료 → verify-completion → PR → 배포(web) → smoke.
+- **그룹대화 상대방 메시지 좌측 정렬(gc-other-msg-left, 배포 PR#435, Minor frontend CSS-only)**: 사용자 요청 — 내 메시지(`is-own-message`)는 우측 유지, assistant 와 상대방(`is-other-message`)은 좌측 출력. app.js 가 이미 부여하는 class 그대로 사용, `styles.css` 정렬 규칙만 분기(`.message.is-user.is-other-message{align-self:flex-start}` + 버블 꼬리 좌측화). 캐시버스터 gc-other-msg-left. 충실한 mock 렌더(실 CSS+renderMessages DOM, Chromium headless) 수치/스크린샷 검증 PASS(own=우측/other·assistant=좌측 25px 동일 기준선). 패널 SKIP(순수 CSS). **PB-0008 미실측**(배포 후 실 그룹대화 권장). (CHG-20260625T065430/REV-20260625T065430)
+- **사이드바 안 읽은 메세지 배지(gc-unread-badge, 본 worktree·커밋 0d45e92→rebase, Major §12.3, REQ-GC-R8)**: 사용자 요청(`/_template:entry`) — 그룹 대화 사이드바에 **안 읽은(새) 메세지 수 + 안 읽은 @멘션 수** 배지(`<안읽음>[ / @<멘션>]`, 멘션은 danger 톤, 0이면 숨김). 멤버별 read cursor 신설(`conversation_members.last_read_message_id`, alembic 0019) + 읽음 API(`POST /api/conversations/{cid}/read`, 멤버십 게이트) + 목록 `unread_count`/`unread_mention_count` 집계(본인 미발신·last_read 이후·canonical 멘션 regex) + FE 배지/읽음처리(열람·활성 도착 시)/비활성 대화 7s 주기 갱신. 멘션 카운트는 `mentions.sql_mention_regex`(파서·FE·SQL 단일 문법, test 파리티). test_mentions 6/6·node·CSS·py_compile PASS + §18.8 적대 패널 3렌즈 SHIP(BLOCKING 0). **★배포 alembic 0019 필수 + PB-0008 배포 후 실측(데이터 의존)**. (CHG-20260625T065840/REV-20260625T065840)
+- In Progress: gc-unread-badge — verify-completion PASS·commit·rebase(main 7-behind 충돌 해소)·push 완료 → PR → 머지 → 배포(alembic 0019 + web) → PB-0008 smoke.
 - Deferred(배포 후 라이브): S5 run cap·llm_usage actor 귀속·LLM 화자 라벨 (REV-0012) / S6 스레드(별도 계획). [폴링 동기화는 ux2 적응형으로 해소]
 - 커밋: 489deb5·8ef6598·eb707e2·76da62d·2542359·fa23367·f503630·1b7ba47·5c75c84 (코어, 머지됨) + ux2(워크트리 ai/claude/gc-live-ux2, 커밋 전).
 
 ## 3. Recent Changes
+- (최신) gc-unread-badge: alembic 0019 `conversation_members.last_read_message_id` + 읽음 API + 목록 unread/멘션 집계 + FE 배지/읽음처리/주기갱신 + `mentions.sql_mention_regex` + test_mentions 파리티 3. (CHG-20260625T065840)
 - PG `agent_runtime_schema.sql`: `conversation_members` 테이블 + `core_messages.sender_account_id`/`thread_root_message_id` + 인덱스 2.
 - MySQL parity: `AgentCoreConversationMembers` + `AgentCoreMessages` 컬럼(READ_BACKEND!=postgres 가드).
 - 신규 `modules/group_members.py`: backfill + 멤버 read/add/remove 헬퍼.
 - 신규 `tests/test_group_members.py`: 10 테스트(SQL 계약·멱등·검증·파싱).
-- 총 변경 횟수: 1 (CHG-20260619-0001)
+- 총 변경 횟수: 다수 — 상세는 MODIFY.md(최신 CHG-20260625T065840-gc-unread-badge).
 
 ## 4. Open Issues
 - backfill 호출 wiring(스키마 ensure 직후 1회 호출)은 S2 초입에서 연결 — 현재는 멱등 함수만 제공.
