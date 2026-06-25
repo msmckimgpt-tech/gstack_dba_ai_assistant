@@ -42,6 +42,15 @@ source_of_truth: true
 - [x] 문서: feature-0003 `{TASK,MODIFY,FUNCTION,REVIEW}.md`(신규 timestamp AC 형식 첫 적용) + feature-0009 `{TASK,MODIFY}.md` cross-ref.
 - [ ] **남은 마감(배포)**: verify-completion --pre-commit → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked + 캐시버스터) → PB-0008 Windows-browser 실렌더(hover 펼침 애니메이션·셀 고정·여백 — worktree=WSL 미실측, WARN-only).
 
+## TASK-20260625T065430-gc-other-msg-left — 그룹대화에서 상대방·assistant 메시지 좌측 정렬, 내 메시지 우측 유지 (feature-0009 cross-cut, 코드 거주=feature-0003, Minor §12.3 — frontend CSS-only)
+- 사용자 요청(`/_template:entry`): "그룹대화 시, 자신의 메세지 버블은 똑같이 우측에 출력하고 assistant와 상대방의 대화는 좌측에 출력하도록 구성해주세요."
+- 설계/판정: app.js `renderMessages()` 가 이미 발신자 귀속으로 메시지에 `is-own-message`(내 메시지)/`is-other-message`(타 참여자)/`is-assistant` class 를 정확히 부여하고 있음 → **JS 무변경**, styles.css 의 정렬 규칙만 분기. 기존 `.message.is-user`(0,2,0)가 own/other 무관 `align-self:flex-end`(우측)이던 것을 `.message.is-user.is-other-message`(0,3,0) override 로 other 만 `flex-start`(좌측)로. 그룹채팅 관례(내=우측/타인=좌측)와 정합, assistant 와 좌측 기준선 통일.
+- [x] `styles.css` 신규 `.message.is-user.is-other-message { align-self: flex-start; align-items: flex-start; }` (상대방 메시지 좌측) + `.message.is-user.is-other-message .message-bubble` 에 `border-bottom-right-radius:14px; border-bottom-left-radius:var(--r-xs)`(꼬리 좌측 하단화). `is-own-message`·`is-assistant`·멘션 하이라이트 규칙 무변경.
+- [x] `index.html` styles.css 캐시버스터 `20260625-gc-other-msg-left`(CSS-only — app.js 무변경 미bump).
+- [x] 검증: `node --check static/app.js` PASS(JS 무변경 확인) + CSS brace 균형(1573=1573) + **충실한 mock 렌더**(실 styles.css 링크 + `renderMessages()` DOM 구조 5 row 재현, Chromium headless): 버블 좌/우 여백 측정 — own=rightGap 25(우측), other·assistant=leftGap 25(좌측 동일 기준선), 멘션 상대방 좌측+주황 강조선. 증거 `artifacts/pb0008-gc-other-msg-left/bubble-align-result.png`.
+- [x] 문서: feature-0003 `{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md` + feature-0009 `{TASK,MODIFY,REPORT}.md` cross-ref.
+- [ ] **남은 마감(배포)**: verify-completion --pre-commit → commit/push → PR·머지 → web 재배포(deploy_scope: included, static baked + 캐시버스터) → PB-0008 Windows-browser 실렌더(실 그룹대화 다수 참여자 — worktree=WSL 미실측, WARN-only).
+
 ## TASK-20260625T020249-admin-metadata-relocate — 관리 콘솔 사이드바 IA: '메타데이터' 탭을 '감사' 그룹에서 신설 '지식베이스' 그룹으로 재배치 (+ '샘플 검수' 동반 이동) (Minor §12.3 — 정적 DOM 재배치, JS/CSS/RBAC/스키마 무변경)
 - 사용자 요청(`/_template:entry`): `관리 콘솔`의 '메타데이터' 탭이 '감사'에 위치하는 게 어색 — `시스템 > 설정 > 메타데이터` 로 이동 검토·적용 + 더 좋은 구조도 검토. **IA 결정(AskUserQuestion)**: 사용자 원안('시스템' 그룹 이동) 대신 신설 '지식베이스' 그룹으로 메타데이터+샘플 검수를 묶음(둘 다 KB 거버넌스·kb.* 권한, '감사'=읽기전용 모니터링과 성격 상이). 결과 순서: [감사: 감사 로그·LLM 사용량·보관 대화] → [지식베이스: 메타데이터·샘플 검수] → [시스템: 설정·릴리즈 노트].
 - [x] `src/static/admin.html`: '감사' 그룹에서 `data-admin-tab="metadata"`/`"sample-review"` 버튼 제거 → 신설 `<div class="admin-tab-group-divider">`+`<div class="admin-tab-group-label">지식베이스</div>` 아래로 메타데이터→샘플 검수 순 재배치. 버튼 `data-admin-tab`/`id`/`style="display:none"` 속성 보존.

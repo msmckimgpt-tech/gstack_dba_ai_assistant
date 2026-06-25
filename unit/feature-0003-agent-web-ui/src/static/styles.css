@@ -729,6 +729,32 @@ a { color: inherit; }
 .conv-item-group-badge .conv-group-ic { width: 11px; height: 11px; display: block; }
 .conv-item-group-badge .conv-group-count { font-variant-numeric: tabular-nums; }
 
+/* feature-0009 gc-unread-badge: 그룹 대화 "안 읽은(새) 메세지" 카운트 배지.
+   형식 <안읽음>[ / @<안읽은 멘션>] — 0이면 JS 가 미표시. 내 멘션이 있으면 .has-mention(주의 톤). */
+.conv-item-unread {
+  display: inline-flex;
+  align-items: baseline;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.6;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg, #f1f5f9);
+  color: var(--text-muted, #64748b);
+  border: 1px solid var(--border, rgba(0,0,0,.12));
+}
+.conv-item-unread .conv-unread-mention { font-weight: 800; }
+/* 내 @멘션이 포함된 안 읽은 메세지 — 주의 톤(danger). 메신저 관례상 멘션은 빨강 강조. */
+.conv-item-unread.has-mention {
+  background: var(--danger-soft, #fef2f2);
+  color: var(--danger, #dc2626);
+  border-color: rgba(220,38,38,.28);
+}
+.conv-item-unread.has-mention .conv-unread-total { opacity: .85; }
+
 .conv-item-title {
   font-size: 12.5px;
   font-weight: 500;
@@ -963,6 +989,11 @@ a { color: inherit; }
 }
 .message.is-user      { align-self: flex-end;   align-items: flex-end;   max-width: 72%; }
 .message.is-assistant { align-self: stretch;    align-items: flex-start; max-width: none; margin-right: 48px; }
+/* gc-other-msg-left (사용자 요청 2026-06-25): 그룹/공유 대화에서 '상대방'(타 참여자) 메시지는
+   assistant 와 함께 좌측 정렬한다. 내 메시지(is-own-message)만 우측 유지.
+   기본 .message.is-user(특이도 0,2,0) 의 flex-end 를 .is-other-message(0,3,0) 가 이긴다.
+   좌측 끝 기준선을 assistant 와 통일(들여쓰기 없음) — 그룹채팅 관례(상대방=좌측 정렬 버블). */
+.message.is-user.is-other-message { align-self: flex-start; align-items: flex-start; }
 
 .message-meta {
   font-size: 11px;
@@ -1056,6 +1087,9 @@ a { color: inherit; }
   color: var(--text);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
+  /* gc-other-msg-left: 좌측 정렬되므로 꼬리(모서리)도 좌측 하단으로 — 우측 정렬용 기본값 무효화. */
+  border-bottom-right-radius: 14px;
+  border-bottom-left-radius: var(--r-xs);
 }
 .message.is-user.is-other-message .message-content pre {
   background: #1a1b26;

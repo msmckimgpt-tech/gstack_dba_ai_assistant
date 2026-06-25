@@ -2525,6 +2525,33 @@ function renderConversationList() {
       groupBadge.setAttribute("aria-label", groupBadge.title);
     }
 
+    // feature-0009 gc-unread-badge: 그룹 대화 "안 읽은(새) 메세지" 카운트 배지.
+    //   형식 <안읽음>[ / @<안읽은 멘션>] — 멘션부는 내 멘션이 있을 때만. unread=0 이면 배지 없음
+    //   (실제 메신저처럼 새 메세지가 있을 때만 표시). 그룹 대화 한정(1:1 은 미표시).
+    let unreadBadge = null;
+    if (isGroupConversation(item)) {
+      const _unread = Number(item.unread_count || 0);
+      const _umention = Number(item.unread_mention_count || 0);
+      if (_unread > 0) {
+        unreadBadge = document.createElement("span");
+        unreadBadge.className = "conv-item-unread" + (_umention > 0 ? " has-mention" : "");
+        const totalEl = document.createElement("span");
+        totalEl.className = "conv-unread-total";
+        totalEl.textContent = String(_unread);
+        unreadBadge.appendChild(totalEl);
+        if (_umention > 0) {
+          const mentionEl = document.createElement("span");
+          mentionEl.className = "conv-unread-mention";
+          mentionEl.textContent = " / @" + _umention;
+          unreadBadge.appendChild(mentionEl);
+        }
+        unreadBadge.title = _umention > 0
+          ? ("안 읽은 메세지 " + _unread + "개 (나를 멘션한 메세지 " + _umention + "개)")
+          : ("안 읽은 메세지 " + _unread + "개");
+        unreadBadge.setAttribute("aria-label", unreadBadge.title);
+      }
+    }
+
     // TASK-0248: 참조 제품 삭제로 차단된 대화 — 목록에 "차단" 배지 + 행 dim.
     if (item.blocked) {
       button.classList.add("is-blocked");
@@ -2532,9 +2559,9 @@ function renderConversationList() {
       blockedBadge.className = "conv-item-blocked-badge";
       blockedBadge.textContent = "차단";
       blockedBadge.title = item.blocked_reason || "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다.";
-      button.append(dot, titleEl, ...(groupBadge ? [groupBadge] : []), blockedBadge, dateTip);
+      button.append(dot, titleEl, ...(groupBadge ? [groupBadge] : []), ...(unreadBadge ? [unreadBadge] : []), blockedBadge, dateTip);
     } else {
-      button.append(dot, titleEl, ...(groupBadge ? [groupBadge] : []), dateTip);
+      button.append(dot, titleEl, ...(groupBadge ? [groupBadge] : []), ...(unreadBadge ? [unreadBadge] : []), dateTip);
     }
 
     // "···" menu trigger
@@ -5457,6 +5484,44 @@ async function refreshWorkspace(preferredConversationId = "", opts = {}) {
   } catch (_) { /* network blip: state 유지 */ }
 }
 
+// feature-0009 gc-unread-badge: 현재 로드된 메세지 중 최대 id(읽음 커서 전진 기준).
+function _latestLoadedMessageId() {
+  let mx = 0;
+  (state.messages || []).forEach((m) => {
+    if (m.id != null && Number(m.id) > mx) mx = Number(m.id);
+  });
+  return mx;
+}
+
+// feature-0009 gc-unread-badge: 대화 읽음 처리 — 서버 last_read 커서 전진 + 사이드바 배지 즉시 0.
+// 그룹 대화에서만 호출(1:1 은 배지 없음). lastMessageId 미지정/0 이면 서버가 그 대화 최대 id 로 처리.
+// best-effort — 실패해도 UI 흐름을 막지 않는다(다음 목록 새로고침이 정정).
+async function markConversationRead(cid, lastMessageId) {
+  if (!cid) return;
+  try {
+    const body = (lastMessageId != null && Number(lastMessageId) > 0)
+      ? JSON.stringify({ last_read_message_id: Number(lastMessageId) })
+      : JSON.stringify({});
+    await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/read`, { method: "POST", body });
+    const it = (state.conversations || []).find((c) => c.id === cid);
+    if (it && (Number(it.unread_count || 0) > 0 || Number(it.unread_mention_count || 0) > 0)) {
+      it.unread_count = 0;
+      it.unread_mention_count = 0;
+      renderConversationList();
+    }
+  } catch (_e) { /* best-effort: 다음 목록 새로고침이 정정 */ }
+}
+
+// feature-0009 gc-unread-badge: 활성 대화가 그룹이면 현재까지 본 메세지를 읽음 처리.
+function _markActiveConversationRead() {
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  const it = (state.conversations || []).find((c) => c.id === cid);
+  if (it && isGroupConversation(it)) {
+    markConversationRead(cid, _latestLoadedMessageId());
+  }
+}
+
 async function selectConversation(conversationId) {
   if (!conversationId || conversationId === state.activeConversationId) {
     return;
@@ -5506,6 +5571,8 @@ async function selectConversation(conversationId) {
   try { _jumpToSearchMatchedMessage(); } catch (_) {}
   // TASK-0094 Sprint 1 Phase 6: 대화 진입 시 attachment list load — backend ground truth 와 selection snapshot 동기화.
   try { await _loadConversationAttachments(conversationId); } catch (_) {}
+  // feature-0009 gc-unread-badge: 대화를 열면(히스토리 로드 완료) 읽음 처리 — 사이드바 배지 0.
+  try { _markActiveConversationRead(); } catch (_) {}
 }
 
 async function createConversation() {
@@ -9327,6 +9394,32 @@ const LIVE_SYNC_MIN_MS = 1500;
 let _liveSyncTimer = null;
 let _liveSyncInFlight = false;
 let _liveSyncInterval = LIVE_SYNC_BASE_MS;
+
+// feature-0009 gc-unread-badge: 비활성 대화의 "안 읽은 메세지" 배지도 준실시간 갱신.
+// _liveSyncTick 은 활성 대화 메세지만 본다 — 다른 대화의 unread 는 목록(/api/conversations)을
+// 주기적으로(>= SIDEBAR_UNREAD_SYNC_MS) 가볍게 다시 불러와 배지만 갱신한다. 열린 대화 메뉴/검색/
+// 탭 숨김 중엔 skip(불필요 re-render·메뉴 닫힘 방지). active 대화는 보는 중이므로 0 으로 강제.
+const SIDEBAR_UNREAD_SYNC_MS = 7000;
+let _lastSidebarUnreadSyncAt = 0;
+async function _maybeSyncConversationListUnread() {
+  if (document.hidden) return;
+  if (state.pendingNewConversation) return;
+  if (state.searchModal && state.searchModal.open) return;
+  if (document.getElementById("convItemMenu")) return;
+  const now = Date.now();
+  if (now - _lastSidebarUnreadSyncAt < SIDEBAR_UNREAD_SYNC_MS) return;
+  _lastSidebarUnreadSyncAt = now;
+  try {
+    const payload = await apiFetch("/api/conversations");
+    if (!payload || !Array.isArray(payload.items)) return;
+    const activeId = state.activeConversationId;
+    payload.items.forEach((it) => {
+      if (it.id === activeId) { it.unread_count = 0; it.unread_mention_count = 0; }
+    });
+    state.conversations = payload.items;
+    renderConversationList();
+  } catch (_e) { /* best-effort: 다음 주기 재시도 */ }
+}
 async function _liveSyncTick() {
   // returns true: 새 메시지 반영(활발). false: 변화 없음 / skip.
   if (_liveSyncInFlight) return false;
@@ -9372,6 +9465,8 @@ async function _liveSyncTick() {
     _notifyMentions(incoming, false);  // feature-0009: 나를 멘션한 새 메시지 알림(토스트/OS)
     renderMessages();
     if (!nearBottom) log.scrollTop = prevTop;  // 과거 읽는 중이면 위치 유지(append 는 하단)
+    // feature-0009 gc-unread-badge: 활성 대화(보는 중)에 도착한 새 메세지는 즉시 읽음 처리 → 배지 0 유지.
+    try { _markActiveConversationRead(); } catch (_e) {}
     return true;
   } catch (_e) {
     return false;  // best-effort: 폴링 실패는 다음 tick 재시도.
@@ -9382,6 +9477,8 @@ async function _liveSyncTick() {
 async function _liveSyncLoop() {
   let hadNew = false;
   try { hadNew = await _liveSyncTick(); } catch (_e) { hadNew = false; }
+  // feature-0009 gc-unread-badge: 비활성 대화의 안 읽은 배지 준실시간 갱신(자체 throttle).
+  try { await _maybeSyncConversationListUnread(); } catch (_e) {}
   // 적응형: 새 메시지 있으면 주기 단축(활발할수록 짧게), 없으면 기본(5s)으로 점진 복귀.
   _liveSyncInterval = hadNew
     ? Math.max(LIVE_SYNC_MIN_MS, Math.round(_liveSyncInterval * 0.6))

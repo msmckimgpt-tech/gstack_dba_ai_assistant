@@ -6523,6 +6523,14 @@ def _ensure_web_tables():
                 )
             except Exception:
                 pass
+            # feature-0009 gc-unread-badge: 멤버별 안 읽은 메세지 커서. PG 정본(alembic 0019)의
+            # MySQL 폴백 parity (production 은 PG 라 보통 미경유).
+            try:
+                cur.execute(
+                    "ALTER TABLE AgentCoreConversationMembers ADD COLUMN last_read_message_id BIGINT NULL"
+                )
+            except Exception:
+                pass
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS WebProducts (
@@ -6982,11 +6990,23 @@ def _parse_search_cursor(cursor: str | None) -> tuple[str, str] | None:
     return parts[0], parts[1]
 
 
+# feature-0009 gc-unread-badge: 사이드바 "안 읽은 @멘션" 카운트용 SQL regex.
+# 정본은 canonical 멘션 모듈(modules/mentions.sql_mention_regex) — 파서·FE·SQL 카운트가 한
+# 문법을 공유하도록 그쪽에 두고 본 래퍼는 lazy import 로 위임한다(app.py import 스타일 일치).
+def _mention_count_regex(username: str | None) -> str | None:
+    try:
+        from modules import mentions as _mentions
+        return _mentions.sql_mention_regex(username)
+    except Exception:
+        return None
+
+
 def _list_conversations_pg(
     limit: int,
     *,
     has_any: bool,
     self_id: int | None,
+    self_username: str | None = None,
     owner_id: int | None,
     hidden_ids: list,
     normalized_q: str | None,
@@ -7129,6 +7149,8 @@ LEFT JOIN agent_runtime.kv kv_topic
         # feature-0009: 멤버십 신호(member_count + viewer is_member) — 프론트 send 게이트/멘션 라우팅용.
         member_map: dict[str, dict[str, Any]] = {}
         group_flag_set: set[str] = set()  # feature-0009 gc-group-authz-flag: is_group=true 인 cid 집합
+        # feature-0009 gc-unread-badge: 멤버별 안 읽은 메세지 수 + 안 읽은 @멘션 수(사이드바 배지).
+        unread_map: dict[str, dict[str, int]] = {}
         if conv_ids:
             with pg.cursor() as pgcur:
                 placeholders_pg = ",".join(["%s"] * len(conv_ids))
@@ -7209,6 +7231,46 @@ GROUP BY conversation_id
                         "user": max(int(existing.get("user", 0) or 0), int(user or 0)),
                     }
 
+                # feature-0009 gc-unread-badge: 멤버별 안 읽은(새) 메세지 수 + 안 읽은 @멘션 수.
+                # conversation_members(본인) JOIN → 멤버인 대화만 집계(비멤버 admin 열람은 배지 없음).
+                # unread = id > last_read 이고 본인(sender) 미발신 user/assistant 메세지.
+                # _mention_re=None(username 없음) 이면 멘션 조건은 FALSE(0).
+                _mention_re = _mention_count_regex(self_username)
+                _mention_frag = "AND m.content ~* %s" if _mention_re else "AND FALSE"
+                try:
+                    _uparams: list[Any] = [int(self_id or 0), int(self_id or 0)]
+                    if _mention_re:
+                        _uparams.append(_mention_re)
+                    _uparams.append(int(self_id or 0))
+                    _uparams.extend(conv_ids)
+                    pgcur.execute(
+                        f"""
+SELECT m.conversation_id,
+       SUM(CASE WHEN m.id > COALESCE(mem.last_read_message_id, 0)
+                 AND m.sender_account_id IS DISTINCT FROM %s THEN 1 ELSE 0 END) AS unread,
+       SUM(CASE WHEN m.id > COALESCE(mem.last_read_message_id, 0)
+                 AND m.sender_account_id IS DISTINCT FROM %s
+                 {_mention_frag} THEN 1 ELSE 0 END) AS unread_mention
+FROM agent_runtime.core_messages m
+JOIN agent_runtime.conversation_members mem
+  ON mem.conversation_id = m.conversation_id AND mem.account_id = %s
+WHERE m.conversation_id IN ({placeholders_pg})
+  AND m.role IN ('user', 'assistant')
+  AND (m.tool_calls IS NULL OR m.tool_calls::text = 'null')
+  AND m.content IS NOT NULL AND m.content <> ''
+GROUP BY m.conversation_id
+                        """,
+                        tuple(_uparams),
+                    )
+                    for cid, unread, unread_mention in pgcur.fetchall() or []:
+                        unread_map[str(cid)] = {
+                            "unread": int(unread or 0),
+                            "unread_mention": int(unread_mention or 0),
+                        }
+                except Exception:
+                    # best-effort: 마이그레이션 미적용(컬럼 부재) 등은 배지 미표시로 폴백.
+                    unread_map = {}
+
         for item in items:
             info = status_map.get(item["id"], {})
             counts = count_map.get(item["id"], {})
@@ -7229,6 +7291,9 @@ GROUP BY conversation_id
                 item["duration_ms"] = None
             item["message_count"] = counts.get("total", 0)
             item["user_message_count"] = counts.get("user", 0)
+            _ur = unread_map.get(item["id"], {})
+            item["unread_count"] = int(_ur.get("unread", 0))
+            item["unread_mention_count"] = int(_ur.get("unread_mention", 0))
             _mm = member_map.get(item["id"], {})
             item["member_count"] = int(_mm.get("count", 0))
             item["is_member"] = bool(_mm.get("is_member", False))
@@ -7304,6 +7369,7 @@ def _list_conversations(
                 limit,
                 has_any=has_any,
                 self_id=self_id,
+                self_username=(account.get("username") if account else None),
                 owner_id=owner_id,
                 hidden_ids=hidden_ids,
                 normalized_q=normalized_q,
@@ -7445,6 +7511,8 @@ LEFT JOIN WebAccounts owner
         conv_ids = [item["id"] for item in items]
         status_map: dict[str, dict[str, str]] = {}
         count_map: dict[str, dict[str, int]] = {}
+        # feature-0009 gc-unread-badge: 안 읽은(새) 메세지 + 안 읽은 @멘션 수 (MySQL parity).
+        unread_map: dict[str, dict[str, int]] = {}
         if conv_ids:
             placeholders = ",".join(["%s"] * len(conv_ids))
             cur = conn.cursor()
@@ -7500,6 +7568,46 @@ GROUP BY conversation_id
                     "total": max(int(existing.get("total", 0) or 0), int(total_count or 0)),
                     "user": max(int(existing.get("user", 0) or 0), int(user_count or 0)),
                 }
+            # feature-0009 gc-unread-badge: 안 읽은(새) 메세지 + 안 읽은 @멘션 수 (MySQL parity,
+            # 레거시 경로 — production 은 PG). 본인 미발신 + last_read 이후. _mention_re=None 이면 0.
+            try:
+                _mention_re = _mention_count_regex(account.get("username") if account else None)
+                _mention_re = _mention_re.lower() if _mention_re else None
+                _mention_frag = "AND LOWER(m.content) REGEXP %s" if _mention_re else "AND 0"
+                _me = int(self_id or 0)
+                _uparams: list[Any] = [_me, _me]
+                if _mention_re:
+                    _uparams.append(_mention_re)
+                _uparams.append(_me)
+                _uparams.extend(conv_ids)
+                cur = conn.cursor()
+                cur.execute(
+                    f"""
+SELECT m.conversation_id,
+       SUM(CASE WHEN m.id > COALESCE(mem.last_read_message_id, 0)
+                 AND NOT (m.sender_account_id <=> %s) THEN 1 ELSE 0 END) AS unread,
+       SUM(CASE WHEN m.id > COALESCE(mem.last_read_message_id, 0)
+                 AND NOT (m.sender_account_id <=> %s)
+                 {_mention_frag} THEN 1 ELSE 0 END) AS unread_mention
+FROM AgentCoreMessages m
+JOIN AgentCoreConversationMembers mem
+  ON mem.conversation_id = m.conversation_id AND mem.account_id = %s
+WHERE m.conversation_id IN ({placeholders})
+  AND m.role IN ('user', 'assistant')
+  AND m.tool_calls IS NULL
+  AND COALESCE(m.content, '') <> ''
+GROUP BY m.conversation_id
+                    """,
+                    tuple(_uparams),
+                )
+                for conv_id, unread, unread_mention in cur.fetchall() or []:
+                    unread_map[str(conv_id)] = {
+                        "unread": int(unread or 0),
+                        "unread_mention": int(unread_mention or 0),
+                    }
+                cur.close()
+            except Exception:
+                unread_map = {}
         # TASK-0061 Phase 3 (REQ-20260515-0005): stale 판정에 last_status_run_id 도 필요하므로
         # 단일 추가 쿼리로 모은다 (KV 한 번 더 조회 — N 회 fan-out 회피).
         run_id_map: dict[str, str] = {}
@@ -7544,6 +7652,9 @@ WHERE ConversationId IN ({placeholders2})
                 item["duration_ms"] = None
             item["message_count"] = counts.get("total", 0)
             item["user_message_count"] = counts.get("user", 0)
+            _ur = unread_map.get(item["id"], {})
+            item["unread_count"] = int(_ur.get("unread", 0))
+            item["unread_mention_count"] = int(_ur.get("unread_mention", 0))
         # REQ-20260518-0010 sub-spec 3: Python re-sort deleted. SQL ORDER BY
         # `c.updated_at DESC, c.conversation_id DESC LIMIT N` is authoritative.
         # The prior `_sort_dt_key` re-sort produced incoherent pages when combined
@@ -11130,7 +11241,9 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         return {"error": "요청 처리 워커가 일시적으로 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.",
                 "conversation_id": conv_id, "_http_status": 503}
 
-    # enqueue payload = run_agent kwargs 12개 (conv_file/temperature/api_key/output_mode 제외).
+    # enqueue payload = run_agent kwargs 13개 (conv_file/temperature/api_key/output_mode 제외).
+    # gc-ask-sender-attrib: sender_username(그룹 발신자 귀속)도 worker 경로로 동등 전달 — 미포함 시
+    # worker mode 에서만 발신자 미러 meta 가 누락돼 inproc 와 동작이 갈린다(_payload_to_kwargs 복원).
     payload = {
         "user_message": run_kwargs.get("user_message", ""),
         "conversation_id": conv_id,
@@ -11138,6 +11251,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         "product_id": run_kwargs.get("product_id"),
         "role_id": run_kwargs.get("role_id"),
         "account_id": account_id,
+        "sender_username": run_kwargs.get("sender_username"),
         "allowed_schemas": run_kwargs.get("allowed_schemas"),
         "product_mode": run_kwargs.get("product_mode", "pinned"),
         "attachment_ids": run_kwargs.get("attachment_ids") or [],
@@ -11819,6 +11933,15 @@ async def ask(request: Request) -> JSONResponse:
                 text_inline_path = None
         # TASK-0137: inline text path 는 contextvar kwarg (text_inline_path) 로 전달.
 
+        # gc-ask-sender-attrib (feature-0009): 그룹 대화 발신이면 actor username 을 sender_username
+        # 으로 실어, _run_agent_core 의 user 메시지 표시 store 미러 meta 가 실제 발신자 프로필로
+        # 표시되게 한다(미주입 시 FE 가 대화 owner=생성자 프로필로 폴백 → 오귀속). 1:1·신규 대화는
+        # None → 기존 동작(미러 meta 없음) 무변경. 조회 실패 시 _conversation_is_group=False 폴백.
+        _sender_username_for_run = (
+            str(account.get("username") or "")
+            if _conversation_is_group(conv_id or "") else None
+        )
+
         # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
         # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
         agent_result = await _dispatch_ask_run(
@@ -11837,6 +11960,7 @@ async def ask(request: Request) -> JSONResponse:
                 product_id=product_id_for_run,
                 role_id=role_id_for_run,
                 account_id=int(account["id"]),
+                sender_username=_sender_username_for_run,  # gc-ask-sender-attrib: 그룹 한정 발신자 귀속
                 allowed_schemas=allowed_schemas_for_run,
                 product_mode=product_mode_for_run,
                 # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
@@ -14988,6 +15112,71 @@ async def post_group_chat_message(cid: str, request: Request) -> JSONResponse:
             return _json_error("메시지 저장 실패", 500)
         return JSONResponse(
             {"ok": True, "conversation_id": cid, "message_id": mid, "role": "user"}
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/api/conversations/{cid}/read")
+async def mark_conversation_read(cid: str, request: Request) -> JSONResponse:
+    """그룹 대화 읽음 처리 — 멤버의 last_read_message_id 커서를 전진(GREATEST) (feature-0009 gc-unread-badge).
+
+    사이드바 "안 읽은 메세지" 배지의 기준점. 대화를 열거나 활성 상태에서 새 메세지를 받으면
+    프론트가 본인이 본 마지막 메세지 id 로 호출한다. body 의 last_read_message_id 가 없거나
+    유효하지 않으면 서버가 그 대화 core_messages 의 최대 id(=전부 읽음)로 처리한다. 커서는
+    전진만(set_last_read 의 GREATEST) — 폴링/재진입 경합에도 되돌리지 않는다.
+
+    멤버십 게이트(read.own/.any) 통과 + 멤버 행이 있을 때만 갱신된다. 멤버가 아닌 admin(.any)
+    열람은 멤버 행이 없어 no-op (그들은 unread 추적 대상이 아님 — FE 도 본인/멤버 그룹대화만 배지 표시).
+    """
+    try:
+        conn = _connect_memory()
+    except Exception:
+        return _json_error("db connection failed", 500)
+    try:
+        account, error = _require_account(request, conn)
+        if error:
+            return error
+        if not _account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        try:
+            requested = int(data.get("last_read_message_id"))
+        except (TypeError, ValueError):
+            requested = None
+        account_id = int(account["id"])
+        try:
+            from modules.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                target_id = requested
+                if target_id is None or target_id <= 0:
+                    with pg.cursor() as _cur:
+                        _cur.execute(
+                            "SELECT COALESCE(MAX(id), 0) FROM agent_runtime.core_messages "
+                            "WHERE conversation_id = %s",
+                            (cid,),
+                        )
+                        _row = _cur.fetchone()
+                        target_id = int(_row[0]) if _row and _row[0] is not None else 0
+                updated = group_members.set_last_read(pg, cid, account_id, target_id)
+            finally:
+                pg.close()
+        except Exception:
+            return _json_error("읽음 처리 실패", 500)
+        return JSONResponse(
+            {
+                "ok": True,
+                "conversation_id": cid,
+                "last_read_message_id": int(target_id),
+                "updated": int(updated),
+            }
         )
     finally:
         conn.close()

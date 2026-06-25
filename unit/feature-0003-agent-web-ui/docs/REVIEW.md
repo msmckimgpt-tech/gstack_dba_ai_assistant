@@ -3838,3 +3838,11 @@ source_of_truth: true
 - 참고(비-blocking, 본 변경 도입 아님 — 수용): run-product 재조회(L11524-11536) 가 예외로 row_p=None 이 되어도 override 적용 시 L11571 RBAC 재확인이 걸려 권한 우회·노출 없음. 정보용 기록.
 - Human Approval Needed: 아니오 (PLAN-APPROVED feature-0009 슬라이스 + 기존 RBAC helper 재사용 + 패널 SHIP).
 - Cross-ref: CHG-20260625T163424-gc-participant-product-select / feature-0009 REV-20260625T163424-gc-participant-product-select (cross-ref).
+## REV-20260625T065430-gc-other-msg-left [SKIPPED:frontend-css-presentation-no-logic] (TASK-20260625T065430-gc-other-msg-left, REQ-20260625-gc-other-msg-left, Minor §12.3 — frontend CSS-only)
+- Date: 2026-06-25
+- 분류: **패널 SKIP** — 순수 CSS 표현계층(정렬) 변경. JS/DOM/핸들러/백엔드/엔드포인트/RBAC/스키마 무변경. app.js `renderMessages()` 가 이미 부여하던 class(`is-own-message`/`is-other-message`/`is-assistant`)를 그대로 사용하고 styles.css 정렬 규칙만 교체. 보안/인가/데이터 표면 0 → 적대 패널 불요.
+- 변경 요지: 그룹/공유 대화에서 '상대방'(타 참여자, `is-other-message`) 메시지를 우측 → 좌측 정렬로 이동(assistant 와 동일 좌측 기준선). 내 메시지(`is-own-message`)는 우측 유지. 좌측으로 옮긴 버블의 꼬리(border-radius)도 좌측 하단으로 대칭화.
+- 설계 근거: 기존 `.message.is-user`(특이도 0,2,0)가 own/other 구분 없이 모두 `align-self:flex-end`(우측)였음 → `.message.is-user.is-other-message`(0,3,0) override 로 other 만 `flex-start`(좌측). 그룹채팅 관례(KakaoTalk/Slack — 내 메시지 우측, 타인 메시지 좌측)와 정합. 들여쓰기 0 으로 assistant 와 좌측 기준선 통일.
+- Verification: `node --check static/app.js` PASS(무변경 확인) + CSS brace 균형 + **충실한 mock 렌더 검증**(실제 styles.css + `renderMessages()` DOM 구조 재현, Chromium headless): 버블 좌우 위치 수치 측정 — `is-own-message` rightGap=25(우측), `is-other-message`/`is-assistant` leftGap=25(좌측 동일 기준선), 멘션 하이라이트 상대방도 좌측 + 주황 강조선 정상. 증거 `artifacts/pb0008-gc-other-msg-left/bubble-align-result.png`. 라이브 시각 정본=PB-0008(Windows-browser, 배포 후 — 본 worktree=WSL 미실행, 실 그룹대화 다수 참여자 메시지 필요).
+- Human Approval Needed: 아니오 (Minor·프론트 CSS·사용자 명시 요청·비파괴 표현계층).
+- Cross-ref: CHG-20260625T065430-gc-other-msg-left / feature-0009 TASK·MODIFY·REPORT cross-ref.
