@@ -4775,3 +4775,17 @@ source_of_truth: true
 - Files: `static/app.js`, `docs/{TASK,MODIFY,REVIEW}.md`.
 - Rollback: app.js 4곳 revert(가드 복원 + state 필드/패널 가드 제거). additive·비파괴 — 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked) — 정적 자산 변경. 마이그/백엔드 없음.
+
+## CHG-20260625T192007-doc-sync-rn-0625b (TASK-20260625T192007-doc-sync-rn-0625b — 06-25 잔여 머지분 릴리즈노트 정합, Minor §12.3 — 사용자 노출 정적 콘텐츠)
+- Date: 2026-06-25 (`/_dqa:doc_sync` no-arg 전 타깃 정합). **콘텐츠 데이터만** — 렌더 로직·백엔드·스키마·RBAC 무변경.
+- Scope: 직전 doc_sync(163929, PR#420~#436 기준 콘텐츠 작성) **이후** main 병합된 06-25 user-facing 변경 5종이 릴리즈노트 미반영 → 기존 `date: "2026-06-25"` 블록 items 에 5항목 **추가**(prepend 아님 — 같은 날 머지분) + `index.html`·`admin.html` cache-buster bump.
+- 내용:
+  - `static/release-notes-data.js`: `2026-06-25` 블록 items 9→14. work +4: 참가자 per-message 제품 선택(new) / 처리 중 입력·전송 안정화·동시 run 고착·블로킹 해소(fixed) / 1:1 인터럽트 재요청 + 그룹 중복차단(improved) / @assistant 발신자 표시 정정(fixed). common +1: datasource 회로차단 안내 문구 분리(improved). summary 갱신.
+  - `index.html`·`admin.html`: `release-notes-data.js?v=20260625b-rn-0625` → `?v=20260625c-rn-0625`.
+  - 사용자 평이화 — 내부 구현/테이블명/feature-id/엔드포인트/RBAC 비노출.
+- Why: 직전 sync 의 브랜치 stale 로 06-25 후속 머지(PR#437~#440·#444)가 릴리즈노트와 drift → 사용자 ‘업데이트 내역’ 화면 정합.
+- 대응 커밋(reality): 908fade(PR#440 per-message 제품 선택) · 1f370c4(PR#438 run-status 고착) + 334c858(PR#444 composer 비잠금/인터럽트/중복차단) · 1a69f70(PR#437 발신자 귀속) · c8637f2(PR#439 회로차단 안내). 흡수: 151679b(PR#442 unread baseline)→안 읽음 배지 항목. 제외(비-user-facing): 6104bf6(개발용 LLM 호출주체 임시전환 CHG-20260625T171844).
+- Verification: `node --check release-notes-data.js` PASS + 스키마(type/area/title/detail) 정합 + 머지 5건 1:1 대조 + 사실검증(평이화·내부 비노출·과장 0). 로직 무변경 → 적대 패널 불요(REVIEW [SKIPPED]).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: 추가 5항목 + 2 cache-buster revert(순수 콘텐츠·additive). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 새 릴리즈노트 화면 반영. 마이그/백엔드 없음.

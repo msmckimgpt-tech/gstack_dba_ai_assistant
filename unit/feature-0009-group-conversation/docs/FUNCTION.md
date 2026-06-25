@@ -49,6 +49,10 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
   읽음으로 간주한다 — 멤버 가입 시 `add_member` 가 가입 시점 `MAX(core_messages.id)` 로 커서를
   초기화하고, 기존 데이터는 alembic 0020 이 대화별 `MAX(id)` 로 backfill. 따라서 배지는 "읽지
   않은 *신규* 메세지"만 센다(과거 전체 메세지가 unread 로 잡히지 않음). 메세지 0건 대화는 NULL→첫 메세지부터 unread.
+  **(보정 gc-unread-read-fix, 2026-06-25)**: 대화를 보면 읽음 커서를 최신으로 전진시켜 배지가 0
+  이 된다 — 첫 전환(`selectConversation`)·**재선택**·**페이지 복원/갱신**(`refreshWorkspace`)·활성
+  대화 새 메세지 도착(`_liveSyncTick`) 전 경로에서 `_markActiveConversationRead` 호출(복원/재선택
+  경로 누락을 보정 — 그 전엔 새로고침으로 복원된 대화가 아무리 봐도 배지가 안 줄었다).
 - per-conversation run cap + llm_usage actor 귀속.
 - 멤버 add/remove + @assistant actor 감사(audit) 액션.
 

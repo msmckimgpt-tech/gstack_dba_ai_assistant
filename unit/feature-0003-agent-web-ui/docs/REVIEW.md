@@ -3865,3 +3865,12 @@ source_of_truth: true
 - 등급 근거(§12.3 Minor): frontend 단일 파일 렌더 조건 로직, 비파괴, 인가/데이터/스키마 경계 무영향.
 - Human Approval Needed: 아니오 (Minor §12.3 — AI 자율 진행 + REVIEW 기록).
 - Cross-ref: CHG-20260625T103503-steps-btn-pending-persist / TASK-20260625T103503-steps-btn-pending-persist.
+
+## REV-20260625T192007-doc-sync-rn-0625b [SKIPPED: 사용자 노출 릴리즈노트 정적 콘텐츠 큐레이션 — 제품 로직·인가·스키마·렌더로직 무변경, 적대 패널 불요] (TASK-20260625T192007-doc-sync-rn-0625b, Minor §12.3)
+- Date: 2026-06-25
+- Cycle: `/_dqa:doc_sync` no-arg 전 타깃 정합 (CHG-20260625T192007-doc-sync-rn-0625b). 직전 doc_sync(163929) 이후 main 병합된 06-25 user-facing 변경 5종을 `static/release-notes-data.js` 의 기존 `2026-06-25` 블록 items 에 추가(9→14) + `index.html`·`admin.html` cache-buster bump(b→c).
+- 변경: 릴리즈노트 **정적 큐레이션 데이터만** — 렌더 로직(`release-notes.js`)·백엔드·라우팅·RBAC·스키마 무변경. 사용자 평이화 문구(내부 구현/테이블명/feature-id/엔드포인트 비노출).
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터 경계 무영향. 제품 로직 변화 없음 → 적대적 verification 패널 불요(비-정책 doc 경량 cycle). 사실 정확성은 머지 본문 5건 1:1 대조 + 평이화/내부 비노출 자체검증.
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 머지 5건(908fade/1f370c4+334c858/1a69f70/c8637f2) 1:1 대조. 비-user-facing(6104bf6 개발용 LLM 호출주체 임시전환)은 의도적 제외 확인. PR#442(unread baseline)는 기존 안 읽음 배지 항목에 흡수.
+- Human Approval Needed: 아니오.
+- Cross-ref: CHG-20260625T192007-doc-sync-rn-0625b / TASK-20260625T192007-doc-sync-rn-0625b / FUNCTION '릴리즈노트 콘텐츠 — 06-25 잔여 머지분(5건) 추가' / META commit(STATUS·wiki·overview·hot·Log 06-25 잔여 정합).

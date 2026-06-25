@@ -139,3 +139,7 @@ source_of_truth: true
 - 단위: `py_compile`(group_members.py·alembic 0020) PASS. add_member INSERT/0020 backfill 은 DB 의존 → 컨테이너 `make test`·라이브에서 검증.
 - 라이브 검증(배포 후): alembic 0020 적용 → `conversation_members` 의 null_cursor=0 확인 → 읽은 그룹 대화 사이드바 배지 사라짐(unread=0) → 신규 메세지 도착 시에만 배지 출현 → **PB-0008 Windows-browser 실측**(데이터 의존).
 - 적대 패널 §18.8 2렌즈(데이터정확성·보안/회귀) SHIP, BLOCKING 0 — REV-20260625T165320 참조.
+
+## gc-unread-read-fix (CHG-20260625T194159) — 읽음 커서 전진 누락 보정
+- `node --check`(app.js) PASS.
+- 라이브(배포 후 PB-0008): ① 안 읽은 배지 있는 그룹 대화에서 **새로고침** → 그 대화가 복원 active → 사이드바 배지 0 으로 감소. ② 다른 대화 보다가 그 대화 재클릭 → 배지 0. ③ DB `last_read_message_id` 가 conv_max 로 전진 확인.
