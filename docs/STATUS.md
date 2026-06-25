@@ -42,7 +42,7 @@ sources:
 | feature-0006-lan-proxy-access | in-progress | 2026-04-06 | [TASK](../unit/feature-0006-lan-proxy-access/docs/TASK.md) | caddy 운영 자산 이관 완료 |
 | feature-0007-bedrock-llm-provider | in-progress | 2026-05-21 | [TASK](../unit/feature-0007-bedrock-llm-provider/docs/TASK.md) | AWS Bedrock(Seoul) provider 통합, API Vault 폐기 (ADR-0022) |
 | feature-0008-windows-browser-testing | review | 2026-06-04 | [TASK](../unit/feature-0008-windows-browser-testing/docs/TASK.md) | Windows 브라우저 자동 구동 + Playwright MCP (PB-0008) |
-| feature-0009-group-conversation | in-progress | 2026-06-25 | [TASK](../unit/feature-0009-group-conversation/docs/TASK.md) | 안 읽은 메세지/@멘션 배지(gc-unread-badge, REQ-GC-R8) · 참가자 per-message 제품 선택·발화(authz, REQ-GC-R7) · 라이브 UX·owner 게이트 (cross-cut: 0002/0003) |
+| feature-0009-group-conversation | in-progress | 2026-06-25 | [TASK](../unit/feature-0009-group-conversation/docs/TASK.md) | 안 읽은 메세지/@멘션 배지(gc-unread-badge, REQ-GC-R8 read-state, alembic 0019 + 0020 baseline backfill — 읽지 않은 신규만 집계) · 참가자 per-message 제품 선택·발화(authz, REQ-GC-R7) · 라이브 UX·owner 게이트 (cross-cut: 0002/0003) |
 | feature-0010-google-drive-integration | in-progress | 2026-06-23 | [TASK](../unit/feature-0010-google-drive-integration/docs/TASK.md) | Google Drive 연동 토대 — 계정별 OAuth 토큰 암호화 + MCP 구성 seam (연동 미수행/비활성 scaffold) |
 | feature-0011-shared-extraction | in-progress | 2026-06-24 | [TASK](../unit/feature-0011-shared-extraction/docs/TASK.md) | `shared/` 공통 코드 점진 추출 P5a Step1~3 (model_catalog·config·db alias, make test 회귀 0) |
 
