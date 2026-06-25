@@ -45,3 +45,31 @@ def test_read_handler_pg_connect_import_is_resolvable():
     from shared.db import _pg_connect  # noqa: F401
 
     assert callable(_pg_connect)
+
+
+def test_read_handler_ignores_client_id_uses_core_messages_max():
+    """gc-unread-read-idspace-fix: 읽음 핸들러는 client 가 보낸 last_read_message_id 를
+    커서로 신뢰하지 않고, 항상 그 대화 agent_runtime.core_messages 의 MAX(id) 로 전진해야 한다.
+
+    근본 원인 회귀 가드: 읽음 커서·unread 집계는 core_messages.id 공간인데, FE 가 보내던
+    last_read_message_id 는 /api/history 가 채운 표시 store(agent_runtime.messages) 의 id 라
+    두 id 공간이 분리(disjoint)되어 있었다. FE 값을 커서로 쓰면 set_last_read 의 GREATEST 가
+    항상 전진을 거부(영구 no-op) → 읽어도 unread 배지가 안 줄고 대화 전환 시 회귀했다. 누군가
+    `target_id = requested`(client 값 신뢰)로 되돌리면 이 테스트가 잡는다.
+    """
+    import inspect
+
+    src = inspect.getsource(app.mark_conversation_read)
+    # (1) client 가 보낸 값(requested/last_read_message_id)을 커서 target 으로 신뢰하면 안 된다.
+    assert "target_id = requested" not in src, (
+        "읽음 핸들러가 client last_read_message_id 를 커서로 신뢰함 — "
+        "표시 store(messages) id 라 core_messages 커서 공간과 분리되어 GREATEST no-op 회귀"
+    )
+    assert 'data.get("last_read_message_id")' not in src, (
+        "읽음 핸들러가 body 의 last_read_message_id 를 파싱·사용함 — id-space 불일치 회귀"
+    )
+    # (2) 항상 core_messages 의 MAX(id) 를 커서로 쓴다(조건부가 아니라 무조건).
+    assert "MAX(id)" in src and "agent_runtime.core_messages" in src, (
+        "읽음 핸들러가 core_messages MAX(id) 로 커서를 산출하지 않음"
+    )
+    assert "set_last_read" in src

@@ -81,7 +81,12 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
-- **gc-unread-read-500-fix** (읽음 API silent 500 → 새로고침 시 unread 배지 복원, Minor §12.3 서버 import 1줄): 사용자 재보고(resume) — gc-unread-read-fix 배포 후에도 "대화를 읽었어도 새로고침하면 회색 뱃지의 안 읽은 개수가 복원됨". **진짜 미해결 근본 원인**: `POST /api/conversations/{cid}/read` 핸들러가 web 컨테이너에 없는 `modules.db` 를 import → 매 호출 `ModuleNotFoundError`→500(frontend best-effort 삼킴, 화면만 0) → 서버 `last_read_message_id` 커서 미전진 → 새로고침 시 복원. 앞선 unread 수정 3건(badge/baseline/read-fix)이 전부 frontend/DB 만 건드려 이 서버 버그를 놓침. 수정=`modules.db`→`shared.db`(같은 파일 다른 9곳과 정합) + 핸들러 회귀 테스트 신설. (CHG/REV-20260625T202817)
+- **gc-unread-read-idspace-fix** (읽음 커서 id-space 불일치 → 읽어도 unread 배지 미감소·전환 시 회귀, Major §12.3 서버 read 핸들러): 사용자 4차 재보고(resume) — gc-unread-read-500-fix(read 200 복구) 후에도 "진입 시 배지 사라지나 다른 대화 전환 시 즉시 회귀". **최종 근본 원인**: 읽음 커서·unread 집계는 `agent_runtime.core_messages.id` 공간(대화 3369~3655)인데 FE 가 보내던 `last_read_message_id` 는 `/api/history` 가 채운 표시 store `agent_runtime.messages` id(750~845)라 두 공간이 disjoint → `set_last_read` GREATEST 가 항상 전진 거부(영구 no-op, updated=1·200 OK 이나 값 불변). 핸들러 폴백(MAX core_messages)은 requested<=0 에서만 발동 → FE 양수라 미발동. 수정=핸들러가 requested 무시하고 항상 MAX(core_messages.id) 전진 + id-space 계약 회귀 테스트. (CHG/REV-20260625T225851)
+  - [x] `mark_conversation_read`: body last_read_message_id 파싱 제거 + 항상 MAX(core_messages.id) 전진 + docstring
+  - [x] 회귀 가드 `test_read_handler_ignores_client_id_uses_core_messages_max` (핸들러 소스 계약 정적 보장)
+  - [x] py_compile + 소스 계약 4/4 + 라이브 재현(cursor 3655→unread 0) + §18.8 패널 SHIP·BLOCKING 0(Q1~Q7 라이브)
+  - [ ] verify-completion → PR → 라이브 배포(web 재빌드, included) → **read 200 + 커서 conv_max 전진 + 전환·폴링 후 미회귀 실증**
+- **gc-unread-read-500-fix** (읽음 API silent 500 → 새로고침 시 unread 배지 복원, Minor §12.3 서버 import 1줄, 머지 PR#453): 사용자 재보고(resume) — gc-unread-read-fix 배포 후에도 "대화를 읽었어도 새로고침하면 회색 뱃지의 안 읽은 개수가 복원됨". **진짜 미해결 근본 원인**: `POST /api/conversations/{cid}/read` 핸들러가 web 컨테이너에 없는 `modules.db` 를 import → 매 호출 `ModuleNotFoundError`→500(frontend best-effort 삼킴, 화면만 0) → 서버 `last_read_message_id` 커서 미전진 → 새로고침 시 복원. 앞선 unread 수정 3건(badge/baseline/read-fix)이 전부 frontend/DB 만 건드려 이 서버 버그를 놓침. 수정=`modules.db`→`shared.db`(같은 파일 다른 9곳과 정합) + 핸들러 회귀 테스트 신설. (CHG/REV-20260625T202817)
   - [x] 서버 `src/app.py` import 경로 수정 (modules.db→shared.db — POST /read 500 해소)
   - [x] 회귀 가드 테스트 `tests/test_read_endpoint_pg_import.py` (정적: modules.db import 부재 / 런타임: shared.db resolvable)
   - [x] `py_compile`(app.py·test) PASS + 컨테이너 재현 `set_last_read` rowcount=1 + §18.8 적대 패널 1렌즈 SHIP·BLOCKING 0

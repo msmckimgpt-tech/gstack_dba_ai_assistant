@@ -442,3 +442,21 @@ source_of_truth: true
 - 핵심 판정: **SHIP. BLOCKING 0.** MINOR 1(M1, 수용)·NIT 2(수용). 비파괴 bind-param 수정, 재현·수정 모두 라이브 오염 없이 실증.
 - Verification: `python -m py_compile`(group_members·app) PASS + `test_group_members` 12/12(회귀 2 신규: distinct-param·lookup-equals-cid) + 컨테이너 재현 OLD/NEW 대조. **배포(web+ask-worker 이미지 재빌드) 후 라이브 공유 링크 join 200 + web 로그 `_ensure_owner_membership failed`/AmbiguousParameter 소거 실증 필수**(deploy-backed 완료 기준).
 - Human Approval Needed: 아니오 (사용자 보고 직접 수정, Minor 서버 버그 정정, 무회귀, 게이트 무변경). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.
+
+## REV-20260625T225851-gc-unread-read-idspace-fix [SUBAGENT:증상제거·1:1회귀·시맨틱·경합·MySQL·backfill·MAX필터비대칭 1렌즈 §18.8 + 4-dim 조사 워크플로]
+- Date: 2026-06-25
+- Cycle: gc-unread-read-idspace-fix (CHG-20260625T225851) — 읽음 커서와 unread 집계(core_messages.id 공간)와 FE 가 보내는 last_read_message_id(표시 store messages.id 공간)의 **id-space 분리(disjoint)** 로 GREATEST 가 전진을 영구 거부 → 읽어도 배지 미감소·전환 시 회귀. **Major §12.3**(서버 read 핸들러 커서 산출 로직 변경).
+- Related Change: feature-0003 `src/app.py`(mark_conversation_read: requested 신뢰 분기 제거, 항상 MAX(core_messages.id) 전진 + docstring), `tests/test_read_endpoint_pg_import.py`(id-space 계약 회귀 테스트 신규).
+- Reason: 핵심 경로(읽음 처리) + 사용자 4차 재보고(앞선 5건 수정 실패) → 근본원인 다각 조사(4-dim 병렬 워크플로: frontend 전송값/handler updated/unread SQL/전환·폴링) 후 §18.8 적대 패널.
+- 근본원인 확정(다각 조사 워크플로 + 라이브 DB, 2개 독립 차원이 동일 결론): messages 750~845 vs core_messages 3369~3655 **비겹침** 라이브 SELECT 확인. `_get_history`(AGENT_RUNTIME_READ_BACKEND=postgres)가 messages 테이블에서 읽어 FE state.messages 천장=845. set_last_read GREATEST(3466,845)=3466 영구 no-op, 멤버 행 존재로 updated=1·200 OK 이나 값 불변. 폴백(MAX core_messages)은 requested<=0 에서만 발동 → FE 양수라 미발동.
+- 적대적 검증(general-purpose 서브에이전트 1, "결함 적발" 목적, worktree diff·코드·라이브 DB 직접):
+  - **Q1 증상제거**: 진입 → 핸들러 MAX=3655 전진 → 라이브 cursor=3655 시 unread **0** 확인. 7s 폴링 재조회해도 서버 0 → 회귀 없음(+ active 클램프 이중안전). **PASS**.
+  - **Q2 1:1/비그룹 회귀**: FE 전 호출처가 `isGroupConversation` 게이트 통과해야 endpoint 도달 → 1:1 호출 안 됨. 직접 호출돼도 set_last_read UPDATE 가 멤버 행 있을 때만 매치 → 1:1 updated=0 no-op. **안전**.
+  - **Q3 "열면 전부 읽음" 시맨틱**: 표시/카운트 store 분리로 FE 가 정확한 core id 를 알 방법이 없어 **부분읽음은 원래 구현 불가** → 새 데이터손실 아닌 구조적 제약의 정직한 반영(카카오/슬랙도 진입=전체읽음). 멘션 카운트 동일 커서라 영구소실 아님. **수용**.
+  - **Q4 새 메시지 경합**: 진입 후 도착분은 `_liveSyncTick` 이 append 직후 `_markActiveConversationRead` 재호출로 재전진. 비활성 전환 후 도착분은 마땅히 unread(정상). **PASS**.
+  - **Q5 MySQL 경로**: 현 배포 postgres 확인. MySQL `AgentCoreConversationMembers.last_read_message_id` 는 **DDL 만 있고 write 경로 0건**(이 수정 이전부터 미배선 — 선행 결함, 회귀 아님). **무영향(NIT)**.
+  - **Q6 backfill 미실행**: 일괄 MAX backfill 은 안 읽은 대화까지 0 처리(데이터손실) → 핸들러 수정만으로 각 대화 lazy 전진이 옳음. **타당**.
+  - **Q7 커서 MAX(id) vs unread 필터 비대칭(핵심)**: MAX 보다 큰 counted 메시지는 정의상 불가 → 커서가 tool id 에 앉아도 unread `m.id>cursor` 가 항상 0 이하, **over-count 불가**. 라이브 전수: max_all>max_counted 인 대화 1건도 둘 다 counted 전부 덮어 unread=0 동일(커서가 약간 앞설 뿐 절대 뒤처지지 않음). **안전**.
+- 핵심 판정: **SHIP. BLOCKING 0.** NIT 3(MySQL write 경로 선행부재 / 고착대화 lazy-correction 의도 / 테스트 import-path는 baked 이미지 harness 전제·정적 assertion diff 확인). 전부 수용/추적.
+- Verification: `py_compile`(app.py·test) PASS + 핸들러 소스 계약 4/4(target_id=requested 부재·body 파싱 부재·MAX core_messages·set_last_read) + 라이브 재현(cursor 3655 → unread 0). **배포 후 web 로그 read 200 + 멤버 커서 conv_max 전진 + 전환·폴링 후 미회귀 실증 필수**(deploy-backed 완료 기준).
+- Human Approval Needed: 아니오 (사용자 보고 직접 수정, 서버 버그 정정, 게이트·스키마·인가 무변경). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.

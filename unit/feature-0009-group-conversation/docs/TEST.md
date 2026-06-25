@@ -159,3 +159,10 @@ source_of_truth: true
 - 회귀: `test_db_query_ux`(히스토리 조립·user-turn 보존) + `test_runtime_read_backend`(PG read backend) 통과. 합계 **48 PASS**, `py_compile`+`ruff` clean.
 - 적대 패널 §18.8 2렌즈(회귀·정확성 / 보안·prompt-injection) **SHIP-WITH-FIXES**(BLOCKING 0, NON-BLOCKING 2건 반영) — REV-20260625T202843 참조.
 - 라이브(배포 후 PB-0008): MySQL 제품 그룹대화에서 @assistant 가 (a) `SELECT TOP`/`UNION`/`[brackets]` 없이 `LIMIT`·단일 SELECT·backtick 생성, (b) 거부 시 엔진별 교정 힌트 수신, (c) "이 DB/직전 결과/바꾼 제품" 류 지시어를 멘션 직전 사람-사람 맥락에서 능동 해석(과도 재질문 감소), (d) 발신자 라벨로 화자 구분 — 실측 권장.
+
+## gc-unread-read-idspace-fix (CHG-20260625T225851) — 읽음 커서 id-space 불일치 (unread 미감소·전환 회귀의 최종 근본원인)
+- 근본원인 확정: 4-dim 병렬 조사 워크플로(frontend 전송값 / handler updated / unread SQL / 전환·폴링) + 라이브 DB. 2개 독립 차원이 동일 결론(id-space disjoint). messages 750~845 vs core_messages 3369~3655 비겹침, GREATEST(3466,845)=3466 영구 no-op.
+- 회귀(CLI, DB 불요): `tests/test_read_endpoint_pg_import.py::test_read_handler_ignores_client_id_uses_core_messages_max` — 핸들러 소스 계약 정적 보장(`target_id = requested`/`data.get("last_read_message_id")` 부재 + `MAX(id)` core_messages 무조건 + set_last_read). `py_compile`(app.py·test) PASS + AST 소스 계약 4/4.
+- 라이브 재현(read-only): cursor=3466 → unread 28(필터 적용), cursor=3655(MAX, 수정 후 핸들러가 전진시킬 값) → 0. row 3655=assistant·tool_calls null·content 있음(정상 카운트 대상). MAX(id) vs unread 필터 비대칭 전수 검증 — over-count 불가(MAX 보다 큰 counted 메시지 정의상 없음).
+- §18.8 적대 패널 1렌즈(general-purpose): **SHIP/BLOCKING 0** — Q1 증상제거(cursor 3655→0)·Q2 1:1 게이트 안전·Q3 부분읽음 구조적 불가(수용)·Q4 경합 정상·Q5 MySQL write 선행부재(NIT)·Q6 backfill 미실행 타당·Q7 MAX/필터 비대칭 안전.
+- 라이브(배포 후, deploy-backed 완료 기준 필수): ① 멤버 계정 read 시 web 로그 200 ② 그 대화 멤버 커서가 conv_max(core_messages MAX)로 전진(DB 확인) ③ 대화 진입 후 **다른 대화로 전환·7s 폴링 후에도 배지 미회귀** ④ bootstrap_admin(비멤버) POST /read 응답 last_read_message_id=MAX(=requested 무시 증명). PB-0008 Windows-browser 실측 권장.
