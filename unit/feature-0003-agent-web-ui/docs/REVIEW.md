@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260625T092403-doc-sync-release-notes [SKIPPED: 사용자 노출 릴리즈노트 정적 콘텐츠 큐레이션 — 제품 로직·인가·스키마·렌더로직 무변경, 적대 패널 불요] (TASK-20260625-doc-sync-release-notes, Minor §12.3)
+- Date: 2026-06-25
+- Cycle: `/_dqa:doc_sync` maintenance (CHG-20260625T092403-doc-sync-release-notes). 직전 릴리즈노트(0fd4ca9, 06-23 16:52) 이후 main 병합된 user-facing 변경 14건(late 06-23 + 06-24)을 `static/release-notes-data.js` 릴리즈노트 콘텐츠에 반영(`date: "2026-06-24"` 블록 prepend + `generated` 갱신).
+- 변경: 릴리즈노트 **정적 큐레이션 데이터만** — 렌더 로직(`release-notes.js`)·백엔드·라우팅·RBAC·스키마 무변경. 사용자 평이화 문구(내부 구현/테이블명/feature-id/엔드포인트 비노출).
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 추가뿐, (b) 실행/인가/데이터 경계 무영향. 제품 로직 변화 없음 → 적대적 verification 패널 불요(비-정책 doc 경량 cycle).
+- 검증: `node --check release-notes-data.js` PASS(JS 구문 — 데이터 객체 무결성) + 항목 스키마(type/area/title/detail) 정합 + 머지 커밋 14건(461506e/147426f/393d15c/e5acb43/16746be/1ee5f1a/4a9ab9b/2c35d57/eb459e4/5f4f45b/dca8f81/43687e9/6df7fac/eb46302) 1:1 대조. 윈도=직전 릴리즈노트 commit(0fd4ca9, 06-23 16:52) 이후 — 적대 검증 Lens B 가 late-06-23 머지(e5acb43 답변 피드백·43687e9 사이드바 구분) + 06-24 eb459e4(알림 제어) 누락 적발 → 보강. 내부/비-user-facing(shared 추출·SSOT·CI·발표자료·doc_sync)은 의도적 제외 확인.
+- Human Approval Needed: 아니오.
+- Cross-ref: CHG-20260625T092403-doc-sync-release-notes / TASK-20260625-doc-sync-release-notes / FUNCTION '릴리즈노트(업데이트 내역) 콘텐츠 — 06-24 머지분 반영'.
+
 ## REV-20260624T170757-metadata-ai-autocomplete [SUBAGENT:adversarial-2lens(backend-security+frontend-css)] — SHIP (BLOCKING 2건 흡수) (TASK-20260624-metadata-ai-autocomplete, Major §12.3 — 외부 LLM dispatch + 서브뷰별 RBAC 표면)
 - Date: 2026-06-24
 - Cycle: 중단 세션 resume — 관리 콘솔 메타데이터 5 서브뷰 AI 자동완성(단건+골격 일괄) + pane 스크롤 수정. 백엔드 2 엔드포인트는 기 작성(미커밋), 본 cycle 은 CSS(스크롤+버튼)·테스트·docs·§18.8 panel·완료 게이트.
