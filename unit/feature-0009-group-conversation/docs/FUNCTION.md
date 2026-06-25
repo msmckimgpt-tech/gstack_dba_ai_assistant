@@ -28,6 +28,7 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - REQ-GC-R5: LLM 은 멘션 시 사람-사람 채팅 포함 히스토리를 발신자 라벨과 함께 맥락으로 받음.
 - REQ-GC-R6: 첨부는 그룹 전원 열람·다운로드 공유. 단 LLM 맥락 주입은 @assistant 발신자 본인 첨부로 한정(권한상승 방지, CSO F1).
 - REQ-GC-R7: 접근제어 분리 — 멤버는 datasource 권한 없어도 전체 열람 가능. @assistant 로 datasource 발화/쿼리는 발신자 본인 RBAC 로만 게이트.
+  - 구현(gc-participant-product-select): 참가자(비-owner 멤버)는 대화 공통 고정 제품 접근권이 없어도 **본인 권한 제품**을 per-message 로 골라 발화 가능(발신자 본인 RBAC 게이트, 권한 상속 아님). 대화 공통 바인딩은 비파괴(PATCH 는 owner 전용 유지). 접근 불가한 생성자 고정 제품은 작업화면 드롭업에서 '열람 전용' 회색·비활성 그룹으로 분리 표시.
 - REQ-GC-R8: read-state(last_read 커서) + @mention 표시 + per-conversation 동시실행/비용 상한.
 
 ## 3. In Scope
@@ -44,6 +45,10 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - read-state 커서·@mention 표시·폴링 동기화. **(구현 gc-unread-badge, 2026-06-25)**: 멤버별
   `conversation_members.last_read_message_id` 커서 + 사이드바 **안 읽은(새) 메세지/@멘션 배지**
   (형식 `<안읽음>[ / @<멘션>]`, 그룹 대화 한정, 본인 발신 제외) + 읽음 API(`POST /api/conversations/{cid}/read`).
+  **(보정 gc-unread-baseline, 2026-06-25)**: last_read baseline 은 가입/배포 *이전* 메세지를
+  읽음으로 간주한다 — 멤버 가입 시 `add_member` 가 가입 시점 `MAX(core_messages.id)` 로 커서를
+  초기화하고, 기존 데이터는 alembic 0020 이 대화별 `MAX(id)` 로 backfill. 따라서 배지는 "읽지
+  않은 *신규* 메세지"만 센다(과거 전체 메세지가 unread 로 잡히지 않음). 메세지 0건 대화는 NULL→첫 메세지부터 unread.
 - per-conversation run cap + llm_usage actor 귀속.
 - 멤버 add/remove + @assistant actor 감사(audit) 액션.
 

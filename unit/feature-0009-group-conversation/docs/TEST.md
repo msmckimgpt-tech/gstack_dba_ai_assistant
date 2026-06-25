@@ -134,3 +134,8 @@ source_of_truth: true
 ## 4. Untested Areas
 - gc-unread-badge: 실 PG unread/mention 집계 + FE 배지 라이브 동작 — **배포(alembic 0019) 후 PB-0008 Windows-browser 실측 예정**(위 PENDING Run).
 - 아직 검증되지 않은 영역
+
+## gc-unread-baseline (CHG-20260625T165320) — last_read baseline backfill
+- 단위: `py_compile`(group_members.py·alembic 0020) PASS. add_member INSERT/0020 backfill 은 DB 의존 → 컨테이너 `make test`·라이브에서 검증.
+- 라이브 검증(배포 후): alembic 0020 적용 → `conversation_members` 의 null_cursor=0 확인 → 읽은 그룹 대화 사이드바 배지 사라짐(unread=0) → 신규 메세지 도착 시에만 배지 출현 → **PB-0008 Windows-browser 실측**(데이터 의존).
+- 적대 패널 §18.8 2렌즈(데이터정확성·보안/회귀) SHIP, BLOCKING 0 — REV-20260625T165320 참조.

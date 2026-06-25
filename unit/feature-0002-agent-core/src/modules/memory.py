@@ -252,6 +252,23 @@ def set_run_status(
         except Exception:
             cur_rid = ""
         if cur_rid and cur_rid != str(run_id).strip():
+            # feature-0009 그룹대화 동시 run 충돌: 다른 run 이 대화 상태 슬롯(last_status_run_id)을
+            # 점유 중이라 이 run 의 terminal write 가 통째로 유실된다. 단일 run 대화에선 이게 옳지만
+            # (취소→재요청 supersede 가드), 그룹대화는 계정별 동시 run 이 설계상 허용(REQ-GC-R3)이라
+            # run1 의 done/error 가 영영 기록 안 돼 그 run 을 추적하는 클라이언트가 '처리 중' 에 갇힌다.
+            # → 작성자가 완료를 *기다리는* 종료(done/error)만 per-run marker 로 남겨, /api/progress 가
+            # client_run_id 로 자기 run 을 해소하게 한다. canceled 는 작성자가 이미 추적을 멈춘
+            # (취소→재요청 supersede 포함) 상태라 해소 대상이 없어 기록하지 않는다 → 1:1 취소-재요청
+            # 등에서의 불필요한 키 누적을 차단. (충돌 시에만, done/error 만 기록 → 단일 run 정상 흐름엔
+            # 미기록. 잔여 done/error 충돌 marker 의 일괄 정리는 FUNCTION §4 S6 per-thread 재키잉으로 이연.)
+            _st = str(status).strip().lower()
+            if _st in ("done", "error"):
+                _rid = str(run_id).strip()
+                try:
+                    save_memory_kv(conn, conversation_id, f"run_term_status:{_rid}", str(status))
+                    save_memory_kv(conn, conversation_id, f"run_term_at:{_rid}", utc_now_iso())
+                except Exception:
+                    pass
             return
     # TASK-0169 (M4): run_id 를 status 보다 먼저 기록한다. set_run_status 는 멀티-tx
     # (save_memory_kv 마다 독립 PG tx) 라, status 를 먼저 쓰면 reader 가 terminal status

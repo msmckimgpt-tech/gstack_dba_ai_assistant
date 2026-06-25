@@ -14,6 +14,7 @@ def test_payload_to_kwargs_round_trip():
         "product_id": 3,
         "role_id": 2,
         "account_id": 99,            # payload 안 값은 무시되고 인자 account_id 우선
+        "sender_username": "alice",  # gc-ask-sender-attrib: 그룹 발신자 귀속(worker 경로 parity)
         "allowed_schemas": ["dbgame"],
         "product_mode": "pinned",
         "attachment_ids": [1, 2],
@@ -26,6 +27,7 @@ def test_payload_to_kwargs_round_trip():
     assert kw["conversation_id"] == "conv-1"
     assert kw["model"] == "edge"
     assert kw["account_id"] == 42           # 인자 우선
+    assert kw["sender_username"] == "alice" # gc-ask-sender-attrib: worker 경로에서도 발신자 귀속 전달
     assert kw["allowed_schemas"] == ["dbgame"]
     assert kw["attachment_ids"] == [1, 2]
     assert kw["image_inline_path"] == "/shared/ask-inline/img.json"
@@ -45,6 +47,7 @@ def test_payload_to_kwargs_defaults_for_missing():
     assert kw["product_mode"] == "pinned"
     assert kw["attachment_ids"] == []
     assert kw["new_attachment_ids"] == []
+    assert kw["sender_username"] is None     # gc-ask-sender-attrib: 미주입(1:1)이면 None → 기존 동작
 
 
 def test_slim_result_keeps_shape_fields():
@@ -92,3 +95,17 @@ def test_run_agent_accepts_run_id_param():
     assert "run_id" in sig.parameters
     sig2 = inspect.signature(agent_core._run_agent_core)
     assert "run_id" in sig2.parameters
+
+
+def test_run_agent_accepts_sender_username_param():
+    # gc-ask-sender-attrib (feature-0009): 그룹 발신자 귀속을 위해 run_agent/_run_agent_core 가
+    # sender_username 키워드를 받아야 한다. 미수용이면 그룹 ask 가 TypeError(inproc) 또는 worker
+    # 복원 시 누락된다. 기본값 None(=1:1 무변경) 이어야 한다.
+    import inspect
+    import agent_core
+    sig = inspect.signature(agent_core.run_agent)
+    assert "sender_username" in sig.parameters
+    assert sig.parameters["sender_username"].default is None
+    sig2 = inspect.signature(agent_core._run_agent_core)
+    assert "sender_username" in sig2.parameters
+    assert sig2.parameters["sender_username"].default is None

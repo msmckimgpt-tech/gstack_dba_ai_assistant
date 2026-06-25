@@ -3488,6 +3488,93 @@ LIMIT 1
     }
 
 
+def _parse_participant_product_override(
+    conn, account: dict[str, Any], data: Any
+) -> dict[str, Any] | None:
+    """feature-0009 gc-participant-product-select: 공유 대화 참가자(비-owner 멤버)가 보낸
+    요청 body 의 제품 override(`product_id`/`product_mode`)를 파싱·검증한다.
+
+    참가자는 자기 `@assistant` 요청에 한해 제품을 per-message 로 바꿀 수 있다(대화 공통
+    바인딩 비파괴 — owner 전용 `PATCH /api/conversations/{cid}/product` 와 분리). 선택 제품은
+    **발신자 본인** `_account_has_product_access` 통과분만 허용하므로 ANCHOR §1("발화는 본인
+    권한으로만 게이트")을 보존한다 — 생성자 권한 상속 없음.
+
+    반환:
+      - ``None``: body 에 override 의도 없음(기존 동작: 대화 공통 product 사용).
+      - ``{"ok": True, "mode": "auto"|"pinned", "product_id": int|None}``: 유효한 override.
+      - ``{"ok": False, "error": "<메시지>"}``: 무권한 제품 override → 호출부가 403.
+    """
+    if not isinstance(data, dict):
+        return None
+    raw_mode = data.get("product_mode")
+    raw_pid = data.get("product_id")
+    if raw_mode is None and raw_pid is None:
+        return None
+    mode = _normalize_product_mode(raw_mode, default="pinned")
+    if mode == "auto":
+        return {"ok": True, "mode": "auto", "product_id": None}
+    pid: int | None = None
+    if raw_pid is not None and str(raw_pid).strip() != "":
+        try:
+            pid = int(raw_pid)
+        except Exception:
+            pid = None
+    if not pid:
+        # pinned 의도지만 product_id 부재/파싱 실패 → override 미적용(대화 product 유지).
+        return None
+    if not _account_has_product_access(account, int(pid), conn=conn):
+        return {
+            "ok": False,
+            "error": "선택한 제품에 발화(질의) 권한이 없습니다. 본인에게 권한이 있는 제품만 사용할 수 있습니다.",
+        }
+    return {"ok": True, "mode": "pinned", "product_id": int(pid)}
+
+
+def _conversation_view_only_products_for(
+    conn, conversation_id: "str | None", viewer_account: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """feature-0009 gc-participant-product-select: 공유 대화의 '생성자 제품 — 열람 전용' 목록.
+
+    참가자(비-owner 멤버)가 현재 보는 공유 대화의 고정 제품에 **본인 접근권이 없을 때**, 그 제품을
+    열람 전용(선택·발화 불가)으로 표시하기 위해 반환한다. 작업 화면 드롭업이 이 목록을 "내 제품"
+    (선택 가능) 아래에 회색·비활성 그룹으로 분리 렌더한다(확인 권한 = <생성자 + 참가자>).
+
+    반환 규칙(보수적 — 최소 노출): 비대화/owner/비멤버/auto·미고정/이미 접근 가능 → ``[]``.
+    그 외엔 대화 고정 제품 1건을 ``view_only=True`` 표식과 함께 반환한다. 생성자의 전체 제품
+    카탈로그는 노출하지 않는다(추가 노출은 별도 disclosure 검토 대상).
+    """
+    if not conversation_id or not viewer_account:
+        return []
+    viewer_id = int(viewer_account.get("id") or 0)
+    if not viewer_id:
+        return []
+    # owner 본인은 분리 그룹 불필요(자기 대화). 멤버가 아니면(직접 접근 경로 없음) 표시 안 함.
+    if _conversation_owned_by_account(conn, conversation_id, viewer_id):
+        return []
+    if not _account_is_conversation_member(conversation_id, viewer_id):
+        return []
+    conv_prod = _load_conversation_product(conn, conversation_id)
+    if not conv_prod or conv_prod.get("product_mode") != "pinned":
+        return []
+    pid = conv_prod.get("product_id")
+    if not pid:
+        return []
+    # 본인이 이미 접근 가능한 제품이면 '내 제품'에 선택 가능 노출되므로 별도 view-only 불필요.
+    if _account_has_product_access(viewer_account, int(pid), conn=conn):
+        return []
+    try:
+        all_products = _list_products(conn, include_inactive=False)
+    except Exception:
+        all_products = []
+    match = next((p for p in all_products if int(p.get("id") or 0) == int(pid)), None)
+    if not match:
+        return []
+    entry = dict(match)
+    entry["view_only"] = True
+    entry["view_only_reason"] = "공유 대화 생성자가 고정한 제품 — 본인 접근권이 없어 열람만 가능합니다."
+    return [entry]
+
+
 def _parse_kv_timestamp(value: str) -> datetime | None:
     """AgentMemoryKv 의 ISO timestamp (`YYYY-MM-DD HH:MM:SS[.f]`) 를 datetime 으로 변환.
     실패 시 None 반환. UTC naive 로 가정 (KV 작성 시 동일 가정)."""
@@ -9018,6 +9105,48 @@ WHERE ConversationId = %s
     )
 
 
+def _load_run_terminal_marker(conn, conversation_id: str, run_id: str) -> tuple[str, str]:
+    """feature-0009 그룹대화 동시 run: 대화 상태 슬롯을 다른 run 이 점유해 terminal write 가 유실된
+    run 의 per-run 종료 상태를 반환. (status, status_at) — 없으면 ("", "").
+    agent_core set_run_status 의 충돌 skip 경로가 기록한 run_term_status:{rid} / run_term_at:{rid} 를
+    읽는다(_load_progress_status 와 동일한 PG-우선·MySQL-폴백 패턴)."""
+    rid = str(run_id or "").strip()
+    if not rid:
+        return "", ""
+    skey = f"run_term_status:{rid}"
+    akey = f"run_term_at:{rid}"
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT key, value FROM agent_runtime.kv "
+                    "WHERE conversation_id = %s AND key IN (%s, %s)",
+                    (conversation_id, skey, akey),
+                )
+                rows = pgcur.fetchall() or []
+            pg.close()
+            kv = {str(k or ""): str(v or "") for k, v in rows}
+            return str(kv.get(skey) or "").strip(), str(kv.get(akey) or "").strip()
+        except Exception:
+            return "", ""
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Key`, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s
+  AND `Key` IN (%s, %s)
+        """,
+        (conversation_id, skey, akey),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    kv = {str(k or ""): str(v or "") for k, v in rows}
+    return str(kv.get(skey) or "").strip(), str(kv.get(akey) or "").strip()
+
+
 _ASK_TERMINAL_STATUSES = frozenset({"done", "error", "canceled"})
 _ASK_SUCCESS_STATUSES = frozenset({"done", "canceled"})
 
@@ -10643,6 +10772,14 @@ def get_session(request: Request) -> JSONResponse:
     # TASK-0047: 사용자 ProductPref 복원 + 현재 대화의 product_mode/product_id 동봉.
     product_pref = _load_account_product_pref(conn, int(account.get("id") or 0), products)
     conversation_product = _load_conversation_product(conn, conversation_id) if conversation_id else None
+    # feature-0009 gc-participant-product-select: 공유 대화 참가자가 현재 대화의 고정 제품에
+    # 접근권이 없으면 그 제품을 '생성자 제품 — 열람 전용'으로 분리 표시(드롭업 하단 회색 그룹).
+    try:
+        conversation_view_only_products = _conversation_view_only_products_for(
+            conn, conversation_id, account
+        )
+    except Exception:
+        conversation_view_only_products = []
     payload = {
         "authenticated": True,
         "user": _serialize_account(account),
@@ -10654,6 +10791,7 @@ def get_session(request: Request) -> JSONResponse:
         "default_product_id": int(default_pid) if default_pid else None,
         "product_pref": product_pref,
         "conversation_product": conversation_product,
+        "conversation_view_only_products": conversation_view_only_products,
         # TASK-20260619T014034: LLM provider 외부요인 제한 상태(컴포저 배너·상태점 초기값).
         "llm_provider_status": _read_llm_provider_status(),
     }
@@ -11145,7 +11283,9 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         return {"error": "요청 처리 워커가 일시적으로 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.",
                 "conversation_id": conv_id, "_http_status": 503}
 
-    # enqueue payload = run_agent kwargs 12개 (conv_file/temperature/api_key/output_mode 제외).
+    # enqueue payload = run_agent kwargs 13개 (conv_file/temperature/api_key/output_mode 제외).
+    # gc-ask-sender-attrib: sender_username(그룹 발신자 귀속)도 worker 경로로 동등 전달 — 미포함 시
+    # worker mode 에서만 발신자 미러 meta 가 누락돼 inproc 와 동작이 갈린다(_payload_to_kwargs 복원).
     payload = {
         "user_message": run_kwargs.get("user_message", ""),
         "conversation_id": conv_id,
@@ -11153,6 +11293,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         "product_id": run_kwargs.get("product_id"),
         "role_id": run_kwargs.get("role_id"),
         "account_id": account_id,
+        "sender_username": run_kwargs.get("sender_username"),
         "allowed_schemas": run_kwargs.get("allowed_schemas"),
         "product_mode": run_kwargs.get("product_mode", "pinned"),
         "attachment_ids": run_kwargs.get("attachment_ids") or [],
@@ -11359,6 +11500,9 @@ async def ask(request: Request) -> JSONResponse:
     if not _quota_ok:
         conn.close()
         return _json_error(_quota_msg, 429)
+    # feature-0009 gc-participant-product-select: 공유 대화 참가자의 per-message 제품 override.
+    # 기존 대화 + 비-owner 멤버 분기에서만 채워진다(아래). owner·신규 대화 경로는 None 유지.
+    _participant_product_override: dict[str, Any] | None = None
     if request_conversation_id:
         if not _conversation_exists(request_conversation_id, conn=conn):
             conn.close()
@@ -11375,7 +11519,18 @@ async def ask(request: Request) -> JSONResponse:
             # 있어야 발화(쿼리) 가능. 무권한 멤버는 열람만 — 결과·SQL 은 볼 수 있으나 새 질의는 거부.
             # auto 모드(미고정)는 다운스트림 execute_sql 가 actor 접근 datasource 로 제한하므로 허용.
             _ask_conv_prod = _load_conversation_product(conn, request_conversation_id)
-            if (
+            # feature-0009 gc-participant-product-select: 참가자가 이 요청에 대해 제품을 바꿔 보냈으면
+            # (body product override) 그 선택으로 발화한다. 선택 제품은 본인 RBAC 로 검증된 것만
+            # 통과(아래 helper)하므로, 대화 공통 pinned product 에 본인 접근권이 없어도 본인이 권한 가진
+            # 다른 제품으로 질의할 수 있다(ANCHOR §1 보존 — 권한 상속 아님, 본인 권한 범위 내 선택).
+            _participant_product_override = _parse_participant_product_override(conn, account, data)
+            if _participant_product_override is not None and not _participant_product_override.get("ok"):
+                conn.close()
+                return _json_error(
+                    _participant_product_override.get("error") or "요청을 수행할 수 없습니다.", 403
+                )
+            # override 가 없을 때만 대화 공통 pinned product 접근권을 게이트(기존 열람-전용 정책).
+            if _participant_product_override is None and (
                 _ask_conv_prod
                 and _ask_conv_prod.get("product_mode") == "pinned"
                 and _ask_conv_prod.get("product_id")
@@ -11547,6 +11702,17 @@ async def ask(request: Request) -> JSONResponse:
                     if row_p[0] is not None:
                         product_id_for_run = int(row_p[0])
                     product_mode_for_run = _normalize_product_mode(row_p[1], default="pinned")
+            # feature-0009 gc-participant-product-select: 참가자 per-message override 적용.
+            # 대화 공통 바인딩(row_p)을 읽은 뒤, 이 요청에 한해 참가자가 고른 제품으로 run product 를
+            # 덮어쓴다. 선택 제품은 member 분기에서 본인 RBAC 로 이미 검증됨. 대화 product_id 는
+            # persist 하지 않는다(아래 backfill UPDATE 를 override 시 skip) — 공통 바인딩 비파괴.
+            if _participant_product_override is not None and _participant_product_override.get("ok"):
+                if _participant_product_override.get("mode") == "pinned":
+                    product_mode_for_run = "pinned"
+                    product_id_for_run = int(_participant_product_override["product_id"])
+                else:
+                    product_mode_for_run = "auto"
+                    product_id_for_run = None
             if product_mode_for_run == "auto":
                 # auto 모드: 기존 default 자동 채움 경로를 우회한다 (의도 보존).
                 product_id_for_run = None
@@ -11567,7 +11733,9 @@ async def ask(request: Request) -> JSONResponse:
                         "이 대화의 제품 접근 권한이 회수되었습니다. 사이드바에서 auto 모드로 전환하거나 관리자에게 권한 요청 후 다시 시도해 주세요.",
                         403,
                     )
-                if product_id_for_run and conv_id:
+                # feature-0009 gc-participant-product-select: 참가자 override 가 적용된 요청은 대화
+                # 공통 product_id 를 backfill 하지 않는다(per-message 선택이 대화 바인딩을 바꾸면 안 됨).
+                if product_id_for_run and conv_id and _participant_product_override is None:
                     try:
                         if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
                             from shared.db import _pg_connect
@@ -11807,6 +11975,15 @@ async def ask(request: Request) -> JSONResponse:
                 text_inline_path = None
         # TASK-0137: inline text path 는 contextvar kwarg (text_inline_path) 로 전달.
 
+        # gc-ask-sender-attrib (feature-0009): 그룹 대화 발신이면 actor username 을 sender_username
+        # 으로 실어, _run_agent_core 의 user 메시지 표시 store 미러 meta 가 실제 발신자 프로필로
+        # 표시되게 한다(미주입 시 FE 가 대화 owner=생성자 프로필로 폴백 → 오귀속). 1:1·신규 대화는
+        # None → 기존 동작(미러 meta 없음) 무변경. 조회 실패 시 _conversation_is_group=False 폴백.
+        _sender_username_for_run = (
+            str(account.get("username") or "")
+            if _conversation_is_group(conv_id or "") else None
+        )
+
         # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
         # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
         agent_result = await _dispatch_ask_run(
@@ -11825,6 +12002,7 @@ async def ask(request: Request) -> JSONResponse:
                 product_id=product_id_for_run,
                 role_id=role_id_for_run,
                 account_id=int(account["id"]),
+                sender_username=_sender_username_for_run,  # gc-ask-sender-attrib: 그룹 한정 발신자 귀속
                 allowed_schemas=allowed_schemas_for_run,
                 product_mode=product_mode_for_run,
                 # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
@@ -18001,6 +18179,16 @@ def progress(
             conn.close()
             return empty
         status, status_at, run_id = _load_progress_status(conn, cid)
+        # feature-0009 그룹대화: 클라이언트가 추적 중인 run(client_run_id)이 대화의 현재 슬롯 run 과
+        # 다르면, 그 run 이 동시 run 충돌로 terminal write 를 잃었을 수 있다. per-run marker 로 자기
+        # run 의 종료를 해소해, 다른 사용자의 동시 run(슬롯 점유) 때문에 '처리 중' 에 갇히지 않게 한다.
+        _client_rid = str(client_run_id or "").strip()
+        if _client_rid and run_id and _client_rid != run_id:
+            _term_status, _term_at = _load_run_terminal_marker(conn, cid, _client_rid)
+            if _term_status:
+                run_id = _client_rid
+                status = _term_status
+                status_at = _term_at or status_at
         # KV 에 run_id 가 없는 경우 steps 테이블에서 최신 run 을 fallback 조회.
         fallback_status = ""
         if not run_id:

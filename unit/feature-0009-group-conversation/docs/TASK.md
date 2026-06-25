@@ -39,6 +39,14 @@ source_of_truth: true
 - **완료 판정(AC)**: 그룹 대화 사이드바에 안 읽은 메세지 수 표시 / 안 읽은 @멘션 별도 표시 / 대화 열람 시 0 / 본인 발신 미포함 / 0이면 배지 숨김. (라이브 실측 = 배포 alembic 0019 후 PB-0008)
 <!-- PLAN-APPROVED by mckim (AskUserQuestion "바로 구현 (권장)") on 2026-06-25 -->
 
+### 2.1.b Plan — gc-unread-baseline (read-state baseline 보정, 2026-06-25)
+- **버그 보고**: 사용자 — "그룹 대화에서 읽은 상태일 경우 전체 메세지 개수(회색)가 출력되는 부분은 의도하지 않음 — 읽지 않은 신규 메세지·멘션 개수만 표현."
+- **원인**: alembic 0019 가 `last_read_message_id` 컬럼을 ADD 만 하고 baseline backfill 을 누락 → `conversation_members` 137행 NULL → `m.id > COALESCE(last_read,0)` 에서 전체 메세지 unread.
+- **해결**: (a) alembic 0020 backfill(NULL→대화별 `MAX(id)`). (b) `add_member` INSERT baseline(가입 시점 `MAX(id)`, ON CONFLICT role-only 로 재참여 커서 보존). frontend 무변경.
+- **위험도**: Major (데이터 마이그레이션 + 멤버 INSERT, deploy-backed, 멱등·비파괴).
+- **완료 판정(AC)**: 읽은 그룹 대화 배지 사라짐(unread=0) / 신규 메세지·멘션만 카운트 / 배포 후 null_cursor=0 / 신규 가입자도 가입 이전 메세지 unread 미집계.
+<!-- 사용자 명시 버그 보고 — 즉시 수정(Major, deploy_scope: included) on 2026-06-25 -->
+
 ## 3. Task Queue (슬라이스)
 - [x] **S1 Foundations** — DDL(conversation_members + sender_account_id + thread_root_message_id) + 멱등 backfill + members(account_id) 인덱스 + membership helper 모듈 (commit 489deb5)
 - [x] **S2 Membership** — ✅백엔드: 멤버십 열람 접근제어(중앙 게이트 + 첨부 게이트 OR, F6 sweep) + 멤버 엔드포인트 + audit + backfill wiring + 신규 권한. ✅roster UI(멤버 버튼·패널·초대·제거/나가기, CHG-0006, PB-0008 보류)
@@ -53,6 +61,12 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
+- **gc-participant-product-select** (참가자 per-message 제품 선택·발화, cross-cut 코드거주=feature-0003, Major §12.3 authz): 중단 세션(372f8779) resume — 코드(B1 ask override·B2 session view-only·F1 드롭업 2그룹·F2 setActiveProduct/sendPrompt) 완료 + 칩 fallback·캐시버스터·검증·docs 완료. §18.8 적대 authz 패널 6가설 REFUTED SHIP(REV-20260625T163424). 잔여: verify-completion → PR → 배포(included) → PB-0008 실측.
+- **gc-run-status-stuck** (그룹대화 '처리 중' 고착/채팅 블로킹 버그, Major 동시성): 코드 완료(워크트리 `ai/claude/gc-run-status-stuck`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 라이브 배포 → smoke 잔여. 근본: run-status 단일 대화 슬롯 vs 계정별 동시 run → run1 done supersede 가드 skip(유실) + FE foreign run hijack. 수정(per-run 해석): 충돌 done/error per-run marker(memory.py) + `/api/progress` client_run_id 해소(app.py) + FE client_run_id 항상 전송·hijack 가드(app.js). §18.8 패널 3 BLOCKING 0. (CHG/REV-20260625T163744)
+  - [x] BE write: set_run_status 충돌 skip 시 done/error per-run marker 기록 (feature-0002 memory.py)
+  - [x] BE read: `_load_run_terminal_marker` + `/api/progress` client_run_id per-run 해소 (feature-0003 app.py)
+  - [x] FE: pollProgress client_run_id 항상 전송 + applyProgressPayload foreign-run hijack 가드 (feature-0003 app.js)
+  - [ ] 라이브 배포 후 다중 사용자 동시 그룹대화 race 검증 (PB-0008 — 배포 후)
 - gc-live-ux2 (라이브 UX 2차): 코드 완료(워크트리 `ai/claude/gc-live-ux2`, 커밋 전) → docs 반영 완료 → verify-completion → PR → 배포 → smoke 잔여.
 - 잔여: S3c(LLM 화자 라벨 라이브 검증) · S5(run cap·llm_usage actor 귀속) [폴링은 ux2 적응형으로 해소]
   - [x] 릴리즈 노트(그룹 대화) + 캐시버스터 (CHG-0007)
@@ -87,7 +101,9 @@ source_of_truth: true
   - [x] 공유 팝업 멤버 추방/차단/해제(gc-member-kick-ban, CHG-0024/REV-0026, **Critical 접근제어**): 소유자가 공유 팝업에서 특정 참여자를 추방(kick=멤버 제거, 재참여 가능)·차단(ban=제거+재참여 영구 차단)·해제(unban). 사용자 결정 **엄격 owner 전용** + unban/차단목록 UI 포함. 추방=기존 `DELETE /members/{id}` 재사용. 차단=신규 `conversation_member_bans`(alembic 0018+GRANT) 등재 → `POST /share/{token}/join` + `POST /public/share/{token}/fork` 양 경로 is_banned 게이트(fail-closed, audit join_blocked/fork_blocked). 신규 owner 전용 엔드포인트 `POST/DELETE /members/{id}/ban` + `GET /bans`. 코어 `group_members.{ban,unban,is_banned,list_bans}`. 캐시버스터 member-kick-ban. **§18.8 적대 보안/authz 패널 — BLOCKER 1(fork 우회 exfiltrate) 적발→수정 + MINOR 3+NIT 1 흡수, 재검증 잔여 0**. 검증: test_member_kick_ban 8 + test_member_ban_endpoints 5 + verify_member_kick_ban 19 + 회귀 전부 PASS. **배포 alembic 0018 필수**. **PB-0008 미실측**(worktree WSL — 배포 후 권장). 코드/문서 정본=feature-0003(+0002 데이터 계층) docs.
   - [x] 사이드바 안 읽은 메세지 배지(gc-unread-badge, CHG-20260625T065840/REV-20260625T065840, **Major §12.3 — REQ-GC-R8 read-state**): 사용자 `/_template:entry` 요청 — 그룹 대화 사이드바에 **안 읽은(새) 메세지 수 + 안 읽은 @멘션 수** 배지(`<안읽음>[ / @<멘션>]`, 그룹 한정·본인 발신 제외·0이면 숨김·멘션 danger 톤). 멤버별 read cursor `conversation_members.last_read_message_id`(alembic 0019) + 읽음 API `POST /api/conversations/{cid}/read`(멤버십 게이트) + 목록 `unread_count`/`unread_mention_count` 집계(PG `~*`/MySQL parity) + FE 배지/읽음처리(열람·활성 도착)/비활성 7s 주기 갱신. 멘션 카운트=`mentions.sql_mention_regex`(파서·FE·SQL 단일 문법). 검증: test_mentions 6/6 + node + CSS 1576 + py_compile PASS. **★배포 alembic 0019 필수 + PB-0008 배포 후 실측(데이터 의존)**. 코드/문서 정본=feature-0009(+cross-feature 0002/0003).
   - [x] 공유 팝업 추방/차단 버튼 hover 펼침 + 그리드 컴팩트화(gc-member-actions-hover, CHG-20260625T030242, **Minor frontend CSS-only**): kick/ban UI 후속(사용자 2차 요청) — 항상-노출 버튼이 칩 폭을 키워 "사용자당 공간 과도" → 기본 숨김 + 칩 hover/focus 시 애니메이션 펼침. 참여자/차단 목록을 **반응형 그리드**(셀 고정)로 — 한 셀 hover 확장이 다른 칩 위치를 안 바꿈(요구) + 이름 flex:1 로 평소 여백 0 + 다열 세로 단축(세로 스택 여백 대안). 순수 CSS(app.js DOM·핸들러·권한 무변경), 캐시버스터 member-actions-hover. 검증: CSS brace 1571=1571 + `verify_member_actions_hover.mjs` 15/15 + 기존 무회귀. 패널 SKIP(표현계층·로직/보안 0). **신규 timestamp+slug AC 형식 첫 적용**(ADR-20260625T023049-spec-anchor-timestamp-id). **PB-0008 미실측**(worktree WSL — 배포 후 권장). 코드/문서 정본=feature-0003 docs.
+  - [x] 그룹대화 @assistant 발신자 귀속(gc-ask-sender-attrib, CHG-20260625T162000/REV-20260625T162000, **Major §12.3 backend 배선**): 그룹 대화에서 멤버가 `@assistant` 를 호출한 user 메시지가 표시 store 미러에서 대화 owner(생성자) 프로필로 **오귀속**되던 것을 실제 발신 멤버(actor)로 귀속. 사람-채팅 경로(`_save_group_chat_message_pg`)는 이미 미러 meta 에 발신자를 실었으나 ask 경로 user 턴은 누락 → FE owner 폴백. 변경: feature-0002 `agent_core.py`(`run_agent`/`_run_agent_core` 에 `sender_username` + user 미러 meta, 사람-채팅과 동일 키 집합·`sender_username and account_id` 게이트로 1:1/그룹 분기) + `modules/ask.py`(`_payload_to_kwargs` worker 복원) + feature-0003 `app.py`(ask dispatch 그룹 한정 `sender_username=account.username` 계산 + inproc run_kwargs + worker enqueue payload). 신규 authz 0(account_id 는 기존 actor), 스키마/캐시버스터 0(표시용 미러 meta). 1:1·비그룹 무회귀. 검증: test_ask_worker 7/7 + 회귀(ask_jobs·group_history_merge) 20/20 + py_compile 3 + §18.8 적대 패널(correctness+security) BLOCKER 0/MAJOR 0(MINOR ACCEPTED-as-is: `if account_id` 대칭화는 1:1 회귀 유발). **PB-0008 미실측**(배포 후 라이브 그룹대화 권장). 코드 정본=feature-0002(+0003) docs.
   - [x] 그룹대화 상대방 메시지 좌측 정렬(gc-other-msg-left, CHG-20260625T065430/REV-20260625T065430, **Minor frontend CSS-only**): 사용자 요청(`/_template:entry`) — 그룹/공유 대화에서 자신의 메시지(`is-own-message`)는 우측 유지, assistant 와 상대방(타 참여자, `is-other-message`)은 좌측 출력. app.js `renderMessages()` 가 이미 부여하던 class 를 그대로 사용 → styles.css 정렬 규칙만 분기(`.message.is-user.is-other-message{align-self:flex-start}`, 특이도 0,3,0 override) + 좌측 정렬 버블 꼬리(border-radius) 좌측 하단화. 그룹채팅 관례(내=우측/타인=좌측)와 정합, assistant 와 좌측 기준선 통일. 순수 CSS(app.js·백엔드·스키마·RBAC 무변경), 캐시버스터 gc-other-msg-left. 검증: `node --check`(app.js 무변경) + 충실한 mock 렌더(실 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측(rightGap 25)/other·assistant=좌측(leftGap 25 동일 기준선). 패널 SKIP(표현계층·로직/보안 0). **PB-0008 미실측**(worktree WSL — 배포 후 실 그룹대화 권장). 코드/문서 정본=feature-0003 docs.
+  - [x] 사이드바 안 읽은 메세지 baseline 보정(gc-unread-baseline, CHG-20260625T165320/REV-20260625T165320, **Major §12.3 — 데이터 마이그레이션**): 사용자 보고 — 읽은 그룹 대화에도 "전체 메세지 개수(회색)" 배지 출력. 원인=0019 가 baseline backfill 누락(`conversation_members` 137행 NULL → `m.id > COALESCE(last_read,0)` 전체 unread). 수정=alembic 0020 backfill(NULL→대화별 `MAX(id)`) + `group_members.add_member` INSERT baseline(가입 시점 `MAX(id)`, ON CONFLICT role-only 로 재참여 커서 보존). frontend 무변경(배지 로직 정상). 검증: py_compile(group_members·0020) + §18.8 적대 패널 2렌즈(데이터정확성·보안/회귀) SHIP·BLOCKING 0. **★배포 alembic 0020 필수 + PB-0008 배포 후**. 코드/문서 정본=feature-0009(+cross-feature 0002).
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연
@@ -95,9 +111,9 @@ source_of_truth: true
 - [x] 전체/통합 테스트: 컨테이너 make test 대상(병합·권한계약), 라이브 smoke 는 배포 후
 - [x] FUNCTION.md가 현재 동작과 일치한다
 - [x] MODIFY.md에 변경 이력이 기록되었다 (cross-feature 편집 포함)
-- [ ] REVIEW.md에 판단 근거가 기록되었다
-- [ ] REPORT.md에 최종 상태가 반영되었다
-- [ ] TEST.md에 테스트 결과가 기록되었다
-- [ ] docs/SECURITY.md 에 AR-1/AR-2 수용 위험이 등재되었다
-- [ ] STATUS.md에 기능 상태가 갱신되었다
+- [x] REVIEW.md에 판단 근거가 기록되었다
+- [x] REPORT.md에 최종 상태가 반영되었다
+- [x] TEST.md에 테스트 결과가 기록되었다
+- [ ] docs/SECURITY.md 에 AR-1/AR-2 수용 위험이 등재되었다 (gc-unread-baseline 무관 — 새 위험 0)
+- [x] STATUS.md에 기능 상태가 갱신되었다
 - [ ] Git 커밋·원격 동기화가 완료되었거나 보류 사유가 기록되었다

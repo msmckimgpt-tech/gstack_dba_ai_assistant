@@ -4716,6 +4716,26 @@ source_of_truth: true
 - Rollback: app.py 메시지 1곳 revert. 로직 영향 0.
 - Deploy: web 재빌드·재시작(app.py). 마이그/스키마/static 없음.
 
+## CHG-20260625T163424-gc-participant-product-select (feature-0009 cycle, Major §12.3 — authz 경계: 참가자 발화 RBAC) — 중단 세션 resume
+- Date: 2026-06-25 (feature-0009 group-conversation cross-cut cycle `gc-participant-product-select`). 코드/문서 정본=feature-0003 — feature-0009 cross-ref. 원본 작성 세션(372f8779)이 코드 작성 직후 docs 직전 중단 → resume 으로 마무리.
+- Scope: 공유 대화(그룹 대화) **참가자(비-owner 멤버)가 제품을 per-message 로 선택·발화**. 대화 공통 고정 제품에 본인 접근권이 없어도, **본인이 권한 가진 다른 제품**으로 이 요청에 한해 질의할 수 있다. ANCHOR §1 / REQ-GC-R7("발화는 발신자 본인 RBAC 로만 게이트") 보존 — 권한 *상속* 아님, 본인 권한 범위 내 선택. 대화 공통 바인딩은 비파괴(per-message override 가 대화 product 를 바꾸지 않음). owner·1:1 대화는 종전 PATCH 단일 경로 유지.
+- 내용(백엔드 `src/app.py`):
+  - `_parse_participant_product_override(conn, account, data)` 신규: body 의 `product_id`/`product_mode` override 를 파싱·검증. 선택 pinned 제품은 **발신자 본인** `_account_has_product_access` 통과분만 허용(무권한 → `{ok:False}` → 호출부 403). auto override 는 pid 검사 전 early-return(product_id=None). `0`/빈/파싱실패 pid → None(override 미적용, 표준 view-only 게이트 폴백).
+  - `_conversation_view_only_products_for(conn, conversation_id, viewer_account)` 신규: 참가자가 보는 대화 고정 제품에 본인 접근권이 없을 때 '생성자 제품 — 열람 전용' **1건**만 반환(fail-closed: 비대화/owner/비멤버/auto·미고정/이미 접근가능 → []). 생성자 전체 카탈로그 미노출.
+  - `get_session`: `/api/session` 응답에 `conversation_view_only_products` 동봉(except → []).
+  - `ask` 핸들러: member 분기에서 `_participant_product_override` 채움 → 무권한 시 403, override 시 대화 공통 pinned 접근권 게이트 skip. run-product 단계에서 override 적용(pinned 시 `_account_has_product_access` **재확인** = authz 이중 게이트) + override 요청은 대화 공통 product_id backfill UPDATE skip(`_participant_product_override is None` 가드).
+- 내용(프론트 `static/app.js`):
+  - `isParticipantInSharedConversation()` 신규: `isGroupConversation && !isOwnConversation`(owner·1:1 → false).
+  - `renderProductDropupMenu`: view-only 그룹 있으면 상단 헤더 "내 제품" + 하단 '공유 대화 생성자 제품 (열람 전용)' 회색·비활성 그룹 분리. `buildProductDropupItem` 에 `viewOnly` 옵션(disabled·aria-disabled·열람전용 배지·click listener 미등록).
+  - `applyProductHydration`: 접근 불가 대화 고정 제품은 active pinned 으로 채택 안 함(auto 강등 — 항상 발화 가능), `viewOnlyProducts` 적재.
+  - `setActiveProduct`: 참가자는 PATCH(403 유발) 미호출 — 로컬 상태만 갱신 + "다음 메시지부터 적용" 토스트 후 return. `sendPrompt`: 참가자일 때 `product_mode`/`product_id` per-message 동봉. `state.conversationViewOnlyProducts: []` 명시 초기화.
+  - `static/styles.css`: `.product-dropup-section-head--viewonly`(구분선) + `.is-view-only`(회색·not-allowed) + `.product-dropup-item-viewonly`(열람전용 배지). `index.html` 캐시버스터 app.js·styles.css → `20260625-gc-participant-product-select`.
+- Why: 공유 대화에서 참가자가 대화 고정 제품에 권한이 없으면 발화가 막혀, '함께 보고 논의'하다 본인 권한 제품으로 이어 질의할 길이 없었다. owner 의 대화 공통 바인딩(PATCH)과 분리된 per-message 경로로, 권한 경계(R7)를 깨지 않고 참가자 질의를 허용.
+- Impact: owner·1:1 대화 무회귀(override 분기 member-only, FE `isParticipantInSharedConversation` owner/1:1 false). 대화 공통 product_id persist 경로 없음(backfill skip). view-only 노출은 대화 고정 1건 한정. auto override → 메타 스키마만(actor 접근 datasource 제한).
+- Verification: `node --check`(app.js) PASS + `py_compile`(app.py) PASS + CSS brace 1577=1577. **§18.8 적대적 authz 패널(SUBAGENT) — 6개 공격가설(권한우회·바인딩오염·owner회귀·view-only과다·FE정합·auto) 전부 REFUTED, VERDICT SHIP, BLOCKING 0**(REV-20260625T163424). 단위 회귀는 Docker `make test`(modules.memory import — 로컬 PYTHONPATH 불가). **PB-0008 미실측**(worktree=WSL — 배포 후 실 그룹대화 권장).
+- Files: `src/app.py`, `static/app.js`, `static/styles.css`, `static/index.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md` (+ feature-0009 `docs/{TASK,REPORT,MODIFY,REVIEW,FUNCTION}.md` cross-ref).
+- Rollback: app.py 의 두 helper + ask/get_session override 블록 revert + app.js 의 view-only/참가자 분기 revert + styles.css view-only 블록 + 캐시버스터 revert. 스키마/마이그 0(순수 코드).
+- Deploy: web 재빌드(static baked + app.py, deploy_scope: included) + cache-buster 반영. 마이그/백엔드 스키마 없음.
 ## CHG-20260625T065430-gc-other-msg-left (feature-0009 cross-feature, Minor §12.3 — frontend CSS-only)
 - Date: 2026-06-25 (REV-20260625T065430-gc-other-msg-left). worktree `ai/claude/gc-other-msg-left`. 그룹대화 UX(feature-0009) — 코드 정본=feature-0003-agent-web-ui static.
 - Reason: 사용자 요청(`/_template:entry`) — 그룹대화에서 자신의 메시지 버블은 우측 유지, assistant 와 상대방(타 참여자) 대화는 좌측에 출력.

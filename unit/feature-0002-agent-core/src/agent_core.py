@@ -38,7 +38,7 @@ from shared.config import (
     AGENT_LOG_DIR, AGENT_MEMORY_CLEAR_KEEP_IDS,
     AGENT_OPENAI_MAX_RETRIES,
 )
-from shared.db import connect_with_retry, execute_sql as raw_execute_sql
+from shared.db import connect_with_retry, execute_sql as raw_execute_sql, DatasourceCircuitOpen
 from modules.memory import (
     _cancel_requested,
     _clear_cancel_request,
@@ -2710,6 +2710,7 @@ def run_agent(
     product_id: int | None = None,
     role_id: int | None = None,
     account_id: int | None = None,
+    sender_username: str | None = None,
     allowed_schemas: list[str] | None = None,
     product_mode: str = "pinned",
     attachment_ids: list[int] | None = None,
@@ -2721,6 +2722,12 @@ def run_agent(
     eval_datasource: "dict | None" = None,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
+
+    sender_username: feature-0009 gc-ask-sender-attrib — 그룹 대화에서 @assistant 를
+    호출한 발신 멤버의 username. 주어지면(=그룹 대화 발신) user 메시지의 *표시 store 미러*
+    meta 에 발신자 귀속(sender_account_id/sender_username)을 실어 UI 가 "누가 보냈는지"를
+    실제 발신자로 표시하게 한다(미주입 시 FE 가 대화 owner 로 폴백 → 생성자 프로필 오귀속).
+    None(=1:1 대화)이면 기존 동작 무변경.
 
     eval_datasource (ITEM-01 평가 harness 전용, None-gated): 주어지면 product/registry
     datasource 라우팅을 우회하고 이 좌표 dict 를 data-plane 연결로 직접 쓴다. 운영 호출은
@@ -2755,6 +2762,7 @@ def run_agent(
             product_id=product_id,
             role_id=role_id,
             account_id=account_id,
+            sender_username=sender_username,
             product_mode=product_mode,
             run_id=run_id,
             queued_ms_seed=queued_ms_seed,
@@ -2785,6 +2793,7 @@ def _run_agent_core(
     product_id: int | None = None,
     role_id: int | None = None,
     account_id: int | None = None,
+    sender_username: str | None = None,
     product_mode: str = "pinned",
     run_id: str | None = None,
     queued_ms_seed: float | None = None,
@@ -2941,7 +2950,11 @@ def _run_agent_core(
             db_conn = _ds_router.conn_for(_ds_router.resolve_label(None))  # primary lazy 연결
         except Exception as e:
             cfg.CURRENT_RUN_ID = ""
-            result["error"] = f"DB 연결 실패(멀티 datasource primary): {e}"
+            # 회로차단은 일시 지연·자동복구 — "실패" 프레이밍 회피(신뢰 보호, 보고 2026-06-25).
+            if isinstance(e, DatasourceCircuitOpen):
+                result["error"] = e.user_message()
+            else:
+                result["error"] = f"DB 연결 실패(멀티 datasource primary): {e}"
             if output_mode == "console":
                 console.print(Panel.fit(result["error"], title="오류"))
             return result
@@ -2967,7 +2980,12 @@ def _run_agent_core(
                 db_conn = connect_with_retry(database=None, autocommit=True, datasource=_ds)
             except Exception:
                 cfg.CURRENT_RUN_ID = ""
-                result["error"] = f"DB 연결 실패: {e}"
+                # 회로차단(연결 격리)은 일시 지연·자동복구라 "실패/차단" 프레이밍을 쓰지 않는다 —
+                # 사용자 신뢰 보호(보고 2026-06-25). 그 외 연결 오류만 "DB 연결 실패" 로 표기.
+                if isinstance(e, DatasourceCircuitOpen):
+                    result["error"] = e.user_message()
+                else:
+                    result["error"] = f"DB 연결 실패: {e}"
                 if output_mode == "console":
                     console.print(Panel.fit(result["error"], title="오류"))
                 return result
@@ -3010,9 +3028,24 @@ def _run_agent_core(
 
     # ── 사용자 메시지 저장 ──
     # feature-0009: 그룹 대화 발신자 귀속 — account_id(=actor, ask 호출자)를 sender 로 기록.
+    # gc-ask-sender-attrib: 표시 store 미러에도 발신자 meta 를 실어, FE 가 user 메시지를
+    # 실제 발신자 프로필로 표시하게 한다(미주입 시 대화 owner=생성자 프로필로 폴백 → 오귀속).
+    # 사람-채팅 경로(_save_group_chat_message_pg)의 meta 와 동일 키 집합(sender_account_id/
+    # sender_username/group_chat). 단 이 경로는 1:1+그룹 양용이라 부착을 sender_username 유무로
+    # 게이트한다 — sender_username 은 app.py 가 그룹 발신에만 주입(그룹 게이트 proxy). 미주입
+    # (None=1:1 또는 비그룹)이면 meta=None → 기존 동작(미러 meta 없음) 무변경. account_id 만으로
+    # 게이트하면 1:1 에도 group_chat meta 가 붙어 회귀하므로 sender_username AND 가드가 필수.
     if _writes_allowed(mem_conn, cid):
         _save_message(mem_conn, cid, "user", content=user_message, sender_account_id=account_id)
-        _mirror_message(mem_conn, cid, "user", user_message, run_id)
+        _user_mirror_meta = (
+            {
+                "sender_account_id": int(account_id),
+                "sender_username": sender_username,
+                "group_chat": True,
+            }
+            if (sender_username and account_id) else None
+        )
+        _mirror_message(mem_conn, cid, "user", user_message, run_id, meta=_user_mirror_meta)
     try:
         save_memory_kv(mem_conn, cid, "last_run_id", run_id)
         set_run_status(mem_conn, cid, "processing", run_id=run_id)

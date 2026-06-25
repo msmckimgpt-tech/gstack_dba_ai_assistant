@@ -316,6 +316,14 @@ source_of_truth: true
 - Rollback Notes: feature-0003 styles.css 그리드+hover 블록 + 캐시버스터 + 테스트 revert. JS/백엔드/스키마 0.
 - 검증: CSS brace 1571=1571 + `verify_member_actions_hover.mjs` 15/15 + 기존 `verify_member_kick_ban.mjs` 무회귀(JS/DOM 불변). 패널 SKIP(순수 CSS 표현계층·로직/보안 0, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 권장).
 
+## CHG-20260625T163424-gc-participant-product-select (cross-feature → feature-0003, Major §12.3 — authz 경계: 참가자 발화 RBAC) — 중단 세션 resume
+- Date: 2026-06-25. 코드/문서 정본=feature-0003-agent-web-ui(`src/app.py`·`static/{app.js,styles.css,index.html}`·`docs/*`) — 본 항목은 feature-0009 cross-feature 추적. 원본 작성 세션(372f8779)이 docs 직전 중단 → resume 마무리.
+- Reason: REQ-GC-R7 구체화 — 공유 대화 참가자(비-owner)가 대화 공통 고정 제품 접근권이 없어 발화가 막히던 갭. '함께 보고 논의'하다 본인 권한 제품으로 이어 질의할 길을 per-message override 로 제공(권한 경계 불변).
+- 변경(feature-0003): 백엔드 `_parse_participant_product_override`(발신자 본인 RBAC 게이트, 무권한 403) + `_conversation_view_only_products_for`(생성자 제품 열람전용 1건, fail-closed) + `/api/session` `conversation_view_only_products` + `/api/ask` member 분기 override 적용·run-product 재게이트·backfill skip. 프론트 `isParticipantInSharedConversation` + 드롭업 2그룹 분리(view-only 회색·비활성) + setActiveProduct 로컬-only(PATCH 미호출) + sendPrompt per-message 동봉. 캐시버스터 `gc-participant-product-select`.
+- 설계 정합(ANCHOR §1): 발화는 발신자 본인 권한으로만 게이트(권한 상속 아님) + 대화 공통 바인딩 비파괴(per-message override). owner·1:1 무회귀.
+- Impact: owner/1:1 종전 PATCH 경로 유지. 스키마/마이그 0(순수 코드). 신규 RBAC/엔드포인트 0(기존 helper 재사용).
+- 검증: node --check + py_compile + CSS brace 1577=1577 + **§18.8 적대 authz 패널 6가설 REFUTED SHIP**(feature-0003 REV-20260625T163424). **PB-0008 미실측**(worktree=WSL — 배포 후 권장).
+- Cross-ref: feature-0003 CHG·REV-20260625T163424-gc-participant-product-select.
 ## CHG-20260625T065430-gc-other-msg-left (cross-feature → feature-0003, Minor §12.3 — frontend CSS-only)
 - Date: 2026-06-25 (CHG-20260625T065430/REV-20260625T065430). worktree `ai/claude/gc-other-msg-left`. 코드/문서 정본=feature-0003-agent-web-ui(`static/styles.css`·`index.html`·`docs/*`) — 본 항목은 feature-0009 cross-feature 추적.
 - Reason: 사용자 요청(`/_template:entry`) — 그룹대화에서 자신의 메시지 버블은 (기존처럼) 우측, assistant 와 상대방의 대화는 좌측에 출력하도록 구성.
@@ -324,6 +332,20 @@ source_of_truth: true
 - Impact: 1:1 본인 대화(`is-own-message` 우측) 무회귀. JS/DOM/핸들러/엔드포인트/RBAC/스키마 0. 순수 표현계층.
 - Rollback Notes: feature-0003 styles.css 2블록 + index.html 캐시버스터 revert. JS/백엔드/스키마 0.
 - 검증: `node --check static/app.js` PASS(무변경) + 충실한 mock 렌더(실 styles.css + renderMessages DOM, Chromium headless) 수치/스크린샷 — own=우측(rightGap 25)/other·assistant=좌측(leftGap 25 동일 기준선)/멘션 하이라이트 상대방 좌측+강조선. 패널 SKIP(순수 CSS, feature-0003 REVIEW [SKIPPED:frontend-css-presentation-no-logic]). **PB-0008 미실측**(본 worktree=WSL — 배포 후 실 그룹대화 권장).
+
+## CHG-20260625T163744-gc-run-status-stuck (cross-feature → feature-0002+0003, Major §12.3 — 동시성/run-status 핵심 경로)
+- Date: 2026-06-25 (CHG-20260625T163744/REV-20260625T163744). worktree `ai/claude/gc-run-status-stuck`. 코드 정본=feature-0002-agent-core(`modules/memory.py`)+feature-0003-agent-web-ui(`app.py`·`static/app.js`) — 본 항목은 feature-0009 cross-feature 추적.
+- Reason: 사용자 보고(`/_template:entry` → `/_template:resume` 재개) — 그룹대화에서 UserA 의 @assistant 요청 처리 중 UserB 가 채팅을 보내면, Assistant 가 '처리 중' 에서 완료 처리가 진행되지 않고(실제로 완료돼도) 다른 사용자의 채팅이 블로킹된다.
+- 근본 원인: run-status 가 `agent_runtime.kv` 의 대화 단위 **단일 슬롯**(`last_status`/`last_status_run_id`)인데, 그룹대화는 계정별 동시 run 이 설계상 허용(REQ-GC-R3; ask 슬롯 `account:{id}`). UserB 요청의 enqueue sentinel→run2 가 슬롯을 점유 → run1 완료 시 `set_run_status("done", run_id=run1, only_if_current_run=True)`(agent_core 3547)가 supersede 가드(`cur_rid=run2≠run1`, TASK-0241)로 **skip → run1 done 영영 미기록**. FE `applyProgressPayload`(app.js 5117)는 서버가 돌려준 foreign run_id 로 progressRunId 를 **갈아타** 자기 run1 완료를 영영 못 봄 → '처리 중' 고착 → composer(`loadHistory` 의 `last_status==processing`→`busyConversations`) 블로킹. (FUNCTION §4 가 이미 인지: run-status KV 단일 키, per-thread 재키잉은 S6 이연.)
+- 변경(per-run 상태 해석, 최소 침습 — S6 전면 재키잉 아님):
+  - feature-0002 `modules/memory.py` `set_run_status`: supersede 가드 skip 분기(다른 run 이 슬롯 점유)에서 **done/error** 종료 상태를 per-run marker `run_term_status:{rid}`/`run_term_at:{rid}` 로 기록(`save_memory_kv`, PG). canceled 는 작성자가 추적을 멈춘 상태라 미기록(1:1 취소-재요청 누적 차단).
+  - feature-0003 `app.py`: 신규 `_load_run_terminal_marker(conn,cid,rid)`(PG-우선·MySQL-폴백, `_load_progress_status` 패턴 동일) + `/api/progress` 가 `client_run_id != 슬롯 run_id` 이고 marker 존재 시 status/run_id 를 client 자기 run 으로 해소(`_compute_display_status`·fallback 보다 선행 → terminal 일관).
+  - feature-0003 `static/app.js`: `pollProgress` 가 `client_run_id` 항상 전송(기존 `after_step>0` 조건 제거). `applyProgressPayload` 선두에 가드 — 자기 progressRunId 추적 중 서버가 *다른* 아직-처리중 run 보고 시 early-return(foreign run 으로 버블 hijack 금지; 자기 run 완료는 서버가 per-run 으로 해소).
+- Why(설계): 직렬화(대화당 단일 run)는 REQ-GC-R3(발신 actor 별 응답)에 반함 → per-run 상태 해석 채택. 충돌로 유실되는 done/error 만 marker 로 보존하고 read-side(`/api/progress`)에서 client_run_id 로 해소 → 슬롯 모델/대다수 reader 무변경(blast radius 최소).
+- Impact: 1:1 단일 run 대화 무회귀(슬롯 run==progressRunId → FE 가드·marker 미발동, BE 일반 경로). 신규 KV 키는 명시 `IN(...)` allowlist 밖이라 대화목록 KV dump/`list_processing_conversation_ids`/orphan recovery 누수 0(LIKE/prefix 매칭 없음). 동시 처리중 창에서 자기 run 의 *라이브 step* 은 미표시('처리중+elapsed' 표시, 완료 즉시 해소) — 의도된 동작(이전엔 foreign step 오표시=버그).
+- Rollback Notes: 3파일 revert(memory.py 가드 분기 marker 블록 / app.py 헬퍼+progress 해소 블록 / app.js 2블록). 스키마 변경 0(KV 키만, DDL 무변경). 이미 기록된 `run_term_*` 키는 무해 dead-data(다음 reader 무시).
+- 잔여(수용, §18.8 패널 기록): done/error 충돌 marker 의 일괄 TTL 정리는 미구현 — FUNCTION §4 S6 per-thread 재키잉에 흡수 이연. 충돌 시에만·tiny row 라 누적 완만.
+- 검증: `py_compile`(memory.py/app.py) + `node --check`(app.js) PASS. §18.8 적대적 패널 3(동시성/FE회귀/BE데이터) — 진짜 BLOCKING 0(REV 참조). **PB-0008 미실측**(본 worktree=WSL; 다중 사용자 동시 race 라 배포 후 라이브 그룹대화 검증 권장).
 
 ## CHG-20260625T065840-gc-unread-badge (REQ-GC-R8 read-state, Major §12.3 — 스키마 추가+백엔드+프론트)
 - Date: 2026-06-25. 사용자 요청(`/_template:entry`): "그룹 대화 사이드바에 진행된 메세지 개수 표시, 자신의 멘션은 별개 집계, 형식 `<전체>[ / @<멘션>]`" + 명확화 "(실제 메신저처럼) **새 메세지(안 읽은) 기준**".
@@ -343,3 +365,28 @@ source_of_truth: true
 - Impact: 순수 additive — 신규 nullable 컬럼 1(기존 멤버 last_read=NULL=전부 unread→열람 시 0), 신규 엔드포인트 1(멤버십 게이트), 목록 payload 필드 2 추가. 기존 동작 무변경(배지는 그룹 대화에만 신규 표면). production=PG 경로 정본, MySQL 은 레거시 parity(try/except).
 - Rollback Notes: alembic downgrade(DROP COLUMN) + schema.sql/app.py ALTER 제거 + group_members 2함수 + mentions.sql_mention_regex + app.py 엔드포인트/집계 + app.js/styles.css/index.html FE + 테스트 revert. 데이터 무손실(컬럼 ADD 만).
 - 검증: py_compile(app.py·group_members·mentions·migration) OK + node --check(app.js·mentions.js) OK + CSS brace 1576=1576 + test_mentions 6/6(기존 3 + sql_mention_regex 파리티 3) PASS + §18.8 적대 패널 3렌즈(authz·correctness·perf) SHIP(BLOCKING 0). **PB-0008 미실측**(본 worktree=WSL + 배지 동작은 alembic 0019 적용 후 라이브에서만 데이터 발생 → 배포 후 실측 권장, TEST.md §3). **★배포 alembic 0019 필수.**
+
+## CHG-20260625T162000-gc-ask-sender-attrib (cross-feature → feature-0002+0003, Major §12.3)
+- Date: 2026-06-25 (CHG-20260625T162000/REV-20260625T162000). worktree `ai/claude/gc-ask-sender-attrib`.
+- Reason: 그룹 대화에서 멤버가 `@assistant` 를 호출하면 그 user 메시지가 표시 store 미러(/api/history 노출)에서 **대화 owner(생성자) 프로필로 오귀속**됐다. 사람-채팅 경로(`_save_group_chat_message_pg`)는 이미 미러 meta 에 발신자를 실어 올바로 표시하나, ask(@assistant) 경로의 user 턴은 미러 meta 가 없어 FE 가 owner 로 폴백 → 오귀속. 실제 발신 멤버(actor)로 귀속 수정.
+- 변경(feature-0002 `src/agent_core.py`): `run_agent`/`_run_agent_core` 에 `sender_username: str | None = None` 파라미터 추가(래퍼→코어 forward). user 메시지 저장 직후 `_mirror_message(..., meta=_user_mirror_meta)` 로 발신자 meta(`sender_account_id`/`sender_username`/`group_chat`) 부착 — 사람-채팅 경로와 **동일 키 집합**. 부착 게이트 `if (sender_username and account_id)` — 양용(1:1+그룹) 경로라 `sender_username` 유무로 그룹 판정(app.py 가 그룹에만 주입). 미주입(None=1:1/비그룹)이면 meta 미부착 → 기존 동작 무변경.
+- 변경(feature-0002 `src/modules/ask.py`): `_payload_to_kwargs` worker 복원에 `sender_username` 추가 — worker mode 에서도 inproc 와 동등 전달(미포함 시 worker 만 발신자 누락 → 두 모드 동작 분기).
+- 변경(feature-0003 `src/app.py`): ask dispatch 직전 `_sender_username_for_run` 계산 — `_conversation_is_group(conv_id or "")` 이면 `str(account.get("username") or "")`, 아니면 None. inproc run_kwargs 에 `sender_username=` 전달 + worker enqueue payload(`_dispatch_ask_run_worker`)에 `sender_username` 추가(주석 kwargs 12→13개).
+- 변경(feature-0002 `tests/test_ask_worker.py`): `_payload_to_kwargs` round-trip 에 sender_username 단언 + defaults 미주입 None 단언 + 신규 `test_run_agent_accepts_sender_username_param`(run_agent/_run_agent_core 시그니처·default None).
+- Why(설계): account_id 는 이미 actor(ask 호출자)로 user 메시지에 기록되고 있었음(feature-0009 S3) → 신규 authz 미도입. 이번 변경은 *표시*용 미러 meta 부착뿐. sender_username 출처는 서버 인증 actor(클라 입력 아님) → 위변조 불가.
+- Impact: 1:1·비그룹·신규 대화 무회귀(sender_username None → meta 미부착). 그룹 ask 만 user 메시지 발신자 표시 정정. 스키마/DDL/RBAC/엔드포인트 0(미러 meta jsonb 부착뿐).
+- Rollback Notes: 3파일 revert. 스키마/마이그레이션 0 → 무상태 롤백 가능. 캐시버스터 불요(FE 미변경 — 미러 meta 는 기존 user 분기 렌더가 이미 소비).
+- 검증: `test_ask_worker.py` 7/7 + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile` PASS. §18.8 적대 패널(general-purpose, correctness+security) BLOCKER 0/MAJOR 0(MINOR 1 ACCEPTED-as-is: `if account_id` 대칭화는 1:1 회귀 유발 → 현 가드 정답 / NIT 1 주석 정확화 반영). REV-20260625T162000 참조. **PB-0008 미실측**(백엔드 배선 — 표시 정정은 배포 후 라이브 그룹 대화 권장).
+
+## CHG-20260625T165320-gc-unread-baseline (REQ-GC-R8 read-state 보정, Major §12.3 — 데이터 마이그레이션 + 멤버 baseline)
+- Date: 2026-06-25. 사용자 보고: "그룹 대화에서 읽은 상태일 경우 전체 메세지 개수(회색)가 출력되는 부분은 의도하지 않음 — 읽지 않은 신규 메세지·멘션 개수만 표현되도록."
+- Related: gc-unread-badge(CHG-20260625T065840) 후속 결함 수정. REQ-GC-R8.
+- **원인**: alembic 0019 가 `last_read_message_id` 컬럼을 ADD 만 하고 baseline backfill 을 누락 → 기존 `conversation_members` 137행 전부 NULL → unread 집계 `m.id > COALESCE(last_read,0)` 에서 *기존 메세지 전체*가 unread → 읽은 대화에도 "전체 개수" 회색 배지 표시.
+- Summary: (a) **alembic 0020 backfill** — NULL 멤버 커서를 대화별 `MAX(core_messages.id)` 로 초기화(배포 이전 메세지=읽음 간주). (b) **group_members.add_member INSERT 에 last_read baseline**=가입 시점 `MAX(id)` (재발 방지). frontend 무변경(배지 로직 정상 — 데이터 보정).
+- Files:
+  - `unit/feature-0002-agent-core/alembic/versions/20260625_0020_conversation_member_last_read_backfill.py` (신규): NULL 행 `UPDATE`→대화별 `MAX(id)`(GROUP BY conversation_id). down_revision=0019. 멱등(`IS NULL` 가드). downgrade no-op(원래 NULL 행 식별 불가).
+  - `unit/feature-0002-agent-core/src/modules/group_members.py` (cross-feature): `_PG_ADD_MEMBER` INSERT 에 `last_read_message_id = (SELECT MAX(id) FROM agent_runtime.core_messages WHERE conversation_id = %(conversation_id)s)`. `ON CONFLICT … DO UPDATE SET role` 은 role 만 갱신(재참여 시 커서 보존).
+- 설계: 가입/배포 *이전* 메세지는 "신규 아님"=읽음. cursor=message_id, 집계 strict `>` 라 baseline 이하=unread 0, 이후 신규만 집계. 메세지 0건 대화=NULL 유지(첫 메세지부터 unread). 모든 멤버 INSERT 경로(owner 자가치유·share join)가 add_member 단일 funnel → baseline 우회 없음.
+- Impact: 순수 데이터 보정 + INSERT 1컬럼. 스키마 DDL 0(0019 컬럼 재사용), 엔드포인트/RBAC/FE 0. production=PG 정본(멤버 write PG 단일경로). MySQL=read parity(무영향).
+- Rollback: alembic downgrade 0019(backfill no-op) + add_member INSERT 컬럼 revert. 데이터 무손실(UPDATE 만).
+- 검증: py_compile(group_members·0020) OK + §18.8 적대 패널 2렌즈(데이터정확성·보안/회귀) **SHIP, BLOCKING 0**. 라이브 backfill 적용 + unread smoke + PB-0008 배포 후. **★배포 alembic 0020 필수.**

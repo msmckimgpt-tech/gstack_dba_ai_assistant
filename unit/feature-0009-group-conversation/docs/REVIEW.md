@@ -279,6 +279,25 @@ source_of_truth: true
 - Verification: pytest 신규 6/6 + 관련 share 20/20 + `node --check` + `py_compile`. PB-0008 미실측(worktree WSL — 배포 후 권장).
 - Human Approval Needed: 아니오 (사용자 명시 요청 + AskUserQuestion D1/D2 반영, backend authz 강화·무회귀).
 
+## REV-20260625T163424-gc-participant-product-select [SUBAGENT:cross-ref-feature-0003]
+- Date: 2026-06-25 (중단 세션 resume).
+- Cycle: gc-participant-product-select (CHG-20260625T163424) — 공유 대화 참가자(비-owner)의 per-message 제품 선택·발화. **Major §12.3** authz 경계, 코드 거주=feature-0003.
+- 정본: 코드/리뷰 정본 = feature-0003 `docs/REVIEW.md` REV-20260625T163424-gc-participant-product-select(적대적 authz 서브에이전트 — 6개 공격가설[권한우회·바인딩오염·owner회귀·view-only과다·FE정합·auto] 전부 REFUTED, **VERDICT SHIP, BLOCKING 0**). 본 entry 는 cross-feature 추적.
+- 핵심: ANCHOR §1 / REQ-GC-R7 보존 — 발화는 발신자 본인 RBAC 로만 게이트(권한 상속 없음), 대화 공통 바인딩 비파괴. authz 이중 게이트(parse + run-product 재확인).
+## REV-20260625T163744-gc-run-status-stuck [SUBAGENT:concurrency-run-status]
+- Date: 2026-06-25
+- Cycle: gc-run-status-stuck (CHG-20260625T163744) — 그룹대화 동시 run 충돌로 인한 '처리 중' 고착/채팅 블로킹 fix. **Major §12.3 (동시성·run-status 핵심 경로, 인가/파괴적 변경 없음)**, worktree `ai/claude/gc-run-status-stuck`.
+- Related Change: feature-0002 `modules/memory.py`(set_run_status per-run marker) + feature-0003 `app.py`(`_load_run_terminal_marker`+`/api/progress` 해소) + `static/app.js`(client_run_id 항상 전송+foreign-run hijack 가드).
+- Reason: 동시성·핵심 send/run-status 경로 인접 → §18.8 적대적 패널 필수. 라이브 자동 배포(deploy_scope: included)라 회귀 차단 검증 필요.
+- 적대적 검증(Explore 서브에이전트 3, lens 분리 — 동시성/FE회귀/BE데이터; "통과 아닌 결함 적발"):
+  - **동시성/race**: per-run marker 가 *살아있는* run 을 오해소하나 → 반증(run_id=`timestamp+uuid8` 고유, 클라이언트는 자기 run_id 로만 marker 조회 → 타 run 못 읽음). supersede 가드 회귀 없음(취소된 superseded run 은 새 run 추적 클라이언트가 조회 안 함).
+  - **FE 회귀**: early-return 이 자기 버블 step 갱신 누락 지적 → 동시 처리중 창에서 자기 *라이브 step* 미표시는 **의도된 동작**(이전엔 foreign step 오표시=버그; '처리중+elapsed' 표시 유지, 완료 즉시 해소). 1:1·관찰자·대화전환·취소-재요청 정상 흐름은 가드 미발동 확인.
+  - **BE 데이터**: 신규 KV 키 누수 0(대화목록 dump·`list_processing_conversation_ids`·orphan recovery 전부 명시 `IN(...)` allowlist, LIKE/prefix 없음). 키폭 OK(`varchar(128)`, ~57자). `/api/progress` after_step 재설정 로직 marker 해소 후 정합. `_compute_display_status` 가 non-processing 조기 return → terminal marker 가 stale 오판 안 됨.
+- 패널 반영(유효 NIT 2): ① 주석 "단일 run 키 누적 0" 부정확 + 1:1 취소-재요청 supersede 도 skip 분기 진입 → marker 를 **done/error 만** 기록하도록 tighten(canceled 미기록 → 1:1 누적 차단, 주석 정확화). ② marker TTL 정리 부재 → 충돌 시·tiny row 만 잔존, S6 per-thread 재키잉 이연 명시(MODIFY 기록).
+- 핵심 판정: **SHIP**. 진짜 BLOCKING 0(패널 "BLOCKING" 라벨은 false-positive[run_id 고유]·intended-behavior[foreign step 미표시]·본질적[첫 폴 run_id 미정] 으로 트리아지). 잔여는 수용 NIT.
+- Verification: `py_compile`(memory.py/app.py) + `node --check`(app.js) PASS. **PB-0008 미실측**(worktree=WSL; 다중 사용자 동시 race — 배포 후 라이브 그룹대화 검증 권장).
+- Human Approval Needed: 아니오 (사용자 명시 버그 보고 재개, 동시성 fix·무회귀, deploy_scope: included standing 승인).
+
 ## REV-20260625T065840-gc-unread-badge [SUBAGENT:authz·correctness·perf 3렌즈 §18.8]
 - Date: 2026-06-25 (패널 2026-06-25, resume 세션에서 완료)
 - Cycle: gc-unread-badge (CHG-20260625T065840) — 사이드바 "안 읽은(새) 메세지 + 안 읽은 @멘션" 배지. **Major §12.3** (스키마 추가+백엔드 쿼리+프론트 다중 파일, deploy-backed). 사용자 `/_template:entry` 요청 + Major plan 사전 승인("바로 구현").
@@ -302,3 +321,33 @@ source_of_truth: true
   - **N3 (보안, 무해)**: MySQL parity `_mention_re.lower()` 가 charset `[A-Za-z0-9_@]`→소문자 변형(범위 보존 + content `LOWER()` 로 경계 유지, prod=PG 영향 0).
 - Verification: py_compile(app.py·group_members·mentions·alembic) + node --check(app.js·mentions.js) + CSS brace 1576=1576 + test_mentions 6/6 PASS. group_members/s2 DB 의존 테스트는 컨테이너 make test(배포 경로).
 - Human Approval Needed: 아니오 (Major plan 사전 승인 "바로 구현" + additive·무회귀). **배포(alembic 0019 + web 재빌드)는 외부영향 — 별도 confirm**(§16.3 deploy-backed).
+
+## REV-20260625T162000-gc-ask-sender-attrib [SUBAGENT:correctness+security]
+- Date: 2026-06-25
+- Cycle: gc-ask-sender-attrib (CHG-20260625T162000) — 그룹 대화 `@assistant` 호출 시 user 메시지가 표시 store 미러에서 대화 owner(생성자) 프로필로 오귀속되던 것을 실제 발신 멤버(actor)로 귀속. **Major §12.3** (ask dispatch 경로·2+ 파일, 신규 authz 미도입 — account_id 는 기존 actor).
+- Related Change: feature-0002 `src/agent_core.py`(`run_agent`/`_run_agent_core` 에 `sender_username` + user 미러 meta) + `src/modules/ask.py`(`_payload_to_kwargs` worker 복원) + feature-0003 `src/app.py`(ask dispatch 그룹 한정 `sender_username` 계산 + inproc run_kwargs + worker enqueue payload) + `tests/test_ask_worker.py`(+3 보강/신규).
+- Reason: 코어 user 메시지 저장/미러 경로 인접 + 발신자 귀속(spoofing 표면) → §18.8 적대적 검증 dispatch.
+- 적대적 검증(general-purpose 서브에이전트, correctness+security 렌즈, 6항목 의심):
+  - end-to-end 무결성 — inproc(app.py run_kwargs→_run_agent_core)·worker(payload→ask_jobs jsonb→_payload_to_kwargs→run_agent→_run_agent_core) **양 경로 모두 sender_username 끝까지 도달**, run_agent 래퍼 forward 확인. 두 모드 동작 일치.
+  - spoofing 불가 — sender_username 출처가 클라 입력이 아닌 서버측 인증 actor `account.get("username")`, account_id/username 동일 row(WebAccounts) → 위장 경로 없음.
+  - 1:1 회귀 0 — 비그룹/신규는 `_conversation_is_group("")`=False → sender_username=None → meta 미부착 → 기존 동작 100% 동일. `int(account_id)` 캐스팅은 `sender_username and account_id` 가드 내부에서만 평가 → None/0 안전.
+  - jsonb 직렬화·이중미러 — None↔null round-trip 안전, ask 경로와 사람-채팅 경로(`_save_group_chat_message_pg`) 상호배타(그룹 비멘션 422) → 이중 미러 없음.
+- 핵심 판정: **SHIP. BLOCKER 0 / MAJOR 0**.
+  - MINOR(빈 username 비대칭, 패널 적발) **REJECTED-as-fix / ACCEPTED-as-is**: 패널 제안(`if account_id` 로 대칭화)은 역회귀 유발 — agent 경로는 1:1+그룹 양용이라 `sender_username` truthiness 가 그룹 게이트 proxy. `if account_id` 로 바꾸면 모든 1:1 에 `group_chat:True` meta 가 붙어 회귀. 비대칭은 의도적·필수. 추가로 `WebAccounts.Username` 은 `NOT NULL UNIQUE` 라 `""` actor 경로 자체가 비현실적. 현 `sender_username AND account_id` 가드가 정답.
+  - NIT(주석 "동일 shape") **수정 반영**: agent_core 주석을 "동일 키 집합 + 1:1/그룹 양용이라 sender_username 으로 게이트, account_id-only 게이트는 회귀" 로 정확화.
+- Verification: `test_ask_worker.py` 7/7 (보강 round_trip/defaults + 신규 sender_username 시그니처) + 인접 회귀 `test_ask_jobs`/`test_group_history_merge` 20/20 + 3파일 `py_compile`. PB-0008 미실측(백엔드 배선 — 표시 동작은 배포 후 라이브 그룹 대화에서 권장).
+- Human Approval Needed: 아니오 (Major·backend 배선·신규 authz 미도입·무회귀, deploy_scope: included 사전승인).
+
+## REV-20260625T165320-gc-unread-baseline [SUBAGENT:데이터정확성·보안/회귀 2렌즈 §18.8]
+- Date: 2026-06-25
+- Cycle: gc-unread-baseline (CHG-20260625T165320) — unread 배지 baseline 누락 버그(읽은 대화에 전체 개수 표시) 수정. **Major §12.3** (데이터 마이그레이션 + 멤버 INSERT, deploy-backed). 사용자 명시 버그 보고 → 즉시 수정.
+- 원인/해결: 0019 가 baseline backfill 누락(137행 NULL→전체 unread). 0020 backfill(NULL→대화별 MAX id) + add_member INSERT baseline(가입 시점 MAX).
+- 적대 패널(§18.8, SUBAGENT 2렌즈 병렬 — 결함 적발 목적): **종합 SHIP, BLOCKING 0**.
+  - 데이터 정확성/안전 → SHIP-WITH-NITS: per-conversation MAX 스코핑(core_messages.id 전역 단조·유일) · `IS NULL` 멱등 가드(전진 커서 미복귀) · strict `>` 경계(off-by-one 0) · 메세지 0건=NULL 유지 · `ON CONFLICT` role-only(재참여 커서 보존) · 단일 add_member funnel.
+  - 보안/회귀 → SHIP: 파라미터 바인딩(서브쿼리 `%(conversation_id)s`) · cross-conv 누설 0 · add_member 호출처(`_ensure_owner_membership`·share join) 시그니처 무변경(서브쿼리가 기존 param 재사용) · 권한(agent_kb_rw SELECT/UPDATE 커버) · owner 자기발신 `sender IS DISTINCT FROM self` 제외 · MySQL read-only 무영향 · 체인 0018→0019→0020 선형.
+- 수용 NIT (가시 회귀 0 — 미적용):
+  - backfill `MAX(id)` 가 role 필터 없이 전체 max(집계는 user/assistant+content 필터) — id 단조라 **결과 동치**(baseline 이하 전부 읽음, 이후 신규 정상) — 무해.
+  - MySQL backfill parity 부재 — production=PG 정본, MySQL 폴백 미운용. 운용 시 동일 UPDATE 필요(기록).
+  - add_member `MAX`↔`ON CONFLICT` TOCTOU 좁은 창 — 단일 statement, 자기 가입 기준이라 무시 가능.
+- Verification: py_compile(group_members·0020) + §18.8 패널 2렌즈 SHIP. backfill 라이브 적용 + unread smoke + PB-0008 배포 후.
+- Human Approval Needed: 아니오 (Major·사용자 명시 버그 보고·데이터 보정 멱등·무회귀, deploy_scope: included 사전승인).
