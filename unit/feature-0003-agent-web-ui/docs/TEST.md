@@ -1204,3 +1204,15 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - styles.css `.conv-settings-sec-danger` 규칙 존재.
   - **적대적 3-렌즈 리뷰(security/authz·correctness·UX)**: 실질 결함 0건(REVIEW.md REV-20260624T031337). client gate cosmetic(backend authoritative)·IDOR 없음(self id only)·버튼-권한 매핑 정합 확인. 1건 LOW 는 기존 환경의존(`is_group` PG-only, 본 변경 비도입).
   - **Pass/Fail: PASS**(정적 게이트). 백엔드/스키마/RBAC 무변경 — backend leave/archive 엔드포인트는 기존, 본 변경은 프론트 진입점·UI 재배치만. [SKIPPED:frontend-ui-archive-leave-relocation-no-backend-no-rbac for backend regression; CHECK#13 PB-0008 배포 후 권장].
+
+- 2026-06-25 (TASK-20260625T021924-rule-db-coverage — 정규식 자동 규칙 추가 DB 의 insight 분석 여부·완료율 UI 표시, **Minor §12.3** — frontend-only; CHG/REV-20260625T021924 evidence):
+  - **Environment: CLI** (jsdom 격리 + 정적 소스 단언 + 적대적 frontend 리뷰; frontend-only, layout 비의존). 실렌더/시각 정본은 PB-0008(Windows-browser, 배포 후) — 본 변경은 worktree(WSL)에서 작성돼 PB-0008 미실행(배포 후 사용자 확인 권장).
+  - **정적**: `node --check static/admin.js` PASS.
+  - **신규 테스트** `tests/verify_rule_db_coverage.mjs` **20/20 PASS**(`node verify_rule_db_coverage.mjs`, jsdom@22 설치 시 DOM 검증 포함):
+    - DOM(jsdom) — `buildDbCoverageCells`: 분석 완료(4/5, schema_analyzed) → 마이크로바 80% fill·통계 '4/5'·분석 여부 'DB✓'·톤 ok / covRow null → '측정 대기'·측정 로딩 → '측정 중' / connected=false → '연결 불가'.
+    - wiring(소스) — 규칙 카드 종속 DB 루프가 `productCoverage.per_db` 로 covByDb 구성 + `buildDbCoverageCells(covRow, …)` 호출 + db명 소문자 매칭 + `_isProductCoverageLoading` 측정상태 + 연결불가 `is-offline`.
+    - wiring(M1) — 메인 목록 rule 행 skip 이 `if (_isRuleRow && canManage) return;` 조건부(read-only 뷰어 노출 보존, 무조건 skip 회귀 방지).
+    - CSS — `.cov-db-rule-dbitem .cov-microbar` 폭·`margin-left:auto`·`.cov-db-stat` 폭.
+    - cache-buster — admin.html styles.css/admin.js `?v=20260625-rule-db-coverage`.
+  - **적대적 frontend 리뷰(6 렌즈: scope·데이터정합·orphan·null안전·CSS·staleness)**: BLOCKER 0 / **MAJOR 1 흡수**(M1 read-only 뷰어 orphan — 메인 목록 skip canManage 조건부화) / MINOR 2 수용(다중 ds 동명 DB 이름키·규칙 DB 초기화 버튼 미노출). REVIEW.md REV-20260625T021924-rule-db-coverage [SUBAGENT:adversarial-frontend-PASS] SHIP.
+  - **Pass/Fail: PASS**(정적+jsdom 게이트). 백엔드/스키마/RBAC 무변경 — 백엔드 `_compute_product_insight_coverage` 는 이미 Source 무관 전체 DB coverage 를 `per_db[]` 로 제공, 본 변경은 표현계층 매칭만. CHECK#13 PB-0008(규칙 카드 분석 진척 표시) 배포 후 사용자 시각 검증 권장.

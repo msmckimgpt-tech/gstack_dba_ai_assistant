@@ -4660,3 +4660,17 @@ source_of_truth: true
 - Files: `app.py`, `static/{app.js,styles.css,index.html}`, `tests/{test_member_ban_endpoints.py,verify_member_kick_ban.mjs}`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md` + (feature-0002) `modules/group_members.py`·`scripts/agent_runtime_schema.sql`·`alembic/versions/20260625_0018_conversation_member_bans.py`·`tests/test_member_kick_ban.py`·`docs/{MODIFY,FUNCTION}.md` + feature-0009 `docs/{TASK,MODIFY}.md` + docs/SECURITY.md.
 - Rollback: 엔드포인트 4 + join/fork 게이트 + group_members 4함수 + static + 테스트 제거 → alembic downgrade(DROP TABLE conversation_member_bans). 추방은 기존 DELETE 재사용이라 무영향.
 - Deploy: **alembic 0018 적용 필수**(superuser + GRANT) + web 재빌드(static baked) + cache-buster. ask-worker 무관(web 전용).
+## CHG-20260625T021924-rule-db-coverage (TASK-20260625T021924-rule-db-coverage — 정규식 자동 규칙 추가 DB 의 insight 분석 여부·완료율 UI 표시, Minor §12.3 — frontend-only)
+- Date: 2026-06-25. **frontend-only** — 백엔드/스키마/RBAC/엔드포인트 무변경. 기존 coverage 데이터(`productCoverage.per_db`) 재사용.
+- 배경: 관리 콘솔 제품 상세의 '데이터 소스 & 접근 가능 데이터베이스'에서 **수동 등록 DB**는 분석 여부·완료율을 표시하나, **정규식 자동 규칙(rule)으로 추가된 DB**는 규칙 카드에 이름만 표시돼 분석 진척을 알 수 없었다. 백엔드 `_compute_product_insight_coverage` 는 이미 Source 무관 전체 DB 의 coverage 를 `per_db[]` 로 반환하므로 frontend 매칭만 누락된 상태.
+- 내용:
+  - `static/admin.js` (`renderProductDetail` → `_buildRuleCard`): 규칙 종속 DB 렌더 루프에 진척 셀 추가. `adminState.productCoverage.get(product.id).per_db` 를 db명(소문자) 키 Map 으로 구성 → 각 규칙 DB 를 `schema_name`(소문자) 으로 lookup → `buildDbCoverageCells(covRow, _isProductCoverageLoading(product.id))`(메인 목록과 동일 helper) 부착. `connected===false` 면 항목에 `is-offline`.
+  - `static/admin.js` (`redrawChips` 메인 목록): rule 행 제외를 `if (_isRuleRow) return;` → `if (_isRuleRow && canManage) return;` 로 조건부화. **이유(적대 리뷰 M1)**: 규칙 카드는 `if (canManage)` 게이트라 read-only 뷰어(product.read 만)는 카드를 못 보는데 기존엔 메인 목록에서도 rule 행을 무조건 제외해 규칙 DB 가 어디에도 안 보였다. canManage 뷰어는 규칙 카드에서(중복 방지 위해 메인 목록 제외 유지), read-only 뷰어는 메인 목록에서 coverage 와 함께 노출.
+  - `static/styles.css`: `.cov-db-rule-dbitem`(flex) 컨텍스트의 `.cov-microbar{width:52px;flex:0 0 auto;margin-left:auto}` / `.cov-db-stat`/`.cov-db-status` flex 폭. grid 셀이 폭을 주는 메인 행(`.cov-db-row`)과 달리 flex 에선 마이크로바가 접히는 문제 해소.
+  - `static/admin.html`: cache-buster `?v=20260624-metadata-ai-autocomplete` → `?v=20260625-rule-db-coverage`(styles.css + admin.js) — static baked 배포 시 캐시 무효화.
+  - `tests/verify_rule_db_coverage.mjs`(신규): jsdom 으로 `buildDbCoverageCells` 의 분석 여부(DB✓/✗·연결 불가)·완료율(80% fill·4/5·측정 대기/중) 렌더 검증 + 규칙 카드 wiring·M1 조건부 skip·CSS·cache-buster 정적 단언. 20/20 PASS.
+- Why: 사용자 요청 — 규칙 추가 DB 도 분석 여부·완료율을 보여 달라. 백엔드는 이미 데이터를 제공하므로 표현계층만 보완.
+- Verification: `node --check admin.js` PASS + `tests/verify_rule_db_coverage.mjs` 20/20 PASS. 적대 리뷰(REV-20260625T021924) MAJOR 1(M1 read-only 뷰어 orphan) 흡수 후 SHIP. UI 실렌더 정본 = PB-0008(Windows-browser, 배포 후) — 본 worktree(WSL) 미실행.
+- Files: `static/admin.js`, `static/styles.css`, `static/admin.html`, `tests/verify_rule_db_coverage.mjs`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- Rollback: admin.js 의 규칙 카드 coverage 루프 + 메인 목록 조건부 skip + styles.css 3줄 + cache-buster revert(순수 additive 표시 변경). 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 규칙 카드 분석 진척 반영. 마이그/백엔드 없음.
