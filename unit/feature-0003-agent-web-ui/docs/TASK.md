@@ -18,7 +18,7 @@ source_of_truth: true
 - [x] `static/index.html`: app.js cache-buster `?v=20260625-conv-switch-fade` → `?v=20260626-product-chip-always-enabled`(변경 전파).
 - [x] 검증: `node --check app.js` PASS · `python3 -m py_compile app.py` PASS · `ruff check app.py` All checks passed · 잔여 chip disable 신호 grep 0(1389 가드는 chip.disabled 항상 false 라 무해) · `isCurrentConvBusy` 타 용도(composer send/stop 5072 등) 무영향.
 - [x] **리뷰(REV-20260626T025055-product-chip-always-enabled [SUBAGENT:adversarial-product-race]):** 적대 검증(general-purpose, 5축 — ask 캡처 시점·worker 재조회·PATCH 부수효과·동시성 데드락·participant override) **VERDICT SAFE**, in-flight 오염·백엔드 race 반증 실패. 발견(watch item): 409 제거 전엔 프론트 가드만 풀면 owner 클릭이 409 로 실패 → 본 cycle 에서 백엔드 가드도 제거해 해소.
-- [ ] verify-completion(operational, feature-0003) → 머지 → web 재배포(static baked, deploy_scope: included) → 마감.
+- [x] verify-completion --pre-commit PASS(9) → commit f049fee → main ff-merge(c11cc27..f049fee) → origin push → **web 재배포(deploy_scope: included, sudo docker compose build web && up -d --no-deps web)**. 배포 검증: `repo-web-1` Up healthy + baked `index.html` 서빙 `app.js?v=20260626-product-chip-always-enabled` + baked `app.py` 409 제거(grep 0) + web healthz OK. ask-worker 미재빌드(web-only). **cycle 완료.**
 
 ## TASK-20260625T192007-doc-sync-rn-0625b — 06-25 잔여 머지분 릴리즈노트 정합 + cache-buster bump (doc_sync maintenance, Minor §12.3 — 정적 콘텐츠)
 - 출처: `/_dqa:doc_sync` (no-arg 전 타깃 정합). 직전 doc_sync(doc-sync-20260625-163929, PR#420~#436 기준 16:55~17:01 콘텐츠 작성)가 그 **이후** main 병합된 06-25 user-facing 변경 5종을 미반영(브랜치 stale 잔여 drift) → 기존 `2026-06-25` 블록에 항목 추가(append — 신규 일자 블록 아님, 같은 날 머지분).

@@ -3916,4 +3916,5 @@ source_of_truth: true
 - Watch item(적발→해소): 적대 리뷰가 "①② 프론트 가드만 풀면 owner 클릭이 백엔드 409 로 실패(활성처럼 보이나 동작 안 함)" 를 적발 → 본 cycle 에서 ③ 백엔드 409 가드도 제거하여 해소(세 계층 일괄). 추가 발견 desync 우려(409 시 chip 라벨↔실제 pinned 불일치)는 409 제거로 처리 중 케이스에서 소멸.
 - 검증: `node --check app.js` · `python3 -m py_compile app.py` · `ruff check app.py`(All checks passed) PASS. 잔여 chip disable 신호 grep 0. RBAC(conversation.ask·소유권·product access·IsActive)·스키마·엔드포인트 계약 무변경 재확인.
 - Human Approval Needed: 아니오 (Minor, 비파괴, RBAC 무변경, 사용자 명시 결정 + SAFE).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included, 사용자 결정 2026-06-11): cycle-final 후 web 재배포 사전 승인 범위. 첫 배포 직전 "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료. 실행: commit f049fee → main ff-merge → origin push → `sudo docker compose build web && up -d --no-deps web`. 검증: `repo-web-1` Up healthy + baked 서빙 `app.js?v=20260626-product-chip-always-enabled` + app.py 409 제거(grep 0) + healthz OK. ask-worker 미재빌드(web-only).
 - Cross-ref: CHG-20260626T025055-product-chip-always-enabled / TASK-20260626T025055-product-chip-always-enabled / ADR-WEB-0006.
