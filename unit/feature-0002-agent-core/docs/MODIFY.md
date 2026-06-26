@@ -16,6 +16,7 @@ source_of_truth: true
   - 신규 `find_active_dup_ask_job(conn, *, conversation_id, account_id, user_message) -> Optional[int]`: 같은 키의 활성(pending/running) job id(가장 큰 id) 반환. INSERT 억제(None)가 '슬롯 가득' 인지 'dedup 억제' 인지 caller 가 구분하는 용도.
 - 비변경: claim(FOR UPDATE SKIP LOCKED 단일문)·heartbeat·finish·sweep·set_run_id·reclaim·_ACTIVE_SLOT_PREDICATE·테이블 스키마 0. 신규 컬럼·인덱스·마이그레이션 없음(payload jsonb 비교).
 - 검증: `tests/test_ask_jobs.py` 21/21 — 신규 5(without dedup→NOT EXISTS 없음·with dedup→절+param·suppressed None·find 반환/부재) + 기존 16 무회귀. `py_compile` PASS.
+- **HOTFIX(배포 검증 중 라이브 PG 회귀 적발·즉시 수정)**: dedup NOT EXISTS 가 `%(cid)s`/`%(account_id)s` 를 재사용하니 PG 가 `AmbiguousParameter: inconsistent types deduced for parameter $1 — text versus character varying` 로 거부(같은 $param 이 INSERT SELECT 의 conversation_id=varchar 추론과 비교 컨텍스트에서 충돌). 워커 모드 모든 신규 /api/ask 가 500 날 회귀였음(단위 FakeConn 테스트는 SQL-shape 만 봐 미포착 — 라이브 enqueue 직접 실행으로 적발). **수정**: dedup 절을 전용 파라미터 `%(dcid)s`/`%(daccount)s` + 테이블 alias `d` 로 분리(각 파라미터 단일 컨텍스트). 라이브 PG 에 수정 SQL 직접 실행해 parse/execute 성공 재확인. 테스트에 `%(DCID)S`/`%(DACCOUNT)S`/`d.conversation_id` 단언 추가로 회귀 고정(21/21).
 - Deploy: **ask-worker 재빌드 필수**(ask_jobs.py baked) + web 재빌드(import 동일 모듈). deploy_scope: included.
 - Cross-ref: feature-0003 CHG-20260626-ask-dedup-idempotency / REV-20260626T134920-ask-dedup-idempotency / FUNCTION REQ-20260626-ask-dedup-idempotency / TASK-20260626-ask-dedup-idempotency.
 

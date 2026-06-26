@@ -127,12 +127,16 @@ def enqueue_ask_job(
         # commit 된 활성 중복에 대해서만 억제(자기 자신이 될 행은 아직 미INSERT).
         # 활성 판정은 slot 예약과 동일한 _ACTIVE_SLOT_PREDICATE 재사용 — stale(heartbeat
         # 끊긴 running)은 제외해, 죽은 run 에 dedup-attach 하지 않고 새 run 을 띄운다(REV MINOR).
+        # 전용 파라미터(%(dcid)s)를 쓴다 — %(cid)s 는 INSERT SELECT 의 첫 항목(=conversation_id
+        # 컬럼, character varying 으로 추론)으로도 쓰여, 같은 $param 을 여기 비교(text 추론)에
+        # 재사용하면 PG 가 "inconsistent types deduced ... text versus character varying"
+        # (AmbiguousParameter)로 거부한다. 별도 이름이면 각 파라미터가 단일 컨텍스트라 안전.
         dedup_clause = (
             "  AND NOT EXISTS ( "
-            "    SELECT 1 FROM agent_runtime.ask_jobs "
-            "    WHERE conversation_id = %(cid)s AND account_id = %(account_id)s "
+            "    SELECT 1 FROM agent_runtime.ask_jobs AS d "
+            "    WHERE d.conversation_id = %(dcid)s AND d.account_id = %(daccount)s "
             "      AND (" + _ACTIVE_SLOT_PREDICATE + ") "
-            "      AND payload->>'user_message' = %(dedup_message)s "
+            "      AND d.payload->>'user_message' = %(dedup_message)s "
             "  ) "
         )
     sql = (
@@ -156,6 +160,9 @@ def enqueue_ask_job(
                 "limit": int(account_limit),
                 "stale": int(stale_seconds),
                 "dedup_message": dedup_message,
+                # dedup NOT EXISTS 전용(%(cid)s/%(account_id)s 와 타입추론 충돌 회피).
+                "dcid": conversation_id,
+                "daccount": int(account_id),
             },
         )
         row = cur.fetchone()

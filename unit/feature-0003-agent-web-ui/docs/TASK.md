@@ -16,7 +16,8 @@ source_of_truth: true
 - [x] **B (`unit/feature-0003-agent-web-ui/src/static/app.js`)**: 기존 대화 `/api/ask` 실패 catch 의 복구 status 조회를 0.7s×3 재시도(첫 조회 null 시) — web 일시 불안정에 in-flight run 을 안정 포착해 불필요 재전송 억제.
 - [x] **C (web 불안정 트리거)**: 원인 확정(크래시 루프 아님 — RestartCount=0, 배포 재생성이 트리거; docker DNS 갭→ISP NXDOMAIN 공인 IP 폴백). 라이브 프록시/배포 인프라 blind 변경 위험 → 원인·권고 문서화로 처리(A 가 트리거 하에서도 중복 근절). 권고(후속): web 배포 graceful drain · Caddy upstream 재해석/health.
 - [x] 테스트: `test_ask_jobs.py` 신규 5건(dedup NOT EXISTS 절·param·suppressed None·find helper 반환/부재) 포함 **21/21 PASS** + `py_compile`(ask_jobs.py·app.py) + `node --check`(app.js) PASS. 스키마/RBAC/마이그 0(런타임 멱등).
-- [ ] verify-completion --pre-commit → 머지(PR) → **web + ask-worker 재배포**(deploy_scope: included — A 가 양 baked 코드라 ask-worker 재빌드 필수) → 라이브 재검증(동일 메시지 재전송 시 ask_jobs dup 0).
+- [x] verify-completion --pre-commit PASS(9) → commit 721519b → main rebase(483c4c0)+ff-merge(0818b0a)+push → **web+ask-worker 재빌드·재기동**(deploy_scope: included, 둘 다 Up healthy, baked dedup+buster+healthz 확인).
+- [x] **HOTFIX(배포 검증 중 라이브 PG 회귀)**: dedup NOT EXISTS 의 `%(cid)s`/`%(account_id)s` 재사용 → `AmbiguousParameter(text vs varchar)` → 워커 모드 신규 /api/ask 500. 전용 파라미터 `%(dcid)s`/`%(daccount)s`+alias `d` 분리, 라이브 PG SQL 직접 실행 재검증 + 회귀 테스트 단언 추가 → 재빌드·재배포. (단위 FakeConn 이 SQL-shape 만 봐 미포착 — 라이브 enqueue 직접 실행으로 적발.)
 - Cross-ref: feature-0002 CHG-20260626-ask-dedup-idempotency / REV-20260626T134920-ask-dedup-idempotency / REPORT 2026-06-26.
 
 ## TASK-20260626T025055-product-chip-always-enabled — 제품 선택 chip 을 요청 처리 중에도 항상 활성화 (Minor §12.3 — frontend + backend PATCH 가드, TASK-0047 race 가드 완화, RBAC 무변경)

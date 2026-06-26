@@ -9,6 +9,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260626T135945-ask-dedup-hotfix (TASK-20260626-ask-dedup-idempotency — 동일 cycle 라이브 PG 회귀 hotfix, Major §12.3, 정본 코드=feature-0002 ask_jobs.py)
+- Date: 2026-06-26. CHG-20260626-ask-dedup-idempotency 배포 검증 중 적발된 라이브 회귀의 즉시 수정. 정본 코드 변경은 feature-0002 ask_jobs.py(전용 파라미터 분리) — 본 항목은 feature-0003 동반 기록(REPORT/TASK/REVIEW 갱신).
+- 회귀/수정 요지: dedup NOT EXISTS 의 `%(cid)s`/`%(account_id)s` 재사용 → PG `AmbiguousParameter(text vs character varying)` → 워커 모드 신규 /api/ask 전부 500. 전용 파라미터 `%(dcid)s`/`%(daccount)s` + 테이블 alias `d` 로 분리. 라이브 PG 수정 SQL 직접 실행 재검증 + 회귀 테스트 단언 추가(21/21). web/app.py·app.js 코드 변경 0(본 commit 은 feature-0002 코드 + 양 feature 문서).
+- 검증/배포: verify-completion --pre-commit → ff-merge → web+ask-worker 재빌드·재기동(deploy_scope: included).
+- Cross-ref: feature-0002 CHG-20260626-ask-dedup-idempotency(HOTFIX) / REV-20260626T135945-ask-dedup-idempotency / REV-20260626T134920-ask-dedup-idempotency.
+
 ## CHG-20260626-ask-dedup-idempotency (TASK-20260626-ask-dedup-idempotency — assistant 요청 2번 중복 전송/처리 결함 수정, Major §12.3 — /api/ask send/concurrency, cross-feature 0002 주 변경 + 0003 dispatch/UI)
 - Date: 2026-06-26. 사용자 보고(/_template:entry): assistant 요청이 2번 중복 전송/처리(요청·답변 모두 2회, 항상). 근본원인: 워커 모드 `/api/ask` long-poll 연결이 web 재생성(배포)으로 끊기면(502 EOF) 사용자 재전송 → 워커 enqueue 멱등성 부재로 두 번째 job 생성 → 첫 job 은 out-of-process 생존·완료 → 답변 2개.
 - Scope: feature-0003 web (app.py dispatch · app.js 복구 경로). ask_jobs.py 정본 변경은 feature-0002 CHG-20260626-ask-dedup-idempotency(교차). 스키마/RBAC/마이그/엔드포인트 shape 0(런타임 멱등 — payload->>'user_message' 비교, 신규 컬럼·인덱스 없음).

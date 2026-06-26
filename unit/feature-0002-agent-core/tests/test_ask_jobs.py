@@ -152,7 +152,14 @@ def test_enqueue_with_dedup_message_injects_not_exists_guard():
     assert "NOT EXISTS" in sql
     assert "PAYLOAD->>'USER_MESSAGE' = %(DEDUP_MESSAGE)S" in sql
     assert "STATUS IN ('PENDING','RUNNING')" in sql
-    assert conn.last_params()["dedup_message"] == "dup-msg"
+    # dedup 절은 전용 파라미터(%(dcid)s/%(daccount)s)를 써야 한다 — %(cid)s/%(account_id)s 를
+    # 재사용하면 INSERT SELECT(varchar 추론) 와 비교(text) 가 충돌해 PG 가 AmbiguousParameter
+    # ("text versus character varying")로 거부한다(라이브 회귀, 단위 SQL-shape 테스트로 고정).
+    assert "%(DCID)S" in sql and "%(DACCOUNT)S" in sql
+    assert "D.CONVERSATION_ID = %(DCID)S" in sql
+    params = conn.last_params()
+    assert params["dedup_message"] == "dup-msg"
+    assert params["dcid"] == "c" and params["daccount"] == 5
 
 
 def test_enqueue_dedup_suppressed_returns_none():

@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260626T135945-ask-dedup-idempotency [SKIPPED:hotfix-1line-param-isolation-live-pg-validated] — 동일 cycle 라이브 회귀 hotfix (TASK-20260626-ask-dedup-idempotency, Major §12.3)
+- Date: 2026-06-26. 본체 REV-20260626T134920-ask-dedup-idempotency 의 배포 검증 단계에서 적발된 라이브 PG 회귀의 즉시 수정. 신규 동작 추가 아닌 **버그 수정(파라미터 격리)** 이라 full §18.8 패널 SKIP — 대신 라이브 PG 직접 실행으로 검증(해당 실패 모드에 가장 직접적인 테스트).
+- 회귀: dedup NOT EXISTS 가 `%(cid)s`/`%(account_id)s` 를 INSERT SELECT(varchar 추론)와 공유 → PG `AmbiguousParameter: inconsistent types deduced for parameter $1 — text versus character varying` → 워커 모드 신규 /api/ask 전부 500. 단위 FakeConn 테스트는 SQL 문자열만 검사해 미포착(파싱·타입추론은 실 PG 에서만 발현).
+- 수정: dedup 절을 전용 파라미터 `%(dcid)s`/`%(daccount)s` + 테이블 alias `d` 로 분리(각 파라미터 단일 컨텍스트). 검증: ① 라이브 PG(`repo-ask-worker-1`)에 수정 enqueue SQL 직접 실행 → parse/execute 성공(limit=0 → None, AmbiguousParameter 소멸). ② `test_ask_jobs.py` 에 `%(DCID)S`/`%(DACCOUNT)S`/`d.conversation_id` 단언 추가로 회귀 고정(21/21 PASS). ③ 재빌드·재배포 후 baked 코드 재검증.
+- 잔여 교훈: ask_jobs 단위 테스트가 SQL-shape 만 검증 → PG 의미(타입추론·jsonb·제약) 회귀는 미포착. 후속 개선 후보 = ephemeral PG 통합 테스트(out-of-scope, 본 cycle 미수행).
+- Human Approval Needed: 없음(commit/push/main 병합·재배포는 자동 동기화 + deploy_scope:included). 코드 SHIP.
+- Cross-ref: REV-20260626T134920-ask-dedup-idempotency / feature-0002 CHG-20260626-ask-dedup-idempotency(HOTFIX 항목) / TASK-20260626-ask-dedup-idempotency.
+
 ## REV-20260626T134920-ask-dedup-idempotency [SUBAGENT:adversarial-concurrency-7hypothesis] — SHIP-WITH-FIXES → 흡수 후 SHIP (TASK-20260626-ask-dedup-idempotency, Major §12.3 — /api/ask send/concurrency 멱등화, cross-feature 0002+0003)
 - Date: 2026-06-26
 - Cycle: assistant 요청 2번 중복 전송/처리 결함 수정. worker enqueue 멱등화(ask_jobs `dedup_message` NOT EXISTS + `find_active_dup_ask_job` → 기존 run attach) + 프론트 실패 status 재시도 + web 불안정 트리거 문서화. worktree `ai/claude/ask-dedup-idempotency`(base 15ef5f4). CHG-20260626-ask-dedup-idempotency.
