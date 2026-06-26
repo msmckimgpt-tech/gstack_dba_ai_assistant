@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260626-ask-dedup-idempotency — assistant 요청이 2번 중복 전송/처리되는 결함 수정 (worker-mode enqueue 멱등화, Major §12.3 — /api/ask send/concurrency, cross-feature 0002+0003)
+- 출처: `/_template:entry` dispatch. 사용자 보고: "프로젝트 내 서비스에서 assistant 에게 요청을 보낼 때 2번 중복되어 전송." 명료화(AskUserQuestion): **요청도 2번·답변도 2번 처리 / 항상(첫 요청부터)**.
+- 진단(코드+라이브 DB/로그 교차): 프론트 `/api/ask` 는 sendPrompt(app.js:8320) 단일 POST(이벤트 이중바인딩 없음·apiFetch 재시도 없음·resume 재전송 경로 없음), 백엔드 enqueue 도 `_dispatch_ask_run_worker`(app.py:11321) 1곳뿐. 그러나 `agent_runtime.ask_jobs` 실측 — 동일 페이로드(conv+account+user_message) **job 2개**(94b96f5f #148/#149 Δ460ms, cbb5bde0 #153/#154 Δ20s; 둘 다 attempts=1·done = requeue 아님). 단일 워커 직렬 처리로 두 번째 run 이 user 메시지를 ~1분 뒤 재삽입 → "요청·답변 2회". 근본원인: 워커 모드 `/api/ask` 가 run 종료까지 연결을 수십 초~분 잡는데(long-poll attach), **web 컨테이너 재생성(배포/자동화)** 시 그 연결이 502 EOF 로 끊김(Caddy 로그: 24~109s 후 502, connection refused, 공인 IP 112.185.196.95 오해석 dial) → 복구용 `/api/ask_status` 도 실패 → 프론트가 in-flight run 미포착 → 사용자 재전송 → 두 번째 job. 첫 job 은 out-of-process 워커에서 생존·완료 → 답변 2개. **워커 enqueue 에 멱등성(dedup) 부재**가 핵심 결함.
+- 결정(AskUserQuestion): **A+B+C 전체**.
+- [x] **A (정본, `unit/feature-0002-agent-core/src/modules/ask_jobs.py`)**: `enqueue_ask_job(dedup_message=...)` — INSERT WHERE 에 `NOT EXISTS(같은 conv+account+user_message 의 pending/running)` 가드(INSERT 동일 statement = commit 된 중복에 atomic) + 신규 `find_active_dup_ask_job`. `unit/feature-0003-agent-web-ui/src/app.py` `_dispatch_ask_run_worker._enqueue`: 사전 dedup 검사(있으면 기존 run KV/run_id 보존·sentinel 미덮어쓰기 후 기존 job_id 반환=attach) → 없으면 `enqueue_ask_job(dedup_message=user_message)` → INSERT 억제 시 `find_active_dup_ask_job` 재조회로 슬롯가득(429) vs 중복(attach) 구분.
+- [x] **B (`unit/feature-0003-agent-web-ui/src/static/app.js`)**: 기존 대화 `/api/ask` 실패 catch 의 복구 status 조회를 0.7s×3 재시도(첫 조회 null 시) — web 일시 불안정에 in-flight run 을 안정 포착해 불필요 재전송 억제.
+- [x] **C (web 불안정 트리거)**: 원인 확정(크래시 루프 아님 — RestartCount=0, 배포 재생성이 트리거; docker DNS 갭→ISP NXDOMAIN 공인 IP 폴백). 라이브 프록시/배포 인프라 blind 변경 위험 → 원인·권고 문서화로 처리(A 가 트리거 하에서도 중복 근절). 권고(후속): web 배포 graceful drain · Caddy upstream 재해석/health.
+- [x] 테스트: `test_ask_jobs.py` 신규 5건(dedup NOT EXISTS 절·param·suppressed None·find helper 반환/부재) 포함 **21/21 PASS** + `py_compile`(ask_jobs.py·app.py) + `node --check`(app.js) PASS. 스키마/RBAC/마이그 0(런타임 멱등).
+- [ ] verify-completion --pre-commit → 머지(PR) → **web + ask-worker 재배포**(deploy_scope: included — A 가 양 baked 코드라 ask-worker 재빌드 필수) → 라이브 재검증(동일 메시지 재전송 시 ask_jobs dup 0).
+- Cross-ref: feature-0002 CHG-20260626-ask-dedup-idempotency / REV-20260626T134920-ask-dedup-idempotency / REPORT 2026-06-26.
+
 ## TASK-20260626T025055-product-chip-always-enabled — 제품 선택 chip 을 요청 처리 중에도 항상 활성화 (Minor §12.3 — frontend + backend PATCH 가드, TASK-0047 race 가드 완화, RBAC 무변경)
 - 출처: `/_template:entry` dispatch. 사용자 보고: "assistant 에게 요청을 보낼 때(요청 처리 중) 제품 목록을 선택하는 버튼(composer 의 `#productChip`, 예: 'KR_QA')이 비활성화됨 — 이제는 항상 활성화 상태여야 함."
 - 진단: 차단이 **세 계층**(전부 TASK-0047 "turn 단위 immutability"). ① `renderProductChip()`(app.js) busy→`chipEl.disabled`+`is-disabled`+안내 title(시각/상호작용 차단, `openProductDropup` `if(chip.disabled)return` 가드로 드롭업 차단). ② `setActiveProduct()`(app.js) busy→토스트 후 변경 거부(프론트 기능 차단). ③ **백엔드 `PATCH /api/conversations/{cid}/product`(app.py:12370) `_conversation_is_processing`→409**. ③ 때문에 ①②만 풀면 owner 가 클릭 시 409 에러 토스트로 실패(활성처럼 보이나 동작 안 함) — 적대 검증 subagent 가 적발. 셋 다 풀어야 "항상 활성+사용 가능" 실효.

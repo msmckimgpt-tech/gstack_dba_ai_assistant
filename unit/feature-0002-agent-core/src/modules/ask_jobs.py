@@ -104,14 +104,37 @@ def enqueue_ask_job(
     payload: dict[str, Any],
     account_limit: int,
     stale_seconds: int,
+    dedup_message: Optional[str] = None,
 ) -> Optional[int]:
     """pending job 을 enqueue. 계정 활성 슬롯이 limit 미만일 때만 INSERT.
 
-    Returns: job id (성공) / None (슬롯 가득 → caller 가 429).
+    Returns: job id (성공) / None (슬롯 가득 → caller 가 429, **또는** dedup 억제 →
+    caller 가 find_active_dup_ask_job 으로 기존 job 에 attach).
 
     INSERT … SELECT … WHERE (count < limit) 단일문이라 두 동시 요청이 모두 통과하는
     TOCTOU 가 불가능하다(인메모리 _ACTIVE_REQUESTS 의 atomic 패리티 — MAJOR 5).
+
+    멱등성(dedup_message, ask-dedup-idempotency): 같은 (conversation_id, account_id,
+    user_message) 로 이미 활성(pending/running) job 이 있으면 INSERT 를 억제한다(WHERE
+    절의 NOT EXISTS — INSERT 와 동일 statement 라 commit 된 중복에 대해 atomic). 워커
+    모드의 /api/ask 는 long-poll 로 연결을 수십 초~분 잡으므로, web 재배포/프록시 EOF 로
+    그 연결이 끊겨 사용자가 같은 메시지를 재전송하면 두 번째 run 이 떠 요청·답변이 2회
+    처리되던 결함(중복 전송)을 차단한다. INSERT 가 None 을 반환하면 caller 는
+    find_active_dup_ask_job 으로 기존 job_id 를 찾아 그 run 에 attach 한다(새 job 미생성).
     """
+    dedup_clause = ""
+    if dedup_message is not None:
+        # commit 된 활성 중복에 대해서만 억제(자기 자신이 될 행은 아직 미INSERT).
+        # 활성 판정은 slot 예약과 동일한 _ACTIVE_SLOT_PREDICATE 재사용 — stale(heartbeat
+        # 끊긴 running)은 제외해, 죽은 run 에 dedup-attach 하지 않고 새 run 을 띄운다(REV MINOR).
+        dedup_clause = (
+            "  AND NOT EXISTS ( "
+            "    SELECT 1 FROM agent_runtime.ask_jobs "
+            "    WHERE conversation_id = %(cid)s AND account_id = %(account_id)s "
+            "      AND (" + _ACTIVE_SLOT_PREDICATE + ") "
+            "      AND payload->>'user_message' = %(dedup_message)s "
+            "  ) "
+        )
     sql = (
         "INSERT INTO agent_runtime.ask_jobs "
         "(conversation_id, run_id, account_id, status, payload) "
@@ -119,6 +142,7 @@ def enqueue_ask_job(
         "WHERE ( SELECT count(*) FROM agent_runtime.ask_jobs "
         "        WHERE account_id = %(account_id)s AND (" + _ACTIVE_SLOT_PREDICATE + ") "
         "      ) < %(limit)s "
+        + dedup_clause +
         "RETURNING id"
     )
     with conn.cursor() as cur:
@@ -131,7 +155,32 @@ def enqueue_ask_job(
                 "payload": json.dumps(payload),
                 "limit": int(account_limit),
                 "stale": int(stale_seconds),
+                "dedup_message": dedup_message,
             },
+        )
+        row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
+def find_active_dup_ask_job(
+    conn, *, conversation_id: str, account_id: int, user_message: str,
+    stale_seconds: int,
+) -> Optional[int]:
+    """같은 (conversation_id, account_id, user_message) 로 활성 job 의 id 를 반환(없으면
+    None). enqueue_ask_job(dedup_message=...) 가 INSERT 를 억제해 None 을 돌려줬을 때,
+    caller 가 '슬롯 가득(429)' 과 '중복 억제(기존 run attach)' 를 구분하기 위해 쓴다. 활성
+    판정은 enqueue 의 dedup 절과 동일한 _ACTIVE_SLOT_PREDICATE — stale(heartbeat 끊긴
+    running)은 제외해 죽은 run 에 attach 하지 않는다(예약·억제·재사용 술어 일치). 가장 최근
+    (가장 큰 id) 활성 job 을 고른다(보통 1건)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM agent_runtime.ask_jobs "
+            "WHERE conversation_id = %(cid)s AND account_id = %(account_id)s "
+            "  AND (" + _ACTIVE_SLOT_PREDICATE + ") "
+            "  AND payload->>'user_message' = %(um)s "
+            "ORDER BY id DESC LIMIT 1",
+            {"cid": conversation_id, "account_id": int(account_id), "um": user_message,
+             "stale": int(stale_seconds)},
         )
         row = cur.fetchone()
     return int(row[0]) if row else None

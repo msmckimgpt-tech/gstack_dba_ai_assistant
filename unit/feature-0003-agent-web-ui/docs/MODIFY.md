@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260626-ask-dedup-idempotency (TASK-20260626-ask-dedup-idempotency — assistant 요청 2번 중복 전송/처리 결함 수정, Major §12.3 — /api/ask send/concurrency, cross-feature 0002 주 변경 + 0003 dispatch/UI)
+- Date: 2026-06-26. 사용자 보고(/_template:entry): assistant 요청이 2번 중복 전송/처리(요청·답변 모두 2회, 항상). 근본원인: 워커 모드 `/api/ask` long-poll 연결이 web 재생성(배포)으로 끊기면(502 EOF) 사용자 재전송 → 워커 enqueue 멱등성 부재로 두 번째 job 생성 → 첫 job 은 out-of-process 생존·완료 → 답변 2개.
+- Scope: feature-0003 web (app.py dispatch · app.js 복구 경로). ask_jobs.py 정본 변경은 feature-0002 CHG-20260626-ask-dedup-idempotency(교차). 스키마/RBAC/마이그/엔드포인트 shape 0(런타임 멱등 — payload->>'user_message' 비교, 신규 컬럼·인덱스 없음).
+- 내용(`src/app.py` `_dispatch_ask_run_worker`):
+  - `_enqueue` 멱등화: payload.user_message 를 `_user_message` 로 캡처 → ① 사전 `ask_jobs.find_active_dup_ask_job(conv, account, user_message)` — 활성 중복 있으면 **새 job·sentinel 미생성, 기존 job_id 반환**(기존 run KV/run_id 보존; 아래 attach 루프가 그 run 결과를 동기 응답) ② 없으면 enqpre sentinel 선기록 후 `enqueue_ask_job(..., dedup_message=_user_message)`(INSERT NOT EXISTS atomic backstop) ③ INSERT 억제(None) 시 `find_active_dup_ask_job` 재조회로 슬롯가득(None→429) vs 중복(기존 job_id→attach) 구분 + `logging...info("ask-dedup: …")`.
+  - 기존 attach 루프(KV terminal / job terminal long-poll)·슬롯 429·sentinel 가드(TASK-0241)·shape 무변경 — dedup 분기만 추가.
+- 내용(`src/static/app.js` sendPrompt 실패 catch, 기존 대화 분기): `/api/ask` 실패 시 복구 status 조회 `fetchAskStatus(askCid)` 가 첫 호출 null(web 일시 불안정으로 /api/ask_status 도 502) 이면 **0.7s 간격 ×3 재시도**해 in-flight run 을 안정 포착 → `is_processing` 시 기존 attach 경로로 흡수(불필요 재전송 억제). is_processing 분기 이후 로직(timeout recovery dialog·attach·cancel/finalize)·shape 무변경. cache-buster 는 배포 시 bump(아래).
+- 비변경: 프론트 이벤트 바인딩·apiFetch·resume·group/1:1 send 라우팅·R2/R3 인터럽트 0. 백엔드 inproc 경로·claim/sweep/heartbeat 0.
+- 적대 리뷰 흡수(REV-20260626T134920-ask-dedup-idempotency, SHIP-WITH-FIXES → SHIP, BLOCKER/MAJOR 0): ① dedup/find 활성 판정을 `_ACTIVE_SLOT_PREDICATE` 재사용으로 교체(stale-running 제외 — 죽은 run 에 attach 방지, `find_active_dup_ask_job(stale_seconds=...)`); ② `index.html` app.js cache-buster `?v=20260626-ask-dedup-idempotency` bump(part B 전파); ③ dedup 키 attachment 누락은 accepted trade-off(동시 same-text/different-attachment 극희소). 동시 race 표현은 "commit 된 중복에 atomic" 으로 정정(sub-ms 동시충돌 완전차단은 partial unique index 후속).
+- 검증: `test_ask_jobs.py` 21/21(신규 dedup 5, stale MAKE_INTERVAL 단언 포함) + `py_compile app.py` + `node --check app.js` PASS.
+- Deploy: **web + ask-worker 재빌드 필수**(A 가 ask_jobs.py = 양 이미지 baked). deploy_scope: included.
+- Cross-ref: feature-0002 CHG-20260626-ask-dedup-idempotency / REV-20260626T134920-ask-dedup-idempotency / TASK-20260626-ask-dedup-idempotency / REPORT 2026-06-26.
+
 ## CHG-20260625-role-account-prompt-autogen (TASK-20260625-role-account-prompt-autogen — 역할 '전체 제품 프롬프트' + 프로필 '제품별 개인 프롬프트' 자동 작성, Major §12.3 — 외부 LLM dispatch 2개 scope 확장)
 - Date: 2026-06-25. 사용자 요청(/_template:entry): "`관리 콘솔 > 역할 > 제품 사용 > 전체 제품 프롬프트` 와 `작업 화면 > 프로필 > 프롬프트 > [각 제품]` 의 자동 완성 기능 구성 — 역할 성격·소속 사용자 대화 내역, 프로필은 역할·제품·대화 패턴 반영." 결정: on-demand 버튼만 + 기능만 구성(seed 라이브 생성은 운영자).
 - Scope: feature-0003 web only. **스키마 변경 0**(기존 `WebSystemPrompts` scope='role'/'account' 행 재사용 — 합성은 agent-core `compose_system_prompt` 가 이미 처리). PG·gateway·credential·RBAC 카탈로그 무변경. 기존 제품 자동작성 엔드포인트·UI 동작 보존.

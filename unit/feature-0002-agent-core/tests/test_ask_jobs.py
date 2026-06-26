@@ -125,6 +125,71 @@ def test_enqueue_returns_none_when_slot_full():
     assert jid is None
 
 
+# ── enqueue 멱등성: dedup_message (ask-dedup-idempotency) ──────────────────
+def test_enqueue_without_dedup_message_has_no_not_exists_clause():
+    # 기본(dedup_message 미지정) — 기존 동작 무변경, NOT EXISTS 절 없음.
+    conn = FakeConn(one_results=[(202,)])
+    jid = aj.enqueue_ask_job(
+        conn, conversation_id="c", run_id=None, account_id=5,
+        payload={"user_message": "hi"}, account_limit=6, stale_seconds=300,
+    )
+    assert jid == 202
+    sql = conn.last_sql().upper()
+    assert "NOT EXISTS" not in sql  # dedup 절 미주입
+    assert conn.last_params()["dedup_message"] is None
+
+
+def test_enqueue_with_dedup_message_injects_not_exists_guard():
+    # dedup_message 지정 — 같은 conv+account+user_message 활성 중복을 INSERT WHERE 에서 억제.
+    conn = FakeConn(one_results=[(203,)])
+    jid = aj.enqueue_ask_job(
+        conn, conversation_id="c", run_id=None, account_id=5,
+        payload={"user_message": "dup-msg"}, account_limit=6, stale_seconds=300,
+        dedup_message="dup-msg",
+    )
+    assert jid == 203
+    sql = conn.last_sql().upper()
+    assert "NOT EXISTS" in sql
+    assert "PAYLOAD->>'USER_MESSAGE' = %(DEDUP_MESSAGE)S" in sql
+    assert "STATUS IN ('PENDING','RUNNING')" in sql
+    assert conn.last_params()["dedup_message"] == "dup-msg"
+
+
+def test_enqueue_dedup_suppressed_returns_none():
+    # 활성 중복 존재 → INSERT…SELECT…WHERE NOT EXISTS 가 0 row → None.
+    # caller(_dispatch_ask_run_worker)는 find_active_dup_ask_job 으로 기존 job 에 attach.
+    conn = FakeConn(one_results=[None])
+    jid = aj.enqueue_ask_job(
+        conn, conversation_id="c", run_id=None, account_id=5,
+        payload={"user_message": "dup-msg"}, account_limit=6, stale_seconds=300,
+        dedup_message="dup-msg",
+    )
+    assert jid is None
+
+
+def test_find_active_dup_ask_job_returns_existing_id():
+    conn = FakeConn(one_results=[(153,)])
+    jid = aj.find_active_dup_ask_job(
+        conn, conversation_id="c", account_id=5, user_message="dup-msg", stale_seconds=300,
+    )
+    assert jid == 153
+    sql = conn.last_sql().upper()
+    assert "STATUS IN ('PENDING','RUNNING')" in sql
+    assert "MAKE_INTERVAL" in sql  # stale-running 제외(_ACTIVE_SLOT_PREDICATE 재사용)
+    assert "PAYLOAD->>'USER_MESSAGE' = %(UM)S" in sql
+    assert "ORDER BY ID DESC LIMIT 1" in sql
+    params = conn.last_params()
+    assert params["cid"] == "c" and params["account_id"] == 5 and params["um"] == "dup-msg"
+    assert params["stale"] == 300
+
+
+def test_find_active_dup_ask_job_returns_none_when_absent():
+    conn = FakeConn(one_results=[None])
+    assert aj.find_active_dup_ask_job(
+        conn, conversation_id="c", account_id=5, user_message="x", stale_seconds=300,
+    ) is None
+
+
 # ── lease fencing (BLOCKER 3) ─────────────────────────────────────────────
 def test_heartbeat_is_lease_guarded():
     conn = FakeConn(one_results=[(1,)])

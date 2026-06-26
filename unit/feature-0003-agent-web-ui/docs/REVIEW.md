@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260626T134920-ask-dedup-idempotency [SUBAGENT:adversarial-concurrency-7hypothesis] — SHIP-WITH-FIXES → 흡수 후 SHIP (TASK-20260626-ask-dedup-idempotency, Major §12.3 — /api/ask send/concurrency 멱등화, cross-feature 0002+0003)
+- Date: 2026-06-26
+- Cycle: assistant 요청 2번 중복 전송/처리 결함 수정. worker enqueue 멱등화(ask_jobs `dedup_message` NOT EXISTS + `find_active_dup_ask_job` → 기존 run attach) + 프론트 실패 status 재시도 + web 불안정 트리거 문서화. worktree `ai/claude/ask-dedup-idempotency`(base 15ef5f4). CHG-20260626-ask-dedup-idempotency.
+- §18.8 verification panel = 적대적 concurrency/regression 코드 리뷰(general-purpose REFUTE, H1~H7 + 추가 발견). 라이브 `agent_runtime.ask_jobs`(159행, 중복 페이로드 7군 — 보고 버그쌍 포함) + 전체 dispatch/attach 루프/`_build_worker_agent_result`/`claim`/`_ACTIVE_SLOT_PREDICATE`/`set_run_status`/`_compute_display_status` 정독. **VERDICT: SHIP-WITH-FIXES → 흡수 후 SHIP. BLOCKER 0 · MAJOR 0 · MINOR 3 + doc nit.**
+- **반증 실패=안전 확인(핵심)**: H1 attach-to-existing — pending/running 만 매칭(done 미attach), `_build_worker_agent_result(job_id, conv_id)` 가 그 job 의 result_json 을 conv_id 강제 → **cross-conversation 결과 누출 불가**; attach 루프는 KV-terminal OR job-terminal 둘 다로 종료(stale terminal 조기종료 없음, send#1 sentinel 이 processing 보장). H3 sentinel skip — 기존 run 이 KV last_status 소유, 새 sentinel 미작성이 정확(재포인팅 방지). H5 `payload->>'user_message'` — 파라미터 바인딩(주입 없음)·EXPLAIN ix_ask_jobs_conv 라이드·159행 perf 무이슈·unicode/quote 정확. H6 회귀 — `dedup_message=None` → SQL byte-identical(절 미주입), 429/abort/`_build_worker_agent_result` 경로 무변경. H7 프론트 — 읽기전용 `/api/ask_status`·슬롯 미점유·≤2.1s bounded.
+- **MINOR 흡수(3)**: ① **stale-running 미제외**(find/dedup 이 죽은 run 에 attach → timeout fallback) → `find_active_dup_ask_job`·enqueue dedup 절을 `_ACTIVE_SLOT_PREDICATE` 재사용으로 교체(heartbeat 끊긴 running 제외, `stale_seconds` 파라미터화)+테스트 MAKE_INTERVAL 단언 추가. ② **index.html cache-buster 미bump**(part B 미전파) → `app.js?v=20260626-ask-dedup-idempotency` 로 bump+스테이징. ③ **dedup 키 attachment 누락**(동시 same-text/different-attachment → 잘못된 답변 attach, WEB_PARALLEL_LIMIT>1+진성 동시 필요) → **accepted trade-off**(dedup 의도=동일 재전송, 시나리오 극희소; 후속 확장 여지). doc nit(동시 race "atomic backstop" 과장) → app.py 주석·문서를 "commit 된 중복에 atomic, sub-ms 동시충돌은 partial unique index 후속" 로 정정.
+- **잔여(accepted)**: 진성 sub-ms 동시 중복은 partial unique index 로만 완전 차단(관측 결함은 순차 재전송이라 현 범위 충분). 테스트는 FakeConn SQL-shape 회귀고정(런타임 PG dedup 의미는 미검증 — 기존 suite 스타일과 동일, 라이브 배포 후 ask_jobs dup=0 재검증으로 보완).
+- 검증(흡수 후): `test_ask_jobs.py` **21/21 PASS**(신규 dedup 5) + `py_compile`(ask_jobs.py·app.py) + `node --check`(app.js) PASS.
+- Human Approval Needed: 외부 영향(PR 생성)은 사용자 confirm. commit/push/main 병합·배포(deploy_scope: included)는 자동 동기화 정책. 코드 자체는 SHIP.
+- Cross-ref: feature-0002 CHG-20260626-ask-dedup-idempotency / TASK-20260626-ask-dedup-idempotency / FUNCTION REQ-20260626-ask-dedup-idempotency / REPORT 2026-06-26.
+
 ## REV-20260625T204254-conv-switch-fade [SUBAGENT:adversarial-frontend-8hypothesis] — SHIP-WITH-FIXES → 흡수 후 SHIP (TASK-20260625T204254-conv-switch-fade, Minor §12.3 — frontend-only 대화 전환 크로스페이드)
 - Date: 2026-06-25
 - Cycle: 좌측 사이드 대화 전환 크로스페이드(fade-out/in + 목표 우선 로딩 시 가속). worktree `ai/claude/feature-0003-agent-web-ui`(base 2666738). CHG-20260625T204254-conv-switch-fade.

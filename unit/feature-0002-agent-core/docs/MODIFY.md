@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260626-ask-dedup-idempotency (TASK-20260626-ask-dedup-idempotency — ask 큐 enqueue 멱등화. feature-0003 주관, **Major §12.3**)
+- Date: 2026-06-26. 주 변경·정본 changelog 은 feature-0003 CHG-20260626-ask-dedup-idempotency. 본 항목은 feature-0002-agent-core 교차변경(ask 큐 데이터 계층)만 기록(§13.2.7).
+- 근본원인: 워커 모드 `/api/ask` long-poll 연결이 web 재생성(배포)으로 끊기면(502 EOF) 사용자 재전송 → 워커 enqueue 멱등성 부재로 동일 페이로드 job 2개 → 첫 job out-of-process 생존·완료 → 요청·답변 2회 처리. 라이브 `agent_runtime.ask_jobs` 에서 실측(동일 conv+account+user_message, attempts=1·done).
+- 변경(`src/modules/ask_jobs.py`):
+  - `enqueue_ask_job(..., dedup_message: Optional[str] = None)`: dedup_message 지정 시 INSERT…SELECT…WHERE 에 `AND NOT EXISTS(SELECT 1 FROM ask_jobs WHERE conversation_id=%(cid)s AND account_id=%(account_id)s AND status IN('pending','running') AND payload->>'user_message'=%(dedup_message)s)` 절을 추가. INSERT 와 **동일 statement** 라 commit 된 활성 중복에 atomic(자기 자신이 될 행은 미INSERT라 자기참조 없음). 미지정 시 절 미주입 = 기존 동작 무변경. 슬롯 enforce(count<limit) 술어·param 무변경, dedup_message param 추가.
+  - 신규 `find_active_dup_ask_job(conn, *, conversation_id, account_id, user_message) -> Optional[int]`: 같은 키의 활성(pending/running) job id(가장 큰 id) 반환. INSERT 억제(None)가 '슬롯 가득' 인지 'dedup 억제' 인지 caller 가 구분하는 용도.
+- 비변경: claim(FOR UPDATE SKIP LOCKED 단일문)·heartbeat·finish·sweep·set_run_id·reclaim·_ACTIVE_SLOT_PREDICATE·테이블 스키마 0. 신규 컬럼·인덱스·마이그레이션 없음(payload jsonb 비교).
+- 검증: `tests/test_ask_jobs.py` 21/21 — 신규 5(without dedup→NOT EXISTS 없음·with dedup→절+param·suppressed None·find 반환/부재) + 기존 16 무회귀. `py_compile` PASS.
+- Deploy: **ask-worker 재빌드 필수**(ask_jobs.py baked) + web 재빌드(import 동일 모듈). deploy_scope: included.
+- Cross-ref: feature-0003 CHG-20260626-ask-dedup-idempotency / REV-20260626T134920-ask-dedup-idempotency / FUNCTION REQ-20260626-ask-dedup-idempotency / TASK-20260626-ask-dedup-idempotency.
+
 ## CHG-20260624T133000-item11-phase2 (TASK-20260624-item11-phase2 — ITEM-11 Phase 2 cross-feature: KB 코어·스키마·주입·overlay. feature-0003 주관, **Major §12.3**)
 - Date: 2026-06-24. 주 변경·정본 changelog 은 feature-0003 CHG-20260624T133000-item11-phase2. 본 항목은 feature-0002-agent-core 교차변경(KB 코어/스키마/주입/overlay)만 교차 기록(§13.2.7).
 - 변경(feature-0002):

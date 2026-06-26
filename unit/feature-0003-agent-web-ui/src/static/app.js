@@ -8474,7 +8474,19 @@ async function sendPrompt() {
       // TASK-0235: early-cid 활성화된 lazy 흐름도 이 경로를 공유 — 이 때 대상 cid 는 targetConvId(빈
       // 값) 가 아니라 발급된 earlyCid(= 현재 state.activeConversationId) 다.
       const askCid = earlyCidActivated ? state.activeConversationId : targetConvId;
-      const status = askCid ? await fetchAskStatus(askCid) : null;
+      // ask-dedup-idempotency (B, retry-safety): /api/ask 가 502/EOF/네트워크로 실패한
+      // 순간엔 복구용 /api/ask_status 도 같은 web 불안정으로 일시 실패(null)할 수 있다.
+      // 단발 조회로 null 을 받으면 '진행 중 run 없음' 으로 오판해 사용자에게 재전송을
+      // 유도하고, 그 재전송이 두 번째 run 을 띄우던 중복의 한 경로였다(서버측 dedup 으로도
+      // 막지만, 여기서 attach 로 흡수하면 사용자가 재전송할 필요 자체가 없다). 짧게 몇 번
+      // 재시도해 in-flight run 을 안정적으로 포착한다.
+      let status = askCid ? await fetchAskStatus(askCid) : null;
+      if (askCid && !status) {
+        for (let _i = 0; _i < 3 && !status; _i += 1) {
+          await new Promise((r) => window.setTimeout(r, 700));
+          status = await fetchAskStatus(askCid);
+        }
+      }
       if (status && status.is_processing) {
         const statusText = status.status || "processing";
         const choice = await showTimeoutRecoveryDialog({ statusText });

@@ -11302,9 +11302,35 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         "text_inline_path": run_kwargs.get("text_inline_path"),
     }
 
+    _user_message = payload.get("user_message", "")
+
     def _enqueue() -> int | None:
         pg = _pg_connect()
         try:
+            # 멱등성(ask-dedup-idempotency): 워커 모드 /api/ask 는 long-poll 로 연결을 수십
+            # 초~분 잡으므로, web 재배포/프록시 EOF 로 그 연결이 끊겨 사용자가 같은 메시지를
+            # 재전송하면 두 번째 run 이 떠 요청·답변이 2회 처리되던 결함이 있었다(중복 전송).
+            # 같은 (conv, account, user_message) 로 활성(pending/running) job 이 이미 있으면
+            # 새 job 을 만들지 않고 그 job_id 를 반환 → 아래 attach 루프가 기존 run 에 붙어
+            # 동일 결과를 동기 응답한다. 사전 검사가 흔한 순차 재전송(끊김→재전송, 수백 ms~수십 s
+            # 간격, 첫 job 이미 commit)을 조기 흡수하고, enqueue 의 dedup_message NOT EXISTS 가
+            # *commit 된 중복* 에 대한 atomic backstop 이다(완전 동시 sub-ms 충돌까지 막으려면
+            # partial unique index 가 필요 — 관측된 결함은 순차라 현 범위로 충분).
+            try:
+                _dup = _aj.find_active_dup_ask_job(
+                    pg, conversation_id=conv_id, account_id=account_id,
+                    user_message=_user_message,
+                    stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                )
+            except Exception:
+                _dup = None
+            if _dup is not None:
+                logging.getLogger(__name__).info(
+                    "ask-dedup: 활성 중복 ask_job 재사용 conv=%s job=%s (새 run 미생성)",
+                    conv_id, _dup,
+                )
+                # 기존 run 의 KV 상태/run_id 를 보존 — 새 sentinel 로 덮어쓰지 않는다.
+                return _dup
             # enqueue~claim 갭에도 프런트가 '처리중' 을 보도록 last_status 선기록(현행 race
             # 가드와 동등). worker 가 claim 시 run_id 와 함께 다시 processing 기록.
             # TASK-0241: 선기록의 last_status_run_id 를 직전 run(취소된 run 포함)이 아닌 *새 sentinel*
@@ -11318,11 +11344,24 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
                 set_run_status(conn, conv_id, "processing", run_id=_enq_sentinel)
             except Exception:
                 pass
-            return _aj.enqueue_ask_job(
+            _jid = _aj.enqueue_ask_job(
                 pg, conversation_id=conv_id, run_id=None, account_id=account_id,
                 payload=payload, account_limit=WEB_PARALLEL_LIMIT,
                 stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                dedup_message=_user_message,
             )
+            if _jid is not None:
+                return _jid
+            # INSERT 억제됨 — 슬롯 가득(429) vs dedup race(기존 attach) 구분. 사전 검사~enqueue
+            # 사이에 동시 요청이 막 commit 한 중복일 수 있으므로 한 번 더 조회한다.
+            try:
+                return _aj.find_active_dup_ask_job(
+                    pg, conversation_id=conv_id, account_id=account_id,
+                    user_message=_user_message,
+                    stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                )
+            except Exception:
+                return None
         finally:
             try:
                 pg.close()
