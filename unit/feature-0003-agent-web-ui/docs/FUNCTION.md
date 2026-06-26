@@ -1245,3 +1245,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 '2026-06-25' 블록에 06-25 후속 user-facing 변경 6건을 평이한 한국어로 추가(items 14→20): 답변 '단계 보기' 버튼 소실 수정 · 대화 전환 크로스페이드 · 공유 링크 대화 참여 불가 수정 · 읽은 대화 안 읽음 배지 미감소 수정 · @assistant 전송 후 입력창 미클리어 수정 · 그룹 대화 AI 답변 정확도 개선. generated 메타 2026-06-26.
 - 내부 구현·feature-id·테이블/함수명 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260626-rn-0626` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d). CHG/REV-20260626T080501-doc-sync-rn-0626.
+
+## (doc-sync-rn-0626b, 2026-06-26) 릴리즈노트 콘텐츠 — product-chip(처리 중 제품 선택 가능) 06-26 블록 신설
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 신규 '2026-06-26' 블록(1항목) prepend: [improved/work] 답변을 만드는 중에도 제품 선택을 바꿀 수 있음(처리 중 제품 선택 잠금 해제, 변경은 다음 질문부터 반영). f049fee(TASK-0047 race 가드 3계층 완화, ADR-WEB-0006)의 사용자 표면 announcement.
+- 내부 구현·feature-id·테이블/함수명·"칩"/PATCH/run_kwargs 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260626b-rn-0626` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d). CHG/REV-20260626T130501-doc-sync-rn-0626b.

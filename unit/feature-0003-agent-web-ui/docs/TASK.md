@@ -4719,3 +4719,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 콘텐츠 데이터만 — 렌더 로직·백엔드·스키마·RBAC 무변경. ULTRACODE 3축 워크플로(분석→적대검증→완전성 비평) VERDICT pass/go-with-fixes, 머지 6건 1:1 대조 CLEAN. 비-user-facing(c2ed580 캐시버스터·7c89b7d META skill 정책·3a7da05 cycle 마감) 제외 확인.
 - [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + 06-25 블록 14→20.
 - [x] META(STATUS·wiki) 별도 commit 분리. verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
+
+### TASK-20260626T130501-doc-sync-rn-0626b — product-chip(처리 중 제품 선택 가능) 릴리즈노트 06-26 블록 + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-26)
+- 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃, ULTRACODE). 릴리즈노트 마지막 sync(cd05fa1 @ 2026-06-26 08:35) 이후 main 병합된 user-facing 변경(f049fee, 12:05)이 릴리즈노트 미반영(drift). 신규 '2026-06-26' 블록(1항목) prepend + `index.html`·`admin.html` cache-buster `?v=20260626-rn-0626`→`?v=20260626b-rn-0626`. generated 메타는 이미 2026-06-26(무변경).
+- [x] 대상 머지(1, 평이화·내부 비노출): [improved work] 답변 처리 중에도 제품 선택 변경 가능 — 처리 중 제품 선택 잠금 해제, 변경은 다음 질문부터 반영(f049fee TASK-0047 race 가드 3계층 완화, ADR-WEB-0006).
+- [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. ULTRACODE 워크플로(3타깃 read-only 분석→타깃별 적대 검증) window 독립 재확인: cd05fa1..HEAD user-facing 단일(f049fee), late-merge 누락 0. 내부용어("칩"/PATCH 409/run_kwargs/race guard/feature-id) 누출 0.
+- [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-26' 블록 신설.
+- [x] META(STATUS·wiki) 무변경(이번 run delta 0 — STATUS feature-0003 행은 f049fee가 이미 반영, wiki는 minor timing-guard 완화라 카드/Log 무변경). 따라서 operational 단일 commit. verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.

@@ -4840,3 +4840,15 @@ source_of_truth: true
 - Files: `static/app.js`, `src/app.py`, `static/index.html`, `docs/{TASK,MODIFY,DECISIONS,REPORT}.md`.
 - Rollback: app.js 2블록(renderProductChip busy 분기·setActiveProduct busy 가드) revert + app.py PATCH 409 가드 3줄 + docstring revert + index.html cache-buster revert. 비파괴 — 스키마/마이그/RBAC 영향 0.
 - Deploy: web 재빌드(static+backend baked, deploy_scope: included) — 정적 자산(app.js/index.html) + app.py 변경. 마이그/스키마 없음.
+
+## CHG-20260626T130501-doc-sync-rn-0626b (TASK-20260626T130501-doc-sync-rn-0626b — product-chip 릴리즈노트 06-26 블록 + cache-buster bump, 비-정책 doc-only)
+- Date: 2026-06-26 (`/_dqa:doc_sync` 무인 스케줄 ULTRACODE, worktree ai/claude/doc-sync-20260626-130501, base 15ef5f4).
+- 배경: 릴리즈노트 마지막 sync(cd05fa1 @ 06-26 08:35) 이후 main 병합된 user-facing 변경(f049fee 제품 chip 처리 중 항상 활성화, 12:05)이 릴리즈노트 미반영(drift).
+- 내용:
+  - `static/release-notes-data.js`: releases head 에 신규 '2026-06-26' 블록 prepend(1항목) — [improved/work] "답변을 만드는 중에도 제품 선택을 바꿀 수 있습니다"(처리 중 제품 선택 잠금 해제, 다음 질문부터 반영). generated 이미 2026-06-26(무변경).
+  - `static/index.html`·`static/admin.html`: 릴리즈노트 cache-buster `release-notes-data.js?v=20260626-rn-0626`→`?v=20260626b-rn-0626`(동일자 2회차 datepart-suffix 규약, cd05fa1 `20260625c-rn-0625` 선례). app.js/styles.css 토큰 무변경.
+- Why: 현실↔릴리즈노트 정합(사용자 노출 표면 최신화). 평이한 한국어·내부 비노출. product-chip 코드(f049fee)는 별도 cycle 에서 이미 배포·검증됨 — 릴리즈노트 announcement 만 누락분.
+- Verification: `node --check release-notes-data.js` PASS + 항목 스키마 정합 + window 독립 재검증(cd05fa1..HEAD user-facing 단일 f049fee). 적대 검증자 CONDITIONAL 수정 흡수: ① 제목 '가능해짐'(부정확)→'바꿀 수 있습니다', ② cache-buster 는 cd05fa1 `20260625c-rn-0625` datepart-suffix 선례 따라 `20260626b-rn-0626`(검증자 제안 rn-part `0626b` 대신 datepart suffix — 둘 다 충돌 없으나 실관례 정합).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: 06-26 블록 + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.

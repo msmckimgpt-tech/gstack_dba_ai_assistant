@@ -3918,3 +3918,11 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (Minor, 비파괴, RBAC 무변경, 사용자 명시 결정 + SAFE).
 - Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included, 사용자 결정 2026-06-11): cycle-final 후 web 재배포 사전 승인 범위. 첫 배포 직전 "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료. 실행: commit f049fee → main ff-merge → origin push → `sudo docker compose build web && up -d --no-deps web`. 검증: `repo-web-1` Up healthy + baked 서빙 `app.js?v=20260626-product-chip-always-enabled` + app.py 409 제거(grep 0) + healthz OK. ask-worker 미재빌드(web-only).
 - Cross-ref: CHG-20260626T025055-product-chip-always-enabled / TASK-20260626T025055-product-chip-always-enabled / ADR-WEB-0006.
+
+## REV-20260626T130501-doc-sync-rn-0626b [SKIPPED:non-policy-doc] (TASK-20260626T130501-doc-sync-rn-0626b, 비-정책 doc-only — 릴리즈노트 콘텐츠 + cache-buster)
+- Date: 2026-06-26 (`/_dqa:doc_sync` 무인 스케줄 ULTRACODE, worktree ai/claude/doc-sync-20260626-130501).
+- 변경: `static/release-notes-data.js` 신규 '2026-06-26' 블록(1항목, product-chip) prepend + `index.html`·`admin.html` cache-buster `?v=20260626-rn-0626`→`?v=20260626b-rn-0626`.
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 1항목 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터/응답계약 무영향. 제품 로직 변화 0(product-chip 코드 f049fee 는 별도 cycle 에서 이미 배포·검증됨) → 적대 verification 패널 불요(비-정책 doc 경량 cycle). 사실 정확성·평이화는 ULTRACODE 워크플로(3타깃 read-only Explore 분석 → 타깃별 적대 검증자)로 검증: window 독립 재확인(cd05fa1..HEAD user-facing 단일 f049fee, late-merge 누락 0), 내부용어 누출 0, 검증자 수정(제목 정밀화 '가능해짐'→'바꿀 수 있습니다'·cache-buster datepart suffix) 흡수.
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-26' 신설. 비-user-facing(15ef5f4 cycle 마감 doc·c11cc27 08:05 doc-sync) 의도적 제외 확인.
+- Human Approval Needed: 아니오.
+- Cross-ref: CHG-20260626T130501-doc-sync-rn-0626b / TASK-20260626T130501-doc-sync-rn-0626b / FUNCTION '릴리즈노트 콘텐츠 — product-chip 06-26 블록 신설' / 원천 머지 f049fee(ADR-WEB-0006). META(STATUS·wiki) 무변경 — 이번 run delta 0.
