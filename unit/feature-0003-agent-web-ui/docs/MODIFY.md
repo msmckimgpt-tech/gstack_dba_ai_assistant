@@ -4824,3 +4824,19 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
 - Rollback: 6항목 + generated + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.
+
+## CHG-20260626T025055-product-chip-always-enabled (TASK-20260626T025055-product-chip-always-enabled — 제품 선택 chip 처리 중 항상 활성화, Minor §12.3 — frontend + backend PATCH 가드, RBAC 무변경)
+- Date: 2026-06-26 (`/_template:entry` dispatch, worktree ai/claude/feature-0003-agent-web-ui, base c11cc27).
+- 배경: 사용자 보고 — assistant 에게 요청을 보낼 때(대화가 "요청 처리 중"인 동안) composer 좌측 제품 선택 chip(`#productChip`, 예: 'KR_QA')이 회색 비활성화돼 제품을 바꿀 수 없음. 이제는 항상 활성화 상태여야 함.
+- 진단: 차단이 **세 계층**(전부 TASK-0047 turn-immutability) — 프론트 시각(renderProductChip)·프론트 기능(setActiveProduct reject)·백엔드(PATCH 409). 적대 검증 subagent 가 ③ 백엔드 409 를 적발: ①②만 풀면 owner 클릭이 409 에러 토스트로 실패("활성처럼 보이나 동작 안 함")라 셋 다 풀어야 실효.
+- 내용:
+  - `static/app.js` `renderProductChip()`: `const busy = isCurrentConvBusy(); chipEl.disabled = busy …` busy 분기 제거 → `chipEl.disabled=false`·`aria-disabled="false"`·`classList.remove("is-disabled")`·정상 title 고정. (이로써 `openProductDropup` 의 `if(chip.disabled)return` 가드가 항상 통과 → 처리 중에도 드롭업 열림.)
+  - `static/app.js` `setActiveProduct()`: `if (isCurrentConvBusy()) { showToast("응답 처리 중에는 제품을 변경할 수 없어요.", true); … return; }` 프론트 기능 차단 가드 제거 → 처리 중 선택도 정상 적용. optimistic state·`writeProductPrefToLocal`·participant per-message override·owner `PATCH …/product`·토스트 문구("다음 답변/메시지부터 적용됩니다") 전부 무변경.
+  - `src/app.py` `update_conversation_product`(@app.patch `/api/conversations/{cid}/product`): `if _conversation_is_processing(conn, cid): return _json_error("응답 처리 중에는 제품을 변경할 수 없습니다…", 409)` turn-immutability 409 가드 제거 + docstring 갱신. **권한 게이트(conversation.ask 권한·`_conversation_owned_by_account`·`_account_has_product_access`·IsActive)·UPDATE·`_save_account_product_pref`·응답 shape 전부 무변경** → RBAC/스키마/엔드포인트 계약 0 변경. helper `_conversation_is_processing`(3669)은 잔여 호출처 없으나 재사용 가능 query util 이라 보존(ruff clean).
+  - `static/index.html`: app.js cache-buster `?v=20260625-conv-switch-fade` → `?v=20260626-product-chip-always-enabled`(변경 전파 — `?v=` 가 유일 무효화 경로).
+- Why: 세 계층을 모두 풀어야 "항상 활성+사용 가능"이 실효. 처리 중 입력창 비잠금(feature-0009 composer-nonblock-interrupt R1)과 같은 방향. 제품 변경은 in-flight 답변이 아닌 다음 요청부터 적용되므로 토스트 문구가 그대로 정확.
+- 안전성(적대 검증 SUBAGENT VERDICT SAFE): 제품은 `/api/ask` 슬롯 획득 후 1회 read(app.py:11676-11704)→`run_kwargs` baked(11995-12013)→worker payload(11293~) 로 캡처. worker `_payload_to_kwargs`(modules/ask.py:85-104)·`run_agent`(agent_core)는 conversation 제품 재조회 0. PATCH 는 단일 row UPDATE(부수효과 0). → 처리 중 변경이 in-flight 답변을 오염시키지 않고 데드락도 없음. TASK-0047/409 가드는 데이터 정합성 아닌 보수적 UX 가드(손상 위험 0). 상세 ADR-WEB-0006.
+- Verification: `node --check app.js` PASS · `python3 -m py_compile app.py` PASS · `ruff check app.py` All checks passed · 잔여 chip disable 신호 grep 0 · `isCurrentConvBusy` 타 용도(renderComposer send/stop 5072 등) 무영향. 적대 검증 5축(ask 캡처 시점·worker 재조회·PATCH 부수효과·동시성·participant override) 반증 실패 SAFE.
+- Files: `static/app.js`, `src/app.py`, `static/index.html`, `docs/{TASK,MODIFY,DECISIONS,REPORT}.md`.
+- Rollback: app.js 2블록(renderProductChip busy 분기·setActiveProduct busy 가드) revert + app.py PATCH 409 가드 3줄 + docstring revert + index.html cache-buster revert. 비파괴 — 스키마/마이그/RBAC 영향 0.
+- Deploy: web 재빌드(static+backend baked, deploy_scope: included) — 정적 자산(app.js/index.html) + app.py 변경. 마이그/스키마 없음.

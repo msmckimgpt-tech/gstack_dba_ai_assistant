@@ -3901,3 +3901,19 @@ source_of_truth: true
 - 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 머지 6건(998376b/8728ade/92753ab/9b1dc16+36ad138+d90e1e2/bec35bd/feca44f) 1:1 대조. 비-user-facing(c2ed580/7c89b7d/3a7da05) 의도적 제외 확인.
 - Human Approval Needed: 아니오.
 - Cross-ref: CHG-20260626T080501-doc-sync-rn-0626 / TASK-20260626T080501-doc-sync-rn-0626 / FUNCTION '릴리즈노트 콘텐츠 — 06-25 후속 머지분(6건) 추가' / META commit(STATUS feature-0003·0009 행 + wiki hot.md·Log.md·feature-0009 카드 §7).
+
+## REV-20260626T025055-product-chip-always-enabled [SUBAGENT:adversarial-product-race] — VERDICT SAFE (TASK-20260626T025055-product-chip-always-enabled, Minor §12.3 — frontend + backend PATCH 가드, TASK-0047 race 가드 완화)
+- Date: 2026-06-26 (`/_template:entry` dispatch, worktree ai/claude/feature-0003-agent-web-ui, base c11cc27).
+- 변경: 제품 선택 chip 을 처리 중에도 항상 활성화 — `static/app.js` renderProductChip busy 분기·setActiveProduct reject 가드 제거 + `src/app.py` `update_conversation_product`(PATCH)의 `_conversation_is_processing`→409 turn-immutability 가드·docstring 제거 + `index.html` cache-buster bump.
+- 패널(§18.8 dispatch: UI/button → ux + backend/endpoint): 적대 검증 1렌즈(general-purpose 적대 리뷰어, read-only). 통과가 아니라 결함 적발 목적. 반증 대상 = "처리 중 제품 변경이 in-flight `/api/ask` 답변을 오염시키거나 백엔드 race 를 유발하지 않는다".
+- 5축 검증 결과(전부 반증 실패):
+  - ① ask 캡처 시점: 제품은 슬롯 획득(11662) 후 1회 read(11676-11704)→`run_kwargs` baked(11995-12013). 실행 중/후 재조회 없음.
+  - ② worker 재조회: worker payload(11289-11303)는 product 캡처 전달, `_payload_to_kwargs`(modules/ask.py:85-104)·`run_agent`(agent_core) 모두 conversation product 재조회 0. agent_core 의 유일 conv SELECT(`_list_conversations` 2413)는 topic/timestamp 만.
+  - ③ PATCH 부수효과: `update_conversation_product`(12332~)는 단일 row UPDATE(12407~)+`_save_account_product_pref` 뿐 — run 취소·KV·캐시 무영향.
+  - ④ 동시성/데드락: 캡처된 값이라 late UPDATE 가 진행 중 run 의 product 를 소급 변경 불가. 단일 row UPDATE 라 데드락 벡터 없음.
+  - ⑤ participant override: `_parse_participant_product_override`(3491)는 body 캡처(11526)·미영속(11738 skip)이라 PATCH 무관.
+- VERDICT: **SAFE.** in-flight 답변 오염·백엔드 race 불가. 제거된 409/race 가드는 데이터 정합성 아닌 보수적 UX 가드(redundant defense-in-depth).
+- Watch item(적발→해소): 적대 리뷰가 "①② 프론트 가드만 풀면 owner 클릭이 백엔드 409 로 실패(활성처럼 보이나 동작 안 함)" 를 적발 → 본 cycle 에서 ③ 백엔드 409 가드도 제거하여 해소(세 계층 일괄). 추가 발견 desync 우려(409 시 chip 라벨↔실제 pinned 불일치)는 409 제거로 처리 중 케이스에서 소멸.
+- 검증: `node --check app.js` · `python3 -m py_compile app.py` · `ruff check app.py`(All checks passed) PASS. 잔여 chip disable 신호 grep 0. RBAC(conversation.ask·소유권·product access·IsActive)·스키마·엔드포인트 계약 무변경 재확인.
+- Human Approval Needed: 아니오 (Minor, 비파괴, RBAC 무변경, 사용자 명시 결정 + SAFE).
+- Cross-ref: CHG-20260626T025055-product-chip-always-enabled / TASK-20260626T025055-product-chip-always-enabled / ADR-WEB-0006.

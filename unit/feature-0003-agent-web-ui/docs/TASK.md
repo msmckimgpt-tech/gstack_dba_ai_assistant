@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260626T025055-product-chip-always-enabled — 제품 선택 chip 을 요청 처리 중에도 항상 활성화 (Minor §12.3 — frontend + backend PATCH 가드, TASK-0047 race 가드 완화, RBAC 무변경)
+- 출처: `/_template:entry` dispatch. 사용자 보고: "assistant 에게 요청을 보낼 때(요청 처리 중) 제품 목록을 선택하는 버튼(composer 의 `#productChip`, 예: 'KR_QA')이 비활성화됨 — 이제는 항상 활성화 상태여야 함."
+- 진단: 차단이 **세 계층**(전부 TASK-0047 "turn 단위 immutability"). ① `renderProductChip()`(app.js) busy→`chipEl.disabled`+`is-disabled`+안내 title(시각/상호작용 차단, `openProductDropup` `if(chip.disabled)return` 가드로 드롭업 차단). ② `setActiveProduct()`(app.js) busy→토스트 후 변경 거부(프론트 기능 차단). ③ **백엔드 `PATCH /api/conversations/{cid}/product`(app.py:12370) `_conversation_is_processing`→409**. ③ 때문에 ①②만 풀면 owner 가 클릭 시 409 에러 토스트로 실패(활성처럼 보이나 동작 안 함) — 적대 검증 subagent 가 적발. 셋 다 풀어야 "항상 활성+사용 가능" 실효.
+- 안전성 분석(적대 검증 SUBAGENT VERDICT SAFE — 반증 실패): 제품(`product_id`/`product_mode`)은 `/api/ask` 슬롯 획득 후 1회 read(app.py:11676-11704)→`run_kwargs` baked(11995-12013)→worker payload(11293~) 로 캡처. worker `_payload_to_kwargs`(modules/ask.py:85-104)·`run_agent`(agent_core.py) 모두 conversation 제품을 **재조회 안 함**. PATCH 는 단일 row UPDATE(12407~), in-flight run 취소·KV·캐시 부수효과 0 → 데드락/오염 불가. 변경은 다음 `/api/ask` 부터 `_load_conversation_product`(11521) 로만 반영 — `setActiveProduct` 토스트("다음 답변/메시지부터 적용됩니다")와 정합. 409 가드는 데이터 정합성 아닌 보수적 UX 가드(손상 위험 0).
+- [x] `static/app.js` `renderProductChip()`: busy 분기 제거 → `chipEl.disabled=false`+`aria-disabled=false`+`is-disabled` 제거+정상 title 상수화.
+- [x] `static/app.js` `setActiveProduct()`: `isCurrentConvBusy()` reject 가드 블록 제거(처리 중에도 변경 허용). 토스트·optimistic·PATCH·participant override 경로 무변경.
+- [x] `src/app.py` `update_conversation_product`(PATCH): `if _conversation_is_processing(conn, cid): return 409` turn-immutability 가드 제거 + docstring 갱신. 권한 게이트(conversation.ask·소유권·`_account_has_product_access`·IsActive)·UPDATE·pref 저장 전부 무변경 → **RBAC/스키마/엔드포인트 shape 0 변경**. helper `_conversation_is_processing`(3669)는 타 호출처 없으나 재사용 가능 query util 이라 보존(ruff clean).
+- [x] `static/index.html`: app.js cache-buster `?v=20260625-conv-switch-fade` → `?v=20260626-product-chip-always-enabled`(변경 전파).
+- [x] 검증: `node --check app.js` PASS · `python3 -m py_compile app.py` PASS · `ruff check app.py` All checks passed · 잔여 chip disable 신호 grep 0(1389 가드는 chip.disabled 항상 false 라 무해) · `isCurrentConvBusy` 타 용도(composer send/stop 5072 등) 무영향.
+- [x] **리뷰(REV-20260626T025055-product-chip-always-enabled [SUBAGENT:adversarial-product-race]):** 적대 검증(general-purpose, 5축 — ask 캡처 시점·worker 재조회·PATCH 부수효과·동시성 데드락·participant override) **VERDICT SAFE**, in-flight 오염·백엔드 race 반증 실패. 발견(watch item): 409 제거 전엔 프론트 가드만 풀면 owner 클릭이 409 로 실패 → 본 cycle 에서 백엔드 가드도 제거해 해소.
+- [ ] verify-completion(operational, feature-0003) → 머지 → web 재배포(static baked, deploy_scope: included) → 마감.
+
 ## TASK-20260625T192007-doc-sync-rn-0625b — 06-25 잔여 머지분 릴리즈노트 정합 + cache-buster bump (doc_sync maintenance, Minor §12.3 — 정적 콘텐츠)
 - 출처: `/_dqa:doc_sync` (no-arg 전 타깃 정합). 직전 doc_sync(doc-sync-20260625-163929, PR#420~#436 기준 16:55~17:01 콘텐츠 작성)가 그 **이후** main 병합된 06-25 user-facing 변경 5종을 미반영(브랜치 stale 잔여 drift) → 기존 `2026-06-25` 블록에 항목 추가(append — 신규 일자 블록 아님, 같은 날 머지분).
 - 대상 머지(5): PR#440(908fade) 참가자 per-message 제품 선택·발화 · PR#438(1f370c4)+PR#444(334c858 R1) 처리 중 입력창 비잠금/동시 run 고착·채팅 블로킹 해소 · PR#444(R3/R2) 1:1 인터럽트 재요청 + 그룹 @assistant 중복차단 · PR#437(1a69f70) @assistant 발신자 귀속 표시 정정 · PR#439(c8637f2) datasource 회로차단 사용자 안내 문구 분리.

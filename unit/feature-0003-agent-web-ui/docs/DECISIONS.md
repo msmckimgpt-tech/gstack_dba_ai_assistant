@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Feature Decisions
 
+## ADR-WEB-0006
+- Date: 2026-06-26 (TASK-20260626T025055-product-chip-always-enabled)
+- Context: composer 의 제품 선택 chip(`#productChip`)이 대화가 "요청 처리 중"인 동안 두 계층으로 막혀 있었다 — ① `renderProductChip()` 이 `isCurrentConvBusy()` 면 `chipEl.disabled=true`+`is-disabled`(시각/상호작용 차단, `openProductDropup` 가드로 드롭업 차단), ② `setActiveProduct()` 가 busy 면 토스트 후 변경 거부(기능 차단). 둘 다 TASK-0047 의 "처리 중 제품 변경 race 가드". 사용자 보고: 요청을 보낼 때 제품 선택 버튼이 비활성화됨 — 항상 활성화 상태여야 함.
+- Options: (A) 시각 disable 만 해제(chip 은 클릭되나 `setActiveProduct` 가 여전히 거부) — 버튼이 활성처럼 보이나 선택이 토스트로 실패하는 모순 UX. (B) **두 계층 모두 해제** — chip 항상 활성 + 처리 중 선택 적용(다음 요청부터 반영). (C) 가드 유지(현행).
+- Decision: **(B) 모든 계층 해제** (사용자 결정 2026-06-26). 차단은 실제로 **세 계층**이었다 — ①② 프론트(renderProductChip 시각·setActiveProduct reject) + ③ 백엔드 `PATCH /api/conversations/{cid}/product` 의 `_conversation_is_processing`→409. ①②만 풀면 owner 가 처리 중 제품을 클릭할 때 PATCH 가 409 로 거부되어 에러 토스트로 실패(활성처럼 보이나 동작 안 함)하므로, 적대 검증 subagent 의 적발에 따라 ③ 백엔드 409 가드도 함께 제거했다. 근거: 제품(`product_id`/`product_mode`)은 `/api/ask` 슬롯 획득 후 1회 read(app.py:11676-11704)→`run_kwargs` baked(11995-12013)→worker payload(11293~) 로 캡처되고, worker `_payload_to_kwargs`(modules/ask.py:85-104)·`run_agent`(agent_core)는 conversation 제품을 **재조회하지 않는다**. PATCH 는 단일 row UPDATE 로 in-flight run 에 부수효과가 없다(취소·KV·캐시 무영향). 따라서 처리 중 제품 변경은 진행 중 답변을 오염시키지 않고 **다음 ask 부터** `_load_conversation_product`(11521) 로 적용되어 `setActiveProduct` 토스트("다음 답변/메시지부터 적용됩니다")와 정확히 일치. TASK-0047 race 가드(프론트)·409 가드(백엔드)는 데이터 정합성 보호가 아니라 보수적 UX 가드였고(데이터 손상 위험 0, 적대 검증 5축 반증 실패 VERDICT SAFE), 처리 중 입력창 비잠금(feature-0009 composer-nonblock-interrupt R1)과 같은 방향이다. (A)는 "활성처럼 보이나 동작 안 함"이라 사용자 의도("항상 활성")에 미달하여 기각.
+- Consequence: `renderProductChip()` busy 분기·`setActiveProduct()` busy reject 가드 제거(app.js) + `update_conversation_product` PATCH 의 409 turn-immutability 가드·docstring 제거(app.py) + index.html app.js cache-buster bump. **RBAC(conversation.ask·소유권·product access·IsActive)·스키마·엔드포인트 계약·마이그 무변경** — 제거된 것은 timing 가드뿐. helper `_conversation_is_processing`(3669)은 잔여 호출처 없으나 재사용 가능 util 이라 보존. app.py:11586~ 의 "기존 대화 제품 변경은 PATCH 단일 경로(TASK-0047)" 주석은 여전히 유효(PATCH 가 단일 변경 경로인 사실은 불변, busy-블로킹만 완화). 향후 처리 중 chip 라벨과 in-flight 답변 제품이 일시적으로 다르게 보일 수 있으나 토스트가 "다음부터 적용"을 안내하므로 수용.
+
 ## ADR-WEB-0005
 - Date: 2026-06-09 (TASK-0170)
 - Context: Fork(`_fork_conversation_impl`)가 웹 표시 메시지(`agent_runtime.messages`)만 복사하고 LLM 문맥(`agent_runtime.core_messages`, agent_core 가 매 ask 마다 읽음)은 복사 안 해, 복사본 대화에서 어시스턴트가 이전 문맥을 인지 못 함(사용자 보고). 또 첨부(`WebConversationAttachments` blob + `agent_attachment_<sha256(cid)>` sandbox)도 미복사. 사용자가 "전체 복사처럼 보이되 내부적으로 원문 참조" 하는 git 식 reference 아키텍처를 희망.

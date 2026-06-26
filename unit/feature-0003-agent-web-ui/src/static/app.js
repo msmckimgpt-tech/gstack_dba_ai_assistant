@@ -1109,14 +1109,16 @@ function renderProductChip() {
     }
   }
   chipEl.setAttribute("aria-label", `이 대화의 제품 선택, 현재 ${fullLabel}${connSuffix}`);
-  // 진행 중 ask 가 있으면 chip disabled (race 가드 + 사용자 안내).
-  const busy = isCurrentConvBusy();
-  chipEl.disabled = busy;
-  chipEl.setAttribute("aria-disabled", busy ? "true" : "false");
-  chipEl.classList.toggle("is-disabled", busy);
-  chipEl.title = busy
-    ? "응답 처리 중에는 변경할 수 없어요. 응답이 끝난 뒤 다시 시도해 주세요."
-    : "이 대화에 적용할 제품을 선택합니다. auto 는 일반 대화 모드입니다.";
+  // REQ-20260626-product-chip-always-enabled: 제품 선택 chip 은 처리 중에도 항상 활성화한다.
+  //  과거 race 가드(TASK-0047)는 처리 중 chip 을 disable 했으나, 제품은 /api/ask enqueue
+  //  시점에 run_kwargs(product_id/product_mode)로 이미 캡처되므로 in-flight 답변은 영향받지
+  //  않고, 변경은 '다음 요청'부터 반영된다(setActiveProduct 토스트 "다음 답변부터 적용"과 정합).
+  //  사용자 결정(2026-06-26): 데이터 손상 위험 없음 → 항상 활성. setActiveProduct 의 busy
+  //  reject 가드도 함께 제거(두 계층 모두 해제해야 '항상 활성' 이 실효).
+  chipEl.disabled = false;
+  chipEl.setAttribute("aria-disabled", "false");
+  chipEl.classList.remove("is-disabled");
+  chipEl.title = "이 대화에 적용할 제품을 선택합니다. auto 는 일반 대화 모드입니다.";
   // 메뉴가 열려 있으면 옵션 리스트도 즉시 갱신.
   if (chipEl.getAttribute("aria-expanded") === "true") {
     renderProductDropupMenu();
@@ -1503,11 +1505,9 @@ async function setActiveProduct({ mode, pinnedId }) {
     renderProductChip();
     return;
   }
-  if (isCurrentConvBusy()) {
-    showToast("응답 처리 중에는 제품을 변경할 수 없어요.", true);
-    renderProductChip();
-    return;
-  }
+  // REQ-20260626-product-chip-always-enabled: 처리 중에도 제품 변경 허용(사용자 결정 2026-06-26).
+  //  변경은 in-flight 답변이 아닌 '다음 요청'부터 적용된다(아래 토스트 문구와 정합) — 제품은
+  //  /api/ask enqueue 시점에 캡처되므로 진행 중 답변은 영향받지 않는다. 과거 busy reject 가드 제거.
   // optimistic.
   state.productMode = normMode;
   state.pinnedProductId = normPid;

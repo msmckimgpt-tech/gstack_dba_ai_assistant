@@ -12336,8 +12336,10 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
     body: { product_id: int|null, mode: 'auto'|'pinned' }
     - mode='auto' ⇒ product_id 는 무시되고 NULL 로 저장된다 (사용자 의도: 일반 대화).
     - mode='pinned' ⇒ product_id 가 활성 product 여야 한다.
-    - 진행 중 ask(`AgentMemoryKv.last_status='processing'`) 가 있으면 409 로 거부.
-      이는 Codex 검토 의견의 PATCH race 가드(turn 단위 immutability) 1차 구현이다.
+    - 처리 중에도 변경을 허용한다 (REQ-20260626-product-chip-always-enabled, ADR-WEB-0006).
+      과거 turn 단위 immutability 409 가드(TASK-0047, Codex 검토 1차 구현)는 제거됨 —
+      제품은 `/api/ask` enqueue 시점에 run_kwargs(product_id/product_mode)로 캡처되어
+      in-flight 답변은 영향받지 않고, 이 변경은 '다음 요청'부터 반영된다(데이터 정합성 위험 0).
     """
     try:
         data = await request.json()
@@ -12366,13 +12368,10 @@ async def update_conversation_product(cid: str, request: Request) -> JSONRespons
     if not _conversation_owned_by_account(conn, cid, int(account["id"])):
         conn.close()
         return _json_error("타 계정 대화는 변경할 수 없습니다.", 403)
-    # turn 단위 immutability 가드.
-    if _conversation_is_processing(conn, cid):
-        conn.close()
-        return _json_error(
-            "응답 처리 중에는 제품을 변경할 수 없습니다. 응답 완료 후 다시 시도해 주세요.", 409
-        )
-
+    # REQ-20260626-product-chip-always-enabled (ADR-WEB-0006): 처리 중에도 제품 변경 허용.
+    #  과거 turn 단위 immutability 409 가드(TASK-0047)는 제거됐다 — in-flight 답변은 enqueue
+    #  시점에 캡처된 product 로 끝까지 실행되므로 영향받지 않고, 이 변경은 다음 /api/ask 부터
+    #  반영된다(setActiveProduct 토스트 "다음 답변부터 적용됩니다"와 정합).
     pinned_id: int | None = None
     if mode == "pinned":
         if raw_pid in (None, "", 0):
