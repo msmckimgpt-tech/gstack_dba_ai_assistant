@@ -4871,3 +4871,15 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
 - Rollback: 06-26 블록 + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.
+
+## CHG-20260629T080501-doc-sync-rn-0629 (TASK-20260629T080501-doc-sync-rn-0629 — ask-dedup 릴리즈노트 06-26 블록 합류 + cache-buster bump, 비-정책 doc-only)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄 ULTRACODE, worktree ai/claude/doc-sync-20260629-080501).
+- 배경: 릴리즈노트 마지막 sync(483c4c0 @ 06-26 13:25) 이후 main 병합된 user-facing 변경(ask-dedup-idempotency 0818b0a 13:51·3595ea3 14:00)이 릴리즈노트 미반영(drift).
+- 내용:
+  - `static/release-notes-data.js`: 기존 '2026-06-26' 블록 items 에 [fixed/work] 1항목 합류 — "같은 질문이 드물게 두 번 처리되던 문제 수정"(연결 끊김 후 재전송 시 중복 처리·답변 → 1회로 수정). 블록 summary "처리 중에도 제품 선택 변경 가능"→"… · 같은 질문 중복 처리 수정". generated 2026-06-26→2026-06-29.
+  - `static/index.html`·`static/admin.html`: 릴리즈노트 cache-buster `?v=20260626b-rn-0626`→`?v=20260629-rn-0629`(sync 일자 datepart). app.js/styles.css 토큰 무변경.
+- Why: 현실↔릴리즈노트 정합(사용자 노출 표면 최신화). 평이한 한국어·내부 비노출. ask-dedup 코드(0818b0a/3595ea3)는 별도 cycle 에서 이미 배포·검증됨(REV-20260626T134920/135945) — 릴리즈노트 announcement 만 누락분.
+- Verification: `node --check release-notes-data.js` PASS + 항목 스키마 정합 + ULTRACODE 적대 워크플로(릴리즈노트 비노출 반증 refuted:false·leaksInternals:false, realityMatch:true — REPORT/diff 대조). window 독립 재검증(483c4c0..HEAD user-facing 단일 ask-dedup).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: 06-26 블록 fixed 항목 + summary + generated + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.

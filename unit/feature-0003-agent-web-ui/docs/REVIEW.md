@@ -3945,3 +3945,11 @@ source_of_truth: true
 - 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-26' 신설. 비-user-facing(15ef5f4 cycle 마감 doc·c11cc27 08:05 doc-sync) 의도적 제외 확인.
 - Human Approval Needed: 아니오.
 - Cross-ref: CHG-20260626T130501-doc-sync-rn-0626b / TASK-20260626T130501-doc-sync-rn-0626b / FUNCTION '릴리즈노트 콘텐츠 — product-chip 06-26 블록 신설' / 원천 머지 f049fee(ADR-WEB-0006). META(STATUS·wiki) 무변경 — 이번 run delta 0.
+
+## REV-20260629T080501-doc-sync-rn-0629 [SKIPPED:non-policy-doc] (TASK-20260629T080501-doc-sync-rn-0629, 비-정책 doc-only — 릴리즈노트 콘텐츠 + cache-buster)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄 ULTRACODE, worktree ai/claude/doc-sync-20260629-080501).
+- 변경: `static/release-notes-data.js` 기존 '2026-06-26' 블록에 [fixed/work] 1항목(ask-dedup, 같은 질문 중복 처리 수정) 합류 + summary 보강 + generated 06-26→06-29 + `index.html`·`admin.html` cache-buster `?v=20260626b-rn-0626`→`?v=20260629-rn-0629`.
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 1항목 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터/응답계약 무영향. ask 멱등화 코드(0818b0a/3595ea3)는 별도 cycle 에서 이미 적대 패널(REV-20260626T134920 SHIP-WITH-FIXES·135945 hotfix) + 라이브 PG 검증 완료 → 본 릴리즈노트 cycle 은 비-정책 doc 경량. 사실 정확성·평이화·비노출은 ULTRACODE 워크플로(완전성 비평 refuted:false + 릴리즈노트 비노출 반증 refuted:false·leaksInternals:false + realityMatch:true)로 검증.
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 06-26 블록 items 1→2. 비-user-facing(15ef5f4·483c4c0·c11cc27 doc·doc-sync) 의도적 제외 확인.
+- Human Approval Needed: 아니오.
+- Cross-ref: CHG-20260629T080501-doc-sync-rn-0629 / TASK-20260629T080501-doc-sync-rn-0629 / FUNCTION '릴리즈노트 콘텐츠 — ask-dedup 06-26 블록 합류' / 원천 머지 0818b0a·3595ea3(ask-dedup-idempotency) / 본체 리뷰 REV-20260626T134920·135945. META(STATUS·wiki)는 별도 commit.

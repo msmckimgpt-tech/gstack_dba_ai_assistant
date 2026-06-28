@@ -4738,3 +4738,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. ULTRACODE 워크플로(3타깃 read-only 분석→타깃별 적대 검증) window 독립 재확인: cd05fa1..HEAD user-facing 단일(f049fee), late-merge 누락 0. 내부용어("칩"/PATCH 409/run_kwargs/race guard/feature-id) 누출 0.
 - [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-26' 블록 신설.
 - [x] META(STATUS·wiki) 무변경(이번 run delta 0 — STATUS feature-0003 행은 f049fee가 이미 반영, wiki는 minor timing-guard 완화라 카드/Log 무변경). 따라서 operational 단일 commit. verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
+
+### TASK-20260629T080501-doc-sync-rn-0629 — assistant 요청 2번 중복 처리 차단(ask-dedup) 릴리즈노트 06-26 블록 합류 + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-29)
+- 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃, ULTRACODE). 릴리즈노트 마지막 sync(483c4c0 @ 2026-06-26 13:25) 이후 main 병합된 user-facing 변경(ask-dedup-idempotency 0818b0a 13:51·3595ea3 14:00)이 릴리즈노트 미반영(drift). 기존 '2026-06-26' 블록(product-chip)에 [fixed/work] 1항목 합류 + summary 보강 + generated 06-26→06-29 + `index.html`·`admin.html` cache-buster `?v=20260626b-rn-0626`→`?v=20260629-rn-0629`.
+- [x] 대상 머지(1, 평이화·내부 비노출): [fixed work] 같은 질문이 드물게 두 번 처리되던 문제 수정 — 답변 대기 중 연결이 잠깐 끊겨 같은 질문을 다시 보냈을 때 드물게 두 번 처리·답변되던 것을 한 번만 처리되도록 수정(0818b0a 워커모드 enqueue 멱등화 + 3595ea3 AmbiguousParameter 회귀 격리).
+- [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. ULTRACODE 워크플로(완전성 비평 + 타깃별 적대 검증 + 릴리즈노트 비노출 반증) window 독립 재확인: 483c4c0..HEAD user-facing 단일(ask-dedup 0818b0a/3595ea3), late-merge 누락 0. 내부용어(enqueue/dedup/NOT EXISTS/AmbiguousParameter/long-poll/502/ask_jobs/feature-id) 누출 0(refuted:false·leaksInternals:false).
+- [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + 06-26 블록 items 1→2(fixed 항목 추가).
+- [x] META(STATUS·wiki) 별도 commit 분리(STATUS feature-0003 행 ask-dedup 1줄 + wiki hot/overview/Log product-chip·ask-dedup backfill). verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
