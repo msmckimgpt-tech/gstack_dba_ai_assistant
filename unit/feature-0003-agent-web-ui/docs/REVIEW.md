@@ -4114,3 +4114,18 @@ source_of_truth: true
 - deploy_scope 승인 근거 (Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`. frontend-only(backend/스키마/migrate 무관) → **web 이미지만** 재빌드·재기동.
 - 라이브 검증(PB-0008 실 Windows Chrome 149): ① **메인 뷰 무회귀** — markdownToHtml→renderMermaidDiagrams flowchart SVG(7501) error 0(mermaid-render.js 추출이 메인 UI 무파손). ② **공유 뷰** — share 렌더 경로 flowchart SVG(7637) error 0 + `.share-container` computed maxWidth=100%·실폭 1249=viewport(전체 폭). 증적 `artifacts/pb0008-share-mermaid-responsive.png`. healthz ok.
 - 배포-후 docs 기록이라 F0 repo-immutability escape(worktree finalize 완료, f7dcb07 동일 패턴).
+
+## REV-20260629T080500-new-conv-dedup [SUBAGENT:adversarial-correctness — 5가설 전부 REFUTED, no BLOCKING] 새 대화 첫 전송 시 사이드바 대화 중복 제거
+- Related Change: CHG-20260629T080500-new-conv-dedup / TASK-20260629T080500-new-conv-dedup / FUNCTION REQ-20260629T080500-new-conv-dedup.
+- 위험등급: **Minor §12.3** (frontend-only — `app.js` + `index.html` cache-buster + 신규 테스트, backend/스키마/마이그/RBAC/credential 무변경).
+- §18.8 적대 패널(general-purpose, correctness lens, 코드 정독): 5개 회귀 가설 전부 **REFUTED**.
+  - H1(early-cid 조기 placeholder 제거가 catch/cancel/lazy-fail 경로 파손) REFUTED — `earlyCidActivated=true` 면 lazy-fail 분기(`else if (isLazyCreate && !earlyCidActivated)`) 미진입 → failed-status `get(busyKey)` 미도달. user-cancel 경로 delete 는 멱등 no-op. placeholder→실 cid optimistic 항목(clickable·polling)으로 교체라 진행추적 연속(오히려 중복 해소로 개선).
+  - H2(추가 delete 가 후속 delete/get 파손) REFUTED — `Map.delete` 멱등, failed-status get 은 `!earlyCidActivated` 가드 안이라 early-cid 경로 미도달.
+  - H3(render 를 find-guard 밖 이동→중복 unshift/무한루프/과다렌더) REFUTED — find-guard 는 여전히 `unshift` 등재만 감쌈, 밖으로 나온 건 `renderConversationList()` 호출뿐(state 무변형·재귀 없음·1회 추가 렌더 무해, placeholder 제거 반영 목적과 정합).
+  - H4(`title`→`topic` 가 타 소비처 파손) REFUTED + **기존 버그 확정**: 백엔드 conversation-list payload 키가 `"topic"`(app.py 7145/7511), `refreshWorkspace` 가 `state.conversations` 전면 교체(app.js 5557). conversation 객체에서 `.title` 읽는 소비처 0건(사이드바 2533/헤더 2781/검색 9492/이름변경 6378·6390/OS알림 637 전부 `.topic`). 기존 `title:` 는 backend shape 불일치로 폴백 "새 대화" 표시되던 실제 버그.
+  - H5(send 중 다른 새 대화 이동 mismatch 오염/누수) REFUTED — 정리 블록 전부 `state.pendingSentinel === busyKey` 가드 안(mismatch 면 미진입, 2차 컨텍스트 무오염). mismatch 시 busyKey placeholder 는 가드 밖 8421 delete + catch 경로 delete 가 책임(기존 설계, 변경 영향 밖).
+- 검증: `tests/verify_new_conv_dedup.mjs` 18/18 PASS(정적 불변식 + jsdom 실 `renderConversationList` 행위, 회귀 재현 포함) + 기존 `verify_conv_entry_defaults.mjs` 20/20·`verify_date_group_collapse.mjs` 22/22 무회귀 + `node --check app.js` PASS.
+- Human Approval Needed: 아니오 (Minor, 비파괴, 사용자 명시 보고 범위, backend/RBAC 무변경).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인. frontend-only → **web 이미지만** 재빌드·재기동.
+- PB-0008 Windows-browser: WSL worktree 미실행 — 배포 후 사용자 시각 확인 권장(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복).
+- 비차단 nit(패널): early-cid/fallback 두 블록은 상호배타 분기라 한쪽만 실행(중복처럼 보이나 의도). mismatch placeholder 잔류 시간은 기존 동작.
