@@ -4129,3 +4129,12 @@ source_of_truth: true
 - Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인. frontend-only → **web 이미지만** 재빌드·재기동.
 - PB-0008 Windows-browser: WSL worktree 미실행 — 배포 후 사용자 시각 확인 권장(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복).
 - 비차단 nit(패널): early-cid/fallback 두 블록은 상호배타 분기라 한쪽만 실행(중복처럼 보이나 의도). mismatch placeholder 잔류 시간은 기존 동작.
+
+## REV-20260629T080500-new-conv-dedup-deploy [SKIPPED:deploy-record-only — 코드 적대검증은 REV-20260629T080500-new-conv-dedup SUBAGENT correctness 패널서 완료] 배포 완료 + 라이브 검증
+- Related Change: CHG-20260629T080500-new-conv-dedup / TASK-20260629T080500-new-conv-dedup.
+- Panel skip 사유: 본 엔트리는 ff-merge·web 재배포·라이브 검증 기록뿐(코드 무변경). 코드 적대 검증은 선행 `[SUBAGENT:adversarial-correctness]`(5가설 REFUTED, no BLOCKING)에서 완료.
+- deploy_scope 승인 근거(Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`(2026-06-11 사용자 결정). frontend-only(app.js + index.html cache-buster) → **web 이미지만** 재빌드·재기동(`docker compose build web && up -d --no-deps web`, override entrypoint=HTTPS 종단 유지).
+- git 흐름: 작업 중 origin/main 이 dad75c3→54dbfe3→8a35eee 로 2회 전진(동시 세션 머지). 각각 재rebase 로 정합(코드 충돌 0 — 신규분 전부 doc 또는 styles.css/admin.html, app.js 무중첩; FUNCTION.md tail 충돌은 양쪽 엔트리 보존으로 해소). ff-merge main → 92751b4 → push origin main.
+- 라이브 검증: `GET /healthz` HTTP 200(repo-web-1 healthy). 서빙 `index.html` 가 `app.js?v=20260629d-new-conv-dedup` 참조. 서빙 `app.js` 에 fix 반영(`new-conv-dedup` 주석 5·optimistic 등재 `topic: message.slice` 2곳).
+- PB-0008 Windows-browser 실 화면 시각검증(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복)은 WSL worktree 라 미실행 — **배포 후 사용자 확인 권장**(frontend-only render-state, 선례 동일).
+- 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, f7dcb07/8a35eee 동일 패턴).
