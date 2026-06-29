@@ -245,6 +245,15 @@
       if (cls === "diff-del") {
         return { cls, mark: "-", code: stripDiffMarker(line), oldNo: oldNo++, newNo: "" };
       }
+      // context — 모델이 첨부 줄번호 prefix(`<N>→`)를 ```diff context 줄로 흘려보낸 경우를
+      // 정규화한다(app.js buildDiffRows 와 동일 로직 — 공유 대화 뷰도 같은 누출을 본다). prefix
+      // 를 떼어 순수 코드만 남기고, 떼어낸 실제 소스 줄번호로 gutter 를 동기화. clean diff 는
+      // 미매칭 → 무변경(회귀 0).
+      const leakedNo = /^\s*(\d+)→/.exec(line);
+      if (leakedNo) {
+        oldNo = newNo = parseInt(leakedNo[1], 10);
+        return { cls, mark: " ", code: line.slice(leakedNo[0].length), oldNo: oldNo++, newNo: newNo++ };
+      }
       return { cls, mark: " ", code: stripDiffMarker(line), oldNo: oldNo++, newNo: newNo++ };
     });
   }

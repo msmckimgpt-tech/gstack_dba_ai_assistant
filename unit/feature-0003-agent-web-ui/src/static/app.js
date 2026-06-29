@@ -744,6 +744,18 @@ function buildDiffRows(lines) {
     if (cls === "diff-del") {
       return { cls, mark: "-", code: stripDiffMarker(line), oldNo: oldNo++, newNo: "" };
     }
+    // context — 모델이 첨부 줄번호 prefix(`<N>→`, agent_core `_number_file_lines` 가 첨부 본문
+    // 각 줄에 주입)를 ```diff context 줄로 흘려보낸 경우를 정규화한다. 프롬프트가 금지하나
+    // 모델이 가끔 누출 → 떼지 않으면 `45→ ...` 가 코드 본문으로 렌더돼 줄 표현이 깨진다(사용자
+    // 보고). prefix 를 떼어 순수 코드만 남기고, 떼어낸 실제 소스 줄번호로 gutter 를 동기화한다
+    // (`_number_file_lines` 가 의도한 "diff 가 원본 줄번호로 앵커" 를 복원). 누출 형식이 매우
+    // 구체적(자릿수+U+2192)이라 clean diff 는 미매칭 → 무변경(회귀 0). +/- 변경줄엔 누출이
+    // 없어(원본 verbatim 인 context 줄에서만 발생) context 분기에만 적용한다.
+    const leakedNo = /^\s*(\d+)→/.exec(line);
+    if (leakedNo) {
+      oldNo = newNo = parseInt(leakedNo[1], 10);
+      return { cls, mark: " ", code: line.slice(leakedNo[0].length), oldNo: oldNo++, newNo: newNo++ };
+    }
     return { cls, mark: " ", code: stripDiffMarker(line), oldNo: oldNo++, newNo: newNo++ };
   });
 }

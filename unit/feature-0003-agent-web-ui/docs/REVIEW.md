@@ -4146,3 +4146,14 @@ source_of_truth: true
 - 라이브 검증: `GET /healthz` HTTP 200(repo-web-1 healthy). 서빙 `index.html` 가 `app.js?v=20260629d-new-conv-dedup` 참조. 서빙 `app.js` 에 fix 반영(`new-conv-dedup` 주석 5·optimistic 등재 `topic: message.slice` 2곳).
 - PB-0008 Windows-browser 실 화면 시각검증(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복)은 WSL worktree 라 미실행 — **배포 후 사용자 확인 권장**(frontend-only render-state, 선례 동일).
 - 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, f7dcb07/8a35eee 동일 패턴).
+
+## REV-20260629T172122-diff-lineno-prefix-leak [SUBAGENT:adversarial-correctness] (TASK-20260629T172122-diff-lineno-prefix-leak — ```diff 누출 `<N>→` 줄번호 prefix 렌더 정규화, Minor §12.3)
+- Trigger(§18.8): UI/render(diff 블록 렌더) + frontend JS code change → correctness/regression/security 렌즈(`ux/qa` 계열). 대상: `static/app.js`·`static/share.js` `buildDiffRows` context 분기 누출 정규화(`/^\s*(\d+)→/`) + `tests/verify_diff_lineno_leak.mjs`(30 단언). LLM 경로/backend/RBAC/스키마 0.
+- 적대 리뷰 5가설(clean-diff 회귀·오매칭 false-strip·gutter 동기화·보안 ReDoS/XSS·app↔share 정합) → **VERDICT: SAFE (BLOCKING 0)**.
+  1. **H1 clean diff 회귀 — REFUTED**: 정상 `@@` 헌크+context/+/- 는 `/^\s*(\d+)→/` 미매칭 → 무변경·gutter 정상. 회귀 0%.
+  2. **H2 오매칭(false strip) — CONFIRMED→NIT(비-blocking)**: 코드 내용이 우연히 `digit→`(예 ` 8080→4000: port`)로 시작하는 context 줄은 prefix 오인. 손실은 **gutter 숫자 cosmetic**(코드 내용은 렌더·복사 무손상), 확률 극히 낮음(context 줄이 `digit→` 시작 AND 모델이 그대로 누출). 코드 주석에 트레이드오프 명시 — accepted risk.
+  3. **H3 gutter 동기화 — REFUTED**: 누출 context 가 oldNo/newNo 재설정 후 `++` → 후속 줄 올바른 증분. 비단조 누출(45→40→50)도 정상.
+  4. **H4 보안 — REFUTED**: `/^\s*(\d+)→/` 선형(ReDoS 무, 10만 공백 <50ms). `line.slice()`→`textContent`(HTML 미파싱)→DOMPurify.sanitize 방어선 유지. 공격표면 무확대.
+  5. **H5 app.js↔share.js 정합 — REFUTED**: regex·로직 byte-동일. 공유 대화 뷰 정합 100%.
+- 회귀 가드: `tests/verify_diff_lineno_leak.mjs` 30/30 PASS(실 누출 블록 정규화·실 줄번호 복원·clean diff 무변경·양쪽 정합). `node --check` app.js·share.js PASS.
+- 라이브 실측 분리(§정직): 코드/테스트는 "렌더러가 누출 prefix 를 떼고 정상 diff 생성" 증명. "실제 사용자 화면 소멸" 은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(미수행 표기).
