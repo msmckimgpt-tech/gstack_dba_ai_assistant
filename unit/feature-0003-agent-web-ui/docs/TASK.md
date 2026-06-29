@@ -17,12 +17,12 @@ source_of_truth: true
   - [x] PB-0008 실 Windows 브라우저 시각검증(MSSQL 테이블명·라벨·AI 자동완성·클리핑) 수행
   - [x] flex-shrink:0 fix 적용 + cache-buster bump + CSS brace 균형(1616/1616)
   - [x] 라이브 fix 주입 검증(paneScrollH 684→2364, 17테이블 전부 표시)
-  - [x] §18.8 적대 리뷰(CSS 회귀) → REVIEW REV 태그
-  - [ ] verify-completion --pre-commit PASS → commit(Task-Cycle) → push
-  - [ ] main 머지 → web 재배포(deploy_scope: included) → 재배포본 PB-0008 재검증(cache-buster·스크롤·healthz)
-  - [ ] cycle-finalize
-- Next Action: §18.8 verdict 반영 → verify-completion → 동기화 → 재배포 → PB-0008 재검증.
-- worktree `ai/claude/metadata-bootstrap-flex-clip-fix`(base dad75c3). REV-20260629T165743-metadata-bs-flexclip.
+  - [x] §18.8 적대 리뷰(CSS 회귀) → REVIEW REV 태그 [SUBAGENT:adversarial-css-regression] VERDICT SAFE
+  - [x] verify-completion --pre-commit PASS(9) → commit 54dbfe3(Task-Cycle) → push
+  - [x] main ff-merge(dad75c3→54dbfe3) + push main → web 재배포(deploy_scope: included, build web + up -d --no-deps web, healthy/healthz OK) → 재배포본 PB-0008 재검증(serve cache-buster flexclip·baked flex-shrink:0·pane scrollH 2364>684·17테이블 표시)
+  - [x] worktree cleanup
+- Next Action: 없음 — cycle 완료.
+- worktree `ai/claude/metadata-bootstrap-flex-clip-fix`(base dad75c3). REV-20260629T165743-metadata-bs-flexclip. **cycle 완료.**
 
 ## TASK-20260629T141637-glossary-role-single-ui — 메타데이터 용어사전 역할 선택 UI 단일화(단일 역할 컨텍스트) + 등록 mis-scope 가드 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(원본 glossary-conv-autoreg/review-nest 배포본 후속 결함)
 - 트리거: 사용자 resume 요청 — "용어사전 자동 등록 기능"은 완료·배포됐으나 배포본에서 결함 2건 확인. ① 메타데이터 탭에 '역할' 선택 UI 가 2곳(툴바 역할 필터 + 등록 폼 역할 select)이라 각 동작 식별이 어려움 → 독립 UI 하나로. ② 역할 드롭다운에 '전체 역할'·'공용'만 보이고 실제 `계정 > 역할`이 안 보임.

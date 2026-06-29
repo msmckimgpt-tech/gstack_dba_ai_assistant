@@ -123,7 +123,8 @@ docker compose run --rm \
   - **Pass — 원본 작업 검증**: ① MSSQL 실테이블명 정상(`tblAccount`·`tblAccountBlockLog`·`tblAccountChannel`… tempdb #temp 0). ② 엔진별 라벨 분기(`mssql-dk-dev`/`mssql-qa-idc`='데이터베이스', `mysql-local`='스키마'). ③ 테이블 설명 AI 자동완성: `tblAccount` 단건 suggest → grounding 된 한국어 설명 자동 생성(권한 레벨·차단 상태·접속 서버 등 컬럼 반영). `.admin-meta-bootstrap-result` maxHeight=none(metadata-table-desc-fix 반영).
   - **버그 적발(이 cycle 의 수정 대상)**: 골격 결과 패널이 펼침/접힘 무관 ~1행만 보이고 나머지 16 테이블 미표시 + pane 스크롤 미발생(`#metadataBootstrap` clientH=88·scrollH=1769·overflow:hidden, 부모 pane scrollH==clientH==684). 근본=flex 자식 overflow:hidden→min-height:auto 0→flex-shrink 무한 압축.
   - **Pass — fix 검증**: `.admin-meta-bootstrap { flex-shrink:0 }` 라이브 주입 시 `#metadataBootstrap` height 90→1771, **부모 pane scrollHeight 684→2364(스크롤 발생)**, 17 테이블+설명 입력란 전부 표시·우측 스크롤바 노출(스크린샷 20).
-  - **Notes**: 배포본 재검증(merged main 빌드 + cache-buster `20260629-metadata-bs-flexclip` 서빙 + 스크롤 + healthz)은 배포 후 본 §3 에 보강. mssql_local 의 '스키마 조회 실패'는 로컬 MSSQL 미가동(환경), UI 버그 아님.
+  - **배포본 재검증(PASS)**: main `54dbfe3` ff-merge → `docker compose build web` + `up -d --no-deps web`(repo-web-1 Up healthy, /healthz mysql_ok·pg_ok true). 서빙 `styles.css?v=20260629-metadata-bs-flexclip`(admin/index 양쪽) + baked styles.css 에 `.admin-meta-bootstrap{flex-shrink:0}`. 브라우저 하드 리로드(주입 없이 실 CSS) 후 동일 시나리오 재현: `.admin-meta-bootstrap` computed `flex-shrink=0`, **부모 pane scrollHeight 684→2364(펼침)/1531(접힘) > clientHeight 684 = 스크롤 발생**, 17 테이블 전부 표시·우측 스크롤바 노출(스크린샷 40_deployed_fix_verify). 클리핑 해소 확정.
+  - **Notes**: mssql_local 의 '스키마 조회 실패'는 로컬 MSSQL 미가동(환경), UI 버그 아님. AI 자동완성 단건 1회 실행은 폼 prefill 만(미저장 — DB 비오염).
 
 ### TASK-0309 제품 프롬프트 무인 자동완성 (Major §12.3, 2026-06-25)
 - TEST: `tests/test_auto_product_prompt.py` 12/12 PASS (DB 없이 fake/monkeypatch, `make test` 격리).
