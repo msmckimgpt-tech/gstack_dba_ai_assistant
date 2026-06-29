@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T110000-glossary-autoreg-bootstrap-sql (TASK-20260629-glossary-conv-autoreg — 0023 부트스트랩 SQL 미러, 배포 정합, Major §12.3)
+- Date: 2026-06-29. 본체(CHG-20260629-glossary-conv-autoreg, main 40c0de0) 머지 후 배포 정합 적발·보완 — 0021 sample_feedback 부트스트랩 미러 트랩과 동형.
+- **결함**: 실 배포 스키마는 alembic 이 아니라 `_ensure_pg_schema()`(boot 시 `agent_kb_schema.sql` idempotent 적용, agent_core.py:4009)가 유지(MIGRATIONS.md). 마이그 0023 만 추가하고 boot 정본 미러를 누락하면, 배포 후 `kb_glossary.role_key`/신 UNIQUE·`glossary_feedback`·`glossary_relations` 미생성 → `upsert/record/auto_promote` 의 `ON CONFLICT (scope,role,term)` 매칭 실패·신규 엔드포인트 전건 런타임 에러.
+- **수정**(`src/scripts/agent_kb_schema.sql`): kb_glossary 블록에 role_key/source ADD COLUMN IF NOT EXISTS + DROP/ADD CONSTRAINT(멱등) + ix_kb_glossary_scope_role; enum_dictionary 뒤에 glossary_feedback·glossary_relations CREATE TABLE IF NOT EXISTS + 인덱스/트리거; §10 GRANT 블록 rw/ro 목록에 두 테이블 추가(alembic 0023 과 문자 동형·멱등). 0014/0017/0021 선례 동일(스키마 변경은 alembic + 부트스트랩 SQL 양쪽 미러).
+- Cross-ref: 마이그 0023 / CHG-20260629-glossary-conv-autoreg / REV-20260629T103000-glossary-conv-autoreg.
+
 ## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 message_id_space 추가, H5(b) follow-up, Major §12.3)
 - Date: 2026-06-29. 선행 0021 의 적대 리뷰 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층 정본 변경.
 - 변경:

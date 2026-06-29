@@ -267,6 +267,15 @@ DROP TRIGGER IF EXISTS trg_kb_glossary_updated_at ON kb_glossary;
 CREATE TRIGGER trg_kb_glossary_updated_at
     BEFORE UPDATE ON kb_glossary
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+-- 0023 미러(용어사전 대화 자율등록): 역할 차원(role_key) + 출처(source). boot 정본이라 alembic 과 동형 미러
+-- 필수 — 미러 누락 시 배포에서 role_key 컬럼/신 UNIQUE 부재 → record/upsert 의 ON CONFLICT (scope,role,term)
+-- 매칭 실패 런타임 에러(0021 sample_feedback 부트스트랩 미러 트랩과 동형). ADD COLUMN/DROP·ADD CONSTRAINT 멱등.
+ALTER TABLE kb_glossary ADD COLUMN IF NOT EXISTS role_key varchar(64) NOT NULL DEFAULT '*';
+ALTER TABLE kb_glossary ADD COLUMN IF NOT EXISTS source   varchar(24) NOT NULL DEFAULT 'manual';
+ALTER TABLE kb_glossary DROP CONSTRAINT IF EXISTS ux_kb_glossary_scope_term;
+ALTER TABLE kb_glossary DROP CONSTRAINT IF EXISTS ux_kb_glossary_scope_role_term;
+ALTER TABLE kb_glossary ADD  CONSTRAINT ux_kb_glossary_scope_role_term UNIQUE (scope_key, role_key, term);
+CREATE INDEX IF NOT EXISTS ix_kb_glossary_scope_role ON kb_glossary (scope_key, role_key);
 
 CREATE TABLE IF NOT EXISTS enum_dictionary (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -288,6 +297,47 @@ DROP TRIGGER IF EXISTS trg_enum_dictionary_updated_at ON enum_dictionary;
 CREATE TRIGGER trg_enum_dictionary_updated_at
     BEFORE UPDATE ON enum_dictionary
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- 0023 미러: 용어사전 대화 자율등록 검토 큐 + 유사어 참조 (boot 정본 미러 — GRANT 블록 §10 이 권한 부여).
+CREATE TABLE IF NOT EXISTS glossary_feedback (
+    id                   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key            varchar(96)  NOT NULL DEFAULT 'common',
+    role_key             varchar(64)  NOT NULL DEFAULT '*',
+    term                 varchar(128) NOT NULL,
+    suggested_definition text         NOT NULL,
+    confidence           real         NOT NULL DEFAULT 0.5,
+    status               varchar(16)  NOT NULL DEFAULT 'pending',  -- pending|auto_promoted|promoted|rejected
+    source_run_id        varchar(64),
+    conversation_id      varchar(128),
+    promoted_glossary_id bigint,
+    approved_by          varchar(64),
+    created_at           timestamptz  NOT NULL DEFAULT now(),
+    updated_at           timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT ck_glossary_feedback_status
+        CHECK (status IN ('pending', 'auto_promoted', 'promoted', 'rejected')),
+    CONSTRAINT ux_glossary_feedback_scope_role_term UNIQUE (scope_key, role_key, term)
+);
+CREATE INDEX IF NOT EXISTS ix_glossary_feedback_status ON glossary_feedback (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS ix_glossary_feedback_scope  ON glossary_feedback (scope_key, role_key);
+DROP TRIGGER IF EXISTS trg_glossary_feedback_updated_at ON glossary_feedback;
+CREATE TRIGGER trg_glossary_feedback_updated_at
+    BEFORE UPDATE ON glossary_feedback
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS glossary_relations (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    from_id       bigint      NOT NULL REFERENCES kb_glossary(id) ON DELETE CASCADE,
+    to_id         bigint      NOT NULL REFERENCES kb_glossary(id) ON DELETE CASCADE,
+    relation_type varchar(16) NOT NULL DEFAULT 'similar',  -- synonym|similar|see_also
+    created_by    varchar(64),
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT ck_glossary_relations_type
+        CHECK (relation_type IN ('synonym', 'similar', 'see_also')),
+    CONSTRAINT ck_glossary_relations_distinct CHECK (from_id <> to_id),
+    CONSTRAINT ux_glossary_relations UNIQUE (from_id, to_id, relation_type)
+);
+CREATE INDEX IF NOT EXISTS ix_glossary_relations_from ON glossary_relations (from_id);
+CREATE INDEX IF NOT EXISTS ix_glossary_relations_to   ON glossary_relations (to_id);
 
 -- ----------------------------------------------------------------------------
 -- 8a. ITEM-11 Phase 2 (ROADMAP dba-ai-nl2sql): 테이블/컬럼 설명 사전 (semantic-lite).
@@ -437,6 +487,7 @@ BEGIN
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
                       kb_invalidations, kb_glossary, enum_dictionary,
                       table_descriptions, column_descriptions,
+                      glossary_feedback, glossary_relations,
                       sample_queries, sample_feedback TO agent_kb_rw;
         GRANT SELECT ON TABLE kb_slow_queries TO agent_kb_rw;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_kb_rw;
@@ -452,6 +503,7 @@ BEGIN
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
                       kb_invalidations, kb_glossary, enum_dictionary,
                       table_descriptions, column_descriptions,
+                      glossary_feedback, glossary_relations,
                       sample_queries, sample_feedback, kb_slow_queries TO agent_kb_ro;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT ON TABLES TO agent_kb_ro;
