@@ -93,3 +93,14 @@ source_of_truth: true
   실 브라우저 화면 검증은 배포 후 Windows-browser 게이트(PB-0008) 대상 — TEST.md §3.
 - Impact: 비파괴(렌더 견고화 + 프롬프트 가이던스 + 데이터 1건 복구). Rollback: 코드 3파일 revert +
   cache-buster 원복 + 데이터 백업 복원.
+
+## CHG-20260629-relationship-diagrams-0004
+- Date: 2026-06-29
+- Related Requirement: CHG-0003 deploy-record (rd-h6 PB-0008 라이브 검증 기록 — 코드 무변경)
+- Summary: CHG-0003 을 main 머지(PR #468 → 8f0a025)·web+ask-worker 재배포 후, rd-h6 PB-0008 실 Windows-browser
+  검증을 완료하고 그 결과를 정본 docs(TASK/REPORT/REVIEW)에 기록. 코드/데이터 로직 변경 없음(docs-only).
+- Files: `unit/feature-0013-relationship-diagrams/docs/{TASK,REPORT,REVIEW}.md` (deploy-record).
+- Verification: 실 Chrome 149(win-browser.py relay) 로 라이브 served 자산(`mermaid-render.js?v=20260629-mermaid-orphan-fix`)
+  검증 — 깨진 erDiagram×2 → graceful 코드블록(body orphan div 0·iframe 0·error-svg 0·bomb 0), 정상 erDiagram → SVG.
+  증적 `artifacts/pb0008-feature-0013-orphan-fix.png`. healthz status:ok, served git_commit 8f0a025.
+- Impact: 비파괴(문서 기록만). Rollback: docs revert(배포·검증 사실 자체는 불변).

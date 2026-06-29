@@ -99,3 +99,14 @@ source_of_truth: true
 - 봉인(seal): 배포 후 PB-0008 실 Windows-browser 로 "문법오류 다이어그램 → bomb iframe/div 잔류 0 +
   graceful 코드블록" 동작 재검증(rd-h6) — frontend 리뷰어 권고와 정합, 정적 반증을 동작으로 최종 확인.
 - Open Questions: 없음(blocking). Human Approval Needed: 없음(사전 승인 범위 내, deploy_scope: included).
+
+## REV-20260629T184057-relationship-diagrams [SKIPPED:deploy-record + live-verify only — 코드 무변경, §18.8 패널은 REV-…T182013 에서 완료] CHG-0003 배포 후 PB-0008 PASS 기록
+- Related Change: CHG-20260629-relationship-diagrams-0003 (배포 후 라이브 검증 기록 — 코드/데이터 무변경, TASK/REPORT docs-only)
+- Panel skip 사유: 본 변경은 rd-h6 PB-0008 결과를 정본 docs(TASK/REPORT)에 기록하는 deploy-record 뿐 — 코드 로직 무변경. 코드 적대 검증은 선행 REV-20260629T182013 `[AGENT-TEAM:frontend+security]` SHIP 으로 완료.
+- 배포 결과: PR #468 merged → main 8f0a025 → `sudo make web`(web 재빌드+재기동, served git_commit=8f0a025) + ask-worker 재빌드(healthy). healthz status:ok (mysql_ok/pg_ok true).
+- PB-0008 라이브 검증 (실 Chrome 149, win-browser.py relay, 라이브 served assets):
+  - 깨진 erDiagram×2 → graceful 코드블록(`.mermaid-error > pre>code`), body orphan `div#dmmd-` 0 · `iframe#immd-` 0 · `svg[aria-roledescription=error]` 0.
+  - 정상 erDiagram → SVG 렌더(무회귀). 증적 `artifacts/pb0008-feature-0013-orphan-fix.png`(gitignore — 경로 참조).
+  - → frontend §18.8 BLOCKING(strict→iframe orphan 주장)을 실엔진에서 종결: strict 모드 orphan 은 `div#dmmd-`(iframe 아님)이며 수정이 제거함을 동작으로 확정.
+- 데이터 복구 확인: `agent_kb.agent_runtime.core_messages` id=4056(conv 20260629074613-356708b8) erDiagram `{ }` 블록 복구·colon-attr 잔존 0 (live SELECT).
+- Open Questions: 없음. Human Approval Needed: 없음(deploy_scope: included).
