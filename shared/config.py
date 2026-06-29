@@ -869,6 +869,12 @@ AGENT_SIMILAR_RETRY_THRESHOLD = float(os.getenv("AGENT_SIMILAR_RETRY_THRESHOLD",
 # 가드 공존). 기본 ON. cap=run 당 최대 넛지 수(폭주 차단; max_steps·circuit-breaker 와 중첩).
 AGENT_SELF_REFLECTION_ENABLED = os.getenv("AGENT_SELF_REFLECTION_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_SELF_REFLECTION_MAX = int(os.getenv("AGENT_SELF_REFLECTION_MAX", "2") or "2")
+
+# feature-0013 relationship-diagrams: 테이블 관계(FK·join) 데이터 확보·학습 토글. 둘 다 기본 ON.
+#  - INTROSPECT: insight worker 가 스키마 구조 변경 시 information_schema FK 를 introspect 해 적재.
+#  - LEARNING : 대화 중 성공한 execute_sql 의 JOIN 에서 관계를 학습(source='conversation').
+AGENT_RELATIONSHIP_INTROSPECT_ENABLED = os.getenv("AGENT_RELATIONSHIP_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_RELATIONSHIP_LEARNING_ENABLED = os.getenv("AGENT_RELATIONSHIP_LEARNING_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────

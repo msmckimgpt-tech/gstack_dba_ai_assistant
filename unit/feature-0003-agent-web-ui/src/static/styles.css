@@ -1283,6 +1283,26 @@ a { color: inherit; }
   font-size: 12px;
   font-weight: 500;
 }
+/* feature-0013: 관계 다이어그램(mermaid) 렌더 컨테이너 */
+.message-content .mermaid-block,
+.message-content .mermaid-rendered {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0;
+  padding: 8px 4px;
+  overflow-x: auto;
+  background: var(--surface-soft, #f6f8fc);
+  border: 1px solid var(--border, #e5e9f0);
+  border-radius: 10px;
+}
+.message-content .mermaid-rendered svg { max-width: 100%; height: auto; }
+.message-content .mermaid-pending { color: var(--muted, #6b7280); font-size: 12px; }
+.message-content .mermaid-error {
+  display: block;
+  margin: 10px 0;
+}
+.message-content .mermaid-error pre { margin: 0; }
+
 .message-content pre.diff-block { padding: 10px 0; }
 .message-content pre.diff-block code {
   display: block;

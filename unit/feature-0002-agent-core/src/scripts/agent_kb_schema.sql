@@ -388,6 +388,41 @@ CREATE TRIGGER trg_column_descriptions_updated_at
     BEFORE UPDATE ON column_descriptions
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- ----------------------------------------------------------------------------
+-- feature-0013 relationship-diagrams: 테이블 관계(FK·join) edge 저장소.
+-- introspection(fk_introspect) + 대화 JOIN 학습(conversation)의 단일 수렴점. mermaid 다이어그램 grounding.
+-- 정본은 alembic/versions/20260629_0024_table_relationships.py — 본 DDL 은 문서적 정합용.
+CREATE TABLE IF NOT EXISTS table_relationships (
+    id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    scope_key         varchar(96)  NOT NULL DEFAULT 'common',
+    datasource_key    varchar(64)  NOT NULL DEFAULT '',
+    source_schema     varchar(128) NOT NULL DEFAULT '',
+    source_table      varchar(128) NOT NULL,
+    source_column     varchar(128) NOT NULL,
+    target_schema     varchar(128) NOT NULL DEFAULT '',
+    target_table      varchar(128) NOT NULL,
+    target_column     varchar(128) NOT NULL,
+    source_table_fqn  varchar(257) NOT NULL,
+    target_table_fqn  varchar(257) NOT NULL,
+    constraint_name   varchar(128) NOT NULL DEFAULT '',
+    cardinality       varchar(24)  NOT NULL DEFAULT '',
+    source            varchar(24)  NOT NULL DEFAULT 'fk_introspect',
+    confidence        real         NOT NULL DEFAULT 1.0,
+    source_run_id     varchar(64),
+    created_at        timestamptz  NOT NULL DEFAULT now(),
+    updated_at        timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT ck_table_relationships_source
+        CHECK (source IN ('fk_introspect', 'conversation', 'llm_insight')),
+    CONSTRAINT ux_table_relationships_edge
+        UNIQUE (scope_key, source_table_fqn, source_column, target_table_fqn, target_column)
+);
+CREATE INDEX IF NOT EXISTS ix_table_relationships_src ON table_relationships (scope_key, source_table_fqn);
+CREATE INDEX IF NOT EXISTS ix_table_relationships_tgt ON table_relationships (scope_key, target_table_fqn);
+DROP TRIGGER IF EXISTS trg_table_relationships_updated_at ON table_relationships;
+CREATE TRIGGER trg_table_relationships_updated_at
+    BEFORE UPDATE ON table_relationships
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- ============================================================================
 -- 8b. ITEM-02+03 (ROADMAP dba-ai-nl2sql): 샘플쿼리 few-shot 저장소 + 피드백 flywheel.
 --    sample_queries  — NL↔SQL 샘플(ds-scoped, 임베딩). approved∧active 만 검색·주입 대상.
@@ -487,7 +522,7 @@ BEGIN
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
                       kb_invalidations, kb_glossary, enum_dictionary,
                       table_descriptions, column_descriptions,
-                      glossary_feedback, glossary_relations,
+                      glossary_feedback, glossary_relations, table_relationships,
                       sample_queries, sample_feedback TO agent_kb_rw;
         GRANT SELECT ON TABLE kb_slow_queries TO agent_kb_rw;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO agent_kb_rw;
@@ -503,7 +538,7 @@ BEGIN
             ON TABLE fact_entries, texts, rag_documents, rag_objects,
                       kb_invalidations, kb_glossary, enum_dictionary,
                       table_descriptions, column_descriptions,
-                      glossary_feedback, glossary_relations,
+                      glossary_feedback, glossary_relations, table_relationships,
                       sample_queries, sample_feedback, kb_slow_queries TO agent_kb_ro;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT ON TABLES TO agent_kb_ro;
