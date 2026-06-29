@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T181648-point-scroll-easeoutexpo [SUBAGENT:adversarial-frontend-7lens] (TASK-20260629T181648-point-scroll-easeoutexpo — 공유 대화 뷰 우측 스크롤바 가이드 뱃지 추가 + 가이드 뱃지 클릭 스크롤 단축·EaseOutExpo, Minor §12.3 — frontend 표현계층)
+- 대상: `static/app.js`(메인 rail dot 클릭 EaseOutExpo 교체+헬퍼), `static/share.js`(공유 rail 신규+EaseOutExpo window 스크롤+리스너), `static/share.html`(rail nav+cache-buster), `static/share.css`(rail 미니맵 스타일+focus-visible), `static/index.html`(app.js cache-buster). 백엔드/JS 로직(데이터/RBAC/스키마/엔드포인트) 0.
+- 적대 패널 7-lens(좌표계 정확성·EaseOutExpo 수식·메인 회귀·공유 엣지·anonymous XSS·성능/ResizeObserver 루프·a11y) → **VERDICT: SHIP** (BLOCKER 0 · MAJOR 0).
+  - A 좌표계: 메인 `scrollMessagePointIntoCenter` 의 scrollTop/scrollHeight/clientHeight 동일좌표계 일관(border offset 차분 상쇄, 부호·off-by 없음, NIT: native scroll-padding 미존중하나 messageLog 무 scroll-padding 이라 무영향). 공유 `topInDoc=rect.top+scrollY` viewport→doc 변환·clamp 정확(PASS).
+  - B EaseOutExpo: `t>=1?1:1-2^(-10t)` 수치검증 f(0)=0·f(1)=1·단조, 보간 `from+delta*ease(p)` p=0→from·p=1→to 정확(PASS).
+  - C 메인 회귀: rail dot 핸들러만 교체, 다른 scrollIntoView 4곳(history_anchor·검색결과·드롭다운 키보드네비) 미변경. `_prefersReducedMotion`/`scrollMessagePointIntoCenter`/`_animatePointScroll` 전부 function 선언 hoisting — 실행시점 호출이라 후방정의 안전(PASS).
+  - D 공유 엣지: 0/1개 rail hidden early-return·querySelectorAll 0개 no-op, `_sharePointRailWired` 리스너 1회 가드, scroll 시 layout 미호출(top% 문서좌표 불변) 정당. **MINOR**: 비동기 재계산이 ResizeObserver 단일의존(미지원 시만 setTimeout 폴백) — `window.load`+ResizeObserver 가 mermaid/img reflow 를 실무상 커버, 영향 낮음(follow-up).
+  - E XSS: dot.title/aria-label 은 `.title`/`setAttribute`(DOM API, innerHTML 아님) — anonymous 노출면 마크업 미실행, 신규 주입경로 0(PASS).
+  - F 성능: scroll rAF 스로틀(`_sharePointRailRaf`) 표준. **ResizeObserver 자기-트리거 무한루프 부재**(핵심) — `#sharePointRail`(position:fixed)은 observe 대상 `#shareMessages`(형제)의 box size 에 영향 없음 → 사이클 미성립(PASS).
+  - G a11y: dot=`<button>`+aria-label, rail `<nav aria-label>`, reduced-motion JS(즉시점프)+CSS(transition none) 양쪽, ≤720px 숨김 양뷰. **MINOR(focus-visible 미정의) → 본 cycle 수정 흡수**: `.share-point-dot:focus-visible{outline}` 추가(메인 styles.css 도 동일 누락이나 anonymous 페이지 우선 보강).
+- 판정: SHIP-WITH-FIXES → G-MINOR(focus-visible) 흡수 후 SHIP. D-MINOR(ResizeObserver 폴백)·NIT 2 는 영향 낮아 follow-up.
+- Human Approval Needed: 아니오 (Minor·비파괴·RBAC/스키마/백엔드 무변경·순수 표현계층).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인(정적 자산 재빌드).
+- 라이브 시각검증 정본: 배포 후 PB-0008 Windows 브라우저(메인/공유 양 뷰 rail 표시·클릭 단축·EaseOutExpo 곡선) — REPORT/TEST §3.
+- Cross-ref: CHG/TASK-20260629T181648-point-scroll-easeoutexpo · FUNCTION REQ-20260629T181648-point-scroll(AC-PSC-1/2) · 기존 메인 rail REQ-20260515-0006(TASK-0061 Phase 4).
+
 ## REV-20260629T170913-glossary-role-fieldname-fix [SKIPPED:Minor 비핵심경로 필드명 정정 — 라이브 실증(role 객체 key/name)+배포후 PB-0008 재검증으로 검증 대체] — 용어사전 역할 드롭다운/라벨 필드명 버그 수정 (TASK-20260629T170913-glossary-role-fieldname-fix, Minor §12.3 — 프런트 전용)
 - 대상: `src/static/admin.js` `_metaRoleLabel`·`_metaPopulateRoleFilter` 의 role 객체 읽기 `role_key/role_name → key/name`(4 refs) + admin.html cache-buster. 백엔드/RBAC/스키마 0.
 - Panel skip 사유(§18.8 6.4): Minor + 비핵심경로(인증/송신/미신뢰 렌더 무관 — 내부 역할 메타데이터 dropdown 채움) + 변경이 필드명 4개 정정. 정본 검증은 **라이브 실증**으로 선행 — PB-0008 브라우저에서 `/api/admin/roles` 200·role 객체 키 `["id","key","name",...]`(role_key/role_name 부재) 확인, `adminState.roles.length=8`인데 드롭다운 옵션 2개뿐 재현. 수정 효과는 **배포 후 PB-0008 재검증**(드롭다운에 실제 8역할 노출)으로 최종 확인.

@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T181648-point-scroll-easeoutexpo — 공유 대화 뷰 우측 스크롤바 대화 가이드 뱃지(point rail) 추가 + 가이드 뱃지 클릭 스크롤 단축(280ms)·EaseOutExpo (Minor §12.3 — frontend 표현계층, RBAC/스키마/백엔드 무변경, anonymous 공유 노출면)
+- 트리거: 사용자 — "공유 기능을 통해 전달한 대화도, 우측 스크롤바에 각 대화 구간에 대한 가이드 뱃지 UI를 구성. 추가로 가이드 뱃지 클릭 시 소요 시간을 지금보다 짧게 + Easing 을 EaseOutExpo 로."
+- 현황: 메인 UI(index.html+app.js)에는 우측 point rail(`renderMessagePointRail`, `#messagePointRail`, `.message-point-dot`)이 이미 존재하나 클릭은 native `scrollIntoView(behavior:smooth)`(가변·통상 ≥400ms). 공유 뷰(share.*)에는 rail 자체가 없었음.
+- 설계: 메인=#messageLog 내부 스크롤(기존 flex rail 보존, 클릭만 EaseOutExpo `scrollTop` 보간으로 교체). 공유=window 스크롤이라 rail 은 position:fixed 미니맵 신규(dot top%=문서좌표 비율, 클릭=`window.scrollTo` EaseOutExpo). duration 280ms, easing `1-2^(-10t)`.
+- Completion Checklist:
+  - [x] app.js: rail dot 클릭 native scrollIntoView → `scrollMessagePointIntoCenter`(`_animatePointScroll`+`_easeOutExpo`, 280ms) 교체. 다른 scrollIntoView 무변경.
+  - [x] share.js: 메시지 `share-msg-${idx}` anchor id + `setupSharePointRail`/`renderSharePointRail`/`layoutSharePointRail`/`highlightSharePoint` + `scrollShareMessageIntoCenter`(EaseOutExpo window) + scroll/resize/ResizeObserver/load 리스너.
+  - [x] share.html: `<nav id="sharePointRail">` 추가 + share.js/share.css cache-buster bump(`20260629-share-scroll-guide`).
+  - [x] share.css: `.share-point-rail`(fixed 미니맵)+`.share-point-dot`+reduced-motion+≤720px 숨김.
+  - [x] index.html: app.js cache-buster bump(`20260629-point-scroll-easeoutexpo`).
+  - [x] node --check(app.js·share.js) PASS · §18.8 적대 검증 패널(프론트 lens) → REVIEW REV 태그.
+  - [ ] verify-completion --pre-commit PASS → commit(Task-Cycle) → push → PR → merge → web 재배포(deploy_scope: included) → PB-0008 Windows 브라우저 시각검증(메인/공유 양 뷰 rail·클릭 단축·EaseOutExpo).
+- Next Action: verify-completion → cycle-finalize → 배포 → PB-0008.
+
 ## TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/배지/태그가 실제 역할(dba·admin·sales)을 표시하지 않던 버그 수정 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(glossary-role-single-ui 배포본 후속)
 - 트리거: 사용자 — glossary-role-single-ui 배포·시각검증 후속. 메타데이터 > 용어사전 '역할' 드롭다운에 '전체 역할'·'공용만'만 보이고 실제 역할(dba/admin/sales 등)이 안 뜨는 현상이 "의도인지" 검토 요청.
 - 판정: **버그(의도 아님)**. 권한 게이트(`role.read`)가 아니라 **필드명 불일치**. `/api/admin/roles` 정본 직렬화는 role 객체를 `{id,key,name,...}` 로 주는데(역할 관리·계정 화면 전부 `.key`/`.name` 사용) glossary 코드만 `adminState.roles` 를 `.role_key`/`.role_name`(미존재 필드)로 읽어 `_metaPopulateRoleFilter` 의 `if(!rk) continue` 에서 전 역할 스킵 → 드롭다운에 정적 옵션만, `_metaRoleLabel` 도 미매칭 raw key 표기. 라이브 실증(PB-0008): admin 계정 role.read 보유·`/api/admin/roles` 200·8역할, role 객체 키 `["id","key","name",…]`, `adminState.roles.length=8`인데 드롭다운 옵션 2개뿐.
