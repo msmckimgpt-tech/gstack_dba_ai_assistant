@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백 데이터 계층 (Major §12.3, feature-0003 주관 — 데이터 계층 교차) — done
+- 출처: `/_template:entry` dispatch(feature-0003 주관). 사용자 보고: assistant 답변 피드백(👍/👎) 새로고침·전환 후 중복 부여 가능 → 답변당 고유 피드백만 가능해야 함. 데이터 계층(테이블·코어 적재)이 feature-0002 거주라 교차 변경 기록.
+- [x] **alembic 0021**(`20260629_0021_sample_feedback_unique_vote.py`, down_revision 0020): `sample_feedback.message_id bigint` + 부분 UNIQUE `ux_sample_feedback_user_msg_vote (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested=false`. 기존 행 NULL → 술어 제외(무손실·멱등). chain linear 단일 head.
+- [x] `src/modules/sample_feedback.py` `record_feedback`: `message_id` 인자 + INSERT→UPSERT(`ON CONFLICT … DO UPDATE`)+`RETURNING id`(lastval 부정확 회피). status·suggested·promoted_sample_id 미변경(검수 lifecycle 보존). "샘플 등록"(suggested=true)은 술어 제외 → 매번 INSERT 보존.
+- [x] FUNCTION.md REQ-20260623-1621 에 고유성 불변식(AC) 추가.
+- [x] 테스트: `test_sample_flywheel.py` 15/15(masks_pii param 보정+ON CONFLICT/DO UPDATE/RETURNING 단언+신규 vote-UPSERT 키). py_compile PASS.
+- [x] §18.8 적대 backend 리뷰(H1~H7) VERDICT FIX-NEEDED — H5(b) 두 id 공간(표시 store vs core_messages) 수용·문서화(첨부 영속 공유 선재 특성, 정상 경로 완전 강제), 나머지 REFUTED. REV-20260629T014345-feedback-unique-vote.
+- Cross-ref: feature-0003 TASK/CHG/REV-20260629T014345-feedback-unique-vote.
+
 ## TASK-20260625T164701-ds-conn-circuit-msg (current cycle) — datasource 회로차단 사용자 안내 문구 분리 (Minor §12.3, cross-feature feature-0002 주관) — done
 - 출처: 사용자 보고(2026-06-25) "WEB_QA 데이터소스 연결 불안정/오류 메시지 개선". `DatasourceCircuitOpen` 회로차단(일시 지연 격리·자동복구)이 "DB 연결 실패/불안정/차단" 으로 노출돼 서비스 고장으로 오인. 사용자 결정: 톤=투명형, 용어="데이터소스". 원본 entry 세션 중단(API Overloaded) → resume 로 재개.
 - [x] `shared/db.py` `DatasourceCircuitOpen.user_message()` 신설(사용자 화면 전용, 기술 `str(e)` 분리·미변경).

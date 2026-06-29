@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T014345-feedback-unique-vote [SUBAGENT:adversarial-backend] — 답변당 사용자별 고유 피드백 강제 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
+- Date: 2026-06-29. 결정(AskUserQuestion): 재투표 **변경 허용**(👍↔👎, UPSERT last-write-wins, 답변당 1행).
+- 설계 근거: 중복의 권위적 차단은 **DB 계층**(부분 UNIQUE + UPSERT)이어야 한다 — 프론트 dedup(`data-done` DOM 플래그)은 새로고침/전환에 소실되어 신뢰 불가. 답변 식별자는 기존에 첨부 영속이 키로 쓰는 표시 store `agent_runtime.messages.id`(프론트 `message.id`)를 재사용 — 새 식별 체계 도입 없이 정합.
+- 안전/적대 분석(검토 표면):
+  1. **부분 인덱스 + ON CONFLICT 단일문**: ON CONFLICT 추론 술어를 부분 인덱스 술어와 문자 동일하게 작성(`WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested=false`). 삽입 행이 술어 불충족(suggested=true 또는 message_id/created_by NULL)이면 arbiter 미적용 → 평범 INSERT(검수 큐 "샘플 등록" 다중 제출 동작 보존). 충족(plain vote)이면 중복 시 DO UPDATE.
+  2. **마이그 데이터 안전**: message_id 신규 컬럼 → 기존 행 전부 NULL → 부분 인덱스 술어가 NULL 제외 → 기존(중복 포함) 행이 UNIQUE INDEX 생성을 막지 않음(무손실·멱등, IF NOT EXISTS).
+  3. **id 회수**: lastval()(DO UPDATE 경로에서 직전 시퀀스값 반환 부정확) 제거 → `RETURNING id` 로 INSERT/DO UPDATE 양 경로 정확.
+  4. **격리**: history 피드백 주입은 (conversation_id, created_by) 로 스코프 — 타 사용자 피드백 미노출. PG 조회 fail-soft(예외 시 빈 dict, 이력 표시 비차단).
+  5. **잔여 watch**: message_id 부재(프론트 message.id 없는 fallback core 경로)·익명(created_by None)은 부분 인덱스 대상 외 → 고유성 미강제(기존 동작). 정상 로그인 + 표시 store 경로(대다수)는 완전 강제.
+- 적대 검증(general-purpose adversarial-backend, H1~H7) **VERDICT: FIX-NEEDED — 확정 결함 1건(H5(b)) 수용(documented watch-item), 나머지 H1~H4·H6·H7 REFUTED(건전)**:
+  - **H1~H4 REFUTED**: 부분 인덱스 arbiter 추론은 plan-time 인덱스 명세 매칭이라 suggested=true 행은 술어 불충족으로 충돌검사 건너뛰고 plain INSERT(검수 큐 보존); ON CONFLICT 술어가 인덱스 술어와 문자 동일(런타임 에러 없음); 신규 message_id NULL 이라 기존 데이터로 인덱스 생성 실패 없음(무손실·멱등); DO UPDATE(≠DO NOTHING)라 RETURNING 항상 행 반환.
+  - **H6 REFUTED**: `_load_user_feedback_by_message` 가 (conversation_id, created_by) 양축 스코프 → 타 사용자 누출 없음, conn fail-soft/close 정리.
+  - **H7 REFUTED**: set_updated_at 트리거 재설정은 같은 tx now() 동일값이라 무해.
+  - **H5(b) CONFIRMED → 수용(watch-item)**: `m["id"]` 가 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`)의 **두 독립 IDENTITY 공간**에서 올 수 있다(app.py:6879 명시). fork/마이그로 대화가 core-only→display 전환되는 드문 경우 고유성 우회 또는 wrong-bubble 복원 가능. **수용 근거**: ① 동일 `message.id` 키잉은 **기존 첨부 영속 레이어가 이미 공유하는 선재 아키텍처 특성**(본 변경이 신규 도입 아님) ② 단일 history 응답은 항상 한 id 공간(혼재는 cross-load 전환 시만) ③ 지배적 실패모드는 "구 core 답변이 display 전환 후 history 에서 사라짐"이라 중복 우회 도달성이 낮음 ④ 정상 표시-store 경로(사용자 보고 시나리오)는 완전 강제 ⑤ 근본 해소(id 공간 통일/태깅)는 첨부 레이어 동반 변경이 필요한 별도 아키텍처 과제 — 본 버그 fix scope·risk 초과. 사용자에게 후속 과제로 표면화.
+  - **H5(1) 인지**: message_id/created_by NULL(익명·fallback)은 부분 인덱스 외 → 고유성 미적용(의도된 한계).
+  - **테스트 공백(권고)**: 단위 테스트가 FakeConn SQL-shape 만 검증 → 실 PG ON CONFLICT+부분 인덱스 의미(suggested 분기·재투표 갱신) 미검증. 후속 ephemeral PG 통합 테스트 권고(out-of-scope).
+- 테스트: curation 15/15 + flywheel 15/15(신규 vote-UPSERT 키 단언 포함) PASS, 두 feature 전체 회귀 0.
+- Human Approval Needed: 없음(commit/push/main 병합 자동 동기화). 배포는 deploy_scope 판정(Phase 6.8) — 마이그 0021 적용 동반이라 1회 confirm 대상.
+- Cross-ref: feature-0002 REV-20260629T014345-feedback-unique-vote / CHG-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+
 ## REV-20260626T135945-ask-dedup-idempotency [SKIPPED:hotfix-1line-param-isolation-live-pg-validated] — 동일 cycle 라이브 회귀 hotfix (TASK-20260626-ask-dedup-idempotency, Major §12.3)
 - Date: 2026-06-26. 본체 REV-20260626T134920-ask-dedup-idempotency 의 배포 검증 단계에서 적발된 라이브 PG 회귀의 즉시 수정. 신규 동작 추가 아닌 **버그 수정(파라미터 격리)** 이라 full §18.8 패널 SKIP — 대신 라이브 PG 직접 실행으로 검증(해당 실패 모드에 가장 직접적인 테스트).
 - 회귀: dedup NOT EXISTS 가 `%(cid)s`/`%(account_id)s` 를 INSERT SELECT(varchar 추론)와 공유 → PG `AmbiguousParameter: inconsistent types deduced for parameter $1 — text versus character varying` → 워커 모드 신규 /api/ask 전부 500. 단위 FakeConn 테스트는 SQL 문자열만 검사해 미포착(파싱·타입추론은 실 PG 에서만 발현).

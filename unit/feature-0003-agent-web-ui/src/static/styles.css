@@ -7736,9 +7736,16 @@ a { color: inherit; }
   margin-left: 4px;
   white-space: nowrap;
 }
-.message-feedback[data-done="1"] .message-feedback-btn {
-  opacity: .4;
-  pointer-events: none;
+/* 답변당 사용자별 고유 피드백(👍/👎): 이미 부여한 투표를 활성 표시(새로고침·전환 후 복원).
+   변경 허용(last-write-wins) — 잠그지 않고, 현재 선택만 강조한다. */
+.message-feedback-btn.is-active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  opacity: 1;
+}
+/* 전송 중(중복 부여 방지) 시각 피드백 */
+.message-feedback[data-busy="1"] .message-feedback-btn {
+  opacity: .5;
 }
 /* ITEM-08: "AI 로 고치기" 표적 재수정 버튼 (실패 SQL 결과에만 노출) */
 .message-fix-with-ai {

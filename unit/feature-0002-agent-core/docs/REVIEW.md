@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T014345-feedback-unique-vote [SUBAGENT:adversarial-backend] — sample_feedback 답변당 고유 피드백 데이터 계층 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
+- Date: 2026-06-29. 데이터 계층(마이그 0021 + record_feedback UPSERT) 리뷰. 주 리뷰 정본은 feature-0003 REV-20260629T014345-feedback-unique-vote — 본 항목은 feature-0002 교차기록.
+- 핵심 판단: 부분 UNIQUE 인덱스 `(created_by, message_id) WHERE … AND suggested=false` 가 (a) 투표(suggested=false)는 답변당 1행 강제, (b) "샘플 등록"(suggested=true)은 검수 큐 다중 제출 보존, (c) 기존 NULL message_id 행 무손실 — 세 요구를 단일 인덱스로 충족. record_feedback 의 ON CONFLICT 추론 술어를 인덱스 술어와 문자 동일하게 유지(불일치 시 런타임 에러 방지).
+- 적대 검증(general-purpose adversarial-backend, H1~H7) **VERDICT: FIX-NEEDED — H5(b) 1건 수용(watch-item), 나머지 REFUTED(건전)**: 부분인덱스 arbiter 추론(suggested=true→plain INSERT 보존)·ON CONFLICT 술어 문자 일치·신규 NULL 컬럼 무손실 마이그·DO UPDATE RETURNING 항상 반환·updated_at 트리거 무해 = 전부 건전. **H5(b)**(message_id 두 id 공간 — 표시 store vs core_messages, app.py:6879) = 기존 첨부 영속 레이어 공유 선재 특성이라 수용·문서화(정상 경로 완전 강제, 근본 해소는 후속 id-space 통일). 상세 = feature-0003 REV-20260629T014345-feedback-unique-vote.
+- 테스트: test_sample_flywheel.py 15/15(masks_pii param 위치 보정 + ON CONFLICT/DO UPDATE/RETURNING 단언 + 신규 vote-UPSERT 키). py_compile PASS.
+- Human Approval Needed: 없음(자동 동기화). 배포 시 마이그 0021 적용 동반 — entry Phase 6.8 deploy_scope 판정.
+- Cross-ref: feature-0003 REV/CHG-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+
 ## REV-20260623T191241-item05-hybrid-search [SUBAGENT:item05-impl-selfcheck + adversarial-backend] — SHIP-WITH-FIXES (적대 리뷰 완료, fix 흡수)
 - Date: 2026-06-23 구현 self-check → 2026-06-24 적대 backend 리뷰 완료. 본 엔트리 上단은 **구현 self-check**(작성자 자기검증), 下단(§적대 리뷰 결과)이 **적대 backend 리뷰**다. self-check 가 예고한 점검 표면 ①②가 실제 MAJOR/MINOR-2 로 적중 — fix 전부 흡수.
 - 자기검증 항목/결과:

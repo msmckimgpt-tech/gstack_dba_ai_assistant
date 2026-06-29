@@ -9752,6 +9752,67 @@ def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: di
             m["_attachments"] = atts
 
 
+def _load_user_feedback_by_message(conversation_id: str, created_by: "str | None") -> dict[int, dict[str, Any]]:
+    """대화의 현재 사용자 투표 피드백(👍/👎, suggested=false)을 message_id 별로 그룹핑.
+
+    새로고침·대화 전환으로 history 를 다시 그릴 때, 이미 부여한 투표를 복원해 중복 부여를 막기
+    위함(assistant 첨부 영속 `_load_assistant_attachments_by_message` 와 대칭). "샘플 등록"
+    (suggested=true)은 투표 고유성과 분리되므로 제외한다.
+
+    피드백 정본은 PG(agent_kb)의 sample_feedback. fail-soft — 실패 시 빈 dict 를 반환해 이력
+    표시를 막지 않는다. created_by(=로그인 username)로 스코프되어 타 사용자 피드백은 노출 안 됨.
+    """
+    out: dict[int, dict[str, Any]] = {}
+    if not conversation_id or not created_by:
+        return out
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return out
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT message_id, vote FROM sample_feedback "
+                "WHERE conversation_id = %s AND created_by = %s "
+                "AND suggested = false AND message_id IS NOT NULL",
+                (conversation_id, created_by),
+            )
+            for row in cur.fetchall() or []:
+                mid_v, vote_v = row
+                try:
+                    out[int(mid_v)] = {"vote": "down" if str(vote_v) == "down" else "up"}
+                except (TypeError, ValueError):
+                    continue
+    except Exception:
+        return {}
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    return out
+
+
+def _attach_user_feedback(messages: list[dict[str, Any]], by_message: dict[int, dict[str, Any]]) -> None:
+    """history assistant 메시지에 현재 사용자의 기존 피드백(`feedback`)을 주입.
+
+    프론트(_buildSampleFeedbackControls)는 message.feedback 가 있으면 해당 투표를 활성 표시한다.
+    """
+    if not by_message:
+        return
+    for m in messages:
+        if str(m.get("role", "")).lower() != "assistant":
+            continue
+        try:
+            mid = int(m.get("id") or 0)
+        except Exception:
+            mid = 0
+        fb = by_message.get(mid)
+        if fb:
+            m["feedback"] = fb
+
+
 def _get_history(
     conversation_id: str, limit: int = 5, before_id: int | None = None
 ) -> tuple[list[dict[str, Any]], bool, int | None, int, int]:
@@ -15316,6 +15377,12 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
     suggested = bool(data.get("suggested"))
     nl_question = str(data.get("nl_question") or "").strip()
     generated_sql = str(data.get("generated_sql") or "")
+    # 답변(메시지) 식별자 — (created_by, message_id) 단위 고유 피드백 강제용(중복 부여 차단).
+    # 표시 store 메시지 id(/api/history 가 m["id"] 로 노출, 첨부 영속과 동일 id 공간). 부재 시 None.
+    try:
+        message_id = int(data.get("message_id")) if str(data.get("message_id") or "").strip() != "" else None
+    except (TypeError, ValueError):
+        message_id = None
     if not nl_question:
         return _json_error("nl_question 은 필수입니다.", 400)
     if len(nl_question) > 8000:
@@ -15347,24 +15414,19 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
     from shared.db import _pg_connect
     feedback_id: int | None = None
     try:
-        # autocommit=False — INSERT + lastval() 을 한 트랜잭션으로 묶어 id 회수 정확성 보장.
+        # autocommit=False — UPSERT + RETURNING 을 한 트랜잭션으로 묶어 id 회수 정확성 보장.
         pg = _pg_connect(autocommit=False)
     except Exception:
         return _json_error("피드백 저장소(PG) 연결 실패", 503)
     try:
-        _sfb.record_feedback(
+        # record_feedback 가 UPSERT(ON CONFLICT (created_by, message_id) … DO UPDATE) RETURNING id
+        # 로 적재/갱신된 행 id 를 직접 반환 — lastval() 은 UPSERT DO UPDATE 경로에서 부정확하므로 미사용.
+        feedback_id = _sfb.record_feedback(
             pg, scope_key, nl_question, generated_sql,
             vote=vote, suggested=suggested, conversation_id=cid,
             created_by=str((account or {}).get("username") or "") or None,
+            message_id=message_id,
         )
-        try:
-            cur = pg.cursor()
-            cur.execute("SELECT lastval()")
-            row = cur.fetchone()
-            feedback_id = int(row[0]) if row and row[0] is not None else None
-            cur.close()
-        except Exception:
-            feedback_id = None
         pg.commit()
     except Exception as exc:
         try:
@@ -17563,6 +17625,20 @@ def history(
         messages, has_more, oldest_id, total_count, user_count = _get_history(
             conv_id, limit=limit, before_id=before_id
         )
+        # 새로고침·대화 전환 후에도 이미 부여한 👍/👎 를 복원해 중복 부여를 막는다(고유 피드백).
+        # best-effort: 피드백 상태 복원 실패는 history 응답을 막지 않는다(첨부 영속과 동형 fail-soft).
+        try:
+            _attach_user_feedback(
+                messages,
+                _load_user_feedback_by_message(
+                    conv_id, str((account or {}).get("username") or "") or None
+                ),
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "history: user feedback enrich failed (conversation_id=%s)",
+                conv_id, exc_info=True,
+            )
     else:
         messages, has_more, oldest_id, total_count, user_count = [], False, None, 0, 0
     # 대화의 현재 처리 상태를 포함 (progress bubble 복원용)

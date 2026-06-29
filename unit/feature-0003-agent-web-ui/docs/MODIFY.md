@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T014345-feedback-unique-vote (TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백(👍/👎) 강제, Major §12.3 — cross-feature 0002+0003)
+- Date: 2026-06-29. 사용자 보고(새로고침·대화 전환 후 같은 답변에 피드백 재부여 가능)의 수정. 정본 데이터 계층 변경(테이블 컬럼·UNIQUE 인덱스·코어 UPSERT)은 feature-0002(마이그 0021 + sample_feedback.py) — 본 항목은 feature-0003 web 층 변경(endpoint·history·UI·CSS) 기록.
+- 변경(feature-0003):
+  - `src/app.py` `post_sample_feedback`: 요청 body `message_id` 파싱(int|None) → `record_feedback(message_id=…)` 전달. id 회수는 `lastval()`(UPSERT DO UPDATE 경로 부정확) 제거 후 record_feedback 의 `RETURNING id` 반환값 직접 사용.
+  - `src/app.py` 신규 `_load_user_feedback_by_message(conversation_id, created_by)`(PG `sample_feedback` 에서 현재 사용자 vote 행 message_id→{vote} 그룹핑, suggested=false 한정, fail-soft) + `_attach_user_feedback(messages, by_message)`(assistant 메시지에 `m["feedback"]` 주입). `@app.get("/api/history")` 가 messages 로드 직후 호출 — 새로고침·전환 시 기존 투표 복원 원천(첨부 영속 attach 패턴 대칭).
+  - `src/static/app.js` `_buildSampleFeedbackControls`: POST body 에 `message_id: message.id` 포함. `message.feedback` 있으면 해당 투표 버튼 활성표시(`is-active`)+상태문구 복원. in-session 영구 잠금(`data-done`) 제거 → 변경 허용(버튼 enable 유지), 전송 중 `data-busy` 가드로만 더블클릭 차단. "샘플 등록"(suggested) 은 투표 활성표시와 분리.
+  - `src/static/styles.css`: 기존 `[data-done]` 비활성 규칙을 `.message-feedback-btn.is-active`(현재 투표 강조)+`[data-busy]`(전송 중) 규칙으로 교체.
+  - `src/static/index.html`: cache-buster `styles.css ?v=20260629-feedback-unique-vote` · `app.js ?v=20260629-feedback-unique-vote`(변경 전파).
+  - `tests/test_sample_feedback_curation.py`: record_feedback 반환 id(=42) 기반 + `message_id=77` 전달 단언으로 갱신(lastval 제거 정합).
+- 비변경: RBAC(대화 접근 게이트)·rate-limit(10/min)·audit(sample.feedback.submit)·scope 도출·승급/거부 endpoint 무변경. 엔드포인트 shape 는 body 에 optional `message_id` 추가뿐(하위호환 — 부재 시 기존 동작).
+- 검증: curation 15/15 PASS · `node --check app.js` · `py_compile app.py` PASS · 두 feature 전체 스위트 회귀 0.
+- Cross-ref: feature-0002 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+
 ## CHG-20260626T135945-ask-dedup-hotfix (TASK-20260626-ask-dedup-idempotency — 동일 cycle 라이브 PG 회귀 hotfix, Major §12.3, 정본 코드=feature-0002 ask_jobs.py)
 - Date: 2026-06-26. CHG-20260626-ask-dedup-idempotency 배포 검증 중 적발된 라이브 회귀의 즉시 수정. 정본 코드 변경은 feature-0002 ask_jobs.py(전용 파라미터 분리) — 본 항목은 feature-0003 동반 기록(REPORT/TASK/REVIEW 갱신).
 - 회귀/수정 요지: dedup NOT EXISTS 의 `%(cid)s`/`%(account_id)s` 재사용 → PG `AmbiguousParameter(text vs character varying)` → 워커 모드 신규 /api/ask 전부 500. 전용 파라미터 `%(dcid)s`/`%(daccount)s` + 테이블 alias `d` 로 분리. 라이브 PG 수정 SQL 직접 실행 재검증 + 회귀 테스트 단언 추가(21/21). web/app.py·app.js 코드 변경 0(본 commit 은 feature-0002 코드 + 양 feature 문서).

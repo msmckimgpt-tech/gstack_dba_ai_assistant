@@ -112,12 +112,28 @@ def test_record_feedback_masks_pii():
     conn = _FakeConn()
     SF.record_feedback(conn, "ds:sales", "이 고객 정보?",
                        "SELECT * FROM users WHERE email='alice@example.com'",
-                       vote="up", suggested=True, created_by="curator1")
+                       vote="up", suggested=True, created_by="curator1", message_id=999)
     sql, params = conn.captured[-1]
     assert "INSERT INTO sample_feedback" in sql
-    masked_sql = params[4]
+    # 답변당 사용자별 고유 피드백(👍/👎) — (created_by, message_id) UPSERT(마이그 0021).
+    assert "ON CONFLICT (created_by, message_id)" in sql
+    # 컬럼 순서: scope_key, conversation_id, message_id, run_id, nl_question, generated_sql, vote, suggested, created_by
+    masked_sql = params[5]
     assert "alice@example.com" not in masked_sql   # PII 마스킹됨
-    assert params[5] == "up" and params[6] is True
+    assert params[2] == 999                          # message_id
+    assert params[6] == "up" and params[7] is True   # vote, suggested
+
+
+def test_record_feedback_vote_upsert_keys_user_and_message():
+    """투표(suggested=false)는 (created_by, message_id) 부분 UNIQUE 로 답변당 1행 — UPSERT 갱신."""
+    conn = _FakeConn()
+    SF.record_feedback(conn, "ds:sales", "활성 고객?", "SELECT 1",
+                       vote="down", suggested=False, created_by="userA", message_id=12)
+    sql, params = conn.captured[-1]
+    assert "ON CONFLICT (created_by, message_id)" in sql
+    assert "suggested = false" in sql                 # 부분 인덱스 술어(투표만 대상)
+    assert "DO UPDATE SET" in sql and "RETURNING id" in sql
+    assert params[2] == 12 and params[6] == "down" and params[7] is False
 
 
 def test_promote_feedback_creates_approved_sample(monkeypatch):

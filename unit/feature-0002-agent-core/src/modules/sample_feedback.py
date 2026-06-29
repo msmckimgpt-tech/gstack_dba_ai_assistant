@@ -28,19 +28,38 @@ def _mask_pii(text):
 
 
 def record_feedback(conn, scope_key, nl_question, generated_sql, *, vote="up",
-                    suggested=False, conversation_id=None, run_id=None, created_by=None) -> None:
-    """답변 피드백 적재(status=pending). generated_sql 은 PII 마스킹 후 저장."""
+                    suggested=False, conversation_id=None, run_id=None, created_by=None,
+                    message_id=None) -> "int | None":
+    """답변 피드백 적재(status=pending). generated_sql 은 PII 마스킹 후 저장. 적재된 행 id 반환.
+
+    **답변당 사용자별 고유 피드백(👍/👎)**: (created_by, message_id) 부분 UNIQUE 인덱스
+    (마이그 0021)에 의해 한 사용자가 한 답변에 남기는 투표는 1행으로 강제된다. 재투표 시
+    ON CONFLICT DO UPDATE 로 기존 행을 갱신(last-write-wins, 변경 허용) — 중복 행 미생성.
+    인덱스 술어상 message_id/created_by 가 없거나 suggested=true("샘플 등록")인 경우 충돌 대상이
+    아니므로 항상 새 행 INSERT(기존 동작 보존 — "샘플 등록"은 검수 큐 제출이라 투표와 분리)."""
     vote_n = "down" if str(vote).strip().lower() in ("down", "negative", "0", "false") else "up"
+    try:
+        mid = int(message_id) if message_id is not None and str(message_id).strip() != "" else None
+    except (TypeError, ValueError):
+        mid = None
     cur = conn.cursor()
     try:
         cur.execute(
             "INSERT INTO sample_feedback "
-            "(scope_key, conversation_id, run_id, nl_question, generated_sql, vote, suggested, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (_normalize_scope_key(scope_key), conversation_id, run_id,
+            "(scope_key, conversation_id, message_id, run_id, nl_question, generated_sql, vote, suggested, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (created_by, message_id) "
+            "WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false "
+            "DO UPDATE SET vote = EXCLUDED.vote, nl_question = EXCLUDED.nl_question, "
+            "generated_sql = EXCLUDED.generated_sql, scope_key = EXCLUDED.scope_key, "
+            "run_id = EXCLUDED.run_id, updated_at = now() "
+            "RETURNING id",
+            (_normalize_scope_key(scope_key), conversation_id, mid, run_id,
              _mask_pii(str(nl_question).strip()), _mask_pii(generated_sql), vote_n,
              bool(suggested), created_by),
         )
+        row = cur.fetchone()
+        return int(row[0]) if row and row[0] is not None else None
     finally:
         cur.close()
 

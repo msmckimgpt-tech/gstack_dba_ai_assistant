@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T014345-feedback-unique-vote (TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백 강제, 데이터 계층 정본. feature-0003 주관, Major §12.3)
+- Date: 2026-06-29. UX 증상·주 TASK 는 feature-0003. 본 항목은 feature-0002 데이터 계층 정본 변경(테이블 스키마·코어 적재 로직) 기록.
+- 변경:
+  - **마이그 0021** `alembic/versions/20260629_0021_sample_feedback_unique_vote.py`(down_revision 0020): `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id bigint` + `CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_vote ON sample_feedback (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false`. downgrade 는 인덱스+컬럼 drop. 기존 데이터 무손실(신규 컬럼 전부 NULL → 부분 인덱스 술어가 제외)·멱등.
+  - `src/modules/sample_feedback.py` `record_feedback`: `message_id` 인자 추가, INSERT→UPSERT(`ON CONFLICT (created_by, message_id) WHERE <인덱스와 동일 술어> DO UPDATE SET vote/nl_question/generated_sql/scope_key/run_id=EXCLUDED, updated_at=now()`) + `RETURNING id` 반환. status·suggested·promoted_sample_id 는 DO UPDATE 에서 미변경(검수 lifecycle 보존). 반환형 None→`int|None`.
+- 비변경: list_pending_feedback·promote_feedback·reject_feedback·_mask_pii 무변경. GRANT 무변경(0014 의 INSERT/UPDATE 권한이 UPSERT 포괄). "샘플 등록"(suggested=true) 행은 부분 인덱스 술어 제외 → 매번 INSERT(검수 큐 동작 보존).
+- 검증: `tests/test_sample_flywheel.py` 15/15(record_feedback param 위치·ON CONFLICT 단언 갱신 + 신규 vote-UPSERT 키 단언) · `py_compile`(sample_feedback.py·0021) PASS · 마이그 chain linear(0020→0021 단일 head).
+- Cross-ref: feature-0003 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+
 ## CHG-20260626-ask-dedup-idempotency (TASK-20260626-ask-dedup-idempotency — ask 큐 enqueue 멱등화. feature-0003 주관, **Major §12.3**)
 - Date: 2026-06-26. 주 변경·정본 changelog 은 feature-0003 CHG-20260626-ask-dedup-idempotency. 본 항목은 feature-0002-agent-core 교차변경(ask 큐 데이터 계층)만 기록(§13.2.7).
 - 근본원인: 워커 모드 `/api/ask` long-poll 연결이 web 재생성(배포)으로 끊기면(502 EOF) 사용자 재전송 → 워커 enqueue 멱등성 부재로 동일 페이로드 job 2개 → 첫 job out-of-process 생존·완료 → 요청·답변 2회 처리. 라이브 `agent_runtime.ask_jobs` 에서 실측(동일 conv+account+user_message, attempts=1·done).

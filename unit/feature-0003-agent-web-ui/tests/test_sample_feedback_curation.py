@@ -211,26 +211,27 @@ def test_user_feedback_record_and_audit(monkeypatch):
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     monkeypatch.setattr(app, "_account_can_access_conversation", lambda *a, **k: True)
     monkeypatch.setattr(app, "_conversation_scope_key", lambda conn, cid: "mysql-deadbeef")
-    pg = _RecordingPgConn(lastval=42)
+    pg = _RecordingPgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     captured = {}
 
     def _fake_record(conn, scope_key, nl_question, generated_sql, **kw):
         captured.update({"conn": conn, "scope_key": scope_key, "nl_question": nl_question,
                          "generated_sql": generated_sql, **kw})
+        return 42  # UPSERT … RETURNING id (lastval() 미사용 — DO UPDATE 경로 부정확)
 
     monkeypatch.setattr(_sfb, "record_feedback", _fake_record)
     events = _audit_capture(monkeypatch)
 
     resp = asyncio.run(app.post_sample_feedback("conv-1", _FakeRequest({
         "vote": "down", "suggested": True, "nl_question": "  매출 상위 10  ",
-        "generated_sql": "SELECT 1",
+        "generated_sql": "SELECT 1", "message_id": 77,
     })))
     assert resp.status_code == 200
     out = _body(resp)
     assert out["ok"] is True
     assert out["feedback_id"] == 42
-    # 적재 인자 검증 — vote/scope/cid/created_by 가 코어로 전달.
+    # 적재 인자 검증 — vote/scope/cid/created_by/message_id 가 코어로 전달.
     assert captured["conn"] is pg, "PG(agent_kb) conn 으로 적재"
     assert captured["scope_key"] == "mysql-deadbeef"
     assert captured["nl_question"] == "매출 상위 10"
@@ -238,6 +239,7 @@ def test_user_feedback_record_and_audit(monkeypatch):
     assert captured["suggested"] is True
     assert captured["conversation_id"] == "conv-1"
     assert captured["created_by"] == "tester"
+    assert captured["message_id"] == 77, "답변 식별자(message_id) 가 코어로 전달 — 고유 피드백 키"
     assert pg.committed is True
     # best-effort audit — action=sample.feedback.submit.
     assert any(e.get("action") == "sample.feedback.submit" for e in events)
