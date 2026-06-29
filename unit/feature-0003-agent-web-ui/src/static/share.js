@@ -142,9 +142,14 @@
         empty.textContent = "공유된 메시지가 없습니다.";
         messagesEl.appendChild(empty);
       } else {
-        messages.forEach((msg) => messagesEl.appendChild(renderMessage(msg)));
+        messages.forEach((msg, idx) => messagesEl.appendChild(renderMessage(msg, idx)));
       }
     }
+
+    // 공유 대화도 우측 스크롤바 가이드 뱃지(point rail)를 구성한다 — 메인 UI(app.js
+    // renderMessagePointRail)와 동형. 공유 페이지는 window(document) 스크롤이라 rail 은
+    // position:fixed 미니맵으로 구현된다(메인은 #messageLog 내부 스크롤).
+    setupSharePointRail(messages);
 
     const joinBtn = document.getElementById("shareJoinBtn");
     const forkBtn = document.getElementById("shareForkBtn");
@@ -163,10 +168,15 @@
     }
   }
 
-  function renderMessage(msg) {
+  function renderMessage(msg, idx) {
     const row = document.createElement("article");
     const role = msg && msg.role === "user" ? "user" : "assistant";
     row.className = `share-message share-message-${role}`;
+    // point rail 점프용 안정 anchor — 렌더 순서 index 기반(공유 메시지 id 유무와 무관).
+    if (idx != null) {
+      row.id = `share-msg-${idx}`;
+      row.dataset.idx = String(idx);
+    }
 
     const meta = document.createElement("div");
     meta.className = "share-message-meta";
@@ -190,6 +200,147 @@
     }
 
     return row;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 공유 대화 우측 스크롤바 가이드 뱃지(point rail) — 메인 UI(app.js
+  // renderMessagePointRail)와 동형 미니맵. 공유 페이지는 window(document) 스크롤이라
+  // rail 은 position:fixed 로 뷰포트 우측 전체 높이를 덮고, 각 dot 의 top% 는 "문서 전체
+  // 높이 대비 메시지 중심 위치" 비율로 배치한다(미니맵 의미). 클릭 시 EaseOutExpo 로 대상
+  // 메시지를 뷰포트 중앙으로 짧게 스크롤한다(REQ-20260629-point-scroll).
+  // ─────────────────────────────────────────────────────────────────────────
+  let _sharePointRailWired = false;
+  let _sharePointRailRaf = 0;
+
+  function setupSharePointRail(messages) {
+    const list = Array.isArray(messages) ? messages : [];
+    renderSharePointRail(list);
+    if (_sharePointRailWired) return; // scroll/resize 리스너는 1 회만 부착.
+    _sharePointRailWired = true;
+    // dot 의 top% 는 "문서 좌표" 기반이라 스크롤만으로는 불변 → 스크롤 시엔 활성 표시만
+    // 갱신하고, 레이아웃 reflow 가 발생하는 resize 에서만 재배치한다. rAF 로 합쳐 과다 호출 방지.
+    const onScroll = () => {
+      if (_sharePointRailRaf) return;
+      _sharePointRailRaf = requestAnimationFrame(() => {
+        _sharePointRailRaf = 0;
+        highlightSharePoint();
+      });
+    };
+    const onResize = () => {
+      layoutSharePointRail();
+      highlightSharePoint();
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onResize);
+    // 비동기 콘텐츠(markdown 표·mermaid 다이어그램·이미지)가 늦게 렌더되며 메시지 높이가
+    // 바뀌면 dot 위치(문서 좌표 비율)도 재계산해야 한다. ResizeObserver 로 추적, 미지원
+    // 환경은 알려진 지연 시점 재배치로 폴백한다.
+    const messagesEl = document.getElementById("shareMessages");
+    if (messagesEl && typeof ResizeObserver !== "undefined") {
+      try { new ResizeObserver(() => onResize()).observe(messagesEl); }
+      catch (_) { [300, 1000, 2500].forEach((ms) => window.setTimeout(onResize, ms)); }
+    } else {
+      [300, 1000, 2500].forEach((ms) => window.setTimeout(onResize, ms));
+    }
+    window.addEventListener("load", onResize);
+  }
+
+  function renderSharePointRail(messages) {
+    const rail = document.getElementById("sharePointRail");
+    if (!rail) return;
+    rail.innerHTML = "";
+    const list = Array.isArray(messages) ? messages : [];
+    // 1 개 이하면 rail 숨김(메인 UI 와 동일 임계).
+    if (list.length <= 1) { rail.classList.add("hidden"); return; }
+    rail.classList.remove("hidden");
+    list.forEach((msg, idx) => {
+      const role = msg && msg.role === "user" ? "user" : "assistant";
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = `share-point-dot is-${role}`;
+      dot.dataset.idx = String(idx);
+      const when = (msg && msg.created_at) ? formatDateTime(msg.created_at) : "";
+      const who = role === "user" ? "사용자" : "Assistant";
+      const topic = String((msg && msg.content) || "").trim().slice(0, 60).replace(/\s+/g, " ");
+      dot.title = [when, who].filter(Boolean).join(" · ") + (topic ? ` · ${topic}` : "");
+      dot.setAttribute("aria-label", dot.title);
+      dot.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const target = document.getElementById(`share-msg-${idx}`);
+        if (target) scrollShareMessageIntoCenter(target);
+      });
+      rail.appendChild(dot);
+    });
+    layoutSharePointRail();
+    highlightSharePoint();
+  }
+
+  function layoutSharePointRail() {
+    const rail = document.getElementById("sharePointRail");
+    if (!rail) return;
+    const dots = rail.querySelectorAll(".share-point-dot");
+    if (!dots.length) return;
+    const totalHeight = Math.max(1, document.documentElement.scrollHeight);
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    dots.forEach((dot) => {
+      const el = document.getElementById(`share-msg-${dot.dataset.idx}`);
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const topInDoc = rect.top + scrollY;       // 뷰포트 좌표 → 문서 좌표.
+      const center = topInDoc + rect.height / 2;
+      const pct = Math.max(0, Math.min(100, (center / totalHeight) * 100));
+      dot.style.top = `${pct}%`;
+    });
+  }
+
+  function highlightSharePoint() {
+    const rail = document.getElementById("sharePointRail");
+    if (!rail) return;
+    const midpoint = window.innerHeight / 2;       // 뷰포트 중앙(좌표계: 뷰포트).
+    let closestIdx = null;
+    let closestDist = Infinity;
+    rail.querySelectorAll(".share-point-dot").forEach((dot) => {
+      const el = document.getElementById(`share-msg-${dot.dataset.idx}`);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const center = r.top + r.height / 2;
+      const dist = Math.abs(center - midpoint);
+      if (dist < closestDist) { closestDist = dist; closestIdx = dot.dataset.idx; }
+    });
+    rail.querySelectorAll(".share-point-dot").forEach((dot) => {
+      dot.classList.toggle("is-active", String(dot.dataset.idx) === String(closestIdx));
+    });
+  }
+
+  // EaseOutExpo 윈도우 스크롤 — 대상 메시지를 뷰포트 중앙으로 짧게 이동.
+  // native scrollIntoView(behavior:smooth, 브라우저 임의 duration) 대비 단축 + 명시 easing.
+  const SHARE_POINT_SCROLL_DURATION_MS = 280;
+  function shareEaseOutExpo(t) {
+    return t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+  }
+  function sharePrefersReducedMotion() {
+    try { return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); }
+    catch (_) { return false; }
+  }
+  function scrollShareMessageIntoCenter(target) {
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    const currentY = window.scrollY || window.pageYOffset || 0;
+    const topInDoc = rect.top + currentY;
+    const dest = topInDoc - (window.innerHeight - rect.height) / 2;
+    const maxY = Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
+    const to = Math.max(0, Math.min(maxY, dest));
+    const delta = to - currentY;
+    if (delta === 0) return;
+    if (sharePrefersReducedMotion()) { window.scrollTo(0, to); return; }
+    const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : null;
+    if (t0 == null) { window.scrollTo(0, to); return; } // performance.now 부재 폴백.
+    function step(now) {
+      const p = Math.min(1, (now - t0) / SHARE_POINT_SCROLL_DURATION_MS);
+      window.scrollTo(0, currentY + delta * shareEaseOutExpo(p));
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
   }
 
   // 메시지 본문을 markdown → HTML 로 렌더한다. 메인 UI(app.js markdownToHtml)와

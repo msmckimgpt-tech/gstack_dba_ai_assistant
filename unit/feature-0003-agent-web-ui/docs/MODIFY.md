@@ -9,6 +9,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T181648-point-scroll-easeoutexpo (TASK-20260629T181648-point-scroll-easeoutexpo — 공유 대화 뷰 우측 스크롤바 가이드 뱃지(point rail) 추가 + 가이드 뱃지 클릭 스크롤 단축·EaseOutExpo, Minor §12.3 — frontend 표현계층)
+- Date: 2026-06-29 (worktree ai/claude/share-scroll-guide-badge, base 60c0d45).
+- 요청: 공유 기능으로 전달한 대화에도 우측 스크롤바 대화 가이드 뱃지 UI 구성 + 가이드 뱃지 클릭 시 소요시간 단축 + Easing 을 EaseOutExpo 로.
+- 변경(`src/static/app.js`, 메인 뷰): rail dot 클릭 핸들러가 native `scrollIntoView({behavior:'smooth',block:'center'})` 대신 `scrollMessagePointIntoCenter(target)` 호출. 신규 헬퍼 `POINT_SCROLL_DURATION_MS=280`·`_easeOutExpo(t)=t>=1?1:1-2^(-10t)`·`_animatePointScroll(setter,from,to)`(rAF 보간, reduced-motion·performance.now 부재 폴백)·`scrollMessagePointIntoCenter`(messageLogEl 중앙 정렬 목표 scrollTop 계산+clamp). 기존 `renderMessagePointRail`/`layoutMessagePointRail`/`highlightActivePoint` 보존. rail dot 외 scrollIntoView(검색결과 5037·캘린더 9439·드롭다운 9629/9639) 무변경.
+- 변경(`src/static/share.js`, 공유 뷰): `render()` 가 `renderMessage(msg, idx)` 로 idx 전달 + `setupSharePointRail(messages)` 호출. `renderMessage` 가 `row.id=share-msg-${idx}`·`dataset.idx` 부여. 신규 rail 로직 `setupSharePointRail`(렌더+scroll/resize/ResizeObserver/load 리스너 1회 부착, rAF 스로틀)·`renderSharePointRail`(dot=`<button.share-point-dot.is-{role}>`, ≤1개 hidden)·`layoutSharePointRail`(문서좌표 비율 top%)·`highlightSharePoint`(뷰포트 중앙 최근접 `is-active`)·`scrollShareMessageIntoCenter`(`shareEaseOutExpo`+`SHARE_POINT_SCROLL_DURATION_MS=280`, `window.scrollTo` 보간, reduced-motion 폴백).
+- 변경(`src/static/share.html`): `<main id="shareMessages">` 직후 `<nav id="sharePointRail" class="share-point-rail hidden">` 추가. cache-buster `share.css`/`share.js` `?v=20260629-share-mermaid → 20260629-share-scroll-guide`.
+- 변경(`src/static/share.css`): `.share-point-rail`(position:fixed 우측 미니맵, `pointer-events:none`)·`.share-point-dot`(`pointer-events:auto`, is-user/is-assistant/is-active/hover)·`@media(max-width:720px)` 숨김·`@media(prefers-reduced-motion)` transition 제거 추가.
+- 변경(`src/static/index.html`): app.js cache-buster `?v=20260629d-new-conv-dedup → 20260629-point-scroll-easeoutexpo`.
+- Impact: 비파괴, 순수 표현계층. 데이터/스키마/RBAC/백엔드/엔드포인트 0 변경. 공유 뷰는 anonymous 노출면이나 dot.title/aria-label 은 `.title`/`setAttribute`(DOM API)로 XSS 무첨가. reduced-motion·모바일 가드.
+- Rollback: app.js 클릭 핸들러를 `scrollIntoView` 로 환원 + 신규 헬퍼 제거 / share.* 의 rail 추가분 제거 + cache-buster 환원.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Files: feature-0003 `src/static/{app.js,index.html,share.html,share.js,share.css}` · `docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST,REPORT}.md` · `docs/STATUS.md`.
+- Cross-ref: 기존 메인 rail REQ-20260515-0006(TASK-0061 Phase 4) · 공유 뷰 mermaid 반응형 REQ-20260629T143914-share-mermaid-responsive.
+
 ## CHG-20260629T170913-glossary-role-fieldname-fix (TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/라벨이 실제 역할 미표시하던 필드명 버그 수정, Minor §12.3 — 프런트 전용)
 - Date: 2026-06-29 (worktree ai/claude/glossary-role-fieldname-fix, base 54dbfe3).
 - 근본원인: `/api/admin/roles` 정본 직렬화 role 객체는 `{id,key,name,permission_codes,...}`. glossary 의 `_metaPopulateRoleFilter`/`_metaRoleLabel` 이 `adminState.roles` 를 `.role_key`/`.role_name`(미존재)로 읽어 → 필터는 전 역할 스킵(`if(!rk) continue`), 라벨은 미매칭 raw key. 역할 관리·계정 화면은 `.key`/`.name`(정본)이라 정상이었고 glossary 만 회귀. role.read 권한 게이트와 무관(현 admin 계정 보유, API 200·8역할 반환 확인).

@@ -116,6 +116,12 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260629T181648-point-scroll-easeoutexpo 공유 뷰 가이드 뱃지(point rail) + 클릭 스크롤 단축·EaseOutExpo (Minor §12.3, 2026-06-29) — **PB-0008 Windows-browser DEFERRED(배포 후)**
+- 구조/단위: `node --check` PASS(app.js·share.js). CSS 추가만(share.css), 백엔드/스키마/RBAC 0.
+- 적대 검증 패널(frontend 7-lens: 좌표계·EaseOutExpo 수식·메인 회귀·공유 엣지·anonymous XSS·성능/ResizeObserver 루프·a11y) → **VERDICT SHIP**(BLOCKER 0·MAJOR 0). EaseOutExpo `1-2^(-10t)` 수치검증 f(0)=0·f(1)=1·단조·보간 from→to 정확. ResizeObserver 자기-트리거 루프 부재(fixed rail↔observed messages 레이아웃 분리). title/aria XSS 무첨가(DOM API). MINOR 2(ResizeObserver 폴백·focus-visible)→ focus-visible 흡수, 나머지 follow-up. REV-20260629T181648-point-scroll-easeoutexpo.
+- **배포 후 PB-0008 잔여(실 Windows 브라우저)**: ① 메인 작업화면 — rail dot 클릭 시 대상 메시지로 **체감상 더 빠른**(280ms) EaseOutExpo 스크롤(기존 native smooth 대비 단축) ② 공유 페이지(`/share/{token}`, 2개+ 메시지) — 우측에 가이드 뱃지(point rail) 표시·각 dot 이 메시지 구간 비율 위치·클릭 시 EaseOutExpo window 스크롤·스크롤 시 현재 구간 dot `is-active` ③ 메시지 1개/0개 시 rail 미표시 ④ ≤720px 모바일 숨김 ⑤ prefers-reduced-motion 시 즉시 점프.
+- Pass/Fail: PARTIAL(단위·적대 패널 PASS, 라이브 PB-0008 배포 후 잔여 — 표현계층 화면 정본).
+
 ### TASK-20260629-metadata-bs-flexclip 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (Minor §12.3, 2026-06-29)
 - 구조: `node`/`py_compile` 대상 JS·Python 변경 0 (CSS+HTML cache-buster 전용). CSS brace 균형 `{`1616/`}`1616.
 - **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.200 via `bin/win-browser.py` 무권한 relay, `bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. Runner: AI. Evidence: `artifacts/shared/win-browser-shots-pb0008-tabledesc/` (10_mssql_account_skeleton·11_viewport·20_fix_flexshrink_applied·30_ai_suggest_filled).

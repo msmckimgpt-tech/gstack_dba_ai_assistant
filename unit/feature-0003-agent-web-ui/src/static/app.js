@@ -4728,7 +4728,9 @@ function renderMessagePointRail() {
     dot.addEventListener("click", (ev) => {
       ev.preventDefault();
       const target = document.getElementById(`message-${message.id}`);
-      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+      // 가이드 뱃지 클릭: native scrollIntoView(behavior:smooth, 브라우저 임의 duration)
+      // 대신 EaseOutExpo 커스텀 애니메이션으로 더 짧게 이동(REQ-20260629-point-scroll).
+      if (target) scrollMessagePointIntoCenter(target);
     });
     rail.appendChild(dot);
   });
@@ -4783,6 +4785,43 @@ function highlightActivePoint() {
   rail.querySelectorAll(".message-point-dot").forEach((dot) => {
     dot.classList.toggle("is-active", String(dot.dataset.messageId) === String(closestId));
   });
+}
+
+// REQ-20260629-point-scroll: 가이드 뱃지(point rail dot) 클릭 시 대상 메시지로의
+// 스크롤을 브라우저 native smooth(가변·임의 duration) 대신 짧은 EaseOutExpo 곡선으로
+// 직접 구동한다. EaseOutExpo 는 초반에 크게 움직였다가 끝에서 부드럽게 감속해 "빠르게
+// 도달 + 깔끔한 정착" 느낌을 준다. prefers-reduced-motion 사용자는 즉시 점프(no-op).
+const POINT_SCROLL_DURATION_MS = 280; // native smooth(통상 ≥400ms) 대비 단축.
+function _easeOutExpo(t) {
+  // f(t)=1-2^(-10t), t=1 에서 정확히 1 (부동소수 오차 방지로 분기).
+  return t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+}
+// scrollTop 을 from→to 로 EaseOutExpo 애니메이션. setter 는 1 개 인자(다음 위치)를 받는다.
+function _animatePointScroll(setter, from, to) {
+  const delta = to - from;
+  if (delta === 0) return;
+  if (_prefersReducedMotion()) { setter(to); return; }
+  const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : null;
+  if (t0 == null) { setter(to); return; } // performance.now 부재 환경 폴백.
+  function step(now) {
+    const elapsed = now - t0;
+    const p = Math.min(1, elapsed / POINT_SCROLL_DURATION_MS);
+    setter(from + delta * _easeOutExpo(p));
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+// 대상 메시지를 messageLog 뷰포트 중앙으로 EaseOutExpo 스크롤(scrollIntoView block:center 대체).
+function scrollMessagePointIntoCenter(target) {
+  if (!messageLogEl || !target) return;
+  const logRect = messageLogEl.getBoundingClientRect();
+  const elRect = target.getBoundingClientRect();
+  const from = messageLogEl.scrollTop;
+  const elTopInLog = elRect.top - logRect.top + from;
+  const dest = elTopInLog - (messageLogEl.clientHeight - elRect.height) / 2;
+  const maxTop = Math.max(0, messageLogEl.scrollHeight - messageLogEl.clientHeight);
+  const to = Math.max(0, Math.min(maxTop, dest));
+  _animatePointScroll((y) => { messageLogEl.scrollTop = y; }, from, to);
 }
 
 // TASK-0061 Phase 5 (REQ-20260515-0007): 캘린더 popover state + 렌더.
