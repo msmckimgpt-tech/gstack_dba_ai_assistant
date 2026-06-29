@@ -4903,3 +4903,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **§18.8 적대 패널(SUBAGENT correctness)**: 5개 회귀 가설(catch/cancel/lazy-fail·delete 충돌·render 이동·title→topic 소비처·mismatch 오염) **전부 REFUTED, no BLOCKING**. 패널이 `title`→`topic` 이 backend payload 키(`"topic"`, app.py 7145/7511)와 일치시키는 기존 버그 수정임을 독립 확인. REV-20260629T080500-new-conv-dedup.
 - [ ] **PB-0008 Windows-browser 시각 검증**(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(frontend-only render, 선례 동일).
 - [x] verify-completion --pre-commit **PASS(9/9 + #12)** → commit → 최신 main(8a35eee) 재rebase(doc tail 충돌 해소) → ff-merge main(92751b4) → push origin main → **web 이미지 재빌드·재기동(deploy_scope: included)**. 라이브 검증: healthz HTTP 200 · 서빙 index.html `app.js?v=20260629d-new-conv-dedup` · 서빙 app.js 에 fix 반영(new-conv-dedup 주석 5·`topic: message.slice` 2). repo-web-1 healthy.
+
+### TASK-20260629T172122-diff-lineno-prefix-leak — ```diff 답변의 누출된 `<N>→` 줄번호 prefix 정규화 (Minor §12.3, frontend render-only, 2026-06-29)
+- 트리거: `/_dqa:conversation_audit "계정 연동 및 보상 일괄 수령 쿼리 구성"`. 사용자 보고: "diff 포맷을 통해 답변할 때, 정상적이지 않은 line 표현이 확인되어 수정이 필요". 진단 대화 `…356708b8`, assistant msg id 4058. 마찰 = `FR-diff-lineno-prefix-leak`(FRICTION_LEDGER).
+- **진단(코드+DB+전사 삼각측량, rootcause_confidence high)**: agent_core `_number_file_lines`(feature-0002, TASK-0256e)가 첨부 본문 각 줄에 `<N>→` 줄번호 prefix 주입. 프롬프트(agent_core.py:770-778)가 diff 안 `<N>→` 금지를 지시하나 **모델이 context 줄에 `45→\t…` 그대로 누출**(변경줄만 표준 `+`/`-`). 웹 렌더러 `buildDiffRows`(app.js·share.js)가 누출 prefix 미정규화 → diff-ctx 코드 본문으로 렌더돼 줄 표현 깨짐(gutter 는 1-based 별도 계산). 레이어 L1↔L6→L7. 재발경로 model limit → 렌더러를 결정론적 최후 방어선으로 봉인.
+- **corroboration**: 전체 기간 ```diff 사용 대화 20건 중 누출 1건(이 대화) → 빈도상 idiosyncratic. 그러나 사용자 명시요청 + RC 코드 확정 + 결정론적 저위험 봉인 → fix-now(전역 프롬프트 행동 재작성 아닌 자기-주입 artifact 의 결정론적 정규화 — 과적합 아님).
+- [x] **수정(2곳, feature-0003)**: `src/static/app.js`·`src/static/share.js` `buildDiffRows` context 분기에 `/^\s*(\d+)→/` 누출 정규화(prefix 제거 + 실제 줄번호로 gutter 동기화).
+- [x] **단위 검증**: 신규 `tests/verify_diff_lineno_leak.mjs` **30/30 PASS**(Node18 순수) — 실 누출 블록 정규화·실 줄번호(45/46/50) 복원·clean diff(@@ 헌크·1-based) 무변경(회귀 0)·app.js↔share.js 정합.
+- [ ] **PB-0008 Windows-browser 시각 검증**(누출 diff 가 든 메시지가 깨끗하게 렌더되는지) — WSL worktree 라 미실행, **배포 후 사용자/실측 확인 권장**(frontend render-only, 선례 동일).
+- [ ] verify-completion --pre-commit → commit → main 통합 → web 재빌드·재기동(deploy_scope: included, **배포 confirm 후**) → 라이브 검증(healthz·서빙 자산 fix 반영).
+- Deferred(cross-ref): agent_core 프롬프트 강화(feature-0002, Major)는 별도 — 렌더러 봉인이 누출 비가시화하므로 우선순위 낮음.

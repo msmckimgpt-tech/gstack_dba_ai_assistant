@@ -5045,3 +5045,17 @@ source_of_truth: true
   - `tests/verify_new_conv_dedup.mjs` — 신규 회귀 가드(정적 불변식 + jsdom 실 `renderConversationList` 행위, 18 단언).
 - Impact: 비파괴. backend/스키마/마이그/RBAC/credential 무변경. placeholder→실 항목 원자적 교체라 클릭 진입·진행상황 폴링은 실 cid 항목이 승계(activeConversationId=earlyCid, is-active 전이). closure-mismatch(send 도중 다른 새 대화 이동)는 가드 밖 8421 delete 가 그대로 정리.
 - Rollback: app.js 3개 hunk 의 `delete(busyKey)`/`topic` 복원 + render 를 find-guard 안으로 + index.html cache-buster 복원.
+
+## CHG-20260629T172122-diff-lineno-prefix-leak (TASK-20260629T172122-diff-lineno-prefix-leak — ```diff 답변의 누출된 `<N>→` 줄번호 prefix 정규화, Minor §12.3 — frontend render-only, backend/스키마/RBAC/LLM 경로 무변경)
+- Date: 2026-06-29
+- Origin: `/_dqa:conversation_audit` (대화 마찰 진단·수정·출하). 마찰 = `FR-diff-lineno-prefix-leak`(FRICTION_LEDGER). 진단 대화 `…356708b8`(topic "계정 연동 및 보상 일괄 수령 쿼리 구성"), assistant msg id 4058. 사용자 명시 보고: "diff 포맷 답변에서 비정상 line 표현".
+- Summary: assistant 가 ```diff 코드블록 context 줄에 `45→\t…` 같은 줄번호+화살표 prefix 를 그대로 흘려보내면 웹 렌더러가 이를 코드 본문으로 표시해 줄 표현이 깨지던 것을, 렌더 시 누출 prefix(`^\s*\d+→`)를 떼고 떼어낸 실제 소스 줄번호로 gutter 를 동기화하도록 정규화.
+- Root cause: agent_core `_number_file_lines`(feature-0002, TASK-0256e)가 첨부 본문 각 줄에 `<N>→` 줄번호 prefix 를 주입(모델이 실제 줄 인용·`@@` 헌크 작성용). 프롬프트(agent_core.py:770-778)가 "diff 안에 `<N>→` 금지"를 지시하나 **모델이 가끔 context 줄에 그대로 복사**(변경줄만 표준 `+`/`-`). 웹 렌더러 `buildDiffRows`(app.js·share.js)가 누출 prefix 를 정규화하지 않아 `diffLineClass`→diff-ctx·`stripDiffMarker` 미스트립 → `45→` 가 코드로 렌더(+ gutter 는 1-based 별도 계산). 레이어 L1↔L6(프롬프트 vs 모델 준수)가 L7(렌더러)에서 표면화. 재발경로=model limit → **렌더러를 결정론적 최후 방어선으로 봉인**(모델이 또 누출해도 매번 차단·기존 저장 메시지도 render-time 에 정상화).
+- Files:
+  - `src/static/app.js` — `buildDiffRows` context 분기에 누출 정규화: `/^\s*(\d+)→/` 매칭 시 prefix 제거 + 떼어낸 줄번호로 oldNo/newNo 동기화.
+  - `src/static/share.js` — 동일 로직(공유 대화 뷰도 같은 `buildDiffRows` 복제본 보유 — diff 렌더는 app.js·share.js 이원화, mermaid 만 공용 추출됨).
+  - `tests/verify_diff_lineno_leak.mjs` — 신규 회귀 가드(30 단언, Node18 순수): 실 누출 블록 정규화·실 줄번호 복원·clean diff(@@/1-based) 무변경·app.js↔share.js 정합.
+- Impact: 비파괴. backend/스키마/마이그/RBAC/credential/LLM 경로 무변경. clean diff 는 정규식 미매칭 → 무변경(blast radius 0, 테스트로 증명). +/- 변경줄 미관여(누출은 verbatim context 줄에서만 발생). 누출 형식이 매우 구체적(자릿수+U+2192)이라 오매칭 시에도 손실은 gutter 숫자 cosmetic(코드/복사 무손상).
+- 분리 표기(§정직): 코드/테스트로 "렌더러가 누출 prefix 를 떼고 정상 diff 를 만든다" 증명됨. "실제 사용자 화면에서 소멸" 은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Deferred(cross-ref, 이번 batch 제외): agent_core 프롬프트 강화(feature-0002, Major·core LLM 경로)는 단일-feature 응집·저위험 유지를 위해 별도. 렌더러 봉인이 누출을 비가시화하므로 우선순위 낮음.
+- Rollback: app.js·share.js `buildDiffRows` 의 `leakedNo` 분기 제거(기존 단일 `return ... stripDiffMarker(line)` 복원) + `tests/verify_diff_lineno_leak.mjs` 삭제.
