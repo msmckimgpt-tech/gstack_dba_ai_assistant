@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T170913-glossary-role-fieldname-fix [SKIPPED:Minor 비핵심경로 필드명 정정 — 라이브 실증(role 객체 key/name)+배포후 PB-0008 재검증으로 검증 대체] — 용어사전 역할 드롭다운/라벨 필드명 버그 수정 (TASK-20260629T170913-glossary-role-fieldname-fix, Minor §12.3 — 프런트 전용)
+- 대상: `src/static/admin.js` `_metaRoleLabel`·`_metaPopulateRoleFilter` 의 role 객체 읽기 `role_key/role_name → key/name`(4 refs) + admin.html cache-buster. 백엔드/RBAC/스키마 0.
+- Panel skip 사유(§18.8 6.4): Minor + 비핵심경로(인증/송신/미신뢰 렌더 무관 — 내부 역할 메타데이터 dropdown 채움) + 변경이 필드명 4개 정정. 정본 검증은 **라이브 실증**으로 선행 — PB-0008 브라우저에서 `/api/admin/roles` 200·role 객체 키 `["id","key","name",...]`(role_key/role_name 부재) 확인, `adminState.roles.length=8`인데 드롭다운 옵션 2개뿐 재현. 수정 효과는 **배포 후 PB-0008 재검증**(드롭다운에 실제 8역할 노출)으로 최종 확인.
+- 자체 점검(반증 시도): ① role 객체 key/name 항상 존재? — `_list_roles` 직렬화가 전 행 부여(라이브 8역할 전수 key/name 확인). ② 대소문자? — key 는 `.toLowerCase()` 비교, DB RoleKey 소문자(dba/admin/sales)라 정합. ③ 타 호출부 회귀? — `_metaRoleLabel` 은 term tag/badge/toast/유사어/관계 6곳 단일 진실원, 전부 동일 수정 혜택. term.role_key·역할 생성 payload role_key 는 별개 객체라 무영향. ④ 빈 역할 목록(403)? — `if(!rk) continue`/find 가 빈 배열 안전.
+- Human Approval Needed: 아니오 (Minor·비파괴·RBAC/스키마 무변경·명백 회귀 정정).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인(정적 자산 재빌드).
+- Cross-ref: CHG/TASK-20260629T170913-glossary-role-fieldname-fix · TASK-20260629T141637-glossary-role-single-ui.
+
 ## REV-20260629T165743-metadata-bs-flexclip [SUBAGENT:adversarial-css-regression] (TASK-20260629-metadata-bs-flexclip — 부트스트랩 결과 패널 flex-shrink 클리핑 수정 + cache-buster bump, Minor §12.3)
 - 대상: `static/styles.css` `.admin-meta-bootstrap { flex-shrink: 0 }`(+주석), `static/admin.html`·`static/index.html` `styles.css?v=` cache-buster bump. (CSS 전용 — 백엔드/JS 로직 0.)
 - 적대 리뷰 5축(회귀범위·flex-shrink 부작용·min-height/overflow 상호작용·cache-buster 정합·CSS 문법) → **VERDICT: SAFE**(BLOCKING 0·NIT 0, 반증 실패).

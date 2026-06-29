@@ -1297,8 +1297,14 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
   - 생성 시 role_key = 현재 툴바 컨텍스트(`전체 역할`(빈값) → 공용 `*`; `공용만` → `*`; 특정 역할 → 그 역할). `전체 역할` 보기에서 생성 시 공용으로 귀속됨을 폼 노트로 명시(혼동 방지).
   - 수정 시 role_key = 대상 용어의 기존 role_key 보존(역할 이동 안 함). **알려진 trade-off**: 폼 select 제거로 기존 용어의 역할 이동(공용↔역할) 직접 편집 UI 가 사라짐 — 백엔드 `PUT …/glossary`(body.role_key) 는 capability 유지하나 UI 경로 없음. 재등록 경로는 `glossary_relations`(term id 종속) 미승계. 이동 필요 시 후속 전용 affordance.
   - mis-scope 가드: 역할별 비중복 namespace 이므로, 등록/수정 성공 토스트에 대상 역할을 표기(`…했습니다 (역할: X / 공용)`). 생성 폼이 열린 채 툴바 역할을 바꾸면 폼 재렌더(입력 소실) 없이 '등록 대상 역할' 배지만 동기화 → 표시값=실제 등록값.
-- API·백엔드·RBAC·DB 스키마/마이그 무변경(프런트 `admin.js`/`admin.html` 전용). 역할 옵션은 `adminState.roles`(`/api/admin/roles`, 권한 `role.read`)에서 채워지므로, 용어사전 관리자가 `role.read` 가 없으면 툴바엔 '전체 역할/공용만'만 노출된다(별도 권한 부여로 해결 — 코드 외).
+- API·백엔드·RBAC·DB 스키마/마이그 무변경(프런트 `admin.js`/`admin.html` 전용). 역할 옵션은 `adminState.roles`(`/api/admin/roles`, 권한 `role.read`)에서 채워진다. **(정정 — TASK-20260629T170913-glossary-role-fieldname-fix)**: 본 cycle 당시엔 "role.read 없으면 전체 역할/공용만 노출"로만 봤으나, 실제로는 **role.read 가 있어 `adminState.roles` 가 차 있어도** 실제 역할이 안 뜨는 별개 버그가 있었다 — glossary 코드가 role 객체를 `role_key/role_name`(미존재 필드)로 읽던 필드명 회귀. fieldname-fix 에서 `key/name` 으로 정정해 정상 노출. (role.read 권한 게이트는 그와 별개로 여전히 유효 — 권한 없으면 애초 `adminState.roles` 가 빔.)
 - 배포 전파: `admin.html` 의 `admin.js?v=20260629-glossary-review-nest`→`?v=20260629-glossary-role-single-ui` bump. CHG/REV-20260629T141637-glossary-role-single-ui.
+
+## (TASK-20260629T170913-glossary-role-fieldname-fix, 2026-06-29) 용어사전 역할 드롭다운/라벨 필드명 버그 수정 — 실제 역할(dba·admin·sales) 미표시 (web/UI, Minor §12.3)
+- 배경: glossary-role-single-ui 배포·시각검증 후속. 사용자가 「메타데이터 > 용어사전」 툴바 '역할' 드롭다운에 실제 역할이 안 뜨는 현상의 의도 여부를 문의. 라이브 실증(PB-0008) — 현 admin 계정은 `role.read` 보유, `/api/admin/roles` 200·8역할 반환, `adminState.roles.length=8`인데 드롭다운 옵션은 '전체 역할/공용만' 2개뿐.
+- 근본원인: `/api/admin/roles` 정본 직렬화 role 객체는 `{id,key,name,permission_codes,permissions,...}`(역할 관리·계정 화면 전부 `.key`/`.name` 사용). glossary 의 `_metaPopulateRoleFilter`/`_metaRoleLabel` 만 `adminState.roles` 를 `.role_key`/`.role_name`(미존재 필드)로 읽어 → 필터는 `if(!rk) continue` 로 전 역할 스킵, 라벨은 미매칭 raw key. 권한 게이트가 아닌 **필드명 회귀**(glossary 한정).
+- 수정: `admin.js` 의 두 헬퍼에서 role 객체 읽기를 `key/name` 으로 정정(4 refs). 두 헬퍼가 역할 필터 옵션·라벨 lookup 의 단일 진실원이라 필터 드롭다운·등록 대상 역할 배지·용어 태그·유사어/관계 라벨이 모두 실제 역할명으로 정상화. (term.role_key·역할 생성 payload role_key 는 별개 객체라 무변경.)
+- API·백엔드·RBAC·DB 스키마/마이그 무변경. 배포 전파: `admin.html` 의 `admin.js?v=20260629-glossary-role-single-ui`→`?v=20260629-glossary-role-fieldname-fix` bump. CHG/REV-20260629T170913-glossary-role-fieldname-fix.
 
 ## (TASK-20260629-metadata-bs-flexclip, 2026-06-29) 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 — PB-0008 적발 (web/UI, Minor §12.3)
 - 배경: resume `테이블 설명 AI 자동완성 및 UI 버그 수정` 의 **PB-0008 실 Windows 브라우저 시각검증** 중 적발. 메타데이터 > 테이블/컬럼 설명의 "스키마 골격 가져오기" 결과가 다수 테이블(MSSQL `Account` 17테이블 등)일 때 패널이 ~1행만 보이고 **pane 스크롤도 안 돼** 나머지 테이블을 확인할 수 없었다. (AC-20260629T114221-2 의 max-height:460px 제거로 끝나지 않은 잔존 잘림 — 별도 flex 경로.)

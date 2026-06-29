@@ -9,6 +9,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T170913-glossary-role-fieldname-fix (TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/라벨이 실제 역할 미표시하던 필드명 버그 수정, Minor §12.3 — 프런트 전용)
+- Date: 2026-06-29 (worktree ai/claude/glossary-role-fieldname-fix, base 54dbfe3).
+- 근본원인: `/api/admin/roles` 정본 직렬화 role 객체는 `{id,key,name,permission_codes,...}`. glossary 의 `_metaPopulateRoleFilter`/`_metaRoleLabel` 이 `adminState.roles` 를 `.role_key`/`.role_name`(미존재)로 읽어 → 필터는 전 역할 스킵(`if(!rk) continue`), 라벨은 미매칭 raw key. 역할 관리·계정 화면은 `.key`/`.name`(정본)이라 정상이었고 glossary 만 회귀. role.read 권한 게이트와 무관(현 admin 계정 보유, API 200·8역할 반환 확인).
+- 변경(`src/static/admin.js`): `_metaRoleLabel` find 키 `x.role_key→x.key`·반환 `r.role_name→r.name`; `_metaPopulateRoleFilter` `r.role_key→r.key`·`r.role_name→r.name`(총 4 참조, 주석으로 근본원인 명기).
+- 변경(`src/static/admin.html`): admin.js cache-buster `?v=20260629-glossary-role-single-ui → ?v=20260629-glossary-role-fieldname-fix`.
+- Impact: 비파괴. 단일 진실원 헬퍼 수정으로 역할 필터 드롭다운(실제 8역할 노출)·등록 대상 역할 배지·용어 태그·유사어/관계 라벨이 친화 역할명 표기. 데이터/스키마/RBAC/백엔드 0.
+- Rollback: admin.js 4 참조를 role_key/role_name 으로 환원 + cache-buster 복원.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
+- Cross-ref: TASK-20260629T141637-glossary-role-single-ui(역할 단일 컨텍스트 도입 — 본 fix 가 그 드롭다운을 실제 동작시킴) · 정본 role 직렬화 `.key/.name`(admin.js 역할 관리·계정 화면).
+
 ## CHG-20260629-metadata-bs-flexclip (TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 + cache-buster bump, Minor §12.3, feature-0003)
 - Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-flex-clip-fix, base origin/main dad75c3).
 - 트리거: resume — `테이블 설명 AI 자동완성 및 UI 버그 수정`(원본 metadata-table-desc-fix/metadata-bs-collapse) PB-0008 실 Windows 브라우저 시각검증 중 적발한 추가 UI 버그. 메타데이터 > 테이블 설명 부트스트랩 골격이 다수 테이블일 때 결과 패널이 ~1행만 보이고 **pane 스크롤도 안 되어** 나머지 테이블 확인 불가.
