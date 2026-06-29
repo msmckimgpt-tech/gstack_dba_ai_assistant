@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T123000-glossary-review-nest-deploy [DEPLOY-RECORD] — 용어 검토 큐 IA 중첩 배포 완료 (TASK-20260629-glossary-review-nest)
+- Date: 2026-06-29. 프런트 전용(정적 자산) 변경 — deploy_scope:included(동일 admin 영역 직전 배포 사용자 승인 + 본 변경 프런트 전용·되돌리기 용이) 따라 web-only 재배포. 첫 배포 surface 는 본 세션 선행 cycle 에서 완료.
+- 실행: `repo-web` 이미지 재빌드(신규 admin.html/admin.js/styles.css baked) → web --force-recreate(healthy). memory-init/ask-worker 미touch(스키마·agent-core 무변경).
+- 검증(컨테이너 baked 자산): admin.html cache-buster `?v=20260629-glossary-review-nest`(admin.js·styles.css) · `data-meta-subtab="glossary-review"` 제거(0) · `#metadataGlossaryViews` strip(1) · `data-glossary-view` 2개 · `ADMIN_TAB_PERMISSIONS.metadata` 에 kb.glossary.curate 포함 · `_metaSyncGlossaryViews` 정의 · functional glossary-review 잔재 0 · web healthz OK. (cache-buster bump 으로 직전 glossary-conv-autoreg UI 미전파 갭도 동반 propagate.)
+- Cross-ref: REV-20260629T120000-glossary-review-nest / CHG-20260629-glossary-review-nest.
+
 ## REV-20260629T120711-attach-id-space [SKIPPED:h5b-attach-layer-direct-closure-of-prior-adversarial-finding-self-review] — 첨부 영속 레이어에 message_id_space 추가 (TASK-20260629T120711-attach-id-space, Major §12.3)
 - Date: 2026-06-29. 선행 REV-20260629T022055-feedback-id-space 의 **잔여** 항목("동일 특성을 공유하는 첨부 영속 레이어 `_load_assistant_attachments_by_message`, message.id 키 — 별도 feature 범위")을 사용자 요청으로 마저 완수. 본 cycle 은 이미 적대 backend 리뷰(H1~H7)가 도출·수용한 **H5(b)** 의 첨부 레이어 직접 폐쇄이고, 피드백 레이어에서 검증된 동일 패턴의 미러 + 전용 cross-space 회귀 테스트라 full 적대 패널 대신 적대 self-review + 회귀 테스트로 종결(check #9 인식 `[SKIPPED:<사유>]`).
 - 결함(H5(b) 첨부 레이어 재기술): `_load_assistant_attachments_by_message` 는 MetaJson.message_id **단일 키**로 그룹핑, `_attach_assistant_attachments` 는 history 메시지 `id` 단일 키로 매칭했다. message.id 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).
