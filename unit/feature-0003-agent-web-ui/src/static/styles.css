@@ -7977,6 +7977,12 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: var(--bg);
   margin-bottom: 16px;
   overflow: hidden;
+  /* metadata-bootstrap-flex-clip-fix: metadata pane 은 flex column + 고정 height + overflow-y:auto 다.
+     이 섹션은 overflow:hidden(둥근 모서리 클립용) 이라 flex 의 auto 최소높이(min-height:auto)가 0 으로
+     떨어져, 골격 결과가 많을 때(수십 테이블) flex-shrink 로 90px 까지 압축·내부 클립되고 pane 스크롤도
+     발생하지 않아 결과가 1~2 행만 보였다(PB-0008 실브라우저 적발 — headless 는 max-height 제거만 확인해 놓침).
+     flex-shrink:0 으로 자연 높이를 보존하면 pane 의 overflow-y:auto 가 스크롤을 담당한다. */
+  flex-shrink: 0;
 }
 .admin-meta-bootstrap-head { padding: 0; }
 .admin-meta-bootstrap-toggle {

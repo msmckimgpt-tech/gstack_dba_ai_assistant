@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (Minor §12.3 — 프런트 CSS 전용, feature-0003) — resume(테이블 설명 AI 자동완성 및 UI 버그 수정 PB-0008)
+- 트리거: resume `테이블 설명 AI 자동완성 및 UI 버그 수정` — 원본 metadata-table-desc-fix(MSSQL database 차원/테이블명/AI 자동완성) + metadata-bs-collapse(접기·검색)는 머지·배포 완료(PR #461/#463). 사용자 요청 = PB-0008 실 Windows 브라우저 시각검증 진행 + 추가 UI 버그 수정.
+- PB-0008 검증 결과(시각): ① MSSQL 골격 테이블명 정상 — `mssql-qa-idc`/`Account` DB 17개 실테이블(`tblAccount`·`tblAccountBlockLog`·`tblAccountChannel`…), tempdb #temp 테이블 0(시스템 DB/스키마 필터 정상). ② 라벨 엔진별 분기 정상(MSSQL='데이터베이스', MySQL='스키마'). ③ AI 자동완성 작동 — `tblAccount` 단건 suggest 가 grounding 된 한국어 설명 자동 생성. **④ 추가 버그 적발**: 부트스트랩 결과 패널이 다수 테이블 시 ~1행만 보이고 pane 스크롤 불가 → 나머지 테이블 확인 불가.
+- 근본원인(④): `.admin-pane[data-admin-pane=metadata]`(flex column·고정 height·overflow-y:auto)의 flex 자식 `.admin-meta-bootstrap`(overflow:hidden) 이 flex `min-height:auto`=0 으로 무한 압축(flex-shrink:1) → 90px 클립 + pane scrollHeight==clientHeight 로 스크롤 미발생. max-height 제거(metadata-table-desc-fix)와 별개 경로. headless 가 놓친 것을 PB-0008 실브라우저가 적발.
+- 수정: `.admin-meta-bootstrap { flex-shrink: 0 }` + styles.css cache-buster bump(admin.html·index.html → `20260629-metadata-bs-flexclip`). 백엔드/JS/스키마 무변경.
+- Completion Checklist:
+  - [x] PB-0008 실 Windows 브라우저 시각검증(MSSQL 테이블명·라벨·AI 자동완성·클리핑) 수행
+  - [x] flex-shrink:0 fix 적용 + cache-buster bump + CSS brace 균형(1616/1616)
+  - [x] 라이브 fix 주입 검증(paneScrollH 684→2364, 17테이블 전부 표시)
+  - [x] §18.8 적대 리뷰(CSS 회귀) → REVIEW REV 태그
+  - [ ] verify-completion --pre-commit PASS → commit(Task-Cycle) → push
+  - [ ] main 머지 → web 재배포(deploy_scope: included) → 재배포본 PB-0008 재검증(cache-buster·스크롤·healthz)
+  - [ ] cycle-finalize
+- Next Action: §18.8 verdict 반영 → verify-completion → 동기화 → 재배포 → PB-0008 재검증.
+- worktree `ai/claude/metadata-bootstrap-flex-clip-fix`(base dad75c3). REV-20260629T165743-metadata-bs-flexclip.
+
 ## TASK-20260629T141637-glossary-role-single-ui — 메타데이터 용어사전 역할 선택 UI 단일화(단일 역할 컨텍스트) + 등록 mis-scope 가드 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(원본 glossary-conv-autoreg/review-nest 배포본 후속 결함)
 - 트리거: 사용자 resume 요청 — "용어사전 자동 등록 기능"은 완료·배포됐으나 배포본에서 결함 2건 확인. ① 메타데이터 탭에 '역할' 선택 UI 가 2곳(툴바 역할 필터 + 등록 폼 역할 select)이라 각 동작 식별이 어려움 → 독립 UI 하나로. ② 역할 드롭다운에 '전체 역할'·'공용'만 보이고 실제 `계정 > 역할`이 안 보임.
 - 결정(AskUserQuestion 2건): ① **단일 역할 컨텍스트** — 툴바 역할 선택 하나가 (목록 필터 + 신규 용어 등록 대상 role_key)를 함께 결정, 폼 역할 select 폐기. ② 결함②는 **권한 부여로 해결**(코드 변경 없음 — `role.read` 게이트, 별도 처리).

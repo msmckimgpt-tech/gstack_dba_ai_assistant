@@ -116,6 +116,15 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260629-metadata-bs-flexclip 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (Minor §12.3, 2026-06-29)
+- 구조: `node`/`py_compile` 대상 JS·Python 변경 0 (CSS+HTML cache-buster 전용). CSS brace 균형 `{`1616/`}`1616.
+- **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.200 via `bin/win-browser.py` 무권한 relay, `bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. Runner: AI. Evidence: `artifacts/shared/win-browser-shots-pb0008-tabledesc/` (10_mssql_account_skeleton·11_viewport·20_fix_flexshrink_applied·30_ai_suggest_filled).
+  - **시나리오**: 로그인(세션 유효) → 관리 콘솔 > 메타데이터 > 테이블 설명 서브탭 → 스키마 골격 가져오기 → DS=`mssql-qa-idc`(129 실 DB, tempdb/시스템 DB 0) → DB=`Account` → 골격 17 테이블·132 컬럼.
+  - **Pass — 원본 작업 검증**: ① MSSQL 실테이블명 정상(`tblAccount`·`tblAccountBlockLog`·`tblAccountChannel`… tempdb #temp 0). ② 엔진별 라벨 분기(`mssql-dk-dev`/`mssql-qa-idc`='데이터베이스', `mysql-local`='스키마'). ③ 테이블 설명 AI 자동완성: `tblAccount` 단건 suggest → grounding 된 한국어 설명 자동 생성(권한 레벨·차단 상태·접속 서버 등 컬럼 반영). `.admin-meta-bootstrap-result` maxHeight=none(metadata-table-desc-fix 반영).
+  - **버그 적발(이 cycle 의 수정 대상)**: 골격 결과 패널이 펼침/접힘 무관 ~1행만 보이고 나머지 16 테이블 미표시 + pane 스크롤 미발생(`#metadataBootstrap` clientH=88·scrollH=1769·overflow:hidden, 부모 pane scrollH==clientH==684). 근본=flex 자식 overflow:hidden→min-height:auto 0→flex-shrink 무한 압축.
+  - **Pass — fix 검증**: `.admin-meta-bootstrap { flex-shrink:0 }` 라이브 주입 시 `#metadataBootstrap` height 90→1771, **부모 pane scrollHeight 684→2364(스크롤 발생)**, 17 테이블+설명 입력란 전부 표시·우측 스크롤바 노출(스크린샷 20).
+  - **Notes**: 배포본 재검증(merged main 빌드 + cache-buster `20260629-metadata-bs-flexclip` 서빙 + 스크롤 + healthz)은 배포 후 본 §3 에 보강. mssql_local 의 '스키마 조회 실패'는 로컬 MSSQL 미가동(환경), UI 버그 아님.
+
 ### TASK-0309 제품 프롬프트 무인 자동완성 (Major §12.3, 2026-06-25)
 - TEST: `tests/test_auto_product_prompt.py` 12/12 PASS (DB 없이 fake/monkeypatch, `make test` 격리).
   T1 분석률<임계 무생성 · T2 >=임계+미입력 1회 생성·재sweep scanned 0 · **T3 insight reset 후 재상승 무재생성(1회성 핵심)** · T4 프롬프트 존재 skip · T5 pct None skip · T6 pct==95.0 경계 · T7 다제품 적격만 · T8 인증 게이트 위임 · **T9 명시 tx(autocommit False→복원)+commit** · **T10 마커 UPDATE 실패 rollback→미저장·마커 NULL(B1)** · **T11 LLM 실패 backoff(M1)** · **T12 cycle 생성 상한(M2)**.

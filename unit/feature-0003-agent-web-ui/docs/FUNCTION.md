@@ -1299,3 +1299,10 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
   - mis-scope 가드: 역할별 비중복 namespace 이므로, 등록/수정 성공 토스트에 대상 역할을 표기(`…했습니다 (역할: X / 공용)`). 생성 폼이 열린 채 툴바 역할을 바꾸면 폼 재렌더(입력 소실) 없이 '등록 대상 역할' 배지만 동기화 → 표시값=실제 등록값.
 - API·백엔드·RBAC·DB 스키마/마이그 무변경(프런트 `admin.js`/`admin.html` 전용). 역할 옵션은 `adminState.roles`(`/api/admin/roles`, 권한 `role.read`)에서 채워지므로, 용어사전 관리자가 `role.read` 가 없으면 툴바엔 '전체 역할/공용만'만 노출된다(별도 권한 부여로 해결 — 코드 외).
 - 배포 전파: `admin.html` 의 `admin.js?v=20260629-glossary-review-nest`→`?v=20260629-glossary-role-single-ui` bump. CHG/REV-20260629T141637-glossary-role-single-ui.
+
+## (TASK-20260629-metadata-bs-flexclip, 2026-06-29) 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 — PB-0008 적발 (web/UI, Minor §12.3)
+- 배경: resume `테이블 설명 AI 자동완성 및 UI 버그 수정` 의 **PB-0008 실 Windows 브라우저 시각검증** 중 적발. 메타데이터 > 테이블/컬럼 설명의 "스키마 골격 가져오기" 결과가 다수 테이블(MSSQL `Account` 17테이블 등)일 때 패널이 ~1행만 보이고 **pane 스크롤도 안 돼** 나머지 테이블을 확인할 수 없었다. (AC-20260629T114221-2 의 max-height:460px 제거로 끝나지 않은 잔존 잘림 — 별도 flex 경로.)
+- 근본원인: `.admin-pane[data-admin-pane="metadata"]`(AC-0622: flex column·고정 height·`overflow-y:auto`)의 flex 자식 `.admin-meta-bootstrap` 이 `overflow:hidden`(둥근모서리 클립)이라 flex `min-height:auto` 가 0 으로 계산되어, 결과가 길면 기본 `flex-shrink:1` 로 90px 까지 무한 압축(자기 overflow:hidden 으로 내부 클립)되고 형제들도 압축돼 pane `scrollHeight==clientHeight` → pane 스크롤바조차 미발생.
+- 동작(수정 후): `.admin-meta-bootstrap { flex-shrink: 0 }` → 부트스트랩 섹션이 결과 자연높이(예: 17테이블 펼침 ~1769px)를 보존하고, pane 의 `overflow-y:auto` 가 스크롤을 담당해 모든 테이블이 스크롤로 접근 가능하다. 형제 `#metadataList`(`.admin-list`: `flex:1 1 auto; min-height:0; overflow-y:auto`)·`#metadataForm`(overflow:visible→min-content 바닥)은 무영향. headless 가 max-height:none 만 확인해 놓친 잘림을 PB-0008 실브라우저가 적발(검증환경 가치). AC-20260629-flexclip.
+- 비변경: 백엔드/route/JS 로직/RBAC/DB 스키마/마이그 0 (CSS 1선언 + cache-buster). §18.8 적대 CSS 회귀 리뷰(5축) VERDICT SAFE.
+- 배포 전파: `admin.html`·`index.html` 의 `styles.css?v=20260629-metadata-bs-collapse`→`?v=20260629-metadata-bs-flexclip` bump(CSS 전용 — `admin.js?v=` 유지). CHG/REV-20260629T165743-metadata-bs-flexclip.

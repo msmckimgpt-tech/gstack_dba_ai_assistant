@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629-metadata-bs-flexclip (TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 + cache-buster bump, Minor §12.3, feature-0003)
+- Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-flex-clip-fix, base origin/main dad75c3).
+- 트리거: resume — `테이블 설명 AI 자동완성 및 UI 버그 수정`(원본 metadata-table-desc-fix/metadata-bs-collapse) PB-0008 실 Windows 브라우저 시각검증 중 적발한 추가 UI 버그. 메타데이터 > 테이블 설명 부트스트랩 골격이 다수 테이블일 때 결과 패널이 ~1행만 보이고 **pane 스크롤도 안 되어** 나머지 테이블 확인 불가.
+- 근본원인: `.admin-pane[data-admin-pane="metadata"]` 는 `display:flex; flex-direction:column; flex:1 1 auto; min-height:0; overflow-y:auto`(고정 height 컨테이너). 그 flex 자식 `.admin-meta-bootstrap` 은 `overflow:hidden`(둥근모서리 클립)이라 flex 의 `min-height:auto` 가 0 으로 계산 → 결과가 많을 때 `flex-shrink:1`(기본)로 90px 까지 압축되고 자기 `overflow:hidden` 으로 내부 클립. 동시에 형제들이 압축되어 pane scrollHeight==clientHeight → pane 스크롤바 미발생. 직전 metadata-table-desc-fix 의 `.admin-meta-bootstrap-result { max-height: 460px }` 제거는 옳았으나 flex-shrink 경로가 별도 클리핑을 유발(headless Playwright 는 max-height:none 만 확인해 놓침 → PB-0008 실브라우저가 적발).
+- 수정: `static/styles.css` `.admin-meta-bootstrap` 에 `flex-shrink: 0;` 추가(주석으로 근본원인 명기) → 부트스트랩 섹션이 자연높이 보존, pane 의 `overflow-y:auto` 가 스크롤 담당. `static/admin.html`·`static/index.html` 의 `styles.css?v=` cache-buster `20260629-metadata-bs-collapse → 20260629-metadata-bs-flexclip`(CSS 전용 변경 전파 — admin.js 미변경이라 `admin.js?v=` 유지).
+- 영향 파일: `static/styles.css`(+6/−0, flex-shrink:0 + 주석), `static/admin.html`(cache-buster 1), `static/index.html`(cache-buster 1). 백엔드/route/RBAC/스키마/마이그/JS 로직 0.
+- 라이브 검증(PB-0008): fix 주입 시 paneScrollHeight 684→2364(스크롤 발생), 17개 테이블(MSSQL `mssql-qa-idc`/`Account` 실테이블 `tblAccount` 등) 전부 표시. 배포 후 cache-buster·healthz 확인은 REPORT/TEST §3.
+- REV-20260629T165743-metadata-bs-flexclip.
+
 ## CHG-20260629-metadata-bs-collapse (TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + cache-buster bump, Major §12.3, feature-0003)
 - Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-collapse-search, base origin/main 3dfe81c).
 - 사용자 보고(metadata-bootstrap-mssql-db 배포 후속): 스키마 골격 가져온 뒤 (1) 테이블 펼침 시 패널 내부 UI 가 여전히 잘려 각 테이블 확인 불가, (2) 테이블 다수일 때 여백 과다.

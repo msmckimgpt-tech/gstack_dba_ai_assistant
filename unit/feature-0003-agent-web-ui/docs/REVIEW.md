@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T165743-metadata-bs-flexclip [SUBAGENT:adversarial-css-regression] (TASK-20260629-metadata-bs-flexclip — 부트스트랩 결과 패널 flex-shrink 클리핑 수정 + cache-buster bump, Minor §12.3)
+- 대상: `static/styles.css` `.admin-meta-bootstrap { flex-shrink: 0 }`(+주석), `static/admin.html`·`static/index.html` `styles.css?v=` cache-buster bump. (CSS 전용 — 백엔드/JS 로직 0.)
+- 적대 리뷰 5축(회귀범위·flex-shrink 부작용·min-height/overflow 상호작용·cache-buster 정합·CSS 문법) → **VERDICT: SAFE**(BLOCKING 0·NIT 0, 반증 실패).
+  1. **회귀범위 격리**: `admin-meta-bootstrap` 클래스는 `admin.html:615` metadata pane 단일 `<section>` 에만 존재(index.html·admin.js grep 0). CSS 규칙도 metadata 문맥 한 곳 → 타 pane 오염 없음.
+  2. **부작용 없음**: 부모 pane `overflow-y:auto` 가 형제 총합 초과분을 스크롤로 흡수(형제 미잘림). 형제 `#metadataList`(`.admin-list`: `flex:1 1 auto; min-height:0; overflow-y:auto`)가 유일 grow+자체 스크롤로 잔여 공간 흡수. 부트스트랩은 grow/basis 미선언 → 변경 후 `flex:0 0 auto`(자연높이 고정, grow=0 이라 형제 밀어내기 경로 없음).
+  3. **형제 안전·타겟 정확**: 클리핑 근원은 `overflow:hidden`→flex `min-height:auto`=0. `#metadataForm`(overflow:visible)은 min-content 바닥 보존, `#metadataList`는 의도된 shrink+내부 스크롤 설계. `overflow:hidden`+미설계 shrink로 0까지 무너진 유일 케이스가 `.admin-meta-bootstrap` → 단일 타겟 수정이 정확.
+  4. **cache-buster 정합**: `styles.css?v=` 가 admin.html:7 + index.html:9 양쪽 동일 `20260629-metadata-bs-flexclip` bump. `share.html` 은 별도 `share.css` 참조라 무관. JS 무변경이라 `admin.js?v=` 유지 정당.
+  5. **CSS 문법**: brace 균형 1616/1616, `@media(max-width:560px)`(7742→7745)와 무관한 depth-0 규칙 블록 내부 정상 위치. diff 정확히 8줄(숨은 변경 없음).
+- 라이브 PB-0008 실브라우저 검증(별도 증적): fix 주입 시 paneScrollHeight 684→2364, 17 테이블 전부 표시·pane 스크롤 정상. 배포본 재검증은 REPORT/TEST §3.
+
 ## REV-20260629T142631-metadata-bs-collapse [SUBAGENT:adversarial-frontend-statemachine+xss+regression] (TASK-20260629-metadata-bs-collapse — 부트스트랩 결과 패널 접기+검색 재설계 + cache-buster bump, Major §12.3)
 - 대상: `static/admin.js`(렌더+토글+검색+힌트), `static/admin.html`(검색 필터바), `static/styles.css`(접기/검색/조밀), `index.html`/`admin.html` cache-buster.
 - 패널(적대 frontend 리뷰어 1, 7축: value-loss·state-machine·XSS·AI-fill 회귀·event-binding·edge·max-height): **BLOCKER 0**.
