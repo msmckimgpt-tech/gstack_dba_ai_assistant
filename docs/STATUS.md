@@ -20,6 +20,7 @@ sources:
   - unit/feature-0009-group-conversation/docs/TASK.md
   - unit/feature-0010-google-drive-integration/docs/TASK.md
   - unit/feature-0011-shared-extraction/docs/TASK.md
+  - unit/feature-0012-web-router-modularization/docs/TASK.md
 ---
 
 # Project Status (인덱스)
@@ -35,8 +36,8 @@ sources:
 | 기능 ID | 상태 | 최종 갱신 | 정본(상세) | 최근 작업 요지 |
 |---|---|---|---|---|
 | feature-0001-platform-runtime | in-progress | 2026-05-18 | [TASK](../unit/feature-0001-platform-runtime/docs/TASK.md) | MySQL redo log 1GiB 상향·restart policy 정렬 (TASK-0064/0059) |
-| feature-0002-agent-core | in-progress | 2026-06-29 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | init "준비" 임베딩 지연 회귀 해소(전용 embed-ollama·캐싱·fast-timeout)·요청량 한도 메시지 주체 구분·datasource 회로차단 안내 문구 분리(고장 오인 해소) / ITEM-11 메타데이터 컨텍스트·NL→SQL flywheel · 용어사전 대화 자율등록 코어(role 분리·유사어·하이브리드 자동승급, mig 0023, ADR-20260629T101500) |
-| feature-0003-agent-web-ui | in-progress | 2026-06-29 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 제품 선택 chip 처리 중 항상 활성화(TASK-0047 race 가드 3계층 완화, ADR-WEB-0006) · 역할/제품 프롬프트 AI 자동작성·제품 분석률 95% 제품프롬프트 자동완성·규칙 자동 추가 DB insight 커버리지 UI·지식베이스 메뉴 재편 / 메타데이터 거버넌스 포탈(ITEM-11) · 좌측 대화 전환 크로스페이드 · 워커모드 assistant 요청 2번 중복 처리 차단(enqueue 멱등화 + AmbiguousParameter 회귀 파라미터 격리, ask-dedup-idempotency, cross-cut 0002) · 용어사전 대화 자율등록 UI(역할 필터/select·검토 큐 kb.glossary.curate·유사어 참조) · 용어 검토 큐 IA 중첩(메타데이터 > 용어사전 > 용어 검토 큐 2차 보기 탭, curate-only 탭 게이트 보존) |
+| feature-0002-agent-core | in-progress | 2026-06-29 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | init "준비" 임베딩 지연 회귀 해소(전용 embed-ollama·캐싱·fast-timeout)·요청량 한도 메시지 주체 구분·datasource 회로차단 안내 문구 분리(고장 오인 해소) / ITEM-11 메타데이터 컨텍스트·NL→SQL flywheel · 용어사전 대화 자율등록 코어(role 분리·유사어·하이브리드 자동승급, mig 0023, ADR-20260629T101500) · 답변 피드백 답변당 고유화 코어(마이그 0021/0022) |
+| feature-0003-agent-web-ui | in-progress | 2026-06-29 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 제품 선택 chip 처리 중 항상 활성화(TASK-0047 race 가드 3계층 완화, ADR-WEB-0006) · 역할/제품 프롬프트 AI 자동작성·제품 분석률 95% 제품프롬프트 자동완성·규칙 자동 추가 DB insight 커버리지 UI·지식베이스 메뉴 재편 / 메타데이터 거버넌스 포탈(ITEM-11) · 좌측 대화 전환 크로스페이드 · 워커모드 assistant 요청 2번 중복 처리 차단(enqueue 멱등화 + AmbiguousParameter 회귀 파라미터 격리, ask-dedup-idempotency, cross-cut 0002) · 용어사전 대화 자율등록 UI(역할 필터/select·검토 큐 kb.glossary.curate·유사어 참조) · 용어 검토 큐 IA 중첩(메타데이터 > 용어사전 > 용어 검토 큐 2차 보기 탭, curate-only 탭 게이트 보존) · 답변 피드백(👍/👎) 답변당 고유화(새로고침·전환 후 중복 차단, id-space) · 첨부 wrong-bubble 엣지 하드닝(message_id_space) |
 | feature-0004-browser-automation | in-progress | 2026-04-06 | [TASK](../unit/feature-0004-browser-automation/docs/TASK.md) | 구조 이관 완료, smoke 검증 예정 |
 | feature-0005-qa-mcp | in-progress | 2026-04-06 | [TASK](../unit/feature-0005-qa-mcp/docs/TASK.md) | 스켈레톤 — MCP 기동 검증 예정 |
 | feature-0006-lan-proxy-access | in-progress | 2026-04-06 | [TASK](../unit/feature-0006-lan-proxy-access/docs/TASK.md) | caddy 운영 자산 이관 완료 |
@@ -45,6 +46,7 @@ sources:
 | feature-0009-group-conversation | in-progress | 2026-06-25 | [TASK](../unit/feature-0009-group-conversation/docs/TASK.md) | 안 읽은 메세지/@멘션 배지(gc-unread-badge, REQ-GC-R8 read-state, alembic 0019 + 0020 baseline backfill + read-fix 커서 전진 보정 + read-500-fix(읽음 API `POST /read` 서버 import 정정 `modules.db`→`shared.db`) + read-idspace-fix(읽음 커서·unread 집계는 core_messages.id 공간인데 FE 가 표시 store messages.id 를 보내 GREATEST 가 전진 영구 거부하던 최종 근본원인 — 핸들러가 항상 MAX(core_messages.id)로 전진) — 읽지 않은 신규만 집계, 읽으면 0) · 공유 대화 join 불가 수정(PG named-param 타입 모순 AmbiguousParameter 해소) · assistant SQL dialect 교정+발신자 맥락 라벨(MySQL T-SQL thrashing 해소, agent-core) · optimistic 발신자 표시 정정(전송 직후 owner 오표시 깜빡임 제거) · 참가자 per-message 제품 선택·발화(authz, REQ-GC-R7) · 라이브 UX(처리 중 composer 비잠금·1:1 인터럽트 재요청·그룹 @assistant 중복차단)·owner 게이트 (cross-cut: 0002/0003) |
 | feature-0010-google-drive-integration | in-progress | 2026-06-23 | [TASK](../unit/feature-0010-google-drive-integration/docs/TASK.md) | Google Drive 연동 토대 — 계정별 OAuth 토큰 암호화 + MCP 구성 seam (연동 미수행/비활성 scaffold) |
 | feature-0011-shared-extraction | in-progress | 2026-06-25 | [TASK](../unit/feature-0011-shared-extraction/docs/TASK.md) | `shared/` 공통 코드 추출 P5a Step1~5c 완료 (model_catalog·config·db·conn_health·datasources 소비처 마이그레이션 + alias shim 4종 전량 제거, make test 회귀 0); 잔여 Step6(feature Dockerfile 분리) |
+| feature-0012-web-router-modularization | in-progress | 2026-06-29 | [TASK](../unit/feature-0012-web-router-modularization/docs/TASK.md) | feature-0003 app.py 를 도메인별 APIRouter 로 점진 분할하는 토대 — route-parity 안전망 + 의존성 audit (P5b, behavior-neutral) |
 
 > **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
 > 상세 TASK 이력을 셀에 누적하지 않는다(ADR-0031 §1) — 상세는 정본 링크의 unit TASK.md / 인덱스화 이전 분은 STATUS_ARCHIVE.md.
@@ -72,6 +74,6 @@ sources:
 - 기능별 테스트 정본: `unit/<feature>/docs/TEST.md`.
 
 ## 5. 전체 진행률
-- 등록 기능(main `unit/`): 11
-- review 1 (feature-0008) · in-progress 10 · done 0 · blocked 0
+- 등록 기능(main `unit/`): 12
+- review 1 (feature-0008) · in-progress 11 · done 0 · blocked 0
 - 상세 진척·이력: 각 unit TASK.md / [STATUS_ARCHIVE.md](./archive/STATUS_ARCHIVE.md)

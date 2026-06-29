@@ -2,6 +2,12 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260629T043125-META-0014-doc-sync-0629 [SKIPPED:doc-sync-index-mirror-alignment] — STATUS·ARCHITECTURE·wiki 06-29 머지 backfill 인덱스/미러 정합
+
+- **cycle**: ai/claude/doc-sync-20260629-130501 — doc_sync(06-29 머지 backfill, 직전 sync 6dee739/63874f2 @ 08:34 이후). feature-0012-web-router-modularization 머지(PR#456) + 답변 피드백 답변당 고유화(👍/👎) + 용어사전 대화 자율등록 + 용어 검토 큐 IA 중첩 + 첨부 wrong-bubble id-space 하드닝을 색인/미러/사용자향 표면에 반영.
+- **변경(META, pure-meta)**: docs/STATUS.md(feature-0012 행 + 등록 기능 11→12 + 0002/0003 행 피드백·첨부 정합) · docs/ARCHITECTURE.md(기능맵 §4 + 의존맵 §6 feature-0012 행) · wiki/Index·Features/_Index·overview·Architecture/Overview(feature 카운트 11→12 + feature-0012 행) · wiki/Features/feature-0012 카드(머지 reality 정합 — status stub→active·maturity stub→minimal·갱신 06-25→06-29) · wiki/hot.md(06-29 갱신, Active Threads 보존) · wiki/Log.md(rollup append-only). 정본(unit docs·DECISIONS) 무변경.
+- **검증**: ADR-0031 인덱스 모델 준수(정본 재서술 0·STATUS 셀 rollup 누적 0) · feature 카운트 ground-truth(`ls -d unit/feature-*`=12) 전 파일 정합 · 잔존 stale '11' 스윕 0 · 병렬 draft + 1차 적대 검증(wiki 누락 2건 적발→보정) + 보정분 7축 재검증 PASS. DECISIONS/SECURITY/PROJECT noChange(무변경 정직 보고). [SKIPPED] 사유: 순수 색인/미러 정합(정책 의미 변경 없음) — codex 패널 불요(선례 REV-20260625T013000-META-0010-doc-sync-0625 동일). 동반 operational(릴리즈노트)은 feature-0003 별도 commit(REV-20260629T041724-doc-sync-rn-0629).
+
 ## REV-20260625T023049-meta-ac-timestamp-id [SUBAGENT:policy-coherence-adversarial + reverify] — SHIP (BLOCKER 2 + MAJOR 2 + MINOR 2 + 재검증 MAJOR 1 흡수)
 
 - **cycle**: ai/claude/meta-ac-timestamp-id — spec 앵커(`REQ`/`AC`/`ADR`/`TEST`) 식별자 형식을 순번 `*-XXXX` → **timestamp+slug** `<PREFIX>-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` 로 전환 (사용자 직접 지시 2건: "AC-NNNN 도 timestamp-slug 로" → "REQ, ADR, TEST 또한 같은 형식"). `feature-NNNN`/`META-NNNN` 은 순번 유지. 신규 ADR `ADR-20260625T023049-spec-anchor-timestamp-id`(본 형식의 첫 적용 예시).
