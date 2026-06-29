@@ -4067,3 +4067,21 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (Major 이나 비파괴·RBAC/스키마/마이그 무변경·사용자 설계 결정 + SAFE). 
 - Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included, 사용자 결정 2026-06-11): cycle-final 후 web 재배포 사전 승인 범위. (이 환경의 컨테이너는 `docker restart` 시 RW 레이어가 baked 이미지로 복원되므로 영구 반영은 이미지 재빌드 필수 — hand-patch 는 검증용 임시.)
 - Cross-ref: REQ-20260629T114221-metadata-bootstrap-mssql-db / CHG-20260629T114221-metadata-bootstrap-mssql-db / TASK-20260629T114221-metadata-bootstrap-mssql-db / 관련 정본 shared/db.py `_connect_mssql`(tempdb 고정, TASK-0213) · feature-0002 dialects.py(MySQL/MSSQL describe_*).
+
+## REV-20260629T143914-share-mermaid-responsive [SUBAGENT:adversarial-security+correctness] (TASK-20260629T143914-share-mermaid-responsive — 공유 뷰 mermaid + 전체 폭 반응형, Minor §12.3)
+- Related Change: CHG-20260629T143914-share-mermaid-responsive
+- Reason: 사용자 요청 — feature-0013 mermaid 렌더가 메인 UI 에만 적용돼 공유 대화 뷰에선 raw 코드블록으로 노출 + 공유 페이지 고정폭 960px 라 넓은 답변이 잘림.
+- Alternatives Considered:
+  - **공유 뷰 mermaid 적용 방식**: (a) share.js 에 함수 복제 vs (b) app.js→공용 `mermaid-render.js` 추출. **(b) 추출 채택** — 익명 공유는 공개 노출면이라 strict 보안설정이 두 뷰에서 갈라지면 위험. 단일 소스로 XSS posture 일원화(미래 mermaid 변경도 1곳).
+  - **폭**: 큰 max-width 캡 vs 전체폭. **전체폭(`max-width:100%`) 채택** — 사용자 명시 요청("브라우저 전체 크기로 반응"). 넓은 표/다이어그램 표시. clamp 패딩으로 대형 화면 좌우 여백 확보.
+- §18.8 적대 패널 (SUBAGENT general-purpose, security+correctness, 결함 적발 목적): **no BLOCKING**. 검증 결과:
+  1. **XSS posture** — app.js·share.js 모두 `window.DOMPurify.sanitize(...)` 무인자·무 setConfig/addHook 호출(grep 확인) → 기본 allowlist 동일. enhance(sanitize 이전, source 는 `textContent` 로만)→sanitize→render(이후 strict SVG) 순서 두 뷰 동일. SVG 는 DOMPurify 표면 미통과. `mermaid.initialize` 는 전 static 트리에 단 1곳(mermaid-render.js), 항상 strict. `_mermaidInited` 단일 전역 → strict 재플립 불가.
+  2. **추출 정합성** — 추출 함수 본문 byte-identical(주석만 reflow), markdownToHtml/renderMessageContent 호출부 유지, 로드 순서(mermaid.min→mermaid-render→app.js) 정확, node --check 3파일 OK.
+  3. **share fallback** — (a) mermaid.min 실패→ensureMermaidInit false→mermaidFallback(원문 pre), (b) mermaid-render 실패→share.js typeof 가드 passthrough — 둘 다 콘텐츠 보존, 페이지 무파손.
+  4. **함수 중복 0** — 4함수·2 module var 각 단 1곳 정의(app.js 정의 완전 제거, redeclare SyntaxError 없음).
+  5. **반응형** — 넓은 요소(table/pre/mermaid) 전부 `overflow-x:auto` 격리, 헤더 flex-wrap+min-width:0. 모바일/print media query 무충돌.
+  6. **회귀** — diff/attachment/결과표/외부링크 무영향, 비-mermaid 답변 early-return 으로 무변경.
+- 반영: **NIT-1**(app.js bare 호출 → `typeof` 가드, mermaid-render.js 404 시 메인 UI 보호) 적용. **NIT-2**(다이어그램 없어도 3.3MB mermaid 로드) 는 메인 UI 동일 패턴이라 defer(MODIFY follow-up).
+- Human Approval Needed: 아니오 (Minor, 비파괴, XSS posture 무변경, 사용자 명시 요청 범위).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인. backend/스키마 무변경이라 web 이미지만 재빌드.
+- Cross-ref: CHG-20260629T143914-share-mermaid-responsive / TASK-20260629T143914-share-mermaid-responsive / feature-0013 mermaid 렌더(REV-20260629T120500-relationship-diagrams 패널 SHIP — 본 변경은 그 검증된 코드의 call-site 확장).

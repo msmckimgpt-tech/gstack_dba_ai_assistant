@@ -4835,3 +4835,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **문서 갱신**: FUNCTION(REQ+AC) · TASK · REPORT · REVIEW([SUBAGENT:adversarial-2lens] check#9 + panel 수렴 기록) · MODIFY(feature-0003 본진 + feature-0002 cross-feature) · TEST · STATUS · wiki(Log/hot). (원본 세션이 문서 갱신 중 중단 → `/_template:resume` 로 완수.)
 - [ ] **PB-0008 Windows-browser 시각 검증**(테이블/컬럼 설명 부트스트랩 DB선택→실테이블 골격·패널 비잘림·AI 일괄생성·describe_table 컬럼 설명 노출) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(선례 동일).
 - [ ] verify-completion --pre-commit PASS → commit(Task-Cycle trailer) → push → main merge → web+ask-worker 재빌드·재배포(deploy_scope: included) → healthz/smoke.
+
+### TASK-20260629T143914-share-mermaid-responsive — 공유 대화 뷰 mermaid(flowchart) 렌더 + 공유 페이지 전체 폭 반응형 (Minor §12.3, frontend-only, feature-0013 후속, 2026-06-29)
+- [x] mermaid 헬퍼 4종(enhance/init/render/fallback)을 app.js→신규 `mermaid-render.js` 추출(메인/공유 단일 소스, `securityLevel:'strict'` 일원화) + app.js 호출부 2곳 `typeof` 가드(NIT-1).
+- [x] index.html·share.html 에 `mermaid.min.js`+`mermaid-render.js` 로드(순서: mermaid→render→app/share) + cache-buster bump(app.js `20260629c`, share `20260629-share-mermaid`).
+- [x] share.js `renderMarkdownContent`: `enhanceMermaidBlocks`(sanitize 이전)+`renderMermaidDiagrams`(innerHTML 이후) 연결, 미로드 시 typeof 가드 폴백.
+- [x] share.css: `.share-container` 960px 고정폭→`max-width:100%` 전체 폭 반응형(clamp 패딩) + `.share-message-content .mermaid-*` 규칙(overflow-x:auto).
+- [x] §18.8 적대 패널(SUBAGENT security+correctness): **no BLOCKING** — XSS posture 동일·추출 byte-identical·로드순서·fallback·반응형·회귀 전부 SAFE. NIT-1 적용 / NIT-2(다이어그램 없어도 mermaid 로드) defer.
+- [x] 검증: node --check(mermaid-render.js·app.js·share.js) PASS · app.js 추출 잔여참조 0 · DOMPurify 설정 무변경.
+- [ ] verify-completion PASS → commit → main 통합·머지 → web 재빌드·재배포(deploy_scope: included).
+- [ ] PB-0008 Windows-browser 시각 검증(공유 뷰 mermaid SVG 렌더 + 전체 폭 + 메인 뷰 무회귀) — 배포 후 실측.
