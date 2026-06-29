@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.35.1
+template_version: v3.36.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -582,6 +582,25 @@ confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-appr
   방식은 외부영향 경계 우회 + rollover 망각 위험으로 불채택.) 단 F0 와 마찬가지로 본
   선언은 **anti-friction 편의 장치이지 인가 통제가 아니다** — 파일 보유자가 편집 가능.
 
+**완료-altitude opt-in (`reachability_scope` · `release_notes_scope`, v3.36.0)**: deploy_scope
+와 동일한 선언 메커니즘(`FIRST_REQUEST.md` 전역 / `FUNCTION.md` 의 `## Pre-approved Changes`
+feature 단위)을 쓰되, 사전 승인이 아니라 **완료 판정 기준(§16.3)을 한 단계 끌어올리는** opt-in 이다.
+
+```md
+## Pre-approved Changes
+- reachability_scope: included     # bring-up/활성화/접속 류 요청은 사용자 진입 경로 도달성까지 완료 조건
+- release_notes_scope: included    # 완료 산출물에 릴리즈노트 동반
+```
+
+- **`reachability_scope: included`**: "기동/활성화/접속 가능하게" 류 요청의 완료 판정에
+  컴포넌트 health 뿐 아니라 **사용자 진입 경로(공개 entry-point) end-to-end 도달성 1-probe** 를
+  포함한다 (§16.3 완료 기준 참조). 미선언이어도 bring-up/access 류 요청이면 AI 는 "컴포넌트
+  health" 와 "사용자 도달성" 을 완료 산출물에서 **분리 표기**해 도달성 미검증을 은폐하지 않는다.
+- **`release_notes_scope: included`**: feature 완료 산출물에 릴리즈노트(`docs/RELEASE_NOTES.md`
+  또는 프로젝트 컨벤션) 동반을 완료 조건에 포함한다.
+- deploy_scope 와 동일하게 **cycle 시작 시점에 이미 존재한 선언만** 그 cycle 의 자동 근거가 되며,
+  파일이 ground truth 다.
+
 ### §12.3 위험도 등급 분류
 
 | 등급 | 대상 | 대응 |
@@ -644,6 +663,12 @@ confirm** 대상이다. 그러나 프로젝트가 `FUNCTION.md` 의 `## Pre-appr
   driver(`.gitattributes` 의 path 한정 `merge=<driver>`)를 둔다. **전체 파일 `merge=union`
   은 금지** — 진짜 충돌(다른 코드 변경)에 양쪽 라인을 모두 남겨 중복을 만든다.
   (timestamp+branch(v3.32.0)·감지-후-재번호(v3.25.0)와 동일 계열의 공유-라인 충돌 회피.)
+- **명시 비활성화 블록 = 운영자 의도 보존 (v3.36.0)**: 주석 처리되었거나 `# DISABLED` 등으로
+  명시 비활성화된 설정·코드 블록(crontab 라인, config 항목, feature flag 등)은 운영자의 의도된
+  상태로 간주한다 — 인접 작업의 부수효과로 재활성화(uncomment)하지 않는다. 재활성화가 필요하면
+  diff 에 명시하고, §12.3 외부영향 등급(Critical/Major)이면 확인을 받는다. (아래 HUMAN-LOCKED
+  마커의 암묵적 일반화 — 마커가 없어도 "지금은 끄되 이력으로 남긴다"는 신중한 비활성화 결정을
+  파일 재작성·하드닝의 부수효과로 silent 하게 뒤집지 않는다.)
 - 아래 마커를 지원한다.
 
 ```md
@@ -1537,6 +1562,32 @@ PASS 만이 최종 완료 기준이다.
 경우 §13.2.9 의 격리 경로(override 배포)를 적용한다. 경합 중에 배포 단계를 진행하면
 잘못된 코드가 컨테이너에 올라갈 수 있다.
 
+
+#### bring-up/access 완료 기준 — entry-path 도달성 (v3.36.0)
+
+**적용 대상**: "기동/활성화/접속 가능하게/진입 가능하게" 류 요청 — 즉 사용자가 **외부에서
+서비스에 도달**하는 것이 요청의 본질인 작업. 공개 entry-point 가 없는 작업(CLI 일회성·내부
+라이브러리·데이터 변환)에는 적용하지 않는다.
+
+**원칙**: 컴포넌트 health(데몬 Up/healthy, 계정/설정 정합)는 **기동됨**을 뜻하지 **사용자
+도달가능**을 뜻하지 않는다. 전송계층(포트 포워딩/방화벽/portproxy stale-IP/DNS)이 끊겨 있으면
+컴포넌트는 healthy 여도 사용자는 진입 불가다. 따라서:
+
+1. **`reachability_scope: included` (§12.2) 선언 시 — 완료 조건에 도달성 1-probe 포함**:
+   완료 선언 전 **공개 entry-point** (사용자가 실제 쓰는 URL/host:port) 를 end-to-end 로 1회
+   probe 해 도달성을 확인한다 (예: `curl -sf https://<공개주소>/` 또는 healthz). 컴포넌트
+   health 만으로 완료 선언 금지.
+2. **미선언이어도 (기본)** — 완료 산출물에서 **"컴포넌트 health(기동됨)" 와 "사용자 도달성"
+   을 분리 표기**한다. 도달성을 검증하지 않았으면 "기동됨(컴포넌트 health) · 사용자 도달성
+   미검증" 으로 명시하고, 도달성을 완료로 오인 보고하지 않는다.
+
+**금지 패턴**:
+- 데몬 health/계정 정합만 확인하고 "모든 서비스 활성화/접속 가능" 선언 — 진입 경로 미검증
+- portproxy/포트포워딩 stale 상태를 점검하지 않고 "기동 완료 = 사용자 도달가능" 으로 등치
+
+(근거: T3-20260626T1135-001 — bring-up 완료를 docker health+계정 config 로 판정했으나 실제
+blocker 는 WSL2 portproxy stale-IP 였고 turn1 시점 검출가능했음. deploy-backed 완료 기준과
+동형의 완료-altitude 보강.)
 
 ### §16.4 병합 충돌 해결 정책
 
