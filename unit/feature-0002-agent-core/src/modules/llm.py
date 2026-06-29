@@ -553,6 +553,32 @@ Rules:
 """.strip()
 
 
+GLOSSARY_SUGGEST_PROMPT = """
+You are a domain glossary extractor for a Korean MySQL/MSSQL DBA assistant.
+From one Q&A turn (user question + assistant answer), extract domain TERMS that are
+worth saving in a shared glossary — business/domain vocabulary, table/metric meanings,
+status codes explained in prose, or jargon the answer defined.
+Return JSON only. No markdown, no reasoning text.
+
+Output schema:
+{
+  "terms": [
+    {"term": "용어", "definition": "1~2문장 한국어 정의", "confidence": 0.0~1.0}
+  ]
+}
+
+Rules:
+- Only include a term if the turn actually defines or clarifies its meaning. If nothing
+  qualifies, return {"terms": []}.
+- definition must be self-contained Korean (1~2 sentences), not "see above".
+- confidence reflects how clearly the term is defined AND how reusable it is
+  (0.9+ = explicitly defined & broadly reusable, 0.5 = plausible but uncertain).
+- Do NOT invent terms not grounded in the text. Do NOT include generic SQL keywords
+  (SELECT, JOIN), the assistant's process steps, or PII.
+- At most 5 terms. Prefer the most reusable ones.
+""".strip()
+
+
 # TASK-0129 (#3): tier-aware LLM client. 이전엔 단일 LLM_BASE_URL(Bedrock 우선) 로 모든
 # 호출이 가서 edge-tier 모델명('edge'/'core'/'auto'/'code')이 Bedrock gateway 에 전달돼
 # HTTP 400 ("Invalid model name passed in model=edge") — 하루 ~47만건 silent 실패 + 전체
@@ -1232,6 +1258,56 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
         if topic:
             return topic
     return text or None
+
+
+def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """대화 한 턴(질문+답변)에서 용어사전 후보를 추론(용어사전 자율등록, 0021).
+
+    payload: {"user_message": str, "assistant_answer": str}
+    반환: [{"term": str, "definition": str, "confidence": float}, ...] (없으면 []).
+    실패(클라이언트 없음/예외/JSON 파싱 실패)는 [] — 호출측(ask 경로) 차단 금지(soft-fail).
+    """
+    _model = AGENT_GLOSSARY_SUGGEST_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
+    client = _get_llm_client(model=_model)  # 티어 라우팅
+    if client is None:
+        return []
+    try:
+        resp = client.chat.completions.create(
+            model=_model,
+            messages=[
+                {"role": "system", "content": GLOSSARY_SUGGEST_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            **_max_tokens_kwargs(_model, "summary"),
+            **_temperature_kwargs(_model),
+            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+        )
+        _record_llm_usage(_model, "glossary_suggest", resp)
+        text = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:
+        _log_llm_warn("llm_glossary_suggest", "exception", str(exc))
+        return []
+    obj = _extract_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("terms")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        term = str(item.get("term", "")).strip()
+        definition = str(item.get("definition", "")).strip()
+        if not term or not definition:
+            continue
+        try:
+            conf = float(item.get("confidence", 0.5))
+        except (TypeError, ValueError):
+            conf = 0.5
+        out.append({"term": term, "definition": definition,
+                    "confidence": max(0.0, min(1.0, conf))})
+    return out
 
 
 def llm_fix_sql(payload: dict[str, Any]) -> str | None:

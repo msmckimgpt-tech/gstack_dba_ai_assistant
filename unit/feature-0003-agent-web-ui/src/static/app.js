@@ -3761,48 +3761,75 @@ function _buildSampleFeedbackControls(message, msgIdx) {
   const nlQuestion = _precedingUserQuestion(msgIdx);
   const generatedSql = _extractSqlFromContent(message.content);
   const cid = state.activeConversationId;
+  // 답변(메시지) 식별자 — 서버가 (created_by, message_id, message_id_space) 단위로 고유 피드백을
+  // 강제(중복 부여 차단). id_space("display"|"core")는 표시 store id 와 core id 의 숫자 겹침을 구분.
+  const messageId = (message && message.id != null) ? message.id : null;
+  const messageIdSpace = (message && message.id_space) ? message.id_space : "display";
 
   const status = document.createElement("span");
   status.className = "message-feedback-status";
-
-  async function send(vote, suggested) {
-    if (wrap.dataset.done === "1") return;
-    if (!nlQuestion) {
-      showToast("이 답변에 연결된 질문을 찾지 못해 피드백을 보낼 수 없습니다.", true);
-      return;
-    }
-    wrap.querySelectorAll("button").forEach((b) => { b.disabled = true; });
-    try {
-      await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
-        method: "POST",
-        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql }),
-      });
-      wrap.dataset.done = "1";
-      status.textContent = suggested ? "샘플 등록 요청됨 (검수 대기)" : (vote === "up" ? "피드백 감사합니다 👍" : "피드백 감사합니다 👎");
-    } catch (error) {
-      wrap.querySelectorAll("button").forEach((b) => { b.disabled = false; });
-      showToast((error && error.message) || "피드백 전송에 실패했습니다.", true);
-    }
-  }
 
   const upBtn = document.createElement("button");
   upBtn.type = "button";
   upBtn.className = "message-action-btn message-feedback-btn";
   upBtn.textContent = "👍";
   upBtn.title = "이 답변이 도움이 되었습니다.";
-  upBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("up", false); });
 
   const downBtn = document.createElement("button");
   downBtn.type = "button";
   downBtn.className = "message-action-btn message-feedback-btn";
   downBtn.textContent = "👎";
   downBtn.title = "이 답변이 부정확/불충분합니다.";
+
+  // 기존 투표 복원 — 새로고침·대화 전환 후에도 server(/api/history)가 내려준 message.feedback 으로
+  // 이미 부여한 👍/👎 를 활성 표시한다. 답변당 1표(변경 허용, last-write-wins) — 중복 부여 방지.
+  let currentVote = "";
+  if (message && message.feedback) {
+    if (message.feedback.vote === "down") currentVote = "down";
+    else if (message.feedback.vote === "up") currentVote = "up";
+  }
+  function reflectVote() {
+    upBtn.classList.toggle("is-active", currentVote === "up");
+    downBtn.classList.toggle("is-active", currentVote === "down");
+    if (currentVote === "up") status.textContent = "피드백 감사합니다 👍";
+    else if (currentVote === "down") status.textContent = "피드백 감사합니다 👎";
+  }
+
+  async function send(vote, suggested) {
+    if (wrap.dataset.busy === "1") return;  // 요청 중 재진입(더블클릭) 차단.
+    if (!nlQuestion) {
+      showToast("이 답변에 연결된 질문을 찾지 못해 피드백을 보낼 수 없습니다.", true);
+      return;
+    }
+    wrap.dataset.busy = "1";
+    wrap.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    try {
+      await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
+        method: "POST",
+        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId, message_id_space: messageIdSpace }),
+      });
+      if (suggested) {
+        status.textContent = "샘플 등록 요청됨 (검수 대기)";
+      } else {
+        currentVote = vote;  // 답변당 1표 — 변경 허용(서버 UPSERT, last-write-wins).
+        reflectVote();
+      }
+    } catch (error) {
+      showToast((error && error.message) || "피드백 전송에 실패했습니다.", true);
+    } finally {
+      wrap.dataset.busy = "0";
+      wrap.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  upBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("up", false); });
   downBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("down", false); });
 
   wrap.appendChild(upBtn);
   wrap.appendChild(downBtn);
 
   // "샘플 등록" — 좋은 질문↔SQL 쌍을 KB 후보로 제출(검수 큐 경유 승급). SQL 이 있을 때만 노출.
+  // 투표 고유성과 분리(suggested=true 는 별 행) — 검수 큐 제출이므로 투표 활성표시에 영향 없음.
   if (generatedSql) {
     const sampleBtn = document.createElement("button");
     sampleBtn.type = "button";
@@ -3813,6 +3840,7 @@ function _buildSampleFeedbackControls(message, msgIdx) {
     wrap.appendChild(sampleBtn);
   }
   wrap.appendChild(status);
+  reflectVote();  // 초기 렌더에 기존 투표 반영.
   return wrap;
 }
 

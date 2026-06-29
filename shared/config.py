@@ -76,6 +76,10 @@ __all__ = [
     "AGENT_INSIGHT_WORKER_STALE_SEC",
     "AGENT_INSIGHT_WORKER_TICK_SEC",
     "AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC",
+    "AGENT_GLOSSARY_AUTOPROPOSE",
+    "AGENT_GLOSSARY_SUGGEST_MODEL",
+    "AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD",
+    "AGENT_GLOSSARY_SUGGEST_MAX",
     "AGENT_ASK_EXECUTION_MODE",
     "AGENT_ASK_WORKER_ENABLED",
     "AGENT_ASK_WORKER_TICK_SEC",
@@ -676,6 +680,31 @@ AGENT_STEP_GRADE_MODEL = (
 AGENT_INSIGHT_MODEL = (
     os.getenv("AGENT_INSIGHT_MODEL", "").strip() or OPENAI_MODEL
 )
+# ── 용어사전 대화 자율등록(0021) ──────────────────────────────────────────────
+# 대화 답변 직후 도메인 용어 후보를 LLM 으로 추론해 용어사전(kb_glossary)에 자율 등록한다.
+# 사용자 결정(2026-06-29): 하이브리드 자동승급 — confidence ≥ THRESHOLD 면 즉시 등록
+# (source='auto', 되돌리기 가능), 미만이면 검토 큐(glossary_feedback.status='pending').
+# 기본 역할 귀속 = 공용('*'). poisoning 방어상 자동 등록분도 glossary_feedback 에 감사 추적.
+AGENT_GLOSSARY_AUTOPROPOSE = (
+    os.getenv("AGENT_GLOSSARY_AUTOPROPOSE", "1").strip().lower() in ("1", "true", "yes")
+)
+AGENT_GLOSSARY_SUGGEST_MODEL = (
+    os.getenv("AGENT_GLOSSARY_SUGGEST_MODEL", AGENT_SUMMARY_MODEL).strip()
+    or AGENT_SUMMARY_MODEL
+)
+try:
+    AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD = float(
+        os.getenv("AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD", "0.85").strip() or "0.85"
+    )
+except ValueError:
+    AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD = 0.85
+# 한 턴에서 큐/등록으로 받아들일 최대 용어 후보 수 (토큰/노이즈 cap).
+try:
+    AGENT_GLOSSARY_SUGGEST_MAX = int(
+        os.getenv("AGENT_GLOSSARY_SUGGEST_MAX", "5").strip() or "5"
+    )
+except ValueError:
+    AGENT_GLOSSARY_SUGGEST_MAX = 5
 
 AGENT_LOG_DIR = os.getenv("AGENT_LOG_DIR", "/shared/logs")
 # 단일 앱 로그 파일 크기 상한(bytes). 초과 시 .1 로 1회 회전. 회전 없이 append 만

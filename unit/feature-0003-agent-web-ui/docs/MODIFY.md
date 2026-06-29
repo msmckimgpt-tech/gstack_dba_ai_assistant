@@ -9,6 +9,69 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T041724-doc-sync-rn-0629 (TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
+- 배경: 직전 릴리즈노트 sync(63874f2 @ 06-29 08:35) 이후 main 병합된 06-29 user-facing 변경(40c0de0 용어사전 대화 자율등록 · 284e75a 용어 검토 큐 중첩 · 31aa67a+8c605b8 답변 평가 고유성)이 릴리즈노트 미반영(drift).
+- 내용:
+  - `static/release-notes-data.js`: releases head 에 신규 '2026-06-29' 블록 prepend(3항목) — [new admin] 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결) · [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동 · [fixed work] 답변 평가가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능). generated 2026-06-29 유지.
+  - `static/index.html`·`static/admin.html`: 릴리즈노트 cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`. app.js/styles.css 토큰 무변경.
+- 제외 결정(적대): 첨부 wrong-bubble(ec39a60)은 "정상 display 경로 동작 동일"(스키마/마이그·프론트 무변경, 드문 cross-space 엣지) → 사용자 체감 변화 0 이라 릴리즈노트 항목 미추가.
+- Why: 현실↔릴리즈노트 정합(사용자 노출 표면 최신화). 평이한 한국어·내부 비노출. 원천 코드(40c0de0/284e75a/31aa67a)는 별도 cycle 에서 이미 배포·검증됨 — 릴리즈노트 announcement 만 누락분.
+- Verification: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 3항목 + 머지 3건 1:1 대조.
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: '2026-06-29' 블록 + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.
+
+## CHG-20260629T120711-attach-id-space (TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가, H5(b) follow-up 완결, Major §12.3 — feature-0003 단독, 스키마 마이그 없음)
+- Date: 2026-06-29. 선행 CHG-20260629T022055-feedback-id-space(피드백 레이어 H5(b) 해소)가 "잔여 — 별도 feature"로 명시한 **첨부 영속 레이어**(`_load_assistant_attachments_by_message`, message.id 키)를 동일 패턴으로 마저 완수. 사용자 요청("동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리"). 코드 계층만 변경 — DB 스키마/마이그 없음(MetaJson JSON 키로 id_space 보존).
+- 변경 파일:
+  - `src/app.py` `_materialize_assistant_attachment_edits`: 새 첨부 버전 row 의 MetaJson 에 `"message_id_space": "display"` 추가. message_id 은 `_load_latest_assistant_message`(표시 store 전용)에서만 와 항상 display 공간이라는 불변식을 영속화.
+  - `src/app.py` `_load_assistant_attachments_by_message`: 반환 키를 `message_id` → `(message_id, message_id_space)` 복합 키로. MetaJson 의 `message_id_space`(없으면 'display' — legacy 행 하위호환) 읽어 그룹핑. 반환 타입 `dict[int, …]` → `dict[tuple, …]`.
+  - `src/app.py` `_attach_assistant_attachments`: history 메시지의 `(id, id_space)`(미설정 시 'display') 복합 키로 매칭 — `_attach_user_feedback` 와 대칭. core 공간 메시지가 같은 숫자 id 의 display 첨부를 잘못 집어가는 wrong-bubble 차단.
+  - `tests/test_task0285_attach_surfacing.py`: A1/A2/L1/L2 를 복합 키 shape 로 갱신 + A3(cross-space wrong-bubble 차단)·L4(core/display 분리 + legacy 'display' 간주) 회귀 테스트 신규. 헬퍼 `_att_row(space=…)` 추가.
+- 비변경: 프론트(renderMessages 는 서버가 채운 `_attachments` 만 렌더)·share 경로·cache-buster·DB 스키마 0. 정상 display 경로 동작 동일(하위호환).
+- 검증: 대상 테스트 11/11(A1~A3·L1~L4·V1·V2·S1·S2), `make test` 전체 스위트 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
+- Cross-ref: 선행 CHG/REV-20260629T022055-feedback-id-space(피드백 레이어, H5(b) 출처) / REV-20260629T120711-attach-id-space.
+## CHG-20260629-glossary-review-nest (TASK-20260629-glossary-review-nest — 용어 검토 큐 IA 중첩, Minor §12.3, 프런트 전용)
+- Date: 2026-06-29. 검토 큐를 메타데이터 최상위 서브탭 → 용어사전 하위 2차 보기 탭으로 이동(IA). 백엔드/route/엔드포인트 무변경.
+- admin.html: `data-meta-subtab="glossary-review"` 버튼 제거 + 용어사전 하위 `#metadataGlossaryViews` strip(`.admin-meta-gview`: data-glossary-view="list"|"review") + 배지 이전.
+- admin.js: 상태 `glossaryView`; 헬퍼 `_metaIsGlossaryReview`/`_metaSubtabVisible`(용어사전 OR(ingest.manual, glossary.curate))/`_GLOSSARY_VIEW_PERM`/`_metaSyncGlossaryViews`(보기 권한 게이트+보정+aria-selected); `_metaBindControls` gview 바인딩; `_metaRenderForm`/`loadMetadata`/`_metaSyncToolbarVisibility` 를 새 보기 모델로; **`ADMIN_TAB_PERMISSIONS.metadata` 에 `kb.glossary.curate` 추가**(적대 리뷰 MAJOR — curate-only 부모 탭 진입 보존); 메타 탭 재진입 분기에 `_metaSyncGlossaryViews`+`_metaPrimeReviewBadge`.
+- styles.css: `.admin-meta-glossary-views`/`.admin-meta-gview` 필 스타일. FUNCTION.md IA 기술 갱신.
+- 검증: node --check PASS, 잔여 functional glossary-review 참조 0, 적대 검증 3 lens(BLOCKER 0, MAJOR 1 수정). Cross-ref: REV-20260629T120000-glossary-review-nest / TASK-20260629-glossary-conv-autoreg(선행).
+- **배포 정합(cache-buster)**: admin.html 의 `admin.js`/`styles.css` 참조 `?v=20260625-role-account-prompt-autogen` → `?v=20260629-glossary-review-nest` bump. 정적 자산 전파의 유일 메커니즘(웹 재빌드만으론 브라우저 캐시 미갱신). **부수 효과**: 직전 glossary-conv-autoreg cycle 이 admin.js/styles.css 를 변경하고도 `?v=` 를 bump 하지 않아 캐시 보유 관리자에게 미전파였던 갭도 본 bump 로 함께 해소(직전 + 본 cycle UI 동시 propagate).
+
+## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가, H5(b) follow-up, Major §12.3 — cross-feature 0002+0003)
+- Date: 2026-06-29. 선행 CHG-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)은 feature-0002(마이그 0022 + sample_feedback.py) — 본 항목은 feature-0003 web 층.
+- 변경(feature-0003):
+  - `src/app.py` `/api/history` 4개 메시지 빌더에 `m["id_space"]` 노출 — `_get_agent_core_history`(PG·MySQL)="core", `_get_history`(PG·MySQL display)="display".
+  - `src/app.py` `_load_user_feedback_by_message`/`_attach_user_feedback`: 반환·매칭 키를 int(message_id) → **(message_id, id_space) 복합 키**로 확장(cross-space wrong-bubble 복원 차단).
+  - `src/app.py` `post_sample_feedback`: body `message_id_space`("display"|"core") 파싱·정규화 후 `record_feedback(message_id_space=…)` 전달.
+  - `src/static/app.js` `_buildSampleFeedbackControls`: `message.id_space` 읽어 POST body 에 `message_id_space` 포함(기본 "display").
+  - `src/static/index.html`: app.js cache-buster `?v=20260629-feedback-unique-vote` → `?v=20260629b-feedback-id-space`.
+  - `tests/test_sample_feedback_curation.py`: 요청에 message_id_space="core" 추가 + 코어 전달 단언.
+- 비변경: 재투표 변경 허용·"샘플 등록" 분리·rate-limit·RBAC·audit·CSS 0.
+- 검증: curation 15/15 · node --check · py_compile · 두 feature 전체 회귀 0.
+- Cross-ref: feature-0002 CHG-20260629T022055-feedback-id-space / 마이그 0022 / REV-20260629T022055-feedback-id-space.
+
+## CHG-20260629T014345-feedback-unique-vote (TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백(👍/👎) 강제, Major §12.3 — cross-feature 0002+0003)
+- Date: 2026-06-29. 사용자 보고(새로고침·대화 전환 후 같은 답변에 피드백 재부여 가능)의 수정. 정본 데이터 계층 변경(테이블 컬럼·UNIQUE 인덱스·코어 UPSERT)은 feature-0002(마이그 0021 + sample_feedback.py) — 본 항목은 feature-0003 web 층 변경(endpoint·history·UI·CSS) 기록.
+- 변경(feature-0003):
+  - `src/app.py` `post_sample_feedback`: 요청 body `message_id` 파싱(int|None) → `record_feedback(message_id=…)` 전달. id 회수는 `lastval()`(UPSERT DO UPDATE 경로 부정확) 제거 후 record_feedback 의 `RETURNING id` 반환값 직접 사용.
+  - `src/app.py` 신규 `_load_user_feedback_by_message(conversation_id, created_by)`(PG `sample_feedback` 에서 현재 사용자 vote 행 message_id→{vote} 그룹핑, suggested=false 한정, fail-soft) + `_attach_user_feedback(messages, by_message)`(assistant 메시지에 `m["feedback"]` 주입). `@app.get("/api/history")` 가 messages 로드 직후 호출 — 새로고침·전환 시 기존 투표 복원 원천(첨부 영속 attach 패턴 대칭).
+  - `src/static/app.js` `_buildSampleFeedbackControls`: POST body 에 `message_id: message.id` 포함. `message.feedback` 있으면 해당 투표 버튼 활성표시(`is-active`)+상태문구 복원. in-session 영구 잠금(`data-done`) 제거 → 변경 허용(버튼 enable 유지), 전송 중 `data-busy` 가드로만 더블클릭 차단. "샘플 등록"(suggested) 은 투표 활성표시와 분리.
+  - `src/static/styles.css`: 기존 `[data-done]` 비활성 규칙을 `.message-feedback-btn.is-active`(현재 투표 강조)+`[data-busy]`(전송 중) 규칙으로 교체.
+  - `src/static/index.html`: cache-buster `styles.css ?v=20260629-feedback-unique-vote` · `app.js ?v=20260629-feedback-unique-vote`(변경 전파).
+  - `tests/test_sample_feedback_curation.py`: record_feedback 반환 id(=42) 기반 + `message_id=77` 전달 단언으로 갱신(lastval 제거 정합).
+- 비변경: RBAC(대화 접근 게이트)·rate-limit(10/min)·audit(sample.feedback.submit)·scope 도출·승급/거부 endpoint 무변경. 엔드포인트 shape 는 body 에 optional `message_id` 추가뿐(하위호환 — 부재 시 기존 동작).
+- 검증: curation 15/15 PASS · `node --check app.js` · `py_compile app.py` PASS · 두 feature 전체 스위트 회귀 0.
+- Cross-ref: feature-0002 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## CHG-20260629-glossary-conv-autoreg (TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 web/UI, Major §12.3, cross-cut 0002+0003)
+- Date: 2026-06-29. 「관리 콘솔 > 메타데이터 > 용어사전」의 대화 자율등록·역할 분리·유사어 참조 web 경계 + 관리 UI. 코어/마이그/hook = feature-0002 동반 CHG.
+- app.py: ① glossary CRUD 에 role_key(공용 '*' 기본) 검증·필터 추가 + UNIQUE(scope,role,term) 409. ② 신규 권한 `kb.glossary.curate`(group=kb, admin seed). ③ 검토 큐 3 엔드포인트(`GET …/glossary-feedback`·`POST …/{id}/promote`·`POST …/{id}/reject`). ④ 유사어 3 엔드포인트(`GET/POST …/glossary/{id}/relations`·`DELETE …/glossary/relations/{id}`). audit: glossary.feedback.promote/reject·glossary.relation.create/delete.
+- admin.html/admin.js/styles.css: glossary 폼 역할 select·목록 역할/출처 배지·툴바 역할 필터·검토 큐 서브탭(pending 배지·승급/되돌리기)·용어별 유사어 패널. XSS=textContent/value.
+- route_snapshot_p5b.json: 신규 6 라우트 반영(golden 갱신). 테스트: 신규 `test_metadata_glossary_autoreg.py` 13 + 기존 metadata 회귀 갱신.
+- Cross-ref: feature-0002 CHG-20260629-glossary-conv-autoreg / REV-20260629T103000-glossary-conv-autoreg / ADR-20260629T101500.
+
 ## CHG-20260626T135945-ask-dedup-hotfix (TASK-20260626-ask-dedup-idempotency — 동일 cycle 라이브 PG 회귀 hotfix, Major §12.3, 정본 코드=feature-0002 ask_jobs.py)
 - Date: 2026-06-26. CHG-20260626-ask-dedup-idempotency 배포 검증 중 적발된 라이브 회귀의 즉시 수정. 정본 코드 변경은 feature-0002 ask_jobs.py(전용 파라미터 분리) — 본 항목은 feature-0003 동반 기록(REPORT/TASK/REVIEW 갱신).
 - 회귀/수정 요지: dedup NOT EXISTS 의 `%(cid)s`/`%(account_id)s` 재사용 → PG `AmbiguousParameter(text vs character varying)` → 워커 모드 신규 /api/ask 전부 500. 전용 파라미터 `%(dcid)s`/`%(daccount)s` + 테이블 alias `d` 로 분리. 라이브 PG 수정 SQL 직접 실행 재검증 + 회귀 테스트 단언 추가(21/21). web/app.py·app.js 코드 변경 0(본 commit 은 feature-0002 코드 + 양 feature 문서).

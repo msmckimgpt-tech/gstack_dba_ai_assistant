@@ -752,3 +752,40 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
   - 정책 명시 위치: AGENTS.md §6(식별자 표)·§6 prose(spec 앵커 단락)·§13.1(감지-후-재번호 제외) +
     docs/CONVENTIONS.md(식별자 목록) + unit/_template/docs/{FUNCTION.md §11, TEST.md §2}(템플릿 주석) +
     wiki/Glossary/_Index.md(용어집 행) + playbooks/PB-0006-template-migration.md(ADR 작성 절차).
+
+## ADR-20260629T101500-glossary-conversation-autoregistration
+- Status: accepted
+- Date: 2026-06-29
+- Context: 「관리 콘솔 > 메타데이터 > 용어사전」(kb_glossary, ITEM-10) 은 그동안 **수동 등록(권한
+  kb.ingest.manual)만** 허용했다 — 등록 내용이 질문/스키마 매칭 시 답변 프롬프트에 주입돼 검색·답변
+  정확도에 직접 영향(KB poisoning 면)하므로 "자동학습 없음" 이 의도된 거버넌스였다(app.py 권한 설명·
+  sample_feedback.py 헤더에 명시). 사용자 요청(/_template:entry, 2026-06-29): ① 용어사전이 **사용자
+  대화로부터 assistant 판단 하에 자율 등록**되도록, ② **역할(role)별 사용 용어가 겹치지 않는 구조**,
+  ③ **유사한 의미가 있으면 참조 가능한 구조**. ①은 기존 "자동학습 없음" 거버넌스와 정면으로 맞닿는다.
+- Decision (사용자 AskUserQuestion, 2026-06-29):
+  - **① 등록 자율성 = 하이브리드 자동승급**. 대화 답변 직후 LLM(`llm_glossary_suggest`)이 용어 후보를
+    추론(`agent_core._glossary_autopropose` hook). `confidence ≥ AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD`
+    (기본 0.85)이면 용어사전에 **자동 등록(source='auto')** 하되, 모든 자동 등록분을 `glossary_feedback`
+    (status='auto_promoted')에 **감사 추적**하여 검수자가 언제든 **되돌리기**(reject 시 source='auto' 행
+    회수) 가능. 임계 미만은 **검토 큐(status='pending')** 에 적재 → 권한 `kb.glossary.curate` 보유자가
+    promote/reject. 라이브 반영 게이트(검수·되돌리기)를 유지해 기존 poisoning 거버넌스를 깨지 않으면서
+    "자율"을 *제안·고신뢰 자동등록의 자율성* 으로 충족(기존 sample_feedback 플라이휠 패턴 재사용).
+  - **② 역할 분리 = role_key 차원**. `kb_glossary` 에 `role_key`(varchar, WebRoles.RoleKey 비정규화 —
+    glossary=PG/WebRoles=MySQL cross-DB 라 FK 불가) 추가, UNIQUE(scope_key, term) → UNIQUE(scope_key,
+    role_key, term) 로 재정의 → **같은 용어를 역할별 독립 namespace 로 보유(겹침 방지)**. `role_key='*'`
+    = 공용(모든 역할). 읽기(load_glossary_enum_context)는 role_key 지정 시 [그 역할, '*'] 만 주입(다른
+    역할 전용 용어 미노출). **자동 제안된 용어의 기본 귀속 = 공용('*')**(사용자 결정) — 역할 특수 시에만
+    관리자가 역할 namespace 로 이동.
+  - **③ 유사어 참조 = glossary_relations**. (from_id, to_id, relation_type ∈ {synonym, similar,
+    see_also}) 자기참조 테이블 — **역할 경계 횡단 허용**. 역할별 비중복이라도 유사 의미 용어를 교차 참조.
+- Consequences:
+  - 신규 마이그레이션 0023: kb_glossary.role_key/source ADD + UNIQUE 재정의, glossary_feedback(검토 큐)·
+    glossary_relations(참조) CREATE + GRANT(agent_kb_rw/ro). 기존 행은 role_key='*'·source='manual' backfill
+    → 동작 불변. cross-cut: 코어/마이그/agent hook = feature-0002, web 엔드포인트/관리 UI = feature-0003.
+  - 신규 권한 `kb.glossary.curate`(group=kb, admin seed 자동 보유) — 검토 큐 promote/reject 게이트.
+  - 신규 config: AGENT_GLOSSARY_AUTOPROPOSE(기본 on)·AGENT_GLOSSARY_SUGGEST_MODEL·
+    AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD(0.85)·AGENT_GLOSSARY_SUGGEST_MAX(5). 비용/오염 우려 시 플래그로 차단.
+  - hook 은 best-effort(soft-fail) — LLM/PG 실패가 ask 경로를 절대 막지 않는다. 거부된 후보는 재제안돼도
+    되살아나지 않는다(ON CONFLICT WHERE status='pending', curator 결정 존중).
+  - trade-off: 매 답변 턴마다 경량 LLM 추론 1회 추가(요약 티어 모델·cap 5). 사용자 응답은 이미 전송된
+    뒤 실행되어 사용자 체감 지연 없음(워커 시간만 소폭 증가). 후속(미구현): insight-worker 비동기 이관 옵션.

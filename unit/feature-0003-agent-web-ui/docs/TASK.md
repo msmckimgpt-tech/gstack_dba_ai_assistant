@@ -8,6 +8,69 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-29)
+- 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃). 직전 릴리즈노트 sync(63874f2 @ 2026-06-29 08:35, "ask-dedup 06-26 블록 합류") 이후 main 병합된 06-29 user-facing 변경이 릴리즈노트 미반영(drift) → `release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 prepend(generated 2026-06-29 유지).
+- [x] 대상 머지(3, 평이화·내부 비노출): [new admin] 용어사전 대화 자율등록 — 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결)(40c0de0); [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동(284e75a); [fixed work] 답변 평가(좋아요/별로예요)가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능)(31aa67a + 8c605b8 id_space 보강).
+- [x] 적대 결정 — 첨부 wrong-bubble(ec39a60) **항목 제외**: REPORT·커밋이 "정상 display 경로 동작 동일"(스키마/마이그·프론트·cache-buster 무변경) 명시, 드문 fork/마이그 cross-space 엣지 하드닝이라 사용자 체감 변화 0 → 보수적으로 미추가.
+- [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. 내부용어(role_key/검토 큐 엔드포인트/마이그 0021/0023/id_space/message_id/wrong-bubble/feature-id/테이블명) 누출 0.
+- [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 신설(3항목).
+- [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629-rn-0629`→`?v=20260629b-rn-0629` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘). verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
+
+## TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가 — H5(b) wrong-bubble 의 첨부 레이어 완결 (follow-up, Major §12.3 — feature-0003 단독, 스키마 마이그 없음) — done
+- 출처: 사용자 요청 — "동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리해주세요." 선행 TASK-20260629T022055-feedback-id-space(REVIEW '잔여')가 별도 feature 로 미룬 첨부 레이어를 완수.
+- 문제(H5(b) 첨부 레이어): `_load_assistant_attachments_by_message` 가 MetaJson.message_id 단일 키로 그룹핑, `_attach_assistant_attachments` 가 history 메시지 `id` 단일 키로 매칭. message.id 는 표시 store(`agent_runtime.messages.id`)·core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).
+- 수정: 첨부 식별에 **id_space** 차원 추가 → (message_id, message_id_space) 복합 키. 피드백 레이어(`_attach_user_feedback`)와 대칭.
+  - [x] `_materialize_assistant_attachment_edits`: 새 버전 row 의 MetaJson 에 `"message_id_space": "display"` 추가(message_id 출처 `_load_latest_assistant_message` 가 표시 store 전용 → 항상 display, 불변식 영속).
+  - [x] `_load_assistant_attachments_by_message`: 반환 키 `message_id` → `(message_id, message_id_space)`. MetaJson space 없으면 'display'(legacy 하위호환). 타입 dict[int]→dict[tuple].
+  - [x] `_attach_assistant_attachments`: 메시지 `(id, id_space)`(미설정 시 'display') 복합 키로 매칭 → cross-space wrong-bubble 차단.
+  - [x] 테스트 `test_task0285_attach_surfacing.py`: A1/A2/L1/L2 복합 키 갱신 + A3(cross-space wrong-bubble)·L4(core/display 분리 + legacy 'display') 신규. 헬퍼 `_att_row(space=)`.
+- 비변경: 프론트(서버가 채운 `_attachments` 렌더)·share·cache-buster·DB 스키마/마이그 0. 정상 display 경로 동작 동일.
+- [x] 검증: 대상 11/11, `make test` 전체 exit=0(두 feature 회귀 0)·ruff·py_compile.
+- [x] 적대 self-review(H5(b) 첨부 레이어 closure) — REV-20260629T120711-attach-id-space. (선행 cycle 적대 리뷰 H1~H7 가 결함·설계 이미 도출.)
+- Cross-ref: 선행 TASK/REV/CHG-20260629T022055-feedback-id-space(H5(b) 출처) / CHG·REV-20260629T120711-attach-id-space.
+## TASK-20260629-glossary-review-nest — 용어 검토 큐 IA 중첩(메타데이터 > 용어사전 > 용어 검토 큐) (Minor §12.3, 프런트 전용)
+- 출처: `/_template:entry` dispatch(2026-06-29). 요청: 검토 큐를 메타데이터 최상위 서브탭(전)에서 **용어사전 하위 2차 보기 탭**(후)으로 이동.
+- 설계: 최상위 서브탭에서 glossary-review 제거 → 용어사전 하위에 2차 보기 탭(`용어 목록`/`용어 검토 큐`), 내부 상태 `glossaryView`. 권한 보존 — 용어사전 서브탭은 `kb.ingest.manual` OR `kb.glossary.curate`(중첩으로 인한 curate-only 접근 단절 방지), 보기별 권한 게이트(목록=ingest.manual, 검토 큐=glossary.curate) + 현재 보기 권한 없으면 첫 표시 보기로 전환. 백엔드/route/엔드포인트 무변경.
+- [x] admin.html: glossary-review 서브탭 제거 + `#metadataGlossaryViews` 2차 보기 strip + 배지 이전.
+- [x] admin.js: `glossaryView` 상태 + `_metaIsGlossaryReview`/`_metaSubtabVisible`/`_GLOSSARY_VIEW_PERM`/`_metaSyncGlossaryViews` + 2차탭 바인딩 + render/load/toolbar 분기를 새 보기 모델로 이전. node --check PASS.
+- [x] styles.css: `.admin-meta-gview` 2차 보기 탭(필 형태) 스타일. FUNCTION.md IA 기술 갱신.
+- [x] 적대 검증 워크플로(상태머신·권한·회귀 3 lens, BLOCKER 0): **MAJOR 1건(3 lens 동일근본)** — 부모 `ADMIN_TAB_PERMISSIONS.metadata` 가 `kb.glossary.curate` 누락 → curate-only 사용자가 메타데이터 탭 자체 진입 불가(내 OR 게이트가 dead path). **수정**: 탭 게이트에 `kb.glossary.curate` 추가(서버 403 이 실경계, 표시 확장 안전). + MINOR/NIT(재진입 strip/배지 sync·이중호출 제거·aria-selected) 전부 흡수. node --check PASS.
+- [ ] verify-completion → commit → main 동기화 → web 재배포(deploy_scope: included).
+
+## TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가 — 두 message-id 공간(표시 store vs core) 모호성 해소 (H5(b) follow-up, Major §12.3 — 스키마 마이그 0022 + cross-feature 0002+0003)
+- 출처: 사용자 요청 — TASK-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 **H5(b)** 잔여 한계를 마저 완수. 사용자: "확인된 후속 권고사항도 마저 작업을 완수해주세요."
+- 문제(H5(b)): `/api/history` 의 `message.id` 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`)의 **두 독립 IDENTITY 공간**서 올 수 있다(agent_core 가 "독립 시퀀스, 숫자 겹침" 명시). 0021 의 고유성 키 (created_by, message_id) 는 숫자만 같으면 서로 다른 답변을 같은 키로 봐, fork·마이그로 대화가 core-only→display 전환되는 드문 경우 (a) cross-space DB 충돌(다른 답변이 같은 키 → UPSERT 가 남의 투표 덮어씀) (b) wrong-bubble 복원(core-id 피드백이 같은 숫자의 display 메시지에 표시) 가능.
+- 수정: 답변 식별에 **id_space** 차원 추가 → 키를 (created_by, message_id, **message_id_space**) 로 확장. 두 공간의 같은 숫자 id 가 이제 다른 키.
+  - [x] `/api/history` 4개 메시지 빌더가 `m["id_space"]` 노출: `_get_agent_core_history`(PG·MySQL)="core", `_get_history`(PG·MySQL display)="display".
+  - [x] `_load_user_feedback_by_message`/`_attach_user_feedback`: (message_id, id_space) 복합 키로 조회·매칭(wrong-bubble 복원 차단).
+  - [x] `post_sample_feedback`: body `message_id_space`("display"|"core") 파싱·정규화·전달.
+  - [x] 코어 `record_feedback`(feature-0002): `message_id_space` 인자 + INSERT/ON CONFLICT 3-col `(created_by, message_id, message_id_space)`.
+  - [x] 마이그 0022 + 부트스트랩 `agent_kb_schema.sql`: `message_id_space varchar(16) NOT NULL DEFAULT 'display'` + 3-col 부분 UNIQUE **신규 이름** `ux_sample_feedback_user_msg_space_vote`(구 2-col `ux_sample_feedback_user_msg_vote` drop — same-name no-op trap 회피). 기존 행 default 'display'(라이브 적재분 전부 표시 store) 무손실.
+  - [x] `_buildSampleFeedbackControls`: `message.id_space` 읽어 POST 에 `message_id_space` 포함. cache-buster `?v=20260629b-feedback-id-space`.
+- 비변경: 재투표 변경 허용·"샘플 등록" 분리·rate-limit·RBAC·audit 0. id_space 기본 'display' 라 대다수 경로 동작 동일.
+- [x] 테스트: `test_sample_flywheel.py`(masks_pii param 위치 보정 + 3-col ON CONFLICT + id_space 전달 단언)·`test_sample_feedback_curation.py`(message_id_space 전달 단언) → flywheel 13/13 · curation 15/15, 두 feature 전체 회귀 0. py_compile + node --check + alembic chain linear(0021→0022 단일 head).
+- [ ] verify-completion → 머지·push → 배포(0022 스키마 적용 + web 재빌드).
+- Cross-ref: feature-0002 TASK/CHG/REV-20260629T022055-feedback-id-space / 선행 TASK-20260629T014345-feedback-unique-vote(H5(b) 원 출처).
+
+## TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백(👍/👎) 강제 — 새로고침·대화 전환 후 중복 부여 차단 (Major §12.3 — 스키마 마이그 + cross-feature 0002+0003)
+- 출처: `/_template:entry` arg-given dispatch. 사용자 보고: "assistant 답변에 피드백(👍/👎) 부여 후, 다른 대화에서 전환하거나 새로고침하면 같은 답변에 다시 피드백 부여가 가능. 각 사용자는 답변당 고유한 피드백만 부여할 수 있어야 함."
+- 결정(AskUserQuestion): 재투표 시 **변경 허용**(👍↔👎 전환 가능, 서버 UPSERT last-write-wins, 항상 답변당 1행).
+- 진단(코드 교차): 중복 차단이 **두 계층 모두 부재**. ① 프론트 `_buildSampleFeedbackControls`(app.js)의 유일한 dedup 이 `wrap.dataset.done="1"`(in-session DOM 플래그) — `renderMessages()`가 새로고침·전환 시 DOM 재생성하며 소실 → 버튼 재활성. POST 가 답변 식별자 미전송. ② 코어 `record_feedback`(feature-0002 modules/sample_feedback.py)이 **무조건 INSERT** — `sample_feedback` 테이블에 message_id·UNIQUE 부재(마이그 0014) → 같은 (user,답변)에 무한 행 생성. 답변은 표시 store `agent_runtime.messages.id`(= 프론트 `message.id`, 첨부 영속과 동일 id 공간)로 안정 식별 가능 → 이를 키로 (created_by, message_id) 고유성 강제.
+- 설계(5요소): **A** 마이그 0021(feature-0002) — `sample_feedback.message_id bigint` 추가 + 부분 UNIQUE `ux_sample_feedback_user_msg_vote (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested=false`(과거 행·익명·"샘플 등록"은 제외 → 무손실·멱등). **B** `record_feedback`: message_id 인자 + INSERT→UPSERT(`ON CONFLICT … DO UPDATE`) + `RETURNING id`(lastval 미사용 — DO UPDATE 경로 부정확). **C** `post_sample_feedback`: body `message_id` 파싱·전달 + 반환 id 사용. **D** `/api/history`: assistant 메시지에 현재 사용자 투표 상태(`m["feedback"]`) 주입(`_load_user_feedback_by_message`/`_attach_user_feedback`, 첨부 attach 패턴 재사용) — 새로고침·전환 복원 데이터 원천. **E** `_buildSampleFeedbackControls`: POST 에 `message_id` 포함 + `message.feedback` 있으면 기존 투표 활성표시(변경 허용, busy 가드만). **F** CSS `.message-feedback-btn.is-active` + index.html cache-buster `?v=20260629-feedback-unique-vote`(app.js·styles.css).
+- 가드: D+E 가 UX 증상(새로고침 후 재클릭)을 막고, A+B 가 어떤 경로(직접 API 포함)로든 중복을 DB 계층에서 권위적으로 차단. "샘플 등록"(suggested=true)은 검수 큐 제출이라 투표 고유성과 분리(부분 인덱스 술어 제외) — 기존 동작 보존.
+- [x] A 마이그 0021 작성(linear chain, 0020→0021 단일 head 검증). B/C/D/E/F 구현.
+- [x] 테스트: `test_sample_flywheel.py` 갱신(param 위치 + ON CONFLICT 단언) + 신규 1건(vote UPSERT 키), `test_sample_feedback_curation.py` 갱신(record 반환 id + message_id 전달 단언) → flywheel 15/15 · curation 15/15 PASS, 두 feature 전체 스위트 회귀 0(`test_share_redaction_invariant`는 컨테이너 전용 `web.app` import 라 로컬 한정 환경 실패, 본 변경 무관). `py_compile`(sample_feedback.py·app.py·0021) + `node --check`(app.js) PASS.
+- [ ] verify-completion --pre-commit → commit → main 병합·push → 배포(deploy_scope 판정).
+- Cross-ref: feature-0002 record_feedback UPSERT + alembic 0021 + MODIFY/REVIEW/MIGRATIONS 2026-06-29.
+## TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 + 역할 분리 + 유사어 참조 (Major §12.3, cross-feature 0002+0003, ADR-20260629T101500)
+- 출처: `/_template:entry` dispatch(2026-06-29). 요청: 「관리 콘솔 > 메타데이터 > 용어사전」이 사용자 대화로부터 assistant 판단 하에 자율 등록되도록 + ① 역할별 용어 비중복 ② 유사 의미 시 참조 가능.
+- 결정(AskUserQuestion): **하이브리드 자동승급**(고신뢰도 자동 등록·되돌리기 가능, 저신뢰도 검토 큐) + **기본 역할 귀속 = 공용('*')**. 위험 Major(DB 마이그레이션 + core/web/UI/tests 다중 파일). 거버넌스 충돌(기존 "자동학습 없음")은 검토 큐·되돌리기로 해소 → ADR-20260629T101500.
+- [x] **web 엔드포인트(app.py)**: glossary CRUD 에 role_key 검증(`_metadata_check_role_key`, WebRoles.RoleKey ∪ '*') + list ?role_key= 필터; 검토 큐 3종 `GET /api/admin/metadata/glossary-feedback`·`POST …/{id}/promote`·`POST …/{id}/reject`(권한 kb.glossary.curate); 유사어 3종 `GET/POST …/glossary/{id}/relations`·`DELETE …/glossary/relations/{id}`(권한 kb.ingest.manual). 신규 권한 `kb.glossary.curate`(group=kb, admin seed). audit: glossary.feedback.promote/reject·glossary.relation.create/delete.
+- [x] **관리 UI(admin.html/admin.js/styles.css)**: glossary 폼 역할 select(roleselect) + 목록 역할/출처 배지 + 툴바 역할 필터; 검토 큐 서브탭(`glossary-review`, pending 배지·상태필터·승급/되돌리기); 용어별 유사어 패널(목록/추가/삭제). XSS = textContent/value 만.
+- [x] **코어/마이그/hook = feature-0002**(cross-cut): TASK-20260629-glossary-conv-autoreg 참조.
+- [x] 테스트: 코어 `test_kb_glossary_enum.py` 19건(역할 read·record/auto-promote/reject/promote/relation SQL) + 웹 신규 `test_metadata_glossary_autoreg.py` 13건(권한·role 검증·큐·관계) + 기존 metadata 회귀(glossary_enum/autocomplete/phase2) 갱신 PASS + route_snapshot_p5b.json 6 신규 라우트 갱신. 전체 **1222 passed**(잔여 7 fail = `web.app` 컨테이너 레이아웃 의존, 본 변경 무관). ruff·py_compile·node --check·단일 alembic head PASS.
+- [ ] verify-completion --pre-commit → commit → main 동기화 (deploy_scope: included).
+
 ## TASK-20260626-ask-dedup-idempotency — assistant 요청이 2번 중복 전송/처리되는 결함 수정 (worker-mode enqueue 멱등화, Major §12.3 — /api/ask send/concurrency, cross-feature 0002+0003)
 - 출처: `/_template:entry` dispatch. 사용자 보고: "프로젝트 내 서비스에서 assistant 에게 요청을 보낼 때 2번 중복되어 전송." 명료화(AskUserQuestion): **요청도 2번·답변도 2번 처리 / 항상(첫 요청부터)**.
 - 진단(코드+라이브 DB/로그 교차): 프론트 `/api/ask` 는 sendPrompt(app.js:8320) 단일 POST(이벤트 이중바인딩 없음·apiFetch 재시도 없음·resume 재전송 경로 없음), 백엔드 enqueue 도 `_dispatch_ask_run_worker`(app.py:11321) 1곳뿐. 그러나 `agent_runtime.ask_jobs` 실측 — 동일 페이로드(conv+account+user_message) **job 2개**(94b96f5f #148/#149 Δ460ms, cbb5bde0 #153/#154 Δ20s; 둘 다 attempts=1·done = requeue 아님). 단일 워커 직렬 처리로 두 번째 run 이 user 메시지를 ~1분 뒤 재삽입 → "요청·답변 2회". 근본원인: 워커 모드 `/api/ask` 가 run 종료까지 연결을 수십 초~분 잡는데(long-poll attach), **web 컨테이너 재생성(배포/자동화)** 시 그 연결이 502 EOF 로 끊김(Caddy 로그: 24~109s 후 502, connection refused, 공인 IP 112.185.196.95 오해석 dial) → 복구용 `/api/ask_status` 도 실패 → 프론트가 in-flight run 미포착 → 사용자 재전송 → 두 번째 job. 첫 job 은 out-of-process 워커에서 생존·완료 → 답변 2개. **워커 enqueue 에 멱등성(dedup) 부재**가 핵심 결함.

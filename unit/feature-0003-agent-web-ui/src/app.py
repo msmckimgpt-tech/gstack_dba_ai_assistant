@@ -259,6 +259,19 @@ PERMISSION_DEFINITIONS = (
         "group": "kb",
     },
     {
+        # 용어사전 대화 자율등록(0021): 대화 답변에서 LLM 이 추론한 용어 후보의 검토/큐레이션 권한.
+        # 하이브리드 자동승급 — 고신뢰도는 자동 등록(source='auto', 되돌리기 가능), 저신뢰도는
+        # 검토 큐(glossary_feedback.status='pending')에 적재된다. 이 권한 보유자는 큐를 검토해
+        # 용어사전(kb_glossary)으로 승급(promote)하거나 거부(reject·되돌리기)할 수 있다. 승급/자동등록은
+        # 검색·답변 정확도에 직접 영향(poisoning 면) → 검수자 한정. admin seed(=set(PERMISSION_CODES))
+        # 자동 보유 + 기존 admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여. operator/sales/
+        # pending 미부여(least-privilege). kb.sample.curate(샘플 검수)와 동급 큐레이션 권한.
+        "code": "kb.glossary.curate",
+        "label": "용어사전 검수/승급",
+        "description": "대화에서 자동 제안된 용어 후보(검토 큐)를 검토해 용어사전으로 승급하거나 거부(자동 등록분 되돌리기)할 수 있다. 승급·자동 등록은 답변 정확도에 직접 영향하므로 명시 검수만 허용된다 (도메인 전문가/검수자 전용).",
+        "group": "kb",
+    },
+    {
         "code": "conversation.create",
         "label": "대화 생성",
         "description": "새 대화를 생성할 수 있다.",
@@ -8636,7 +8649,12 @@ def _materialize_assistant_attachment_edits(
                     conversation_id, account_id, object_key, filename,
                     _hmac_filename(filename), mime_type, len(body_bytes),
                     _size_bucket(len(body_bytes)), sha256_hex, new_kind,
-                    json.dumps({"assistant_edit_of": src_id, "message_id": int(message_id or 0)}),
+                    # message_id_space="display": message_id 은 _load_latest_assistant_message 가
+                    # 표시 store(agent_runtime.messages / AgentMemoryMessages)에서만 읽어 항상 display
+                    # 공간이다. 첨부 영속도 피드백(H5(b))과 대칭으로 id_space 를 저장해, history 표시
+                    # 시 (message_id, id_space) 복합 키로만 매칭 → core 공간 숫자 겹침에 의한 wrong-bubble 차단.
+                    json.dumps({"assistant_edit_of": src_id, "message_id": int(message_id or 0),
+                                "message_id_space": "display"}),
                     root_id, next_version,
                 ),
             )
@@ -9587,6 +9605,7 @@ WHERE conversation_id = %s
                     meta["run_id"] = steps_val[0].get("run_id")
             messages_pg.append({
                 "id": int(msg_id),
+                "id_space": "core",  # core_messages.id 공간 — 피드백 고유성 키 모호성 차단(표시 store id 와 숫자 겹침 가능)
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -9649,6 +9668,7 @@ LIMIT %s
         messages.append(
             {
                 "id": int(msg_id),
+                "id_space": "core",  # AgentCoreMessages.id 공간 — 피드백 고유성 키 모호성 차단
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -9679,13 +9699,21 @@ WHERE conversation_id = %s
     )
 
 
-def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[int, list[dict[str, Any]]]:
-    """③ TASK-0285: 대화의 assistant 생성 첨부(미삭제)를 MetaJson.message_id 별로 그룹핑.
+def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[tuple, list[dict[str, Any]]]:
+    """③ TASK-0285: 대화의 assistant 생성 첨부(미삭제)를 (message_id, id_space) 별로 그룹핑.
 
     history 직렬화에서 assistant 말풍선에 첨부 칩을 영속 표시하기 위함(사용자 말풍선이 첨부를
     보여주는 것과 대칭). materialize 가 새 버전 row 의 MetaJson 에 message_id 를 저장하므로
     그 키로 그룹핑한다. supersede 여부와 무관 — "그 메시지가 만든 버전"은 이후 더 새 버전이
     나와도 그 시점 history 사실로서 칩에 남는다(다운로드는 /download 프록시가 항상 가능).
+
+    **id_space 키 포함(H5(b) 후속 — 피드백 영속 `_load_user_feedback_by_message` 와 대칭)**:
+    message_id 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두
+    독립 IDENTITY 공간서 올 수 있어 숫자만 같아도 다른 답변이다. materialize 가 저장하는
+    message_id 는 항상 display 공간(`_load_latest_assistant_message`)이지만, history 가 core
+    fallback 으로 그려질 때 core 공간 메시지의 같은 숫자 id 가 display 첨부를 잘못 집어가는
+    wrong-bubble 를 막기 위해 (message_id, message_id_space) 복합 키로 그룹핑한다. MetaJson 에
+    message_id_space 키가 없는 기존 행은 'display'(materialize 불변식)로 간주한다(하위호환).
 
     첨부 정본은 MySQL(dual-write, TASK-0279) 이므로 conn(MySQL)로 조회. fail-soft — 실패 시
     빈 dict 를 반환해 history 를 막지 않는다. 권한은 caller(_get_history → /api/history)가 대화
@@ -9693,7 +9721,7 @@ def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[i
     """
     if not conversation_id:
         return {}
-    out: dict[int, list[dict[str, Any]]] = {}
+    out: dict[tuple, list[dict[str, Any]]] = {}
     try:
         cur = conn.cursor(dictionary=True)
         try:
@@ -9722,21 +9750,25 @@ def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[i
             except Exception:
                 meta = {}
         mid = 0
+        space = "display"
         if isinstance(meta, dict):
             try:
                 mid = int(meta.get("message_id") or 0)
             except Exception:
                 mid = 0
+            space = "core" if str(meta.get("message_id_space") or "display").strip().lower() == "core" else "display"
         if mid <= 0:
             continue
-        out.setdefault(mid, []).append(_serialize_attachment_for_api(dict(row)))
+        out.setdefault((mid, space), []).append(_serialize_attachment_for_api(dict(row)))
     return out
 
 
-def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: dict[int, list[dict[str, Any]]]) -> None:
+def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: dict[tuple, list[dict[str, Any]]]) -> None:
     """③ TASK-0285: history message 리스트의 assistant 메시지에 `_attachments` 를 주입.
 
     프론트(renderMessages)는 user/assistant 공통으로 message._attachments 를 칩으로 렌더한다.
+    매칭은 (message_id, id_space) 복합 키 — 두 id 공간의 숫자 겹침에 의한 wrong-bubble 표시 차단
+    (`_attach_user_feedback` 와 대칭, H5(b) 후속). 메시지의 id_space 미설정 시 'display' 로 간주.
     """
     if not by_message:
         return
@@ -9747,9 +9779,79 @@ def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: di
             mid = int(m.get("id") or 0)
         except Exception:
             mid = 0
-        atts = by_message.get(mid)
+        space = str(m.get("id_space") or "display")
+        atts = by_message.get((mid, space))
         if atts:
             m["_attachments"] = atts
+
+
+def _load_user_feedback_by_message(conversation_id: str, created_by: "str | None") -> dict[tuple, dict[str, Any]]:
+    """대화의 현재 사용자 투표 피드백(👍/👎, suggested=false)을 (message_id, id_space) 별로 그룹핑.
+
+    새로고침·대화 전환으로 history 를 다시 그릴 때, 이미 부여한 투표를 복원해 중복 부여를 막기
+    위함(assistant 첨부 영속 `_load_assistant_attachments_by_message` 와 대칭). "샘플 등록"
+    (suggested=true)은 투표 고유성과 분리되므로 제외한다.
+
+    **id_space 키 포함(H5(b) 해소)**: message_id 는 표시 store(`agent_runtime.messages.id`)와
+    core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 올 수 있어 숫자만 같아도 다른
+    답변이다. (message_id, message_id_space) 복합 키로 매칭해 fork·마이그 경로전환 시 wrong-bubble
+    복원을 차단한다.
+
+    피드백 정본은 PG(agent_kb)의 sample_feedback. fail-soft — 실패 시 빈 dict 를 반환해 이력
+    표시를 막지 않는다. created_by(=로그인 username)로 스코프되어 타 사용자 피드백은 노출 안 됨.
+    """
+    out: dict[tuple, dict[str, Any]] = {}
+    if not conversation_id or not created_by:
+        return out
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return out
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT message_id, message_id_space, vote FROM sample_feedback "
+                "WHERE conversation_id = %s AND created_by = %s "
+                "AND suggested = false AND message_id IS NOT NULL",
+                (conversation_id, created_by),
+            )
+            for row in cur.fetchall() or []:
+                mid_v, space_v, vote_v = row
+                try:
+                    space_n = str(space_v) if space_v else "display"
+                    out[(int(mid_v), space_n)] = {"vote": "down" if str(vote_v) == "down" else "up"}
+                except (TypeError, ValueError):
+                    continue
+    except Exception:
+        return {}
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    return out
+
+
+def _attach_user_feedback(messages: list[dict[str, Any]], by_message: dict[tuple, dict[str, Any]]) -> None:
+    """history assistant 메시지에 현재 사용자의 기존 피드백(`feedback`)을 주입.
+
+    프론트(_buildSampleFeedbackControls)는 message.feedback 가 있으면 해당 투표를 활성 표시한다.
+    매칭은 (message_id, id_space) 복합 키 — 두 id 공간의 숫자 겹침에 의한 wrong-bubble 복원 차단.
+    """
+    if not by_message:
+        return
+    for m in messages:
+        if str(m.get("role", "")).lower() != "assistant":
+            continue
+        try:
+            mid = int(m.get("id") or 0)
+        except Exception:
+            mid = 0
+        space = str(m.get("id_space") or "display")
+        fb = by_message.get((mid, space))
+        if fb:
+            m["feedback"] = fb
 
 
 def _get_history(
@@ -9809,6 +9911,7 @@ def _get_history(
                     meta["run_id"] = steps_v[0].get("run_id")
             messages_pg.append({
                 "id": int(msg_id),
+                "id_space": "display",  # agent_runtime.messages.id(표시 store) — 피드백 고유성 키 공간
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -9886,6 +9989,7 @@ LIMIT %s
         messages.append(
             {
                 "id": int(msg_id),
+                "id_space": "display",  # AgentMemoryMessages.Id(표시 store) — 피드백 고유성 키 공간
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -15316,6 +15420,15 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
     suggested = bool(data.get("suggested"))
     nl_question = str(data.get("nl_question") or "").strip()
     generated_sql = str(data.get("generated_sql") or "")
+    # 답변(메시지) 식별자 — (created_by, message_id, message_id_space) 단위 고유 피드백 강제용.
+    # message_id = /api/history 가 m["id"] 로 노출하는 표시 store/core 메시지 id. 부재 시 None.
+    try:
+        message_id = int(data.get("message_id")) if str(data.get("message_id") or "").strip() != "" else None
+    except (TypeError, ValueError):
+        message_id = None
+    # id_space = m["id_space"]("display"|"core") — message_id 숫자가 두 store 공간서 겹쳐도 답변을
+    # 명확히 구분(H5(b) 해소). 미지정/비정상은 "display" 로 정규화(대다수 경로).
+    message_id_space = "core" if str(data.get("message_id_space") or "").strip().lower() == "core" else "display"
     if not nl_question:
         return _json_error("nl_question 은 필수입니다.", 400)
     if len(nl_question) > 8000:
@@ -15347,24 +15460,19 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
     from shared.db import _pg_connect
     feedback_id: int | None = None
     try:
-        # autocommit=False — INSERT + lastval() 을 한 트랜잭션으로 묶어 id 회수 정확성 보장.
+        # autocommit=False — UPSERT + RETURNING 을 한 트랜잭션으로 묶어 id 회수 정확성 보장.
         pg = _pg_connect(autocommit=False)
     except Exception:
         return _json_error("피드백 저장소(PG) 연결 실패", 503)
     try:
-        _sfb.record_feedback(
+        # record_feedback 가 UPSERT(ON CONFLICT (created_by, message_id, message_id_space) … DO UPDATE)
+        # RETURNING id 로 적재/갱신된 행 id 직접 반환 — lastval() 은 DO UPDATE 경로 부정확하므로 미사용.
+        feedback_id = _sfb.record_feedback(
             pg, scope_key, nl_question, generated_sql,
             vote=vote, suggested=suggested, conversation_id=cid,
             created_by=str((account or {}).get("username") or "") or None,
+            message_id=message_id, message_id_space=message_id_space,
         )
-        try:
-            cur = pg.cursor()
-            cur.execute("SELECT lastval()")
-            row = cur.fetchone()
-            feedback_id = int(row[0]) if row and row[0] is not None else None
-            cur.close()
-        except Exception:
-            feedback_id = None
         pg.commit()
     except Exception as exc:
         try:
@@ -17563,6 +17671,20 @@ def history(
         messages, has_more, oldest_id, total_count, user_count = _get_history(
             conv_id, limit=limit, before_id=before_id
         )
+        # 새로고침·대화 전환 후에도 이미 부여한 👍/👎 를 복원해 중복 부여를 막는다(고유 피드백).
+        # best-effort: 피드백 상태 복원 실패는 history 응답을 막지 않는다(첨부 영속과 동형 fail-soft).
+        try:
+            _attach_user_feedback(
+                messages,
+                _load_user_feedback_by_message(
+                    conv_id, str((account or {}).get("username") or "") or None
+                ),
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "history: user feedback enrich failed (conversation_id=%s)",
+                conv_id, exc_info=True,
+            )
     else:
         messages, has_more, oldest_id, total_count, user_count = [], False, None, 0, 0
     # 대화의 현재 처리 상태를 포함 (progress bubble 복원용)
@@ -26313,7 +26435,7 @@ async def admin_reject_sample_feedback(feedback_id: int, request: Request) -> JS
 
 _METADATA_FIELD_CAPS = {
     # 입력 길이 cap — KB 본문 비대화/UI 깨짐/저장소 남용 방어. PG 컬럼은 text 라 DB 강제는 없으니 web 가 cap.
-    "scope_key": 64, "term": 200, "definition": 4000,
+    "scope_key": 64, "role_key": 64, "term": 200, "definition": 4000,
     "schema_name": 128, "table_name": 128, "column_name": 128, "code": 256, "label": 1000,
     # ITEM-11 Phase 2: 테이블/컬럼 설명·샘플 필드 cap. description 은 definition 과 동일(4000).
     "description": 4000, "nl_question": 2000, "domain": 64,
@@ -26403,6 +26525,51 @@ def _metadata_check_scope(scope_key: str):
     return sk, None
 
 
+_GLOSSARY_COMMON_ROLE = "*"  # 역할 비특정(공용) 용어 — modules.kb_glossary.COMMON_ROLE 와 동일.
+
+
+def _metadata_valid_role_keys() -> set[str]:
+    """허용 role_key 집합 — 등록된 WebRoles.RoleKey ∪ {'*'(공용)}. 조회 실패 시 {'*'}만(보수적).
+
+    용어사전 역할 차원(0021): role_key 는 WebRoles.RoleKey(admin/operator/sales/…) 또는 '*'(공용).
+    역할별 비중복 namespace 를 위해 write 시 검증한다(임의 문자열 저장 방지).
+    """
+    keys = {_GLOSSARY_COMMON_ROLE}
+    conn = None
+    try:
+        conn = _connect_memory()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT RoleKey FROM WebRoles")
+            for row in (cur.fetchall() or []):
+                rk = str((row[0] if not isinstance(row, dict) else row.get("RoleKey")) or "").strip().lower()
+                if rk:
+                    keys.add(rk)
+        finally:
+            cur.close()
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return keys
+
+
+def _metadata_check_role_key(role_key, *, default=_GLOSSARY_COMMON_ROLE):
+    """role_key 검증 → (normalized, None) 또는 (None, JSONResponse[400]). 빈값 → default('*')."""
+    rk = str(role_key or "").strip().lower()
+    if not rk:
+        rk = default
+    if len(rk) > _METADATA_FIELD_CAPS["role_key"]:
+        return None, _json_error("role_key 가 너무 깁니다.", 400)
+    if rk not in _metadata_valid_role_keys():
+        return None, _json_error("허용되지 않은 role_key 입니다 (등록된 역할 또는 '*' 공용).", 400)
+    return rk, None
+
+
 def _metadata_str_field(data: dict, key: str, *, required: bool = True):
     """문자열 필드 추출+trim+cap 검증 → (value, None) 또는 (None, JSONResponse[400])."""
     val = str((data or {}).get(key) or "").strip()
@@ -26451,13 +26618,23 @@ def _metadata_iso(v):
 
 @app.get("/api/admin/metadata/glossary")
 def admin_list_glossary(request: Request) -> JSONResponse:
-    """용어 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
+    """용어 목록 — 단일 scope(역할 차원 포함). 권한 kb.ingest.manual.
+
+    ?scope_key= (기본 'common'). ?role_key= 지정 시 그 역할 행만(공용 '*' 미포함) 필터 — 역할별
+    조회. 미지정이면 scope 의 모든 역할 행(role_key 필드로 구분 표시).
+    """
     account, error = _metadata_resolve_account(request)
     if error:
         return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
         return serr
+    role_filter = None
+    rk_param = request.query_params.get("role_key")
+    if rk_param is not None and str(rk_param).strip() != "":
+        role_filter, rerr = _metadata_check_role_key(rk_param)
+        if rerr:
+            return rerr
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect_ro
     try:
@@ -26465,7 +26642,7 @@ def admin_list_glossary(request: Request) -> JSONResponse:
     except Exception:
         return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
     try:
-        rows = _kg.list_glossary_admin(pg, scope_key)
+        rows = _kg.list_glossary_admin(pg, scope_key, role_key=role_filter)
     except Exception:
         logging.getLogger(__name__).warning("admin_list_glossary 조회 실패", exc_info=True)
         return _json_error("용어 목록 조회 실패", 503)
@@ -26474,12 +26651,14 @@ def admin_list_glossary(request: Request) -> JSONResponse:
             pg.close()
         except Exception:
             pass
+    # row: (id, scope_key, role_key, term, definition, source, created_at, updated_at)
     items = [{
-        "id": int(r[0]), "scope_key": str(r[1] or ""), "term": str(r[2] or ""),
-        "definition": str(r[3] or ""),
-        "created_at": _metadata_iso(r[4]), "updated_at": _metadata_iso(r[5]),
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "role_key": str(r[2] or "*"),
+        "term": str(r[3] or ""), "definition": str(r[4] or ""), "source": str(r[5] or "manual"),
+        "created_at": _metadata_iso(r[6]), "updated_at": _metadata_iso(r[7]),
     } for r in rows]
-    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
+    return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key,
+                         "role_key": role_filter})
 
 
 @app.post("/api/admin/metadata/glossary")
@@ -26492,6 +26671,9 @@ async def admin_create_glossary(request: Request) -> JSONResponse:
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
         return serr
+    role_key, rerr = _metadata_check_role_key(data.get("role_key"))
+    if rerr:
+        return rerr
     term, terr = _metadata_str_field(data, "term")
     if terr:
         return terr
@@ -26505,7 +26687,7 @@ async def admin_create_glossary(request: Request) -> JSONResponse:
     except Exception:
         return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
     try:
-        _kg.upsert_glossary_term(pg, scope_key, term, definition)
+        _kg.upsert_glossary_term(pg, scope_key, term, definition, role_key=role_key)
         pg.commit()
     except Exception:
         try:
@@ -26520,9 +26702,9 @@ async def admin_create_glossary(request: Request) -> JSONResponse:
         except Exception:
             pass
     _metadata_audit(request, account, action="glossary.term.create",
-                    resource_id=f"{scope_key}:{term}",
-                    change_json={"scope_key": scope_key, "term": term})
-    return JSONResponse({"ok": True, "scope_key": scope_key, "term": term})
+                    resource_id=f"{scope_key}:{role_key}:{term}",
+                    change_json={"scope_key": scope_key, "role_key": role_key, "term": term})
+    return JSONResponse({"ok": True, "scope_key": scope_key, "role_key": role_key, "term": term})
 
 
 @app.put("/api/admin/metadata/glossary/{term_id}")
@@ -26535,6 +26717,12 @@ async def admin_update_glossary(term_id: int, request: Request) -> JSONResponse:
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
         return serr
+    # role_key 는 선택 — 본문에 있으면 역할 귀속까지 변경(공용↔역할 이동), 없으면 기존 유지.
+    role_key = None
+    if "role_key" in (data or {}) and str(data.get("role_key") or "").strip() != "":
+        role_key, rerr = _metadata_check_role_key(data.get("role_key"))
+        if rerr:
+            return rerr
     term, terr = _metadata_str_field(data, "term")
     if terr:
         return terr
@@ -26548,16 +26736,20 @@ async def admin_update_glossary(term_id: int, request: Request) -> JSONResponse:
     except Exception:
         return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
     try:
-        affected = _kg.update_glossary_term(pg, int(term_id), scope_key, term, definition)
+        affected = _kg.update_glossary_term(pg, int(term_id), scope_key, term, definition,
+                                            role_key=role_key)
         if affected <= 0:
             pg.rollback()
             return _json_error("해당 용어를 찾을 수 없습니다.", 404)
         pg.commit()
-    except Exception:
+    except Exception as exc:
         try:
             pg.rollback()
         except Exception:
             pass
+        # UNIQUE(scope,role,term) 충돌 → 409 (같은 역할에 동일 용어 존재).
+        if exc.__class__.__name__ in ("UniqueViolation", "IntegrityError"):
+            return _json_error("같은 역할에 동일 용어가 이미 있습니다.", 409)
         logging.getLogger(__name__).warning("admin_update_glossary 실패 id=%s", term_id, exc_info=True)
         return _json_error("용어 수정 실패", 500)
     finally:
@@ -26567,7 +26759,7 @@ async def admin_update_glossary(term_id: int, request: Request) -> JSONResponse:
             pass
     _metadata_audit(request, account, action="glossary.term.update",
                     resource_id=int(term_id),
-                    change_json={"scope_key": scope_key, "term": term})
+                    change_json={"scope_key": scope_key, "role_key": role_key, "term": term})
     return JSONResponse({"ok": True, "id": int(term_id)})
 
 
@@ -26606,6 +26798,253 @@ def admin_delete_glossary(term_id: int, request: Request) -> JSONResponse:
         _metadata_audit(request, account, action="glossary.term.delete",
                         resource_id=int(term_id), change_json={"scope_key": scope_key})
     return JSONResponse({"ok": True, "id": int(term_id), "deleted": int(affected)})
+
+
+# ── 용어사전 대화 자율등록 검토 큐(glossary_feedback) ──────────────────────────────
+# 대화에서 LLM 이 추론한 용어 후보 큐. 하이브리드 자동승급(0021): 고신뢰도는 자동 등록(auto_promoted),
+# 저신뢰도는 pending. 권한 kb.glossary.curate(검수자) 가 promote(승급)/reject(거부·되돌리기) 한다.
+# 적재/승급/거부 정본 = feature-0002 modules.kb_glossary (PG/agent_kb). web 은 RBAC/audit 경계만.
+
+def _glossary_feedback_iso(v):
+    return _metadata_iso(v)
+
+
+@app.get("/api/admin/metadata/glossary-feedback")
+def admin_list_glossary_feedback(request: Request) -> JSONResponse:
+    """검토 큐 목록. 권한 kb.glossary.curate. ?status=(기본 pending, 'all'=전체) &scope_key= &role_key=."""
+    account, error = _metadata_resolve_account_perm(request, "kb.glossary.curate")
+    if error:
+        return error
+    status = str(request.query_params.get("status") or "pending").strip().lower()
+    if status in ("all", ""):
+        status = None
+    elif status not in ("pending", "auto_promoted", "promoted", "rejected"):
+        return _json_error("허용되지 않은 status 입니다.", 400)
+    scope_filter = None
+    sk_param = request.query_params.get("scope_key")
+    if sk_param is not None and str(sk_param).strip() != "":
+        scope_filter, serr = _metadata_check_scope(sk_param)
+        if serr:
+            return serr
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _kg.list_glossary_feedback(pg, status=status, scope_key=scope_filter)
+        pending_count = _kg.count_glossary_feedback(pg, status="pending")
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_glossary_feedback 조회 실패", exc_info=True)
+        return _json_error("검토 큐 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # row: (id, scope_key, role_key, term, suggested_definition, confidence, status,
+    #       source_run_id, conversation_id, promoted_glossary_id, approved_by, created_at, updated_at)
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "role_key": str(r[2] or "*"),
+        "term": str(r[3] or ""), "suggested_definition": str(r[4] or ""),
+        "confidence": float(r[5]) if r[5] is not None else None, "status": str(r[6] or ""),
+        "source_run_id": (str(r[7]) if r[7] is not None else None),
+        "conversation_id": (str(r[8]) if r[8] is not None else None),
+        "promoted_glossary_id": (int(r[9]) if r[9] is not None else None),
+        "approved_by": (str(r[10]) if r[10] is not None else None),
+        "created_at": _glossary_feedback_iso(r[11]), "updated_at": _glossary_feedback_iso(r[12]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items),
+                         "pending_count": int(pending_count), "status": status})
+
+
+@app.post("/api/admin/metadata/glossary-feedback/{feedback_id}/promote")
+def admin_promote_glossary_feedback(feedback_id: int, request: Request) -> JSONResponse:
+    """검토 큐(pending) → 용어사전 승급. 권한 kb.glossary.curate."""
+    account, error = _metadata_resolve_account_perm(request, "kb.glossary.curate")
+    if error:
+        return error
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        gid = _kg.promote_glossary_feedback(
+            pg, int(feedback_id), approved_by=str((account or {}).get("username") or "") or None)
+        if gid is None:
+            pg.rollback()
+            return _json_error("해당 후보를 찾을 수 없거나 이미 처리되었습니다.", 404)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_promote_glossary_feedback 실패 id=%s", feedback_id, exc_info=True)
+        return _json_error("용어 승급 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="glossary.feedback.promote",
+                    resource_id=int(feedback_id),
+                    change_json={"feedback_id": int(feedback_id), "glossary_id": int(gid)})
+    return JSONResponse({"ok": True, "id": int(feedback_id), "glossary_id": int(gid)})
+
+
+@app.post("/api/admin/metadata/glossary-feedback/{feedback_id}/reject")
+def admin_reject_glossary_feedback(feedback_id: int, request: Request) -> JSONResponse:
+    """검토 큐 거부(pending) 또는 자동등록 되돌리기(auto_promoted → source='auto' 행 회수).
+    권한 kb.glossary.curate. 멱등."""
+    account, error = _metadata_resolve_account_perm(request, "kb.glossary.curate")
+    if error:
+        return error
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.reject_glossary_feedback(pg, int(feedback_id))
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_reject_glossary_feedback 실패 id=%s", feedback_id, exc_info=True)
+        return _json_error("용어 후보 거부 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        _metadata_audit(request, account, action="glossary.feedback.reject",
+                        resource_id=int(feedback_id), change_json={"feedback_id": int(feedback_id)})
+    return JSONResponse({"ok": True, "id": int(feedback_id), "rejected": int(affected)})
+
+
+# ── 용어 유사어/참조 링크(glossary_relations) ─────────────────────────────────────
+# 역할별 비중복 namespace 라도 유사 의미 용어는 참조로 연결(역할 경계 횡단 허용). 권한 kb.ingest.manual.
+
+@app.get("/api/admin/metadata/glossary/{term_id}/relations")
+def admin_list_glossary_relations(term_id: int, request: Request) -> JSONResponse:
+    """해당 용어의 인접 참조(유사어/동의어/see_also) 목록. 권한 kb.ingest.manual."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _kg.list_glossary_relations(pg, int(term_id))
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_glossary_relations 실패 id=%s", term_id, exc_info=True)
+        return _json_error("유사어 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # row: (relation_id, relation_type, from_id, to_id, other_id, other_scope, other_role, other_term, other_def)
+    items = [{
+        "relation_id": int(r[0]), "relation_type": str(r[1] or ""),
+        "from_id": int(r[2]), "to_id": int(r[3]),
+        "other_id": int(r[4]), "other_scope_key": str(r[5] or ""), "other_role_key": str(r[6] or "*"),
+        "other_term": str(r[7] or ""), "other_definition": str(r[8] or ""),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items), "term_id": int(term_id)})
+
+
+@app.post("/api/admin/metadata/glossary/{term_id}/relations")
+async def admin_add_glossary_relation(term_id: int, request: Request) -> JSONResponse:
+    """유사어 참조 추가. 권한 kb.ingest.manual. body: to_id(필수), relation_type(synonym|similar|see_also)."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    try:
+        to_id = int(data.get("to_id"))
+    except (TypeError, ValueError):
+        return _json_error("to_id 는 필수(정수)입니다.", 400)
+    if int(to_id) == int(term_id):
+        return _json_error("자기 자신은 참조로 연결할 수 없습니다.", 400)
+    relation_type = str(data.get("relation_type") or "similar").strip().lower()
+    if relation_type not in ("synonym", "similar", "see_also"):
+        return _json_error("relation_type 은 synonym|similar|see_also 중 하나여야 합니다.", 400)
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        # 두 용어 존재 확인(FK 위반 전 명시 404).
+        if _kg.get_glossary_term(pg, int(term_id)) is None or _kg.get_glossary_term(pg, int(to_id)) is None:
+            pg.rollback()
+            return _json_error("연결 대상 용어를 찾을 수 없습니다.", 404)
+        _kg.add_glossary_relation(pg, int(term_id), int(to_id), relation_type,
+                                  created_by=str((account or {}).get("username") or "") or None)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_add_glossary_relation 실패 from=%s to=%s", term_id, to_id, exc_info=True)
+        return _json_error("유사어 추가 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    _metadata_audit(request, account, action="glossary.relation.create",
+                    resource_id=int(term_id),
+                    change_json={"from_id": int(term_id), "to_id": int(to_id), "relation_type": relation_type})
+    return JSONResponse({"ok": True, "from_id": int(term_id), "to_id": int(to_id),
+                         "relation_type": relation_type})
+
+
+@app.delete("/api/admin/metadata/glossary/relations/{relation_id}")
+def admin_delete_glossary_relation(relation_id: int, request: Request) -> JSONResponse:
+    """유사어 참조 삭제(by relation id, 멱등). 권한 kb.ingest.manual."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return _json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.delete_glossary_relation(pg, int(relation_id))
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_delete_glossary_relation 실패 id=%s", relation_id, exc_info=True)
+        return _json_error("유사어 삭제 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        _metadata_audit(request, account, action="glossary.relation.delete",
+                        resource_id=int(relation_id), change_json={"relation_id": int(relation_id)})
+    return JSONResponse({"ok": True, "id": int(relation_id), "deleted": int(affected)})
 
 
 # ── ENUM 코드사전(enum_dictionary) ────────────────────────────────────────────

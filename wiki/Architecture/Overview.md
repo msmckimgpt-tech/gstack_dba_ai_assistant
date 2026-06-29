@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 11 (feature-0001 ~ feature-0011) |
+| Feature 수 | 12 (feature-0001 ~ feature-0012) |
 
 ## 목차
 
@@ -82,6 +82,7 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0009-group-conversation\|feature-0009-group-conversation]] | 그룹 대화 — 멤버십 · `@assistant` 멘션 · 열람≠발화 분리 |
 | [[../Features/feature-0010-google-drive-integration\|feature-0010-google-drive-integration]] | Google Drive 연동 토대 — 계정별 OAuth 암호화 + MCP seam (비활성) |
 | [[../Features/feature-0011-shared-extraction\|feature-0011-shared-extraction]] | 공통 코드 `shared/` 점진 추출 (P5a — model_catalog·config·db alias) |
+| [[../Features/feature-0012-web-router-modularization\|feature-0012-web-router-modularization]] | web `app.py` 도메인별 `APIRouter` 점진 분할 토대 (P5b — route-parity 안전망 + 의존성 audit, behavior-neutral) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -96,6 +97,7 @@ unit/feature-NNNN-<purpose>/
 | feature-0009 | feature-0003, feature-0002 | uses | Web UI(공유·첨부·avatar) + ask_jobs 큐(`@assistant`) 위 그룹 대화 |
 | feature-0010 | feature-0003, feature-0002 | uses | 인증/라우트 app.py 인라인 + `cred_crypto` 토큰 암호화 |
 | feature-0011 | feature-0002, feature-0003 | uses | 공통 모듈 `shared/` 추출 + import 재배선 (모듈 alias shim) |
+| feature-0012 | feature-0003 | uses | `app.py` 도메인별 `APIRouter` 점진 분할 (route-parity 안전망 + 의존성 audit, behavior-neutral) |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 
@@ -109,6 +111,7 @@ unit/feature-NNNN-<purpose>/
 - **그룹 대화 + 보안 보강 (2026-06-19~23)**: 단일 owner 대화 → 멤버십 기반(feature-0009, **열람 ≠ 발화** RBAC 분리). 사용자 보안 보강 6종(공유 만료·로그인 제한·감사 변조방지·LLM 한도·인젝션 방지·2FA) 완료. [[../Features/feature-0009-group-conversation]] · [[../../docs/SECURITY|SECURITY.md]].
 - **NL→SQL 정확도 flywheel (2026-06)**: 평가 harness + 샘플쿼리 few-shot(pgvector) + self-reflection + 용어/ENUM 사전. [[../concepts/nl2sql-flywheel]].
 - **메타데이터 거버넌스 + 토대 확장 (2026-06-24)**: ITEM-11 관리 콘솔 메타데이터 거버넌스(용어·ENUM·테이블/컬럼 설명·주입·AI 자동완성)로 NL→SQL 컨텍스트 강화. feature-0010 Google Drive 연동 토대(계정별 OAuth 암호화 + MCP seam, 비활성). feature-0011 공통 코드 `shared/` 점진 추출(P5a). [[../Features/feature-0011-shared-extraction]].
+- **피드백 고유화 · 용어사전 자율등록 · router 분할 토대 (2026-06-29)**: 답변 피드백(👍/👎) 답변당 고유화(새로고침·전환 후 중복 차단). 관리 콘솔 용어사전 대화 자율등록(역할 분리·유사어·검토 큐 + 용어 검토 큐 IA 중첩). feature-0012 web `app.py` 도메인별 `APIRouter` 점진 분할 토대(P5b — route-parity 안전망 + 의존성 audit, behavior-neutral). [[../Features/feature-0012-web-router-modularization]].
 
 ## 4. 관련 문서
 

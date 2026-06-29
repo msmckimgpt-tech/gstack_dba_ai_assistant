@@ -7736,9 +7736,16 @@ a { color: inherit; }
   margin-left: 4px;
   white-space: nowrap;
 }
-.message-feedback[data-done="1"] .message-feedback-btn {
-  opacity: .4;
-  pointer-events: none;
+/* 답변당 사용자별 고유 피드백(👍/👎): 이미 부여한 투표를 활성 표시(새로고침·전환 후 복원).
+   변경 허용(last-write-wins) — 잠그지 않고, 현재 선택만 강조한다. */
+.message-feedback-btn.is-active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  opacity: 1;
+}
+/* 전송 중(중복 부여 방지) 시각 피드백 */
+.message-feedback[data-busy="1"] .message-feedback-btn {
+  opacity: .5;
 }
 /* ITEM-08: "AI 로 고치기" 표적 재수정 버튼 (실패 SQL 결과에만 노출) */
 .message-fix-with-ai {
@@ -7829,6 +7836,28 @@ a { color: inherit; }
 }
 .admin-meta-subtab:hover { color: var(--text); }
 .admin-meta-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+/* 용어사전 2차 보기 탭(메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}) — 메인 서브탭보다 시각적 하위(필 형태). */
+.admin-meta-glossary-views {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 14px;
+}
+.admin-meta-gview {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: color .13s, border-color .13s, background .13s;
+}
+.admin-meta-gview:hover { color: var(--text); }
+.admin-meta-gview.is-active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
 .admin-meta-form {
   display: flex;
   flex-direction: column;
@@ -7900,6 +7929,26 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-tag-ok { background: rgba(22, 163, 74, 0.12); border-color: rgba(22, 163, 74, 0.4); color: #15803d; }
 .admin-meta-tag-warn { background: rgba(202, 138, 4, 0.12); border-color: rgba(202, 138, 4, 0.4); color: #a16207; }
 .admin-meta-tag-stale { background: rgba(220, 38, 38, 0.12); border-color: rgba(220, 38, 38, 0.4); color: #b91c1c; }
+/* 용어사전 역할/검토 큐/유사어 (0021) */
+.admin-meta-tag-role { background: rgba(37, 99, 235, 0.12); border-color: rgba(37, 99, 235, 0.4); color: #1d4ed8; }
+.admin-meta-subtab-badge {
+  display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px;
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  border-radius: 999px; background: var(--primary, #2563eb); color: #fff; vertical-align: middle;
+}
+.admin-meta-review-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.admin-meta-rel-panel {
+  border: 1px dashed var(--border); border-radius: var(--r-md, 10px);
+  padding: 10px 12px; margin: 2px 0 8px; background: var(--surface-2, var(--bg));
+}
+.admin-meta-rel-head { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); margin-bottom: 8px; }
+.admin-meta-rel-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.admin-meta-rel-item {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 2px 4px 2px 10px; border: 1px solid var(--border); border-radius: 999px;
+}
+.admin-meta-rel-item .admin-meta-del { padding: 0 6px; min-width: 0; line-height: 1.6; }
+.admin-meta-rel-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
 /* 부트스트랩 패널 */
 .admin-meta-bootstrap {

@@ -8,6 +8,94 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T041724-doc-sync-rn-0629 [SKIPPED:non-policy-doc] — 릴리즈노트 06-29 블록 정합 + 캐시버스터 bump (TASK-20260629T041724-doc-sync-rn-0629, 비-정책 doc-only)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
+- 변경: `static/release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 3항목 prepend(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + `index.html`·`admin.html` cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`.
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 3항목 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터/응답계약 무영향. 원천 코드(40c0de0 glossary-conv-autoreg·284e75a glossary-review-nest·31aa67a feedback-unique-vote)는 각 cycle 에서 이미 적대 패널 + 라이브 검증·배포 완료 → 본 릴리즈노트 cycle 은 비-정책 doc 경량. 사실 정확성·평이화·비노출은 머지 3건 REPORT/diff 1:1 대조로 검증.
+- 적대 제외 판정: 첨부 wrong-bubble(ec39a60)은 REPORT·커밋이 "정상 display 경로 동작 동일"(스키마/마이그·프론트·cache-buster 무변경, 드문 fork/마이그 cross-space 엣지) 명시 → 사용자 체감 변화 0 이라 항목 미추가(보수적 결정).
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 3항목. 비-user-facing(내부/devops — OAuth 폴백 1d0ace4·b9335b5, conversation_audit persona 84f2e45, template v3.36.0 0f69e6d, web-router-modularization 99bffb1 behavior-neutral) 의도적 제외 확인.
+- Human Approval Needed: 아니오(자동 동기화).
+- Cross-ref: CHG-20260629T041724-doc-sync-rn-0629 / TASK-20260629T041724-doc-sync-rn-0629 / FUNCTION '릴리즈노트 콘텐츠 — 06-29 블록 신설' / 원천 머지 40c0de0·284e75a·31aa67a. META(STATUS·wiki)는 별도 commit/상위 루프 소관.
+
+## REV-20260629T123000-glossary-review-nest-deploy [DEPLOY-RECORD] — 용어 검토 큐 IA 중첩 배포 완료 (TASK-20260629-glossary-review-nest)
+- Date: 2026-06-29. 프런트 전용(정적 자산) 변경 — deploy_scope:included(동일 admin 영역 직전 배포 사용자 승인 + 본 변경 프런트 전용·되돌리기 용이) 따라 web-only 재배포. 첫 배포 surface 는 본 세션 선행 cycle 에서 완료.
+- 실행: `repo-web` 이미지 재빌드(신규 admin.html/admin.js/styles.css baked) → web --force-recreate(healthy). memory-init/ask-worker 미touch(스키마·agent-core 무변경).
+- 검증(컨테이너 baked 자산): admin.html cache-buster `?v=20260629-glossary-review-nest`(admin.js·styles.css) · `data-meta-subtab="glossary-review"` 제거(0) · `#metadataGlossaryViews` strip(1) · `data-glossary-view` 2개 · `ADMIN_TAB_PERMISSIONS.metadata` 에 kb.glossary.curate 포함 · `_metaSyncGlossaryViews` 정의 · functional glossary-review 잔재 0 · web healthz OK. (cache-buster bump 으로 직전 glossary-conv-autoreg UI 미전파 갭도 동반 propagate.)
+- Cross-ref: REV-20260629T120000-glossary-review-nest / CHG-20260629-glossary-review-nest.
+
+## REV-20260629T120711-attach-id-space [SKIPPED:h5b-attach-layer-direct-closure-of-prior-adversarial-finding-self-review] — 첨부 영속 레이어에 message_id_space 추가 (TASK-20260629T120711-attach-id-space, Major §12.3)
+- Date: 2026-06-29. 선행 REV-20260629T022055-feedback-id-space 의 **잔여** 항목("동일 특성을 공유하는 첨부 영속 레이어 `_load_assistant_attachments_by_message`, message.id 키 — 별도 feature 범위")을 사용자 요청으로 마저 완수. 본 cycle 은 이미 적대 backend 리뷰(H1~H7)가 도출·수용한 **H5(b)** 의 첨부 레이어 직접 폐쇄이고, 피드백 레이어에서 검증된 동일 패턴의 미러 + 전용 cross-space 회귀 테스트라 full 적대 패널 대신 적대 self-review + 회귀 테스트로 종결(check #9 인식 `[SKIPPED:<사유>]`).
+- 결함(H5(b) 첨부 레이어 재기술): `_load_assistant_attachments_by_message` 는 MetaJson.message_id **단일 키**로 그룹핑, `_attach_assistant_attachments` 는 history 메시지 `id` 단일 키로 매칭했다. message.id 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).
+- 해소: id_space 차원 추가 → (message_id, message_id_space) 복합 키. materialize 가 MetaJson 에 `message_id_space="display"` 영속(message_id 출처 `_load_latest_assistant_message` 가 표시 store 전용이라 불변), 로더·attacher 가 복합 키로 그룹핑·매칭. `_attach_user_feedback` 와 정확히 대칭.
+- 적대 self-review (반증 시도 → 안전 확인):
+  1. **정상 경로 회귀?** — display 메시지(`id_space="display"`) + display 첨부(MetaJson space='display')는 같은 키라 기존과 동일 매칭. 현재 `_get_history` 의 두 호출부(PG·MySQL)는 항상 display 리스트에 attach 하므로 관측 동작 불변. (반증 실패=안전.)
+  2. **legacy 행 누락?** — message_id_space 키 없는 기존 MetaJson 행은 로더·materialize 모두 'display' 로 간주 → 기존 display 메시지에 정상 합류(L4 단언). 무손실.
+  3. **wrong-bubble 실증** — A3: display 첨부가 같은 숫자 id 의 core 메시지엔 미주입·display 메시지엔 정상 주입. L4: core/display 같은 숫자 100 이 별개 키. (방어가 실제로 동작.)
+  4. **stale int-key 소비자?** — `_load_assistant_attachments_by_message`/`_attach_assistant_attachments` 의 src 호출부는 `_get_history` 2곳뿐, 테스트는 test_task0285 뿐(grep 확인). 옛 int-key 기대 소비자 0 → 타입 변경(dict[int]→dict[tuple]) 안전.
+  5. **share/프론트 영향?** — share view 는 본 함수 미호출(redact 는 MetaJson.attachment_derived flag 기반), 프론트는 서버가 채운 `_attachments` 만 렌더 → JS·cache-buster 불요.
+  6. **join 테이블 범위?** — `core_attachment_derived_messages.message_id`(비-FK)는 라이브 surfacing 에서 message_id 로 조회되지 않음(INSERT/mirror/backfill 전용) → wrong-bubble surface 아님, 범위 밖(Resume≠Re-scope).
+- 검증: 대상 테스트 11/11(A1~A3·L1~L4·V·S), `make test` 전체 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
+- Human Approval Needed: 없음(자동 동기화). 배포는 web 코드 재빌드 동반(스키마 마이그 없음) — deploy_scope: included(FIRST_REQUEST 전역) 자동 배포 대상.
+- Cross-ref: 선행 REV-20260629T022055-feedback-id-space(잔여 출처) / CHG-20260629T120711-attach-id-space.
+## REV-20260629T120000-glossary-review-nest [SUBAGENT:adversarial-state-machine + adversarial-access-control + adversarial-regression-dom] — SHIP-WITH-FIXES (MAJOR 1 수정)
+- Date: 2026-06-29. TASK-20260629-glossary-review-nest(Minor §12.3, 프런트 IA). §18.8 적대 검증 워크플로 3 lens 병렬(상태머신·렌더 / 권한 게이트·접근경계 / 회귀·DOM·XSS). **BLOCKER 0, MAJOR 1(3 lens 독립 동일근본), MINOR 2, NIT 4**.
+- **[MAJOR] 적발→수정**: 부모 `ADMIN_TAB_PERMISSIONS.metadata = [ingest.manual, sample.curate]` 가 `kb.glossary.curate` 누락 → `canSeeTab("metadata")` 가 curate-only 사용자에게 false → 메타데이터 탭 자체 미표시 → 중첩된 용어 검토 큐 도달 불가. 본 변경이 추가한 `_metaSubtabVisible` 의 OR(curate) 분기·`_GLOSSARY_VIEW_PERM.review` 가 그 페르소나에 dead path 가 되어 변경의 명시 목표(curate-only 접근 보존) 무력화. **수정**: 탭 게이트에 `kb.glossary.curate` 추가(backend `admin_list_glossary_feedback` 가 curate 단독 200 → 표시 확장이 실 인가와 정합, 서버 403 이 실경계). pre-existing 갭이나 본 IA 가 큐를 더 깊이 중첩하므로 동반 수정이 정합.
+- **[MINOR] 수정**: 메타 탭 재진입 분기에 `_metaSyncGlossaryViews()`+`_metaPrimeReviewBadge()` 추가(strip 가시성·active·배지 stale 방어). **[NIT] 수정**: gview 클릭 핸들러의 `_metaSyncGlossaryViews` 이중 호출 제거(_metaRenderForm 위임); gview 버튼 `aria-selected` 추가(a11y).
+- **결함 없음 확인(적대 검증됨)**: 타 서브탭(enums/tables/columns/samples) 게이트 회귀 0(_metaSubtabVisible 비-glossary 분기 = 기존 `!perm||can(perm)` 동치), ingest-only/둘다없음 persona 접근 경계 견고(curate-only list 누수·CRUD 폼 노출 차단 — _metaSyncGlossaryViews 가 권한 없는 보기 보정), XSS(gview/배지 textContent·정적 HTML, innerHTML 미사용), 부트스트랩/역할필터/scope 정합, 잔여 glossary-review 참조 0, 백엔드/route 무변경.
+- 검증: node --check PASS. Human Approval Needed: 없음(자동 동기화 + deploy_scope:included). 프런트 SHIP.
+- Cross-ref: TASK-20260629-glossary-review-nest / CHG-20260629-glossary-review-nest / 선행 TASK-20260629-glossary-conv-autoreg.
+
+## REV-20260629T112000-glossary-conv-autoreg-deploy [DEPLOY-RECORD] — 용어사전 대화 자율등록 배포 완료 (TASK-20260629-glossary-conv-autoreg)
+- Date: 2026-06-29. 배포 승인 근거: 사용자 AskUserQuestion "지금 배포"(라이브 스키마 변경 동반이라 deploy_scope:included 와 전역 deploy-confirm 정책 교차 확인 후 명시 승인). FIRST_REQUEST 정책상 승인 근거 기록.
+- 실행: ① `repo-web`·`repo-ask-worker`·`repo-memory-init` 이미지 재빌드(공유 Dockerfile) → ② `memory-init` 재실행(`agent_core.py --init-memory` → `_ensure_pg_schema()` 가 agent_kb_schema.sql 0023 미러 idempotent 적용, exit 0 "schema 적용 완료") → ③ `web`+`ask-worker` --force-recreate(둘 다 healthy).
+- 검증: 라이브 PG(`agent_kb`) — kb_glossary.role_key/source 컬럼·glossary_feedback·glossary_relations 테이블·ux_kb_glossary_scope_role_term 제약 전부 present. 런타임 `web.app`: kb.glossary.curate 권한 + 신규 5 라우트 등록 + 코어 함수(auto_promote_or_queue·_feedback_status 등) present. web/ask-worker 부팅 로그 에러 0.
+- Cross-ref: REV-20260629T103000-glossary-conv-autoreg / feature-0002 CHG-20260629T110000-glossary-autoreg-bootstrap-sql.
+
+## REV-20260629T022055-feedback-id-space [SKIPPED:h5b-direct-closure-of-prior-adversarial-finding-self-review] — 피드백 고유성 키에 id_space 추가 (TASK-20260629T022055-feedback-id-space, Major §12.3)
+- Date: 2026-06-29. 선행 REV-20260629T014345-feedback-unique-vote 의 적대 backend 리뷰가 **CONFIRMED→수용(watch-item)** 한 H5(b)(두 id 공간 모호성)를 사용자 요청으로 마저 해소. 본 cycle 은 그 한정 결함의 직접 수정이라 full 적대 패널 대신 self-review + 회귀 테스트로 종결(설계가 이미 H5(b) 분석에서 도출됨).
+- 결함(H5(b) 재기술): `message.id` 가 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 온다(숫자 겹침). 0021 의 (created_by, message_id) 키는 cross-space 에서 (a) DB 충돌(다른 답변 같은 키 → UPSERT 가 남의 투표 덮음) (b) wrong-bubble 복원 가능.
+- 해소: id_space("display"|"core") 차원 추가 → 키 (created_by, message_id, message_id_space). 두 공간의 같은 숫자 id 가 다른 키가 되어 (a)(b) 모두 차단. /api/history 4개 빌더가 id_space 노출, record_feedback/endpoint/app.js/복원 헬퍼가 전 경로 일관 전달·매칭.
+- 설계 판단:
+  1. **인덱스 신규명**: 3-col 인덱스를 `ux_sample_feedback_user_msg_space_vote`(신규)로 — 구 2-col 동명 인덱스가 있으면 부트스트랩 `CREATE … IF NOT EXISTS` 가 정의 변경을 감지 못하는 same-name no-op trap 회피(구명 DROP + 신명 CREATE 멱등).
+  2. **default 'display'**: 신규 컬럼 NOT NULL DEFAULT 'display' — 라이브 적재분은 전부 표시 store 경로라 기존 행 정합.
+  3. **ON CONFLICT 추론**: 3-col + 동일 술어로 신규 인덱스를 arbiter 추론(컬럼셋+술어 매칭, 인덱스명 무관). suggested=true 는 술어 제외 → plain INSERT 보존.
+  4. **하위호환**: id_space 기본 'display' 라 미전송 클라이언트·기존 행 모두 'display' 로 정합(대다수 경로 동작 동일).
+- 잔여: 동일 특성을 공유하는 첨부 영속 레이어(`_load_assistant_attachments_by_message`, message.id 키)는 본 cycle 범위 밖(별도 feature) — 피드백 한정 해소.
+- 검증: flywheel 13/13(3-col ON CONFLICT·id_space 전달 단언)·curation 15/15(id_space 전달)·두 feature 전체 회귀 0. py_compile·node --check·alembic chain linear(0021→0022 단일 head).
+- Human Approval Needed: 없음(자동 동기화). 배포는 0022 스키마 적용 동반 — confirm 대상.
+- Cross-ref: feature-0002 REV-20260629T022055-feedback-id-space / 마이그 0022 / 선행 REV-20260629T014345-feedback-unique-vote(H5(b) 출처).
+
+## REV-20260629T014345-feedback-unique-vote [SUBAGENT:adversarial-backend] — 답변당 사용자별 고유 피드백 강제 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
+- Date: 2026-06-29. 결정(AskUserQuestion): 재투표 **변경 허용**(👍↔👎, UPSERT last-write-wins, 답변당 1행).
+- 설계 근거: 중복의 권위적 차단은 **DB 계층**(부분 UNIQUE + UPSERT)이어야 한다 — 프론트 dedup(`data-done` DOM 플래그)은 새로고침/전환에 소실되어 신뢰 불가. 답변 식별자는 기존에 첨부 영속이 키로 쓰는 표시 store `agent_runtime.messages.id`(프론트 `message.id`)를 재사용 — 새 식별 체계 도입 없이 정합.
+- 안전/적대 분석(검토 표면):
+  1. **부분 인덱스 + ON CONFLICT 단일문**: ON CONFLICT 추론 술어를 부분 인덱스 술어와 문자 동일하게 작성(`WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested=false`). 삽입 행이 술어 불충족(suggested=true 또는 message_id/created_by NULL)이면 arbiter 미적용 → 평범 INSERT(검수 큐 "샘플 등록" 다중 제출 동작 보존). 충족(plain vote)이면 중복 시 DO UPDATE.
+  2. **마이그 데이터 안전**: message_id 신규 컬럼 → 기존 행 전부 NULL → 부분 인덱스 술어가 NULL 제외 → 기존(중복 포함) 행이 UNIQUE INDEX 생성을 막지 않음(무손실·멱등, IF NOT EXISTS).
+  3. **id 회수**: lastval()(DO UPDATE 경로에서 직전 시퀀스값 반환 부정확) 제거 → `RETURNING id` 로 INSERT/DO UPDATE 양 경로 정확.
+  4. **격리**: history 피드백 주입은 (conversation_id, created_by) 로 스코프 — 타 사용자 피드백 미노출. PG 조회 fail-soft(예외 시 빈 dict, 이력 표시 비차단).
+  5. **잔여 watch**: message_id 부재(프론트 message.id 없는 fallback core 경로)·익명(created_by None)은 부분 인덱스 대상 외 → 고유성 미강제(기존 동작). 정상 로그인 + 표시 store 경로(대다수)는 완전 강제.
+- 적대 검증(general-purpose adversarial-backend, H1~H7) **VERDICT: FIX-NEEDED — 확정 결함 1건(H5(b)) 수용(documented watch-item), 나머지 H1~H4·H6·H7 REFUTED(건전)**:
+  - **H1~H4 REFUTED**: 부분 인덱스 arbiter 추론은 plan-time 인덱스 명세 매칭이라 suggested=true 행은 술어 불충족으로 충돌검사 건너뛰고 plain INSERT(검수 큐 보존); ON CONFLICT 술어가 인덱스 술어와 문자 동일(런타임 에러 없음); 신규 message_id NULL 이라 기존 데이터로 인덱스 생성 실패 없음(무손실·멱등); DO UPDATE(≠DO NOTHING)라 RETURNING 항상 행 반환.
+  - **H6 REFUTED**: `_load_user_feedback_by_message` 가 (conversation_id, created_by) 양축 스코프 → 타 사용자 누출 없음, conn fail-soft/close 정리.
+  - **H7 REFUTED**: set_updated_at 트리거 재설정은 같은 tx now() 동일값이라 무해.
+  - **H5(b) CONFIRMED → 수용(watch-item)**: `m["id"]` 가 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`)의 **두 독립 IDENTITY 공간**에서 올 수 있다(app.py:6879 명시). fork/마이그로 대화가 core-only→display 전환되는 드문 경우 고유성 우회 또는 wrong-bubble 복원 가능. **수용 근거**: ① 동일 `message.id` 키잉은 **기존 첨부 영속 레이어가 이미 공유하는 선재 아키텍처 특성**(본 변경이 신규 도입 아님) ② 단일 history 응답은 항상 한 id 공간(혼재는 cross-load 전환 시만) ③ 지배적 실패모드는 "구 core 답변이 display 전환 후 history 에서 사라짐"이라 중복 우회 도달성이 낮음 ④ 정상 표시-store 경로(사용자 보고 시나리오)는 완전 강제 ⑤ 근본 해소(id 공간 통일/태깅)는 첨부 레이어 동반 변경이 필요한 별도 아키텍처 과제 — 본 버그 fix scope·risk 초과. 사용자에게 후속 과제로 표면화.
+  - **H5(1) 인지**: message_id/created_by NULL(익명·fallback)은 부분 인덱스 외 → 고유성 미적용(의도된 한계).
+  - **테스트 공백(권고)**: 단위 테스트가 FakeConn SQL-shape 만 검증 → 실 PG ON CONFLICT+부분 인덱스 의미(suggested 분기·재투표 갱신) 미검증. 후속 ephemeral PG 통합 테스트 권고(out-of-scope).
+- 테스트: curation 15/15 + flywheel 15/15(신규 vote-UPSERT 키 단언 포함) PASS, 두 feature 전체 회귀 0.
+- Human Approval Needed: 없음(commit/push/main 병합 자동 동기화). 배포는 deploy_scope 판정(Phase 6.8) — 마이그 0021 적용 동반이라 1회 confirm 대상.
+- Cross-ref: feature-0002 REV-20260629T014345-feedback-unique-vote / CHG-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## REV-20260629T103000-glossary-conv-autoreg [SUBAGENT:adversarial-correctness-db + adversarial-security-governance] — SHIP-WITH-FIXES (BLOCKER 1건 적발·수정, 적대 패널 완료)
+- Date: 2026-06-29. TASK-20260629-glossary-conv-autoreg(Major §12.3, cross-cut 0002+0003, ADR-20260629T101500). §18.8 적대 패널 2인: ① 정확성·DB·동시성, ② 보안·거버넌스·RBAC·XSS. 두 리뷰어가 **동일 BLOCKER 독립 적발**.
+- **[BLOCKER] (적발→수정)** `kb_glossary.auto_promote_or_queue` — 거부(rejected)된 용어가 고신뢰 재추론 시 라이브 kb_glossary 에 재유입(poisoning 방어 무력화). 원인: `_insert_glossary_auto`(라이브 INSERT)가 거부 가드(`record_glossary_suggestion`의 WHERE pending)보다 **먼저** 실행되고 가드 차단 시 롤백 안 됨 → 부활 행이 검토 큐에서 되돌릴 핸들도 없는 좀비. **수정**: 삽입 전에 `_feedback_status` 로 선검사 — status ∈ {rejected, promoted, auto_promoted} 면 즉시 "skipped"(INSERT 미발생). 회귀 테스트 2건 추가(`test_auto_promote_skips_rejected_term`·`test_auto_promote_skips_already_promoted`).
+- **[MAJOR] (수정)** poisoning 방어 미검증(false-green) → 위 회귀 테스트로 게이트 고정.
+- **[MINOR] (수정)** 마이그 0021 `ADD CONSTRAINT` 재실행 비멱등 → 신규 제약도 `DROP CONSTRAINT IF EXISTS` 선행(트리거 패턴)으로 멱등화.
+- **[MINOR] (부분완화)** 자율등록이 매 턴 LLM 호출(기본 ON·per-account cap 부재) → 짧은 답변(<80자) 추론 skip 가드 추가. 자연 rate-limit(턴=과금) 존재하므로 잔여 per-account cap 은 후속 후보(AGENT_GLOSSARY_AUTOPROPOSE=0 로 즉시 차단 가능).
+- **[MINOR] (수용)** downgrade 의 UNIQUE(scope,term) 재추가가 role별 중복 시 실패 가능 — 마이그 주석에 문서화된 trade-off(다운그레이드 한정).
+- **결함 없음 확인(적대 검증됨)**: RBAC 6개 신규 엔드포인트 정합(검토큐=kb.glossary.curate, 관계=kb.ingest.manual), role_key 검증(WebRoles∪'*'), scope 가드, XSS(textContent/value 만), 프롬프트 주입측 datamark 펜스, audit 4종, reject 단일 동작, ON CONFLICT 타깃↔UNIQUE 제약 정합, GRANT, conn 수명/soft-fail.
+- 검증: 코어 21 + 웹 신규 13 + 기존 metadata 회귀 + route_snapshot 갱신 → 전체 **1222 passed**(잔여 7=`web.app` 컨테이너 레이아웃 의존, 본 변경 무관). ruff·py_compile·node --check·단일 alembic head PASS.
+- Human Approval Needed: 없음(commit/push/main 병합·재배포는 자동 동기화 정책 + deploy_scope:included). 코드 SHIP.
+- Cross-ref: feature-0002 REV-20260629T103000-glossary-conv-autoreg / ADR-20260629T101500-glossary-conversation-autoregistration.
+
 ## REV-20260626T135945-ask-dedup-idempotency [SKIPPED:hotfix-1line-param-isolation-live-pg-validated] — 동일 cycle 라이브 회귀 hotfix (TASK-20260626-ask-dedup-idempotency, Major §12.3)
 - Date: 2026-06-26. 본체 REV-20260626T134920-ask-dedup-idempotency 의 배포 검증 단계에서 적발된 라이브 PG 회귀의 즉시 수정. 신규 동작 추가 아닌 **버그 수정(파라미터 격리)** 이라 full §18.8 패널 SKIP — 대신 라이브 PG 직접 실행으로 검증(해당 실패 모드에 가장 직접적인 테스트).
 - 회귀: dedup NOT EXISTS 가 `%(cid)s`/`%(account_id)s` 를 INSERT SELECT(varchar 추론)와 공유 → PG `AmbiguousParameter: inconsistent types deduced for parameter $1 — text versus character varying` → 워커 모드 신규 /api/ask 전부 500. 단위 FakeConn 테스트는 SQL 문자열만 검사해 미포착(파싱·타입추론은 실 PG 에서만 발현).

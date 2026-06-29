@@ -8,6 +8,43 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T110000-glossary-autoreg-bootstrap-sql (TASK-20260629-glossary-conv-autoreg — 0023 부트스트랩 SQL 미러, 배포 정합, Major §12.3)
+- Date: 2026-06-29. 본체(CHG-20260629-glossary-conv-autoreg, main 40c0de0) 머지 후 배포 정합 적발·보완 — 0021 sample_feedback 부트스트랩 미러 트랩과 동형.
+- **결함**: 실 배포 스키마는 alembic 이 아니라 `_ensure_pg_schema()`(boot 시 `agent_kb_schema.sql` idempotent 적용, agent_core.py:4009)가 유지(MIGRATIONS.md). 마이그 0023 만 추가하고 boot 정본 미러를 누락하면, 배포 후 `kb_glossary.role_key`/신 UNIQUE·`glossary_feedback`·`glossary_relations` 미생성 → `upsert/record/auto_promote` 의 `ON CONFLICT (scope,role,term)` 매칭 실패·신규 엔드포인트 전건 런타임 에러.
+- **수정**(`src/scripts/agent_kb_schema.sql`): kb_glossary 블록에 role_key/source ADD COLUMN IF NOT EXISTS + DROP/ADD CONSTRAINT(멱등) + ix_kb_glossary_scope_role; enum_dictionary 뒤에 glossary_feedback·glossary_relations CREATE TABLE IF NOT EXISTS + 인덱스/트리거; §10 GRANT 블록 rw/ro 목록에 두 테이블 추가(alembic 0023 과 문자 동형·멱등). 0014/0017/0021 선례 동일(스키마 변경은 alembic + 부트스트랩 SQL 양쪽 미러).
+- Cross-ref: 마이그 0023 / CHG-20260629-glossary-conv-autoreg / REV-20260629T103000-glossary-conv-autoreg.
+
+## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 message_id_space 추가, H5(b) follow-up, Major §12.3)
+- Date: 2026-06-29. 선행 0021 의 적대 리뷰 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층 정본 변경.
+- 변경:
+  - **마이그 0022** `alembic/versions/20260629_0022_sample_feedback_id_space.py`(down_revision 0021): `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id_space varchar(16) NOT NULL DEFAULT 'display'` + `DROP INDEX IF EXISTS ux_sample_feedback_user_msg_vote`(구 2-col) + `CREATE UNIQUE INDEX ux_sample_feedback_user_msg_space_vote (created_by, message_id, message_id_space) WHERE …`. downgrade 는 역순. 신규 인덱스명 = 부트스트랩 `CREATE … IF NOT EXISTS` same-name no-op trap 회피.
+  - `src/modules/sample_feedback.py` `record_feedback`: `message_id_space="display"` 인자(정규화 display|core) 추가, INSERT 컬럼/VALUES + ON CONFLICT 를 3-col `(created_by, message_id, message_id_space)` 로. EXCLUDED SET·RETURNING·suggested 분리 동일.
+  - `src/scripts/agent_kb_schema.sql`: boot 정본 미러(컬럼 추가 + 구 인덱스 DROP + 신규명 3-col).
+- 비변경: list_pending/promote/reject/_mask_pii·GRANT·"샘플 등록" 분리 0.
+- 검증: `tests/test_sample_flywheel.py` 13/13(masks_pii param 위치 보정[message_id_space 삽입]·3-col ON CONFLICT·id_space 전달)·py_compile·chain linear(0021→0022 단일 head).
+- Cross-ref: feature-0003 CHG-20260629T022055-feedback-id-space / 마이그 0022 / REV-20260629T022055-feedback-id-space.
+
+## CHG-20260629T021000-feedback-unique-vote-bootstrap-sql (TASK-20260629T014345-feedback-unique-vote — 배포 정합 follow-up, Major §12.3)
+- Date: 2026-06-29. 본체(CHG-20260629T014345-feedback-unique-vote, main 31aa67a) 머지 후 배포 정합 적발·보완. **결함**: alembic 0021 만 추가하고 boot 정본 `src/scripts/agent_kb_schema.sql` 미러를 누락 → 실 배포 스키마는 `_ensure_pg_schema()`(agent_core.py:3960, 매 boot idempotent `agent_kb_schema.sql` 적용)가 유지하므로, 배포 시 `sample_feedback.message_id`/`ux_sample_feedback_user_msg_vote` 가 생성되지 않아 `record_feedback` 의 `ON CONFLICT (created_by, message_id) WHERE …` 가 **매칭 인덱스 부재 런타임 에러 → 피드백 적재 전건 실패**.
+- 변경(`src/scripts/agent_kb_schema.sql`): sample_feedback 인덱스 블록에 `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id bigint` + `CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_vote ON sample_feedback (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false` 추가(alembic 0021 과 동일·멱등). 0014/0017 선례와 동일 패턴(스키마 변경은 alembic + 부트스트랩 SQL 양쪽 미러).
+- 비변경: 코어 로직·테이블 정의 본문·GRANT(0014 의 sample_feedback GRANT 가 포괄) 0.
+- Cross-ref: feature-0003 CHG-20260629T014345-feedback-unique-vote / alembic 0021 / REV-20260629T014345-feedback-unique-vote.
+
+## CHG-20260629T014345-feedback-unique-vote (TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백 강제, 데이터 계층 정본. feature-0003 주관, Major §12.3)
+- Date: 2026-06-29. UX 증상·주 TASK 는 feature-0003. 본 항목은 feature-0002 데이터 계층 정본 변경(테이블 스키마·코어 적재 로직) 기록.
+- 변경:
+  - **마이그 0021** `alembic/versions/20260629_0021_sample_feedback_unique_vote.py`(down_revision 0020): `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id bigint` + `CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_vote ON sample_feedback (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false`. downgrade 는 인덱스+컬럼 drop. 기존 데이터 무손실(신규 컬럼 전부 NULL → 부분 인덱스 술어가 제외)·멱등.
+  - `src/modules/sample_feedback.py` `record_feedback`: `message_id` 인자 추가, INSERT→UPSERT(`ON CONFLICT (created_by, message_id) WHERE <인덱스와 동일 술어> DO UPDATE SET vote/nl_question/generated_sql/scope_key/run_id=EXCLUDED, updated_at=now()`) + `RETURNING id` 반환. status·suggested·promoted_sample_id 는 DO UPDATE 에서 미변경(검수 lifecycle 보존). 반환형 None→`int|None`.
+- 비변경: list_pending_feedback·promote_feedback·reject_feedback·_mask_pii 무변경. GRANT 무변경(0014 의 INSERT/UPDATE 권한이 UPSERT 포괄). "샘플 등록"(suggested=true) 행은 부분 인덱스 술어 제외 → 매번 INSERT(검수 큐 동작 보존).
+- 검증: `tests/test_sample_flywheel.py` 15/15(record_feedback param 위치·ON CONFLICT 단언 갱신 + 신규 vote-UPSERT 키 단언) · `py_compile`(sample_feedback.py·0021) PASS · 마이그 chain linear(0020→0021 단일 head).
+- Cross-ref: feature-0003 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## CHG-20260629-glossary-conv-autoreg (TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 코어, Major §12.3, cross-cut 0002+0003)
+- Date: 2026-06-29. 코어/마이그/agent hook(web/UI = feature-0003 동반 CHG).
+- 마이그 0023: kb_glossary.role_key/source ADD + UNIQUE(scope_key,role_key,term) 재정의(멱등 DROP IF EXISTS 선행), glossary_feedback(검토 큐)·glossary_relations(유사어) CREATE + 인덱스/트리거/GRANT. 기존 행 backfill(동작 불변).
+- kb_glossary.py: role-scoped read(role_key 옵션), 하이브리드 자동승급(`auto_promote_or_queue`+`_feedback_status` 선검사 — REV BLOCKER 수정으로 거부 용어 재유입 차단), 검토 큐(record/list/count/promote/reject), 유사어(add/list/delete/get), 대화 추론(`infer_terminology_suggestions`, 짧은 답변 skip). upsert/update/list role_key·source 반영(ON CONFLICT (scope,role,term)).
+- llm.py: `llm_glossary_suggest`(GLOSSARY_SUGGEST_PROMPT, soft-fail). agent_core.py: `_glossary_autopropose`(답변 직후 hook, AGENT_GLOSSARY_AUTOPROPOSE 게이트, best-effort·ask 비차단, PG conn). shared/config.py: 4 flag + __all__.
+- 테스트: `test_kb_glossary_enum.py` 21(역할 read·하이브리드 분기·거부 차단 회귀·관계 SQL). Cross-ref: feature-0003 CHG-20260629-glossary-conv-autoreg / REV-20260629T103000 / ADR-20260629T101500.
+
 ## CHG-20260626-ask-dedup-idempotency (TASK-20260626-ask-dedup-idempotency — ask 큐 enqueue 멱등화. feature-0003 주관, **Major §12.3**)
 - Date: 2026-06-26. 주 변경·정본 changelog 은 feature-0003 CHG-20260626-ask-dedup-idempotency. 본 항목은 feature-0002-agent-core 교차변경(ask 큐 데이터 계층)만 기록(§13.2.7).
 - 근본원인: 워커 모드 `/api/ask` long-poll 연결이 web 재생성(배포)으로 끊기면(502 EOF) 사용자 재전송 → 워커 enqueue 멱등성 부재로 동일 페이로드 job 2개 → 첫 job out-of-process 생존·완료 → 요청·답변 2회 처리. 라이브 `agent_runtime.ask_jobs` 에서 실측(동일 conv+account+user_message, attempts=1·done).

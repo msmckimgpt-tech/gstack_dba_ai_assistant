@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T022055-feedback-id-space [SKIPPED:h5b-direct-closure-of-prior-adversarial-finding-self-review] — message_id_space 데이터 계층 (TASK-20260629T022055-feedback-id-space, Major §12.3)
+- Date: 2026-06-29. 주 리뷰 정본 = feature-0003 REV-20260629T022055-feedback-id-space — 본 항목은 feature-0002 데이터 계층(마이그 0022 + record_feedback) 교차기록.
+- 핵심 판단: 3-col 부분 UNIQUE `(created_by, message_id, message_id_space)` 가 두 id 공간의 같은 숫자 id 를 다른 키로 분리(H5(b) (a) cross-space 충돌 + (b) wrong-bubble 차단). 신규 인덱스명으로 부트스트랩 same-name no-op trap 회피. record_feedback ON CONFLICT 추론 술어를 인덱스와 문자 동일 유지. default 'display' 로 기존 행·미전송 정합.
+- 적대 검증: 본 cycle 은 선행 적대 backend 리뷰(H1~H7)가 도출한 H5(b) 의 직접 수정이라 self-review + 회귀 테스트로 종결.
+- 테스트: test_sample_flywheel 13/13(3-col ON CONFLICT·id_space·param 위치). py_compile PASS.
+- Human Approval Needed: 없음(자동 동기화). 배포 시 0022 적용 동반.
+- Cross-ref: feature-0003 REV/CHG-20260629T022055-feedback-id-space / 마이그 0022.
+
+## REV-20260629T021000-feedback-unique-vote-bootstrap-sql [SKIPPED:deploy-parity-bootstrap-mirror-idempotent-ddl] — 0021 부트스트랩 SQL 미러 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
+- Date: 2026-06-29. 본체 REV-20260629T014345-feedback-unique-vote 머지 후 적발된 **배포 정합 결함**의 보완. 신규 동작 추가 아닌 **이미 리뷰된 0021 DDL 을 boot 정본(agent_kb_schema.sql)에 동일 미러**라 full §18.8 패널 SKIP.
+- 결함: 실 배포 스키마는 alembic 이 아니라 `_ensure_pg_schema()`(boot 시 `agent_kb_schema.sql` idempotent 적용)가 유지한다(MIGRATIONS.md — alembic 은 versioned-history 부가 레이어). 0021 을 부트스트랩 SQL 에 미러하지 않으면 배포 후 `message_id`/`ux_sample_feedback_user_msg_vote` 부재 → record_feedback UPSERT 의 `ON CONFLICT … WHERE …` 가 매칭 인덱스 부재로 런타임 에러 → 피드백 전건 실패. (0014/0017 선례: 스키마 변경은 양쪽 미러.)
+- 수정: agent_kb_schema.sql 의 sample_feedback 블록에 ALTER ADD COLUMN IF NOT EXISTS + CREATE UNIQUE INDEX IF NOT EXISTS(alembic 0021 과 문자 동일·멱등) 추가. 검증: SQL 문자 대조(alembic 0021 ↔ 부트스트랩 동일 술어/컬럼), 멱등 IF NOT EXISTS, py 영향 없음(SQL 텍스트). 배포 시 `_ensure_pg_schema()` 가 라이브 적용.
+- Human Approval Needed: 없음(자동 동기화). 배포는 deploy_scope 판정(외부 영향) — 마이그 동반이라 confirm 대상.
+- Cross-ref: feature-0003 REV-20260629T014345-feedback-unique-vote / feature-0002 CHG-20260629T021000-feedback-unique-vote-bootstrap-sql.
+
+## REV-20260629T014345-feedback-unique-vote [SUBAGENT:adversarial-backend] — sample_feedback 답변당 고유 피드백 데이터 계층 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
+- Date: 2026-06-29. 데이터 계층(마이그 0021 + record_feedback UPSERT) 리뷰. 주 리뷰 정본은 feature-0003 REV-20260629T014345-feedback-unique-vote — 본 항목은 feature-0002 교차기록.
+- 핵심 판단: 부분 UNIQUE 인덱스 `(created_by, message_id) WHERE … AND suggested=false` 가 (a) 투표(suggested=false)는 답변당 1행 강제, (b) "샘플 등록"(suggested=true)은 검수 큐 다중 제출 보존, (c) 기존 NULL message_id 행 무손실 — 세 요구를 단일 인덱스로 충족. record_feedback 의 ON CONFLICT 추론 술어를 인덱스 술어와 문자 동일하게 유지(불일치 시 런타임 에러 방지).
+- 적대 검증(general-purpose adversarial-backend, H1~H7) **VERDICT: FIX-NEEDED — H5(b) 1건 수용(watch-item), 나머지 REFUTED(건전)**: 부분인덱스 arbiter 추론(suggested=true→plain INSERT 보존)·ON CONFLICT 술어 문자 일치·신규 NULL 컬럼 무손실 마이그·DO UPDATE RETURNING 항상 반환·updated_at 트리거 무해 = 전부 건전. **H5(b)**(message_id 두 id 공간 — 표시 store vs core_messages, app.py:6879) = 기존 첨부 영속 레이어 공유 선재 특성이라 수용·문서화(정상 경로 완전 강제, 근본 해소는 후속 id-space 통일). 상세 = feature-0003 REV-20260629T014345-feedback-unique-vote.
+- 테스트: test_sample_flywheel.py 15/15(masks_pii param 위치 보정 + ON CONFLICT/DO UPDATE/RETURNING 단언 + 신규 vote-UPSERT 키). py_compile PASS.
+- Human Approval Needed: 없음(자동 동기화). 배포 시 마이그 0021 적용 동반 — entry Phase 6.8 deploy_scope 판정.
+- Cross-ref: feature-0003 REV/CHG-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## REV-20260629T103000-glossary-conv-autoreg [SUBAGENT:adversarial-correctness-db + adversarial-security-governance] — SHIP-WITH-FIXES (코어 측, BLOCKER 수정)
+- Date: 2026-06-29. TASK-20260629-glossary-conv-autoreg 코어 측(kb_glossary·llm·agent_core·mig 0023) 적대 패널 결과. 상세 정본 = feature-0003 REV-20260629T103000-glossary-conv-autoreg.
+- **[BLOCKER] 적발→수정**: `auto_promote_or_queue` 가 거부 가드보다 라이브 INSERT 를 선행해 거부 용어가 고신뢰 재추론 시 부활(poisoning 무력화). `_feedback_status` 선검사(rejected/promoted/auto_promoted → skip)로 수정 + 회귀 테스트 2건. **[MINOR]** 마이그 ADD CONSTRAINT 멱등화(DROP IF EXISTS 선행), 짧은 답변 추론 skip 가드.
+- 검증: 코어 `test_kb_glossary_enum.py` 21 PASS, ruff·py_compile·단일 alembic head PASS. SHIP.
+- Cross-ref: feature-0003 REV-20260629T103000-glossary-conv-autoreg / ADR-20260629T101500.
+
 ## REV-20260623T191241-item05-hybrid-search [SUBAGENT:item05-impl-selfcheck + adversarial-backend] — SHIP-WITH-FIXES (적대 리뷰 완료, fix 흡수)
 - Date: 2026-06-23 구현 self-check → 2026-06-24 적대 backend 리뷰 완료. 본 엔트리 上단은 **구현 self-check**(작성자 자기검증), 下단(§적대 리뷰 결과)이 **적대 backend 리뷰**다. self-check 가 예고한 점검 표면 ①②가 실제 MAJOR/MINOR-2 로 적중 — fix 전부 흡수.
 - 자기검증 항목/결과:
