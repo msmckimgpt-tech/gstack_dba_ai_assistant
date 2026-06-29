@@ -9,6 +9,7 @@ last_updated: 2026-06-29
 2026-06-29
 
 ## Key Recent Facts
+- 메타데이터 부트스트랩 MSSQL database 차원 수정(feature-0003, 06-29): "테이블 설명 > 스키마 골격 가져오기"가 MSSQL 에서 `database=None`→중립 tempdb(shared/db.py `_connect_mssql` 보안 기본값) 임시테이블(`#…`)을 노출하던 "테이블 명칭 모두 오류" 근본 수정. 부트스트랩 unit 엔진분기(MySQL=schema/MSSQL=database via `list_server_databases`, 시스템 DB·스키마·센티넬 필터), MSSQL 선택 DB 연결 평탄수집(저장 schema_name=database — 4계층→3-키, 사용자 결정), suggest grounding 동일분기, 프론트 '데이터베이스/스키마' 라벨, `.admin-meta-bootstrap-result` max-height 제거(패널 내부 잘림 해소, 테이블·컬럼 공통). AI 자동완성은 기구현·깨진 골격에 grounding 해 무력화됐던 것. REQ-20260629T114221.
 - 제품 선택 chip 처리 중 항상 활성화(feature-0003, 06-26): 답변 생성 중에도 composer 제품 선택 chip 변경 가능 — TASK-0047 turn-immutability 3계층 가드(프론트 시각 disable·프론트 reject·백엔드 `PATCH …/product` 409) 일괄 완화. 제품은 `/api/ask` enqueue 시 캡처 → in-flight 답변 비오염, 변경은 다음 요청부터. RBAC/스키마/엔드포인트 무변경(timing 가드만 제거). ADR-WEB-0006.
 - assistant 요청 2번 중복 처리 차단(feature-0003/0002, 06-26): 워커모드 `/api/ask` long-poll 이 web 재배포로 끊겨 사용자 재전송 시 동일 페이로드 ask_job 2개 → 요청·답변 2회 처리되던 결함을 enqueue 멱등화(dedup NOT EXISTS + `find_active_dup_ask_job` 로 기존 run attach)로 차단. 후속 PG AmbiguousParameter 회귀(워커모드 신규 `/api/ask` 500)는 dedup 전용 파라미터(`%(dcid)s`/`%(daccount)s`)+alias 격리로 해소.
 - 그룹 대화 라이브 UX 확장(feature-0009, 06-25): 사이드바 안 읽음/@멘션 배지(read cursor, REQ-GC-R8 · alembic 0019) · 메시지 좌우 정렬(내 메시지 우측, 상대/`@assistant` 좌측) · 공유 팝업 owner 멤버 추방/차단/해제(kick/ban/unban, hover 액션) · 참가자 per-message 제품 선택(REQ-GC-R7, 발신자 RBAC) · 처리 중 composer 비잠금/1:1 인터럽트 재요청/그룹 @assistant 중복차단.

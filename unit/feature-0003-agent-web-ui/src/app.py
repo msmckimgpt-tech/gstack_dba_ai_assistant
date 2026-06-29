@@ -26813,6 +26813,12 @@ def admin_delete_enum(entry_id: int, request: Request) -> JSONResponse:
 _SAMPLE_WEIGHT_MIN, _SAMPLE_WEIGHT_MAX = 1, 1000
 _BOOTSTRAP_MAX_TABLES = 500
 _BOOTSTRAP_MAX_COLS_PER_TABLE = 200
+# MySQL 부트스트랩 unit(=schema=database) 목록에서 제외할 시스템 스키마 + config 센티넬
+# (metadata-table-desc-fix). information_schema/mysql/performance_schema/sys 는 업무 테이블이 없고,
+# __invalid_default_db__ 는 default_db 미설정 시 config 가 넣는 센티넬이라 골격 대상이 아니다.
+_BOOTSTRAP_MYSQL_SYS_SCHEMAS = frozenset({
+    "information_schema", "mysql", "performance_schema", "sys", "__invalid_default_db__",
+})
 
 
 # ── 테이블 설명(table_descriptions) ───────────────────────────────────────────
@@ -27411,7 +27417,16 @@ def _bootstrap_activate_dialect(ds: dict, scope_key: str):
 
 @app.get("/api/admin/metadata/bootstrap/schemas")
 def admin_bootstrap_schemas(request: Request) -> JSONResponse:
-    """선택 datasource 의 schema 목록. 권한 kb.ingest.manual. ?datasource=<key>."""
+    """선택 datasource 의 골격 단위(unit) 목록. 권한 kb.ingest.manual. ?datasource=<key>.
+
+    엔진별 unit 차이(metadata-table-desc-fix):
+      - **MySQL**: schema == database. information_schema/mysql/performance_schema/sys 시스템
+        스키마 + __invalid_default_db__ 센티넬을 제외한 schema 목록.
+      - **MSSQL**: server > database > schema 4계층. unit = **database**(list_server_databases,
+        master/model/msdb/tempdb 제외). 과거엔 database 미선택 시 중립 tempdb 에 연결되어 임시테이블
+        (#A0A50030 …)이 골격으로 잡혀 "테이블 명칭이 모두 올바르지 않은 값"으로 보였다.
+    응답: {schemas:[...], datasource, engine, unit_kind:"database"|"schema"} — 프론트가 unit_kind 로 라벨 분기.
+    """
     account, error = _metadata_resolve_account(request)
     if error:
         return error
@@ -27420,12 +27435,24 @@ def admin_bootstrap_schemas(request: Request) -> JSONResponse:
         return derr
     from shared import config as _cfg
     from shared import db as _db
+    from modules import dialects as _dialects
     from modules import schema as _schema
     conn = None
     try:
-        _bootstrap_activate_dialect(ds, scope_key)
-        conn = _db.connect(datasource=ds, autocommit=True)  # RO 유저(데이터소스 좌표는 least-priv)
-        schemas = _schema.load_known_schemas(conn)  # dialect-aware(MySQL/MSSQL 분기 — schema.py:788)
+        engine = _bootstrap_activate_dialect(ds, scope_key)
+        if engine == "mssql":
+            # MSSQL unit = database. 시스템 DB(master/model/msdb/tempdb) 제외.
+            dialect = _dialects.active()
+            sys_db = {str(n).strip().lower() for n in dialect.system_databases()}
+            units = [str(n) for n in (_db.list_server_databases(ds) or [])
+                     if str(n).strip().lower() not in sys_db]
+            unit_kind = "database"
+        else:
+            conn = _db.connect(datasource=ds, autocommit=True)  # RO 유저(데이터소스 좌표는 least-priv)
+            raw = _schema.load_known_schemas(conn) or []  # dialect-aware(schema.py:788)
+            units = [str(n) for n in raw
+                     if str(n).strip().lower() not in _BOOTSTRAP_MYSQL_SYS_SCHEMAS]
+            unit_kind = "schema"
     except Exception:
         logging.getLogger(__name__).warning("admin_bootstrap_schemas 실패 ds=%s", scope_key, exc_info=True)
         return _json_error("스키마 조회 실패", 503)
@@ -27439,7 +27466,7 @@ def admin_bootstrap_schemas(request: Request) -> JSONResponse:
             _cfg.set_active_datasource(None)  # 요청 컨텍스트 dialect 리셋
         except Exception:
             pass
-    return JSONResponse({"schemas": list(schemas or []), "datasource": scope_key})
+    return JSONResponse({"schemas": units, "datasource": scope_key, "engine": engine, "unit_kind": unit_kind})
 
 
 @app.post("/api/admin/metadata/bootstrap")
@@ -27469,17 +27496,30 @@ async def admin_bootstrap(request: Request) -> JSONResponse:
     from modules import schema as _schema
     from modules.tools import _safe_ident as _safe_ident_fn
     # REV B1(BLOCKER) — SQLi 차단: dialect.describe_schema_tables 는 schema 를 f-string 으로 SQL 에
-    # 삽입(dialects.py:251 `WHERE TABLE_SCHEMA = '{schema}'`)하므로, 구조화 도구(tools.py:732)와 동일하게
-    # ① _safe_ident 로 인용 구분자 제거 + ② load_known_schemas 멤버십 allowlist 로만 통과시킨다.
+    # 삽입(dialects.py `WHERE … = '{schema}'`)하므로, 구조화 도구(tools.py)와 동일하게
+    # ① _safe_ident 로 인용 구분자 제거 + ② allowlist 멤버십으로만 통과시킨다.
     safe_schema = _safe_ident_fn(schema_name)
     conn = None
     try:
         engine = _bootstrap_activate_dialect(ds, scope_key)
-        conn = _db.connect(datasource=ds, autocommit=True)
-        known_schemas = set(_schema.load_known_schemas(conn) or [])
-        if safe_schema not in known_schemas:
-            return _json_error("알 수 없는 schema 이거나 접근할 수 없습니다.", 404)
-        tables = _bootstrap_collect_skeleton(conn, _dialects, safe_schema)
+        if engine == "mssql":
+            # MSSQL: schema 파라미터는 **database**. 시스템 DB 제외 allowlist 로 검증 후 해당 DB 로
+            # 직접 연결(database 미지정 시 중립 tempdb 폴백 → 임시테이블 회귀)하고, 그 DB 안의 비시스템
+            # SQL 스키마 테이블을 평탄 수집한다(저장 schema_name = database).
+            dialect = _dialects.active()
+            sys_db = {str(n).strip().lower() for n in dialect.system_databases()}
+            db_units = {str(n) for n in (_db.list_server_databases(ds) or [])
+                        if str(n).strip().lower() not in sys_db}
+            if safe_schema not in db_units:
+                return _json_error("알 수 없는 database 이거나 접근할 수 없습니다.", 404)
+            conn = _db.connect(datasource=ds, database=safe_schema, autocommit=True)
+            tables = _bootstrap_collect_skeleton_mssql(conn, _dialects, safe_schema)
+        else:
+            conn = _db.connect(datasource=ds, autocommit=True)
+            known_schemas = set(_schema.load_known_schemas(conn) or [])
+            if safe_schema not in known_schemas:
+                return _json_error("알 수 없는 schema 이거나 접근할 수 없습니다.", 404)
+            tables = _bootstrap_collect_skeleton(conn, _dialects, safe_schema)
     except Exception:
         logging.getLogger(__name__).warning("admin_bootstrap 실패 ds=%s schema=%s", scope_key, schema_name, exc_info=True)
         return _json_error("스키마 골격 조회 실패", 503)
@@ -27537,6 +27577,63 @@ def _bootstrap_collect_skeleton(conn, _dialects, schema_name: str) -> list:
         finally:
             ccur.close()
         out.append({"schema_name": schema_name, "table_name": tname, "columns": cols})
+    return out
+
+
+def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
+    """MSSQL 골격 — 연결된 database 의 비시스템 SQL 스키마(dbo 등) 테이블을 평탄 수집(metadata-table-desc-fix).
+
+    server > database > schema > table 4계층을 테이블 설명 모델의 (scope_key=datasource, schema_name,
+    table_name) 3-키에 매핑한다 — **저장 schema_name = database(db_name)** (사용자 결정). describe_columns 는
+    실제 SQL 스키마로 introspect 하되 산출 schema_name 은 db_name 으로 통일한다. 동일 table_name 이 복수 SQL
+    스키마에 있으면 최초 1건만 남긴다(DB명 평탄화 한계 — 대부분 dbo 단일). 시스템 SQL 스키마(db_datareader 등
+    고정 역할 + sys/information_schema)는 dialect.system_schemas() 로 제외. cap: 테이블 500 / 컬럼 200.
+    """
+    from modules.tools import _safe_ident as _safe_ident_fn
+    from modules import schema as _schema
+    dialect = _dialects.active()
+    sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
+    real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
+                    if str(s).strip().lower() not in sys_schema]
+    out: list = []
+    seen: set = set()
+    for sql_schema in real_schemas:
+        if len(out) >= _BOOTSTRAP_MAX_TABLES:
+            break
+        safe_sql_schema = _safe_ident_fn(sql_schema)
+        tnames: list = []
+        cur = conn.cursor()
+        try:
+            cur.execute(dialect.describe_schema_tables(safe_sql_schema))
+            for row in (cur.fetchall() or []):
+                if row and row[0]:
+                    tnames.append(str(row[0]))
+        finally:
+            cur.close()
+        for tname in tnames:
+            if len(out) >= _BOOTSTRAP_MAX_TABLES:
+                break
+            key = tname.strip().lower()
+            if key in seen:
+                continue  # DB명 평탄화: 동명 테이블(타 SQL 스키마)은 최초 1건만
+            seen.add(key)
+            safe_tname = _safe_ident_fn(tname)
+            cols: list = []
+            ccur = conn.cursor()
+            try:
+                ccur.execute(dialect.describe_columns(safe_sql_schema, safe_tname))
+                for crow in (ccur.fetchall() or []):
+                    if not crow or not crow[0]:
+                        continue
+                    cols.append({"column_name": str(crow[0]),
+                                 "data_type": str(crow[1] or "").lower()})
+                    if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
+                        break
+            except Exception:
+                cols = []  # 단일 테이블 introspection 실패는 건너뜀(부분 골격 허용)
+            finally:
+                ccur.close()
+            out.append({"schema_name": db_name, "table_name": tname, "columns": cols})
     return out
 
 
@@ -27627,25 +27724,57 @@ def _metadata_introspect_table(datasource_key: str, schema_name: str, table_name
     from modules.tools import _safe_ident as _safe_ident_fn
     conn = None
     try:
-        _bootstrap_activate_dialect(ds, scope_key)
-        conn = _db.connect(datasource=ds, autocommit=True)
-        known = set(_schema.load_known_schemas(conn) or [])
-        safe_schema = _safe_ident_fn(schema_name)
-        if safe_schema not in known:
-            return None
+        engine = _bootstrap_activate_dialect(ds, scope_key)
         safe_table = _safe_ident_fn(table_name)
-        dialect = _dialects.active()
         cols: list = []
-        cur = conn.cursor()
-        try:
-            cur.execute(dialect.describe_columns(safe_schema, safe_table))
-            for crow in (cur.fetchall() or []):
-                if crow and crow[0]:
-                    cols.append({"column_name": str(crow[0]), "data_type": str(crow[1] or "").lower()})
-                if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
-                    break
-        finally:
-            cur.close()
+        if engine == "mssql":
+            # metadata-table-desc-fix: MSSQL 은 schema_name 이 **database**(부트스트랩 저장 규약과 동일).
+            # 시스템 DB 제외 allowlist 로 검증 → 해당 DB 로 연결 → 비시스템 SQL 스키마에서 테이블 컬럼 탐색.
+            dialect0 = _dialects.active()
+            sys_db = {str(n).strip().lower() for n in dialect0.system_databases()}
+            db_units = {str(n) for n in (_db.list_server_databases(ds) or [])
+                        if str(n).strip().lower() not in sys_db}
+            safe_db = _safe_ident_fn(schema_name)
+            if safe_db not in db_units:
+                return None
+            conn = _db.connect(datasource=ds, database=safe_db, autocommit=True)
+            dialect = _dialects.active()
+            sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
+            real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
+                            if str(s).strip().lower() not in sys_schema]
+            for sql_schema in real_schemas:
+                ss = _safe_ident_fn(sql_schema)
+                cur = conn.cursor()
+                try:
+                    cur.execute(dialect.describe_columns(ss, safe_table))
+                    for crow in (cur.fetchall() or []):
+                        if crow and crow[0]:
+                            cols.append({"column_name": str(crow[0]), "data_type": str(crow[1] or "").lower()})
+                        if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
+                            break
+                except Exception:
+                    cols = []
+                finally:
+                    cur.close()
+                if cols:
+                    break  # 테이블을 담은 첫 SQL 스키마에서 종료(DB명 평탄화와 정합)
+        else:
+            conn = _db.connect(datasource=ds, autocommit=True)
+            known = set(_schema.load_known_schemas(conn) or [])
+            safe_schema = _safe_ident_fn(schema_name)
+            if safe_schema not in known:
+                return None
+            dialect = _dialects.active()
+            cur = conn.cursor()
+            try:
+                cur.execute(dialect.describe_columns(safe_schema, safe_table))
+                for crow in (cur.fetchall() or []):
+                    if crow and crow[0]:
+                        cols.append({"column_name": str(crow[0]), "data_type": str(crow[1] or "").lower()})
+                    if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
+                        break
+            finally:
+                cur.close()
         return {"schema_name": schema_name, "table_name": table_name, "columns": cols} if cols else None
     except Exception:
         logging.getLogger(__name__).warning(
