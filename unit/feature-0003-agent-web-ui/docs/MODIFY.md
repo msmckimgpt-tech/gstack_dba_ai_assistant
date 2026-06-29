@@ -17,6 +17,7 @@ source_of_truth: true
 - Impact: 비파괴. 단일 진실원 헬퍼 수정으로 역할 필터 드롭다운(실제 8역할 노출)·등록 대상 역할 배지·용어 태그·유사어/관계 라벨이 친화 역할명 표기. 데이터/스키마/RBAC/백엔드 0.
 - Rollback: admin.js 4 참조를 role_key/role_name 으로 환원 + cache-buster 복원.
 - Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Deploy & live-verify (2026-06-29): commit 90ab783 → base drift(main 8383652) 흡수 병합 a5fea6f(REPORT.md union — fieldname-fix 엔트리 + main flexclip 완료본) → PR #466(CI test pass) 머지(main f021f3d) → worktree/branch cleanup → web 이미지 재빌드·repo-web-1 recreate. **PB-0008 재검증 PASS**(실 Windows Chrome): healthz git_commit=f021f3d·mysql/pg ok / 새 admin.js `?v=…-fieldname-fix` 로드 / 메타데이터>용어사전 역할 드롭다운 옵션 **2→10**(실제 8역할 Pending·일반 사용자·Admin·DBA·관리자·서버·웹플랫폼·사업팀 노출, 증적 artifacts/pb0008-glossary-role-dropdown-after.png). F0 repo-immutability escape(worktree finalize 완료, post-deploy doc-only).
 - Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
 - Cross-ref: TASK-20260629T141637-glossary-role-single-ui(역할 단일 컨텍스트 도입 — 본 fix 가 그 드롭다운을 실제 동작시킴) · 정본 role 직렬화 `.key/.name`(admin.js 역할 관리·계정 화면).
 

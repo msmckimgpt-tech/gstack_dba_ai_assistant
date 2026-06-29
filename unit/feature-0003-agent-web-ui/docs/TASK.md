@@ -16,9 +16,9 @@ source_of_truth: true
 - Completion Checklist:
   - [x] _metaRoleLabel·_metaPopulateRoleFilter 필드명 role_key/role_name → key/name (4 refs)
   - [x] admin.html cache-buster bump + node --check(admin.js) PASS
-  - [ ] verify-completion PASS → commit → push → PR 머지
-  - [ ] web 재배포(deploy_scope: included) + PB-0008 재검증(드롭다운에 실제 8역할 노출)
-- 잔여: verify-completion → 머지·push → web 재배포 → PB-0008 재검증. worktree `ai/claude/glossary-role-fieldname-fix`(base 54dbfe3). REV-20260629T170913-glossary-role-fieldname-fix.
+  - [x] verify-completion PASS(9) → commit 90ab783 → base drift(main 8383652) 흡수 병합 a5fea6f(REPORT union) → push → PR #466(CI test pass) 머지(main f021f3d) → worktree/branch cleanup
+  - [x] web 재배포(deploy_scope: included, image 재빌드·repo-web-1 recreate, healthz git_commit=f021f3d) + **PB-0008 재검증 PASS**: 실 Windows Chrome 에서 새 admin.js(`?v=…-fieldname-fix`) 로드 후 메타데이터>용어사전 툴바 역할 드롭다운 옵션 **2→10**(전체 역할·공용만 + 실제 8역할: Pending·일반 사용자·Admin·DBA·관리자·서버·웹플랫폼·사업팀) 노출 확인(스크린샷 artifacts/pb0008-glossary-role-dropdown-after.png)
+- 완료: cycle 종결. worktree `ai/claude/glossary-role-fieldname-fix`(base 54dbfe3). REV-20260629T170913-glossary-role-fieldname-fix.
 
 ## TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (Minor §12.3 — 프런트 CSS 전용, feature-0003) — resume(테이블 설명 AI 자동완성 및 UI 버그 수정 PB-0008)
 - 트리거: resume `테이블 설명 AI 자동완성 및 UI 버그 수정` — 원본 metadata-table-desc-fix(MSSQL database 차원/테이블명/AI 자동완성) + metadata-bs-collapse(접기·검색)는 머지·배포 완료(PR #461/#463). 사용자 요청 = PB-0008 실 Windows 브라우저 시각검증 진행 + 추가 UI 버그 수정.
