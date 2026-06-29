@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T141637-glossary-role-single-ui — 메타데이터 용어사전 역할 선택 UI 단일화(단일 역할 컨텍스트) + 등록 mis-scope 가드 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(원본 glossary-conv-autoreg/review-nest 배포본 후속 결함)
+- 트리거: 사용자 resume 요청 — "용어사전 자동 등록 기능"은 완료·배포됐으나 배포본에서 결함 2건 확인. ① 메타데이터 탭에 '역할' 선택 UI 가 2곳(툴바 역할 필터 + 등록 폼 역할 select)이라 각 동작 식별이 어려움 → 독립 UI 하나로. ② 역할 드롭다운에 '전체 역할'·'공용'만 보이고 실제 `계정 > 역할`이 안 보임.
+- 결정(AskUserQuestion 2건): ① **단일 역할 컨텍스트** — 툴바 역할 선택 하나가 (목록 필터 + 신규 용어 등록 대상 role_key)를 함께 결정, 폼 역할 select 폐기. ② 결함②는 **권한 부여로 해결**(코드 변경 없음 — `role.read` 게이트, 별도 처리).
+- 수정(결함①, 프런트): `_METADATA_FIELDS.glossary` 의 `role_key` roleselect 필드 제거 → 폼에 역할 선택 없음. 죽은 roleselect 렌더 블록·미사용 `_metaRoleOptions` 제거. 툴바 `metadataRoleFilter`(전체 역할 ""/공용 "*"/역할들)가 유일 역할 선택 UI. `_metaSubmitForm` 이 `_metaGlossaryTargetRole(editing)`(단일 진실원)로 role_key 주입 — 생성=현재 컨텍스트(전체→공용 '*'), 수정=대상 용어 기존 role_key 보존. 폼엔 읽기전용 '등록 대상 역할' 배지(선택 UI 아님). admin.html 라벨/aria/title 을 "목록 필터 + 신규 등록 대상"으로 명확화 + admin.js cache-buster `?v=20260629-glossary-role-single-ui`.
+- §18.8 적대 패널 2건 BLOCKING 흡수: **F2(mis-scope)** 등록/수정 성공 토스트에 대상 역할 표기(`…했습니다 (역할: X / 공용)`) — 역할별 비중복 namespace 사후 인지 보장. **F5(배지 stale)** 툴바 역할 변경 시 폼 재렌더(입력 소실) 없이 `_metaUpdateGlossaryRoleBadge`(id 기반)로 배지·노트만 동기화. NIT 흡수: F1(‘전체 역할’ 보기 생성 시 공용 귀속 노트) · 로직 중복 헬퍼화.
+- 비변경: 백엔드 라우트/검증(`admin_create_glossary`·`_metadata_check_role_key`), RBAC, DB 스키마/마이그, 목록 역할 배지·유사어 패널·검토 큐. **알려진 trade-off(F3, 의도적 수용·고지)**: 폼 역할 select 제거로 기존 용어의 역할 이동(공용↔역할) 직접 편집 UI 소실(백엔드 PUT 은 계속 지원) — 이동 필요 시 후속 전용 affordance 검토. 사용자에 표면화.
+- 검증: node --check(admin.js) PASS · §18.8 적대 2-lens 패널 + BLOCKING 수정 후 재검증 · Windows 브라우저(PB-0008) 라이브 렌더 · web 재배포(deploy_scope: included) 후 cache-buster·healthz 확인.
+- 잔여: REVIEW REV 태그 → verify-completion → commit(Task-Cycle) → push → PR 머지 → web 재배포 → 라이브 검증. 결함②는 코드 외 권한 부여 안내. worktree `ai/claude/glossary-role-single-ui`(base 3dfe81c). REV-20260629T141637-glossary-role-single-ui.
+- Completion Checklist:
+  - [x] 폼 역할 select 제거 + 죽은 roleselect 렌더/`_metaRoleOptions` 제거 → 툴바 단일 역할 UI
+  - [x] `_metaGlossaryTargetRole` 단일 진실원으로 role_key 주입(생성=컨텍스트/전체→공용, 수정=기존 보존)
+  - [x] 읽기전용 '등록 대상 역할' 배지/노트 + admin.html aria/title 명확화 + cache-buster bump
+  - [x] §18.8 적대 패널(2-lens) → BLOCKING 2(F2 토스트·F5 배지 stale) 수정 → 재검증 클린
+  - [x] FUNCTION.md 단일 역할 컨텍스트 반영 · TASK/MODIFY/REVIEW/REPORT/STATUS 갱신
+  - [ ] verify-completion PASS → commit → push → PR 머지
+  - [ ] web 재배포(deploy_scope: included) + cache-buster·healthz 확인
+  - [ ] PB-0008 Windows 브라우저 라이브 렌더 검증(역할 UI 1곳·등록 토스트 역할 표기)
+  - [ ] 결함② role.read 권한 부여 안내(코드 외)
 ## TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림(cache-buster) 수정 (Major §12.3, feature-0003, 2026-06-29)
 - 트리거: 사용자 보고(metadata-bootstrap-mssql-db 배포 후속) — 스키마 골격 펼침 시 패널 내부 잘림 잔존 + 다수 테이블 여백 과다.
 - 결정(AskUserQuestion): 이슈2 재설계 방향 = **접기 + 검색/필터**(사용자 선택).

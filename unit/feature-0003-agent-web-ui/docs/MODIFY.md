@@ -4978,6 +4978,18 @@ source_of_truth: true
 - Deploy: web + ask-worker(tools.py·kb_metadata.py 변경) 재빌드(deploy_scope: included).
 - Cross-ref: REQ/REV/TASK-20260629T114221-metadata-bootstrap-mssql-db / 정본 shared/db.py `_connect_mssql`(tempdb 고정, TASK-0213) · feature-0002 dialects.py(system_databases/system_schemas) · config.py `get_active_default_db`(소문자 정규화).
 
+## CHG-20260629T141637-glossary-role-single-ui (TASK-20260629T141637-glossary-role-single-ui — 메타데이터 용어사전 역할 선택 UI 단일화 + 등록 mis-scope 가드, Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경)
+- Date: 2026-06-29 (resume — 원본 용어사전 대화 자율등록/검토 큐 중첩 배포본의 후속 결함 2건). worktree `ai/claude/glossary-role-single-ui`(base 3dfe81c).
+- 배경: 배포본의 메타데이터 > 용어사전에 역할 선택 UI 2곳(툴바 역할 필터 + 등록 폼 역할 select)이 공존해 사용자가 각 동작을 식별하기 어려움. 사용자 결정 = "단일 역할 컨텍스트"(툴바 하나가 목록 필터 + 신규 등록 대상을 함께 결정).
+- 변경(`src/static/admin.js`): ① `_METADATA_FIELDS.glossary` 의 `role_key`(roleselect) 폼 필드 제거 + 죽은 roleselect 렌더 블록·미사용 `_metaRoleOptions()` 제거. ② 신규 헬퍼 `_metaGlossaryTargetRole(editing)` — 등록/수정 대상 role_key 단일 진실원(생성=툴바 컨텍스트, 전체 역할 ""→공용 '*'; 수정=대상 용어 기존 role_key 보존, legacy null→'*'). ③ `_metaRenderForm` 에 읽기전용 '등록 대상 역할' 배지(id `metadataRoleContextBadge`)+노트(id `metadataRoleContextNote`). ④ `_metaUpdateGlossaryRoleBadge()` — 폼 재렌더(입력 소실) 없이 배지/노트만 동기화. ⑤ 툴바 `metadataRoleFilter` change 핸들러가 배지 동기화 호출. ⑥ `_metaSubmitForm` payload.role_key 를 헬퍼로 주입 + 성공 토스트에 대상 역할 표기.
+- 변경(`src/static/admin.html`): 역할 필터 `<label>`/`<select>` 의 aria-label·title 을 "목록 필터 + 신규 용어 등록 대상 역할"로 명확화 + admin.js cache-buster `?v=20260629-glossary-review-nest` → `?v=20260629-glossary-role-single-ui`.
+- §18.8 적대 패널(2-lens) BLOCKING 2 흡수 후 재검증(VERDICT 클린): **F2** 등록/수정 성공 토스트 역할 표기(mis-scope 사후 인지) · **F5** 툴바 역할 변경 시 배지 stale 해소(표시값=실제 등록값, 입력 보존 확인). NIT 흡수: F1(‘전체 역할’ 보기 생성 시 공용 귀속 노트) · 로직 중복 헬퍼 일원화. 재검증 잔여 NIT 2(도달불가 dead-guard·라벨 미세 표기차)는 무해로 수용(REVIEW 기록).
+- 비변경: 백엔드 라우트/검증·RBAC·DB 스키마/마이그·목록 역할 배지·유사어 패널·검토 큐 IA. **알려진 trade-off(F3)**: 폼 역할 select 제거로 기존 용어의 역할 이동(공용↔역할) 직접 편집 UI 소실(백엔드 PUT 은 계속 지원, glossary_relations 는 term id 종속이라 재등록 경로에선 미승계). 의도적 수용 — 사용자 표면화, 이동 필요 시 후속 전용 affordance.
+- 검증: node --check(admin.js) PASS · §18.8 적대 패널 + BLOCKING 수정 재검증(클린) · Windows 브라우저(PB-0008) 라이브 렌더 · web 재배포 후 cache-buster·healthz.
+- Rollback: admin.js 의 헬퍼·배지·토스트·payload 주입 revert + `_METADATA_FIELDS.glossary` 의 role_key roleselect 필드·렌더 블록·`_metaRoleOptions` 복원 + admin.html aria/title·cache-buster 복원. 데이터/스키마/RBAC 변경 0.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
+- Cross-ref: 원본 TASK-20260629-glossary-conv-autoreg(역할 분리 코어) · TASK-20260629-glossary-review-nest(검토 큐 중첩) · 결함② role.read 권한 부여(코드 외, app.py:20402 게이트).
 ## CHG-20260629T143914-share-mermaid-responsive (TASK-20260629T143914-share-mermaid-responsive — 공유 대화 뷰 mermaid 렌더 + 전체 폭 반응형, Minor §12.3 — frontend render/CSS, anonymous 공유 노출면)
 - Date: 2026-06-29
 - Related Requirement: 사용자 요청(2026-06-29, feature-0013 후속) — ① 공유 대화에서도 flowchart(mermaid) 정상 렌더, ② 공유대화 고정폭(960px)→브라우저 전체 폭 반응형(넓은 답변 대응).
