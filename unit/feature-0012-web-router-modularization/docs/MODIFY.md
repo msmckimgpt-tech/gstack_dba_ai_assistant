@@ -87,3 +87,17 @@ source_of_truth: true
   - `unit/feature-0012-web-router-modularization/docs/TASK.md` (§8 Completion Checklist 2줄 [x] 마킹)
 - Impact: doc-only. 코드·런타임·이미지·테스트 무변경. route-parity·make test 영향 0.
 - Rollback Notes: 단일 commit revert(TASK.md 2줄). 코드 무관.
+
+## CHG-20260629-0005
+- Date: 2026-06-29
+- Related Requirement: P5b DI seam Phase 2 batch 1(TASK-0012-7) — cat-A 단순 require 핸들러 19개 DI 전환. DI_SEAM_BLUEPRINT §2 Phase 2 / §3.1 cat A / 부록 마이그 원자단위.
+- Summary:
+  auth-first 단순 require 핸들러 19개를 부록 원자단위(①인라인 conn 생성 try/except 삭제 ②수동 conn.close()/try-finally 삭제 ③`account, error = _require_account(request, conn)`+`if error: return error` 삭제 ④시그니처에 `account=Depends(get_current_account), conn=Depends(get_conn)` 추가)로 byte-동치 전환. conn 은 get_conn use_cache 공유로 인증 conn=핸들러 conn 동일 객체 유지.
+  대상(19): gdrive_status, gdrive_disconnect, serve_avatar, serve_role_icon, serve_product_icon, delete_my_avatar, upload_my_avatar, auth_totp_setup, auth_totp_confirm, auth_totp_disable, list_audit_events, list_audit_actors, list_audit_resources, list_conversation_members, list_conversation_bans, ban_conversation_member, unban_conversation_member, delete_attachment, join_conversation_via_share.
+  적대검증(REV-20260629-0006, ultracode workflow 72 agents): 24 cat-A 후보를 핸들러별 분석 + 2렌즈(렌즈A 순서/conn수명/트랜잭션, 렌즈B 에러셰이프/응답/account/부수효과) 적대 반증 → 21 확정(전부 NONE)·3 보류. byte-동치 불변식: 미인증→401 {"error":"로그인이 필요합니다."}, conn실패→500 {"error":"db connection failed"}, 본문 응답 1:1 보존(get_current_account 가 _AuthError→_auth_error_handler 로 _json_error 셰이프 동치, _get_authenticated_account 직접 호출로 LastSeenAt 부수효과 보존). serve_avatar/serve_role_icon 은 account 를 login-gate 로만 사용(본문 미참조) — Depends 가 401 게이트 유지하므로 동치.
+  보류 2건 이월: list_conversation_shares(본문 flush-left SQL heredoc → 일괄 dedent 불가, batch 2 수작업), profile_usage_conversations(동반 테스트 직접호출 → batch 2 TestClient 전환 동반). 적대검증 보류 3건(mark_conversation_read/list_conversation_attachments/profile_llm_usage)은 런타임 동치이나 자동 edit-spec 의 orphan-try 결함 → batch 2 수작업.
+- Files (cross-cut — 추적은 feature-0012, 코드는 feature-0003):
+  - `unit/feature-0003-agent-web-ui/src/app.py` (19 핸들러 시그니처+본문 — auth/conn 보일러플레이트 제거, body dedent)
+  - `unit/feature-0012-web-router-modularization/docs/{TASK,REPORT,MODIFY,REVIEW}.md` (갱신)
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean(unused account-arg 비차단), py_compile OK. `_require_account` 호출 118→99(-19). 런타임 응답 무변경 — 배포 불요(라우터 추출/배포는 Final).
+- Rollback Notes: 단일 commit revert(app.py 19 핸들러 + docs). 런타임/이미지 무변경. DI seam 토대(Phase 0/1)는 불변.

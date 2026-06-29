@@ -110,3 +110,15 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
   REV-20260629-0004(AGENT-TEAM, 27 agents/5 lens, HIGH 2 적발·보정)에서 이미 완료.
 - 검증(결정적): TASK.md 2줄 diff 만(`[ ]`→`[x]` + 커밋 해시·push 범위 기재). git diff 로 doc-only 확인,
   코드 changeset 0. route-parity·make test 무영향.
+
+## REV-20260629-0006 [AGENT-TEAM:p5b-phase2-cata-batch1-adversarial-panel]
+- Related Change: CHG-20260629-0005 (Phase 2 batch 1 — cat-A 단순 require 19 핸들러 DI 전환)
+- §18.8 Adversarial Panel: **AGENT-TEAM (ultracode workflow `p5b-phase2-cata-plan`, 72 agents / 2.37M tokens).**
+  파이프라인: cat-A 후보 24개 → 핸들러별 정밀 분석(실제 app.py 코드 + DI seam + blueprint 정독, 마이그 spec·동반 테스트 식별)
+  → 핸들러별 **2렌즈 적대 반증**(렌즈A=순서/conn수명/트랜잭션 — pre-auth gate 로 인한 401 우선순위 역전·close 후 conn 재사용·autocommit 토글 적발; 렌즈B=에러셰이프/응답/account/부수효과 — _AuthError 셰이프 동치·HTTPException 회귀·비-JSON 응답·account dict 충족·set_cookie/redirect 보존). "통과가 아니라 결함 적발", 불확실 시 refuted=true(보수적).
+- 결과: **21 확정(양 렌즈 모두 refuted=false, severity NONE)** / **3 보류**.
+  - 보류 BLOCKING×2(mark_conversation_read L15372, profile_llm_usage L28735): 런타임은 byte-동치이나 자동 생성 edit-spec 이 외곽 `try:` 를 남겨(finally 만 제거) `SyntaxError: expected except/finally` 유발 — py_compile 재현 확인. → batch 2 수작업 edit 로 재처리.
+  - 보류 HIGH×1(list_conversation_attachments L17128): 런타임 동치(렌즈B PASS)이나 동일 try/finally 구조 edit 결함. → batch 2.
+- 적용: 확정 21 중 19 적용. 제외 2 — list_conversation_shares(본문 flush-left SQL heredoc 으로 일괄 dedent 불가, batch 2 수작업), profile_usage_conversations(동반 테스트 직접호출 전환 동반, batch 2). 자동 edit-spec 의 try/finally 구조 누락 위험은 **신뢰하지 않고** 보수적 구조 변환기(`cata_transform.py`: 정확 패턴만 변환·SQL heredoc/inline-close/복수 conn skip) + py_compile + sanity 검사(시그니처/잔류 보일러플레이트/conn 사용)로 대체.
+- 검증(결정적): make test **progress-chars 1238 = baseline 동일**(테스트 수 불변·skip 동일·0 FAIL/ERROR, exit 0), route-parity 179 불변(Depends 추가는 경로/메서드/순서 불변), ruff clean(serve_avatar/role_icon 의 login-gate-only unused account-arg 는 비차단), py_compile OK, `_require_account` 호출 118→99(-19, 정확). 동반 테스트(getsource/AST 도메인-문자열 단언)는 auth/conn 패턴 미참조 확인 → 무영향.
+- NIT/수용: serve_avatar/serve_role_icon 의 `account` param 본문 미사용(login-gate 전용) — FastAPI 표준 패턴, ruff 비차단. 수용.

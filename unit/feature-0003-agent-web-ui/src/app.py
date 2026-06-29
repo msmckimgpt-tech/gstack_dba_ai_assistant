@@ -14968,58 +14968,48 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
 # ============================================================================
 
 @app.get("/api/conversations/{cid}/members")
-def list_conversation_members(cid: str, request: Request) -> JSONResponse:
+def list_conversation_members(cid: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """그룹 대화 멤버 roster. 조회 권한: 대화 접근(멤버/owner/read.any)."""
+    if not _account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn, account, cid, "conversation.read.own", "conversation.read.any"
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
         try:
-            from shared.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                member_ids = group_members.list_member_account_ids(pg, cid)
-                roles = {
-                    aid: (group_members.account_member_role(pg, cid, aid) or "member")
-                    for aid in member_ids
-                }
-            finally:
-                pg.close()
-        except Exception:
-            return _json_error("멤버 조회 실패", 500)
-        uname_map: dict[int, str] = {}
-        if member_ids:
-            cur = conn.cursor()
-            ph = ",".join(["%s"] * len(member_ids))
-            cur.execute(
-                f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(member_ids)
-            )
-            for mid, un in cur.fetchall() or []:
-                uname_map[int(mid)] = str(un or "")
-            cur.close()
-        owner_id = _conversation_owner_account_id(conn, cid)
-        members = [
-            {
-                "account_id": aid,
-                "username": uname_map.get(aid, ""),
-                "role": roles.get(aid, "member"),
+            member_ids = group_members.list_member_account_ids(pg, cid)
+            roles = {
+                aid: (group_members.account_member_role(pg, cid, aid) or "member")
+                for aid in member_ids
             }
-            for aid in member_ids
-        ]
-        return JSONResponse(
-            {"conversation_id": cid, "owner_account_id": owner_id, "members": members}
+        finally:
+            pg.close()
+    except Exception:
+        return _json_error("멤버 조회 실패", 500)
+    uname_map: dict[int, str] = {}
+    if member_ids:
+        cur = conn.cursor()
+        ph = ",".join(["%s"] * len(member_ids))
+        cur.execute(
+            f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(member_ids)
         )
-    finally:
-        conn.close()
+        for mid, un in cur.fetchall() or []:
+            uname_map[int(mid)] = str(un or "")
+        cur.close()
+    owner_id = _conversation_owner_account_id(conn, cid)
+    members = [
+        {
+            "account_id": aid,
+            "username": uname_map.get(aid, ""),
+            "role": roles.get(aid, "member"),
+        }
+        for aid in member_ids
+    ]
+    return JSONResponse(
+        {"conversation_id": cid, "owner_account_id": owner_id, "members": members}
+    )
 
 
 @app.delete("/api/conversations/{cid}/members/{account_id}")
@@ -15093,177 +15083,147 @@ def remove_conversation_member(cid: str, account_id: int, request: Request) -> J
 # 권한: 사용자 결정(엄격 owner 전용) — conversation.member.manage 보유자도 ban/unban 불가.
 # ─────────────────────────────────────────────────────────────────────────────
 @app.post("/api/conversations/{cid}/members/{account_id}/ban")
-async def ban_conversation_member(cid: str, account_id: int, request: Request) -> JSONResponse:
+async def ban_conversation_member(cid: str, account_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """그룹 대화 멤버 차단(ban) — 멤버십 제거 + 재참여 차단 목록 등재. **소유자 전용**.
 
     추방(kick=DELETE /members/{id}, 재참여 가능)과 달리, 차단은 공유 링크로도 재참여 불가
     (POST /api/share/{token}/join 의 is_banned 게이트). owner 자신/소유자는 차단 불가(409).
     body: {reason?: str(<=512)}. audit: conversation.member.ban.
     """
+    if not _account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    target_id = int(account_id)
+    if target_id <= 0:
+        return _json_error("유효하지 않은 대상입니다.", 400)
+    # 엄격 owner 전용(사용자 결정) — conversation.member.manage 보유자도 불가.
+    if not _conversation_owned_by_account(conn, cid, actor_id):
+        return _json_error("대화 소유자만 멤버를 차단할 수 있습니다.", 403)
+    conv_owner = _conversation_owner_account_id(conn, cid)
+    if conv_owner is not None and target_id == int(conv_owner):
+        return _json_error("대화 소유자는 차단할 수 없습니다.", 409)
+    if target_id == actor_id:
+        return _json_error("자기 자신은 차단할 수 없습니다.", 409)
     try:
-        conn = _connect_memory()
+        data = await request.json()
     except Exception:
-        return _json_error("db connection failed", 500)
+        data = {}
+    reason = (str(data.get("reason") or "").strip()[:512]) or None
     try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn, account, cid, "conversation.read.own", "conversation.read.any"
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        actor_id = int(account["id"])
-        target_id = int(account_id)
-        if target_id <= 0:
-            return _json_error("유효하지 않은 대상입니다.", 400)
-        # 엄격 owner 전용(사용자 결정) — conversation.member.manage 보유자도 불가.
-        if not _conversation_owned_by_account(conn, cid, actor_id):
-            return _json_error("대화 소유자만 멤버를 차단할 수 있습니다.", 403)
-        conv_owner = _conversation_owner_account_id(conn, cid)
-        if conv_owner is not None and target_id == int(conv_owner):
-            return _json_error("대화 소유자는 차단할 수 없습니다.", 409)
-        if target_id == actor_id:
-            return _json_error("자기 자신은 차단할 수 없습니다.", 409)
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
         try:
-            data = await request.json()
-        except Exception:
-            data = {}
-        reason = (str(data.get("reason") or "").strip()[:512]) or None
-        try:
-            from shared.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                # ban 먼저, remove 나중 — 비원자 fail-window 를 안전 방향(차단 등재됨+멤버 잔존)으로.
-                # remove 먼저였다면 ban 실패 시 "제거됨+미차단=자유 재참여"(fail-open)였다(적대 리뷰 MINOR).
-                group_members.ban_member(
-                    pg, cid, target_id, banned_by_account_id=actor_id, reason=reason
-                )
-                removed = group_members.remove_member(pg, cid, target_id)
-            finally:
-                pg.close()
-        except Exception:
-            return _json_error("멤버 차단 실패", 500)
-        _audit_user_action(
-            conn,
-            request,
-            account,
-            action="conversation.member.ban",
-            resource_type="conversation_member",
-            resource_id=str(target_id),
-            request_ctx={
-                "conversation_id": cid,
-                "target_account_id": target_id,
-                "removed": removed,
-                "reason": reason or "",
-            },
-        )
-        return JSONResponse(
-            {"conversation_id": cid, "account_id": target_id, "banned": True, "removed": removed}
-        )
-    finally:
-        conn.close()
+            # ban 먼저, remove 나중 — 비원자 fail-window 를 안전 방향(차단 등재됨+멤버 잔존)으로.
+            # remove 먼저였다면 ban 실패 시 "제거됨+미차단=자유 재참여"(fail-open)였다(적대 리뷰 MINOR).
+            group_members.ban_member(
+                pg, cid, target_id, banned_by_account_id=actor_id, reason=reason
+            )
+            removed = group_members.remove_member(pg, cid, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return _json_error("멤버 차단 실패", 500)
+    _audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.member.ban",
+        resource_type="conversation_member",
+        resource_id=str(target_id),
+        request_ctx={
+            "conversation_id": cid,
+            "target_account_id": target_id,
+            "removed": removed,
+            "reason": reason or "",
+        },
+    )
+    return JSONResponse(
+        {"conversation_id": cid, "account_id": target_id, "banned": True, "removed": removed}
+    )
 
 
 @app.delete("/api/conversations/{cid}/members/{account_id}/ban")
-def unban_conversation_member(cid: str, account_id: int, request: Request) -> JSONResponse:
+def unban_conversation_member(cid: str, account_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """그룹 대화 멤버 차단 해제(unban). **소유자 전용**. audit: conversation.member.unban.
 
     해제만 수행 — 멤버십 자동 복원은 없다(account 가 다시 공유 링크로 참여할 수 있게 될 뿐).
     """
+    if not _account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    target_id = int(account_id)
+    if not _conversation_owned_by_account(conn, cid, actor_id):
+        return _json_error("대화 소유자만 차단을 해제할 수 있습니다.", 403)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn, account, cid, "conversation.read.own", "conversation.read.any"
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        actor_id = int(account["id"])
-        target_id = int(account_id)
-        if not _conversation_owned_by_account(conn, cid, actor_id):
-            return _json_error("대화 소유자만 차단을 해제할 수 있습니다.", 403)
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
         try:
-            from shared.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                removed = group_members.unban_member(pg, cid, target_id)
-            finally:
-                pg.close()
-        except Exception:
-            return _json_error("차단 해제 실패", 500)
-        _audit_user_action(
-            conn,
-            request,
-            account,
-            action="conversation.member.unban",
-            resource_type="conversation_member",
-            resource_id=str(target_id),
-            request_ctx={"conversation_id": cid, "target_account_id": target_id, "unbanned": removed},
-        )
-        return JSONResponse(
-            {"conversation_id": cid, "account_id": target_id, "unbanned": removed}
-        )
-    finally:
-        conn.close()
+            removed = group_members.unban_member(pg, cid, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return _json_error("차단 해제 실패", 500)
+    _audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.member.unban",
+        resource_type="conversation_member",
+        resource_id=str(target_id),
+        request_ctx={"conversation_id": cid, "target_account_id": target_id, "unbanned": removed},
+    )
+    return JSONResponse(
+        {"conversation_id": cid, "account_id": target_id, "unbanned": removed}
+    )
 
 
 @app.get("/api/conversations/{cid}/bans")
-def list_conversation_bans(cid: str, request: Request) -> JSONResponse:
+def list_conversation_bans(cid: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """그룹 대화 차단(ban) 목록. **소유자 전용** — '차단된 사용자' UI 가 소비."""
+    if not _account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    if not _conversation_owned_by_account(conn, cid, actor_id):
+        return _json_error("대화 소유자만 차단 목록을 조회할 수 있습니다.", 403)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn, account, cid, "conversation.read.own", "conversation.read.any"
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        actor_id = int(account["id"])
-        if not _conversation_owned_by_account(conn, cid, actor_id):
-            return _json_error("대화 소유자만 차단 목록을 조회할 수 있습니다.", 403)
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
         try:
-            from shared.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                bans = group_members.list_bans(pg, cid)
-            finally:
-                pg.close()
-        except Exception:
-            return _json_error("차단 목록 조회 실패", 500)
-        uname_map: dict[int, str] = {}
-        ban_ids = [int(b["account_id"]) for b in bans]
-        if ban_ids:
-            cur = conn.cursor()
-            ph = ",".join(["%s"] * len(ban_ids))
-            cur.execute(
-                f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(ban_ids)
-            )
-            for mid, un in cur.fetchall() or []:
-                uname_map[int(mid)] = str(un or "")
-            cur.close()
-        out = [
-            {
-                "account_id": b["account_id"],
-                "username": uname_map.get(b["account_id"], ""),
-                "banned_at": b["banned_at"],
-                "reason": b["reason"] or "",
-            }
-            for b in bans
-        ]
-        return JSONResponse({"conversation_id": cid, "bans": out})
-    finally:
-        conn.close()
+            bans = group_members.list_bans(pg, cid)
+        finally:
+            pg.close()
+    except Exception:
+        return _json_error("차단 목록 조회 실패", 500)
+    uname_map: dict[int, str] = {}
+    ban_ids = [int(b["account_id"]) for b in bans]
+    if ban_ids:
+        cur = conn.cursor()
+        ph = ",".join(["%s"] * len(ban_ids))
+        cur.execute(
+            f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(ban_ids)
+        )
+        for mid, un in cur.fetchall() or []:
+            uname_map[int(mid)] = str(un or "")
+        cur.close()
+    out = [
+        {
+            "account_id": b["account_id"],
+            "username": uname_map.get(b["account_id"], ""),
+            "banned_at": b["banned_at"],
+            "reason": b["reason"] or "",
+        }
+        for b in bans
+    ]
+    return JSONResponse({"conversation_id": cid, "bans": out})
 
 
 def _save_group_chat_message_pg(
@@ -16046,109 +16006,99 @@ WHERE Token = %s AND RevokedAt IS NULL
 
 
 @app.post("/api/share/{token}/join")
-def join_conversation_via_share(token: str, request: Request) -> JSONResponse:
+def join_conversation_via_share(token: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """feature-0009: 공유 링크로 그룹 대화에 **참여(join)** — 로그인 viewer 를 멤버로 추가.
 
     조건(전부 충족): 로그인 + 링크 활성(revoked/expired 아님) + Joinable=1 + 대화 비차단/비보관.
     참여 시 발신자(actor)는 대화 전체(권한 멤버가 만든 datasource 결과 포함)를 열람하게 된다
     (열람 ≠ 발화, AR-1). datasource 발화/쿼리는 여전히 본인 RBAC 게이트(S4). audit: conversation.member.join.
     """
+    share = _share_load_active(conn, token)
+    if not share:
+        return _json_error("공유 링크를 찾을 수 없습니다.", 404)
+    if share.get("RevokedAt") is not None:
+        return _json_error("이 공유 링크는 취소되었습니다.", 410)
+    if _share_row_expired(conn, int(share.get("Id") or 0)):
+        return _json_error("이 공유 링크는 만료되었습니다.", 410)
+    if not bool(int(share.get("Joinable") if share.get("Joinable") is not None else 1)):
+        return _json_error("이 공유 링크는 대화 참여가 허용되지 않습니다.", 403)
+    cid = str(share.get("ConversationId") or "")
+    if not cid or not _conversation_exists(cid, conn=conn):
+        return _json_error("대화를 찾을 수 없습니다.", 404)
+    _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
+    if _is_blocked:
+        return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
+    # feature-0009 gc-group-authz-flag: join = 그룹 협업 확정 → owner 멤버십 보장(member_count
+    # under-count → 공유 직후 assistant 오호출 #2 자가치유) + is_group 플래그 set(#4). 기존
+    # backfill 미적용 대화도 이 시점에 정상화. best-effort(헬퍼가 예외 무시).
+    _ensure_owner_membership(cid)
+    _mark_conversation_group(cid)
+    actor_id = int(account["id"])
+    # feature-0009 member-kick-ban: 차단된 account 는 공유 링크로 재참여 불가(owner ban).
+    # owner 는 차단 불가(ban 엔드포인트 가드)라 owner self-join 은 영향 없음. _ensure_owner_membership
+    # 위에서 이미 owner 멤버십을 보장했고, 본 게이트는 차단된 비-owner actor 만 막는다.
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        share = _share_load_active(conn, token)
-        if not share:
-            return _json_error("공유 링크를 찾을 수 없습니다.", 404)
-        if share.get("RevokedAt") is not None:
-            return _json_error("이 공유 링크는 취소되었습니다.", 410)
-        if _share_row_expired(conn, int(share.get("Id") or 0)):
-            return _json_error("이 공유 링크는 만료되었습니다.", 410)
-        if not bool(int(share.get("Joinable") if share.get("Joinable") is not None else 1)):
-            return _json_error("이 공유 링크는 대화 참여가 허용되지 않습니다.", 403)
-        cid = str(share.get("ConversationId") or "")
-        if not cid or not _conversation_exists(cid, conn=conn):
-            return _json_error("대화를 찾을 수 없습니다.", 404)
-        _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
-        if _is_blocked:
-            return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
-        # feature-0009 gc-group-authz-flag: join = 그룹 협업 확정 → owner 멤버십 보장(member_count
-        # under-count → 공유 직후 assistant 오호출 #2 자가치유) + is_group 플래그 set(#4). 기존
-        # backfill 미적용 대화도 이 시점에 정상화. best-effort(헬퍼가 예외 무시).
-        _ensure_owner_membership(cid)
-        _mark_conversation_group(cid)
-        actor_id = int(account["id"])
-        # feature-0009 member-kick-ban: 차단된 account 는 공유 링크로 재참여 불가(owner ban).
-        # owner 는 차단 불가(ban 엔드포인트 가드)라 owner self-join 은 영향 없음. _ensure_owner_membership
-        # 위에서 이미 owner 멤버십을 보장했고, 본 게이트는 차단된 비-owner actor 만 막는다.
+        from shared.db import _pg_connect as _pg_connect_ban
+        from modules import group_members as _gm_ban
+        _pg_b = _pg_connect_ban()
         try:
-            from shared.db import _pg_connect as _pg_connect_ban
-            from modules import group_members as _gm_ban
-            _pg_b = _pg_connect_ban()
+            _is_banned = _gm_ban.is_banned(_pg_b, cid, actor_id)
+        finally:
+            _pg_b.close()
+    except Exception:
+        # 보안 게이트 fail-closed — 차단 여부 불명 시 참여 거부(가용성보다 ban 무결성 우선).
+        # join 은 어차피 add_member(동일 PG)를 요구하므로 PG 장애 시 추가 가용성 손실 없음.
+        logging.getLogger(__name__).warning(
+            "join: is_banned check failed — fail-closed", exc_info=True
+        )
+        return _json_error("참여 처리 중 오류가 발생했습니다. 다시 시도해 주세요.", 500)
+    if _is_banned:
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.member.join_blocked",
+            resource_type="conversation_member",
+            resource_id=str(actor_id),
+            request_ctx={"conversation_id": cid, "via": "share_link", "reason": "banned"},
+        )
+        return _json_error("이 대화에서 차단되어 참여할 수 없습니다.", 403)
+    # 이미 소유자/멤버면 멱등 성공(중복 참여 무해).
+    already = _conversation_owned_by_account(conn, cid, actor_id) or _account_is_conversation_member(cid, actor_id)
+    if not already:
+        try:
+            from shared.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
             try:
-                _is_banned = _gm_ban.is_banned(_pg_b, cid, actor_id)
+                inviter = int(share.get("CreatedBy")) if share.get("CreatedBy") is not None else None
+                group_members.add_member(pg, cid, actor_id, role="member", invited_by_account_id=inviter)
             finally:
-                _pg_b.close()
+                pg.close()
         except Exception:
-            # 보안 게이트 fail-closed — 차단 여부 불명 시 참여 거부(가용성보다 ban 무결성 우선).
-            # join 은 어차피 add_member(동일 PG)를 요구하므로 PG 장애 시 추가 가용성 손실 없음.
+            # 진단 가시성: 실제 예외를 로깅(상위 ban 체크와 동일 정책). silent 500 은
+            # 근본원인 파악을 막는다(gc-join-ambiguous-param-fix 사례 — 멤버 INSERT 실패가
+            # 일반 500 으로만 표면화되어 진단이 지연됨).
             logging.getLogger(__name__).warning(
-                "join: is_banned check failed — fail-closed", exc_info=True
+                "join: add_member failed — conversation_id=%s actor_id=%s", cid, actor_id,
+                exc_info=True,
             )
-            return _json_error("참여 처리 중 오류가 발생했습니다. 다시 시도해 주세요.", 500)
-        if _is_banned:
-            _audit_user_action(
-                conn,
-                request,
-                account,
-                action="conversation.member.join_blocked",
-                resource_type="conversation_member",
-                resource_id=str(actor_id),
-                request_ctx={"conversation_id": cid, "via": "share_link", "reason": "banned"},
-            )
-            return _json_error("이 대화에서 차단되어 참여할 수 없습니다.", 403)
-        # 이미 소유자/멤버면 멱등 성공(중복 참여 무해).
-        already = _conversation_owned_by_account(conn, cid, actor_id) or _account_is_conversation_member(cid, actor_id)
-        if not already:
-            try:
-                from shared.db import _pg_connect
-                from modules import group_members
-                pg = _pg_connect()
-                try:
-                    inviter = int(share.get("CreatedBy")) if share.get("CreatedBy") is not None else None
-                    group_members.add_member(pg, cid, actor_id, role="member", invited_by_account_id=inviter)
-                finally:
-                    pg.close()
-            except Exception:
-                # 진단 가시성: 실제 예외를 로깅(상위 ban 체크와 동일 정책). silent 500 은
-                # 근본원인 파악을 막는다(gc-join-ambiguous-param-fix 사례 — 멤버 INSERT 실패가
-                # 일반 500 으로만 표면화되어 진단이 지연됨).
-                logging.getLogger(__name__).warning(
-                    "join: add_member failed — conversation_id=%s actor_id=%s", cid, actor_id,
-                    exc_info=True,
-                )
-                return _json_error("대화 참여에 실패했습니다.", 500)
-            _audit_user_action(
-                conn,
-                request,
-                account,
-                action="conversation.member.join",
-                resource_type="conversation_member",
-                resource_id=str(actor_id),
-                request_ctx={
-                    "conversation_id": cid,
-                    "via": "share_link",
-                    "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
-                    "token_prefix": str(token)[:8],
-                },
-            )
-        return JSONResponse({"ok": True, "conversation_id": cid, "already_member": already})
-    finally:
-        conn.close()
+            return _json_error("대화 참여에 실패했습니다.", 500)
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.member.join",
+            resource_type="conversation_member",
+            resource_id=str(actor_id),
+            request_ctx={
+                "conversation_id": cid,
+                "via": "share_link",
+                "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                "token_prefix": str(token)[:8],
+            },
+        )
+    return JSONResponse({"ok": True, "conversation_id": cid, "already_member": already})
 
 
 @app.post("/api/public/share/{token}/fork")
@@ -16334,99 +16284,69 @@ def _serve_image_object(object_key: "str | None", *, fallback_404: str = "이미
 
 
 @app.put("/api/auth/me/avatar")
-async def upload_my_avatar(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+async def upload_my_avatar(request: Request, file: UploadFile = File(...), account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """본인 프로필 아바타 업로드(self-service — 별도 RBAC 없음, 로그인만). 이전 아바타는 교체."""
+    aid = int(account.get("id") or 0)
+    if aid <= 0:
+        return _json_error("계정 식별 실패", 403)
+    body = await file.read()
+    object_key, info = _store_image_upload(
+        body, prefix="avatars", owner_id=aid, max_bytes=_AVATAR_MAX_BYTES,
+        mime_hint=(file.content_type or ""),
+    )
+    if not object_key:
+        return _json_error(info, 400)
+    # 이전 아바타 object key 회수(best-effort 삭제).
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        aid = int(account.get("id") or 0)
-        if aid <= 0:
-            return _json_error("계정 식별 실패", 403)
-        body = await file.read()
-        object_key, info = _store_image_upload(
-            body, prefix="avatars", owner_id=aid, max_bytes=_AVATAR_MAX_BYTES,
-            mime_hint=(file.content_type or ""),
-        )
-        if not object_key:
-            return _json_error(info, 400)
-        # 이전 아바타 object key 회수(best-effort 삭제).
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (aid,))
-            row = cur.fetchone()
-            old_key = row[0] if row else None
-            cur.execute("UPDATE WebAccounts SET AvatarObjectKey = %s WHERE Id = %s", (object_key, aid))
-            conn.commit()
-        finally:
-            cur.close()
-        if old_key and old_key != object_key:
-            try:
-                from web.modules import storage_minio
-                storage_minio.delete_object(str(old_key))
-            except Exception:
-                pass
-        return JSONResponse({"ok": True, "avatar_url": _avatar_url_for(aid, object_key)})
+        cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (aid,))
+        row = cur.fetchone()
+        old_key = row[0] if row else None
+        cur.execute("UPDATE WebAccounts SET AvatarObjectKey = %s WHERE Id = %s", (object_key, aid))
+        conn.commit()
     finally:
-        conn.close()
+        cur.close()
+    if old_key and old_key != object_key:
+        try:
+            from web.modules import storage_minio
+            storage_minio.delete_object(str(old_key))
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "avatar_url": _avatar_url_for(aid, object_key)})
 
 
 @app.delete("/api/auth/me/avatar")
-def delete_my_avatar(request: Request) -> JSONResponse:
+def delete_my_avatar(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """본인 아바타 제거 → Identicon 폴백."""
+    aid = int(account.get("id") or 0)
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        aid = int(account.get("id") or 0)
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (aid,))
-            row = cur.fetchone()
-            old_key = row[0] if row else None
-            cur.execute("UPDATE WebAccounts SET AvatarObjectKey = NULL WHERE Id = %s", (aid,))
-            conn.commit()
-        finally:
-            cur.close()
-        if old_key:
-            try:
-                from web.modules import storage_minio
-                storage_minio.delete_object(str(old_key))
-            except Exception:
-                pass
-        return JSONResponse({"ok": True, "avatar_url": None})
+        cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (aid,))
+        row = cur.fetchone()
+        old_key = row[0] if row else None
+        cur.execute("UPDATE WebAccounts SET AvatarObjectKey = NULL WHERE Id = %s", (aid,))
+        conn.commit()
     finally:
-        conn.close()
+        cur.close()
+    if old_key:
+        try:
+            from web.modules import storage_minio
+            storage_minio.delete_object(str(old_key))
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "avatar_url": None})
 
 
 @app.get("/api/avatars/{account_id}")
-def serve_avatar(account_id: int, request: Request) -> Any:
+def serve_avatar(account_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> Any:
     """계정 아바타 이미지 bytes 서빙(로그인 필요 — 같은 출처). 미설정/없음 404 → 프론트 Identicon."""
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (int(account_id),))
-            row = cur.fetchone()
-        finally:
-            cur.close()
-        return _serve_image_object(row[0] if row else None, fallback_404="아바타 없음")
+        cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (int(account_id),))
+        row = cur.fetchone()
     finally:
-        conn.close()
+        cur.close()
+    return _serve_image_object(row[0] if row else None, fallback_404="아바타 없음")
 
 
 @app.put("/api/admin/products/{product_id}/icon")
@@ -16509,25 +16429,15 @@ def delete_product_icon(product_id: int, request: Request) -> JSONResponse:
 
 
 @app.get("/api/products/{product_id}/icon")
-def serve_product_icon(product_id: int, request: Request) -> Any:
+def serve_product_icon(product_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> Any:
     """제품 아이콘 bytes 서빙(로그인 필요). 미설정/없음 404 → 프론트 Identicon/기본."""
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
-            row = cur.fetchone()
-        finally:
-            cur.close()
-        return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
+        cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+        row = cur.fetchone()
     finally:
-        conn.close()
+        cur.close()
+    return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
 
 
 # ============================================================================
@@ -16718,25 +16628,15 @@ def admin_delete_role_icon(role_id: int, request: Request) -> JSONResponse:
 
 
 @app.get("/api/roles/{role_id}/icon")
-def serve_role_icon(role_id: int, request: Request) -> Any:
+def serve_role_icon(role_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> Any:
     """역할 아이콘 bytes 서빙(로그인 필요 — 같은 출처). 미설정/없음 404 → 프론트 Identicon."""
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT IconObjectKey FROM WebRoles WHERE Id = %s", (int(role_id),))
-            row = cur.fetchone()
-        finally:
-            cur.close()
-        return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
+        cur.execute("SELECT IconObjectKey FROM WebRoles WHERE Id = %s", (int(role_id),))
+        row = cur.fetchone()
     finally:
-        conn.close()
+        cur.close()
+    return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
 
 
 # ============================================================================
@@ -17429,94 +17329,83 @@ def get_attachment_versions(attachment_id: int, request: Request) -> JSONRespons
 
 
 @app.delete("/api/attachments/{attachment_id}")
-def delete_attachment(attachment_id: int, request: Request) -> JSONResponse:
+def delete_attachment(attachment_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """첨부 soft-delete (D6 user delete_reason). MinIO 객체 실삭제는 Phase 9
     reconciliation worker 가 retention 만료 후 처리. 권한: upload.{own,any}.
 
     BRIEFING D6 의 4 종 taxonomy 중 user delete 만 본 endpoint 가 trigger.
     admin_purge / legal erasure / conv_soft 는 별 endpoint (Phase 9 ship).
     """
+    row = _load_attachment_row(conn, attachment_id)
+    # upload.{own,any} 가 soft-delete 권한 (uploader 가 자기 첨부 회수).
+    if not _account_can_access_attachment(
+        conn,
+        account,
+        row,
+        "conversation.attachment.upload.own",
+        "conversation.attachment.upload.any",
+    ):
+        return _json_error("첨부를 찾을 수 없거나 삭제 권한이 없습니다.", 404)
+
+    # 이미 soft-deleted 면 idempotent 응답.
+    if row.get("DeletePending"):
+        return JSONResponse(
+            {
+                "ok": True,
+                "delete_reason": str(row.get("DeleteReason") or "user"),
+                "already_pending": True,
+            }
+        )
+
+    before_snapshot = _serialize_attachment_for_audit(row)
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        row = _load_attachment_row(conn, attachment_id)
-        # upload.{own,any} 가 soft-delete 권한 (uploader 가 자기 첨부 회수).
-        if not _account_can_access_attachment(
-            conn,
-            account,
-            row,
-            "conversation.attachment.upload.own",
-            "conversation.attachment.upload.any",
-        ):
-            return _json_error("첨부를 찾을 수 없거나 삭제 권한이 없습니다.", 404)
-
-        # 이미 soft-deleted 면 idempotent 응답.
-        if row.get("DeletePending"):
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "delete_reason": str(row.get("DeleteReason") or "user"),
-                    "already_pending": True,
-                }
-            )
-
-        before_snapshot = _serialize_attachment_for_audit(row)
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
-                UPDATE WebConversationAttachments
-                SET DeletePending = 1, DeleteReason = 'user', DeletedAt = UTC_TIMESTAMP(6)
-                WHERE Id = %s AND DeletePending = 0
-                """,
-                (int(attachment_id),),
-            )
-            updated = int(cur.rowcount or 0)
-        finally:
-            cur.close()
-
-        if updated <= 0:
-            return _json_error("삭제 처리 실패 (이미 처리됨)", 409)
-
-        try:
-            conn.commit()
-        except Exception:
-            pass
-
-        # TASK-0277: dual-write — soft-delete(DeletePending/DeletedAt) 상태를 PG 로 미러(flag-gated, fail-soft).
-        try:
-            from web.modules import attachment_pg_mirror as _apm
-            _apm.mirror_attachments(conn, [int(attachment_id)])
-        except Exception:
-            pass
-
-        # audit dispatch.
-        try:
-            _audit_user_action(
-                conn,
-                request,
-                account,
-                action="attachment.delete",
-                resource_type="attachment",
-                resource_id=str(attachment_id),
-                request_ctx={**before_snapshot, "delete_reason": "user"},
-            )
-        except Exception:
-            # fail-open: attachment.delete audit dispatch 실패는 삭제 응답을 막지 않으나 가시화.
-            logging.getLogger(__name__).warning(
-                "delete_attachment: delete audit dispatch failed (attachment_id=%s)",
-                attachment_id, exc_info=True,
-            )
-
-        return JSONResponse({"ok": True, "delete_reason": "user"})
+        cur.execute(
+            """
+            UPDATE WebConversationAttachments
+            SET DeletePending = 1, DeleteReason = 'user', DeletedAt = UTC_TIMESTAMP(6)
+            WHERE Id = %s AND DeletePending = 0
+            """,
+            (int(attachment_id),),
+        )
+        updated = int(cur.rowcount or 0)
     finally:
-        conn.close()
+        cur.close()
+
+    if updated <= 0:
+        return _json_error("삭제 처리 실패 (이미 처리됨)", 409)
+
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+    # TASK-0277: dual-write — soft-delete(DeletePending/DeletedAt) 상태를 PG 로 미러(flag-gated, fail-soft).
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        _apm.mirror_attachments(conn, [int(attachment_id)])
+    except Exception:
+        pass
+
+    # audit dispatch.
+    try:
+        _audit_user_action(
+            conn,
+            request,
+            account,
+            action="attachment.delete",
+            resource_type="attachment",
+            resource_id=str(attachment_id),
+            request_ctx={**before_snapshot, "delete_reason": "user"},
+        )
+    except Exception:
+        # fail-open: attachment.delete audit dispatch 실패는 삭제 응답을 막지 않으나 가시화.
+        logging.getLogger(__name__).warning(
+            "delete_attachment: delete audit dispatch failed (attachment_id=%s)",
+            attachment_id, exc_info=True,
+        )
+
+    return JSONResponse({"ok": True, "delete_reason": "user"})
 
 
 @app.get("/api/conversations")
@@ -19107,124 +18996,94 @@ async def auth_me_patch(request: Request) -> JSONResponse:
 # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA self-service 등록/해제 (로그인 필요).
 # =============================================================================
 @app.post("/api/auth/totp/setup")
-async def auth_totp_setup(request: Request) -> JSONResponse:
+async def auth_totp_setup(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """2FA 등록 시작 — secret 생성·암호화 저장(Enabled=0 미확인) + otpauth URI 반환.
     재호출(미확인 상태) 시 새 secret 으로 덮어쓴다. 이미 활성(Enabled=1)이면 409."""
+    aid = int(account["id"])
+    if _totp_is_enabled(conn, aid):
+        return _json_error("이미 2단계 인증이 설정되어 있습니다. 먼저 해제 후 다시 설정하세요.", 409)
+    secret = _totp_generate_secret()
+    enc = _totp_encrypt_secret(conn, aid, secret)
+    if not enc:
+        return _json_error("2단계 인증 암호화 인프라(KEK)가 구성되어 있지 않습니다. 관리자에게 문의해 주세요.", 503)
+    secret_enc, ver = enc
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        aid = int(account["id"])
-        if _totp_is_enabled(conn, aid):
-            return _json_error("이미 2단계 인증이 설정되어 있습니다. 먼저 해제 후 다시 설정하세요.", 409)
-        secret = _totp_generate_secret()
-        enc = _totp_encrypt_secret(conn, aid, secret)
-        if not enc:
-            return _json_error("2단계 인증 암호화 인프라(KEK)가 구성되어 있지 않습니다. 관리자에게 문의해 주세요.", 503)
-        secret_enc, ver = enc
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "INSERT INTO WebAccountTotp (AccountId, SecretEnc, EncryptionVersion, Enabled, BackupCodesJson, ConfirmedAt) "
-                "VALUES (%s, %s, %s, 0, NULL, NULL) "
-                "ON DUPLICATE KEY UPDATE SecretEnc=VALUES(SecretEnc), EncryptionVersion=VALUES(EncryptionVersion), "
-                "Enabled=0, BackupCodesJson=NULL, ConfirmedAt=NULL",
-                (aid, secret_enc, int(ver)),
-            )
-        finally:
-            cur.close()
-        username = str(account.get("username") or "user")
-        return JSONResponse({
-            "ok": True,
-            "secret": secret,  # 1회 노출 — 사용자가 authenticator 에 수동 입력 가능.
-            "otpauth_uri": _totp_otpauth_uri(secret, username),
-            "digits": _TOTP_DIGITS,
-            "period": _TOTP_STEP,
-        })
+        cur.execute(
+            "INSERT INTO WebAccountTotp (AccountId, SecretEnc, EncryptionVersion, Enabled, BackupCodesJson, ConfirmedAt) "
+            "VALUES (%s, %s, %s, 0, NULL, NULL) "
+            "ON DUPLICATE KEY UPDATE SecretEnc=VALUES(SecretEnc), EncryptionVersion=VALUES(EncryptionVersion), "
+            "Enabled=0, BackupCodesJson=NULL, ConfirmedAt=NULL",
+            (aid, secret_enc, int(ver)),
+        )
     finally:
-        conn.close()
+        cur.close()
+    username = str(account.get("username") or "user")
+    return JSONResponse({
+        "ok": True,
+        "secret": secret,  # 1회 노출 — 사용자가 authenticator 에 수동 입력 가능.
+        "otpauth_uri": _totp_otpauth_uri(secret, username),
+        "digits": _TOTP_DIGITS,
+        "period": _TOTP_STEP,
+    })
 
 
 @app.post("/api/auth/totp/confirm")
-async def auth_totp_confirm(request: Request) -> JSONResponse:
+async def auth_totp_confirm(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """2FA 등록 확정 — setup 의 secret 으로 첫 코드 검증 → Enabled=1 + 백업코드 10개(1회 노출) 발급."""
     try:
         data = await request.json()
     except Exception:
         data = {}
     code = str(data.get("code", "") or "").strip()
+    aid = int(account["id"])
+    row = _totp_load(conn, aid)
+    if not row or not row.get("SecretEnc"):
+        return _json_error("먼저 2단계 인증 설정을 시작해 주세요.", 400)
+    if int(row.get("Enabled") or 0) == 1:
+        return _json_error("이미 활성화되어 있습니다.", 409)
+    secret = _totp_decrypt_secret(conn, aid, str(row.get("SecretEnc") or ""), int(row.get("EncryptionVersion") or 0))
+    if not secret or not _totp_verify(secret, code):
+        return _json_error("인증 코드가 올바르지 않습니다. authenticator 앱의 현재 코드를 입력해 주세요.", 400)
+    backup_codes = _totp_generate_backup_codes()
+    backup_json = json.dumps([{"hash": _totp_backup_hash(c), "used": False} for c in backup_codes])
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        aid = int(account["id"])
-        row = _totp_load(conn, aid)
-        if not row or not row.get("SecretEnc"):
-            return _json_error("먼저 2단계 인증 설정을 시작해 주세요.", 400)
-        if int(row.get("Enabled") or 0) == 1:
-            return _json_error("이미 활성화되어 있습니다.", 409)
-        secret = _totp_decrypt_secret(conn, aid, str(row.get("SecretEnc") or ""), int(row.get("EncryptionVersion") or 0))
-        if not secret or not _totp_verify(secret, code):
-            return _json_error("인증 코드가 올바르지 않습니다. authenticator 앱의 현재 코드를 입력해 주세요.", 400)
-        backup_codes = _totp_generate_backup_codes()
-        backup_json = json.dumps([{"hash": _totp_backup_hash(c), "used": False} for c in backup_codes])
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "UPDATE WebAccountTotp SET Enabled=1, BackupCodesJson=%s, ConfirmedAt=NOW() WHERE AccountId=%s",
-                (backup_json, aid),
-            )
-        finally:
-            cur.close()
-        _audit_user_action(
-            conn, request, account, action="auth.totp.enable", resource_type="account",
-            resource_id=str(aid), request_ctx={"backup_codes_issued": len(backup_codes)}, target_account_id=aid,
+        cur.execute(
+            "UPDATE WebAccountTotp SET Enabled=1, BackupCodesJson=%s, ConfirmedAt=NOW() WHERE AccountId=%s",
+            (backup_json, aid),
         )
-        return JSONResponse({"ok": True, "enabled": True, "backup_codes": backup_codes})
     finally:
-        conn.close()
+        cur.close()
+    _audit_user_action(
+        conn, request, account, action="auth.totp.enable", resource_type="account",
+        resource_id=str(aid), request_ctx={"backup_codes_issued": len(backup_codes)}, target_account_id=aid,
+    )
+    return JSONResponse({"ok": True, "enabled": True, "backup_codes": backup_codes})
 
 
 @app.post("/api/auth/totp/disable")
-async def auth_totp_disable(request: Request) -> JSONResponse:
+async def auth_totp_disable(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """2FA 해제 — 비밀번호 재확인 후 삭제(self-service)."""
     try:
         data = await request.json()
     except Exception:
         data = {}
     password = str(data.get("password", "") or "")
+    aid = int(account["id"])
+    full = _load_account_by_username(conn, str(account.get("username") or ""))
+    if not full or not _verify_password(password, str(full.get("password_hash") or "")):
+        return _json_error("비밀번호가 올바르지 않습니다.", 403)
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        aid = int(account["id"])
-        full = _load_account_by_username(conn, str(account.get("username") or ""))
-        if not full or not _verify_password(password, str(full.get("password_hash") or "")):
-            return _json_error("비밀번호가 올바르지 않습니다.", 403)
-        cur = conn.cursor()
-        try:
-            cur.execute("DELETE FROM WebAccountTotp WHERE AccountId=%s", (aid,))
-        finally:
-            cur.close()
-        _audit_user_action(
-            conn, request, account, action="auth.totp.disable", resource_type="account",
-            resource_id=str(aid), request_ctx={"by": "self"}, target_account_id=aid,
-        )
-        return JSONResponse({"ok": True, "enabled": False})
+        cur.execute("DELETE FROM WebAccountTotp WHERE AccountId=%s", (aid,))
     finally:
-        conn.close()
+        cur.close()
+    _audit_user_action(
+        conn, request, account, action="auth.totp.disable", resource_type="account",
+        resource_id=str(aid), request_ctx={"by": "self"}, target_account_id=aid,
+    )
+    return JSONResponse({"ok": True, "enabled": False})
 
 
 @app.post("/api/auth/logout")
@@ -19827,19 +19686,9 @@ def _gdrive_callback_redirect(request: Request, location: str) -> Any:
 
 
 @app.get("/api/integrations/google-drive/status")
-def gdrive_status(request: Request) -> JSONResponse:
+def gdrive_status(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """현재 로그인 계정의 Drive 연결 상태(메타데이터만). 비로그인=401. flag 무관 항상 가용."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        return JSONResponse(_gdrive_connection_status(conn, int(account["id"])))
-    finally:
-        conn.close()
+    return JSONResponse(_gdrive_connection_status(conn, int(account["id"])))
 
 
 @app.get("/api/integrations/google-drive/connect")
@@ -19924,20 +19773,10 @@ def gdrive_callback(request: Request) -> Any:
 
 
 @app.post("/api/integrations/google-drive/disconnect")
-def gdrive_disconnect(request: Request) -> JSONResponse:
+def gdrive_disconnect(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """현재 로그인 계정의 Drive 연결 해제(저장 토큰 삭제). 비로그인=401. flag 무관 항상 가용."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        ok = _gdrive_delete_tokens(conn, int(account["id"]))
-        return JSONResponse({"ok": bool(ok), "connected": False})
-    finally:
-        conn.close()
+    ok = _gdrive_delete_tokens(conn, int(account["id"]))
+    return JSONResponse({"ok": bool(ok), "connected": False})
 
 
 @app.get("/api/admin/me")
@@ -28837,7 +28676,7 @@ def profile_llm_usage(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/audits")
-def list_audit_events(request: Request) -> JSONResponse:
+def list_audit_events(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): audit event 조회 (filter + cursor).
 
     권한: `audit.read.own` 또는 `audit.read.any`. `.own` 은 `WHERE ActorAccountId=:self`
@@ -28848,46 +28687,36 @@ def list_audit_events(request: Request) -> JSONResponse:
 
     Response: `{items: [...], next_cursor: <id>|None, scope: 'own'|'any'}`.
     """
+    scope = _audit_resolve_read_scope(account)
+    if not scope:
+        return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+    params = _audit_parse_filter_params(request)
+    cursor_id = _audit_parse_cursor(params["cursor"])
+    limit = _audit_clamped_limit(params["limit"])
+    where_clause, args = _audit_compose_where(
+        scope=scope,
+        account_id=int(account["id"]),
+        params=params,
+        cursor_id=cursor_id,
+    )
+    sql = (
+        "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+        "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+        "RemoteAddr, UserAgent, RequestId, OccurredAt "
+        f"FROM WebAuditEvents{where_clause} "
+        "ORDER BY Id DESC LIMIT %s"
+    )
+    args.append(int(limit) + 1)
+    cur = conn.cursor(dictionary=True)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        scope = _audit_resolve_read_scope(account)
-        if not scope:
-            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
-        params = _audit_parse_filter_params(request)
-        cursor_id = _audit_parse_cursor(params["cursor"])
-        limit = _audit_clamped_limit(params["limit"])
-        where_clause, args = _audit_compose_where(
-            scope=scope,
-            account_id=int(account["id"]),
-            params=params,
-            cursor_id=cursor_id,
-        )
-        sql = (
-            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
-            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
-            "RemoteAddr, UserAgent, RequestId, OccurredAt "
-            f"FROM WebAuditEvents{where_clause} "
-            "ORDER BY Id DESC LIMIT %s"
-        )
-        args.append(int(limit) + 1)
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(sql, tuple(args))
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
-        has_more = len(rows) > limit
-        items = [_audit_row_to_dict(r) for r in rows[:limit]]
-        next_cursor = str(items[-1]["id"]) if has_more and items else None
-        return JSONResponse({"items": items, "next_cursor": next_cursor, "scope": scope})
+        cur.execute(sql, tuple(args))
+        rows = cur.fetchall() or []
     finally:
-        conn.close()
+        cur.close()
+    has_more = len(rows) > limit
+    items = [_audit_row_to_dict(r) for r in rows[:limit]]
+    next_cursor = str(items[-1]["id"]) if has_more and items else None
+    return JSONResponse({"items": items, "next_cursor": next_cursor, "scope": scope})
 
 
 _AUDIT_EXPORT_CHUNK_SIZE = 500   # TASK-0090 (Codex C4 minimum-fix): 1000→500.
@@ -29111,82 +28940,62 @@ def export_audit_events_csv(request: Request) -> Any:
 
 
 @app.get("/api/admin/audits/actors")
-def list_audit_actors(request: Request) -> JSONResponse:
+def list_audit_actors(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): facet — distinct actor 목록."""
+    scope = _audit_resolve_read_scope(account)
+    if not scope:
+        return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+    # `.own` 사용자는 본인 actor 만 (계정 enumeration 차단).
+    if scope == "own":
+        return JSONResponse({"items": [{"actor_account_id": int(account["id"])}]})
+    cur = conn.cursor(dictionary=True)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        scope = _audit_resolve_read_scope(account)
-        if not scope:
-            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
-        # `.own` 사용자는 본인 actor 만 (계정 enumeration 차단).
-        if scope == "own":
-            return JSONResponse({"items": [{"actor_account_id": int(account["id"])}]})
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                "SELECT wae.ActorAccountId, wa.Username "
-                "FROM (SELECT DISTINCT ActorAccountId FROM WebAuditEvents WHERE ActorAccountId IS NOT NULL) wae "
-                "LEFT JOIN WebAccounts wa ON wa.Id = wae.ActorAccountId "
-                "ORDER BY wa.Username ASC LIMIT 500"
-            )
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
-        items = [
-            {
-                "actor_account_id": int(r.get("ActorAccountId")) if r.get("ActorAccountId") is not None else None,
-                "username": str(r.get("Username") or ""),
-            }
-            for r in rows
-        ]
-        return JSONResponse({"items": items})
+        cur.execute(
+            "SELECT wae.ActorAccountId, wa.Username "
+            "FROM (SELECT DISTINCT ActorAccountId FROM WebAuditEvents WHERE ActorAccountId IS NOT NULL) wae "
+            "LEFT JOIN WebAccounts wa ON wa.Id = wae.ActorAccountId "
+            "ORDER BY wa.Username ASC LIMIT 500"
+        )
+        rows = cur.fetchall() or []
     finally:
-        conn.close()
+        cur.close()
+    items = [
+        {
+            "actor_account_id": int(r.get("ActorAccountId")) if r.get("ActorAccountId") is not None else None,
+            "username": str(r.get("Username") or ""),
+        }
+        for r in rows
+    ]
+    return JSONResponse({"items": items})
 
 
 @app.get("/api/admin/audits/resources")
-def list_audit_resources(request: Request) -> JSONResponse:
+def list_audit_resources(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """REQ-20260519-0001 (TASK-0073 Phase A4): facet — distinct resource_type 목록."""
+    scope = _audit_resolve_read_scope(account)
+    if not scope:
+        return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+    cur = conn.cursor(dictionary=True)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        scope = _audit_resolve_read_scope(account)
-        if not scope:
-            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
-        cur = conn.cursor(dictionary=True)
-        try:
-            # `.own` 사용자도 본인이 actor 인 row 의 resource_type 만 — extra SQL 분기.
-            # TASK-0293: Actor-only (TargetAccountId 제외 — _audit_build_self_filter_sql 정합).
-            if scope == "own":
-                cur.execute(
-                    "SELECT DISTINCT ResourceType FROM WebAuditEvents "
-                    "WHERE ActorAccountId = %s "
-                    "ORDER BY ResourceType ASC LIMIT 100",
-                    (int(account["id"]),),
-                )
-            else:
-                cur.execute(
-                    "SELECT DISTINCT ResourceType FROM WebAuditEvents "
-                    "ORDER BY ResourceType ASC LIMIT 100"
-                )
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
-        items = [{"resource_type": str(r.get("ResourceType") or "")} for r in rows if r.get("ResourceType")]
-        return JSONResponse({"items": items})
+        # `.own` 사용자도 본인이 actor 인 row 의 resource_type 만 — extra SQL 분기.
+        # TASK-0293: Actor-only (TargetAccountId 제외 — _audit_build_self_filter_sql 정합).
+        if scope == "own":
+            cur.execute(
+                "SELECT DISTINCT ResourceType FROM WebAuditEvents "
+                "WHERE ActorAccountId = %s "
+                "ORDER BY ResourceType ASC LIMIT 100",
+                (int(account["id"]),),
+            )
+        else:
+            cur.execute(
+                "SELECT DISTINCT ResourceType FROM WebAuditEvents "
+                "ORDER BY ResourceType ASC LIMIT 100"
+            )
+        rows = cur.fetchall() or []
     finally:
-        conn.close()
+        cur.close()
+    items = [{"resource_type": str(r.get("ResourceType") or "")} for r in rows if r.get("ResourceType")]
+    return JSONResponse({"items": items})
 
 
 @app.get("/api/admin/audits/verify")
