@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629-metadata-bs-collapse (TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + cache-buster bump, Major §12.3, feature-0003)
+- Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-collapse-search, base origin/main 3dfe81c).
+- 사용자 보고(metadata-bootstrap-mssql-db 배포 후속): 스키마 골격 가져온 뒤 (1) 테이블 펼침 시 패널 내부 UI 가 여전히 잘려 각 테이블 확인 불가, (2) 테이블 다수일 때 여백 과다.
+- 진단: (1) 잘림은 직전 metadata-bootstrap-mssql-db 가 `styles.css` 의 `.admin-meta-bootstrap-result` 460px 캡을 제거·서버 배포까지 했으나 `admin.html` 의 `styles.css?v=`/`admin.js?v=` cache-buster 미bump → 브라우저가 stale CSS(캡 생존) 를 계속 로드(서버 반영, 미전파). (2) 부트스트랩 결과가 수백 테이블을 전부 펼쳐 평면 렌더.
+- 변경(파일):
+  - `static/admin.html`: `styles.css?v=`·`admin.js?v=` → `?v=20260629-metadata-bs-collapse`; status~result 사이 검색 필터바(`#metadataBootstrapFilterBar`: 검색 input `#metadataBootstrapSearch` + 카운트 `#metadataBootstrapFilterCount` + 모두펼치기/접기 `#metadataBootstrapExpandAll`).
+  - `static/index.html`: `styles.css?v=` → `?v=20260629-metadata-bs-collapse`(공유 CSS 전파).
+  - `static/admin.js`: `_metaBootstrapRenderResult` 재작성 — 테이블별 기본 접힘 한 줄 헤더(button: caret+이름+입력상태 힌트), 본문을 `.admin-meta-bs-body` 로 감쌈. 신규 `_metaBootstrapToggleTable`·`_metaBootstrapUpdateHint`·`_metaBootstrapRefreshAllHints`·`_metaBootstrapApplyFilter`·`_metaBootstrapToggleAll`·`_metaBootstrapSyncExpandAllLabel`. `_metaBindBootstrap` 에 검색·모두펼치기 idempotent 바인딩. `_metaBootstrapAiFill` finally 에 hint 일괄 갱신.
+  - `static/styles.css`: `.admin-meta-bs-filterbar`/`-search`/`-filter-count`/`-expandall`, 접기 헤더(button, hover/focus-visible)·`.admin-meta-bs-caret`·`.admin-meta-bs-hint`(`.is-filled`)·`.admin-meta-bs-body`(`.is-collapsed` 시 display:none), 결과 gap 10→4px 조밀화. max-height 캡 미재도입(metadata-table-desc-fix 보존).
+- 안전 불변: 접기·필터는 시각 토글(class/`display`)만 → 입력값 DOM 보존. 저장(`_metaBootstrapSave`)·AI 일괄생성(`_metaBootstrapApplyDescriptions`)이 descendant 셀렉터라 접힌/필터된 입력까지 전체 수집(회귀 0).
+- 비변경: 백엔드/route/엔드포인트/스키마/RBAC/마이그 0. feature-0003 단독(cross-feature 없음).
+- 검증: node --check PASS. §18.8 적대 frontend 패널(value-loss·state-machine·XSS·AI-fill·binding·edge·max-height) BLOCKER 0·diff CLEAN, MINOR(모두펼치기 라벨 desync) 수정 흡수. REV-20260629T142631-metadata-bs-collapse.
+
 ## CHG-20260629T041724-doc-sync-rn-0629 (TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
 - Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
 - 배경: 직전 릴리즈노트 sync(63874f2 @ 06-29 08:35) 이후 main 병합된 06-29 user-facing 변경(40c0de0 용어사전 대화 자율등록 · 284e75a 용어 검토 큐 중첩 · 31aa67a+8c605b8 답변 평가 고유성)이 릴리즈노트 미반영(drift).
@@ -4946,3 +4959,21 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
 - Rollback: 06-26 블록 fixed 항목 + summary + generated + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.
+
+## CHG-20260629T114221-metadata-bootstrap-mssql-db (TASK-20260629T114221-metadata-bootstrap-mssql-db — 메타데이터 부트스트랩 MSSQL database 차원 + 패널 잘림 + describe_table 오버레이 정합, **Major §12.3** — cross-engine 골격 introspection, cross-feature 0003 주관·0002 read 정합)
+- Date: 2026-06-29 (`/_template:entry` arg-given → 원본 세션 문서 갱신 중 중단 → `/_template:resume` 로 재개·완수). worktree `ai/claude/metadata-table-desc-fix`.
+- Reason: 사용자 보고 — 관리 콘솔 > 메타데이터 > 테이블/컬럼 설명에서 (1) 테이블 설명도 AI 자동완성, (2) 테이블 명칭이 모두 올바르지 않은 값, (3) 패널 내부 공간 미확장으로 UI 잘림(컬럼 설명 탭 동일). 진단: AI 자동완성은 기구현(REQ-20260624-metadata-ai-autocomplete)이나 MSSQL 골격이 깨져 grounding 무력화. 근본=`admin_bootstrap`/`_metadata_introspect_table` 가 `database=None` 연결 → shared/db.py `_connect_mssql` 보안 기본값(중립 tempdb)에 붙어 임시테이블(`#…`) 노출 + 스키마 드롭다운이 고정 역할 스키마로 오염.
+- 변경(feature-0003 `src/app.py`):
+  - `admin_bootstrap_schemas`: 엔진 분기 — MSSQL=`list_server_databases`(system_databases 제외, unit_kind=database), MySQL=`load_known_schemas`(`_BOOTSTRAP_MYSQL_SYS_SCHEMAS`+`__invalid_default_db__` 센티넬 제외, unit_kind=schema). 응답에 engine·unit_kind 추가.
+  - `admin_bootstrap`: MSSQL 은 schema 파라미터=database, 시스템 DB 제외 allowlist 멤버십 검증 후 `_db.connect(database=safe_schema)` 연결 → 신규 `_bootstrap_collect_skeleton_mssql`(비시스템 SQL 스키마 평탄수집, 저장 schema_name=database, 동명 dedupe, cap 500/200). MySQL 기존 경로 유지.
+  - `_metadata_introspect_table`(단건 suggest grounding): 동일 엔진 분기 — MSSQL schema_name=database 로 연결·grounding(이전 tempdb 검증 실패→ungrounded 해소).
+  - `_BOOTSTRAP_MYSQL_SYS_SCHEMAS` 상수 추가. 식별자 SQLi: database/SQL스키마/table 전부 `_safe_ident` + allowlist 멤버십 통과 후에만 dialect f-string 도달.
+- 변경(프론트 `src/static/admin.js`·`admin.html`): `_metaBootstrapLoadSchemas` 가 `unit_kind` 로 라벨/플레이스홀더/상태문구 분기(MySQL='스키마'/MSSQL='데이터베이스'), `_metaBootstrapUnitWord`/`_metaBootstrapSetUnitLabel` 헬퍼, `metadataBootstrapSchemaLabel` id. 응답 누락 시 'schema' 폴백.
+- 변경(`src/static/styles.css`): `.admin-meta-bootstrap-result` 의 `max-height:460px; overflow:auto` 제거 — metadata pane(AC-0622 overflow-y:auto)과의 이중 스크롤(내부 460px 갇힘)이 "패널 내부 잘림"(테이블·컬럼 공통)의 원인. pane 단일 스크롤로 통일.
+- 변경(cross-feature, feature-0002 — §18.8 panel 적발 MAJOR + 재검증 BLOCKING 수정, Path A): describe_table 도구가 부트스트랩한 MSSQL 컬럼 설명을 보여주도록 read 축 정합. (a) `src/modules/tools.py` `_tool_describe_table`: KB 오버레이 조회 키를 MSSQL 일 때 SQL 스키마(dbo, 도구 인자)가 아니라 `get_active_default_db()`(pin 된 primary DB명)로 변경 → 부트스트랩 저장 규약(`column_descriptions.schema_name=database`)과 매칭. (b) `src/modules/kb_metadata.py` `load_column_descriptions_for_table`: schema 매칭을 case-insensitive(`LOWER(schema_name)=LOWER(%s)`)로 — 저장값은 원본 케이스(GunzGame)인데 read 키 `get_active_default_db()`는 소문자 정규화(gunzgame)라 PG `=`(case-sensitive)로 대문자 포함 DB명이 0행이 되던 회귀(panel 2차 BLOCKING) 해소. 이 함수는 describe_table 오버레이 전용. 이전엔 'dbo' vs 'GunzGame' 축 불일치로 부트스트랩 컬럼 설명이 describe_table 출력에 영영 미주입(질문-시점 grounding Path B 는 schema 무관 정상). MySQL 무변경.
+- 설계 결정(사용자 AskUserQuestion 2건): ① MSSQL 4계층(server>db>schema>table)을 3-키 (scope_key, schema_name, table_name)에 매핑 시 **schema_name=database 명**(MySQL schema==DB 와 일관, read 라벨 의미있음, 마이그레이션 0). ② describe_table 오버레이 정합(Path A)을 본 cycle 에 포함(후속 분리 대신).
+- 검증: py_compile(app.py·tools.py·kb_metadata.py) PASS · node --check(admin.js) PASS · 라이브 introspection 직호출(GunzGame 88 실테이블·temp 0)·실 HTTPS API(curl: schemas/bootstrap/suggest 정상)·Playwright eval(라벨 '데이터베이스'·129 DB·maxHeight none·88테이블·스크린샷). §18.8 적대 2-lens panel(보안 VERDICT SAFE / 정합성: Path A MAJOR 적발→fix→2차 BLOCKING(case) 적발→case-insensitive fix→3차 재검증).
+- Files: feature-0003 `src/app.py`·`src/static/{admin.js,admin.html,styles.css}`·`docs/{TASK,REPORT,REVIEW,MODIFY,FUNCTION,TEST}.md` / feature-0002 `src/modules/{tools.py,kb_metadata.py}`·`docs/MODIFY.md` / `docs/STATUS.md` · `wiki/{Log,hot}.md`.
+- Rollback: app.py 엔진분기·신규 함수·상수 revert(MySQL 경로 무영향) + admin.* 라벨분기 revert + styles.css max-height 1줄 복원 + tools.py 오버레이 키 1블록 + kb_metadata.py LOWER 매칭 revert. 데이터/스키마/마이그/RBAC 변경 0(런타임 introspection·read 키만).
+- Deploy: web + ask-worker(tools.py·kb_metadata.py 변경) 재빌드(deploy_scope: included).
+- Cross-ref: REQ/REV/TASK-20260629T114221-metadata-bootstrap-mssql-db / 정본 shared/db.py `_connect_mssql`(tempdb 고정, TASK-0213) · feature-0002 dialects.py(system_databases/system_schemas) · config.py `get_active_default_db`(소문자 정규화).

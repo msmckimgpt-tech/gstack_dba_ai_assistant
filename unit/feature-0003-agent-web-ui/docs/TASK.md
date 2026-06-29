@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림(cache-buster) 수정 (Major §12.3, feature-0003, 2026-06-29)
+- 트리거: 사용자 보고(metadata-bootstrap-mssql-db 배포 후속) — 스키마 골격 펼침 시 패널 내부 잘림 잔존 + 다수 테이블 여백 과다.
+- 결정(AskUserQuestion): 이슈2 재설계 방향 = **접기 + 검색/필터**(사용자 선택).
+- [x] 진단: 잘림 = cache-buster 미bump 로 stale CSS(460px 캡 생존), 여백 = 전체 평면 렌더.
+- [x] cache-buster bump(admin.html `styles.css`·`admin.js` + index.html `styles.css` → 20260629-metadata-bs-collapse).
+- [x] admin.js 접기 렌더 + 검색/필터 + 모두펼치기 + 입력상태 힌트(시각 토글, 입력 DOM 보존, 저장·AI fill 전체 수집 불변).
+- [x] admin.html 검색 필터바 + styles.css 접기/조밀 스타일.
+- [x] node --check PASS · §18.8 적대 패널 BLOCKER 0(MINOR 라벨 desync 흡수).
+- [ ] verify-completion → commit → PR → merge → web 재배포(cache-buster 반영) → PB-0008 Windows 브라우저 검증 → 임시 검증계정 정리.
+- Next Action: 출하·배포·라이브 검증.
+- 잔여/follow-up: tables↔columns 서브탭 전환 시 부트스트랩 재렌더(REV MAJOR, pre-existing) 별도 cycle 로 처리 권고.
+
 ## TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-29)
 - 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃). 직전 릴리즈노트 sync(63874f2 @ 2026-06-29 08:35, "ask-dedup 06-26 블록 합류") 이후 main 병합된 06-29 user-facing 변경이 릴리즈노트 미반영(drift) → `release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 prepend(generated 2026-06-29 유지).
 - [x] 대상 머지(3, 평이화·내부 비노출): [new admin] 용어사전 대화 자율등록 — 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결)(40c0de0); [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동(284e75a); [fixed work] 답변 평가(좋아요/별로예요)가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능)(31aa67a + 8c605b8 id_space 보강).
@@ -4808,3 +4820,18 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. ULTRACODE 워크플로(완전성 비평 + 타깃별 적대 검증 + 릴리즈노트 비노출 반증) window 독립 재확인: 483c4c0..HEAD user-facing 단일(ask-dedup 0818b0a/3595ea3), late-merge 누락 0. 내부용어(enqueue/dedup/NOT EXISTS/AmbiguousParameter/long-poll/502/ask_jobs/feature-id) 누출 0(refuted:false·leaksInternals:false).
 - [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + 06-26 블록 items 1→2(fixed 항목 추가).
 - [x] META(STATUS·wiki) 별도 commit 분리(STATUS feature-0003 행 ask-dedup 1줄 + wiki hot/overview/Log product-chip·ask-dedup backfill). verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
+
+### TASK-20260629T114221-metadata-bootstrap-mssql-db — 관리 콘솔 > 메타데이터 > 테이블/컬럼 설명: MSSQL database 차원 미처리로 인한 "테이블 명칭 모두 오류" + 패널 내부 잘림 수정, AI 자동완성 정상화 (Major §12.3 — cross-engine 골격 introspection, 2026-06-29)
+- 트리거: `/_template:entry` arg-given. 사용자 보고: "메타데이터 > 테이블 설명에서 (1) 각 데이터소스·스키마 테이블 설명도 AI 자동완성 구성, (2) 테이블 명칭이 모두 올바르지 않은 값, (3) 패널 내부 공간이 확장 안 돼 UI 내부 잘림(컬럼 설명 탭 동일)".
+- REQ: REQ-20260629T114221-metadata-bootstrap-mssql-db (FUNCTION.md). AC: AC-…-1(MSSQL 골격이 tempdb 임시테이블이 아닌 선택 DB 실테이블) · AC-…-2(테이블/컬럼 서브뷰 부트스트랩 패널 내부 잘림 없음) · AC-…-3(테이블 설명 단건·일괄 AI 자동완성이 선택 DB+테이블에 grounding).
+- **진단(라이브 introspection 직접 재현, app 내부 함수 직호출)**: AI 자동완성(단건 `/api/admin/metadata/tables/suggest` + 일괄 `bootstrap/describe`)은 **이미 구현돼 있었음** → 요청 (1) 은 신규 아님. "테이블 명칭 모두 오류"의 정체 = **MSSQL 데이터소스 골격**: `admin_bootstrap`/`_bootstrap_collect_skeleton` 이 `database=None` 으로 연결 → shared/db.py `_connect_mssql` 의 설계상(보안: 무자격 2-part 쿼리 차단) **중립 `tempdb` 고정** → `tempdb.dbo` 의 임시테이블(`#A0A50030`…)이 골격으로 노출. + "스키마" 드롭다운이 `load_known_schemas`(sys.schemas) raw 라 SQL Server 고정 역할 스키마(`db_datareader`·`db_owner`…)로 오염. MySQL 은 schema==database 라 원래 정상(`account_db`→`account`·`billing_history`). `table_descriptions`/`column_descriptions` DB 0행 확인 → 저장목록 아닌 골격 경로 확정.
+- **설계(사용자 AskUserQuestion 확정)**: MSSQL 은 server>database>schema>table 4계층인데 테이블 설명 모델은 (scope_key=datasource, schema_name, table_name) 3-키 → **schema_name = database 명** 으로 매핑(MySQL 도 이미 schema==DB 라 일관). 부트스트랩 unit = MySQL:schema / MSSQL:database.
+- [x] **백엔드(app.py)**: `admin_bootstrap_schemas` 엔진분기 — MSSQL=`list_server_databases`(시스템 DB master/model/msdb/tempdb 제외), MySQL=`load_known_schemas`(시스템 스키마+`__invalid_default_db__` 센티넬 제외); 응답에 `engine`·`unit_kind` 추가. `admin_bootstrap` — MSSQL 은 schema 파라미터=database, 시스템 DB 제외 allowlist 검증 후 해당 DB 로 연결 + 신규 `_bootstrap_collect_skeleton_mssql`(비시스템 SQL 스키마 평탄수집, 저장 schema_name=DB, 동명테이블 dedupe). `_metadata_introspect_table`(단건 suggest grounding) 동일 엔진분기 — MSSQL schema_name=DB 로 grounding(이전엔 tempdb 검증 실패→ungrounded). `_BOOTSTRAP_MYSQL_SYS_SCHEMAS` 상수 추가.
+- [x] **프론트(admin.js/admin.html)**: `_metaBootstrapLoadSchemas` 가 `unit_kind` 로 라벨/플레이스홀더/상태문구 분기(MySQL='스키마', MSSQL='데이터베이스'); `_metaBootstrapUnitWord`/`_metaBootstrapSetUnitLabel` 헬퍼; `metadataBootstrapSchemaLabel` id 부여. `_metaBootstrapFetch` 안내문구 엔진인지.
+- [x] **CSS(styles.css)**: `.admin-meta-bootstrap-result` 의 `max-height:460px;overflow:auto` 제거 — metadata pane 이 이미 `overflow-y:auto` 라 이중 스크롤(내부 460px 갇힘)이 "패널 내부 미확장 잘림"의 원인. 캡 제거로 자연 확장, 스크롤은 pane 담당(테이블/컬럼 서브뷰 공통).
+- [x] **라이브 검증(전부 통과)**: ① app 내부 introspection 직호출 — MSSQL `GunzGame` 88 실테이블·schema_name=GunzGame·임시테이블 0 / MySQL 센티넬 제외. ② 실 HTTPS API(curl, admin 세션) — `bootstrap/schemas` MSSQL engine=mssql·unit_kind=database·129 DB(tempdb 없음)·MySQL unit_kind=schema·센티넬 제거 / `bootstrap` GunzGame 88테이블 all schema_name=GunzGame·temp 0 / `tables/suggest` grounded=true(29컬럼)·정확 설명 생성(claude-haiku-4). ③ Playwright 브라우저 서비스(repo-browser-1, WSL-headless) eval — 메타데이터 탭 노출·tables 서브뷰·부트스트랩 패널 visibleOnPage=true·`.admin-meta-bootstrap-result` computed maxHeight='none'·라벨 '데이터베이스 *'·129 DB·GunzGame 88테이블 렌더·스크린샷(`artifacts/shared/out/browser/claude_verify_dbdropdown.png`).
+- [x] **§18.8 적대 verification panel (general-purpose 2-lens)** — lens1 보안 VERDICT SAFE(SQLi·allowlist·의존함수·시스템객체·RBAC·dialect·자원누수 7항목 반증 실패). lens2 정합성: 1차 **MAJOR**(Path A — describe_table 컬럼 오버레이 read 축이 schema_name=DB 규약과 불일치, 부트스트랩 컬럼 설명이 describe_table 도구 출력에 미주입; 질문-시점 grounding Path B 는 정상) 적발.
+- [x] **Path A 포함 결정(사용자 AskUserQuestion: "지금 포함")** → cross-feature feature-0002 read 축 정합 수정: (a) `tools.py` `_tool_describe_table` 오버레이 조회 키 MSSQL=`get_active_default_db()`(pin DB명) (b) panel 2차 재검증이 **BLOCKING**(pin DB명 소문자 정규화 vs 저장값 원본 케이스 → PG `=` case-sensitive 0행, 대문자 포함 DB명 전부 미적중) 적발 → `kb_metadata.py` `load_column_descriptions_for_table` schema 매칭 case-insensitive(`LOWER`) → 3차 재검증 **VERDICT SAFE**(NIT 2 선재·비회귀 수용).
+- [x] **문서 갱신**: FUNCTION(REQ+AC) · TASK · REPORT · REVIEW([SUBAGENT:adversarial-2lens] check#9 + panel 수렴 기록) · MODIFY(feature-0003 본진 + feature-0002 cross-feature) · TEST · STATUS · wiki(Log/hot). (원본 세션이 문서 갱신 중 중단 → `/_template:resume` 로 완수.)
+- [ ] **PB-0008 Windows-browser 시각 검증**(테이블/컬럼 설명 부트스트랩 DB선택→실테이블 골격·패널 비잘림·AI 일괄생성·describe_table 컬럼 설명 노출) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(선례 동일).
+- [ ] verify-completion --pre-commit PASS → commit(Task-Cycle trailer) → push → main merge → web+ask-worker 재빌드·재배포(deploy_scope: included) → healthz/smoke.

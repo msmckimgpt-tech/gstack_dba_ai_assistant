@@ -3471,6 +3471,18 @@ function _metaBindBootstrap() {
     aiBtn.dataset.bound = "1";
     aiBtn.addEventListener("click", () => _metaBootstrapAiFill(aiBtn));
   }
+  // metadata-bs-collapse: 테이블명 검색 필터.
+  const search = document.getElementById("metadataBootstrapSearch");
+  if (search && !search.dataset.bound) {
+    search.dataset.bound = "1";
+    search.addEventListener("input", () => _metaBootstrapApplyFilter());
+  }
+  // metadata-bs-collapse: 모두 펼치기/접기.
+  const expandAll = document.getElementById("metadataBootstrapExpandAll");
+  if (expandAll && !expandAll.dataset.bound) {
+    expandAll.dataset.bound = "1";
+    expandAll.addEventListener("click", () => _metaBootstrapToggleAll());
+  }
 }
 
 // DS 드롭다운 — 등록된 datasource key 목록(common 은 실제 스키마가 없으므로 제외).
@@ -3509,23 +3521,40 @@ function _metaBootstrapStatus(text, isError) {
   el.classList.toggle("is-error", Boolean(isError));
 }
 
-// 선택 DS 의 schema 목록 로드 → 스키마 드롭다운 채움.
+// 부트스트랩 unit 라벨 갱신(엔진별) — MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층).
+// metadata-table-desc-fix: MSSQL 은 unit=database 라 라벨/플레이스홀더를 분기해야 사용자 혼동이 없다.
+function _metaBootstrapUnitWord() {
+  return adminState.metadata.bootstrap.unitKind === "database" ? "데이터베이스" : "스키마";
+}
+function _metaBootstrapSetUnitLabel() {
+  const word = _metaBootstrapUnitWord();
+  const lbl = document.getElementById("metadataBootstrapSchemaLabel");
+  if (lbl) lbl.textContent = `${word} *`;
+  const sel = document.getElementById("metadataBootstrapSchema");
+  if (sel) sel.setAttribute("aria-label", `부트스트랩 ${word}`);
+}
+
+// 선택 DS 의 unit(MySQL=schema / MSSQL=database) 목록 로드 → 드롭다운 채움.
 async function _metaBootstrapLoadSchemas() {
   const ds = adminState.metadata.bootstrap.datasource;
   const schemaSel = document.getElementById("metadataBootstrapSchema");
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
   if (schemaSel) { schemaSel.replaceChildren(); schemaSel.disabled = true; }
   if (fetchBtn) fetchBtn.disabled = true;
-  if (!ds) { _metaBootstrapStatus(""); return; }
-  _metaBootstrapStatus("스키마 목록 로딩 중…");
+  if (!ds) { adminState.metadata.bootstrap.unitKind = ""; _metaBootstrapSetUnitLabel(); _metaBootstrapStatus(""); return; }
+  _metaBootstrapStatus("목록 로딩 중…");
   try {
     const data = await apiFetch(`/api/admin/metadata/bootstrap/schemas?datasource=${encodeURIComponent(ds)}`);
     const schemas = (data && Array.isArray(data.schemas)) ? data.schemas : [];
+    // engine/unit_kind 로 라벨 분기(MSSQL=database). 구버전 백엔드 응답(필드 없음)은 'schema' 로 폴백.
+    adminState.metadata.bootstrap.unitKind = (data && data.unit_kind) || "schema";
     adminState.metadata.bootstrap.schemas = schemas;
+    _metaBootstrapSetUnitLabel();
+    const word = _metaBootstrapUnitWord();
     if (schemaSel) {
       const ph = document.createElement("option");
       ph.value = "";
-      ph.textContent = schemas.length ? "스키마 선택…" : "스키마 없음";
+      ph.textContent = schemas.length ? `${word} 선택…` : `${word} 없음`;
       schemaSel.appendChild(ph);
       for (const s of schemas) {
         const el = document.createElement("option");
@@ -3535,10 +3564,10 @@ async function _metaBootstrapLoadSchemas() {
       }
       schemaSel.disabled = !schemas.length;
     }
-    _metaBootstrapStatus(schemas.length ? `${schemas.length}개 스키마` : "스키마가 없습니다.");
+    _metaBootstrapStatus(schemas.length ? `${schemas.length}개 ${word}` : `${word}가 없습니다.`);
   } catch (err) {
     adminState.metadata.bootstrap.schemas = [];
-    _metaBootstrapStatus((err && err.message) || "스키마 조회 실패", true);
+    _metaBootstrapStatus((err && err.message) || "목록 조회 실패", true);
   }
 }
 
@@ -3546,7 +3575,7 @@ async function _metaBootstrapLoadSchemas() {
 async function _metaBootstrapFetch() {
   const bs = adminState.metadata.bootstrap;
   if (!bs.datasource || !bs.schema) {
-    _metaBootstrapStatus("데이터소스와 스키마를 선택하세요.", true);
+    _metaBootstrapStatus(`데이터소스와 ${_metaBootstrapUnitWord()}를 선택하세요.`, true);
     return;
   }
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
@@ -3577,9 +3606,14 @@ async function _metaBootstrapFetch() {
 // 골격 결과 렌더 — 현재 서브탭(tables vs columns)에 따라 입력란 형태가 다르다.
 //   tables: 테이블별 설명 1줄.  columns: 테이블 트리 아래 컬럼별 설명.
 // 모든 식별자/타입은 textContent, 입력값은 value(=신규 입력)로만 다룸(XSS 안전).
+// metadata-bs-collapse: 대규모 스키마(수백 테이블·수천 컬럼) 가독성 — 각 테이블을 기본 접힘
+// 한 줄 헤더로 렌더(여백 최소화), 클릭 시 펼쳐 설명/컬럼 입력. 검색 필터·모두 펼치기/접기 동반.
+// 접기·필터는 모두 "시각" 토글(display/class)로만 동작 — 입력값은 DOM 에 보존되어 저장(_metaBootstrapSave)
+// ·AI 일괄생성(_metaBootstrapApplyDescriptions)·apply 로직은 변경 없이 그대로 전체를 수집한다.
 function _metaBootstrapRenderResult() {
   const wrap = document.getElementById("metadataBootstrapResult");
   const saveActions = document.getElementById("metadataBootstrapSaveActions");
+  const filterBar = document.getElementById("metadataBootstrapFilterBar");
   if (!wrap) return;
   wrap.replaceChildren();
   const bs = adminState.metadata.bootstrap;
@@ -3587,6 +3621,7 @@ function _metaBootstrapRenderResult() {
   const mode = sub === "columns" ? "columns" : "tables";  // 부트스트랩은 tables/columns 서브뷰에서만 노출
   if (bs.loading) {
     if (saveActions) saveActions.style.display = "none";
+    if (filterBar) filterBar.style.display = "none";
     const l = document.createElement("div");
     l.className = "admin-list-empty";
     l.textContent = "로딩 중…";
@@ -3595,22 +3630,38 @@ function _metaBootstrapRenderResult() {
   }
   if (!bs.tables.length) {
     if (saveActions) saveActions.style.display = "none";
+    if (filterBar) filterBar.style.display = "none";
     return;
   }
   for (const t of bs.tables) {
     const schemaName = t.schema_name || bs.schema || "";
     const tableName = t.table_name || "";
     const block = document.createElement("div");
-    block.className = "admin-meta-bs-table";
+    block.className = "admin-meta-bs-table is-collapsed";  // 기본 접힘
     block.dataset.schema = schemaName;
     block.dataset.table = tableName;
-    const head = document.createElement("div");
+    // 접기 헤더(클릭 토글) — caret + 이름 + 입력상태 힌트. button 으로 키보드 접근성 확보.
+    const head = document.createElement("button");
+    head.type = "button";
     head.className = "admin-meta-bs-table-head";
+    head.setAttribute("aria-expanded", "false");
+    const caret = document.createElement("span");
+    caret.className = "admin-meta-bs-caret";
+    caret.setAttribute("aria-hidden", "true");
+    caret.textContent = "▸";
     const name = document.createElement("span");
     name.className = "admin-meta-bs-table-name";
     name.textContent = [schemaName, tableName].filter(Boolean).join(".");
+    const hint = document.createElement("span");
+    hint.className = "admin-meta-bs-hint";
+    head.appendChild(caret);
     head.appendChild(name);
+    head.appendChild(hint);
+    head.addEventListener("click", () => _metaBootstrapToggleTable(block));
     block.appendChild(head);
+    // 본문 — 접힘 시 CSS(.is-collapsed)로 숨김. 입력 요소는 항상 생성(저장·AI fill 이 전체 수집).
+    const body = document.createElement("div");
+    body.className = "admin-meta-bs-body";
     if (mode === "tables") {
       // 테이블 설명 입력 1줄.
       const inp = document.createElement("input");
@@ -3618,7 +3669,8 @@ function _metaBootstrapRenderResult() {
       inp.className = "admin-meta-input admin-meta-bs-desc";
       inp.placeholder = "테이블 설명 입력…";
       inp.dataset.kind = "table";
-      block.appendChild(inp);
+      inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
+      body.appendChild(inp);
     } else {
       // 컬럼별 설명 입력 트리.
       const cols = Array.isArray(t.columns) ? t.columns : [];
@@ -3626,7 +3678,7 @@ function _metaBootstrapRenderResult() {
         const none = document.createElement("div");
         none.className = "admin-meta-bs-col-none";
         none.textContent = "컬럼 없음";
-        block.appendChild(none);
+        body.appendChild(none);
       }
       for (const c of cols) {
         const colName = c.column_name || "";
@@ -3644,17 +3696,109 @@ function _metaBootstrapRenderResult() {
         inp.className = "admin-meta-input admin-meta-bs-desc";
         inp.placeholder = "컬럼 설명 입력…";
         inp.dataset.kind = "column";
+        inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
         row.appendChild(cn);
         row.appendChild(dt);
         row.appendChild(inp);
-        block.appendChild(row);
+        body.appendChild(row);
       }
     }
+    block.appendChild(body);
     wrap.appendChild(block);
+    _metaBootstrapUpdateHint(block, mode);
+  }
+  // 검색/펼치기 바 초기화(매 fetch 마다 검색어·펼침상태 리셋).
+  if (filterBar) {
+    filterBar.style.display = "";
+    const search = document.getElementById("metadataBootstrapSearch");
+    if (search) search.value = "";
+    _metaBootstrapSyncExpandAllLabel();  // 전부 접힌 상태 → "모두 펼치기"
+    _metaBootstrapApplyFilter();
   }
   if (saveActions) saveActions.style.display = "";
   const info = document.getElementById("metadataBootstrapSaveInfo");
-  if (info) info.textContent = "설명을 입력한 행만 저장됩니다.";
+  if (info) info.textContent = "설명을 입력한 행만 저장됩니다. (접힌 테이블의 입력도 저장됩니다)";
+}
+
+// 단일 테이블 블록 접기/펼치기 토글.
+function _metaBootstrapToggleTable(block) {
+  if (!block) return;
+  const collapsed = block.classList.toggle("is-collapsed");
+  const head = block.querySelector(".admin-meta-bs-table-head");
+  const caret = block.querySelector(".admin-meta-bs-caret");
+  if (head) head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  if (caret) caret.textContent = collapsed ? "▸" : "▾";
+  _metaBootstrapSyncExpandAllLabel();  // 개별 토글 후 모두펼치기/접기 라벨 DOM 기준 재동기화
+}
+
+// "모두 펼치기/접기" 버튼 라벨을 DOM 상태로 동기화 — 하나라도 접혀 있으면 "모두 펼치기"(다음 클릭=전체 펼침).
+function _metaBootstrapSyncExpandAllLabel() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  const btn = document.getElementById("metadataBootstrapExpandAll");
+  if (!wrap || !btn) return;
+  const anyCollapsed = !!wrap.querySelector(".admin-meta-bs-table.is-collapsed");
+  btn.textContent = anyCollapsed ? "모두 펼치기" : "모두 접기";
+}
+
+// 입력상태 힌트 갱신 — tables: 설명 유무, columns: 채운/전체 컬럼 수.
+function _metaBootstrapUpdateHint(block, mode) {
+  const hint = block && block.querySelector(".admin-meta-bs-hint");
+  if (!hint) return;
+  if (mode === "tables") {
+    const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
+    const has = !!(inp && (inp.value || "").trim());
+    hint.textContent = has ? "● 설명 입력됨" : "○ 비어있음";
+    hint.classList.toggle("is-filled", has);
+  } else {
+    const total = block.querySelectorAll(".admin-meta-bs-col").length;
+    let filled = 0;
+    block.querySelectorAll(".admin-meta-bs-desc[data-kind='column']").forEach((i) => {
+      if ((i.value || "").trim()) filled += 1;
+    });
+    hint.textContent = total ? `컬럼 ${filled}/${total}` : "컬럼 없음";
+    hint.classList.toggle("is-filled", filled > 0);
+  }
+}
+
+// 모든 블록 힌트 일괄 갱신(AI 일괄생성 등 프로그램적 value 설정 후 호출 — input 이벤트 미발생).
+function _metaBootstrapRefreshAllHints(mode) {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  wrap.querySelectorAll(".admin-meta-bs-table").forEach((b) => _metaBootstrapUpdateHint(b, mode));
+}
+
+// 검색 필터 — 이름 부분일치(대소문자 무시)로 블록 표시/숨김. 숨겨도 DOM 보존(저장 시 전체 수집).
+function _metaBootstrapApplyFilter() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  const search = document.getElementById("metadataBootstrapSearch");
+  const count = document.getElementById("metadataBootstrapFilterCount");
+  const q = (search ? search.value : "").trim().toLowerCase();
+  const blocks = wrap.querySelectorAll(".admin-meta-bs-table");
+  let shown = 0;
+  blocks.forEach((b) => {
+    const nm = [(b.dataset.schema || ""), (b.dataset.table || "")].filter(Boolean).join(".").toLowerCase();
+    const match = !q || nm.includes(q);
+    b.style.display = match ? "" : "none";
+    if (match) shown += 1;
+  });
+  if (count) count.textContent = q ? `표시 ${shown} / 전체 ${blocks.length}` : `전체 ${blocks.length}`;
+}
+
+// 모두 펼치기 ↔ 모두 접기 토글.
+function _metaBootstrapToggleAll() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  // 하나라도 접혀 있으면 모두 펼침, 전부 펼쳐져 있으면 모두 접음(DOM 기준 — 상태 desync 없음).
+  const expand = !!wrap.querySelector(".admin-meta-bs-table.is-collapsed");
+  wrap.querySelectorAll(".admin-meta-bs-table").forEach((block) => {
+    block.classList.toggle("is-collapsed", !expand);
+    const head = block.querySelector(".admin-meta-bs-table-head");
+    const caret = block.querySelector(".admin-meta-bs-caret");
+    if (head) head.setAttribute("aria-expanded", expand ? "true" : "false");
+    if (caret) caret.textContent = expand ? "▾" : "▸";
+  });
+  _metaBootstrapSyncExpandAllLabel();
 }
 
 // 부트스트랩 저장 — 설명이 입력된 행만 tables/columns POST(각 행). scope = 현재 메타데이터 scope.
@@ -3795,6 +3939,8 @@ async function _metaBootstrapAiFill(btn) {
     btn.disabled = false;
     btn.textContent = origLabel;
     if (saveBtn) saveBtn.disabled = false;
+    // metadata-bs-collapse: 프로그램적 value 설정 후 접힌 헤더 힌트(설명 유무/채움 수) 갱신.
+    _metaBootstrapRefreshAllHints(mode);
   }
 }
 

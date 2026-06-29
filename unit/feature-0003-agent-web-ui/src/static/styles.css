@@ -1283,6 +1283,26 @@ a { color: inherit; }
   font-size: 12px;
   font-weight: 500;
 }
+/* feature-0013: 관계 다이어그램(mermaid) 렌더 컨테이너 */
+.message-content .mermaid-block,
+.message-content .mermaid-rendered {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0;
+  padding: 8px 4px;
+  overflow-x: auto;
+  background: var(--surface-soft, #f6f8fc);
+  border: 1px solid var(--border, #e5e9f0);
+  border-radius: 10px;
+}
+.message-content .mermaid-rendered svg { max-width: 100%; height: auto; }
+.message-content .mermaid-pending { color: var(--muted, #6b7280); font-size: 12px; }
+.message-content .mermaid-error {
+  display: block;
+  margin: 10px 0;
+}
+.message-content .mermaid-error pre { margin: 0; }
+
 .message-content pre.diff-block { padding: 10px 0; }
 .message-content pre.diff-block code {
   display: block;
@@ -7982,21 +8002,71 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-bootstrap-fetch { flex-shrink: 0; }
 .admin-meta-bootstrap-status { font-size: 12px; color: var(--text-muted); min-height: 16px; margin-bottom: 8px; }
 .admin-meta-bootstrap-status.is-error { color: var(--danger, #dc2626); }
-.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow: auto; }
+/* metadata-table-desc-fix: 내부 max-height:460px 고정 스크롤 박스를 제거 — metadata pane 이 이미
+   overflow-y:auto 라(styles.css 위 .admin-pane[data-admin-pane="metadata"]) 이중 스크롤이 되어
+   골격 결과가 460px 안에 갇혀 "패널 내부 공간이 확장되지 않아 잘림"으로 보였다(테이블/컬럼 서브뷰 공통).
+   캡을 없애 결과가 자연 확장되고 스크롤은 pane 이 담당한다. */
+/* metadata-bs-collapse: 검색/펼치기 바 — 대규모 스키마에서 대상 테이블만 빠르게 좁힌다. */
+.admin-meta-bs-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.admin-meta-bs-search { flex: 1 1 auto; min-width: 0; }
+.admin-meta-bs-filter-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-meta-bs-expandall { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
+
+/* metadata-bs-collapse: 결과는 접힌 한 줄 행들의 조밀 스택(여백 최소화). gap 도 축소. */
+.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 4px; }
 .admin-meta-bs-table {
   border: 1px solid var(--border);
   border-radius: var(--r-sm, 6px);
-  padding: 10px 12px;
   background: var(--surface);
+  overflow: hidden;
 }
-.admin-meta-bs-table-head { margin-bottom: 8px; }
+/* 접기 헤더 — 클릭 가능한 한 줄 행(caret + 이름 + 입력상태 힌트). button 으로 키보드 토글 가능. */
+.admin-meta-bs-table-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+}
+.admin-meta-bs-table-head:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.admin-meta-bs-table-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.admin-meta-bs-caret { flex-shrink: 0; width: 12px; font-size: 11px; color: var(--text-muted); }
 .admin-meta-bs-table-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   word-break: break-all;
+  min-width: 0;
 }
+.admin-meta-bs-hint {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-meta-bs-hint.is-filled { color: var(--primary); }
+/* 본문 — 접힘(.is-collapsed) 시 숨김(시각 토글, 입력은 DOM 보존). */
+.admin-meta-bs-body { padding: 0 12px 10px; }
+.admin-meta-bs-table.is-collapsed .admin-meta-bs-body { display: none; }
 .admin-meta-bs-col {
   display: flex;
   align-items: center;
