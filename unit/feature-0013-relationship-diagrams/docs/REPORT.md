@@ -34,8 +34,9 @@ assistant 가 flow/관계/구조 질문에 **mermaid 다이어그램**(ER·flowc
 - 총 변경 횟수: 3
 
 ## 4. Open Issues
-- (신규/대기) CHG-0003 배포 후 실 Windows-browser 화면 재검증(PB-0008, TASK rd-h6) — bomb 미표시 +
-  복구된 ER 다이어그램 렌더 확인. 코드/데이터 수정은 완료, 화면 게이트만 배포 후 잔여.
+- (해소) CHG-0003 배포 후 실 Windows-browser 화면 재검증(PB-0008, TASK rd-h6) — **PASS** (실 Chrome 149,
+  라이브 git_commit 8f0a025): 깨진 erDiagram×2 → graceful 코드블록(orphan div/iframe 0·bomb 0), 정상
+  erDiagram → SVG 렌더. 증적 `artifacts/pb0008-feature-0013-orphan-fix.png`.
 - cardinality(1:N/M:N) 미수집 — 현재 edge 만. FK 메타에서 후속 도출 가능.
 - JOIN 파서는 복잡 subquery/CTE 미해석(best-effort, 낮은 confidence 라 영향 제한).
 
@@ -46,7 +47,10 @@ assistant 가 flow/관계/구조 질문에 **mermaid 다이어그램**(ER·flowc
   - ✅ 패치된 `mermaid-render.js` e2e — 깨진 erDiagram 2패스 → leftover bomb 0 · orphan `dmmd-` 0 ·
     graceful 코드블록 2 (graceful fallback 불변식 복원).
   - ✅ 가이던스 예시 erDiagram · 복구된 stored erDiagram 파서 PASS · `agent_core.py` py_compile OK.
-  - ⏳ 실 브라우저 화면 검증(PB-0008)은 배포 후 잔여(TASK rd-h6).
+  - ✅ 실 브라우저 화면 검증(PB-0008, CHG-0003 배포 후) — 실 Chrome 149, 라이브 served `mermaid-render.js`
+    (`?v=20260629-mermaid-orphan-fix`, removeMermaidRenderOrphan 포함) 로 깨진 erDiagram×2 → graceful
+    코드블록(body orphan div 0·iframe 0·error-svg 0), 정상 erDiagram → SVG. 증적
+    `artifacts/pb0008-feature-0013-orphan-fix.png`. → frontend §18.8 BLOCKING(strict→iframe 주장) 실엔진 반증 확정.
 - 라이브 검증 (배포 후, 2026-06-29):
   - ✅ alembic `0024` 적용 — `make migrate`(0020→0024, 0021~0023 멱등 no-op), live current=`0024_table_relationships`.
   - ✅ GRANT 발효 — agent_kb_rw=INSERT/UPDATE/DELETE/SELECT, agent_kb_ro=SELECT, rw 실 INSERT/DELETE 성공.
@@ -61,7 +65,7 @@ assistant 가 flow/관계/구조 질문에 **mermaid 다이어그램**(ER·flowc
 - 없음
 
 ## 7. Human Attention Needed
-- (대기) CHG-0003 배포 후 PB-0008 화면 재검증(rd-h6) — 코드/데이터/문서 완료, 배포 게이트만 잔여.
+- (해소) CHG-0003 배포 후 PB-0008 화면 재검증(rd-h6) PASS — 실 Chrome 149, bomb 0·orphan 0. 잔여 없음.
 - (해소) app.js·mermaid-render.js cache-buster bump — CHG-0003 에서 mermaid-render.js bump 완료.
 - (해소) 배포·라이브 검증 완료. 후속 비-blocking:
   - 보안: 프런트 mermaid 렌더 XSS 표면 — strict-mode SVG sanitize 불변식 무변경(orphan 제거는 표면

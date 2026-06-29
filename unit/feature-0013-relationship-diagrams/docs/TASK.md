@@ -136,9 +136,10 @@ source_of_truth: true
 - [x] TASK-20260629T083043-rd-h4 cache-buster bump(index.html/share.html) — CHG-0002 follow-up 해소.
 - [x] TASK-20260629T083043-rd-h5 과거 대화 데이터 복구(PG core_messages id=4056 erDiagram → `{}` 블록,
   사용자 명시 승인) — 저장 후 3블록 파서 PASS.
-- [ ] TASK-20260629T083043-rd-h6 배포 후 실 Windows-browser 재현 대화 화면 검증(PB-0008) — bomb 미표시 +
-  복구된 ER 다이어그램 렌더 확인 (deploy 게이트 대상).
+- [x] TASK-20260629T083043-rd-h6 배포 후 실 Windows-browser 재현 화면 검증(PB-0008) — **PASS** (실 Chrome 149,
+  라이브 `git_commit 8f0a025`): 깨진 erDiagram×2 → graceful 코드블록(body orphan div 0 · iframe 0 ·
+  error-svg 0 · bomb 0), 정상 erDiagram → SVG 렌더, 무회귀. 증적 `artifacts/pb0008-feature-0013-orphan-fix.png`.
 
 ### 9.2 Next Action
-- verify-completion(pre-commit) PASS → commit/push → PR/merge → web+ask-worker 재배포(deploy_scope: included)
-  → PB-0008 라이브 재검증(rd-h6).
+- (CHG-0003 cycle 완료) commit 35fe0ab → PR #468 merged(main 8f0a025) → web+ask-worker 재배포(healthz ok,
+  served git_commit 8f0a025) → PB-0008 라이브 재검증(rd-h6) PASS. 잔여 없음.
