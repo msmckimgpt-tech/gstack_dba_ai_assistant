@@ -4988,6 +4988,7 @@ source_of_truth: true
 - 검증: node --check(admin.js) PASS · §18.8 적대 패널 + BLOCKING 수정 재검증(클린) · Windows 브라우저(PB-0008) 라이브 렌더 · web 재배포 후 cache-buster·healthz.
 - Rollback: admin.js 의 헬퍼·배지·토스트·payload 주입 revert + `_METADATA_FIELDS.glossary` 의 role_key roleselect 필드·렌더 블록·`_metaRoleOptions` 복원 + admin.html aria/title·cache-buster 복원. 데이터/스키마/RBAC 변경 0.
 - Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Deploy & live-verify (2026-06-29, resume cycle-finalize): base drift(main 7-behind) 흡수 병합 38da578 → PR #465(CI test success) 머지(main 4f3d22c) → worktree/branch cleanup → **web 이미지만** 재빌드(e045ef4)·repo-web-1 recreate. 검증: healthz git_commit=4f3d22c·mysql/pg ok / baked+라이브 HTTPS serve `admin.js?v=20260629-glossary-role-single-ui` / baked admin.js `_metaGlossaryTargetRole` 존재. PB-0008 실 Windows 브라우저 시각검증은 admin 인증 화면이라 사용자 확인 권장(metadata-bootstrap precedent 동일). F0 repo-immutability escape(worktree finalize 완료, 357bf9f 동일 패턴 — post-deploy doc-only).
 - Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
 - Cross-ref: 원본 TASK-20260629-glossary-conv-autoreg(역할 분리 코어) · TASK-20260629-glossary-review-nest(검토 큐 중첩) · 결함② role.read 권한 부여(코드 외, app.py:20402 게이트).
 ## CHG-20260629T143914-share-mermaid-responsive (TASK-20260629T143914-share-mermaid-responsive — 공유 대화 뷰 mermaid 렌더 + 전체 폭 반응형, Minor §12.3 — frontend render/CSS, anonymous 공유 노출면)

@@ -22,10 +22,10 @@ source_of_truth: true
   - [x] 읽기전용 '등록 대상 역할' 배지/노트 + admin.html aria/title 명확화 + cache-buster bump
   - [x] §18.8 적대 패널(2-lens) → BLOCKING 2(F2 토스트·F5 배지 stale) 수정 → 재검증 클린
   - [x] FUNCTION.md 단일 역할 컨텍스트 반영 · TASK/MODIFY/REVIEW/REPORT/STATUS 갱신
-  - [ ] verify-completion PASS → commit → push → PR 머지
-  - [ ] web 재배포(deploy_scope: included) + cache-buster·healthz 확인
-  - [ ] PB-0008 Windows 브라우저 라이브 렌더 검증(역할 UI 1곳·등록 토스트 역할 표기)
-  - [ ] 결함② role.read 권한 부여 안내(코드 외)
+  - [x] verify-completion PASS(9) → base drift(main 7-behind) 흡수 병합커밋 38da578 → push → PR #465(CI test success) 머지(main 4f3d22c) → worktree/branch cleanup(cycle-finalize)
+  - [x] web 재배포(deploy_scope: included, image e045ef4 재빌드·repo-web-1 recreate) + 검증: healthz git_commit=4f3d22c·mysql/pg ok, baked+라이브 HTTPS serve `admin.js?v=20260629-glossary-role-single-ui`, baked admin.js `_metaGlossaryTargetRole` 존재
+  - [ ] PB-0008 Windows 브라우저 라이브 렌더 검증(역할 UI 1곳·등록 토스트 역할 표기) — 배포·라이브 serve 검증 완료, 단 admin 인증 필요 화면이라 실 Windows 브라우저 시각검증은 **사용자 확인 권장**(precedent metadata-bootstrap 동일)
+  - [ ] 결함② role.read 권한 부여 안내(코드 외) — 용어사전 관리 역할/계정에 `role.read` 부여 시 툴바 역할 선택에 실제 `계정 > 역할` 노출(사용자 조치)
 ## TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림(cache-buster) 수정 (Major §12.3, feature-0003, 2026-06-29)
 - 트리거: 사용자 보고(metadata-bootstrap-mssql-db 배포 후속) — 스키마 골격 펼침 시 패널 내부 잘림 잔존 + 다수 테이블 여백 과다.
 - 결정(AskUserQuestion): 이슈2 재설계 방향 = **접기 + 검색/필터**(사용자 선택).
