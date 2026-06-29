@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가 — 두 message-id 공간(표시 store vs core) 모호성 해소 (H5(b) follow-up, Major §12.3 — 스키마 마이그 0022 + cross-feature 0002+0003)
+- 출처: 사용자 요청 — TASK-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 **H5(b)** 잔여 한계를 마저 완수. 사용자: "확인된 후속 권고사항도 마저 작업을 완수해주세요."
+- 문제(H5(b)): `/api/history` 의 `message.id` 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`)의 **두 독립 IDENTITY 공간**서 올 수 있다(agent_core 가 "독립 시퀀스, 숫자 겹침" 명시). 0021 의 고유성 키 (created_by, message_id) 는 숫자만 같으면 서로 다른 답변을 같은 키로 봐, fork·마이그로 대화가 core-only→display 전환되는 드문 경우 (a) cross-space DB 충돌(다른 답변이 같은 키 → UPSERT 가 남의 투표 덮어씀) (b) wrong-bubble 복원(core-id 피드백이 같은 숫자의 display 메시지에 표시) 가능.
+- 수정: 답변 식별에 **id_space** 차원 추가 → 키를 (created_by, message_id, **message_id_space**) 로 확장. 두 공간의 같은 숫자 id 가 이제 다른 키.
+  - [x] `/api/history` 4개 메시지 빌더가 `m["id_space"]` 노출: `_get_agent_core_history`(PG·MySQL)="core", `_get_history`(PG·MySQL display)="display".
+  - [x] `_load_user_feedback_by_message`/`_attach_user_feedback`: (message_id, id_space) 복합 키로 조회·매칭(wrong-bubble 복원 차단).
+  - [x] `post_sample_feedback`: body `message_id_space`("display"|"core") 파싱·정규화·전달.
+  - [x] 코어 `record_feedback`(feature-0002): `message_id_space` 인자 + INSERT/ON CONFLICT 3-col `(created_by, message_id, message_id_space)`.
+  - [x] 마이그 0022 + 부트스트랩 `agent_kb_schema.sql`: `message_id_space varchar(16) NOT NULL DEFAULT 'display'` + 3-col 부분 UNIQUE **신규 이름** `ux_sample_feedback_user_msg_space_vote`(구 2-col `ux_sample_feedback_user_msg_vote` drop — same-name no-op trap 회피). 기존 행 default 'display'(라이브 적재분 전부 표시 store) 무손실.
+  - [x] `_buildSampleFeedbackControls`: `message.id_space` 읽어 POST 에 `message_id_space` 포함. cache-buster `?v=20260629b-feedback-id-space`.
+- 비변경: 재투표 변경 허용·"샘플 등록" 분리·rate-limit·RBAC·audit 0. id_space 기본 'display' 라 대다수 경로 동작 동일.
+- [x] 테스트: `test_sample_flywheel.py`(masks_pii param 위치 보정 + 3-col ON CONFLICT + id_space 전달 단언)·`test_sample_feedback_curation.py`(message_id_space 전달 단언) → flywheel 13/13 · curation 15/15, 두 feature 전체 회귀 0. py_compile + node --check + alembic chain linear(0021→0022 단일 head).
+- [ ] verify-completion → 머지·push → 배포(0022 스키마 적용 + web 재빌드).
+- Cross-ref: feature-0002 TASK/CHG/REV-20260629T022055-feedback-id-space / 선행 TASK-20260629T014345-feedback-unique-vote(H5(b) 원 출처).
+
 ## TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백(👍/👎) 강제 — 새로고침·대화 전환 후 중복 부여 차단 (Major §12.3 — 스키마 마이그 + cross-feature 0002+0003)
 - 출처: `/_template:entry` arg-given dispatch. 사용자 보고: "assistant 답변에 피드백(👍/👎) 부여 후, 다른 대화에서 전환하거나 새로고침하면 같은 답변에 다시 피드백 부여가 가능. 각 사용자는 답변당 고유한 피드백만 부여할 수 있어야 함."
 - 결정(AskUserQuestion): 재투표 시 **변경 허용**(👍↔👎 전환 가능, 서버 UPSERT last-write-wins, 항상 답변당 1행).

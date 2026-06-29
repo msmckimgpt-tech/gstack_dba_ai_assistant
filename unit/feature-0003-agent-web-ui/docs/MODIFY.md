@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가, H5(b) follow-up, Major §12.3 — cross-feature 0002+0003)
+- Date: 2026-06-29. 선행 CHG-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)은 feature-0002(마이그 0022 + sample_feedback.py) — 본 항목은 feature-0003 web 층.
+- 변경(feature-0003):
+  - `src/app.py` `/api/history` 4개 메시지 빌더에 `m["id_space"]` 노출 — `_get_agent_core_history`(PG·MySQL)="core", `_get_history`(PG·MySQL display)="display".
+  - `src/app.py` `_load_user_feedback_by_message`/`_attach_user_feedback`: 반환·매칭 키를 int(message_id) → **(message_id, id_space) 복합 키**로 확장(cross-space wrong-bubble 복원 차단).
+  - `src/app.py` `post_sample_feedback`: body `message_id_space`("display"|"core") 파싱·정규화 후 `record_feedback(message_id_space=…)` 전달.
+  - `src/static/app.js` `_buildSampleFeedbackControls`: `message.id_space` 읽어 POST body 에 `message_id_space` 포함(기본 "display").
+  - `src/static/index.html`: app.js cache-buster `?v=20260629-feedback-unique-vote` → `?v=20260629b-feedback-id-space`.
+  - `tests/test_sample_feedback_curation.py`: 요청에 message_id_space="core" 추가 + 코어 전달 단언.
+- 비변경: 재투표 변경 허용·"샘플 등록" 분리·rate-limit·RBAC·audit·CSS 0.
+- 검증: curation 15/15 · node --check · py_compile · 두 feature 전체 회귀 0.
+- Cross-ref: feature-0002 CHG-20260629T022055-feedback-id-space / 마이그 0022 / REV-20260629T022055-feedback-id-space.
+
 ## CHG-20260629T014345-feedback-unique-vote (TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백(👍/👎) 강제, Major §12.3 — cross-feature 0002+0003)
 - Date: 2026-06-29. 사용자 보고(새로고침·대화 전환 후 같은 답변에 피드백 재부여 가능)의 수정. 정본 데이터 계층 변경(테이블 컬럼·UNIQUE 인덱스·코어 UPSERT)은 feature-0002(마이그 0021 + sample_feedback.py) — 본 항목은 feature-0003 web 층 변경(endpoint·history·UI·CSS) 기록.
 - 변경(feature-0003):

@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T022055-feedback-id-space [SKIPPED:h5b-direct-closure-of-prior-adversarial-finding-self-review] — 피드백 고유성 키에 id_space 추가 (TASK-20260629T022055-feedback-id-space, Major §12.3)
+- Date: 2026-06-29. 선행 REV-20260629T014345-feedback-unique-vote 의 적대 backend 리뷰가 **CONFIRMED→수용(watch-item)** 한 H5(b)(두 id 공간 모호성)를 사용자 요청으로 마저 해소. 본 cycle 은 그 한정 결함의 직접 수정이라 full 적대 패널 대신 self-review + 회귀 테스트로 종결(설계가 이미 H5(b) 분석에서 도출됨).
+- 결함(H5(b) 재기술): `message.id` 가 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 온다(숫자 겹침). 0021 의 (created_by, message_id) 키는 cross-space 에서 (a) DB 충돌(다른 답변 같은 키 → UPSERT 가 남의 투표 덮음) (b) wrong-bubble 복원 가능.
+- 해소: id_space("display"|"core") 차원 추가 → 키 (created_by, message_id, message_id_space). 두 공간의 같은 숫자 id 가 다른 키가 되어 (a)(b) 모두 차단. /api/history 4개 빌더가 id_space 노출, record_feedback/endpoint/app.js/복원 헬퍼가 전 경로 일관 전달·매칭.
+- 설계 판단:
+  1. **인덱스 신규명**: 3-col 인덱스를 `ux_sample_feedback_user_msg_space_vote`(신규)로 — 구 2-col 동명 인덱스가 있으면 부트스트랩 `CREATE … IF NOT EXISTS` 가 정의 변경을 감지 못하는 same-name no-op trap 회피(구명 DROP + 신명 CREATE 멱등).
+  2. **default 'display'**: 신규 컬럼 NOT NULL DEFAULT 'display' — 라이브 적재분은 전부 표시 store 경로라 기존 행 정합.
+  3. **ON CONFLICT 추론**: 3-col + 동일 술어로 신규 인덱스를 arbiter 추론(컬럼셋+술어 매칭, 인덱스명 무관). suggested=true 는 술어 제외 → plain INSERT 보존.
+  4. **하위호환**: id_space 기본 'display' 라 미전송 클라이언트·기존 행 모두 'display' 로 정합(대다수 경로 동작 동일).
+- 잔여: 동일 특성을 공유하는 첨부 영속 레이어(`_load_assistant_attachments_by_message`, message.id 키)는 본 cycle 범위 밖(별도 feature) — 피드백 한정 해소.
+- 검증: flywheel 13/13(3-col ON CONFLICT·id_space 전달 단언)·curation 15/15(id_space 전달)·두 feature 전체 회귀 0. py_compile·node --check·alembic chain linear(0021→0022 단일 head).
+- Human Approval Needed: 없음(자동 동기화). 배포는 0022 스키마 적용 동반 — confirm 대상.
+- Cross-ref: feature-0002 REV-20260629T022055-feedback-id-space / 마이그 0022 / 선행 REV-20260629T014345-feedback-unique-vote(H5(b) 출처).
+
 ## REV-20260629T014345-feedback-unique-vote [SUBAGENT:adversarial-backend] — 답변당 사용자별 고유 피드백 강제 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
 - Date: 2026-06-29. 결정(AskUserQuestion): 재투표 **변경 허용**(👍↔👎, UPSERT last-write-wins, 답변당 1행).
 - 설계 근거: 중복의 권위적 차단은 **DB 계층**(부분 UNIQUE + UPSERT)이어야 한다 — 프론트 dedup(`data-done` DOM 플래그)은 새로고침/전환에 소실되어 신뢰 불가. 답변 식별자는 기존에 첨부 영속이 키로 쓰는 표시 store `agent_runtime.messages.id`(프론트 `message.id`)를 재사용 — 새 식별 체계 도입 없이 정합.

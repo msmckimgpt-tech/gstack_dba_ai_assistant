@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T022055-feedback-id-space [SKIPPED:h5b-direct-closure-of-prior-adversarial-finding-self-review] — message_id_space 데이터 계층 (TASK-20260629T022055-feedback-id-space, Major §12.3)
+- Date: 2026-06-29. 주 리뷰 정본 = feature-0003 REV-20260629T022055-feedback-id-space — 본 항목은 feature-0002 데이터 계층(마이그 0022 + record_feedback) 교차기록.
+- 핵심 판단: 3-col 부분 UNIQUE `(created_by, message_id, message_id_space)` 가 두 id 공간의 같은 숫자 id 를 다른 키로 분리(H5(b) (a) cross-space 충돌 + (b) wrong-bubble 차단). 신규 인덱스명으로 부트스트랩 same-name no-op trap 회피. record_feedback ON CONFLICT 추론 술어를 인덱스와 문자 동일 유지. default 'display' 로 기존 행·미전송 정합.
+- 적대 검증: 본 cycle 은 선행 적대 backend 리뷰(H1~H7)가 도출한 H5(b) 의 직접 수정이라 self-review + 회귀 테스트로 종결.
+- 테스트: test_sample_flywheel 13/13(3-col ON CONFLICT·id_space·param 위치). py_compile PASS.
+- Human Approval Needed: 없음(자동 동기화). 배포 시 0022 적용 동반.
+- Cross-ref: feature-0003 REV/CHG-20260629T022055-feedback-id-space / 마이그 0022.
+
 ## REV-20260629T021000-feedback-unique-vote-bootstrap-sql [SKIPPED:deploy-parity-bootstrap-mirror-idempotent-ddl] — 0021 부트스트랩 SQL 미러 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
 - Date: 2026-06-29. 본체 REV-20260629T014345-feedback-unique-vote 머지 후 적발된 **배포 정합 결함**의 보완. 신규 동작 추가 아닌 **이미 리뷰된 0021 DDL 을 boot 정본(agent_kb_schema.sql)에 동일 미러**라 full §18.8 패널 SKIP.
 - 결함: 실 배포 스키마는 alembic 이 아니라 `_ensure_pg_schema()`(boot 시 `agent_kb_schema.sql` idempotent 적용)가 유지한다(MIGRATIONS.md — alembic 은 versioned-history 부가 레이어). 0021 을 부트스트랩 SQL 에 미러하지 않으면 배포 후 `message_id`/`ux_sample_feedback_user_msg_vote` 부재 → record_feedback UPSERT 의 `ON CONFLICT … WHERE …` 가 매칭 인덱스 부재로 런타임 에러 → 피드백 전건 실패. (0014/0017 선례: 스키마 변경은 양쪽 미러.)

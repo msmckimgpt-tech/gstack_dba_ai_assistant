@@ -3761,8 +3761,10 @@ function _buildSampleFeedbackControls(message, msgIdx) {
   const nlQuestion = _precedingUserQuestion(msgIdx);
   const generatedSql = _extractSqlFromContent(message.content);
   const cid = state.activeConversationId;
-  // 답변(메시지) 식별자 — 서버가 (created_by, message_id) 단위로 고유 피드백을 강제(중복 부여 차단).
+  // 답변(메시지) 식별자 — 서버가 (created_by, message_id, message_id_space) 단위로 고유 피드백을
+  // 강제(중복 부여 차단). id_space("display"|"core")는 표시 store id 와 core id 의 숫자 겹침을 구분.
   const messageId = (message && message.id != null) ? message.id : null;
+  const messageIdSpace = (message && message.id_space) ? message.id_space : "display";
 
   const status = document.createElement("span");
   status.className = "message-feedback-status";
@@ -3804,7 +3806,7 @@ function _buildSampleFeedbackControls(message, msgIdx) {
     try {
       await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
         method: "POST",
-        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId }),
+        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId, message_id_space: messageIdSpace }),
       });
       if (suggested) {
         status.textContent = "샘플 등록 요청됨 (검수 대기)";

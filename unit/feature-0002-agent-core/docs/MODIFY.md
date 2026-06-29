@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 message_id_space 추가, H5(b) follow-up, Major §12.3)
+- Date: 2026-06-29. 선행 0021 의 적대 리뷰 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층 정본 변경.
+- 변경:
+  - **마이그 0022** `alembic/versions/20260629_0022_sample_feedback_id_space.py`(down_revision 0021): `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id_space varchar(16) NOT NULL DEFAULT 'display'` + `DROP INDEX IF EXISTS ux_sample_feedback_user_msg_vote`(구 2-col) + `CREATE UNIQUE INDEX ux_sample_feedback_user_msg_space_vote (created_by, message_id, message_id_space) WHERE …`. downgrade 는 역순. 신규 인덱스명 = 부트스트랩 `CREATE … IF NOT EXISTS` same-name no-op trap 회피.
+  - `src/modules/sample_feedback.py` `record_feedback`: `message_id_space="display"` 인자(정규화 display|core) 추가, INSERT 컬럼/VALUES + ON CONFLICT 를 3-col `(created_by, message_id, message_id_space)` 로. EXCLUDED SET·RETURNING·suggested 분리 동일.
+  - `src/scripts/agent_kb_schema.sql`: boot 정본 미러(컬럼 추가 + 구 인덱스 DROP + 신규명 3-col).
+- 비변경: list_pending/promote/reject/_mask_pii·GRANT·"샘플 등록" 분리 0.
+- 검증: `tests/test_sample_flywheel.py` 13/13(masks_pii param 위치 보정[message_id_space 삽입]·3-col ON CONFLICT·id_space 전달)·py_compile·chain linear(0021→0022 단일 head).
+- Cross-ref: feature-0003 CHG-20260629T022055-feedback-id-space / 마이그 0022 / REV-20260629T022055-feedback-id-space.
+
 ## CHG-20260629T021000-feedback-unique-vote-bootstrap-sql (TASK-20260629T014345-feedback-unique-vote — 배포 정합 follow-up, Major §12.3)
 - Date: 2026-06-29. 본체(CHG-20260629T014345-feedback-unique-vote, main 31aa67a) 머지 후 배포 정합 적발·보완. **결함**: alembic 0021 만 추가하고 boot 정본 `src/scripts/agent_kb_schema.sql` 미러를 누락 → 실 배포 스키마는 `_ensure_pg_schema()`(agent_core.py:3960, 매 boot idempotent `agent_kb_schema.sql` 적용)가 유지하므로, 배포 시 `sample_feedback.message_id`/`ux_sample_feedback_user_msg_vote` 가 생성되지 않아 `record_feedback` 의 `ON CONFLICT (created_by, message_id) WHERE …` 가 **매칭 인덱스 부재 런타임 에러 → 피드백 적재 전건 실패**.
 - 변경(`src/scripts/agent_kb_schema.sql`): sample_feedback 인덱스 블록에 `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id bigint` + `CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_vote ON sample_feedback (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false` 추가(alembic 0021 과 동일·멱등). 0014/0017 선례와 동일 패턴(스키마 변경은 alembic + 부트스트랩 SQL 양쪽 미러).

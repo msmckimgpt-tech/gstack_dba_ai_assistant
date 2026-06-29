@@ -225,13 +225,13 @@ def test_user_feedback_record_and_audit(monkeypatch):
 
     resp = asyncio.run(app.post_sample_feedback("conv-1", _FakeRequest({
         "vote": "down", "suggested": True, "nl_question": "  매출 상위 10  ",
-        "generated_sql": "SELECT 1", "message_id": 77,
+        "generated_sql": "SELECT 1", "message_id": 77, "message_id_space": "core",
     })))
     assert resp.status_code == 200
     out = _body(resp)
     assert out["ok"] is True
     assert out["feedback_id"] == 42
-    # 적재 인자 검증 — vote/scope/cid/created_by/message_id 가 코어로 전달.
+    # 적재 인자 검증 — vote/scope/cid/created_by/message_id/message_id_space 가 코어로 전달.
     assert captured["conn"] is pg, "PG(agent_kb) conn 으로 적재"
     assert captured["scope_key"] == "mysql-deadbeef"
     assert captured["nl_question"] == "매출 상위 10"
@@ -240,6 +240,7 @@ def test_user_feedback_record_and_audit(monkeypatch):
     assert captured["conversation_id"] == "conv-1"
     assert captured["created_by"] == "tester"
     assert captured["message_id"] == 77, "답변 식별자(message_id) 가 코어로 전달 — 고유 피드백 키"
+    assert captured["message_id_space"] == "core", "id_space 가 코어로 전달 — 두 id 공간 구분(H5(b))"
     assert pg.committed is True
     # best-effort audit — action=sample.feedback.submit.
     assert any(e.get("action") == "sample.feedback.submit" for e in events)

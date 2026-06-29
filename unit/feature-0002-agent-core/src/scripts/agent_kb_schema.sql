@@ -389,12 +389,17 @@ CREATE TABLE IF NOT EXISTS sample_feedback (
 );
 CREATE INDEX IF NOT EXISTS ix_sample_feedback_status ON sample_feedback (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_sample_feedback_scope ON sample_feedback (scope_key);
--- 답변당 사용자별 고유 피드백(👍/👎) — alembic 0021 미러(boot idempotent 정본).
--- 한 created_by 가 한 message_id(답변)에 남기는 투표(suggested=false)는 1행으로 강제(record_feedback UPSERT).
+-- 답변당 사용자별 고유 피드백(👍/👎) — alembic 0021+0022 미러(boot idempotent 정본).
+-- 한 created_by 가 한 답변(message_id, message_id_space)에 남기는 투표(suggested=false)는 1행으로
+-- 강제(record_feedback UPSERT). message_id_space("display"|"core")는 표시 store id 와 core_messages
+-- id 의 숫자 겹침을 구분(H5(b) — fork·마이그 경로전환 시 cross-space 충돌/오매칭 차단).
 -- 과거 행(message_id NULL)·익명(created_by NULL)·"샘플 등록"(suggested=true)은 술어 제외 → 무손실.
 ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id bigint;
-CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_vote
-    ON sample_feedback (created_by, message_id)
+ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id_space varchar(16) NOT NULL DEFAULT 'display';
+-- 구 2-col 인덱스(0021) 정리 — 3-col 은 새 이름이라 same-name no-op trap 회피(boot 멱등).
+DROP INDEX IF EXISTS ux_sample_feedback_user_msg_vote;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_space_vote
+    ON sample_feedback (created_by, message_id, message_id_space)
     WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false;
 DROP TRIGGER IF EXISTS trg_sample_feedback_updated_at ON sample_feedback;
 CREATE TRIGGER trg_sample_feedback_updated_at

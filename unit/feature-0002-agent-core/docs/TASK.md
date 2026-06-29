@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 message_id_space 추가 데이터 계층 (Major §12.3, feature-0003 주관 — 데이터 계층 교차) — done
+- 출처: 사용자 요청 — 선행 TASK-20260629T014345-feedback-unique-vote 적대 리뷰의 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)이 feature-0002 거주라 교차 기록.
+- [x] **alembic 0022**(`20260629_0022_sample_feedback_id_space.py`, down_revision 0021): `message_id_space varchar(16) NOT NULL DEFAULT 'display'` 추가 + 3-col 부분 UNIQUE **신규명** `ux_sample_feedback_user_msg_space_vote (created_by, message_id, message_id_space)` (구 2-col `ux_sample_feedback_user_msg_vote` DROP — same-name no-op trap 회피). 기존 행 default 'display' 무손실.
+- [x] `src/modules/sample_feedback.py` `record_feedback`: `message_id_space` 인자(정규화 display|core) + INSERT/ON CONFLICT 3-col `(created_by, message_id, message_id_space)`.
+- [x] 부트스트랩 `src/scripts/agent_kb_schema.sql` 미러(구 인덱스 DROP + 신규명 3-col + 컬럼).
+- [x] FUNCTION.md AC 갱신(0021 한계 해소 + 신규 AC).
+- [x] 테스트: `test_sample_flywheel.py` 13/13(masks_pii param 위치 보정 + 3-col ON CONFLICT + id_space 전달 단언). py_compile PASS.
+- [x] self-review(H5(b) closure) — REV-20260629T022055-feedback-id-space. (선행 cycle 적대 리뷰가 결함·설계 이미 도출.)
+- [ ] verify-completion → 머지·push → 배포(0022 적용).
+- Cross-ref: feature-0003 TASK/CHG/REV-20260629T022055-feedback-id-space / 선행 TASK-20260629T014345-feedback-unique-vote.
+
 ## TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백 데이터 계층 (Major §12.3, feature-0003 주관 — 데이터 계층 교차) — done
 - 출처: `/_template:entry` dispatch(feature-0003 주관). 사용자 보고: assistant 답변 피드백(👍/👎) 새로고침·전환 후 중복 부여 가능 → 답변당 고유 피드백만 가능해야 함. 데이터 계층(테이블·코어 적재)이 feature-0002 거주라 교차 변경 기록.
 - [x] **alembic 0021**(`20260629_0021_sample_feedback_unique_vote.py`, down_revision 0020): `sample_feedback.message_id bigint` + 부분 UNIQUE `ux_sample_feedback_user_msg_vote (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested=false`. 기존 행 NULL → 술어 제외(무손실·멱등). chain linear 단일 head.

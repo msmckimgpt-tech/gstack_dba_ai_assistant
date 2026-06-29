@@ -9587,6 +9587,7 @@ WHERE conversation_id = %s
                     meta["run_id"] = steps_val[0].get("run_id")
             messages_pg.append({
                 "id": int(msg_id),
+                "id_space": "core",  # core_messages.id 공간 — 피드백 고유성 키 모호성 차단(표시 store id 와 숫자 겹침 가능)
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -9649,6 +9650,7 @@ LIMIT %s
         messages.append(
             {
                 "id": int(msg_id),
+                "id_space": "core",  # AgentCoreMessages.id 공간 — 피드백 고유성 키 모호성 차단
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -9752,17 +9754,22 @@ def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: di
             m["_attachments"] = atts
 
 
-def _load_user_feedback_by_message(conversation_id: str, created_by: "str | None") -> dict[int, dict[str, Any]]:
-    """대화의 현재 사용자 투표 피드백(👍/👎, suggested=false)을 message_id 별로 그룹핑.
+def _load_user_feedback_by_message(conversation_id: str, created_by: "str | None") -> dict[tuple, dict[str, Any]]:
+    """대화의 현재 사용자 투표 피드백(👍/👎, suggested=false)을 (message_id, id_space) 별로 그룹핑.
 
     새로고침·대화 전환으로 history 를 다시 그릴 때, 이미 부여한 투표를 복원해 중복 부여를 막기
     위함(assistant 첨부 영속 `_load_assistant_attachments_by_message` 와 대칭). "샘플 등록"
     (suggested=true)은 투표 고유성과 분리되므로 제외한다.
 
+    **id_space 키 포함(H5(b) 해소)**: message_id 는 표시 store(`agent_runtime.messages.id`)와
+    core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 올 수 있어 숫자만 같아도 다른
+    답변이다. (message_id, message_id_space) 복합 키로 매칭해 fork·마이그 경로전환 시 wrong-bubble
+    복원을 차단한다.
+
     피드백 정본은 PG(agent_kb)의 sample_feedback. fail-soft — 실패 시 빈 dict 를 반환해 이력
     표시를 막지 않는다. created_by(=로그인 username)로 스코프되어 타 사용자 피드백은 노출 안 됨.
     """
-    out: dict[int, dict[str, Any]] = {}
+    out: dict[tuple, dict[str, Any]] = {}
     if not conversation_id or not created_by:
         return out
     try:
@@ -9773,15 +9780,16 @@ def _load_user_feedback_by_message(conversation_id: str, created_by: "str | None
     try:
         with pg.cursor() as cur:
             cur.execute(
-                "SELECT message_id, vote FROM sample_feedback "
+                "SELECT message_id, message_id_space, vote FROM sample_feedback "
                 "WHERE conversation_id = %s AND created_by = %s "
                 "AND suggested = false AND message_id IS NOT NULL",
                 (conversation_id, created_by),
             )
             for row in cur.fetchall() or []:
-                mid_v, vote_v = row
+                mid_v, space_v, vote_v = row
                 try:
-                    out[int(mid_v)] = {"vote": "down" if str(vote_v) == "down" else "up"}
+                    space_n = str(space_v) if space_v else "display"
+                    out[(int(mid_v), space_n)] = {"vote": "down" if str(vote_v) == "down" else "up"}
                 except (TypeError, ValueError):
                     continue
     except Exception:
@@ -9794,10 +9802,11 @@ def _load_user_feedback_by_message(conversation_id: str, created_by: "str | None
     return out
 
 
-def _attach_user_feedback(messages: list[dict[str, Any]], by_message: dict[int, dict[str, Any]]) -> None:
+def _attach_user_feedback(messages: list[dict[str, Any]], by_message: dict[tuple, dict[str, Any]]) -> None:
     """history assistant 메시지에 현재 사용자의 기존 피드백(`feedback`)을 주입.
 
     프론트(_buildSampleFeedbackControls)는 message.feedback 가 있으면 해당 투표를 활성 표시한다.
+    매칭은 (message_id, id_space) 복합 키 — 두 id 공간의 숫자 겹침에 의한 wrong-bubble 복원 차단.
     """
     if not by_message:
         return
@@ -9808,7 +9817,8 @@ def _attach_user_feedback(messages: list[dict[str, Any]], by_message: dict[int, 
             mid = int(m.get("id") or 0)
         except Exception:
             mid = 0
-        fb = by_message.get(mid)
+        space = str(m.get("id_space") or "display")
+        fb = by_message.get((mid, space))
         if fb:
             m["feedback"] = fb
 
@@ -9870,6 +9880,7 @@ def _get_history(
                     meta["run_id"] = steps_v[0].get("run_id")
             messages_pg.append({
                 "id": int(msg_id),
+                "id_space": "display",  # agent_runtime.messages.id(표시 store) — 피드백 고유성 키 공간
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -9947,6 +9958,7 @@ LIMIT %s
         messages.append(
             {
                 "id": int(msg_id),
+                "id_space": "display",  # AgentMemoryMessages.Id(표시 store) — 피드백 고유성 키 공간
                 "role": str(role),
                 "content": _normalize_output(str(content or "")),
                 "created_at": str(created_at),
@@ -15377,12 +15389,15 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
     suggested = bool(data.get("suggested"))
     nl_question = str(data.get("nl_question") or "").strip()
     generated_sql = str(data.get("generated_sql") or "")
-    # 답변(메시지) 식별자 — (created_by, message_id) 단위 고유 피드백 강제용(중복 부여 차단).
-    # 표시 store 메시지 id(/api/history 가 m["id"] 로 노출, 첨부 영속과 동일 id 공간). 부재 시 None.
+    # 답변(메시지) 식별자 — (created_by, message_id, message_id_space) 단위 고유 피드백 강제용.
+    # message_id = /api/history 가 m["id"] 로 노출하는 표시 store/core 메시지 id. 부재 시 None.
     try:
         message_id = int(data.get("message_id")) if str(data.get("message_id") or "").strip() != "" else None
     except (TypeError, ValueError):
         message_id = None
+    # id_space = m["id_space"]("display"|"core") — message_id 숫자가 두 store 공간서 겹쳐도 답변을
+    # 명확히 구분(H5(b) 해소). 미지정/비정상은 "display" 로 정규화(대다수 경로).
+    message_id_space = "core" if str(data.get("message_id_space") or "").strip().lower() == "core" else "display"
     if not nl_question:
         return _json_error("nl_question 은 필수입니다.", 400)
     if len(nl_question) > 8000:
@@ -15419,13 +15434,13 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
     except Exception:
         return _json_error("피드백 저장소(PG) 연결 실패", 503)
     try:
-        # record_feedback 가 UPSERT(ON CONFLICT (created_by, message_id) … DO UPDATE) RETURNING id
-        # 로 적재/갱신된 행 id 를 직접 반환 — lastval() 은 UPSERT DO UPDATE 경로에서 부정확하므로 미사용.
+        # record_feedback 가 UPSERT(ON CONFLICT (created_by, message_id, message_id_space) … DO UPDATE)
+        # RETURNING id 로 적재/갱신된 행 id 직접 반환 — lastval() 은 DO UPDATE 경로 부정확하므로 미사용.
         feedback_id = _sfb.record_feedback(
             pg, scope_key, nl_question, generated_sql,
             vote=vote, suggested=suggested, conversation_id=cid,
             created_by=str((account or {}).get("username") or "") or None,
-            message_id=message_id,
+            message_id=message_id, message_id_space=message_id_space,
         )
         pg.commit()
     except Exception as exc:
