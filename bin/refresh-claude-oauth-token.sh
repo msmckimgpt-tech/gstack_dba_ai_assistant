@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# refresh-claude-oauth-token.sh — 개발 단계 전용 (2026-06-23, fallback 2026-06-29)
+# refresh-claude-oauth-token.sh — 개발 단계 전용 (2026-06-23, fallback+probe 2026-06-29)
 # =============================================================================
 # 지정된 계정의 Claude Code OAuth access token 을 읽어
 # bedrock-gateway(litellm) 의 ANTHROPIC_API_KEY 로 주입한다.
 #
-# 계정 선택 정책 (2026-06-29 변경 — 서비스 내부 폴백):
+# 계정 선택 정책 (2026-06-29 — 서비스 내부 폴백 + 라이브 probe):
 #   - 기본: claude-corp 계정을 우선 사용하고, 사용 불가 시 root 계정으로 자동 폴백.
 #       claude-corp : 회사가 발급한 Claude Team 구독 계정 (/home/claude-corp/.claude)
 #       root        : 개인 max 계정 (/root/.claude) — 회사 계정 사용 불가 시 폴백
@@ -16,22 +16,41 @@
 #   이후(후): 스크립트가 내부에서 claude-corp 우선 + root 폴백을 수행하므로
 #             cron 구성 수정 없이 계정 전환이 자동으로 일어난다.
 #
-# "사용 불가(실패)" 판정 — 다음 중 하나면 그 계정을 건너뛴다:
-#   1) credentials 파일 부재
-#   2) accessToken 비어있음
-#   3) 토큰이 이미 만료 또는 만료 임박 (남은 TTL ≤ CLAUDE_OAUTH_MIN_TTL 초, 기본 300s)
-#      → (3)이 핵심: claude-corp 의 Claude Code 가 갱신을 멈추면(구독 만료·미실행) 토큰이
-#      만료되므로, 그 시점에 root 로 자동 전환되어 게이트웨이가 안 끊긴다.
-#      claude-corp 가 회복되면(토큰 다시 유효) 다음 실행에서 claude-corp 로 자동 복귀.
+# "사용 불가(실패)" 판정 — 후보 계정을 다음 두 단계로 검사하고, 하나라도 걸리면 건너뛴다:
+#   [정적 검사] (cheap, 네트워크 없음)
+#     1) credentials 파일 부재
+#     2) accessToken 비어있음
+#     3) 토큰이 이미 만료 또는 만료 임박 (남은 TTL ≤ CLAUDE_OAUTH_MIN_TTL 초, 기본 300s)
+#   [라이브 probe] (CLAUDE_OAUTH_PROBE=1 기본 — 위 정적 검사 통과한 후보만 수행)
+#     4) litellm 과 동일한 방식(sk-ant-oat → Authorization: Bearer +
+#        anthropic-beta: oauth-2025-04-20)으로 Anthropic /v1/messages 에 max_tokens=1
+#        ping 을 보내 HTTP 200 이 아니면 "사용 불가"로 본다.
+#        → 이것이 핵심: 토큰은 유효(미만료)해도 구독 **사용량이 소진**되면 실제 호출이
+#          429(rate_limit_error)로 거부된다. 정적 검사만으로는 이 상태를 못 잡아
+#          "사용 가능"으로 오판하므로(2026-06-29 관측), 라이브 probe 로 실제 호출
+#          가능 여부를 확인한 뒤 폴백한다.
+#   claude-corp 가 회복되면(probe 200) 다음 실행에서 claude-corp 로 자동 복귀.
+#
+# 안전장치:
+#   - 어떤 후보도 사용 불가면 .env/컨테이너를 **건드리지 않고** exit 1 (transient 장애로
+#     동작 중인 게이트웨이를 깨뜨리지 않음 — 마지막으로 주입된 토큰 유지).
+#   - CLAUDE_OAUTH_PROBE=0 으로 라이브 probe 비활성화 가능(정적 검사만 — probe 가
+#     오작동하거나 네트워크 격리 환경일 때의 escape hatch).
+#
+# 환경변수 요약:
+#   CLAUDE_OAUTH_ACCOUNT       단일 계정 강제(폴백 없음). 지정 시 ACCOUNTS 무시.
+#   CLAUDE_OAUTH_ACCOUNTS      우선순위 목록(공백 구분). 기본 "claude-corp root".
+#   CLAUDE_OAUTH_MIN_TTL       만료 임박 임계(초). 기본 300.
+#   CLAUDE_OAUTH_PROBE         라이브 probe 활성(1/0). 기본 1.
+#   CLAUDE_OAUTH_PROBE_MODEL   probe 모델. 기본 claude-haiku-4-5 (가장 저렴).
+#   CLAUDE_OAUTH_PROBE_TIMEOUT probe HTTP timeout(초). 기본 20.
 #
 # 배경: 정식 배포 전 개발 단계에서, 위 계정의 Claude Code OAuth 로 LLM 백엔드를
 #   운용한다(AGENTS.md / 사용자 지시). Anthropic OAuth access token 은
 #   short-lived(~수시간) 이므로 주기적으로 갱신해야 게이트웨이가 안 끊긴다.
-#   해당 계정의 Claude Code 가 refresh token 으로 access token 을 자동 갱신하면,
-#   본 스크립트가 그 최신 토큰을 게이트웨이에 반영한다.
 #
 # 토큰이 바뀐 경우에만 컨테이너를 재생성한다(불필요한 recreate 방지).
-# --check 옵션: .env/컨테이너 미변경, 어느 계정이 선택되는지만 진단 출력.
+# --check 옵션: .env/컨테이너 미변경, 어느 계정이 선택되는지만(probe 포함) 진단 출력.
 # 배포 시: litellm_config.yaml 을 Bedrock provider 로 복구하고 본 cron 을 제거한다.
 # =============================================================================
 set -euo pipefail
@@ -39,8 +58,10 @@ set -euo pipefail
 REPO="/root/download/docker/mysql_ai_delegated_dev/repo"
 ENV_FILE="$REPO/.env.bedrock"
 
-# 토큰 만료 임박 임계(초). 이 시간 이내에 만료되는 토큰은 "실패"로 보고 다음 계정 폴백.
 MIN_TTL="${CLAUDE_OAUTH_MIN_TTL:-300}"
+PROBE="${CLAUDE_OAUTH_PROBE:-1}"
+PROBE_MODEL="${CLAUDE_OAUTH_PROBE_MODEL:-claude-haiku-4-5}"
+PROBE_TIMEOUT="${CLAUDE_OAUTH_PROBE_TIMEOUT:-20}"
 
 # 계정 우선순위 결정
 #   - CLAUDE_OAUTH_ACCOUNT 명시: 그 계정만 사용 (폴백 없음, 기존 수동 전환 호환)
@@ -62,10 +83,14 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [refresh-oauth] $*" >&2; }
 #   stderr: 계정별 진단 로그
 #   exit  : 0=선택됨, 1=사용 가능 계정 없음
 select_account() {
-  MIN_TTL="$MIN_TTL" python3 - "$@" <<'PY'
-import json, os, sys, time
+  MIN_TTL="$MIN_TTL" PROBE="$PROBE" PROBE_MODEL="$PROBE_MODEL" PROBE_TIMEOUT="$PROBE_TIMEOUT" \
+  python3 - "$@" <<'PY'
+import json, os, sys, time, urllib.request, urllib.error
 
 min_ttl = int(os.environ.get('MIN_TTL', '300'))
+probe_on = os.environ.get('PROBE', '1') not in ('0', '', 'false', 'no')
+probe_model = os.environ.get('PROBE_MODEL', 'claude-haiku-4-5')
+probe_timeout = float(os.environ.get('PROBE_TIMEOUT', '20'))
 accounts = sys.argv[1:]
 
 def cred_path(acct):
@@ -78,8 +103,8 @@ def ts():
 def logd(msg):
     sys.stderr.write(f'{ts()} [refresh-oauth] {msg}\n')
 
-def usable(acct):
-    """사용 가능하면 (token, None), 아니면 (None, 사유)."""
+def static_check(acct):
+    """정적 검사. 사용 가능하면 (token, None), 아니면 (None, 사유)."""
     cred = cred_path(acct)
     if not os.path.isfile(cred):
         return None, f'credentials 없음: {cred}'
@@ -100,21 +125,64 @@ def usable(acct):
             return None, f'토큰 만료/임박 (남은 {remaining}s ≤ {min_ttl}s)'
     return tok, None
 
+def live_probe(token):
+    """litellm 과 동일한 OAuth 호출을 흉내내 실제 사용 가능 여부 확인.
+    사용 가능(HTTP 200)하면 (True, detail), 아니면 (False, detail)."""
+    body = json.dumps({
+        'model': probe_model,
+        'max_tokens': 1,
+        # Claude Code OAuth 토큰의 정식 사용 형태에 맞춰 식별 system prompt 포함
+        # (현재는 없어도 인증되지만, 향후 요구 변화에 대한 안전 마진).
+        'system': "You are Claude Code, Anthropic's official CLI for Claude.",
+        'messages': [{'role': 'user', 'content': 'ping'}],
+    }).encode()
+    req = urllib.request.Request(
+        'https://api.anthropic.com/v1/messages', data=body, method='POST',
+        headers={
+            'content-type': 'application/json',
+            'authorization': f'Bearer {token}',
+            'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'oauth-2025-04-20',
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=probe_timeout) as r:
+            return (r.status == 200), f'HTTP {r.status}'
+    except urllib.error.HTTPError as e:
+        detail = f'HTTP {e.code}'
+        try:
+            j = json.loads(e.read().decode())
+            etype = (j.get('error') or {}).get('type')
+            if etype:
+                detail += f' {etype}'
+        except Exception:
+            pass
+        return False, detail  # 429(사용량 만료)/401/403 등 → 사용 불가
+    except Exception as e:  # noqa: BLE001 — 네트워크/timeout 등은 사용 불가로 보고 다음 후보
+        return False, f'probe 예외 {type(e).__name__}: {e}'
+
 for acct in accounts:
-    tok, reason = usable(acct)
-    if tok:
-        logd(f'[{acct}] 선택 — 사용 가능')
-        sys.stdout.write(f'{acct}\t{tok}')
-        sys.exit(0)
-    logd(f'[{acct}] 건너뜀 — {reason}')
+    tok, reason = static_check(acct)
+    if not tok:
+        logd(f'[{acct}] 건너뜀 — {reason}')
+        continue
+    if probe_on:
+        ok, detail = live_probe(tok)
+        if not ok:
+            logd(f'[{acct}] 건너뜀 — 라이브 호출 실패 ({detail})')
+            continue
+        logd(f'[{acct}] 선택 — 라이브 호출 성공 ({detail})')
+    else:
+        logd(f'[{acct}] 선택 — 정적 검사 통과 (probe 비활성)')
+    sys.stdout.write(f'{acct}\t{tok}')
+    sys.exit(0)
 
 logd(f'ERROR: 사용 가능한 계정 없음 (후보: {" ".join(accounts) or "(비어있음)"})')
 sys.exit(1)
 PY
 }
 
-# 1) 계정 선택 + 토큰 추출
-SEL="$(select_account $ACCOUNTS)" || { log "ERROR: 토큰 주입 중단 — 사용 가능한 계정 없음 (후보: $ACCOUNTS)"; exit 1; }
+# 1) 계정 선택 + 토큰 추출 (정적 검사 + 라이브 probe)
+SEL="$(select_account $ACCOUNTS)" || { log "ERROR: 토큰 주입 중단 — 사용 가능한 계정 없음 (후보: $ACCOUNTS). 게이트웨이 미변경(현 토큰 유지)."; exit 1; }
 ACCOUNT="${SEL%%$'\t'*}"
 TOKEN="${SEL#*$'\t'}"
 [ -n "$ACCOUNT" ] && [ -n "$TOKEN" ] || { log "ERROR: 계정/토큰 추출 실패 (sel=$ACCOUNT)"; exit 1; }
