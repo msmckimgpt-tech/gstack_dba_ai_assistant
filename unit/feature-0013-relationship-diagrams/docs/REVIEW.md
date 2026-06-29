@@ -56,3 +56,16 @@ source_of_truth: true
 - 후속(비-blocking): vendored mermaid 차기 refresh 시 내장 DOMPurify(3.1.6) bump · cardinality 수집 ·
   라이브/Windows-browser end-to-end 검증.
 - Open Questions: 없음 (blocking). Human Approval Needed: 없음 (사전 승인 범위 내).
+
+## REV-20260629T140500-relationship-diagrams [SKIPPED:deploy+doc-merge only — 코드 로직 무변경, §18.8 패널은 REV-…T120500 에서 완료] 배포 완료 기록
+- Related Change: CHG-20260629-relationship-diagrams-0002
+- Panel skip 사유: 이번 변경은 main 머지 충돌 해소(append형 docs/wiki) + 라이브 배포뿐 — 코드 로직 무변경.
+  코드 적대 검증은 선행 REV-20260629T120500 `[AGENT-TEAM:security+backend+frontend]` SHIP 으로 완료됨.
+- deploy_scope 승인 근거 (Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`(init standing 값)
+  + feature `FUNCTION.md` 동일 선언 → cycle-final 후 web 재배포 사전 승인. 자동 배포 진행, 첫 배포 직전
+  "deploy_scope: included 활성" 1줄 표면화함.
+- 라이브 검증 결과: alembic 0024 적용(live=0024) · `table_relationships`+GRANT 발효(rw CRUD 실측) ·
+  healthz ok · **PB-0008 실 Windows Chrome mermaid erDiagram SVG 렌더 PASS**
+  (`artifacts/pb0008-feature-0013-mermaid-render.png`).
+- Follow-up (비-blocking): app.js cache-buster bump(컨벤션 nit — ETag 재검증으로 기능 무영향) ·
+  `/cso` 보안 리뷰(권장) · cardinality 수집(후속 cycle).

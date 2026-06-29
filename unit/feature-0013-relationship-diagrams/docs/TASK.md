@@ -9,7 +9,7 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in-progress
+- State: done (배포 완료 + 라이브 검증 PASS — PR #462 merged @ main 34cb31b)
 - Owner: AI (claude) / Human (ms.mckim)
 - Priority: high
 - Last Updated: 2026-06-29
@@ -90,28 +90,33 @@ source_of_truth: true
 - [x] TASK-20260629-rd-09 단위 테스트(19건 PASS) + §18.8 적대 패널(3 reviewer SHIP) + 문서 정리
 
 ## 4. In Progress
-- (verify-completion 게이트 + commit) 진행 중.
+- 없음 (배포·검증 완료).
 
 ## 5. Blocked
 - 없음
 
 ## 6. Done
 - 3-phase 전체 구현(렌더·발화·데이터·학습) + 단위 테스트 19건 + §18.8 적대 패널(SHIP) + 문서/STATUS/wiki.
+- main 머지(PR #462 — append형 충돌 해소: feature-0012+0013 양쪽 보존) + 배포(alembic 0020→0024 적용,
+  web·ask-worker·insight-worker 재빌드·재기동, 전부 healthy).
+- 라이브 검증: DB smoke(table_relationships 생성 + GRANT 발효, rw INSERT/DELETE 실측) · healthz ok ·
+  **PB-0008 실 Windows Chrome mermaid erDiagram SVG 렌더 PASS**(artifacts/pb0008-feature-0013-mermaid-render.png).
 
 ## 7. Next Action
-- 커밋 → PR → 배포(deploy_scope:included) 후 alembic 0024 적용 확인 + Windows-browser 렌더 검증(PB-0008).
+- (cycle 완료) 후속 비-blocking: app.js cache-buster bump(컨벤션 nit — ETag 재검증으로 기능 무영향) ·
+  `/cso` 보안 리뷰(권장) · cardinality(1:N/M:N) 수집(후속 cycle).
 
 ## 8. Completion Checklist
-- [x] 모든 REQ의 AC가 구현되었다 (AC-1~5 코드 반영; AC-1/3/4 라이브 검증은 배포 후)
+- [x] 모든 REQ의 AC가 구현되었다 (AC-1~5 코드 반영 + 라이브 검증 완료 — PB-0008 렌더·DB·healthz PASS)
 - [x] 단위 테스트(unit test)가 통과한다 (test_relationships.py 19건 PASS)
 - [x] 전체/통합 테스트가 통과하거나, 미작성 사유와 커버 계획이 TEST.md §4에 기록되었다
 - [x] FUNCTION.md가 현재 동작과 일치한다
 - [x] MODIFY.md에 변경 이력이 기록되었다
 - [x] REVIEW.md에 판단 근거가 기록되었다 (+ §18.8 AGENT-TEAM 패널 entry)
 - [x] REPORT.md에 최종 상태가 반영되었다
-- [x] TEST.md에 테스트 결과가 기록되었다 (웹 렌더는 Windows-browser 게이트 대상 — §10.5)
+- [x] TEST.md에 테스트 결과가 기록되었다 (웹 렌더 PB-0008 실 Windows 브라우저 검증 PASS — §10.5/§15.4.1)
 - [x] BLOCKED 항목이 없거나 사람에게 전달되었다
 - [x] STATUS.md에 기능 상태가 갱신되었다
-- [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시 — 본 cycle 특이 교훈 없음)
-- [ ] Git 커밋이 완료되었다
-- [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
+- [x] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 없음 — alembic version drift/멱등·cache-buster nit 은 MODIFY/REVIEW 에 기록)
+- [x] Git 커밋이 완료되었다 (c3487a6 feat + 99a66cf merge + 배포기록 docs)
+- [x] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다 (PR #462 merged → main 34cb31b, 브랜치 정리)

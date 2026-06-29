@@ -35,3 +35,25 @@ source_of_truth: true
   기존 답변/insight/스키마 무회귀(모든 신규 경로 try/except + flag-gated + ds-scope 격리).
 - Rollback Notes: migration downgrade=DROP TABLE table_relationships. 플래그 OFF
   (`AGENT_RELATIONSHIP_*_ENABLED=0`)로 런타임 비활성. 프런트는 vendor script + 4 함수 제거.
+
+## CHG-20260629-relationship-diagrams-0002
+- Date: 2026-06-29
+- Related Requirement: REQ-20260629-relationship-diagrams (배포·라이브 검증)
+- Summary: feature-0013 을 main 에 머지(PR #462) + 라이브 배포 + deploy-backed 검증. 코드 로직 무변경.
+- Files (이번 변경):
+  - `docs/STATUS.md`, `wiki/Features/_Index.md`, `wiki/Log.md` — main 머지 충돌 해소(append형:
+    feature-0012 + feature-0013 양쪽 항목 보존). 코드 파일 변경 없음(c3487a6 산출물 그대로 배포).
+- Deploy:
+  - `make migrate`(alembic upgrade 0020→0024): 0021~0023 멱등 재실행(NOTICE skip, no-op) +
+    0024 `table_relationships` 생성·INDEX·TRIGGER·GRANT. live current = `0024_table_relationships`.
+  - web / ask-worker / insight-worker 이미지 재빌드(`compose build`) + recreate(`up -d`) — 전부 healthy.
+- Live verify (deploy-backed):
+  - DB smoke: `table_relationships` 존재 + GRANT(agent_kb_rw=INSERT/UPDATE/DELETE/SELECT,
+    agent_kb_ro=SELECT) 발효 — agent_kb_rw 실 INSERT/DELETE 성공(DEPLOY TRAP 회피 확인).
+  - healthz(caddy TLS): `status:ok`, mysql_ok/pg_ok=true, insight heartbeat fresh.
+  - PB-0008(실 Windows Chrome 149): `markdownToHtml → renderMermaidDiagrams` 전체 경로로 erDiagram
+    SVG 렌더 성공(viewBox·mermaid CSS, error fallback 없음). 증적 `artifacts/pb0008-feature-0013-mermaid-render.png`.
+- Follow-up (비-blocking): `index.html` 의 app.js cache-buster 가 `?v=20260629b-feedback-id-space`
+  (feedback 값) 그대로 — 컨벤션상 mermaid 버전으로 bump 권장. 단 app.js 가 `Cache-Control max-age`
+  없이 content-ETag 로 서빙되어 재방문자도 ETag 재검증으로 새 app.js 를 수신(기능 무영향) → 별도 follow-up.
+- Impact: 비파괴. Rollback: migration downgrade=DROP table_relationships; 이미지 직전 태그 롤백.
