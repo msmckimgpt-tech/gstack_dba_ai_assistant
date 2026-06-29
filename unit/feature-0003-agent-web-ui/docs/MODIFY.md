@@ -4964,3 +4964,19 @@ source_of_truth: true
 - Rollback: app.py 엔진분기·신규 함수·상수 revert(MySQL 경로 무영향) + admin.* 라벨분기 revert + styles.css max-height 1줄 복원 + tools.py 오버레이 키 1블록 + kb_metadata.py LOWER 매칭 revert. 데이터/스키마/마이그/RBAC 변경 0(런타임 introspection·read 키만).
 - Deploy: web + ask-worker(tools.py·kb_metadata.py 변경) 재빌드(deploy_scope: included).
 - Cross-ref: REQ/REV/TASK-20260629T114221-metadata-bootstrap-mssql-db / 정본 shared/db.py `_connect_mssql`(tempdb 고정, TASK-0213) · feature-0002 dialects.py(system_databases/system_schemas) · config.py `get_active_default_db`(소문자 정규화).
+
+## CHG-20260629T143914-share-mermaid-responsive (TASK-20260629T143914-share-mermaid-responsive — 공유 대화 뷰 mermaid 렌더 + 전체 폭 반응형, Minor §12.3 — frontend render/CSS, anonymous 공유 노출면)
+- Date: 2026-06-29
+- Related Requirement: 사용자 요청(2026-06-29, feature-0013 후속) — ① 공유 대화에서도 flowchart(mermaid) 정상 렌더, ② 공유대화 고정폭(960px)→브라우저 전체 폭 반응형(넓은 답변 대응).
+- Summary: feature-0013 의 mermaid 렌더를 익명 공유 대화 뷰에도 적용 + 공유 페이지 폭을 전체 폭 반응형으로.
+- Files:
+  - `src/static/mermaid-render.js` (신규) — mermaid 헬퍼 4종(enhanceMermaidBlocks/ensureMermaidInit/renderMermaidDiagrams/mermaidFallback)을 app.js 에서 **verbatim 추출**. 메인 UI(index.html/app.js)와 공유 뷰(share.html/share.js)의 단일 소스 — 특히 `securityLevel:'strict'` init 을 한 곳에만 둬 두 뷰 XSS posture 일원화.
+  - `src/static/app.js` — 위 4함수 정의 제거(호출부 markdownToHtml·renderMessageContent 는 전역 함수로 유지) + 두 호출부에 `typeof` 가드(mermaid-render.js 미로드 방어 — NIT-1, share.js 와 동일 패턴). cache-buster `20260629b-feedback-id-space`→`20260629c-share-mermaid`.
+  - `src/static/index.html` — mermaid-render.js 로드 추가(`mermaid.min.js → mermaid-render.js → app.js` 순).
+  - `src/static/share.html` — `mermaid.min.js` + `mermaid-render.js` 로드 + share.css/share.js cache-buster `20260623-share-join`→`20260629-share-mermaid`.
+  - `src/static/share.js` — `renderMarkdownContent` 에 `enhanceMermaidBlocks`(sanitize 이전) + `renderMermaidDiagrams`(innerHTML 이후) 연결. 미로드 시 `typeof` 가드 폴백(원문 코드블록 유지).
+  - `src/static/share.css` — `.share-container` `max-width:960px`→`100%`(전체 폭 반응형, `padding: 24px clamp(16px,4vw,48px) 80px`) + `.share-message-content .mermaid-*` 컨테이너 규칙(styles.css 동형, share 토큰).
+- Impact: 비파괴. DOMPurify 설정 무변경(전역 setConfig/addHook 없음, 무인자 sanitize) — XSS posture 메인과 동일. mermaid `securityLevel:'strict'` 단일 init(`_mermaidInited` 단일 전역). 넓은 요소(표/pre/mermaid)는 `overflow-x:auto` 로 컨테이너 내 스크롤(레이아웃 무파손).
+- 적대 검증(§18.8 SUBAGENT security+correctness): **no BLOCKING** — 추출 byte-identical·로드 순서·fallback·반응형·회귀 전 항목 SAFE. NIT-1 적용, NIT-2 defer.
+- Follow-up (NIT-2, 비-blocking): 공유 뷰가 다이어그램 없어도 3.3MB `mermaid.min.js` 로드(메인 UI 동일 패턴) — `language-mermaid` 존재 시 lazy-load 최적화 여지.
+- Rollback: share.html 의 mermaid 2 script 제거 + share.js enhance/render 호출 제거 + share.css `max-width:960px` 복원. mermaid-render.js 는 메인 UI 가 계속 사용(유지).

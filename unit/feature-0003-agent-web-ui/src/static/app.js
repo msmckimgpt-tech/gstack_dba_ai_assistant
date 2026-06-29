@@ -828,32 +828,10 @@ function enhanceAttachmentEditBlocks(html) {
   }
 }
 
-function enhanceMermaidBlocks(html) {
-  // feature-0013: marked 가 만든 ```mermaid 코드블록(<pre><code class="language-mermaid">)을
-  // <div class="mermaid-block mermaid-pending"> (다이어그램 source 텍스트만) 으로 치환한다.
-  // 실제 SVG 렌더는 DOMPurify sanitize 이후 renderMermaidDiagrams() 가 라이브 DOM 에서
-  // mermaid.render(securityLevel:'strict') 로 수행 — SVG 를 sanitize 표면에 태우지 않으므로
-  // DOMPurify 전역 ALLOWED_TAGS 완화가 불필요하다(XSS 표면 최소화, ANCHOR §2 Alt-C 불채택).
-  if (typeof document === "undefined") return html;
-  if (!html || html.indexOf("language-mermaid") === -1) return html;
-  try {
-    const tpl = document.createElement("template");
-    tpl.innerHTML = html;
-    const blocks = tpl.content.querySelectorAll("pre > code.language-mermaid");
-    if (!blocks.length) return html;
-    blocks.forEach((codeEl) => {
-      const src = (codeEl.textContent || "").replace(/\n$/, "");
-      const div = document.createElement("div");
-      div.className = "mermaid-block mermaid-pending";
-      div.textContent = src; // source 만 — SVG 아님. render 단계가 textContent 를 읽는다.
-      const pre = codeEl.closest("pre");
-      (pre || codeEl).replaceWith(div);
-    });
-    return tpl.innerHTML;
-  } catch (_) {
-    return html;
-  }
-}
+// feature-0013 mermaid 헬퍼(enhanceMermaidBlocks / ensureMermaidInit / renderMermaidDiagrams /
+// mermaidFallback)는 mermaid-render.js 로 추출했다(공유 대화 뷰 share.js 와 단일 소스 — strict
+// 보안 설정 일원화). index.html 이 mermaid.min.js → mermaid-render.js → app.js 순으로 로드하므로
+// markdownToHtml·renderMessageContent 는 그대로 전역 함수로 호출한다.
 
 function markdownToHtml(text = "") {
   const source = String(text || "").trim();
@@ -861,7 +839,11 @@ function markdownToHtml(text = "") {
     return "";
   }
   if (window.marked && window.DOMPurify) {
-    const rendered = enhanceMermaidBlocks(
+    // mermaid-render.js(별도 파일) 미로드 시에도 메인 UI 렌더가 죽지 않도록 가드 — 추출이 만든
+    // 파일 결합에 대한 방어(share.js 와 동일 패턴). 미로드면 ```mermaid 는 원문 코드블록으로 남는다.
+    const enhanceMmd =
+      typeof enhanceMermaidBlocks === "function" ? enhanceMermaidBlocks : (h) => h;
+    const rendered = enhanceMmd(
       enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source)))
     );
     return window.DOMPurify.sanitize(rendered);
@@ -869,64 +851,7 @@ function markdownToHtml(text = "") {
   return `<pre>${escapeHtml(source)}</pre>`;
 }
 
-let _mermaidInited = false;
-function ensureMermaidInit() {
-  // feature-0013: mermaid 1회 초기화. startOnLoad:false 라 자동 스캔 없음 — 명시적
-  // render 만 수행. securityLevel:'strict' 가 라벨 HTML escape + click/script 디렉티브를
-  // 비활성화해 사용자 DB 유래 라벨로 인한 XSS 를 mermaid 내부에서 차단한다.
-  if (_mermaidInited) return true;
-  if (!window.mermaid) return false;
-  try {
-    window.mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: "default",
-      flowchart: { useMaxWidth: true, htmlLabels: false },
-      er: { useMaxWidth: true },
-      sequence: { useMaxWidth: true },
-    });
-    _mermaidInited = true;
-  } catch (_) {}
-  return _mermaidInited;
-}
-
-let _mermaidSeq = 0;
-function renderMermaidDiagrams(target) {
-  // renderMessageContent 가 innerHTML(=DOMPurify 통과본) 을 설정한 "이후" 호출.
-  // 라이브 DOM 의 .mermaid-pending(다이어그램 source) 을 SVG 로 렌더한다.
-  if (!target || typeof target.querySelectorAll !== "function") return;
-  const nodes = Array.from(target.querySelectorAll(".mermaid-pending"));
-  if (!nodes.length) return;
-  if (!ensureMermaidInit()) {
-    nodes.forEach((node) => mermaidFallback(node, node.textContent || ""));
-    return;
-  }
-  nodes.forEach((node) => {
-    const src = node.textContent || "";
-    const id = "mmd-" + (++_mermaidSeq);
-    Promise.resolve()
-      .then(() => window.mermaid.render(id, src))
-      .then((out) => {
-        node.classList.remove("mermaid-pending");
-        node.classList.add("mermaid-rendered");
-        node.innerHTML = (out && out.svg) || ""; // strict-mode 에서 mermaid 가 자체 sanitize 한 SVG
-      })
-      .catch(() => mermaidFallback(node, src));
-  });
-}
-
-function mermaidFallback(node, src) {
-  // 렌더 실패/미로딩 시 원본 다이어그램 소스를 코드블록으로 노출(비차단 graceful fallback).
-  try {
-    node.className = "mermaid-error";
-    const pre = document.createElement("pre");
-    const code = document.createElement("code");
-    code.textContent = src;
-    pre.appendChild(code);
-    node.innerHTML = "";
-    node.appendChild(pre);
-  } catch (_) {}
-}
+// (mermaid 헬퍼는 mermaid-render.js 로 이동 — 위 markdownToHtml 주석 참조.)
 
 function can(permission) {
   // TASK-0098: state.user.permissions 의존성 제거. "표시 허용 + 실행은 backend
@@ -2899,7 +2824,8 @@ function renderMessageContent(target, content = "", role = "assistant") {
     target.innerHTML = markdownToHtml(content);
     collapseSqlCodeBlocksInContent(target);
     enhanceFilePreviewLinks(target);
-    renderMermaidDiagrams(target); // feature-0013: ```mermaid → SVG (sanitize 이후 라이브 DOM)
+    // feature-0013: ```mermaid → SVG (sanitize 이후 라이브 DOM). mermaid-render.js 미로드 시 가드(no-op).
+    if (typeof renderMermaidDiagrams === "function") renderMermaidDiagrams(target);
     return;
   }
   target.innerHTML = markdownToHtml(content || "");

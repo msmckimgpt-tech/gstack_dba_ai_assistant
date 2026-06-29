@@ -329,8 +329,16 @@
       return;
     }
     if (window.marked && window.DOMPurify) {
-      target.innerHTML = window.DOMPurify.sanitize(enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source))));
+      // feature-0013 후속: 공유 대화도 메인 UI 와 동일하게 ```mermaid 를 다이어그램으로 렌더.
+      // mermaid-render.js(공용) 의 enhanceMermaidBlocks 로 sanitize 이전 텍스트 치환 → DOMPurify →
+      // innerHTML 이후 라이브 DOM 에서 strict-mode SVG 렌더. mermaid-render.js 미로드 시 안전 폴백(원문 유지).
+      const enhanceMmd =
+        typeof window.enhanceMermaidBlocks === "function" ? window.enhanceMermaidBlocks : (h) => h;
+      target.innerHTML = window.DOMPurify.sanitize(
+        enhanceMmd(enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source))))
+      );
       markExternalLinks(target);
+      if (typeof window.renderMermaidDiagrams === "function") window.renderMermaidDiagrams(target);
     } else {
       // 폴백: 라이브러리 로드 실패 시 줄바꿈 보존 평문 (share.css .share-content-plain).
       target.classList.add("share-content-plain");

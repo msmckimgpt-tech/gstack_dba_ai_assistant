@@ -29,9 +29,12 @@
 }
 
 .share-container {
-  max-width: 960px;
+  /* feature-0013 후속: 고정폭(960px) → 브라우저 전체 폭 반응형. 넓은 표·다이어그램·코드블록이
+     좁은 고정폭에 잘리지 않도록 컨테이너가 뷰포트 폭을 채운다(개별 wide 요소는 각자
+     overflow-x:auto 로 컨테이너 안에서 스크롤). 큰 화면일수록 좌우 여백을 비례 확대. */
+  max-width: 100%;
   margin: 0 auto;
-  padding: 24px 16px 80px 16px;
+  padding: 24px clamp(16px, 4vw, 48px) 80px;
 }
 
 .share-header {
@@ -227,6 +230,24 @@
   border-radius: 0;
   font-size: inherit;
 }
+
+/* feature-0013 후속: 공유 대화 mermaid 다이어그램 — 메인 styles.css 와 동형(share 토큰).
+   .mermaid-pending(source) → renderMermaidDiagrams 가 .mermaid-rendered(SVG) 로 치환. */
+.share-message-content .mermaid-block,
+.share-message-content .mermaid-rendered {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0;
+  padding: 8px 4px;
+  overflow-x: auto;
+  background: #f6f8fc;
+  border: 1px solid var(--share-border);
+  border-radius: 10px;
+}
+.share-message-content .mermaid-rendered svg { max-width: 100%; height: auto; }
+.share-message-content .mermaid-pending { color: var(--share-text-muted); font-size: 12px; }
+.share-message-content .mermaid-error { display: block; margin: 10px 0; }
+.share-message-content .mermaid-error pre { margin: 0; }
 
 /* TASK-0256: ```diff 코드 블록 — 변경 제안을 라인별 +/- 색으로 구분.
    --share-code-bg(#1e293b) 다크 배경 위에서 읽히는 팔레트. */
