@@ -62,5 +62,5 @@ source_of_truth: true
 - [x] §18.8 이월(REV-0003) 1·2·3 해소(get_conn 500 동치 / 셰이프 동치 회귀 테스트 / 빈 perms 가드)
 - [x] TASK/REPORT/MODIFY/REVIEW 에 상태가 반영되었다
 - [x] BLOCKED 없음
-- [ ] verify-completion PASS → Git 커밋 (Phase 1)
-- [ ] Git 원격 동기화 (§16.3 정책 적용)
+- [x] verify-completion PASS(9 checks) → Git 커밋 **ca66ee9** (Phase 1)
+- [x] Git 원격 동기화: ai/* push 완료(06d88a8..ca66ee9). PR/머지는 milestone 까지 보류(브랜치 main 대비 2 ahead/43 behind, Phase 2..Final 잔존 + Final 브라우저 QA 게이트 전).

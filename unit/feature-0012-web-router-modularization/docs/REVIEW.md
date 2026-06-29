@@ -101,3 +101,12 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
   테스트로 legacy byte-동치 고정. route-parity 179 불변, make test 1236 passed/2 skip/0 fail, ruff clean.
 - get_conn None-yield 는 required(→500)·optional(→None) 양 소비자에서 byte-동치 검증, teardown(None 시 close 미시도) 안전.
 - 신규 conftest 는 autouse snapshot/restore 로 production app overrides 격리, mini-app 은 로컬 인스턴스라 기존 스위트 무오염(make test 1205→1236 회귀 0).
+
+## REV-20260629-0005 [SKIPPED:doc-tail-bookkeeping]
+- Related Change: CHG-20260629-0004 (Phase 1 완료 기록 보강 — TASK.md Completion Checklist 2줄 [x] 마킹)
+- §18.8 Adversarial Panel: **SKIPPED — doc-only/bookkeeping.** 본 변경은 이미 커밋·검증된 Phase 1(ca66ee9,
+  make test 1236 passed)의 완료 사실을 TASK.md 에 사후 기록할 뿐. 프로덕션 src·런타임·이미지·테스트 무변경
+  → 적대 패널 표적(import 깨짐·런타임·배포·byte-동치 회귀) 부재. Phase 1 코드 자체의 적대 검증은
+  REV-20260629-0004(AGENT-TEAM, 27 agents/5 lens, HIGH 2 적발·보정)에서 이미 완료.
+- 검증(결정적): TASK.md 2줄 diff 만(`[ ]`→`[x]` + 커밋 해시·push 범위 기재). git diff 로 doc-only 확인,
+  코드 changeset 0. route-parity·make test 무영향.

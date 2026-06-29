@@ -74,3 +74,16 @@ source_of_truth: true
   잔여 수용(LOW): 파일럿 conn 보유시간이 요청 teardown 까지(§1.1 sanction; probe TTL-skip 으로 실발생 희박),
   make test bind-mount stale-.pyc(환경성).
 - Rollback Notes: 단일 commit revert(app.py 5함수 + conftest/test 신규 2파일 + docs). 런타임/이미지 무변경.
+
+## CHG-20260629-0004
+- Date: 2026-06-29
+- Related Requirement: P5b DI seam Phase 1(TASK-0012-6) 완료 기록 보강 — bookkeeping 전용.
+- Summary:
+  CHG-20260629-0003(Phase 1) 커밋 **ca66ee9** 직후 작성된 TASK.md Completion Checklist tail 2줄
+  (`verify-completion PASS(9 checks) → 커밋 ca66ee9` / `ai/* push 완료 06d88a8..ca66ee9, PR·머지는
+  milestone 보류`)이 미커밋으로 남아 있던 것을 cross-session resume 으로 closure. 커밋 해시는 commit
+  이후에야 확정되므로 ca66ee9 본 커밋에 포함될 수 없던 post-commit 기록물.
+- Files (cross-cut — 추적은 feature-0012):
+  - `unit/feature-0012-web-router-modularization/docs/TASK.md` (§8 Completion Checklist 2줄 [x] 마킹)
+- Impact: doc-only. 코드·런타임·이미지·테스트 무변경. route-parity·make test 영향 0.
+- Rollback Notes: 단일 commit revert(TASK.md 2줄). 코드 무관.
