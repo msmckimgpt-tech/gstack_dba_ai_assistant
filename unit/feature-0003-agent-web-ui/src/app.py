@@ -15329,7 +15329,7 @@ async def post_group_chat_message(cid: str, request: Request) -> JSONResponse:
 
 
 @app.post("/api/conversations/{cid}/read")
-async def mark_conversation_read(cid: str, request: Request) -> JSONResponse:
+async def mark_conversation_read(cid: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """그룹 대화 읽음 처리 — 멤버의 last_read_message_id 커서를 전진(GREATEST) (feature-0009 gc-unread-badge).
 
     사이드바 "안 읽은 메세지" 배지의 기준점. 대화를 열거나 활성 상태에서 새 메세지를 받으면
@@ -15342,58 +15342,48 @@ async def mark_conversation_read(cid: str, request: Request) -> JSONResponse:
     멤버십 게이트(read.own/.any) 통과 + 멤버 행이 있을 때만 갱신된다. 멤버가 아닌 admin(.any)
     열람은 멤버 행이 없어 no-op (그들은 unread 추적 대상이 아님 — FE 도 본인/멤버 그룹대화만 배지 표시).
     """
+    if not _account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    account_id = int(account["id"])
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn, account, cid, "conversation.read.own", "conversation.read.any"
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        account_id = int(account["id"])
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
         try:
-            from shared.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                # feature-0009 gc-unread-read-idspace-fix: 읽음 커서(conversation_members.last_read_message_id)
-                # 와 unread 집계는 agent_runtime.core_messages.id 공간을 기준으로 한다. 그러나 FE 가 읽음
-                # 처리로 보내던 last_read_message_id 는 /api/history 가 채운 표시 store(agent_runtime.messages)
-                # 의 id 였고, 두 테이블은 별개 base table 로 id 공간이 분리(disjoint)되어 있다(같은 대화라도
-                # messages 는 수백 단위, core_messages 는 수천 단위). 그래서 FE 가 보낸 값은 커서보다 항상
-                # 작아 set_last_read 의 GREATEST(되돌림 방지)가 전진을 영구 거부했다 — 읽어도 사이드바 unread
-                # 배지가 줄지 않고 대화 전환 시 회귀하던 근본 원인. 대화 열람은 "현재까지 전부 읽음"이므로,
-                # FE 가 보낸 값과 무관하게 항상 이 대화 core_messages 의 MAX(id) 로 커서를 전진시킨다.
-                # (표시/카운트 store 가 분리된 현 구조상 FE 는 정확한 core id 를 알 수 없어 부분 읽음은
-                #  원래 불가능 — '열면 전부 읽음' 시맨틱. set_last_read 의 GREATEST 는 그대로 두어 폴링/
-                #  재진입 경합에도 커서가 되돌아가지 않는다.)
-                with pg.cursor() as _cur:
-                    _cur.execute(
-                        "SELECT COALESCE(MAX(id), 0) FROM agent_runtime.core_messages "
-                        "WHERE conversation_id = %s",
-                        (cid,),
-                    )
-                    _row = _cur.fetchone()
-                    target_id = int(_row[0]) if _row and _row[0] is not None else 0
-                updated = group_members.set_last_read(pg, cid, account_id, target_id)
-            finally:
-                pg.close()
-        except Exception:
-            return _json_error("읽음 처리 실패", 500)
-        return JSONResponse(
-            {
-                "ok": True,
-                "conversation_id": cid,
-                "last_read_message_id": int(target_id),
-                "updated": int(updated),
-            }
-        )
-    finally:
-        conn.close()
+            # feature-0009 gc-unread-read-idspace-fix: 읽음 커서(conversation_members.last_read_message_id)
+            # 와 unread 집계는 agent_runtime.core_messages.id 공간을 기준으로 한다. 그러나 FE 가 읽음
+            # 처리로 보내던 last_read_message_id 는 /api/history 가 채운 표시 store(agent_runtime.messages)
+            # 의 id 였고, 두 테이블은 별개 base table 로 id 공간이 분리(disjoint)되어 있다(같은 대화라도
+            # messages 는 수백 단위, core_messages 는 수천 단위). 그래서 FE 가 보낸 값은 커서보다 항상
+            # 작아 set_last_read 의 GREATEST(되돌림 방지)가 전진을 영구 거부했다 — 읽어도 사이드바 unread
+            # 배지가 줄지 않고 대화 전환 시 회귀하던 근본 원인. 대화 열람은 "현재까지 전부 읽음"이므로,
+            # FE 가 보낸 값과 무관하게 항상 이 대화 core_messages 의 MAX(id) 로 커서를 전진시킨다.
+            # (표시/카운트 store 가 분리된 현 구조상 FE 는 정확한 core id 를 알 수 없어 부분 읽음은
+            #  원래 불가능 — '열면 전부 읽음' 시맨틱. set_last_read 의 GREATEST 는 그대로 두어 폴링/
+            #  재진입 경합에도 커서가 되돌아가지 않는다.)
+            with pg.cursor() as _cur:
+                _cur.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM agent_runtime.core_messages "
+                    "WHERE conversation_id = %s",
+                    (cid,),
+                )
+                _row = _cur.fetchone()
+                target_id = int(_row[0]) if _row and _row[0] is not None else 0
+            updated = group_members.set_last_read(pg, cid, account_id, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return _json_error("읽음 처리 실패", 500)
+    return JSONResponse(
+        {
+            "ok": True,
+            "conversation_id": cid,
+            "last_read_message_id": int(target_id),
+            "updated": int(updated),
+        }
+    )
 
 
 # ── TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03) ──────
@@ -15717,72 +15707,62 @@ async def post_fix_with_ai(cid: str, request: Request) -> JSONResponse:
 
 
 @app.get("/api/conversations/{cid}/shares")
-def list_conversation_shares(cid: str, request: Request) -> JSONResponse:
+def list_conversation_shares(cid: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """해당 대화의 share 목록 (활성 + revoked 모두). 조회 권한: read.own/any."""
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    cur = conn.cursor(dictionary=True)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn,
-            account,
-            cid,
-            "conversation.read.own",
-            "conversation.read.any",
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                """
+        cur.execute(
+            """
 SELECT Id, Token, ScopeMode, AnchorMessageId, CreatedBy, CreatedAt,
        RevokedAt, RevokedBy, ViewCount, LastViewedAt, ExpiresAt,
        (ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()) AS IsExpired
 FROM WebConversationShares
 WHERE ConversationId = %s
 ORDER BY CreatedAt DESC, Id DESC
-                """,
-                (cid,),
-            )
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
-        items = []
-        for row in rows:
-            created_at = row.get("CreatedAt")
-            revoked_at = row.get("RevokedAt")
-            last_viewed_at = row.get("LastViewedAt")
-            expires_at = row.get("ExpiresAt")
-            # TASK-20260619T012028-share-link-expiry: 만료는 DB NOW() 평가(IsExpired)로 판정.
-            is_revoked = row.get("RevokedAt") is not None
-            is_expired = bool(row.get("IsExpired"))
-            items.append(
-                {
-                    "id": int(row.get("Id") or 0),
-                    "token": str(row.get("Token") or ""),
-                    "scope_mode": str(row.get("ScopeMode") or "full"),
-                    "anchor_message_id": int(row["AnchorMessageId"]) if row.get("AnchorMessageId") is not None else None,
-                    "created_by": int(row.get("CreatedBy") or 0),
-                    "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
-                    "revoked_at": revoked_at.isoformat() if hasattr(revoked_at, "isoformat") else (str(revoked_at) if revoked_at else None),
-                    "revoked_by": int(row["RevokedBy"]) if row.get("RevokedBy") is not None else None,
-                    "view_count": int(row.get("ViewCount") or 0),
-                    "last_viewed_at": last_viewed_at.isoformat() if hasattr(last_viewed_at, "isoformat") else (str(last_viewed_at) if last_viewed_at else None),
-                    "expires_at": expires_at.isoformat() if hasattr(expires_at, "isoformat") else (str(expires_at) if expires_at else None),
-                    "is_expired": is_expired,
-                    "url": f"/share/{row.get('Token')}",
-                    # is_active = 활성(취소 안 됨 + 만료 안 됨). revoke 버튼 노출 조건.
-                    "is_active": (not is_revoked) and (not is_expired),
-                    "is_revoked": is_revoked,
-                }
-            )
-        return JSONResponse({"items": items})
+            """,
+            (cid,),
+        )
+        rows = cur.fetchall() or []
     finally:
-        conn.close()
+        cur.close()
+    items = []
+    for row in rows:
+        created_at = row.get("CreatedAt")
+        revoked_at = row.get("RevokedAt")
+        last_viewed_at = row.get("LastViewedAt")
+        expires_at = row.get("ExpiresAt")
+        # TASK-20260619T012028-share-link-expiry: 만료는 DB NOW() 평가(IsExpired)로 판정.
+        is_revoked = row.get("RevokedAt") is not None
+        is_expired = bool(row.get("IsExpired"))
+        items.append(
+            {
+                "id": int(row.get("Id") or 0),
+                "token": str(row.get("Token") or ""),
+                "scope_mode": str(row.get("ScopeMode") or "full"),
+                "anchor_message_id": int(row["AnchorMessageId"]) if row.get("AnchorMessageId") is not None else None,
+                "created_by": int(row.get("CreatedBy") or 0),
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
+                "revoked_at": revoked_at.isoformat() if hasattr(revoked_at, "isoformat") else (str(revoked_at) if revoked_at else None),
+                "revoked_by": int(row["RevokedBy"]) if row.get("RevokedBy") is not None else None,
+                "view_count": int(row.get("ViewCount") or 0),
+                "last_viewed_at": last_viewed_at.isoformat() if hasattr(last_viewed_at, "isoformat") else (str(last_viewed_at) if last_viewed_at else None),
+                "expires_at": expires_at.isoformat() if hasattr(expires_at, "isoformat") else (str(expires_at) if expires_at else None),
+                "is_expired": is_expired,
+                "url": f"/share/{row.get('Token')}",
+                # is_active = 활성(취소 안 됨 + 만료 안 됨). revoke 버튼 노출 조건.
+                "is_active": (not is_revoked) and (not is_expired),
+                "is_revoked": is_revoked,
+            }
+        )
+    return JSONResponse({"items": items})
 
 
 @app.delete("/api/share/{share_id}")
@@ -17025,103 +17005,92 @@ def _mark_ingest_failed(attachment_id: int, reason: str) -> None:
 
 
 @app.get("/api/conversations/{cid}/attachments")
-def list_conversation_attachments(cid: str, request: Request) -> JSONResponse:
+def list_conversation_attachments(cid: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """대화의 active 첨부 목록 (DeletedAt IS NULL). 권한: read.{own,any}."""
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.attachment.read.own",
+        "conversation.attachment.read.any",
+    ):
+        return _json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
+
+    # TASK-0277: read cutover — PG 우선(권한은 위 _account_can_access_conversation 로 이미 게이트),
+    # PG read 실패 시 MySQL 폴백. PG helper 의 WHERE 는 MySQL 판과 동형(최신·미삭제).
+    rows = None
     try:
-        conn = _connect_memory()
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_list_conversation_attachments(cid)
     except Exception:
-        return _json_error("db connection failed", 500)
-
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn,
-            account,
-            cid,
-            "conversation.attachment.read.own",
-            "conversation.attachment.read.any",
-        ):
-            return _json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
-
-        # TASK-0277: read cutover — PG 우선(권한은 위 _account_can_access_conversation 로 이미 게이트),
-        # PG read 실패 시 MySQL 폴백. PG helper 의 WHERE 는 MySQL 판과 동형(최신·미삭제).
         rows = None
+        logging.getLogger(__name__).warning(
+            "list_conversation_attachments: PG read failed → MySQL fallback (cid=%s)", cid, exc_info=True)
+    if rows is None:
+        cur = conn.cursor(dictionary=True)
         try:
-            from web.modules import attachment_pg_mirror as _apm
-            if _apm.read_pg_enabled():
-                rows = _apm.pg_list_conversation_attachments(cid)
-        except Exception:
-            rows = None
-            logging.getLogger(__name__).warning(
-                "list_conversation_attachments: PG read failed → MySQL fallback (cid=%s)", cid, exc_info=True)
-        if rows is None:
-            cur = conn.cursor(dictionary=True)
-            try:
-                # TASK-0274: 버전 체인의 최신 버전만 목록에 노출(SupersededAt IS NULL).
-                # 구버전은 /api/attachments/{id}/versions 로 조회. 기존 단일 첨부는
-                # SupersededAt NULL + VersionNumber=1 이라 동작 동일(하위호환).
-                cur.execute(
-                    """
-                    SELECT
-                        Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
-                        FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
-                        UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
-                        DeletePending, DeleteReason, MetaJson,
-                        RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
-                    FROM WebConversationAttachments
-                    WHERE ConversationId = %s AND DeletedAt IS NULL AND SupersededAt IS NULL
-                    ORDER BY Id ASC
-                    """,
-                    (cid,),
-                )
-                rows = cur.fetchall() or []
-            finally:
-                cur.close()
+            # TASK-0274: 버전 체인의 최신 버전만 목록에 노출(SupersededAt IS NULL).
+            # 구버전은 /api/attachments/{id}/versions 로 조회. 기존 단일 첨부는
+            # SupersededAt NULL + VersionNumber=1 이라 동작 동일(하위호환).
+            cur.execute(
+                """
+                SELECT
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                    DeletePending, DeleteReason, MetaJson,
+                    RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND DeletedAt IS NULL AND SupersededAt IS NULL
+                ORDER BY Id ASC
+                """,
+                (cid,),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
 
-        # ② TASK-0285: 각 첨부의 버전 체인 길이(version_count) + AI 수정본 개수(ai_version_count)를
-        # 집계해 목록에 표면화한다. 목록 SQL 은 최신 버전만 노출(SupersededAt IS NULL)하므로, 같은
-        # 대화의 전체(미삭제) 버전에서 root 별 카운트를 한 번의 GROUP BY 로 구한다(N+1 회피). 첨부
-        # 정본은 MySQL(dual-write, TASK-0279) 이라 conn(MySQL) 집계가 정확. fail-soft — 집계 실패는
-        # 목록 자체를 막지 않는다(version_count 필드만 생략).
-        version_counts: dict[int, dict[str, int]] = {}
+    # ② TASK-0285: 각 첨부의 버전 체인 길이(version_count) + AI 수정본 개수(ai_version_count)를
+    # 집계해 목록에 표면화한다. 목록 SQL 은 최신 버전만 노출(SupersededAt IS NULL)하므로, 같은
+    # 대화의 전체(미삭제) 버전에서 root 별 카운트를 한 번의 GROUP BY 로 구한다(N+1 회피). 첨부
+    # 정본은 MySQL(dual-write, TASK-0279) 이라 conn(MySQL) 집계가 정확. fail-soft — 집계 실패는
+    # 목록 자체를 막지 않는다(version_count 필드만 생략).
+    version_counts: dict[int, dict[str, int]] = {}
+    try:
+        vcur = conn.cursor()
         try:
-            vcur = conn.cursor()
-            try:
-                vcur.execute(
-                    """
-                    SELECT COALESCE(RootAttachmentId, Id) AS RootId,
-                           COUNT(*) AS Cnt,
-                           SUM(CASE WHEN CreatedByRole = 'assistant' THEN 1 ELSE 0 END) AS AiCnt
-                    FROM WebConversationAttachments
-                    WHERE ConversationId = %s AND DeletedAt IS NULL
-                    GROUP BY COALESCE(RootAttachmentId, Id)
-                    """,
-                    (cid,),
-                )
-                for vr in (vcur.fetchall() or []):
-                    if vr and vr[0] is not None:
-                        version_counts[int(vr[0])] = {
-                            "count": int(vr[1] or 1),
-                            "ai_count": int(vr[2] or 0),
-                        }
-            finally:
-                vcur.close()
-        except Exception:
-            version_counts = {}
+            vcur.execute(
+                """
+                SELECT COALESCE(RootAttachmentId, Id) AS RootId,
+                       COUNT(*) AS Cnt,
+                       SUM(CASE WHEN CreatedByRole = 'assistant' THEN 1 ELSE 0 END) AS AiCnt
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND DeletedAt IS NULL
+                GROUP BY COALESCE(RootAttachmentId, Id)
+                """,
+                (cid,),
+            )
+            for vr in (vcur.fetchall() or []):
+                if vr and vr[0] is not None:
+                    version_counts[int(vr[0])] = {
+                        "count": int(vr[1] or 1),
+                        "ai_count": int(vr[2] or 0),
+                    }
+        finally:
+            vcur.close()
+    except Exception:
+        version_counts = {}
 
-        results = []
-        for row in rows:
-            ser = _serialize_attachment_for_api(dict(row))
-            _vc = version_counts.get(int(ser.get("root_attachment_id") or ser.get("id") or 0))
-            if _vc:
-                ser["version_count"] = _vc["count"]
-                ser["ai_version_count"] = _vc["ai_count"]
-            results.append(ser)
-        return JSONResponse({"attachments": results})
-    finally:
-        conn.close()
+    results = []
+    for row in rows:
+        ser = _serialize_attachment_for_api(dict(row))
+        _vc = version_counts.get(int(ser.get("root_attachment_id") or ser.get("id") or 0))
+        if _vc:
+            ser["version_count"] = _vc["count"]
+            ser["ai_version_count"] = _vc["ai_count"]
+        results.append(ser)
+    return JSONResponse({"attachments": results})
 
 
 @app.get("/api/attachments/{attachment_id}")
@@ -25900,50 +25869,37 @@ def admin_usage_conversations(request: Request) -> JSONResponse:
 
 
 @app.get("/api/profile/usage/conversations")
-def profile_usage_conversations(request: Request) -> JSONResponse:
+def profile_usage_conversations(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-0263: 본인 사용량 차트 클릭 → 본인 대화목록(작업 화면 프로필 모달).
 
     로그인만 필요(profile_llm_usage 와 동일 — 본인 소유 대화로 범위 강제, 신규 RBAC 0).
     owner_account_id = 로그인 계정으로 INNER 필터 → 타인 대화 노출 불가.
     """
+    aid = int(account.get("id") or 0)
+    if aid <= 0:
+        return _json_error("계정 식별 실패", 403)
+    p = _parse_usage_conv_params(request)
     try:
-        conn = _connect_memory()
+        from shared.db import _pg_connect
+        pg = _pg_connect()
     except Exception:
-        return _json_error("db connection failed", 500)
+        logging.getLogger(__name__).warning("profile_usage_conversations: pg connect failed", exc_info=True)
+        return _json_error("usage 저장소(PG) 연결 실패", 503)
     try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        aid = int(account.get("id") or 0)
-        if aid <= 0:
-            return _json_error("계정 식별 실패", 403)
-        p = _parse_usage_conv_params(request)
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-        except Exception:
-            logging.getLogger(__name__).warning("profile_usage_conversations: pg connect failed", exc_info=True)
-            return _json_error("usage 저장소(PG) 연결 실패", 503)
-        try:
-            # 본인 범위 강제 — role/account_id 파라미터 무시(권한 상승 차단), model/day 만 적용.
-            items, truncated = _query_usage_conversations(
-                pg, days=p["days"], model=p["model"], account_ids=None,
-                day_label=p["day_label"], gran=p["gran"], owner_account_id=aid,
-                owner_is_null_ok=False,
-            )
-        finally:
-            try:
-                pg.close()
-            except Exception:
-                pass
-        return JSONResponse({"items": items, "truncated": truncated,
-                             "filter": {"days": p["days"], "gran": p["gran"], "model": p["model"], "day_label": p["day_label"]},
-                             "scope": "self"})
+        # 본인 범위 강제 — role/account_id 파라미터 무시(권한 상승 차단), model/day 만 적용.
+        items, truncated = _query_usage_conversations(
+            pg, days=p["days"], model=p["model"], account_ids=None,
+            day_label=p["day_label"], gran=p["gran"], owner_account_id=aid,
+            owner_is_null_ok=False,
+        )
     finally:
         try:
-            conn.close()
+            pg.close()
         except Exception:
             pass
+    return JSONResponse({"items": items, "truncated": truncated,
+                         "filter": {"days": p["days"], "gran": p["gran"], "model": p["model"], "day_label": p["day_label"]},
+                         "scope": "self"})
 
 
 def _enrich_usage_conv_owner_meta(conn, items: list[dict]) -> None:
@@ -28571,7 +28527,7 @@ async def admin_put_dashboard_prefs(request: Request) -> JSONResponse:
 
 
 @app.get("/api/profile/usage")
-def profile_llm_usage(request: Request) -> JSONResponse:
+def profile_llm_usage(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-0184: 본인 LLM 사용량 — 로그인 사용자 자신의 토큰/모델/요청 집계(간소판).
 
     admin_llm_usage(console.usage.read, admin 전용) 의 본인-범위 축소판. owner_account_id =
@@ -28579,100 +28535,87 @@ def profile_llm_usage(request: Request) -> JSONResponse:
     비노출). 별도 RBAC 권한 없이 로그인만 요구 — 본인 소유 대화의 usage 로만 한정되므로
     권한 카탈로그 변경이 없다. 프로필 '사용 내역' 탭에서 사용.
     """
+    aid = int(account["id"])
     try:
-        conn = _connect_memory()
+        days = int(request.query_params.get("days", "30"))
     except Exception:
-        return _json_error("db connection failed", 500)
+        days = 30
+    days = max(1, min(365, days))
+    gran = request.query_params.get("gran", "day").lower()
+    if gran not in _USAGE_GRAN:
+        gran = "day"
+    gran_cfg = _USAGE_GRAN[gran]
+    bucket_expr = f"to_char(date_trunc('{gran}', u.created_at), '{gran_cfg['fmt']}')"
+    bucket_limit = gran_cfg["limit"]
     try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        aid = int(account["id"])
-        try:
-            days = int(request.query_params.get("days", "30"))
-        except Exception:
-            days = 30
-        days = max(1, min(365, days))
-        gran = request.query_params.get("gran", "day").lower()
-        if gran not in _USAGE_GRAN:
-            gran = "day"
-        gran_cfg = _USAGE_GRAN[gran]
-        bucket_expr = f"to_char(date_trunc('{gran}', u.created_at), '{gran_cfg['fmt']}')"
-        bucket_limit = gran_cfg["limit"]
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-        except Exception:
-            logging.getLogger(__name__).warning("profile_usage: pg connect failed", exc_info=True)
-            return _json_error("usage 저장소(PG) 연결 실패", 503)
-        try:
-            win = f"now() - interval '{days} days'"
-            # 본인 소유 대화로 한정 (INNER JOIN: owner 매칭 안 되는 insight/시스템 호출은 제외).
-            base = (
-                "FROM agent_runtime.llm_usage u "
-                "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-                f"WHERE u.created_at >= {win} AND c.owner_account_id = %s"
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        logging.getLogger(__name__).warning("profile_usage: pg connect failed", exc_info=True)
+        return _json_error("usage 저장소(PG) 연결 실패", 503)
+    try:
+        win = f"now() - interval '{days} days'"
+        # 본인 소유 대화로 한정 (INNER JOIN: owner 매칭 안 되는 insight/시스템 호출은 제외).
+        base = (
+            "FROM agent_runtime.llm_usage u "
+            "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+            f"WHERE u.created_at >= {win} AND c.owner_account_id = %s"
+        )
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(count(*),0), COALESCE(sum(u.prompt_tokens),0), "
+                "COALESCE(sum(u.completion_tokens),0), COALESCE(sum(u.total_tokens),0), "
+                f"COALESCE(count(distinct u.run_id),0) {base}",
+                (aid,),
             )
-            with pg.cursor() as cur:
-                cur.execute(
-                    "SELECT COALESCE(count(*),0), COALESCE(sum(u.prompt_tokens),0), "
-                    "COALESCE(sum(u.completion_tokens),0), COALESCE(sum(u.total_tokens),0), "
-                    f"COALESCE(count(distinct u.run_id),0) {base}",
-                    (aid,),
-                )
-                t = cur.fetchone() or (0, 0, 0, 0, 0)
-                totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
-                          "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
-                          "requests": int(t[4])}
-                # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(hover 표시). 본인 범위라 owner enrich 불요.
-                cur.execute(
-                    "SELECT COALESCE(u.resolved_model, u.model) AS m, u.model, count(*), "
-                    f"sum(u.total_tokens), count(distinct u.run_id), sum(u.prompt_tokens), sum(u.completion_tokens) {base} "
-                    "GROUP BY COALESCE(u.resolved_model, u.model), u.model "
-                    "ORDER BY 4 DESC NULLS LAST LIMIT 50",
-                    (aid,),
-                )
-                by_model = [{"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
-                             "total_tokens": int(r[3] or 0), "requests": int(r[4] or 0),
-                             "cost_usd": _estimate_llm_cost_usd(r[1], int(r[5] or 0), int(r[6] or 0))}
+            t = cur.fetchone() or (0, 0, 0, 0, 0)
+            totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
+                      "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
+                      "requests": int(t[4])}
+            # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(hover 표시). 본인 범위라 owner enrich 불요.
+            cur.execute(
+                "SELECT COALESCE(u.resolved_model, u.model) AS m, u.model, count(*), "
+                f"sum(u.total_tokens), count(distinct u.run_id), sum(u.prompt_tokens), sum(u.completion_tokens) {base} "
+                "GROUP BY COALESCE(u.resolved_model, u.model), u.model "
+                "ORDER BY 4 DESC NULLS LAST LIMIT 50",
+                (aid,),
+            )
+            by_model = [{"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
+                         "total_tokens": int(r[3] or 0), "requests": int(r[4] or 0),
+                         "cost_usd": _estimate_llm_cost_usd(r[1], int(r[5] or 0), int(r[6] or 0))}
+                        for r in (cur.fetchall() or [])]
+            cur.execute(
+                f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens) {base} "
+                f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}",
+                (aid,),
+            )
+            by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)}
+                      for r in (cur.fetchall() or [])]
+            cur.execute(
+                f"SELECT {bucket_expr} AS b, COALESCE(u.resolved_model, u.model), sum(u.total_tokens), "
+                f"sum(u.prompt_tokens), sum(u.completion_tokens) "
+                f"{base} AND {bucket_expr} IN (SELECT {bucket_expr} {base} "
+                f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) GROUP BY 1, 2 ORDER BY 1",
+                (aid, aid),
+            )
+            by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
+                             "cost_usd": _estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
                             for r in (cur.fetchall() or [])]
-                cur.execute(
-                    f"SELECT {bucket_expr} AS b, count(*), sum(u.total_tokens) {base} "
-                    f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}",
-                    (aid,),
-                )
-                by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0)}
-                          for r in (cur.fetchall() or [])]
-                cur.execute(
-                    f"SELECT {bucket_expr} AS b, COALESCE(u.resolved_model, u.model), sum(u.total_tokens), "
-                    f"sum(u.prompt_tokens), sum(u.completion_tokens) "
-                    f"{base} AND {bucket_expr} IN (SELECT {bucket_expr} {base} "
-                    f"GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) GROUP BY 1, 2 ORDER BY 1",
-                    (aid, aid),
-                )
-                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
-                                 "cost_usd": _estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
-                                for r in (cur.fetchall() or [])]
-                # TASK-0263: 본인 총 추정 비용(모델별 합).
-                totals["cost_usd"] = round(sum(m.get("cost_usd", 0) for m in by_model), 4)
-        finally:
-            try:
-                pg.close()
-            except Exception:
-                pass
-        return JSONResponse({
-            "window_days": days,
-            "granularity": gran,
-            "totals": totals,
-            "by_model": by_model,
-            "by_day": by_day,
-            "by_day_model": by_day_model,
-        })
+            # TASK-0263: 본인 총 추정 비용(모델별 합).
+            totals["cost_usd"] = round(sum(m.get("cost_usd", 0) for m in by_model), 4)
     finally:
         try:
-            conn.close()
+            pg.close()
         except Exception:
             pass
+    return JSONResponse({
+        "window_days": days,
+        "granularity": gran,
+        "totals": totals,
+        "by_model": by_model,
+        "by_day": by_day,
+        "by_day_model": by_day_model,
+    })
 
 
 @app.get("/api/admin/audits")

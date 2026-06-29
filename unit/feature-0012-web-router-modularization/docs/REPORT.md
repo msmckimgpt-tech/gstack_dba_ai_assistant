@@ -13,8 +13,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 
 ## 2. Progress
 - Done: plan-eng-review+§12 · route-parity 안전망(골든 179) · 의존성 audit · **DI seam 설계(DI_SEAM_BLUEPRINT.md)** · **Phase 0(deps+_AuthError handler+get_conn, behavior-neutral, 커밋 06d88a8)** · **Phase 1(conftest TestClient/`as_account` + 파일럿 get_llm_health DI 전환 byte-동치 + get_conn None-yield 보정 + require_permission 빈 perms 가드 + 회귀 스위트 31 + §18.8 적대 패널 HIGH 2 보정)**.
-- In Progress: DI seam **Phase 2 batch 1 완료(cat A 19/~95)** — ultracode workflow(72 agents) 2렌즈 적대검증으로 byte-동치 확정 후 19 핸들러 전환, make test progress 1238(baseline 동일)·route-parity 179. batch 2(SQL-heredoc·테스트전환·orphan-try 수정·cat-A 잔여) 진행 예정.
-- Planned: Phase 2 잔여 → Phase 3..7 클러스터별 마이그 → helper→web_context 이동 → APIRouter 추출 → 브라우저 로그인 QA+§18.8+배포 → 프론트 분할.
+- In Progress: DI seam **Phase 2 batch 1+2 완료(cat A 24/~95)** — ultracode workflow(REV-0006, 72 agents) 2렌즈 적대검증으로 byte-동치 확정 후 batch 1(19)+batch 2(보류 5: orphan-try edit 수정·SQL-heredoc verbatim·테스트 전환) 전환. make test progress 1238(baseline 동일)·route-parity 179·`_require_account` 88→64. batch 3+(잔여 22: pre-auth gate variant·multi-close·edge) 진행 예정.
+- Planned: Phase 2 잔여(22 + 재survey) → Phase 3..7 클러스터별 마이그 → helper→web_context 이동 → APIRouter 추출 → 브라우저 로그인 QA+§18.8+배포 → 프론트 분할.
 
 ## 3. Recent Changes
 - CHG-20260625-0001: feature-0012 scaffold + route-parity 안전망 테스트/골든 + 의존성 audit (P5b 선행물, PR #456).
@@ -22,7 +22,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260629-0003: DI seam Phase 1 — get_conn None-yield 보정(required 500/optional None) + require_permission 빈 perms 가드 + conftest(TestClient/`as_account`) + 파일럿 get_llm_health DI 전환(byte-동치) + 회귀 스위트 31 + §18.8 적대 패널(REV-0004) HIGH 2 적발·보정. make test 1236 green.
 - CHG-20260629-0004: Phase 1 완료 기록 보강(doc-tail bookkeeping, 커밋 ca66ee9 closure).
 - CHG-20260629-0005: DI seam Phase 2 batch 1 — cat-A 단순 require 19 핸들러 DI 전환(byte-동치). ultracode workflow 적대검증(REV-0006, 72 agents, 21 확정/3 보류). make test progress 1238(baseline 동일), route-parity 179, `_require_account` 118→99.
-- 총 변경 횟수: 5
+- CHG-20260629-0006: DI seam Phase 2 batch 2 — REV-0006 보류 5 핸들러 마무리(누적 cat-A 24). orphan-try edit-spec 결함을 구조 변환기로 교정 + SQL-heredoc verbatim + profile_usage_conversations 동반 테스트 TestClient 전환. make test progress 1238, route-parity 179, exact-anchor _require_account 88→64.
+- 총 변경 횟수: 6
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

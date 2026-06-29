@@ -228,11 +228,12 @@ def test_a2_system_role_empty(monkeypatch):
 
 # ── P1: profile 권한 상승 차단 ───────────────────────────────────────────────
 
-def test_p1_profile_ignores_role_account(monkeypatch):
-    actor = {"id": 42, "permissions": {}}  # 일반 사용자
+def test_p1_profile_ignores_role_account(monkeypatch, client, as_account):
+    # P5b DI seam Phase 2: profile_usage_conversations 가 account=Depends(get_current_account) 로
+    # 마이그됨 → 직접 함수호출 대신 TestClient + as_account override(get_current_account).
+    as_account(id=42, perms={})  # 일반 사용자
     captured = {}
-    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
+    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())  # get_conn → fake conn(body 미사용)
     monkeypatch.setattr("shared.db._pg_connect", lambda: _FakePG([], []))
 
     def _fake_query(pg, **kw):
@@ -240,7 +241,11 @@ def test_p1_profile_ignores_role_account(monkeypatch):
         return ([], False)
     monkeypatch.setattr(app, "_query_usage_conversations", _fake_query)
     # role/account_id 를 주입해도 무시되고 owner_account_id=self(42) 강제여야 함
-    app.profile_usage_conversations(_Req({"role": "admin", "account_id": "999", "model": "claude-haiku-4"}))
+    resp = client.get(
+        "/api/profile/usage/conversations",
+        params={"role": "admin", "account_id": "999", "model": "claude-haiku-4"},
+    )
+    assert resp.status_code == 200
     assert captured.get("owner_account_id") == 42
     assert captured.get("account_ids") is None
     assert captured.get("model") == "claude-haiku-4"  # 모델 필터는 적용

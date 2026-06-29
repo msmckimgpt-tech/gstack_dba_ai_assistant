@@ -101,3 +101,19 @@ source_of_truth: true
   - `unit/feature-0012-web-router-modularization/docs/{TASK,REPORT,MODIFY,REVIEW}.md` (갱신)
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean(unused account-arg 비차단), py_compile OK. `_require_account` 호출 118→99(-19). 런타임 응답 무변경 — 배포 불요(라우터 추출/배포는 Final).
 - Rollback Notes: 단일 commit revert(app.py 19 핸들러 + docs). 런타임/이미지 무변경. DI seam 토대(Phase 0/1)는 불변.
+
+## CHG-20260629-0006
+- Date: 2026-06-29
+- Related Requirement: P5b DI seam Phase 2 batch 2(TASK-0012-7) — REV-0006 보류 5 핸들러 마무리. 누적 cat-A 24.
+- Summary:
+  REV-20260629-0006(워크플로) 에서 batch 1 으로 적용 못 한 5 핸들러를 byte-동치 전환:
+  mark_conversation_read, list_conversation_attachments, profile_llm_usage, list_conversation_shares, profile_usage_conversations.
+  (a) 적대검증 보류 3건(mark_conversation_read/list_conversation_attachments/profile_llm_usage): 워크플로 verdict 는 runtime SAFE 였고, 반증은 오직 자동 생성 edit-spec 이 외곽 `try:` 를 남긴 채 `finally:` 만 제거해 orphan-try SyntaxError 를 내는 결함(py_compile 재현). → 구조 변환기(`cata_transform.py`)가 body `try:` 와 짝 `finally:` 를 함께 제거하고 본문을 dedent 하여 올바르게 전환. profile_llm_usage 는 `finally: try: conn.close() except: pass` nested 변종 — 변환기에 해당 형태 추가.
+  (b) list_conversation_shares: 본문에 flush-left SQL heredoc(`"""\nSELECT...\n"""`) → 변환기 dedent 가 문자열 내용을 건드리지 않도록 보정(verbatim) + SQL 정렬 공백 원복(byte-exact). conn 은 _account_can_access_conversation 와 공유.
+  (c) profile_usage_conversations: nested-finally 변종 전환 + 동반 테스트(`tests/test_usage_conversations.py::test_p1_profile_ignores_role_account`)가 핸들러를 직접 함수호출(`app.profile_usage_conversations(_Req(...))`) + `_require_account` monkeypatch 했으므로 → TestClient(`client.get` + `as_account(id=42)` override) 로 전환(DI 핸들러는 직접호출 불가). conn 은 auth 전용(body 는 PG) — get_conn 페이크.
+- Files (cross-cut — 추적은 feature-0012, 코드는 feature-0003):
+  - `unit/feature-0003-agent-web-ui/src/app.py` (5 핸들러 시그니처+본문)
+  - `unit/feature-0003-agent-web-ui/tests/test_usage_conversations.py` (test_p1 TestClient 전환)
+  - `unit/feature-0012-web-router-modularization/docs/{TASK,REPORT,MODIFY,REVIEW}.md`
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` 호출 99→80(전체 `_require_account(` 기준; exact-anchor 88→64). 누적 cat-A 24 핸들러 DI 전환. 배포 불요.
+- Rollback Notes: 단일 commit revert(app.py 5 핸들러 + test 1 + docs). DI seam 토대·batch 1 불변.

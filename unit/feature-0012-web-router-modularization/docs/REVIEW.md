@@ -122,3 +122,14 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 적용: 확정 21 중 19 적용. 제외 2 — list_conversation_shares(본문 flush-left SQL heredoc 으로 일괄 dedent 불가, batch 2 수작업), profile_usage_conversations(동반 테스트 직접호출 전환 동반, batch 2). 자동 edit-spec 의 try/finally 구조 누락 위험은 **신뢰하지 않고** 보수적 구조 변환기(`cata_transform.py`: 정확 패턴만 변환·SQL heredoc/inline-close/복수 conn skip) + py_compile + sanity 검사(시그니처/잔류 보일러플레이트/conn 사용)로 대체.
 - 검증(결정적): make test **progress-chars 1238 = baseline 동일**(테스트 수 불변·skip 동일·0 FAIL/ERROR, exit 0), route-parity 179 불변(Depends 추가는 경로/메서드/순서 불변), ruff clean(serve_avatar/role_icon 의 login-gate-only unused account-arg 는 비차단), py_compile OK, `_require_account` 호출 118→99(-19, 정확). 동반 테스트(getsource/AST 도메인-문자열 단언)는 auth/conn 패턴 미참조 확인 → 무영향.
 - NIT/수용: serve_avatar/serve_role_icon 의 `account` param 본문 미사용(login-gate 전용) — FastAPI 표준 패턴, ruff 비차단. 수용.
+
+## REV-20260629-0007 [AGENT-TEAM:p5b-phase2-cata-batch2-deferred-completion]
+- Related Change: CHG-20260629-0006 (Phase 2 batch 2 — REV-0006 보류 5 핸들러 마무리)
+- §18.8 Adversarial Panel: **AGENT-TEAM (REV-20260629-0006 워크플로 재사용 + edit-spec 수정 검증).**
+  본 5 핸들러의 byte-동치 적대검증은 REV-20260629-0006(72 agents, 2렌즈) 에서 이미 완료됨 — 5건 모두 verdict SAFE(렌즈 B 불변식 PASS). batch 1 에 포함 못 한 사유는 *런타임 안전성*이 아니라 *자동 생성 edit-spec 의 구조 결함*:
+  - mark_conversation_read / list_conversation_attachments / profile_llm_usage: 외곽 `try:` 를 남긴 채 `finally:` 만 제거하는 spec → orphan-try SyntaxError(워크플로 BLOCKING/HIGH 반증, py_compile 재현). 본 cycle 에서 구조 변환기(body try+finally 동시 제거·dedent)로 정확히 재처리 → py_compile OK.
+  - list_conversation_shares: flush-left SQL heredoc 으로 일괄 dedent 불가 → 변환기 verbatim 보존 + SQL 공백 byte-exact 원복.
+  - profile_usage_conversations: 동반 테스트 직접호출 → TestClient 전환 동반.
+- 결정적 검증(byte-동치 재확인): make test **progress-chars 1238 = baseline 동일**(전환된 test_p1 포함·0 FAIL/ERROR·exit 0), route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/잔류 _require_account·conn.close·_connect_memory 0/conn 사용) PASS. `_require_account` exact-anchor 88→64(누적 -24, batch1 19 + batch2 5).
+- 보류→해소 입증: 워크플로의 "verdict SAFE but edit-spec refuted" 분리가 정확했음 — 런타임 동치는 옳고 edit 처방만 결함이었으며, 구조 변환기로 처방을 교정하니 동일 동치가 make test 로 확정됨.
+- NIT/수용: profile_llm_usage/profile_usage_conversations 의 `conn` param 본문 미사용(auth 전용, body 는 PG) — get_conn use_cache 로 get_current_account 와 공유, ruff 비차단. 수용.
