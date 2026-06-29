@@ -7836,6 +7836,28 @@ a { color: inherit; }
 }
 .admin-meta-subtab:hover { color: var(--text); }
 .admin-meta-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+/* 용어사전 2차 보기 탭(메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}) — 메인 서브탭보다 시각적 하위(필 형태). */
+.admin-meta-glossary-views {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 14px;
+}
+.admin-meta-gview {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: color .13s, border-color .13s, background .13s;
+}
+.admin-meta-gview:hover { color: var(--text); }
+.admin-meta-gview.is-active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
 .admin-meta-form {
   display: flex;
   flex-direction: column;

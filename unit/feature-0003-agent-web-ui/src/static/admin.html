@@ -603,8 +603,12 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="tables" role="tab">테이블 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
-          <!-- 용어사전 대화 자율등록 검토 큐(0021) — 권한 kb.glossary.curate. admin.js 가 권한별로 숨긴다. -->
-          <button type="button" class="admin-meta-subtab" data-meta-subtab="glossary-review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
+        </div>
+        <!-- 용어사전 2차 보기 탭(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). admin.js 가
+             용어사전 서브탭일 때만 노출 + 권한별로 보기 버튼을 숨긴다(목록=kb.ingest.manual, 검토 큐=kb.glossary.curate). -->
+        <div class="admin-meta-glossary-views" id="metadataGlossaryViews" role="tablist" aria-label="용어사전 보기" style="display:none">
+          <button type="button" class="admin-meta-gview is-active" data-glossary-view="list" role="tab">용어 목록</button>
+          <button type="button" class="admin-meta-gview" data-glossary-view="review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
         </div>
         <!-- 부트스트랩 패널 — 테이블/컬럼 서브뷰에서만 admin.js 가 노출(kb.ingest.manual). DS+스키마 골격을 가져와 설명 빈칸 채워 일괄 저장. -->
         <section class="admin-meta-bootstrap" id="metadataBootstrap" style="display:none" aria-label="스키마 골격 부트스트랩">

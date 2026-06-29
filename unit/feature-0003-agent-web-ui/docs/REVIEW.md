@@ -22,6 +22,13 @@ source_of_truth: true
 - 검증: 대상 테스트 11/11(A1~A3·L1~L4·V·S), `make test` 전체 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
 - Human Approval Needed: 없음(자동 동기화). 배포는 web 코드 재빌드 동반(스키마 마이그 없음) — deploy_scope: included(FIRST_REQUEST 전역) 자동 배포 대상.
 - Cross-ref: 선행 REV-20260629T022055-feedback-id-space(잔여 출처) / CHG-20260629T120711-attach-id-space.
+## REV-20260629T120000-glossary-review-nest [SUBAGENT:adversarial-state-machine + adversarial-access-control + adversarial-regression-dom] — SHIP-WITH-FIXES (MAJOR 1 수정)
+- Date: 2026-06-29. TASK-20260629-glossary-review-nest(Minor §12.3, 프런트 IA). §18.8 적대 검증 워크플로 3 lens 병렬(상태머신·렌더 / 권한 게이트·접근경계 / 회귀·DOM·XSS). **BLOCKER 0, MAJOR 1(3 lens 독립 동일근본), MINOR 2, NIT 4**.
+- **[MAJOR] 적발→수정**: 부모 `ADMIN_TAB_PERMISSIONS.metadata = [ingest.manual, sample.curate]` 가 `kb.glossary.curate` 누락 → `canSeeTab("metadata")` 가 curate-only 사용자에게 false → 메타데이터 탭 자체 미표시 → 중첩된 용어 검토 큐 도달 불가. 본 변경이 추가한 `_metaSubtabVisible` 의 OR(curate) 분기·`_GLOSSARY_VIEW_PERM.review` 가 그 페르소나에 dead path 가 되어 변경의 명시 목표(curate-only 접근 보존) 무력화. **수정**: 탭 게이트에 `kb.glossary.curate` 추가(backend `admin_list_glossary_feedback` 가 curate 단독 200 → 표시 확장이 실 인가와 정합, 서버 403 이 실경계). pre-existing 갭이나 본 IA 가 큐를 더 깊이 중첩하므로 동반 수정이 정합.
+- **[MINOR] 수정**: 메타 탭 재진입 분기에 `_metaSyncGlossaryViews()`+`_metaPrimeReviewBadge()` 추가(strip 가시성·active·배지 stale 방어). **[NIT] 수정**: gview 클릭 핸들러의 `_metaSyncGlossaryViews` 이중 호출 제거(_metaRenderForm 위임); gview 버튼 `aria-selected` 추가(a11y).
+- **결함 없음 확인(적대 검증됨)**: 타 서브탭(enums/tables/columns/samples) 게이트 회귀 0(_metaSubtabVisible 비-glossary 분기 = 기존 `!perm||can(perm)` 동치), ingest-only/둘다없음 persona 접근 경계 견고(curate-only list 누수·CRUD 폼 노출 차단 — _metaSyncGlossaryViews 가 권한 없는 보기 보정), XSS(gview/배지 textContent·정적 HTML, innerHTML 미사용), 부트스트랩/역할필터/scope 정합, 잔여 glossary-review 참조 0, 백엔드/route 무변경.
+- 검증: node --check PASS. Human Approval Needed: 없음(자동 동기화 + deploy_scope:included). 프런트 SHIP.
+- Cross-ref: TASK-20260629-glossary-review-nest / CHG-20260629-glossary-review-nest / 선행 TASK-20260629-glossary-conv-autoreg.
 
 ## REV-20260629T112000-glossary-conv-autoreg-deploy [DEPLOY-RECORD] — 용어사전 대화 자율등록 배포 완료 (TASK-20260629-glossary-conv-autoreg)
 - Date: 2026-06-29. 배포 승인 근거: 사용자 AskUserQuestion "지금 배포"(라이브 스키마 변경 동반이라 deploy_scope:included 와 전역 deploy-confirm 정책 교차 확인 후 명시 승인). FIRST_REQUEST 정책상 승인 근거 기록.

@@ -20,6 +20,14 @@ source_of_truth: true
 - [x] 검증: 대상 11/11, `make test` 전체 exit=0(두 feature 회귀 0)·ruff·py_compile.
 - [x] 적대 self-review(H5(b) 첨부 레이어 closure) — REV-20260629T120711-attach-id-space. (선행 cycle 적대 리뷰 H1~H7 가 결함·설계 이미 도출.)
 - Cross-ref: 선행 TASK/REV/CHG-20260629T022055-feedback-id-space(H5(b) 출처) / CHG·REV-20260629T120711-attach-id-space.
+## TASK-20260629-glossary-review-nest — 용어 검토 큐 IA 중첩(메타데이터 > 용어사전 > 용어 검토 큐) (Minor §12.3, 프런트 전용)
+- 출처: `/_template:entry` dispatch(2026-06-29). 요청: 검토 큐를 메타데이터 최상위 서브탭(전)에서 **용어사전 하위 2차 보기 탭**(후)으로 이동.
+- 설계: 최상위 서브탭에서 glossary-review 제거 → 용어사전 하위에 2차 보기 탭(`용어 목록`/`용어 검토 큐`), 내부 상태 `glossaryView`. 권한 보존 — 용어사전 서브탭은 `kb.ingest.manual` OR `kb.glossary.curate`(중첩으로 인한 curate-only 접근 단절 방지), 보기별 권한 게이트(목록=ingest.manual, 검토 큐=glossary.curate) + 현재 보기 권한 없으면 첫 표시 보기로 전환. 백엔드/route/엔드포인트 무변경.
+- [x] admin.html: glossary-review 서브탭 제거 + `#metadataGlossaryViews` 2차 보기 strip + 배지 이전.
+- [x] admin.js: `glossaryView` 상태 + `_metaIsGlossaryReview`/`_metaSubtabVisible`/`_GLOSSARY_VIEW_PERM`/`_metaSyncGlossaryViews` + 2차탭 바인딩 + render/load/toolbar 분기를 새 보기 모델로 이전. node --check PASS.
+- [x] styles.css: `.admin-meta-gview` 2차 보기 탭(필 형태) 스타일. FUNCTION.md IA 기술 갱신.
+- [x] 적대 검증 워크플로(상태머신·권한·회귀 3 lens, BLOCKER 0): **MAJOR 1건(3 lens 동일근본)** — 부모 `ADMIN_TAB_PERMISSIONS.metadata` 가 `kb.glossary.curate` 누락 → curate-only 사용자가 메타데이터 탭 자체 진입 불가(내 OR 게이트가 dead path). **수정**: 탭 게이트에 `kb.glossary.curate` 추가(서버 403 이 실경계, 표시 확장 안전). + MINOR/NIT(재진입 strip/배지 sync·이중호출 제거·aria-selected) 전부 흡수. node --check PASS.
+- [ ] verify-completion → commit → main 동기화 → web 재배포(deploy_scope: included).
 
 ## TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가 — 두 message-id 공간(표시 store vs core) 모호성 해소 (H5(b) follow-up, Major §12.3 — 스키마 마이그 0022 + cross-feature 0002+0003)
 - 출처: 사용자 요청 — TASK-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 **H5(b)** 잔여 한계를 마저 완수. 사용자: "확인된 후속 권고사항도 마저 작업을 완수해주세요."

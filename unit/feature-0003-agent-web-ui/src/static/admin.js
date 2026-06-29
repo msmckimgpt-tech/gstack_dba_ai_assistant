@@ -1989,7 +1989,7 @@ const ADMIN_TAB_PERMISSIONS = {
   // scope-key-unify: samples 서브뷰는 kb.sample.curate 권한이라, 부모 탭 게이트도 OR 로 넓혀
   // kb.sample.curate 단독 보유 큐레이터가 메타데이터 탭→samples 서브뷰에 도달 가능하게 한다
   // (서브뷰별 가시성은 _METADATA_SUBTAB_PERM 가 별도 분기).
-  metadata: ["kb.ingest.manual", "kb.sample.curate"],
+  metadata: ["kb.ingest.manual", "kb.sample.curate", "kb.glossary.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2092,7 +2092,9 @@ function switchTab(tabName) {
       // 재진입(REV MINOR-2): 첫 진입이 datasources 로드 전이었을 수 있으니 scope/부트스트랩 DS 드롭다운 재채움(선택 보존).
       _metaPopulateScopeSelect();
       _metaApplySubtabPermissions();
+      _metaSyncGlossaryViews();        // 재진입 시 용어사전 2차 보기 strip 가시성·active 재동기화(권한 변동 방어).
       _metaSyncBootstrapVisibility();
+      _metaPrimeReviewBadge();         // 검토 큐 pending 배지 best-effort 재반영(다른 화면에서 큐 변동 시 stale 방지).
     }
   }
   // 릴리즈 노트 — 정적 콘텐츠라 진입 시 렌더(가벼움). 렌더러는 release-notes.js, 작업 화면과 공유.
@@ -2328,13 +2330,14 @@ async function _sampleFeedbackAction(btn, action) {
  *         GET/PUT/DELETE /api/admin/metadata/samples (POST 없음 — 검수 경로가 생성 정본),
  *         GET /api/admin/metadata/bootstrap/schemas?datasource=, POST /api/admin/metadata/bootstrap. */
 adminState.metadata = {
-  subTab: "glossary",   // glossary | enums | tables | columns | samples | glossary-review
+  subTab: "glossary",   // glossary | enums | tables | columns | samples
+  glossaryView: "list", // 용어사전 2차 보기(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). list | review
   scopeKey: "common",
   roleFilter: "",       // 용어사전 역할 필터(0021) — "" = 전체 역할, "*" = 공용만, "<role_key>" = 그 역할
   items: [],
   loading: false,
   editing: null,        // 수정 중인 항목(id 포함) 또는 null(=생성 모드)
-  // 대화 자율등록 검토 큐(0021) — glossary-review 서브뷰 상태.
+  // 대화 자율등록 검토 큐(0021) — 용어사전 하위 '용어 검토 큐' 보기 상태.
   feedback: { items: [], pendingCount: 0, status: "pending", loading: false },
   relationsOpenId: null,   // 유사어 패널이 펼쳐진 용어 id(목록에서 1개만)
   // Phase 2 부트스트랩 상태(테이블/컬럼 서브뷰 전용).
@@ -2351,13 +2354,28 @@ adminState.metadata = {
 
 // 서브뷰별 권한 — 서브탭/버튼 표시 게이트(실제 거부는 서버 403). samples 만 kb.sample.curate.
 const _METADATA_SUBTAB_PERM = {
-  glossary: "kb.ingest.manual",
+  glossary: "kb.ingest.manual",   // 단, 용어사전 서브탭은 OR(kb.glossary.curate) — _metaSubtabVisible 참조.
   enums: "kb.ingest.manual",
   tables: "kb.ingest.manual",
   columns: "kb.ingest.manual",
   samples: "kb.sample.curate",
-  "glossary-review": "kb.glossary.curate",   // 대화 자율등록 검토 큐(0021)
 };
+
+// 용어사전 2차 보기별 권한(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}).
+const _GLOSSARY_VIEW_PERM = { list: "kb.ingest.manual", review: "kb.glossary.curate" };
+
+// 용어사전 검토 큐 보기 활성 여부.
+function _metaIsGlossaryReview() {
+  return adminState.metadata.subTab === "glossary" && adminState.metadata.glossaryView === "review";
+}
+
+// 서브탭 표시 게이트 — 용어사전은 목록(kb.ingest.manual) 또는 검토 큐(kb.glossary.curate) 권한 중
+// 하나라도 있으면 표시(검토 큐를 용어사전 하위로 중첩했으므로 curate-only 사용자의 접근 보존).
+function _metaSubtabVisible(sub) {
+  if (sub === "glossary") return can("kb.ingest.manual") || can("kb.glossary.curate");
+  const perm = _METADATA_SUBTAB_PERM[sub];
+  return !perm || can(perm);
+}
 
 // 생성 폼 비활성 서브뷰 — samples 는 검수 경로(ITEM-03)가 생성 정본이라 수정 전용.
 const _METADATA_NO_CREATE = { samples: true };
@@ -2440,8 +2458,7 @@ function _metaApplySubtabPermissions() {
   let firstVisible = null;
   for (const btn of btns) {
     const sub = btn.dataset.metaSubtab;
-    const perm = _METADATA_SUBTAB_PERM[sub];
-    const visible = !perm || can(perm);
+    const visible = _metaSubtabVisible(sub);
     btn.style.display = visible ? "" : "none";
     if (visible && !firstVisible) firstVisible = sub;
     if (visible && sub === adminState.metadata.subTab) curVisible = true;
@@ -2449,6 +2466,33 @@ function _metaApplySubtabPermissions() {
   if (!curVisible && firstVisible) {
     adminState.metadata.subTab = firstVisible;
     for (const b of btns) b.classList.toggle("is-active", b.dataset.metaSubtab === firstVisible);
+  }
+}
+
+// 용어사전 2차 보기 탭 동기화 — 용어사전 서브탭일 때만 노출, 권한별 보기 버튼 게이트 + 현재 보기 유효성 보정.
+function _metaSyncGlossaryViews() {
+  const strip = document.getElementById("metadataGlossaryViews");
+  if (!strip) return;
+  const inGlossary = adminState.metadata.subTab === "glossary";
+  strip.style.display = inGlossary ? "" : "none";
+  if (!inGlossary) return;
+  const btns = Array.from(strip.querySelectorAll(".admin-meta-gview"));
+  let curOk = false;
+  let firstOk = null;
+  for (const b of btns) {
+    const v = b.dataset.glossaryView;
+    const perm = _GLOSSARY_VIEW_PERM[v];
+    const vis = !perm || can(perm);
+    b.style.display = vis ? "" : "none";
+    if (vis && !firstOk) firstOk = v;
+    if (vis && v === adminState.metadata.glossaryView) curOk = true;
+  }
+  // 현재 보기 권한 없음 → 첫 표시 보기로 전환(curate-only=검토 큐, ingest-only=용어 목록).
+  if (!curOk && firstOk) adminState.metadata.glossaryView = firstOk;
+  for (const b of btns) {
+    const active = b.dataset.glossaryView === adminState.metadata.glossaryView;
+    b.classList.toggle("is-active", active);
+    b.setAttribute("aria-selected", active ? "true" : "false");
   }
 }
 
@@ -2503,6 +2547,20 @@ function _metaBindControls() {
       _metaCancelEdit();
       _metaRenderForm();
       _metaSyncBootstrapVisibility();
+      loadMetadata();
+    });
+  });
+  // 용어사전 2차 보기 탭(용어 목록 / 용어 검토 큐) 전환.
+  document.querySelectorAll(".admin-meta-gview").forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const v = btn.dataset.glossaryView;
+      if (!v || v === adminState.metadata.glossaryView) return;
+      adminState.metadata.glossaryView = v;
+      adminState.metadata.editing = null;       // 보기 전환 시 폼 초기화
+      adminState.metadata.relationsOpenId = null;
+      _metaRenderForm();   // 내부에서 _metaSyncGlossaryViews 호출(strip active/가시성 토글 일원화).
       loadMetadata();
     });
   });
@@ -2626,11 +2684,13 @@ function _metaRenderForm() {
   const fields = _METADATA_FIELDS[sub] || [];
   const editing = adminState.metadata.editing;
   const noCreate = Boolean(_METADATA_NO_CREATE[sub]);
-  // 검토 큐 서브뷰는 CRUD 폼 없음. 생성 비활성 서브뷰 + 비편집 상태도 폼 숨김(목록 '수정'으로만 진입).
-  const hideForm = (sub === "glossary-review") || (noCreate && !editing);
+  _metaSyncGlossaryViews();   // 용어사전 보기 유효성 먼저 보정(권한 없는 보기 → 첫 표시 보기)
+  // 용어 검토 큐 보기는 CRUD 폼 없음. 생성 비활성 서브뷰 + 비편집 상태도 폼 숨김(목록 '수정'으로만 진입).
+  const isReview = _metaIsGlossaryReview();
+  const hideForm = isReview || (noCreate && !editing);
   if (form) form.style.display = hideForm ? "none" : "";
   _metaSyncToolbarVisibility();
-  if (sub === "glossary-review") { wrap.replaceChildren(); return; }
+  if (isReview) { wrap.replaceChildren(); return; }
   wrap.replaceChildren();
   for (const f of fields) {
     if (f.type === "checkbox") {
@@ -2720,8 +2780,8 @@ async function loadMetadata() {
   const listEl = document.getElementById("metadataList");
   if (!listEl) return;
   const sub = adminState.metadata.subTab;
-  // 검토 큐 서브뷰는 별도 적재/렌더 경로(폼/CRUD 아님).
-  if (sub === "glossary-review") {
+  // 용어 검토 큐 보기는 별도 적재/렌더 경로(폼/CRUD 아님).
+  if (_metaIsGlossaryReview()) {
     await loadGlossaryFeedback();
     return;
   }
@@ -2996,7 +3056,7 @@ async function _metaDelete(it) {
 /* ── 용어사전 대화 자율등록: 역할 차원 + 검토 큐 + 유사어 참조 (0021) ───────────────────
  * 역할(role) 차원: 용어사전을 역할별 비중복 namespace 로 운영. 폼 역할 select + 목록 역할 배지 +
  *   툴바 역할 필터(GET …/glossary?role_key=). 공용 = '*'.
- * 검토 큐(glossary-review 서브뷰, 권한 kb.glossary.curate): 대화에서 자동 제안된 용어 후보를 검토.
+ * 검토 큐(용어사전 > 용어 검토 큐 보기, 권한 kb.glossary.curate): 대화에서 자동 제안된 용어 후보를 검토.
  *   하이브리드 — pending(검토 대기) / auto_promoted(자동 등록, 되돌리기 가능). promote(승급)/reject(거부).
  * 유사어/참조: 용어별 glossary_relations 패널(목록/추가/삭제, 역할 경계 횡단 허용).
  * XSS: 모든 사용자 데이터 textContent/value 로만 삽입. */
@@ -3042,10 +3102,9 @@ function _metaPopulateRoleFilter() {
   adminState.metadata.roleFilter = sel.value;
 }
 
-// 툴바 가시성 — 역할 필터는 glossary 서브뷰에서만. (scope select 는 검토 큐에서도 의미 없으니 유지.)
+// 툴바 가시성 — 역할 필터는 용어사전 '용어 목록' 보기에서만(검토 큐 보기엔 무의미). scope select 는 유지.
 function _metaSyncToolbarVisibility() {
-  const sub = adminState.metadata.subTab;
-  const showRole = (sub === "glossary");
+  const showRole = (adminState.metadata.subTab === "glossary" && adminState.metadata.glossaryView === "list");
   const label = document.getElementById("metadataRoleFilterLabel");
   const sel = document.getElementById("metadataRoleFilter");
   if (label) label.style.display = showRole ? "" : "none";
@@ -3055,7 +3114,7 @@ function _metaSyncToolbarVisibility() {
   }
 }
 
-// ── 검토 큐(glossary-review) ─────────────────────────────────────────────────
+// ── 검토 큐(용어사전 > 용어 검토 큐 보기) ─────────────────────────────────────
 async function loadGlossaryFeedback() {
   const listEl = document.getElementById("metadataList");
   if (!listEl) return;

@@ -19,6 +19,12 @@ source_of_truth: true
 - 비변경: 프론트(renderMessages 는 서버가 채운 `_attachments` 만 렌더)·share 경로·cache-buster·DB 스키마 0. 정상 display 경로 동작 동일(하위호환).
 - 검증: 대상 테스트 11/11(A1~A3·L1~L4·V1·V2·S1·S2), `make test` 전체 스위트 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
 - Cross-ref: 선행 CHG/REV-20260629T022055-feedback-id-space(피드백 레이어, H5(b) 출처) / REV-20260629T120711-attach-id-space.
+## CHG-20260629-glossary-review-nest (TASK-20260629-glossary-review-nest — 용어 검토 큐 IA 중첩, Minor §12.3, 프런트 전용)
+- Date: 2026-06-29. 검토 큐를 메타데이터 최상위 서브탭 → 용어사전 하위 2차 보기 탭으로 이동(IA). 백엔드/route/엔드포인트 무변경.
+- admin.html: `data-meta-subtab="glossary-review"` 버튼 제거 + 용어사전 하위 `#metadataGlossaryViews` strip(`.admin-meta-gview`: data-glossary-view="list"|"review") + 배지 이전.
+- admin.js: 상태 `glossaryView`; 헬퍼 `_metaIsGlossaryReview`/`_metaSubtabVisible`(용어사전 OR(ingest.manual, glossary.curate))/`_GLOSSARY_VIEW_PERM`/`_metaSyncGlossaryViews`(보기 권한 게이트+보정+aria-selected); `_metaBindControls` gview 바인딩; `_metaRenderForm`/`loadMetadata`/`_metaSyncToolbarVisibility` 를 새 보기 모델로; **`ADMIN_TAB_PERMISSIONS.metadata` 에 `kb.glossary.curate` 추가**(적대 리뷰 MAJOR — curate-only 부모 탭 진입 보존); 메타 탭 재진입 분기에 `_metaSyncGlossaryViews`+`_metaPrimeReviewBadge`.
+- styles.css: `.admin-meta-glossary-views`/`.admin-meta-gview` 필 스타일. FUNCTION.md IA 기술 갱신.
+- 검증: node --check PASS, 잔여 functional glossary-review 참조 0, 적대 검증 3 lens(BLOCKER 0, MAJOR 1 수정). Cross-ref: REV-20260629T120000-glossary-review-nest / TASK-20260629-glossary-conv-autoreg(선행).
 
 ## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가, H5(b) follow-up, Major §12.3 — cross-feature 0002+0003)
 - Date: 2026-06-29. 선행 CHG-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)은 feature-0002(마이그 0022 + sample_feedback.py) — 본 항목은 feature-0003 web 층.
