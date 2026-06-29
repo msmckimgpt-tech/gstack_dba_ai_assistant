@@ -15,6 +15,7 @@ source_of_truth: true
 - [x] FUNCTION.md REQ-20260623-1621 에 고유성 불변식(AC) 추가.
 - [x] 테스트: `test_sample_flywheel.py` 15/15(masks_pii param 보정+ON CONFLICT/DO UPDATE/RETURNING 단언+신규 vote-UPSERT 키). py_compile PASS.
 - [x] §18.8 적대 backend 리뷰(H1~H7) VERDICT FIX-NEEDED — H5(b) 두 id 공간(표시 store vs core_messages) 수용·문서화(첨부 영속 공유 선재 특성, 정상 경로 완전 강제), 나머지 REFUTED. REV-20260629T014345-feedback-unique-vote.
+- [x] **배포 정합 follow-up(CHG-20260629T0210-feedback-unique-vote-bootstrap-sql)**: 0021 변경을 boot 정본 `src/scripts/agent_kb_schema.sql`(=`_ensure_pg_schema()` 가 매 boot idempotent 적용, agent_core.py:3960)에도 미러. **누락 시 배포에서 message_id/인덱스 미생성 → record_feedback 의 `ON CONFLICT (created_by, message_id) WHERE …` 가 매칭 인덱스 부재로 런타임 에러(피드백 전건 실패)**. alembic 은 versioned-history 이고 실 배포 스키마는 부트스트랩 SQL 이 적용(0014/0017 선례 동일 — 양쪽 미러 필수). main 31aa67a 머지 후 적발·보완.
 - Cross-ref: feature-0003 TASK/CHG/REV-20260629T014345-feedback-unique-vote.
 
 ## TASK-20260625T164701-ds-conn-circuit-msg (current cycle) — datasource 회로차단 사용자 안내 문구 분리 (Minor §12.3, cross-feature feature-0002 주관) — done

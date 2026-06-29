@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T021000-feedback-unique-vote-bootstrap-sql (TASK-20260629T014345-feedback-unique-vote — 배포 정합 follow-up, Major §12.3)
+- Date: 2026-06-29. 본체(CHG-20260629T014345-feedback-unique-vote, main 31aa67a) 머지 후 배포 정합 적발·보완. **결함**: alembic 0021 만 추가하고 boot 정본 `src/scripts/agent_kb_schema.sql` 미러를 누락 → 실 배포 스키마는 `_ensure_pg_schema()`(agent_core.py:3960, 매 boot idempotent `agent_kb_schema.sql` 적용)가 유지하므로, 배포 시 `sample_feedback.message_id`/`ux_sample_feedback_user_msg_vote` 가 생성되지 않아 `record_feedback` 의 `ON CONFLICT (created_by, message_id) WHERE …` 가 **매칭 인덱스 부재 런타임 에러 → 피드백 적재 전건 실패**.
+- 변경(`src/scripts/agent_kb_schema.sql`): sample_feedback 인덱스 블록에 `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id bigint` + `CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_vote ON sample_feedback (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false` 추가(alembic 0021 과 동일·멱등). 0014/0017 선례와 동일 패턴(스키마 변경은 alembic + 부트스트랩 SQL 양쪽 미러).
+- 비변경: 코어 로직·테이블 정의 본문·GRANT(0014 의 sample_feedback GRANT 가 포괄) 0.
+- Cross-ref: feature-0003 CHG-20260629T014345-feedback-unique-vote / alembic 0021 / REV-20260629T014345-feedback-unique-vote.
+
 ## CHG-20260629T014345-feedback-unique-vote (TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백 강제, 데이터 계층 정본. feature-0003 주관, Major §12.3)
 - Date: 2026-06-29. UX 증상·주 TASK 는 feature-0003. 본 항목은 feature-0002 데이터 계층 정본 변경(테이블 스키마·코어 적재 로직) 기록.
 - 변경:

@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T021000-feedback-unique-vote-bootstrap-sql [SKIPPED:deploy-parity-bootstrap-mirror-idempotent-ddl] — 0021 부트스트랩 SQL 미러 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
+- Date: 2026-06-29. 본체 REV-20260629T014345-feedback-unique-vote 머지 후 적발된 **배포 정합 결함**의 보완. 신규 동작 추가 아닌 **이미 리뷰된 0021 DDL 을 boot 정본(agent_kb_schema.sql)에 동일 미러**라 full §18.8 패널 SKIP.
+- 결함: 실 배포 스키마는 alembic 이 아니라 `_ensure_pg_schema()`(boot 시 `agent_kb_schema.sql` idempotent 적용)가 유지한다(MIGRATIONS.md — alembic 은 versioned-history 부가 레이어). 0021 을 부트스트랩 SQL 에 미러하지 않으면 배포 후 `message_id`/`ux_sample_feedback_user_msg_vote` 부재 → record_feedback UPSERT 의 `ON CONFLICT … WHERE …` 가 매칭 인덱스 부재로 런타임 에러 → 피드백 전건 실패. (0014/0017 선례: 스키마 변경은 양쪽 미러.)
+- 수정: agent_kb_schema.sql 의 sample_feedback 블록에 ALTER ADD COLUMN IF NOT EXISTS + CREATE UNIQUE INDEX IF NOT EXISTS(alembic 0021 과 문자 동일·멱등) 추가. 검증: SQL 문자 대조(alembic 0021 ↔ 부트스트랩 동일 술어/컬럼), 멱등 IF NOT EXISTS, py 영향 없음(SQL 텍스트). 배포 시 `_ensure_pg_schema()` 가 라이브 적용.
+- Human Approval Needed: 없음(자동 동기화). 배포는 deploy_scope 판정(외부 영향) — 마이그 동반이라 confirm 대상.
+- Cross-ref: feature-0003 REV-20260629T014345-feedback-unique-vote / feature-0002 CHG-20260629T021000-feedback-unique-vote-bootstrap-sql.
+
 ## REV-20260629T014345-feedback-unique-vote [SUBAGENT:adversarial-backend] — sample_feedback 답변당 고유 피드백 데이터 계층 (TASK-20260629T014345-feedback-unique-vote, Major §12.3)
 - Date: 2026-06-29. 데이터 계층(마이그 0021 + record_feedback UPSERT) 리뷰. 주 리뷰 정본은 feature-0003 REV-20260629T014345-feedback-unique-vote — 본 항목은 feature-0002 교차기록.
 - 핵심 판단: 부분 UNIQUE 인덱스 `(created_by, message_id) WHERE … AND suggested=false` 가 (a) 투표(suggested=false)는 답변당 1행 강제, (b) "샘플 등록"(suggested=true)은 검수 큐 다중 제출 보존, (c) 기존 NULL message_id 행 무손실 — 세 요구를 단일 인덱스로 충족. record_feedback 의 ON CONFLICT 추론 술어를 인덱스 술어와 문자 동일하게 유지(불일치 시 런타임 에러 방지).
