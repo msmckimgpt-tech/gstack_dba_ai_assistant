@@ -43,19 +43,21 @@ docs/improvements/
 
 ROADMAP 의 각 항목 `status` 필드: `pending → in-progress → done`(또는 `blocked`). improve_cycle 이 이를 갱신하므로, ROADMAP.md 자체가 **단일 진행 원장**이다(별도 ledger 불필요). "다음 ready 항목" = (status=pending ∧ depends_on 전부 done) 중 (Phase asc → risk_grade asc → id asc). **드레인 모드는 항목이 done·머지될 때마다 이 집합을 재계산**해 풀린 deps 를 잡는다(매 반복 main 최신본 ROADMAP 기준).
 
-## 부가: 유지보수 persona (doc_sync)
+## 부가: 유지보수 persona (doc_sync · conversation_audit)
 
-위 1→2→3 파이프라인과 **별개**로, 같은 묶음에 머지된 작업↔문서 drift 를 정합하는 maintenance persona 를 둔다. **파이프라인 단계가 아니므로 핸드오프 표에 넣지 않는다**(자동 후속 chain 없음 — 사람·스케줄이 필요 시 호출).
+위 1→2→3 파이프라인과 **별개**로, 같은 묶음에 둘 이상의 standalone maintenance persona 를 둔다 — 머지된 작업↔문서 drift 를 정합하는 `doc_sync`, 라이브 대화 마찰을 진단·수정·출하하는 `conversation_audit`. **둘 다 파이프라인 단계가 아니므로 핸드오프 표에 넣지 않는다**(자동 후속 chain 없음 — 사람·스케줄이 필요 시 호출).
 
 | skill | 호출 | 입력 | 산출 |
 |---|---|---|---|
 | `doc_sync` | 사람·스케줄(maintenance) | 타깃(릴리즈노트\|wiki\|정책문서) 또는 기준일(선택) | 정책문서·wiki·릴리즈노트 색인/서사/사용자향 노출 갱신 (정본 비대체) |
+| `conversation_audit` | 사람·스케줄(maintenance) | 대화 한정(conversation-id\|product=\|account=\|기간) \| friction-id \| `--drain [N]`(선택) | 라이브 대화 마찰 진단(명시+암묵 이탈)→코드 거주 feature 수정·검증·출하 + `FRICTION_LEDGER.md` 갱신 |
 
 - **무엇을 정합**: 정본(`unit/<id>/docs/*`·`docs/DECISIONS.md`)은 그대로 두고, 그 **색인·서사·사용자향 표면**(`docs/STATUS.md`·wiki·릴리즈노트)만 최신화한다. 정본과 모순되면 정본을 진실로 삼아 색인을 고친다.
 - **commit 분류 주의**: wiki(`wiki/*`)·정책문서(`docs/*`)는 META path → doc-only 분리 commit + verify META mode. **릴리즈노트가 owning feature 의 `unit/<feature>/src/static/...` 에 살면 operational** 이라 META mode 가 아니다 — 별도 commit + owning feature operational gate(check #9 는 `unit/<fid>/docs/REVIEW.md`). 자세한 분기는 `doc_sync.md` Phase 4.
 - **산출물 위치 규약**: 본 persona 는 새 산출물 경로를 만들지 않는다(기존 `docs/`·`wiki/`·릴리즈노트 산출물 in-place 갱신). META REVIEW index 는 project-wide 규약(`meta/REVIEW.md` + `meta/reviews/<ts>-<agent>.md`, §18.10.1) 또는 operational 시 `unit/<fid>/docs/REVIEW.md`.
 - **landing/배포 무확인 자동(사용자 정책 2026-06-25 — doc_sync 한정 override)**: doc_sync 는 attended·unattended(백그라운드/cron) 무관하게 `PR→merge→배포`까지 **무확인 자동 진행**한다(전역 'PR·deploy=confirm' fail-closed 의 doc_sync 한정 예외 — improve_cycle 의 무인 안전선과 다름). delta 가 있는데 landing 누락, 또는 서빙 static(릴리즈노트) 변경 후 배포 누락 = **장애**. 멈추는 경우는 early-exit(delta 0)·verify FAIL·BLOCKED 뿐(정확성 게이트는 우회 안 함). 자세한 건 `doc_sync.md` 헤더·Phase 5/6.
-- **`.codex` 미러 없음**: 본 묶음 정책대로 `doc_sync.md` 도 `.claude/commands/_dqa/` 에만 둔다.
+- **conversation_audit 외부영향(중요 — doc_sync override 비승계)**: conversation_audit 은 프롬프트·맥락조립·가드·PII 경로(Major~Critical)를 건드려 blast radius 가 크다 → **기본 confirm 유지**(commit/push 만 전역 auto-sync). doc_sync 식 무확인 override 는 **Minor deploy 에만** 적용 가능하고 **Major/Critical(프롬프트·가드·RBAC·PII)은 override 불가 — §12.3 사람 승인 절대**. 진단 단일 정본은 `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(append; 코드 거주 feature `REPORT.md` 엔 cross-ref 1줄). 수정 후 STATUS·wiki 정합은 `doc_sync` 위임(자동 chain 금지). 자세한 건 `conversation_audit.md` 헤더·불변제약·Phase 0~14.
+- **`.codex` 미러 없음**: 본 묶음 정책대로 `doc_sync.md`·`conversation_audit.md` 모두 `.claude/commands/_dqa/` 에만 둔다.
 
 ## 비고 (계약·제약)
 

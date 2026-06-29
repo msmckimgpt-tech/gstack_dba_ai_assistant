@@ -24,7 +24,8 @@ gstack 스킬이 본 저장소 맥락과 충돌하지 않는 경우에 한해, �
 - 정합성 6축 review + 종속성 로드맵화 → `/_dqa:improve_listup` (AI 자율 호출)
 - 로드맵 항목 구현 (worktree cycle, 스케줄 가능) → `/_dqa:improve_cycle` (사람 호출)
 - 머지 작업↔문서(정책문서·wiki·릴리즈노트) drift 정합 (maintenance, 스케줄 가능) → `/_dqa:doc_sync` (사람 호출·예약, 파이프라인 단계 아님)
-- 산출물: `docs/improvements/<initiative>/{RESEARCH,ROADMAP}.md` · fit-review subagent `improve-fit-reviewer`
+- 라이브 대화(그룹·1:1) 마찰 진단·수정·출하 (명시 신호 + 암묵 이탈 뉘앙스, maintenance, 스케줄 가능) → `/_dqa:conversation_audit` (사람 호출·예약, 파이프라인 단계 아님 / Major·Critical PR·deploy=confirm)
+- 산출물: `docs/improvements/<initiative>/{RESEARCH,ROADMAP}.md` · 대화 마찰 원장 `docs/improvements/conversation-audit/FRICTION_LEDGER.md` · fit-review subagent `improve-fit-reviewer`
 
 - 제품 아이디어 / "이거 만들 가치가 있나" / 브레인스토밍 → `/office-hours`
 - 전략 · scope · "더 크게 생각해 보자" · 방향 리뷰 → `/plan-ceo-review`
