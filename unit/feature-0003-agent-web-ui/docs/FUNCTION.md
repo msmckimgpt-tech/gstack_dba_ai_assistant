@@ -1312,3 +1312,11 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 동작(수정 후): `.admin-meta-bootstrap { flex-shrink: 0 }` → 부트스트랩 섹션이 결과 자연높이(예: 17테이블 펼침 ~1769px)를 보존하고, pane 의 `overflow-y:auto` 가 스크롤을 담당해 모든 테이블이 스크롤로 접근 가능하다. 형제 `#metadataList`(`.admin-list`: `flex:1 1 auto; min-height:0; overflow-y:auto`)·`#metadataForm`(overflow:visible→min-content 바닥)은 무영향. headless 가 max-height:none 만 확인해 놓친 잘림을 PB-0008 실브라우저가 적발(검증환경 가치). AC-20260629-flexclip.
 - 비변경: 백엔드/route/JS 로직/RBAC/DB 스키마/마이그 0 (CSS 1선언 + cache-buster). §18.8 적대 CSS 회귀 리뷰(5축) VERDICT SAFE.
 - 배포 전파: `admin.html`·`index.html` 의 `styles.css?v=20260629-metadata-bs-collapse`→`?v=20260629-metadata-bs-flexclip` bump(CSS 전용 — `admin.js?v=` 유지). CHG/REV-20260629T165743-metadata-bs-flexclip.
+
+## (TASK-20260629T080500-new-conv-dedup, 2026-06-29) 새 대화 첫 전송 시 사이드바 대화 항목 단일화 — in-flight placeholder ↔ optimistic 항목 원자적 교체 (web/UI, Minor §12.3, frontend-only)
+- REQ-20260629T080500-new-conv-dedup (**Minor §12.3** — frontend-only, backend/스키마/RBAC 무변경): 사용자가 "새 대화"에서 첫 요청을 전송하면 좌측 대화 목록(사이드바)에 **그 대화 항목이 정확히 1개만** 나타난다. 전송 진행(응답 대기) 중에도 in-flight placeholder 와 실 대화 optimistic 항목이 동시에 보이지 않는다(중복 0). AC-20260629T080500-new-conv-dedup-1·2·3.
+  - AC-…-1: early-cid(`/api/new_conversation`) 발급으로 실 대화 항목을 등재하는 시점에, 같은 send 의 in-flight placeholder(`state.pendingConversationEntries[busyKey]`)를 **등재 전에** 제거해 단일 `renderConversationList` 가 실 항목 하나만 그린다(early-cid 발급 직후~`/api/ask` 응답 도착 사이의 중복 창 제거).
+  - AC-…-2: optimistic 대화 항목은 `buildCompactItem` 이 읽는 키(`item.topic`)로 등재해 메시지 제목을 표시한다(폴백 "새 대화" 미표시). early-cid 미발급 fallback 경로도 동일.
+  - AC-…-3: 새 대화에서 파일 첨부로 대화가 선생성되는 경로의 optimistic 항목도 `topic` 키로 등재해 "(파일 첨부 중)" 의도 라벨을 표시한다.
+- 구현: `static/app.js` `sendPrompt` 의 early-cid 발급 블록 + `/api/ask` 응답 fallback 블록에서 optimistic unshift 전 `state.pendingConversationEntries.delete(busyKey)` + 등재 키 `title:`→`topic:` + `renderConversationList()` 를 find-guard 밖으로 이동(placeholder 제거 반영 위해 항상 재렌더). 파일 첨부 lazy-create 경로 optimistic 등재도 `topic` 키. closure-mismatch 케이스의 placeholder 정리는 기존 8421 `delete(busyKey)` 가 멱등으로 보존.
+- 무관: backend `/api/ask`·`/api/new_conversation`·`/api/conversations`·ask-worker·스키마/마이그·RBAC·credential 무변경. 정적 자산 전파는 `index.html` app.js cache-buster bump(`20260629c-share-mermaid`→`20260629d-new-conv-dedup`).

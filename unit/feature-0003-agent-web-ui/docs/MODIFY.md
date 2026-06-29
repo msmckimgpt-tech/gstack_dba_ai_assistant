@@ -5033,3 +5033,14 @@ source_of_truth: true
 - Summary: PR #464 머지 후 web 재배포 + PB-0008 검증 결과를 TASK/MODIFY/REVIEW 에 기록(배포-후 docs, 코드 무변경). F0 repo-immutability escape(worktree finalize 완료, f7dcb07 동일 패턴).
 - Files: `docs/{TASK,MODIFY,REVIEW}.md`.
 - Cross-ref: CHG-20260629T143914-share-mermaid-responsive(Deploy & live-verify) / REV-20260629T144600-share-mermaid-responsive-deploy.
+
+## CHG-20260629T080500-new-conv-dedup (TASK-20260629T080500-new-conv-dedup — 새 대화 첫 전송 시 사이드바 대화 중복 제거, Minor §12.3 — frontend-only, backend/스키마/RBAC 무변경)
+- Date: 2026-06-29
+- Summary: "새 대화"에서 첫 요청 전송 시 좌측 사이드바에 in-flight placeholder(메시지 제목)와 optimistic 대화 항목('새 대화')이 동시 렌더돼 같은 대화가 2개로 보이던 중복을, optimistic 등재 전에 placeholder 를 원자적으로 제거하고 등재 키를 `title`→`topic` 으로 바로잡아 단일 항목으로 일원화.
+- Root cause: `sendPrompt`(app.js) lazy-create early-cid 성공 경로가 실 cid 대화 항목을 `state.conversations` 에 unshift+render 하면서도 in-flight placeholder(`pendingConversationEntries[busyKey]`)를 `/api/ask` 응답(8421)까지 제거하지 않음 → early-cid 발급~응답 도착(실 LLM 응답 시간) 동안 placeholder + optimistic 항목 동시 표시. + optimistic 항목이 `buildCompactItem` 미인식 `title` 키로 등재돼 폴백 "새 대화" 로 표시(중복의 '새 대화' 출처). 다른 정리 경로(fallback·422·취소·실패)는 placeholder 를 delete 했으나 early-cid 성공 경로만 누락.
+- Files:
+  - `src/static/app.js` — (1) early-cid 발급 블록: optimistic unshift 전 `pendingConversationEntries.delete(busyKey)` 추가 + `title`→`topic` + `renderConversationList()` 를 find-guard 밖으로. (2) `/api/ask` 응답 fallback 블록: 동일 정합(8421 delete 멱등 보존). (3) 파일 첨부 lazy-create 경로(~7337) optimistic 등재 `title: "(파일 첨부 중)"`→`topic:`.
+  - `src/static/index.html` — app.js cache-buster `?v=20260629c-share-mermaid`→`?v=20260629d-new-conv-dedup`(정적 자산 전파).
+  - `tests/verify_new_conv_dedup.mjs` — 신규 회귀 가드(정적 불변식 + jsdom 실 `renderConversationList` 행위, 18 단언).
+- Impact: 비파괴. backend/스키마/마이그/RBAC/credential 무변경. placeholder→실 항목 원자적 교체라 클릭 진입·진행상황 폴링은 실 cid 항목이 승계(activeConversationId=earlyCid, is-active 전이). closure-mismatch(send 도중 다른 새 대화 이동)는 가드 밖 8421 delete 가 그대로 정리.
+- Rollback: app.js 3개 hunk 의 `delete(busyKey)`/`topic` 복원 + render 를 find-guard 안으로 + index.html cache-buster 복원.

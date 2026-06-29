@@ -29,12 +29,12 @@ source_of_truth: true
   - [x] PB-0008 실 Windows 브라우저 시각검증(MSSQL 테이블명·라벨·AI 자동완성·클리핑) 수행
   - [x] flex-shrink:0 fix 적용 + cache-buster bump + CSS brace 균형(1616/1616)
   - [x] 라이브 fix 주입 검증(paneScrollH 684→2364, 17테이블 전부 표시)
-  - [x] §18.8 적대 리뷰(CSS 회귀) → REVIEW REV 태그
-  - [ ] verify-completion --pre-commit PASS → commit(Task-Cycle) → push
-  - [ ] main 머지 → web 재배포(deploy_scope: included) → 재배포본 PB-0008 재검증(cache-buster·스크롤·healthz)
-  - [ ] cycle-finalize
-- Next Action: §18.8 verdict 반영 → verify-completion → 동기화 → 재배포 → PB-0008 재검증.
-- worktree `ai/claude/metadata-bootstrap-flex-clip-fix`(base dad75c3). REV-20260629T165743-metadata-bs-flexclip.
+  - [x] §18.8 적대 리뷰(CSS 회귀) → REVIEW REV 태그 [SUBAGENT:adversarial-css-regression] VERDICT SAFE
+  - [x] verify-completion --pre-commit PASS(9) → commit 54dbfe3(Task-Cycle) → push
+  - [x] main ff-merge(dad75c3→54dbfe3) + push main → web 재배포(deploy_scope: included, build web + up -d --no-deps web, healthy/healthz OK) → 재배포본 PB-0008 재검증(serve cache-buster flexclip·baked flex-shrink:0·pane scrollH 2364>684·17테이블 표시)
+  - [x] worktree cleanup
+- Next Action: 없음 — cycle 완료.
+- worktree `ai/claude/metadata-bootstrap-flex-clip-fix`(base dad75c3). REV-20260629T165743-metadata-bs-flexclip. **cycle 완료.**
 
 ## TASK-20260629T141637-glossary-role-single-ui — 메타데이터 용어사전 역할 선택 UI 단일화(단일 역할 컨텍스트) + 등록 mis-scope 가드 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(원본 glossary-conv-autoreg/review-nest 배포본 후속 결함)
 - 트리거: 사용자 resume 요청 — "용어사전 자동 등록 기능"은 완료·배포됐으나 배포본에서 결함 2건 확인. ① 메타데이터 탭에 '역할' 선택 UI 가 2곳(툴바 역할 필터 + 등록 폼 역할 select)이라 각 동작 식별이 어려움 → 독립 UI 하나로. ② 역할 드롭다운에 '전체 역할'·'공용'만 보이고 실제 `계정 > 역할`이 안 보임.
@@ -4892,3 +4892,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] verify-completion PASS(9/9) → commit cbd54f4 → main 통합(머지, 충돌 0) → PR #464 머지(main 37d58cc) → web 재빌드·재기동(deploy_scope: included, healthz ok).
 - [x] PB-0008 Windows-browser 시각 검증(실 Chrome 149) — **① 메인 뷰 무회귀**: markdownToHtml→renderMermaidDiagrams flowchart SVG(7501) error 0. **② 공유 뷰**: share 렌더 경로 flowchart SVG(7637) error 0 + `.share-container` maxWidth=100%·실폭 1249=viewport(전체 폭). 증적 `artifacts/pb0008-share-mermaid-responsive.png`.
 - [x] 배포-기록 REVIEW 엔트리(REV-20260629T144600-share-mermaid-responsive-deploy [SKIPPED:deploy-record]) 추가 — verify-completion check#9 정합.
+
+### TASK-20260629T080500-new-conv-dedup — "새 대화" 첫 전송 시 사이드바 대화 중복('현재 대화' + 별도 '새 대화') 제거 (Minor §12.3, frontend-only, 2026-06-29)
+- 트리거: `/_template:entry` arg-given. 사용자 보고: "프로젝트 내 서비스로 assistant 에게 새 대화에서 요청을 보내면, 좌측 사이드바(대화 목록)에 현재 대화 항목과 더불어 '새 대화' 가 추가로 생성됨(진입점 완전히 동일한 중복 대화)."
+- REQ: REQ-20260629T080500-new-conv-dedup (FUNCTION.md). AC: AC-…-1(early-cid 등재 시 placeholder 원자적 제거→중복 0) · AC-…-2(optimistic 항목 topic 키→메시지 제목 표시) · AC-…-3(첨부 lazy-create 경로 동일).
+- **진단(Explore + 코드 정독)**: `sendPrompt`(app.js) lazy-create early-cid 성공 블록이 실 cid 대화 항목을 `state.conversations` 에 unshift+render 하면서도, in-flight placeholder(`pendingConversationEntries[busyKey]`)는 `/api/ask` 응답(8421)까지 제거하지 않음 → early-cid 발급~응답 도착(실 LLM 응답 시간) 동안 ① placeholder(메시지 제목)와 ② optimistic 항목이 사이드바에 동시 렌더. 게다가 optimistic 항목이 `buildCompactItem` 미인식 `title` 키로 등재돼(읽는 키=`topic`) 폴백 "새 대화" 로 표시 → 중복의 '새 대화' 라벨 출처. 다른 정리 경로(fallback 8421·422-fallback·취소·실패)는 placeholder 를 delete 하나 early-cid 성공 경로만 누락.
+- [x] **수정(app.js 3곳)**: early-cid 블록 — optimistic 등재 전 `pendingConversationEntries.delete(busyKey)` + `title`→`topic` + render 를 find-guard 밖으로(항상 재렌더). `/api/ask` fallback 블록 — 동일 정합(8421 delete 멱등 보존). 파일 첨부 lazy-create(~7337) optimistic 등재 `title: "(파일 첨부 중)"`→`topic:`.
+- [x] **cache-buster**: `index.html` app.js `?v=20260629c-share-mermaid`→`?v=20260629d-new-conv-dedup`.
+- [x] **단위 검증**: `node --check app.js` PASS. 신규 `tests/verify_new_conv_dedup.mjs` **18/18 PASS**(Node18+jsdom@22) — [A] 정적 불변식(두 optimistic 등재 직전 placeholder delete·직후 render·topic 키·title 잔존 0·cache-buster), [B] 실 `renderConversationList` jsdom: 수정 후=실 항목 1·placeholder 0·제목=메시지 / 회귀 재현=placeholder 1 + '새 대화' 항목 1(동시 2개). 기존 `verify_conv_entry_defaults.mjs` 20/20·`verify_date_group_collapse.mjs` 22/22 무회귀.
+- [x] **§18.8 적대 패널(SUBAGENT correctness)**: 5개 회귀 가설(catch/cancel/lazy-fail·delete 충돌·render 이동·title→topic 소비처·mismatch 오염) **전부 REFUTED, no BLOCKING**. 패널이 `title`→`topic` 이 backend payload 키(`"topic"`, app.py 7145/7511)와 일치시키는 기존 버그 수정임을 독립 확인. REV-20260629T080500-new-conv-dedup.
+- [ ] **PB-0008 Windows-browser 시각 검증**(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(frontend-only render, 선례 동일).
+- [x] verify-completion --pre-commit **PASS(9/9 + #12)** → commit → 최신 main(8a35eee) 재rebase(doc tail 충돌 해소) → ff-merge main(92751b4) → push origin main → **web 이미지 재빌드·재기동(deploy_scope: included)**. 라이브 검증: healthz HTTP 200 · 서빙 index.html `app.js?v=20260629d-new-conv-dedup` · 서빙 app.js 에 fix 반영(new-conv-dedup 주석 5·`topic: message.slice` 2). repo-web-1 healthy.

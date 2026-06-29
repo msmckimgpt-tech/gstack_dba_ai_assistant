@@ -7333,8 +7333,10 @@ async function _uploadComposerAttachment(file) {
       state.pendingNewConversation = false;
       state.pendingSentinel = null;
       // minimal sidebar entry (refreshWorkspace 가 확정 데이터로 교체)
+      // new-conv-dedup: buildCompactItem 은 item.topic 을 읽는다(title 아님) — title 키로 넣으면
+      // 첨부 중 항목이 "(파일 첨부 중)" 대신 폴백 "새 대화" 로 표시됐다. topic 으로 등재해 의도 라벨 유지.
       if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
-        state.conversations.unshift({ id: earlyCid, title: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_account_id: state.user?.id || null, owner_username: state.user?.username || null });
+        state.conversations.unshift({ id: earlyCid, topic: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_account_id: state.user?.id || null, owner_username: state.user?.username || null });
       }
       renderConversationList();
       renderConversationHeader();
@@ -8318,20 +8320,31 @@ async function sendPrompt() {
           state.pendingNewConversation = false;
           state.activeConversationId = earlyCid;
           state.pendingSentinel = null;
+          // new-conv-dedup: in-flight placeholder(pendingConversationEntries[busyKey]) 를 실 cid
+          // entry 로 *원자적* 교체한다. 이 정리를 /api/ask 응답(아래 8421)까지 미루면 — early-cid 발급
+          // 직후부터 /api/ask 응답 도착까지(실 LLM 응답 시간) — placeholder(메시지 제목)와 아래 optimistic
+          // 대화 항목이 사이드바에 *동시* 렌더돼 "현재 대화 + 새 대화" 중복 항목으로 보였다.
+          // placeholder 를 등재 전에 먼저 제거하면 단일 renderConversationList 가 실 cid 항목 하나만 그린다.
+          state.pendingConversationEntries.delete(busyKey);
           // polling 첫 tick 의 _updateConversationStatusDot 가 DOM 에서 실패하지 않도록 최소
           // conversation entry 선행 등재 (refreshWorkspace 가 실 데이터로 교체).
           if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
             state.conversations.unshift({
               id: earlyCid,
-              title: message.slice(0, 60) || "새 대화",
+              // new-conv-dedup: buildCompactItem 은 item.topic 을 읽는다(item.title 아님). title 키로
+              // 넣으면 사이드바에 메시지 제목 대신 "새 대화" 폴백이 표시돼 placeholder 교체 항목이 정확히
+              // "새 대화" 로 보였다 — 중복의 '새 대화' 라벨 출처. topic 으로 등재해 메시지 제목을 유지한다.
+              topic: message.slice(0, 60) || "새 대화",
               display_status: "processing",
               created_at: new Date().toISOString(),
               account_id: state.session?.account_id || null,
               owner_account_id: state.user?.id || null,
               owner_username: state.user?.username || null,
             });
-            renderConversationList();
           }
+          // placeholder 제거 반영을 위해 find 가드와 무관하게 항상 재렌더(이미 등재된 cid 여도 placeholder
+          // 가 사라진 목록을 다시 그려야 한다).
+          renderConversationList();
           // 처리 단계 실시간 폴링 시작 — pending bubble 이 step 을 받아 "N단계 보기" 버튼/사이드바 활성화.
           startProgressPolling({ reset: true });
           // 이 send 는 이제 cid 확정 + 폴링 진행 중 — catch 시 non-lazy 복구 경로로 분기.
@@ -8398,26 +8411,32 @@ async function sendPrompt() {
         state.pendingNewConversation = false;
         state.activeConversationId = newCid;
         state.pendingSentinel = null;
+        // new-conv-dedup: early-cid 미발급(fallback) 경로도 동일하게 placeholder 를 등재 전에 먼저
+        // 제거해 단일 렌더가 실 cid 항목 하나만 그리게 한다. (제거를 아래 8421 까지 미루면 이 블록의
+        // renderConversationList 가 placeholder + optimistic 항목을 동시에 그려 같은 중복이 나타났다.)
+        state.pendingConversationEntries.delete(busyKey);
         // UX-COMPACT: polling 첫 tick 에서 _updateConversationStatusDot 가 DOM 에서 실패하지 않도록
         // 최소 conversation entry 를 선행 등재. refreshWorkspace 가 실 데이터로 교체.
         if (!state.conversations.find((c) => String(c.id) === newCid)) {
           state.conversations.unshift({
             id: newCid,
-            title: message.slice(0, 60) || "새 대화",
+            // new-conv-dedup: buildCompactItem 이 읽는 키는 topic(title 아님) — 메시지 제목 유지.
+            topic: message.slice(0, 60) || "새 대화",
             display_status: "processing",
             created_at: new Date().toISOString(),
             account_id: state.session?.account_id || null,
             owner_account_id: state.user?.id || null,
             owner_username: state.user?.username || null,
           });
-          renderConversationList();
         }
+        renderConversationList();
         // TASK-0061 Phase 2 (AC-0076): lazy-create 응답으로 cid 가 발급된 즉시 polling 시작.
         // ask 가 동기 완료된 경우라도 첫 polling 으로 step snapshot 을 받아 pending bubble 에 반영한다.
         startProgressPolling({ reset: true });
       }
       // TASK-0085: optimistic pending entry 정리 — closure mismatch 여도 본 send 의 sentinel entry
-      // 는 항상 본 함수가 책임지고 remove. 실 cid entry 는 refreshWorkspace 가 backend list 로 등재.
+      // 는 항상 본 함수가 책임지고 remove(matched 경로는 위에서 이미 제거 — delete 멱등). 실 cid entry
+      // 는 refreshWorkspace 가 backend list 로 등재.
       state.pendingConversationEntries.delete(busyKey);
     }
     // TASK-0061 Phase 1 (AC-0072): 정상 응답 후 pending bubble 제거 → refreshWorkspace 가 실 assistant message 로 교체.
