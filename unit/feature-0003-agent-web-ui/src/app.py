@@ -10284,31 +10284,46 @@ async def _auth_error_handler(request: Request, exc: _AuthError) -> JSONResponse
 def get_conn():
     """요청-스코프 memory conn 의존성. 인증 의존성과 핸들러가 use_cache 로 동일 conn 을 공유한다.
 
+    [Phase 1 §18.8 HIGH 보정] _connect_memory() 실패를 흡수해 conn=None 을 yield 한다(raise 금지).
+    소비 의존성이 분기한다: get_current_account 는 None→_AuthError("db connection failed",500)
+    (legacy 필수-인증 핸들러 121 사이트의 `_json_error("db connection failed",500)` byte-동치),
+    get_optional_account 는 None→None(graceful — get_llm_health/get_session 의 cheap-read 200 보존).
+    raise 로 두면 DI resolution 중 예외가 _auth_error_handler 를 우회해 Starlette generic
+    500({"detail":"Internal Server Error"})로 회귀하고 optional 핸들러의 fail-soft 가 깨진다.
+
     teardown: 트랜잭션 토글 핸들러(autocommit=False)는 본문에서 commit + finally 에서
     autocommit=True 복원하므로 아래 rollback 안전망은 정상경로엔 미발화하고, autocommit 미복원
     (에러 경로)일 때만 미커밋 변경을 되돌린다(BLOCKING-2 완화). 그 후 항상 close.
     """
-    conn = _connect_memory()
+    try:
+        conn = _connect_memory()
+    except Exception:
+        conn = None
     try:
         yield conn
     finally:
-        try:
-            if not conn.autocommit:
-                conn.rollback()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
+        if conn is not None:
+            try:
+                if not conn.autocommit:
+                    conn.rollback()
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def get_current_account(request: Request, conn=Depends(get_conn)) -> dict[str, Any]:
-    """필수 인증 의존성 — 미인증 시 401({"error":"로그인이 필요합니다."}). _require_account 와 동치.
+    """필수 인증 의존성 — conn 실패 시 500, 미인증 시 401({"error":"로그인이 필요합니다."}).
 
+    [Phase 1 §18.8 HIGH] conn is None(=_connect_memory 실패) → _AuthError("db connection failed",500)
+    = legacy 필수-인증 핸들러 `_json_error("db connection failed",500)`(121 사이트 uniform) byte-동치.
     _get_authenticated_account 를 직접 호출해 세션 부수효과(WebAuthSessions LastSeenAt/RemoteAddr/
     UserAgent UPDATE)를 보존한다. 인자 순서 (conn, request) 주의.
     """
+    if conn is None:
+        raise _AuthError("db connection failed", 500)
     account = _get_authenticated_account(conn, request)
     if not account:
         raise _AuthError("로그인이 필요합니다.", 401)
@@ -10316,11 +10331,14 @@ def get_current_account(request: Request, conn=Depends(get_conn)) -> dict[str, A
 
 
 def get_optional_account(request: Request, conn=Depends(get_conn)) -> dict[str, Any] | None:
-    """anonymous 허용 의존성 — 미인증/예외 시 None(절대 raise 하지 않음). _optional_account 와 동치.
+    """anonymous 허용 의존성 — 미인증/예외/conn 실패 시 None(절대 raise 하지 않음). _optional_account 동치.
 
-    try/except 가 LastSeen UPDATE 까지 감싸므로 '조회 성공 + UPDATE 예외 → 익명 강등' 의 기존
-    fail-soft 동작을 byte-for-byte 보존한다(REQ-20260514-0001).
+    [Phase 1 §18.8 HIGH] conn is None(=_connect_memory 실패) → None → 소비 핸들러의 cheap-read
+    fallback(get_llm_health/get_session 200 fail-soft) byte-동치 유지. try/except 가 LastSeen
+    UPDATE 까지 감싸므로 '조회 성공 + UPDATE 예외 → 익명 강등' fail-soft 도 보존(REQ-20260514-0001).
     """
+    if conn is None:
+        return None
     try:
         return _get_authenticated_account(conn, request)
     except Exception:
@@ -10333,7 +10351,16 @@ def require_permission(*perms: str, message: str = "권한이 없습니다.", st
     message 는 마이그 사이트의 원본 _json_error 메시지를 그대로 전달해 403 body(60종)를 보존한다.
     _account_has_permission(account, p) = account['permissions'].get(p) — 동적 catalog code 포함,
     정적 PERMISSION_CODES iterate 금지. OR/분기/동적 perm 은 account-only DI + 본문 검사로 처리.
+
+    [Phase 1 §18.8 LOW] 무인자 호출(require_permission())은 인증만 통과시키는 footgun →
+    데코레이션(import) 시점에 ValueError 로 차단. account-only 게이트가 필요하면
+    Depends(get_current_account) 를 직접 사용한다.
     """
+    if not perms:
+        raise ValueError(
+            "require_permission() 는 최소 1개 권한 코드가 필요합니다 "
+            "(account-only 게이트는 Depends(get_current_account) 를 직접 사용)."
+        )
 
     def dep(account=Depends(get_current_account)) -> dict[str, Any]:
         for p in perms:
@@ -10841,24 +10868,24 @@ def _read_llm_provider_status() -> "dict[str, Any]":
 
 
 @app.get("/api/llm/health")
-def get_llm_health(request: Request, force: int = 0) -> JSONResponse:
+def get_llm_health(request: Request, force: int = 0, conn=Depends(get_conn)) -> JSONResponse:
     """TASK-20260619T014034: LLM provider health(외부요인 제한) 조회 + hybrid active probe.
 
     프론트가 로드 시 + 주기적으로 폴링. probe 는 TTL(LLM_HEALTH_PROBE_TTL_SEC, 기본 60s) 내
     재호출이면 skip(비용 최소화) — 단 `force=1`(배너 '다시 확인')은 TTL 무시. 인증 필요(외부
     노출 최소화) — 미인증은 cheap read 만 반환.
+
+    [P5b DI seam Phase 1 파일럿] conn 공급을 get_conn DI 로 위임(behavior-neutral). 인증 해석은
+    legacy 와 동일하게 _get_authenticated_account 를 **직접** 호출한다 — get_optional_account 로
+    위임하면 인증 쿼리 예외를 삼켜(except→None) legacy 의 'conn-open + 인증쿼리 raise → 500 전파'
+    를 200 cheap-read 로 바꾸므로(적대 패널 REV HIGH-1) 의도적으로 inline 유지. 동치 경로:
+    conn 획득 실패(get_conn None)·미인증 → cheap read 200, 인증 쿼리 예외 → 전파(→500), 인증 성공 → probe.
+    (conn 은 get_conn 계약상 요청 teardown 까지 보유 — 관측 응답은 불변, §1.1 sanction 한 design tradeoff.)
     """
-    try:
-        conn = _connect_memory()
-    except Exception:
+    if conn is None:
+        # conn 획득 실패: probe 트리거 없이 마지막 알려진 상태만 (legacy `except → cheap read` 동치).
         return JSONResponse(_read_llm_provider_status())
-    try:
-        account = _get_authenticated_account(conn, request)
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    account = _get_authenticated_account(conn, request)
     if not account:
         # 미인증: probe 트리거 없이 마지막 알려진 상태만.
         return JSONResponse(_read_llm_provider_status())

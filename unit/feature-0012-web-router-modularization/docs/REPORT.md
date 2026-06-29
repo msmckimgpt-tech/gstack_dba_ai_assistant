@@ -9,17 +9,18 @@ source_of_truth: false
 # Current Report
 
 ## 1. Summary
-P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-CONDITIONS)+§12 승인 → route-parity 안전망+의존성 audit 완료(PR #456 머지). **2026-06-29**: web_context 직추출이 테스트 monkeypatch 커플링에 막힘을 확인(테스트가 `app._require_account` 를 패치하고 핸들러를 직접 함수호출 → helper 이동 시 cross-call 네임스페이스 미스). 사용자 결정 **A(DI 전면)** → FastAPI DI seam 선행. 6축 매핑 Workflow + 적대적 비평(BLOCKING 2 보정) 후 **DI seam Phase 0(가산적 토대) 구현·검증 완료**. make test 1205 passed/2 skip/0 fail.
+P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-CONDITIONS)+§12 승인 → route-parity 안전망+의존성 audit 완료(PR #456 머지). **2026-06-29**: web_context 직추출이 테스트 monkeypatch 커플링에 막힘을 확인 → 사용자 결정 **A(DI 전면)** → FastAPI DI seam 선행. **Phase 0(가산적 토대)** 구현·검증·커밋(06d88a8). **Phase 1(테스트 인프라 + 파일럿)** 완료: §18.8 이월 보정(get_conn None-yield 분기) + `conftest.py`(TestClient/`as_account` fixture) + 파일럿 `GET /api/llm/health` DI 전환(byte-동치) + 회귀 스위트 31. §18.8 적대 패널(27 agents/5 lens, REV-0004)이 HIGH 2건(파일럿 get_optional_account 위임의 auth-raise 500→200 변형 / 인자순서 가드 부재) 적발 → 보정. make test 1236 passed/2 skip/0 fail.
 
 ## 2. Progress
-- Done: plan-eng-review+§12 · route-parity 안전망(골든 179) · 의존성 audit · **DI seam 설계(DI_SEAM_BLUEPRINT.md)** · **DI seam Phase 0(deps+_AuthError handler+get_conn, behavior-neutral)**.
-- In Progress: DI seam Phase 1(conftest TestClient+`as_account` + 파일럿 핸들러 + 401/403 회귀 스위트).
-- Planned: Phase 2..7 클러스터별 마이그 → helper→web_context 이동 → APIRouter 추출 → 브라우저 로그인 QA+§18.8+배포 → 프론트 분할.
+- Done: plan-eng-review+§12 · route-parity 안전망(골든 179) · 의존성 audit · **DI seam 설계(DI_SEAM_BLUEPRINT.md)** · **Phase 0(deps+_AuthError handler+get_conn, behavior-neutral, 커밋 06d88a8)** · **Phase 1(conftest TestClient/`as_account` + 파일럿 get_llm_health DI 전환 byte-동치 + get_conn None-yield 보정 + require_permission 빈 perms 가드 + 회귀 스위트 31 + §18.8 적대 패널 HIGH 2 보정)**.
+- In Progress: DI seam Phase 2(cat A 단순 require, ~95 핸들러, PR당 15-25) — 파일럿/conftest 패턴 확대.
+- Planned: Phase 3..7 클러스터별 마이그 → helper→web_context 이동 → APIRouter 추출 → 브라우저 로그인 QA+§18.8+배포 → 프론트 분할.
 
 ## 3. Recent Changes
 - CHG-20260625-0001: feature-0012 scaffold + route-parity 안전망 테스트/골든 + 의존성 audit (P5b 선행물, PR #456).
 - CHG-20260629-0002: DI seam 설계(DI_SEAM_BLUEPRINT.md) + Phase 0 가산적 토대(app.py auth DI 의존성 5종 + 예외 핸들러). behavior-neutral, make test green.
-- 총 변경 횟수: 2
+- CHG-20260629-0003: DI seam Phase 1 — get_conn None-yield 보정(required 500/optional None) + require_permission 빈 perms 가드 + conftest(TestClient/`as_account`) + 파일럿 get_llm_health DI 전환(byte-동치) + 회귀 스위트 31 + §18.8 적대 패널(REV-0004) HIGH 2 적발·보정. make test 1236 green.
+- 총 변경 횟수: 3
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라
@@ -41,9 +42,10 @@ web_context(또는 shared.config 승격)로, 실상태(lock 등)는 단일 인�
 DI(Depends) 도입은 보류(별건). admin(92)은 추출 최후, sub-domain(users/datasource/metadata/products/audits…)으로.
 
 ## 5. Test Status
-- 자동: `make test` green — **1205 passed / 2 skipped / 0 fail** (Phase 0 후, 전체 스위트). ruff 통과.
-- route-parity: 골든 179 route 불변(Depends 추가는 경로/메서드/순서 무영향). `_AuthError` exception handler 등록 확인.
-- Phase 0 = behavior-neutral(deps 미사용). 이후 클러스터 마이그마다 make test+route-parity+401/403 회귀 스위트 게이트.
+- 자동: `make test` green — **1236 passed / 2 skipped / 0 fail** (Phase 1 후, 전체 스위트; Phase 0 의 1205 + 신규 31). ruff 통과.
+- route-parity: 골든 179 route 불변(Depends 추가/파일럿 전환은 경로/메서드/순서 무영향). `_AuthError` exception handler 등록 production app TestClient 로 end-to-end 확인.
+- 신규 회귀 스위트(`test_di_seam_p5b.py` 31): get_conn None-yield / get_current(401·500)·get_optional(no-raise)·require_permission(403·빈가드) 단위 + `_get_authenticated_account(conn,request)` 인자순서 가드 + `_auth_error_handler` 셰이프({"error"}+detail 부재) + 파일럿 end-to-end(authed/force/미인증/conn실패/**auth-raise→500**) + auth deps 라우트 소비 계약(mini-app, route-parity 무영향).
+- Phase 1 = behavior-neutral(파일럿 응답 byte-동치). 이후 클러스터 마이그마다 make test+route-parity+401/403/500 회귀 게이트.
 - Final 게이트: 브라우저 로그인 QA(PB-0008 `bin/win-browser.py`, 가용 확인) + 라이브 RBAC smoke 4종.
 
 ## 6. Blocked Items

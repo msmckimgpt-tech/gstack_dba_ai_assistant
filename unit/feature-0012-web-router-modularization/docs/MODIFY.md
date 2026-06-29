@@ -42,3 +42,35 @@ source_of_truth: true
 - Impact: behavior-neutral(deps 미사용). route-parity 179 불변, `_AuthError` handler 등록 확인, **make test
   1205 passed / 2 skipped / 0 fail**. 배포 불요(런타임 경로 변화 없음, 라우터 추출/QA 는 Final).
 - Rollback Notes: 단일 commit revert(app.py seam 블록 + import 1줄 + docs). 런타임/이미지 무변경.
+
+## CHG-20260629-0003
+- Date: 2026-06-29
+- Related Requirement: P5b DI seam Phase 1(TASK-0012-6) — 테스트 인프라 + 첫 소비자(파일럿) 전환 +
+  §18.8 이월(REV-20260629-0003) 보정. DI_SEAM_BLUEPRINT §2 Phase 1 / §4.2.
+- Summary:
+  (1) **§18.8 이월 보정** — get_conn 이 `_connect_memory()` 실패 시 **None 을 yield**(raise 금지) →
+  소비 의존성 분기: get_current_account None→`_AuthError("db connection failed",500)`(legacy required-auth
+  121 사이트 uniform byte-동치), get_optional_account None→None(graceful). require_permission 무인자 호출
+  ValueError 가드(footgun). conn-failure 메시지 grep 분석 결과 memory conn 은 uniform "db connection failed"
+  (PG 저장소 연결 실패는 별개 conn → 무관)임을 확인해 per-site 전략 불요.
+  (2) **테스트 인프라** — `tests/conftest.py` 신규: TestClient 픽스처(base_url=localhost TrustedHost 통과 +
+  lifespan 미발화로 --no-deps DB 회피) + `make_account`/`as_account`/`as_anonymous` fixture(permissions 명시,
+  §3.2 보정 MEDIUM-2) + autouse override **snapshot/restore** 격리 + `client_capture_errors`(미처리예외 500 검증).
+  (3) **파일럿** — `GET /api/llm/health` 를 `Depends(get_conn)` + inline `_get_authenticated_account` 로 전환.
+  (적대 패널 HIGH-1) get_optional_account 위임은 인증쿼리 예외를 삼켜 legacy 의 'conn-open+auth-raise→500 전파'
+  를 200 으로 바꾸므로 inline 유지 — None→200·미인증→200·auth-raise→500·인증→probe 모두 legacy byte-동치.
+  (4) **회귀 스위트** — `tests/test_di_seam_p5b.py` 신규(31 테스트): get_conn/deps 단위(401/403/500/None) +
+  `_get_authenticated_account(conn,request)` 인자순서 가드(패널 HIGH-2) + `_auth_error_handler` 셰이프({"error"}+
+  "detail" 부재) + 파일럿 end-to-end(authed/force/미인증/conn실패/**auth-raise→500**) + auth deps 라우트 소비
+  계약을 throwaway mini-app 으로 end-to-end 검증(패널 MEDIUM #6, route-parity 무영향).
+- Files (cross-cut — 추적은 feature-0012, 코드는 feature-0003):
+  - `unit/feature-0003-agent-web-ui/src/app.py` (get_conn/get_current_account/get_optional_account/
+    require_permission/get_llm_health 5함수 수정 — DI seam 보정 + 파일럿 전환)
+  - `unit/feature-0003-agent-web-ui/tests/conftest.py` (신규 — DI seam 테스트 인프라)
+  - `unit/feature-0003-agent-web-ui/tests/test_di_seam_p5b.py` (신규 — DI seam 회귀 스위트 31 테스트)
+  - `unit/feature-0012-web-router-modularization/docs/{TASK,REPORT,MODIFY,REVIEW}.md` (갱신)
+- Impact: behavior-neutral(관측 응답 byte-동치 — 파일럿 4경로 + deps 계약 적대 검증). route-parity 179 불변,
+  **make test 1236 passed / 2 skipped / 0 fail**, ruff clean. 배포 불요(런타임 응답 무변경; 라우터 추출/배포는 Final).
+  잔여 수용(LOW): 파일럿 conn 보유시간이 요청 teardown 까지(§1.1 sanction; probe TTL-skip 으로 실발생 희박),
+  make test bind-mount stale-.pyc(환경성).
+- Rollback Notes: 단일 commit revert(app.py 5함수 + conftest/test 신규 2파일 + docs). 런타임/이미지 무변경.

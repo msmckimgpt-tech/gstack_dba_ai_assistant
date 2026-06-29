@@ -55,3 +55,49 @@ Phase 0 diff(app.py L29 `Depends` import + L10269~10341 seam: `_AuthError` 클�
 2. `_AuthError` 실제 raise / deps wire 시 응답 셰이프 동치(401 `{error}` vs `_json_error`, 422 ordering) 별도 golden/회귀 테스트.
 3. require_permission 빈 perms 가드(LOW).
 4. 마이그 전환 사이트마다 dependency_overrides 단위테스트로 401/403 body byte-동치 + LastSeen UPDATE 부수효과 보존 검증.
+
+## REV-20260629-0004 [AGENT-TEAM:p5b-phase1-di-seam-adversarial-panel]
+- Related Change: CHG-20260629-0003 (DI seam Phase 1 — 테스트 인프라 + 파일럿 + §18.8 이월 보정)
+- 패널 구성: §18.8 적대적 검증 — 5개 독립 lens(byte-equivalence / get_conn-none-yield / test-false-confidence /
+  cross-suite-contamination / exception-middleware) 병렬 반증(refute) + finding 별 독립 skeptic 적대 검증
+  (Workflow `p5b-phase1-di-seam-adversarial-panel`, 27 agents, 5 lens → 22 findings → finding별 검증 → 확정 11).
+
+**평결: 적발 후 보정 → ACCEPT.** BLOCKING 0. 확정 11건(HIGH 2 + MEDIUM 4 + LOW 5). HIGH 2건은 **실 회귀/테스트
+공백**으로 판명되어 즉시 보정했고, MEDIUM/LOW 는 보정 또는 근거 있는 수용 처리. 보정 후 make test 1236 passed/2 skip/0 fail.
+
+### 무엇을 적대 검토했나
+Phase 1 diff(app.py get_conn/get_current_account/get_optional_account/require_permission/get_llm_health 5함수 +
+신규 conftest.py + test_di_seam_p5b.py)의 "behavior-neutral(파일럿 응답 byte-동치) + deps conn-failure 동치 +
+신규 테스트가 동치를 실제 검증하며 기존 1205 스위트 무오염" 주장을 반증 시도. 축: 응답 byte-동치(authed/미인증/
+conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신규 conftest 의 cross-suite 오염 / 예외핸들러·미들웨어·권한의미.
+
+### 적발 → 보정 (HIGH, 실 결함)
+- **HIGH-1 (byte-equivalence, 5 finding 수렴)**: legacy get_llm_health 는 `_get_authenticated_account` 를 직접
+  (except 없이) 호출 → **conn-open + 인증쿼리 raise → 500 전파**. 최초 Phase 1 구현은 인증을 get_optional_account
+  (모든 예외 except→None)에 위임 → 같은 경로가 **200 cheap-read 로 변형**(라이브 인증/DB 장애를 health 가 정상으로 은폐).
+  **근본 사실: legacy get_llm_health 는 get_optional_account-shaped 가 아니다**(conn-acquire-fail 만 fail-soft, auth-query-raise 는 fail-loud).
+  → **보정**: 파일럿을 `Depends(get_conn)` + inline `_get_authenticated_account` 로 재전환(None→200·미인증→200·
+  auth-raise→500·인증→probe legacy byte-동치). 회귀 가드 `test_llm_health_auth_query_raises_propagates_500` 추가
+  (Starlette generic 500 plain-text "Internal Server Error" 셰이프 단언 — 패널의 `{"detail"}` 표기는 부정확, 실제는 plain text).
+- **HIGH-2 (test-false-confidence)**: `_get_authenticated_account(conn, request)` 인자 순서(app.py docstring 이 footgun
+  명시)를 검증하는 테스트가 0 — swap 해도 전 테스트 통과(라이브선 conn.cookies AttributeError→500). shipped 코드는
+  올바른 순서이나 회귀 가드 부재. → **보정**: get_current_account/get_optional_account 에 duck-typed 인자순서 가드
+  테스트 2건 추가(위치1=conn[.cookies 없음]/위치2=request[.cookies 보유] 단언).
+
+### 적발 → 보정/수용 (MEDIUM/LOW)
+- **MEDIUM #6 (auth deps 라우트 e2e 커버리지 0)**: get_current_account/require_permission 가 라우트에서 소비될 때의
+  401/403/500 계약이 end-to-end 미검증(Phase 1 은 파일럿 1개라 내재적). → **보정**: throwaway mini-app(FastAPI +
+  _AuthError 핸들러 등록 + Depends(dep) 라우트)로 401/403/500/200 계약을 production 라우트 무변경(route-parity 무영향)으로
+  end-to-end 고정(6 테스트). Phase 2 마이그 계약을 선검증.
+- **LOW #9 (autouse clear)**: dependency_overrides 전체 clear → 단일소비자 전제 smell. → **보정**: snapshot/restore 로 교체.
+- **LOW #8/#11 (conn 보유시간)**: 파일럿이 get_conn 계약상 conn 을 요청 teardown(probe 최대 8s 포함)까지 보유 —
+  관측 응답 불변. **수용**: §1.1 이 sanction 한 shared get_conn design tradeoff. probe 는 TTL-skip 으로 대부분 즉시
+  반환해 실보유 희박. docstring 에 명시. 문제화 시 후속 special-case 가능.
+- **LOW #10 (stale .pyc)**: make test 의 worktree bind-mount 에서 stale .pyc 가 핸들러 미등록처럼 보일 환경성 취약성.
+  코드 결함 아님. **수용**: 컨테이너는 --rm 신규 기동 + pip 신규 설치, 소스 mtime 갱신 시 재컴파일. 문제화 시 PYTHONDONTWRITEBYTECODE.
+
+### 왜 최종 통과인가 (결정적 근거)
+- 파일럿 4경로(authed=probe / 미인증=200 / conn실패=200 / auth-raise=500) + deps 계약(401/403/500) 모두 회귀
+  테스트로 legacy byte-동치 고정. route-parity 179 불변, make test 1236 passed/2 skip/0 fail, ruff clean.
+- get_conn None-yield 는 required(→500)·optional(→None) 양 소비자에서 byte-동치 검증, teardown(None 시 close 미시도) 안전.
+- 신규 conftest 는 autouse snapshot/restore 로 production app overrides 격리, mini-app 은 로컬 인스턴스라 기존 스위트 무오염(make test 1205→1236 회귀 0).
