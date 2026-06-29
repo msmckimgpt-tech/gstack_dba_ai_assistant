@@ -4911,5 +4911,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **수정(2곳, feature-0003)**: `src/static/app.js`·`src/static/share.js` `buildDiffRows` context 분기에 `/^\s*(\d+)→/` 누출 정규화(prefix 제거 + 실제 줄번호로 gutter 동기화).
 - [x] **단위 검증**: 신규 `tests/verify_diff_lineno_leak.mjs` **30/30 PASS**(Node18 순수) — 실 누출 블록 정규화·실 줄번호(45/46/50) 복원·clean diff(@@ 헌크·1-based) 무변경(회귀 0)·app.js↔share.js 정합.
 - [ ] **PB-0008 Windows-browser 시각 검증**(누출 diff 가 든 메시지가 깨끗하게 렌더되는지) — WSL worktree 라 미실행, **배포 후 사용자/실측 확인 권장**(frontend render-only, 선례 동일).
-- [ ] verify-completion --pre-commit → commit → main 통합 → web 재빌드·재기동(deploy_scope: included, **배포 confirm 후**) → 라이브 검증(healthz·서빙 자산 fix 반영).
+- [x] verify-completion --pre-commit PASS(원본 세션) → commit `d75152f` → push → **PR #467 머지(main 5942a25)** → cycle-finalize(worktree/브랜치 정리) → **web 이미지 재빌드·재기동(deploy_scope: included)**. 라이브 검증: `GET /healthz` git_commit=`5942a25`(live)·repo-web-1 healthy · 서빙 `index.html` `app.js?v=20260629e-diff-lineno-leak` · 서빙 `app.js` **byte-identical** to main(fix live). (원본 세션 session-limit 중단 → `/_template:resume` 로 landing+배포 완수.)
 - Deferred(cross-ref): agent_core 프롬프트 강화(feature-0002, Major)는 별도 — 렌더러 봉인이 누출 비가시화하므로 우선순위 낮음.

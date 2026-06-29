@@ -5059,3 +5059,13 @@ source_of_truth: true
 - 분리 표기(§정직): 코드/테스트로 "렌더러가 누출 prefix 를 떼고 정상 diff 를 만든다" 증명됨. "실제 사용자 화면에서 소멸" 은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
 - Deferred(cross-ref, 이번 batch 제외): agent_core 프롬프트 강화(feature-0002, Major·core LLM 경로)는 단일-feature 응집·저위험 유지를 위해 별도. 렌더러 봉인이 누출을 비가시화하므로 우선순위 낮음.
 - Rollback: app.js·share.js `buildDiffRows` 의 `leakedNo` 분기 제거(기존 단일 `return ... stripDiffMarker(line)` 복원) + `tests/verify_diff_lineno_leak.mjs` 삭제.
+
+## CHG-20260629T172122-diff-lineno-prefix-leak-deploy (TASK-20260629T172122-diff-lineno-prefix-leak — landing + web 재배포 + 라이브 검증, 코드 무변경 / post-deploy doc-record)
+- Date: 2026-06-29
+- Origin: `/_template:resume` — 원본 `/_dqa:conversation_audit` 세션이 commit `d75152f` 직후 session-limit 으로 중단된 작업을 추적·재개해 landing+배포 완수.
+- Summary: 코드/스키마 무변경. CHG-20260629T172122-diff-lineno-prefix-leak 의 landing(push·PR·merge)·배포·라이브 검증만 기록.
+- git 흐름: commit `d75152f` push → PR #467 → `cycle-finalize --pr 467`(gh pr merge --merge, main `60c0d45`→`5942a25`, clean FF·충돌 0, worktree+local+remote 브랜치 정리).
+- Deploy (deploy_scope: included): frontend-only → **web 이미지만** 재빌드(`make dc-build SERVICE=web` GIT_COMMIT=`5942a25` 각인)·재기동(`docker compose up -d --no-deps --force-recreate web`, override HTTPS 종단 유지). backend/ask-worker 무변경 → 미재빌드.
+- 라이브 검증: `GET /healthz`(HTTPS) git_commit=`5942a25`(live, baseline `f021f3d`→`5942a25`)·repo-web-1 healthy. 서빙 `index.html` `app.js?v=20260629e-diff-lineno-leak`. 서빙 `app.js` **byte-identical** to main(`diff -q` IDENTICAL — fix live). 단위 테스트 30/30 PASS.
+- Impact: 비파괴(doc-record). 사용자 화면 실 소멸 시각검증(PB-0008 Windows-browser)은 WSL 미실행 — 사용자 확인 권장.
+- Rollback: 해당 없음(doc-only). 배포 롤백 시 이전 web 이미지로 재기동.

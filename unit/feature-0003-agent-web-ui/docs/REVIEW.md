@@ -4157,3 +4157,12 @@ source_of_truth: true
   5. **H5 app.js↔share.js 정합 — REFUTED**: regex·로직 byte-동일. 공유 대화 뷰 정합 100%.
 - 회귀 가드: `tests/verify_diff_lineno_leak.mjs` 30/30 PASS(실 누출 블록 정규화·실 줄번호 복원·clean diff 무변경·양쪽 정합). `node --check` app.js·share.js PASS.
 - 라이브 실측 분리(§정직): 코드/테스트는 "렌더러가 누출 prefix 를 떼고 정상 diff 생성" 증명. "실제 사용자 화면 소멸" 은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(미수행 표기).
+
+## REV-20260629T172122-diff-lineno-prefix-leak-deploy [SKIPPED:deploy-record-only — 코드 적대검증은 REV-20260629T172122-diff-lineno-prefix-leak SUBAGENT correctness 패널서 완료] 배포 완료 + 라이브 검증
+- Related Change: CHG-20260629T172122-diff-lineno-prefix-leak / TASK-20260629T172122-diff-lineno-prefix-leak.
+- Panel skip 사유: 본 엔트리는 landing(push·PR·merge)·web 재배포·라이브 검증 기록뿐(코드 무변경). 코드 적대 검증은 선행 `[SUBAGENT:adversarial-correctness]`(5가설 REFUTED, BLOCKING 0)에서 완료.
+- deploy_scope 승인 근거(Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`(2026-06-11 사용자 결정 — cycle-final 후 web 재배포 사전 승인). 첫 배포 직전 "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료. frontend-only(app.js·share.js·index.html·share.html cache-buster) → **web 이미지만** 재빌드·재기동(`make dc-build SERVICE=web` GIT_COMMIT 각인 + `docker compose up -d --no-deps --force-recreate web`, override entrypoint=HTTPS 종단 유지). backend/ask-worker 무변경 → 미재빌드.
+- git 흐름: 원본 세션(`/_dqa:conversation_audit`)이 session-limit 으로 commit `d75152f` 직후 중단 → `/_template:resume` 가 push → PR #467 생성(confirm) → `cycle-finalize --pr 467`(gh pr merge --merge → main `60c0d45`→`5942a25`, base drift 0·충돌 0·clean FF, worktree+local+remote 브랜치 정리) 로 landing 완수.
+- 라이브 검증: `GET /healthz`(HTTPS) → `{"status":"ok","git_commit":"5942a25…","mysql_ok":true,"pg_ok":true}`(repo-web-1 healthy, baseline `f021f3d`→`5942a25`). 서빙 `index.html` 가 `app.js?v=20260629e-diff-lineno-leak` 참조. 서빙 `app.js` 가 main repo app.js 와 **byte-identical**(`diff -q` IDENTICAL — fix live). 단위 테스트 30/30 PASS(배포본 동일 코드).
+- PB-0008 Windows-browser 실 화면 시각검증(누출 diff 메시지 깨끗 렌더)은 WSL 라 미실행 — **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
+- 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, 60c0d45/8a35eee 동일 패턴 — 직접 main commit).
