@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T112000-glossary-conv-autoreg-deploy [DEPLOY-RECORD] — 용어사전 대화 자율등록 배포 완료 (TASK-20260629-glossary-conv-autoreg)
+- Date: 2026-06-29. 배포 승인 근거: 사용자 AskUserQuestion "지금 배포"(라이브 스키마 변경 동반이라 deploy_scope:included 와 전역 deploy-confirm 정책 교차 확인 후 명시 승인). FIRST_REQUEST 정책상 승인 근거 기록.
+- 실행: ① `repo-web`·`repo-ask-worker`·`repo-memory-init` 이미지 재빌드(공유 Dockerfile) → ② `memory-init` 재실행(`agent_core.py --init-memory` → `_ensure_pg_schema()` 가 agent_kb_schema.sql 0023 미러 idempotent 적용, exit 0 "schema 적용 완료") → ③ `web`+`ask-worker` --force-recreate(둘 다 healthy).
+- 검증: 라이브 PG(`agent_kb`) — kb_glossary.role_key/source 컬럼·glossary_feedback·glossary_relations 테이블·ux_kb_glossary_scope_role_term 제약 전부 present. 런타임 `web.app`: kb.glossary.curate 권한 + 신규 5 라우트 등록 + 코어 함수(auto_promote_or_queue·_feedback_status 등) present. web/ask-worker 부팅 로그 에러 0.
+- Cross-ref: REV-20260629T103000-glossary-conv-autoreg / feature-0002 CHG-20260629T110000-glossary-autoreg-bootstrap-sql.
+
 ## REV-20260629T022055-feedback-id-space [SKIPPED:h5b-direct-closure-of-prior-adversarial-finding-self-review] — 피드백 고유성 키에 id_space 추가 (TASK-20260629T022055-feedback-id-space, Major §12.3)
 - Date: 2026-06-29. 선행 REV-20260629T014345-feedback-unique-vote 의 적대 backend 리뷰가 **CONFIRMED→수용(watch-item)** 한 H5(b)(두 id 공간 모호성)를 사용자 요청으로 마저 해소. 본 cycle 은 그 한정 결함의 직접 수정이라 full 적대 패널 대신 self-review + 회귀 테스트로 종결(설계가 이미 H5(b) 분석에서 도출됨).
 - 결함(H5(b) 재기술): `message.id` 가 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 온다(숫자 겹침). 0021 의 (created_by, message_id) 키는 cross-space 에서 (a) DB 충돌(다른 답변 같은 키 → UPSERT 가 남의 투표 덮음) (b) wrong-bubble 복원 가능.
