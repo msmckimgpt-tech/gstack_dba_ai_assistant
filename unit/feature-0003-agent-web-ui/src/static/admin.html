@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260629-metadata-bs-flexclip" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260629-metadata-bs-paging" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -639,6 +639,13 @@
               <button type="button" class="btn-secondary admin-meta-bs-expandall" id="metadataBootstrapExpandAll">모두 펼치기</button>
             </div>
             <div class="admin-meta-bootstrap-result" id="metadataBootstrapResult"></div>
+            <!-- metadata-bs-paging: 대규모 스키마 세로 스크롤 고정 — 결과를 페이지(30개/쪽)로 분할.
+                 페이지가 1쪽뿐이면 admin.js 가 숨김. 가시성은 display 토글이라 저장·AI 일괄은 전체 수집. -->
+            <div class="admin-meta-bs-pager" id="metadataBootstrapPager" style="display:none">
+              <button type="button" class="btn-secondary admin-meta-bs-page-btn" id="metadataBootstrapPagePrev" aria-label="이전 페이지">‹ 이전</button>
+              <span class="admin-meta-bs-page-label" id="metadataBootstrapPageLabel" aria-live="polite"></span>
+              <button type="button" class="btn-secondary admin-meta-bs-page-btn" id="metadataBootstrapPageNext" aria-label="다음 페이지">다음 ›</button>
+            </div>
             <div class="admin-meta-bootstrap-actions" id="metadataBootstrapSaveActions" style="display:none">
               <!-- AI 일괄 자동완성 — 빈 설명 입력란을 AI 가 채움(검토 후 저장). source='bootstrap' 저장 흐름 그대로. -->
               <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataBootstrapAiBtn">✨ AI 로 설명 일괄 생성</button>
@@ -750,7 +757,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260629-glossary-role-fieldname-fix"></script>
+  <script src="/static/admin.js?v=20260629-metadata-bs-paging"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260629b-rn-0629"></script>

@@ -2349,6 +2349,8 @@ adminState.metadata = {
     tables: [],         // {schema_name, table_name, columns:[{column_name, data_type}]}
     loading: false,
     saving: false,
+    page: 0,            // metadata-bs-paging: 현재 페이지(0-base). 페이징은 "가시성 윈도우"라
+                        //   모든 블록은 DOM 유지(저장·AI 일괄은 전체 DOM 수집) — display 토글만.
   },
 };
 
@@ -3446,6 +3448,11 @@ async function _metaRemoveRelation(relationId, termId, listWrap) {
  *       사람이 description 입력 → 저장 시 tables/columns POST(각 행). 골격은 미영속 — 저장 전까지 DB 무반영.
  * 권한 게이트: kb.ingest.manual(서브뷰가 이미 게이트됨). XSS: 모든 식별자 textContent/value 로만 삽입. */
 
+// metadata-bs-paging: 페이지당 테이블 블록 수. 대규모 스키마(수백 테이블)에서 접힌 한 줄
+//   헤더라도 전부 렌더하면 pane(overflow-y:auto) 세로가 무한 확장된다. 페이징으로 가시 블록을
+//   한 페이지로 제한해 스크롤 길이를 고정한다(필터와 동일한 display 토글 — DOM 은 전체 보존).
+const META_BS_PAGE_SIZE = 30;
+
 // 현재 서브탭(tables/columns)에 한해 부트스트랩 패널을 노출. 진입 시 DS 드롭다운 채움.
 function _metaSyncBootstrapVisibility() {
   const panel = document.getElementById("metadataBootstrap");
@@ -3506,17 +3513,32 @@ function _metaBindBootstrap() {
     aiBtn.dataset.bound = "1";
     aiBtn.addEventListener("click", () => _metaBootstrapAiFill(aiBtn));
   }
-  // metadata-bs-collapse: 테이블명 검색 필터.
+  // metadata-bs-collapse: 테이블명 검색 필터. 검색어 변경은 결과 부분집합을 바꾸므로
+  //   metadata-bs-paging: 페이지를 1쪽으로 리셋한 뒤 뷰 재계산.
   const search = document.getElementById("metadataBootstrapSearch");
   if (search && !search.dataset.bound) {
     search.dataset.bound = "1";
-    search.addEventListener("input", () => _metaBootstrapApplyFilter());
+    search.addEventListener("input", () => {
+      adminState.metadata.bootstrap.page = 0;
+      _metaBootstrapApplyFilter();
+    });
   }
   // metadata-bs-collapse: 모두 펼치기/접기.
   const expandAll = document.getElementById("metadataBootstrapExpandAll");
   if (expandAll && !expandAll.dataset.bound) {
     expandAll.dataset.bound = "1";
     expandAll.addEventListener("click", () => _metaBootstrapToggleAll());
+  }
+  // metadata-bs-paging: 이전/다음 페이지. 페이지 변경 후 뷰 재계산 + 결과 상단으로 스크롤.
+  const pagePrev = document.getElementById("metadataBootstrapPagePrev");
+  if (pagePrev && !pagePrev.dataset.bound) {
+    pagePrev.dataset.bound = "1";
+    pagePrev.addEventListener("click", () => _metaBootstrapGoPage(-1));
+  }
+  const pageNext = document.getElementById("metadataBootstrapPageNext");
+  if (pageNext && !pageNext.dataset.bound) {
+    pageNext.dataset.bound = "1";
+    pageNext.addEventListener("click", () => _metaBootstrapGoPage(1));
   }
 }
 
@@ -3649,6 +3671,7 @@ function _metaBootstrapRenderResult() {
   const wrap = document.getElementById("metadataBootstrapResult");
   const saveActions = document.getElementById("metadataBootstrapSaveActions");
   const filterBar = document.getElementById("metadataBootstrapFilterBar");
+  const pager = document.getElementById("metadataBootstrapPager");  // metadata-bs-paging
   if (!wrap) return;
   wrap.replaceChildren();
   const bs = adminState.metadata.bootstrap;
@@ -3657,6 +3680,7 @@ function _metaBootstrapRenderResult() {
   if (bs.loading) {
     if (saveActions) saveActions.style.display = "none";
     if (filterBar) filterBar.style.display = "none";
+    if (pager) pager.style.display = "none";
     const l = document.createElement("div");
     l.className = "admin-list-empty";
     l.textContent = "로딩 중…";
@@ -3666,6 +3690,7 @@ function _metaBootstrapRenderResult() {
   if (!bs.tables.length) {
     if (saveActions) saveActions.style.display = "none";
     if (filterBar) filterBar.style.display = "none";
+    if (pager) pager.style.display = "none";
     return;
   }
   for (const t of bs.tables) {
@@ -3742,11 +3767,12 @@ function _metaBootstrapRenderResult() {
     wrap.appendChild(block);
     _metaBootstrapUpdateHint(block, mode);
   }
-  // 검색/펼치기 바 초기화(매 fetch 마다 검색어·펼침상태 리셋).
+  // 검색/펼치기 바 초기화(매 fetch 마다 검색어·펼침상태·페이지 리셋).
   if (filterBar) {
     filterBar.style.display = "";
     const search = document.getElementById("metadataBootstrapSearch");
     if (search) search.value = "";
+    bs.page = 0;  // metadata-bs-paging: 새 골격은 항상 1쪽부터.
     _metaBootstrapSyncExpandAllLabel();  // 전부 접힌 상태 → "모두 펼치기"
     _metaBootstrapApplyFilter();
   }
@@ -3802,7 +3828,9 @@ function _metaBootstrapRefreshAllHints(mode) {
   wrap.querySelectorAll(".admin-meta-bs-table").forEach((b) => _metaBootstrapUpdateHint(b, mode));
 }
 
-// 검색 필터 — 이름 부분일치(대소문자 무시)로 블록 표시/숨김. 숨겨도 DOM 보존(저장 시 전체 수집).
+// 검색 필터 + 페이징(metadata-bs-paging) — 이름 부분일치(대소문자 무시)로 매칭 블록을 추리고,
+// 그중 현재 페이지 윈도우(META_BS_PAGE_SIZE개)만 노출한다. 숨겨도 DOM 보존(저장·AI 일괄은
+// 전체 DOM 수집 — 가시성은 순수 display 토글). 대규모 스키마에서 세로 스크롤을 1페이지로 고정.
 function _metaBootstrapApplyFilter() {
   const wrap = document.getElementById("metadataBootstrapResult");
   if (!wrap) return;
@@ -3810,14 +3838,57 @@ function _metaBootstrapApplyFilter() {
   const count = document.getElementById("metadataBootstrapFilterCount");
   const q = (search ? search.value : "").trim().toLowerCase();
   const blocks = wrap.querySelectorAll(".admin-meta-bs-table");
-  let shown = 0;
+  const bs = adminState.metadata.bootstrap;
+  // 1) 필터 매칭 — 검색어 부분일치한 블록만 페이징 대상. 비매칭은 즉시 숨김.
+  const matched = [];
   blocks.forEach((b) => {
     const nm = [(b.dataset.schema || ""), (b.dataset.table || "")].filter(Boolean).join(".").toLowerCase();
-    const match = !q || nm.includes(q);
-    b.style.display = match ? "" : "none";
-    if (match) shown += 1;
+    if (!q || nm.includes(q)) matched.push(b);
+    else b.style.display = "none";
   });
-  if (count) count.textContent = q ? `표시 ${shown} / 전체 ${blocks.length}` : `전체 ${blocks.length}`;
+  // 2) 페이지 클램프 — 매칭 수 기준(검색으로 결과가 줄면 현재 페이지가 범위 밖일 수 있음).
+  const total = matched.length;
+  const pageCount = Math.max(1, Math.ceil(total / META_BS_PAGE_SIZE));
+  bs.page = Math.min(Math.max(0, bs.page || 0), pageCount - 1);
+  const start = bs.page * META_BS_PAGE_SIZE;
+  const end = start + META_BS_PAGE_SIZE;
+  // 3) 가시성 — 매칭 블록 중 현재 페이지 윈도우만 노출(display 토글만 — DOM/입력값 보존).
+  matched.forEach((b, i) => { b.style.display = (i >= start && i < end) ? "" : "none"; });
+  // 4) 카운트 라벨 — 페이지 범위 + 전체. 검색 시 매칭/전체 함께 표기.
+  const from = total === 0 ? 0 : start + 1;
+  const to = Math.min(end, total);
+  if (count) {
+    count.textContent = q
+      ? `표시 ${from}–${to} / 검색 ${total}건 (전체 ${blocks.length})`
+      : `표시 ${from}–${to} / 전체 ${total}`;
+  }
+  // 5) 페이저 갱신(페이지 1쪽뿐이면 숨김).
+  _metaBootstrapRenderPager(pageCount);
+}
+
+// metadata-bs-paging: 페이지 이동(delta = -1/+1). 클램프·가시성·페이저 갱신은 ApplyFilter 가 수행.
+function _metaBootstrapGoPage(delta) {
+  const bs = adminState.metadata.bootstrap;
+  bs.page = (bs.page || 0) + delta;
+  _metaBootstrapApplyFilter();
+  // 페이지 전환 시 결과 영역 상단으로 — 긴 목록에서 위치 감 유지.
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (wrap && typeof wrap.scrollIntoView === "function") wrap.scrollIntoView({ block: "nearest" });
+}
+
+// metadata-bs-paging: 페이저 컨트롤 갱신 — 라벨/이전·다음 disabled. 1페이지뿐이면 바 자체 숨김.
+function _metaBootstrapRenderPager(pageCount) {
+  const bar = document.getElementById("metadataBootstrapPager");
+  if (!bar) return;
+  const bs = adminState.metadata.bootstrap;
+  if (!pageCount || pageCount <= 1) { bar.style.display = "none"; return; }
+  bar.style.display = "";
+  const label = document.getElementById("metadataBootstrapPageLabel");
+  if (label) label.textContent = `페이지 ${bs.page + 1} / ${pageCount}`;
+  const prev = document.getElementById("metadataBootstrapPagePrev");
+  const next = document.getElementById("metadataBootstrapPageNext");
+  if (prev) prev.disabled = bs.page <= 0;
+  if (next) next.disabled = bs.page >= pageCount - 1;
 }
 
 // 모두 펼치기 ↔ 모두 접기 토글.

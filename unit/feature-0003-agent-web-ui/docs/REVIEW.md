@@ -4182,3 +4182,15 @@ source_of_truth: true
 - 라이브 검증: `GET /healthz`(HTTPS) → `{"status":"ok","git_commit":"5942a25…","mysql_ok":true,"pg_ok":true}`(repo-web-1 healthy, baseline `f021f3d`→`5942a25`). 서빙 `index.html` 가 `app.js?v=20260629e-diff-lineno-leak` 참조. 서빙 `app.js` 가 main repo app.js 와 **byte-identical**(`diff -q` IDENTICAL — fix live). 단위 테스트 30/30 PASS(배포본 동일 코드).
 - PB-0008 Windows-browser 실 화면 시각검증(누출 diff 메시지 깨끗 렌더)은 WSL 라 미실행 — **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
 - 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, 60c0d45/8a35eee 동일 패턴 — 직접 main commit).
+
+## REV-20260629T184726-metadata-bs-paging [SUBAGENT:adversarial-correctness] (TASK-20260629T184726-metadata-bs-paging — 스키마 골격 가져오기 결과 페이지네이션 + 여백 압축, Minor §12.3)
+- Trigger(§18.8): UI/레이아웃(부트스트랩 결과 렌더) + frontend JS 동작 변경 → correctness/regression 렌즈(`ux/qa` 계열). 대상: `static/admin.js`(`_metaBootstrapApplyFilter` 재작성 + `_metaBootstrapGoPage`/`_metaBootstrapRenderPager` 신설 + `META_BS_PAGE_SIZE`·`bootstrap.page`)·`static/styles.css`(여백 압축+페이저+sticky)·`static/admin.html`(페이저 바+cache-buster). backend/RBAC/스키마/LLM 경로 0.
+- 적대 리뷰 5가설(저장/AI일괄 off-page 유실·필터·페이징 인덱싱·클램프/라벨 off-by-one·펼치기 display race·stale/null throw) → **VERDICT: SAFE (BLOCKING 0)**. `node --check admin.js` PASS.
+  1. **H1 저장/AI일괄 off-page 유실 — REFUTED**: 페이징은 `block.style.display` 인라인 토글만(유일 block-level writer). 수집은 `querySelectorAll(".admin-meta-bs-table")` 전체 순회(`display:none` 도 반환) — `_metaBootstrapSave`·`_metaBootstrapApplyDescriptions` 전체 DOM, `_metaBootstrapAiFill` 은 데이터배열 `bs.tables` 기반(페이징 무관). off-page 입력 보존. 불변식 1 ✓.
+  2. **H2 필터·페이징 합성 — REFUTED**: 페이징은 `matched[]`(필터 통과분) 위에서만. 검색 변경·fetch 시 page=0 리셋 + 매 호출 `Math.min(Math.max(0,page),pageCount-1)` 클램프. 1000건 page=3→검색 5건 축소 시 page 0 클램프, 빈 화면 없음.
+  3. **H3 클램프/라벨 off-by-one — REFUTED**: 11 경계 케이스 시뮬 정확(0건·30건 pager숨김·31건 마지막·90건 stale page=99→2 클램프·음수 page→0). `from=total===0?0:start+1`, `to=min(end,total)` 정합.
+  4. **H4 펼치기 display race — REFUTED**: 두 가시성 레이어 직교 — 페이지/필터=블록 인라인 `display`, 펼치기=`is-collapsed` 클래스(자식 본문만 제어). toggle 함수는 인라인 display 미접촉. off-page "모두 펼치기" 해도 블록 `display:none` 유지.
+  5. **H5 stale/null throw — REFUTED**: `replaceChildren()`→page=0 리셋→ApplyFilter 순서로 stale 차단. 모든 element 참조 null-guard. 빈/로딩 분기 pager 숨김. `scrollIntoView` typeof 가드.
+- 회귀 가드: `tests/verify_metadata_bs_paging.mjs` **32/32 PASS**(Node18+jsdom) — [A] 정적(상수·윈도잉·저장/AI 전체수집 불변식·페이저 id/클래스·cache-buster) + [B] 행위(70블록 30/쪽 윈도잉·마지막 페이지 잔여·page 999 클램프·검색 합성·≤30 페이저숨김·전체 블록 DOM 보존). 기존 `verify_conv_entry_defaults.mjs` 20/20 무회귀.
+- NIT(적용함): 패널이 "페이저가 결과 wrap 하단이라 한 페이지 전부 펼치면 스크롤 하단에 묻힘"을 지적(차단 아님). 사용자 스크롤 불만과 직결되어 `.admin-meta-bs-pager` 에 `position:sticky; bottom:0` 적용(pane 하단 고정, 이전/다음 항상 도달).
+- 라이브 실측 분리(§정직): `node --check`·id/클래스 정합·jsdom 행위·적대 패널로 "페이징=가시성 윈도우, 저장/AI 전체 수집 불변식 유지, 클램프·합성 정확" 코드 검증. "실 사용자 화면에서 세로 스크롤 고정·여백 축소·페이저 동작 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).

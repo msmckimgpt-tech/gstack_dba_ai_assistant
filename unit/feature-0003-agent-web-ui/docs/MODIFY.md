@@ -5084,3 +5084,16 @@ source_of_truth: true
 - 라이브 검증: `GET /healthz`(HTTPS) git_commit=`5942a25`(live, baseline `f021f3d`→`5942a25`)·repo-web-1 healthy. 서빙 `index.html` `app.js?v=20260629e-diff-lineno-leak`. 서빙 `app.js` **byte-identical** to main(`diff -q` IDENTICAL — fix live). 단위 테스트 30/30 PASS.
 - Impact: 비파괴(doc-record). 사용자 화면 실 소멸 시각검증(PB-0008 Windows-browser)은 WSL 미실행 — 사용자 확인 권장.
 - Rollback: 해당 없음(doc-only). 배포 롤백 시 이전 web 이미지로 재기동.
+
+## CHG-20260629T184726-metadata-bs-paging (TASK-20260629T184726-metadata-bs-paging — 스키마 골격 가져오기 결과 페이지네이션 + 여백 압축, Minor §12.3 — frontend render-only, backend/스키마/RBAC/LLM 경로 무변경)
+- Date: 2026-06-29
+- Origin: `/_template:entry` arg-given. 사용자 보고("테이블 설명 AI 자동완성 및 UI 버그 수정" 작업 중): 관리 콘솔 > 메타데이터 > 테이블 설명 > "스키마 골격 가져오기" — ① 테이블 多 시 세로 스크롤 과길이(페이징 필요) ② 여백 과다.
+- Summary: 부트스트랩 골격 결과를 페이지(30개/쪽)로 분할해 대규모 스키마에서도 pane 세로 스크롤을 1페이지로 고정. 검색 필터와 합성(필터된 부분집합 위에서 페이징). 결과 행/컨트롤 영역 여백 압축.
+- Root cause: 직전 `metadata-bs-collapse`(접힘 헤더+검색+모두펼치기) + `metadata-table-desc-fix`(내부 max-height 스크롤 박스 제거 → pane `overflow-y:auto` 위임)로 결과가 **테이블 수에 비례해 무한 세로 확장**. 접힌 한 줄 헤더라도 수백 개면 스크롤 과길이 — 페이징 레이어 부재가 근본. (내부 max-height 재도입은 그 fix 가 적발한 이중 스크롤/잘림 회귀를 되살리므로 금지 → 페이징이 올바른 대체.)
+- Files:
+  - `src/static/admin.js` — 상수 `META_BS_PAGE_SIZE=30`; `adminState.metadata.bootstrap.page` 상태. `_metaBootstrapApplyFilter` 재작성(필터 매칭 부분집합 → 현재 페이지 윈도우만 `display` 노출 + 카운트 라벨 페이지 범위화 + `_metaBootstrapRenderPager` 호출). 신규 `_metaBootstrapGoPage`(delta 이동·클램프 위임·scrollIntoView)·`_metaBootstrapRenderPager`(라벨/이전·다음 disabled, 1페이지뿐이면 바 숨김). `_metaBindBootstrap` 에 prev/next 바인딩 + 검색 input 에 page=0 리셋. `_metaBootstrapRenderResult` 가 fetch마다 page=0 리셋 + loading/빈 결과 분기에서 페이저 숨김.
+  - `src/static/styles.css` — 컨트롤 영역(note/controls/status) 세로 여백 축소, 결과 gap `4px→3px`, 헤더 padding `8px 12px→6px 10px`, 본문 `0 12px 10px→0 10px 8px`, 컬럼 행 `4px 0→3px 0`. 페이저 스타일 `.admin-meta-bs-pager`/`.admin-meta-bs-page-btn`(disabled opacity)/`.admin-meta-bs-page-label` 신설.
+  - `src/static/admin.html` — 결과 div↔저장 액션 사이에 `metadataBootstrapPager` 바(prev/`metadataBootstrapPageLabel`/next) 추가. cache-buster 2건 bump: `styles.css?v=20260629-metadata-bs-flexclip`→`?v=20260629-metadata-bs-paging`, `admin.js?v=20260629-glossary-role-fieldname-fix`→`?v=20260629-metadata-bs-paging`(정적 자산 전파 — 본 프로젝트 반복 회귀 벡터).
+- Impact: 비파괴. backend/스키마/마이그/RBAC/credential/LLM 경로 무변경. **불변식 보존**: 가시성은 순수 `display` 토글 — 모든 테이블 블록은 항상 DOM 유지. 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapAiFill`/`_metaBootstrapApplyDescriptions`)이 `querySelectorAll(".admin-meta-bs-table")` 로 전체 DOM 수집하는 로직 무변경 → off-page/비매칭 블록 입력값도 저장·AI채움(blast radius 0). 테이블 ≤30개면 페이저 숨김 = 기존 동작 동일.
+- 분리 표기(§정직): `node --check`·id/클래스 정합·적대 패널로 "페이징이 가시성 윈도우이며 저장/AI 전체 수집 불변식 유지" 코드 검증. "실제 사용자 화면에서 스크롤 고정·여백 축소 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: admin.js 의 페이징 추가분(상수·page 상태·3 신규/재작성 함수·바인딩) 제거 + `_metaBootstrapApplyFilter` 를 단순 필터 버전으로 복원 + styles.css 여백/페이저 hunk 복원 + admin.html 페이저 바 제거 + cache-buster 복원.

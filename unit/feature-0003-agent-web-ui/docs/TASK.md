@@ -4928,3 +4928,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] **PB-0008 Windows-browser 시각 검증**(누출 diff 가 든 메시지가 깨끗하게 렌더되는지) — WSL worktree 라 미실행, **배포 후 사용자/실측 확인 권장**(frontend render-only, 선례 동일).
 - [x] verify-completion --pre-commit PASS(원본 세션) → commit `d75152f` → push → **PR #467 머지(main 5942a25)** → cycle-finalize(worktree/브랜치 정리) → **web 이미지 재빌드·재기동(deploy_scope: included)**. 라이브 검증: `GET /healthz` git_commit=`5942a25`(live)·repo-web-1 healthy · 서빙 `index.html` `app.js?v=20260629e-diff-lineno-leak` · 서빙 `app.js` **byte-identical** to main(fix live). (원본 세션 session-limit 중단 → `/_template:resume` 로 landing+배포 완수.)
 - Deferred(cross-ref): agent_core 프롬프트 강화(feature-0002, Major)는 별도 — 렌더러 봉인이 누출 비가시화하므로 우선순위 낮음.
+
+### TASK-20260629T184726-metadata-bs-paging — 스키마 골격 가져오기 결과 페이지네이션 + 여백 압축 (Minor §12.3, frontend-only, metadata-bs-collapse 후속, 2026-06-29)
+- 트리거: `/_template:entry` arg-given. 사용자 보고(테이블 설명 AI 자동완성 및 UI 버그 수정 작업 중): 관리 콘솔 > 메타데이터 > 테이블 설명 > "스키마 골격 가져오기" — ① 탐색된 테이블이 많을 경우 세로 스크롤이 과도하게 늘어남(페이징 필요) ② 사용되지 않는 여백 과다.
+- 근본원인: 직전 `metadata-bs-collapse`(접힘 헤더+검색 필터+모두 펼치기/접기) + `metadata-table-desc-fix`(내부 max-height 스크롤 박스 제거, pane `overflow-y:auto` 에 위임)로 결과가 **테이블 수에 비례해 무한 세로 확장**. 접힌 한 줄 헤더라도 수백 개면 pane 스크롤이 과길어짐 — 페이징 레이어 부재가 근본.
+- [x] **admin.js — 페이징을 "가시성 윈도우" 레이어로 추가**: 상수 `META_BS_PAGE_SIZE=30`, `bootstrap.page` 상태. `_metaBootstrapApplyFilter` 를 필터+페이징 결합으로 재작성(매칭 부분집합 위에서 현재 페이지 윈도우만 `display` 노출). `_metaBootstrapGoPage`(이전/다음+scrollIntoView)·`_metaBootstrapRenderPager`(라벨/disabled, 1페이지뿐이면 숨김) 신설. fetch·검색 변경 시 page=0 리셋, pager 이동 시 클램프.
+- [x] **불변식 보존(핵심)**: 가시성은 순수 `display` 토글 — 모든 블록은 DOM 유지. 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapAiFill`/`_metaBootstrapApplyDescriptions`)의 `querySelectorAll(".admin-meta-bs-table")` 전체 수집 무변경 → off-page/비매칭 블록 입력값도 저장·AI채움.
+- [x] **styles.css — 여백 압축**: 컨트롤 영역(note `12px→8px 0 10px`·controls/status margin 축소), 결과 gap `4px→3px`, 헤더 padding `8px 12px→6px 10px`, 본문 `0 12px 10px→0 10px 8px`, 컬럼 행 `4px→3px`. 페이저 스타일(`.admin-meta-bs-pager/-page-btn/-page-label`) 신설.
+- [x] **admin.html**: 결과↔저장액션 사이 페이저 바(`metadataBootstrapPager`+prev/label/next) 추가 + cache-buster 2건 bump(`styles.css?v=`·`admin.js?v=` → `20260629-metadata-bs-paging`).
+- [x] **단위 검증**: `node --check admin.js` PASS · JS↔HTML id 정합(4 id)·CSS↔HTML 클래스 정합·cache-buster 양쪽 bump 확인. §18.8 적대 패널(SUBAGENT correctness) — 페이징이 DOM 전체 수집 불변식·필터 합성·클램프·toggle 충돌·stale 상태 5가설.
+- [ ] **PB-0008 Windows-browser 시각 검증**(대규모 스키마 fetch→페이저 노출·이전/다음·검색 합성·≤30개 시 페이저 숨김·여백 축소·저장/AI일괄 전체 수집) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
+- [ ] verify-completion --pre-commit PASS → commit → main merge → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지만) → healthz.

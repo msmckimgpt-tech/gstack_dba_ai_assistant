@@ -7996,17 +7996,18 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 }
 .admin-meta-bootstrap-toggle:hover { color: var(--primary); }
 .admin-meta-bootstrap-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
-.admin-meta-bootstrap-note { font-size: 12px; color: var(--text-muted); margin: 12px 0; line-height: 1.5; }
+/* metadata-bs-paging: 결과 위 컨트롤 영역(노트/셀렉터/상태) 세로 여백 압축 — 결과가 더 빨리 시작. */
+.admin-meta-bootstrap-note { font-size: 12px; color: var(--text-muted); margin: 8px 0 10px; line-height: 1.45; }
 .admin-meta-bootstrap-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .admin-meta-bootstrap-controls .admin-meta-field { flex: 1 1 200px; min-width: 160px; }
 .admin-meta-bootstrap-fetch { flex-shrink: 0; }
-.admin-meta-bootstrap-status { font-size: 12px; color: var(--text-muted); min-height: 16px; margin-bottom: 8px; }
+.admin-meta-bootstrap-status { font-size: 12px; color: var(--text-muted); min-height: 16px; margin-bottom: 6px; }
 .admin-meta-bootstrap-status.is-error { color: var(--danger, #dc2626); }
 /* metadata-table-desc-fix: 내부 max-height:460px 고정 스크롤 박스를 제거 — metadata pane 이 이미
    overflow-y:auto 라(styles.css 위 .admin-pane[data-admin-pane="metadata"]) 이중 스크롤이 되어
@@ -8029,8 +8030,35 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 }
 .admin-meta-bs-expandall { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
 
+/* metadata-bs-paging: 페이저 — 결과를 META_BS_PAGE_SIZE(=30)개/쪽으로 나눠 세로 스크롤을 고정.
+   admin.js 가 1페이지뿐이면 숨기고, 그 외엔 이전/다음 + "페이지 P / T" 라벨을 노출. */
+.admin-meta-bs-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+  /* metadata-bs-paging NIT(적대 패널): 한 페이지(30개)를 모두 펼치면 페이저가 스크롤 하단에 묻힌다.
+     pane(overflow-y:auto) 하단에 sticky 고정해 이전/다음을 항상 도달 가능하게 한다. */
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: 6px 0;
+  z-index: 1;
+}
+.admin-meta-bs-page-btn { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
+.admin-meta-bs-page-btn:disabled { opacity: 0.45; cursor: default; }
+.admin-meta-bs-page-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 84px;
+  text-align: center;
+}
+
 /* metadata-bs-collapse: 결과는 접힌 한 줄 행들의 조밀 스택(여백 최소화). gap 도 축소. */
-.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 4px; }
+.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 3px; }
 .admin-meta-bs-table {
   border: 1px solid var(--border);
   border-radius: var(--r-sm, 6px);
@@ -8043,7 +8071,7 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 12px;
+  padding: 6px 10px;  /* metadata-bs-paging: 행 높이 압축(여백 과다 해소) */
   text-align: left;
   background: transparent;
   border: none;
@@ -8071,13 +8099,13 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 }
 .admin-meta-bs-hint.is-filled { color: var(--primary); }
 /* 본문 — 접힘(.is-collapsed) 시 숨김(시각 토글, 입력은 DOM 보존). */
-.admin-meta-bs-body { padding: 0 12px 10px; }
+.admin-meta-bs-body { padding: 0 10px 8px; }  /* metadata-bs-paging: 본문 여백 압축 */
 .admin-meta-bs-table.is-collapsed .admin-meta-bs-body { display: none; }
 .admin-meta-bs-col {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 3px 0;  /* metadata-bs-paging: 컬럼 행 여백 압축 */
   border-top: 1px solid var(--border);
 }
 .admin-meta-bs-col:first-of-type { border-top: none; }
