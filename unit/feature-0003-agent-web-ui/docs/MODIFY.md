@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T041724-doc-sync-rn-0629 (TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
+- 배경: 직전 릴리즈노트 sync(63874f2 @ 06-29 08:35) 이후 main 병합된 06-29 user-facing 변경(40c0de0 용어사전 대화 자율등록 · 284e75a 용어 검토 큐 중첩 · 31aa67a+8c605b8 답변 평가 고유성)이 릴리즈노트 미반영(drift).
+- 내용:
+  - `static/release-notes-data.js`: releases head 에 신규 '2026-06-29' 블록 prepend(3항목) — [new admin] 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결) · [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동 · [fixed work] 답변 평가가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능). generated 2026-06-29 유지.
+  - `static/index.html`·`static/admin.html`: 릴리즈노트 cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`. app.js/styles.css 토큰 무변경.
+- 제외 결정(적대): 첨부 wrong-bubble(ec39a60)은 "정상 display 경로 동작 동일"(스키마/마이그·프론트 무변경, 드문 cross-space 엣지) → 사용자 체감 변화 0 이라 릴리즈노트 항목 미추가.
+- Why: 현실↔릴리즈노트 정합(사용자 노출 표면 최신화). 평이한 한국어·내부 비노출. 원천 코드(40c0de0/284e75a/31aa67a)는 별도 cycle 에서 이미 배포·검증됨 — 릴리즈노트 announcement 만 누락분.
+- Verification: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 3항목 + 머지 3건 1:1 대조.
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: '2026-06-29' 블록 + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.
+
 ## CHG-20260629T120711-attach-id-space (TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가, H5(b) follow-up 완결, Major §12.3 — feature-0003 단독, 스키마 마이그 없음)
 - Date: 2026-06-29. 선행 CHG-20260629T022055-feedback-id-space(피드백 레이어 H5(b) 해소)가 "잔여 — 별도 feature"로 명시한 **첨부 영속 레이어**(`_load_assistant_attachments_by_message`, message.id 키)를 동일 패턴으로 마저 완수. 사용자 요청("동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리"). 코드 계층만 변경 — DB 스키마/마이그 없음(MetaJson JSON 키로 id_space 보존).
 - 변경 파일:

@@ -1272,3 +1272,9 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
   - API: `GET/POST …/glossary/{term_id}/relations`, `DELETE …/glossary/relations/{relation_id}`(권한 kb.ingest.manual). audit: glossary.relation.create/delete.
 - 신규 권한 `kb.glossary.curate`(group=kb) — 검토 큐 검수자. admin seed 자동 보유, operator/sales/pending 미부여.
 - XSS: 검토 큐·역할·유사어 UI 의 사용자/LLM 데이터는 textContent/value 로만 삽입(innerHTML 미사용).
+
+## (doc-sync-rn-0629, 2026-06-29) 릴리즈노트 콘텐츠 — 용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리 06-29 블록 신설
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 releases head 에 신규 '2026-06-29' 블록(3항목) prepend: [new admin] 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결) · [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동 · [fixed work] 답변 평가(좋아요/별로예요)가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능). 40c0de0·284e75a·31aa67a 의 사용자 표면 announcement. generated 2026-06-29 유지.
+- 적대 제외: 첨부 wrong-bubble(ec39a60)은 정상 display 경로 동작 동일(드문 cross-space 엣지 하드닝)이라 사용자 체감 변화 0 → 항목 미추가.
+- 내부 구현·feature-id·테이블/함수명·role_key/검토 큐 엔드포인트/마이그 번호/id_space/message_id/wrong-bubble 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629-rn-0629`→`?v=20260629b-rn-0629` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d). CHG/REV-20260629T041724-doc-sync-rn-0629.

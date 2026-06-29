@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-29)
+- 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃). 직전 릴리즈노트 sync(63874f2 @ 2026-06-29 08:35, "ask-dedup 06-26 블록 합류") 이후 main 병합된 06-29 user-facing 변경이 릴리즈노트 미반영(drift) → `release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 prepend(generated 2026-06-29 유지).
+- [x] 대상 머지(3, 평이화·내부 비노출): [new admin] 용어사전 대화 자율등록 — 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결)(40c0de0); [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동(284e75a); [fixed work] 답변 평가(좋아요/별로예요)가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능)(31aa67a + 8c605b8 id_space 보강).
+- [x] 적대 결정 — 첨부 wrong-bubble(ec39a60) **항목 제외**: REPORT·커밋이 "정상 display 경로 동작 동일"(스키마/마이그·프론트·cache-buster 무변경) 명시, 드문 fork/마이그 cross-space 엣지 하드닝이라 사용자 체감 변화 0 → 보수적으로 미추가.
+- [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. 내부용어(role_key/검토 큐 엔드포인트/마이그 0021/0023/id_space/message_id/wrong-bubble/feature-id/테이블명) 누출 0.
+- [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 신설(3항목).
+- [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629-rn-0629`→`?v=20260629b-rn-0629` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘). verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
+
 ## TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가 — H5(b) wrong-bubble 의 첨부 레이어 완결 (follow-up, Major §12.3 — feature-0003 단독, 스키마 마이그 없음) — done
 - 출처: 사용자 요청 — "동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리해주세요." 선행 TASK-20260629T022055-feedback-id-space(REVIEW '잔여')가 별도 feature 로 미룬 첨부 레이어를 완수.
 - 문제(H5(b) 첨부 레이어): `_load_assistant_attachments_by_message` 가 MetaJson.message_id 단일 키로 그룹핑, `_attach_assistant_attachments` 가 history 메시지 `id` 단일 키로 매칭. message.id 는 표시 store(`agent_runtime.messages.id`)·core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).

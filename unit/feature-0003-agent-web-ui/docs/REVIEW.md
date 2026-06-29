@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T041724-doc-sync-rn-0629 [SKIPPED:non-policy-doc] — 릴리즈노트 06-29 블록 정합 + 캐시버스터 bump (TASK-20260629T041724-doc-sync-rn-0629, 비-정책 doc-only)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
+- 변경: `static/release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 3항목 prepend(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + `index.html`·`admin.html` cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`.
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 3항목 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터/응답계약 무영향. 원천 코드(40c0de0 glossary-conv-autoreg·284e75a glossary-review-nest·31aa67a feedback-unique-vote)는 각 cycle 에서 이미 적대 패널 + 라이브 검증·배포 완료 → 본 릴리즈노트 cycle 은 비-정책 doc 경량. 사실 정확성·평이화·비노출은 머지 3건 REPORT/diff 1:1 대조로 검증.
+- 적대 제외 판정: 첨부 wrong-bubble(ec39a60)은 REPORT·커밋이 "정상 display 경로 동작 동일"(스키마/마이그·프론트·cache-buster 무변경, 드문 fork/마이그 cross-space 엣지) 명시 → 사용자 체감 변화 0 이라 항목 미추가(보수적 결정).
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 3항목. 비-user-facing(내부/devops — OAuth 폴백 1d0ace4·b9335b5, conversation_audit persona 84f2e45, template v3.36.0 0f69e6d, web-router-modularization 99bffb1 behavior-neutral) 의도적 제외 확인.
+- Human Approval Needed: 아니오(자동 동기화).
+- Cross-ref: CHG-20260629T041724-doc-sync-rn-0629 / TASK-20260629T041724-doc-sync-rn-0629 / FUNCTION '릴리즈노트 콘텐츠 — 06-29 블록 신설' / 원천 머지 40c0de0·284e75a·31aa67a. META(STATUS·wiki)는 별도 commit/상위 루프 소관.
+
 ## REV-20260629T123000-glossary-review-nest-deploy [DEPLOY-RECORD] — 용어 검토 큐 IA 중첩 배포 완료 (TASK-20260629-glossary-review-nest)
 - Date: 2026-06-29. 프런트 전용(정적 자산) 변경 — deploy_scope:included(동일 admin 영역 직전 배포 사용자 승인 + 본 변경 프런트 전용·되돌리기 용이) 따라 web-only 재배포. 첫 배포 surface 는 본 세션 선행 cycle 에서 완료.
 - 실행: `repo-web` 이미지 재빌드(신규 admin.html/admin.js/styles.css baked) → web --force-recreate(healthy). memory-init/ask-worker 미touch(스키마·agent-core 무변경).
