@@ -1260,3 +1260,13 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 기존 '2026-06-26' 블록에 [fixed/work] 1항목 합류(items 1→2): "같은 질문이 드물게 두 번 처리되던 문제 수정"(답변 대기 중 연결이 잠깐 끊겨 재전송 시 중복 처리·답변 → 1회). 블록 summary 보강 + generated 2026-06-26→2026-06-29. 0818b0a·3595ea3(ask-dedup-idempotency)의 사용자 표면 announcement.
 - 내부 구현·feature-id·테이블/함수명·enqueue/dedup/NOT EXISTS/AmbiguousParameter/long-poll/502 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629-rn-0629` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d). CHG/REV-20260629T080501-doc-sync-rn-0629.
+
+## (TASK-20260629-glossary-conv-autoreg, 2026-06-29) 용어사전 대화 자율등록 — 역할 차원·검토 큐·유사어 참조 (web/UI, cross-cut 0002, ADR-20260629T101500)
+- **역할(role) 차원**: 「관리 콘솔 > 메타데이터 > 용어사전」 항목에 역할 귀속(role_key)이 생긴다. 폼의 "역할" select(공용='*' + 등록된 역할)로 역할별 비중복 namespace 에 등록하고, 목록은 역할/출처(자동등록·자동승급) 배지를 표시하며, 툴바 "역할" 필터로 역할별 조회한다. 같은 용어를 역할마다 독립 정의로 보유할 수 있다(UNIQUE(scope,role,term)). 같은 역할에 동일 용어 재등록은 409.
+  - API: `GET …/glossary?scope_key=&role_key=`(역할 필터), `POST/PUT …/glossary`(body.role_key, 미지정=공용 '*'), role_key 는 WebRoles.RoleKey ∪ '*' 만 허용(검증).
+- **대화 자율등록(검토 큐)**: assistant 답변에서 코어(feature-0002)가 용어 후보를 자동 추론해, 고신뢰도는 용어사전에 자동 등록(출처='자동')하고 저신뢰도는 검토 큐에 적재한다. 관리 콘솔 "용어 검토 큐" 서브탭(권한 `kb.glossary.curate`, pending 배지)에서 후보를 검토해 **승급**(용어사전 반영) 또는 **거부**(자동 등록분은 라이브 회수=되돌리기)한다. 거부된 용어는 재제안돼도 되살아나지 않는다.
+  - API: `GET …/glossary-feedback?status=`, `POST …/glossary-feedback/{id}/promote`, `POST …/glossary-feedback/{id}/reject`(권한 kb.glossary.curate). audit: glossary.feedback.promote/reject.
+- **유사어/참조**: 역할별로 용어가 분리돼 있어도, 유사 의미 용어를 교차 참조로 연결할 수 있다. 용어 목록의 "유사어" 패널에서 다른 용어를 선택해 유형(유사어/동의어/참고)으로 연결·해제한다(역할 경계 횡단 허용).
+  - API: `GET/POST …/glossary/{term_id}/relations`, `DELETE …/glossary/relations/{relation_id}`(권한 kb.ingest.manual). audit: glossary.relation.create/delete.
+- 신규 권한 `kb.glossary.curate`(group=kb) — 검토 큐 검수자. admin seed 자동 보유, operator/sales/pending 미부여.
+- XSS: 검토 큐·역할·유사어 UI 의 사용자/LLM 데이터는 textContent/value 로만 삽입(innerHTML 미사용).

@@ -33,6 +33,14 @@ source_of_truth: true
 - [x] 테스트: `test_sample_flywheel.py` 갱신(param 위치 + ON CONFLICT 단언) + 신규 1건(vote UPSERT 키), `test_sample_feedback_curation.py` 갱신(record 반환 id + message_id 전달 단언) → flywheel 15/15 · curation 15/15 PASS, 두 feature 전체 스위트 회귀 0(`test_share_redaction_invariant`는 컨테이너 전용 `web.app` import 라 로컬 한정 환경 실패, 본 변경 무관). `py_compile`(sample_feedback.py·app.py·0021) + `node --check`(app.js) PASS.
 - [ ] verify-completion --pre-commit → commit → main 병합·push → 배포(deploy_scope 판정).
 - Cross-ref: feature-0002 record_feedback UPSERT + alembic 0021 + MODIFY/REVIEW/MIGRATIONS 2026-06-29.
+## TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 + 역할 분리 + 유사어 참조 (Major §12.3, cross-feature 0002+0003, ADR-20260629T101500)
+- 출처: `/_template:entry` dispatch(2026-06-29). 요청: 「관리 콘솔 > 메타데이터 > 용어사전」이 사용자 대화로부터 assistant 판단 하에 자율 등록되도록 + ① 역할별 용어 비중복 ② 유사 의미 시 참조 가능.
+- 결정(AskUserQuestion): **하이브리드 자동승급**(고신뢰도 자동 등록·되돌리기 가능, 저신뢰도 검토 큐) + **기본 역할 귀속 = 공용('*')**. 위험 Major(DB 마이그레이션 + core/web/UI/tests 다중 파일). 거버넌스 충돌(기존 "자동학습 없음")은 검토 큐·되돌리기로 해소 → ADR-20260629T101500.
+- [x] **web 엔드포인트(app.py)**: glossary CRUD 에 role_key 검증(`_metadata_check_role_key`, WebRoles.RoleKey ∪ '*') + list ?role_key= 필터; 검토 큐 3종 `GET /api/admin/metadata/glossary-feedback`·`POST …/{id}/promote`·`POST …/{id}/reject`(권한 kb.glossary.curate); 유사어 3종 `GET/POST …/glossary/{id}/relations`·`DELETE …/glossary/relations/{id}`(권한 kb.ingest.manual). 신규 권한 `kb.glossary.curate`(group=kb, admin seed). audit: glossary.feedback.promote/reject·glossary.relation.create/delete.
+- [x] **관리 UI(admin.html/admin.js/styles.css)**: glossary 폼 역할 select(roleselect) + 목록 역할/출처 배지 + 툴바 역할 필터; 검토 큐 서브탭(`glossary-review`, pending 배지·상태필터·승급/되돌리기); 용어별 유사어 패널(목록/추가/삭제). XSS = textContent/value 만.
+- [x] **코어/마이그/hook = feature-0002**(cross-cut): TASK-20260629-glossary-conv-autoreg 참조.
+- [x] 테스트: 코어 `test_kb_glossary_enum.py` 19건(역할 read·record/auto-promote/reject/promote/relation SQL) + 웹 신규 `test_metadata_glossary_autoreg.py` 13건(권한·role 검증·큐·관계) + 기존 metadata 회귀(glossary_enum/autocomplete/phase2) 갱신 PASS + route_snapshot_p5b.json 6 신규 라우트 갱신. 전체 **1222 passed**(잔여 7 fail = `web.app` 컨테이너 레이아웃 의존, 본 변경 무관). ruff·py_compile·node --check·단일 alembic head PASS.
+- [ ] verify-completion --pre-commit → commit → main 동기화 (deploy_scope: included).
 
 ## TASK-20260626-ask-dedup-idempotency — assistant 요청이 2번 중복 전송/처리되는 결함 수정 (worker-mode enqueue 멱등화, Major §12.3 — /api/ask send/concurrency, cross-feature 0002+0003)
 - 출처: `/_template:entry` dispatch. 사용자 보고: "프로젝트 내 서비스에서 assistant 에게 요청을 보낼 때 2번 중복되어 전송." 명료화(AskUserQuestion): **요청도 2번·답변도 2번 처리 / 항상(첫 요청부터)**.

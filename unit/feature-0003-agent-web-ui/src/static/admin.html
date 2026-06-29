@@ -587,6 +587,9 @@
           <div class="admin-pane-actions">
             <label class="admin-meta-scope-label" for="metadataScopeSelect">데이터소스</label>
             <select id="metadataScopeSelect" class="admin-meta-scope-select" aria-label="메타데이터 스코프(데이터소스)"></select>
+            <!-- 용어사전 역할 필터(0021) — glossary 서브뷰에서만 admin.js 가 노출. 역할별 비중복 namespace 조회. -->
+            <label class="admin-meta-scope-label" for="metadataRoleFilter" id="metadataRoleFilterLabel" style="display:none">역할</label>
+            <select id="metadataRoleFilter" class="admin-meta-scope-select" aria-label="용어사전 역할 필터" style="display:none"></select>
             <span class="admin-list-count" id="metadataCount" aria-live="polite"></span>
             <button type="button" id="metadataRefreshBtn" class="btn-secondary">새로고침</button>
           </div>
@@ -600,6 +603,8 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="tables" role="tab">테이블 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
+          <!-- 용어사전 대화 자율등록 검토 큐(0021) — 권한 kb.glossary.curate. admin.js 가 권한별로 숨긴다. -->
+          <button type="button" class="admin-meta-subtab" data-meta-subtab="glossary-review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
         </div>
         <!-- 부트스트랩 패널 — 테이블/컬럼 서브뷰에서만 admin.js 가 노출(kb.ingest.manual). DS+스키마 골격을 가져와 설명 빈칸 채워 일괄 저장. -->
         <section class="admin-meta-bootstrap" id="metadataBootstrap" style="display:none" aria-label="스키마 골격 부트스트랩">

@@ -34,6 +34,12 @@ source_of_truth: true
 - 비변경: RBAC(대화 접근 게이트)·rate-limit(10/min)·audit(sample.feedback.submit)·scope 도출·승급/거부 endpoint 무변경. 엔드포인트 shape 는 body 에 optional `message_id` 추가뿐(하위호환 — 부재 시 기존 동작).
 - 검증: curation 15/15 PASS · `node --check app.js` · `py_compile app.py` PASS · 두 feature 전체 스위트 회귀 0.
 - Cross-ref: feature-0002 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## CHG-20260629-glossary-conv-autoreg (TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 web/UI, Major §12.3, cross-cut 0002+0003)
+- Date: 2026-06-29. 「관리 콘솔 > 메타데이터 > 용어사전」의 대화 자율등록·역할 분리·유사어 참조 web 경계 + 관리 UI. 코어/마이그/hook = feature-0002 동반 CHG.
+- app.py: ① glossary CRUD 에 role_key(공용 '*' 기본) 검증·필터 추가 + UNIQUE(scope,role,term) 409. ② 신규 권한 `kb.glossary.curate`(group=kb, admin seed). ③ 검토 큐 3 엔드포인트(`GET …/glossary-feedback`·`POST …/{id}/promote`·`POST …/{id}/reject`). ④ 유사어 3 엔드포인트(`GET/POST …/glossary/{id}/relations`·`DELETE …/glossary/relations/{id}`). audit: glossary.feedback.promote/reject·glossary.relation.create/delete.
+- admin.html/admin.js/styles.css: glossary 폼 역할 select·목록 역할/출처 배지·툴바 역할 필터·검토 큐 서브탭(pending 배지·승급/되돌리기)·용어별 유사어 패널. XSS=textContent/value.
+- route_snapshot_p5b.json: 신규 6 라우트 반영(golden 갱신). 테스트: 신규 `test_metadata_glossary_autoreg.py` 13 + 기존 metadata 회귀 갱신.
+- Cross-ref: feature-0002 CHG-20260629-glossary-conv-autoreg / REV-20260629T103000-glossary-conv-autoreg / ADR-20260629T101500.
 
 ## CHG-20260626T135945-ask-dedup-hotfix (TASK-20260626-ask-dedup-idempotency — 동일 cycle 라이브 PG 회귀 hotfix, Major §12.3, 정본 코드=feature-0002 ask_jobs.py)
 - Date: 2026-06-26. CHG-20260626-ask-dedup-idempotency 배포 검증 중 적발된 라이브 회귀의 즉시 수정. 정본 코드 변경은 feature-0002 ask_jobs.py(전용 파라미터 분리) — 본 항목은 feature-0003 동반 기록(REPORT/TASK/REVIEW 갱신).

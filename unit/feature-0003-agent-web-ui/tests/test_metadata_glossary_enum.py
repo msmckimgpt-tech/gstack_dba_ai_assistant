@@ -199,9 +199,11 @@ def test_glossary_create_calls_core_and_audits(monkeypatch):
     pg = _PgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     captured = {}
+    # 0021: upsert_glossary_term 시그니처에 role_key/source 추가(기본 '*'/'manual').
     monkeypatch.setattr(_kg, "upsert_glossary_term",
-                        lambda conn, scope_key, term, definition: captured.update(
-                            {"conn": conn, "scope_key": scope_key, "term": term, "definition": definition}))
+                        lambda conn, scope_key, term, definition, role_key="*", source="manual": captured.update(
+                            {"conn": conn, "scope_key": scope_key, "term": term, "definition": definition,
+                             "role_key": role_key, "source": source}))
     events = _audit_capture(monkeypatch)
 
     resp = asyncio.run(app.admin_create_glossary(_FakeRequest({
@@ -211,6 +213,7 @@ def test_glossary_create_calls_core_and_audits(monkeypatch):
     assert captured["scope_key"] == "default"
     assert captured["term"] == "활성 사용자"
     assert captured["definition"] == "최근 30일 로그인"
+    assert captured["role_key"] == "*"   # role_key 미지정 → 공용 기본
     assert pg.committed is True
     assert any(e.get("action") == "glossary.term.create" for e in events)
     assert all(e.get("resource_type") == "kb_metadata" for e in events)
@@ -335,8 +338,9 @@ def test_glossary_list_serializes(monkeypatch):
     _admin(monkeypatch)
     monkeypatch.setattr(_dbmod, "_pg_connect_ro", lambda: _PgConn())
     ts = datetime.datetime(2026, 6, 24, 10, 0, 0)
-    # row: (id, scope_key, term, definition, created_at, updated_at)
-    rows = [(1, "common", "용어A", "정의A", ts, ts), (2, "common", "용어B", "정의B", ts, ts)]
+    # 0021 row: (id, scope_key, role_key, term, definition, source, created_at, updated_at)
+    rows = [(1, "common", "*", "용어A", "정의A", "manual", ts, ts),
+            (2, "common", "sales", "용어B", "정의B", "auto", ts, ts)]
     monkeypatch.setattr(_kg, "list_glossary_admin", lambda conn, scope_key, **k: rows)
 
     resp = app.admin_list_glossary(_FakeRequest(query={"scope_key": "common"}))
@@ -344,6 +348,8 @@ def test_glossary_list_serializes(monkeypatch):
     out = _body(resp)
     assert out["count"] == 2 and out["scope_key"] == "common"
     assert out["items"][0]["id"] == 1 and out["items"][0]["term"] == "용어A"
+    assert out["items"][0]["role_key"] == "*" and out["items"][0]["source"] == "manual"
+    assert out["items"][1]["role_key"] == "sales" and out["items"][1]["source"] == "auto"
     assert out["items"][0]["updated_at"].startswith("2026-06-24")
 
 

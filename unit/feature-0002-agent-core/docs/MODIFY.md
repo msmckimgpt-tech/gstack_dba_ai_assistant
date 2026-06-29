@@ -32,6 +32,12 @@ source_of_truth: true
 - 비변경: list_pending_feedback·promote_feedback·reject_feedback·_mask_pii 무변경. GRANT 무변경(0014 의 INSERT/UPDATE 권한이 UPSERT 포괄). "샘플 등록"(suggested=true) 행은 부분 인덱스 술어 제외 → 매번 INSERT(검수 큐 동작 보존).
 - 검증: `tests/test_sample_flywheel.py` 15/15(record_feedback param 위치·ON CONFLICT 단언 갱신 + 신규 vote-UPSERT 키 단언) · `py_compile`(sample_feedback.py·0021) PASS · 마이그 chain linear(0020→0021 단일 head).
 - Cross-ref: feature-0003 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## CHG-20260629-glossary-conv-autoreg (TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 코어, Major §12.3, cross-cut 0002+0003)
+- Date: 2026-06-29. 코어/마이그/agent hook(web/UI = feature-0003 동반 CHG).
+- 마이그 0023: kb_glossary.role_key/source ADD + UNIQUE(scope_key,role_key,term) 재정의(멱등 DROP IF EXISTS 선행), glossary_feedback(검토 큐)·glossary_relations(유사어) CREATE + 인덱스/트리거/GRANT. 기존 행 backfill(동작 불변).
+- kb_glossary.py: role-scoped read(role_key 옵션), 하이브리드 자동승급(`auto_promote_or_queue`+`_feedback_status` 선검사 — REV BLOCKER 수정으로 거부 용어 재유입 차단), 검토 큐(record/list/count/promote/reject), 유사어(add/list/delete/get), 대화 추론(`infer_terminology_suggestions`, 짧은 답변 skip). upsert/update/list role_key·source 반영(ON CONFLICT (scope,role,term)).
+- llm.py: `llm_glossary_suggest`(GLOSSARY_SUGGEST_PROMPT, soft-fail). agent_core.py: `_glossary_autopropose`(답변 직후 hook, AGENT_GLOSSARY_AUTOPROPOSE 게이트, best-effort·ask 비차단, PG conn). shared/config.py: 4 flag + __all__.
+- 테스트: `test_kb_glossary_enum.py` 21(역할 read·하이브리드 분기·거부 차단 회귀·관계 SQL). Cross-ref: feature-0003 CHG-20260629-glossary-conv-autoreg / REV-20260629T103000 / ADR-20260629T101500.
 
 ## CHG-20260626-ask-dedup-idempotency (TASK-20260626-ask-dedup-idempotency — ask 큐 enqueue 멱등화. feature-0003 주관, **Major §12.3**)
 - Date: 2026-06-26. 주 변경·정본 changelog 은 feature-0003 CHG-20260626-ask-dedup-idempotency. 본 항목은 feature-0002-agent-core 교차변경(ask 큐 데이터 계층)만 기록(§13.2.7).

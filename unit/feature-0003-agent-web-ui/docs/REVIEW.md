@@ -41,6 +41,17 @@ source_of_truth: true
 - 테스트: curation 15/15 + flywheel 15/15(신규 vote-UPSERT 키 단언 포함) PASS, 두 feature 전체 회귀 0.
 - Human Approval Needed: 없음(commit/push/main 병합 자동 동기화). 배포는 deploy_scope 판정(Phase 6.8) — 마이그 0021 적용 동반이라 1회 confirm 대상.
 - Cross-ref: feature-0002 REV-20260629T014345-feedback-unique-vote / CHG-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## REV-20260629T103000-glossary-conv-autoreg [SUBAGENT:adversarial-correctness-db + adversarial-security-governance] — SHIP-WITH-FIXES (BLOCKER 1건 적발·수정, 적대 패널 완료)
+- Date: 2026-06-29. TASK-20260629-glossary-conv-autoreg(Major §12.3, cross-cut 0002+0003, ADR-20260629T101500). §18.8 적대 패널 2인: ① 정확성·DB·동시성, ② 보안·거버넌스·RBAC·XSS. 두 리뷰어가 **동일 BLOCKER 독립 적발**.
+- **[BLOCKER] (적발→수정)** `kb_glossary.auto_promote_or_queue` — 거부(rejected)된 용어가 고신뢰 재추론 시 라이브 kb_glossary 에 재유입(poisoning 방어 무력화). 원인: `_insert_glossary_auto`(라이브 INSERT)가 거부 가드(`record_glossary_suggestion`의 WHERE pending)보다 **먼저** 실행되고 가드 차단 시 롤백 안 됨 → 부활 행이 검토 큐에서 되돌릴 핸들도 없는 좀비. **수정**: 삽입 전에 `_feedback_status` 로 선검사 — status ∈ {rejected, promoted, auto_promoted} 면 즉시 "skipped"(INSERT 미발생). 회귀 테스트 2건 추가(`test_auto_promote_skips_rejected_term`·`test_auto_promote_skips_already_promoted`).
+- **[MAJOR] (수정)** poisoning 방어 미검증(false-green) → 위 회귀 테스트로 게이트 고정.
+- **[MINOR] (수정)** 마이그 0021 `ADD CONSTRAINT` 재실행 비멱등 → 신규 제약도 `DROP CONSTRAINT IF EXISTS` 선행(트리거 패턴)으로 멱등화.
+- **[MINOR] (부분완화)** 자율등록이 매 턴 LLM 호출(기본 ON·per-account cap 부재) → 짧은 답변(<80자) 추론 skip 가드 추가. 자연 rate-limit(턴=과금) 존재하므로 잔여 per-account cap 은 후속 후보(AGENT_GLOSSARY_AUTOPROPOSE=0 로 즉시 차단 가능).
+- **[MINOR] (수용)** downgrade 의 UNIQUE(scope,term) 재추가가 role별 중복 시 실패 가능 — 마이그 주석에 문서화된 trade-off(다운그레이드 한정).
+- **결함 없음 확인(적대 검증됨)**: RBAC 6개 신규 엔드포인트 정합(검토큐=kb.glossary.curate, 관계=kb.ingest.manual), role_key 검증(WebRoles∪'*'), scope 가드, XSS(textContent/value 만), 프롬프트 주입측 datamark 펜스, audit 4종, reject 단일 동작, ON CONFLICT 타깃↔UNIQUE 제약 정합, GRANT, conn 수명/soft-fail.
+- 검증: 코어 21 + 웹 신규 13 + 기존 metadata 회귀 + route_snapshot 갱신 → 전체 **1222 passed**(잔여 7=`web.app` 컨테이너 레이아웃 의존, 본 변경 무관). ruff·py_compile·node --check·단일 alembic head PASS.
+- Human Approval Needed: 없음(commit/push/main 병합·재배포는 자동 동기화 정책 + deploy_scope:included). 코드 SHIP.
+- Cross-ref: feature-0002 REV-20260629T103000-glossary-conv-autoreg / ADR-20260629T101500-glossary-conversation-autoregistration.
 
 ## REV-20260626T135945-ask-dedup-idempotency [SKIPPED:hotfix-1line-param-isolation-live-pg-validated] — 동일 cycle 라이브 회귀 hotfix (TASK-20260626-ask-dedup-idempotency, Major §12.3)
 - Date: 2026-06-26. 본체 REV-20260626T134920-ask-dedup-idempotency 의 배포 검증 단계에서 적발된 라이브 PG 회귀의 즉시 수정. 신규 동작 추가 아닌 **버그 수정(파라미터 격리)** 이라 full §18.8 패널 SKIP — 대신 라이브 PG 직접 실행으로 검증(해당 실패 모드에 가장 직접적인 테스트).

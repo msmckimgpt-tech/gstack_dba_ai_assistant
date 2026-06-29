@@ -35,8 +35,8 @@ sources:
 | 기능 ID | 상태 | 최종 갱신 | 정본(상세) | 최근 작업 요지 |
 |---|---|---|---|---|
 | feature-0001-platform-runtime | in-progress | 2026-05-18 | [TASK](../unit/feature-0001-platform-runtime/docs/TASK.md) | MySQL redo log 1GiB 상향·restart policy 정렬 (TASK-0064/0059) |
-| feature-0002-agent-core | in-progress | 2026-06-25 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | init "준비" 임베딩 지연 회귀 해소(전용 embed-ollama·캐싱·fast-timeout)·요청량 한도 메시지 주체 구분·datasource 회로차단 안내 문구 분리(고장 오인 해소) / ITEM-11 메타데이터 컨텍스트·NL→SQL flywheel |
-| feature-0003-agent-web-ui | in-progress | 2026-06-26 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 제품 선택 chip 처리 중 항상 활성화(TASK-0047 race 가드 3계층 완화, ADR-WEB-0006) · 역할/제품 프롬프트 AI 자동작성·제품 분석률 95% 제품프롬프트 자동완성·규칙 자동 추가 DB insight 커버리지 UI·지식베이스 메뉴 재편 / 메타데이터 거버넌스 포탈(ITEM-11) · 좌측 대화 전환 크로스페이드 · 워커모드 assistant 요청 2번 중복 처리 차단(enqueue 멱등화 + AmbiguousParameter 회귀 파라미터 격리, ask-dedup-idempotency, cross-cut 0002) |
+| feature-0002-agent-core | in-progress | 2026-06-29 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | init "준비" 임베딩 지연 회귀 해소(전용 embed-ollama·캐싱·fast-timeout)·요청량 한도 메시지 주체 구분·datasource 회로차단 안내 문구 분리(고장 오인 해소) / ITEM-11 메타데이터 컨텍스트·NL→SQL flywheel · 용어사전 대화 자율등록 코어(role 분리·유사어·하이브리드 자동승급, mig 0023, ADR-20260629T101500) |
+| feature-0003-agent-web-ui | in-progress | 2026-06-29 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 제품 선택 chip 처리 중 항상 활성화(TASK-0047 race 가드 3계층 완화, ADR-WEB-0006) · 역할/제품 프롬프트 AI 자동작성·제품 분석률 95% 제품프롬프트 자동완성·규칙 자동 추가 DB insight 커버리지 UI·지식베이스 메뉴 재편 / 메타데이터 거버넌스 포탈(ITEM-11) · 좌측 대화 전환 크로스페이드 · 워커모드 assistant 요청 2번 중복 처리 차단(enqueue 멱등화 + AmbiguousParameter 회귀 파라미터 격리, ask-dedup-idempotency, cross-cut 0002) · 용어사전 대화 자율등록 UI(역할 필터/select·검토 큐 kb.glossary.curate·유사어 참조) |
 | feature-0004-browser-automation | in-progress | 2026-04-06 | [TASK](../unit/feature-0004-browser-automation/docs/TASK.md) | 구조 이관 완료, smoke 검증 예정 |
 | feature-0005-qa-mcp | in-progress | 2026-04-06 | [TASK](../unit/feature-0005-qa-mcp/docs/TASK.md) | 스켈레톤 — MCP 기동 검증 예정 |
 | feature-0006-lan-proxy-access | in-progress | 2026-04-06 | [TASK](../unit/feature-0006-lan-proxy-access/docs/TASK.md) | caddy 운영 자산 이관 완료 |

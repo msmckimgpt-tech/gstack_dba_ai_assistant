@@ -30,6 +30,11 @@ source_of_truth: true
 - 테스트: test_sample_flywheel.py 15/15(masks_pii param 위치 보정 + ON CONFLICT/DO UPDATE/RETURNING 단언 + 신규 vote-UPSERT 키). py_compile PASS.
 - Human Approval Needed: 없음(자동 동기화). 배포 시 마이그 0021 적용 동반 — entry Phase 6.8 deploy_scope 판정.
 - Cross-ref: feature-0003 REV/CHG-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## REV-20260629T103000-glossary-conv-autoreg [SUBAGENT:adversarial-correctness-db + adversarial-security-governance] — SHIP-WITH-FIXES (코어 측, BLOCKER 수정)
+- Date: 2026-06-29. TASK-20260629-glossary-conv-autoreg 코어 측(kb_glossary·llm·agent_core·mig 0023) 적대 패널 결과. 상세 정본 = feature-0003 REV-20260629T103000-glossary-conv-autoreg.
+- **[BLOCKER] 적발→수정**: `auto_promote_or_queue` 가 거부 가드보다 라이브 INSERT 를 선행해 거부 용어가 고신뢰 재추론 시 부활(poisoning 무력화). `_feedback_status` 선검사(rejected/promoted/auto_promoted → skip)로 수정 + 회귀 테스트 2건. **[MINOR]** 마이그 ADD CONSTRAINT 멱등화(DROP IF EXISTS 선행), 짧은 답변 추론 skip 가드.
+- 검증: 코어 `test_kb_glossary_enum.py` 21 PASS, ruff·py_compile·단일 alembic head PASS. SHIP.
+- Cross-ref: feature-0003 REV-20260629T103000-glossary-conv-autoreg / ADR-20260629T101500.
 
 ## REV-20260623T191241-item05-hybrid-search [SUBAGENT:item05-impl-selfcheck + adversarial-backend] — SHIP-WITH-FIXES (적대 리뷰 완료, fix 흡수)
 - Date: 2026-06-23 구현 self-check → 2026-06-24 적대 backend 리뷰 완료. 본 엔트리 上단은 **구현 self-check**(작성자 자기검증), 下단(§적대 리뷰 결과)이 **적대 backend 리뷰**다. self-check 가 예고한 점검 표면 ①②가 실제 MAJOR/MINOR-2 로 적중 — fix 전부 흡수.
