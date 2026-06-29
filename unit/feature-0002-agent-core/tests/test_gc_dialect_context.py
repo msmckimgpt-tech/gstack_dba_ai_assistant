@@ -91,3 +91,50 @@ def test_dialect_hint_clean_query_head_only():
     h = tools._dialect_correction_hint("SELECT a FROM db.t LIMIT 5")
     assert "MySQL" in h
     assert "TOP" not in h and "UNION" not in h
+
+
+# ── conv-audit FR-nl2sql-schema-discovery-giveup: 능동 해석 지침을 modality 무관으로 일반화 ──
+# 라이브 1:1 conv 20260626034832 에서 assistant 가 스키마(dbGame)를 dbgame 으로 소문자화→1049→
+# 8 tool 후 give-up·대량 재질문. 기존 능동해석 지침이 그룹에만 주입돼 1:1 은 무방비였다.
+import inspect  # noqa: E402
+
+
+def test_active_interpretation_guidance_is_modality_agnostic():
+    g = agent_core._ACTIVE_INTERPRETATION_GUIDANCE
+    # 핵심 anti-friction 지침 포함(과도 재질문 억제 / 추측 말고 발견 / casing 보존 / 데이터소스 일관성).
+    assert "과도하게 되묻지" in g
+    assert "추측하지 말고 발견" in g
+    assert "소문자화하지" in g  # casing 보존(dbGame≠dbgame)
+    assert "데이터소스/주제 일관성" in g
+    assert "통째로 미루지" in g  # give-up 금지
+    # modality 무관 — 그룹 전용 마커(여러 명/발신자 라벨/@assistant)는 이 블록에 없어야 한다.
+    assert "여러 명의 사람" not in g
+    assert "발신자이름" not in g
+
+
+def test_group_guidance_keeps_only_multiparty_specifics():
+    g = agent_core._GROUP_CONVERSATION_GUIDANCE
+    # 다자-특화(발신자 라벨·여러 사람)만 유지.
+    assert "여러 명의 사람" in g
+    assert "발신자이름" in g
+    # 능동 해석 일반 본문은 분리됐다(중복 제거) — general 안티마찰 문구가 group 블록에 재등장하지 않아야
+    # split 불변식이 잠긴다(§18.8 QA 리뷰 follow-up: 1개만 단언하면 미래 재중복을 못 잡음).
+    for _p in ("과도하게 되묻", "추측하지 말고", "소문자화", "통째로 미루지", "데이터소스/주제 일관성", "스키마/테이블을 모르면"):
+        assert _p not in g, f"general 문구 '{_p}' 가 group 블록에 재등장 — split de-dup 위반"
+
+
+def test_active_interpretation_injected_unconditionally_for_1to1():
+    # _run_agent_core 에서 능동해석 주입이 그룹 조건(if _group_sender_labels) 밖(무조건)이어야 1:1 도 받는다.
+    src = inspect.getsource(agent_core._run_agent_core)
+    lines = src.splitlines()
+    active = [l for l in lines if "system_content += _ACTIVE_INTERPRETATION_GUIDANCE" in l]
+    assert active, "능동해석 주입 라인이 _run_agent_core 에 있어야 한다"
+    # 함수 본문 레벨 들여쓰기(8 spaces: def 안 4 + 1단계)여야 하고, 16(if-블록 내부)이면 그룹-한정 회귀.
+    indent = len(active[0]) - len(active[0].lstrip())
+    grp = [l for l in lines if "system_content += _GROUP_CONVERSATION_GUIDANCE" in l]
+    assert grp, "그룹 지침 주입 라인 존재"
+    grp_indent = len(grp[0]) - len(grp[0].lstrip())
+    # 능동해석은 그룹 주입보다 얕은(또는 같지 않은 if-내부가 아닌) 들여쓰기 — 그룹은 if 안이라 더 깊다.
+    assert indent < grp_indent, (
+        f"능동해석(indent={indent})이 그룹 if-블록(indent={grp_indent}) 밖이어야 1:1 도 주입됨"
+    )

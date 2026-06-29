@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T142624-active-interp-modality [AGENT-TEAM:conv-audit-fix-panel-3lens+adversarial-verify] — 능동해석 modality 일반화 + MySQL casing (TASK-20260629T142624-active-interp-modality, Major §12.3)
+- Date: 2026-06-29. §18.8 full 패널(프롬프트 변경 = full default): 3 독립 적대 렌즈(qa·회귀·정합성 / security·over-reach / rootcause-completeness) + 비차단 finding 적대 검증(refute-or-confirm). resume(session limit 으로 중단됐던 QA 리뷰어 재실행).
+- verdict: qa-regression **PASS-WITH-NITS**(split 정확·회귀 0 실측), security-overreach **PASS-WITH-NITS**(가드 코드 미접촉·신규 공격표면/PII 노출 없음·injection 등 보안경계 스위트 PASS), rootcause-completeness **CHANGES-REQUESTED**(BLOCKER1+MAJOR3).
+- 적대 검증: rootcause BLOCKER1(L2 교정힌트 미구현)+MAJOR3(base 중복·casing grounding 비대칭·행동테스트 부재) **전부 REFUTED, NON-BLOCKING** — 코드 관찰은 실측 정확하나 L2/grounding 은 본 fix scope 밖(ledger 가 report-only·single-conv·Major 로 명시 보류, conversation_audit 게이트가 단일대화 Major 자동 promote 금지). shipped 변경은 실제 1:1 무방비 회귀를 닫는 작고 테스트된 additive 수정.
+- NIT 수용: (a) casing 지침 `1049`→`1049`/`1146` 정밀화 반영, (b) group de-dup 테스트를 general 문구 전체 잠금으로 강화. 반영 후 재테스트 green.
+- follow-up(별도 human-plan, ledger re-triage 시): L2 에러피드백 교정힌트(`_classify_sql_error` 1049 분류 + `_sql_reflection_nudge` casing 힌트 + 휴면 `_mcp_auto_retry` 배선), MySQL exact-case DB grounding 대칭화, 정적 indent 테스트의 행동테스트 승격.
+- 테스트: `test_gc_dialect_context.py` 9 PASS, prompt/dialect/group/reflection 광역 회귀 0. py_compile PASS.
+- Human Approval Needed: 없음(PLAN-APPROVED 승계 + 자동 동기화). 배포: deploy_scope:included(ask-worker·web).
+
 ## REV-20260629T022055-feedback-id-space [SKIPPED:h5b-direct-closure-of-prior-adversarial-finding-self-review] — message_id_space 데이터 계층 (TASK-20260629T022055-feedback-id-space, Major §12.3)
 - Date: 2026-06-29. 주 리뷰 정본 = feature-0003 REV-20260629T022055-feedback-id-space — 본 항목은 feature-0002 데이터 계층(마이그 0022 + record_feedback) 교차기록.
 - 핵심 판단: 3-col 부분 UNIQUE `(created_by, message_id, message_id_space)` 가 두 id 공간의 같은 숫자 id 를 다른 키로 분리(H5(b) (a) cross-space 충돌 + (b) wrong-bubble 차단). 신규 인덱스명으로 부트스트랩 same-name no-op trap 회피. record_feedback ON CONFLICT 추론 술어를 인덱스와 문자 동일 유지. default 'display' 로 기존 행·미전송 정합.
