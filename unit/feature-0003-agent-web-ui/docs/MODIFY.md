@@ -20,6 +20,7 @@ source_of_truth: true
 - Impact: 비파괴, 순수 표현계층. 데이터/스키마/RBAC/백엔드/엔드포인트 0 변경. 공유 뷰는 anonymous 노출면이나 dot.title/aria-label 은 `.title`/`setAttribute`(DOM API)로 XSS 무첨가. reduced-motion·모바일 가드.
 - Rollback: app.js 클릭 핸들러를 `scrollIntoView` 로 환원 + 신규 헬퍼 제거 / share.* 의 rail 추가분 제거 + cache-buster 환원.
 - Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Deploy & live-verify (2026-06-29): commit f9954cf → origin/main drift(251df5f, diff-lineno-leak PR#467) rebase 3931fa3(cache-buster 충돌 2건 → 결합 신규 토큰 `20260629f-…` 해소) → ff-merge + push origin main(`251df5f..3931fa3`). 직후 feature-0013-mermaid PR#468 머지로 origin/main `8f0a025`(내 3931fa3 조상 포함 확인). web 이미지 재빌드(GIT_COMMIT 주입)·repo-web-1 recreate → **서빙본 검증 PASS**: healthz `git_commit=8f0a025`·mysql/pg ok / 서빙 index.html `app.js?v=20260629f-point-scroll-easeoutexpo`·share.html `share.js?v=20260629f-share-scroll-guide`·`share.css?v=20260629-share-scroll-guide` / 서빙 app.js EaseOutExpo 심볼 6·share.js rail 심볼 6·share.css rail 스타일 10 존재. worktree/branch cleanup 완료. **PB-0008 Windows 브라우저 시각검증은 잔여**(메인/공유 양 뷰 rail 표시·클릭 단축·EaseOutExpo). F0 repo-immutability escape(worktree finalize 완료, post-deploy doc-only).
 - Files: feature-0003 `src/static/{app.js,index.html,share.html,share.js,share.css}` · `docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST,REPORT}.md` · `docs/STATUS.md`.
 - Cross-ref: 기존 메인 rail REQ-20260515-0006(TASK-0061 Phase 4) · 공유 뷰 mermaid 반응형 REQ-20260629T143914-share-mermaid-responsive.
 

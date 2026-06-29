@@ -19,8 +19,9 @@ source_of_truth: true
   - [x] share.css: `.share-point-rail`(fixed 미니맵)+`.share-point-dot`+reduced-motion+≤720px 숨김.
   - [x] index.html: app.js cache-buster bump(`20260629-point-scroll-easeoutexpo`).
   - [x] node --check(app.js·share.js) PASS · §18.8 적대 검증 패널(프론트 lens) → REVIEW REV 태그.
-  - [ ] verify-completion --pre-commit PASS → commit(Task-Cycle) → push → PR → merge → web 재배포(deploy_scope: included) → PB-0008 Windows 브라우저 시각검증(메인/공유 양 뷰 rail·클릭 단축·EaseOutExpo).
-- Next Action: verify-completion → cycle-finalize → 배포 → PB-0008.
+  - [x] verify-completion --pre-commit PASS(9/9) → commit f9954cf → origin/main rebase 3931fa3(cache-buster 충돌 결합 토큰 해소) → ff-merge + push origin main → web 재배포(deploy_scope: included, GIT_COMMIT 주입 재빌드·repo-web-1 recreate, healthz git_commit=8f0a025 — feature-0013 PR#468 머지로 내 3931fa3 위에 진행, 조상 포함) → 서빙본 검증 PASS(app.js EaseOutExpo·share.js rail·신규 cache-buster) → worktree/branch cleanup.
+  - [ ] PB-0008 Windows 브라우저 시각검증(잔여): 메인 작업화면 rail dot 클릭 시 단축(280ms) EaseOutExpo 스크롤 · 공유 페이지 우측 가이드 뱃지 표시/클릭 점프/active 추적 · 1개 이하 미표시 · ≤720px 숨김 · reduced-motion 즉시점프.
+- Next Action: PB-0008 Windows 브라우저 시각검증(배포본 라이브).
 
 ## TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/배지/태그가 실제 역할(dba·admin·sales)을 표시하지 않던 버그 수정 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(glossary-role-single-ui 배포본 후속)
 - 트리거: 사용자 — glossary-role-single-ui 배포·시각검증 후속. 메타데이터 > 용어사전 '역할' 드롭다운에 '전체 역할'·'공용만'만 보이고 실제 역할(dba/admin/sales 등)이 안 뜨는 현상이 "의도인지" 검토 요청.
