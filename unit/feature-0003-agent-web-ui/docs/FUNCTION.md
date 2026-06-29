@@ -1268,7 +1268,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629-rn-0629` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d). CHG/REV-20260629T080501-doc-sync-rn-0629.
 
 ## (TASK-20260629-glossary-conv-autoreg, 2026-06-29) 용어사전 대화 자율등록 — 역할 차원·검토 큐·유사어 참조 (web/UI, cross-cut 0002, ADR-20260629T101500)
-- **역할(role) 차원**: 「관리 콘솔 > 메타데이터 > 용어사전」 항목에 역할 귀속(role_key)이 생긴다. 폼의 "역할" select(공용='*' + 등록된 역할)로 역할별 비중복 namespace 에 등록하고, 목록은 역할/출처(자동등록·자동승급) 배지를 표시하며, 툴바 "역할" 필터로 역할별 조회한다. 같은 용어를 역할마다 독립 정의로 보유할 수 있다(UNIQUE(scope,role,term)). 같은 역할에 동일 용어 재등록은 409.
+- **역할(role) 차원**: 「관리 콘솔 > 메타데이터 > 용어사전」 항목에 역할 귀속(role_key)이 생긴다. 역할 선택 UI 는 **툴바 "역할" 컨텍스트 하나**다(glossary-role-single-ui, TASK-20260629T141637): 이 선택이 목록을 역할별로 좁히는 동시에 **신규 용어의 등록 대상 role_key 를 결정**한다. 폼엔 별도 역할 select 가 없고 '등록 대상 역할'을 읽기전용 배지로만 보여준다. 목록은 역할/출처(자동등록·자동승급) 배지를 표시한다. 같은 용어를 역할마다 독립 정의로 보유할 수 있다(UNIQUE(scope,role,term)). 같은 역할에 동일 용어 재등록은 409. (이전엔 폼 역할 select + 툴바 필터 2곳이 공존했으나 식별 혼동으로 단일화.)
   - API: `GET …/glossary?scope_key=&role_key=`(역할 필터), `POST/PUT …/glossary`(body.role_key, 미지정=공용 '*'), role_key 는 WebRoles.RoleKey ∪ '*' 만 허용(검증).
 - **대화 자율등록(검토 큐)**: assistant 답변에서 코어(feature-0002)가 용어 후보를 자동 추론해, 고신뢰도는 용어사전에 자동 등록(출처='자동')하고 저신뢰도는 검토 큐에 적재한다. **IA: 「관리 콘솔 > 메타데이터 > 용어사전」 하위 2차 보기 탭** — `용어 목록`(CRUD, 권한 `kb.ingest.manual`)과 `용어 검토 큐`(권한 `kb.glossary.curate`, pending 배지). 검토 큐 보기에서 후보를 **승급**(용어사전 반영) 또는 **거부**(자동 등록분은 라이브 회수=되돌리기)한다. 거부된 용어는 재제안돼도 되살아나지 않는다.
   - **권한·접근**: 용어사전 서브탭은 두 권한 중 하나라도 있으면 표시(중첩으로 인한 접근 단절 방지). 보기 버튼은 권한별로 노출되고, 현재 보기 권한이 없으면 첫 표시 보기로 전환(예: `kb.glossary.curate`만 보유 → 기본 보기가 검토 큐). 역할 필터는 `용어 목록` 보기에서만 노출.
@@ -1283,3 +1283,12 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 적대 제외: 첨부 wrong-bubble(ec39a60)은 정상 display 경로 동작 동일(드문 cross-space 엣지 하드닝)이라 사용자 체감 변화 0 → 항목 미추가.
 - 내부 구현·feature-id·테이블/함수명·role_key/검토 큐 엔드포인트/마이그 번호/id_space/message_id/wrong-bubble 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629-rn-0629`→`?v=20260629b-rn-0629` bump 으로 전 사용자에게 전파(정적 자산은 `?v=` 가 유일 전파 메커니즘 — app.py:10582 TASK-0256d). CHG/REV-20260629T041724-doc-sync-rn-0629.
+
+## (TASK-20260629T141637-glossary-role-single-ui, 2026-06-29) 용어사전 역할 선택 UI 단일화 — 단일 역할 컨텍스트 + 등록 mis-scope 가드 (web/UI, Minor §12.3)
+- 배경: 직전 자율등록 cycle 배포본의 「메타데이터 > 용어사전」에 역할 선택 UI 가 2곳(툴바 역할 필터 + 등록 폼 역할 select)이라 사용자가 각 동작을 식별하기 어려웠다. 사용자 결정 = **단일 역할 컨텍스트**.
+- 동작: 툴바 "역할" 선택이 **유일한 역할 선택 UI** 이며 두 역할(役)을 겸한다 — ① 목록을 역할별로 좁히는 필터(`GET …/glossary?role_key=`), ② **신규 용어의 등록 대상 role_key 결정**. 폼의 역할 select 는 폐기됐고, 등록/수정 폼은 '등록 대상 역할'을 읽기전용 배지로만 표시한다.
+  - 생성 시 role_key = 현재 툴바 컨텍스트(`전체 역할`(빈값) → 공용 `*`; `공용만` → `*`; 특정 역할 → 그 역할). `전체 역할` 보기에서 생성 시 공용으로 귀속됨을 폼 노트로 명시(혼동 방지).
+  - 수정 시 role_key = 대상 용어의 기존 role_key 보존(역할 이동 안 함). **알려진 trade-off**: 폼 select 제거로 기존 용어의 역할 이동(공용↔역할) 직접 편집 UI 가 사라짐 — 백엔드 `PUT …/glossary`(body.role_key) 는 capability 유지하나 UI 경로 없음. 재등록 경로는 `glossary_relations`(term id 종속) 미승계. 이동 필요 시 후속 전용 affordance.
+  - mis-scope 가드: 역할별 비중복 namespace 이므로, 등록/수정 성공 토스트에 대상 역할을 표기(`…했습니다 (역할: X / 공용)`). 생성 폼이 열린 채 툴바 역할을 바꾸면 폼 재렌더(입력 소실) 없이 '등록 대상 역할' 배지만 동기화 → 표시값=실제 등록값.
+- API·백엔드·RBAC·DB 스키마/마이그 무변경(프런트 `admin.js`/`admin.html` 전용). 역할 옵션은 `adminState.roles`(`/api/admin/roles`, 권한 `role.read`)에서 채워지므로, 용어사전 관리자가 `role.read` 가 없으면 툴바엔 '전체 역할/공용만'만 노출된다(별도 권한 부여로 해결 — 코드 외).
+- 배포 전파: `admin.html` 의 `admin.js?v=20260629-glossary-review-nest`→`?v=20260629-glossary-role-single-ui` bump. CHG/REV-20260629T141637-glossary-role-single-ui.

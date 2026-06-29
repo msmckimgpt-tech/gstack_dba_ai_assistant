@@ -2384,8 +2384,8 @@ const _METADATA_NO_CREATE = { samples: true };
 // type: text | textarea | number | checkbox.
 const _METADATA_FIELDS = {
   glossary: [
-    // 역할 차원(0021) — 공용('*') 또는 특정 역할. 역할별 비중복 namespace. 기본 공용.
-    { key: "role_key", label: "역할", required: false, type: "roleselect", placeholder: "" },
+    // 역할 차원(0021, role-single-ui): 폼 역할 select 폐기 — 역할 선택 UI 를 툴바 하나로 일원화.
+    //   role_key 는 _metaSubmitForm 에서 주입한다(생성=툴바 역할 컨텍스트, 전체→공용 '*'; 수정=기존 보존).
     { key: "term", label: "용어", required: true, type: "text", placeholder: "예: 활성 사용자" },
     { key: "definition", label: "정의", required: true, type: "textarea", placeholder: "이 용어의 의미/판정 기준" },
   ],
@@ -2585,6 +2585,7 @@ function _metaBindControls() {
     roleFilter.dataset.bound = "1";
     roleFilter.addEventListener("change", () => {
       adminState.metadata.roleFilter = roleFilter.value || "";
+      _metaUpdateGlossaryRoleBadge();   // 생성 폼이 열려 있으면 '등록 대상 역할' 배지를 새 컨텍스트로 동기화(표시값=실제 등록값, F5)
       loadMetadata();
     });
   }
@@ -2692,6 +2693,27 @@ function _metaRenderForm() {
   _metaSyncToolbarVisibility();
   if (isReview) { wrap.replaceChildren(); return; }
   wrap.replaceChildren();
+  // 단일 역할 컨텍스트(glossary, role-single-ui): 등록/수정 대상 역할을 읽기전용으로 표시(선택 UI 아님 — 역할 선택은 툴바 하나).
+  //   생성=현재 툴바 컨텍스트(전체 역할이면 공용 '*'), 수정=대상 용어의 기존 role_key. 배지 스타일 재사용(추가 CSS 불요).
+  //   id 부여 — 툴바 역할 변경 시 폼 전체 재렌더(입력 소실) 없이 배지만 동기화하기 위함(_metaUpdateGlossaryRoleBadge).
+  if (sub === "glossary") {
+    const field = document.createElement("div");
+    field.className = "admin-meta-field";
+    field.id = "metadataRoleContextField";
+    const cap = document.createElement("span");
+    cap.className = "admin-meta-field-label";
+    cap.textContent = "등록 대상 역할";
+    const badge = document.createElement("span");
+    badge.id = "metadataRoleContextBadge";
+    const note = document.createElement("span");
+    note.id = "metadataRoleContextNote";
+    note.className = "admin-meta-row-meta";
+    field.appendChild(cap);
+    field.appendChild(badge);
+    field.appendChild(note);
+    wrap.appendChild(field);
+    _metaUpdateGlossaryRoleBadge();   // 배지/노트 텍스트 채우기(생성=컨텍스트, 수정=대상 용어 역할)
+  }
   for (const f of fields) {
     if (f.type === "checkbox") {
       // 체크박스는 라벨을 input 우측에 배치(가로 정렬).
@@ -2707,30 +2729,6 @@ function _metaRenderForm() {
       cap.textContent = f.label;
       field.appendChild(input);
       field.appendChild(cap);
-      wrap.appendChild(field);
-      continue;
-    }
-    if (f.type === "roleselect") {
-      // 역할 차원(0021) — 공용('*') + 등록된 역할. value=role_key, label=역할명.
-      const field = document.createElement("label");
-      field.className = "admin-meta-field";
-      const cap = document.createElement("span");
-      cap.className = "admin-meta-field-label";
-      cap.textContent = f.label + (f.required ? " *" : "");
-      field.appendChild(cap);
-      const sel = document.createElement("select");
-      sel.className = "admin-meta-input";
-      sel.name = f.key;
-      const curRole = (editing && editing[f.key] != null && String(editing[f.key]).trim() !== "")
-        ? String(editing[f.key]) : "*";
-      for (const o of _metaRoleOptions()) {
-        const opt = document.createElement("option");
-        opt.value = o.value;
-        opt.textContent = o.label;
-        if (o.value === curRole) opt.selected = true;
-        sel.appendChild(opt);
-      }
-      field.appendChild(sel);
       wrap.appendChild(field);
       continue;
     }
@@ -2994,6 +2992,11 @@ async function _metaSubmitForm(e) {
       payload[f.key] = raw;
     }
   }
+  // 단일 역할 컨텍스트(glossary, role-single-ui) — 폼 role select 폐기. role_key 를 _metaGlossaryTargetRole 로 주입
+  //   (배지·노트와 동일 진실원). 생성=툴바 컨텍스트, 수정=대상 용어 기존 role_key 보존. 백엔드 role_key 검증은 그대로.
+  if (sub === "glossary") {
+    payload.role_key = _metaGlossaryTargetRole(editing);
+  }
   const submitBtn = document.getElementById("metadataSubmitBtn");
   if (submitBtn) submitBtn.disabled = true;
   try {
@@ -3009,7 +3012,16 @@ async function _metaSubmitForm(e) {
     // 폼 초기화(생성 모드면 입력 비움).
     _metaResetInputs();
     await loadMetadata();
-    if (typeof showToast === "function") showToast(editing ? "수정했습니다." : "등록했습니다.");
+    if (typeof showToast === "function") {
+      // glossary 는 역할별 비중복 namespace — mis-scope 방지를 위해 등록/수정된 대상 역할을 토스트에 명시(F2).
+      if (sub === "glossary") {
+        const rk = payload.role_key;
+        const rkLabel = (!rk || rk === "*") ? "공용" : `역할: ${_metaRoleLabel(rk)}`;
+        showToast(`${editing ? "수정" : "등록"}했습니다 (${rkLabel}).`);
+      } else {
+        showToast(editing ? "수정했습니다." : "등록했습니다.");
+      }
+    }
   } catch (err) {
     if (typeof showToast === "function") showToast((err && err.message) || "저장 실패", true);
   } finally {
@@ -3054,22 +3066,43 @@ async function _metaDelete(it) {
 }
 
 /* ── 용어사전 대화 자율등록: 역할 차원 + 검토 큐 + 유사어 참조 (0021) ───────────────────
- * 역할(role) 차원: 용어사전을 역할별 비중복 namespace 로 운영. 폼 역할 select + 목록 역할 배지 +
- *   툴바 역할 필터(GET …/glossary?role_key=). 공용 = '*'.
+ * 역할(role) 차원: 용어사전을 역할별 비중복 namespace 로 운영. 역할 선택 UI 는 **툴바 하나로 일원화**
+ *   (role-single-ui): 툴바 역할 컨텍스트 = 목록 필터(GET …/glossary?role_key=) + 신규 용어 등록 대상.
+ *   폼엔 역할 select 없음 — 대상 역할은 읽기전용 배지로만 표시. 목록 역할 배지는 유지. 공용 = '*'.
  * 검토 큐(용어사전 > 용어 검토 큐 보기, 권한 kb.glossary.curate): 대화에서 자동 제안된 용어 후보를 검토.
  *   하이브리드 — pending(검토 대기) / auto_promoted(자동 등록, 되돌리기 가능). promote(승급)/reject(거부).
  * 유사어/참조: 용어별 glossary_relations 패널(목록/추가/삭제, 역할 경계 횡단 허용).
  * XSS: 모든 사용자 데이터 textContent/value 로만 삽입. */
 
-// 역할 옵션 — 공용('*') + 등록된 역할(adminState.roles). 폼 select 용.
-function _metaRoleOptions() {
-  const opts = [{ value: "*", label: "공용 (모든 역할)" }];
-  for (const r of (adminState.roles || [])) {
-    const rk = String((r && r.role_key) || "").trim().toLowerCase();
-    if (!rk) continue;
-    opts.push({ value: rk, label: (r && r.role_name) ? String(r.role_name) : rk });
+// (role-single-ui) _metaRoleOptions 폐기 — 폼 역할 select 제거로 미사용. 역할 옵션은 툴바 _metaPopulateRoleFilter 하나만 채운다.
+
+// 단일 역할 컨텍스트(role-single-ui) — 등록/수정 대상 role_key 의 단일 진실원(배지·payload·토스트 공용).
+//   생성 = 현재 툴바 역할 컨텍스트(전체 역할 "" → 공용 '*'). 수정 = 대상 용어의 기존 role_key 보존(legacy null/빈값 → '*').
+function _metaGlossaryTargetRole(editing) {
+  if (editing && editing.id != null) {
+    return String((editing.role_key != null && String(editing.role_key).trim() !== "") ? editing.role_key : "*");
   }
-  return opts;
+  const ctx = adminState.metadata.roleFilter || "";
+  return ctx === "" ? "*" : ctx;
+}
+
+// '등록 대상 역할' 배지/노트 동기화 — 폼 전체 재렌더(입력 소실) 없이 배지만 갱신(툴바 역할 변경·렌더 시 호출).
+//   수정 모드면 대상 용어 역할(고정), 생성 모드면 현재 컨텍스트. '전체 역할' 보기 생성 시 공용 귀속을 노트로 명시(혼동 방지, F1).
+function _metaUpdateGlossaryRoleBadge() {
+  const badge = document.getElementById("metadataRoleContextBadge");
+  if (!badge) return;   // 폼 미표시(다른 서브탭/검토 큐)면 대상 없음
+  const editing = adminState.metadata.editing;
+  const isEdit = Boolean(editing && editing.id != null);
+  const rk = _metaGlossaryTargetRole(editing);
+  badge.className = "admin-meta-tag" + (rk === "*" ? "" : " admin-meta-tag-role");
+  badge.textContent = rk === "*" ? "공용 (모든 역할)" : `역할: ${_metaRoleLabel(rk)}`;
+  badge.title = "역할은 위 툴바의 '역할' 선택으로 정합니다.";
+  const note = document.getElementById("metadataRoleContextNote");
+  if (note) {
+    note.textContent = (!isEdit && (adminState.metadata.roleFilter || "") === "")
+      ? "‘전체 역할’ 보기 — 신규 용어는 공용으로 등록됩니다."
+      : "";
+  }
 }
 
 // role_key → 사람이 읽는 라벨(역할명). 미매칭이면 key 그대로.

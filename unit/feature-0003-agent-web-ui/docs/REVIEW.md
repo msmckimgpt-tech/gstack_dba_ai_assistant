@@ -4056,3 +4056,16 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (Major 이나 비파괴·RBAC/스키마/마이그 무변경·사용자 설계 결정 + SAFE). 
 - Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included, 사용자 결정 2026-06-11): cycle-final 후 web 재배포 사전 승인 범위. (이 환경의 컨테이너는 `docker restart` 시 RW 레이어가 baked 이미지로 복원되므로 영구 반영은 이미지 재빌드 필수 — hand-patch 는 검증용 임시.)
 - Cross-ref: REQ-20260629T114221-metadata-bootstrap-mssql-db / CHG-20260629T114221-metadata-bootstrap-mssql-db / TASK-20260629T114221-metadata-bootstrap-mssql-db / 관련 정본 shared/db.py `_connect_mssql`(tempdb 고정, TASK-0213) · feature-0002 dialects.py(MySQL/MSSQL describe_*).
+
+## REV-20260629T141637-glossary-role-single-ui [SUBAGENT:adversarial-3agent-2lens+reverify] — 메타데이터 용어사전 역할 선택 UI 단일화 + mis-scope 가드 (TASK-20260629T141637-glossary-role-single-ui, Minor §12.3 — 프런트 전용)
+- 범위: feature-0003 `src/static/{admin.js,admin.html}` — 역할 선택 UI 2곳(툴바 필터 + 폼 select)을 단일 역할 컨텍스트(툴바 하나)로 통합. 폼 role select 폐기, role_key 는 `_metaGlossaryTargetRole` 단일 진실원에서 주입(생성=컨텍스트/전체→공용, 수정=기존 보존). 읽기전용 '등록 대상 역할' 배지/노트. RBAC/스키마/백엔드 무변경.
+- §18.8 적대 verification panel(general-purpose, 결함 적발 목적): **1차 2-lens 병렬** — lens1(회귀/correctness 7항목: 생성/수정 role_key·제거된 폼 필드 잔여참조·payload 이중주입·배지 가드·필터 동작·node-check) **VERDICT BLOCKING 0/NIT 1**(로직 중복). lens2(UX/데이터정합 5항목: 혼동·mis-scope·역할이동 회귀·빈 역할목록·보기 전환) **VERDICT BLOCKING 2/NIT 2**.
+  - **BLOCKING F2(mis-scope)**: 특정 역할 컨텍스트 등록 시 성공 토스트("등록했습니다")에 역할 미표기 → 어느 namespace 에 들어갔는지 사후 인지 불가(역할별 비중복 namespace invariant 위험). → **수정**: 토스트에 대상 역할 표기(`…했습니다 (역할: X / 공용)`).
+  - **BLOCKING F5(배지 stale)**: 생성 폼 열린 채 툴바 역할 변경 시 '등록 대상 역할' 배지 미갱신 → 표시값≠실제 등록값(F2 가중). → **수정**: change 핸들러가 `_metaUpdateGlossaryRoleBadge`(id 기반, 폼 재렌더·입력 소실 없이 배지/노트만 갱신) 호출.
+  - **NIT 흡수**: F1(‘전체 역할’ 보기 생성 시 공용 귀속 노트 추가) · 로직 중복(`_metaGlossaryTargetRole` 헬퍼로 배지·payload·토스트 일원화).
+- **재검증(3번째 agent, 6항목 반증)**: F2/F5 해소 확인(토스트=payload 동일 진실원·배지 갱신 시 **입력 보존**·수정 모드 역할 고정), 함수 hoisting 정상, 배지 id glossary 외 미생성·null-guard 안전, 제출 후 `editing` 지역변수 생존. **VERDICT BLOCKING 0/NIT 2/클린**. 잔여 NIT 2(토스트 `!rk` 도달불가 dead-guard·"공용"/"공용 (모든 역할)" 라벨 미세 표기차)는 무해·비회귀로 수용.
+- **알려진 trade-off(F3, 의도적 수용)**: 폼 역할 select 제거로 기존 용어의 역할 이동(공용↔역할) 직접 편집 UI 가 사라짐. 백엔드 PUT(`admin_update_glossary`, role_key 인자)은 capability 유지하나 UI 경로 없음. 재등록 경로는 glossary_relations(term id 종속) 미승계 + 중복 잔존. 사용자가 "단일 역할 컨텍스트"를 명시 선택한 결과로 수용하되, 이동 필요 시 후속 전용 affordance 검토 — 사용자에 표면화.
+- 검증: node --check(admin.js) PASS · 적대 패널 3-agent(2-lens + 재검증) · Windows 브라우저(PB-0008) 라이브 렌더 후 완료 선언 · web 재배포 후 cache-buster·healthz.
+- Human Approval Needed: 아니오 (Minor·비파괴·RBAC/스키마 무변경·사용자 설계 결정 + 재검증 클린).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included, 사용자 결정 2026-06-11): cycle-final 후 web 재배포 사전 승인 범위(정적 자산 — 컨테이너 baked 이미지 재빌드 필수).
+- Cross-ref: TASK/CHG-20260629T141637-glossary-role-single-ui / 원본 glossary-conv-autoreg·glossary-review-nest / 결함② role.read 권한 부여(코드 외).
