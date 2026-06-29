@@ -26,7 +26,7 @@ import mysql.connector
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from fastapi import FastAPI, Request, UploadFile, File, Form  # TASK-0094 Phase 5: multipart upload
+from fastapi import FastAPI, Request, UploadFile, File, Form, Depends  # TASK-0094 Phase 5: multipart upload; feature-0012 P5b: Depends(DI seam)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -10259,6 +10259,89 @@ def _require_permission(
     if not _account_has_permission(account, permission):
         return None, _json_error("권한이 없습니다.", 403)
     return account, None
+
+
+# ── feature-0012 P5b: Auth DI Seam (가산적 토대, Phase 0) ──────────────────────────────
+# FastAPI Depends 기반 인증/인가 의존성. 기존 _require_account / _require_permission /
+# _optional_account 와 동치(동일 _get_authenticated_account / _account_has_permission 경유)이며,
+# 응답 셰이프({"error":msg}+status)를 _AuthError + exception handler 로 1:1 보존한다.
+# 핸들러는 점진적으로 이 의존성으로 마이그한다(DI_SEAM_BLUEPRINT.md). 도입 시점엔 미사용 → behavior-neutral.
+class _AuthError(Exception):
+    """인증/인가 실패 신호 — _auth_error_handler 가 {"error":msg}+status 로 직렬화한다."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+@app.exception_handler(_AuthError)
+async def _auth_error_handler(request: Request, exc: _AuthError) -> JSONResponse:
+    # _json_error 와 동일 셰이프. HTTPException 의 {"detail": ...} 회귀를 방지한다.
+    return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+
+
+def get_conn():
+    """요청-스코프 memory conn 의존성. 인증 의존성과 핸들러가 use_cache 로 동일 conn 을 공유한다.
+
+    teardown: 트랜잭션 토글 핸들러(autocommit=False)는 본문에서 commit + finally 에서
+    autocommit=True 복원하므로 아래 rollback 안전망은 정상경로엔 미발화하고, autocommit 미복원
+    (에러 경로)일 때만 미커밋 변경을 되돌린다(BLOCKING-2 완화). 그 후 항상 close.
+    """
+    conn = _connect_memory()
+    try:
+        yield conn
+    finally:
+        try:
+            if not conn.autocommit:
+                conn.rollback()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_current_account(request: Request, conn=Depends(get_conn)) -> dict[str, Any]:
+    """필수 인증 의존성 — 미인증 시 401({"error":"로그인이 필요합니다."}). _require_account 와 동치.
+
+    _get_authenticated_account 를 직접 호출해 세션 부수효과(WebAuthSessions LastSeenAt/RemoteAddr/
+    UserAgent UPDATE)를 보존한다. 인자 순서 (conn, request) 주의.
+    """
+    account = _get_authenticated_account(conn, request)
+    if not account:
+        raise _AuthError("로그인이 필요합니다.", 401)
+    return account
+
+
+def get_optional_account(request: Request, conn=Depends(get_conn)) -> dict[str, Any] | None:
+    """anonymous 허용 의존성 — 미인증/예외 시 None(절대 raise 하지 않음). _optional_account 와 동치.
+
+    try/except 가 LastSeen UPDATE 까지 감싸므로 '조회 성공 + UPDATE 예외 → 익명 강등' 의 기존
+    fail-soft 동작을 byte-for-byte 보존한다(REQ-20260514-0001).
+    """
+    try:
+        return _get_authenticated_account(conn, request)
+    except Exception:
+        return None
+
+
+def require_permission(*perms: str, message: str = "권한이 없습니다.", status_code: int = 403):
+    """정적 perm AND 게이트 의존성 팩토리 — get_current_account 의존 후 _account_has_permission 검사.
+
+    message 는 마이그 사이트의 원본 _json_error 메시지를 그대로 전달해 403 body(60종)를 보존한다.
+    _account_has_permission(account, p) = account['permissions'].get(p) — 동적 catalog code 포함,
+    정적 PERMISSION_CODES iterate 금지. OR/분기/동적 perm 은 account-only DI + 본문 검사로 처리.
+    """
+
+    def dep(account=Depends(get_current_account)) -> dict[str, Any]:
+        for p in perms:
+            if not _account_has_permission(account, p):
+                raise _AuthError(message, status_code)
+        return account
+
+    return dep
 
 
 def _resolve_conversation_for_account(
