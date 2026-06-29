@@ -149,7 +149,12 @@ signal_id   (관측, 대화 내 위치)      예 E-AST-2@<conv>#<msg>     ← Ph
 
 1. **D0.1 정본 backend 선언 발견(env)**: read-backend toggle 키를 **이름 가정 없이 grep 으로 발견** — `grep -iE 'READ_BACKEND|READ_DB|RUNTIME.*BACKEND|MESSAGE.*STORE'` 를 env + 코드(`unit/`,`shared/`)에 적용하고, **대화/메시지 history 를 분기하는 코드 지점**(예: 히스토리 로드 함수가 읽는 키)을 ground truth 로 삼는다. 같은 프로젝트에 도메인별 분리 toggle 이 여럿 있을 수 있으니(대화 vs KB/RAG) **conversation/message 분기 키** 만 채택. dual-write 토글도 발견(단 읽기는 toggle 정본 쪽만).
 2. **D0.2 토폴로지 발견(compose)**: `docker-compose*.yml`(+override)에서 DB 서비스 키를 image 로 식별. **컨테이너명은 `docker compose ps <service>` 로 실시간 해소**(project 파생이라 하드코딩 금지). 경유 미들웨어(풀러/바운서) 유무·DB명·스키마는 compose/env 에서 발견.
-3. **D0.3 접속 probe(exec)**: 컨테이너 **내부 클라이언트**로 1-shot probe(`docker compose exec -T <svc> <client> -c 'SELECT 1'`). 자격증명은 컨테이너 env 가 보유 — 외부 평문 주입 금지. RO 유저/replica 가용하면 그것을 강제(불변제약).
+3. **D0.3 접속 probe(exec)**: 컨테이너 **내부 클라이언트**로 1-shot probe. 자격증명은 컨테이너 env 가 보유 — 외부 평문 주입 금지. **RO 강제(불변제약) — 구체 경로**: 읽기는 *replica/RO 역할* 우선 — compose 에 `*-replica`(또는 `*-ro`) 서비스가 있으면 **그 컨테이너로 접속**(물리 replica = 자연 read-only, 쓰기 자체 거부), 없으면 RO 유저로. **quoting·인증 실측 함정(MUST, dogfood-검증)**: `exec -T <svc> sh -lc "..."` 로 감쌀 때 ① 자격증명은 **컨테이너 안에서** 풀어야 하므로 `\"\$POSTGRES_USER\"` 처럼 호스트 셸의 `$` 를 escape(호스트에서 풀어 평문 노출 금지), ② **Postgres `$$` dollar-quote 는 `sh` 가 셸 PID(`$$`)로 오확장하니 쓰지 말 것** — SQL 문자열 리터럴은 작은따옴표(`'agent_runtime'`)·식별자는 큰따옴표. 검증된 동작 형태:
+   ```bash
+   # Postgres (replica 우선): 
+   docker compose exec -T <replica-svc> sh -lc "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -tAc \"SELECT 1\""
+   # MySQL: cmdline 에 -p<pw> 금지(프로세스 목록 노출) — socket/defaults-file 인증 또는 컨테이너 소켓 로그인 사용
+   ```
 4. **D0.4 스키마 introspection + 정본 테이블 확정**: 테이블·컬럼명을 introspection 으로 확정(세션이 알려준 이름조차 검증 — 마이그레이션으로 컬럼이 늘 수 있다). **같은 backend 안에 conversation FK + role/content 를 가진 테이블이 복수면(예 `messages` vs `core_messages`), 코드의 실제 load SQL 이 읽는 테이블 = 정본**(`core_conversations` FK 가 가리키는 쪽). 비정본 테이블 감사 = stale 과거 진단(금지). **role-map**(의미 역할 → 실제 컬럼)을 만들어 이후 모든 쿼리가 물리명이 아닌 역할로 작성하게 한다. 부재 컬럼(예 발신자 식별 컬럼 없는 버전)은 신호 degrade + 산출물 명시.
    - **content 형태 판정(B1-nuance, MUST)**: 감사 쿼리가 읽는 `content` 가 **저장 원본(raw)인지 표시/주입 가공본(예 `[발신자]:` 라벨 prepend)인지** 를 코드 경로로 확인. 라벨이 read-path 에서 붙는다면 길이/토큰 정규식은 `regexp_replace(content,'^\[[^\]]+\]:\s*','')` 로 라벨 strip 후 적용(미확인 시 신호 degrade 표기). 정렬은 **정본 load SQL 과 동일 키**(보통 `id ASC`) — `created_at` 은 동시 INSERT 비결정성으로 순서 보장 못 함(지연 측정 보조용으로만).
 5. backend 자체 부재면 fail-loud("대화 정본 미발견") 또는 해당 한정 skip.
@@ -157,6 +162,7 @@ signal_id   (관측, 대화 내 위치)      예 E-AST-2@<conv>#<msg>     ← Ph
 # Phase 2 — 대화 모집단 필터 + 마찰의심 랭킹 + 후보 선택
 
 **모집단 필터(cheap)**: 시간창(최근 윈도, 기본 14일·인자 조정) ∧ 최소 밀도(메시지 ≥ 임계) ∧ **미감사 우선**(ledger 에 audit 없는 것) ∧ (인자에 `account=`/`product=`/`conversation-id` 한정이 있으면 그 차원으로 모집단 제한 — 입력 절의 한정이 여기서 실제 필터로 적용된다).
+- **이름→FK 해소는 별도 discovery 서브스텝(dogfood-검증)**: `account=<이름>`·`product=<이름>` 은 conversation 테이블에 **숫자 FK**(예 `owner_account_id`·`product_id` bigint)로만 실린다. 이름→FK 매핑 테이블(account/identity·product 카탈로그)이 **대화 backend 안에 없을 수 있다**(별도 스키마·다른 DB·앱 레이어). 매핑을 못 찾으면 (a) 다른 한정(`conversation-id`·정확한 `topic`)으로 우회하거나 (b) 매핑원을 discovery 한 뒤 적용 — **FK 를 추측하지 말 것**. (한정이 topic 같은 텍스트면 대화 테이블에서 직접 매칭 가능.)
 
 **마찰의심 score = 2층 신호 가중합**(정독 비용 배분용. **절대 빈도 아닌 per-conversation rate 정규화** + product/modality baseline 대비 편차로 — 트래픽 큰 product 착시 방지, E-3):
 - **도메인-agnostic 신호(본문 고정)**: tool 에러율(`role=tool` 중 error/거부 비율) · 재시도 반복(동일 류 에러 self-correct 실패) · 미완 종료(마지막 메시지가 assistant + 그 뒤 user 무응답; 가용 시 읽음커서 끝도달로 강화) · 참여 감소(user 길이 추세 하향) · 명시 불만(E-USR) · **명시 부정 피드백(E-FBK — 피드백 테이블 존재 시 최강 신호)**.
@@ -219,6 +225,18 @@ signal_id   (관측, 대화 내 위치)      예 E-AST-2@<conv>#<msg>     ← Ph
 
 1. **5축 점수**(각 1~5 + 근거 1줄): **S** severity(짜증 vs 대화 끊김·이탈·보안결함) · **F** frequency(이 대화만 vs 여러 대화·ops 확인 — corroboration 없으면 F≤2) · **L** leverage(1 수정의 파급 — 공통뿌리면 높음) · **C** = `rootcause_confidence`(§C4) · **R** fix risk(**역축** — 위험·결정필요할수록 낮음). `TriageScore=(S×F)+L+C+R`(deep-but-rare 와 shallow-but-pervasive 둘 다 포착; 추측·고위험은 자동 보수 분기). 점수는 분기 근거이지 정밀 수치 아님.
 2. **corroboration(과적합 방지, T.3)**: 자연어 좌절을 **기계 흔적**(거부코드·에러 토큰·재질문 narration 패턴 — discovery)으로 환원 → 정본 store **집계 쿼리**(distinct conversation 수·시계열 추세·product/engine 분포). 판정: **structural**(임계 이상 → 전역수정 promote 자격) / **idiosyncratic**(이 대화만 → 전역수정 금지·국소만) / **inconclusive**(쿼리 불가·표본 부족 → 보수). **임계는 모집단 상대값(rate+절대수)**. **무인 모드 고정 임계**: `distinct_conv ≥ N AND rate ≥ X%` 둘 다 충족만 structural, 표본 부족이면 **fail-closed → report-only**(D-2/N4).
+   - **침묵 이탈 corroboration 은 *직전 턴 실패* 결합 필수(dogfood-검증 함정)**: "마지막 메시지가 assistant" 단독은 거의 **무차별**(실측: 최근 대화의 ~95% 가 assistant 로 끝남 — 정상 만족 종료 포함)이라 corroboration 신호가 못 된다. **반드시 직전 턴 실패와 결합**해야 한다 — *마지막 assistant 턴의 바로 앞 tool 메시지가 에러/0행/빈응답이고 그 뒤 user 무응답*. 레퍼런스 형태(정본 키 `id ASC` 기준, role-map 적용):
+     ```sql
+     WITH seq AS (SELECT conversation_id, id, role, content,
+                    lead(role) OVER (PARTITION BY conversation_id ORDER BY id) AS next_role
+                  FROM <msg정본> WHERE created_at > now() - interval '<W> days')
+     SELECT count(DISTINCT conversation_id)            -- 실패-직후-침묵 대화 수
+     FROM seq
+     WHERE role='tool' AND (content ~* '<에러/0행 시그니처 discovery>')
+       AND next_role='assistant'                       -- 그 에러를 무마하려는 마지막 assistant 턴
+       AND id = (SELECT max(id)-1 FROM <msg정본> m WHERE m.conversation_id=seq.conversation_id);
+     ```
+     이 정밀 프록시 없이 거친 "ended-on-assistant" 로 세면 idiosyncratic 을 structural 로 오판한다(과적합 위험 역전).
 3. **공통뿌리 batch(T.2)**: 정본까지 추적된 **물리적 동일 근본**(§C2 friction-id)을 공유하는 마찰을 1 batch. **응집 한계(MUST, 넘으면 분할→queue)**: 1 worktree cycle · **1 verify-completion(단일 코드거주 feature-id)** · 1 적대 패널 렌즈셋(§18.8) · 단일 리뷰 응집. (드레인 군집화의 정본 = 여기. governance drain() 은 이 결과를 순차 실행.)
 4. **disposition(게이트 우선, 점수는 정렬용)**:
    - **human-decision**: R 이 정책·UX·ANCHOR·plan 필요 함의 → Phase 8/Phase 6.F5.

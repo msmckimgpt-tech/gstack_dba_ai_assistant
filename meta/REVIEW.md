@@ -334,3 +334,13 @@
 - **수용(미수정) 기록**: (S1) Phase 헤더 레벨 `#` vs doc_sync `##` — 미관 차이, 기능 영향 0, 50줄 churn 회피 위해 수용 · (H1) Phase1 D0.4 예시 테이블명 `core_messages`/`core_conversations` — 리뷰어 B 가 "예: 로 framing·discovery-driven 로직·실제 정확한 illustration, 하드코딩 위반 아님" 으로 확인 → 수용.
 - **검증 한계**: 본 스킬은 `.claude/commands/*`(서빙 산출물 아님) → 배포 no-op(silent skip 아님 — META path 명시). 런타임 코드 무변경이라 verify-completion META mode(check #9/#10/#11)만 — 스킬 self-coherence·governance 인용 정확성은 위 3인 적대 패널로 직접 확인(디스크 정본 대조).
 - **Human Approval Needed**: 아니오 (additive META-tooling docs, 비파괴, 신규 production 동작 0, `.claude/commands/*` pure-meta. resume persona 가 기존 의도 완수 — Resume≠Re-scope, BLOCKER-C1 fix 도 스킬 자신의 명시 목적(암묵 이탈 포착) 충족이지 새 scope 아님).
+
+## REV-20260629T123949-conv-audit-dogfood [SKIPPED:additive-meta-doc-clarification+ledger]
+
+- **cycle**: ai/claude/META-0013-conv-audit-dogfood — `/_dqa:conversation_audit` dogfood 검증 run 에서 surface 된 스킬 마찰 4건 보강 + 첫 FRICTION_LEDGER entry. 실행: `account=mckim conversation="게임 스테이지 성공률 통계"` 대화 1건을 Phase 0~7 전구간 실행해 스킬 end-to-end 동작 확인.
+- **changeset (pure-meta, META path)**: `.claude/commands/_dqa/conversation_audit.md`(Phase 1 D0.3 quoting·RO-replica / Phase 2 account 이름→FK 해소 / Phase 7.2 침묵이탈 corroboration 레퍼런스 SQL) · `docs/improvements/conversation-audit/FRICTION_LEDGER.md`(신규 — report-only 2건) · `meta/REVIEW.md`(본 entry).
+- **검증 run 결과(스킬이 정상 작동)**: discovery 가 라이브 backend(postgres, `AGENT_RUNTIME_READ_BACKEND=postgres`)·정본 테이블(`agent_runtime.core_messages`)·대상 대화를 실측 확정. 진단: turn1 스키마 추측 실패(`1049 Unknown database`)로 assistant give-up(E-AST) + turn2 표/서술 행수 불일치(I-FALSE) + 침묵 이탈(I-SIL). corroboration: idiosyncratic(distinct_conv=1). disposition: **report-only**(단일대화·Major·idiosyncratic → 과적합 가드 의도대로 자동수정 보류).
+- **반영한 스킬 마찰 4건(실사용 surface)**: (1) Postgres `$$` dollar-quote 가 `sh -lc` 에서 셸 PID 로 오확장 → quoting·인증 escape 동작 패턴 명시 · (2) RO 강제를 `*-replica` 서비스 discovery 로 구체화 · (3) `account=<이름>`→`owner_account_id`(bigint) 매핑이 대화 backend 밖일 수 있음 → 별도 discovery·FK 추측 금지 · (4) 침묵이탈 corroboration 은 "ended-on-assistant" 단독이 ~95% 무차별 → "직전 턴 실패 결합" 레퍼런스 SQL 제공(과적합 역전 방지).
+- **panel**: SKIPPED — 변경이 **Minor + 비핵심경로 + doc-only**(스킬 본문 명료화 + 신규 원장, 코드/런타임 무변경). quoting 패턴·corroboration 쿼리 형태는 dogfood run 에서 **라이브 실측으로 직접 검증**(psql replica 접속·집계 쿼리 실행)됨. §18.8 표 키워드 0건.
+- **검증 한계**: `.claude/commands/*`·`docs/*` = 서빙 산출물 아님 → 배포 no-op. verify-completion META mode(check #9/#10/#11). FRICTION_LEDGER 2건은 report-only — 코드 수정·배포 없음(사람 plan 대기).
+- **Human Approval Needed**: 아니오 (additive doc 명료화 + 진단 원장, 비파괴, 코드 변경 0).
