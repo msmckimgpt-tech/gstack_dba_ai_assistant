@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/배지/태그가 실제 역할(dba·admin·sales)을 표시하지 않던 버그 수정 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(glossary-role-single-ui 배포본 후속)
+- 트리거: 사용자 — glossary-role-single-ui 배포·시각검증 후속. 메타데이터 > 용어사전 '역할' 드롭다운에 '전체 역할'·'공용만'만 보이고 실제 역할(dba/admin/sales 등)이 안 뜨는 현상이 "의도인지" 검토 요청.
+- 판정: **버그(의도 아님)**. 권한 게이트(`role.read`)가 아니라 **필드명 불일치**. `/api/admin/roles` 정본 직렬화는 role 객체를 `{id,key,name,...}` 로 주는데(역할 관리·계정 화면 전부 `.key`/`.name` 사용) glossary 코드만 `adminState.roles` 를 `.role_key`/`.role_name`(미존재 필드)로 읽어 `_metaPopulateRoleFilter` 의 `if(!rk) continue` 에서 전 역할 스킵 → 드롭다운에 정적 옵션만, `_metaRoleLabel` 도 미매칭 raw key 표기. 라이브 실증(PB-0008): admin 계정 role.read 보유·`/api/admin/roles` 200·8역할, role 객체 키 `["id","key","name",…]`, `adminState.roles.length=8`인데 드롭다운 옵션 2개뿐.
+- 수정(`src/static/admin.js`): `_metaRoleLabel`·`_metaPopulateRoleFilter` 의 role 객체 읽기 `role_key→key`·`role_name→name`(4 참조). 두 헬퍼가 역할 라벨 lookup·필터 옵션의 단일 진실원이라 배지·태그·유사어·관계 6 호출부 전부 정상화. admin.html cache-buster `20260629-glossary-role-single-ui → 20260629-glossary-role-fieldname-fix`.
+- 비변경: 백엔드·RBAC·스키마/마이그·검토 큐·유사어 로직. glossary *용어* 객체의 `role_key`(term.role_key)·역할 생성 payload `role_key` 는 별개 정합 필드라 무변경.
+- Completion Checklist:
+  - [x] _metaRoleLabel·_metaPopulateRoleFilter 필드명 role_key/role_name → key/name (4 refs)
+  - [x] admin.html cache-buster bump + node --check(admin.js) PASS
+  - [x] verify-completion PASS(9) → commit 90ab783 → base drift(main 8383652) 흡수 병합 a5fea6f(REPORT union) → push → PR #466(CI test pass) 머지(main f021f3d) → worktree/branch cleanup
+  - [x] web 재배포(deploy_scope: included, image 재빌드·repo-web-1 recreate, healthz git_commit=f021f3d) + **PB-0008 재검증 PASS**: 실 Windows Chrome 에서 새 admin.js(`?v=…-fieldname-fix`) 로드 후 메타데이터>용어사전 툴바 역할 드롭다운 옵션 **2→10**(전체 역할·공용만 + 실제 8역할: Pending·일반 사용자·Admin·DBA·관리자·서버·웹플랫폼·사업팀) 노출 확인(스크린샷 artifacts/pb0008-glossary-role-dropdown-after.png)
+- 완료: cycle 종결. worktree `ai/claude/glossary-role-fieldname-fix`(base 54dbfe3). REV-20260629T170913-glossary-role-fieldname-fix.
+
 ## TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (Minor §12.3 — 프런트 CSS 전용, feature-0003) — resume(테이블 설명 AI 자동완성 및 UI 버그 수정 PB-0008)
 - 트리거: resume `테이블 설명 AI 자동완성 및 UI 버그 수정` — 원본 metadata-table-desc-fix(MSSQL database 차원/테이블명/AI 자동완성) + metadata-bs-collapse(접기·검색)는 머지·배포 완료(PR #461/#463). 사용자 요청 = PB-0008 실 Windows 브라우저 시각검증 진행 + 추가 UI 버그 수정.
 - PB-0008 검증 결과(시각): ① MSSQL 골격 테이블명 정상 — `mssql-qa-idc`/`Account` DB 17개 실테이블(`tblAccount`·`tblAccountBlockLog`·`tblAccountChannel`…), tempdb #temp 테이블 0(시스템 DB/스키마 필터 정상). ② 라벨 엔진별 분기 정상(MSSQL='데이터베이스', MySQL='스키마'). ③ AI 자동완성 작동 — `tblAccount` 단건 suggest 가 grounding 된 한국어 설명 자동 생성. **④ 추가 버그 적발**: 부트스트랩 결과 패널이 다수 테이블 시 ~1행만 보이고 pane 스크롤 불가 → 나머지 테이블 확인 불가.
@@ -4891,3 +4903,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **§18.8 적대 패널(SUBAGENT correctness)**: 5개 회귀 가설(catch/cancel/lazy-fail·delete 충돌·render 이동·title→topic 소비처·mismatch 오염) **전부 REFUTED, no BLOCKING**. 패널이 `title`→`topic` 이 backend payload 키(`"topic"`, app.py 7145/7511)와 일치시키는 기존 버그 수정임을 독립 확인. REV-20260629T080500-new-conv-dedup.
 - [ ] **PB-0008 Windows-browser 시각 검증**(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(frontend-only render, 선례 동일).
 - [x] verify-completion --pre-commit **PASS(9/9 + #12)** → commit → 최신 main(8a35eee) 재rebase(doc tail 충돌 해소) → ff-merge main(92751b4) → push origin main → **web 이미지 재빌드·재기동(deploy_scope: included)**. 라이브 검증: healthz HTTP 200 · 서빙 index.html `app.js?v=20260629d-new-conv-dedup` · 서빙 app.js 에 fix 반영(new-conv-dedup 주석 5·`topic: message.slice` 2). repo-web-1 healthy.
+
+### TASK-20260629T172122-diff-lineno-prefix-leak — ```diff 답변의 누출된 `<N>→` 줄번호 prefix 정규화 (Minor §12.3, frontend render-only, 2026-06-29)
+- 트리거: `/_dqa:conversation_audit "계정 연동 및 보상 일괄 수령 쿼리 구성"`. 사용자 보고: "diff 포맷을 통해 답변할 때, 정상적이지 않은 line 표현이 확인되어 수정이 필요". 진단 대화 `…356708b8`, assistant msg id 4058. 마찰 = `FR-diff-lineno-prefix-leak`(FRICTION_LEDGER).
+- **진단(코드+DB+전사 삼각측량, rootcause_confidence high)**: agent_core `_number_file_lines`(feature-0002, TASK-0256e)가 첨부 본문 각 줄에 `<N>→` 줄번호 prefix 주입. 프롬프트(agent_core.py:770-778)가 diff 안 `<N>→` 금지를 지시하나 **모델이 context 줄에 `45→\t…` 그대로 누출**(변경줄만 표준 `+`/`-`). 웹 렌더러 `buildDiffRows`(app.js·share.js)가 누출 prefix 미정규화 → diff-ctx 코드 본문으로 렌더돼 줄 표현 깨짐(gutter 는 1-based 별도 계산). 레이어 L1↔L6→L7. 재발경로 model limit → 렌더러를 결정론적 최후 방어선으로 봉인.
+- **corroboration**: 전체 기간 ```diff 사용 대화 20건 중 누출 1건(이 대화) → 빈도상 idiosyncratic. 그러나 사용자 명시요청 + RC 코드 확정 + 결정론적 저위험 봉인 → fix-now(전역 프롬프트 행동 재작성 아닌 자기-주입 artifact 의 결정론적 정규화 — 과적합 아님).
+- [x] **수정(2곳, feature-0003)**: `src/static/app.js`·`src/static/share.js` `buildDiffRows` context 분기에 `/^\s*(\d+)→/` 누출 정규화(prefix 제거 + 실제 줄번호로 gutter 동기화).
+- [x] **단위 검증**: 신규 `tests/verify_diff_lineno_leak.mjs` **30/30 PASS**(Node18 순수) — 실 누출 블록 정규화·실 줄번호(45/46/50) 복원·clean diff(@@ 헌크·1-based) 무변경(회귀 0)·app.js↔share.js 정합.
+- [ ] **PB-0008 Windows-browser 시각 검증**(누출 diff 가 든 메시지가 깨끗하게 렌더되는지) — WSL worktree 라 미실행, **배포 후 사용자/실측 확인 권장**(frontend render-only, 선례 동일).
+- [x] verify-completion --pre-commit PASS(원본 세션) → commit `d75152f` → push → **PR #467 머지(main 5942a25)** → cycle-finalize(worktree/브랜치 정리) → **web 이미지 재빌드·재기동(deploy_scope: included)**. 라이브 검증: `GET /healthz` git_commit=`5942a25`(live)·repo-web-1 healthy · 서빙 `index.html` `app.js?v=20260629e-diff-lineno-leak` · 서빙 `app.js` **byte-identical** to main(fix live). (원본 세션 session-limit 중단 → `/_template:resume` 로 landing+배포 완수.)
+- Deferred(cross-ref): agent_core 프롬프트 강화(feature-0002, Major)는 별도 — 렌더러 봉인이 누출 비가시화하므로 우선순위 낮음.

@@ -3109,8 +3109,9 @@ function _metaUpdateGlossaryRoleBadge() {
 function _metaRoleLabel(rk) {
   const key = String(rk || "").trim().toLowerCase();
   if (!key || key === "*") return "공용";
-  const r = (adminState.roles || []).find((x) => String((x && x.role_key) || "").toLowerCase() === key);
-  return (r && r.role_name) ? String(r.role_name) : key;
+  // role 객체(/api/admin/roles 정본 직렬화)는 key/name 필드를 쓴다 — role_key/role_name 은 미존재(역할 라벨 미표시 fix).
+  const r = (adminState.roles || []).find((x) => String((x && x.key) || "").toLowerCase() === key);
+  return (r && r.name) ? String(r.name) : key;
 }
 
 // 역할 필터 드롭다운: 전체("") + 공용('*') + 역할들. glossary 서브뷰 툴바 노출.
@@ -3119,9 +3120,10 @@ function _metaPopulateRoleFilter() {
   if (!sel) return;
   const opts = [{ value: "", label: "전체 역할" }, { value: "*", label: "공용만" }];
   for (const r of (adminState.roles || [])) {
-    const rk = String((r && r.role_key) || "").trim().toLowerCase();
+    // role 객체는 key/name(정본 /api/admin/roles 직렬화) — role_key/role_name 은 미존재 필드라 전 역할이 스킵돼 드롭다운이 비던 버그 fix.
+    const rk = String((r && r.key) || "").trim().toLowerCase();
     if (!rk) continue;
-    opts.push({ value: rk, label: (r && r.role_name) ? String(r.role_name) : rk });
+    opts.push({ value: rk, label: (r && r.name) ? String(r.name) : rk });
   }
   sel.replaceChildren();
   for (const o of opts) {

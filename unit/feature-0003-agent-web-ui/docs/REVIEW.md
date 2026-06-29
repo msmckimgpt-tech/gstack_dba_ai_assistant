@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T170913-glossary-role-fieldname-fix [SKIPPED:Minor 비핵심경로 필드명 정정 — 라이브 실증(role 객체 key/name)+배포후 PB-0008 재검증으로 검증 대체] — 용어사전 역할 드롭다운/라벨 필드명 버그 수정 (TASK-20260629T170913-glossary-role-fieldname-fix, Minor §12.3 — 프런트 전용)
+- 대상: `src/static/admin.js` `_metaRoleLabel`·`_metaPopulateRoleFilter` 의 role 객체 읽기 `role_key/role_name → key/name`(4 refs) + admin.html cache-buster. 백엔드/RBAC/스키마 0.
+- Panel skip 사유(§18.8 6.4): Minor + 비핵심경로(인증/송신/미신뢰 렌더 무관 — 내부 역할 메타데이터 dropdown 채움) + 변경이 필드명 4개 정정. 정본 검증은 **라이브 실증**으로 선행 — PB-0008 브라우저에서 `/api/admin/roles` 200·role 객체 키 `["id","key","name",...]`(role_key/role_name 부재) 확인, `adminState.roles.length=8`인데 드롭다운 옵션 2개뿐 재현. 수정 효과는 **배포 후 PB-0008 재검증**(드롭다운에 실제 8역할 노출)으로 최종 확인.
+- 자체 점검(반증 시도): ① role 객체 key/name 항상 존재? — `_list_roles` 직렬화가 전 행 부여(라이브 8역할 전수 key/name 확인). ② 대소문자? — key 는 `.toLowerCase()` 비교, DB RoleKey 소문자(dba/admin/sales)라 정합. ③ 타 호출부 회귀? — `_metaRoleLabel` 은 term tag/badge/toast/유사어/관계 6곳 단일 진실원, 전부 동일 수정 혜택. term.role_key·역할 생성 payload role_key 는 별개 객체라 무영향. ④ 빈 역할 목록(403)? — `if(!rk) continue`/find 가 빈 배열 안전.
+- Human Approval Needed: 아니오 (Minor·비파괴·RBAC/스키마 무변경·명백 회귀 정정).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인(정적 자산 재빌드).
+- Cross-ref: CHG/TASK-20260629T170913-glossary-role-fieldname-fix · TASK-20260629T141637-glossary-role-single-ui.
+
 ## REV-20260629T165743-metadata-bs-flexclip [SUBAGENT:adversarial-css-regression] (TASK-20260629-metadata-bs-flexclip — 부트스트랩 결과 패널 flex-shrink 클리핑 수정 + cache-buster bump, Minor §12.3)
 - 대상: `static/styles.css` `.admin-meta-bootstrap { flex-shrink: 0 }`(+주석), `static/admin.html`·`static/index.html` `styles.css?v=` cache-buster bump. (CSS 전용 — 백엔드/JS 로직 0.)
 - 적대 리뷰 5축(회귀범위·flex-shrink 부작용·min-height/overflow 상호작용·cache-buster 정합·CSS 문법) → **VERDICT: SAFE**(BLOCKING 0·NIT 0, 반증 실패).
@@ -4138,3 +4146,23 @@ source_of_truth: true
 - 라이브 검증: `GET /healthz` HTTP 200(repo-web-1 healthy). 서빙 `index.html` 가 `app.js?v=20260629d-new-conv-dedup` 참조. 서빙 `app.js` 에 fix 반영(`new-conv-dedup` 주석 5·optimistic 등재 `topic: message.slice` 2곳).
 - PB-0008 Windows-browser 실 화면 시각검증(새 대화 첫 전송→사이드바 항목 1개·진행 중 placeholder 비중복)은 WSL worktree 라 미실행 — **배포 후 사용자 확인 권장**(frontend-only render-state, 선례 동일).
 - 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, f7dcb07/8a35eee 동일 패턴).
+
+## REV-20260629T172122-diff-lineno-prefix-leak [SUBAGENT:adversarial-correctness] (TASK-20260629T172122-diff-lineno-prefix-leak — ```diff 누출 `<N>→` 줄번호 prefix 렌더 정규화, Minor §12.3)
+- Trigger(§18.8): UI/render(diff 블록 렌더) + frontend JS code change → correctness/regression/security 렌즈(`ux/qa` 계열). 대상: `static/app.js`·`static/share.js` `buildDiffRows` context 분기 누출 정규화(`/^\s*(\d+)→/`) + `tests/verify_diff_lineno_leak.mjs`(30 단언). LLM 경로/backend/RBAC/스키마 0.
+- 적대 리뷰 5가설(clean-diff 회귀·오매칭 false-strip·gutter 동기화·보안 ReDoS/XSS·app↔share 정합) → **VERDICT: SAFE (BLOCKING 0)**.
+  1. **H1 clean diff 회귀 — REFUTED**: 정상 `@@` 헌크+context/+/- 는 `/^\s*(\d+)→/` 미매칭 → 무변경·gutter 정상. 회귀 0%.
+  2. **H2 오매칭(false strip) — CONFIRMED→NIT(비-blocking)**: 코드 내용이 우연히 `digit→`(예 ` 8080→4000: port`)로 시작하는 context 줄은 prefix 오인. 손실은 **gutter 숫자 cosmetic**(코드 내용은 렌더·복사 무손상), 확률 극히 낮음(context 줄이 `digit→` 시작 AND 모델이 그대로 누출). 코드 주석에 트레이드오프 명시 — accepted risk.
+  3. **H3 gutter 동기화 — REFUTED**: 누출 context 가 oldNo/newNo 재설정 후 `++` → 후속 줄 올바른 증분. 비단조 누출(45→40→50)도 정상.
+  4. **H4 보안 — REFUTED**: `/^\s*(\d+)→/` 선형(ReDoS 무, 10만 공백 <50ms). `line.slice()`→`textContent`(HTML 미파싱)→DOMPurify.sanitize 방어선 유지. 공격표면 무확대.
+  5. **H5 app.js↔share.js 정합 — REFUTED**: regex·로직 byte-동일. 공유 대화 뷰 정합 100%.
+- 회귀 가드: `tests/verify_diff_lineno_leak.mjs` 30/30 PASS(실 누출 블록 정규화·실 줄번호 복원·clean diff 무변경·양쪽 정합). `node --check` app.js·share.js PASS.
+- 라이브 실측 분리(§정직): 코드/테스트는 "렌더러가 누출 prefix 를 떼고 정상 diff 생성" 증명. "실제 사용자 화면 소멸" 은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(미수행 표기).
+
+## REV-20260629T172122-diff-lineno-prefix-leak-deploy [SKIPPED:deploy-record-only — 코드 적대검증은 REV-20260629T172122-diff-lineno-prefix-leak SUBAGENT correctness 패널서 완료] 배포 완료 + 라이브 검증
+- Related Change: CHG-20260629T172122-diff-lineno-prefix-leak / TASK-20260629T172122-diff-lineno-prefix-leak.
+- Panel skip 사유: 본 엔트리는 landing(push·PR·merge)·web 재배포·라이브 검증 기록뿐(코드 무변경). 코드 적대 검증은 선행 `[SUBAGENT:adversarial-correctness]`(5가설 REFUTED, BLOCKING 0)에서 완료.
+- deploy_scope 승인 근거(Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`(2026-06-11 사용자 결정 — cycle-final 후 web 재배포 사전 승인). 첫 배포 직전 "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료. frontend-only(app.js·share.js·index.html·share.html cache-buster) → **web 이미지만** 재빌드·재기동(`make dc-build SERVICE=web` GIT_COMMIT 각인 + `docker compose up -d --no-deps --force-recreate web`, override entrypoint=HTTPS 종단 유지). backend/ask-worker 무변경 → 미재빌드.
+- git 흐름: 원본 세션(`/_dqa:conversation_audit`)이 session-limit 으로 commit `d75152f` 직후 중단 → `/_template:resume` 가 push → PR #467 생성(confirm) → `cycle-finalize --pr 467`(gh pr merge --merge → main `60c0d45`→`5942a25`, base drift 0·충돌 0·clean FF, worktree+local+remote 브랜치 정리) 로 landing 완수.
+- 라이브 검증: `GET /healthz`(HTTPS) → `{"status":"ok","git_commit":"5942a25…","mysql_ok":true,"pg_ok":true}`(repo-web-1 healthy, baseline `f021f3d`→`5942a25`). 서빙 `index.html` 가 `app.js?v=20260629e-diff-lineno-leak` 참조. 서빙 `app.js` 가 main repo app.js 와 **byte-identical**(`diff -q` IDENTICAL — fix live). 단위 테스트 30/30 PASS(배포본 동일 코드).
+- PB-0008 Windows-browser 실 화면 시각검증(누출 diff 메시지 깨끗 렌더)은 WSL 라 미실행 — **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
+- 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, 60c0d45/8a35eee 동일 패턴 — 직접 main commit).

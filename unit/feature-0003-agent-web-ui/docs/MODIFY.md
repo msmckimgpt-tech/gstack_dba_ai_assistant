@@ -9,6 +9,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T170913-glossary-role-fieldname-fix (TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/라벨이 실제 역할 미표시하던 필드명 버그 수정, Minor §12.3 — 프런트 전용)
+- Date: 2026-06-29 (worktree ai/claude/glossary-role-fieldname-fix, base 54dbfe3).
+- 근본원인: `/api/admin/roles` 정본 직렬화 role 객체는 `{id,key,name,permission_codes,...}`. glossary 의 `_metaPopulateRoleFilter`/`_metaRoleLabel` 이 `adminState.roles` 를 `.role_key`/`.role_name`(미존재)로 읽어 → 필터는 전 역할 스킵(`if(!rk) continue`), 라벨은 미매칭 raw key. 역할 관리·계정 화면은 `.key`/`.name`(정본)이라 정상이었고 glossary 만 회귀. role.read 권한 게이트와 무관(현 admin 계정 보유, API 200·8역할 반환 확인).
+- 변경(`src/static/admin.js`): `_metaRoleLabel` find 키 `x.role_key→x.key`·반환 `r.role_name→r.name`; `_metaPopulateRoleFilter` `r.role_key→r.key`·`r.role_name→r.name`(총 4 참조, 주석으로 근본원인 명기).
+- 변경(`src/static/admin.html`): admin.js cache-buster `?v=20260629-glossary-role-single-ui → ?v=20260629-glossary-role-fieldname-fix`.
+- Impact: 비파괴. 단일 진실원 헬퍼 수정으로 역할 필터 드롭다운(실제 8역할 노출)·등록 대상 역할 배지·용어 태그·유사어/관계 라벨이 친화 역할명 표기. 데이터/스키마/RBAC/백엔드 0.
+- Rollback: admin.js 4 참조를 role_key/role_name 으로 환원 + cache-buster 복원.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Deploy & live-verify (2026-06-29): commit 90ab783 → base drift(main 8383652) 흡수 병합 a5fea6f(REPORT.md union — fieldname-fix 엔트리 + main flexclip 완료본) → PR #466(CI test pass) 머지(main f021f3d) → worktree/branch cleanup → web 이미지 재빌드·repo-web-1 recreate. **PB-0008 재검증 PASS**(실 Windows Chrome): healthz git_commit=f021f3d·mysql/pg ok / 새 admin.js `?v=…-fieldname-fix` 로드 / 메타데이터>용어사전 역할 드롭다운 옵션 **2→10**(실제 8역할 Pending·일반 사용자·Admin·DBA·관리자·서버·웹플랫폼·사업팀 노출, 증적 artifacts/pb0008-glossary-role-dropdown-after.png). F0 repo-immutability escape(worktree finalize 완료, post-deploy doc-only).
+- Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
+- Cross-ref: TASK-20260629T141637-glossary-role-single-ui(역할 단일 컨텍스트 도입 — 본 fix 가 그 드롭다운을 실제 동작시킴) · 정본 role 직렬화 `.key/.name`(admin.js 역할 관리·계정 화면).
+
 ## CHG-20260629-metadata-bs-flexclip (TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 + cache-buster bump, Minor §12.3, feature-0003)
 - Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-flex-clip-fix, base origin/main dad75c3).
 - 트리거: resume — `테이블 설명 AI 자동완성 및 UI 버그 수정`(원본 metadata-table-desc-fix/metadata-bs-collapse) PB-0008 실 Windows 브라우저 시각검증 중 적발한 추가 UI 버그. 메타데이터 > 테이블 설명 부트스트랩 골격이 다수 테이블일 때 결과 패널이 ~1행만 보이고 **pane 스크롤도 안 되어** 나머지 테이블 확인 불가.
@@ -5033,3 +5045,27 @@ source_of_truth: true
   - `tests/verify_new_conv_dedup.mjs` — 신규 회귀 가드(정적 불변식 + jsdom 실 `renderConversationList` 행위, 18 단언).
 - Impact: 비파괴. backend/스키마/마이그/RBAC/credential 무변경. placeholder→실 항목 원자적 교체라 클릭 진입·진행상황 폴링은 실 cid 항목이 승계(activeConversationId=earlyCid, is-active 전이). closure-mismatch(send 도중 다른 새 대화 이동)는 가드 밖 8421 delete 가 그대로 정리.
 - Rollback: app.js 3개 hunk 의 `delete(busyKey)`/`topic` 복원 + render 를 find-guard 안으로 + index.html cache-buster 복원.
+
+## CHG-20260629T172122-diff-lineno-prefix-leak (TASK-20260629T172122-diff-lineno-prefix-leak — ```diff 답변의 누출된 `<N>→` 줄번호 prefix 정규화, Minor §12.3 — frontend render-only, backend/스키마/RBAC/LLM 경로 무변경)
+- Date: 2026-06-29
+- Origin: `/_dqa:conversation_audit` (대화 마찰 진단·수정·출하). 마찰 = `FR-diff-lineno-prefix-leak`(FRICTION_LEDGER). 진단 대화 `…356708b8`(topic "계정 연동 및 보상 일괄 수령 쿼리 구성"), assistant msg id 4058. 사용자 명시 보고: "diff 포맷 답변에서 비정상 line 표현".
+- Summary: assistant 가 ```diff 코드블록 context 줄에 `45→\t…` 같은 줄번호+화살표 prefix 를 그대로 흘려보내면 웹 렌더러가 이를 코드 본문으로 표시해 줄 표현이 깨지던 것을, 렌더 시 누출 prefix(`^\s*\d+→`)를 떼고 떼어낸 실제 소스 줄번호로 gutter 를 동기화하도록 정규화.
+- Root cause: agent_core `_number_file_lines`(feature-0002, TASK-0256e)가 첨부 본문 각 줄에 `<N>→` 줄번호 prefix 를 주입(모델이 실제 줄 인용·`@@` 헌크 작성용). 프롬프트(agent_core.py:770-778)가 "diff 안에 `<N>→` 금지"를 지시하나 **모델이 가끔 context 줄에 그대로 복사**(변경줄만 표준 `+`/`-`). 웹 렌더러 `buildDiffRows`(app.js·share.js)가 누출 prefix 를 정규화하지 않아 `diffLineClass`→diff-ctx·`stripDiffMarker` 미스트립 → `45→` 가 코드로 렌더(+ gutter 는 1-based 별도 계산). 레이어 L1↔L6(프롬프트 vs 모델 준수)가 L7(렌더러)에서 표면화. 재발경로=model limit → **렌더러를 결정론적 최후 방어선으로 봉인**(모델이 또 누출해도 매번 차단·기존 저장 메시지도 render-time 에 정상화).
+- Files:
+  - `src/static/app.js` — `buildDiffRows` context 분기에 누출 정규화: `/^\s*(\d+)→/` 매칭 시 prefix 제거 + 떼어낸 줄번호로 oldNo/newNo 동기화.
+  - `src/static/share.js` — 동일 로직(공유 대화 뷰도 같은 `buildDiffRows` 복제본 보유 — diff 렌더는 app.js·share.js 이원화, mermaid 만 공용 추출됨).
+  - `tests/verify_diff_lineno_leak.mjs` — 신규 회귀 가드(30 단언, Node18 순수): 실 누출 블록 정규화·실 줄번호 복원·clean diff(@@/1-based) 무변경·app.js↔share.js 정합.
+- Impact: 비파괴. backend/스키마/마이그/RBAC/credential/LLM 경로 무변경. clean diff 는 정규식 미매칭 → 무변경(blast radius 0, 테스트로 증명). +/- 변경줄 미관여(누출은 verbatim context 줄에서만 발생). 누출 형식이 매우 구체적(자릿수+U+2192)이라 오매칭 시에도 손실은 gutter 숫자 cosmetic(코드/복사 무손상).
+- 분리 표기(§정직): 코드/테스트로 "렌더러가 누출 prefix 를 떼고 정상 diff 를 만든다" 증명됨. "실제 사용자 화면에서 소멸" 은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Deferred(cross-ref, 이번 batch 제외): agent_core 프롬프트 강화(feature-0002, Major·core LLM 경로)는 단일-feature 응집·저위험 유지를 위해 별도. 렌더러 봉인이 누출을 비가시화하므로 우선순위 낮음.
+- Rollback: app.js·share.js `buildDiffRows` 의 `leakedNo` 분기 제거(기존 단일 `return ... stripDiffMarker(line)` 복원) + `tests/verify_diff_lineno_leak.mjs` 삭제.
+
+## CHG-20260629T172122-diff-lineno-prefix-leak-deploy (TASK-20260629T172122-diff-lineno-prefix-leak — landing + web 재배포 + 라이브 검증, 코드 무변경 / post-deploy doc-record)
+- Date: 2026-06-29
+- Origin: `/_template:resume` — 원본 `/_dqa:conversation_audit` 세션이 commit `d75152f` 직후 session-limit 으로 중단된 작업을 추적·재개해 landing+배포 완수.
+- Summary: 코드/스키마 무변경. CHG-20260629T172122-diff-lineno-prefix-leak 의 landing(push·PR·merge)·배포·라이브 검증만 기록.
+- git 흐름: commit `d75152f` push → PR #467 → `cycle-finalize --pr 467`(gh pr merge --merge, main `60c0d45`→`5942a25`, clean FF·충돌 0, worktree+local+remote 브랜치 정리).
+- Deploy (deploy_scope: included): frontend-only → **web 이미지만** 재빌드(`make dc-build SERVICE=web` GIT_COMMIT=`5942a25` 각인)·재기동(`docker compose up -d --no-deps --force-recreate web`, override HTTPS 종단 유지). backend/ask-worker 무변경 → 미재빌드.
+- 라이브 검증: `GET /healthz`(HTTPS) git_commit=`5942a25`(live, baseline `f021f3d`→`5942a25`)·repo-web-1 healthy. 서빙 `index.html` `app.js?v=20260629e-diff-lineno-leak`. 서빙 `app.js` **byte-identical** to main(`diff -q` IDENTICAL — fix live). 단위 테스트 30/30 PASS.
+- Impact: 비파괴(doc-record). 사용자 화면 실 소멸 시각검증(PB-0008 Windows-browser)은 WSL 미실행 — 사용자 확인 권장.
+- Rollback: 해당 없음(doc-only). 배포 롤백 시 이전 web 이미지로 재기동.
