@@ -47,6 +47,7 @@ sources:
 | feature-0010-google-drive-integration | in-progress | 2026-06-23 | [TASK](../unit/feature-0010-google-drive-integration/docs/TASK.md) | Google Drive 연동 토대 — 계정별 OAuth 토큰 암호화 + MCP 구성 seam (연동 미수행/비활성 scaffold) |
 | feature-0011-shared-extraction | in-progress | 2026-06-25 | [TASK](../unit/feature-0011-shared-extraction/docs/TASK.md) | `shared/` 공통 코드 추출 P5a Step1~5c 완료 (model_catalog·config·db·conn_health·datasources 소비처 마이그레이션 + alias shim 4종 전량 제거, make test 회귀 0); 잔여 Step6(feature Dockerfile 분리) |
 | feature-0012-web-router-modularization | in-progress | 2026-06-29 | [TASK](../unit/feature-0012-web-router-modularization/docs/TASK.md) | feature-0003 app.py 를 도메인별 APIRouter 로 점진 분할하는 토대 — route-parity 안전망 + 의존성 audit (P5b, behavior-neutral) |
+| feature-0013-relationship-diagrams | in-progress | 2026-06-29 | [TASK](../unit/feature-0013-relationship-diagrams/docs/TASK.md) | flow/관계 질문에 mermaid 다이어그램 답변 — 웹 UI mermaid 렌더(vendor v10.9.3, sanitize-후 strict 렌더) + `_MERMAID_DIAGRAM_GUIDANCE` 발화 + `table_relationships` 관계 저장소(FK introspection·대화 JOIN 학습, mig 0024) + knowledge digest 주입 (cross-cut: 0002/0003). 코드+단위검증 완료, 라이브/브라우저 검증 미수행 |
 
 > **미머지 활성 worktree**: 없음 — 현행 worktree(feature-0002·0003·0009)는 모두 `ahead=0`(작업 main 병합 완료). 미머지 in-flight 작업이 생기면 표 아래 note 로만 표기하고, 병합 시 행을 갱신한다(ADR-0031 §1).
 > 상세 TASK 이력을 셀에 누적하지 않는다(ADR-0031 §1) — 상세는 정본 링크의 unit TASK.md / 인덱스화 이전 분은 STATUS_ARCHIVE.md.

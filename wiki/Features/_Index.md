@@ -57,6 +57,7 @@ sources:
 | feature-0010-google-drive-integration | active (토대) | Google Drive 연동 토대 — 계정별 OAuth 토큰 암호화 저장 + MCP 구성 seam (연동 미수행/비활성) | [[feature-0010-google-drive-integration]] | `unit/feature-0010-google-drive-integration/docs/FUNCTION.md` |
 | feature-0011-shared-extraction | active (리팩터) | 공통 코드 `shared/` 점진 추출 — model_catalog·config·db 모듈 alias (P5a, 회귀 0) | [[feature-0011-shared-extraction]] | `unit/feature-0011-shared-extraction/docs/FUNCTION.md` |
 | feature-0012-web-router-modularization | active (토대) | feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할 토대 — route-parity 안전망 + 의존성 audit (P5b, behavior-neutral) | [[feature-0012-web-router-modularization]] | `unit/feature-0012-web-router-modularization/docs/FUNCTION.md` |
+| feature-0013-relationship-diagrams | active | flow/관계 질문에 mermaid 다이어그램 답변 + 관계 저장소(FK introspection·대화 JOIN 학습) | [[feature-0013-relationship-diagrams]] | `unit/feature-0013-relationship-diagrams/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

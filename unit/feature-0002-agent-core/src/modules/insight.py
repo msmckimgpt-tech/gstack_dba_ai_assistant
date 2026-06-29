@@ -908,6 +908,23 @@ def _clear_repair_backoff(mem_conn) -> None:
         pass
 
 
+def _fk_raw_execute(conn, sql):
+    """feature-0013: relationships.introspect_and_store 용 콜백 — db_conn 으로 FK SQL 실행.
+
+    dialects.foreign_keys_outgoing(schema, table) 는 신뢰된 메타(information_schema/sys.foreign_keys)를
+    f-string 보간한 단일 SELECT 다. (result_sets,) 튜플로 반환해 introspect_and_store 의
+    `results, *_ = raw_execute(...)` 와 정합.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(sql)
+        cols = [d[0] for d in (cur.description or [])]
+        rows = [list(r) for r in (cur.fetchall() or [])]
+        return ([{"columns": cols, "rows": rows}],)
+    finally:
+        cur.close()
+
+
 def _scan_instance_schema_insights(
     db_conn,
     mem_conn,
@@ -1070,6 +1087,27 @@ ORDER BY TABLE_NAME
                     schema_refresh_map, schema_refresh_key, schema_refresh_sec
                 )
                 schema_has_stored_fp = bool(stored_schema_fp)
+
+                # feature-0013 Phase 2: 스키마 구조 변경/신규 시에만 FK 관계를 introspect 해
+                # table_relationships 에 적재(source='fk_introspect'). 빈도 제한으로 8초 루프 부하 억제.
+                # 전부 guarded — 어떤 예외도 insight 스캔을 차단하지 않는다(PG 미가용 시 no-op).
+                if (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
+                        and (schema_structure_changed or schema_artifact_missing)
+                        and all_table_names):
+                    try:
+                        from . import relationships as _rel
+                        _rel_scope = get_active_datasource()
+                        _n_rel = _rel.introspect_and_store(
+                            db_conn, _dialects.active(), schema, all_table_names,
+                            kb_conn=None, scope_key=_rel_scope,
+                            datasource_key=str(_rel_scope or ""), source_run_id=run_id,
+                            raw_execute=_fk_raw_execute,
+                        )
+                        report["relationships_introspected"] = int(
+                            report.get("relationships_introspected", 0)) + int(_n_rel or 0)
+                    except Exception:
+                        pass
+
                 schema_reason = ""
                 if schema_artifact_missing:
                     schema_reason = "artifact_missing"
