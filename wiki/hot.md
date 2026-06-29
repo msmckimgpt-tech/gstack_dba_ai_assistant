@@ -9,6 +9,7 @@ last_updated: 2026-06-29
 2026-06-29
 
 ## Key Recent Facts
+- 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림 cache-buster 수정(feature-0003, 06-29): 직전 mssql-db 수정의 460px 캡 제거가 배포는 됐으나 `admin.html` 의 `styles.css?v=`/`admin.js?v=` cache-buster 미bump 로 브라우저가 stale CSS 를 계속 로드 → "여전히 잘림". cache-buster bump(→20260629-metadata-bs-collapse)로 해소. 또 수백 테이블을 전부 펼쳐 평면 렌더하던 여백 과다를 **테이블별 기본 접힘 한 줄 헤더(caret+이름+입력상태 힌트) + 테이블명 검색/필터 + 모두펼치기/접기** 로 재설계(사용자 결정). 접기·필터는 시각 토글만 — 입력값 DOM 보존, 저장·AI 일괄생성이 전체 수집(회귀 0). 서브탭 전환 재렌더 mode 불일치(pre-existing)는 follow-up. metadata-bs-collapse.
 - 메타데이터 부트스트랩 MSSQL database 차원 수정(feature-0003, 06-29): "테이블 설명 > 스키마 골격 가져오기"가 MSSQL 에서 `database=None`→중립 tempdb(shared/db.py `_connect_mssql` 보안 기본값) 임시테이블(`#…`)을 노출하던 "테이블 명칭 모두 오류" 근본 수정. 부트스트랩 unit 엔진분기(MySQL=schema/MSSQL=database via `list_server_databases`, 시스템 DB·스키마·센티넬 필터), MSSQL 선택 DB 연결 평탄수집(저장 schema_name=database — 4계층→3-키, 사용자 결정), suggest grounding 동일분기, 프론트 '데이터베이스/스키마' 라벨, `.admin-meta-bootstrap-result` max-height 제거(패널 내부 잘림 해소, 테이블·컬럼 공통). AI 자동완성은 기구현·깨진 골격에 grounding 해 무력화됐던 것. REQ-20260629T114221.
 - 용어사전 대화 자율등록+역할분리+유사어(feature-0002/0003, 06-29): 대화에서 용어 자율 등록 + 등록·검토 역할 분리 + 유사어 참조(관리 콘솔 메타데이터 거버넌스, 마이그 0023, ADR-20260629T101500). 용어 검토 큐는 용어사전 하위 2차 보기 탭으로 중첩(admin IA).
 - 답변 피드백 답변당 고유화(feature-0003/0002, 06-29): 답변당 사용자별 고유 👍/👎 1개 강제(마이그 0021/0022 + 고유성 키 id_space 보강) — 새로고침·대화 전환 후 중복 부여 차단.

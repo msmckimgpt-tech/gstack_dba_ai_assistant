@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T142631-metadata-bs-collapse [SUBAGENT:adversarial-frontend-statemachine+xss+regression] (TASK-20260629-metadata-bs-collapse — 부트스트랩 결과 패널 접기+검색 재설계 + cache-buster bump, Major §12.3)
+- 대상: `static/admin.js`(렌더+토글+검색+힌트), `static/admin.html`(검색 필터바), `static/styles.css`(접기/검색/조밀), `index.html`/`admin.html` cache-buster.
+- 패널(적대 frontend 리뷰어 1, 7축: value-loss·state-machine·XSS·AI-fill 회귀·event-binding·edge·max-height): **BLOCKER 0**.
+  - VALUE-LOSS: CLEAN — 접기/필터는 시각 토글(class/`display`)만, save·AI-fill·apply 가 descendant 셀렉터로 숨은 입력까지 전체 수집. 유실 경로 없음.
+  - XSS: CLEAN — 식별자 textContent·값 .value/String(), 검색어는 includes+textContent 만(셀렉터/HTML 삽입 0).
+  - AI-fill: CLEAN — apply 셀렉터 nesting 투명, fill 후 hint 갱신이 접힌 헤더까지 반영.
+  - event-binding/edge/max-height: CLEAN — idempotent bound 가드, 0테이블/0컬럼/특수문자/0결과 카운트 정상, 460px 캡 미재도입(metadata-table-desc-fix 보존).
+  - MINOR(diff 귀속): 모두펼치기 라벨이 개별 토글 후 desync(자가복구) → **수정 흡수**(`allExpanded` 상태 제거, `_metaBootstrapSyncExpandAllLabel` 로 DOM 기준 라벨 동기화 — render/toggleTable/toggleAll 3곳).
+  - MAJOR(pre-existing, diff 무관, **수용·follow-up**): tables↔columns 서브탭 전환 시 부트스트랩 미재렌더 → render/save mode 불일치(stale 패널·저장 0건). 서브탭 핸들러가 `_metaBootstrapRenderResult` 미호출이 원인 — 본 cycle scope(잘림·여백) 밖이라 미수정, 별도 티켓 권고.
+- 판정: SHIP-WITH-FIXES → MINOR 흡수 후 SHIP.
+
 ## REV-20260629T041724-doc-sync-rn-0629 [SKIPPED:non-policy-doc] — 릴리즈노트 06-29 블록 정합 + 캐시버스터 bump (TASK-20260629T041724-doc-sync-rn-0629, 비-정책 doc-only)
 - Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
 - 변경: `static/release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 3항목 prepend(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + `index.html`·`admin.html` cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`.

@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림(cache-buster) 수정 (Major §12.3, feature-0003, 2026-06-29)
+- 트리거: 사용자 보고(metadata-bootstrap-mssql-db 배포 후속) — 스키마 골격 펼침 시 패널 내부 잘림 잔존 + 다수 테이블 여백 과다.
+- 결정(AskUserQuestion): 이슈2 재설계 방향 = **접기 + 검색/필터**(사용자 선택).
+- [x] 진단: 잘림 = cache-buster 미bump 로 stale CSS(460px 캡 생존), 여백 = 전체 평면 렌더.
+- [x] cache-buster bump(admin.html `styles.css`·`admin.js` + index.html `styles.css` → 20260629-metadata-bs-collapse).
+- [x] admin.js 접기 렌더 + 검색/필터 + 모두펼치기 + 입력상태 힌트(시각 토글, 입력 DOM 보존, 저장·AI fill 전체 수집 불변).
+- [x] admin.html 검색 필터바 + styles.css 접기/조밀 스타일.
+- [x] node --check PASS · §18.8 적대 패널 BLOCKER 0(MINOR 라벨 desync 흡수).
+- [ ] verify-completion → commit → PR → merge → web 재배포(cache-buster 반영) → PB-0008 Windows 브라우저 검증 → 임시 검증계정 정리.
+- Next Action: 출하·배포·라이브 검증.
+- 잔여/follow-up: tables↔columns 서브탭 전환 시 부트스트랩 재렌더(REV MAJOR, pre-existing) 별도 cycle 로 처리 권고.
+
 ## TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-29)
 - 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃). 직전 릴리즈노트 sync(63874f2 @ 2026-06-29 08:35, "ask-dedup 06-26 블록 합류") 이후 main 병합된 06-29 user-facing 변경이 릴리즈노트 미반영(drift) → `release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 prepend(generated 2026-06-29 유지).
 - [x] 대상 머지(3, 평이화·내부 비노출): [new admin] 용어사전 대화 자율등록 — 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결)(40c0de0); [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동(284e75a); [fixed work] 답변 평가(좋아요/별로예요)가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능)(31aa67a + 8c605b8 id_space 보강).
