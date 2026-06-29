@@ -4843,5 +4843,5 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] share.css: `.share-container` 960px 고정폭→`max-width:100%` 전체 폭 반응형(clamp 패딩) + `.share-message-content .mermaid-*` 규칙(overflow-x:auto).
 - [x] §18.8 적대 패널(SUBAGENT security+correctness): **no BLOCKING** — XSS posture 동일·추출 byte-identical·로드순서·fallback·반응형·회귀 전부 SAFE. NIT-1 적용 / NIT-2(다이어그램 없어도 mermaid 로드) defer.
 - [x] 검증: node --check(mermaid-render.js·app.js·share.js) PASS · app.js 추출 잔여참조 0 · DOMPurify 설정 무변경.
-- [ ] verify-completion PASS → commit → main 통합·머지 → web 재빌드·재배포(deploy_scope: included).
-- [ ] PB-0008 Windows-browser 시각 검증(공유 뷰 mermaid SVG 렌더 + 전체 폭 + 메인 뷰 무회귀) — 배포 후 실측.
+- [x] verify-completion PASS(9/9) → commit cbd54f4 → main 통합(머지, 충돌 0) → PR #464 머지(main 37d58cc) → web 재빌드·재기동(deploy_scope: included, healthz ok).
+- [x] PB-0008 Windows-browser 시각 검증(실 Chrome 149) — **① 메인 뷰 무회귀**: markdownToHtml→renderMermaidDiagrams flowchart SVG(7501) error 0. **② 공유 뷰**: share 렌더 경로 flowchart SVG(7637) error 0 + `.share-container` maxWidth=100%·실폭 1249=viewport(전체 폭). 증적 `artifacts/pb0008-share-mermaid-responsive.png`.

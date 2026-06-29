@@ -4993,3 +4993,4 @@ source_of_truth: true
 - 적대 검증(§18.8 SUBAGENT security+correctness): **no BLOCKING** — 추출 byte-identical·로드 순서·fallback·반응형·회귀 전 항목 SAFE. NIT-1 적용, NIT-2 defer.
 - Follow-up (NIT-2, 비-blocking): 공유 뷰가 다이어그램 없어도 3.3MB `mermaid.min.js` 로드(메인 UI 동일 패턴) — `language-mermaid` 존재 시 lazy-load 최적화 여지.
 - Rollback: share.html 의 mermaid 2 script 제거 + share.js enhance/render 호출 제거 + share.css `max-width:960px` 복원. mermaid-render.js 는 메인 UI 가 계속 사용(유지).
+- Deploy & live-verify (2026-06-29): commit cbd54f4 → main 통합(충돌 0) → PR #464 머지(main 37d58cc) → **web 이미지만** 재빌드·재기동(frontend-only, backend/스키마/migrate 무관, deploy_scope: included). 서버 서빙 확인(share.html: mermaid.min+mermaid-render+share.js?v=…-share-mermaid / index.html app.js?v=20260629c). **PB-0008 실 Windows Chrome**: 메인 뷰 flowchart SVG 무회귀(7501) + 공유 뷰 flowchart SVG(7637)·`.share-container` maxWidth=100% 전체 폭. healthz ok. 증적 `artifacts/pb0008-share-mermaid-responsive.png`.
