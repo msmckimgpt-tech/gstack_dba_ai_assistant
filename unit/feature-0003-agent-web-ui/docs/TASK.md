@@ -26,6 +26,17 @@ source_of_truth: true
   - [ ] web 재배포(deploy_scope: included) + cache-buster·healthz 확인
   - [ ] PB-0008 Windows 브라우저 라이브 렌더 검증(역할 UI 1곳·등록 토스트 역할 표기)
   - [ ] 결함② role.read 권한 부여 안내(코드 외)
+## TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림(cache-buster) 수정 (Major §12.3, feature-0003, 2026-06-29)
+- 트리거: 사용자 보고(metadata-bootstrap-mssql-db 배포 후속) — 스키마 골격 펼침 시 패널 내부 잘림 잔존 + 다수 테이블 여백 과다.
+- 결정(AskUserQuestion): 이슈2 재설계 방향 = **접기 + 검색/필터**(사용자 선택).
+- [x] 진단: 잘림 = cache-buster 미bump 로 stale CSS(460px 캡 생존), 여백 = 전체 평면 렌더.
+- [x] cache-buster bump(admin.html `styles.css`·`admin.js` + index.html `styles.css` → 20260629-metadata-bs-collapse).
+- [x] admin.js 접기 렌더 + 검색/필터 + 모두펼치기 + 입력상태 힌트(시각 토글, 입력 DOM 보존, 저장·AI fill 전체 수집 불변).
+- [x] admin.html 검색 필터바 + styles.css 접기/조밀 스타일.
+- [x] node --check PASS · §18.8 적대 패널 BLOCKER 0(MINOR 라벨 desync 흡수).
+- [ ] verify-completion → commit → PR → merge → web 재배포(cache-buster 반영) → PB-0008 Windows 브라우저 검증 → 임시 검증계정 정리.
+- Next Action: 출하·배포·라이브 검증.
+- 잔여/follow-up: tables↔columns 서브탭 전환 시 부트스트랩 재렌더(REV MAJOR, pre-existing) 별도 cycle 로 처리 권고.
 
 ## TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-29)
 - 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃). 직전 릴리즈노트 sync(63874f2 @ 2026-06-29 08:35, "ask-dedup 06-26 블록 합류") 이후 main 병합된 06-29 user-facing 변경이 릴리즈노트 미반영(drift) → `release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 prepend(generated 2026-06-29 유지).
@@ -4842,3 +4853,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **문서 갱신**: FUNCTION(REQ+AC) · TASK · REPORT · REVIEW([SUBAGENT:adversarial-2lens] check#9 + panel 수렴 기록) · MODIFY(feature-0003 본진 + feature-0002 cross-feature) · TEST · STATUS · wiki(Log/hot). (원본 세션이 문서 갱신 중 중단 → `/_template:resume` 로 완수.)
 - [ ] **PB-0008 Windows-browser 시각 검증**(테이블/컬럼 설명 부트스트랩 DB선택→실테이블 골격·패널 비잘림·AI 일괄생성·describe_table 컬럼 설명 노출) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(선례 동일).
 - [ ] verify-completion --pre-commit PASS → commit(Task-Cycle trailer) → push → main merge → web+ask-worker 재빌드·재배포(deploy_scope: included) → healthz/smoke.
+
+### TASK-20260629T143914-share-mermaid-responsive — 공유 대화 뷰 mermaid(flowchart) 렌더 + 공유 페이지 전체 폭 반응형 (Minor §12.3, frontend-only, feature-0013 후속, 2026-06-29)
+- [x] mermaid 헬퍼 4종(enhance/init/render/fallback)을 app.js→신규 `mermaid-render.js` 추출(메인/공유 단일 소스, `securityLevel:'strict'` 일원화) + app.js 호출부 2곳 `typeof` 가드(NIT-1).
+- [x] index.html·share.html 에 `mermaid.min.js`+`mermaid-render.js` 로드(순서: mermaid→render→app/share) + cache-buster bump(app.js `20260629c`, share `20260629-share-mermaid`).
+- [x] share.js `renderMarkdownContent`: `enhanceMermaidBlocks`(sanitize 이전)+`renderMermaidDiagrams`(innerHTML 이후) 연결, 미로드 시 typeof 가드 폴백.
+- [x] share.css: `.share-container` 960px 고정폭→`max-width:100%` 전체 폭 반응형(clamp 패딩) + `.share-message-content .mermaid-*` 규칙(overflow-x:auto).
+- [x] §18.8 적대 패널(SUBAGENT security+correctness): **no BLOCKING** — XSS posture 동일·추출 byte-identical·로드순서·fallback·반응형·회귀 전부 SAFE. NIT-1 적용 / NIT-2(다이어그램 없어도 mermaid 로드) defer.
+- [x] 검증: node --check(mermaid-render.js·app.js·share.js) PASS · app.js 추출 잔여참조 0 · DOMPurify 설정 무변경.
+- [x] verify-completion PASS(9/9) → commit cbd54f4 → main 통합(머지, 충돌 0) → PR #464 머지(main 37d58cc) → web 재빌드·재기동(deploy_scope: included, healthz ok).
+- [x] PB-0008 Windows-browser 시각 검증(실 Chrome 149) — **① 메인 뷰 무회귀**: markdownToHtml→renderMermaidDiagrams flowchart SVG(7501) error 0. **② 공유 뷰**: share 렌더 경로 flowchart SVG(7637) error 0 + `.share-container` maxWidth=100%·실폭 1249=viewport(전체 폭). 증적 `artifacts/pb0008-share-mermaid-responsive.png`.
+- [x] 배포-기록 REVIEW 엔트리(REV-20260629T144600-share-mermaid-responsive-deploy [SKIPPED:deploy-record]) 추가 — verify-completion check#9 정합.

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T142631-metadata-bs-collapse [SUBAGENT:adversarial-frontend-statemachine+xss+regression] (TASK-20260629-metadata-bs-collapse — 부트스트랩 결과 패널 접기+검색 재설계 + cache-buster bump, Major §12.3)
+- 대상: `static/admin.js`(렌더+토글+검색+힌트), `static/admin.html`(검색 필터바), `static/styles.css`(접기/검색/조밀), `index.html`/`admin.html` cache-buster.
+- 패널(적대 frontend 리뷰어 1, 7축: value-loss·state-machine·XSS·AI-fill 회귀·event-binding·edge·max-height): **BLOCKER 0**.
+  - VALUE-LOSS: CLEAN — 접기/필터는 시각 토글(class/`display`)만, save·AI-fill·apply 가 descendant 셀렉터로 숨은 입력까지 전체 수집. 유실 경로 없음.
+  - XSS: CLEAN — 식별자 textContent·값 .value/String(), 검색어는 includes+textContent 만(셀렉터/HTML 삽입 0).
+  - AI-fill: CLEAN — apply 셀렉터 nesting 투명, fill 후 hint 갱신이 접힌 헤더까지 반영.
+  - event-binding/edge/max-height: CLEAN — idempotent bound 가드, 0테이블/0컬럼/특수문자/0결과 카운트 정상, 460px 캡 미재도입(metadata-table-desc-fix 보존).
+  - MINOR(diff 귀속): 모두펼치기 라벨이 개별 토글 후 desync(자가복구) → **수정 흡수**(`allExpanded` 상태 제거, `_metaBootstrapSyncExpandAllLabel` 로 DOM 기준 라벨 동기화 — render/toggleTable/toggleAll 3곳).
+  - MAJOR(pre-existing, diff 무관, **수용·follow-up**): tables↔columns 서브탭 전환 시 부트스트랩 미재렌더 → render/save mode 불일치(stale 패널·저장 0건). 서브탭 핸들러가 `_metaBootstrapRenderResult` 미호출이 원인 — 본 cycle scope(잘림·여백) 밖이라 미수정, 별도 티켓 권고.
+- 판정: SHIP-WITH-FIXES → MINOR 흡수 후 SHIP.
+
 ## REV-20260629T041724-doc-sync-rn-0629 [SKIPPED:non-policy-doc] — 릴리즈노트 06-29 블록 정합 + 캐시버스터 bump (TASK-20260629T041724-doc-sync-rn-0629, 비-정책 doc-only)
 - Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
 - 변경: `static/release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 3항목 prepend(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + `index.html`·`admin.html` cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`.
@@ -4069,3 +4080,27 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (Minor·비파괴·RBAC/스키마 무변경·사용자 설계 결정 + 재검증 클린).
 - Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included, 사용자 결정 2026-06-11): cycle-final 후 web 재배포 사전 승인 범위(정적 자산 — 컨테이너 baked 이미지 재빌드 필수).
 - Cross-ref: TASK/CHG-20260629T141637-glossary-role-single-ui / 원본 glossary-conv-autoreg·glossary-review-nest / 결함② role.read 권한 부여(코드 외).
+## REV-20260629T143914-share-mermaid-responsive [SUBAGENT:adversarial-security+correctness] (TASK-20260629T143914-share-mermaid-responsive — 공유 뷰 mermaid + 전체 폭 반응형, Minor §12.3)
+- Related Change: CHG-20260629T143914-share-mermaid-responsive
+- Reason: 사용자 요청 — feature-0013 mermaid 렌더가 메인 UI 에만 적용돼 공유 대화 뷰에선 raw 코드블록으로 노출 + 공유 페이지 고정폭 960px 라 넓은 답변이 잘림.
+- Alternatives Considered:
+  - **공유 뷰 mermaid 적용 방식**: (a) share.js 에 함수 복제 vs (b) app.js→공용 `mermaid-render.js` 추출. **(b) 추출 채택** — 익명 공유는 공개 노출면이라 strict 보안설정이 두 뷰에서 갈라지면 위험. 단일 소스로 XSS posture 일원화(미래 mermaid 변경도 1곳).
+  - **폭**: 큰 max-width 캡 vs 전체폭. **전체폭(`max-width:100%`) 채택** — 사용자 명시 요청("브라우저 전체 크기로 반응"). 넓은 표/다이어그램 표시. clamp 패딩으로 대형 화면 좌우 여백 확보.
+- §18.8 적대 패널 (SUBAGENT general-purpose, security+correctness, 결함 적발 목적): **no BLOCKING**. 검증 결과:
+  1. **XSS posture** — app.js·share.js 모두 `window.DOMPurify.sanitize(...)` 무인자·무 setConfig/addHook 호출(grep 확인) → 기본 allowlist 동일. enhance(sanitize 이전, source 는 `textContent` 로만)→sanitize→render(이후 strict SVG) 순서 두 뷰 동일. SVG 는 DOMPurify 표면 미통과. `mermaid.initialize` 는 전 static 트리에 단 1곳(mermaid-render.js), 항상 strict. `_mermaidInited` 단일 전역 → strict 재플립 불가.
+  2. **추출 정합성** — 추출 함수 본문 byte-identical(주석만 reflow), markdownToHtml/renderMessageContent 호출부 유지, 로드 순서(mermaid.min→mermaid-render→app.js) 정확, node --check 3파일 OK.
+  3. **share fallback** — (a) mermaid.min 실패→ensureMermaidInit false→mermaidFallback(원문 pre), (b) mermaid-render 실패→share.js typeof 가드 passthrough — 둘 다 콘텐츠 보존, 페이지 무파손.
+  4. **함수 중복 0** — 4함수·2 module var 각 단 1곳 정의(app.js 정의 완전 제거, redeclare SyntaxError 없음).
+  5. **반응형** — 넓은 요소(table/pre/mermaid) 전부 `overflow-x:auto` 격리, 헤더 flex-wrap+min-width:0. 모바일/print media query 무충돌.
+  6. **회귀** — diff/attachment/결과표/외부링크 무영향, 비-mermaid 답변 early-return 으로 무변경.
+- 반영: **NIT-1**(app.js bare 호출 → `typeof` 가드, mermaid-render.js 404 시 메인 UI 보호) 적용. **NIT-2**(다이어그램 없어도 3.3MB mermaid 로드) 는 메인 UI 동일 패턴이라 defer(MODIFY follow-up).
+- Human Approval Needed: 아니오 (Minor, 비파괴, XSS posture 무변경, 사용자 명시 요청 범위).
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인. backend/스키마 무변경이라 web 이미지만 재빌드.
+- Cross-ref: CHG-20260629T143914-share-mermaid-responsive / TASK-20260629T143914-share-mermaid-responsive / feature-0013 mermaid 렌더(REV-20260629T120500-relationship-diagrams 패널 SHIP — 본 변경은 그 검증된 코드의 call-site 확장).
+
+## REV-20260629T144600-share-mermaid-responsive-deploy [SKIPPED:deploy-record-only — 코드 적대검증은 REV-20260629T143914-share-mermaid-responsive SUBAGENT 패널서 완료] 배포 완료 + PB-0008 기록
+- Related Change: CHG-20260629T143914-share-mermaid-responsive (Deploy & live-verify)
+- Panel skip 사유: 이번 변경은 PR #464 머지 후 web 재배포 + 배포-후 docs 기록(TASK/MODIFY/REVIEW)뿐 — 코드 무변경. 코드 적대 검증은 선행 `[SUBAGENT:adversarial-security+correctness]`(no BLOCKING)에서 완료.
+- deploy_scope 승인 근거 (Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`. frontend-only(backend/스키마/migrate 무관) → **web 이미지만** 재빌드·재기동.
+- 라이브 검증(PB-0008 실 Windows Chrome 149): ① **메인 뷰 무회귀** — markdownToHtml→renderMermaidDiagrams flowchart SVG(7501) error 0(mermaid-render.js 추출이 메인 UI 무파손). ② **공유 뷰** — share 렌더 경로 flowchart SVG(7637) error 0 + `.share-container` computed maxWidth=100%·실폭 1249=viewport(전체 폭). 증적 `artifacts/pb0008-share-mermaid-responsive.png`. healthz ok.
+- 배포-후 docs 기록이라 F0 repo-immutability escape(worktree finalize 완료, f7dcb07 동일 패턴).

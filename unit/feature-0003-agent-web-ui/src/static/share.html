@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex,nofollow" />
   <title>공유된 대화</title>
-  <link rel="stylesheet" href="/static/share.css?v=20260623-share-join" />
+  <link rel="stylesheet" href="/static/share.css?v=20260629-share-mermaid" />
 </head>
 <body class="share-body">
   <div class="share-container">
@@ -38,7 +38,10 @@
   </div>
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/share.js?v=20260623-share-join"></script>
+  <!-- feature-0013 후속: 공유 대화에서도 mermaid 다이어그램 렌더(메인 UI 와 동일 strict 경로) -->
+  <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>
+  <script src="/static/mermaid-render.js?v=20260629-share-mermaid"></script>
+  <script src="/static/share.js?v=20260629-share-mermaid"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260629-glossary-review-nest" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260629-metadata-bs-collapse" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -631,6 +631,13 @@
               <button type="button" class="btn-primary admin-meta-bootstrap-fetch" id="metadataBootstrapFetchBtn" disabled>골격 가져오기</button>
             </div>
             <div class="admin-meta-bootstrap-status" id="metadataBootstrapStatus" aria-live="polite"></div>
+            <!-- metadata-bs-collapse: 대규모 스키마(수백 테이블) 가독성 — 테이블명 검색 필터 + 모두 펼치기/접기.
+                 결과는 기본 접힘(한 줄 헤더)이라 여백을 줄이고, 입력값은 DOM 보존(저장 시 전체 수집). -->
+            <div class="admin-meta-bs-filterbar" id="metadataBootstrapFilterBar" style="display:none">
+              <input type="text" class="admin-meta-input admin-meta-bs-search" id="metadataBootstrapSearch" placeholder="테이블명 검색…" aria-label="테이블명 검색" autocomplete="off" />
+              <span class="admin-meta-bs-filter-count" id="metadataBootstrapFilterCount" aria-live="polite"></span>
+              <button type="button" class="btn-secondary admin-meta-bs-expandall" id="metadataBootstrapExpandAll">모두 펼치기</button>
+            </div>
             <div class="admin-meta-bootstrap-result" id="metadataBootstrapResult"></div>
             <div class="admin-meta-bootstrap-actions" id="metadataBootstrapSaveActions" style="display:none">
               <!-- AI 일괄 자동완성 — 빈 설명 입력란을 AI 가 채움(검토 후 저장). source='bootstrap' 저장 흐름 그대로. -->

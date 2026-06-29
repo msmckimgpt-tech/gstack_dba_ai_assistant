@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629-metadata-bs-collapse (TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + cache-buster bump, Major §12.3, feature-0003)
+- Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-collapse-search, base origin/main 3dfe81c).
+- 사용자 보고(metadata-bootstrap-mssql-db 배포 후속): 스키마 골격 가져온 뒤 (1) 테이블 펼침 시 패널 내부 UI 가 여전히 잘려 각 테이블 확인 불가, (2) 테이블 다수일 때 여백 과다.
+- 진단: (1) 잘림은 직전 metadata-bootstrap-mssql-db 가 `styles.css` 의 `.admin-meta-bootstrap-result` 460px 캡을 제거·서버 배포까지 했으나 `admin.html` 의 `styles.css?v=`/`admin.js?v=` cache-buster 미bump → 브라우저가 stale CSS(캡 생존) 를 계속 로드(서버 반영, 미전파). (2) 부트스트랩 결과가 수백 테이블을 전부 펼쳐 평면 렌더.
+- 변경(파일):
+  - `static/admin.html`: `styles.css?v=`·`admin.js?v=` → `?v=20260629-metadata-bs-collapse`; status~result 사이 검색 필터바(`#metadataBootstrapFilterBar`: 검색 input `#metadataBootstrapSearch` + 카운트 `#metadataBootstrapFilterCount` + 모두펼치기/접기 `#metadataBootstrapExpandAll`).
+  - `static/index.html`: `styles.css?v=` → `?v=20260629-metadata-bs-collapse`(공유 CSS 전파).
+  - `static/admin.js`: `_metaBootstrapRenderResult` 재작성 — 테이블별 기본 접힘 한 줄 헤더(button: caret+이름+입력상태 힌트), 본문을 `.admin-meta-bs-body` 로 감쌈. 신규 `_metaBootstrapToggleTable`·`_metaBootstrapUpdateHint`·`_metaBootstrapRefreshAllHints`·`_metaBootstrapApplyFilter`·`_metaBootstrapToggleAll`·`_metaBootstrapSyncExpandAllLabel`. `_metaBindBootstrap` 에 검색·모두펼치기 idempotent 바인딩. `_metaBootstrapAiFill` finally 에 hint 일괄 갱신.
+  - `static/styles.css`: `.admin-meta-bs-filterbar`/`-search`/`-filter-count`/`-expandall`, 접기 헤더(button, hover/focus-visible)·`.admin-meta-bs-caret`·`.admin-meta-bs-hint`(`.is-filled`)·`.admin-meta-bs-body`(`.is-collapsed` 시 display:none), 결과 gap 10→4px 조밀화. max-height 캡 미재도입(metadata-table-desc-fix 보존).
+- 안전 불변: 접기·필터는 시각 토글(class/`display`)만 → 입력값 DOM 보존. 저장(`_metaBootstrapSave`)·AI 일괄생성(`_metaBootstrapApplyDescriptions`)이 descendant 셀렉터라 접힌/필터된 입력까지 전체 수집(회귀 0).
+- 비변경: 백엔드/route/엔드포인트/스키마/RBAC/마이그 0. feature-0003 단독(cross-feature 없음).
+- 검증: node --check PASS. §18.8 적대 frontend 패널(value-loss·state-machine·XSS·AI-fill·binding·edge·max-height) BLOCKER 0·diff CLEAN, MINOR(모두펼치기 라벨 desync) 수정 흡수. REV-20260629T142631-metadata-bs-collapse.
+
 ## CHG-20260629T041724-doc-sync-rn-0629 (TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
 - Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
 - 배경: 직전 릴리즈노트 sync(63874f2 @ 06-29 08:35) 이후 main 병합된 06-29 user-facing 변경(40c0de0 용어사전 대화 자율등록 · 284e75a 용어 검토 큐 중첩 · 31aa67a+8c605b8 답변 평가 고유성)이 릴리즈노트 미반영(drift).
@@ -4977,3 +4990,25 @@ source_of_truth: true
 - Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
 - Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
 - Cross-ref: 원본 TASK-20260629-glossary-conv-autoreg(역할 분리 코어) · TASK-20260629-glossary-review-nest(검토 큐 중첩) · 결함② role.read 권한 부여(코드 외, app.py:20402 게이트).
+## CHG-20260629T143914-share-mermaid-responsive (TASK-20260629T143914-share-mermaid-responsive — 공유 대화 뷰 mermaid 렌더 + 전체 폭 반응형, Minor §12.3 — frontend render/CSS, anonymous 공유 노출면)
+- Date: 2026-06-29
+- Related Requirement: 사용자 요청(2026-06-29, feature-0013 후속) — ① 공유 대화에서도 flowchart(mermaid) 정상 렌더, ② 공유대화 고정폭(960px)→브라우저 전체 폭 반응형(넓은 답변 대응).
+- Summary: feature-0013 의 mermaid 렌더를 익명 공유 대화 뷰에도 적용 + 공유 페이지 폭을 전체 폭 반응형으로.
+- Files:
+  - `src/static/mermaid-render.js` (신규) — mermaid 헬퍼 4종(enhanceMermaidBlocks/ensureMermaidInit/renderMermaidDiagrams/mermaidFallback)을 app.js 에서 **verbatim 추출**. 메인 UI(index.html/app.js)와 공유 뷰(share.html/share.js)의 단일 소스 — 특히 `securityLevel:'strict'` init 을 한 곳에만 둬 두 뷰 XSS posture 일원화.
+  - `src/static/app.js` — 위 4함수 정의 제거(호출부 markdownToHtml·renderMessageContent 는 전역 함수로 유지) + 두 호출부에 `typeof` 가드(mermaid-render.js 미로드 방어 — NIT-1, share.js 와 동일 패턴). cache-buster `20260629b-feedback-id-space`→`20260629c-share-mermaid`.
+  - `src/static/index.html` — mermaid-render.js 로드 추가(`mermaid.min.js → mermaid-render.js → app.js` 순).
+  - `src/static/share.html` — `mermaid.min.js` + `mermaid-render.js` 로드 + share.css/share.js cache-buster `20260623-share-join`→`20260629-share-mermaid`.
+  - `src/static/share.js` — `renderMarkdownContent` 에 `enhanceMermaidBlocks`(sanitize 이전) + `renderMermaidDiagrams`(innerHTML 이후) 연결. 미로드 시 `typeof` 가드 폴백(원문 코드블록 유지).
+  - `src/static/share.css` — `.share-container` `max-width:960px`→`100%`(전체 폭 반응형, `padding: 24px clamp(16px,4vw,48px) 80px`) + `.share-message-content .mermaid-*` 컨테이너 규칙(styles.css 동형, share 토큰).
+- Impact: 비파괴. DOMPurify 설정 무변경(전역 setConfig/addHook 없음, 무인자 sanitize) — XSS posture 메인과 동일. mermaid `securityLevel:'strict'` 단일 init(`_mermaidInited` 단일 전역). 넓은 요소(표/pre/mermaid)는 `overflow-x:auto` 로 컨테이너 내 스크롤(레이아웃 무파손).
+- 적대 검증(§18.8 SUBAGENT security+correctness): **no BLOCKING** — 추출 byte-identical·로드 순서·fallback·반응형·회귀 전 항목 SAFE. NIT-1 적용, NIT-2 defer.
+- Follow-up (NIT-2, 비-blocking): 공유 뷰가 다이어그램 없어도 3.3MB `mermaid.min.js` 로드(메인 UI 동일 패턴) — `language-mermaid` 존재 시 lazy-load 최적화 여지.
+- Rollback: share.html 의 mermaid 2 script 제거 + share.js enhance/render 호출 제거 + share.css `max-width:960px` 복원. mermaid-render.js 는 메인 UI 가 계속 사용(유지).
+- Deploy & live-verify (2026-06-29): commit cbd54f4 → main 통합(충돌 0) → PR #464 머지(main 37d58cc) → **web 이미지만** 재빌드·재기동(frontend-only, backend/스키마/migrate 무관, deploy_scope: included). 서버 서빙 확인(share.html: mermaid.min+mermaid-render+share.js?v=…-share-mermaid / index.html app.js?v=20260629c). **PB-0008 실 Windows Chrome**: 메인 뷰 flowchart SVG 무회귀(7501) + 공유 뷰 flowchart SVG(7637)·`.share-container` maxWidth=100% 전체 폭. healthz ok. 증적 `artifacts/pb0008-share-mermaid-responsive.png`.
+
+## CHG-20260629T144600-share-mermaid-responsive-deploy-record (TASK-20260629T143914-share-mermaid-responsive — 배포 완료 docs 기록, doc-only)
+- Date: 2026-06-29
+- Summary: PR #464 머지 후 web 재배포 + PB-0008 검증 결과를 TASK/MODIFY/REVIEW 에 기록(배포-후 docs, 코드 무변경). F0 repo-immutability escape(worktree finalize 완료, f7dcb07 동일 패턴).
+- Files: `docs/{TASK,MODIFY,REVIEW}.md`.
+- Cross-ref: CHG-20260629T143914-share-mermaid-responsive(Deploy & live-verify) / REV-20260629T144600-share-mermaid-responsive-deploy.
