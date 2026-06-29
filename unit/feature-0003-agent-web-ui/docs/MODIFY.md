@@ -4994,3 +4994,9 @@ source_of_truth: true
 - Follow-up (NIT-2, 비-blocking): 공유 뷰가 다이어그램 없어도 3.3MB `mermaid.min.js` 로드(메인 UI 동일 패턴) — `language-mermaid` 존재 시 lazy-load 최적화 여지.
 - Rollback: share.html 의 mermaid 2 script 제거 + share.js enhance/render 호출 제거 + share.css `max-width:960px` 복원. mermaid-render.js 는 메인 UI 가 계속 사용(유지).
 - Deploy & live-verify (2026-06-29): commit cbd54f4 → main 통합(충돌 0) → PR #464 머지(main 37d58cc) → **web 이미지만** 재빌드·재기동(frontend-only, backend/스키마/migrate 무관, deploy_scope: included). 서버 서빙 확인(share.html: mermaid.min+mermaid-render+share.js?v=…-share-mermaid / index.html app.js?v=20260629c). **PB-0008 실 Windows Chrome**: 메인 뷰 flowchart SVG 무회귀(7501) + 공유 뷰 flowchart SVG(7637)·`.share-container` maxWidth=100% 전체 폭. healthz ok. 증적 `artifacts/pb0008-share-mermaid-responsive.png`.
+
+## CHG-20260629T144600-share-mermaid-responsive-deploy-record (TASK-20260629T143914-share-mermaid-responsive — 배포 완료 docs 기록, doc-only)
+- Date: 2026-06-29
+- Summary: PR #464 머지 후 web 재배포 + PB-0008 검증 결과를 TASK/MODIFY/REVIEW 에 기록(배포-후 docs, 코드 무변경). F0 repo-immutability escape(worktree finalize 완료, f7dcb07 동일 패턴).
+- Files: `docs/{TASK,MODIFY,REVIEW}.md`.
+- Cross-ref: CHG-20260629T143914-share-mermaid-responsive(Deploy & live-verify) / REV-20260629T144600-share-mermaid-responsive-deploy.

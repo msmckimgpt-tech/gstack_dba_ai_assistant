@@ -4085,3 +4085,10 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (Minor, 비파괴, XSS posture 무변경, 사용자 명시 요청 범위).
 - Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included): cycle-final 후 web 재배포 사전 승인. backend/스키마 무변경이라 web 이미지만 재빌드.
 - Cross-ref: CHG-20260629T143914-share-mermaid-responsive / TASK-20260629T143914-share-mermaid-responsive / feature-0013 mermaid 렌더(REV-20260629T120500-relationship-diagrams 패널 SHIP — 본 변경은 그 검증된 코드의 call-site 확장).
+
+## REV-20260629T144600-share-mermaid-responsive-deploy [SKIPPED:deploy-record-only — 코드 적대검증은 REV-20260629T143914-share-mermaid-responsive SUBAGENT 패널서 완료] 배포 완료 + PB-0008 기록
+- Related Change: CHG-20260629T143914-share-mermaid-responsive (Deploy & live-verify)
+- Panel skip 사유: 이번 변경은 PR #464 머지 후 web 재배포 + 배포-후 docs 기록(TASK/MODIFY/REVIEW)뿐 — 코드 무변경. 코드 적대 검증은 선행 `[SUBAGENT:adversarial-security+correctness]`(no BLOCKING)에서 완료.
+- deploy_scope 승인 근거 (Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`. frontend-only(backend/스키마/migrate 무관) → **web 이미지만** 재빌드·재기동.
+- 라이브 검증(PB-0008 실 Windows Chrome 149): ① **메인 뷰 무회귀** — markdownToHtml→renderMermaidDiagrams flowchart SVG(7501) error 0(mermaid-render.js 추출이 메인 UI 무파손). ② **공유 뷰** — share 렌더 경로 flowchart SVG(7637) error 0 + `.share-container` computed maxWidth=100%·실폭 1249=viewport(전체 폭). 증적 `artifacts/pb0008-share-mermaid-responsive.png`. healthz ok.
+- 배포-후 docs 기록이라 F0 repo-immutability escape(worktree finalize 완료, f7dcb07 동일 패턴).

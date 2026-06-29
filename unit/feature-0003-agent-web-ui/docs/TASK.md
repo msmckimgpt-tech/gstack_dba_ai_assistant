@@ -4845,3 +4845,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: node --check(mermaid-render.js·app.js·share.js) PASS · app.js 추출 잔여참조 0 · DOMPurify 설정 무변경.
 - [x] verify-completion PASS(9/9) → commit cbd54f4 → main 통합(머지, 충돌 0) → PR #464 머지(main 37d58cc) → web 재빌드·재기동(deploy_scope: included, healthz ok).
 - [x] PB-0008 Windows-browser 시각 검증(실 Chrome 149) — **① 메인 뷰 무회귀**: markdownToHtml→renderMermaidDiagrams flowchart SVG(7501) error 0. **② 공유 뷰**: share 렌더 경로 flowchart SVG(7637) error 0 + `.share-container` maxWidth=100%·실폭 1249=viewport(전체 폭). 증적 `artifacts/pb0008-share-mermaid-responsive.png`.
+- [x] 배포-기록 REVIEW 엔트리(REV-20260629T144600-share-mermaid-responsive-deploy [SKIPPED:deploy-record]) 추가 — verify-completion check#9 정합.
