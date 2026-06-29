@@ -8,6 +8,43 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T041724-doc-sync-rn-0629 [SKIPPED:non-policy-doc] — 릴리즈노트 06-29 블록 정합 + 캐시버스터 bump (TASK-20260629T041724-doc-sync-rn-0629, 비-정책 doc-only)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
+- 변경: `static/release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 3항목 prepend(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + `index.html`·`admin.html` cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`.
+- SKIP 사유(§18.4): 변경이 (a) 사용자 노출 릴리즈노트 텍스트 콘텐츠 3항목 추가 + cache-buster bump 뿐, (b) 실행/인가/데이터/응답계약 무영향. 원천 코드(40c0de0 glossary-conv-autoreg·284e75a glossary-review-nest·31aa67a feedback-unique-vote)는 각 cycle 에서 이미 적대 패널 + 라이브 검증·배포 완료 → 본 릴리즈노트 cycle 은 비-정책 doc 경량. 사실 정확성·평이화·비노출은 머지 3건 REPORT/diff 1:1 대조로 검증.
+- 적대 제외 판정: 첨부 wrong-bubble(ec39a60)은 REPORT·커밋이 "정상 display 경로 동작 동일"(스키마/마이그·프론트·cache-buster 무변경, 드문 fork/마이그 cross-space 엣지) 명시 → 사용자 체감 변화 0 이라 항목 미추가(보수적 결정).
+- 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 3항목. 비-user-facing(내부/devops — OAuth 폴백 1d0ace4·b9335b5, conversation_audit persona 84f2e45, template v3.36.0 0f69e6d, web-router-modularization 99bffb1 behavior-neutral) 의도적 제외 확인.
+- Human Approval Needed: 아니오(자동 동기화).
+- Cross-ref: CHG-20260629T041724-doc-sync-rn-0629 / TASK-20260629T041724-doc-sync-rn-0629 / FUNCTION '릴리즈노트 콘텐츠 — 06-29 블록 신설' / 원천 머지 40c0de0·284e75a·31aa67a. META(STATUS·wiki)는 별도 commit/상위 루프 소관.
+
+## REV-20260629T123000-glossary-review-nest-deploy [DEPLOY-RECORD] — 용어 검토 큐 IA 중첩 배포 완료 (TASK-20260629-glossary-review-nest)
+- Date: 2026-06-29. 프런트 전용(정적 자산) 변경 — deploy_scope:included(동일 admin 영역 직전 배포 사용자 승인 + 본 변경 프런트 전용·되돌리기 용이) 따라 web-only 재배포. 첫 배포 surface 는 본 세션 선행 cycle 에서 완료.
+- 실행: `repo-web` 이미지 재빌드(신규 admin.html/admin.js/styles.css baked) → web --force-recreate(healthy). memory-init/ask-worker 미touch(스키마·agent-core 무변경).
+- 검증(컨테이너 baked 자산): admin.html cache-buster `?v=20260629-glossary-review-nest`(admin.js·styles.css) · `data-meta-subtab="glossary-review"` 제거(0) · `#metadataGlossaryViews` strip(1) · `data-glossary-view` 2개 · `ADMIN_TAB_PERMISSIONS.metadata` 에 kb.glossary.curate 포함 · `_metaSyncGlossaryViews` 정의 · functional glossary-review 잔재 0 · web healthz OK. (cache-buster bump 으로 직전 glossary-conv-autoreg UI 미전파 갭도 동반 propagate.)
+- Cross-ref: REV-20260629T120000-glossary-review-nest / CHG-20260629-glossary-review-nest.
+
+## REV-20260629T120711-attach-id-space [SKIPPED:h5b-attach-layer-direct-closure-of-prior-adversarial-finding-self-review] — 첨부 영속 레이어에 message_id_space 추가 (TASK-20260629T120711-attach-id-space, Major §12.3)
+- Date: 2026-06-29. 선행 REV-20260629T022055-feedback-id-space 의 **잔여** 항목("동일 특성을 공유하는 첨부 영속 레이어 `_load_assistant_attachments_by_message`, message.id 키 — 별도 feature 범위")을 사용자 요청으로 마저 완수. 본 cycle 은 이미 적대 backend 리뷰(H1~H7)가 도출·수용한 **H5(b)** 의 첨부 레이어 직접 폐쇄이고, 피드백 레이어에서 검증된 동일 패턴의 미러 + 전용 cross-space 회귀 테스트라 full 적대 패널 대신 적대 self-review + 회귀 테스트로 종결(check #9 인식 `[SKIPPED:<사유>]`).
+- 결함(H5(b) 첨부 레이어 재기술): `_load_assistant_attachments_by_message` 는 MetaJson.message_id **단일 키**로 그룹핑, `_attach_assistant_attachments` 는 history 메시지 `id` 단일 키로 매칭했다. message.id 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).
+- 해소: id_space 차원 추가 → (message_id, message_id_space) 복합 키. materialize 가 MetaJson 에 `message_id_space="display"` 영속(message_id 출처 `_load_latest_assistant_message` 가 표시 store 전용이라 불변), 로더·attacher 가 복합 키로 그룹핑·매칭. `_attach_user_feedback` 와 정확히 대칭.
+- 적대 self-review (반증 시도 → 안전 확인):
+  1. **정상 경로 회귀?** — display 메시지(`id_space="display"`) + display 첨부(MetaJson space='display')는 같은 키라 기존과 동일 매칭. 현재 `_get_history` 의 두 호출부(PG·MySQL)는 항상 display 리스트에 attach 하므로 관측 동작 불변. (반증 실패=안전.)
+  2. **legacy 행 누락?** — message_id_space 키 없는 기존 MetaJson 행은 로더·materialize 모두 'display' 로 간주 → 기존 display 메시지에 정상 합류(L4 단언). 무손실.
+  3. **wrong-bubble 실증** — A3: display 첨부가 같은 숫자 id 의 core 메시지엔 미주입·display 메시지엔 정상 주입. L4: core/display 같은 숫자 100 이 별개 키. (방어가 실제로 동작.)
+  4. **stale int-key 소비자?** — `_load_assistant_attachments_by_message`/`_attach_assistant_attachments` 의 src 호출부는 `_get_history` 2곳뿐, 테스트는 test_task0285 뿐(grep 확인). 옛 int-key 기대 소비자 0 → 타입 변경(dict[int]→dict[tuple]) 안전.
+  5. **share/프론트 영향?** — share view 는 본 함수 미호출(redact 는 MetaJson.attachment_derived flag 기반), 프론트는 서버가 채운 `_attachments` 만 렌더 → JS·cache-buster 불요.
+  6. **join 테이블 범위?** — `core_attachment_derived_messages.message_id`(비-FK)는 라이브 surfacing 에서 message_id 로 조회되지 않음(INSERT/mirror/backfill 전용) → wrong-bubble surface 아님, 범위 밖(Resume≠Re-scope).
+- 검증: 대상 테스트 11/11(A1~A3·L1~L4·V·S), `make test` 전체 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
+- Human Approval Needed: 없음(자동 동기화). 배포는 web 코드 재빌드 동반(스키마 마이그 없음) — deploy_scope: included(FIRST_REQUEST 전역) 자동 배포 대상.
+- Cross-ref: 선행 REV-20260629T022055-feedback-id-space(잔여 출처) / CHG-20260629T120711-attach-id-space.
+## REV-20260629T120000-glossary-review-nest [SUBAGENT:adversarial-state-machine + adversarial-access-control + adversarial-regression-dom] — SHIP-WITH-FIXES (MAJOR 1 수정)
+- Date: 2026-06-29. TASK-20260629-glossary-review-nest(Minor §12.3, 프런트 IA). §18.8 적대 검증 워크플로 3 lens 병렬(상태머신·렌더 / 권한 게이트·접근경계 / 회귀·DOM·XSS). **BLOCKER 0, MAJOR 1(3 lens 독립 동일근본), MINOR 2, NIT 4**.
+- **[MAJOR] 적발→수정**: 부모 `ADMIN_TAB_PERMISSIONS.metadata = [ingest.manual, sample.curate]` 가 `kb.glossary.curate` 누락 → `canSeeTab("metadata")` 가 curate-only 사용자에게 false → 메타데이터 탭 자체 미표시 → 중첩된 용어 검토 큐 도달 불가. 본 변경이 추가한 `_metaSubtabVisible` 의 OR(curate) 분기·`_GLOSSARY_VIEW_PERM.review` 가 그 페르소나에 dead path 가 되어 변경의 명시 목표(curate-only 접근 보존) 무력화. **수정**: 탭 게이트에 `kb.glossary.curate` 추가(backend `admin_list_glossary_feedback` 가 curate 단독 200 → 표시 확장이 실 인가와 정합, 서버 403 이 실경계). pre-existing 갭이나 본 IA 가 큐를 더 깊이 중첩하므로 동반 수정이 정합.
+- **[MINOR] 수정**: 메타 탭 재진입 분기에 `_metaSyncGlossaryViews()`+`_metaPrimeReviewBadge()` 추가(strip 가시성·active·배지 stale 방어). **[NIT] 수정**: gview 클릭 핸들러의 `_metaSyncGlossaryViews` 이중 호출 제거(_metaRenderForm 위임); gview 버튼 `aria-selected` 추가(a11y).
+- **결함 없음 확인(적대 검증됨)**: 타 서브탭(enums/tables/columns/samples) 게이트 회귀 0(_metaSubtabVisible 비-glossary 분기 = 기존 `!perm||can(perm)` 동치), ingest-only/둘다없음 persona 접근 경계 견고(curate-only list 누수·CRUD 폼 노출 차단 — _metaSyncGlossaryViews 가 권한 없는 보기 보정), XSS(gview/배지 textContent·정적 HTML, innerHTML 미사용), 부트스트랩/역할필터/scope 정합, 잔여 glossary-review 참조 0, 백엔드/route 무변경.
+- 검증: node --check PASS. Human Approval Needed: 없음(자동 동기화 + deploy_scope:included). 프런트 SHIP.
+- Cross-ref: TASK-20260629-glossary-review-nest / CHG-20260629-glossary-review-nest / 선행 TASK-20260629-glossary-conv-autoreg.
+
 ## REV-20260629T112000-glossary-conv-autoreg-deploy [DEPLOY-RECORD] — 용어사전 대화 자율등록 배포 완료 (TASK-20260629-glossary-conv-autoreg)
 - Date: 2026-06-29. 배포 승인 근거: 사용자 AskUserQuestion "지금 배포"(라이브 스키마 변경 동반이라 deploy_scope:included 와 전역 deploy-confirm 정책 교차 확인 후 명시 승인). FIRST_REQUEST 정책상 승인 근거 기록.
 - 실행: ① `repo-web`·`repo-ask-worker`·`repo-memory-init` 이미지 재빌드(공유 Dockerfile) → ② `memory-init` 재실행(`agent_core.py --init-memory` → `_ensure_pg_schema()` 가 agent_kb_schema.sql 0023 미러 idempotent 적용, exit 0 "schema 적용 완료") → ③ `web`+`ask-worker` --force-recreate(둘 다 healthy).
@@ -4004,3 +4041,18 @@ source_of_truth: true
 - 검증: `node --check release-notes-data.js` PASS(JS 구문) + 항목 스키마(type/area/title/detail) 정합 + 06-26 블록 items 1→2. 비-user-facing(15ef5f4·483c4c0·c11cc27 doc·doc-sync) 의도적 제외 확인.
 - Human Approval Needed: 아니오.
 - Cross-ref: CHG-20260629T080501-doc-sync-rn-0629 / TASK-20260629T080501-doc-sync-rn-0629 / FUNCTION '릴리즈노트 콘텐츠 — ask-dedup 06-26 블록 합류' / 원천 머지 0818b0a·3595ea3(ask-dedup-idempotency) / 본체 리뷰 REV-20260626T134920·135945. META(STATUS·wiki)는 별도 commit.
+
+## REV-20260629T114221-metadata-bootstrap-mssql-db [SUBAGENT:adversarial-2lens-security+correctness] (TASK-20260629T114221-metadata-bootstrap-mssql-db — 메타데이터 부트스트랩 MSSQL database 차원 + 패널 잘림 + describe_table 오버레이 정합, Major §12.3)
+- Date: 2026-06-29 (`/_template:entry` arg-given, worktree ai/claude/metadata-table-desc-fix).
+- 문제: 관리 콘솔 > 메타데이터 > 테이블/컬럼 설명의 "스키마 골격 가져오기"가 MSSQL 데이터소스에서 **임시테이블(`#…`)** 을 테이블명으로 노출("모두 올바르지 않은 값") + 스키마 드롭다운이 고정 역할 스키마로 오염 + 부트스트랩 결과 패널이 내부 460px 박스에 갇혀 잘려 보임. AI 자동완성은 이미 구현됐으나 깨진 골격에 grounding 해 무력화.
+- 근본 원인: (a) `admin_bootstrap`/`_metadata_introspect_table` 가 `_db.connect(datasource=ds)` 를 `database=None` 으로 호출 → `shared/db.py:_connect_mssql` 의 의도적 보안 설계(default_db/caller 미지정 시 중립 `tempdb` 고정, 무자격 2-part 쿼리 누수 차단)로 `tempdb` 연결 → 임시테이블 열거. (b) `load_known_schemas` 가 dialect `list_schema_names`(MSSQL=전체 sys.schemas) 를 필터 없이 반환. MySQL 은 schema==database 라 영향 없음.
+- 결정 (사용자 AskUserQuestion): MSSQL server>db>schema>table 4계층을 (scope_key, schema_name, table_name) 3-키 모델에 매핑할 때 **schema_name = database 명**. 근거: ① 주입 read 경로(`load_table_column_descriptions`)는 table_name 으로 매칭하고 schema_name 은 표시 라벨(`schema.table`)이라, DB명을 넣으면 라벨이 의미있고(GunzGame.Account) DB 간 동명 테이블이 자연 구분됨, ② MySQL 이 이미 schema_name=DB명(schema==DB)이라 엔진 간 일관, ③ 모델 스키마 무변경(마이그레이션 0). 검토한 대안: schema_name="DB.schema" 복합값(라벨 길고 매칭 토큰 복잡 — 기각), schema_name=SQL스키마(dbo)(DB 차원 소실·동명 충돌 — 기각).
+- 평탄화 한계(수용): MSSQL DB 안 복수 SQL 스키마(dbo+사용자스키마)의 동명 테이블은 골격에서 최초 1건만(대부분 dbo 단일). 향후 다중 SQL 스키마 DB 가 빈번해지면 schema_name="db.schema" 재검토.
+- 변경(feature-0003): app.py(`admin_bootstrap_schemas` 엔진분기 + `engine`/`unit_kind` 응답, `admin_bootstrap` MSSQL database allowlist+연결, `_bootstrap_collect_skeleton_mssql` 신규, `_metadata_introspect_table` 엔진분기, `_BOOTSTRAP_MYSQL_SYS_SCHEMAS`), admin.js(unit_kind 라벨 분기 헬퍼), admin.html(label id), styles.css(`.admin-meta-bootstrap-result` max-height 제거).
+- 변경(cross-feature feature-0002, Path A — panel 적발 후 추가): `tools.py` `_tool_describe_table` 가 MSSQL 일 때 KB 컬럼 오버레이 조회 키를 SQL 스키마(dbo)가 아니라 `get_active_default_db()`(pin DB명)로 + `kb_metadata.py` `load_column_descriptions_for_table` schema 매칭 case-insensitive(`LOWER`) → 부트스트랩 저장 컬럼 설명이 describe_table 도구 출력에 주입(이전 'dbo' vs DB명 + 대소문자 비대칭으로 미주입). 질문-시점 grounding(Path B `load_table_column_descriptions`)은 schema 무관·원래 정상.
+- 보안: SQLi 방어 유지 — schema/database/table 식별자는 `_safe_ident` + allowlist 멤버십(MySQL=load_known_schemas / MSSQL=list_server_databases 시스템제외)로만 통과. RBAC(`kb.ingest.manual`) 무변경. database 연결은 RO 로그인 GRANT 범위 내. 외부 비용/파괴적 변경 없음.
+- §18.8 적대 verification panel(general-purpose 2-lens, 통과 아닌 결함 적발 목적): **lens1 보안**(SQLi·allowlist·의존함수 실재·시스템객체 노출·RBAC·dialect 컨텍스트·자원누수 7항목) VERDICT SAFE. **lens2 정합성/회귀**(read/write 축·suggest dedup·MySQL 회귀·프론트 분기·CSS·cap 6항목) → 1차 **MAJOR 1**(Path A: describe_table 오버레이 read 축이 schema_name=DB 규약과 불일치) 적발 → 사용자 결정으로 본 cycle 포함·수정(tools.py overlay 키) → 2차 재검증 **BLOCKING 1**(pin DB명 소문자 정규화 vs 저장값 원본 케이스, PG `=` case-sensitive 로 0행) 적발 → case-insensitive 수정(kb_metadata.py LOWER) → 3차 재검증 **VERDICT SAFE**(BLOCKING/MAJOR/MINOR 0, NIT 2 선재·비회귀 수용: `''`폴백 동순위 비결정성·docstring). 적대 검증이 라이브 검증(쓰인 DB 가 전부 대문자 포함이라 우연 통과)으로는 놓칠 case 회귀를 적발·차단.
+- 검증: `py_compile` app.py·tools.py·kb_metadata.py PASS · `node --check` admin.js PASS · 라이브 introspection 직호출(GunzGame 88 실테이블·temp 0) · 실 HTTPS API(curl, admin 세션: schemas/bootstrap/suggest 전부 정상) · Playwright 브라우저 eval(라벨 '데이터베이스 *'·129 DB·maxHeight none·88테이블 렌더·스크린샷). 단건 suggest grounded=true(29컬럼)·정확 설명.
+- Human Approval Needed: 아니오 (Major 이나 비파괴·RBAC/스키마/마이그 무변경·사용자 설계 결정 + SAFE). 
+- Deploy 승인 근거(FIRST_REQUEST.md deploy_scope: included, 사용자 결정 2026-06-11): cycle-final 후 web 재배포 사전 승인 범위. (이 환경의 컨테이너는 `docker restart` 시 RW 레이어가 baked 이미지로 복원되므로 영구 반영은 이미지 재빌드 필수 — hand-patch 는 검증용 임시.)
+- Cross-ref: REQ-20260629T114221-metadata-bootstrap-mssql-db / CHG-20260629T114221-metadata-bootstrap-mssql-db / TASK-20260629T114221-metadata-bootstrap-mssql-db / 관련 정본 shared/db.py `_connect_mssql`(tempdb 고정, TASK-0213) · feature-0002 dialects.py(MySQL/MSSQL describe_*).

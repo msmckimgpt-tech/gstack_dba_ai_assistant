@@ -1,7 +1,7 @@
 ---
 doc_type: WIKI_FEATURE_CARD
 scope: feature
-status: stub
+status: active
 edit_policy: ai-maintained
 source_of_truth: false
 template_version: v3.12.0
@@ -10,7 +10,7 @@ ai_read_priority: 7
 wiki_role: feature_card
 wiki_name: project
 confidence: high
-maturity: stub
+maturity: minimal
 ai_generated: true
 feature_id: feature-0012-web-router-modularization
 linked_unit: unit/feature-0012-web-router-modularization
@@ -29,8 +29,8 @@ feature-0003 `app.py`(29.5K줄/178 route, 단일 FastAPI app)를 도메인별 `A
 
 ## 2. 상태
 
-- **단계**: in-progress — plan-eng-review(조건부 승인)+§12 승인 후, route-parity 안전망·audit 완료. router 추출은 후속(브라우저 QA env).
-- **마지막 갱신**: 2026-06-25
+- **단계**: in-progress — 본 cycle(route-parity 안전망 + 의존성 audit) 머지 완료(2026-06-29, PR#456). 실제 router 추출은 후속(브라우저 QA env).
+- **마지막 갱신**: 2026-06-29
 - **AI 작업자**: claude / Human (§12 승인 2026-06-25)
 
 ## 3. 책임 경계

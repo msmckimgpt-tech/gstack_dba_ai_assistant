@@ -8,6 +8,35 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합(용어사전 대화 자율등록 · 용어 검토 큐 중첩 · 답변 평가 중복 정리) + cache-buster bump (doc_sync, 비-정책 doc, 2026-06-29)
+- 트리거: `/_dqa:doc_sync`(스케줄 무인 실행, 전 타깃). 직전 릴리즈노트 sync(63874f2 @ 2026-06-29 08:35, "ask-dedup 06-26 블록 합류") 이후 main 병합된 06-29 user-facing 변경이 릴리즈노트 미반영(drift) → `release-notes-data.js` releases head 에 신규 '2026-06-29' 블록 prepend(generated 2026-06-29 유지).
+- [x] 대상 머지(3, 평이화·내부 비노출): [new admin] 용어사전 대화 자율등록 — 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결)(40c0de0); [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동(284e75a); [fixed work] 답변 평가(좋아요/별로예요)가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능)(31aa67a + 8c605b8 id_space 보강).
+- [x] 적대 결정 — 첨부 wrong-bubble(ec39a60) **항목 제외**: REPORT·커밋이 "정상 display 경로 동작 동일"(스키마/마이그·프론트·cache-buster 무변경) 명시, 드문 fork/마이그 cross-space 엣지 하드닝이라 사용자 체감 변화 0 → 보수적으로 미추가.
+- [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. 내부용어(role_key/검토 큐 엔드포인트/마이그 0021/0023/id_space/message_id/wrong-bubble/feature-id/테이블명) 누출 0.
+- [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 신설(3항목).
+- [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629-rn-0629`→`?v=20260629b-rn-0629` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘). verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
+
+## TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가 — H5(b) wrong-bubble 의 첨부 레이어 완결 (follow-up, Major §12.3 — feature-0003 단독, 스키마 마이그 없음) — done
+- 출처: 사용자 요청 — "동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리해주세요." 선행 TASK-20260629T022055-feedback-id-space(REVIEW '잔여')가 별도 feature 로 미룬 첨부 레이어를 완수.
+- 문제(H5(b) 첨부 레이어): `_load_assistant_attachments_by_message` 가 MetaJson.message_id 단일 키로 그룹핑, `_attach_assistant_attachments` 가 history 메시지 `id` 단일 키로 매칭. message.id 는 표시 store(`agent_runtime.messages.id`)·core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).
+- 수정: 첨부 식별에 **id_space** 차원 추가 → (message_id, message_id_space) 복합 키. 피드백 레이어(`_attach_user_feedback`)와 대칭.
+  - [x] `_materialize_assistant_attachment_edits`: 새 버전 row 의 MetaJson 에 `"message_id_space": "display"` 추가(message_id 출처 `_load_latest_assistant_message` 가 표시 store 전용 → 항상 display, 불변식 영속).
+  - [x] `_load_assistant_attachments_by_message`: 반환 키 `message_id` → `(message_id, message_id_space)`. MetaJson space 없으면 'display'(legacy 하위호환). 타입 dict[int]→dict[tuple].
+  - [x] `_attach_assistant_attachments`: 메시지 `(id, id_space)`(미설정 시 'display') 복합 키로 매칭 → cross-space wrong-bubble 차단.
+  - [x] 테스트 `test_task0285_attach_surfacing.py`: A1/A2/L1/L2 복합 키 갱신 + A3(cross-space wrong-bubble)·L4(core/display 분리 + legacy 'display') 신규. 헬퍼 `_att_row(space=)`.
+- 비변경: 프론트(서버가 채운 `_attachments` 렌더)·share·cache-buster·DB 스키마/마이그 0. 정상 display 경로 동작 동일.
+- [x] 검증: 대상 11/11, `make test` 전체 exit=0(두 feature 회귀 0)·ruff·py_compile.
+- [x] 적대 self-review(H5(b) 첨부 레이어 closure) — REV-20260629T120711-attach-id-space. (선행 cycle 적대 리뷰 H1~H7 가 결함·설계 이미 도출.)
+- Cross-ref: 선행 TASK/REV/CHG-20260629T022055-feedback-id-space(H5(b) 출처) / CHG·REV-20260629T120711-attach-id-space.
+## TASK-20260629-glossary-review-nest — 용어 검토 큐 IA 중첩(메타데이터 > 용어사전 > 용어 검토 큐) (Minor §12.3, 프런트 전용)
+- 출처: `/_template:entry` dispatch(2026-06-29). 요청: 검토 큐를 메타데이터 최상위 서브탭(전)에서 **용어사전 하위 2차 보기 탭**(후)으로 이동.
+- 설계: 최상위 서브탭에서 glossary-review 제거 → 용어사전 하위에 2차 보기 탭(`용어 목록`/`용어 검토 큐`), 내부 상태 `glossaryView`. 권한 보존 — 용어사전 서브탭은 `kb.ingest.manual` OR `kb.glossary.curate`(중첩으로 인한 curate-only 접근 단절 방지), 보기별 권한 게이트(목록=ingest.manual, 검토 큐=glossary.curate) + 현재 보기 권한 없으면 첫 표시 보기로 전환. 백엔드/route/엔드포인트 무변경.
+- [x] admin.html: glossary-review 서브탭 제거 + `#metadataGlossaryViews` 2차 보기 strip + 배지 이전.
+- [x] admin.js: `glossaryView` 상태 + `_metaIsGlossaryReview`/`_metaSubtabVisible`/`_GLOSSARY_VIEW_PERM`/`_metaSyncGlossaryViews` + 2차탭 바인딩 + render/load/toolbar 분기를 새 보기 모델로 이전. node --check PASS.
+- [x] styles.css: `.admin-meta-gview` 2차 보기 탭(필 형태) 스타일. FUNCTION.md IA 기술 갱신.
+- [x] 적대 검증 워크플로(상태머신·권한·회귀 3 lens, BLOCKER 0): **MAJOR 1건(3 lens 동일근본)** — 부모 `ADMIN_TAB_PERMISSIONS.metadata` 가 `kb.glossary.curate` 누락 → curate-only 사용자가 메타데이터 탭 자체 진입 불가(내 OR 게이트가 dead path). **수정**: 탭 게이트에 `kb.glossary.curate` 추가(서버 403 이 실경계, 표시 확장 안전). + MINOR/NIT(재진입 strip/배지 sync·이중호출 제거·aria-selected) 전부 흡수. node --check PASS.
+- [ ] verify-completion → commit → main 동기화 → web 재배포(deploy_scope: included).
+
 ## TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가 — 두 message-id 공간(표시 store vs core) 모호성 해소 (H5(b) follow-up, Major §12.3 — 스키마 마이그 0022 + cross-feature 0002+0003)
 - 출처: 사용자 요청 — TASK-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 **H5(b)** 잔여 한계를 마저 완수. 사용자: "확인된 후속 권고사항도 마저 작업을 완수해주세요."
 - 문제(H5(b)): `/api/history` 의 `message.id` 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`)의 **두 독립 IDENTITY 공간**서 올 수 있다(agent_core 가 "독립 시퀀스, 숫자 겹침" 명시). 0021 의 고유성 키 (created_by, message_id) 는 숫자만 같으면 서로 다른 답변을 같은 키로 봐, fork·마이그로 대화가 core-only→display 전환되는 드문 경우 (a) cross-space DB 충돌(다른 답변이 같은 키 → UPSERT 가 남의 투표 덮어씀) (b) wrong-bubble 복원(core-id 피드백이 같은 숫자의 display 메시지에 표시) 가능.
@@ -4779,3 +4808,18 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. ULTRACODE 워크플로(완전성 비평 + 타깃별 적대 검증 + 릴리즈노트 비노출 반증) window 독립 재확인: 483c4c0..HEAD user-facing 단일(ask-dedup 0818b0a/3595ea3), late-merge 누락 0. 내부용어(enqueue/dedup/NOT EXISTS/AmbiguousParameter/long-poll/502/ask_jobs/feature-id) 누출 0(refuted:false·leaksInternals:false).
 - [x] 검증: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + 06-26 블록 items 1→2(fixed 항목 추가).
 - [x] META(STATUS·wiki) 별도 commit 분리(STATUS feature-0003 행 ask-dedup 1줄 + wiki hot/overview/Log product-chip·ask-dedup backfill). verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·deploy 는 cron wrapper 소관.
+
+### TASK-20260629T114221-metadata-bootstrap-mssql-db — 관리 콘솔 > 메타데이터 > 테이블/컬럼 설명: MSSQL database 차원 미처리로 인한 "테이블 명칭 모두 오류" + 패널 내부 잘림 수정, AI 자동완성 정상화 (Major §12.3 — cross-engine 골격 introspection, 2026-06-29)
+- 트리거: `/_template:entry` arg-given. 사용자 보고: "메타데이터 > 테이블 설명에서 (1) 각 데이터소스·스키마 테이블 설명도 AI 자동완성 구성, (2) 테이블 명칭이 모두 올바르지 않은 값, (3) 패널 내부 공간이 확장 안 돼 UI 내부 잘림(컬럼 설명 탭 동일)".
+- REQ: REQ-20260629T114221-metadata-bootstrap-mssql-db (FUNCTION.md). AC: AC-…-1(MSSQL 골격이 tempdb 임시테이블이 아닌 선택 DB 실테이블) · AC-…-2(테이블/컬럼 서브뷰 부트스트랩 패널 내부 잘림 없음) · AC-…-3(테이블 설명 단건·일괄 AI 자동완성이 선택 DB+테이블에 grounding).
+- **진단(라이브 introspection 직접 재현, app 내부 함수 직호출)**: AI 자동완성(단건 `/api/admin/metadata/tables/suggest` + 일괄 `bootstrap/describe`)은 **이미 구현돼 있었음** → 요청 (1) 은 신규 아님. "테이블 명칭 모두 오류"의 정체 = **MSSQL 데이터소스 골격**: `admin_bootstrap`/`_bootstrap_collect_skeleton` 이 `database=None` 으로 연결 → shared/db.py `_connect_mssql` 의 설계상(보안: 무자격 2-part 쿼리 차단) **중립 `tempdb` 고정** → `tempdb.dbo` 의 임시테이블(`#A0A50030`…)이 골격으로 노출. + "스키마" 드롭다운이 `load_known_schemas`(sys.schemas) raw 라 SQL Server 고정 역할 스키마(`db_datareader`·`db_owner`…)로 오염. MySQL 은 schema==database 라 원래 정상(`account_db`→`account`·`billing_history`). `table_descriptions`/`column_descriptions` DB 0행 확인 → 저장목록 아닌 골격 경로 확정.
+- **설계(사용자 AskUserQuestion 확정)**: MSSQL 은 server>database>schema>table 4계층인데 테이블 설명 모델은 (scope_key=datasource, schema_name, table_name) 3-키 → **schema_name = database 명** 으로 매핑(MySQL 도 이미 schema==DB 라 일관). 부트스트랩 unit = MySQL:schema / MSSQL:database.
+- [x] **백엔드(app.py)**: `admin_bootstrap_schemas` 엔진분기 — MSSQL=`list_server_databases`(시스템 DB master/model/msdb/tempdb 제외), MySQL=`load_known_schemas`(시스템 스키마+`__invalid_default_db__` 센티넬 제외); 응답에 `engine`·`unit_kind` 추가. `admin_bootstrap` — MSSQL 은 schema 파라미터=database, 시스템 DB 제외 allowlist 검증 후 해당 DB 로 연결 + 신규 `_bootstrap_collect_skeleton_mssql`(비시스템 SQL 스키마 평탄수집, 저장 schema_name=DB, 동명테이블 dedupe). `_metadata_introspect_table`(단건 suggest grounding) 동일 엔진분기 — MSSQL schema_name=DB 로 grounding(이전엔 tempdb 검증 실패→ungrounded). `_BOOTSTRAP_MYSQL_SYS_SCHEMAS` 상수 추가.
+- [x] **프론트(admin.js/admin.html)**: `_metaBootstrapLoadSchemas` 가 `unit_kind` 로 라벨/플레이스홀더/상태문구 분기(MySQL='스키마', MSSQL='데이터베이스'); `_metaBootstrapUnitWord`/`_metaBootstrapSetUnitLabel` 헬퍼; `metadataBootstrapSchemaLabel` id 부여. `_metaBootstrapFetch` 안내문구 엔진인지.
+- [x] **CSS(styles.css)**: `.admin-meta-bootstrap-result` 의 `max-height:460px;overflow:auto` 제거 — metadata pane 이 이미 `overflow-y:auto` 라 이중 스크롤(내부 460px 갇힘)이 "패널 내부 미확장 잘림"의 원인. 캡 제거로 자연 확장, 스크롤은 pane 담당(테이블/컬럼 서브뷰 공통).
+- [x] **라이브 검증(전부 통과)**: ① app 내부 introspection 직호출 — MSSQL `GunzGame` 88 실테이블·schema_name=GunzGame·임시테이블 0 / MySQL 센티넬 제외. ② 실 HTTPS API(curl, admin 세션) — `bootstrap/schemas` MSSQL engine=mssql·unit_kind=database·129 DB(tempdb 없음)·MySQL unit_kind=schema·센티넬 제거 / `bootstrap` GunzGame 88테이블 all schema_name=GunzGame·temp 0 / `tables/suggest` grounded=true(29컬럼)·정확 설명 생성(claude-haiku-4). ③ Playwright 브라우저 서비스(repo-browser-1, WSL-headless) eval — 메타데이터 탭 노출·tables 서브뷰·부트스트랩 패널 visibleOnPage=true·`.admin-meta-bootstrap-result` computed maxHeight='none'·라벨 '데이터베이스 *'·129 DB·GunzGame 88테이블 렌더·스크린샷(`artifacts/shared/out/browser/claude_verify_dbdropdown.png`).
+- [x] **§18.8 적대 verification panel (general-purpose 2-lens)** — lens1 보안 VERDICT SAFE(SQLi·allowlist·의존함수·시스템객체·RBAC·dialect·자원누수 7항목 반증 실패). lens2 정합성: 1차 **MAJOR**(Path A — describe_table 컬럼 오버레이 read 축이 schema_name=DB 규약과 불일치, 부트스트랩 컬럼 설명이 describe_table 도구 출력에 미주입; 질문-시점 grounding Path B 는 정상) 적발.
+- [x] **Path A 포함 결정(사용자 AskUserQuestion: "지금 포함")** → cross-feature feature-0002 read 축 정합 수정: (a) `tools.py` `_tool_describe_table` 오버레이 조회 키 MSSQL=`get_active_default_db()`(pin DB명) (b) panel 2차 재검증이 **BLOCKING**(pin DB명 소문자 정규화 vs 저장값 원본 케이스 → PG `=` case-sensitive 0행, 대문자 포함 DB명 전부 미적중) 적발 → `kb_metadata.py` `load_column_descriptions_for_table` schema 매칭 case-insensitive(`LOWER`) → 3차 재검증 **VERDICT SAFE**(NIT 2 선재·비회귀 수용).
+- [x] **문서 갱신**: FUNCTION(REQ+AC) · TASK · REPORT · REVIEW([SUBAGENT:adversarial-2lens] check#9 + panel 수렴 기록) · MODIFY(feature-0003 본진 + feature-0002 cross-feature) · TEST · STATUS · wiki(Log/hot). (원본 세션이 문서 갱신 중 중단 → `/_template:resume` 로 완수.)
+- [ ] **PB-0008 Windows-browser 시각 검증**(테이블/컬럼 설명 부트스트랩 DB선택→실테이블 골격·패널 비잘림·AI 일괄생성·describe_table 컬럼 설명 노출) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(선례 동일).
+- [ ] verify-completion --pre-commit PASS → commit(Task-Cycle trailer) → push → main merge → web+ask-worker 재빌드·재배포(deploy_scope: included) → healthz/smoke.

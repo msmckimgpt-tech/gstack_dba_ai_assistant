@@ -287,8 +287,9 @@ def load_column_descriptions_for_table(schema_name, table_name, scope_key=None, 
 
     같은 (scope_key, schema, table) 의 column_descriptions 를 ds-scoped(active∪common) 로 읽어
     column_name→description dict 반환. native COLUMN_COMMENT 가 빈 컬럼만 KB 설명으로 채울 때 사용.
-    PG 미가용/실패 → {} (graceful — 기존 출력 유지). schema_name 매칭은 빈 schema('') 도 허용해
-    단일 스키마 DB 와 정합.
+    PG 미가용/실패 → {} (graceful — 기존 출력 유지). schema_name 매칭은 대소문자 무관(LOWER) + 빈
+    schema('') 허용 — MSSQL 저장 schema_name=DB명(원본 케이스) vs describe_table read 키 소문자
+    정규화(get_active_default_db) 비대칭, 및 단일 스키마 DB(레거시 '') 와 정합.
     """
     tb = str(table_name or "").strip()
     if not tb:
@@ -306,12 +307,16 @@ def load_column_descriptions_for_table(schema_name, table_name, scope_key=None, 
         scopes = _scope_candidates(scope_key)
         cur = c.cursor()
         try:
-            # schema 일치 또는 빈 schema('') 둘 다 허용(단일 스키마 DB 는 schema_name='' 로 저장).
+            # schema 매칭은 대소문자 무관(LOWER) — MSSQL 은 저장 schema_name=DB명(원본 케이스, 예
+            # GunzGame)인데 describe_table 오버레이 read 키 get_active_default_db()는 소문자 정규화
+            # (gunzgame)라, PG text '='(case-sensitive)로는 대문자 포함 DB명이 불일치한다
+            # (metadata-table-desc-fix Path A). 빈 schema('') 폴백은 단일 스키마 DB(레거시) 호환용 —
+            # ORDER BY 가 정확(대소문자 무관)매치를 '' 폴백보다 우선.
             cur.execute(
                 "SELECT column_name, description FROM column_descriptions "
                 "WHERE scope_key = ANY(%s) AND table_name = %s "
-                "AND (schema_name = %s OR schema_name = '') "
-                "ORDER BY (schema_name = %s) DESC LIMIT %s",
+                "AND (LOWER(schema_name) = LOWER(%s) OR schema_name = '') "
+                "ORDER BY (LOWER(schema_name) = LOWER(%s)) DESC LIMIT %s",
                 (scopes, tb, sch, sch, _COLUMN_READ_LIMIT),
             )
             rows = cur.fetchall() or []

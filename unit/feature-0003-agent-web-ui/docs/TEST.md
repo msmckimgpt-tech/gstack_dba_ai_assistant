@@ -1227,3 +1227,17 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - `is-user is-other-message is-mention-me` (멘션 하이라이트 상대방): **leftGap 25 → 좌측** + 주황 강조선 정상.
   - 증거: `artifacts/pb0008-gc-other-msg-left/bubble-align-result.png`(내 파란 버블 우측·상대방 회색 버블/assistant 흰 버블 좌측·멘션 주황 강조선 좌측, 육안 확인).
   - **Pass/Fail: PASS**(headless mock 게이트). 내 메시지=우측, 상대방·assistant=좌측 동일 기준선으로 사용자 요청 충족. JS/백엔드/스키마/RBAC 무변경. [SKIPPED:frontend-css-presentation-no-logic for backend/panel; CHECK#13 PB-0008 배포 후 실 그룹대화 권장].
+
+- 2026-06-29 (TASK-20260629T114221-metadata-bootstrap-mssql-db — 메타데이터 부트스트랩 MSSQL database 차원 + 패널 잘림, **Major §12.3** — cross-engine 골격 introspection; CHG/REV-20260629T114221 evidence):
+  - **Environment: WSL-headless-Playwright(repo-browser-1) + 실 HTTPS API(curl, admin 세션)**. 실 Windows 화면 최종 확인은 PB-0008 — worktree(WSL)에서 작성돼 미실행(배포 후 사용자 시각 확인 권장, 선례 동일).
+  - **정적**: `python3 -m py_compile app.py` PASS · `node --check static/admin.js` PASS · CSS 1줄 교체(브레이스 영향 없음).
+  - **백엔드 introspection 직호출(app 내부 함수)**: MSSQL `mssql-qa-idc`/`GunzGame` → `_bootstrap_collect_skeleton_mssql` 88 실테이블(`_CurrencyType`·`Account`·`AccountItem`…)·전부 schema_name=GunzGame·임시(`#`)테이블 0 / `Account` DB 17테이블·`GameLog` 36 / MySQL `mysql-local` 센티넬·시스템스키마 제외 확인.
+  - **실 HTTPS 엔드포인트(curl, `mysql_ai_session` admin)**:
+    - `GET …/bootstrap/schemas?datasource=mssql-qa-idc` → engine=mssql·unit_kind=database·129개(tempdb/master/model/msdb 없음).
+    - `GET …/bootstrap/schemas?datasource=mysql-local` → engine=mysql·unit_kind=schema·13개(`__invalid_default_db__` 센티넬 제거).
+    - `POST …/bootstrap {mssql-qa-idc, GunzGame}` → 88테이블·전부 schema_name=GunzGame·temp 0·컬럼 포함.
+    - `POST …/tables/suggest {mssql-qa-idc, GunzGame, Account}` → target=description·grounded=true(29컬럼 introspect)·정확 한국어 설명(claude-haiku-4).
+  - **Playwright 브라우저 서비스(eval, admin 로그인)**: 메타데이터 탭 노출(권한)·tables 서브뷰 전환·부트스트랩 패널 `display=block`·`offsetParent!=null`(visibleOnPage)·`.admin-meta-bootstrap-result` computed `maxHeight='none'`(패널 잘림 해소)·DS=mssql-qa-idc 선택 시 라벨 '데이터베이스 *'·status '129개 데이터베이스'·GunzGame 88 table-name 렌더(`GunzGame.Account`…). 증거: `artifacts/shared/out/browser/claude_verify_dbdropdown.png`.
+  - **§18.8 적대 verification panel (general-purpose 2-lens, cross-feature 0002 포함)**: lens1 보안 VERDICT SAFE(SQLi·allowlist·의존함수 실재·시스템객체·RBAC·dialect 컨텍스트·자원누수). lens2 정합성: 1차 **MAJOR**(Path A — describe_table 컬럼 오버레이 read 축이 schema_name=DB 규약과 불일치) → tools.py overlay 키=pin DB명 수정 → 2차 재검증 **BLOCKING**(pin DB명 소문자 정규화 vs 저장값 원본 케이스, PG `=` case-sensitive 0행 — 라이브 검증 DB 가 전부 대문자 포함이라 우연 통과한 회귀) → kb_metadata.py `LOWER` case-insensitive 수정 → 3차 재검증 **VERDICT SAFE**(NIT 2 선재·비회귀 수용).
+  - **Path A 검증(코드/런타임)**: `_tool_describe_table` 가 MSSQL 일 때 `get_active_default_db()`(소문자 'gunzgame') 로 오버레이 조회 → `load_column_descriptions_for_table` 가 `LOWER(schema_name)=LOWER(%s)` 로 저장값 'GunzGame' 과 매치(panel 런타임 `LOWER('GunzGame')='gunzgame'` TRUE 확인). 함수 호출처 `tools.py:789` 단일(Path A 격리). `py_compile` tools.py·kb_metadata.py PASS. (라이브 노출 단언은 column_descriptions DB 0행이라 미수행 — 코드/축 정합 + panel 3-pass 로 검증; PB-0008 배포 후 실 컬럼 설명 저장 시 사용자 확인 권장.)
+  - **Pass/Fail: PASS**. 사용자 보고 3건 전부 해소: (1) 테이블 설명 AI 자동완성 정상(이미 구현+grounding 복구), (2) 테이블명 오류=tempdb 임시테이블 → 실 DB 실테이블, (3) 패널 내부 잘림 해소(maxHeight none). + describe_table 컬럼 오버레이 MSSQL read 축 정합(Path A, panel 적발·수정). RBAC/스키마/마이그 무변경. [PB-0008 Windows-browser 배포 후 사용자 시각 확인 권장].

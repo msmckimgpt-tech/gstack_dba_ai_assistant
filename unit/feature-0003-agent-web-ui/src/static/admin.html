@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260625-role-account-prompt-autogen" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260629-glossary-review-nest" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -603,8 +603,12 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="tables" role="tab">테이블 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
-          <!-- 용어사전 대화 자율등록 검토 큐(0021) — 권한 kb.glossary.curate. admin.js 가 권한별로 숨긴다. -->
-          <button type="button" class="admin-meta-subtab" data-meta-subtab="glossary-review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
+        </div>
+        <!-- 용어사전 2차 보기 탭(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). admin.js 가
+             용어사전 서브탭일 때만 노출 + 권한별로 보기 버튼을 숨긴다(목록=kb.ingest.manual, 검토 큐=kb.glossary.curate). -->
+        <div class="admin-meta-glossary-views" id="metadataGlossaryViews" role="tablist" aria-label="용어사전 보기" style="display:none">
+          <button type="button" class="admin-meta-gview is-active" data-glossary-view="list" role="tab">용어 목록</button>
+          <button type="button" class="admin-meta-gview" data-glossary-view="review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
         </div>
         <!-- 부트스트랩 패널 — 테이블/컬럼 서브뷰에서만 admin.js 가 노출(kb.ingest.manual). DS+스키마 골격을 가져와 설명 빈칸 채워 일괄 저장. -->
         <section class="admin-meta-bootstrap" id="metadataBootstrap" style="display:none" aria-label="스키마 골격 부트스트랩">
@@ -619,7 +623,8 @@
                 <select id="metadataBootstrapDs" class="admin-meta-input" aria-label="부트스트랩 데이터소스"></select>
               </label>
               <label class="admin-meta-field">
-                <span class="admin-meta-field-label">스키마 *</span>
+                <!-- 라벨은 엔진별로 admin.js 가 갱신: MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층) -->
+                <span class="admin-meta-field-label" id="metadataBootstrapSchemaLabel">스키마 *</span>
                 <select id="metadataBootstrapSchema" class="admin-meta-input" aria-label="부트스트랩 스키마" disabled></select>
               </label>
               <button type="button" class="btn-primary admin-meta-bootstrap-fetch" id="metadataBootstrapFetchBtn" disabled>골격 가져오기</button>
@@ -737,10 +742,10 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260625-role-account-prompt-autogen"></script>
+  <script src="/static/admin.js?v=20260629-glossary-review-nest"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
-  <script src="/static/release-notes-data.js?v=20260629-rn-0629"></script>
+  <script src="/static/release-notes-data.js?v=20260629b-rn-0629"></script>
   <script src="/static/release-notes.js?v=20260618-rn-scope-scroll"></script>
 </body>
 </html>

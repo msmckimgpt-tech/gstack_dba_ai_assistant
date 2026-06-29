@@ -7856,6 +7856,28 @@ a { color: inherit; }
 }
 .admin-meta-subtab:hover { color: var(--text); }
 .admin-meta-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+/* 용어사전 2차 보기 탭(메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}) — 메인 서브탭보다 시각적 하위(필 형태). */
+.admin-meta-glossary-views {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 14px;
+}
+.admin-meta-gview {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: color .13s, border-color .13s, background .13s;
+}
+.admin-meta-gview:hover { color: var(--text); }
+.admin-meta-gview.is-active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
 .admin-meta-form {
   display: flex;
   flex-direction: column;
@@ -7980,7 +8002,11 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-bootstrap-fetch { flex-shrink: 0; }
 .admin-meta-bootstrap-status { font-size: 12px; color: var(--text-muted); min-height: 16px; margin-bottom: 8px; }
 .admin-meta-bootstrap-status.is-error { color: var(--danger, #dc2626); }
-.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow: auto; }
+/* metadata-table-desc-fix: 내부 max-height:460px 고정 스크롤 박스를 제거 — metadata pane 이 이미
+   overflow-y:auto 라(styles.css 위 .admin-pane[data-admin-pane="metadata"]) 이중 스크롤이 되어
+   골격 결과가 460px 안에 갇혀 "패널 내부 공간이 확장되지 않아 잘림"으로 보였다(테이블/컬럼 서브뷰 공통).
+   캡을 없애 결과가 자연 확장되고 스크롤은 pane 이 담당한다. */
+.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 10px; }
 .admin-meta-bs-table {
   border: 1px solid var(--border);
   border-radius: var(--r-sm, 6px);

@@ -778,8 +778,16 @@ def _tool_describe_table(conn, args: dict) -> str:
     try:
         from shared import config as _cfg
         from modules.kb_metadata import load_column_descriptions_for_table
+        # 오버레이 조회 키는 부트스트랩 저장 규약(metadata-table-desc-fix)과 일치시킨다:
+        #   - MySQL: schema_name == database == 도구 schema 인자(그대로).
+        #   - MSSQL: 부트스트랩이 schema_name=database(pin 된 primary DB) 로 저장하므로, SQL 스키마
+        #     (dbo 등 도구 schema 인자)가 아니라 **현재 연결 DB 명**(get_active_default_db)으로 조회해야
+        #     적중한다(이전엔 'dbo' vs 'GunzGame' 축 불일치로 부트스트랩 컬럼 설명이 영영 미주입).
+        overlay_schema = schema
+        if str(_dialects.active().name).lower() == "mssql":
+            overlay_schema = (_cfg.get_active_default_db() or schema)
         kb_col_desc = load_column_descriptions_for_table(
-            schema, table, scope_key=_cfg.get_active_datasource()
+            overlay_schema, table, scope_key=_cfg.get_active_datasource()
         )
     except Exception:
         kb_col_desc = {}

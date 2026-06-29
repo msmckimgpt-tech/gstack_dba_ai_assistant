@@ -50,13 +50,14 @@ sources:
 
 ## 1. 개요
 
-본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → **N 개 데이터소스 (MySQL·MSSQL)** 에 대한 read-only DBA 작업 자동화를 11 개 feature unit + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.
+본 프로젝트는 **기존 `mysql_ai` 운영 자산을 AI 위임 개발 (`ai_delegated_dev`) 템플릿 구조로 이관한 실행형 사본** 이다. 자연어 입력 → LLM tool-call loop → **N 개 데이터소스 (MySQL·MSSQL)** 에 대한 read-only DBA 작업 자동화를 12 개 feature unit + 단일 docker-compose 로 제공한다. 정책 정본 (`AGENTS.md`) + 도메인 정본 (`docs/`) + 기능 정본 (`unit/<id>/docs/`) 의 3-tier 문서 체계로 다중 AI 가 동시에 작업 가능.
 
 > **2026-06 현재**: 초기 단일 MySQL replica → **멀티 데이터소스** (dialect 추상화 + envelope 암호화 registry + DB-단위 접근) 로 일반화. agent runtime + KB 는 Postgres 단독 정본 (2026-05-27 이관 완료). agent 실행은 ask-worker out-of-process 큐로 cutover.
 > **2026-06-19~23**: ① **사용자 보안 보강 6종** (공유 링크 만료·로그인 시도 제한·감사 변조방지·LLM 사용량 한도·프롬프트 인젝션 방지·2단계 인증) 전체 완료 — [[../docs/SECURITY|SECURITY.md]] §7.2·§12~§15. ② **그룹 대화** (feature-0009) — 멤버십·`@assistant` 멘션·열람≠발화 분리·라이브 UX. ③ **NL→SQL 정확도 flywheel** (eval harness·샘플쿼리 few-shot·self-reflection·용어/ENUM 사전) — `docs/improvements/dba-ai-nl2sql/ROADMAP.md`.
 > **2026-06-24**: ④ **관리 콘솔 메타데이터 거버넌스** (용어·ENUM·테이블/컬럼 설명·AI 자동완성, ITEM-11) 로 NL→SQL 컨텍스트 강화. ⑤ **feature-0010 Google Drive 연동 토대** — 계정별 OAuth 토큰 암호화 저장 + MCP 구성 seam (연동 미수행·비활성 scaffold). ⑥ **feature-0011 `shared/` 공통 코드 추출** (P5a — `model_catalog`·`config`·`db` 모듈 alias, `make test` 회귀 0).
 > **2026-06-25**: ⑦ **그룹 대화 라이브 UX 확장** (feature-0009) — 사이드바 안 읽음/@멘션 배지(read cursor)·메시지 좌우 정렬·owner 멤버 추방/차단/해제·참가자 per-message 제품 선택·처리 중 composer 비잠금/1:1 인터럽트 재요청. ⑧ **관리 콘솔 프롬프트 자동화** (feature-0003) — 역할 '전체 제품 프롬프트'·프로필 '제품별 프롬프트' AI 자동 작성·제품 분석률 95% 시 제품프롬프트 자동완성·규칙 자동추가 DB insight 커버리지 UI·'지식베이스' 메뉴 재편. ⑨ **feature-0011 `shared/` 추출 P5a Step5 완료** — config·db·conn_health·datasources 소비처 마이그레이션 + alias shim 4종 전량 제거(회귀 0). ⑩ **안정성** — init "준비" 임베딩 지연 회귀 해소·요청량 한도 메시지 주체(서비스/계정) 구분·그룹 동시 처리 고착/입력 블로킹 해소·datasource 회로차단 안내 문구 명확화.
 > **2026-06-26**: ⑪ **제품 선택 chip 처리 중 항상 활성화** (feature-0003) — composer 제품 선택 chip 을 "요청 처리 중" 에도 항상 활성·사용 가능하게(TASK-0047 turn-immutability 의 3계층 가드 — 프론트 시각 disable·프론트 reject·백엔드 PATCH 409 — 일괄 완화). 제품은 `/api/ask` enqueue 시 캡처되어 in-flight 답변은 비오염, 변경은 다음 요청부터 반영. RBAC/스키마/엔드포인트 무변경(timing 가드만 제거). ADR-WEB-0006. ⑫ **assistant 요청 2번 중복 처리 차단** (feature-0003/0002) — 워커모드 `/api/ask` 의 long-poll 연결이 web 재배포로 끊겨 사용자가 재전송하면 동일 페이로드 ask_job 2개 → 요청·답변 2회 처리되던 결함을 enqueue 멱등화(dedup NOT EXISTS + 활성 중복 시 기존 run attach) + app.js status 복구 재시도로 차단. 배포 검증 중 적발된 PG AmbiguousParameter 회귀(워커모드 신규 `/api/ask` 500)는 dedup 전용 파라미터+alias 격리로 해소.
+> **2026-06-29**: ⑬ **답변 피드백 답변당 고유화** (feature-0003/0002) — 답변당 사용자별 고유 👍/👎 1개 강제 (마이그 0021/0022 + id_space 보강), 새로고침·대화 전환 후 중복 부여 차단. ⑭ **용어사전 대화 자율등록 + 역할 분리 + 유사어 참조** (feature-0002/0003, 관리 콘솔, 마이그 0023, ADR-20260629T101500) — 대화에서 용어를 자율 등록하고 등록·검토 역할을 분리하며 유사어를 참조. ⑮ **용어 검토 큐 IA 중첩** (admin) — 용어 검토 큐를 용어사전 하위 2차 보기 탭으로 중첩. ⑯ **첨부 wrong-bubble 엣지 하드닝** (feature-0003) — 첨부 영속 레이어 매칭 키에 `message_id_space` 추가 (정상 display 경로 동작 동일, fork/마이그 cross-space 엣지 하드닝). ⑰ **feature-0012 web-router-modularization 토대** — feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할의 route-parity 안전망 + 의존성 audit (P5b, behavior-neutral 리팩터 토대).
 
 ## 2. 상세
 
@@ -75,10 +76,11 @@ sources:
 | feature-0009-group-conversation | 그룹 대화 — 멤버십·`@assistant` 멘션·열람≠발화 분리·라이브 UX | [[Features/feature-0009-group-conversation\|카드]] |
 | feature-0010-google-drive-integration | 계정별 Google Drive 연동 토대 — OAuth 토큰 암호화 + MCP 구성 seam (비활성 scaffold) | [[Features/feature-0010-google-drive-integration\|카드]] |
 | feature-0011-shared-extraction | 공통 코드 `shared/` 추출 리팩터 (model_catalog·config·db·conn_health·datasources) | [[Features/feature-0011-shared-extraction\|카드]] |
+| feature-0012-web-router-modularization | feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할 토대 (P5b — route-parity 안전망 + 의존성 audit, behavior-neutral) | [[Features/feature-0012-web-router-modularization\|카드]] |
 
 ### 2.2 핵심 결정 (ADR)
 
-11-feature 위에 다음 결정이 누적되어 현재 시스템을 형성한다:
+12-feature 위에 다음 결정이 누적되어 현재 시스템을 형성한다:
 
 - **ADR-0019** ([[Decisions/ADR-0019-web-audit-events|mirror]]) — `WebAuditEvents` 단일 테이블 + `record_audit_event` dispatcher + 16 endpoint hook + 4 RBAC 권한
 - **ADR-0021** ([[Decisions/ADR-0021-kb-postgres-rbac|mirror]]) — KB Postgres 분리 + `agent_kb_rw` / `agent_kb_ro` 2-layer RBAC
