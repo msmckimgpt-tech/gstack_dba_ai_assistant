@@ -7982,7 +7982,11 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-bootstrap-fetch { flex-shrink: 0; }
 .admin-meta-bootstrap-status { font-size: 12px; color: var(--text-muted); min-height: 16px; margin-bottom: 8px; }
 .admin-meta-bootstrap-status.is-error { color: var(--danger, #dc2626); }
-.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow: auto; }
+/* metadata-table-desc-fix: 내부 max-height:460px 고정 스크롤 박스를 제거 — metadata pane 이 이미
+   overflow-y:auto 라(styles.css 위 .admin-pane[data-admin-pane="metadata"]) 이중 스크롤이 되어
+   골격 결과가 460px 안에 갇혀 "패널 내부 공간이 확장되지 않아 잘림"으로 보였다(테이블/컬럼 서브뷰 공통).
+   캡을 없애 결과가 자연 확장되고 스크롤은 pane 이 담당한다. */
+.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 10px; }
 .admin-meta-bs-table {
   border: 1px solid var(--border);
   border-radius: var(--r-sm, 6px);

@@ -623,7 +623,8 @@
                 <select id="metadataBootstrapDs" class="admin-meta-input" aria-label="부트스트랩 데이터소스"></select>
               </label>
               <label class="admin-meta-field">
-                <span class="admin-meta-field-label">스키마 *</span>
+                <!-- 라벨은 엔진별로 admin.js 가 갱신: MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층) -->
+                <span class="admin-meta-field-label" id="metadataBootstrapSchemaLabel">스키마 *</span>
                 <select id="metadataBootstrapSchema" class="admin-meta-input" aria-label="부트스트랩 스키마" disabled></select>
               </label>
               <button type="button" class="btn-primary admin-meta-bootstrap-fetch" id="metadataBootstrapFetchBtn" disabled>골격 가져오기</button>

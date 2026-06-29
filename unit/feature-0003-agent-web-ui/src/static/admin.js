@@ -3509,23 +3509,40 @@ function _metaBootstrapStatus(text, isError) {
   el.classList.toggle("is-error", Boolean(isError));
 }
 
-// 선택 DS 의 schema 목록 로드 → 스키마 드롭다운 채움.
+// 부트스트랩 unit 라벨 갱신(엔진별) — MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층).
+// metadata-table-desc-fix: MSSQL 은 unit=database 라 라벨/플레이스홀더를 분기해야 사용자 혼동이 없다.
+function _metaBootstrapUnitWord() {
+  return adminState.metadata.bootstrap.unitKind === "database" ? "데이터베이스" : "스키마";
+}
+function _metaBootstrapSetUnitLabel() {
+  const word = _metaBootstrapUnitWord();
+  const lbl = document.getElementById("metadataBootstrapSchemaLabel");
+  if (lbl) lbl.textContent = `${word} *`;
+  const sel = document.getElementById("metadataBootstrapSchema");
+  if (sel) sel.setAttribute("aria-label", `부트스트랩 ${word}`);
+}
+
+// 선택 DS 의 unit(MySQL=schema / MSSQL=database) 목록 로드 → 드롭다운 채움.
 async function _metaBootstrapLoadSchemas() {
   const ds = adminState.metadata.bootstrap.datasource;
   const schemaSel = document.getElementById("metadataBootstrapSchema");
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
   if (schemaSel) { schemaSel.replaceChildren(); schemaSel.disabled = true; }
   if (fetchBtn) fetchBtn.disabled = true;
-  if (!ds) { _metaBootstrapStatus(""); return; }
-  _metaBootstrapStatus("스키마 목록 로딩 중…");
+  if (!ds) { adminState.metadata.bootstrap.unitKind = ""; _metaBootstrapSetUnitLabel(); _metaBootstrapStatus(""); return; }
+  _metaBootstrapStatus("목록 로딩 중…");
   try {
     const data = await apiFetch(`/api/admin/metadata/bootstrap/schemas?datasource=${encodeURIComponent(ds)}`);
     const schemas = (data && Array.isArray(data.schemas)) ? data.schemas : [];
+    // engine/unit_kind 로 라벨 분기(MSSQL=database). 구버전 백엔드 응답(필드 없음)은 'schema' 로 폴백.
+    adminState.metadata.bootstrap.unitKind = (data && data.unit_kind) || "schema";
     adminState.metadata.bootstrap.schemas = schemas;
+    _metaBootstrapSetUnitLabel();
+    const word = _metaBootstrapUnitWord();
     if (schemaSel) {
       const ph = document.createElement("option");
       ph.value = "";
-      ph.textContent = schemas.length ? "스키마 선택…" : "스키마 없음";
+      ph.textContent = schemas.length ? `${word} 선택…` : `${word} 없음`;
       schemaSel.appendChild(ph);
       for (const s of schemas) {
         const el = document.createElement("option");
@@ -3535,10 +3552,10 @@ async function _metaBootstrapLoadSchemas() {
       }
       schemaSel.disabled = !schemas.length;
     }
-    _metaBootstrapStatus(schemas.length ? `${schemas.length}개 스키마` : "스키마가 없습니다.");
+    _metaBootstrapStatus(schemas.length ? `${schemas.length}개 ${word}` : `${word}가 없습니다.`);
   } catch (err) {
     adminState.metadata.bootstrap.schemas = [];
-    _metaBootstrapStatus((err && err.message) || "스키마 조회 실패", true);
+    _metaBootstrapStatus((err && err.message) || "목록 조회 실패", true);
   }
 }
 
@@ -3546,7 +3563,7 @@ async function _metaBootstrapLoadSchemas() {
 async function _metaBootstrapFetch() {
   const bs = adminState.metadata.bootstrap;
   if (!bs.datasource || !bs.schema) {
-    _metaBootstrapStatus("데이터소스와 스키마를 선택하세요.", true);
+    _metaBootstrapStatus(`데이터소스와 ${_metaBootstrapUnitWord()}를 선택하세요.`, true);
     return;
   }
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");

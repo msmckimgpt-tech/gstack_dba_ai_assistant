@@ -9,6 +9,7 @@ last_updated: 2026-06-29
 2026-06-29
 
 ## Key Recent Facts
+- 메타데이터 부트스트랩 MSSQL database 차원 수정(feature-0003, 06-29): "테이블 설명 > 스키마 골격 가져오기"가 MSSQL 에서 `database=None`→중립 tempdb(shared/db.py `_connect_mssql` 보안 기본값) 임시테이블(`#…`)을 노출하던 "테이블 명칭 모두 오류" 근본 수정. 부트스트랩 unit 엔진분기(MySQL=schema/MSSQL=database via `list_server_databases`, 시스템 DB·스키마·센티넬 필터), MSSQL 선택 DB 연결 평탄수집(저장 schema_name=database — 4계층→3-키, 사용자 결정), suggest grounding 동일분기, 프론트 '데이터베이스/스키마' 라벨, `.admin-meta-bootstrap-result` max-height 제거(패널 내부 잘림 해소, 테이블·컬럼 공통). AI 자동완성은 기구현·깨진 골격에 grounding 해 무력화됐던 것. REQ-20260629T114221.
 - 용어사전 대화 자율등록+역할분리+유사어(feature-0002/0003, 06-29): 대화에서 용어 자율 등록 + 등록·검토 역할 분리 + 유사어 참조(관리 콘솔 메타데이터 거버넌스, 마이그 0023, ADR-20260629T101500). 용어 검토 큐는 용어사전 하위 2차 보기 탭으로 중첩(admin IA).
 - 답변 피드백 답변당 고유화(feature-0003/0002, 06-29): 답변당 사용자별 고유 👍/👎 1개 강제(마이그 0021/0022 + 고유성 키 id_space 보강) — 새로고침·대화 전환 후 중복 부여 차단.
 - 첨부 wrong-bubble 엣지 하드닝(feature-0003, 06-29): 첨부 영속 레이어 매칭 키에 `message_id_space` 추가(ec39a60). 정상 display 경로 동작 동일 — fork/마이그 cross-space 엣지 하드닝.
