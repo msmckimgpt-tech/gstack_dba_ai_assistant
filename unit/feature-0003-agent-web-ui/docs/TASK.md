@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가 — H5(b) wrong-bubble 의 첨부 레이어 완결 (follow-up, Major §12.3 — feature-0003 단독, 스키마 마이그 없음) — done
+- 출처: 사용자 요청 — "동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리해주세요." 선행 TASK-20260629T022055-feedback-id-space(REVIEW '잔여')가 별도 feature 로 미룬 첨부 레이어를 완수.
+- 문제(H5(b) 첨부 레이어): `_load_assistant_attachments_by_message` 가 MetaJson.message_id 단일 키로 그룹핑, `_attach_assistant_attachments` 가 history 메시지 `id` 단일 키로 매칭. message.id 는 표시 store(`agent_runtime.messages.id`)·core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).
+- 수정: 첨부 식별에 **id_space** 차원 추가 → (message_id, message_id_space) 복합 키. 피드백 레이어(`_attach_user_feedback`)와 대칭.
+  - [x] `_materialize_assistant_attachment_edits`: 새 버전 row 의 MetaJson 에 `"message_id_space": "display"` 추가(message_id 출처 `_load_latest_assistant_message` 가 표시 store 전용 → 항상 display, 불변식 영속).
+  - [x] `_load_assistant_attachments_by_message`: 반환 키 `message_id` → `(message_id, message_id_space)`. MetaJson space 없으면 'display'(legacy 하위호환). 타입 dict[int]→dict[tuple].
+  - [x] `_attach_assistant_attachments`: 메시지 `(id, id_space)`(미설정 시 'display') 복합 키로 매칭 → cross-space wrong-bubble 차단.
+  - [x] 테스트 `test_task0285_attach_surfacing.py`: A1/A2/L1/L2 복합 키 갱신 + A3(cross-space wrong-bubble)·L4(core/display 분리 + legacy 'display') 신규. 헬퍼 `_att_row(space=)`.
+- 비변경: 프론트(서버가 채운 `_attachments` 렌더)·share·cache-buster·DB 스키마/마이그 0. 정상 display 경로 동작 동일.
+- [x] 검증: 대상 11/11, `make test` 전체 exit=0(두 feature 회귀 0)·ruff·py_compile.
+- [x] 적대 self-review(H5(b) 첨부 레이어 closure) — REV-20260629T120711-attach-id-space. (선행 cycle 적대 리뷰 H1~H7 가 결함·설계 이미 도출.)
+- Cross-ref: 선행 TASK/REV/CHG-20260629T022055-feedback-id-space(H5(b) 출처) / CHG·REV-20260629T120711-attach-id-space.
+
 ## TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가 — 두 message-id 공간(표시 store vs core) 모호성 해소 (H5(b) follow-up, Major §12.3 — 스키마 마이그 0022 + cross-feature 0002+0003)
 - 출처: 사용자 요청 — TASK-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 **H5(b)** 잔여 한계를 마저 완수. 사용자: "확인된 후속 권고사항도 마저 작업을 완수해주세요."
 - 문제(H5(b)): `/api/history` 의 `message.id` 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`)의 **두 독립 IDENTITY 공간**서 올 수 있다(agent_core 가 "독립 시퀀스, 숫자 겹침" 명시). 0021 의 고유성 키 (created_by, message_id) 는 숫자만 같으면 서로 다른 답변을 같은 키로 봐, fork·마이그로 대화가 core-only→display 전환되는 드문 경우 (a) cross-space DB 충돌(다른 답변이 같은 키 → UPSERT 가 남의 투표 덮어씀) (b) wrong-bubble 복원(core-id 피드백이 같은 숫자의 display 메시지에 표시) 가능.

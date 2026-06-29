@@ -6,11 +6,13 @@
   ④ assistant 가 첨부를 수정하면 진행 단계(step)에 명시적으로 출력.
 
 검증(`make test` agent 이미지, DB 없이 fake conn):
-  A1  _attach_assistant_attachments — assistant 메시지에만 _attachments 주입, user 무시.
-  A2  _attach_assistant_attachments — 매칭 message_id 없으면 무주입(빈 by_message graceful).
-  L1  _load_assistant_attachments_by_message — MetaJson(dict/str) message_id 별 그룹핑.
+  A1  _attach_assistant_attachments — assistant 메시지에만 _attachments 주입, user 무시((id,id_space) 키).
+  A2  _attach_assistant_attachments — 매칭 키 없으면 무주입(빈 by_message graceful).
+  A3  _attach_assistant_attachments — id_space 가 다르면 같은 숫자 id 라도 미주입(wrong-bubble 차단, H5(b)).
+  L1  _load_assistant_attachments_by_message — MetaJson(dict/str) (message_id,id_space) 별 그룹핑.
   L2  _load_assistant_attachments_by_message — message_id 누락/0 인 첨부는 제외.
   L3  _load_assistant_attachments_by_message — 조회 예외 시 빈 dict(fail-soft, history 비차단).
+  L4  _load_assistant_attachments_by_message — core/display 공간 분리 + 무-space 행 'display' 간주(H5(b)).
   V1  list_conversation_attachments — 버전 체인 집계 SQL(GROUP BY COALESCE) + version_count 키.
   V2  _serialize_attachment_for_api — 버전 필드가 그대로 직렬화(목록 배지 데이터 소스).
   S1  ask materialize step — 소스에 materialize_attachment step + save_memory_step 기록 존재.
@@ -51,8 +53,10 @@ class _DictConn:
         return _DictCursor(self._rows, raise_on_execute=self._raise)
 
 
-def _att_row(att_id, message_id, *, role="assistant", version=2, filename="q.sql", root=5, meta_as_str=False):
+def _att_row(att_id, message_id, *, role="assistant", version=2, filename="q.sql", root=5, meta_as_str=False, space="display"):
     meta = {"assistant_edit_of": root, "message_id": message_id}
+    if space is not None:  # space=None → MetaJson 에 message_id_space 키 부재(legacy 행, 로더가 'display' 로 간주)
+        meta["message_id_space"] = space
     return {
         "Id": att_id,
         "ConversationId": "conv-1",
@@ -80,11 +84,11 @@ def _att_row(att_id, message_id, *, role="assistant", version=2, filename="q.sql
 # ── A: _attach_assistant_attachments ────────────────────────────────────────
 def test_a1_attach_only_assistant_messages():
     messages = [
-        {"id": 100, "role": "assistant"},
+        {"id": 100, "role": "assistant", "id_space": "display"},
         {"id": 101, "role": "user"},
-        {"id": 102, "role": "assistant"},
+        {"id": 102, "role": "assistant", "id_space": "display"},
     ]
-    by_message = {100: [{"id": 10}], 102: [{"id": 12}], 101: [{"id": 99}]}
+    by_message = {(100, "display"): [{"id": 10}], (102, "display"): [{"id": 12}], (101, "display"): [{"id": 99}]}
     app._attach_assistant_attachments(messages, by_message)
     assert messages[0]["_attachments"] == [{"id": 10}]
     # user 메시지는 by_message 에 키가 있어도 주입하지 않는다.
@@ -93,11 +97,28 @@ def test_a1_attach_only_assistant_messages():
 
 
 def test_a2_attach_no_match_is_noop():
-    messages = [{"id": 100, "role": "assistant"}]
+    messages = [{"id": 100, "role": "assistant", "id_space": "display"}]
     app._attach_assistant_attachments(messages, {})  # 빈 by_message
     assert "_attachments" not in messages[0]
-    app._attach_assistant_attachments(messages, {999: [{"id": 1}]})  # 매칭 없음
+    app._attach_assistant_attachments(messages, {(999, "display"): [{"id": 1}]})  # 매칭 없음
     assert "_attachments" not in messages[0]
+
+
+def test_a3_cross_space_no_wrong_bubble():
+    """H5(b) 후속: 같은 숫자 id 라도 id_space 가 다르면 첨부가 잘못 붙지 않는다(wrong-bubble 차단)."""
+    # display 첨부(100)만 존재. core 공간의 같은 숫자 답변엔 붙으면 안 된다.
+    messages = [
+        {"id": 100, "role": "assistant", "id_space": "core"},     # core 공간 답변(다른 답변)
+        {"id": 100, "role": "assistant", "id_space": "display"},  # display 공간 답변
+    ]
+    by_message = {(100, "display"): [{"id": 10}]}
+    app._attach_assistant_attachments(messages, by_message)
+    assert "_attachments" not in messages[0]              # core 메시지엔 미주입(wrong-bubble 차단)
+    assert messages[1]["_attachments"] == [{"id": 10}]    # display 메시지엔 정상 주입
+    # id_space 미설정 메시지는 'display' 로 간주(하위호환).
+    legacy = [{"id": 100, "role": "assistant"}]
+    app._attach_assistant_attachments(legacy, by_message)
+    assert legacy[0]["_attachments"] == [{"id": 10}]
 
 
 # ── L: _load_assistant_attachments_by_message ───────────────────────────────
@@ -108,12 +129,12 @@ def test_l1_group_by_message_id_dict_and_str_meta():
         _att_row(12, 200, version=2, filename="r.sql"),
     ]
     out = app._load_assistant_attachments_by_message(_DictConn(rows), "conv-1")
-    assert set(out.keys()) == {100, 200}
-    assert {a["id"] for a in out[100]} == {10, 11}
-    assert [a["id"] for a in out[200]] == [12]
+    assert set(out.keys()) == {(100, "display"), (200, "display")}
+    assert {a["id"] for a in out[(100, "display")]} == {10, 11}
+    assert [a["id"] for a in out[(200, "display")]] == [12]
     # 직렬화 필드가 칩 렌더용으로 포함되는지.
-    assert out[100][0]["is_assistant_generated"] is True
-    assert out[100][0]["version_number"] in (2, 3)
+    assert out[(100, "display")][0]["is_assistant_generated"] is True
+    assert out[(100, "display")][0]["version_number"] in (2, 3)
 
 
 def test_l2_skip_missing_or_zero_message_id():
@@ -123,8 +144,21 @@ def test_l2_skip_missing_or_zero_message_id():
         _att_row(12, 100),                      # 정상
     ]
     out = app._load_assistant_attachments_by_message(_DictConn(rows), "conv-1")
-    assert list(out.keys()) == [100]
-    assert [a["id"] for a in out[100]] == [12]
+    assert list(out.keys()) == [(100, "display")]
+    assert [a["id"] for a in out[(100, "display")]] == [12]
+
+
+def test_l4_group_by_id_space_core_vs_display_and_legacy_default():
+    """H5(b) 후속: 같은 숫자 message_id 라도 id_space 가 다르면 별개 키. MetaJson 무-space 행은 display."""
+    rows = [
+        _att_row(10, 100, space="display"),  # display 공간
+        _att_row(11, 100, space="core"),     # 같은 숫자 100, core 공간 → 다른 키
+        _att_row(12, 100, space=None),       # legacy(message_id_space 키 부재) → 'display' 로 간주
+    ]
+    out = app._load_assistant_attachments_by_message(_DictConn(rows), "conv-1")
+    assert set(out.keys()) == {(100, "display"), (100, "core")}
+    assert {a["id"] for a in out[(100, "display")]} == {10, 12}  # display + legacy 합류
+    assert [a["id"] for a in out[(100, "core")]] == [11]
 
 
 def test_l3_query_exception_returns_empty():
