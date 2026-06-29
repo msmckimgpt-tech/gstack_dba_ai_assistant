@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/배지/태그가 실제 역할(dba·admin·sales)을 표시하지 않던 버그 수정 (Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경) — resume(glossary-role-single-ui 배포본 후속)
+- 트리거: 사용자 — glossary-role-single-ui 배포·시각검증 후속. 메타데이터 > 용어사전 '역할' 드롭다운에 '전체 역할'·'공용만'만 보이고 실제 역할(dba/admin/sales 등)이 안 뜨는 현상이 "의도인지" 검토 요청.
+- 판정: **버그(의도 아님)**. 권한 게이트(`role.read`)가 아니라 **필드명 불일치**. `/api/admin/roles` 정본 직렬화는 role 객체를 `{id,key,name,...}` 로 주는데(역할 관리·계정 화면 전부 `.key`/`.name` 사용) glossary 코드만 `adminState.roles` 를 `.role_key`/`.role_name`(미존재 필드)로 읽어 `_metaPopulateRoleFilter` 의 `if(!rk) continue` 에서 전 역할 스킵 → 드롭다운에 정적 옵션만, `_metaRoleLabel` 도 미매칭 raw key 표기. 라이브 실증(PB-0008): admin 계정 role.read 보유·`/api/admin/roles` 200·8역할, role 객체 키 `["id","key","name",…]`, `adminState.roles.length=8`인데 드롭다운 옵션 2개뿐.
+- 수정(`src/static/admin.js`): `_metaRoleLabel`·`_metaPopulateRoleFilter` 의 role 객체 읽기 `role_key→key`·`role_name→name`(4 참조). 두 헬퍼가 역할 라벨 lookup·필터 옵션의 단일 진실원이라 배지·태그·유사어·관계 6 호출부 전부 정상화. admin.html cache-buster `20260629-glossary-role-single-ui → 20260629-glossary-role-fieldname-fix`.
+- 비변경: 백엔드·RBAC·스키마/마이그·검토 큐·유사어 로직. glossary *용어* 객체의 `role_key`(term.role_key)·역할 생성 payload `role_key` 는 별개 정합 필드라 무변경.
+- Completion Checklist:
+  - [x] _metaRoleLabel·_metaPopulateRoleFilter 필드명 role_key/role_name → key/name (4 refs)
+  - [x] admin.html cache-buster bump + node --check(admin.js) PASS
+  - [ ] verify-completion PASS → commit → push → PR 머지
+  - [ ] web 재배포(deploy_scope: included) + PB-0008 재검증(드롭다운에 실제 8역할 노출)
+- 잔여: verify-completion → 머지·push → web 재배포 → PB-0008 재검증. worktree `ai/claude/glossary-role-fieldname-fix`(base 54dbfe3). REV-20260629T170913-glossary-role-fieldname-fix.
+
 ## TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (Minor §12.3 — 프런트 CSS 전용, feature-0003) — resume(테이블 설명 AI 자동완성 및 UI 버그 수정 PB-0008)
 - 트리거: resume `테이블 설명 AI 자동완성 및 UI 버그 수정` — 원본 metadata-table-desc-fix(MSSQL database 차원/테이블명/AI 자동완성) + metadata-bs-collapse(접기·검색)는 머지·배포 완료(PR #461/#463). 사용자 요청 = PB-0008 실 Windows 브라우저 시각검증 진행 + 추가 UI 버그 수정.
 - PB-0008 검증 결과(시각): ① MSSQL 골격 테이블명 정상 — `mssql-qa-idc`/`Account` DB 17개 실테이블(`tblAccount`·`tblAccountBlockLog`·`tblAccountChannel`…), tempdb #temp 테이블 0(시스템 DB/스키마 필터 정상). ② 라벨 엔진별 분기 정상(MSSQL='데이터베이스', MySQL='스키마'). ③ AI 자동완성 작동 — `tblAccount` 단건 suggest 가 grounding 된 한국어 설명 자동 생성. **④ 추가 버그 적발**: 부트스트랩 결과 패널이 다수 테이블 시 ~1행만 보이고 pane 스크롤 불가 → 나머지 테이블 확인 불가.
