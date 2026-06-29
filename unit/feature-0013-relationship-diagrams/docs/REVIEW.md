@@ -69,3 +69,33 @@ source_of_truth: true
   (`artifacts/pb0008-feature-0013-mermaid-render.png`).
 - Follow-up (비-blocking): app.js cache-buster bump(컨벤션 nit — ETag 재검증으로 기능 무영향) ·
   `/cso` 보안 리뷰(권장) · cardinality 수집(후속 cycle).
+
+## REV-20260629T182013-relationship-diagrams [AGENT-TEAM:frontend+security] SHIP — §18.8 CHG-0003 적대 패널 (frontend BLOCKING 소스근거로 반증)
+- Related Change: CHG-20260629-relationship-diagrams-0003 (mermaid "Syntax error" bomb 수정 — render orphan 제거 + erDiagram 가이던스 + cache-buster + 데이터 복구)
+- Panel: 2 적대 리뷰어 병렬 (frontend·correctness / security). resume(`/_template:resume`) 재개 시
+  실행 — 원본 세션(fc28c82a)이 동일 패널 대기 중 session-limit 으로 중단, REVIEW.md 미기록분을 완수.
+- **Security (SHIP, NIT 1)**: sanitize 불변식(strict-mode SVG sanitize, `htmlLabels:false`, `out.svg`
+  전용, `bindFunctions` 미사용, 앱 DOMPurify 전역 무변경) **무변경** 확인. orphan 제거는 removeChild
+  단일 연산이라 신규 XSS 표면 0 — 오히려 잔류 bomb 제거로 표면 축소. 프롬프트 가이던스/데이터 복구/
+  cache-buster 모두 렌더 보안 자세에 중립. **NIT(비-blocking, 수용)**: marked raw-HTML passthrough +
+  DOMPurify 기본 `id` 허용으로 악의적 콘텐츠가 본문에 `id="dmmd-N"` 를 심으면, `getElementById` 트리순서
+  상 mermaid 임시 컨테이너보다 앞서 잡혀 패치가 본문 요소를 오제거할 수 있음. 단 결과는 (a) 공격자가
+  자기 콘텐츠 삭제 또는 (b) 경미한 표시 교란(자해성)일 뿐 — **코드실행/sanitize 우회/XSS 아님**. 가시
+  회귀 아니므로 수용. 후속 견고화 옵션: id 에 랜덤 suffix 또는 `document.body` 직속 자식으로 스코프 제한.
+- **Frontend·correctness (BLOCKING 제기 → 반증)**: 리뷰어는 "strict 모드에서 mermaid 가 main body 에
+  남기는 orphan 은 `d<id>` div 가 아니라 iframe `i<id>`(`d<id>` 는 iframe 내부)이므로 `getElementById("d"+id)`
+  는 항상 null → 수정 no-op, 버그 미수정" 으로 BLOCK 판정. **반증 (vendored mermaid 10.9.3 소스 직접 실측)**:
+  render 함수 `Tqt` 에서 `const P = p.securityLevel === sqt` 이고 `sqt = "sandbox"` — 즉 **P 는
+  `securityLevel === "sandbox"` 여부이지 strict 가 아니다.** 리뷰어가 `P` 를 strict 로 오독함. 앱은
+  `securityLevel:"strict"`(mermaid-render.js:49) → P=false → iframe 분기(`q$e(...,"i"+i)`) 미실행,
+  `A=Ir("body")` 유지, 임시 컨테이너는 `z$e(A,i,"d"+i)` = `<div id="d<id>">` 가 **main document.body 직속**.
+  파싱 실패 시 `if(zjt(),W) throw W` 가 정리 라인 `Ir(P?y:_).node().remove()`(strict 면 `#d<id>`) 보다
+  먼저 실행 → `<div id="d<id>">` orphan 잔류. `removeMermaidRenderOrphan` 의 `getElementById("d"+id)` 가
+  **바로 그 div 를 찾아 제거** → 수정은 strict 경로에서 정확히 동작. (iframe `i<id>` 경로는 sandbox 전용.)
+  사전 cleanup `Eqt(document,i,"d"+i,"i"+i)` 는 동일 id 충돌만 제거 → id 가 `mmd-<seq>` 로 고유하므로
+  이전 패스 orphan 미청소(누적 사실 정합). 원본 세션의 jsdom e2e("깨진 2패스 → bomb 0·orphan 0·graceful 2")
+  도 동일 결론 뒷받침.
+- 반영한 NIT: 없음(가시 회귀 아님 — 수용 기록). BLOCKING: 없음(반증됨).
+- 봉인(seal): 배포 후 PB-0008 실 Windows-browser 로 "문법오류 다이어그램 → bomb iframe/div 잔류 0 +
+  graceful 코드블록" 동작 재검증(rd-h6) — frontend 리뷰어 권고와 정합, 정적 반증을 동작으로 최종 확인.
+- Open Questions: 없음(blocking). Human Approval Needed: 없음(사전 승인 범위 내, deploy_scope: included).

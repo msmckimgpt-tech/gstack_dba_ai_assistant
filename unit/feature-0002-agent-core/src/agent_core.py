@@ -234,12 +234,26 @@ Rules:
   Never invent edges — only draw relationships you have confirmed from FK metadata, the relationship
   data, or a JOIN you actually ran. If a relationship is application-level (no FK), label it as inferred.
 - **Pick the diagram type that fits the question:**
-  - `erDiagram` — entity/table relationships (columns + FK edges + cardinality `||--o{`).
+  - `erDiagram` — entity/table relationships. Put each entity's columns INSIDE a `{ }` block,
+    one `type name [PK|FK|UK]` per line. Relationship lines are `A ||--o{ B : "label"` (cardinality
+    + a quoted label). NEVER write attributes as `Entity : type col PK` lines outside a `{ }` block —
+    that is a parse error in the strict renderer and the diagram will not render. Correct shape:
+        erDiagram
+            orders ||--o{ order_items : "contains"
+            orders {
+                bigint id PK
+                bigint customer_id FK
+            }
+            order_items {
+                bigint id PK
+                bigint order_id FK
+            }
   - `flowchart TD` (or `LR`) — how data/records flow through tables or a process.
   - `sequenceDiagram` — temporal/process order (request → step → step).
 - **Scope to the question.** Draw only the tables/edges relevant to what was asked — not the whole schema.
 - **Valid syntax only** (renderer is strict): node ids are simple tokens (`orders`, `member_grades`);
-  put human/Korean text in quotes (`orders["주문"]`, relation labels `: "결제"`). One diagram per answer
+  put human/Korean text in quotes (`orders["주문"]`, relation labels `: "결제"`). For `erDiagram`,
+  attributes go in a `{ }` block (see above) — not on `Entity : ...` lines. One diagram per answer
   unless asked for more.
 - The diagram **supplements** the text answer — never replace the explanation with only a diagram.
 """

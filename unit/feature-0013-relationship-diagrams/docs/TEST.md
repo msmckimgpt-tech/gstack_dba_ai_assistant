@@ -40,6 +40,19 @@ source_of_truth: true
 - Steps: (배포 후) FK 있는 DB 연결 → "테이블 관계 그려줘" 질문 → 답변에 ```mermaid → 화면 SVG 확인.
 - Expected Result: 텍스트 설명 + 렌더된 ER/flowchart. **Windows-browser 검증 필요.**
 
+### TEST-20260629T083043-relationship-diagrams-5 (CHG-0003 mermaid 렌더 graceful fallback)
+- Purpose: 깨진 mermaid(erDiagram colon-attribute)가 strict 파싱 실패해도 "Syntax error" bomb 이
+  화면에 잔류하지 않고 graceful 코드블록만 보이는 불변식 검증(AC-1) + erDiagram 생성 가이던스가
+  유효 문법을 산출하는지.
+- Preconditions: jsdom + vendored `mermaid.min.js`(v10.9.3) 로 실제 파서/렌더 구동(DB·브라우저 무관).
+- Steps:
+  - (a) 라이브 대화 4 블록을 `mermaid.parse()` → erDiagram 만 FAIL(`Expecting BLOCK_START got ':'`) 확정.
+  - (b) 패치된 `mermaid-render.js` 의 `renderMermaidDiagrams` 로 깨진 erDiagram 을 2패스 렌더 후
+    `document.body` 의 orphan(`#dmmd-*`) / bomb SVG / `.mermaid-error` 코드블록 수 측정.
+  - (c) 가이던스 예시 erDiagram + 복구된 stored erDiagram 을 `mermaid.parse()`.
+- Expected Result: (a) erDiagram 외 PASS. (b) bomb 0 · orphan 0 · graceful 코드블록 2. (c) 둘 다 PASS.
+- Result: PASS (2026-06-29, jsdom 실측 — Run 2026-06-29-002).
+
 ## 3. Test Run History
 
 ### Run 2026-06-29-001
@@ -52,6 +65,17 @@ source_of_truth: true
   ruff(신규 코드) clean, alembic single-head(0024).
 - Pass/Fail: PASS (순수 로직 + 정적 검증 범위)
 - Notes: 라이브 스택(DB/insight/브라우저) 미검증 — §4.
+
+### Run 2026-06-29-002 (CHG-0003 mermaid 렌더 fallback)
+- Date: 2026-06-29
+- Environment: CLI (node 18 + jsdom + vendored mermaid 10.9.3 파서/렌더)
+- Runner: AI
+- Bridge: n/a
+- Evidence: 라이브 4 블록 parse(erDiagram FAIL `got ':'`, 나머지 PASS) · 패치 `mermaid-render.js`
+  e2e(깨진 erDiagram 2패스 → bomb 0 · orphan `dmmd-` 0 · graceful 코드블록 2) · 가이던스/복구
+  erDiagram parse PASS · `agent_core.py` py_compile OK.
+- Pass/Fail: PASS (파서/렌더 로직 범위 — TEST-…-5).
+- Notes: 실 브라우저 화면 검증(PB-0008, bomb 미표시 + 복구 ER 렌더)은 배포 후 잔여(TASK rd-h6).
 
 ## 4. Untested Areas
 - alembic `0024_table_relationships` 실제 upgrade + GRANT 발효(agent_kb_rw/agent_kb_ro).

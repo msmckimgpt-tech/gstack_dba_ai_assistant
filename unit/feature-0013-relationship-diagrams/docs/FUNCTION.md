@@ -75,7 +75,10 @@ flowchart) 으로 사용자 데이터소스(MySQL·MSSQL)의 구조 관계를 �
 
 ## 8. Edge Cases
 
-- mermaid 문법 오류 → 렌더 실패 시 원본 코드블록 표시(graceful fallback), 에러 콘솔만.
+- mermaid 문법 오류 → 렌더 실패 시 원본 코드블록 표시(graceful fallback), 에러 콘솔만. mermaid v10
+  `render()` 가 파싱 실패 시 `document.body` 에 남기는 임시 컨테이너(`#d<id>`, "Syntax error" bomb SVG
+  포함)는 `renderMermaidDiagrams` 의 `.finally(removeMermaidRenderOrphan)` 가 제거한다 — bomb 이 화면에
+  잔류하지 않고 코드블록 fallback 만 보이는 것이 불변식(CHG-0003 으로 복원, AC-1).
 - 권한 부족으로 `information_schema` FK 조회 실패 → 해당 datasource 관계 수집 skip,
   telemetry 기록(기존 insight `db_failed_perm` 패턴 재사용).
 - FK 미선언 스키마(관계가 application-level) → introspection 0건, L4 대화 학습이 보충.

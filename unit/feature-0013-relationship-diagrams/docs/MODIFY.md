@@ -57,3 +57,39 @@ source_of_truth: true
   (feedback 값) 그대로 — 컨벤션상 mermaid 버전으로 bump 권장. 단 app.js 가 `Cache-Control max-age`
   없이 content-ETag 로 서빙되어 재방문자도 ETag 재검증으로 새 app.js 를 수신(기능 무영향) → 별도 follow-up.
 - Impact: 비파괴. Rollback: migration downgrade=DROP table_relationships; 이미지 직전 태그 롤백.
+
+## CHG-20260629-relationship-diagrams-0003
+- Date: 2026-06-29
+- Related Requirement: REQ-20260629-relationship-diagrams (AC-…-1 graceful fallback 불변식 / AC-…-2 유효 mermaid)
+- Summary: 라이브 대화("계정 연동 및 보상 일괄 수령 쿼리 구성", conv `20260629074613-356708b8`)에서
+  mermaid "Syntax error in text" bomb 2개가 표면화된 버그 수정. 근본 원인 2가지를 실측(vendored
+  mermaid 10.9.3 파서)으로 확정 후 수정 + 과거 대화 데이터 복구.
+- Root Cause:
+  1. (렌더/증상) mermaid v10 `render(id, src)` 가 컨테이너 인자 없이 호출되면 임시 컨테이너
+     `<div id="d<id>">` 를 `document.body` 에 append 하는데, **파싱 실패 시 이를 제거하지 않아**
+     bomb SVG 가 orphan 으로 잔류. `.catch → mermaidFallback` 의 graceful 코드블록 대체(FUNCTION.md
+     §8 edge / AC-1)가 무력화됨. 렌더 패스 2회 → bomb 2개. (`suppressErrorRendering` 는 이 render()
+     경로에 무효임을 jsdom 실측 확인.)
+  2. (생성/유발) LLM 이 erDiagram 속성을 `{ }` 블록 밖 `Entity : type col PK` 로 나열 → strict
+     파싱 실패(`Expecting ... BLOCK_START ... got ':'`). `_MERMAID_DIAGRAM_GUIDANCE` 에 erDiagram
+     속성-블록 문법이 없었음. (해당 대화의 graph TD·sequenceDiagram·graph LR 3개 블록은 PASS.)
+- Files (이번 변경):
+  - `unit/feature-0003-agent-web-ui/src/static/mermaid-render.js` (cross-cut) — `renderMermaidDiagrams`
+    에 `.finally(() => removeMermaidRenderOrphan(id))` 추가 + `removeMermaidRenderOrphan()` 신규
+    (성공·실패 무관 `#d<id>` orphan 제거, idempotent). 폭탄 0, graceful 코드블록만 남도록 복원.
+  - `unit/feature-0002-agent-core/src/agent_core.py` (cross-cut) — `_MERMAID_DIAGRAM_GUIDANCE` 의
+    erDiagram 규칙을 `{ }` 속성-블록 문법 명시 + colon-attribute 금지 + 올바른 예시로 강화.
+  - `unit/feature-0003-agent-web-ui/src/static/index.html`, `share.html` — mermaid-render.js
+    cache-buster `?v=20260629-share-mermaid` → `?v=20260629-mermaid-orphan-fix` (CHG-0002 follow-up nit 해소).
+  - `unit/feature-0013-relationship-diagrams/docs/{FUNCTION,REPORT,TASK,TEST,REVIEW}.md` 갱신.
+- Data repair (런타임 PG, 사용자 명시 승인 — AskUserQuestion 2026-06-29 "A+B + 과거 대화 ER 복구"):
+  - `agent_runtime.core_messages` id=4056 (conv `20260629074613-356708b8`) 의 erDiagram 블록 속성
+    라인을 `{ }` 블록 문법으로 교체(관계 라벨·나머지 텍스트·graph/sequence 블록 무변경). 교체 후
+    저장 내용의 mermaid 3블록 전부 파서 PASS 재확인. 원본 백업: scratchpad `msg_4056.orig.md`.
+    Rollback: 백업 content 로 동일 UPDATE.
+- Verification: jsdom + vendored mermaid 10.9.3 로 (a) 4개 라이브 블록 파싱(erDiagram만 FAIL 확정),
+  (b) 패치된 mermaid-render.js end-to-end(깨진 블록 2패스 → bomb 0·orphan 0·graceful fallback 2),
+  (c) 가이던스 예시 erDiagram·복구 erDiagram 파싱 PASS, (d) agent_core.py py_compile OK.
+  실 브라우저 화면 검증은 배포 후 Windows-browser 게이트(PB-0008) 대상 — TEST.md §3.
+- Impact: 비파괴(렌더 견고화 + 프롬프트 가이던스 + 데이터 1건 복구). Rollback: 코드 3파일 revert +
+  cache-buster 원복 + 데이터 백업 복원.
