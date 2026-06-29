@@ -12,7 +12,9 @@ source_of_truth: true
 이 기능이 무엇을 하는지 한 문단으로 설명한다.
 
 ## 2. Goal
-- REQ-001:
+<!-- 식별자: spec 앵커는 timestamp+slug 권장 (AGENTS.md §6, ADR-0026). REQ-<YYYYMMDDTHHMMSS>-<slug>
+     또는 날짜형 REQ-<YYYYMMDD>-<slug>. 순번 REQ-XXXX 도 유효(additive). -->
+- REQ-20260101-example-goal:
 - REQ-002:
 
 ## 3. In Scope
