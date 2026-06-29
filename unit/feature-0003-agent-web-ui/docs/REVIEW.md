@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260629T120711-attach-id-space [SKIPPED:h5b-attach-layer-direct-closure-of-prior-adversarial-finding-self-review] — 첨부 영속 레이어에 message_id_space 추가 (TASK-20260629T120711-attach-id-space, Major §12.3)
+- Date: 2026-06-29. 선행 REV-20260629T022055-feedback-id-space 의 **잔여** 항목("동일 특성을 공유하는 첨부 영속 레이어 `_load_assistant_attachments_by_message`, message.id 키 — 별도 feature 범위")을 사용자 요청으로 마저 완수. 본 cycle 은 이미 적대 backend 리뷰(H1~H7)가 도출·수용한 **H5(b)** 의 첨부 레이어 직접 폐쇄이고, 피드백 레이어에서 검증된 동일 패턴의 미러 + 전용 cross-space 회귀 테스트라 full 적대 패널 대신 적대 self-review + 회귀 테스트로 종결(check #9 인식 `[SKIPPED:<사유>]`).
+- 결함(H5(b) 첨부 레이어 재기술): `_load_assistant_attachments_by_message` 는 MetaJson.message_id **단일 키**로 그룹핑, `_attach_assistant_attachments` 는 history 메시지 `id` 단일 키로 매칭했다. message.id 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 와 숫자만 같아도 다른 답변 → core 공간 메시지가 같은 숫자의 display 첨부를 잘못 표시하는 wrong-bubble 가능(피드백 레이어와 동일 선재 특성).
+- 해소: id_space 차원 추가 → (message_id, message_id_space) 복합 키. materialize 가 MetaJson 에 `message_id_space="display"` 영속(message_id 출처 `_load_latest_assistant_message` 가 표시 store 전용이라 불변), 로더·attacher 가 복합 키로 그룹핑·매칭. `_attach_user_feedback` 와 정확히 대칭.
+- 적대 self-review (반증 시도 → 안전 확인):
+  1. **정상 경로 회귀?** — display 메시지(`id_space="display"`) + display 첨부(MetaJson space='display')는 같은 키라 기존과 동일 매칭. 현재 `_get_history` 의 두 호출부(PG·MySQL)는 항상 display 리스트에 attach 하므로 관측 동작 불변. (반증 실패=안전.)
+  2. **legacy 행 누락?** — message_id_space 키 없는 기존 MetaJson 행은 로더·materialize 모두 'display' 로 간주 → 기존 display 메시지에 정상 합류(L4 단언). 무손실.
+  3. **wrong-bubble 실증** — A3: display 첨부가 같은 숫자 id 의 core 메시지엔 미주입·display 메시지엔 정상 주입. L4: core/display 같은 숫자 100 이 별개 키. (방어가 실제로 동작.)
+  4. **stale int-key 소비자?** — `_load_assistant_attachments_by_message`/`_attach_assistant_attachments` 의 src 호출부는 `_get_history` 2곳뿐, 테스트는 test_task0285 뿐(grep 확인). 옛 int-key 기대 소비자 0 → 타입 변경(dict[int]→dict[tuple]) 안전.
+  5. **share/프론트 영향?** — share view 는 본 함수 미호출(redact 는 MetaJson.attachment_derived flag 기반), 프론트는 서버가 채운 `_attachments` 만 렌더 → JS·cache-buster 불요.
+  6. **join 테이블 범위?** — `core_attachment_derived_messages.message_id`(비-FK)는 라이브 surfacing 에서 message_id 로 조회되지 않음(INSERT/mirror/backfill 전용) → wrong-bubble surface 아님, 범위 밖(Resume≠Re-scope).
+- 검증: 대상 테스트 11/11(A1~A3·L1~L4·V·S), `make test` 전체 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
+- Human Approval Needed: 없음(자동 동기화). 배포는 web 코드 재빌드 동반(스키마 마이그 없음) — deploy_scope: included(FIRST_REQUEST 전역) 자동 배포 대상.
+- Cross-ref: 선행 REV-20260629T022055-feedback-id-space(잔여 출처) / CHG-20260629T120711-attach-id-space.
+
 ## REV-20260629T112000-glossary-conv-autoreg-deploy [DEPLOY-RECORD] — 용어사전 대화 자율등록 배포 완료 (TASK-20260629-glossary-conv-autoreg)
 - Date: 2026-06-29. 배포 승인 근거: 사용자 AskUserQuestion "지금 배포"(라이브 스키마 변경 동반이라 deploy_scope:included 와 전역 deploy-confirm 정책 교차 확인 후 명시 승인). FIRST_REQUEST 정책상 승인 근거 기록.
 - 실행: ① `repo-web`·`repo-ask-worker`·`repo-memory-init` 이미지 재빌드(공유 Dockerfile) → ② `memory-init` 재실행(`agent_core.py --init-memory` → `_ensure_pg_schema()` 가 agent_kb_schema.sql 0023 미러 idempotent 적용, exit 0 "schema 적용 완료") → ③ `web`+`ask-worker` --force-recreate(둘 다 healthy).

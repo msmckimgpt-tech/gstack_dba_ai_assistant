@@ -8649,7 +8649,12 @@ def _materialize_assistant_attachment_edits(
                     conversation_id, account_id, object_key, filename,
                     _hmac_filename(filename), mime_type, len(body_bytes),
                     _size_bucket(len(body_bytes)), sha256_hex, new_kind,
-                    json.dumps({"assistant_edit_of": src_id, "message_id": int(message_id or 0)}),
+                    # message_id_space="display": message_id 은 _load_latest_assistant_message 가
+                    # 표시 store(agent_runtime.messages / AgentMemoryMessages)에서만 읽어 항상 display
+                    # 공간이다. 첨부 영속도 피드백(H5(b))과 대칭으로 id_space 를 저장해, history 표시
+                    # 시 (message_id, id_space) 복합 키로만 매칭 → core 공간 숫자 겹침에 의한 wrong-bubble 차단.
+                    json.dumps({"assistant_edit_of": src_id, "message_id": int(message_id or 0),
+                                "message_id_space": "display"}),
                     root_id, next_version,
                 ),
             )
@@ -9694,13 +9699,21 @@ WHERE conversation_id = %s
     )
 
 
-def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[int, list[dict[str, Any]]]:
-    """③ TASK-0285: 대화의 assistant 생성 첨부(미삭제)를 MetaJson.message_id 별로 그룹핑.
+def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[tuple, list[dict[str, Any]]]:
+    """③ TASK-0285: 대화의 assistant 생성 첨부(미삭제)를 (message_id, id_space) 별로 그룹핑.
 
     history 직렬화에서 assistant 말풍선에 첨부 칩을 영속 표시하기 위함(사용자 말풍선이 첨부를
     보여주는 것과 대칭). materialize 가 새 버전 row 의 MetaJson 에 message_id 를 저장하므로
     그 키로 그룹핑한다. supersede 여부와 무관 — "그 메시지가 만든 버전"은 이후 더 새 버전이
     나와도 그 시점 history 사실로서 칩에 남는다(다운로드는 /download 프록시가 항상 가능).
+
+    **id_space 키 포함(H5(b) 후속 — 피드백 영속 `_load_user_feedback_by_message` 와 대칭)**:
+    message_id 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두
+    독립 IDENTITY 공간서 올 수 있어 숫자만 같아도 다른 답변이다. materialize 가 저장하는
+    message_id 는 항상 display 공간(`_load_latest_assistant_message`)이지만, history 가 core
+    fallback 으로 그려질 때 core 공간 메시지의 같은 숫자 id 가 display 첨부를 잘못 집어가는
+    wrong-bubble 를 막기 위해 (message_id, message_id_space) 복합 키로 그룹핑한다. MetaJson 에
+    message_id_space 키가 없는 기존 행은 'display'(materialize 불변식)로 간주한다(하위호환).
 
     첨부 정본은 MySQL(dual-write, TASK-0279) 이므로 conn(MySQL)로 조회. fail-soft — 실패 시
     빈 dict 를 반환해 history 를 막지 않는다. 권한은 caller(_get_history → /api/history)가 대화
@@ -9708,7 +9721,7 @@ def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[i
     """
     if not conversation_id:
         return {}
-    out: dict[int, list[dict[str, Any]]] = {}
+    out: dict[tuple, list[dict[str, Any]]] = {}
     try:
         cur = conn.cursor(dictionary=True)
         try:
@@ -9737,21 +9750,25 @@ def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[i
             except Exception:
                 meta = {}
         mid = 0
+        space = "display"
         if isinstance(meta, dict):
             try:
                 mid = int(meta.get("message_id") or 0)
             except Exception:
                 mid = 0
+            space = "core" if str(meta.get("message_id_space") or "display").strip().lower() == "core" else "display"
         if mid <= 0:
             continue
-        out.setdefault(mid, []).append(_serialize_attachment_for_api(dict(row)))
+        out.setdefault((mid, space), []).append(_serialize_attachment_for_api(dict(row)))
     return out
 
 
-def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: dict[int, list[dict[str, Any]]]) -> None:
+def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: dict[tuple, list[dict[str, Any]]]) -> None:
     """③ TASK-0285: history message 리스트의 assistant 메시지에 `_attachments` 를 주입.
 
     프론트(renderMessages)는 user/assistant 공통으로 message._attachments 를 칩으로 렌더한다.
+    매칭은 (message_id, id_space) 복합 키 — 두 id 공간의 숫자 겹침에 의한 wrong-bubble 표시 차단
+    (`_attach_user_feedback` 와 대칭, H5(b) 후속). 메시지의 id_space 미설정 시 'display' 로 간주.
     """
     if not by_message:
         return
@@ -9762,7 +9779,8 @@ def _attach_assistant_attachments(messages: list[dict[str, Any]], by_message: di
             mid = int(m.get("id") or 0)
         except Exception:
             mid = 0
-        atts = by_message.get(mid)
+        space = str(m.get("id_space") or "display")
+        atts = by_message.get((mid, space))
         if atts:
             m["_attachments"] = atts
 

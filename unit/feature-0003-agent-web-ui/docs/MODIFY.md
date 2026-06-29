@@ -9,6 +9,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T120711-attach-id-space (TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가, H5(b) follow-up 완결, Major §12.3 — feature-0003 단독, 스키마 마이그 없음)
+- Date: 2026-06-29. 선행 CHG-20260629T022055-feedback-id-space(피드백 레이어 H5(b) 해소)가 "잔여 — 별도 feature"로 명시한 **첨부 영속 레이어**(`_load_assistant_attachments_by_message`, message.id 키)를 동일 패턴으로 마저 완수. 사용자 요청("동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리"). 코드 계층만 변경 — DB 스키마/마이그 없음(MetaJson JSON 키로 id_space 보존).
+- 변경 파일:
+  - `src/app.py` `_materialize_assistant_attachment_edits`: 새 첨부 버전 row 의 MetaJson 에 `"message_id_space": "display"` 추가. message_id 은 `_load_latest_assistant_message`(표시 store 전용)에서만 와 항상 display 공간이라는 불변식을 영속화.
+  - `src/app.py` `_load_assistant_attachments_by_message`: 반환 키를 `message_id` → `(message_id, message_id_space)` 복합 키로. MetaJson 의 `message_id_space`(없으면 'display' — legacy 행 하위호환) 읽어 그룹핑. 반환 타입 `dict[int, …]` → `dict[tuple, …]`.
+  - `src/app.py` `_attach_assistant_attachments`: history 메시지의 `(id, id_space)`(미설정 시 'display') 복합 키로 매칭 — `_attach_user_feedback` 와 대칭. core 공간 메시지가 같은 숫자 id 의 display 첨부를 잘못 집어가는 wrong-bubble 차단.
+  - `tests/test_task0285_attach_surfacing.py`: A1/A2/L1/L2 를 복합 키 shape 로 갱신 + A3(cross-space wrong-bubble 차단)·L4(core/display 분리 + legacy 'display' 간주) 회귀 테스트 신규. 헬퍼 `_att_row(space=…)` 추가.
+- 비변경: 프론트(renderMessages 는 서버가 채운 `_attachments` 만 렌더)·share 경로·cache-buster·DB 스키마 0. 정상 display 경로 동작 동일(하위호환).
+- 검증: 대상 테스트 11/11(A1~A3·L1~L4·V1·V2·S1·S2), `make test` 전체 스위트 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
+- Cross-ref: 선행 CHG/REV-20260629T022055-feedback-id-space(피드백 레이어, H5(b) 출처) / REV-20260629T120711-attach-id-space.
+
 ## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가, H5(b) follow-up, Major §12.3 — cross-feature 0002+0003)
 - Date: 2026-06-29. 선행 CHG-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)은 feature-0002(마이그 0022 + sample_feedback.py) — 본 항목은 feature-0003 web 층.
 - 변경(feature-0003):
