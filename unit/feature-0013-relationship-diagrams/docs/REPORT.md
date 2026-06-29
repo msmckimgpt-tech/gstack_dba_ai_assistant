@@ -29,14 +29,24 @@ assistant 가 flow/관계/구조 질문에 **mermaid 다이어그램**(ER·flowc
 ## 3. Recent Changes
 - 3-phase 일괄 구현(CHG-20260629-relationship-diagrams-0001).
 - main 머지 + 배포 + 라이브 검증(CHG-20260629-relationship-diagrams-0002).
-- 총 변경 횟수: 2
+- 라이브 mermaid bomb 버그 수정(CHG-20260629-relationship-diagrams-0003): render orphan 누수 제거
+  (graceful fallback 복원) + erDiagram 생성 가이던스 강화 + cache-buster bump + 과거 대화 데이터 복구.
+- 총 변경 횟수: 3
 
 ## 4. Open Issues
+- (신규/대기) CHG-0003 배포 후 실 Windows-browser 화면 재검증(PB-0008, TASK rd-h6) — bomb 미표시 +
+  복구된 ER 다이어그램 렌더 확인. 코드/데이터 수정은 완료, 화면 게이트만 배포 후 잔여.
 - cardinality(1:N/M:N) 미수집 — 현재 edge 만. FK 메타에서 후속 도출 가능.
 - JOIN 파서는 복잡 subquery/CTE 미해석(best-effort, 낮은 confidence 라 영향 제한).
 
 ## 5. Test Status
 - 자동 테스트: `tests/test_relationships.py` 19건 PASS (JOIN 파서·digest·FK row 추출·alias 해석 + ON-CONFLICT 불변식).
+- CHG-0003 mermaid 렌더 검증 (jsdom + vendored mermaid 10.9.3, TEST §2.x):
+  - ✅ 라이브 4 블록 파싱 — graph TD / sequenceDiagram / graph LR PASS, erDiagram FAIL(`got ':'`) 확정.
+  - ✅ 패치된 `mermaid-render.js` e2e — 깨진 erDiagram 2패스 → leftover bomb 0 · orphan `dmmd-` 0 ·
+    graceful 코드블록 2 (graceful fallback 불변식 복원).
+  - ✅ 가이던스 예시 erDiagram · 복구된 stored erDiagram 파서 PASS · `agent_core.py` py_compile OK.
+  - ⏳ 실 브라우저 화면 검증(PB-0008)은 배포 후 잔여(TASK rd-h6).
 - 라이브 검증 (배포 후, 2026-06-29):
   - ✅ alembic `0024` 적용 — `make migrate`(0020→0024, 0021~0023 멱등 no-op), live current=`0024_table_relationships`.
   - ✅ GRANT 발효 — agent_kb_rw=INSERT/UPDATE/DELETE/SELECT, agent_kb_ro=SELECT, rw 실 INSERT/DELETE 성공.
@@ -51,9 +61,13 @@ assistant 가 flow/관계/구조 질문에 **mermaid 다이어그램**(ER·flowc
 - 없음
 
 ## 7. Human Attention Needed
+- (대기) CHG-0003 배포 후 PB-0008 화면 재검증(rd-h6) — 코드/데이터/문서 완료, 배포 게이트만 잔여.
+- (해소) app.js·mermaid-render.js cache-buster bump — CHG-0003 에서 mermaid-render.js bump 완료.
 - (해소) 배포·라이브 검증 완료. 후속 비-blocking:
-  - 보안: 프런트 mermaid 렌더 XSS 표면 — `/cso` 리뷰 권장(이미 §18.8 security reviewer 가 strict-mode SVG sanitize 디컴파일 검증·SHIP).
-  - app.js cache-buster 컨벤션 bump(ETag 재검증으로 기능 무영향, MODIFY CHG-0002 follow-up).
+  - 보안: 프런트 mermaid 렌더 XSS 표면 — strict-mode SVG sanitize 불변식 무변경(orphan 제거는 표면
+    축소). §18.8 security reviewer SHIP(REV-…T120500) + CHG-0003 적대 패널 재리뷰(REVIEW.md
+    REV-20260629T182013 `[AGENT-TEAM:frontend+security]` SHIP — frontend BLOCKING 은 strict 모드 orphan
+    이 `d<id>` div(iframe 아님)임을 vendored mermaid 소스로 반증).
 
 ## 8. Suggested Improvements
 - cardinality 수집(REFERENTIAL_CONSTRAINTS UPDATE_RULE/DELETE_RULE + 컬럼 UNIQUE 여부로 1:1/1:N 추정).

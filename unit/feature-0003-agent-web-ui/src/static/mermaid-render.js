@@ -78,8 +78,24 @@ function renderMermaidDiagrams(target) {
         node.classList.add("mermaid-rendered");
         node.innerHTML = (out && out.svg) || ""; // strict-mode 에서 mermaid 가 자체 sanitize 한 SVG
       })
-      .catch(() => mermaidFallback(node, src));
+      .catch(() => mermaidFallback(node, src))
+      .finally(() => removeMermaidRenderOrphan(id));
   });
+}
+
+function removeMermaidRenderOrphan(id) {
+  // mermaid v10 `render(id, src)` 는 컨테이너 인자 없이 호출되면 임시 렌더 컨테이너
+  // `<div id="d<id>">` 를 document.body 에 append 한다. 정상 렌더 시 mermaid 가 스스로
+  // 제거하지만, **문법 오류로 파싱이 실패하면 이 임시 컨테이너를 제거하지 않아** 그 안의
+  // "Syntax error" bomb SVG 가 페이지에 orphan 으로 남는다(렌더 패스마다 1개씩 누적).
+  // 그러면 .catch 의 graceful fallback(node 를 원문 코드블록으로 교체)이 무력화된다
+  // — FUNCTION.md §8 edge case("렌더 실패 시 원본 코드블록 표시") / AC-1 의 불변식 위배.
+  // 따라서 성공·실패와 무관하게(.finally) 해당 render id 의 orphan 을 제거한다(idempotent:
+  // 성공 경로에서는 이미 제거돼 있어 no-op). mermaid 의 컨테이너 id prefix 는 'd' 로 고정.
+  try {
+    const orphan = document.getElementById("d" + id);
+    if (orphan && orphan.parentNode) orphan.parentNode.removeChild(orphan);
+  } catch (_) {}
 }
 
 function mermaidFallback(node, src) {

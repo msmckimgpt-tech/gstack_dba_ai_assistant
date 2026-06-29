@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: done (배포 완료 + 라이브 검증 PASS — PR #462 merged @ main 34cb31b)
+- State: hotfix-in-progress (라이브 mermaid bomb 버그 수정 cycle — CHG-0003)
 - Owner: AI (claude) / Human (ms.mckim)
 - Priority: high
-- Last Updated: 2026-06-29
+- Last Updated: 2026-06-29 (hotfix: mermaid 렌더 graceful fallback 복원 + erDiagram 가이던스)
 
 ## 2. Implementation Plan
 
@@ -120,3 +120,25 @@ source_of_truth: true
 - [x] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 없음 — alembic version drift/멱등·cache-buster nit 은 MODIFY/REVIEW 에 기록)
 - [x] Git 커밋이 완료되었다 (c3487a6 feat + 99a66cf merge + 배포기록 docs)
 - [x] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다 (PR #462 merged → main 34cb31b, 브랜치 정리)
+
+## 9. Hotfix Cycle — mermaid bomb 표면화 (CHG-0003, 2026-06-29)
+
+라이브 대화 "계정 연동 및 보상 일괄 수령 쿼리 구성"(conv `20260629074613-356708b8`)에서 mermaid
+"Syntax error in text" bomb 2개 표면화. 근본 원인 2가지(render orphan 누수 + erDiagram 생성 문법) 수정.
+
+### 9.1 Tasks
+- [x] TASK-20260629T083043-rd-h1 근본 원인 진단 — 라이브 4 블록을 vendored mermaid 10.9.3 파서로
+  검증(erDiagram 만 FAIL: `Expecting BLOCK_START got ':'`) + render() orphan(`#d<id>`) 누수 실측.
+- [x] TASK-20260629T083043-rd-h2 Fix A: `mermaid-render.js` 렌더 실패 시 orphan 제거(`.finally` +
+  `removeMermaidRenderOrphan`) — bomb 0, graceful 코드블록만 (jsdom e2e PASS).
+- [x] TASK-20260629T083043-rd-h3 Fix B: `_MERMAID_DIAGRAM_GUIDANCE` erDiagram `{ }` 속성-블록 문법
+  명시 + colon-attribute 금지 + 예시.
+- [x] TASK-20260629T083043-rd-h4 cache-buster bump(index.html/share.html) — CHG-0002 follow-up 해소.
+- [x] TASK-20260629T083043-rd-h5 과거 대화 데이터 복구(PG core_messages id=4056 erDiagram → `{}` 블록,
+  사용자 명시 승인) — 저장 후 3블록 파서 PASS.
+- [ ] TASK-20260629T083043-rd-h6 배포 후 실 Windows-browser 재현 대화 화면 검증(PB-0008) — bomb 미표시 +
+  복구된 ER 다이어그램 렌더 확인 (deploy 게이트 대상).
+
+### 9.2 Next Action
+- verify-completion(pre-commit) PASS → commit/push → PR/merge → web+ask-worker 재배포(deploy_scope: included)
+  → PB-0008 라이브 재검증(rd-h6).
