@@ -25,6 +25,7 @@ source_of_truth: true
 - admin.js: 상태 `glossaryView`; 헬퍼 `_metaIsGlossaryReview`/`_metaSubtabVisible`(용어사전 OR(ingest.manual, glossary.curate))/`_GLOSSARY_VIEW_PERM`/`_metaSyncGlossaryViews`(보기 권한 게이트+보정+aria-selected); `_metaBindControls` gview 바인딩; `_metaRenderForm`/`loadMetadata`/`_metaSyncToolbarVisibility` 를 새 보기 모델로; **`ADMIN_TAB_PERMISSIONS.metadata` 에 `kb.glossary.curate` 추가**(적대 리뷰 MAJOR — curate-only 부모 탭 진입 보존); 메타 탭 재진입 분기에 `_metaSyncGlossaryViews`+`_metaPrimeReviewBadge`.
 - styles.css: `.admin-meta-glossary-views`/`.admin-meta-gview` 필 스타일. FUNCTION.md IA 기술 갱신.
 - 검증: node --check PASS, 잔여 functional glossary-review 참조 0, 적대 검증 3 lens(BLOCKER 0, MAJOR 1 수정). Cross-ref: REV-20260629T120000-glossary-review-nest / TASK-20260629-glossary-conv-autoreg(선행).
+- **배포 정합(cache-buster)**: admin.html 의 `admin.js`/`styles.css` 참조 `?v=20260625-role-account-prompt-autogen` → `?v=20260629-glossary-review-nest` bump. 정적 자산 전파의 유일 메커니즘(웹 재빌드만으론 브라우저 캐시 미갱신). **부수 효과**: 직전 glossary-conv-autoreg cycle 이 admin.js/styles.css 를 변경하고도 `?v=` 를 bump 하지 않아 캐시 보유 관리자에게 미전파였던 갭도 본 bump 로 함께 해소(직전 + 본 cycle UI 동시 propagate).
 
 ## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가, H5(b) follow-up, Major §12.3 — cross-feature 0002+0003)
 - Date: 2026-06-29. 선행 CHG-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)은 feature-0002(마이그 0022 + sample_feedback.py) — 본 항목은 feature-0003 web 층.
