@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260625-role-account-prompt-autogen" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260630-metadata-bs-prefill" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -587,11 +587,16 @@
           <div class="admin-pane-actions">
             <label class="admin-meta-scope-label" for="metadataScopeSelect">데이터소스</label>
             <select id="metadataScopeSelect" class="admin-meta-scope-select" aria-label="메타데이터 스코프(데이터소스)"></select>
-            <span class="admin-list-count" id="metadataCount" aria-live="polite"></span>
+            <!-- 용어사전 역할 컨텍스트(0021, role-single-ui) — glossary 서브뷰에서만 admin.js 가 노출.
+                 역할 선택 UI 는 이것 하나뿐: 목록을 역할별로 좁히는 동시에 신규 용어의 등록 대상 역할을 결정한다(폼 select 폐기). -->
+            <label class="admin-meta-scope-label" for="metadataRoleFilter" id="metadataRoleFilterLabel" style="display:none" title="목록 필터 + 신규 용어 등록 대상 역할">역할</label>
+            <select id="metadataRoleFilter" class="admin-meta-scope-select" aria-label="용어사전 역할 — 목록 필터 및 신규 용어 등록 대상" title="목록 필터 + 신규 용어 등록 대상 역할" style="display:none"></select>
+            <!-- list-detail(metadata-list-detail): '+ 새 항목' = 우측 상세에 생성 폼. 생성 비활성(samples)·검토 큐에선 admin.js 가 숨긴다. 카운트는 목록 head 로 이동. -->
+            <button type="button" id="metadataNewBtn" class="btn-primary admin-meta-new-btn">+ 새 항목</button>
             <button type="button" id="metadataRefreshBtn" class="btn-secondary">새로고침</button>
           </div>
         </header>
-        <p class="admin-archive-detail-note">용어사전(도메인 용어↔정의)·ENUM 코드사전(컬럼 코드↔라벨)·테이블/컬럼 설명·샘플쿼리를 데이터소스별로 관리합니다. 등록 내용은 질문/스키마와 매칭될 때 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다. <strong>공용(common)</strong> 스코프는 모든 데이터소스에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
+        <!-- 거버넌스 안내문은 우측 상세 empty-state(#metadataDetailEmpty)로 이동 — 상단 압축(metadata-list-detail). -->
         <!-- TASK-20260624-item11-metadata-phase2: 5 서브뷰 — 용어/ENUM(MVP-1) + 테이블/컬럼/샘플(Phase 2).
              테이블/컬럼/부트스트랩 = kb.ingest.manual, 샘플 = kb.sample.curate. admin.js 가 권한별로 서브탭을 숨긴다. -->
         <div class="admin-meta-subtabs" role="tablist" aria-label="메타데이터 서브뷰">
@@ -600,27 +605,72 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="tables" role="tab">테이블 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
+          <!-- feature-0016: 메타데이터 지식그래프 뷰(Apache AGE 투영) — 테이블/컬럼/관계/용어를 한 그래프로 탐색·검색. -->
+          <button type="button" class="admin-meta-subtab" data-meta-subtab="graph" role="tab">🕸 그래프 뷰</button>
         </div>
-        <!-- 부트스트랩 패널 — 테이블/컬럼 서브뷰에서만 admin.js 가 노출(kb.ingest.manual). DS+스키마 골격을 가져와 설명 빈칸 채워 일괄 저장. -->
+        <!-- 용어사전 2차 보기 탭(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). admin.js 가
+             용어사전 서브탭일 때만 노출 + 권한별로 보기 버튼을 숨긴다(목록=kb.ingest.manual, 검토 큐=kb.glossary.curate). -->
+        <div class="admin-meta-glossary-views" id="metadataGlossaryViews" role="tablist" aria-label="용어사전 보기" style="display:none">
+          <button type="button" class="admin-meta-gview is-active" data-glossary-view="list" role="tab">용어 목록</button>
+          <button type="button" class="admin-meta-gview" data-glossary-view="review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
+        </div>
+        <!-- metadata-list-detail: 계정/제품/데이터소스/감사 패널과 동일한 2단 list-detail.
+             좌측 = 항목 목록(검색·카운트·'스키마 골격 가져오기' 진입). 우측 #metadataDetail = 선택/신규 편집 폼
+             또는 일괄 골격 가져오기(우측 상세 모드). 행 선택→우측 편집으로 위/아래 스크롤 점프 제거. -->
+        <div class="admin-list-detail admin-meta-list-detail">
+          <div class="admin-list-col">
+            <div class="admin-list-toolbar">
+              <input type="search" id="metadataSearch" class="admin-search" placeholder="항목 검색…" autocomplete="off" aria-label="메타데이터 항목 검색" />
+              <!-- 스키마 골격 가져오기(테이블/컬럼 일괄) — 우측 상세 모드로 진입. admin.js 가 테이블/컬럼+kb.ingest.manual 일 때만 노출. -->
+              <button type="button" class="btn-secondary admin-meta-bs-open" id="metadataBootstrapOpenBtn" style="display:none">＋ 스키마 골격 가져오기</button>
+            </div>
+            <div class="admin-list-head">
+              <span class="admin-list-count" id="metadataCount" aria-live="polite"></span>
+            </div>
+            <div class="admin-list admin-meta-list" id="metadataList" role="list" aria-label="메타데이터 항목 목록"></div>
+          </div>
+          <div class="admin-detail-col" id="metadataDetail">
+            <!-- 미선택 안내 — 다른 카테고리 list-detail empty-state(.admin-detail-empty) 컨벤션 + 거버넌스 안내문 통합. -->
+            <div class="admin-detail-empty" id="metadataDetailEmpty">
+              <p>왼쪽 목록에서 항목을 선택해 수정하거나, 우측 상단 <strong>+ 새 항목</strong>으로 추가하세요.</p>
+              <p class="admin-meta-detail-note">용어사전(도메인 용어↔정의)·ENUM 코드사전(컬럼 코드↔라벨)·테이블/컬럼 설명·샘플쿼리를 데이터소스별로 관리합니다. 등록 내용은 질문/스키마 매칭 시 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다. <strong>공용(common)</strong> 스코프는 모든 데이터소스에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
+            </div>
+        <!-- 부트스트랩 패널 — 우측 상세 모드(metadata-list-detail). '스키마 골격 가져오기' 버튼으로 진입.
+             scope-single-ds-ui: 데이터소스는 상단 스코프 선택(metadataScopeSelect)을 그대로 상속한다(부트스트랩
+             전용 DS selector 폐기 — 중복 + 스코프↔소스 불일치 footgun 제거). 공용(common) 스코프는 실제 스키마가
+             없어 골격 불가 → admin.js 가 #metadataBootstrapEmpty empty-state 로 안내한다. -->
         <section class="admin-meta-bootstrap" id="metadataBootstrap" style="display:none" aria-label="스키마 골격 부트스트랩">
-          <header class="admin-meta-bootstrap-head">
+          <!-- 공용(common) 스코프 안내 — 관리 콘솔 list-detail empty-state(.admin-detail-empty) 컨벤션 정합. -->
+          <div class="admin-detail-empty admin-meta-bootstrap-empty" id="metadataBootstrapEmpty" style="display:none">상단에서 특정 데이터소스 스코프를 선택하면 해당 스키마 골격을 가져올 수 있습니다. <strong>공용(common)</strong> 스코프는 실제 스키마가 없어 골격을 가져올 수 없습니다.</div>
+          <header class="admin-meta-bootstrap-head" id="metadataBootstrapHead">
             <button type="button" class="admin-meta-bootstrap-toggle" id="metadataBootstrapToggle" aria-expanded="false">스키마 골격 가져오기 ▾</button>
           </header>
           <div class="admin-meta-bootstrap-body" id="metadataBootstrapBody" style="display:none">
-            <p class="admin-meta-bootstrap-note">데이터소스의 실제 스키마에서 테이블/컬럼 골격을 가져와 설명만 채워 일괄 저장합니다. 골격은 저장 전까지 영속되지 않습니다(미영속). 큰 스키마는 가져오는 데 시간이 걸릴 수 있습니다.</p>
+            <p class="admin-meta-bootstrap-note">현재 스코프 데이터소스(<strong id="metadataBootstrapDsName">—</strong>)의 실제 스키마에서 테이블/컬럼 골격을 가져와 설명만 채워 일괄 저장합니다. 골격은 저장 전까지 영속되지 않습니다(미영속). 큰 스키마는 가져오는 데 시간이 걸릴 수 있습니다.</p>
             <div class="admin-meta-bootstrap-controls">
               <label class="admin-meta-field">
-                <span class="admin-meta-field-label">데이터소스 *</span>
-                <select id="metadataBootstrapDs" class="admin-meta-input" aria-label="부트스트랩 데이터소스"></select>
-              </label>
-              <label class="admin-meta-field">
-                <span class="admin-meta-field-label">스키마 *</span>
+                <!-- 라벨은 엔진별로 admin.js 가 갱신: MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층) -->
+                <span class="admin-meta-field-label" id="metadataBootstrapSchemaLabel">스키마 *</span>
                 <select id="metadataBootstrapSchema" class="admin-meta-input" aria-label="부트스트랩 스키마" disabled></select>
               </label>
               <button type="button" class="btn-primary admin-meta-bootstrap-fetch" id="metadataBootstrapFetchBtn" disabled>골격 가져오기</button>
             </div>
             <div class="admin-meta-bootstrap-status" id="metadataBootstrapStatus" aria-live="polite"></div>
+            <!-- metadata-bs-collapse: 대규모 스키마(수백 테이블) 가독성 — 테이블명 검색 필터 + 모두 펼치기/접기.
+                 결과는 기본 접힘(한 줄 헤더)이라 여백을 줄이고, 입력값은 DOM 보존(저장 시 전체 수집). -->
+            <div class="admin-meta-bs-filterbar" id="metadataBootstrapFilterBar" style="display:none">
+              <input type="text" class="admin-meta-input admin-meta-bs-search" id="metadataBootstrapSearch" placeholder="테이블명 검색…" aria-label="테이블명 검색" autocomplete="off" />
+              <span class="admin-meta-bs-filter-count" id="metadataBootstrapFilterCount" aria-live="polite"></span>
+              <button type="button" class="btn-secondary admin-meta-bs-expandall" id="metadataBootstrapExpandAll">모두 펼치기</button>
+            </div>
             <div class="admin-meta-bootstrap-result" id="metadataBootstrapResult"></div>
+            <!-- metadata-bs-paging: 대규모 스키마 세로 스크롤 고정 — 결과를 페이지(30개/쪽)로 분할.
+                 페이지가 1쪽뿐이면 admin.js 가 숨김. 가시성은 display 토글이라 저장·AI 일괄은 전체 수집. -->
+            <div class="admin-meta-bs-pager" id="metadataBootstrapPager" style="display:none">
+              <button type="button" class="btn-secondary admin-meta-bs-page-btn" id="metadataBootstrapPagePrev" aria-label="이전 페이지">‹ 이전</button>
+              <span class="admin-meta-bs-page-label" id="metadataBootstrapPageLabel" aria-live="polite"></span>
+              <button type="button" class="btn-secondary admin-meta-bs-page-btn" id="metadataBootstrapPageNext" aria-label="다음 페이지">다음 ›</button>
+            </div>
             <div class="admin-meta-bootstrap-actions" id="metadataBootstrapSaveActions" style="display:none">
               <!-- AI 일괄 자동완성 — 빈 설명 입력란을 AI 가 채움(검토 후 저장). source='bootstrap' 저장 흐름 그대로. -->
               <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataBootstrapAiBtn">✨ AI 로 설명 일괄 생성</button>
@@ -629,8 +679,8 @@
             </div>
           </div>
         </section>
-        <!-- 편집 폼(생성/수정 공용) — 서브탭에 따라 admin.js 가 필드를 토글한다. 샘플 서브뷰는 생성 비활성(수정 전용). -->
-        <form id="metadataForm" class="admin-meta-form" autocomplete="off">
+        <!-- 편집 폼(생성/수정 공용) — 우측 상세 모드. 서브탭에 따라 admin.js 가 필드를 토글. 샘플 서브뷰는 생성 비활성(수정 전용). 기본 숨김(미선택=empty-state). -->
+        <form id="metadataForm" class="admin-meta-form" autocomplete="off" style="display:none">
           <div class="admin-meta-form-grid" id="metadataFormFields"></div>
           <div class="admin-meta-form-actions">
             <button type="submit" class="btn-primary" id="metadataSubmitBtn">등록</button>
@@ -639,7 +689,45 @@
             <button type="button" class="btn-secondary" id="metadataCancelBtn" style="display:none">취소</button>
           </div>
         </form>
-        <div class="admin-list admin-meta-list" id="metadataList" role="list" aria-label="메타데이터 항목 목록"></div>
+          </div><!-- /.admin-detail-col #metadataDetail -->
+        </div><!-- /.admin-list-detail -->
+
+        <!-- feature-0016: 메타데이터 지식그래프 뷰. '그래프 뷰' 서브탭일 때만 표시(admin.js 토글).
+             검색→투영 API(/api/admin/metadata/graph?q=) 노드 렌더, 노드 클릭→이웃(?node=&depth=) 확장 +
+             우측 통합 엔티티 카드(설명+컬럼+관계+용어). 8K 규모라 검색·이웃 스코프만(전체 렌더 안 함). -->
+        <div class="admin-meta-graph" id="metadataGraphView" style="display:none">
+          <div class="admin-meta-graph-toolbar">
+            <input type="search" id="metadataGraphSearch" class="admin-search admin-meta-graph-search"
+                   placeholder="테이블·컬럼·용어 검색…" autocomplete="off" aria-label="그래프 노드 검색" />
+            <label class="admin-meta-graph-depth-label" for="metadataGraphDepth">이웃 깊이</label>
+            <select id="metadataGraphDepth" class="admin-meta-scope-select" aria-label="이웃 확장 깊이">
+              <option value="1">1-hop</option>
+              <option value="2" selected>2-hop</option>
+              <option value="3">3-hop</option>
+            </select>
+            <button type="button" class="btn-secondary" id="metadataGraphResetBtn">초기화</button>
+            <button type="button" class="btn-secondary" id="metadataGraphDetailToggle" aria-label="상세 패널 접기/펼치기" title="상세 패널 접기/펼치기">상세 ⇆</button>
+            <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
+          </div>
+          <!-- 범례: 노드 색=카테고리(라벨), 크기=검색 관련도, 점선 박스=스키마 클러스터. -->
+          <div class="admin-meta-graph-legend" aria-hidden="true">
+            <span><i class="lg-dot" style="background:#0f7d8c"></i>테이블</span>
+            <span><i class="lg-dot" style="background:#5c6773"></i>컬럼</span>
+            <span><i class="lg-dot" style="background:#9c6515"></i>용어</span>
+            <span><i class="lg-box"></i>스키마 클러스터</span>
+            <span class="admin-meta-graph-legend-note">크기 = 검색 관련도 · 선 = 관계(FK/JOIN)</span>
+          </div>
+          <div class="admin-meta-graph-body">
+            <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
+                 role="img" aria-label="메타데이터 관계 그래프"></div>
+            <aside class="admin-meta-graph-detail" id="metadataGraphDetail" aria-live="polite">
+              <div class="admin-detail-empty">
+                <p>검색 후 노드를 클릭하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p>
+                <p class="admin-meta-detail-note">노드 더블클릭 시 이웃을 펼칩니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
+              </div>
+            </aside>
+          </div>
+        </div>
       </section>
 
       <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
@@ -732,10 +820,16 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260625-role-account-prompt-autogen"></script>
+  <!-- feature-0016: Cytoscape.js 3.30.2 (vendored, UMD window.cytoscape) — admin.js 의 그래프 뷰 의존. -->
+  <script src="/static/vendor/cytoscape.min.js?v=3.30.2"></script>
+  <!-- feature-0016 graphux: fcose(compound 클러스터 force layout) 의존 체인 (순서 고정: layout-base→cose-base→fcose). -->
+  <script src="/static/vendor/layout-base.js?v=2.0.1"></script>
+  <script src="/static/vendor/cose-base.js?v=2.2.0"></script>
+  <script src="/static/vendor/cytoscape-fcose.js?v=2.2.0"></script>
+  <script src="/static/admin.js?v=20260630-graphux2"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
-  <script src="/static/release-notes-data.js?v=20260629-rn-0629"></script>
+  <script src="/static/release-notes-data.js?v=20260630-rn-0630"></script>
   <script src="/static/release-notes.js?v=20260618-rn-scope-scroll"></script>
 </body>
 </html>

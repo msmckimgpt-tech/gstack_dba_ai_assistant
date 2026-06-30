@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T142624-active-interp-modality (TASK-20260629T142624-active-interp-modality — 능동해석 modality 일반화 + MySQL casing, Major §12.3)
+- Date: 2026-06-29. conversation_audit `FR-nl2sql-schema-discovery-giveup`(1:1 conv …91655acc give-up) 근본원인 수정.
+- `src/agent_core.py`: `_GROUP_CONVERSATION_GUIDANCE` 의 능동 해석 본문을 분리해 신설 `_ACTIVE_INTERPRETATION_GUIDANCE`(modality-무관), `_run_agent_core` 에서 그룹 조건 밖 **무조건 주입**(1:1 무방비 회귀 수복 — 종전 그룹-한정). 그룹 블록은 다자-특화(발신자 라벨)만 + cross-ref. `_MYSQL_DIALECT_GUIDANCE` 에 case-sensitivity 블록(표기 보존·소문자화 금지·`1049`/`1146`·`SCHEMA()=NULL` qualify) 추가.
+- `tests/test_gc_dialect_context.py`: +5 테스트(split 불변식·1:1 무조건 주입·de-dup 전체 잠금).
+- 가드 코드(sql_guard/allowlist) 미접촉 — advisory 프롬프트 일반화 한정(§18.8 security PASS). REV-20260629T142624.
+
+## CHG-20260629T110000-glossary-autoreg-bootstrap-sql (TASK-20260629-glossary-conv-autoreg — 0023 부트스트랩 SQL 미러, 배포 정합, Major §12.3)
+- Date: 2026-06-29. 본체(CHG-20260629-glossary-conv-autoreg, main 40c0de0) 머지 후 배포 정합 적발·보완 — 0021 sample_feedback 부트스트랩 미러 트랩과 동형.
+- **결함**: 실 배포 스키마는 alembic 이 아니라 `_ensure_pg_schema()`(boot 시 `agent_kb_schema.sql` idempotent 적용, agent_core.py:4009)가 유지(MIGRATIONS.md). 마이그 0023 만 추가하고 boot 정본 미러를 누락하면, 배포 후 `kb_glossary.role_key`/신 UNIQUE·`glossary_feedback`·`glossary_relations` 미생성 → `upsert/record/auto_promote` 의 `ON CONFLICT (scope,role,term)` 매칭 실패·신규 엔드포인트 전건 런타임 에러.
+- **수정**(`src/scripts/agent_kb_schema.sql`): kb_glossary 블록에 role_key/source ADD COLUMN IF NOT EXISTS + DROP/ADD CONSTRAINT(멱등) + ix_kb_glossary_scope_role; enum_dictionary 뒤에 glossary_feedback·glossary_relations CREATE TABLE IF NOT EXISTS + 인덱스/트리거; §10 GRANT 블록 rw/ro 목록에 두 테이블 추가(alembic 0023 과 문자 동형·멱등). 0014/0017/0021 선례 동일(스키마 변경은 alembic + 부트스트랩 SQL 양쪽 미러).
+- Cross-ref: 마이그 0023 / CHG-20260629-glossary-conv-autoreg / REV-20260629T103000-glossary-conv-autoreg.
+
+## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 message_id_space 추가, H5(b) follow-up, Major §12.3)
+- Date: 2026-06-29. 선행 0021 의 적대 리뷰 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층 정본 변경.
+- 변경:
+  - **마이그 0022** `alembic/versions/20260629_0022_sample_feedback_id_space.py`(down_revision 0021): `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id_space varchar(16) NOT NULL DEFAULT 'display'` + `DROP INDEX IF EXISTS ux_sample_feedback_user_msg_vote`(구 2-col) + `CREATE UNIQUE INDEX ux_sample_feedback_user_msg_space_vote (created_by, message_id, message_id_space) WHERE …`. downgrade 는 역순. 신규 인덱스명 = 부트스트랩 `CREATE … IF NOT EXISTS` same-name no-op trap 회피.
+  - `src/modules/sample_feedback.py` `record_feedback`: `message_id_space="display"` 인자(정규화 display|core) 추가, INSERT 컬럼/VALUES + ON CONFLICT 를 3-col `(created_by, message_id, message_id_space)` 로. EXCLUDED SET·RETURNING·suggested 분리 동일.
+  - `src/scripts/agent_kb_schema.sql`: boot 정본 미러(컬럼 추가 + 구 인덱스 DROP + 신규명 3-col).
+- 비변경: list_pending/promote/reject/_mask_pii·GRANT·"샘플 등록" 분리 0.
+- 검증: `tests/test_sample_flywheel.py` 13/13(masks_pii param 위치 보정[message_id_space 삽입]·3-col ON CONFLICT·id_space 전달)·py_compile·chain linear(0021→0022 단일 head).
+- Cross-ref: feature-0003 CHG-20260629T022055-feedback-id-space / 마이그 0022 / REV-20260629T022055-feedback-id-space.
+
 ## CHG-20260629T021000-feedback-unique-vote-bootstrap-sql (TASK-20260629T014345-feedback-unique-vote — 배포 정합 follow-up, Major §12.3)
 - Date: 2026-06-29. 본체(CHG-20260629T014345-feedback-unique-vote, main 31aa67a) 머지 후 배포 정합 적발·보완. **결함**: alembic 0021 만 추가하고 boot 정본 `src/scripts/agent_kb_schema.sql` 미러를 누락 → 실 배포 스키마는 `_ensure_pg_schema()`(agent_core.py:3960, 매 boot idempotent `agent_kb_schema.sql` 적용)가 유지하므로, 배포 시 `sample_feedback.message_id`/`ux_sample_feedback_user_msg_vote` 가 생성되지 않아 `record_feedback` 의 `ON CONFLICT (created_by, message_id) WHERE …` 가 **매칭 인덱스 부재 런타임 에러 → 피드백 적재 전건 실패**.
 - 변경(`src/scripts/agent_kb_schema.sql`): sample_feedback 인덱스 블록에 `ALTER TABLE sample_feedback ADD COLUMN IF NOT EXISTS message_id bigint` + `CREATE UNIQUE INDEX IF NOT EXISTS ux_sample_feedback_user_msg_vote ON sample_feedback (created_by, message_id) WHERE message_id IS NOT NULL AND created_by IS NOT NULL AND suggested = false` 추가(alembic 0021 과 동일·멱등). 0014/0017 선례와 동일 패턴(스키마 변경은 alembic + 부트스트랩 SQL 양쪽 미러).
@@ -22,6 +44,12 @@ source_of_truth: true
 - 비변경: list_pending_feedback·promote_feedback·reject_feedback·_mask_pii 무변경. GRANT 무변경(0014 의 INSERT/UPDATE 권한이 UPSERT 포괄). "샘플 등록"(suggested=true) 행은 부분 인덱스 술어 제외 → 매번 INSERT(검수 큐 동작 보존).
 - 검증: `tests/test_sample_flywheel.py` 15/15(record_feedback param 위치·ON CONFLICT 단언 갱신 + 신규 vote-UPSERT 키 단언) · `py_compile`(sample_feedback.py·0021) PASS · 마이그 chain linear(0020→0021 단일 head).
 - Cross-ref: feature-0003 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## CHG-20260629-glossary-conv-autoreg (TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 코어, Major §12.3, cross-cut 0002+0003)
+- Date: 2026-06-29. 코어/마이그/agent hook(web/UI = feature-0003 동반 CHG).
+- 마이그 0023: kb_glossary.role_key/source ADD + UNIQUE(scope_key,role_key,term) 재정의(멱등 DROP IF EXISTS 선행), glossary_feedback(검토 큐)·glossary_relations(유사어) CREATE + 인덱스/트리거/GRANT. 기존 행 backfill(동작 불변).
+- kb_glossary.py: role-scoped read(role_key 옵션), 하이브리드 자동승급(`auto_promote_or_queue`+`_feedback_status` 선검사 — REV BLOCKER 수정으로 거부 용어 재유입 차단), 검토 큐(record/list/count/promote/reject), 유사어(add/list/delete/get), 대화 추론(`infer_terminology_suggestions`, 짧은 답변 skip). upsert/update/list role_key·source 반영(ON CONFLICT (scope,role,term)).
+- llm.py: `llm_glossary_suggest`(GLOSSARY_SUGGEST_PROMPT, soft-fail). agent_core.py: `_glossary_autopropose`(답변 직후 hook, AGENT_GLOSSARY_AUTOPROPOSE 게이트, best-effort·ask 비차단, PG conn). shared/config.py: 4 flag + __all__.
+- 테스트: `test_kb_glossary_enum.py` 21(역할 read·하이브리드 분기·거부 차단 회귀·관계 SQL). Cross-ref: feature-0003 CHG-20260629-glossary-conv-autoreg / REV-20260629T103000 / ADR-20260629T101500.
 
 ## CHG-20260626-ask-dedup-idempotency (TASK-20260626-ask-dedup-idempotency — ask 큐 enqueue 멱등화. feature-0003 주관, **Major §12.3**)
 - Date: 2026-06-26. 주 변경·정본 changelog 은 feature-0003 CHG-20260626-ask-dedup-idempotency. 본 항목은 feature-0002-agent-core 교차변경(ask 큐 데이터 계층)만 기록(§13.2.7).
@@ -1431,3 +1459,15 @@ source_of_truth: true
 - Rollback: 3파일 revert(순수 additive — `user_message()` 메서드·import·isinstance 분기 제거 시 기존 "DB 연결 실패" 거동으로 환원). 데이터/스키마/마이그 변경 0.
 - Deploy: 코드만(스키마·마이그·env 0). ask-worker(agent_core/tools)·web 재빌드(surface 경로). deploy_scope: included.
 - Cross-ref: REV-20260625T164701-ds-conn-circuit-msg / FUNCTION ds-conn-circuit-msg / TASK-20260625T164701-ds-conn-circuit-msg.
+
+## CHG-20260629T114221-describe-table-overlay-mssql (cross-feature, feature-0003 주관 — metadata-bootstrap-mssql-db; describe_table 컬럼 오버레이 MSSQL read 축 정합, Major §12.3)
+- Date: 2026-06-29. worktree `ai/claude/metadata-table-desc-fix`(feature-0003 `/_template:resume` cycle). feature-0003 §18.8 panel 이 적발한 MAJOR(+재검증 BLOCKING)의 read-축 수정.
+- Reason: feature-0003 부트스트랩이 MSSQL 컬럼 설명을 `schema_name=database`(예 GunzGame, 사용자 결정)로 저장하도록 규약을 바꿨는데, describe_table 도구 오버레이(`_tool_describe_table`)는 SQL 스키마(dbo)로 조회 → 축 불일치로 부트스트랩 컬럼 설명이 describe_table 출력에 미주입.
+- 변경:
+  - `src/modules/tools.py` `_tool_describe_table`: KB 오버레이 조회 시 `_dialects.active().name=="mssql"` 이면 조회 schema 를 `_cfg.get_active_default_db()`(pin primary DB, `_mssql_pin_gate` 와 동일 좌표)로, None 시 도구 schema 인자(dbo) 폴백. SQL introspection(describe_columns)·MySQL 경로 무변경.
+  - `src/modules/kb_metadata.py` `load_column_descriptions_for_table`: schema 매칭을 case-insensitive(`LOWER(schema_name)=LOWER(%s)`, ORDER BY 도 LOWER)로 — `get_active_default_db()`는 소문자 정규화(gunzgame)인데 저장값은 원본 케이스(GunzGame)라 PG `=`(case-sensitive)로 대문자 포함 DB명이 0행이 되던 회귀(panel 2차 BLOCKING) 해소. 이 함수는 describe_table 오버레이 전용(다른 호출처 0).
+- 범위: MSSQL describe_table 오버레이 조회 키·매칭만. 질문-시점 grounding(`load_table_column_descriptions`, Path B)은 schema 무관(substring 매칭)이라 무영향. MySQL 정확매치 ⊂ LOWER매치(무회귀). graceful({}) 유지.
+- 검증: py_compile(tools.py·kb_metadata.py) PASS · §18.8 panel(general-purpose 적대) Path A 정합 복구 재검증.
+- Rollback: tools.py 오버레이 키 분기 1블록 + kb_metadata.py LOWER 매칭 revert(기존 case-sensitive·schema 인자 직접 사용으로 환원). 데이터/스키마/RBAC 0.
+- Deploy: ask-worker(tools.py·kb_metadata.py) 재빌드(deploy_scope: included).
+- Cross-ref: feature-0003 CHG/REV/TASK-20260629T114221-metadata-bootstrap-mssql-db / config.py `get_active_default_db`(소문자 정규화) / kb_metadata.py `load_column_descriptions_for_table`.

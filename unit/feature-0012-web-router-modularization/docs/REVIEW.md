@@ -265,3 +265,10 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!", route-parity 179, py_compile OK. docker 런타임: rebind-identity 7/7(2 inc1 + 5 inc2) + import app/web_context 동시 성공(순환 없음) + WEB_TRUSTED_PROXIES=(172.18.0.0/16)(env 계산 정상) + _get_client_ip("1.2.3.4")→"1.2.3.4".
 - 학습: app-internal 전역 결합(AGENT_MODE) 은 **동일 env-read 표현식 mirror** 로 app-free 유지 가능(시그니처 불변 byte-faithful). 모듈상수가 startup 부수효과(fail-loud) 를 가지면 계산 위치 이동의 timing/관측 동치 명시.
 - 다음: inc3 SESSION_COOKIE+_resolve_permission_catalog(+PERMISSION_*) → inc4 _fetch/_decorate_account_rows(0 test ref 안전 영역) → 그 후 23-테스트 retarget 영역.
+
+## REV-20260630-0017 [AGENT-TEAM:p5b-main-integration-self-review]
+- Related Change: CHG-20260630-0017 (origin/main 100-commit 통합)
+- §18.8 Adversarial Panel: **SELF+구조+make test 결정적 검증.** drift 성격 사전 분석(main app.py 변경 = additive 신규 라우트, auth helper 무변)으로 의미 충돌 위험 배제 → auto-merge 안전성 확인.
+- 검증 포인트: (1) **충돌 성격**: 양쪽 수정 3파일 중 app.py·test_sample_feedback 는 auto-merge(영역 분리), route_snapshot 만 충돌(골든이라 재생성으로 해소). (2) **머지 정합**: py_compile OK, 내 web_context re-import + 5 include_router 생존, main 신규 라우트(livez/readyz/glossary-feedback/graph) 존재, **중복 라우트 데코 0**(머지 오류 없음), 추출 핸들러 app.py 재등장 0(deletion 보존). (3) **route-parity**: 179→188(+9 main), 골든 재생성=현재 일치. (4) main 이 _require_account/_get_authenticated_account/_account_has_permission/_sanitize_session_id/_get_client_ip/DI seam 무변(grep) → 내 refactor 와 semantic 충돌 0.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!", route-parity 188(골든=현재), py_compile OK.
+- 다음: 브라우저 로그인 QA(win-browser bridge OK) + RBAC smoke → §18.8 패널 → PR/머지 → 배포(confirm).

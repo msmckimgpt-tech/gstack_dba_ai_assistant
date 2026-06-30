@@ -76,6 +76,10 @@ __all__ = [
     "AGENT_INSIGHT_WORKER_STALE_SEC",
     "AGENT_INSIGHT_WORKER_TICK_SEC",
     "AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC",
+    "AGENT_GLOSSARY_AUTOPROPOSE",
+    "AGENT_GLOSSARY_SUGGEST_MODEL",
+    "AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD",
+    "AGENT_GLOSSARY_SUGGEST_MAX",
     "AGENT_ASK_EXECUTION_MODE",
     "AGENT_ASK_WORKER_ENABLED",
     "AGENT_ASK_WORKER_TICK_SEC",
@@ -676,6 +680,31 @@ AGENT_STEP_GRADE_MODEL = (
 AGENT_INSIGHT_MODEL = (
     os.getenv("AGENT_INSIGHT_MODEL", "").strip() or OPENAI_MODEL
 )
+# ── 용어사전 대화 자율등록(0021) ──────────────────────────────────────────────
+# 대화 답변 직후 도메인 용어 후보를 LLM 으로 추론해 용어사전(kb_glossary)에 자율 등록한다.
+# 사용자 결정(2026-06-29): 하이브리드 자동승급 — confidence ≥ THRESHOLD 면 즉시 등록
+# (source='auto', 되돌리기 가능), 미만이면 검토 큐(glossary_feedback.status='pending').
+# 기본 역할 귀속 = 공용('*'). poisoning 방어상 자동 등록분도 glossary_feedback 에 감사 추적.
+AGENT_GLOSSARY_AUTOPROPOSE = (
+    os.getenv("AGENT_GLOSSARY_AUTOPROPOSE", "1").strip().lower() in ("1", "true", "yes")
+)
+AGENT_GLOSSARY_SUGGEST_MODEL = (
+    os.getenv("AGENT_GLOSSARY_SUGGEST_MODEL", AGENT_SUMMARY_MODEL).strip()
+    or AGENT_SUMMARY_MODEL
+)
+try:
+    AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD = float(
+        os.getenv("AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD", "0.85").strip() or "0.85"
+    )
+except ValueError:
+    AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD = 0.85
+# 한 턴에서 큐/등록으로 받아들일 최대 용어 후보 수 (토큰/노이즈 cap).
+try:
+    AGENT_GLOSSARY_SUGGEST_MAX = int(
+        os.getenv("AGENT_GLOSSARY_SUGGEST_MAX", "5").strip() or "5"
+    )
+except ValueError:
+    AGENT_GLOSSARY_SUGGEST_MAX = 5
 
 AGENT_LOG_DIR = os.getenv("AGENT_LOG_DIR", "/shared/logs")
 # 단일 앱 로그 파일 크기 상한(bytes). 초과 시 .1 로 1회 회전. 회전 없이 append 만
@@ -840,6 +869,17 @@ AGENT_SIMILAR_RETRY_THRESHOLD = float(os.getenv("AGENT_SIMILAR_RETRY_THRESHOLD",
 # 가드 공존). 기본 ON. cap=run 당 최대 넛지 수(폭주 차단; max_steps·circuit-breaker 와 중첩).
 AGENT_SELF_REFLECTION_ENABLED = os.getenv("AGENT_SELF_REFLECTION_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_SELF_REFLECTION_MAX = int(os.getenv("AGENT_SELF_REFLECTION_MAX", "2") or "2")
+
+# feature-0013 relationship-diagrams: 테이블 관계(FK·join) 데이터 확보·학습 토글. 둘 다 기본 ON.
+#  - INTROSPECT: insight worker 가 스키마 구조 변경 시 information_schema FK 를 introspect 해 적재.
+#  - LEARNING : 대화 중 성공한 execute_sql 의 JOIN 에서 관계를 학습(source='conversation').
+AGENT_RELATIONSHIP_INTROSPECT_ENABLED = os.getenv("AGENT_RELATIONSHIP_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_RELATIONSHIP_LEARNING_ENABLED = os.getenv("AGENT_RELATIONSHIP_LEARNING_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+# feature-0016 metadata-graph: 관계형 SSOT → Apache AGE `metadata_kb` 그래프 투영 토글.
+#  - 기본 OFF — AGE 확장 미설치(cutover 전) 상태에서 sync/projection 이 no-op 되도록.
+#  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.
+#  - 투영 API/모듈은 플래그와 무관하게 graceful no-op 이나, insight/cron 트리거는 이 플래그를 본다.
+AGENT_METADATA_GRAPH_SYNC_ENABLED = os.getenv("AGENT_METADATA_GRAPH_SYNC_ENABLED", "0").strip().lower() not in ("0", "false", "no", "")
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────

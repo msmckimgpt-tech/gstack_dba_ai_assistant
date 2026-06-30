@@ -29,9 +29,12 @@
 }
 
 .share-container {
-  max-width: 960px;
+  /* feature-0013 후속: 고정폭(960px) → 브라우저 전체 폭 반응형. 넓은 표·다이어그램·코드블록이
+     좁은 고정폭에 잘리지 않도록 컨테이너가 뷰포트 폭을 채운다(개별 wide 요소는 각자
+     overflow-x:auto 로 컨테이너 안에서 스크롤). 큰 화면일수록 좌우 여백을 비례 확대. */
+  max-width: 100%;
   margin: 0 auto;
-  padding: 24px 16px 80px 16px;
+  padding: 24px clamp(16px, 4vw, 48px) 80px;
 }
 
 .share-header {
@@ -137,6 +140,59 @@
 .share-role-assistant { background: #e2e8f0; color: #334155; }
 .share-message-time { color: var(--share-text-muted); }
 
+/* REQ-20260629-point-scroll: 공유 대화 우측 스크롤바 가이드 뱃지(point rail).
+   공유 페이지는 window 스크롤이므로 rail 은 뷰포트 우측에 position:fixed 미니맵으로
+   고정한다(메인 UI styles.css 의 .message-point-rail 은 #messageLog 내부 flex rail).
+   dot 의 top% 는 share.js 가 "문서 전체 높이 대비 메시지 중심" 비율로 주입한다. */
+.share-point-rail {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  z-index: 50;
+  pointer-events: none;             /* rail 자체는 클릭 통과 — dot 만 잡는다. */
+}
+.share-point-rail.hidden { display: none; }
+.share-point-dot {
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  pointer-events: auto;             /* rail 의 통과 설정을 dot 만 되돌린다. */
+  background: var(--share-border-strong, rgba(0, 0, 0, 0.2));
+  opacity: 0.55;
+  /* translate 와 scale 을 함께 — translate 가 사라지면 dot 가 좌측으로 튄다(메인 UI 동일 주의). */
+  transform: translate(-50%, -50%);
+  transition: background 0.15s, transform 0.15s, opacity 0.15s;
+}
+.share-point-dot.is-user { background: var(--share-primary, #2563eb); }
+.share-point-dot.is-assistant { background: var(--share-text-muted, #6b7280); }
+.share-point-dot.is-active {
+  transform: translate(-50%, -50%) scale(1.8);
+  opacity: 1;
+}
+.share-point-dot:hover { opacity: 1; }
+/* 키보드 포커스 가시성(8px 점은 브라우저 기본 링이 약함) — anonymous 공유 페이지 a11y. */
+.share-point-dot:focus-visible {
+  outline: 2px solid var(--share-primary, #2563eb);
+  outline-offset: 2px;
+  opacity: 1;
+}
+@media (max-width: 720px) {
+  .share-point-rail { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 모션 최소화: dot 위치/스케일 transition 제거. 클릭 스크롤 애니메이션도 share.js 가
+     reduced-motion 시 즉시 점프(no-op)로 처리한다. */
+  .share-point-dot { transition: none; }
+}
+
 .share-message-content {
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -227,6 +283,24 @@
   border-radius: 0;
   font-size: inherit;
 }
+
+/* feature-0013 후속: 공유 대화 mermaid 다이어그램 — 메인 styles.css 와 동형(share 토큰).
+   .mermaid-pending(source) → renderMermaidDiagrams 가 .mermaid-rendered(SVG) 로 치환. */
+.share-message-content .mermaid-block,
+.share-message-content .mermaid-rendered {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0;
+  padding: 8px 4px;
+  overflow-x: auto;
+  background: #f6f8fc;
+  border: 1px solid var(--share-border);
+  border-radius: 10px;
+}
+.share-message-content .mermaid-rendered svg { max-width: 100%; height: auto; }
+.share-message-content .mermaid-pending { color: var(--share-text-muted); font-size: 12px; }
+.share-message-content .mermaid-error { display: block; margin: 10px 0; }
+.share-message-content .mermaid-error pre { margin: 0; }
 
 /* TASK-0256: ```diff 코드 블록 — 변경 제안을 라인별 +/- 색으로 구분.
    --share-code-bg(#1e293b) 다크 배경 위에서 읽히는 팔레트. */

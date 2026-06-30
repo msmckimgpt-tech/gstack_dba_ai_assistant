@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.36.0
+template_version: v3.37.1
 domain: [architecture]
 ai_read_priority: 4
 ---
@@ -53,6 +53,12 @@ ai_read_priority: 4
 | feature-0009-group-conversation | 그룹 대화 — 멤버십·`@assistant` 멘션·**열람 ≠ 발화** RBAC 분리·라이브 UX (2026-06-19~23) |
 | feature-0010-google-drive-integration | **Google Drive 연동 토대 (2026-06-23)** — 계정별 OAuth 토큰 암호화 저장(`WebGoogleDriveTokens`, cred_crypto AAD=`gdrive:{account_id}`) + connect/callback/status/disconnect 라우트 + MCP 구성 seam(`bin/gdrive-mcp.sh`·compose `gdrive-mcp`·`src/gdrive_mcp_seam.py` per-account 토큰 주입 A). **연동 미수행/기본 비활성**. SECURITY.md §17 정합. |
 | feature-0011-shared-extraction | **공통 코드 `shared/` 점진 추출 (P5a, 2026-06-24)** — 저결합 공통 모듈(`model_catalog`·`config`·`db`)을 repo 루트 `shared/` 패키지로 **모듈 alias 이동**(Step1~3, 모든 심볼·monkeypatch·wildcard 보존 비파괴 shim) + Dockerfile/Makefile PYTHONPATH 배선, `make test` 회귀 0. feature-0002·0003·격리 컨테이너 공유 토대(`shared/` = DOC_REGISTRY 공통 코드 정본). |
+| feature-0012-web-router-modularization | **feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할 토대 (P5b, 2026-06-29)** — route-parity 안전망(`test_route_parity_p5b.py` + 골든 179 route, 경로·메서드·순서 drift 적발) + handler→전역/helper 의존성 audit(`web_context` 추출 경계 확정). behavior-neutral, 실제 router 추출은 후속(브라우저 QA env). |
+| feature-0013-relationship-diagrams | **flow/관계 질문에 mermaid 다이어그램 답변 (2026-06-29)** — 웹 UI mermaid 렌더(vendor v10.9.3, sanitize-후 `securityLevel:'strict'` 렌더 + graceful fallback) + `_MERMAID_DIAGRAM_GUIDANCE` 발화(feature-0002) + `table_relationships` 관계 저장소(alembic 0024 — FK introspection·대화 JOIN 학습) + knowledge context 관계 digest 주입. cross-cut 코드 거주 feature-0002·0003. PB-0008 라이브 검증 PASS. |
+| feature-0014-zero-downtime-deploy | **web 무중단 롤링 배포 구조 (2026-06-30)** — Caddy LB(web-a:8000 web-b:8000, sticky cookie + dial-retry-primary + active `/livez`) 뒤 2-replica 를 `bin/deploy-web.sh` 가 한 번에 하나씩 재시작(항상 ≥1 healthy upstream). 배포 스파인: flock 전체 직렬화 + origin/main coalesce, 단일 scoped-sudo 경계, `-f docker-compose.yml` only file-set, TLS preflight, `bin/migrate-lint.sh` expand/contract 게이트(CONVENTIONS §12), one-at-a-time + SSE pre-drain(`/livez` active_streams), post-cutover soak + 자동 롤백(last-good 이미지 pin). app.py `/livez`(DB-무관)·`/readyz`(DB-backed). :18080 web 직접 문 폐기(Caddy :443 단일). cross-cut 코드 거주 feature-0003(app.py)·0006(Caddyfile). |
+| feature-0015-zd-hygiene-backup | **백엔드/DB 무중단 위생 + 백업 (2026-06-30, feature-0014 후속)** — feasibility 분석(wf_1d634d33: "HA 아니라 데이터 보존이 진짜 위험, 코드·expand 무중단은 이미 됨") 기반 저비용 위생작업. ① insight-worker SIGTERM graceful(`_INSIGHT_SHUTDOWN`+signal alias+interruptible wait, stop_grace_period 30s) — ask-worker 동형. ② MySQL online-DDL 강제 `bin/mysql-ddl-lint.sh`(diff-mode, LOCK=NONE)+CONVENTIONS §13. ③ 백업 갭: 범위 명시(sandbox 의도 제외)+`bin/restore-rehearsal.sh`(throwaway DB 복원검증)+`bin/install-backup-cron.sh`(멱등). cross-cut 코드 거주 feature-0002(insight). HA·DB엔진·호스트 무중단은 단일 호스트 SPOF 라 범위 밖. |
+| feature-0016-zd-pg-pause-caddy | **무중단 조건부→가능 승격 (2026-06-30)** — ① PG primary 재시작을 near-zero RW 단절로: `bin/pg-restart.sh` 가 pgbouncer(transaction-mode) PAUSE(신규 RW 큐잉)→postgres recreate→healthy→RESUME, RESUME 을 trap 으로 보장(실패 시 RW 차단 방지), PAUSE timeout fail-safe. compose pgbouncer `ADMIN_USERS=${AGENT_KB_PG_USER}`(=agent_kb_rw, userlist 보유). config/minor 한정(major·HA 범위 밖). ② `deploy-web.sh reconcile_caddy()`: 호스트/컨테이너 Caddyfile sha 비교 → 변경 시에만 adapt 검증 후 caddy recreate(WSL2 bind-mount inode-stale 대응 — reload 무효). cross-cut feature-0002(PG)·0006(caddy). |
+| feature-0017-deploy-build-gate | **deploy 스파인 빌드 게이트 false-failure 수정 (2026-06-30)** — snap 설치 docker(29.3.1/compose v5.1.1/buildx v0.31.1) strict confinement 에서 compose 가 이미지를 정상 빌드·태깅 후 /tmp metadata 파일을 다른 mount ns 라 못 읽어 EXIT 1 반환 → 기존 게이트(exit-only)가 모든 web 배포를 false-ABORT. `build_image` 게이트를 `docker image inspect mysql-ai-web:<sha>` GIT_COMMIT 라벨==sha 정합 검증으로 보강(EXIT≠0 은 로그 metadata-race 마커 3중 AND 일 때만 양성무시; 진짜 실패는 ABORT, /readyz 2차 방어). dc-build 의 기존 우회 패턴과 정합. cross-cut feature-0014(deploy-web.sh). |
 
 ## 5. source of truth 원칙
 동일한 사실을 여러 문서에 중복 확정하지 않는다.
@@ -78,6 +84,8 @@ ai_read_priority: 4
 | feature-0009-group-conversation | feature-0003-agent-web-ui, feature-0002-agent-core | uses | Web UI(공유·첨부·avatar) + ask_jobs 큐(`@assistant`) 위에 그룹 대화 |
 | feature-0010-google-drive-integration | feature-0003-agent-web-ui, feature-0002-agent-core | uses | 인증/라우트/DDL 은 web app.py 인라인(물리 위치), 토큰 암호화는 `modules/cred_crypto`+`datasources`(DEK). 활성화 cycle 에서 `modules/mcp_client` seam(A) 배선 예정 |
 | feature-0011-shared-extraction | feature-0002-agent-core, feature-0003-agent-web-ui | uses | 두 feature 가 공유하는 저결합 공통 모듈을 repo 루트 `shared/` 로 추출하고 import 사이트 재배선 (모듈 alias shim 으로 비파괴). 추출 후 양 feature 가 `shared.*` 를 import |
+| feature-0012-web-router-modularization | feature-0003-agent-web-ui | uses | app.py 도메인별 APIRouter 점진 분할 — route-parity 안전망 |
+| feature-0013-relationship-diagrams | feature-0002-agent-core, feature-0003-agent-web-ui | uses | 발화 가이던스·관계 저장소·insight introspection·대화 JOIN 학습은 feature-0002, mermaid 웹 렌더는 feature-0003 (cross-cut) |
 
 ### 의존 유형 정의
 - `requires`: 대상 기능이 완성되어야 구현 가능

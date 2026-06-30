@@ -1283,6 +1283,26 @@ a { color: inherit; }
   font-size: 12px;
   font-weight: 500;
 }
+/* feature-0013: 관계 다이어그램(mermaid) 렌더 컨테이너 */
+.message-content .mermaid-block,
+.message-content .mermaid-rendered {
+  display: flex;
+  justify-content: center;
+  margin: 10px 0;
+  padding: 8px 4px;
+  overflow-x: auto;
+  background: var(--surface-soft, #f6f8fc);
+  border: 1px solid var(--border, #e5e9f0);
+  border-radius: 10px;
+}
+.message-content .mermaid-rendered svg { max-width: 100%; height: auto; }
+.message-content .mermaid-pending { color: var(--muted, #6b7280); font-size: 12px; }
+.message-content .mermaid-error {
+  display: block;
+  margin: 10px 0;
+}
+.message-content .mermaid-error pre { margin: 0; }
+
 .message-content pre.diff-block { padding: 10px 0; }
 .message-content pre.diff-block code {
   display: block;
@@ -2394,6 +2414,11 @@ a { color: inherit; }
 .share-joinable-row.is-locked { cursor: not-allowed; color: var(--text-muted); }
 .share-joinable-row.is-locked input { cursor: not-allowed; opacity: 0.5; }
 .share-expiry-opt { flex: 1 1 auto; min-width: 72px; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+/* feature-0009 share-joinable-confirm: '링크 생성' 직후 참여 허용 여부 확인 모달. */
+.share-confirm-panel { max-width: 420px; }
+.share-confirm-desc { padding: 16px 20px 4px; font-size: 13px; color: var(--text); line-height: 1.6; }
+.share-confirm-desc strong { color: var(--text); font-weight: 600; }
+.share-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding: 14px 20px 20px; }
 
 /* gc-settings-notif: 통합 공유 팝업 — 상단 '생성' 영역 + 구분 소제목 + 하단 '발급된 링크' 목록. */
 .share-create-sec { padding: 14px 20px 4px; }
@@ -4200,11 +4225,13 @@ a { color: inherit; }
    다른 pane(accounts/roles/products/audits)은 내부 admin-list 가 스크롤하므로 제외.
    TASK-20260624-metadata-ai-autocomplete: metadata pane 도 list-detail 이 아니라 scope+서브탭+
    부트스트랩 패널+폼+리스트의 단순 세로 흐름이라, 창이 길어지면 하단(폼/리스트)이 잘려 보였다 →
-   dashboard 와 동일하게 pane 자체에 세로 스크롤 부여. */
+   dashboard 와 동일하게 pane 자체에 세로 스크롤 부여.
+   metadata-list-detail(v3): metadata pane 은 이제 다른 카테고리처럼 2단 list-detail 구조라
+   (좌측 .admin-list / 우측 .admin-detail-col 가 각자 overflow-y:auto) pane 단일 스크롤에서 제외한다.
+   pane 단일 overflow 를 남기면 list-detail 의 flex:1 fill + 컬럼 독립 스크롤과 충돌(이중 스크롤). */
 .admin-pane[data-admin-pane="dashboard"].is-active,
 .admin-pane[data-admin-pane="usage"].is-active,
-.admin-pane[data-admin-pane="release-notes"].is-active,
-.admin-pane[data-admin-pane="metadata"].is-active {
+.admin-pane[data-admin-pane="release-notes"].is-active {
   overflow-y: auto;
   /* TASK-0198: 좌우 스크롤 차단 — 카드 min-width 누적/SVG 폭/표 넓이로 가로 넘침이 발생하던 회귀 차단.
      내부 요소는 min-width:min(Npx,100%) + 표는 카드 내부 스크롤로 흡수(아래). */
@@ -7836,16 +7863,39 @@ a { color: inherit; }
 }
 .admin-meta-subtab:hover { color: var(--text); }
 .admin-meta-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+/* 용어사전 2차 보기 탭(메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}) — 메인 서브탭보다 시각적 하위(필 형태). */
+.admin-meta-glossary-views {
+  display: flex;
+  gap: 6px;
+  margin: -4px 0 14px;
+}
+.admin-meta-gview {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: color .13s, border-color .13s, background .13s;
+}
+.admin-meta-gview:hover { color: var(--text); }
+.admin-meta-gview.is-active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+/* metadata-list-detail: 폼은 이제 우측 .admin-detail-col(자체가 카드) 안에 살아서 자체 카드 chrome 불요.
+   border/bg/padding/margin 을 제거해 detail-col 패딩 안에 자연스럽게 배치(다른 패널 상세 폼과 정합). */
 .admin-meta-form {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px;
-  margin-bottom: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md, 10px);
-  background: var(--bg);
 }
+/* metadata-list-detail: 우측 상세 거버넌스 안내문(empty-state) — 본문 톤 보조 설명. */
+.admin-meta-detail-note { font-size: 12px; color: var(--text-muted); line-height: 1.55; margin: 10px 0 0; text-align: left; }
+/* metadata-list-detail: '스키마 골격 가져오기' 진입 버튼 — 우측 상세 bootstrap 모드 활성 시 강조(토글). */
+.admin-meta-bs-open.is-active { border-color: var(--primary); color: var(--primary); }
 .admin-meta-form-grid { display: flex; flex-direction: column; gap: 10px; }
 .admin-meta-field { display: flex; flex-direction: column; gap: 4px; }
 .admin-meta-field-label { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); }
@@ -7862,14 +7912,68 @@ a { color: inherit; }
 textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inherit; }
 .admin-meta-input:focus { outline: none; border-color: var(--primary); }
 .admin-meta-form-actions { display: flex; gap: 8px; }
-.admin-meta-list { margin-top: 4px; }
+
+/* feature-0016: 메타데이터 지식그래프 뷰 (Cytoscape 캔버스 + 통합 엔티티 카드) */
+.admin-meta-graph { display: flex; flex-direction: column; gap: 10px; }
+.admin-meta-graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin-meta-graph-search { flex: 1 1 240px; min-width: 180px; }
+.admin-meta-graph-depth-label { font-size: 12px; color: var(--text-muted); }
+.admin-meta-graph-status { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+/* 범례 — 색=카테고리, 크기=관련도, 점선박스=스키마 클러스터 */
+.admin-meta-graph-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 11.5px; color: var(--text-muted); }
+.admin-meta-graph-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.admin-meta-graph-legend .lg-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.admin-meta-graph-legend .lg-box { width: 14px; height: 11px; border: 1px dashed #aab3c5; border-radius: 3px; background: rgba(63,75,140,.08); display: inline-block; }
+.admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
+/* 반응형 그래프 body: clamp 높이 + 패널 접기(.detail-collapsed) */
+.admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: stretch; }
+.admin-meta-graph.detail-collapsed .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
+.admin-meta-graph.detail-collapsed .admin-meta-graph-detail { display: none; }
+.admin-meta-graph-canvas {
+  min-width: 0; height: clamp(420px, 64vh, 760px); border: 1px solid var(--border);
+  border-radius: 8px; background: #fbfcfd; overflow: hidden;
+}
+.admin-meta-graph-detail {
+  border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0;
+  background: var(--surface, #fff); overflow-y: auto; height: clamp(420px, 64vh, 760px); font-size: 13px;
+}
+.admin-meta-graph-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.admin-meta-graph-badge {
+  color: #fff; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 5px;
+  text-transform: uppercase; letter-spacing: .03em;
+}
+.admin-meta-graph-fqn { font-family: monospace; font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; word-break: break-all; }
+.admin-meta-graph-desc { margin: 0 0 12px; line-height: 1.5; }
+.admin-meta-graph-muted { color: var(--text-muted); }
+.admin-meta-graph-sec { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.admin-meta-graph-sec h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--text-2, var(--text)); }
+.admin-meta-graph-sec ul { margin: 0; padding-left: 16px; }
+.admin-meta-graph-sec li { margin: 3px 0; line-height: 1.45; word-break: break-word; }
+.admin-meta-graph-sec code { font-size: 11.5px; }
+@media (max-width: 900px) {
+  /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소 */
+  .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
+  .admin-meta-graph-canvas { height: clamp(360px, 56vh, 560px); }
+  .admin-meta-graph-detail { height: auto; max-height: 380px; }
+  .admin-meta-graph-legend-note { margin-left: 0; flex-basis: 100%; }
+}
+
+.admin-meta-list { margin-top: 0; }
+/* metadata-list-detail: 행을 클릭 선택 가능하게(좌측 목록에서 선택 → 우측 상세 편집).
+   다른 패널 .admin-list-row.is-active 와 동형 — 투명 테두리 + 선택 시 primary 강조, hover 배경. */
 .admin-meta-row {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
   border-bottom: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
 }
+/* 선택(편집) 가능한 행만 클릭 affordance — 검토 큐 행(자체 액션)은 제외(role 미부여). */
+.admin-meta-row[role="button"] { cursor: pointer; }
+.admin-meta-row[role="button"]:hover { background: var(--bg); }
+.admin-meta-row.is-active { background: var(--surface-2, var(--bg)); border-color: var(--primary); }
 .admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .admin-meta-row-title { font-size: 14px; font-weight: 600; color: var(--text); word-break: break-word; }
 .admin-meta-row-body { font-size: 13px; color: var(--text-2, var(--text-muted)); word-break: break-word; white-space: pre-wrap; }
@@ -7907,6 +8011,26 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-tag-ok { background: rgba(22, 163, 74, 0.12); border-color: rgba(22, 163, 74, 0.4); color: #15803d; }
 .admin-meta-tag-warn { background: rgba(202, 138, 4, 0.12); border-color: rgba(202, 138, 4, 0.4); color: #a16207; }
 .admin-meta-tag-stale { background: rgba(220, 38, 38, 0.12); border-color: rgba(220, 38, 38, 0.4); color: #b91c1c; }
+/* 용어사전 역할/검토 큐/유사어 (0021) */
+.admin-meta-tag-role { background: rgba(37, 99, 235, 0.12); border-color: rgba(37, 99, 235, 0.4); color: #1d4ed8; }
+.admin-meta-subtab-badge {
+  display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px;
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  border-radius: 999px; background: var(--primary, #2563eb); color: #fff; vertical-align: middle;
+}
+.admin-meta-review-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.admin-meta-rel-panel {
+  border: 1px dashed var(--border); border-radius: var(--r-md, 10px);
+  padding: 10px 12px; margin: 2px 0 8px; background: var(--surface-2, var(--bg));
+}
+.admin-meta-rel-head { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); margin-bottom: 8px; }
+.admin-meta-rel-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.admin-meta-rel-item {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 2px 4px 2px 10px; border: 1px solid var(--border); border-radius: 999px;
+}
+.admin-meta-rel-item .admin-meta-del { padding: 0 6px; min-width: 0; line-height: 1.6; }
+.admin-meta-rel-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
 /* 부트스트랩 패널 */
 .admin-meta-bootstrap {
@@ -7915,6 +8039,12 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: var(--bg);
   margin-bottom: 16px;
   overflow: hidden;
+  /* metadata-bootstrap-flex-clip-fix: metadata pane 은 flex column + 고정 height + overflow-y:auto 다.
+     이 섹션은 overflow:hidden(둥근 모서리 클립용) 이라 flex 의 auto 최소높이(min-height:auto)가 0 으로
+     떨어져, 골격 결과가 많을 때(수십 테이블) flex-shrink 로 90px 까지 압축·내부 클립되고 pane 스크롤도
+     발생하지 않아 결과가 1~2 행만 보였다(PB-0008 실브라우저 적발 — headless 는 max-height 제거만 확인해 놓침).
+     flex-shrink:0 으로 자연 높이를 보존하면 pane 의 overflow-y:auto 가 스크롤을 담당한다. */
+  flex-shrink: 0;
 }
 .admin-meta-bootstrap-head { padding: 0; }
 .admin-meta-bootstrap-toggle {
@@ -7927,39 +8057,147 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: transparent;
 }
 .admin-meta-bootstrap-toggle:hover { color: var(--primary); }
+/* scope-single-ds-ui: 공용(common) 스코프 부트스트랩 empty-state — 관리 콘솔 list-detail
+   .admin-detail-empty 컨벤션을 재사용한다. 안내문이 한 줄 placeholder 보다 길어 줄간격/여백만
+   보강하고, <strong> 은 본문 톤으로 강조한다(패널 내부라 상하 여백은 약간 압축). */
+.admin-meta-bootstrap-empty { padding: 28px 20px; line-height: 1.55; }
+.admin-meta-bootstrap-empty strong { color: var(--text); font-weight: 600; }
 .admin-meta-bootstrap-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
-.admin-meta-bootstrap-note { font-size: 12px; color: var(--text-muted); margin: 12px 0; line-height: 1.5; }
+/* metadata-bs-paging: 결과 위 컨트롤 영역(노트/셀렉터/상태) 세로 여백 압축 — 결과가 더 빨리 시작. */
+.admin-meta-bootstrap-note { font-size: 12px; color: var(--text-muted); margin: 8px 0 10px; line-height: 1.45; }
 .admin-meta-bootstrap-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .admin-meta-bootstrap-controls .admin-meta-field { flex: 1 1 200px; min-width: 160px; }
 .admin-meta-bootstrap-fetch { flex-shrink: 0; }
-.admin-meta-bootstrap-status { font-size: 12px; color: var(--text-muted); min-height: 16px; margin-bottom: 8px; }
+.admin-meta-bootstrap-status { font-size: 12px; color: var(--text-muted); min-height: 16px; margin-bottom: 6px; }
 .admin-meta-bootstrap-status.is-error { color: var(--danger, #dc2626); }
-.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow: auto; }
+/* metadata-table-desc-fix: 내부 max-height:460px 고정 스크롤 박스를 제거 — 골격 결과가 460px 안에 갇혀
+   "패널 내부 공간이 확장되지 않아 잘림"으로 보였다(테이블/컬럼 서브뷰 공통). 캡을 없애 결과가 자연 확장된다.
+   metadata-list-detail(v3): 스크롤은 이제 pane 단일 overflow 가 아니라 부트스트랩이 들어가는
+   우측 .admin-detail-col(overflow-y:auto) 이 담당한다(메타데이터 pane 은 단일 스크롤 override 에서 제외됨). */
+/* metadata-bs-collapse: 검색/펼치기 바 — 대규모 스키마에서 대상 테이블만 빠르게 좁힌다. */
+.admin-meta-bs-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.admin-meta-bs-search { flex: 1 1 auto; min-width: 0; }
+.admin-meta-bs-filter-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-meta-bs-expandall { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
+
+/* metadata-bs-paging: 페이저 — 결과를 META_BS_PAGE_SIZE(=30)개/쪽으로 나눠 세로 스크롤을 고정.
+   admin.js 가 1페이지뿐이면 숨기고, 그 외엔 이전/다음 + "페이지 P / T" 라벨을 노출. */
+.admin-meta-bs-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+  /* metadata-bs-paging NIT(적대 패널): 한 페이지(30개)를 모두 펼치면 페이저가 스크롤 하단에 묻힌다.
+     pane(overflow-y:auto) 하단에 sticky 고정해 이전/다음을 항상 도달 가능하게 한다. */
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: 6px 0;
+  z-index: 1;
+}
+.admin-meta-bs-page-btn { flex-shrink: 0; padding: 6px 12px; font-size: 12px; }
+.admin-meta-bs-page-btn:disabled { opacity: 0.45; cursor: default; }
+.admin-meta-bs-page-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 84px;
+  text-align: center;
+}
+
+/* metadata-bs-collapse: 결과는 접힌 한 줄 행들의 조밀 스택(여백 최소화). gap 도 축소. */
+.admin-meta-bootstrap-result { display: flex; flex-direction: column; gap: 3px; }
 .admin-meta-bs-table {
   border: 1px solid var(--border);
   border-radius: var(--r-sm, 6px);
-  padding: 10px 12px;
   background: var(--surface);
+  overflow: hidden;
 }
-.admin-meta-bs-table-head { margin-bottom: 8px; }
+/* 접기 헤더 — 클릭 가능한 한 줄 행(caret + 이름 + 입력상태 힌트). button 으로 키보드 토글 가능. */
+.admin-meta-bs-table-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;  /* metadata-bs-paging: 행 높이 압축(여백 과다 해소) */
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+}
+.admin-meta-bs-table-head:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.admin-meta-bs-table-head:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.admin-meta-bs-caret { flex-shrink: 0; width: 12px; font-size: 11px; color: var(--text-muted); }
 .admin-meta-bs-table-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   word-break: break-all;
+  min-width: 0;
 }
+.admin-meta-bs-hint {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.admin-meta-bs-hint.is-filled { color: var(--primary); }
+/* metadata-bs-inline-desc: tables 모드 평면 행 — 이름↔상태 사이 빈 중앙 여백을 설명 입력란으로
+   채운다(여백 효용화 + 펼침 없이 바로 입력). 접기 헤더(button) 대신 비클릭 div 행이며,
+   columns 모드(.is-collapsed)는 기존 접힘 헤더를 그대로 유지한다. */
+.admin-meta-bs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+}
+/* metadata-bs-inline-align: 이름 칸을 고정 폭(행 너비 비례, 모든 행 동일 px)으로 둬, 테이블명 길이가
+   제각각이어도 입력란의 시작 x·너비가 행마다 정렬되게 한다. 칸을 넘는 긴 이름은 ellipsis(전체명 title). */
+.admin-meta-bs-table.is-flat .admin-meta-bs-table-name {
+  flex: 0 0 clamp(180px, 32%, 340px);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+}
+/* 입력란은 남은 폭을 채움 — min-width:0 으로 좁은 화면에서도 행 overflow 없이 수축. 단, 뒤에 오는
+   동일-specificity `.admin-meta-bs-desc`(flex:1; min-width:120px)에 밀리지 않도록 `.is-flat` 로
+   스코프해 specificity(0,2,0)를 올린다(미스코프 시 min-width:0 이 dead-code 가 됨 — CSS-lens 패널 적발). */
+.admin-meta-bs-table.is-flat .admin-meta-bs-desc-inline { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+/* 상태 힌트도 고정 폭 + 우측 정렬 — 입력란 오른쪽 끝까지 행마다 정렬되고, 입력(○→●) 시 입력란 너비가 흔들리지 않는다. */
+.admin-meta-bs-table.is-flat .admin-meta-bs-hint { flex: 0 0 5.5rem; margin-left: 0; text-align: right; }
+/* 본문 — 접힘(.is-collapsed) 시 숨김(시각 토글, 입력은 DOM 보존). */
+.admin-meta-bs-body { padding: 0 10px 8px; }  /* metadata-bs-paging: 본문 여백 압축 */
+.admin-meta-bs-table.is-collapsed .admin-meta-bs-body { display: none; }
 .admin-meta-bs-col {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 3px 0;  /* metadata-bs-paging: 컬럼 행 여백 압축 */
   border-top: 1px solid var(--border);
 }
 .admin-meta-bs-col:first-of-type { border-top: none; }

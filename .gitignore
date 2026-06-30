@@ -51,3 +51,6 @@ artifacts/
 
 # Playwright MCP session logs (feature-0008)
 .playwright-mcp/
+
+# feature-0016: .env 안전 백업(비밀 포함) 커밋 방지
+.env.bak*

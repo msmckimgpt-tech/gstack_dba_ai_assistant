@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 11 (feature-0001 ~ feature-0011) |
+| Feature 수 | 13 (feature-0001 ~ feature-0013) |
 
 ## 목차
 
@@ -82,6 +82,8 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0009-group-conversation\|feature-0009-group-conversation]] | 그룹 대화 — 멤버십 · `@assistant` 멘션 · 열람≠발화 분리 |
 | [[../Features/feature-0010-google-drive-integration\|feature-0010-google-drive-integration]] | Google Drive 연동 토대 — 계정별 OAuth 암호화 + MCP seam (비활성) |
 | [[../Features/feature-0011-shared-extraction\|feature-0011-shared-extraction]] | 공통 코드 `shared/` 점진 추출 (P5a — model_catalog·config·db alias) |
+| [[../Features/feature-0012-web-router-modularization\|feature-0012-web-router-modularization]] | web `app.py` 도메인별 `APIRouter` 점진 분할 토대 (P5b — route-parity 안전망 + 의존성 audit, behavior-neutral) |
+| [[../Features/feature-0013-relationship-diagrams\|feature-0013-relationship-diagrams]] | flow/관계 질문에 mermaid 다이어그램 답변 + `table_relationships` 관계 저장소 (FK introspection·대화 JOIN 학습) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -96,6 +98,8 @@ unit/feature-NNNN-<purpose>/
 | feature-0009 | feature-0003, feature-0002 | uses | Web UI(공유·첨부·avatar) + ask_jobs 큐(`@assistant`) 위 그룹 대화 |
 | feature-0010 | feature-0003, feature-0002 | uses | 인증/라우트 app.py 인라인 + `cred_crypto` 토큰 암호화 |
 | feature-0011 | feature-0002, feature-0003 | uses | 공통 모듈 `shared/` 추출 + import 재배선 (모듈 alias shim) |
+| feature-0012 | feature-0003 | uses | `app.py` 도메인별 `APIRouter` 점진 분할 (route-parity 안전망 + 의존성 audit, behavior-neutral) |
+| feature-0013 | feature-0002, feature-0003 | uses | 발화 가이던스·관계 저장소·introspection·JOIN 학습은 feature-0002, mermaid 웹 렌더는 feature-0003 (cross-cut) |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 
@@ -109,6 +113,8 @@ unit/feature-NNNN-<purpose>/
 - **그룹 대화 + 보안 보강 (2026-06-19~23)**: 단일 owner 대화 → 멤버십 기반(feature-0009, **열람 ≠ 발화** RBAC 분리). 사용자 보안 보강 6종(공유 만료·로그인 제한·감사 변조방지·LLM 한도·인젝션 방지·2FA) 완료. [[../Features/feature-0009-group-conversation]] · [[../../docs/SECURITY|SECURITY.md]].
 - **NL→SQL 정확도 flywheel (2026-06)**: 평가 harness + 샘플쿼리 few-shot(pgvector) + self-reflection + 용어/ENUM 사전. [[../concepts/nl2sql-flywheel]].
 - **메타데이터 거버넌스 + 토대 확장 (2026-06-24)**: ITEM-11 관리 콘솔 메타데이터 거버넌스(용어·ENUM·테이블/컬럼 설명·주입·AI 자동완성)로 NL→SQL 컨텍스트 강화. feature-0010 Google Drive 연동 토대(계정별 OAuth 암호화 + MCP seam, 비활성). feature-0011 공통 코드 `shared/` 점진 추출(P5a). [[../Features/feature-0011-shared-extraction]].
+- **피드백 고유화 · 용어사전 자율등록 · router 분할 토대 (2026-06-29)**: 답변 피드백(👍/👎) 답변당 고유화(새로고침·전환 후 중복 차단). 관리 콘솔 용어사전 대화 자율등록(역할 분리·유사어·검토 큐 + 용어 검토 큐 IA 중첩). feature-0012 web `app.py` 도메인별 `APIRouter` 점진 분할 토대(P5b — route-parity 안전망 + 의존성 audit, behavior-neutral). [[../Features/feature-0012-web-router-modularization]].
+- **관계 다이어그램 신규 · 메타데이터/공유 화면 정리 (2026-06-29)**: feature-0013 관계 다이어그램 — assistant 가 flow/관계 질문에 mermaid(ER·flowchart)로 답하고 `table_relationships` 관계 저장소(FK introspection·대화 JOIN 학습, alembic 0024)로 지속 학습(PB-0008 라이브 PASS). 메타데이터 스키마 골격 화면 접기·검색·페이지네이션·여백 압축, 공유 대화 뷰 mermaid 렌더·전체폭 반응형·스크롤 가이드, 용어사전 역할 선택 단일화. [[../Features/feature-0013-relationship-diagrams]].
 
 ## 4. 관련 문서
 

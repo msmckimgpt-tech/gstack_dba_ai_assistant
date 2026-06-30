@@ -69,6 +69,32 @@ x-agent-common: &agent-common
     minio:
       condition: service_started
 
+# feature-0014 (P0b/P1): web 무중단 롤링 배포용 공통 정의. web-a/web-b 두 replica 가
+# 동일 이미지/cert/healthcheck 로 떠서 Caddy LB 뒤에서 한 번에 하나씩 재시작된다.
+# 시퀀스 merge `<<: [*web-extra, *agent-common]` — web-extra 가 먼저라 volumes(certs 포함)
+# 등 겹치는 키는 web-extra 가 우선, 나머지(build/env_file/environment/depends_on 등)는
+# agent-common 에서 채워진다. 프로덕션은 호스트 포트를 바인딩하지 않는다(Caddy :443 단일
+# 진입, :18080 직접 문 폐기). 런타임 secret/datasource 설정(KEK·HOST_ALLOWLIST)은 agent-common
+# 의 env_file(.env.secret)에서 주입되므로 base 파일셋만으로 완전하다(override 불요).
+x-web-extra: &web-extra
+  restart: unless-stopped
+  # TASK-0297: ENABLE_WEB_TLS=1 + cert 존재 시 8000 에서 HTTPS, 아니면 평문. Caddy 가
+  # 이 upstream 으로 HTTPS 연결(rootCA 검증, SNI=WEB_PUBLIC_HOST)한다.
+  entrypoint: ["/bin/sh", "-c", "if [ -f \"$WEB_TLS_CERT_FILE\" ] && [ -f \"$WEB_TLS_KEY_FILE\" ] && [ \"$ENABLE_WEB_TLS\" = '1' ]; then exec uvicorn web.app:app --host 0.0.0.0 --port 8000 --ssl-keyfile \"$WEB_TLS_KEY_FILE\" --ssl-certfile \"$WEB_TLS_CERT_FILE\"; else exec uvicorn web.app:app --host 0.0.0.0 --port 8000; fi"]
+  volumes:
+    - ../artifacts/shared:/shared
+    - ../artifacts/certs:/certs:ro
+  networks: [dbnet, llm-shared, replica-net]
+  # feature-0014: SIGTERM 시 uvicorn in-flight 비-SSE 요청 drain + @app.on_event(shutdown)
+  # in-flight run 마킹(8s soft cap)에 여유. SSE 장수명 스트림은 deploy-web.sh pre-drain 게이트가 담당.
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "python", "/app/scripts/healthcheck_web.py"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+
 services:
   mysql:
     image: mysql:${MYSQL_IMAGE_TAG}
@@ -110,7 +136,7 @@ services:
   # T3-8: 에이전트는 직접 postgres:5432 가 아닌 pgbouncer:5432 로 연결 권장.
   #   .env.postgres 에서 AGENT_KB_PG_HOST=pgbouncer 으로 변경하면 자동 전환.
   postgres:
-    image: pgvector/pgvector:pg16
+    image: ${KB_PG_IMAGE:-pgvector/pgvector:pg16}
     restart: unless-stopped
     logging: *default-logging
     mem_limit: 2g
@@ -161,7 +187,8 @@ services:
       - -c
       - hot_standby=on
       - -c
-      - shared_preload_libraries=pg_stat_statements
+      # feature-0016: cutover 시 KB_PG_PRELOAD=pg_stat_statements,age 로 AGE preload(롤백=env 제거).
+      - shared_preload_libraries=${KB_PG_PRELOAD:-pg_stat_statements}
       - -c
       - pg_stat_statements.track=all
     ports:
@@ -201,6 +228,12 @@ services:
       MAX_CLIENT_CONN: "100"
       DEFAULT_POOL_SIZE: "20"
       AUTH_TYPE: scram-sha-256
+      # feature-0016: admin 콘솔(PAUSE/RESUME)을 DB_USER(agent_kb_rw, userlist 보유)로 허용.
+      # bin/pg-restart.sh 가 PG primary 재시작/config 변경을 near-zero RW 단절로 수행하는 데 필요.
+      # (edoburu 기본 admin_users=postgres 는 userlist 에 없어 인증 불가였음.) unix socket 부재 →
+      # 컨테이너 내 psql 로 TCP admin 접속. 보안: agent_kb_rw 는 이미 신뢰 내부 role + pgbouncer 는
+      # dbnet 전용. 전용 admin user 분리는 하드닝 후속.
+      ADMIN_USERS: ${AGENT_KB_PG_USER:-postgres}
       TZ: ${TZ}
     ports:
       - "${AGENT_KB_PGB_PORT:-6432}:5432"
@@ -220,7 +253,7 @@ services:
   # 그 후: docker compose --profile replica up -d postgres-replica
   # 에이전트 read-only 연결: .env.postgres 에 AGENT_KB_PG_HOST_RO=postgres-replica 설정.
   postgres-replica:
-    image: pgvector/pgvector:pg16
+    image: ${KB_PG_IMAGE:-pgvector/pgvector:pg16}
     restart: unless-stopped
     profiles: [replica]
     logging: *default-logging
@@ -245,6 +278,9 @@ services:
       - shared_buffers=128MB
       - -c
       - effective_cache_size=384MB
+      - -c
+      # feature-0016: replica 도 AGE preload 필요(RO 그래프 read). cutover 시 KB_PG_REPLICA_PRELOAD=age.
+      - shared_preload_libraries=${KB_PG_REPLICA_PRELOAD:-}
     volumes:
       - ../artifacts/postgres-replica-data:/var/lib/postgresql/data
     networks: [dbnet]
@@ -260,7 +296,7 @@ services:
   # T5-14: 1회성 replica 초기화 (pg_basebackup). 완료 후 컨테이너 종료.
   # 실행: docker compose run --rm postgres-replica-init
   postgres-replica-init:
-    image: pgvector/pgvector:pg16
+    image: ${KB_PG_IMAGE:-pgvector/pgvector:pg16}
     restart: "no"
     profiles: [replica]
     logging: *default-logging
@@ -321,6 +357,9 @@ services:
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
     networks: [dbnet, llm-shared, replica-net]
     restart: unless-stopped
+    # feature-0015: SIGTERM graceful(_INSIGHT_SHUTDOWN) — 진행 cycle 을 루프 경계에서 마치고 종료.
+    # cycle 이 LLM 호출로 길 수 있어 기본 10s 보다 여유. 초과 시 SIGKILL 이나 쓰기 멱등이라 무손상.
+    stop_grace_period: 30s
     # TASK-0130 (#4): heartbeat 신선도 기반 healthcheck. advisory-lock 버그로 매 사이클
     # skip_locked 라 24h+ 무동작이어도 Docker 가 healthy 로 표기하던 것을 가시화.
     healthcheck:
@@ -427,23 +466,14 @@ services:
     # 활성화 시(HTTP MCP): 에이전트가 GDRIVE_MCP_URL=http://gdrive-mcp:${GDRIVE_MCP_PORT} 로 접근.
     # 호스트 포트 노출(ports)은 사내망 한정 — 필요 시 operator 가 추가.
 
-  web:
-    <<: *agent-common
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c", "if [ -f \"$WEB_TLS_CERT_FILE\" ] && [ -f \"$WEB_TLS_KEY_FILE\" ] && [ \"$ENABLE_WEB_TLS\" = '1' ]; then exec uvicorn web.app:app --host 0.0.0.0 --port 8000 --ssl-keyfile \"$WEB_TLS_KEY_FILE\" --ssl-certfile \"$WEB_TLS_CERT_FILE\"; else exec uvicorn web.app:app --host 0.0.0.0 --port 8000; fi"]
-    volumes:
-      - ../artifacts/shared:/shared
-      - ../artifacts/certs:/certs:ro
-    ports:
-      - "${WEB_PORT}:8000"
-    networks: [dbnet, llm-shared, replica-net]
-    # TASK-0130 (#5): /healthz 기반 healthcheck (https→http). 200=healthy, 503/미응답=unhealthy.
-    healthcheck:
-      test: ["CMD", "python", "/app/scripts/healthcheck_web.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+  # feature-0014 (Tier 2 무중단): web 을 두 replica 로 분할. Caddy LB(web-a:8000 web-b:8000)
+  # 뒤에서 deploy-web.sh 가 한 번에 하나씩 재시작 → 항상 ≥1 healthy upstream. 두 replica 는
+  # 동일 이미지(build-once)/cert/healthcheck 를 공유한다(x-web-extra). 호스트 포트 없음
+  # (Caddy :443 단일 진입). 직접 디버그가 필요하면 dev override 에서 한 replica 에만 포트 부여.
+  web-a:
+    <<: [*web-extra, *agent-common]
+  web-b:
+    <<: [*web-extra, *agent-common]
 
   caddy:
     image: caddy:2
@@ -469,7 +499,8 @@ services:
       - "${WEB_HTTPS_PORT}:443"
     networks: [dbnet]
     depends_on:
-      - web
+      - web-a
+      - web-b
 
   browser:
     build:

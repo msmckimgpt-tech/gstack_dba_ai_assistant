@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex,nofollow" />
   <title>공유된 대화</title>
-  <link rel="stylesheet" href="/static/share.css?v=20260623-share-join" />
+  <link rel="stylesheet" href="/static/share.css?v=20260629-share-scroll-guide" />
 </head>
 <body class="share-body">
   <div class="share-container">
@@ -31,6 +31,9 @@
     <main id="shareMessages" class="share-messages">
       <div class="share-loading">로딩 중...</div>
     </main>
+    <!-- REQ-20260629-point-scroll: 공유 대화 우측 스크롤바 가이드 뱃지(point rail).
+         position:fixed 미니맵 — share.js setupSharePointRail 가 dot 을 채운다. -->
+    <nav class="share-point-rail hidden" id="sharePointRail" aria-label="대화 메시지 빠른 이동"></nav>
     <footer class="share-footer">
       <span class="share-footer-note">사내 공유용 — 외부 IP 로 전달 시 데이터 노출 위험이 있습니다.</span>
       <span id="shareViewCount" class="share-footer-stats"></span>
@@ -38,7 +41,10 @@
   </div>
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
-  <script src="/static/share.js?v=20260623-share-join"></script>
+  <!-- feature-0013 후속: 공유 대화에서도 mermaid 다이어그램 렌더(메인 UI 와 동일 strict 경로) -->
+  <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>
+  <script src="/static/mermaid-render.js?v=20260629-mermaid-orphan-fix"></script>
+  <script src="/static/share.js?v=20260629f-share-scroll-guide"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
 </body>
 </html>

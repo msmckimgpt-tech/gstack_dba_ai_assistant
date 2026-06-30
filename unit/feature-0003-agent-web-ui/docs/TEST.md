@@ -116,6 +116,22 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260629T181648-point-scroll-easeoutexpo 공유 뷰 가이드 뱃지(point rail) + 클릭 스크롤 단축·EaseOutExpo (Minor §12.3, 2026-06-29) — **PB-0008 Windows-browser DEFERRED(배포 후)**
+- 구조/단위: `node --check` PASS(app.js·share.js). CSS 추가만(share.css), 백엔드/스키마/RBAC 0.
+- 적대 검증 패널(frontend 7-lens: 좌표계·EaseOutExpo 수식·메인 회귀·공유 엣지·anonymous XSS·성능/ResizeObserver 루프·a11y) → **VERDICT SHIP**(BLOCKER 0·MAJOR 0). EaseOutExpo `1-2^(-10t)` 수치검증 f(0)=0·f(1)=1·단조·보간 from→to 정확. ResizeObserver 자기-트리거 루프 부재(fixed rail↔observed messages 레이아웃 분리). title/aria XSS 무첨가(DOM API). MINOR 2(ResizeObserver 폴백·focus-visible)→ focus-visible 흡수, 나머지 follow-up. REV-20260629T181648-point-scroll-easeoutexpo.
+- **배포 후 PB-0008 잔여(실 Windows 브라우저)**: ① 메인 작업화면 — rail dot 클릭 시 대상 메시지로 **체감상 더 빠른**(280ms) EaseOutExpo 스크롤(기존 native smooth 대비 단축) ② 공유 페이지(`/share/{token}`, 2개+ 메시지) — 우측에 가이드 뱃지(point rail) 표시·각 dot 이 메시지 구간 비율 위치·클릭 시 EaseOutExpo window 스크롤·스크롤 시 현재 구간 dot `is-active` ③ 메시지 1개/0개 시 rail 미표시 ④ ≤720px 모바일 숨김 ⑤ prefers-reduced-motion 시 즉시 점프.
+- Pass/Fail: PARTIAL(단위·적대 패널 PASS, 라이브 PB-0008 배포 후 잔여 — 표현계층 화면 정본).
+
+### TASK-20260629-metadata-bs-flexclip 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 (Minor §12.3, 2026-06-29)
+- 구조: `node`/`py_compile` 대상 JS·Python 변경 0 (CSS+HTML cache-buster 전용). CSS brace 균형 `{`1616/`}`1616.
+- **Environment: Windows-browser** (실제 Windows Chrome/149.0.7827.200 via `bin/win-browser.py` 무권한 relay, `bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, https://localhost:18080, self-signed ignore). WSL headless 아닌 실제 Windows 화면. Runner: AI. Evidence: `artifacts/shared/win-browser-shots-pb0008-tabledesc/` (10_mssql_account_skeleton·11_viewport·20_fix_flexshrink_applied·30_ai_suggest_filled).
+  - **시나리오**: 로그인(세션 유효) → 관리 콘솔 > 메타데이터 > 테이블 설명 서브탭 → 스키마 골격 가져오기 → DS=`mssql-qa-idc`(129 실 DB, tempdb/시스템 DB 0) → DB=`Account` → 골격 17 테이블·132 컬럼.
+  - **Pass — 원본 작업 검증**: ① MSSQL 실테이블명 정상(`tblAccount`·`tblAccountBlockLog`·`tblAccountChannel`… tempdb #temp 0). ② 엔진별 라벨 분기(`mssql-dk-dev`/`mssql-qa-idc`='데이터베이스', `mysql-local`='스키마'). ③ 테이블 설명 AI 자동완성: `tblAccount` 단건 suggest → grounding 된 한국어 설명 자동 생성(권한 레벨·차단 상태·접속 서버 등 컬럼 반영). `.admin-meta-bootstrap-result` maxHeight=none(metadata-table-desc-fix 반영).
+  - **버그 적발(이 cycle 의 수정 대상)**: 골격 결과 패널이 펼침/접힘 무관 ~1행만 보이고 나머지 16 테이블 미표시 + pane 스크롤 미발생(`#metadataBootstrap` clientH=88·scrollH=1769·overflow:hidden, 부모 pane scrollH==clientH==684). 근본=flex 자식 overflow:hidden→min-height:auto 0→flex-shrink 무한 압축.
+  - **Pass — fix 검증**: `.admin-meta-bootstrap { flex-shrink:0 }` 라이브 주입 시 `#metadataBootstrap` height 90→1771, **부모 pane scrollHeight 684→2364(스크롤 발생)**, 17 테이블+설명 입력란 전부 표시·우측 스크롤바 노출(스크린샷 20).
+  - **배포본 재검증(PASS)**: main `54dbfe3` ff-merge → `docker compose build web` + `up -d --no-deps web`(repo-web-1 Up healthy, /healthz mysql_ok·pg_ok true). 서빙 `styles.css?v=20260629-metadata-bs-flexclip`(admin/index 양쪽) + baked styles.css 에 `.admin-meta-bootstrap{flex-shrink:0}`. 브라우저 하드 리로드(주입 없이 실 CSS) 후 동일 시나리오 재현: `.admin-meta-bootstrap` computed `flex-shrink=0`, **부모 pane scrollHeight 684→2364(펼침)/1531(접힘) > clientHeight 684 = 스크롤 발생**, 17 테이블 전부 표시·우측 스크롤바 노출(스크린샷 40_deployed_fix_verify). 클리핑 해소 확정.
+  - **Notes**: mssql_local 의 '스키마 조회 실패'는 로컬 MSSQL 미가동(환경), UI 버그 아님. AI 자동완성 단건 1회 실행은 폼 prefill 만(미저장 — DB 비오염).
+
 ### TASK-0309 제품 프롬프트 무인 자동완성 (Major §12.3, 2026-06-25)
 - TEST: `tests/test_auto_product_prompt.py` 12/12 PASS (DB 없이 fake/monkeypatch, `make test` 격리).
   T1 분석률<임계 무생성 · T2 >=임계+미입력 1회 생성·재sweep scanned 0 · **T3 insight reset 후 재상승 무재생성(1회성 핵심)** · T4 프롬프트 존재 skip · T5 pct None skip · T6 pct==95.0 경계 · T7 다제품 적격만 · T8 인증 게이트 위임 · **T9 명시 tx(autocommit False→복원)+commit** · **T10 마커 UPDATE 실패 rollback→미저장·마커 NULL(B1)** · **T11 LLM 실패 backoff(M1)** · **T12 cycle 생성 상한(M2)**.
@@ -1227,3 +1243,37 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
     - `is-user is-other-message is-mention-me` (멘션 하이라이트 상대방): **leftGap 25 → 좌측** + 주황 강조선 정상.
   - 증거: `artifacts/pb0008-gc-other-msg-left/bubble-align-result.png`(내 파란 버블 우측·상대방 회색 버블/assistant 흰 버블 좌측·멘션 주황 강조선 좌측, 육안 확인).
   - **Pass/Fail: PASS**(headless mock 게이트). 내 메시지=우측, 상대방·assistant=좌측 동일 기준선으로 사용자 요청 충족. JS/백엔드/스키마/RBAC 무변경. [SKIPPED:frontend-css-presentation-no-logic for backend/panel; CHECK#13 PB-0008 배포 후 실 그룹대화 권장].
+
+- 2026-06-29 (TASK-20260629T114221-metadata-bootstrap-mssql-db — 메타데이터 부트스트랩 MSSQL database 차원 + 패널 잘림, **Major §12.3** — cross-engine 골격 introspection; CHG/REV-20260629T114221 evidence):
+  - **Environment: WSL-headless-Playwright(repo-browser-1) + 실 HTTPS API(curl, admin 세션)**. 실 Windows 화면 최종 확인은 PB-0008 — worktree(WSL)에서 작성돼 미실행(배포 후 사용자 시각 확인 권장, 선례 동일).
+  - **정적**: `python3 -m py_compile app.py` PASS · `node --check static/admin.js` PASS · CSS 1줄 교체(브레이스 영향 없음).
+  - **백엔드 introspection 직호출(app 내부 함수)**: MSSQL `mssql-qa-idc`/`GunzGame` → `_bootstrap_collect_skeleton_mssql` 88 실테이블(`_CurrencyType`·`Account`·`AccountItem`…)·전부 schema_name=GunzGame·임시(`#`)테이블 0 / `Account` DB 17테이블·`GameLog` 36 / MySQL `mysql-local` 센티넬·시스템스키마 제외 확인.
+  - **실 HTTPS 엔드포인트(curl, `mysql_ai_session` admin)**:
+    - `GET …/bootstrap/schemas?datasource=mssql-qa-idc` → engine=mssql·unit_kind=database·129개(tempdb/master/model/msdb 없음).
+    - `GET …/bootstrap/schemas?datasource=mysql-local` → engine=mysql·unit_kind=schema·13개(`__invalid_default_db__` 센티넬 제거).
+    - `POST …/bootstrap {mssql-qa-idc, GunzGame}` → 88테이블·전부 schema_name=GunzGame·temp 0·컬럼 포함.
+    - `POST …/tables/suggest {mssql-qa-idc, GunzGame, Account}` → target=description·grounded=true(29컬럼 introspect)·정확 한국어 설명(claude-haiku-4).
+  - **Playwright 브라우저 서비스(eval, admin 로그인)**: 메타데이터 탭 노출(권한)·tables 서브뷰 전환·부트스트랩 패널 `display=block`·`offsetParent!=null`(visibleOnPage)·`.admin-meta-bootstrap-result` computed `maxHeight='none'`(패널 잘림 해소)·DS=mssql-qa-idc 선택 시 라벨 '데이터베이스 *'·status '129개 데이터베이스'·GunzGame 88 table-name 렌더(`GunzGame.Account`…). 증거: `artifacts/shared/out/browser/claude_verify_dbdropdown.png`.
+  - **§18.8 적대 verification panel (general-purpose 2-lens, cross-feature 0002 포함)**: lens1 보안 VERDICT SAFE(SQLi·allowlist·의존함수 실재·시스템객체·RBAC·dialect 컨텍스트·자원누수). lens2 정합성: 1차 **MAJOR**(Path A — describe_table 컬럼 오버레이 read 축이 schema_name=DB 규약과 불일치) → tools.py overlay 키=pin DB명 수정 → 2차 재검증 **BLOCKING**(pin DB명 소문자 정규화 vs 저장값 원본 케이스, PG `=` case-sensitive 0행 — 라이브 검증 DB 가 전부 대문자 포함이라 우연 통과한 회귀) → kb_metadata.py `LOWER` case-insensitive 수정 → 3차 재검증 **VERDICT SAFE**(NIT 2 선재·비회귀 수용).
+  - **Path A 검증(코드/런타임)**: `_tool_describe_table` 가 MSSQL 일 때 `get_active_default_db()`(소문자 'gunzgame') 로 오버레이 조회 → `load_column_descriptions_for_table` 가 `LOWER(schema_name)=LOWER(%s)` 로 저장값 'GunzGame' 과 매치(panel 런타임 `LOWER('GunzGame')='gunzgame'` TRUE 확인). 함수 호출처 `tools.py:789` 단일(Path A 격리). `py_compile` tools.py·kb_metadata.py PASS. (라이브 노출 단언은 column_descriptions DB 0행이라 미수행 — 코드/축 정합 + panel 3-pass 로 검증; PB-0008 배포 후 실 컬럼 설명 저장 시 사용자 확인 권장.)
+  - **Pass/Fail: PASS**. 사용자 보고 3건 전부 해소: (1) 테이블 설명 AI 자동완성 정상(이미 구현+grounding 복구), (2) 테이블명 오류=tempdb 임시테이블 → 실 DB 실테이블, (3) 패널 내부 잘림 해소(maxHeight none). + describe_table 컬럼 오버레이 MSSQL read 축 정합(Path A, panel 적발·수정). RBAC/스키마/마이그 무변경. [PB-0008 Windows-browser 배포 후 사용자 시각 확인 권장].
+
+### TEST-20260629T080500-new-conv-dedup — 새 대화 첫 전송 시 사이드바 대화 중복 제거 (frontend-only, CLI/jsdom)
+- **Environment: CLI/jsdom** (frontend-only — backend/스키마/RBAC 무경유). `node --check src/static/app.js` PASS.
+- **신규 회귀 가드 `tests/verify_new_conv_dedup.mjs` 18/18 PASS** (Node v18.19.1 + jsdom@22, `/tmp/node_modules`):
+  - **[A] 정적 불변식**: lazy-create optimistic 등재 정확히 2곳(early-cid + fallback) · 각 등재 *직전* 윈도에 `pendingConversationEntries.delete(busyKey)` · 등재 *직후* `renderConversationList()` · 등재 키 `topic: message.slice` 2곳/`title: message.slice` 잔존 0 · 첨부 경로 `topic: "(파일 첨부 중)"`(title 잔존 0) · index.html app.js cache-buster `20260629d-new-conv-dedup`.
+  - **[B] 실 `renderConversationList` jsdom 추출·실행**: (B1) 수정 후 상태(placeholder 제거 + conversations 에 topic 항목 1개) → in-flight placeholder 0 · draft 0 · 실 대화 항목 정확히 1개 · 제목=메시지(폴백 '새 대화' 아님). (B2) 회귀 재현 상태(placeholder 존재 + title 키 항목) → placeholder 1 + 실 항목 1 = 사이드바 2개 동시 표시 · title 키 항목은 폴백 '새 대화' 로 표시(중복의 '새 대화' 출처 문서화).
+- **무회귀**: 기존 `tests/verify_conv_entry_defaults.mjs` **20/20 PASS** · `tests/verify_date_group_collapse.mjs` **22/22 PASS**(대화 목록 로직 동일 영역).
+- **Pass/Fail: PASS**. 사용자 보고("새 대화에서 요청 보내면 현재 대화 + 별도 '새 대화' 중복 생성") 해소: optimistic 항목과 placeholder 의 동시 렌더 창 제거 + optimistic 항목 메시지 제목 표시.
+- **미수행(배포 후 사용자 확인 권장)**: PB-0008 Windows-browser 실 화면 검증(새 대화 첫 전송→사이드바 항목 1개·중복 0·진행 중 placeholder 비중복) — WSL worktree 라 미실행(frontend-only render, 선례 동일). REV-20260629T080500-new-conv-dedup [SKIPPED:frontend-ui-render-state-no-backend-no-rbac] 적용 예정.
+
+### TEST-20260630T005923-share-joinable-confirm-persist — 공유 '링크 생성' 참여 허용 확인 모달 + '참여 허용' 체크박스 대화별 영속 (Critical 인접 §12.3 인가/프라이버시 UX, frontend-only)
+- **Environment: agent 이미지 pytest (DB 없이 — static read + inspect.getsource)** + CLI `node --check`. backend/스키마/RBAC 무경유(app.py diff 0).
+- **기존 owner-guard 회귀 가드 `tests/test_share_joinable_owner_guard.py`** — 리팩터 후에도 인가 불변식 보존되도록 3 assertion 갱신(f1 `intended`+최종 joinable 강제 false, f2 cid 파라미터, f3 cid 전달). B1~B3(백엔드 403 게이트·INSERT 선행·admin 우회 없음) 무변경 PASS.
+- **신규 회귀 가드 `tests/test_share_joinable_confirm_persist.py` 7/7 PASS**:
+  - **[P 영속]** P1 헬퍼 존재+기본 ON(`!== false`)·정규화, P2 openShareDialog 초기값 복원(`joinableInit ? ' checked' : ''`)+change 영속, P3 promptShareExpiry cid 복원+change/확정 영속.
+  - **[C 확인 게이트]** C1 `confirmShareJoinable` 존재, C2 '링크 생성' 이 confirm→취소중단→발급 순서(인덱스 단언), C3 비소유자 canAllow=false 분기에서만 '허용' 버튼 렌더(비소유자 강제 false), C4 확인 모달 CSS 존재.
+- **통합 회귀**: 공유 테스트 13/13 + **feature-0003 전체 pytest 548 PASS(회귀 0)**. `node --check src/static/app.js` PASS.
+- **§18.8 적대 패널 2렌즈**: 보안/authz VERDICT SAFE(5가설 REFUTED·BLOCKING 0), UX/regression VERDICT SOUND(5가설 REFUTED·BLOCKING 0). 상세 REV-20260630T005923-share-joinable-confirm-persist.
+- **Pass/Fail: PASS**. 요청1(생성 직후 참여 허용 확인 모달)·요청2(체크박스 상태 대화별 유지=회귀 해소) 코드/테스트 검증 완료.
+- **미수행(배포 후 사용자 확인 권장)**: PB-0008 Windows-browser 실 화면(링크 생성→'참여 허용 확인' 모달·취소 시 발급 중단·체크박스 토글 후 재진입 상태 유지) — WSL worktree 미실행(frontend render, 선례 동일).

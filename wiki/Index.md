@@ -53,7 +53,7 @@ sources:
 
 ### 2.1 도메인
 
-DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `describe_table`, `search_tables`, `get_sample_rows`) 을 핵심 loop 로 갖는 사내 DBA 자동화 도구. **멀티 데이터소스 (MySQL·MSSQL)** read-only 분석을 dialect 추상화 + envelope 암호화 registry + DB-단위 접근으로 제공. AWS Bedrock (Claude) 단일 service-managed LLM provider, Postgres 16 + pgvector (KB + runtime 단독 정본) + MySQL 8.0 (`web*` control plane), FastAPI Web UI + ask-worker 큐 + Playwright 자동화 + MCP gateway + 그룹 대화(멤버십·`@assistant` 멘션) 의 11-feature compose.
+DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `describe_table`, `search_tables`, `get_sample_rows`) 을 핵심 loop 로 갖는 사내 DBA 자동화 도구. **멀티 데이터소스 (MySQL·MSSQL)** read-only 분석을 dialect 추상화 + envelope 암호화 registry + DB-단위 접근으로 제공. AWS Bedrock (Claude) 단일 service-managed LLM provider, Postgres 16 + pgvector (KB + runtime 단독 정본) + MySQL 8.0 (`web*` control plane), FastAPI Web UI + ask-worker 큐 + Playwright 자동화 + MCP gateway + 그룹 대화(멤버십·`@assistant` 멘션) 의 13-feature compose.
 
 ### 2.2 핵심 영역 입구
 
@@ -63,7 +63,7 @@ DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `d
 
 ### 2.3 Feature 카드
 
-- [[Features/_Index|Features MOC]] — 11 feature 의 카드 (feature-0001 ~ feature-0011)
+- [[Features/_Index|Features MOC]] — 13 feature 의 카드 (feature-0001 ~ feature-0013)
 
 ### 2.4 Decisions (ADR mirror)
 

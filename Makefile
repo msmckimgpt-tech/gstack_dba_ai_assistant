@@ -145,14 +145,16 @@ up:  ## lifecycle: 전체 스택 빌드 + 기동 (mysql, web, browser, insight-w
 	@# docker compose v5.1 + buildx v0.31 은 build 후처리에서 `--metadata-file` 임시파일을
 	@# race-unlink 하여 빌드는 성공해도 exit 1 을 반환하는 알려진 이슈가 있다.
 	@# 종료코드는 흡수하고, 직후 이미지 존재 여부로 실제 빌드 성공을 검증한다.
-	@$(DC_QUIET) build agent memory-init insight-worker web browser || true
-	@for img in repo-agent repo-memory-init repo-insight-worker repo-web repo-browser; do \
+	@# feature-0014: web 은 web-a/web-b 두 replica(무중단 롤링). 동일 Dockerfile 이라 빌드
+	@# 캐시로 사실상 build-once. (라이브 무중단 재배포는 'make deploy-web' = bin/deploy-web.sh.)
+	@$(DC_QUIET) build agent memory-init insight-worker web-a web-b browser || true
+	@for img in repo-agent repo-memory-init repo-insight-worker repo-web-a repo-web-b repo-browser; do \
 		docker image inspect $$img >/dev/null 2>&1 \
 			|| { echo "[make up] 빌드된 이미지 누락: $$img" >&2; exit 1; }; \
 	done
 	@# 위 build 단계에서 이미 이미지가 만들어졌으므로 후속 `up` 은 `--build` 없이 호출한다.
 	@# (`--build` 를 다시 주면 동일 metadata-file race 가 재발한다.)
-	@$(DC_QUIET) up -d mysql web browser
+	@$(DC_QUIET) up -d mysql web-a web-b browser
 	@$(MAKE) wait-mysql
 	@$(MAKE) ensure-memory-db
 	@if [[ "$(ENABLE_WEB_TLS_PROXY)" == "1" ]]; then \
@@ -219,11 +221,18 @@ kb-retrieval-eval:  ## ci: KB retrieval A/B (ITEM-05) — fusion vs 2-tier preci
 backup:  ## ops: 플랫폼 정본 데이터 논리 백업 (PG agent_kb + MySQL agent_memory) — TASK-0130
 	@bash bin/backup.sh
 
+restore-rehearsal:  ## ops: 최신 백업을 throwaway DB 로 복원 검증 (복원 가능성 리허설) — feature-0015
+	@bash bin/restore-rehearsal.sh $(RESTORE_REHEARSAL_ARGS)
+
+install-backup-cron:  ## ops: 정기 백업(매일) + 복원 리허설(주간) cron 설치(멱등) — feature-0015
+	@bash bin/install-backup-cron.sh $(CRON_ARGS)
+
 gc:  ## ops: 운영 데이터 GC — kv 고아행 + 만료 세션 정리 (멱등) — TASK-0134
 	@bash bin/gc.sh
 
 embed:  ## ops: KB 임베딩 백필 (texts.embedding NULL 채움, Titan v2) — TASK-0135
-	@$(DC_QUIET) exec -T -w /app web python -m scripts.kb_embedding_worker || docker exec -w /app repo-web-1 python -m scripts.kb_embedding_worker
+	@# feature-0014: web → web-a (2-replica). 어느 replica 에서 실행해도 동일(공유 DB).
+	@$(DC_QUIET) exec -T -w /app web-a python -m scripts.kb_embedding_worker || docker exec -w /app repo-web-a-1 python -m scripts.kb_embedding_worker
 
 # =============================================================================
 # Status — 상태 / 로그 / 진단
@@ -329,6 +338,15 @@ migrate-stamp:  ## db: 라이브 기존 DB 를 head baseline 으로 표시 (스�
 migrate-current:  ## db: 라이브 현재 alembic revision 조회
 	@bin/alembic-migrate.sh current
 
+migrate-lint:  ## db: 신규 alembic revision 의 expand/contract 안전성 검사 (무중단 배포 게이트, feature-0014)
+	@bin/migrate-lint.sh $(MIGRATE_LINT_ARGS)
+
+pg-restart:  ## db: PG primary 를 near-zero RW 단절로 재시작 (pgbouncer PAUSE→restart→RESUME) — feature-0016
+	@sudo -E bin/pg-restart.sh $(PG_RESTART_ARGS)
+
+mysql-ddl-lint:  ## db: 신규 MySQL ALTER 의 online-DDL(LOCK=NONE) 강제 검사 (무중단, feature-0015)
+	@bin/mysql-ddl-lint.sh $(MYSQL_DDL_LINT_ARGS)
+
 migrate-new:  ## db: 신규 revision 생성 (사용법: make migrate-new name="add_xyz" [auto=1]) — 생성 파일은 repo 의 alembic/versions 에 저장
 	@if [[ -z "$(name)" ]]; then \
 		echo '사용법: make migrate-new name="add_xyz" [auto=1]'; \
@@ -389,27 +407,28 @@ convo-clear: init  ## convo: 모든 메모리 테이블 비우기
 # Web — Web UI / TLS Proxy
 # =============================================================================
 
-web: init  ## web: Web UI 기동 (ENABLE_WEB_TLS=1 또는 ENABLE_WEB_TLS_PROXY=1 자동 처리)
+web: init  ## web: Web UI 기동 (web-a/web-b 2-replica + Caddy :443 단일 진입). 라이브 무중단 재배포는 'make deploy-web'.
 	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then $(MAKE) -s web-tls-cert; fi
 	@$(MAKE) check-llm-network
-	@$(MAKE) -s dc-build SERVICE=web
-	@$(DC_QUIET) up -d --no-build web
-	@if [ "$(ENABLE_WEB_TLS)" = "1" ]; then \
-		echo "Web UI (HTTPS): https://localhost:$(WEB_PORT)"; \
-		if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_LAN_IP):$(WEB_PORT)"; fi; \
-	else \
-		echo "Web UI: http://localhost:$(WEB_PORT)"; \
-	fi
-	@if [ "$(ENABLE_WEB_TLS_PROXY)" = "1" ]; then \
-		$(MAKE) -s web-tls-cert; \
-		mkdir -p $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR); \
-		$(DC_QUIET) up -d caddy; \
-		echo "TLS Proxy: https://$(WEB_PUBLIC_HOST)"; \
-	fi
+	@# feature-0014: 두 replica(web-a/web-b). 동일 Dockerfile 이라 빌드 캐시로 사실상 build-once.
+	@$(DC_QUIET) build web-a web-b || true
+	@for img in repo-web-a repo-web-b; do docker image inspect $$img >/dev/null 2>&1 || { echo "[make web] 이미지 누락: $$img" >&2; exit 1; }; done
+	@$(DC_QUIET) up -d --no-build web-a web-b
+	@$(MAKE) -s web-tls-cert
+	@mkdir -p $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
+	@$(DC_QUIET) up -d caddy
+	@echo "Web UI: https://$(WEB_PUBLIC_HOST)  (Caddy :443 단일 진입 — :18080 web 직접 문은 feature-0014 에서 폐기)"
+	@if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_PUBLIC_HOST) (LAN IP $(WEB_LAN_IP) → DNS/hosts 매핑)"; fi
+
+deploy-web:  ## web: 라이브 무중단(zero-downtime) 롤링 재배포 (origin/main HEAD). 헤더의 scoped sudo 필요.
+	@sudo -E bin/deploy-web.sh
+
+web-rollback:  ## web: 직전 정상 이미지(last-good)로 무중단 롤백
+	@sudo -E bin/deploy-web.sh --rollback
 
 web-down:  ## web: Web UI + caddy 정지
 	@$(DC_QUIET) stop caddy 2>/dev/null || true
-	@$(DC_QUIET) stop web || true
+	@$(DC_QUIET) stop web-a web-b || true
 
 web-tls-cert:  ## web: 자체 서명 인증서 생성 (이미 있으면 재사용)
 	@mkdir -p $(CERT_ROOT)/$(WEB_PUBLIC_HOST)
@@ -427,19 +446,19 @@ web-tls-cert:  ## web: 자체 서명 인증서 생성 (이미 있으면 재사�
 		echo "  기존 인증서 사용: $(CERT_ROOT)/$(WEB_PUBLIC_HOST)/"; \
 	fi
 
-web-tls-up: init web-tls-cert  ## web: web + caddy 를 TLS 모드로 기동
+web-tls-up: init web-tls-cert  ## web: web-a/web-b + caddy 를 TLS 모드로 기동
 	@mkdir -p $(CADDY_DATA_DIR) $(CADDY_CONFIG_DIR)
 	@$(MAKE) check-llm-network
-	@$(DC_QUIET) up -d --build web
+	@$(DC_QUIET) up -d --build web-a web-b
 	@$(DC_QUIET) up -d caddy
 	@echo "TLS Web UI: https://$(WEB_PUBLIC_HOST)"
-	@if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_LAN_IP)"; fi
+	@if [ -n "$(WEB_LAN_IP)" ]; then echo "LAN 접속: https://$(WEB_PUBLIC_HOST)"; fi
 
 web-tls-down:  ## web: caddy 만 정지
 	@$(DC_QUIET) stop caddy || true
 
-web-tls-status:  ## web: web + caddy 컨테이너 상태 표시
-	@$(DC_QUIET) ps web caddy
+web-tls-status:  ## web: web-a/web-b + caddy 컨테이너 상태 표시
+	@$(DC_QUIET) ps web-a web-b caddy
 
 web-tls-logs:  ## web: caddy 로그 follow
 	@$(DC_QUIET) logs -f --tail=200 caddy

@@ -280,6 +280,32 @@ function setConversationMuted(cid, muted) {
   try { localStorage.setItem(MUTED_CONVS_LS_KEY, JSON.stringify(Array.from(set))); } catch (_) {}
 }
 
+// feature-0009 share-joinable-persist: 공유 팝업 '이 링크로 대화 참여 허용' 체크박스 상태를
+// 대화별로 영속한다(회귀 방지). 기존 muted/notify 환경설정과 동일한 localStorage 패턴 —
+// 백엔드/스키마 변경 없음. cid → bool 맵으로 저장하고, 키 부재 대화는 기존 기본값 ON(true) 유지.
+// (joinable 의 authoritative 게이트는 여전히 백엔드 owner-only 403 — 본 영속은 UX 편의일 뿐.)
+const SHARE_JOINABLE_PREFS_LS_KEY = "mad.shareJoinablePrefs.v1";
+function _loadShareJoinablePrefs() {
+  try {
+    const raw = localStorage.getItem(SHARE_JOINABLE_PREFS_LS_KEY);
+    const obj = raw ? JSON.parse(raw) : {};
+    return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : {};
+  } catch (_) {
+    return {};
+  }
+}
+// 저장값이 명시 false 일 때만 OFF — 미설정(키 부재) 대화는 기존 기본값 ON 을 유지한다.
+function getShareJoinablePref(cid) {
+  if (cid == null || cid === "") return true;
+  return _loadShareJoinablePrefs()[String(cid)] !== false;
+}
+function setShareJoinablePref(cid, joinable) {
+  if (cid == null || cid === "") return;
+  const prefs = _loadShareJoinablePrefs();
+  prefs[String(cid)] = joinable !== false;
+  try { localStorage.setItem(SHARE_JOINABLE_PREFS_LS_KEY, JSON.stringify(prefs)); } catch (_) {}
+}
+
 // Restore collapsed groups from localStorage
 try {
   const _cgRaw = localStorage.getItem(COLLAPSED_GROUPS_LS_KEY);
@@ -744,6 +770,18 @@ function buildDiffRows(lines) {
     if (cls === "diff-del") {
       return { cls, mark: "-", code: stripDiffMarker(line), oldNo: oldNo++, newNo: "" };
     }
+    // context — 모델이 첨부 줄번호 prefix(`<N>→`, agent_core `_number_file_lines` 가 첨부 본문
+    // 각 줄에 주입)를 ```diff context 줄로 흘려보낸 경우를 정규화한다. 프롬프트가 금지하나
+    // 모델이 가끔 누출 → 떼지 않으면 `45→ ...` 가 코드 본문으로 렌더돼 줄 표현이 깨진다(사용자
+    // 보고). prefix 를 떼어 순수 코드만 남기고, 떼어낸 실제 소스 줄번호로 gutter 를 동기화한다
+    // (`_number_file_lines` 가 의도한 "diff 가 원본 줄번호로 앵커" 를 복원). 누출 형식이 매우
+    // 구체적(자릿수+U+2192)이라 clean diff 는 미매칭 → 무변경(회귀 0). +/- 변경줄엔 누출이
+    // 없어(원본 verbatim 인 context 줄에서만 발생) context 분기에만 적용한다.
+    const leakedNo = /^\s*(\d+)→/.exec(line);
+    if (leakedNo) {
+      oldNo = newNo = parseInt(leakedNo[1], 10);
+      return { cls, mark: " ", code: line.slice(leakedNo[0].length), oldNo: oldNo++, newNo: newNo++ };
+    }
     return { cls, mark: " ", code: stripDiffMarker(line), oldNo: oldNo++, newNo: newNo++ };
   });
 }
@@ -828,17 +866,30 @@ function enhanceAttachmentEditBlocks(html) {
   }
 }
 
+// feature-0013 mermaid 헬퍼(enhanceMermaidBlocks / ensureMermaidInit / renderMermaidDiagrams /
+// mermaidFallback)는 mermaid-render.js 로 추출했다(공유 대화 뷰 share.js 와 단일 소스 — strict
+// 보안 설정 일원화). index.html 이 mermaid.min.js → mermaid-render.js → app.js 순으로 로드하므로
+// markdownToHtml·renderMessageContent 는 그대로 전역 함수로 호출한다.
+
 function markdownToHtml(text = "") {
   const source = String(text || "").trim();
   if (!source) {
     return "";
   }
   if (window.marked && window.DOMPurify) {
-    const rendered = enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source)));
+    // mermaid-render.js(별도 파일) 미로드 시에도 메인 UI 렌더가 죽지 않도록 가드 — 추출이 만든
+    // 파일 결합에 대한 방어(share.js 와 동일 패턴). 미로드면 ```mermaid 는 원문 코드블록으로 남는다.
+    const enhanceMmd =
+      typeof enhanceMermaidBlocks === "function" ? enhanceMermaidBlocks : (h) => h;
+    const rendered = enhanceMmd(
+      enhanceAttachmentEditBlocks(enhanceDiffBlocks(window.marked.parse(source)))
+    );
     return window.DOMPurify.sanitize(rendered);
   }
   return `<pre>${escapeHtml(source)}</pre>`;
 }
+
+// (mermaid 헬퍼는 mermaid-render.js 로 이동 — 위 markdownToHtml 주석 참조.)
 
 function can(permission) {
   // TASK-0098: state.user.permissions 의존성 제거. "표시 허용 + 실행은 backend
@@ -2811,6 +2862,8 @@ function renderMessageContent(target, content = "", role = "assistant") {
     target.innerHTML = markdownToHtml(content);
     collapseSqlCodeBlocksInContent(target);
     enhanceFilePreviewLinks(target);
+    // feature-0013: ```mermaid → SVG (sanitize 이후 라이브 DOM). mermaid-render.js 미로드 시 가드(no-op).
+    if (typeof renderMermaidDiagrams === "function") renderMermaidDiagrams(target);
     return;
   }
   target.innerHTML = markdownToHtml(content || "");
@@ -3761,8 +3814,10 @@ function _buildSampleFeedbackControls(message, msgIdx) {
   const nlQuestion = _precedingUserQuestion(msgIdx);
   const generatedSql = _extractSqlFromContent(message.content);
   const cid = state.activeConversationId;
-  // 답변(메시지) 식별자 — 서버가 (created_by, message_id) 단위로 고유 피드백을 강제(중복 부여 차단).
+  // 답변(메시지) 식별자 — 서버가 (created_by, message_id, message_id_space) 단위로 고유 피드백을
+  // 강제(중복 부여 차단). id_space("display"|"core")는 표시 store id 와 core id 의 숫자 겹침을 구분.
   const messageId = (message && message.id != null) ? message.id : null;
+  const messageIdSpace = (message && message.id_space) ? message.id_space : "display";
 
   const status = document.createElement("span");
   status.className = "message-feedback-status";
@@ -3804,7 +3859,7 @@ function _buildSampleFeedbackControls(message, msgIdx) {
     try {
       await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
         method: "POST",
-        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId }),
+        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId, message_id_space: messageIdSpace }),
       });
       if (suggested) {
         status.textContent = "샘플 등록 요청됨 (검수 대기)";
@@ -4699,7 +4754,9 @@ function renderMessagePointRail() {
     dot.addEventListener("click", (ev) => {
       ev.preventDefault();
       const target = document.getElementById(`message-${message.id}`);
-      if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+      // 가이드 뱃지 클릭: native scrollIntoView(behavior:smooth, 브라우저 임의 duration)
+      // 대신 EaseOutExpo 커스텀 애니메이션으로 더 짧게 이동(REQ-20260629-point-scroll).
+      if (target) scrollMessagePointIntoCenter(target);
     });
     rail.appendChild(dot);
   });
@@ -4754,6 +4811,43 @@ function highlightActivePoint() {
   rail.querySelectorAll(".message-point-dot").forEach((dot) => {
     dot.classList.toggle("is-active", String(dot.dataset.messageId) === String(closestId));
   });
+}
+
+// REQ-20260629-point-scroll: 가이드 뱃지(point rail dot) 클릭 시 대상 메시지로의
+// 스크롤을 브라우저 native smooth(가변·임의 duration) 대신 짧은 EaseOutExpo 곡선으로
+// 직접 구동한다. EaseOutExpo 는 초반에 크게 움직였다가 끝에서 부드럽게 감속해 "빠르게
+// 도달 + 깔끔한 정착" 느낌을 준다. prefers-reduced-motion 사용자는 즉시 점프(no-op).
+const POINT_SCROLL_DURATION_MS = 280; // native smooth(통상 ≥400ms) 대비 단축.
+function _easeOutExpo(t) {
+  // f(t)=1-2^(-10t), t=1 에서 정확히 1 (부동소수 오차 방지로 분기).
+  return t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+}
+// scrollTop 을 from→to 로 EaseOutExpo 애니메이션. setter 는 1 개 인자(다음 위치)를 받는다.
+function _animatePointScroll(setter, from, to) {
+  const delta = to - from;
+  if (delta === 0) return;
+  if (_prefersReducedMotion()) { setter(to); return; }
+  const t0 = (typeof performance !== "undefined" && performance.now) ? performance.now() : null;
+  if (t0 == null) { setter(to); return; } // performance.now 부재 환경 폴백.
+  function step(now) {
+    const elapsed = now - t0;
+    const p = Math.min(1, elapsed / POINT_SCROLL_DURATION_MS);
+    setter(from + delta * _easeOutExpo(p));
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+// 대상 메시지를 messageLog 뷰포트 중앙으로 EaseOutExpo 스크롤(scrollIntoView block:center 대체).
+function scrollMessagePointIntoCenter(target) {
+  if (!messageLogEl || !target) return;
+  const logRect = messageLogEl.getBoundingClientRect();
+  const elRect = target.getBoundingClientRect();
+  const from = messageLogEl.scrollTop;
+  const elTopInLog = elRect.top - logRect.top + from;
+  const dest = elTopInLog - (messageLogEl.clientHeight - elRect.height) / 2;
+  const maxTop = Math.max(0, messageLogEl.scrollHeight - messageLogEl.clientHeight);
+  const to = Math.max(0, Math.min(maxTop, dest));
+  _animatePointScroll((y) => { messageLogEl.scrollTop = y; }, from, to);
 }
 
 // TASK-0061 Phase 5 (REQ-20260515-0007): 캘린더 popover state + 렌더.
@@ -5885,14 +5979,17 @@ const SHARE_EXPIRY_PRESETS = [
 // 만료 기간 선택 모달. resolve({ cancelled, seconds, joinable }). seconds=null → 무기한.
 // feature-0009-share-joinable-guard: canToggleJoinable=false(비소유자) 면 참여 허용 토글을
 // disabled 로 표시하고 joinable 을 강제 false 로 resolve 한다(백엔드도 403 으로 이중 방어).
-function promptShareExpiry({ canToggleJoinable = true } = {}) {
+// feature-0009 share-joinable-persist: cid 가 주어지면 체크박스 초기값을 대화별 영속값에서
+// 복원하고, 토글/확정 시 다시 영속한다(회귀 방지).
+function promptShareExpiry({ cid = null, canToggleJoinable = true } = {}) {
   return new Promise((resolve) => {
     const backdrop = document.createElement("div");
     backdrop.className = "share-mgr-backdrop";
     backdrop.setAttribute("role", "dialog");
     backdrop.setAttribute("aria-modal", "true");
+    const joinableInit = canToggleJoinable && getShareJoinablePref(cid);
     const joinableRow = canToggleJoinable
-      ? '  <label class="share-joinable-row"><input type="checkbox" id="shareJoinableChk" checked /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>'
+      ? '  <label class="share-joinable-row"><input type="checkbox" id="shareJoinableChk"' + (joinableInit ? ' checked' : '') + ' /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>'
       : '  <label class="share-joinable-row is-locked"><input type="checkbox" id="shareJoinableChk" disabled /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(대화 생성자만 변경할 수 있습니다)</span></label>';
     backdrop.innerHTML =
       '<div class="share-mgr-panel share-expiry-panel">' +
@@ -5914,6 +6011,11 @@ function promptShareExpiry({ canToggleJoinable = true } = {}) {
     backdrop.addEventListener("click", (e) => { if (e.target === backdrop) finish({ cancelled: true, seconds: null }); });
     backdrop.querySelector(".share-mgr-close").addEventListener("click", () => finish({ cancelled: true, seconds: null }));
     document.addEventListener("keydown", onKey);
+    // share-joinable-persist: 토글 즉시 대화별 영속 — 생성하지 않고 닫아도 다음 진입 시 복원.
+    if (canToggleJoinable) {
+      const chkInit = backdrop.querySelector("#shareJoinableChk");
+      if (chkInit) chkInit.addEventListener("change", () => setShareJoinablePref(cid, chkInit.checked));
+    }
     const opts = backdrop.querySelector(".share-expiry-opts");
     SHARE_EXPIRY_PRESETS.forEach((p) => {
       const btn = document.createElement("button");
@@ -5924,11 +6026,67 @@ function promptShareExpiry({ canToggleJoinable = true } = {}) {
         const chk = backdrop.querySelector("#shareJoinableChk");
         // 비소유자(canToggleJoinable=false)는 토글 disabled → joinable 강제 false.
         const joinable = canToggleJoinable && chk ? chk.checked : false;
+        if (canToggleJoinable) setShareJoinablePref(cid, joinable);
         finish({ cancelled: false, seconds: p.seconds, joinable });
       });
       opts.appendChild(btn);
     });
     document.body.appendChild(backdrop);
+  });
+}
+
+// feature-0009 share-joinable-confirm (Q1=항상 확인 모달): 통합 공유 팝업에서 '링크 생성'을
+// 누른 직후, 참여 허용 여부를 한 번 더 명시적으로 확정받는다. joinable=true 는 받는 사람이
+// 대화 전체를 보고 참여하게 되는(되돌리기 어려운) 노출이므로, 무심코 누른 생성으로 공개되지
+// 않도록 의도를 재확인한다. owner 만 '허용' 선택 가능(canAllow). resolve({ cancelled, joinable }).
+function confirmShareJoinable({ initial = true, canAllow = true } = {}) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "share-mgr-backdrop";
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-modal", "true");
+    const desc = canAllow
+      ? "이 링크로 <strong>대화 참여를 허용</strong>하시겠습니까?<br />허용하면 링크를 받은 사람이 이 대화 <strong>전체를 보고 참여</strong>할 수 있습니다. 참여 없이 생성하면 받는 사람은 대화를 <strong>볼 수만</strong> 있습니다."
+      : "보기 전용 공유 링크를 생성합니다. 받는 사람은 대화를 볼 수만 있고 참여할 수 없습니다.<br />(참여 허용은 대화 생성자만 설정할 수 있습니다.)";
+    // canAllow=false 면 '허용' 선택지를 두지 않는다(버튼 자체 부재 — 비소유자는 강제 false).
+    const actionsHtml = canAllow
+      ? '    <button type="button" class="share-mgr-btn" data-act="cancel">취소</button>' +
+        '    <button type="button" class="share-mgr-btn" data-act="deny">참여 없이 생성</button>' +
+        '    <button type="button" class="btn-primary" data-act="allow">참여 허용하고 생성</button>'
+      : '    <button type="button" class="share-mgr-btn" data-act="cancel">취소</button>' +
+        '    <button type="button" class="btn-primary" data-act="deny">생성</button>';
+    backdrop.innerHTML =
+      '<div class="share-mgr-panel share-confirm-panel">' +
+      '  <div class="share-mgr-head">' +
+      '    <h3 class="share-mgr-title">참여 허용 확인</h3>' +
+      '    <button type="button" class="share-mgr-close" aria-label="닫기">×</button>' +
+      '  </div>' +
+      '  <div class="share-confirm-desc">' + desc + '</div>' +
+      '  <div class="share-confirm-actions">' + actionsHtml + '</div>' +
+      '</div>';
+    let settled = false;
+    const cleanup = () => {
+      if (backdrop.parentNode) document.body.removeChild(backdrop);
+      document.removeEventListener("keydown", onKey);
+    };
+    const finish = (val) => { if (settled) return; settled = true; cleanup(); resolve(val); };
+    const onKey = (e) => { if (e.key === "Escape") finish({ cancelled: true }); };
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) finish({ cancelled: true }); });
+    backdrop.querySelector(".share-mgr-close").addEventListener("click", () => finish({ cancelled: true }));
+    document.addEventListener("keydown", onKey);
+    backdrop.querySelectorAll(".share-confirm-actions [data-act]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const act = btn.getAttribute("data-act");
+        if (act === "cancel") finish({ cancelled: true });
+        else if (act === "allow") finish({ cancelled: false, joinable: true });
+        else finish({ cancelled: false, joinable: false }); // deny
+      });
+    });
+    document.body.appendChild(backdrop);
+    // 직전 의도(체크박스 값)에 해당하는 기본 동작 버튼에 포커스 — Enter 로 즉시 확정 가능.
+    const focusAct = canAllow ? (initial ? "allow" : "deny") : "deny";
+    const focusBtn = backdrop.querySelector('.share-confirm-actions [data-act="' + focusAct + '"]');
+    if (focusBtn) focusBtn.focus();
   });
 }
 
@@ -5992,7 +6150,12 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
   const _shareConv = state.conversations.find((it) => String(it.id) === String(cid));
   const isOwner = isOwnConversation(_shareConv);
   // 만료 기간 선택 (취소 시 생성 중단). 앵커 공유(메시지 '여기까지 공유') 진입점.
-  const choice = await promptShareExpiry({ canToggleJoinable: isOwner });
+  // cid 전달 — 참여 허용 체크박스를 대화별 영속값에서 복원/저장(share-joinable-persist).
+  // 주의(share-joinable-confirm scope): 앵커 경로는 confirmShareJoinable 확인 모달을
+  // 의도적으로 거치지 않는다. 요청1(생성 직후 참여 허용 재확인)은 '링크 생성' 버튼이 있는
+  // openShareDialog 한정 — 앵커 경로는 메시지에서의 명시적 '여기까지 공유' 제스처 + 자체
+  // 설정 모달(promptShareExpiry, joinable 체크박스 노출)이 이미 deliberate 단계라 중복 확인 생략.
+  const choice = await promptShareExpiry({ cid, canToggleJoinable: isOwner });
   if (!choice || choice.cancelled) return null;
   return _issueConversationShare({
     cid,
@@ -6281,8 +6444,10 @@ async function openShareDialog(cid) {
     const expiryOpts = SHARE_EXPIRY_PRESETS
       .map((p, i) => `<option value="${i}">${escapeHtml(p.label)}</option>`)
       .join("");
+    // share-joinable-persist: 체크박스 초기값을 대화별 영속값에서 복원(회귀 방지) — 미설정은 기본 ON.
+    const joinableInit = isOwner && getShareJoinablePref(cid);
     const joinableRow = isOwner
-      ? '<label class="share-joinable-row"><input type="checkbox" id="shareDialogJoinableChk" checked /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>'
+      ? '<label class="share-joinable-row"><input type="checkbox" id="shareDialogJoinableChk"' + (joinableInit ? ' checked' : '') + ' /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(참여자는 이 대화 전체를 보게 됩니다)</span></label>'
       : '<label class="share-joinable-row is-locked"><input type="checkbox" id="shareDialogJoinableChk" disabled /> 이 링크로 대화 참여 허용 <span class="share-joinable-hint">(대화 생성자만 변경할 수 있습니다)</span></label>';
     createSec.innerHTML =
       joinableRow +
@@ -6290,11 +6455,25 @@ async function openShareDialog(cid) {
       '  <label class="share-expiry-field">만료 <select id="shareExpirySel" class="btn-secondary">' + expiryOpts + '</select></label>' +
       '  <button type="button" class="btn-primary" id="shareCreateBtn">링크 생성</button>' +
       '</div>';
+    // share-joinable-persist: 토글 즉시 대화별 영속 — 생성하지 않고 닫아도 다음 진입 시 복원.
+    const joinableChk = createSec.querySelector("#shareDialogJoinableChk");
+    if (isOwner && joinableChk) {
+      joinableChk.addEventListener("change", () => setShareJoinablePref(cid, joinableChk.checked));
+    }
     const createBtn = createSec.querySelector("#shareCreateBtn");
     createBtn.addEventListener("click", async () => {
       const chk = createSec.querySelector("#shareDialogJoinableChk");
       // 비소유자는 토글이 disabled 이므로 항상 joinable=false 로 강제(백엔드도 403 으로 차단).
-      const joinable = isOwner && chk ? chk.checked !== false : false;
+      const intended = isOwner && chk ? chk.checked !== false : false;
+      // share-joinable-confirm (Q1=항상 확인 모달): '링크 생성' 직후 참여 허용 여부를 재확정.
+      // 취소 시 발급하지 않는다. 모달의 최종 선택을 체크박스·영속값에 반영(의도 일치 보장).
+      const confirmRes = await confirmShareJoinable({ initial: intended, canAllow: isOwner });
+      if (!confirmRes || confirmRes.cancelled) return;
+      const joinable = isOwner ? confirmRes.joinable !== false : false;
+      if (isOwner) {
+        if (chk && !chk.disabled) chk.checked = joinable;
+        setShareJoinablePref(cid, joinable);
+      }
       const sel = createSec.querySelector("#shareExpirySel");
       const preset = SHARE_EXPIRY_PRESETS[Number(sel && sel.value) || 0] || SHARE_EXPIRY_PRESETS[0];
       createBtn.disabled = true;
@@ -7316,8 +7495,10 @@ async function _uploadComposerAttachment(file) {
       state.pendingNewConversation = false;
       state.pendingSentinel = null;
       // minimal sidebar entry (refreshWorkspace 가 확정 데이터로 교체)
+      // new-conv-dedup: buildCompactItem 은 item.topic 을 읽는다(title 아님) — title 키로 넣으면
+      // 첨부 중 항목이 "(파일 첨부 중)" 대신 폴백 "새 대화" 로 표시됐다. topic 으로 등재해 의도 라벨 유지.
       if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
-        state.conversations.unshift({ id: earlyCid, title: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_account_id: state.user?.id || null, owner_username: state.user?.username || null });
+        state.conversations.unshift({ id: earlyCid, topic: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_account_id: state.user?.id || null, owner_username: state.user?.username || null });
       }
       renderConversationList();
       renderConversationHeader();
@@ -8301,20 +8482,31 @@ async function sendPrompt() {
           state.pendingNewConversation = false;
           state.activeConversationId = earlyCid;
           state.pendingSentinel = null;
+          // new-conv-dedup: in-flight placeholder(pendingConversationEntries[busyKey]) 를 실 cid
+          // entry 로 *원자적* 교체한다. 이 정리를 /api/ask 응답(아래 8421)까지 미루면 — early-cid 발급
+          // 직후부터 /api/ask 응답 도착까지(실 LLM 응답 시간) — placeholder(메시지 제목)와 아래 optimistic
+          // 대화 항목이 사이드바에 *동시* 렌더돼 "현재 대화 + 새 대화" 중복 항목으로 보였다.
+          // placeholder 를 등재 전에 먼저 제거하면 단일 renderConversationList 가 실 cid 항목 하나만 그린다.
+          state.pendingConversationEntries.delete(busyKey);
           // polling 첫 tick 의 _updateConversationStatusDot 가 DOM 에서 실패하지 않도록 최소
           // conversation entry 선행 등재 (refreshWorkspace 가 실 데이터로 교체).
           if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
             state.conversations.unshift({
               id: earlyCid,
-              title: message.slice(0, 60) || "새 대화",
+              // new-conv-dedup: buildCompactItem 은 item.topic 을 읽는다(item.title 아님). title 키로
+              // 넣으면 사이드바에 메시지 제목 대신 "새 대화" 폴백이 표시돼 placeholder 교체 항목이 정확히
+              // "새 대화" 로 보였다 — 중복의 '새 대화' 라벨 출처. topic 으로 등재해 메시지 제목을 유지한다.
+              topic: message.slice(0, 60) || "새 대화",
               display_status: "processing",
               created_at: new Date().toISOString(),
               account_id: state.session?.account_id || null,
               owner_account_id: state.user?.id || null,
               owner_username: state.user?.username || null,
             });
-            renderConversationList();
           }
+          // placeholder 제거 반영을 위해 find 가드와 무관하게 항상 재렌더(이미 등재된 cid 여도 placeholder
+          // 가 사라진 목록을 다시 그려야 한다).
+          renderConversationList();
           // 처리 단계 실시간 폴링 시작 — pending bubble 이 step 을 받아 "N단계 보기" 버튼/사이드바 활성화.
           startProgressPolling({ reset: true });
           // 이 send 는 이제 cid 확정 + 폴링 진행 중 — catch 시 non-lazy 복구 경로로 분기.
@@ -8381,26 +8573,32 @@ async function sendPrompt() {
         state.pendingNewConversation = false;
         state.activeConversationId = newCid;
         state.pendingSentinel = null;
+        // new-conv-dedup: early-cid 미발급(fallback) 경로도 동일하게 placeholder 를 등재 전에 먼저
+        // 제거해 단일 렌더가 실 cid 항목 하나만 그리게 한다. (제거를 아래 8421 까지 미루면 이 블록의
+        // renderConversationList 가 placeholder + optimistic 항목을 동시에 그려 같은 중복이 나타났다.)
+        state.pendingConversationEntries.delete(busyKey);
         // UX-COMPACT: polling 첫 tick 에서 _updateConversationStatusDot 가 DOM 에서 실패하지 않도록
         // 최소 conversation entry 를 선행 등재. refreshWorkspace 가 실 데이터로 교체.
         if (!state.conversations.find((c) => String(c.id) === newCid)) {
           state.conversations.unshift({
             id: newCid,
-            title: message.slice(0, 60) || "새 대화",
+            // new-conv-dedup: buildCompactItem 이 읽는 키는 topic(title 아님) — 메시지 제목 유지.
+            topic: message.slice(0, 60) || "새 대화",
             display_status: "processing",
             created_at: new Date().toISOString(),
             account_id: state.session?.account_id || null,
             owner_account_id: state.user?.id || null,
             owner_username: state.user?.username || null,
           });
-          renderConversationList();
         }
+        renderConversationList();
         // TASK-0061 Phase 2 (AC-0076): lazy-create 응답으로 cid 가 발급된 즉시 polling 시작.
         // ask 가 동기 완료된 경우라도 첫 polling 으로 step snapshot 을 받아 pending bubble 에 반영한다.
         startProgressPolling({ reset: true });
       }
       // TASK-0085: optimistic pending entry 정리 — closure mismatch 여도 본 send 의 sentinel entry
-      // 는 항상 본 함수가 책임지고 remove. 실 cid entry 는 refreshWorkspace 가 backend list 로 등재.
+      // 는 항상 본 함수가 책임지고 remove(matched 경로는 위에서 이미 제거 — delete 멱등). 실 cid entry
+      // 는 refreshWorkspace 가 backend list 로 등재.
       state.pendingConversationEntries.delete(busyKey);
     }
     // TASK-0061 Phase 1 (AC-0072): 정상 응답 후 pending bubble 제거 → refreshWorkspace 가 실 assistant message 로 교체.

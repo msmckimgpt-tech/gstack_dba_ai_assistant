@@ -4,7 +4,7 @@ scope: project
 status: active
 edit_policy: rewrite
 source_of_truth: true
-template_version: v3.36.0
+template_version: v3.37.1
 domain: [workflow, context]
 ai_read_priority: 3
 ---
@@ -448,3 +448,65 @@ wiki 노트에서 정본 문서로 link 할 때:
 - *각주* `[^N]` markdown footnote 활용.
 
 자세한 spec: `docs/WIKI.md §11.3` 와 `AGENTS.md §21.8`.
+
+## 12. 마이그레이션 안전 — expand/contract (무중단 배포 전제, feature-0014)
+
+web 은 무중단 롤링 배포(Caddy 뒤 web-a/web-b, 한 번에 하나씩 재시작)되므로, 배포 중
+**OLD 코드와 NEW 코드가 같은 DB 를 잠시 동시에** 사용한다. 이 mixed-version 창에서
+안전하려면 모든 alembic revision 이 **backward-compatible(expand/contract)** 여야 한다.
+
+### 12.1 원칙
+
+- **Expand (안전, 자유 적용)**: 컬럼/테이블/인덱스 **추가**, nullable 또는 `server_default`
+  있는 컬럼 추가, 신규 제약을 `NOT VALID` 로 추가 후 별도 검증 — OLD 코드가 모르는 객체를
+  더하는 변경.
+- **Contract (위험, 2-phase 필수)**: OLD 코드가 여전히 읽고/쓰는 컬럼·테이블·제약의
+  **DROP / RENAME / 타입 변경 / `NOT NULL` 추가(server_default 없이)**. 이런 변경은
+  **NEW 코드가 모든 replica 에 배포된 뒤, 다음 별도 cycle 에서** 떼어낸다(2-phase):
+  - Phase 1 (이번 cycle): 새 컬럼/구조 추가(expand) + 코드가 양쪽 모두 쓰게.
+  - Phase 2 (후속 cycle): 모든 replica 가 NEW 코드일 때 구 컬럼/구조 제거(contract).
+
+### 12.2 강제 게이트
+
+- 신규/변경 revision 은 **`bin/migrate-lint.sh`** 가 `upgrade()` 본문(+`op.execute()` 가
+  참조하는 모듈 상수 SQL)을 스캔해 비가산 DDL 을 적발한다. `op.execute(UPGRADE_SQL)` 처럼
+  상수로 감싼 raw SQL 도 따라간다.
+- `bin/deploy-web.sh` 가 **마이그레이션 적용 직전 hard gate** 로 호출한다(실패 시 배포 ABORT,
+  스키마/컨테이너 무변경).
+- alembic revision 을 만질 때는 AGENTS.md §10.5 조건부 규칙에 따라 본 §12 를 참조한다.
+
+### 12.3 정말 contract 가 필요할 때 (escape)
+
+2-phase 로 분리할 수 없는 불가피한 경우에 한해, revision 파일에 **서명 annotation** 을 남겨
+게이트를 통과시킨다 (책임 명시):
+
+```python
+# migrate-lint: contract-deferred — <사유: 왜 안전한지/언제 OLD 코드가 사라지는지> (서명: <name> <YYYY-MM-DD>)
+# 또는
+# migrate-lint: allow drop_constraint — FK 제약만 제거, 앱 동작 비의존 (서명: <name> <YYYY-MM-DD>)
+```
+
+annotation 없이 비가산 DDL 이 있으면 `migrate-lint` 가 exit 1 로 배포/머지를 차단한다.
+
+## 13. MySQL online DDL — 무중단 스키마 변경 (feature-0015)
+
+MySQL agent_memory 는 **단일 인스턴스(replica 없음)**다. `ALTER TABLE` 이 silent COPY 알고리즘으로
+떨어지면 해당 테이블 DML 이 락에 걸려 사용자 체감 중단이 발생한다. 8.0 online DDL 을 강제한다.
+
+### 13.1 규칙
+- 신규/변경 MySQL `ALTER TABLE` 은 **`ALGORITHM=INPLACE, LOCK=NONE`** 을 명시한다(끝-컬럼 추가는
+  8.0.29+ 에서 `ALGORITHM=INSTANT` 도 가능하나, 미지원 op 에서 에러나므로 INPLACE 가 안전 기본).
+- `LOCK=NONE` 의 의도는 **online 불가 시 에러로 표면화**(silent COPY-lock 차단). 에러나면 그 변경은
+  online 불가 → `gh-ost`(본 스택 binlog ON 이라 단일 인스턴스에서도 동작) 또는 정비창으로 전환.
+- **online-DDL 을 bare `try/except: pass` 로 감싸지 말 것** — 비-online 에러가 silent skip 되어 필요한
+  스키마가 누락된다. 멱등 가드가 필요하면 ALTER 전에 컬럼/인덱스 존재를 먼저 확인하라.
+- type 변경/rename/drop 등 본질적 비-online 변경은 expand/contract 2-phase(§12) 로 분해한다.
+
+### 13.2 강제
+- `bin/mysql-ddl-lint.sh` (`make mysql-ddl-lint`) 가 origin/main 대비 **신규/변경** MySQL ALTER 중
+  `LOCK=NONE` 누락을 적발한다(diff-mode). 기존 사이트는 grandfathered.
+- 불가피한 예외: 해당 라인에 `# mysql-ddl-lint: allow — <사유> (서명: <name> <YYYY-MM-DD>)`.
+- online 절(`LOCK=NONE`)은 `ALTER TABLE` 과 **같은 소스 라인**에 둘 것 — multi-line 문자열 concat 으로
+  쪼개면 lint 가 첫 라인을 false-positive 로 잡는다(단일 라인 검사).
+- 적용 제외(자동): `agent_runtime.`/`agent_kb` 수식(PG — §12 alembic 게이트 담당), alembic/, 사용자
+  업로드 SQL 실행(sandbox).

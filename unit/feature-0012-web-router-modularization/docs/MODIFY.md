@@ -324,3 +324,15 @@ source_of_truth: true
 - 관측 차이(무시 가능): _parse_trusted_proxies 의 warning print 는 file=sys.stderr 동일. logger 미사용(print). startup RuntimeError 메시지·timing 동일.
 - 후속: inc3 SESSION_COOKIE+_resolve_permission_catalog+PERMISSION_* → inc4 _fetch/_decorate_account_rows. 그 후 _account_has_permission(11×)/_require_account(51×)/_connect_memory(62×)=23-테스트 retarget 영역.
 - Rollback Notes: revert(web_context.py 5종+AGENT_MODE 제거 + app.py 5종 복원 + re-import 축소). 단방향 edge라 무위험.
+
+## CHG-20260630-0017
+- Date: 2026-06-30
+- Related Requirement: P5b Final ship 준비 — origin/main(100 commits drift) 통합. 배포 선결(내 브랜치만 배포 시 main 신규 기능 롤백 위험).
+- Summary:
+  feature-0012 가 origin/main 대비 100 behind / 21 ahead 로 큰 base drift. main 은 머지베이스 이후 app.py 를 +720/-65 변경했으나 **전부 additive(신규 라우트 9: /livez·/readyz·glossary-feedback CRUD·glossary relations·metadata graph 등) — 내가 DI 전환/추출/web_context 이동한 auth helper 는 전혀 건드리지 않음**(grep 확인, auth-orthogonal). `git merge origin/main`:
+  - app.py: **충돌 없이 auto-merge**(main 추가 영역 ↔ 내 편집 영역 분리). 검증: py_compile OK + 내 마커(web_context re-import + include_router ×5) 생존 + main 신규 라우트 4종 존재 + **중복 라우트 데코 0** + 추출 핸들러 app.py 재등장 0.
+  - test_sample_feedback_curation.py: auto-merge(make test 통과로 정합 확인).
+  - route_snapshot_p5b.json: 유일 충돌(양쪽 수정) → 머지된 앱에서 골든 재생성(179 → **188**, main 신규 9 반영)으로 해소.
+- Files: 머지 커밋(app.py·test_sample_feedback_curation.py auto-merge + route_snapshot 재생성 + main 100 commits) + docs.
+- Impact: behavior-neutral(내 리팩터 측). make test 전체 통과·0 fail·route drift 0·route-parity 188. main 신규 기능 + 내 분할 공존.
+- Rollback Notes: 머지 커밋 revert(`git revert -m 1`) 또는 머지 전 21-commit 상태로 reset.

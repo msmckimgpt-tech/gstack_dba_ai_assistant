@@ -6,7 +6,7 @@
   <title>DQA — Database Query Assistant</title>
   <link rel="preconnect" href="https://fonts.bunny.net" />
   <link href="https://fonts.bunny.net/css?family=geist:300,400,500,600,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20260629-feedback-unique-vote" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260629-share-joinable-confirm" />
 </head>
 <body>
 
@@ -563,11 +563,15 @@
 
   <script src="/static/vendor/marked.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
+  <!-- feature-0013: 관계 다이어그램 렌더(window.mermaid, UMD v10.9.3, 오프라인 vendored) -->
+  <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>
+  <!-- mermaid 렌더 헬퍼(공유 대화 share.js 와 단일 소스) — mermaid.min.js 다음, app.js 이전 -->
+  <script src="/static/mermaid-render.js?v=20260629-mermaid-orphan-fix"></script>
   <script src="/static/mentions.js?v=20260619-group-conversation"></script>
-  <script src="/static/app.js?v=20260629-feedback-unique-vote"></script>
+  <script src="/static/app.js?v=20260629g-share-joinable-confirm"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 관리 콘솔과 동일 파일을 공유한다. -->
-  <script src="/static/release-notes-data.js?v=20260629-rn-0629"></script>
+  <script src="/static/release-notes-data.js?v=20260630-rn-0630"></script>
   <script src="/static/release-notes.js?v=20260618-rn-scope-scroll"></script>
 </body>
 </html>

@@ -3,6 +3,8 @@ import hashlib
 import random
 import re
 import time
+import signal as _signal      # feature-0015: SIGTERM graceful (지역변수 `signal` 과 충돌 회피용 alias)
+import threading as _threading
 __all__ = [
     "_bootstrap_schema_insights",
     "_is_insight_worker_heartbeat_fresh",
@@ -908,6 +910,23 @@ def _clear_repair_backoff(mem_conn) -> None:
         pass
 
 
+def _fk_raw_execute(conn, sql):
+    """feature-0013: relationships.introspect_and_store 용 콜백 — db_conn 으로 FK SQL 실행.
+
+    dialects.foreign_keys_outgoing(schema, table) 는 신뢰된 메타(information_schema/sys.foreign_keys)를
+    f-string 보간한 단일 SELECT 다. (result_sets,) 튜플로 반환해 introspect_and_store 의
+    `results, *_ = raw_execute(...)` 와 정합.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(sql)
+        cols = [d[0] for d in (cur.description or [])]
+        rows = [list(r) for r in (cur.fetchall() or [])]
+        return ([{"columns": cols, "rows": rows}],)
+    finally:
+        cur.close()
+
+
 def _scan_instance_schema_insights(
     db_conn,
     mem_conn,
@@ -1070,6 +1089,27 @@ ORDER BY TABLE_NAME
                     schema_refresh_map, schema_refresh_key, schema_refresh_sec
                 )
                 schema_has_stored_fp = bool(stored_schema_fp)
+
+                # feature-0013 Phase 2: 스키마 구조 변경/신규 시에만 FK 관계를 introspect 해
+                # table_relationships 에 적재(source='fk_introspect'). 빈도 제한으로 8초 루프 부하 억제.
+                # 전부 guarded — 어떤 예외도 insight 스캔을 차단하지 않는다(PG 미가용 시 no-op).
+                if (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
+                        and (schema_structure_changed or schema_artifact_missing)
+                        and all_table_names):
+                    try:
+                        from . import relationships as _rel
+                        _rel_scope = get_active_datasource()
+                        _n_rel = _rel.introspect_and_store(
+                            db_conn, _dialects.active(), schema, all_table_names,
+                            kb_conn=None, scope_key=_rel_scope,
+                            datasource_key=str(_rel_scope or ""), source_run_id=run_id,
+                            raw_execute=_fk_raw_execute,
+                        )
+                        report["relationships_introspected"] = int(
+                            report.get("relationships_introspected", 0)) + int(_n_rel or 0)
+                    except Exception:
+                        pass
+
                 schema_reason = ""
                 if schema_artifact_missing:
                     schema_reason = "artifact_missing"
@@ -1902,6 +1942,15 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             _seen_scan_keys: set = set()  # TASK-0255 M-1: 이번 cycle 관측한 (scope_key, db_name) — stale prune 용
             plan_start = time.perf_counter()
             for _ds_key, _ds_coords in ds_targets:
+                # feature-0015: cycle 내 협조적 graceful 체크포인트. 긴 cycle(다수 datasource·LLM) 중
+                # SIGTERM 이 와도 루프 경계까지 못 가 30s grace 후 SIGKILL 되던 것을, 현재 datasource
+                # 처리 후 즉시 bail 로 단축(부분 cycle 은 멱등 — 다음 스캔이 재유도). (라이브 검증 적발)
+                if _INSIGHT_SHUTDOWN.is_set():
+                    try:
+                        console.print("insight-worker: graceful — cycle 중 SIGTERM, datasource 루프 조기 종료")
+                    except Exception:
+                        pass
+                    break
                 # TASK-0219: 스코핑 식별자는 라벨(_ds_key)이 아닌 **엔드포인트 해시**(scope_key).
                 _ds_scope = None
                 if _ds_key is not None and _ds_coords:
@@ -2358,15 +2407,40 @@ def _start_embedding_backfill_thread() -> None:
         logging.getLogger("insight").warning("embedding_backfill 스레드 기동 실패(무시): %s", exc)
 
 
+# feature-0015: SIGTERM/SIGINT → graceful. 현재 cycle 을 마저 끝내고(루프 경계에서) 종료.
+# insight 쓰기는 멱등(_upsert_fact autocommit 단일-fact + advisory lock + 다음 스캔 재유도)이라
+# SIGKILL 도 데이터 손상은 없으나, graceful 종료로 (a) 진행 cycle 의 불필요한 중단/LLM 비용 낭비,
+# (b) heartbeat 갱신 누락에 따른 healthcheck 일시 unhealthy 를 줄인다. ask.py 패턴과 동형.
+_INSIGHT_SHUTDOWN = _threading.Event()
+
+
+def _install_insight_signal_handlers() -> None:
+    def _handler(signum, _frame):
+        # console.print 로 가시화(이 워커는 logging 미설정이라 INFO 는 docker logs 에 안 보임).
+        try:
+            console.print(f"insight-worker: signal {signum} 수신 — graceful shutdown 예약")
+        except Exception:
+            pass
+        _INSIGHT_SHUTDOWN.set()
+    try:
+        _signal.signal(_signal.SIGTERM, _handler)
+        _signal.signal(_signal.SIGINT, _handler)
+    except Exception:
+        # 메인 스레드가 아니면(테스트 등) 등록 불가 — 무시.
+        pass
+
+
 def run_insight_worker_loop() -> None:
     if not AGENT_INSIGHT_WORKER_ENABLED:
         console.print("insight worker disabled: AGENT_INSIGHT_WORKER_ENABLED=0")
         return
+    _install_insight_signal_handlers()
     tick_sec = max(5, int(AGENT_INSIGHT_WORKER_TICK_SEC))
     degraded_backoff_sec = max(tick_sec, int(AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC))
     jitter_sec = max(0, int(AGENT_INSIGHT_WORKER_JITTER_SEC))
     if jitter_sec > 0:
-        time.sleep(random.uniform(0, float(jitter_sec)))
+        # 인터럽트 가능한 jitter 대기(부팅 직후 SIGTERM 도 즉시 반응).
+        _INSIGHT_SHUTDOWN.wait(random.uniform(0, float(jitter_sec)))
     # conn-health-monitor: insight 스캔 연결도 health 게이트 수혜 — 불안정 datasource 를
     # 백그라운드로 미리 판정(daemon thread, 프로세스 종료 시 정리).
     try:
@@ -2377,7 +2451,7 @@ def run_insight_worker_loop() -> None:
         logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)
     # TASK-0307: embedding 백필 데몬 스레드 기동(본 tick 루프와 분리 — 블로킹 방지).
     _start_embedding_backfill_thread()
-    while True:
+    while not _INSIGHT_SHUTDOWN.is_set():
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()
         # B′ (TASK-20260617T082131): degraded(PG 부재) 아닐 때만 account_insight 추출 pass.
@@ -2390,7 +2464,12 @@ def run_insight_worker_loop() -> None:
         # PG read 정본 부재(degraded_readback) / 연결 오류(error) 시엔 짧은 tick 대신
         # 길게 backoff — MySQL fallback 으로 떨어져 무의미한 재시도(livelock 동력)를
         # 반복하지 않고 PG 복구를 기다린다.
+        # 인터럽트 가능한 tick 대기 — SIGTERM 시 다음 cycle 진입 전 즉시 깨어 루프 종료.
         if status in ("degraded_readback", "error"):
-            time.sleep(degraded_backoff_sec)
+            _INSIGHT_SHUTDOWN.wait(degraded_backoff_sec)
         else:
-            time.sleep(tick_sec)
+            _INSIGHT_SHUTDOWN.wait(tick_sec)
+    try:
+        console.print("insight-worker: graceful shutdown 완료(루프 종료).")
+    except Exception:
+        pass

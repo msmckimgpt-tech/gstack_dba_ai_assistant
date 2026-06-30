@@ -1989,7 +1989,7 @@ const ADMIN_TAB_PERMISSIONS = {
   // scope-key-unify: samples 서브뷰는 kb.sample.curate 권한이라, 부모 탭 게이트도 OR 로 넓혀
   // kb.sample.curate 단독 보유 큐레이터가 메타데이터 탭→samples 서브뷰에 도달 가능하게 한다
   // (서브뷰별 가시성은 _METADATA_SUBTAB_PERM 가 별도 분기).
-  metadata: ["kb.ingest.manual", "kb.sample.curate"],
+  metadata: ["kb.ingest.manual", "kb.sample.curate", "kb.glossary.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2092,7 +2092,9 @@ function switchTab(tabName) {
       // 재진입(REV MINOR-2): 첫 진입이 datasources 로드 전이었을 수 있으니 scope/부트스트랩 DS 드롭다운 재채움(선택 보존).
       _metaPopulateScopeSelect();
       _metaApplySubtabPermissions();
-      _metaSyncBootstrapVisibility();
+      _metaSyncGlossaryViews();        // 재진입 시 용어사전 2차 보기 strip 가시성·active 재동기화(권한 변동 방어).
+      _metaRenderDetail();             // metadata-list-detail: 우측 상세(현재 모드)·목록 툴바·부트스트랩 가시성 재동기화.
+      _metaPrimeReviewBadge();         // 검토 큐 pending 배지 best-effort 재반영(다른 화면에서 큐 변동 시 stale 방지).
     }
   }
   // 릴리즈 노트 — 정적 콘텐츠라 진입 시 렌더(가벼움). 렌더러는 release-notes.js, 작업 화면과 공유.
@@ -2329,10 +2331,19 @@ async function _sampleFeedbackAction(btn, action) {
  *         GET /api/admin/metadata/bootstrap/schemas?datasource=, POST /api/admin/metadata/bootstrap. */
 adminState.metadata = {
   subTab: "glossary",   // glossary | enums | tables | columns | samples
+  glossaryView: "list", // 용어사전 2차 보기(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). list | review
   scopeKey: "common",
+  roleFilter: "",       // 용어사전 역할 필터(0021) — "" = 전체 역할, "*" = 공용만, "<role_key>" = 그 역할
   items: [],
   loading: false,
   editing: null,        // 수정 중인 항목(id 포함) 또는 null(=생성 모드)
+  // metadata-list-detail: 우측 상세 컬럼 모드 + 좌측 목록 선택/검색 상태.
+  detailMode: "empty",  // empty(미선택 안내) | form(생성/수정 폼) | bootstrap(스키마 골격 일괄)
+  selectedId: null,     // 좌측 목록에서 선택된 행 id(.is-active 하이라이트). null=미선택.
+  search: "",           // 좌측 목록 검색어(클라이언트 필터 — title/body 부분일치).
+  // 대화 자율등록 검토 큐(0021) — 용어사전 하위 '용어 검토 큐' 보기 상태.
+  feedback: { items: [], pendingCount: 0, status: "pending", loading: false },
+  relationsOpenId: null,   // 유사어 패널이 펼쳐진 용어 id(목록에서 1개만)
   // Phase 2 부트스트랩 상태(테이블/컬럼 서브뷰 전용).
   bootstrap: {
     open: false,
@@ -2342,25 +2353,46 @@ adminState.metadata = {
     tables: [],         // {schema_name, table_name, columns:[{column_name, data_type}]}
     loading: false,
     saving: false,
+    page: 0,            // metadata-bs-paging: 현재 페이지(0-base). 페이징은 "가시성 윈도우"라
+                        //   모든 블록은 DOM 유지(저장·AI 일괄은 전체 DOM 수집) — display 토글만.
   },
 };
 
 // 서브뷰별 권한 — 서브탭/버튼 표시 게이트(실제 거부는 서버 403). samples 만 kb.sample.curate.
 const _METADATA_SUBTAB_PERM = {
-  glossary: "kb.ingest.manual",
+  glossary: "kb.ingest.manual",   // 단, 용어사전 서브탭은 OR(kb.glossary.curate) — _metaSubtabVisible 참조.
   enums: "kb.ingest.manual",
   tables: "kb.ingest.manual",
   columns: "kb.ingest.manual",
   samples: "kb.sample.curate",
+  graph: "kb.ingest.manual",      // feature-0016: 그래프 뷰(읽기 전용 탐색).
 };
 
-// 생성 폼 비활성 서브뷰 — samples 는 검수 경로(ITEM-03)가 생성 정본이라 수정 전용.
-const _METADATA_NO_CREATE = { samples: true };
+// 용어사전 2차 보기별 권한(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}).
+const _GLOSSARY_VIEW_PERM = { list: "kb.ingest.manual", review: "kb.glossary.curate" };
+
+// 용어사전 검토 큐 보기 활성 여부.
+function _metaIsGlossaryReview() {
+  return adminState.metadata.subTab === "glossary" && adminState.metadata.glossaryView === "review";
+}
+
+// 서브탭 표시 게이트 — 용어사전은 목록(kb.ingest.manual) 또는 검토 큐(kb.glossary.curate) 권한 중
+// 하나라도 있으면 표시(검토 큐를 용어사전 하위로 중첩했으므로 curate-only 사용자의 접근 보존).
+function _metaSubtabVisible(sub) {
+  if (sub === "glossary") return can("kb.ingest.manual") || can("kb.glossary.curate");
+  const perm = _METADATA_SUBTAB_PERM[sub];
+  return !perm || can(perm);
+}
+
+// 생성 폼 비활성 서브뷰 — samples 는 검수 경로(ITEM-03)가 생성 정본이라 수정 전용. graph 는 읽기 전용 탐색.
+const _METADATA_NO_CREATE = { samples: true, graph: true };
 
 // 서브뷰별 폼 필드 정의 — label/key/type/required/placeholder/min/max. 렌더/검증/payload 조립에 공용 사용.
 // type: text | textarea | number | checkbox.
 const _METADATA_FIELDS = {
   glossary: [
+    // 역할 차원(0021, role-single-ui): 폼 역할 select 폐기 — 역할 선택 UI 를 툴바 하나로 일원화.
+    //   role_key 는 _metaSubmitForm 에서 주입한다(생성=툴바 역할 컨텍스트, 전체→공용 '*'; 수정=기존 보존).
     { key: "term", label: "용어", required: true, type: "text", placeholder: "예: 활성 사용자" },
     { key: "definition", label: "정의", required: true, type: "textarea", placeholder: "이 용어의 의미/판정 기준" },
   ],
@@ -2410,9 +2442,18 @@ function initMetadataTab() {
   _metaApplySubtabPermissions();
   _metaBindControls();
   _metaBindBootstrap();
-  _metaRenderForm();
-  _metaSyncBootstrapVisibility();
+  _metaRenderDetail();   // metadata-list-detail: 초기 우측 상세 = empty-state + 목록 툴바 가시성.
+  _metaPrimeReviewBadge();
   loadMetadata();
+}
+
+// 검토 큐 배지 선반영(0021) — 탭 진입 시 pending 건수만 best-effort 로 가져와 서브탭 배지 표시.
+async function _metaPrimeReviewBadge() {
+  if (!can("kb.glossary.curate")) return;
+  try {
+    const data = await apiFetch("/api/admin/metadata/glossary-feedback?status=pending");
+    _updateGlossaryReviewBadge((data && data.pending_count) || 0);
+  } catch (_) { /* best-effort — 배지 없음 */ }
 }
 
 // 서브탭 권한 게이트 — 미보유 서브탭 버튼 숨김. 현재 서브탭이 숨겨졌으면 첫 표시 서브탭으로 전환.
@@ -2423,8 +2464,7 @@ function _metaApplySubtabPermissions() {
   let firstVisible = null;
   for (const btn of btns) {
     const sub = btn.dataset.metaSubtab;
-    const perm = _METADATA_SUBTAB_PERM[sub];
-    const visible = !perm || can(perm);
+    const visible = _metaSubtabVisible(sub);
     btn.style.display = visible ? "" : "none";
     if (visible && !firstVisible) firstVisible = sub;
     if (visible && sub === adminState.metadata.subTab) curVisible = true;
@@ -2432,6 +2472,33 @@ function _metaApplySubtabPermissions() {
   if (!curVisible && firstVisible) {
     adminState.metadata.subTab = firstVisible;
     for (const b of btns) b.classList.toggle("is-active", b.dataset.metaSubtab === firstVisible);
+  }
+}
+
+// 용어사전 2차 보기 탭 동기화 — 용어사전 서브탭일 때만 노출, 권한별 보기 버튼 게이트 + 현재 보기 유효성 보정.
+function _metaSyncGlossaryViews() {
+  const strip = document.getElementById("metadataGlossaryViews");
+  if (!strip) return;
+  const inGlossary = adminState.metadata.subTab === "glossary";
+  strip.style.display = inGlossary ? "" : "none";
+  if (!inGlossary) return;
+  const btns = Array.from(strip.querySelectorAll(".admin-meta-gview"));
+  let curOk = false;
+  let firstOk = null;
+  for (const b of btns) {
+    const v = b.dataset.glossaryView;
+    const perm = _GLOSSARY_VIEW_PERM[v];
+    const vis = !perm || can(perm);
+    b.style.display = vis ? "" : "none";
+    if (vis && !firstOk) firstOk = v;
+    if (vis && v === adminState.metadata.glossaryView) curOk = true;
+  }
+  // 현재 보기 권한 없음 → 첫 표시 보기로 전환(curate-only=검토 큐, ingest-only=용어 목록).
+  if (!curOk && firstOk) adminState.metadata.glossaryView = firstOk;
+  for (const b of btns) {
+    const active = b.dataset.glossaryView === adminState.metadata.glossaryView;
+    b.classList.toggle("is-active", active);
+    b.setAttribute("aria-selected", active ? "true" : "false");
   }
 }
 
@@ -2469,7 +2536,14 @@ function _metaBindControls() {
     sel.dataset.bound = "1";
     sel.addEventListener("change", () => {
       adminState.metadata.scopeKey = sel.value || "common";
-      _metaCancelEdit();
+      adminState.metadata.editing = null;
+      adminState.metadata.selectedId = null;
+      // feature-0016: 그래프 뷰 활성 시 datasource 변경 → 그 데이터소스의 그래프(roots) 재로드.
+      if (adminState.metadata.subTab === "graph") { _metaGraphLoadRoots(); return; }
+      // scope-single-ds-ui + metadata-list-detail: 스코프가 부트스트랩 DS 를 결정하므로 bootstrap 모드면
+      // 유지하며 재동기화(공용=empty-state, 구체 DS=골격 컨트롤·상속 DS·스키마 재로드). form/empty 는 선택 무효 → empty.
+      if (adminState.metadata.detailMode !== "bootstrap") adminState.metadata.detailMode = "empty";
+      _metaRenderDetail();
       loadMetadata();
     });
   }
@@ -2483,9 +2557,41 @@ function _metaBindControls() {
       document.querySelectorAll(".admin-meta-subtab").forEach((b) => {
         b.classList.toggle("is-active", b.dataset.metaSubtab === sub);
       });
-      _metaCancelEdit();
-      _metaRenderForm();
-      _metaSyncBootstrapVisibility();
+      adminState.metadata.editing = null;
+      adminState.metadata.selectedId = null;
+      adminState.metadata.search = "";
+      const searchEl = document.getElementById("metadataSearch");
+      if (searchEl) searchEl.value = "";
+      // feature-0016: 그래프 뷰 서브탭은 list-detail 대신 Cytoscape 캔버스로 전환(별도 적재 경로).
+      if (sub === "graph") {
+        _metaShowGraph();
+        return;
+      }
+      _metaHideGraph();
+      // metadata-list-detail: bootstrap 모드는 tables↔columns 간 유지(골격 결과 보존 + 새 mode 재렌더), 그 외 서브탭은 empty.
+      if (!(adminState.metadata.detailMode === "bootstrap" && (sub === "tables" || sub === "columns"))) {
+        adminState.metadata.detailMode = "empty";
+      }
+      _metaRenderDetail();
+      loadMetadata();
+    });
+  });
+  // 용어사전 2차 보기 탭(용어 목록 / 용어 검토 큐) 전환.
+  document.querySelectorAll(".admin-meta-gview").forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const v = btn.dataset.glossaryView;
+      if (!v || v === adminState.metadata.glossaryView) return;
+      adminState.metadata.glossaryView = v;
+      adminState.metadata.editing = null;       // 보기 전환 시 폼 초기화
+      adminState.metadata.selectedId = null;
+      adminState.metadata.relationsOpenId = null;
+      adminState.metadata.search = "";          // 보기 전환 시 검색 초기화(검토 큐는 검색 미적용)
+      const sEl = document.getElementById("metadataSearch");
+      if (sEl) sEl.value = "";
+      adminState.metadata.detailMode = "empty";  // metadata-list-detail: 보기 전환 시 우측 상세 초기화
+      _metaRenderDetail();
       loadMetadata();
     });
   });
@@ -2503,6 +2609,59 @@ function _metaBindControls() {
   if (refreshBtn && !refreshBtn.dataset.bound) {
     refreshBtn.dataset.bound = "1";
     refreshBtn.addEventListener("click", () => loadMetadata());
+  }
+  // metadata-list-detail: '+ 새 항목' — 우측 상세에 생성 폼(빈) 진입.
+  const newBtn = document.getElementById("metadataNewBtn");
+  if (newBtn && !newBtn.dataset.bound) {
+    newBtn.dataset.bound = "1";
+    newBtn.addEventListener("click", () => {
+      adminState.metadata.editing = null;       // 생성 모드.
+      adminState.metadata.selectedId = null;
+      adminState.metadata.detailMode = "form";
+      _metaRenderDetail();
+      _metaSyncListActive();
+      const first = document.querySelector("#metadataFormFields input, #metadataFormFields textarea");
+      if (first && first.focus) try { first.focus(); } catch (_) {}
+    });
+  }
+  // metadata-list-detail: '스키마 골격 가져오기'(테이블/컬럼 일괄) — 우측 상세 bootstrap 모드 토글(다시 누르면 목록 안내로 복귀).
+  const bsOpenBtn = document.getElementById("metadataBootstrapOpenBtn");
+  if (bsOpenBtn && !bsOpenBtn.dataset.bound) {
+    bsOpenBtn.dataset.bound = "1";
+    bsOpenBtn.addEventListener("click", () => {
+      if (adminState.metadata.detailMode === "bootstrap") {
+        adminState.metadata.detailMode = "empty";   // 다시 누르면 닫기(미선택 안내로).
+      } else {
+        adminState.metadata.editing = null;
+        adminState.metadata.selectedId = null;
+        adminState.metadata.detailMode = "bootstrap";
+        adminState.metadata.bootstrap.open = true;   // 진입 시 본문 펼침.
+      }
+      _metaRenderDetail();
+      _metaSyncListActive();
+    });
+  }
+  // metadata-list-detail: 좌측 목록 검색(클라이언트 필터) — 입력마다 재렌더(선택 하이라이트 보존).
+  const searchEl = document.getElementById("metadataSearch");
+  if (searchEl && !searchEl.dataset.bound) {
+    searchEl.dataset.bound = "1";
+    searchEl.addEventListener("input", () => {
+      adminState.metadata.search = searchEl.value || "";
+      if (_metaIsGlossaryReview()) return;   // 검토 큐는 별도 렌더 경로(loadGlossaryFeedback) — 검색 미적용.
+      // 설계 결정(적대 패널 MAJOR-1): 검색은 좌측 목록만 필터한다. 편집 중인 항목이 필터로 가려져도 우측 폼은
+      //   유지한다(검색 키 입력으로 진행 중 편집을 폐기하지 않음 — 검색 해제 시 해당 행이 다시 강조된다).
+      renderMetadataList();
+    });
+  }
+  // 용어사전 역할 필터(0021) — 변경 시 그 역할 행만 재조회.
+  const roleFilter = document.getElementById("metadataRoleFilter");
+  if (roleFilter && !roleFilter.dataset.bound) {
+    roleFilter.dataset.bound = "1";
+    roleFilter.addEventListener("change", () => {
+      adminState.metadata.roleFilter = roleFilter.value || "";
+      _metaUpdateGlossaryRoleBadge();   // 생성 폼이 열려 있으면 '등록 대상 역할' 배지를 새 컨텍스트로 동기화(표시값=실제 등록값, F5)
+      loadMetadata();
+    });
   }
   // AI 단건 자동완성 — 식별 필드 → 설명/정의/라벨/질문 생성(검토 후 등록).
   const suggestBtn = document.getElementById("metadataSuggestBtn");
@@ -2600,9 +2759,35 @@ function _metaRenderForm() {
   const fields = _METADATA_FIELDS[sub] || [];
   const editing = adminState.metadata.editing;
   const noCreate = Boolean(_METADATA_NO_CREATE[sub]);
-  // 생성 비활성 서브뷰 + 비편집 상태 → 폼 자체를 숨김(목록의 '수정' 버튼으로만 진입).
-  if (form) form.style.display = (noCreate && !editing) ? "none" : "";
+  _metaSyncGlossaryViews();   // 용어사전 보기 유효성 먼저 보정(권한 없는 보기 → 첫 표시 보기)
+  // 용어 검토 큐 보기는 CRUD 폼 없음. 생성 비활성 서브뷰 + 비편집 상태도 폼 숨김(목록 '수정'으로만 진입).
+  const isReview = _metaIsGlossaryReview();
+  const hideForm = isReview || (noCreate && !editing);
+  if (form) form.style.display = hideForm ? "none" : "";
+  _metaSyncToolbarVisibility();
+  if (isReview) { wrap.replaceChildren(); return; }
   wrap.replaceChildren();
+  // 단일 역할 컨텍스트(glossary, role-single-ui): 등록/수정 대상 역할을 읽기전용으로 표시(선택 UI 아님 — 역할 선택은 툴바 하나).
+  //   생성=현재 툴바 컨텍스트(전체 역할이면 공용 '*'), 수정=대상 용어의 기존 role_key. 배지 스타일 재사용(추가 CSS 불요).
+  //   id 부여 — 툴바 역할 변경 시 폼 전체 재렌더(입력 소실) 없이 배지만 동기화하기 위함(_metaUpdateGlossaryRoleBadge).
+  if (sub === "glossary") {
+    const field = document.createElement("div");
+    field.className = "admin-meta-field";
+    field.id = "metadataRoleContextField";
+    const cap = document.createElement("span");
+    cap.className = "admin-meta-field-label";
+    cap.textContent = "등록 대상 역할";
+    const badge = document.createElement("span");
+    badge.id = "metadataRoleContextBadge";
+    const note = document.createElement("span");
+    note.id = "metadataRoleContextNote";
+    note.className = "admin-meta-row-meta";
+    field.appendChild(cap);
+    field.appendChild(badge);
+    field.appendChild(note);
+    wrap.appendChild(field);
+    _metaUpdateGlossaryRoleBadge();   // 배지/노트 텍스트 채우기(생성=컨텍스트, 수정=대상 용어 역할)
+  }
   for (const f of fields) {
     if (f.type === "checkbox") {
       // 체크박스는 라벨을 input 우측에 배치(가로 정렬).
@@ -2648,7 +2833,407 @@ function _metaRenderForm() {
 
 function _metaCancelEdit() {
   adminState.metadata.editing = null;
-  _metaRenderForm();
+  adminState.metadata.selectedId = null;
+  adminState.metadata.detailMode = "empty";
+  _metaRenderDetail();
+  _metaSyncListActive();
+}
+
+// metadata-list-detail: 우측 상세 컬럼 모드 코디네이터 — empty | form | bootstrap 중 하나만 노출한다.
+//   다른 카테고리(계정/제품/데이터소스/감사) list-detail 과 동형: 좌측 선택 → 우측 상세 편집.
+//   모드 유효성을 보정(검토 큐/생성비활성/권한)한 뒤 세 컨테이너 가시성을 일원 결정하고, form/bootstrap
+//   모드는 기존 렌더러(_metaRenderForm / _metaSyncBootstrapVisibility)에 위임한다. 상단 네비(역할 필터·
+//   용어 2차 보기·목록 툴바 버튼)는 모드와 무관하므로 항상 동기화한다.
+function _metaRenderDetail() {
+  const md = adminState.metadata;
+  _metaSyncGlossaryViews();   // 용어사전 2차 보기 strip 가시성/active (모드 무관 top-nav).
+  let mode = md.detailMode || "empty";
+  if (mode === "form") {
+    if (_metaIsGlossaryReview()) mode = "empty";                                  // 검토 큐는 CRUD 폼 없음.
+    else if (_METADATA_NO_CREATE[md.subTab] && !(md.editing && md.editing.id != null)) mode = "empty";  // samples 생성 비활성.
+  }
+  if (mode === "bootstrap" && !((md.subTab === "tables" || md.subTab === "columns") && can("kb.ingest.manual"))) mode = "empty";
+  md.detailMode = mode;
+  const empty = document.getElementById("metadataDetailEmpty");
+  const form = document.getElementById("metadataForm");
+  const boot = document.getElementById("metadataBootstrap");
+  if (empty) empty.style.display = mode === "empty" ? "" : "none";
+  if (form) form.style.display = mode === "form" ? "" : "none";
+  if (boot) boot.style.display = mode === "bootstrap" ? "" : "none";
+  if (mode === "form") _metaRenderForm();                 // 폼 필드 채움(생성=빈, 수정=editing 값).
+  else if (mode === "bootstrap") _metaSyncBootstrapVisibility();  // 공용=empty-state, 구체 DS=골격 컨트롤.
+  _metaSyncToolbarVisibility();   // 역할 필터 가시성(glossary 목록 보기만).
+  _metaSyncListToolbar();         // '+ 새 항목' / '스키마 골격 가져오기' 버튼 가시성.
+}
+
+// 좌측 목록의 선택 행(.is-active) 동기화 — selectedId 와 매칭되는 행만 강조(다른 패널 list-detail 동형).
+function _metaSyncListActive() {
+  const listEl = document.getElementById("metadataList");
+  if (!listEl) return;
+  const sel = adminState.metadata.selectedId;
+  listEl.querySelectorAll(".admin-meta-row").forEach((row) => {
+    row.classList.toggle("is-active", sel != null && String(row.dataset.metaId) === String(sel));
+  });
+}
+
+// 좌측 목록 툴바 버튼 가시성 — '+ 새 항목'(생성 가능 서브탭만)·'스키마 골격 가져오기'(테이블/컬럼+권한만).
+function _metaSyncListToolbar() {
+  const md = adminState.metadata;
+  const review = _metaIsGlossaryReview();
+  // 검토 큐는 별도 렌더(피드백 큐) — 클라이언트 검색 미적용이라 검색 입력 숨김.
+  const searchEl = document.getElementById("metadataSearch");
+  if (searchEl) searchEl.style.display = review ? "none" : "";
+  const bsBtn = document.getElementById("metadataBootstrapOpenBtn");
+  if (bsBtn) {
+    const showBs = (md.subTab === "tables" || md.subTab === "columns") && can("kb.ingest.manual") && !review;
+    bsBtn.style.display = showBs ? "" : "none";
+    bsBtn.classList.toggle("is-active", md.detailMode === "bootstrap");   // 진입 상태 시각 표시(토글).
+  }
+  const newBtn = document.getElementById("metadataNewBtn");
+  if (newBtn) {
+    const canCreate = !_METADATA_NO_CREATE[md.subTab] && !review && can(_METADATA_SUBTAB_PERM[md.subTab] || "kb.ingest.manual");
+    newBtn.style.display = canCreate ? "" : "none";
+  }
+}
+
+// ── feature-0016: 메타데이터 지식그래프 뷰 (Cytoscape + 투영 API) ─────────────────
+const _metaGraph = { cy: null, bound: false, lastQuery: "" };
+
+// 라벨별 색 — RFC 팔레트(Table=teal, Column=slate, GlossaryTerm=amber, Schema=indigo, DS/Product=green).
+const _META_GRAPH_COLOR = {
+  Table: "#0f7d8c", Column: "#5c6773", GlossaryTerm: "#9c6515",
+  Schema: "#3f4b8c", Datasource: "#2e7d52", Product: "#2e7d52",
+};
+
+function _metaGraphStatus(msg) {
+  const el = document.getElementById("metadataGraphStatus");
+  if (el) el.textContent = msg || "";
+}
+
+function _metaShowGraph() {
+  const ld = document.querySelector(".admin-meta-list-detail");
+  if (ld) ld.style.display = "none";
+  const bs = document.getElementById("metadataBootstrap");
+  if (bs) bs.style.display = "none";
+  const gv = document.getElementById("metadataGlossaryViews");
+  if (gv) gv.style.display = "none";
+  // 그래프 모드에선 생성/골격 버튼 무의미 — 숨김.
+  const newBtn = document.getElementById("metadataNewBtn");
+  if (newBtn) newBtn.style.display = "none";
+  const bsBtn = document.getElementById("metadataBootstrapOpenBtn");
+  if (bsBtn) bsBtn.style.display = "none";
+  const view = document.getElementById("metadataGraphView");
+  if (view) view.style.display = "";
+  _metaInitGraph();
+  // feature-0016: 그래프 뷰 진입 시 현재 선택 datasource 의 그래프(roots)를 즉시 로드 — 각 데이터소스별 그래프 출현.
+  _metaGraphLoadRoots();
+  const s = document.getElementById("metadataGraphSearch");
+  if (s && s.focus) try { s.focus(); } catch (_) {}
+}
+
+// 현재 선택 datasource(scope)의 진입 그래프(Schema→Table)를 로드. 'common'/미선택이면 안내.
+async function _metaGraphLoadRoots() {
+  if (!_metaGraph.cy) _metaInitGraph();
+  if (!_metaGraph.cy) return;
+  const scope = adminState.metadata.scopeKey || "common";
+  const si = document.getElementById("metadataGraphSearch");
+  if (si) si.value = "";
+  _metaGraph.cy.elements().remove();
+  if (!scope || scope === "common") {
+    _metaGraphStatus("상단에서 데이터소스를 선택하면 그 데이터소스의 그래프가 표시됩니다. (공용 스코프는 검색으로 탐색)");
+    _metaGraphRenderDetailEmpty();
+    return;
+  }
+  _metaGraphStatus("데이터소스 그래프 로딩…");
+  let data;
+  try {
+    data = await apiFetch(`/api/admin/metadata/graph?scope=${encodeURIComponent(scope)}`);
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || "그래프 로드 실패");
+    return;
+  }
+  _metaGraphAddElements(data.nodes || [], data.edges || []);
+  _metaGraphLayout();
+  const n = (data.nodes || []).length;
+  _metaGraphStatus(n ? `${scope}: ${n}개 노드 — 노드 클릭으로 확장, 또는 검색.` : `${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
+}
+
+function _metaHideGraph() {
+  const view = document.getElementById("metadataGraphView");
+  if (view) view.style.display = "none";
+  const ld = document.querySelector(".admin-meta-list-detail");
+  if (ld) ld.style.display = "";
+}
+
+// 라벨별 기본 노드 크기. 검색 시 관련도(rel 0~1)에 따라 +최대 40 가산(키워드 prominence).
+const _META_NODE_BASE = { Schema: 30, Table: 30, Column: 18, GlossaryTerm: 26, Datasource: 34, Product: 34 };
+function _metaNodeSize(ele) {
+  const base = _META_NODE_BASE[ele.data("label")] || 22;
+  const rel = ele.data("rel");
+  return (typeof rel === "number") ? Math.round(base + rel * 40) : base;
+}
+
+// 노드 key(`scope:fqn`)에서 카테고리(스키마) compound parent id 도출. schema 없으면 null.
+function _metaCatParent(key, fqn) {
+  if (!key) return null;
+  const idx = key.indexOf(":");
+  if (idx < 0) return null;
+  const scope = key.slice(0, idx);
+  const f = fqn || key.slice(idx + 1);
+  if (!f || f.indexOf(".") < 0) return null;   // 스키마 segment 없음(스키마 노드 자체 등)
+  return scope + ":" + f.split(".")[0];
+}
+function _metaEnsureCat(cy, id) {
+  if (!id || cy.getElementById(id).length) return;
+  const nm = id.slice(id.indexOf(":") + 1);
+  cy.add({ group: "nodes", data: { id, label: "Schema", name: nm, fqn: nm, isCat: 1 } });
+}
+
+function _metaInitGraph() {
+  const container = document.getElementById("metadataGraphCanvas");
+  if (!container) return;
+  if (typeof window.cytoscape !== "function") {
+    _metaGraphStatus("그래프 라이브러리(cytoscape)를 불러오지 못했습니다.");
+    return;
+  }
+  // fcose(compound 클러스터 force layout) 등록 — 1회. 미가용 시 built-in cose 폴백.
+  if (window.cytoscapeFcose && !_metaGraph.fcose) {
+    try { window.cytoscape.use(window.cytoscapeFcose); _metaGraph.fcose = true; } catch (_) {}
+  }
+  if (_metaGraph.cy) { try { _metaGraph.cy.resize(); } catch (_) {} return; }
+  _metaGraph.cy = window.cytoscape({
+    container,
+    elements: [],
+    minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
+    style: [
+      { selector: "node", style: {
+          "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
+          "label": "data(name)", "font-size": "11px", "color": "#161b22",
+          "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
+          "width": _metaNodeSize, "height": _metaNodeSize,
+          "text-wrap": "ellipsis", "text-max-width": "120px", "border-width": 0 } },
+      { selector: "node[label='Table']", style: { "font-weight": "bold" } },
+      // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
+      { selector: "node:parent", style: {
+          "background-color": "#3f4b8c", "background-opacity": 0.08,
+          "border-width": 1, "border-color": "#aab3c5", "border-style": "dashed",
+          "shape": "round-rectangle", "padding": "16px",
+          "label": "data(name)", "font-size": "13px", "font-weight": "bold", "color": "#3f4b8c",
+          "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
+      // 검색 관련도 강조: rel 높을수록 진한 테두리.
+      { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
+      { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
+      { selector: "node.dim", style: { "opacity": 0.35 } },
+      { selector: "edge", style: {
+          "width": 1.4, "line-color": "#cbd2db", "target-arrow-color": "#cbd2db",
+          "target-arrow-shape": "triangle", "curve-style": "bezier",
+          "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
+      { selector: "edge[label='REFERENCES']", style: {
+          "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2.2, "label": "data(label)" } },
+      { selector: "edge[label='RELATED_TERM']", style: {
+          "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "line-style": "dashed", "label": "data(label)" } },
+    ],
+  });
+  _metaGraph.cy.on("tap", "node", (evt) => {
+    const t = evt.target;
+    if (t.isParent && t.isParent()) return;   // 컨테이너 클릭은 무시
+    _metaGraphExpand(t.id());
+  });
+  // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
+  if (window.ResizeObserver && !_metaGraph.ro) {
+    let rt = null;
+    _metaGraph.ro = new ResizeObserver(() => {
+      if (rt) clearTimeout(rt);
+      rt = setTimeout(() => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } }, 150);
+    });
+    try { _metaGraph.ro.observe(container); } catch (_) {}
+  }
+  if (!_metaGraph.bound) {
+    _metaGraph.bound = true;
+    const s = document.getElementById("metadataGraphSearch");
+    if (s) {
+      let t = null;
+      s.addEventListener("input", () => {
+        if (t) clearTimeout(t);
+        t = setTimeout(() => _metaGraphSearch(s.value.trim()), 300);
+      });
+    }
+    const reset = document.getElementById("metadataGraphResetBtn");
+    if (reset) reset.addEventListener("click", () => { _metaGraphLoadRoots(); });
+    // 상세 패널 접기/펼치기(좁은 화면 대응).
+    const tgl = document.getElementById("metadataGraphDetailToggle");
+    if (tgl) tgl.addEventListener("click", () => {
+      const body = document.getElementById("metadataGraphView");
+      if (body) body.classList.toggle("detail-collapsed");
+      setTimeout(() => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } }, 60);
+    });
+  }
+}
+
+// 검색어 관련도 점수(0~1): exact name > prefix > name contains > fqn contains.
+function _metaRelevance(name, fqn, ql) {
+  name = (name || "").toLowerCase(); fqn = (fqn || "").toLowerCase();
+  if (name === ql) return 1.0;
+  if (name.startsWith(ql)) return 0.85;
+  if (name.indexOf(ql) >= 0) return 0.65;
+  if (fqn.indexOf(ql) >= 0) return 0.45;
+  return 0.3;
+}
+
+async function _metaGraphSearch(q) {
+  if (!_metaGraph.cy) return;
+  _metaGraph.lastQuery = q;
+  if (!q) { _metaGraphLoadRoots(); return; }
+  _metaGraphStatus("검색 중…");
+  const scope = adminState.metadata.scopeKey || "common";
+  const scopeParam = (scope && scope !== "common") ? `&scope=${encodeURIComponent(scope)}` : "";
+  let data;
+  try {
+    data = await apiFetch(`/api/admin/metadata/graph?q=${encodeURIComponent(q)}${scopeParam}`);
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || "그래프 검색 실패");
+    return;
+  }
+  if (q !== _metaGraph.lastQuery) return;
+  _metaGraph.cy.elements().remove();
+  _metaGraphAddElements(data.nodes || [], data.edges || []);
+  // 키워드 관련도 → 노드 크기 가산(검색 결과 prominence).
+  const ql = q.toLowerCase();
+  _metaGraph.cy.nodes().forEach((node) => {
+    if (node.isParent()) return;
+    node.data("rel", _metaRelevance(node.data("name"), node.data("fqn"), ql));
+  });
+  _metaGraphLayout();
+  const n = (data.nodes || []).length;
+  _metaGraphStatus(n ? `'${q}' ${n}개 — 관련도 높을수록 크게 표시. 노드 클릭으로 확장.` : "검색 결과 없음.");
+}
+
+async function _metaGraphExpand(key) {
+  if (!_metaGraph.cy || !key) return;
+  const depthSel = document.getElementById("metadataGraphDepth");
+  const depth = depthSel ? depthSel.value : "2";
+  _metaGraphStatus("이웃 조회 중…");
+  let data;
+  try {
+    data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=${encodeURIComponent(depth)}`);
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || "이웃 조회 실패");
+    return;
+  }
+  _metaGraphAddElements(data.nodes || [], data.edges || []);
+  _metaGraphLayout();
+  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
+  const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
+}
+
+function _metaGraphAddElements(nodes, edges) {
+  const cy = _metaGraph.cy;
+  if (!cy) return;
+  (nodes || []).forEach((n) => {
+    if (!n || !n.key) return;
+    // 스키마 노드 = 카테고리 컨테이너(compound parent)로 사용.
+    if (n.label === "Schema") { _metaEnsureCat(cy, n.key); return; }
+    const existing = cy.getElementById(n.key);
+    if (existing.length) {
+      existing.data({ label: n.label, name: n.name || n.fqn || n.key,
+        fqn: n.fqn || "", description: n.description || "", source: n.source || "" });
+      return;
+    }
+    const pid = _metaCatParent(n.key, n.fqn);
+    if (pid) _metaEnsureCat(cy, pid);
+    const data = { id: n.key, label: n.label || "Node", name: n.name || n.fqn || n.key,
+      fqn: n.fqn || "", description: n.description || "", source: n.source || "" };
+    if (pid) data.parent = pid;
+    cy.add({ group: "nodes", data });
+  });
+  (edges || []).forEach((e) => {
+    if (!e || !e.source || !e.target) return;
+    if (e.type === "HAS_TABLE") return;   // 스키마→테이블은 compound 컨테인먼트로 표현(엣지 생략).
+    const id = `${e.source}|${e.type}|${e.target}`;
+    if (cy.getElementById(id).length) return;
+    if (!cy.getElementById(e.source).length || !cy.getElementById(e.target).length) return;
+    cy.add({ group: "edges", data: { id, source: e.source, target: e.target, label: e.type || "" } });
+  });
+}
+
+function _metaGraphLayout() {
+  if (!_metaGraph.cy) return;
+  const cnt = _metaGraph.cy.nodes().length;
+  // 라벨 겹침 방지의 핵심: nodeDimensionsIncludeLabels=true → 레이아웃이 각 노드의 **라벨 박스까지**
+  // 충돌 회피 대상으로 간주해 라벨이 겹치지 않을 만큼 벌린다. animate=true 로 펼침 과정을 보여준다.
+  const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
+  if (_metaGraph.fcose) {
+    try {
+      _metaGraph.cy.layout({
+        name: "fcose", quality: "proof", randomize: true, fit: true, padding: 40,
+        animate: animate, animationDuration: 1000, animationEasing: "ease-out",
+        nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거)
+        uniformNodeDimensions: false,
+        packComponents: true,
+        nodeSeparation: 150,                  // 노드 간 최소 간격 ↑(라벨 여유)
+        tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,  // 비연결 노드 타일 간격
+        nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
+        gravityRangeCompound: 1.5, gravityCompound: 1.0,
+        numIter: cnt > 400 ? 1800 : 2500,
+      }).run();
+      return;
+    } catch (_) {}
+  }
+  try {
+    _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
+      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: true }).run();
+  } catch (_) {}
+}
+
+function _metaGraphRenderDetailEmpty() {
+  const el = document.getElementById("metadataGraphDetail");
+  if (!el) return;
+  el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p></div>';
+}
+
+// 통합 엔티티 카드 — 클릭 노드의 이웃을 카테고리(컬럼·관계·용어)로 묶어 표시.
+function _metaGraphRenderDetail(self, nodes, edges) {
+  const el = document.getElementById("metadataGraphDetail");
+  if (!el) return;
+  const byKey = {};
+  (nodes || []).forEach((n) => { if (n && n.key) byKey[n.key] = n; });
+  const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || k;
+  const selfKey = self.key;
+  // 컬럼(HAS_COLUMN out), 관계(REFERENCES), 용어(GlossaryTerm), 부모 스키마(HAS_TABLE in)
+  const columns = [], refs = [], terms = [];
+  (edges || []).forEach((e) => {
+    if (!e) return;
+    if (e.type === "HAS_COLUMN" && e.source === selfKey && byKey[e.target]) columns.push(byKey[e.target]);
+    if (e.type === "REFERENCES") refs.push(e);
+    if (e.type === "DESCRIBES" && byKey[e.source] && byKey[e.source].label === "GlossaryTerm") terms.push(byKey[e.source]);
+  });
+  (nodes || []).forEach((n) => { if (n && n.label === "GlossaryTerm" && n.key !== selfKey && !terms.includes(n)) terms.push(n); });
+
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const parts = [];
+  parts.push(`<div class="admin-meta-graph-card">`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong></div>`);
+  if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
+  if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
+  else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
+  if (columns.length) {
+    parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})</h4><ul>`);
+    columns.slice(0, 50).forEach((c) => parts.push(`<li><code>${esc(c.name)}</code>${c.description ? " — " + esc(c.description) : ""}</li>`));
+    parts.push(`</ul></div>`);
+  }
+  if (refs.length) {
+    parts.push(`<div class="admin-meta-graph-sec"><h4>관계 (${refs.length})</h4><ul>`);
+    refs.slice(0, 50).forEach((e) => parts.push(`<li><code>${esc(nm(e.source))}</code> → <code>${esc(nm(e.target))}</code>${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(e.edge_source) + ")</span>" : ""}</li>`));
+    parts.push(`</ul></div>`);
+  }
+  if (terms.length) {
+    parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul>`);
+    terms.slice(0, 30).forEach((t) => parts.push(`<li><strong>${esc(t.name)}</strong>${t.description ? " — " + esc(t.description) : ""}</li>`));
+    parts.push(`</ul></div>`);
+  }
+  parts.push(`</div>`);
+  el.innerHTML = parts.join("");
 }
 
 // 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)
@@ -2656,7 +3241,7 @@ function _metaFormValues() {
   const wrap = document.getElementById("metadataFormFields");
   const out = {};
   if (!wrap) return out;
-  wrap.querySelectorAll("input, textarea").forEach((el) => {
+  wrap.querySelectorAll("input, textarea, select").forEach((el) => {
     if (el.type === "checkbox") out[el.name] = el.checked;
     else out[el.name] = (el.value || "").trim();
   });
@@ -2667,6 +3252,11 @@ async function loadMetadata() {
   const listEl = document.getElementById("metadataList");
   if (!listEl) return;
   const sub = adminState.metadata.subTab;
+  // 용어 검토 큐 보기는 별도 적재/렌더 경로(폼/CRUD 아님).
+  if (_metaIsGlossaryReview()) {
+    await loadGlossaryFeedback();
+    return;
+  }
   const scope = adminState.metadata.scopeKey || "common";
   adminState.metadata.loading = true;
   listEl.replaceChildren();
@@ -2675,7 +3265,11 @@ async function loadMetadata() {
   loading.textContent = "로딩 중…";
   listEl.appendChild(loading);
   try {
-    const url = `/api/admin/metadata/${sub}?scope_key=${encodeURIComponent(scope)}`;
+    let url = `/api/admin/metadata/${sub}?scope_key=${encodeURIComponent(scope)}`;
+    // 용어사전 역할 필터(0021) — 선택된 역할이 있으면 그 역할 행만(공용 '*' 포함 안 함).
+    if (sub === "glossary" && adminState.metadata.roleFilter) {
+      url += `&role_key=${encodeURIComponent(adminState.metadata.roleFilter)}`;
+    }
     const data = await apiFetch(url);
     adminState.metadata.items = (data && data.items) || [];
   } catch (err) {
@@ -2690,6 +3284,13 @@ async function loadMetadata() {
     adminState.metadata.loading = false;
   }
   renderMetadataList();
+  // metadata-bs-prefill: 부트스트랩 모드에서 items 가 갱신되면(스코프/서브탭 전환·저장 후) 골격 입력란을
+  // 갱신된 기존 설명으로 재prefill 한다. 전체 재렌더(filterBar·페이지·펼침 리셋) 대신 in-place 갱신으로
+  // 검색어·페이지·펼침 등 작업 위치를 보존한다(골격 구조는 fetch·서브탭 sync 렌더가 담당).
+  const _bs = adminState.metadata.bootstrap;
+  if (adminState.metadata.detailMode === "bootstrap" && _bs && Array.isArray(_bs.tables) && _bs.tables.length) {
+    _metaBootstrapRefreshPrefill();
+  }
 }
 
 // 서브뷰별 빈 상태 안내 문구.
@@ -2701,26 +3302,53 @@ const _METADATA_EMPTY_MSG = {
   samples: "등록된 샘플쿼리가 없습니다. (피드백 검수 경로로 생성됩니다)",
 };
 
+// metadata-list-detail: 좌측 목록 클라이언트 검색 — 서브뷰별 표시 필드 부분일치(소문자).
+function _metaItemMatchesSearch(it, sub, q) {
+  if (!q) return true;
+  let hay = "";
+  if (sub === "glossary") hay = `${it.term || ""} ${it.definition || ""}`;
+  else if (sub === "enums") hay = `${it.schema_name || ""} ${it.table_name || ""} ${it.column_name || ""} ${it.code || ""} ${it.label || ""}`;
+  else if (sub === "tables") hay = `${it.schema_name || ""} ${it.table_name || ""} ${it.description || ""}`;
+  else if (sub === "columns") hay = `${it.schema_name || ""} ${it.table_name || ""} ${it.column_name || ""} ${it.description || ""}`;
+  else if (sub === "samples") hay = `${it.nl_question || ""} ${it.sql || ""} ${it.domain || ""}`;
+  return hay.toLowerCase().includes(q);
+}
+
 function renderMetadataList() {
   const listEl = document.getElementById("metadataList");
   const countEl = document.getElementById("metadataCount");
   if (!listEl) return;
-  const items = adminState.metadata.items;
+  const allItems = adminState.metadata.items;
   const sub = adminState.metadata.subTab;
+  // metadata-list-detail: 좌측 목록 검색(title/body 부분일치). 카운트는 검색 시 필터/전체 표기.
+  const q = (adminState.metadata.search || "").trim().toLowerCase();
+  const items = q ? allItems.filter((it) => _metaItemMatchesSearch(it, sub, q)) : allItems;
   // 서브뷰별 편집 권한 — samples 는 kb.sample.curate, 나머지는 kb.ingest.manual.
   const canEdit = can(_METADATA_SUBTAB_PERM[sub] || "kb.ingest.manual");
-  if (countEl) countEl.textContent = `${items.length}건`;
+  if (countEl) countEl.textContent = q ? `${items.length}/${allItems.length}건` : `${items.length}건`;
   listEl.replaceChildren();
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "admin-list-empty";
-    empty.textContent = _METADATA_EMPTY_MSG[sub] || "등록된 항목이 없습니다.";
+    empty.textContent = q ? "검색 결과가 없습니다." : (_METADATA_EMPTY_MSG[sub] || "등록된 항목이 없습니다.");
     listEl.appendChild(empty);
     return;
   }
   for (const it of items) {
     const row = document.createElement("div");
     row.className = "admin-meta-row";
+    if (it.id != null) row.dataset.metaId = String(it.id);
+    if (adminState.metadata.selectedId != null && String(it.id) === String(adminState.metadata.selectedId)) row.classList.add("is-active");
+    // metadata-list-detail: 행 클릭 = 선택 → 우측 상세 편집('수정' 버튼·폼 점프 스크롤 폐기). 키보드 접근(Enter/Space).
+    if (canEdit) {
+      row.setAttribute("role", "button");
+      row.setAttribute("tabindex", "0");
+      row.addEventListener("click", () => _metaStartEdit(it));
+      row.addEventListener("keydown", (e) => {
+        if (e.target !== e.currentTarget) return;   // 행 내부 버튼(삭제/유사어) 키 입력은 무시 — 이중 발화 방지(적대 패널 MAJOR-2).
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _metaStartEdit(it); }
+      });
+    }
     const main = document.createElement("div");
     main.className = "admin-meta-row-main";
     const title = document.createElement("div");
@@ -2750,6 +3378,24 @@ function renderMetadataList() {
     }
     main.appendChild(title);
     main.appendChild(body);
+    // glossary 전용 — 역할/출처 배지(0021). 역할별 비중복·자동등록 출처를 한눈에.
+    if (sub === "glossary") {
+      const tags = document.createElement("div");
+      tags.className = "admin-meta-row-tags";
+      const mkTag = (text, cls) => {
+        const t = document.createElement("span");
+        t.className = "admin-meta-tag" + (cls ? " " + cls : "");
+        t.textContent = text;
+        return t;
+      };
+      const rk = String(it.role_key || "*");
+      tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`,
+        rk === "*" ? "" : "admin-meta-tag-role"));
+      const src = String(it.source || "manual");
+      if (src === "auto") tags.appendChild(mkTag("자동등록", "admin-meta-tag-warn"));
+      else if (src === "auto_promoted") tags.appendChild(mkTag("자동승급", "admin-meta-tag-warn"));
+      main.appendChild(tags);
+    }
     // samples 전용 — 가중치/도메인/승인/status 배지.
     if (sub === "samples") {
       const tags = document.createElement("div");
@@ -2778,29 +3424,39 @@ function renderMetadataList() {
     if (canEdit) {
       const actions = document.createElement("div");
       actions.className = "admin-meta-row-actions";
-      const editBtn = document.createElement("button");
-      editBtn.type = "button";
-      editBtn.className = "btn-secondary admin-meta-edit";
-      editBtn.textContent = "수정";
-      editBtn.addEventListener("click", () => _metaStartEdit(it));
+      // metadata-list-detail: '수정'은 행 클릭으로 대체. 유사어/삭제만 인라인 — 클릭 전파 차단(행 선택과 분리).
+      // glossary 전용 — 유사어/참조 패널 토글(0021).
+      if (sub === "glossary") {
+        const relBtn = document.createElement("button");
+        relBtn.type = "button";
+        relBtn.className = "btn-secondary admin-meta-rel";
+        relBtn.textContent = "유사어";
+        relBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaToggleRelations(it); });
+        actions.appendChild(relBtn);
+      }
       const delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "btn-secondary admin-meta-del";
       delBtn.textContent = "삭제";
-      delBtn.addEventListener("click", () => _metaDelete(it));
-      actions.appendChild(editBtn);
+      delBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaDelete(it); });
       actions.appendChild(delBtn);
       row.appendChild(actions);
     }
     listEl.appendChild(row);
+    // 유사어 패널 — 이 용어가 펼쳐진 상태면 행 아래에 패널 삽입(0021).
+    if (sub === "glossary" && String(adminState.metadata.relationsOpenId) === String(it.id)) {
+      listEl.appendChild(_metaBuildRelationsPanel(it));
+    }
   }
 }
 
 function _metaStartEdit(it) {
+  // metadata-list-detail: 좌측 행 선택 → 우측 상세에 수정 폼. 선택 하이라이트 동기화(폼 점프 스크롤 제거 — 상세가 상시 우측에 존재).
   adminState.metadata.editing = { ...it };
-  _metaRenderForm();
-  const form = document.getElementById("metadataForm");
-  if (form && form.scrollIntoView) form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  adminState.metadata.selectedId = (it && it.id != null) ? it.id : null;
+  adminState.metadata.detailMode = "form";
+  _metaRenderDetail();
+  _metaSyncListActive();
 }
 
 async function _metaSubmitForm(e) {
@@ -2841,6 +3497,11 @@ async function _metaSubmitForm(e) {
       payload[f.key] = raw;
     }
   }
+  // 단일 역할 컨텍스트(glossary, role-single-ui) — 폼 role select 폐기. role_key 를 _metaGlossaryTargetRole 로 주입
+  //   (배지·노트와 동일 진실원). 생성=툴바 컨텍스트, 수정=대상 용어 기존 role_key 보존. 백엔드 role_key 검증은 그대로.
+  if (sub === "glossary") {
+    payload.role_key = _metaGlossaryTargetRole(editing);
+  }
   const submitBtn = document.getElementById("metadataSubmitBtn");
   if (submitBtn) submitBtn.disabled = true;
   try {
@@ -2852,11 +3513,22 @@ async function _metaSubmitForm(e) {
       await apiFetch(`/api/admin/metadata/${sub}`, { method: "POST", body: JSON.stringify(payload) });
     }
     adminState.metadata.editing = null;
-    _metaRenderForm();
+    adminState.metadata.selectedId = null;
+    adminState.metadata.detailMode = "empty";   // metadata-list-detail: 저장 후 미선택 안내로 복귀(목록 갱신).
     // 폼 초기화(생성 모드면 입력 비움).
     _metaResetInputs();
+    _metaRenderDetail();
     await loadMetadata();
-    if (typeof showToast === "function") showToast(editing ? "수정했습니다." : "등록했습니다.");
+    if (typeof showToast === "function") {
+      // glossary 는 역할별 비중복 namespace — mis-scope 방지를 위해 등록/수정된 대상 역할을 토스트에 명시(F2).
+      if (sub === "glossary") {
+        const rk = payload.role_key;
+        const rkLabel = (!rk || rk === "*") ? "공용" : `역할: ${_metaRoleLabel(rk)}`;
+        showToast(`${editing ? "수정" : "등록"}했습니다 (${rkLabel}).`);
+      } else {
+        showToast(editing ? "수정했습니다." : "등록했습니다.");
+      }
+    }
   } catch (err) {
     if (typeof showToast === "function") showToast((err && err.message) || "저장 실패", true);
   } finally {
@@ -2893,10 +3565,393 @@ async function _metaDelete(it) {
       method: "DELETE",
     });
     adminState.metadata.items = adminState.metadata.items.filter((x) => String(x.id) !== String(it.id));
+    // metadata-list-detail: 삭제한 항목이 우측에서 편집/선택 중이면 상세를 empty 로 리셋(stale 폼 방지).
+    const ed = adminState.metadata.editing;
+    if (String(adminState.metadata.selectedId) === String(it.id) || (ed && String(ed.id) === String(it.id))) {
+      adminState.metadata.editing = null;
+      adminState.metadata.selectedId = null;
+      adminState.metadata.detailMode = "empty";
+      _metaRenderDetail();
+    }
     renderMetadataList();
     if (typeof showToast === "function") showToast("삭제했습니다.");
   } catch (err) {
     if (typeof showToast === "function") showToast((err && err.message) || "삭제 실패", true);
+  }
+}
+
+/* ── 용어사전 대화 자율등록: 역할 차원 + 검토 큐 + 유사어 참조 (0021) ───────────────────
+ * 역할(role) 차원: 용어사전을 역할별 비중복 namespace 로 운영. 역할 선택 UI 는 **툴바 하나로 일원화**
+ *   (role-single-ui): 툴바 역할 컨텍스트 = 목록 필터(GET …/glossary?role_key=) + 신규 용어 등록 대상.
+ *   폼엔 역할 select 없음 — 대상 역할은 읽기전용 배지로만 표시. 목록 역할 배지는 유지. 공용 = '*'.
+ * 검토 큐(용어사전 > 용어 검토 큐 보기, 권한 kb.glossary.curate): 대화에서 자동 제안된 용어 후보를 검토.
+ *   하이브리드 — pending(검토 대기) / auto_promoted(자동 등록, 되돌리기 가능). promote(승급)/reject(거부).
+ * 유사어/참조: 용어별 glossary_relations 패널(목록/추가/삭제, 역할 경계 횡단 허용).
+ * XSS: 모든 사용자 데이터 textContent/value 로만 삽입. */
+
+// (role-single-ui) _metaRoleOptions 폐기 — 폼 역할 select 제거로 미사용. 역할 옵션은 툴바 _metaPopulateRoleFilter 하나만 채운다.
+
+// 단일 역할 컨텍스트(role-single-ui) — 등록/수정 대상 role_key 의 단일 진실원(배지·payload·토스트 공용).
+//   생성 = 현재 툴바 역할 컨텍스트(전체 역할 "" → 공용 '*'). 수정 = 대상 용어의 기존 role_key 보존(legacy null/빈값 → '*').
+function _metaGlossaryTargetRole(editing) {
+  if (editing && editing.id != null) {
+    return String((editing.role_key != null && String(editing.role_key).trim() !== "") ? editing.role_key : "*");
+  }
+  const ctx = adminState.metadata.roleFilter || "";
+  return ctx === "" ? "*" : ctx;
+}
+
+// '등록 대상 역할' 배지/노트 동기화 — 폼 전체 재렌더(입력 소실) 없이 배지만 갱신(툴바 역할 변경·렌더 시 호출).
+//   수정 모드면 대상 용어 역할(고정), 생성 모드면 현재 컨텍스트. '전체 역할' 보기 생성 시 공용 귀속을 노트로 명시(혼동 방지, F1).
+function _metaUpdateGlossaryRoleBadge() {
+  const badge = document.getElementById("metadataRoleContextBadge");
+  if (!badge) return;   // 폼 미표시(다른 서브탭/검토 큐)면 대상 없음
+  const editing = adminState.metadata.editing;
+  const isEdit = Boolean(editing && editing.id != null);
+  const rk = _metaGlossaryTargetRole(editing);
+  badge.className = "admin-meta-tag" + (rk === "*" ? "" : " admin-meta-tag-role");
+  badge.textContent = rk === "*" ? "공용 (모든 역할)" : `역할: ${_metaRoleLabel(rk)}`;
+  badge.title = "역할은 위 툴바의 '역할' 선택으로 정합니다.";
+  const note = document.getElementById("metadataRoleContextNote");
+  if (note) {
+    note.textContent = (!isEdit && (adminState.metadata.roleFilter || "") === "")
+      ? "‘전체 역할’ 보기 — 신규 용어는 공용으로 등록됩니다."
+      : "";
+  }
+}
+
+// role_key → 사람이 읽는 라벨(역할명). 미매칭이면 key 그대로.
+function _metaRoleLabel(rk) {
+  const key = String(rk || "").trim().toLowerCase();
+  if (!key || key === "*") return "공용";
+  // role 객체(/api/admin/roles 정본 직렬화)는 key/name 필드를 쓴다 — role_key/role_name 은 미존재(역할 라벨 미표시 fix).
+  const r = (adminState.roles || []).find((x) => String((x && x.key) || "").toLowerCase() === key);
+  return (r && r.name) ? String(r.name) : key;
+}
+
+// 역할 필터 드롭다운: 전체("") + 공용('*') + 역할들. glossary 서브뷰 툴바 노출.
+function _metaPopulateRoleFilter() {
+  const sel = document.getElementById("metadataRoleFilter");
+  if (!sel) return;
+  const opts = [{ value: "", label: "전체 역할" }, { value: "*", label: "공용만" }];
+  for (const r of (adminState.roles || [])) {
+    // role 객체는 key/name(정본 /api/admin/roles 직렬화) — role_key/role_name 은 미존재 필드라 전 역할이 스킵돼 드롭다운이 비던 버그 fix.
+    const rk = String((r && r.key) || "").trim().toLowerCase();
+    if (!rk) continue;
+    opts.push({ value: rk, label: (r && r.name) ? String(r.name) : rk });
+  }
+  sel.replaceChildren();
+  for (const o of opts) {
+    const el = document.createElement("option");
+    el.value = o.value;
+    el.textContent = o.label;
+    sel.appendChild(el);
+  }
+  const cur = adminState.metadata.roleFilter || "";
+  sel.value = opts.some((o) => o.value === cur) ? cur : "";
+  adminState.metadata.roleFilter = sel.value;
+}
+
+// 툴바 가시성 — 역할 필터는 용어사전 '용어 목록' 보기에서만(검토 큐 보기엔 무의미). scope select 는 유지.
+function _metaSyncToolbarVisibility() {
+  const showRole = (adminState.metadata.subTab === "glossary" && adminState.metadata.glossaryView === "list");
+  const label = document.getElementById("metadataRoleFilterLabel");
+  const sel = document.getElementById("metadataRoleFilter");
+  if (label) label.style.display = showRole ? "" : "none";
+  if (sel) {
+    sel.style.display = showRole ? "" : "none";
+    if (showRole) _metaPopulateRoleFilter();
+  }
+}
+
+// ── 검토 큐(용어사전 > 용어 검토 큐 보기) ─────────────────────────────────────
+async function loadGlossaryFeedback() {
+  const listEl = document.getElementById("metadataList");
+  if (!listEl) return;
+  adminState.metadata.feedback.loading = true;
+  listEl.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "admin-list-empty";
+  loading.textContent = "로딩 중…";
+  listEl.appendChild(loading);
+  const status = adminState.metadata.feedback.status || "pending";
+  try {
+    const url = `/api/admin/metadata/glossary-feedback?status=${encodeURIComponent(status)}`;
+    const data = await apiFetch(url);
+    adminState.metadata.feedback.items = (data && data.items) || [];
+    adminState.metadata.feedback.pendingCount = (data && data.pending_count) || 0;
+    _updateGlossaryReviewBadge(adminState.metadata.feedback.pendingCount);
+  } catch (err) {
+    adminState.metadata.feedback.items = [];
+    listEl.replaceChildren();
+    const e = document.createElement("div");
+    e.className = "admin-list-empty";
+    e.textContent = (err && err.message) || "검토 큐 조회 실패";
+    listEl.appendChild(e);
+    return;
+  } finally {
+    adminState.metadata.feedback.loading = false;
+  }
+  renderGlossaryFeedback();
+}
+
+function _updateGlossaryReviewBadge(count) {
+  const badge = document.getElementById("glossaryReviewBadge");
+  if (!badge) return;
+  const n = Number(count) || 0;
+  if (n > 0) { badge.textContent = String(n); badge.hidden = false; }
+  else { badge.textContent = ""; badge.hidden = true; }
+}
+
+function renderGlossaryFeedback() {
+  const listEl = document.getElementById("metadataList");
+  const countEl = document.getElementById("metadataCount");
+  if (!listEl) return;
+  const items = adminState.metadata.feedback.items || [];
+  const canCurate = can("kb.glossary.curate");
+  if (countEl) countEl.textContent = `${items.length}건`;
+  listEl.replaceChildren();
+
+  // 상태 필터 툴바(pending / auto_promoted / rejected / 전체).
+  const bar = document.createElement("div");
+  bar.className = "admin-meta-review-bar";
+  const sel = document.createElement("select");
+  sel.className = "admin-meta-scope-select";
+  sel.setAttribute("aria-label", "검토 큐 상태 필터");
+  for (const o of [
+    { value: "pending", label: "검토 대기(pending)" },
+    { value: "auto_promoted", label: "자동 등록(auto)" },
+    { value: "promoted", label: "승급됨" },
+    { value: "rejected", label: "거부됨" },
+    { value: "all", label: "전체" },
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = o.value; opt.textContent = o.label;
+    if (o.value === (adminState.metadata.feedback.status || "pending")) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener("change", () => {
+    adminState.metadata.feedback.status = sel.value || "pending";
+    loadGlossaryFeedback();
+  });
+  bar.appendChild(sel);
+  const note = document.createElement("span");
+  note.className = "admin-archive-detail-note";
+  note.textContent = "대화에서 자동 제안된 용어 후보입니다. 승급하면 용어사전에 반영되고, 거부하면 제외(자동 등록분은 회수)됩니다.";
+  bar.appendChild(note);
+  listEl.appendChild(bar);
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-list-empty";
+    empty.textContent = "검토할 용어 후보가 없습니다.";
+    listEl.appendChild(empty);
+    return;
+  }
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "admin-meta-row";
+    const main = document.createElement("div");
+    main.className = "admin-meta-row-main";
+    const title = document.createElement("div");
+    title.className = "admin-meta-row-title";
+    title.textContent = it.term || "";
+    const body = document.createElement("div");
+    body.className = "admin-meta-row-body";
+    body.textContent = it.suggested_definition || "";
+    main.appendChild(title);
+    main.appendChild(body);
+    // 배지: 역할 / scope / confidence / status.
+    const tags = document.createElement("div");
+    tags.className = "admin-meta-row-tags";
+    const mkTag = (text, cls) => {
+      const t = document.createElement("span");
+      t.className = "admin-meta-tag" + (cls ? " " + cls : "");
+      t.textContent = text;
+      return t;
+    };
+    const rk = String(it.role_key || "*");
+    tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`, rk === "*" ? "" : "admin-meta-tag-role"));
+    if (it.scope_key) tags.appendChild(mkTag(`scope: ${it.scope_key}`));
+    if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`));
+    const st = String(it.status || "");
+    const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "승급됨", rejected: "거부됨" }[st] || st;
+    tags.appendChild(mkTag(stLabel, st === "auto_promoted" ? "admin-meta-tag-warn" : (st === "promoted" ? "admin-meta-tag-ok" : "")));
+    main.appendChild(tags);
+    row.appendChild(main);
+
+    if (canCurate) {
+      const actions = document.createElement("div");
+      actions.className = "admin-meta-row-actions";
+      if (st === "pending") {
+        const promoteBtn = document.createElement("button");
+        promoteBtn.type = "button";
+        promoteBtn.className = "btn-primary admin-meta-edit";
+        promoteBtn.textContent = "승급";
+        promoteBtn.addEventListener("click", () => _glossaryFeedbackAction(it.id, "promote", promoteBtn));
+        actions.appendChild(promoteBtn);
+      }
+      if (st === "pending" || st === "auto_promoted") {
+        const rejectBtn = document.createElement("button");
+        rejectBtn.type = "button";
+        rejectBtn.className = "btn-secondary admin-meta-del";
+        rejectBtn.textContent = (st === "auto_promoted") ? "되돌리기" : "거부";
+        rejectBtn.addEventListener("click", () => _glossaryFeedbackAction(it.id, "reject", rejectBtn));
+        actions.appendChild(rejectBtn);
+      }
+      if (actions.childNodes.length) row.appendChild(actions);
+    }
+    listEl.appendChild(row);
+  }
+}
+
+async function _glossaryFeedbackAction(feedbackId, action, btn) {
+  if (action === "reject" && !window.confirm("이 용어 후보를 거부하시겠습니까?\n자동 등록된 용어라면 용어사전에서 회수됩니다.")) return;
+  if (btn) btn.disabled = true;
+  try {
+    await apiFetch(`/api/admin/metadata/glossary-feedback/${encodeURIComponent(feedbackId)}/${action}`, { method: "POST" });
+    if (typeof showToast === "function") showToast(action === "promote" ? "용어사전에 승급했습니다." : "거부 처리했습니다.");
+    await loadGlossaryFeedback();
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "처리 실패", true);
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ── 유사어/참조 패널 (glossary_relations) ─────────────────────────────────────
+function _metaToggleRelations(it) {
+  const open = String(adminState.metadata.relationsOpenId) === String(it.id);
+  adminState.metadata.relationsOpenId = open ? null : it.id;
+  renderMetadataList();
+}
+
+function _metaBuildRelationsPanel(it) {
+  const panel = document.createElement("div");
+  panel.className = "admin-meta-rel-panel";
+  const head = document.createElement("div");
+  head.className = "admin-meta-rel-head";
+  head.textContent = `"${it.term}" 의 유사어/참조`;
+  panel.appendChild(head);
+  const listWrap = document.createElement("div");
+  listWrap.className = "admin-meta-rel-list";
+  listWrap.textContent = "로딩 중…";
+  panel.appendChild(listWrap);
+
+  // 추가 컨트롤 — 다른 용어 선택 + 관계 유형 + 추가.
+  const addWrap = document.createElement("div");
+  addWrap.className = "admin-meta-rel-add";
+  const otherSel = document.createElement("select");
+  otherSel.className = "admin-meta-scope-select";
+  otherSel.setAttribute("aria-label", "연결할 용어");
+  const others = (adminState.metadata.items || []).filter((x) => String(x.id) !== String(it.id));
+  if (!others.length) {
+    const opt = document.createElement("option");
+    opt.value = ""; opt.textContent = "(연결할 다른 용어 없음)";
+    otherSel.appendChild(opt);
+  } else {
+    for (const o of others) {
+      const opt = document.createElement("option");
+      opt.value = String(o.id);
+      const rk = String(o.role_key || "*");
+      opt.textContent = `${o.term}${rk === "*" ? "" : " (" + _metaRoleLabel(rk) + ")"}`;
+      otherSel.appendChild(opt);
+    }
+  }
+  const typeSel = document.createElement("select");
+  typeSel.className = "admin-meta-scope-select";
+  typeSel.setAttribute("aria-label", "관계 유형");
+  for (const o of [
+    { value: "similar", label: "유사어" },
+    { value: "synonym", label: "동의어" },
+    { value: "see_also", label: "참고" },
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = o.value; opt.textContent = o.label;
+    typeSel.appendChild(opt);
+  }
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "btn-secondary";
+  addBtn.textContent = "연결 추가";
+  addBtn.addEventListener("click", () => {
+    const toId = otherSel.value;
+    if (!toId) { if (typeof showToast === "function") showToast("연결할 용어를 선택하세요.", true); return; }
+    _metaAddRelation(it.id, toId, typeSel.value, listWrap);
+  });
+  addWrap.appendChild(otherSel);
+  addWrap.appendChild(typeSel);
+  addWrap.appendChild(addBtn);
+  panel.appendChild(addWrap);
+
+  _metaLoadRelations(it.id, listWrap);
+  return panel;
+}
+
+const _META_REL_TYPE_LABEL = { similar: "유사어", synonym: "동의어", see_also: "참고" };
+
+async function _metaLoadRelations(termId, listWrap) {
+  listWrap.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "admin-list-empty";
+  loading.textContent = "로딩 중…";
+  listWrap.appendChild(loading);
+  let items = [];
+  try {
+    const data = await apiFetch(`/api/admin/metadata/glossary/${encodeURIComponent(termId)}/relations`);
+    items = (data && data.items) || [];
+  } catch (err) {
+    listWrap.replaceChildren();
+    const e = document.createElement("div");
+    e.className = "admin-list-empty";
+    e.textContent = (err && err.message) || "유사어 조회 실패";
+    listWrap.appendChild(e);
+    return;
+  }
+  listWrap.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-list-empty";
+    empty.textContent = "연결된 유사어가 없습니다.";
+    listWrap.appendChild(empty);
+    return;
+  }
+  for (const rel of items) {
+    const chip = document.createElement("div");
+    chip.className = "admin-meta-rel-item";
+    const label = document.createElement("span");
+    const rk = String(rel.other_role_key || "*");
+    label.textContent = `[${_META_REL_TYPE_LABEL[rel.relation_type] || rel.relation_type}] ${rel.other_term}${rk === "*" ? "" : " (" + _metaRoleLabel(rk) + ")"}`;
+    chip.appendChild(label);
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "btn-secondary admin-meta-del";
+    rm.textContent = "✕";
+    rm.addEventListener("click", () => _metaRemoveRelation(rel.relation_id, termId, listWrap));
+    chip.appendChild(rm);
+    listWrap.appendChild(chip);
+  }
+}
+
+async function _metaAddRelation(termId, toId, relType, listWrap) {
+  try {
+    await apiFetch(`/api/admin/metadata/glossary/${encodeURIComponent(termId)}/relations`, {
+      method: "POST",
+      body: JSON.stringify({ to_id: Number(toId), relation_type: relType }),
+    });
+    if (typeof showToast === "function") showToast("유사어를 연결했습니다.");
+    _metaLoadRelations(termId, listWrap);
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "연결 추가 실패", true);
+  }
+}
+
+async function _metaRemoveRelation(relationId, termId, listWrap) {
+  try {
+    await apiFetch(`/api/admin/metadata/glossary/relations/${encodeURIComponent(relationId)}`, { method: "DELETE" });
+    if (typeof showToast === "function") showToast("연결을 삭제했습니다.");
+    _metaLoadRelations(termId, listWrap);
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "연결 삭제 실패", true);
   }
 }
 
@@ -2906,14 +3961,50 @@ async function _metaDelete(it) {
  *       사람이 description 입력 → 저장 시 tables/columns POST(각 행). 골격은 미영속 — 저장 전까지 DB 무반영.
  * 권한 게이트: kb.ingest.manual(서브뷰가 이미 게이트됨). XSS: 모든 식별자 textContent/value 로만 삽입. */
 
-// 현재 서브탭(tables/columns)에 한해 부트스트랩 패널을 노출. 진입 시 DS 드롭다운 채움.
+// metadata-bs-paging: 페이지당 테이블 블록 수. 대규모 스키마(수백 테이블)에서 접힌 한 줄
+//   헤더라도 전부 렌더하면 pane(overflow-y:auto) 세로가 무한 확장된다. 페이징으로 가시 블록을
+//   한 페이지로 제한해 스크롤 길이를 고정한다(필터와 동일한 display 토글 — DOM 은 전체 보존).
+const META_BS_PAGE_SIZE = 30;
+
+// 현재 서브탭(tables/columns) + kb.ingest.manual 일 때만 부트스트랩 패널을 노출한다.
+// scope-single-ds-ui: 부트스트랩 데이터소스는 상단 스코프(metadataScopeSelect)를 상속한다.
+//   - 공용(common)/미매칭 스코프 → 실제 스키마 없음 → empty-state(#metadataBootstrapEmpty)만 노출.
+//   - 구체 데이터소스 스코프 → 골격 컨트롤(토글+본문) 노출 + 스코프 DS 상속·스키마 목록 로드.
 function _metaSyncBootstrapVisibility() {
   const panel = document.getElementById("metadataBootstrap");
   if (!panel) return;
   const sub = adminState.metadata.subTab;
-  const show = (sub === "tables" || sub === "columns") && can("kb.ingest.manual");
-  panel.style.display = show ? "" : "none";
-  if (show) _metaBootstrapPopulateDs();
+  const applicable = (sub === "tables" || sub === "columns") && can("kb.ingest.manual");
+  panel.style.display = applicable ? "" : "none";
+  if (!applicable) return;
+  const scopeDs = _metaScopeDatasourceKey();  // 공용/미매칭이면 빈 문자열.
+  const head = document.getElementById("metadataBootstrapHead");
+  const body = document.getElementById("metadataBootstrapBody");
+  const empty = document.getElementById("metadataBootstrapEmpty");
+  if (!scopeDs) {
+    // 공용(common) 스코프 — 골격 불가. empty-state 만 노출(토글/본문 숨김).
+    if (empty) empty.style.display = "";
+    if (head) head.style.display = "none";
+    if (body) body.style.display = "none";
+    return;
+  }
+  // 구체 데이터소스 스코프 — 골격 컨트롤 노출. 본문은 접힘 상태(bootstrap.open)를 따른다.
+  if (empty) empty.style.display = "none";
+  if (head) head.style.display = "";
+  if (body) body.style.display = adminState.metadata.bootstrap.open ? "" : "none";
+  // metadata-list-detail: 토글 텍스트/aria 를 open 상태와 동기화(우측 상세 진입 시 펼친 상태 정합).
+  const toggle = document.getElementById("metadataBootstrapToggle");
+  if (toggle) {
+    const open = adminState.metadata.bootstrap.open;
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.textContent = open ? "스키마 골격 가져오기 ▴" : "스키마 골격 가져오기 ▾";
+  }
+  _metaBootstrapSyncToScopeDs(scopeDs);
+  // metadata-bs-inline-desc: tables↔columns 서브탭 전환 시 골격 결과를 현재 mode 로 재렌더한다.
+  // 서브탭 전환 핸들러는 이 함수만 부르고 _metaBootstrapRenderResult 를 호출하지 않으므로, 이미
+  // 가져온 골격(bs.tables)이 있으면 여기서 새 mode 입력 UI 로 교체해야 한다 — 안 그러면 두 mode 의
+  // 행 구조(평면 vs 접힘)·expand-all 가시성이 엇갈린 채 stale 하게 남는다(적대 패널 H4 적발).
+  if (adminState.metadata.bootstrap.tables.length) _metaBootstrapRenderResult();
 }
 
 // 부트스트랩 컨트롤 바인딩(idempotent).
@@ -2930,17 +4021,9 @@ function _metaBindBootstrap() {
       toggle.textContent = open ? "스키마 골격 가져오기 ▴" : "스키마 골격 가져오기 ▾";
     });
   }
-  const dsSel = document.getElementById("metadataBootstrapDs");
-  if (dsSel && !dsSel.dataset.bound) {
-    dsSel.dataset.bound = "1";
-    dsSel.addEventListener("change", () => {
-      adminState.metadata.bootstrap.datasource = dsSel.value || "";
-      adminState.metadata.bootstrap.schema = "";
-      adminState.metadata.bootstrap.tables = [];
-      _metaBootstrapRenderResult();
-      _metaBootstrapLoadSchemas();
-    });
-  }
+  // scope-single-ds-ui: 부트스트랩 전용 데이터소스 selector 폐기 — 데이터소스는 상단 스코프를
+  // 상속한다(_metaBootstrapSyncToScopeDs). 스코프 변경 핸들러(_metaBindControls)와 서브탭/패널
+  // 가시성 동기화(_metaSyncBootstrapVisibility)가 DS 상속·스키마 로드를 담당한다.
   const schemaSel = document.getElementById("metadataBootstrapSchema");
   if (schemaSel && !schemaSel.dataset.bound) {
     schemaSel.dataset.bound = "1";
@@ -2966,35 +4049,54 @@ function _metaBindBootstrap() {
     aiBtn.dataset.bound = "1";
     aiBtn.addEventListener("click", () => _metaBootstrapAiFill(aiBtn));
   }
+  // metadata-bs-collapse: 테이블명 검색 필터. 검색어 변경은 결과 부분집합을 바꾸므로
+  //   metadata-bs-paging: 페이지를 1쪽으로 리셋한 뒤 뷰 재계산.
+  const search = document.getElementById("metadataBootstrapSearch");
+  if (search && !search.dataset.bound) {
+    search.dataset.bound = "1";
+    search.addEventListener("input", () => {
+      adminState.metadata.bootstrap.page = 0;
+      _metaBootstrapApplyFilter();
+    });
+  }
+  // metadata-bs-collapse: 모두 펼치기/접기.
+  const expandAll = document.getElementById("metadataBootstrapExpandAll");
+  if (expandAll && !expandAll.dataset.bound) {
+    expandAll.dataset.bound = "1";
+    expandAll.addEventListener("click", () => _metaBootstrapToggleAll());
+  }
+  // metadata-bs-paging: 이전/다음 페이지. 페이지 변경 후 뷰 재계산 + 결과 상단으로 스크롤.
+  const pagePrev = document.getElementById("metadataBootstrapPagePrev");
+  if (pagePrev && !pagePrev.dataset.bound) {
+    pagePrev.dataset.bound = "1";
+    pagePrev.addEventListener("click", () => _metaBootstrapGoPage(-1));
+  }
+  const pageNext = document.getElementById("metadataBootstrapPageNext");
+  if (pageNext && !pageNext.dataset.bound) {
+    pageNext.dataset.bound = "1";
+    pageNext.addEventListener("click", () => _metaBootstrapGoPage(1));
+  }
 }
 
-// DS 드롭다운 — 등록된 datasource key 목록(common 은 실제 스키마가 없으므로 제외).
-function _metaBootstrapPopulateDs() {
-  const sel = document.getElementById("metadataBootstrapDs");
-  if (!sel) return;
-  const cur = adminState.metadata.bootstrap.datasource || "";
-  const keys = [];
-  for (const ds of (adminState.datasources || [])) {
-    const key = String((ds && ds.key) || "").trim().toLowerCase();
-    if (key) keys.push(key);
-  }
-  sel.replaceChildren();
-  const ph = document.createElement("option");
-  ph.value = "";
-  ph.textContent = "데이터소스 선택…";
-  sel.appendChild(ph);
-  for (const k of keys) {
-    const el = document.createElement("option");
-    el.value = k;
-    el.textContent = k;
-    sel.appendChild(el);
-  }
-  sel.value = keys.includes(cur) ? cur : "";
-  adminState.metadata.bootstrap.datasource = sel.value;
+// scope-single-ds-ui: 부트스트랩 데이터소스를 상단 스코프(metadataScopeSelect)에서 상속한다.
+// 별도 DS selector 가 없으므로, 노트의 데이터소스명(읽기 전용 컨텍스트)을 갱신하고, 스코프 DS 가
+// 바뀐 경우에만 이전 골격/스키마 선택을 리셋한 뒤 새 DS 의 스키마 목록을 로드한다.
+// (구체 데이터소스 스코프에서만 호출됨 — 공용/미매칭은 _metaSyncBootstrapVisibility 가 먼저 차단.)
+function _metaBootstrapSyncToScopeDs(scopeDs) {
+  const ds = String(scopeDs || "").trim().toLowerCase();
+  const dsName = document.getElementById("metadataBootstrapDsName");
+  if (dsName) dsName.textContent = ds || "—";
+  if (ds === (adminState.metadata.bootstrap.datasource || "")) return;  // 변동 없음 — 기존 골격 보존.
+  // 스코프 DS 변경 — 이전 DS 의 골격/스키마는 무효(다른 데이터소스 스키마).
+  adminState.metadata.bootstrap.datasource = ds;
+  adminState.metadata.bootstrap.schema = "";
+  adminState.metadata.bootstrap.tables = [];
   const schemaSel = document.getElementById("metadataBootstrapSchema");
-  if (schemaSel && !sel.value) { schemaSel.disabled = true; schemaSel.replaceChildren(); }
+  if (schemaSel) { schemaSel.disabled = true; schemaSel.replaceChildren(); }
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
   if (fetchBtn) fetchBtn.disabled = true;
+  _metaBootstrapRenderResult();
+  _metaBootstrapLoadSchemas();
 }
 
 function _metaBootstrapStatus(text, isError) {
@@ -3004,23 +4106,43 @@ function _metaBootstrapStatus(text, isError) {
   el.classList.toggle("is-error", Boolean(isError));
 }
 
-// 선택 DS 의 schema 목록 로드 → 스키마 드롭다운 채움.
+// 부트스트랩 unit 라벨 갱신(엔진별) — MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층).
+// metadata-table-desc-fix: MSSQL 은 unit=database 라 라벨/플레이스홀더를 분기해야 사용자 혼동이 없다.
+function _metaBootstrapUnitWord() {
+  return adminState.metadata.bootstrap.unitKind === "database" ? "데이터베이스" : "스키마";
+}
+function _metaBootstrapSetUnitLabel() {
+  const word = _metaBootstrapUnitWord();
+  const lbl = document.getElementById("metadataBootstrapSchemaLabel");
+  if (lbl) lbl.textContent = `${word} *`;
+  const sel = document.getElementById("metadataBootstrapSchema");
+  if (sel) sel.setAttribute("aria-label", `부트스트랩 ${word}`);
+}
+
+// 선택 DS 의 unit(MySQL=schema / MSSQL=database) 목록 로드 → 드롭다운 채움.
 async function _metaBootstrapLoadSchemas() {
   const ds = adminState.metadata.bootstrap.datasource;
   const schemaSel = document.getElementById("metadataBootstrapSchema");
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
   if (schemaSel) { schemaSel.replaceChildren(); schemaSel.disabled = true; }
   if (fetchBtn) fetchBtn.disabled = true;
-  if (!ds) { _metaBootstrapStatus(""); return; }
-  _metaBootstrapStatus("스키마 목록 로딩 중…");
+  if (!ds) { adminState.metadata.bootstrap.unitKind = ""; _metaBootstrapSetUnitLabel(); _metaBootstrapStatus(""); return; }
+  _metaBootstrapStatus("목록 로딩 중…");
   try {
     const data = await apiFetch(`/api/admin/metadata/bootstrap/schemas?datasource=${encodeURIComponent(ds)}`);
+    // scope-single-ds-ui: 스코프가 부트스트랩 DS 를 결정하므로 스코프 빠른 전환 시 본 함수가 연속 발화한다.
+    // await 사이에 DS 가 바뀌었으면 이 응답은 stale — 폐기해 늦게 온 응답이 다른 DS 드롭다운을 덮지 않게 한다.
+    if (adminState.metadata.bootstrap.datasource !== ds) return;
     const schemas = (data && Array.isArray(data.schemas)) ? data.schemas : [];
+    // engine/unit_kind 로 라벨 분기(MSSQL=database). 구버전 백엔드 응답(필드 없음)은 'schema' 로 폴백.
+    adminState.metadata.bootstrap.unitKind = (data && data.unit_kind) || "schema";
     adminState.metadata.bootstrap.schemas = schemas;
+    _metaBootstrapSetUnitLabel();
+    const word = _metaBootstrapUnitWord();
     if (schemaSel) {
       const ph = document.createElement("option");
       ph.value = "";
-      ph.textContent = schemas.length ? "스키마 선택…" : "스키마 없음";
+      ph.textContent = schemas.length ? `${word} 선택…` : `${word} 없음`;
       schemaSel.appendChild(ph);
       for (const s of schemas) {
         const el = document.createElement("option");
@@ -3030,10 +4152,10 @@ async function _metaBootstrapLoadSchemas() {
       }
       schemaSel.disabled = !schemas.length;
     }
-    _metaBootstrapStatus(schemas.length ? `${schemas.length}개 스키마` : "스키마가 없습니다.");
+    _metaBootstrapStatus(schemas.length ? `${schemas.length}개 ${word}` : `${word}가 없습니다.`);
   } catch (err) {
     adminState.metadata.bootstrap.schemas = [];
-    _metaBootstrapStatus((err && err.message) || "스키마 조회 실패", true);
+    _metaBootstrapStatus((err && err.message) || "목록 조회 실패", true);
   }
 }
 
@@ -3041,7 +4163,7 @@ async function _metaBootstrapLoadSchemas() {
 async function _metaBootstrapFetch() {
   const bs = adminState.metadata.bootstrap;
   if (!bs.datasource || !bs.schema) {
-    _metaBootstrapStatus("데이터소스와 스키마를 선택하세요.", true);
+    _metaBootstrapStatus(`데이터소스와 ${_metaBootstrapUnitWord()}를 선택하세요.`, true);
     return;
   }
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
@@ -3069,19 +4191,83 @@ async function _metaBootstrapFetch() {
   }
 }
 
+// metadata-bs-prefill: 기존 저장된 설명을 골격 입력란에 prefill 하기 위한 색인 + 조회 헬퍼.
+// loadMetadata 가 현재 (scope, 서브탭) 기준으로 적재한 adminState.metadata.items 를 색인한다.
+// read 경로(kb_metadata.load_column_descriptions_for_table)와 동일 정규화 — schema 는 대소문자 무관
+// (LOWER) + 빈 schema('') 폴백 — 으로 키잉해, 수동 폼 입력(케이스 임의)·MSSQL 저장 schema_name=DB명
+// (원본 케이스) 비대칭에서도 기존 설명이 매칭된다. table/column 명은 정확매치(read 경로 동일).
+function _metaBootstrapBuildDescIndex(mode) {
+  const idx = new Map();
+  for (const it of (adminState.metadata.items || [])) {
+    const desc = (it && it.description) || "";
+    if (!desc) continue;
+    const sn = String(it.schema_name || "").toLowerCase();
+    const tn = it.table_name || "";
+    const key = mode === "columns" ? JSON.stringify([sn, tn, it.column_name || ""]) : JSON.stringify([sn, tn]);
+    // 정확-schema 항목이 빈-schema 폴백을 이기도록, 동일 키 충돌 시 비어있지 않은 schema 를 우선.
+    if (!idx.has(key) || sn) idx.set(key, desc);
+  }
+  return idx;
+}
+// 골격 행(schemaName/tableName[/colName])에 대응하는 기존 설명을 조회 — 정확 schema 우선, 빈 schema 폴백.
+function _metaBootstrapDescLookup(idx, schemaName, tableName, colName) {
+  const ls = String(schemaName || "").toLowerCase();
+  const exact = colName !== undefined
+    ? idx.get(JSON.stringify([ls, tableName, colName]))
+    : idx.get(JSON.stringify([ls, tableName]));
+  if (exact !== undefined) return exact;
+  const fb = colName !== undefined
+    ? idx.get(JSON.stringify(["", tableName, colName]))
+    : idx.get(JSON.stringify(["", tableName]));
+  return fb !== undefined ? fb : "";
+}
+// metadata-bs-prefill: 골격 DOM 을 다시 그리지 않고(검색어·페이지·펼침 상태 보존) 입력란의 value·
+// dataset.original 만 최신 items 로 갱신한다. loadMetadata(스코프/서브탭 전환·저장 후) 가 호출 —
+// 전체 재렌더(_metaBootstrapRenderResult)는 filterBar 를 리셋해 작업 위치를 잃으므로 in-place 갱신.
+function _metaBootstrapRefreshPrefill() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  const mode = adminState.metadata.subTab === "columns" ? "columns" : "tables";
+  const idx = _metaBootstrapBuildDescIndex(mode);
+  wrap.querySelectorAll(".admin-meta-bs-table").forEach((block) => {
+    const schemaName = block.dataset.schema || "";
+    const tableName = block.dataset.table || "";
+    if (mode === "tables") {
+      const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
+      if (inp) { const v = _metaBootstrapDescLookup(idx, schemaName, tableName); inp.value = v; inp.dataset.original = v; }
+    } else {
+      block.querySelectorAll(".admin-meta-bs-col").forEach((colRow) => {
+        const inp = colRow.querySelector(".admin-meta-bs-desc[data-kind='column']");
+        if (inp) { const v = _metaBootstrapDescLookup(idx, schemaName, tableName, colRow.dataset.column || ""); inp.value = v; inp.dataset.original = v; }
+      });
+    }
+  });
+  _metaBootstrapRefreshAllHints(mode);  // 프로그램적 value 변경 후 힌트(입력상태/채움 수) 동기화
+}
+
 // 골격 결과 렌더 — 현재 서브탭(tables vs columns)에 따라 입력란 형태가 다르다.
 //   tables: 테이블별 설명 1줄.  columns: 테이블 트리 아래 컬럼별 설명.
 // 모든 식별자/타입은 textContent, 입력값은 value(=신규 입력)로만 다룸(XSS 안전).
+// metadata-bs-collapse: 대규모 스키마(수백 테이블·수천 컬럼) 가독성 — 각 테이블을 기본 접힘
+// 한 줄 헤더로 렌더(여백 최소화), 클릭 시 펼쳐 설명/컬럼 입력. 검색 필터·모두 펼치기/접기 동반.
+// 접기·필터는 모두 "시각" 토글(display/class)로만 동작 — 입력값은 DOM 에 보존되어 저장(_metaBootstrapSave)
+// ·AI 일괄생성(_metaBootstrapApplyDescriptions)·apply 로직은 변경 없이 그대로 전체를 수집한다.
 function _metaBootstrapRenderResult() {
   const wrap = document.getElementById("metadataBootstrapResult");
   const saveActions = document.getElementById("metadataBootstrapSaveActions");
+  const filterBar = document.getElementById("metadataBootstrapFilterBar");
+  const pager = document.getElementById("metadataBootstrapPager");  // metadata-bs-paging
   if (!wrap) return;
   wrap.replaceChildren();
   const bs = adminState.metadata.bootstrap;
   const sub = adminState.metadata.subTab;
   const mode = sub === "columns" ? "columns" : "tables";  // 부트스트랩은 tables/columns 서브뷰에서만 노출
+  // metadata-bs-prefill: 기존 저장된 설명 색인(현재 mode 기준). 입력란 생성 시 prefill 에 사용.
+  const _descIndex = _metaBootstrapBuildDescIndex(mode);
   if (bs.loading) {
     if (saveActions) saveActions.style.display = "none";
+    if (filterBar) filterBar.style.display = "none";
+    if (pager) pager.style.display = "none";
     const l = document.createElement("div");
     l.className = "admin-list-empty";
     l.textContent = "로딩 중…";
@@ -3090,44 +4276,85 @@ function _metaBootstrapRenderResult() {
   }
   if (!bs.tables.length) {
     if (saveActions) saveActions.style.display = "none";
+    if (filterBar) filterBar.style.display = "none";
+    if (pager) pager.style.display = "none";
     return;
   }
   for (const t of bs.tables) {
     const schemaName = t.schema_name || bs.schema || "";
     const tableName = t.table_name || "";
+    const fullName = [schemaName, tableName].filter(Boolean).join(".");
     const block = document.createElement("div");
     block.className = "admin-meta-bs-table";
     block.dataset.schema = schemaName;
     block.dataset.table = tableName;
-    const head = document.createElement("div");
-    head.className = "admin-meta-bs-table-head";
-    const name = document.createElement("span");
-    name.className = "admin-meta-bs-table-name";
-    name.textContent = [schemaName, tableName].filter(Boolean).join(".");
-    head.appendChild(name);
-    block.appendChild(head);
     if (mode === "tables") {
-      // 테이블 설명 입력 1줄.
+      // metadata-bs-inline-desc: 테이블 설명은 테이블당 1줄뿐이라 접기/펼치기가 불필요하다.
+      // 행을 평면(flat)으로 두고, 이름↔상태 사이 빈 중앙 여백을 설명 입력란으로 채운다 —
+      // 펼치지 않고 바로 입력(클릭 절감 + 여백 효용화). 입력은 항상 DOM 에 존재(저장·AI fill 전체 수집).
+      block.classList.add("is-flat");
+      const row = document.createElement("div");
+      row.className = "admin-meta-bs-row";
+      const name = document.createElement("span");
+      name.className = "admin-meta-bs-table-name";
+      name.textContent = fullName;
+      name.title = fullName;  // ellipsis 시 전체명 hover 노출
       const inp = document.createElement("input");
       inp.type = "text";
-      inp.className = "admin-meta-input admin-meta-bs-desc";
+      inp.className = "admin-meta-input admin-meta-bs-desc admin-meta-bs-desc-inline";
       inp.placeholder = "테이블 설명 입력…";
       inp.dataset.kind = "table";
-      block.appendChild(inp);
+      // metadata-bs-prefill: 기존 저장된 테이블 설명을 표시. dataset.original 로 원본을 기억해
+      // 저장 시 변경된 행만 POST(미변경 prefill 재저장 안 함 → source provenance 보존).
+      {
+        const _existing = _metaBootstrapDescLookup(_descIndex, schemaName, tableName);
+        inp.value = _existing;
+        inp.dataset.original = _existing;
+      }
+      inp.setAttribute("aria-label", `${fullName} 설명`);
+      inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
+      const hint = document.createElement("span");
+      hint.className = "admin-meta-bs-hint";
+      row.appendChild(name);
+      row.appendChild(inp);
+      row.appendChild(hint);
+      block.appendChild(row);
     } else {
-      // 컬럼별 설명 입력 트리.
+      // columns — 테이블당 컬럼이 여러 개라 접힘 헤더(클릭 토글) + 본문(컬럼별 입력 트리)을 유지.
+      block.classList.add("is-collapsed");  // 기본 접힘
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "admin-meta-bs-table-head";
+      head.setAttribute("aria-expanded", "false");
+      const caret = document.createElement("span");
+      caret.className = "admin-meta-bs-caret";
+      caret.setAttribute("aria-hidden", "true");
+      caret.textContent = "▸";
+      const name = document.createElement("span");
+      name.className = "admin-meta-bs-table-name";
+      name.textContent = fullName;
+      const hint = document.createElement("span");
+      hint.className = "admin-meta-bs-hint";
+      head.appendChild(caret);
+      head.appendChild(name);
+      head.appendChild(hint);
+      head.addEventListener("click", () => _metaBootstrapToggleTable(block));
+      block.appendChild(head);
+      // 본문 — 접힘 시 CSS(.is-collapsed)로 숨김. 입력 요소는 항상 생성(저장·AI fill 이 전체 수집).
+      const body = document.createElement("div");
+      body.className = "admin-meta-bs-body";
       const cols = Array.isArray(t.columns) ? t.columns : [];
       if (!cols.length) {
         const none = document.createElement("div");
         none.className = "admin-meta-bs-col-none";
         none.textContent = "컬럼 없음";
-        block.appendChild(none);
+        body.appendChild(none);
       }
       for (const c of cols) {
         const colName = c.column_name || "";
-        const row = document.createElement("div");
-        row.className = "admin-meta-bs-col";
-        row.dataset.column = colName;
+        const colRow = document.createElement("div");
+        colRow.className = "admin-meta-bs-col";
+        colRow.dataset.column = colName;
         const cn = document.createElement("span");
         cn.className = "admin-meta-bs-col-name";
         cn.textContent = colName;
@@ -3139,17 +4366,166 @@ function _metaBootstrapRenderResult() {
         inp.className = "admin-meta-input admin-meta-bs-desc";
         inp.placeholder = "컬럼 설명 입력…";
         inp.dataset.kind = "column";
-        row.appendChild(cn);
-        row.appendChild(dt);
-        row.appendChild(inp);
-        block.appendChild(row);
+        // metadata-bs-prefill: 기존 저장된 컬럼 설명을 표시(원본 기억 → 변경분만 저장).
+        {
+          const _existing = _metaBootstrapDescLookup(_descIndex, schemaName, tableName, colName);
+          inp.value = _existing;
+          inp.dataset.original = _existing;
+        }
+        inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
+        colRow.appendChild(cn);
+        colRow.appendChild(dt);
+        colRow.appendChild(inp);
+        body.appendChild(colRow);
       }
+      block.appendChild(body);
     }
     wrap.appendChild(block);
+    _metaBootstrapUpdateHint(block, mode);
+  }
+  // 검색/펼치기 바 초기화(매 fetch 마다 검색어·펼침상태·페이지 리셋).
+  if (filterBar) {
+    filterBar.style.display = "";
+    const search = document.getElementById("metadataBootstrapSearch");
+    if (search) search.value = "";
+    bs.page = 0;  // metadata-bs-paging: 새 골격은 항상 1쪽부터.
+    // metadata-bs-inline-desc: tables 모드는 평면 행(펼침 없음)이라 "모두 펼치기/접기" 숨김(columns 전용).
+    const expandAll = document.getElementById("metadataBootstrapExpandAll");
+    if (expandAll) expandAll.style.display = mode === "columns" ? "" : "none";
+    _metaBootstrapSyncExpandAllLabel();  // columns: 전부 접힌 상태 → "모두 펼치기"
+    _metaBootstrapApplyFilter();
   }
   if (saveActions) saveActions.style.display = "";
   const info = document.getElementById("metadataBootstrapSaveInfo");
-  if (info) info.textContent = "설명을 입력한 행만 저장됩니다.";
+  if (info) info.textContent = mode === "columns"
+    ? "기존 설명은 채워져 표시됩니다. 변경·추가한 행만 저장됩니다. (접힌 테이블·다른 페이지의 변경도 저장됩니다)"
+    : "기존 설명은 채워져 표시됩니다. 변경·추가한 행만 저장됩니다. (다른 페이지의 변경도 저장됩니다)";
+}
+
+// 단일 테이블 블록 접기/펼치기 토글.
+function _metaBootstrapToggleTable(block) {
+  if (!block) return;
+  const collapsed = block.classList.toggle("is-collapsed");
+  const head = block.querySelector(".admin-meta-bs-table-head");
+  const caret = block.querySelector(".admin-meta-bs-caret");
+  if (head) head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  if (caret) caret.textContent = collapsed ? "▸" : "▾";
+  _metaBootstrapSyncExpandAllLabel();  // 개별 토글 후 모두펼치기/접기 라벨 DOM 기준 재동기화
+}
+
+// "모두 펼치기/접기" 버튼 라벨을 DOM 상태로 동기화 — 하나라도 접혀 있으면 "모두 펼치기"(다음 클릭=전체 펼침).
+function _metaBootstrapSyncExpandAllLabel() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  const btn = document.getElementById("metadataBootstrapExpandAll");
+  if (!wrap || !btn) return;
+  const anyCollapsed = !!wrap.querySelector(".admin-meta-bs-table.is-collapsed");
+  btn.textContent = anyCollapsed ? "모두 펼치기" : "모두 접기";
+}
+
+// 입력상태 힌트 갱신 — tables: 설명 유무, columns: 채운/전체 컬럼 수.
+function _metaBootstrapUpdateHint(block, mode) {
+  const hint = block && block.querySelector(".admin-meta-bs-hint");
+  if (!hint) return;
+  if (mode === "tables") {
+    const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
+    const has = !!(inp && (inp.value || "").trim());
+    hint.textContent = has ? "● 설명 입력됨" : "○ 비어있음";
+    hint.classList.toggle("is-filled", has);
+  } else {
+    const total = block.querySelectorAll(".admin-meta-bs-col").length;
+    let filled = 0;
+    block.querySelectorAll(".admin-meta-bs-desc[data-kind='column']").forEach((i) => {
+      if ((i.value || "").trim()) filled += 1;
+    });
+    hint.textContent = total ? `컬럼 ${filled}/${total}` : "컬럼 없음";
+    hint.classList.toggle("is-filled", filled > 0);
+  }
+}
+
+// 모든 블록 힌트 일괄 갱신(AI 일괄생성 등 프로그램적 value 설정 후 호출 — input 이벤트 미발생).
+function _metaBootstrapRefreshAllHints(mode) {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  wrap.querySelectorAll(".admin-meta-bs-table").forEach((b) => _metaBootstrapUpdateHint(b, mode));
+}
+
+// 검색 필터 + 페이징(metadata-bs-paging) — 이름 부분일치(대소문자 무시)로 매칭 블록을 추리고,
+// 그중 현재 페이지 윈도우(META_BS_PAGE_SIZE개)만 노출한다. 숨겨도 DOM 보존(저장·AI 일괄은
+// 전체 DOM 수집 — 가시성은 순수 display 토글). 대규모 스키마에서 세로 스크롤을 1페이지로 고정.
+function _metaBootstrapApplyFilter() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  const search = document.getElementById("metadataBootstrapSearch");
+  const count = document.getElementById("metadataBootstrapFilterCount");
+  const q = (search ? search.value : "").trim().toLowerCase();
+  const blocks = wrap.querySelectorAll(".admin-meta-bs-table");
+  const bs = adminState.metadata.bootstrap;
+  // 1) 필터 매칭 — 검색어 부분일치한 블록만 페이징 대상. 비매칭은 즉시 숨김.
+  const matched = [];
+  blocks.forEach((b) => {
+    const nm = [(b.dataset.schema || ""), (b.dataset.table || "")].filter(Boolean).join(".").toLowerCase();
+    if (!q || nm.includes(q)) matched.push(b);
+    else b.style.display = "none";
+  });
+  // 2) 페이지 클램프 — 매칭 수 기준(검색으로 결과가 줄면 현재 페이지가 범위 밖일 수 있음).
+  const total = matched.length;
+  const pageCount = Math.max(1, Math.ceil(total / META_BS_PAGE_SIZE));
+  bs.page = Math.min(Math.max(0, bs.page || 0), pageCount - 1);
+  const start = bs.page * META_BS_PAGE_SIZE;
+  const end = start + META_BS_PAGE_SIZE;
+  // 3) 가시성 — 매칭 블록 중 현재 페이지 윈도우만 노출(display 토글만 — DOM/입력값 보존).
+  matched.forEach((b, i) => { b.style.display = (i >= start && i < end) ? "" : "none"; });
+  // 4) 카운트 라벨 — 페이지 범위 + 전체. 검색 시 매칭/전체 함께 표기.
+  const from = total === 0 ? 0 : start + 1;
+  const to = Math.min(end, total);
+  if (count) {
+    count.textContent = q
+      ? `표시 ${from}–${to} / 검색 ${total}건 (전체 ${blocks.length})`
+      : `표시 ${from}–${to} / 전체 ${total}`;
+  }
+  // 5) 페이저 갱신(페이지 1쪽뿐이면 숨김).
+  _metaBootstrapRenderPager(pageCount);
+}
+
+// metadata-bs-paging: 페이지 이동(delta = -1/+1). 클램프·가시성·페이저 갱신은 ApplyFilter 가 수행.
+function _metaBootstrapGoPage(delta) {
+  const bs = adminState.metadata.bootstrap;
+  bs.page = (bs.page || 0) + delta;
+  _metaBootstrapApplyFilter();
+  // 페이지 전환 시 결과 영역 상단으로 — 긴 목록에서 위치 감 유지.
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (wrap && typeof wrap.scrollIntoView === "function") wrap.scrollIntoView({ block: "nearest" });
+}
+
+// metadata-bs-paging: 페이저 컨트롤 갱신 — 라벨/이전·다음 disabled. 1페이지뿐이면 바 자체 숨김.
+function _metaBootstrapRenderPager(pageCount) {
+  const bar = document.getElementById("metadataBootstrapPager");
+  if (!bar) return;
+  const bs = adminState.metadata.bootstrap;
+  if (!pageCount || pageCount <= 1) { bar.style.display = "none"; return; }
+  bar.style.display = "";
+  const label = document.getElementById("metadataBootstrapPageLabel");
+  if (label) label.textContent = `페이지 ${bs.page + 1} / ${pageCount}`;
+  const prev = document.getElementById("metadataBootstrapPagePrev");
+  const next = document.getElementById("metadataBootstrapPageNext");
+  if (prev) prev.disabled = bs.page <= 0;
+  if (next) next.disabled = bs.page >= pageCount - 1;
+}
+
+// 모두 펼치기 ↔ 모두 접기 토글.
+function _metaBootstrapToggleAll() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  // 하나라도 접혀 있으면 모두 펼침, 전부 펼쳐져 있으면 모두 접음(DOM 기준 — 상태 desync 없음).
+  const expand = !!wrap.querySelector(".admin-meta-bs-table.is-collapsed");
+  wrap.querySelectorAll(".admin-meta-bs-table").forEach((block) => {
+    block.classList.toggle("is-collapsed", !expand);
+    const head = block.querySelector(".admin-meta-bs-table-head");
+    const caret = block.querySelector(".admin-meta-bs-caret");
+    if (head) head.setAttribute("aria-expanded", expand ? "true" : "false");
+    if (caret) caret.textContent = expand ? "▾" : "▸";
+  });
+  _metaBootstrapSyncExpandAllLabel();
 }
 
 // 부트스트랩 저장 — 설명이 입력된 행만 tables/columns POST(각 행). scope = 현재 메타데이터 scope.
@@ -3168,12 +4544,16 @@ async function _metaBootstrapSave() {
     if (mode === "tables") {
       const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
       const desc = inp ? (inp.value || "").trim() : "";
-      if (desc) rows.push({ schema_name: schemaName, table_name: tableName, description: desc });
+      // metadata-bs-prefill: 변경된(또는 새로 입력한) 행만 저장 — prefill 된 기존 설명을
+      // 손대지 않았으면 재저장하지 않아 source(manual 등) provenance 를 보존한다.
+      const orig = inp ? (inp.dataset.original || "") : "";
+      if (desc && desc !== orig) rows.push({ schema_name: schemaName, table_name: tableName, description: desc });
     } else {
       block.querySelectorAll(".admin-meta-bs-col").forEach((colRow) => {
         const inp = colRow.querySelector(".admin-meta-bs-desc[data-kind='column']");
         const desc = inp ? (inp.value || "").trim() : "";
-        if (desc) {
+        const orig = inp ? (inp.dataset.original || "") : "";
+        if (desc && desc !== orig) {
           rows.push({
             schema_name: schemaName, table_name: tableName,
             column_name: colRow.dataset.column || "", description: desc,
@@ -3183,7 +4563,7 @@ async function _metaBootstrapSave() {
     }
   });
   if (!rows.length) {
-    if (typeof showToast === "function") showToast("설명을 입력한 행이 없습니다.", true);
+    if (typeof showToast === "function") showToast("저장할 변경(새 입력 또는 수정)이 없습니다.", true);
     return;
   }
   const saveBtn = document.getElementById("metadataBootstrapSaveBtn");
@@ -3211,12 +4591,10 @@ async function _metaBootstrapSave() {
   if (typeof showToast === "function") {
     showToast(fail ? `저장 ${ok}건 성공, ${fail}건 실패` : `${ok}건 저장했습니다.`, fail > 0);
   }
-  // 저장된 행은 입력란 비움(중복 저장 방지).
+  // metadata-bs-prefill: 저장 후 목록 + items 갱신 → (부트스트랩 모드면) loadMetadata 가 골격 입력란을
+  // 갱신된 설명으로 재prefill 한다(방금 저장분 포함, dataset.original 도 최신값으로 재설정 → 중복 저장 방지).
   if (ok > 0) {
-    wrap.querySelectorAll(".admin-meta-bs-desc").forEach((inp) => {
-      if ((inp.value || "").trim()) inp.value = "";
-    });
-    await loadMetadata();  // 목록 갱신
+    await loadMetadata();
   }
 }
 
@@ -3290,6 +4668,8 @@ async function _metaBootstrapAiFill(btn) {
     btn.disabled = false;
     btn.textContent = origLabel;
     if (saveBtn) saveBtn.disabled = false;
+    // metadata-bs-collapse: 프로그램적 value 설정 후 접힌 헤더 힌트(설명 유무/채움 수) 갱신.
+    _metaBootstrapRefreshAllHints(mode);
   }
 }
 

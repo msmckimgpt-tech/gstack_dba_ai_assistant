@@ -9,6 +9,125 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260630T174000-metadata-bs-prefill (TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill, Minor §12.3 — feature-0003 프론트 단독, 비파괴)
+- Date: 2026-06-30 (worktree ai/claude/feature-0003-metadata-bs-prefill, base dcb3e02).
+- 요청: 관리콘솔 > 메타데이터 > 테이블 설명/컬럼 설명 — "스키마 골격을 가져왔을 때 기존에 입력된 정보가 확인되지 않음".
+- 근본원인: 백엔드 `/api/admin/metadata/bootstrap`(`admin_bootstrap`)은 설계상 골격(이름·타입)만 반환·설명 미영속(주석 "UI 가 빈칸 prefill")인데, 프론트 `_metaBootstrapRenderResult` 가 `adminState.metadata.items`(저장된 설명) 매칭 prefill 을 구현하지 않아 골격 import 시 항상 빈칸.
+- 변경(`src/static/admin.js`):
+  - 색인/조회 헬퍼 신설 — `_metaBootstrapBuildDescIndex(mode)`(items 를 `(schema,table[,column])` 키로 색인; schema 소문자화 + 정확-schema 우선) + `_metaBootstrapDescLookup(idx, schemaName, tableName[, colName])`(정확-schema 시도 후 빈-schema 폴백). read 경로 `kb_metadata.load_column_descriptions_for_table`(`LOWER(schema_name)=LOWER() OR schema_name=''`)와 동일 정규화 → 수동 폼 입력(임의 케이스)·MSSQL 저장 schema_name=DB명(원본 케이스)·레거시 빈-schema 저장분도 매칭.
+  - `_metaBootstrapRenderResult`: 입력란 생성 시 헬퍼로 prefill(`inp.value`) + `inp.dataset.original` 원본 기록(테이블·컬럼 양 분기).
+  - `_metaBootstrapRefreshPrefill` 신설(in-place): 골격 DOM 재생성 없이 입력란 `value`·`dataset.original`·hint 만 최신 items 로 갱신 → 검색어·페이지·펼침 등 작업 위치 보존.
+  - `loadMetadata`: items 적재 후 부트스트랩 모드(골격 존재)면 `_metaBootstrapRefreshPrefill` 호출(전체 재렌더 아님).
+  - `_metaBootstrapSave`: `desc && desc !== inp.dataset.original` 인 행만 POST(미변경 prefill 재저장 안 함 → `source` provenance 보존). post-save 는 `await loadMetadata()` 로 재prefill(저장분 반영·original 최신화 → 중복 저장 차단). 기존 "빈칸 비우기 루프" 폐기. save-info 안내문 갱신.
+- 변경(`src/static/admin.html`): cache-buster lockstep bump `admin.js`·`styles.css` `?v=20260630-metadata-list-detail → 20260630-metadata-bs-prefill`.
+- 불변식: `.admin-meta-bs-desc[data-kind=...]` 셀렉터·골격 수집 구조·AI 일괄생성(빈 칸만 채움)·백엔드 계약(`/api/admin/metadata/bootstrap*`·tables/columns POST) 전부 불변. prefill 은 `inp.value`(DOM 프로퍼티) 주입 — XSS 무첨가.
+- Impact: 비파괴, 순수 프론트. 데이터/스키마/RBAC/백엔드/엔드포인트/마이그 0 변경. 저장 측은 변경분만 → 기존 manual source 보존(prefill 추가가 유발할 manual→bootstrap 덮어쓰기 회귀 동반 차단).
+- Verification: `node --check` PASS · admin.js NUL 0 · 신규 `verify_metadata_bs_prefill.mjs` 44/44(케이스 무관·빈-schema 폴백·정확 우선·변경감지·in-place 검색보존) + 인접 inline-desc 30·list-detail 33·paging 32·scope-single-ds 15 회귀 0. §18.8 적대 패널 8-가설 FIX-THEN-SHIP → H2(상태 리셋)·H3(키 케이스) 수정 → 재검 SHIP. REV-20260630T174000-metadata-bs-prefill.
+- Rollback: 색인/조회/refresh 헬퍼 제거 + `_metaBootstrapRenderResult` prefill·dataset.original 제거 + `_metaBootstrapSave` 변경감지 환원(전 행 저장) + loadMetadata 재prefill 제거 + cache-buster 환원.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). 백엔드/마이그 무관.
+- Files: `src/static/admin.js`, `src/static/admin.html`, `tests/verify_metadata_bs_prefill.mjs`(신규), `docs/{TASK,FUNCTION,REPORT,MODIFY,REVIEW}.md`.
+
+## CHG-20260630T100000-doc-sync-rn-0630 (TASK-20260630T100000-doc-sync-rn-0630 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 기존 '2026-06-29' 블록에 doc_sync 6항목 추가(최종 11항목 — landing 중 origin/main 공유 2항목 합류분 보존) — [new work] 관계를 그림(다이어그램)으로 답변(feature-0013) · [improved admin] 스키마 골격 화면 접기·검색·페이지 정리 · [improved admin] 용어사전 역할 선택 단일화 · [improved work] 공유 대화 화면 보기 개선 · [fixed work] 새 대화 중복 표시 수정 · [fixed work] diff 답변 줄번호 수정 (기존: 용어 자율등록·검토 큐·답변 평가·공유 링크 참여 허용/유지 보존). `generated` 2026-06-29→2026-06-30.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629b-rn-0629`→`?v=20260630-rn-0630`.
+- Verification: `node --check release-notes-data.js` PASS + vm 로드 generated=2026-06-30·06-29 블록 11항목 확인 + 스키마(type/area/title/detail) 정합 + 신규 user-facing 머지 consolidate 대조.
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·테이블/함수명·마이그 번호·엔드포인트·cache-buster 내부 슬러그 비노출. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki)는 별도 commit.
+
+## CHG-20260629T181648-point-scroll-easeoutexpo (TASK-20260629T181648-point-scroll-easeoutexpo — 공유 대화 뷰 우측 스크롤바 가이드 뱃지(point rail) 추가 + 가이드 뱃지 클릭 스크롤 단축·EaseOutExpo, Minor §12.3 — frontend 표현계층)
+- Date: 2026-06-29 (worktree ai/claude/share-scroll-guide-badge, base 60c0d45).
+- 요청: 공유 기능으로 전달한 대화에도 우측 스크롤바 대화 가이드 뱃지 UI 구성 + 가이드 뱃지 클릭 시 소요시간 단축 + Easing 을 EaseOutExpo 로.
+- 변경(`src/static/app.js`, 메인 뷰): rail dot 클릭 핸들러가 native `scrollIntoView({behavior:'smooth',block:'center'})` 대신 `scrollMessagePointIntoCenter(target)` 호출. 신규 헬퍼 `POINT_SCROLL_DURATION_MS=280`·`_easeOutExpo(t)=t>=1?1:1-2^(-10t)`·`_animatePointScroll(setter,from,to)`(rAF 보간, reduced-motion·performance.now 부재 폴백)·`scrollMessagePointIntoCenter`(messageLogEl 중앙 정렬 목표 scrollTop 계산+clamp). 기존 `renderMessagePointRail`/`layoutMessagePointRail`/`highlightActivePoint` 보존. rail dot 외 scrollIntoView(검색결과 5037·캘린더 9439·드롭다운 9629/9639) 무변경.
+- 변경(`src/static/share.js`, 공유 뷰): `render()` 가 `renderMessage(msg, idx)` 로 idx 전달 + `setupSharePointRail(messages)` 호출. `renderMessage` 가 `row.id=share-msg-${idx}`·`dataset.idx` 부여. 신규 rail 로직 `setupSharePointRail`(렌더+scroll/resize/ResizeObserver/load 리스너 1회 부착, rAF 스로틀)·`renderSharePointRail`(dot=`<button.share-point-dot.is-{role}>`, ≤1개 hidden)·`layoutSharePointRail`(문서좌표 비율 top%)·`highlightSharePoint`(뷰포트 중앙 최근접 `is-active`)·`scrollShareMessageIntoCenter`(`shareEaseOutExpo`+`SHARE_POINT_SCROLL_DURATION_MS=280`, `window.scrollTo` 보간, reduced-motion 폴백).
+- 변경(`src/static/share.html`): `<main id="shareMessages">` 직후 `<nav id="sharePointRail" class="share-point-rail hidden">` 추가. cache-buster `share.css`/`share.js` `?v=20260629-share-mermaid → 20260629-share-scroll-guide`.
+- 변경(`src/static/share.css`): `.share-point-rail`(position:fixed 우측 미니맵, `pointer-events:none`)·`.share-point-dot`(`pointer-events:auto`, is-user/is-assistant/is-active/hover)·`@media(max-width:720px)` 숨김·`@media(prefers-reduced-motion)` transition 제거 추가.
+- 변경(`src/static/index.html`): app.js cache-buster `?v=20260629d-new-conv-dedup → 20260629-point-scroll-easeoutexpo`.
+- Impact: 비파괴, 순수 표현계층. 데이터/스키마/RBAC/백엔드/엔드포인트 0 변경. 공유 뷰는 anonymous 노출면이나 dot.title/aria-label 은 `.title`/`setAttribute`(DOM API)로 XSS 무첨가. reduced-motion·모바일 가드.
+- Rollback: app.js 클릭 핸들러를 `scrollIntoView` 로 환원 + 신규 헬퍼 제거 / share.* 의 rail 추가분 제거 + cache-buster 환원.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Deploy & live-verify (2026-06-29): commit f9954cf → origin/main drift(251df5f, diff-lineno-leak PR#467) rebase 3931fa3(cache-buster 충돌 2건 → 결합 신규 토큰 `20260629f-…` 해소) → ff-merge + push origin main(`251df5f..3931fa3`). 직후 feature-0013-mermaid PR#468 머지로 origin/main `8f0a025`(내 3931fa3 조상 포함 확인). web 이미지 재빌드(GIT_COMMIT 주입)·repo-web-1 recreate → **서빙본 검증 PASS**: healthz `git_commit=8f0a025`·mysql/pg ok / 서빙 index.html `app.js?v=20260629f-point-scroll-easeoutexpo`·share.html `share.js?v=20260629f-share-scroll-guide`·`share.css?v=20260629-share-scroll-guide` / 서빙 app.js EaseOutExpo 심볼 6·share.js rail 심볼 6·share.css rail 스타일 10 존재. worktree/branch cleanup 완료. **PB-0008 Windows 브라우저 시각검증은 잔여**(메인/공유 양 뷰 rail 표시·클릭 단축·EaseOutExpo). F0 repo-immutability escape(worktree finalize 완료, post-deploy doc-only).
+- Files: feature-0003 `src/static/{app.js,index.html,share.html,share.js,share.css}` · `docs/{FUNCTION,TASK,MODIFY,REVIEW,TEST,REPORT}.md` · `docs/STATUS.md`.
+- Cross-ref: 기존 메인 rail REQ-20260515-0006(TASK-0061 Phase 4) · 공유 뷰 mermaid 반응형 REQ-20260629T143914-share-mermaid-responsive.
+
+## CHG-20260629T170913-glossary-role-fieldname-fix (TASK-20260629T170913-glossary-role-fieldname-fix — 용어사전 역할 드롭다운/라벨이 실제 역할 미표시하던 필드명 버그 수정, Minor §12.3 — 프런트 전용)
+- Date: 2026-06-29 (worktree ai/claude/glossary-role-fieldname-fix, base 54dbfe3).
+- 근본원인: `/api/admin/roles` 정본 직렬화 role 객체는 `{id,key,name,permission_codes,...}`. glossary 의 `_metaPopulateRoleFilter`/`_metaRoleLabel` 이 `adminState.roles` 를 `.role_key`/`.role_name`(미존재)로 읽어 → 필터는 전 역할 스킵(`if(!rk) continue`), 라벨은 미매칭 raw key. 역할 관리·계정 화면은 `.key`/`.name`(정본)이라 정상이었고 glossary 만 회귀. role.read 권한 게이트와 무관(현 admin 계정 보유, API 200·8역할 반환 확인).
+- 변경(`src/static/admin.js`): `_metaRoleLabel` find 키 `x.role_key→x.key`·반환 `r.role_name→r.name`; `_metaPopulateRoleFilter` `r.role_key→r.key`·`r.role_name→r.name`(총 4 참조, 주석으로 근본원인 명기).
+- 변경(`src/static/admin.html`): admin.js cache-buster `?v=20260629-glossary-role-single-ui → ?v=20260629-glossary-role-fieldname-fix`.
+- Impact: 비파괴. 단일 진실원 헬퍼 수정으로 역할 필터 드롭다운(실제 8역할 노출)·등록 대상 역할 배지·용어 태그·유사어/관계 라벨이 친화 역할명 표기. 데이터/스키마/RBAC/백엔드 0.
+- Rollback: admin.js 4 참조를 role_key/role_name 으로 환원 + cache-buster 복원.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Deploy & live-verify (2026-06-29): commit 90ab783 → base drift(main 8383652) 흡수 병합 a5fea6f(REPORT.md union — fieldname-fix 엔트리 + main flexclip 완료본) → PR #466(CI test pass) 머지(main f021f3d) → worktree/branch cleanup → web 이미지 재빌드·repo-web-1 recreate. **PB-0008 재검증 PASS**(실 Windows Chrome): healthz git_commit=f021f3d·mysql/pg ok / 새 admin.js `?v=…-fieldname-fix` 로드 / 메타데이터>용어사전 역할 드롭다운 옵션 **2→10**(실제 8역할 Pending·일반 사용자·Admin·DBA·관리자·서버·웹플랫폼·사업팀 노출, 증적 artifacts/pb0008-glossary-role-dropdown-after.png). F0 repo-immutability escape(worktree finalize 완료, post-deploy doc-only).
+- Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
+- Cross-ref: TASK-20260629T141637-glossary-role-single-ui(역할 단일 컨텍스트 도입 — 본 fix 가 그 드롭다운을 실제 동작시킴) · 정본 role 직렬화 `.key/.name`(admin.js 역할 관리·계정 화면).
+
+## CHG-20260629-metadata-bs-flexclip (TASK-20260629-metadata-bs-flexclip — 메타데이터 부트스트랩 결과 패널 flex-shrink 클리핑 수정 + cache-buster bump, Minor §12.3, feature-0003)
+- Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-flex-clip-fix, base origin/main dad75c3).
+- 트리거: resume — `테이블 설명 AI 자동완성 및 UI 버그 수정`(원본 metadata-table-desc-fix/metadata-bs-collapse) PB-0008 실 Windows 브라우저 시각검증 중 적발한 추가 UI 버그. 메타데이터 > 테이블 설명 부트스트랩 골격이 다수 테이블일 때 결과 패널이 ~1행만 보이고 **pane 스크롤도 안 되어** 나머지 테이블 확인 불가.
+- 근본원인: `.admin-pane[data-admin-pane="metadata"]` 는 `display:flex; flex-direction:column; flex:1 1 auto; min-height:0; overflow-y:auto`(고정 height 컨테이너). 그 flex 자식 `.admin-meta-bootstrap` 은 `overflow:hidden`(둥근모서리 클립)이라 flex 의 `min-height:auto` 가 0 으로 계산 → 결과가 많을 때 `flex-shrink:1`(기본)로 90px 까지 압축되고 자기 `overflow:hidden` 으로 내부 클립. 동시에 형제들이 압축되어 pane scrollHeight==clientHeight → pane 스크롤바 미발생. 직전 metadata-table-desc-fix 의 `.admin-meta-bootstrap-result { max-height: 460px }` 제거는 옳았으나 flex-shrink 경로가 별도 클리핑을 유발(headless Playwright 는 max-height:none 만 확인해 놓침 → PB-0008 실브라우저가 적발).
+- 수정: `static/styles.css` `.admin-meta-bootstrap` 에 `flex-shrink: 0;` 추가(주석으로 근본원인 명기) → 부트스트랩 섹션이 자연높이 보존, pane 의 `overflow-y:auto` 가 스크롤 담당. `static/admin.html`·`static/index.html` 의 `styles.css?v=` cache-buster `20260629-metadata-bs-collapse → 20260629-metadata-bs-flexclip`(CSS 전용 변경 전파 — admin.js 미변경이라 `admin.js?v=` 유지).
+- 영향 파일: `static/styles.css`(+6/−0, flex-shrink:0 + 주석), `static/admin.html`(cache-buster 1), `static/index.html`(cache-buster 1). 백엔드/route/RBAC/스키마/마이그/JS 로직 0.
+- 라이브 검증(PB-0008): fix 주입 시 paneScrollHeight 684→2364(스크롤 발생), 17개 테이블(MSSQL `mssql-qa-idc`/`Account` 실테이블 `tblAccount` 등) 전부 표시. 배포 후 cache-buster·healthz 확인은 REPORT/TEST §3.
+- REV-20260629T165743-metadata-bs-flexclip.
+
+## CHG-20260629-metadata-bs-collapse (TASK-20260629-metadata-bs-collapse — 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + cache-buster bump, Major §12.3, feature-0003)
+- Date: 2026-06-29 (worktree ai/claude/metadata-bootstrap-collapse-search, base origin/main 3dfe81c).
+- 사용자 보고(metadata-bootstrap-mssql-db 배포 후속): 스키마 골격 가져온 뒤 (1) 테이블 펼침 시 패널 내부 UI 가 여전히 잘려 각 테이블 확인 불가, (2) 테이블 다수일 때 여백 과다.
+- 진단: (1) 잘림은 직전 metadata-bootstrap-mssql-db 가 `styles.css` 의 `.admin-meta-bootstrap-result` 460px 캡을 제거·서버 배포까지 했으나 `admin.html` 의 `styles.css?v=`/`admin.js?v=` cache-buster 미bump → 브라우저가 stale CSS(캡 생존) 를 계속 로드(서버 반영, 미전파). (2) 부트스트랩 결과가 수백 테이블을 전부 펼쳐 평면 렌더.
+- 변경(파일):
+  - `static/admin.html`: `styles.css?v=`·`admin.js?v=` → `?v=20260629-metadata-bs-collapse`; status~result 사이 검색 필터바(`#metadataBootstrapFilterBar`: 검색 input `#metadataBootstrapSearch` + 카운트 `#metadataBootstrapFilterCount` + 모두펼치기/접기 `#metadataBootstrapExpandAll`).
+  - `static/index.html`: `styles.css?v=` → `?v=20260629-metadata-bs-collapse`(공유 CSS 전파).
+  - `static/admin.js`: `_metaBootstrapRenderResult` 재작성 — 테이블별 기본 접힘 한 줄 헤더(button: caret+이름+입력상태 힌트), 본문을 `.admin-meta-bs-body` 로 감쌈. 신규 `_metaBootstrapToggleTable`·`_metaBootstrapUpdateHint`·`_metaBootstrapRefreshAllHints`·`_metaBootstrapApplyFilter`·`_metaBootstrapToggleAll`·`_metaBootstrapSyncExpandAllLabel`. `_metaBindBootstrap` 에 검색·모두펼치기 idempotent 바인딩. `_metaBootstrapAiFill` finally 에 hint 일괄 갱신.
+  - `static/styles.css`: `.admin-meta-bs-filterbar`/`-search`/`-filter-count`/`-expandall`, 접기 헤더(button, hover/focus-visible)·`.admin-meta-bs-caret`·`.admin-meta-bs-hint`(`.is-filled`)·`.admin-meta-bs-body`(`.is-collapsed` 시 display:none), 결과 gap 10→4px 조밀화. max-height 캡 미재도입(metadata-table-desc-fix 보존).
+- 안전 불변: 접기·필터는 시각 토글(class/`display`)만 → 입력값 DOM 보존. 저장(`_metaBootstrapSave`)·AI 일괄생성(`_metaBootstrapApplyDescriptions`)이 descendant 셀렉터라 접힌/필터된 입력까지 전체 수집(회귀 0).
+- 비변경: 백엔드/route/엔드포인트/스키마/RBAC/마이그 0. feature-0003 단독(cross-feature 없음).
+- 검증: node --check PASS. §18.8 적대 frontend 패널(value-loss·state-machine·XSS·AI-fill·binding·edge·max-height) BLOCKER 0·diff CLEAN, MINOR(모두펼치기 라벨 desync) 수정 흡수. REV-20260629T142631-metadata-bs-collapse.
+
+## CHG-20260629T041724-doc-sync-rn-0629 (TASK-20260629T041724-doc-sync-rn-0629 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- Date: 2026-06-29 (`/_dqa:doc_sync` 무인 스케줄, worktree ai/claude/doc-sync-20260629-130501).
+- 배경: 직전 릴리즈노트 sync(63874f2 @ 06-29 08:35) 이후 main 병합된 06-29 user-facing 변경(40c0de0 용어사전 대화 자율등록 · 284e75a 용어 검토 큐 중첩 · 31aa67a+8c605b8 답변 평가 고유성)이 릴리즈노트 미반영(drift).
+- 내용:
+  - `static/release-notes-data.js`: releases head 에 신규 '2026-06-29' 블록 prepend(3항목) — [new admin] 대화 내용 바탕 업무 용어 자동 제안·검토 후 등록(역할별 구분·비슷한 용어 연결) · [improved admin] 용어 검토 큐를 용어사전 화면 안의 보기 탭으로 이동 · [fixed work] 답변 평가가 새로고침·대화 전환 후에도 답변마다 한 번만 남도록 정리(평가 변경 가능). generated 2026-06-29 유지.
+  - `static/index.html`·`static/admin.html`: 릴리즈노트 cache-buster `?v=20260629-rn-0629`→`?v=20260629b-rn-0629`. app.js/styles.css 토큰 무변경.
+- 제외 결정(적대): 첨부 wrong-bubble(ec39a60)은 "정상 display 경로 동작 동일"(스키마/마이그·프론트 무변경, 드문 cross-space 엣지) → 사용자 체감 변화 0 이라 릴리즈노트 항목 미추가.
+- Why: 현실↔릴리즈노트 정합(사용자 노출 표면 최신화). 평이한 한국어·내부 비노출. 원천 코드(40c0de0/284e75a/31aa67a)는 별도 cycle 에서 이미 배포·검증됨 — 릴리즈노트 announcement 만 누락분.
+- Verification: `node --check release-notes-data.js` PASS + 항목 스키마(type/area/title/detail) 정합 + releases head '2026-06-29' 블록 3항목 + 머지 3건 1:1 대조.
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- Rollback: '2026-06-29' 블록 + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
+- Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.
+
+## CHG-20260629T120711-attach-id-space (TASK-20260629T120711-attach-id-space — 첨부 영속 레이어에 message_id_space 추가, H5(b) follow-up 완결, Major §12.3 — feature-0003 단독, 스키마 마이그 없음)
+- Date: 2026-06-29. 선행 CHG-20260629T022055-feedback-id-space(피드백 레이어 H5(b) 해소)가 "잔여 — 별도 feature"로 명시한 **첨부 영속 레이어**(`_load_assistant_attachments_by_message`, message.id 키)를 동일 패턴으로 마저 완수. 사용자 요청("동일한 message.id 키를 쓰는 첨부 영속 레이어의 같은 이슈를 마저 처리"). 코드 계층만 변경 — DB 스키마/마이그 없음(MetaJson JSON 키로 id_space 보존).
+- 변경 파일:
+  - `src/app.py` `_materialize_assistant_attachment_edits`: 새 첨부 버전 row 의 MetaJson 에 `"message_id_space": "display"` 추가. message_id 은 `_load_latest_assistant_message`(표시 store 전용)에서만 와 항상 display 공간이라는 불변식을 영속화.
+  - `src/app.py` `_load_assistant_attachments_by_message`: 반환 키를 `message_id` → `(message_id, message_id_space)` 복합 키로. MetaJson 의 `message_id_space`(없으면 'display' — legacy 행 하위호환) 읽어 그룹핑. 반환 타입 `dict[int, …]` → `dict[tuple, …]`.
+  - `src/app.py` `_attach_assistant_attachments`: history 메시지의 `(id, id_space)`(미설정 시 'display') 복합 키로 매칭 — `_attach_user_feedback` 와 대칭. core 공간 메시지가 같은 숫자 id 의 display 첨부를 잘못 집어가는 wrong-bubble 차단.
+  - `tests/test_task0285_attach_surfacing.py`: A1/A2/L1/L2 를 복합 키 shape 로 갱신 + A3(cross-space wrong-bubble 차단)·L4(core/display 분리 + legacy 'display' 간주) 회귀 테스트 신규. 헬퍼 `_att_row(space=…)` 추가.
+- 비변경: 프론트(renderMessages 는 서버가 채운 `_attachments` 만 렌더)·share 경로·cache-buster·DB 스키마 0. 정상 display 경로 동작 동일(하위호환).
+- 검증: 대상 테스트 11/11(A1~A3·L1~L4·V1·V2·S1·S2), `make test` 전체 스위트 exit=0(두 feature 회귀 0)·ruff 통과·py_compile.
+- Cross-ref: 선행 CHG/REV-20260629T022055-feedback-id-space(피드백 레이어, H5(b) 출처) / REV-20260629T120711-attach-id-space.
+## CHG-20260629-glossary-review-nest (TASK-20260629-glossary-review-nest — 용어 검토 큐 IA 중첩, Minor §12.3, 프런트 전용)
+- Date: 2026-06-29. 검토 큐를 메타데이터 최상위 서브탭 → 용어사전 하위 2차 보기 탭으로 이동(IA). 백엔드/route/엔드포인트 무변경.
+- admin.html: `data-meta-subtab="glossary-review"` 버튼 제거 + 용어사전 하위 `#metadataGlossaryViews` strip(`.admin-meta-gview`: data-glossary-view="list"|"review") + 배지 이전.
+- admin.js: 상태 `glossaryView`; 헬퍼 `_metaIsGlossaryReview`/`_metaSubtabVisible`(용어사전 OR(ingest.manual, glossary.curate))/`_GLOSSARY_VIEW_PERM`/`_metaSyncGlossaryViews`(보기 권한 게이트+보정+aria-selected); `_metaBindControls` gview 바인딩; `_metaRenderForm`/`loadMetadata`/`_metaSyncToolbarVisibility` 를 새 보기 모델로; **`ADMIN_TAB_PERMISSIONS.metadata` 에 `kb.glossary.curate` 추가**(적대 리뷰 MAJOR — curate-only 부모 탭 진입 보존); 메타 탭 재진입 분기에 `_metaSyncGlossaryViews`+`_metaPrimeReviewBadge`.
+- styles.css: `.admin-meta-glossary-views`/`.admin-meta-gview` 필 스타일. FUNCTION.md IA 기술 갱신.
+- 검증: node --check PASS, 잔여 functional glossary-review 참조 0, 적대 검증 3 lens(BLOCKER 0, MAJOR 1 수정). Cross-ref: REV-20260629T120000-glossary-review-nest / TASK-20260629-glossary-conv-autoreg(선행).
+- **배포 정합(cache-buster)**: admin.html 의 `admin.js`/`styles.css` 참조 `?v=20260625-role-account-prompt-autogen` → `?v=20260629-glossary-review-nest` bump. 정적 자산 전파의 유일 메커니즘(웹 재빌드만으론 브라우저 캐시 미갱신). **부수 효과**: 직전 glossary-conv-autoreg cycle 이 admin.js/styles.css 를 변경하고도 `?v=` 를 bump 하지 않아 캐시 보유 관리자에게 미전파였던 갭도 본 bump 로 함께 해소(직전 + 본 cycle UI 동시 propagate).
+
+## CHG-20260629T022055-feedback-id-space (TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 id_space 추가, H5(b) follow-up, Major §12.3 — cross-feature 0002+0003)
+- Date: 2026-06-29. 선행 CHG-20260629T014345-feedback-unique-vote 의 적대 리뷰가 수용·문서화한 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)은 feature-0002(마이그 0022 + sample_feedback.py) — 본 항목은 feature-0003 web 층.
+- 변경(feature-0003):
+  - `src/app.py` `/api/history` 4개 메시지 빌더에 `m["id_space"]` 노출 — `_get_agent_core_history`(PG·MySQL)="core", `_get_history`(PG·MySQL display)="display".
+  - `src/app.py` `_load_user_feedback_by_message`/`_attach_user_feedback`: 반환·매칭 키를 int(message_id) → **(message_id, id_space) 복합 키**로 확장(cross-space wrong-bubble 복원 차단).
+  - `src/app.py` `post_sample_feedback`: body `message_id_space`("display"|"core") 파싱·정규화 후 `record_feedback(message_id_space=…)` 전달.
+  - `src/static/app.js` `_buildSampleFeedbackControls`: `message.id_space` 읽어 POST body 에 `message_id_space` 포함(기본 "display").
+  - `src/static/index.html`: app.js cache-buster `?v=20260629-feedback-unique-vote` → `?v=20260629b-feedback-id-space`.
+  - `tests/test_sample_feedback_curation.py`: 요청에 message_id_space="core" 추가 + 코어 전달 단언.
+- 비변경: 재투표 변경 허용·"샘플 등록" 분리·rate-limit·RBAC·audit·CSS 0.
+- 검증: curation 15/15 · node --check · py_compile · 두 feature 전체 회귀 0.
+- Cross-ref: feature-0002 CHG-20260629T022055-feedback-id-space / 마이그 0022 / REV-20260629T022055-feedback-id-space.
+
 ## CHG-20260629T014345-feedback-unique-vote (TASK-20260629T014345-feedback-unique-vote — 답변당 사용자별 고유 피드백(👍/👎) 강제, Major §12.3 — cross-feature 0002+0003)
 - Date: 2026-06-29. 사용자 보고(새로고침·대화 전환 후 같은 답변에 피드백 재부여 가능)의 수정. 정본 데이터 계층 변경(테이블 컬럼·UNIQUE 인덱스·코어 UPSERT)은 feature-0002(마이그 0021 + sample_feedback.py) — 본 항목은 feature-0003 web 층 변경(endpoint·history·UI·CSS) 기록.
 - 변경(feature-0003):
@@ -21,6 +140,12 @@ source_of_truth: true
 - 비변경: RBAC(대화 접근 게이트)·rate-limit(10/min)·audit(sample.feedback.submit)·scope 도출·승급/거부 endpoint 무변경. 엔드포인트 shape 는 body 에 optional `message_id` 추가뿐(하위호환 — 부재 시 기존 동작).
 - 검증: curation 15/15 PASS · `node --check app.js` · `py_compile app.py` PASS · 두 feature 전체 스위트 회귀 0.
 - Cross-ref: feature-0002 CHG-20260629T014345-feedback-unique-vote / REV-20260629T014345-feedback-unique-vote / MIGRATIONS 0021.
+## CHG-20260629-glossary-conv-autoreg (TASK-20260629-glossary-conv-autoreg — 용어사전 대화 자율등록 web/UI, Major §12.3, cross-cut 0002+0003)
+- Date: 2026-06-29. 「관리 콘솔 > 메타데이터 > 용어사전」의 대화 자율등록·역할 분리·유사어 참조 web 경계 + 관리 UI. 코어/마이그/hook = feature-0002 동반 CHG.
+- app.py: ① glossary CRUD 에 role_key(공용 '*' 기본) 검증·필터 추가 + UNIQUE(scope,role,term) 409. ② 신규 권한 `kb.glossary.curate`(group=kb, admin seed). ③ 검토 큐 3 엔드포인트(`GET …/glossary-feedback`·`POST …/{id}/promote`·`POST …/{id}/reject`). ④ 유사어 3 엔드포인트(`GET/POST …/glossary/{id}/relations`·`DELETE …/glossary/relations/{id}`). audit: glossary.feedback.promote/reject·glossary.relation.create/delete.
+- admin.html/admin.js/styles.css: glossary 폼 역할 select·목록 역할/출처 배지·툴바 역할 필터·검토 큐 서브탭(pending 배지·승급/되돌리기)·용어별 유사어 패널. XSS=textContent/value.
+- route_snapshot_p5b.json: 신규 6 라우트 반영(golden 갱신). 테스트: 신규 `test_metadata_glossary_autoreg.py` 13 + 기존 metadata 회귀 갱신.
+- Cross-ref: feature-0002 CHG-20260629-glossary-conv-autoreg / REV-20260629T103000-glossary-conv-autoreg / ADR-20260629T101500.
 
 ## CHG-20260626T135945-ask-dedup-hotfix (TASK-20260626-ask-dedup-idempotency — 동일 cycle 라이브 PG 회귀 hotfix, Major §12.3, 정본 코드=feature-0002 ask_jobs.py)
 - Date: 2026-06-26. CHG-20260626-ask-dedup-idempotency 배포 검증 중 적발된 라이브 회귀의 즉시 수정. 정본 코드 변경은 feature-0002 ask_jobs.py(전용 파라미터 분리) — 본 항목은 feature-0003 동반 기록(REPORT/TASK/REVIEW 갱신).
@@ -4896,3 +5021,184 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
 - Rollback: 06-26 블록 fixed 항목 + summary + generated + cache-buster 2줄 revert. 비파괴 — 백엔드/스키마/마이그 영향 0.
 - Deploy: web 재빌드(static baked, deploy_scope: included) — 릴리즈노트 콘텐츠+cache-buster 전파. landing/deploy 는 cron wrapper 소관.
+
+## CHG-20260629T114221-metadata-bootstrap-mssql-db (TASK-20260629T114221-metadata-bootstrap-mssql-db — 메타데이터 부트스트랩 MSSQL database 차원 + 패널 잘림 + describe_table 오버레이 정합, **Major §12.3** — cross-engine 골격 introspection, cross-feature 0003 주관·0002 read 정합)
+- Date: 2026-06-29 (`/_template:entry` arg-given → 원본 세션 문서 갱신 중 중단 → `/_template:resume` 로 재개·완수). worktree `ai/claude/metadata-table-desc-fix`.
+- Reason: 사용자 보고 — 관리 콘솔 > 메타데이터 > 테이블/컬럼 설명에서 (1) 테이블 설명도 AI 자동완성, (2) 테이블 명칭이 모두 올바르지 않은 값, (3) 패널 내부 공간 미확장으로 UI 잘림(컬럼 설명 탭 동일). 진단: AI 자동완성은 기구현(REQ-20260624-metadata-ai-autocomplete)이나 MSSQL 골격이 깨져 grounding 무력화. 근본=`admin_bootstrap`/`_metadata_introspect_table` 가 `database=None` 연결 → shared/db.py `_connect_mssql` 보안 기본값(중립 tempdb)에 붙어 임시테이블(`#…`) 노출 + 스키마 드롭다운이 고정 역할 스키마로 오염.
+- 변경(feature-0003 `src/app.py`):
+  - `admin_bootstrap_schemas`: 엔진 분기 — MSSQL=`list_server_databases`(system_databases 제외, unit_kind=database), MySQL=`load_known_schemas`(`_BOOTSTRAP_MYSQL_SYS_SCHEMAS`+`__invalid_default_db__` 센티넬 제외, unit_kind=schema). 응답에 engine·unit_kind 추가.
+  - `admin_bootstrap`: MSSQL 은 schema 파라미터=database, 시스템 DB 제외 allowlist 멤버십 검증 후 `_db.connect(database=safe_schema)` 연결 → 신규 `_bootstrap_collect_skeleton_mssql`(비시스템 SQL 스키마 평탄수집, 저장 schema_name=database, 동명 dedupe, cap 500/200). MySQL 기존 경로 유지.
+  - `_metadata_introspect_table`(단건 suggest grounding): 동일 엔진 분기 — MSSQL schema_name=database 로 연결·grounding(이전 tempdb 검증 실패→ungrounded 해소).
+  - `_BOOTSTRAP_MYSQL_SYS_SCHEMAS` 상수 추가. 식별자 SQLi: database/SQL스키마/table 전부 `_safe_ident` + allowlist 멤버십 통과 후에만 dialect f-string 도달.
+- 변경(프론트 `src/static/admin.js`·`admin.html`): `_metaBootstrapLoadSchemas` 가 `unit_kind` 로 라벨/플레이스홀더/상태문구 분기(MySQL='스키마'/MSSQL='데이터베이스'), `_metaBootstrapUnitWord`/`_metaBootstrapSetUnitLabel` 헬퍼, `metadataBootstrapSchemaLabel` id. 응답 누락 시 'schema' 폴백.
+- 변경(`src/static/styles.css`): `.admin-meta-bootstrap-result` 의 `max-height:460px; overflow:auto` 제거 — metadata pane(AC-0622 overflow-y:auto)과의 이중 스크롤(내부 460px 갇힘)이 "패널 내부 잘림"(테이블·컬럼 공통)의 원인. pane 단일 스크롤로 통일.
+- 변경(cross-feature, feature-0002 — §18.8 panel 적발 MAJOR + 재검증 BLOCKING 수정, Path A): describe_table 도구가 부트스트랩한 MSSQL 컬럼 설명을 보여주도록 read 축 정합. (a) `src/modules/tools.py` `_tool_describe_table`: KB 오버레이 조회 키를 MSSQL 일 때 SQL 스키마(dbo, 도구 인자)가 아니라 `get_active_default_db()`(pin 된 primary DB명)로 변경 → 부트스트랩 저장 규약(`column_descriptions.schema_name=database`)과 매칭. (b) `src/modules/kb_metadata.py` `load_column_descriptions_for_table`: schema 매칭을 case-insensitive(`LOWER(schema_name)=LOWER(%s)`)로 — 저장값은 원본 케이스(GunzGame)인데 read 키 `get_active_default_db()`는 소문자 정규화(gunzgame)라 PG `=`(case-sensitive)로 대문자 포함 DB명이 0행이 되던 회귀(panel 2차 BLOCKING) 해소. 이 함수는 describe_table 오버레이 전용. 이전엔 'dbo' vs 'GunzGame' 축 불일치로 부트스트랩 컬럼 설명이 describe_table 출력에 영영 미주입(질문-시점 grounding Path B 는 schema 무관 정상). MySQL 무변경.
+- 설계 결정(사용자 AskUserQuestion 2건): ① MSSQL 4계층(server>db>schema>table)을 3-키 (scope_key, schema_name, table_name)에 매핑 시 **schema_name=database 명**(MySQL schema==DB 와 일관, read 라벨 의미있음, 마이그레이션 0). ② describe_table 오버레이 정합(Path A)을 본 cycle 에 포함(후속 분리 대신).
+- 검증: py_compile(app.py·tools.py·kb_metadata.py) PASS · node --check(admin.js) PASS · 라이브 introspection 직호출(GunzGame 88 실테이블·temp 0)·실 HTTPS API(curl: schemas/bootstrap/suggest 정상)·Playwright eval(라벨 '데이터베이스'·129 DB·maxHeight none·88테이블·스크린샷). §18.8 적대 2-lens panel(보안 VERDICT SAFE / 정합성: Path A MAJOR 적발→fix→2차 BLOCKING(case) 적발→case-insensitive fix→3차 재검증).
+- Files: feature-0003 `src/app.py`·`src/static/{admin.js,admin.html,styles.css}`·`docs/{TASK,REPORT,REVIEW,MODIFY,FUNCTION,TEST}.md` / feature-0002 `src/modules/{tools.py,kb_metadata.py}`·`docs/MODIFY.md` / `docs/STATUS.md` · `wiki/{Log,hot}.md`.
+- Rollback: app.py 엔진분기·신규 함수·상수 revert(MySQL 경로 무영향) + admin.* 라벨분기 revert + styles.css max-height 1줄 복원 + tools.py 오버레이 키 1블록 + kb_metadata.py LOWER 매칭 revert. 데이터/스키마/마이그/RBAC 변경 0(런타임 introspection·read 키만).
+- Deploy: web + ask-worker(tools.py·kb_metadata.py 변경) 재빌드(deploy_scope: included).
+- Cross-ref: REQ/REV/TASK-20260629T114221-metadata-bootstrap-mssql-db / 정본 shared/db.py `_connect_mssql`(tempdb 고정, TASK-0213) · feature-0002 dialects.py(system_databases/system_schemas) · config.py `get_active_default_db`(소문자 정규화).
+
+## CHG-20260629T141637-glossary-role-single-ui (TASK-20260629T141637-glossary-role-single-ui — 메타데이터 용어사전 역할 선택 UI 단일화 + 등록 mis-scope 가드, Minor §12.3 — 프런트 전용, RBAC/스키마/백엔드 무변경)
+- Date: 2026-06-29 (resume — 원본 용어사전 대화 자율등록/검토 큐 중첩 배포본의 후속 결함 2건). worktree `ai/claude/glossary-role-single-ui`(base 3dfe81c).
+- 배경: 배포본의 메타데이터 > 용어사전에 역할 선택 UI 2곳(툴바 역할 필터 + 등록 폼 역할 select)이 공존해 사용자가 각 동작을 식별하기 어려움. 사용자 결정 = "단일 역할 컨텍스트"(툴바 하나가 목록 필터 + 신규 등록 대상을 함께 결정).
+- 변경(`src/static/admin.js`): ① `_METADATA_FIELDS.glossary` 의 `role_key`(roleselect) 폼 필드 제거 + 죽은 roleselect 렌더 블록·미사용 `_metaRoleOptions()` 제거. ② 신규 헬퍼 `_metaGlossaryTargetRole(editing)` — 등록/수정 대상 role_key 단일 진실원(생성=툴바 컨텍스트, 전체 역할 ""→공용 '*'; 수정=대상 용어 기존 role_key 보존, legacy null→'*'). ③ `_metaRenderForm` 에 읽기전용 '등록 대상 역할' 배지(id `metadataRoleContextBadge`)+노트(id `metadataRoleContextNote`). ④ `_metaUpdateGlossaryRoleBadge()` — 폼 재렌더(입력 소실) 없이 배지/노트만 동기화. ⑤ 툴바 `metadataRoleFilter` change 핸들러가 배지 동기화 호출. ⑥ `_metaSubmitForm` payload.role_key 를 헬퍼로 주입 + 성공 토스트에 대상 역할 표기.
+- 변경(`src/static/admin.html`): 역할 필터 `<label>`/`<select>` 의 aria-label·title 을 "목록 필터 + 신규 용어 등록 대상 역할"로 명확화 + admin.js cache-buster `?v=20260629-glossary-review-nest` → `?v=20260629-glossary-role-single-ui`.
+- §18.8 적대 패널(2-lens) BLOCKING 2 흡수 후 재검증(VERDICT 클린): **F2** 등록/수정 성공 토스트 역할 표기(mis-scope 사후 인지) · **F5** 툴바 역할 변경 시 배지 stale 해소(표시값=실제 등록값, 입력 보존 확인). NIT 흡수: F1(‘전체 역할’ 보기 생성 시 공용 귀속 노트) · 로직 중복 헬퍼 일원화. 재검증 잔여 NIT 2(도달불가 dead-guard·라벨 미세 표기차)는 무해로 수용(REVIEW 기록).
+- 비변경: 백엔드 라우트/검증·RBAC·DB 스키마/마이그·목록 역할 배지·유사어 패널·검토 큐 IA. **알려진 trade-off(F3)**: 폼 역할 select 제거로 기존 용어의 역할 이동(공용↔역할) 직접 편집 UI 소실(백엔드 PUT 은 계속 지원, glossary_relations 는 term id 종속이라 재등록 경로에선 미승계). 의도적 수용 — 사용자 표면화, 이동 필요 시 후속 전용 affordance.
+- 검증: node --check(admin.js) PASS · §18.8 적대 패널 + BLOCKING 수정 재검증(클린) · Windows 브라우저(PB-0008) 라이브 렌더 · web 재배포 후 cache-buster·healthz.
+- Rollback: admin.js 의 헬퍼·배지·토스트·payload 주입 revert + `_METADATA_FIELDS.glossary` 의 role_key roleselect 필드·렌더 블록·`_metaRoleOptions` 복원 + admin.html aria/title·cache-buster 복원. 데이터/스키마/RBAC 변경 0.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). ask-worker 무관(프런트 전용).
+- Deploy & live-verify (2026-06-29, resume cycle-finalize): base drift(main 7-behind) 흡수 병합 38da578 → PR #465(CI test success) 머지(main 4f3d22c) → worktree/branch cleanup → **web 이미지만** 재빌드(e045ef4)·repo-web-1 recreate. 검증: healthz git_commit=4f3d22c·mysql/pg ok / baked+라이브 HTTPS serve `admin.js?v=20260629-glossary-role-single-ui` / baked admin.js `_metaGlossaryTargetRole` 존재. PB-0008 실 Windows 브라우저 시각검증은 admin 인증 화면이라 사용자 확인 권장(metadata-bootstrap precedent 동일). F0 repo-immutability escape(worktree finalize 완료, 357bf9f 동일 패턴 — post-deploy doc-only).
+- Files: feature-0003 `src/static/{admin.js,admin.html}` · `docs/{TASK,REPORT,REVIEW,MODIFY}.md` · `docs/STATUS.md`.
+- Cross-ref: 원본 TASK-20260629-glossary-conv-autoreg(역할 분리 코어) · TASK-20260629-glossary-review-nest(검토 큐 중첩) · 결함② role.read 권한 부여(코드 외, app.py:20402 게이트).
+## CHG-20260629T143914-share-mermaid-responsive (TASK-20260629T143914-share-mermaid-responsive — 공유 대화 뷰 mermaid 렌더 + 전체 폭 반응형, Minor §12.3 — frontend render/CSS, anonymous 공유 노출면)
+- Date: 2026-06-29
+- Related Requirement: 사용자 요청(2026-06-29, feature-0013 후속) — ① 공유 대화에서도 flowchart(mermaid) 정상 렌더, ② 공유대화 고정폭(960px)→브라우저 전체 폭 반응형(넓은 답변 대응).
+- Summary: feature-0013 의 mermaid 렌더를 익명 공유 대화 뷰에도 적용 + 공유 페이지 폭을 전체 폭 반응형으로.
+- Files:
+  - `src/static/mermaid-render.js` (신규) — mermaid 헬퍼 4종(enhanceMermaidBlocks/ensureMermaidInit/renderMermaidDiagrams/mermaidFallback)을 app.js 에서 **verbatim 추출**. 메인 UI(index.html/app.js)와 공유 뷰(share.html/share.js)의 단일 소스 — 특히 `securityLevel:'strict'` init 을 한 곳에만 둬 두 뷰 XSS posture 일원화.
+  - `src/static/app.js` — 위 4함수 정의 제거(호출부 markdownToHtml·renderMessageContent 는 전역 함수로 유지) + 두 호출부에 `typeof` 가드(mermaid-render.js 미로드 방어 — NIT-1, share.js 와 동일 패턴). cache-buster `20260629b-feedback-id-space`→`20260629c-share-mermaid`.
+  - `src/static/index.html` — mermaid-render.js 로드 추가(`mermaid.min.js → mermaid-render.js → app.js` 순).
+  - `src/static/share.html` — `mermaid.min.js` + `mermaid-render.js` 로드 + share.css/share.js cache-buster `20260623-share-join`→`20260629-share-mermaid`.
+  - `src/static/share.js` — `renderMarkdownContent` 에 `enhanceMermaidBlocks`(sanitize 이전) + `renderMermaidDiagrams`(innerHTML 이후) 연결. 미로드 시 `typeof` 가드 폴백(원문 코드블록 유지).
+  - `src/static/share.css` — `.share-container` `max-width:960px`→`100%`(전체 폭 반응형, `padding: 24px clamp(16px,4vw,48px) 80px`) + `.share-message-content .mermaid-*` 컨테이너 규칙(styles.css 동형, share 토큰).
+- Impact: 비파괴. DOMPurify 설정 무변경(전역 setConfig/addHook 없음, 무인자 sanitize) — XSS posture 메인과 동일. mermaid `securityLevel:'strict'` 단일 init(`_mermaidInited` 단일 전역). 넓은 요소(표/pre/mermaid)는 `overflow-x:auto` 로 컨테이너 내 스크롤(레이아웃 무파손).
+- 적대 검증(§18.8 SUBAGENT security+correctness): **no BLOCKING** — 추출 byte-identical·로드 순서·fallback·반응형·회귀 전 항목 SAFE. NIT-1 적용, NIT-2 defer.
+- Follow-up (NIT-2, 비-blocking): 공유 뷰가 다이어그램 없어도 3.3MB `mermaid.min.js` 로드(메인 UI 동일 패턴) — `language-mermaid` 존재 시 lazy-load 최적화 여지.
+- Rollback: share.html 의 mermaid 2 script 제거 + share.js enhance/render 호출 제거 + share.css `max-width:960px` 복원. mermaid-render.js 는 메인 UI 가 계속 사용(유지).
+- Deploy & live-verify (2026-06-29): commit cbd54f4 → main 통합(충돌 0) → PR #464 머지(main 37d58cc) → **web 이미지만** 재빌드·재기동(frontend-only, backend/스키마/migrate 무관, deploy_scope: included). 서버 서빙 확인(share.html: mermaid.min+mermaid-render+share.js?v=…-share-mermaid / index.html app.js?v=20260629c). **PB-0008 실 Windows Chrome**: 메인 뷰 flowchart SVG 무회귀(7501) + 공유 뷰 flowchart SVG(7637)·`.share-container` maxWidth=100% 전체 폭. healthz ok. 증적 `artifacts/pb0008-share-mermaid-responsive.png`.
+
+## CHG-20260629T144600-share-mermaid-responsive-deploy-record (TASK-20260629T143914-share-mermaid-responsive — 배포 완료 docs 기록, doc-only)
+- Date: 2026-06-29
+- Summary: PR #464 머지 후 web 재배포 + PB-0008 검증 결과를 TASK/MODIFY/REVIEW 에 기록(배포-후 docs, 코드 무변경). F0 repo-immutability escape(worktree finalize 완료, f7dcb07 동일 패턴).
+- Files: `docs/{TASK,MODIFY,REVIEW}.md`.
+- Cross-ref: CHG-20260629T143914-share-mermaid-responsive(Deploy & live-verify) / REV-20260629T144600-share-mermaid-responsive-deploy.
+
+## CHG-20260629T080500-new-conv-dedup (TASK-20260629T080500-new-conv-dedup — 새 대화 첫 전송 시 사이드바 대화 중복 제거, Minor §12.3 — frontend-only, backend/스키마/RBAC 무변경)
+- Date: 2026-06-29
+- Summary: "새 대화"에서 첫 요청 전송 시 좌측 사이드바에 in-flight placeholder(메시지 제목)와 optimistic 대화 항목('새 대화')이 동시 렌더돼 같은 대화가 2개로 보이던 중복을, optimistic 등재 전에 placeholder 를 원자적으로 제거하고 등재 키를 `title`→`topic` 으로 바로잡아 단일 항목으로 일원화.
+- Root cause: `sendPrompt`(app.js) lazy-create early-cid 성공 경로가 실 cid 대화 항목을 `state.conversations` 에 unshift+render 하면서도 in-flight placeholder(`pendingConversationEntries[busyKey]`)를 `/api/ask` 응답(8421)까지 제거하지 않음 → early-cid 발급~응답 도착(실 LLM 응답 시간) 동안 placeholder + optimistic 항목 동시 표시. + optimistic 항목이 `buildCompactItem` 미인식 `title` 키로 등재돼 폴백 "새 대화" 로 표시(중복의 '새 대화' 출처). 다른 정리 경로(fallback·422·취소·실패)는 placeholder 를 delete 했으나 early-cid 성공 경로만 누락.
+- Files:
+  - `src/static/app.js` — (1) early-cid 발급 블록: optimistic unshift 전 `pendingConversationEntries.delete(busyKey)` 추가 + `title`→`topic` + `renderConversationList()` 를 find-guard 밖으로. (2) `/api/ask` 응답 fallback 블록: 동일 정합(8421 delete 멱등 보존). (3) 파일 첨부 lazy-create 경로(~7337) optimistic 등재 `title: "(파일 첨부 중)"`→`topic:`.
+  - `src/static/index.html` — app.js cache-buster `?v=20260629c-share-mermaid`→`?v=20260629d-new-conv-dedup`(정적 자산 전파).
+  - `tests/verify_new_conv_dedup.mjs` — 신규 회귀 가드(정적 불변식 + jsdom 실 `renderConversationList` 행위, 18 단언).
+- Impact: 비파괴. backend/스키마/마이그/RBAC/credential 무변경. placeholder→실 항목 원자적 교체라 클릭 진입·진행상황 폴링은 실 cid 항목이 승계(activeConversationId=earlyCid, is-active 전이). closure-mismatch(send 도중 다른 새 대화 이동)는 가드 밖 8421 delete 가 그대로 정리.
+- Rollback: app.js 3개 hunk 의 `delete(busyKey)`/`topic` 복원 + render 를 find-guard 안으로 + index.html cache-buster 복원.
+
+## CHG-20260629T172122-diff-lineno-prefix-leak (TASK-20260629T172122-diff-lineno-prefix-leak — ```diff 답변의 누출된 `<N>→` 줄번호 prefix 정규화, Minor §12.3 — frontend render-only, backend/스키마/RBAC/LLM 경로 무변경)
+- Date: 2026-06-29
+- Origin: `/_dqa:conversation_audit` (대화 마찰 진단·수정·출하). 마찰 = `FR-diff-lineno-prefix-leak`(FRICTION_LEDGER). 진단 대화 `…356708b8`(topic "계정 연동 및 보상 일괄 수령 쿼리 구성"), assistant msg id 4058. 사용자 명시 보고: "diff 포맷 답변에서 비정상 line 표현".
+- Summary: assistant 가 ```diff 코드블록 context 줄에 `45→\t…` 같은 줄번호+화살표 prefix 를 그대로 흘려보내면 웹 렌더러가 이를 코드 본문으로 표시해 줄 표현이 깨지던 것을, 렌더 시 누출 prefix(`^\s*\d+→`)를 떼고 떼어낸 실제 소스 줄번호로 gutter 를 동기화하도록 정규화.
+- Root cause: agent_core `_number_file_lines`(feature-0002, TASK-0256e)가 첨부 본문 각 줄에 `<N>→` 줄번호 prefix 를 주입(모델이 실제 줄 인용·`@@` 헌크 작성용). 프롬프트(agent_core.py:770-778)가 "diff 안에 `<N>→` 금지"를 지시하나 **모델이 가끔 context 줄에 그대로 복사**(변경줄만 표준 `+`/`-`). 웹 렌더러 `buildDiffRows`(app.js·share.js)가 누출 prefix 를 정규화하지 않아 `diffLineClass`→diff-ctx·`stripDiffMarker` 미스트립 → `45→` 가 코드로 렌더(+ gutter 는 1-based 별도 계산). 레이어 L1↔L6(프롬프트 vs 모델 준수)가 L7(렌더러)에서 표면화. 재발경로=model limit → **렌더러를 결정론적 최후 방어선으로 봉인**(모델이 또 누출해도 매번 차단·기존 저장 메시지도 render-time 에 정상화).
+- Files:
+  - `src/static/app.js` — `buildDiffRows` context 분기에 누출 정규화: `/^\s*(\d+)→/` 매칭 시 prefix 제거 + 떼어낸 줄번호로 oldNo/newNo 동기화.
+  - `src/static/share.js` — 동일 로직(공유 대화 뷰도 같은 `buildDiffRows` 복제본 보유 — diff 렌더는 app.js·share.js 이원화, mermaid 만 공용 추출됨).
+  - `tests/verify_diff_lineno_leak.mjs` — 신규 회귀 가드(30 단언, Node18 순수): 실 누출 블록 정규화·실 줄번호 복원·clean diff(@@/1-based) 무변경·app.js↔share.js 정합.
+- Impact: 비파괴. backend/스키마/마이그/RBAC/credential/LLM 경로 무변경. clean diff 는 정규식 미매칭 → 무변경(blast radius 0, 테스트로 증명). +/- 변경줄 미관여(누출은 verbatim context 줄에서만 발생). 누출 형식이 매우 구체적(자릿수+U+2192)이라 오매칭 시에도 손실은 gutter 숫자 cosmetic(코드/복사 무손상).
+- 분리 표기(§정직): 코드/테스트로 "렌더러가 누출 prefix 를 떼고 정상 diff 를 만든다" 증명됨. "실제 사용자 화면에서 소멸" 은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Deferred(cross-ref, 이번 batch 제외): agent_core 프롬프트 강화(feature-0002, Major·core LLM 경로)는 단일-feature 응집·저위험 유지를 위해 별도. 렌더러 봉인이 누출을 비가시화하므로 우선순위 낮음.
+- Rollback: app.js·share.js `buildDiffRows` 의 `leakedNo` 분기 제거(기존 단일 `return ... stripDiffMarker(line)` 복원) + `tests/verify_diff_lineno_leak.mjs` 삭제.
+
+## CHG-20260629T172122-diff-lineno-prefix-leak-deploy (TASK-20260629T172122-diff-lineno-prefix-leak — landing + web 재배포 + 라이브 검증, 코드 무변경 / post-deploy doc-record)
+- Date: 2026-06-29
+- Origin: `/_template:resume` — 원본 `/_dqa:conversation_audit` 세션이 commit `d75152f` 직후 session-limit 으로 중단된 작업을 추적·재개해 landing+배포 완수.
+- Summary: 코드/스키마 무변경. CHG-20260629T172122-diff-lineno-prefix-leak 의 landing(push·PR·merge)·배포·라이브 검증만 기록.
+- git 흐름: commit `d75152f` push → PR #467 → `cycle-finalize --pr 467`(gh pr merge --merge, main `60c0d45`→`5942a25`, clean FF·충돌 0, worktree+local+remote 브랜치 정리).
+- Deploy (deploy_scope: included): frontend-only → **web 이미지만** 재빌드(`make dc-build SERVICE=web` GIT_COMMIT=`5942a25` 각인)·재기동(`docker compose up -d --no-deps --force-recreate web`, override HTTPS 종단 유지). backend/ask-worker 무변경 → 미재빌드.
+- 라이브 검증: `GET /healthz`(HTTPS) git_commit=`5942a25`(live, baseline `f021f3d`→`5942a25`)·repo-web-1 healthy. 서빙 `index.html` `app.js?v=20260629e-diff-lineno-leak`. 서빙 `app.js` **byte-identical** to main(`diff -q` IDENTICAL — fix live). 단위 테스트 30/30 PASS.
+- Impact: 비파괴(doc-record). 사용자 화면 실 소멸 시각검증(PB-0008 Windows-browser)은 WSL 미실행 — 사용자 확인 권장.
+- Rollback: 해당 없음(doc-only). 배포 롤백 시 이전 web 이미지로 재기동.
+
+## CHG-20260629T184726-metadata-bs-paging (TASK-20260629T184726-metadata-bs-paging — 스키마 골격 가져오기 결과 페이지네이션 + 여백 압축, Minor §12.3 — frontend render-only, backend/스키마/RBAC/LLM 경로 무변경)
+- Date: 2026-06-29
+- Origin: `/_template:entry` arg-given. 사용자 보고("테이블 설명 AI 자동완성 및 UI 버그 수정" 작업 중): 관리 콘솔 > 메타데이터 > 테이블 설명 > "스키마 골격 가져오기" — ① 테이블 多 시 세로 스크롤 과길이(페이징 필요) ② 여백 과다.
+- Summary: 부트스트랩 골격 결과를 페이지(30개/쪽)로 분할해 대규모 스키마에서도 pane 세로 스크롤을 1페이지로 고정. 검색 필터와 합성(필터된 부분집합 위에서 페이징). 결과 행/컨트롤 영역 여백 압축.
+- Root cause: 직전 `metadata-bs-collapse`(접힘 헤더+검색+모두펼치기) + `metadata-table-desc-fix`(내부 max-height 스크롤 박스 제거 → pane `overflow-y:auto` 위임)로 결과가 **테이블 수에 비례해 무한 세로 확장**. 접힌 한 줄 헤더라도 수백 개면 스크롤 과길이 — 페이징 레이어 부재가 근본. (내부 max-height 재도입은 그 fix 가 적발한 이중 스크롤/잘림 회귀를 되살리므로 금지 → 페이징이 올바른 대체.)
+- Files:
+  - `src/static/admin.js` — 상수 `META_BS_PAGE_SIZE=30`; `adminState.metadata.bootstrap.page` 상태. `_metaBootstrapApplyFilter` 재작성(필터 매칭 부분집합 → 현재 페이지 윈도우만 `display` 노출 + 카운트 라벨 페이지 범위화 + `_metaBootstrapRenderPager` 호출). 신규 `_metaBootstrapGoPage`(delta 이동·클램프 위임·scrollIntoView)·`_metaBootstrapRenderPager`(라벨/이전·다음 disabled, 1페이지뿐이면 바 숨김). `_metaBindBootstrap` 에 prev/next 바인딩 + 검색 input 에 page=0 리셋. `_metaBootstrapRenderResult` 가 fetch마다 page=0 리셋 + loading/빈 결과 분기에서 페이저 숨김.
+  - `src/static/styles.css` — 컨트롤 영역(note/controls/status) 세로 여백 축소, 결과 gap `4px→3px`, 헤더 padding `8px 12px→6px 10px`, 본문 `0 12px 10px→0 10px 8px`, 컬럼 행 `4px 0→3px 0`. 페이저 스타일 `.admin-meta-bs-pager`/`.admin-meta-bs-page-btn`(disabled opacity)/`.admin-meta-bs-page-label` 신설.
+  - `src/static/admin.html` — 결과 div↔저장 액션 사이에 `metadataBootstrapPager` 바(prev/`metadataBootstrapPageLabel`/next) 추가. cache-buster 2건 bump: `styles.css?v=20260629-metadata-bs-flexclip`→`?v=20260629-metadata-bs-paging`, `admin.js?v=20260629-glossary-role-fieldname-fix`→`?v=20260629-metadata-bs-paging`(정적 자산 전파 — 본 프로젝트 반복 회귀 벡터).
+- Impact: 비파괴. backend/스키마/마이그/RBAC/credential/LLM 경로 무변경. **불변식 보존**: 가시성은 순수 `display` 토글 — 모든 테이블 블록은 항상 DOM 유지. 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapAiFill`/`_metaBootstrapApplyDescriptions`)이 `querySelectorAll(".admin-meta-bs-table")` 로 전체 DOM 수집하는 로직 무변경 → off-page/비매칭 블록 입력값도 저장·AI채움(blast radius 0). 테이블 ≤30개면 페이저 숨김 = 기존 동작 동일.
+- 분리 표기(§정직): `node --check`·id/클래스 정합·적대 패널로 "페이징이 가시성 윈도우이며 저장/AI 전체 수집 불변식 유지" 코드 검증. "실제 사용자 화면에서 스크롤 고정·여백 축소 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: admin.js 의 페이징 추가분(상수·page 상태·3 신규/재작성 함수·바인딩) 제거 + `_metaBootstrapApplyFilter` 를 단순 필터 버전으로 복원 + styles.css 여백/페이저 hunk 복원 + admin.html 페이저 바 제거 + cache-buster 복원.
+
+## CHG-20260630T005923-share-joinable-confirm-persist (TASK-20260630T005923-share-joinable-confirm-persist — 공유 '링크 생성' 참여 허용 확인 모달 + '참여 허용' 체크박스 대화별 영속(회귀 수정), Critical 인접 §12.3 — 인가/프라이버시 UX, frontend-only)
+- Date: 2026-06-30
+- Origin: `/_template:entry` arg-given. 사용자 요청 2건: (1) '대화 공유' '링크 생성' 클릭 후 참여 허용 여부를 먼저 확인하는 구조. (2) '공유' 화면에서 '이 링크로 대화 참여 허용' 체크박스 조절 후 재진입 시 상태 회귀 버그 수정.
+- 설계 결정(AskUserQuestion): Q1=**항상 확인 모달**(생성 클릭 시 참여 허용/미허용 명시 확정), Q2=**대화별 localStorage 영속**(cid 키).
+- Summary: (요청1) `openShareDialog` 의 '링크 생성' 클릭이 `confirmShareJoinable` 확인 모달('참여 허용 확인')을 거친 뒤에만 발급되도록 게이트 — joinable=true 가 받는 사람에게 대화 전체를 노출하는 비가역 동작이라 무심코 누른 생성으로 공개되지 않게 재확정. (요청2) '참여 허용' 체크박스가 매 진입 시 하드코딩 `checked` 로 회귀하던 것을, 대화별 localStorage(`mad.shareJoinablePrefs.v1`, cid→bool)에서 복원 + 토글/확정 즉시 영속하도록 수정. 통합 팝업·앵커 경로(`promptShareExpiry`) 동일 적용.
+- Root cause(요청2): `openShareDialog`(app.js)·`promptShareExpiry` 가 owner 분기 체크박스를 `checked` 로 하드코딩 → 사용자가 끈 상태가 어디에도 저장되지 않아 재오픈 시 무조건 기본 ON 으로 복귀. 클라이언트 선호 영속(localStorage) 부재가 근본 — 같은 앱의 muted/notify/sendMode 선호는 이미 localStorage 로 영속하던 확립 패턴인데 joinable 만 누락.
+- Files:
+  - `src/static/app.js` — (1) 영속 헬퍼 `SHARE_JOINABLE_PREFS_LS_KEY`/`_loadShareJoinablePrefs`/`getShareJoinablePref(cid)`/`setShareJoinablePref(cid,joinable)` 신설(muted-convs 패턴 미러, cid→bool, 기본 ON=`!== false`, 손상값 `{}` 폴백). (2) 확인 모달 `confirmShareJoinable({initial,canAllow})` 신설(owner=취소/참여 없이 생성/참여 허용하고 생성, 비소유자=취소/생성 — '허용' 버튼 부재; 취소·Escape·backdrop·× 모두 cancelled; settled 가드; cleanup 리스너 해제). (3) `openShareDialog` 체크박스 초기값 `getShareJoinablePref(cid)` 복원·change 영속·'링크 생성' 핸들러에 confirm 게이트(`intended`→`confirmRes.joinable`→최종 `joinable = isOwner ? … : false`, 체크박스+pref 반영). (4) `promptShareExpiry` cid 파라미터·초기값 복원·change/확정 영속. (5) `createConversationShare` cid 전달 + 앵커 경로 스코프 주석.
+  - `src/static/styles.css` — `.share-confirm-panel`/`.share-confirm-desc`/`.share-confirm-actions`(share-expiry 톤 동일).
+  - `src/static/index.html` — app.js `20260629f-point-scroll-easeoutexpo`→`20260629g-share-joinable-confirm`, styles.css `20260629-metadata-bs-flexclip`→`20260629-share-joinable-confirm`(정적 자산 전파).
+  - `src/static/release-notes-data.js` — 2026-06-29 블록에 항목 2건(참여 허용 확인 improved · 체크박스 상태 유지 fixed) + summary 갱신.
+  - `tests/test_share_joinable_owner_guard.py` — 리팩터로 바뀐 3 assertion 을 인가 불변식 보존하며 갱신(f1 `intended`+최종 joinable 강제 false, f2 cid 파라미터, f3 cid 전달).
+  - `tests/test_share_joinable_confirm_persist.py` — 신규 회귀 가드(P1~3 영속·C1~4 확인 게이트, 7 케이스).
+- Impact: 비파괴. **backend/route/스키마/마이그/RBAC/credential/LLM 경로 무변경(app.py diff 0)**. owner-only joinable + 백엔드 403 게이트(`_conversation_owned_by_account`) authoritative 불변. 비소유자는 체크박스 disabled + change 리스너 미등록 + confirm 모달 '허용' 버튼 부재 + 최종 joinable 강제 false(triple-clamp). 영속은 체크박스 초기 표시만 — 발급은 항상 confirm 모달+owner 클램프 경유라 프라이버시 회귀 0.
+- 검증: agent 이미지 pytest 공유 13/13 + feature-0003 전체 548 PASS(회귀 0), `node --check app.js` PASS. §18.8 적대 패널 2렌즈 각 5가설 REFUTED — 보안 SAFE(BLOCKING 0)·UX SOUND(BLOCKING 0). rebase: worktree 생성 후 main 8ae77ca→4359be5(metadata-bs-paging) 1커밋 전진 감지 → stash→reset origin/main→pop 으로 최신 main 위 재배치(충돌 0, app.js/index.html 무중첩, styles.css 영역 분리).
+- 분리 표기(§정직): 코드/테스트/적대패널로 "확인 게이트·체크박스 영속·인가 불변식 보존" 검증. "실제 사용자 화면에서 확인 모달 노출·재진입 상태 유지 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: app.js 의 (헬퍼 4함수·confirmShareJoinable·openShareDialog confirm 게이트·promptShareExpiry cid 영속·createConversationShare cid) 제거 + 체크박스 `checked` 하드코딩 복원 + styles.css `.share-confirm-*` 제거 + index.html cache-buster 복원 + 테스트 2파일 원복/삭제.
+
+## CHG-20260630T011858-share-joinable-confirm-persist-deploy (TASK-20260630T005923-share-joinable-confirm-persist — landing + web 재배포 + 라이브 검증, 코드 무변경 / post-deploy doc-record)
+- Date: 2026-06-30
+- Summary: 코드/스키마 무변경. CHG-20260630T005923-share-joinable-confirm-persist 의 landing(PR·merge)·배포·라이브 검증만 기록.
+- git 흐름: commit `2167cd0` push → PR #470 → `cycle-finalize --pr 470 --target-worktree …`(gh pr merge --merge, main `4359be5`→`557c3c9`, clean FF·충돌 0). worktree remove 가 sudo pytest 의 root 소유 `.pytest_cache`/`__pycache__` 로 1차 Permission denied → `sudo rm -rf` + `git worktree prune` + local/remote 브랜치 삭제로 정리 완료.
+- Deploy (deploy_scope: included, FIRST_REQUEST.md 전역): frontend-only → **web 이미지만** 재빌드(`make dc-build SERVICE=web`, GIT_COMMIT=`557c3c9` 각인; compose v5.1.1 metadata-file race exit1 흡수)·재기동(`docker compose up -d --no-deps --force-recreate web`, override HTTPS 종단 유지). backend/ask-worker 무변경 → 미재빌드.
+- 라이브 검증: `GET /healthz`(HTTPS) git_commit=`557c3c9`(live, baseline `4359be5`→`557c3c9`)·repo-web-1 healthy. 서빙 `index.html` → `app.js?v=20260629g-share-joinable-confirm`·`styles.css?v=20260629-share-joinable-confirm`. 서빙 `app.js` **byte-identical** to main(`diff -q` IDENTICAL — fix live), 서빙 `styles.css` `.share-confirm` 2건 반영.
+- Impact: 비파괴(doc-record). 사용자 화면 실 체감(확인 모달·취소 중단·체크박스 재진입 유지)은 PB-0008 Windows-browser 미실행(WSL) — 사용자 확인 권장.
+- Rollback: 해당 없음(doc-only). 배포 롤백 시 이전 web 이미지(`4359be5`)로 재기동.
+
+## CHG-20260630T100802-metadata-bs-inline-desc (TASK-20260630T100802-metadata-bs-inline-desc — 테이블 설명 모드 결과 행 평면화 + 설명 입력 인라인, Minor §12.3 — frontend render-only, backend/route/RBAC/스키마/LLM 경로 무변경)
+- Date: 2026-06-30
+- Origin: `/_template:entry` arg-given. 직전 `metadata-bs-paging` 배포 후 사용자 후속 보고(스크린샷): 테이블 설명 모드 각 행의 이름↔상태 사이 **중앙 가로 여백이 과다** — 정리/효용화 요청.
+- Summary: tables(테이블 설명) 모드 결과 행을 접힘 헤더(button+caret, 펼친 본문 안 입력)에서 **평면 행(div) + 중앙 인라인 설명 입력**으로 전환. 빈 여백을 입력란으로 전환하고 펼침 없이 바로 입력하게 해 클릭을 줄임. columns(컬럼 설명) 모드는 테이블당 컬럼 다수라 접힘 구조 유지.
+- Files:
+  - `src/static/admin.js` — `_metaBootstrapRenderResult` 의 tables 분기를 평면 행으로 재작성(`block.is-flat` + `.admin-meta-bs-row` div + 이름 span + `.admin-meta-bs-desc-inline` 인라인 입력[data-kind=table] + 힌트 span). caret/toggle/본문 미생성. columns 분기는 기존 접힘 헤더(caret+is-collapsed+컬럼 트리) 보존(내부 변수 `row`→`colRow` 정리만). filterbar 초기화에서 expand-all 가시성 `mode==='columns'` 게이트 + 저장 안내문구 모드별 분기.
+  - `src/static/styles.css` — `.admin-meta-bs-row`(flex 비클릭 행, padding 5px 10px) + `.admin-meta-bs-table.is-flat .admin-meta-bs-table-name`(flex 0 1 auto·max-width 38%·nowrap·ellipsis·word-break normal) + `.admin-meta-bs-desc-inline`(flex 1 1 auto·min-width 120px) 신설. columns/페이저/접힘 규칙 무변경.
+  - `src/static/admin.html` — cache-buster 2건 bump: `styles.css?v=20260629-metadata-bs-paging`→`?v=20260630-metadata-bs-inline-desc`, `admin.js?v=20260629-metadata-bs-paging`→`?v=20260630-metadata-bs-inline-desc`.
+  - `tests/verify_metadata_bs_inline_desc.mjs`(신규, 21 단언) + `tests/verify_metadata_bs_paging.mjs`(cache-buster 단언 literal→동반-bump 불변식 견고화).
+- Impact: 비파괴. backend/route/ask-worker/스키마/마이그/RBAC/credential/LLM 경로 무변경. **불변식 보존**: 인라인 입력이 `.admin-meta-bs-desc[data-kind='table']` 로 블록 내 존재 → 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapApplyDescriptions`)·힌트(`_metaBootstrapUpdateHint`) 셀렉터·페이징 display 토글 전부 무변경 동작. columns 모드 접힘/펼침·"모두 펼치기" 회귀 0(columns 분기 보존, expand-all 은 columns 에서만 노출). 접근성: 이전 button-헤더에 입력을 넣을 뻔한 안티패턴 회피(평면 행은 div, 입력은 독립 — `aria-label` 부여).
+- 분리 표기(§정직): `node --check`·정적/jsdom 행위 테스트·적대 패널로 "평면 행에서도 수집/힌트/페이징 불변식 유지, columns 무회귀" 코드 검증. "실 화면에서 인라인 입력 노출·중앙 여백 해소·바로 입력 UX"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: admin.js tables 분기를 접힘 헤더+본문 입력 구조로 복원 + filterbar expand-all 무조건 노출/안내문구 단일화 + styles.css 평면 행 3규칙 제거 + admin.html cache-buster 복원 + 신규 테스트 삭제·paging 테스트 cache-buster 단언 원복.
+
+## CHG-20260630T103235-metadata-bs-inline-align (TASK-20260630T103235-metadata-bs-inline-align — 테이블 설명 인라인 입력란 행간 정렬, Minor §12.3 — CSS-only, JS/backend/RBAC/스키마 무변경)
+- Date: 2026-06-30
+- Origin: `/_template:entry` arg-given. `metadata-bs-inline-desc` 배포 후 사용자 후속 보고: `<DB명>.<테이블명>` 길이 차이로 이름 칸이 내용 너비를 먹어 입력란 시작 x·너비가 행마다 달라 들쭉날쭉.
+- Summary: 평면 행의 이름 칸·힌트 칸을 고정 폭으로 두어 모든 행의 인라인 설명 입력란이 같은 x에서 시작·같은 너비·같은 우측 끝으로 정렬되게 함.
+- Files:
+  - `src/static/styles.css` — `.admin-meta-bs-table.is-flat .admin-meta-bs-table-name`: `flex:0 1 auto; max-width:38%` → `flex:0 0 clamp(180px,32%,340px)`(평면 행은 동일 폭 컨테이너라 32% 가 행마다 동일 px → 정렬; 초과 이름 ellipsis+title). `.admin-meta-bs-desc-inline`: `min-width:120px`→`min-width:0`(좁은 화면 정렬 유지). 신규 `.admin-meta-bs-table.is-flat .admin-meta-bs-hint`: `flex:0 0 5.5rem; margin-left:0; text-align:right`(입력란 우측 끝 정렬 + ○→● 전이 시 너비 불변).
+  - `src/static/admin.html` — cache-buster 2건 bump `20260630-metadata-bs-inline-desc`→`20260630-metadata-bs-inline-align`.
+  - `tests/verify_metadata_bs_inline_desc.mjs` — 정렬 단언 [A6-align](이름/힌트 고정 폭) 추가 + cache-buster 단언을 literal→동반-bump 불변식으로 견고화.
+- Impact: 비파괴. CSS-only(JS/route/RBAC/스키마/LLM 0). `.is-flat` 스코프라 columns 모드(`.is-collapsed` 헤더, 동일 `.admin-meta-bs-table-name`/`-hint` 클래스) 무영향. clamp() 는 프로젝트 기존 사용(share.css). 정렬은 평면 행이 모두 동일 폭(블록 레벨 full-width) 컨테이너라는 점에 기반 — 32% 가 모든 행에서 동일 px 로 해석.
+- 분리 표기(§정직): 테스트·CSS-lens 적대 패널로 "고정 폭 칸 정렬·columns 무회귀·좁은 화면 비overflow" 코드 검증. "실 화면에서 여러 길이 이름의 입력란 좌/우 끝 정렬 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: styles.css 3규칙(이름 flex/ min-width, desc-inline min-width, hint flex/text-align)을 inline-desc 시점 값으로 복원 + admin.html cache-buster 복원 + 테스트 정렬 단언 제거.
+
+## CHG-20260630T110910-metadata-ds-single-ui (TASK-20260630T110910-metadata-ds-single-ui — 메타데이터 패널 '데이터소스' 선택 UI 단일화, Major §12.3 — feature-0003 프론트 단독, backend/route/RBAC/스키마/엔드포인트 무변경)
+- Date: 2026-06-30
+- Origin: `/_template:entry` arg-given. 사용자: 관리 콘솔 > 메타데이터 > 테이블/컬럼 설명에서 '데이터소스' UI 가 '스키마 골격 가져오기'와 메타데이터 패널 양쪽에 동시 존재해 역할 혼란 → 각 역할 파악 후 단일 UI 정리 요청.
+- Summary: 데이터소스 selector 2개(헤더 스코프 `#metadataScopeSelect` = 저장/조회 스코프, 부트스트랩 `#metadataBootstrapDs` = 스키마 introspection 소스) 중 **부트스트랩 전용 selector 를 폐기**하고 데이터소스를 헤더 스코프에서 상속. 두 selector 독립으로 인한 "스코프↔골격소스 불일치(B 골격을 A 스코프로 저장)" footgun 제거. 공용(common) 스코프는 실제 스키마 없어 부트스트랩 불가 → 관리 콘솔 list-detail `.admin-detail-empty` 컨벤션 정합 empty-state 안내(비활성 잔재/더미 컨트롤 없음).
+- Files:
+  - `src/static/admin.html` — 부트스트랩 `데이터소스 *` label/`#metadataBootstrapDs` select 제거. `#metadataBootstrapEmpty`(.admin-detail-empty + .admin-meta-bootstrap-empty, 공용 안내) + `#metadataBootstrapHead`(토글 숨김용 id) + 노트 문구를 "현재 스코프 데이터소스(`#metadataBootstrapDsName`)의 실제 스키마에서…"로 교체(읽기전용 상속 DS 표기). cache-buster 2건 `20260630-metadata-bs-inline-align`→`20260630-metadata-ds-single-ui`.
+  - `src/static/admin.js` — `_metaBootstrapPopulateDs`(DS 드롭다운 채움) → `_metaBootstrapSyncToScopeDs(scopeDs)`(스코프 DS 상속·노트명 갱신·DS 변경 시 골격/스키마 리셋 후 `_metaBootstrapLoadSchemas` 재로드) 교체. `_metaSyncBootstrapVisibility` 재작성 — applicable(tables/columns+kb.ingest.manual) 후 `_metaScopeDatasourceKey()` 로 분기: 공용/미매칭=empty-state 만(head/body 숨김), 구체 DS=골격 컨트롤 노출 + 상속·재렌더. `_metaBindBootstrap` 의 `#metadataBootstrapDs` change 바인딩 블록 제거. `_metaBindControls` 의 스코프 change 핸들러에 `_metaSyncBootstrapVisibility()` 추가(스코프 변경 시 가시성·상속 DS·스키마 즉시 동기화).
+  - `src/static/styles.css` — `.admin-meta-bootstrap-empty`(.admin-detail-empty 재사용 + padding 28px/line-height 1.55, `strong` 본문 톤) 신설.
+  - `tests/verify_metadata_scope_single_ds.mjs`(신규, 14 단언 — DS selector/populate 부재, 상속 구조, 저장 scopeKey 불변식, cache-buster 동반 bump, empty-state CSS).
+- Impact: 비파괴. backend/route/엔드포인트(`/api/admin/metadata/bootstrap*` 시그니처)/RBAC/스키마/마이그/LLM 무변경 — 부트스트랩은 여전히 `{datasource,schema}` 를 받되 datasource 출처만 별도 selector → 스코프로 변경. **불변식 보존**: `_metaBootstrapSave` 는 변함없이 `adminState.metadata.scopeKey` 로 저장, `bootstrap.datasource` 는 `_metaScopeDatasourceKey()`(기존에 부트스트랩 DS 옵션과 동일하게 `ds.key` 산출)로 동일 형식 값 → 백엔드 계약 동일. 부트스트랩이 구체 DS 스코프에서만 노출되므로 저장 스코프=골격 소스 항상 일치. tables↔columns 서브탭 전환 재렌더(metadata-bs-inline-desc), 공용 외 스코프 골격 보존 회귀 0.
+- 분리 표기(§정직): `node --check`·정적 회귀 테스트(신규 14 + 기존 inline-desc 32)로 "중복 selector 제거·스코프 상속·저장 불변식·cache-buster 정합" 코드 검증. "실 화면에서 공용=empty-state 안내·구체 DS=단일 데이터소스 컨트롤·스코프 전환 시 골격 리셋·중복 UI 부재"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: admin.html 의 `데이터소스 *`/`#metadataBootstrapDs` 복원 + empty-state/head id/노트 원복, admin.js `_metaBootstrapSyncToScopeDs`→`_metaBootstrapPopulateDs` 복원 + 가시성 함수·DS 바인딩·스코프 핸들러 원복, styles.css 규칙 제거, cache-buster 원복, 신규 테스트 삭제.
+
+## CHG-20260630T160000-metadata-list-detail (TASK-20260630T160000-metadata-list-detail — 메타데이터 패널 list-detail 2단 재구성, Major §12.3 — feature-0003 프론트 단독, backend/route/RBAC/스키마/엔드포인트 무변경)
+- Date: 2026-06-30
+- Origin: 사용자 — "메타데이터 UI 를 다른 카테고리(계정/제품/데이터소스/감사)처럼 한 항목 선택 후 우측에서 상세조정하는 형태로 재구성. 현재는 위/아래 스크롤이 잦다."
+- Summary: 메타데이터 패널을 단일 컬럼 수직 스택(헤더→서브탭→부트스트랩→폼→목록, 행 '수정'이 폼으로 scrollIntoView 점프)에서 다른 관리 콘솔 카테고리와 동일한 **2단 list-detail** 로 재구성. 좌측 `.admin-list-col`(검색·카운트·목록) + 우측 `.admin-detail-col`(#metadataDetail: empty-state | 편집 폼 | 부트스트랩 일괄). 행 클릭=선택→우측 편집(폼 점프 제거). 각 컬럼 독립 스크롤로 단일 긴 스크롤 소멸.
+- Files:
+  - `src/static/admin.html` — 메타데이터 pane 을 `.admin-list-detail admin-meta-list-detail` 2단으로. 좌측: 검색(#metadataSearch)+카운트(#metadataCount, 헤더→list-head 이동)+목록(#metadataList). 우측 #metadataDetail: empty-state(#metadataDetailEmpty, 거버넌스 안내문 통합)+폼(#metadataForm, 초기 display:none)+부트스트랩(#metadataBootstrap). 헤더에 '+ 새 항목'(#metadataNewBtn), 좌측 툴바에 '스키마 골격 가져오기'(#metadataBootstrapOpenBtn). cache-buster 2건 `20260630-metadata-ds-single-ui`→`20260630-metadata-list-detail`.
+  - `src/static/admin.js` — 상태에 `detailMode(empty|form|bootstrap)`·`selectedId`·`search` 추가. 코디네이터 `_metaRenderDetail()`(모드 유효성 보정 후 세 컨테이너 배타 가시성, form→_metaRenderForm·bootstrap→_metaSyncBootstrapVisibility 위임 + 상단 네비 동기화). 헬퍼 `_metaSyncListActive`(선택 .is-active)·`_metaSyncListToolbar`(버튼/검색 가시성)·`_metaItemMatchesSearch`(검색). `_metaStartEdit`=detailMode='form'+selectedId(scrollIntoView 제거). 행 클릭=선택(role=button·keydown target 게이트), 인라인 '수정' 버튼 폐기, 삭제/유사어 stopPropagation. 스코프/서브탭/2차보기 핸들러·init·_metaSubmitForm 성공·_metaDelete(편집중 항목 삭제 시 empty 리셋)를 코디네이터 경유로 갱신. '+ 새 항목'/'골격 가져오기'/검색 바인딩.
+  - `src/static/styles.css` — 메타데이터 pane 을 단일 세로 스크롤 override 에서 제외(list-detail 내부 컬럼 독립 스크롤). `.admin-meta-form` 카드 chrome 제거(detail-col 가 카드). `.admin-meta-row[role=button]` 클릭 affordance + `.is-active` 선택 강조. `.admin-meta-detail-note`·`.admin-meta-bs-open.is-active` 신설.
+  - `tests/verify_metadata_list_detail.mjs`(신규 33 — HTML 2단 구조/admin.js 코디네이터·선택·검색/CSS/ jsdom detailMode 배타 가시성 + MAJOR-2 keydown 게이트 + 삭제 리셋) + `verify_metadata_scope_single_ds.mjs` [B8] 갱신(스코프 핸들러 코디네이터 경유).
+- Impact: 비파괴. backend/route/엔드포인트/RBAC/스키마/마이그/LLM 무변경 — CRUD·부트스트랩·검토 큐·유사어 데이터 경로 모두 기존 함수 재사용(폼/목록 렌더 위치만 list-detail 로 이동). 권한 게이트(kb.ingest.manual/kb.sample.curate/kb.glossary.curate) 보존. 검토 큐는 별도 렌더 경로 유지(검색 미적용, 우측 empty-state).
+- §18.8 적대 frontend state-machine 패널(7가설): VERDICT **FIX-THEN-SHIP→SHIP**(BLOCKING 0). MAJOR-2(행 keydown 이 내부 버튼 키 입력에 이중 발화) 수정(target 게이트)+테스트 잠금. MAJOR-1(검색이 편집중 항목 필터 시 list↔detail 시각 desync)=진행중 편집 보존 의도로 수용·문서화. NIT-1(stale CSS 주석) 정리. 전 테스트 108→ 신규 33 + 기존 75 green.
+- 분리 표기(§정직): 테스트·적대 패널로 "2단 구조·모드 배타 가시성·선택 wiring·검색·권한 게이트·이벤트 전파·회귀 0" 코드 검증. "실 화면에서 좌우 2단 렌더·행 선택→우측 편집·컬럼 독립 스크롤(짧은 viewport)·스크롤 점프 해소"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: admin.html 메타데이터 pane 을 단일 컬럼(폼→목록)으로 복원 + admin.js detailMode/코디네이터/헬퍼/핸들러 변경 원복(_metaRenderForm/_metaSyncBootstrapVisibility 직접 호출) + styles.css 단일 스크롤 override 에 metadata 복원·폼 카드 chrome 복원·행 선택 규칙 제거 + cache-buster 원복 + 신규 테스트 삭제·scope-single-ds [B8] 원복.

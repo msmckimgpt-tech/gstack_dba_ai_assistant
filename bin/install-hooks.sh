@@ -90,11 +90,19 @@ if [[ ! "$feature_id" =~ ^(feature|META)-[0-9]+(-[a-zA-Z0-9-]+)?$ ]]; then
   exit 0
 fi
 
-# Invoke verify in post-commit mode. Capture stderr.
-if ! bash "$verify" --post-commit "$feature_id" >/dev/null 2>/tmp/post-commit-verify.log; then
+# Invoke verify in post-commit mode. Capture stderr to a per-user/per-process
+# log: a shared /tmp path collides across users in multi-user headless envs
+# (AGENTS.md §22.12) — a cross-user-owned log makes the redirect itself fail and
+# raises a false "FAILED" banner unrelated to the verify result. mktemp gives a
+# fresh file owned by the invoking user (always writable). Base the banner on the
+# verify exit code only, never on log-write/infra failure.
+log=$(mktemp -t post-commit-verify.XXXXXX 2>/dev/null) || log="/tmp/post-commit-verify-$(id -u)-$$.log"
+bash "$verify" --post-commit "$feature_id" >/dev/null 2>"$log"
+verify_rc=$?
+if [ "$verify_rc" -ne 0 ]; then
   printf '\n⚠️  POST-COMMIT VERIFY FAILED for %s\n' "$feature_id"
-  printf '   See: /tmp/post-commit-verify.log\n'
-  cat /tmp/post-commit-verify.log
+  printf '   See: %s\n' "$log"
+  cat "$log" 2>/dev/null
   printf '\n   Create a new commit to fix (amend is disallowed — see AGENTS.md §16.3).\n\n'
 fi
 

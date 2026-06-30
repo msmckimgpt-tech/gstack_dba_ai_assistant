@@ -1,6 +1,6 @@
 {
- "total_routes": 179,
- "api_routes": 178,
+ "total_routes": 188,
+ "api_routes": 187,
  "ordered": [
   {
    "path": "/openapi.json",
@@ -34,6 +34,20 @@
    "path": "/static",
    "methods": [],
    "type": "Mount"
+  },
+  {
+   "path": "/livez",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/readyz",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
   },
   {
    "path": "/api/llm/health",
@@ -925,6 +939,48 @@
    "type": "APIRoute"
   },
   {
+   "path": "/api/admin/metadata/glossary-feedback",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary-feedback/{feedback_id}/promote",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary-feedback/{feedback_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/{term_id}/relations",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/{term_id}/relations",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/relations/{relation_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
    "path": "/api/admin/metadata/enums",
    "methods": [
     "GET"
@@ -1005,6 +1061,13 @@
    "path": "/api/admin/metadata/columns/{desc_id}",
    "methods": [
     "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph",
+   "methods": [
+    "GET"
    ],
    "type": "APIRoute"
   },
