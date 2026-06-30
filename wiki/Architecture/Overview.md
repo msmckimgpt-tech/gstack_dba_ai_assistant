@@ -25,7 +25,7 @@ sources:
 | 분류 | `#wiki/article` |
 | 정본 | [[../../docs/ARCHITECTURE\|docs/ARCHITECTURE.md]] |
 | Wiki layer | mirror (graph 입구) |
-| Feature 수 | 13 (feature-0001 ~ feature-0013) |
+| Feature 수 | 17 (feature-0001 ~ feature-0017; feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스) |
 
 ## 목차
 
@@ -84,6 +84,11 @@ unit/feature-NNNN-<purpose>/
 | [[../Features/feature-0011-shared-extraction\|feature-0011-shared-extraction]] | 공통 코드 `shared/` 점진 추출 (P5a — model_catalog·config·db alias) |
 | [[../Features/feature-0012-web-router-modularization\|feature-0012-web-router-modularization]] | web `app.py` 도메인별 `APIRouter` 점진 분할 토대 (P5b — route-parity 안전망 + 의존성 audit, behavior-neutral) |
 | [[../Features/feature-0013-relationship-diagrams\|feature-0013-relationship-diagrams]] | flow/관계 질문에 mermaid 다이어그램 답변 + `table_relationships` 관계 저장소 (FK introspection·대화 JOIN 학습) |
+| [[../Features/feature-0014-zero-downtime-deploy\|feature-0014-zero-downtime-deploy]] | web 무중단 롤링 배포 — Caddy LB(web-a/web-b) + `bin/deploy-web.sh`(자동 롤백) + `/livez`·`/readyz` + :18080 폐기 |
+| [[../Features/feature-0015-zd-hygiene-backup\|feature-0015-zd-hygiene-backup]] | 백엔드/DB 무중단 위생 — insight-worker graceful + MySQL online-DDL 게이트 + 백업·복원 리허설 cron |
+| [[../Features/feature-0016-metadata-graph\|feature-0016-metadata-graph]] | 메타데이터 지식그래프 — 관계형 SSOT→AGE `metadata_kb` 투영 + 관리콘솔 그래프 뷰 + `graph_navigate` AI 도구 (cutover 라이브 완료) |
+| [[../Features/feature-0016-zd-pg-pause-caddy\|feature-0016-zd-pg-pause-caddy]] | PG 재시작 무중단화 — pgbouncer PAUSE 래퍼 + deploy-web.sh Caddyfile reconcile |
+| [[../Features/feature-0017-deploy-build-gate\|feature-0017-deploy-build-gate]] | 배포 스파인 빌드 게이트 false-failure 수정 (snap-docker metadata-race 이미지 정합 검증) |
 
 ### 2.4 기능 간 의존성 (정본 §6)
 
@@ -100,6 +105,11 @@ unit/feature-NNNN-<purpose>/
 | feature-0011 | feature-0002, feature-0003 | uses | 공통 모듈 `shared/` 추출 + import 재배선 (모듈 alias shim) |
 | feature-0012 | feature-0003 | uses | `app.py` 도메인별 `APIRouter` 점진 분할 (route-parity 안전망 + 의존성 audit, behavior-neutral) |
 | feature-0013 | feature-0002, feature-0003 | uses | 발화 가이던스·관계 저장소·introspection·JOIN 학습은 feature-0002, mermaid 웹 렌더는 feature-0003 (cross-cut) |
+| feature-0014 | feature-0003, feature-0006 | uses | 무중단 롤링 = web `/livez`·`/readyz`·SSE 카운터(0003) + Caddy LB·active health·:443 단일(0006) |
+| feature-0015 | feature-0002 | uses | insight-worker graceful 핸들러가 feature-0002 `modules/insight.py` 거주 |
+| feature-0016-metadata-graph | feature-0002, feature-0003, feature-0013, feature-0014 | uses | 동기화·투영·`graph_navigate`·introspection=0002, 그래프 뷰=0003, 관계 저장소=0013 재사용, AGE 이미지 cutover=0014 무중단 정합 |
+| feature-0016-zd-pg-pause-caddy | feature-0002, feature-0006 | uses | pg-restart=0002 PG/pgbouncer, reconcile_caddy=0006 Caddyfile |
+| feature-0017 | feature-0014 | extends | feature-0014 배포 스파인 build_image 게이트 보강 |
 
 의존 유형 어휘 (`requires` / `uses` / `extends`) 정본은 ARCHITECTURE.md §6.
 
@@ -115,6 +125,7 @@ unit/feature-NNNN-<purpose>/
 - **메타데이터 거버넌스 + 토대 확장 (2026-06-24)**: ITEM-11 관리 콘솔 메타데이터 거버넌스(용어·ENUM·테이블/컬럼 설명·주입·AI 자동완성)로 NL→SQL 컨텍스트 강화. feature-0010 Google Drive 연동 토대(계정별 OAuth 암호화 + MCP seam, 비활성). feature-0011 공통 코드 `shared/` 점진 추출(P5a). [[../Features/feature-0011-shared-extraction]].
 - **피드백 고유화 · 용어사전 자율등록 · router 분할 토대 (2026-06-29)**: 답변 피드백(👍/👎) 답변당 고유화(새로고침·전환 후 중복 차단). 관리 콘솔 용어사전 대화 자율등록(역할 분리·유사어·검토 큐 + 용어 검토 큐 IA 중첩). feature-0012 web `app.py` 도메인별 `APIRouter` 점진 분할 토대(P5b — route-parity 안전망 + 의존성 audit, behavior-neutral). [[../Features/feature-0012-web-router-modularization]].
 - **관계 다이어그램 신규 · 메타데이터/공유 화면 정리 (2026-06-29)**: feature-0013 관계 다이어그램 — assistant 가 flow/관계 질문에 mermaid(ER·flowchart)로 답하고 `table_relationships` 관계 저장소(FK introspection·대화 JOIN 학습, alembic 0024)로 지속 학습(PB-0008 라이브 PASS). 메타데이터 스키마 골격 화면 접기·검색·페이지네이션·여백 압축, 공유 대화 뷰 mermaid 렌더·전체폭 반응형·스크롤 가이드, 용어사전 역할 선택 단일화. [[../Features/feature-0013-relationship-diagrams]].
+- **무중단 배포·운영 위생 + 메타데이터 지식그래프 (2026-06-30)**: web 무중단 롤링 배포(Caddy LB web-a/web-b 2-replica·자동 롤백·:18080 폐기→:443 단일, feature-0014) + 백엔드/DB 위생(insight graceful·MySQL online-DDL·백업 복원 리허설, feature-0015) + PG 재시작 무중단화(pgbouncer PAUSE 래퍼, feature-0016-zd-pg-pause-caddy) + 배포 빌드게이트 false-failure 수정(feature-0017). 관리콘솔 메타데이터를 Apache AGE 지식그래프(관계형 SSOT→`metadata_kb` 투영)로 승급 + 그래프 뷰·`graph_navigate` AI 도구(feature-0016-metadata-graph, cutover 라이브 완료). [[../Features/feature-0016-metadata-graph]].
 
 ## 4. 관련 문서
 

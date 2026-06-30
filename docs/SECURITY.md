@@ -593,3 +593,11 @@ FUNCTION.md AC-0600~0601. **인증 변경은 §3 의 사람 승인 대상** — 
   이미 fork 해 둔 사본은 회수 불가(fork 시점 스냅샷) — ban 은 이후 접근만 차단.
 - `conversation_member_bans` 는 account FK 없음(conversation FK CASCADE 만) — 유령 account_id ban 은
   무해(join 매칭 안 됨), `target_id<=0` 만 거부.
+
+## 19. 메타데이터 지식그래프 — AGE/Cypher 질의 표면 (feature-0016-metadata-graph, 2026-06-30)
+
+> 색인 항목 — 전체 위협모델·구현 정본은 `unit/feature-0016-metadata-graph/docs/{REVIEW.md, FUNCTION.md, REPORT.md}`. 주입 방어 일반 철학은 §14(프롬프트 인젝션 방지)를 그대로 따른다. 본 절은 신규 그래프 질의면의 boundary 색인 1줄.
+
+- **신규 표면**: 관리 콘솔 메타데이터 '그래프 뷰' 검색 + AI `graph_navigate` 도구가 사용자/대화 입력을 KB Postgres 의 Apache AGE openCypher 질의로 전달한다(관계형 SSOT 의 **읽기전용 투영** `metadata_kb` 그래프 대상 — FUNCTION.md §4.3).
+- **경계 가드**: 엔드포인트 RBAC(sync=`kb.ingest.manual`) + 읽기는 read-only role 라우팅, 라벨/속성 화이트리스트, k-hop·limit 정수 강제·cap, 투영 read-only. 근거 정본: REPORT.md(RBAC·읽기전용·화이트리스트 절)·REVIEW.md.
+- **봉인된 결함(출하 전 수정 — 출하된 취약 경계 아님)**: 적대 리뷰 REVIEW.md `REV-20260630-0001` BLOCKER B1 — 정적 `$$` dollar-quote + 바인드파라미터 없는 simple-protocol 로 값에 `$$` 혼입 시 외곽 SQL 탈출(다중 statement 인젝션, 도달면=검색 q·node key·저장 description). 질의에 부재가 보장되는 동적 dollar-tag(`$mdgq…$`) + single-quote 이스케이프 이중 방어로 수정, 회귀(sentinel DROP 차단) PASS(commit `1f52d65`), 잔여 BLOCKER/MAJOR 0.

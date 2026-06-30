@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-13 개 active feature 의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+17 개 feature(카드 18 — feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스, 번호 충돌·사람 결정 보류)의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 
@@ -60,6 +60,7 @@ sources:
 | feature-0013-relationship-diagrams | active | flow/관계 질문에 mermaid 다이어그램 답변 + 관계 저장소(FK introspection·대화 JOIN 학습) | [[feature-0013-relationship-diagrams]] | `unit/feature-0013-relationship-diagrams/docs/FUNCTION.md` |
 | feature-0014-zero-downtime-deploy | review | web 무중단 롤링 배포 — Caddy LB(web-a/web-b) + `bin/deploy-web.sh`(flock·coalesce·TLS preflight·migrate-lint·one-at-a-time+SSE pre-drain·soak 자동롤백) + `/livez`·`/readyz` + :18080 폐기 | [[feature-0014-zero-downtime-deploy]] | `unit/feature-0014-zero-downtime-deploy/docs/FUNCTION.md` |
 | feature-0015-zd-hygiene-backup | review | 백엔드/DB 무중단 위생(0014 후속) — insight-worker graceful + MySQL online-DDL 게이트(`mysql-ddl-lint`) + 백업 복원 리허설(`restore-rehearsal`)+cron | [[feature-0015-zd-hygiene-backup]] | `unit/feature-0015-zd-hygiene-backup/docs/FUNCTION.md` |
+| feature-0016-metadata-graph | in-progress | AGE 메타데이터 지식그래프(관계형 SSOT→`metadata_kb` 투영) + 관리콘솔 그래프 뷰(Cytoscape·fcose) + `graph_navigate` AI 도구 — 커스텀 PG16 AGE 이미지 cutover 라이브 완료 | [[feature-0016-metadata-graph]] | `unit/feature-0016-metadata-graph/docs/FUNCTION.md` |
 | feature-0016-zd-pg-pause-caddy | review | PG pgbouncer PAUSE 래퍼(`pg-restart.sh`, near-zero PG 재시작) + deploy-web.sh Caddyfile reconcile(변경 시 caddy recreate) | [[feature-0016-zd-pg-pause-caddy]] | `unit/feature-0016-zd-pg-pause-caddy/docs/FUNCTION.md` |
 | feature-0017-deploy-build-gate | review | deploy-web.sh 빌드 게이트 snap-docker metadata-file race false-failure 수정(이미지 정합 검증) | [[feature-0017-deploy-build-gate]] | `unit/feature-0017-deploy-build-gate/docs/FUNCTION.md` |
 
