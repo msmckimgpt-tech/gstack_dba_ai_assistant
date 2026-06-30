@@ -216,3 +216,15 @@ source_of_truth: true
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
 - cat-F 이연: public_share_view 는 `_optional_account` 가 본문 중간(share-load·404/410 게이트 *뒤*) 호출 → get_optional_account hoisting 시 LastSeenAt 세션 부수효과가 eager 화(로그인 viewer×무효 share 에서 legacy 미갱신 vs DI 갱신). 보안 민감 익명 엔드포인트라 router-extraction 단계로 이연.
 - Rollback Notes: 단일 commit revert(app.py 3 + test 1 + docs). 이전 batch 불변.
+
+## CHG-20260630-0009
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 3 — cat-B workflow 보류분 중 동반 테스트 전환으로 회수된 2 핸들러. **Final 이전 migratable 세트 완결.**
+- Summary:
+  cat-B 잔여 workflow(REV-0006)가 "마이그 byte-correct 이나 동반 테스트 전환 필요"로 보류했던 admin_overview(RP)·admin_products_insight_coverage(AO) 전환:
+  - **admin_overview**(RP): 단일 정적 perm console.access → `actor=Depends(require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다."))`. 동반 테스트(test_dashboard_overview.py 7 call): happy 6은 직접호출에 `actor/conn=_BenignConn()` 명시 주입(위젯 게이팅은 본문 _account_has_permission 그대로), perm-gate 403 1은 TestClient+as_account(console.access 없음 → require_permission 403).
+  - **admin_products_insight_coverage**(AO): 복수 perm 다른 메시지(console.access/product.read|manage) → `account=Depends(get_current_account)` + 본문 검사 유지. 동반 테스트(test_insight_coverage_endpoint.py 5 call): AO 라 전부 직접호출에 `account/conn` 명시(_install 이 acct 반환하도록 보강; perm-gate 403도 body 검사가 account=nobody 로 실행).
+- Files: app.py(2 핸들러) + tests/{test_dashboard_overview(7), test_insight_coverage_endpoint(_install+5)} + docs.
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
+- **Final 이전 migratable 핸들러 전부 완료(누적 69).** 잔여 미전환 = 아키텍처 이연(router-extraction 단계): (1) fail-soft 3(progress·suggestions — conn/auth 실패를 200 으로 흡수해 get_current_account 의 500 raise 와 비동치; public_share_view — _optional_account 본문중간 LastSeenAt eager 부수효과). (2) preauth/longpoll/txn ~43(conn 이전 404/400 early-return·long-poll conn-hold·autocommit 토글) = cat-A preauth 와 동일 사유.
+- Rollback Notes: 단일 commit revert(app.py 2 + tests 2 + docs). 이전 batch 불변.

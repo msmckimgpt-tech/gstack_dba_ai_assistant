@@ -20651,52 +20651,39 @@ def _compute_product_insight_coverage(conn, product: dict) -> dict:
 
 
 @app.get("/api/admin/products/insight-coverage")
-def admin_products_insight_coverage(request: Request) -> JSONResponse:
+def admin_products_insight_coverage(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """제품별 insight-worker 분석 완료율 (TASK-0223). console.access. ?product_id= 단건, ?refresh=1 캐시 무시."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not _account_has_permission(account, "console.access"):
-        conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     # TASK-0288: 제품 구성 조회 권한(read|manage) — coverage 배지는 제품 탭 표면.
     if not _account_has_any_permission(account, "product.read", "product.manage"):
-        conn.close()
         return _json_error("제품 조회 권한이 필요합니다.", 403)
-    try:
-        raw_pid = request.query_params.get("product_id")
-        only_pid = None
-        if raw_pid not in (None, ""):
-            try:
-                only_pid = int(raw_pid)
-            except Exception:
-                return _json_error("invalid product_id", 400)
-        force = str(request.query_params.get("refresh") or "").strip() in ("1", "true", "yes")
-        products = _list_products(conn, include_inactive=True)
-        # TASK-0253: 프론트가 head-of-line 제거를 위해 제품마다 ?product_id= 단건을 **병렬** 호출한다.
-        #  본 핸들러는 일반 def 라 Starlette 스레드풀에서 자동 병렬 실행되므로, 단건 N개 동시 요청이
-        #  가장 느린 1건 시간 안에 끝난다(_compute_product_insight_coverage 는 라이브 DB 조회라 무겁다).
-        #  단건일 때 대상 제품만 계산하고 즉시 break — 무관 제품 순회/계산을 피한다.
-        out: dict = {}
-        for p in products:
-            pid = int(p["id"])
-            if only_pid is not None and pid != only_pid:
-                continue
-            cache_key = (pid, p.get("datasource_key") or "")
-            cov = None if force else _insight_cov_cache_get(cache_key)
-            if cov is None:
-                cov = _compute_product_insight_coverage(conn, p)
-                _insight_cov_cache_put(cache_key, cov)
-            out[str(pid)] = cov
-            if only_pid is not None:
-                break
-    finally:
-        conn.close()
+    raw_pid = request.query_params.get("product_id")
+    only_pid = None
+    if raw_pid not in (None, ""):
+        try:
+            only_pid = int(raw_pid)
+        except Exception:
+            return _json_error("invalid product_id", 400)
+    force = str(request.query_params.get("refresh") or "").strip() in ("1", "true", "yes")
+    products = _list_products(conn, include_inactive=True)
+    # TASK-0253: 프론트가 head-of-line 제거를 위해 제품마다 ?product_id= 단건을 **병렬** 호출한다.
+    #  본 핸들러는 일반 def 라 Starlette 스레드풀에서 자동 병렬 실행되므로, 단건 N개 동시 요청이
+    #  가장 느린 1건 시간 안에 끝난다(_compute_product_insight_coverage 는 라이브 DB 조회라 무겁다).
+    #  단건일 때 대상 제품만 계산하고 즉시 break — 무관 제품 순회/계산을 피한다.
+    out: dict = {}
+    for p in products:
+        pid = int(p["id"])
+        if only_pid is not None and pid != only_pid:
+            continue
+        cache_key = (pid, p.get("datasource_key") or "")
+        cov = None if force else _insight_cov_cache_get(cache_key)
+        if cov is None:
+            cov = _compute_product_insight_coverage(conn, p)
+            _insight_cov_cache_put(cache_key, cov)
+        out[str(pid)] = cov
+        if only_pid is not None:
+            break
     return JSONResponse({"coverage": out})
 
 
@@ -27909,7 +27896,7 @@ def _dash_widget_usage(pg, days: int) -> dict:
 
 
 @app.get("/api/admin/overview")
-def admin_overview(request: Request) -> JSONResponse:
+def admin_overview(request: Request, actor=Depends(require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-0210: 관리 콘솔 대시보드 카테고리별 RBAC-스코프 집계.
 
     actor 가 보유한 표시 권한의 위젯 데이터만 반환한다 — 권한 경계가 곧 데이터
@@ -27919,79 +27906,64 @@ def admin_overview(request: Request) -> JSONResponse:
     카탈로그 순서로 반환해 프런트가 권한 기준 위젯 집합을 서버 권위로 받게 한다.
     """
     try:
-        conn = _connect_memory()
+        days = int(request.query_params.get("days", "7"))
     except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        actor, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(actor, "console.access"):
-            return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+        days = 7
+    days = max(1, min(365, days))
+
+    catalog = [
+        {"key": w["key"], "title": w["title"], "source": w["source"]}
+        for w in _DASHBOARD_WIDGETS
+        if _actor_can_see_widget(actor, w)
+    ]
+    permitted = {c["key"] for c in catalog}
+    widgets: dict = {}
+    log = logging.getLogger(__name__)
+    actor_id = int(actor["id"])
+    # TASK-0294: `.own`/`.any` 짝 위젯의 데이터 스코프 — `.any` 미보유면 본인 데이터로 제한.
+    audits_scope = _widget_data_scope(actor, "audit.read.any")
+    conv_scope = _widget_data_scope(actor, "conversation.list.any")
+
+    def _isolate(key: str, fn):
+        if key not in permitted:
+            return
         try:
-            days = int(request.query_params.get("days", "7"))
+            widgets[key] = fn()
         except Exception:
-            days = 7
-        days = max(1, min(365, days))
+            log.warning("admin_overview: widget %s failed", key, exc_info=True)
+            widgets[key] = {"error": True, "metrics": [], "lists": []}
 
-        catalog = [
-            {"key": w["key"], "title": w["title"], "source": w["source"]}
-            for w in _DASHBOARD_WIDGETS
-            if _actor_can_see_widget(actor, w)
-        ]
-        permitted = {c["key"] for c in catalog}
-        widgets: dict = {}
-        log = logging.getLogger(__name__)
-        actor_id = int(actor["id"])
-        # TASK-0294: `.own`/`.any` 짝 위젯의 데이터 스코프 — `.any` 미보유면 본인 데이터로 제한.
-        audits_scope = _widget_data_scope(actor, "audit.read.any")
-        conv_scope = _widget_data_scope(actor, "conversation.list.any")
+    # MySQL 위젯 (시간 기반 위젯엔 days 윈도우 전파 — TASK-0218 거짓 컨트롤 정직화)
+    _isolate("accounts", lambda: _dash_widget_accounts(conn, days))
+    _isolate("roles", lambda: _dash_widget_roles(conn))
+    _isolate("products", lambda: _dash_widget_products(conn))
+    _isolate("datasources", lambda: _dash_widget_datasources(conn))
+    _isolate("audits", lambda: _dash_widget_audits(conn, days, scope=audits_scope, account_id=actor_id))
 
-        def _isolate(key: str, fn):
-            if key not in permitted:
-                return
-            try:
-                widgets[key] = fn()
-            except Exception:
-                log.warning("admin_overview: widget %s failed", key, exc_info=True)
-                widgets[key] = {"error": True, "metrics": [], "lists": []}
-
-        # MySQL 위젯 (시간 기반 위젯엔 days 윈도우 전파 — TASK-0218 거짓 컨트롤 정직화)
-        _isolate("accounts", lambda: _dash_widget_accounts(conn, days))
-        _isolate("roles", lambda: _dash_widget_roles(conn))
-        _isolate("products", lambda: _dash_widget_products(conn))
-        _isolate("datasources", lambda: _dash_widget_datasources(conn))
-        _isolate("audits", lambda: _dash_widget_audits(conn, days, scope=audits_scope, account_id=actor_id))
-
-        # PG 위젯 (conversations + usage) — 단일 연결 재사용
-        if ("conversations" in permitted) or ("usage" in permitted):
+    # PG 위젯 (conversations + usage) — 단일 연결 재사용
+    if ("conversations" in permitted) or ("usage" in permitted):
+        pg = None
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+        except Exception:
+            log.warning("admin_overview: pg connect failed", exc_info=True)
             pg = None
+        if pg is None:
+            for k in ("conversations", "usage"):
+                if k in permitted:
+                    widgets[k] = {"error": True, "metrics": [], "lists": []}
+        else:
             try:
-                from shared.db import _pg_connect
-                pg = _pg_connect()
-            except Exception:
-                log.warning("admin_overview: pg connect failed", exc_info=True)
-                pg = None
-            if pg is None:
-                for k in ("conversations", "usage"):
-                    if k in permitted:
-                        widgets[k] = {"error": True, "metrics": [], "lists": []}
-            else:
+                _isolate("conversations", lambda: _dash_widget_conversations(pg, days, scope=conv_scope, account_id=actor_id))
+                _isolate("usage", lambda: _dash_widget_usage(pg, days))
+            finally:
                 try:
-                    _isolate("conversations", lambda: _dash_widget_conversations(pg, days, scope=conv_scope, account_id=actor_id))
-                    _isolate("usage", lambda: _dash_widget_usage(pg, days))
-                finally:
-                    try:
-                        pg.close()
-                    except Exception:
-                        pass
+                    pg.close()
+                except Exception:
+                    pass
 
-        return JSONResponse({"catalog": catalog, "widgets": widgets, "window_days": days})
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    return JSONResponse({"catalog": catalog, "widgets": widgets, "window_days": days})
 
 
 @app.get("/api/admin/dashboard/preferences")

@@ -77,6 +77,7 @@ def _install(monkeypatch, products, *, computed_log=None):
         return {"measurable": True, "pct": 100.0, "total_objects": 1,
                 "analyzed_objects": 1, "per_db": [], "engine": "mysql"}
     monkeypatch.setattr(app, "_compute_product_insight_coverage", _compute)
+    return acct  # P5b DI: 직접호출 시 account 명시 주입용(AO — body perm 검사가 이 account 로 실행)
 
 
 # ── E1: 단건 응답에 대상 제품만 ─────────────────────────────────────────────────
@@ -84,8 +85,8 @@ def test_single_product_returns_only_target(monkeypatch):
     products = [{"id": 1, "datasource_key": "ds-a"},
                 {"id": 2, "datasource_key": "ds-b"},
                 {"id": 3, "datasource_key": "ds-c"}]
-    _install(monkeypatch, products)
-    resp = app.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}))
+    acct = _install(monkeypatch, products)
+    resp = app.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}), account=acct, conn=_BenignConn())
     assert resp.status_code == 200
     cov = _body(resp)["coverage"]
     assert set(cov.keys()) == {"2"}
@@ -97,8 +98,8 @@ def test_single_product_skips_other_products_compute(monkeypatch):
                 {"id": 2, "datasource_key": "ds-b"},
                 {"id": 3, "datasource_key": "ds-c"}]
     log: list[int] = []
-    _install(monkeypatch, products, computed_log=log)
-    app.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}))
+    acct = _install(monkeypatch, products, computed_log=log)
+    app.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}), account=acct, conn=_BenignConn())
     # 오직 대상 제품(2)만 계산 — 느릴 수 있는 1·3 은 건드리지 않는다.
     assert log == [2]
 
@@ -109,8 +110,8 @@ def test_no_product_id_computes_all(monkeypatch):
                 {"id": 2, "datasource_key": "ds-b"},
                 {"id": 3, "datasource_key": "ds-c"}]
     log: list[int] = []
-    _install(monkeypatch, products, computed_log=log)
-    resp = app.admin_products_insight_coverage(_FakeRequest())
+    acct = _install(monkeypatch, products, computed_log=log)
+    resp = app.admin_products_insight_coverage(_FakeRequest(), account=acct, conn=_BenignConn())
     cov = _body(resp)["coverage"]
     assert set(cov.keys()) == {"1", "2", "3"}
     assert sorted(log) == [1, 2, 3]
@@ -119,14 +120,13 @@ def test_no_product_id_computes_all(monkeypatch):
 # ── E4: 권한 게이트 ────────────────────────────────────────────────────────────
 def test_requires_console_access(monkeypatch):
     nobody = {"id": 9, "permissions": {}}
-    monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (nobody, None))
-    resp = app.admin_products_insight_coverage(_FakeRequest())
+    # P5b DI: AO 라 본문 perm 검사가 account 로 실행 → 직접호출에 account=nobody 명시 주입(console.access 없음 → 403).
+    resp = app.admin_products_insight_coverage(_FakeRequest(), account=nobody, conn=_BenignConn())
     assert resp.status_code == 403
 
 
 # ── E5: 잘못된 product_id ──────────────────────────────────────────────────────
 def test_invalid_product_id_400(monkeypatch):
-    _install(monkeypatch, [{"id": 1, "datasource_key": "ds-a"}])
-    resp = app.admin_products_insight_coverage(_FakeRequest({"product_id": "abc"}))
+    acct = _install(monkeypatch, [{"id": 1, "datasource_key": "ds-a"}])
+    resp = app.admin_products_insight_coverage(_FakeRequest({"product_id": "abc"}), account=acct, conn=_BenignConn())
     assert resp.status_code == 400

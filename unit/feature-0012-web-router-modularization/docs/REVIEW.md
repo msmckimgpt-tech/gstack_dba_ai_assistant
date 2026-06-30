@@ -202,3 +202,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 검증 포인트: (1) cat-C 의 인증-전용 try/finally(body 미포함)는 auth conn 을 즉시 닫고 본문은 자체 mconn(audit)·pg(작업) 사용 → conn=Depends 불요(auth conn held-until-teardown 회피, 추가 idle conn 0). 본문의 conn 참조는 전부 주석(코드 NameError 없음, grep 확인). account 는 sig 에서 공급(record_audit_event actor). (2) 동반 테스트 RP(require_permission 의존성) 특성상 perm-gate 403 은 TestClient 필수(직접호출 우회), happy 는 명시 account 우회 — core-미호출 단언(promote/reject False) 은 require_permission 이 body 이전 403 이라 보존.
 - 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. sanity(require_permission sig/잔류 _require_permission·conn.close 0) PASS.
 - cat-F(public_share_view) 이연 판정: _optional_account 본문-중간 호출의 LastSeenAt eager-resolution 부수효과 차이 → 보안 민감 익명 엔드포인트라 router-extraction 이연(보수적).
+
+## REV-20260630-0009 [AGENT-TEAM:p5b-phase3-final-migratable-recovery]
+- Related Change: CHG-20260630-0009 (cat-B 보류분 회수 2 핸들러 — Final 이전 migratable 완결)
+- §18.8 Adversarial Panel: **AGENT-TEAM (REV-20260630-0006 확정분 재사용 + 종합 잔여 survey).** admin_overview·admin_products_insight_coverage 는 REV-0006 에서 byte-correct 확정됐으나 동반 테스트 전환 누락(needs_conversion)으로 보류된 것. 본 cycle 에서 테스트 전환으로 회수.
+- 종합 survey(결정적): 남은 *모든* 인증-route 핸들러를 버킷 분류(MIGRATABLE vs DEFER). 결과 MIGRATABLE 5 중 2(admin_overview·admin_products_insight_coverage) 회수, 3(progress·suggestions·public_share_view) 은 개별 코드 정독으로 **이연 확정**: progress/suggestions 는 conn/auth/perm 실패를 *fail-soft 200*({"items":[]}/empty)로 흡수 → get_current_account(미인증 401·conn 실패 500 raise)로 전환 시 **fail-soft→error 회귀**(비동치); public_share_view 는 _optional_account 가 share-load·404/410 게이트 *뒤* 호출이라 get_optional_account hoisting 시 LastSeenAt 세션 부수효과 eager 화. 셋 다 DI seam 으로 byte-동치 불가 → router-extraction 이연.
+- 테스트 전환 검증: admin_overview(RP) happy 6=명시 actor/conn(위젯 게이팅 본문 _account_has_permission 보존), perm-gate 1=TestClient(require_permission 403); admin_products_insight_coverage(AO) 5=명시 account/conn(본문 perm 검사가 account 로 실행, 403 포함). _install acct 반환 보강.
+- 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. 미전환 직접호출 0(grep).
+- **결론: DI seam 으로 byte-동치 가능한 모든 핸들러(69) 전환 완료.** 잔여 ~46(fail-soft 3 + preauth/longpoll/txn 43)은 아키텍처 이연 — Final(router-extraction) 단계에서 구조 재편과 함께 처리.
