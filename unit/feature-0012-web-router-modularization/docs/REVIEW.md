@@ -233,3 +233,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!"(test_html_no_cache GREEN), route-parity 179(골든=현재), ruff clean, py_compile OK.
 - 학습 반영: NS-BOUND 분류는 **app.<handler> 직접참조 테스트 + app.<global> monkeypatch** 도 점검 대상. 다음 도메인부터 추출 전 `grep -rn 'app\.<handler>'` 선행. app.X 동적 참조 규약이 이런 커플링의 일반 해법.
 - 다음: admin-conversations(1)→admin-usage(5 MIXED account 순수함수)→conversations(MIXED). 그 후 web_context 추출→브라우저 QA→배포(confirm).
+
+## REV-20260630-0013 [AGENT-TEAM:p5b-final-router-admin-conv-self-review]
+- Related Change: CHG-20260630-0013 (Final router 추출 #4 — admin_archived_conversations RP)
+- §18.8 Adversarial Panel: **SELF+구조+route-parity+런타임(TestClient) 결정적 검증.** keywords/media/static_pages 에서 추출 파이프라인 적대검증 완료. 본건은 단일 RP 핸들러 위치 이동(로직 무변, 이미 cat-B b5 에서 DI 전환됨)이라 byte-동치 결정적.
+- 검증 포인트: (1) **byte-동치**: PG 정본(agent_runtime.core_conversations)·MySQL 폴백·계정 메타 enrich·q/limit(≤500)·503/200 분기 원본과 1:1. require_permission 메시지 verbatim 보존. (2) **DI override 정합**: require_permission/get_conn 을 `from app import` 로 동일 객체 바인딩 → as_account 의 dependency_overrides(객체키) 가 router 핸들러에도 적용(media 입증 패턴). (3) **var-shadow 역전 점검(concrete 끝-이동 신규 리스크)**: archived 는 4-segment 전부 literal concrete. 끝 이동 시 *선행 var 라우트가 가로채면* 역전이나, `/api/admin/conversations/{var}` 형제 0 + `/api/admin/{a}/{b}` 광역 매처 0(grep) → 캡처 불가. (4) **런타임 증명**: test_p1_admin_archived 가 TestClient 로 실제 경로 호출(perm-gate 403) → GREEN = 라우팅·DI 정상.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!", route-parity 179(골든=현재), ruff clean, py_compile OK.
+- 학습 강화: **concrete 라우트 끝-이동은 "선행 var 캡처" 점검 필수**(var 라우트 끝-이동의 "후행 shadow" 와 대칭). 둘 다 `/<prefix>* + 광역 {a}/{b} 매처` grep 으로 커버.
+- 다음: admin-usage(5 MIXED — account 순수함수 인라인 perm)→conversations(MIXED)→web_context(NS-BOUND)→브라우저 QA→배포(confirm).

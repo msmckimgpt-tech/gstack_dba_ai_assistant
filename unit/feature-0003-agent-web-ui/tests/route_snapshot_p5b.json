@@ -890,13 +890,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/admin/conversations/archived",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/admin/sample-feedback",
    "methods": [
     "GET"
@@ -1199,6 +1192,13 @@
   },
   {
    "path": "/healthz",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/conversations/archived",
    "methods": [
     "GET"
    ],

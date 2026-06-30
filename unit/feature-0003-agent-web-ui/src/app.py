@@ -25403,114 +25403,8 @@ def _enrich_usage_conv_owner_meta(conn, items: list[dict]) -> None:
 _ARCHIVED_CONV_LIMIT = 500
 
 
-@app.get("/api/admin/conversations/archived")
-def admin_archived_conversations(request: Request, account=Depends(require_permission("conversation.archive.read.any", message="보관 대화 조회 권한이 필요합니다 (conversation.archive.read.any).")), conn=Depends(get_conn)) -> JSONResponse:
-    """보관된 대화 목록(admin 감사). 권한: conversation.archive.read.any.
-
-    PG 정본(agent_runtime.core_conversations, archived_at IS NOT NULL) + MySQL 계정 메타 enrich.
-    메타만 반환(제목/소유자/보관시각/보관자) — 메시지 본문 미포함. q 검색·limit(≤500) 지원.
-    """
-    q = (request.query_params.get("q") or "").strip()
-    try:
-        limit = int(request.query_params.get("limit", str(_ARCHIVED_CONV_LIMIT)))
-    except Exception:
-        limit = _ARCHIVED_CONV_LIMIT
-    limit = max(1, min(_ARCHIVED_CONV_LIMIT, limit))
-
-    items: list[dict[str, Any]] = []
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-        except Exception:
-            logging.getLogger(__name__).warning("admin_archived: pg connect failed", exc_info=True)
-            return _json_error("대화 저장소(PG) 연결 실패", 503)
-        try:
-            where = ["c.archived_at IS NOT NULL"]
-            params: list[Any] = []
-            if q:
-                where.append("(c.topic ILIKE %s OR c.conversation_id ILIKE %s)")
-                params.extend([f"%{q}%", f"%{q}%"])
-            sql = (
-                "SELECT c.conversation_id, COALESCE(NULLIF(TRIM(c.topic),''),'(제목 없음)'), "
-                "c.owner_account_id, c.created_at, c.updated_at, c.archived_at, "
-                "c.archived_by_account_id, c.product_id "
-                "FROM agent_runtime.core_conversations c "
-                f"WHERE {' AND '.join(where)} "
-                "ORDER BY c.archived_at DESC LIMIT %s"
-            )
-            params.append(limit)
-            with pg.cursor() as pgcur:
-                pgcur.execute(sql, tuple(params))
-                for r in (pgcur.fetchall() or []):
-                    items.append({
-                        "conversation_id": str(r[0]),
-                        "topic": str(r[1] or ""),
-                        "owner_account_id": (int(r[2]) if r[2] is not None else None),
-                        "created_at": (r[3].isoformat() if r[3] else None),
-                        "updated_at": (r[4].isoformat() if r[4] else None),
-                        "archived_at": (r[5].isoformat() if r[5] else None),
-                        "archived_by_account_id": (int(r[6]) if r[6] is not None else None),
-                        "product_id": (int(r[7]) if r[7] is not None else None),
-                    })
-        finally:
-            try:
-                pg.close()
-            except Exception:
-                pass
-    else:
-        # MySQL 폴백.
-        try:
-            cur = conn.cursor(dictionary=True)
-            try:
-                where = ["c.archived_at IS NOT NULL"]
-                params2: list[Any] = []
-                if q:
-                    where.append("(c.topic LIKE %s OR c.conversation_id LIKE %s)")
-                    params2.extend([f"%{q}%", f"%{q}%"])
-                cur.execute(
-                    "SELECT c.conversation_id, c.topic, c.owner_account_id, c.created_at, "
-                    "c.updated_at, c.archived_at, c.archived_by_account_id, c.product_id "
-                    "FROM AgentCoreConversations c "
-                    f"WHERE {' AND '.join(where)} ORDER BY c.archived_at DESC LIMIT %s",
-                    tuple(params2) + (limit,),
-                )
-                for m in (cur.fetchall() or []):
-                    items.append({
-                        "conversation_id": str(m.get("conversation_id") or ""),
-                        "topic": str(m.get("topic") or "(제목 없음)"),
-                        "owner_account_id": (int(m["owner_account_id"]) if m.get("owner_account_id") is not None else None),
-                        "created_at": str(m.get("created_at") or ""),
-                        "updated_at": str(m.get("updated_at") or ""),
-                        "archived_at": str(m.get("archived_at") or ""),
-                        "archived_by_account_id": (int(m["archived_by_account_id"]) if m.get("archived_by_account_id") is not None else None),
-                        "product_id": (int(m["product_id"]) if m.get("product_id") is not None else None),
-                    })
-            finally:
-                cur.close()
-        except Exception:
-            logging.getLogger(__name__).warning("admin_archived: MySQL query failed", exc_info=True)
-            return _json_error("대화 저장소 조회 실패", 503)
-
-    # 계정 메타(소유자/보관자 사용자명) enrich (MySQL).
-    acct_ids = sorted({i for e in items for i in (e.get("owner_account_id"), e.get("archived_by_account_id")) if i is not None})
-    meta: dict[int, str] = {}
-    if acct_ids:
-        try:
-            ph = ",".join(["%s"] * len(acct_ids))
-            mcur = conn.cursor(dictionary=True)
-            try:
-                mcur.execute(f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(acct_ids))
-                for m in (mcur.fetchall() or []):
-                    meta[int(m["Id"])] = str(m.get("Username") or "")
-            finally:
-                mcur.close()
-        except Exception:
-            logging.getLogger(__name__).warning("admin_archived: owner meta enrich failed", exc_info=True)
-    for e in items:
-        e["owner_username"] = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
-        e["archived_by_username"] = meta.get(e.get("archived_by_account_id")) if e.get("archived_by_account_id") is not None else None
-    return JSONResponse({"items": items, "count": len(items), "truncated": len(items) >= limit})
+# feature-0012 P5b Final: admin_archived_conversations(`/api/admin/conversations/archived`)는
+# src/routers/admin_conversations.py 로 추출(맨 끝 include_router).
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -28772,9 +28666,11 @@ def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
 # 이미-정의된 심볼을 읽음). route 경로/메서드/순서는 보존(키워드 router 는 종전과 동일하게 맨 끝 등록).
 # =============================================================================
 from routers.static_pages import router as _static_pages_router  # noqa: E402
+from routers.admin_conversations import router as _admin_conversations_router  # noqa: E402
 from routers.media import router as _media_router  # noqa: E402
 from routers.keywords import router as _keywords_router  # noqa: E402
 
 app.include_router(_static_pages_router)
+app.include_router(_admin_conversations_router)
 app.include_router(_media_router)
 app.include_router(_keywords_router)

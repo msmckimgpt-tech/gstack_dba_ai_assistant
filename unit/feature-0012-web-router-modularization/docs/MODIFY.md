@@ -267,3 +267,16 @@ source_of_truth: true
 - Impact: behavior-neutral. make test 전체 통과·0 fail(test_html_no_cache 포함), route-parity 179, ruff clean, py_compile OK. 배포 불요(런타임 라우팅·헤더·status 동일).
 - 후속: admin-conversations(1)→admin-usage(5 MIXED)→conversations(MIXED). **NS-BOUND 분류는 핸들러 직접참조 테스트도 점검 필요(이번 학습) — 추출 전 grep 으로 app.<handler> 참조 확인.**
 - Rollback Notes: revert(app.py 4 복원 + routers/static_pages.py 삭제 + 테스트·골든 복원). 라우팅 동일이라 무위험.
+
+## CHG-20260630-0013
+- Date: 2026-06-30
+- Related Requirement: P5b Final — NS-BOUND=0 도메인 router 추출 #4(admin_conversations). 보관 대화 감사 1 RP 핸들러. **concrete-route 끝-이동 시 var-shadow 역전 점검 패턴 확립.**
+- Summary:
+  admin_archived_conversations(`GET /api/admin/conversations/archived`, require_permission("conversation.archive.read.any") RP)를 `src/routers/admin_conversations.py` 로 추출:
+  - **import**: DI seam(require_permission/get_conn)은 `from app import`(객체 동일성이 dependency_overrides 정합에 필요 — media 와 동일). _json_error/_ARCHIVED_CONV_LIMIT 은 monkeypatch 대상 아님(setattr grep 0). _pg_connect 는 본문 내 shared.db import 유지. 원본 PG/MySQL 이중 경로·계정 enrich·SQL·503/200 byte-동치.
+  - **app.py**: 핸들러 제거 + include_router(_admin_conversations_router) (static_pages 뒤·media 앞).
+  - **var-shadow 점검(중요)**: archived 는 concrete 라 끝-이동 시 *선행 var 라우트가 캡처*하면 역전 가능. 점검 결과 `/api/admin/conversations*` 라우트는 archived **단독**(`/{var}` 형제 없음) + `/api/admin/{a}/{b}` 류 광역 매처 0 → 캡처 불가. 골든 [127]→[171]. 추가 런타임 증명: 동반 테스트 test_p1_admin_archived(`client.get` perm-gate 403)가 make test 에서 GREEN(잘못된 핸들러로 라우팅됐다면 실패).
+- Files: src/app.py(핸들러 제거 + include_router), src/routers/admin_conversations.py(신규), tests/route_snapshot_p5b.json(골든 순서) + docs.
+- Impact: behavior-neutral. make test 전체 통과·0 fail(test_conversation_archive 포함), route-parity 179, ruff clean, py_compile OK. 배포 불요.
+- 후속: admin-usage(5 MIXED: admin_usage_conversations 등 account 순수함수 인라인 perm)→conversations(MIXED). NS-BOUND 도메인은 web_context 선행.
+- Rollback Notes: revert(app.py 핸들러 복원 + routers/admin_conversations.py 삭제 + 골든 복원). 라우팅 동일.
