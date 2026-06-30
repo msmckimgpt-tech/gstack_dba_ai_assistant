@@ -227,6 +227,12 @@ services:
       MAX_CLIENT_CONN: "100"
       DEFAULT_POOL_SIZE: "20"
       AUTH_TYPE: scram-sha-256
+      # feature-0016: admin 콘솔(PAUSE/RESUME)을 DB_USER(agent_kb_rw, userlist 보유)로 허용.
+      # bin/pg-restart.sh 가 PG primary 재시작/config 변경을 near-zero RW 단절로 수행하는 데 필요.
+      # (edoburu 기본 admin_users=postgres 는 userlist 에 없어 인증 불가였음.) unix socket 부재 →
+      # 컨테이너 내 psql 로 TCP admin 접속. 보안: agent_kb_rw 는 이미 신뢰 내부 role + pgbouncer 는
+      # dbnet 전용. 전용 admin user 분리는 하드닝 후속.
+      ADMIN_USERS: ${AGENT_KB_PG_USER:-postgres}
       TZ: ${TZ}
     ports:
       - "${AGENT_KB_PGB_PORT:-6432}:5432"

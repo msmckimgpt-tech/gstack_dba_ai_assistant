@@ -341,6 +341,9 @@ migrate-current:  ## db: 라이브 현재 alembic revision 조회
 migrate-lint:  ## db: 신규 alembic revision 의 expand/contract 안전성 검사 (무중단 배포 게이트, feature-0014)
 	@bin/migrate-lint.sh $(MIGRATE_LINT_ARGS)
 
+pg-restart:  ## db: PG primary 를 near-zero RW 단절로 재시작 (pgbouncer PAUSE→restart→RESUME) — feature-0016
+	@sudo -E bin/pg-restart.sh $(PG_RESTART_ARGS)
+
 mysql-ddl-lint:  ## db: 신규 MySQL ALTER 의 online-DDL(LOCK=NONE) 강제 검사 (무중단, feature-0015)
 	@bin/mysql-ddl-lint.sh $(MYSQL_DDL_LINT_ARGS)
 
