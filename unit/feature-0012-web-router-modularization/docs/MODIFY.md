@@ -253,3 +253,17 @@ source_of_truth: true
 - Impact: behavior-neutral. make test 전체 통과·0 fail, route-parity 179(골든=현재 일치), ruff clean, py_compile OK. 배포 불요(런타임 라우팅 동일).
 - 후속: static_pages(4 무인증)→admin-conversations(1)→admin-usage(5 MIXED)→conversations(MIXED). NS-BOUND 도메인은 web_context 추출 선행.
 - Rollback Notes: revert(app.py media 복원 + routers/media.py 삭제 + 골든 복원). 라우팅 동일이라 무위험.
+
+## CHG-20260630-0012
+- Date: 2026-06-30
+- Related Requirement: P5b Final — NS-BOUND=0 도메인 router 추출 #3(static_pages). 무인증 정적 페이지 + 헬스 프로브 4 핸들러. **test-coupling(직접 핸들러 참조 + app.전역 monkeypatch) 보존 패턴 확립.**
+- Summary:
+  static_pages 도메인 4 핸들러(index `/`·admin_index `/admin`·share_page `/share/{token}`·healthz `/healthz`, 전부 무인증)를 `src/routers/static_pages.py` 로 추출:
+  - **import 규약**: `import app` 후 app-소스 심볼은 전부 **호출 시 `app.X` 속성 접근**(STATIC_DIR·_HTML_NO_CACHE·FileResponse·_connect_memory·load_memory_kv). import-time 복사(`from app import`)가 아닌 동적 참조라 heavily-monkeypatched 헬퍼(_connect_memory 62×) + test 의 `app.FileResponse` 가로채기 계약 모두 보존. 순환 안전(app 정의 후 맨 끝 include). stdlib(os/logging/datetime/timezone)·fastapi(FileResponse/JSONResponse) 는 직접 import.
+  - **app.py**: 4 핸들러 본문 제거(자리표시 주석) + 맨 끝 `app.include_router(_static_pages_router)`(media/keywords 앞). _HTML_NO_CACHE 상수는 app.py 유지(router 가 app._HTML_NO_CACHE 참조).
+  - **test 전환(test-coupling 해소)**: `test_html_no_cache.py::test_html_routes_set_no_cache` 는 `app.index/admin_index/share_page` 를 **직접 호출** + `monkeypatch.setattr(app,"FileResponse",_Fake)` 가로채기. → Final-planning 의 NS-BOUND=0 분류가 놓친 test-coupling. router 가 `app.FileResponse` 동적 참조하므로 monkeypatch 는 그대로 유효 → 테스트는 **호출 위치만** `from routers import static_pages` + `static_pages.index()` 로 전환(검증 의미·assert 불변).
+  - **route-parity 골든 갱신**: static_pages 4 라우트가 원본 위치 [5,6,7,8]→include 순서상 [168,169,170,171]로 이동. set 불변(179→179). var-vs-concrete: {var} 는 `/share/{token}` 하나뿐(share-prefix 유일·경쟁 concrete 0·끝 이동=가장 늦게 매칭) + 나머지 3(`/`·`/admin`·`/healthz`) concrete → shadow 위험 없음.
+- Files: src/app.py(4 핸들러 제거 + include_router), src/routers/static_pages.py(신규), tests/test_html_no_cache.py(호출 위치 전환), tests/route_snapshot_p5b.json(골든 순서) + docs.
+- Impact: behavior-neutral. make test 전체 통과·0 fail(test_html_no_cache 포함), route-parity 179, ruff clean, py_compile OK. 배포 불요(런타임 라우팅·헤더·status 동일).
+- 후속: admin-conversations(1)→admin-usage(5 MIXED)→conversations(MIXED). **NS-BOUND 분류는 핸들러 직접참조 테스트도 점검 필요(이번 학습) — 추출 전 grep 으로 app.<handler> 참조 확인.**
+- Rollback Notes: revert(app.py 4 복원 + routers/static_pages.py 삭제 + 테스트·골든 복원). 라우팅 동일이라 무위험.

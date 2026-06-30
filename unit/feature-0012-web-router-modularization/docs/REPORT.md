@@ -35,7 +35,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260630-0009: DI seam Phase 3 final migratable — admin_overview(RP)·admin_products_insight_coverage(AO) 회수(동반 테스트 12 call 전환). DI seam byte-동치 가능 핸들러 전부 완료(누적 69). 잔여 ~46 아키텍처 이연(fail-soft 3 + preauth/longpoll/txn 43) 문서화. make test 1238. **Final 이전 완결.**
 - CHG-20260630-0010: P5b **Final 시작** — Final-planning workflow(8 agents)로 NS-BOUND=0 도메인 web_context 선행 불요 확정 + route-parity 인프라 갱신(Starlette 1.x _IncludedRouter nest → _walk_routes 재귀) + keywords 도메인 router 추출(src/routers/). make test 전체 통과, route-parity 179 골든 불변, byte-동치. APIRouter 분할 파이프라인 확립.
 - CHG-20260630-0011: P5b Final router 추출 #2 — media 도메인 3 DI 핸들러(serve_avatar·serve_product_icon·serve_role_icon) → src/routers/media.py. **실 DI 핸들러 추출 + 골든 순서 갱신** 파이프라인 증명(keywords stub·last-position 과 달리 mid→end 이동). route-parity set 불변(179)·순서만 [45,48,53]→[172-174], var-vs-concrete shadow 위험 없음(끝 이동=가장 늦게 매칭). make test 전체 통과·route drift 0·byte-동치.
-- 총 변경 횟수: 17
+- CHG-20260630-0012: P5b Final router 추출 #3 — static_pages 도메인 4 무인증 핸들러(index·admin_index·share_page·healthz) → src/routers/static_pages.py. **test-coupling 보존 패턴 확립**: `import app`+호출시 `app.X` 동적 속성 접근(STATIC_DIR·_HTML_NO_CACHE·FileResponse·_connect_memory·load_memory_kv) → heavily-monkeypatched 헬퍼 + test 의 app.FileResponse 가로채기 계약 보존. Final-planning NS-BOUND=0 분류가 놓친 test_html_no_cache 커플링(핸들러 직접참조+app.FileResponse patch)을 make test 가 즉시 적발 → router app.FileResponse 동적참조 + 테스트 호출 위치 전환으로 byte-동치 해소. 골든 [5-8]→[168-171]. make test 전체 통과·route drift 0.
+- 총 변경 횟수: 18
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

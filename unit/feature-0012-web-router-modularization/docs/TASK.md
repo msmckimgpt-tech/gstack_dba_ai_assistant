@@ -49,7 +49,8 @@ source_of_truth: true
 - [~] TASK-0012-8 helper→web_context 이동 + APIRouter 추출(도메인 1개/커밋) + route-parity 골든 갱신
   - [x] **Final 시작**: Final-planning workflow(8 agents) — NS-BOUND=0 도메인은 web_context 선행 없이 router 추출 가능 확정. route-parity 인프라 갱신(Starlette 1.x `_IncludedRouter` nest → `_walk_routes` 재귀). **keywords router 추출**(src/routers/keywords.py, 4 stub) — make test 전체 통과·route-parity 179 골든 불변·byte-동치.
   - [x] **router 추출 #2 (media, 3 DI 핸들러)**: serve_avatar/serve_product_icon/serve_role_icon → src/routers/media.py(`from app import get_current_account, get_conn, _serve_image_object`, 순환 안전). 실 DI 핸들러 추출 + 골든 순서 갱신(set 불변 179, [45,48,53]→[172-174] 끝 이동, var-vs-concrete shadow 위험 없음) 파이프라인 증명. make test 전체 통과·route drift 0·byte-동치(CHG/REV-0011).
-  - [ ] NS-BOUND=0 도메인 순차 추출(잔여): static_pages(4 무인증)→admin-conversations(1)→admin-usage(5 MIXED)→conversations(MIXED). 그 후 web_context 추출(NS-BOUND admin/metadata 등)→이연 핸들러 router 화.
+  - [x] **router 추출 #3 (static_pages, 4 무인증 핸들러)**: index/admin_index/share_page/healthz → src/routers/static_pages.py. **test-coupling 보존 패턴**: `import app`+호출시 `app.X` 동적 속성 접근(monkeypatched 헬퍼·test 의 app.FileResponse 가로채기 보존). NS-BOUND=0 분류가 놓친 test_html_no_cache 커플링(app.<handler> 직접참조+app.FileResponse patch)을 make test 가 즉시 적발 → router app.FileResponse 동적참조 + 테스트 호출 위치 전환으로 byte-동치 해소. 골든 [5-8]→[168-171] set 불변. make test 전체 통과·route drift 0(CHG/REV-0012).
+  - [ ] NS-BOUND=0 도메인 순차 추출(잔여): admin-conversations(1)→admin-usage(5 MIXED)→conversations(MIXED). **추출 전 grep `app.<handler>` 직접참조 + `app.<global>` monkeypatch 선행 점검(0012 학습).** 그 후 web_context 추출(NS-BOUND admin/metadata 등)→이연 핸들러 router 화.
 - [ ] TASK-0012-9 브라우저 로그인 QA(win-browser.py) + §18.8 패널 + 배포
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 

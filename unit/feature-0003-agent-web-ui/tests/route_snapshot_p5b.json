@@ -36,34 +36,6 @@
    "type": "Mount"
   },
   {
-   "path": "/",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/admin",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/share/{token}",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/healthz",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/llm/health",
    "methods": [
     "GET"
@@ -1199,6 +1171,34 @@
   },
   {
    "path": "/api/profile/audits/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/admin",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/share/{token}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/healthz",
    "methods": [
     "GET"
    ],

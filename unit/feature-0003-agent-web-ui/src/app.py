@@ -10758,23 +10758,9 @@ def _assign_default_signup_role(conn, role_id: int) -> None:
 _HTML_NO_CACHE = {"Cache-Control": "no-cache"}
 
 
-@app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html", headers=_HTML_NO_CACHE)
-
-
-@app.get("/admin")
-def admin_index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "admin.html", headers=_HTML_NO_CACHE)
-
-
-# REQ-20260514-0001: 공유 링크 페이지 (anonymous accessible). 실제 token 검증은
-# 클라이언트 JS 가 `/api/public/share/{token}` 호출로 수행한다. 본 route 는
-# 정적 share.html serve 만 담당. AGENTS.md / SECURITY.md 에 명시된 유이한
-# anonymous-allowed 페이지 경로.
-@app.get("/share/{token}")
-def share_page(token: str) -> FileResponse:
-    return FileResponse(STATIC_DIR / "share.html", headers=_HTML_NO_CACHE)
+# feature-0012 P5b Final: static_pages 도메인(`/`·`/admin`·`/share/{token}`·`/healthz`)은
+# src/routers/static_pages.py 로 추출(맨 끝 include_router). index/admin_index/share_page/healthz
+# 핸들러 정의는 그곳에 있음. _HTML_NO_CACHE 상수는 그대로 유지(router 가 app._HTML_NO_CACHE 로 참조).
 
 
 def _resolve_session_default_model() -> str:
@@ -10796,64 +10782,7 @@ def _resolve_session_default_model() -> str:
     return API_DEFAULT_MODEL
 
 
-@app.get("/healthz")
-def healthz() -> JSONResponse:
-    """TASK-0126 (#5 split-brain / #4 워커 가시성): 배포 provenance + readiness probe.
-    인증 불필요, 최소 정보만 노출한다. git_commit 으로 web·insight-worker 가 동일 빌드인지
-    검증하고, insight_heartbeat_age_sec 로 워커 생존을 확인한다. Docker HEALTHCHECK 가
-    본 endpoint 를 사용한다 (mysql·pg 둘 다 정상이면 200, 아니면 503)."""
-    git_commit = os.environ.get("GIT_COMMIT", "unknown")
-    mysql_ok = False
-    pg_ok = False
-    heartbeat_age_sec: int | None = None
-
-    conn = None
-    try:
-        conn = _connect_memory()
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        cur.fetchone()
-        cur.close()
-        mysql_ok = True
-    except Exception:
-        logging.getLogger(__name__).warning("healthz: mysql check failed", exc_info=True)
-
-    if conn is not None:
-        try:
-            from shared.config import GLOBAL_CONVERSATION_ID
-
-            raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_cycle_at")
-            if raw:
-                ts = str(raw).strip().replace("Z", "+00:00")
-                dt = datetime.fromisoformat(ts)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                heartbeat_age_sec = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
-        except Exception:
-            logging.getLogger(__name__).warning("healthz: insight heartbeat read failed", exc_info=True)
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-    try:
-        from shared.db import _pg_available
-
-        pg_ok = bool(_pg_available())
-    except Exception:
-        logging.getLogger(__name__).warning("healthz: pg check failed", exc_info=True)
-
-    ok = mysql_ok and pg_ok
-    return JSONResponse(
-        {
-            "status": "ok" if ok else "degraded",
-            "git_commit": git_commit,
-            "mysql_ok": mysql_ok,
-            "pg_ok": pg_ok,
-            "insight_heartbeat_age_sec": heartbeat_age_sec,
-        },
-        status_code=200 if ok else 503,
-    )
+# feature-0012 P5b Final: healthz 핸들러는 src/routers/static_pages.py 로 추출(맨 끝 include_router).
 
 
 def _read_llm_provider_status() -> "dict[str, Any]":
@@ -28842,8 +28771,10 @@ def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
 # import·include 하므로 순환 import 안전(router 의 `from app import ...` 가 부분 적재된 app 의
 # 이미-정의된 심볼을 읽음). route 경로/메서드/순서는 보존(키워드 router 는 종전과 동일하게 맨 끝 등록).
 # =============================================================================
+from routers.static_pages import router as _static_pages_router  # noqa: E402
 from routers.media import router as _media_router  # noqa: E402
 from routers.keywords import router as _keywords_router  # noqa: E402
 
+app.include_router(_static_pages_router)
 app.include_router(_media_router)
 app.include_router(_keywords_router)
