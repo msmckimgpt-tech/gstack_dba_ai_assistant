@@ -136,7 +136,7 @@ services:
   # T3-8: 에이전트는 직접 postgres:5432 가 아닌 pgbouncer:5432 로 연결 권장.
   #   .env.postgres 에서 AGENT_KB_PG_HOST=pgbouncer 으로 변경하면 자동 전환.
   postgres:
-    image: pgvector/pgvector:pg16
+    image: ${KB_PG_IMAGE:-pgvector/pgvector:pg16}
     restart: unless-stopped
     logging: *default-logging
     mem_limit: 2g
@@ -187,7 +187,8 @@ services:
       - -c
       - hot_standby=on
       - -c
-      - shared_preload_libraries=pg_stat_statements
+      # feature-0016: cutover 시 KB_PG_PRELOAD=pg_stat_statements,age 로 AGE preload(롤백=env 제거).
+      - shared_preload_libraries=${KB_PG_PRELOAD:-pg_stat_statements}
       - -c
       - pg_stat_statements.track=all
     ports:
@@ -246,7 +247,7 @@ services:
   # 그 후: docker compose --profile replica up -d postgres-replica
   # 에이전트 read-only 연결: .env.postgres 에 AGENT_KB_PG_HOST_RO=postgres-replica 설정.
   postgres-replica:
-    image: pgvector/pgvector:pg16
+    image: ${KB_PG_IMAGE:-pgvector/pgvector:pg16}
     restart: unless-stopped
     profiles: [replica]
     logging: *default-logging
@@ -271,6 +272,9 @@ services:
       - shared_buffers=128MB
       - -c
       - effective_cache_size=384MB
+      - -c
+      # feature-0016: replica 도 AGE preload 필요(RO 그래프 read). cutover 시 KB_PG_REPLICA_PRELOAD=age.
+      - shared_preload_libraries=${KB_PG_REPLICA_PRELOAD:-}
     volumes:
       - ../artifacts/postgres-replica-data:/var/lib/postgresql/data
     networks: [dbnet]
@@ -286,7 +290,7 @@ services:
   # T5-14: 1회성 replica 초기화 (pg_basebackup). 완료 후 컨테이너 종료.
   # 실행: docker compose run --rm postgres-replica-init
   postgres-replica-init:
-    image: pgvector/pgvector:pg16
+    image: ${KB_PG_IMAGE:-pgvector/pgvector:pg16}
     restart: "no"
     profiles: [replica]
     logging: *default-logging
