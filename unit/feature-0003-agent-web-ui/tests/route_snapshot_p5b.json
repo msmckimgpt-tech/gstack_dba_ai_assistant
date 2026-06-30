@@ -869,20 +869,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/admin/usage",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/usage/conversations",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/profile/usage/conversations",
    "methods": [
     "GET"
@@ -1199,6 +1185,20 @@
   },
   {
    "path": "/api/admin/conversations/archived",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/usage",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/usage/conversations",
    "methods": [
     "GET"
    ],

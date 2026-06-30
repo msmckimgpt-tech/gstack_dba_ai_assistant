@@ -241,3 +241,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!", route-parity 179(골든=현재), ruff clean, py_compile OK.
 - 학습 강화: **concrete 라우트 끝-이동은 "선행 var 캡처" 점검 필수**(var 라우트 끝-이동의 "후행 shadow" 와 대칭). 둘 다 `/<prefix>* + 광역 {a}/{b} 매처` grep 으로 커버.
 - 다음: admin-usage(5 MIXED — account 순수함수 인라인 perm)→conversations(MIXED)→web_context(NS-BOUND)→브라우저 QA→배포(confirm).
+
+## REV-20260630-0014 [AGENT-TEAM:p5b-final-router-admin-usage-self-review]
+- Related Change: CHG-20260630-0014 (Final router 추출 #5 — admin_usage 2 핸들러, verbatim+uniform app.X)
+- §18.8 Adversarial Panel: **SELF+구조+route-parity+런타임(TestClient/직접호출) 결정적 검증.** 추출 파이프라인은 #1-4 에서 적대검증 완료. 본건 신규 리스크 2가지를 집중 검증: (a) 대형 핸들러 verbatim 정합, (b) helper-monkeypatch 보존.
+- 검증 포인트: (1) **verbatim 정합**: 스크립트가 app.py 라인 슬라이스를 그대로 추출(assert 로 첫/끝 줄 검증) 후 정규식 rewrite 만 적용 → 본문 로직·SQL(date_trunc 화이트리스트·interval 캐스트·by_model/account/role/day 집계)·403 메시지·503 분기 byte 보존. rewrite 부작용 점검: `app.` 접두는 word-boundary lookbehind `(?<![\w.])` 로 method/속성/문자열 오염 0, `_pg_connect`(shared.db) bare 유지 확인, 이중접두 `app.app.` 0(grep). (2) **helper-monkeypatch 보존**: uniform `app.X` 동적참조 → test 의 `monkeypatch.setattr(app,"_query_usage_conversations"/"_usage_account_ids_for_role")` 가 router 핸들러에도 적용. (3) **DI override 정합**: `Depends(app.get_current_account/get_conn)` = app 정본 동일 객체 → as_account override 적용(media 입증). (4) **test 전환 정합**: AO 직접호출(account/conn 명시)이 Depends 기본값 우회 → 본문 perm 검사가 actor dict 로 실행(real _account_has_permission), 403 ×2·시스템역할 빈목록 ×1 보존. (5) **var-shadow**: admin/usage* 2 concrete·var 형제 0·1-seg `/api/admin/{var}` matcher 0.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!"(test_usage_conversations 전체 GREEN: Q1-Q4 헬퍼 + A1/A2 admin + P1 profile), route-parity 179(골든=현재), ruff clean, py_compile OK.
+- 학습: 대형/다-helper 핸들러는 **verbatim 슬라이스+화이트리스트 정규식 rewrite** 가 수기 전사보다 안전. helper-monkeypatch 도메인은 **uniform app.X** 가 일반 해법(static_pages 의 app.FileResponse 와 동일 원리 확장).
+- 다음: conversations(MIXED) → NS-BOUND 도메인 web_context 추출 → 브라우저 QA → 배포(confirm).

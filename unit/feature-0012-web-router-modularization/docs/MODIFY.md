@@ -280,3 +280,18 @@ source_of_truth: true
 - Impact: behavior-neutral. make test 전체 통과·0 fail(test_conversation_archive 포함), route-parity 179, ruff clean, py_compile OK. 배포 불요.
 - 후속: admin-usage(5 MIXED: admin_usage_conversations 등 account 순수함수 인라인 perm)→conversations(MIXED). NS-BOUND 도메인은 web_context 선행.
 - Rollback Notes: revert(app.py 핸들러 복원 + routers/admin_conversations.py 삭제 + 골든 복원). 라우팅 동일.
+
+## CHG-20260630-0014
+- Date: 2026-06-30
+- Related Requirement: P5b Final — NS-BOUND=0 도메인 router 추출 #5(admin_usage, MIXED 2 핸들러). **대형 핸들러 verbatim 스크립트 추출 + uniform `app.X` 동적참조(helper-monkeypatch 보존) 패턴 확립.**
+- Summary:
+  admin_usage 도메인 2 핸들러 → `src/routers/admin_usage.py`:
+  - **admin_llm_usage**(`GET /api/admin/usage`, RP console.usage.read, ~164줄 대형) + **admin_usage_conversations**(`GET /api/admin/usage/conversations`, AO get_current_account + 본문 2-perm `_account_has_permission` 검사).
+  - **추출 방식**: 대형 핸들러 수기 전사 오류 방지 위해 **verbatim 스크립트 추출**(app.py 라인 슬라이스 → 정규식 rewrite). rewrite: `@app.get`→`@router.get`, 시그니처 `Depends(app.X)`, app-helper 8종(`_estimate_llm_cost_usd`·`_json_error`·`_aggregate_usage_by_role`·`_account_has_permission`·`_enrich_usage_conv_owner_meta`·`_parse_usage_conv_params`·`_query_usage_conversations`·`_usage_account_ids_for_role`) + 상수 `_USAGE_GRAN` 에 `app.` 접두(word-boundary lookbehind, 이중접두 0). `_pg_connect`(shared.db)는 bare 유지.
+  - **uniform `import app`+`app.X` 규약(이유)**: 동반 테스트 test_usage_conversations 가 `app._query_usage_conversations`·`app._usage_account_ids_for_role` 를 monkeypatch → router 가 import-time 복사 아닌 `app.X` 동적참조여야 가로채기 유효. DI seam 도 `Depends(app.require_permission/get_conn/get_current_account)` — app 정본과 동일 객체라 dependency_overrides 정합.
+  - **test 전환**: admin 직접호출 3건(`app.admin_usage_conversations(_Req(), account=actor, conn=_Conn())` perm-gate 403 ×2 + 시스템역할 빈목록 ×1) → `from routers import admin_usage` + `admin_usage.admin_usage_conversations(...)`. 헬퍼 단위테스트(Q1-Q4 `app._query_usage_conversations`, 헬퍼는 app.py 잔류)·profile 핸들러(미추출) 무변.
+  - **route-parity**: set 불변(179). admin/usage* 2 concrete(var 형제 0) + `/api/admin/{var}` 1-seg matcher 0 → shadow 없음. 골든 끝-이동 재생성.
+- Files: src/app.py(2 핸들러 제거 + include_router), src/routers/admin_usage.py(신규 207줄), tests/test_usage_conversations.py(import + 직접호출 3 전환), tests/route_snapshot_p5b.json(골든) + docs.
+- Impact: behavior-neutral. make test 전체 통과·0 fail(test_usage_conversations 전체 GREEN), route-parity 179, ruff clean, py_compile OK. 배포 불요.
+- 후속: conversations(MIXED). NS-BOUND 도메인(admin/metadata wrapper 등)은 web_context 선행.
+- Rollback Notes: revert(app.py 2 핸들러 복원 + routers/admin_usage.py 삭제 + 테스트·골든 복원). 라우팅 동일.
