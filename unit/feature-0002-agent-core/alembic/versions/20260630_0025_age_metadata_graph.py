@@ -26,8 +26,15 @@
 비superuser 의 `LOAD 'age'` 를 거부한다("access to library age is not allowed"). 따라서 앱 role
 (agent_kb_rw/ro) 이 AGE 를 쓰려면 서버가 `age` 를 preload 해야 한다. 운영 compose 의 postgres·
 postgres-replica `command:` 절에 `-c shared_preload_libraries='age'` (+기존 pgvector 관련 값과
-병기 — 콤마 구분) 를 추가하고 **서버 재시작** 이 cutover 의 일부다(TASK.md T5.3). 앱 코드는 세션마다
-`LOAD` 없이 `SET search_path = ag_catalog, "$user", public` 만 하면 된다(modules/metadata_graph.py).
+병기 — 콤마 구분) 를 추가하고 **서버 재시작** 이 cutover 의 일부다(TASK.md T5.3).
+
+**LOAD-BEARING — ALTER ROLE search_path (pgbouncer transaction-mode 안전, Phase 4 검증)**: AGE 의
+agtype 연산자(`@>` 등 property 매칭)는 **schema-qualify 불가**하고 search_path 로만 해소된다. 앱은
+pgbouncer(transaction pooling) 경유라 세션 `SET search_path` 가 풀링 트랜잭션 간 유지 안 될 수 있다.
+그래서 본 마이그레이션이 `ALTER ROLE agent_kb_rw/ro SET search_path = ag_catalog, "$user", public`
+로 **role 기본값**을 박아, startup·DISCARD ALL 후에도 자동 적용되게 한다(검증: DISCARD ALL 후 @> 동작).
+modules/metadata_graph.py 는 추가로 `cypher`·`agtype` 를 `ag_catalog.` 정규화 + 방어적 `SET search_path`
+(직접/superuser 연결용) 를 병행한다.
 
 **create_vlabel/create_elabel 시그니처**: `(graph_name cstring, label_name cstring)` — `name` 아님.
 literal 은 unknown→cstring 으로 암묵 캐스트되나 변수는 `::cstring` 명시 캐스트 필요. `create_graph`
@@ -96,6 +103,10 @@ BEGIN
             GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agent_kb_rw;
         ALTER DEFAULT PRIVILEGES IN SCHEMA metadata_kb
             GRANT USAGE, SELECT ON SEQUENCES TO agent_kb_rw;
+        -- LOAD-BEARING (pgbouncer transaction-mode): AGE 의 agtype 연산자(@> 등)는 search_path 로만
+        -- 해소된다. role 기본 search_path 에 ag_catalog 를 넣어 풀링 세션 startup 마다(DISCARD ALL 후에도)
+        -- 자동 적용 — 앱이 매 트랜잭션 SET 할 필요 없음. 기존 관계형(public) 경로는 영향 없음(이름 충돌 없음).
+        ALTER ROLE agent_kb_rw SET search_path = ag_catalog, "$user", public;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agent_kb_ro') THEN
         GRANT USAGE ON SCHEMA ag_catalog, metadata_kb TO agent_kb_ro;
@@ -103,6 +114,7 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA metadata_kb TO agent_kb_ro;
         ALTER DEFAULT PRIVILEGES IN SCHEMA metadata_kb
             GRANT SELECT ON TABLES TO agent_kb_ro;
+        ALTER ROLE agent_kb_ro SET search_path = ag_catalog, "$user", public;
     END IF;
 END
 $grant$;

@@ -88,8 +88,12 @@ def _props_set(var: str, props: dict) -> str:
 
 
 def _cypher(cur, query: str, ncols: int):
-    """cypher() 실행 + fetchall. ncols = RETURN 컬럼 수(agtype). 실패 시 예외 전파(호출측 try)."""
-    cols = ", ".join(f"c{i} agtype" for i in range(ncols))
+    """cypher() 실행 + fetchall. ncols = RETURN 컬럼 수(agtype). 실패 시 예외 전파(호출측 try).
+
+    **pgbouncer transaction-mode 안전**: `cypher`·`agtype` 를 모두 `ag_catalog.` 로 정규화해
+    세션 search_path 에 의존하지 않는다(SET search_path 가 풀링 트랜잭션 간 유지 안 될 수 있음).
+    """
+    cols = ", ".join(f"c{i} ag_catalog.agtype" for i in range(ncols))
     cur.execute(f"SELECT * FROM ag_catalog.cypher('{GRAPH}', $$ {query} $$) AS ({cols})")
     return cur.fetchall()
 

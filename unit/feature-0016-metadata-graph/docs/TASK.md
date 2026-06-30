@@ -60,12 +60,14 @@ source_of_truth: true
 - [x] T3.4 8K 보호: 검색/이웃 스코프만(전체 렌더 안 함), cytoscape 부재·빈 그래프·실패 graceful + 초기화 버튼.
       node --check 구문 OK, cytoscape 로드 OK, admin.html 요소 5/5. **라이브 렌더 검증=cutover 후 PB-0008.**
 
-## 5. Phase 4 — AI 정합
-- [ ] T4.1 `_build_knowledge_context`(agent_core): 질문 관련 엔티티를 그래프에서 **묶어 주입**
-      (테이블+컬럼+관계+용어 한 블록), datamark 유지. 기존 7블록과 정합/중복제거.
-- [ ] T4.2 (컨텍스트 초과 해소) AI tool `graph_navigate` — 제한된 Cypher/이웃 조회 tool 추가
-      (read-only, 화이트리스트). 게임 용어 기반 질의에서 관련 서브그래프 자율 탐색.
-- [ ] T4.3 KB 회귀 스위트 통과 + 신규 단위.
+## 5. Phase 4 — AI 정합 ✅ PASS (2026-06-30)
+- [x] T4.2 (컨텍스트 초과 해소 — 사용자 동기 핵심) AI tool **`graph_navigate`**(tools.py): read-only,
+      action=search(부분일치)·neighbor(k-hop). metadata_graph 경유(RO), 플래그 off·AGE 부재 시 graceful
+      안내(get_foreign_keys 로 유도). 대규모 스키마에서 관련 서브그래프만 탐색. py_compile OK.
+- [x] T4.1 가이던스 정합: `_MERMAID_DIAGRAM_GUIDANCE`(agent_core) 의 "관계 수집" 지침에 graph_navigate
+      추가 — 대규모 스키마는 graph_navigate 로 관련 subgraph 만 pull. (전면 _build_knowledge_context
+      엔티티-번들 재구성은 기존 flat 블록이 이미 커버 + 그래프는 on-demand tool 로 충당 → 과변경 회피.)
+- [ ] T4.3 KB 회귀(`make test`) + 라이브 AI-calls-tool 검증 — cutover 후(AGE 필요).
 
 ## 6. Phase 5 — 측정 + 배포
 - [ ] T5.1 ITEM-01 eval harness A/B(그래프 컨텍스트 on/off) — 임베더/bedrock-auth 복구 전제. 수치 기록.

@@ -35,10 +35,10 @@ def main() -> int:
     assert "dbo.customers.id" in fqns, f"nb 2hop: {fqns}"
     assert "REFERENCES" in etypes, f"nb etypes: {etypes}"
 
-    # orders Table 단일(멱등)
+    # orders Table 단일(멱등) — scope-specific key 로 매칭(fqn 은 scope 간 공유라 부적합).
     cur = conn.cursor()
     mg._set_age_path(cur)
-    cnt = mg._cypher(cur, "MATCH (t:Table {fqn:'dbo.orders'}) RETURN t.key", 1)
+    cnt = mg._cypher(cur, "MATCH (t:Table {key:'dsX:dbo.orders'}) RETURN t.key", 1)
     assert len(cnt) == 1, f"orders dup: {len(cnt)}"
 
     print("SYNC_GRAPH FROM RELATIONAL: PASS", {**rep, "search": len(res),

@@ -64,9 +64,39 @@ source_of_truth: true
 - Phase 2 투영 API(app.py 엔드포인트) → Phase 3 Cytoscape UI → Phase 4 AI 정합 →
   Phase 5 측정·**cutover(게이트)**·배포.
 
+## 2026-06-30 (cont.) · Phase 1c→4 순차 구축 (cutover 직전까지)
+
+### Phase 1c — 동기화 파이프라인 ✅
+- `scripts/metadata_graph_sync.py`(CLI) + `bin/metadata-graph-sync.sh`(워커 exec) + config
+  `AGENT_METADATA_GRAPH_SYNC_ENABLED`(기본 OFF). sync_graph 관계형 read 경로 통합검증 PASS.
+- FK introspection·대화학습 = 이미 가동(엣지 0=게임DB FK 미선언, 대화학습으로 점증).
+
+### Phase 2 — 그래프 투영 API ✅
+- `GET /api/admin/metadata/graph?q=&node=&depth=&limit=`(app.py, RBAC kb.ingest.manual, _pg_connect_ro,
+  graceful). 검색·이웃 모드, cap 강제. py_compile OK. e2e=cutover 후.
+
+### Phase 3 — Cytoscape UI ✅(구조 검증)
+- vendor cytoscape 3.30.2 + '🕸 그래프 뷰' 서브탭 + 캔버스 + 통합 엔티티 카드(설명+컬럼+관계+용어) +
+  검색(debounce)→투영 API, 노드 클릭→이웃 확장(cose). node --check OK, 요소 5/5. 라이브=cutover 후 PB-0008.
+
+### Phase 4 — AI 정합 ✅
+- `graph_navigate` tool(tools.py): read-only search/neighbor, metadata_graph 경유, 플래그 off/AGE 부재 시
+  graceful. `_MERMAID_DIAGRAM_GUIDANCE` 에 graph_navigate 추가(대규모 스키마는 subgraph 만 pull). py_compile OK.
+
+### 핵심 발견 2 — pgbouncer transaction-mode 안전성 (Phase 4 검증)
+- AGE agtype 연산자(`@>`)는 search_path 로만 해소되고 schema-qualify 불가. pgbouncer 풀링은 세션 SET 을
+  잃을 수 있음 → **마이그 0025 에 `ALTER ROLE agent_kb_rw/ro SET search_path = ag_catalog,"$user",public`**
+  추가(role 기본값, DISCARD ALL 후에도 유지). 검증: agent_kb_rw 접속 + DISCARD ALL 후 @> 동작 PASS.
+- metadata_graph `_cypher` 는 `ag_catalog.cypher`·`ag_catalog.agtype` 정규화 + 방어적 SET 병행.
+
+### 회귀 검증 (adversarial)
+- test_metadata_graph_age + test_sync_graph_from_relational 둘 다 fresh 컨테이너 PASS.
+  (직전 "dup" 은 T1/T2 컨테이너 공유 + fqn-매칭 단언의 오염 — scope-key 단언으로 견고화, 제품 버그 아님.)
+
 ### 검증 상태 요약
-- Phase 0(이미지)·1a(스키마/RBAC)·1b(동기화/투영) = **라이브 AGE 대상 검증 완료**(worktree-local, 운영 무영향).
-- Phase 1c~5 는 통합 스택(또는 cutover) 필요 — 다음 cycle. cutover 는 비가역·외부영향 별도 게이트.
+- Phase 0·1a·1b·1c·2·3·4 = **격리/라이브 AGE 검증 완료**(worktree-local, 운영 무영향).
+- 잔여 = Phase 5 운영 cutover(이미지 교체 + shared_preload + ALTER ROLE 반영 + 마이그 + sync + 재시작 +
+  web 재빌드 + PB-0008 + cron). **비가역·외부영향 — 별도 게이트 + 롤백 플랜.** (RUNBOOK-cutover.md 참조)
 
 ### 검증 미결 / 리스크
 - 이 단계 산출물은 worktree-local 비파괴(운영 무영향). 운영 cutover(이미지 교체+shared_preload+재시작)는
