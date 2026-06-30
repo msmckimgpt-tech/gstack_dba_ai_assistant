@@ -28872,22 +28872,12 @@ def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
         conn.close()
 
 
-@app.get("/api/keywords")
-def list_keywords_removed(*_args, **_kwargs) -> JSONResponse:
-    return _json_error("Keyword Management는 제거되었습니다.", 410)
+# =============================================================================
+# feature-0012 P5b Final — 도메인 APIRouter 분할 (include_router)
+# 모든 정의(get_conn/get_current_account/require_permission/_json_error 등) 이후 맨 끝에서
+# import·include 하므로 순환 import 안전(router 의 `from app import ...` 가 부분 적재된 app 의
+# 이미-정의된 심볼을 읽음). route 경로/메서드/순서는 보존(키워드 router 는 종전과 동일하게 맨 끝 등록).
+# =============================================================================
+from routers.keywords import router as _keywords_router  # noqa: E402
 
-
-@app.post("/api/keywords")
-def upsert_keyword_removed(*_args, **_kwargs) -> JSONResponse:
-    return _json_error("Keyword Management는 제거되었습니다.", 410)
-
-
-@app.delete("/api/keywords/{keyword_id}")
-def delete_keyword_removed(keyword_id: int) -> JSONResponse:
-    _ = keyword_id
-    return _json_error("Keyword Management는 제거되었습니다.", 410)
-
-
-@app.get("/api/keywords/categories")
-def keyword_categories_removed() -> JSONResponse:
-    return _json_error("Keyword Management는 제거되었습니다.", 410)
+app.include_router(_keywords_router)

@@ -210,3 +210,10 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 테스트 전환 검증: admin_overview(RP) happy 6=명시 actor/conn(위젯 게이팅 본문 _account_has_permission 보존), perm-gate 1=TestClient(require_permission 403); admin_products_insight_coverage(AO) 5=명시 account/conn(본문 perm 검사가 account 로 실행, 403 포함). _install acct 반환 보강.
 - 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. 미전환 직접호출 0(grep).
 - **결론: DI seam 으로 byte-동치 가능한 모든 핸들러(69) 전환 완료.** 잔여 ~46(fail-soft 3 + preauth/longpoll/txn 43)은 아키텍처 이연 — Final(router-extraction) 단계에서 구조 재편과 함께 처리.
+
+## REV-20260630-0010 [AGENT-TEAM:p5b-final-router-pipeline-keywords]
+- Related Change: CHG-20260630-0010 (Final 시작 — route-parity 인프라 + keywords router)
+- §18.8 Adversarial Panel: **AGENT-TEAM (Final-planning workflow `p5b-final-execution-plan`, 8 agents / 0.46M tokens, 4축 분석+적대검증).** 검증된 핵심: (1) closure 축 HIGH refute → _get_authenticated_account 등 heavily-patched helper 는 web_context 이동 시 cross-binding 함정 → NS-BOUND 도메인은 web_context 이연. (2) **NS-BOUND=0 도메인은 web_context 선행 없이 router 추출 가능**(인증=dependency_overrides 객체키 cross-module 안전, MIXED 의 _account_has_permission 은 account 순수함수). (3) 첫 후보 media+keywords 검증. (4) route-parity 3-tier + include_router 순서/골든 게이팅.
+- 실측 발견(워크플로 미예측, 본 cycle 적발): **Starlette 1.3.1 include_router 는 flatten 아닌 `_IncludedRouter` nest**(path=None, .original_router.routes). route-parity 의 flat 열거가 nested 라우트를 못 봐 count drift(179→176) 발생 → `_build_table` 재귀(`_walk_routes`)로 해소. keywords 의 `*_args,**_kwargs` GET/POST 는 원본도 422(FastAPI 가 phantom query param 요구)임을 clean app.py 대조로 확인 → 410 은 dead code, 추출 byte-동치.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0, route-parity 골든 179 불변(recursion 으로 set/order 동일), ruff clean, py_compile OK. 런타임 라우팅 동일(GET /api/keywords 422·categories 410 보존). 순환 import 안전(app 정의 후 include).
+- 다음: NS-BOUND=0 도메인 순차 추출(media→static→admin-conversations→admin-usage→conversations MIXED), 그 후 web_context 추출(NS-BOUND 도메인용)→브라우저 QA→배포(confirm).

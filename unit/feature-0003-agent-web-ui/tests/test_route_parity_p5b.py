@@ -18,15 +18,32 @@ import app as appmod  # feature-0003 src on PYTHONPATH (make test)
 _GOLDEN = Path(__file__).parent / "route_snapshot_p5b.json"
 
 
-def _build_table():
-    ordered = []
-    for r in appmod.app.routes:
+def _walk_routes(routes, ordered):
+    """app.routes 를 in-order 평탄화. P5b Final: include_router(Starlette 1.x)는 라우트를
+    app.routes 에 flatten 하지 않고 path=None 의 컨테이너(_IncludedRouter)로 nest 하므로,
+    컨테이너(path 없음 + .routes 보유)는 등록 위치에서 그 하위 라우트로 재귀 전개한다.
+    이로써 router 추출 후에도 동일 경로/메서드/순서가 평탄 골든과 1:1 대조된다(StaticFiles 등
+    path 보유 Mount 는 단일 leaf 로 기록 — 재귀 안 함)."""
+    for r in routes:
         methods = sorted(
             m for m in (getattr(r, "methods", None) or []) if m not in ("HEAD", "OPTIONS")
         )
-        ordered.append(
-            {"path": getattr(r, "path", None), "methods": methods, "type": type(r).__name__}
-        )
+        path = getattr(r, "path", None)
+        # included router 컨테이너의 하위 라우트 접근: Starlette 1.x 의 _IncludedRouter 는
+        # .routes 가 아니라 .original_router.routes 에 보관한다. 둘 다 시도.
+        sub = getattr(r, "routes", None)
+        if sub is None:
+            orig = getattr(r, "original_router", None)
+            sub = getattr(orig, "routes", None) if orig is not None else None
+        if path is None and not methods and sub:
+            _walk_routes(sub, ordered)  # included router 컨테이너 → 등록 위치에서 전개
+        else:
+            ordered.append({"path": path, "methods": methods, "type": type(r).__name__})
+
+
+def _build_table():
+    ordered = []
+    _walk_routes(appmod.app.routes, ordered)
     api = [r for r in ordered if r["methods"]]
     return {"total_routes": len(ordered), "api_routes": len(api), "ordered": ordered}
 

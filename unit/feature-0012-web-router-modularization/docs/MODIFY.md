@@ -228,3 +228,15 @@ source_of_truth: true
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
 - **Final 이전 migratable 핸들러 전부 완료(누적 69).** 잔여 미전환 = 아키텍처 이연(router-extraction 단계): (1) fail-soft 3(progress·suggestions — conn/auth 실패를 200 으로 흡수해 get_current_account 의 500 raise 와 비동치; public_share_view — _optional_account 본문중간 LastSeenAt eager 부수효과). (2) preauth/longpoll/txn ~43(conn 이전 404/400 early-return·long-poll conn-hold·autocommit 토글) = cat-A preauth 와 동일 사유.
 - Rollback Notes: 단일 commit revert(app.py 2 + tests 2 + docs). 이전 batch 불변.
+
+## CHG-20260630-0010
+- Date: 2026-06-30
+- Related Requirement: P5b **Final 시작** — APIRouter 분할 파이프라인 확립(route-parity 인프라 + 첫 도메인 router). DI_SEAM_BLUEPRINT §2 Final.
+- Summary:
+  Final-planning workflow(8 agents, 적대검증) 결과 **NS-BOUND=0 도메인(인증=DI override 또는 무인증, app.* monkeypatch 의존 테스트 없음)은 web_context cascade 선행 없이 즉시 router 추출 가능**함을 확정. 첫 증분으로 (1) route-parity 인프라 적응 + (2) keywords 도메인 router 추출:
+  - **route-parity 인프라**: Starlette 1.3.1 의 `include_router` 는 라우트를 app.routes 에 flatten 하지 않고 `_IncludedRouter`(path=None, 하위는 `.original_router.routes`) 컨테이너로 nest 한다. `test_route_parity_p5b.py::_build_table` 을 `_walk_routes` 재귀로 갱신 — 컨테이너(path 없음+methods 없음+routes/original_router.routes 보유)를 등록 위치에서 전개해 평탄 골든과 1:1 대조. 모든 라우트 여전히 열거(안전망 강화, 약화 아님).
+  - **keywords router**: src/routers/{__init__,keywords}.py 신규. 4 stub(/api/keywords GET·POST, /api/keywords/{id} DELETE, /api/keywords/categories GET, 전부 410 stub·인증 0)을 APIRouter 로 이동, `from app import _json_error`(순환 안전: app 이 모든 정의 후 맨 끝 include_router). app.py 는 stub 제거 + `app.include_router(_keywords_router)`. 경로/메서드/순서/응답 byte-동치(원본 `*_args,**_kwargs` 시그니처의 GET·POST=422, categories·delete=410 동작 보존 — 검증: clean app.py 대조).
+- Files: src/app.py(keywords stub 제거 + include_router), src/routers/__init__.py(신규), src/routers/keywords.py(신규), tests/test_route_parity_p5b.py(_walk_routes 재귀) + docs.
+- Impact: behavior-neutral. make test 전체 통과·0 fail, route-parity 179 골든 불변(recursion 으로 set·order 동일), ruff clean, py_compile OK. 배포 불요(런타임 라우팅 동일).
+- 후속(검증된 안전 순서): media(3 DI)→static_pages→admin-conversations→admin-usage(MIXED)→conversations(MIXED). NS-BOUND 도메인(admin/metadata wrapper 등)은 web_context 추출 선행.
+- Rollback Notes: revert(app.py + routers/ 삭제 + route-parity 복원). 라우팅 동일이라 무위험.

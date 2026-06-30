@@ -46,7 +46,9 @@ source_of_truth: true
   - [x] **Phase 3 cat-C (`_require_permission` 헬퍼 3 핸들러)**: admin_list/approve/reject_sample_feedback → `account=Depends(require_permission("kb.sample.curate"))`(고정 메시지라 message= 생략, conn=Depends 불요). 전용 변환기 `cata_c_transform.py`(RPH). 동반 테스트 7 call(3 TestClient 403 + 4 명시 account happy) 전환. make test 1238·0 fail. 누적 cat-B/C 32.
   - [x] **Phase 3 final migratable (admin_overview RP + admin_products_insight_coverage AO)**: cat-B workflow 가 동반 테스트 전환 필요로 보류했던 2건 회수(테스트 전환: overview 7 call[happy 6 명시 actor + perm-gate 1 TestClient], insight_coverage 5 call[전부 명시 account]). **DI seam byte-동치 가능 핸들러 전부 완료(누적 69).** make test 1238·0 fail.
   - [~] **Final 이전 잔여 = 아키텍처 이연 확정(router-extraction 단계 처리, DI seam byte-동치 불가):** (a) fail-soft 3 — progress·suggestions(conn/auth/perm 실패를 200 으로 흡수 → get_current_account 의 401/500 raise 와 비동치), public_share_view(_optional_account 본문중간 LastSeenAt eager 부수효과). (b) preauth/longpoll/txn ~43 — conn 이전 404/400 early-return(admin CRUD 대부분), long-poll conn-hold, autocommit 토글(admin_create/update/delete_product). cat-A preauth 와 동일 사유.
-- [ ] TASK-0012-8 helper→web_context 이동 + APIRouter 추출(도메인 1개/커밋) + route-parity 골든 갱신
+- [~] TASK-0012-8 helper→web_context 이동 + APIRouter 추출(도메인 1개/커밋) + route-parity 골든 갱신
+  - [x] **Final 시작**: Final-planning workflow(8 agents) — NS-BOUND=0 도메인은 web_context 선행 없이 router 추출 가능 확정. route-parity 인프라 갱신(Starlette 1.x `_IncludedRouter` nest → `_walk_routes` 재귀). **keywords router 추출**(src/routers/keywords.py, 4 stub) — make test 전체 통과·route-parity 179 골든 불변·byte-동치.
+  - [ ] NS-BOUND=0 도메인 순차 추출: media(3 DI)→static_pages→admin-conversations→admin-usage(MIXED)→conversations(MIXED). 그 후 web_context 추출(NS-BOUND admin/metadata 등)→이연 핸들러 router 화.
 - [ ] TASK-0012-9 브라우저 로그인 QA(win-browser.py) + §18.8 패널 + 배포
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 
@@ -81,7 +83,16 @@ source_of_truth: true
 - 변환 도구: `scratchpad/cata_transform.py`(보수적 — 정확 패턴만, SQL-heredoc·inline-close·복수conn 은 skip). batch 마다 make test progress-chars baseline 대조 + route-parity 179 게이트.
 - 주의(파일럿 교훈): conn-acquire-fail 과 auth-query-raise 의 legacy 의미가 사이트별로 다를 수 있음(fail-soft vs fail-loud) — pre-auth gate(conn 생성 이전 early return) 있는 핸들러는 cat-A 부적격(401 우선순위 역전), account-only DI variant 필요.
 
-## 8. Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
+## 8. Completion Checklist (Final 시작 = route-parity 인프라 + keywords router 추출)
+- [x] Final-planning workflow(8 agents, 적대검증) — NS-BOUND=0 도메인 web_context 선행 불요 + 추출 순서 확정
+- [x] route-parity 인프라: Starlette 1.x `_IncludedRouter` nest 대응 `_walk_routes` 재귀(전 라우트 열거 유지, 골든 179 불변)
+- [x] keywords router 추출(src/routers/{__init__,keywords}.py) + app.include_router(순환 안전). 경로/메서드/순서/응답 byte-동치(원본 422/410 보존 검증)
+- [x] make test 전체 통과·0 fail, route-parity 골든 불변, ruff clean, py_compile OK
+- [x] TASK/REPORT/MODIFY/REVIEW 반영, BLOCKED 없음
+- [ ] verify-completion PASS(9 checks) → Git 커밋 (Final #1)
+- [ ] Git 원격 동기화: ai/* push. PR/머지·배포는 Final 완료 후.
+
+## 8b. (이전) Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
 - [x] 2 핸들러 회수(RP overview + AO insight_coverage) — DI seam byte-동치 가능 핸들러 전부 완료(누적 69)
 - [x] behavior-neutral — make test progress-chars 1238(baseline 동일)·0 fail, route-parity 179 불변, ruff clean, py_compile OK
 - [x] §18.8 — REV-20260630-0009: 종합 잔여 survey + REV-0006 확정분 회수. fail-soft 3 + preauth/longpoll/txn 43 이연 확정(코드 정독 byte-동치 불가)

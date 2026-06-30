@@ -33,7 +33,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260630-0007: DI seam Phase 3 cat-B batch 5 — testconv 4 핸들러(AO 3 명시 actor/conn 인자 + RP 1 TestClient 전환). cat-B 잔여 workflow 확정 14 완결. 동반 테스트 4파일(12 call) 전환. 누적 cat-B 29. make test 1238.
 - CHG-20260630-0008: DI seam Phase 3 cat-C — _require_permission 헬퍼 3 핸들러(admin_list/approve/reject_sample_feedback) → require_permission("kb.sample.curate"). 변환기 cata_c_transform.py(RPH). 동반 테스트 7 call 전환. cat-F public_share_view 이연. 누적 cat-B/C 32. make test 1238.
 - CHG-20260630-0009: DI seam Phase 3 final migratable — admin_overview(RP)·admin_products_insight_coverage(AO) 회수(동반 테스트 12 call 전환). DI seam byte-동치 가능 핸들러 전부 완료(누적 69). 잔여 ~46 아키텍처 이연(fail-soft 3 + preauth/longpoll/txn 43) 문서화. make test 1238. **Final 이전 완결.**
-- 총 변경 횟수: 15
+- CHG-20260630-0010: P5b **Final 시작** — Final-planning workflow(8 agents)로 NS-BOUND=0 도메인 web_context 선행 불요 확정 + route-parity 인프라 갱신(Starlette 1.x _IncludedRouter nest → _walk_routes 재귀) + keywords 도메인 router 추출(src/routers/). make test 전체 통과, route-parity 179 골든 불변, byte-동치. APIRouter 분할 파이프라인 확립.
+- 총 변경 횟수: 16
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라
