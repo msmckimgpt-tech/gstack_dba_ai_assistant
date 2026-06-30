@@ -2365,6 +2365,7 @@ const _METADATA_SUBTAB_PERM = {
   tables: "kb.ingest.manual",
   columns: "kb.ingest.manual",
   samples: "kb.sample.curate",
+  graph: "kb.ingest.manual",      // feature-0016: 그래프 뷰(읽기 전용 탐색).
 };
 
 // 용어사전 2차 보기별 권한(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}).
@@ -2383,8 +2384,8 @@ function _metaSubtabVisible(sub) {
   return !perm || can(perm);
 }
 
-// 생성 폼 비활성 서브뷰 — samples 는 검수 경로(ITEM-03)가 생성 정본이라 수정 전용.
-const _METADATA_NO_CREATE = { samples: true };
+// 생성 폼 비활성 서브뷰 — samples 는 검수 경로(ITEM-03)가 생성 정본이라 수정 전용. graph 는 읽기 전용 탐색.
+const _METADATA_NO_CREATE = { samples: true, graph: true };
 
 // 서브뷰별 폼 필드 정의 — label/key/type/required/placeholder/min/max. 렌더/검증/payload 조립에 공용 사용.
 // type: text | textarea | number | checkbox.
@@ -2559,6 +2560,12 @@ function _metaBindControls() {
       adminState.metadata.search = "";
       const searchEl = document.getElementById("metadataSearch");
       if (searchEl) searchEl.value = "";
+      // feature-0016: 그래프 뷰 서브탭은 list-detail 대신 Cytoscape 캔버스로 전환(별도 적재 경로).
+      if (sub === "graph") {
+        _metaShowGraph();
+        return;
+      }
+      _metaHideGraph();
       // metadata-list-detail: bootstrap 모드는 tables↔columns 간 유지(골격 결과 보존 + 새 mode 재렌더), 그 외 서브탭은 empty.
       if (!(adminState.metadata.detailMode === "bootstrap" && (sub === "tables" || sub === "columns"))) {
         adminState.metadata.detailMode = "empty";
@@ -2885,6 +2892,219 @@ function _metaSyncListToolbar() {
     const canCreate = !_METADATA_NO_CREATE[md.subTab] && !review && can(_METADATA_SUBTAB_PERM[md.subTab] || "kb.ingest.manual");
     newBtn.style.display = canCreate ? "" : "none";
   }
+}
+
+// ── feature-0016: 메타데이터 지식그래프 뷰 (Cytoscape + 투영 API) ─────────────────
+const _metaGraph = { cy: null, bound: false, lastQuery: "" };
+
+// 라벨별 색 — RFC 팔레트(Table=teal, Column=slate, GlossaryTerm=amber, Schema=indigo, DS/Product=green).
+const _META_GRAPH_COLOR = {
+  Table: "#0f7d8c", Column: "#5c6773", GlossaryTerm: "#9c6515",
+  Schema: "#3f4b8c", Datasource: "#2e7d52", Product: "#2e7d52",
+};
+
+function _metaGraphStatus(msg) {
+  const el = document.getElementById("metadataGraphStatus");
+  if (el) el.textContent = msg || "";
+}
+
+function _metaShowGraph() {
+  const ld = document.querySelector(".admin-meta-list-detail");
+  if (ld) ld.style.display = "none";
+  const bs = document.getElementById("metadataBootstrap");
+  if (bs) bs.style.display = "none";
+  const gv = document.getElementById("metadataGlossaryViews");
+  if (gv) gv.style.display = "none";
+  // 그래프 모드에선 생성/골격 버튼 무의미 — 숨김.
+  const newBtn = document.getElementById("metadataNewBtn");
+  if (newBtn) newBtn.style.display = "none";
+  const bsBtn = document.getElementById("metadataBootstrapOpenBtn");
+  if (bsBtn) bsBtn.style.display = "none";
+  const view = document.getElementById("metadataGraphView");
+  if (view) view.style.display = "";
+  _metaInitGraph();
+  const s = document.getElementById("metadataGraphSearch");
+  if (s && s.focus) try { s.focus(); } catch (_) {}
+}
+
+function _metaHideGraph() {
+  const view = document.getElementById("metadataGraphView");
+  if (view) view.style.display = "none";
+  const ld = document.querySelector(".admin-meta-list-detail");
+  if (ld) ld.style.display = "";
+}
+
+function _metaInitGraph() {
+  if (_metaGraph.cy) { try { _metaGraph.cy.resize(); } catch (_) {} return; }
+  const container = document.getElementById("metadataGraphCanvas");
+  if (!container) return;
+  if (typeof window.cytoscape !== "function") {
+    _metaGraphStatus("그래프 라이브러리(cytoscape)를 불러오지 못했습니다.");
+    return;
+  }
+  _metaGraph.cy = window.cytoscape({
+    container,
+    elements: [],
+    minZoom: 0.2, maxZoom: 2.5, wheelSensitivity: 0.3,
+    style: [
+      { selector: "node", style: {
+          "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
+          "label": "data(name)", "font-size": "11px", "color": "#161b22",
+          "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
+          "width": 24, "height": 24, "text-wrap": "ellipsis", "text-max-width": "120px",
+          "border-width": 0 } },
+      { selector: "node[label='Table']", style: { "width": 32, "height": 32, "font-weight": "bold" } },
+      { selector: "node:selected", style: { "border-width": 3, "border-color": "#0a5b66" } },
+      { selector: "edge", style: {
+          "width": 1.5, "line-color": "#c2c9d2", "target-arrow-color": "#c2c9d2",
+          "target-arrow-shape": "triangle", "curve-style": "bezier",
+          "label": "data(label)", "font-size": "9px", "color": "#8a949f",
+          "text-rotation": "autorotate" } },
+      { selector: "edge[label='REFERENCES']", style: { "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2 } },
+    ],
+  });
+  _metaGraph.cy.on("tap", "node", (evt) => {
+    const key = evt.target.id();
+    _metaGraphExpand(key);
+  });
+  if (!_metaGraph.bound) {
+    _metaGraph.bound = true;
+    const s = document.getElementById("metadataGraphSearch");
+    if (s) {
+      let t = null;
+      s.addEventListener("input", () => {
+        if (t) clearTimeout(t);
+        t = setTimeout(() => _metaGraphSearch(s.value.trim()), 300);
+      });
+    }
+    const reset = document.getElementById("metadataGraphResetBtn");
+    if (reset) reset.addEventListener("click", () => {
+      if (_metaGraph.cy) _metaGraph.cy.elements().remove();
+      _metaGraphRenderDetailEmpty();
+      _metaGraphStatus("");
+      const si = document.getElementById("metadataGraphSearch");
+      if (si) si.value = "";
+    });
+  }
+}
+
+async function _metaGraphSearch(q) {
+  if (!_metaGraph.cy) return;
+  _metaGraph.lastQuery = q;
+  if (!q) { _metaGraphStatus(""); return; }
+  _metaGraphStatus("검색 중…");
+  let data;
+  try {
+    data = await apiFetch(`/api/admin/metadata/graph?q=${encodeURIComponent(q)}`);
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || "그래프 검색 실패");
+    return;
+  }
+  if (q !== _metaGraph.lastQuery) return;  // 경합: 더 최신 검색이 진행 중
+  _metaGraph.cy.elements().remove();
+  _metaGraphAddElements(data.nodes || [], data.edges || []);
+  _metaGraphLayout();
+  const n = (data.nodes || []).length;
+  _metaGraphStatus(n ? `${n}개 노드 — 노드를 클릭하면 이웃을 펼칩니다.` : "검색 결과 없음.");
+}
+
+async function _metaGraphExpand(key) {
+  if (!_metaGraph.cy || !key) return;
+  const depthSel = document.getElementById("metadataGraphDepth");
+  const depth = depthSel ? depthSel.value : "2";
+  _metaGraphStatus("이웃 조회 중…");
+  let data;
+  try {
+    data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=${encodeURIComponent(depth)}`);
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || "이웃 조회 실패");
+    return;
+  }
+  _metaGraphAddElements(data.nodes || [], data.edges || []);
+  _metaGraphLayout();
+  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
+  const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
+}
+
+function _metaGraphAddElements(nodes, edges) {
+  const cy = _metaGraph.cy;
+  if (!cy) return;
+  (nodes || []).forEach((n) => {
+    if (!n || !n.key) return;
+    if (cy.getElementById(n.key).length) {
+      cy.getElementById(n.key).data({ label: n.label, name: n.name || n.fqn || n.key,
+        fqn: n.fqn || "", description: n.description || "", source: n.source || "" });
+      return;
+    }
+    cy.add({ group: "nodes", data: { id: n.key, label: n.label || "Node",
+      name: n.name || n.fqn || n.key, fqn: n.fqn || "", description: n.description || "", source: n.source || "" } });
+  });
+  (edges || []).forEach((e) => {
+    if (!e || !e.source || !e.target) return;
+    const id = `${e.source}|${e.type}|${e.target}`;
+    if (cy.getElementById(id).length) return;
+    if (!cy.getElementById(e.source).length || !cy.getElementById(e.target).length) return;
+    cy.add({ group: "edges", data: { id, source: e.source, target: e.target, label: e.type || "" } });
+  });
+}
+
+function _metaGraphLayout() {
+  if (!_metaGraph.cy) return;
+  try {
+    _metaGraph.cy.layout({ name: "cose", animate: false, padding: 30, nodeRepulsion: 8000,
+      idealEdgeLength: 80, fit: true }).run();
+  } catch (_) {}
+}
+
+function _metaGraphRenderDetailEmpty() {
+  const el = document.getElementById("metadataGraphDetail");
+  if (!el) return;
+  el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p></div>';
+}
+
+// 통합 엔티티 카드 — 클릭 노드의 이웃을 카테고리(컬럼·관계·용어)로 묶어 표시.
+function _metaGraphRenderDetail(self, nodes, edges) {
+  const el = document.getElementById("metadataGraphDetail");
+  if (!el) return;
+  const byKey = {};
+  (nodes || []).forEach((n) => { if (n && n.key) byKey[n.key] = n; });
+  const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || k;
+  const selfKey = self.key;
+  // 컬럼(HAS_COLUMN out), 관계(REFERENCES), 용어(GlossaryTerm), 부모 스키마(HAS_TABLE in)
+  const columns = [], refs = [], terms = [];
+  (edges || []).forEach((e) => {
+    if (!e) return;
+    if (e.type === "HAS_COLUMN" && e.source === selfKey && byKey[e.target]) columns.push(byKey[e.target]);
+    if (e.type === "REFERENCES") refs.push(e);
+    if (e.type === "DESCRIBES" && byKey[e.source] && byKey[e.source].label === "GlossaryTerm") terms.push(byKey[e.source]);
+  });
+  (nodes || []).forEach((n) => { if (n && n.label === "GlossaryTerm" && n.key !== selfKey && !terms.includes(n)) terms.push(n); });
+
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const parts = [];
+  parts.push(`<div class="admin-meta-graph-card">`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong></div>`);
+  if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
+  if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
+  else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
+  if (columns.length) {
+    parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})</h4><ul>`);
+    columns.slice(0, 50).forEach((c) => parts.push(`<li><code>${esc(c.name)}</code>${c.description ? " — " + esc(c.description) : ""}</li>`));
+    parts.push(`</ul></div>`);
+  }
+  if (refs.length) {
+    parts.push(`<div class="admin-meta-graph-sec"><h4>관계 (${refs.length})</h4><ul>`);
+    refs.slice(0, 50).forEach((e) => parts.push(`<li><code>${esc(nm(e.source))}</code> → <code>${esc(nm(e.target))}</code>${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(e.edge_source) + ")</span>" : ""}</li>`));
+    parts.push(`</ul></div>`);
+  }
+  if (terms.length) {
+    parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul>`);
+    terms.slice(0, 30).forEach((t) => parts.push(`<li><strong>${esc(t.name)}</strong>${t.description ? " — " + esc(t.description) : ""}</li>`));
+    parts.push(`</ul></div>`);
+  }
+  parts.push(`</div>`);
+  el.innerHTML = parts.join("");
 }
 
 // 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)

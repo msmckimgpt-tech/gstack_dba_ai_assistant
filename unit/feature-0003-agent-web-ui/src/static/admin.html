@@ -605,6 +605,8 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="tables" role="tab">테이블 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
+          <!-- feature-0016: 메타데이터 지식그래프 뷰(Apache AGE 투영) — 테이블/컬럼/관계/용어를 한 그래프로 탐색·검색. -->
+          <button type="button" class="admin-meta-subtab" data-meta-subtab="graph" role="tab">🕸 그래프 뷰</button>
         </div>
         <!-- 용어사전 2차 보기 탭(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). admin.js 가
              용어사전 서브탭일 때만 노출 + 권한별로 보기 버튼을 숨긴다(목록=kb.ingest.manual, 검토 큐=kb.glossary.curate). -->
@@ -689,6 +691,34 @@
         </form>
           </div><!-- /.admin-detail-col #metadataDetail -->
         </div><!-- /.admin-list-detail -->
+
+        <!-- feature-0016: 메타데이터 지식그래프 뷰. '그래프 뷰' 서브탭일 때만 표시(admin.js 토글).
+             검색→투영 API(/api/admin/metadata/graph?q=) 노드 렌더, 노드 클릭→이웃(?node=&depth=) 확장 +
+             우측 통합 엔티티 카드(설명+컬럼+관계+용어). 8K 규모라 검색·이웃 스코프만(전체 렌더 안 함). -->
+        <div class="admin-meta-graph" id="metadataGraphView" style="display:none">
+          <div class="admin-meta-graph-toolbar">
+            <input type="search" id="metadataGraphSearch" class="admin-search admin-meta-graph-search"
+                   placeholder="테이블·컬럼·용어 검색…" autocomplete="off" aria-label="그래프 노드 검색" />
+            <label class="admin-meta-graph-depth-label" for="metadataGraphDepth">이웃 깊이</label>
+            <select id="metadataGraphDepth" class="admin-meta-scope-select" aria-label="이웃 확장 깊이">
+              <option value="1">1-hop</option>
+              <option value="2" selected>2-hop</option>
+              <option value="3">3-hop</option>
+            </select>
+            <button type="button" class="btn-secondary" id="metadataGraphResetBtn">초기화</button>
+            <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
+          </div>
+          <div class="admin-meta-graph-body">
+            <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
+                 role="img" aria-label="메타데이터 관계 그래프"></div>
+            <aside class="admin-meta-graph-detail" id="metadataGraphDetail" aria-live="polite">
+              <div class="admin-detail-empty">
+                <p>검색 후 노드를 클릭하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p>
+                <p class="admin-meta-detail-note">노드 더블클릭 시 이웃을 펼칩니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
+              </div>
+            </aside>
+          </div>
+        </div>
       </section>
 
       <!-- TASK-0096 v2: 설정 pane — 계정/역할/제품 과 동일한 list-detail 5단 구조.
@@ -781,7 +811,9 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260630-metadata-list-detail"></script>
+  <!-- feature-0016: Cytoscape.js 3.30.2 (vendored, UMD window.cytoscape) — admin.js 의 그래프 뷰 의존. -->
+  <script src="/static/vendor/cytoscape.min.js?v=3.30.2"></script>
+  <script src="/static/admin.js?v=20260630-metadata-graph"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260630-rn-0630"></script>

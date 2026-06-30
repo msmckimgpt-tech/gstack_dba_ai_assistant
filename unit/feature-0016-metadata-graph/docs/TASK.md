@@ -43,19 +43,22 @@ source_of_truth: true
 - [x] T1.6 대화 JOIN 학습 = **이미 가동 중**(agent_core post-answer hook, AGENT_RELATIONSHIP_LEARNING_ENABLED=1).
       FK 미선언 DB 의 엣지는 대화학습으로 점증. **LLM 관계 추론 seed 는 후속**(heavy, gated, Phase 4 이후).
 
-## 3. Phase 2 — 그래프 투영 API
-- [ ] T2.1 `modules/metadata_graph.py` 조회부: Cypher 로 (a) 검색(이름/설명 부분일치)
-      (b) 노드 k-hop 이웃 → `{nodes[],edges[]}`. 상한(노드/엣지 cap)·전체덤프 금지.
-- [ ] T2.2 엔드포인트 `GET /api/admin/metadata/graph?q=&node=&depth=` (RBAC `kb.ingest.manual`,
-      audit, ds-scope cascade). app.py(feature-0003).
-- [ ] T2.3 단위/계약 테스트 (cap·scope 격리·빈 그래프 graceful).
+## 3. Phase 2 — 그래프 투영 API ✅ PASS (2026-06-30)
+- [x] T2.1 `modules/metadata_graph.py` 조회부(Phase 1b 완료): search_nodes(부분일치)·neighborhood(k-hop)
+      → `{nodes,edges}`, cap 강제(_NEIGHBOR_NODE_CAP=300, _SEARCH_CAP=80).
+- [x] T2.2 `GET /api/admin/metadata/graph?q=&node=&depth=&limit=` (app.py:27729, RBAC kb.ingest.manual
+      via `_metadata_resolve_account`, _pg_connect_ro, graceful 503/no-op). mode=search/neighborhood/empty.
+      py_compile OK. 라이브 검증=cutover 후(web 컨테이너 AGE 필요).
+- [ ] T2.3 계약 테스트(cap·빈 그래프 graceful) — 모듈 레벨은 Phase 1b 에서 검증, 엔드포인트 e2e 는 cutover 후.
 
-## 4. Phase 3 — 통합 그래프 UI (Cytoscape)
-- [ ] T3.1 `static/vendor/cytoscape.min.js` vendoring (mermaid 패턴 동형) + 무결성 주석.
-- [ ] T3.2 admin.js/admin.html: 메타데이터 탭에 **그래프 뷰** 추가(평면 list-detail 과 토글).
-      노드 클릭 → **통합 엔티티 카드**(테이블 설명 + 컬럼 목록·설명 + 관계 엣지 + 관련 용어).
-- [ ] T3.3 검색창 → 투영 API 연동, 결과 노드 중심 이웃 렌더, 이웃 확장(expand) 인터랙션.
-- [ ] T3.4 8K 노드 대비: 검색/이웃 스코프 강제(전체 렌더 금지), 빈 그래프·로딩·실패 graceful.
+## 4. Phase 3 — 통합 그래프 UI (Cytoscape) ✅ 구조 검증 PASS (2026-06-30)
+- [x] T3.1 `static/vendor/cytoscape.min.js` 3.30.2 vendoring(373KB, 정품 확인) + admin.html script(캐시버스터 bump).
+- [x] T3.2 admin.html/admin.js: 메타데이터 탭에 **'🕸 그래프 뷰' 서브탭** + 캔버스/통합 엔티티 카드 섹션 +
+      `_metaShowGraph/_metaHideGraph/_metaInitGraph/_metaGraphSearch/_metaGraphExpand/_metaGraphRenderDetail`.
+      노드 클릭 → 이웃 확장 + 통합 카드(설명+컬럼+관계+연관용어). 라벨별 색(RFC 팔레트).
+- [x] T3.3 검색창(debounce 300ms) → 투영 API → 노드 렌더, 노드 클릭 → ?node=&depth= 이웃 확장(cose 레이아웃).
+- [x] T3.4 8K 보호: 검색/이웃 스코프만(전체 렌더 안 함), cytoscape 부재·빈 그래프·실패 graceful + 초기화 버튼.
+      node --check 구문 OK, cytoscape 로드 OK, admin.html 요소 5/5. **라이브 렌더 검증=cutover 후 PB-0008.**
 
 ## 5. Phase 4 — AI 정합
 - [ ] T4.1 `_build_knowledge_context`(agent_core): 질문 관련 엔티티를 그래프에서 **묶어 주입**
