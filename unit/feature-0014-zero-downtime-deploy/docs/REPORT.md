@@ -20,10 +20,11 @@ web 서비스를 Caddy LB 뒤 **2-replica(web-a/web-b) 무중단 롤링** 으로
 이라 sudo 경계 문제를 은폐하므로 그 검증을 대신할 수 없다.
 
 ## 2. Progress
-- Planned: (없음 — P0~P3 코드 구현 완료)
-- In Progress: 운영자 컷오버 검증 대기 (RUNBOOK §4~§7)
-- Done: P0a 마이그레이션 게이트 / P0b·P1 compose 분할 / P1 Caddy LB / P0d /livez·/readyz·SSE 카운터 /
-  P0c deploy-web.sh / P1 Makefile / P3 문서 + route-parity golden 갱신
+- Planned: (없음)
+- Done: P0~P3 코드 구현 + **라이브 컷오버 완료(2026-06-30, 사용자 승인 — 라이브 사용자 1명)**.
+  PR #475 머지(main d980e24) → web-a/web-b 기동 → caddy 전환 → 구 web 제거 → edge 200(d980e24).
+  단일 replica 롤링 부하 104/104 200·0실패·max 0.27s. 라이브 적발 버그 2건(health Host, proxy Host) 즉시 수정.
+- In Progress: (없음 — 잔여는 운영자 후속: 자동롤백/SSE pre-drain 실측, scoped sudoers 무인경로)
 
 ## 3. Recent Changes
 - `bin/migrate-lint.sh`(신규, AST 기반 expand/contract 게이트), `bin/deploy-web.sh`(신규, 배포 스파인)
@@ -35,9 +36,12 @@ web 서비스를 Caddy LB 뒤 **2-replica(web-a/web-b) 무중단 롤링** 으로
 - 총 변경 횟수: 1 (CHG-20260630T120000)
 
 ## 4. Open Issues
-- **운영자 게이트(외부 영향)**: 본 PR 머지는 자동배포(deploy_scope: included)를 트리거하며,
-  토폴로지 컷오버는 sudoers 설정 + 실 호스트 dry-run + :18080 사용자 통지가 선행되어야 한다.
-  → PR 은 생성하되 **자동 머지/배포는 운영자 confirm 까지 보류**.
+- ~~운영자 게이트~~ **해소**: 사용자가 전체 배포 승인 + 라이브 사용자 1명(외부 :18080 영향 없음) →
+  머지·컷오버 완료. caddy hotfix(health_headers + header_up Host)는 main 에 후속 커밋(CHG-20260630T123000).
+- **후속(운영자/별 cycle)**: ① 무인 자동배포 경로(`deploy-web.sh` + scoped NOPASSWD sudoers) 미검증 —
+  현재 컷오버는 수동 오케스트레이션. ② 자동 롤백(TEST-...-6)·SSE pre-drain(TEST-...-7) 실측 미수행.
+  ③ Caddyfile 변경 시 caddy recreate 필요(inode staleness) — deploy-web.sh 에 "Caddyfile 변경 감지 시
+  caddy recreate" 추가 검토. ④ feature-0006 AC-0553/0556(:18080) deprecated 표기(TODOS P2).
 - feature-0006 AC-0553/0556(:18080 직접 접속) deprecated 표기는 후속 doc-sync.
 - (선택) 자산 스큐: sticky cookie LB 로 차단. 더 강한 보장이 필요하면 후속에서 content-hash 파일명.
 

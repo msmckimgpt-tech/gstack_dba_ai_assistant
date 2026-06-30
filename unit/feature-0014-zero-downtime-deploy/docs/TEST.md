@@ -66,8 +66,23 @@ source_of_truth: true
 - deploy-web.sh --dry-run(stub env): preflight 순서·flock·origin/main coalesce(8baa707) 동작, file-set
   preflight 가 env 부재 시 fail-loud (정상). **완전 dry-run 은 운영자 실 호스트(.env 보유) 단계.**
 
-### Run (예정) — Environment: CLI (운영자 실 호스트)
-- TEST-...-5/6/7 (zero-502, 자동 롤백, SSE pre-drain) — RUNBOOK §4~§7 수행 후 기록.
+### Run 2026-06-30 — Environment: CLI (라이브 컷오버, 이 호스트 — 사용자 승인, 라이브 사용자 1명)
+- **컷오버 수행**: PR #475 머지(main d980e24) → web-a/web-b 빌드(GIT_COMMIT=d980e24) → up → /readyz 200
+  (양 replica d980e24) → caddy recreate(new Caddyfile) → 구 web(repo-web-1) 제거.
+- **라이브 적발 버그 2건(정적검증·적대적검증 미포착, 라이브에서만 발현) — 즉시 수정**:
+  1. caddy active health `/livez` 프로브가 Host=`web-a:8000`(dial host)로 가 앱 TrustedHost(WEB_ALLOWED_HOSTS)
+     400 거부 → 양 replica down → edge 503. 수정: Caddyfile `health_headers { Host {$WEB_PUBLIC_HOST} }`.
+  2. 프록시 실 요청 Host 가 upstream 명(web-a)으로 나가 400(구 단일 upstream 은 allowlist 의 `web` 로 우연
+     통과). 수정: Caddyfile `header_up Host {host}` (클라 Host 보존).
+  3. (운영 메모) git merge 가 Caddyfile 을 새 inode 로 교체 → 기존 caddy bind-mount 가 옛 inode 를 봄
+     (WSL2 docker). Caddyfile 변경 반영엔 caddy **recreate** 필요(reload 부족).
+- **TEST-...-5 zero-502 (수정 후)**: edge `/healthz` 200 (mysql-ai.company.local + 112.185.196.20 둘 다,
+  git_commit=d980e24). 단일 replica(web-a) 롤링 force-recreate 중 정상 클라(10s) 부하 **104/104 HTTP 200,
+  0 실패, 최대 응답 0.27s** → 무중단 확인. (참고: --max-time 4 의 공격적 back-to-back 더블 recreate 에선
+  10/121 가 4s 타임아웃 cut — 502 아님, lb_try_duration 5s 재시도 창 > 4s 캡 artifact. one-at-a-time 정상
+  클라에선 0 실패.)
+- **미수행(후속)**: TEST-...-6 자동 롤백(결함 이미지 유도), TEST-...-7 SSE pre-drain, deploy-web.sh 전체
+  무인 경로(scoped sudoers) — RUNBOOK §4·§7. 본 컷오버는 수동 오케스트레이션(머지 직후 1회 토폴로지 전환).
 
 ## 4. 미작성/미수행 사유 및 커버 계획
 - 라이브 무중단 동작(zero-502/롤백/pre-drain)은 실 docker 호스트 + sudo + 라이브 트래픽이 필요해

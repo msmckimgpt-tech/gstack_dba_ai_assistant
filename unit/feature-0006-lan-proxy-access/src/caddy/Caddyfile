@@ -63,6 +63,12 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 			health_timeout 2s
 			health_passes 1
 			health_fails 1
+			# active health 프로브는 dial host(web-a:8000)를 Host 로 보내므로, 앱의 host 검증
+			# (WEB_ALLOWED_HOSTS → TrustedHost)이 400 으로 거부해 양 replica 가 동시 down 된다.
+			# 실 트래픽은 클라 Host 를 전달해 무관. 프로브 Host 를 공개 호스트로 고정. (feature-0014 라이브 적발)
+			health_headers {
+				Host {$WEB_PUBLIC_HOST}
+			}
 
 			transport http {
 				tls
@@ -70,6 +76,10 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 				tls_server_name {$WEB_PUBLIC_HOST}
 				dial_timeout 5s
 			}
+			# 클라이언트 Host 를 upstream 으로 보존. 다중 upstream(web-a/web-b) 환경에서 Host 가
+			# 내부 서비스명(web-a)으로 나가면 앱 TrustedHost(WEB_ALLOWED_HOSTS)가 400 거부한다.
+			# (구 단일 upstream 은 allowlist 에 'web' 가 있어 우연히 통과했음.) feature-0014 라이브 적발.
+			header_up Host {host}
 			header_up X-Forwarded-For {client_ip}
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-Port 443
