@@ -168,3 +168,15 @@ source_of_truth: true
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
 - 잔여 cat-B 확정 4(batch3): admin_llm_usage·admin_get_dashboard_prefs(본문 `try: conn.close() except: pass` defensive-close → try/except 제거 필요) + admin_list_datasources·admin_datasource_databases(AO, 본문 finally:conn.close).
 - Rollback Notes: 단일 commit revert(app.py 5 + test 1 + docs). 이전 batch 불변.
+
+## CHG-20260630-0005
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 3 cat-B batch 3(TASK-0012-7) — sole-in-block conn.close 처리. cat-B 확정 15 완결(누적 cat-B 15).
+- Summary:
+  cat-B 확정 15 중 본문에 sole-in-block conn.close()(제거 시 빈 블록) 가 있어 batch1/2 에서 미룬 4 핸들러 전환:
+  - **admin_llm_usage, admin_get_dashboard_prefs**(RP, WRAP/FB): 외곽 try 의 finally 가 `finally: try: conn.close() except Exception: pass`(FB form) — 변환기 WRAP 경로가 FB 를 인식해 통째 제거+dedent+require_permission hoist. (이전 over-conservative 스캔이 "after try:" 로 오분류해 배제했던 것; FB 는 WRAP 이 정상 처리.)
+  - **admin_list_datasources, admin_datasource_databases**(AO): 본문에 `try: <body, conn 사용> finally: conn.close()` wrapper. 변환기에 신규 `strip_conn_finally` pass 추가(본문의 finally:conn.close[FA/FB] wrapper 의 matching `try:` 를 역추적해 try+finally 제거하고 try-body 4-dedent; defensive `try: conn.close() except: pass` 통째 제거; cur.close/pg.close 는 미대상). AO 라 perm 검사(console.access + datasource.read|manage)는 본문 유지, conn 은 body 가 계속 사용(_dsr.all_datasources/resolve, cur, _list_product_datasources)하므로 conn=Depends(get_conn) 유지.
+  변수명 actor 자동 감지. RP 메시지 verbatim 보존("LLM 사용량 조회 권한이 필요합니다 (운영자 전용).", "관리 콘솔 접근 권한이 필요합니다.").
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(4 핸들러) + docs. 동반 테스트 변경 0(4개 직접호출 없음, grep 확인).
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요. **cat-B workflow 확정 15 전부 마이그 완료.**
+- Rollback Notes: 단일 commit revert(app.py 4 + docs). 이전 batch 불변.

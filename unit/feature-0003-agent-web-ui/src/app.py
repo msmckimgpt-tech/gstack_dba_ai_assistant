@@ -13428,103 +13428,90 @@ def _read_insight_datasource_health() -> dict:
 
 
 @app.get("/api/admin/datasources")
-async def admin_list_datasources(request: Request) -> JSONResponse:
+async def admin_list_datasources(request: Request, actor=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """등록된 datasource 키 목록 + product 바인딩 현황 (멀티 datasource P1, DESIGN Stage 1).
 
     좌표/비밀번호는 절대 반환하지 않는다 (datasource_public 마스킹). 관리 콘솔 접근 권한 필요.
     """
     from shared.config import AGENT_MULTI_DATASOURCE_ENABLED, DATASOURCES
     from shared import datasources as _dsr
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    actor, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not _account_has_permission(actor, "console.access"):
-        conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     # TASK-0288: 데이터소스 조회 전용 권한 게이트 (read 또는 manage). 기존엔 console.access 만
     # 검사해 콘솔 진입권만 있으면 datasource 목록(좌표·바인딩 현황)이 무조건 노출됐다.
     if not _account_has_any_permission(actor, "datasource.read", "datasource.manage"):
-        conn.close()
         return _json_error("데이터소스 조회 권한이 필요합니다.", 403)
+    # B3: host/port/engine/default_db 만 노출. **user/password 절대 비노출**(enumeration·누출 회피).
+    # has_password=bool 만(평문/복호값 echo 금지). source=db/env(DB 우선 override 가시화, N1).
+    merged = _dsr.all_datasources(conn)
+    # conn-health-monitor: 백그라운드 모니터가 미리 계산한 per-datasource 연결 상태를
+    # 첨부 → admin.js 가 per-item /test lazy probe(세마포어 대기) 없이 즉시 표시.
     try:
-        # B3: host/port/engine/default_db 만 노출. **user/password 절대 비노출**(enumeration·누출 회피).
-        # has_password=bool 만(평문/복호값 echo 금지). source=db/env(DB 우선 override 가시화, N1).
-        merged = _dsr.all_datasources(conn)
-        # conn-health-monitor: 백그라운드 모니터가 미리 계산한 per-datasource 연결 상태를
-        # 첨부 → admin.js 가 per-item /test lazy probe(세마포어 대기) 없이 즉시 표시.
-        try:
-            from shared import conn_health as _ch
-            _health = _ch.snapshot()
-        except Exception:
-            _health = {}
-        # TASK-0255 R2: insight-worker 가 PG 에 영속한 스캔 관점 health(연결 불안정 vs 권한 실패 구분).
-        _insight_health = _read_insight_datasource_health()
-        datasources = []
-        for v in merged.values():
-            _sk = _dsr.scope_key(v)
-            _h = _health.get(_sk) if _sk else None
-            datasources.append({
-                "key": v["key"], "engine": v["engine"], "host": v.get("host"),
-                "port": v.get("port"), "default_db": v.get("default_db"),
-                "has_password": bool(v.get("password")),
-                "source": ("db" if v.get("_source") == "db" else "env"),
-                "editable": (v.get("_source") == "db"),  # .env datasource 는 UI 수정 불가(운영자 .env 편집)
-                # TASK-0215: insight-worker 탐색 토글(.env 데이터소스는 컬럼 부재 → True 기본).
-                "insight_enabled": bool(v.get("insight_enabled", True)),
-                # conn-health: 사전 계산된 연결 상태(좌표 비노출 — status/elapsed/checked_at 만).
-                "conn_status": ({
-                    "status": _h.get("status"),
-                    "elapsed_ms": _h.get("last_elapsed_ms"),
-                    "checked_at": _h.get("checked_at"),
-                } if _h else {"status": "unknown", "elapsed_ms": None, "checked_at": None}),
-                # TASK-0255 R2: insight-worker 스캔 관점(PG 정본) — 미커버 사유 구분(연결 불안정/권한). None=insight 미기록.
-                "insight_health": (_insight_health.get(_sk) if _sk else None),
-                # scope-key-unify: 메타데이터 admin scope 드롭다운이 쓸 scope 식별자 — **질의 시점 read 와
-                # 동일 해소값**(`scope_key 필드 or 라벨`: DB-등록 ds=해시, .env 레거시=라벨). 위 health 용
-                # `_sk`(=_dsr.scope_key, .env 도 해시 계산)와 달리 read 축을 그대로 노출해야 write==read 가 된다
-                # (라벨 ≠ 해시 死data 및 .env 역방향 死data 동시 회피). host/port 는 이미 노출 → 파생값 신규 누출 없음.
-                "scope_key": (v.get("scope_key") or v.get("key")),
-            })
-        datasources.sort(key=lambda d: d["key"])
-        cur = conn.cursor()
-        try:
-            try:
-                cur.execute("SELECT Id, ProductKey, Name, DatasourceKey, DatasourceDatabase FROM WebProducts ORDER BY Id")
-                rows = cur.fetchall() or []
-                products = [
-                    {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
-                     "datasource_key": (str(r[3]).lower() if r[3] else None),
-                     "datasource_database": (str(r[4]) if len(r) > 4 and r[4] else None)}
-                    for r in rows
-                ]
-            except Exception:
-                cur.execute("SELECT Id, ProductKey, Name, DatasourceKey FROM WebProducts ORDER BY Id")
-                products = [
-                    {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
-                     "datasource_key": (str(r[3]).lower() if r[3] else None), "datasource_database": None}
-                    for r in (cur.fetchall() or [])
-                ]
-        finally:
-            cur.close()
-        # TASK-0228 (1:N): 각 product 에 전체 datasource 바인딩 목록 부착(primary 포함, 단일 바인딩=1건).
-        for _p in products:
-            _p["datasources"] = _list_product_datasources(conn, int(_p["id"]))
-        from modules import cred_crypto as _cc
-        return JSONResponse({
-            "enabled": bool(AGENT_MULTI_DATASOURCE_ENABLED),
-            "encryption_ready": bool(_cc.enc_available()),  # KEK 설정 여부(미설정 시 UI 가 CRUD 비활성)
-            # TASK-0228: 사설/링크로컬 SSRF 경계 활성 여부 — UI 안내 문구 정합용(메타데이터 차단은 토글 무관 상시).
-            "ssrf_private_guard_enabled": bool(_ssrf_private_guard_enabled()),
-            "datasources": datasources,
-            "products": products,
+        from shared import conn_health as _ch
+        _health = _ch.snapshot()
+    except Exception:
+        _health = {}
+    # TASK-0255 R2: insight-worker 가 PG 에 영속한 스캔 관점 health(연결 불안정 vs 권한 실패 구분).
+    _insight_health = _read_insight_datasource_health()
+    datasources = []
+    for v in merged.values():
+        _sk = _dsr.scope_key(v)
+        _h = _health.get(_sk) if _sk else None
+        datasources.append({
+            "key": v["key"], "engine": v["engine"], "host": v.get("host"),
+            "port": v.get("port"), "default_db": v.get("default_db"),
+            "has_password": bool(v.get("password")),
+            "source": ("db" if v.get("_source") == "db" else "env"),
+            "editable": (v.get("_source") == "db"),  # .env datasource 는 UI 수정 불가(운영자 .env 편집)
+            # TASK-0215: insight-worker 탐색 토글(.env 데이터소스는 컬럼 부재 → True 기본).
+            "insight_enabled": bool(v.get("insight_enabled", True)),
+            # conn-health: 사전 계산된 연결 상태(좌표 비노출 — status/elapsed/checked_at 만).
+            "conn_status": ({
+                "status": _h.get("status"),
+                "elapsed_ms": _h.get("last_elapsed_ms"),
+                "checked_at": _h.get("checked_at"),
+            } if _h else {"status": "unknown", "elapsed_ms": None, "checked_at": None}),
+            # TASK-0255 R2: insight-worker 스캔 관점(PG 정본) — 미커버 사유 구분(연결 불안정/권한). None=insight 미기록.
+            "insight_health": (_insight_health.get(_sk) if _sk else None),
+            # scope-key-unify: 메타데이터 admin scope 드롭다운이 쓸 scope 식별자 — **질의 시점 read 와
+            # 동일 해소값**(`scope_key 필드 or 라벨`: DB-등록 ds=해시, .env 레거시=라벨). 위 health 용
+            # `_sk`(=_dsr.scope_key, .env 도 해시 계산)와 달리 read 축을 그대로 노출해야 write==read 가 된다
+            # (라벨 ≠ 해시 死data 및 .env 역방향 死data 동시 회피). host/port 는 이미 노출 → 파생값 신규 누출 없음.
+            "scope_key": (v.get("scope_key") or v.get("key")),
         })
+    datasources.sort(key=lambda d: d["key"])
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute("SELECT Id, ProductKey, Name, DatasourceKey, DatasourceDatabase FROM WebProducts ORDER BY Id")
+            rows = cur.fetchall() or []
+            products = [
+                {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
+                 "datasource_key": (str(r[3]).lower() if r[3] else None),
+                 "datasource_database": (str(r[4]) if len(r) > 4 and r[4] else None)}
+                for r in rows
+            ]
+        except Exception:
+            cur.execute("SELECT Id, ProductKey, Name, DatasourceKey FROM WebProducts ORDER BY Id")
+            products = [
+                {"id": int(r[0]), "product_key": str(r[1] or ""), "name": str(r[2] or ""),
+                 "datasource_key": (str(r[3]).lower() if r[3] else None), "datasource_database": None}
+                for r in (cur.fetchall() or [])
+            ]
     finally:
-        conn.close()
+        cur.close()
+    # TASK-0228 (1:N): 각 product 에 전체 datasource 바인딩 목록 부착(primary 포함, 단일 바인딩=1건).
+    for _p in products:
+        _p["datasources"] = _list_product_datasources(conn, int(_p["id"]))
+    from modules import cred_crypto as _cc
+    return JSONResponse({
+        "enabled": bool(AGENT_MULTI_DATASOURCE_ENABLED),
+        "encryption_ready": bool(_cc.enc_available()),  # KEK 설정 여부(미설정 시 UI 가 CRUD 비활성)
+        # TASK-0228: 사설/링크로컬 SSRF 경계 활성 여부 — UI 안내 문구 정합용(메타데이터 차단은 토글 무관 상시).
+        "ssrf_private_guard_enabled": bool(_ssrf_private_guard_enabled()),
+        "datasources": datasources,
+        "products": products,
+    })
 
 
 @app.patch("/api/admin/products/{product_id}/datasource")
@@ -14379,28 +14366,16 @@ async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/datasources/{key}/databases")
-async def admin_datasource_databases(key: str, request: Request) -> JSONResponse:
+async def admin_datasource_databases(key: str, request: Request, actor=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """datasource 서버의 DB 목록(제품별 참조 DB 선택용, TASK-0205 §2.4). datasource.read. SSRF 차단."""
     from shared import datasources as _dsr
     from shared import db as _db
     from shared import conn_health as _ch
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    actor, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     # TASK-0288: datasource 의 DB 목록 조회 — datasource.read(또는 manage). 기존 console.manage 대체.
     if not (_account_has_permission(actor, "console.access")
             and _account_has_any_permission(actor, "datasource.read", "datasource.manage")):
-        conn.close()
         return _json_error("데이터소스 조회 권한이 필요합니다.", 403)
-    try:
-        ds = _dsr.resolve(conn, str(key).strip().lower())
-    finally:
-        conn.close()
+    ds = _dsr.resolve(conn, str(key).strip().lower())
     if not ds:
         return _json_error("미등록(또는 복호 불가) datasource.", 404)
     okssrf, reason, _pin = _ssrf_check_host(ds.get("host"))
@@ -25224,7 +25199,7 @@ async def admin_set_account_quota(account_id: int, request: Request) -> JSONResp
 
 
 @app.get("/api/admin/usage")
-def admin_llm_usage(request: Request) -> JSONResponse:
+def admin_llm_usage(request: Request, account=Depends(require_permission("console.usage.read", message="LLM 사용량 조회 권한이 필요합니다 (운영자 전용).")), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-0136 (#11): LLM 토큰 사용량/비용 집계 — admin 한정(console.usage.read).
 
     감사 #11/cost gap: ~128 step frontier 호출에 비용 가시성이 전무했다. 모든 LLM 호출이
@@ -25235,173 +25210,158 @@ def admin_llm_usage(request: Request) -> JSONResponse:
     Query: days (기본 30, 1~365). Response: {window_days, totals, by_model, by_account, by_day}.
     """
     try:
-        conn = _connect_memory()
+        days = int(request.query_params.get("days", "30"))
     except Exception:
-        return _json_error("db connection failed", 500)
+        days = 30
+    days = max(1, min(365, days))
+    # TASK-0166: granularity (시/일/주/월). date_trunc 단위는 화이트리스트로만 SQL 삽입.
+    gran = request.query_params.get("gran", "day").lower()
+    if gran not in _USAGE_GRAN:
+        gran = "day"
+    gran_cfg = _USAGE_GRAN[gran]
+    bucket_expr = f"to_char(date_trunc('{gran}', created_at), '{gran_cfg['fmt']}')"
+    bucket_limit = gran_cfg["limit"]
     try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "console.usage.read"):
-            return _json_error("LLM 사용량 조회 권한이 필요합니다 (운영자 전용).", 403)
-        try:
-            days = int(request.query_params.get("days", "30"))
-        except Exception:
-            days = 30
-        days = max(1, min(365, days))
-        # TASK-0166: granularity (시/일/주/월). date_trunc 단위는 화이트리스트로만 SQL 삽입.
-        gran = request.query_params.get("gran", "day").lower()
-        if gran not in _USAGE_GRAN:
-            gran = "day"
-        gran_cfg = _USAGE_GRAN[gran]
-        bucket_expr = f"to_char(date_trunc('{gran}', created_at), '{gran_cfg['fmt']}')"
-        bucket_limit = gran_cfg["limit"]
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-        except Exception as exc:
-            logging.getLogger(__name__).warning("admin_usage: pg connect failed", exc_info=True)
-            return _json_error("usage 저장소(PG) 연결 실패", 503)
-        try:
-            win = f"now() - interval '{days} days'"
-            with pg.cursor() as cur:
-                # TASK-0181: requests = 작업 화면에서 보낸 요청 수(distinct run_id; NULL=insight 등 제외).
-                cur.execute(
-                    f"SELECT COALESCE(count(*),0), COALESCE(sum(prompt_tokens),0), "
-                    f"COALESCE(sum(completion_tokens),0), COALESCE(sum(total_tokens),0), "
-                    f"COALESCE(count(distinct run_id),0) "
-                    f"FROM agent_runtime.llm_usage WHERE created_at >= {win}"
-                )
-                t = cur.fetchone() or (0, 0, 0, 0, 0)
-                totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
-                          "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
-                          "requests": int(t[4])}
-                # TASK-0163: resolved_model(실제 서빙 모델, LiteLLM 해소 결과) 기준으로
-                # 집계하되 요청 별칭(model)도 함께 노출 → claude 계열 식별 + 별칭 추적.
-                cur.execute(
-                    f"SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens), "
-                    f"sum(prompt_tokens), sum(completion_tokens), count(distinct run_id) "
-                    f"FROM agent_runtime.llm_usage "
-                    f"WHERE created_at >= {win} GROUP BY COALESCE(resolved_model, model), model "
-                    f"ORDER BY 4 DESC NULLS LAST LIMIT 50"
-                )
-                by_model = []
-                for r in (cur.fetchall() or []):
-                    pt_m, ct_m = int(r[4] or 0), int(r[5] or 0)
-                    by_model.append({"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
-                                     "requests": int(r[6] or 0),
-                                     "total_tokens": int(r[3] or 0), "prompt_tokens": pt_m,
-                                     "completion_tokens": ct_m,
-                                     "cost_usd": _estimate_llm_cost_usd(r[1], pt_m, ct_m)})
-                # TASK-0176: 계정 × 모델 분해 → 계정별 추정 비용 산출(비용은 모델별 단가라
-                # 모델 분해 필수). Python 으로 계정별 fold(calls/tokens/cost). 역할별 비용은
-                # _aggregate_usage_by_role 가 enrich 된 by_account 의 cost_usd 를 재합산.
-                cur.execute(
-                    f"SELECT c.owner_account_id, COALESCE(u.resolved_model, u.model), count(*), "
-                    f"sum(u.total_tokens), sum(u.prompt_tokens), sum(u.completion_tokens) "
-                    f"FROM agent_runtime.llm_usage u "
-                    f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-                    f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id, COALESCE(u.resolved_model, u.model)"
-                )
-                _acct_fold: dict = {}
-                for r in (cur.fetchall() or []):
-                    aid = int(r[0]) if r[0] is not None else None
-                    mk, calls_r, tok_r, pt_r, ct_r = r[1], int(r[2]), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0)
-                    e = _acct_fold.setdefault(aid, {"account_id": aid, "calls": 0, "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
-                    e["calls"] += calls_r
-                    e["total_tokens"] += tok_r
-                    mc = _estimate_llm_cost_usd(mk, pt_r, ct_r)
-                    e["cost_usd"] += mc
-                    # TASK-0181: 계정 × 모델 분해 보존(stacked 막대용).
-                    mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
-                    mm["total_tokens"] += tok_r
-                    mm["cost_usd"] += mc
-                # TASK-0181: 계정별 요청 수(distinct run_id; run 은 conversation=계정 단위, NULL 제외).
-                cur.execute(
-                    f"SELECT c.owner_account_id, count(distinct u.run_id) "
-                    f"FROM agent_runtime.llm_usage u "
-                    f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-                    f"WHERE u.created_at >= {win} AND u.run_id IS NOT NULL GROUP BY 1"
-                )
-                _acct_req = {(int(r[0]) if r[0] is not None else None): int(r[1]) for r in (cur.fetchall() or [])}
-                by_account = sorted(_acct_fold.values(), key=lambda x: x["total_tokens"], reverse=True)[:100]
-                for a in by_account:
-                    a["cost_usd"] = round(a["cost_usd"], 4)
-                    a["requests"] = _acct_req.get(a["account_id"], 0)
-                    a["models"] = sorted(a.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
-                    for m in a["models"]:
-                        m["cost_usd"] = round(m["cost_usd"], 4)
-                # TASK-0166: granularity bucket(시/일/주/월) 시계열 — 호출/토큰/prompt/completion.
-                cur.execute(
-                    f"SELECT {bucket_expr} AS b, count(*), sum(total_tokens), "
-                    f"sum(prompt_tokens), sum(completion_tokens) FROM agent_runtime.llm_usage "
-                    f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}"
-                )
-                by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0),
-                           "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0)}
-                          for r in (cur.fetchall() or [])]
-                # TASK-0164/0166: bucket × 모델 분해 (stacked bar). 최근 bucket_limit 버킷만
-                # (서브쿼리로 by_day 와 동일 버킷 집합 보장 → 차트 정합).
-                # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(cost_usd) 산출 → hover 표시.
-                cur.execute(
-                    f"SELECT {bucket_expr} AS b, COALESCE(resolved_model, model), sum(total_tokens), "
-                    f"sum(prompt_tokens), sum(completion_tokens) "
-                    f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
-                    f"AND {bucket_expr} IN (SELECT {bucket_expr} FROM agent_runtime.llm_usage "
-                    f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) "
-                    f"GROUP BY 1, 2 ORDER BY 1"
-                )
-                by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
-                                 "cost_usd": _estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
-                                for r in (cur.fetchall() or [])]
-        finally:
-            try:
-                pg.close()
-            except Exception:
-                pass
-        # TASK-0163: 계정 ID → 사용자명·역할 매핑(MySQL, cross-DB) + 역할별 집계.
-        # usage 는 PG·계정/역할은 MySQL 이라 SQL join 불가 → Python 으로 enrich/fold.
-        acct_ids = [row["account_id"] for row in by_account if row["account_id"] is not None]
-        acct_meta: dict[int, dict] = {}
-        if acct_ids:
-            try:
-                placeholders = ",".join(["%s"] * len(acct_ids))
-                mcur = conn.cursor(dictionary=True)
-                try:
-                    mcur.execute(
-                        f"SELECT a.Id AS id, a.Username AS username, r.Name AS role "
-                        f"FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId "
-                        f"WHERE a.Id IN ({placeholders})",
-                        tuple(acct_ids),
-                    )
-                    for m in (mcur.fetchall() or []):
-                        acct_meta[int(m["id"])] = {"username": m.get("username"), "role": m.get("role")}
-                finally:
-                    mcur.close()
-            except Exception:
-                logging.getLogger(__name__).warning("admin_usage: role enrichment failed", exc_info=True)
-        for row in by_account:
-            meta = acct_meta.get(row["account_id"]) if row["account_id"] is not None else None
-            row["username"] = (meta or {}).get("username")
-            row["role"] = (meta or {}).get("role")
-        by_role = _aggregate_usage_by_role(by_account)
-        # TASK-0166: 총 추정 비용 = 모델별 추정 비용 합(단가 미상 로컬은 0).
-        totals["cost_usd"] = round(sum(m.get("cost_usd", 0) for m in by_model), 4)
-        return JSONResponse({
-            "window_days": days,
-            "granularity": gran,
-            "totals": totals,
-            "by_model": by_model,
-            "by_account": by_account,
-            "by_role": by_role,
-            "by_day": by_day,
-            "by_day_model": by_day_model,
-        })
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("admin_usage: pg connect failed", exc_info=True)
+        return _json_error("usage 저장소(PG) 연결 실패", 503)
+    try:
+        win = f"now() - interval '{days} days'"
+        with pg.cursor() as cur:
+            # TASK-0181: requests = 작업 화면에서 보낸 요청 수(distinct run_id; NULL=insight 등 제외).
+            cur.execute(
+                f"SELECT COALESCE(count(*),0), COALESCE(sum(prompt_tokens),0), "
+                f"COALESCE(sum(completion_tokens),0), COALESCE(sum(total_tokens),0), "
+                f"COALESCE(count(distinct run_id),0) "
+                f"FROM agent_runtime.llm_usage WHERE created_at >= {win}"
+            )
+            t = cur.fetchone() or (0, 0, 0, 0, 0)
+            totals = {"calls": int(t[0]), "prompt_tokens": int(t[1]),
+                      "completion_tokens": int(t[2]), "total_tokens": int(t[3]),
+                      "requests": int(t[4])}
+            # TASK-0163: resolved_model(실제 서빙 모델, LiteLLM 해소 결과) 기준으로
+            # 집계하되 요청 별칭(model)도 함께 노출 → claude 계열 식별 + 별칭 추적.
+            cur.execute(
+                f"SELECT COALESCE(resolved_model, model) AS m, model, count(*), sum(total_tokens), "
+                f"sum(prompt_tokens), sum(completion_tokens), count(distinct run_id) "
+                f"FROM agent_runtime.llm_usage "
+                f"WHERE created_at >= {win} GROUP BY COALESCE(resolved_model, model), model "
+                f"ORDER BY 4 DESC NULLS LAST LIMIT 50"
+            )
+            by_model = []
+            for r in (cur.fetchall() or []):
+                pt_m, ct_m = int(r[4] or 0), int(r[5] or 0)
+                by_model.append({"model": r[1], "resolved_model": r[0], "calls": int(r[2]),
+                                 "requests": int(r[6] or 0),
+                                 "total_tokens": int(r[3] or 0), "prompt_tokens": pt_m,
+                                 "completion_tokens": ct_m,
+                                 "cost_usd": _estimate_llm_cost_usd(r[1], pt_m, ct_m)})
+            # TASK-0176: 계정 × 모델 분해 → 계정별 추정 비용 산출(비용은 모델별 단가라
+            # 모델 분해 필수). Python 으로 계정별 fold(calls/tokens/cost). 역할별 비용은
+            # _aggregate_usage_by_role 가 enrich 된 by_account 의 cost_usd 를 재합산.
+            cur.execute(
+                f"SELECT c.owner_account_id, COALESCE(u.resolved_model, u.model), count(*), "
+                f"sum(u.total_tokens), sum(u.prompt_tokens), sum(u.completion_tokens) "
+                f"FROM agent_runtime.llm_usage u "
+                f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                f"WHERE u.created_at >= {win} GROUP BY c.owner_account_id, COALESCE(u.resolved_model, u.model)"
+            )
+            _acct_fold: dict = {}
+            for r in (cur.fetchall() or []):
+                aid = int(r[0]) if r[0] is not None else None
+                mk, calls_r, tok_r, pt_r, ct_r = r[1], int(r[2]), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0)
+                e = _acct_fold.setdefault(aid, {"account_id": aid, "calls": 0, "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
+                e["calls"] += calls_r
+                e["total_tokens"] += tok_r
+                mc = _estimate_llm_cost_usd(mk, pt_r, ct_r)
+                e["cost_usd"] += mc
+                # TASK-0181: 계정 × 모델 분해 보존(stacked 막대용).
+                mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
+                mm["total_tokens"] += tok_r
+                mm["cost_usd"] += mc
+            # TASK-0181: 계정별 요청 수(distinct run_id; run 은 conversation=계정 단위, NULL 제외).
+            cur.execute(
+                f"SELECT c.owner_account_id, count(distinct u.run_id) "
+                f"FROM agent_runtime.llm_usage u "
+                f"LEFT JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                f"WHERE u.created_at >= {win} AND u.run_id IS NOT NULL GROUP BY 1"
+            )
+            _acct_req = {(int(r[0]) if r[0] is not None else None): int(r[1]) for r in (cur.fetchall() or [])}
+            by_account = sorted(_acct_fold.values(), key=lambda x: x["total_tokens"], reverse=True)[:100]
+            for a in by_account:
+                a["cost_usd"] = round(a["cost_usd"], 4)
+                a["requests"] = _acct_req.get(a["account_id"], 0)
+                a["models"] = sorted(a.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
+                for m in a["models"]:
+                    m["cost_usd"] = round(m["cost_usd"], 4)
+            # TASK-0166: granularity bucket(시/일/주/월) 시계열 — 호출/토큰/prompt/completion.
+            cur.execute(
+                f"SELECT {bucket_expr} AS b, count(*), sum(total_tokens), "
+                f"sum(prompt_tokens), sum(completion_tokens) FROM agent_runtime.llm_usage "
+                f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}"
+            )
+            by_day = [{"day": r[0], "calls": int(r[1]), "total_tokens": int(r[2] or 0),
+                       "prompt_tokens": int(r[3] or 0), "completion_tokens": int(r[4] or 0)}
+                      for r in (cur.fetchall() or [])]
+            # TASK-0164/0166: bucket × 모델 분해 (stacked bar). 최근 bucket_limit 버킷만
+            # (서브쿼리로 by_day 와 동일 버킷 집합 보장 → 차트 정합).
+            # TASK-0263: prompt/completion 합도 가져와 모델별 추정 비용(cost_usd) 산출 → hover 표시.
+            cur.execute(
+                f"SELECT {bucket_expr} AS b, COALESCE(resolved_model, model), sum(total_tokens), "
+                f"sum(prompt_tokens), sum(completion_tokens) "
+                f"FROM agent_runtime.llm_usage WHERE created_at >= {win} "
+                f"AND {bucket_expr} IN (SELECT {bucket_expr} FROM agent_runtime.llm_usage "
+                f"WHERE created_at >= {win} GROUP BY 1 ORDER BY 1 DESC LIMIT {bucket_limit}) "
+                f"GROUP BY 1, 2 ORDER BY 1"
+            )
+            by_day_model = [{"day": r[0], "model": r[1], "total_tokens": int(r[2] or 0),
+                             "cost_usd": _estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0))}
+                            for r in (cur.fetchall() or [])]
     finally:
         try:
-            conn.close()
+            pg.close()
         except Exception:
             pass
+    # TASK-0163: 계정 ID → 사용자명·역할 매핑(MySQL, cross-DB) + 역할별 집계.
+    # usage 는 PG·계정/역할은 MySQL 이라 SQL join 불가 → Python 으로 enrich/fold.
+    acct_ids = [row["account_id"] for row in by_account if row["account_id"] is not None]
+    acct_meta: dict[int, dict] = {}
+    if acct_ids:
+        try:
+            placeholders = ",".join(["%s"] * len(acct_ids))
+            mcur = conn.cursor(dictionary=True)
+            try:
+                mcur.execute(
+                    f"SELECT a.Id AS id, a.Username AS username, r.Name AS role "
+                    f"FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId "
+                    f"WHERE a.Id IN ({placeholders})",
+                    tuple(acct_ids),
+                )
+                for m in (mcur.fetchall() or []):
+                    acct_meta[int(m["id"])] = {"username": m.get("username"), "role": m.get("role")}
+            finally:
+                mcur.close()
+        except Exception:
+            logging.getLogger(__name__).warning("admin_usage: role enrichment failed", exc_info=True)
+    for row in by_account:
+        meta = acct_meta.get(row["account_id"]) if row["account_id"] is not None else None
+        row["username"] = (meta or {}).get("username")
+        row["role"] = (meta or {}).get("role")
+    by_role = _aggregate_usage_by_role(by_account)
+    # TASK-0166: 총 추정 비용 = 모델별 추정 비용 합(단가 미상 로컬은 0).
+    totals["cost_usd"] = round(sum(m.get("cost_usd", 0) for m in by_model), 4)
+    return JSONResponse({
+        "window_days": days,
+        "granularity": gran,
+        "totals": totals,
+        "by_model": by_model,
+        "by_account": by_account,
+        "by_role": by_role,
+        "by_day": by_day,
+        "by_day_model": by_day_model,
+    })
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -28221,35 +28181,20 @@ def admin_overview(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/dashboard/preferences")
-def admin_get_dashboard_prefs(request: Request) -> JSONResponse:
+def admin_get_dashboard_prefs(request: Request, actor=Depends(require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-0210: 본인 계정의 대시보드 위젯 표시/순서 prefs (없으면 권한 기반 기본값).
 
     별도 RBAC 권한 없이 console.access 만 요구 — 본인 대시보드 레이아웃은 self-service.
     """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        actor, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(actor, "console.access"):
-            return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
-        defaults = _dashboard_default_prefs(actor)
-        saved = _load_dashboard_pref_row(conn, int(actor["id"]))
-        if saved and isinstance(saved.get("widgets"), list) and saved["widgets"]:
-            return JSONResponse({
-                "preferences": _sanitize_dashboard_prefs(saved),
-                "defaults": defaults,
-                "customized": True,
-            })
-        return JSONResponse({"preferences": defaults, "defaults": defaults, "customized": False})
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
+    defaults = _dashboard_default_prefs(actor)
+    saved = _load_dashboard_pref_row(conn, int(actor["id"]))
+    if saved and isinstance(saved.get("widgets"), list) and saved["widgets"]:
+        return JSONResponse({
+            "preferences": _sanitize_dashboard_prefs(saved),
+            "defaults": defaults,
+            "customized": True,
+        })
+    return JSONResponse({"preferences": defaults, "defaults": defaults, "customized": False})
 
 
 @app.put("/api/admin/dashboard/preferences")
