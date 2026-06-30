@@ -5115,3 +5115,12 @@ source_of_truth: true
 - 검증: agent 이미지 pytest 공유 13/13 + feature-0003 전체 548 PASS(회귀 0), `node --check app.js` PASS. §18.8 적대 패널 2렌즈 각 5가설 REFUTED — 보안 SAFE(BLOCKING 0)·UX SOUND(BLOCKING 0). rebase: worktree 생성 후 main 8ae77ca→4359be5(metadata-bs-paging) 1커밋 전진 감지 → stash→reset origin/main→pop 으로 최신 main 위 재배치(충돌 0, app.js/index.html 무중첩, styles.css 영역 분리).
 - 분리 표기(§정직): 코드/테스트/적대패널로 "확인 게이트·체크박스 영속·인가 불변식 보존" 검증. "실제 사용자 화면에서 확인 모달 노출·재진입 상태 유지 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
 - Rollback: app.js 의 (헬퍼 4함수·confirmShareJoinable·openShareDialog confirm 게이트·promptShareExpiry cid 영속·createConversationShare cid) 제거 + 체크박스 `checked` 하드코딩 복원 + styles.css `.share-confirm-*` 제거 + index.html cache-buster 복원 + 테스트 2파일 원복/삭제.
+
+## CHG-20260630T011858-share-joinable-confirm-persist-deploy (TASK-20260630T005923-share-joinable-confirm-persist — landing + web 재배포 + 라이브 검증, 코드 무변경 / post-deploy doc-record)
+- Date: 2026-06-30
+- Summary: 코드/스키마 무변경. CHG-20260630T005923-share-joinable-confirm-persist 의 landing(PR·merge)·배포·라이브 검증만 기록.
+- git 흐름: commit `2167cd0` push → PR #470 → `cycle-finalize --pr 470 --target-worktree …`(gh pr merge --merge, main `4359be5`→`557c3c9`, clean FF·충돌 0). worktree remove 가 sudo pytest 의 root 소유 `.pytest_cache`/`__pycache__` 로 1차 Permission denied → `sudo rm -rf` + `git worktree prune` + local/remote 브랜치 삭제로 정리 완료.
+- Deploy (deploy_scope: included, FIRST_REQUEST.md 전역): frontend-only → **web 이미지만** 재빌드(`make dc-build SERVICE=web`, GIT_COMMIT=`557c3c9` 각인; compose v5.1.1 metadata-file race exit1 흡수)·재기동(`docker compose up -d --no-deps --force-recreate web`, override HTTPS 종단 유지). backend/ask-worker 무변경 → 미재빌드.
+- 라이브 검증: `GET /healthz`(HTTPS) git_commit=`557c3c9`(live, baseline `4359be5`→`557c3c9`)·repo-web-1 healthy. 서빙 `index.html` → `app.js?v=20260629g-share-joinable-confirm`·`styles.css?v=20260629-share-joinable-confirm`. 서빙 `app.js` **byte-identical** to main(`diff -q` IDENTICAL — fix live), 서빙 `styles.css` `.share-confirm` 2건 반영.
+- Impact: 비파괴(doc-record). 사용자 화면 실 체감(확인 모달·취소 중단·체크박스 재진입 유지)은 PB-0008 Windows-browser 미실행(WSL) — 사용자 확인 권장.
+- Rollback: 해당 없음(doc-only). 배포 롤백 시 이전 web 이미지(`4359be5`)로 재기동.

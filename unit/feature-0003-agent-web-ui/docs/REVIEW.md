@@ -4214,3 +4214,12 @@ source_of_truth: true
 - 회귀 가드: agent 이미지 pytest 공유 13/13(owner-guard 6 + confirm-persist 7) + feature-0003 전체 **548 PASS**(회귀 0), `node --check app.js` PASS. rebase(8ae77ca→4359be5) 충돌 0.
 - Human Approval Needed: 아니오 (frontend-only, 인가 불변식 무변경, 사용자 명시 요청 범위, AskUserQuestion 설계 확정 완료). 단 Critical 인접 영역이라 적대 패널 2렌즈로 검증 강화.
 - 라이브 실측 분리(§정직): 코드/테스트/적대 패널로 "확인 게이트·체크박스 영속·인가 불변식 보존" 검증. "실 사용자 화면에서 확인 모달 노출·취소 시 발급 중단·재진입 체크박스 상태 유지 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+
+## REV-20260630T011858-share-joinable-confirm-persist-deploy [SKIPPED:deploy-record-only — 코드 적대검증은 REV-20260630T005923-share-joinable-confirm-persist AGENT-TEAM 2렌즈 패널서 완료] 배포 완료 + 라이브 검증
+- Related Change: CHG-20260630T011858-share-joinable-confirm-persist-deploy / TASK-20260630T005923-share-joinable-confirm-persist.
+- Panel skip 사유: 본 엔트리는 PR 머지·web 재배포·라이브 검증 기록뿐(코드 무변경). 코드 적대 검증은 선행 `[AGENT-TEAM:adversarial-security+ux]`(security SAFE·ux SOUND, 각 5가설 REFUTED, BLOCKING 0)에서 완료.
+- deploy_scope 승인 근거(Phase 6.8): 전역 `FIRST_REQUEST.md deploy_scope: included`(2026-06-11 사용자 결정). 첫 배포 직전 "deploy_scope: included 활성 — 이후 자동 배포" 1줄 표면화 완료. frontend-only(app.js·styles.css·index.html cache-buster) → **web 이미지만** 재빌드·재기동. backend/ask-worker 무변경 → 미재빌드.
+- git 흐름: commit `2167cd0` → PR #470 (사용자 confirm 후 생성) → `cycle-finalize --pr 470 --target-worktree`(gh pr merge --merge → main `4359be5`→`557c3c9`, clean FF·충돌 0). worktree remove 1차 Permission denied(sudo pytest root 소유 pycache) → `sudo rm -rf`+`git worktree prune`+브랜치 삭제로 정리.
+- 라이브 검증: `GET /healthz`(HTTPS) git_commit=`557c3c9`(live, `4359be5`→`557c3c9`)·repo-web-1 healthy. 서빙 `index.html` `app.js?v=20260629g-share-joinable-confirm`·`styles.css?v=20260629-share-joinable-confirm`. 서빙 `app.js` **byte-identical** to main(fix live), `styles.css` `.share-confirm` 반영.
+- PB-0008 Windows-browser 실 화면(확인 모달·취소 중단·체크박스 재진입 유지)은 WSL 라 미실행 — **배포 후 사용자 확인 권장**(frontend render, 선례 동일).
+- 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, 직접 main commit — 선례 동일).

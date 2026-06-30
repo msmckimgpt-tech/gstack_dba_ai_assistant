@@ -4954,4 +4954,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **§18.8 적대 패널 2렌즈**(security/authz + ux/regression) — 각 5가설 전부 REFUTED. 보안 VERDICT SAFE(backend gate intact·triple-clamp·XSS 0), UX VERDICT SOUND(종료경로·회귀수정·일관성). BLOCKING 0.
 - [x] **릴리즈노트**: `release-notes-data.js` 2026-06-29 블록에 2건(참여 허용 확인 improved · 체크박스 상태 유지 fixed) + summary 갱신.
 - [ ] **PB-0008 Windows-browser 시각 검증**(링크 생성→확인 모달·취소 시 발급 중단·체크박스 토글 후 재진입 상태 유지) — WSL worktree 미실행, **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
-- [ ] verify-completion --pre-commit PASS → commit → main merge → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지만) → healthz.
+- [x] verify-completion --pre-commit PASS → commit `2167cd0` → **PR #470 머지(main 557c3c9, FF)** → cycle-finalize(worktree/브랜치 정리; worktree remove 는 sudo pytest pycache root소유로 1차 실패→sudo rm+prune) → **web 이미지만 재빌드·재기동(deploy_scope: included)**. 라이브: `GET /healthz` git_commit=`557c3c9`(live, `4359be5`→`557c3c9`)·repo-web-1 healthy · 서빙 `index.html` `app.js?v=20260629g-share-joinable-confirm`·`styles.css?v=20260629-share-joinable-confirm` · 서빙 `app.js` **byte-identical** to main(fix live)·styles.css `.share-confirm` 반영.
