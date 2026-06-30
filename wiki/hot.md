@@ -1,14 +1,16 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-06-29
+last_updated: 2026-06-30
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-06-29
+2026-06-30
 
 ## Key Recent Facts
+- feature-0013 관계 다이어그램 신규(06-29, PR#462/#469): assistant 가 flow/관계/구조 질문에 mermaid(ER·flowchart)로 사용자 DB 구조를 답함 — 웹 UI mermaid 렌더(vendor v10.9.3, sanitize-후 `securityLevel:'strict'` + graceful fallback), `_MERMAID_DIAGRAM_GUIDANCE` 발화(feature-0002), `table_relationships` 관계 저장소(alembic 0024 — FK introspection·대화 JOIN 학습) + knowledge digest 주입. 후속 mermaid render orphan/erDiagram "Syntax error" 봉인(rd-h2/h3), PB-0008 라이브 검증 PASS·배포 완료(rd-h6). cross-cut 코드 거주 feature-0002·0003.
+- 메타데이터·공유 대화 화면 정리(feature-0003, 06-29 저녁): 스키마 골격 결과 패널 페이지네이션(`META_BS_PAGE_SIZE=30`, 가시성 윈도우 — 저장/AI일괄 전체수집 불변식 유지)·여백 압축(metadata-bs-paging), flex-shrink 클리핑 수정(metadata-bs-flexclip). 공유 대화 뷰 mermaid 렌더 + 전체폭 반응형(share-mermaid-responsive) + 스크롤바 가이드 뱃지·클릭 스크롤 단축 EaseOutExpo(point-scroll-easeoutexpo). 용어사전 역할 선택 UI 단일화 + 역할 미표시(필드명 role_key→key) 수정(glossary-role-single-ui/fieldname-fix). 새 대화 첫 전송 사이드바 중복 제거(new-conv-dedup). diff 답변 누출 줄번호 prefix 정규화(diff-lineno-leak).
 - 메타데이터 부트스트랩 결과 패널 접기+검색 재설계 + 잘림 cache-buster 수정(feature-0003, 06-29): 직전 mssql-db 수정의 460px 캡 제거가 배포는 됐으나 `admin.html` 의 `styles.css?v=`/`admin.js?v=` cache-buster 미bump 로 브라우저가 stale CSS 를 계속 로드 → "여전히 잘림". cache-buster bump(→20260629-metadata-bs-collapse)로 해소. 또 수백 테이블을 전부 펼쳐 평면 렌더하던 여백 과다를 **테이블별 기본 접힘 한 줄 헤더(caret+이름+입력상태 힌트) + 테이블명 검색/필터 + 모두펼치기/접기** 로 재설계(사용자 결정). 접기·필터는 시각 토글만 — 입력값 DOM 보존, 저장·AI 일괄생성이 전체 수집(회귀 0). 서브탭 전환 재렌더 mode 불일치(pre-existing)는 follow-up. metadata-bs-collapse.
 - 메타데이터 부트스트랩 MSSQL database 차원 수정(feature-0003, 06-29): "테이블 설명 > 스키마 골격 가져오기"가 MSSQL 에서 `database=None`→중립 tempdb(shared/db.py `_connect_mssql` 보안 기본값) 임시테이블(`#…`)을 노출하던 "테이블 명칭 모두 오류" 근본 수정. 부트스트랩 unit 엔진분기(MySQL=schema/MSSQL=database via `list_server_databases`, 시스템 DB·스키마·센티넬 필터), MSSQL 선택 DB 연결 평탄수집(저장 schema_name=database — 4계층→3-키, 사용자 결정), suggest grounding 동일분기, 프론트 '데이터베이스/스키마' 라벨, `.admin-meta-bootstrap-result` max-height 제거(패널 내부 잘림 해소, 테이블·컬럼 공통). AI 자동완성은 기구현·깨진 골격에 grounding 해 무력화됐던 것. REQ-20260629T114221.
 - 용어사전 대화 자율등록+역할분리+유사어(feature-0002/0003, 06-29): 대화에서 용어 자율 등록 + 등록·검토 역할 분리 + 유사어 참조(관리 콘솔 메타데이터 거버넌스, 마이그 0023, ADR-20260629T101500). 용어 검토 큐는 용어사전 하위 2차 보기 탭으로 중첩(admin IA).
@@ -19,6 +21,7 @@ last_updated: 2026-06-29
 - assistant 요청 2번 중복 처리 차단(feature-0003/0002, 06-26): 워커모드 `/api/ask` long-poll 끊김 후 재전송 시 ask_job 2개 → 2회 처리되던 결함을 enqueue 멱등화(dedup NOT EXISTS + 기존 run attach)로 차단. 후속 PG AmbiguousParameter 회귀는 dedup 전용 파라미터+alias 격리로 해소.
 
 ## Recent Changes
+- doc_sync 06-30: 06-29 13:35 직전 sync 이후 머지분 정합 — feature 카운트 12→13(Index/_Index/overview/Architecture Overview)·ARCHITECTURE/overview 기능맵·의존맵 feature-0013 행·STATUS §5 카운트·feature-0013 카드 reality(stub→active, PB-0008 PASS)·`concepts/nl2sql-flywheel.md` §2 ITEM-08/11 출시 반영. 동반: 릴리즈노트 06-29 블록 6항목 추가(3→9) + cache-buster bump(20260630-rn-0630) → web 재배포.
 - 제품 chip 처리 중 항상 활성화(f049fee, 06-26): 처리 중 제품 선택을 막던 3계층 가드(`renderProductChip` 시각 disable·`setActiveProduct` busy reject·`update_conversation_product` PATCH 409) 제거 — chip 항상 활성, 변경은 다음 요청부터(in-flight 답변은 enqueue 시 캡처된 product 로 실행). RBAC/스키마 0 변경. ADR-WEB-0006.
 - ask-dedup-idempotency(0818b0a·3595ea3, 06-26): `enqueue_ask_job(dedup_message=...)` INSERT NOT EXISTS(`_ACTIVE_SLOT_PREDICATE` 재사용·stale 제외)+`find_active_dup_ask_job` 로 활성 중복이면 새 job·sentinel 없이 기존 run attach; app.js `/api/ask` 실패 시 status 복구 0.7s×3 재시도. 배포 검증 중 dedup NOT EXISTS 가 INSERT SELECT(varchar)와 파라미터 공유 → AmbiguousParameter 로 워커모드 신규 `/api/ask` 전부 500 회귀 → 전용 파라미터 + 테이블 alias `d` 격리로 수정.
 - shared/ P5a Step5 완료: 4개 alias shim(model_catalog 제외 config·db·conn_health·datasources) 소비처를 `shared.*` 로 직접 마이그레이션 후 `modules/*` shim 전량 제거.
@@ -32,4 +35,3 @@ last_updated: 2026-06-29
 - feature-0010 활성화 cycle 이월: 라이브 토큰교환·refresh 회전·Google revoke·설정 UI·mcp_client seam 배선.
 - insight-worker(TASK-0305) GRANT 적용 · NL2SQL few-shot A/B.
 - baseline 추적: `test_product_delete_block_conv.py` 2건 clean main 에서도 실패(admin_delete_product 404) — feature-0003 소관.
-- 잔여 doc drift: `concepts/nl2sql-flywheel.md` §2 가 ITEM-08/ITEM-11 출시 미반영(stale) — 후속 doc_sync 1회 필요.

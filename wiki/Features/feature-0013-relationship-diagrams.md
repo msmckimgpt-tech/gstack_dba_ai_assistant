@@ -1,7 +1,7 @@
 ---
 doc_type: WIKI_FEATURE_CARD
 scope: feature
-status: stub
+status: active
 edit_policy: ai-maintained
 source_of_truth: false
 template_version: v3.12.0
@@ -10,7 +10,7 @@ ai_read_priority: 7
 wiki_role: feature_card
 wiki_name: project
 confidence: high
-maturity: stub
+maturity: minimal
 ai_generated: true
 feature_id: feature-0013-relationship-diagrams
 linked_unit: unit/feature-0013-relationship-diagrams
@@ -29,7 +29,7 @@ assistant 가 "이 기능이 어떤 flow 로 동작하나 / 테이블 관계가 
 
 ## 2. 상태
 
-- **단계**: stub / in-progress — 3-phase 코드+단위검증 완료, 라이브/브라우저 검증 미수행.
+- **단계**: active / in-progress — 3-phase 코드+단위검증 완료 + 후속 mermaid render orphan/erDiagram "Syntax error" 봉인(rd-h2/h3) + **PB-0008 라이브 검증 PASS·배포 완료**(rd-h6, 2026-06-29).
 - **마지막 갱신**: 2026-06-29
 - **AI 작업자**: claude / Human (REQ-20260629-relationship-diagrams, 범위·worktree 사용자 승인 2026-06-29)
 
@@ -64,3 +64,4 @@ assistant 가 "이 기능이 어떤 flow 로 동작하나 / 테이블 관계가 
 > append-only. 정본 변경은 `unit/feature-0013-relationship-diagrams/docs/MODIFY.md` 에.
 
 - 2026-06-29: 초안 작성 (feature 신규 생성 동반 — 3-phase 구현 반영).
+- 2026-06-30 (doc_sync): 머지 reality 정합 — status stub→active·maturity stub→minimal, §2 상태에 mermaid Syntax error 봉인(rd-h2/h3)·PB-0008 라이브 PASS·배포 완료(rd-h6) 반영.
