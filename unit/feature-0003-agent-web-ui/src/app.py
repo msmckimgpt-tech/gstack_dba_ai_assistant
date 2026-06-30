@@ -27730,16 +27730,19 @@ def admin_delete_column_desc(desc_id: int, request: Request) -> JSONResponse:
 def admin_metadata_graph(request: Request) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
 
-    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 두 모드만:
-      - 검색:    ?q=<부분일치>           → {nodes:[검색결과], edges:[]}  (이름/FQN CONTAINS)
-      - 이웃:    ?node=<key>&depth=1..3   → {nodes, edges}  (해당 노드 k-hop, cap 적용)
-    q·node 둘 다 없으면 빈 그래프. AGE cutover 전(확장 부재)엔 모듈이 graceful no-op → 빈 결과.
+    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 세 모드:
+      - 이웃:    ?node=<key>&depth=1..3      → 해당 노드 k-hop (cap 적용)
+      - 검색:    ?q=<부분일치>[&scope=<ds>]  → 이름/FQN CONTAINS (scope 지정 시 그 datasource 만)
+      - 진입:    ?scope=<ds>                 → 그 datasource 의 Schema→Table 서브그래프(초기 뷰)
+    셋 다 없으면 빈 그래프. AGE cutover 전(확장 부재)엔 모듈이 graceful no-op → 빈 결과.
+    scope 는 datasource scope_key(예: mssql-06656002eda6) — 각 데이터소스별 그래프 분리.
     """
     account, error = _metadata_resolve_account(request)
     if error:
         return error
     q = (request.query_params.get("q") or "").strip()
     node = (request.query_params.get("node") or "").strip()
+    scope = (request.query_params.get("scope") or "").strip() or None
     try:
         depth = int(request.query_params.get("depth") or "1")
     except (TypeError, ValueError):
@@ -27759,10 +27762,16 @@ def admin_metadata_graph(request: Request) -> JSONResponse:
     try:
         if node:
             data = _mg.neighborhood(node, depth=depth, conn=pg)
+            mode = "neighborhood"
         elif q:
-            data = {"nodes": _mg.search_nodes(q, limit=limit, conn=pg), "edges": []}
+            data = {"nodes": _mg.search_nodes(q, limit=limit, scope=scope, conn=pg), "edges": []}
+            mode = "search"
+        elif scope:
+            data = _mg.scope_roots(scope, conn=pg)
+            mode = "scope_roots"
         else:
             data = {"nodes": [], "edges": []}
+            mode = "empty"
     except Exception:
         logging.getLogger(__name__).warning("admin_metadata_graph 조회 실패", exc_info=True)
         return _json_error("그래프 조회 실패", 503)
@@ -27774,8 +27783,8 @@ def admin_metadata_graph(request: Request) -> JSONResponse:
     return JSONResponse({
         "nodes": data.get("nodes", []),
         "edges": data.get("edges", []),
-        "mode": "neighborhood" if node else ("search" if q else "empty"),
-        "q": q, "node": node, "depth": depth,
+        "mode": mode,
+        "q": q, "node": node, "scope": scope or "", "depth": depth,
         "node_count": len(data.get("nodes", [])), "edge_count": len(data.get("edges", [])),
     })
 

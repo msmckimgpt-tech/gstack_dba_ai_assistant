@@ -2538,6 +2538,8 @@ function _metaBindControls() {
       adminState.metadata.scopeKey = sel.value || "common";
       adminState.metadata.editing = null;
       adminState.metadata.selectedId = null;
+      // feature-0016: 그래프 뷰 활성 시 datasource 변경 → 그 데이터소스의 그래프(roots) 재로드.
+      if (adminState.metadata.subTab === "graph") { _metaGraphLoadRoots(); return; }
       // scope-single-ds-ui + metadata-list-detail: 스코프가 부트스트랩 DS 를 결정하므로 bootstrap 모드면
       // 유지하며 재동기화(공용=empty-state, 구체 DS=골격 컨트롤·상속 DS·스키마 재로드). form/empty 는 선택 무효 → empty.
       if (adminState.metadata.detailMode !== "bootstrap") adminState.metadata.detailMode = "empty";
@@ -2923,8 +2925,37 @@ function _metaShowGraph() {
   const view = document.getElementById("metadataGraphView");
   if (view) view.style.display = "";
   _metaInitGraph();
+  // feature-0016: 그래프 뷰 진입 시 현재 선택 datasource 의 그래프(roots)를 즉시 로드 — 각 데이터소스별 그래프 출현.
+  _metaGraphLoadRoots();
   const s = document.getElementById("metadataGraphSearch");
   if (s && s.focus) try { s.focus(); } catch (_) {}
+}
+
+// 현재 선택 datasource(scope)의 진입 그래프(Schema→Table)를 로드. 'common'/미선택이면 안내.
+async function _metaGraphLoadRoots() {
+  if (!_metaGraph.cy) _metaInitGraph();
+  if (!_metaGraph.cy) return;
+  const scope = adminState.metadata.scopeKey || "common";
+  const si = document.getElementById("metadataGraphSearch");
+  if (si) si.value = "";
+  _metaGraph.cy.elements().remove();
+  if (!scope || scope === "common") {
+    _metaGraphStatus("상단에서 데이터소스를 선택하면 그 데이터소스의 그래프가 표시됩니다. (공용 스코프는 검색으로 탐색)");
+    _metaGraphRenderDetailEmpty();
+    return;
+  }
+  _metaGraphStatus("데이터소스 그래프 로딩…");
+  let data;
+  try {
+    data = await apiFetch(`/api/admin/metadata/graph?scope=${encodeURIComponent(scope)}`);
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || "그래프 로드 실패");
+    return;
+  }
+  _metaGraphAddElements(data.nodes || [], data.edges || []);
+  _metaGraphLayout();
+  const n = (data.nodes || []).length;
+  _metaGraphStatus(n ? `${scope}: ${n}개 노드 — 노드 클릭으로 확장, 또는 검색.` : `${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
 }
 
 function _metaHideGraph() {
@@ -2991,11 +3022,15 @@ function _metaInitGraph() {
 async function _metaGraphSearch(q) {
   if (!_metaGraph.cy) return;
   _metaGraph.lastQuery = q;
-  if (!q) { _metaGraphStatus(""); return; }
+  // 검색어 비우면 현재 datasource 의 진입 그래프(roots)로 복귀.
+  if (!q) { _metaGraphLoadRoots(); return; }
   _metaGraphStatus("검색 중…");
+  // feature-0016: 선택 datasource 로 검색 스코프 제한(공용이면 전역 검색).
+  const scope = adminState.metadata.scopeKey || "common";
+  const scopeParam = (scope && scope !== "common") ? `&scope=${encodeURIComponent(scope)}` : "";
   let data;
   try {
-    data = await apiFetch(`/api/admin/metadata/graph?q=${encodeURIComponent(q)}`);
+    data = await apiFetch(`/api/admin/metadata/graph?q=${encodeURIComponent(q)}${scopeParam}`);
   } catch (err) {
     _metaGraphStatus((err && err.message) || "그래프 검색 실패");
     return;
