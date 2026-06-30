@@ -180,3 +180,16 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/app.py`(4 핸들러) + docs. 동반 테스트 변경 0(4개 직접호출 없음, grep 확인).
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요. **cat-B workflow 확정 15 전부 마이그 완료.**
 - Rollback Notes: 단일 commit revert(app.py 4 + docs). 이전 batch 불변.
+
+## CHG-20260630-0006
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 3 cat-B batch 4(TASK-0012-7) — cat-B 잔여 no-flag 중 동반 테스트 전환 불요 10 핸들러. 누적 cat-B 25.
+- Summary:
+  cat-B 잔여 워크플로(REV-20260630-0006, 67 agents)가 no-flag 17 후보 → 14 확정/3 보류(suggestions fail-soft·admin_products_insight_coverage·admin_overview). 확정 14 중 동반 테스트 직접호출 전환이 불요한 10 적용:
+  - **RP 5**(admin_accounts, admin_roles, admin_list_quotas, admin_set_role_quota, admin_set_account_quota): perm 게이트가 **OR-of-negations 형**(`if not ahp(a) or not ahp(b) [or not ahp(c)]:` = AND 의미·단일 메시지) → `require_permission("a","b"[,"c"], message="<원본>")` 로 다중 perm hoist. 변환기에 or-chain 다중 perm 인식 + 메시지 verbatim 추출 추가. admin_set_role/account_quota 는 auth-perm 사이 주석 허용(adjacency 완화).
+  - **AO 5**(duplicate_conversation, remove_conversation_member, revoke_share, admin_get_system_prompt, list_profile_audit_events): 복수 perm/다른 메시지/OR/action-분기(admin_get_system_prompt: scope 별 perm 분기) → `account|actor=Depends(get_current_account)` + perm 검사 본문 유지.
+  변수명 account/actor 자동 감지, WRAP/P2 스타일·sole-in-block close(strip_conn_finally) 자동 처리.
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(10 핸들러) + docs. 동반 테스트 변경 0(10개 직접호출 없음, grep 확인).
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
+- batch5 분리(4, 동반 테스트 직접호출 전환 필요): admin_test_datasource·admin_product_db_insights·admin_usage_conversations(AO)·admin_archived_conversations(RP).
+- Rollback Notes: 단일 commit revert(app.py 10 + docs). 이전 batch 불변.

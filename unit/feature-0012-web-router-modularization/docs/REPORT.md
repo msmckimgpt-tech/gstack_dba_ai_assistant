@@ -13,7 +13,7 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 
 ## 2. Progress
 - Done: plan-eng-review+§12 · route-parity 안전망(골든 179) · 의존성 audit · **DI seam 설계(DI_SEAM_BLUEPRINT.md)** · **Phase 0(deps+_AuthError handler+get_conn, behavior-neutral, 커밋 06d88a8)** · **Phase 1(conftest TestClient/`as_account` + 파일럿 get_llm_health DI 전환 byte-동치 + get_conn None-yield 보정 + require_permission 빈 perms 가드 + 회귀 스위트 31 + §18.8 적대 패널 HIGH 2 보정)**.
-- In Progress: DI seam **Phase 2 cat-A 완료(35) + Phase 3 cat-B 확정 15 완결** — cat-A b1-4 + cat-B b1(RP4+AO2)·b2(WRAP RP5)·b3(sole-in-block 4). ultracode workflow 4회(183 agents) 2렌즈 적대검증. make test 1238·route-parity 179. 변환기 `cata_b_transform.py`(변수명/스타일 자동·메시지 verbatim·strip_conn_finally). **다음: cat-B 잔여**(workflow 보류 8[동반 테스트 전환 등] + AND pre-auth gate/multi ~18 + OR·BRANCH 23) → cat C/D/E/F/트랜잭션 → Final.
+- In Progress: DI seam **Phase 2 cat-A 완료(35) + Phase 3 cat-B 진행(25)** — cat-A b1-4 + cat-B b1-4(확정 15 + no-flag 잔여 10). ultracode workflow 5회(232 agents) 2렌즈 적대검증. make test 1238·route-parity 179. 변환기 `cata_b_transform.py`(변수명/스타일 자동·메시지 verbatim·strip_conn_finally·or-chain 다중 perm). **다음: cat-B batch5**(testconv 4: admin_test_datasource·admin_product_db_insights·admin_usage_conversations·admin_archived_conversations + 동반 테스트 전환) + preauth/longpoll ~32(아키텍처 이연) + OR·BRANCH 잔여 → cat C/D/E/F/트랜잭션 → Final.
 - 이연(아키텍처, router-extraction 단계): cat-A pre-auth gate 10(401 우선순위 역전·conn eager-open) + ask_result(long-poll 60s conn-hold).
 - Planned: Phase 3(cat B)~7 → helper→web_context 이동 → APIRouter 추출 → 브라우저 로그인 QA+§18.8+배포 → 프론트 분할.
 
@@ -29,7 +29,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260630-0003: DI seam Phase 3 cat-B batch 1 — require+인라인 perm 6 핸들러(RP 4 require_permission + AO 2 account-only). cat-B workflow(REV-20260630-0003, 67 agents) clean-AND 23 → 15 확정 중 sole-in-block 없는 6 적용. 403 메시지 verbatim 추출 byte-보존. make test 1238, account-anchor 53→47.
 - CHG-20260630-0004: DI seam Phase 3 cat-B batch 2 — WRAP-style RP 5 핸들러(public_share_fork·upload/delete_product_icon·verify_audit_chain·admin_health_attachment_grants). 외곽 try/finally:conn.close 제거+dedent+require_permission hoist. delete_product_icon 동반 테스트 전환. 누적 cat-B 11. make test 1238.
 - CHG-20260630-0005: DI seam Phase 3 cat-B batch 3 — sole-in-block conn.close 4 핸들러(admin_llm_usage·admin_get_dashboard_prefs RP WRAP/FB + admin_list_datasources·admin_datasource_databases AO 본문 try/finally). 변환기 strip_conn_finally pass 신규. cat-B 확정 15 완결. make test 1238.
-- 총 변경 횟수: 11
+- CHG-20260630-0006: DI seam Phase 3 cat-B batch 4 — no-flag 10 핸들러(RP 5 OR-of-negations require_permission 다중 hoist + AO 5). cat-B 잔여 workflow(REV-0006, 49 agents) no-flag 17→14 확정. 변환기 or-chain 다중 perm 인식+주석 adjacency. 누적 cat-B 25. make test 1238.
+- 총 변경 횟수: 12
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

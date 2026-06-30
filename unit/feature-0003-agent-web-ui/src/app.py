@@ -14471,7 +14471,7 @@ async def fork_conversation(request: Request) -> JSONResponse:
 
 
 @app.post("/api/conversations/{cid}/duplicate")
-def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
+def duplicate_conversation(cid: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """REQ-20260518-0001: 본인 대화 또는 (.any) 타 사용자 대화를 본 계정 소유의 새 대화로 복제.
 
     fork (`/api/fork_conversation`) 와의 차이:
@@ -14481,53 +14481,43 @@ def duplicate_conversation(cid: str, request: Request) -> JSONResponse:
     - topic prefix = `사본:` (fork 의 `[Fork]` 와 구분되어 추적성 보존).
     - 본체 복제는 `_fork_conversation_impl` 재활용 (share-token fork 와 helper 공유).
     """
+    # Codex risk 5/6: read-gate 를 먼저 수행. 404 단일 메시지로 metadata leak 차단.
+    # (rename/delete 와 동일 wording — `_account_can_access_conversation` 이 존재성 + own/any 권한을 한 번에 검사)
+    if not _account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+    # Codex risk 7: .any superset semantics. mirror `_account_can_access_conversation` (app.py §3004-3008).
+    is_own = _conversation_owned_by_account(conn, cid, int(account["id"]))
+    if not (
+        _account_has_permission(account, "conversation.duplicate.any")
+        or (is_own and _account_has_permission(account, "conversation.duplicate.own"))
+    ):
+        return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+    if not _account_has_permission(account, "conversation.create"):
+        return _json_error("요청을 수행할 수 없습니다.", 403)
+    payload, err = _fork_conversation_impl(conn, account, cid, None)
+    if err:
+        return err
+    # Codex risk 10: 그래프임 단위 안전 truncation. helper 가 만든 "[Fork] " 를 "사본: " 로 교체.
+    source_topic = str(payload.get("topic") or "")
+    base = source_topic[len("[Fork] "):] if source_topic.startswith("[Fork] ") else source_topic
+    max_base = max(0, 256 - len("사본: "))
+    new_topic = f"사본: {base[:max_base]}"
     try:
-        conn = _connect_memory()
+        _conv_update_topic(conn, str(payload["conversation_id"]), new_topic)
     except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        # Codex risk 5/6: read-gate 를 먼저 수행. 404 단일 메시지로 metadata leak 차단.
-        # (rename/delete 와 동일 wording — `_account_can_access_conversation` 이 존재성 + own/any 권한을 한 번에 검사)
-        if not _account_can_access_conversation(
-            conn,
-            account,
-            cid,
-            "conversation.read.own",
-            "conversation.read.any",
-        ):
-            return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
-        # Codex risk 7: .any superset semantics. mirror `_account_can_access_conversation` (app.py §3004-3008).
-        is_own = _conversation_owned_by_account(conn, cid, int(account["id"]))
-        if not (
-            _account_has_permission(account, "conversation.duplicate.any")
-            or (is_own and _account_has_permission(account, "conversation.duplicate.own"))
-        ):
-            return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
-        if not _account_has_permission(account, "conversation.create"):
-            return _json_error("요청을 수행할 수 없습니다.", 403)
-        payload, err = _fork_conversation_impl(conn, account, cid, None)
-        if err:
-            return err
-        # Codex risk 10: 그래프임 단위 안전 truncation. helper 가 만든 "[Fork] " 를 "사본: " 로 교체.
-        source_topic = str(payload.get("topic") or "")
-        base = source_topic[len("[Fork] "):] if source_topic.startswith("[Fork] ") else source_topic
-        max_base = max(0, 256 - len("사본: "))
-        new_topic = f"사본: {base[:max_base]}"
-        try:
-            _conv_update_topic(conn, str(payload["conversation_id"]), new_topic)
-        except Exception:
-            # best-effort: 사본 topic 갱신 실패는 응답을 막지 않으나 조용한 쓰기 실패를 가시화.
-            logging.getLogger(__name__).warning(
-                "duplicate_conversation: topic update failed (conversation_id=%s)",
-                payload.get("conversation_id"), exc_info=True,
-            )
-        payload["topic"] = new_topic
-        return JSONResponse(payload)
-    finally:
-        conn.close()
+        # best-effort: 사본 topic 갱신 실패는 응답을 막지 않으나 조용한 쓰기 실패를 가시화.
+        logging.getLogger(__name__).warning(
+            "duplicate_conversation: topic update failed (conversation_id=%s)",
+            payload.get("conversation_id"), exc_info=True,
+        )
+    payload["topic"] = new_topic
+    return JSONResponse(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -14975,67 +14965,57 @@ def list_conversation_members(cid: str, request: Request, account=Depends(get_cu
 
 
 @app.delete("/api/conversations/{cid}/members/{account_id}")
-def remove_conversation_member(cid: str, account_id: int, request: Request) -> JSONResponse:
+def remove_conversation_member(cid: str, account_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """그룹 대화 멤버 제거 또는 본인 나가기.
 
     권한: owner/conversation.member.manage(타인 제거) 또는 본인(나가기). 대화 소유자는
     멤버에서 제거 불가(409, 소유권 이전/대화 삭제는 별도 흐름). 메시지·첨부는 잔존(tombstone
     author), 향후 접근만 차단 → audit conversation.member.remove.
     """
+    if not _account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    target_id = int(account_id)
+    is_owner = _conversation_owned_by_account(conn, cid, actor_id)
+    is_self_leave = target_id == actor_id
+    if not (
+        is_self_leave
+        or is_owner
+        or _account_has_permission(account, "conversation.member.manage")
+    ):
+        return _json_error("멤버를 관리할 권한이 없습니다.", 403)
+    conv_owner = _conversation_owner_account_id(conn, cid)
+    if conv_owner is not None and target_id == int(conv_owner):
+        return _json_error("대화 소유자는 멤버에서 제거할 수 없습니다.", 409)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_can_access_conversation(
-            conn, account, cid, "conversation.read.own", "conversation.read.any"
-        ):
-            return _json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
-        actor_id = int(account["id"])
-        target_id = int(account_id)
-        is_owner = _conversation_owned_by_account(conn, cid, actor_id)
-        is_self_leave = target_id == actor_id
-        if not (
-            is_self_leave
-            or is_owner
-            or _account_has_permission(account, "conversation.member.manage")
-        ):
-            return _json_error("멤버를 관리할 권한이 없습니다.", 403)
-        conv_owner = _conversation_owner_account_id(conn, cid)
-        if conv_owner is not None and target_id == int(conv_owner):
-            return _json_error("대화 소유자는 멤버에서 제거할 수 없습니다.", 409)
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
         try:
-            from shared.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                removed = group_members.remove_member(pg, cid, target_id)
-            finally:
-                pg.close()
-        except Exception:
-            return _json_error("멤버 제거 실패", 500)
-        _audit_user_action(
-            conn,
-            request,
-            account,
-            action="conversation.member.remove",
-            resource_type="conversation_member",
-            resource_id=str(target_id),
-            request_ctx={
-                "conversation_id": cid,
-                "target_account_id": target_id,
-                "self_leave": is_self_leave,
-                "removed": removed,
-            },
-        )
-        return JSONResponse(
-            {"conversation_id": cid, "account_id": target_id, "removed": removed}
-        )
-    finally:
-        conn.close()
+            removed = group_members.remove_member(pg, cid, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return _json_error("멤버 제거 실패", 500)
+    _audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.member.remove",
+        resource_type="conversation_member",
+        resource_id=str(target_id),
+        request_ctx={
+            "conversation_id": cid,
+            "target_account_id": target_id,
+            "self_leave": is_self_leave,
+            "removed": removed,
+        },
+    )
+    return JSONResponse(
+        {"conversation_id": cid, "account_id": target_id, "removed": removed}
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -15728,63 +15708,53 @@ ORDER BY CreatedAt DESC, Id DESC
 
 
 @app.delete("/api/share/{share_id}")
-def revoke_share(share_id: int, request: Request) -> JSONResponse:
+def revoke_share(share_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """공유 링크 revoke. CreatedBy 본인 또는 admin (`conversation.read.any` 가진 자) 만 가능."""
+    cur = conn.cursor(dictionary=True)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
+        cur.execute(
+            "SELECT Id, ConversationId, CreatedBy, RevokedAt FROM WebConversationShares WHERE Id = %s LIMIT 1",
+            (int(share_id),),
+        )
+        row = cur.fetchone()
+    finally:
+        cur.close()
+    if not row:
+        return _json_error("공유 링크를 찾을 수 없습니다.", 404)
+    if row.get("RevokedAt") is not None:
+        return JSONResponse({"id": int(row.get("Id")), "already_revoked": True})
+    is_creator = int(row.get("CreatedBy") or 0) == int(account["id"])
+    is_admin = _account_has_permission(account, "conversation.read.any")
+    if not (is_creator or is_admin):
+        return _json_error("요청을 수행할 수 없습니다.", 403)
+    cur = conn.cursor()
     try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                "SELECT Id, ConversationId, CreatedBy, RevokedAt FROM WebConversationShares WHERE Id = %s LIMIT 1",
-                (int(share_id),),
-            )
-            row = cur.fetchone()
-        finally:
-            cur.close()
-        if not row:
-            return _json_error("공유 링크를 찾을 수 없습니다.", 404)
-        if row.get("RevokedAt") is not None:
-            return JSONResponse({"id": int(row.get("Id")), "already_revoked": True})
-        is_creator = int(row.get("CreatedBy") or 0) == int(account["id"])
-        is_admin = _account_has_permission(account, "conversation.read.any")
-        if not (is_creator or is_admin):
-            return _json_error("요청을 수행할 수 없습니다.", 403)
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
+        cur.execute(
+            """
 UPDATE WebConversationShares
 SET RevokedAt = CURRENT_TIMESTAMP, RevokedBy = %s
 WHERE Id = %s AND RevokedAt IS NULL
-                """,
-                (int(account["id"]), int(share_id)),
-            )
-            updated = int(cur.rowcount or 0)
-        finally:
-            cur.close()
-        # TASK-0073 Phase A6: user endpoint best-effort audit.
-        _audit_user_action(
-            conn,
-            request,
-            account,
-            action="conversation.share.revoke",
-            resource_type="share",
-            resource_id=str(share_id),
-            request_ctx={
-                "conversation_id": str(row.get("ConversationId") or ""),
-                "share_id": int(share_id),
-                "already_revoked": updated == 0,
-            },
+            """,
+            (int(account["id"]), int(share_id)),
         )
-        return JSONResponse({"id": int(share_id), "revoked": updated > 0})
+        updated = int(cur.rowcount or 0)
     finally:
-        conn.close()
+        cur.close()
+    # TASK-0073 Phase A6: user endpoint best-effort audit.
+    _audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.share.revoke",
+        resource_type="share",
+        resource_id=str(share_id),
+        request_ctx={
+            "conversation_id": str(row.get("ConversationId") or ""),
+            "share_id": int(share_id),
+            "already_revoked": updated == 0,
+        },
+    )
+    return JSONResponse({"id": int(share_id), "revoked": updated > 0})
 
 
 @app.get("/api/public/share/{token}")
@@ -19564,18 +19534,7 @@ def admin_me(request: Request, account=Depends(require_permission("console.acces
 
 
 @app.get("/api/admin/accounts")
-def admin_accounts(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    if not _account_has_permission(account, "console.access") or not _account_has_permission(account, "account.read"):
-        conn.close()
-        return _json_error("관리 콘솔 조회 권한이 필요합니다.", 403)
+def admin_accounts(request: Request, account=Depends(require_permission("console.access", "account.read", message="관리 콘솔 조회 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     accounts = _list_admin_accounts(conn)
     # TASK-20260623T030418-quota-rbac-permission: quota.read 미보유 actor 에는 한도 필드 비노출.
     _strip_quota_fields_if_unpermitted(accounts, account)
@@ -19586,7 +19545,6 @@ def admin_accounts(request: Request) -> JSONResponse:
         "deleted": sum(1 for item in accounts if item.get("deleted_at")),
         "management": sum(1 for item in accounts if _is_management_permission_set(item.get("permissions"))),
     }
-    conn.close()
     return JSONResponse({"accounts": accounts, "summary": summary})
 
 
@@ -20046,22 +20004,10 @@ WHERE Id = %s
 
 
 @app.get("/api/admin/roles")
-def admin_roles(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    if not _account_has_permission(account, "console.access") or not _account_has_permission(account, "role.read"):
-        conn.close()
-        return _json_error("역할 조회 권한이 필요합니다.", 403)
+def admin_roles(request: Request, account=Depends(require_permission("console.access", "role.read", message="역할 조회 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     roles = _list_roles(conn)
     # TASK-20260623T030418-quota-rbac-permission: quota.read 미보유 actor 에는 역할 기본 한도 비노출.
     _strip_quota_fields_if_unpermitted(roles, account)
-    conn.close()
     return JSONResponse({"roles": roles})
 
 
@@ -24099,39 +24045,28 @@ def admin_get_system_prompt(
     product_id: int | None = None,
     role_id: int | None = None,
     account_id: int | None = None,
+    actor=Depends(get_current_account),
+    conn=Depends(get_conn),
 ) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    actor, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if scope not in ("global", "product", "role", "account"):
-        conn.close()
         return _json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
     # scope 별 권한 검사
     if scope == "global":
         # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
         if not _account_has_permission(actor, "system_prompt.global.read"):
-            conn.close()
             return _json_error("전역 시스템 프롬프트 조회 권한이 없습니다.", 403)
         product_id = None
         role_id = None
         account_id = None
     elif scope == "product":
         if not _account_has_permission(actor, "product.manage"):
-            conn.close()
             return _json_error("제품 시스템 프롬프트 조회 권한이 없습니다.", 403)
     elif scope == "role":
         if not _account_has_permission(actor, "system_prompt.manage.role.any"):
-            conn.close()
             return _json_error("역할 시스템 프롬프트 조회 권한이 없습니다.", 403)
     else:  # account
         target_account = int(account_id or 0)
         if target_account != int(actor["id"]) and not _account_has_permission(actor, "system_prompt.manage.role.any"):
-            conn.close()
             return _json_error("타 계정 프롬프트 조회 권한이 없습니다.", 403)
     row = _load_system_prompt(
         conn,
@@ -24140,7 +24075,6 @@ def admin_get_system_prompt(
         role_id=int(role_id) if role_id else None,
         account_id=int(account_id) if account_id else None,
     )
-    conn.close()
     return JSONResponse({"prompt": row, "scope": scope})
 
 
@@ -25051,151 +24985,115 @@ def _quota_parse_limit(raw) -> "int | None":
 
 
 @app.get("/api/admin/quotas")
-def admin_list_quotas(request: Request) -> JSONResponse:
+def admin_list_quotas(request: Request, actor=Depends(require_permission("console.access", "quota.read", message="LLM 사용 한도 조회 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """역할별 기본 + 계정별 특수 LLM 토큰 한도 목록.
     TASK-20260623T030418-quota-rbac-permission: 권한 quota.read(조회 전용 위임 가능)."""
+    cur = conn.cursor(dictionary=True)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        actor, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "quota.read"):
-            return _json_error("LLM 사용 한도 조회 권한이 필요합니다.", 403)
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                "SELECT r.Id AS role_id, r.RoleKey AS role_key, r.Name AS name, "
-                "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
-                "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
-                "FROM WebRoles r LEFT JOIN WebRoleTokenQuotas q ON q.RoleId = r.Id "
-                "GROUP BY r.Id, r.RoleKey, r.Name ORDER BY r.Id"
-            )
-            roles = [
-                {"role_id": int(x["role_id"]), "role_key": x.get("role_key"), "name": x.get("name"),
-                 "daily": int(x["daily"]) if x.get("daily") is not None else None,
-                 "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
-                for x in (cur.fetchall() or [])
-            ]
-            cur.execute(
-                "SELECT a.Id AS account_id, a.Username AS username, "
-                "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
-                "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
-                "FROM WebAccountTokenQuotas q JOIN WebAccounts a ON a.Id = q.AccountId "
-                "GROUP BY a.Id, a.Username ORDER BY a.Username"
-            )
-            overrides = [
-                {"account_id": int(x["account_id"]), "username": x.get("username"),
-                 "daily": int(x["daily"]) if x.get("daily") is not None else None,
-                 "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
-                for x in (cur.fetchall() or [])
-            ]
-        finally:
-            cur.close()
-        return JSONResponse({"roles": roles, "account_overrides": overrides, "enforce": bool(LLM_QUOTA_ENFORCE)})
+        cur.execute(
+            "SELECT r.Id AS role_id, r.RoleKey AS role_key, r.Name AS name, "
+            "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
+            "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
+            "FROM WebRoles r LEFT JOIN WebRoleTokenQuotas q ON q.RoleId = r.Id "
+            "GROUP BY r.Id, r.RoleKey, r.Name ORDER BY r.Id"
+        )
+        roles = [
+            {"role_id": int(x["role_id"]), "role_key": x.get("role_key"), "name": x.get("name"),
+             "daily": int(x["daily"]) if x.get("daily") is not None else None,
+             "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
+            for x in (cur.fetchall() or [])
+        ]
+        cur.execute(
+            "SELECT a.Id AS account_id, a.Username AS username, "
+            "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
+            "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
+            "FROM WebAccountTokenQuotas q JOIN WebAccounts a ON a.Id = q.AccountId "
+            "GROUP BY a.Id, a.Username ORDER BY a.Username"
+        )
+        overrides = [
+            {"account_id": int(x["account_id"]), "username": x.get("username"),
+             "daily": int(x["daily"]) if x.get("daily") is not None else None,
+             "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
+            for x in (cur.fetchall() or [])
+        ]
     finally:
-        conn.close()
+        cur.close()
+    return JSONResponse({"roles": roles, "account_overrides": overrides, "enforce": bool(LLM_QUOTA_ENFORCE)})
 
 
 @app.put("/api/admin/quotas/role/{role_id}")
-async def admin_set_role_quota(role_id: int, request: Request) -> JSONResponse:
+async def admin_set_role_quota(role_id: int, request: Request, actor=Depends(require_permission("console.access", "quota.read", "quota.manage", message="LLM 사용 한도 조절 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """역할 기본 LLM 토큰 한도 설정. body {daily?, monthly?} — null/생략=상속 해제, 0=무제한.
     TASK-20260623T030418-quota-rbac-permission: 권한 quota.manage(조절, quota.read 선행)."""
     try:
         data = await request.json()
     except Exception:
         data = {}
+    # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): "조절은 조회 종속"을
+    #   서버에서 집행 — quota.manage 만으로 blind-write 불가. quota.read + quota.manage 동시 필요.
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        actor, error = _require_account(request, conn)
-        if error:
-            return error
-        # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): "조절은 조회 종속"을
-        #   서버에서 집행 — quota.manage 만으로 blind-write 불가. quota.read + quota.manage 동시 필요.
-        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "quota.read") or not _account_has_permission(actor, "quota.manage"):
-            return _json_error("LLM 사용 한도 조절 권한이 필요합니다.", 403)
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT RoleKey FROM WebRoles WHERE Id = %s LIMIT 1", (int(role_id),))
-            rr = cur.fetchone()
-        finally:
-            cur.close()
-        if not rr:
-            return _json_error("role not found", 404)
-        daily = _quota_parse_limit(data.get("daily"))
-        monthly = _quota_parse_limit(data.get("monthly"))
-        try:
-            _quota_upsert(conn, "WebRoleTokenQuotas", "RoleId", int(role_id), daily, monthly)
-        except Exception:
-            return _json_error("한도 저장에 실패했습니다.", 500)
-        try:
-            _audit_admin_mutation(
-                conn, request, actor, action="quota.role.update", resource_type="role",
-                resource_id=str(role_id), before=None, after=None,
-                request_ctx={"role_id": int(role_id), "daily": daily, "monthly": monthly},
-            )
-            conn.commit()
-        except Exception as audit_exc:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            return _json_error(f"audit write failed: {audit_exc}", 500)
-        return JSONResponse({"ok": True, "role_id": int(role_id), "daily": daily, "monthly": monthly})
+        cur.execute("SELECT RoleKey FROM WebRoles WHERE Id = %s LIMIT 1", (int(role_id),))
+        rr = cur.fetchone()
     finally:
-        conn.close()
+        cur.close()
+    if not rr:
+        return _json_error("role not found", 404)
+    daily = _quota_parse_limit(data.get("daily"))
+    monthly = _quota_parse_limit(data.get("monthly"))
+    try:
+        _quota_upsert(conn, "WebRoleTokenQuotas", "RoleId", int(role_id), daily, monthly)
+    except Exception:
+        return _json_error("한도 저장에 실패했습니다.", 500)
+    try:
+        _audit_admin_mutation(
+            conn, request, actor, action="quota.role.update", resource_type="role",
+            resource_id=str(role_id), before=None, after=None,
+            request_ctx={"role_id": int(role_id), "daily": daily, "monthly": monthly},
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return _json_error(f"audit write failed: {audit_exc}", 500)
+    return JSONResponse({"ok": True, "role_id": int(role_id), "daily": daily, "monthly": monthly})
 
 
 @app.put("/api/admin/quotas/account/{account_id}")
-async def admin_set_account_quota(account_id: int, request: Request) -> JSONResponse:
+async def admin_set_account_quota(account_id: int, request: Request, actor=Depends(require_permission("console.access", "quota.read", "quota.manage", message="LLM 사용 한도 조절 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """계정 특수(override) LLM 토큰 한도. body {daily?, monthly?} — null/생략=override 해제(역할 상속).
     TASK-20260623T030418-quota-rbac-permission: 권한 quota.manage(조절, quota.read 선행)."""
     try:
         data = await request.json()
     except Exception:
         data = {}
+    # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): 조절은 조회 종속.
+    target = _load_account_by_id(conn, int(account_id))
+    if not target:
+        return _json_error("account not found", 404)
+    daily = _quota_parse_limit(data.get("daily"))
+    monthly = _quota_parse_limit(data.get("monthly"))
     try:
-        conn = _connect_memory()
+        _quota_upsert(conn, "WebAccountTokenQuotas", "AccountId", int(account_id), daily, monthly)
     except Exception:
-        return _json_error("db connection failed", 500)
+        return _json_error("한도 저장에 실패했습니다.", 500)
     try:
-        actor, error = _require_account(request, conn)
-        if error:
-            return error
-        # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): 조절은 조회 종속.
-        if not _account_has_permission(actor, "console.access") or not _account_has_permission(actor, "quota.read") or not _account_has_permission(actor, "quota.manage"):
-            return _json_error("LLM 사용 한도 조절 권한이 필요합니다.", 403)
-        target = _load_account_by_id(conn, int(account_id))
-        if not target:
-            return _json_error("account not found", 404)
-        daily = _quota_parse_limit(data.get("daily"))
-        monthly = _quota_parse_limit(data.get("monthly"))
+        _audit_admin_mutation(
+            conn, request, actor, action="quota.account.update", resource_type="account",
+            resource_id=str(account_id), before=None, after=None,
+            request_ctx={"account_id": int(account_id), "daily": daily, "monthly": monthly},
+            target_account_id=int(account_id),
+        )
+        conn.commit()
+    except Exception as audit_exc:
         try:
-            _quota_upsert(conn, "WebAccountTokenQuotas", "AccountId", int(account_id), daily, monthly)
+            conn.rollback()
         except Exception:
-            return _json_error("한도 저장에 실패했습니다.", 500)
-        try:
-            _audit_admin_mutation(
-                conn, request, actor, action="quota.account.update", resource_type="account",
-                resource_id=str(account_id), before=None, after=None,
-                request_ctx={"account_id": int(account_id), "daily": daily, "monthly": monthly},
-                target_account_id=int(account_id),
-            )
-            conn.commit()
-        except Exception as audit_exc:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            return _json_error(f"audit write failed: {audit_exc}", 500)
-        return JSONResponse({"ok": True, "account_id": int(account_id), "daily": daily, "monthly": monthly})
-    finally:
-        conn.close()
+            pass
+        return _json_error(f"audit write failed: {audit_exc}", 500)
+    return JSONResponse({"ok": True, "account_id": int(account_id), "daily": daily, "monthly": monthly})
 
 
 @app.get("/api/admin/usage")
@@ -28993,7 +28891,7 @@ def admin_health_attachment_grants(request: Request, account=Depends(require_per
 
 
 @app.get("/api/profile/audits")
-def list_profile_audit_events(request: Request) -> JSONResponse:
+def list_profile_audit_events(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """REQ-20260520-0004 (TASK-0089): 작업 화면 profile drawer 의 본인 audit row 조회.
 
     권한: `audit.read.own` 또는 `audit.read.any`. **backend 가 scope="own" 강제** —
@@ -29005,49 +28903,39 @@ def list_profile_audit_events(request: Request) -> JSONResponse:
 
     Response: `{items: [...], next_cursor: <id>|None, scope: 'own'}`.
     """
+    if not (
+        _account_has_permission(account, "audit.read.own")
+        or _account_has_permission(account, "audit.read.any")
+    ):
+        return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
+    params = _audit_parse_filter_params(request)
+    cursor_id = _audit_parse_cursor(params["cursor"])
+    limit = _audit_clamped_limit(params["limit"])
+    # TASK-0089 (Codex C2): scope="own" 강제 — .any 보유자도 본인 row 만.
+    where_clause, args = _audit_compose_where(
+        scope="own",
+        account_id=int(account["id"]),
+        params=params,
+        cursor_id=cursor_id,
+    )
+    sql = (
+        "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
+        "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
+        "RemoteAddr, UserAgent, RequestId, OccurredAt "
+        f"FROM WebAuditEvents{where_clause} "
+        "ORDER BY Id DESC LIMIT %s"
+    )
+    args.append(int(limit) + 1)
+    cur = conn.cursor(dictionary=True)
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not (
-            _account_has_permission(account, "audit.read.own")
-            or _account_has_permission(account, "audit.read.any")
-        ):
-            return _json_error("감사 로그 조회 권한이 필요합니다.", 403)
-        params = _audit_parse_filter_params(request)
-        cursor_id = _audit_parse_cursor(params["cursor"])
-        limit = _audit_clamped_limit(params["limit"])
-        # TASK-0089 (Codex C2): scope="own" 강제 — .any 보유자도 본인 row 만.
-        where_clause, args = _audit_compose_where(
-            scope="own",
-            account_id=int(account["id"]),
-            params=params,
-            cursor_id=cursor_id,
-        )
-        sql = (
-            "SELECT Id, ActorAccountId, ActorRoleId, ActorType, TargetAccountId, "
-            "SessionId, ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields, "
-            "RemoteAddr, UserAgent, RequestId, OccurredAt "
-            f"FROM WebAuditEvents{where_clause} "
-            "ORDER BY Id DESC LIMIT %s"
-        )
-        args.append(int(limit) + 1)
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(sql, tuple(args))
-            rows = cur.fetchall() or []
-        finally:
-            cur.close()
-        has_more = len(rows) > limit
-        items = [_audit_row_to_dict(r) for r in rows[:limit]]
-        next_cursor = str(items[-1]["id"]) if has_more and items else None
-        return JSONResponse({"items": items, "next_cursor": next_cursor, "scope": "own"})
+        cur.execute(sql, tuple(args))
+        rows = cur.fetchall() or []
     finally:
-        conn.close()
+        cur.close()
+    has_more = len(rows) > limit
+    items = [_audit_row_to_dict(r) for r in rows[:limit]]
+    next_cursor = str(items[-1]["id"]) if has_more and items else None
+    return JSONResponse({"items": items, "next_cursor": next_cursor, "scope": "own"})
 
 
 @app.get("/api/profile/audits/{event_id}")
