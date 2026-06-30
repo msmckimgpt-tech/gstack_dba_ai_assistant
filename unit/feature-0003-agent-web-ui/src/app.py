@@ -13842,7 +13842,7 @@ async def admin_remove_product_datasource(product_id: int, key: str, request: Re
 
 
 @app.post("/api/admin/datasources/{key}/test")
-async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
+async def admin_test_datasource(key: str, request: Request, actor=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """datasource 연결 테스트 (멀티 datasource P2) — 좌표로 직접 SELECT 1.
 
     flag 활성화 *전* 운영자가 자격증명·연결성을 검증. 관리 콘솔 접근 권한 필요. password/host
@@ -13850,25 +13850,12 @@ async def admin_test_datasource(key: str, request: Request) -> JSONResponse:
     """
     from shared import datasources as _dsr
     from shared import db as _db
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    actor, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not _account_has_permission(actor, "console.access"):
-        conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     # TASK-0288: 연결 테스트는 datasource 관리 동작(자격증명 검증·서버 probe) — manage 권한.
     if not _account_has_permission(actor, "datasource.manage"):
-        conn.close()
         return _json_error("데이터소스 관리 권한이 필요합니다.", 403)
-    try:
-        ds = _dsr.resolve(conn, str(key).strip().lower())
-    finally:
-        conn.close()
+    ds = _dsr.resolve(conn, str(key).strip().lower())
     if not ds:
         return _json_error(f"미등록(또는 복호 불가) datasource 라벨: {key}", 404)
     okssrf, ssrf_reason, _pin = _ssrf_check_host(ds.get("host"))
@@ -21225,38 +21212,25 @@ def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> di
 
 
 @app.get("/api/admin/products/{product_id}/db-insights")
-def admin_product_db_insights(product_id: int, request: Request) -> JSONResponse:
+def admin_product_db_insights(product_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """제품의 datasource 별 DB insight 파악 내용 (TASK-0242). console.access.
     ?datasource=<key> 로 멀티 datasource 의 특정 바인딩 scope 선택(미지정=primary/legacy)."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not _account_has_permission(account, "console.access"):
-        conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     # TASK-0288: 제품 구성 조회 권한(read|manage).
     if not _account_has_any_permission(account, "product.read", "product.manage"):
-        conn.close()
         return _json_error("제품 조회 권한이 필요합니다.", 403)
-    try:
-        products = _list_products(conn, include_inactive=True)
-        product = next((p for p in products if int(p["id"]) == int(product_id)), None)
-        if not product:
-            return _json_error("제품을 찾을 수 없습니다.", 404)
-        req_ds = (request.query_params.get("datasource") or "").strip().lower()
-        if req_ds:
-            # 요청 datasource 가 제품에 바인딩됐는지 검증(임의 scope 조회 차단).
-            bound = {b["datasource_key"] for b in _list_product_datasources(conn, int(product_id))}
-            if req_ds not in bound:
-                return _json_error("해당 제품에 바인딩되지 않은 데이터소스입니다.", 400)
-        result = _compute_product_db_insights(conn, product, req_ds or None)
-    finally:
-        conn.close()
+    products = _list_products(conn, include_inactive=True)
+    product = next((p for p in products if int(p["id"]) == int(product_id)), None)
+    if not product:
+        return _json_error("제품을 찾을 수 없습니다.", 404)
+    req_ds = (request.query_params.get("datasource") or "").strip().lower()
+    if req_ds:
+        # 요청 datasource 가 제품에 바인딩됐는지 검증(임의 scope 조회 차단).
+        bound = {b["datasource_key"] for b in _list_product_datasources(conn, int(product_id))}
+        if req_ds not in bound:
+            return _json_error("해당 제품에 바인딩되지 않은 데이터소스입니다.", 400)
+    result = _compute_product_db_insights(conn, product, req_ds or None)
     return JSONResponse(result)
 
 
@@ -25433,7 +25407,7 @@ def _parse_usage_conv_params(request: Request) -> dict:
 
 
 @app.get("/api/admin/usage/conversations")
-def admin_usage_conversations(request: Request) -> JSONResponse:
+def admin_usage_conversations(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-0263: 사용량 차트 클릭 → 집계 기여 대화목록(admin 콘솔 모달).
 
     권한: console.usage.read(사용량 조회) + conversation.list.any(타 계정 대화목록 열람).
@@ -25441,53 +25415,40 @@ def admin_usage_conversations(request: Request) -> JSONResponse:
     제목을 노출하지 않기 위함(기존 RBAC 재사용, 신규 권한 0). 대화 메타(제목/일시/소유자/
     기간내 usage)만 반환 — 메시지 본문 미포함.
     """
+    if not _account_has_permission(account, "console.usage.read"):
+        return _json_error("LLM 사용량 조회 권한이 필요합니다 (운영자 전용).", 403)
+    if not _account_has_permission(account, "conversation.list.any"):
+        return _json_error("전체 대화목록 열람 권한이 필요합니다 (conversation.list.any).", 403)
+    p = _parse_usage_conv_params(request)
+    # 역할 클릭 → 계정 집합 역매핑(MySQL). 모델/일자 클릭은 account 필터 없음.
+    account_ids = None
+    if p["account_id"] is not None:
+        account_ids = [p["account_id"]]
+    elif p["role"] is not None:
+        account_ids = _usage_account_ids_for_role(conn, p["role"])
+        if account_ids is None:
+            # "(시스템)" 역할 — owner 없는 비대화 usage. 대화목록 비어있음.
+            return JSONResponse({"items": [], "truncated": False, "filter": p, "scope": "admin"})
     try:
-        conn = _connect_memory()
+        from shared.db import _pg_connect
+        pg = _pg_connect()
     except Exception:
-        return _json_error("db connection failed", 500)
+        logging.getLogger(__name__).warning("admin_usage_conversations: pg connect failed", exc_info=True)
+        return _json_error("usage 저장소(PG) 연결 실패", 503)
     try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "console.usage.read"):
-            return _json_error("LLM 사용량 조회 권한이 필요합니다 (운영자 전용).", 403)
-        if not _account_has_permission(account, "conversation.list.any"):
-            return _json_error("전체 대화목록 열람 권한이 필요합니다 (conversation.list.any).", 403)
-        p = _parse_usage_conv_params(request)
-        # 역할 클릭 → 계정 집합 역매핑(MySQL). 모델/일자 클릭은 account 필터 없음.
-        account_ids = None
-        if p["account_id"] is not None:
-            account_ids = [p["account_id"]]
-        elif p["role"] is not None:
-            account_ids = _usage_account_ids_for_role(conn, p["role"])
-            if account_ids is None:
-                # "(시스템)" 역할 — owner 없는 비대화 usage. 대화목록 비어있음.
-                return JSONResponse({"items": [], "truncated": False, "filter": p, "scope": "admin"})
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-        except Exception:
-            logging.getLogger(__name__).warning("admin_usage_conversations: pg connect failed", exc_info=True)
-            return _json_error("usage 저장소(PG) 연결 실패", 503)
-        try:
-            items, truncated = _query_usage_conversations(
-                pg, days=p["days"], model=p["model"], account_ids=account_ids,
-                day_label=p["day_label"], gran=p["gran"], owner_account_id=None,
-                owner_is_null_ok=False,
-            )
-        finally:
-            try:
-                pg.close()
-            except Exception:
-                pass
-        # 계정 메타(사용자명/역할) enrich — 모달 표시용(cross-DB, MySQL).
-        _enrich_usage_conv_owner_meta(conn, items)
-        return JSONResponse({"items": items, "truncated": truncated, "filter": p, "scope": "admin"})
+        items, truncated = _query_usage_conversations(
+            pg, days=p["days"], model=p["model"], account_ids=account_ids,
+            day_label=p["day_label"], gran=p["gran"], owner_account_id=None,
+            owner_is_null_ok=False,
+        )
     finally:
         try:
-            conn.close()
+            pg.close()
         except Exception:
             pass
+    # 계정 메타(사용자명/역할) enrich — 모달 표시용(cross-DB, MySQL).
+    _enrich_usage_conv_owner_meta(conn, items)
+    return JSONResponse({"items": items, "truncated": truncated, "filter": p, "scope": "admin"})
 
 
 @app.get("/api/profile/usage/conversations")
@@ -25563,128 +25524,113 @@ _ARCHIVED_CONV_LIMIT = 500
 
 
 @app.get("/api/admin/conversations/archived")
-def admin_archived_conversations(request: Request) -> JSONResponse:
+def admin_archived_conversations(request: Request, account=Depends(require_permission("conversation.archive.read.any", message="보관 대화 조회 권한이 필요합니다 (conversation.archive.read.any).")), conn=Depends(get_conn)) -> JSONResponse:
     """보관된 대화 목록(admin 감사). 권한: conversation.archive.read.any.
 
     PG 정본(agent_runtime.core_conversations, archived_at IS NOT NULL) + MySQL 계정 메타 enrich.
     메타만 반환(제목/소유자/보관시각/보관자) — 메시지 본문 미포함. q 검색·limit(≤500) 지원.
     """
+    q = (request.query_params.get("q") or "").strip()
     try:
-        conn = _connect_memory()
+        limit = int(request.query_params.get("limit", str(_ARCHIVED_CONV_LIMIT)))
     except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "conversation.archive.read.any"):
-            return _json_error("보관 대화 조회 권한이 필요합니다 (conversation.archive.read.any).", 403)
-        q = (request.query_params.get("q") or "").strip()
-        try:
-            limit = int(request.query_params.get("limit", str(_ARCHIVED_CONV_LIMIT)))
-        except Exception:
-            limit = _ARCHIVED_CONV_LIMIT
-        limit = max(1, min(_ARCHIVED_CONV_LIMIT, limit))
+        limit = _ARCHIVED_CONV_LIMIT
+    limit = max(1, min(_ARCHIVED_CONV_LIMIT, limit))
 
-        items: list[dict[str, Any]] = []
-        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+    items: list[dict[str, Any]] = []
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+        except Exception:
+            logging.getLogger(__name__).warning("admin_archived: pg connect failed", exc_info=True)
+            return _json_error("대화 저장소(PG) 연결 실패", 503)
+        try:
+            where = ["c.archived_at IS NOT NULL"]
+            params: list[Any] = []
+            if q:
+                where.append("(c.topic ILIKE %s OR c.conversation_id ILIKE %s)")
+                params.extend([f"%{q}%", f"%{q}%"])
+            sql = (
+                "SELECT c.conversation_id, COALESCE(NULLIF(TRIM(c.topic),''),'(제목 없음)'), "
+                "c.owner_account_id, c.created_at, c.updated_at, c.archived_at, "
+                "c.archived_by_account_id, c.product_id "
+                "FROM agent_runtime.core_conversations c "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY c.archived_at DESC LIMIT %s"
+            )
+            params.append(limit)
+            with pg.cursor() as pgcur:
+                pgcur.execute(sql, tuple(params))
+                for r in (pgcur.fetchall() or []):
+                    items.append({
+                        "conversation_id": str(r[0]),
+                        "topic": str(r[1] or ""),
+                        "owner_account_id": (int(r[2]) if r[2] is not None else None),
+                        "created_at": (r[3].isoformat() if r[3] else None),
+                        "updated_at": (r[4].isoformat() if r[4] else None),
+                        "archived_at": (r[5].isoformat() if r[5] else None),
+                        "archived_by_account_id": (int(r[6]) if r[6] is not None else None),
+                        "product_id": (int(r[7]) if r[7] is not None else None),
+                    })
+        finally:
             try:
-                from shared.db import _pg_connect
-                pg = _pg_connect()
+                pg.close()
             except Exception:
-                logging.getLogger(__name__).warning("admin_archived: pg connect failed", exc_info=True)
-                return _json_error("대화 저장소(PG) 연결 실패", 503)
+                pass
+    else:
+        # MySQL 폴백.
+        try:
+            cur = conn.cursor(dictionary=True)
             try:
                 where = ["c.archived_at IS NOT NULL"]
-                params: list[Any] = []
+                params2: list[Any] = []
                 if q:
-                    where.append("(c.topic ILIKE %s OR c.conversation_id ILIKE %s)")
-                    params.extend([f"%{q}%", f"%{q}%"])
-                sql = (
-                    "SELECT c.conversation_id, COALESCE(NULLIF(TRIM(c.topic),''),'(제목 없음)'), "
-                    "c.owner_account_id, c.created_at, c.updated_at, c.archived_at, "
-                    "c.archived_by_account_id, c.product_id "
-                    "FROM agent_runtime.core_conversations c "
-                    f"WHERE {' AND '.join(where)} "
-                    "ORDER BY c.archived_at DESC LIMIT %s"
+                    where.append("(c.topic LIKE %s OR c.conversation_id LIKE %s)")
+                    params2.extend([f"%{q}%", f"%{q}%"])
+                cur.execute(
+                    "SELECT c.conversation_id, c.topic, c.owner_account_id, c.created_at, "
+                    "c.updated_at, c.archived_at, c.archived_by_account_id, c.product_id "
+                    "FROM AgentCoreConversations c "
+                    f"WHERE {' AND '.join(where)} ORDER BY c.archived_at DESC LIMIT %s",
+                    tuple(params2) + (limit,),
                 )
-                params.append(limit)
-                with pg.cursor() as pgcur:
-                    pgcur.execute(sql, tuple(params))
-                    for r in (pgcur.fetchall() or []):
-                        items.append({
-                            "conversation_id": str(r[0]),
-                            "topic": str(r[1] or ""),
-                            "owner_account_id": (int(r[2]) if r[2] is not None else None),
-                            "created_at": (r[3].isoformat() if r[3] else None),
-                            "updated_at": (r[4].isoformat() if r[4] else None),
-                            "archived_at": (r[5].isoformat() if r[5] else None),
-                            "archived_by_account_id": (int(r[6]) if r[6] is not None else None),
-                            "product_id": (int(r[7]) if r[7] is not None else None),
-                        })
+                for m in (cur.fetchall() or []):
+                    items.append({
+                        "conversation_id": str(m.get("conversation_id") or ""),
+                        "topic": str(m.get("topic") or "(제목 없음)"),
+                        "owner_account_id": (int(m["owner_account_id"]) if m.get("owner_account_id") is not None else None),
+                        "created_at": str(m.get("created_at") or ""),
+                        "updated_at": str(m.get("updated_at") or ""),
+                        "archived_at": str(m.get("archived_at") or ""),
+                        "archived_by_account_id": (int(m["archived_by_account_id"]) if m.get("archived_by_account_id") is not None else None),
+                        "product_id": (int(m["product_id"]) if m.get("product_id") is not None else None),
+                    })
             finally:
-                try:
-                    pg.close()
-                except Exception:
-                    pass
-        else:
-            # MySQL 폴백.
-            try:
-                cur = conn.cursor(dictionary=True)
-                try:
-                    where = ["c.archived_at IS NOT NULL"]
-                    params2: list[Any] = []
-                    if q:
-                        where.append("(c.topic LIKE %s OR c.conversation_id LIKE %s)")
-                        params2.extend([f"%{q}%", f"%{q}%"])
-                    cur.execute(
-                        "SELECT c.conversation_id, c.topic, c.owner_account_id, c.created_at, "
-                        "c.updated_at, c.archived_at, c.archived_by_account_id, c.product_id "
-                        "FROM AgentCoreConversations c "
-                        f"WHERE {' AND '.join(where)} ORDER BY c.archived_at DESC LIMIT %s",
-                        tuple(params2) + (limit,),
-                    )
-                    for m in (cur.fetchall() or []):
-                        items.append({
-                            "conversation_id": str(m.get("conversation_id") or ""),
-                            "topic": str(m.get("topic") or "(제목 없음)"),
-                            "owner_account_id": (int(m["owner_account_id"]) if m.get("owner_account_id") is not None else None),
-                            "created_at": str(m.get("created_at") or ""),
-                            "updated_at": str(m.get("updated_at") or ""),
-                            "archived_at": str(m.get("archived_at") or ""),
-                            "archived_by_account_id": (int(m["archived_by_account_id"]) if m.get("archived_by_account_id") is not None else None),
-                            "product_id": (int(m["product_id"]) if m.get("product_id") is not None else None),
-                        })
-                finally:
-                    cur.close()
-            except Exception:
-                logging.getLogger(__name__).warning("admin_archived: MySQL query failed", exc_info=True)
-                return _json_error("대화 저장소 조회 실패", 503)
-
-        # 계정 메타(소유자/보관자 사용자명) enrich (MySQL).
-        acct_ids = sorted({i for e in items for i in (e.get("owner_account_id"), e.get("archived_by_account_id")) if i is not None})
-        meta: dict[int, str] = {}
-        if acct_ids:
-            try:
-                ph = ",".join(["%s"] * len(acct_ids))
-                mcur = conn.cursor(dictionary=True)
-                try:
-                    mcur.execute(f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(acct_ids))
-                    for m in (mcur.fetchall() or []):
-                        meta[int(m["Id"])] = str(m.get("Username") or "")
-                finally:
-                    mcur.close()
-            except Exception:
-                logging.getLogger(__name__).warning("admin_archived: owner meta enrich failed", exc_info=True)
-        for e in items:
-            e["owner_username"] = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
-            e["archived_by_username"] = meta.get(e.get("archived_by_account_id")) if e.get("archived_by_account_id") is not None else None
-        return JSONResponse({"items": items, "count": len(items), "truncated": len(items) >= limit})
-    finally:
-        try:
-            conn.close()
+                cur.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("admin_archived: MySQL query failed", exc_info=True)
+            return _json_error("대화 저장소 조회 실패", 503)
+
+    # 계정 메타(소유자/보관자 사용자명) enrich (MySQL).
+    acct_ids = sorted({i for e in items for i in (e.get("owner_account_id"), e.get("archived_by_account_id")) if i is not None})
+    meta: dict[int, str] = {}
+    if acct_ids:
+        try:
+            ph = ",".join(["%s"] * len(acct_ids))
+            mcur = conn.cursor(dictionary=True)
+            try:
+                mcur.execute(f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(acct_ids))
+                for m in (mcur.fetchall() or []):
+                    meta[int(m["Id"])] = str(m.get("Username") or "")
+            finally:
+                mcur.close()
+        except Exception:
+            logging.getLogger(__name__).warning("admin_archived: owner meta enrich failed", exc_info=True)
+    for e in items:
+        e["owner_username"] = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
+        e["archived_by_username"] = meta.get(e.get("archived_by_account_id")) if e.get("archived_by_account_id") is not None else None
+    return JSONResponse({"items": items, "count": len(items), "truncated": len(items) >= limit})
 
 
 # ════════════════════════════════════════════════════════════════════════════

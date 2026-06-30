@@ -154,11 +154,12 @@ def test_l1_list_query_has_archived_filter():
 
 # ── P1: admin 보관 조회 권한 게이트 ──────────────────────────────────────────
 
-def test_p1_admin_archived_requires_perm(monkeypatch):
-    actor = {"id": 1, "permissions": {"console.access": True}}  # archive.read.any 없음
-    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn({}))
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_archived_conversations(_Req())
+def test_p1_admin_archived_requires_perm(client, as_account):
+    # P5b DI seam Phase 3: admin_archived_conversations 가 require_permission("conversation.archive.read.any")
+    # 로 마이그됨 → perm 검사가 의존성으로 이동(직접호출은 우회). TestClient + as_account override 로 호출하면
+    # require_permission 이 실제 _account_has_permission 검사를 타므로, archive.read.any 없는 계정 → 403.
+    as_account(perms={"console.access": True})  # archive.read.any 없음
+    resp = client.get("/api/admin/conversations/archived")
     assert resp.status_code == 403
 
 

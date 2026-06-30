@@ -186,3 +186,12 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 변환기 보강: (1) RP perm-블록 검출에 OR-of-negations 다중 perm 인식(`if not ahp(a) or not ahp(b):` → require_permission("a","b")), (2) auth-perm adjacency 에 주석 허용(quota 핸들러의 TASK 설명 주석). 메시지·status 는 코드에서 verbatim 추출(전사 의존 0).
 - 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/require_permission|get_current_account/잔류 _require_account·conn.close 0) PASS. 직접호출 0(grep).
 - batch5 분리(4, 동반 테스트 전환 필요): admin_test_datasource(concurrency 테스트)·admin_product_db_insights·admin_usage_conversations(AO)·admin_archived_conversations(RP). 보류 3: suggestions(fail-soft 비-cat-B)·admin_products_insight_coverage·admin_overview(적대 보류 — batch5+ 재검토).
+
+## REV-20260630-0007 [AGENT-TEAM:p5b-phase3-catb-batch5-testconv-panel]
+- Related Change: CHG-20260630-0007 (Phase 3 cat-B batch 5 — testconv 4 핸들러)
+- §18.8 Adversarial Panel: **AGENT-TEAM (REV-20260630-0006 cat-B 잔여 workflow, 49 agents) 재사용.** 4 핸들러는 REV-0006 확정·byte-동치 검증분이며 batch4 미적용 사유는 동반 테스트가 핸들러 직접호출이라 전환 필요(needs_conversion=true).
+- 적용 + 테스트 전환 패턴(핵심: RP vs AO 차이):
+  - AO 3(admin_test_datasource[actor]·admin_product_db_insights·admin_usage_conversations): perm 검사 본문 유지 → 동반 테스트 직접호출에 `actor|account={...}, conn=<fake>` 명시 주입(Depends 기본값 직접 전달). body perm 검사가 그 account 로 실행되어 403/404/400/200 보존. admin_test_datasource concurrency 테스트(asyncio.gather)는 TestClient(sync) 부적합 → 직접 coroutine 호출 유지 + 명시 인자.
+  - RP 1(admin_archived_conversations): perm 이 require_permission 의존성으로 이동 → 직접호출+명시 account 는 require_permission 을 *우회*해 403 재현 불가 → test_p1 을 TestClient(client.get+as_account(perms={"console.access":True}))로 전환. require_permission 이 실제 검사를 타 403 보존.
+- 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. 잔류 직접호출 0(grep). **cat-B 잔여 workflow 확정 14 전부 완료(누적 cat-B 29).**
+- 보류 3(재검토): suggestions(fail-soft), admin_products_insight_coverage·admin_overview(적대 보류). cat-B preauth/longpoll ~32 = cat-A preauth 와 동일 아키텍처 이연.

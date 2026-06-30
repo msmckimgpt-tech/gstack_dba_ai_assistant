@@ -193,3 +193,15 @@ source_of_truth: true
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
 - batch5 분리(4, 동반 테스트 직접호출 전환 필요): admin_test_datasource·admin_product_db_insights·admin_usage_conversations(AO)·admin_archived_conversations(RP).
 - Rollback Notes: 단일 commit revert(app.py 10 + docs). 이전 batch 불변.
+
+## CHG-20260630-0007
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 3 cat-B batch 5(TASK-0012-7) — 동반 테스트 전환 동반 4 핸들러. cat-B 잔여 workflow 확정 14 완결(누적 cat-B 29).
+- Summary:
+  cat-B 잔여 workflow(REV-20260630-0006) 확정 14 중 동반 테스트가 핸들러 직접호출이라 전환이 필요했던 4 적용:
+  - **AO 3**(admin_test_datasource[var=actor], admin_product_db_insights, admin_usage_conversations): perm 검사 본문 유지. 동반 테스트(직접 함수호출 + `_require_account`/`_account_has_permission` 패치)는 **호출에 `actor|account={...}, conn=<fake>` 명시 인자 주입**으로 전환(Depends 기본값을 직접 전달, body perm 검사가 그 account 로 실행 → 403/404/400/200 보존). admin_test_datasource 는 concurrency 테스트(asyncio.gather 병렬)라 TestClient(sync) 대신 직접 coroutine 호출 유지가 정합 — 명시 인자 방식이 적합.
+  - **RP 1**(admin_archived_conversations): perm 이 require_permission 의존성으로 이동 → 직접호출은 perm 검사를 *우회*하므로 명시 인자로는 403 재현 불가. 동반 테스트(test_p1_admin_archived_requires_perm, 403 perm-gate)를 **TestClient(client.get + as_account(perms={"console.access":True}))** 로 전환 → require_permission 이 실제 _account_has_permission 검사를 타 403 보존.
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(4 핸들러) + tests/{test_datasource_test_nonblocking(4 calls), test_db_insights(4 calls), test_usage_conversations(3 calls), test_conversation_archive(1, TestClient)} + docs.
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. **cat-B 잔여 workflow 확정 14 전부 완료.** 배포 불요.
+- 보류 3(batch6+ 재검토): suggestions(fail-soft 비-cat-B), admin_products_insight_coverage·admin_overview(적대 보류). cat-B preauth/longpoll ~32 = 아키텍처 이연(router-extraction).
+- Rollback Notes: 단일 commit revert(app.py 4 + tests 4 + docs). 이전 batch 불변.

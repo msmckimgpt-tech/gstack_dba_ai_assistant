@@ -202,7 +202,9 @@ def test_a1_admin_requires_usage_read(monkeypatch):
     actor = {"id": 1, "permissions": {"conversation.list.any": True}}  # usage.read 없음
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_usage_conversations(_Req())
+    # P5b DI seam Phase 3: admin_usage_conversations 가 account=Depends(get_current_account) 로 마이그됨
+    # → 직접호출 시 account/conn 명시 주입. AO 라 본문 perm 검사(usage.read+list.any)가 account 로 실행.
+    resp = app.admin_usage_conversations(_Req(), account=actor, conn=_Conn())
     assert resp.status_code == 403
 
 
@@ -210,7 +212,7 @@ def test_a1_admin_requires_list_any(monkeypatch):
     actor = {"id": 1, "permissions": {"console.usage.read": True}}  # list.any 없음
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_usage_conversations(_Req())
+    resp = app.admin_usage_conversations(_Req(), account=actor, conn=_Conn())
     assert resp.status_code == 403
 
 
@@ -221,7 +223,7 @@ def test_a2_system_role_empty(monkeypatch):
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
     monkeypatch.setattr(app, "_usage_account_ids_for_role", lambda conn, rk: None)  # 시스템
-    resp = app.admin_usage_conversations(_Req({"role": "(시스템)"}))
+    resp = app.admin_usage_conversations(_Req({"role": "(시스템)"}), account=actor, conn=_Conn())
     body = _body(resp)
     assert body["items"] == [] and body["truncated"] is False
 
