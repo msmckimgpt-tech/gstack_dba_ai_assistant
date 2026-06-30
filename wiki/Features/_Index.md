@@ -59,6 +59,7 @@ sources:
 | feature-0012-web-router-modularization | active (토대) | feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할 토대 — route-parity 안전망 + 의존성 audit (P5b, behavior-neutral) | [[feature-0012-web-router-modularization]] | `unit/feature-0012-web-router-modularization/docs/FUNCTION.md` |
 | feature-0013-relationship-diagrams | active | flow/관계 질문에 mermaid 다이어그램 답변 + 관계 저장소(FK introspection·대화 JOIN 학습) | [[feature-0013-relationship-diagrams]] | `unit/feature-0013-relationship-diagrams/docs/FUNCTION.md` |
 | feature-0014-zero-downtime-deploy | review | web 무중단 롤링 배포 — Caddy LB(web-a/web-b) + `bin/deploy-web.sh`(flock·coalesce·TLS preflight·migrate-lint·one-at-a-time+SSE pre-drain·soak 자동롤백) + `/livez`·`/readyz` + :18080 폐기 | [[feature-0014-zero-downtime-deploy]] | `unit/feature-0014-zero-downtime-deploy/docs/FUNCTION.md` |
+| feature-0015-zd-hygiene-backup | review | 백엔드/DB 무중단 위생(0014 후속) — insight-worker graceful + MySQL online-DDL 게이트(`mysql-ddl-lint`) + 백업 복원 리허설(`restore-rehearsal`)+cron | [[feature-0015-zd-hygiene-backup]] | `unit/feature-0015-zd-hygiene-backup/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 

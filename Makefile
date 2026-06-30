@@ -221,6 +221,12 @@ kb-retrieval-eval:  ## ci: KB retrieval A/B (ITEM-05) — fusion vs 2-tier preci
 backup:  ## ops: 플랫폼 정본 데이터 논리 백업 (PG agent_kb + MySQL agent_memory) — TASK-0130
 	@bash bin/backup.sh
 
+restore-rehearsal:  ## ops: 최신 백업을 throwaway DB 로 복원 검증 (복원 가능성 리허설) — feature-0015
+	@bash bin/restore-rehearsal.sh $(RESTORE_REHEARSAL_ARGS)
+
+install-backup-cron:  ## ops: 정기 백업(매일) + 복원 리허설(주간) cron 설치(멱등) — feature-0015
+	@bash bin/install-backup-cron.sh $(CRON_ARGS)
+
 gc:  ## ops: 운영 데이터 GC — kv 고아행 + 만료 세션 정리 (멱등) — TASK-0134
 	@bash bin/gc.sh
 
@@ -334,6 +340,9 @@ migrate-current:  ## db: 라이브 현재 alembic revision 조회
 
 migrate-lint:  ## db: 신규 alembic revision 의 expand/contract 안전성 검사 (무중단 배포 게이트, feature-0014)
 	@bin/migrate-lint.sh $(MIGRATE_LINT_ARGS)
+
+mysql-ddl-lint:  ## db: 신규 MySQL ALTER 의 online-DDL(LOCK=NONE) 강제 검사 (무중단, feature-0015)
+	@bin/mysql-ddl-lint.sh $(MYSQL_DDL_LINT_ARGS)
 
 migrate-new:  ## db: 신규 revision 생성 (사용법: make migrate-new name="add_xyz" [auto=1]) — 생성 파일은 repo 의 alembic/versions 에 저장
 	@if [[ -z "$(name)" ]]; then \

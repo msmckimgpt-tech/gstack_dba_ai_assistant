@@ -347,6 +347,9 @@ services:
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
     networks: [dbnet, llm-shared, replica-net]
     restart: unless-stopped
+    # feature-0015: SIGTERM graceful(_INSIGHT_SHUTDOWN) — 진행 cycle 을 루프 경계에서 마치고 종료.
+    # cycle 이 LLM 호출로 길 수 있어 기본 10s 보다 여유. 초과 시 SIGKILL 이나 쓰기 멱등이라 무손상.
+    stop_grace_period: 30s
     # TASK-0130 (#4): heartbeat 신선도 기반 healthcheck. advisory-lock 버그로 매 사이클
     # skip_locked 라 24h+ 무동작이어도 Docker 가 healthy 로 표기하던 것을 가시화.
     healthcheck:
