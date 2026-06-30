@@ -25648,22 +25648,12 @@ _SAMPLE_FEEDBACK_LIMIT = 100
 
 
 @app.get("/api/admin/sample-feedback")
-def admin_list_sample_feedback(request: Request) -> JSONResponse:
+def admin_list_sample_feedback(request: Request, account=Depends(require_permission("kb.sample.curate"))) -> JSONResponse:
     """검수 큐 — pending 샘플 피드백 목록. 권한: kb.sample.curate.
 
     PG(agent_kb) 의 sample_feedback(status='pending') 을 코어 list_pending_feedback 로 조회한다.
     generated_sql 은 적재 시점에 이미 PII 마스킹돼 저장됨(추가 마스킹 불필요). scope_key 쿼리로 ds 한정 가능.
     """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_permission(request, conn, "kb.sample.curate")
-        if error:
-            return error
-    finally:
-        conn.close()
 
     scope_key = (request.query_params.get("scope_key") or "").strip() or None
     try:
@@ -25706,22 +25696,12 @@ def admin_list_sample_feedback(request: Request) -> JSONResponse:
 
 
 @app.post("/api/admin/sample-feedback/{feedback_id}/approve")
-async def admin_approve_sample_feedback(feedback_id: int, request: Request) -> JSONResponse:
+async def admin_approve_sample_feedback(feedback_id: int, request: Request, account=Depends(require_permission("kb.sample.curate"))) -> JSONResponse:
     """샘플 피드백 승급(promote) — sample_queries(approved=true, source_type='feedback'). 권한: kb.sample.curate.
 
     코어 promote_feedback(PG/agent_kb conn). 👎(down)/비-pending 은 승급 대상 아님(sample_id=None).
     embedding 미지정 → 코어가 titan-embed(1024-dim)로 임베딩. audit(memory conn) 분리 기록.
     """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_permission(request, conn, "kb.sample.curate")
-        if error:
-            return error
-    finally:
-        conn.close()
 
     try:
         body_raw = await request.body()
@@ -25790,18 +25770,8 @@ async def admin_approve_sample_feedback(feedback_id: int, request: Request) -> J
 
 
 @app.post("/api/admin/sample-feedback/{feedback_id}/reject")
-async def admin_reject_sample_feedback(feedback_id: int, request: Request) -> JSONResponse:
+async def admin_reject_sample_feedback(feedback_id: int, request: Request, account=Depends(require_permission("kb.sample.curate"))) -> JSONResponse:
     """샘플 피드백 거부(reject) — status='rejected'. sample_queries 미반영(poisoning 방어). 권한: kb.sample.curate."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_permission(request, conn, "kb.sample.curate")
-        if error:
-            return error
-    finally:
-        conn.close()
 
     from modules import sample_feedback as _sfb
     from shared.db import _pg_connect

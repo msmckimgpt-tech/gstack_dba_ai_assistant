@@ -195,3 +195,10 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
   - RP 1(admin_archived_conversations): perm 이 require_permission 의존성으로 이동 → 직접호출+명시 account 는 require_permission 을 *우회*해 403 재현 불가 → test_p1 을 TestClient(client.get+as_account(perms={"console.access":True}))로 전환. require_permission 이 실제 검사를 타 403 보존.
 - 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. 잔류 직접호출 0(grep). **cat-B 잔여 workflow 확정 14 전부 완료(누적 cat-B 29).**
 - 보류 3(재검토): suggestions(fail-soft), admin_products_insight_coverage·admin_overview(적대 보류). cat-B preauth/longpoll ~32 = cat-A preauth 와 동일 아키텍처 이연.
+
+## REV-20260630-0008 [AGENT-TEAM:p5b-phase3-catc-rph-self-review]
+- Related Change: CHG-20260630-0008 (Phase 3 cat-C — _require_permission 헬퍼 3 핸들러)
+- §18.8 Adversarial Panel: **SELF+구조 검증(SUBAGENT 미dispatch — cat-C 3 핸들러는 동일·단순 패턴이고 byte-동치 논리가 결정적, 직접 코드 정독+gate 로 충분).** _require_permission(request,conn,perm) = _require_account → if not _account_has_permission(account,perm): _json_error("권한이 없습니다.",403). require_permission(perm) DI 의 dep = get_current_account → _account_has_permission 검사 → _AuthError(기본 "권한이 없습니다.",403). **메시지·status·셰이프 1:1**(기본 메시지 일치라 message= 생략). 401(미인증)이 403(perm) 선행도 require_permission→get_current_account 의존 체인으로 자동 보존.
+- 검증 포인트: (1) cat-C 의 인증-전용 try/finally(body 미포함)는 auth conn 을 즉시 닫고 본문은 자체 mconn(audit)·pg(작업) 사용 → conn=Depends 불요(auth conn held-until-teardown 회피, 추가 idle conn 0). 본문의 conn 참조는 전부 주석(코드 NameError 없음, grep 확인). account 는 sig 에서 공급(record_audit_event actor). (2) 동반 테스트 RP(require_permission 의존성) 특성상 perm-gate 403 은 TestClient 필수(직접호출 우회), happy 는 명시 account 우회 — core-미호출 단언(promote/reject False) 은 require_permission 이 body 이전 403 이라 보존.
+- 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. sanity(require_permission sig/잔류 _require_permission·conn.close 0) PASS.
+- cat-F(public_share_view) 이연 판정: _optional_account 본문-중간 호출의 LastSeenAt eager-resolution 부수효과 차이 → 보안 민감 익명 엔드포인트라 router-extraction 이연(보수적).

@@ -205,3 +205,14 @@ source_of_truth: true
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. **cat-B 잔여 workflow 확정 14 전부 완료.** 배포 불요.
 - 보류 3(batch6+ 재검토): suggestions(fail-soft 비-cat-B), admin_products_insight_coverage·admin_overview(적대 보류). cat-B preauth/longpoll ~32 = 아키텍처 이연(router-extraction).
 - Rollback Notes: 단일 commit revert(app.py 4 + tests 4 + docs). 이전 batch 불변.
+
+## CHG-20260630-0008
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 3 cat-C(TASK-0012-7) — `_require_permission` 헬퍼(RPH) 3 핸들러. DI_SEAM_BLUEPRINT §3.1 cat C.
+- Summary:
+  cat-C(인증+단일 perm 을 `account,error=_require_permission(request,conn,"<perm>")` 헬퍼로 처리) 3 핸들러 전환: admin_list_sample_feedback, admin_approve_sample_feedback, admin_reject_sample_feedback (전부 perm `kb.sample.curate`). `_require_permission` 은 perm-fail 시 *고정 메시지 "권한이 없습니다."* 반환 → require_permission DI 기본 메시지와 동치 → `account=Depends(require_permission("kb.sample.curate"))` 로 hoist(message= 생략). **conn=Depends(get_conn) 미추가** — 본문은 auth conn 미사용(audit 는 본문이 자체 `mconn=_connect_memory()` 재오픈, PG 작업은 _pg_connect). 전용 변환기 `cata_c_transform.py`(RPH 모드): CONN_ACQUIRE + 인증-전용 try/finally:conn.close() 블록 제거, 본문(뒤) dedent 불요.
+  동반 테스트(test_sample_feedback_curation.py): perm-gate 403 3건(test_list/approve/reject_requires_permission)은 require_permission 이 의존성으로 이동해 직접호출 우회 → **TestClient+as_account(perms 없이)** 전환(core 미호출 단언 보존); happy 4건(promote/none-409/reject/list-serialize)은 직접호출에 **`account=admin` 명시 인자** 추가(require_permission 우회, 동작만 검증).
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(3 핸들러) + tests/test_sample_feedback_curation.py(7 call: 3 TestClient + 4 명시 account) + docs.
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
+- cat-F 이연: public_share_view 는 `_optional_account` 가 본문 중간(share-load·404/410 게이트 *뒤*) 호출 → get_optional_account hoisting 시 LastSeenAt 세션 부수효과가 eager 화(로그인 viewer×무효 share 에서 legacy 미갱신 vs DI 갱신). 보안 민감 익명 엔드포인트라 router-extraction 단계로 이연.
+- Rollback Notes: 단일 commit revert(app.py 3 + test 1 + docs). 이전 batch 불변.
