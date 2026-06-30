@@ -64,6 +64,28 @@ def _set_age_path(cur) -> None:
     cur.execute('SET search_path = ag_catalog, "$user", public')
 
 
+def _ensure_graph_indexes(cur) -> None:
+    """AGE metadata_kb 그래프 성능 인덱스(멱등). **없으면 이웃 조회가 전 엣지/노드 Seq Scan 으로
+    수초~수십초**(검증: Table depth1 9.4s → 인덱스 후 0.15s, 60x). drop_graph 재생성 후 라벨 테이블이
+    새로 만들어지므로 sync 마다 보장한다.
+      - vertex: GIN(properties) — `{key:'X'}`(@> containment) 앵커 조회 가속.
+      - edge  : btree(start_id)·btree(end_id) — (a)-[r]-(b) traversal 을 vertex id 로 가속(핵심).
+    각 CREATE 는 IF NOT EXISTS + try/except(라벨 부재·권한 등 graceful)."""
+    for lbl in _VLABELS:
+        try:
+            cur.execute(f'CREATE INDEX IF NOT EXISTS "ix_mkb_{lbl.lower()}_props" '
+                        f'ON metadata_kb."{lbl}" USING gin (properties)')
+        except Exception:
+            pass
+    for lbl in _ELABELS:
+        for col, sfx in (("start_id", "start"), ("end_id", "end")):
+            try:
+                cur.execute(f'CREATE INDEX IF NOT EXISTS "ix_mkb_{lbl.lower()}_{sfx}" '
+                            f'ON metadata_kb."{lbl}" ({col})')
+            except Exception:
+                pass
+
+
 # ── Cypher 안전 리터럴 ────────────────────────────────────────────────────
 def _cq(val) -> str:
     """Python 값 → 안전한 단일인용 Cypher 문자열 리터럴 (injection 방어)."""
@@ -258,6 +280,7 @@ def sync_graph(conn=None, scope_key=None) -> dict:
     try:
         cur = c.cursor()
         _set_age_path(cur)
+        _ensure_graph_indexes(cur)   # 성능 인덱스 보장(이웃 조회 60x) — drop_graph 재생성 생존
         scope_filter = "" if scope_key is None else "WHERE scope_key = %s"
         sf_args = () if scope_key is None else (scope_key,)
 
