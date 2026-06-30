@@ -9,6 +9,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260630T100000-doc-sync-rn-0630 (TASK-20260630T100000-doc-sync-rn-0630 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 기존 '2026-06-29' 블록에 doc_sync 6항목 추가(최종 11항목 — landing 중 origin/main 공유 2항목 합류분 보존) — [new work] 관계를 그림(다이어그램)으로 답변(feature-0013) · [improved admin] 스키마 골격 화면 접기·검색·페이지 정리 · [improved admin] 용어사전 역할 선택 단일화 · [improved work] 공유 대화 화면 보기 개선 · [fixed work] 새 대화 중복 표시 수정 · [fixed work] diff 답변 줄번호 수정 (기존: 용어 자율등록·검토 큐·답변 평가·공유 링크 참여 허용/유지 보존). `generated` 2026-06-29→2026-06-30.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629b-rn-0629`→`?v=20260630-rn-0630`.
+- Verification: `node --check release-notes-data.js` PASS + vm 로드 generated=2026-06-30·06-29 블록 11항목 확인 + 스키마(type/area/title/detail) 정합 + 신규 user-facing 머지 consolidate 대조.
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·테이블/함수명·마이그 번호·엔드포인트·cache-buster 내부 슬러그 비노출. 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki)는 별도 commit.
+
 ## CHG-20260629T181648-point-scroll-easeoutexpo (TASK-20260629T181648-point-scroll-easeoutexpo — 공유 대화 뷰 우측 스크롤바 가이드 뱃지(point rail) 추가 + 가이드 뱃지 클릭 스크롤 단축·EaseOutExpo, Minor §12.3 — frontend 표현계층)
 - Date: 2026-06-29 (worktree ai/claude/share-scroll-guide-badge, base 60c0d45).
 - 요청: 공유 기능으로 전달한 대화에도 우측 스크롤바 대화 가이드 뱃지 UI 구성 + 가이드 뱃지 클릭 시 소요시간 단축 + Easing 을 EaseOutExpo 로.
