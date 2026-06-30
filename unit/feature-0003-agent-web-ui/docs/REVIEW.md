@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260630T100000-doc-sync-rn-0630 [SKIPPED:non-policy-doc] — 릴리즈노트 06-29 블록 augment(+6, 최종 11항목) + 캐시버스터 bump (TASK-20260630T100000-doc-sync-rn-0630, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`) + cache-buster(`index/admin.html`) 뿐 — 비-정책 doc-only. 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC·엔드포인트 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`).
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check release-notes-data.js` PASS + vm 로드 `generated`=2026-06-30·'2026-06-29' 블록 11항목·항목 스키마(type/area/title/detail) 정합. 적대 사실검증 — 사용자향 평이화·내부 비노출(feature-id/테이블/마이그/엔드포인트/cache-buster 슬러그 0)·과장 0.
+- Cross-ref: CHG-20260630T100000-doc-sync-rn-0630 / TASK-20260630T100000-doc-sync-rn-0630 / FUNCTION '릴리즈노트 콘텐츠 — 06-29 블록 augment' / 원천 머지 feature-0013(PR#462/#469)·metadata-bs-collapse/flexclip/paging·share-mermaid-responsive·point-scroll·glossary-role-single-ui/fieldname-fix·new-conv-dedup·diff-lineno-leak. META(STATUS·wiki·nl2sql concept)는 별도 commit/META mode.
+
 ## REV-20260629T181648-point-scroll-easeoutexpo [SUBAGENT:adversarial-frontend-7lens] (TASK-20260629T181648-point-scroll-easeoutexpo — 공유 대화 뷰 우측 스크롤바 가이드 뱃지 추가 + 가이드 뱃지 클릭 스크롤 단축·EaseOutExpo, Minor §12.3 — frontend 표현계층)
 - 대상: `static/app.js`(메인 rail dot 클릭 EaseOutExpo 교체+헬퍼), `static/share.js`(공유 rail 신규+EaseOutExpo window 스크롤+리스너), `static/share.html`(rail nav+cache-buster), `static/share.css`(rail 미니맵 스타일+focus-visible), `static/index.html`(app.js cache-buster). 백엔드/JS 로직(데이터/RBAC/스키마/엔드포인트) 0.
 - 적대 패널 7-lens(좌표계 정확성·EaseOutExpo 수식·메인 회귀·공유 엣지·anonymous XSS·성능/ResizeObserver 루프·a11y) → **VERDICT: SHIP** (BLOCKER 0 · MAJOR 0).

@@ -23,7 +23,7 @@ sources:
 |---|---|
 | 분류 | `#wiki/index` |
 | 정본 영역 | `unit/feature-NNNN-<purpose>/docs/FUNCTION.md` |
-| Feature 수 | 12 active |
+| Feature 수 | 13 active |
 | Wiki layer | mirror (입구점) |
 
 ## 목차
@@ -39,7 +39,7 @@ sources:
 
 ## 1. 개요
 
-12 개 active feature 의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
+13 개 active feature 의 *사람용 카드* 입구. 정본은 `unit/<id>/docs/FUNCTION.md`. AI 가 새 feature 를 생성할 때마다 본 MOC 에 1줄 entry 추가 + `Features/<feature-slug>.md` 동반 (`AGENTS.md §21` 의무).
 
 ## 2. Active features
 

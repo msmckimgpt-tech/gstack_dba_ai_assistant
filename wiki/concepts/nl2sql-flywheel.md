@@ -15,7 +15,7 @@ ai_generated: true
 concept_category: framework
 aliases: [nl2sql-flywheel, NL2SQL flywheel, NL→SQL 정확도, dba-ai-nl2sql]
 tags: [nl2sql, rag, evaluation, few-shot, self-reflection, glossary]
-last_updated: 2026-06-23
+last_updated: 2026-06-30
 ---
 
 # NL→SQL 정확도 Flywheel (dba-ai-nl2sql)
@@ -27,7 +27,7 @@ last_updated: 2026-06-23
 | 정본 로드맵 | `docs/improvements/dba-ai-nl2sql/ROADMAP.md` (`/_dqa` 파이프라인 산출) |
 | 정본 리서치 | `docs/improvements/dba-ai-nl2sql/RESEARCH.md` |
 | 구현 정본 | `unit/feature-0002-agent-core/docs/FUNCTION.md` |
-| 최종 갱신 | 2026-06-23 |
+| 최종 갱신 | 2026-06-30 (doc_sync — ITEM-08/11 출시 반영) |
 
 ## 1. 개요
 
@@ -39,15 +39,17 @@ last_updated: 2026-06-23
 > **불변 규칙**: ITEM-01(평가 harness)이 **모든 성능 항목의 선행 측정 수단**. 측정 없이
 > 성능 항목을 done 으로 닫지 않는다.
 
-## 2. 구현 현황 (2026-06-23 드레인)
+## 2. 구현 현황 (2026-06-23 드레인 · 2026-06-30 ITEM-08/11 출시 반영)
 
 | ITEM | 내용 | 상태 |
 |---|---|---|
 | **ITEM-01** | NL→SQL 평가 harness (RAGAS + LLM-as-Judge) | 코어 완료 |
 | **ITEM-02+03** | 샘플쿼리(NL↔SQL) few-shot 저장소 (PR-A) | 코어 완료 |
-| **ITEM-04** | 데이터소스 비즈니스 컨텍스트 필드 | read-side+schema 완료 (write UI 는 ITEM-11) |
+| **ITEM-04** | 데이터소스 비즈니스 컨텍스트 필드 | read-side+schema 완료 (write UI 는 ITEM-11 에서 출시) |
 | **ITEM-07** | Self-Reflection 명시 자가수정 루프 | 완료 |
+| **ITEM-08** | "AI 로 고치기" 표적 재수정 버튼 | 완료(출시, 2026-06 — 적대 리뷰 SHIP-WITH-FIXES) |
 | **ITEM-10** | 용어사전 + ENUM 코드사전 구조부 | 구조부 완료 |
+| **ITEM-11** | 메타데이터 거버넌스 포탈 (CRUD UI — 용어/ENUM + 테이블/컬럼 설명·주입·overlay·부트스트랩·샘플 admin, 용어 대화 자율등록) | 완료(출시, MVP-1 + Phase 2 마감, RBAC `kb.ingest.manual`/`kb.sample.curate`) |
 | **ITEM-09** | heavy-query plan+approve | reject(subsumed) — 기존 EXPLAIN gate 가 포섭 |
 
 > **측정 보류**: ITEM-02/04 의 효과 A/B(샘플 off/on)는 임베딩(titan-embed) 다운으로 보류 —

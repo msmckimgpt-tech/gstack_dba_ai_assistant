@@ -2,6 +2,12 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260630T100000-META-0015-doc-sync-0630 [SKIPPED:doc-sync-index-mirror-alignment] — feature-0013 신규 + 06-29 저녁 머지 backfill 인덱스/미러 정합 + nl2sql concept stale 해소
+
+- **cycle**: ai/claude/doc-sync-0630 — doc_sync(전 타깃, 직전 sync a644fcb/72c970f @ 2026-06-29 13:35 이후). feature-0013 관계 다이어그램 머지(PR#462/#469) + 06-29 저녁 user-facing(metadata-bs-*/share-*/glossary-role-*/new-conv-dedup/diff-lineno-leak)을 색인/미러/사용자향 표면에 반영.
+- **변경(META, pure-meta)**: docs/STATUS.md(§5 등록 기능 12→13·in-progress 11→12 + frontmatter sources feature-0013 + feature-0013 행 라이브 PASS + feature-0003 행 paging/dedup/lineno 1줄) · docs/ARCHITECTURE.md(기능맵 §4 + 의존맵 §6 feature-0013 행) · wiki/Index·Features/_Index·overview·Architecture/Overview(feature 카운트 12→13 + feature-0013 행/서사) · wiki/Features/feature-0013 카드(머지 reality — status stub→active·maturity stub→minimal·§2 PB-0008 라이브 PASS·rd-h2/h3/h6) · wiki/concepts/nl2sql-flywheel.md(§2 ITEM-08/11 출시 반영 — hot.md flag 한 stale 해소) · wiki/hot.md(06-30 갱신, Active Threads 보존·nl2sql thread 해소) · wiki/Log.md(rollup append-only). 정본(unit docs·DECISIONS) 무변경.
+- **검증**: ADR-0031 인덱스 모델 준수(정본 재서술 0·STATUS 셀 rollup blockquote 누적 0) · feature 카운트 ground-truth(`ls -d unit/feature-*`=13) 전 narrative 파일 정합·잔존 stale '12' 스윕 0 · `bin/ssot-lint.sh` PASS · 신규 wikilink 대상(feature-0013 카드) 존재. DECISIONS/SECURITY/PROJECT noChange(무변경 정직 보고). [SKIPPED] 사유: 순수 색인/미러/concept-stale 정합(정책 의미 변경 없음) — codex 패널 불요(선례 REV-20260629T043125-META-0014-doc-sync-0629 동일). 동반 operational(릴리즈노트)은 feature-0003 별도 commit(REV-20260630T100000-doc-sync-rn-0630).
+
 ## REV-20260629T043125-META-0014-doc-sync-0629 [SKIPPED:doc-sync-index-mirror-alignment] — STATUS·ARCHITECTURE·wiki 06-29 머지 backfill 인덱스/미러 정합
 
 - **cycle**: ai/claude/doc-sync-20260629-130501 — doc_sync(06-29 머지 backfill, 직전 sync 6dee739/63874f2 @ 08:34 이후). feature-0012-web-router-modularization 머지(PR#456) + 답변 피드백 답변당 고유화(👍/👎) + 용어사전 대화 자율등록 + 용어 검토 큐 IA 중첩 + 첨부 wrong-bubble id-space 하드닝을 색인/미러/사용자향 표면에 반영.

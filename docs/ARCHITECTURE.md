@@ -54,6 +54,7 @@ ai_read_priority: 4
 | feature-0010-google-drive-integration | **Google Drive 연동 토대 (2026-06-23)** — 계정별 OAuth 토큰 암호화 저장(`WebGoogleDriveTokens`, cred_crypto AAD=`gdrive:{account_id}`) + connect/callback/status/disconnect 라우트 + MCP 구성 seam(`bin/gdrive-mcp.sh`·compose `gdrive-mcp`·`src/gdrive_mcp_seam.py` per-account 토큰 주입 A). **연동 미수행/기본 비활성**. SECURITY.md §17 정합. |
 | feature-0011-shared-extraction | **공통 코드 `shared/` 점진 추출 (P5a, 2026-06-24)** — 저결합 공통 모듈(`model_catalog`·`config`·`db`)을 repo 루트 `shared/` 패키지로 **모듈 alias 이동**(Step1~3, 모든 심볼·monkeypatch·wildcard 보존 비파괴 shim) + Dockerfile/Makefile PYTHONPATH 배선, `make test` 회귀 0. feature-0002·0003·격리 컨테이너 공유 토대(`shared/` = DOC_REGISTRY 공통 코드 정본). |
 | feature-0012-web-router-modularization | **feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할 토대 (P5b, 2026-06-29)** — route-parity 안전망(`test_route_parity_p5b.py` + 골든 179 route, 경로·메서드·순서 drift 적발) + handler→전역/helper 의존성 audit(`web_context` 추출 경계 확정). behavior-neutral, 실제 router 추출은 후속(브라우저 QA env). |
+| feature-0013-relationship-diagrams | **flow/관계 질문에 mermaid 다이어그램 답변 (2026-06-29)** — 웹 UI mermaid 렌더(vendor v10.9.3, sanitize-후 `securityLevel:'strict'` 렌더 + graceful fallback) + `_MERMAID_DIAGRAM_GUIDANCE` 발화(feature-0002) + `table_relationships` 관계 저장소(alembic 0024 — FK introspection·대화 JOIN 학습) + knowledge context 관계 digest 주입. cross-cut 코드 거주 feature-0002·0003. PB-0008 라이브 검증 PASS. |
 
 ## 5. source of truth 원칙
 동일한 사실을 여러 문서에 중복 확정하지 않는다.
@@ -80,6 +81,7 @@ ai_read_priority: 4
 | feature-0010-google-drive-integration | feature-0003-agent-web-ui, feature-0002-agent-core | uses | 인증/라우트/DDL 은 web app.py 인라인(물리 위치), 토큰 암호화는 `modules/cred_crypto`+`datasources`(DEK). 활성화 cycle 에서 `modules/mcp_client` seam(A) 배선 예정 |
 | feature-0011-shared-extraction | feature-0002-agent-core, feature-0003-agent-web-ui | uses | 두 feature 가 공유하는 저결합 공통 모듈을 repo 루트 `shared/` 로 추출하고 import 사이트 재배선 (모듈 alias shim 으로 비파괴). 추출 후 양 feature 가 `shared.*` 를 import |
 | feature-0012-web-router-modularization | feature-0003-agent-web-ui | uses | app.py 도메인별 APIRouter 점진 분할 — route-parity 안전망 |
+| feature-0013-relationship-diagrams | feature-0002-agent-core, feature-0003-agent-web-ui | uses | 발화 가이던스·관계 저장소·insight introspection·대화 JOIN 학습은 feature-0002, mermaid 웹 렌더는 feature-0003 (cross-cut) |
 
 ### 의존 유형 정의
 - `requires`: 대상 기능이 완성되어야 구현 가능
