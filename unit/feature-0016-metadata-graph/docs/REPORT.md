@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Report
 
+## 2026-06-30 · 그래프 뷰 UX 개선 (반응형 · 관련도 사이징 · 카테고리 클러스터링)
+
+**요청**: 그래프가 사람이 보기 까다로움 → 반응형 + 키워드 관련도별 노드 크기 + 유사 카테고리 집적.
+**웹 리서치**(Neo4j Bloom·Linkurious·Cytoscape): 노드 크기=중요도/관련도·색=카테고리가 표준, 카테고리
+집적은 **fcose**(compound force layout, 리서치 1순위)가 정석.
+
+**구현** (admin.html/admin.js/styles.css + vendor):
+- **fcose vendoring**(layout-base→cose-base→cytoscape-fcose) — compound 클러스터 force layout. 미등록 시 cose 폴백.
+- **카테고리 클러스터링**: 노드를 스키마(scope:schema) compound parent 로 묶음(점선 박스). HAS_TABLE 엣지는
+  컨테인먼트로 대체(생략). fcose gravityCompound 로 스키마 내부 집적 강화.
+- **관련도 사이징**: 검색 시 노드별 관련도(exact>prefix>contains, name>fqn) 0~1 → 크기 +최대 40·rel≥0.8 테두리 강조.
+- **반응형**: ResizeObserver→cy.resize/fit, 캔버스 clamp(420~760px·64vh), 상세패널 접기 토글 + ≤900px 세로 스택, 범례 추가.
+
+**검증**: admin.js node --check OK. fcose 폴백·compound 는 cose 도 지원이라 견고. 라이브 렌더는 배포 후 스크린샷.
+
 ## 2026-06-30 · per-datasource 그래프 (rag_objects 투영 + scope 필터)
 
 **배경**: cutover 후 "각 데이터소스 그래프 출현" 검증 중, table_descriptions(큐레이션)는 **단 1개

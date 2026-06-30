@@ -2965,39 +2965,89 @@ function _metaHideGraph() {
   if (ld) ld.style.display = "";
 }
 
+// 라벨별 기본 노드 크기. 검색 시 관련도(rel 0~1)에 따라 +최대 40 가산(키워드 prominence).
+const _META_NODE_BASE = { Schema: 30, Table: 30, Column: 18, GlossaryTerm: 26, Datasource: 34, Product: 34 };
+function _metaNodeSize(ele) {
+  const base = _META_NODE_BASE[ele.data("label")] || 22;
+  const rel = ele.data("rel");
+  return (typeof rel === "number") ? Math.round(base + rel * 40) : base;
+}
+
+// 노드 key(`scope:fqn`)에서 카테고리(스키마) compound parent id 도출. schema 없으면 null.
+function _metaCatParent(key, fqn) {
+  if (!key) return null;
+  const idx = key.indexOf(":");
+  if (idx < 0) return null;
+  const scope = key.slice(0, idx);
+  const f = fqn || key.slice(idx + 1);
+  if (!f || f.indexOf(".") < 0) return null;   // 스키마 segment 없음(스키마 노드 자체 등)
+  return scope + ":" + f.split(".")[0];
+}
+function _metaEnsureCat(cy, id) {
+  if (!id || cy.getElementById(id).length) return;
+  const nm = id.slice(id.indexOf(":") + 1);
+  cy.add({ group: "nodes", data: { id, label: "Schema", name: nm, fqn: nm, isCat: 1 } });
+}
+
 function _metaInitGraph() {
-  if (_metaGraph.cy) { try { _metaGraph.cy.resize(); } catch (_) {} return; }
   const container = document.getElementById("metadataGraphCanvas");
   if (!container) return;
   if (typeof window.cytoscape !== "function") {
     _metaGraphStatus("그래프 라이브러리(cytoscape)를 불러오지 못했습니다.");
     return;
   }
+  // fcose(compound 클러스터 force layout) 등록 — 1회. 미가용 시 built-in cose 폴백.
+  if (window.cytoscapeFcose && !_metaGraph.fcose) {
+    try { window.cytoscape.use(window.cytoscapeFcose); _metaGraph.fcose = true; } catch (_) {}
+  }
+  if (_metaGraph.cy) { try { _metaGraph.cy.resize(); } catch (_) {} return; }
   _metaGraph.cy = window.cytoscape({
     container,
     elements: [],
-    minZoom: 0.2, maxZoom: 2.5, wheelSensitivity: 0.3,
+    minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
           "label": "data(name)", "font-size": "11px", "color": "#161b22",
           "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
-          "width": 24, "height": 24, "text-wrap": "ellipsis", "text-max-width": "120px",
-          "border-width": 0 } },
-      { selector: "node[label='Table']", style: { "width": 32, "height": 32, "font-weight": "bold" } },
-      { selector: "node:selected", style: { "border-width": 3, "border-color": "#0a5b66" } },
+          "width": _metaNodeSize, "height": _metaNodeSize,
+          "text-wrap": "ellipsis", "text-max-width": "120px", "border-width": 0 } },
+      { selector: "node[label='Table']", style: { "font-weight": "bold" } },
+      // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
+      { selector: "node:parent", style: {
+          "background-color": "#3f4b8c", "background-opacity": 0.08,
+          "border-width": 1, "border-color": "#aab3c5", "border-style": "dashed",
+          "shape": "round-rectangle", "padding": "16px",
+          "label": "data(name)", "font-size": "13px", "font-weight": "bold", "color": "#3f4b8c",
+          "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
+      // 검색 관련도 강조: rel 높을수록 진한 테두리.
+      { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
+      { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
+      { selector: "node.dim", style: { "opacity": 0.35 } },
       { selector: "edge", style: {
-          "width": 1.5, "line-color": "#c2c9d2", "target-arrow-color": "#c2c9d2",
+          "width": 1.4, "line-color": "#cbd2db", "target-arrow-color": "#cbd2db",
           "target-arrow-shape": "triangle", "curve-style": "bezier",
-          "label": "data(label)", "font-size": "9px", "color": "#8a949f",
-          "text-rotation": "autorotate" } },
-      { selector: "edge[label='REFERENCES']", style: { "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2 } },
+          "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
+      { selector: "edge[label='REFERENCES']", style: {
+          "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2.2, "label": "data(label)" } },
+      { selector: "edge[label='RELATED_TERM']", style: {
+          "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "line-style": "dashed", "label": "data(label)" } },
     ],
   });
   _metaGraph.cy.on("tap", "node", (evt) => {
-    const key = evt.target.id();
-    _metaGraphExpand(key);
+    const t = evt.target;
+    if (t.isParent && t.isParent()) return;   // 컨테이너 클릭은 무시
+    _metaGraphExpand(t.id());
   });
+  // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
+  if (window.ResizeObserver && !_metaGraph.ro) {
+    let rt = null;
+    _metaGraph.ro = new ResizeObserver(() => {
+      if (rt) clearTimeout(rt);
+      rt = setTimeout(() => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } }, 150);
+    });
+    try { _metaGraph.ro.observe(container); } catch (_) {}
+  }
   if (!_metaGraph.bound) {
     _metaGraph.bound = true;
     const s = document.getElementById("metadataGraphSearch");
@@ -3009,23 +3059,32 @@ function _metaInitGraph() {
       });
     }
     const reset = document.getElementById("metadataGraphResetBtn");
-    if (reset) reset.addEventListener("click", () => {
-      if (_metaGraph.cy) _metaGraph.cy.elements().remove();
-      _metaGraphRenderDetailEmpty();
-      _metaGraphStatus("");
-      const si = document.getElementById("metadataGraphSearch");
-      if (si) si.value = "";
+    if (reset) reset.addEventListener("click", () => { _metaGraphLoadRoots(); });
+    // 상세 패널 접기/펼치기(좁은 화면 대응).
+    const tgl = document.getElementById("metadataGraphDetailToggle");
+    if (tgl) tgl.addEventListener("click", () => {
+      const body = document.getElementById("metadataGraphView");
+      if (body) body.classList.toggle("detail-collapsed");
+      setTimeout(() => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } }, 60);
     });
   }
+}
+
+// 검색어 관련도 점수(0~1): exact name > prefix > name contains > fqn contains.
+function _metaRelevance(name, fqn, ql) {
+  name = (name || "").toLowerCase(); fqn = (fqn || "").toLowerCase();
+  if (name === ql) return 1.0;
+  if (name.startsWith(ql)) return 0.85;
+  if (name.indexOf(ql) >= 0) return 0.65;
+  if (fqn.indexOf(ql) >= 0) return 0.45;
+  return 0.3;
 }
 
 async function _metaGraphSearch(q) {
   if (!_metaGraph.cy) return;
   _metaGraph.lastQuery = q;
-  // 검색어 비우면 현재 datasource 의 진입 그래프(roots)로 복귀.
   if (!q) { _metaGraphLoadRoots(); return; }
   _metaGraphStatus("검색 중…");
-  // feature-0016: 선택 datasource 로 검색 스코프 제한(공용이면 전역 검색).
   const scope = adminState.metadata.scopeKey || "common";
   const scopeParam = (scope && scope !== "common") ? `&scope=${encodeURIComponent(scope)}` : "";
   let data;
@@ -3035,12 +3094,18 @@ async function _metaGraphSearch(q) {
     _metaGraphStatus((err && err.message) || "그래프 검색 실패");
     return;
   }
-  if (q !== _metaGraph.lastQuery) return;  // 경합: 더 최신 검색이 진행 중
+  if (q !== _metaGraph.lastQuery) return;
   _metaGraph.cy.elements().remove();
   _metaGraphAddElements(data.nodes || [], data.edges || []);
+  // 키워드 관련도 → 노드 크기 가산(검색 결과 prominence).
+  const ql = q.toLowerCase();
+  _metaGraph.cy.nodes().forEach((node) => {
+    if (node.isParent()) return;
+    node.data("rel", _metaRelevance(node.data("name"), node.data("fqn"), ql));
+  });
   _metaGraphLayout();
   const n = (data.nodes || []).length;
-  _metaGraphStatus(n ? `${n}개 노드 — 노드를 클릭하면 이웃을 펼칩니다.` : "검색 결과 없음.");
+  _metaGraphStatus(n ? `'${q}' ${n}개 — 관련도 높을수록 크게 표시. 노드 클릭으로 확장.` : "검색 결과 없음.");
 }
 
 async function _metaGraphExpand(key) {
@@ -3067,16 +3132,24 @@ function _metaGraphAddElements(nodes, edges) {
   if (!cy) return;
   (nodes || []).forEach((n) => {
     if (!n || !n.key) return;
-    if (cy.getElementById(n.key).length) {
-      cy.getElementById(n.key).data({ label: n.label, name: n.name || n.fqn || n.key,
+    // 스키마 노드 = 카테고리 컨테이너(compound parent)로 사용.
+    if (n.label === "Schema") { _metaEnsureCat(cy, n.key); return; }
+    const existing = cy.getElementById(n.key);
+    if (existing.length) {
+      existing.data({ label: n.label, name: n.name || n.fqn || n.key,
         fqn: n.fqn || "", description: n.description || "", source: n.source || "" });
       return;
     }
-    cy.add({ group: "nodes", data: { id: n.key, label: n.label || "Node",
-      name: n.name || n.fqn || n.key, fqn: n.fqn || "", description: n.description || "", source: n.source || "" } });
+    const pid = _metaCatParent(n.key, n.fqn);
+    if (pid) _metaEnsureCat(cy, pid);
+    const data = { id: n.key, label: n.label || "Node", name: n.name || n.fqn || n.key,
+      fqn: n.fqn || "", description: n.description || "", source: n.source || "" };
+    if (pid) data.parent = pid;
+    cy.add({ group: "nodes", data });
   });
   (edges || []).forEach((e) => {
     if (!e || !e.source || !e.target) return;
+    if (e.type === "HAS_TABLE") return;   // 스키마→테이블은 compound 컨테인먼트로 표현(엣지 생략).
     const id = `${e.source}|${e.type}|${e.target}`;
     if (cy.getElementById(id).length) return;
     if (!cy.getElementById(e.source).length || !cy.getElementById(e.target).length) return;
@@ -3086,6 +3159,20 @@ function _metaGraphAddElements(nodes, edges) {
 
 function _metaGraphLayout() {
   if (!_metaGraph.cy) return;
+  const cnt = _metaGraph.cy.nodes().length;
+  if (_metaGraph.fcose) {
+    try {
+      _metaGraph.cy.layout({
+        name: "fcose", quality: "default", animate: false, randomize: true, fit: true, padding: 30,
+        packComponents: true,                 // 비연결 컴포넌트 압축 배치(여백 최소)
+        nodeSeparation: 80,                   // 카테고리 내 노드 간 간격
+        nodeRepulsion: () => 7000, idealEdgeLength: () => 75, gravity: 0.3,
+        gravityRangeCompound: 1.2, gravityCompound: 1.4,  // compound(스키마) 내부 집적 강화
+        numIter: cnt > 400 ? 1500 : 2500,
+      }).run();
+      return;
+    } catch (_) {}
+  }
   try {
     _metaGraph.cy.layout({ name: "cose", animate: false, padding: 30, nodeRepulsion: 8000,
       idealEdgeLength: 80, fit: true }).run();
