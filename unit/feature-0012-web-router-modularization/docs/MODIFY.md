@@ -336,3 +336,14 @@ source_of_truth: true
 - Files: 머지 커밋(app.py·test_sample_feedback_curation.py auto-merge + route_snapshot 재생성 + main 100 commits) + docs.
 - Impact: behavior-neutral(내 리팩터 측). make test 전체 통과·0 fail·route drift 0·route-parity 188. main 신규 기능 + 내 분할 공존.
 - Rollback Notes: 머지 커밋 revert(`git revert -m 1`) 또는 머지 전 21-commit 상태로 reset.
+
+## CHG-20260630-0018
+- Date: 2026-06-30
+- Related Requirement: P5b Final §18.8 ship-gate 패널(REV-0017 GO) 후속 — 확정 low/info finding 정정(주석 정확도). 동작 무변.
+- Summary:
+  §18.8 적대 패널(14 agents, ship 판정 GO·blocking 0)이 확정한 비차단 finding 정정:
+  - **[low] WEB_TRUSTED_PROXIES fail-loud 순서 주석 정정**: web_context 추출로 WEB_TRUSTED_PROXIES invalid-CIDR RuntimeError 가 import 시점(app L61, audit-prod gate 보다 앞)에 발화 — main 에서는 audit gate 뒤(L1225)였음. prod+audit-off+invalid-CIDR 이중-오설정 시 *먼저 발화하는 에러*만 다름(둘 다 fail-loud·보안 동일, S8 테스트 무회귀). 단방향 edge 유지상 WEB_TRUSTED_PROXIES 가 web_context import 계산되는 것은 클린 추출의 불가피한 귀결(app 으로 옮기면 back-ref). → app.py L60/L1210·web_context 의 "원래 startup-time 과 동일" 문구를 "import 시점(audit gate 보다 앞) 계산, 이중-오설정 시 첫 에러만 상이" 로 정정.
+  - **[info] stale line-number**: web_context.py:22 "app.py(L82)" → 실제 L91 정정.
+- Files: src/app.py(주석 3곳), src/web_context.py(주석 1곳) + docs. **코드 라인 변경 0(주석-only, diff 검증).**
+- Impact: behavior-neutral(주석만). py_compile OK. make test 는 §18.8 가 동일 코드 상태(머지본)로 575 passed/0 fail·route-parity 188 검증 완료. 배포 불요(주석).
+- Rollback Notes: revert(주석 복원). 무위험.

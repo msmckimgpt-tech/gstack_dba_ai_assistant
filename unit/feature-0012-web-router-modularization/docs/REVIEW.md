@@ -272,3 +272,12 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 검증 포인트: (1) **충돌 성격**: 양쪽 수정 3파일 중 app.py·test_sample_feedback 는 auto-merge(영역 분리), route_snapshot 만 충돌(골든이라 재생성으로 해소). (2) **머지 정합**: py_compile OK, 내 web_context re-import + 5 include_router 생존, main 신규 라우트(livez/readyz/glossary-feedback/graph) 존재, **중복 라우트 데코 0**(머지 오류 없음), 추출 핸들러 app.py 재등장 0(deletion 보존). (3) **route-parity**: 179→188(+9 main), 골든 재생성=현재 일치. (4) main 이 _require_account/_get_authenticated_account/_account_has_permission/_sanitize_session_id/_get_client_ip/DI seam 무변(grep) → 내 refactor 와 semantic 충돌 0.
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!", route-parity 188(골든=현재), py_compile OK.
 - 다음: 브라우저 로그인 QA(win-browser bridge OK) + RBAC smoke → §18.8 패널 → PR/머지 → 배포(confirm).
+
+## REV-20260630-0018 [AGENT-TEAM:p5b-final-1808-ship-panel]
+- Related Change: CHG-20260630-0018 (§18.8 ship-gate 패널 후속 주석 정정) + 머지(CHG-0017) ship 판정
+- §18.8 Adversarial Panel: **ultracode Workflow `p5b-final-1808-panel`(14 agents / 0.63M tokens): 5 차원 리뷰(byte-동치/route-shadowing/web_context-edge/auth-rbac-e2e/merge-integration) → 차원별 적대 검증(REFUTE 시도) → 합성 ship 판정.** **판정: GO. ship-blocking 0건.** 확정 결함 6(low 1 + info 5).
+- 검증 요약(워크트리 직접 재현): make test **575 passed/0 fail**(agent 이미지+worktree 마운트), route-parity **188**(=내 179+main 9), byte-동치 계약 문자열 무손상("로그인이 필요합니다." 401 / "db connection failed" 500 verbatim), web_context INVARIANT 유지(단독 import 시 app not in sys.modules·acyclic), include_router app 맨 끝(L29090-94), 7 심볼 재정의/shadow 0, 머지 중복 라우트/함수 0.
+- 확정 결함(전부 non-blocking): [low] WEB_TRUSTED_PROXIES fail-loud 순서(이중-오설정 첫 에러만 상이, 둘 다 abort·S8 무회귀) → 주석 정정(CHG-0018). [info×5] 주석 line-number·검증노트(결함 아님).
+- route-shadowing 차원: 14 추출 라우트 끝-이동 + main 신규 9 라우트 상호작용 점검 → shadow 신규 0. auth-rbac-e2e: DI 전환 핸들러 401/403/500 우선순위·dependency_overrides 경로 보존, 이연 pre-auth gate 핸들러 app.py 잔류 정상. merge-integration: main 신규 9 라우트 온전·중복 0.
+- 브라우저 QA 필수 시나리오(패널 권고): 미인증 401 verbatim·로그인 세션쿠키·RBAC 403(admin_usage/admin_conversations)·추출 라우트 14 실호출(media 이미지·static_pages /healthz·/share)·conn실패 500. 배포 후 healthz(edge 200=router include 라이브 증명)+soak+rollback 인지.
+- 결정적 검증: §18.8 GO + make test 575/0 + route-parity 188 + py_compile OK. ship 진행 가능.

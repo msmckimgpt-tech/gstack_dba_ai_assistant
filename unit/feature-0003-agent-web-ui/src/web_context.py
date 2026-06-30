@@ -19,7 +19,7 @@ import sys
 
 from fastapi import Request
 
-# app.py 의 AGENT_MODE(L82)와 동일 표현식의 env-mirror — web_context 를 app-free 로 유지하기
+# app.py 의 AGENT_MODE(L91)와 동일 표현식의 env-mirror — web_context 를 app-free 로 유지하기
 # 위함(_parse_trusted_proxies 의 prod/staging fail-loud 분기가 참조). 둘 다 import 시점에 같은
 # 환경변수를 읽어 동일 값을 갖는다(파생 상수, 결정적). app 의 startup-validation 블록은 app 의
 # AGENT_MODE 를 계속 사용한다.

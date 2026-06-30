@@ -56,7 +56,11 @@ source_of_truth: true
   - [x] **web_context 추출 증분 #2 (proxy/client-IP cluster)**: `_TrustedNetwork`·`_parse_trusted_proxies`·`WEB_TRUSTED_PROXIES`·`_is_trusted_proxy`·`_get_client_ip` → web_context.py. AGENT_MODE 결합은 동일 env-read mirror 로 app-free 유지(시그니처 불변), startup-validation 블록 app 잔류, WEB_TRUSTED_PROXIES 계산 위치 이동(둘 다 startup-time fail-loud 보존). make test 전체 통과·route drift 0·byte-동치. docker rebind-identity 7/7·순환 없음(CHG/REV-0016).
   - [ ] web_context 추출 후속(안전 영역, 테스트 0변경): inc3 SESSION_COOKIE+`_resolve_permission_catalog`+PERMISSION_* → inc4 `_fetch/_decorate_account_rows`. 그 후 `_account_has_permission`(11×)·`_require_account`(51×)·`_connect_memory`(62×) = **23-테스트 retarget 영역**(workflow 적대검증 후 진행 권장).
   - [ ] router 추출 잔여: conversations(MIXED, 엔탱글먼트 경계 — AO 10 + INLINE 7, web_context 와 함께 처리 권장). **추출 전 grep `app.<handler>` 직접참조 + `app.<global>` monkeypatch + concrete-route 면 var-매처 선행 점검(0012/0013/0014 학습).** 이연 핸들러 ~46 router 화.
-- [ ] TASK-0012-9 브라우저 로그인 QA(win-browser.py) + §18.8 패널 + 배포
+- [~] TASK-0012-9 ship: 브라우저 로그인 QA(win-browser.py) + §18.8 패널 + 배포
+  - [x] **origin/main 100-commit 통합 머지**(배포 선결): main app.py +720 additive 신규 9 라우트, auth helper 무변(auth-orthogonal) → app.py auto-merge, route_snapshot 만 충돌→골든 재생성(179→188). make test 전체 통과·route-parity 188(CHG/REV-0017).
+  - [x] **§18.8 ship-gate 적대 패널**(ultracode workflow, 14 agents): **판정 GO, ship-blocking 0**. 확정 6(low 1+info 5) 전부 non-blocking. make test 575 passed/0 fail·route-parity 188·byte-동치 계약 무손상·web_context INVARIANT 유지 직접 재현. low finding(WEB_TRUSTED_PROXIES fail-loud 순서 주석) 정정(CHG/REV-0018).
+  - [ ] **브라우저 로그인 QA**(win-browser.py bridge OK): 미인증 401 verbatim·로그인 세션쿠키·RBAC 403(admin_usage/admin_conversations)·추출 라우트 14 실호출·conn실패 500. **라이브 자격증명 필요(사용자 confirm).**
+  - [ ] **PR 생성 + main 머지 + 프로덕션 배포**(bin/deploy-web.sh blue-green, healthz-gated, rollback): **외부영향·비가역 → 사용자 명시 confirm 필요.** 배포 후 edge healthz 200(router include 라이브 증명)+soak+인증 smoke.
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 
 ## 4. In Progress

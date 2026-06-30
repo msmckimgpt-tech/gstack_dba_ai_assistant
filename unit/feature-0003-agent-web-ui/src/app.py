@@ -57,7 +57,9 @@ from modules.render import normalize_step_result_summary
 
 # feature-0012 P5b Final: web_context 로 추출한 leaf helper 를 모듈 전역에 rebind
 # (app 내 기존 bare-name 호출부 + 테스트 monkeypatch.setattr(app,...) 호환 보존, behavior-neutral).
-# WEB_TRUSTED_PROXIES 는 web_context import 시점에 계산(원래 startup-time 과 동일, prod/staging fail-loud 보존).
+# WEB_TRUSTED_PROXIES 는 web_context import 시점(본 re-import, audit-prod gate 보다 앞)에 계산된다.
+# prod/staging invalid-CIDR fail-loud(RuntimeError) 보존 — 단 main 에서는 이 계산이 audit gate 뒤였으므로
+# prod+audit-off+invalid-CIDR 이중-오설정 시 *먼저 발화하는 에러* 만 다르다(둘 다 fail-loud, 보안 동일; §18.8 REV-0017 low).
 from web_context import (
     _sanitize_session_id,
     _hash_session_token,
@@ -1207,8 +1209,9 @@ def _unwrap_followup_user_request(text: str) -> str:
 
 # feature-0012 P5b Final: _TrustedNetwork·_parse_trusted_proxies·WEB_TRUSTED_PROXIES 는
 # src/web_context.py 로 추출(상단 from web_context import 로 rebind). WEB_TRUSTED_PROXIES 는
-# web_context import 시점(app 상단 re-import)에 계산된다 — 원래 본 위치 계산과 동일 startup-time,
-# prod/staging invalid-CIDR fail-loud(RuntimeError) 보존. 아래 startup-validation 블록은 app 에 잔류
+# web_context import 시점(app 상단 re-import, L61)에 계산된다 — main 에서는 본 위치(audit gate 뒤)였으나
+# 이제 import 시점(audit gate 보다 앞)으로 이동. prod/staging invalid-CIDR fail-loud(RuntimeError) 보존
+# (이중-오설정 시 먼저 발화하는 에러만 다름, §18.8 REV-0017 low). 아래 startup-validation 블록은 app 에 잔류
 # (재import된 WEB_TRUSTED_PROXIES + app 의 AGENT_MODE 참조).
 
 # TASK-0087 §9.7: proxy mode + empty trusted proxies = PIPA audit IP quality regression.
