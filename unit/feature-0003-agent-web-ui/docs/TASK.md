@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260630T110910-metadata-ds-single-ui — 메타데이터 패널 '데이터소스' 선택 UI 단일화(헤더 스코프 상속) + 공용 스코프 empty-state (Major §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 트리거: 사용자 — "관리 콘솔 > 메타데이터 > 테이블/컬럼 설명 구조에서 '데이터소스' UI 가 '스키마 골격 가져오기' 기능과 메타데이터 패널 자체에 동시에 있어 혼란. 각 UI 역할 파악 후 단일 UI 만 쓰도록 정리."
+- 현황 파악(코드 근거): 데이터소스 selector 가 둘 — (1) 패널 헤더 `#metadataScopeSelect`("데이터소스") = 메타데이터 저장/조회 **스코프**(5서브탭 전체, 저장 target `_metaBootstrapSave`→scopeKey), (2) "스키마 골격 가져오기" 내부 `#metadataBootstrapDs`("데이터소스 *") = 스키마 introspection **소스**(테이블/컬럼 서브탭만). 둘은 완전 독립 → 헤더 스코프=A·부트스트랩 DS=B 로 어긋나게 고르면 "B 골격을 A 스코프로 저장"하는 조용한 불일치(footgun).
+- 결정(사용자 2-step Q&A): 비활성 잔재·더미 selector 금지(디자인 부적합) → **중복 근원 제거** = 부트스트랩 전용 DS selector 폐기, 데이터소스는 헤더 스코프 상속. 공용(common)은 실제 스키마 없어 부트스트랩 불가 → 관리 콘솔 list-detail `.admin-detail-empty` 컨벤션 정합 **empty-state** 안내.
+- 설계: `_metaScopeDatasourceKey()`(기존 스코프→DS 해소)를 부트스트랩 소스로 재사용. `_metaSyncBootstrapVisibility` 가 구체 DS 스코프=골격 컨트롤(토글+본문) 노출 + DS 상속, 공용/미매칭=empty-state 만 노출. 백엔드 무변경(POST /bootstrap {datasource,schema} 의 datasource 가 스코프에서 옴).
+- Completion Checklist:
+  - [x] admin.html: `#metadataBootstrapDs` label/select 제거 + `#metadataBootstrapEmpty`(.admin-detail-empty) + `#metadataBootstrapHead` + 노트에 `#metadataBootstrapDsName` 상속 DS 표기.
+  - [x] admin.js: `_metaBootstrapPopulateDs`(드롭다운) → `_metaBootstrapSyncToScopeDs`(스코프 상속·DS 변경 시 골격/스키마 리셋·재로드) 교체. `_metaSyncBootstrapVisibility` 공용/구체 DS 분기. `_metaBindBootstrap` DS 바인딩 제거. 스코프 change 핸들러가 `_metaSyncBootstrapVisibility` 호출.
+  - [x] styles.css: `.admin-meta-bootstrap-empty`(list-detail empty-state 정합) 보강. cache-buster admin.js·styles.css 동반 bump `20260630-metadata-ds-single-ui`.
+  - [x] 회귀 가드 `tests/verify_metadata_scope_single_ds.mjs`(14 단언) + 기존 inline-desc(30: B1 수정+B4-common)·paging(32) 회귀 0. `node --check` PASS.
+  - [x] §18.8 적대 frontend state-machine 패널(7가설) → 1차 FIX-THEN-SHIP(BLOCKING 1=깨진 회귀 테스트 B1) → 수정·재검증 → SHIP. N1(스키마 로드 stale-response 가드) 추가. REV-20260630T110910-metadata-ds-single-ui.
+  - [ ] verify-completion --pre-commit PASS → 머지·push → web 재배포(deploy_scope: included) → PB-0008 Windows 브라우저 시각검증(공용=empty-state, 구체 DS=골격 컨트롤·DS 상속 노트, 스코프 전환 시 골격 리셋·중복 selector 부재).
+- Next Action: verify-completion → cycle-final → 배포 → PB-0008 시각검증.
+
 ## TASK-20260629T181648-point-scroll-easeoutexpo — 공유 대화 뷰 우측 스크롤바 대화 가이드 뱃지(point rail) 추가 + 가이드 뱃지 클릭 스크롤 단축(280ms)·EaseOutExpo (Minor §12.3 — frontend 표현계층, RBAC/스키마/백엔드 무변경, anonymous 공유 노출면)
 - 트리거: 사용자 — "공유 기능을 통해 전달한 대화도, 우측 스크롤바에 각 대화 구간에 대한 가이드 뱃지 UI를 구성. 추가로 가이드 뱃지 클릭 시 소요 시간을 지금보다 짧게 + Easing 을 EaseOutExpo 로."
 - 현황: 메인 UI(index.html+app.js)에는 우측 point rail(`renderMessagePointRail`, `#messagePointRail`, `.message-point-dot`)이 이미 존재하나 클릭은 native `scrollIntoView(behavior:smooth)`(가변·통상 ≥400ms). 공유 뷰(share.*)에는 rail 자체가 없었음.

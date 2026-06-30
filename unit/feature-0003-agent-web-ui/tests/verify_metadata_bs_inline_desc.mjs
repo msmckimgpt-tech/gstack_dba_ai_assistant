@@ -172,14 +172,18 @@ ok("[B3] 입력 후 힌트 = 설명 입력됨 + is-filled",
    /설명 입력됨/.test(hintEl.textContent) && hintEl.classList.contains("is-filled"));
 
 // (B4) H4 fix — 서브탭 전환(visibility sync)이 골격 보유 시 결과를 재렌더해 stale 구조를 막는다.
+// scope-single-ds-ui: _metaSyncBootstrapVisibility 가 _metaBootstrapPopulateDs 대신
+//   _metaScopeDatasourceKey(스코프→DS 해소)·_metaBootstrapSyncToScopeDs(스코프 DS 상속)에 의존하도록
+//   바뀌어, 격리 실행 주입 인자도 갱신한다. _metaScopeDatasourceKey 를 truthy("x")로 주입해 구체 DS
+//   스코프 분기(재렌더 경로)를 타게 한다(공용=""이면 empty-state early-return 이라 재렌더 미발생).
 const syncSrcB = extractFn(adminJs, "_metaSyncBootstrapVisibility");
 const dom2 = new JSDOM("<!doctype html><html><body><div id='metadataBootstrap'></div></body></html>");
-const adminState2 = { metadata: { subTab: "tables", bootstrap: { tables: [] } } };
+const adminState2 = { metadata: { subTab: "tables", bootstrap: { tables: [], open: false } } };
 let renderCalls = 0;
 const sync = new Function(
-  "document", "adminState", "can", "_metaBootstrapPopulateDs", "_metaBootstrapRenderResult",
+  "document", "adminState", "can", "_metaScopeDatasourceKey", "_metaBootstrapSyncToScopeDs", "_metaBootstrapRenderResult",
   `${syncSrcB}; return _metaSyncBootstrapVisibility;`,
-)(dom2.window.document, adminState2, () => true, () => {}, () => { renderCalls += 1; });
+)(dom2.window.document, adminState2, () => true, () => "x", () => {}, () => { renderCalls += 1; });
 sync();
 ok("[B4] 골격 없으면 재렌더 안 함", renderCalls === 0);
 adminState2.metadata.bootstrap.tables = [{ schema_name: "s", table_name: "t", columns: [] }];
@@ -188,6 +192,15 @@ ok("[B4] 골격 보유 + tables 노출 시 재렌더 호출(stale 방지)", rend
 adminState2.metadata.subTab = "columns";
 sync();
 ok("[B4] columns 전환 시에도 재렌더(평면↔접힘 구조 교체)", renderCalls === 2);
+// scope-single-ds-ui: 공용(common) 스코프(_metaScopeDatasourceKey="")는 empty-state early-return →
+//   골격이 있어도 재렌더 안 함(부트스트랩 컨트롤/저장 UI 비노출 — 공용 저장 footgun 차단의 행위 근거).
+const syncCommon = new Function(
+  "document", "adminState", "can", "_metaScopeDatasourceKey", "_metaBootstrapSyncToScopeDs", "_metaBootstrapRenderResult",
+  `${syncSrcB}; return _metaSyncBootstrapVisibility;`,
+)(dom2.window.document, adminState2, () => true, () => "", () => {}, () => { renderCalls += 1; });
+const _beforeCommon = renderCalls;
+syncCommon();
+ok("[B4-common] 공용 스코프는 골격 있어도 재렌더 안 함(empty-state early-return)", renderCalls === _beforeCommon);
 
 console.log(`\n  ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -8000,6 +8000,11 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: transparent;
 }
 .admin-meta-bootstrap-toggle:hover { color: var(--primary); }
+/* scope-single-ds-ui: 공용(common) 스코프 부트스트랩 empty-state — 관리 콘솔 list-detail
+   .admin-detail-empty 컨벤션을 재사용한다. 안내문이 한 줄 placeholder 보다 길어 줄간격/여백만
+   보강하고, <strong> 은 본문 톤으로 강조한다(패널 내부라 상하 여백은 약간 압축). */
+.admin-meta-bootstrap-empty { padding: 28px 20px; line-height: 1.55; }
+.admin-meta-bootstrap-empty strong { color: var(--text); font-weight: 600; }
 .admin-meta-bootstrap-body { padding: 0 14px 14px; border-top: 1px solid var(--border); }
 /* metadata-bs-paging: 결과 위 컨트롤 영역(노트/셀렉터/상태) 세로 여백 압축 — 결과가 더 빨리 시작. */
 .admin-meta-bootstrap-note { font-size: 12px; color: var(--text-muted); margin: 8px 0 10px; line-height: 1.45; }

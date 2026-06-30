@@ -2533,6 +2533,9 @@ function _metaBindControls() {
     sel.addEventListener("change", () => {
       adminState.metadata.scopeKey = sel.value || "common";
       _metaCancelEdit();
+      // scope-single-ds-ui: 스코프가 부트스트랩 데이터소스를 결정하므로, 변경 시 부트스트랩
+      // 가시성(공용=empty-state, 구체 DS=골격 컨트롤)·상속 DS·스키마 목록을 즉시 동기화한다.
+      _metaSyncBootstrapVisibility();
       loadMetadata();
     });
   }
@@ -3453,21 +3456,38 @@ async function _metaRemoveRelation(relationId, termId, listWrap) {
 //   한 페이지로 제한해 스크롤 길이를 고정한다(필터와 동일한 display 토글 — DOM 은 전체 보존).
 const META_BS_PAGE_SIZE = 30;
 
-// 현재 서브탭(tables/columns)에 한해 부트스트랩 패널을 노출. 진입 시 DS 드롭다운 채움.
+// 현재 서브탭(tables/columns) + kb.ingest.manual 일 때만 부트스트랩 패널을 노출한다.
+// scope-single-ds-ui: 부트스트랩 데이터소스는 상단 스코프(metadataScopeSelect)를 상속한다.
+//   - 공용(common)/미매칭 스코프 → 실제 스키마 없음 → empty-state(#metadataBootstrapEmpty)만 노출.
+//   - 구체 데이터소스 스코프 → 골격 컨트롤(토글+본문) 노출 + 스코프 DS 상속·스키마 목록 로드.
 function _metaSyncBootstrapVisibility() {
   const panel = document.getElementById("metadataBootstrap");
   if (!panel) return;
   const sub = adminState.metadata.subTab;
-  const show = (sub === "tables" || sub === "columns") && can("kb.ingest.manual");
-  panel.style.display = show ? "" : "none";
-  if (show) {
-    _metaBootstrapPopulateDs();
-    // metadata-bs-inline-desc: tables↔columns 서브탭 전환 시 골격 결과를 현재 mode 로 재렌더한다.
-    // 서브탭 전환 핸들러는 이 함수만 부르고 _metaBootstrapRenderResult 를 호출하지 않으므로, 이미
-    // 가져온 골격(bs.tables)이 있으면 여기서 새 mode 입력 UI 로 교체해야 한다 — 안 그러면 두 mode 의
-    // 행 구조(평면 vs 접힘)·expand-all 가시성이 엇갈린 채 stale 하게 남는다(적대 패널 H4 적발).
-    if (adminState.metadata.bootstrap.tables.length) _metaBootstrapRenderResult();
+  const applicable = (sub === "tables" || sub === "columns") && can("kb.ingest.manual");
+  panel.style.display = applicable ? "" : "none";
+  if (!applicable) return;
+  const scopeDs = _metaScopeDatasourceKey();  // 공용/미매칭이면 빈 문자열.
+  const head = document.getElementById("metadataBootstrapHead");
+  const body = document.getElementById("metadataBootstrapBody");
+  const empty = document.getElementById("metadataBootstrapEmpty");
+  if (!scopeDs) {
+    // 공용(common) 스코프 — 골격 불가. empty-state 만 노출(토글/본문 숨김).
+    if (empty) empty.style.display = "";
+    if (head) head.style.display = "none";
+    if (body) body.style.display = "none";
+    return;
   }
+  // 구체 데이터소스 스코프 — 골격 컨트롤 노출. 본문은 접힘 상태(bootstrap.open)를 따른다.
+  if (empty) empty.style.display = "none";
+  if (head) head.style.display = "";
+  if (body) body.style.display = adminState.metadata.bootstrap.open ? "" : "none";
+  _metaBootstrapSyncToScopeDs(scopeDs);
+  // metadata-bs-inline-desc: tables↔columns 서브탭 전환 시 골격 결과를 현재 mode 로 재렌더한다.
+  // 서브탭 전환 핸들러는 이 함수만 부르고 _metaBootstrapRenderResult 를 호출하지 않으므로, 이미
+  // 가져온 골격(bs.tables)이 있으면 여기서 새 mode 입력 UI 로 교체해야 한다 — 안 그러면 두 mode 의
+  // 행 구조(평면 vs 접힘)·expand-all 가시성이 엇갈린 채 stale 하게 남는다(적대 패널 H4 적발).
+  if (adminState.metadata.bootstrap.tables.length) _metaBootstrapRenderResult();
 }
 
 // 부트스트랩 컨트롤 바인딩(idempotent).
@@ -3484,17 +3504,9 @@ function _metaBindBootstrap() {
       toggle.textContent = open ? "스키마 골격 가져오기 ▴" : "스키마 골격 가져오기 ▾";
     });
   }
-  const dsSel = document.getElementById("metadataBootstrapDs");
-  if (dsSel && !dsSel.dataset.bound) {
-    dsSel.dataset.bound = "1";
-    dsSel.addEventListener("change", () => {
-      adminState.metadata.bootstrap.datasource = dsSel.value || "";
-      adminState.metadata.bootstrap.schema = "";
-      adminState.metadata.bootstrap.tables = [];
-      _metaBootstrapRenderResult();
-      _metaBootstrapLoadSchemas();
-    });
-  }
+  // scope-single-ds-ui: 부트스트랩 전용 데이터소스 selector 폐기 — 데이터소스는 상단 스코프를
+  // 상속한다(_metaBootstrapSyncToScopeDs). 스코프 변경 핸들러(_metaBindControls)와 서브탭/패널
+  // 가시성 동기화(_metaSyncBootstrapVisibility)가 DS 상속·스키마 로드를 담당한다.
   const schemaSel = document.getElementById("metadataBootstrapSchema");
   if (schemaSel && !schemaSel.dataset.bound) {
     schemaSel.dataset.bound = "1";
@@ -3549,33 +3561,25 @@ function _metaBindBootstrap() {
   }
 }
 
-// DS 드롭다운 — 등록된 datasource key 목록(common 은 실제 스키마가 없으므로 제외).
-function _metaBootstrapPopulateDs() {
-  const sel = document.getElementById("metadataBootstrapDs");
-  if (!sel) return;
-  const cur = adminState.metadata.bootstrap.datasource || "";
-  const keys = [];
-  for (const ds of (adminState.datasources || [])) {
-    const key = String((ds && ds.key) || "").trim().toLowerCase();
-    if (key) keys.push(key);
-  }
-  sel.replaceChildren();
-  const ph = document.createElement("option");
-  ph.value = "";
-  ph.textContent = "데이터소스 선택…";
-  sel.appendChild(ph);
-  for (const k of keys) {
-    const el = document.createElement("option");
-    el.value = k;
-    el.textContent = k;
-    sel.appendChild(el);
-  }
-  sel.value = keys.includes(cur) ? cur : "";
-  adminState.metadata.bootstrap.datasource = sel.value;
+// scope-single-ds-ui: 부트스트랩 데이터소스를 상단 스코프(metadataScopeSelect)에서 상속한다.
+// 별도 DS selector 가 없으므로, 노트의 데이터소스명(읽기 전용 컨텍스트)을 갱신하고, 스코프 DS 가
+// 바뀐 경우에만 이전 골격/스키마 선택을 리셋한 뒤 새 DS 의 스키마 목록을 로드한다.
+// (구체 데이터소스 스코프에서만 호출됨 — 공용/미매칭은 _metaSyncBootstrapVisibility 가 먼저 차단.)
+function _metaBootstrapSyncToScopeDs(scopeDs) {
+  const ds = String(scopeDs || "").trim().toLowerCase();
+  const dsName = document.getElementById("metadataBootstrapDsName");
+  if (dsName) dsName.textContent = ds || "—";
+  if (ds === (adminState.metadata.bootstrap.datasource || "")) return;  // 변동 없음 — 기존 골격 보존.
+  // 스코프 DS 변경 — 이전 DS 의 골격/스키마는 무효(다른 데이터소스 스키마).
+  adminState.metadata.bootstrap.datasource = ds;
+  adminState.metadata.bootstrap.schema = "";
+  adminState.metadata.bootstrap.tables = [];
   const schemaSel = document.getElementById("metadataBootstrapSchema");
-  if (schemaSel && !sel.value) { schemaSel.disabled = true; schemaSel.replaceChildren(); }
+  if (schemaSel) { schemaSel.disabled = true; schemaSel.replaceChildren(); }
   const fetchBtn = document.getElementById("metadataBootstrapFetchBtn");
   if (fetchBtn) fetchBtn.disabled = true;
+  _metaBootstrapRenderResult();
+  _metaBootstrapLoadSchemas();
 }
 
 function _metaBootstrapStatus(text, isError) {
@@ -3609,6 +3613,9 @@ async function _metaBootstrapLoadSchemas() {
   _metaBootstrapStatus("목록 로딩 중…");
   try {
     const data = await apiFetch(`/api/admin/metadata/bootstrap/schemas?datasource=${encodeURIComponent(ds)}`);
+    // scope-single-ds-ui: 스코프가 부트스트랩 DS 를 결정하므로 스코프 빠른 전환 시 본 함수가 연속 발화한다.
+    // await 사이에 DS 가 바뀌었으면 이 응답은 stale — 폐기해 늦게 온 응답이 다른 DS 드롭다운을 덮지 않게 한다.
+    if (adminState.metadata.bootstrap.datasource !== ds) return;
     const schemas = (data && Array.isArray(data.schemas)) ? data.schemas : [];
     // engine/unit_kind 로 라벨 분기(MSSQL=database). 구버전 백엔드 응답(필드 없음)은 'schema' 로 폴백.
     adminState.metadata.bootstrap.unitKind = (data && data.unit_kind) || "schema";

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260630-metadata-bs-inline-align" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260630-metadata-ds-single-ui" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -611,18 +611,19 @@
           <button type="button" class="admin-meta-gview is-active" data-glossary-view="list" role="tab">용어 목록</button>
           <button type="button" class="admin-meta-gview" data-glossary-view="review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
         </div>
-        <!-- 부트스트랩 패널 — 테이블/컬럼 서브뷰에서만 admin.js 가 노출(kb.ingest.manual). DS+스키마 골격을 가져와 설명 빈칸 채워 일괄 저장. -->
+        <!-- 부트스트랩 패널 — 테이블/컬럼 서브뷰 + kb.ingest.manual + 구체 데이터소스 스코프일 때만 admin.js 가 노출.
+             scope-single-ds-ui: 데이터소스는 상단 스코프 선택(metadataScopeSelect)을 그대로 상속한다(부트스트랩
+             전용 DS selector 폐기 — 중복 + 스코프↔소스 불일치 footgun 제거). 공용(common) 스코프는 실제 스키마가
+             없어 골격 불가 → admin.js 가 #metadataBootstrapEmpty empty-state 로 안내한다. -->
         <section class="admin-meta-bootstrap" id="metadataBootstrap" style="display:none" aria-label="스키마 골격 부트스트랩">
-          <header class="admin-meta-bootstrap-head">
+          <!-- 공용(common) 스코프 안내 — 관리 콘솔 list-detail empty-state(.admin-detail-empty) 컨벤션 정합. -->
+          <div class="admin-detail-empty admin-meta-bootstrap-empty" id="metadataBootstrapEmpty" style="display:none">상단에서 특정 데이터소스 스코프를 선택하면 해당 스키마 골격을 가져올 수 있습니다. <strong>공용(common)</strong> 스코프는 실제 스키마가 없어 골격을 가져올 수 없습니다.</div>
+          <header class="admin-meta-bootstrap-head" id="metadataBootstrapHead">
             <button type="button" class="admin-meta-bootstrap-toggle" id="metadataBootstrapToggle" aria-expanded="false">스키마 골격 가져오기 ▾</button>
           </header>
           <div class="admin-meta-bootstrap-body" id="metadataBootstrapBody" style="display:none">
-            <p class="admin-meta-bootstrap-note">데이터소스의 실제 스키마에서 테이블/컬럼 골격을 가져와 설명만 채워 일괄 저장합니다. 골격은 저장 전까지 영속되지 않습니다(미영속). 큰 스키마는 가져오는 데 시간이 걸릴 수 있습니다.</p>
+            <p class="admin-meta-bootstrap-note">현재 스코프 데이터소스(<strong id="metadataBootstrapDsName">—</strong>)의 실제 스키마에서 테이블/컬럼 골격을 가져와 설명만 채워 일괄 저장합니다. 골격은 저장 전까지 영속되지 않습니다(미영속). 큰 스키마는 가져오는 데 시간이 걸릴 수 있습니다.</p>
             <div class="admin-meta-bootstrap-controls">
-              <label class="admin-meta-field">
-                <span class="admin-meta-field-label">데이터소스 *</span>
-                <select id="metadataBootstrapDs" class="admin-meta-input" aria-label="부트스트랩 데이터소스"></select>
-              </label>
               <label class="admin-meta-field">
                 <!-- 라벨은 엔진별로 admin.js 가 갱신: MySQL='스키마', MSSQL='데이터베이스'(server>db>schema 4계층) -->
                 <span class="admin-meta-field-label" id="metadataBootstrapSchemaLabel">스키마 *</span>
@@ -757,7 +758,7 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <script src="/static/admin.js?v=20260630-metadata-bs-inline-align"></script>
+  <script src="/static/admin.js?v=20260630-metadata-ds-single-ui"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260630-rn-0630"></script>
