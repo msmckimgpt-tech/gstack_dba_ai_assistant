@@ -160,6 +160,26 @@ def _vkey(scope: str, fqn: str) -> str:
     return f"{scope or 'common'}:{fqn}"
 
 
+def _rag_effective(ds, object_key, schema_name, table_name):
+    """rag_objects 행 → (효과적 스키마=클러스터 카테고리, 테이블명).
+
+    MSSQL 은 schema_name 이 리터럴 'dbo'(기본 스키마)라 DB 차원이 소실되고 다중 DB 동명 테이블이
+    충돌한다. 정규화된 DB명은 object_key(`<ds>:db.dbo.table` = 3+ 세그먼트)에 있으므로 DB명을 스키마로 쓴다.
+    MySQL 은 object_key 가 `<ds>:db.table`(2 세그먼트)이라 schema_name(=DB)과 동일 → 변화 없음.
+    파싱 불가 시 schema_name/table_name 으로 fallback.
+    """
+    ok = object_key or ""
+    pref = f"{ds or ''}:"
+    if ok.startswith(pref):
+        ok = ok[len(pref):]
+    parts = [p for p in ok.split(".") if p] if ok else []
+    if len(parts) >= 3:
+        return parts[0], parts[-1]          # db.schema.table → (db, table) — 중간 'dbo' 제거
+    if len(parts) == 2:
+        return parts[0], parts[1]           # db.table
+    return (schema_name or ""), table_name
+
+
 # ── 고수준 동기화 (관계형 → 그래프) ───────────────────────────────────────
 def sync_table(cur, scope, schema, table, description=None, source="manual") -> None:
     """Schema·Table 노드 + HAS_TABLE 엣지 MERGE.
@@ -244,17 +264,21 @@ def sync_graph(conn=None, scope_key=None) -> dict:
         # 0) rag_objects (auto-discovered 스키마/테이블) → datasource_key 별 노드 베이스.
         #    각 데이터소스가 그래프를 갖게 하는 핵심(table_descriptions 는 1개 ds 만 커버).
         #    description=None → 큐레이션 설명을 덮어쓰지 않음(아래 1·2 단계가 layering). 먼저 실행.
+        #    **MSSQL 'dbo' 보정**: rag_objects.schema_name 은 MSSQL 에서 리터럴 'dbo'(기본 스키마)라
+        #    DB 차원이 소실되고 다중 DB 동명 테이블(예: 23개 DB 의 dbo.T_ErrorLog)이 한 노드로 충돌한다.
+        #    DB명은 object_key(`<ds>:db.dbo.table`)에 있으므로 그걸 파싱해 DB명을 스키마(클러스터)로 사용.
         try:
             rag_where = "object_type = 'table' AND datasource_key <> '' AND table_name <> ''"
             rag_args = ()
             if scope_key is not None:
                 rag_where += " AND datasource_key = %s"
                 rag_args = (scope_key,)
-            cur.execute(f"SELECT datasource_key, schema_name, table_name FROM rag_objects WHERE {rag_where}",
-                        rag_args)
-            for ds, sch, tbl in cur.fetchall():
+            cur.execute(f"SELECT datasource_key, schema_name, table_name, object_key "
+                        f"FROM rag_objects WHERE {rag_where}", rag_args)
+            for ds, sch, tbl, okey in cur.fetchall():
                 try:
-                    sync_table(cur, ds, sch or "", tbl, description=None, source="insight")
+                    eff_sch, eff_tbl = _rag_effective(ds, okey, sch, tbl)
+                    sync_table(cur, ds, eff_sch, eff_tbl, description=None, source="insight")
                     rep["rag_tables"] += 1
                 except Exception:
                     rep["errors"] += 1

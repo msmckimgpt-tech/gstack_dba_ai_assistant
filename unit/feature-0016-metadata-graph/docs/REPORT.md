@@ -1,12 +1,21 @@
----
-doc_type: REPORT
-feature_id: feature-0016-metadata-graph
-status: active
-edit_policy: rewrite
-source_of_truth: true
----
-
 # Report
+
+## 2026-06-30 · 라벨 비겹침 펼침 + dbo→DB명 클러스터링
+
+**요청1 (라벨 겹침)**: dbo 클러스터 노드 라벨이 겹쳐 판독 불가 → fcose `nodeDimensionsIncludeLabels:true`
+(라벨 박스까지 충돌 회피 = 비겹침 핵심) + `animate:true`(펼침 애니메이션, ~600노드 이하) + nodeSeparation
+80→150 · nodeRepulsion 7k→12k · idealEdgeLength 75→120 · tilingPadding 30. cose 폴백도 동일 적용.
+
+**요청2 (dbo 집계 검토)**: **버그 확인 — 의도된 것 아님.** rag_objects(auto-insight)가 MSSQL 에서
+schema_name 을 리터럴 'dbo'(기본 스키마)로 저장 → (a) DB 차원 소실(전 테이블 dbo 한 박스) (b) **다중 DB
+동명 테이블 충돌**(예: 23개 DB 의 dbo.T_ErrorLog → 1 노드 붕괴, sysdiagrams 16 등). DB명은 object_key
+(`<ds>:db.dbo.table`)에 존재. 큐레이션(table_descriptions)은 이미 DB명(AccountDB 등) 사용 → 경로 불일치.
+**수정**: `_rag_effective()` 가 object_key 를 파싱해 **DB명을 스키마(클러스터)로 사용** + fqn=`db.table`
+(충돌 제거). MySQL(2-seg)은 무변화. 단위 테스트 PASS. 잔여(미세): object_key DB명 소문자(accountdb) vs
+큐레이션(AccountDB) 대소문자 차이로 동일 DB 가 2 클러스터 가능 — 후속 정규화 권장(insight-worker 근본수정 동반).
+
+검증: admin.js node --check · metadata_graph.py py_compile · _rag_effective 단위 PASS. 그래프 rebuild 후 라이브 스크린샷.
+
 
 ## 2026-06-30 · 그래프 뷰 UX 개선 (반응형 · 관련도 사이징 · 카테고리 클러스터링)
 
