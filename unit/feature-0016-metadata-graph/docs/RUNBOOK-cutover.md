@@ -50,9 +50,14 @@ docker-compose.yml 의 **세 pgvector 서비스 중 KB primary·replica** (postg
 - [ ] 회귀: `make test` 전체 + 기존 pgvector/pg_trgm 경로(KB 검색·임베딩) 무회귀.
 - [ ] replica RO 경로(`_pg_connect_ro`)로 그래프 read 동작(투영 API 가 replica 사용).
 
-## 4. 주기 동기화 (cron, cutover 후)
-- [ ] `bin/metadata-graph-sync.sh` 를 주기 실행(예: 15~30분). 관계형 SSOT 변경(설명 편집·FK introspect·
-      대화학습 엣지)을 그래프로 반영. 기존 docsync-cron 패턴 참조.
+## 4. 주기 동기화 (cron, cutover 후) ✅ 설치됨 (2026-06-30)
+- [x] `bin/install-metadata-graph-sync-cron.sh` (feature-0015 backup-cron 동형) — 매 30분
+      `bin/metadata-graph-sync.sh` 실행. 관계형 SSOT 변경(설명 편집·FK introspect·대화학습 엣지)을
+      그래프에 반영. 멱등(MERGE)이라 중복 무해.
+- **⚠️ 반드시 `sudo`(root crontab)로 설치**: 이 호스트는 일반 사용자에게 docker 소켓 접근이 없어
+  (permission denied) user cron 은 docker exec 실패. root crontab 에서만 동작(backup cron 과 동일).
+  설치: `sudo bin/install-metadata-graph-sync-cron.sh` · 제거: `sudo … --remove`.
+- 로그: `../artifacts/metadata-graph/cron.log`. 검증: root 컨텍스트 sync 1회 PASS(153 tables, 0 errors).
 
 ## 5. 롤백 (문제 시)
 관계형 SSOT 는 **무변경**이라 그래프만 되돌리면 됨:
