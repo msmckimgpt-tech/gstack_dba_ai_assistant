@@ -487,3 +487,26 @@ web 은 무중단 롤링 배포(Caddy 뒤 web-a/web-b, 한 번에 하나씩 재�
 ```
 
 annotation 없이 비가산 DDL 이 있으면 `migrate-lint` 가 exit 1 로 배포/머지를 차단한다.
+
+## 13. MySQL online DDL — 무중단 스키마 변경 (feature-0015)
+
+MySQL agent_memory 는 **단일 인스턴스(replica 없음)**다. `ALTER TABLE` 이 silent COPY 알고리즘으로
+떨어지면 해당 테이블 DML 이 락에 걸려 사용자 체감 중단이 발생한다. 8.0 online DDL 을 강제한다.
+
+### 13.1 규칙
+- 신규/변경 MySQL `ALTER TABLE` 은 **`ALGORITHM=INPLACE, LOCK=NONE`** 을 명시한다(끝-컬럼 추가는
+  8.0.29+ 에서 `ALGORITHM=INSTANT` 도 가능하나, 미지원 op 에서 에러나므로 INPLACE 가 안전 기본).
+- `LOCK=NONE` 의 의도는 **online 불가 시 에러로 표면화**(silent COPY-lock 차단). 에러나면 그 변경은
+  online 불가 → `gh-ost`(본 스택 binlog ON 이라 단일 인스턴스에서도 동작) 또는 정비창으로 전환.
+- **online-DDL 을 bare `try/except: pass` 로 감싸지 말 것** — 비-online 에러가 silent skip 되어 필요한
+  스키마가 누락된다. 멱등 가드가 필요하면 ALTER 전에 컬럼/인덱스 존재를 먼저 확인하라.
+- type 변경/rename/drop 등 본질적 비-online 변경은 expand/contract 2-phase(§12) 로 분해한다.
+
+### 13.2 강제
+- `bin/mysql-ddl-lint.sh` (`make mysql-ddl-lint`) 가 origin/main 대비 **신규/변경** MySQL ALTER 중
+  `LOCK=NONE` 누락을 적발한다(diff-mode). 기존 사이트는 grandfathered.
+- 불가피한 예외: 해당 라인에 `# mysql-ddl-lint: allow — <사유> (서명: <name> <YYYY-MM-DD>)`.
+- online 절(`LOCK=NONE`)은 `ALTER TABLE` 과 **같은 소스 라인**에 둘 것 — multi-line 문자열 concat 으로
+  쪼개면 lint 가 첫 라인을 false-positive 로 잡는다(단일 라인 검사).
+- 적용 제외(자동): `agent_runtime.`/`agent_kb` 수식(PG — §12 alembic 게이트 담당), alembic/, 사용자
+  업로드 SQL 실행(sandbox).

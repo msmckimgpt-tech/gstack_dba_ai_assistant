@@ -3,6 +3,8 @@ import hashlib
 import random
 import re
 import time
+import signal as _signal      # feature-0015: SIGTERM graceful (지역변수 `signal` 과 충돌 회피용 alias)
+import threading as _threading
 __all__ = [
     "_bootstrap_schema_insights",
     "_is_insight_worker_heartbeat_fresh",
@@ -2396,15 +2398,36 @@ def _start_embedding_backfill_thread() -> None:
         logging.getLogger("insight").warning("embedding_backfill 스레드 기동 실패(무시): %s", exc)
 
 
+# feature-0015: SIGTERM/SIGINT → graceful. 현재 cycle 을 마저 끝내고(루프 경계에서) 종료.
+# insight 쓰기는 멱등(_upsert_fact autocommit 단일-fact + advisory lock + 다음 스캔 재유도)이라
+# SIGKILL 도 데이터 손상은 없으나, graceful 종료로 (a) 진행 cycle 의 불필요한 중단/LLM 비용 낭비,
+# (b) heartbeat 갱신 누락에 따른 healthcheck 일시 unhealthy 를 줄인다. ask.py 패턴과 동형.
+_INSIGHT_SHUTDOWN = _threading.Event()
+
+
+def _install_insight_signal_handlers() -> None:
+    def _handler(signum, _frame):
+        logging.getLogger("insight").info("insight-worker: signal %s 수신 — graceful shutdown 예약", signum)
+        _INSIGHT_SHUTDOWN.set()
+    try:
+        _signal.signal(_signal.SIGTERM, _handler)
+        _signal.signal(_signal.SIGINT, _handler)
+    except Exception:
+        # 메인 스레드가 아니면(테스트 등) 등록 불가 — 무시.
+        pass
+
+
 def run_insight_worker_loop() -> None:
     if not AGENT_INSIGHT_WORKER_ENABLED:
         console.print("insight worker disabled: AGENT_INSIGHT_WORKER_ENABLED=0")
         return
+    _install_insight_signal_handlers()
     tick_sec = max(5, int(AGENT_INSIGHT_WORKER_TICK_SEC))
     degraded_backoff_sec = max(tick_sec, int(AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC))
     jitter_sec = max(0, int(AGENT_INSIGHT_WORKER_JITTER_SEC))
     if jitter_sec > 0:
-        time.sleep(random.uniform(0, float(jitter_sec)))
+        # 인터럽트 가능한 jitter 대기(부팅 직후 SIGTERM 도 즉시 반응).
+        _INSIGHT_SHUTDOWN.wait(random.uniform(0, float(jitter_sec)))
     # conn-health-monitor: insight 스캔 연결도 health 게이트 수혜 — 불안정 datasource 를
     # 백그라운드로 미리 판정(daemon thread, 프로세스 종료 시 정리).
     try:
@@ -2415,7 +2438,7 @@ def run_insight_worker_loop() -> None:
         logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)
     # TASK-0307: embedding 백필 데몬 스레드 기동(본 tick 루프와 분리 — 블로킹 방지).
     _start_embedding_backfill_thread()
-    while True:
+    while not _INSIGHT_SHUTDOWN.is_set():
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()
         # B′ (TASK-20260617T082131): degraded(PG 부재) 아닐 때만 account_insight 추출 pass.
@@ -2428,7 +2451,9 @@ def run_insight_worker_loop() -> None:
         # PG read 정본 부재(degraded_readback) / 연결 오류(error) 시엔 짧은 tick 대신
         # 길게 backoff — MySQL fallback 으로 떨어져 무의미한 재시도(livelock 동력)를
         # 반복하지 않고 PG 복구를 기다린다.
+        # 인터럽트 가능한 tick 대기 — SIGTERM 시 다음 cycle 진입 전 즉시 깨어 루프 종료.
         if status in ("degraded_readback", "error"):
-            time.sleep(degraded_backoff_sec)
+            _INSIGHT_SHUTDOWN.wait(degraded_backoff_sec)
         else:
-            time.sleep(tick_sec)
+            _INSIGHT_SHUTDOWN.wait(tick_sec)
+    logging.getLogger("insight").info("insight-worker: graceful shutdown 완료(루프 종료).")
