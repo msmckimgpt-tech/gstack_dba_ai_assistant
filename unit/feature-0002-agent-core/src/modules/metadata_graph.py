@@ -161,17 +161,21 @@ def _vkey(scope: str, fqn: str) -> str:
 
 
 # ── 고수준 동기화 (관계형 → 그래프) ───────────────────────────────────────
-def sync_table(cur, scope, schema, table, description="", source="manual") -> None:
-    """Schema·Table 노드 + HAS_TABLE 엣지 MERGE."""
+def sync_table(cur, scope, schema, table, description=None, source="manual") -> None:
+    """Schema·Table 노드 + HAS_TABLE 엣지 MERGE.
+
+    description=None 이면 description 속성을 **건드리지 않는다**(rag_objects 노드 투영이 큐레이션
+    설명을 덮어쓰지 않도록). 빈 문자열("")은 명시적으로 빈 설명을 set."""
     fqn = f"{schema}.{table}" if schema else table
     skey = _vkey(scope, schema or "(default)")
     tkey = _vkey(scope, fqn)
     _merge_vertex(cur, "Schema", skey,
                   {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope})
-    _merge_vertex(cur, "Table", tkey,
-                  {"name": table, "fqn": fqn, "scope_key": scope,
-                   "schema_name": schema or "", "table_name": table,
-                   "description": description, "source": source})
+    tprops = {"name": table, "fqn": fqn, "scope_key": scope,
+              "schema_name": schema or "", "table_name": table, "source": source}
+    if description is not None:
+        tprops["description"] = description
+    _merge_vertex(cur, "Table", tkey, tprops)
     _merge_edge(cur, "Schema", skey, "HAS_TABLE", "Table", tkey)
 
 
@@ -226,7 +230,7 @@ def sync_graph(conn=None, scope_key=None) -> dict:
     멱등(MERGE) — 반복 호출 안전. 예외는 삼키고 부분 카운트 반환(비차단).
     scope_key=None 이면 모든 scope 동기화.
     """
-    rep = {"tables": 0, "columns": 0, "relationships": 0, "glossary": 0,
+    rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0, "glossary": 0,
            "glossary_relations": 0, "errors": 0}
     c, owned = _rw_conn(conn)
     if c is None:
@@ -236,6 +240,26 @@ def sync_graph(conn=None, scope_key=None) -> dict:
         _set_age_path(cur)
         scope_filter = "" if scope_key is None else "WHERE scope_key = %s"
         sf_args = () if scope_key is None else (scope_key,)
+
+        # 0) rag_objects (auto-discovered 스키마/테이블) → datasource_key 별 노드 베이스.
+        #    각 데이터소스가 그래프를 갖게 하는 핵심(table_descriptions 는 1개 ds 만 커버).
+        #    description=None → 큐레이션 설명을 덮어쓰지 않음(아래 1·2 단계가 layering). 먼저 실행.
+        try:
+            rag_where = "object_type = 'table' AND datasource_key <> '' AND table_name <> ''"
+            rag_args = ()
+            if scope_key is not None:
+                rag_where += " AND datasource_key = %s"
+                rag_args = (scope_key,)
+            cur.execute(f"SELECT datasource_key, schema_name, table_name FROM rag_objects WHERE {rag_where}",
+                        rag_args)
+            for ds, sch, tbl in cur.fetchall():
+                try:
+                    sync_table(cur, ds, sch or "", tbl, description=None, source="insight")
+                    rep["rag_tables"] += 1
+                except Exception:
+                    rep["errors"] += 1
+        except Exception:
+            pass  # rag_objects 부재(구버전)·조회 실패 — graceful(다른 단계 계속)
 
         # 1) table_descriptions
         cur.execute(f"SELECT scope_key, schema_name, table_name, description, source "
@@ -312,8 +336,8 @@ def _node_dict(row):
             "fqn": _unwrap(row[3]), "description": _unwrap(row[4]), "source": _unwrap(row[5])}
 
 
-def search_nodes(query: str, limit: int = 50, conn=None) -> list:
-    """이름/FQN 부분일치 노드 검색(대소문자 무관). 8K 규모 보호 cap."""
+def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=None) -> list:
+    """이름/FQN 부분일치 노드 검색(대소문자 무관). scope 지정 시 해당 datasource 노드만. 8K 규모 보호 cap."""
     out = []
     if not query:
         return out
@@ -325,8 +349,9 @@ def search_nodes(query: str, limit: int = 50, conn=None) -> list:
         cur = c.cursor()
         _set_age_path(cur)
         ql = _cq(query.lower())
+        scope_clause = f" AND n.scope_key = {_cq(scope)}" if scope else ""
         rows = _cypher(cur,
-            f"MATCH (n) WHERE toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql} "
+            f"MATCH (n) WHERE (toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql}){scope_clause} "
             f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source LIMIT {limit}", 6)
         out = [_node_dict(r) for r in rows]
         cur.close()
@@ -339,6 +364,62 @@ def search_nodes(query: str, limit: int = 50, conn=None) -> list:
             except Exception:
                 pass
     return out
+
+
+def scope_roots(scope: str, limit: int = 200, conn=None) -> dict:
+    """데이터소스(scope) 진입 그래프 — Schema -[:HAS_TABLE]-> Table 서브그래프(cap 적용).
+
+    그래프뷰에서 datasource 선택 시 검색 없이 '이 데이터소스의 그래프'를 즉시 보여준다.
+    cap 초과 datasource 는 부분 표시(나머지는 검색·이웃확장). 빈 datasource 는 {nodes:[],edges:[]}.
+    """
+    result = {"nodes": [], "edges": []}
+    if not scope:
+        return result
+    limit = min(int(limit or 200), _NEIGHBOR_NODE_CAP)
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return result
+    try:
+        cur = c.cursor()
+        _set_age_path(cur)
+        sc = _cq(scope)
+        rows = _cypher(cur,
+            f"MATCH (s:Schema)-[:HAS_TABLE]->(t:Table) WHERE s.scope_key = {sc} "
+            f"RETURN s.key, s.name, s.fqn, t.key, t.name, t.fqn, t.description, t.source "
+            f"LIMIT {limit}", 8)
+        nodes = {}
+        for r in rows:
+            skey = _unwrap(r[0]); tkey = _unwrap(r[3])
+            if skey and skey not in nodes:
+                nodes[skey] = {"label": "Schema", "key": skey, "name": _unwrap(r[1]),
+                               "fqn": _unwrap(r[2]), "description": None, "source": None}
+            if tkey and tkey not in nodes:
+                nodes[tkey] = {"label": "Table", "key": tkey, "name": _unwrap(r[4]),
+                               "fqn": _unwrap(r[5]), "description": _unwrap(r[6]), "source": _unwrap(r[7])}
+            if skey and tkey:
+                result["edges"].append({"source": skey, "target": tkey, "type": "HAS_TABLE",
+                                        "cardinality": None, "edge_source": None})
+        # 테이블이 없는 datasource 도 Schema 만이라도 보여줌
+        if not nodes:
+            srows = _cypher(cur,
+                f"MATCH (s:Schema) WHERE s.scope_key = {sc} "
+                f"RETURN s.key, s.name, s.fqn LIMIT {limit}", 3)
+            for r in srows:
+                skey = _unwrap(r[0])
+                if skey:
+                    nodes[skey] = {"label": "Schema", "key": skey, "name": _unwrap(r[1]),
+                                   "fqn": _unwrap(r[2]), "description": None, "source": None}
+        result["nodes"] = list(nodes.values())
+        cur.close()
+    except Exception as exc:
+        _log.debug("scope_roots_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return result
 
 
 def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:

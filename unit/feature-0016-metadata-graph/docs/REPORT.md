@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Report
 
+## 2026-06-30 · per-datasource 그래프 (rag_objects 투영 + scope 필터)
+
+**배경**: cutover 후 "각 데이터소스 그래프 출현" 검증 중, table_descriptions(큐레이션)는 **단 1개
+datasource**(mssql-06656002eda6, 153)만 커버해 나머지 19개 데이터소스 그래프가 비어있음을 발견.
+반면 `rag_objects`(auto-insight)는 `datasource_key` 로 **~21개 datasource·8,122 테이블** 커버.
+
+**구현** (metadata_graph.py + app.py + admin.js):
+- `sync_graph` step0: **rag_objects 투영**(datasource_key 별 Schema/Table 노드). description=None 으로
+  큐레이션 설명 비파괴(table_descriptions 가 같은 key 에 설명 layering). rag_objects 부재 graceful.
+- `search_nodes(scope=)` + 신규 `scope_roots(scope)` (datasource 진입 그래프 = Schema→Table 서브그래프, cap).
+- API `/api/admin/metadata/graph?scope=` (검색 scope 필터 + scope_roots 모드).
+- admin.js 그래프뷰: datasource 선택 시 그 datasource 의 그래프(roots) 즉시 로드 + 검색 scope 격리.
+- sync_table description=None 시 미설정(큐레이션 보존). 캐시버스터 bump.
+
+**검증**(throwaway, test_per_datasource_graph.py): per-datasource 투영·scope 격리(dsA/dsB 키 분리)·
+HAS_TABLE 엣지·검색 scope·**큐레이션 설명 보존**(rag 투영 무덮어쓰기)·멱등 재sync PASS.
+기존 2 모듈 테스트 회귀 0(rag_objects graceful).
+
 ## 2026-06-30 · Phase 5 운영 cutover 완료 (사용자 승인 후 실행·검증)
 
 **상태: AGE cutover 라이브 완료.** 사용자 명시 승인("남은 단계 진행 및 검증 완수") 하에 RUNBOOK-cutover.md 따라 실행.
