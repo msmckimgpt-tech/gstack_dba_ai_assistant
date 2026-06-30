@@ -1,38 +1,40 @@
-# docker-compose.override.yml — DEV / EXTERNAL-EXPOSED 가동 옵션 template
+# docker-compose.override.yml — DEV 전용 가동 옵션 template (feature-0014 갱신)
 #
 # 사용:
 #   cp docker-compose.override.yml.example docker-compose.override.yml
-#   docker compose up -d web
+#   make web        # 또는 docker compose up -d web-a web-b caddy
 #
-# docker compose 가 자동으로 docker-compose.yml + docker-compose.override.yml 을
-# merge 한다. 추가 옵션 없이 `make web` 또는 `docker compose up -d web` 으로
-# override 가 적용된다. production / staging 배포 시 이 파일을 두지 않거나
-# `-f docker-compose.yml` 만 명시하면 override 무시.
+# docker compose 가 자동으로 docker-compose.yml + docker-compose.override.yml 을 merge 한다.
 #
-# 두 가지 사용 시나리오:
+# === feature-0014 무중단 배포 이후 변경점 ======================================
+#  - web 서비스는 web-a / web-b 두 replica 로 분할되었다(Caddy LB 뒤 무중단 롤링).
+#  - web 의 :18080 호스트 직접 문은 폐기되었다 — 모든 외부/LAN 접속은 Caddy :443 단일 진입.
+#  - 런타임 secret/datasource 설정(AGENT_DATASOURCE_KEK_V1 · AGENT_DATASOURCE_HOST_ALLOWLIST)은
+#    `.env.secret`(gitignored) 에 있고 agent-common env_file 로 모든 replica 에 주입된다.
+#    → 이전 override 가 하던 KEK/allowlist 하드코딩은 불필요(중복). base 파일셋만으로 완전.
+#  - web 의 TLS 서빙은 base entrypoint 가 `.env` 의 ENABLE_WEB_TLS / WEB_TLS_CERT_FILE 로 처리.
+#    → 이전 override 의 self-TLS entrypoint 하드코딩도 보통 불필요.
 #
-# (A) Local dev — gstack browse / curl / playwright 의 self-signed cert
-#     번거로움 회피용. 평문 HTTP 8000 으로 작동. 외부 노출 금지.
-#     → 아래 `services.web.entrypoint` 의 "Variant A" 를 사용.
+# 따라서 대부분의 경우 **override 파일은 두지 않아도 된다**(base 자급). 아래는 dev 에서만
+# 필요한 선택적 옵션들이다.
 #
-# (B) 외부-노출 single-instance (TASK-0104) — 외부 IP 직접 접근 + WebCrypto
-#     SubtleCrypto secure-context 요건 충족. web 컨테이너 자체가 TLS 종단.
-#     `.env` 에 `ENABLE_WEB_TLS=1`, `WEB_TLS_CERT_FILE` / `WEB_TLS_KEY_FILE`
-#     설정 + `../artifacts/certs/<host>/{fullchain,privkey}.pem` 배치 필요.
-#     → 아래 `services.web.entrypoint` 의 "Variant B" 를 사용.
-#
-# (C) Production (Caddy 동반): Caddy (`80/443`) 가 TLS 종단 → web 내부 HTTP.
-#     이 경우 본 override 자체를 두지 않거나 `-f docker-compose.yml` 만 사용.
+# === Production ================================================================
+#  - 라이브 무중단 재배포: `make deploy-web` (= sudo -E bin/deploy-web.sh).
+#    이 스크립트는 `-f docker-compose.yml` ONLY(override 미머지)로 동작하며, web-a/web-b 에
+#    호스트 포트가 없어야 한다(있으면 preflight 가 차단). 따라서 production 호스트에는
+#    이 override 를 두지 않는 것을 권장한다.
 
 services:
-  web:
-    # docker-compose.yml 의 entrypoint 는 `if [ "$ENABLE_WEB_TLS" = '1' ]; ...`
-    # 분기를 가지지만, `$ENABLE_WEB_TLS` 가 compose 변수 보간 단계에서 `.env`
-    # 값으로 이미 치환되어 단순 environment override 로는 분기 제어가 어렵다.
-    # 따라서 entrypoint 자체를 명시적으로 plain HTTP / HTTPS 둘 중 하나로 지정.
-
-    # Variant A — local dev (plain HTTP):
+  # (선택) Local dev 평문 HTTP — gstack browse / curl / playwright 의 self-signed 번거로움 회피.
+  # 외부 노출 금지. 두 replica 모두 평문으로 띄우려면 web-a, web-b 둘 다 지정.
+  web-a:
     # entrypoint: ["/bin/sh", "-c", "exec uvicorn web.app:app --host 0.0.0.0 --port 8000"]
-
-    # Variant B — 외부-노출 single-instance (HTTPS, TASK-0104 default):
-    entrypoint: ["/bin/sh", "-c", "exec uvicorn web.app:app --host 0.0.0.0 --port 8000 --ssl-keyfile /certs/mysql-ai.company.local/privkey.pem --ssl-certfile /certs/mysql-ai.company.local/fullchain.pem"]
+    #
+    # (선택) dev 에서 한 replica 에만 직접 디버그 포트를 붙이고 싶을 때(외부 노출 아님, 127.0.0.1 바인딩):
+    #   ports:
+    #     - "127.0.0.1:18080:8000"
+    # 주의: production deploy-web.sh 는 -f docker-compose.yml ONLY 라 이 포트를 머지하지 않는다.
+    # 단, `make web`(dev)은 override 를 머지하므로 web-a 에만 포트를 주고 web-b 에는 주지 말 것.
+    {}
+  # web-b:
+  #   entrypoint: ["/bin/sh", "-c", "exec uvicorn web.app:app --host 0.0.0.0 --port 8000"]

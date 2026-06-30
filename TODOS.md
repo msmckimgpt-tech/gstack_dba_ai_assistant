@@ -12,6 +12,11 @@
 
 ## Active
 
+- [ ] **P2** feature-0006 AC-0553/AC-0556 (`:18080` web 직접 접속) deprecated 표기 (2026-06-30, feature-0014 동반)
+  - **Why**: feature-0014 무중단 배포에서 `:18080` web 직접 문을 폐기(Caddy :443 단일화)했다. feature-0006 의 AC-0553/AC-0556 은 `https://<host>:18080` 체인검증·HTTP 200 을 *live* 계약으로 단언하고 있어, 폐기와 모순(거짓 통과 AC) 상태다.
+  - **Where**: `unit/feature-0006-lan-proxy-access/docs/{FUNCTION,TASK,TEST}.md` (AC-0553/AC-0556), cert SAN(`bin/tls-internal-ca.sh` 의 IP:112.185.196.20 — 유지 여부 판단), `.env` `WEB_ALLOWED_ORIGINS/HOSTS` 의 `:18080` origin 정리(비파괴).
+  - **Next step**: `/_dqa:doc_sync` 또는 별 cycle 로 AC-0553/0556 을 `superseded by feature-0014` 로 표기 + 테스터 안내(Caddy 진입) 갱신. (폐기 자체는 사용자 결정 — 본 항목은 문서 정합 닫기.)
+
 - [~] **P1** 구현됐으나 진입점 없는 기능 전수조사 — 진입점 구성 (2026-06-08, TASK-0158 진행 중)
   - **Why**: TASK-0157(중단 버튼 복구)과 동일 클래스 — 백엔드·로직·RBAC 는 완성됐으나 사용자가 도달할 UI 진입점이 없는 기능을 3축(엔드포인트 77 ↔ 호출자 / UI 요소 ↔ JS 배선 / RBAC 권한 48 ↔ 진입경로) 병렬 감사로 전수 발굴. 발급은 되는데 보완 동작 진입점이 없는 lifecycle 갭 다수.
   - **Where**: feature-0003 `static/{index.html,app.js,admin.html,admin.js,styles.css}` + `app.py`. 디자인은 design.md 9섹션 형식 적용 → `unit/feature-0003-agent-web-ui/docs/DESIGN-entry-points.md`.

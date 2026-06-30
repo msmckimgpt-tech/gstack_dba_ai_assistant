@@ -58,6 +58,7 @@ sources:
 | feature-0011-shared-extraction | active (리팩터) | 공통 코드 `shared/` 점진 추출 — model_catalog·config·db 모듈 alias (P5a, 회귀 0) | [[feature-0011-shared-extraction]] | `unit/feature-0011-shared-extraction/docs/FUNCTION.md` |
 | feature-0012-web-router-modularization | active (토대) | feature-0003 `app.py` 도메인별 `APIRouter` 점진 분할 토대 — route-parity 안전망 + 의존성 audit (P5b, behavior-neutral) | [[feature-0012-web-router-modularization]] | `unit/feature-0012-web-router-modularization/docs/FUNCTION.md` |
 | feature-0013-relationship-diagrams | active | flow/관계 질문에 mermaid 다이어그램 답변 + 관계 저장소(FK introspection·대화 JOIN 학습) | [[feature-0013-relationship-diagrams]] | `unit/feature-0013-relationship-diagrams/docs/FUNCTION.md` |
+| feature-0014-zero-downtime-deploy | review | web 무중단 롤링 배포 — Caddy LB(web-a/web-b) + `bin/deploy-web.sh`(flock·coalesce·TLS preflight·migrate-lint·one-at-a-time+SSE pre-drain·soak 자동롤백) + `/livez`·`/readyz` + :18080 폐기 | [[feature-0014-zero-downtime-deploy]] | `unit/feature-0014-zero-downtime-deploy/docs/FUNCTION.md` |
 
 ## 3. Archived / completed
 
