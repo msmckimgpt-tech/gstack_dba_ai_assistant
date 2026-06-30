@@ -16069,87 +16069,75 @@ def join_conversation_via_share(token: str, request: Request, account=Depends(ge
 
 
 @app.post("/api/public/share/{token}/fork")
-def public_share_fork(token: str, request: Request) -> JSONResponse:
+def public_share_fork(token: str, request: Request, account=Depends(require_permission("conversation.create", message="요청을 수행할 수 없습니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """공유 링크 viewer 가 로그인 상태일 때 본인 계정으로 대화 fork.
 
     권한: `conversation.create`. share-token 자체가 source 접근의 grant 역할이므로
     `_account_can_access_conversation` 우회 (helper 직접 호출).
     """
+    share = _share_load_active(conn, token)
+    if not share:
+        return _json_error("공유 링크를 찾을 수 없습니다.", 404)
+    if share.get("RevokedAt") is not None:
+        return _json_error("이 공유 링크는 취소되었습니다.", 410)
+    # TASK-20260619T012028-share-link-expiry: 만료된 링크는 fork 도 차단 (DB NOW() 기준).
+    if _share_row_expired(conn, int(share.get("Id") or 0)):
+        return _json_error("이 공유 링크는 만료되었습니다.", 410)
+    conversation_id = str(share.get("ConversationId") or "")
+    # feature-0009 member-kick-ban: 원본 대화에서 차단(ban)된 account 는 fork 로도 콘텐츠를
+    # 회수할 수 없다 — ban 의 목적("추가 접근 영구 차단")을 share-token fork 우회로부터 보호한다.
+    # (적대 리뷰 BLOCKER: fork 는 멤버십/join 을 거치지 않고 콘텐츠를 복제하므로 별도 게이트 필요.)
+    # 보안 게이트라 fail-closed — 차단 여부 불명(PG 오류) 시 거부(가용성보다 ban 무결성 우선).
+    _fk_actor_id = int(account["id"])
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "conversation.create"):
-            return _json_error("요청을 수행할 수 없습니다.", 403)
-        share = _share_load_active(conn, token)
-        if not share:
-            return _json_error("공유 링크를 찾을 수 없습니다.", 404)
-        if share.get("RevokedAt") is not None:
-            return _json_error("이 공유 링크는 취소되었습니다.", 410)
-        # TASK-20260619T012028-share-link-expiry: 만료된 링크는 fork 도 차단 (DB NOW() 기준).
-        if _share_row_expired(conn, int(share.get("Id") or 0)):
-            return _json_error("이 공유 링크는 만료되었습니다.", 410)
-        conversation_id = str(share.get("ConversationId") or "")
-        # feature-0009 member-kick-ban: 원본 대화에서 차단(ban)된 account 는 fork 로도 콘텐츠를
-        # 회수할 수 없다 — ban 의 목적("추가 접근 영구 차단")을 share-token fork 우회로부터 보호한다.
-        # (적대 리뷰 BLOCKER: fork 는 멤버십/join 을 거치지 않고 콘텐츠를 복제하므로 별도 게이트 필요.)
-        # 보안 게이트라 fail-closed — 차단 여부 불명(PG 오류) 시 거부(가용성보다 ban 무결성 우선).
-        _fk_actor_id = int(account["id"])
+        from shared.db import _pg_connect as _pg_connect_fk
+        from modules import group_members as _gm_fk
+        _pg_fk = _pg_connect_fk()
         try:
-            from shared.db import _pg_connect as _pg_connect_fk
-            from modules import group_members as _gm_fk
-            _pg_fk = _pg_connect_fk()
-            try:
-                _fk_banned = _gm_fk.is_banned(_pg_fk, conversation_id, _fk_actor_id)
-            finally:
-                _pg_fk.close()
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "public_share_fork: is_banned check failed — fail-closed", exc_info=True
-            )
-            _fk_banned = True
-        if _fk_banned:
-            _audit_user_action(
-                conn,
-                request,
-                account,
-                action="conversation.member.fork_blocked",
-                resource_type="conversation",
-                resource_id=str(conversation_id),
-                request_ctx={"conversation_id": conversation_id, "via": "share_fork", "reason": "banned"},
-            )
-            return _json_error("이 대화에서 차단되어 복제(fork)할 수 없습니다.", 403)
-        anchor_id = share.get("AnchorMessageId")
-        anchor_id_int = int(anchor_id) if anchor_id is not None else None
-        payload, err = _fork_conversation_impl(conn, account, conversation_id, anchor_id_int)
-        if err:
-            return err
-        # TASK-0073 Phase A6: share fork audit (TASK-0058 fork 는 이미 logged-in 필수).
-        new_cid = payload.get("conversation_id") if isinstance(payload, dict) else None
+            _fk_banned = _gm_fk.is_banned(_pg_fk, conversation_id, _fk_actor_id)
+        finally:
+            _pg_fk.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "public_share_fork: is_banned check failed — fail-closed", exc_info=True
+        )
+        _fk_banned = True
+    if _fk_banned:
         _audit_user_action(
             conn,
             request,
             account,
-            action="share.fork",
+            action="conversation.member.fork_blocked",
             resource_type="conversation",
-            resource_id=str(new_cid) if new_cid else None,
-            request_ctx={
-                "source_share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
-                "source_token_prefix": str(token)[:8],
-                "new_conversation_id": str(new_cid) if new_cid else None,
-                # REV-20260609-0004 #5: 교차계정 fork 가 원본 첨부/문맥을 forker 계정으로
-                # 복제하는 보안민감 이벤트의 forensics — 건수만 기록(파일명/바이트 비노출, D12).
-                "attachments_copied": int(payload.get("attachments_copied") or 0) if isinstance(payload, dict) else 0,
-                "core_messages_copied": int(payload.get("core_copied") or 0) if isinstance(payload, dict) else 0,
-            },
+            resource_id=str(conversation_id),
+            request_ctx={"conversation_id": conversation_id, "via": "share_fork", "reason": "banned"},
         )
-        return JSONResponse(payload)
-    finally:
-        conn.close()
+        return _json_error("이 대화에서 차단되어 복제(fork)할 수 없습니다.", 403)
+    anchor_id = share.get("AnchorMessageId")
+    anchor_id_int = int(anchor_id) if anchor_id is not None else None
+    payload, err = _fork_conversation_impl(conn, account, conversation_id, anchor_id_int)
+    if err:
+        return err
+    # TASK-0073 Phase A6: share fork audit (TASK-0058 fork 는 이미 logged-in 필수).
+    new_cid = payload.get("conversation_id") if isinstance(payload, dict) else None
+    _audit_user_action(
+        conn,
+        request,
+        account,
+        action="share.fork",
+        resource_type="conversation",
+        resource_id=str(new_cid) if new_cid else None,
+        request_ctx={
+            "source_share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+            "source_token_prefix": str(token)[:8],
+            "new_conversation_id": str(new_cid) if new_cid else None,
+            # REV-20260609-0004 #5: 교차계정 fork 가 원본 첨부/문맥을 forker 계정으로
+            # 복제하는 보안민감 이벤트의 forensics — 건수만 기록(파일명/바이트 비노출, D12).
+            "attachments_copied": int(payload.get("attachments_copied") or 0) if isinstance(payload, dict) else 0,
+            "core_messages_copied": int(payload.get("core_copied") or 0) if isinstance(payload, dict) else 0,
+        },
+    )
+    return JSONResponse(payload)
 
 
 # TASK-0161: POST /api/list_conversations 제거 — 클라이언트 호출자 0 의 레거시 중복
@@ -16317,82 +16305,58 @@ def serve_avatar(account_id: int, request: Request, account=Depends(get_current_
 
 
 @app.put("/api/admin/products/{product_id}/icon")
-async def upload_product_icon(product_id: int, request: Request, file: UploadFile = File(...)) -> JSONResponse:
+async def upload_product_icon(product_id: int, request: Request, file: UploadFile = File(...), account=Depends(require_permission("product.manage", message="제품 관리 권한이 필요합니다 (product.manage).")), conn=Depends(get_conn)) -> JSONResponse:
     """제품 아이콘 업로드(product.manage). 이전 아이콘 교체."""
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "product.manage"):
-            return _json_error("제품 관리 권한이 필요합니다 (product.manage).", 403)
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
-            row = cur.fetchone()
-        finally:
-            cur.close()
-        if row is None:
-            return _json_error("제품을 찾을 수 없습니다.", 404)
-        old_key = row[0]
-        body = await file.read()
-        object_key, info = _store_image_upload(
-            body, prefix="product-icons", owner_id=int(product_id), max_bytes=_ICON_MAX_BYTES,
-            mime_hint=(file.content_type or ""),
-        )
-        if not object_key:
-            return _json_error(info, 400)
-        cur = conn.cursor()
-        try:
-            cur.execute("UPDATE WebProducts SET IconObjectKey = %s WHERE Id = %s", (object_key, int(product_id)))
-            conn.commit()
-        finally:
-            cur.close()
-        if old_key and old_key != object_key:
-            try:
-                from web.modules import storage_minio
-                storage_minio.delete_object(str(old_key))
-            except Exception:
-                pass
-        return JSONResponse({"ok": True, "icon_url": _product_icon_url_for(int(product_id), object_key)})
+        cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+        row = cur.fetchone()
     finally:
-        conn.close()
+        cur.close()
+    if row is None:
+        return _json_error("제품을 찾을 수 없습니다.", 404)
+    old_key = row[0]
+    body = await file.read()
+    object_key, info = _store_image_upload(
+        body, prefix="product-icons", owner_id=int(product_id), max_bytes=_ICON_MAX_BYTES,
+        mime_hint=(file.content_type or ""),
+    )
+    if not object_key:
+        return _json_error(info, 400)
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE WebProducts SET IconObjectKey = %s WHERE Id = %s", (object_key, int(product_id)))
+        conn.commit()
+    finally:
+        cur.close()
+    if old_key and old_key != object_key:
+        try:
+            from web.modules import storage_minio
+            storage_minio.delete_object(str(old_key))
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "icon_url": _product_icon_url_for(int(product_id), object_key)})
 
 
 @app.delete("/api/admin/products/{product_id}/icon")
-def delete_product_icon(product_id: int, request: Request) -> JSONResponse:
+def delete_product_icon(product_id: int, request: Request, account=Depends(require_permission("product.manage", message="제품 관리 권한이 필요합니다 (product.manage).")), conn=Depends(get_conn)) -> JSONResponse:
     """제품 아이콘 제거(product.manage) → 기본/Identicon 폴백."""
+    cur = conn.cursor()
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "product.manage"):
-            return _json_error("제품 관리 권한이 필요합니다 (product.manage).", 403)
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
-            row = cur.fetchone()
-            old_key = row[0] if row else None
-            cur.execute("UPDATE WebProducts SET IconObjectKey = NULL WHERE Id = %s", (int(product_id),))
-            conn.commit()
-        finally:
-            cur.close()
-        if old_key:
-            try:
-                from web.modules import storage_minio
-                storage_minio.delete_object(str(old_key))
-            except Exception:
-                pass
-        return JSONResponse({"ok": True, "icon_url": None})
+        cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+        row = cur.fetchone()
+        old_key = row[0] if row else None
+        cur.execute("UPDATE WebProducts SET IconObjectKey = NULL WHERE Id = %s", (int(product_id),))
+        conn.commit()
     finally:
-        conn.close()
+        cur.close()
+    if old_key:
+        try:
+            from web.modules import storage_minio
+            storage_minio.delete_object(str(old_key))
+        except Exception:
+            pass
+    return JSONResponse({"ok": True, "icon_url": None})
 
 
 @app.get("/api/products/{product_id}/icon")
@@ -28742,7 +28706,7 @@ def list_audit_resources(request: Request, account=Depends(get_current_account),
 
 
 @app.get("/api/admin/audits/verify")
-def verify_audit_chain(request: Request) -> JSONResponse:
+def verify_audit_chain(request: Request, actor=Depends(require_permission("audit.read.any", message="감사 무결성 검증 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-20260619T023922-audit-tamper-evidence (보안 ③, Critical §12.3): 감사 로그 해시 체인 무결성 검증.
 
     봉인 catch-up 후 Id 순으로 walk 하며 (1) 각 행 PrevHash == 직전 봉인행 EventHash(링크),
@@ -28750,75 +28714,63 @@ def verify_audit_chain(request: Request) -> JSONResponse:
     최신 checkpoint 로 재앵커(잔존 최古행 PrevHash == checkpoint). 권한: `audit.read.any`(admin/dba).
     walk 는 keyset 페이지네이션으로 메모리 bound.
     """
+    # 검증 전 봉인 catch-up(미봉인 행 포함). 실패해도 검증은 진행(미봉인=break 로 보고).
     try:
-        conn = _connect_memory()
+        sealed_now = _seal_audit_chain_drain(conn)
     except Exception:
-        return _json_error("db connection failed", 500)
+        sealed_now = 0
+    cur = conn.cursor(dictionary=True)
     try:
-        actor, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(actor, "audit.read.any"):
-            return _json_error("감사 무결성 검증 권한이 필요합니다.", 403)
-        # 검증 전 봉인 catch-up(미봉인 행 포함). 실패해도 검증은 진행(미봉인=break 로 보고).
-        try:
-            sealed_now = _seal_audit_chain_drain(conn)
-        except Exception:
-            sealed_now = 0
-        cur = conn.cursor(dictionary=True)
-        try:
-            # purge 경계 genesis = 최신 checkpoint hash(없으면 "").
+        # purge 경계 genesis = 최신 checkpoint hash(없으면 "").
+        cur.execute(
+            "SELECT ThroughEventId, CheckpointHash FROM WebAuditChainCheckpoint ORDER BY Id DESC LIMIT 1"
+        )
+        cp = cur.fetchone()
+        prev_event_hash = str(cp["CheckpointHash"]) if cp and cp.get("CheckpointHash") else ""
+        checkpoint_through = int(cp["ThroughEventId"]) if cp and cp.get("ThroughEventId") is not None else None
+        # 첫 잔존행 PrevHash 가 checkpoint(또는 genesis "")와 일치하는지 검사용.
+        last_id = 0
+        verified = 0
+        first_break: dict | None = None
+        while first_break is None:
             cur.execute(
-                "SELECT ThroughEventId, CheckpointHash FROM WebAuditChainCheckpoint ORDER BY Id DESC LIMIT 1"
+                f"SELECT {_AUDIT_CHAIN_SELECT}, EventHash, PrevHash FROM WebAuditEvents "
+                "WHERE Id > %s ORDER BY Id ASC LIMIT 1000",
+                (last_id,),
             )
-            cp = cur.fetchone()
-            prev_event_hash = str(cp["CheckpointHash"]) if cp and cp.get("CheckpointHash") else ""
-            checkpoint_through = int(cp["ThroughEventId"]) if cp and cp.get("ThroughEventId") is not None else None
-            # 첫 잔존행 PrevHash 가 checkpoint(또는 genesis "")와 일치하는지 검사용.
-            last_id = 0
-            verified = 0
-            first_break: dict | None = None
-            while first_break is None:
-                cur.execute(
-                    f"SELECT {_AUDIT_CHAIN_SELECT}, EventHash, PrevHash FROM WebAuditEvents "
-                    "WHERE Id > %s ORDER BY Id ASC LIMIT 1000",
-                    (last_id,),
-                )
-                batch = cur.fetchall() or []
-                if not batch:
+            batch = cur.fetchall() or []
+            if not batch:
+                break
+            for row in batch:
+                rid = int(row["Id"])
+                last_id = rid
+                stored = row.get("EventHash")
+                if not stored:
+                    first_break = {"id": rid, "reason": "unsealed"}
                     break
-                for row in batch:
-                    rid = int(row["Id"])
-                    last_id = rid
-                    stored = row.get("EventHash")
-                    if not stored:
-                        first_break = {"id": rid, "reason": "unsealed"}
-                        break
-                    stored_prev = str(row.get("PrevHash") or "")
-                    if stored_prev != str(prev_event_hash or ""):
-                        first_break = {
-                            "id": rid, "reason": "prev_hash_mismatch",
-                            "expected_prev": (prev_event_hash or None), "stored_prev": (stored_prev or None),
-                        }
-                        break
-                    recomputed = _audit_compute_hash(stored_prev, _audit_canonical_string(row))
-                    if recomputed != str(stored):
-                        first_break = {"id": rid, "reason": "content_modified"}
-                        break
-                    prev_event_hash = str(stored)
-                    verified += 1
-        finally:
-            cur.close()
-        ok = first_break is None
-        return JSONResponse({
-            "ok": ok,
-            "verified_count": verified,
-            "first_break": first_break,
-            "sealed_during_verify": int(sealed_now or 0),
-            "checkpoint_through_event_id": checkpoint_through,
-        })
+                stored_prev = str(row.get("PrevHash") or "")
+                if stored_prev != str(prev_event_hash or ""):
+                    first_break = {
+                        "id": rid, "reason": "prev_hash_mismatch",
+                        "expected_prev": (prev_event_hash or None), "stored_prev": (stored_prev or None),
+                    }
+                    break
+                recomputed = _audit_compute_hash(stored_prev, _audit_canonical_string(row))
+                if recomputed != str(stored):
+                    first_break = {"id": rid, "reason": "content_modified"}
+                    break
+                prev_event_hash = str(stored)
+                verified += 1
     finally:
-        conn.close()
+        cur.close()
+    ok = first_break is None
+    return JSONResponse({
+        "ok": ok,
+        "verified_count": verified,
+        "first_break": first_break,
+        "sealed_during_verify": int(sealed_now or 0),
+        "checkpoint_through_event_id": checkpoint_through,
+    })
 
 
 @app.post("/api/admin/audits/purge")
@@ -29070,7 +29022,7 @@ def get_audit_event(event_id: int, request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/health/attachment-grants")
-def admin_health_attachment_grants(request: Request) -> JSONResponse:
+def admin_health_attachment_grants(request: Request, account=Depends(require_permission("console.access", message="요청을 수행할 수 없습니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """TASK-0094 Sprint 1 Phase 10 (R-F4): sandbox schema grant drift detection.
 
     권한: `console.access` 보유 (admin). sandbox_schema.detect_grant_drift 호출
@@ -29078,33 +29030,21 @@ def admin_health_attachment_grants(request: Request) -> JSONResponse:
     재실행).
     """
     try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
+        from web.modules import sandbox_schema as _ssch
+    except Exception as exc:
+        return _json_error(f"sandbox_schema 모듈 import 실패: {exc}", 500)
     try:
-        account, error = _require_account(request, conn)
-        if error:
-            return error
-        if not _account_has_permission(account, "console.access"):
-            return _json_error("요청을 수행할 수 없습니다.", 403)
-        try:
-            from web.modules import sandbox_schema as _ssch
-        except Exception as exc:
-            return _json_error(f"sandbox_schema 모듈 import 실패: {exc}", 500)
-        try:
-            drift = _ssch.detect_grant_drift(conn)
-        except Exception as exc:
-            return _json_error(f"drift detection 실패: {exc}", 500)
-        return JSONResponse(
-            {
-                "scanned_at": datetime.utcnow().isoformat() + "Z",
-                "drift_count": len(drift),
-                "drift": drift,
-                "healthy": len(drift) == 0,
-            }
-        )
-    finally:
-        conn.close()
+        drift = _ssch.detect_grant_drift(conn)
+    except Exception as exc:
+        return _json_error(f"drift detection 실패: {exc}", 500)
+    return JSONResponse(
+        {
+            "scanned_at": datetime.utcnow().isoformat() + "Z",
+            "drift_count": len(drift),
+            "drift": drift,
+            "healthy": len(drift) == 0,
+        }
+    )
 
 
 @app.get("/api/profile/audits")

@@ -157,3 +157,14 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/app.py`(6 핸들러) + docs. 동반 테스트 변경 0(6개 모두 HTTP-레벨/route-snapshot/source-assertion — 직접호출/패치 없음, grep 확인).
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` account-anchor 53→47. 배포 불요.
 - Rollback Notes: 단일 commit revert(app.py 6 핸들러 + docs). DI seam 토대·이전 batch 불변.
+
+## CHG-20260630-0004
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 3 cat-B batch 2(TASK-0012-7) — WRAP-style RP 5 핸들러. 누적 cat-B 11.
+- Summary:
+  cat-B 확정 15 중 WRAP-style(인증+perm 검사가 외곽 `try: ... finally: conn.close()` 안에 있는) 5 핸들러를 require_permission 으로 전환: public_share_fork, upload_product_icon, delete_product_icon, verify_audit_chain, admin_health_attachment_grants (전부 REQUIRE_PERMISSION). 변환기 WRAP 경로가 외곽 try/finally 제거 + 본문 dedent + perm-블록 hoist + 산재 conn.close 제거를 동시 처리. 403 메시지 verbatim 추출 byte-보존(예: "제품 관리 권한이 필요합니다 (product.manage).", "감사 무결성 검증 권한이 필요합니다.", "요청을 수행할 수 없습니다."). verify_audit_chain 변수명 `actor` 자동 감지.
+  동반 테스트: delete_product_icon 의 test_avatar_icon_upload.py::test_a1_product_icon_delete_requires_manage 가 `app.delete_product_icon(7, _Req())` 직접호출 + `_require_account` 패치 → TestClient(`client.delete("/api/admin/products/7/icon")` + `as_account(perms={"console.access": True})`)로 전환. require_permission 은 override 안 하고 실제 _account_has_permission 검사를 타므로 product.manage 없는 계정 → 403 검증 보존. 나머지 4 는 직접호출 없음(grep 확인).
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(5 핸들러) + `tests/test_avatar_icon_upload.py`(test_a1 전환) + docs.
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. 배포 불요.
+- 잔여 cat-B 확정 4(batch3): admin_llm_usage·admin_get_dashboard_prefs(본문 `try: conn.close() except: pass` defensive-close → try/except 제거 필요) + admin_list_datasources·admin_datasource_databases(AO, 본문 finally:conn.close).
+- Rollback Notes: 단일 commit revert(app.py 5 + test 1 + docs). 이전 batch 불변.
