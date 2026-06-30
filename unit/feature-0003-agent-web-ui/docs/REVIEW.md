@@ -4223,3 +4223,16 @@ source_of_truth: true
 - 라이브 검증: `GET /healthz`(HTTPS) git_commit=`557c3c9`(live, `4359be5`→`557c3c9`)·repo-web-1 healthy. 서빙 `index.html` `app.js?v=20260629g-share-joinable-confirm`·`styles.css?v=20260629-share-joinable-confirm`. 서빙 `app.js` **byte-identical** to main(fix live), `styles.css` `.share-confirm` 반영.
 - PB-0008 Windows-browser 실 화면(확인 모달·취소 중단·체크박스 재진입 유지)은 WSL 라 미실행 — **배포 후 사용자 확인 권장**(frontend render, 선례 동일).
 - 배포-기록 doc-only 라 F0 repo-immutability escape(worktree finalize 완료, 직접 main commit — 선례 동일).
+
+## REV-20260630T100802-metadata-bs-inline-desc [SUBAGENT:adversarial-correctness] (TASK-20260630T100802-metadata-bs-inline-desc — 테이블 설명 모드 결과 행 평면화 + 설명 입력 인라인, Minor §12.3)
+- Trigger(§18.8): UI/레이아웃(부트스트랩 결과 행 구조 변경) + frontend JS → correctness/regression 렌즈. 대상: `static/admin.js`(`_metaBootstrapRenderResult` tables 분기 평면화 + `_metaSyncBootstrapVisibility` 재렌더)·`static/styles.css`(평면 행/인라인 입력)·`static/admin.html`(cache-buster). backend/RBAC/스키마/LLM 0.
+- 적대 리뷰 6가설(저장/AI/힌트 수집·toggle/expand-all throw·페이징 평면블록·서브탭 전환 stale·접근성·CSS) → **1차 BLOCKING 1 적발 → 수정 → 2차 재검증 VERDICT SAFE (BLOCKING 0)**. `node --check admin.js` PASS.
+  1. **H1 수집(저장/AI/힌트) — REFUTED**: 평면 행 인라인 입력 `admin-meta-bs-desc admin-meta-bs-desc-inline`+`data-kind='table'` → 기존 셀렉터 `.admin-meta-bs-desc[data-kind='table']` 정확 매칭(중복 0, 블록당 1). columns 는 `colRow` 변수명만 변경·`data-kind='column'` 불변.
+  2. **H2 toggleAll/SyncLabel throw·expand-all 영구숨김 — REFUTED**: null-guard 보유, `.is-collapsed` 부재 시 false 반환(무해). expand-all 은 매 렌더 `mode==="columns"?"":"none"` 재설정(영구 숨김 아님 — 재렌더 보장은 H4 fix 가 담보).
+  3. **H3 페이징 평면블록 — REFUTED**: `_metaBootstrapApplyFilter` 는 `.admin-meta-bs-table` 단위 → 평면블록 동일 적용. 식별자 `dataset.schema/table`(블록 레벨, 양 mode 공통). save/AI 는 display/page 무시 전체 수집.
+  4. **H4 서브탭 전환 stale 구조·expand-all desync — CONFIRMED(BLOCKING) → FIXED → 재검증 RESOLVED**: 전환 핸들러(admin.js:2551)가 `_metaSyncBootstrapVisibility`+`loadMetadata` 만 부르고 `_metaBootstrapRenderResult` 미호출 → 골격 fetch 후 tables↔columns 전환 시 결과 DOM 이 이전 mode 구조(평면 vs 접힘)로 stale + expand-all 가시성 어긋남. (base 부터 있던 미재렌더 결함이 이번 구조 분기로 질적 악화.) **수정**: `_metaSyncBootstrapVisibility` 가 패널 노출 + 골격 보유(`bs.tables.length`) 시 `_metaBootstrapRenderResult()` 호출. 2차 jsdom 재현 — columns→tables 전환 시 flat 40·collapsed/caret/col 0 으로 완전 교체, save 셀렉터 40/40, expand-all `display:none`(정합); 역방향 대칭. 회귀 가드 [A6]/[B4] 추가.
+  5. **H5 접근성 — REFUTED(NIT)**: 평면 행은 `div`(이전 "button 안 입력" 안티패턴 회피), 입력 `aria-label`·이름 `title` 부여. NIT: hint `aria-live` 부재(기존부터 동일, 신규 결함 아님).
+  6. **H6 CSS — REFUTED**: 긴 이름 `max-width:38%`+ellipsis, 입력 `flex:1 1 auto; min-width:120px`(좁은 화면 보장). columns 회귀 0(`is-flat` 스코프 셀렉터 비적용).
+- 회귀 가드: `tests/verify_metadata_bs_inline_desc.mjs` **26/26**(정적 분기·인라인·caret 미생성·columns 접힘 유지·expand-all columns 전용·H4 재렌더 호출[A6] + jsdom: 수집 셀렉터·힌트 전이·H4 전환 재렌더[B4]). `tests/verify_metadata_bs_paging.mjs` **32/32 무회귀**(cache-buster 단언 견고화). `verify_conv_entry_defaults.mjs` 20/20 무회귀.
+- 수용 NIT(3): (1) 서브탭 전환 시 검색어·페이지 리셋 — tables/columns 는 입력 대상이 달라 수용. (2) 미저장 입력 소실 — 저장 대상(테이블 vs 컬럼) 분리라 데이터 손실 위험 낮음, 같은 mode 내 미발생. (3) hint aria-live 부재(기존). 모두 render 기존 동작이 전환 경로로 노출된 것 — 신규 데이터 정합성 결함 아님.
+- 라이브 실측 분리(§정직): 코드/테스트/적대 패널로 "평면 행 수집·힌트·페이징 불변식 유지, columns 무회귀, 서브탭 전환 재렌더 정합" 검증. "실 화면에서 인라인 입력 노출·중앙 여백 해소·바로 입력→저장 UX"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).

@@ -109,8 +109,11 @@ ok("[A4] _metaBootstrapApplyDescriptions 가 display/page 로 수집 제한 안 
 ok("[A5] admin.html 페이저 컨테이너", /id="metadataBootstrapPager"/.test(adminHtml));
 ok("[A5] admin.html 이전/다음/라벨 id", /id="metadataBootstrapPagePrev"/.test(adminHtml)
    && /id="metadataBootstrapPageNext"/.test(adminHtml) && /id="metadataBootstrapPageLabel"/.test(adminHtml));
-ok("[A5] styles.css 가 admin.js cache-buster 와 동일 태그로 bump",
-   /admin\.js\?v=20260629-metadata-bs-paging/.test(adminHtml) && /styles\.css\?v=20260629-metadata-bs-paging/.test(adminHtml));
+// cache-buster 는 cycle 마다 bump 되므로 특정 태그 literal 에 결속하지 않고, styles.css·admin.js 가
+// "같은 태그로 동반 bump" 되는 불변식만 검증한다(정적 자산 전파 누락 방지).
+const _jsV = (adminHtml.match(/admin\.js\?v=([0-9a-z-]+)/) || [])[1];
+const _cssV = (adminHtml.match(/styles\.css\?v=([0-9a-z-]+)/) || [])[1];
+ok("[A5] styles.css·admin.js cache-buster 동일 태그로 동반 bump", Boolean(_jsV) && _jsV === _cssV);
 ok("[A5] 페이저 CSS 클래스", /\.admin-meta-bs-pager\b/.test(adminCss) && /\.admin-meta-bs-page-btn\b/.test(adminCss));
 
 // ── [B] jsdom 행위 단언 — 실 _metaBootstrapApplyFilter(+_metaBootstrapRenderPager) ───

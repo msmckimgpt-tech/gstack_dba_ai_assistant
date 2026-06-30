@@ -5124,3 +5124,16 @@ source_of_truth: true
 - 라이브 검증: `GET /healthz`(HTTPS) git_commit=`557c3c9`(live, baseline `4359be5`→`557c3c9`)·repo-web-1 healthy. 서빙 `index.html` → `app.js?v=20260629g-share-joinable-confirm`·`styles.css?v=20260629-share-joinable-confirm`. 서빙 `app.js` **byte-identical** to main(`diff -q` IDENTICAL — fix live), 서빙 `styles.css` `.share-confirm` 2건 반영.
 - Impact: 비파괴(doc-record). 사용자 화면 실 체감(확인 모달·취소 중단·체크박스 재진입 유지)은 PB-0008 Windows-browser 미실행(WSL) — 사용자 확인 권장.
 - Rollback: 해당 없음(doc-only). 배포 롤백 시 이전 web 이미지(`4359be5`)로 재기동.
+
+## CHG-20260630T100802-metadata-bs-inline-desc (TASK-20260630T100802-metadata-bs-inline-desc — 테이블 설명 모드 결과 행 평면화 + 설명 입력 인라인, Minor §12.3 — frontend render-only, backend/route/RBAC/스키마/LLM 경로 무변경)
+- Date: 2026-06-30
+- Origin: `/_template:entry` arg-given. 직전 `metadata-bs-paging` 배포 후 사용자 후속 보고(스크린샷): 테이블 설명 모드 각 행의 이름↔상태 사이 **중앙 가로 여백이 과다** — 정리/효용화 요청.
+- Summary: tables(테이블 설명) 모드 결과 행을 접힘 헤더(button+caret, 펼친 본문 안 입력)에서 **평면 행(div) + 중앙 인라인 설명 입력**으로 전환. 빈 여백을 입력란으로 전환하고 펼침 없이 바로 입력하게 해 클릭을 줄임. columns(컬럼 설명) 모드는 테이블당 컬럼 다수라 접힘 구조 유지.
+- Files:
+  - `src/static/admin.js` — `_metaBootstrapRenderResult` 의 tables 분기를 평면 행으로 재작성(`block.is-flat` + `.admin-meta-bs-row` div + 이름 span + `.admin-meta-bs-desc-inline` 인라인 입력[data-kind=table] + 힌트 span). caret/toggle/본문 미생성. columns 분기는 기존 접힘 헤더(caret+is-collapsed+컬럼 트리) 보존(내부 변수 `row`→`colRow` 정리만). filterbar 초기화에서 expand-all 가시성 `mode==='columns'` 게이트 + 저장 안내문구 모드별 분기.
+  - `src/static/styles.css` — `.admin-meta-bs-row`(flex 비클릭 행, padding 5px 10px) + `.admin-meta-bs-table.is-flat .admin-meta-bs-table-name`(flex 0 1 auto·max-width 38%·nowrap·ellipsis·word-break normal) + `.admin-meta-bs-desc-inline`(flex 1 1 auto·min-width 120px) 신설. columns/페이저/접힘 규칙 무변경.
+  - `src/static/admin.html` — cache-buster 2건 bump: `styles.css?v=20260629-metadata-bs-paging`→`?v=20260630-metadata-bs-inline-desc`, `admin.js?v=20260629-metadata-bs-paging`→`?v=20260630-metadata-bs-inline-desc`.
+  - `tests/verify_metadata_bs_inline_desc.mjs`(신규, 21 단언) + `tests/verify_metadata_bs_paging.mjs`(cache-buster 단언 literal→동반-bump 불변식 견고화).
+- Impact: 비파괴. backend/route/ask-worker/스키마/마이그/RBAC/credential/LLM 경로 무변경. **불변식 보존**: 인라인 입력이 `.admin-meta-bs-desc[data-kind='table']` 로 블록 내 존재 → 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapApplyDescriptions`)·힌트(`_metaBootstrapUpdateHint`) 셀렉터·페이징 display 토글 전부 무변경 동작. columns 모드 접힘/펼침·"모두 펼치기" 회귀 0(columns 분기 보존, expand-all 은 columns 에서만 노출). 접근성: 이전 button-헤더에 입력을 넣을 뻔한 안티패턴 회피(평면 행은 div, 입력은 독립 — `aria-label` 부여).
+- 분리 표기(§정직): `node --check`·정적/jsdom 행위 테스트·적대 패널로 "평면 행에서도 수집/힌트/페이징 불변식 유지, columns 무회귀" 코드 검증. "실 화면에서 인라인 입력 노출·중앙 여백 해소·바로 입력 UX"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: admin.js tables 분기를 접힘 헤더+본문 입력 구조로 복원 + filterbar expand-all 무조건 노출/안내문구 단일화 + styles.css 평면 행 3규칙 제거 + admin.html cache-buster 복원 + 신규 테스트 삭제·paging 테스트 cache-buster 단언 원복.

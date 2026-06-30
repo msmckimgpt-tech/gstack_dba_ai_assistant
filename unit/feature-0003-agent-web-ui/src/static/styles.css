@@ -8103,6 +8103,24 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   white-space: nowrap;
 }
 .admin-meta-bs-hint.is-filled { color: var(--primary); }
+/* metadata-bs-inline-desc: tables 모드 평면 행 — 이름↔상태 사이 빈 중앙 여백을 설명 입력란으로
+   채운다(여백 효용화 + 펼침 없이 바로 입력). 접기 헤더(button) 대신 비클릭 div 행이며,
+   columns 모드(.is-collapsed)는 기존 접힘 헤더를 그대로 유지한다. */
+.admin-meta-bs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+}
+.admin-meta-bs-table.is-flat .admin-meta-bs-table-name {
+  flex: 0 1 auto;
+  max-width: 38%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+}
+.admin-meta-bs-desc-inline { flex: 1 1 auto; min-width: 120px; margin-top: 0; }
 /* 본문 — 접힘(.is-collapsed) 시 숨김(시각 토글, 입력은 DOM 보존). */
 .admin-meta-bs-body { padding: 0 10px 8px; }  /* metadata-bs-paging: 본문 여백 압축 */
 .admin-meta-bs-table.is-collapsed .admin-meta-bs-body { display: none; }

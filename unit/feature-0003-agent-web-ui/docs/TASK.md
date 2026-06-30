@@ -4955,3 +4955,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **릴리즈노트**: `release-notes-data.js` 2026-06-29 블록에 2건(참여 허용 확인 improved · 체크박스 상태 유지 fixed) + summary 갱신.
 - [ ] **PB-0008 Windows-browser 시각 검증**(링크 생성→확인 모달·취소 시 발급 중단·체크박스 토글 후 재진입 상태 유지) — WSL worktree 미실행, **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
 - [x] verify-completion --pre-commit PASS → commit `2167cd0` → **PR #470 머지(main 557c3c9, FF)** → cycle-finalize(worktree/브랜치 정리; worktree remove 는 sudo pytest pycache root소유로 1차 실패→sudo rm+prune) → **web 이미지만 재빌드·재기동(deploy_scope: included)**. 라이브: `GET /healthz` git_commit=`557c3c9`(live, `4359be5`→`557c3c9`)·repo-web-1 healthy · 서빙 `index.html` `app.js?v=20260629g-share-joinable-confirm`·`styles.css?v=20260629-share-joinable-confirm` · 서빙 `app.js` **byte-identical** to main(fix live)·styles.css `.share-confirm` 반영.
+
+### TASK-20260630T100802-metadata-bs-inline-desc — 테이블 설명 모드 결과 행 평면화 + 설명 입력 인라인(중앙 여백 효용화) (Minor §12.3, frontend-only, metadata-bs-paging 후속, 2026-06-30)
+- 트리거: `/_template:entry` arg-given(직전 페이지네이션 배포 후 사용자 후속 보고 + 스크린샷). 사용자 보고: 페이징·세로 여백은 해소됐으나 "테이블 설명 모드 각 행의 **중간(이름↔'○ 비어있음' 사이) 가로 여백이 너무 많이 차지** — 정리하거나 효용성있게 사용 가능한지".
+- 결정: 가장 효용성 있는 해법 = 빈 중앙에 설명 입력란을 인라인 배치(여백을 입력란으로 전환 + 펼침 없이 바로 입력 → 테이블 설명 모드 클릭 절감). columns 모드는 테이블당 컬럼 다수라 접힘 구조 유지.
+- [x] **admin.js — render tables 분기 평면화**: `_metaBootstrapRenderResult` 의 tables 모드를 `<button>` 접힘 헤더 → 비클릭 `<div class="admin-meta-bs-row">`(`.is-flat`)로 변경. 행 = 이름(ellipsis) + **인라인 설명 입력(`.admin-meta-bs-desc-inline`, flex:1, `data-kind='table'`)** + 상태 힌트. caret/toggle/본문 없음. columns 분기는 caret + `.is-collapsed` + 컬럼 본문 트리 그대로 유지.
+- [x] **수집 불변식 보존**: 인라인 입력이 여전히 `.admin-meta-bs-desc[data-kind='table']` 로 블록 내 존재 → `_metaBootstrapSave`·`_metaBootstrapApplyDescriptions`·`_metaBootstrapUpdateHint` 셀렉터 무변경 매칭. 페이징(`.admin-meta-bs-table` display 토글)도 평면 블록에 동일 적용.
+- [x] **expand-all 모드별 가시성**: tables 모드는 펼칠 게 없어 "모두 펼치기/접기" 숨김(columns 전용). 저장 안내문구도 모드별 분기.
+- [x] **styles.css**: `.admin-meta-bs-row`(flex 비클릭 행) + `.is-flat .admin-meta-bs-table-name`(ellipsis·max-width 38%) + `.admin-meta-bs-desc-inline`(flex:1, min 120px). **admin.html**: cache-buster 2건 bump → `20260630-metadata-bs-inline-desc`.
+- [x] **검증**: `node --check admin.js` PASS. 신규 `tests/verify_metadata_bs_inline_desc.mjs` 21/21(정적: tables 평면·인라인·caret 미생성·columns 접힘 유지·expand-all columns 전용 + jsdom 행위: save 셀렉터 인라인 입력 탐지·힌트). `tests/verify_metadata_bs_paging.mjs` 32/32 무회귀(cache-buster 단언을 literal→동반-bump 불변식으로 견고화). §18.8 적대 패널(SUBAGENT correctness) 6가설.
+- [ ] **PB-0008 Windows-browser 시각 검증**(테이블 설명 모드 행에 인라인 입력 노출·중앙 여백 해소·바로 입력→저장·columns 모드 접힘 무회귀·서브탭 전환) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**.
+- [ ] verify-completion --pre-commit PASS → commit → main merge → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지만) → healthz.

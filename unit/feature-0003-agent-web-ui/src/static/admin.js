@@ -3460,7 +3460,14 @@ function _metaSyncBootstrapVisibility() {
   const sub = adminState.metadata.subTab;
   const show = (sub === "tables" || sub === "columns") && can("kb.ingest.manual");
   panel.style.display = show ? "" : "none";
-  if (show) _metaBootstrapPopulateDs();
+  if (show) {
+    _metaBootstrapPopulateDs();
+    // metadata-bs-inline-desc: tables↔columns 서브탭 전환 시 골격 결과를 현재 mode 로 재렌더한다.
+    // 서브탭 전환 핸들러는 이 함수만 부르고 _metaBootstrapRenderResult 를 호출하지 않으므로, 이미
+    // 가져온 골격(bs.tables)이 있으면 여기서 새 mode 입력 UI 로 교체해야 한다 — 안 그러면 두 mode 의
+    // 행 구조(평면 vs 접힘)·expand-all 가시성이 엇갈린 채 stale 하게 남는다(적대 패널 H4 적발).
+    if (adminState.metadata.bootstrap.tables.length) _metaBootstrapRenderResult();
+  }
 }
 
 // 부트스트랩 컨트롤 바인딩(idempotent).
@@ -3696,43 +3703,59 @@ function _metaBootstrapRenderResult() {
   for (const t of bs.tables) {
     const schemaName = t.schema_name || bs.schema || "";
     const tableName = t.table_name || "";
+    const fullName = [schemaName, tableName].filter(Boolean).join(".");
     const block = document.createElement("div");
-    block.className = "admin-meta-bs-table is-collapsed";  // 기본 접힘
+    block.className = "admin-meta-bs-table";
     block.dataset.schema = schemaName;
     block.dataset.table = tableName;
-    // 접기 헤더(클릭 토글) — caret + 이름 + 입력상태 힌트. button 으로 키보드 접근성 확보.
-    const head = document.createElement("button");
-    head.type = "button";
-    head.className = "admin-meta-bs-table-head";
-    head.setAttribute("aria-expanded", "false");
-    const caret = document.createElement("span");
-    caret.className = "admin-meta-bs-caret";
-    caret.setAttribute("aria-hidden", "true");
-    caret.textContent = "▸";
-    const name = document.createElement("span");
-    name.className = "admin-meta-bs-table-name";
-    name.textContent = [schemaName, tableName].filter(Boolean).join(".");
-    const hint = document.createElement("span");
-    hint.className = "admin-meta-bs-hint";
-    head.appendChild(caret);
-    head.appendChild(name);
-    head.appendChild(hint);
-    head.addEventListener("click", () => _metaBootstrapToggleTable(block));
-    block.appendChild(head);
-    // 본문 — 접힘 시 CSS(.is-collapsed)로 숨김. 입력 요소는 항상 생성(저장·AI fill 이 전체 수집).
-    const body = document.createElement("div");
-    body.className = "admin-meta-bs-body";
     if (mode === "tables") {
-      // 테이블 설명 입력 1줄.
+      // metadata-bs-inline-desc: 테이블 설명은 테이블당 1줄뿐이라 접기/펼치기가 불필요하다.
+      // 행을 평면(flat)으로 두고, 이름↔상태 사이 빈 중앙 여백을 설명 입력란으로 채운다 —
+      // 펼치지 않고 바로 입력(클릭 절감 + 여백 효용화). 입력은 항상 DOM 에 존재(저장·AI fill 전체 수집).
+      block.classList.add("is-flat");
+      const row = document.createElement("div");
+      row.className = "admin-meta-bs-row";
+      const name = document.createElement("span");
+      name.className = "admin-meta-bs-table-name";
+      name.textContent = fullName;
+      name.title = fullName;  // ellipsis 시 전체명 hover 노출
       const inp = document.createElement("input");
       inp.type = "text";
-      inp.className = "admin-meta-input admin-meta-bs-desc";
+      inp.className = "admin-meta-input admin-meta-bs-desc admin-meta-bs-desc-inline";
       inp.placeholder = "테이블 설명 입력…";
       inp.dataset.kind = "table";
+      inp.setAttribute("aria-label", `${fullName} 설명`);
       inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
-      body.appendChild(inp);
+      const hint = document.createElement("span");
+      hint.className = "admin-meta-bs-hint";
+      row.appendChild(name);
+      row.appendChild(inp);
+      row.appendChild(hint);
+      block.appendChild(row);
     } else {
-      // 컬럼별 설명 입력 트리.
+      // columns — 테이블당 컬럼이 여러 개라 접힘 헤더(클릭 토글) + 본문(컬럼별 입력 트리)을 유지.
+      block.classList.add("is-collapsed");  // 기본 접힘
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "admin-meta-bs-table-head";
+      head.setAttribute("aria-expanded", "false");
+      const caret = document.createElement("span");
+      caret.className = "admin-meta-bs-caret";
+      caret.setAttribute("aria-hidden", "true");
+      caret.textContent = "▸";
+      const name = document.createElement("span");
+      name.className = "admin-meta-bs-table-name";
+      name.textContent = fullName;
+      const hint = document.createElement("span");
+      hint.className = "admin-meta-bs-hint";
+      head.appendChild(caret);
+      head.appendChild(name);
+      head.appendChild(hint);
+      head.addEventListener("click", () => _metaBootstrapToggleTable(block));
+      block.appendChild(head);
+      // 본문 — 접힘 시 CSS(.is-collapsed)로 숨김. 입력 요소는 항상 생성(저장·AI fill 이 전체 수집).
+      const body = document.createElement("div");
+      body.className = "admin-meta-bs-body";
       const cols = Array.isArray(t.columns) ? t.columns : [];
       if (!cols.length) {
         const none = document.createElement("div");
@@ -3742,9 +3765,9 @@ function _metaBootstrapRenderResult() {
       }
       for (const c of cols) {
         const colName = c.column_name || "";
-        const row = document.createElement("div");
-        row.className = "admin-meta-bs-col";
-        row.dataset.column = colName;
+        const colRow = document.createElement("div");
+        colRow.className = "admin-meta-bs-col";
+        colRow.dataset.column = colName;
         const cn = document.createElement("span");
         cn.className = "admin-meta-bs-col-name";
         cn.textContent = colName;
@@ -3757,13 +3780,13 @@ function _metaBootstrapRenderResult() {
         inp.placeholder = "컬럼 설명 입력…";
         inp.dataset.kind = "column";
         inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
-        row.appendChild(cn);
-        row.appendChild(dt);
-        row.appendChild(inp);
-        body.appendChild(row);
+        colRow.appendChild(cn);
+        colRow.appendChild(dt);
+        colRow.appendChild(inp);
+        body.appendChild(colRow);
       }
+      block.appendChild(body);
     }
-    block.appendChild(body);
     wrap.appendChild(block);
     _metaBootstrapUpdateHint(block, mode);
   }
@@ -3773,12 +3796,17 @@ function _metaBootstrapRenderResult() {
     const search = document.getElementById("metadataBootstrapSearch");
     if (search) search.value = "";
     bs.page = 0;  // metadata-bs-paging: 새 골격은 항상 1쪽부터.
-    _metaBootstrapSyncExpandAllLabel();  // 전부 접힌 상태 → "모두 펼치기"
+    // metadata-bs-inline-desc: tables 모드는 평면 행(펼침 없음)이라 "모두 펼치기/접기" 숨김(columns 전용).
+    const expandAll = document.getElementById("metadataBootstrapExpandAll");
+    if (expandAll) expandAll.style.display = mode === "columns" ? "" : "none";
+    _metaBootstrapSyncExpandAllLabel();  // columns: 전부 접힌 상태 → "모두 펼치기"
     _metaBootstrapApplyFilter();
   }
   if (saveActions) saveActions.style.display = "";
   const info = document.getElementById("metadataBootstrapSaveInfo");
-  if (info) info.textContent = "설명을 입력한 행만 저장됩니다. (접힌 테이블의 입력도 저장됩니다)";
+  if (info) info.textContent = mode === "columns"
+    ? "설명을 입력한 행만 저장됩니다. (접힌 테이블·다른 페이지의 입력도 저장됩니다)"
+    : "설명을 입력한 행만 저장됩니다. (다른 페이지의 입력도 저장됩니다)";
 }
 
 // 단일 테이블 블록 접기/펼치기 토글.
