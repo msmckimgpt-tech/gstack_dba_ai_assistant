@@ -875,6 +875,11 @@ AGENT_SELF_REFLECTION_MAX = int(os.getenv("AGENT_SELF_REFLECTION_MAX", "2") or "
 #  - LEARNING : 대화 중 성공한 execute_sql 의 JOIN 에서 관계를 학습(source='conversation').
 AGENT_RELATIONSHIP_INTROSPECT_ENABLED = os.getenv("AGENT_RELATIONSHIP_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_RELATIONSHIP_LEARNING_ENABLED = os.getenv("AGENT_RELATIONSHIP_LEARNING_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+# feature-0016 metadata-graph: 관계형 SSOT → Apache AGE `metadata_kb` 그래프 투영 토글.
+#  - 기본 OFF — AGE 확장 미설치(cutover 전) 상태에서 sync/projection 이 no-op 되도록.
+#  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.
+#  - 투영 API/모듈은 플래그와 무관하게 graceful no-op 이나, insight/cron 트리거는 이 플래그를 본다.
+AGENT_METADATA_GRAPH_SYNC_ENABLED = os.getenv("AGENT_METADATA_GRAPH_SYNC_ENABLED", "0").strip().lower() not in ("0", "false", "no", "")
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────

@@ -33,9 +33,15 @@ source_of_truth: true
       투영(search_nodes·neighborhood). 멱등 MERGE, Cypher injection 방어(_cq), 화이트리스트 라벨/속성,
       8K 보호 cap. 라이브 AGE 행위검증 PASS(test_metadata_graph_age.py): 멱등·한국어·k-hop·injection.
 - [ ] T1.4 `bin/metadata-graph-sync.sh` (run + rebuild) + insight-worker 주기 훅. 〔다음〕
-### 2c. 엣지 적재 (빈 table_relationships 채우기)
-- [ ] T1.5 FK introspection 실제 실행 경로 점검·기동 (20 datasource). 적재량 telemetry.
-- [ ] T1.6 대화 JOIN 학습 훅 활성 확인(feature-0013 재사용). FK 미선언 DB 대비 LLM 관계 추론 seed(gated).
+### 2c. 엣지 적재 + 동기화 파이프라인 ✅ 부분 PASS (2026-06-30)
+- [x] T1.4 `scripts/metadata_graph_sync.py` + `bin/metadata-graph-sync.sh`(워커 docker exec) +
+      config `AGENT_METADATA_GRAPH_SYNC_ENABLED`(기본 OFF, cutover 후 ON). sync_graph 관계형 read
+      경로 통합검증 PASS(test_sync_graph_from_relational.py): tables/columns/rel/glossary/glossary_relations
+      모두 투영, 멱등, k-hop 도달. Phase 5 에서 cron 주기 호출 배선.
+- [x] T1.5 FK introspection 경로 = **이미 가동 중**(insight.py:1095, AGENT_RELATIONSHIP_INTROSPECT_ENABLED=1).
+      라이브 엣지 0행은 게임 DB(로그/통계/랭킹)의 **FK 미선언** 특성 — introspect 할 declared FK 부재.
+- [x] T1.6 대화 JOIN 학습 = **이미 가동 중**(agent_core post-answer hook, AGENT_RELATIONSHIP_LEARNING_ENABLED=1).
+      FK 미선언 DB 의 엣지는 대화학습으로 점증. **LLM 관계 추론 seed 는 후속**(heavy, gated, Phase 4 이후).
 
 ## 3. Phase 2 — 그래프 투영 API
 - [ ] T2.1 `modules/metadata_graph.py` 조회부: Cypher 로 (a) 검색(이름/설명 부분일치)
