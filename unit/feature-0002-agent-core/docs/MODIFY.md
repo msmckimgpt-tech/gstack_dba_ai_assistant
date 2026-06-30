@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260629T142624-active-interp-modality (TASK-20260629T142624-active-interp-modality — 능동해석 modality 일반화 + MySQL casing, Major §12.3)
+- Date: 2026-06-29. conversation_audit `FR-nl2sql-schema-discovery-giveup`(1:1 conv …91655acc give-up) 근본원인 수정.
+- `src/agent_core.py`: `_GROUP_CONVERSATION_GUIDANCE` 의 능동 해석 본문을 분리해 신설 `_ACTIVE_INTERPRETATION_GUIDANCE`(modality-무관), `_run_agent_core` 에서 그룹 조건 밖 **무조건 주입**(1:1 무방비 회귀 수복 — 종전 그룹-한정). 그룹 블록은 다자-특화(발신자 라벨)만 + cross-ref. `_MYSQL_DIALECT_GUIDANCE` 에 case-sensitivity 블록(표기 보존·소문자화 금지·`1049`/`1146`·`SCHEMA()=NULL` qualify) 추가.
+- `tests/test_gc_dialect_context.py`: +5 테스트(split 불변식·1:1 무조건 주입·de-dup 전체 잠금).
+- 가드 코드(sql_guard/allowlist) 미접촉 — advisory 프롬프트 일반화 한정(§18.8 security PASS). REV-20260629T142624.
+
 ## CHG-20260629T110000-glossary-autoreg-bootstrap-sql (TASK-20260629-glossary-conv-autoreg — 0023 부트스트랩 SQL 미러, 배포 정합, Major §12.3)
 - Date: 2026-06-29. 본체(CHG-20260629-glossary-conv-autoreg, main 40c0de0) 머지 후 배포 정합 적발·보완 — 0021 sample_feedback 부트스트랩 미러 트랩과 동형.
 - **결함**: 실 배포 스키마는 alembic 이 아니라 `_ensure_pg_schema()`(boot 시 `agent_kb_schema.sql` idempotent 적용, agent_core.py:4009)가 유지(MIGRATIONS.md). 마이그 0023 만 추가하고 boot 정본 미러를 누락하면, 배포 후 `kb_glossary.role_key`/신 UNIQUE·`glossary_feedback`·`glossary_relations` 미생성 → `upsert/record/auto_promote` 의 `ON CONFLICT (scope,role,term)` 매칭 실패·신규 엔드포인트 전건 런타임 에러.

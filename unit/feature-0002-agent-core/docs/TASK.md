@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260629T142624-active-interp-modality — 능동해석 지침 modality-무관 일반화 + MySQL casing (Major §12.3, conversation_audit FR-nl2sql 후속) — done
+- 출처: `/_dqa:conversation_audit` 가 라이브 1:1 conv …91655acc 를 감사해 마찰 `FR-nl2sql-schema-discovery-giveup` 적발 — assistant 가 스키마 `dbGame`→`dbgame` 소문자화→`1049 Unknown database`→8 tool 후 give-up·대량 재질문. 근본원인: (a) 능동해석 지침이 그룹대화에만 주입돼 1:1 무방비, (b) MySQL 식별자 case-sensitivity 안내 부재. PLAN-APPROVED.
+- [x] `_GROUP_CONVERSATION_GUIDANCE` 의 modality-무관 본문(능동 해석·합리적 추정·스키마 발견·데이터소스 일관성·give-up 금지)을 `_ACTIVE_INTERPRETATION_GUIDANCE` 로 분리, `_run_agent_core` 에서 그룹 조건(`if _group_sender_labels`) **밖에서 무조건 주입**(1:1·그룹 모두). 그룹 블록엔 다자-특화(발신자 라벨·사람-사람 맥락)만 잔존 + 능동 해석 절 cross-ref.
+- [x] `_MYSQL_DIALECT_GUIDANCE` 에 식별자 case-sensitivity 블록 추가(Linux MySQL 대소문자 구분, 도구 보고 표기 보존·소문자화 금지, 오류코드 `1049`/`1146`, `SCHEMA()=NULL` 시 명시 qualify).
+- [x] 회귀 테스트 `tests/test_gc_dialect_context.py` +5(modality-무관 단언·group multiparty-only·1:1 무조건 주입 indent·split de-dup 전체 잠금). gc 9 PASS, prompt/dialect/group/reflection 광역 회귀 0, py_compile PASS.
+- [x] §18.8 full 패널(AGENT-TEAM 3렌즈: qa·회귀·정합성 / security·over-reach / rootcause-completeness) — BLOCKER1+MAJOR3 전부 적대검증 **REFUTED**(scope·정책 정합), PASS-WITH-NITS. → REV-20260629T142624.
+- follow-up(별도 human-plan, ledger re-triage 시): L2 에러피드백 교정힌트(`_classify_sql_error` 1049 분류 + `_sql_reflection_nudge` casing 힌트 + 휴면 `_mcp_auto_retry` 배선), MySQL exact-case DB grounding 비대칭 대칭화(MSSQL 패턴 차용).
+
 ## TASK-20260629T022055-feedback-id-space — 피드백 고유성 키에 message_id_space 추가 데이터 계층 (Major §12.3, feature-0003 주관 — 데이터 계층 교차) — done
 - 출처: 사용자 요청 — 선행 TASK-20260629T014345-feedback-unique-vote 적대 리뷰의 H5(b)(message_id 두 id 공간 모호성) 잔여 한계 완수. 데이터 계층(컬럼·인덱스·코어 UPSERT)이 feature-0002 거주라 교차 기록.
 - [x] **alembic 0022**(`20260629_0022_sample_feedback_id_space.py`, down_revision 0021): `message_id_space varchar(16) NOT NULL DEFAULT 'display'` 추가 + 3-col 부분 UNIQUE **신규명** `ux_sample_feedback_user_msg_space_vote (created_by, message_id, message_id_space)` (구 2-col `ux_sample_feedback_user_msg_vote` DROP — same-name no-op trap 회피). 기존 행 default 'display' 무손실.

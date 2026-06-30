@@ -203,6 +203,11 @@ If earlier product-specific guidance above suggests SQL Server / T-SQL forms (`T
 list further below shows additional datasources, follow **each datasource's own engine/dialect**.) Critical rules:
 - **Row limiting**: use `... LIMIT n` (or `LIMIT offset, n`) — there is NO `SELECT TOP n` in MySQL; `TOP` is rejected.
 - **Identifier quoting**: use backticks `` `db`.`table` `` or plain `db.table` — NEVER SQL Server `[brackets]`.
+- **Identifier case-sensitivity**: this MySQL runs on Linux, so **database/table names are case-sensitive**
+  (`dbGame` ≠ `dbgame`). Use the **exact casing** that search_tables/describe_table/list_schemas reports — do
+  NOT lowercase or guess; a wrong-cased database fails with `1049 Unknown database` (a wrong-cased table with
+  `1146`). If `SELECT SCHEMA()` returns NULL
+  there is no default DB, so always qualify with the exact `` `database`.`table` ``.
 - **Single statement only**: `execute_sql` accepts ONE `SELECT`/CTE. A top-level `UNION`/`UNION ALL` is rejected
   ("got Union") — split into separate queries, or combine with conditional aggregation (`SUM(CASE WHEN … END)`).
   For schema/structure discovery use search_tables / describe_table / list_schemas, never a `UNION` probe.
@@ -213,6 +218,35 @@ list further below shows additional datasources, follow **each datasource's own 
   (not `CONVERT(DATE, x)`), `IFNULL(x, y)` or `COALESCE(x, y)` (MySQL `ISNULL(x)` takes ONE argument — do NOT
   use the 2-arg SQL Server form), `CONCAT()` for string concatenation.
 Discover exact table/column names with describe_table/search_tables before querying.
+"""
+
+
+# gc-assistant-active-interpretation (RC-2 일반화 + conv-audit FR-nl2sql-schema-discovery-giveup):
+# 능동 해석 지침은 대화 modality 와 무관하다 — 그룹뿐 아니라 1:1 에서도 LLM 이 과도하게 되묻고("요청이
+# 명확하지 않습니다"), 스키마를 추측하다 실패하면 포기하며, 임의로 다른 DB 로 드리프트한다. 라이브 관측:
+# group conv 20260625063340-4220125d("명시적으로 정해줘야 찾을수있나보네요"/"능동적으로는 찾기 힘드네요"/
+# "갑자기 또 다른 DB") + 1:1 conv 20260626034832-91655acc(스키마 dbGame 을 dbgame 으로 소문자화 →
+# 1049 Unknown database → 8 tool 후 give-up·대량 재질문). 기존엔 이 지침이 그룹에만 주입돼 1:1 은 무방비
+# 였다 → modality 무관 블록으로 분리해 모든 대화에 주입한다(아래 주입부). _GROUP_CONVERSATION_GUIDANCE 는
+# 다자-특화(발신자 라벨·사람-사람 맥락)만 남긴다.
+_ACTIVE_INTERPRETATION_GUIDANCE = """
+
+## 능동 해석 — 과도하게 되묻지 말고 합리적으로 추정해 진행하세요
+- **의도를 직전 대화 맥락에서 능동적으로 해석**하세요. "이 DB", "직전 결과", "아까 그거", "바꾼 제품",
+  "최근 것" 같은 지시어는 직전 맥락에서 구체 대상으로 해석해 진행합니다.
+- **과도하게 되묻지 마세요.** 맥락으로 합리적 추정이 가능하면 먼저 추정해 작업을 수행하고, 그 가정을
+  답변 첫 줄에 한 줄로 밝히세요(예: "최근 7일·성공률 기준으로 집계했습니다 — 다르면 알려주세요"). 정말로
+  추정 불가한 핵심 정보(대상 테이블/기간 등)가 빠졌을 때만 한 번에 모아 간결히 질문하세요. **모든 정보가
+  빠졌다며 작업을 통째로 미루지 말고**, 합리적 기본값으로 1차 결과를 내고 가정을 밝히는 편이 낫습니다.
+- **스키마/테이블을 모르면 추측하지 말고 발견하세요.** search_tables/describe_table/list_schemas 로 실제
+  스키마·테이블·**정확한 식별자 표기(대소문자 포함)**를 확인한 뒤 쿼리합니다. 도구가 알려준 스키마/테이블
+  이름은 **그 표기 그대로**(대소문자 보존) 사용하세요 — 임의로 소문자화하지 마세요. 한 접근이 막혀도 즉시
+  포기하지 말고 다른 발견 경로(list_schemas, 다른 키워드)를 시도하세요.
+- **데이터소스/주제 일관성**: 직전에 다루던 데이터소스·테이블·범위를 유지하세요. 사용자가 명시적으로
+  바꾸라고 하지 않았는데 다른 DB·다른 테이블로 임의 전환하지 마세요(혼선의 원인). 전환이 필요하면 먼저
+  근거를 한 줄로 밝히세요.
+- 일시적 오류(요청량 한도 등)로 중단된 뒤 다시 요청되면, **처음부터 되묻지 말고** 직전까지의 맥락·진행
+  (찾은 테이블, 직전 의도)을 이어서 수행하세요.
 """
 
 
@@ -259,27 +293,16 @@ Rules:
 """
 
 
-# gc-assistant-dialect-context (RC-2): 그룹대화일 때만 system prompt 끝에 덧붙이는 다자 대화 맥락 지침.
-# 라이브(group conv 20260625063340-4220125d)에서 LLM 이 사람-사람 대화 맥락을 능동적으로 못 따라가
-# 과도하게 되묻고("요청이 명확하지 않습니다"), rate-limit 후 맥락을 잃고, 임의로 다른 DB 로 드리프트해
-# 사용자가 불만("명시적으로 정해줘야 찾을수있나보네요"/"능동적으로는 찾기 힘드네요"/"갑자기 또 다른 DB
-# 에서 가져오네요")을 표했다. 발신자 라벨(_format_core_messages)과 함께 본 지침으로 능동 해석을 유도한다.
+# gc-assistant-dialect-context (RC-2): 그룹대화일 때만 덧붙이는 **다자-특화** 맥락 지침(발신자 라벨·
+# 사람-사람 대화 해석). 능동 해석·추정·스키마 발견·데이터소스 일관성 등 modality 무관 지침은
+# _ACTIVE_INTERPRETATION_GUIDANCE(위, 모든 대화 주입)로 분리됨. 1:1(None)은 본 블록 무회귀.
 _GROUP_CONVERSATION_GUIDANCE = """
 
 ## 그룹 대화 모드 — 여러 사람이 함께 대화 중입니다
 이 대화에는 **여러 명의 사람**이 참여하고 있으며, 당신(@assistant)은 멘션될 때만 호출됩니다.
 - 히스토리의 user 메시지 앞에는 `[발신자이름]:` 라벨이 붙어 있습니다. **누가 무슨 말을 했는지 구분**하세요.
-- 당신을 부른 멘션 바로 앞의 **사람-사람 대화에서 의도·지시대상을 능동적으로 해석**하세요. 사용자는
-  방금 나눈 대화를 당신이 읽었다고 가정합니다. "이 DB", "직전 결과", "아까 그거", "바꾼 제품",
-  "그쪽/저쪽", "최근 것" 같은 지시어는 **직전 대화 맥락에서 구체 대상으로 해석**해 진행하세요.
-- **과도하게 되묻지 마세요.** 맥락으로 합리적 추정이 가능하면 먼저 추정해 작업을 수행하고, 그 가정을
-  답변 첫 줄에 한 줄로 밝히세요(예: "직전 대화의 log_v2 채팅 로그 기준으로 집계했습니다 — 다르면 알려주세요").
-  정말로 추정 불가한 핵심 정보(대상 테이블/기간 등)가 빠졌을 때만, 한 번에 모아 간결히 질문하세요.
-- **데이터소스/주제 일관성**: 직전에 다루던 데이터소스·테이블·범위를 유지하세요. 사용자가 명시적으로
-  바꾸라고 하지 않았는데 다른 DB·다른 테이블로 임의 전환하지 마세요(혼선의 원인). 전환이 필요하면 먼저
-  근거를 한 줄로 밝히세요.
-- 일시적 오류(요청량 한도 등)로 중단된 뒤 다시 멘션되면, **처음부터 되묻지 말고** 직전까지의 맥락·진행
-  (찾은 테이블, 직전 의도)을 이어서 수행하세요.
+- 당신을 부른 멘션 **바로 앞의 사람-사람 대화에서 의도·지시대상을 능동적으로 해석**하세요 — 사용자는 방금
+  나눈 대화를 당신이 읽었다고 가정합니다. (능동 해석·추정·데이터소스 일관성 일반 지침은 위 "능동 해석" 절을 따르세요.)
 """
 
 
@@ -3440,10 +3463,15 @@ def _run_agent_core(
             _ds_desc = []
         system_content += _format_multi_ds_grounding(_ds_desc)
 
-    # ── gc-assistant-dialect-context (RC-2): 그룹대화 맥락 지침 주입 ──────────────
-    # _group_sender_labels 가 truthy(멤버 ≥ 2)면 그룹대화 — 다자 대화에서 발신자 라벨로 누가 무슨 말을
-    # 했는지 구분하고, 멘션 직전 사람-사람 대화에서 의도를 능동 해석하며, 과도 재질문·데이터소스 드리프트를
-    # 억제하도록 지침을 덧붙인다. 1:1(None)은 무회귀.
+    # ── gc-assistant-active-interpretation: 능동 해석 지침(modality 무관 — 1:1·그룹 모두 주입) ──
+    # 과도 재질문·스키마 추측 후 give-up·데이터소스 드리프트는 그룹뿐 아니라 1:1 에서도 발생한다
+    # (conv-audit FR-nl2sql-schema-discovery-giveup, 1:1 conv 20260626034832). 기존 그룹-한정 주입을
+    # modality 무관으로 일반화. base SYSTEM_PROMPT·product 프롬프트 뒤 last-writer 로 능동 해석을 권위화.
+    system_content += _ACTIVE_INTERPRETATION_GUIDANCE
+
+    # ── gc-assistant-dialect-context (RC-2): 그룹대화 **다자-특화** 맥락 지침 주입 ──────────────
+    # _group_sender_labels 가 truthy(멤버 ≥ 2)면 그룹대화 — 발신자 라벨로 누가 무슨 말을 했는지 구분하고
+    # 멘션 직전 사람-사람 대화에서 의도를 해석한다. 능동 해석 일반 지침은 위에서 이미 주입됨. 1:1 은 무회귀.
     if _group_sender_labels:
         system_content += _GROUP_CONVERSATION_GUIDANCE
 
