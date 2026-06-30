@@ -3277,6 +3277,13 @@ async function loadMetadata() {
     adminState.metadata.loading = false;
   }
   renderMetadataList();
+  // metadata-bs-prefill: 부트스트랩 모드에서 items 가 갱신되면(스코프/서브탭 전환·저장 후) 골격 입력란을
+  // 갱신된 기존 설명으로 재prefill 한다. 전체 재렌더(filterBar·페이지·펼침 리셋) 대신 in-place 갱신으로
+  // 검색어·페이지·펼침 등 작업 위치를 보존한다(골격 구조는 fetch·서브탭 sync 렌더가 담당).
+  const _bs = adminState.metadata.bootstrap;
+  if (adminState.metadata.detailMode === "bootstrap" && _bs && Array.isArray(_bs.tables) && _bs.tables.length) {
+    _metaBootstrapRefreshPrefill();
+  }
 }
 
 // 서브뷰별 빈 상태 안내 문구.
@@ -4177,6 +4184,60 @@ async function _metaBootstrapFetch() {
   }
 }
 
+// metadata-bs-prefill: 기존 저장된 설명을 골격 입력란에 prefill 하기 위한 색인 + 조회 헬퍼.
+// loadMetadata 가 현재 (scope, 서브탭) 기준으로 적재한 adminState.metadata.items 를 색인한다.
+// read 경로(kb_metadata.load_column_descriptions_for_table)와 동일 정규화 — schema 는 대소문자 무관
+// (LOWER) + 빈 schema('') 폴백 — 으로 키잉해, 수동 폼 입력(케이스 임의)·MSSQL 저장 schema_name=DB명
+// (원본 케이스) 비대칭에서도 기존 설명이 매칭된다. table/column 명은 정확매치(read 경로 동일).
+function _metaBootstrapBuildDescIndex(mode) {
+  const idx = new Map();
+  for (const it of (adminState.metadata.items || [])) {
+    const desc = (it && it.description) || "";
+    if (!desc) continue;
+    const sn = String(it.schema_name || "").toLowerCase();
+    const tn = it.table_name || "";
+    const key = mode === "columns" ? JSON.stringify([sn, tn, it.column_name || ""]) : JSON.stringify([sn, tn]);
+    // 정확-schema 항목이 빈-schema 폴백을 이기도록, 동일 키 충돌 시 비어있지 않은 schema 를 우선.
+    if (!idx.has(key) || sn) idx.set(key, desc);
+  }
+  return idx;
+}
+// 골격 행(schemaName/tableName[/colName])에 대응하는 기존 설명을 조회 — 정확 schema 우선, 빈 schema 폴백.
+function _metaBootstrapDescLookup(idx, schemaName, tableName, colName) {
+  const ls = String(schemaName || "").toLowerCase();
+  const exact = colName !== undefined
+    ? idx.get(JSON.stringify([ls, tableName, colName]))
+    : idx.get(JSON.stringify([ls, tableName]));
+  if (exact !== undefined) return exact;
+  const fb = colName !== undefined
+    ? idx.get(JSON.stringify(["", tableName, colName]))
+    : idx.get(JSON.stringify(["", tableName]));
+  return fb !== undefined ? fb : "";
+}
+// metadata-bs-prefill: 골격 DOM 을 다시 그리지 않고(검색어·페이지·펼침 상태 보존) 입력란의 value·
+// dataset.original 만 최신 items 로 갱신한다. loadMetadata(스코프/서브탭 전환·저장 후) 가 호출 —
+// 전체 재렌더(_metaBootstrapRenderResult)는 filterBar 를 리셋해 작업 위치를 잃으므로 in-place 갱신.
+function _metaBootstrapRefreshPrefill() {
+  const wrap = document.getElementById("metadataBootstrapResult");
+  if (!wrap) return;
+  const mode = adminState.metadata.subTab === "columns" ? "columns" : "tables";
+  const idx = _metaBootstrapBuildDescIndex(mode);
+  wrap.querySelectorAll(".admin-meta-bs-table").forEach((block) => {
+    const schemaName = block.dataset.schema || "";
+    const tableName = block.dataset.table || "";
+    if (mode === "tables") {
+      const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
+      if (inp) { const v = _metaBootstrapDescLookup(idx, schemaName, tableName); inp.value = v; inp.dataset.original = v; }
+    } else {
+      block.querySelectorAll(".admin-meta-bs-col").forEach((colRow) => {
+        const inp = colRow.querySelector(".admin-meta-bs-desc[data-kind='column']");
+        if (inp) { const v = _metaBootstrapDescLookup(idx, schemaName, tableName, colRow.dataset.column || ""); inp.value = v; inp.dataset.original = v; }
+      });
+    }
+  });
+  _metaBootstrapRefreshAllHints(mode);  // 프로그램적 value 변경 후 힌트(입력상태/채움 수) 동기화
+}
+
 // 골격 결과 렌더 — 현재 서브탭(tables vs columns)에 따라 입력란 형태가 다르다.
 //   tables: 테이블별 설명 1줄.  columns: 테이블 트리 아래 컬럼별 설명.
 // 모든 식별자/타입은 textContent, 입력값은 value(=신규 입력)로만 다룸(XSS 안전).
@@ -4194,6 +4255,8 @@ function _metaBootstrapRenderResult() {
   const bs = adminState.metadata.bootstrap;
   const sub = adminState.metadata.subTab;
   const mode = sub === "columns" ? "columns" : "tables";  // 부트스트랩은 tables/columns 서브뷰에서만 노출
+  // metadata-bs-prefill: 기존 저장된 설명 색인(현재 mode 기준). 입력란 생성 시 prefill 에 사용.
+  const _descIndex = _metaBootstrapBuildDescIndex(mode);
   if (bs.loading) {
     if (saveActions) saveActions.style.display = "none";
     if (filterBar) filterBar.style.display = "none";
@@ -4234,6 +4297,13 @@ function _metaBootstrapRenderResult() {
       inp.className = "admin-meta-input admin-meta-bs-desc admin-meta-bs-desc-inline";
       inp.placeholder = "테이블 설명 입력…";
       inp.dataset.kind = "table";
+      // metadata-bs-prefill: 기존 저장된 테이블 설명을 표시. dataset.original 로 원본을 기억해
+      // 저장 시 변경된 행만 POST(미변경 prefill 재저장 안 함 → source provenance 보존).
+      {
+        const _existing = _metaBootstrapDescLookup(_descIndex, schemaName, tableName);
+        inp.value = _existing;
+        inp.dataset.original = _existing;
+      }
       inp.setAttribute("aria-label", `${fullName} 설명`);
       inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
       const hint = document.createElement("span");
@@ -4289,6 +4359,12 @@ function _metaBootstrapRenderResult() {
         inp.className = "admin-meta-input admin-meta-bs-desc";
         inp.placeholder = "컬럼 설명 입력…";
         inp.dataset.kind = "column";
+        // metadata-bs-prefill: 기존 저장된 컬럼 설명을 표시(원본 기억 → 변경분만 저장).
+        {
+          const _existing = _metaBootstrapDescLookup(_descIndex, schemaName, tableName, colName);
+          inp.value = _existing;
+          inp.dataset.original = _existing;
+        }
         inp.addEventListener("input", () => _metaBootstrapUpdateHint(block, mode));
         colRow.appendChild(cn);
         colRow.appendChild(dt);
@@ -4315,8 +4391,8 @@ function _metaBootstrapRenderResult() {
   if (saveActions) saveActions.style.display = "";
   const info = document.getElementById("metadataBootstrapSaveInfo");
   if (info) info.textContent = mode === "columns"
-    ? "설명을 입력한 행만 저장됩니다. (접힌 테이블·다른 페이지의 입력도 저장됩니다)"
-    : "설명을 입력한 행만 저장됩니다. (다른 페이지의 입력도 저장됩니다)";
+    ? "기존 설명은 채워져 표시됩니다. 변경·추가한 행만 저장됩니다. (접힌 테이블·다른 페이지의 변경도 저장됩니다)"
+    : "기존 설명은 채워져 표시됩니다. 변경·추가한 행만 저장됩니다. (다른 페이지의 변경도 저장됩니다)";
 }
 
 // 단일 테이블 블록 접기/펼치기 토글.
@@ -4461,12 +4537,16 @@ async function _metaBootstrapSave() {
     if (mode === "tables") {
       const inp = block.querySelector(".admin-meta-bs-desc[data-kind='table']");
       const desc = inp ? (inp.value || "").trim() : "";
-      if (desc) rows.push({ schema_name: schemaName, table_name: tableName, description: desc });
+      // metadata-bs-prefill: 변경된(또는 새로 입력한) 행만 저장 — prefill 된 기존 설명을
+      // 손대지 않았으면 재저장하지 않아 source(manual 등) provenance 를 보존한다.
+      const orig = inp ? (inp.dataset.original || "") : "";
+      if (desc && desc !== orig) rows.push({ schema_name: schemaName, table_name: tableName, description: desc });
     } else {
       block.querySelectorAll(".admin-meta-bs-col").forEach((colRow) => {
         const inp = colRow.querySelector(".admin-meta-bs-desc[data-kind='column']");
         const desc = inp ? (inp.value || "").trim() : "";
-        if (desc) {
+        const orig = inp ? (inp.dataset.original || "") : "";
+        if (desc && desc !== orig) {
           rows.push({
             schema_name: schemaName, table_name: tableName,
             column_name: colRow.dataset.column || "", description: desc,
@@ -4476,7 +4556,7 @@ async function _metaBootstrapSave() {
     }
   });
   if (!rows.length) {
-    if (typeof showToast === "function") showToast("설명을 입력한 행이 없습니다.", true);
+    if (typeof showToast === "function") showToast("저장할 변경(새 입력 또는 수정)이 없습니다.", true);
     return;
   }
   const saveBtn = document.getElementById("metadataBootstrapSaveBtn");
@@ -4504,12 +4584,10 @@ async function _metaBootstrapSave() {
   if (typeof showToast === "function") {
     showToast(fail ? `저장 ${ok}건 성공, ${fail}건 실패` : `${ok}건 저장했습니다.`, fail > 0);
   }
-  // 저장된 행은 입력란 비움(중복 저장 방지).
+  // metadata-bs-prefill: 저장 후 목록 + items 갱신 → (부트스트랩 모드면) loadMetadata 가 골격 입력란을
+  // 갱신된 설명으로 재prefill 한다(방금 저장분 포함, dataset.original 도 최신값으로 재설정 → 중복 저장 방지).
   if (ok > 0) {
-    wrap.querySelectorAll(".admin-meta-bs-desc").forEach((inp) => {
-      if ((inp.value || "").trim()) inp.value = "";
-    });
-    await loadMetadata();  // 목록 갱신
+    await loadMetadata();
   }
 }
 

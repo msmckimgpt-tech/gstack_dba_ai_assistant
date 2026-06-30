@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill (Minor §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경, 비파괴)
+- 트리거: 사용자 — "관리콘솔 > 메타데이터 > 테이블 설명, 컬럼 설명 에서 스키마 골격을 가져왔을 때, 기존에 입력된 정보가 확인되지 않아 수정 필요."
+- 근본원인(코드 근거): 백엔드 `/api/admin/metadata/bootstrap`(app.py `admin_bootstrap`)은 **설계상 의도적으로 골격(테이블/컬럼 이름·타입)만** 반환하고 설명은 미영속(주석: "UI 가 설명 빈칸을 prefill"). 그러나 프론트 `_metaBootstrapRenderResult`(admin.js)가 입력란 생성 시 `adminState.metadata.items`(loadMetadata 가 현재 scope·서브탭 기준 적재한 저장 설명)와 매칭해 `inp.value` 를 채우는 **prefill 로직이 누락** → 골격을 가져오면 항상 빈칸으로 표시됨. (최근 metadata-bs-inline-desc/list-detail/paging 리팩터와 무관 — 애초 prefill 미구현.)
+- 부수 회귀 차단: prefill 만 추가하면 `_metaBootstrapSave` 가 비어있지 않은 모든 행을 `source:"bootstrap"` 으로 재저장 → 기존 `source:"manual"` 설명까지 덮어쓰는 provenance 오염 발생. 따라서 prefill + **변경분만 저장**(dataset.original 비교)을 한 묶음으로 처리.
+- 설계(frontend only, admin.js):
+  1. `_metaBootstrapRenderResult`: `adminState.metadata.items` 를 `(schema,table[,column])`(JSON.stringify 키)로 색인한 `_descByKey` 구축 → 테이블/컬럼 입력란에 `inp.value` prefill + `inp.dataset.original` 원본 기록.
+  2. `loadMetadata`: items 갱신 후 부트스트랩 모드(골격 존재)면 `_metaBootstrapRenderResult` 재호출 → 스코프/서브탭 전환·저장 후에도 prefill 정합.
+  3. `_metaBootstrapSave`: `desc && desc !== dataset.original` 인 행만 POST(미변경 prefill 재저장 안 함 → source 보존). post-save 는 loadMetadata 재렌더로 저장분+기존 재표시(dataset.original 최신화 → 중복 저장 차단). 빈칸 비우기 루프 폐기.
+  4. AI 일괄생성(`_metaBootstrapApplyDescriptions`)은 빈 입력란만 채우므로 prefill 보존 — 정합.
+  5. save-info 안내문 갱신("기존 설명은 채워져 표시 / 변경·추가한 행만 저장").
+- Completion Checklist:
+  - [x] admin.js: 색인/조회 헬퍼(`_metaBootstrapBuildDescIndex`/`_metaBootstrapDescLookup`, schema 소문자+빈-schema 폴백=read 경로 정합) + `_metaBootstrapRenderResult` prefill·`dataset.original` + in-place 갱신 `_metaBootstrapRefreshPrefill`(검색/페이지/펼침 보존) + `loadMetadata` 재prefill + `_metaBootstrapSave` 변경분만 저장 + 안내문 갱신.
+  - [x] admin.html: cache-buster lockstep 동반 bump `admin.js`·`styles.css?v=…20260630-metadata-bs-prefill`(js==css 불변식 — 정적 자산 전파 누락 방지 가드).
+  - [x] §18.8 적대 frontend 패널(8-가설) → FIX-THEN-SHIP(BLOCKER 0·MAJOR 1·MINOR 2) → MAJOR-H2(post-save 전체 재렌더가 검색/페이지/펼침 리셋)·MINOR-H3(prefill 키 정확매치라 케이스/빈-schema 비대칭 누락) 수정 → 재검 SHIP. MINOR-H6(prefill 후 비움=삭제 불가) pre-existing 수용. REV-20260630T174000-metadata-bs-prefill.
+  - [x] 회귀 가드 `tests/verify_metadata_bs_prefill.mjs`(44: 케이스 무관·빈-schema 폴백·정확 우선·dataset.original·in-place 검색보존·변경분만 저장·키 충돌 회피) green. 인접 inline-desc(30)·list-detail(33)·paging(32)·scope-single-ds(15) 회귀 0.
+  - [x] `node --check` PASS · admin.js NUL 바이트 0 확인.
+  - [ ] verify-completion --pre-commit PASS → 머지·push → web 재배포(deploy_scope: included) → PB-0008 Windows 브라우저 시각검증(골격 가져오기 시 기존 테이블/컬럼 설명 prefill 표시·미변경 시 저장 0·수정행만 저장·source 보존·저장 후 검색/페이지 위치 보존).
+- Next Action: verify-completion → cycle-final → 배포 → PB-0008 시각검증.
+
 ## TASK-20260630T160000-metadata-list-detail — 메타데이터 패널 list-detail 2단 재구성(좌측 목록 선택 → 우측 상세 편집) (Major §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
 - 트리거: 사용자 — "메타데이터 UI 를 다른 카테고리처럼 한 항목 선택 후 우측 상세조정 형태로 재구성. 위/아래 스크롤이 잦다." 참조: 계정/역할·제품/데이터소스·감사로그/보관대화.
 - 현황 파악(코드 근거): 메타데이터 pane 은 단일 컬럼 수직 스택(헤더→서브탭→부트스트랩→폼→목록). 행 '수정' 버튼이 `_metaStartEdit`→목록 **위**의 폼으로 `scrollIntoView({behavior:'smooth'})` 점프 → 위/아래 스크롤 마찰의 정체. 다른 카테고리는 `.admin-list-detail`(grid 2단: 좌측 .admin-list-col + 우측 .admin-detail-col, 각자 overflow-y:auto).
