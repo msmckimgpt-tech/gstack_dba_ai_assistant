@@ -19,7 +19,9 @@ UI(Cytoscape) 와 AI(knowledge context) 가 같은 그래프를 공유해 정합
 """
 from __future__ import annotations
 
+import json
 import logging
+import math
 
 _log = logging.getLogger("metadata_graph")
 
@@ -79,9 +81,12 @@ def _props_set(var: str, props: dict) -> str:
             continue
         if k == "confidence":
             try:
-                parts.append(f"{var}.{k} = {float(v)}")
+                fv = float(v)
             except (TypeError, ValueError):
                 continue
+            if not math.isfinite(fv):   # nan/inf 는 유효 Cypher 숫자 리터럴 아님(M1)
+                continue
+            parts.append(f"{var}.{k} = {fv}")
         else:
             parts.append(f"{var}.{k} = {_cq(v)}")
     return ", ".join(parts)
@@ -92,21 +97,33 @@ def _cypher(cur, query: str, ncols: int):
 
     **pgbouncer transaction-mode 안전**: `cypher`·`agtype` 를 모두 `ag_catalog.` 로 정규화해
     세션 search_path 에 의존하지 않는다(SET search_path 가 풀링 트랜잭션 간 유지 안 될 수 있음).
+
+    **injection 방어 (B1)**: Cypher 본문을 dollar-quote 로 감쌀 때, query 에 존재하지 않음이 보장되는
+    동적 태그(`$mdgq…$`)를 사용한다. 정적 `$$` 는 값에 `$$` 가 섞이면 breakout → (바인드 파라미터
+    없는 execute = simple protocol 이라) 다중 statement SQL 인젝션이 가능했다. 값 내부는 `_cq` 가
+    single-quote 이스케이프하고, 본문 전체는 이 태그가 외곽 SQL 탈출을 막는다(이중 방어).
     """
     cols = ", ".join(f"c{i} ag_catalog.agtype" for i in range(ncols))
-    cur.execute(f"SELECT * FROM ag_catalog.cypher('{GRAPH}', $$ {query} $$) AS ({cols})")
+    tag = "mdgq"
+    while f"${tag}$" in query:
+        tag += "z"
+    dq = f"${tag}$"
+    cur.execute(f"SELECT * FROM ag_catalog.cypher('{GRAPH}', {dq} {query} {dq}) AS ({cols})")
     return cur.fetchall()
 
 
 def _unwrap(agt):
-    """agtype 스칼라 → python. 문자열은 양끝 큰따옴표 제거, 'null' → None."""
+    """agtype 스칼라 → python. 문자열은 JSON 디코드(이스케이프·유니코드 정확), 'null' → None (M3)."""
     if agt is None:
         return None
     s = str(agt)
     if s == "null":
         return None
     if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
-        return s[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        try:
+            return json.loads(s)   # \n·\t·\uXXXX·\" 등 JSON 이스케이프 정확 처리
+        except Exception:
+            return s[1:-1].replace('\\"', '"').replace("\\\\", "\\")
     return s
 
 
@@ -358,6 +375,8 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
             next_frontier = []
             for r in erows:
                 a_key = _unwrap(r[0]); etype = _unwrap(r[1]); b_key = _unwrap(r[2])
+                if not b_key:   # key 없는 노드(M2) — phantom None 노드/엣지 붕괴 방지
+                    continue
                 if b_key not in seen_nodes and len(seen_nodes) < _NEIGHBOR_NODE_CAP:
                     seen_nodes[b_key] = {"label": _unwrap(r[3]), "key": b_key,
                                          "name": _unwrap(r[4]), "fqn": _unwrap(r[5]),

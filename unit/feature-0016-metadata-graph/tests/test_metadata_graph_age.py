@@ -67,6 +67,22 @@ def main() -> int:
     cnt = mg._cypher(cur, "MATCH (t:Table {fqn:'dbo.orders'}) RETURN t.key", 1)
     assert len(cnt) == 1, f"orders Table duplicated: {len(cnt)}"
 
+    # ── 검증 6 (B1): dollar-quote breakout 인젝션 방어 ──
+    # $$ 포함 페이로드가 외곽 SQL 을 탈출하면 sentinel 테이블이 DROP 된다. 방어 시 그대로 생존.
+    cur.execute("CREATE TABLE IF NOT EXISTS _b1_sentinel (x int)")
+    inj = "x$$) AS (k ag_catalog.agtype); DROP TABLE _b1_sentinel; --"
+    try:
+        mg.search_nodes(inj, conn=conn)          # 검색어 경로
+        mg.neighborhood(inj, depth=1, conn=conn)  # node key 경로
+    except Exception:
+        pass
+    cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = '_b1_sentinel'")
+    assert cur.fetchone() is not None, "B1 injection: sentinel dropped — dollar-quote breakout!"
+    # $$ 포함 값이 정상 노드로 저장·검색되는지(escape 성공, 데이터 무손상)
+    mg.sync_table(cur, "ds1", "dbo", "ev$$il", "desc $$ with dollars", "manual")
+    r_ev = mg.search_nodes("ev$$il", conn=conn)
+    assert any((n.get("name") or "") == "ev$$il" for n in r_ev), f"dollar value lost: {r_ev}"
+
     print("ALL ASSERTS PASS", {
         "search_orders": len(res), "search_주문": len(res_kr),
         "nb_nodes": len(nb["nodes"]), "nb_edges": len(nb["edges"]),
