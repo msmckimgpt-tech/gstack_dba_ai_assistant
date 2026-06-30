@@ -117,3 +117,19 @@ source_of_truth: true
   - `unit/feature-0012-web-router-modularization/docs/{TASK,REPORT,MODIFY,REVIEW}.md`
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` 호출 99→80(전체 `_require_account(` 기준; exact-anchor 88→64). 누적 cat-A 24 핸들러 DI 전환. 배포 불요.
 - Rollback Notes: 단일 commit revert(app.py 5 핸들러 + test 1 + docs). DI seam 토대·batch 1 불변.
+
+## CHG-20260630-0001
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 2 batch 3(TASK-0012-7) — P2_MULTI_CLOSE 10 핸들러. 누적 cat-A 34. DI_SEAM_BLUEPRINT §2 Phase 2 / §3.1 cat A.
+- Summary:
+  batch3 workflow(REV-20260630-0001, 44 agents)이 잔여 22 cat-A 후보를 3패턴으로 분류+2렌즈 적대검증 → 10 확정(전부 P2_MULTI_CLOSE)·12 보류. P2 = auth-first 이나 본문에 try/finally 래퍼 없이 early-return 마다 conn.close() 가 산재한 형태.
+  전환 10(use_conversation, history, history_dates, delete_conversation, delete_conversations, cancel_request, finalize_request, get_file, ask_status, me_get_system_prompt): conn-acquire 삭제 + `account,error=_require_account`+if-error 블록 삭제 + **산재한 모든 conn.close() 삭제**(get_conn finally-teardown 이 close) + 시그니처 `account=Depends(get_current_account), conn=Depends(get_conn)`. body dedent 불요(래퍼 try 부재).
+  특이: ask_status 는 산재 close + terminal `try: snapshot=_build_ask_status_snapshot finally: conn.close()` 하이브리드 → conn.close 가 finally 유일 내용이라 단순 제거 시 빈 finally(IndentationError) → 수작업으로 try/finally 제거+본문 승격. history/history_dates 는 multi-line signature → 전용 변환기(`cata_p2_transform.py`) 의 sig_insert 를 multi-line 지원으로 보강.
+  동반 테스트: history_dates 의 test_history_calendar_pg_routing T1(PG 라우팅)/T3(legacy MySQL)이 `app.history_dates(_DummyRequest(), ...)` 직접호출 + `_require_account` 패치 → TestClient(`client.get` + `as_account()` override) 전환. get_conn→_connect_memory(mem) 로 conn=mem 유지해 mem.cursor_calls 가드 보존. T2(history_anchor, 미마이그)는 직접호출 유지. 나머지 9 핸들러는 route-snapshot/getsource 단언으로 무영향(잔류 직접호출 0 확인).
+- Files (cross-cut — 추적은 feature-0012, 코드는 feature-0003):
+  - `unit/feature-0003-agent-web-ui/src/app.py` (10 핸들러)
+  - `unit/feature-0003-agent-web-ui/tests/test_history_calendar_pg_routing.py` (T1/T3 TestClient 전환)
+  - `unit/feature-0012-web-router-modularization/docs/{TASK,REPORT,MODIFY,REVIEW}.md`
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` exact-anchor 64→54(누적 -34). 배포 불요.
+- 보류 12(batch 4+): pre-auth gate 10(P1 — conn 이전 404/400 early-return, Depends hoisting 시 401 우선순위 역전 → account-only variant 필요), ask_result(P3 복수 conn), history_anchor(적대 HIGH refute — 재조사).
+- Rollback Notes: 단일 commit revert(app.py 10 핸들러 + test 1 + docs). DI seam 토대·batch 1/2 불변.

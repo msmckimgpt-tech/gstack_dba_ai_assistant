@@ -133,3 +133,14 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증(byte-동치 재확인): make test **progress-chars 1238 = baseline 동일**(전환된 test_p1 포함·0 FAIL/ERROR·exit 0), route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/잔류 _require_account·conn.close·_connect_memory 0/conn 사용) PASS. `_require_account` exact-anchor 88→64(누적 -24, batch1 19 + batch2 5).
 - 보류→해소 입증: 워크플로의 "verdict SAFE but edit-spec refuted" 분리가 정확했음 — 런타임 동치는 옳고 edit 처방만 결함이었으며, 구조 변환기로 처방을 교정하니 동일 동치가 make test 로 확정됨.
 - NIT/수용: profile_llm_usage/profile_usage_conversations 의 `conn` param 본문 미사용(auth 전용, body 는 PG) — get_conn use_cache 로 get_current_account 와 공유, ruff 비차단. 수용.
+
+## REV-20260630-0001 [AGENT-TEAM:p5b-phase2-cata-batch3-multiclose-panel]
+- Related Change: CHG-20260630-0001 (Phase 2 batch 3 — P2_MULTI_CLOSE 10 핸들러)
+- §18.8 Adversarial Panel: **AGENT-TEAM (ultracode workflow `p5b-phase2-cata-batch3-plan`, 44 agents / 1.42M tokens).**
+  잔여 22 cat-A 후보를 핸들러별 정밀 분석(실제 코드 + DI seam 정독) → 3패턴 분류(P1 pre-auth gate / P2 multi-close / P3 edge) + strategy 결정 → 핸들러별 **2렌즈 적대 반증**(렌즈A 순서/컴파일/conn수명 — pre-auth gate 로 인한 401 우선순위 역전·orphan-try·산재 close 누락·복수 conn; 렌즈B 에러셰이프/응답/account/부수효과). 불확실 시 refuted=true.
+- 결과: **10 확정(P2_MULTI_CLOSE, CATA_MULTICLOSE)** / **12 보류**.
+  - 확정 10: use_conversation, history, history_dates, delete_conversation, delete_conversations, cancel_request, finalize_request, get_file, ask_status, me_get_system_prompt. 일부 LOW verdict 있었으나 **실결함 아님**(렌즈가 명시: "실행 영향 없는 prose 산술 오류" 등 — refuted=false).
+  - 보류 12: pre-auth gate 10(P1, KEEP_INLINE_DEFER — conn 이전 404/400 early-return 이 Depends auth hoisting 시 401 보다 먼저 나가던 순서를 역전시킴 → cat-A 부적격), ask_result(P3 EDGE — 복수 _connect_memory 재취득), history_anchor(P2 분류는 정확하나 한 렌즈 HIGH refute → 보수적 보류, batch 4 재조사).
+- 적용 정확성(자동 edit-spec 불신, 구조 변환기 사용): P2 전용 변환기(`cata_p2_transform.py`)가 산재 conn.close() 전부 제거 + auth 블록 제거 + Depends 삽입(dedent 불요). 단 ask_status 는 terminal `finally: conn.close()` 하이브리드 — conn.close 가 finally 유일 내용이라 변환기로 제거 시 빈 finally(IndentationError, py_compile 재현) → 수작업으로 try/finally 제거+본문 승격. history/history_dates multi-line sig → 변환기 sig_insert multi-line 보강. sole-in-block close 사전 스캔으로 ask_status 만 격리해 수작업한 것이 정확.
+- 결정적 검증: make test **progress-chars 1238 = baseline 동일**(전환 T1/T3 포함·0 FAIL/ERROR·exit 0), route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/잔류 _require_account·conn.close·_connect_memory 0) PASS. `_require_account` exact-anchor 64→54. 잔류 직접호출 0(grep) 확인.
+- 동반 테스트: history_dates 의 T1(PG 라우팅)/T3(legacy MySQL) 직접호출 → TestClient(as_account) 전환, conn=mem 유지로 mem.cursor_calls 가드 보존. T2(history_anchor 미마이그) 직접호출 유지. 나머지 9 무영향.

@@ -17517,23 +17517,13 @@ def conversations(
 
 
 @app.post("/api/use_conversation")
-async def use_conversation(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+async def use_conversation(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     try:
         data = await request.json()
     except Exception:
-        conn.close()
         return _json_error("invalid json", 400)
     conversation_id = str(data.get("conversation_id", "")).strip()
     if not conversation_id:
-        conn.close()
         return _json_error("empty conversation_id", 400)
     if not _account_can_access_conversation(
         conn,
@@ -17542,15 +17532,12 @@ async def use_conversation(request: Request) -> JSONResponse:
         "conversation.read.own",
         "conversation.read.any",
     ):
-        conn.close()
         return _json_error("conversation not found", 404)
     _set_account_current_conversation(conn, int(account["id"]), conversation_id)
     try:
         Path(_account_conv_file(int(account["id"]))).write_text(conversation_id, encoding="utf-8")
     except Exception:
-        conn.close()
         return _json_error("failed to set conversation", 500)
-    conn.close()
     return JSONResponse({"conversation_id": conversation_id})
 
 
@@ -17560,15 +17547,9 @@ def history(
     conversation_id: str | None = None,
     before_id: int | None = None,
     limit: int = 10,
+    account=Depends(get_current_account),
+    conn=Depends(get_conn),
 ) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     requested_id = (conversation_id or "").strip()
     if requested_id:
         conv_id = (
@@ -17641,7 +17622,6 @@ def history(
         "total_messages": total_count,
         "total_user_messages": user_count,
     }
-    conn.close()
     return JSONResponse(payload)
 
 
@@ -17747,19 +17727,12 @@ LIMIT 1
 def history_dates(
     request: Request,
     conversation_id: str | None = None,
+    account=Depends(get_current_account),
+    conn=Depends(get_conn),
 ) -> JSONResponse:
     """Return message timestamps grouped by date for calendar highlighting."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     conv_id = _resolve_conversation_for_account(conn, account, conversation_id or "")
     if not conv_id:
-        conn.close()
         return JSONResponse({"dates": {}, "first": None, "last": None})
     # TASK-0061 Phase 5 (REQ-20260515-0007 / AC-0088): 메시지 정본은 AgentMemoryMessages 이므로
     # 캘린더 source 를 그쪽으로 일치시킨다 (이전: AgentCoreMessages — 일부 경로에서 비어 있음).
@@ -17787,9 +17760,7 @@ def history_dates(
             finally:
                 pg.close()
         except Exception:
-            conn.close()
             return JSONResponse({"dates": {}, "first": None, "last": None})
-        conn.close()
         dates_pg: dict[str, list[str]] = {}
         for row in rows:
             day_str = str(row[0])
@@ -17812,7 +17783,6 @@ def history_dates(
         rows = cur.fetchall() or []
         cur.close()
     except Exception:
-        conn.close()
         return JSONResponse({"dates": {}, "first": None, "last": None})
     dates: dict[str, list[str]] = {}
     for row in rows:
@@ -17821,7 +17791,6 @@ def history_dates(
         dates[day_str] = sorted(set(times))
     first = str(rows[0][0]) if rows else None
     last = str(rows[-1][0]) if rows else None
-    conn.close()
     return JSONResponse({"dates": dates, "first": first, "last": last})
 
 
@@ -17938,25 +17907,15 @@ def _delete_conversation_impl(
 
 
 @app.post("/api/delete_conversation")
-async def delete_conversation(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+async def delete_conversation(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     try:
         data = await request.json()
     except Exception:
-        conn.close()
         return _json_error("invalid json", 400)
     conversation_id = str(data.get("conversation_id", "")).strip()
     force = bool(data.get("force"))
     confirm_text = str(data.get("confirm_text", "")).strip()
     if not conversation_id:
-        conn.close()
         return _json_error("empty conversation_id", 400)
     result = _delete_conversation_impl(
         conn, account, conversation_id, force=force, confirm_text=confirm_text
@@ -17964,15 +17923,11 @@ async def delete_conversation(request: Request) -> JSONResponse:
     if result["status"] == "failed":
         reason = result.get("reason", "")
         if reason == "forbidden":
-            conn.close()
             return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
         if reason == "processing":
-            conn.close()
             return _json_error("처리 중 대화입니다. 강제 보관하려면 확인 입력이 필요합니다.", 409)
         if reason == "confirm_text_mismatch":
-            conn.close()
             return _json_error("확인 입력이 올바르지 않습니다. 보관을 입력해주세요.", 400)
-        conn.close()
         return _json_error("failed to archive conversation", 500)
     # TASK-0048 후속 fix: 대화 보관 후 자동으로 빈 새 대화를 만들지 않는다 (lazy 정책).
     current_after = _repair_current_conversation(
@@ -17981,7 +17936,6 @@ async def delete_conversation(request: Request) -> JSONResponse:
         items=[],
         create_if_missing=False,
     )
-    conn.close()
     # TASK-0273: 응답 키는 기존 프론트 호환을 위해 deleted/deleted_pending 유지(보관도 "목록에서
     # 사라짐" 으로 동일 UX). archived 플래그도 함께 노출.
     if result["status"] in ("archived_pending", "deleted_pending"):
@@ -17991,23 +17945,13 @@ async def delete_conversation(request: Request) -> JSONResponse:
 
 # TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0103~AC-0107): 다중 대화 일괄 삭제 — partial success.
 @app.post("/api/delete_conversations")
-async def delete_conversations(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+async def delete_conversations(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     try:
         data = await request.json()
     except Exception:
-        conn.close()
         return _json_error("invalid json", 400)
     raw_ids = data.get("conversation_ids", [])
     if not isinstance(raw_ids, list) or not raw_ids:
-        conn.close()
         return _json_error("conversation_ids required", 400)
     force = bool(data.get("force"))
     confirm_text = str(data.get("confirm_text", "")).strip()
@@ -18035,7 +17979,6 @@ async def delete_conversations(request: Request) -> JSONResponse:
         items=[],
         create_if_missing=False,
     )
-    conn.close()
     return JSONResponse({
         "deleted": deleted,
         "deleted_pending": deleted_pending,
@@ -18096,19 +18039,10 @@ async def rename_conversation_title(conversation_id: str, request: Request) -> J
 
 
 @app.post("/api/cancel")
-async def cancel_request(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+async def cancel_request(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     try:
         data = await request.json()
     except Exception:
-        conn.close()
         return _json_error("invalid json", 400)
     conversation_id = _resolve_conversation_for_account(
         conn,
@@ -18116,7 +18050,6 @@ async def cancel_request(request: Request) -> JSONResponse:
         str(data.get("conversation_id", "")).strip(),
     )
     if not conversation_id:
-        conn.close()
         return _json_error("empty conversation_id", 400)
     if not _account_can_access_conversation(
         conn,
@@ -18125,7 +18058,6 @@ async def cancel_request(request: Request) -> JSONResponse:
         "conversation.cancel.own",
         "conversation.cancel.any",
     ):
-        conn.close()
         return _json_error("권한이 없습니다.", 403)
     # composer-nonblock-interrupt R3: 1:1 인터럽트 재요청은 preserve_reasoning=true 로 취소 →
     # agent_core 가 이 run 의 부분 추론을 메시지로 보존(가시 + 다음 run 맥락). 명시 '중단' 버튼(미지정)
@@ -18161,27 +18093,16 @@ async def cancel_request(request: Request) -> JSONResponse:
         except Exception:
             pass
     except Exception:
-        conn.close()
         return _json_error("cancel failed", 500)
-    conn.close()
     return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "요청 취소를 진행합니다."})
 
 
 @app.post("/api/finalize")
-async def finalize_request(request: Request) -> JSONResponse:
+async def finalize_request(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """사용자가 '즉시 답변'을 요청 — 현재 루프를 마무리하고 텍스트 답변 생성."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     try:
         data = await request.json()
     except Exception:
-        conn.close()
         return _json_error("invalid json", 400)
     conversation_id = _resolve_conversation_for_account(
         conn,
@@ -18189,7 +18110,6 @@ async def finalize_request(request: Request) -> JSONResponse:
         str(data.get("conversation_id", "")).strip(),
     )
     if not conversation_id:
-        conn.close()
         return _json_error("empty conversation_id", 400)
     if not _account_can_access_conversation(
         conn,
@@ -18198,15 +18118,12 @@ async def finalize_request(request: Request) -> JSONResponse:
         "conversation.finalize.own",
         "conversation.finalize.any",
     ):
-        conn.close()
         return _json_error("권한이 없습니다.", 403)
     try:
         run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         mark_finalize_requested(conn, conversation_id, run_id=run_id)
     except Exception:
-        conn.close()
         return _json_error("finalize failed", 500)
-    conn.close()
     return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})
 
 
@@ -18379,23 +18296,14 @@ def _build_ask_status_snapshot(conn, conversation_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/ask_status")
-def ask_status(request: Request, conversation_id: str = "") -> JSONResponse:
+def ask_status(request: Request, conversation_id: str = "", account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     """현재 대화의 agent 실행 상태 snapshot.
 
     client disconnect 이후에도 서버에서 돌고 있는 run 의 상태를 확인하는 read-only
     엔드포인트. `/api/ask` 슬롯을 점유하지 않는다.
     """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     cid = _resolve_conversation_for_account(conn, account, conversation_id.strip())
     if not cid:
-        conn.close()
         return _json_error("empty conversation_id", 400)
     if not _account_can_access_conversation(
         conn,
@@ -18404,12 +18312,8 @@ def ask_status(request: Request, conversation_id: str = "") -> JSONResponse:
         "conversation.read.own",
         "conversation.read.any",
     ):
-        conn.close()
         return _json_error("권한이 없습니다.", 403)
-    try:
-        snapshot = _build_ask_status_snapshot(conn, cid)
-    finally:
-        conn.close()
+    snapshot = _build_ask_status_snapshot(conn, cid)
     snapshot.pop("_latest_assistant", None)
     return JSONResponse(snapshot)
 
@@ -18590,18 +18494,9 @@ LIMIT %s
 
 
 @app.get("/api/file")
-def get_file(request: Request, path: str, conversation_id: str, max_bytes: int = 0):
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+def get_file(request: Request, path: str, conversation_id: str, max_bytes: int = 0, account=Depends(get_current_account), conn=Depends(get_conn)):
     conversation_id = str(conversation_id or "").strip()
     if not conversation_id:
-        conn.close()
         return _json_error("conversation_id is required", 400)
     if not _account_can_access_conversation(
         conn,
@@ -18610,9 +18505,7 @@ def get_file(request: Request, path: str, conversation_id: str, max_bytes: int =
         "conversation.file.read.own",
         "conversation.file.read.any",
     ):
-        conn.close()
         return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
-    conn.close()
     safe = _safe_shared_path(path)
     if not safe or not safe.exists():
         return JSONResponse({"error": "file not found"}, status_code=404)
@@ -24494,19 +24387,10 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
 
 
 @app.get("/api/auth/me/system-prompt")
-def me_get_system_prompt(request: Request, product_id: int | None = None) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+def me_get_system_prompt(request: Request, product_id: int | None = None, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     # TASK-0052 Phase 1C G7: product_id query param 이 주어졌으면 그 product 의 접근 권한 검사.
     if product_id is not None and int(product_id) > 0:
         if not _account_has_product_access(account, int(product_id), conn=conn):
-            conn.close()
             return _json_error("요청을 수행할 수 없습니다.", 403)
     # 계정 스코프: 개인 프롬프트는 product 별 혹은 product 무관 하나씩 보유 가능.
     row = _load_system_prompt(
@@ -24516,7 +24400,6 @@ def me_get_system_prompt(request: Request, product_id: int | None = None) -> JSO
         role_id=None,
         account_id=int(account["id"]),
     )
-    conn.close()
     return JSONResponse({"prompt": row, "product_id": int(product_id) if product_id else None})
 
 
