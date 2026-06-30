@@ -16224,18 +16224,6 @@ def delete_my_avatar(request: Request, account=Depends(get_current_account), con
     return JSONResponse({"ok": True, "avatar_url": None})
 
 
-@app.get("/api/avatars/{account_id}")
-def serve_avatar(account_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> Any:
-    """계정 아바타 이미지 bytes 서빙(로그인 필요 — 같은 출처). 미설정/없음 404 → 프론트 Identicon."""
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT AvatarObjectKey FROM WebAccounts WHERE Id = %s", (int(account_id),))
-        row = cur.fetchone()
-    finally:
-        cur.close()
-    return _serve_image_object(row[0] if row else None, fallback_404="아바타 없음")
-
-
 @app.put("/api/admin/products/{product_id}/icon")
 async def upload_product_icon(product_id: int, request: Request, file: UploadFile = File(...), account=Depends(require_permission("product.manage", message="제품 관리 권한이 필요합니다 (product.manage).")), conn=Depends(get_conn)) -> JSONResponse:
     """제품 아이콘 업로드(product.manage). 이전 아이콘 교체."""
@@ -16289,18 +16277,6 @@ def delete_product_icon(product_id: int, request: Request, account=Depends(requi
         except Exception:
             pass
     return JSONResponse({"ok": True, "icon_url": None})
-
-
-@app.get("/api/products/{product_id}/icon")
-def serve_product_icon(product_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> Any:
-    """제품 아이콘 bytes 서빙(로그인 필요). 미설정/없음 404 → 프론트 Identicon/기본."""
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT IconObjectKey FROM WebProducts WHERE Id = %s", (int(product_id),))
-        row = cur.fetchone()
-    finally:
-        cur.close()
-    return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
 
 
 # ============================================================================
@@ -16488,18 +16464,6 @@ def admin_delete_role_icon(role_id: int, request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "icon_url": None})
     finally:
         conn.close()
-
-
-@app.get("/api/roles/{role_id}/icon")
-def serve_role_icon(role_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> Any:
-    """역할 아이콘 bytes 서빙(로그인 필요 — 같은 출처). 미설정/없음 404 → 프론트 Identicon."""
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT IconObjectKey FROM WebRoles WHERE Id = %s", (int(role_id),))
-        row = cur.fetchone()
-    finally:
-        cur.close()
-    return _serve_image_object(row[0] if row else None, fallback_404="아이콘 없음")
 
 
 # ============================================================================
@@ -28878,6 +28842,8 @@ def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
 # import·include 하므로 순환 import 안전(router 의 `from app import ...` 가 부분 적재된 app 의
 # 이미-정의된 심볼을 읽음). route 경로/메서드/순서는 보존(키워드 router 는 종전과 동일하게 맨 끝 등록).
 # =============================================================================
+from routers.media import router as _media_router  # noqa: E402
 from routers.keywords import router as _keywords_router  # noqa: E402
 
+app.include_router(_media_router)
 app.include_router(_keywords_router)

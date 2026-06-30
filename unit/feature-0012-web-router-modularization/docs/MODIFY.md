@@ -240,3 +240,16 @@ source_of_truth: true
 - Impact: behavior-neutral. make test 전체 통과·0 fail, route-parity 179 골든 불변(recursion 으로 set·order 동일), ruff clean, py_compile OK. 배포 불요(런타임 라우팅 동일).
 - 후속(검증된 안전 순서): media(3 DI)→static_pages→admin-conversations→admin-usage(MIXED)→conversations(MIXED). NS-BOUND 도메인(admin/metadata wrapper 등)은 web_context 추출 선행.
 - Rollback Notes: revert(app.py + routers/ 삭제 + route-parity 복원). 라우팅 동일이라 무위험.
+
+## CHG-20260630-0011
+- Date: 2026-06-30
+- Related Requirement: P5b Final — NS-BOUND=0 도메인 router 추출 #2(media). **DI 핸들러 추출 + 골든 순서 갱신** 파이프라인 증명(keywords 는 stub·last-position 이라 골든 불변, media 는 실 DI 핸들러·mid→end 이동).
+- Summary:
+  media 도메인 3 핸들러(serve_avatar `/api/avatars/{account_id}`·serve_product_icon `/api/products/{product_id}/icon`·serve_role_icon `/api/roles/{role_id}/icon`, 전부 cat-A DI 전환 완료 — `Depends(get_current_account)`+`get_conn` 로그인 게이트)를 `src/routers/media.py` 로 이동:
+  - **router**: `from app import get_current_account, get_conn, _serve_image_object`(순환 안전: app 이 모든 정의 후 맨 끝 include). 각 핸들러 원본 SQL(`SELECT {Avatar|Icon}ObjectKey FROM Web{Accounts|Products|Roles} WHERE Id=%s`)+`_serve_image_object(...,fallback_404=)` byte-동치 보존(cursor try/finally:close 포함).
+  - **app.py**: 3 핸들러 본문 제거 + 맨 끝 `from routers.media import router as _media_router`+`app.include_router(_media_router)`(keywords include 앞에 배치).
+  - **route-parity 골든 갱신**: media 3 라우트가 원본 위치 [45,48,53]→include 순서상 [172,173,174](끝, keywords 앞)로 이동. **set 불변(removed/added 0, 179→179)·순서만 변경**. var-vs-concrete 검토: avatars/{id}·products/{id}/icon·roles/{id}/icon 은 경쟁 concrete 라우트 0 + 끝으로 이동=가장 늦게 매칭이라 shadow 위험 없음 → 매칭 안전. route_snapshot_p5b.json 재생성(docker `_build_table`, 22±22 라인).
+- Files: src/app.py(media 3 제거 + include_router), src/routers/media.py(신규), tests/route_snapshot_p5b.json(골든 순서 갱신) + docs.
+- Impact: behavior-neutral. make test 전체 통과·0 fail, route-parity 179(골든=현재 일치), ruff clean, py_compile OK. 배포 불요(런타임 라우팅 동일).
+- 후속: static_pages(4 무인증)→admin-conversations(1)→admin-usage(5 MIXED)→conversations(MIXED). NS-BOUND 도메인은 web_context 추출 선행.
+- Rollback Notes: revert(app.py media 복원 + routers/media.py 삭제 + 골든 복원). 라우팅 동일이라 무위험.

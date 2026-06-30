@@ -13,7 +13,7 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 
 ## 2. Progress
 - Done: plan-eng-review+§12 · route-parity 안전망(골든 179) · 의존성 audit · **DI seam 설계(DI_SEAM_BLUEPRINT.md)** · **Phase 0(deps+_AuthError handler+get_conn, behavior-neutral, 커밋 06d88a8)** · **Phase 1(conftest TestClient/`as_account` + 파일럿 get_llm_health DI 전환 byte-동치 + get_conn None-yield 보정 + require_permission 빈 perms 가드 + 회귀 스위트 31 + §18.8 적대 패널 HIGH 2 보정)**.
-- In Progress: DI seam **Phase 2 cat-A(35) + Phase 3 cat-B(29)+cat-C(3)+final(2) = 69 핸들러 — DI seam byte-동치 가능 핸들러 전부 완료.** cat-A b1-4 + cat-B b1-5 + cat-C + admin_overview/admin_products_insight_coverage. 잔여 ~46 = 아키텍처 이연(fail-soft 3 + preauth/longpoll/txn 43) → Final(router-extraction). **Final 이전 작업 완결.** ultracode workflow 5회(232 agents) 2렌즈 적대검증. make test 1238·route-parity 179. 변환기 `cata_b_transform.py`(변수명/스타일 자동·메시지 verbatim·strip_conn_finally·or-chain 다중 perm). 테스트 전환 패턴: AO 직접호출=명시 actor/conn 인자, RP=TestClient+as_account. **다음: cat-B preauth/longpoll ~32(아키텍처 이연, cat-A preauth 동일) + 보류 3 재검토 → cat C/D/E/F/트랜잭션 → Final.**
+- In Progress: DI seam **Phase 2 cat-A(35) + Phase 3 cat-B(29)+cat-C(3)+final(2) = 69 핸들러 — DI seam byte-동치 가능 핸들러 전부 완료.** cat-A b1-4 + cat-B b1-5 + cat-C + admin_overview/admin_products_insight_coverage. 잔여 ~46 = 아키텍처 이연(fail-soft 3 + preauth/longpoll/txn 43) → Final(router-extraction). **Final 이전 작업 완결.** ultracode workflow 5회(232 agents) 2렌즈 적대검증. make test 1238·route-parity 179. 변환기 `cata_b_transform.py`(변수명/스타일 자동·메시지 verbatim·strip_conn_finally·or-chain 다중 perm). 테스트 전환 패턴: AO 직접호출=명시 actor/conn 인자, RP=TestClient+as_account. **Final 진행중: router 추출 #1 keywords(4 stub, CHG-0010) + #2 media(3 DI, CHG-0011) 완료 — APIRouter 분할 파이프라인(순환 안전 import + route-parity recursion + 골든 순서 게이팅) 확립·증명. 다음: static_pages(4 무인증)→admin-conversations(1)→admin-usage(5 MIXED)→conversations 순차 NS-BOUND=0 추출 → NS-BOUND 도메인용 web_context 추출 → 브라우저 QA → 배포(confirm).**
 - 이연(아키텍처, router-extraction 단계): cat-A pre-auth gate 10(401 우선순위 역전·conn eager-open) + ask_result(long-poll 60s conn-hold).
 - Planned: Phase 3(cat B)~7 → helper→web_context 이동 → APIRouter 추출 → 브라우저 로그인 QA+§18.8+배포 → 프론트 분할.
 
@@ -34,7 +34,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260630-0008: DI seam Phase 3 cat-C — _require_permission 헬퍼 3 핸들러(admin_list/approve/reject_sample_feedback) → require_permission("kb.sample.curate"). 변환기 cata_c_transform.py(RPH). 동반 테스트 7 call 전환. cat-F public_share_view 이연. 누적 cat-B/C 32. make test 1238.
 - CHG-20260630-0009: DI seam Phase 3 final migratable — admin_overview(RP)·admin_products_insight_coverage(AO) 회수(동반 테스트 12 call 전환). DI seam byte-동치 가능 핸들러 전부 완료(누적 69). 잔여 ~46 아키텍처 이연(fail-soft 3 + preauth/longpoll/txn 43) 문서화. make test 1238. **Final 이전 완결.**
 - CHG-20260630-0010: P5b **Final 시작** — Final-planning workflow(8 agents)로 NS-BOUND=0 도메인 web_context 선행 불요 확정 + route-parity 인프라 갱신(Starlette 1.x _IncludedRouter nest → _walk_routes 재귀) + keywords 도메인 router 추출(src/routers/). make test 전체 통과, route-parity 179 골든 불변, byte-동치. APIRouter 분할 파이프라인 확립.
-- 총 변경 횟수: 16
+- CHG-20260630-0011: P5b Final router 추출 #2 — media 도메인 3 DI 핸들러(serve_avatar·serve_product_icon·serve_role_icon) → src/routers/media.py. **실 DI 핸들러 추출 + 골든 순서 갱신** 파이프라인 증명(keywords stub·last-position 과 달리 mid→end 이동). route-parity set 불변(179)·순서만 [45,48,53]→[172-174], var-vs-concrete shadow 위험 없음(끝 이동=가장 늦게 매칭). make test 전체 통과·route drift 0·byte-동치.
+- 총 변경 횟수: 17
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

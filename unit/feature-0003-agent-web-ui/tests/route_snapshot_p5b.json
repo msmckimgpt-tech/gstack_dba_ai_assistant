@@ -316,13 +316,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/avatars/{account_id}",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/admin/products/{product_id}/icon",
    "methods": [
     "PUT"
@@ -333,13 +326,6 @@
    "path": "/api/admin/products/{product_id}/icon",
    "methods": [
     "DELETE"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/products/{product_id}/icon",
-   "methods": [
-    "GET"
    ],
    "type": "APIRoute"
   },
@@ -368,13 +354,6 @@
    "path": "/api/admin/roles/{role_id}/icon",
    "methods": [
     "DELETE"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/roles/{role_id}/icon",
-   "methods": [
-    "GET"
    ],
    "type": "APIRoute"
   },
@@ -1220,6 +1199,27 @@
   },
   {
    "path": "/api/profile/audits/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/avatars/{account_id}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/products/{product_id}/icon",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/roles/{role_id}/icon",
    "methods": [
     "GET"
    ],
