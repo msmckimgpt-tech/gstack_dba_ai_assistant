@@ -309,3 +309,18 @@ source_of_truth: true
 - Impact: behavior-neutral. make test 전체 통과·0 fail·route drift 0·"All checks passed!", route-parity 179, py_compile OK. docker 에서 `app._sanitize_session_id is web_context._sanitize_session_id`(rebind 동일객체) + 순환 import 없음 검증. 배포 불요.
 - 후속 시퀀스(합성 권고, 안전 영역=테스트 0변경): inc2 `_get_client_ip`+proxy companions(_is_trusted_proxy/_parse_trusted_proxies/_TrustedNetwork/WEB_TRUSTED_PROXIES) → inc3 SESSION_COOKIE+_resolve_permission_catalog+PERMISSION_* 상수(web_context 가 canonical 홈, app re-import) → inc4 _fetch_account_rows/_decorate_account_rows. 그 후부터 _account_has_permission(11×)·_require_account(51×)·_connect_memory(62×) = 23-테스트 retarget 필요 영역.
 - Rollback Notes: revert(web_context.py 삭제 + app.py 2 def 복원 + re-import 제거). 단방향 edge라 무위험.
+
+## CHG-20260630-0016
+- Date: 2026-06-30
+- Related Requirement: P5b Final — web_context 추출 증분 #2(proxy/client-IP leaf cluster). TASK-0012-8.
+- Summary:
+  합성 권고 안전-시퀀스 inc2: proxy/client-IP 5종을 `src/web_context.py` 로 이동:
+  - `_TrustedNetwork`(type alias) · `_parse_trusted_proxies` · `WEB_TRUSTED_PROXIES`(모듈상수) · `_is_trusted_proxy` · `_get_client_ip`.
+  - **AGENT_MODE 결합 해소(app-free 유지)**: `_parse_trusted_proxies` 가 prod/staging invalid-CIDR fail-loud 에 app 전역 `AGENT_MODE` 를 참조 → web_context 에 동일 표현식 env-mirror `AGENT_MODE = os.getenv("AGENT_MODE","").strip().lower()`(app L82 동일) 보유. 함수 시그니처 불변(byte-faithful). `_is_trusted_proxy` 가 읽는 `WEB_TRUSTED_PROXIES` 도 함께 이동 → web_context 가 canonical(단방향 edge 유지, back-ref 0).
+  - **startup-validation 블록은 app 잔류**: `if not WEB_TRUSTED_PROXIES and ENABLE_WEB_TLS_PROXY=1 → prod/staging RuntimeError`(L1150 부근)은 app startup 로직이라 app 에 유지, 재import된 WEB_TRUSTED_PROXIES + app 의 AGENT_MODE 참조.
+  - app.py 상단 re-import 에 5종 추가(rebind). WEB_TRUSTED_PROXIES 계산 시점이 app L1172 → web_context import(app 상단 re-import) 로 이동 — 둘 다 startup-time, prod/staging fail-loud 보존.
+- Files: src/web_context.py(5종 + AGENT_MODE env-mirror + ipaddress/os/sys/fastapi.Request import 추가), src/app.py(5종 제거 + re-import 확장, startup-block 잔류) + docs.
+- Impact: behavior-neutral. make test 전체 통과·0 fail·route drift 0, route-parity 179, py_compile OK. docker: rebind-identity 7/7 + 순환 없음 + WEB_TRUSTED_PROXIES(172.18.0.0/16 env 계산) + _get_client_ip 동작 확인. 테스트 참조 0(검증). 배포 불요.
+- 관측 차이(무시 가능): _parse_trusted_proxies 의 warning print 는 file=sys.stderr 동일. logger 미사용(print). startup RuntimeError 메시지·timing 동일.
+- 후속: inc3 SESSION_COOKIE+_resolve_permission_catalog+PERMISSION_* → inc4 _fetch/_decorate_account_rows. 그 후 _account_has_permission(11×)/_require_account(51×)/_connect_memory(62×)=23-테스트 retarget 영역.
+- Rollback Notes: revert(web_context.py 5종+AGENT_MODE 제거 + app.py 5종 복원 + re-import 축소). 단방향 edge라 무위험.

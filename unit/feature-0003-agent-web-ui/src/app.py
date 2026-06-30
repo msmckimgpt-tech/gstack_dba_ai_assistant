@@ -57,7 +57,16 @@ from modules.render import normalize_step_result_summary
 
 # feature-0012 P5b Final: web_context 로 추출한 leaf helper 를 모듈 전역에 rebind
 # (app 내 기존 bare-name 호출부 + 테스트 monkeypatch.setattr(app,...) 호환 보존, behavior-neutral).
-from web_context import _sanitize_session_id, _hash_session_token
+# WEB_TRUSTED_PROXIES 는 web_context import 시점에 계산(원래 startup-time 과 동일, prod/staging fail-loud 보존).
+from web_context import (
+    _sanitize_session_id,
+    _hash_session_token,
+    _TrustedNetwork,
+    _parse_trusted_proxies,
+    WEB_TRUSTED_PROXIES,
+    _is_trusted_proxy,
+    _get_client_ip,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -1143,33 +1152,11 @@ def _unwrap_followup_user_request(text: str) -> str:
 # feature-0012 P5b Final: _sanitize_session_id 는 src/web_context.py 로 추출(상단 from web_context import 로 rebind).
 
 
-_TrustedNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
-
-
-def _parse_trusted_proxies(raw: str) -> tuple[_TrustedNetwork, ...]:
-    items: list[_TrustedNetwork] = []
-    bad: list[str] = []
-    for token in (raw or "").split(","):
-        token = token.strip()
-        if not token:
-            continue
-        try:
-            items.append(ipaddress.ip_network(token, strict=False))
-        except ValueError:
-            bad.append(token)
-    if bad:
-        if AGENT_MODE in {"prod", "staging"}:
-            raise RuntimeError(
-                f"WEB_TRUSTED_PROXIES: invalid CIDR(s) in {AGENT_MODE}: {bad}"
-            )
-        print(
-            f"[startup] WARNING: WEB_TRUSTED_PROXIES contains invalid CIDR(s) (skipped): {bad}",
-            file=sys.stderr,
-        )
-    return tuple(items)
-
-
-WEB_TRUSTED_PROXIES = _parse_trusted_proxies(os.getenv("WEB_TRUSTED_PROXIES", ""))
+# feature-0012 P5b Final: _TrustedNetwork·_parse_trusted_proxies·WEB_TRUSTED_PROXIES 는
+# src/web_context.py 로 추출(상단 from web_context import 로 rebind). WEB_TRUSTED_PROXIES 는
+# web_context import 시점(app 상단 re-import)에 계산된다 — 원래 본 위치 계산과 동일 startup-time,
+# prod/staging invalid-CIDR fail-loud(RuntimeError) 보존. 아래 startup-validation 블록은 app 에 잔류
+# (재import된 WEB_TRUSTED_PROXIES + app 의 AGENT_MODE 참조).
 
 # TASK-0087 §9.7: proxy mode + empty trusted proxies = PIPA audit IP quality regression.
 # In prod/staging this is a fail-loud condition; in dev/test we emit a stderr warning only.
@@ -1189,28 +1176,8 @@ if not WEB_TRUSTED_PROXIES and os.getenv("ENABLE_WEB_TLS_PROXY", "").strip() == 
     )
 
 
-def _is_trusted_proxy(host: str) -> bool:
-    if not host or not WEB_TRUSTED_PROXIES:
-        return False
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return any(ip in network for network in WEB_TRUSTED_PROXIES)
-
-
-def _get_client_ip(request: Request) -> str:
-    direct_ip = (request.client.host if request.client else "") or ""
-    if direct_ip and _is_trusted_proxy(direct_ip):
-        forwarded = request.headers.get("x-forwarded-for", "").strip()
-        if forwarded:
-            first = forwarded.split(",")[0].strip()
-            try:
-                ipaddress.ip_address(first)
-            except ValueError:
-                return direct_ip
-            return first
-    return direct_ip
+# feature-0012 P5b Final: _is_trusted_proxy·_get_client_ip 는 src/web_context.py 로 추출
+# (상단 from web_context import 로 rebind — app 내 _get_client_ip 호출부 7곳 + 미래 monkeypatch 보존).
 
 
 def _get_session_id(request: Request) -> tuple[str, bool, str]:
