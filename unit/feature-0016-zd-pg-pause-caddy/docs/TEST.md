@@ -38,8 +38,15 @@ source_of_truth: true
 - reconcile_caddy 함수 정의 + main wiring(soak 전) 확인
 - pgbouncer 내부 점검(read-only): admin_users=postgres(기본)·userlist=agent_kb_rw·unix_socket 없음·psql 존재
   → ADMIN_USERS=agent_kb_rw 로 전환 근거 확인.
-### Run (예정) — Environment: CLI (배포 시, 이 호스트)
-- TEST-...-1/2/3 (admin --check, pg-restart RW 무에러 실증, reconcile) — 배포 단계 기록.
+### Run 2026-06-30 — Environment: CLI (라이브 배포, 이 호스트 — 사용자 "전체 배포" 승인)
+- **TEST-...-1 admin --check**: pgbouncer `ADMIN_USERS=agent_kb_rw` recreate 적용(admin_users=agent_kb_rw
+  확인) → `pg-restart --check` → "admin 콘솔 OK (PgBouncer 1.25.1)". PASS.
+- **TEST-...-2 pg-restart RW 무에러 (라이브 실증)**: pgbouncer 경유 RW 부하 루프(SELECT, ~55s) 돌리며
+  `make pg-restart`(PAUSE→postgres force-recreate→healthy→RESUME). 결과 **OK=134 / ERR=0**(에러 0!),
+  MAX_QUERY_WAIT=14s(에러 아닌 큐 지연), RESUME 후 paused DB=0(잔존 없음). 종료 후 edge HTTP 200.
+  → **PG primary 재시작이 RW 에러 없이(near-zero, 최대 14s 큐 지연) 동작** 실증.
+- **TEST-...-3 reconcile sha**: 호스트 Caddyfile sha == caddy 컨테이너 sha(59f22b3b…) → reconcile_caddy
+  'no-op(blip 0)' 경로(현재 무변경). 변경 시 adapt 검증 후 recreate 경로(코드 검증). main deploy-web.sh wired.
 
 ## 4. 미수행 사유
 - pg-restart 라이브 실증은 pgbouncer recreate(ADMIN_USERS) + 라이브 PG 재시작이 필요 → 배포 단계 수행.
