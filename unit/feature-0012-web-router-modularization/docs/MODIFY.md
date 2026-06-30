@@ -295,3 +295,17 @@ source_of_truth: true
 - Impact: behavior-neutral. make test 전체 통과·0 fail(test_usage_conversations 전체 GREEN), route-parity 179, ruff clean, py_compile OK. 배포 불요.
 - 후속: conversations(MIXED). NS-BOUND 도메인(admin/metadata wrapper 등)은 web_context 선행.
 - Rollback Notes: revert(app.py 2 핸들러 복원 + routers/admin_usage.py 삭제 + 테스트·골든 복원). 라우팅 동일.
+
+## CHG-20260630-0015
+- Date: 2026-06-30
+- Related Requirement: P5b Final — **web_context.py 추출 시작(원래 막혔던 핵심 리팩터)**. TASK-0012-8 helper→web_context 이동. leaf-first 안전 증분 #1.
+- Summary:
+  과거 web_context 직추출은 helper cross-call 네임스페이스 재해석(monkeypatch 빗나감)으로 실패했었다. ultracode workflow(p5b-web-context-strategy, 10 agents: 3 전략 설계 + 6 적대 stress(test-breakage/binding-circular 렌즈) + 1 합성)로 3 전략을 판정 → **Strategy B(clean-leaf-move) 채택**:
+  - **A(re-export shim)**: 양 렌즈 `broken` — web_context 가 late-defined DI 심볼(get_conn L10284 등)을 from app import 하면 partial-module ImportError + 추출가치 0.
+  - **C(full move+_connect_memory)**: `broken` — web_context 가 app 을 import 해 app↔web_context 양방향 cycle 인위 생성; _connect_memory 는 62× monkeypatch hotspot(최후 이동 대상).
+  - **B**: 양 렌즈 `safe` — app-internal callee 0 인 순수 stdlib leaf 만 이동 → web_context 가 `from app import`-free → 단방향 app→web_context edge → 순환 불가 + 테스트 참조 0 → 무파손.
+  - **실행(증분 #1)**: `_sanitize_session_id`(re) + `_hash_session_token`(hashlib) 2 leaf 를 `src/web_context.py`(신규, stdlib-only, INVARIANT: from app import 금지)로 물리 이동. app.py 는 상단(L57)에서 `from web_context import _sanitize_session_id, _hash_session_token` 재가져와 모듈 전역 rebind → app 내 8 호출부(bare name) + 테스트 `monkeypatch.setattr(app,...)` 모두 보존(behavior-neutral). ruff select=["E9","F63","F7","F82"] 라 F401/E402 미검사(noqa 불요).
+- Files: src/web_context.py(신규), src/app.py(2 def 제거 + 상단 re-import) + docs.
+- Impact: behavior-neutral. make test 전체 통과·0 fail·route drift 0·"All checks passed!", route-parity 179, py_compile OK. docker 에서 `app._sanitize_session_id is web_context._sanitize_session_id`(rebind 동일객체) + 순환 import 없음 검증. 배포 불요.
+- 후속 시퀀스(합성 권고, 안전 영역=테스트 0변경): inc2 `_get_client_ip`+proxy companions(_is_trusted_proxy/_parse_trusted_proxies/_TrustedNetwork/WEB_TRUSTED_PROXIES) → inc3 SESSION_COOKIE+_resolve_permission_catalog+PERMISSION_* 상수(web_context 가 canonical 홈, app re-import) → inc4 _fetch_account_rows/_decorate_account_rows. 그 후부터 _account_has_permission(11×)·_require_account(51×)·_connect_memory(62×) = 23-테스트 retarget 필요 영역.
+- Rollback Notes: revert(web_context.py 삭제 + app.py 2 def 복원 + re-import 제거). 단방향 edge라 무위험.

@@ -55,6 +55,10 @@ from shared.model_catalog import (
 )
 from modules.render import normalize_step_result_summary
 
+# feature-0012 P5b Final: web_context 로 추출한 leaf helper 를 모듈 전역에 rebind
+# (app 내 기존 bare-name 호출부 + 테스트 monkeypatch.setattr(app,...) 호환 보존, behavior-neutral).
+from web_context import _sanitize_session_id, _hash_session_token
+
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 SESSION_COOKIE = "mysql_ai_session"
@@ -1136,11 +1140,7 @@ def _unwrap_followup_user_request(text: str) -> str:
     return current
 
 
-def _sanitize_session_id(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_-]", "", value or "")
-    if cleaned:
-        return cleaned[:64]
-    return ""
+# feature-0012 P5b Final: _sanitize_session_id 는 src/web_context.py 로 추출(상단 from web_context import 로 rebind).
 
 
 _TrustedNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
@@ -1247,8 +1247,7 @@ def _clear_session_cookie(response: Any, request: Request) -> None:
     )
 
 
-def _hash_session_token(token: str) -> str:
-    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+# feature-0012 P5b Final: _hash_session_token 는 src/web_context.py 로 추출(상단 from web_context import 로 rebind).
 
 
 def _sanitize_username(value: str) -> str:

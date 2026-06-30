@@ -249,3 +249,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!"(test_usage_conversations 전체 GREEN: Q1-Q4 헬퍼 + A1/A2 admin + P1 profile), route-parity 179(골든=현재), ruff clean, py_compile OK.
 - 학습: 대형/다-helper 핸들러는 **verbatim 슬라이스+화이트리스트 정규식 rewrite** 가 수기 전사보다 안전. helper-monkeypatch 도메인은 **uniform app.X** 가 일반 해법(static_pages 의 app.FileResponse 와 동일 원리 확장).
 - 다음: conversations(MIXED) → NS-BOUND 도메인 web_context 추출 → 브라우저 QA → 배포(confirm).
+
+## REV-20260630-0015 [AGENT-TEAM:p5b-web-context-strategy-workflow]
+- Related Change: CHG-20260630-0015 (web_context 추출 시작 — leaf-first 증분 #1)
+- §18.8 Adversarial Panel: **ultracode Workflow `p5b-web-context-strategy`(10 agents / 0.60M tokens): 3 전략 설계(parallel) → 전략별 2 lens 적대 stress(test-breakage / binding-circular, "안 깨진다" 반증 목적) → 1 합성(effort high).** 판정 결과 A·C `broken`, B `safe`(양 렌즈). 합성이 현 worktree 실측(web_context.py 부재·app.py web_context import 0)으로 stress 에이전트들이 본 "contamination"(transient concurrent-session noise)을 기각하고 B 채택 확정.
+- 검증 포인트: (1) **behavior-neutral**: 2 함수 본문 byte 그대로 이동(re.sub session-id sanitize, sha256 token hash). app.py re-import 가 모듈 전역에 rebind → 8 호출부(L1218/2170/2185/2202/2221/5671/18706/18713) + 미래 monkeypatch 보존. (2) **순환 import 불가**: web_context 가 app-internal 심볼 0 참조(stdlib re/hashlib only) → 단방향 edge. docstring 의 "from app import" 언급은 INVARIANT 설명 텍스트일 뿐 실제 import 문 0(grep `^\s*from app import` 검증). (3) **무파손 근거**: 두 심볼 테스트 monkeypatch/직접참조 0(Explore 매핑 + 본 cycle 재확인). DI override 키(get_current_account/get_optional_account)·hotspot(_connect_memory/_require_account)와 무관.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0·"All checks passed!", route-parity 179, py_compile OK(web_context.py+app.py). docker 런타임: `import app, web_context` 동시 성공(순환 없음) + `app._X is web_context._X`(rebind 동일객체) + 함수 동작 확인.
+- 학습: 과거 실패한 web_context 직추출의 안전 재개법 = **0-monkeypatch·app-free leaf 부터 물리 이동**(단방향 edge 보장) + app re-import rebind(호출부·monkeypatch 보존). hotspot(_require_account 51×·_connect_memory 62×·_account_has_permission 11×)은 23-테스트 retarget 동반이라 최후. workflow 적대 stress 가 A(순환)·C(양방향 cycle 인위) 의 치명 결함을 사전 적발.
+- 다음: inc2 _get_client_ip+proxy companions(0 test ref, 안전) → inc3 SESSION_COOKIE+_resolve_permission_catalog → inc4 _fetch/_decorate_account_rows → (그 후 23-테스트 retarget 영역).
