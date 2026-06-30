@@ -448,3 +448,42 @@ wiki 노트에서 정본 문서로 link 할 때:
 - *각주* `[^N]` markdown footnote 활용.
 
 자세한 spec: `docs/WIKI.md §11.3` 와 `AGENTS.md §21.8`.
+
+## 12. 마이그레이션 안전 — expand/contract (무중단 배포 전제, feature-0014)
+
+web 은 무중단 롤링 배포(Caddy 뒤 web-a/web-b, 한 번에 하나씩 재시작)되므로, 배포 중
+**OLD 코드와 NEW 코드가 같은 DB 를 잠시 동시에** 사용한다. 이 mixed-version 창에서
+안전하려면 모든 alembic revision 이 **backward-compatible(expand/contract)** 여야 한다.
+
+### 12.1 원칙
+
+- **Expand (안전, 자유 적용)**: 컬럼/테이블/인덱스 **추가**, nullable 또는 `server_default`
+  있는 컬럼 추가, 신규 제약을 `NOT VALID` 로 추가 후 별도 검증 — OLD 코드가 모르는 객체를
+  더하는 변경.
+- **Contract (위험, 2-phase 필수)**: OLD 코드가 여전히 읽고/쓰는 컬럼·테이블·제약의
+  **DROP / RENAME / 타입 변경 / `NOT NULL` 추가(server_default 없이)**. 이런 변경은
+  **NEW 코드가 모든 replica 에 배포된 뒤, 다음 별도 cycle 에서** 떼어낸다(2-phase):
+  - Phase 1 (이번 cycle): 새 컬럼/구조 추가(expand) + 코드가 양쪽 모두 쓰게.
+  - Phase 2 (후속 cycle): 모든 replica 가 NEW 코드일 때 구 컬럼/구조 제거(contract).
+
+### 12.2 강제 게이트
+
+- 신규/변경 revision 은 **`bin/migrate-lint.sh`** 가 `upgrade()` 본문(+`op.execute()` 가
+  참조하는 모듈 상수 SQL)을 스캔해 비가산 DDL 을 적발한다. `op.execute(UPGRADE_SQL)` 처럼
+  상수로 감싼 raw SQL 도 따라간다.
+- `bin/deploy-web.sh` 가 **마이그레이션 적용 직전 hard gate** 로 호출한다(실패 시 배포 ABORT,
+  스키마/컨테이너 무변경).
+- alembic revision 을 만질 때는 AGENTS.md §10.5 조건부 규칙에 따라 본 §12 를 참조한다.
+
+### 12.3 정말 contract 가 필요할 때 (escape)
+
+2-phase 로 분리할 수 없는 불가피한 경우에 한해, revision 파일에 **서명 annotation** 을 남겨
+게이트를 통과시킨다 (책임 명시):
+
+```python
+# migrate-lint: contract-deferred — <사유: 왜 안전한지/언제 OLD 코드가 사라지는지> (서명: <name> <YYYY-MM-DD>)
+# 또는
+# migrate-lint: allow drop_constraint — FK 제약만 제거, 앱 동작 비의존 (서명: <name> <YYYY-MM-DD>)
+```
+
+annotation 없이 비가산 DDL 이 있으면 `migrate-lint` 가 exit 1 로 배포/머지를 차단한다.

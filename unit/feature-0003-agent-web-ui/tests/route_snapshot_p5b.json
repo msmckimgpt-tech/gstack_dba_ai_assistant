@@ -1,6 +1,6 @@
 {
- "total_routes": 185,
- "api_routes": 184,
+ "total_routes": 187,
+ "api_routes": 186,
  "ordered": [
   {
    "path": "/openapi.json",
@@ -58,6 +58,20 @@
   },
   {
    "path": "/healthz",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/livez",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/readyz",
    "methods": [
     "GET"
    ],

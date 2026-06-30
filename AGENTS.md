@@ -386,6 +386,7 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 | 파일 패턴 | 추가 참조 문서 | 비고 |
 |-----------|--------------|------|
 | `unit/feature-0003-agent-web-ui/**`, `**/*.html`, `**/templates/**`, `**/static/**` | AGENTS.md §15.4.1 + `playbooks/PB-0008-windows-browser-verification.md` | 웹/UI 변경 — 완료 검증은 실제 Windows 브라우저(`bin/win-browser.py`)로 수행, `TEST.md` §3 에 `Environment: Windows-browser` Run 기록 |
+| `unit/feature-0002-agent-core/alembic/versions/**` | `docs/CONVENTIONS.md §12` (expand/contract) | 마이그레이션 — 무중단 롤링 배포의 mixed-version 안전을 위해 expand/contract 필수. `bin/migrate-lint.sh` 통과 의무. contract(DROP/RENAME/타입변경/NOT NULL)는 2-phase 또는 서명 annotation. (feature-0014) |
 <!-- 프로젝트 초기화 시 도메인에 맞게 최소 3~5개 이상을 채운다. 예시는 아래 주석 참조. -->
 <!-- | *.sql | docs/SECURITY.md §3 | SQL 인젝션 방지 규칙 확인 | -->
 <!-- | *.env*, *.cnf | docs/SECURITY.md §2 | 민감정보 처리 규칙 확인 | -->

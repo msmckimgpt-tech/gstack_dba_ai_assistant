@@ -32,13 +32,43 @@ https://{$WEB_PUBLIC_HOST}, :443 {
 	# TASK-0297 (AC-0554): web 은 ENABLE_WEB_TLS=1 로 8000 에서 HTTPS 를 서빙하므로
 	# upstream 으로 평문 HTTP 가 아닌 HTTPS 로 연결한다 (평문 연결 시 502). 사내 Root CA
 	# 로 web leaf 인증서를 검증하고(tls_trust_pool), SNI/검증 이름은 leaf SAN 과
-	# 일치하는 공개 호스트명을 사용한다(tls_server_name — 내부 서비스명 `web` 는 SAN 부재).
+	# 일치하는 공개 호스트명을 사용한다(tls_server_name — 내부 서비스명은 SAN 부재).
+	#
+	# feature-0014 (Tier 2 무중단): 단일 upstream(web:8000) → 2-replica LB(web-a/web-b).
+	# deploy-web.sh 가 한 번에 하나씩 재시작 → 항상 ≥1 healthy upstream.
+	#  - zero-502 의 핵심 lever = dial 실패 retry(passive): 죽어가는 replica 로 dial 한 요청을
+	#    lb_try_duration 동안 healthy replica 로 재시도. active health 의 검출 lag(~2-4s)을 메운다.
+	#  - lb_policy cookie(sticky): 한 클라이언트의 HTML + /static/* 자산이 같은 replica 에서
+	#    오게 해 롤아웃 중 버전 스큐(HTML=NEW / asset=OLD)와 캐시 오염을 제거. sticky replica
+	#    가 down 되면 cookie 재배정 + retry 로 healthy replica 로 자동 전환(무중단 유지).
+	#  - active health 는 /livez(DB 무관 liveness)로 — /healthz(DB ping)로 하면 DB 가 잠깐
+	#    느릴 때(예: migrate 중) 양 replica 가 동시에 unhealthy 로 빠져 502 가 날 수 있다.
+	#  - 두 replica 는 동일 leaf(SAN=WEB_PUBLIC_HOST)를 공유하므로 per-transport SNI 하나로 충분.
 	handle {
-		reverse_proxy web:8000 {
+		reverse_proxy web-a:8000 web-b:8000 {
+			lb_policy cookie weblb
+			# zero-502 의 retry 는 lb_try_duration 이 구동한다(시간 한도 내 재선택). dial 실패
+			# (recreate 로 죽은 replica 로의 연결 거부)는 항상 재시도되어 healthy replica 로 넘어간다.
+			# 주의: 짧은 non-GET(예: POST) 이 연결 성립 후 replica 가 mid-request 로 죽는 극히 짧은
+			# 창은 기본 lb_retry_match(GET 한정)상 재시도되지 않는다 — 단 SIGTERM 시 uvicorn 이
+			# in-flight 를 stop_grace_period(30s) 동안 drain 하므로 그 창은 sub-second 수준.
+			lb_try_duration 5s
+			lb_try_interval 250ms
+
+			fail_duration 30s
+			max_fails 1
+
+			health_uri /livez
+			health_interval 2s
+			health_timeout 2s
+			health_passes 1
+			health_fails 1
+
 			transport http {
 				tls
 				tls_trust_pool file /certs/rootCA.pem
 				tls_server_name {$WEB_PUBLIC_HOST}
+				dial_timeout 5s
 			}
 			header_up X-Forwarded-For {client_ip}
 			header_up X-Forwarded-Proto https

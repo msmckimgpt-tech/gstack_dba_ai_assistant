@@ -1042,6 +1042,46 @@ WEB_PARALLEL_LIMIT = max(1, int(os.getenv("WEB_PARALLEL_LIMIT", "6")))
 WEB_PROGRESS_STALE_TIMEOUT_SECONDS = max(60, int(os.getenv("WEB_PROGRESS_STALE_TIMEOUT_SECONDS", "1200")))
 _ACTIVE_REQUESTS: dict[str, int] = {}
 _ACTIVE_REQUESTS_LOCK = threading.Lock()
+
+# feature-0014 (P0d/P2a): 진행 중 장수명 스트리밍(SSE 프롬프트 자동작성 + CSV export) 카운터.
+# 무중단 롤링 배포 시 deploy-web.sh 의 pre-drain 게이트가 /livez 의 active_streams 를 폴링해,
+# 대상 replica 의 진행 중 스트림이 끝날 때까지 recreate 를 미룬다. (SSE 클라이언트는 fetch/
+# getReader 라 자동 재접속이 없어, 중간에 끊기면 사용자가 수동 재시도해야 하므로.)
+_ACTIVE_STREAMS = 0
+_ACTIVE_STREAMS_LOCK = threading.Lock()
+
+
+def _active_stream_count() -> int:
+    with _ACTIVE_STREAMS_LOCK:
+        return _ACTIVE_STREAMS
+
+
+async def _counted_stream(agen):
+    """async generator 를 감싸 진행 중 스트림 수를 카운트한다(SSE event_stream 용)."""
+    global _ACTIVE_STREAMS
+    with _ACTIVE_STREAMS_LOCK:
+        _ACTIVE_STREAMS += 1
+    try:
+        async for chunk in agen:
+            yield chunk
+    finally:
+        with _ACTIVE_STREAMS_LOCK:
+            _ACTIVE_STREAMS = max(0, _ACTIVE_STREAMS - 1)
+
+
+def _counted_stream_sync(gen):
+    """sync generator 를 감싸 카운트한다(CSV export 용 — async 로 감싸면 event loop 블로킹)."""
+    global _ACTIVE_STREAMS
+    with _ACTIVE_STREAMS_LOCK:
+        _ACTIVE_STREAMS += 1
+    try:
+        for chunk in gen:
+            yield chunk
+    finally:
+        with _ACTIVE_STREAMS_LOCK:
+            _ACTIVE_STREAMS = max(0, _ACTIVE_STREAMS - 1)
+
+
 _MEMORY_SCHEMA_READY = False
 _MEMORY_SCHEMA_INIT_LOCK = threading.Lock()
 _MEMORY_BOOTSTRAP_RUNNING = False
@@ -10786,6 +10826,65 @@ def healthz() -> JSONResponse:
             "insight_heartbeat_age_sec": heartbeat_age_sec,
         },
         status_code=200 if ok else 503,
+    )
+
+
+@app.get("/livez")
+def livez() -> JSONResponse:
+    """feature-0014: DB-무관 liveness probe. 프로세스가 떠서 HTTP 를 처리하면 항상 200.
+
+    Caddy 의 active health_uri 가 본 endpoint 를 쓴다 — /healthz(mysql+pg ping)로 하면 DB 가
+    잠깐 느릴 때(예: migrate 중) 양 replica 가 동시에 unhealthy 로 빠져 502 가 날 수 있으므로,
+    LB liveness 는 DB 와 분리한다. active_streams 는 deploy-web.sh pre-drain 게이트가 폴링한다."""
+    return JSONResponse(
+        {
+            "status": "ok",
+            "git_commit": os.environ.get("GIT_COMMIT", "unknown"),
+            "active_streams": _active_stream_count(),
+        },
+        status_code=200,
+    )
+
+
+@app.get("/readyz")
+def readyz() -> JSONResponse:
+    """feature-0014: 배포 게이트용 readiness probe. mysql+pg 도달 가능해야 200, 아니면 503.
+
+    deploy-web.sh 가 새 replica 를 띄운 뒤 본 endpoint 가 200 + git_commit==<배포 대상 SHA>
+    가 될 때까지 기다린 후에만 다음 replica 로 넘어간다(또는 OLD 를 제거한다). /livez 와 달리
+    DB 연결을 확인하므로, DB 미준비 상태의 replica 로 트래픽이 가는 것을 막는다."""
+    git_commit = os.environ.get("GIT_COMMIT", "unknown")
+    mysql_ok = False
+    pg_ok = False
+    try:
+        conn = _connect_memory()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.fetchone()
+            cur.close()
+            mysql_ok = True
+        finally:
+            conn.close()
+    except Exception:
+        logging.getLogger(__name__).warning("readyz: mysql check failed", exc_info=True)
+    try:
+        from shared.db import _pg_available
+
+        pg_ok = bool(_pg_available())
+    except Exception:
+        logging.getLogger(__name__).warning("readyz: pg check failed", exc_info=True)
+
+    ready = mysql_ok and pg_ok
+    return JSONResponse(
+        {
+            "status": "ready" if ready else "not-ready",
+            "git_commit": git_commit,
+            "mysql_ok": mysql_ok,
+            "pg_ok": pg_ok,
+            "active_streams": _active_stream_count(),
+        },
+        status_code=200 if ready else 503,
     )
 
 
@@ -24347,7 +24446,7 @@ def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str)
         })
 
     return StreamingResponse(
-        event_stream(),
+        _counted_stream(event_stream()),  # feature-0014: 무중단 배포 pre-drain 용 스트림 카운트
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -29486,7 +29585,7 @@ def export_audit_events_csv(request: Request) -> Any:
                     pass
 
     return StreamingResponse(
-        csv_iter(),
+        _counted_stream_sync(csv_iter()),  # feature-0014: 무중단 배포 pre-drain 용 스트림 카운트
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="audit_events.csv"'},
     )
