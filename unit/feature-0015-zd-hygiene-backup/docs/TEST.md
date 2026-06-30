@@ -42,8 +42,23 @@ source_of_truth: true
 - install-backup-cron --print: 항목 2개 + 현재 crontab 출력(변경 없음).
 - make -n mysql-ddl-lint/restore-rehearsal/install-backup-cron: OK.
 - compose config(insight stop_grace_period 30s 반영): exit=0.
-### Run (예정) — Environment: CLI (배포 시, 이 호스트)
-- TEST-...-1/3/4 (insight graceful recreate, restore-rehearsal 실행, cron 멱등) — 배포 단계 기록.
+### Run 2026-06-30 — Environment: CLI (라이브 배포, 이 호스트 — 사용자 "전체 배포" 승인)
+- **TEST-...-1 insight graceful (라이브 실증)**: insight-worker recreate(신 코드 c5356a5) 후 SIGTERM(stop)
+  측정 — **stop 18s(<30s grace), ExitCode=0(SIGKILL 아님)**, 로그 3종 출력: "signal 15 수신 — graceful
+  shutdown 예약"(handler 발화) + "datasource 루프 조기 종료"(cooperative checkpoint 작동) + "graceful
+  shutdown 완료". → graceful 동작 확인.
+  - **라이브 적발·수정 2건(정적검증·패널 미포착, 라이브에서만)**: (a) 경계-only graceful 은 긴 cycle 에
+    mid-cycle SIGTERM 을 못 끊어 첫 측정 31~32s(SIGKILL 경계) → `run_insight_cycle` 의 per-datasource
+    루프에 **협조적 `_INSIGHT_SHUTDOWN` 체크포인트** 추가(부분 cycle 멱등). (b) 워커가 logging 미설정이라
+    INFO 로그 비가시 → handler/checkpoint 로그를 `console.print` 로 전환(가시화). 수정 후 18s/exit0/로그 확인.
+- **TEST-...-3 restore-rehearsal (라이브 실증)**: `make backup`(agent_kb 250M + agent_memory 32M) →
+  `make restore-rehearsal` → **PG throwaway 34 테이블 + MySQL throwaway 29 테이블 복원·검증·DROP, PASS**.
+  프로덕션 agent_kb/agent_memory 미접촉, orphan rehearsal DB 0(cleanup trap 확인). agent_memory 32M
+  = 비어있지 않음(Web* auth/RBAC/products/datasources/sessions — '거의 빈' 추정 반박).
+- **TEST-...-4 cron 멱등 (라이브)**: `install-backup-cron` 2회 → crontab 의 'feature-0015' 항목 정확히 2개
+  (매일 03:00 backup + 주간 일 03:30 restore-rehearsal), 무관 항목 보존.
+
+> 위 (a)/(b) 수정은 main 핫픽스(feature-0015 머지 후 라이브 검증 적발 — caddy 핫픽스와 동류)로 반영.
 
 ## 4. 미수행 사유
 - 라이브 insight graceful recreate / restore-rehearsal 실행 / cron 설치는 docker·DB·crontab 접근이

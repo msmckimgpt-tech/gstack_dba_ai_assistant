@@ -1942,6 +1942,15 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             _seen_scan_keys: set = set()  # TASK-0255 M-1: 이번 cycle 관측한 (scope_key, db_name) — stale prune 용
             plan_start = time.perf_counter()
             for _ds_key, _ds_coords in ds_targets:
+                # feature-0015: cycle 내 협조적 graceful 체크포인트. 긴 cycle(다수 datasource·LLM) 중
+                # SIGTERM 이 와도 루프 경계까지 못 가 30s grace 후 SIGKILL 되던 것을, 현재 datasource
+                # 처리 후 즉시 bail 로 단축(부분 cycle 은 멱등 — 다음 스캔이 재유도). (라이브 검증 적발)
+                if _INSIGHT_SHUTDOWN.is_set():
+                    try:
+                        console.print("insight-worker: graceful — cycle 중 SIGTERM, datasource 루프 조기 종료")
+                    except Exception:
+                        pass
+                    break
                 # TASK-0219: 스코핑 식별자는 라벨(_ds_key)이 아닌 **엔드포인트 해시**(scope_key).
                 _ds_scope = None
                 if _ds_key is not None and _ds_coords:
@@ -2407,7 +2416,11 @@ _INSIGHT_SHUTDOWN = _threading.Event()
 
 def _install_insight_signal_handlers() -> None:
     def _handler(signum, _frame):
-        logging.getLogger("insight").info("insight-worker: signal %s 수신 — graceful shutdown 예약", signum)
+        # console.print 로 가시화(이 워커는 logging 미설정이라 INFO 는 docker logs 에 안 보임).
+        try:
+            console.print(f"insight-worker: signal {signum} 수신 — graceful shutdown 예약")
+        except Exception:
+            pass
         _INSIGHT_SHUTDOWN.set()
     try:
         _signal.signal(_signal.SIGTERM, _handler)
@@ -2456,4 +2469,7 @@ def run_insight_worker_loop() -> None:
             _INSIGHT_SHUTDOWN.wait(degraded_backoff_sec)
         else:
             _INSIGHT_SHUTDOWN.wait(tick_sec)
-    logging.getLogger("insight").info("insight-worker: graceful shutdown 완료(루프 종료).")
+    try:
+        console.print("insight-worker: graceful shutdown 완료(루프 종료).")
+    except Exception:
+        pass
