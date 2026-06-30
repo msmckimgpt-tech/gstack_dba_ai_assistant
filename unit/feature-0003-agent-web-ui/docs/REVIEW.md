@@ -4194,3 +4194,23 @@ source_of_truth: true
 - 회귀 가드: `tests/verify_metadata_bs_paging.mjs` **32/32 PASS**(Node18+jsdom) — [A] 정적(상수·윈도잉·저장/AI 전체수집 불변식·페이저 id/클래스·cache-buster) + [B] 행위(70블록 30/쪽 윈도잉·마지막 페이지 잔여·page 999 클램프·검색 합성·≤30 페이저숨김·전체 블록 DOM 보존). 기존 `verify_conv_entry_defaults.mjs` 20/20 무회귀.
 - NIT(적용함): 패널이 "페이저가 결과 wrap 하단이라 한 페이지 전부 펼치면 스크롤 하단에 묻힘"을 지적(차단 아님). 사용자 스크롤 불만과 직결되어 `.admin-meta-bs-pager` 에 `position:sticky; bottom:0` 적용(pane 하단 고정, 이전/다음 항상 도달).
 - 라이브 실측 분리(§정직): `node --check`·id/클래스 정합·jsdom 행위·적대 패널로 "페이징=가시성 윈도우, 저장/AI 전체 수집 불변식 유지, 클램프·합성 정확" 코드 검증. "실 사용자 화면에서 세로 스크롤 고정·여백 축소·페이저 동작 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+
+## REV-20260630T005923-share-joinable-confirm-persist [AGENT-TEAM:adversarial-security+ux] (TASK-20260630T005923-share-joinable-confirm-persist — 공유 '링크 생성' 참여 허용 확인 모달 + '참여 허용' 체크박스 대화별 영속, Critical 인접 §12.3 인가/프라이버시 UX)
+- Trigger(§18.8): UI/dialog/modal + 인가/프라이버시(joinable owner-gate) frontend 변경 → security/authz + ux/regression 2렌즈 적대 패널. 대상: `static/app.js`(영속 헬퍼·`confirmShareJoinable`·`openShareDialog` confirm 게이트·`promptShareExpiry` cid 영속)·`static/styles.css`·`static/index.html` + 테스트 2파일. backend/route/RBAC/스키마/LLM 0(app.py diff empty).
+- 설계 결정(AskUserQuestion): Q1=항상 확인 모달, Q2=대화별 localStorage 영속. owner-only joinable + 백엔드 403(`_conversation_owned_by_account`) authoritative 불변 — 본 변경은 프론트 UX 만.
+- **렌즈1 보안/인가 — VERDICT: SAFE (BLOCKING 0, NIT 0)**. 5가설 전부 REFUTED:
+  1. H1(비소유자 joinable=true 생성) REFUTED — **triple-clamp**: `openShareDialog` 최종 `const joinable = isOwner ? confirmRes.joinable !== false : false`(비소유자 강제 false) + `confirmShareJoinable({canAllow:false})` 가 '허용' 버튼 자체 미렌더(취소+생성[deny]만) + `promptShareExpiry` `canToggleJoinable=false`→joinable false. `_issueConversationShare` 후 백엔드 재검증.
+  2. H2(localStorage 영속이 프라이버시 회귀) REFUTED — 기본 ON 은 **기존 동작**(영속은 복원만, 에스컬레이션 아님). 손상값 try/catch + 비객체/배열 거부→`{}` 폴백→기본 ON. cid null/빈 → 기본 반환·set no-op(키 오염 0). `String(cid)` 대화별 키(누출 0). 영속은 체크박스 초기 표시만 — 발급은 항상 confirm 모달+owner 클램프 경유.
+  3. H3(확인 모달 우회 발급) REFUTED — 취소/Escape/backdrop/× 모두 `{cancelled:true}`, `settled` 가드 이중 resolve 차단, caller `if (!confirmRes || confirmRes.cancelled) return;` 가 비-cancel allow/deny 외 `_issueConversationShare` 도달 차단. 앵커 경로는 기존 `promptShareExpiry` cancel 가드 무변경.
+  4. H4(innerHTML/localStorage XSS·인젝션) REFUTED — `desc`/`actionsHtml` 은 `canAllow` 불리언으로만 선택되는 **정적 문자열 리터럴**(사용자/대화 데이터 미보간). cid 는 innerHTML 에 절대 미삽입(grep 0) — localStorage 키(`String(cid)`)·API path `encodeURIComponent(cid)` 만. 저장값은 boolean. 기존 `escapeHtml`(만료 option) 유지.
+  5. H5(백엔드 게이트 약화) REFUTED — `app.py` diff empty, owner-only 403(app.py:14794)·view-only-vs-owner 구분 무변경.
+- **렌즈2 UX/회귀 — VERDICT: SOUND (BLOCKING 0)**. 5가설 전부 REFUTED:
+  1. H1(모달 종료 경로·리스너 누수) REFUTED — 4 종료 경로 모두 `{cancelled:true}` resolve, `settled` 가드, keydown 리스너 `cleanup`(=finish 내부, resolve 전)에서 제거, 버튼/backdrop 리스너는 노드 제거 시 GC. 생성 중단 정상.
+  2. H2(회귀 수정 동작) REFUTED — 두 진입점(openShareDialog·promptShareExpiry) 초기값 `getShareJoinablePref(cid)` 복원 + change 즉시 영속, 동일 cid 공유(createConversationShare 가 cid 전달), 미설정 기본 ON.
+  3. H3(confirm↔checkbox↔pref 일관성) REFUTED — `intended`(체크박스)→`confirmShareJoinable({initial})` 기본 포커스→최종 `joinable`(모달 권위)→체크박스+pref writeback→발급. deny→joinable=false 일관.
+  4. H4(비소유자 흐름) REFUTED — disabled 체크박스·change 리스너 미등록·canAllow=false('허용' 부재, deny 포커스)·최종 false·writeback skip. 앵커 경로(createConversationShare)는 confirm 모달 미경유로 기존 동작 보존 — 스코프 결정(요청1=openShareDialog '링크 생성' 한정) 합리적(앵커는 명시적 '여기까지 공유' 제스처 + 자체 설정 모달이 이미 deliberate).
+  5. H5(focus·중복 모달·disabled 토글) REFUTED — confirm backdrop `position:fixed; inset:0; z-index:9999` 가 마지막 append 라 '링크 생성' 버튼 완전 오버레이(재진입 차단). 취소 후 createBtn 활성 유지, 발급 중 try/finally 토글.
+  - NIT(반영함): UX 패널이 "앵커 경로 주석에 confirm 미적용 스코프 미문서화 — drift 우려" 지적 → `createConversationShare` 에 스코프 주석 추가. (다른 NIT: `chk.checked=joinable` 후 `load()` 재로드라 약간 중복이나 무해 — 무조치.)
+- 회귀 가드: agent 이미지 pytest 공유 13/13(owner-guard 6 + confirm-persist 7) + feature-0003 전체 **548 PASS**(회귀 0), `node --check app.js` PASS. rebase(8ae77ca→4359be5) 충돌 0.
+- Human Approval Needed: 아니오 (frontend-only, 인가 불변식 무변경, 사용자 명시 요청 범위, AskUserQuestion 설계 확정 완료). 단 Critical 인접 영역이라 적대 패널 2렌즈로 검증 강화.
+- 라이브 실측 분리(§정직): 코드/테스트/적대 패널로 "확인 게이트·체크박스 영속·인가 불변식 보존" 검증. "실 사용자 화면에서 확인 모달 노출·취소 시 발급 중단·재진입 체크박스 상태 유지 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).

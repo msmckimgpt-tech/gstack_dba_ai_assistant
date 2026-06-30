@@ -2414,6 +2414,11 @@ a { color: inherit; }
 .share-joinable-row.is-locked { cursor: not-allowed; color: var(--text-muted); }
 .share-joinable-row.is-locked input { cursor: not-allowed; opacity: 0.5; }
 .share-expiry-opt { flex: 1 1 auto; min-width: 72px; justify-content: center; text-align: center; padding: 8px 12px; font-size: 13px; }
+/* feature-0009 share-joinable-confirm: '링크 생성' 직후 참여 허용 여부 확인 모달. */
+.share-confirm-panel { max-width: 420px; }
+.share-confirm-desc { padding: 16px 20px 4px; font-size: 13px; color: var(--text); line-height: 1.6; }
+.share-confirm-desc strong { color: var(--text); font-weight: 600; }
+.share-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding: 14px 20px 20px; }
 
 /* gc-settings-notif: 통합 공유 팝업 — 상단 '생성' 영역 + 구분 소제목 + 하단 '발급된 링크' 목록. */
 .share-create-sec { padding: 14px 20px 4px; }
