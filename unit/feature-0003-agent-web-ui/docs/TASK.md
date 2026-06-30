@@ -4939,3 +4939,19 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **단위 검증**: `node --check admin.js` PASS · JS↔HTML id 정합(4 id)·CSS↔HTML 클래스 정합·cache-buster 양쪽 bump 확인. §18.8 적대 패널(SUBAGENT correctness) — 페이징이 DOM 전체 수집 불변식·필터 합성·클램프·toggle 충돌·stale 상태 5가설.
 - [ ] **PB-0008 Windows-browser 시각 검증**(대규모 스키마 fetch→페이저 노출·이전/다음·검색 합성·≤30개 시 페이저 숨김·여백 축소·저장/AI일괄 전체 수집) — WSL worktree 라 미실행, **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
 - [ ] verify-completion --pre-commit PASS → commit → main merge → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지만) → healthz.
+
+### TASK-20260630T005923-share-joinable-confirm-persist — 공유 '링크 생성' 참여 허용 확인 모달 + '참여 허용' 체크박스 대화별 영속(회귀 수정) (Critical 인접 §12.3 인가/프라이버시 UX, frontend-only, feature-0009 cross-cut, 2026-06-30)
+- 트리거: `/_template:entry` arg-given. 사용자 요청: (1) '대화 공유'에서 '링크 생성' 버튼을 누른 후 해당 대화 참여 허용 여부를 먼저 확인하는 구조 구성. (2) '공유' 화면에서 '이 링크로 대화 참여 허용' 체크박스를 조절한 후 다시 진입 시 상태가 회귀하는 버그 수정.
+- 설계 결정(AskUserQuestion): Q1=**항상 확인 모달**(생성 클릭 시 참여 허용/미허용 명시 확정). Q2=**대화별 localStorage 영속**(cid 키).
+- 위험: 기존 `test_share_joinable_owner_guard.py` 가 Critical §12.3 인가로 명시한 영역. 본 변경은 프론트 UX(확인 게이트+영속)만 — owner-only joinable + 백엔드 403 불변식 무변경. 격리: 신규 worktree(rebase 후 main 4359be5 기반).
+- [x] **localStorage 영속 헬퍼**: `SHARE_JOINABLE_PREFS_LS_KEY="mad.shareJoinablePrefs.v1"` + `_loadShareJoinablePrefs`/`getShareJoinablePref(cid)`/`setShareJoinablePref(cid,joinable)`. cid→bool 맵, 미설정 대화는 기본 ON(`!== false`). muted/notify 패턴 미러.
+- [x] **확인 모달 `confirmShareJoinable({initial,canAllow})`**: '참여 허용 확인' 모달. owner(canAllow=true)=[취소][참여 없이 생성][참여 허용하고 생성], 비소유자(canAllow=false)=[취소][생성](허용 버튼 부재). resolve({cancelled, joinable}). 취소/Escape/backdrop/× 모두 cancelled, settled 이중 resolve 가드, cleanup 에서 keydown 리스너 제거.
+- [x] **openShareDialog '링크 생성' 게이트**: 클릭 시 `confirmShareJoinable` await → 취소면 발급 중단 → 최종 joinable 을 체크박스·영속값에 반영 → `_issueConversationShare`. 비소유자 최종 joinable 강제 false 보존.
+- [x] **회귀 수정(요청2)**: openShareDialog·promptShareExpiry 체크박스 초기값을 `getShareJoinablePref(cid)` 에서 복원(하드코딩 `checked` 제거) + change 즉시 영속. createConversationShare 가 cid 전달.
+- [x] **CSS/cache-buster**: `.share-confirm-panel/-desc/-actions` 추가. index.html app.js `20260629f-point-scroll-easeoutexpo`→`20260629g-share-joinable-confirm`, styles.css `20260629-metadata-bs-flexclip`→`20260629-share-joinable-confirm`.
+- [x] **스코프 명문화(패널 NIT)**: 앵커 경로(createConversationShare)는 confirm 모달 의도적 미적용 — 주석으로 명시(요청1 = openShareDialog '링크 생성' 한정).
+- [x] **테스트**: 기존 `test_share_joinable_owner_guard.py` 3 assertion 을 불변식 보존하며 갱신(intended/최종 joinable 분리·cid 파라미터·cid 전달) + 신규 `test_share_joinable_confirm_persist.py`(P1~3 영속·C1~4 확인 게이트, 7 케이스). agent 이미지 pytest: 공유 테스트 13/13 + feature-0003 전체 548 PASS(회귀 0). `node --check app.js` PASS.
+- [x] **§18.8 적대 패널 2렌즈**(security/authz + ux/regression) — 각 5가설 전부 REFUTED. 보안 VERDICT SAFE(backend gate intact·triple-clamp·XSS 0), UX VERDICT SOUND(종료경로·회귀수정·일관성). BLOCKING 0.
+- [x] **릴리즈노트**: `release-notes-data.js` 2026-06-29 블록에 2건(참여 허용 확인 improved · 체크박스 상태 유지 fixed) + summary 갱신.
+- [ ] **PB-0008 Windows-browser 시각 검증**(링크 생성→확인 모달·취소 시 발급 중단·체크박스 토글 후 재진입 상태 유지) — WSL worktree 미실행, **배포 후 사용자 확인 권장**(frontend render-only, 선례 동일).
+- [ ] verify-completion --pre-commit PASS → commit → main merge → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지만) → healthz.

@@ -5097,3 +5097,21 @@ source_of_truth: true
 - Impact: 비파괴. backend/스키마/마이그/RBAC/credential/LLM 경로 무변경. **불변식 보존**: 가시성은 순수 `display` 토글 — 모든 테이블 블록은 항상 DOM 유지. 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapAiFill`/`_metaBootstrapApplyDescriptions`)이 `querySelectorAll(".admin-meta-bs-table")` 로 전체 DOM 수집하는 로직 무변경 → off-page/비매칭 블록 입력값도 저장·AI채움(blast radius 0). 테이블 ≤30개면 페이저 숨김 = 기존 동작 동일.
 - 분리 표기(§정직): `node --check`·id/클래스 정합·적대 패널로 "페이징이 가시성 윈도우이며 저장/AI 전체 수집 불변식 유지" 코드 검증. "실제 사용자 화면에서 스크롤 고정·여백 축소 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
 - Rollback: admin.js 의 페이징 추가분(상수·page 상태·3 신규/재작성 함수·바인딩) 제거 + `_metaBootstrapApplyFilter` 를 단순 필터 버전으로 복원 + styles.css 여백/페이저 hunk 복원 + admin.html 페이저 바 제거 + cache-buster 복원.
+
+## CHG-20260630T005923-share-joinable-confirm-persist (TASK-20260630T005923-share-joinable-confirm-persist — 공유 '링크 생성' 참여 허용 확인 모달 + '참여 허용' 체크박스 대화별 영속(회귀 수정), Critical 인접 §12.3 — 인가/프라이버시 UX, frontend-only)
+- Date: 2026-06-30
+- Origin: `/_template:entry` arg-given. 사용자 요청 2건: (1) '대화 공유' '링크 생성' 클릭 후 참여 허용 여부를 먼저 확인하는 구조. (2) '공유' 화면에서 '이 링크로 대화 참여 허용' 체크박스 조절 후 재진입 시 상태 회귀 버그 수정.
+- 설계 결정(AskUserQuestion): Q1=**항상 확인 모달**(생성 클릭 시 참여 허용/미허용 명시 확정), Q2=**대화별 localStorage 영속**(cid 키).
+- Summary: (요청1) `openShareDialog` 의 '링크 생성' 클릭이 `confirmShareJoinable` 확인 모달('참여 허용 확인')을 거친 뒤에만 발급되도록 게이트 — joinable=true 가 받는 사람에게 대화 전체를 노출하는 비가역 동작이라 무심코 누른 생성으로 공개되지 않게 재확정. (요청2) '참여 허용' 체크박스가 매 진입 시 하드코딩 `checked` 로 회귀하던 것을, 대화별 localStorage(`mad.shareJoinablePrefs.v1`, cid→bool)에서 복원 + 토글/확정 즉시 영속하도록 수정. 통합 팝업·앵커 경로(`promptShareExpiry`) 동일 적용.
+- Root cause(요청2): `openShareDialog`(app.js)·`promptShareExpiry` 가 owner 분기 체크박스를 `checked` 로 하드코딩 → 사용자가 끈 상태가 어디에도 저장되지 않아 재오픈 시 무조건 기본 ON 으로 복귀. 클라이언트 선호 영속(localStorage) 부재가 근본 — 같은 앱의 muted/notify/sendMode 선호는 이미 localStorage 로 영속하던 확립 패턴인데 joinable 만 누락.
+- Files:
+  - `src/static/app.js` — (1) 영속 헬퍼 `SHARE_JOINABLE_PREFS_LS_KEY`/`_loadShareJoinablePrefs`/`getShareJoinablePref(cid)`/`setShareJoinablePref(cid,joinable)` 신설(muted-convs 패턴 미러, cid→bool, 기본 ON=`!== false`, 손상값 `{}` 폴백). (2) 확인 모달 `confirmShareJoinable({initial,canAllow})` 신설(owner=취소/참여 없이 생성/참여 허용하고 생성, 비소유자=취소/생성 — '허용' 버튼 부재; 취소·Escape·backdrop·× 모두 cancelled; settled 가드; cleanup 리스너 해제). (3) `openShareDialog` 체크박스 초기값 `getShareJoinablePref(cid)` 복원·change 영속·'링크 생성' 핸들러에 confirm 게이트(`intended`→`confirmRes.joinable`→최종 `joinable = isOwner ? … : false`, 체크박스+pref 반영). (4) `promptShareExpiry` cid 파라미터·초기값 복원·change/확정 영속. (5) `createConversationShare` cid 전달 + 앵커 경로 스코프 주석.
+  - `src/static/styles.css` — `.share-confirm-panel`/`.share-confirm-desc`/`.share-confirm-actions`(share-expiry 톤 동일).
+  - `src/static/index.html` — app.js `20260629f-point-scroll-easeoutexpo`→`20260629g-share-joinable-confirm`, styles.css `20260629-metadata-bs-flexclip`→`20260629-share-joinable-confirm`(정적 자산 전파).
+  - `src/static/release-notes-data.js` — 2026-06-29 블록에 항목 2건(참여 허용 확인 improved · 체크박스 상태 유지 fixed) + summary 갱신.
+  - `tests/test_share_joinable_owner_guard.py` — 리팩터로 바뀐 3 assertion 을 인가 불변식 보존하며 갱신(f1 `intended`+최종 joinable 강제 false, f2 cid 파라미터, f3 cid 전달).
+  - `tests/test_share_joinable_confirm_persist.py` — 신규 회귀 가드(P1~3 영속·C1~4 확인 게이트, 7 케이스).
+- Impact: 비파괴. **backend/route/스키마/마이그/RBAC/credential/LLM 경로 무변경(app.py diff 0)**. owner-only joinable + 백엔드 403 게이트(`_conversation_owned_by_account`) authoritative 불변. 비소유자는 체크박스 disabled + change 리스너 미등록 + confirm 모달 '허용' 버튼 부재 + 최종 joinable 강제 false(triple-clamp). 영속은 체크박스 초기 표시만 — 발급은 항상 confirm 모달+owner 클램프 경유라 프라이버시 회귀 0.
+- 검증: agent 이미지 pytest 공유 13/13 + feature-0003 전체 548 PASS(회귀 0), `node --check app.js` PASS. §18.8 적대 패널 2렌즈 각 5가설 REFUTED — 보안 SAFE(BLOCKING 0)·UX SOUND(BLOCKING 0). rebase: worktree 생성 후 main 8ae77ca→4359be5(metadata-bs-paging) 1커밋 전진 감지 → stash→reset origin/main→pop 으로 최신 main 위 재배치(충돌 0, app.js/index.html 무중첩, styles.css 영역 분리).
+- 분리 표기(§정직): 코드/테스트/적대패널로 "확인 게이트·체크박스 영속·인가 불변식 보존" 검증. "실제 사용자 화면에서 확인 모달 노출·재진입 상태 유지 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: app.js 의 (헬퍼 4함수·confirmShareJoinable·openShareDialog confirm 게이트·promptShareExpiry cid 영속·createConversationShare cid) 제거 + 체크박스 `checked` 하드코딩 복원 + styles.css `.share-confirm-*` 제거 + index.html cache-buster 복원 + 테스트 2파일 원복/삭제.

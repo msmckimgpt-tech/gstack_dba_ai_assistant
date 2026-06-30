@@ -1266,3 +1266,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **무회귀**: 기존 `tests/verify_conv_entry_defaults.mjs` **20/20 PASS** · `tests/verify_date_group_collapse.mjs` **22/22 PASS**(대화 목록 로직 동일 영역).
 - **Pass/Fail: PASS**. 사용자 보고("새 대화에서 요청 보내면 현재 대화 + 별도 '새 대화' 중복 생성") 해소: optimistic 항목과 placeholder 의 동시 렌더 창 제거 + optimistic 항목 메시지 제목 표시.
 - **미수행(배포 후 사용자 확인 권장)**: PB-0008 Windows-browser 실 화면 검증(새 대화 첫 전송→사이드바 항목 1개·중복 0·진행 중 placeholder 비중복) — WSL worktree 라 미실행(frontend-only render, 선례 동일). REV-20260629T080500-new-conv-dedup [SKIPPED:frontend-ui-render-state-no-backend-no-rbac] 적용 예정.
+
+### TEST-20260630T005923-share-joinable-confirm-persist — 공유 '링크 생성' 참여 허용 확인 모달 + '참여 허용' 체크박스 대화별 영속 (Critical 인접 §12.3 인가/프라이버시 UX, frontend-only)
+- **Environment: agent 이미지 pytest (DB 없이 — static read + inspect.getsource)** + CLI `node --check`. backend/스키마/RBAC 무경유(app.py diff 0).
+- **기존 owner-guard 회귀 가드 `tests/test_share_joinable_owner_guard.py`** — 리팩터 후에도 인가 불변식 보존되도록 3 assertion 갱신(f1 `intended`+최종 joinable 강제 false, f2 cid 파라미터, f3 cid 전달). B1~B3(백엔드 403 게이트·INSERT 선행·admin 우회 없음) 무변경 PASS.
+- **신규 회귀 가드 `tests/test_share_joinable_confirm_persist.py` 7/7 PASS**:
+  - **[P 영속]** P1 헬퍼 존재+기본 ON(`!== false`)·정규화, P2 openShareDialog 초기값 복원(`joinableInit ? ' checked' : ''`)+change 영속, P3 promptShareExpiry cid 복원+change/확정 영속.
+  - **[C 확인 게이트]** C1 `confirmShareJoinable` 존재, C2 '링크 생성' 이 confirm→취소중단→발급 순서(인덱스 단언), C3 비소유자 canAllow=false 분기에서만 '허용' 버튼 렌더(비소유자 강제 false), C4 확인 모달 CSS 존재.
+- **통합 회귀**: 공유 테스트 13/13 + **feature-0003 전체 pytest 548 PASS(회귀 0)**. `node --check src/static/app.js` PASS.
+- **§18.8 적대 패널 2렌즈**: 보안/authz VERDICT SAFE(5가설 REFUTED·BLOCKING 0), UX/regression VERDICT SOUND(5가설 REFUTED·BLOCKING 0). 상세 REV-20260630T005923-share-joinable-confirm-persist.
+- **Pass/Fail: PASS**. 요청1(생성 직후 참여 허용 확인 모달)·요청2(체크박스 상태 대화별 유지=회귀 해소) 코드/테스트 검증 완료.
+- **미수행(배포 후 사용자 확인 권장)**: PB-0008 Windows-browser 실 화면(링크 생성→'참여 허용 확인' 모달·취소 시 발급 중단·체크박스 토글 후 재진입 상태 유지) — WSL worktree 미실행(frontend render, 선례 동일).

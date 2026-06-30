@@ -96,13 +96,17 @@ def test_f1_open_share_dialog_owner_gate():
     # 비소유자: disabled 체크박스 + 안내 문구.
     assert 'id="shareDialogJoinableChk" disabled' in js
     assert "대화 생성자만 변경할 수 있습니다" in js
-    # 발급 시 비소유자 joinable 강제 false.
-    assert "const joinable = isOwner && chk ? chk.checked !== false : false;" in js
+    # 발급 시 비소유자 joinable 강제 false (share-joinable-confirm 리팩터 후 변수명 intended → 최종 joinable).
+    # 의도(체크박스) 단계: 비소유자는 항상 false.
+    assert "const intended = isOwner && chk ? chk.checked !== false : false;" in js
+    # 확인 모달 통과 후 최종 joinable: 비소유자는 owner 분기 자체가 false 라 강제 false 보존.
+    assert "const joinable = isOwner ? confirmRes.joinable !== false : false;" in js
 
 
 def test_f2_prompt_share_expiry_can_toggle_param():
     js = _read_static("app.js")
-    assert "function promptShareExpiry({ canToggleJoinable = true } = {})" in js
+    # share-joinable-persist 리팩터 후 cid 파라미터 추가 — canToggleJoinable 기본값 유지.
+    assert "function promptShareExpiry({ cid = null, canToggleJoinable = true } = {})" in js
     # 비소유자: shareJoinableChk disabled.
     assert 'id="shareJoinableChk" disabled' in js
     # 강제 false resolve.
@@ -111,5 +115,5 @@ def test_f2_prompt_share_expiry_can_toggle_param():
 
 def test_f3_create_share_passes_owner_flag():
     js = _read_static("app.js")
-    # createConversationShare 가 owner 여부를 promptShareExpiry 로 전달.
-    assert "await promptShareExpiry({ canToggleJoinable: isOwner });" in js
+    # createConversationShare 가 owner 여부를 promptShareExpiry 로 전달(cid 동반 — persist).
+    assert "await promptShareExpiry({ cid, canToggleJoinable: isOwner });" in js
