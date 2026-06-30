@@ -3160,22 +3160,29 @@ function _metaGraphAddElements(nodes, edges) {
 function _metaGraphLayout() {
   if (!_metaGraph.cy) return;
   const cnt = _metaGraph.cy.nodes().length;
+  // 라벨 겹침 방지의 핵심: nodeDimensionsIncludeLabels=true → 레이아웃이 각 노드의 **라벨 박스까지**
+  // 충돌 회피 대상으로 간주해 라벨이 겹치지 않을 만큼 벌린다. animate=true 로 펼침 과정을 보여준다.
+  const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
   if (_metaGraph.fcose) {
     try {
       _metaGraph.cy.layout({
-        name: "fcose", quality: "default", animate: false, randomize: true, fit: true, padding: 30,
-        packComponents: true,                 // 비연결 컴포넌트 압축 배치(여백 최소)
-        nodeSeparation: 80,                   // 카테고리 내 노드 간 간격
-        nodeRepulsion: () => 7000, idealEdgeLength: () => 75, gravity: 0.3,
-        gravityRangeCompound: 1.2, gravityCompound: 1.4,  // compound(스키마) 내부 집적 강화
-        numIter: cnt > 400 ? 1500 : 2500,
+        name: "fcose", quality: "proof", randomize: true, fit: true, padding: 40,
+        animate: animate, animationDuration: 1000, animationEasing: "ease-out",
+        nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거)
+        uniformNodeDimensions: false,
+        packComponents: true,
+        nodeSeparation: 150,                  // 노드 간 최소 간격 ↑(라벨 여유)
+        tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,  // 비연결 노드 타일 간격
+        nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
+        gravityRangeCompound: 1.5, gravityCompound: 1.0,
+        numIter: cnt > 400 ? 1800 : 2500,
       }).run();
       return;
     } catch (_) {}
   }
   try {
-    _metaGraph.cy.layout({ name: "cose", animate: false, padding: 30, nodeRepulsion: 8000,
-      idealEdgeLength: 80, fit: true }).run();
+    _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
+      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: true }).run();
   } catch (_) {}
 }
 
