@@ -84,8 +84,14 @@ ok("[B7] 공용(common) 스코프 분기에서 empty-state 노출 + 상속 함�
    Boolean(syncVis) && /metadataBootstrapEmpty/.test(syncVis) && /_metaBootstrapSyncToScopeDs\(/.test(syncVis));
 
 const bindCtl = extractFn(adminJs, "_metaBindControls");
-ok("[B8] 스코프 변경 핸들러(_metaBindControls)가 부트스트랩 가시성 동기화 호출",
-   Boolean(bindCtl) && /metadataScopeSelect[\s\S]*_metaSyncBootstrapVisibility\(\)/.test(bindCtl));
+// metadata-list-detail: 스코프 핸들러는 _metaRenderDetail(우측 상세 코디네이터) 경유로 부트스트랩
+//   가시성을 동기화한다(bootstrap 모드면 _metaRenderDetail 가 _metaSyncBootstrapVisibility 호출).
+//   직접 호출에서 코디네이터 경유로 바뀐 정당한 리팩토링 — 동기화 보장은 _metaRenderDetail 가 책임.
+ok("[B8] 스코프 변경 핸들러가 우측 상세 코디네이터(_metaRenderDetail) 경유로 부트스트랩 동기화",
+   Boolean(bindCtl) && /metadataScopeSelect[\s\S]*_metaRenderDetail\(\)/.test(bindCtl));
+const renderDetailB8 = extractFn(adminJs, "_metaRenderDetail");
+ok("[B8b] _metaRenderDetail 가 bootstrap 모드에서 _metaSyncBootstrapVisibility 호출",
+   Boolean(renderDetailB8) && /_metaSyncBootstrapVisibility\(\)/.test(renderDetailB8));
 
 // ── [C] 저장 불변식(footgun 제거 후에도 보존) ───────────────────────────────
 const saveSrc = extractFn(adminJs, "_metaBootstrapSave");

@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260630T160000-metadata-list-detail — 메타데이터 패널 list-detail 2단 재구성(좌측 목록 선택 → 우측 상세 편집) (Major §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 트리거: 사용자 — "메타데이터 UI 를 다른 카테고리처럼 한 항목 선택 후 우측 상세조정 형태로 재구성. 위/아래 스크롤이 잦다." 참조: 계정/역할·제품/데이터소스·감사로그/보관대화.
+- 현황 파악(코드 근거): 메타데이터 pane 은 단일 컬럼 수직 스택(헤더→서브탭→부트스트랩→폼→목록). 행 '수정' 버튼이 `_metaStartEdit`→목록 **위**의 폼으로 `scrollIntoView({behavior:'smooth'})` 점프 → 위/아래 스크롤 마찰의 정체. 다른 카테고리는 `.admin-list-detail`(grid 2단: 좌측 .admin-list-col + 우측 .admin-detail-col, 각자 overflow-y:auto).
+- 결정(사용자 Q&A): list-detail 채택. 부트스트랩 '스키마 골격 가져오기'(단일 항목 모델에 1:1 없음)=**우측 상세 모드**(좌측 툴바 버튼 진입). 거버넌스 안내문=우측 empty-state 로 이동(상단 압축).
+- 설계: `detailMode(empty|form|bootstrap)` + `selectedId` + `search` 상태. 코디네이터 `_metaRenderDetail` 가 모드 유효성 보정 후 세 컨테이너 배타 가시성 결정. 행 클릭=선택→form. 기존 폼/목록/부트스트랩 렌더 함수 재사용(위치만 이동). 백엔드 무변경.
+- Completion Checklist:
+  - [x] admin.html: 메타데이터 pane 2단 list-detail 화. 좌측 검색/카운트/목록, 우측 empty-state/폼/부트스트랩. '+ 새 항목'·'스키마 골격 가져오기' 버튼. cache-buster bump.
+  - [x] admin.js: detailMode/selectedId/search + `_metaRenderDetail`/`_metaSyncListActive`/`_metaSyncListToolbar`/`_metaItemMatchesSearch`. 행 클릭 선택(role=button·keydown target 게이트)·'수정'버튼·scrollIntoView 폐기·삭제/유사어 stopPropagation. 핸들러/init/submit/delete 코디네이터 경유.
+  - [x] styles.css: pane 단일 스크롤 제외, 폼 카드 chrome 제거, 행 선택 스타일, 안내문/bs-open 활성.
+  - [x] 회귀 가드 `verify_metadata_list_detail.mjs`(33) + scope-single-ds(15)·inline-desc(30)·paging(32) green. `node --check` PASS.
+  - [x] §18.8 적대 frontend state-machine 패널(7가설) → SHIP(BLOCKING 0). MAJOR-2(keydown 이중발화) 수정+잠금, MAJOR-1(검색-편집 desync) 편집보존 의도 수용, NIT-1 정리. REV-20260630T160000-metadata-list-detail.
+  - [ ] verify-completion → rebase onto origin/main(base drift 6) → 머지·push → web 재배포(deploy_scope: included) → PB-0008 Windows 브라우저 시각검증(좌우 2단·행 선택→우측 편집·컬럼 독립 스크롤·스크롤 점프 해소·부트스트랩 우측 모드).
+- Next Action: verify-completion → rebase → cycle-final → 배포 → PB-0008.
+
 ## TASK-20260630T110910-metadata-ds-single-ui — 메타데이터 패널 '데이터소스' 선택 UI 단일화(헤더 스코프 상속) + 공용 스코프 empty-state (Major §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
 - 트리거: 사용자 — "관리 콘솔 > 메타데이터 > 테이블/컬럼 설명 구조에서 '데이터소스' UI 가 '스키마 골격 가져오기' 기능과 메타데이터 패널 자체에 동시에 있어 혼란. 각 UI 역할 파악 후 단일 UI 만 쓰도록 정리."
 - 현황 파악(코드 근거): 데이터소스 selector 가 둘 — (1) 패널 헤더 `#metadataScopeSelect`("데이터소스") = 메타데이터 저장/조회 **스코프**(5서브탭 전체, 저장 target `_metaBootstrapSave`→scopeKey), (2) "스키마 골격 가져오기" 내부 `#metadataBootstrapDs`("데이터소스 *") = 스키마 introspection **소스**(테이블/컬럼 서브탭만). 둘은 완전 독립 → 헤더 스코프=A·부트스트랩 DS=B 로 어긋나게 고르면 "B 골격을 A 스코프로 저장"하는 조용한 불일치(footgun).

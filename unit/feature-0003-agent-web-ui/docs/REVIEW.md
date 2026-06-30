@@ -4270,3 +4270,20 @@ source_of_truth: true
 - **NIT N2 (수용)**: DS 변경 경로의 재렌더 분기가 호출부(`_metaSyncBootstrapVisibility`)와 피호출부(`_metaBootstrapSyncToScopeDs`)에 흩어져 가독성 낮음 — 기능 정상, 비차단.
 - 회귀 가드: `verify_metadata_scope_single_ds.mjs` **14/14**(신규) · `verify_metadata_bs_inline_desc.mjs` **30/30**(B1 수정 + B4-common 추가) · `verify_metadata_bs_paging.mjs` **32/32 무회귀** · `node --check` PASS.
 - 라이브 실측 분리(§정직): 적대 패널·테스트로 "단일화 런타임 동작(H1~H7 방어)·footgun 구조 제거·회귀 가드 정합" 코드 검증. "실 화면에서 공용=empty-state 안내·구체 DS=단일 데이터소스 컨트롤·스코프 전환 시 골격 리셋·중복 selector 부재"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+
+---
+## REV-20260630T160000-metadata-list-detail [SUBAGENT:adversarial-frontend] (TASK-20260630T160000-metadata-list-detail — 메타데이터 패널 list-detail 2단 재구성, Major §12.3 — 프론트 단독)
+- Trigger(§18.8): UI/state-machine 대규모 리팩토링(수직 스택 → 2단 list-detail + detailMode 코디네이터) → frontend state-machine + a11y + 회귀 렌즈. 대상: `static/admin.{html,js,css}`. backend/route/RBAC/스키마 0.
+- 적대 7가설(코드 정독 + 시나리오 trace + 테스트 4종 실행) → **VERDICT FIX-THEN-SHIP(BLOCKING 0, MAJOR 2) → 수정/수용 → SHIP**.
+  1. **H1 모드 전이 누수 — REFUTED**: `_metaRenderDetail` 가 단일 `mode` 로 세 컨테이너 display 를 배타 결정(2849-2851) → 동시 노출 구조적 불가. 유효성 폴백 이중 가드(검토 큐/samples no-create/bootstrap subtab·perm + `_metaSyncBootstrapVisibility` 내부 2차 게이트). bootstrap 은 tables↔columns 만 유지. stuck-mode 경로 없음.
+  2. **H2 .is-active desync — REFUTED**: `renderMetadataList` 가 매 rebuild 마다 selectedId 로 is-active 재적용. 유사어 토글·비선택 행 삭제·저장 일관. 선택 행 삭제는 empty 리셋. 검토 큐 행은 data-meta-id 없어 무시.
+  3. **H3 검색 경합 — REFUTED**: 검색 핸들러 review 가드 + `_metaSyncListToolbar` review 검색 숨김 + review 렌더 경로가 search 무시. 서브탭/보기 전환 시 검색 초기화. stale-filter 경로 없음.
+  4. **H4 부트스트랩 우측 모드 — REFUTED**: 공용=empty-state, 구체 DS=컨트롤+재로드. 저장 후 `await loadMetadata` 로 좌측 갱신. 모든 진입/이탈 경로 동작.
+  5. **H5 권한 게이트 — REFUTED**: samples '+새 항목' 숨김+행수정 가능, curate-only glossary→review 자동전환, review 폼/버튼 전부 숨김. 정확 게이트.
+  6. **H6 이벤트 전파 — partial(MAJOR-2)**: 마우스 경로 정상(삭제/유사어 stopPropagation, 유사어 패널 sibling). 키보드 경로 결함.
+  7. **H7 회귀/잔재 — REFUTED**: 인라인 '수정'·폼 scrollIntoView 제거, 잔존 scrollIntoView(부트스트랩 결과)·admin-meta-edit(검토 promote) 무관. `_metaRenderForm`/`_metaSyncBootstrapVisibility` 코디네이터에서만 호출. node --check + 4 테스트 green(108).
+- **MAJOR-2 (적발→수정→잠금)**: 행 keydown(Enter/Space→_metaStartEdit)이 `e.target` 미검사 → 행 내부 '삭제'/'유사어' 버튼에 Tab 후 Enter 시 native click(_metaDelete) + 버블링 keydown(_metaStartEdit) **이중 발화**(편집 폼 동시 오픈). 마우스 무관. **수정**: 행 keydown 에 `if (e.target !== e.currentTarget) return;` 게이트(admin.js). 테스트 [B5] 로 잠금.
+- **MAJOR-1 (수용·문서화)**: 검색이 편집 중 항목을 필터로 가리면 좌측 행(.is-active) 사라지나 우측 폼은 그 항목 유지 → list↔detail 시각 desync. **결정**: 진행 중 편집을 검색 키 입력으로 폐기하지 않는 것이 우선(검색 해제 시 행 재강조). 검색은 좌측 목록만 필터하는 의도. admin.js 검색 핸들러 주석 + FUNCTION AC-MLD-3 명시.
+- **NIT-1 (정리)**: styles.css 부트스트랩 결과 max-height 제거 주석이 이번에 제거한 metadata pane overflow-y 를 인용 → 우측 .admin-detail-col 스크롤로 갱신. **NIT-2(수용)**: `.admin-meta-new-btn`/`.admin-meta-list-detail` 무규칙 hook 클래스(btn-primary/admin-list-detail 상속) — 의미 마커로 유지.
+- 회귀 가드: `verify_metadata_list_detail.mjs` **33/33**(2단 구조·코디네이터·선택·검색·jsdom 모드 배타 + MAJOR-2 keydown 게이트 + 삭제 리셋) · `verify_metadata_scope_single_ds.mjs` **15/15**([B8] 코디네이터 경유 갱신 + [B8b] 추가) · `verify_metadata_bs_inline_desc.mjs` **30/30** · `verify_metadata_bs_paging.mjs` **32/32** · `node --check` PASS.
+- 라이브 실측 분리(§정직): 적대 패널·테스트로 "2단 구조·모드 배타 가시성·선택 wiring·검색·권한·이벤트 전파(키보드 포함)·회귀 0" 코드 검증. "실 화면에서 좌우 2단 렌더·행 선택→우측 편집·컬럼 독립 스크롤(짧은 viewport)·스크롤 점프 해소·부트스트랩 우측 모드"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리 — 패널도 layout note 로 짧은 viewport 컬럼 스크롤 실브라우저 확인 권고).
