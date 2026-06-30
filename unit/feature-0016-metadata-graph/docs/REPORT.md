@@ -8,6 +8,36 @@ source_of_truth: true
 
 # Report
 
+## 2026-06-30 · Phase 5 운영 cutover 완료 (사용자 승인 후 실행·검증)
+
+**상태: AGE cutover 라이브 완료.** 사용자 명시 승인("남은 단계 진행 및 검증 완수") 하에 RUNBOOK-cutover.md 따라 실행.
+
+### 실행 (순서대로, 모두 PASS)
+1. 백업: `bin/backup.sh` → agent_kb 250M + agent_memory 32M (`artifacts/backups/20260630_154938`).
+2. 이미지: `kb-pg-age:pg16` 태그(검증된 AGE 이미지). compose env-var 토글(KB_PG_IMAGE/PRELOAD/REPLICA_PRELOAD, 기본=현행).
+3. main 머지: PR #477 → main `0c57e25`.
+4. **DB cutover**: `.env` 토글 설정 → postgres·postgres-replica 재생성(AGE 이미지+`shared_preload=...,age`).
+   - primary: age preload ✓, **데이터 무손상**(rag_objects=14889, table_descriptions=153), 1s 순단.
+   - replica: age preload ✓, streaming ✓, **graph WAL 복제 ✓**, agent_kb_ro Cypher read ✓(pgbouncer-safe).
+5. **alembic 0025**(postgres superuser 적용 + stamp): graph=1, labels=13, role search_path 양쪽 적용.
+6. worker(ask/insight) 재빌드+재생성 → `bin/metadata-graph-sync.sh` 초기 적재: **153 tables, 0 errors**.
+7. web 롤링 재배포(web-a→web-b one-at-a-time, 둘 다 healthy, 무중단). deploy-web.sh 는 본 세션 sandbox 의
+   `/tmp` provenance-metadata 이슈로 ABORT(이미지는 정상 빌드) → 수동 health-gated 롤링으로 완수.
+
+### 라이브 검증 (PASS)
+- API 라우팅: `GET /api/admin/metadata/graph` → HTTP 401(auth gate, 등록됨).
+- 그래프 투영(RO=replica): 실제 게임 테이블 `AccountDB.T_AccountAuth_2`(한국어 설명 포함) 검색 + 34노드 이웃.
+- `graph_navigate` AI tool: 등록 ✓, 'AccountAuth' 검색 → 실제 테이블·설명·key 반환.
+- 회귀(`make test` 등가): **feature-0016 신규 실패 0건**. route_parity 골든 갱신(+1 route, 정당).
+  잔여 4건 `test_attachment_idor` 는 **사전존재**(base c5356a5 동일 실패, 첨부 함수 무관 — feature-0016 무관).
+
+### 잔여 / 후속
+- **PB-0008 실제 Windows 브라우저 그래프 UI 검증**: 인프라·API·tool 검증 완료, 시각 렌더는 운영자 브라우저 게이트 권장.
+- 엣지 적재: 현 0(게임 DB FK 미선언) — 대화 JOIN 학습·LLM 추론으로 점증. 주기 sync cron 배선(RUNBOOK §4).
+- rag_objects(8122 테이블 auto-insight) 그래프 투영 = 후속 enhancement(현 sync 는 curated 메타데이터 153).
+- 사전존재 `test_attachment_idor` 4건은 별도 이슈(본 feature 범위 밖).
+- 롤백: `.env` KB_PG_* 3줄 제거 + postgres/replica 재생성(관계형 SSOT 무변경). 백업 `20260630_154938`.
+
 ## 2026-06-30 · 착수 + Phase 0/1a 검증 (entry persona dispatch)
 
 ### 배경 / 결정
