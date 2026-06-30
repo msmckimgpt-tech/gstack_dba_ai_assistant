@@ -97,6 +97,7 @@ WEB_PUBLIC_HOST="${WEB_PUBLIC_HOST:-$(sed -n 's/^WEB_PUBLIC_HOST=//p' .env 2>/de
 [ -n "${WEB_PUBLIC_HOST:-}" ] || die2 "WEB_PUBLIC_HOST 를 결정할 수 없습니다 (.env 또는 env)."
 LEAF_CERT="$CERT_ROOT/$WEB_PUBLIC_HOST/fullchain.pem"
 ROOT_CA="$CERT_ROOT/rootCA.pem"
+CADDYFILE="unit/feature-0006-lan-proxy-access/src/caddy/Caddyfile"  # feature-0016: reconcile 대상
 
 # ── preflight: 권한/소유권 ─────────────────────────────────────────────────────
 preflight_privilege() {
@@ -333,6 +334,38 @@ restart_count() {  # $1 = svc
   [ -n "$cid" ] && docker inspect -f '{{.RestartCount}}' "$cid" 2>/dev/null || echo 0
 }
 
+# ── Caddyfile 변경 reconcile (feature-0016) ──────────────────────────────────
+# 호스트 Caddyfile 과 실행 caddy 컨테이너가 보는 파일의 sha 를 비교. 다르면(= 배포로 Caddyfile
+# 이 바뀌었거나 git merge 가 inode 를 교체해 bind-mount 가 stale) caddy 를 recreate 해 현재 inode 를
+# 재바인딩한다. (caddy reload 는 inode-stale 시 옛 내용을 다시 읽어 무효 — feature-0014 라이브 적발.)
+# 변경 없으면 caddy 무접촉(blip 0). 변경 시에만 sub-second recreate.
+reconcile_caddy() {
+  step "Caddyfile reconcile (변경 시에만 caddy recreate)"
+  [ -f "$CADDYFILE" ] || { warn "Caddyfile 없음($CADDYFILE) — reconcile skip"; return 0; }
+  if [ -z "$("${DC[@]}" ps -q caddy 2>/dev/null)" ]; then
+    log "caddy 미기동 — up -d caddy"; run "${DC[@]}" up -d --no-deps caddy; return 0
+  fi
+  local host_sha cont_sha
+  host_sha="$(sha256sum "$CADDYFILE" 2>/dev/null | awk '{print $1}')"
+  cont_sha="$("${DC[@]}" exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null | sha256sum 2>/dev/null | awk '{print $1}')"
+  if [ -n "$cont_sha" ] && [ "$host_sha" = "$cont_sha" ]; then
+    log "Caddyfile 무변경(sha 일치) — caddy 유지(blip 0)"; return 0
+  fi
+  log "Caddyfile 변경 감지(host=$(printf '%.12s' "$host_sha") != caddy=$(printf '%.12s' "$cont_sha")) — 검증 후 recreate"
+  # recreate 전 adapt 검증(깨진 config 로 caddy 를 죽이지 않도록). throwaway 컨테이너에서 검증.
+  if [ "$DRY_RUN" -ne 1 ]; then
+    if ! docker run --rm -e WEB_PUBLIC_HOST="$WEB_PUBLIC_HOST" -e WEB_TLS_CERT_FILE=/c/f -e WEB_TLS_KEY_FILE=/c/k \
+         -v "$PWD/$CADDYFILE:/etc/caddy/Caddyfile:ro" caddy:2 caddy adapt --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+      die "새 Caddyfile 이 caddy adapt 실패 — recreate 중단(기존 caddy 유지). Caddyfile 문법 점검."
+    fi
+  fi
+  run "${DC[@]}" up -d --no-deps --force-recreate caddy || die "caddy recreate 실패."
+  # edge 회복 대기(짧은 recreate blip 후)
+  local deadline=$(( SECONDS + 20 ))
+  while [ "$SECONDS" -lt "$deadline" ]; do edge_ok && { log "caddy recreate 후 edge 정상"; return 0; }; sleep 2; done
+  warn "caddy recreate 후 edge 가 20s 내 200 아님 — soak 단계가 추가 감시."
+}
+
 # ── post-cutover soak (부하 노출 후 안정성 + crash-loop 감시 → 자동 롤백) ────────
 soak_or_rollback() {  # $1 = deployed sha
   local sha="$1" deadline=$(( SECONDS + SOAK_SECONDS )) rc_a rc_b base_a base_b
@@ -451,6 +484,7 @@ main() {
   fi
 
   echo "current=$TARGET_SHA" > "$STATE_FILE"
+  reconcile_caddy   # feature-0016: Caddyfile 변경 시에만 caddy recreate(inode-stale 대응)
   soak_or_rollback "$TARGET_SHA" || exit 1
   worker_divergence_warn
   normalize_ownership
