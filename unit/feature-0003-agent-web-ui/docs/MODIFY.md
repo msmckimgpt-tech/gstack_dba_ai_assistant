@@ -5145,3 +5145,15 @@ source_of_truth: true
 - Impact: 비파괴. backend/route/ask-worker/스키마/마이그/RBAC/credential/LLM 경로 무변경. **불변식 보존**: 인라인 입력이 `.admin-meta-bs-desc[data-kind='table']` 로 블록 내 존재 → 저장(`_metaBootstrapSave`)·AI 일괄(`_metaBootstrapApplyDescriptions`)·힌트(`_metaBootstrapUpdateHint`) 셀렉터·페이징 display 토글 전부 무변경 동작. columns 모드 접힘/펼침·"모두 펼치기" 회귀 0(columns 분기 보존, expand-all 은 columns 에서만 노출). 접근성: 이전 button-헤더에 입력을 넣을 뻔한 안티패턴 회피(평면 행은 div, 입력은 독립 — `aria-label` 부여).
 - 분리 표기(§정직): `node --check`·정적/jsdom 행위 테스트·적대 패널로 "평면 행에서도 수집/힌트/페이징 불변식 유지, columns 무회귀" 코드 검증. "실 화면에서 인라인 입력 노출·중앙 여백 해소·바로 입력 UX"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
 - Rollback: admin.js tables 분기를 접힘 헤더+본문 입력 구조로 복원 + filterbar expand-all 무조건 노출/안내문구 단일화 + styles.css 평면 행 3규칙 제거 + admin.html cache-buster 복원 + 신규 테스트 삭제·paging 테스트 cache-buster 단언 원복.
+
+## CHG-20260630T103235-metadata-bs-inline-align (TASK-20260630T103235-metadata-bs-inline-align — 테이블 설명 인라인 입력란 행간 정렬, Minor §12.3 — CSS-only, JS/backend/RBAC/스키마 무변경)
+- Date: 2026-06-30
+- Origin: `/_template:entry` arg-given. `metadata-bs-inline-desc` 배포 후 사용자 후속 보고: `<DB명>.<테이블명>` 길이 차이로 이름 칸이 내용 너비를 먹어 입력란 시작 x·너비가 행마다 달라 들쭉날쭉.
+- Summary: 평면 행의 이름 칸·힌트 칸을 고정 폭으로 두어 모든 행의 인라인 설명 입력란이 같은 x에서 시작·같은 너비·같은 우측 끝으로 정렬되게 함.
+- Files:
+  - `src/static/styles.css` — `.admin-meta-bs-table.is-flat .admin-meta-bs-table-name`: `flex:0 1 auto; max-width:38%` → `flex:0 0 clamp(180px,32%,340px)`(평면 행은 동일 폭 컨테이너라 32% 가 행마다 동일 px → 정렬; 초과 이름 ellipsis+title). `.admin-meta-bs-desc-inline`: `min-width:120px`→`min-width:0`(좁은 화면 정렬 유지). 신규 `.admin-meta-bs-table.is-flat .admin-meta-bs-hint`: `flex:0 0 5.5rem; margin-left:0; text-align:right`(입력란 우측 끝 정렬 + ○→● 전이 시 너비 불변).
+  - `src/static/admin.html` — cache-buster 2건 bump `20260630-metadata-bs-inline-desc`→`20260630-metadata-bs-inline-align`.
+  - `tests/verify_metadata_bs_inline_desc.mjs` — 정렬 단언 [A6-align](이름/힌트 고정 폭) 추가 + cache-buster 단언을 literal→동반-bump 불변식으로 견고화.
+- Impact: 비파괴. CSS-only(JS/route/RBAC/스키마/LLM 0). `.is-flat` 스코프라 columns 모드(`.is-collapsed` 헤더, 동일 `.admin-meta-bs-table-name`/`-hint` 클래스) 무영향. clamp() 는 프로젝트 기존 사용(share.css). 정렬은 평면 행이 모두 동일 폭(블록 레벨 full-width) 컨테이너라는 점에 기반 — 32% 가 모든 행에서 동일 px 로 해석.
+- 분리 표기(§정직): 테스트·CSS-lens 적대 패널로 "고정 폭 칸 정렬·columns 무회귀·좁은 화면 비overflow" 코드 검증. "실 화면에서 여러 길이 이름의 입력란 좌/우 끝 정렬 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+- Rollback: styles.css 3규칙(이름 flex/ min-width, desc-inline min-width, hint flex/text-align)을 inline-desc 시점 값으로 복원 + admin.html cache-buster 복원 + 테스트 정렬 단언 제거.

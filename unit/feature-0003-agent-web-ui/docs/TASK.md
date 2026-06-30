@@ -4971,3 +4971,11 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. 내부용어(feature-id/테이블·함수명/마이그 번호/엔드포인트/cache-buster 내부 슬러그/role_key) 누출 0. 메타데이터·공유 다수 fix 는 사용자 체감 단위로 consolidate(over-listing 회피 — 메타데이터 3건→1항목, 공유 2건→1항목).
 - [x] 검증: `node --check release-notes-data.js` PASS + vm 로드 generated=2026-06-30·06-29 블록 11항목(2 new·5 improved·4 fixed) + 항목 스키마(type/area/title/detail) 정합.
 - [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260629b-rn-0629`→`?v=20260630-rn-0630` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘). verify-completion(operational, feature-0003) → commit → landing(PR/merge) → web 재배포(deploy_scope: included).
+
+### TASK-20260630T103235-metadata-bs-inline-align — 테이블 설명 인라인 입력란 행간 정렬(고정 폭 칸) (Minor §12.3, frontend-only CSS, metadata-bs-inline-desc 후속, 2026-06-30)
+- 트리거: `/_template:entry` arg-given(인라인 입력 배포 후 사용자 후속 보고). 사용자 보고: `<DB명>.<테이블명>` 길이가 제각각이라 이름 칸이 내용 너비를 먹어 **입력란 시작 x·너비가 행마다 들쭉날쭉** — 입력란 UI 정합 요청.
+- [x] **styles.css(정렬)**: `.is-flat .admin-meta-bs-table-name` `flex: 0 1 auto; max-width:38%`→**`flex: 0 0 clamp(180px,32%,340px)`**(고정 폭 칸 — 평면 행은 모두 동일 폭 컨테이너라 32% 가 행마다 동일 px → 입력란 시작 정렬, 긴 이름 ellipsis+title). `.admin-meta-bs-desc-inline` `min-width:120px`→**`min-width:0`**(좁은 화면에서도 정렬 유지). `.is-flat .admin-meta-bs-hint` **`flex: 0 0 5.5rem; text-align:right`** 신설(입력란 우측 끝 정렬 + ○→● 입력 시 너비 불변).
+- [x] **admin.html**: cache-buster 2건 bump → `20260630-metadata-bs-inline-align`(동반).
+- [x] **검증**: 회귀 가드 `tests/verify_metadata_bs_inline_desc.mjs` 27/27(정렬 단언 [A6-align] 이름/힌트 고정 폭 + cache-buster 동반-bump 불변식 견고화 + 기존 평면행·수집·H4) · `verify_metadata_bs_paging.mjs` 32/32 무회귀. CSS-lens 적대 패널(6가설: 정렬·columns 회귀·좁은화면 overflow·초장문·힌트폭·기타).
+- [ ] **PB-0008 Windows-browser 시각 검증**(여러 길이 테이블명에서 입력란 좌/우 끝이 행마다 정렬·긴 이름 ellipsis·columns 무회귀) — WSL worktree 미실행, **배포 후 사용자 확인 권장**.
+- [ ] verify-completion --pre-commit PASS → commit → main merge → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지만) → healthz.

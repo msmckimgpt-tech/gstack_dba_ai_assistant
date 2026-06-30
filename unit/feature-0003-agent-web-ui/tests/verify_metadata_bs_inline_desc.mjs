@@ -99,10 +99,23 @@ ok("[A6] _metaSyncBootstrapVisibility 추출", Boolean(syncSrc));
 ok("[A6] 서브탭 전환 시 골격 보유하면 결과 재렌더(stale 구조 방지)",
    /bootstrap\.tables\.length[\s\S]{0,40}_metaBootstrapRenderResult\(\)/.test(syncSrc || ""));
 
-// cache-buster bump(2건 동일 태그).
-ok("[A5] admin.js cache-buster inline-desc bump", /admin\.js\?v=20260630-metadata-bs-inline-desc/.test(adminHtml));
-ok("[A5] styles.css cache-buster inline-desc bump", /styles\.css\?v=20260630-metadata-bs-inline-desc/.test(adminHtml));
+// cache-buster — 특정 태그 literal 에 결속하지 않고 styles.css·admin.js 가 같은 태그로 동반 bump 되는
+// 불변식만 검증(cycle 마다 태그가 바뀌므로 — 정적 자산 전파 누락 방지).
+const _jsV = (adminHtml.match(/admin\.js\?v=([0-9a-z-]+)/) || [])[1];
+const _cssV = (adminHtml.match(/styles\.css\?v=([0-9a-z-]+)/) || [])[1];
+ok("[A5] styles.css·admin.js cache-buster 동일 태그로 동반 bump", Boolean(_jsV) && _jsV === _cssV);
 ok("[A5] 평면 행 CSS(.admin-meta-bs-row / -desc-inline)", /\.admin-meta-bs-row\b/.test(adminCss) && /\.admin-meta-bs-desc-inline\b/.test(adminCss));
+// metadata-bs-inline-align: 입력란 정렬 — 이름 칸은 고정 폭(flex 0 0 …), 힌트도 고정 폭이라 행마다
+// 입력란 시작 x·너비가 정렬된다(테이블명 길이 무관). 고정 폭 셀렉터 존재를 잠근다.
+const _nameRule = (adminCss.match(/\.admin-meta-bs-table\.is-flat\s+\.admin-meta-bs-table-name\s*\{[^}]*\}/) || [])[0] || "";
+ok("[A6-align] 이름 칸 고정 폭(flex: 0 0 …)으로 입력란 시작 정렬", /flex:\s*0\s+0\s+/.test(_nameRule));
+const _hintRule = (adminCss.match(/\.admin-meta-bs-table\.is-flat\s+\.admin-meta-bs-hint\s*\{[^}]*\}/) || [])[0] || "";
+ok("[A6-align] 힌트 칸 고정 폭(flex: 0 0 …) + 우측 정렬로 입력란 우측 끝 정렬", /flex:\s*0\s+0\s+/.test(_hintRule) && /text-align:\s*right/.test(_hintRule));
+// cascade 가드(CSS-lens 패널): 입력란 min-width:0 은 동일-specificity `.admin-meta-bs-desc`(min-width:120px,
+// 소스 뒤)에 밀려 dead-code 가 되므로, `.is-flat` 로 스코프(0,2,0)해 이기게 해야 한다. 스코프된 규칙 + min-width:0 존재 확인.
+const _descInlineRule = (adminCss.match(/\.admin-meta-bs-table\.is-flat\s+\.admin-meta-bs-desc-inline\s*\{[^}]*\}/) || [])[0] || "";
+ok("[A6-align] 입력란 규칙이 .is-flat 로 스코프됨(specificity 0,2,0 — .admin-meta-bs-desc 이김)", _descInlineRule.length > 0);
+ok("[A6-align] 스코프된 입력란이 min-width:0(좁은 화면 overflow 방지, dead-code 아님)", /min-width:\s*0\b/.test(_descInlineRule));
 
 // ── [B] jsdom 행위 단언 (jsdom 있을 때만) ────────────────────────────────────
 if (!JSDOM) {

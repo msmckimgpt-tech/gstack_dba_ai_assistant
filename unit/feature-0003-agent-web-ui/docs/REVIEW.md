@@ -4241,3 +4241,15 @@ source_of_truth: true
 - 회귀 가드: `tests/verify_metadata_bs_inline_desc.mjs` **26/26**(정적 분기·인라인·caret 미생성·columns 접힘 유지·expand-all columns 전용·H4 재렌더 호출[A6] + jsdom: 수집 셀렉터·힌트 전이·H4 전환 재렌더[B4]). `tests/verify_metadata_bs_paging.mjs` **32/32 무회귀**(cache-buster 단언 견고화). `verify_conv_entry_defaults.mjs` 20/20 무회귀.
 - 수용 NIT(3): (1) 서브탭 전환 시 검색어·페이지 리셋 — tables/columns 는 입력 대상이 달라 수용. (2) 미저장 입력 소실 — 저장 대상(테이블 vs 컬럼) 분리라 데이터 손실 위험 낮음, 같은 mode 내 미발생. (3) hint aria-live 부재(기존). 모두 render 기존 동작이 전환 경로로 노출된 것 — 신규 데이터 정합성 결함 아님.
 - 라이브 실측 분리(§정직): 코드/테스트/적대 패널로 "평면 행 수집·힌트·페이징 불변식 유지, columns 무회귀, 서브탭 전환 재렌더 정합" 검증. "실 화면에서 인라인 입력 노출·중앙 여백 해소·바로 입력→저장 UX"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
+
+## REV-20260630T103235-metadata-bs-inline-align [SUBAGENT:adversarial-css] (TASK-20260630T103235-metadata-bs-inline-align — 테이블 설명 인라인 입력란 행간 정렬, Minor §12.3, CSS-only)
+- Trigger(§18.8): UI/레이아웃(CSS 정렬) → design/CSS 회귀 렌즈. 대상: `static/styles.css`(평면 행 이름/입력/힌트 폭 규칙)·`static/admin.html`(cache-buster). JS/backend/RBAC/스키마 0.
+- 적대 CSS 리뷰 6가설(정렬 성립·columns 회귀·좁은 화면 overflow·초장문·힌트 폭·cascade/기타) → **1차 BLOCKING 1 적발 → 수정 → 2차 재검증 VERDICT SAFE (BLOCKING 0)**.
+  1. **H1 정렬 성립 — REFUTED**: 평면 행이 모두 동일 폭 컨테이너(`.admin-meta-bootstrap-result` flex-column 형제)라 `clamp(180px,32%,340px)` 의 32% 가 행마다 동일 px → 이름 칸 `flex:0 0`·힌트 칸 `flex:0 0` 고정 폭으로 입력란 좌/우 끝 행 간 정렬.
+  2. **H2 columns 회귀 — REFUTED**: 신규 규칙 `.is-flat` 스코프. columns 입력란은 `admin-meta-bs-desc-inline` 클래스 없음(`admin.js:3779`) + 헤더는 `is-collapsed`(is-flat 미부여)라 무영향. columns 이름/힌트 base 규칙(`margin-left:auto`) 유지.
+  3. **H3+H6 cascade dead-code → 좁은 화면 overflow — CONFIRMED(BLOCKING) → FIXED → 재검증 RESOLVED**: 인라인 입력이 `.admin-meta-bs-desc-inline`(min-width:0) + `.admin-meta-bs-desc`(소스 뒤·동일 specificity 0,1,0·min-width:120px) 동시 매칭 → 후순위 `.admin-meta-bs-desc` 가 이겨 `min-width:0` 이 dead-code, 입력란 120px 강제 → 좁은 폭(pane <~486px) 행 overflow(pane `overflow-x:hidden` 클립). **수정**: 입력란 규칙을 `.admin-meta-bs-table.is-flat .admin-meta-bs-desc-inline`(specificity 0,2,0)로 스코프 → `.admin-meta-bs-desc` 이김, `min-width:0`·`flex:1 1 auto` 실효. 재검증: row-min 408px→288px, overflow onset pane <~366px 로 후퇴(데스크톱 전 구간 + 일반 모바일 해소). 가드 [A6-align] 2건(스코프 규칙 존재 + min-width:0) 추가 — 미스코프로 되돌리면 FAIL.
+  4. **H4 초장문 이름 — REFUTED**: 340px 초과 ellipsis + `name.title` hover 전체명, 이름 칸 `flex:0 0` 라 입력란 미침범.
+  5. **H5 힌트 폭 — REFUTED**: `5.5rem`(88px) > 최장 "● 설명 입력됨"(~75px), `text-align:right` 우측 정렬, ○→● 전이 시 고정 폭이라 입력란 너비 불변.
+- 수용 NIT(1): pane <~366px(모바일 단일열 최소폭 320~360px)에서 이름 칸(≥180px)·힌트 칸(88px) 동시 불수축으로 합 288px 가 컨테이너 초과 → 입력란 0 수축 후에도 ~수px 행 overflow(힌트 끝 클립, title hover 로 전체명 복구). admin 콘솔은 데스크톱 surface + 핵심 BLOCKING(일반 폭 깨짐) 해소되어 협소 cosmetic 대역으로 수용. (개선 시: 이름 clamp min↓ 또는 초협소 미디어쿼리 — 차후.)
+- 회귀 가드: `tests/verify_metadata_bs_inline_desc.mjs` **29/29**(정렬 [A6-align] 4건: 이름/힌트 고정 폭·스코프 규칙·min-width:0 + cache-buster 동반-bump + 기존 평면행/수집/H4) · `verify_metadata_bs_paging.mjs` **32/32 무회귀**.
+- 라이브 실측 분리(§정직): 테스트·CSS-lens 적대 패널로 "고정 폭 칸 정렬·cascade 실효·일반 폭 비overflow·columns 무회귀" 검증. "실 화면에서 여러 길이 이름의 입력란 좌/우 끝 정렬 체감"은 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).

@@ -8112,15 +8112,22 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   gap: 10px;
   padding: 5px 10px;
 }
+/* metadata-bs-inline-align: 이름 칸을 고정 폭(행 너비 비례, 모든 행 동일 px)으로 둬, 테이블명 길이가
+   제각각이어도 입력란의 시작 x·너비가 행마다 정렬되게 한다. 칸을 넘는 긴 이름은 ellipsis(전체명 title). */
 .admin-meta-bs-table.is-flat .admin-meta-bs-table-name {
-  flex: 0 1 auto;
-  max-width: 38%;
+  flex: 0 0 clamp(180px, 32%, 340px);
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   word-break: normal;
 }
-.admin-meta-bs-desc-inline { flex: 1 1 auto; min-width: 120px; margin-top: 0; }
+/* 입력란은 남은 폭을 채움 — min-width:0 으로 좁은 화면에서도 행 overflow 없이 수축. 단, 뒤에 오는
+   동일-specificity `.admin-meta-bs-desc`(flex:1; min-width:120px)에 밀리지 않도록 `.is-flat` 로
+   스코프해 specificity(0,2,0)를 올린다(미스코프 시 min-width:0 이 dead-code 가 됨 — CSS-lens 패널 적발). */
+.admin-meta-bs-table.is-flat .admin-meta-bs-desc-inline { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+/* 상태 힌트도 고정 폭 + 우측 정렬 — 입력란 오른쪽 끝까지 행마다 정렬되고, 입력(○→●) 시 입력란 너비가 흔들리지 않는다. */
+.admin-meta-bs-table.is-flat .admin-meta-bs-hint { flex: 0 0 5.5rem; margin-left: 0; text-align: right; }
 /* 본문 — 접힘(.is-collapsed) 시 숨김(시각 토글, 입력은 DOM 보존). */
 .admin-meta-bs-body { padding: 0 10px 8px; }  /* metadata-bs-paging: 본문 여백 압축 */
 .admin-meta-bs-table.is-collapsed .admin-meta-bs-body { display: none; }
