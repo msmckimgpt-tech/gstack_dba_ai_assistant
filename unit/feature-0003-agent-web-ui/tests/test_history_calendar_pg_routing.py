@@ -144,18 +144,22 @@ def test_history_dates_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch, c
 
 
 # ── T2: history_anchor 는 PG id 를 반환한다(DOM id-space 일치) ────────────────
-def test_history_anchor_returns_pg_id(monkeypatch):
+def test_history_anchor_returns_pg_id(monkeypatch, client, as_account):
+    # P5b DI seam Phase 2: history_anchor 가 account=Depends(get_current_account) 로 마이그됨
+    # → 직접 함수호출 대신 TestClient + as_account override (conn=mem 유지로 cursor_calls 가드 보존).
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     mem = _FakeMemConn()
     monkeypatch.setattr(app, "_connect_memory", lambda: mem)
     _patch_auth(monkeypatch)
+    as_account()
     pg = _FakePgConn(fetchone_row=(4242, "2026-05-18 14:30:00+09:00"))
     monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
-    resp = app.history_anchor(
-        _DummyRequest(), conversation_id="conv-1", at="2026-05-18 14:30:00"
+    resp = client.get(
+        "/api/history_anchor",
+        params={"conversation_id": "conv-1", "at": "2026-05-18 14:30:00"},
     )
-    body = _body(resp)
+    body = resp.json()
 
     assert body["message_id"] == 4242
     assert mem.cursor_calls == 0, "PG 모드에서 삭제된 MySQL 테이블을 조회하면 안 됨"

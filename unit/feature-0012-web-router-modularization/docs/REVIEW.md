@@ -144,3 +144,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 적용 정확성(자동 edit-spec 불신, 구조 변환기 사용): P2 전용 변환기(`cata_p2_transform.py`)가 산재 conn.close() 전부 제거 + auth 블록 제거 + Depends 삽입(dedent 불요). 단 ask_status 는 terminal `finally: conn.close()` 하이브리드 — conn.close 가 finally 유일 내용이라 변환기로 제거 시 빈 finally(IndentationError, py_compile 재현) → 수작업으로 try/finally 제거+본문 승격. history/history_dates multi-line sig → 변환기 sig_insert multi-line 보강. sole-in-block close 사전 스캔으로 ask_status 만 격리해 수작업한 것이 정확.
 - 결정적 검증: make test **progress-chars 1238 = baseline 동일**(전환 T1/T3 포함·0 FAIL/ERROR·exit 0), route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/잔류 _require_account·conn.close·_connect_memory 0) PASS. `_require_account` exact-anchor 64→54. 잔류 직접호출 0(grep) 확인.
 - 동반 테스트: history_dates 의 T1(PG 라우팅)/T3(legacy MySQL) 직접호출 → TestClient(as_account) 전환, conn=mem 유지로 mem.cursor_calls 가드 보존. T2(history_anchor 미마이그) 직접호출 유지. 나머지 9 무영향.
+
+## REV-20260630-0002 [AGENT-TEAM:p5b-phase2-batch4-history_anchor-refute-resolution]
+- Related Change: CHG-20260630-0002 (Phase 2 batch 4 — history_anchor + cat-A 마무리)
+- §18.8 Adversarial Panel: **AGENT-TEAM (REV-20260630-0001 batch3 워크플로 재사용 + HIGH refute 근본원인 해소).**
+  history_anchor 는 batch3 워크플로(44 agents)에서 P2_MULTI_CLOSE 로 정분류됐고 한 렌즈가 byte-동치/컴파일/순서 보존을 모두 확인했다. **HIGH refute 의 유일 사유는 마이그 위험이 아니라 동반 테스트 T2(test_history_anchor_returns_pg_id)의 TestClient 전환이 edit_plan 에서 누락(needs_conversion 미지정)된 것** — 렌즈가 "핸들러 마이그 자체는 OK, 다만 T2 가 직접호출이라 마이그 후 Depends 마커가 기본값으로 새어 false-confidence(우연 통과) 상태로 남고 §18.8 검증을 못 한다"고 명시(BLOCKING 아님 = hard-fail 아님, 그래서 HIGH).
+- 해소: history_anchor 를 P2 변환기로 마이그(multi-line sig + 6 산재 close 제거, sole-in-block 없음 확인) + **T2 를 `client.get`+`as_account` override 로 전환**(conn=mem 유지로 cursor_calls/HH24:MI SQL 가드 보존). refute 의 근본원인(테스트 전환 누락) 직접 제거.
+- 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/잔류 0/pg.close 보존) PASS. `_require_account` exact 54→53.
+- cat-A 잔여 11 이연 판정(아키텍처): pre-auth gate 10(401 우선순위 역전 + conn eager-open 부수효과), ask_result(long-poll 60s conn-hold) — DI seam 으로 byte-동치 불가, router-extraction 단계 재구조화. 워크플로 KEEP_INLINE_DEFER/EDGE_DEFER 판정이 정확했음을 코드 정독으로 재확인.

@@ -133,3 +133,15 @@ source_of_truth: true
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` exact-anchor 64→54(누적 -34). 배포 불요.
 - 보류 12(batch 4+): pre-auth gate 10(P1 — conn 이전 404/400 early-return, Depends hoisting 시 401 우선순위 역전 → account-only variant 필요), ask_result(P3 복수 conn), history_anchor(적대 HIGH refute — 재조사).
 - Rollback Notes: 단일 commit revert(app.py 10 핸들러 + test 1 + docs). DI seam 토대·batch 1/2 불변.
+
+## CHG-20260630-0002
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 2 batch 4(TASK-0012-7) — history_anchor + Phase 2 cat-A 마무리. 누적 cat-A 35.
+- Summary:
+  history_anchor(P2_MULTI_CLOSE) 마이그: multi-line sig 에 Depends 삽입 + conn-acquire/auth 블록 삭제 + 산재 6 conn.close() 삭제(PG 분기의 pg.close() 는 보존). batch3 에서 history_anchor 가 보류된 유일 사유는 적대 HIGH refute 였는데, 재조사 결과 **마이그 자체는 byte-동치**(렌즈가 명시)이고 refute 는 동반 테스트 T2(test_history_anchor_returns_pg_id) 의 TestClient 전환이 누락된 것이 원인 → T2 를 직접호출에서 `client.get`+`as_account` override 로 전환해 해소(conn=mem 유지로 cursor_calls 가드 보존).
+  **Phase 2 cat-A 잔여 11 = 아키텍처적 이연 확정**(router-extraction 단계 처리, DI seam 으로 byte-동치 불가):
+  - pre-auth gate 10(post_group_chat_message, upload_conversation_attachment, get_attachment_metadata/download/versions, gdrive_connect/callback, me_put_system_prompt, get_audit_event, progress): conn 생성 *이전* 404/400 early-return 이 본문 첫 게이트. `Depends(get_current_account)` 는 401 을 그 게이트보다 먼저 내보내 우선순위 역전; `conn=Depends(get_conn)` 는 게이트 이전에 conn 을 eager-open 해 미설정/잘못된 입력에도 DB 연결(부수효과 회귀).
+  - ask_result(long-poll): auth conn 을 long-poll 루프(최대 60s) *이전* 에 `conn.close()` 하는데 get_conn 은 요청 종료까지 conn 을 보유 → 60s idle conn 점유(풀 고갈). long-poll/SSE 핸들러는 get_conn(held-until-teardown) 설계와 근본 비호환.
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(history_anchor) + `tests/test_history_calendar_pg_routing.py`(T2 전환) + docs.
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` exact-anchor 54→53. 배포 불요.
+- Rollback Notes: 단일 commit revert(app.py history_anchor + test T2 + docs).

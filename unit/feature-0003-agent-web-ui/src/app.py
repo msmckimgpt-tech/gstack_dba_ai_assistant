@@ -17630,19 +17630,12 @@ def history_anchor(
     request: Request,
     conversation_id: str | None = None,
     at: str | None = None,
+    account=Depends(get_current_account),
+    conn=Depends(get_conn),
 ) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     conv_id = _resolve_conversation_for_account(conn, account, conversation_id or "")
     when = str(at or "").strip()
     if not conv_id or not when:
-        conn.close()
         return _json_error("missing conversation_id or at", 400)
     # AR-M5 cutover: 메시지 정본이 MySQL AgentMemoryMessages → PG agent_runtime.messages 로
     # 이전되며 MySQL 테이블이 DROP 되었다. 캘린더 점프가 반환하는 message_id 는
@@ -17681,9 +17674,7 @@ def history_anchor(
             finally:
                 pg.close()
         except Exception:
-            conn.close()
             return _json_error("failed to locate anchor", 500)
-        conn.close()
         if not row:
             return _json_error("no messages", 404)
         return JSONResponse({"message_id": int(row[0]), "created_at": str(row[1])})
@@ -17714,12 +17705,9 @@ LIMIT 1
             row = cur.fetchone()
         cur.close()
     except Exception:
-        conn.close()
         return _json_error("failed to locate anchor", 500)
     if not row:
-        conn.close()
         return _json_error("no messages", 404)
-    conn.close()
     return JSONResponse({"message_id": int(row[0]), "created_at": str(row[1])})
 
 
