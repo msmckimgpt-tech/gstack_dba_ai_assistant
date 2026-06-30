@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260630T174000-metadata-bs-prefill [SUBAGENT:adversarial-frontend-8hyp] (TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill, Minor §12.3 — feature-0003 프론트 단독)
+- 대상: `static/admin.js`(prefill 색인/조회 헬퍼 `_metaBootstrapBuildDescIndex`·`_metaBootstrapDescLookup`, in-place 갱신 `_metaBootstrapRefreshPrefill`, `_metaBootstrapRenderResult` prefill+dataset.original, `loadMetadata` 재prefill, `_metaBootstrapSave` 변경분만 저장), `static/admin.html`(cache-buster lockstep). 백엔드/route/RBAC/스키마/엔드포인트/마이그 0.
+- 적대 패널 8-가설(H1 타이밍/staleness·H2 중복렌더/상태리셋·H3 키정합 케이스·H4 변경감지·H5 provenance·H6 데이터손실·H7 XSS·H8 성능) → **1차 VERDICT: FIX-THEN-SHIP** (BLOCKER 0 · MAJOR 1 · MINOR 2).
+- **MAJOR-H2 (수정 완료)**: post-save 가 `_metaBootstrapRenderResult` 전체 재렌더를 타 검색어·페이지·펼침 상태를 무조건 리셋 → 이 PR 의 "마찰 해소" 취지와 충돌하는 신규 UX 회귀. **수정**: loadMetadata/post-save 경로를 in-place 갱신 `_metaBootstrapRefreshPrefill`(value·dataset.original·hint 만 갱신, `replaceChildren`/filterBar 리셋 없음)로 교체 → 작업 위치 보존. 골격 구조 변경(fetch·서브탭 sync)만 전체 렌더.
+- **MINOR-H3 (수정 완료)**: prefill 키가 정확매치라 수동 폼 입력(임의 케이스)·MSSQL 저장 schema_name=DB명(원본 케이스)·레거시 빈-schema 저장분이 read 경로(kb_metadata `LOWER(schema_name)=LOWER() OR schema_name=''`)와 달리 누락 → 목표 부분 미달. **수정**: 색인/조회 헬퍼를 read 경로와 동일 정규화(schema 소문자 + 빈-schema 폴백, 정확-schema 우선)로 통일.
+- **MINOR-H6 (수용)**: prefill 후 입력란을 비워도 삭제 POST 없음(설명 삭제는 좌측 list-detail CRUD 소관) — pre-existing 비파괴 동작, 회귀 아님. 테스트에 명시 수용.
+- **견고 확인(반증 실패)**: H1(stale items 의 columns 키는 column_name 부재로 절대 오매칭 안 함 — transient 빈칸 후 교정)·H4(dataset.original 항상 세팅, AI 일괄은 빈 칸만 채워 prefill 보존)·H5(미변경 prefill 재저장 제외로 source 보존, upsert 가 source 덮어쓰므로 실제 기여)·H7(value DOM 프로퍼티 주입, textContent 식별자 — XSS 무첨가)·H8(items 상한 1000/2000, Map O(n) 무시 가능).
+- 수정 후 회귀 가드 `verify_metadata_bs_prefill.mjs` 30→**44** 확장(H2 in-place 갱신·검색 보존 [B3], H3 케이스 무관·빈-schema 폴백·정확 우선 [B1] 신설) green. 인접 inline-desc(30)·list-detail(33)·paging(32)·scope-single-ds(15) 회귀 0. `node --check` PASS · admin.js NUL 0. **재검 VERDICT: SHIP** (잔여 BLOCKER/MAJOR 0).
+- Cross-ref: CHG-20260630T174000-metadata-bs-prefill / TASK·FUNCTION(REQ-20260630T174000-metadata-bs-prefill, AC-BSP-1~3).
+
 ## REV-20260630T100000-doc-sync-rn-0630 [SKIPPED:non-policy-doc] — 릴리즈노트 06-29 블록 augment(+6, 최종 11항목) + 캐시버스터 bump (TASK-20260630T100000-doc-sync-rn-0630, 비-정책 doc-only)
 - Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`) + cache-buster(`index/admin.html`) 뿐 — 비-정책 doc-only. 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC·엔드포인트 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`).
 - 타깃별 실질 검증(doc_sync Phase 4): `node --check release-notes-data.js` PASS + vm 로드 `generated`=2026-06-30·'2026-06-29' 블록 11항목·항목 스키마(type/area/title/detail) 정합. 적대 사실검증 — 사용자향 평이화·내부 비노출(feature-id/테이블/마이그/엔드포인트/cache-buster 슬러그 0)·과장 0.

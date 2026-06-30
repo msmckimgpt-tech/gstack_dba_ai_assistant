@@ -9,6 +9,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260630T174000-metadata-bs-prefill (TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill, Minor §12.3 — feature-0003 프론트 단독, 비파괴)
+- Date: 2026-06-30 (worktree ai/claude/feature-0003-metadata-bs-prefill, base dcb3e02).
+- 요청: 관리콘솔 > 메타데이터 > 테이블 설명/컬럼 설명 — "스키마 골격을 가져왔을 때 기존에 입력된 정보가 확인되지 않음".
+- 근본원인: 백엔드 `/api/admin/metadata/bootstrap`(`admin_bootstrap`)은 설계상 골격(이름·타입)만 반환·설명 미영속(주석 "UI 가 빈칸 prefill")인데, 프론트 `_metaBootstrapRenderResult` 가 `adminState.metadata.items`(저장된 설명) 매칭 prefill 을 구현하지 않아 골격 import 시 항상 빈칸.
+- 변경(`src/static/admin.js`):
+  - 색인/조회 헬퍼 신설 — `_metaBootstrapBuildDescIndex(mode)`(items 를 `(schema,table[,column])` 키로 색인; schema 소문자화 + 정확-schema 우선) + `_metaBootstrapDescLookup(idx, schemaName, tableName[, colName])`(정확-schema 시도 후 빈-schema 폴백). read 경로 `kb_metadata.load_column_descriptions_for_table`(`LOWER(schema_name)=LOWER() OR schema_name=''`)와 동일 정규화 → 수동 폼 입력(임의 케이스)·MSSQL 저장 schema_name=DB명(원본 케이스)·레거시 빈-schema 저장분도 매칭.
+  - `_metaBootstrapRenderResult`: 입력란 생성 시 헬퍼로 prefill(`inp.value`) + `inp.dataset.original` 원본 기록(테이블·컬럼 양 분기).
+  - `_metaBootstrapRefreshPrefill` 신설(in-place): 골격 DOM 재생성 없이 입력란 `value`·`dataset.original`·hint 만 최신 items 로 갱신 → 검색어·페이지·펼침 등 작업 위치 보존.
+  - `loadMetadata`: items 적재 후 부트스트랩 모드(골격 존재)면 `_metaBootstrapRefreshPrefill` 호출(전체 재렌더 아님).
+  - `_metaBootstrapSave`: `desc && desc !== inp.dataset.original` 인 행만 POST(미변경 prefill 재저장 안 함 → `source` provenance 보존). post-save 는 `await loadMetadata()` 로 재prefill(저장분 반영·original 최신화 → 중복 저장 차단). 기존 "빈칸 비우기 루프" 폐기. save-info 안내문 갱신.
+- 변경(`src/static/admin.html`): cache-buster lockstep bump `admin.js`·`styles.css` `?v=20260630-metadata-list-detail → 20260630-metadata-bs-prefill`.
+- 불변식: `.admin-meta-bs-desc[data-kind=...]` 셀렉터·골격 수집 구조·AI 일괄생성(빈 칸만 채움)·백엔드 계약(`/api/admin/metadata/bootstrap*`·tables/columns POST) 전부 불변. prefill 은 `inp.value`(DOM 프로퍼티) 주입 — XSS 무첨가.
+- Impact: 비파괴, 순수 프론트. 데이터/스키마/RBAC/백엔드/엔드포인트/마이그 0 변경. 저장 측은 변경분만 → 기존 manual source 보존(prefill 추가가 유발할 manual→bootstrap 덮어쓰기 회귀 동반 차단).
+- Verification: `node --check` PASS · admin.js NUL 0 · 신규 `verify_metadata_bs_prefill.mjs` 44/44(케이스 무관·빈-schema 폴백·정확 우선·변경감지·in-place 검색보존) + 인접 inline-desc 30·list-detail 33·paging 32·scope-single-ds 15 회귀 0. §18.8 적대 패널 8-가설 FIX-THEN-SHIP → H2(상태 리셋)·H3(키 케이스) 수정 → 재검 SHIP. REV-20260630T174000-metadata-bs-prefill.
+- Rollback: 색인/조회/refresh 헬퍼 제거 + `_metaBootstrapRenderResult` prefill·dataset.original 제거 + `_metaBootstrapSave` 변경감지 환원(전 행 저장) + loadMetadata 재prefill 제거 + cache-buster 환원.
+- Deploy: web 재빌드(정적 자산 — deploy_scope: included). 백엔드/마이그 무관.
+- Files: `src/static/admin.js`, `src/static/admin.html`, `tests/verify_metadata_bs_prefill.mjs`(신규), `docs/{TASK,FUNCTION,REPORT,MODIFY,REVIEW}.md`.
+
 ## CHG-20260630T100000-doc-sync-rn-0630 (TASK-20260630T100000-doc-sync-rn-0630 — 06-29 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
 - 변경:
   - `static/release-notes-data.js`: 기존 '2026-06-29' 블록에 doc_sync 6항목 추가(최종 11항목 — landing 중 origin/main 공유 2항목 합류분 보존) — [new work] 관계를 그림(다이어그램)으로 답변(feature-0013) · [improved admin] 스키마 골격 화면 접기·검색·페이지 정리 · [improved admin] 용어사전 역할 선택 단일화 · [improved work] 공유 대화 화면 보기 개선 · [fixed work] 새 대화 중복 표시 수정 · [fixed work] diff 답변 줄번호 수정 (기존: 용어 자율등록·검토 큐·답변 평가·공유 링크 참여 허용/유지 보존). `generated` 2026-06-29→2026-06-30.
