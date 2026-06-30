@@ -239,7 +239,33 @@ build_image() {  # $1 = sha
     fi
   fi
   # web-a 만 빌드하면 image:$sha 로 태깅됨 → web-b 가 동일 이미지 재사용(build-once).
-  GIT_COMMIT="$sha" run "${DC_PROD[@]}" build web-a || die "이미지 빌드 실패. ABORT."
+  # feature-0017: build 게이트는 exit code 만 신뢰하지 않는다(snap-docker 의 metadata-file race —
+  # docker 29.3.1/compose v5.1.1/buildx v0.31.1 가 `naming...done` 후 /tmp metadata 파일을 confinement
+  # 다른 mount ns 에서 못 찾아 EXIT 1 을 반환하나 이미지는 정상 산출·태깅됨, dc-build 동일 우회).
+  # 판정: 이미지 존재 + GIT_COMMIT 라벨==sha 로 정합 확인. EXIT≠0 은 **로그에 metadata-file race 마커가
+  # 있을 때만** 양성 무시 — 진짜 빌드 실패(컴파일 에러 등, 마커 없음/이미지 부재)는 여전히 ABORT.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] build web-a (GIT_COMMIT=$sha)"
+  else
+    local _blog _brc
+    _blog="$(mktemp)"
+    set +e +o pipefail
+    GIT_COMMIT="$sha" "${DC_PROD[@]}" build web-a 2>&1 | tee "$_blog"
+    _brc=${PIPESTATUS[0]}
+    set -e -o pipefail
+    local _img_commit
+    _img_commit="$(docker image inspect "$IMAGE_REPO:$sha" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^GIT_COMMIT=//p' | head -1)"
+    if [ "$_brc" -eq 0 ] && [ "$_img_commit" = "$sha" ]; then
+      :  # 정상 빌드
+    elif [ "$_brc" -ne 0 ] && [ "$_img_commit" = "$sha" ] && \
+         grep -qiE 'compose-build-metadataFile|metadataFile.*no such file|metadata file.*no such file' "$_blog"; then
+      warn "compose build EXIT=$_brc 이나 이미지($IMAGE_REPO:$sha, GIT_COMMIT 일치) 정상 산출 — snap-docker metadata-file race 양성 무시(dc-build 동일 우회)."
+    else
+      log "--- build log tail ---"; tail -15 "$_blog" >&2; rm -f "$_blog"
+      die "이미지 빌드 실패 — $IMAGE_REPO:$sha 부재 또는 GIT_COMMIT('$_img_commit')≠$sha (EXIT=$_brc, metadata-race 마커 없음). 진짜 빌드 실패 — ABORT."
+    fi
+    rm -f "$_blog"
+  fi
   # 새 이미지를 안정 태그 :current 로 (다음 배포가 :last-good 로 회전).
   if [ "$DRY_RUN" -ne 1 ]; then docker tag "$IMAGE_REPO:$sha" "$IMAGE_REPO:current" || true; fi
   # keep-N prune (오래된 SHA 태그 정리)
