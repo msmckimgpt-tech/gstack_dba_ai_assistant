@@ -12453,22 +12453,11 @@ async def ask(request: Request) -> JSONResponse:
 
 
 @app.post("/api/new_conversation")
-async def new_conversation(request: Request) -> JSONResponse:
+async def new_conversation(request: Request, account=Depends(require_permission("conversation.create")), conn=Depends(get_conn)) -> JSONResponse:
     try:
         data = await request.json()
     except Exception:
         data = {}
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    if not _account_has_permission(account, "conversation.create"):
-        conn.close()
-        return _json_error("권한이 없습니다.", 403)
     # TASK-0047: body 확장 — `mode='auto'|'pinned'`. 생략 시 기존 동작(pinned + default product) 보존.
     raw_mode = (data or {}).get("mode") if isinstance(data, dict) else None
     req_mode = _normalize_product_mode(raw_mode, default="pinned")
@@ -12492,7 +12481,6 @@ async def new_conversation(request: Request) -> JSONResponse:
         if not _account_has_product_access(account, int(req_product_id), conn=conn):
             # explicit body 에 명시했는데 권한 없으면 403 (보안 명확성). default 가 강등된 경우는 auto.
             if (data or {}).get("product_id") not in (None, "", 0):
-                conn.close()
                 return _json_error("요청을 수행할 수 없습니다.", 403)
             # default product 권한도 없는 케이스 → auto 강등 (운영 가능성 유지).
             req_mode = "auto"
@@ -12530,7 +12518,6 @@ async def new_conversation(request: Request) -> JSONResponse:
     _save_account_product_pref(
         conn, int(account["id"]), mode=req_mode, pinned_id=req_product_id
     )
-    conn.close()
     return JSONResponse({
         "conversation_id": cid,
         "output": f"새 대화: {cid}",
@@ -17387,19 +17374,12 @@ def conversations(
     date_to: str | None = None,
     cursor: str | None = None,
     limit: int = 50,
+    account=Depends(get_current_account),
+    conn=Depends(get_conn),
 ) -> JSONResponse:
     """REQ-20260518-0010 (TASK-0072): list mode (no params) is backward-compatible.
     Search mode triggered when any of {q, owner_id, product_id, date_from, date_to,
     cursor} is provided. Body-search (q) requires rate limit + audit log."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-
     search_mode = any(
         [q, owner_id is not None, product_id is not None, date_from, date_to, cursor]
     )
@@ -17415,14 +17395,12 @@ def conversations(
                 account.get("id"), exc_info=True,
             )
         payload = _build_conversations_payload(conn, account)
-        conn.close()
         return JSONResponse(payload)
 
     # REQ-20260518-0010 risk 4: reject q that fails the normalize gate (covers
     # q="%%"" post-escape 0 char, q="ab" < 3 char, etc.). 400 response body is
     # generic to avoid distinguishing failure modes.
     if q is not None and _normalize_search_query(q) is None:
-        conn.close()
         return _json_error("invalid search query", 400)
 
     has_any = _account_has_permission(account, "conversation.list.any")
@@ -17441,7 +17419,6 @@ def conversations(
     body_search_active = bool(q and _normalize_search_query(q))
     if body_search_active:
         if not _search_rate_limit_check(int(account["id"]), max_per_min=10):
-            conn.close()
             return _json_error("rate limit exceeded — try again in a minute", 429)
         # SET SESSION max_execution_time=3s for runaway query protection.
         try:
@@ -17512,7 +17489,6 @@ def conversations(
         "has_any": bool(has_any),
         "matched_excerpts": matched_excerpts,
     }
-    conn.close()
     return JSONResponse(payload)
 
 
@@ -19630,7 +19606,7 @@ def gdrive_disconnect(request: Request, account=Depends(get_current_account), co
 
 
 @app.get("/api/admin/me")
-def admin_me(request: Request) -> JSONResponse:
+def admin_me(request: Request, account=Depends(require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """관리 콘솔 전용 self 정보 endpoint (TASK-0098).
 
     `console.access` permission 보유자만 200 + permissions 포함 응답을 받는다.
@@ -19640,18 +19616,6 @@ def admin_me(request: Request) -> JSONResponse:
 
     Codex outside voice F1 (blocker) 흡수.
     """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    if not _account_has_permission(account, "console.access"):
-        conn.close()
-        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
-    conn.close()
     user_payload = _serialize_account(account, include_permissions=True) or {}
     _strip_quota_fields_if_unpermitted(user_payload, account)
     return JSONResponse({
@@ -20448,49 +20412,26 @@ WHERE RoleId = %s
 
 
 @app.get("/api/admin/permissions")
-def admin_permissions(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    if not _account_has_permission(account, "console.access"):
-        conn.close()
-        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+def admin_permissions(request: Request, account=Depends(require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     # TASK-0052 Phase 1A: catalog 를 _resolve_permission_catalog 경로로 조회.
     # Phase 1A 시점에는 정적 PERMISSION_DEFINITIONS 와 동일한 결과지만, plumbing 을 미리 검증.
     # Phase 1B 에서 conn 이 동적 product 권한까지 union 한 catalog 를 반환하도록 확장 예정.
     catalog_definitions, _catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
-    conn.close()
     return JSONResponse({"permissions": _permission_catalog_payload(catalog=catalog_definitions)})
 
 
 @app.get("/api/admin/products")
-def admin_list_products(request: Request) -> JSONResponse:
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
+def admin_list_products(request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
     if not _account_has_permission(account, "console.access"):
-        conn.close()
         return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
     # TASK-0288: 관리 콘솔 제품 구성 **조회** 권한 게이트(read 또는 manage). 기존엔 console.access 만
     # 검사해 제품 관리 권한 없이도 제품 목록·접근 DB·시스템 프롬프트 구성이 노출됐다(③ 결함).
     # 작업 화면 제품 사용(product.access.<key>)과는 별개 축 — 여기선 관리 콘솔 구성 조회만 게이팅.
     if not _account_has_any_permission(account, "product.read", "product.manage"):
-        conn.close()
         return _json_error("제품 조회 권한이 필요합니다.", 403)
     products = _list_products(conn, include_inactive=True)
     for p in products:
         p["databases"] = _list_product_databases(conn, int(p["id"]))
-    conn.close()
     return JSONResponse({"products": products})
 
 
@@ -22572,25 +22513,13 @@ def _reconcile_all_db_rules_once() -> None:
 
 
 @app.get("/api/admin/databases/available")
-def admin_list_available_databases(request: Request) -> JSONResponse:
+def admin_list_available_databases(request: Request, account=Depends(require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
     """Live MySQL `SHOW DATABASES` enumeration for the product DB whitelist picker.
 
     - 권한: `console.access` (등록은 별도로 `product.manage` 가 필요한 PUT /api/admin/products/{id}/databases 에서 검사).
     - `metadata_schemas`: 정책상 항상 접근 가능한 4 종 (REV-20260422-0006). 실제 서버 존재 여부는 `present` 필드로 표기.
     - `user_schemas`: 메타·내부(`agent_memory`, MEMORY_DB) 제외 + 정규식 통과 schema 만 정렬해 반환.
     """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return _json_error("db connection failed", 500)
-    account, error = _require_account(request, conn)
-    if error:
-        conn.close()
-        return error
-    if not _account_has_permission(account, "console.access"):
-        conn.close()
-        return _json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
-    conn.close()
 
     try:
         probe = _open_memory_connection(database=None)

@@ -13,7 +13,7 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 
 ## 2. Progress
 - Done: plan-eng-review+§12 · route-parity 안전망(골든 179) · 의존성 audit · **DI seam 설계(DI_SEAM_BLUEPRINT.md)** · **Phase 0(deps+_AuthError handler+get_conn, behavior-neutral, 커밋 06d88a8)** · **Phase 1(conftest TestClient/`as_account` + 파일럿 get_llm_health DI 전환 byte-동치 + get_conn None-yield 보정 + require_permission 빈 perms 가드 + 회귀 스위트 31 + §18.8 적대 패널 HIGH 2 보정)**.
-- In Progress: DI seam **Phase 2 cat-A 완료(35/~95 viable, 잔여 11 아키텍처 이연)** — batch1(19)+batch2(5)+batch3(10 P2_MULTI_CLOSE)+batch4(history_anchor). ultracode workflow 3회(116 agents) 2렌즈 적대검증으로 byte-동치 확정. make test 1238·route-parity 179·`_require_account` exact 88→53. **다음: Phase 3 cat-B**(require+인라인 perm 64개: AND 41/OR·BRANCH 23, clean-AND 23 우선) → `require_permission(*perms, message=원본)` 전환.
+- In Progress: DI seam **Phase 2 cat-A 완료(35) + Phase 3 cat-B 진입(batch1 6)** — cat-A batch1-4 + cat-B batch1(RP 4 require_permission + AO 2 account-only). ultracode workflow 4회(183 agents) 2렌즈 적대검증. make test 1238·route-parity 179·account-anchor `_require_account` 88→47. **다음: cat-B batch2**(확정 잔여 9: 본문 sole-in-block conn.close → try/finally 제거+dedent) + workflow 보류 8(동반 테스트 전환 등) + OR·BRANCH 23 → cat C/D/E/F/트랜잭션.
 - 이연(아키텍처, router-extraction 단계): cat-A pre-auth gate 10(401 우선순위 역전·conn eager-open) + ask_result(long-poll 60s conn-hold).
 - Planned: Phase 3(cat B)~7 → helper→web_context 이동 → APIRouter 추출 → 브라우저 로그인 QA+§18.8+배포 → 프론트 분할.
 
@@ -26,7 +26,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260629-0006: DI seam Phase 2 batch 2 — REV-0006 보류 5 핸들러 마무리(누적 cat-A 24). orphan-try edit-spec 결함을 구조 변환기로 교정 + SQL-heredoc verbatim + profile_usage_conversations 동반 테스트 TestClient 전환. make test progress 1238, route-parity 179, exact-anchor _require_account 88→64.
 - CHG-20260630-0001: DI seam Phase 2 batch 3 — P2_MULTI_CLOSE 10 핸들러(누적 cat-A 34). batch3 workflow(REV-20260630-0001, 44 agents) 22 후보 3패턴 분류+적대검증 → 10 확정/12 보류. 산재 conn.close 제거형, ask_status terminal-finally 수작업, history_dates 동반 테스트 전환. make test progress 1238, route-parity 179, exact-anchor _require_account 64→54.
 - CHG-20260630-0002: DI seam Phase 2 batch 4 — history_anchor(누적 cat-A 35) + cat-A 마무리. batch3 HIGH refute 해소(근본원인=T2 전환 누락). cat-A 잔여 11(pre-auth gate 10 + ask_result) 아키텍처 이연 확정. make test 1238, exact-anchor _require_account 54→53.
-- 총 변경 횟수: 8
+- CHG-20260630-0003: DI seam Phase 3 cat-B batch 1 — require+인라인 perm 6 핸들러(RP 4 require_permission + AO 2 account-only). cat-B workflow(REV-20260630-0003, 67 agents) clean-AND 23 → 15 확정 중 sole-in-block 없는 6 적용. 403 메시지 verbatim 추출 byte-보존. make test 1238, account-anchor 53→47.
+- 총 변경 횟수: 9
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

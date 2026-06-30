@@ -152,3 +152,14 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 해소: history_anchor 를 P2 변환기로 마이그(multi-line sig + 6 산재 close 제거, sole-in-block 없음 확인) + **T2 를 `client.get`+`as_account` override 로 전환**(conn=mem 유지로 cursor_calls/HH24:MI SQL 가드 보존). refute 의 근본원인(테스트 전환 누락) 직접 제거.
 - 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/잔류 0/pg.close 보존) PASS. `_require_account` exact 54→53.
 - cat-A 잔여 11 이연 판정(아키텍처): pre-auth gate 10(401 우선순위 역전 + conn eager-open 부수효과), ask_result(long-poll 60s conn-hold) — DI seam 으로 byte-동치 불가, router-extraction 단계 재구조화. 워크플로 KEEP_INLINE_DEFER/EDGE_DEFER 판정이 정확했음을 코드 정독으로 재확인.
+
+## REV-20260630-0003 [AGENT-TEAM:p5b-phase3-catb-batch1-require-permission-panel]
+- Related Change: CHG-20260630-0003 (Phase 3 cat-B batch 1 — require+perm 6 핸들러)
+- §18.8 Adversarial Panel: **AGENT-TEAM (ultracode workflow `p5b-phase3-catb-plan`, 67 agents / 2.22M tokens).**
+  clean-AND cat-B 23 후보를 핸들러별 분석(perm 코드·각 실패 메시지 정확 인용·status·AND/OR·resource-의존·perm-before-resource) → migratability(REQUIRE_PERMISSION/ACCOUNT_ONLY/DEFER) 결정 → 2렌즈 적대검증(렌즈A 메시지 byte-보존[BLOCKING-1]·perm-before-resource 순서·동적 catalog·AND/OR 의미; 렌즈B 401≺403 순서·셰이프·orphan-try·동반 테스트 needs_conversion). 결과 15 확정 / 8 보류.
+- batch1 적용 6 (sole-in-block conn.close() 부재): RP 4 + AO 2. 검증 사항:
+  - **403 메시지 byte-보존**: RP 시그니처의 message= 를 워크플로 전사가 아니라 *실제 제거되는 perm-블록의 `_json_error` 문자열 리터럴에서 정규식 verbatim 추출* — 전사 오류 위험 0. admin_me/admin_permissions/admin_list_available_databases="관리 콘솔 접근 권한이 필요합니다.", new_conversation=기본값("권한이 없습니다.") 라 message= 생략. 확정 def 시그니처로 일치 확인.
+  - **순서**: require_permission 이 get_current_account(→get_conn) 의존 → 401 이 403 보다 선행 자동 보존; perm-게이트가 인증 직후·resource 로딩 전(perm_before_resource=true)이라 hoist 가 순서 불변. new_conversation 2차 resource-의존 검사(_account_has_product_access)는 본문 유지(메시지 "요청을 수행할 수 없습니다." byte-보존).
+  - **AO**: conversations/admin_list_products 는 복수 perm/다른 메시지라 account-only + 본문 검사 유지(require_permission 단일 메시지로 뭉치면 메시지 회귀). 변수명 actor 자동 감지.
+- 결정적 검증: make test progress-chars 1238 = baseline 동일·0 FAIL/ERROR·exit 0, route-parity 179 불변, ruff clean, py_compile OK. sanity(시그니처 Depends/require_permission/잔류 _require_account·conn.close 0/RP perm 본문 제거·AO perm 본문 유지) PASS. account-anchor 53→47. 직접호출 동반 테스트 0(grep).
+- batch2 분리(9, sole-in-block conn.close): public_share_fork·upload/delete_product_icon·admin_llm_usage·admin_get_dashboard_prefs·verify_audit_chain·admin_health_attachment_grants(본문 finally:conn.close 또는 try:conn.close try/except-pass) — 마이그 자체는 byte-correct(워크플로 확정)이나 conn.close 가 블록 유일 내용이라 단순 제거 시 빈 블록 → try/finally(또는 try/except) 제거+dedent 가 추가 필요. + admin_list_datasources·admin_datasource_databases(AO, 본문 finally:conn.close). 워크플로 보류 8(동반 테스트 전환 누락 5·action분기·fail-soft)도 batch2+.

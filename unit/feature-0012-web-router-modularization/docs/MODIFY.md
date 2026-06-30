@@ -145,3 +145,15 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/app.py`(history_anchor) + `tests/test_history_calendar_pg_routing.py`(T2 전환) + docs.
 - Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` exact-anchor 54→53. 배포 불요.
 - Rollback Notes: 단일 commit revert(app.py history_anchor + test T2 + docs).
+
+## CHG-20260630-0003
+- Date: 2026-06-30
+- Related Requirement: P5b DI seam Phase 3 cat-B batch 1(TASK-0012-7) — require+인라인 perm 6 핸들러. DI_SEAM_BLUEPRINT §1.4(require_permission), §1.6(account-only), §0(403 메시지 byte-보존).
+- Summary:
+  cat-B(인증 + 인라인 permission 검사) 진입. cat-B workflow(REV-20260630-0003, 67 agents)이 clean-AND 23 후보를 분석+2렌즈 적대검증 → 15 확정(REQUIRE_PERMISSION/ACCOUNT_ONLY)·8 보류. 확정 15 중 **본문에 sole-in-block conn.close()(finally/try 의 유일 내용)가 없는 6개만** batch1 적용(나머지 9 는 try/finally 제거+dedent 가 추가로 필요해 batch2 분리 — 빈 블록 IndentationError 회피).
+  - **REQUIRE_PERMISSION 4**(new_conversation, admin_me, admin_permissions, admin_list_available_databases): 인증 직후 단일 정적 perm 게이트를 `account=Depends(require_permission("<perm>"[, message="<원본 403 메시지>"]))` 로 hoist. **403 메시지는 워크플로 전사가 아니라 제거되는 perm-블록의 `_json_error(...)` 에서 정규식으로 verbatim 추출**해 sig 에 삽입(byte-보존 보장); 메시지가 정확히 기본값 "권한이 없습니다." 면 message= 생략(new_conversation). require_permission 이 get_current_account 의존 → 미인증 401·conn실패 500·401≺403 순서 자동 보존. new_conversation 의 2차 검사(_account_has_product_access, resource-의존·다른 메시지)는 본문 유지.
+  - **ACCOUNT_ONLY 2**(conversations, admin_list_products): 복수 perm/다른 메시지라 require_permission(단일 메시지) hoist 불가 → `account=Depends(get_current_account)` + perm 검사 전부 본문 유지(메시지 byte-보존). admin_list_products 는 변수명 `actor`(변환기 자동 감지).
+  - 공통: conn-acquire/auth 블록 제거 + 산재 conn.close() 제거(get_conn teardown). 전용 변환기 `cata_b_transform.py`(변수명·스타일 자동 감지, 메시지 verbatim 추출).
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(6 핸들러) + docs. 동반 테스트 변경 0(6개 모두 HTTP-레벨/route-snapshot/source-assertion — 직접호출/패치 없음, grep 확인).
+- Impact: behavior-neutral. make test progress-chars 1238 = baseline 동일·0 fail, route-parity 179 불변, ruff clean, py_compile OK. `_require_account` account-anchor 53→47. 배포 불요.
+- Rollback Notes: 단일 commit revert(app.py 6 핸들러 + docs). DI seam 토대·이전 batch 불변.
