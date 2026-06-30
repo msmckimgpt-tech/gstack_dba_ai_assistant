@@ -28,10 +28,11 @@ source_of_truth: true
 - [x] T1.2 라벨/속성 규약(FUNCTION.md §4) + RBAC 검증: rw 쓰기 ✓ / ro 읽기 ✓ / ro 쓰기 차단(permission denied) ✓.
       **앱 코드는 `SET search_path = ag_catalog,"$user",public` (LOAD 없이) — shared_preload 의존.**
       create_vlabel/elabel 은 `(cstring,cstring)` 시그니처(변수 `::cstring` 캐스트 필수).
-### 2b. 동기화 (관계형 SSOT → AGE 투영)
-- [ ] T1.3 `modules/metadata_graph.py` — 관계형(table/column_descriptions·table_relationships·
-      glossary·rag_objects) → AGE upsert. 증분 + `--rebuild`. 멱등(MERGE).
-- [ ] T1.4 `bin/metadata-graph-sync.sh` (run + rebuild) + insight-worker 주기 훅.
+### 2b. 동기화 (관계형 SSOT → AGE 투영) ✅ 모듈 PASS (2026-06-30)
+- [x] T1.3 `modules/metadata_graph.py` — sync_table/column/relationship/glossary + sync_graph(전체) +
+      투영(search_nodes·neighborhood). 멱등 MERGE, Cypher injection 방어(_cq), 화이트리스트 라벨/속성,
+      8K 보호 cap. 라이브 AGE 행위검증 PASS(test_metadata_graph_age.py): 멱등·한국어·k-hop·injection.
+- [ ] T1.4 `bin/metadata-graph-sync.sh` (run + rebuild) + insight-worker 주기 훅. 〔다음〕
 ### 2c. 엣지 적재 (빈 table_relationships 채우기)
 - [ ] T1.5 FK introspection 실제 실행 경로 점검·기동 (20 datasource). 적재량 telemetry.
 - [ ] T1.6 대화 JOIN 학습 훅 활성 확인(feature-0013 재사용). FK 미선언 DB 대비 LLM 관계 추론 seed(gated).

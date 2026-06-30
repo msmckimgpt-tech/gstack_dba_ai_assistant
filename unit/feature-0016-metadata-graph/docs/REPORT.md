@@ -50,10 +50,23 @@ source_of_truth: true
 - `unit/feature-0016-metadata-graph/docker/{Dockerfile.pg-age,verify-age.sql}`
 - `unit/feature-0002-agent-core/alembic/versions/20260630_0025_age_metadata_graph.py`
 
-### 다음 (Phase 1b~)
-- T1.3/1.4 `modules/metadata_graph.py` 관계형→AGE 동기화 + `bin/metadata-graph-sync.sh` + insight 훅.
-- T1.5/1.6 FK introspection 실행(엣지 적재) + 대화 학습 + FK 미선언 보완.
-- Phase 2 투영 API → Phase 3 Cytoscape UI → Phase 4 AI 정합 → Phase 5 측정·cutover(게이트)·배포.
+### Phase 1b — 동기화 + 투영 모듈 (metadata_graph.py) ✅ PASS
+- `modules/metadata_graph.py`: 관계형→AGE 동기화(sync_table/column/relationship/glossary/sync_graph) +
+  투영(search_nodes·neighborhood). 멱등 MERGE, Cypher injection 방어(`_cq`), 라벨/속성 화이트리스트,
+  8K 규모 보호 cap(_NEIGHBOR_NODE_CAP=300, _SEARCH_CAP=80). conn 주입 시 shared.db 미import(단독 가능).
+- 라이브 AGE 행위검증(tests/test_metadata_graph_age.py): **ALL ASSERTS PASS**
+  {search_orders:3, search_주문:1, nb_nodes:7, nb_edges:9, orders_node_count:1}.
+  멱등(3회 재sync 중복 0) · 한국어 · injection escape · k-hop(depth2 REFERENCES 도달) 확인.
+
+### 다음 (Phase 1c~)
+- T1.4 `bin/metadata-graph-sync.sh` + insight-worker 주기 훅.
+- T1.5/1.6 FK introspection 실행(엣지 적재 — 현 0행) + 대화 학습 + FK 미선언 보완.
+- Phase 2 투영 API(app.py 엔드포인트) → Phase 3 Cytoscape UI → Phase 4 AI 정합 →
+  Phase 5 측정·**cutover(게이트)**·배포.
+
+### 검증 상태 요약
+- Phase 0(이미지)·1a(스키마/RBAC)·1b(동기화/투영) = **라이브 AGE 대상 검증 완료**(worktree-local, 운영 무영향).
+- Phase 1c~5 는 통합 스택(또는 cutover) 필요 — 다음 cycle. cutover 는 비가역·외부영향 별도 게이트.
 
 ### 검증 미결 / 리스크
 - 이 단계 산출물은 worktree-local 비파괴(운영 무영향). 운영 cutover(이미지 교체+shared_preload+재시작)는
