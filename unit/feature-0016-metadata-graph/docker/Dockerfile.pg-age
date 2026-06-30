@@ -1,0 +1,44 @@
+# feature-0016-metadata-graph · Phase 0
+# 커스텀 PostgreSQL 16 이미지: pgvector(기존) + pg_trgm + Apache AGE(openCypher 그래프)
+#
+# 기반: pgvector/pgvector:pg16 (현 운영 image) 위에 Apache AGE 를 소스 빌드.
+#   → 단일 PG 인스턴스에서 벡터검색(pgvector) + trigram(pg_trgm) + 그래프(AGE) 공존.
+#   → 빌드 툴체인은 동일 레이어에서 purge 해 런타임 이미지 비대화 방지.
+#
+# AGE ref: release/PG16/1.6.0 (PG16 최신 안정 릴리스 브랜치, 2026-06 ls-remote 확인)
+# 검증: docker/verify-age.sql (AGE create_graph + Cypher + pgvector/pg_trgm 공존 회귀)
+
+FROM pgvector/pgvector:pg16
+
+ARG AGE_REF=release/PG16/1.6.0
+
+# 빌드 의존성 설치 → AGE clone·빌드·install → 툴체인 purge (동일 RUN 레이어)
+RUN set -eux; \
+    savedAptMark="$(apt-mark showmanual)"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        flex \
+        bison \
+        postgresql-server-dev-16 \
+        libreadline-dev \
+        zlib1g-dev \
+        ca-certificates; \
+    git clone --depth 1 --branch "${AGE_REF}" https://github.com/apache/age.git /tmp/age; \
+    cd /tmp/age; \
+    make PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config; \
+    make PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config install; \
+    cd /; \
+    rm -rf /tmp/age; \
+    apt-get purge -y --auto-remove \
+        build-essential git flex bison postgresql-server-dev-16 \
+        libreadline-dev zlib1g-dev; \
+    apt-mark manual $savedAptMark >/dev/null 2>&1 || true; \
+    rm -rf /var/lib/apt/lists/*; \
+    # AGE 확장 파일 설치 확인 (빌드 실패 시 fail-loud)
+    test -f "$(/usr/lib/postgresql/16/bin/pg_config --sharedir)/extension/age.control"
+
+# AGE 를 shared_preload_libraries 에 추가하면 세션마다 LOAD 'age' 불필요.
+# 운영 compose 의 command 절(server params)에서 -c shared_preload_libraries='age'
+# 를 추가하는 방식과 택일 — 본 이미지는 기본 동작 불변(LOAD 'age' per session) 유지.

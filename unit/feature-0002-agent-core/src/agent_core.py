@@ -264,9 +264,12 @@ explanation. The web UI renders ```mermaid blocks as diagrams.
 
 Rules:
 - **Gather real relationships first.** Use the RELATIONSHIP DATA in the knowledge context below if
-  present; otherwise call `get_foreign_keys` and `describe_table` on the relevant tables before drawing.
+  present; otherwise call `graph_navigate` (action='search' to find the entity, then action='neighbor'
+  to get its columns·relationships·related terms from the metadata knowledge graph), or
+  `get_foreign_keys`·`describe_table` on the relevant tables before drawing. For large schemas where
+  the full structure does not fit in context, prefer `graph_navigate` to pull only the relevant subgraph.
   Never invent edges — only draw relationships you have confirmed from FK metadata, the relationship
-  data, or a JOIN you actually ran. If a relationship is application-level (no FK), label it as inferred.
+  data, the graph, or a JOIN you actually ran. If a relationship is application-level (no FK), label it as inferred.
 - **Pick the diagram type that fits the question:**
   - `erDiagram` — entity/table relationships. Put each entity's columns INSIDE a `{ }` block,
     one `type name [PK|FK|UK]` per line. Relationship lines are `A ||--o{ B : "label"` (cardinality

@@ -570,6 +570,32 @@ TOOL_DEFINITIONS_FULL: list[dict[str, Any]] = TOOL_DEFINITIONS + [
             },
         },
     },
+    {
+        # feature-0016: 메타데이터 지식그래프(Apache AGE 투영) 탐색. 대규모 스키마(수천 테이블)에서
+        # 전체를 컨텍스트에 담지 않고 필요한 부분만 그래프로 찾는다. 게임 용어 기반 질의에 특히 유용.
+        "type": "function",
+        "function": {
+            "name": "graph_navigate",
+            "description": (
+                "메타데이터 지식그래프(테이블·컬럼·관계·용어)를 탐색한다. 스키마가 커서 전체를 "
+                "컨텍스트에 담을 수 없을 때, 질문 관련 부분만 찾는 용도. "
+                "action='search': 이름/설명 부분일치로 노드 검색(결과의 key 를 얻는다). "
+                "action='neighbor': 특정 노드(key)의 k-hop 이웃(연결된 컬럼·관계·연관 용어)을 조회. "
+                "knowledge context 에 관계가 이미 충분하면 호출 불필요."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["search", "neighbor"],
+                               "description": "search=검색, neighbor=이웃 확장"},
+                    "query": {"type": "string", "description": "action=search 시 검색어(테이블/컬럼/용어 이름의 일부)"},
+                    "node": {"type": "string", "description": "action=neighbor 시 노드 key(search 결과의 key 값)"},
+                    "depth": {"type": "integer", "description": "action=neighbor 시 이웃 깊이(1~3, 기본 2)"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 
@@ -1271,6 +1297,68 @@ def _tool_get_foreign_keys(conn, args: dict) -> str:
     return "\n".join(parts)
 
 
+def _tool_graph_navigate(conn, args: dict) -> str:
+    """feature-0016: 메타데이터 지식그래프(AGE metadata_kb) 읽기 전용 탐색.
+
+    conn(데이터소스)은 무시 — KB(agent_kb) 의 AGE 그래프를 metadata_graph 모듈로 조회한다(RO).
+    cutover 전(AGE 미설치·플래그 off)엔 기존 도구로 안내(graceful). 쓰기 불가(투영은 동기화 경로 전용).
+    """
+    action = str(args.get("action") or "").strip().lower()
+    try:
+        from shared import config as _cfg
+        if not getattr(_cfg, "AGENT_METADATA_GRAPH_SYNC_ENABLED", False):
+            return ("메타데이터 그래프가 아직 활성화되지 않았습니다. "
+                    "관계·구조는 get_foreign_keys / describe_table 로 조회하세요.")
+    except Exception:
+        pass
+    try:
+        from modules import metadata_graph as _mg
+    except Exception:
+        return "그래프 탐색을 사용할 수 없습니다(metadata_graph 미가용). get_foreign_keys 를 사용하세요."
+
+    try:
+        if action == "search":
+            q = str(args.get("query") or "").strip()
+            if not q:
+                return "오류: action=search 에는 query 가 필요합니다."
+            nodes = _mg.search_nodes(q, limit=40)
+            if not nodes:
+                return f"'{q}' 와 매칭되는 그래프 노드가 없습니다."
+            lines = [f"## 그래프 검색 '{q}' ({len(nodes)}건) — key 로 neighbor 조회 가능"]
+            for n in nodes:
+                desc = str(n.get("description") or "").strip()
+                lines.append(f"- [{n.get('label')}] {n.get('fqn') or n.get('name')} (key={n.get('key')})"
+                             + (f" — {desc}" if desc else ""))
+            return "\n".join(lines)
+        if action == "neighbor":
+            node = str(args.get("node") or "").strip()
+            if not node:
+                return "오류: action=neighbor 에는 node(key) 가 필요합니다."
+            try:
+                depth = int(args.get("depth") or 2)
+            except (TypeError, ValueError):
+                depth = 2
+            nb = _mg.neighborhood(node, depth=depth)
+            nodes = nb.get("nodes") or []
+            edges = nb.get("edges") or []
+            if not nodes:
+                return f"노드 '{node}' 의 이웃이 없습니다(또는 노드 부재)."
+            lines = [f"## '{node}' 이웃 (노드 {len(nodes)} · 관계 {len(edges)})", "### 노드"]
+            for n in nodes[:60]:
+                desc = str(n.get("description") or "").strip()
+                lines.append(f"- [{n.get('label')}] {n.get('fqn') or n.get('name')}"
+                             + (f" — {desc}" if desc else ""))
+            if edges:
+                lines.append("### 관계")
+                for e in edges[:60]:
+                    card = f" [{e.get('cardinality')}]" if e.get("cardinality") else ""
+                    lines.append(f"- {e.get('source')} -{e.get('type')}-> {e.get('target')}{card}")
+            return "\n".join(lines)
+        return "오류: action 은 'search' 또는 'neighbor' 여야 합니다."
+    except Exception as e:
+        return f"그래프 탐색 오류: {e}"
+
+
 # ── 도구 디스패처 ────────────────────────────────────────────────
 
 _TOOL_HANDLERS = {
@@ -1283,6 +1371,7 @@ _TOOL_HANDLERS = {
     "explain_query": _tool_explain_query,
     "get_table_indexes": _tool_get_table_indexes,
     "get_foreign_keys": _tool_get_foreign_keys,
+    "graph_navigate": _tool_graph_navigate,
 }
 
 
