@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.36.0
+template_version: v3.37.0
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1588,6 +1588,36 @@ PASS 만이 최종 완료 기준이다.
 (근거: T3-20260626T1135-001 — bring-up 완료를 docker health+계정 config 로 판정했으나 실제
 blocker 는 WSL2 portproxy stale-IP 였고 turn1 시점 검출가능했음. deploy-backed 완료 기준과
 동형의 완료-altitude 보강.)
+
+#### 완료-altitude 3층 broaden 및 검증 충실도 (v3.37.0)
+
+위 bring-up/access 완료 기준(v3.36.0)을 일반화한다. **완료 판정 altitude 는 3층이며, 상위 층을
+통과하지 못하면 완료가 아니다** — 하위 층 PASS 를 완료로 오인 보고하지 않는다:
+
+1. **Layer 1 — 컴포넌트 health**: 데몬 Up/healthy, 계정·설정 정합. "기동됨".
+2. **Layer 2 — 사용자 도달성**: 공개 entry-point end-to-end 도달 (위 v3.36.0 기준). "사용자가 닿음".
+3. **Layer 3 — 비-disruptive 사용자 경험**: 요청 충족을 위해 **채택한 메커니즘·remediation 이 사용자
+   환경에 주기적·가시적 부작용을 남기지 않는다**. 팝업 창(예: 5분 주기 대화형 PowerShell scheduled
+   task), 반복 프롬프트, desktop noise, 백그라운드여야 할 작업의 foreground 노출 등은 "기능은
+   동작(`LastTaskResult=0`)" 이어도 완료가 아니다. 메커니즘 선택 시점에 결정론적으로 예측가능한
+   부작용(예: 대화형 표면 `/IT`)은 그 turn 의 완료 판정 범위에 포함해 hidden/백그라운드로 처리한다.
+
+**검증 충실도 — 완료 근거의 신뢰성 (2 check)**:
+
+- **proxy ≠ ground-truth**: 기능이 자체 health/availability/연결성 check 를 신설하거나 그에 의존해
+  완료를 선언하면, **그 check 는 구조적 proxy(토큰 `expiresAt`·파일 존재여부·syntax 정합 등)가
+  아니라 실제 end-capability(라이브 호출/실 사용 경로 1회 성공)를 검증해야 완료 근거로 인정**한다.
+  예: 계정 가용성을 토큰 만료시각만으로 PASS 하면 quota 소진(HTTP 429) 같은 실-미가용을 놓친다 —
+  라이브 1-call 로 확인한다.
+- **검증 사전-descope 금지**: 브라우저/시각 등 검증-요구 작업을 "환경상 불가"로 이월·축소하기
+  **전에**, AI-주도 실측 경로(§16.6 의 `/browse` 스킬·host-side real-browser 동등 경로·Playwright
+  via `/browse` MCP 등 프로젝트가 보유한 실측 수단)를 **반드시 먼저 consult** 한다. "브라우저 QA
+  환경상 불가" 같은 단정으로 검증을 사전 descope 하지 않는다 — 실측 경로가 있으면 그것으로
+  검증하고, 없을 때에만 미검증을 명시 표기한다.
+
+(근거 inbox: T3-20260626T1635-001[Layer 3 — 주기 PowerShell 창], T3-20260629T1635-001[proxy —
+토큰만료 vs HTTP 429], T3-20260629T1135-001[사전-descope — 브라우저 QA 단정]. v3.36.0 완료-altitude
+2층의 일반화·broaden.)
 
 ### §16.4 병합 충돌 해결 정책
 
@@ -3429,6 +3459,16 @@ worktree 디렉토리가 root 소유로 생성되면(예: root 컨텍스트에�
 - 이미 root-소유 orphan 이 생겼으면 **우선 `cycle-finalize.sh --target-worktree <path>` 로 대상을
   명시해 main 에서 정리**한다 (§16.3 Step 6 참조). sudo 가 불가피하면 위 §1 의 scoped NOPASSWD
   (특정 정리 래퍼 한정)로만 호출한다.
+
+**5. MCP 서버 사전인증 — `claude mcp login` / `claude mcp logout` (v2.1.185+)**
+
+대화형 세션은 `/mcp` 메뉴로 MCP 서버를 인증하지만, **headless/cron 자기위임에는 `/mcp` 메뉴가
+없다** — 설정된 MCP 서버(`.mcp.json`)가 OAuth/토큰 인증을 요구하면 비대화 실행에서 인증 단계가
+공백이 된다. `claude mcp login <server>` 로 셸에서 사전인증하고, `claude mcp logout <server>` 로
+credential 을 해제한다. cron job 은 인증을 보유한 user 소유로 실행하되, 그 전에 이 사전인증을
+스크립트화한다 (예: cron wrapper 가 `claude mcp login` 을 1회 선행 — 대화형 `/mcp` 부재 보완). MCP
+credential 도 토큰이므로 위 항목 3(cron clean-env hygiene)의 per-user credentials 규칙(소유 user
+실행·`chmod 600`·world-readable 금지)을 그대로 따른다.
 
 **범위 밖 (비-actionable)**: 모델-tier 강제(예: ultracode 기본화)는 harness/모델 설정이지 코드
 템플릿이 강제할 수 있는 대상이 아니다. 본 recipe 는 **CLI/env 보편 사실의 문서화**에 한정하고,
