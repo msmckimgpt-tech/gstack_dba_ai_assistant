@@ -1295,4 +1295,4 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - locality: 반경 밖 far 노드 이동 최소(depth-2 far 4중 0 이동) — 원거리 문맥 보존.
 - **시각(스크린샷 아티팩트)**: `scratchpad/pb0008-04..06` — 신규 노드가 주변 테이블을 밀어내 겹침 해소, 컬럼 세로스택+round-taxi 유지.
 - **Pass/Fail: PASS**(인젝션 검증) — 사용자 보고 2건 해소: (1) 더블클릭 시 컬럼 세로스택 가시화(겹침 제거로 판독), (2) 신규 노드가 주변 노드를 부드럽게 밀어냄(겹침 502→17). 잔여 minor 겹침(극단 depth-2 17쌍)은 numIter 250(perf) 유지 trade-off.
-- **배포 후 최종 확인**: web 재배포(배포 번들) 후 동일 시나리오 PB-0008 재확인 예정(선례 패턴).
+- **배포 후 최종 확인 (배포 번들, 2026-07-01) PASS**: web 재배포(git_commit=e2efac2, soak 통과) 후 배포된 `admin.js?v=graphux-expand-relax` 로 동일 시나리오 재확인 — 검색 achievement→Achievement 더블클릭 확장(신규 120, 총 300노드) 결과 **겹침쌍 0**, Achievement 컬럼 ordinal 세로스택 유지(1@dy75·2@105·3@135·4@165). 스크린샷 `scratchpad/pb0008-07-DEPLOYED-final.png`.
