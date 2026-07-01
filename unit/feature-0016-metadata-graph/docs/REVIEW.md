@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T170000-ai-claude-feature-0016-graphux-camfps [SUBAGENT: PASS] — 카메라 애니 프레임레이트 최적화(layoutstop 지연 복원) 적대 리뷰
+- Related Change: graphux-camfps (`_metaGraphLayout` layoutstop — 라벨/엣지 숨김 해제를 카메라 fit 애니 complete 후로 지연 + 세대 가드 + 무조건 복원 헬퍼).
+- 방식: §18.8 적대 subagent 패널 — cytoscape.min.js/fcose 번들 내부 의미(`stop()`→`layoutstop` 동기 발화, stopped-anim promise 미resolve, fcose `run()` 완전 동기, `cy` 비파괴)를 실측 확인 후 10+ 경로 적대 검증 → **2라운드**(1차 발견 → hardened 재구현 → 재검증).
+- 1차 발견 (5건, 전량 수정):
+  - **BLOCKING-1/2 — fcose `run()` 예외 시 라벨/엣지 영구 숨김**: addClass 후 fcose try 블록이 throw 하면 cose 폴백으로 빠지는데 폴백엔 복원 코드 부재 → 라벨/엣지 `display:none`/`""` 영구 잔존(새로고침 전 복구 불가, 사용자 회귀 부류). **→ 수정**: fcose outer catch + layoutstop 내부 catch + 폴백 layoutstop + 폴백 outer catch **모든 경로에 무조건 `clearMotionHide()`**.
+  - **MAJOR-3 — `!_layoutRunning` guard 고착**: 후속 레이아웃 이중 예외 시 `_layoutRunning` 이 true 로 고착되면 지연 복원이 영구 차단 + dragfree 2차 무력화. **→ 수정**: guard 를 **세대(gen) 토큰 `restoreIfCurrent`** 로 대체 — `_layoutRunning` 상태와 독립. 폴백 catch 가 `_layoutRunning=false` 보장.
+  - **MAJOR-2 — 숨긴 지오메트리로 fit → 프레이밍 어긋남**: else 경로가 엣지/라벨 숨긴 채 `cy.fit()`. **→ 수정**: else 는 `clearMotionHide()` **후** fit.
+  - **MAJOR-1 — setTimeout 누수**: 취소 안 되는 `setTimeout(restore,650)` 누적. **→ 수정**: `_metaGraph._restoreTimer` 단일 슬롯 + 재설정 전 `clearTimeout`.
+- 재검증 (hardened) 결과: **잔여 BLOCKING 0**. 핵심 불변식 확증 — "모든 비동기(지연) 복원은 gen-gated `restoreIfCurrent` 뿐, 무조건 `clearMotionHide()` 는 전부 동기 실행 경로" → 어떤 연타·예외·폴백·스코프전환 조합에서도 라벨/엣지 영구 숨김·깜빡임 재현 불가. 종결 경로(run 예외→catch / run 성공→layoutstop 항상 발화)가 모두 clearMotionHide 로 수렴.
+- 잔여 NIT(기능 회귀 아님, 원장 기록): N1 겹치는 cy.animate({fit}) 직렬 큐잉 더블팬(변경 전에도 존재), N2 구세대 _restoreTimer 최대 650ms 후 1회 no-op, N3 gen 정수 증가(오버플로 비현실적).
+- Risks (수정 후): 잔여 BLOCKER/MAJOR 0. node --check PASS.
+- Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included). **실 FPS 효과는 PB-0008(렌더 정합)로 확인 불가 — 사용자 실브라우저 재측정이 유일 검증**(headless/WSL 은 실 GPU 프레임 미측정).
+
 ## REV-20260701T160000-ai-claude-feature-0016-graphux5-progress [AGENT-TEAM: PASS] — AI 능동 분석 진행 현황 라이브 패널 적대 리뷰
 - Related Change: graphux5-progress (get_run_status jobs/running_keys + 진행 패널 `_metaGraphRenderProgress` 라이브·상세 + 분석중 주황 마커).
 - 방식: §18.8 적대 패널 — Workflow 2렌즈(backend/frontend) 병렬 → 발견 8건 → 발견별 적대 검증 → 확정 7건.
