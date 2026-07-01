@@ -2,6 +2,25 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260701T014032-visual-verification-gate [SUBAGENT:check13-adversarial-6hyp] — 웹/UI 변경 PB-0008 시각검증을 완료 hard gate 로 강제 (check #13 신규 + visual_verification_scope + §15.4.1 격상)
+
+- **cycle**: ai/claude/visual-verification-gate (base 24dd588). 사용자 지시(2026-07-01) "시각검증은 항상 진행되어야 합니다. 스킬 및 기억에 구성해주세요." — 웹/UI 변경의 PB-0008 실 Windows 브라우저 시각검증을 선택이 아닌 **필수 완료 게이트**로 인코딩. 배경: AGENTS.md §15.4.1/§16.2 는 이미 "필수" 로 선언했으나 `verify-completion.sh` 에 강제 check 부재(선언적·WARN-only 의도)로 스킵이 통과되던 마찰. PB-0008 시각검증 자체는 본 지시 앞 turn 에서 metadata-bs-prefill 대상 PASS(실 브라우저 123테이블 중 120 prefill·Achievement DB값 일치·0 pending) 확인 완료.
+- **변경(META, pure-meta)**:
+  - `bin/verify-completion.sh`: **check #13 신규 구현** — 웹/UI 자산(`**/src/static/**`·`**/static/**` + 렌더트리 UI 확장자, `docs/`·`wiki/`·`.claude/` 제외) 변경 cycle 에서, 해당 자산이 속한 feature `docs/TEST.md` 의 **이번 staged diff** 에 `Windows-browser` Run(또는 미수행 사유) 추가 라인이 없으면 판정. 강제 수준은 wrapper `FIRST_REQUEST.md` `visual_verification_scope`(정규화: 주석/따옴표/대소문자) — `always`→FAIL(hard), 미선언→WARN(backward-compat). check #10/#11 처럼 **META short-circuit 앞에서 무조건 실행**. escape: `GSTACK_SKIP_VISUAL_VERIFICATION=1`. helper `is_web_asset`·`read_first_request_scope` 동반.
+  - `AGENTS.md §15.4.1`: enforcement 문단을 "v1 WARN-only 예정"→"구현·격상(visual_verification_scope 기반 hard/WARN)" 으로 갱신 + 본 저장소 always 명시.
+  - `FIRST_REQUEST.md`(wrapper, non-git): `visual_verification_scope: always` 선언(deploy_scope 패턴) — repo commit 밖 로컬 config.
+  - `meta/REVIEW.md`: 본 entry.
+  - 병행(별도, 이 commit 밖): 세션 memory `feedback_always_visual_verification.md`(기억 구성분).
+- **적대 패널 (SUBAGENT, 6-가설 — 통과 아닌 결함 적발)**: VERDICT 1차 **FIX-THEN-SHIP** (BLOCKER 0 · MAJOR 4 · MINOR 2). 전부 수정 후 재검:
+  - **M1(미탐, MAJOR) 수정**: whole-file substring(`grep -qiE`)이 주석·URL·이전 cycle stale 라인으로 통과 → **staged diff 의 추가 라인(`git diff --cached | grep '^\+' | grep -i windows-browser`)만 인정**. (격리 테스트 T4: 파일엔 있으나 diff 추가 없음 → FAIL 확인.)
+  - **M2(오/미탐, MAJOR) 수정**: placement-only 분류 → `docs/**`·`wiki/**`·`.claude/**` 제외(프레젠테이션 `.html` 오탐 차단) + static 밖 UI 확장자(`styles.css`·`.jsx` 등) 포착(미탐 차단).
+  - **M3(우회, MAJOR) 수정**: META/shared short-circuit 이 웹 자산을 건너뜀 → check #13 을 short-circuit **앞**에서 무조건 실행 + shared 분기 반영.
+  - **M4(silent 격하, MAJOR) 수정**: `always # 주석`·`Always`·`"always"` 가 hard→WARN 로 조용히 격하 → 값 정규화(주석/따옴표 strip·소문자)로 해소. (검증: 6 변형 전부 MATCH-always.)
+  - **m1(교차-feature vouch, MINOR) 수정**: CLI fdir 고정 → **웹 자산 경로에서 feature 도출**해 그 feature TEST.md 로 귀속.
+  - **m2(WARN 문구, MINOR)**: M4 수정으로 자연 해소.
+  - **견고 확인(반증 실패)**: set -e 하 크래시(check_13 이 `||` 좌변이라 억제 + `read_first_request_scope` pipefail-safe 하드닝), failed 카운터 정합, post-commit 조기 return.
+- **검증**: `bash -n` PASS · check_13 격리 테스트(M1 diff/M2 분류/M4 정규화/scope별 FAIL·WARN/escape/no-web/docs-exempt) 전부 기대대로 · 본 cycle 자체는 웹 자산 미포함 → check #13 PASS(no web). verify-completion META mode(check #9/#10/#11/#13).
+- **Human Approval Needed**: 아니오 — 사용자 명시 지시로 구성, 게이트 강화는 비파괴(기존 소비자는 미선언→WARN 유지, 본 저장소만 always), 신규 production 런타임 동작 0(개발-시점 검증 스크립트). deploy 무관(verify-completion.sh 는 컨테이너 미배포).
 ## REV-20260630T230501-META-0016-doc-sync-2305 [SUBAGENT:doc-sync-adversarial-5stream] — feature-0016-metadata-graph 전 문서 누락분 신설 + 무중단군 0014~0017 정합 + 06-30 머지 backfill (ULTRACODE)
 
 - **cycle**: ai/claude/doc-sync-20260630-230501 — `/_dqa:doc_sync ultracode`(스케줄 무인, 전 타깃). 직전 sync(doc-sync-0630 @ 06-30 10:31, PR#471) 이후 main 병합된 feature-0014/0015/0016(metadata-graph+zd-pg-pause-caddy)/0017 신규 + feature-0002/0003 06-30 작업을 색인/미러/사용자향 표면에 정합. cron wrapper 가 push/merge/deploy 소관 — 본 run 은 로컬 commit 까지.

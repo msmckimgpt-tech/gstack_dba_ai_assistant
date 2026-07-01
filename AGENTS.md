@@ -1257,9 +1257,16 @@ AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실�
   `python3 bin/win-browser.py doctor` 가 준비 상태를 게이팅한다.
 - **예외**: 브리지 setup 이 환경상 불가하거나(공용 CI 등) 변경에 UI 표면이 전혀 없으면,
   그 사유를 `TEST.md` §3 또는 `REPORT.md` 에 명시한다 — 누락을 "검증함"으로 오인 금지.
-- **enforcement (staged)**: `bin/verify-completion.sh` check #13 이 웹 대상 파일 변경에
-  `Windows-browser` Run 누락을 감지하면 경고한다 (v1 WARN-only, PR block 아님; 후속
-  cycle MUST 격상 예정 — wiki check #12 와 동일한 staged rollout).
+- **enforcement (staged, v3.x+ 격상)**: `bin/verify-completion.sh` check #13 이 웹 대상
+  파일(`**/src/static/**`·`**/static/**`·`**/templates/**`·`*.html`) 변경 cycle 에서 해당
+  feature `docs/TEST.md` 에 `Windows-browser` Run(또는 미수행 사유) 이 **이번 changeset 에
+  staged 되어 있는지**를 검사한다. 강제 수준은 wrapper `FIRST_REQUEST.md` 의
+  `visual_verification_scope` 로 결정한다:
+  - `visual_verification_scope: always` → 누락 시 **FAIL (hard gate, --pre-commit)**.
+  - 미선언/그 외 → **WARN** (기존 소비자 비파괴 backward-compat).
+  긴급 우회는 `GSTACK_SKIP_VISUAL_VERIFICATION=1` (상시 사용 금지 — 브리지 불가 사유는
+  TEST.md 명시가 정도). 본 저장소는 `visual_verification_scope: always` (사용자 결정
+  2026-07-01) 이므로 웹/UI 변경은 PB-0008 시각검증이 완료의 hard gate 다.
 
 ---
 
