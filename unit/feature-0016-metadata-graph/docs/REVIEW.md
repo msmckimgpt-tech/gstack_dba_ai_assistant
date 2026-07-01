@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T160000-ai-claude-feature-0016-graphux5-progress [AGENT-TEAM: PASS] — AI 능동 분석 진행 현황 라이브 패널 적대 리뷰
+- Related Change: graphux5-progress (get_run_status jobs/running_keys + 진행 패널 `_metaGraphRenderProgress` 라이브·상세 + 분석중 주황 마커).
+- 방식: §18.8 적대 패널 — Workflow 2렌즈(backend/frontend) 병렬 → 발견 8건 → 발견별 적대 검증 → 확정 7건.
+- 결과 (확정 7건 전량 수정):
+  - **MEDIUM — jobs LIMIT 400 이 done_keys/running_keys 절단**: node_budget 최대 1000(MAX_BUDGET)이라 400 초과 run 에서 그래프 마커 키가 truncate → tail 노드 미표시. **→ 수정**: done/running 키는 **cap 없이 별도 조회**(키만), jobs 상세 리스트만 LIMIT 80(패널 표시분).
+  - **LOW ×6**: (a) docstring alembic 0026→0028 정정, (b) 폴 중단(캡 도달/재시도 소진) 시 주황 마커 잔존 → 종료 경로에서 `_metaGraphMarkRunning([], done)` 정리 + 안내, (c) 진행 패널 aria-live 매 틱 전체 재낭독(SR 스팸) → aria-live/role 제거(status 바가 짧은 요약 담당), (d) st.status class 속성 보간 → 화이트리스트 class 맵, (e) 노드 재추가 시 주황 마커 미유지 → `_metaGraph.running` Set 로 보라 마커와 동형 유지. 전량 수정.
+- Verdict: PASS — 확정 결함 잔여 0(수정 후 py_compile·node --check 재검증 PASS). 라이브 검증은 PB-0008 배포 후.
+- Human Approval Needed: 없음(비파괴 additive UI + 응답 필드, DB/마이그레이션 무변경, 기존 RBAC). 배포 deploy_scope: included.
+
 ## REV-20260701T140000-ai-claude-feature-0016-graphux-expand-relax [SUBAGENT:expand-relax-frontend-perf] — 더블클릭 확장 relax 적대 리뷰
 - Related Change: CHG-20260701T140000-graphux-expand-relax (더블클릭 확장 시 신규노드가 주변 노드를 밀어내 겹침 해소).
 - 방식: §18.8 적대 패널 1렌즈(frontend/perf/regression/concurrency) — admin.js + vendor cytoscape-fcose 대조. 결함 적발.

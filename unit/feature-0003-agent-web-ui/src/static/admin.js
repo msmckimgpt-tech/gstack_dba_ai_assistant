@@ -2904,6 +2904,11 @@ const _META_GRAPH_COLOR = {
   Table: "#0f7d8c", Column: "#5c6773", GlossaryTerm: "#9c6515",
   Schema: "#3f4b8c", Datasource: "#2e7d52", Product: "#2e7d52",
 };
+// graphux5-progress: 라벨 한글 표기(AI 능동 분석 진행 상세 — 어떤 '항목'인지 사람이 읽게).
+const _META_LABEL_KO = {
+  Table: "테이블", Column: "컬럼", GlossaryTerm: "용어", Schema: "스키마",
+  Datasource: "데이터소스", Product: "제품",
+};
 
 function _metaGraphStatus(msg) {
   const el = document.getElementById("metadataGraphStatus");
@@ -3043,6 +3048,8 @@ function _metaInitGraph() {
       { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
       // 항목2: AI 능동 분석 완료 노드 — 보라 이중 테두리 마커(범례: ✨ AI 분석됨).
       { selector: "node[ai = 1]", style: { "border-width": 3, "border-color": "#7b2fbe", "border-style": "double" } },
+      // graphux5-progress: 현재 AI 분석 중인 노드 — 주황 점선(라이브 진행 시각화).
+      { selector: "node[aiRunning = 1]", style: { "border-width": 3, "border-color": "#e08a1e", "border-style": "dashed" } },
       { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
       { selector: "node.dim", style: { "opacity": 0.35 } },
       // feature-0016 graphux5: 기본 엣지는 직선이 아닌 완만한 곡선(unbundled-bezier) — 교차부 가독성.
@@ -3290,6 +3297,7 @@ function _metaGraphAddElements(nodes, edges) {
       fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
     if (typeof n.score === "number") data.score = n.score;   // 항목1: pg_trgm 유사도(엔드포인트 전달)
     if (_metaGraph.analyzed && _metaGraph.analyzed.has(n.key)) data.ai = 1;   // 항목2: 재추가 시 분석 마커 유지
+    if (_metaGraph.running && _metaGraph.running.has(n.key)) data.aiRunning = 1;   // graphux5-progress: 분석중 마커도 재추가 시 유지
     if (pid) data.parent = pid;
     cy.add({ group: "nodes", data });
     added.push(n.key);
@@ -3552,7 +3560,10 @@ async function _metaGraphAnalyze(key, scope) {
     return;
   }
   if (res && res.run_id) {
-    if (box) box.innerHTML = '<span class="admin-meta-graph-muted">분석 중(백그라운드)… 관련 노드를 재귀 탐색합니다.</span>';
+    // graphux5-progress: 진행 패널을 즉시 표시(닫힘 상태 해제) — 이후 폴링이 상세를 라이브 갱신.
+    const panel = document.getElementById("metadataGraphProgress");
+    if (panel) { delete panel.dataset.dismissed; panel.style.display = ""; panel.innerHTML = '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">시작 중… 관련 노드를 재귀 탐색합니다.</span></div>'; }
+    if (box) box.innerHTML = '<span class="admin-meta-graph-muted">분석 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
     _metaGraphPollRun(res.run_id, key);
   }
 }
@@ -3570,25 +3581,85 @@ function _metaGraphPollRun(runId, focusKey) {
     catch (_) {
       // fix(medium): 일시 오류/네트워크/일시 5xx 로 폴이 영구 중단되지 않게 재시도(bounded).
       if (tries < 240 && _metaGraph.activeRunId === runId) setTimeout(tick, 2500);
+      else _metaGraphMarkRunning([], []);   // review fix: 재시도 소진 시 주황 마커 정리(무한 '분석중' 방지)
       return;
     }
-    if (!st) { if (tries < 240 && _metaGraph.activeRunId === runId) setTimeout(tick, 2500); return; }
-    _metaGraphMarkAnalyzed(st.done_keys || []);   // 그래프 마커는 전역(어느 상세를 보든 유효)
-    const done = st.done || 0, total = st.enqueued || 0, failed = st.failed || 0;
-    // 상세 패널 box 갱신은 사용자가 아직 이 노드를 보고 있을 때만(다른 노드로 이동 시 오염 방지).
-    const onFocus = (_metaGraph.lastDetailKey === focusKey);
-    const box = document.getElementById("metaGraphAiBox");
-    if (onFocus && box && st.status === "running") {
-      box.innerHTML = `<span class="admin-meta-graph-muted">분석 중(백그라운드)… ${done}/${total} 노드 완료${failed ? " · 실패 " + failed : ""}</span>`;
+    if (!st) {
+      if (tries < 240 && _metaGraph.activeRunId === runId) setTimeout(tick, 2500);
+      else _metaGraphMarkRunning([], []);
+      return;
     }
+    // graphux5-progress: 그래프 마커(완료/분석중) + 진행 패널은 노드 선택과 무관하게 항상 갱신(화면 라이브).
+    _metaGraphMarkAnalyzed(st.done_keys || []);
+    _metaGraphMarkRunning(st.running_keys || [], st.done_keys || []);
+    _metaGraphRenderProgress(st);
+    const done = st.done || 0, total = st.enqueued || 0, failed = st.failed || 0;
+    const onFocus = (_metaGraph.lastDetailKey === focusKey);
+    // 초점 노드가 완료되면 상세 패널의 분석문도 로드(노드 상세는 여전히 개별 표시).
     if (onFocus && (st.done_keys || []).indexOf(focusKey) >= 0) _metaGraphLoadNodeAnalysis(focusKey);
     _metaGraphStatus(`AI 능동 분석: ${done}/${total} 완료${failed ? " · 실패 " + failed : ""} (${st.status})`);
     if (st.status === "running") {
       if (tries < 240) { setTimeout(tick, 2500); }
-      else if (onFocus && box) { box.innerHTML = '<span class="admin-meta-graph-muted">분석이 오래 걸립니다 — 잠시 후 노드를 다시 클릭해 결과를 확인하세요.</span>'; }   // fix(low): 캡 도달 안내
-    } else if (onFocus) { _metaGraphLoadNodeAnalysis(focusKey); }
+      else {
+        // review fix: 캡 도달(여전히 running) — 폴 중단 시 주황 마커 잔존 방지 + 안내(백그라운드는 계속).
+        _metaGraphMarkRunning([], st.done_keys || []);
+        _metaGraphStatus(`AI 능동 분석: ${done}/${total} — 폴링 시간초과(백그라운드 계속). 노드 재클릭으로 최신 확인.`);
+        _metaGraph.activeRunId = null;
+      }
+    } else {
+      _metaGraphMarkRunning([], st.done_keys || []);   // 종료(done/failed) 시 주황 '분석중' 마커 정리
+      if (onFocus) _metaGraphLoadNodeAnalysis(focusKey);
+    }
   };
   setTimeout(tick, 1500);
+}
+
+// graphux5-progress: 현재 분석 중(running) 노드에 주황 점선 마커(aiRunning=1). 더 이상 running 아니면 해제.
+function _metaGraphMarkRunning(runningKeys, doneKeys) {
+  if (!_metaGraph.cy) return;
+  const done = new Set(doneKeys || []);
+  const nowRunning = new Set(runningKeys || []);
+  if (_metaGraph.running) {
+    _metaGraph.running.forEach((k) => {
+      if (!nowRunning.has(k)) { try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("aiRunning", 0); } catch (_) {} }
+    });
+  }
+  _metaGraph.running = nowRunning;
+  (runningKeys || []).forEach((k) => {
+    if (done.has(k)) return;
+    try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("aiRunning", 1); } catch (_) {}
+  });
+}
+
+// graphux5-progress: AI 능동 분석 진행 현황을 상단 패널에 라이브 렌더. 노드 선택과 무관하게 항상 갱신하고,
+//   단순 %가 아니라 **어떤 항목(테이블/컬럼/스키마/용어)이 어느 상태(분석중/완료/대기)인지 상세**를 보여준다.
+function _metaGraphRenderProgress(st) {
+  const panel = document.getElementById("metadataGraphProgress");
+  if (!panel || !st) return;
+  if (panel.dataset.dismissed && panel.dataset.dismissed === st.run_id) return;   // 사용자가 이 run 패널을 닫음
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const jobs = st.jobs || [];
+  const done = st.done || 0, enq = st.enqueued || 0, failed = st.failed || 0;
+  const running = jobs.filter((j) => j.status === "running");
+  const pending = Math.max(0, enq - done - failed - running.length);
+  const pct = enq ? Math.round((done / enq) * 100) : 0;
+  const ko = (l) => _META_LABEL_KO[l] || l || "노드";
+  const statusKo = st.status === "running" ? "진행 중" : st.status === "done" ? "완료" : st.status === "failed" ? "실패" : (st.status || "");
+  const stCls = { running: "ampg-st-running", done: "ampg-st-done", failed: "ampg-st-failed" }[st.status] || "";   // review fix: 값을 class 속성에 직접 보간하지 않음
+  const item = (j, cls, ic) => `<li class="ampg-item ${cls}">${ic} <span class="ampg-lbl">${esc(ko(j.node_label))}</span> <span class="ampg-nm">${esc(j.node_name || j.node_key || "")}</span><span class="admin-meta-graph-muted"> · 깊이 ${j.depth}</span></li>`;
+  const rows = [];
+  running.forEach((j) => rows.push(item(j, "ampg-running", "⏳")));
+  jobs.filter((j) => j.status === "done").slice(0, 12).forEach((j) => rows.push(item(j, "ampg-done", "✅")));
+  jobs.filter((j) => j.status === "failed").slice(0, 4).forEach((j) => rows.push(item(j, "ampg-fail", "⚠️")));
+  if (pending > 0) rows.push(`<li class="ampg-item admin-meta-graph-muted">⋯ 대기 ${pending}개 (관련 노드 재귀 탐색 중)</li>`);
+  const parts = [];
+  parts.push(`<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">${esc(st.root_name || st.root_key || "")}</span> <span class="ampg-status ${stCls}">${statusKo}</span><button type="button" class="ampg-close" id="metaGraphProgClose" title="닫기" aria-label="진행 패널 닫기">✕</button></div>`);
+  parts.push(`<div class="ampg-bar" title="${done}/${enq}"><div class="ampg-bar-fill" style="width:${pct}%"></div></div>`);
+  parts.push(`<div class="ampg-counts">완료 <b>${done}</b> · 분석중 <b>${running.length}</b> · 대기 <b>${pending}</b>${failed ? ` · 실패 <b>${failed}</b>` : ""} <span class="admin-meta-graph-muted">/ 예약 ${enq}${st.node_budget ? ` (상한 ${st.node_budget})` : ""}</span></div>`);
+  parts.push(`<ul class="ampg-list">${rows.join("") || '<li class="admin-meta-graph-muted">준비 중…</li>'}</ul>`);
+  panel.innerHTML = parts.join("");
+  const cb = document.getElementById("metaGraphProgClose");
+  if (cb) cb.addEventListener("click", () => { panel.style.display = "none"; panel.dataset.dismissed = st.run_id || "1"; });
 }
 
 // 완료 노드 키에 그래프 분석 마커(data ai=1) 부여 + 세션 set 에 기억(재추가 시 유지).
