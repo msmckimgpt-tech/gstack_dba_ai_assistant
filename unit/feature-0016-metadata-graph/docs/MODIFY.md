@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260701T220000-ai-claude-feature-0016-graph-perf2
+- Date: 2026-07-01
+- Related Requirement: WebGL 배포 후 사용자 육안 후속 3건 — (1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌 **원형 뭉치(blob)**, (4) 휠 확대/축소 너무 느림. (2 라벨유지는 OK.)
+- 근본원인 (진단 워크플로 5에이전트 적대 검증): blob·거침은 **동일 뿌리** — 컬럼 세로정렬을 fcose 제약(alignment/
+  relativePlacement)에 위임하고 그 제약을 화면 전체 테이블에 매 tick(numIter 1000) 적용. (a) fcose 는 다수 컬럼의
+  ring seed 에서 세로 라인 수렴 보장 못 해 blob 잔존, (b) 제약 동기 계산(cose-base runSpringEmbedder while-loop,
+  rAF/yield 0)이 프레임 거침. WebGL 은 렌더만 GPU 화라 이 계산 병목과 무관(→ 거침 개선 없던 게 정합). 줌은 독립:
+  wheelSensitivity 0.3 = 기본(1)의 1/3 스텝.
+- Summary: (1) 컬럼 세로정렬을 fcose 제약에서 **완전 제거**하고 layoutstop 의 **결정론적 세로 배치**(`_metaGraphPlaceColumns`,
+  batched, ordinal 정렬, 무게중심 기준 상하대칭)로 이관 → blob 해소 + tick 당 제약 부하 소멸로 거침 완화. (2) 신규
+  컬럼 seed 를 ring→세로 스택으로. (3) 정렬 비교자·정렬맵을 단일 헬퍼(`_metaGraphColCmp`/`_metaGraphOrderedColumns`)로.
+  (4) `wheelSensitivity:0.3` 제거→기본 1(줌 3배 빨라짐). (5) 박스 겹침 상쇄: `_META_COL_PITCH` 18 + nodeSeparation
+  150→220. de-risk(실 Windows 브라우저): 17컬럼 x-spread 0.0px(완벽 세로스택, blob 소멸) + 박스겹침 0/7 실측.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (컬럼 결정론 배치 헬퍼 3종, fcose 제약 제거, 세로 seed, wheelSensitivity 제거, PITCH/nodeSeparation)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (캐시버스터 graph-perf2)
+- Impact: 프론트 전용·비파괴. 그래프 레이아웃/입력 semantics 만 변경(컬럼 정렬 주체 이전, 줌 배율 복원). 백엔드/API/데이터
+  무변경. WebGL 렌더러 유지(position set 은 렌더러 무관). 배포=web 재빌드만. **실 FPS·박스겹침·줌 체감은 사용자 실 하드웨어 재확인이 최종 검증.**
+- Rollback Notes: 컬럼 제약(_metaGraphColumnConstraints)·_ccCfg 병합 복원 + placeColumns/세로seed/PITCH/nodeSeparation/
+  wheelSensitivity 되돌림(graph-webgl 상태로). DB/백엔드 무관.
+
 ## CHG-20260701T210000-ai-claude-feature-0016-graph-webgl
 - Date: 2026-07-01
 - Related Requirement: 그래프 뷰 애니 프레임레이트 근본 해소 + 애니 중 라벨 유지 (사용자 육안 후속 — camfps 배포 후에도 거침 + 라벨 사라짐 불호 + 렌더링 엔진 검토 요청).
