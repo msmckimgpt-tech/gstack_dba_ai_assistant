@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T210000-ai-claude-feature-0016-graph-webgl [SUBAGENT: PASS] — canvas-2D→WebGL 렌더러 전환 적대 리뷰
+- Related Change: graph-webgl (cytoscape 3.30.2→3.34.0, `renderer webgl:_webglOk`+feature-detect 폴백, 엣지 bezier·색/투명도 재설계, anim-hide 전면 제거).
+- 방식: §18.8 적대 subagent — admin.js 전량 grep + cytoscape 3.34.0 번들 내부(WebGL 렌더 실코드) 대조 + diff. 7개 우려경로 적대 검증.
+- 결과: **BLOCKING 0 · MAJOR 1 · NIT 3**. 우려 6/7 은 코드 근거로 방어 확인:
+  - **anim-hide 제거 완전성 = CLEAN**: 잔존 참조 주석 1줄 외 전부 제거(정의부·모든 catch/layoutstop/폴백 대칭 삭제). ReferenceError·죽은 로직 0. node --check PASS.
+  - **WebGL 폴백 = 안전**: 번들 확인 — `webgl:false` 면 `initWebgl` 미호출·2D 레이어 유지·render 의 webgl 분기 skip → canvas-2D 그대로 회귀. renderer 객체 형식 3.34.0 수용. feature-detect try/catch 견고.
+  - **노드 dashed/double 보더 = 정상 렌더**: WebGL 노드는 2D sprite 캔버스에 그린 뒤 GPU 업로드 → 보더의 `setLineDash`/double 정상. "dashed 미지원"은 엣지 라인에만 해당(노드 무관). node:parent/ai/aiRunning 마커 모두 정상.
+  - **_webglOk 스코프 = 정상**: 함수지역·동기참조. cy.destroy/null 부재 + init 가드 → 세션당 1회 계산·1회 사용. 충돌 0.
+  - **평행 엣지 dedup = 무효 우려**: 엣지 id=`source|type|target` + getElementById dedup → 동일노드쌍 trusted+candidate(둘 다 REFERENCES type) 공존 불가(id 동일). control-point 제거 겹침 발생 안 함.
+- **MAJOR-1 (수정)**: candidate/trusted 가 색(둘 다 갈색군)+투명도+두께로만 구분 → dashed(비색상 채널) 상실로 색맹/저대비 붕괴 + 얇은 candidate(1.3px·0.45) 묻힘 우려. **→ 수정**: candidate 가시성 상향(width 1.3→1.8·opacity 0.45→0.6), trusted 3.2→3.4 로 두께비를 색-비의존 주 구분채널화. 완전한 dashed 등가는 WebGL 제약상 불가(엣지 라인 패턴 미지원) — width/opacity/color 다채널로 완화, PB-0008 저대비 실측 확인 예정.
+- 잔여 NIT(기능 회귀 아님, 실측 표시): N1 sprite atlas 는 다장 자동확장(코드 방어)이나 대규모+긴 라벨 실측 필요, N2 다른 type 평행엣지 라벨 겹침(색 구분 OK), N3 WebGL 실험적 기능 의존(zoom≤7.99 kh 경로 정상, maxZoom 2.5) → PB-0008 게이트.
+- Risks (수정 후): 잔여 BLOCKER/MAJOR 0. node --check PASS. WebGL 런타임 품질은 **PB-0008 Windows 실브라우저 실측**으로 완료 게이트.
+- Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included). **실 FPS 효과 + 저대비 엣지 구분은 사용자 실브라우저 재확인이 유일 검증**.
+
 ## REV-20260701T200000-ai-claude-feature-0016-erd-box-spread-tap [SUBAGENT: box-spread-tap-adversarial] — 박스 벌림 + 박스 클릭/더블클릭 정합 적대 리뷰
 - Related Change: CHG-...-erd-box-spread-tap ((A) 증분 경로 hasCompound 분기+전체-스프레드로 박스 벌림, (B) tap 핸들러 Table 예외로 박스 클릭/더블클릭 일반 노드와 정합).
 - 방식: 적대 subagent — admin.js diff + cytoscape/fcose tap·compound·packComponents 의미 교차확인. 두 변경 각각 (a)~(e) 렌즈로 결함 적발.

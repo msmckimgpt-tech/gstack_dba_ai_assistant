@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260701T210000-ai-claude-feature-0016-graph-webgl
+- Date: 2026-07-01
+- Related Requirement: 그래프 뷰 애니 프레임레이트 근본 해소 + 애니 중 라벨 유지 (사용자 육안 후속 — camfps 배포 후에도 거침 + 라벨 사라짐 불호 + 렌더링 엔진 검토 요청).
+- 근본원인 확정: vendored Cytoscape **3.30.2 = canvas-2D 렌더러 전용**(WebGL 코드 0). 매 프레임 CPU 재래스터가
+  구조적 상한(트레이스: rAF 60fps인데 표시 ~36fps, Scripting busy 65%=Cytoscape 렌더, GPU/컴포지터 유휴). 미세 튜닝
+  불가 → 엔진 교체 필요.
+- 사용자 결정(AskUserQuestion 2단): WebGL 업그레이드 + 엣지 재설계(강등 수용).
+- Summary: (1) vendor cytoscape **3.30.2→3.34.0**(WebGL 렌더러 지원). (2) `renderer:{name:"canvas",webgl:_webglOk}`
+  활성 — `_webglOk`=webgl2/webgl feature-detect(미지원 시 canvas-2D graceful 폴백). pixelRatio 제거. (3) 엣지 WebGL
+  호환 재설계: curve-style unbundled-bezier→bezier, candidate/RELATED_TERM dashed 제거→색·투명도·두께 구분. (4) 애니
+  중 라벨/엣지 숨김(anim-hide-* + camfps gen/clearMotionHide/restoreIfCurrent) **전면 제거** → 항상 표시. de-risk:
+  실 Windows 브라우저 WebGL 로 2단 compound+라벨+bezier 정상 렌더 확인(스크린샷).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/vendor/cytoscape.min.js` (3.30.2→3.34.0, unpkg 정품)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (renderer webgl + feature-detect, 엣지 재설계, anim-hide 제거)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (캐시버스터 cytoscape 3.34.0 + admin.js graph-webgl)
+- Impact: 프론트 전용·비파괴. 렌더러 GPU 가속 전환(라벨 유지한 채 부드러운 애니 목표). 백엔드/API/데이터 무변경.
+  트레이드오프: WebGL 미지원 엣지 스타일(taxi/dashed) 강등(bezier/색 구분). WebGL 미지원 환경은 canvas-2D 폴백.
+  배포=web 재빌드만(정적 자산). **실 FPS 개선은 사용자 실 하드웨어 재측정이 유일 검증.**
+- Rollback Notes: cytoscape.min.js 3.30.2 환원 + admin.html/admin.js 캐시버스터 revert + renderer/엣지/anim-hide
+  변경 되돌림(erd-box-spread-tap 상태로). DB/백엔드 무관.
+
 ## CHG-20260701T200000-ai-claude-feature-0016-erd-box-spread-tap
 - Date: 2026-07-01
 - Related Requirement: 사용자 후속(4·5회차) — (4) ERD 카드 배포 후 밀집 뷰에서 **테이블 박스끼리 겹침**(사용자 결정
