@@ -434,3 +434,13 @@ source_of_truth: true
 - Impact: **app.py 28,224→26,734 줄(~1,490↓ — 단일 도메인 최대 감소).** make test 전체 통과·**1313 passed·0 fail**·route drift 0, route-parity 192(set 불변·순서만 갱신, docker `_build_table` 재생성), py_compile OK. byte-neutral(라우트 경로·메서드·응답 불변).
 - 학습: **whitelist 도출 시 mod_syms 는 튜플-대입(`A, B = ...`)·AnnAssign·import 타깃까지 수집 필수** — `ast.Name` 타깃만 하면 튜플-상수 누락 → 추출 router NameError(make test 안전망 적발). 추출 후 **완전 mod_syms 로 router bare-ref static 재검사**를 골든 재생성 전에 수행하면 조기 적발.
 - Rollback: revert(admin_metadata.py 삭제 + app.py 34 복원 + 4 테스트 재참조 원복 + 골든 복원).
+
+## CHG-20260701-0008
+- Date: 2026-07-01
+- Related Requirement: P5b admin/metadata 마일스톤(CHG-0006 DI 전환 + CHG-0007 추출) **프로덕션 배포·라이브 검증**(deploy-backed 완료 기준).
+- Summary:
+  PR #506(CHG-0006/0007 2 커밋 + origin/main 재머지) CI test PASS → main 머지(0b91b1b) → `sudo -E bin/deploy-web.sh` blue-green 무중단 롤링(web-a·web-b 순차 recreate, healthz-gated commit-match, soak 90s 통과). deploy_scope: included(FIRST_REQUEST.md 전역 standing) 근거 자동 배포.
+  - 라이브 검증(edge 112.185.196.20): healthz git_commit=0b91b1b·status=ok / 추출 admin_metadata 라우트 `/api/admin/metadata/glossary`·`/samples` 미인증 **401 `{"error":"로그인이 필요합니다."}` verbatim** — DI seam byte-동치 + 컨테이너 로드(uvicorn web.app:app) router import 프로덕션 확인(web_context류 ModuleNotFoundError 없음).
+- Files: docs(MODIFY/REVIEW/REPORT/TASK) — 배포 기록(코드 무변경).
+- Impact: admin/metadata 도메인 deploy-backed 완료. insight/ask-worker GIT_COMMIT WARN 은 별건(웹 무관).
+- Rollback: `sudo -E bin/deploy-web.sh --rollback`(이전 색 유지, 이미 안정).

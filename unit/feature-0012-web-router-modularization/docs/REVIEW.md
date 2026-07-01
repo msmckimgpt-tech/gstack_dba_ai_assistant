@@ -335,3 +335,10 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - app.py 28,224→26,734(~1,490↓, 단일 도메인 최대). routers 12개 / metadata 34 라우트 추출.
 - 학습: whitelist mod_syms 는 튜플-대입 타깃까지 수집 필수(누락 시 router NameError, make test 적발). 추출 후 완전 mod_syms static 재검사를 골든 재생성 전 수행 = 조기 적발.
 - 후속 배포: 컨테이너 로드(uvicorn web.app:app)에서 router import 는 기존 11 router 와 동일 `routers.<d>` 경로(신규 top-level 모듈 아님)라 web_context류 위험 없음 — 배포 blue-green healthz 게이트가 최종 안전망.
+- **배포·라이브 검증 완료(main 0b91b1b, PR #506)**: blue-green soak 통과·healthz git_commit=0b91b1b·추출 admin_metadata 라우트 미인증 401 verbatim(`{"error":"로그인이 필요합니다."}`) — DI seam byte-동치 + 컨테이너 로드 import 프로덕션 확인. deploy_scope: included(전역 standing) 근거 자동 배포.
+
+## REV-20260701-0008 [SKIPPED:deploy-record — 라이브 smoke 검증이 게이트; §18.8 byte-동치는 CHG-0006 REV-0006 에서 수행]
+- Related Change: CHG-20260701-0008 (admin/metadata 마일스톤 배포·라이브 검증)
+- 검증 성격: 코드 무변경 배포 기록. byte-동치 §18.8 은 DI 전환(REV-0006)에서, 추출 route-parity 는 REV-0007 에서 완료. 본 항목은 **프로덕션 라이브 smoke** 가 게이트.
+- 결정적 검증: (1) CI test PASS(36s). (2) blue-green 배포 soak 90s 통과·롤백 없음. (3) 라이브 edge healthz git_commit=0b91b1b·status=ok(배포 커밋 일치). (4) 추출 admin_metadata 라우트 미인증 **401 verbatim** = DI seam(require_permission→get_current_account→_AuthError 401) 프로덕션 byte-동치 + 컨테이너 로드 router import 정상(web_context류 ModuleNotFoundError 없음 — healthz 게이트 통과가 입증). (5) insight/ask-worker GIT_COMMIT WARN = 별건(웹 배포 무관).
+- 결론: admin/metadata 도메인 deploy-backed 완료.
