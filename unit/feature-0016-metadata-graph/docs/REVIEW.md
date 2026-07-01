@@ -21,6 +21,14 @@ source_of_truth: true
 - de-risk 실측(실 Windows 브라우저, win-browser): 17컬럼 AchievementReward + 6이웃 ERD 렌더 → **컬럼 x-spread 0.0px(완벽 세로스택·blob 소멸)** + **박스겹침 2→0**(PITCH18/nodeSep220). 스크린샷 render3.png.
 - Risks (수정 후): 잔여 BLOCKER/MAJOR 0. node --check PASS. 실 FPS·대규모(141테이블) 박스겹침·줌 체감은 **사용자 실 하드웨어 재확인이 최종 검증**(headless 실 GPU/체감 미측정).
 - Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included).
+## REV-20260701T233000-ai-claude-feature-0016-node-analysis-anchor-liveverify [SKIPPED:docs-only-live-verification-record-no-code-change] — 라이브 검증 결과 기록(문서 전용)
+- Related Change: node-analysis-anchor 배포 후 라이브 실데이터 검증 결과를 ANCHOR §4 / TEST / REPORT / TASK 에 기록. 코드 무변경.
+- 방식: 코드 diff 0(문서 전용) → 신규 적대 패널 불요. 기능 정합은 선행 REV-20260701T173000(2라운드 패널, SHIP)에서 확증.
+- 기록 내용: alembic 0029 라이브 적용(live=0029)·web-a/web-b 무중단 7bca9b2·insight-worker 7bca9b2 재기동.
+  실데이터 프로브(insight-worker 내부, LLM 0) — `dk_data_release.Achievement` 하위 컬럼 4개 rel 1.0 통과 +
+  부모 Schema(형제 테이블 **123개**) 탈락 = fan-out 지배 경로 차단 정량 확인.
+- Verdict: N/A(문서 기록) — 코드 검증은 REV-20260701T173000 참조. 그래프 UI 마커 시각 최종은 PB-0008 후속.
+- Human Approval Needed: 없음(문서·비파괴).
 
 ## REV-20260701T210000-ai-claude-feature-0016-graph-webgl [SUBAGENT: PASS] — canvas-2D→WebGL 렌더러 전환 적대 리뷰
 - Related Change: graph-webgl (cytoscape 3.30.2→3.34.0, `renderer webgl:_webglOk`+feature-detect 폴백, 엣지 bezier·색/투명도 재설계, anim-hide 전면 제거).

@@ -112,8 +112,12 @@ docker run --rm --network container:pgage-t \
     - 2라운드 hardening: content-gate(신뢰·제품만으론 불통과) · 한글 일반어 stoplist(게임/정의/테이블 겹침 배제) ·
       한글 접두/접미 부분연관(중간삽입 회원⊄비회원구매·업적⊄기업적자 배제) · depth ramp nd3 경계 고정 ·
       tiebreak key 전순서 결정 · 신뢰FK 내용발산 제외(precision 트레이드오프 고정).
-- 라이브(예정, PB-0008): Achievement 능동 분석 → 분석 노드가 dk scope·Achievement 연관 내 유지, generic-hub
-  (UniqueID/Schema) 무관 fan-out 억제. `GET .../graph/analyze?run_id=` jobs[].relevance 노출 확인.
+- 라이브 실데이터 검증 **PASS** (2026-07-01, Environment: 배포된 insight-worker 7bca9b2 내부 프로브, LLM 비용 0):
+  실 AGE 그래프 `mssql-06656002eda6:dk_data_release.Achievement`(사용자 예시) → 하위 컬럼 4개 relevance 1.0 통과 +
+  **부모 Schema `dk_data_release`(형제 테이블 123개) 탈락(rel 0.0)** = fan-out 지배 경로 차단 정량 확인 +
+  AchievementReward(이웃 18) 17컬럼 통과·Schema 탈락. alembic 0029 라이브 적용(live=0029)·web-a/web-b 7bca9b2·
+  insight-worker 7bca9b2 재기동 확인.
+- 그래프 UI 마커 시각 최종(PB-0008): 웹 자산 무변경이라 이번 cycle 하드 게이트 아님 — 후속 시각 확인 권장.
 
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).

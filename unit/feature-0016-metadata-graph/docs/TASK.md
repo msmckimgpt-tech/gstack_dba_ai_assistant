@@ -385,6 +385,8 @@ source_of_truth: true
 - [x] T20.7 단위 `test_node_analysis_relevance.py` **28건 PASS**(pytest) — 토큰화·anchor·관련도·게이팅 + 2라운드
       적대 패널 반영(content-gate·한글 일반어·접두접미 부분연관·depth ramp·tiebreak·신뢰FK 트레이드오프).
 - [x] T20.8b 2라운드 적대 검증 패널(REV-20260701T173000 [AGENT-TEAM]) — R1 M1~M5 + R2 MAJOR·MINOR 전건 처리, BLOCKER 0.
-- [x] T20.8 verify-completion + alembic 0029 적용 + web/insight 재배포(node-analysis-anchor, main 병합 #518).
-- [ ] T20.9 라이브: Achievement 능동 분석 트리거 → 분석 노드가 dk scope·Achievement 연관 안에 머무는지 + generic
-      -hub fan-out 억제 확인(PB-0008). ANCHOR §4 외부검증 append 후보.
+- [x] T20.8 verify-completion(--pre-commit) PASS + alembic 0029 라이브 적용(live=0029) + web-a/web-b 무중단
+      배포(7bca9b2) + insight-worker 재기동(7bca9b2). PR #518 main 병합.
+- [x] T20.9 라이브 실데이터 검증 PASS(LLM 0): `dk_data_release.Achievement` 하위 컬럼 4개 rel 1.0 통과 +
+      **부모 Schema(형제 테이블 123개) 탈락 = fan-out 지배 경로 차단 정량 확인**. AchievementReward 17컬럼 통과.
+      ANCHOR §4 는 human 외부검증 전용이라 미기입(AI 프로브는 TEST/REPORT 기록). UI 마커 시각은 PB-0008 후속.
