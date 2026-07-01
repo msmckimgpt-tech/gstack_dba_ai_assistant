@@ -366,3 +366,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 커플링 8유형 확립: 기존 7 + **(8) getsource 컨텍스트-substring**(helper 앞 단어 포함 substring 이 `app.` 접두로 깨짐 — 단일 심볼명은 생존). test_share_joinable_owner_guard 의 `not _conversation_owned_by_account` 적발.
 - app.py 23,536→20,542(~2,994↓, 단일 배치 최대). 20→21 router. **잔여 app.py 라우트 16(session 시작 148 대비 −132, 89% 추출)**.
 - 학습: --append 모드로 도메인 재통합(conversations sub-resource 를 lifecycle router 로). source-text getsource 는 helper-접두에 취약 — make test 가 안전망.
+
+## REV-20260701-0012 [SKIPPED:mechanical byte-neutral 전체추출 완주 — make test route-parity + 커플링 9유형 게이트]
+- Related Change: CHG-20260701-0012 (잔여 16 라우트 append — 라우트 핸들러 전량 추출 완료)
+- 검증 성격: mechanical route-preserving move. DEFER(long-poll/fail-soft/opt) 인라인 그대로. cross-call `ask` 는 내부 caller/monkeypatch 대상 모듈 전환.
+- 결정적 검증: (1) 골든 set-neutral 192. (2) make test **1313 passed·0 fail·route drift 0**. (3) **잔여 @app 라우트 0**(148 전량 추출) — python AST 확인. (4) cross-call `ask`: 내부 caller(conversations.py post_fix_with_ai) `app.ask`→bare `ask`(동일 모듈), monkeypatch/hasattr/getsource `app.ask`→`conversations.ask`, post_fix_with_ai 가 bare `ask` 호출 → `conversations.ask` module global → monkeypatch 정합(make test 입증). (5) 4 router append(conversations/share/admin_console/system) 컨테이너 로드 정상(골든 재생성 app 로드 성공).
+- 커플링 9유형: 기존 8 + **(9) cross-call 핸들러**(route 이자 내부 함수). `ask`(POST /api/ask, fix-with-ai 가 내부 호출) 유일.
+- app.py 20,542→18,917(~1,625↓). **148 route 핸들러 전량 21 router 추출 — app.py = 헬퍼 라이브러리 + DI seam + include_router.**
+- 잔여 아키텍처: app.py ~18.9k = **헬퍼**(web_context 미이동 — 원래 monkeypatch 블로커, 별도 workstream). route-handler 모듈화는 완주. 완전 thin-app 은 web_context 헬퍼 추출 필요(DI seam 선행).

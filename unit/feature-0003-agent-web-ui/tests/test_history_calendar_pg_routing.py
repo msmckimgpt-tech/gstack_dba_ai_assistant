@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 
 import app
+from routers import conversations  # feature-0012 P5b
 
 
 # ── PG fake ────────────────────────────────────────────────────────────────
@@ -206,7 +207,7 @@ def test_suggestions_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch):
     pg = _FakePgConn(fetchall_rows=[("최근 사용자 질문입니다",), ("또 다른 사용자 질문",)])
     monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
-    resp = app.suggestions(_DummyRequest(), limit=5)
+    resp = conversations.suggestions(_DummyRequest(), limit=5)
     body = _body(resp)
 
     assert body["items"] == ["최근 사용자 질문입니다", "또 다른 사용자 질문"]

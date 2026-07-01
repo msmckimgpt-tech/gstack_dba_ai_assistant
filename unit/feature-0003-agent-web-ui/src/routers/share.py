@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
+from web_context import _get_client_ip
 import app
 
 router = APIRouter()
@@ -158,3 +159,234 @@ def join_conversation_via_share(token: str, request: Request, account=Depends(ap
             },
         )
     return JSONResponse({"ok": True, "conversation_id": cid, "already_member": already})
+
+
+@router.get("/api/public/share/{token}")
+def public_share_view(token: str, request: Request) -> JSONResponse:
+    """anonymous accessible share view. revoked 면 410 Gone, 미존재 면 404.
+
+    View 카운터 증가는 revoke 체크와 동일 UPDATE 로 race-free 처리.
+    노출 범위: messages (text + SQL + result 포함), owner display name, conversation topic,
+    product context. file attachments 는 `conversation.file.read.*` gated 이므로 공유 view 에서 hide.
+    """
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        # race-free: 활성(취소 안 됨 + 만료 안 됨) share 일 때만 ViewCount++ + LastViewedAt 갱신.
+        # TASK-20260619T012028-share-link-expiry: 만료 predicate 추가 — 만료된 링크 조회는
+        # ViewCount 를 부풀리지 않는다 (DB NOW() 평가).
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+UPDATE WebConversationShares
+SET ViewCount = ViewCount + 1, LastViewedAt = CURRENT_TIMESTAMP
+WHERE Token = %s AND RevokedAt IS NULL
+  AND (ExpiresAt IS NULL OR ExpiresAt > NOW())
+                """,
+                (token,),
+            )
+            bumped = int(cur.rowcount or 0)
+        finally:
+            cur.close()
+        share = app._share_load_active(conn, token)
+        if not share:
+            return app._json_error("공유 링크를 찾을 수 없습니다.", 404)
+        if share.get("RevokedAt") is not None:
+            return app._json_error("이 공유 링크는 취소되었습니다.", 410)
+        if bumped == 0:
+            # UPDATE 가 매칭 안 됨 = 취소 아님(위에서 처리) → 만료 또는 revoke race.
+            # 만료는 명시적 메시지로 구분 (DB NOW() 기준 재확인).
+            if app._share_row_expired(conn, int(share.get("Id") or 0)):
+                return app._json_error("이 공유 링크는 만료되었습니다.", 410)
+            # race 가드: revoke 가 load 직후 끼어든 경우.
+            return app._json_error("이 공유 링크는 취소되었습니다.", 410)
+        conversation_id = str(share.get("ConversationId") or "")
+        anchor_id = share.get("AnchorMessageId")
+        anchor_id_int = int(anchor_id) if anchor_id is not None else None
+        # 대화 topic + product context 조회 (cutover: core_conversations 는 PG,
+        # WebProducts/WebAccounts 는 MySQL → backend-aware merge helper).
+        # TASK-0176 (F1, REV-20260609-0001): 데이터 로드(PG core_conversations/messages) 실패 시
+        # bare 500 대신 graceful JSON 500 으로 일관된 에러 계약을 준다 (fork 의 명시 500 래핑과 대칭).
+        # 주의: 상단 ViewCount++ 는 revoke race 가드 겸용이라 그대로 두며 — 로드 실패 시 1 과대
+        # 카운트는 허용 가능한 soft-metric 오차(race 정합 우선). 빈 공유뷰를 렌더하느니 명시 실패.
+        try:
+            conv_meta = app._conv_load_share_meta(conn, conversation_id)
+            # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share token row 의 PolicyVersion 추출 후 redact 결정.
+            share_policy_version_raw = share.get("PolicyVersion")
+            share_policy_version: int | None
+            try:
+                share_policy_version = int(share_policy_version_raw) if share_policy_version_raw is not None else None
+            except Exception:
+                share_policy_version = None
+            messages = app._share_load_messages(
+                conn,
+                conversation_id,
+                anchor_id_int,
+                share_token_policy_version=share_policy_version,
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "public_share_view: 공유 대화 로드 실패 (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+            return app._json_error("공유 대화를 불러오지 못했습니다.", 500)
+        # R-F7 audit dispatch — stale token (PolicyVersion < CURRENT) 의 자동 redact 활성 기록.
+        if share_policy_version is None or int(share_policy_version or 0) < app.SHARE_POLICY_VERSION_CURRENT:
+            try:
+                app._audit_user_action(
+                    conn,
+                    request,
+                    None,  # actor_type='anonymous' / 'account' 는 본 turn 의 viewer 로 결정 (아래 다시 호출)
+                    action="share.policy.redact_applied",
+                    resource_type="share",
+                    resource_id=str(int(share.get("Id") or 0)) if share.get("Id") is not None else None,
+                    request_ctx={
+                        "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                        "token_prefix": str(token)[:8],
+                        "token_policy_version": share_policy_version,
+                        "current_policy_version": app.SHARE_POLICY_VERSION_CURRENT,
+                        "redact_reason": "policy_version_mismatch",
+                    },
+                    actor_type="anonymous",
+                )
+            except Exception:
+                # fail-open: redact audit dispatch 실패는 공유 뷰 렌더를 막지 않으나 가시화.
+                logging.getLogger(__name__).warning(
+                    "public_share_view: redact audit dispatch failed", exc_info=True,
+                )
+        # 로그인 상태 + conversation.create 보유 시 fork 가능 flag.
+        viewer = app._optional_account(request, conn)
+        can_fork = bool(viewer and app._account_has_permission(viewer, "conversation.create"))
+        # feature-0009: 공유 링크 참여(join) — 링크가 Joinable + 로그인 + 아직 멤버/소유자 아님일 때 가능.
+        joinable = bool(int(share.get("Joinable") if share.get("Joinable") is not None else 1))
+        already_member = bool(viewer) and (
+            app._conversation_owned_by_account(conn, conversation_id, int(viewer["id"]))
+            or app._account_is_conversation_member(conversation_id, int(viewer["id"]))
+        )
+        can_join = bool(viewer) and joinable and not already_member
+        created_at = share.get("CreatedAt")
+        last_viewed = share.get("LastViewedAt")
+        share_expires_at = share.get("ExpiresAt")
+        # TASK-0073 Phase A6 (Eng review E4): anonymous share view audit.
+        # ActorType='anonymous' (viewer is None) 또는 'account' (logged in viewer).
+        # ChangeJson 에 share_token_prefix 8 char 만 — full token X (PII 차단).
+        actor_type = "anonymous" if not viewer else "account"
+        app._audit_user_action(
+            conn,
+            request,
+            viewer,
+            action="share.public.view",
+            resource_type="share",
+            resource_id=str(int(share.get("Id") or 0)) if share.get("Id") is not None else None,
+            request_ctx={
+                "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+                "token_prefix": str(token)[:8],
+                "view_count_after": int(share.get("ViewCount") or 0) + 1,
+                "remote_addr": _get_client_ip(request),
+            },
+            actor_type=actor_type,
+        )
+        return JSONResponse(
+            {
+                "share": {
+                    "token": token,
+                    "scope_mode": str(share.get("ScopeMode") or "full"),
+                    "anchor_message_id": anchor_id_int,
+                    "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
+                    "view_count": int(share.get("ViewCount") or 0) + 1,
+                    "last_viewed_at": last_viewed.isoformat() if hasattr(last_viewed, "isoformat") else (str(last_viewed) if last_viewed else None),
+                    "expires_at": share_expires_at.isoformat() if hasattr(share_expires_at, "isoformat") else (str(share_expires_at) if share_expires_at else None),
+                },
+                "conversation": {
+                    "topic": str(conv_meta.get("topic") or "대화"),
+                    "owner_username": str(conv_meta.get("owner_username") or ""),
+                    "product_key": str(conv_meta.get("product_key") or ""),
+                    "product_name": str(conv_meta.get("product_name") or ""),
+                    "product_mode": str(conv_meta.get("product_mode") or "pinned"),
+                },
+                "messages": messages,
+                "viewer": {
+                    "is_authenticated": bool(viewer),
+                    "can_fork": can_fork,
+                    "can_join": can_join,
+                    "already_member": already_member,
+                    "joinable": joinable,
+                },
+            }
+        )
+    finally:
+        conn.close()
+
+@router.post("/api/public/share/{token}/fork")
+def public_share_fork(token: str, request: Request, account=Depends(app.require_permission("conversation.create", message="요청을 수행할 수 없습니다.")), conn=Depends(app.get_conn)) -> JSONResponse:
+    """공유 링크 viewer 가 로그인 상태일 때 본인 계정으로 대화 fork.
+
+    권한: `conversation.create`. share-token 자체가 source 접근의 grant 역할이므로
+    `_account_can_access_conversation` 우회 (helper 직접 호출).
+    """
+    share = app._share_load_active(conn, token)
+    if not share:
+        return app._json_error("공유 링크를 찾을 수 없습니다.", 404)
+    if share.get("RevokedAt") is not None:
+        return app._json_error("이 공유 링크는 취소되었습니다.", 410)
+    # TASK-20260619T012028-share-link-expiry: 만료된 링크는 fork 도 차단 (DB NOW() 기준).
+    if app._share_row_expired(conn, int(share.get("Id") or 0)):
+        return app._json_error("이 공유 링크는 만료되었습니다.", 410)
+    conversation_id = str(share.get("ConversationId") or "")
+    # feature-0009 member-kick-ban: 원본 대화에서 차단(ban)된 account 는 fork 로도 콘텐츠를
+    # 회수할 수 없다 — ban 의 목적("추가 접근 영구 차단")을 share-token fork 우회로부터 보호한다.
+    # (적대 리뷰 BLOCKER: fork 는 멤버십/join 을 거치지 않고 콘텐츠를 복제하므로 별도 게이트 필요.)
+    # 보안 게이트라 fail-closed — 차단 여부 불명(PG 오류) 시 거부(가용성보다 ban 무결성 우선).
+    _fk_actor_id = int(account["id"])
+    try:
+        from shared.db import _pg_connect as _pg_connect_fk
+        from modules import group_members as _gm_fk
+        _pg_fk = _pg_connect_fk()
+        try:
+            _fk_banned = _gm_fk.is_banned(_pg_fk, conversation_id, _fk_actor_id)
+        finally:
+            _pg_fk.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "public_share_fork: is_banned check failed — fail-closed", exc_info=True
+        )
+        _fk_banned = True
+    if _fk_banned:
+        app._audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.member.fork_blocked",
+            resource_type="conversation",
+            resource_id=str(conversation_id),
+            request_ctx={"conversation_id": conversation_id, "via": "share_fork", "reason": "banned"},
+        )
+        return app._json_error("이 대화에서 차단되어 복제(fork)할 수 없습니다.", 403)
+    anchor_id = share.get("AnchorMessageId")
+    anchor_id_int = int(anchor_id) if anchor_id is not None else None
+    payload, err = app._fork_conversation_impl(conn, account, conversation_id, anchor_id_int)
+    if err:
+        return err
+    # TASK-0073 Phase A6: share fork audit (TASK-0058 fork 는 이미 logged-in 필수).
+    new_cid = payload.get("conversation_id") if isinstance(payload, dict) else None
+    app._audit_user_action(
+        conn,
+        request,
+        account,
+        action="share.fork",
+        resource_type="conversation",
+        resource_id=str(new_cid) if new_cid else None,
+        request_ctx={
+            "source_share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
+            "source_token_prefix": str(token)[:8],
+            "new_conversation_id": str(new_cid) if new_cid else None,
+            # REV-20260609-0004 #5: 교차계정 fork 가 원본 첨부/문맥을 forker 계정으로
+            # 복제하는 보안민감 이벤트의 forensics — 건수만 기록(파일명/바이트 비노출, D12).
+            "attachments_copied": int(payload.get("attachments_copied") or 0) if isinstance(payload, dict) else 0,
+            "core_messages_copied": int(payload.get("core_copied") or 0) if isinstance(payload, dict) else 0,
+        },
+    )
+    return JSONResponse(payload)
