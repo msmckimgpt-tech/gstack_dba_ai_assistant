@@ -63,6 +63,11 @@
           <span class="admin-tab-label">보관 대화</span>
         </button>
 
+        <!-- TASK-AIOPS: AI 운영 현황 tab (console.aiops.read 없으면 숨김 — canSeeTab + ADMIN_TAB_PERMISSIONS["ai-ops"]) -->
+        <button type="button" class="admin-tab" data-admin-tab="ai-ops" id="adminTabAiOps" style="display:none">
+          <span class="admin-tab-label">AI 운영 현황</span>
+        </button>
+
         <!-- admin-metadata-relocate: 메타데이터/샘플 검수는 '감사'(읽기전용 모니터링)가 아닌
              지식베이스(KB) 거버넌스(kb.* 권한)라 별도 그룹으로 분리한다. 그룹 경계는
              admin.js applyAdminTabVisibility() 가 DOM 순서로 동적 계산하고 권한 게이팅은
@@ -556,6 +561,23 @@
         </div>
       </section>
 
+      <!-- TASK-AIOPS: AI 운영 현황 pane (console.aiops.read). 내부 콘텐츠(배너/KPI/Attention/
+           카테고리 드릴다운/활동 feed/커버리지)는 admin.js renderAiOps() 가 #aiOpsBody 에 동적 렌더. -->
+      <section class="admin-pane" data-admin-pane="ai-ops">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">AI Ops</div>
+            <h2>AI 운영 현황</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="aiOpsRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="aiOpsBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </section>
+
       <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03):
            피드백 → 샘플쿼리 KB 환류 flywheel 검수 큐. 권한 kb.sample.curate. 사용자 답변
            피드백(👍/👎/"샘플 등록")으로 적재된 pending 항목을 검토해 KB(sample_queries)로
@@ -843,7 +865,7 @@
   <script src="/static/vendor/layout-base.js?v=2.0.1"></script>
   <script src="/static/vendor/cose-base.js?v=2.2.0"></script>
   <script src="/static/vendor/cytoscape-fcose.js?v=2.2.0"></script>
-  <script src="/static/admin.js?v=20260702-graph-panel-perms"></script>
+  <script src="/static/admin.js?v=20260702-ai-ops"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260701-rn-0701"></script>

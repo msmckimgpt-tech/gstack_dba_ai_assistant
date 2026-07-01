@@ -1,0 +1,198 @@
+"""TASK-AIOPS — AI 운영 관제 패널 (관리 콘솔 > 감사 > AI 운영 현황) 회귀/보안 테스트.
+
+검증 대상(`make test` agent 이미지, DB 없이 monkeypatch/fake 로 실행):
+  T1  taxonomy self-surface — 등록 task 는 카테고리 매핑, 미등록/오타/None 은 ai.other.unmapped.
+  T2  상태 축 임계 — ask-worker age 밴드(정상/저하/중단) + inprocess N/A(롤업 제외).
+  T3  datasource 축 매핑 — ok/unstable/circuit_open → 정상/저하/중단 worst-of.
+  T4  worst-of 배너 + PG 미가용 부분 degrade(200 유지, pg_available=False, banner=축 기반).
+  T5  PG 가용(빈 결과) — 배너 정상, categories 빈, ask-worker na 롤업 제외.
+  A1  권한 — console.aiops.read 없으면 403(TestClient require_permission).
+  R1  _record_llm_usage latency_ms — 미전달=NULL(agent-core 11경로 byte-동치), 명시값 전달.
+  R2  usage 없음(스트리밍 include_usage 미지원 등) → INSERT 미실행(정직 스킵).
+"""
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import app
+from routers import ai_ops
+from shared.model_catalog import taxonomy_for, ai_categories, TASK_TAXONOMY
+
+
+class _FakeRequest:
+    def __init__(self, days=None):
+        self.query_params = {} if days is None else {"days": str(days)}
+
+
+def _body(resp):
+    return json.loads(resp.body)
+
+
+# ── T1: taxonomy self-surface ────────────────────────────────────────────────
+def test_taxonomy_known_tasks_map_to_categories():
+    assert taxonomy_for("agent")["category"] == "ai.reasoning.agent"
+    assert taxonomy_for("prompt_gen")["category"] == "ai.prompt.autogen"
+    assert taxonomy_for("metadata_summary")["category"] == "ai.metadata.autocomplete"
+    # 라벨 보존
+    assert taxonomy_for("node_analysis")["label"] == "그래프 노드 분석"
+    # 등록된 모든 task 의 category 는 ai_categories() 라벨맵에 존재(고아 카테고리 없음)
+    labels = ai_categories()
+    for t, meta in TASK_TAXONOMY.items():
+        assert meta["category"] in labels, f"{t} 의 category 가 라벨맵에 없음"
+
+
+def test_taxonomy_unmapped_self_surface():
+    # 미등록/오타/None/공백 → ai.other.unmapped, 원본 task 라벨 보존(운영자 식별용)
+    assert taxonomy_for("brand_new_ai_task")["category"] == "ai.other.unmapped"
+    assert taxonomy_for("brand_new_ai_task")["label"] == "brand_new_ai_task"
+    assert taxonomy_for(None)["category"] == "ai.other.unmapped"
+    assert taxonomy_for("")["category"] == "ai.other.unmapped"
+
+
+# ── T2: ask-worker 축 임계 + inprocess N/A ───────────────────────────────────
+def test_ask_worker_axis_inprocess_is_na(monkeypatch):
+    monkeypatch.setattr(app, "_is_worker_mode", lambda: False)
+    ax = ai_ops._ask_worker_axis(conn=None)
+    assert ax["state"] == "na", "inprocess 모드는 N/A 여야 함(롤업 제외)"
+
+
+def test_ask_worker_axis_age_bands(monkeypatch):
+    monkeypatch.setattr(app, "_is_worker_mode", lambda: True)
+    monkeypatch.setattr(app, "_ask_worker_age_sec", lambda conn: 10)
+    assert ai_ops._ask_worker_axis(None)["state"] == "ok"
+    monkeypatch.setattr(app, "_ask_worker_age_sec", lambda conn: 90)
+    assert ai_ops._ask_worker_axis(None)["state"] == "degraded"
+    monkeypatch.setattr(app, "_ask_worker_age_sec", lambda conn: 300)
+    assert ai_ops._ask_worker_axis(None)["state"] == "down"
+    monkeypatch.setattr(app, "_ask_worker_age_sec", lambda conn: None)
+    assert ai_ops._ask_worker_axis(None)["state"] == "down", "heartbeat 부재 → 중단"
+
+
+# ── T3: datasource 축 매핑 ───────────────────────────────────────────────────
+def test_datasource_axis_worst_of(monkeypatch):
+    monkeypatch.setattr(app, "_read_insight_datasource_health", lambda: {
+        "ds_ok": {"status": "ok", "scan_outcome": "ok"},
+        "ds_bad": {"status": "unstable", "scan_outcome": "error"},
+    })
+    assert ai_ops._datasource_axis()["state"] == "degraded"
+    monkeypatch.setattr(app, "_read_insight_datasource_health", lambda: {
+        "ds_ok": {"status": "ok", "scan_outcome": "ok"},
+        "ds_dead": {"status": "ok", "scan_outcome": "circuit_open"},
+    })
+    assert ai_ops._datasource_axis()["state"] == "down"
+    monkeypatch.setattr(app, "_read_insight_datasource_health", lambda: {})
+    assert ai_ops._datasource_axis()["state"] == "unknown", "스캔 이력 없음/PG 미가용 → unknown"
+
+
+# ── 공용: 축 소스 monkeypatch (건강한 기본값) ────────────────────────────────
+def _patch_axes_healthy(monkeypatch, *, worker_mode=False):
+    monkeypatch.setattr(app, "_read_llm_provider_status", lambda: {"state": "ok"})
+    monkeypatch.setattr(app, "_is_worker_mode", lambda: worker_mode)
+    monkeypatch.setattr(app, "_ask_worker_age_sec", lambda conn: 5)
+    monkeypatch.setattr(app, "_insight_worker_liveness", lambda conn: {"alive": True, "age_sec": 5, "status": "ok"})
+    monkeypatch.setattr(app, "_read_insight_datasource_health", lambda: {"ds": {"status": "ok", "scan_outcome": "ok"}})
+
+
+# ── T4: PG 미가용 → 부분 degrade(200) ────────────────────────────────────────
+def test_handler_pg_unavailable_partial_degrade(monkeypatch):
+    _patch_axes_healthy(monkeypatch, worker_mode=False)  # inprocess → ask-worker na
+
+    def _boom(*a, **k):
+        raise RuntimeError("pg down")
+
+    monkeypatch.setattr("shared.db._pg_connect_ro", _boom, raising=False)
+    body = _body(ai_ops.admin_ai_ops(_FakeRequest(7), account={"id": 1}, conn=None))
+
+    assert body["pg_available"] is False
+    assert body["categories"] == []
+    # provider ok + insight ok + datasource ok, ask-worker na 제외 → 배너 정상
+    assert body["banner"]["state"] == "ok"
+    ask = next(a for a in body["axes"] if a["key"] == "ask_worker")
+    assert ask["state"] == "na"
+    # PG 미가용은 Attention 에 표면화(은폐 금지)
+    assert any("PG" in x["label"] or "미가용" in x["label"] for x in body["attention"])
+
+
+# ── T5: PG 가용(빈 결과) → 배너 정상, categories 빈 ──────────────────────────
+class _EmptyCur:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def execute(self, sql, params=None): return None
+    def fetchall(self): return []
+    def fetchone(self): return None
+    def close(self): return None
+
+
+class _EmptyConn:
+    def cursor(self, *a, **k): return _EmptyCur()
+    def close(self): return None
+
+
+def test_handler_pg_available_empty(monkeypatch):
+    _patch_axes_healthy(monkeypatch, worker_mode=True)  # worker mode + age 5 → ask ok
+    monkeypatch.setattr("shared.db._pg_connect_ro", lambda *a, **k: _EmptyConn(), raising=False)
+    body = _body(ai_ops.admin_ai_ops(_FakeRequest(7), account={"id": 1}, conn=None))
+
+    assert body["pg_available"] is True
+    assert body["categories"] == []
+    assert body["banner"]["state"] == "ok"
+    # worker mode + 정상 age → ask-worker ok(롤업 포함)
+    ask = next(a for a in body["axes"] if a["key"] == "ask_worker")
+    assert ask["state"] == "ok"
+    assert body["kpis"]["workers_total"] == 2  # ask + insight 둘 다 롤업 대상
+
+
+# ── A1: 권한 403 (TestClient require_permission) ─────────────────────────────
+def test_ai_ops_requires_permission(client, as_account):
+    as_account(perms={"console.access": True})  # console.aiops.read 없음
+    resp = client.get("/api/admin/ai-ops")
+    assert resp.status_code == 403
+
+
+# ── R1/R2: _record_llm_usage latency_ms (byte-동치 NULL + 명시값 + usage 스킵) ─
+class _CaptureCur:
+    def __init__(self, sink): self.sink = sink
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def execute(self, sql, params=None): self.sink.append((sql, params))
+
+
+class _CaptureConn:
+    def __init__(self, sink): self.sink = sink
+    def cursor(self, *a, **k): return _CaptureCur(self.sink)
+    def commit(self): return None
+    def close(self): return None
+
+
+def _resp(pt=10, ct=5, tt=15, model="claude-haiku-4"):
+    return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=pt, completion_tokens=ct, total_tokens=tt), model=model)
+
+
+def test_record_llm_usage_latency_column(monkeypatch):
+    import modules.llm as llm
+    import modules.runtime_backend as rb
+    sink: list = []
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: _CaptureConn(sink))
+
+    # 미전달 → latency_ms=NULL (agent-core 11경로 byte-동치)
+    llm._record_llm_usage("claude-haiku-4", "agent", _resp())
+    assert len(sink) == 1
+    sql, params = sink[0]
+    assert "latency_ms" in sql
+    assert params[-1] is None, "latency 미전달 시 NULL 이어야 함(byte-동치)"
+
+    # 명시값 → 그대로 전달
+    sink.clear()
+    llm._record_llm_usage("claude-haiku-4", "prompt_gen", _resp(), latency_ms=123)
+    assert sink[0][1][-1] == 123
+
+
+def test_record_llm_usage_skips_without_usage(monkeypatch):
+    import modules.llm as llm
+    import modules.runtime_backend as rb
+    sink: list = []
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: _CaptureConn(sink))
+    # usage 없음(스트리밍 include_usage 미지원 등) → INSERT 미실행(정직 스킵)
+    llm._record_llm_usage("m", "prompt_gen", SimpleNamespace(usage=None, model="m"), latency_ms=50)
+    assert sink == []
