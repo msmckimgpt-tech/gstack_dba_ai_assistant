@@ -74,7 +74,8 @@ source_of_truth: true
     - [x] **admin/metadata 마일스톤 배포·라이브 검증**(main 0b91b1b, PR #506, CHG/REV-20260701-0008): CI PASS → 머지 → blue-green 배포(soak 통과) → 라이브 smoke(healthz 0b91b1b·추출 라우트 401 verbatim). deploy-backed 완료.
     - [~] **전략 전환 — 전체추출(DI 전환 불요)**: 잔여 10 도메인 분류 workflow(11 agents) 결과 CLEAN-DI 5·ALREADY-DI 36·PUBLIC 7·DEFER 50. **핸들러 추출은 DI 전환 전제 아님**(monkeypatch 는 `app.X` 동적참조로 보존) → DEFER 도 인라인 auth 유지로 byte-identical 추출. 도메인 전체추출로 라우트 split 회피.
       - [x] **batch1 6 도메인 35 핸들러 전체추출**(CHG/REV-20260701-0009): profile 4·integrations 4·attachments 4·admin_audits 7·admin_accounts 8·admin_roles 8 → routers/. 범용 추출기(완전 mod_syms·동적 import·self-healing) + reref(커플링 6유형). **app.py 26,734→24,648(~2,086↓)**, 12→18 router. make test 1313·0 fail.
-      - [ ] batch2: admin/datasources 6·api/auth 18(PUBLIC 7 포함)·api/conversations 17·admin/products 22(txn) 전체추출.
+      - [x] **batch2 datasources 6 + auth 18 전체추출**(CHG/REV-20260701-0010): routers/{admin_datasources,auth}.py. datasources CLEAN-DI 3·auth PUBLIC 7·DEFER 인라인 유지. 커플링 7유형(신규: source-text 호출식 count). **app.py 24,648→23,536(~1,112↓)**, 20 router. make test 1313·0 fail.
+      - [ ] batch3: api/conversations 17(→기존 conversations.py append)·admin/products 22(txn/streaming/pre-auth) 전체추출.
       - [ ] (향후 정제) DEFER preauth 핸들러 byte-동치 DI-rework(pre-auth gate → pre-auth dependency).
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 

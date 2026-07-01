@@ -37,7 +37,7 @@ def _import_app():
 
 
 app = _import_app()
-from routers import admin_accounts  # feature-0012 P5b
+from routers import admin_accounts, auth  # feature-0012 P5b
 
 
 def _read_static(name: str) -> str:
@@ -93,20 +93,20 @@ def test_b4_schema():
 
 def test_b5_enrollment_endpoints():
     for fn in ("auth_totp_setup", "auth_totp_confirm", "auth_totp_disable"):
-        assert hasattr(app, fn), fn
-    setup = inspect.getsource(app.auth_totp_setup)
+        assert hasattr(auth, fn), fn
+    setup = inspect.getsource(auth.auth_totp_setup)
     assert "_totp_encrypt_secret" in setup and "otpauth_uri" in setup
-    confirm = inspect.getsource(app.auth_totp_confirm)
+    confirm = inspect.getsource(auth.auth_totp_confirm)
     assert "_totp_verify" in confirm and "backup_codes" in confirm and "Enabled=1" in confirm
-    disable = inspect.getsource(app.auth_totp_disable)
+    disable = inspect.getsource(auth.auth_totp_disable)
     assert "_verify_password" in disable  # 비번 재확인
 
 
 def test_b6_login_two_step():
-    login = inspect.getsource(app.auth_login)
+    login = inspect.getsource(auth.auth_login)
     assert "_totp_is_enabled" in login and "totp_required" in login and "_totp_pending_token" in login
-    assert hasattr(app, "auth_login_totp")
-    step2 = inspect.getsource(app.auth_login_totp)
+    assert hasattr(auth, "auth_login_totp")
+    step2 = inspect.getsource(auth.auth_login_totp)
     assert "_totp_verify_pending_token" in step2
     assert "_totp_verify" in step2 and "_totp_consume_backup_code" in step2
     assert "_issue_auth_session" in step2
@@ -131,11 +131,11 @@ def test_b8_serialize_and_fetch():
 # ── F1: frontend ─────────────────────────────────────────────────────────────
 def test_b9_bruteforce_absorption():
     # outside-voice MAJOR 흡수: 2FA 분기는 잠금/IP 리셋을 미룬다(2단계 완료 시에만).
-    login = inspect.getsource(app.auth_login)
+    login = inspect.getsource(auth.auth_login)
     # totp_required return 이 _login_ip_clear 보다 앞 — 2FA 분기에선 리셋 안 함.
     assert login.index("totp_required") < login.index("_login_ip_clear")
     # step-2: TOTP 실패 시 계정 잠금 누적 + 잠긴 계정 차단.
-    step2 = inspect.getsource(app.auth_login_totp)
+    step2 = inspect.getsource(auth.auth_login_totp)
     assert "_login_record_failure" in step2
     assert "is_locked" in step2
     # MINOR 흡수: 백업코드 소비 row-lock.

@@ -456,3 +456,15 @@ source_of_truth: true
 - Impact: **app.py 26,734→24,648 줄(~2,086↓).** 12→18 router. make test 전체 통과·1313 passed·0 fail·route drift 0, route-parity 192(set 불변), py_compile OK. byte-neutral(라우트 경로/메서드/응답 불변, DEFER 핸들러 인라인 auth 그대로).
 - 학습: 추출 커플링 유형 확장 → (1)직접호출 (2)monkeypatch (3)getsource attribute (4)소스텍스트 read_text/ast.parse (5)**`hasattr/getattr(app,"handler")` 문자열-인자** (6)**`app.app.routes` flat 순회(중첩 라우트)**. 추출 전 grep: `app\.<h>`·`hasattr\(app,"<h>"`·`app.app.routes`. **DI 전환은 추출의 전제가 아님** — 모듈화(app.py 축소)가 목표면 전체추출(인라인 유지)이 최단.
 - Rollback: revert(6 router 삭제 + app.py 35 복원 + 테스트 원복 + 골든 복원).
+
+## CHG-20260701-0010
+- Date: 2026-07-01
+- Related Requirement: P5b 전체추출 batch2 — admin/datasources(6) + api/auth(18) 24 핸들러.
+- Summary:
+  admin/datasources 6(CLEAN-DI 3 `_ds_write_common` 인라인 유지 + ALREADY-DI 3) → routers/admin_datasources.py. api/auth 18(PUBLIC 7 signup/login/oauth + ALREADY-DI 6 avatar/totp + DEFER 5) → routers/auth.py. 전체추출(인라인 auth 보존, byte-identical).
+  - 동반 테스트 reref: datasources 4파일(admin_update/delete/test_datasource 직접호출) + auth 3파일(test_oauth_google_foundation 8 직접호출, test_two_factor_auth·test_login_attempt_limit getsource). **커플링 추가 적발·수정**: hasattr 루프 2(`for fn in (...): hasattr(app,fn)`→auth), **source-text 호출식 count**(test_product_list_rbac 가 `_filter_products_for_account_access(account, products)` 를 app.py 소스에서 2회 count — auth_me 가 auth.py 로 이동해 1로 감소 → app.py+routers 합산 검색으로 수정; 핸들러명 아닌 호출식이라 커플링 스캔 미포착).
+  - reref 도구 guard 정밀화: `f" {module}"` generic substring 오탐(module="auth") → `^from routers import ...\b{module}\b` 정확 매칭.
+- Files: src/routers/{admin_datasources,auth}.py(신규), src/app.py(24 제거 + include_router 2), tests/(8 파일 reref+coupling fix), tests/route_snapshot_p5b.json(골든 set-neutral 192) + docs.
+- Impact: **app.py 24,648→23,536 줄(~1,112↓).** 18→20 router. make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral(PUBLIC/DEFER 인라인 그대로).
+- 학습: 커플링 7유형 = 기존 6 + **(7) source-text 호출식 count**(핸들러명 아닌 helper 호출식을 app.py 소스에서 count → 추출로 이동 시 count 변동, app.py+routers 합산으로 수정). reref import guard 는 정확 매칭 필수(generic substring 금지).
+- Rollback: revert(2 router 삭제 + app.py 24 복원 + 테스트 원복 + 골든 복원).

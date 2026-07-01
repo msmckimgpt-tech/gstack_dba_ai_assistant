@@ -350,3 +350,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 커플링 6유형 확립(추출 전 grep): (1)`app.<h>(` 직접호출 (2)`monkeypatch.setattr(app,...)` (3)`getsource(app.<h>)` (4)소스텍스트 `read_text/ast.parse`+핸들러명 (5)`hasattr/getattr(app,"<h>")` 문자열-인자 (6)`app.app.routes` flat 순회. profile·integrations 는 커플링 0(TestClient+snapshot), 나머지 4 도메인은 getsource/hasattr/route-check 재참조.
 - app.py 26,734→24,648(~2,086↓). 12→18 router. DEFER 핸들러(preauth) 인라인 auth 보존 = byte-identical.
 - 학습: 핸들러 추출은 DI 전환 불요(monkeypatch 는 `app.X` 동적참조로 보존). DEFER byte-동치 DI-rework 는 향후 정제(현 목표=모듈화, 전체추출이 최단).
+
+## REV-20260701-0010 [SKIPPED:mechanical byte-neutral 전체추출 — make test route-parity + 커플링 7유형 게이트]
+- Related Change: CHG-20260701-0010 (datasources 6 + auth 18 전체추출)
+- 검증 성격: mechanical route-preserving move(auth 로직 무변경, PUBLIC/DEFER 인라인 그대로). 게이트 = route-parity + make test + 커플링 전수.
+- 결정적 검증: (1) 골든 재생성 set-neutral 192. (2) make test **1313 passed·0 fail·route drift 0**(2회 반복 — 1차 hasattr 루프 2 + source-text 호출식 count 1 적발, 2차 GREEN). (3) datasources CLEAN-DI 3(`_ds_write_common`)·auth PUBLIC 7(signup/login/oauth)·DEFER 5 전부 인라인 auth 보존 = byte-identical. (4) 2 신규 router docker 컨테이너 로드 정상(골든 재생성 app 로드 성공). (5) py_compile+static missing-prefix clean.
+- 커플링 7유형 확립: 기존 6 + **(7) source-text 호출식 count**(helper 호출식을 app.py 소스에서 count — 추출 이동 시 변동, app.py+routers 합산 수정). auth_me 필터 호출이 auth.py 로 이동해 count 2→1 적발.
+- app.py 24,648→23,536(~1,112↓). 18→20 router.
+- 학습: 커플링 스캔은 핸들러명 grep 만으론 부족 — helper 호출식 count 형 source-text 검사(핸들러명 무참조)는 make test 가 최종 안전망. reref import guard 정확 매칭 필수.

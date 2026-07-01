@@ -78,13 +78,6 @@
       "type": "APIRoute"
     },
     {
-      "path": "/api/admin/datasources",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/api/admin/products/{product_id}/datasource",
       "methods": [
         "PATCH"
@@ -109,41 +102,6 @@
       "path": "/api/admin/products/{product_id}/datasources/{key}",
       "methods": [
         "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}/test",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}/databases",
-      "methods": [
-        "GET"
       ],
       "type": "APIRoute"
     },
@@ -260,20 +218,6 @@
       "type": "APIRoute"
     },
     {
-      "path": "/api/auth/me/avatar",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/avatar",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/api/admin/products/{product_id}/icon",
       "methods": [
         "PUT"
@@ -331,90 +275,6 @@
     },
     {
       "path": "/api/suggestions",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/signup",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/login",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/login/totp",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/totp/setup",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/totp/confirm",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/totp/disable",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/logout",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/oauth/config",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/oauth/google/start",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/oauth/google/callback",
       "methods": [
         "GET"
       ],
@@ -533,20 +393,6 @@
       "type": "APIRoute"
     },
     {
-      "path": "/api/auth/me/system-prompt/generate",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/system-prompt/generate/stream",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/api/admin/system-prompts",
       "methods": [
         "GET"
@@ -555,20 +401,6 @@
     },
     {
       "path": "/api/admin/system-prompts",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/system-prompt",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/system-prompt",
       "methods": [
         "PUT"
       ],
@@ -1341,6 +1173,174 @@
       "path": "/api/admin/roles/{role_id}/prompt/generate/stream",
       "methods": [
         "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/datasources",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/datasources/{key}/test",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/datasources",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/datasources/{key}",
+      "methods": [
+        "PATCH"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/datasources/{key}",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/datasources/{key}/databases",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me/avatar",
+      "methods": [
+        "PUT"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me/avatar",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/signup",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/login",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/login/totp",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me",
+      "methods": [
+        "PATCH"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/totp/setup",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/totp/confirm",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/totp/disable",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/logout",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/oauth/config",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/oauth/google/start",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/oauth/google/callback",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me/system-prompt/generate",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me/system-prompt/generate/stream",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me/system-prompt",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/auth/me/system-prompt",
+      "methods": [
+        "PUT"
       ],
       "type": "APIRoute"
     }

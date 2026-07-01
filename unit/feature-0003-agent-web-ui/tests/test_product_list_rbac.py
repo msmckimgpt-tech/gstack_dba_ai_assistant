@@ -89,7 +89,11 @@ def test_t8_coerce_default_empty_zero():
 def test_t9_filter_only_on_workspace_paths():
     """_filter_products_for_account_access 는 작업 화면 2곳에서만 호출되고
     admin _list_products(include_inactive=True) 경로엔 미적용이어야 한다."""
-    src = APP_PY.read_text(encoding="utf-8")
+    # feature-0012 P5b: 핸들러 일부가 routers/ 로 추출됨(auth_me 등) → app.py + routers 합산 검색.
+    _ROUTERS = APP_PY.parent / "routers"
+    src = APP_PY.read_text(encoding="utf-8") + "".join(
+        p.read_text(encoding="utf-8") for p in sorted(_ROUTERS.glob("*.py"))
+    )
     call_count = src.count("_filter_products_for_account_access(account, products)")
     assert call_count == 2, f"작업화면 필터 호출이 정확히 2곳이어야 함 (실제 {call_count})"
     # admin 경로는 include_inactive=True — 필터 미적용

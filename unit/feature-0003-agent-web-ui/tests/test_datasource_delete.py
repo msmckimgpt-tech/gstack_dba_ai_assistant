@@ -18,6 +18,7 @@ import asyncio
 import json
 
 import app
+from routers import admin_datasources  # feature-0012 P5b
 
 
 # ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -115,7 +116,7 @@ def test_delete_datasource_success(monkeypatch):
     class _RouteReq(_FakeRequest):
         path_params = {"key": "mysql-abcdef123456"}
 
-    resp = asyncio.run(app.admin_delete_datasource("mysql-abcdef123456", _RouteReq()))
+    resp = asyncio.run(admin_datasources.admin_delete_datasource("mysql-abcdef123456", _RouteReq()))
     body = json.loads(resp.body)
     assert body.get("deleted") is True
     assert conn.committed
@@ -129,5 +130,5 @@ def test_delete_datasource_not_found(monkeypatch):
     _patch_common(monkeypatch, conn)
 
     req = _FakeRequest()
-    resp = asyncio.run(app.admin_delete_datasource("mysql-abcdef123456", req))
+    resp = asyncio.run(admin_datasources.admin_delete_datasource("mysql-abcdef123456", req))
     assert resp.status_code == 404
