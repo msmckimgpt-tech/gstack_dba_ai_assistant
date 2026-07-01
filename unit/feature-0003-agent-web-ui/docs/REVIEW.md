@@ -4314,3 +4314,8 @@ source_of_truth: true
 - **MINOR-1 (적발→수정)**: `_metaGraphLoadRoots`/`_metaGraphSearch` 의 `elements().remove()` 가 `_metaGraph.analyzed`/`running` Set 을 비우지 않음 — 키가 scope-namespaced(`scope:fqn`)라 **오표시는 없으나**, scope 다수 전환 시 Set 무한 성장 + 이전 scope stale 'running' 잔존(재방문 동기화 실패 시 재적용 가능). **수정**: `_metaGraphLoadRoots` 의 `elements().remove()` 직후 두 Set `.clear()`(새 scope 마커는 `_metaGraphSyncAnalysisMarkers` 가 DB 재조회). node --check PASS.
 - **NIT-1 (수용)**: `_metaGraphSyncClusterLabels` 에서 `renderedBoundingBox` falsy 시 div `display:none` 처리하나 parent 존재 시 Map 미prune — 무해(숨김·재사용).
 - 라이브 실측 분리(§정직): 적대 패널은 "SQL 정합·라우팅·마커 additive·오버레이 수명·tap 분기·null-safety" 정적 코드 검증. 실 화면 동작(②클러스터 상세·③좌정렬 무잘림·zoom 추종)은 **PB-0008 Windows-browser 프리뷰 인젝션 PASS**(TEST.md), ①마커 렌더는 백엔드 집계 실 KB PG 정합 확인 + **실배포 후 최종 확인**.
+
+## REV-20260701T220000-graphview-webgl-labels [SKIPPED:minor-scoped-fix] (TASK-20260701T220000-graphview-webgl-labels — 클러스터명 오버레이 WebGL 렌더러 호환 수정, Minor §12.3 — feature-0003 프론트 단독)
+- Panel skip 사유(§18.8): 변경은 오버레이 위치 동기화의 **이벤트 바인딩 2줄 교체**(`render` 단일 → `render viewport resize layoutstop add remove` + node `position drag free`) 뿐 — 신규 로직 경로·상태·API·RBAC·스키마 0. sync 함수 본체·`renderedBoundingBox` 정렬·마커·클러스터 상세 전부 불변. 코드 적대 검증 대상이 아니라 **라이브 실측이 정본**(§18.8 표 minor-scoped).
+- 실질 검증(정본): PB-0008 Windows-browser 병합 번들 프리뷰(cytoscape 3.34.0 `webgl:true`) — **회귀 적발**(수정 전 labelDivs=0, `cy.on('render')` WebGL emit 0 실측) → **수정 후 PASS**(로드 labelDivs=35·pan +120/+60 정확 추종 tracked=true·클러스터 tap 상세·좌정렬 무잘림). `node --check` PASS. TEST.md 동일 id Run 참조.
+- 근거: WebGL 렌더러는 `render` 이벤트 미emit(cytoscape 3.31+ 사양) — 렌더러 무관 코어 이벤트로 교체가 유일 정답. canvas-2D 폴백은 `render` 포함으로 호환 유지. Cross-ref: §17 graph-webgl(REV-20260701T210000) · §18 graphview-render(REV-20260701T163000).

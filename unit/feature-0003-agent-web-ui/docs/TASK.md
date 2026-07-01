@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260701T220000-graphview-webgl-labels — 스키마 클러스터명 오버레이 WebGL 렌더러 호환 수정 (Minor §12.3 — feature-0003 프론트 단독, graphview-render 후속)
+- 트리거: `graphview-render`(§18 클러스터명 오버레이) 를 최신 main 에 병합하니, 병렬 머지된 **graph-webgl(§17, Cytoscape 3.30.2→3.34.0 + WebGL 렌더러)** 과 결합됐다. 배포 전 병합 번들 PB-0008 프리뷰 검증에서 **클러스터명 오버레이 미표시(labelDivs=0)** 발견.
+- 근본원인(실측): 오버레이 위치 동기화가 `cy.on("render", …)` 에 바인딩됐는데, **WebGL 렌더러(cytoscape 3.31+ `webgl:true`)는 `render` 이벤트를 emit 하지 않는다**(실측 renderFires=0, canvas-2D 에선 fire). → 초기 로드·pan/zoom 시 sync 미호출 → 라벨 div 미생성/미추종. (`_metaGraphSyncClusterLabels` 함수 자체·`renderedBoundingBox` 는 WebGL 에서 정상 — 수동 호출 시 35 divs 정상 생성 확인.)
+- 수정(admin.js): `render` 단일 바인딩 → **렌더러 무관 코어 이벤트**로 교체 — `cy.on("render viewport resize layoutstop add remove", sync)` + `cy.on("position drag free", "node", sync)`. viewport=pan+zoom(카메라 애니 per-frame), position/drag=노드 이동·레이아웃 애니 per-frame. `render` 도 포함해 canvas-2D 폴백(webgl 미지원 GPU) 호환 유지. rAF 스로틀 불변.
+- Completion Checklist:
+  - [x] admin.js: `_lblSync` 헬퍼 + 코어 이벤트 바인딩 교체. `node --check` PASS.
+  - [x] admin.html: cache-buster 2건 bump `admin.js`·`styles.css?v=20260701-graphview-webgl-labels`(js==css lockstep).
+  - [x] PB-0008 **Windows-browser 라이브 실측**(병합 번들 프리뷰, cytoscape 3.34.0 `webgl:true` 확인): 로드 시 오버레이 labelDivs=35 생성 · pan +120/+60 정확 추종(tracked) · 클러스터 tap 상세('테이블 130개') · 좌상단 좌정렬 무잘림 — 전부 WebGL 하 PASS.
+  - [x] §18.8 패널: [SKIPPED:minor-scoped-fix] — 2줄 이벤트-바인딩 교체, 신규 로직 경로 0, 라이브 실측이 정본. REV-20260701T220000-graphview-webgl-labels.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 배포(deploy_scope: included — graph-webgl WebGL 과 동시 첫 배포) → 배포 후 최종 확인.
+- Next Action: verify-completion → cycle-final → 배포.
+
 ## TASK-20260701T163000-graphview-render — 관리콘솔 메타데이터 그래프 뷰 출력 이슈 3건(마커 렌더-타임 갱신·클러스터 선택 상세·클러스터명 잘림) (Major §12.3 — feature-0003 프론트 + feature-0002 백엔드 cross-cut)
 - 트리거: 사용자(`/_template:entry` arg-given) — "관리 콘솔 > 메타데이터 > 그래프 뷰 출력 이슈: ①각 노드 표식(AI 분석 중/분석됨)이 직접 클릭했을 때만 갱신 → 화면 출력 당시에도 렌더. ②DB(스키마 클러스터) 선택 시에도 상세 갱신. ③스키마 클러스터 명칭 잘림 → 좌정렬·좌여백(둥근 사각형 존중)·무잘림 확장."
 - 근본원인(코드 근거):
