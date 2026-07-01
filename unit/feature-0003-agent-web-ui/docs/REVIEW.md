@@ -4319,3 +4319,14 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 변경은 오버레이 위치 동기화의 **이벤트 바인딩 2줄 교체**(`render` 단일 → `render viewport resize layoutstop add remove` + node `position drag free`) 뿐 — 신규 로직 경로·상태·API·RBAC·스키마 0. sync 함수 본체·`renderedBoundingBox` 정렬·마커·클러스터 상세 전부 불변. 코드 적대 검증 대상이 아니라 **라이브 실측이 정본**(§18.8 표 minor-scoped).
 - 실질 검증(정본): PB-0008 Windows-browser 병합 번들 프리뷰(cytoscape 3.34.0 `webgl:true`) — **회귀 적발**(수정 전 labelDivs=0, `cy.on('render')` WebGL emit 0 실측) → **수정 후 PASS**(로드 labelDivs=35·pan +120/+60 정확 추종 tracked=true·클러스터 tap 상세·좌정렬 무잘림). `node --check` PASS. TEST.md 동일 id Run 참조.
 - 근거: WebGL 렌더러는 `render` 이벤트 미emit(cytoscape 3.31+ 사양) — 렌더러 무관 코어 이벤트로 교체가 유일 정답. canvas-2D 폴백은 `render` 포함으로 호환 유지. Cross-ref: §17 graph-webgl(REV-20260701T210000) · §18 graphview-render(REV-20260701T163000).
+
+## REV-20260701T100738-convswitch-opacity-guard [SUBAGENT:adversarial-correctness] (TASK-20260701T100738-convswitch-opacity-guard — 좌측 대화 선택 시 대화창 미표시 방어 하드닝, Minor §12.3 — feature-0003 프론트 단독)
+- Trigger(§18.8): UI 상태·렌더 흐름(frontend 렌즈) 단일 — `static/app.js` selectConversation 크로스페이드 예외 안전성. 스키마/RBAC/API/엔드포인트 0.
+- 적대 코드리뷰(staged diff 정독 + `_beginConversationCrossfade`/`_commitConversationCrossfade` trace, 앱 미실행 정적) → **VERDICT PASS(BLOCKING 0, MAJOR 0, MINOR 0)**.
+  1. commit 보장 — 두 early-return(빈 id·이미-active)은 begin(5823) 앞이라 imbalance 없음. begin 이후 모든 throw 경로(risk window·apiFetch·loadHistory·pending 복원)가 try 안 → finally 의 commit 이 정확히 1회 실행. opacity-stuck-at-0 근본 차단(구 코드는 risk window 가 try 밖이라 무방비였음).
+  2. 에러 전파 — try/finally(catch 없음)는 finally 실행 후 원예외 그대로 rethrow → 구 `catch{commit;throw}` 와 동형. 호출부(2554/9696/9777 fire-and-forget) 영향 0.
+  3. `const _prevConvId` — try 안에서만 선언·사용, 외부 참조 없음 → 스코프 축소 안전.
+  4. post-processing(product hydration·_jumpToSearchMatchedMessage·_loadConversationAttachments·_markActiveConversationRead) — try/finally 뒤 위치, throw 시 스킵 → 구 rethrow 동형(성공 시에만 실행).
+  5. finally 의 commit 은 자체 `try{...}catch(_){}` 로 감싸 원예외 마스킹 불가.
+  6. double-commit 불가(단일 commit site), renderMessages↔commit 순서 불변, reduced-motion 하 begin/commit 둘 다 no-op 대칭.
+- 라이브 실측(정본 분리, §정직): 적대 패널은 정적 코드 정합만 검증. 실 화면 동작은 **PB-0008 Windows-browser 프리뷰 인젝션 PASS**(bootstrap_admin 대화 A op1·msg4 렌더·제목 갱신, A→B 전환 렌더 — TEST.md) + headless browse 5대화 op1. `node --check` PASS.

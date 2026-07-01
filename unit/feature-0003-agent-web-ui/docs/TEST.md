@@ -1355,3 +1355,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **수정 후 PASS**: 이벤트를 `render viewport resize layoutstop add remove` + node `position drag free` 로 교체 → 로드 시 **labelDivs=35** 자동 생성(webgl=true), `cy.panBy({120,60})` 후 라벨 transform `(308,435)→(428,495)` = **+120/+60 정확 추종**(tracked=true). 클러스터 tap → 상세 '스키마 클러스터 / 테이블 (130)' 렌더. 좌상단 좌정렬·무잘림 유지(스크린샷 `scratchpad/graphview-webgl-final.png`).
 - **Pass/Fail: PASS** — WebGL 렌더러 하에서 클러스터명 오버레이(생성·pan/zoom 추종)·클러스터 상세가 정상 동작함을 실 Windows 브라우저로 실측. CHECK#13(PB-0008 Windows-browser) **충족**.
 - **배포 후 최종 확인**: web 재빌드·재배포(graph-webgl WebGL + graphview-render 동시 첫 배포) 후 라이브에서 클러스터명·상세·①마커(백엔드 배포분) 재확인.
+
+### TASK-20260701T100738-convswitch-opacity-guard — 좌측 대화 선택 시 대화창 미표시 방어 하드닝 (frontend-only, Minor §12.3 — **PB-0008 Windows-browser PASS**)
+- **Environment: Windows-browser** (실 Windows Chrome/149.0.7827.200 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, https://localhost/ 인증 세션 bootstrap_admin). WSL headless 아닌 실 Windows 화면.
+  - 방법론: 정적자산 baked 라 배포 전 **프리뷰 인젝션** — 변경 `app.js`·`index.html` 을 실행 중 web-a·web-b `/app/web/static/` 에 주입(cache-buster `?v=20260701-convswitch-opacity-guard` 로 신규 finally-guard 번들 강제 서빙 확인). 데이터 bootstrap_admin 54 대화.
+- **정량 실측(Windows Chrome)**:
+  - 앱 로드 → served `app.js?v=20260701-convswitch-opacity-guard`(finally-guard 번들) 확인, 로그인 세션 유지(authHidden=true).
+  - 대화 A(`…1c170112`) 선택 → messageLog `computedOpacity` 0.70(fade-in 중간 샘플) → **정착 1**(inline=""), `msgs=4`, `visibility:visible`, 제목 "dbgame 스키마의 item 테이블 구조를 알려줘" 갱신, ghost 0. 스크린샷 `scratchpad/pb0008_convselect.png`(테이블 구조·인덱스 구성·특징·메시지 전부 가시).
+  - 대화 A→B(`…1669c81d`) 전환(크로스페이드 begin→finally commit 경로) → `msgs=2` 렌더, 제목 "dbgame 스키마에 어떤 테이블들이…" 갱신, opacity fade-in 후 1 수렴.
+- **Pass/Fail: PASS** — 하드닝 후 대화 선택/전환이 실 Windows 브라우저에서 정상 렌더(opacity 1 정착)·회귀 0. CHECK#13(PB-0008 Windows-browser) **충족**(웹 자산 변경에 이번 cycle Windows-browser Run 기록). 보강: headless browse 5대화 전부 op1·렌더, `node --check` PASS, §18.8 적대 리뷰 VERDICT PASS.
+- **배포 후 최종 확인**: web 재빌드·재배포(deploy_scope: included) 후 라이브에서 대화 선택 렌더 + 새 cache-buster(`20260701-convswitch-opacity-guard`) 서빙 재확인.

@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260701T100738-convswitch-opacity-guard — 좌측 대화 선택 시 대화창 미표시 방어 하드닝 (Minor §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 트리거(사용자 /_template:entry, 유저 admin): "작업 화면(메인 채팅)에서 좌측 대화 항목을 선택해도 대화창에 내용이 안 뜬다 — 선택이 아예 안 먹는 것처럼". 조사: 현재 배포본(b3175b6) 백엔드·프론트 모두 재현 안 됨(curl `/api/use_conversation`·`/api/history` 200+메시지, fresh 브라우저에서 admin 과 동일 role id3 계정 headless 10대화·race·PB-0008 Windows 정상, 캐시버스터 정합) → stale client(캐시된 구버전 app.js / 장시간 열어둔 탭) 유력. 사용자 결정: 재발 불가하도록 방어 하드닝 배포.
+- 근본 취약점: `static/app.js` `selectConversation` conv-switch-fade 의 begin(opacity:0)↔commit(opacity:1) 사이 risk window(pendingNewConversation 리셋·pending 스냅샷·`stopProgressPolling`)가 try 밖 → 예외 시 opacity:0 잔류로 대화창 빈 화면 가능.
+- Completion Checklist:
+  - [x] `static/app.js`: risk window 를 try 안으로 + 성공/catch 중복 commit 을 단일 `finally` 로 이관(에러 전파·post-processing·렌더 순서 보존). `node --check` PASS.
+  - [x] `static/index.html`: cache-buster `app.js?v=20260701-convswitch-opacity-guard` bump(stale 사용자에게 새 코드 강제).
+  - [x] §18.8 적대 코드리뷰(SUBAGENT adversarial-correctness) VERDICT PASS(commit 보장·에러 전파·scoping·post-processing·double-commit 불가·reduced-motion 대칭 6점). REV-20260701T100738-convswitch-opacity-guard.
+  - [x] PB-0008 **Windows-browser 실측**(프리뷰 인젝션 web-a/web-b): 대화 A op1·msg4 렌더·제목 갱신, A→B 전환 렌더, 스크린샷. + headless browse 5대화 전부 op1.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 배포(deploy_scope: included) → 배포 후 최종 확인.
+
 ## TASK-20260701T220000-graphview-webgl-labels — 스키마 클러스터명 오버레이 WebGL 렌더러 호환 수정 (Minor §12.3 — feature-0003 프론트 단독, graphview-render 후속)
 - 트리거: `graphview-render`(§18 클러스터명 오버레이) 를 최신 main 에 병합하니, 병렬 머지된 **graph-webgl(§17, Cytoscape 3.30.2→3.34.0 + WebGL 렌더러)** 과 결합됐다. 배포 전 병합 번들 PB-0008 프리뷰 검증에서 **클러스터명 오버레이 미표시(labelDivs=0)** 발견.
 - 근본원인(실측): 오버레이 위치 동기화가 `cy.on("render", …)` 에 바인딩됐는데, **WebGL 렌더러(cytoscape 3.31+ `webgl:true`)는 `render` 이벤트를 emit 하지 않는다**(실측 renderFires=0, canvas-2D 에선 fire). → 초기 로드·pan/zoom 시 sync 미호출 → 라벨 div 미생성/미추종. (`_metaGraphSyncClusterLabels` 함수 자체·`renderedBoundingBox` 는 WebGL 에서 정상 — 수동 호출 시 35 divs 정상 생성 확인.)
