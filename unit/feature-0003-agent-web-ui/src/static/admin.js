@@ -3031,9 +3031,18 @@ function _metaInitGraph() {
     //   라벨 사라짐 불호). WebGL 은 노드/라벨을 sprite-sheet 텍스처로 만들어 GPU 로 합성 → **라벨을 켠 채로도
     //   부드러운 애니**. 노드/라벨/2단 compound(스키마>Table ERD카드>컬럼)는 완전 지원(실 Windows 브라우저
     //   WebGL 실측 확인). 미지원 엣지 스타일(taxi/dashed)은 아래에서 bezier/색·투명도 구분으로 대체.
-    //   pixelRatio 제거: canvas-2D 픽셀-채우기 절감 레버였으나 WebGL 은 GPU 처리라 불필요.
     //   webgl:_webglOk — 미지원 환경은 위 feature-detect 로 false → canvas-2D 폴백(그래프 유지).
-    renderer: { name: "canvas", webgl: _webglOk },
+    //   graphview-webgl-polish: **외곽선 뭉개짐 해소**. WebGL 은 각 노드/박스를 sprite atlas 셀
+    //   (기본 webglTexSize 2048 / webglTexRowsNodes 18 → 셀 ~113px)로 래스터한 뒤 화면 크기로 스케일한다.
+    //   줌인 시 노드·compound 박스가 셀 해상도를 초과하면 텍스처 업스케일 블러가 생긴다. 대책:
+    //     - webglTexSize 4096(노드 셀 ~227px·라벨 셀 상향; GPU MAX_TEXTURE_SIZE 초과분은 cytoscape 자동 클램프)
+    //     - pixelRatio 2(atlas 텍스처를 2× DPI 로 래스터 → 외곽선/텍스트 선명). canvas-2D 와 달리 WebGL 은
+    //       텍스처를 GPU 합성하므로 pixelRatio 상향의 프레임 비용이 낮다(graph-webgl 의 FPS 이득 유지).
+    //   ※ pixelRatio 는 **WebGL 경로에만** 부여한다. canvas-2D 폴백에 pixelRatio:1 을 강제하면 Cytoscape 가
+    //     device DPR 폴백(getPixelRatio: forcedPixelRatio!=null 이면 우선)을 건너뛰어 HiDPI(Retina·Windows
+    //     스케일)에서 오히려 흐려진다 → 폴백은 키를 생략해 기존 device-DPR 선명도를 보존(적대 리뷰 NIT).
+    renderer: { name: "canvas", webgl: _webglOk, webglTexSize: 4096 },
+    ...(_webglOk ? { pixelRatio: 2 } : {}),
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
@@ -3135,9 +3144,16 @@ function _metaInitGraph() {
     _metaGraph._lastTapAt = now;
     if (isDbl) {
       _metaGraph._lastTapKey = null;   // 트리플탭 중복 방지
-      _metaGraphExpand(key);           // 더블: 이웃 그래프 확장/전환
+      if (_metaGraph._colTimer) { clearTimeout(_metaGraph._colTimer); _metaGraph._colTimer = null; }   // 단일-지연 컬럼 토글 취소(더블은 이웃 확장)
+      _metaGraphExpand(key);           // 더블: 이웃(관계) 그래프 확장/전환
     } else {
-      _metaGraphShowDetail(key);       // 단일: 상세 카드만 갱신
+      _metaGraphShowDetail(key);       // 단일: 상세 카드 즉시 갱신(캔버스 무변경)
+      // webgl-polish 항목2: 테이블은 단일 클릭 시 **자신의 컬럼을 인라인 토글(펼침/접힘)**. 기본 접힘(roots).
+      //   더블클릭(이웃 확장)과 구분하려 300ms 지연 — 두 번째 탭이 오면 위 isDbl 분기가 이 타이머를 취소한다.
+      if (t.data("label") === "Table") {
+        if (_metaGraph._colTimer) clearTimeout(_metaGraph._colTimer);
+        _metaGraph._colTimer = setTimeout(() => { _metaGraph._colTimer = null; _metaGraphToggleColumns(key); }, 300);
+      }
     }
   });
   // ERD-card: 컬럼은 테이블의 compound 자식 → 테이블(박스) 드래그 시 자식 컬럼이 자동 추종(별도 재배치 불필요).
@@ -3245,7 +3261,72 @@ async function _metaGraphShowDetail(key) {
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
   const nb = Math.max(0, (data.nodes || []).length - 1);
-  _metaGraphStatus(`상세: ${self.name || key} · 이웃 ${nb}개 (더블클릭 = 그래프 확장)`);
+  _metaGraphStatus(`상세: ${self.name || key} · 이웃 ${nb}개 (더블클릭 = 관계 확장)`);
+}
+
+// webgl-polish 항목2: 테이블 단일 클릭 = **자신의 컬럼 인라인 토글(펼침/접힘)** 진입점.
+//   기본 접힘(roots 는 Schema→Table 만 로드). 펼침: depth=1 그래프 컬럼(HAS_COLUMN) → 없으면 datasource
+//   information_schema 즉석 조회(introspect). 접힘: compound 자식(Column) 제거 + introspected Set 에서 해제
+//   (해제해야 재펼침이 재-introspect). 이웃(관계) 확장은 더블클릭(_metaGraphExpand)이 책임 — 단, #519(graph-perf2)
+//   부터 미분석 테이블 더블클릭은 이웃 확장과 함께 컬럼도 introspect 한다(introspected Set·anchorHasCols 로 중복 회피).
+async function _metaGraphToggleColumns(key) {
+  const cy = _metaGraph.cy;
+  if (!cy || !key) return;
+  const node = cy.getElementById(key);
+  if (!node || !node.length || node.data("label") !== "Table") return;
+  // 이미 펼쳐져 있으면(Column 자식 존재) 접기.
+  let cols = cy.collection();
+  try { cols = node.children().filter((c) => c.data("label") === "Column"); } catch (_) {}
+  if (cols.length) {
+    const nm = node.data("name") || key;
+    cols.remove();
+    // fix(webgl-polish): introspect(datasource information_schema)로 채운 컬럼은 그래프 DB 에 HAS_COLUMN 이
+    //   없어 재펼침 시 respHasCols=false 다. introspected Set 에 key 가 남으면 아래 펼침 분기의 재조회가 skip 되어
+    //   컬럼이 다시 안 나온다 → 접힘 시 key 를 해제해 재펼침이 재-introspect 하게 한다.
+    if (_metaGraph.introspected) _metaGraph.introspected.delete(key);
+    _metaGraphStatus(`${nm} 컬럼 접힘 (${cols.length}개) — 다시 클릭하면 펼침`);
+    return;
+  }
+  // 접혀 있으면 펼치기.
+  _metaGraphStatus("컬럼 조회 중…");
+  let data;
+  try { data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`); }
+  catch (_) { data = { nodes: [], edges: [] }; }
+  const respHasCols = (data.edges || []).some((e) => e && e.type === "HAS_COLUMN" && e.source === key);
+  if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
+  let note = "";
+  if (!respHasCols && !_metaGraph.introspected.has(key)) {
+    try {
+      const col = await apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`);
+      if (col && col.introspected && (col.nodes || []).length) {
+        _metaGraph.introspected.add(key);
+        data.nodes = (data.nodes || []).concat(col.nodes);
+        data.edges = (data.edges || []).concat(col.edges || []);
+      } else if (col && !col.introspected && col.reason) {
+        note = ` (${col.reason})`;
+      }
+    } catch (_) { /* graceful — 컬럼 조회 실패는 무시 */ }
+  }
+  // 이웃 테이블/관계는 제외 — self(테이블) + Column + HAS_COLUMN 만 add(단일=컬럼 역할 유지).
+  const colNodes = (data.nodes || []).filter((x) => x && (x.key === key || x.label === "Column"));
+  const colEdges = (data.edges || []).filter((e) => e && e.type === "HAS_COLUMN");
+  const newIds = _metaGraphAddElements(colNodes, colEdges) || [];
+  const nm = node.data("name") || key;
+  if (newIds.length > 0) {
+    // graph-perf2 정합: 신규 컬럼을 부모 테이블 중심 기준 **세로 스택**으로 seed(옛 3-wide grid 아님). #519 가
+    //   fcose 컬럼 정렬 제약을 제거했으므로 fcose 는 컬럼을 정렬하지 않는다 — seed 는 randomize:false fcose 의
+    //   수렴 안정성 보험일 뿐이고, 컬럼 최종 배치는 layoutstop 의 _metaGraphPlaceColumns 결정론 배치가 보장한다.
+    const ap = node.position();
+    const newCols = newIds.map((id) => cy.getElementById(id)).filter((n) => n && n.length);
+    const y0 = ap.y - (newCols.length - 1) / 2 * _META_COL_PITCH;
+    newCols.forEach((nd, i) => { nd.position({ x: ap.x, y: y0 + i * _META_COL_PITCH }); });
+    const focus = cy.collection().merge(node);
+    newCols.forEach((nd) => focus.merge(nd));
+    _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus, anchorId: key });
+    _metaGraphStatus(`${nm} 컬럼 ${newIds.length}개 펼침 — 다시 클릭하면 접힘`);
+  } else {
+    _metaGraphStatus(`${nm} — 펼칠 컬럼 없음${note}`);
+  }
 }
 
 async function _metaGraphExpand(key) {
