@@ -444,3 +444,15 @@ source_of_truth: true
 - Files: docs(MODIFY/REVIEW/REPORT/TASK) — 배포 기록(코드 무변경).
 - Impact: admin/metadata 도메인 deploy-backed 완료. insight/ask-worker GIT_COMMIT WARN 은 별건(웹 무관).
 - Rollback: `sudo -E bin/deploy-web.sh --rollback`(이전 색 유지, 이미 안정).
+
+## CHG-20260701-0009
+- Date: 2026-07-01
+- Related Requirement: P5b router 추출 batch — **6 도메인 35 핸들러 전체추출**(profile·integrations·attachments·admin_audits·admin_accounts·admin_roles). inline-heavy 도메인 대량 추출.
+- **전략 전환(핵심 발견)**: **핸들러 router 추출은 DI 전환을 요구하지 않는다.** 원래 블로커(테스트 monkeypatch 커플링)는 *helper* 를 web_context 로 옮길 때만 발생(cross-call 네임스페이스 이탈); *핸들러* 추출은 `import app`+`app.X` 동적참조라 `app._require_account` 등 monkeypatch 계약이 그대로 보존됨(admin_metadata_suggest 선례). → **DEFER 핸들러(pre-auth gate 등)도 인라인 auth 유지로 byte-identical 추출 가능**("이연=구조 재편 후 추출"의 구조 재편 = router 이동 자체). 잔여 10 도메인 분류 workflow(11 agents): CLEAN-DI 5·ALREADY-DI 36·PUBLIC 7·DEFER 50(preauth 42·longpoll 4·txn 3·failsoft 1). 전체추출로 도메인 라우트 split(var-vs-concrete 순서 위험) 회피.
+- Summary:
+  6 도메인 전 핸들러(ALREADY-DI + PUBLIC + DEFER-inline)를 **범용 tokenize 추출기**(`extract_router.py`)로 router 이동. 개선: (1) 완전 mod_syms(튜플/AnnAssign/import 타깃), (2) **import 심볼 제외 + app.py import_map 으로 router 로컬 import 동적 생성**(fastapi/stdlib/typing), (3) self-healing missing-prefix static 재검사. profile(4)·integrations(4, RedirectResponse/OAuth)·attachments(4)·admin_audits(7)·admin_accounts(8)·admin_roles(8).
+  - 동반 테스트 재참조(범용 `reref_tests.py`, `app.<handler>`→`<module>.<handler>` call·getsource·attribute 전부 + module-level import): test_audit_tamper_evidence·test_login_attempt_limit·test_llm_usage_quota·test_avatar_icon_upload·test_two_factor_auth. **추가 커플링 2유형 make test 적발·수정**: (a) `hasattr(app,"handler")` 문자열-인자 3건 → `hasattr(<module>,...)`, (b) `app.app.routes` flat 순회(중첩 include_router 라우트 미포착) → 재귀 walk(test_task0284 route-registered), (c) source-text regex `def download_attachment...@app\.`(app.py) → routers/attachments.py + `@router\.`.
+- Files: src/routers/{profile,integrations,attachments,admin_audits,admin_accounts,admin_roles}.py(신규 6), src/app.py(35 제거 + include_router 6), tests/(6 파일 reref+import+coupling fix), tests/route_snapshot_p5b.json(골든 순서 재생성·set-neutral 192) + docs.
+- Impact: **app.py 26,734→24,648 줄(~2,086↓).** 12→18 router. make test 전체 통과·1313 passed·0 fail·route drift 0, route-parity 192(set 불변), py_compile OK. byte-neutral(라우트 경로/메서드/응답 불변, DEFER 핸들러 인라인 auth 그대로).
+- 학습: 추출 커플링 유형 확장 → (1)직접호출 (2)monkeypatch (3)getsource attribute (4)소스텍스트 read_text/ast.parse (5)**`hasattr/getattr(app,"handler")` 문자열-인자** (6)**`app.app.routes` flat 순회(중첩 라우트)**. 추출 전 grep: `app\.<h>`·`hasattr\(app,"<h>"`·`app.app.routes`. **DI 전환은 추출의 전제가 아님** — 모듈화(app.py 축소)가 목표면 전체추출(인라인 유지)이 최단.
+- Rollback: revert(6 router 삭제 + app.py 35 복원 + 테스트 원복 + 골든 복원).

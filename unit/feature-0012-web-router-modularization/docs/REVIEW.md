@@ -342,3 +342,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 검증 성격: 코드 무변경 배포 기록. byte-동치 §18.8 은 DI 전환(REV-0006)에서, 추출 route-parity 는 REV-0007 에서 완료. 본 항목은 **프로덕션 라이브 smoke** 가 게이트.
 - 결정적 검증: (1) CI test PASS(36s). (2) blue-green 배포 soak 90s 통과·롤백 없음. (3) 라이브 edge healthz git_commit=0b91b1b·status=ok(배포 커밋 일치). (4) 추출 admin_metadata 라우트 미인증 **401 verbatim** = DI seam(require_permission→get_current_account→_AuthError 401) 프로덕션 byte-동치 + 컨테이너 로드 router import 정상(web_context류 ModuleNotFoundError 없음 — healthz 게이트 통과가 입증). (5) insight/ask-worker GIT_COMMIT WARN = 별건(웹 배포 무관).
 - 결론: admin/metadata 도메인 deploy-backed 완료.
+
+## REV-20260701-0009 [SKIPPED:mechanical byte-neutral 전체추출 — make test route-parity + 커플링 6유형 grep + static missing-prefix 게이트]
+- Related Change: CHG-20260701-0009 (6 도메인 35 핸들러 전체추출)
+- 검증 성격: 추출은 라우트 경로/메서드/응답 불변 mechanical move(핸들러 코드 무변경, DEFER 는 인라인 auth 그대로, `app.X` 참조 접두만). auth 로직 변경 0(§18.8 byte-동치 불요). 게이트 = route-parity(경로+메서드+순서) + make test 전체 + static prefix-완전성 + 커플링 6유형 전수.
+- 결정적 검증: (1) route-parity 골든 docker `_build_table` 재생성 = **set-neutral(added/removed 0), total 192 불변**. (2) make test **1313 passed·0 fail·route drift 0**. (3) **make test 안전망이 미포착 커플링 4건 실적 적발·수정**: `hasattr(app,"handler")` 3(→모듈), `app.app.routes` flat 순회 1(→재귀 walk). (4) 6 신규 router 가 docker(uvicorn web.app 컨테이너 로드)에서 정상 import(골든 재생성이 app 로드 성공으로 입증). (5) 추출기 self-healing missing-prefix static 재검사 clean, py_compile app.py+6 router OK.
+- 커플링 6유형 확립(추출 전 grep): (1)`app.<h>(` 직접호출 (2)`monkeypatch.setattr(app,...)` (3)`getsource(app.<h>)` (4)소스텍스트 `read_text/ast.parse`+핸들러명 (5)`hasattr/getattr(app,"<h>")` 문자열-인자 (6)`app.app.routes` flat 순회. profile·integrations 는 커플링 0(TestClient+snapshot), 나머지 4 도메인은 getsource/hasattr/route-check 재참조.
+- app.py 26,734→24,648(~2,086↓). 12→18 router. DEFER 핸들러(preauth) 인라인 auth 보존 = byte-identical.
+- 학습: 핸들러 추출은 DI 전환 불요(monkeypatch 는 `app.X` 동적참조로 보존). DEFER byte-동치 DI-rework 는 향후 정제(현 목표=모듈화, 전체추출이 최단).

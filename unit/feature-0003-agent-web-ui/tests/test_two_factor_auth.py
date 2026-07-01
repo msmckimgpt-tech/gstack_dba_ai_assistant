@@ -37,6 +37,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import admin_accounts  # feature-0012 P5b
 
 
 def _read_static(name: str) -> str:
@@ -112,8 +113,8 @@ def test_b6_login_two_step():
 
 
 def test_b7_admin_disable_and_audit():
-    assert hasattr(app, "admin_account_totp_disable")
-    adm = inspect.getsource(app.admin_account_totp_disable)
+    assert hasattr(admin_accounts, "admin_account_totp_disable")
+    adm = inspect.getsource(admin_accounts.admin_account_totp_disable)
     assert "console.manage" in adm and "auth.totp.admin_disable" in adm
     builder = inspect.getsource(app.build_audit_change_json)
     for act in ("auth.totp.enable", "auth.totp.disable", "auth.totp.admin_disable", "auth.login.totp"):

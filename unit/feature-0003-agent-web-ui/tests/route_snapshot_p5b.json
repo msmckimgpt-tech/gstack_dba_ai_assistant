@@ -288,34 +288,6 @@
       "type": "APIRoute"
     },
     {
-      "path": "/api/admin/accounts/{account_id}/avatar",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/avatar",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}/icon",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}/icon",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/api/conversations/{cid}/attachments",
       "methods": [
         "POST"
@@ -326,34 +298,6 @@
       "path": "/api/conversations/{cid}/attachments",
       "methods": [
         "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}/download",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}/versions",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}",
-      "methods": [
-        "DELETE"
       ],
       "type": "APIRoute"
     },
@@ -477,104 +421,6 @@
       "type": "APIRoute"
     },
     {
-      "path": "/api/integrations/google-drive/status",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/integrations/google-drive/connect",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/integrations/google-drive/callback",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/integrations/google-drive/disconnect",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/password-reset",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/unlock",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/totp/disable",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/api/admin/products",
       "methods": [
         "GET"
@@ -687,20 +533,6 @@
       "type": "APIRoute"
     },
     {
-      "path": "/api/admin/roles/{role_id}/prompt/generate",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}/prompt/generate/stream",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/api/auth/me/system-prompt/generate",
       "methods": [
         "POST"
@@ -743,13 +575,6 @@
       "type": "APIRoute"
     },
     {
-      "path": "/api/profile/usage/conversations",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/api/admin/dashboard/preferences",
       "methods": [
         "GET"
@@ -760,76 +585,6 @@
       "path": "/api/admin/dashboard/preferences",
       "methods": [
         "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/profile/usage",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/export.csv",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/actors",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/resources",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/verify",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/purge",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/{event_id}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/profile/audits",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/profile/audits/{event_id}",
-      "methods": [
-        "GET"
       ],
       "type": "APIRoute"
     },
@@ -1341,6 +1096,251 @@
       "path": "/api/admin/metadata/bootstrap/describe",
       "methods": [
         "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/profile/usage/conversations",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/profile/usage",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/profile/audits",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/profile/audits/{event_id}",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/integrations/google-drive/status",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/integrations/google-drive/connect",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/integrations/google-drive/callback",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/integrations/google-drive/disconnect",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/attachments/{attachment_id}",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/attachments/{attachment_id}/download",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/attachments/{attachment_id}/versions",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/attachments/{attachment_id}",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/audits",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/audits/export.csv",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/audits/actors",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/audits/resources",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/audits/verify",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/audits/purge",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/audits/{event_id}",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts/{account_id}/avatar",
+      "methods": [
+        "PUT"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts/{account_id}/avatar",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts/{account_id}",
+      "methods": [
+        "PATCH"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts/{account_id}/password-reset",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts/{account_id}/unlock",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts/{account_id}/totp/disable",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/accounts/{account_id}",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles/{role_id}/icon",
+      "methods": [
+        "PUT"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles/{role_id}/icon",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles/{role_id}",
+      "methods": [
+        "PATCH"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles/{role_id}",
+      "methods": [
+        "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles/{role_id}/prompt/generate",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/roles/{role_id}/prompt/generate/stream",
+      "methods": [
+        "GET"
       ],
       "type": "APIRoute"
     }

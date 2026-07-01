@@ -39,6 +39,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import admin_accounts  # feature-0012 P5b
 
 
 def _read_static(name: str) -> str:
@@ -119,15 +120,15 @@ def test_b7_serialize_exposes_lock():
 
 
 def test_b8_admin_unlock_endpoint():
-    assert hasattr(app, "admin_account_unlock")
-    src = inspect.getsource(app.admin_account_unlock)
+    assert hasattr(admin_accounts, "admin_account_unlock")
+    src = inspect.getsource(admin_accounts.admin_account_unlock)
     assert "console.manage" in src and "account.update" in src   # 권한 게이트
     assert "_login_reset_lockout" in src
     assert "auth.unlock" in src
 
 
 def test_b9_password_reset_clears_lockout():
-    src = inspect.getsource(app.admin_account_password_reset)
+    src = inspect.getsource(admin_accounts.admin_account_password_reset)
     assert "FailedLoginAttempts = 0" in src
     assert "LockedUntilAt = NULL" in src
 
