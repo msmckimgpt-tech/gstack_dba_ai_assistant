@@ -18,6 +18,7 @@ import asyncio
 import json
 
 import app
+from routers import admin_products  # feature-0012 P5b
 
 
 # ── Fakes ──────────────────────────────────────────────────────────────────────
@@ -215,7 +216,7 @@ def test_reset_requires_permission(monkeypatch):
     nobody = {"id": 9, "permissions": {"console.access": True}}  # insight.reset 없음
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (nobody, None))
-    resp = asyncio.run(app.admin_product_insight_reset(_FakeRequest({"db": "account_db"}), 1))
+    resp = asyncio.run(admin_products.admin_product_insight_reset(_FakeRequest({"db": "account_db"}), 1))
     assert resp.status_code == 403
 
 
@@ -227,7 +228,7 @@ def test_reset_rejects_db_not_in_product(monkeypatch):
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (admin, None))
     _patch_product(monkeypatch, pid=1, dbs=("account_db",))
     # 'evil_db' 는 제품 접근 DB 가 아님 → 400
-    resp = asyncio.run(app.admin_product_insight_reset(_FakeRequest({"db": "evil_db"}), 1))
+    resp = asyncio.run(admin_products.admin_product_insight_reset(_FakeRequest({"db": "evil_db"}), 1))
     assert resp.status_code == 400
 
 
@@ -237,7 +238,7 @@ def test_reset_requires_db(monkeypatch):
     admin = {"id": 1, "permissions": {"insight.reset": True}}
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (admin, None))
-    resp = asyncio.run(app.admin_product_insight_reset(_FakeRequest({}), 1))
+    resp = asyncio.run(admin_products.admin_product_insight_reset(_FakeRequest({}), 1))
     assert resp.status_code == 400
 
 
@@ -255,7 +256,7 @@ def test_reset_dry_run_counts(monkeypatch):
     monkeypatch.setattr("shared.db._pg_connect", lambda: _CountingPgConn([7, 7, 10, 4, 17]))
 
     resp = asyncio.run(
-        app.admin_product_insight_reset(_FakeRequest({"db": "account_db", "dry_run": True}), 1)
+        admin_products.admin_product_insight_reset(_FakeRequest({"db": "account_db", "dry_run": True}), 1)
     )
     assert resp.status_code == 200
     body = _body(resp)
@@ -282,7 +283,7 @@ def test_reset_catalog_unreachable_aborts(monkeypatch):
         raise RuntimeError("connection refused")
     monkeypatch.setattr("shared.db.list_information_schema_tables", _boom)
     resp = asyncio.run(
-        app.admin_product_insight_reset(_FakeRequest({"db": "account_db", "dry_run": True}), 1)
+        admin_products.admin_product_insight_reset(_FakeRequest({"db": "account_db", "dry_run": True}), 1)
     )
     assert resp.status_code == 502
 

@@ -468,3 +468,15 @@ source_of_truth: true
 - Impact: **app.py 24,648→23,536 줄(~1,112↓).** 18→20 router. make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral(PUBLIC/DEFER 인라인 그대로).
 - 학습: 커플링 7유형 = 기존 6 + **(7) source-text 호출식 count**(핸들러명 아닌 helper 호출식을 app.py 소스에서 count → 추출로 이동 시 count 변동, app.py+routers 합산으로 수정). reref import guard 는 정확 매칭 필수(generic substring 금지).
 - Rollback: revert(2 router 삭제 + app.py 24 복원 + 테스트 원복 + 골든 복원).
+
+## CHG-20260701-0011
+- Date: 2026-07-01
+- Related Requirement: P5b 전체추출 batch3 — api/conversations 17(→기존 conversations.py **append**) + admin/products 22(신규) = 39 핸들러. **잔여 도메인 대부분 추출 완료**.
+- Summary:
+  api/conversations 17 sub-resource 핸들러(members/share/attachments/messages/product/sample-feedback/fix-with-ai 등, ALREADY-DI 10 + DEFER 7 인라인) → **기존 routers/conversations.py 에 append**(추출기 --append 모드 신규: 기존 import 에 부족분 병합·핸들러 뒤 추가·include_router 기존 유지·NEW 블록만 missing-prefix 검사). admin/products 22(CLEAN-DI 1 + ALREADY-DI 5 + DEFER 16 txn/streaming/pre-auth 인라인) → routers/admin_products.py(신규).
+  - 동반 테스트 reref: conversations 7파일(direct-call post_sample_feedback/post_fix_with_ai + getsource create_conversation_share/list_conversation_shares/list_conversation_attachments/mark_conversation_read) + products 5파일(direct-call). **source-text contract 2 make test 적발·수정**: (a) test_group_conversation_s2 `@app.get(".../members")` in APP(app.py만) → member 핸들러 이동으로 APP_ALL(app.py+routers)+`@router` 허용, (b) **test_share_joinable_owner_guard getsource substring `joinable and not _conversation_owned_by_account`** → 추출로 helper 가 `app._conversation_owned_by_account` 접두되어 substring(앞 단어 `not ` 포함) 불일치 → `not app._conversation_owned_by_account` 로 갱신.
+  - 추출기 개선: missing-prefix 에서 IMPORTED 심볼 제외(로컬 import 로 커버), --append 시 NEW 블록만 검사(기존 router F821 은 별건).
+- Files: src/routers/conversations.py(+17 append), src/routers/admin_products.py(신규), src/app.py(39 제거 + include_router 1[products; conversations 기존]), tests/(13 파일 reref+source-text fix), tests/route_snapshot_p5b.json(골든 set-neutral 192) + docs.
+- Impact: **app.py 23,536→20,542 줄(~2,994↓).** 20→21 router(conversations append). make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral. **잔여 app.py 라우트 16(session 시작 148 대비)**.
+- 학습: getsource substring 검사는 **helper 앞 컨텍스트(`not X`, `= X`) 포함 시 app. 접두로 깨짐**(단일 심볼명은 부분문자열로 생존) → 추출 시 그런 substring 은 `app.` 접두형으로 갱신. --append 는 기존 router import 병합 + include_router 미추가. 커플링 8유형(신규 8=getsource 컨텍스트-substring).
+- Rollback: revert(conversations 17 append 제거 + admin_products 삭제 + app.py 39 복원 + 테스트 원복 + 골든).

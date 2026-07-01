@@ -358,3 +358,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 커플링 7유형 확립: 기존 6 + **(7) source-text 호출식 count**(helper 호출식을 app.py 소스에서 count — 추출 이동 시 변동, app.py+routers 합산 수정). auth_me 필터 호출이 auth.py 로 이동해 count 2→1 적발.
 - app.py 24,648→23,536(~1,112↓). 18→20 router.
 - 학습: 커플링 스캔은 핸들러명 grep 만으론 부족 — helper 호출식 count 형 source-text 검사(핸들러명 무참조)는 make test 가 최종 안전망. reref import guard 정확 매칭 필수.
+
+## REV-20260701-0011 [SKIPPED:mechanical byte-neutral 전체추출 — make test route-parity + 커플링 8유형 게이트]
+- Related Change: CHG-20260701-0011 (conversations 17 append + products 22 전체추출)
+- 검증 성격: mechanical route-preserving move(auth 로직 무변경, DEFER/txn/streaming 인라인 그대로). conversations 는 기존 router append.
+- 결정적 검증: (1) 골든 재생성 set-neutral 192. (2) make test **1313 passed·0 fail·route drift 0**(2회 — 1차 source-text contract 6 적발[test_group_conversation_s2 APP→APP_ALL·test_share_joinable_owner_guard getsource substring], 2차 GREEN). (3) products txn(admin_create/update/delete_product)·streaming(prompt/generate/stream)·pre-auth 전부 인라인 보존 byte-identical. (4) --append: 기존 conversations.py(10) + 신규 17 = 27 핸들러, NEW 블록 missing-prefix clean, 골든 재생성 app 로드 성공(컨테이너 import 정상). (5) py_compile OK.
+- 커플링 8유형 확립: 기존 7 + **(8) getsource 컨텍스트-substring**(helper 앞 단어 포함 substring 이 `app.` 접두로 깨짐 — 단일 심볼명은 생존). test_share_joinable_owner_guard 의 `not _conversation_owned_by_account` 적발.
+- app.py 23,536→20,542(~2,994↓, 단일 배치 최대). 20→21 router. **잔여 app.py 라우트 16(session 시작 148 대비 −132, 89% 추출)**.
+- 학습: --append 모드로 도메인 재통합(conversations sub-resource 를 lifecycle router 로). source-text getsource 는 helper-접두에 취약 — make test 가 안전망.

@@ -75,7 +75,8 @@ source_of_truth: true
     - [~] **전략 전환 — 전체추출(DI 전환 불요)**: 잔여 10 도메인 분류 workflow(11 agents) 결과 CLEAN-DI 5·ALREADY-DI 36·PUBLIC 7·DEFER 50. **핸들러 추출은 DI 전환 전제 아님**(monkeypatch 는 `app.X` 동적참조로 보존) → DEFER 도 인라인 auth 유지로 byte-identical 추출. 도메인 전체추출로 라우트 split 회피.
       - [x] **batch1 6 도메인 35 핸들러 전체추출**(CHG/REV-20260701-0009): profile 4·integrations 4·attachments 4·admin_audits 7·admin_accounts 8·admin_roles 8 → routers/. 범용 추출기(완전 mod_syms·동적 import·self-healing) + reref(커플링 6유형). **app.py 26,734→24,648(~2,086↓)**, 12→18 router. make test 1313·0 fail.
       - [x] **batch2 datasources 6 + auth 18 전체추출**(CHG/REV-20260701-0010): routers/{admin_datasources,auth}.py. datasources CLEAN-DI 3·auth PUBLIC 7·DEFER 인라인 유지. 커플링 7유형(신규: source-text 호출식 count). **app.py 24,648→23,536(~1,112↓)**, 20 router. make test 1313·0 fail.
-      - [ ] batch3: api/conversations 17(→기존 conversations.py append)·admin/products 22(txn/streaming/pre-auth) 전체추출.
+      - [x] **batch3 conversations 17(append) + products 22 전체추출**(CHG/REV-20260701-0011): conversations sub-resource → 기존 routers/conversations.py append(추출기 --append 신규), products → routers/admin_products.py. DEFER/txn/streaming 인라인 유지. 커플링 8유형(신규: getsource 컨텍스트-substring). **app.py 23,536→20,542(~2,994↓)**, 21 router. make test 1313·0 fail. **잔여 app.py 라우트 16(session 시작 148 대비 89% 추출)**.
+      - [ ] 잔여 16 라우트(misc/deferred): api/public 2(public_share_view fail-soft)·admin/system-prompts 2·admin/dashboard 2·livez·readyz·session·api-vault·ask·fork_conversation·clear_memory·progress(fail-soft)·ask_result(long-poll)·suggestions(fail-soft) — 도메인 그룹핑/기존 router 편입.
       - [ ] (향후 정제) DEFER preauth 핸들러 byte-동치 DI-rework(pre-auth gate → pre-auth dependency).
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 

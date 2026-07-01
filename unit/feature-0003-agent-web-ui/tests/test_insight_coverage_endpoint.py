@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 
 import app
+from routers import admin_products  # feature-0012 P5b
 
 
 class _BenignCursor:
@@ -86,7 +87,7 @@ def test_single_product_returns_only_target(monkeypatch):
                 {"id": 2, "datasource_key": "ds-b"},
                 {"id": 3, "datasource_key": "ds-c"}]
     acct = _install(monkeypatch, products)
-    resp = app.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}), account=acct, conn=_BenignConn())
+    resp = admin_products.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}), account=acct, conn=_BenignConn())
     assert resp.status_code == 200
     cov = _body(resp)["coverage"]
     assert set(cov.keys()) == {"2"}
@@ -99,7 +100,7 @@ def test_single_product_skips_other_products_compute(monkeypatch):
                 {"id": 3, "datasource_key": "ds-c"}]
     log: list[int] = []
     acct = _install(monkeypatch, products, computed_log=log)
-    app.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}), account=acct, conn=_BenignConn())
+    admin_products.admin_products_insight_coverage(_FakeRequest({"product_id": "2"}), account=acct, conn=_BenignConn())
     # 오직 대상 제품(2)만 계산 — 느릴 수 있는 1·3 은 건드리지 않는다.
     assert log == [2]
 
@@ -111,7 +112,7 @@ def test_no_product_id_computes_all(monkeypatch):
                 {"id": 3, "datasource_key": "ds-c"}]
     log: list[int] = []
     acct = _install(monkeypatch, products, computed_log=log)
-    resp = app.admin_products_insight_coverage(_FakeRequest(), account=acct, conn=_BenignConn())
+    resp = admin_products.admin_products_insight_coverage(_FakeRequest(), account=acct, conn=_BenignConn())
     cov = _body(resp)["coverage"]
     assert set(cov.keys()) == {"1", "2", "3"}
     assert sorted(log) == [1, 2, 3]
@@ -121,12 +122,12 @@ def test_no_product_id_computes_all(monkeypatch):
 def test_requires_console_access(monkeypatch):
     nobody = {"id": 9, "permissions": {}}
     # P5b DI: AO 라 본문 perm 검사가 account 로 실행 → 직접호출에 account=nobody 명시 주입(console.access 없음 → 403).
-    resp = app.admin_products_insight_coverage(_FakeRequest(), account=nobody, conn=_BenignConn())
+    resp = admin_products.admin_products_insight_coverage(_FakeRequest(), account=nobody, conn=_BenignConn())
     assert resp.status_code == 403
 
 
 # ── E5: 잘못된 product_id ──────────────────────────────────────────────────────
 def test_invalid_product_id_400(monkeypatch):
     acct = _install(monkeypatch, [{"id": 1, "datasource_key": "ds-a"}])
-    resp = app.admin_products_insight_coverage(_FakeRequest({"product_id": "abc"}), account=acct, conn=_BenignConn())
+    resp = admin_products.admin_products_insight_coverage(_FakeRequest({"product_id": "abc"}), account=acct, conn=_BenignConn())
     assert resp.status_code == 400
