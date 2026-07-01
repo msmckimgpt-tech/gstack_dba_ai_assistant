@@ -5264,3 +5264,11 @@ source_of_truth: true
 - Verification: `node --check admin.js` PASS · `py_compile` app.py/admin_metadata.py PASS · 신규 `test_metadata_perm_split.py` 9/9 + `test_metadata_ai_autocomplete.py`(fixture 세부권한 갱신) + `test_metadata_phase2.py`/`test_metadata_glossary_enum.py`(직접호출·console.access 음성 경로라 무회귀) + `test_permission_dependency_map.py`(group 기반 트리 — 신규 kb 권한 정합) PASS. 유일 실패 `test_route_parity_p5b`(192→193)는 **origin/main 344a5a80 기존 결함**(#520/#522 신규 route 의 golden 미갱신; 본 변경 route 무추가로 무관 — `git diff main` 에 @router/@app 데코레이터 추가 0 확인). §18.8 적대 패널 2 렌즈(authz + 그래프 프론트).
 - Impact: 프론트(그래프 UX 3) + 인가(권한 세분화). 백엔드 enforcement 권한 코드 전환 + permission map 함의 추가. 데이터/스키마 무변경(권한 catalog seed 는 startup idempotent). 기존 `kb.ingest.manual` 보유자 접근 무손실(함의). 배포=web 이미지 재빌드.
 - Rollback Notes: (Task1-3) admin.js/styles.css/admin.html 환원. (Task4) PERMISSION_DEFINITIONS 5권한 제거 + `_apply_permission_overrides` 함의 블록 제거 + admin_metadata.py 28 핸들러 kb.ingest.manual 환원 + `_METADATA_SUBTAB_PERM_SERVER`/admin.js 맵 환원. `kb.ingest.manual` catalog 유지라 기존 grant 그대로 동작(가역). DB 무변경이라 데이터 롤백 불요.
+
+## CHG-20260701T230501-doc-sync-rn-0701 (TASK-20260701T230501-doc-sync-rn-0701 — 07-01 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 신규 '2026-07-01' 블록 7항목 prepend(기존 06-30 블록 10항목 보존) — [improved admin] 관계도 더 부드럽게·선명 · [new admin] 추정 관계 점선 표시(자기교정) · [new admin] AI 능동 분석 진행 현황 실시간 · [improved admin] 컬럼 실제순서 정렬+조작 편의 · [fixed admin] 관계도 표시 수정(묶음 이름·연결선·첫 컬럼명) · [new admin] 메타데이터 관리 권한 기능별 세분화 · [fixed work] 좌측 대화 선택 시 대화창 미표시 수정. `generated` 2026-06-30→2026-07-01.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260630b-rn-0630`→`?v=20260701-rn-0701`.
+- Verification: `node --check` PASS + vm 로드 generated/07-01 블록 7항목·스키마 정합. 사용자향 평이화(내부용어 0: WebGL/Cytoscape/AGE/alembic/권한키 비노출). feature-0012 router 모듈화는 behavior-neutral 내부 리팩터라 user-facing 제외(정직 분류).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·테이블/함수명·렌더러/마이그·cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit.

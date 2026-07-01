@@ -4365,3 +4365,8 @@ source_of_truth: true
 - 수정 후 `node --check admin.js` 재확인 PASS.
 
 - 라이브 실측(정본 분리, §정직): 두 패널 모두 정적 코드 정합 + 단위테스트 + (authz)런타임 시나리오. 실 그래프 canvas 인터랙션(드래그 리사이즈·접기 버튼·첫 컬럼명 표시)은 자동화 PB-0008 회귀 이력 → **배포 후 사용자 실화면 확인**(TEST.md §3). 권한 세분화는 백엔드 로직이라 단위테스트+런타임 시나리오가 정본.
+
+## REV-20260701T230501-doc-sync-rn-0701 [SKIPPED:non-policy-doc] — 릴리즈노트 07-01 블록 신규(+7) + 캐시버스터 bump (TASK-20260701T230501-doc-sync-rn-0701, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`) + cache-buster(`index/admin.html`) 뿐 — 비-정책 doc-only. 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC·엔드포인트 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현은 doc_sync ULTRACODE 적대 워크플로(ground-truth 3-agent + 적대 verify)가 정본 대비 직접 검증.
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check release-notes-data.js` PASS + vm 로드 `generated`=2026-07-01·신규 '2026-07-01' 블록 7항목·스키마(type/area/title/detail) 정합·06-30 블록 10항목 보존. 적대 사실검증 — 사용자향 평이화·내부 비노출(feature-id/테이블/WebGL/Cytoscape/AGE/Cypher/마이그/권한키 `metadata.*.manage`/cache-buster 슬러그 0)·추정 관계 정직 프레이밍(점선·자기교정)·feature-0012 behavior-neutral 내부 리팩터는 user-facing 제외(정직 분류).
+- Cross-ref: CHG/TASK/FUNCTION-20260701T230501-doc-sync-rn-0701 / 원천 머지 feature-0016 그래프 뷰 07-01 진화(WebGL·암묵 관계 ADR-002·AI 능동 분석 ADR-003·ERD ordinal)·feature-0003 graph-panel-perms(권한 5분할)·convswitch-opacity-guard·graphview-webgl-polish. 원천 UI PB-0008 07-01 PASS(graphview-render/webgl-labels/convswitch). META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit/META mode(REV-20260701T230501-META-0018-doc-sync-0701).
