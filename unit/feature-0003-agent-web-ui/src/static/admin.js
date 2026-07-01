@@ -3005,13 +3005,28 @@ function _metaInitGraph() {
     container,
     elements: [],
     minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
+    // 렌더 성능(프레임 부드럽게): 아래는 전부 프레임당 그리기 부하를 '줄이는' 옵션이라 성능 저하 없음.
+    // - pixelRatio:1 — 고DPI 디스플레이에서 캔버스를 devicePixelRatio(보통 2)² = 4배 픽셀로 래스터하던 것을
+    //   1x 로 고정. 프레임당 채우는 픽셀 수가 최대 병목(측정: 1x 전환 시 jank 프레임 21→9, 노드 더 많은데도 감소).
+    //   트레이드오프: 정지 화면이 약간 소프트해짐(그래프 도형/텍스트라 가독 영향 미미). 필요 시 1.5 로 상향 가능.
+    // - motionBlur: 모션 중 프레임 병합 렌더 → 부드러운 체감.
+    // - textureOnViewport: 팬/줌 시 캐시 텍스처 재사용(전 요소 재렌더 생략).
+    // - hideEdgesOnViewport: 팬/줌 중 엣지 그리기 생략.
+    // (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
+    pixelRatio: 1,
+    motionBlur: true,
+    textureOnViewport: true,
+    hideEdgesOnViewport: true,
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
           "label": "data(name)", "font-size": "11px", "color": "#161b22",
           "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
           "width": _metaNodeSize, "height": _metaNodeSize,
+          "min-zoomed-font-size": 7,   // 축소 시 작아진 라벨은 렌더 생략(줌아웃 프레임 비용↓)
           "text-wrap": "ellipsis", "text-max-width": "120px", "border-width": 0 } },
+      // 모션(레이아웃/카메라 애니메이션) 중 라벨 숨김 — 텍스트 래스터가 프레임 최대 비용. 정지 시 복원.
+      { selector: "node.anim-hide-label", style: { "label": "" } },
       { selector: "node[label='Table']", style: { "font-weight": "bold" } },
       // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
       { selector: "node:parent", style: {
@@ -3162,16 +3177,38 @@ async function _metaGraphExpand(key) {
     _metaGraphStatus((err && err.message) || "이웃 조회 실패");
     return;
   }
-  _metaGraphAddElements(data.nodes || [], data.edges || []);
-  _metaGraphLayout();
+  const cy = _metaGraph.cy;
+  const newIds = _metaGraphAddElements(data.nodes || [], data.edges || []) || [];
+  if (newIds.length > 0) {
+    // 신규 노드를 앵커(더블클릭 노드) 좌표 근처에 seed → 원점(0,0) 겹침 방지 + fcose 가 국소 정착.
+    const anchor = cy.getElementById(key);
+    const ap = (anchor && anchor.length) ? anchor.position() : { x: 0, y: 0 };
+    newIds.forEach((id, i) => {
+      const nd = cy.getElementById(id);
+      if (nd && nd.length) {
+        const ang = (i / newIds.length) * 2 * Math.PI;
+        nd.position({ x: ap.x + Math.cos(ang) * 90 + (i % 6) * 6, y: ap.y + Math.sin(ang) * 90 + (i % 5) * 6 });
+      }
+    });
+    // 증분 레이아웃: 기존 노드는 좌표 고정(재계산·튐 제거), 신규만 배치. 전체 fit 대신 신규 영역으로 카메라 이동.
+    const focus = cy.collection();
+    if (anchor && anchor.length) focus.merge(anchor);
+    newIds.forEach((id) => { const n = cy.getElementById(id); if (n && n.length) focus.merge(n); });
+    _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus });
+  } else {
+    // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
+    try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 300 }); } catch (_) {}
+  }
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
 }
 
+// 반환: 이번에 새로 add 된 (compound 부모 제외) 노드 id 배열 — 증분 레이아웃이 이들만 자유 배치.
 function _metaGraphAddElements(nodes, edges) {
   const cy = _metaGraph.cy;
-  if (!cy) return;
+  if (!cy) return [];
+  const added = [];
   (nodes || []).forEach((n) => {
     if (!n || !n.key) return;
     // 스키마 노드 = 카테고리 컨테이너(compound parent)로 사용.
@@ -3188,6 +3225,7 @@ function _metaGraphAddElements(nodes, edges) {
       fqn: n.fqn || "", description: n.description || "", source: n.source || "" };
     if (pid) data.parent = pid;
     cy.add({ group: "nodes", data });
+    added.push(n.key);
   });
   (edges || []).forEach((e) => {
     if (!e || !e.source || !e.target) return;
@@ -3200,34 +3238,73 @@ function _metaGraphAddElements(nodes, edges) {
       status: e.status || "", esource: e.edge_source || "",
       weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" } });
   });
+  return added;
 }
 
-function _metaGraphLayout() {
+// opts.incremental=true(더블클릭 확장): 기존 노드 좌표를 fixedNodeConstraint 로 고정하고 신규 노드만
+//   국소 배치(randomize:false=PURE_INCREMENTAL). 전체 재무작위화·재프레이밍(fit)·proof 반복을 생략해
+//   '전체가 다시 튕겨 펼쳐지는' 지연을 제거한다. 인자 없음(초기 로드/검색): 좌표 없는 재구축이라
+//   randomize:true + packComponents + proof 유지(안 그러면 원점 뭉침 — fcose 는 randomize:false 시
+//   spectral/packComponents 를 끈다).
+function _metaGraphLayout(opts) {
   if (!_metaGraph.cy) return;
-  const cnt = _metaGraph.cy.nodes().length;
-  // 라벨 겹침 방지의 핵심: nodeDimensionsIncludeLabels=true → 레이아웃이 각 노드의 **라벨 박스까지**
-  // 충돌 회피 대상으로 간주해 라벨이 겹치지 않을 만큼 벌린다. animate=true 로 펼침 과정을 보여준다.
+  opts = opts || {};
+  const cy = _metaGraph.cy;
+  const cnt = cy.nodes().length;
+  const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
+  const base = {
+    nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
+    uniformNodeDimensions: false,
+    nodeSeparation: 150,
+    tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,
+    nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
+    gravityRangeCompound: 1.5, gravityCompound: 1.0,
+    animate: animate, animationEasing: "ease-out",
+  };
   if (_metaGraph.fcose) {
     try {
-      _metaGraph.cy.layout({
-        name: "fcose", quality: "proof", randomize: true, fit: true, padding: 40,
-        animate: animate, animationDuration: 1000, animationEasing: "ease-out",
-        nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거)
-        uniformNodeDimensions: false,
-        packComponents: true,
-        nodeSeparation: 150,                  // 노드 간 최소 간격 ↑(라벨 여유)
-        tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,  // 비연결 노드 타일 간격
-        nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
-        gravityRangeCompound: 1.5, gravityCompound: 1.0,
-        numIter: cnt > 400 ? 1800 : 2500,
-      }).run();
+      let cfg;
+      if (incremental) {
+        const fixed = [];
+        cy.nodes().forEach((n) => {
+          if (n.isParent()) return;                                   // compound 부모는 자식으로 자동 산정
+          if (opts.newIdSet && opts.newIdSet.has(n.id())) return;      // 신규는 자유 배치
+          const p = n.position();
+          fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
+        });
+        // 확장은 element 애니메이션 없이 '즉시 배치'(animate:false). cytoscape 는 요소 애니메이션 중
+        // 매 프레임 전체 캔버스를 고DPI 로 재래스터하므로(몇 노드만 움직여도 수백 노드 전부) element 애니가
+        // 저프레임의 주원인이다. 노드는 즉시 놓고, '화면 이동'은 아래 카메라 애니(textureOnViewport 캐시)
+        // 로만 부드럽게 처리한다. numIter 축소로 동기 계산 hitch 도 완화. (초기 로드/검색의 펼침 애니는 유지.)
+        cfg = Object.assign({}, base, {
+          name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
+          animate: false, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
+        });
+      } else {
+        cfg = Object.assign({}, base, {
+          name: "fcose", randomize: true, quality: "proof", fit: true, padding: 40,
+          animationDuration: 1000, packComponents: true, numIter: cnt > 400 ? 1800 : 2500,
+        });
+      }
+      const layout = cy.layout(cfg);
+      // 비증분(초기 로드/검색)만 element 애니 → 그 동안 라벨 숨김(텍스트 래스터 최대 비용). 증분은 즉시 배치라 불필요.
+      const hideLabels = animate && !incremental;
+      if (hideLabels) { try { cy.nodes().addClass("anim-hide-label"); } catch (_) {} }
+      layout.one("layoutstop", () => {
+        if (hideLabels) { try { cy.nodes().removeClass("anim-hide-label"); } catch (_) {} }
+        if (incremental && opts.focusEles && opts.focusEles.length) {
+          // 노드는 이미 즉시 배치됨 — 카메라만 신규 이웃 영역으로 부드럽게 이동(캐시 텍스처라 저부하).
+          try { cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" }); } catch (_) {}
+        }
+      });
+      layout.run();
       return;
     } catch (_) {}
   }
   try {
     _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
-      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: true }).run();
+      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental }).run();
   } catch (_) {}
 }
 
