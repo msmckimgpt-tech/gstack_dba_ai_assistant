@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260702-metadata-perm-hier — 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3 — feature-0003 프론트 단독, RBAC enforcement/스키마/백엔드/엔드포인트 무변경 · UI 표시 계층만)
+- 트리거(사용자): "다른 권한 구성과 같이 종속적인 관계가 정합하도록 구성. `지식베이스 > 메타데이터` 권한이 다른 권한 포맷과 차이 확인."
+- 진단: `admin.js` `PERMISSION_DEPENDENCIES`(UI progressive-disclosure 표시 계층, enforcement 아님)에서 다른 관리 그룹은 "그룹 게이트(read)→세부(manage)" 2단 계층인데 메타데이터(kb)만 평면(5개 metadata.* 전부 console.access 직속 + 묶음 kb.ingest.manual 은 맵 부재 고아). → kb 그룹만 flat 나열.
+- 해법(B안 유지): 묶음 `kb.ingest.manual`을 그룹 게이트로 삼아 정합화. `kb.ingest.manual→console.access`, 세부 5개 `metadata.*→kb.ingest.manual`. 백엔드 함의(_METADATA_MANUAL_IMPLIES)와 의미 정합. enforcement 무변경.
+- Completion Checklist:
+  - [x] `static/admin.js` `PERMISSION_DEPENDENCIES` 정합화(kb.ingest.manual 게이트화 + metadata.* nest). `node --check` PASS.
+  - [x] §18.8 NIT-1 흡수: `isGrantedForReach`(explicit + override 상속-부여)로 override 도달성 cue 회귀 복원. checkbox 모드 무영향.
+  - [x] `static/admin.html` cache-buster `admin.js?v=20260702-metadata-perm-hier` bump.
+  - [x] `tests/test_permission_dependency_map.py` t5(계층 pin)/t6(도달성) 추가 — 18개 전부 PASS.
+  - [x] §18.8 SUBAGENT 적대 패널 VERDICT PASS(BLOCKING 0 — 개별부여·은닉·enforcement·implies 4축 refute + NIT 2 흡수). REV-20260702T010000-metadata-perm-hier.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 배포(deploy_scope: included) → 배포 후 라이브 그리드 2단 계층 실측.
+
 ## TASK-20260701T100738-convswitch-opacity-guard — 좌측 대화 선택 시 대화창 미표시 방어 하드닝 (Minor §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
 - 트리거(사용자 /_template:entry, 유저 admin): "작업 화면(메인 채팅)에서 좌측 대화 항목을 선택해도 대화창에 내용이 안 뜬다 — 선택이 아예 안 먹는 것처럼". 조사: 현재 배포본(b3175b6) 백엔드·프론트 모두 재현 안 됨(curl `/api/use_conversation`·`/api/history` 200+메시지, fresh 브라우저에서 admin 과 동일 role id3 계정 headless 10대화·race·PB-0008 Windows 정상, 캐시버스터 정합) → stale client(캐시된 구버전 app.js / 장시간 열어둔 탭) 유력. 사용자 결정: 재발 불가하도록 방어 하드닝 배포.
 - 근본 취약점: `static/app.js` `selectConversation` conv-switch-fade 의 begin(opacity:0)↔commit(opacity:1) 사이 risk window(pendingNewConversation 리셋·pending 스냅샷·`stopProgressPolling`)가 try 밖 → 예외 시 opacity:0 잔류로 대화창 빈 화면 가능.

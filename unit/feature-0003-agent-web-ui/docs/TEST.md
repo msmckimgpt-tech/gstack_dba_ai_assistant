@@ -116,6 +116,12 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
+- 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.
+- 정적 검증(pre-commit): `node --check admin.js` PASS · `test_permission_dependency_map.py` 18개 PASS(신규 t5 계층 pin[metadata.*→kb.ingest.manual→console.access, depth manual=0·metadata.*=1] + t6 도달성[게이트 OFF 시 metadata hidden 이나 그룹 비은닉] + 기존 V1~V7 disclosure 무회귀) · §18.8 SUBAGENT 패널 PASS(BLOCKING 0).
+- **PB-0008 Windows-browser: 배포 후 수행(사유 명시)** — 본 변경은 **표시 계층 재구성**이라 배포 전(현재 라이브 654c05ff)엔 관측 불가하고 새 admin.js 서빙 이후에만 그리드 계층이 바뀐다 → **배포 후** 라이브 검증. 권한 그리드는 **DOM 요소**(그래프 canvas/WebGL 아님)라 PB-0008 자동화 회귀(Chrome UtilityScript)와 무관 — headless/실 브라우저 모두 신뢰 검증 가능. 배포 후 확인 항목: (1) 역할 편집 그리드 "지식베이스(KB) 검수" 그룹에서 묶음이 루트·metadata 5개가 그 아래 들여쓰기(2단 계층, 다른 그룹과 동형) (2) 묶음 미체크 시 세부 접힘 + "세부 권한 N개 더 보기" 로 노출·개별 부여 가능(B안 보존) (3) 묶음 체크 시 세부 5개 노출. Runner: AI(배포 후 /browse DOM 검증) + 사용자 실화면 확인 권장.
+- Pass/Fail: 정적 PASS. 라이브 계층 검증은 배포 후 §4 Run 에 기록.
+
 ### TASK-20260702-graph-panel-perms 그래프 뷰 UX 3건 + 메타데이터 탭 권한 세분화(B안) (Major+Critical §12.3, 2026-07-02) — **Environment: Windows-browser (그래프 canvas 인터랙션 — 배포 후 사용자 실화면 확인, 자동화 회귀 이력)**
 - 대상: (Task1) 상세 패널 드래그 리사이즈 (Task2) 확장 테이블 접기 버튼(박스 우측하단 HTML 오버레이) (Task3) 첫 컬럼명 미표시 버그(text-margin-y -13 + halo) (Task4) 메타데이터 탭 권한 세분화(kb.ingest.manual→5 세부 권한, 비파괴 함의).
 - **구조/단위 (PASS)**: `node --check admin.js` PASS · `py_compile app.py routers/admin_metadata.py` PASS. 신규 `tests/test_metadata_perm_split.py` **9/9 PASS**(R1 카탈로그·R2 admin seed/least-priv·R3 함의(묶음→5권한)·R3b override-allow 함의·R4 개별 DENY 우선·R5 granular 격리·R6 umbrella 유지·R7 서버 서브탭 맵·R8 프론트 맵). `test_metadata_ai_autocomplete.py`(fixture 세부권한 갱신)·`test_metadata_phase2.py`·`test_metadata_glossary_enum.py`·`test_permission_dependency_map.py` 무회귀 PASS.

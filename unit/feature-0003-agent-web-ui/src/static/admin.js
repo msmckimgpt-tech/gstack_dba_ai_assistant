@@ -230,13 +230,18 @@ const PERMISSION_DEPENDENCIES = {
   "datasource.manage": "datasource.read",
   // TASK-20260623T090440-sample-feedback-curation: KB 샘플 검수/승급 — console.access 하위(콘솔 진입 필요).
   "kb.sample.curate": "console.access",
-  // graph-panel-perms(task4): 메타데이터 세부 권한(B안) — 모두 console.access 하위. 레거시 묶음 kb.ingest.manual 은
-  //   이들을 함의(effective)하며 루트 표시로 남긴다(하위호환 편의).
-  "metadata.glossary.manage": "console.access",
-  "metadata.enum.manage": "console.access",
-  "metadata.table.manage": "console.access",
-  "metadata.column.manage": "console.access",
-  "metadata.graph.read": "console.access",
+  // metadata-perm-hier: 메타데이터 그룹 종속 정합화 — 다른 관리 그룹(account.read→account.*,
+  //   quota.read→quota.manage 등)이 "그룹 게이트(read) → 세부 권한" 2단 계층인데 메타데이터만 평면이었다.
+  //   묶음 권한 `kb.ingest.manual`("메타데이터 관리 (전체 묶음)")을 그룹 게이트로 삼아 정합화한다:
+  //   `kb.ingest.manual`→console.access(콘솔 게이트 하위, 타 그룹 base 와 동형), 세부 5개→`kb.ingest.manual`.
+  //   백엔드는 이미 묶음이 5개를 함의(_METADATA_MANUAL_IMPLIES)하므로 의미 정합. 종속 맵은 UI 표시 계층
+  //   (progressive disclosure)일 뿐 authz enforcement 아님 — 개별 부여는 "세부 권한 더 보기"로 여전히 가능.
+  "kb.ingest.manual": "console.access",
+  "metadata.glossary.manage": "kb.ingest.manual",
+  "metadata.enum.manage": "kb.ingest.manual",
+  "metadata.table.manage": "kb.ingest.manual",
+  "metadata.column.manage": "kb.ingest.manual",
+  "metadata.graph.read": "kb.ingest.manual",
   // TASK-0288: 제품 관리 — product.read 가 그룹 게이트(console.access 하위), manage/프롬프트는 read 선행.
   "product.read": "console.access",
   "product.manage": "product.read",
@@ -611,14 +616,14 @@ function _updateOverrideGroupSummary(section) {
 //   checkbox 모드는 마스터 게이트 console.access 체크박스가 항상 보이는 복원 레버라 trap 없음.
 //   override(계정) 모드는 게이트가 그 자신도 접힐 수 있는 select 라 그룹을 숨기면 "더 보기" 탈출구까지
 //   같이 사라져 도달 불가 → override 모드는 그룹/섹션을 숨기지 않고(§10.6 "전체 표시" 정합) 행만 접는다.
-function _refreshGroupDisclosure(containerEl, showAll, recompute, mode, isExplicit) {
+function _refreshGroupDisclosure(containerEl, showAll, recompute, mode, isGrantedForReach) {
   const collapseGroups = mode === "checkbox";
   containerEl.querySelectorAll("details.permission-group").forEach((groupEl) => {
     const rows = Array.from(groupEl.querySelectorAll("[data-perm-code]"));
     if (!rows.length) return; // 권한 row 없는 그룹(예: 제품 카드 only)은 건드리지 않음
     const groupKey = groupEl.dataset.permGroup;
     const hiddenCount = rows.filter((r) => r.hidden).length;
-    const grantedCount = rows.filter((r) => isExplicit(r.dataset.permCode)).length;
+    const grantedCount = rows.filter((r) => isGrantedForReach(r.dataset.permCode)).length;
     // checkbox 모드: 보이는 권한 row 0 이면 details 자체를 감춘다 → 마스터 게이트 OFF 시 계정·역할 등 묶음이 사라짐.
     // 단, 부여된 권한이 하나라도 있으면 그룹을 유지한다 → 부여된 권한이 영구히 가려지지 않고
     //   "더 보기 · N개 부여됨" 으로 도달 가능(TASK-0264 — forceVisible 제거 후 도달성 보장).
@@ -632,7 +637,7 @@ function _refreshGroupDisclosure(containerEl, showAll, recompute, mode, isExplic
       return;
     }
     // 숨겨진 row 중 부여된 개수 — "더 보기" 뒤에 부여된 권한이 있음을 표면화(도달성 단서).
-    const hiddenGranted = rows.filter((r) => r.hidden && isExplicit(r.dataset.permCode)).length;
+    const hiddenGranted = rows.filter((r) => r.hidden && isGrantedForReach(r.dataset.permCode)).length;
     if (!more) {
       more = document.createElement("button");
       more.type = "button";
@@ -684,6 +689,14 @@ function _applyPermissionDisclosure(containerEl, mode, showAll, inheritedGrants)
     const s = state.get(code);
     return mode === "checkbox" ? s === "on" : (s === "allow" || s === "deny");
   };
+  // metadata-perm-hier: 그룹 도달성·"N개 부여됨" cue 판정용 — explicit(명시 설정)에 더해
+  //   override(계정) 모드의 **상속(허용)** 부여(inherit + 역할이 부여)도 "부여됨" 으로 센다.
+  //   메타데이터 종속을 kb.ingest.manual 게이트 하위로 옮기면서, 역할이 개별 metadata.* 를 (묶음 없이)
+  //   부여한 계정을 override 편집기에서 열 때 그 row 가 게이트 미충족으로 접히는데 — isExplicit 만으로는
+  //   상속-부여가 안 집계돼 "· N개 부여됨" 단서가 사라진다(도달성 회귀). 상속-부여를 포함해 단서를 복원한다.
+  //   checkbox(역할) 모드는 inherited 가 비어 isExplicit 과 동일(무영향).
+  const isGrantedForReach = (code) =>
+    isExplicit(code) || (mode !== "checkbox" && state.get(code) === "inherit" && inherited.has(code));
   // gateSatisfied = 자식을 여는 effective 허용.
   //   checkbox(역할): 체크. override(계정, TASK-0270): "허용" 또는 "상속"이면서 역할이 그 권한을 부여(상속(허용)).
   const gateSatisfied = (code) => {
@@ -713,7 +726,7 @@ function _applyPermissionDisclosure(containerEl, mode, showAll, inheritedGrants)
     const forceShow = Boolean(groupKey && showAll.has(groupKey));
     w.hidden = !(forceShow || isVisible(code));
   });
-  _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll, inherited), mode, isExplicit);
+  _refreshGroupDisclosure(containerEl, showAll, () => _applyPermissionDisclosure(containerEl, mode, showAll, inherited), mode, isGrantedForReach);
 }
 
 // 그룹 내 권한을 PERMISSION_DEPENDENCIES 트리 순서(부모 먼저, 자식 들여쓰기)로 정렬한다 (TASK-0267).
