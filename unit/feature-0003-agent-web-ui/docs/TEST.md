@@ -1317,3 +1317,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **정량 실측**: 3 테이블 박스·컬럼 25 — 컬럼 순서 top→bottom **보존(true)**, 최상위 박스 겹침 **1쌍**(이전 satellite 11쌍), fcose 131ms. node --check OK.
 - **Pass/Fail: PASS**(인젝션) — 사용자 보고(더블클릭 시 컬럼 스택이 이웃 테이블과 겹침, 3회) 해소: 컬럼이 테이블 박스 안 ordinal 세로 목록으로 들어가고 fcose 가 박스 bounds 로 이웃 공간을 확보해 겹침 원천 차단.
 - **배포 후 최종 확인**: web 재배포(배포 번들) 후 다컬럼 테이블 더블클릭 PB-0008 재확인 예정.
+
+### TASK-0016 ERD 박스 벌림 + 박스 클릭/더블클릭 정합 (frontend-only, feature-0016 연계)
+- **Environment: Windows-browser** (실 Windows Chrome/149 via `bin/win-browser.py` relay, https://localhost/admin 인증 세션). 메타데이터 > 🕸 그래프 뷰, mssql-qa-idc.
+  방법론: 배포 전 **런타임 인젝션 검증**(코드와 동일 로직: 증분 경로 신규-박스 감지 시 전체-스프레드 config). **정식 배포 후 배포 번들 재확인.**
+- **정량 실측(인젝션)**: 141테이블 compound 전체-스프레드(`randomize:false`·`packComponents:true`·`numIter:1000`·`nodeRepulsion 18000`·고정없음) → 테이블 박스겹침 **886 → 0**, fcose **109ms**. node --check OK. 캐시버스터 `admin.js?v=20260701-erd-spread`.
+- **Pass/Fail: PASS**(인젝션) — 사용자 보고 2건 대응: (4) 밀집 뷰 박스겹침(886→0 벌림), (5) 박스 클릭/더블클릭 정합(tap 핸들러 Table 예외로 단일=상세·더블=확장, 일반 노드와 동일). 적대리뷰 MAJOR(hasCompound 과발동) 수정 — full-spread 는 신규 노드가 박스를 들여올 때만 발동.
+- **배포 후 최종 확인**: web 재배포(배포 번들) 후 PB-0008 — (a) 밀집 ERD 박스 더블클릭 확장 시 박스겹침 해소 + term/순수노드 확장은 국소 push, (b) Table 박스 단일클릭→상세·더블클릭→확장 정합, 확인 예정.
