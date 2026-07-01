@@ -116,6 +116,14 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260701T170000-graphux-camfps 그래프 카메라 애니 프레임레이트 최적화(layoutstop 지연 복원) (Minor §12.3, 2026-07-01, resume 인계) — **Environment: Windows-browser (라이브 PB-0008 배포 후 잔여)**
+- 대상: `_metaGraphLayout` layoutstop — 라벨/엣지 숨김 해제를 카메라 fit 애니 complete 후로 지연 + 세대가드 + 무조건 복원. 프론트 전용·비파괴(JS 로직).
+- 구조/단위: `node --check` PASS(admin.js). 백엔드/스키마/RBAC/API 변경 0. 캐시버스터 graphux-camfps.
+- 적대 검증 패널(§18.8 subagent, 2라운드): cytoscape/fcose 번들 내부(`stop()`→`layoutstop` 동기 발화·fcose run() 완전 동기·cy 비파괴) 실측 기반 10+ 경로. 1차 BLOCKING 2(fcose 예외→폴백 복원부재 영구숨김)+MAJOR 3 발견 → hardened 재구현 → 재검증 **잔여 BLOCKING 0**. 핵심 불변식(비동기 복원=gen-gated 뿐, 무조건 복원=전부 동기) 확증 → 어떤 연타·예외·폴백·스코프전환에서도 라벨/엣지 영구숨김·깜빡임 재현 불가. REV-20260701T170000 [SUBAGENT: PASS].
+- **PB-0008 Windows-browser 성격 (정직)**: 본 변경의 목표는 **애니 FPS 개선**인데, 실 FPS 는 PB-0008(스크린샷 기반)로 측정 불가하고 **사용자 실 하드웨어 재측정이 유일한 효과 검증**이다(headless/WSL 실 GPU 프레임 미측정 = 원 세션이 막힌 근본 이유). PB-0008 가 확인 가능한 것은 **렌더 정합**(라벨/엣지가 애니 후 정상 복원·영구숨김 회귀 없음·확장 동작).
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저, 브리지 relay 9223 available)**: ① 관리콘솔 > 메타데이터 > 그래프 뷰 로드 → 검색(초기 스프레드 애니) 후 **라벨·엣지 정상 표시**(영구숨김 없음) ② 노드 더블클릭 확장(카메라 fit 애니) → 애니 중 라벨/엣지 숨김·**정착 후 복원** ③ **연타(빠른 더블클릭 2~3회)** 후 최종 상태에서 라벨/엣지 정상(영구숨김 회귀 없음) ④ 데이터소스 전환/리셋 후 정상 렌더. + 사용자 애니 FPS 재측정(DevTools).
+- Pass/Fail: PARTIAL(구조·단위·2라운드 적대 패널 PASS / 라이브 PB-0008 렌더정합 = 배포 후 잔여, FPS 효과 = 사용자 재측정). Runner: AI.
+
 ### TASK-20260629T181648-point-scroll-easeoutexpo 공유 뷰 가이드 뱃지(point rail) + 클릭 스크롤 단축·EaseOutExpo (Minor §12.3, 2026-06-29) — **PB-0008 Windows-browser DEFERRED(배포 후)**
 - 구조/단위: `node --check` PASS(app.js·share.js). CSS 추가만(share.css), 백엔드/스키마/RBAC 0.
 - 적대 검증 패널(frontend 7-lens: 좌표계·EaseOutExpo 수식·메인 회귀·공유 엣지·anonymous XSS·성능/ResizeObserver 루프·a11y) → **VERDICT SHIP**(BLOCKER 0·MAJOR 0). EaseOutExpo `1-2^(-10t)` 수치검증 f(0)=0·f(1)=1·단조·보간 from→to 정확. ResizeObserver 자기-트리거 루프 부재(fixed rail↔observed messages 레이아웃 분리). title/aria XSS 무첨가(DOM API). MINOR 2(ResizeObserver 폴백·focus-visible)→ focus-visible 흡수, 나머지 follow-up. REV-20260629T181648-point-scroll-easeoutexpo.
@@ -319,6 +327,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-07-01 (feature-0016 graphux5-panelmove-showfix — 세션 독립 폴 재개 시 진행 패널 미표시 버그 수정(`_metaGraphRenderProgress` 가 display 직접 해제) — **PB-0008 Windows-browser PASS(라이브 실측)**):
+  - **Environment: Windows-browser** (실제 Windows Chrome/149 via `bin/win-browser.py` 무권한 relay, https://localhost/admin). 배포: web 90973df→showfix. 실측 PASS: (1) 진행 패널이 **우측 상세 aside 상단**에 표시(progressInsideDetailAside=true, topBar 제거 — 그래프 안 밀림), (2) 진행률 갱신(GMRIP root 처리 완료 1·done 마커 — depth-first fairness 로 0% 탈출), (3) **세션 독립**: 새로고침(activeRunId 없음) 후 진행 중 노드 클릭 → 폴 재개(status "0/1 running") + showfix 후 진행 패널 정상 표시. Evidence: `artifacts/shared/win-browser-shots-graphux5-panelmove/` (01_panel_right_aside·02_session_independent).
+- 2026-07-01 (feature-0016 graphux5-panelmove — AI 능동 분석 진행 패널을 **우측 상세 패널로 이동**(상단 full-width 바 제거 → 그래프 안 밀림·여백 낭비 해소; 노드상세는 detailBody 분리로 진행 패널 유지), **Major §12.3(프론트 전용 비파괴 레이아웃)** — **PB-0008 Windows-browser 배포 후 라이브 검증 예정**):
+  - **Environment: node 정적 + 집중 프론트 리뷰** — 정적 PASS: `admin.js` `node --check`, 구조 검증(진행 패널 aside 상단·detailBody 분리·타 참조 없음). 배포 후 실 Windows 브라우저로 확인: (a) 진행 패널이 상단 바가 아닌 **우측 상세 패널 상단**에 표시, (b) 그래프 캔버스가 아래로 밀리지 않음, (c) 미분석 시 여백 낭비 없음(패널 숨김), (d) 분석 중 노드 클릭 시 진행 패널 유지·아래 노드상세만 교체. Evidence(예정): `artifacts/shared/win-browser-shots-graphux5-panelmove/`.
 - 2026-07-01 (feature-0016 graphux5-progress — AI 능동 분석 진행 현황 **화면 라이브·상세**(지속 진행 패널: 항목별 상태[분석중/완료/대기] + 진행바 + 분석중 주황 마커), **Major §12.3(비파괴 additive UI + 응답 필드)** — **PB-0008 Windows-browser 배포 후 라이브 검증 예정**):
   - **Environment: python/node 정적 + 적대 리뷰(backend/frontend 렌즈)** — 정적 PASS: `node_analysis.py` py_compile · `admin.js` `node --check`. 배포 후 실 Windows 브라우저로 확인: (a) AI 능동 분석 시작 → 상단 진행 패널이 노드 선택과 무관하게 라이브 갱신, (b) 완료/분석중/대기/실패 카운트 + 진행바, (c) 항목별 상세 리스트(⏳ 컬럼 X·✅ 테이블 Y·깊이) 갱신, (d) 그래프에 분석중 주황 점선 + 완료 보라 마커. Evidence(예정): `artifacts/shared/win-browser-shots-graphux5-progress/`.
 - 2026-07-01 (feature-0016 graphux5 — 관리콘솔 그래프뷰 4항목 개선[검색 유사도 pg_trgm 명시·AI 능동분석 재귀/백그라운드·미분석 노드 컬럼 즉석 introspection·이웃깊이 드롭다운 즉시 갱신], **Major §12.3 + 외부 LLM 비용 + 신규 테이블 alembic 0028** — **PB-0008 Windows-browser DEFERRED(배포 후)**):

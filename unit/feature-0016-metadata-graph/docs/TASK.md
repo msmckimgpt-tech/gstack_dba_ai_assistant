@@ -210,21 +210,62 @@ source_of_truth: true
 - [x] T12.2 `admin.js` — 지속 진행 패널 `_metaGraphRenderProgress`(노드 선택 무관 라이브, 진행바+완료/분석중/대기/실패 카운트+항목별 상세 리스트 한글 라벨/아이콘/깊이) + `_metaGraphMarkRunning`(분석중 주황 점선) + 폴 틱마다 갱신 + 시작 시 패널 표시 + 닫기(run 별 dismiss).
 - [x] T12.3 `admin.html` 진행 패널 컨테이너 + "AI 분석 중" 범례 + 캐시버스터. `styles.css` 패널/마커 스타일.
 - [x] T12.4 py_compile + node --check PASS.
-- [ ] T12.5 적대 리뷰(backend/frontend) + verify-completion + 배포 + PB-0008 라이브 검증.
+- [x] T12.5 적대 리뷰(7건 수정) + verify-completion + 배포(e12ac55) + PB-0008 라이브 검증 완료.
 
-## 13. ERD 카드 — 컬럼을 테이블 compound 박스 안에 (2026-07-01)
+## 13. graphux5-panelmove — 진행 패널을 우측 상세 패널로 이동 (2026-07-01)
 
-### 13.0 맥락
+사용자 피드백: 능동 분석 화면을 **우측 상세정보 패널에 구성**. 상단 full-width 진행 바가 그래프를 밀어내 구성이 무너지고 사용 안 되는 여백이 큼. 등급 Major(프론트 전용·비파괴 레이아웃).
+- [x] T13.1 `admin.html` — 진행 패널(`#metadataGraphProgress`)을 상단 바에서 제거하고 상세 aside 상단으로 이동. 노드 상세를 신규 `#metadataGraphDetailBody` 로 분리(클릭 시 body 만 교체·진행 패널 유지). 캐시버스터.
+- [x] T13.2 `admin.js` — `_metaGraphRenderDetail`/`_metaGraphRenderDetailEmpty` 타깃을 `#metadataGraphDetailBody` 로 변경(진행 패널 미영향).
+- [x] T13.3 `styles.css` — 진행 패널 마진/리스트 높이를 좁은 aside 컬럼에 맞게 조정. 캐시버스터.
+- [x] T13.4 node --check PASS.
+- [x] T13.5 집중 프론트 리뷰 CLEAN(6/6 무결).
+- [x] T13.6 **후속 이슈 수정**(사용자: 진행률 항상 0%·다른 탭 진행 패널/마커 누락):
+      - **fairness (node_analysis.py)**: claim 순서 `depth ASC` 우선 — 대형 run 의 깊은 recursion 이 앞줄을 독점해 이후 단일노드 run 의 root 조차 처리 못 하던 starvation 해소. 모든 run 의 root 를 먼저 처리 → 즉시 진행 표시.
+      - **세션 독립 (admin.js)**: `_metaGraphLoadNodeAnalysis` 가 pending/running 노드의 run_id 로 폴링 자동 재개 → 다른 탭/새로고침에서도 진행 패널·주황 마커·진행률 표시.
+- [x] T13.7 verify-completion + 배포(web 90973df + insight-worker) — PB-0008 라이브: 패널 우측·진행률 갱신·세션독립 확인.
+- [x] T13.8 **showfix**: 세션 독립 재개 경로에서 진행 패널이 populated 되고도 숨김(display 미해제) 버그 → `_metaGraphRenderProgress` 가 display 직접 해제. 라이브 실측 PASS(01/02 스크린샷).
+
+## 14. graphux-camfps — 카메라 애니메이션 프레임레이트 저하 수정 (2026-07-01, resume 인계)
+
+### 14.0 맥락 / 진단
+- 사용자 보고(이전 세션 2597e01c, 컨텍스트 초과로 진단 직전 중단 → resume 인계): 그래프 뷰 애니메이션이
+  **노드 수와 무관하게 FPS 낮음**(동작 속도·수동 팬은 정상). 이전 세션이 DevTools 실측을 요청했고 사용자가
+  Performance 트레이스(Trace-20260701T134334) + 환경정보(dpr1/zoom100%/1295x1073/refresh?) + chrome://gpu 샷 제공.
+- 트레이스 실측(10.4s/70418 events): 메인 busy 20% 중 **Scripting 65%(FunctionCall 1180ms)** = Cytoscape 캔버스
+  재렌더(`ts`·스타일 재계산·`calculateLabelDimensions`·`boundingBox`), Rendering/Painting 각 1%. **rAF 60fps(16.7ms)
+  인데 표시 프레임 ~36fps(27.8ms) 드롭.** GPU HW 가속 ON, 디스플레이 사실상 60Hz(144Hz 가설 기각).
+- 근본원인: 레이아웃 애니는 라벨/엣지 숨김 최적화됨(기존 anim-hide-label/anim-hide)이나, layoutstop 에서 **즉시
+  복원** 후 뒤이은 **450ms 카메라 fit 애니가 라벨·엣지를 켠 채** 돌아 매 프레임 텍스트 래스터+엣지 지오메트리
+  재계산 재발. 이 카메라 애니 구간이 체감 저프레임의 본체.
+- 등급: **Minor** (프론트 전용·비파괴, 애니 렌더 semantics 만 변경).
+
+### 14.1 구현 (admin.js)
+- [x] T14.1 `_metaGraphLayout` layoutstop: 숨김 즉시 해제 제거 → 카메라 fit 애니 `complete` 로 지연(세대가드
+      `restoreIfCurrent`). 즉시맞춤(cy.fit)·모든 예외/폴백 경로는 `clearMotionHide` 무조건 복원. `setTimeout(650ms)` fallback.
+- [x] T14.2 admin.html 캐시버스터 graphux-progress → graphux-camfps.
+
+### 14.2 검증
+- [x] T14.3 node --check admin.js PASS.
+- [x] T14.4 적대 리뷰 패널(§18.8, subagent 2라운드) — 1차 BLOCKING 2+MAJOR 3 발견 → hardened 재구현(세대가드+무조건복원) → 재검증 잔여 BLOCKING 0. REVIEW.md REV-20260701T170000 [SUBAGENT: PASS].
+- [x] T14.5 verify-completion --pre-commit PASS + commit + PR + main 병합.
+- [ ] T14.6 web 재배포(deploy_scope: included) + healthz/smoke.
+- [ ] T14.7 **사용자 실브라우저 FPS 재측정** — headless/WSL 은 실 GPU 프레임을 못 재므로(세션이 막힌 근본 이유)
+      배포 후 사용자님 브라우저에서 애니 FPS 재확인이 유일한 효과 검증. PB-0008 은 렌더 정합만 확인 가능.
+
+## 15. ERD 카드 — 컬럼을 테이블 compound 박스 안에 (2026-07-01)
+
+### 15.0 맥락
 - 사용자 후속(3회차): relax 후에도 더블클릭 시 컬럼 세로 스택이 이웃 테이블과 겹침(스크린샷). 진단: 위성 컬럼을
   layoutstop 후 배치 → force 가 우측 라벨 폭(~160px) 미예약 → 이웃 침범. 사후 밀어내기(declutter)는 적대검증상
   인접 스택 진동 or 노드 쏠림으로 겹침을 옮길 뿐 → REJECT. 사용자 결정(AskUserQuestion): **ERD 카드** 채택.
 - 등급 Minor (프론트 전용, 비파괴).
 
-### 13.1 구현·검증 (admin.js)
-- [x] T13.1 컬럼을 소속 테이블의 **compound 자식**으로(`_metaColParent` 부모=테이블 key, 2-pass add). HAS_COLUMN
+### 15.1 구현·검증 (admin.js)
+- [x] T15.1 컬럼을 소속 테이블의 **compound 자식**으로(`_metaColParent` 부모=테이블 key, 2-pass add). HAS_COLUMN
       엣지·placeColumns·declutter·round-taxi·dragfree 재배치 제거(컨테인먼트로 대체).
-- [x] T13.2 `_metaGraphColumnConstraints()` — fcose `alignmentConstraint.vertical`(동일 x) +
+- [x] T15.2 `_metaGraphColumnConstraints()` — fcose `alignmentConstraint.vertical`(동일 x) +
       `relativePlacementConstraint`(ordinal 위→아래 gap) 를 두 레이아웃 cfg 에 병합 → 박스 안 ordinal 세로 정렬.
-- [x] T13.3 Table compound 박스 스타일(teal 실선, 이름 상단) + Column 작은점+우측라벨.
-- [x] T13.4 실측(라이브 인젝션): 컬럼 순서 top→bottom 보존 + 최상위 박스 겹침 1쌍(이전 11) + fcose 131ms. node --check OK.
-- [ ] T13.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인.
+- [x] T15.3 Table compound 박스 스타일(teal 실선, 이름 상단) + Column 작은점+우측라벨.
+- [x] T15.4 실측(라이브 인젝션): 컬럼 순서 top→bottom 보존 + 최상위 박스 겹침 1쌍(이전 11) + fcose 131ms. node --check OK.
+- [ ] T15.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인.

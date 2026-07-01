@@ -25,6 +25,39 @@ source_of_truth: true
   스키마(점선 남색) > 테이블(teal 실선) > 컬럼 2단 중첩 compound. 컬럼 미보유 테이블은 평범 노드 유지. 상세 패널은
   API 응답 edges 사용이라 무영향. round-taxi 꺾이는 선은 사용자 결정으로 컨테인먼트 대체(겹침 제거 우선).
 - Rollback Notes: admin.js 를 satellite 방식(위성 컬럼+placeColumns+round-taxi)으로 revert + 캐시버스터 환원. DB/백엔드 무관.
+## CHG-20260701T190000-ai-claude-feature-0016-graphux5-panelmove-showfix
+- Date: 2026-07-01
+- Related Requirement: panelmove 세션 독립 폴 재개 시 진행 패널이 **표시되지 않던 버그** 수정(라이브 검증 중 적발 — status 바는 갱신되나 패널 숨김).
+- Summary: `_metaGraphRenderProgress` 가 렌더 시 `panel.style.display = ""` 를 직접 설정. 기존엔 `_metaGraphAnalyze`(버튼) 경로만 display 를 풀어, 노드 클릭으로 폴을 재개(fix B)한 세션 독립 경로에서 초기 `display:none` 이 안 풀려 패널이 populated 되고도 숨겨졌다.
+- Files: `unit/feature-0003-agent-web-ui/src/static/admin.js`.
+- Impact: 프론트 1줄·비파괴. 세션 독립(다른 탭/새로고침) 및 재개 경로에서 진행 패널이 정상 표시. 버튼 경로는 무변화(중복 display 설정, 무해).
+- Rollback Notes: 해당 라인 제거. 백엔드/DB 무변경.
+
+## CHG-20260701T180000-ai-claude-feature-0016-graphux5-panelmove
+- Date: 2026-07-01
+- Related Requirement: AI 능동 분석 진행 화면을 **우측 상세정보 패널에 구성**. 상단 full-width 진행 바가 그래프를 밀어내 구성이 무너지고 여백이 낭비되던 이슈 해소 (사용자 피드백).
+- Summary: (1) 진행 패널(`#metadataGraphProgress`)을 legend 아래 상단 바에서 **제거**하고 우측 상세 aside(`#metadataGraphDetail`) **상단**으로 이동. 노드 상세는 신규 `#metadataGraphDetailBody` 서브컨테이너로 분리 — 노드 클릭 시 body 만 교체되고 진행 패널은 유지. 미분석 시 패널 `display:none` 이라 여백 낭비 0. (2) **후속 이슈 수정** — (a) **fairness**: `process_pending` claim 순서 `depth ASC` 우선(대형 run 의 깊은 recursion 독점 → 이후 단일노드 run root 미처리 starvation 해소, 즉시 진행 표시), (b) **세션 독립**: `_metaGraphLoadNodeAnalysis` 가 pending/running 노드 run_id 로 폴링 자동 재개(다른 탭/새로고침에서도 진행 패널·주황 마커·진행률 표시).
+- Files: `unit/feature-0002-agent-core/src/modules/node_analysis.py`(claim depth 우선); `unit/feature-0003-agent-web-ui/src/static/{admin.html,admin.js,styles.css}`.
+- Impact: 프론트 레이아웃 + 워커 claim 정렬 변경(비파괴). 진행률 0% 고착·세션 종속 표시 해소. 기존 마커·폴링·백엔드 저장 무변경. 그래프가 상단 바에 밀리지 않음.
+- Rollback Notes: admin.html 구조·렌더 타깃 환원 + claim `ORDER BY created_at ASC` 환원 + 캐시버스터 환원. DB/마이그레이션 무변경.
+
+## CHG-20260701T170000-ai-claude-feature-0016-graphux-camfps
+- Date: 2026-07-01
+- Related Requirement: 그래프 뷰 애니메이션 프레임레이트 저하 — "노드 수와 무관하게 애니메이션만 FPS 낮음(수동 팬은 매끄러움)" (사용자 보고, 이전 세션 컨텍스트 초과로 진단 중단분 인계).
+- 근본원인 (DevTools Performance 트레이스 실측, Trace-20260701T134334, 10.4s/70418 events): 메인스레드 busy 20%
+  중 **Scripting 65%(FunctionCall 1180ms) = Cytoscape 캔버스 재렌더**(핫스팟 `ts`/스타일 재계산/`calculateLabelDimensions`),
+  Rendering·Painting 각 1%. rAF 는 60fps(16.7ms) 인데 실제 표시 프레임 ~36fps(27.8ms)로 드롭. GPU HW 가속 ON(chrome://gpu),
+  디스플레이 사실상 60Hz. → 레이아웃 애니는 라벨/엣지 숨김 최적화됨(기존)이나, **그 직후의 450ms 카메라 fit 애니가
+  라벨·엣지를 켠 채 돌아** 매 프레임 텍스트 래스터+엣지 지오메트리 재계산 재발 = 저프레임 구간.
+- Summary: `_metaGraphLayout` 의 `layoutstop` 콜백에서 라벨(`anim-hide-label`)·엣지(`anim-hide`) 숨김 해제를
+  즉시 하지 않고 **뒤이은 카메라 fit 애니(450ms)의 `complete` 후로 미룸**. 즉시맞춤(`cy.fit`)·예외 경로는 동기 복원.
+  연타 경합 방지 guard(`!_layoutRunning`) + complete 미발화 대비 `setTimeout(650ms)` fallback(라벨/엣지 영구 숨김 회귀 차단).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraphLayout` layoutstop: restoreMotion 지연 복원)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (캐시버스터 graphux-progress → graphux-camfps)
+- Impact: 프론트 전용·비파괴. 애니 렌더 semantics 만 변경(라벨/엣지가 레이아웃 애니 + 직후 카메라 애니 동안 숨겨졌다
+  정착 시 복원 — 기존은 카메라 애니 중 표시). 백엔드·계약·인증·데이터 무변경. 배포=web 재빌드만(alembic/worker 무관).
+- Rollback Notes: admin.js layoutstop 콜백을 즉시-복원 형태로 환원 + 캐시버스터 graphux-progress 로 되돌림. DB·API 무관.
 
 ## CHG-20260701T160000-ai-claude-feature-0016-graphux5-progress
 - Date: 2026-07-01

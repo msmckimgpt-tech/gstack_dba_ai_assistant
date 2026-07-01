@@ -7971,8 +7971,10 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-ai-box p { margin: 0 0 7px; }
 .admin-meta-graph-ai-summary { font-weight: 600; }
 /* graphux5-progress: AI 능동 분석 진행 현황 패널(라이브·상세) */
+/* graphux5-panelmove: 진행 패널은 우측 상세 aside 상단에 배치(상단 full-width 바 아님) — 좁은 컬럼에 맞춰
+   여백 최소화, 노드 상세와 구분되게 아래 마진. */
 .admin-meta-graph-progress {
-  margin: 8px 0 4px; padding: 10px 12px; border: 1px solid var(--border);
+  margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--border);
   border-left: 3px solid #e08a1e; border-radius: 8px;
   background: var(--surface-2, rgba(224, 138, 30, .05)); font-size: 12.5px;
 }
@@ -7989,7 +7991,7 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-progress .ampg-bar-fill { height: 100%; background: linear-gradient(90deg, #e08a1e, #7b2fbe); transition: width .4s ease; }
 .admin-meta-graph-progress .ampg-counts { margin-bottom: 6px; }
 .admin-meta-graph-progress .ampg-counts b { color: var(--text); }
-.admin-meta-graph-progress .ampg-list { list-style: none; margin: 0; padding: 0; max-height: 168px; overflow-y: auto; }
+.admin-meta-graph-progress .ampg-list { list-style: none; margin: 0; padding: 0; max-height: 150px; overflow-y: auto; }
 .admin-meta-graph-progress .ampg-item { padding: 2px 0; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .admin-meta-graph-progress .ampg-item .ampg-lbl {
   font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 4px;

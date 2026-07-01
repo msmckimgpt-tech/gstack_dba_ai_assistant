@@ -3380,13 +3380,17 @@ function _metaGraphLayout(opts) {
   const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
   // ERD-card: 컬럼(테이블 compound 자식)을 박스 안에서 ordinal 세로 정렬하도록 fcose 제약을 구성해 두 경로 cfg 에
-  //   병합한다. 컬럼은 compound 부모(테이블) 이동을 자동 추종 → 별도 lock/사후 배치 불필요.
-  //   **제약이 비면(컬럼 0개) cfg 에 넣지 않는다** — fcose 는 constraint 객체 존재만으로 tile/packComponents 를
-  //   꺼버려(빈 배열도 truthy) 검색·초기로드의 비연결 노드가 흩어짐. 제약이 있을 때만 병합(_ccCfg).
+  //   병합한다(제약이 비면 미병합 — fcose 는 빈 제약 객체만으로도 tile/packComponents 를 꺼 검색·초기로드의 비연결
+  //   노드가 흩어짐. 제약 있을 때만 _ccCfg 병합). 컬럼은 compound 부모(테이블) 이동을 자동 추종 → lock/사후 배치 불필요.
   const _cc = _metaGraphColumnConstraints();
   const _ccCfg = (_cc.relativePlacementConstraint.length || _cc.alignmentConstraint.vertical.length)
     ? { alignmentConstraint: _cc.alignmentConstraint, relativePlacementConstraint: _cc.relativePlacementConstraint }
     : {};
+  // graphux-camfps: 애니 중 숨긴 라벨/엣지의 '무조건 복원' 헬퍼 + 세대(gen) 토큰(비대칭 cleanup=영구숨김 회귀 방지).
+  //   어떤 예외/폴백/연타 경로로 빠지든 clearMotionHide 가 호출되어야 하며, 지연 복원(카메라 애니 후)은 gen 이
+  //   최신일 때만 수행(연타 인계 시 구세대 복원 skip). ERD-card: 컬럼은 제약 관리라 lock/unlock 불필요.
+  const gen = (_metaGraph._motionGen = (_metaGraph._motionGen || 0) + 1);
+  const clearMotionHide = () => { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} };
   const base = {
     nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
     uniformNodeDimensions: false,
@@ -3458,33 +3462,41 @@ function _metaGraphLayout(opts) {
       }
       layout.one("layoutstop", () => {
         _metaGraph._layoutRunning = false;
-        if (hideMotion) { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} }
         // ERD-card: 컬럼은 제약(alignment/relativePlacement)으로 박스 안에 이미 ordinal 정렬됨 — 사후 배치 불필요.
-        // 확장: 신규 이웃 영역으로 카메라 부드럽게 이동(애니 복원). 초기 로드: 스프레드가 이미 애니라 즉시 맞춤.
+        // graphux-camfps: 라벨/엣지 숨김 해제를 카메라 fit 애니 종료 후로 지연(즉시 복원 제거) — fit 애니가 라벨·엣지를
+        //   켠 채 돌면 매 프레임 텍스트 래스터+엣지 지오메트리 재계산으로 표시프레임 드롭(트레이스 실측). fit 동안 숨김
+        //   유지 → complete 에서 복원. restoreIfCurrent: gen 최신일 때만 복원(연타 인계 skip). 그 외 종결은 무조건 복원.
+        const restoreIfCurrent = () => { if (gen === _metaGraph._motionGen) clearMotionHide(); };
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
-            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" });
+            // 확장: 카메라를 신규 이웃으로 이동(450ms). 이 애니 동안에도 숨김 유지 → complete 에서 복원.
+            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out", complete: restoreIfCurrent });
+            if (_metaGraph._restoreTimer) clearTimeout(_metaGraph._restoreTimer);   // 중첩 stale 타이머 누수 방지
+            _metaGraph._restoreTimer = setTimeout(restoreIfCurrent, 650);           // complete 미발화(애니 중단 등) 대비 fallback
           } else {
+            clearMotionHide();       // 즉시맞춤: 라벨/엣지 먼저 복원(숨김 상태로 fit 하면 라벨/엣지 잘린 프레이밍) 후 fit.
             cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤(스프레드 애니 종료 후 1회)
           }
-        } catch (_) {}
+        } catch (_) { clearMotionHide(); }   // 예외 시에도 무조건 복원(영구 숨김 회귀 차단)
       });
       layout.run();
       return;
-    } catch (_) {}
+    } catch (_) { clearMotionHide(); }   // fcose 경로 예외 → cose 폴백 진입 전 반드시 복원(폴백엔 addClass 없음 = 무해 no-op이나 이미 숨긴 걸 남기지 않기 위함)
   }
   try {
     try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}
     const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
       idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
     _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; });
+    // 폴백도 fcose 경로에서 숨긴 라벨/엣지를 확실히 복원(비대칭 cleanup 차단). ERD-card: placeColumns 불필요(컬럼=제약).
+    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; clearMotionHide(); });
     layout.run();
-  } catch (_) {}
+  } catch (_) { _metaGraph._layoutRunning = false; clearMotionHide(); }   // 폴백까지 예외 → running 해제 + 무조건 복원(영구 숨김·guard 고착 차단)
 }
 
 function _metaGraphRenderDetailEmpty() {
-  const el = document.getElementById("metadataGraphDetail");
+  // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p></div>';
 }
@@ -3506,7 +3518,8 @@ function _metaEdgeTrustBadge(e) {
 
 // 통합 엔티티 카드 — 클릭 노드의 이웃을 카테고리(컬럼·관계·용어)로 묶어 표시.
 function _metaGraphRenderDetail(self, nodes, edges) {
-  const el = document.getElementById("metadataGraphDetail");
+  // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   // 항목1: 이 노드가 검색 결과라 그래프에 rel(유사도)이 실려 있으면 상세 헤더에 % 명시.
   const selfScopeKey = (self.key && self.key.indexOf(":") >= 0)
@@ -3659,6 +3672,7 @@ function _metaGraphRenderProgress(st) {
   const panel = document.getElementById("metadataGraphProgress");
   if (!panel || !st) return;
   if (panel.dataset.dismissed && panel.dataset.dismissed === st.run_id) return;   // 사용자가 이 run 패널을 닫음
+  panel.style.display = "";   // fix(세션 독립): 재개 폴 경로(버튼 미경유)에서도 패널을 표시 — 초기 display:none 해제
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const jobs = st.jobs || [];
   const done = st.done || 0, enq = st.enqueued || 0, failed = st.failed || 0;
@@ -3716,7 +3730,15 @@ async function _metaGraphLoadNodeAnalysis(key) {
     const b2 = document.getElementById("metaGraphAiBtn2");
     if (b2) b2.addEventListener("click", () => _metaGraphAnalyze(key));
   } else if (res.status === "pending" || res.status === "running") {
-    box.innerHTML = '<span class="admin-meta-graph-muted">분석 대기/진행 중(백그라운드)…</span>';
+    box.innerHTML = '<span class="admin-meta-graph-muted">분석 진행 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
+    // graphux5 fix(세션 독립): 이 노드가 (다른 탭/세션·새로고침으로) 활성 폴이 없는 진행 중 run 에 속하면
+    //   그 run 을 폴링 재개해 **어느 화면에서도** 진행 패널·주황 마커·진행률이 나타나게 한다. 이미 그 run 을
+    //   폴링 중이면 재개하지 않음(중복 방지). run 이 done/failed 로 끝나면 폴이 자연 종료.
+    if (res.run_id && _metaGraph.activeRunId !== res.run_id) {
+      const panel = document.getElementById("metadataGraphProgress");
+      if (panel) delete panel.dataset.dismissed;
+      _metaGraphPollRun(res.run_id, key);
+    }
   } else if (res.status === "failed") {
     box.innerHTML = '<span class="admin-meta-graph-muted">이 노드 분석 실패. 재시도하려면 능동 분석을 다시 눌러 주세요.</span>';
   }
