@@ -274,7 +274,7 @@ def test_column_create_calls_core(monkeypatch):
     pg = _pg(monkeypatch)
     captured = {}
 
-    def _fake(conn, scope_key, table_name, column_name, description, schema_name="", source="manual", created_by=None):
+    def _fake(conn, scope_key, table_name, column_name, description, schema_name="", source="manual", created_by=None, ordinal=None):
         captured.update({"table_name": table_name, "column_name": column_name,
                          "description": description, "schema_name": schema_name})
 
