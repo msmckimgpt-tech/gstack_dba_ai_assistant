@@ -212,6 +212,57 @@ is_code_file() {
 }
 
 # -----------------------------------------------------------------------------
+# Web/UI asset detection + FIRST_REQUEST scope reader (for check #13: PB-0008 gate)
+# 웹/UI 자산 = 사용자에게 렌더되는 static/template/html (AGENTS.md §15.4.1 · PB-0008).
+# -----------------------------------------------------------------------------
+is_web_asset() {
+  local path="$1"
+  # 문서·메타 영역은 제품 UI 아님 — 제외(프레젠테이션 리포트 docs/*.html, wiki, .claude 등).
+  # (M2 오탐 방지: docs/presentation/*.html 이 시각검증 게이트를 트리거하지 않도록.)
+  case "$path" in
+    docs/*|*/docs/*|wiki/*|.claude/*|.codex/*|.agents/*) return 1 ;;
+  esac
+  # 정적 프론트 자산 경로 — 이 프로젝트의 admin.js/app.js/share.js/styles.css/*.html 이 여기 거주.
+  case "$path" in
+    */src/static/*|*/static/*) return 0 ;;
+  esac
+  # static 밖의 UI 확장자 — 렌더 트리(src/web/components/templates/assets) 한정.
+  # (M2 미탐 방지: static 밖 styles.css·*.jsx 등도 포착. .mjs 테스트/.py 백엔드는 비대상.)
+  case "$path" in
+    */src/*|*/web/*|*/components/*|*/templates/*|*/assets/*)
+      case "$path" in
+        *.html|*.htm|*.css|*.js|*.jsx|*.ts|*.tsx|*.vue|*.svg) return 0 ;;
+      esac
+      ;;
+  esac
+  return 1
+}
+
+# wrapper `<project_root>/FIRST_REQUEST.md` 의 'key: value' 스코프 선언을 echo (없으면 빈값).
+# main worktree 의 부모(=wrapper) 에서 읽는다 — deploy_scope/reachability_scope 와 동일 위치.
+read_first_request_scope() {
+  local key="$1"
+  local repo_root main_wt_path wrapper fr
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  main_wt_path=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
+  [ -n "$main_wt_path" ] || main_wt_path="$repo_root"
+  wrapper=$(dirname "$main_wt_path")
+  fr="$wrapper/FIRST_REQUEST.md"
+  [ -f "$fr" ] || return 0
+  # pipefail-safe: grep no-match(rc1) 는 `|| true` 로 흡수, head 로 인한 SIGPIPE 회피
+  # (파이프라인 대신 변수 파싱 — verify-completion.sh 내 grep|head|pipefail 취약 패턴 주석 참조).
+  local matches first
+  matches=$(grep -iE "^[[:space:]]*${key}:" "$fr" 2>/dev/null) || true
+  first="${matches%%$'\n'*}"        # 첫 매칭 라인
+  first="${first#*:}"                # 'key:' 접두 제거
+  first="${first%%#*}"               # 인라인 주석(# ...) 제거 (M4)
+  first="${first//\"/}"; first="${first//\'/}"   # 따옴표 제거 (M4)
+  # 공백 제거 + 소문자화 — 값 비교를 포맷/대소문자에 견고하게 (M4: silent hard→WARN 격하 방지).
+  printf '%s' "$first" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # ANCHOR.md frontmatter helpers
 # canonical_created_at: minimum of frontmatter created_at vs git first-add timestamp.
 # Prevents frontmatter manipulation for grace extension.
@@ -1074,6 +1125,92 @@ check_12_wiki_feature_card() {
   return 0
 }
 
+# Check #13: 웹/UI 변경 시 실제 Windows 브라우저 시각검증(PB-0008) 완료 게이트.
+# 정책 근거: AGENTS.md §15.4.1 / §16.2 — 웹/UI(화면·상호작용) 변경의 완료 검증은 실제
+# Windows 브라우저(`bin/win-browser.py`)에서 수행하고 feature `docs/TEST.md §3` 에
+# 'Environment: Windows-browser' Run 을 기록한다.
+# 강제 수준(wrapper FIRST_REQUEST.md `visual_verification_scope`):
+#   always → 미기록 시 FAIL(hard gate — 본 프로젝트 정책, 2026-07-01 사용자 지시).
+#   그 외/미선언 → WARN(backward-compat — 기존 소비자 비파괴).
+# escape: 브리지 setup 불가(공용 CI 등)로 미수행 시 TEST.md 에 'Windows-browser' 맥락으로
+#   사유(미수행/skip/BLOCKED/불가)를 기록하면 통과(카고컬트 방지 — 사유 명시 요구).
+#   긴급 우회: env GSTACK_SKIP_VISUAL_VERIFICATION=1 또는 --skip-visual-verification.
+check_13_visual_verification() {
+  local mode="${1:-pre-commit}" fdir="${2:-}"
+
+  if [[ "${GSTACK_SKIP_VISUAL_VERIFICATION:-}" == "1" ]]; then
+    log_check 13 WARN "visual verification" "SKIP (escape hatch: GSTACK_SKIP_VISUAL_VERIFICATION=1)"
+    return 0
+  fi
+
+  # pre-commit 계열에서만 게이트(post-commit 은 이미 커밋됨 — 참고). check #10/#11 처럼
+  # META short-circuit 앞에서 무조건 실행되므로(M3), 여기서 모드 가드.
+  case "$mode" in
+    pre-commit|shared-pre-commit) : ;;
+    *) return 0 ;;
+  esac
+
+  local changed_files
+  changed_files=$(staged_files)
+
+  # 웹 자산 수집(M2 개선 is_web_asset — docs/wiki/.claude 제외, static 밖 UI 확장자 포함).
+  local web_assets=() f
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if is_web_asset "$f"; then web_assets+=("$f"); fi
+  done <<<"$changed_files"
+
+  if [ ${#web_assets[@]} -eq 0 ]; then
+    log_check 13 PASS "visual verification" "(no web/UI asset change — skip)"
+    return 0
+  fi
+
+  # 강제 수준 — wrapper FIRST_REQUEST.md 선언(M4: 정규화된 값).
+  local scope
+  scope=$(read_first_request_scope "visual_verification_scope")
+
+  # 웹 자산이 '속한 feature' 의 TEST.md 로 귀속(m1: CLI fdir 아닌 자산 경로 기반 —
+  # 교차-feature vouch 차단). unit/<id>/... → unit/<id>/docs/TEST.md. unit 밖(shared/ 등)
+  # 은 CLI fdir 폴백, 없으면 unattributed.
+  local targets="" unattributed="" fid
+  for f in "${web_assets[@]}"; do
+    case "$f" in
+      unit/*/*)
+        fid="${f#unit/}"; fid="${fid%%/*}"
+        targets+="unit/${fid}/docs/TEST.md"$'\n' ;;
+      *)
+        if [ -n "$fdir" ]; then targets+="${fdir}/docs/TEST.md"$'\n'
+        else unattributed+="${f} "; fi ;;
+    esac
+  done
+  targets=$(printf '%s' "$targets" | sort -u | sed '/^$/d')
+
+  # 각 대상 TEST.md 가 '이번 staged diff 에 추가된' Windows-browser Run(또는 미수행 사유)
+  # 라인을 담는가(M1: whole-file substring 아닌 추가 라인만 — stale/재-stage/주석 우회 차단).
+  local missing="" tmd added
+  while IFS= read -r tmd; do
+    [ -z "$tmd" ] && continue
+    added=$(git diff --cached -- "$tmd" 2>/dev/null | grep -E '^\+' | grep -iE 'windows-browser' || true)
+    [ -z "$added" ] && missing+="${tmd} "
+  done <<<"$targets"
+  [ -n "$unattributed" ] && missing+="(unattributed: ${unattributed})"
+
+  if [ -z "$missing" ]; then
+    log_check 13 PASS "visual verification" "(대상 TEST.md 에 이번 cycle Windows-browser Run 추가 — PB-0008)"
+    return 0
+  fi
+
+  if [ "$scope" = "always" ]; then
+    log_check 13 FAIL "visual verification" \
+      "웹/UI 자산 변경인데 이번 cycle 'Windows-browser' Run(PB-0008) 추가가 없는 대상: ${missing}. bin/win-browser.py 로 시각검증 후 해당 feature docs/TEST.md §3 에 'Environment: Windows-browser' Run 을 추가·stage(브리지 불가 시 그 라인에 미수행 사유 명시)하세요 (AGENTS.md §15.4.1 · PB-0008 · visual_verification_scope=always). 긴급: GSTACK_SKIP_VISUAL_VERIFICATION=1"
+    return 1
+  fi
+
+  log_check 13 WARN "visual verification" \
+    "웹/UI 자산 변경에 이번 cycle 'Windows-browser' Run(PB-0008) 추가 없음 — 대상: ${missing}. visual_verification_scope 미선언 → WARN(§15.4.1 권장). always 로 선언하면 hard gate."
+  return 0
+}
+
 # -----------------------------------------------------------------------------
 # Main dispatch
 # -----------------------------------------------------------------------------
@@ -1119,6 +1256,15 @@ main() {
     check11_status=1
   fi
 
+  # Check #13 (PB-0008 visual verification) — unconditional, META/shared 모드보다 먼저 실행 (M3).
+  # 웹/UI 자산 변경은 changeset 이 pure-meta(예: unit/_template/** scaffold)여도 시각검증 게이트
+  # 대상이므로 META short-circuit 앞에서 판정한다. 자산 경로에서 feature TEST.md 를 도출하므로
+  # feature_id 미해결(META/shared)에서도 동작(비-unit 자산만 CLI fdir 폴백 — 여기선 미해결이라 "").
+  local check13_status=0
+  if ! check_13_visual_verification "$mode" ""; then
+    check13_status=1
+  fi
+
   # META short-circuit: pure-meta changesets skip verify entirely.
   # (Mixed commits — meta + operational — still get full operational gate.)
   local changed_files
@@ -1141,24 +1287,24 @@ main() {
   fi
 
   if [ "$meta_mode" = "1" ]; then
-    printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). checks #10, #11 always run.\n' >&2
-    local failed=$((check10_status + check11_status))
+    printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). checks #10, #11, #13 always run.\n' >&2
+    local failed=$((check10_status + check11_status + check13_status))
     case "$mode" in
       post-commit) check_9_review_entry post-commit "" || failed=$((failed + 1)) ;;
       *) check_9_review_entry pre-commit "" || failed=$((failed + 1)) ;;
     esac
     if [ "$failed" -eq 0 ]; then
-      printf '\nverify-completion: PASS (META mode: checks #9, #10, #11 ran)\n' >&2
+      printf '\nverify-completion: PASS (META mode: checks #9, #10, #11, #13 ran)\n' >&2
       exit 0
     else
-      printf '\nverify-completion: FAIL (META mode: %d of #9, #10, #11 failed)\n' "$failed" >&2
+      printf '\nverify-completion: FAIL (META mode: %d of #9, #10, #11, #13 failed)\n' "$failed" >&2
       exit 1
     fi
   fi
 
-  # Shared mode uses its own minimal check set + check #9 + check #10 + check #11.
+  # Shared mode uses its own minimal check set + check #9 + check #10 + check #11 + check #13.
   if [ "$mode" = "shared-pre-commit" ]; then
-    local failed=$((check10_status + check11_status))
+    local failed=$((check10_status + check11_status + check13_status))
     check_shared_modify pre-commit || failed=$((failed + 1))
     check_8_unstaged_residual pre-commit || failed=$((failed + 1))
     check_9_review_entry shared-pre-commit "" || failed=$((failed + 1))
@@ -1169,7 +1315,8 @@ main() {
   local fdir
   fdir=$(feature_dir "$feature_id")
 
-  local failed=$((check10_status + check11_status))
+  # check13_status: check #13 (visual verification) 은 META short-circuit 앞에서 이미 실행됨(M3).
+  local failed=$((check10_status + check11_status + check13_status))
   local effective_mode
   effective_mode="${mode}"
 
@@ -1184,10 +1331,10 @@ main() {
   check_12_wiki_feature_card "$effective_mode" || true
 
   if [ "$failed" -eq 0 ]; then
-    printf '\nverify-completion: PASS (9 checks: 7 pilot + worktree binding + repo immutability) + check #12 informational (wiki feature card, WARN-only)\n' >&2
+    printf '\nverify-completion: PASS (gate checks + worktree binding + repo immutability + visual-verification #13; #12 wiki WARN-only)\n' >&2
     exit 0
   else
-    printf '\nverify-completion: FAIL (%d of 9 checks failed)\n' "$failed" >&2
+    printf '\nverify-completion: FAIL (%d gate checks failed)\n' "$failed" >&2
     exit 1
   fi
 }
