@@ -116,6 +116,17 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260701T210000-graph-webgl 그래프 렌더러 canvas-2D→WebGL 전환 (Major §12.3, 2026-07-01) — **Environment: Windows-browser (실 GPU de-risk 완료 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: cytoscape 3.30.2→3.34.0 + `renderer:{name:"canvas",webgl:_webglOk}` + 엣지 bezier·색/투명도 재설계 + anim-hide 제거. 프론트 전용·비파괴.
+- 구조/단위: `node --check` PASS(admin.js). vendored cytoscape 3.34.0 정품(Cytoscape Consortium 헤더, node --check OK). 백엔드/스키마/API 변경 0.
+- **Environment: Windows-browser (de-risk 실측, PB-0008 준거)** — 실 Windows Chrome/149 via `bin/win-browser.py` 무권한 relay(`bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, 실 GPU). WSL headless(SwiftShader) 아닌 실 GPU.
+  - **시나리오**: cytoscape 3.34.0 + `webgl:true` + **2단 compound**(스키마 dbo > Table tblUser/tblOrder ERD카드 > 컬럼 dots) + 라벨 + REFERENCES bezier 엣지(trusted/candidate) 최소 페이지 렌더.
+  - **Pass — WebGL 활성·compound 정상**: `webglContextDetected=true`(getContext webgl2/webgl 성공), renderer webglOpt=true, renderer_hint=webgl, canvas#=4, nodes=8 parents=3 edges=2. 스크린샷(`scratchpad/webgl-test/render.png`): **2단 compound 박스(round-rectangle teal 보더)·노드 라벨·bezier 엣지+화살표+라벨 전부 정상 렌더**. make-or-break(compound WebGL 지원) 통과.
+- 적대 검증 패널(§18.8 subagent): BLOCKING 0·MAJOR 1(엣지 색-비의존 구분→candidate 가시성 상향 수정)·NIT 3. anim-hide 제거 완전성·폴백·노드보더·스코프·평행엣지 dedup 전부 코드 방어 확인. REV-20260701T210000 [SUBAGENT: PASS].
+- **PB-0008 성격(정직)**: 실 FPS 개선은 스크린샷 기반 PB-0008 로 측정 불가 → **사용자 실 하드웨어 재측정이 유일 효과 검증**. PB-0008 가 확인 가능한 것은 WebGL 활성·렌더 정합(compound·라벨·엣지·후보/신뢰 구분·ai 마커)·애니 부드러움·대규모 이웃 sprite 안정성.
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 관리콘솔 그래프 뷰 → ① WebGL 활성 확인 ② 검색·확장 애니 중 **라벨 항상 표시**(사라짐 없음) ③ compound ERD 박스·컬럼·엣지 렌더 정합 ④ candidate(연앰버 얇음)/trusted(진갈 굵음) 구분 가시성 ⑤ 대규모 이웃(수백 노드) 렌더 안정 + 사용자 육안 FPS·라벨유지 재확인.
+- Pass/Fail: PARTIAL(구조·단위·de-risk 실측·적대 패널 PASS / 라이브 PB-0008 렌더정합 = 배포 후 잔여, FPS 효과 = 사용자 재측정). Runner: AI.
+
 ### TASK-20260701T170000-graphux-camfps 그래프 카메라 애니 프레임레이트 최적화(layoutstop 지연 복원) (Minor §12.3, 2026-07-01, resume 인계) — **Environment: Windows-browser (라이브 PB-0008 배포 후 잔여)**
 - 대상: `_metaGraphLayout` layoutstop — 라벨/엣지 숨김 해제를 카메라 fit 애니 complete 후로 지연 + 세대가드 + 무조건 복원. 프론트 전용·비파괴(JS 로직).
 - 구조/단위: `node --check` PASS(admin.js). 백엔드/스키마/RBAC/API 변경 0. 캐시버스터 graphux-camfps.

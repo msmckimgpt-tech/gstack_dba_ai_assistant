@@ -287,12 +287,49 @@ source_of_truth: true
 - [x] T16.2 box click/dblclick — tap 핸들러에 `t.data("label") !== "Table"` 조건 추가 → Table 박스는 일반 노드와 동일
       (단일=상세, 더블=확장), Schema 컨테이너만 무시 유지. 박스 안 컬럼 클릭은 target=컬럼(컬럼 상세).
 - [x] T16.3 실측(라이브 인젝션): 141테이블 compound 전체-스프레드 → 박스겹침 886→0, 109ms. node --check OK. 캐시버스터 erd-spread.
-- [x] T16.4 적대 리뷰(REV-...-erd-box-spread-tap, MAJOR 수정) + verify-completion PASS + 배포(web `a6bf0eb`, PR #511, soak 통과). **PB-0008 라이브 인터랙션((a) 박스겹침 해소 (b) 클릭/더블클릭 정합)은 사용자 실화면 확인 요망** — 이번 세션 win-browser eval/canvas 클릭 자동화 차단(Chrome 149.0.7827.200/Playwright 회귀, 메모리 project-pb0008-eval-regression-chrome200). 코드 정합은 인젝션 실측(886→0)+리뷰로 확증.
+- [x] T16.4 적대 리뷰(REV-...-erd-box-spread-tap, MAJOR 수정) + verify-completion PASS + 배포(web `a6bf0eb`, PR #511, soak 통과). **PB-0008 라이브 인터랙션((a) 박스겹침 해소 (b) 클릭/더블클릭 정합)은 사용자 실화면 확인 요망** — 이번 세션 win-browser eval/canvas 클릭 자동화 차단(Chrome 149.0.7827.200/Playwright 회귀). 코드 정합은 인젝션 실측(886→0)+리뷰로 확증.
 
-## 17. 그래프 뷰 출력 이슈 3건(마커 렌더-타임·클러스터 선택 상세·클러스터명 좌정렬/무잘림) (2026-07-01, cross-cut, 코드 거주 feature-0002/0003)
+## 17. graph-webgl — 렌더러를 canvas-2D → WebGL 로 전환 (2026-07-01, 프레임레이트 근본 해소)
+
+### 17.0 맥락 / 진단
+- 사용자 후속(camfps 배포 후 육안): "여전히 거친 프레임 + 애니 시작 시 라벨 사라짐(불호) + 렌더링 엔진이 부드러운
+  프레임 지원하는지 검토". → **렌더링 엔진이 구조적 상한**임을 확정: vendored Cytoscape **3.30.2 는 canvas-2D 렌더러
+  전용**(`getContext("2d")`, `webgl` 0건). 매 프레임 그래프 전체를 CPU 재래스터 → 트레이스 실측 rAF 60fps인데 표시
+  ~36fps 드롭(Scripting busy 65%=Cytoscape 렌더, 레이아웃 계산은 64ms·GPU 276ms 로 유휴). 라벨 숨김 등 미세 튜닝으로
+  못 넘는 canvas-2D 상한.
+- 사용자 결정(AskUserQuestion 2단): ① 방향 = **WebGL 업그레이드**(canvas 유지·애니 최소화 A안, 엣지 재설계 B안 중 B),
+  ② 범위 = **WebGL + 엣지 재설계**(taxi→bezier·dashed→색/투명도 강등 수용하고 진행).
+- 등급 **Major** (프론트 라이브러리 업그레이드 + 렌더러 전환 + 엣지 스타일 재설계).
+
+### 17.1 리서치 / de-risk
+- [x] T17.1 Cytoscape WebGL 렌더러 사양 확정(공식 블로그·릴리스): 3.31.0(2025-01) 도입, `renderer:{name:'canvas',
+      webgl:true}`. **노드/라벨 완전 지원**(sprite-sheet 텍스처). **미지원**: taxi/segments 엣지→bezier 강등, dashed
+      라인·overlay/underlay, hollow arrow, 엣지 gradient. 최신 3.34.0(2026-06). fcose 2.2.0 peer `^3.2.0` 호환.
+- [x] T17.2 **실 Windows 브라우저 de-risk**(win-browser, 실 GPU): cytoscape 3.34.0 + `webgl:true` + 2단 compound
+      (스키마>Table>컬럼) 최소 페이지 렌더 → `webglContextDetected=true`, parents=3, **compound 박스·라벨·bezier 엣지
+      전부 정상 렌더**(스크린샷 확인). make-or-break(compound WebGL 지원) 통과.
+
+### 17.2 구현 (admin.js / admin.html / vendor)
+- [x] T17.3 vendor `cytoscape.min.js` 3.30.2→**3.34.0**(unpkg, 435KB, Cytoscape Consortium 정품 헤더, node --check OK).
+      admin.html 캐시버스터 3.34.0. fcose/cose-base 2.2.0 유지(호환).
+- [x] T17.4 `renderer:{name:"canvas",webgl:_webglOk}` — `_webglOk` = 초기화 직전 webgl2/webgl feature-detect
+      (미지원 GPU/브라우저는 false→canvas-2D graceful 폴백, 그래프 안 깨짐). `pixelRatio:1` 제거(WebGL 은 GPU 처리).
+- [x] T17.5 엣지 WebGL 호환 재설계: `curve-style` unbundled-bezier→**bezier**(control-point 제거), candidate/RELATED_TERM
+      의 `line-style:dashed`→제거 → **색·투명도·두께로 구분**(candidate=연앰버·0.45·1.3 / trusted=진갈·1·3.2 / related=녹·0.75).
+- [x] T17.6 애니 중 라벨/엣지 숨김 메커니즘 **전면 제거**(`anim-hide-*` 셀렉터 + camfps 의 gen/clearMotionHide/
+      restoreIfCurrent/setTimeout 로직) — WebGL 로 애니 중에도 항상 표시(사용자 "라벨 사라짐" 불호 해소). 캐시버스터 graph-webgl.
+
+### 17.3 검증
+- [x] T17.7 node --check admin.js PASS. anim-hide 잔존 코드 참조 0.
+- [x] T17.8 적대 리뷰 패널(§18.8 subagent) — BLOCKING 0·MAJOR 1(엣지 색-비의존 구분→candidate 가시성 상향 수정)·NIT 3. REVIEW.md REV-20260701T210000 [SUBAGENT: PASS].
+- [ ] T17.9 verify-completion --pre-commit + commit + PR + main 병합 + web 배포.
+- [ ] T17.10 **PB-0008 실 Windows 브라우저**(실측): WebGL 활성 확인 + 그래프 렌더 정합(compound 박스·라벨·엣지·후보/신뢰
+      구분·ai 마커) + 애니 부드러움 + 대규모 이웃(sprite 아틀라스 한계) + **사용자 육안 FPS·라벨유지 재확인**.
+
+## 18. 그래프 뷰 출력 이슈 3건(마커 렌더-타임·클러스터 선택 상세·클러스터명 좌정렬/무잘림) (2026-07-01, cross-cut, 코드 거주 feature-0002/0003)
 - 사용자(`/_template:entry` arg-given): 관리 콘솔 > 메타데이터 > 그래프 뷰 — ①노드 표식(AI 분석중/분석됨)이 클릭 시에만 갱신 → 렌더-타임 갱신, ②DB(스키마 클러스터) 선택 시 상세 갱신, ③클러스터명 잘림 → 좌정렬·좌여백·무잘림.
 - [x] ① scope 단위 분석상태 일괄조회: 백엔드 `node_analysis.get_scope_analysis_status`(feature-0002) + `GET .../graph/analyze/status`(feature-0003) + 프론트 `_metaGraphSyncAnalysisMarkers`(로드/검색/확장 3경로, additive). 실 KB PG 정합 실측(scope mssql-06656002eda6 done 335·active 183).
 - [x] ② 스키마 클러스터 tap → `_metaGraphShowClusterDetail`(스키마명·테이블 목록·개수). §16.2 tap 병합(Table→통과·Schema→클러스터 상세·그 외 parent→무시). PB-0008 PASS('테이블(58)').
-- [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종) + native 라벨 숨김. PB-0008 PASS.
-- [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD 박스 벌림·tap 정합과 tap 핸들러 병합 완료.)
-- [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 PB-0008 최종 확인.
+- [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종, `cy.on('render')` 동기화 — 렌더러 무관이라 §17 WebGL 전환과 호환) + native 라벨 숨김. PB-0008 PASS(canvas-2D 프리뷰) → **§17 WebGL 병합 후 오버레이 정합 재확인 예정**.
+- [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD tap 정합·§17 graph-webgl 렌더러와 tap/스타일 병합 완료.)
+- [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 + WebGL 오버레이 PB-0008 최종 확인.

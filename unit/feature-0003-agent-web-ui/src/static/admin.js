@@ -3013,20 +3013,24 @@ function _metaInitGraph() {
     try { window.cytoscape.use(window.cytoscapeFcose); _metaGraph.fcose = true; } catch (_) {}
   }
   if (_metaGraph.cy) { try { _metaGraph.cy.resize(); } catch (_) {} return; }
+  // graph-webgl: WebGL 미지원 브라우저/GPU 는 canvas-2D 로 graceful fallback(그래프가 안 깨지게).
+  //   feature-detect(webgl2 우선, 없으면 webgl). 실패 시 webgl:false → 기존 canvas 렌더로 자동 회귀.
+  let _webglOk = false;
+  try { const _tc = document.createElement("canvas"); _webglOk = !!(_tc.getContext("webgl2") || _tc.getContext("webgl")); } catch (_) { _webglOk = false; }
   _metaGraph.cy = window.cytoscape({
     container,
     elements: [],
     minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
-    // 렌더 성능(프레임 부드럽게): 아래는 전부 프레임당 그리기 부하를 '줄이는' 옵션이라 성능 저하 없음.
-    // - pixelRatio:1 — 고DPI 디스플레이에서 캔버스를 devicePixelRatio(보통 2)² = 4배 픽셀로 래스터하던 것을
-    //   1x 로 고정. 프레임당 채우는 픽셀 수가 최대 병목(격리측정: pixelRatio 만 지배적 — 30노드 fit-애니
-    //   jank 11→1). 트레이드오프: 정지 화면이 약간 소프트(그래프 도형/텍스트라 가독 영향 미미).
-    // - textureOnViewport / hideEdgesOnViewport 는 제거함: 노드 드래그 시 이 옵션들이 연결 엣지를
-    //   숨기거나(정적 텍스처가 live 엣지 갱신 미반영) 사라지게 하는 버그 유발. 수동 팬/줌 이득은
-    //   pixelRatio:1(주 레버) 로 이미 확보되어 손실 미미.
-    // - motionBlur 도 제거: 격리측정상 프레임 병합 합성 패스가 오히려 jank 를 늘림(11→14, 이득 0).
-    //   (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨/엣지 숨김은 _metaGraphLayout 에서 처리.)
-    pixelRatio: 1,
+    // feature-0016 graph-webgl: **WebGL 렌더러**(Cytoscape 3.31+ 실험적, vendored 3.34.0) 활성화.
+    //   근거: canvas-2D 렌더러(이전 3.30.2)는 매 프레임 그래프 전체를 CPU 로 재래스터 → 트레이스 실측상
+    //   rAF 는 60fps 인데 실제 표시 ~36fps 로 드롭(Scripting 이 busy 65% = Cytoscape 캔버스 재렌더), GPU·
+    //   컴포지터는 유휴. 이 canvas-2D 상한은 라벨 숨김 등 미세 튜닝으로 못 넘음(사용자 육안: 여전히 거침 +
+    //   라벨 사라짐 불호). WebGL 은 노드/라벨을 sprite-sheet 텍스처로 만들어 GPU 로 합성 → **라벨을 켠 채로도
+    //   부드러운 애니**. 노드/라벨/2단 compound(스키마>Table ERD카드>컬럼)는 완전 지원(실 Windows 브라우저
+    //   WebGL 실측 확인). 미지원 엣지 스타일(taxi/dashed)은 아래에서 bezier/색·투명도 구분으로 대체.
+    //   pixelRatio 제거: canvas-2D 픽셀-채우기 절감 레버였으나 WebGL 은 GPU 처리라 불필요.
+    //   webgl:_webglOk — 미지원 환경은 위 feature-detect 로 false → canvas-2D 폴백(그래프 유지).
+    renderer: { name: "canvas", webgl: _webglOk },
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
@@ -3036,8 +3040,9 @@ function _metaInitGraph() {
           "width": _metaNodeSize, "height": _metaNodeSize,
           "min-zoomed-font-size": 7,   // 축소 시 작아진 라벨은 렌더 생략(줌아웃 프레임 비용↓)
           "text-wrap": "ellipsis", "text-max-width": "120px", "border-width": 0 } },
-      // 모션(레이아웃/카메라 애니메이션) 중 라벨 숨김 — 텍스트 래스터가 프레임 최대 비용. 정지 시 복원.
-      { selector: "node.anim-hide-label", style: { "label": "" } },
+      // graph-webgl: WebGL 은 라벨을 GPU 텍스처로 렌더 → 애니 중에도 라벨 유지 부담이 적다. 모션 중
+      //   라벨/엣지 숨김(anim-hide-*)은 제거 — 사용자가 "애니 시작 시 라벨 사라짐"을 불호했고, WebGL 로
+      //   숨길 필요가 없어졌다(항상 표시).
       { selector: "node[label='Table']", style: { "font-weight": "bold" } },
       // feature-0016 ERD-card: Column 은 테이블 compound 박스 안 세로 목록 — 작은 점 + 오른쪽 라벨.
       { selector: "node[label='Column']", style: {
@@ -3072,27 +3077,28 @@ function _metaInitGraph() {
       { selector: "node[aiRunning = 1]", style: { "border-width": 3, "border-color": "#e08a1e", "border-style": "dashed" } },
       { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
       { selector: "node.dim", style: { "opacity": 0.35 } },
-      // feature-0016 graphux5: 기본 엣지는 직선이 아닌 완만한 곡선(unbundled-bezier) — 교차부 가독성.
+      // graph-webgl: 기본 엣지는 bezier(완만한 곡선). WebGL 은 unbundled-bezier 미지원(bezier 로 강등)이라
+      //   처음부터 bezier 로 통일 — control-point 커스텀 제거(WebGL 은 표준 bezier 만 지원).
       { selector: "edge", style: {
           "width": 1.4, "line-color": "#cbd2db", "target-arrow-color": "#cbd2db",
-          "target-arrow-shape": "triangle", "curve-style": "unbundled-bezier",
-          "control-point-distances": "36", "control-point-weights": "0.5",
+          "target-arrow-shape": "triangle", "curve-style": "bezier",
           "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
-      // ERD-card: HAS_COLUMN 은 compound 컨테인먼트로 표현(엣지 없음) — round-taxi 스타일 제거됨.
-      // 레이아웃 애니메이션 중 엣지 숨김 — 매 프레임 엣지 지오메트리(bezier 제어점·화살표) 재계산이
-      // 트윈 프레임의 주 비용(격리측정: 엣지표시 대비 트윈 40.8→21.4ms). 정착 시 복원.
-      { selector: "edge.anim-hide", style: { "display": "none" } },
+      // ERD-card: HAS_COLUMN 은 compound 컨테인먼트로 표현(엣지 없음).
       { selector: "edge[label='REFERENCES']", style: {
           "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2.2, "label": "data(label)" } },
-      // feature-0016 암묵 관계 신뢰 시각화: 추론/후보(candidate)=점선·반투명(검증 전),
-      // 신뢰(trusted)=진한 실선. broken 은 백엔드 투영에서 이미 제외됨.
+      // feature-0016 암묵 관계 신뢰 시각화: WebGL 은 dashed/hollow-arrow 미지원 → **두께(form)·색·투명도** 다채널로 구분.
+      //   적대리뷰 MAJOR: dashed 라는 비색상 채널을 잃어 색맹/저대비에서 붕괴 우려 + 얇은 candidate 묻힘 →
+      //   candidate 가시성 상향(width 1.3→1.8·opacity 0.45→0.6)해 "안 보임" 방지하고, trusted(3.2) 대비 두께비를
+      //   주 구분 채널(색-비의존)로 삼음. 완전한 dashed 등가는 WebGL 제약상 불가(엣지 라인 패턴 미지원).
+      //   추론/후보(candidate)=연앰버·반투명·중간두께(검증 전), 신뢰(trusted)=진갈·불투명·굵게. broken 은 백엔드 제외.
       { selector: "edge[label='REFERENCES'][status='candidate']", style: {
-          "line-style": "dashed", "line-color": "#b0872f", "target-arrow-color": "#b0872f",
-          "opacity": 0.5, "width": 1.6 } },
+          "line-color": "#c9a24a", "target-arrow-color": "#c9a24a",
+          "opacity": 0.6, "width": 1.8 } },
       { selector: "edge[label='REFERENCES'][status='trusted']", style: {
-          "line-color": "#7a4f10", "target-arrow-color": "#7a4f10", "opacity": 1, "width": 3 } },
+          "line-color": "#6b4410", "target-arrow-color": "#6b4410", "opacity": 1, "width": 3.4 } },
+      // RELATED_TERM: WebGL 은 dashed 미지원 → 녹색·반투명으로 구분(용어 연관).
       { selector: "edge[label='RELATED_TERM']", style: {
-          "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "line-style": "dashed", "label": "data(label)" } },
+          "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "opacity": 0.75, "label": "data(label)" } },
     ],
   });
   // 항목3: 스키마 클러스터명 HTML 오버레이 레이어 준비 + 렌더(pan/zoom/애니메이션)마다 위치 동기화.
@@ -3413,11 +3419,6 @@ function _metaGraphLayout(opts) {
   const _ccCfg = (_cc.relativePlacementConstraint.length || _cc.alignmentConstraint.vertical.length)
     ? { alignmentConstraint: _cc.alignmentConstraint, relativePlacementConstraint: _cc.relativePlacementConstraint }
     : {};
-  // graphux-camfps: 애니 중 숨긴 라벨/엣지의 '무조건 복원' 헬퍼 + 세대(gen) 토큰(비대칭 cleanup=영구숨김 회귀 방지).
-  //   어떤 예외/폴백/연타 경로로 빠지든 clearMotionHide 가 호출되어야 하며, 지연 복원(카메라 애니 후)은 gen 이
-  //   최신일 때만 수행(연타 인계 시 구세대 복원 skip). ERD-card: 컬럼은 제약 관리라 lock/unlock 불필요.
-  const gen = (_metaGraph._motionGen = (_metaGraph._motionGen || 0) + 1);
-  const clearMotionHide = () => { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} };
   const base = {
     nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
     uniformNodeDimensions: false,
@@ -3506,44 +3507,31 @@ function _metaGraphLayout(opts) {
       try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}   // 동시성: 진행 중 레이아웃 중단(연타·경쟁 방지)
       const layout = cy.layout(cfg);
       _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-      // 애니메이션(초기 로드/검색/확장) 동안 라벨+엣지 숨김 → 프레임당 텍스트 래스터 + **엣지 지오메트리
-      // 재계산**(트윈 프레임의 주 비용, 격리측정 40.8→21.4ms) 생략 → 프레임 부담 최소화. 정착 시 복원.
-      const hideMotion = animate;
-      if (hideMotion) {
-        try { cy.nodes().addClass("anim-hide-label"); cy.edges().addClass("anim-hide"); } catch (_) {}
-      }
+      // graph-webgl: WebGL 렌더러가 GPU 로 부드럽게 그리므로 애니 중 라벨/엣지를 **숨기지 않는다**(항상 표시).
+      //   (canvas-2D 시절엔 프레임당 텍스트 래스터/엣지 재계산 비용 때문에 숨겼으나, WebGL 로 불필요 + 사용자 불호.)
       layout.one("layoutstop", () => {
         _metaGraph._layoutRunning = false;
         // ERD-card: 컬럼은 제약(alignment/relativePlacement)으로 박스 안에 이미 ordinal 정렬됨 — 사후 배치 불필요.
-        // graphux-camfps: 라벨/엣지 숨김 해제를 카메라 fit 애니 종료 후로 지연(즉시 복원 제거) — fit 애니가 라벨·엣지를
-        //   켠 채 돌면 매 프레임 텍스트 래스터+엣지 지오메트리 재계산으로 표시프레임 드롭(트레이스 실측). fit 동안 숨김
-        //   유지 → complete 에서 복원. restoreIfCurrent: gen 최신일 때만 복원(연타 인계 skip). 그 외 종결은 무조건 복원.
-        const restoreIfCurrent = () => { if (gen === _metaGraph._motionGen) clearMotionHide(); };
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
-            // 확장: 카메라를 신규 이웃으로 이동(450ms). 이 애니 동안에도 숨김 유지 → complete 에서 복원.
-            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out", complete: restoreIfCurrent });
-            if (_metaGraph._restoreTimer) clearTimeout(_metaGraph._restoreTimer);   // 중첩 stale 타이머 누수 방지
-            _metaGraph._restoreTimer = setTimeout(restoreIfCurrent, 650);           // complete 미발화(애니 중단 등) 대비 fallback
+            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" });   // 확장: 카메라를 신규 이웃으로 이동
           } else {
-            clearMotionHide();       // 즉시맞춤: 라벨/엣지 먼저 복원(숨김 상태로 fit 하면 라벨/엣지 잘린 프레이밍) 후 fit.
             cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤(스프레드 애니 종료 후 1회)
           }
-        } catch (_) { clearMotionHide(); }   // 예외 시에도 무조건 복원(영구 숨김 회귀 차단)
+        } catch (_) {}
       });
       layout.run();
       return;
-    } catch (_) { clearMotionHide(); }   // fcose 경로 예외 → cose 폴백 진입 전 반드시 복원(폴백엔 addClass 없음 = 무해 no-op이나 이미 숨긴 걸 남기지 않기 위함)
+    } catch (_) {}
   }
   try {
     try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}
     const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
       idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
     _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-    // 폴백도 fcose 경로에서 숨긴 라벨/엣지를 확실히 복원(비대칭 cleanup 차단). ERD-card: placeColumns 불필요(컬럼=제약).
-    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; clearMotionHide(); });
+    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; });
     layout.run();
-  } catch (_) { _metaGraph._layoutRunning = false; clearMotionHide(); }   // 폴백까지 예외 → running 해제 + 무조건 복원(영구 숨김·guard 고착 차단)
+  } catch (_) { _metaGraph._layoutRunning = false; }
 }
 
 function _metaGraphRenderDetailEmpty() {
