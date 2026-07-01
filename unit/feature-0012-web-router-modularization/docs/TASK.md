@@ -63,6 +63,9 @@ source_of_truth: true
   - [x] **PR #485 생성 + CI test PASS + main 머지**(merge commit 24dd588). 이후 main 재전진 재머지.
   - [x] **배포 hotfix**: 프로덕션 배포 중 blue-green healthz 게이트가 컨테이너 로드 import 실패(web_context ModuleNotFoundError, test PYTHONPATH vs uvicorn web.app 패키지 불일치) 적발 → app.py sys.path append + app alias 수정. 컨테이너 실기동+make test 검증(CHG/REV-20260701-0001). web-b OLD 서빙 유지로 프로덕션 무영향.
   - [ ] **프로덕션 재배포**(hotfix 반영 후 bin/deploy-web.sh) + edge healthz 200 + 인증 smoke + 브라우저 QA(자격증명).
+- [~] TASK-0012-11 (자율 순차) 잔존 라우트 도메인 추출 — 모놀리스 축소
+  - [x] **router 추출 #6 conversations(10 완전-DI 핸들러)**: new_conversation·use_conversation·history·history_anchor·history_dates·delete_conversation(s)·cancel_request·finalize_request·ask_status → routers/conversations.py. AST 경계 + app.X + stdlib import. app.py 29,111→28,610줄. make test 통과·route-parity 188(CHG/REV-20260701-0002).
+  - [ ] 잔여: 완전-DI(admin_quotas 3·admin_sample_feedback 3·admin console singles) → inline-heavy(admin/metadata 30·admin/products 17·api/auth 12·conversations MIXED 7 = DI 전환 선행) → 이연 핸들러
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 
 ## 4. In Progress

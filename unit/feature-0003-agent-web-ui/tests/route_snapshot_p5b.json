@@ -78,13 +78,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/new_conversation",
-   "methods": [
-    "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/conversations/{cid}/product",
    "methods": [
     "PATCH"
@@ -393,48 +386,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/use_conversation",
-   "methods": [
-    "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/history",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/history_anchor",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/history_dates",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/delete_conversation",
-   "methods": [
-    "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/delete_conversations",
-   "methods": [
-    "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/conversations/{conversation_id}/title",
    "methods": [
     "PATCH"
@@ -442,28 +393,7 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/cancel",
-   "methods": [
-    "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/finalize",
-   "methods": [
-    "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/progress",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/ask_status",
    "methods": [
     "GET"
    ],
@@ -1262,6 +1192,76 @@
   },
   {
    "path": "/api/admin/usage/conversations",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/new_conversation",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/use_conversation",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/history",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/history_anchor",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/history_dates",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/delete_conversation",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/delete_conversations",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/cancel",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/finalize",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/ask_status",
    "methods": [
     "GET"
    ],

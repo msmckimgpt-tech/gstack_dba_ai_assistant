@@ -289,3 +289,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 검증(컨테이너 실기동, mysql-ai-web:24dd588 + 수정 app.py 마운트): `uvicorn web.app:app` → Application startup complete(import 해소). healthz git_commit=24dd588(추출 static_pages router 동작). /api/session 200(미인증). /api/avatars/1(media)·/api/admin/usage(admin_usage) → 라우팅 정상 + DI conn-fail 500 "db connection failed" byte-동치. (503/500 은 테스트 컨테이너 DB 미연결 탓, 실배포는 .env+DB로 정상.)
 - 회귀: make test 575 passed/0 fail·route drift 0·route-parity 188(테스트 환경 무영향 — append 는 이미-on-path 라 guard skip, alias 는 test 에서 no-op). py_compile OK.
 - 학습(중요): **추출 모듈은 컨테이너 로드 방식(web.app 패키지)으로도 import 검증 필요.** make test/§18.8 이 top-level PYTHONPATH 만 써서 이 클래스를 놓침 → blue-green healthz 게이트가 최종 안전망(프로덕션 무영향 abort). CI 에 web.app-스타일 import smoke 추가가 근본 대책.
+
+## REV-20260701-0002 [AGENT-TEAM:p5b-conversations-router-self-review]
+- Related Change: CHG-20260701-0002 (conversations 도메인 10 핸들러 추출)
+- §18.8 Adversarial Panel: **SELF+구조+make test 결정적 검증.** 추출 파이프라인은 REV-0010~0014 에서 적대검증 완료. 본건 신규 리스크 = (a) AST 경계 정확성, (b) app.X rewrite 오탐, (c) stdlib import 누락.
+- 검증: (1) **경계**: 초기 regex line-range 가 multi-line sig 를 오판(history L17437-17444 로 잘림 → SyntaxError) → AST(decorator_list[0].lineno..end_lineno) 로 정확 재추출(10 핸들러 512줄). (2) **rewrite 안전**: whitelist=블록토큰∩app심볼722−핸들러명−키워드/파라미터 = `_`헬퍼17+DI seam3. `app.app.`/`app.progress`(로컬 충돌) 0 assert. `_`헬퍼는 app.X 동적참조라 monkeypatch 보존. (3) **stdlib 누락 적발·보강**: make test 가 `NameError: os`(history_anchor/dates 의 os.environ) 적발 → os·logging import 추가(app.X 는 app-심볼만 커버하는 한계 = 학습). (4) **동반 테스트**: test_history_calendar_pg_routing(T1/T2/T3) 는 TestClient+as_account(DI override)+monkeypatch app._connect_memory/_require_account → 전부 GREEN(app.X 동적참조 + DI override 정합).
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 188(set 불변·골든 재생성), py_compile OK. **app.py 29,111→28,610(~500↓).**
+- 학습: 추출 3원칙 = app-심볼 app.X 동적참조 + 핸들러-사용 stdlib 명시 import + AST 경계. make test 가 stdlib 누락/monkeypatch-miss 안전망.
+- 다음(순차): 완전-DI 잔여 도메인(admin_quotas 3·admin_sample_feedback 3 — test 커플링 전환 필요) → admin console singles → 그 후 inline-heavy(admin/metadata 30 등, DI 전환 선행).
