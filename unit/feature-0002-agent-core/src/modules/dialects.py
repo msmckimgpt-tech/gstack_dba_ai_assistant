@@ -337,6 +337,27 @@ class MySQLDialect(Dialect):
         ORDER BY TABLE_SCHEMA, TABLE_NAME
     """
 
+    def probe_relationship_overlap(self, src_schema, src_table, src_col,
+                                   tgt_schema, tgt_table, tgt_col, sample, timeout_ms=0):
+        """암묵 관계 검증(feature-0016): src 컬럼 표본이 tgt 컬럼에 존재하는 비율.
+
+        반환 SQL 결과 = (sampled, matched) 1행. read-only. 식별자는 백틱 이스케이프(DB-sourced).
+        timeout_ms>0 이면 `MAX_EXECUTION_TIME` 옵티마이저 힌트로 statement 시간 상한(운영 DB 폭주 차단).
+        """
+        def q(x):
+            return "`" + str(x).replace("`", "``") + "`"
+        n = max(1, min(int(sample), 200))
+        src = f"{q(src_schema)}.{q(src_table)}" if src_schema else q(src_table)
+        tgt = f"{q(tgt_schema)}.{q(tgt_table)}" if tgt_schema else q(tgt_table)
+        hint = f"/*+ MAX_EXECUTION_TIME({int(timeout_ms)}) */ " if int(timeout_ms or 0) > 0 else ""
+        return (
+            f"SELECT {hint}COUNT(*) AS sampled, "
+            f"SUM(CASE WHEN EXISTS (SELECT 1 FROM {tgt} t WHERE t.{q(tgt_col)} = s.v) "
+            f"THEN 1 ELSE 0 END) AS matched "
+            f"FROM (SELECT {q(src_col)} AS v FROM {src} "
+            f"WHERE {q(src_col)} IS NOT NULL LIMIT {n}) s"
+        )
+
 
 class MSSQLDialect(Dialect):
     """MSSQL(T-SQL). 동일 컬럼 순서로 tools.py 결과 파싱(row[i]) 호환.
@@ -601,6 +622,28 @@ class MSSQLDialect(Dialect):
         WHERE rs.name = '{schema}' AND rt.name = '{table}'
         ORDER BY ps.name, pt.name
     """
+
+    def probe_relationship_overlap(self, src_schema, src_table, src_col,
+                                   tgt_schema, tgt_table, tgt_col, sample, timeout_ms=0):
+        """암묵 관계 검증(feature-0016): src 컬럼 표본이 tgt 컬럼에 존재하는 비율.
+
+        반환 SQL 결과 = (sampled, matched) 1행. read-only. 식별자는 대괄호 이스케이프(']' 이중화).
+        timeout_ms>0 이면 `SET LOCK_TIMEOUT` 로 락 대기 상한(운영 DB blocking hang 차단 — MSSQL 은
+        per-statement CPU timeout 구문이 없어 락 대기를 상한. 표본 상한 TOP {n} 이 CPU 폭주를 2차 제한).
+        """
+        def q(x):
+            return "[" + str(x).replace("]", "]]") + "]"
+        n = max(1, min(int(sample), 200))
+        src = f"{q(src_schema)}.{q(src_table)}" if src_schema else q(src_table)
+        tgt = f"{q(tgt_schema)}.{q(tgt_table)}" if tgt_schema else q(tgt_table)
+        prefix = f"SET LOCK_TIMEOUT {int(timeout_ms)}; " if int(timeout_ms or 0) > 0 else ""
+        return (
+            f"{prefix}SELECT COUNT(*) AS sampled, "
+            f"SUM(CASE WHEN EXISTS (SELECT 1 FROM {tgt} t WHERE t.{q(tgt_col)} = s.v) "
+            f"THEN 1 ELSE 0 END) AS matched "
+            f"FROM (SELECT TOP {n} {q(src_col)} AS v FROM {src} "
+            f"WHERE {q(src_col)} IS NOT NULL) s"
+        )
 
 
 _MYSQL = MySQLDialect()

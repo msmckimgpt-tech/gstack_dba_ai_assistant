@@ -78,6 +78,27 @@ source_of_truth: true
       (이미지 revert + 그래프 drop, 관계형 SSOT 무변경). pgbouncer/replica 호환 + replica 의 shared_preload 정합 확인.
 - [ ] T5.4 PB-0008 라이브 브라우저 검증(그래프 UI) + canary.
 
+## 6b. Phase 6 — 암묵 관계 추론 + 자기교정 강화 (implicit-edges cycle, R4 실현) ✅ 코드 PASS (2026-07-01)
+사용자 결정(2026-07-01): 검증=관찰+능동프로브 하이브리드 · 범위=풀 슬라이스. 등급 Major(비파괴 추가).
+- [x] T6.1 alembic 0026 `20260701_0026_relationship_reinforcement.py` — `table_relationships` 비파괴 ADD
+      COLUMN(weight·positive_signals·negative_signals·status·last_validated_at) + source CHECK 'inferred'
+      추가 + status CHECK + 상태/가중 인덱스 + backfill. downgrade=DROP.
+- [x] T6.2 `relationships.py` — `infer_implicit_relationships`(명명규칙 name_fk/shared_key, 순수) +
+      `store_inferred_relationships` + 강화 엔진(`next_reinforcement_state` 순수 + `apply_relationship_signal`)
+      + 능동 프로브(`probe_and_reinforce`/`classify_probe`/`fetch_probe_candidates`) + weight-aware
+      upsert/read/digest(broken 제외·신뢰 태그). confidence↔weight 분리, FK 권위적 불변, 재추론 보존.
+- [x] T6.3 `dialects.py` — `probe_relationship_overlap`(MySQL LIMIT / MSSQL TOP, EXISTS 겹침, 식별자 이스케이프).
+- [x] T6.4 `insight.py` — 스키마 구조 변경/신규 시 추론 + 프로브 훅(throttle·cap) + report 카운터.
+- [x] T6.5 `metadata_graph.py` — REFERENCES 엣지에 weight/status 투영, sync_graph broken 제외, 이웃 조회 반환.
+- [x] T6.6 `agent_core.py` 경로 — 성공한 대화 JOIN = 양성 강화(`learn_relationships_from_sql` 확장, 무변경 훅).
+- [x] T6.7 UI(admin.js/html/css) — 엣지 status/weight 데이터 + 신뢰=실선/추정=점선 스타일 + 범례 + 상세 배지
+      + 캐시버스터 bump.
+- [x] T6.8 config 플래그 5(INFERENCE/PROBE ENABLED + INFER/PROBE CAP + PROBE SAMPLE).
+- [x] T6.9 단위 테스트 +21건(강화 전이·프로브 판정·추론 휴리스틱·digest 신뢰·dialect SQL) — 36건 PASS,
+      ruff clean, 전체 suite collection EXIT=0, ON CONFLICT↔UNIQUE 불변식 유지.
+- [ ] T6.10 (배포 게이트) alembic 0026 적용 + insight 워커 재빌드 + `metadata-graph-sync --rebuild` →
+      라이브 e2e(점선 추정 엣지 출현·프로브 강화/파단) + PB-0008 시각 검증. **cutover 된 AGE 스택 필요.**
+
 ## 7. 검증 게이트 (각 Phase 공통)
 - 적대 패널: backend/security/qa (AGE Cypher 인젝션·RBAC·scope 격리·확장 공존 회귀).
 - `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph`.
@@ -89,7 +110,30 @@ source_of_truth: true
 - R3: 8K 노드 그래프 UI 성능 → 검색/이웃 스코프로 제한(전체 렌더 금지).
 - R4: FK 미선언으로 엣지 희소 → 대화 학습·LLM 추론으로 점진 보강(엣지 0 이어도 노드 그래프는 가치).
 
-## 9. Phase 6 — graphux5 그래프뷰 UX 개선 cycle (2026-07-01, entry persona dispatch)
+## 9. graphux5 — 컬럼 세로 정렬(실제 순서) + 부드럽게 꺾이는 엣지 (2026-07-01)
+
+### 9.0 맥락 / 요구
+- 사용자 요청: 그래프 뷰에서 (1) 테이블(청색) 노드 하단으로 컬럼(회색) 노드가 **실제 순서대로** 세로로
+  펼쳐지고, (2) 연결선이 직선이 아닌 **부드럽게 꺾이는 선**이 되도록. 현재 fcose force layout 이 컬럼을
+  흩뿌려 순서 판독 불가 + 타 테이블 엣지와 교차.
+- 사용자 결정(2026-07-01, AskUserQuestion): **백엔드 ordinal 까지 한 번에** — 실제 DDL 순서 보장.
+- 등급: **Major** (agent_kb 마이그레이션 추가 + 그래프 재sync + web 재배포). 마이그는 비파괴 additive(ADD COLUMN nullable)라 expand-safe.
+
+### 9.1 백엔드 — ordinal 을 관계형 SSOT(column_descriptions)에 저장 → 그래프 투영
+- [x] T9.1 alembic 0026 `20260701_0026_column_ordinal.py`: `column_descriptions.ordinal integer NULL` ADD
+      + backfill. downgrade=DROP. `agent_kb_schema.sql` 정합.
+- [x] T9.2 kb_metadata.py: upsert/update/list ordinal.
+- [x] T9.3 metadata_graph.py: `_PROP_KEYS += ordinal`, 정수 리터럴, sync_column/sync_graph/직렬화 ordinal.
+- [x] T9.4 app.py: columns POST/PUT/GET + graph 노드 직렬화 ordinal.
+
+### 9.2 프론트엔드 — 컬럼 세로 스택 + round-taxi 엣지 (admin.js)
+- [x] T9.5~T9.8 bootstrap ordinal 캡처 · `_metaGraphPlaceColumns` 세로 스택 + lock · round-taxi/unbundled-bezier.
+
+### 9.3 검증
+- [x] T9.9~T9.10 테스트 + verify-completion + migrate-lint.
+- [ ] T9.11~T9.12 배포(alembic upgrade + 재sync + web 재배포) + PB-0008 시각검증.
+
+## 10. Phase 6 — graphux5 그래프뷰 UX 4항목 개선 cycle (node-analysis, 2026-07-01, entry persona dispatch)
 
 사용자 요청 4건. 등급 **Major**(외부 LLM 비용 + 백그라운드 인프라 + 신규 테이블). 사용자 결정 3건
 (2026-07-01 AskUserQuestion): ① AI 재귀 = **경계 있는 재귀**(depth/node 예산 + visited dedupe),
@@ -103,7 +147,7 @@ source_of_truth: true
       백엔드 score 우선, 부재 시 클라 휴리스틱 폴백.
 
 ### 6.2 항목2 — AI 능동 분석(재귀·백그라운드) ✅
-- [x] alembic **0026** `node_analysis_runs`/`node_analysis_jobs`(비파괴 추가, GRANT, set_updated_at).
+- [x] alembic **0028** `node_analysis_runs`/`node_analysis_jobs`(비파괴 추가, GRANT, set_updated_at). ※ implicit-edges 동시 0026/0027 병합으로 0028 재번호.
 - [x] `modules/node_analysis.py`(신규) — enqueue_analysis(run+루트 잡) / process_pending(claim
       `FOR UPDATE SKIP LOCKED` → llm_node_analysis → 저장 → 이웃 재큐, **depth/node 예산 캡 + dedupe**) /
       get_run_status / get_node_analysis. 경계: `AGENT_NODE_ANALYSIS_*` config.
@@ -126,14 +170,14 @@ source_of_truth: true
 - [x] `static/admin.js` — change 리스너 추가 → 현재 선택/최근 상세 노드를 새 깊이로 재전개.
 
 ### 6.5 검증
-- [x] py_compile(config/metadata_graph/node_analysis/llm/insight/0026/app.py) + node --check admin.js PASS.
-- [ ] 적대 리뷰 패널(backend/security/qa/ux/frontend) — diff 대상.
-- [ ] `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph`.
-- [ ] PB-0008 Windows 브라우저 시각검증(visual_verification_scope: always) — 그래프뷰 4항목 라이브.
-- [ ] 배포 시 **alembic upgrade head**(0026 적용) + web 재빌드(deploy_scope: included).
+- [x] py_compile(config/metadata_graph/node_analysis/llm/insight/0028/app.py) + node --check admin.js PASS.
+- [x] 적대 리뷰 패널(5렌즈 backend/security/api/frontend/migration → 발견 16 → 확정 10건 전량 수정, REVIEW.md REV-graphux5).
+- [x] `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph` PASS (전 게이트) + `migrate-lint --base main`(0028 expand-safe).
+- [ ] PB-0008 Windows 브라우저 시각검증(visual_verification_scope: always) — 그래프뷰 4항목 라이브(배포 후).
+- [ ] 배포 시 **alembic upgrade head**(0028 적용) + web 재빌드(deploy_scope: included).
 
 ### 6.6 변경 파일
 - backend: `shared/config.py`, `unit/feature-0002-agent-core/src/modules/{metadata_graph,node_analysis,llm,insight}.py`,
-  `unit/feature-0002-agent-core/alembic/versions/20260701_0026_node_analysis.py`,
+  `unit/feature-0002-agent-core/alembic/versions/20260701_0028_node_analysis.py`,
   `unit/feature-0003-agent-web-ui/src/app.py`.
 - frontend: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`.

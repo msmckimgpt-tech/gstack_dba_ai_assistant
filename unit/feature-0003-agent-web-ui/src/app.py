@@ -26561,12 +26561,13 @@ def admin_list_column_desc(request: Request) -> JSONResponse:
             pg.close()
         except Exception:
             pass
-    # row: (id, scope_key, schema_name, table_name, column_name, description, source, created_at, updated_at)
+    # row: (id, scope_key, schema_name, table_name, column_name, description, source, created_at, updated_at, ordinal)
     items = [{
         "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
         "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
         "description": str(r[5] or ""), "source": str(r[6] or ""),
         "created_at": _metadata_iso(r[7]), "updated_at": _metadata_iso(r[8]),
+        "ordinal": (int(r[9]) if len(r) > 9 and r[9] is not None else None),
     } for r in rows]
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
@@ -26594,6 +26595,14 @@ async def admin_create_column_desc(request: Request) -> JSONResponse:
     if e:
         return e
     source = "manual" if str(data.get("source") or "").strip().lower() != "bootstrap" else "bootstrap"
+    # feature-0016 graphux5: 실제 스키마 컬럼 순서(1-based). 부트스트랩 저장이 골격(DDL) 순서를 전송.
+    ordinal = data.get("ordinal")
+    try:
+        ordinal = int(ordinal) if ordinal is not None and str(ordinal).strip() != "" else None
+    except (TypeError, ValueError):
+        ordinal = None
+    if ordinal is not None and not (0 < ordinal <= 100000):
+        ordinal = None   # 비정상 범위(PG int 초과·음수·0)는 미지정 처리(500 회피)
     from modules import kb_metadata as _km
     from shared.db import _pg_connect
     try:
@@ -26603,7 +26612,8 @@ async def admin_create_column_desc(request: Request) -> JSONResponse:
     try:
         _km.upsert_column_desc(pg, scope_key, table_name, column_name, description,
                                schema_name=schema_name, source=source,
-                               created_by=str((account or {}).get("username") or "") or None)
+                               created_by=str((account or {}).get("username") or "") or None,
+                               ordinal=ordinal)
         pg.commit()
     except Exception:
         try:
@@ -26651,6 +26661,17 @@ async def admin_update_column_desc(desc_id: int, request: Request) -> JSONRespon
         schema_name, e = _metadata_str_field(data, "schema_name", required=False)
         if e:
             return e
+    # feature-0016 graphux5: ordinal(실제 스키마 컬럼 순서) 선택 수정. 미제공 → 미변경.
+    ordinal = data.get("ordinal")
+    if ordinal is not None and str(ordinal).strip() != "":
+        try:
+            ordinal = int(ordinal)
+        except (TypeError, ValueError):
+            ordinal = None
+        if ordinal is not None and not (0 < ordinal <= 100000):
+            ordinal = None   # 비정상 범위는 미지정 처리(500 회피)
+    else:
+        ordinal = None
     from modules import kb_metadata as _km
     from shared.db import _pg_connect
     try:
@@ -26660,7 +26681,7 @@ async def admin_update_column_desc(desc_id: int, request: Request) -> JSONRespon
     try:
         affected = _km.update_column_desc(pg, int(desc_id), scope_key, description,
                                           schema_name=schema_name, table_name=table_name,
-                                          column_name=column_name)
+                                          column_name=column_name, ordinal=ordinal)
         if affected <= 0:
             pg.rollback()
             return _json_error("해당 컬럼 설명을 찾을 수 없습니다.", 404)

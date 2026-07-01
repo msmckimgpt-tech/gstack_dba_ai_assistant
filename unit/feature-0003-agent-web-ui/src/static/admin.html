@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260701-graphux8" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260701-graphux12" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -710,14 +710,17 @@
             <button type="button" class="btn-secondary" id="metadataGraphDetailToggle" aria-label="상세 패널 접기/펼치기" title="상세 패널 접기/펼치기">상세 ⇆</button>
             <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
           </div>
-          <!-- 범례: 노드 색=카테고리(라벨), 크기=검색 관련도, 점선 박스=스키마 클러스터. -->
+          <!-- 범례: 노드 색=카테고리(라벨), 크기=검색 관련도, 점선 박스=스키마 클러스터.
+               feature-0016: 실선=신뢰(FK·검증됨) 관계, 점선=추정(암묵 JOIN, 검증 전) 관계. -->
           <div class="admin-meta-graph-legend" aria-hidden="true">
             <span><i class="lg-dot" style="background:#0f7d8c"></i>테이블</span>
             <span><i class="lg-dot" style="background:#5c6773"></i>컬럼</span>
             <span><i class="lg-dot" style="background:#9c6515"></i>용어</span>
             <span><i class="lg-box"></i>스키마 클러스터</span>
+            <span><i class="lg-line lg-line-solid"></i>신뢰 관계</span>
+            <span><i class="lg-line lg-line-dashed"></i>추정 관계</span>
             <span><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</span>
-            <span class="admin-meta-graph-legend-note">크기·라벨% = 검색 유사도(pg_trgm) · 보라 테두리 = AI 능동분석 완료 · 선 = 관계(FK/JOIN)</span>
+            <span class="admin-meta-graph-legend-note">크기·라벨% = 검색 유사도(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 보라 테두리=AI 능동분석 완료</span>
           </div>
           <div class="admin-meta-graph-body">
             <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
@@ -828,7 +831,7 @@
   <script src="/static/vendor/layout-base.js?v=2.0.1"></script>
   <script src="/static/vendor/cose-base.js?v=2.2.0"></script>
   <script src="/static/vendor/cytoscape-fcose.js?v=2.2.0"></script>
-  <script src="/static/admin.js?v=20260701-graphux8"></script>
+  <script src="/static/admin.js?v=20260701-graphux12"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260630b-rn-0630"></script>

@@ -24,8 +24,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0026_node_analysis"
-down_revision: Union[str, None] = "0025_age_metadata_graph"
+revision: str = "0028_node_analysis"
+down_revision: Union[str, None] = "0027_column_ordinal"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

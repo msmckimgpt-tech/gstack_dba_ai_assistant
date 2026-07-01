@@ -7924,6 +7924,10 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .admin-meta-graph-legend .lg-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
 .admin-meta-graph-legend .lg-box { width: 14px; height: 11px; border: 1px dashed #aab3c5; border-radius: 3px; background: rgba(63,75,140,.08); display: inline-block; }
+/* feature-0016: 관계 신뢰 범례 — 실선=신뢰(FK·검증됨), 점선=추정(암묵 JOIN, 검증 전). */
+.admin-meta-graph-legend .lg-line { width: 16px; height: 0; display: inline-block; }
+.admin-meta-graph-legend .lg-line-solid { border-top: 2.5px solid #7a4f10; }
+.admin-meta-graph-legend .lg-line-dashed { border-top: 2px dashed #b0872f; }
 .admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
 /* 반응형 그래프 body: clamp 높이 + 패널 접기(.detail-collapsed) */
 .admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: stretch; }
@@ -7945,6 +7949,10 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-fqn { font-family: monospace; font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; word-break: break-all; }
 .admin-meta-graph-desc { margin: 0 0 12px; line-height: 1.5; }
 .admin-meta-graph-muted { color: var(--text-muted); }
+/* feature-0016: 관계 신뢰 배지 — 추정(검증 전, 주의)/신뢰(검증됨). */
+.admin-meta-graph-trust { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-left: 4px; letter-spacing: .02em; }
+.admin-meta-graph-trust-candidate { color: #7a4f10; background: rgba(176,135,47,.16); border: 1px dashed #b0872f; }
+.admin-meta-graph-trust-trusted { color: #1f6b3a; background: rgba(46,125,82,.14); }
 .admin-meta-graph-sec { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
 .admin-meta-graph-sec h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--text-2, var(--text)); }
 .admin-meta-graph-sec ul { margin: 0; padding-left: 16px; }

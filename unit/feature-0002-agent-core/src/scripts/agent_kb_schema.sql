@@ -374,12 +374,15 @@ CREATE TABLE IF NOT EXISTS column_descriptions (
     column_name varchar(128) NOT NULL,
     description text         NOT NULL,
     source      varchar(24)  NOT NULL DEFAULT 'manual',
+    ordinal     integer,     -- feature-0016 graphux5: 실제 스키마 컬럼 순서(DDL ORDINAL_POSITION). NULL=미상.
     created_by  varchar(64),
     created_at  timestamptz  NOT NULL DEFAULT now(),
     updated_at  timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT ux_column_descriptions_scope_col
         UNIQUE (scope_key, schema_name, table_name, column_name)
 );
+-- feature-0016 graphux5: 기존 DB(alembic 0026 미적용 경로)에도 ordinal 을 보장(정본은 alembic 0026).
+ALTER TABLE column_descriptions ADD COLUMN IF NOT EXISTS ordinal integer;
 CREATE INDEX IF NOT EXISTS ix_column_descriptions_scope ON column_descriptions (scope_key);
 CREATE INDEX IF NOT EXISTS ix_column_descriptions_col
     ON column_descriptions (scope_key, table_name, column_name);

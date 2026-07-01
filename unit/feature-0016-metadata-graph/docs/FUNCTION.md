@@ -52,13 +52,28 @@ source_of_truth: true
 ### 4.1 노드 레이블
 - `Product` (제품) · `Datasource` (데이터소스) · `Schema` · `Table` · `Column` · `GlossaryTerm`
 - 공통 속성: `scope_key`, `fqn`, `name`, `description`, `source`, `confidence`, `updated_at`.
+- `Column` 추가 속성(graphux5): `ordinal` — 실제 스키마 컬럼 순서(1-based). 관계형 SSOT
+  `column_descriptions.ordinal`(부트스트랩 골격 = `describe_columns` ORDINAL_POSITION 순서 캡처)의 투영.
+  그래프 UI 가 이 값으로 Column 을 Table 하단에 실제 순서대로 세로 배치한다(미상 = name 순 fallback).
 
 ### 4.2 엣지 레이블
 - `(Datasource)-[:HAS_SCHEMA]->(Schema)` / `(Schema)-[:HAS_TABLE]->(Table)` / `(Table)-[:HAS_COLUMN]->(Column)`
 - `(Product)-[:USES]->(Datasource)`
-- `(Column)-[:REFERENCES {cardinality, source, confidence}]->(Column)` — FK/join 관계 (table_relationships 투영)
+- `(Column)-[:REFERENCES {cardinality, source, confidence, weight, status}]->(Column)` — FK/join/추론 관계
+  (table_relationships 투영). `source` ∈ {fk_introspect, conversation, llm_insight, **inferred**}.
+  `weight`(동적 신뢰 0~1)·`status`(candidate/trusted/broken)는 **implicit-edges 자기교정**의 산물 —
+  UI 는 trusted=실선 / candidate=점선 / broken=숨김. broken 은 투영에서 제외(학습된 '비관계').
 - `(GlossaryTerm)-[:RELATED_TERM {relation_type}]->(GlossaryTerm)` — synonym/similar/see_also
 - `(GlossaryTerm)-[:DESCRIBES]->(Table|Column)` — 용어↔객체 연결 (확장)
+
+### 4.2.1 암묵 관계 자기교정 (implicit-edges, 2026-07-01)
+FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 추론**(source='inferred', status='candidate')한
+뒤, 그 연결이 올바른지 **항상 검증**한다. 정적 `confidence`(출처 prior)와 동적 `weight`(관찰·프로브로 갱신)를
+분리하며, 신호에 따라 weight 가 오르내리고 상태가 전이한다:
+- **양성**(성공한 대화 JOIN 사용 · 실데이터 겹침 프로브 겹침률 ≥ 0.5) → `weight += step·(1-weight)`(점근 상승).
+- **음성**(프로브 겹침률 == 0, 충분표본) → `weight *= (1-step)`(더 빠른 감쇠 — 비대칭, 오류 관계 빠른 파단).
+- `weight ≤ 0.15` → **broken**(주입·그래프 제외). `weight ≥ 0.85` + 양성 누적 → **trusted**(신뢰 재구성).
+- **FK(fk_introspect)는 권위적** — 강등 없이 항상 trusted. 재추론 upsert 는 강화상태를 보존(파단 부활 없음).
 
 ### 4.3 SSOT ↔ 투영 원칙
 - **SSOT = 관계형 테이블** (`table_descriptions`·`column_descriptions`·`table_relationships`·
@@ -69,22 +84,31 @@ source_of_truth: true
 ## 5. Inputs
 - 관계형 SSOT (위 테이블들).
 - 데이터소스 `information_schema` / `sys.foreign_keys` (FK 메타 — 엣지 적재).
-- 대화 중 실행된 JOIN SQL (엣지 학습, 기존 feature-0013 훅).
+- 대화 중 실행된 JOIN SQL (엣지 학습 + 사용 성공 = 양성 강화 신호, 기존 feature-0013 훅).
+- 데이터소스 스키마의 테이블·컬럼 명명 규칙 (implicit-edges 추론 입력).
+- 실데이터 겹침 프로브 결과 (candidate 검증 — 양성/음성 신호).
 - 관리자 CRUD 입력 (통합 엔티티 편집).
 
 ## 6. Outputs
 - AGE `metadata_kb` 그래프 (관계형 투영).
 - 그래프 투영 API `{nodes[], edges[]}` (scope·검색·k-hop 필터).
 - 관리콘솔 그래프 UI (Cytoscape.js) + 통합 엔티티 상세 + 검색.
+  - graphux5: Column 노드를 소속 Table 하단에 `ordinal` 순으로 세로 배치(lock) + Table→Column 연결선을
+    부드럽게 꺾이는(round-taxi, 아래로 내려가 컬럼으로 꺾임) 라우팅, 그 외 엣지는 완만한 곡선(unbundled-bezier).
 - AI knowledge context 의 엔티티 묶음 + 이웃 digest + (선택) Cypher 네비게이션 tool.
 
 ## 7. Main Flow
 1. (적재) insight worker FK introspection + 대화 JOIN 학습 → `table_relationships` upsert.
-2. (동기화) `metadata-graph-sync` 가 관계형 → AGE `metadata_kb` 그래프 upsert (증분/전체).
-3. (조회) 투영 API 가 Cypher 로 검색·k-hop 이웃을 `{nodes,edges}` 로 반환.
-4. (UI) 관리콘솔이 Cytoscape 로 그래프 렌더, 노드 클릭 → 통합 엔티티 카드(설명+컬럼+관계+용어).
-5. (AI) `_build_knowledge_context` 가 질문 관련 엔티티를 그래프에서 묶어 주입 + 컨텍스트 초과 시
-   Cypher 네비게이션 tool 로 AI 가 직접 탐색.
+1b. (추론) insight worker 가 FK 미선언 스키마에서 명명 규칙으로 암묵 관계를 추론(source='inferred',
+    candidate) → upsert. (`AGENT_RELATIONSHIP_INFERENCE_ENABLED`)
+1c. (검증) insight worker 가 candidate 를 실데이터 겹침 프로브(EXISTS)로 검증 → 양성/음성 강화. 대화에서
+    성공한 JOIN 은 상시 양성 강화. weight/status 전이(§4.2.1). (`AGENT_RELATIONSHIP_PROBE_ENABLED`)
+2. (동기화) `metadata-graph-sync` 가 관계형 → AGE `metadata_kb` 그래프 upsert (증분/전체). broken 제외.
+3. (조회) 투영 API 가 Cypher 로 검색·k-hop 이웃을 `{nodes,edges}`(weight/status 포함) 로 반환.
+4. (UI) 관리콘솔이 Cytoscape 로 그래프 렌더(신뢰=실선/추정=점선), 노드 클릭 → 통합 엔티티 카드(관계에
+   추정/신뢰 배지).
+5. (AI) `_build_knowledge_context` 가 질문 관련 엔티티를 그래프에서 묶어 주입(broken 제외·weight 정렬·
+   추정/신뢰 태그) + 컨텍스트 초과 시 Cypher 네비게이션 tool 로 AI 가 직접 탐색.
 
 ## 8. Out of Scope
 - 사용자 비즈니스 데이터 자체의 그래프화 (메타데이터만 대상).
@@ -108,10 +132,15 @@ source_of_truth: true
 - AC-5: 관리콘솔에서 그래프 뷰 렌더(노드 클릭→통합 엔티티 카드: 설명+컬럼+관계+용어) + 검색 동작.
 - AC-6: AI knowledge context 가 질문 관련 엔티티를 그래프에서 묶어 주입(+Cypher tool), 회귀 0.
 - AC-7: 운영 cutover 가 무중단 배포 파이프라인과 정합, 롤백 경로(이미지 revert + 그래프 drop) 검증.
+- AC-8 (implicit-edges): FK 미선언 스키마에서 암묵 관계가 추론(source='inferred', candidate)되어 그래프에
+  점선으로 표시되고, 실데이터 겹침 프로브·대화 사용으로 weight 가 오르내리며 broken(제외)/trusted(실선)로
+  전이한다. FK 엣지는 강등되지 않는다. broken 은 AI 주입·그래프에서 제외된다.
 
 ## 11. Observability
 - sync telemetry: `graph_nodes_synced`, `graph_edges_synced`, `graph_sync_failed`.
 - introspection: `relationships_introspected`(기존 재사용).
+- implicit-edges (insight report): `relationships_inferred`(추론 upsert 수),
+  `relationships_probe_probed`/`_positive`/`_negative`(프로브 검증 결과).
 - 투영 API: 응답 노드/엣지 수, k-hop depth, latency.
 - AI: Cypher tool 호출 수, 컨텍스트 토큰 절감.
 
