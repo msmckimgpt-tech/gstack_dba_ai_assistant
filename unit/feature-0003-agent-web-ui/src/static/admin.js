@@ -3047,13 +3047,16 @@ function _metaInitGraph() {
           "target-arrow-shape": "triangle", "curve-style": "unbundled-bezier",
           "control-point-distances": "36", "control-point-weights": "0.5",
           "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
-      // feature-0016 graphux5: 테이블→컬럼(HAS_COLUMN)은 하단으로 '부드럽게 꺾이는' 직교 라우팅(round-taxi).
+      // feature-0016 graphux10: 테이블→컬럼(HAS_COLUMN)은 하단으로 '부드럽게 꺾이는' 직교 라우팅(round-taxi).
       //   컬럼이 테이블 아래 세로로 펼쳐지며(_metaGraphPlaceColumns), 엣지가 아래로 내려가 각 컬럼으로 꺾인다.
       { selector: "edge[label='HAS_COLUMN']", style: {
           "curve-style": "round-taxi", "taxi-direction": "downward",
           "taxi-turn": "24px", "taxi-turn-min-distance": "4px", "taxi-radius": 10,
           "line-color": "#b7bfca", "target-arrow-color": "#b7bfca", "target-arrow-shape": "triangle",
           "width": 1.3, "opacity": 0.9 } },
+      // 레이아웃 애니메이션 중 엣지 숨김 — 매 프레임 엣지 지오메트리(bezier 제어점·화살표) 재계산이
+      // 트윈 프레임의 주 비용(격리측정: 엣지표시 대비 트윈 40.8→21.4ms). 정착 시 복원.
+      { selector: "edge.anim-hide", style: { "display": "none" } },
       { selector: "edge[label='REFERENCES']", style: {
           "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2.2, "label": "data(label)" } },
       // feature-0016 암묵 관계 신뢰 시각화: 추론/후보(candidate)=점선·반투명(검증 전),
@@ -3340,19 +3343,26 @@ function _metaGraphLayout(opts) {
           animate: false, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
         });
       } else {
+        // 초기 로드/검색 펼침 애니메이션. quality proof→default + numIter 대폭 축소로 **fcose 동기 계산
+        // 프리즈**를 줄인다(격리측정 400노드: proof/2500 프리즈 402ms → default/600 250ms). 계산은 메인스레드
+        // JS 라 HW 가속과 무관 — 저프레임 애니의 근본 원인 중 하나. nodeSeparation·nodeDimensionsIncludeLabels
+        // 유지라 비겹침 스프레드 품질은 보존.
         cfg = Object.assign({}, base, {
-          name: "fcose", randomize: true, quality: "proof", fit: true, padding: 40,
-          animationDuration: 1000, packComponents: true, numIter: cnt > 400 ? 1800 : 2500,
+          name: "fcose", randomize: true, quality: "default", fit: true, padding: 40,
+          animationDuration: 700, packComponents: true, numIter: cnt > 200 ? 600 : 1000,
         });
       }
       const layout = cy.layout(cfg);
-      // 비증분(초기 로드/검색)만 element 애니 → 그 동안 라벨 숨김(텍스트 래스터 최대 비용). 증분은 즉시 배치라 불필요.
-      const hideLabels = animate && !incremental;
-      if (hideLabels) { try { cy.nodes().addClass("anim-hide-label"); } catch (_) {} }
+      // 비증분(초기 로드/검색) element 애니 동안 라벨+엣지 숨김 → 프레임당 텍스트 래스터 + **엣지 지오메트리
+      // 재계산**(트윈 프레임의 주 비용, 격리측정 40.8→21.4ms) 생략 → 부드러운 프레임. 증분은 즉시 배치라 불필요.
+      const hideMotion = animate && !incremental;
+      if (hideMotion) {
+        try { cy.nodes().addClass("anim-hide-label"); cy.edges().addClass("anim-hide"); } catch (_) {}
+      }
       layout.one("layoutstop", () => {
-        if (hideLabels) { try { cy.nodes().removeClass("anim-hide-label"); } catch (_) {} }
-        _metaGraphPlaceColumns();   // graphux9: 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
-        // 카메라는 '즉시' 이동(cy.fit, 애니메이션 없음 — graphux8b 저프레임 회피 결정 존중). 컬럼 배치 후 bounding box 반영.
+        if (hideMotion) { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} }
+        _metaGraphPlaceColumns();   // graphux10: 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
+        // 카메라는 '즉시' 이동(cy.fit, 애니메이션 없음 — 저프레임 회피 결정 존중). 컬럼 배치 후 bounding box 반영.
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
             cy.fit(opts.focusEles, 80);
