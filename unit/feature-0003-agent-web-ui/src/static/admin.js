@@ -3481,7 +3481,8 @@ function _metaGraphLayout(opts) {
 }
 
 function _metaGraphRenderDetailEmpty() {
-  const el = document.getElementById("metadataGraphDetail");
+  // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p></div>';
 }
@@ -3503,7 +3504,8 @@ function _metaEdgeTrustBadge(e) {
 
 // 통합 엔티티 카드 — 클릭 노드의 이웃을 카테고리(컬럼·관계·용어)로 묶어 표시.
 function _metaGraphRenderDetail(self, nodes, edges) {
-  const el = document.getElementById("metadataGraphDetail");
+  // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   // 항목1: 이 노드가 검색 결과라 그래프에 rel(유사도)이 실려 있으면 상세 헤더에 % 명시.
   const selfScopeKey = (self.key && self.key.indexOf(":") >= 0)
@@ -3656,6 +3658,7 @@ function _metaGraphRenderProgress(st) {
   const panel = document.getElementById("metadataGraphProgress");
   if (!panel || !st) return;
   if (panel.dataset.dismissed && panel.dataset.dismissed === st.run_id) return;   // 사용자가 이 run 패널을 닫음
+  panel.style.display = "";   // fix(세션 독립): 재개 폴 경로(버튼 미경유)에서도 패널을 표시 — 초기 display:none 해제
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const jobs = st.jobs || [];
   const done = st.done || 0, enq = st.enqueued || 0, failed = st.failed || 0;
@@ -3713,7 +3716,15 @@ async function _metaGraphLoadNodeAnalysis(key) {
     const b2 = document.getElementById("metaGraphAiBtn2");
     if (b2) b2.addEventListener("click", () => _metaGraphAnalyze(key));
   } else if (res.status === "pending" || res.status === "running") {
-    box.innerHTML = '<span class="admin-meta-graph-muted">분석 대기/진행 중(백그라운드)…</span>';
+    box.innerHTML = '<span class="admin-meta-graph-muted">분석 진행 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
+    // graphux5 fix(세션 독립): 이 노드가 (다른 탭/세션·새로고침으로) 활성 폴이 없는 진행 중 run 에 속하면
+    //   그 run 을 폴링 재개해 **어느 화면에서도** 진행 패널·주황 마커·진행률이 나타나게 한다. 이미 그 run 을
+    //   폴링 중이면 재개하지 않음(중복 방지). run 이 done/failed 로 끝나면 폴이 자연 종료.
+    if (res.run_id && _metaGraph.activeRunId !== res.run_id) {
+      const panel = document.getElementById("metadataGraphProgress");
+      if (panel) delete panel.dataset.dismissed;
+      _metaGraphPollRun(res.run_id, key);
+    }
   } else if (res.status === "failed") {
     box.innerHTML = '<span class="admin-meta-graph-muted">이 노드 분석 실패. 재시도하려면 능동 분석을 다시 눌러 주세요.</span>';
   }

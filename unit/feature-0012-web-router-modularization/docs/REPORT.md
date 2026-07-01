@@ -47,7 +47,9 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260701-0003: Final router 추출 #7 admin_quotas(3)+admin_sample_feedback(3) 완전-DI RP → routers/. app.X(non-_ record_audit_event 포함)+stdlib+test 전환. **app.py 28,610→28,350(~260↓)**, route-parity 188, make test 통과.
 - CHG-20260701-0004: Final router 추출 #8(batch 3) admin_console 5 완전-DI(me·permissions·databases·overview·health) → routers/admin_console.py. app.X+from-datetime import+test 전환. **app.py 28,559→28,410**, 골든 192(main graph 4 흡수), make test 통과.
 - CHG-20260701-0005: Final router 추출 #9(batch 4) share(2)+system(2) 완전-DI → routers/. 소스텍스트 contract 테스트 전환(4번째 커플링 유형). **app.py 28,410→28,221, 완전-DI 라우트 전부 추출(11 router)**, route-parity 192, make test 통과.
-- 총 변경 횟수: 29
+- CHG-20260701-0006: **inline-heavy DI 전환 재개 — admin/metadata 33 핸들러** byte-동치 전환(추출 선행). 도메인 auth helper(`_metadata_resolve_account`류)→`Depends(require_permission("<perm>"))`, perm kb.ingest.manual 27/kb.glossary.curate 3/kb.sample.curate 3. **핵심발견: txn(autocommit)은 독립 `_pg_connect`(PostgreSQL)라 get_conn(MySQL) 무관 → txn 이연 불요.** 이연 1(admin_metadata_suggest: pre-auth 404 gate + 동적 perm). 동반 테스트 4파일(happy 49 account= 주입/403 gate 9 TestClient). §18.8 패널(REV-0006) GO. **behavior-neutral(추출 아님, 핸들러 app.py 잔류)**, make test 1313·0 fail, route-parity 192 불변.
+- CHG-20260701-0007: **router 추출 #10 admin/metadata 34 핸들러** → routers/admin_metadata.py(1447줄). inline-heavy 도메인 첫 추출(DI 전환 CHG-0006 선행). tokenize 변환기(whitelist app.X 접두), 테스트 재참조 65+import, 골든 재생성 set-neutral 192. **app.py 28,224→26,734(~1,490↓, 단일 도메인 최대).** make test 1313·0 fail. 학습: mod_syms 튜플-대입 상수 누락→make test NameError 적발→완전 static 재검사.
+- 총 변경 횟수: 31
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

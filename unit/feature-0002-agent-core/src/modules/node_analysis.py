@@ -205,11 +205,15 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                         (lease,))
         except Exception:
             pass
-        # claim (원자적 단일 statement — autocommit 안전)
+        # claim (원자적 단일 statement — autocommit 안전).
+        #   fairness fix: **depth ASC 우선** 정렬 — 모든 run 의 root(depth 0)/얕은 노드를 먼저 처리한다.
+        #   과거 created_at-only FIFO 는 대형 run(예: 124노드)의 깊은 recursion 잡이 앞줄을 독점해, 이후
+        #   트리거된 단일노드 run 의 root 조차 처리 못 하고 사용자 화면이 오래 0% 에 머물렀다(starvation).
+        #   depth 우선이면 새 run 의 root 가 즉시 처리돼 done>0(진행 표시)로 빠르게 전환된다.
         cur.execute(
             "UPDATE node_analysis_jobs SET status='running' WHERE id IN ("
             "  SELECT id FROM node_analysis_jobs WHERE status='pending' "
-            "  ORDER BY created_at ASC LIMIT %s FOR UPDATE SKIP LOCKED) "
+            "  ORDER BY depth ASC, created_at ASC LIMIT %s FOR UPDATE SKIP LOCKED) "
             "RETURNING id, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth",
             (max_nodes,))
         claimed = cur.fetchall()

@@ -409,3 +409,28 @@ source_of_truth: true
 - Impact: **app.py 28,410→28,221 줄.** make test 전체 통과·0 fail·route drift 0, route-parity 192, py_compile OK. behavior-neutral. **완전-DI(inline=0) 라우트 전부 추출 완료(11 router).**
 - 학습: 추출 커플링 4유형 = (1) `app.<handler>` 직접호출, (2) `monkeypatch.setattr(app,...)`, (3) `getsource(app.<handler>)` attribute, (4) **app.py 소스 read_text/ast.parse 후 핸들러명 검색(contract 테스트)**. 추출 전 grep: `app\.<handler>` + 핸들러명이 등장하는 소스-읽기 테스트.
 - Rollback: revert(share.py·system.py 삭제 + app.py 4 복원 + 테스트·골든 복원).
+
+## CHG-20260701-0006
+- Date: 2026-07-01
+- Related Requirement: P5b inline-heavy DI 전환 재개 — **admin/metadata 도메인 33 핸들러** DI seam byte-동치 전환(추출 선행). 원래 블로커(monkeypatch 커플링)의 핵심 잔여.
+- Summary:
+  admin/metadata 33 핸들러의 도메인 전용 인라인 auth helper(`_metadata_resolve_account`/`_samples_resolve_account`/`_metadata_resolve_account_perm(request,"<lit>")`) → `account=Depends(require_permission("<perm>"))` byte-동치 전환. perm 매핑: kb.ingest.manual 27(glossary/enum/relations/tables/columns/graph/bootstrap) + kb.glossary.curate 3(glossary-feedback) + kb.sample.curate 3(samples). **결정적 AST 변환기**(`metadata_di_transform.py`): 첫 본문 auth-resolve 3줄(account,error=.../if error:/return error) 제거 + 시그니처 param 주입.
+  - **핵심 발견**: admin/metadata 의 txn(autocommit 토글 17)은 **독립 `_pg_connect(autocommit=False)`**(PostgreSQL) — get_conn 의 memory conn(MySQL)과 별개 DB/드라이버라 무간섭 → **txn 이연 사유 미적용**(원래 이연 대상으로 분류됐으나 실측 clean). auth 는 memory conn(short-lived) 경유로 legacy 와 동일 `_get_authenticated_account` 세션 부수효과.
+  - **이연 1**: `admin_metadata_suggest`(`/{sub}/suggest`) — auth 이전 pre-auth 404 gate(sub 미인식) + 동적 perm(`_METADATA_SUBTAB_PERM_SERVER`) → DI hoisting 시 404→401/403 순서 역전 → 인라인 유지(정확한 이연).
+  - 동반 테스트 전환(4파일: test_metadata_{glossary_enum,phase2,glossary_autoreg,ai_autocomplete}.py): happy/val 직접호출 49개에 `account=acct` 명시 주입 + helper(`_admin`/`_env`) 반환 캡처 38개(결정적 AST+paren-match 변환기, 멀티바이트 안전) / 403 perm-gate 9개 → TestClient(`as_account(perms=...)` + 실 require_permission 검사)로 수기 전환.
+- Files: src/app.py(33 핸들러 시그니처+auth 블록), tests/test_metadata_{glossary_enum,phase2,glossary_autoreg,ai_autocomplete}.py(전환) + docs.
+- Impact: **behavior-neutral(추출 아님 — 핸들러 app.py 잔류, 라우트 불변).** make test 전체 통과·**1313 passed·0 fail**(baseline 1238→1313 = base-merge 로 흡수한 feature-0016 신규 테스트; 내 편집은 테스트 수 불변), route-parity 192 불변(Depends param 추가는 라우트 등록/순서 무영향), py_compile OK. §18.8 적대 패널(REV-0006) GO·ship-blocking 0.
+- 학습: 도메인 전용 auth helper(`_X_resolve_account`)도 auth+단일정적 perm 이면 require_permission 로 clean 전환 가능. **txn 이연은 conn 정체성 확인 필수**(독립 PG conn 은 get_conn 무관 → 이연 불요). 동반 테스트: happy RP 직접호출은 `account=` 명시 주입(body 가 perm 재검사 안 함)로 byte-동치, 403 게이트만 TestClient 필수.
+- Rollback: revert(app.py 33 핸들러 auth 블록 복원 + 시그니처 원복 + 4 테스트 파일 복원).
+
+## CHG-20260701-0007
+- Date: 2026-07-01
+- Related Requirement: P5b router 추출 #10 — **admin/metadata 도메인 34 핸들러 → routers/admin_metadata.py**. inline-heavy 도메인 첫 추출(DI 전환 CHG-0006 선행).
+- Summary:
+  admin/metadata 34 핸들러(DI 전환 33 + 이연 1 `admin_metadata_suggest` inline 유지)를 AST 경계로 `src/routers/admin_metadata.py`(신규, 1447줄) 추출. **tokenize 기반 결정적 변환기**(`metadata_extract.py`): whitelist app-symbol(32) → `app.X` 접두(문자열/속성/정의 안전), `@app.<m>`→`@router.<m>`. 핸들러가 `_metadata_*` 헬퍼와 교차 배치돼 있어 핸들러 함수만 개별 추출(헬퍼는 app.py 잔류, `app.X` 참조로 monkeypatch 보존). app.py 맨 끝 `from routers.admin_metadata import router; include_router`(순환 안전).
+  - 동반 테스트 재참조(4파일): `app.<handler>(` → `admin_metadata.<handler>(` 65개(happy 49 + suggest/bootstrap_describe 16) + `from routers import admin_metadata` import. 403-gate 9는 TestClient(route 사용)라 무변경.
+  - **make test 안전망 적발·교정**: `_SAMPLE_WEIGHT_MIN`/`_MAX`(app.py `= 1, 1000` **튜플 대입** 모듈 상수)를 whitelist 도출(mod_syms=`ast.Name` 타깃만)이 놓침 → NameError → **완전 mod_syms(튜플/AnnAssign/import 타깃 포함) static 재검사**로 전수 확인 후 `app.` 접두 보정.
+- Files: src/routers/admin_metadata.py(신규 1447줄), src/app.py(34 제거 + include_router), tests/test_metadata_{glossary_enum,phase2,glossary_autoreg,ai_autocomplete}.py(재참조), tests/route_snapshot_p5b.json(골든 순서 재생성·set-neutral 192) + docs.
+- Impact: **app.py 28,224→26,734 줄(~1,490↓ — 단일 도메인 최대 감소).** make test 전체 통과·**1313 passed·0 fail**·route drift 0, route-parity 192(set 불변·순서만 갱신, docker `_build_table` 재생성), py_compile OK. byte-neutral(라우트 경로·메서드·응답 불변).
+- 학습: **whitelist 도출 시 mod_syms 는 튜플-대입(`A, B = ...`)·AnnAssign·import 타깃까지 수집 필수** — `ast.Name` 타깃만 하면 튜플-상수 누락 → 추출 router NameError(make test 안전망 적발). 추출 후 **완전 mod_syms 로 router bare-ref static 재검사**를 골든 재생성 전에 수행하면 조기 적발.
+- Rollback: revert(admin_metadata.py 삭제 + app.py 34 복원 + 4 테스트 재참조 원복 + 골든 복원).
