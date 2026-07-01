@@ -3009,12 +3009,12 @@ function _metaInitGraph() {
     // - pixelRatio:1 — 고DPI 디스플레이에서 캔버스를 devicePixelRatio(보통 2)² = 4배 픽셀로 래스터하던 것을
     //   1x 로 고정. 프레임당 채우는 픽셀 수가 최대 병목(격리측정: pixelRatio 만 지배적 — 30노드 fit-애니
     //   jank 11→1). 트레이드오프: 정지 화면이 약간 소프트(그래프 도형/텍스트라 가독 영향 미미).
-    // - textureOnViewport / hideEdgesOnViewport: 수동 팬/줌 시 캐시 텍스처·엣지 생략(대형 그래프 도움).
-    // - motionBlur 는 제거함: 격리측정상 프레임 병합 합성 패스가 오히려 jank 를 늘림(11→14, 이득 0).
-    //   (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
+    // - textureOnViewport / hideEdgesOnViewport 는 제거함: 노드 드래그 시 이 옵션들이 연결 엣지를
+    //   숨기거나(정적 텍스처가 live 엣지 갱신 미반영) 사라지게 하는 버그 유발. 수동 팬/줌 이득은
+    //   pixelRatio:1(주 레버) 로 이미 확보되어 손실 미미.
+    // - motionBlur 도 제거: 격리측정상 프레임 병합 합성 패스가 오히려 jank 를 늘림(11→14, 이득 0).
+    //   (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨/엣지 숨김은 _metaGraphLayout 에서 처리.)
     pixelRatio: 1,
-    textureOnViewport: true,
-    hideEdgesOnViewport: true,
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
@@ -3214,7 +3214,7 @@ async function _metaGraphExpand(key) {
     _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus });
   } else {
     // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
-    try { const a = cy.getElementById(key); if (a && a.length) cy.center(a); } catch (_) {}
+    try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 350 }); } catch (_) {}
   }
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
@@ -3334,13 +3334,12 @@ function _metaGraphLayout(opts) {
           const p = n.position();
           fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
         });
-        // 확장은 element 애니메이션 없이 '즉시 배치'(animate:false). cytoscape 는 요소 애니메이션 중
-        // 매 프레임 전체 캔버스를 고DPI 로 재래스터하므로(몇 노드만 움직여도 수백 노드 전부) element 애니가
-        // 저프레임의 주원인이다. 노드는 즉시 놓고, '화면 이동'은 아래 카메라 애니(textureOnViewport 캐시)
-        // 로만 부드럽게 처리한다. numIter 축소로 동기 계산 hitch 도 완화. (초기 로드/검색의 펼침 애니는 유지.)
+        // 확장(더블클릭): 기존 노드는 fixedNodeConstraint 로 고정, 신규 노드만 펼침 애니메이션. animate 는
+        // 켜되(사용자 요청 = 애니 복원) 아래 hideMotion 으로 트윈 중 라벨·엣지를 숨겨 프레임당 재계산을
+        // 줄인다. numIter 축소로 동기 계산 hitch 완화.
         cfg = Object.assign({}, base, {
           name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
-          animate: false, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
+          animationDuration: 500, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
         });
       } else {
         // 초기 로드/검색 펼침 애니메이션. quality proof→default + numIter 대폭 축소로 **fcose 동기 계산
@@ -3353,21 +3352,21 @@ function _metaGraphLayout(opts) {
         });
       }
       const layout = cy.layout(cfg);
-      // 비증분(초기 로드/검색) element 애니 동안 라벨+엣지 숨김 → 프레임당 텍스트 래스터 + **엣지 지오메트리
-      // 재계산**(트윈 프레임의 주 비용, 격리측정 40.8→21.4ms) 생략 → 부드러운 프레임. 증분은 즉시 배치라 불필요.
-      const hideMotion = animate && !incremental;
+      // 애니메이션(초기 로드/검색/확장) 동안 라벨+엣지 숨김 → 프레임당 텍스트 래스터 + **엣지 지오메트리
+      // 재계산**(트윈 프레임의 주 비용, 격리측정 40.8→21.4ms) 생략 → 프레임 부담 최소화. 정착 시 복원.
+      const hideMotion = animate;
       if (hideMotion) {
         try { cy.nodes().addClass("anim-hide-label"); cy.edges().addClass("anim-hide"); } catch (_) {}
       }
       layout.one("layoutstop", () => {
         if (hideMotion) { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} }
         _metaGraphPlaceColumns();   // graphux10: 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
-        // 카메라는 '즉시' 이동(cy.fit, 애니메이션 없음 — 저프레임 회피 결정 존중). 컬럼 배치 후 bounding box 반영.
+        // 확장: 신규 이웃 영역으로 카메라 부드럽게 이동(애니 복원). 초기 로드: 스프레드가 이미 애니라 즉시 맞춤.
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
-            cy.fit(opts.focusEles, 80);
+            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" });
           } else {
-            cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤
+            cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤(스프레드 애니 종료 후 1회)
           }
         } catch (_) {}
       });
