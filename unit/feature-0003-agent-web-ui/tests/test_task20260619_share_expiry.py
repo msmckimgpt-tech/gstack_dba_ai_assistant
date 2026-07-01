@@ -41,6 +41,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import conversations  # feature-0012 P5b
 
 
 def _static_path(name: str) -> str:
@@ -73,7 +74,7 @@ def test_b3_schema_helper_alters_expires_at():
 
 
 def test_b4_create_endpoint_parses_and_inserts_expiry():
-    src = inspect.getsource(app.create_conversation_share)
+    src = inspect.getsource(conversations.create_conversation_share)
     assert 'data.get("expires_in_seconds")' in src
     # 상한 초과 거부.
     assert "_SHARE_EXPIRY_MAX_SECONDS" in src
@@ -105,7 +106,7 @@ def test_b6_fork_blocks_expired():
 
 
 def test_b7_list_exposes_expiry_fields():
-    src = inspect.getsource(app.list_conversation_shares)
+    src = inspect.getsource(conversations.list_conversation_shares)
     assert "IsExpired" in src
     assert '"is_expired"' in src
     assert '"expires_at"' in src

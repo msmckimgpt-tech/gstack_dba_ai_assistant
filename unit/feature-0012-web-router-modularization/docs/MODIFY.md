@@ -434,3 +434,49 @@ source_of_truth: true
 - Impact: **app.py 28,224→26,734 줄(~1,490↓ — 단일 도메인 최대 감소).** make test 전체 통과·**1313 passed·0 fail**·route drift 0, route-parity 192(set 불변·순서만 갱신, docker `_build_table` 재생성), py_compile OK. byte-neutral(라우트 경로·메서드·응답 불변).
 - 학습: **whitelist 도출 시 mod_syms 는 튜플-대입(`A, B = ...`)·AnnAssign·import 타깃까지 수집 필수** — `ast.Name` 타깃만 하면 튜플-상수 누락 → 추출 router NameError(make test 안전망 적발). 추출 후 **완전 mod_syms 로 router bare-ref static 재검사**를 골든 재생성 전에 수행하면 조기 적발.
 - Rollback: revert(admin_metadata.py 삭제 + app.py 34 복원 + 4 테스트 재참조 원복 + 골든 복원).
+
+## CHG-20260701-0008
+- Date: 2026-07-01
+- Related Requirement: P5b admin/metadata 마일스톤(CHG-0006 DI 전환 + CHG-0007 추출) **프로덕션 배포·라이브 검증**(deploy-backed 완료 기준).
+- Summary:
+  PR #506(CHG-0006/0007 2 커밋 + origin/main 재머지) CI test PASS → main 머지(0b91b1b) → `sudo -E bin/deploy-web.sh` blue-green 무중단 롤링(web-a·web-b 순차 recreate, healthz-gated commit-match, soak 90s 통과). deploy_scope: included(FIRST_REQUEST.md 전역 standing) 근거 자동 배포.
+  - 라이브 검증(edge 112.185.196.20): healthz git_commit=0b91b1b·status=ok / 추출 admin_metadata 라우트 `/api/admin/metadata/glossary`·`/samples` 미인증 **401 `{"error":"로그인이 필요합니다."}` verbatim** — DI seam byte-동치 + 컨테이너 로드(uvicorn web.app:app) router import 프로덕션 확인(web_context류 ModuleNotFoundError 없음).
+- Files: docs(MODIFY/REVIEW/REPORT/TASK) — 배포 기록(코드 무변경).
+- Impact: admin/metadata 도메인 deploy-backed 완료. insight/ask-worker GIT_COMMIT WARN 은 별건(웹 무관).
+- Rollback: `sudo -E bin/deploy-web.sh --rollback`(이전 색 유지, 이미 안정).
+
+## CHG-20260701-0009
+- Date: 2026-07-01
+- Related Requirement: P5b router 추출 batch — **6 도메인 35 핸들러 전체추출**(profile·integrations·attachments·admin_audits·admin_accounts·admin_roles). inline-heavy 도메인 대량 추출.
+- **전략 전환(핵심 발견)**: **핸들러 router 추출은 DI 전환을 요구하지 않는다.** 원래 블로커(테스트 monkeypatch 커플링)는 *helper* 를 web_context 로 옮길 때만 발생(cross-call 네임스페이스 이탈); *핸들러* 추출은 `import app`+`app.X` 동적참조라 `app._require_account` 등 monkeypatch 계약이 그대로 보존됨(admin_metadata_suggest 선례). → **DEFER 핸들러(pre-auth gate 등)도 인라인 auth 유지로 byte-identical 추출 가능**("이연=구조 재편 후 추출"의 구조 재편 = router 이동 자체). 잔여 10 도메인 분류 workflow(11 agents): CLEAN-DI 5·ALREADY-DI 36·PUBLIC 7·DEFER 50(preauth 42·longpoll 4·txn 3·failsoft 1). 전체추출로 도메인 라우트 split(var-vs-concrete 순서 위험) 회피.
+- Summary:
+  6 도메인 전 핸들러(ALREADY-DI + PUBLIC + DEFER-inline)를 **범용 tokenize 추출기**(`extract_router.py`)로 router 이동. 개선: (1) 완전 mod_syms(튜플/AnnAssign/import 타깃), (2) **import 심볼 제외 + app.py import_map 으로 router 로컬 import 동적 생성**(fastapi/stdlib/typing), (3) self-healing missing-prefix static 재검사. profile(4)·integrations(4, RedirectResponse/OAuth)·attachments(4)·admin_audits(7)·admin_accounts(8)·admin_roles(8).
+  - 동반 테스트 재참조(범용 `reref_tests.py`, `app.<handler>`→`<module>.<handler>` call·getsource·attribute 전부 + module-level import): test_audit_tamper_evidence·test_login_attempt_limit·test_llm_usage_quota·test_avatar_icon_upload·test_two_factor_auth. **추가 커플링 2유형 make test 적발·수정**: (a) `hasattr(app,"handler")` 문자열-인자 3건 → `hasattr(<module>,...)`, (b) `app.app.routes` flat 순회(중첩 include_router 라우트 미포착) → 재귀 walk(test_task0284 route-registered), (c) source-text regex `def download_attachment...@app\.`(app.py) → routers/attachments.py + `@router\.`.
+- Files: src/routers/{profile,integrations,attachments,admin_audits,admin_accounts,admin_roles}.py(신규 6), src/app.py(35 제거 + include_router 6), tests/(6 파일 reref+import+coupling fix), tests/route_snapshot_p5b.json(골든 순서 재생성·set-neutral 192) + docs.
+- Impact: **app.py 26,734→24,648 줄(~2,086↓).** 12→18 router. make test 전체 통과·1313 passed·0 fail·route drift 0, route-parity 192(set 불변), py_compile OK. byte-neutral(라우트 경로/메서드/응답 불변, DEFER 핸들러 인라인 auth 그대로).
+- 학습: 추출 커플링 유형 확장 → (1)직접호출 (2)monkeypatch (3)getsource attribute (4)소스텍스트 read_text/ast.parse (5)**`hasattr/getattr(app,"handler")` 문자열-인자** (6)**`app.app.routes` flat 순회(중첩 라우트)**. 추출 전 grep: `app\.<h>`·`hasattr\(app,"<h>"`·`app.app.routes`. **DI 전환은 추출의 전제가 아님** — 모듈화(app.py 축소)가 목표면 전체추출(인라인 유지)이 최단.
+- Rollback: revert(6 router 삭제 + app.py 35 복원 + 테스트 원복 + 골든 복원).
+
+## CHG-20260701-0010
+- Date: 2026-07-01
+- Related Requirement: P5b 전체추출 batch2 — admin/datasources(6) + api/auth(18) 24 핸들러.
+- Summary:
+  admin/datasources 6(CLEAN-DI 3 `_ds_write_common` 인라인 유지 + ALREADY-DI 3) → routers/admin_datasources.py. api/auth 18(PUBLIC 7 signup/login/oauth + ALREADY-DI 6 avatar/totp + DEFER 5) → routers/auth.py. 전체추출(인라인 auth 보존, byte-identical).
+  - 동반 테스트 reref: datasources 4파일(admin_update/delete/test_datasource 직접호출) + auth 3파일(test_oauth_google_foundation 8 직접호출, test_two_factor_auth·test_login_attempt_limit getsource). **커플링 추가 적발·수정**: hasattr 루프 2(`for fn in (...): hasattr(app,fn)`→auth), **source-text 호출식 count**(test_product_list_rbac 가 `_filter_products_for_account_access(account, products)` 를 app.py 소스에서 2회 count — auth_me 가 auth.py 로 이동해 1로 감소 → app.py+routers 합산 검색으로 수정; 핸들러명 아닌 호출식이라 커플링 스캔 미포착).
+  - reref 도구 guard 정밀화: `f" {module}"` generic substring 오탐(module="auth") → `^from routers import ...\b{module}\b` 정확 매칭.
+- Files: src/routers/{admin_datasources,auth}.py(신규), src/app.py(24 제거 + include_router 2), tests/(8 파일 reref+coupling fix), tests/route_snapshot_p5b.json(골든 set-neutral 192) + docs.
+- Impact: **app.py 24,648→23,536 줄(~1,112↓).** 18→20 router. make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral(PUBLIC/DEFER 인라인 그대로).
+- 학습: 커플링 7유형 = 기존 6 + **(7) source-text 호출식 count**(핸들러명 아닌 helper 호출식을 app.py 소스에서 count → 추출로 이동 시 count 변동, app.py+routers 합산으로 수정). reref import guard 는 정확 매칭 필수(generic substring 금지).
+- Rollback: revert(2 router 삭제 + app.py 24 복원 + 테스트 원복 + 골든 복원).
+
+## CHG-20260701-0011
+- Date: 2026-07-01
+- Related Requirement: P5b 전체추출 batch3 — api/conversations 17(→기존 conversations.py **append**) + admin/products 22(신규) = 39 핸들러. **잔여 도메인 대부분 추출 완료**.
+- Summary:
+  api/conversations 17 sub-resource 핸들러(members/share/attachments/messages/product/sample-feedback/fix-with-ai 등, ALREADY-DI 10 + DEFER 7 인라인) → **기존 routers/conversations.py 에 append**(추출기 --append 모드 신규: 기존 import 에 부족분 병합·핸들러 뒤 추가·include_router 기존 유지·NEW 블록만 missing-prefix 검사). admin/products 22(CLEAN-DI 1 + ALREADY-DI 5 + DEFER 16 txn/streaming/pre-auth 인라인) → routers/admin_products.py(신규).
+  - 동반 테스트 reref: conversations 7파일(direct-call post_sample_feedback/post_fix_with_ai + getsource create_conversation_share/list_conversation_shares/list_conversation_attachments/mark_conversation_read) + products 5파일(direct-call). **source-text contract 2 make test 적발·수정**: (a) test_group_conversation_s2 `@app.get(".../members")` in APP(app.py만) → member 핸들러 이동으로 APP_ALL(app.py+routers)+`@router` 허용, (b) **test_share_joinable_owner_guard getsource substring `joinable and not _conversation_owned_by_account`** → 추출로 helper 가 `app._conversation_owned_by_account` 접두되어 substring(앞 단어 `not ` 포함) 불일치 → `not app._conversation_owned_by_account` 로 갱신.
+  - 추출기 개선: missing-prefix 에서 IMPORTED 심볼 제외(로컬 import 로 커버), --append 시 NEW 블록만 검사(기존 router F821 은 별건).
+- Files: src/routers/conversations.py(+17 append), src/routers/admin_products.py(신규), src/app.py(39 제거 + include_router 1[products; conversations 기존]), tests/(13 파일 reref+source-text fix), tests/route_snapshot_p5b.json(골든 set-neutral 192) + docs.
+- Impact: **app.py 23,536→20,542 줄(~2,994↓).** 20→21 router(conversations append). make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral. **잔여 app.py 라우트 16(session 시작 148 대비)**.
+- 학습: getsource substring 검사는 **helper 앞 컨텍스트(`not X`, `= X`) 포함 시 app. 접두로 깨짐**(단일 심볼명은 부분문자열로 생존) → 추출 시 그런 substring 은 `app.` 접두형으로 갱신. --append 는 기존 router import 병합 + include_router 미추가. 커플링 8유형(신규 8=getsource 컨텍스트-substring).
+- Rollback: revert(conversations 17 append 제거 + admin_products 삭제 + app.py 39 복원 + 테스트 원복 + 골든).

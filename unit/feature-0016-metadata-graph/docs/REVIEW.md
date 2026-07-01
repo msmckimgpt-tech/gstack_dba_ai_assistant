@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T210000-ai-claude-feature-0016-erd-box-spread-tap-deploy-record [SKIPPED:docs-only-deploy-verification-record-no-code-change] — 배포·검증 상태 기록(문서 전용)
+- Related Change: CHG-...-erd-box-spread-tap-deploy-record (배포 결과 + PB-0008 라이브 차단 기록, 코드 무변경).
+- 방식: 코드 diff 0(문서 전용) → 신규 적대 패널 불요. 기능 정합은 선행 REV-20260701T200000(box-spread-tap, MAJOR 수정 후 SHIP)에서 확증.
+- 기록 내용: web 배포 `a6bf0eb`(PR #511, soak 통과), 자산 HTTP 서빙 검증(newAddsBox 3건), 그래프 뷰 UI 로드 sanity PASS.
+  **라이브 canvas 인터랙션 PB-0008 은 tool 차단(Chrome 149.0.7827.200/Playwright eval UtilityScript 파손 + canvas 클릭·native select 미지원)** → 사용자 실화면 확인 요망. 코드 정합은 인젝션 실측(886→0)+선행 리뷰로 확증.
+- Verdict: N/A(문서 기록) — 코드 검증은 REV-20260701T200000 참조.
+- Human Approval Needed: 없음(문서). 단 그래프 인터랙션 최종 시각 확인은 사용자 실브라우저가 정본.
+
+## REV-20260701T200000-ai-claude-feature-0016-erd-box-spread-tap [SUBAGENT: box-spread-tap-adversarial] — 박스 벌림 + 박스 클릭/더블클릭 정합 적대 리뷰
+- Related Change: CHG-...-erd-box-spread-tap ((A) 증분 경로 hasCompound 분기+전체-스프레드로 박스 벌림, (B) tap 핸들러 Table 예외로 박스 클릭/더블클릭 일반 노드와 정합).
+- 방식: 적대 subagent — admin.js diff + cytoscape/fcose tap·compound·packComponents 의미 교차확인. 두 변경 각각 (a)~(e) 렌즈로 결함 적발.
+- 발견 → 처리:
+  - **CHANGE 1 (tap 핸들러): 정확.** Table 박스 응답·Schema 컨테이너 무시·target/key 정합(compound-parent id=실 노드 key)·박스↔자식 클릭 시 `_lastTapKey` 리셋으로 오검출 없음·트리플탭 가드 정상. 잔여는 pre-existing MINOR(label 기반 게이팅 결합도, 이미-펼쳐진 박스 더블탭 시 1회 중복 introspect — 둘 다 기존 동작, 이번 변경 무관).
+  - **M-MAJOR (CHANGE 2) — `hasCompound` 전체 그래프 스캔 → 과발동**: `_metaGraphColumnConstraints()` 가 전 그래프 Table 을 스캔해, 박스가 하나라도 있으면 **무관한 term/노드 확장까지** 전체-스프레드(고정 없음·전 그래프 이동) 경로로 빠짐 → 국소 relax(앵커 고정) 분기가 사실상 死. 사용자는 "박스 겹침 해소" 를 위한 이동을 승인했지 "모든 확장이 튀는" 것은 아님. **→ 수정**: `hasCompound` 를 **이번 확장의 신규 노드가 박스를 들여올 때**(newIdSet 에 Column 또는 새 compound Table)로 한정. 박스 추가 확장만 full-spread, 순수 노드·term 확장은 국소 relax 유지. `_ccCfg`(컬럼 정렬 제약)는 두 분기 공통 병합 유지라 기존 박스 컬럼 정렬 불변.
+  - **m-MINOR (packComponents:true) — 수용(근거 기록)**: `randomize:false` 라도 packComponents 가 비연결 컴포넌트를 재배치해 점프 증폭 가능. 그러나 (1) MAJOR fix 로 full-spread 는 박스 추가 확장에만 발동(빈도 급감), (2) 확장 시나리오는 대개 연결 그래프(이웃 확장)라 packing 영향 미미, (3) 실측 검증된 config(886→0, 109ms)가 packComponents:true 조합 → 미검증 변경 회피. 박스 추가 확장에서 벌림이 목적이라 packing 수용.
+  - CLEAN: 동시성 가드(`_layout.stop()`)는 분기 무관 무조건 실행 → 연타 안전. 카메라 focus-fit(focusEles=앵커+신규)은 if/else 밖이라 두 분기 공통 발화 → 전체-스프레드여도 신규 이웃으로 프레이밍(전 그래프 이동 체감 완화). brace/dead-code 없음(local-relax 계산은 else 스코프 내).
+- 검증: MAJOR 수정 후 node --check OK. 실측(인젝션) 141테이블 compound 전체-스프레드 박스겹침 886→0, 109ms. 캐시버스터 erd-spread.
+- Verdict: **SHIP**(수정 후) — MAJOR 처리, MINOR 수용(근거), CHANGE 1 결함 0. PB-0008 라이브 최종: (a) 밀집 박스겹침 해소 + (b) 박스 클릭/더블클릭 정합.
+- Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included). 박스 벌림 이동 트레이드오프는 사용자 사전 승인(AskUserQuestion).
+
 ## REV-20260701T170000-ai-claude-feature-0016-erd-card [SUBAGENT: erd-card-compound-refactor] — 컬럼→테이블 compound(ERD 카드) 적대 리뷰
 - Related Change: CHG-...-erd-card (컬럼을 테이블 compound 자식으로 + fcose alignment/relativePlacement 로 박스 안 ordinal 정렬, 겹침 원천 차단). admin.js/admin.html + admin_metadata.py(introspect ordinal).
 - 방식: §18.8 적대 subagent — admin.js diff + fcose 벤더 내부 + AGE graph module + graph/columns 엔드포인트 교차확인. BLOCKER/MAJOR/MINOR 적발.

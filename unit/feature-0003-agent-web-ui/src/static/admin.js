@@ -3107,9 +3107,11 @@ function _metaInitGraph() {
   _metaGraph.cy.on("tap", "node", (evt) => {
     const t = evt.target;
     if (t.isParent && t.isParent()) {
-      // 항목2: 스키마 클러스터(compound 컨테이너) 클릭 시에도 상세를 갱신 — 클러스터 개요(스키마명·포함 테이블).
-      //   Table ERD-카드(컬럼 보유 테이블도 compound)는 아래 일반 경로로 흘려보내 개별 노드 상세/확장 처리.
+      // 항목2: 스키마 클러스터(compound 컨테이너) 클릭 시 클러스터 상세 갱신 — 클러스터 개요(스키마명·포함 테이블).
       if (t.data("label") === "Schema" || t.data("isCat")) { _metaGraphShowClusterDetail(t); return; }
+      // ERD-card(origin/main): Table compound 박스는 클릭/더블클릭이 일반 노드와 동일(상세/확장)하게 흘려보냄.
+      //   그 외 컨테이너(카테고리 박스)만 무시. (박스 안 Column 자식 클릭 시 target=컬럼 → 컬럼 상세.)
+      if (t.data("label") !== "Table") return;
     }
     const key = t.id();
     const now = (window.performance && performance.now) ? performance.now() : Date.now();
@@ -3429,11 +3431,35 @@ function _metaGraphLayout(opts) {
     try {
       let cfg;
       if (incremental) {
-        // 확장(더블클릭): **신규 노드 주변(반경 R)의 기존 노드만 relax → 부드럽게 밀어냄** (사용자 요청).
+        // 적대리뷰 MAJOR fix: 전체-스프레드는 **이번 확장이 ERD 박스를 새로 들여올 때만** 발동한다. 예전엔
+        //   그래프에 박스가 하나라도 있으면(hasCompound=전체 스캔) 무관한 term/노드 확장까지 전체가 튀었다. 신규
+        //   노드에 Column(=박스 자식) 또는 새 compound Table 이 있을 때만 full-spread; 그 외(순수 노드·term 확장)는
+        //   기존 국소 relax(앵커·먼 노드 고정) 유지 → 박스 추가 시에만 벌림, 무관한 확장은 부드러운 국소 push.
+        let newAddsBox = false;
+        if (opts.newIdSet) {
+          for (const id of opts.newIdSet) {
+            const n = cy.getElementById(id);
+            if (!n || !n.length) continue;
+            const lbl = n.data("label");
+            if (lbl === "Column" || (lbl === "Table" && n.isParent && n.isParent())) { newAddsBox = true; break; }
+          }
+        }
+        const hasCompound = newAddsBox && !!(_cc.relativePlacementConstraint.length || _cc.alignmentConstraint.vertical.length);
+        if (hasCompound) {
+        // ERD compound 박스 존재: 국소 relax(먼 노드 고정)는 중첩 compound(tall 박스)를 못 벌려 박스끼리 겹친다
+        //   → **전체 스프레드**(고정 없음·packComponents·반복↑)로 박스를 벌린다(사용자 결정: 겹침 해소 우선, 문맥
+        //   일부 이동 감수). randomize:false 라 현 배치에서 relax(full 재무작위화보다 덜 튐), 카메라는 layoutstop
+        //   focus-fit 이 앵커+신규로 따라감. 실측(141테이블 compound): 박스겹침 886→0, 109ms.
+        cfg = Object.assign({}, base, {
+          name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
+          animationDuration: 600, packComponents: true, numIter: 1000,
+          nodeRepulsion: () => 18000, idealEdgeLength: () => 130,
+          ..._ccCfg,   // 컬럼(alignment/relativePlacement) 제약으로 박스 안 ordinal 정렬 유지
+        });
+        } else {
+        // 확장(더블클릭, 비-compound): **신규 노드 주변(반경 R)의 기존 노드만 relax → 부드럽게 밀어냄** (사용자 요청).
         //   먼 노드·앵커는 고정 → 원거리 배치(문맥) 보존 + 뷰 안정. 신규 노드의 반발이 반경 안 이웃만 밀어내
-        //   겹침을 해소한다. (이전 'anchor 만 고정' 은 전 노드를 재배치해 문맥 상실 — 국소화로 교정.)
-        //   randomize:false = 현 좌표에서 국소 완화(재무작위화 없음). numIter 250 유지(프리즈 완화 커밋 수치).
-        //   컬럼은 상단 공통 unlock → force 참여(테이블 추종) → layoutstop 재-스택+재-lock.
+        //   겹침을 해소한다. randomize:false = 현 좌표에서 국소 완화. numIter 250 유지(프리즈 완화 커밋 수치).
         let cx = 0, cy0 = 0;
         const a = opts.anchorId ? cy.getElementById(opts.anchorId) : null;
         if (a && a.length) { cx = a.position("x"); cy0 = a.position("y"); }
@@ -3465,6 +3491,7 @@ function _metaGraphLayout(opts) {
           fixedNodeConstraint: fixed,   // 앵커 + 반경 밖 노드 고정 → 항상 비어있지 않음(전체폭발 방지)
           ..._ccCfg,   // 컬럼 있을 때만 alignment/relativePlacement 병합(M2: 빈 제약이 tile 끄는 것 방지)
         });
+        }   // end else (비-compound 국소 relax)
       } else {
         // 초기 로드/검색 펼침 애니메이션. quality proof→default + numIter 대폭 축소로 **fcose 동기 계산
         // 프리즈**를 줄인다(격리측정 400노드: proof/2500 프리즈 402ms → default/600 250ms). 계산은 메인스레드

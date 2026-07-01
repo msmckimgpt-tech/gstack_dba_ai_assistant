@@ -268,12 +268,31 @@ source_of_truth: true
       `relativePlacementConstraint`(ordinal 위→아래 gap) 를 두 레이아웃 cfg 에 병합 → 박스 안 ordinal 세로 정렬.
 - [x] T15.3 Table compound 박스 스타일(teal 실선, 이름 상단) + Column 작은점+우측라벨.
 - [x] T15.4 실측(라이브 인젝션): 컬럼 순서 top→bottom 보존 + 최상위 박스 겹침 1쌍(이전 11) + fcose 131ms. node --check OK.
-- [ ] T15.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인.
+- [x] T15.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인. (배포됨 — 밀집 뷰 박스겹침은 §16 후속)
 
-## T16 — 그래프 뷰 출력 이슈 3건(마커 렌더-타임·클러스터 선택 상세·클러스터명 좌정렬/무잘림) (cross-cut, 코드 거주 feature-0002/0003)
+## 16. ERD 박스 벌림 + 박스 클릭/더블클릭 정합 (2026-07-01)
+
+### 16.0 맥락
+- 사용자 후속(4회차): ERD 카드 배포 후 **밀집 뷰에서 테이블 박스끼리 겹침**. 진단: 증분(더블클릭 확장) 경로가
+  국소 relax(먼 노드·앵커 고정)라 중첩 compound(tall ERD 박스)를 벌리지 못함(실측 141테이블 886쌍). 사용자 결정
+  (AskUserQuestion): **박스 벌림 튜닝 투자** — 문맥·프레임 일부 이동 감수하고 겹침 해소 우선.
+- 사용자 후속(5회차): **박스 클릭/더블클릭 동작이 기존 노드와 정합하지 않음**. 진단: tap 핸들러가 모든 compound
+  부모를 무시(`if (t.isParent()) return`) → Table ERD 카드 박스 클릭 무반응(일반 노드는 상세/확장 동작 → 불일치).
+- 등급 Minor (프론트 전용, 비파괴).
+
+### 16.1 구현·검증 (admin.js)
+- [x] T16.1 box-spread — `_metaGraphLayout` 증분 경로를 `hasCompound` 분기: compound(ERD 카드) 존재 시 **전체-스프레드**
+      (`randomize:false`·`packComponents:true`·`numIter:1000`·`nodeRepulsion 18000`·고정 없음)로 박스 벌림, compound 미존재 시
+      기존 국소 relax 유지. 카메라는 layoutstop focus-fit 이 앵커+신규 이웃 추종(문맥 추적 유지).
+- [x] T16.2 box click/dblclick — tap 핸들러에 `t.data("label") !== "Table"` 조건 추가 → Table 박스는 일반 노드와 동일
+      (단일=상세, 더블=확장), Schema 컨테이너만 무시 유지. 박스 안 컬럼 클릭은 target=컬럼(컬럼 상세).
+- [x] T16.3 실측(라이브 인젝션): 141테이블 compound 전체-스프레드 → 박스겹침 886→0, 109ms. node --check OK. 캐시버스터 erd-spread.
+- [x] T16.4 적대 리뷰(REV-...-erd-box-spread-tap, MAJOR 수정) + verify-completion PASS + 배포(web `a6bf0eb`, PR #511, soak 통과). **PB-0008 라이브 인터랙션((a) 박스겹침 해소 (b) 클릭/더블클릭 정합)은 사용자 실화면 확인 요망** — 이번 세션 win-browser eval/canvas 클릭 자동화 차단(Chrome 149.0.7827.200/Playwright 회귀, 메모리 project-pb0008-eval-regression-chrome200). 코드 정합은 인젝션 실측(886→0)+리뷰로 확증.
+
+## 17. 그래프 뷰 출력 이슈 3건(마커 렌더-타임·클러스터 선택 상세·클러스터명 좌정렬/무잘림) (2026-07-01, cross-cut, 코드 거주 feature-0002/0003)
 - 사용자(`/_template:entry` arg-given): 관리 콘솔 > 메타데이터 > 그래프 뷰 — ①노드 표식(AI 분석중/분석됨)이 클릭 시에만 갱신 → 렌더-타임 갱신, ②DB(스키마 클러스터) 선택 시 상세 갱신, ③클러스터명 잘림 → 좌정렬·좌여백·무잘림.
-- [x] ① scope 단위 분석상태 일괄조회: 백엔드 `node_analysis.get_scope_analysis_status`(feature-0002) + `GET .../graph/analyze/status`(feature-0003) + 프론트 `_metaGraphSyncAnalysisMarkers`(로드/검색/확장 3경로). 실 KB PG 정합 실측(done 335·active 183).
-- [x] ② 스키마 클러스터 tap → `_metaGraphShowClusterDetail`(스키마명·테이블 목록·개수). PB-0008 PASS('테이블(58)').
+- [x] ① scope 단위 분석상태 일괄조회: 백엔드 `node_analysis.get_scope_analysis_status`(feature-0002) + `GET .../graph/analyze/status`(feature-0003) + 프론트 `_metaGraphSyncAnalysisMarkers`(로드/검색/확장 3경로, additive). 실 KB PG 정합 실측(scope mssql-06656002eda6 done 335·active 183).
+- [x] ② 스키마 클러스터 tap → `_metaGraphShowClusterDetail`(스키마명·테이블 목록·개수). §16.2 tap 병합(Table→통과·Schema→클러스터 상세·그 외 parent→무시). PB-0008 PASS('테이블(58)').
 - [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종) + native 라벨 숨김. PB-0008 PASS.
-- [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id.
+- [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD 박스 벌림·tap 정합과 tap 핸들러 병합 완료.)
 - [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 PB-0008 최종 확인.

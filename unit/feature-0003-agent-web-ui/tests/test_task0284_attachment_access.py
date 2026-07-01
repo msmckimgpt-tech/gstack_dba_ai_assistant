@@ -105,14 +105,26 @@ def test_pg_select_account_fallback_without_conversation(monkeypatch):
 
 def test_download_route_registered():
     """프록시 다운로드 라우트가 FastAPI 앱에 등록되어 있다."""
-    paths = {getattr(r, "path", None) for r in app.app.routes}
+    # feature-0012 P5b: include_router 로 중첩된 라우트까지 재귀 수집(Starlette _IncludedRouter).
+    def _paths(routes):
+        out = set()
+        for r in routes:
+            p = getattr(r, "path", None)
+            sub = getattr(r, "routes", None) or getattr(getattr(r, "original_router", None), "routes", None)
+            if p is None and sub:
+                out |= _paths(sub)
+            elif p is not None:
+                out.add(p)
+        return out
+    paths = _paths(app.app.routes)
     assert "/api/attachments/{attachment_id}/download" in paths
 
 
 def test_download_route_security_contract():
     """라우트 본문이 권한 게이트 + pending 차단 + octet-stream + attachment disposition + nosniff 를 갖춘다."""
-    src = (_SRC / "app.py").read_text(encoding="utf-8")
-    m = re.search(r"def download_attachment\(.*?\n(.*?)\n@app\.", src, re.S)
+    # feature-0012 P5b: download_attachment 은 routers/attachments.py 로 추출됨(@router 데코레이터).
+    src = (_SRC / "routers" / "attachments.py").read_text(encoding="utf-8")
+    m = re.search(r"def download_attachment\(.*?\n(.*?)\n@router\.", src, re.S)
     assert m, "download_attachment 함수 추출 실패"
     body = m.group(1)
     assert "_account_can_access_attachment" in body, "권한 게이트 누락 (IDOR)"

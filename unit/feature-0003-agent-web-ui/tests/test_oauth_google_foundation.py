@@ -25,6 +25,7 @@ import json
 import pytest
 
 import app
+from routers import auth  # feature-0012 P5b
 
 
 # ---------------------------------------------------------------------------
@@ -132,31 +133,31 @@ def test_configured_true_when_all_set(google_enabled):
 
 def test_start_endpoint_404_when_disabled(monkeypatch):
     monkeypatch.setattr(app, "OAUTH_GOOGLE_ENABLED", False)
-    resp = app.auth_oauth_google_start(None)
+    resp = auth.auth_oauth_google_start(None)
     assert resp.status_code == 404
 
 
 def test_callback_endpoint_404_when_disabled(monkeypatch):
     monkeypatch.setattr(app, "OAUTH_GOOGLE_ENABLED", False)
-    resp = app.auth_oauth_google_callback(None)
+    resp = auth.auth_oauth_google_callback(None)
     assert resp.status_code == 404
 
 
 def test_config_endpoint_reports_enabled_flag(monkeypatch, google_enabled):
-    resp = app.auth_oauth_config(None)
+    resp = auth.auth_oauth_config(None)
     body = json.loads(bytes(resp.body).decode("utf-8"))
     assert body == {"google": {"enabled": True}}
 
 
 def test_config_endpoint_reports_disabled(monkeypatch):
     monkeypatch.setattr(app, "OAUTH_GOOGLE_ENABLED", False)
-    resp = app.auth_oauth_config(None)
+    resp = auth.auth_oauth_config(None)
     body = json.loads(bytes(resp.body).decode("utf-8"))
     assert body == {"google": {"enabled": False}}
 
 
 def test_start_redirects_to_google_when_enabled(google_enabled):
-    resp = app.auth_oauth_google_start(_FakeRequest())
+    resp = auth.auth_oauth_google_start(_FakeRequest())
     assert resp.status_code == 302
     loc = resp.headers["location"]
     assert loc.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
@@ -170,7 +171,7 @@ def test_start_redirects_to_google_when_enabled(google_enabled):
 # ---------------------------------------------------------------------------
 def test_start_sets_binding_cookie_matching_state(google_enabled):
     import urllib.parse as up
-    resp = app.auth_oauth_google_start(_FakeRequest(scheme="https"))
+    resp = auth.auth_oauth_google_start(_FakeRequest(scheme="https"))
     set_cookie = resp.headers.get("set-cookie", "")
     assert f"{app.OAUTH_BIND_COOKIE}=" in set_cookie
     assert "httponly" in set_cookie.lower()
@@ -186,7 +187,7 @@ def test_callback_rejects_missing_binding_cookie(google_enabled):
     now = int(app.datetime.now(app.timezone.utc).timestamp())
     state = app._oauth_state_encode({"v": "ver", "n": "non", "b": "the-bind", "ts": now})
     req = _FakeRequest(cookies={}, query={"code": "abc", "state": state})
-    resp = app.auth_oauth_google_callback(req)
+    resp = auth.auth_oauth_google_callback(req)
     assert resp.status_code == 302
     assert "oauth_error=state" in resp.headers["location"]
 
@@ -195,7 +196,7 @@ def test_callback_rejects_binding_mismatch(google_enabled):
     now = int(app.datetime.now(app.timezone.utc).timestamp())
     state = app._oauth_state_encode({"v": "ver", "n": "non", "b": "the-bind", "ts": now})
     req = _FakeRequest(cookies={app.OAUTH_BIND_COOKIE: "wrong-bind"}, query={"code": "abc", "state": state})
-    resp = app.auth_oauth_google_callback(req)
+    resp = auth.auth_oauth_google_callback(req)
     assert resp.status_code == 302
     assert "oauth_error=state" in resp.headers["location"]
 
