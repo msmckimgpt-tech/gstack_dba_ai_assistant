@@ -1430,3 +1430,16 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - main 병합: **보류**(PR 생성·머지·web 배포는 외부 영향 — 사용자 confirm 후 진행).
 - 충돌 해결: 없음(신규 branch, base main `165906b`).
 - 잔여: PR 생성·머지(cycle-finalize) · web 재배포(static baked + 캐시버스터 `archive-leave`) · PB-0008 Windows-browser 실렌더 검증.
+
+## TASK-20260702-graphview-webgl-polish — 그래프 뷰 WebGL 외곽선 선명화 + 단일클릭 컬럼 토글 (/_template:resume 재개, 2026-07-02)
+### Summary
+- `/_template:resume` 로 원본 세션 cfbede21(계정 session-limit 중단) 재개. 그 세션이 WebGL 배포 후 육안 후속 2건(줌인 외곽선 뭉개짐·컬럼 단독 토글 부재)을 `graphview-webgl-polish` worktree 에 미커밋 구현했으나 (a) 접힘→재펼침 버그 미수정 (b) 리뷰/docs/랜딩 미완 상태였음. 재개하여 완수.
+- 결과: WebGL `webglTexSize:4096`+`pixelRatio:2`(WebGL 경로 한정), 단일클릭 컬럼 인라인 토글(`_metaGraphToggleColumns`, 300ms tap 타이머로 더블클릭 이웃확장과 구분), 접힘 시 `introspected.delete` 버그 수정, #519(graph-perf2) 결정론 컬럼 배치 재정합.
+### Recent Changes
+- 병합: origin/main `042613eb` ff → stash pop 재적용. admin.html 캐시버스터 충돌·admin.js 자동병합 해소(실 충돌 마커 0).
+- 코드: `static/admin.js`(+condition pixelRatio·webglTexSize·`_metaGraphToggleColumns`·tap 타이머·collapse Set 해제·세로-스택 seed) · `static/admin.html`(캐시버스터 lockstep).
+- 검증: `node --check` PASS. §18.8 적대 패널 REV-20260702T000000-graphview-webgl-polish VERDICT PASS(BLOCKING 0), NIT1(canvas-2D 폴백 pixelRatio 회귀) 즉시 수정.
+### Git 동기화 결과
+- verify-completion → commit(Task-Cycle: feature-0003-agent-web-ui) → push → PR → main merge → cycle-finalize → web 재배포(deploy_scope: included) → /healthz. (진행 시 hash·PR#·배포결과 갱신.)
+### 잔여
+- PB-0008 Windows-browser 라이브(단일클릭 컬럼 펼침/접힘·**재펼침 재출현**·줌인 선명·더블클릭 무회귀) — 배포 후 사용자 실화면 확인 권장.

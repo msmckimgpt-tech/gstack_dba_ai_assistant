@@ -5073,3 +5073,14 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. 내부용어(feature-id/테이블명/AGE/Cypher/Cytoscape/pgbouncer/Caddy/alembic/마이그번호/스크립트명/함수명) 누출 0. ULTRACODE 5-stream 적대 패널 MAJOR 흡수: 그래프 뷰 항목이 관계 엣지=0(게임 DB FK 미선언)인데 '테이블 연결 따라가기' 과대표현 → 가시 사실(스키마/DB 그룹핑·검색·노드 설명·컬럼)로 완화; 무중단 항목 '주요 기능 멈추지 않음'이 스트리밍 예외 초과 → '채팅 등 주요 작업 이어짐 + 일부 진행 중 작업 드물게 재시도'로 완화.
 - [x] 검증: `node --check release-notes-data.js` PASS + vm 로드 generated=2026-06-30·06-30 블록 10항목(1 new·8 improved·1 fixed) + 항목 스키마(type/area/title/detail) 정합.
 - [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260630-rn-0630`→`?v=20260630b-rn-0630` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘). verify-completion(operational, feature-0003) → 로컬 commit → landing/배포는 cron wrapper 소관(deploy_scope: included). META(STATUS·wiki·SECURITY·RELEASE_NOTES)는 별도 commit.
+
+### TASK-20260702-graphview-webgl-polish — 그래프 뷰 WebGL 외곽선 선명화 + 테이블 단일클릭 컬럼 인라인 토글 (Minor §12.3, frontend-only, graph-webgl/graph-perf2 후속, /_template:resume 재개, 2026-07-02)
+- 트리거: `/_template:resume "관리 콘솔 그래프 뷰 노드 렌더링 및 표시 개선"`. 원본 세션(cfbede21)이 WebGL 배포 후 육안 후속 2건(줌인 외곽선 뭉개짐·컬럼 단독 토글 부재)을 구현·라이브 검증했으나 계정 session-limit 로 (a) 접힘→재펼침 버그 미수정 (b) 리뷰/docs/랜딩 미완 중단 → 재개 완수. command-args 의 원 3건(노드 표식/클러스터 상세/명칭 잘림)은 별개 PR #514 로 이미 병합됨(재개 대상 아님).
+- [x] **WebGL 외곽선 선명화**(AC-1): renderer `webglTexSize:4096`(atlas 셀 ~113→227px) + `pixelRatio:2` **WebGL 경로 한정**. GPU 합성이라 FPS 이득 유지. canvas-2D 폴백은 pixelRatio 키 생략(device DPR 보존).
+- [x] **단일클릭 컬럼 인라인 토글**(AC-2): 신규 `_metaGraphToggleColumns` + tap 핸들러 300ms `_colTimer`(단일=컬럼, 더블=이웃확장 `_metaGraphExpand`). 펼침=그래프 HAS_COLUMN→없으면 information_schema introspect, 접힘=Column 제거.
+- [x] **접힘→재펼침 컬럼 미출현 버그 수정**: collapse 분기에 `_metaGraph.introspected.delete(key)` — introspect 컬럼(HAS_COLUMN 부재)이 재펼침 시 Set 잔류로 재조회 skip 되던 문제 해소(원본 세션이 적발·선언했으나 미적용분).
+- [x] **#519(graph-perf2) base drift 정합**: origin/main(042613eb) ff 병합 → stash pop 재적용. admin.html 캐시버스터 충돌·admin.js 자동병합 해소(실 충돌 마커 0). 토글 컬럼 seed 를 옛 3-wide grid→**부모 중심 세로 스택**(#519 `_META_COL_PITCH`)으로 재정합 — 최종 배치는 layoutstop `_metaGraphPlaceColumns` 결정론 배치가 보장. 역할분리 주석 정직화.
+- [x] **캐시버스터**: `admin.html` `admin.js`/`styles.css` → `?v=20260702-graphview-webgl-polish`(lockstep).
+- [x] **검증**: `node --check admin.js` PASS. §18.8 적대 패널 REV-20260702T000000-graphview-webgl-polish (VERDICT PASS, BLOCKING 0, 축1~6 안전, NIT1 canvas-2D 폴백 pixelRatio 회귀 즉시 수정). MODIFY/FUNCTION/REVIEW/REPORT 갱신.
+- [ ] **PB-0008 Windows-browser 시각 검증**(단일클릭 컬럼 펼침/접힘·**접었다 재펼침 시 컬럼 재출현**·줌인 외곽선/텍스트 선명·더블클릭 이웃확장 무회귀) — WSL worktree + 그래프 canvas 인터랙션 자동화 PB-0008 회귀 이력이라 미실행, **배포 후 사용자 실화면 확인 권장**.
+- [ ] verify-completion --pre-commit PASS → commit(Task-Cycle) → push → PR → main merge → cycle-finalize → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지만) → /healthz.

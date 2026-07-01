@@ -4330,3 +4330,15 @@ source_of_truth: true
   5. finally 의 commit 은 자체 `try{...}catch(_){}` 로 감싸 원예외 마스킹 불가.
   6. double-commit 불가(단일 commit site), renderMessages↔commit 순서 불변, reduced-motion 하 begin/commit 둘 다 no-op 대칭.
 - 라이브 실측(정본 분리, §정직): 적대 패널은 정적 코드 정합만 검증. 실 화면 동작은 **PB-0008 Windows-browser 프리뷰 인젝션 PASS**(bootstrap_admin 대화 A op1·msg4 렌더·제목 갱신, A→B 전환 렌더 — TEST.md) + headless browse 5대화 op1. `node --check` PASS.
+
+## REV-20260702T000000-graphview-webgl-polish [SUBAGENT:adversarial-correctness] (TASK-20260702-graphview-webgl-polish — WebGL 외곽선 선명화 + 테이블 단일클릭 컬럼 인라인 토글, Minor §12.3 — feature-0003 프론트 단독, /_template:resume 재개)
+- Trigger(§18.8): 그래프 뷰 상호작용/렌더 핵심 경로(frontend 렌즈) — tap 타이머 경합·introspect Set 생명주기·#519(graph-perf2) 결정론 컬럼 배치 정합·WebGL renderer config. 스키마/RBAC/API/엔드포인트 0(기존 그래프 엔드포인트 재사용).
+- 적대 코드리뷰(작업트리 diff 정독 + `_metaGraphToggleColumns`/`_metaGraphExpand`/`_metaGraphLayout`/`_metaGraphPlaceColumns`/`_metaGraphAddElements`/tap 핸들러 trace + vendored Cytoscape 3.34.0 `pixelRatio`/`webglTexSize` 처리 경로 직독, 앱 미실행 정적) → **VERDICT PASS(BLOCKING 0, MAJOR 0), NIT 1 수정**.
+  - **NIT1 [FIXED]** `admin.js` renderer — `pixelRatio: _webglOk ? 2 : 1` 이 canvas-2D 폴백에 `pixelRatio:1` 을 강제 → Cytoscape `getPixelRatio()`(forcedPixelRatio!=null 우선)가 device DPR 폴백을 건너뛰어 **HiDPI(Retina·Windows 스케일) 폴백에서 오히려 흐려짐**(선명화 목표와 정반대·가시 회귀). 수정: `...(_webglOk ? { pixelRatio: 2 } : {})` 로 **WebGL 경로에만** 부여, 폴백은 키 생략(기존 device-DPR 선명도 보존). `node --check` 재확인 PASS.
+  - 축1 탭 타이머 경합 — 안전: 각 `setTimeout` 이 자기 `key`(const) 캡처 + 새 단일탭이 이전 `_colTimer` clearTimeout → 엉뚱 노드 토글 없음. 트리플탭 `_lastTapKey=null` + 더블 분기 타이머 취소. async 재진입은 `_metaGraphAddElements` idempotent 로 무해.
+  - 축2 introspected 생명주기 — 안전: 분석된 테이블(HAS_COLUMN 실재)은 respHasCols=true 라 Set 미등록 → collapse 의 delete 는 no-op(무해). introspect 컬럼은 HAS_COLUMN 이 compound containment 라 `anchorHasCols`=0 이나 `introspected.has(key)` 로 재조회 정확 skip → 단일↔더블 혼용 중복 add 없음.
+  - 축3 컬럼 seed/배치 정합 — 안전: 토글이 `newIdSet` 에 Column id 를 넣어 incremental `newAddsBox=true` → full-spread → fcose·cose 양 경로 layoutstop 이 `_metaGraphPlaceColumns()` 호출 → seed blob 에 안 갇히고 결정론 세로 스택 배치.
+  - 축4 #519 회귀 — 안전: 더블클릭 이웃확장·미분석 introspect·결정론 배치·wheelSensitivity 제거 로직 무변경(더블 분기에 `_colTimer` 취소 1줄만 추가).
+  - 축5 WebGL config — `webglTexSize:4096` 은 WebGL init 안 `Math.min(…,MAX_TEXTURE_SIZE)` 클램프, `webgl:false` 폴백 미참조(inert) 안전. pixelRatio 는 NIT1 로 해소.
+  - 축6 self 노드 재-add 오염 — 안전: `colNodes` 의 self(테이블)는 기존 존재라 `_metaGraphAddElements` 가 added 에 미포함 → newIds 에서 제외 → seed 계산 정상. (collapse 상태 메시지 `cols.length` 는 Cytoscape Collection immutable 스냅샷이라 remove 후에도 개수 정확 — 결함 아님.)
+- 라이브 실측(정본 분리, §정직): 적대 패널은 정적 코드 정합 + vendored 렌더러 소스 검증. 실 그래프 인터랙션(단일클릭 컬럼 펼침/접힘·재펼침 재출현·줌인 외곽선 선명·더블클릭 이웃확장 무회귀)은 **PB-0008 Windows-browser 사용자 실화면 확인 요망**(그래프 canvas 인터랙션 자동화는 PB-0008 회귀 이력 — 코드정합은 리뷰·node --check 로 확증). `node --check admin.js` PASS.
