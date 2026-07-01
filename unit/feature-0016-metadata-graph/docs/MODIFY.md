@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260701T190000-ai-claude-feature-0016-graphux5-panelmove-showfix
+- Date: 2026-07-01
+- Related Requirement: panelmove 세션 독립 폴 재개 시 진행 패널이 **표시되지 않던 버그** 수정(라이브 검증 중 적발 — status 바는 갱신되나 패널 숨김).
+- Summary: `_metaGraphRenderProgress` 가 렌더 시 `panel.style.display = ""` 를 직접 설정. 기존엔 `_metaGraphAnalyze`(버튼) 경로만 display 를 풀어, 노드 클릭으로 폴을 재개(fix B)한 세션 독립 경로에서 초기 `display:none` 이 안 풀려 패널이 populated 되고도 숨겨졌다.
+- Files: `unit/feature-0003-agent-web-ui/src/static/admin.js`.
+- Impact: 프론트 1줄·비파괴. 세션 독립(다른 탭/새로고침) 및 재개 경로에서 진행 패널이 정상 표시. 버튼 경로는 무변화(중복 display 설정, 무해).
+- Rollback Notes: 해당 라인 제거. 백엔드/DB 무변경.
+
 ## CHG-20260701T180000-ai-claude-feature-0016-graphux5-panelmove
 - Date: 2026-07-01
 - Related Requirement: AI 능동 분석 진행 화면을 **우측 상세정보 패널에 구성**. 상단 full-width 진행 바가 그래프를 밀어내 구성이 무너지고 여백이 낭비되던 이슈 해소 (사용자 피드백).

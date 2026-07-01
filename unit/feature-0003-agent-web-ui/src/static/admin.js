@@ -3639,6 +3639,7 @@ function _metaGraphRenderProgress(st) {
   const panel = document.getElementById("metadataGraphProgress");
   if (!panel || !st) return;
   if (panel.dataset.dismissed && panel.dataset.dismissed === st.run_id) return;   // 사용자가 이 run 패널을 닫음
+  panel.style.display = "";   // fix(세션 독립): 재개 폴 경로(버튼 미경유)에서도 패널을 표시 — 초기 display:none 해제
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const jobs = st.jobs || [];
   const done = st.done || 0, enq = st.enqueued || 0, failed = st.failed || 0;
