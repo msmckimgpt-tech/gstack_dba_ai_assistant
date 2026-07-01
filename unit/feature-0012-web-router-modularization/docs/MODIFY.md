@@ -387,3 +387,25 @@ source_of_truth: true
 - Impact: **app.py 28,610 → 28,350 줄(~260↓).** make test 전체 통과·0 fail·route drift 0, route-parity 188(set 불변), py_compile OK. behavior-neutral.
 - 학습: app.X whitelist 는 **non-_ app 함수(record_audit_event 등)도 포함** 필요(도출 시 `_`한정하면 누락). 테스트 전환은 getsource/hasattr/직접호출/`_import_app` 헬퍼 등 모든 참조 스타일 처리. make test 가 누락 안전망.
 - Rollback Notes: revert(2 router 삭제 + app.py 6 복원 + 테스트·골든 복원).
+
+## CHG-20260701-0004
+- Date: 2026-07-01
+- Related Requirement: P5b Final router 추출 #8(batch 3) — admin_console 도메인 5 완전-DI 핸들러.
+- Summary:
+  관리 콘솔 메타 5 핸들러(admin_me·admin_permissions·admin_list_available_databases·admin_overview·admin_health_attachment_grants, require_permission RP) → `src/routers/admin_console.py`(AST 경계). app.X rewrite(`_`헬퍼/상수 19 + DI seam; non-_ 함수 없음), stdlib `import logging`+`from datetime import datetime`(admin_health 의 datetime.utcnow — 클래스라 from-import). 동반 테스트: test_llm_usage_quota(getsource app.admin_me→admin_console) + test_dashboard_overview(직접호출 6 app.admin_overview→admin_console + import).
+  - 골든 188→**192**: main feature-0016 이 graph/analyze 4 라우트 추가(내 추출 무관, removed=[]로 admin_console 5 라우트 set-보존) → 골든 재생성으로 흡수.
+- Files: src/routers/admin_console.py(신규), src/app.py(5 제거 + include_router), tests/{test_llm_usage_quota,test_dashboard_overview}.py(전환), tests/route_snapshot_p5b.json(골든 192) + docs.
+- Impact: **app.py 28,559→28,410 줄.** make test 전체 통과·0 fail·route drift 0, route-parity 192, py_compile OK. behavior-neutral.
+- 학습: datetime 은 사용 형태 확인 필요(datetime.utcnow=클래스→`from datetime import datetime`, module 아님). main 신규 라우트로 골든 set 변경 시 무조건 재생성(내 추출은 removed=[] 로 set-neutral 확인 후).
+- Rollback: revert(admin_console.py 삭제 + app.py 5 복원 + 테스트·골든 복원).
+
+## CHG-20260701-0005
+- Date: 2026-07-01
+- Related Requirement: P5b Final router 추출 #9(batch 4) — 완전-DI misc(share 2 + system 2). **완전-DI 라우트 전부 추출 마일스톤.**
+- Summary:
+  마지막 완전-DI 도메인 추출(AST 경계): share.py(revoke_share·join_conversation_via_share) + system.py(get_llm_health·get_file). app.X 동적참조(app 헬퍼 + DI seam), stdlib(logging)·from datetime import 필요분. get_llm_health 은 DI 파일럿(본문 _get_authenticated_account inline 유지 → app._get_authenticated_account).
+  - **소스텍스트 contract 테스트 전환(4번째 커플링 유형 학습)**: test_member_ban_endpoints(`_func_src` AST 파싱이 app.py 만 → app.py + src/routers/*.py 검색) + test_group_conversation_s2(`@app.post(...)` in APP 텍스트 → APP_ALL=app.py+routers 통합 + `@router.post` 허용). `app.<handler>` grep 이 못 잡는 유형(app.py 소스를 read_text/ast.parse 해 핸들러명 검색).
+- Files: src/routers/{share,system}.py(신규), src/app.py(4 제거 + include_router), tests/{test_member_ban_endpoints,test_group_conversation_s2}.py(소스텍스트 검색을 routers 포함으로), tests/route_snapshot_p5b.json(골든 192 불변·재생성) + docs.
+- Impact: **app.py 28,410→28,221 줄.** make test 전체 통과·0 fail·route drift 0, route-parity 192, py_compile OK. behavior-neutral. **완전-DI(inline=0) 라우트 전부 추출 완료(11 router).**
+- 학습: 추출 커플링 4유형 = (1) `app.<handler>` 직접호출, (2) `monkeypatch.setattr(app,...)`, (3) `getsource(app.<handler>)` attribute, (4) **app.py 소스 read_text/ast.parse 후 핸들러명 검색(contract 테스트)**. 추출 전 grep: `app\.<handler>` + 핸들러명이 등장하는 소스-읽기 테스트.
+- Rollback: revert(share.py·system.py 삭제 + app.py 4 복원 + 테스트·골든 복원).

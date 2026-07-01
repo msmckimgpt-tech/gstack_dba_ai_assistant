@@ -66,7 +66,9 @@ source_of_truth: true
 - [~] TASK-0012-11 (자율 순차) 잔존 라우트 도메인 추출 — 모놀리스 축소
   - [x] **router 추출 #6 conversations(10 완전-DI 핸들러)**: new_conversation·use_conversation·history·history_anchor·history_dates·delete_conversation(s)·cancel_request·finalize_request·ask_status → routers/conversations.py. AST 경계 + app.X + stdlib import. app.py 29,111→28,610줄. make test 통과·route-parity 188(CHG/REV-20260701-0002).
   - [x] **router 추출 #7 admin_quotas(3)+admin_sample_feedback(3)**: 완전-DI RP → routers/. app.X(non-_ record_audit_event 포함)+stdlib import+test 전환(getsource/hasattr/직접호출). app.py 28,610→28,350. make test 통과(CHG/REV-20260701-0003).
-  - [ ] 잔여: 완전-DI(admin console singles: admin_me·permissions·databases·overview·health 등) → inline-heavy(admin/metadata 30·admin/products 17·api/auth 12·conversations MIXED 7 = DI 전환 선행) → 이연 핸들러
+  - [x] **router 추출 #8(batch 3) admin_console(5)**: admin_me·permissions·databases·overview·health → routers/admin_console.py. app.X+from-datetime+test 전환. app.py→28,410, 골든 192(CHG/REV-20260701-0004).
+  - [x] **router 추출 #9(batch 4) share(2)+system(2)**: revoke_share·join_conversation_via_share + get_llm_health·get_file → routers/. 소스텍스트 contract 테스트(app.py read_text/ast.parse) → routers 포함 검색. app.py→28,221. **완전-DI 라우트 전부 추출(11 router, CHG/REV-20260701-0005)**.
+  - [ ] 잔여: inline-heavy(DI 전환 선행): admin/metadata 30·admin/products 17·api/auth 12·conversations MIXED 7 → cat-A/B/C 마이그 재개 후 추출(admin/metadata 30·admin/products 17·api/auth 12·conversations MIXED 7 = DI 전환 선행) → 이연 핸들러
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 
 ## 4. In Progress

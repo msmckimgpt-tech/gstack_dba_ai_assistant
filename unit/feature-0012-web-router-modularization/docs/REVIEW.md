@@ -305,3 +305,17 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 188, py_compile OK. **app.py 28,610→28,350(~260↓).**
 - 학습(파이프라인 보강): 추출 whitelist=`_`헬퍼+DI+**non-_ app 함수(record_audit_event류)**; test 전환=getsource/hasattr/직접호출/import-헬퍼 전수 점검. make test 가 최종 안전망(3 라운드 적발·교정).
 - 다음: admin console singles(admin_me·permissions·databases·overview·health) 등 완전-DI 잔여 → inline-heavy(DI 전환 선행).
+
+## REV-20260701-0004 [AGENT-TEAM:p5b-admin-console-self-review]
+- Related Change: CHG-20260701-0004 (admin_console 5 핸들러 추출, batch 3)
+- §18.8 Adversarial Panel: **SELF+make test 결정적 검증.** 파이프라인 3원칙(AST 경계·app.X 동적참조·stdlib 명시 import) 기확립. 본건 검증: (1) datetime from-import(admin_health datetime.utcnow=클래스), (2) main 신규 라우트로 골든 set 변경 흡수.
+- 검증: (1) AST 경계 5 핸들러 155줄. (2) app.X: `_`헬퍼/상수 19(_DASHBOARD_WIDGETS·_dash_widget_*·_serialize_account·_json_error 등)+DI seam, non-_ 함수 0. `app.app.` 0. (3) stdlib: logging + `from datetime import datetime`(module import 아님 — datetime.utcnow 는 클래스 메서드). (4) 골든 188→192: 재생성 시 removed=[] 확인(admin_console 5 라우트 set-보존) + added=[graph/analyze ×4]=main feature-0016(내 추출 무관) → 골든 흡수. (5) 테스트 전환: getsource(admin_me)+직접호출(admin_overview ×6) → admin_console.X + import.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 192, py_compile OK. **app.py 28,559→28,410.**
+- 다음: 완전-DI 잔여(api/share 2·api/llm 1·api/file 1 misc) → inline-heavy(DI 전환 선행: admin/metadata 30·admin/products 17·api/auth 12·conversations MIXED 7).
+
+## REV-20260701-0005 [AGENT-TEAM:p5b-share-system-self-review]
+- Related Change: CHG-20260701-0005 (share+system 추출, batch 4 — 완전-DI 완료)
+- §18.8 Adversarial Panel: **SELF+make test 결정적 검증(2 라운드).** 파이프라인 기확립. 본건 신규 = 소스텍스트 contract 테스트(4번째 커플링).
+- 검증: (1) AST 경계 4 핸들러. app.X(app 헬퍼+DI seam), get_llm_health 의 _get_authenticated_account inline→app.X. (2) **소스텍스트 contract 적발**: 1차 make test 가 test_group_conversation_s2(`@app.post("/api/share/{token}/join")` in app.py 텍스트) + test_member_ban(`_func_src` AST가 app.py 만 파싱) 실패 → app.py+routers 통합 검색으로 전환. `app.<handler>` grep 은 이 유형 못 잡음(read_text/ast.parse). (3) route set 불변 192(share/system 추출 set-neutral). (4) var-shadow: /api/share/* 2 라우트 전부 추출(app.py 잔여 share 형제 0), get_llm_health·get_file concrete.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 192, py_compile OK. **app.py 28,410→28,221. 완전-DI 라우트 전부 추출(11 router / ~39 라우트).**
+- 학습: 커플링 4유형(직접호출·monkeypatch·getsource·소스텍스트 contract) 전수 점검. 다음 = inline-heavy(DI 전환 선행 — admin/metadata 30 등 cat-A/B/C 마이그 재개).

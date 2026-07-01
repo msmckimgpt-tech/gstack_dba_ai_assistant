@@ -1,6 +1,6 @@
 {
- "total_routes": 188,
- "api_routes": 187,
+ "total_routes": 192,
+ "api_routes": 191,
  "ordered": [
   {
    "path": "/openapi.json",
@@ -44,13 +44,6 @@
   },
   {
    "path": "/readyz",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/llm/health",
    "methods": [
     "GET"
    ],
@@ -246,23 +239,9 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/share/{share_id}",
-   "methods": [
-    "DELETE"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/public/share/{token}",
    "methods": [
     "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/share/{token}/join",
-   "methods": [
-    "POST"
    ],
    "type": "APIRoute"
   },
@@ -414,13 +393,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/file",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/auth/signup",
    "methods": [
     "POST"
@@ -533,13 +505,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/admin/me",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/admin/accounts",
    "methods": [
     "GET"
@@ -610,13 +575,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/admin/permissions",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/admin/products",
    "methods": [
     "GET"
@@ -662,13 +620,6 @@
    "path": "/api/admin/products/{product_id}",
    "methods": [
     "DELETE"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/databases/available",
-   "methods": [
-    "GET"
    ],
    "type": "APIRoute"
   },
@@ -960,6 +911,34 @@
    "type": "APIRoute"
   },
   {
+   "path": "/api/admin/metadata/graph/analyze",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze/node",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/columns",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
    "path": "/api/admin/metadata/samples",
    "methods": [
     "GET"
@@ -1005,13 +984,6 @@
    "path": "/api/admin/metadata/bootstrap/describe",
    "methods": [
     "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/overview",
-   "methods": [
-    "GET"
    ],
    "type": "APIRoute"
   },
@@ -1086,13 +1058,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/admin/health/attachment-grants",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/profile/audits",
    "methods": [
     "GET"
@@ -1150,6 +1115,69 @@
   },
   {
    "path": "/api/admin/usage/conversations",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/me",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/permissions",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/databases/available",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/overview",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/health/attachment-grants",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/share/{share_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/share/{token}/join",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/llm/health",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/file",
    "methods": [
     "GET"
    ],

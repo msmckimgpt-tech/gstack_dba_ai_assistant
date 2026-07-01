@@ -38,7 +38,7 @@ def _import_app():
 
 
 app = _import_app()
-from routers import admin_quotas  # feature-0012 P5b: quotas 추출
+from routers import admin_quotas, admin_console  # feature-0012 P5b
 
 
 def _read_static(name: str) -> str:
@@ -164,7 +164,7 @@ def test_b12_quota_strip_helper_and_gates():
     # 엔드포인트들이 strip 헬퍼 + 조회 게이트를 호출.
     assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_accounts)
     assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_roles)
-    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_me)
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(admin_console.admin_me)
     # outside-voice MAJOR-1 흡수: PATCH 응답(include_permissions=True)도 strip — account.update 만으로 한도 열람 우회 차단.
     assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_update_account)
     # GET /api/admin/quotas 는 quota.read 게이트.

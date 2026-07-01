@@ -15,15 +15,19 @@ APP_PY = os.path.join(
 
 
 def _func_src(name: str) -> str:
-    with open(APP_PY, "r", encoding="utf-8") as f:
-        src = f.read()
-    tree = ast.parse(src)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            seg = ast.get_source_segment(src, node)
-            assert seg, f"source segment empty for {name}"
-            return seg
-    raise AssertionError(f"function {name} not found in app.py")
+    # feature-0012 P5b: 핸들러가 app.py 또는 src/routers/*.py 에 있을 수 있음(도메인 추출).
+    import glob
+    _routers = sorted(glob.glob(os.path.join(os.path.dirname(APP_PY), "routers", "*.py")))
+    for fp in [APP_PY, *_routers]:
+        with open(fp, "r", encoding="utf-8") as f:
+            src = f.read()
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+                seg = ast.get_source_segment(src, node)
+                assert seg, f"source segment empty for {name}"
+                return seg
+    raise AssertionError(f"function {name} not found in app.py or src/routers/")
 
 
 # ── ban 엔드포인트: 엄격 owner 전용 + 가드 ──────────────────────────────────
