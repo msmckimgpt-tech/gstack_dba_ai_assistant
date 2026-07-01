@@ -327,3 +327,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 수용(비차단): **LOW test-adequacy gap** — perm-string 스왑 mutation 이 스위트 통과(403 테스트는 console.access 만 부여, happy-path 직접호출은 require_permission 우회, graph 5핸들러 behavior 커버리지 0) → 코드리뷰 perm 정확성 독립 확인으로 상쇄. **INFO conn-lifetime** — DI 가 memory conn 을 teardown 까지 유지(legacy 는 body 전 close) → 응답 byte 무영향(handler body 는 별도 _pg_connect).
 - 결정적 검증: make test 1313 passed·0 fail·route-parity 192 불변·py_compile OK. behavior-neutral(추출 아님).
 - 학습: 도메인 전용 auth helper 도 auth+정적 perm 이면 require_permission clean 전환. txn 이연은 conn 정체성(어느 DB) 확인 필수. 다음 = admin/metadata router 추출(34 핸들러, app.X 동적참조 + suggest inline 유지).
+
+## REV-20260701-0007 [SKIPPED:mechanical byte-neutral extraction — make test route-parity + static prefix-완전성 게이트; §18.8 byte-동치는 DI 전환(REV-0006)에서 수행]
+- Related Change: CHG-20260701-0007 (admin/metadata 34 핸들러 → routers/admin_metadata.py 추출)
+- 검증 성격: 추출은 라우트 경로·메서드·응답 불변 mechanical move(핸들러 코드 자체 무변경, `app.X` 참조 접두만). auth byte-동치(auth-sensitive)는 선행 DI 전환 REV-0006 §18.8 패널에서 검증 완료. 본 추출은 **route-parity(경로+메서드+순서) + make test 전체 + static prefix-완전성 검사**가 결함 게이트.
+- 결정적 검증: (1) route-parity 골든 docker `_build_table` 재생성 = **set-neutral(added/removed 0), total 192 불변, 순서만 갱신**(34 metadata 라우트 include 순서상 끝 이동). (2) make test **1313 passed·0 fail·route drift 0**. (3) **make test 안전망이 추출 결함 1건 실적 적발**: `_SAMPLE_WEIGHT_MIN/_MAX`(튜플-대입 모듈상수) whitelist 누락 → NameError → 완전 mod_syms static 재검사(튜플/AnnAssign/import 타깃 포함)로 전수 0 확인 후 보정. (4) py_compile app.py+router OK. (5) 커플링 4유형 사전 grep: type1(직접호출)=재참조 완료, type2/3/4(monkeypatch·getsource·소스텍스트 contract)=metadata 핸들러 해당 0 확인. (6) 헬퍼 monkeypatch 보존: `_metadata_*`/`_connect_memory`/`record_audit_event` app.py 잔류 → router `app.X` 동적참조로 테스트 monkeypatch 계약 유지.
+- app.py 28,224→26,734(~1,490↓, 단일 도메인 최대). routers 12개 / metadata 34 라우트 추출.
+- 학습: whitelist mod_syms 는 튜플-대입 타깃까지 수집 필수(누락 시 router NameError, make test 적발). 추출 후 완전 mod_syms static 재검사를 골든 재생성 전 수행 = 조기 적발.
+- 후속 배포: 컨테이너 로드(uvicorn web.app:app)에서 router import 는 기존 11 router 와 동일 `routers.<d>` 경로(신규 top-level 모듈 아님)라 web_context류 위험 없음 — 배포 blue-green healthz 게이트가 최종 안전망.

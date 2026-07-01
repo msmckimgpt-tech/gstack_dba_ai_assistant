@@ -21,6 +21,7 @@ import datetime
 import json
 
 import app
+from routers import admin_metadata
 import shared.db as _dbmod
 import modules.kb_glossary as _kg
 
@@ -139,7 +140,7 @@ def test_create_glossary_with_role(monkeypatch):
                         lambda conn, scope_key, term, definition, role_key="*", source="manual":
                         captured.update({"role_key": role_key, "term": term}))
     _audit_capture(monkeypatch)
-    resp = asyncio.run(app.admin_create_glossary(_FakeRequest(
+    resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest(
         {"scope_key": "common", "role_key": "Operator", "term": "리드", "definition": "영업 잠재고객"}), account=acct))
     assert resp.status_code == 200
     assert captured["role_key"] == "operator"   # 정규화
@@ -149,7 +150,7 @@ def test_create_glossary_invalid_role_400(monkeypatch):
     acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
     called = {"n": 0}
     monkeypatch.setattr(_kg, "upsert_glossary_term", lambda *a, **k: called.update(n=called["n"] + 1))
-    resp = asyncio.run(app.admin_create_glossary(_FakeRequest(
+    resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest(
         {"scope_key": "common", "role_key": "ghost", "term": "x", "definition": "y"}), account=acct))
     assert resp.status_code == 400
     assert called["n"] == 0   # 코어 미호출
@@ -172,7 +173,7 @@ def test_feedback_list_serializes(monkeypatch):
     rows = [(5, "common", "*", "리드", "영업 잠재고객", 0.7, "pending", "run1", "c1", None, None, ts, ts)]
     monkeypatch.setattr(_kg, "list_glossary_feedback", lambda conn, **k: rows)
     monkeypatch.setattr(_kg, "count_glossary_feedback", lambda conn, status="pending": 3)
-    resp = app.admin_list_glossary_feedback(_FakeRequest(query={"status": "pending"}), account=acct)
+    resp = admin_metadata.admin_list_glossary_feedback(_FakeRequest(query={"status": "pending"}), account=acct)
     assert resp.status_code == 200
     out = _body(resp)
     assert out["count"] == 1 and out["pending_count"] == 3
@@ -188,7 +189,7 @@ def test_feedback_promote(monkeypatch):
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     monkeypatch.setattr(_kg, "promote_glossary_feedback", lambda conn, fid, **k: 321)
     events = _audit_capture(monkeypatch)
-    resp = app.admin_promote_glossary_feedback(5, _FakeRequest(), account=acct)
+    resp = admin_metadata.admin_promote_glossary_feedback(5, _FakeRequest(), account=acct)
     assert resp.status_code == 200
     assert _body(resp)["glossary_id"] == 321
     assert pg.committed is True
@@ -201,7 +202,7 @@ def test_feedback_promote_404(monkeypatch):
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     monkeypatch.setattr(_kg, "promote_glossary_feedback", lambda conn, fid, **k: None)
     _audit_capture(monkeypatch)
-    resp = app.admin_promote_glossary_feedback(99, _FakeRequest(), account=acct)
+    resp = admin_metadata.admin_promote_glossary_feedback(99, _FakeRequest(), account=acct)
     assert resp.status_code == 404
 
 
@@ -212,7 +213,7 @@ def test_feedback_reject(monkeypatch):
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     monkeypatch.setattr(_kg, "reject_glossary_feedback", lambda conn, fid: 1)
     events = _audit_capture(monkeypatch)
-    resp = app.admin_reject_glossary_feedback(5, _FakeRequest(), account=acct)
+    resp = admin_metadata.admin_reject_glossary_feedback(5, _FakeRequest(), account=acct)
     assert resp.status_code == 200
     assert any(e.get("action") == "glossary.feedback.reject" for e in events)
 
@@ -227,7 +228,7 @@ def test_relation_add(monkeypatch):
     monkeypatch.setattr(_kg, "add_glossary_relation",
                         lambda conn, f, t, rt, created_by=None: captured.update({"f": f, "t": t, "rt": rt}))
     events = _audit_capture(monkeypatch)
-    resp = asyncio.run(app.admin_add_glossary_relation(1, _FakeRequest({"to_id": 2, "relation_type": "synonym"}), account=acct))
+    resp = asyncio.run(admin_metadata.admin_add_glossary_relation(1, _FakeRequest({"to_id": 2, "relation_type": "synonym"}), account=acct))
     assert resp.status_code == 200
     assert captured == {"f": 1, "t": 2, "rt": "synonym"}
     assert any(e.get("action") == "glossary.relation.create" for e in events)
@@ -235,13 +236,13 @@ def test_relation_add(monkeypatch):
 
 def test_relation_self_reference_400(monkeypatch):
     acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
-    resp = asyncio.run(app.admin_add_glossary_relation(1, _FakeRequest({"to_id": 1}), account=acct))
+    resp = asyncio.run(admin_metadata.admin_add_glossary_relation(1, _FakeRequest({"to_id": 1}), account=acct))
     assert resp.status_code == 400
 
 
 def test_relation_bad_type_400(monkeypatch):
     acct = _env(monkeypatch, perms={"kb.ingest.manual": True})
-    resp = asyncio.run(app.admin_add_glossary_relation(1, _FakeRequest({"to_id": 2, "relation_type": "bogus"}), account=acct))
+    resp = asyncio.run(admin_metadata.admin_add_glossary_relation(1, _FakeRequest({"to_id": 2, "relation_type": "bogus"}), account=acct))
     assert resp.status_code == 400
 
 
@@ -251,6 +252,6 @@ def test_relation_delete(monkeypatch):
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     monkeypatch.setattr(_kg, "delete_glossary_relation", lambda conn, rid: 1)
     events = _audit_capture(monkeypatch)
-    resp = app.admin_delete_glossary_relation(7, _FakeRequest(), account=acct)
+    resp = admin_metadata.admin_delete_glossary_relation(7, _FakeRequest(), account=acct)
     assert resp.status_code == 200
     assert any(e.get("action") == "glossary.relation.delete" for e in events)

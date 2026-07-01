@@ -27,6 +27,7 @@ import asyncio
 import json
 
 import app
+from routers import admin_metadata
 
 
 # ── Fakes (phase2 복제) ──────────────────────────────────────────────────────────
@@ -129,7 +130,7 @@ def test_suggest_requires_permission(monkeypatch):
     _allow(monkeypatch)
     _nobody(monkeypatch)
     called = _fake_llm(monkeypatch)
-    resp = asyncio.run(app.admin_metadata_suggest("glossary", _FakeRequest({"term": "이탈률"})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("glossary", _FakeRequest({"term": "이탈률"})))
     assert resp.status_code == 403
     assert called["n"] == 0
 
@@ -139,7 +140,7 @@ def test_samples_requires_sample_curate_perm(monkeypatch):
     _allow(monkeypatch)
     _ingest_only(monkeypatch)
     called = _fake_llm(monkeypatch)
-    resp = asyncio.run(app.admin_metadata_suggest("samples", _FakeRequest({"sql": "SELECT 1"})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("samples", _FakeRequest({"sql": "SELECT 1"})))
     assert resp.status_code == 403
     assert called["n"] == 0
 
@@ -150,7 +151,7 @@ def test_unknown_sub_404_before_llm(monkeypatch):
     _allow(monkeypatch)
     _nobody(monkeypatch)
     called = _fake_llm(monkeypatch)
-    resp = asyncio.run(app.admin_metadata_suggest("bogus", _FakeRequest({"x": 1})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("bogus", _FakeRequest({"x": 1})))
     assert resp.status_code == 404
     assert called["n"] == 0
 
@@ -161,7 +162,7 @@ def test_missing_required_field_400_no_llm(monkeypatch):
     _allow(monkeypatch)
     _admin(monkeypatch)
     called = _fake_llm(monkeypatch)
-    resp = asyncio.run(app.admin_metadata_suggest("glossary", _FakeRequest({})))  # term 누락
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("glossary", _FakeRequest({})))  # term 누락
     assert resp.status_code == 400
     assert called["n"] == 0
 
@@ -172,7 +173,7 @@ def test_glossary_suggest_returns_definition(monkeypatch):
     _allow(monkeypatch)
     _admin(monkeypatch)
     _fake_llm(monkeypatch, text="가입 후 일정 기간 내 활동이 없는 사용자 비율.")
-    resp = asyncio.run(app.admin_metadata_suggest("glossary", _FakeRequest({"term": "이탈률"})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("glossary", _FakeRequest({"term": "이탈률"})))
     assert resp.status_code == 200
     b = _body(resp)
     assert b["target"] == "definition"
@@ -184,7 +185,7 @@ def test_samples_suggest_returns_nl_question(monkeypatch):
     _allow(monkeypatch)
     _admin(monkeypatch)
     _fake_llm(monkeypatch, text="최근 30일 신규 가입자는 몇 명인가요?")
-    resp = asyncio.run(app.admin_metadata_suggest(
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest(
         "samples", _FakeRequest({"sql": "SELECT count(*) FROM users"})))
     assert resp.status_code == 200
     b = _body(resp)
@@ -199,7 +200,7 @@ def test_suggestion_capped(monkeypatch):
     _admin(monkeypatch)
     cap = app._METADATA_FIELD_CAPS["definition"]
     _fake_llm(monkeypatch, text="가" * (cap + 200))
-    resp = asyncio.run(app.admin_metadata_suggest("glossary", _FakeRequest({"term": "x"})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("glossary", _FakeRequest({"term": "x"})))
     assert resp.status_code == 200
     assert len(_body(resp)["suggestion"]) <= cap
 
@@ -210,7 +211,7 @@ def test_llm_error_propagates_status(monkeypatch):
     _allow(monkeypatch)
     _admin(monkeypatch)
     _fake_llm(monkeypatch, err=app._json_error("LLM 생성 실패", 502))
-    resp = asyncio.run(app.admin_metadata_suggest("glossary", _FakeRequest({"term": "x"})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("glossary", _FakeRequest({"term": "x"})))
     assert resp.status_code == 502
 
 
@@ -222,7 +223,7 @@ def test_samples_sql_input_capped_400(monkeypatch):
     _admin(monkeypatch)
     called = _fake_llm(monkeypatch)
     cap = app._METADATA_FIELD_CAPS["sql"]
-    resp = asyncio.run(app.admin_metadata_suggest("samples", _FakeRequest({"sql": "S" * (cap + 1)})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("samples", _FakeRequest({"sql": "S" * (cap + 1)})))
     assert resp.status_code == 400
     assert called["n"] == 0
 
@@ -232,7 +233,7 @@ def test_suggest_rate_limited_429_before_llm(monkeypatch):
     _admin(monkeypatch)
     called = _fake_llm(monkeypatch)
     monkeypatch.setattr(app, "_search_rate_limit_check", lambda *a, **k: False)
-    resp = asyncio.run(app.admin_metadata_suggest("glossary", _FakeRequest({"term": "x"})))
+    resp = asyncio.run(admin_metadata.admin_metadata_suggest("glossary", _FakeRequest({"term": "x"})))
     assert resp.status_code == 429
     assert called["n"] == 0  # rate-limit 이 LLM dispatch 앞에서 차단
 
@@ -242,7 +243,7 @@ def test_bootstrap_rate_limited_429(monkeypatch):
     acct = _admin(monkeypatch)
     called = _fake_llm(monkeypatch)
     monkeypatch.setattr(app, "_search_rate_limit_check", lambda *a, **k: False)
-    resp = asyncio.run(app.admin_metadata_bootstrap_describe(
+    resp = asyncio.run(admin_metadata.admin_metadata_bootstrap_describe(
         _FakeRequest({"mode": "tables", "tables": [{"table_name": "users"}]}), account=acct))
     assert resp.status_code == 429
     assert called["n"] == 0
@@ -263,7 +264,7 @@ def test_bootstrap_invalid_mode_400(monkeypatch):
     _allow(monkeypatch)
     acct = _admin(monkeypatch)
     _fake_llm(monkeypatch)
-    resp = asyncio.run(app.admin_metadata_bootstrap_describe(
+    resp = asyncio.run(admin_metadata.admin_metadata_bootstrap_describe(
         _FakeRequest({"mode": "rows", "tables": [{"table_name": "users"}]}), account=acct))
     assert resp.status_code == 400
 
@@ -272,7 +273,7 @@ def test_bootstrap_empty_tables_400(monkeypatch):
     _allow(monkeypatch)
     acct = _admin(monkeypatch)
     _fake_llm(monkeypatch)
-    resp = asyncio.run(app.admin_metadata_bootstrap_describe(
+    resp = asyncio.run(admin_metadata.admin_metadata_bootstrap_describe(
         _FakeRequest({"mode": "tables", "tables": []}), account=acct))
     assert resp.status_code == 400
 
@@ -284,7 +285,7 @@ def test_bootstrap_tables_shapes_results(monkeypatch):
     acct = _admin(monkeypatch)
     # LLM 이 {table_name: description} JSON(코드펜스 포함)을 반환 → results 로 정형.
     _fake_llm(monkeypatch, text='```json\n{"users": "사용자 계정 정보", "orders": "주문 내역"}\n```')
-    resp = asyncio.run(app.admin_metadata_bootstrap_describe(_FakeRequest({
+    resp = asyncio.run(admin_metadata.admin_metadata_bootstrap_describe(_FakeRequest({
         "mode": "tables",
         "tables": [{"schema_name": "public", "table_name": "users"},
                    {"schema_name": "public", "table_name": "orders"}],
@@ -301,7 +302,7 @@ def test_bootstrap_columns_shapes_results(monkeypatch):
     _allow(monkeypatch)
     acct = _admin(monkeypatch)
     _fake_llm(monkeypatch, text='{"users": {"id": "기본키", "email": "이메일 주소"}}')
-    resp = asyncio.run(app.admin_metadata_bootstrap_describe(_FakeRequest({
+    resp = asyncio.run(admin_metadata.admin_metadata_bootstrap_describe(_FakeRequest({
         "mode": "columns",
         "tables": [{"schema_name": "public", "table_name": "users",
                     "columns": [{"column_name": "id", "data_type": "int"},
@@ -317,7 +318,7 @@ def test_bootstrap_unparseable_llm_502(monkeypatch):
     _allow(monkeypatch)
     acct = _admin(monkeypatch)
     _fake_llm(monkeypatch, text="죄송하지만 JSON 을 만들 수 없습니다.")  # { } 없음 → parse None
-    resp = asyncio.run(app.admin_metadata_bootstrap_describe(
+    resp = asyncio.run(admin_metadata.admin_metadata_bootstrap_describe(
         _FakeRequest({"mode": "tables", "tables": [{"table_name": "users"}]}), account=acct))
     assert resp.status_code == 502
 

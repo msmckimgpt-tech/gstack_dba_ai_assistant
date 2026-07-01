@@ -27,6 +27,7 @@ import datetime
 import json
 
 import app
+from routers import admin_metadata
 import shared.db as _dbmod
 import modules.kb_glossary as _kg
 
@@ -204,7 +205,7 @@ def test_glossary_create_calls_core_and_audits(monkeypatch):
                              "role_key": role_key, "source": source}))
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.admin_create_glossary(_FakeRequest({
+    resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest({
         "scope_key": "default", "term": "  활성 사용자  ", "definition": "  최근 30일 로그인  "}), account=acct))
     assert resp.status_code == 200
     assert captured["conn"] is pg, "PG(agent_kb) conn 으로 적재"
@@ -227,14 +228,14 @@ def test_glossary_update_affected_then_404(monkeypatch):
     events = _audit_capture(monkeypatch)
 
     monkeypatch.setattr(_kg, "update_glossary_term", lambda *a, **k: 1)
-    resp = asyncio.run(app.admin_update_glossary(7, _FakeRequest({"scope_key": "common", "term": "t", "definition": "d"}), account=acct))
+    resp = asyncio.run(admin_metadata.admin_update_glossary(7, _FakeRequest({"scope_key": "common", "term": "t", "definition": "d"}), account=acct))
     assert resp.status_code == 200
     assert pg.committed is True
     upd = [e for e in events if e.get("action") == "glossary.term.update"]
     assert len(upd) == 1 and upd[0]["resource_id"] == "7"
 
     monkeypatch.setattr(_kg, "update_glossary_term", lambda *a, **k: 0)
-    resp2 = asyncio.run(app.admin_update_glossary(8, _FakeRequest({"scope_key": "common", "term": "t", "definition": "d"}), account=acct))
+    resp2 = asyncio.run(admin_metadata.admin_update_glossary(8, _FakeRequest({"scope_key": "common", "term": "t", "definition": "d"}), account=acct))
     assert resp2.status_code == 404
 
 
@@ -248,13 +249,13 @@ def test_glossary_delete_idempotent_audit(monkeypatch):
     events = _audit_capture(monkeypatch)
 
     monkeypatch.setattr(_kg, "delete_glossary_term", lambda *a, **k: 1)
-    resp = app.admin_delete_glossary(3, _FakeRequest(query={"scope_key": "common"}), account=acct)
+    resp = admin_metadata.admin_delete_glossary(3, _FakeRequest(query={"scope_key": "common"}), account=acct)
     assert resp.status_code == 200 and _body(resp)["deleted"] == 1
     assert any(e.get("action") == "glossary.term.delete" for e in events)
 
     events.clear()
     monkeypatch.setattr(_kg, "delete_glossary_term", lambda *a, **k: 0)  # 이미 없음
-    resp2 = app.admin_delete_glossary(3, _FakeRequest(query={"scope_key": "common"}), account=acct)
+    resp2 = admin_metadata.admin_delete_glossary(3, _FakeRequest(query={"scope_key": "common"}), account=acct)
     assert resp2.status_code == 200 and _body(resp2)["deleted"] == 0, "멱등 — 이미 없어도 성공"
     assert not events, "미삭제(affected=0) 시 audit 미기록"
 
@@ -275,7 +276,7 @@ def test_enum_create_calls_core(monkeypatch):
     monkeypatch.setattr(_kg, "upsert_enum_entry", _fake_upsert)
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.admin_create_enum(_FakeRequest({
+    resp = asyncio.run(admin_metadata.admin_create_enum(_FakeRequest({
         "scope_key": "default", "table_name": "orders", "column_name": "status",
         "code": "1", "label": "결제완료"}), account=acct))  # schema_name 생략(선택)
     assert resp.status_code == 200
@@ -291,7 +292,7 @@ def test_enum_update_404_when_not_found(monkeypatch):
     pg = _PgConn()
     monkeypatch.setattr(_dbmod, "_pg_connect", lambda autocommit=True: pg)
     monkeypatch.setattr(_kg, "update_enum_entry", lambda *a, **k: 0)
-    resp = asyncio.run(app.admin_update_enum(5, _FakeRequest({
+    resp = asyncio.run(admin_metadata.admin_update_enum(5, _FakeRequest({
         "scope_key": "common", "table_name": "t", "column_name": "c", "code": "1", "label": "l"}), account=acct))
     assert resp.status_code == 404
 
@@ -305,10 +306,10 @@ def test_scope_rejects_unknown_and_empty(monkeypatch):
     monkeypatch.setattr(_kg, "upsert_glossary_term", lambda *a, **k: called.__setitem__("hit", True))
 
     # 미허용 scope → 400
-    resp = asyncio.run(app.admin_create_glossary(_FakeRequest({"scope_key": "nope", "term": "t", "definition": "d"}), account=acct))
+    resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest({"scope_key": "nope", "term": "t", "definition": "d"}), account=acct))
     assert resp.status_code == 400
     # 빈 scope → 400
-    resp2 = asyncio.run(app.admin_create_glossary(_FakeRequest({"scope_key": "", "term": "t", "definition": "d"}), account=acct))
+    resp2 = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest({"scope_key": "", "term": "t", "definition": "d"}), account=acct))
     assert resp2.status_code == 400
     assert called["hit"] is False, "scope 거부 시 코어 미호출"
 
@@ -321,11 +322,11 @@ def test_input_validation(monkeypatch):
     monkeypatch.setattr(_kg, "upsert_glossary_term", lambda *a, **k: None)
 
     # 필수필드 누락(term) → 400
-    resp = asyncio.run(app.admin_create_glossary(_FakeRequest({"scope_key": "common", "definition": "d"}), account=acct))
+    resp = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest({"scope_key": "common", "definition": "d"}), account=acct))
     assert resp.status_code == 400
     # 길이 cap 초과(term cap=200) → 400
     long_term = "x" * 201
-    resp2 = asyncio.run(app.admin_create_glossary(_FakeRequest({"scope_key": "common", "term": long_term, "definition": "d"}), account=acct))
+    resp2 = asyncio.run(admin_metadata.admin_create_glossary(_FakeRequest({"scope_key": "common", "term": long_term, "definition": "d"}), account=acct))
     assert resp2.status_code == 400
 
 
@@ -341,7 +342,7 @@ def test_glossary_list_serializes(monkeypatch):
             (2, "common", "sales", "용어B", "정의B", "auto", ts, ts)]
     monkeypatch.setattr(_kg, "list_glossary_admin", lambda conn, scope_key, **k: rows)
 
-    resp = app.admin_list_glossary(_FakeRequest(query={"scope_key": "common"}), account=acct)
+    resp = admin_metadata.admin_list_glossary(_FakeRequest(query={"scope_key": "common"}), account=acct)
     assert resp.status_code == 200
     out = _body(resp)
     assert out["count"] == 2 and out["scope_key"] == "common"
@@ -360,7 +361,7 @@ def test_enum_list_serializes(monkeypatch):
     rows = [(10, "default", "", "orders", "status", "1", "결제완료", ts, ts)]
     monkeypatch.setattr(_kg, "list_enum_admin", lambda conn, scope_key, **k: rows)
 
-    resp = app.admin_list_enums(_FakeRequest(query={"scope_key": "default"}), account=acct)
+    resp = admin_metadata.admin_list_enums(_FakeRequest(query={"scope_key": "default"}), account=acct)
     assert resp.status_code == 200
     out = _body(resp)
     assert out["count"] == 1
