@@ -3155,16 +3155,38 @@ async function _metaGraphExpand(key) {
     _metaGraphStatus((err && err.message) || "이웃 조회 실패");
     return;
   }
-  _metaGraphAddElements(data.nodes || [], data.edges || []);
-  _metaGraphLayout();
+  const cy = _metaGraph.cy;
+  const newIds = _metaGraphAddElements(data.nodes || [], data.edges || []) || [];
+  if (newIds.length > 0) {
+    // 신규 노드를 앵커(더블클릭 노드) 좌표 근처에 seed → 원점(0,0) 겹침 방지 + fcose 가 국소 정착.
+    const anchor = cy.getElementById(key);
+    const ap = (anchor && anchor.length) ? anchor.position() : { x: 0, y: 0 };
+    newIds.forEach((id, i) => {
+      const nd = cy.getElementById(id);
+      if (nd && nd.length) {
+        const ang = (i / newIds.length) * 2 * Math.PI;
+        nd.position({ x: ap.x + Math.cos(ang) * 90 + (i % 6) * 6, y: ap.y + Math.sin(ang) * 90 + (i % 5) * 6 });
+      }
+    });
+    // 증분 레이아웃: 기존 노드는 좌표 고정(재계산·튐 제거), 신규만 배치. 전체 fit 대신 신규 영역으로 카메라 이동.
+    const focus = cy.collection();
+    if (anchor && anchor.length) focus.merge(anchor);
+    newIds.forEach((id) => { const n = cy.getElementById(id); if (n && n.length) focus.merge(n); });
+    _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus });
+  } else {
+    // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
+    try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 300 }); } catch (_) {}
+  }
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
 }
 
+// 반환: 이번에 새로 add 된 (compound 부모 제외) 노드 id 배열 — 증분 레이아웃이 이들만 자유 배치.
 function _metaGraphAddElements(nodes, edges) {
   const cy = _metaGraph.cy;
-  if (!cy) return;
+  if (!cy) return [];
+  const added = [];
   (nodes || []).forEach((n) => {
     if (!n || !n.key) return;
     // 스키마 노드 = 카테고리 컨테이너(compound parent)로 사용.
@@ -3181,6 +3203,7 @@ function _metaGraphAddElements(nodes, edges) {
       fqn: n.fqn || "", description: n.description || "", source: n.source || "" };
     if (pid) data.parent = pid;
     cy.add({ group: "nodes", data });
+    added.push(n.key);
   });
   (edges || []).forEach((e) => {
     if (!e || !e.source || !e.target) return;
@@ -3190,34 +3213,65 @@ function _metaGraphAddElements(nodes, edges) {
     if (!cy.getElementById(e.source).length || !cy.getElementById(e.target).length) return;
     cy.add({ group: "edges", data: { id, source: e.source, target: e.target, label: e.type || "" } });
   });
+  return added;
 }
 
-function _metaGraphLayout() {
+// opts.incremental=true(더블클릭 확장): 기존 노드 좌표를 fixedNodeConstraint 로 고정하고 신규 노드만
+//   국소 배치(randomize:false=PURE_INCREMENTAL). 전체 재무작위화·재프레이밍(fit)·proof 반복을 생략해
+//   '전체가 다시 튕겨 펼쳐지는' 지연을 제거한다. 인자 없음(초기 로드/검색): 좌표 없는 재구축이라
+//   randomize:true + packComponents + proof 유지(안 그러면 원점 뭉침 — fcose 는 randomize:false 시
+//   spectral/packComponents 를 끈다).
+function _metaGraphLayout(opts) {
   if (!_metaGraph.cy) return;
-  const cnt = _metaGraph.cy.nodes().length;
-  // 라벨 겹침 방지의 핵심: nodeDimensionsIncludeLabels=true → 레이아웃이 각 노드의 **라벨 박스까지**
-  // 충돌 회피 대상으로 간주해 라벨이 겹치지 않을 만큼 벌린다. animate=true 로 펼침 과정을 보여준다.
+  opts = opts || {};
+  const cy = _metaGraph.cy;
+  const cnt = cy.nodes().length;
+  const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
+  const base = {
+    nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
+    uniformNodeDimensions: false,
+    nodeSeparation: 150,
+    tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,
+    nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
+    gravityRangeCompound: 1.5, gravityCompound: 1.0,
+    animate: animate, animationEasing: "ease-out",
+  };
   if (_metaGraph.fcose) {
     try {
-      _metaGraph.cy.layout({
-        name: "fcose", quality: "proof", randomize: true, fit: true, padding: 40,
-        animate: animate, animationDuration: 1000, animationEasing: "ease-out",
-        nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거)
-        uniformNodeDimensions: false,
-        packComponents: true,
-        nodeSeparation: 150,                  // 노드 간 최소 간격 ↑(라벨 여유)
-        tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,  // 비연결 노드 타일 간격
-        nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
-        gravityRangeCompound: 1.5, gravityCompound: 1.0,
-        numIter: cnt > 400 ? 1800 : 2500,
-      }).run();
+      let cfg;
+      if (incremental) {
+        const fixed = [];
+        cy.nodes().forEach((n) => {
+          if (n.isParent()) return;                                   // compound 부모는 자식으로 자동 산정
+          if (opts.newIdSet && opts.newIdSet.has(n.id())) return;      // 신규는 자유 배치
+          const p = n.position();
+          fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
+        });
+        cfg = Object.assign({}, base, {
+          name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
+          animationDuration: 450, packComponents: false, numIter: 400, fixedNodeConstraint: fixed,
+        });
+      } else {
+        cfg = Object.assign({}, base, {
+          name: "fcose", randomize: true, quality: "proof", fit: true, padding: 40,
+          animationDuration: 1000, packComponents: true, numIter: cnt > 400 ? 1800 : 2500,
+        });
+      }
+      const layout = cy.layout(cfg);
+      if (incremental && opts.focusEles && opts.focusEles.length) {
+        // 레이아웃 종료 후 신규 이웃 영역으로만 카메라 이동(전체 fit 대신 맥락 유지).
+        layout.one("layoutstop", () => {
+          try { cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 400 }); } catch (_) {}
+        });
+      }
+      layout.run();
       return;
     } catch (_) {}
   }
   try {
     _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
-      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: true }).run();
+      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental }).run();
   } catch (_) {}
 }
 
