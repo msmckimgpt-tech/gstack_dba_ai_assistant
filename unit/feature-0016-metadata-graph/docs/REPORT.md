@@ -29,6 +29,39 @@ compound 박스·라벨·bezier 엣지 전부 정상(스크린샷). 전체 구�
 ### 검증
 - node --check PASS. 적대 리뷰 패널(§18.8) → REVIEW.md. PB-0008 실 Windows 브라우저(WebGL 활성·compound·라벨·엣지·
   부드러움·대규모 이웃). **실 FPS 효과는 사용자 실 하드웨어 재측정이 유일 검증**.
+## 2026-07-01 · AI 능동 분석 재귀 — 앵커-상대 관련도 게이팅 (node-analysis-anchor)
+
+### 요청·증상
+- 관리콘솔 > 메타데이터 > 그래프 뷰 "AI 능동 분석"(node_analysis) 재귀의 기준이 불명확. `dk_data_release.Achievement`
+  분석 시, 테이블에 연결된 컬럼을 따라 depth 가 깊어지면 **대상 노드(예 `UniqueID`)를 기준으로 다시 탐색**하는
+  동작. 요구: 처음 분석하려던 대상(Achievement/dk 제품) 기준으로 탐색 + 하위 컬럼 기본 분석 + 깊은 확장은
+  "dk 제품·Achievement" 연관 높은 대상만 + 단순 컬럼명 일치·상위객체 무연관은 낮은 우선순위.
+
+### 근본원인
+- `node_analysis._enqueue_neighbors` 가 방문 노드의 이웃 **전부**(`ctx["neighbors"]`)를 무차별 pending 재큐.
+  게이트는 depth_budget/node_budget/UNIQUE dedupe **뿐** — 원래 루트와의 관련도 판단이 전무한 무방향 BFS.
+- 결과: 일반 허브 컬럼 `UniqueID`(여러 테이블이 REFERENCES 공유)나 부모 **Schema** 노드(HAS_TABLE 로 형제
+  테이블 전량 보유)를 방문하면 그 노드가 **새 중심**이 되어 무관 테이블로 fan-out. Achievement/dk 앵커 상실.
+
+### 조치 (ADR-003, 상세 CHG-20260701T173000)
+- 재귀를 **원래 루트(anchor)** 에 고정하는 관련도 게이팅 도입:
+  - `_build_anchor`/`_load_anchor`(run 당 캐시) — 루트 scope·table_fqn·이름/설명 토큰.
+  - `_relevance(node, meta, anchor)` — 같은 제품(scope)/루트 테이블 서브트리/이름·설명 토큰 겹침(일반어 stoplist
+    제외)/GlossaryTerm/REFERENCES 신뢰(ADR-002). 다른 제품 감쇠, Schema·broken=0.
+  - `_score_candidates` — 루트 직속 컬럼(depth0 child)은 1.0 무조건 통과(하위 컬럼 기본 분석), 그 외 임계 이상만
+    (depth≥2 는 _DEEP 상향) 관련도순 재큐.
+  - `node_analysis_jobs.relevance`(alembic 0029) 영속 + claim `depth ASC, relevance DESC` 우선순위.
+- 튜닝 노브(env): RELEVANCE_MIN(0.18)/_DEEP(0.34)/CROSS_SCOPE_FACTOR(0.25)/EXPAND_SCHEMA(off).
+
+### 검증
+- 단위: `test_node_analysis_relevance.py` 12건 PASS(pytest). 핵심 — hub 컬럼 depth1 확장 시 교차-제품/무관
+  이웃 탈락 + 관련 이웃만 관련도순 유지; 루트 하위 컬럼(UniqueID 포함) 무조건 통과; Schema/broken=0.
+- 라이브(예정): alembic 0029 + 재배포 후 Achievement 능동 분석 → 분석 노드가 dk scope·Achievement 연관 안에
+  머무는지(마커) + generic-hub fan-out 억제 확인. PB-0008.
+
+### 범위 밖
+- 그래프 UI 마커/진행 패널 표시 자체는 변경 없음(백엔드 재귀 선정만). relevance 는 get_run_status 로 노출만 —
+  프론트 우선순위 시각화는 후속 옵션.
 
 ## 2026-07-01 · 그래프 애니 프레임레이트 저하 — 카메라 애니 구간 라벨/엣지 숨김 (graphux-camfps, resume 인계)
 

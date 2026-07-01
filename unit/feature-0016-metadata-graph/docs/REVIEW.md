@@ -41,6 +41,25 @@ source_of_truth: true
 - 검증: MAJOR 수정 후 node --check OK. 실측(인젝션) 141테이블 compound 전체-스프레드 박스겹침 886→0, 109ms. 캐시버스터 erd-spread.
 - Verdict: **SHIP**(수정 후) — MAJOR 처리, MINOR 수용(근거), CHANGE 1 결함 0. PB-0008 라이브 최종: (a) 밀집 박스겹침 해소 + (b) 박스 클릭/더블클릭 정합.
 - Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included). 박스 벌림 이동 트레이드오프는 사용자 사전 승인(AskUserQuestion).
+## REV-20260701T173000-ai-claude-feature-0016-node-analysis-anchor [AGENT-TEAM: 2-round backend+qa panel] — AI 능동 분석 재귀 앵커-상대 관련도 게이팅 적대 리뷰
+- Related Change: CHG-20260701T173000-...-node-analysis-anchor (재귀를 원래 루트에 고정하는 관련도 게이팅 + alembic 0029 relevance + claim relevance 우선). node_analysis.py/config/migration/tests.
+- 방식: §18.8 2라운드 적대 패널. R1 = 단일 backend+qa 리뷰어(전 diff 8차원 적대 probe). R2 = 3-렌즈 병렬 워크플로(wf_739336d8: m1-closure / korean-determinism / regression-integration) — R1 지적 수정본을 재적대검증.
+- R1 발견 → 전건 처리:
+  - **M1(MAJOR) — 신뢰/제품만으로 무연관 노드 통과**: 같은 scope + trusted REFERENCES 인데 내용(도메인) 무연관 노드가 0.15+0.08=0.23 ≥ MIN 0.18 로 depth1 통과(사용자 "내용 연관 없으면 제외" 침해). **→ 수정**: `_relevance` 를 content-gate 구조로 재작성 — 서브트리/이름/설명/용어(content) 신호가 0 이면 즉시 0.0 반환, 신뢰/제품은 content>0 위 **부스터**로만 작용.
+  - **M2(MINOR) — claim relevance DESC 의 depth≥1 run 간 공정성 변화**: root(depth0·rel1.0)는 FIFO 유지라 starvation 무회귀 확인. depth≥1 은 relevance 우선(예산캡·BATCH 로 지연만) — 주석 문서화.
+  - **M3(MINOR) — deep 임계 이진 계단**: MAX_DEPTH=5 인데 depth≥2 평탄 0.34. **→ 수정**: `min_rel = MIN_DEEP + 0.06*(nd-2)` 상한 0.7(깊을수록 상향 유지).
+  - **M4(MINOR) — 한글/혼합 토큰 미분절**: 업적↔Achievement 미분리·업적⊂업적보상 미인식. **→ 수정**: 한글↔라틴 경계 split + 한글 부분연관.
+  - **M5(MINOR) — 예산 절단 비결정성**: 동점 정렬이 입력순 의존. **→ 수정**: ordinal→name 결정 정렬.
+  - CLEAN(R1): cursor/txn 안전(`_load_anchor` per-run 캐시·autocommit·예외격리), 마이그레이션 additive·GRANT 테이블단위 커버·인덱스 정합, budget/dedup/finalize 무영향, root 하위컬럼 1.0 무조건.
+- R2 발견(수정본 재적대) → 전건 처리:
+  - **MAJOR(2R) — M1 한글 경로 재발**: `_GENERIC_TOKENS` 가 라틴 전용 → 한글 일반어(게임/정의/테이블/상태…)가 식별토큰으로 남아 설명 booster 가 generic-only 한글 겹침으로 content 조작(WeaponMaster desc "게임 무기 정의 테이블" → 0.26 통과). **→ 수정**: 한글 일반어·구조어 45+개를 stoplist 에 추가(라틴 목록과 동형). 회귀 테스트 추가.
+  - **MINOR(2R) — 한글 임의 부분문자열 오매칭**: 회원⊂비회원구매(반대의미)·업적⊂기업적자(무관)·상태⊂상태이상 등 중간삽입 오연관. **→ 수정**: `_hangul_partial_overlap` 을 **접두/접미 경계**만 인정으로 제한(중간삽입 배제). 부정 테스트 추가.
+  - **MINOR(2R) — tiebreak key 누락**: 동명·동점·ordinal무 노드가 DB row order 의존. **→ 수정**: tiebreak 에 node key 최종 성분 추가(전순서). 결정성 테스트 추가.
+  - **NIT(2R)** — `_relevance` meta=None 방어(`meta = meta or {}`), broken-guard belt-and-suspenders 주석. 반영.
+  - 의도된 트레이드오프(수용): 신뢰 FK 라도 이름/내용 발산 시 제외(precision-over-recall) — 사용자 "내용 연관 없으면 low priority" 정합. 회귀 테스트로 고정.
+- 검증: 순수함수 단위 **28/28 PASS**(pytest), py_compile OK. R2 3렌즈 모두 수정 후 SHIP/SHIP-WITH-FIXES(잔여 BLOCKER 0). 200k자 토큰화 34ms(catastrophic backtracking 없음).
+- Verdict: **SHIP**(2라운드 수정 후) — BLOCKER 0, R1 M1~M5 + R2 MAJOR·MINOR 전건 처리. 라이브 검증(Achievement 능동분석 fan-out 억제) PB-0008 후속.
+- Human Approval Needed: 없음(비파괴 additive·deploy_scope: included). 배포=alembic 0029 + web/insight 재배포.
 
 ## REV-20260701T170000-ai-claude-feature-0016-erd-card [SUBAGENT: erd-card-compound-refactor] — 컬럼→테이블 compound(ERD 카드) 적대 리뷰
 - Related Change: CHG-...-erd-card (컬럼을 테이블 compound 자식으로 + fcose alignment/relativePlacement 로 박스 안 ordinal 정렬, 겹침 원천 차단). admin.js/admin.html + admin_metadata.py(introspect ordinal).

@@ -333,3 +333,31 @@ source_of_truth: true
 - [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종, `cy.on('render')` 동기화 — 렌더러 무관이라 §17 WebGL 전환과 호환) + native 라벨 숨김. PB-0008 PASS(canvas-2D 프리뷰) → **§17 WebGL 병합 후 오버레이 정합 재확인 예정**.
 - [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD tap 정합·§17 graph-webgl 렌더러와 tap/스타일 병합 완료.)
 - [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 + WebGL 오버레이 PB-0008 최종 확인.
+- [ ] T15.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인.
+
+## 16. AI 능동 분석 재귀 — 앵커-상대 관련도 게이팅 (2026-07-01, node-analysis-anchor)
+
+### 16.0 맥락
+- 사용자 요청: "AI 능동 분석" 재귀 기준이 불명확 — Achievement 분석 시 컬럼 따라 depth 깊어지면 대상 노드
+  (UniqueID)를 기준으로 재탐색. 처음 분석 대상 기준으로 탐색되게, 하위 컬럼은 기본 분석, 깊은 확장은
+  "dk 제품·Achievement" 연관 높은 대상만, 단순 컬럼명 일치·상위객체 무연관은 낮은 우선순위.
+- 근본원인: `_enqueue_neighbors` 가 이웃 전부 무차별 재큐(루트 관련도 판단 부재) → 허브(일반 컬럼·Schema)에서
+  재-앵커링 fan-out.
+- 등급 **Major** (재귀 동작 변경 + 비파괴 additive 마이그레이션). 결정 근거·설계: DECISIONS ADR-003, MODIFY
+  CHG-20260701T173000.
+
+### 16.1 구현 (node_analysis.py · config · alembic)
+- [x] T16.1 config 노브: RELEVANCE_MIN(0.18)/_DEEP(0.34)/CROSS_SCOPE_FACTOR(0.25)/EXPAND_SCHEMA(off), env override.
+- [x] T16.2 토크나이저(`_split_tokens` camel/snake, `_meaningful_tokens` 일반어 stoplist) + `_build_anchor`/`_load_anchor`.
+- [x] T16.3 `_relevance(node, meta, anchor)` — scope·서브트리·토큰·용어·REFERENCES 신뢰; Schema/broken=0; 교차제품 감쇠.
+- [x] T16.4 `_fetch_context` neighbor_meta(kind/weight/status/child) + `_score_candidates` 게이팅(루트 컬럼 무조건, 그 외 임계).
+- [x] T16.5 `_enqueue_neighbors` 앵커 관련도 게이트·우선순위 재큐; enqueue 루트 relevance=1.0; process_pending claim `depth ASC, relevance DESC`.
+- [x] T16.6 alembic 0029 — `node_analysis_jobs.relevance real DEFAULT 0` + `ix_node_analysis_jobs_claim_priority`(expand-only). get_run_status relevance 노출.
+
+### 16.2 검증
+- [x] T16.7 단위 `test_node_analysis_relevance.py` **28건 PASS**(pytest) — 토큰화·anchor·관련도·게이팅 + 2라운드
+      적대 패널 반영(content-gate·한글 일반어·접두접미 부분연관·depth ramp·tiebreak·신뢰FK 트레이드오프).
+- [x] T16.8b 2라운드 적대 검증 패널(REV-20260701T173000 [AGENT-TEAM]) — R1 M1~M5 + R2 MAJOR·MINOR 전건 처리, BLOCKER 0.
+- [ ] T16.8 verify-completion(--pre-commit) + alembic 0029 적용 + web/insight 재배포.
+- [ ] T16.9 라이브: Achievement 능동 분석 트리거 → 분석 노드가 dk scope·Achievement 연관 안에 머무는지 + generic
+      -hub fan-out 억제 확인(PB-0008). ANCHOR §4 외부검증 append 후보.
