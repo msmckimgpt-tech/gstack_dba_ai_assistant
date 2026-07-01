@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T140000-ai-claude-feature-0016-graphux-expand-relax [SUBAGENT:expand-relax-frontend-perf] — 더블클릭 확장 relax 적대 리뷰
+- Related Change: CHG-20260701T140000-graphux-expand-relax (더블클릭 확장 시 신규노드가 주변 노드를 밀어내 겹침 해소).
+- 방식: §18.8 적대 패널 1렌즈(frontend/perf/regression/concurrency) — admin.js + vendor cytoscape-fcose 대조. 결함 적발.
+- 발견 → 전건 처리:
+  - **BLOCKER #1 — numIter 250→400 복귀로 프리즈 완화 커밋(1bb45f3) 무측정 회귀 + repulsion↑ 악화**:
+    **→ 수정**: numIter **250 유지**(커밋 수치), repulsion 20000→**16000**(base 12000 대비 완만). **실측**:
+    depth-1 확장 49ms, depth-2(120 신규) 153ms — 커밋이 우려한 120~155ms 스파이크 내(재측정으로 무회귀 입증).
+  - **MAJOR #2 — 'anchor 만 고정' = 매 확장 전체 재배치·문맥 상실**: **→ 수정**: **국소 relax** — 앵커 +
+    반경 R(=160+√newCount·55) **밖 노드는 고정**(원거리 문맥 보존), 반경 안만 자유(밀림). 실측 far 노드
+    이동 최소(depth2: far 4중 0 이동). newCount=0 이면 `_metaGraphExpand` 가 애초에 relax 미호출.
+  - **MAJOR #3 — anchor 부재/compound/컬럼 시 fixed 비어 전체폭발(fail-open)**: **→ 수정**: 앵커 부재 시
+    **신규노드 무게중심**을 relax 중심으로 + 반경 밖 노드가 항상 fixed 에 포함 → fixed 비지 않음(폭발 방지).
+  - **MAJOR #6 — dragfree ↔ 진행중 레이아웃 경쟁, 동시성 가드 전무**: **→ 수정**: `_metaGraph._layout` 에
+    진행 레이아웃 보관 + 신규 layout 시작 시 `.stop()`(연타 취소), `_layoutRunning` 플래그 + dragfree 는
+    실행 중이면 재배치 skip.
+  - **MINOR #4 — newIdSet 죽은 인자**: **→ 해소**: 국소 relax 가 newIdSet 으로 신규를 fixed 에서 제외(재사용).
+  - **MINOR #5 — 컬럼 lock 생명주기(폴백/비동기 창)**: placeColumns try/catch 재-lock + 동시성 가드로 완화. 잔존 위험 낮음.
+  - CLEAN #7 — 단일노드 fixedNodeConstraint + randomize:false 는 fcose API 유효.
+- 잔여: depth-2(120 신규) 극단 케이스 minor 겹침 4~17쌍(원래 502 대비 96~99%↓, 시각상 경미) — numIter 250
+  유지(perf 우선)의 의도적 trade-off. 라이브 시각검증에서 허용 확인.
+- Verdict: **SHIP** (수정 후) — BLOCKER/MAJOR 전건 처리 + 실측 재검증. node --check OK. PB-0008 라이브 최종.
+- Human Approval Needed: 없음(프론트 전용·비파괴). 배포 deploy_scope: included.
+
 ## REV-20260630-0001 — 적대적 코드 리뷰 (backend+security 렌즈, Phase 1c~4 diff)
 - Related Change: feature-0016 커밋 306f19c·bbafb52·08621f0·209e09b·0250fc4 (AGE 그래프 토대~AI tool).
 - 방식: §18.8 적대 패널 — Cypher/SQL injection·RBAC·XSS·graceful·migration·logic 6 카테고리 정밀 감사.

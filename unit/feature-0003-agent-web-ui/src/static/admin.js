@@ -3093,7 +3093,7 @@ function _metaInitGraph() {
   });
   // feature-0016 graphux5: 사용자가 Table 노드를 드래그하면 그 아래 컬럼 스택이 추종하도록 재정렬(lock 컬럼은
   //   드래그 이동 불가 → 테이블만 이동, dragfree 에서 컬럼을 새 위치 아래로 재배치해 트리 구조 유지).
-  _metaGraph.cy.on("dragfree", "node[label='Table']", () => { _metaGraphPlaceColumns(); });
+  _metaGraph.cy.on("dragfree", "node[label='Table']", () => { if (!_metaGraph._layoutRunning) _metaGraphPlaceColumns(); });
   // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
   if (window.ResizeObserver && !_metaGraph.ro) {
     let rt = null;
@@ -3250,11 +3250,12 @@ async function _metaGraphExpand(key) {
         nd.position({ x: ap.x + Math.cos(ang) * 90 + (i % 6) * 6, y: ap.y + Math.sin(ang) * 90 + (i % 5) * 6 });
       }
     });
-    // 증분 레이아웃: 기존 노드는 좌표 고정(재계산·튐 제거), 신규만 배치. 전체 fit 대신 신규 영역으로 카메라 이동.
+    // 증분 레이아웃: 앵커(더블클릭 노드)만 고정하고 나머지는 relax → 신규 노드가 주변 기존 노드를
+    //   '부드럽게 밀어내' 겹침을 없앤다. 전체 fit 대신 신규 영역으로 카메라 이동.
     const focus = cy.collection();
     if (anchor && anchor.length) focus.merge(anchor);
     newIds.forEach((id) => { const n = cy.getElementById(id); if (n && n.length) focus.merge(n); });
-    _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus });
+    _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus, anchorId: key });
   } else {
     // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
     try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 350 }); } catch (_) {}
@@ -3345,13 +3346,12 @@ function _metaGraphPlaceColumns() {
   } catch (_) {}
 }
 
-// opts.incremental=true(더블클릭 확장): 기존 노드 좌표를 fixedNodeConstraint 로 고정하고 신규 노드만
-//   국소 배치(randomize:false=PURE_INCREMENTAL). 전체 재무작위화·재프레이밍(fit)·proof 반복을 생략해
-//   '전체가 다시 튕겨 펼쳐지는' 지연을 제거한다. 인자 없음(초기 로드/검색): 좌표 없는 재구축이라
-//   randomize:true + packComponents + proof 유지(안 그러면 원점 뭉침 — fcose 는 randomize:false 시
-//   spectral/packComponents 를 끈다).
-// graphux5: 레이아웃 종료(layoutstop)마다 _metaGraphPlaceColumns 로 컬럼을 테이블 아래 세로 정렬 + lock.
-//   전체 재배치(non-incremental) 전에는 컬럼 lock 을 풀어(stale 고정점 왜곡 방지) force 에 참여시킨 뒤 재정렬.
+// opts.incremental=true(더블클릭 확장): **신규 노드가 주변 기존 노드를 부드럽게 밀어내도록 relax**
+//   (앵커만 고정, 나머지 자유 + nodeRepulsion↑, randomize:false 로 현 배치에서 국소 완화). 이전의
+//   '기존 노드 전부 고정' 방식은 신규 노드를 앵커 주변에 몰아 겹침을 유발해 폐기(사용자 요청).
+//   인자 없음(초기 로드/검색): 좌표 없는 재구축이라 randomize:true + packComponents 유지(원점 뭉침 회피).
+// graphux: 레이아웃 종료(layoutstop)마다 _metaGraphPlaceColumns 로 컬럼을 테이블 아래 세로 정렬 + lock.
+//   두 경로 모두 layout 전 컬럼 lock 해제(stale 고정점 왜곡 방지 + 테이블 이동 추종) → 종료 후 재정렬+재lock.
 function _metaGraphLayout(opts) {
   if (!_metaGraph.cy) return;
   opts = opts || {};
@@ -3359,8 +3359,9 @@ function _metaGraphLayout(opts) {
   const cnt = cy.nodes().length;
   const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
-  // 전체 재배치는 컬럼 lock 해제 후 force 에 참여시킨다(종료 후 재정렬+재lock). 증분은 기존 컬럼 lock 유지(스택 보존).
-  if (!incremental) { try { cy.nodes("[label='Column']").unlock(); } catch (_) {} }
+  // 두 경로 공통: layout 전 컬럼 lock 해제 → force 에 참여(테이블 이동 추종·stale 고정점 왜곡 방지),
+  //   layoutstop 에서 _metaGraphPlaceColumns 가 테이블 아래로 재-스택+재-lock.
+  try { cy.nodes("[label='Column']").unlock(); } catch (_) {}
   const base = {
     nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
     uniformNodeDimensions: false,
@@ -3374,19 +3375,37 @@ function _metaGraphLayout(opts) {
     try {
       let cfg;
       if (incremental) {
+        // 확장(더블클릭): **신규 노드 주변(반경 R)의 기존 노드만 relax → 부드럽게 밀어냄** (사용자 요청).
+        //   먼 노드·앵커는 고정 → 원거리 배치(문맥) 보존 + 뷰 안정. 신규 노드의 반발이 반경 안 이웃만 밀어내
+        //   겹침을 해소한다. (이전 'anchor 만 고정' 은 전 노드를 재배치해 문맥 상실 — 국소화로 교정.)
+        //   randomize:false = 현 좌표에서 국소 완화(재무작위화 없음). numIter 250 유지(프리즈 완화 커밋 수치).
+        //   컬럼은 상단 공통 unlock → force 참여(테이블 추종) → layoutstop 재-스택+재-lock.
+        let cx = 0, cy0 = 0;
+        const a = opts.anchorId ? cy.getElementById(opts.anchorId) : null;
+        if (a && a.length) { cx = a.position("x"); cy0 = a.position("y"); }
+        else {   // 앵커 부재/compound: 신규 노드 무게중심을 relax 중심으로(fail-open 방지)
+          let sx = 0, sy = 0, k = 0;
+          (opts.newIdSet ? [...opts.newIdSet] : []).forEach((id) => { const n = cy.getElementById(id); if (n && n.length) { sx += n.position("x"); sy += n.position("y"); k++; } });
+          cx = k ? sx / k : 0; cy0 = k ? sy / k : 0;
+        }
+        const newCount = opts.newIdSet ? opts.newIdSet.size : 0;
+        const R = 160 + Math.sqrt(Math.max(1, newCount)) * 55;   // 신규 규모에 비례한 완화 반경
         const fixed = [];
         cy.nodes().forEach((n) => {
-          if (n.isParent()) return;                                   // compound 부모는 자식으로 자동 산정
-          if (opts.newIdSet && opts.newIdSet.has(n.id())) return;      // 신규는 자유 배치
+          if (n.isParent()) return;                                  // compound 부모는 자식으로 자동 산정
+          if (opts.newIdSet && opts.newIdSet.has(n.id())) return;     // 신규는 자유(push 주체)
+          if (n.data("label") === "Column") return;                  // 컬럼은 자유(후 재배치)
           const p = n.position();
-          fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
+          // 앵커는 항상 고정(뷰 안정). 반경 밖 노드도 고정(원거리 문맥 보존). 반경 안(앵커 제외)만 자유(밀림).
+          if ((opts.anchorId && n.id() === opts.anchorId) || Math.hypot(p.x - cx, p.y - cy0) > R) {
+            fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
+          }
         });
-        // 확장(더블클릭): 기존 노드는 fixedNodeConstraint 로 고정, 신규 노드만 펼침 애니메이션. animate 는
-        // 켜되(사용자 요청 = 애니 복원) 아래 hideMotion 으로 트윈 중 라벨·엣지를 숨겨 프레임당 재계산을
-        // 줄인다. numIter 축소로 동기 계산 hitch 완화.
         cfg = Object.assign({}, base, {
           name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
-          animationDuration: 500, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
+          animationDuration: 500, packComponents: false, numIter: 250,   // 프리즈 완화 커밋(1bb45f3) 수치 유지
+          nodeRepulsion: () => 16000, idealEdgeLength: () => 130,         // 국소 push 용 완만한 반발(전 노드 자유 아님)
+          fixedNodeConstraint: fixed,   // 앵커 + 반경 밖 노드 고정 → 항상 비어있지 않음(전체폭발 방지)
         });
       } else {
         // 초기 로드/검색 펼침 애니메이션. quality proof→default + numIter 대폭 축소로 **fcose 동기 계산
@@ -3398,7 +3417,9 @@ function _metaGraphLayout(opts) {
           animationDuration: 700, packComponents: true, numIter: cnt > 200 ? 600 : 1000,
         });
       }
+      try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}   // 동시성: 진행 중 레이아웃 중단(연타·경쟁 방지)
       const layout = cy.layout(cfg);
+      _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
       // 애니메이션(초기 로드/검색/확장) 동안 라벨+엣지 숨김 → 프레임당 텍스트 래스터 + **엣지 지오메트리
       // 재계산**(트윈 프레임의 주 비용, 격리측정 40.8→21.4ms) 생략 → 프레임 부담 최소화. 정착 시 복원.
       const hideMotion = animate;
@@ -3406,8 +3427,9 @@ function _metaGraphLayout(opts) {
         try { cy.nodes().addClass("anim-hide-label"); cy.edges().addClass("anim-hide"); } catch (_) {}
       }
       layout.one("layoutstop", () => {
+        _metaGraph._layoutRunning = false;
         if (hideMotion) { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} }
-        _metaGraphPlaceColumns();   // graphux10: 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
+        _metaGraphPlaceColumns();   // 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
         // 확장: 신규 이웃 영역으로 카메라 부드럽게 이동(애니 복원). 초기 로드: 스프레드가 이미 애니라 즉시 맞춤.
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
@@ -3422,9 +3444,11 @@ function _metaGraphLayout(opts) {
     } catch (_) {}
   }
   try {
+    try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}
     const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
       idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
-    layout.one("layoutstop", () => { _metaGraphPlaceColumns(); });
+    _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
+    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; _metaGraphPlaceColumns(); });
     layout.run();
   } catch (_) {}
 }
