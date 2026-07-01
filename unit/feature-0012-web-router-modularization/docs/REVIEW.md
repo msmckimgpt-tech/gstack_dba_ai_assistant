@@ -305,3 +305,10 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 188, py_compile OK. **app.py 28,610→28,350(~260↓).**
 - 학습(파이프라인 보강): 추출 whitelist=`_`헬퍼+DI+**non-_ app 함수(record_audit_event류)**; test 전환=getsource/hasattr/직접호출/import-헬퍼 전수 점검. make test 가 최종 안전망(3 라운드 적발·교정).
 - 다음: admin console singles(admin_me·permissions·databases·overview·health) 등 완전-DI 잔여 → inline-heavy(DI 전환 선행).
+
+## REV-20260701-0004 [AGENT-TEAM:p5b-admin-console-self-review]
+- Related Change: CHG-20260701-0004 (admin_console 5 핸들러 추출, batch 3)
+- §18.8 Adversarial Panel: **SELF+make test 결정적 검증.** 파이프라인 3원칙(AST 경계·app.X 동적참조·stdlib 명시 import) 기확립. 본건 검증: (1) datetime from-import(admin_health datetime.utcnow=클래스), (2) main 신규 라우트로 골든 set 변경 흡수.
+- 검증: (1) AST 경계 5 핸들러 155줄. (2) app.X: `_`헬퍼/상수 19(_DASHBOARD_WIDGETS·_dash_widget_*·_serialize_account·_json_error 등)+DI seam, non-_ 함수 0. `app.app.` 0. (3) stdlib: logging + `from datetime import datetime`(module import 아님 — datetime.utcnow 는 클래스 메서드). (4) 골든 188→192: 재생성 시 removed=[] 확인(admin_console 5 라우트 set-보존) + added=[graph/analyze ×4]=main feature-0016(내 추출 무관) → 골든 흡수. (5) 테스트 전환: getsource(admin_me)+직접호출(admin_overview ×6) → admin_console.X + import.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 192, py_compile OK. **app.py 28,559→28,410.**
+- 다음: 완전-DI 잔여(api/share 2·api/llm 1·api/file 1 misc) → inline-heavy(DI 전환 선행: admin/metadata 30·admin/products 17·api/auth 12·conversations MIXED 7).
