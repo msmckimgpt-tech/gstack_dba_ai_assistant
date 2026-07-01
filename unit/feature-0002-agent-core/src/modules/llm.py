@@ -640,6 +640,7 @@ _get_openai_client = _get_llm_client
 def _record_llm_usage(
     model: str, task: str, resp,
     conversation_id: str | None = None, run_id: str | None = None,
+    latency_ms: int | None = None,
 ) -> None:
     """TASK-0136 (#11): LLM 호출 토큰 사용량을 agent_runtime.llm_usage 에 기록 (best-effort).
     모든 LLM 호출의 단일 chokepoint 에서 포착 → 비용 가시성. 실패해도 LLM 응답에 무영향.
@@ -666,6 +667,14 @@ def _record_llm_usage(
         # TASK-0163: provider 가 응답으로 반환한 실제 서빙 모델명(LiteLLM 이 별칭을 해소한
         # 결과). 요청 별칭(model)만으론 claude 계열 구분 불가 → resolved_model 로 보존.
         served = str(getattr(resp, "model", "") or "")[:128] or None
+        # AI 운영 관제 계측(TASK-AIOPS): 순수 API 왕복 지연(ms). 미측정(latency_ms 미전달)은
+        # NULL 로 남겨 통계(p50/p95)에서 제외 — DEFAULT 0 을 쓰지 않는 이유(미측정=0ms 오염 방지).
+        try:
+            lat = int(latency_ms) if latency_ms is not None else None
+            if lat is not None and lat < 0:
+                lat = None
+        except Exception:
+            lat = None
         from .runtime_backend import _get_pg_runtime_conn
         pg = _get_pg_runtime_conn()
         if not pg:
@@ -674,9 +683,9 @@ def _record_llm_usage(
             with pg.cursor() as cur:
                 cur.execute(
                     "INSERT INTO agent_runtime.llm_usage "
-                    "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt),
+                    "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, latency_ms) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, lat),
                 )
             pg.commit()
         finally:
@@ -719,13 +728,15 @@ def _openai_chat_completion_with_deadline(
     }
     create_kwargs.update(_max_tokens_kwargs(model, task))
     create_kwargs.update(_temperature_kwargs(model))
+    _lat_t0 = time.perf_counter_ns()  # TASK-AIOPS: 순수 API 왕복 지연 측정 시작(submit 직전)
     future = executor.submit(
         client.chat.completions.create,
         **create_kwargs,
     )
     try:
         resp = future.result(timeout=wall_sec)
-        _record_llm_usage(model, task, resp)  # TASK-0136 (#11): best-effort 토큰 회계
+        _lat_ms = (time.perf_counter_ns() - _lat_t0) // 1_000_000
+        _record_llm_usage(model, task, resp, latency_ms=int(_lat_ms))  # TASK-0136 (#11): best-effort 토큰+지연 회계
         return resp
     except concurrent.futures.TimeoutError:
         _log_llm_warn("_openai_chat_completion_with_deadline", "timeout", f"model={model} wall_sec={wall_sec}")

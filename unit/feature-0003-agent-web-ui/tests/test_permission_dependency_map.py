@@ -178,7 +178,7 @@ def test_v2_master_gate_off_collapses_manage_section():
     # TASK-0288: datasource.read/manage·product.read/manage·system_prompt.manage.role.any 추가 —
     #   데이터소스/제품 관리 그룹이 관리 권한 section 으로 이동, console.access 마스터 게이트 하위로 종속.
     for code in (
-        "console.manage", "console.usage.read", "insight.reset",
+        "console.manage", "console.usage.read", "console.aiops.read", "insight.reset",
         "account.read", "account.update", "account.delete",
         "role.read", "role.create", "role.permission.manage",
         "datasource.read", "datasource.manage",

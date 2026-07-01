@@ -208,6 +208,7 @@ const PERMISSION_DEPENDENCIES = {
   // ── 관리 권한 (마스터 게이트 = console.access) ──
   "console.manage": "console.access",
   "console.usage.read": "console.access",
+  "console.aiops.read": "console.access",
   "insight.reset": "console.access",
   "account.read": "console.access",
   "account.update": "account.read",
@@ -1384,6 +1385,9 @@ function getSystemPromptPending(args) {
 //   마지막 응답 캐시(days|gran). 모델 칩 토글은 재조회 없이 캐시로 재렌더(loadUsage({refetch:false})).
 adminState.usage = { initialized: false, byAccount: [], drillRole: null, drillPage: 0, drillQuery: "", drillPageSize: 10, _renderDrill: null, selectedModels: null, _lastRaw: null, _lastKey: null };
 
+// TASK-AIOPS: AI 운영 현황 패널 상태 (첫 진입 시 lazy-load, 새로고침 버튼으로 재조회).
+adminState.aiOps = { initialized: false, data: null };
+
 // TASK-20260623T014626-quota-ui-relocate: LLM 토큰 사용 한도 편집기 — 역할 상세 / 계정 상세 공용.
 // (감사>LLM 사용량 화면에서 각 역할/계정 상세 속성으로 이전.)
 //   opts = { scope: "role"|"account", id, daily, monthly, onSaved, inheritNote?, readOnly? }
@@ -1989,6 +1993,10 @@ const ADMIN_TAB_PERMISSIONS = {
   datasources: ["datasource.read", "datasource.manage"],
   audits: ["audit.read.own", "audit.read.any"],
   usage: ["console.usage.read"],
+  // TASK-AIOPS: AI 운영 현황 탭 — console.aiops.read 게이트. **필수(fail-open 방지)** — canSeeTab()
+  //   은 매핑 없는 탭을 fail-open(전원 노출)하므로, 이 항목 누락 = 권한 없는 사용자에게 ai-ops 탭
+  //   버튼 노출. cosmetic 이 아니라 enforcement 배선. key 는 data-admin-tab 과 동일한 "ai-ops"(hyphen).
+  "ai-ops": ["console.aiops.read"],
   archives: ["conversation.archive.read.any"],
   // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수 큐.
   "sample-review": ["kb.sample.curate"],
@@ -2055,6 +2063,93 @@ function applyAdminTabVisibility() {
   }
 }
 
+// ── TASK-AIOPS: AI 운영 현황 패널 (관리 콘솔 > 감사 > AI 운영 현황) ──────────────
+async function loadAiOps() {
+  const body = $("aiOpsBody");
+  if (body) body.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
+  try {
+    const data = await apiFetch("/api/admin/ai-ops");
+    adminState.aiOps.data = data;
+    renderAiOps(data);
+  } catch (e) {
+    const msg = String((e && e.message) || e).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    if (body) body.innerHTML = '<div class="admin-detail-empty">AI 운영 현황을 불러오지 못했습니다: ' + msg + "</div>";
+  }
+}
+
+function renderAiOps(data) {
+  const body = $("aiOpsBody");
+  if (!body || !data) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const SC = { ok: "#1a7f37", degraded: "#9a6700", down: "#cf222e", unknown: "#57606a", na: "#8c959f" };
+  const SL = { ok: "정상", degraded: "저하", down: "중단", unknown: "부분 가시", na: "해당 없음" };
+  const chip = (st) => `<span style="display:inline-block;padding:1px 9px;border-radius:11px;font-weight:600;font-size:12px;color:#fff;background:${SC[st] || "#57606a"}">${esc(SL[st] || st)}</span>`;
+  const fmtMs = (v) => (v == null ? "—" : (v >= 1000 ? (v / 1000).toFixed(2) + "s" : Math.round(v) + "ms"));
+  const fmtUsd = (v) => (v == null ? "—" : "$" + Number(v).toFixed(Number(v) < 1 ? 4 : 2));
+  const fmtNum = (v) => (v == null ? "0" : Number(v).toLocaleString());
+  const b = data.banner || {}, k = data.kpis || {}, lat = k.latency || {}, a24 = k.activity_24h || {};
+  const axes = data.axes || [];
+  let h = "";
+  // 상태 배너
+  h += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">`
+    + `<span style="font-size:15px;font-weight:700">종합 상태</span>${chip(b.state)}`
+    + `<span style="color:#57606a;font-size:12px;margin-left:auto">최근 ${esc(data.window_days)}일 · ${esc(String(data.generated_at || "").replace("T", " ").slice(0, 19))}</span></div>`;
+  // 상태 축
+  h += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">`
+    + axes.map((a) => `<span style="border:1px solid #d0d7de;border-radius:8px;padding:6px 10px;font-size:12px"><b>${esc(a.label)}</b> ${chip(a.state)} <span style="color:#57606a">${esc(a.detail || "")}</span></span>`).join("")
+    + `</div>`;
+  // KPI 타일
+  const kpi = (label, value, sub) => `<div style="flex:1 1 150px;border:1px solid #d0d7de;border-radius:8px;padding:10px 12px"><div style="color:#57606a;font-size:12px">${esc(label)}</div><div style="font-size:18px;font-weight:700;margin-top:2px">${value}</div>${sub ? `<div style="color:#57606a;font-size:11px;margin-top:2px">${esc(sub)}</div>` : ""}</div>`;
+  h += `<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px">`
+    + kpi("워커 정상", `${esc(k.workers_ok)}/${esc(k.workers_total)}`, "요청·인사이트 워커")
+    + kpi("24시간 활동", fmtNum(a24.calls) + "회", (a24.requests || 0) + "개 요청")
+    + kpi("지연 p50 / p95", fmtMs(lat.p50_ms) + " / " + fmtMs(lat.p95_ms), (lat.measured_calls || 0) + "건 측정(계측 이후)")
+    + `</div>`;
+  // Attention
+  const att = data.attention || [];
+  if (att.length) {
+    h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">주의 필요</div>`
+      + att.map((x) => `<div style="display:flex;gap:8px;align-items:center;border-left:3px solid ${SC[x.level] || "#9a6700"};background:#f6f8fa;padding:6px 10px;border-radius:4px;margin-bottom:4px">${chip(x.level)}<b>${esc(x.label)}</b><span style="color:#57606a;font-size:12px">${esc(x.detail || "")}</span></div>`).join("")
+      + `</div>`;
+  }
+  // 카테고리 드릴다운
+  const cats = data.categories || [];
+  h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">AI 활동 카테고리 (최근 ${esc(data.window_days)}일)</div>`;
+  if (cats.length) {
+    h += `<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:#57606a;border-bottom:1px solid #d0d7de"><th style="padding:4px 6px">카테고리 / 활동</th><th style="padding:4px 6px">호출</th><th style="padding:4px 6px">토큰</th><th style="padding:4px 6px">추정 비용 · p95</th></tr></thead><tbody>`;
+    cats.forEach((c) => {
+      h += `<tr style="border-bottom:1px solid #eaeef2"><td style="padding:4px 6px"><b>${esc(c.label)}</b></td><td style="padding:4px 6px">${fmtNum(c.calls)}</td><td style="padding:4px 6px">${fmtNum(c.total_tokens)}</td><td style="padding:4px 6px">${fmtUsd(c.cost_usd)}</td></tr>`;
+      (c.tasks || []).forEach((t) => {
+        const p95 = (t.p95_ms != null) ? "p95 " + fmtMs(t.p95_ms) : "";
+        h += `<tr style="color:#57606a"><td style="padding:2px 6px 2px 20px">· ${esc(t.label)} <span style="font-size:11px">(${esc(t.task)})</span></td><td style="padding:2px 6px">${fmtNum(t.calls)}</td><td style="padding:2px 6px">${fmtNum(t.total_tokens)}</td><td style="padding:2px 6px;font-size:11px">${esc(p95)}</td></tr>`;
+      });
+    });
+    h += `</tbody></table>`;
+  } else {
+    h += `<div style="color:#57606a;font-size:13px">${data.pg_available ? "기간 내 기록된 AI 활동이 없습니다." : "계측 저장소(PG)를 조회할 수 없어 활동을 표시할 수 없습니다."}</div>`;
+  }
+  h += `</div>`;
+  // 최근 활동 feed
+  const act = data.activity || [];
+  if (act.length) {
+    h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">최근 활동</div><div style="font-size:12px">`
+      + act.slice(0, 20).map((r) => {
+        const ts = String(r.created_at || "").replace("T", " ").slice(5, 19);
+        return `<div style="display:flex;gap:10px;padding:3px 0;border-bottom:1px solid #f0f2f4"><span style="color:#57606a;width:96px;flex:none">${esc(ts)}</span><span style="flex:1;min-width:0"><b>${esc(r.label)}</b> <span style="color:#8c959f">${esc(r.model || "")}</span></span><span style="color:#57606a;width:74px;text-align:right">${fmtNum(r.total_tokens)} tok</span><span style="color:#57606a;width:60px;text-align:right">${fmtMs(r.latency_ms)}</span></div>`;
+      }).join("")
+      + `</div></div>`;
+  }
+  // 계측 커버리지 (정직 노출)
+  const cov = data.coverage || {};
+  h += `<div style="border-top:1px solid #d0d7de;padding-top:10px;font-size:12px;color:#57606a">`
+    + `<div style="font-weight:700;color:#24292f;margin-bottom:4px">계측 커버리지</div>`
+    + `<div>계측됨: ${esc((cov.instrumented || []).join(", "))}</div>`
+    + `<div style="margin-top:3px">미계측: ${(cov.uninstrumented || []).map((u) => esc(u.name) + " (" + esc(u.reason) + ")").join("; ")}</div>`
+    + (cov.note ? `<div style="margin-top:3px;font-style:italic">${esc(cov.note)}</div>` : "")
+    + `</div>`;
+  body.innerHTML = h;
+}
+
 function switchTab(tabName) {
   adminState.tab = tabName;
   document.querySelectorAll(".admin-tab").forEach((btn) => {
@@ -2074,6 +2169,11 @@ function switchTab(tabName) {
     adminState.usage.initialized = true;
     loadUsage();
     // TASK-20260623T014626-quota-ui-relocate: 사용 한도 설정은 역할/계정 상세 화면으로 이전(이 화면은 조회 전용).
+  }
+  // TASK-AIOPS: AI 운영 현황 tab 첫 진입 시 로드.
+  if (tabName === "ai-ops" && !adminState.aiOps.initialized) {
+    adminState.aiOps.initialized = true;
+    loadAiOps();
   }
   // TASK-0095: 설정 tab 첫 진입 시 sub-section 마운트.
   if (tabName === "settings" && !adminState.settings.initialized) {
@@ -11970,6 +12070,12 @@ async function initialize() {
   if (archiveRefreshBtn && !archiveRefreshBtn.dataset.bound) {
     archiveRefreshBtn.dataset.bound = "1";
     archiveRefreshBtn.addEventListener("click", () => loadArchivedConversations());
+  }
+  // TASK-AIOPS: AI 운영 현황 새로고침.
+  const aiOpsRefreshBtn = $("aiOpsRefreshBtn");
+  if (aiOpsRefreshBtn && !aiOpsRefreshBtn.dataset.bound) {
+    aiOpsRefreshBtn.dataset.bound = "1";
+    aiOpsRefreshBtn.addEventListener("click", () => loadAiOps());
   }
   // TASK-20260623T090440-sample-feedback-curation: 샘플 검수 새로고침.
   const sampleReviewRefreshBtn = $("sampleReviewRefreshBtn");

@@ -130,6 +130,9 @@ def admin_overview(request: Request, actor=Depends(app.require_permission("conso
     _isolate("products", lambda: app._dash_widget_products(conn))
     _isolate("datasources", lambda: app._dash_widget_datasources(conn))
     _isolate("audits", lambda: app._dash_widget_audits(conn, days, scope=audits_scope, account_id=actor_id))
+    # TASK-AIOPS: AI 상태 타일 — conn(worker heartbeat) + 축 헬퍼가 provider/datasource PG 를 자체
+    #   RO 연결로 읽음. _isolate 위젯 격리 + 축별 try/except 로 한 축 실패가 전체를 깨지 않음.
+    _isolate("ai_ops", lambda: app._dash_widget_ai_ops(conn))
 
     # PG 위젯 (conversations + usage) — 단일 연결 재사용
     if ("conversations" in permitted) or ("usage" in permitted):
