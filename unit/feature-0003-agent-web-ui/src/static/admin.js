@@ -3045,6 +3045,13 @@ function _metaInitGraph() {
           "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
       { selector: "edge[label='REFERENCES']", style: {
           "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2.2, "label": "data(label)" } },
+      // feature-0016 암묵 관계 신뢰 시각화: 추론/후보(candidate)=점선·반투명(검증 전),
+      // 신뢰(trusted)=진한 실선. broken 은 백엔드 투영에서 이미 제외됨.
+      { selector: "edge[label='REFERENCES'][status='candidate']", style: {
+          "line-style": "dashed", "line-color": "#b0872f", "target-arrow-color": "#b0872f",
+          "opacity": 0.5, "width": 1.6 } },
+      { selector: "edge[label='REFERENCES'][status='trusted']", style: {
+          "line-color": "#7a4f10", "target-arrow-color": "#7a4f10", "opacity": 1, "width": 3 } },
       { selector: "edge[label='RELATED_TERM']", style: {
           "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "line-style": "dashed", "label": "data(label)" } },
     ],
@@ -3226,7 +3233,10 @@ function _metaGraphAddElements(nodes, edges) {
     const id = `${e.source}|${e.type}|${e.target}`;
     if (cy.getElementById(id).length) return;
     if (!cy.getElementById(e.source).length || !cy.getElementById(e.target).length) return;
-    cy.add({ group: "edges", data: { id, source: e.source, target: e.target, label: e.type || "" } });
+    // feature-0016: status/weight/edge_source 를 엣지 데이터로 실어 신뢰(실선)·추정(점선) 구분.
+    cy.add({ group: "edges", data: { id, source: e.source, target: e.target, label: e.type || "",
+      status: e.status || "", esource: e.edge_source || "",
+      weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" } });
   });
   return added;
 }
@@ -3304,6 +3314,21 @@ function _metaGraphRenderDetailEmpty() {
   el.innerHTML = '<div class="admin-detail-empty"><p>검색 후 노드를 클릭하면 해당 항목의 <strong>설명·컬럼·관계·연관 용어</strong>를 한 곳에서 봅니다.</p></div>';
 }
 
+// feature-0016: 관계 엣지의 신뢰 상태 배지 — FK 는 무표시, 추정(candidate)/신뢰(trusted) 구분.
+// "이 연결이 정말 올바른지" 를 사람이 한눈에 판단하도록 weight 를 함께 노출.
+function _metaEdgeTrustBadge(e) {
+  if (!e || e.edge_source === "fk_introspect") return "";
+  const w = (e.weight != null && e.weight !== "") ? Number(e.weight) : null;
+  const ws = (w != null && !isNaN(w)) ? " w=" + w.toFixed(2) : "";
+  if (e.status === "candidate") {
+    return ` <span class="admin-meta-graph-trust admin-meta-graph-trust-candidate" title="검증 전 추정 관계 — 사용/프로브로 강화·감쇠">추정${ws}</span>`;
+  }
+  if (e.status === "trusted") {
+    return ` <span class="admin-meta-graph-trust admin-meta-graph-trust-trusted" title="검증된 신뢰 관계">신뢰${ws}</span>`;
+  }
+  return "";
+}
+
 // 통합 엔티티 카드 — 클릭 노드의 이웃을 카테고리(컬럼·관계·용어)로 묶어 표시.
 function _metaGraphRenderDetail(self, nodes, edges) {
   const el = document.getElementById("metadataGraphDetail");
@@ -3336,7 +3361,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   }
   if (refs.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>관계 (${refs.length})</h4><ul>`);
-    refs.slice(0, 50).forEach((e) => parts.push(`<li><code>${esc(nm(e.source))}</code> → <code>${esc(nm(e.target))}</code>${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(e.edge_source) + ")</span>" : ""}</li>`));
+    refs.slice(0, 50).forEach((e) => parts.push(`<li><code>${esc(nm(e.source))}</code> → <code>${esc(nm(e.target))}</code>${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(e.edge_source) + ")</span>" : ""}${_metaEdgeTrustBadge(e)}</li>`));
     parts.push(`</ul></div>`);
   }
   if (terms.length) {

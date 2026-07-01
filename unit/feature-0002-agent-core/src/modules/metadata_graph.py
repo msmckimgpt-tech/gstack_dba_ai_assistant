@@ -30,10 +30,14 @@ GRAPH = "metadata_kb"
 # alembic 0025 사전선언 라벨 화이트리스트 (런타임 동적 라벨 생성 금지)
 _VLABELS = {"Product", "Datasource", "Schema", "Table", "Column", "GlossaryTerm"}
 _ELABELS = {"USES", "HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "REFERENCES", "RELATED_TERM", "DESCRIBES"}
-# 노드 속성 화이트리스트 (Cypher SET 대상 — 임의 키 주입 차단)
+# 노드/엣지 속성 화이트리스트 (Cypher SET 대상 — 임의 키 주입 차단)
+#  weight/status: feature-0016 강화 상태 투영(REFERENCES 엣지) — UI 가 신뢰/추정/파단을 구분.
 _PROP_KEYS = {"key", "name", "fqn", "scope_key", "description", "source",
               "confidence", "cardinality", "datasource_key", "schema_name",
-              "table_name", "column_name", "relation_type", "term"}
+              "table_name", "column_name", "relation_type", "term",
+              "weight", "status"}
+# 숫자 리터럴로 SET 하는 속성(문자열 인용 금지)
+_NUMERIC_PROP_KEYS = {"confidence", "weight"}
 
 _NEIGHBOR_NODE_CAP = 300   # 투영 1회 최대 노드 수 (8K 규모 보호)
 _SEARCH_CAP = 80           # 검색 결과 최대 노드 수
@@ -96,12 +100,12 @@ def _cq(val) -> str:
 
 
 def _props_set(var: str, props: dict) -> str:
-    """props dict → 'var.k = lit, ...' (화이트리스트 키만). confidence 는 숫자 리터럴."""
+    """props dict → 'var.k = lit, ...' (화이트리스트 키만). confidence/weight 는 숫자 리터럴."""
     parts = []
     for k, v in props.items():
         if k not in _PROP_KEYS:
             continue
-        if k == "confidence":
+        if k in _NUMERIC_PROP_KEYS:
             try:
                 fv = float(v)
             except (TypeError, ValueError):
@@ -238,8 +242,13 @@ def sync_column(cur, scope, schema, table, column, description="", source="manua
 
 
 def sync_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col,
-                      cardinality="", source="fk_introspect", confidence=1.0) -> None:
-    """REFERENCES 엣지 (Column→Column) MERGE. 양끝 Column 노드도 보장."""
+                      cardinality="", source="fk_introspect", confidence=1.0,
+                      weight=None, status="") -> None:
+    """REFERENCES 엣지 (Column→Column) MERGE. 양끝 Column 노드도 보장.
+
+    weight/status(feature-0016): 동적 신뢰 가중치·상태(candidate/trusted/broken)를 엣지에 투영해
+    UI 가 신뢰 실선 / 추정 점선으로 구분. broken 은 애초에 sync_graph 가 투영에서 제외한다.
+    """
     s_ckey = _vkey(scope, f"{src_fqn}.{src_col}")
     t_ckey = _vkey(scope, f"{tgt_fqn}.{tgt_col}")
     _merge_vertex(cur, "Column", s_ckey,
@@ -248,8 +257,25 @@ def sync_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col,
     _merge_vertex(cur, "Column", t_ckey,
                   {"name": tgt_col, "fqn": f"{tgt_fqn}.{tgt_col}", "scope_key": scope,
                    "column_name": tgt_col})
-    _merge_edge(cur, "Column", s_ckey, "REFERENCES", "Column", t_ckey,
-                {"cardinality": cardinality, "source": source, "confidence": confidence})
+    eprops = {"cardinality": cardinality, "source": source, "confidence": confidence}
+    if weight is not None:
+        eprops["weight"] = weight
+    if status:
+        eprops["status"] = status
+    _merge_edge(cur, "Column", s_ckey, "REFERENCES", "Column", t_ckey, eprops)
+
+
+def delete_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col) -> None:
+    """REFERENCES 엣지 삭제 — broken(파단) 관계를 그래프에서 제거해 SSOT 와 정합(feature-0016).
+
+    MERGE 는 가산적이라, candidate/trusted 로 투영됐던 엣지가 이후 broken 으로 감쇠해도 그래프에
+    stale 하게 남는다(backend 패널 MAJOR). sync_graph 가 broken 행마다 이 함수를 호출해 회수한다.
+    노드는 남기고 엣지만 삭제(다른 관계가 그 컬럼을 참조할 수 있음). 멱등(없으면 no-op)."""
+    s_ckey = _vkey(scope, f"{src_fqn}.{src_col}")
+    t_ckey = _vkey(scope, f"{tgt_fqn}.{tgt_col}")
+    q = (f"MATCH (a:Column {{key: {_cq(s_ckey)}}})-[r:REFERENCES]->(b:Column {{key: {_cq(t_ckey)}}}) "
+         f"DELETE r RETURN 1")
+    _cypher(cur, q, 1)
 
 
 def sync_glossary_term(cur, scope, term, definition="", source="manual") -> None:
@@ -272,8 +298,8 @@ def sync_graph(conn=None, scope_key=None) -> dict:
     멱등(MERGE) — 반복 호출 안전. 예외는 삼키고 부분 카운트 반환(비차단).
     scope_key=None 이면 모든 scope 동기화.
     """
-    rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0, "glossary": 0,
-           "glossary_relations": 0, "errors": 0}
+    rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0,
+           "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "errors": 0}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -326,15 +352,22 @@ def sync_graph(conn=None, scope_key=None) -> dict:
                 rep["columns"] += 1
             except Exception:
                 rep["errors"] += 1
-        # 3) table_relationships
+        # 3) table_relationships — broken(파단)은 그래프에서 **삭제**(가산적 MERGE 라 stale 방지,
+        #    학습된 '비관계'), 그 외는 weight/status 와 함께 투영. (전량 스캔 후 status 로 분기.)
+        rel_where = "" if scope_key is None else "WHERE scope_key = %s"
         cur.execute(f"SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
-                    f"target_column, cardinality, source, confidence "
-                    f"FROM table_relationships {scope_filter}", sf_args)
-        for sc, sfqn, scol, tfqn, tcol, card, src, conf in cur.fetchall():
+                    f"target_column, cardinality, source, confidence, weight, status "
+                    f"FROM table_relationships {rel_where}", sf_args)
+        for sc, sfqn, scol, tfqn, tcol, card, src, conf, wgt, st in cur.fetchall():
             try:
-                sync_relationship(cur, sc, sfqn, scol, tfqn, tcol, card or "",
-                                  src or "fk_introspect", conf if conf is not None else 1.0)
-                rep["relationships"] += 1
+                if st == "broken":
+                    delete_relationship(cur, sc, sfqn, scol, tfqn, tcol)
+                    rep["relationships_deleted"] += 1
+                else:
+                    sync_relationship(cur, sc, sfqn, scol, tfqn, tcol, card or "",
+                                      src or "fk_introspect", conf if conf is not None else 1.0,
+                                      weight=wgt, status=st or "")
+                    rep["relationships"] += 1
             except Exception:
                 rep["errors"] += 1
         # 4) kb_glossary
@@ -536,11 +569,13 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                 f'FROM metadata_kb."{et}" WHERE start_id = ANY({farr}) OR end_id = ANY({farr})'
                 for et in elabels) + f" LIMIT {_NEIGHBOR_NODE_CAP * 4}"
             cur.execute(edge_sql)
-            edge_hits = []   # (start_gid, end_gid, etype, cardinality, edge_source)
+            edge_hits = []   # (start_gid, end_gid, etype, cardinality, edge_source, weight, status)
             neigh_gids = set()
             for s, e, pr, et in cur.fetchall():
                 sg = int(s); eg = int(e); ep = json.loads(pr) if pr else {}
-                edge_hits.append((sg, eg, et, ep.get("cardinality"), ep.get("source")))
+                # weight/status(feature-0016): REFERENCES 엣지 강화상태 투영 — UI 신뢰/추정/파단 구분.
+                edge_hits.append((sg, eg, et, ep.get("cardinality"), ep.get("source"),
+                                  ep.get("weight"), ep.get("status")))
                 if sg not in gid2key:
                     neigh_gids.add(sg)
                 if eg not in gid2key:
@@ -565,16 +600,20 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                         seen_nodes[k] = _node_from_props(lbl, props)
                         next_frontier.append(g)
             # (4) 엣지 빌드 — 양 끝점이 해소된 것만, 방향(source=start,target=end) + dedup.
-            for sg, eg, et, card, esrc in edge_hits:
+            for sg, eg, et, card, esrc, ewgt, estatus in edge_hits:
                 sk = gid2key.get(sg); tk = gid2key.get(eg)
                 if not sk or not tk:   # cap 로 미해소된 이웃과의 엣지는 생략
                     continue
                 ekey = (sg, et, eg)
                 if ekey in seen_edges:
                     continue
+                # broken(feature-0016)은 sync 가 삭제하지만 감쇠~다음 sync 창 방어로 이웃 투영에서도 제외.
+                if estatus == "broken":
+                    continue
                 seen_edges.add(ekey)
                 result["edges"].append({"source": sk, "target": tk, "type": et,
-                                        "cardinality": card, "edge_source": esrc})
+                                        "cardinality": card, "edge_source": esrc,
+                                        "weight": ewgt, "status": estatus})
             frontier = next_frontier
         result["nodes"] = list(seen_nodes.values())
         cur.close()

@@ -875,6 +875,19 @@ AGENT_SELF_REFLECTION_MAX = int(os.getenv("AGENT_SELF_REFLECTION_MAX", "2") or "
 #  - LEARNING : 대화 중 성공한 execute_sql 의 JOIN 에서 관계를 학습(source='conversation').
 AGENT_RELATIONSHIP_INTROSPECT_ENABLED = os.getenv("AGENT_RELATIONSHIP_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_RELATIONSHIP_LEARNING_ENABLED = os.getenv("AGENT_RELATIONSHIP_LEARNING_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+# feature-0016 implicit-edges: FK 미선언 관계의 휴리스틱 추론 + 자기교정(강화/감쇠) 토글·캡. 기본 ON.
+#  - INFERENCE: insight worker 가 스키마 구조 변경 시 명명 규칙으로 암묵 관계를 추론해 적재(source='inferred').
+#  - PROBE    : candidate edge 를 실데이터 겹침(EXISTS)으로 검증해 강화/감쇠(능동 검증). 운영 DB read-only.
+#  - 강화(사용 성공)는 대화 JOIN 학습(LEARNING)과 함께 상시 작동. 음성은 프로브가 실데이터로 판정.
+AGENT_RELATIONSHIP_INFERENCE_ENABLED = os.getenv("AGENT_RELATIONSHIP_INFERENCE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_RELATIONSHIP_PROBE_ENABLED = os.getenv("AGENT_RELATIONSHIP_PROBE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_RELATIONSHIP_INFER_CAP = int(os.getenv("AGENT_RELATIONSHIP_INFER_CAP", "400") or "400")
+AGENT_RELATIONSHIP_PROBE_CAP = int(os.getenv("AGENT_RELATIONSHIP_PROBE_CAP", "40") or "40")
+AGENT_RELATIONSHIP_PROBE_SAMPLE = int(os.getenv("AGENT_RELATIONSHIP_PROBE_SAMPLE", "50") or "50")
+# 프로브 statement 시간 상한(ms). 운영 DB 상 unindexed 키 컬럼 대상 correlated EXISTS 폭주 차단
+# (보안 패널 MINOR — _fk_raw_execute 가 _apply_query_cap 을 우회). MySQL=MAX_EXECUTION_TIME 힌트,
+# MSSQL=SET LOCK_TIMEOUT(락 대기 상한). 0 이면 미적용.
+AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = int(os.getenv("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", "5000") or "5000")
 # feature-0016 metadata-graph: 관계형 SSOT → Apache AGE `metadata_kb` 그래프 투영 토글.
 #  - 기본 OFF — AGE 확장 미설치(cutover 전) 상태에서 sync/projection 이 no-op 되도록.
 #  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.

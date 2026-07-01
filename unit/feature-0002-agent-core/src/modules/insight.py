@@ -1110,6 +1110,51 @@ ORDER BY TABLE_NAME
                     except Exception:
                         pass
 
+                # feature-0016 implicit-edges: FK 로 확인 안 되는 **암묵 관계**를 명명 규칙으로
+                # 추론(source='inferred', candidate)한 뒤, candidate 를 **실데이터 겹침 프로브**로
+                # 검증해 강화/감쇠한다("항상 올바른지 파악"). 스키마 구조 변경/신규 시에만(빈도 제한).
+                # 전부 guarded — insight 스캔을 절대 차단하지 않는다.
+                if (AGENT_RELATIONSHIP_INFERENCE_ENABLED
+                        and (schema_structure_changed or schema_artifact_missing)
+                        and all_table_names):
+                    try:
+                        from . import relationships as _rel
+                        _infer_scope = get_active_datasource()
+                        # 스키마의 테이블별 컬럼 맵(추론 입력). information_schema.COLUMNS = MySQL·MSSQL 공통.
+                        _tc = {}
+                        _ccur = db_conn.cursor()
+                        try:
+                            _ccur.execute(
+                                "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+                                "WHERE TABLE_SCHEMA = %s ORDER BY TABLE_NAME, ORDINAL_POSITION",
+                                (schema,),
+                            )
+                            for _t, _c in (_ccur.fetchall() or []):
+                                if _t and _c:
+                                    _tc.setdefault(str(_t), []).append(str(_c))
+                        finally:
+                            _ccur.close()
+                        if _tc:
+                            _n_inf = _rel.store_inferred_relationships(
+                                None, _infer_scope, schema, _tc,
+                                datasource_key=str(_infer_scope or ""), source_run_id=run_id,
+                                cap=AGENT_RELATIONSHIP_INFER_CAP)
+                            report["relationships_inferred"] = int(
+                                report.get("relationships_inferred", 0)) + int(_n_inf or 0)
+                        # 능동 프로브(실데이터 겹침 검증) — 별 토글. 운영 DB read-only, cap+timeout 으로 부하 제한.
+                        if AGENT_RELATIONSHIP_PROBE_ENABLED:
+                            _pr = _rel.probe_and_reinforce(
+                                db_conn, _dialects.active(), _infer_scope,
+                                kb_conn=None, raw_execute=_fk_raw_execute,
+                                sample=AGENT_RELATIONSHIP_PROBE_SAMPLE,
+                                cap=AGENT_RELATIONSHIP_PROBE_CAP,
+                                timeout_ms=AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS)
+                            for _k in ("probed", "positive", "negative"):
+                                _rk = "relationships_probe_" + _k
+                                report[_rk] = int(report.get(_rk, 0)) + int(_pr.get(_k, 0))
+                    except Exception:
+                        pass
+
                 schema_reason = ""
                 if schema_artifact_missing:
                     schema_reason = "artifact_missing"

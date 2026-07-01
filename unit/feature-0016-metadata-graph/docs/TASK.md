@@ -78,6 +78,27 @@ source_of_truth: true
       (이미지 revert + 그래프 drop, 관계형 SSOT 무변경). pgbouncer/replica 호환 + replica 의 shared_preload 정합 확인.
 - [ ] T5.4 PB-0008 라이브 브라우저 검증(그래프 UI) + canary.
 
+## 6b. Phase 6 — 암묵 관계 추론 + 자기교정 강화 (implicit-edges cycle, R4 실현) ✅ 코드 PASS (2026-07-01)
+사용자 결정(2026-07-01): 검증=관찰+능동프로브 하이브리드 · 범위=풀 슬라이스. 등급 Major(비파괴 추가).
+- [x] T6.1 alembic 0026 `20260701_0026_relationship_reinforcement.py` — `table_relationships` 비파괴 ADD
+      COLUMN(weight·positive_signals·negative_signals·status·last_validated_at) + source CHECK 'inferred'
+      추가 + status CHECK + 상태/가중 인덱스 + backfill. downgrade=DROP.
+- [x] T6.2 `relationships.py` — `infer_implicit_relationships`(명명규칙 name_fk/shared_key, 순수) +
+      `store_inferred_relationships` + 강화 엔진(`next_reinforcement_state` 순수 + `apply_relationship_signal`)
+      + 능동 프로브(`probe_and_reinforce`/`classify_probe`/`fetch_probe_candidates`) + weight-aware
+      upsert/read/digest(broken 제외·신뢰 태그). confidence↔weight 분리, FK 권위적 불변, 재추론 보존.
+- [x] T6.3 `dialects.py` — `probe_relationship_overlap`(MySQL LIMIT / MSSQL TOP, EXISTS 겹침, 식별자 이스케이프).
+- [x] T6.4 `insight.py` — 스키마 구조 변경/신규 시 추론 + 프로브 훅(throttle·cap) + report 카운터.
+- [x] T6.5 `metadata_graph.py` — REFERENCES 엣지에 weight/status 투영, sync_graph broken 제외, 이웃 조회 반환.
+- [x] T6.6 `agent_core.py` 경로 — 성공한 대화 JOIN = 양성 강화(`learn_relationships_from_sql` 확장, 무변경 훅).
+- [x] T6.7 UI(admin.js/html/css) — 엣지 status/weight 데이터 + 신뢰=실선/추정=점선 스타일 + 범례 + 상세 배지
+      + 캐시버스터 bump.
+- [x] T6.8 config 플래그 5(INFERENCE/PROBE ENABLED + INFER/PROBE CAP + PROBE SAMPLE).
+- [x] T6.9 단위 테스트 +21건(강화 전이·프로브 판정·추론 휴리스틱·digest 신뢰·dialect SQL) — 36건 PASS,
+      ruff clean, 전체 suite collection EXIT=0, ON CONFLICT↔UNIQUE 불변식 유지.
+- [ ] T6.10 (배포 게이트) alembic 0026 적용 + insight 워커 재빌드 + `metadata-graph-sync --rebuild` →
+      라이브 e2e(점선 추정 엣지 출현·프로브 강화/파단) + PB-0008 시각 검증. **cutover 된 AGE 스택 필요.**
+
 ## 7. 검증 게이트 (각 Phase 공통)
 - 적대 패널: backend/security/qa (AGE Cypher 인젝션·RBAC·scope 격리·확장 공존 회귀).
 - `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph`.

@@ -1,14 +1,15 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-06-30
+last_updated: 2026-07-01
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-06-30
+2026-07-01
 
 ## Key Recent Facts
+- feature-0016 implicit-edges(07-01, 미머지 cycle `ai/claude/feature-0016-implicit-edges`): 그래프 뷰의 **FK 미선언 암묵 JOIN 관계**를 명명 규칙으로 추론(source='inferred', candidate)하고, 정적 confidence 와 분리된 **동적 weight** 를 (a)성공한 대화 JOIN 사용(관찰)+(b)insight 워커 실데이터 겹침(EXISTS) 프로브(능동)로 강화/감쇠하는 자기교정 엔진. 양성 점근 상승·음성 고정 감산(전 구간 비대칭 보장)→ weight≤0.15 broken(주입·그래프 삭제), ≥0.85+양성누적 trusted, FK 권위적 불변. alembic 0026 비파괴 ADD. 노출: AI context digest broken 제외+weight 정렬+추정/신뢰 태그, AGE REFERENCES weight/status 투영·broken 회수, admin UI 신뢰=실선/추정=점선/파단=숨김+범례+배지. §18.8 적대 패널 1+4+3 findings 전건 수정(REV-20260701-0002). 단위 38 PASS·verify-completion PASS. 라이브 e2e 는 cutover 된 AGE 스택(T6.10/PB-0008). 코드 거주 feature-0002·0003.
 - feature-0016 메타데이터 지식그래프 신규(06-30, 대형, PR#477/#479/#480/#482/#484): 관리콘솔 메타데이터를 Apache AGE(openCypher) `metadata_kb` 그래프(관계형 SSOT 의 재생성 가능 투영)로 승급 — 그래프 뷰(Cytoscape·fcose 클러스터링·관련도 사이징·이웃 60x 인덱스)·검색·`graph_navigate` AI 도구(8K 테이블 컨텍스트 초과 해소). 커스텀 PG16 이미지(pgvector+pg_trgm+AGE, alembic 0025) cutover 라이브 완료(데이터 무손상·무중단 롤링). per-datasource 투영(~21 ds/8,122 테이블). 엣지 희소(게임 DB FK 미선언) — 노드 그래프·그룹핑 즉시 가치. cross-cut 0002(코어·tool)·0003(admin UI). ※번호 0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스 공유(사람 결정 보류).
 - web 무중단 배포·운영 위생군 라이브 완료(06-30, feature-0014/0015/0016-zd/0017): web 무중단 롤링 배포(Caddy LB web-a/web-b·자동 롤백·:18080 폐기→:443 단일, 0014) + insight-worker graceful 종료·MySQL online-DDL 게이트·백업 복원 리허설 cron(0015) + PG 재시작 무중단화 pgbouncer PAUSE 래퍼(0016-zd, RW 무에러 실증) + 배포 빌드게이트 snap-docker metadata-race false-failure 수정(0017, 전 web 배포 차단 해소).
 - 메타데이터 관리 화면 정리(feature-0003, 06-30, frontend-only): 스키마 설명 패널 list-detail 2단 재구성·데이터소스 선택 단일화(헤더 스코프 상속)·테이블 설명 인라인 입력(평면화·정렬)·스키마 가져오기 시 기존 설명 prefill+변경분만 저장. 질문 의도 이해·끈기 개선(feature-0002, 능동 해석 지침 1:1·그룹 주입+식별자 대소문자 보존).
