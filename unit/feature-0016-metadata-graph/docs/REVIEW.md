@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T170000-ai-claude-feature-0016-erd-card [SUBAGENT: erd-card-compound-refactor] — 컬럼→테이블 compound(ERD 카드) 적대 리뷰
+- Related Change: CHG-...-erd-card (컬럼을 테이블 compound 자식으로 + fcose alignment/relativePlacement 로 박스 안 ordinal 정렬, 겹침 원천 차단). admin.js/admin.html + admin_metadata.py(introspect ordinal).
+- 방식: §18.8 적대 subagent — admin.js diff + fcose 벤더 내부 + AGE graph module + graph/columns 엔드포인트 교차확인. BLOCKER/MAJOR/MINOR 적발.
+- 발견 → 전건 처리:
+  - **M1(MAJOR) — 앵커 compound 미고정 → 뷰 튐**: 증분 relax 의 fixed 빌더가 `isParent()`(=컬럼보유 테이블=compound=앵커)와 Column 을 skip → 앵커가 고정 안 됨. **→ 수정**: 앵커는 parent 여도 fixed 에 포함(`isAnchor` 예외). 컬럼은 제약(alignment/relative) 관리라 fixed 제외 유지(충돌 회피).
+  - **M2(MAJOR) — 빈 제약이 fcose tile/packComponents 끔 → 검색·초기로드 노드 흩어짐**: `_metaGraphColumnConstraints` 가 컬럼 0개여도 truthy 객체 반환 → fcose `constraintExist` 참 → tile off. **→ 수정**: 제약 있을 때만 cfg 에 병합(`_ccCfg`, 없으면 `{}`).
+  - **m1(MINOR) — introspect 컬럼 ordinal 없음 → ERD 알파벳순**: `graph/columns` 엔드포인트가 Column 노드에 ordinal 미부여. **→ 수정**: `describe_columns`(ORDINAL_POSITION 순) 인덱스를 ordinal 로 부여(admin_metadata.py).
+  - **m2(MINOR) — 검색 컬럼(테이블 부재)이 스키마 박스 이탈**: 컬럼 스키마-폴백 시 `_metaEnsureCat` 미호출로 부모 없는 뜬 노드. **→ 수정**: 컬럼 스키마-폴백에도 cat 보장.
+  - **M3(오탐)** — "progress/resume 코드 삭제" 는 내 삭제가 아니라 **브랜치가 origin/main 대비 7커밋 뒤처져** 발생한 diff 아티팩트(ab1299c 등이 main 에 후행 추가). origin/main 병합으로 복원 확인(panel.style.display·resume 5건 존재).
+  - CLEAN: node --check·2-pass(Table 먼저)·`existing.move` 가드·상세패널 API edges 사용(HAS_COLUMN 그래프 엣지 제거 무영향)·fcose 3제약 공존(컬럼 fixed 제외로 충돌 없음)·compound 드래그 자식 자동 추종.
+- 검증: 실측(인젝션) 컬럼 순서 top→bottom 보존·박스 겹침 1쌍·131ms. 수정 후 node --check·py_compile OK. origin/main(camfps/panelmove) 병합(3 hunk 수동 해소: _ccCfg+gen/clearMotionHide 병존, restoreIfCurrent 유지·placeColumns 제거).
+- Verdict: **SHIP**(수정 후) — M1/M2/m1/m2 전건 처리, M3 오탐 확인. PB-0008 배포 후 라이브 최종.
+- Human Approval Needed: 없음(프론트+introspect 응답 필드, 비파괴, deploy_scope: included).
+
 ## REV-20260701T170000-ai-claude-feature-0016-graphux-camfps [SUBAGENT: PASS] — 카메라 애니 프레임레이트 최적화(layoutstop 지연 복원) 적대 리뷰
 - Related Change: graphux-camfps (`_metaGraphLayout` layoutstop — 라벨/엣지 숨김 해제를 카메라 fit 애니 complete 후로 지연 + 세대 가드 + 무조건 복원 헬퍼).
 - 방식: §18.8 적대 subagent 패널 — cytoscape.min.js/fcose 번들 내부 의미(`stop()`→`layoutstop` 동기 발화, stopped-anim promise 미resolve, fcose `run()` 완전 동기, `cy` 비파괴)를 실측 확인 후 10+ 경로 적대 검증 → **2라운드**(1차 발견 → hardened 재구현 → 재검증).
