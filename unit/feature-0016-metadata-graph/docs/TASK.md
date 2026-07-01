@@ -333,3 +333,32 @@ source_of_truth: true
 - [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종, `cy.on('render')` 동기화 — 렌더러 무관이라 §17 WebGL 전환과 호환) + native 라벨 숨김. PB-0008 PASS(canvas-2D 프리뷰) → **§17 WebGL 병합 후 오버레이 정합 재확인 예정**.
 - [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD tap 정합·§17 graph-webgl 렌더러와 tap/스타일 병합 완료.)
 - [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 + WebGL 오버레이 PB-0008 최종 확인.
+
+## 19. graph-perf2 — 컬럼 blob·프레임 거침·느린 줌 (WebGL 후속 육안 3건) (2026-07-01)
+
+### 19.0 맥락 / 진단
+- 사용자 후속(WebGL 배포 후 육안): (1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌
+  **원형 뭉치(blob)**, (4) 휠 확대/축소 너무 느림. (2 라벨유지=OK.)
+- **진단 워크플로**(5에이전트: 3렌즈 진단 → 통합설계 → 적대검증, verify=go-with-fixes): blob·거침은 **동일 뿌리** —
+  컬럼 세로정렬을 fcose 제약(alignment/relativePlacement)에 위임 + 화면 전체 테이블 제약을 numIter 1000 동기 tick
+  마다 적용. (a) fcose 가 ring seed 다수 컬럼을 세로로 못 펼쳐 blob, (b) 제약 동기 계산(cose-base while-loop, rAF
+  yield 0)이 프레임 거침. WebGL 은 렌더만 GPU 화라 이 계산 병목과 무관(→ 거침 개선 없던 게 정합). 줌=독립(wheelSensitivity 0.3=기본 1/3).
+- 등급 **Major** (레이아웃 아키텍처 변경: 컬럼 정렬 주체 이전).
+
+### 19.1 구현 (admin.js)
+- [x] T19.1 컬럼 정렬을 fcose 제약에서 **제거**(_metaGraphColumnConstraints·_ccCfg·..._ccCfg 병합 3곳 삭제, hasCompound=newAddsBox).
+- [x] T19.2 layoutstop 결정론 배치 `_metaGraphPlaceColumns`(batched, ordinal, 무게중심 상하대칭, x통일) — fcose success
+      + cose 폴백 **모든 경로** fit 전 호출. 정렬 헬퍼 단일화(`_metaGraphColCmp`/`_metaGraphOrderedColumns`).
+- [x] T19.3 신규 컬럼 seed ring→세로(부모별, 동일 비교자). `_META_COL_PITCH` 공유(seed·배치 drift 방지).
+- [x] T19.4 `wheelSensitivity:0.3` 제거 → 기본 1(줌 3배 회복). minZoom/maxZoom 클램프 유지(과확대/축소 없음).
+- [x] T19.5 박스 겹침 상쇄: `_META_COL_PITCH` 22→18(박스 세로↓) + nodeSeparation 150→220.
+
+### 19.2 검증
+- [x] T19.6 node --check PASS. 잔존 제약 참조 0. stale 주석 정리.
+- [x] T19.7 적대 리뷰 패널(§18.8 subagent) — **BLOCKING 0·MAJOR 0·MINOR 1(박스겹침 실측)·NIT 3**. 핵심: 컬럼정렬
+      공백경로 없음(전 경로 placeColumns 수렴), 제약 '키 제거'가 fcose tile/packComponents-off 과거 취약성 오히려 제거(더 안전). REVIEW REV-20260701T220000 [SUBAGENT: PASS].
+- [x] T19.8 **실 Windows 브라우저 de-risk**(win-browser): 17컬럼 + 6이웃 ERD 렌더 → **컬럼 x-spread 0.0px(완벽 세로스택,
+      blob 소멸)** + PITCH18·nodeSep220 으로 **박스겹침 2→0** 실측(스크린샷 render3.png).
+- [ ] T19.9 verify-completion + commit + PR + main 병합 + web 배포.
+- [ ] T19.10 **사용자 실브라우저 재확인**: (1) 프레임 거침 완화(더블클릭 확장) (3) 컬럼 세로스택(blob 없음) (4) 휠 줌 속도
+      + 박스 겹침/over-zoom 없음. (실 FPS·체감은 사용자 하드웨어가 최종.)

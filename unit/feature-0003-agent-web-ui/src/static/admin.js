@@ -3020,7 +3020,10 @@ function _metaInitGraph() {
   _metaGraph.cy = window.cytoscape({
     container,
     elements: [],
-    minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
+    // graph-perf2: wheelSensitivity 제거 → Cytoscape 기본값(1) 복원. 기존 0.3 은 기본의 1/3 스텝이라 휠당
+    //   줌 배율(zoom*10^(h*sensitivity))이 작아 확대/축소가 3배 이상 느리게 체감(사용자 불호). 기본 1 이
+    //   mainstream 마우스/트랙패드 튜닝값. minZoom/maxZoom 클램프 유지라 과확대·과축소는 없음(속도만 회복).
+    minZoom: 0.15, maxZoom: 2.5,
     // feature-0016 graph-webgl: **WebGL 렌더러**(Cytoscape 3.31+ 실험적, vendored 3.34.0) 활성화.
     //   근거: canvas-2D 렌더러(이전 3.30.2)는 매 프레임 그래프 전체를 CPU 로 재래스터 → 트레이스 실측상
     //   rAF 는 60fps 인데 실제 표시 ~36fps 로 드롭(Scripting 이 busy 65% = Cytoscape 캔버스 재렌더), GPU·
@@ -3279,15 +3282,31 @@ async function _metaGraphExpand(key) {
   _metaGraph.lastQuery = "";                                 // 검색 컨텍스트 종료(상세 배지 게이트 참조)
   const newIds = _metaGraphAddElements(data.nodes || [], data.edges || []) || [];
   if (newIds.length > 0) {
-    // 신규 노드를 앵커(더블클릭 노드) 좌표 근처에 seed → 원점(0,0) 겹침 방지 + fcose 가 국소 정착.
+    // graph-perf2: 신규 노드 seed. 비-컬럼(Table/기타)은 앵커 주위 ring, **컬럼은 부모 테이블별 세로 스택**으로 seed
+    //   (ring 아님) → randomize:false fcose 가 이미 세로 정렬된 상태에서 출발 → blob(원형 뭉치) 방지. 최종 정합은
+    //   layoutstop 의 _metaGraphPlaceColumns 결정론 배치가 보장(seed 는 수렴 안정성 보험).
     const anchor = cy.getElementById(key);
     const ap = (anchor && anchor.length) ? anchor.position() : { x: 0, y: 0 };
-    newIds.forEach((id, i) => {
+    const nonCols = [], colsByParent = new Map();
+    newIds.forEach((id) => {
       const nd = cy.getElementById(id);
-      if (nd && nd.length) {
-        const ang = (i / newIds.length) * 2 * Math.PI;
-        nd.position({ x: ap.x + Math.cos(ang) * 90 + (i % 6) * 6, y: ap.y + Math.sin(ang) * 90 + (i % 5) * 6 });
-      }
+      if (!nd || !nd.length) return;
+      if (nd.data("label") === "Column") {
+        const pid = nd.parent().length ? nd.parent().id() : "";
+        if (!colsByParent.has(pid)) colsByParent.set(pid, []);
+        colsByParent.get(pid).push(nd);
+      } else { nonCols.push(nd); }
+    });
+    nonCols.forEach((nd, i) => {
+      const ang = (i / Math.max(1, nonCols.length)) * 2 * Math.PI;
+      nd.position({ x: ap.x + Math.cos(ang) * 90 + (i % 6) * 6, y: ap.y + Math.sin(ang) * 90 + (i % 5) * 6 });
+    });
+    colsByParent.forEach((cols, pid) => {
+      cols.sort(_metaGraphColCmp);   // 동일 ordinal 비교자 — 배치 로직과 drift 방지
+      const pnode = pid ? cy.getElementById(pid) : null;
+      const pc = (pnode && pnode.length) ? pnode.position() : ap;   // 부모 테이블 중심(없으면 앵커)
+      const y0 = pc.y - (cols.length - 1) / 2 * _META_COL_PITCH;
+      cols.forEach((c, j) => { c.position({ x: pc.x, y: y0 + j * _META_COL_PITCH }); });
     });
     // 증분 레이아웃: 앵커(더블클릭 노드)만 고정하고 나머지는 relax → 신규 노드가 주변 기존 노드를
     //   '부드럽게 밀어내' 겹침을 없앤다. 전체 fit 대신 신규 영역으로 카메라 이동.
@@ -3379,30 +3398,55 @@ function _metaGraphAddElements(nodes, edges) {
   return added;
 }
 
-// feature-0016 ERD-card: fcose 제약으로 컬럼(테이블 compound 자식)을 박스 안에서 ordinal 세로 정렬 +
-//   fcose 가 각 테이블 박스 bounds 로 이웃 공간을 확보 → 겹침을 원천 차단(사후 배치·declutter 불필요; 실측:
-//   컬럼 순서 top→bottom 보존 + 박스 겹침 ~0). alignmentConstraint.vertical=컬럼 동일 x(세로 라인),
-//   relativePlacementConstraint=위→아래 gap(ordinal 순). 컬럼 노드는 compound 부모(테이블) 이동을 자동 추종.
-function _metaGraphColumnConstraints() {
+// feature-0016 ERD-card: 컬럼(테이블 compound 자식)을 박스 안에서 ordinal 세로 정렬. graph-perf2 부터는 이를
+//   fcose 제약이 아니라 layoutstop 의 결정론 배치(_metaGraphPlaceColumns)로 수행 — fcose 제약은 다수 컬럼
+//   수렴 실패(blob)와 tick 당 동기 계산(프레임 거침)을 유발했다. 컬럼은 compound 부모(테이블) 이동을 자동 추종.
+// graph-perf2: 단일 정렬 비교자(ordinal 숫자 우선·미상=MAX, 동률 name localeCompare) — seed·결정론 배치가 공유(정렬 drift 방지).
+function _metaGraphColCmp(a, b) {
+  const oa = a.data("ordinal"), ob = b.data("ordinal");
+  const na = (typeof oa === "number" && isFinite(oa)) ? oa : Number.MAX_SAFE_INTEGER;
+  const nb = (typeof ob === "number" && isFinite(ob)) ? ob : Number.MAX_SAFE_INTEGER;
+  if (na !== nb) return na - nb;
+  return String(a.data("name") || "").localeCompare(String(b.data("name") || ""));
+}
+// 테이블별 컬럼을 ordinal 정렬해 Map<tableId,[colEls]> 반환(fcose 제약 대체 — 결정론 배치·seed 공용 소스).
+function _metaGraphOrderedColumns() {
   const cy = _metaGraph.cy;
-  const align = [], rel = [];
-  if (!cy) return { alignmentConstraint: { vertical: align }, relativePlacementConstraint: rel };
+  const map = new Map();
+  if (!cy) return map;
   try {
     cy.nodes("[label='Table']").forEach((t) => {
       if (!(t.isParent && t.isParent())) return;
-      const cols = t.children("[label='Column']").toArray().sort((a, b) => {
-        const oa = a.data("ordinal"), ob = b.data("ordinal");
-        const na = (typeof oa === "number" && isFinite(oa)) ? oa : Number.MAX_SAFE_INTEGER;
-        const nb = (typeof ob === "number" && isFinite(ob)) ? ob : Number.MAX_SAFE_INTEGER;
-        if (na !== nb) return na - nb;
-        return String(a.data("name") || "").localeCompare(String(b.data("name") || ""));
-      });
-      if (!cols.length) return;
-      if (cols.length >= 2) align.push(cols.map((c) => c.id()));
-      for (let i = 0; i < cols.length - 1; i++) rel.push({ top: cols[i].id(), bottom: cols[i + 1].id(), gap: 26 });
+      const cols = t.children("[label='Column']").toArray().sort(_metaGraphColCmp);
+      if (cols.length) map.set(t.id(), cols);
     });
   } catch (_) {}
-  return { alignmentConstraint: { vertical: align }, relativePlacementConstraint: rel };
+  return map;
+}
+const _META_COL_PITCH = 18;   // 컬럼 중심 간격(dot 12 + gap 6) — seed 와 결정론 배치 공유. 짧을수록 박스 세로↓=인접 겹침↓(라벨 가독 유지 하한)
+// graph-perf2: 컬럼을 부모 박스 안 ordinal 세로 스택으로 **결정론적** 배치(fcose 제약 대체). 근거: fcose
+//   post-constraint(alignment/relativePlacement)는 다수 컬럼의 ring seed 에서 세로 라인 수렴을 보장 못 해
+//   blob(원형 뭉치)이 잔존했고, 그 제약을 화면 전체 테이블에 매 tick(numIter 1000) 적용하는 동기 계산이 프레임
+//   거침의 주원인이었다. 컬럼 정렬을 fcose 밖 결정론 코드로 이관 → blob·거침 동시 해소(WebGL 은 렌더만 GPU 화라
+//   이 계산 병목과 무관했음). layoutstop(fcose 종료) 후 호출 — fcose 가 덮어쓰지 않음. batch 로 감싸 WebGL
+//   재업로드 프레임 튐/중간 리렌더 방지. 컬럼 position 만 set → Cytoscape 가 부모 compound bounds 자동 재계산 = containment 유지.
+function _metaGraphPlaceColumns() {
+  const cy = _metaGraph.cy;
+  if (!cy) return;
+  const byTable = _metaGraphOrderedColumns();
+  if (!byTable.size) return;
+  try {
+    cy.startBatch();
+    byTable.forEach((cols) => {
+      if (!cols.length) return;
+      let sx = 0, sy = 0;
+      cols.forEach((c) => { const p = c.position(); sx += p.x; sy += p.y; });
+      const cx = sx / cols.length;                                              // 현 컬럼 무게중심 x 로 통일(세로 라인)
+      const y0 = (sy / cols.length) - (cols.length - 1) / 2 * _META_COL_PITCH;  // 무게중심 기준 상하 대칭 → 부모 위치 보존
+      cols.forEach((c, i) => { c.position({ x: cx, y: y0 + i * _META_COL_PITCH }); });
+    });
+    cy.endBatch();
+  } catch (_) { try { cy.endBatch(); } catch (_) {} }
 }
 
 function _metaGraphLayout(opts) {
@@ -3412,17 +3456,14 @@ function _metaGraphLayout(opts) {
   const cnt = cy.nodes().length;
   const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
-  // ERD-card: 컬럼(테이블 compound 자식)을 박스 안에서 ordinal 세로 정렬하도록 fcose 제약을 구성해 두 경로 cfg 에
-  //   병합한다(제약이 비면 미병합 — fcose 는 빈 제약 객체만으로도 tile/packComponents 를 꺼 검색·초기로드의 비연결
-  //   노드가 흩어짐. 제약 있을 때만 _ccCfg 병합). 컬럼은 compound 부모(테이블) 이동을 자동 추종 → lock/사후 배치 불필요.
-  const _cc = _metaGraphColumnConstraints();
-  const _ccCfg = (_cc.relativePlacementConstraint.length || _cc.alignmentConstraint.vertical.length)
-    ? { alignmentConstraint: _cc.alignmentConstraint, relativePlacementConstraint: _cc.relativePlacementConstraint }
-    : {};
+  // graph-perf2: 컬럼 세로정렬을 fcose 제약(alignment/relativePlacement)에서 **제거**하고 layoutstop 의
+  //   `_metaGraphPlaceColumns` 결정론 배치로 이관(blob·프레임 거침 동시 해소 — 위 헬퍼 주석 참조). fcose 는
+  //   이제 박스(테이블/스키마 compound)와 일반 노드 배치만 담당 → tick 당 제약 부하 소멸 = 동기 계산 급감.
   const base = {
     nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
     uniformNodeDimensions: false,
-    nodeSeparation: 150,
+    nodeSeparation: 220,   // graph-perf2: 150→220 — 컬럼 세로 스택으로 박스가 세로로 길어져(결정론 배치) 인접 compound 겹침 여지↑ → 박스 간격 확대로 상쇄
+
     tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,
     nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
     gravityRangeCompound: 1.5, gravityCompound: 1.0,
@@ -3445,7 +3486,7 @@ function _metaGraphLayout(opts) {
             if (lbl === "Column" || (lbl === "Table" && n.isParent && n.isParent())) { newAddsBox = true; break; }
           }
         }
-        const hasCompound = newAddsBox && !!(_cc.relativePlacementConstraint.length || _cc.alignmentConstraint.vertical.length);
+        const hasCompound = newAddsBox;   // graph-perf2: 컬럼 제약 제거로 _cc 참조 삭제 — 박스 신규 추가 여부만으로 판정
         if (hasCompound) {
         // ERD compound 박스 존재: 국소 relax(먼 노드 고정)는 중첩 compound(tall 박스)를 못 벌려 박스끼리 겹친다
         //   → **전체 스프레드**(고정 없음·packComponents·반복↑)로 박스를 벌린다(사용자 결정: 겹침 해소 우선, 문맥
@@ -3455,7 +3496,6 @@ function _metaGraphLayout(opts) {
           name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
           animationDuration: 600, packComponents: true, numIter: 1000,
           nodeRepulsion: () => 18000, idealEdgeLength: () => 130,
-          ..._ccCfg,   // 컬럼(alignment/relativePlacement) 제약으로 박스 안 ordinal 정렬 유지
         });
         } else {
         // 확장(더블클릭, 비-compound): **신규 노드 주변(반경 R)의 기존 노드만 relax → 부드럽게 밀어냄** (사용자 요청).
@@ -3478,7 +3518,7 @@ function _metaGraphLayout(opts) {
           //   튐 방지. 앵커 parent 를 fixed 에 넣어도 alignment/relative 는 그 자식(컬럼)에 걸려 충돌 없음.
           if (n.isParent() && !isAnchor) return;
           if (opts.newIdSet && opts.newIdSet.has(n.id())) return;     // 신규는 자유(push 주체)
-          if (n.data("label") === "Column") return;                  // 컬럼은 제약(alignment/relative) 관리 — fixed 제외
+          if (n.data("label") === "Column") return;                  // 컬럼은 layoutstop 결정론 배치(_metaGraphPlaceColumns) 관리 — fixed 제외
           const p = n.position();
           // 앵커는 항상 고정. 반경 밖 노드도 고정(원거리 문맥 보존). 반경 안(앵커 제외)만 자유(밀림).
           if (isAnchor || Math.hypot(p.x - cx, p.y - cy0) > R) {
@@ -3490,7 +3530,6 @@ function _metaGraphLayout(opts) {
           animationDuration: 500, packComponents: false, numIter: 250,   // 프리즈 완화 커밋(1bb45f3) 수치 유지
           nodeRepulsion: () => 16000, idealEdgeLength: () => 130,         // 국소 push 용 완만한 반발(전 노드 자유 아님)
           fixedNodeConstraint: fixed,   // 앵커 + 반경 밖 노드 고정 → 항상 비어있지 않음(전체폭발 방지)
-          ..._ccCfg,   // 컬럼 있을 때만 alignment/relativePlacement 병합(M2: 빈 제약이 tile 끄는 것 방지)
         });
         }   // end else (비-compound 국소 relax)
       } else {
@@ -3501,7 +3540,6 @@ function _metaGraphLayout(opts) {
         cfg = Object.assign({}, base, {
           name: "fcose", randomize: true, quality: "default", fit: true, padding: 40,
           animationDuration: 700, packComponents: true, numIter: cnt > 200 ? 600 : 1000,
-          ..._ccCfg,   // 컬럼 있을 때만 병합(M2: 빈 제약이 tile/packComponents 끄는 것 방지)
         });
       }
       try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}   // 동시성: 진행 중 레이아웃 중단(연타·경쟁 방지)
@@ -3511,7 +3549,9 @@ function _metaGraphLayout(opts) {
       //   (canvas-2D 시절엔 프레임당 텍스트 래스터/엣지 재계산 비용 때문에 숨겼으나, WebGL 로 불필요 + 사용자 불호.)
       layout.one("layoutstop", () => {
         _metaGraph._layoutRunning = false;
-        // ERD-card: 컬럼은 제약(alignment/relativePlacement)으로 박스 안에 이미 ordinal 정렬됨 — 사후 배치 불필요.
+        // graph-perf2: fcose 종료 후 컬럼을 박스 안 ordinal 세로 스택으로 결정론 배치(fit 전 — fit 이 재배치된 박스
+        //   bounds 를 읽도록). fcose 제약을 뺐으므로 이 배치가 컬럼 정합의 유일·최종 소스(모든 fcose 경로 공통).
+        _metaGraphPlaceColumns();
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
             cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" });   // 확장: 카메라를 신규 이웃으로 이동
@@ -3529,7 +3569,7 @@ function _metaGraphLayout(opts) {
     const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
       idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
     _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; });
+    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; _metaGraphPlaceColumns(); });   // graph-perf2: cose 폴백도 결정론 배치
     layout.run();
   } catch (_) { _metaGraph._layoutRunning = false; }
 }

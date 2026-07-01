@@ -1,5 +1,29 @@
 # Report
 
+## 2026-07-01 · 컬럼 blob·프레임 거침·느린 줌 수정 (graph-perf2, WebGL 후속)
+
+### 배경 (WebGL 배포 후 사용자 육안 3건)
+(1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌 **원형 뭉치(blob)**, (4) 휠 줌 너무 느림.
+(2 라벨유지=OK.) → WebGL 로도 거침이 안 잡혀, 병목이 렌더가 아님을 시사.
+
+### 진단 (5에이전트 워크플로: 3렌즈 진단 → 통합설계 → 적대검증)
+- blob·거침 **동일 뿌리**: 컬럼 세로정렬을 fcose 제약(alignment/relativePlacement)에 위임 + 화면 전체 테이블 제약을
+  numIter 1000 동기 tick 마다 재구성·적용. (a) fcose 가 신규 컬럼 **ring seed**(반경 90 원)를 세로로 못 펼쳐 blob
+  잔존, (b) 제약 동기 계산(cose-base runSpringEmbedder while-loop, rAF/yield 0건)이 rAF 를 굶겨 프레임 거침.
+  **WebGL 은 렌더만 GPU 화 → 이 계산 병목과 무관**(거침 개선 없던 게 정합). 줌=독립(wheelSensitivity 0.3=기본 1/3 스텝).
+- verify(적대): go-with-fixes. 컬럼정렬 공백경로 없음, 제약 '키 제거'가 fcose tile-off 취약성 오히려 제거(더 안전).
+
+### 수정 (admin.js)
+- 컬럼 세로정렬을 fcose 제약에서 **제거** → layoutstop `_metaGraphPlaceColumns` **결정론적 세로 배치**(batched, ordinal,
+  무게중심 상하대칭·x통일, 전 경로 공통). 신규 컬럼 seed ring→세로. `wheelSensitivity` 제거(기본 1). 박스 겹침 상쇄
+  PITCH 22→18 + nodeSeparation 150→220.
+
+### de-risk (실 Windows 브라우저)
+17컬럼 + 6이웃 ERD 렌더 → **컬럼 x-spread 0.0px(완벽 세로스택·blob 소멸)** + **박스겹침 2→0**(PITCH18/nodeSep220). 스크린샷 확인.
+
+### 검증
+- node --check PASS. 적대 리뷰 BLOCKING 0(REV-20260701T220000). **실 FPS·대규모 겹침·줌 체감은 사용자 실 하드웨어 재확인이 최종.**
+
 ## 2026-07-01 · 렌더러 canvas-2D → WebGL 전환 (graph-webgl, 프레임레이트 근본 해소)
 
 ### 배경 (사용자 육안 후속)

@@ -116,6 +116,17 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260701T220000-graph-perf2 컬럼 blob·프레임 거침·느린 줌 수정 (Major §12.3, 2026-07-01) — **Environment: Windows-browser (실 GPU de-risk 완료 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 컬럼 정렬 fcose 제약 제거→layoutstop 결정론 배치(`_metaGraphPlaceColumns`), 세로 seed, wheelSensitivity 제거, PITCH18/nodeSep220. 프론트 전용·비파괴.
+- 구조/단위: `node --check` PASS(admin.js). 잔존 제약 참조 0. 백엔드/API 변경 0. 캐시버스터 graph-perf2.
+- 적대 검증: 진단 워크플로(5에이전트, verdict go-with-fixes) + §18.8 적대 subagent(admin.js + vendored fcose 실측) → **BLOCKING 0·MAJOR 0·MINOR 1(박스겹침)·NIT 3**. 컬럼정렬 공백경로 없음, 제약 키 제거가 tile-off 취약성 오히려 제거. REV-20260701T220000 [SUBAGENT: PASS].
+- **Environment: Windows-browser (de-risk 실측)** — 실 Windows Chrome/149 via `bin/win-browser.py` relay(`bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, 실 GPU). WSL headless 아님.
+  - **시나리오**: cytoscape 3.34.0 WebGL + fcose 2.2.0 + 스키마 compound > AchievementReward(17컬럼) ERD 카드 + UserAchievementReward 6이웃(각 3컬럼) + REFERENCES. **본 cycle 의 결정론 컬럼 배치·세로 seed·nodeSep220 로직을 그대로 재현**한 최소 페이지.
+  - **Pass — blob 해소·겹침 해소 실측**: AchievementReward 17컬럼 **x-spread = 0.0px**(모두 동일 x = 완벽 세로 스택, blob 소멸). PITCH 22→18 + nodeSeparation 150→220 적용 시 **Table 박스 겹침쌍 2→0/7**. 스크린샷 `scratchpad/webgl-test/render3.png`: 17컬럼 세로 스택(UniqueID→NeedLevel 판독) + 6이웃 박스 무겹침 분산 + REFERENCES bezier.
+- **PB-0008 성격(정직)**: 실 FPS(거침 완화)는 스크린샷으로 측정 불가 → **사용자 실 하드웨어 재확인이 유일 효과 검증**. 대규모(141테이블) 박스겹침·휠 줌 체감도 배포 후 사용자 확인.
+- **배포 후 라이브 잔여**: 관리콘솔 그래프 뷰 → (1) 더블클릭 확장 프레임 거침 완화 (3) 17컬럼 테이블 세로 스택(blob 없음) (4) 휠 줌 속도 + 대규모 박스겹침/over-zoom 없음 + 사용자 육안.
+- Pass/Fail: PARTIAL(구조·단위·워크플로+적대 패널·de-risk 실측 PASS / 라이브 = 사용자 재확인). Runner: AI.
+
 ### TASK-20260701T210000-graph-webgl 그래프 렌더러 canvas-2D→WebGL 전환 (Major §12.3, 2026-07-01) — **Environment: Windows-browser (실 GPU de-risk 완료 + 라이브 PB-0008 배포 후 잔여)**
 - 대상: cytoscape 3.30.2→3.34.0 + `renderer:{name:"canvas",webgl:_webglOk}` + 엣지 bezier·색/투명도 재설계 + anim-hide 제거. 프론트 전용·비파괴.
 - 구조/단위: `node --check` PASS(admin.js). vendored cytoscape 3.34.0 정품(Cytoscape Consortium 헤더, node --check OK). 백엔드/스키마/API 변경 0.
