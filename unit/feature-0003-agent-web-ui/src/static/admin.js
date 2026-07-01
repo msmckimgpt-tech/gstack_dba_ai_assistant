@@ -3005,13 +3005,24 @@ function _metaInitGraph() {
     container,
     elements: [],
     minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
+    // 렌더 성능(프레임 부드럽게): 아래는 전부 프레임당 그리기 부하를 '줄이는' 옵션이라 성능 저하 없음.
+    // - motionBlur: 모션 중 프레임 병합 렌더 → 부드러운 체감.
+    // - textureOnViewport: 팬/줌 시 캐시 텍스처 재사용(전 요소 재렌더 생략).
+    // - hideEdgesOnViewport: 팬/줌 중 엣지 그리기 생략.
+    // (라벨 텍스트 래스터가 프레임 최대 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
+    motionBlur: true,
+    textureOnViewport: true,
+    hideEdgesOnViewport: true,
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
           "label": "data(name)", "font-size": "11px", "color": "#161b22",
           "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
           "width": _metaNodeSize, "height": _metaNodeSize,
+          "min-zoomed-font-size": 7,   // 축소 시 작아진 라벨은 렌더 생략(줌아웃 프레임 비용↓)
           "text-wrap": "ellipsis", "text-max-width": "120px", "border-width": 0 } },
+      // 모션(레이아웃/카메라 애니메이션) 중 라벨 숨김 — 텍스트 래스터가 프레임 최대 비용. 정지 시 복원.
+      { selector: "node.anim-hide-label", style: { "label": "" } },
       { selector: "node[label='Table']", style: { "font-weight": "bold" } },
       // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
       { selector: "node:parent", style: {
@@ -3259,12 +3270,16 @@ function _metaGraphLayout(opts) {
         });
       }
       const layout = cy.layout(cfg);
-      if (incremental && opts.focusEles && opts.focusEles.length) {
-        // 레이아웃 종료 후 신규 이웃 영역으로만 카메라 이동(전체 fit 대신 맥락 유지).
-        layout.one("layoutstop", () => {
+      // 모션 중 라벨 숨김 → 프레임당 텍스트 래스터(최대 비용) 생략 → 부드러운 프레임. 정지 시 복원.
+      if (animate) { try { cy.nodes().addClass("anim-hide-label"); } catch (_) {} }
+      layout.one("layoutstop", () => {
+        // 레이아웃 정착 즉시 라벨 복원(중단돼도 stuck 되지 않도록 무조건). 이후 카메라 팬은
+        // textureOnViewport 가 캐시 텍스처를 써서 라벨이 보여도 프레임 부담이 낮다.
+        try { cy.nodes().removeClass("anim-hide-label"); } catch (_) {}
+        if (incremental && opts.focusEles && opts.focusEles.length) {
           try { cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 400 }); } catch (_) {}
-        });
-      }
+        }
+      });
       layout.run();
       return;
     } catch (_) {}
