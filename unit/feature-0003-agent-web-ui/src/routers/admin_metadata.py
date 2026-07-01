@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/api/admin/metadata/glossary")
-def admin_list_glossary(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 목록 — 단일 scope(역할 차원 포함). 권한 kb.ingest.manual.
 
     ?scope_key= (기본 'common'). ?role_key= 지정 시 그 역할 행만(공용 '*' 미포함) 필터 — 역할별
@@ -59,7 +59,7 @@ def admin_list_glossary(request: Request, account=Depends(app.require_permission
                          "role_key": role_filter})
 
 @router.post("/api/admin/metadata/glossary")
-async def admin_create_glossary(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 생성(upsert). 권한 kb.ingest.manual. body: scope_key, term, definition."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -101,7 +101,7 @@ async def admin_create_glossary(request: Request, account=Depends(app.require_pe
     return JSONResponse({"ok": True, "scope_key": scope_key, "role_key": role_key, "term": term})
 
 @router.put("/api/admin/metadata/glossary/{term_id}")
-async def admin_update_glossary(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_glossary(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, term, definition."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -153,7 +153,7 @@ async def admin_update_glossary(term_id: int, request: Request, account=Depends(
     return JSONResponse({"ok": True, "id": int(term_id)})
 
 @router.delete("/api/admin/metadata/glossary/{term_id}")
-def admin_delete_glossary(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_glossary(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -295,7 +295,7 @@ def admin_reject_glossary_feedback(feedback_id: int, request: Request, account=D
     return JSONResponse({"ok": True, "id": int(feedback_id), "rejected": int(affected)})
 
 @router.get("/api/admin/metadata/glossary/{term_id}/relations")
-def admin_list_glossary_relations(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_glossary_relations(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """해당 용어의 인접 참조(유사어/동의어/see_also) 목록. 권한 kb.ingest.manual."""
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect_ro
@@ -323,7 +323,7 @@ def admin_list_glossary_relations(term_id: int, request: Request, account=Depend
     return JSONResponse({"items": items, "count": len(items), "term_id": int(term_id)})
 
 @router.post("/api/admin/metadata/glossary/{term_id}/relations")
-async def admin_add_glossary_relation(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_add_glossary_relation(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """유사어 참조 추가. 권한 kb.ingest.manual. body: to_id(필수), relation_type(synonym|similar|see_also)."""
     data = await app._metadata_read_json(request)
     try:
@@ -368,7 +368,7 @@ async def admin_add_glossary_relation(term_id: int, request: Request, account=De
                          "relation_type": relation_type})
 
 @router.delete("/api/admin/metadata/glossary/relations/{relation_id}")
-def admin_delete_glossary_relation(relation_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_glossary_relation(relation_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """유사어 참조 삭제(by relation id, 멱등). 권한 kb.ingest.manual."""
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect
@@ -397,7 +397,7 @@ def admin_delete_glossary_relation(relation_id: int, request: Request, account=D
     return JSONResponse({"ok": True, "id": int(relation_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/enums")
-def admin_list_enums(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_enums(request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
@@ -427,7 +427,7 @@ def admin_list_enums(request: Request, account=Depends(app.require_permission('k
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
 @router.post("/api/admin/metadata/enums")
-async def admin_create_enum(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_enum(request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, code, label, schema_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -465,7 +465,7 @@ async def admin_create_enum(request: Request, account=Depends(app.require_permis
     return JSONResponse({"ok": True, "scope_key": scope_key})
 
 @router.put("/api/admin/metadata/enums/{entry_id}")
-async def admin_update_enum(entry_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_enum(entry_id: int, request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 수정(by id, scope 가드). 권한 kb.ingest.manual. body 동일."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -510,7 +510,7 @@ async def admin_update_enum(entry_id: int, request: Request, account=Depends(app
     return JSONResponse({"ok": True, "id": int(entry_id)})
 
 @router.delete("/api/admin/metadata/enums/{entry_id}")
-def admin_delete_enum(entry_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_enum(entry_id: int, request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -542,7 +542,7 @@ def admin_delete_enum(entry_id: int, request: Request, account=Depends(app.requi
     return JSONResponse({"ok": True, "id": int(entry_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/tables")
-def admin_list_table_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_table_desc(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
@@ -572,7 +572,7 @@ def admin_list_table_desc(request: Request, account=Depends(app.require_permissi
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
 @router.post("/api/admin/metadata/tables")
-async def admin_create_table_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_table_desc(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, description, schema_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -618,7 +618,7 @@ async def admin_create_table_desc(request: Request, account=Depends(app.require_
     return JSONResponse({"ok": True, "scope_key": scope_key, "table_name": table_name})
 
 @router.put("/api/admin/metadata/tables/{desc_id}")
-async def admin_update_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?, table_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -672,7 +672,7 @@ async def admin_update_table_desc(desc_id: int, request: Request, account=Depend
     return JSONResponse({"ok": True, "id": int(desc_id)})
 
 @router.delete("/api/admin/metadata/tables/{desc_id}")
-def admin_delete_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -704,7 +704,7 @@ def admin_delete_table_desc(desc_id: int, request: Request, account=Depends(app.
     return JSONResponse({"ok": True, "id": int(desc_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/columns")
-def admin_list_column_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_column_desc(request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
@@ -736,7 +736,7 @@ def admin_list_column_desc(request: Request, account=Depends(app.require_permiss
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
 @router.post("/api/admin/metadata/columns")
-async def admin_create_column_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_column_desc(request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, description, schema_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -794,7 +794,7 @@ async def admin_create_column_desc(request: Request, account=Depends(app.require
     return JSONResponse({"ok": True, "scope_key": scope_key, "table_name": table_name, "column_name": column_name})
 
 @router.put("/api/admin/metadata/columns/{desc_id}")
-async def admin_update_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?/table_name?/column_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -861,7 +861,7 @@ async def admin_update_column_desc(desc_id: int, request: Request, account=Depen
     return JSONResponse({"ok": True, "id": int(desc_id)})
 
 @router.delete("/api/admin/metadata/columns/{desc_id}")
-def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -893,7 +893,7 @@ def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app
     return JSONResponse({"ok": True, "id": int(desc_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/graph")
-def admin_metadata_graph(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
 
     권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 세 모드:
@@ -952,7 +952,7 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
     })
 
 @router.post("/api/admin/metadata/graph/analyze")
-async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """그래프 노드 AI 능동 분석 트리거(항목2). 권한 kb.ingest.manual.
 
     body: {node_key, scope_key?, depth?, node_budget?}. run 을 만들고 즉시 202 반환 — 실제 분석은
@@ -983,7 +983,7 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
                          "reused": res.get("reused", False)}, status_code=202)
 
 @router.get("/api/admin/metadata/graph/analyze")
-def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """분석 run 진행률 폴링(항목2). 권한 kb.ingest.manual. ?run_id=<hex>.
     반환 {status, enqueued, done, failed, done_keys[...]} — 프론트가 done_keys 로 분석 마커 표시."""
     run_id = (request.query_params.get("run_id") or "").strip()
@@ -996,7 +996,7 @@ def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.re
     return JSONResponse(st)
 
 @router.get("/api/admin/metadata/graph/analyze/node")
-def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """노드의 최신 분석 상태/결과(상세 패널, 항목2). 권한 kb.ingest.manual. ?node=<key>[&scope=<ds>].
     반환 {status:'none'|'pending'|'running'|'done'|'failed', analysis:{summary,relationships,usage,caveats}}."""
     node = (request.query_params.get("node") or "").strip()
@@ -1011,7 +1011,7 @@ def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.requ
     return JSONResponse(res)
 
 @router.get("/api/admin/metadata/graph/analyze/status")
-def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """스코프 내 노드들의 분석 상태 **일괄** 집계(그래프 초기 렌더 마커용, 항목1). 권한 kb.ingest.manual.
     ?scope=<ds> — 그 datasource 스코프의 완료/진행중 node_key 집합을 반환한다. 프론트는 그래프 로드/검색/확장
     직후 이 결과로 마커(보라 '분석됨'·주황 '분석중')를 **노드 클릭 없이** 즉시 적용한다.
@@ -1025,7 +1025,7 @@ def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(a
     return JSONResponse({"done_keys": res.get("done_keys", []), "running_keys": res.get("running_keys", [])})
 
 @router.get("/api/admin/metadata/graph/columns")
-def admin_metadata_graph_columns(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_columns(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """더블클릭 컬럼 즉석 introspection(항목3). 권한 kb.ingest.manual. ?node=<table key `scope:schema.table`>.
 
     그래프 투영(SSOT=column_descriptions)에 Column 노드가 없어(큐레이션/분석 미진행) 더블클릭해도
@@ -1254,7 +1254,7 @@ def admin_delete_sample(sample_id: int, request: Request, account=Depends(app.re
     return JSONResponse({"ok": True, "id": int(sample_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/bootstrap/schemas")
-def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """선택 datasource 의 골격 단위(unit) 목록. 권한 kb.ingest.manual. ?datasource=<key>.
 
     엔진별 unit 차이(metadata-table-desc-fix):
@@ -1304,7 +1304,7 @@ def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permis
     return JSONResponse({"schemas": units, "datasource": scope_key, "engine": engine, "unit_kind": unit_kind})
 
 @router.post("/api/admin/metadata/bootstrap")
-async def admin_bootstrap(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_bootstrap(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """선택 datasource+schema 의 테이블/컬럼 골격(미영속). 권한 kb.ingest.manual. body: datasource, schema.
 
     골격은 저장하지 않는다 — UI 가 설명 빈칸을 prefill, 사람이 채워 tables/columns POST(source='bootstrap')
@@ -1415,7 +1415,7 @@ async def admin_metadata_suggest(sub: str, request: Request) -> JSONResponse:
     })
 
 @router.post("/api/admin/metadata/bootstrap/describe")
-async def admin_metadata_bootstrap_describe(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_metadata_bootstrap_describe(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """부트스트랩 일괄 AI 자동완성 — 골격(테이블/컬럼)의 설명을 1 LLM 호출로 생성(영속 안 함).
 
     프론트가 청크 단위(≤_METADATA_BULK_MAX_TABLES)로 호출해 진행률을 표면화한다. RBAC kb.ingest.manual.

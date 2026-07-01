@@ -116,6 +116,15 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260702-graph-panel-perms 그래프 뷰 UX 3건 + 메타데이터 탭 권한 세분화(B안) (Major+Critical §12.3, 2026-07-02) — **Environment: Windows-browser (그래프 canvas 인터랙션 — 배포 후 사용자 실화면 확인, 자동화 회귀 이력)**
+- 대상: (Task1) 상세 패널 드래그 리사이즈 (Task2) 확장 테이블 접기 버튼(박스 우측하단 HTML 오버레이) (Task3) 첫 컬럼명 미표시 버그(text-margin-y -13 + halo) (Task4) 메타데이터 탭 권한 세분화(kb.ingest.manual→5 세부 권한, 비파괴 함의).
+- **구조/단위 (PASS)**: `node --check admin.js` PASS · `py_compile app.py routers/admin_metadata.py` PASS. 신규 `tests/test_metadata_perm_split.py` **9/9 PASS**(R1 카탈로그·R2 admin seed/least-priv·R3 함의(묶음→5권한)·R3b override-allow 함의·R4 개별 DENY 우선·R5 granular 격리·R6 umbrella 유지·R7 서버 서브탭 맵·R8 프론트 맵). `test_metadata_ai_autocomplete.py`(fixture 세부권한 갱신)·`test_metadata_phase2.py`·`test_metadata_glossary_enum.py`·`test_permission_dependency_map.py` 무회귀 PASS.
+- **route parity 주의(정직)**: `test_route_parity_p5b`(192→193) 는 **origin/main 344a5a80 기존 결함**(#520/#522 신규 route 의 golden 미갱신). 본 변경은 route 무추가(`git diff main` 에 @router/@app 데코 추가 0)라 무관 — feature-0012(P5b) 소관 golden 갱신 대상.
+- **적대 검증 패널(§18.8, 2 렌즈)**: authz(인가 상승·접근 회귀·enforcement 누락·FE/BE 불일치·부트스트랩 게이트·DENY 우회) + 그래프 프론트(리사이즈 clamp 경계·접기 버튼 이벤트/좌표·컬럼 수정 겹침·#522 병합 정합·런타임 에러). REV-20260702T120000-graph-panel-perms.
+- **권한 세분화(Task4) 검증 성격**: 백엔드 인가 로직은 렌더 표면이 아니라 **단위테스트가 정본**(함의·enforcement·granular 격리 커버). 프론트 서브탭 가시성은 비파괴(worst-case 탭 표시/숨김)·함의로 기존 사용자 무손실.
+- **PB-0008 Windows-browser 라이브(배포 후 사용자 실화면 확인 권장)**: 관리콘솔 그래프 뷰 → (1) 캔버스↔패널 사이 바 드래그로 패널 폭 조절·새로고침 후 유지 (2) 테이블 더블클릭 확장 후 박스 우측하단 "−" 버튼 클릭 → 컬럼 접힘, 재더블클릭 재펼침 (3) 확장 시 **첫(최상단) 컬럼명이 타이틀에 안 가려지고 표시** (4) 세부 권한만 가진 역할로 로그인 시 해당 서브탭만 노출·타 서브탭 403. 그래프 canvas 인터랙션 자동화(win-browser eval)는 PB-0008 회귀 이력(Chrome UtilityScript)이라 라이브 육안 확인이 유일 신뢰.
+- Pass/Fail: PARTIAL(구조·단위 9/9·적대 패널 PASS / 그래프 인터랙션 라이브 = 배포 후 사용자 재확인). Runner: AI.
+
 ### TASK-20260701T220000-graph-perf2 컬럼 blob·프레임 거침·느린 줌 수정 (Major §12.3, 2026-07-01) — **Environment: Windows-browser (실 GPU de-risk 완료 + 라이브 PB-0008 배포 후 잔여)**
 - 대상: 컬럼 정렬 fcose 제약 제거→layoutstop 결정론 배치(`_metaGraphPlaceColumns`), 세로 seed, wheelSensitivity 제거, PITCH18/nodeSep220. 프론트 전용·비파괴.
 - 구조/단위: `node --check` PASS(admin.js). 잔존 제약 참조 0. 백엔드/API 변경 0. 캐시버스터 graph-perf2.

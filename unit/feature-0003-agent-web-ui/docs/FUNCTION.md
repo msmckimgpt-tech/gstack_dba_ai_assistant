@@ -1396,3 +1396,15 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - AC-20260702-graphview-webgl-polish-3 (컬럼 배치 정합): 컬럼은 부모 테이블 박스 안 ordinal 세로 스택으로 배치 — seed(부모 중심 세로 스택, `_META_COL_PITCH`) 후 layoutstop 의 결정론 배치(`_metaGraphPlaceColumns`, #519 graph-perf2)가 최종 정합. 단일클릭 토글도 이 결정론 경로를 공유(blob 방지).
 - 구현: `static/admin.js`(`_metaGraphToggleColumns` 신규 · tap 핸들러 단일/더블 300ms 타이머 분기 · renderer `webglTexSize`/조건부 `pixelRatio` · collapse `introspected.delete` · #519 세로-스택 seed 정합) · `static/admin.html`(cache-buster `admin.js`/`styles.css` `20260702-graphview-webgl-polish`).
 - 검증: `node --check admin.js` PASS. §18.8 적대 패널 REV-20260702T000000-graphview-webgl-polish (VERDICT PASS, NIT1 pixelRatio 폴백 회귀 수정). PB-0008 Windows-browser 라이브(단일클릭 컬럼 펼침/접힘·재펼침 재출현·줌인 선명·더블클릭 무회귀) — **배포 후 사용자 실화면 확인 요망**(그래프 canvas 인터랙션 자동화는 PB-0008 회귀 이력). Origin: `/_template:resume`(원본 세션 cfbede21 session-limit 중단분 재개).
+
+## (TASK-20260702-graph-panel-perms, 2026-07-02) 메타데이터 그래프 뷰 UX 3건 + 메타데이터 탭 권한 세분화 (web/UI + 인가, Major+Critical §12.3, /_template:entry arg-given, PLAN-APPROVED)
+- REQ-20260702-graph-panel-perms-1 (**Minor** — 그래프 뷰 상세 패널 크기 드래그 조절): 캔버스↔상세 패널 사이 세로 분리 바 드래그로 패널 폭을 조절(±키보드), 폭 영속.
+- REQ-20260702-graph-panel-perms-2 (**Major** — 확장 테이블 접기 버튼): 테이블 노드를 확장(컬럼 펼침)한 뒤, 확장된 테이블 박스 **우측 하단 구석의 전용 버튼**으로 접는다(더블클릭 재펼침).
+- REQ-20260702-graph-panel-perms-3 (**Minor** — 첫 컬럼명 미표시 버그): 테이블 노드 확장 시 최상단(첫) 컬럼 명칭이 박스 타이틀에 가려 안 보이던 버그 수정.
+- REQ-20260702-graph-panel-perms-4 (**Critical 인가** — 메타데이터 탭 권한 세분화 B안): 단일 묶음 `kb.ingest.manual` 을 기능별 세부 권한(`metadata.{glossary,enum,table,column}.manage`, `metadata.graph.read`)으로 분리해 메타데이터 탭 내부 기능을 개별 위임 가능하게 한다. 하위호환: 묶음 보유자는 세부 권한을 함의로 전량 보유(비파괴·가역).
+- AC-1: 상세 패널을 드래그(및 ←/→)로 넓히거나 줄일 수 있고, 캔버스는 최소 폭이 보존되며, 새로고침 후에도 조절한 폭이 유지된다(localStorage). ≤900px 세로 스택에선 리사이저 숨김.
+- AC-2: 컬럼이 펼쳐진 테이블 박스 우측 하단에 접기 버튼이 표시되고, 클릭 시 그 테이블의 컬럼이 접혀 dot 노드로 환원된다(다시 더블클릭하면 컬럼 재조회·재펼침).
+- AC-3: 컬럼이 펼쳐진 테이블에서 첫(최상단) 컬럼의 명칭이 타이틀에 가려지지 않고 보인다.
+- AC-4: 세부 권한 5개가 카탈로그·권한 그리드에 존재하고 개별 부여/회수 가능하며, 기존 `kb.ingest.manual`(역할/계정 override) 보유자는 5개 세부 기능 접근을 그대로 유지한다(무손실). 백엔드 28 핸들러가 세부 권한으로 게이트되고 프론트 서브탭 가시성이 세부 권한과 정합한다.
+- 구현: `app.py`(PERMISSION_DEFINITIONS·`_METADATA_MANUAL_IMPLIES`·`_apply_permission_overrides` 함의·admin catchup·`_METADATA_SUBTAB_PERM_SERVER`) · `routers/admin_metadata.py`(28 핸들러 require_permission) · `static/admin.js`(`_metaGraphInitResizer`·`_metaGraphSyncCollapseButtons`·`_metaGraphCollapse`·`node:parent[label='Table']` 스타일·PERMISSION_DEPENDENCIES·`_METADATA_SUBTAB_PERM`·`_metaSubtabVisible`·canSeeTab·부트스트랩 게이트) · `static/styles.css`(리사이저·접기 버튼·3-col grid) · `static/admin.html`(리사이저 div·캐시버스터) · `tests/test_metadata_perm_split.py`(신규 9).
+- 검증: `node --check`·`py_compile` PASS. `test_metadata_perm_split.py` 9/9. §18.8 적대 패널 2 렌즈(authz + 그래프 프론트) REV-20260702T120000-graph-panel-perms. PB-0008 Windows-browser 그래프 인터랙션 = 배포 후 사용자 실화면 확인(자동화 회귀 이력). Origin: `/_template:entry` arg-given.

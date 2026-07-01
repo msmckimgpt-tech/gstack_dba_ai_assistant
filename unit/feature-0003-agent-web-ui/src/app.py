@@ -283,8 +283,44 @@ PERMISSION_DEFINITIONS = (
         # 자동 보유 + 기존 admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여.
         # operator/sales/pending 미부여(least-privilege).
         "code": "kb.ingest.manual",
-        "label": "메타데이터 수동 등록/편집",
-        "description": "용어사전·ENUM 코드사전 항목을 수동으로 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향하므로 명시 권한 보유자(도메인 전문가/큐레이터)만 편집할 수 있다.",
+        "label": "메타데이터 관리 (전체 묶음)",
+        "description": "메타데이터 탭의 모든 세부 기능(용어사전·ENUM·테이블 설명·컬럼 설명 관리 + 그래프 뷰 조회)을 한 번에 부여하는 묶음 권한이다. 세부 기능만 선택적으로 부여하려면 아래 개별 metadata.* 권한을 사용한다(이 묶음을 보유하면 개별 권한을 모두 보유한 것과 동일하게 동작한다).",
+        "group": "kb",
+    },
+    # graph-panel-perms(task4, Critical §12.3): 메타데이터 탭 세부 권한 — 기존 단일 `kb.ingest.manual`
+    # 묶음을 기능별로 분리(B안, 사용자 결정 2026-07-01)해 용어사전/ENUM/테이블/컬럼 관리와 그래프 뷰 조회를
+    # 개별 위임 가능하게 한다. 하위호환: `kb.ingest.manual` 보유자는 _apply_permission_overrides 의
+    # 함의(_METADATA_MANUAL_IMPLIES)로 아래 5개를 effective 로 자동 보유 → 기존 배포 무손실(비파괴·가역).
+    # 모두 console.access 하위(관리 콘솔 진입 필요). admin seed(=set(PERMISSION_CODES)) 자동 보유 + 기존
+    # admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여. operator/sales/pending 미부여(least-privilege).
+    {
+        "code": "metadata.glossary.manage",
+        "label": "용어사전 관리",
+        "description": "용어사전(도메인 용어↔정의) 항목과 유사어 참조를 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다(도메인 전문가/큐레이터 전용).",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.enum.manage",
+        "label": "ENUM 코드사전 관리",
+        "description": "ENUM 코드사전(컬럼 코드↔라벨) 항목을 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.table.manage",
+        "label": "테이블 설명 관리",
+        "description": "테이블 설명을 등록/수정/삭제하고 스키마 골격 가져오기(부트스트랩)를 사용할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.column.manage",
+        "label": "컬럼 설명 관리",
+        "description": "컬럼 설명을 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.graph.read",
+        "label": "메타데이터 그래프 뷰 조회",
+        "description": "메타데이터 지식그래프 뷰(테이블/컬럼/관계/용어 탐색·검색)를 조회하고, 그래프 뷰의 내장 AI 능동 분석을 실행할 수 있다. 읽기 중심 탐색 권한으로, 개별 메타데이터 항목 편집 권한과 분리된다.",
         "group": "kb",
     },
     {
@@ -561,6 +597,17 @@ PERMISSION_DEFINITIONS = (
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
 PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
+
+# graph-panel-perms(task4): 레거시 묶음 권한 `kb.ingest.manual` 이 함의하는 세부 권한 집합.
+#   _apply_permission_overrides 가 effective map 에서 묶음 보유자에게 아래 5개를 자동 부여(개별 DENY 오버라이드는 존중).
+#   기존 배포 무손실(비파괴·가역) — DB 마이그레이션 없이 하위호환. 묶음 보유 principal(역할/계정 오버라이드) 전부 커버.
+_METADATA_MANUAL_IMPLIES = (
+    "metadata.glossary.manage",
+    "metadata.enum.manage",
+    "metadata.table.manage",
+    "metadata.column.manage",
+    "metadata.graph.read",
+)
 
 
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
@@ -1611,6 +1658,15 @@ def _apply_permission_overrides(
             permissions[code] = True
         elif normalized == OVERRIDE_DENY:
             permissions[code] = False
+    # graph-panel-perms(task4): 레거시 묶음 `kb.ingest.manual` 함의 — effective 로 묶음 보유 시 세부 metadata.*
+    #   권한을 자동 부여한다(비파괴 하위호환). 단 해당 세부 권한이 명시 DENY 오버라이드된 경우는 존중(least-privilege).
+    if permissions.get("kb.ingest.manual"):
+        for code in _METADATA_MANUAL_IMPLIES:
+            if code not in permissions:
+                continue
+            if _normalize_override_value((overrides or {}).get(code)) == OVERRIDE_DENY:
+                continue
+            permissions[code] = True
     return permissions
 
 
@@ -2677,6 +2733,14 @@ def _ensure_seed_roles(conn) -> None:
             # 부여되어 기존 배포 admin row 에는 retroactive 미적용. 미보정 시 콘솔에 메타데이터 탭이
             # 노출되지 않는다(kb.ingest.manual 게이트).
             "kb.ingest.manual",
+            # graph-panel-perms(task4): 메타데이터 세부 권한(B안 분리) admin catchup. **필수** — 신규 권한은
+            # role 생성 시 seed 로만 부여되어 기존 배포 admin row 에는 미적용. (묶음 함의로 effective 보유되나,
+            # grid 표시·명시 부여 정합을 위해 explicit catchup.)
+            "metadata.glossary.manage",
+            "metadata.enum.manage",
+            "metadata.table.manage",
+            "metadata.column.manage",
+            "metadata.graph.read",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -18048,12 +18112,12 @@ _METADATA_SUGGEST_REQUIRES = {
     "samples": ["sql"],
 }
 
-# 서버측 서브뷰별 RBAC — admin.js _METADATA_SUBTAB_PERM 과 동치. samples 만 kb.sample.curate.
+# 서버측 서브뷰별 RBAC — admin.js _METADATA_SUBTAB_PERM 과 동치. graph-panel-perms(task4): 기능별 세부 권한으로 분리.
 _METADATA_SUBTAB_PERM_SERVER = {
-    "glossary": "kb.ingest.manual",
-    "enums": "kb.ingest.manual",
-    "tables": "kb.ingest.manual",
-    "columns": "kb.ingest.manual",
+    "glossary": "metadata.glossary.manage",
+    "enums": "metadata.enum.manage",
+    "tables": "metadata.table.manage",
+    "columns": "metadata.column.manage",
     "samples": "kb.sample.curate",
 }
 

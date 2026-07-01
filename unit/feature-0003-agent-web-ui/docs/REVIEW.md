@@ -4342,3 +4342,26 @@ source_of_truth: true
   - 축5 WebGL config — `webglTexSize:4096` 은 WebGL init 안 `Math.min(…,MAX_TEXTURE_SIZE)` 클램프, `webgl:false` 폴백 미참조(inert) 안전. pixelRatio 는 NIT1 로 해소.
   - 축6 self 노드 재-add 오염 — 안전: `colNodes` 의 self(테이블)는 기존 존재라 `_metaGraphAddElements` 가 added 에 미포함 → newIds 에서 제외 → seed 계산 정상. (collapse 상태 메시지 `cols.length` 는 Cytoscape Collection immutable 스냅샷이라 remove 후에도 개수 정확 — 결함 아님.)
 - 라이브 실측(정본 분리, §정직): 적대 패널은 정적 코드 정합 + vendored 렌더러 소스 검증. 실 그래프 인터랙션(단일클릭 컬럼 펼침/접힘·재펼침 재출현·줌인 외곽선 선명·더블클릭 이웃확장 무회귀)은 **PB-0008 Windows-browser 사용자 실화면 확인 요망**(그래프 canvas 인터랙션 자동화는 PB-0008 회귀 이력 — 코드정합은 리뷰·node --check 로 확증). `node --check admin.js` PASS.
+
+## REV-20260702T120000-graph-panel-perms [AGENT-TEAM:authz+graph-frontend] (TASK-20260702-graph-panel-perms — 그래프 뷰 UX 3건 + 메타데이터 탭 권한 세분화 B안, Major+Critical §12.3 — feature-0016 그래프 UX + feature-0003 인가)
+- Trigger(§18.8): 두 렌즈 동시 dispatch — (1) **authz/security**(인가 구조 변경 = Critical: 권한 상승·접근 회귀·enforcement 누락·FE/BE 불일치·부트스트랩 게이트·DENY 우회) (2) **graph-frontend**(그래프 canvas 상호작용: 리사이즈 경계·접기 버튼 이벤트/좌표·첫 컬럼 수정 겹침·#522 병합 정합·런타임). 각 subagent 작업트리 diff 정독 + 시나리오/코드 trace(앱 미실행 정적 + 단위테스트 실행).
+
+### 렌즈1 — authz/security [SUBAGENT:adversarial-authz] → **VERDICT PASS (결함 0: High/Medium/Low 전부 0)**
+- **권한 상승 없음**: `_apply_permission_overrides` 함의는 effective `kb.ingest.manual`=True 일 때만 세부 5권한 부여 — 역함의(세부→umbrella) 부재(5권한 단독 부여 시 umbrella False 유지). `graph.read` 단독은 mutation 권한(manage/umbrella) 미획득. **graph analyze(POST)의 KB 오염 여부 정밀 확인**: `analyze` 는 `modules/node_analysis.py` 의 전용 테이블(`node_analysis_runs`/`_jobs`)에만 write, 답변 프롬프트 주입 KB 테이블(table/column_descriptions·glossary)에 미write → graph.read 로 KB poisoning 불가(escalation 아님).
+- **접근 회귀(lockout) 없음**: 라이브 계정 로딩 전 경로가 `_decorate_account_rows`→`_apply_permission_overrides` 경유 → 역할 grant + 계정 ALLOW override **둘 다** 함의 적용(테스트 R3/R3b). admin catchup 이 기존 admin row retroactive 부여. 기존 `kb.ingest.manual` 보유자 무손실.
+- **enforcement 누락 없음**: 28 핸들러 전환 전수 확인(glossary6/enum4/table4+bootstrap3/column4/graph7), 라우터 잔존 kb.ingest.manual 게이트 0. dead code `_metadata_resolve_account`(고정 kb.ingest.manual)는 호출자 0(라이브 게이트 아님). `admin_metadata_suggest` 는 `_METADATA_SUBTAB_PERM_SERVER` 세부 perm 정확 게이트.
+- **FE/BE 정합**: FE `can()` = BE `_account_permissions`(함의 적용 effective map) 동일 소스. 서브탭 맵 5개 동치(R7/R8). 역할편집 그리드는 직접 grant 만 표시(함의 미적용 — 의도).
+- **부트스트랩**: 3종 table.manage 게이트 + 결과 미영속(실 저장은 개별 게이트 경유) → table.manage-only 의 column 저장 우회 없음.
+- **DENY 우회 없음**: 개별 세부 DENY 가 함의보다 우선(R4), umbrella DENY 시 함의 미발화.
+- 실행: `test_metadata_perm_split.py` 9 passed + `test_metadata_ai_autocomplete.py` 18 passed + 적대 시나리오 스크립트 7종(A~G) 런타임 전부 기대치 일치.
+
+### 렌즈2 — graph-frontend [SUBAGENT:adversarial-frontend] → **VERDICT PASS w/ fixes (BLOCKING 0; MEDIUM 3 → 수정, LOW 3 → 수용/문서화)**
+- **[MEDIUM-1 FIXED]** 리사이저 `pointercancel` 미처리 → 드래그 리스너·전역 `userSelect:none` 고착 누수. 수정: `pointercancel` 핸들러 추가 + `setPointerCapture` — 터치 중단·제스처 취소에도 확실 정리.
+- **[MEDIUM-2 FIXED]** 저장된 패널 폭이 창 축소 시 재-clamp 안 됨 → 좁은 화면에서 캔버스 near-0 압착. 수정: `window resize`(150ms debounce)에 `applyW(curW())` 재-clamp 추가.
+- **[MEDIUM-3/LOW FIXED]** 접기 상태 메시지가 "더블클릭 재펼침"만 안내하나 #522(단일클릭 컬럼 토글) 병합으로 단일클릭도 재펼침 → 메시지를 "테이블을 클릭하면 다시 펼쳐집니다"로 정정.
+- **[LOW-5 수용·문서화]** `text-margin-y:-13`(타이틀 박스 위로 띄움)이 캔버스 상단 경계 테이블에서 상단 클리핑/스키마 라벨 근접 여지 — 첫 컬럼 겹침(보고된 버그)은 해소. fit(30px 패딩)·기본 줌에선 미발생, 고배율+상단 스크롤 시 엣지케이스. **배포 후 사용자 실화면 확인·필요 시 미세조정** 대상(TEST.md 기록).
+- **[LOW-3 완화]** 좁은 body(<~616px)에서 CANVAS_MIN(360) 보증이 패널 MIN(240) 우선에 밀림 — MEDIUM-2 재-clamp 로 완화, 크래시 없음(합리적 degradation).
+- **정합 확인(결함 아님)**: 오버레이 좌표계(renderedBoundingBox+inset:0 레이어) 일치, 버튼 stopPropagation 로 팬/탭 누수 차단, 줌아웃<26px 버튼 생략, orphan 정리(seen set), leaf 환원+introspect 재조회, #522 인접 코드(rAF·introspect·WebGL) 정합, `node --check` PASS·중복 바인딩 없음(`_bound` 가드).
+- 수정 후 `node --check admin.js` 재확인 PASS.
+
+- 라이브 실측(정본 분리, §정직): 두 패널 모두 정적 코드 정합 + 단위테스트 + (authz)런타임 시나리오. 실 그래프 canvas 인터랙션(드래그 리사이즈·접기 버튼·첫 컬럼명 표시)은 자동화 PB-0008 회귀 이력 → **배포 후 사용자 실화면 확인**(TEST.md §3). 권한 세분화는 백엔드 로직이라 단위테스트+런타임 시나리오가 정본.

@@ -88,16 +88,21 @@ def _allow(monkeypatch):
 
 
 def _admin(monkeypatch):
-    """kb.ingest.manual + kb.sample.curate 둘 다 보유(happy path)."""
+    """메타데이터 세부 권한(graph-panel-perms task4 B안 분리) + kb.sample.curate 모두 보유(happy path).
+    as_account/직접 dict 는 _apply_permission_overrides 함의를 안 타므로, 세부 권한을 명시 부여한다."""
     acct = {"id": 1, "username": "admin",
-            "permissions": {"kb.ingest.manual": True, "kb.sample.curate": True}}
+            "permissions": {"metadata.glossary.manage": True, "metadata.enum.manage": True,
+                            "metadata.table.manage": True, "metadata.column.manage": True,
+                            "metadata.graph.read": True, "kb.sample.curate": True}}
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     return acct
 
 
 def _ingest_only(monkeypatch):
-    """kb.ingest.manual 만 — samples(kb.sample.curate)에는 부족."""
-    acct = {"id": 5, "username": "kb", "permissions": {"kb.ingest.manual": True}}
+    """메타데이터 세부 편집 권한만 — samples(kb.sample.curate)에는 부족."""
+    acct = {"id": 5, "username": "kb",
+            "permissions": {"metadata.glossary.manage": True, "metadata.enum.manage": True,
+                            "metadata.table.manage": True, "metadata.column.manage": True}}
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     return acct
 
