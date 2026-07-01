@@ -22,6 +22,20 @@ from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlparse
 
+# feature-0012 P5b: app.py 는 두 방식으로 로드된다 — (a) 컨테이너 `uvicorn web.app:app`
+# (WORKDIR /app, 모듈명 web.app, sys.path[0]='' → /app; 형제는 web.web_context·web.routers)
+# (b) 테스트/개발 PYTHONPATH=.../src (모듈명 app, web_context·routers top-level). 추출한 형제
+# 모듈(web_context·routers)과 routers 의 `from app import` 가 두 환경에서 top-level 로 동일하게
+# resolve 되도록: 본 파일 디렉토리를 sys.path 에 **append** 하고(컨테이너 /app/web → web_context·
+# routers 를 top-level 로; ★ insert(0) 금지 — /app/web/modules[web 전용] 가 /app/modules[core] 를
+# shadow 해 `modules.memory` 등이 깨진다. append 라 '' (=/app) 의 core modules 가 우선), 현재
+# 모듈을 `app` 으로 alias 한다(web.app 인스턴스를 routers 의 `from app import` 가 그대로 참조 →
+# 모듈 중복 로드/재실행 방지). `from web.modules import ...`(feature-0003 web 모듈)은 무영향.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.append(_HERE)
+sys.modules.setdefault("app", sys.modules[__name__])
+
 import mysql.connector
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM

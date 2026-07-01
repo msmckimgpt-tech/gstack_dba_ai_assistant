@@ -347,3 +347,17 @@ source_of_truth: true
 - Files: src/app.py(주석 3곳), src/web_context.py(주석 1곳) + docs. **코드 라인 변경 0(주석-only, diff 검증).**
 - Impact: behavior-neutral(주석만). py_compile OK. make test 는 §18.8 가 동일 코드 상태(머지본)로 575 passed/0 fail·route-parity 188 검증 완료. 배포 불요(주석).
 - Rollback Notes: revert(주석 복원). 무위험.
+
+## CHG-20260701-0001
+- Date: 2026-07-01
+- Related Requirement: P5b Final 배포 hotfix — 컨테이너 로드(uvicorn web.app:app) 시 추출 모듈 import 실패 수정. **blue-green healthz 게이트가 배포 중 적발(web-b OLD 서빙 유지 → 프로덕션 무영향).**
+- Summary:
+  프로덕션 배포 시 web-a(신이미지)가 crash-loop: `/app/web/app.py:63 from web_context import → ModuleNotFoundError`. 근본 원인 = **테스트 하네스와 컨테이너의 모듈 로드 방식 불일치**:
+  - 컨테이너: `uvicorn web.app:app`(WORKDIR /app, sys.path[0]='' → /app). app.py = 모듈 `web.app`, sys.path 에 /app 만 → 내가 추출한 top-level import(`from web_context import`·`from routers.X import`·routers 의 `from app import`)가 전부 실패(/app/web 미포함).
+  - 테스트: `make test`(PYTHONPATH=.../src) → app·web_context·routers 전부 top-level → 통과. **→ make test·§18.8 패널이 이 클래스를 못 잡음(둘 다 test PYTHONPATH 사용).**
+  - 이 저장소는 **modules 패키지가 둘**: `modules.X`=feature-0002 core(/app/modules, memory·render 등), `web.modules.X`=feature-0003 web(/app/web/modules, attachment_pg_mirror·storage_minio 등; app.py 가 이미 `from web.modules import` 로 사용). 즉 컨테이너는 app 을 `web` 패키지로 로드하는 게 정본 컨벤션.
+  - **수정(app.py 상단, load-style 무관 robust)**: 본 파일 디렉토리를 sys.path 에 **append**(insert(0) 아님 — /app/web/modules[web] 가 /app/modules[core] 를 shadow 해 `modules.memory` 깨짐; append 라 ''=/app 의 core modules 우선) + 현재 모듈을 `app` 으로 `sys.modules.setdefault` alias(web.app 인스턴스를 routers 의 `from app import` 가 그대로 참조 → 모듈 중복 로드/재실행 방지). `from web.modules import` 무영향.
+- Files: src/app.py(상단 sys.path append + app alias 블록) + docs.
+- Impact: 컨테이너 실기동 검증(mysql-ai-web:24dd588 + 수정 app.py 마운트, `uvicorn web.app:app`): Application startup complete·healthz git_commit=24dd588·/api/session 200 authenticated:false·추출 라우트(/api/avatars/1 media·/api/admin/usage admin_usage) 정상 라우팅+DI seam 500 byte-동치. make test 575 passed/0 fail·route drift 0·route-parity 188. py_compile OK.
+- 후속(test-gap): make test/CI 에 **컨테이너-스타일 로드(web.app 패키지) import smoke** 추가 권장(현 하네스가 못 잡는 클래스). 배포 healthz 게이트가 최종 안전망.
+- Rollback Notes: revert(app.py 상단 블록). 배포는 web-b OLD 유지로 무영향이었음.

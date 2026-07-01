@@ -42,7 +42,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260630-0016: P5b Final web_context 추출 증분 #2 — proxy/client-IP 5종(`_TrustedNetwork`·`_parse_trusted_proxies`·`WEB_TRUSTED_PROXIES`·`_is_trusted_proxy`·`_get_client_ip`) → web_context.py. **AGENT_MODE 결합 해소**: 동일 env-read 표현식 mirror 로 app-free 유지(시그니처 불변). startup-validation 블록(ENABLE_WEB_TLS_PROXY)은 app 잔류(재import WEB_TRUSTED_PROXIES 참조). WEB_TRUSTED_PROXIES 계산 위치 이동(둘 다 startup-time, fail-loud 보존). make test 전체 통과·route drift 0·byte-동치. docker rebind-identity 7/7·순환 없음. 후속: inc3 SESSION_COOKIE/_resolve_permission_catalog→inc4 _fetch/_decorate_account_rows(안전) → _account_has_permission/_require_account/_connect_memory(23-테스트 retarget 영역).
 - CHG-20260630-0017: origin/main 100-commit 통합 머지(배포 선결). main app.py +720 additive 신규 9 라우트·auth helper 무변(auth-orthogonal)→app.py auto-merge, route_snapshot 충돌→골든 재생성(179→188). make test 전체 통과·route-parity 188.
 - CHG-20260630-0018: §18.8 ship-gate 패널(GO·blocking 0) 후속 주석 정정(WEB_TRUSTED_PROXIES fail-loud 순서 low + stale line-num). 코드 무변(주석-only).
-- 총 변경 횟수: 24
+- CHG-20260701-0001: 배포 hotfix — 컨테이너 로드(uvicorn web.app:app) 시 추출 모듈 import 실패(ModuleNotFoundError: web_context) 수정. app.py 상단 sys.path append(insert 금지=modules shadow) + app alias. blue-green healthz 게이트가 배포 중 적발(web-b OLD 서빙→프로덕션 무영향). 컨테이너 실기동 검증+make test 575 pass. test-gap: make test/§18.8 이 top-level PYTHONPATH 만 써서 놓침.
+- 총 변경 횟수: 25
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

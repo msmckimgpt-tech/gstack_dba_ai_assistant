@@ -281,3 +281,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - route-shadowing 차원: 14 추출 라우트 끝-이동 + main 신규 9 라우트 상호작용 점검 → shadow 신규 0. auth-rbac-e2e: DI 전환 핸들러 401/403/500 우선순위·dependency_overrides 경로 보존, 이연 pre-auth gate 핸들러 app.py 잔류 정상. merge-integration: main 신규 9 라우트 온전·중복 0.
 - 브라우저 QA 필수 시나리오(패널 권고): 미인증 401 verbatim·로그인 세션쿠키·RBAC 403(admin_usage/admin_conversations)·추출 라우트 14 실호출(media 이미지·static_pages /healthz·/share)·conn실패 500. 배포 후 healthz(edge 200=router include 라이브 증명)+soak+rollback 인지.
 - 결정적 검증: §18.8 GO + make test 575/0 + route-parity 188 + py_compile OK. ship 진행 가능.
+
+## REV-20260701-0001 [AGENT-TEAM:p5b-deploy-import-hotfix-self-review]
+- Related Change: CHG-20260701-0001 (컨테이너 로드 import 실패 hotfix)
+- §18.8 Adversarial Panel: **SELF+컨테이너 실기동 검증.** 배포 healthz 게이트가 web-a crash-loop(ModuleNotFoundError: web_context)를 적발 → 근본원인(test PYTHONPATH top-level vs 컨테이너 web.app 패키지 로드 불일치) 진단 → 수정 → **실제 uvicorn web.app:app 로 재현·검증**(단순 make test 재실행이 아니라, 놓친 환경 자체를 재현).
+- 진단 경로(결정적): (1) web-a 로그 = app.py:63 `from web_context import` ModuleNotFoundError. (2) 컨테이너 uvicorn = WORKDIR /app, sys.path[0]='' → /app 만 → top-level web_context/routers 불가. (3) 1차 수정 insert(0,/app/web) → 새 실패 `modules.memory` ModuleNotFoundError → /app/web/modules(web) 가 /app/modules(core) 를 shadow 발견. (4) 최종 수정 append(/app/web) → core modules('' 우선) 보존 + web_context/routers(append) resolve + app alias(routers from app import 중복 방지).
+- 검증(컨테이너 실기동, mysql-ai-web:24dd588 + 수정 app.py 마운트): `uvicorn web.app:app` → Application startup complete(import 해소). healthz git_commit=24dd588(추출 static_pages router 동작). /api/session 200(미인증). /api/avatars/1(media)·/api/admin/usage(admin_usage) → 라우팅 정상 + DI conn-fail 500 "db connection failed" byte-동치. (503/500 은 테스트 컨테이너 DB 미연결 탓, 실배포는 .env+DB로 정상.)
+- 회귀: make test 575 passed/0 fail·route drift 0·route-parity 188(테스트 환경 무영향 — append 는 이미-on-path 라 guard skip, alias 는 test 에서 no-op). py_compile OK.
+- 학습(중요): **추출 모듈은 컨테이너 로드 방식(web.app 패키지)으로도 import 검증 필요.** make test/§18.8 이 top-level PYTHONPATH 만 써서 이 클래스를 놓침 → blue-green healthz 게이트가 최종 안전망(프로덕션 무영향 abort). CI 에 web.app-스타일 import smoke 추가가 근본 대책.

@@ -60,7 +60,9 @@ source_of_truth: true
   - [x] **origin/main 100-commit 통합 머지**(배포 선결): main app.py +720 additive 신규 9 라우트, auth helper 무변(auth-orthogonal) → app.py auto-merge, route_snapshot 만 충돌→골든 재생성(179→188). make test 전체 통과·route-parity 188(CHG/REV-0017).
   - [x] **§18.8 ship-gate 적대 패널**(ultracode workflow, 14 agents): **판정 GO, ship-blocking 0**. 확정 6(low 1+info 5) 전부 non-blocking. make test 575 passed/0 fail·route-parity 188·byte-동치 계약 무손상·web_context INVARIANT 유지 직접 재현. low finding(WEB_TRUSTED_PROXIES fail-loud 순서 주석) 정정(CHG/REV-0018).
   - [ ] **브라우저 로그인 QA**(win-browser.py bridge OK): 미인증 401 verbatim·로그인 세션쿠키·RBAC 403(admin_usage/admin_conversations)·추출 라우트 14 실호출·conn실패 500. **라이브 자격증명 필요(사용자 confirm).**
-  - [ ] **PR 생성 + main 머지 + 프로덕션 배포**(bin/deploy-web.sh blue-green, healthz-gated, rollback): **외부영향·비가역 → 사용자 명시 confirm 필요.** 배포 후 edge healthz 200(router include 라이브 증명)+soak+인증 smoke.
+  - [x] **PR #485 생성 + CI test PASS + main 머지**(merge commit 24dd588). 이후 main 재전진 재머지.
+  - [x] **배포 hotfix**: 프로덕션 배포 중 blue-green healthz 게이트가 컨테이너 로드 import 실패(web_context ModuleNotFoundError, test PYTHONPATH vs uvicorn web.app 패키지 불일치) 적발 → app.py sys.path append + app alias 수정. 컨테이너 실기동+make test 검증(CHG/REV-20260701-0001). web-b OLD 서빙 유지로 프로덕션 무영향.
+  - [ ] **프로덕션 재배포**(hotfix 반영 후 bin/deploy-web.sh) + edge healthz 200 + 인증 smoke + 브라우저 QA(자격증명).
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
 
 ## 4. In Progress
