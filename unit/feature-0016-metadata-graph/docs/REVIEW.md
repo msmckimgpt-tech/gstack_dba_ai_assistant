@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T180000-ai-claude-feature-0016-graphux5-panelmove [SUBAGENT: panelmove-frontend-layout] — 진행 패널 우측 이동 + 세션 독립 진행 표시
+- Related Change: graphux5-panelmove (진행 패널을 상단 바 → 우측 상세 aside 상단 이동, detailBody 분리) + 세션 독립 진행 폴링(사용자 후속 이슈: 다른 탭/새로고침 시 진행률·패널·마커 누락).
+- 방식: §18.8 집중 프론트 리뷰(Explore) — 6개 결함 카테고리(aside wipe·패널 id·AI 버튼 바인딩·aria-live·토글·레이아웃) 점검.
+- 결과: 레이아웃 이동 부분 **CLEAN**(6/6 무결 — 진행 패널 aside 내 정확 타깃, 노드상세만 detailBody 교체, aria-live 정정, 토글이 진행+상세 동시 숨김, clamp+overflow 정상).
+- 후속 이슈 수정(세션 독립): `_metaGraphLoadNodeAnalysis` 가 pending/running 노드의 run_id 로 폴링을 자동 재개(activeRunId 미설정 세션도 진행 패널·마커·진행률 표시). 상세는 사용자 라이브 검증 시.
+- Verdict: PASS — 레이아웃 결함 0. 세션독립 수정 후 재검증.
+- Human Approval Needed: 없음(프론트 전용·비파괴). 배포 deploy_scope: included.
+
 ## REV-20260701T160000-ai-claude-feature-0016-graphux5-progress [AGENT-TEAM: PASS] — AI 능동 분석 진행 현황 라이브 패널 적대 리뷰
 - Related Change: graphux5-progress (get_run_status jobs/running_keys + 진행 패널 `_metaGraphRenderProgress` 라이브·상세 + 분석중 주황 마커).
 - 방식: §18.8 적대 패널 — Workflow 2렌즈(backend/frontend) 병렬 → 발견 8건 → 발견별 적대 검증 → 확정 7건.
