@@ -202,3 +202,12 @@ source_of_truth: true
 - [x] T11.4 실측(라이브 인젝션): 128노드(신규127) 덴스 확장 seed 겹침쌍 502 → relax 후 **0**, fcose 68ms.
 - [x] T11.5 앵커 컬럼 스택 보존 확인(UniqueID→Type→Title→DLC, dx54·dy 55/85/115/145, round-taxi).
 - [ ] T11.6 적대 리뷰 + verify-completion + 배포(web) + PB-0008 라이브 최종 시각검증.
+
+## 12. graphux5-progress — AI 능동 분석 진행 현황 화면 라이브·상세 (2026-07-01)
+
+사용자 요청: AI 능동 분석 현황을 **화면에 갱신** + 단순 비율(%) 대신 **어떤 항목이 어느 정도 분석됐는지 상세** 출력. 등급 Major(2+파일, 비파괴 additive UI + 응답 필드).
+- [x] T12.1 `node_analysis.get_run_status` — 노드별 `jobs[]`(label/name/status/depth) + `running_keys` 추가(cap 400, 분석중→완료→깊이 정렬). 엔드포인트 `JSONResponse(st)` 통과라 API 무변경.
+- [x] T12.2 `admin.js` — 지속 진행 패널 `_metaGraphRenderProgress`(노드 선택 무관 라이브, 진행바+완료/분석중/대기/실패 카운트+항목별 상세 리스트 한글 라벨/아이콘/깊이) + `_metaGraphMarkRunning`(분석중 주황 점선) + 폴 틱마다 갱신 + 시작 시 패널 표시 + 닫기(run 별 dismiss).
+- [x] T12.3 `admin.html` 진행 패널 컨테이너 + "AI 분석 중" 범례 + 캐시버스터. `styles.css` 패널/마커 스타일.
+- [x] T12.4 py_compile + node --check PASS.
+- [ ] T12.5 적대 리뷰(backend/frontend) + verify-completion + 배포 + PB-0008 라이브 검증.
