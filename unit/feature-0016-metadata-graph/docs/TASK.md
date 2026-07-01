@@ -88,3 +88,52 @@ source_of_truth: true
 - R2: 커스텀 이미지 cutover 가 무중단 배포(feature-0014)와 충돌 → Phase 5 게이트에서 정합·롤백 필수.
 - R3: 8K 노드 그래프 UI 성능 → 검색/이웃 스코프로 제한(전체 렌더 금지).
 - R4: FK 미선언으로 엣지 희소 → 대화 학습·LLM 추론으로 점진 보강(엣지 0 이어도 노드 그래프는 가치).
+
+## 9. Phase 6 — graphux5 그래프뷰 UX 개선 cycle (2026-07-01, entry persona dispatch)
+
+사용자 요청 4건. 등급 **Major**(외부 LLM 비용 + 백그라운드 인프라 + 신규 테이블). 사용자 결정 3건
+(2026-07-01 AskUserQuestion): ① AI 재귀 = **경계 있는 재귀**(depth/node 예산 + visited dedupe),
+② 미분석 노드 컬럼 = **즉석 introspection**, ③ 검색 유사도 = **백엔드 pg_trgm 실측**.
+
+### 6.1 항목1 — 검색 유사도 명시 척도 ✅
+- [x] `modules/metadata_graph.py::search_nodes` — Cypher CONTAINS 후보에 **pg_trgm similarity()** 를
+      1왕복 계산(파라미터 바인딩) → `score`(0~1) 부여 + score DESC 정렬. 엔드포인트가 node dict 그대로
+      통과하므로 API 변경 불필요.
+- [x] `static/admin.js` — 노드 라벨에 유사도 %(relLabel) 표시 + 상세 헤더 유사도 배지 + 범례 갱신.
+      백엔드 score 우선, 부재 시 클라 휴리스틱 폴백.
+
+### 6.2 항목2 — AI 능동 분석(재귀·백그라운드) ✅
+- [x] alembic **0026** `node_analysis_runs`/`node_analysis_jobs`(비파괴 추가, GRANT, set_updated_at).
+- [x] `modules/node_analysis.py`(신규) — enqueue_analysis(run+루트 잡) / process_pending(claim
+      `FOR UPDATE SKIP LOCKED` → llm_node_analysis → 저장 → 이웃 재큐, **depth/node 예산 캡 + dedupe**) /
+      get_run_status / get_node_analysis. 경계: `AGENT_NODE_ANALYSIS_*` config.
+- [x] `modules/llm.py::llm_node_analysis` + `NODE_ANALYSIS_PROMPT`(table_insight 동형).
+- [x] `modules/insight.py::run_insight_cycle` — 틱마다 `process_pending()` 훅(자체 PG + SKIP LOCKED,
+      advisory lock/readback 무관, 실패 삼킴). 부하 분산 = 틱당 `BATCH_PER_TICK`.
+- [x] API: `POST/GET /api/admin/metadata/graph/analyze`(+`/node`) — RBAC kb.ingest.manual, 202 + 폴링.
+- [x] `static/admin.js` — 상세 패널 "✨ 능동 분석" 버튼 + run 폴링 + 진행/결과 렌더 + 완료 노드 보라 마커.
+
+### 6.3 항목3 — 미분석 노드 더블클릭 컬럼 미전개 ✅ (검토결론: 투영 아티팩트 + UX 결함)
+- 원인: AGE 그래프는 SSOT(column_descriptions) 투영이라 컬럼 미큐레이션 테이블은 Column 노드 부재 →
+  더블클릭 시 silent no-op.
+- [x] `GET /api/admin/metadata/graph/columns` — 데이터소스 information_schema **즉석 introspection**
+      (dialect.describe_columns, MSSQL 은 DB 카탈로그 연결), Column 노드+HAS_COLUMN 반환(그래프 미저장).
+      실패 시 introspected=False+reason(명확 피드백, silent 금지).
+- [x] `static/admin.js::_metaGraphExpand` — Table 인데 그래프에 컬럼 없으면 즉석조회 병합 → 항상 펼침.
+
+### 6.4 항목4 — 이웃 깊이 드롭다운 미갱신 ✅ (검토결론: 버그)
+- 원인: `#metadataGraphDepth` 에 change 리스너 부재 — 더블클릭 시에만 값 read.
+- [x] `static/admin.js` — change 리스너 추가 → 현재 선택/최근 상세 노드를 새 깊이로 재전개.
+
+### 6.5 검증
+- [x] py_compile(config/metadata_graph/node_analysis/llm/insight/0026/app.py) + node --check admin.js PASS.
+- [ ] 적대 리뷰 패널(backend/security/qa/ux/frontend) — diff 대상.
+- [ ] `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph`.
+- [ ] PB-0008 Windows 브라우저 시각검증(visual_verification_scope: always) — 그래프뷰 4항목 라이브.
+- [ ] 배포 시 **alembic upgrade head**(0026 적용) + web 재빌드(deploy_scope: included).
+
+### 6.6 변경 파일
+- backend: `shared/config.py`, `unit/feature-0002-agent-core/src/modules/{metadata_graph,node_analysis,llm,insight}.py`,
+  `unit/feature-0002-agent-core/alembic/versions/20260701_0026_node_analysis.py`,
+  `unit/feature-0003-agent-web-ui/src/app.py`.
+- frontend: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`.

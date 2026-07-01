@@ -823,6 +823,21 @@ Output (JSON only):
 }""".strip()
 
 
+NODE_ANALYSIS_PROMPT = """You are a metadata knowledge-graph analyst for a game-service database platform. A user opened the admin graph view and asked the AI to actively analyze one node (a Table, Column, Schema, or business GlossaryTerm) together with its related neighbors. Return JSON only — no markdown, no explanation.
+
+You are given the focus node and its immediate graph neighbors (columns, referenced tables/columns, related glossary terms). Reason about what this node represents in the game-operations domain, how it connects to its neighbors, and how an operator/analyst would use it. Be concrete but do NOT invent columns or relationships not present in the input. Write the prose in Korean.
+
+Input JSON: { "label": "Table|Column|Schema|GlossaryTerm", "name": "...", "fqn": "...", "description": "...", "scope_key": "...", "neighbors": { "columns": [...], "references": [...], "related_terms": [...], "other": [...] } }
+
+Output (JSON only):
+{
+  "summary": "Korean 1-2 sentences — 이 노드가 무엇을 담고/의미하고, 도메인상 역할",
+  "relationships": "Korean 1-2 sentences — 이웃(컬럼/참조/관련용어)과 어떻게 연결되는지. 이웃 정보가 없으면 '연결 정보 없음'",
+  "usage": "Korean 1 sentence — 운영/분석에서 이 노드를 어떻게 조회·활용하는지",
+  "caveats": "Korean, 있으면 데이터 품질/민감정보/주의점 1문장, 없으면 빈 문자열"
+}""".strip()
+
+
 OBJECT_RESOLVE_PROMPT = """
 You are a database object resolver.
 Choose the single best table candidate for the user's request from the provided candidates only.
@@ -1447,6 +1462,46 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(obj, dict):
         _log_llm_warn(
             "llm_account_insight",
+            "json_extract_failed",
+            f"model={_insight_model} len={len(text)} head={text[:200]}",
+        )
+        return None
+    return obj
+
+
+def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """feature-0016 graphux5: 그래프 노드 1개 + 이웃을 능동 분석한다(재귀 워커가 노드마다 호출).
+
+    schema/table insight 와 동일 티어 라우팅·예외·JSON 추출. 반환 dict
+    `{"summary","relationships","usage","caveats"}` 또는 None(실패). 호출측(node_analysis.py)이
+    None 을 status='failed' 로 기록하고 재귀는 계속한다(1개 실패가 run 전체를 막지 않음)."""
+    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
+    if client is None:
+        return None
+    try:
+        resp = client.chat.completions.create(
+            model=_insight_model,
+            messages=[
+                {"role": "system", "content": NODE_ANALYSIS_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            **_max_tokens_kwargs(_insight_model, "insight"),
+            **_temperature_kwargs(_insight_model),
+            timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
+        )
+        _record_llm_usage(_insight_model, "node_analysis", resp)
+        text = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:
+        _log_llm_warn("llm_node_analysis", "exception", str(exc))
+        return None
+    if not text:
+        _log_llm_warn("llm_node_analysis", "empty_response", f"model={_insight_model}")
+        return None
+    obj = _extract_json_object(text)
+    if not isinstance(obj, dict):
+        _log_llm_warn(
+            "llm_node_analysis",
             "json_extract_failed",
             f"model={_insight_model} len={len(text)} head={text[:200]}",
         )

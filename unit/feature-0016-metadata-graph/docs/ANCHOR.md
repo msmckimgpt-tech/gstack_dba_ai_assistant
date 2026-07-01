@@ -39,5 +39,4 @@ Apache AGE 그래프 DB 를 도입하지?" → 라이브 데이터 검토 결과
 
 ## §4. 외부 검증 로그 (append-only)
 
-(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. A3 결정 근거는 RFC 아티팩트 v2 + 라이브
-데이터 조회 기록 참조. 운영 cutover milestone 시 human 검증 권장.)
+(엔트리 없음 — 일반 TASK cycle 완료 조건 아님. A3 결정 근거는 RFC 아티팩트 v2 + 라이브 데이터 조회 기록 참조; 운영 cutover milestone 시 human 검증 권장. graphux5 UX cycle 은 AGE 도입 결정 재검증이 아니라 그래프뷰 표면 개선이며, 코드 적대 리뷰·라이브 검증 계획은 TASK.md §9(Phase 6) 참조.)

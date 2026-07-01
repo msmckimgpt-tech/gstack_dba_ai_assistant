@@ -401,6 +401,27 @@ def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=Non
             f"MATCH (n) WHERE (toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql}){scope_clause} "
             f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source LIMIT {limit}", 6)
         out = [_node_dict(r) for r in rows]
+        # feature-0016 graphux5: pg_trgm 실측 유사도 점수(검색어 대비) 부여 + 내림차순 정렬.
+        #   Cypher CONTAINS 로 얻은 후보의 name/fqn 에 pg_trgm similarity() 를 1왕복으로 계산해 score(0~1)
+        #   를 각 노드에 실어 UI 가 "검색어와 얼마나 유사한지"를 명시 표시하게 한다(요청 항목1). 값은 전부
+        #   파라미터 바인딩(injection-safe). pg_trgm 부재/실패 시 score 없이 원순서 반환(graceful).
+        if out:
+            try:
+                rows_sql, vparams = [], []
+                for i, nd in enumerate(out):
+                    rows_sql.append("(%s::int, %s, %s)")
+                    vparams.extend([i, nd.get("name") or "", nd.get("fqn") or ""])
+                cur.execute(
+                    "SELECT x.i, GREATEST(similarity(lower(x.nm), lower(%s)), "
+                    "                     similarity(lower(x.fq), lower(%s))) AS score "
+                    "FROM (VALUES " + ",".join(rows_sql) + ") AS x(i, nm, fq)",
+                    tuple([query, query] + vparams))
+                smap = {int(r[0]): float(r[1]) for r in cur.fetchall()}
+                for i, nd in enumerate(out):
+                    nd["score"] = round(smap.get(i, 0.0), 4)
+                out.sort(key=lambda n: (n.get("score") or 0.0), reverse=True)
+            except Exception as exc:
+                _log.debug("search_nodes_score_failed err=%r", exc)
         cur.close()
     except Exception as exc:
         _log.debug("search_nodes_failed err=%r", exc)

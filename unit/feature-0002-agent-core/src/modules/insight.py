@@ -1914,6 +1914,17 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             lock_name,
             timeout_sec=max(0, int(AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC)),
         )
+        # feature-0016 graphux5: 그래프 노드 AI 능동 분석 잡 처리(백그라운드 부하 분산 — 틱당 소량).
+        #   자체 agent_kb PG 연결 + FOR UPDATE SKIP LOCKED claim 이라 advisory lock/source-DB readback
+        #   상태와 무관하게 매 틱 수행한다(pending 잡 없으면 즉시 no-op). 실패는 삼켜 insight cycle 을
+        #   막지 않는다(코어 비차단). 관리콘솔에서 "AI 능동 분석" 트리거 시에만 잡이 생긴다.
+        try:
+            from modules import node_analysis as _node_analysis
+            _na_rep = _node_analysis.process_pending()
+            if _na_rep.get("claimed"):
+                scan_report["node_analysis"] = _na_rep
+        except Exception:
+            logging.getLogger("insight").warning("node_analysis process_pending 실패", exc_info=True)
         if not lock_acquired:
             status = "skip_locked"
         elif _insight_readback_degraded():
