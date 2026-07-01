@@ -387,3 +387,14 @@ source_of_truth: true
 - Impact: **app.py 28,610 → 28,350 줄(~260↓).** make test 전체 통과·0 fail·route drift 0, route-parity 188(set 불변), py_compile OK. behavior-neutral.
 - 학습: app.X whitelist 는 **non-_ app 함수(record_audit_event 등)도 포함** 필요(도출 시 `_`한정하면 누락). 테스트 전환은 getsource/hasattr/직접호출/`_import_app` 헬퍼 등 모든 참조 스타일 처리. make test 가 누락 안전망.
 - Rollback Notes: revert(2 router 삭제 + app.py 6 복원 + 테스트·골든 복원).
+
+## CHG-20260701-0004
+- Date: 2026-07-01
+- Related Requirement: P5b Final router 추출 #8(batch 3) — admin_console 도메인 5 완전-DI 핸들러.
+- Summary:
+  관리 콘솔 메타 5 핸들러(admin_me·admin_permissions·admin_list_available_databases·admin_overview·admin_health_attachment_grants, require_permission RP) → `src/routers/admin_console.py`(AST 경계). app.X rewrite(`_`헬퍼/상수 19 + DI seam; non-_ 함수 없음), stdlib `import logging`+`from datetime import datetime`(admin_health 의 datetime.utcnow — 클래스라 from-import). 동반 테스트: test_llm_usage_quota(getsource app.admin_me→admin_console) + test_dashboard_overview(직접호출 6 app.admin_overview→admin_console + import).
+  - 골든 188→**192**: main feature-0016 이 graph/analyze 4 라우트 추가(내 추출 무관, removed=[]로 admin_console 5 라우트 set-보존) → 골든 재생성으로 흡수.
+- Files: src/routers/admin_console.py(신규), src/app.py(5 제거 + include_router), tests/{test_llm_usage_quota,test_dashboard_overview}.py(전환), tests/route_snapshot_p5b.json(골든 192) + docs.
+- Impact: **app.py 28,559→28,410 줄.** make test 전체 통과·0 fail·route drift 0, route-parity 192, py_compile OK. behavior-neutral.
+- 학습: datetime 은 사용 형태 확인 필요(datetime.utcnow=클래스→`from datetime import datetime`, module 아님). main 신규 라우트로 골든 set 변경 시 무조건 재생성(내 추출은 removed=[] 로 set-neutral 확인 후).
+- Rollback: revert(admin_console.py 삭제 + app.py 5 복원 + 테스트·골든 복원).
