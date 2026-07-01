@@ -36,9 +36,9 @@ def test_access_helpers_include_membership():
 
 def test_member_endpoints_registered():
     # GET roster + DELETE leave/remove 유지. POST 초대는 제거(공유 링크 join 으로 일원화).
-    assert '@app.get("/api/conversations/{cid}/members")' in APP
-    assert '@app.delete("/api/conversations/{cid}/members/{account_id}")' in APP
-    assert '@app.post("/api/conversations/{cid}/members")' not in APP
+    assert '@app.get("/api/conversations/{cid}/members")' in APP_ALL or '@router.get("/api/conversations/{cid}/members")' in APP_ALL
+    assert '@app.delete("/api/conversations/{cid}/members/{account_id}")' in APP_ALL or '@router.delete("/api/conversations/{cid}/members/{account_id}")' in APP_ALL
+    assert '@app.post("/api/conversations/{cid}/members")' not in APP_ALL and '@router.post("/api/conversations/{cid}/members")' not in APP_ALL
 
 
 def test_share_join_endpoint_registered():
@@ -49,20 +49,20 @@ def test_share_join_endpoint_registered():
 
 def test_member_manage_permission_and_audit():
     # 권한은 DELETE(타인 제거)에 여전히 사용. 초대(member.add) audit 은 제거됨.
-    assert '"code": "conversation.member.manage"' in APP
-    assert 'action="conversation.member.remove"' in APP
-    assert 'action="conversation.member.add"' not in APP
+    assert '"code": "conversation.member.manage"' in APP_ALL
+    assert 'action="conversation.member.remove"' in APP_ALL
+    assert 'action="conversation.member.add"' not in APP_ALL
 
 
 def test_owner_cannot_be_removed_guard():
     # 소유자 멤버 제거 차단(409) 가드 존재.
-    assert "대화 소유자는 멤버에서 제거할 수 없습니다." in APP
+    assert "대화 소유자는 멤버에서 제거할 수 없습니다." in APP_ALL
 
 
 def test_share_joinable_column_and_default_on():
     # Joinable 컬럼 + 기본 ON(명시 false 일 때만 OFF).
-    assert "ADD COLUMN Joinable TINYINT(1) NOT NULL DEFAULT 1" in APP
-    assert 'joinable = 0 if (data.get("joinable") is False) else 1' in APP
+    assert "ADD COLUMN Joinable TINYINT(1) NOT NULL DEFAULT 1" in APP_ALL
+    assert 'joinable = 0 if (data.get("joinable") is False) else 1' in APP_ALL
 
 
 def test_permission_nested_under_list_gate_in_admin_js():
