@@ -1422,4 +1422,5 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **대시보드**: `_dash_widget_ai_ops`(`_DASHBOARD_WIDGETS` ai_ops) — 종합 상태 요약 타일, 클릭 시 `tab='ai-ops'` deep-link. 축 로직은 `routers.ai_ops` lazy import 재사용(순환 회피).
 - **프론트**: 감사 그룹 탭 `data-admin-tab="ai-ops"` + pane(#aiOpsBody) + `renderAiOps`(배너/축/KPI/Attention/카테고리 테이블/활동 feed/커버리지, 전부 인라인 스타일·esc). cache-buster css/js `?v=20260702-ai-ops`.
 - 계측 커버리지 한계(정직): 임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 필드 부재 → 구조적 계측 불가(패널 각주 명시). cost 는 read-time 계산(단가표 web 전용, DB 컬럼 미추가). 워커 프로세스 latency 는 web 배포로 미반영(후속 워커 재빌드).
-- Verification: `tests/test_ai_ops.py` 10/10 + 회귀 PASS. REV-20260702-aiops-panel. PB-0008= TEST.md.
+- Verification: `tests/test_ai_ops.py` 10/10 + 회귀 PASS. REV-20260702T140000-aiops-panel. PB-0008= TEST.md.
+- Route-parity: 신규 `GET /api/admin/ai-ops` 1개 추가로 route-parity 골든(`tests/route_snapshot_p5b.json`) **193→194** 갱신(origin/main #525 머지 후 머지된 앱 기준 재생성). `test_route_parity_p5b.py` PASS.
