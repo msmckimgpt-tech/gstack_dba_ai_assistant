@@ -63,6 +63,34 @@ def main() -> int:
     assert "dbo.customers.id" in fqns, f"nb 2-hop missing: {fqns}"
     assert "REFERENCES" in etypes, f"nb REFERENCES missing: {etypes}"
 
+    # ── 검증 4b (graphux4 raw-graphid 재작성): 엣지 방향 보존 ──
+    # neighborhood 는 start_id=source·end_id=target 로 물리 저장 방향을 유지해야 한다. 라벨로 검증
+    # (HAS_COLUMN=Table→Column, REFERENCES=Column→Column FK 방향). 무방향 -[r]- 프론티어 역전 회귀 방지.
+    lblof = {n["key"]: n["label"] for n in nb["nodes"]}
+    for e in nb["edges"]:
+        if e["type"] == "HAS_COLUMN":
+            assert lblof.get(e["source"]) == "Table" and lblof.get(e["target"]) == "Column", \
+                f"HAS_COLUMN 방향(Table→Column) 위반: {e}"
+        if e["type"] == "REFERENCES":
+            assert lblof.get(e["source"]) == "Column" and lblof.get(e["target"]) == "Column", \
+                f"REFERENCES 방향(Column→Column) 위반: {e}"
+
+    # ── 검증 4c: 자식(Column) 노드에서 시작해도 방향 보존 + 역중복 0 ──
+    nbc = mg.neighborhood("ds1:dbo.orders.customer_id", depth=2, conn=conn)
+    lblc = {n["key"]: n["label"] for n in nbc["nodes"]}
+    hc2 = [e for e in nbc["edges"] if e["type"] == "HAS_COLUMN"]
+    assert hc2, f"자식시작 HAS_COLUMN 없음: {nbc['edges']}"
+    for e in hc2:
+        assert lblc.get(e["source"]) == "Table" and lblc.get(e["target"]) == "Column", \
+            f"자식시작 HAS_COLUMN 역전: {e}"
+    seen_e = set(); dups = []
+    for e in nbc["edges"]:
+        k = (e["source"], e["type"], e["target"])
+        if k in seen_e:
+            dups.append(k)
+        seen_e.add(k)
+    assert not dups, f"역중복 엣지(양끝점 프론티어): {dups}"
+
     # ── 검증 5: 멱등 — orders Table 노드 정확히 1개 ──
     cnt = mg._cypher(cur, "MATCH (t:Table {fqn:'dbo.orders'}) RETURN t.key", 1)
     assert len(cnt) == 1, f"orders Table duplicated: {len(cnt)}"

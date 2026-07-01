@@ -186,3 +186,23 @@ HAS_TABLE 엣지·검색 scope·**큐레이션 설명 보존**(rag 투영 무덮
 - **클릭 동작 분리**(admin.js): 단일 클릭 = `_metaGraphShowDetail`(depth=1 상세 카드만, 그래프 유지),
   더블 클릭 = `_metaGraphExpand`(이웃 그래프 확장/전환, 기존 단일클릭 동작). cytoscape 코어에 dbltap
   부재 → 350ms 윈도우 수동 감지. 힌트/주석/캐시버스터(graphux3) 갱신. node --check·py_compile OK.
+
+### 더블클릭 확장 속도 — graphux4 (2026-07-01, ultracode 3축 조사→적대검증)
+사용자 보고 "더블클릭 연결관계 펼치는 속도 느림". 3축 병렬 조사 + 적대 검증(회귀·정합·UX 렌즈)으로 진단:
+- **지배 병목=클라이언트 레이아웃**: `_metaGraphLayout` 이 확장마다 fcose `randomize:true`·`quality:proof`·
+  `numIter 2500`·`animate 1000ms`·`fit:true` 로 **전체 병합 그래프(루트+신규)를 spectral 재초기화**→기존 노드까지
+  재배치·뷰포트 점프(벤더 fcose: `PURE_INCREMENTAL=!randomize`). **수정**: 확장 전용 증분 경로 — 기존 노드
+  `fixedNodeConstraint` 고정 + `randomize:false`·`quality:default`·`numIter 400`·`animate 450ms`·`fit:false`,
+  신규 노드는 앵커 근처 seed 후 신규 영역으로만 카메라 이동. **초기 로드/검색은 불변**(좌표 없는 재구축이라
+  randomize:true 필수 — 검증 blocker: randomize:false 전역화 시 원점 뭉침).
+- **서버 쿼리(부차)**: Cypher `MATCH (a)-[r]-(b) WHERE a.key IN [...]` 는 GIN 미활용 Seq Scan(332ms/hop),
+  startNode/endNode 방향보존은 3.5x 악화, UNWIND `{key:k}`(변수 containment)는 hang — 실측 확인. **AGE 플래너
+  우회 raw graphid id-bound SQL** 로 재작성: key→graphid(`@>` GIN, 파라미터화 injection-safe) → 엣지 라벨
+  `start_id/end_id=ANY`(btree) → vertex 라벨 `id=ANY`(pk), UNION ALL 로 왕복 축약. depth2 660→~208ms(3x).
+  **방향 버그 동시 해결**: 무방향 -[r]- 이 프론티어 기준 source/target 을 뒤집어 화살표 역전·역중복 엣지를
+  만들던 잠재 버그를, start_id=source·end_id=target(물리 방향)+방향정규화 dedup 으로 제거. `ag_label` 앱 role
+  권한 없음 → 라벨명은 `_VLABELS`/`_ELABELS` 상수 순회(gid 는 정확히 한 라벨 테이블 소속). 회귀 테스트 추가
+  (Table·Column 시작 방향 보존 + 역중복 0). 컬럼 보유 테이블은 depth1 에 컬럼 노출(상세카드 개선).
+- **범위 밖(별도 이슈로 보고)**: 형제 테이블 edge-type 필터 제거는 **미채택** — HAS_TABLE 은 이미 비가시
+  (compound), 제거 시 노드만 사라지고 컬럼 미투영 99% 테이블 확장이 텅 빔("느림"→"빈 결과"). 데이터 완전성
+  갭(REFERENCES=0, HAS_COLUMN 커버 0.78%)은 FK/컬럼 introspect 파이프라인 후속 initiative 로 분리.

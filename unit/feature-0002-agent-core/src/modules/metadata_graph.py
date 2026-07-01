@@ -469,8 +469,31 @@ def scope_roots(scope: str, limit: int = 200, conn=None) -> dict:
     return result
 
 
+def _node_from_props(label: str, props: dict) -> dict:
+    """라벨 테이블 properties(dict) → 노드 dict. _node_dict 와 동일 shape."""
+    return {"label": label, "key": props.get("key"), "name": props.get("name"),
+            "fqn": props.get("fqn"), "description": props.get("description"),
+            "source": props.get("source")}
+
+
+def _gid_array(gids) -> str:
+    """graphid 정수 목록 → `ARRAY['<int>'::ag_catalog.graphid, ...]` SQL 리터럴.
+    gids 는 전부 DB 에서 온 정수라 int() 검증만으로 injection-safe(문자열 보간 없음)."""
+    return "ARRAY[" + ", ".join(f"'{int(g)}'::ag_catalog.graphid" for g in gids) + "]"
+
+
 def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
-    """node_key 중심 k-hop 이웃 {nodes, edges}. Python BFS + node cap(8K 규모 보호)."""
+    """node_key 중심 k-hop 이웃 {nodes, edges}. 방향 보존 BFS + node cap(8K 규모 보호).
+
+    **성능**: Cypher `MATCH (a)-[r]-(b) WHERE a.key IN [...]` 는 GIN 미활용(vertex 라벨 전체
+    Seq Scan, 측정 332ms/hop) + startNode/endNode 방향보존 시 3.5x 악화 + UNWIND `{key:k}`(변수
+    containment)는 GIN 미계획으로 hang. 그래서 AGE Cypher 플래너를 우회한 **raw graphid id-bound
+    SQL** 로 재작성: (1) key→graphid = `properties @> {"key":..}`(GIN, 파라미터화 injection-safe),
+    (2) 이웃 = 엣지 라벨 테이블 `start_id/end_id = ANY(frontier)`(ix_mkb_*_start/end btree),
+    (3) 해소 = vertex 라벨 테이블 `id = ANY(gids)`(pk). 측정 45ms(112엣지) vs Cypher 332ms.
+    **방향**: start_id=source, end_id=target 로 물리적 저장 방향 보존(무방향 -[r]- 의 프론티어 기준
+    역전·역중복 버그 제거). ag_catalog.ag_label 은 앱 role 권한 없음 → 라벨명은 _VLABELS/_ELABELS
+    상수로 순회(gid 는 정확히 한 라벨 테이블에만 속함)."""
     result = {"nodes": [], "edges": []}
     if not node_key:
         return result
@@ -481,40 +504,77 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
     try:
         cur = c.cursor()
         _set_age_path(cur)
-        seen_nodes = {}
-        # 시작 노드
-        srows = _cypher(cur,
-            f"MATCH (n {{key: {_cq(node_key)}}}) "
-            f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source LIMIT 1", 6)
-        for r in srows:
-            d = _node_dict(r)
-            seen_nodes[d["key"]] = d
-        frontier = list(seen_nodes.keys())
+        seen_nodes = {}    # key -> node dict
+        gid2key = {}       # graphid(int) -> key
+        vlabels = sorted(_VLABELS)   # 결정적 순서
+        elabels = sorted(_ELABELS)
+        # (1) 시작 노드: vertex 라벨 UNION ALL 을 GIN containment 로 1왕복 조회(파라미터화 = injection-safe).
+        #     key 는 라벨 전역 유일(ds:db / ds:db.table / ds:db.table.col)이라 최대 1개 매칭.
+        key_param = json.dumps({"key": node_key})
+        start_sql = " UNION ALL ".join(
+            f'SELECT id::text AS gid, properties::text AS props, \'{lbl}\' AS lbl '
+            f'FROM metadata_kb."{lbl}" WHERE properties @> %s::ag_catalog.agtype'
+            for lbl in vlabels) + " LIMIT 1"
+        cur.execute(start_sql, tuple([key_param] * len(vlabels)))
+        srow = cur.fetchone()
+        if not srow:
+            cur.close()
+            return result
+        sg0 = int(srow[0]); sprops = json.loads(srow[1]); slbl = srow[2]
+        skey = sprops.get("key") or node_key
+        seen_nodes[skey] = _node_from_props(slbl, sprops)
+        gid2key[sg0] = skey
+        frontier = [sg0]
         seen_edges = set()
         for _hop in range(depth):
             if not frontier or len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
                 break
-            keys_lit = "[" + ", ".join(_cq(k) for k in frontier) + "]"
-            erows = _cypher(cur,
-                f"MATCH (a)-[r]-(b) WHERE a.key IN {keys_lit} "
-                f"RETURN a.key, type(r), b.key, "
-                f"label(b), b.name, b.fqn, b.description, b.source, r.cardinality, r.source "
-                f"LIMIT {_NEIGHBOR_NODE_CAP}", 10)
+            farr = _gid_array(frontier)
+            # (2) 프론티어에 걸린 엣지를 엣지 라벨 UNION ALL 로 1왕복 수집(방향=start->end 보존).
+            edge_sql = " UNION ALL ".join(
+                f'SELECT start_id::text AS s, end_id::text AS e, properties::text AS p, \'{et}\' AS et '
+                f'FROM metadata_kb."{et}" WHERE start_id = ANY({farr}) OR end_id = ANY({farr})'
+                for et in elabels) + f" LIMIT {_NEIGHBOR_NODE_CAP * 4}"
+            cur.execute(edge_sql)
+            edge_hits = []   # (start_gid, end_gid, etype, cardinality, edge_source)
+            neigh_gids = set()
+            for s, e, pr, et in cur.fetchall():
+                sg = int(s); eg = int(e); ep = json.loads(pr) if pr else {}
+                edge_hits.append((sg, eg, et, ep.get("cardinality"), ep.get("source")))
+                if sg not in gid2key:
+                    neigh_gids.add(sg)
+                if eg not in gid2key:
+                    neigh_gids.add(eg)
+            # (3) 신규 이웃 graphid 해소 — vertex 라벨 UNION ALL 로 1왕복. cap 도달 시 중단.
             next_frontier = []
-            for r in erows:
-                a_key = _unwrap(r[0]); etype = _unwrap(r[1]); b_key = _unwrap(r[2])
-                if not b_key:   # key 없는 노드(M2) — phantom None 노드/엣지 붕괴 방지
+            if neigh_gids:
+                narr = _gid_array(neigh_gids)
+                resolve_sql = " UNION ALL ".join(
+                    f'SELECT id::text AS gid, properties::text AS p, \'{lbl}\' AS lbl '
+                    f'FROM metadata_kb."{lbl}" WHERE id = ANY({narr})'
+                    for lbl in vlabels)
+                cur.execute(resolve_sql)
+                for idt, pt, lbl in cur.fetchall():
+                    if len(seen_nodes) >= _NEIGHBOR_NODE_CAP:
+                        break
+                    g = int(idt); props = json.loads(pt); k = props.get("key")
+                    if not k:
+                        continue
+                    gid2key[g] = k
+                    if k not in seen_nodes:
+                        seen_nodes[k] = _node_from_props(lbl, props)
+                        next_frontier.append(g)
+            # (4) 엣지 빌드 — 양 끝점이 해소된 것만, 방향(source=start,target=end) + dedup.
+            for sg, eg, et, card, esrc in edge_hits:
+                sk = gid2key.get(sg); tk = gid2key.get(eg)
+                if not sk or not tk:   # cap 로 미해소된 이웃과의 엣지는 생략
                     continue
-                if b_key not in seen_nodes and len(seen_nodes) < _NEIGHBOR_NODE_CAP:
-                    seen_nodes[b_key] = {"label": _unwrap(r[3]), "key": b_key,
-                                         "name": _unwrap(r[4]), "fqn": _unwrap(r[5]),
-                                         "description": _unwrap(r[6]), "source": _unwrap(r[7])}
-                    next_frontier.append(b_key)
-                ekey = (a_key, etype, b_key)
-                if ekey not in seen_edges and b_key in seen_nodes:
-                    seen_edges.add(ekey)
-                    result["edges"].append({"source": a_key, "target": b_key, "type": etype,
-                                            "cardinality": _unwrap(r[8]), "edge_source": _unwrap(r[9])})
+                ekey = (sg, et, eg)
+                if ekey in seen_edges:
+                    continue
+                seen_edges.add(ekey)
+                result["edges"].append({"source": sk, "target": tk, "type": et,
+                                        "cardinality": card, "edge_source": esrc})
             frontier = next_frontier
         result["nodes"] = list(seen_nodes.values())
         cur.close()
