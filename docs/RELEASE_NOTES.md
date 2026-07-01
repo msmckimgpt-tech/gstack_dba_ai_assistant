@@ -82,3 +82,24 @@ edit_policy: append-only
 
 ### 검증
 - 격리(main repo .env 재현): positive(EXIT=1+이미지 GIT_COMMIT 라벨 일치+마커 → PASS 양성무시) / negative(존재 안 하는 sha → GIT_COMMIT 빈값 → ABORT). end-to-end 롤링 배포 완주 검증은 머지 후 라이브 단계. 정본: `unit/feature-0017-deploy-build-gate/docs/{FUNCTION,TEST}.md`.
+
+## 2026-07-01 — feature-0016-metadata-graph: 그래프 뷰 진화 (WebGL · 암묵 관계 추론 · AI 능동 분석 · 권한 세분화)
+
+### 변경 (관리자/운영자 영향)
+- **그래프 렌더러 canvas-2D → WebGL 전환** — Cytoscape 3.34.0 `webgl:true`(feature-detect fallback). 노드가 많은 대규모 스키마 그래프에서 확대·이동·펼치기 프레임레이트 근본 개선(실 FPS 는 사용자 하드웨어 의존). 외곽선 선명화(texSize 4096·pixelRatio 2), 이동 중 라벨/엣지 유지.
+- **암묵(FK 미선언) 관계 추론 + 자기교정 엔진** — FK 가 선언되지 않아 declared 엣지가 희소한 데이터소스에서 이름·구조 휴리스틱으로 **추정 관계(`source='inferred'`, 점선)**를 채우고, (a) 성공한 대화 JOIN 관찰 + (b) insight 워커 실데이터 겹침 프로브로 **동적 weight**(정적 confidence 와 분리)를 강화/감쇠. weight≤0.15 broken(숨김·주입 제외), ≥0.85+양성누적 trusted(실선), FK 는 권위적 불변. alembic 0026 비파괴 ADD. 노출: AI context digest(broken 제외·weight 정렬·추정/신뢰 태그)·AGE REFERENCES weight/status 투영·admin UI(신뢰=실선/추정=점선/파단=숨김+범례·배지). 정본 ADR-002.
+- **AI 능동 분석 — 앵커-상대 관련도 게이팅 + 실시간 진행 패널** — 노드 능동 분석 시 처음 선택한 앵커 기준 관련도로 재귀 확장을 게이팅(무관 분기 번짐 억제, alembic 0029 `node_analysis_jobs.relevance`, ADR-003). 진행 현황(완료/분석중/대기/실패)을 우측 패널에 실시간 표시 + 세션 독립 폴 재개.
+- **ERD 카드 컬럼 ordinal 세로배치 + 그래프 UX** — 표(노드)를 펼치면 컬럼이 테이블 compound 박스 안에 실제 순서(ordinal)대로 세로 정렬(겹침 원천 차단, alembic 0027 `column_descriptions.ordinal`). 단일클릭 컬럼 펼침/접힘, 상세 패널 드래그 리사이즈, 접기 버튼, 첫 컬럼명 가림 수정, 노드 드래그 엣지 유지, 클러스터명 WebGL 오버레이 정합 등 다수 개선.
+- **메타데이터 관리 권한 5분할 (B안, Critical, PLAN-APPROVED)** — 단일 `kb.ingest.manual` 우산 권한을 `metadata.{glossary,enum,table,column}.manage` + `metadata.graph.read` 5키로 세분(담당자별 개별 위임). **비파괴·가역**: 우산 권한 유지 + 함의(implication)로 기존 grant 무손실·DB 마이그 0. 상세 정본: `docs/SECURITY.md §19` · feature-0003 REVIEW `REV-20260702T120000-graph-panel-perms`.
+
+### 잔여
+- PB-0008 라이브 브라우저 그래프 UI 시각검증(T5.4)·eval A/B(T5.1)·추정/신뢰 엣지 시각(점선/실선·배지) 실화면 확인은 배포 후. 정본: `unit/feature-0016-metadata-graph/docs/{REPORT,DECISIONS,TEST}.md`.
+
+## 2026-07-01 — feature-0012-web-router-modularization: P5b 전체추출 완료 (내부 리팩터, behavior-neutral)
+
+### 변경 (개발자 영향 — 사용자 무영향)
+- **app.py 모놀리스 라우터 전체추출 완료** — feature-0003 `app.py`(단일 FastAPI app)의 **148 route 핸들러 전량을 21개 도메인 `APIRouter` 모듈로 byte-동치 추출**(app.py ~29K→18,917줄, 잔여 `@app` 라우트 0 — app.py = helpers + DI seam + `include_router`). route-parity 골든(경로·메서드·순서 불변)·프로덕션 응답 byte-동치 검증. **사용자 체감 변화 0**(behavior-neutral 내부 구조 리팩터).
+- 배포: batch1-3 라이브 배포·검증 완료(main c031b5d — 추출 라우트 프로덕션 401 응답 verbatim 동일). batch4(잔여 16 route)는 추출 완료·재배포 검증 후속.
+
+### 잔여
+- `web_context` 헬퍼 전체 추출(별도 workstream)·프론트(admin.js/app.js/styles.css) 분할·Final 로그인 QA. 정본: `unit/feature-0012-web-router-modularization/docs/{REPORT,TASK}.md`.

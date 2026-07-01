@@ -29,8 +29,8 @@ sources:
 
 ## 2. 상태
 
-- **단계**: active / in-progress — Phase 0(커스텀 PG16 AGE 이미지)·1a(alembic 0025 그래프 스키마+RBAC)·1b/1c(동기화·투영 모듈+파이프라인)·2(투영 API)·3(Cytoscape UI)·4(`graph_navigate` AI tool) 검증 완료. **운영 cutover 라이브 완료**(primary/replica `shared_preload_libraries='age'` + role search_path, 데이터 무손상, 무중단 롤링 재배포). post-cutover graphux(반응형·fcose 카테고리 클러스터링·관련도 사이징·라벨 비겹침)·per-datasource 투영·이웃조회 60x 인덱스 머지(#477/#479/#480/#482/#484).
-- **마지막 갱신**: 2026-06-30
+- **단계**: active / in-progress — Phase 0(커스텀 PG16 AGE 이미지)·1a(alembic 0025 그래프 스키마+RBAC)·1b/1c(동기화·투영 모듈+파이프라인)·2(투영 API)·3(Cytoscape UI)·4(`graph_navigate` AI tool) 검증 완료. **운영 cutover 라이브 완료**(primary/replica `shared_preload_libraries='age'` + role search_path, 데이터 무손상, 무중단 롤링 재배포). post-cutover graphux(반응형·fcose 카테고리 클러스터링·관련도 사이징·라벨 비겹침)·per-datasource 투영·이웃조회 60x 인덱스 머지(#477/#479/#480/#482/#484). **(2026-07-01 진화)** 렌더러 canvas-2D→WebGL 전환(프레임레이트 근본 대응·외곽선 선명화)·**암묵(FK 미선언) 관계 추론+자기교정 엔진**(alembic 0026 — 추정=점선/신뢰=실선/파단=숨김, ADR-002)·**AI 능동 분석 앵커-상대 관련도 게이팅**(alembic 0029, ADR-003)+실시간 진행 패널·ERD 컬럼 ordinal 세로배치(alembic 0027)·**메타데이터 탭 권한 5분할**(`metadata.{glossary,enum,table,column}.manage`+`graph.read`, 인가 거주 feature-0003)·다수 그래프 UX/렌더 수정.
+- **마지막 갱신**: 2026-07-01
 - **AI 작업자**: claude / Human (REQ-20260630-metadata-graph, 사용자 결정 A3 — AGE 즉시 도입·한 묶음·신규 feature-0016, 2026-06-30)
 
 ## 3. 책임 경계
@@ -57,7 +57,7 @@ sources:
 
 ## 6. Open questions / 미해결
 
-- **엣지 희소(현 0)** — 게임 DB(로그/통계/랭킹)는 FK 미선언이라 introspect 할 declared FK 부재. 대화 JOIN 학습·LLM 관계 추론(후속)으로 점증. 엣지 0 이어도 노드 그래프(스키마·DB 그룹핑·검색)는 가치.
+- **엣지 희소(declared FK 0)** — 게임 DB(로그/통계/랭킹)는 FK 미선언이라 introspect 할 declared FK 부재. **(2026-07-01 대응)** 이름·구조 휴리스틱 **암묵 추론**(추정 엣지=점선)+성공한 대화 JOIN 관찰·insight 겹침 프로브로 **자기교정**(신뢰=실선/파단=숨김) 엔진 도입(ADR-002, alembic 0026). 추정 정밀도는 사후 검증이 보정 — 추정/신뢰 엣지 시각(점선/실선·배지) 실화면 확인은 PB-0008 배포 후.
 - **번호 충돌** — 동일 feature-0016 번호를 `feature-0016-metadata-graph` 와 `feature-0016-zd-pg-pause-caddy` 두 슬라이스가 공유(과거 0015 선점 회피 과정의 오버랩). 코드·정본 디렉토리는 분리 — 사람 결정으로 번호 정리 보류.
 - **per-datasource 클러스터 대소문자 분기** — object_key DB명 소문자(accountdb) vs 큐레이션(AccountDB) 차이로 동일 DB 가 2 클러스터 가능 — 후속 정규화 권장.
 - **PB-0008 라이브 브라우저 그래프 UI 검증·eval A/B(T5.4/T5.1)** 잔여.
@@ -67,3 +67,4 @@ sources:
 > append-only. 정본 변경은 `unit/feature-0016-metadata-graph/docs/MODIFY.md` 에.
 
 - 2026-06-30 (doc_sync): 초안 작성 — 전 문서 누락분 backfill. 정본 REPORT/FUNCTION/TASK/ANCHOR 및 머지 이력(#477/#479/#480/#482/#484)을 반영(AGE 그래프 토대·동기화/투영·투영 API·Cytoscape UI·graph_navigate·운영 cutover 라이브 완료·graphux·이웃 60x 인덱스).
+- 2026-07-01 (doc_sync): 07-01 그래프 뷰 대규모 진화 반영 — 렌더러 WebGL 전환·암묵(FK 미선언) 관계 추론+자기교정(ADR-002, alembic 0026)·AI 능동 분석 앵커-상대 관련도 게이팅(ADR-003, alembic 0029)+실시간 진행 패널·ERD 컬럼 ordinal(alembic 0027)·메타데이터 탭 권한 5분할(B안, 인가 거주 feature-0003). 정본 REPORT 2026-07-01 항목 / DECISIONS ADR-002·003.

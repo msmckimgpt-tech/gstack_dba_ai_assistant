@@ -25,20 +25,19 @@ sources:
 
 ## 1. 한 줄 요약
 
-feature-0003 `app.py`(29.5K줄/178 route, 단일 FastAPI app)를 도메인별 `APIRouter` 모듈로 **점진 분할**하는 라이브 web 구조 리팩터 (ssot-consolidation P5b, Critical). 본 cycle 은 분할 **안전망 + 의존성 audit** 까지.
+feature-0003 `app.py`(단일 FastAPI app, 최대 29.5K줄/178 route)를 도메인별 `APIRouter` 모듈로 **분할**하는 라이브 web 구조 리팩터 (ssot-consolidation P5b, Critical, behavior-neutral). **route 핸들러 전량 추출 완료** — app.py 는 helpers + DI seam + `include_router` 로 축소.
 
 ## 2. 상태
 
-- **단계**: in-progress — 본 cycle(route-parity 안전망 + 의존성 audit) 머지 완료(2026-06-29, PR#456). 실제 router 추출은 후속(브라우저 QA env).
-- **마지막 갱신**: 2026-06-29
+- **단계**: in-progress — route-parity 안전망 + 의존성 audit(PR#456) 이후 **P5b 전체추출 완료**(2026-07-01): app.py 모놀리스의 148 route 핸들러 전량을 21개 도메인 `APIRouter` 로 byte-동치 추출(app.py ~29K→18,917줄, 잔여 `@app` 라우트 0). batch1-3 라이브 배포·검증 완료(main c031b5d — 추출 라우트 프로덕션 응답 byte-동치). 잔여: `web_context` 헬퍼 추출·프론트(admin.js/app.js/styles.css) 분할·Final 로그인 QA·batch4(잔여 16 route) 재배포 검증.
+- **마지막 갱신**: 2026-07-01
 - **AI 작업자**: claude / Human (§12 승인 2026-06-25)
 
 ## 3. 책임 경계
 
 - **입력**: app.py 178 route + 공통 helper(`_require_account` 118 등) + 전역 98.
-- **출력(본 cycle)**: route-parity 안전망(`test_route_parity_p5b.py` + 골든 179 route) + 의존성 audit(web_context 경계).
-- **출력(후속)**: `src/web_context.py` + `src/routers/<domain>.py` (behavior-neutral router 추출).
-- **side-effect**: 본 cycle 없음(테스트/doc). 추출은 동작 무변경(경로·메서드·순서·응답 불변) 목표.
+- **출력**: route-parity 안전망(`test_route_parity_p5b.py` + 골든 route) + 의존성 audit(web_context 경계) + `src/routers/<domain>.py` 21개 도메인 라우터(전량 추출 완료, behavior-neutral).
+- **side-effect**: 동작 무변경 — 경로·메서드·순서·응답 byte-동치(route-parity 골든 불변, 프로덕션 응답 실측 동일). 잔여 `web_context` 헬퍼 추출·프론트 분할은 후속 workstream.
 
 ## 4. 관련 정본
 
@@ -54,6 +53,6 @@ feature-0003 `app.py`(29.5K줄/178 route, 단일 FastAPI app)를 도메인별 `A
 
 ## 6. Open questions / 미해결
 
-- web_context 추출 방식(모듈 vs DI) — 모듈 채택, DI 보류.
-- 실제 router 추출(keywords→…→admin) — 브라우저 QA(PB-0008) env 필요.
-- 프론트(admin.js/app.js/styles.css) 분할 — 별건/후속.
+- web_context 헬퍼 전체 추출 — 별도 workstream(원래 블로커), 후속.
+- 프론트(admin.js/app.js/styles.css) 분할 — 별건/후속(TASK-0012-10).
+- Final 로그인 QA + batch4(잔여 16 route) 프로덕션 재배포 검증 — 후속.
