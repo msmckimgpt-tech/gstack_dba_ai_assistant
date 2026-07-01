@@ -91,6 +91,22 @@ docker run --rm --network container:pgage-t \
 ### 단위 테스트 (예정 — 순수 함수)
 - `node_analysis._clamp` 경계 · `_build_payload` 이웃 cap · enqueue 중복 run 재사용.
 
+### 앵커-상대 관련도 게이팅 (node-analysis-anchor, 2026-07-01)
+- 단위: `unit/feature-0002-agent-core/tests/test_node_analysis_relevance.py` (순수함수, DB 불요, pytest testpaths 수집).
+  - 실행: `python3 -m pytest unit/feature-0002-agent-core/tests/test_node_analysis_relevance.py -q`
+  - Run 2026-07-01 (Environment: unit/pytest): **28 passed** (초기 12 + 2라운드 적대 패널 반영 16). 커버:
+    - 토큰화 camel/snake 분해 + 일반어(id/uniqueid/createdAt) drop.
+    - `_build_anchor` scope/table_fqn/tokens 도출.
+    - `_relevance`: 같은 테이블 컬럼 高 · 교차-제품 UniqueID < _DEEP 임계 · 이름연관 테이블 통과 · 같은제품
+      무관 테이블 < _DEEP · Schema=0 · broken=0.
+    - `_score_candidates`: **depth0 루트 직속 컬럼(일반명 UniqueID 포함) 무조건 통과(relevance 1.0)** ·
+      **depth1 hub 컬럼 확장 시 교차-제품/무관 이웃 탈락, 관련 이웃만 관련도순** · anchor=None 보수적 저하.
+    - 2라운드 hardening: content-gate(신뢰·제품만으론 불통과) · 한글 일반어 stoplist(게임/정의/테이블 겹침 배제) ·
+      한글 접두/접미 부분연관(중간삽입 회원⊄비회원구매·업적⊄기업적자 배제) · depth ramp nd3 경계 고정 ·
+      tiebreak key 전순서 결정 · 신뢰FK 내용발산 제외(precision 트레이드오프 고정).
+- 라이브(예정, PB-0008): Achievement 능동 분석 → 분석 노드가 dk scope·Achievement 연관 내 유지, generic-hub
+  (UniqueID/Schema) 무관 fan-out 억제. `GET .../graph/analyze?run_id=` jobs[].relevance 노출 확인.
+
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
 - KB 회귀 스위트(`make test`) — AI 정합(Phase 4) 후.

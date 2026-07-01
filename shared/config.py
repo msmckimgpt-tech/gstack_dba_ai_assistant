@@ -911,6 +911,21 @@ AGENT_NODE_ANALYSIS_BATCH_PER_TICK = int(os.getenv("AGENT_NODE_ANALYSIS_BATCH_PE
 # stale 'running' 잡 lease(초). 워커 크래시/SIGTERM 로 running 에 갇힌 잡을 이 시간 초과 시 pending 으로
 # 되돌려 run 영구 미완료·재트리거 불가를 방지(reaper). LLM 타임아웃보다 넉넉히 크게(기본 15분).
 AGENT_NODE_ANALYSIS_LEASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_LEASE_SEC", "900"))
+# ── 앵커-상대 관련도 게이팅 (feature-0016 node-analysis-anchor, 사용자 결정 2026-07-01) ──
+#  문제: 기존 재귀는 방문한 모든 노드의 이웃 전부를 무차별 재큐 → 일반 허브 컬럼(예 UniqueID)이나 부모
+#  Schema 노드를 만나면 그 노드를 새 중심으로 삼아 무관한 테이블로 fan-out(원래 대상에 앵커되지 않음).
+#  해법: 후보 이웃을 **원래 루트(예 dk 제품·Achievement)와의 관련도**(0~1)로 평가해 게이트·우선순위화.
+#  - 루트 직속 컬럼(하위 컬럼)은 기본 분석(게이트 면제). 그 외는 관련도 임계 이상만 재귀.
+#  - 임계는 깊이가 깊을수록 상향(depth>=2 는 _DEEP 적용) → 허브 재탐색 억제.
+#  - 다른 제품(scope)·일반어만 일치·상위객체 무연관은 낮은 점수 → 재귀 제외(낮은 우선순위).
+AGENT_NODE_ANALYSIS_RELEVANCE_MIN = float(os.getenv("AGENT_NODE_ANALYSIS_RELEVANCE_MIN", "0.18"))
+# depth>=2(루트에서 2-hop 이상) 재귀 확장에 요구하는 더 엄격한 관련도 기준 임계. 실제 임계는 이 값에서
+# 깊이당 +0.06 씩 상향(상한 0.7) — MAX_DEPTH 를 크게 잡아도 "깊을수록 상향" 이 유지된다.
+AGENT_NODE_ANALYSIS_RELEVANCE_MIN_DEEP = float(os.getenv("AGENT_NODE_ANALYSIS_RELEVANCE_MIN_DEEP", "0.34"))
+# 다른 scope(제품) 이웃에 곱하는 감쇠 계수(0~1). 0 이면 교차-제품 확장 완전 차단.
+AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR", "0.25"))
+# Schema 노드를 재귀 확장 허브로 쓸지 여부. 기본 False — 부모 Schema 확장 시 형제 테이블 전량 fan-out 방지.
+AGENT_NODE_ANALYSIS_EXPAND_SCHEMA = os.getenv("AGENT_NODE_ANALYSIS_EXPAND_SCHEMA", "0").strip().lower() in ("1", "true", "yes")
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────
