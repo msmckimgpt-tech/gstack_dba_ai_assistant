@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="doc_type" content="PRESENTATION_DECK" />
+<title>DBA AI Assistant 개발 진척 보고 · 2026-06-01 ~ 2026-07-02</title>
+<meta name="description" content="2026년 6월(6/1~7/2) DBA AI Assistant 개발 진척 상부보고 — 배경·주요 변경·전후·선택 근거·기대 효과·리스크. 확인/확인필요 구분." />
+<style>
+/* =========================================================================
+   DBA AI Assistant 개발 진척 보고 덱 — 자기완결(offline) HTML/CSS.
+   디자인 언어는 서비스/기존 발표덱(docs/presentation/index.html)의 :root 토큰을
+   상속(warm neutral + 단일 파랑 accent + 2겹 soft-shadow + 시스템 폰트)하고,
+   파생 토큰만 얇게 보강. 외부 CDN/폰트/이미지/JS 0 — 전부 인라인.
+   접근성: 색+라벨+형태 3중, focus-visible, prefers-reduced-motion,
+   keep-all 한국어 타이포, clamp() rem 타입 + 문서 스크롤(브라우저 줌 보존).
+   ========================================================================= */
+:root{
+  /* ── 봉투 상속(기존 서비스/덱 토큰) ── */
+  --bg:#f7f7f4; --surface:#ffffff; --surface-2:#fafaf7;
+  --border:#e6e5e0; --border-subtle:#f0efea;
+  --text:#26251e; --text-2:#5a5852; --text-muted:#807d72;
+  --primary:#2563eb; --primary-dark:#1d4ed8; --primary-soft:#eff6ff;
+  --success:#16a34a; --warning:#d97706; --danger:#dc2626;
+  --code-bg:#1a1b26; --code-fg:#c0caf5;
+  --font:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;
+  --mono:"D2Coding","Cascadia Code","SFMono-Regular",Consolas,"Noto Sans Mono CJK KR",ui-monospace,Menlo,monospace;
+  --r-sm:6px; --r-md:10px; --r-lg:14px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:0 4px 14px rgba(0,0,0,.10);
+  /* ── 파생(신규, 대비 실측 통과값) ── */
+  --text-3:#6b6960;                 /* 5.1:1 — 4.5:1 필요한 3번째 스텝 */
+  --accent-soft:#eef4ff;
+  --ok-ink:#15803d;                 /* 확인 텍스트(흰 위 5.0:1) */
+  --ok-bg:#f0f8f2; --ok-bd:#bfe3c8;
+  --warn-ink:#b45309;               /* 확인필요 텍스트(흰 위 5.0:1) */
+  --warn-bg:#fdf6ec; --warn-bd:#f0d9b0;
+  --new-bg:#eef4ff; --new-bd:#cfe0ff; --new-ink:#1d4ed8;
+  --carry-bg:#f2f1ec; --carry-bd:#dedcd4; --carry-ink:#5a5852;
+  --done-bg:#f0f8f2; --done-bd:#bfe3c8; --done-ink:#15803d;
+  --before-bg:#f4f3ef; --before-bd:#e0ded6;
+  --after-bg:#eff5ff; --after-bd:#cfe0ff;
+  --dur:.28s; --ease:cubic-bezier(.22,.61,.36,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{ -webkit-text-size-adjust:100%; }
+body{
+  font-family:var(--font); color:var(--text);
+  word-break:keep-all; overflow-wrap:anywhere; hyphens:none; line-break:strict;
+  background:
+    radial-gradient(1100px 560px at 85% -12%, #eef4ff 0%, transparent 55%),
+    radial-gradient(820px 460px at -8% 112%, #f3f0ff 0%, transparent 52%),
+    var(--bg);
+  -webkit-font-smoothing:antialiased; line-height:1.62;
+}
+h1,h2,h3{text-wrap:balance;line-height:1.2;letter-spacing:-.01em}
+p,li,.lead,.cell p,.rowlab{text-wrap:pretty}
+.mono{font-family:var(--mono)}
+
+/* ── 상단 크롬(진행바·목차·카운터) ── */
+.topbar{position:fixed;top:0;left:0;right:0;z-index:60;pointer-events:none}
+.progress{height:3px;background:linear-gradient(90deg,var(--primary),#7aa2ff);width:0;transition:width var(--dur) var(--ease)}
+.chrome{position:fixed;top:11px;left:14px;right:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;z-index:61}
+.pill{pointer-events:auto;background:var(--surface);border:1px solid var(--border);border-radius:999px;
+  box-shadow:var(--shadow-sm);font-size:12.5px;font-weight:650;color:var(--text-2)}
+button.pill{cursor:pointer;font-family:inherit;transition:color var(--dur) var(--ease),border-color var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.menu-btn{display:inline-flex;align-items:center;gap:8px;padding:7px 14px}
+.menu-btn:hover{color:var(--primary);border-color:#cdd9f5}
+.menu-btn .bars{display:inline-flex;flex-direction:column;gap:2.6px}
+.menu-btn .bars i{width:14px;height:2px;background:currentColor;border-radius:2px}
+.brand{display:flex;align-items:center;gap:8px;padding:6px 13px;font-weight:750;color:var(--text)}
+.brand .mk{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,var(--primary),#60a5fa);display:grid;place-items:center;color:#fff;font-size:10px;font-weight:800}
+.brand .rng{font-size:10.5px;font-weight:700;color:var(--primary);background:var(--primary-soft);border:1px solid #dbe6ff;border-radius:999px;padding:1px 8px}
+.counter{padding:7px 13px;font-variant-numeric:tabular-nums;font-size:12px;color:var(--text-muted)}
+
+/* ── 슬라이드 스테이지: transform-scale 대신 문서 스크롤(줌 보존) ── */
+.deck{position:fixed;inset:0;overflow:hidden}
+.slide{position:absolute;inset:0;display:none;overflow-y:auto;overflow-x:hidden;
+  padding:64px clamp(18px,4vw,60px) 52px;scroll-behavior:smooth}
+.slide.is-active{display:block;animation:fade var(--dur) var(--ease) both}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.wrap{max-width:1080px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;justify-content:center}
+.kicker{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;font-size:11.5px;font-weight:750;letter-spacing:.02em;
+  color:var(--primary);background:var(--primary-soft);border:1px solid #dbe6ff;padding:4px 11px;border-radius:999px;margin-bottom:13px}
+.kicker .dot{width:6px;height:6px;border-radius:50%;background:var(--primary)}
+h1.title{font-size:clamp(24px,3.6vw,40px);font-weight:820}
+h2.title{font-size:clamp(20px,2.7vw,30px);font-weight:800}
+.lead{font-size:clamp(14px,1.5vw,16.5px);color:var(--text-2);margin-top:12px;max-width:62em}
+.sub{font-size:clamp(13px,1.3vw,14.5px);color:var(--text-2)}
+.muted{color:var(--text-muted)}
+
+/* ── 클릭 넘김 영역(시맨틱 button) ── */
+.zone{position:fixed;top:0;bottom:0;width:13%;z-index:40;border:0;background:transparent;cursor:pointer;padding:0}
+.zone.l{left:0} .zone.r{right:0}
+.zone:focus-visible{outline:3px solid var(--primary);outline-offset:-6px;background:rgba(37,99,235,.04)}
+
+/* ── 배지: 색 + 라벨 + 형태(SVG) 3중 ── */
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:750;border-radius:999px;padding:2px 9px;border:1px solid;white-space:nowrap}
+.badge svg{width:11px;height:11px;flex:0 0 auto}
+.b-new{background:var(--new-bg);border-color:var(--new-bd);color:var(--new-ink)}
+.b-carry{background:var(--carry-bg);border-color:var(--carry-bd);color:var(--carry-ink)}
+.b-done{background:var(--done-bg);border-color:var(--done-bd);color:var(--done-ink)}
+.b-ok{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok-ink)}
+.b-warn{background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-ink)}
+
+/* ── 카드 / bento ── */
+.grid{display:grid;gap:14px;margin-top:18px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:15px 16px;box-shadow:var(--shadow-sm)}
+.card h3{font-size:14.5px;font-weight:750;margin-bottom:7px;display:flex;align-items:center;gap:8px}
+.card p,.card li{font-size:13px;color:var(--text-2)}
+.card ul{margin:0;padding-left:16px} .card li{margin:3px 0}
+.cap{font-size:11px;font-weight:750;letter-spacing:.03em;color:var(--text-muted);text-transform:uppercase}
+
+/* 기능 5블록 bento */
+.bento{display:grid;gap:12px;margin-top:16px;
+  grid-template-columns:1.15fr 1fr 1fr;
+  grid-template-areas:"bg flow flow" "bg before after" "why why effect";}
+.bento .blk{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:13px 15px;box-shadow:var(--shadow-sm)}
+.blk.bg{grid-area:bg} .blk.flow{grid-area:flow} .blk.before{grid-area:before}
+.blk.after{grid-area:after} .blk.why{grid-area:why} .blk.effect{grid-area:effect}
+.blk .lab{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;color:var(--text-muted);letter-spacing:.03em;margin-bottom:6px}
+.blk .lab .n{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:5px;background:var(--primary-soft);color:var(--primary);font-size:10px;font-weight:800}
+.blk p,.blk li{font-size:12.5px;color:var(--text-2)}
+.blk ul{margin:0;padding-left:15px} .blk li{margin:2px 0}
+.blk strong{color:var(--text);font-weight:700}
+
+/* 전/후 미니 패널(도식 재구성) */
+.ba{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:stretch;margin-top:4px}
+.ba .side{border-radius:var(--r-sm);padding:8px 10px;font-size:12px;border:1px solid}
+.ba .before{background:var(--before-bg);border-color:var(--before-bd);color:var(--text-2)}
+.ba .after{background:var(--after-bg);border-color:var(--after-bd);color:var(--text)}
+.ba .tag{font-size:9.5px;font-weight:800;letter-spacing:.04em;display:block;margin-bottom:3px}
+.ba .before .tag{color:var(--text-muted)} .ba .after .tag{color:var(--primary-dark)}
+.ba .arw{display:grid;place-items:center;color:var(--primary)}
+.recon{font-size:10.5px;color:var(--warn-ink);margin-top:5px;display:inline-flex;gap:4px;align-items:center}
+
+/* 비교표 */
+table.cmp{width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px}
+table.cmp th,table.cmp td{border:1px solid var(--border);padding:6px 9px;text-align:left;vertical-align:top}
+table.cmp th{background:var(--surface-2);font-weight:750;color:var(--text);font-size:11.5px}
+table.cmp td.b{background:var(--before-bg);color:var(--text-2)}
+table.cmp td.a{background:var(--after-bg);color:var(--text)}
+.rowlab{font-weight:700;color:var(--text);background:var(--surface-2)!important}
+
+/* KPI 타일 */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:18px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:13px 15px;box-shadow:var(--shadow-sm)}
+.kpi .v{font-size:clamp(20px,2.4vw,28px);font-weight:820;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .v .u{font-size:14px;font-weight:700;color:var(--primary);margin-left:2px}
+.kpi .k{font-size:12px;color:var(--text-2);margin-top:2px}
+.kpi .src{font-size:10px;color:var(--text-muted);margin-top:5px}
+
+/* 흐름도(flex + SVG 커넥터) */
+.flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px}
+.node{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:7px 11px;font-size:12px;font-weight:650;color:var(--text);box-shadow:var(--shadow-sm)}
+.node.on{border-color:#cfe0ff;background:var(--accent-soft);color:var(--primary-dark)}
+.arrowc{color:var(--text-muted);display:grid;place-items:center}
+
+/* 리스트형 요약(agenda) */
+.agenda{display:grid;gap:9px;margin-top:16px}
+.ag{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-md);padding:11px 15px;box-shadow:var(--shadow-sm)}
+.ag .num{font-variant-numeric:tabular-nums;font-weight:820;color:var(--primary);font-size:15px;min-width:20px}
+.ag .t{font-weight:720;font-size:14px} .ag .d{font-size:12px;color:var(--text-2);margin-top:1px}
+
+/* 콜아웃 */
+.callout{margin-top:16px;border-left:3px solid var(--primary);background:var(--primary-soft);
+  border-radius:0 var(--r-md) var(--r-md) 0;padding:12px 16px;font-size:13.5px;color:var(--text)}
+.callout.warn{border-left-color:var(--warning);background:var(--warn-bg)}
+.callout.warn strong{color:var(--warn-ink)}
+
+/* 목차(rgba 단색 오버레이 — backdrop-filter 미사용) */
+.idx{position:fixed;inset:0;z-index:80;background:rgba(20,20,18,.62);display:none;opacity:0;transition:opacity var(--dur) var(--ease)}
+.idx.open{display:block;opacity:1}
+.idx-panel{position:absolute;top:0;left:0;bottom:0;width:min(420px,88vw);background:var(--surface);box-shadow:var(--shadow-md);
+  padding:24px 18px;transform:translateX(-104%);transition:transform var(--dur) var(--ease);overflow:auto}
+.idx.open .idx-panel{transform:none}
+.idx-title{font-size:12px;font-weight:750;color:var(--text-muted);letter-spacing:.05em;margin-bottom:12px}
+.idx-item{display:flex;gap:12px;align-items:flex-start;padding:10px 11px;border-radius:var(--r-md);cursor:pointer;
+  width:100%;text-align:left;border:0;background:transparent;font-family:inherit;transition:background var(--dur) var(--ease)}
+.idx-item:hover{background:var(--primary-soft)}
+.idx-item.active{background:var(--primary-soft);box-shadow:inset 3px 0 0 var(--primary)}
+.idx-num{font-variant-numeric:tabular-nums;font-weight:820;color:var(--primary);font-size:13.5px;min-width:20px}
+.idx-name{font-weight:720;font-size:14px;color:var(--text)}
+.idx-sub{font-size:11.5px;color:var(--text-muted);margin-top:2px}
+.idx-hint{margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.7;border-top:1px solid var(--border-subtle);padding-top:12px}
+kbd{font-family:var(--mono);font-size:10.5px;background:var(--bg);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--text-2)}
+
+/* cover */
+.cover{align-items:flex-start}
+.cover .big{font-size:clamp(28px,5vw,52px);font-weight:840;letter-spacing:-.025em;line-height:1.08;margin-top:6px}
+.cover .tag{font-size:clamp(15px,2vw,19px);color:var(--text-2);margin-top:14px;max-width:40em}
+.cover .meta{margin-top:26px;display:flex;flex-wrap:wrap;gap:10px}
+.chip{font-size:12.5px;font-weight:650;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 13px;box-shadow:var(--shadow-sm)}
+.chip b{color:var(--text);font-weight:800}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+
+/* focus-visible(신규 구축 — 봉투 focus 규칙 0건이던 것 보강) */
+a:focus-visible,button:focus-visible,.idx-item:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:4px}
+@media (forced-colors:active){
+  a:focus-visible,button:focus-visible,.zone:focus-visible{outline:2px solid CanvasText}
+}
+
+/* 반응형(문서 모드에서만 재배치) */
+@media (max-width:860px){
+  .g2,.g3,.kpis{grid-template-columns:1fr}
+  .bento{grid-template-columns:1fr;grid-template-areas:"bg" "flow" "before" "after" "why" "effect"}
+  .ba{grid-template-columns:1fr} .ba .arw{transform:rotate(90deg)}
+  .zone{display:none}
+}
+
+/* prefers-reduced-motion(봉투 가드 계승) */
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001s!important;transition-duration:.08s!important;scroll-behavior:auto!important}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar"><div class="progress" id="prog"></div></div>
+<div class="chrome">
+  <button class="pill menu-btn" id="menuBtn" aria-label="목차 열기" aria-haspopup="true"><span class="bars"><i></i><i></i><i></i></span>목차</button>
+  <span class="pill brand"><span class="mk">DQA</span>개발 진척 보고<span class="rng">6/1–7/2</span></span>
+  <span class="pill counter" id="counter" role="status" aria-live="polite">1 / 15</span>
+</div>
+
+<button class="zone l" id="zoneL" aria-label="이전 슬라이드"></button>
+<button class="zone r" id="zoneR" aria-label="다음 슬라이드"></button>
+
+<main class="deck" id="deck">
+
+<!-- 0 · 표지 -->
+<section class="slide cover is-active" data-key="cover" aria-label="표지">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>개발 진척 보고 · 상부보고용</span>
+    <div class="big">DBA AI Assistant<br/>개발 진척 보고</div>
+    <div class="tag">자연어로 데이터베이스에 묻고, 안전하게 검증된 조회 결과를 받는 사내 AI 어시스턴트 — 2026년 6월 한 달의 진척을 정리합니다.</div>
+    <div class="meta">
+      <span class="chip">기간 <b>2026-06-01 ~ 2026-07-02</b></span>
+      <span class="chip">버전 <b>v1</b></span>
+      <span class="chip">작성 <b>2026-07-02</b></span>
+      <span class="chip">대상 <b>기획·운영·관리·개발</b></span>
+    </div>
+    <div class="legend" aria-label="배지 범례">
+      <span class="badge b-new"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" fill="none"/></svg>신규</span>
+      <span class="badge b-carry"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>이어받음</span>
+      <span class="badge b-done"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>완료(머지)</span>
+      <span class="badge b-ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l3 3 5-6" stroke="currentColor" stroke-width="2" fill="none"/></svg>확인(근거 有)</span>
+      <span class="badge b-warn"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l5 9H1z" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M6 5v2.4" stroke="currentColor" stroke-width="1.4"/></svg>확인 필요</span>
+    </div>
+  </div>
+</section>
+
+<!-- 1 · 핵심 요약(BLUF) -->
+<section class="slide" data-key="summary" aria-label="핵심 요약">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>핵심 요약 · 먼저 결론</span>
+    <h1 class="title">한 달 만에 "쓸 만한 도구"에서 "믿고 운영하는 플랫폼"으로</h1>
+    <p class="lead">이 기간 개발은 <strong>①제품 신뢰(보안·안정)</strong>, <strong>②데이터 범위·정확도</strong>, <strong>③함께 쓰기·운영 관제</strong> 세 방향으로 진행되어, 총 <strong>16개 작업 묶음</strong>이 본선(main)에 반영됐습니다.</p>
+    <div class="kpis">
+      <div class="kpi"><div class="v">16<span class="u">묶음</span></div><div class="k">본선 반영 작업 단위</div><div class="src">✓ 확인 · git 이력 (E-001)</div></div>
+      <div class="kpi"><div class="v">9<span class="u">개</span></div><div class="k">관여 기능 영역</div><div class="src">✓ 확인 · feature 0002·0003·0006·0009·0010·0012·0014·0015·0016</div></div>
+      <div class="kpi"><div class="v">2<span class="u">종</span></div><div class="k">지원 데이터베이스(＋MSSQL)</div><div class="src">✓ 확인 · 멀티 데이터소스 (E-002)</div></div>
+      <div class="kpi"><div class="v">0<span class="u">회</span></div><div class="k">배포 중 접속 중단(무중단 전환)</div><div class="src">✓ 확인 · 롤링 부하 실증 (E-011)</div></div>
+    </div>
+    <div class="callout">지난 기간 대비: 5월 말까지는 <strong>단일 MySQL·단일 웹 인스턴스</strong> 구조였습니다. 이 기간에 <strong>다중 데이터베이스 분석 + 무중단 운영 + 보안·정확도·협업</strong>이 한꺼번에 성숙했습니다. (배포·효과의 확인/확인필요 구분은 각 장과 부록 참조)</div>
+  </div>
+</section>
+
+<!-- 2 · 개발 배경(SCQA) -->
+<section class="slide" data-key="background" aria-label="개발 배경">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>개발 배경 · 왜 이 일을 했나</span>
+    <h2 class="title">"보고 싶은 데이터는 많은데, 안전하게·정확하게·안 끊기게가 어렵다"</h2>
+    <div class="grid g2">
+      <div class="card"><h3><span class="cap">상황</span></h3><ul>
+        <li>SQL을 모르는 현업도 데이터를 직접 보고 싶어 함 → 자연어 어시스턴트 도입.</li>
+        <li>대상 데이터가 <strong>MySQL 한 종류</strong>, 웹은 <strong>단일 인스턴스</strong>였음.</li>
+        <li>메타데이터(테이블·컬럼 뜻)가 평면 목록 — 대규모 스키마(수천 테이블) 탐색이 어려움.</li>
+      </ul></div>
+      <div class="card"><h3><span class="cap">문제</span></h3><ul>
+        <li>배포할 때마다 화면이 잠깐 끊김(502) — 주 채팅까지 영향.</li>
+        <li>계정 보호(2단계 인증)·프롬프트 악용 방어·기록 변조 방지 등 <strong>운영 신뢰 요소</strong> 미흡.</li>
+        <li>답의 정확도를 <strong>측정·개선</strong>할 수단과, 여러 DB·회사 용어를 이해할 근거가 부족.</li>
+      </ul></div>
+    </div>
+    <div class="callout"><strong>그래서 이번 기간의 목표</strong> — (1) 배포·재시작에도 <strong>안 끊기게</strong>, (2) <strong>더 많은 데이터(＋MSSQL)</strong>를 <strong>더 정확하게</strong>, (3) <strong>안전하게·함께</strong> 쓰고 <strong>운영자가 관제</strong>할 수 있게. 아래는 사용자가 화면을 만나는 순서로 설명합니다.</div>
+  </div>
+</section>
+
+<!-- 3 · 이번 기간 개요(목차 1:1) -->
+<section class="slide" data-key="agenda" aria-label="이번 기간 개요">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>이번 기간 개요 · 화면 흐름 순</span>
+    <h2 class="title">사용자가 만나는 순서로 본 7가지 변화</h2>
+    <div class="agenda">
+      <div class="ag"><span class="num">1</span><div><div class="t">안전하게 접속·인증</div><div class="d">사내 자체 인증서 HTTPS · 2단계 인증 · 로그인 시도 제한</div></div><span class="badge b-new">신규</span></div>
+      <div class="ag"><span class="num">2</span><div><div class="t">물어보고 답 받고 다듬기 (작업 화면)</div><div class="d">답변 변경점 비교(diff) · 첨부 버전 관리 · 진행 표시 개선</div></div><span class="badge b-new">신규</span></div>
+      <div class="ag"><span class="num">3</span><div><div class="t">더 정확한 답</div><div class="d">정확도 평가·좋은 답 환류 · 회사 용어/코드값 사전 · 혼합 검색</div></div><span class="badge b-new">신규</span></div>
+      <div class="ag"><span class="num">4</span><div><div class="t">더 많은 데이터 (＋MSSQL)</div><div class="d">여러 데이터베이스 연결 · DB 단위 접근 통제 · 연결 상태 표시</div></div><span class="badge b-new">신규</span></div>
+      <div class="ag"><span class="num">5</span><div><div class="t">함께 쓰기 (그룹 대화)</div><div class="d">여러 명이 한 대화 · @어시스턴트 멘션 · 실시간 알림</div></div><span class="badge b-new">신규</span></div>
+      <div class="ag"><span class="num">6</span><div><div class="t">운영·관제 강화 + 지식그래프</div><div class="d">사용량/AI 운영 현황 · 권한 편집기 · 대규모 스키마 그래프 탐색</div></div><span class="badge b-new">신규</span></div>
+      <div class="ag"><span class="num">7</span><div><div class="t">끊김 없는 서비스 (안정성·인프라)</div><div class="d">무중단 배포 · 재시작 안전 · 내부 구조 정리</div></div><span class="badge b-done">완료</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 · 안전하게 접속·인증 -->
+<section class="slide" data-key="feat-access" aria-label="안전하게 접속·인증">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>1. 안전하게 접속·인증 <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">"들어오는 문"을 신뢰할 수 있게 만들었습니다</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>사내 접속 시 <strong>인증서 경고</strong>가 뜨고, 로그인은 <strong>아이디·비밀번호 단일 인증</strong>이라 계정 도용·무차별 시도에 취약했습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node on">주소 접속(https)</span><span class="arrowc">›</span><span class="node">로그인</span><span class="arrowc">›</span><span class="node on">2단계 인증(선택)</span><span class="arrowc">›</span><span class="node">작업 화면</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">첫 접속 시 사내 인증서를 원클릭으로 신뢰 등록 → 이후 경고 없음.</p>
+      </div>
+      <div class="blk before"><div class="lab">변경 전</div><p>단일 웹 진입(경고 있음) · ID/PW 단일 인증 · 로그인 무제한 시도.</p></div>
+      <div class="blk after"><div class="lab">변경 후</div><p>사내 <strong>자체 인증서 HTTPS</strong>(경고 제거) · <strong>2단계 인증(TOTP)</strong> · <strong>로그인 시도 제한/계정 잠금</strong> · 프롬프트 악용 방어.</p><span class="recon">◐ 실측 화면 미확보(도식 재구성)</span></div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>보안·신뢰</strong>가 도입의 전제. 표준(TOTP·자체 CA)을 택해 <strong>추가 비용 없이</strong> 사내 환경에 맞췄고, 2단계 인증은 <strong>사용자가 스스로 등록</strong>(운영 부담 최소)하도록 했습니다.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn" style="margin-left:auto">효과 확인필요</span></div><p>계정 도용·무차별 로그인 위험 감소, 접속 신뢰 확보. <strong>기능 개발·머지는 확인</strong>(E-004·E-005) — <strong>재발방지 실효·라이브 적용</strong>은 운영 확인 필요(U-005).</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 · 작업 화면 -->
+<section class="slide" data-key="feat-work" aria-label="물어보고 답 받고 다듬기">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>2. 물어보고 답 받고 다듬기 (작업 화면) <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">답을 "받는" 데서 "함께 다듬는" 화면으로</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>답변·첨부 SQL을 고쳐 달라고 하면 <strong>무엇이 바뀌었는지</strong> 알기 어려웠고, 큰 결과는 화면을 무겁게 했으며, 처리 중 조작이 애매했습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">질문</span><span class="arrowc">›</span><span class="node on">진행(전송↔중단)</span><span class="arrowc">›</span><span class="node">표 답변(인라인 로더)</span><span class="arrowc">›</span><span class="node on">변경점 비교(diff)</span><span class="arrowc">›</span><span class="node">첨부 새 버전</span></div>
+      </div>
+      <div class="blk before"><div class="lab">변경 전</div><p>변경점을 글로만 설명 · "전체 N행" 별도 화면 · 처리 중 상태 모호 · 첨부 수정 이력 불명.</p></div>
+      <div class="blk after"><div class="lab">변경 후</div><p>답변에 <strong>+/− 색 diff 블록</strong>(줄번호, 복사 시 마커 제외) · <strong>인라인 표 로더</strong>·접기/펼침 · 전송→중단 <strong>버튼 모핑</strong> · 첨부 <strong>버전 배지</strong>.</p><span class="recon">◐ 실측 화면 미확보(도식 재구성)</span></div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>사용자 영향</strong> 우선 — 검토 신뢰(무엇이 바뀌었나)와 조작감. 기존 채팅 UI와 <strong>호환</strong>되게 얹어 학습 부담을 줄였습니다.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">개발 확인</span></div><p>검토 시간 단축·오해 감소, 첨부 반복 수정 추적. 개발·머지 확인(E-007). 사용자 체감 개선폭은 실사용 관찰 권장.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 · 더 정확한 답 -->
+<section class="slide" data-key="feat-accuracy" aria-label="더 정확한 답">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>3. 더 정확한 답 (NL→SQL 정확도) <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">"잘 나온 답"이 다음 답을 더 정확하게 만드는 선순환</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>정확도를 <strong>측정할 수단</strong>이 없고, AI가 <strong>회사 고유 용어·코드값</strong>(예: 상태 1=결제완료)을 몰라 오답 여지가 있었습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>선순환 흐름</div>
+        <div class="flow"><span class="node">질문·답변</span><span class="arrowc">›</span><span class="node on">좋은 답 등록</span><span class="arrowc">›</span><span class="node">관리자 검수</span><span class="arrowc">›</span><span class="node on">참고 예시(KB)</span><span class="arrowc">›</span><span class="node">정확도↑</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">＋ 회사 용어/코드값 사전, 벡터＋키워드 <strong>혼합 검색</strong>.</p>
+      </div>
+      <div class="blk before"><div class="lab">변경 전</div><p>정확도 측정 없음 · 자동 학습 없음 · 회사 용어 미반영.</p></div>
+      <div class="blk after"><div class="lab">변경 후</div><p><strong>정확도 평가 도구</strong> · 좋은 답 <strong>검수 후 환류</strong>(flywheel) · <strong>용어/ENUM 사전</strong> · 자가수정 루프 · 혼합 검색.</p><span class="recon">◐ 실측 화면 미확보(도식 재구성)</span></div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>측정 선행</strong> — 개선을 증명할 잣대부터. 자동 학습이 아니라 <strong>사람 검수</strong>를 거쳐(데이터 오염 방지) 안전하게 정확도를 올립니다.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-warn" style="margin-left:auto">수치 확인필요</span></div><p>답변 정확도 향상 기대. <strong>수단 도입은 확인</strong>(E-003) — 단, <strong>"정확도 X%→Y%" 수치는 아직 미측정</strong>(U-006). 목표치로만 언급.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 · 더 많은 데이터 -->
+<section class="slide" data-key="feat-datasource" aria-label="더 많은 데이터">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>4. 더 많은 데이터 (멀티 데이터소스) <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">MySQL 전용에서 여러 데이터베이스 분석 플랫폼으로</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>대상이 <strong>MySQL 한 종류</strong>였고, 접속 정보 관리·접근 통제가 미흡했습니다. 현업 데이터는 <strong>MSSQL</strong>에도 있습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>접근 구조</div>
+        <div class="flow"><span class="node">제품</span><span class="arrowc">›</span><span class="node on">데이터소스(MySQL·MSSQL)</span><span class="arrowc">›</span><span class="node">허용 DB 목록</span><span class="arrowc">›</span><span class="node on">조회</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">바인딩 없으면 접근 0 — 기본이 "차단".</p>
+      </div>
+      <div class="blk before"><div class="lab">변경 전</div><p>MySQL 단일 · 접속정보 관리 취약 · DB 단위 통제 없음.</p></div>
+      <div class="blk after"><div class="lab">변경 후</div><p><strong>MySQL＋MSSQL</strong> · 데이터소스 레지스트리(<strong>자격증명 암호화</strong>) · <strong>DB 단위 화이트리스트</strong> · 연결 상태 <strong>정상/불안정/끊김</strong> 표시·격리.</p><span class="recon">◐ 실측 화면 미확보(도식 재구성)</span></div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>보안·안정성</strong> 우선(기본 차단·엔진별 가드·불안정 DB 격리) + <strong>운영 편의</strong>(관리 콘솔에서 추가·연결 테스트).</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">개발 확인</span></div><p>분석 대상 확대·안전한 다중 연결. 개발·머지 확인(E-002). 각 엔진 라이브 운영 효과는 운영 확인 권장(U-005).</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 · 함께 쓰기 -->
+<section class="slide" data-key="feat-group" aria-label="함께 쓰기">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>5. 함께 쓰기 (그룹 대화) <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">데이터 점검을 "여럿이 한 대화"에서</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>데이터 점검은 혼자보다 <strong>함께</strong>가 많은데, 대화는 1:1 뿐이었습니다. 공유 시 <strong>권한·읽음 표시</strong>가 애매했습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>화면 흐름</div>
+        <div class="flow"><span class="node">공유 링크 초대</span><span class="arrowc">›</span><span class="node on">사람끼리 의논</span><span class="arrowc">›</span><span class="node">@어시스턴트 멘션</span><span class="arrowc">›</span><span class="node on">AI 응답(요청자 권한)</span></div>
+      </div>
+      <div class="blk before"><div class="lab">변경 전</div><p>1:1 대화만 · 협업·멘션·읽음 표시 없음.</p></div>
+      <div class="blk after"><div class="lab">변경 후</div><p>멤버십·발신자 표시 · <strong>@멘션한 글에만 AI 응답</strong> · <strong>열람과 발화 권한 분리</strong> · 실시간 알림·피멘션 하이라이트.</p><span class="recon">◐ 실측 화면 미확보(도식 재구성)</span></div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>사용자 영향＋보안</strong> — "열람은 되지만 발화(조회)는 권한 있는 사람만". 단일 권한 대신 <strong>세분 권한</strong>으로 실제 협업 요구에 맞췄습니다. <span class="muted">(설계 과정은 개발 기록 기준 — U-007)</span></p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">개발 확인</span></div><p>협업 점검·지식 공유. 개발·머지 확인(E-006). AI 조회는 <strong>항상 요청 본인 권한</strong>으로만 — 권한 확장 없음.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 · 운영·관제 + 지식그래프 -->
+<section class="slide" data-key="feat-admin" aria-label="운영·관제 강화">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>6. 운영·관제 강화 + 메타데이터 지식그래프 <span class="badge b-new" style="margin-left:8px">신규</span></span>
+    <h2 class="title">운영자가 "한눈에 보고 통제"하고, 대규모 스키마를 그래프로 탐색</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>사용량·AI 동작·권한을 한눈에 볼 화면이 부족했고, <strong>수천 개 테이블</strong>을 평면 목록으로 탐색하기 어려웠습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>관리 콘솔 영역</div>
+        <div class="flow"><span class="node on">LLM 사용량</span><span class="node on">AI 운영 현황</span><span class="node">권한 편집기</span><span class="node">사용량 한도</span><span class="node on">지식그래프</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">감사 기록 변조 방지(해시 체인) 포함.</p>
+      </div>
+      <div class="blk before"><div class="lab">변경 전</div><p>사용량 가시성 낮음 · 권한 설정 복잡 · 메타데이터 평면 목록(관계 안 보임).</p></div>
+      <div class="blk after"><div class="lab">변경 후</div><p><strong>사용량 대시보드</strong>(비용·모델·drill-down) · <strong>AI 운영 현황</strong> 패널 · 권한 <strong>단계적 노출</strong> 편집기 · <strong>지식그래프</strong>(관계 탐색·능동 분석).</p><span class="recon">◐ 실측 화면 미확보(도식 재구성)</span></div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>운영 편의·안전</strong> — 그래프 DB(표준 Cypher)로 관계를 다루고, FK가 없어도 <strong>관계를 추론</strong>하되 <strong>추정/신뢰를 구분 표시</strong>(과대표현 방지).</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">일부 확인</span></div><p>운영 가시성↑·대규모 스키마 탐색. 지식그래프 <strong>배포·서버 조회 60배 개선 확인</strong>(E-010). 단 <strong>화면 렌더 속도(FPS)·시각 검증은 확인필요</strong>(U-003·U-002).</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 · 끊김 없는 서비스 -->
+<section class="slide" data-key="feat-stability" aria-label="끊김 없는 서비스">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>7. 끊김 없는 서비스 (안정성·인프라) <span class="badge b-done" style="margin-left:8px">완료·일부 배포대기</span></span>
+    <h2 class="title">배포하고 재시작해도, 사용자는 끊김을 느끼지 않게</h2>
+    <div class="bento">
+      <div class="blk bg"><div class="lab"><span class="n">1</span>배경·문제</div><p>배포할 때마다 <strong>화면 끊김(502)</strong>이 났고, 재시작 시 진행 중 작업이 중단됐으며, 거대한 단일 코드 파일은 유지보수가 어려웠습니다.</p></div>
+      <div class="blk flow"><div class="lab"><span class="n">2</span>무중단 처리</div>
+        <div class="flow"><span class="node on">2대 웹(A·B)</span><span class="arrowc">›</span><span class="node">한 대씩 교체</span><span class="arrowc">›</span><span class="node on">최소 1대 정상 보장</span><span class="arrowc">›</span><span class="node">무중단</span></div>
+        <p class="muted" style="font-size:11.5px;margin-top:8px">＋ 질문은 "작업 대기열"에 넣어 재배포에도 생존.</p>
+      </div>
+      <div class="blk before"><div class="lab">변경 전</div><p>단일 웹(배포 시 502) · 재시작 시 작업 중단 · 29,000줄 단일 파일.</p></div>
+      <div class="blk after"><div class="lab">변경 후</div><p><strong>2-replica 롤링 배포</strong>(무중단) · 재시작 <strong>우아한 종료</strong>·DB 무중단 재시작 · 코드 <strong>21개 모듈</strong>로 분할.</p><span class="recon">◐ 인프라 영역(도식 재구성)</span></div>
+      <div class="blk why"><div class="lab"><span class="n">4</span>왜 이 방향</div><p><strong>안정성·운영편의</strong> — 표준 로드밸런서로 간결하게. 코드 분할은 <strong>겉보기 동작을 바꾸지 않는</strong>(byte-동치) 방식으로 안전하게 진행.</p></div>
+      <div class="blk effect"><div class="lab"><span class="n">5</span>기대 효과 <span class="badge b-ok" style="margin-left:auto">배포·실증 확인</span></div><p>배포 중 <strong>중단 0</strong> 실증(부하 104건 200 OK, E-011)·라우터 배포 완료(E-012). <strong>자동롤백·일부 보조기능(백업 cron)은 확인필요</strong>(U-004·U-001).</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 · 기대 효과·성과 종합 -->
+<section class="slide" data-key="impact" aria-label="기대 효과 성과 종합">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>기대 효과 · 성과 종합</span>
+    <h2 class="title">확인된 성과와, 아직 "확인 필요"한 것을 나눠서</h2>
+    <div class="grid g2">
+      <div class="card"><h3><span class="badge b-ok">확인</span> 근거 있는 성과</h3><ul>
+        <li><strong>무중단 배포</strong>: 롤링 부하 104건 전부 정상, 최대 0.27초, <strong>502 = 0</strong>. <span class="muted">(E-011)</span></li>
+        <li><strong>지식그래프 서버 조회</strong>: 이웃 조회 <strong>약 60배</strong> 빨라짐(9.5초→0.15초). <span class="muted">(E-010, 서버 실측)</span></li>
+        <li><strong>DB 무중단 재시작</strong>: 재시작 중 읽기/쓰기 오류 <strong>0건</strong>. <span class="muted">(E-014)</span></li>
+        <li><strong>백업 복원 리허설</strong> 통과 · <strong>코드 모듈화</strong>(29K→18.9K줄) 배포. <span class="muted">(E-015·E-012)</span></li>
+        <li>다중 데이터소스·보안 6대·그룹 대화·정확도 수단 <strong>개발·머지 완료</strong>. <span class="muted">(E-002~E-008)</span></li>
+      </ul></div>
+      <div class="card"><h3><span class="badge b-warn">확인 필요</span> 단정하지 않는 것</h3><ul>
+        <li><strong>정확도 향상 수치</strong>(X%→Y%) — 측정 수단은 도입, 결과는 미측정. <span class="muted">(U-006)</span></li>
+        <li><strong>그래프 화면 속도(FPS)</strong> — 설계상 개선, 실 브라우저 계측 필요. <span class="muted">(U-003)</span></li>
+        <li><strong>일부 기능 라이브 배포·효과</strong>(무중단 보조·6월 전반 기능). <span class="muted">(U-001·U-005)</span></li>
+        <li><strong>실 Windows 브라우저 시각검증</strong>·로그인 QA·자동롤백. <span class="muted">(U-002·U-004)</span></li>
+      </ul></div>
+    </div>
+    <div class="callout warn"><strong>정직성 원칙</strong> — "개발·머지 완료"와 "라이브 배포·효과 확인"은 다릅니다. 성능·안정화·정확도는 <strong>근거가 있는 것만</strong> 수치로 말하고, 나머지는 "진행 중/예정/목표"로 표현합니다. (전체 목록: 부록 및 <span class="mono">EVIDENCE.md</span>)</div>
+  </div>
+</section>
+
+<!-- 12 · 리스크·후속 -->
+<section class="slide" data-key="risk" aria-label="리스크 및 후속 과제">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>리스크 · 후속 과제 · 정직하게</span>
+    <h2 class="title">남은 위험과 다음 할 일</h2>
+    <table class="cmp" aria-label="리스크 및 후속">
+      <thead><tr><th style="width:24%">항목</th><th style="width:38%">현재 상태</th><th>다음 단계 / 완화</th></tr></thead>
+      <tbody>
+        <tr><td class="rowlab">무중단 보조 기능 배포</td><td class="b">코드·정적검증 완료, <strong>라이브 배포 대기</strong> (U-001)</td><td class="a">운영자 배포 후 우아한 종료·백업 cron 설치 확인</td></tr>
+        <tr><td class="rowlab">실 화면 시각검증</td><td class="b">그래프·목록·그룹·운영 패널 <strong>PB-0008 확인필요</strong> (U-002)</td><td class="a">실 Windows 브라우저 검증(발표 전 권장)</td></tr>
+        <tr><td class="rowlab">성능·정확도 수치</td><td class="b">FPS·NL→SQL 정확도 <strong>미측정</strong> (U-003·U-006)</td><td class="a">브라우저 계측·평가 harness before/after</td></tr>
+        <tr><td class="rowlab">무중단 자동롤백</td><td class="b">설계·스크립트 있음, <strong>실패주입 미검증</strong> (U-004)</td><td class="a">배포 리허설에서 자동롤백·SSE 무손실 관찰</td></tr>
+        <tr><td class="rowlab">단일 호스트 SPOF</td><td class="b">이중화(HA) 미도입 — 데이터 보존 우선 선택</td><td class="a">백업/복원 강화 우선(문서화된 의사결정)</td></tr>
+        <tr><td class="rowlab">문서 정합</td><td class="b">기능 번호 충돌·수치 경미 불일치 (U-008)</td><td class="a">최신 상태·검증 수치 재확인</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 13 · 마무리 -->
+<section class="slide" data-key="outro" aria-label="마무리 및 다음 기간">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>마무리 · 다음 기간</span>
+    <h2 class="title">정리하면 — 신뢰·범위·정확도·협업·안정성이 한 달에 함께 올라섰습니다</h2>
+    <div class="grid g3">
+      <div class="card"><h3>이번 기간</h3><p>보안·정확도·다중 데이터·협업·운영관제·무중단 — <strong>16개 작업 묶음</strong>이 본선 반영. 핵심 인프라·관리 콘솔은 <strong>배포까지 확인</strong>.</p></div>
+      <div class="card"><h3>다음 기간(예정)</h3><p>무중단 보조 기능 라이브 반영 · 실 화면 시각검증 · <strong>정확도/성능 수치 측정</strong> · 라우터 잔여 검증.</p></div>
+      <div class="card"><h3>권장 확인</h3><p>발표 전 <span class="mono">EVIDENCE.md §2</span>(확인필요 8건)를 담당자와 점검 → "완료"와 "예정"을 정확히 구분해 보고.</p></div>
+    </div>
+    <div class="callout">이 자료의 모든 수치·주장은 <span class="mono">git 이력·정책문서·기능 기록·개발 기록</span>에 근거하며, <strong>확인/확인 필요를 구분</strong>했습니다. 상세 근거는 동봉 <span class="mono">EVIDENCE.md</span>, 발표 대사는 <span class="mono">SCRIPT.md</span>.</div>
+  </div>
+</section>
+
+<!-- 14 · 부록: 확인필요 색인 -->
+<section class="slide" data-key="evidence" aria-label="부록 확인필요 색인">
+  <div class="wrap">
+    <span class="kicker"><span class="dot"></span>부록 · 확인 필요 색인 (발표자용)</span>
+    <h2 class="title">발표 시 "완료"로 단정하지 말 것 — 8건</h2>
+    <div class="grid g2">
+      <div class="card"><h3>배포·설치</h3><ul>
+        <li><strong>U-001</strong> 무중단 보조(백업 cron·우아한 종료) 라이브 배포</li>
+        <li><strong>U-005</strong> 6월 전반 기능(보안·다중DB·정확도·협업)의 라이브 배포·효과</li>
+      </ul></div>
+      <div class="card"><h3>측정·수치</h3><ul>
+        <li><strong>U-003</strong> 그래프 화면 속도(FPS) 개선 수치</li>
+        <li><strong>U-006</strong> NL→SQL 정확도 향상 수치</li>
+      </ul></div>
+      <div class="card"><h3>검증</h3><ul>
+        <li><strong>U-002</strong> 실 Windows 브라우저 시각검증·로그인 QA</li>
+        <li><strong>U-004</strong> 무중단 자동롤백·SSE 무손실</li>
+      </ul></div>
+      <div class="card"><h3>근거·정합</h3><ul>
+        <li><strong>U-007</strong> 일부 설계 결정은 개발 기록(대화) 단독 — 결과는 코드로 확인</li>
+        <li><strong>U-008</strong> 문서 간 경미한 수치·번호 불일치</li>
+      </ul></div>
+    </div>
+    <div class="callout"><strong>내부 정보 주의</strong> — 이 자료에는 계정·비밀번호·토큰·접속 정보가 포함되지 않았습니다. 외부 공유 시에도 동일 원칙을 유지하세요.</div>
+  </div>
+</section>
+
+</main>
+
+<!-- 목차 -->
+<div class="idx" id="idx" role="dialog" aria-modal="true" aria-label="목차">
+  <nav class="idx-panel" id="idxPanel" aria-label="슬라이드 목차">
+    <div class="idx-title">목차 · 클릭하면 이동</div>
+    <div id="idxList"></div>
+    <div class="idx-hint">← / → · Space 로 이동 · <kbd>Esc</kbd> 목차 열고 닫기 · 주소 끝 <kbd>#키</kbd> 로 특정 장 직행</div>
+  </nav>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var titles = [
+    ['표지','DBA AI Assistant 개발 진척 보고'],
+    ['핵심 요약','먼저 결론 — 3가지 방향, 16개 묶음'],
+    ['개발 배경','안전·정확·무중단이 어렵다 (SCQA)'],
+    ['이번 기간 개요','화면 흐름 순 7가지 변화'],
+    ['1. 접속·인증','자체 HTTPS·2단계 인증·로그인 제한'],
+    ['2. 작업 화면','답변 diff·첨부 버전·진행 표시'],
+    ['3. 정확한 답','정확도 평가·환류·용어 사전'],
+    ['4. 더 많은 데이터','MySQL＋MSSQL·DB 단위 접근'],
+    ['5. 함께 쓰기','그룹 대화·@멘션·권한 분리'],
+    ['6. 운영·관제','사용량·권한·지식그래프'],
+    ['7. 끊김 없는 서비스','무중단 배포·재시작 안전·모듈화'],
+    ['기대 효과','확인된 성과 vs 확인 필요'],
+    ['리스크·후속','남은 위험과 다음 할 일'],
+    ['마무리','다음 기간 예고'],
+    ['부록','확인 필요 색인(발표자용)']
+  ];
+  var cur = 0, N = slides.length;
+  var prog = document.getElementById('prog');
+  var counter = document.getElementById('counter');
+  var idx = document.getElementById('idx');
+  var idxList = document.getElementById('idxList');
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+
+  // 목차 구축
+  slides.forEach(function(s, i){
+    var b = document.createElement('button');
+    b.className = 'idx-item'; b.type = 'button';
+    b.setAttribute('data-i', i);
+    var t = titles[i] || [s.getAttribute('data-key')||('슬라이드 '+(i+1)),''];
+    b.innerHTML = '<span class="idx-num">'+(i)+'</span><span><span class="idx-name">'+t[0]+'</span><span class="idx-sub">'+(t[1]||'')+'</span></span>';
+    b.addEventListener('click', function(){ go(i); closeIdx(); });
+    idxList.appendChild(b);
+  });
+  var idxItems = Array.prototype.slice.call(idxList.querySelectorAll('.idx-item'));
+
+  function render(){
+    slides.forEach(function(s, i){ s.classList.toggle('is-active', i===cur); });
+    prog.style.width = (N>1 ? (cur/(N-1))*100 : 100) + '%';
+    counter.textContent = (cur+1) + ' / ' + N;
+    idxItems.forEach(function(b, i){ b.classList.toggle('active', i===cur); });
+    var key = slides[cur].getAttribute('data-key');
+    if (key && ('#'+key) !== location.hash) history.replaceState(null,'','#'+key);
+    var act = slides[cur]; act.setAttribute('tabindex','-1');
+    // 활성 슬라이드 상단으로(스크롤 폴백 모드에서 장 전환 시)
+    act.scrollTop = 0;
+  }
+  function go(i){ cur = Math.max(0, Math.min(N-1, i)); render(); }
+  function next(){ go(cur+1); } function prev(){ go(cur-1); }
+
+  function openIdx(){ idx.classList.add('open'); var a=idxList.querySelector('.idx-item.active'); if(a) a.focus(); }
+  function closeIdx(){ idx.classList.remove('open'); }
+  function toggleIdx(){ idx.classList.contains('open') ? closeIdx() : openIdx(); }
+
+  document.getElementById('zoneL').addEventListener('click', prev);
+  document.getElementById('zoneR').addEventListener('click', next);
+  document.getElementById('menuBtn').addEventListener('click', toggleIdx);
+  idx.addEventListener('click', function(e){ if(e.target===idx) closeIdx(); });
+
+  document.addEventListener('keydown', function(e){
+    if (e.key==='Escape'){ toggleIdx(); return; }
+    if (idx.classList.contains('open')) return;
+    if (e.key==='ArrowRight' || e.key===' ' || e.key==='PageDown'){ e.preventDefault(); next(); }
+    else if (e.key==='ArrowLeft' || e.key==='PageUp'){ e.preventDefault(); prev(); }
+    else if (e.key==='Home'){ go(0); } else if (e.key==='End'){ go(N-1); }
+  });
+
+  // 딥링크(#key) 진입
+  (function(){
+    var h = (location.hash||'').replace('#','');
+    if (h){ for (var i=0;i<slides.length;i++){ if (slides[i].getAttribute('data-key')===h){ cur=i; break; } } }
+    render();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -2,6 +2,16 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260702T025852-report-deck-run-20260601-20260702 [SKIPPED:presentation-generation] — /_dqa:report_deck 검증 실행 산출물 (2026-06-01~07-02 개발 진척 발표자료 v1)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (base 2a4a8d3d). `/_dqa:report_deck "2026-06-01 ~ 2026-07-02"` 실행 — 스킬 end-to-end **검증 겸 실제 발표자료 생성**.
+- **변경(META, pure-meta, doc-only)**: `docs/presentation/2026-06-01_2026-07-02/v1/{deck.html, SCRIPT.md, EVIDENCE.md}` 신규 + `meta/REVIEW.md`(본 entry). 코드·정본·정책 무변경(신규 버전 dir, 기존 자산 미덮어씀).
+- **수집(5채널, 병렬 subagent)**: git main 반영분(16 논리 단위·1,084 커밋, baseline 44d42997@05-29) · 정책/릴리즈노트(배경·선택근거·운영영향·리스크) · unit feature 기록(feature-0003·0012·0014·0015·0016 등 배경/전후/시행착오/배포상태) · 개발 세션 transcript(보조·두 홈 하이픈-slug, 의사결정·시행착오) · 이전 발표자료(기간 스코프 report_deck 산출물 없음 — 제품 소개 index/practitioner 만 존재, 성격 상이).
+- **정직성(확인 vs 확인필요)**: 확인 15건(무중단 zero-502 부하실증·그래프 서버조회 60x·DB재시작 오류0·백업복원 PASS·라우터 배포·다중DB/보안6대/협업/정확도수단 머지) / 확인필요 8건(정확도·FPS 수치 미측정·일부 라이브 배포·PB-0008 시각검증·자동롤백·transcript 단독 결정·문서 경미 불일치). **배포여부·테스트·성능수치·재발방지·전후자료·문서코드불일치 단정 금지** 준수 — 덱·스크립트가 EVIDENCE 원장과 1:1 정합.
+- **자기검증(Phase 6)**: 외부 리소스 참조 0(자기완결 offline — CDN·원격폰트·원격이미지·외부JS 0) · 민감정보 0(계정·비번·토큰·접속좌표·개인정보) · focus-visible(신규)·prefers-reduced-motion·keep-all·색+라벨+형태 배지 28 · `--diff-*` before-after 오용 0 · backdrop-filter 미사용(주석만) · HTML 균형 · 슬라이드 15 정합. §5.0 디자인(봉투 토큰 상속+파생, 시스템폰트, 접근성-우선 clamp rem+문서스크롤 모드) 적용.
+- **[SKIPPED] 사유**: 발표자료 **콘텐츠 생성**(정책 의미 변경 없음, 코드/정본 무변경) — 정책 코히런스 패널 불요(선례 REV-20260624T090355 presentation-title-rename 동일 계열). 콘텐츠 신뢰성은 `EVIDENCE.md` 원장 + Phase 6 자기검증으로 담보. 실 브라우저 시각검증(PB-0008)은 문서 exempt(check #13) + EVIDENCE U-002 로 확인필요 명시.
+- **Human Approval Needed**: 아니오(additive doc-only, 제품 런타임 동작 0). 단 **발표자료는 리뷰 콘텐츠**이므로 main 랜딩 전 사용자 검토 권장(확인필요 8건 담당자 점검) — 본 실행은 스킬 검증 목적, 랜딩은 사용자 판단.
+
 ## REV-20260702T022910-report-deck-skill [SUBAGENT:report-deck-fit-review + design-trends-workflow] — `/_dqa:report_deck` 신설 (기간별 개발 진척 상부보고 발표자료 생성 persona)
 
 - **cycle**: ai/claude/dqa-report-deck (base c5e259db). 사용자 요청(2026-07-02): 특정 개발 일정 범위("YYYY-MM-DD ~ YYYY-MM-DD")를 입력받아 그 기간 작업을 git·정책문서·unit 기록·개발 대화기록·릴리즈노트로 종합, **비전문가(기획·운영·관리) 포함 상부보고용 발표자료**(자기완결 HTML 덱 + 발표 스크립트 + 근거·확인필요 원장)를 `docs/presentation/<범위>/<버전>/` 에 생성하는 reporting persona 를 신설. 발표 형식은 세션 공동 설계(AskUserQuestion 4결정: 하이브리드 골격/고정 5블록/자산우선+폴백/3종 세트) + 상부보고·발표 웹 리서치(SCQA·피라미드·outcome-over-output·전후 병치)로 확정.
