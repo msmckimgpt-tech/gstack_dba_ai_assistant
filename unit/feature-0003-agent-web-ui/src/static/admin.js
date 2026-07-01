@@ -3006,10 +3006,14 @@ function _metaInitGraph() {
     elements: [],
     minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
     // 렌더 성능(프레임 부드럽게): 아래는 전부 프레임당 그리기 부하를 '줄이는' 옵션이라 성능 저하 없음.
+    // - pixelRatio:1 — 고DPI 디스플레이에서 캔버스를 devicePixelRatio(보통 2)² = 4배 픽셀로 래스터하던 것을
+    //   1x 로 고정. 프레임당 채우는 픽셀 수가 최대 병목(측정: 1x 전환 시 jank 프레임 21→9, 노드 더 많은데도 감소).
+    //   트레이드오프: 정지 화면이 약간 소프트해짐(그래프 도형/텍스트라 가독 영향 미미). 필요 시 1.5 로 상향 가능.
     // - motionBlur: 모션 중 프레임 병합 렌더 → 부드러운 체감.
     // - textureOnViewport: 팬/줌 시 캐시 텍스처 재사용(전 요소 재렌더 생략).
     // - hideEdgesOnViewport: 팬/줌 중 엣지 그리기 생략.
-    // (라벨 텍스트 래스터가 프레임 최대 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
+    // (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
+    pixelRatio: 1,
     motionBlur: true,
     textureOnViewport: true,
     hideEdgesOnViewport: true,
@@ -3261,7 +3265,9 @@ function _metaGraphLayout(opts) {
         });
         cfg = Object.assign({}, base, {
           name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
-          animationDuration: 450, packComponents: false, numIter: 400, fixedNodeConstraint: fixed,
+          // numIter 축소: 증분은 기존 노드 고정·신규만 정착이라 반복이 적어도 충분. 동기 계산 hitch(측정
+          // max 120~155ms 스파이크) 완화 — fcose 반복은 메인 스레드 블로킹이라 프레임 시작 지연의 원인.
+          animationDuration: 450, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
         });
       } else {
         cfg = Object.assign({}, base, {
