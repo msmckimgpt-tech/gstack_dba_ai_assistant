@@ -3009,12 +3009,12 @@ function _metaInitGraph() {
     // - pixelRatio:1 — 고DPI 디스플레이에서 캔버스를 devicePixelRatio(보통 2)² = 4배 픽셀로 래스터하던 것을
     //   1x 로 고정. 프레임당 채우는 픽셀 수가 최대 병목(격리측정: pixelRatio 만 지배적 — 30노드 fit-애니
     //   jank 11→1). 트레이드오프: 정지 화면이 약간 소프트(그래프 도형/텍스트라 가독 영향 미미).
-    // - textureOnViewport / hideEdgesOnViewport: 수동 팬/줌 시 캐시 텍스처·엣지 생략(대형 그래프 도움).
-    // - motionBlur 는 제거함: 격리측정상 프레임 병합 합성 패스가 오히려 jank 를 늘림(11→14, 이득 0).
-    //   (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
+    // - textureOnViewport / hideEdgesOnViewport 는 제거함: 노드 드래그 시 이 옵션들이 연결 엣지를
+    //   숨기거나(정적 텍스처가 live 엣지 갱신 미반영) 사라지게 하는 버그 유발. 수동 팬/줌 이득은
+    //   pixelRatio:1(주 레버) 로 이미 확보되어 손실 미미.
+    // - motionBlur 도 제거: 격리측정상 프레임 병합 합성 패스가 오히려 jank 를 늘림(11→14, 이득 0).
+    //   (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨/엣지 숨김은 _metaGraphLayout 에서 처리.)
     pixelRatio: 1,
-    textureOnViewport: true,
-    hideEdgesOnViewport: true,
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
@@ -3026,6 +3026,10 @@ function _metaInitGraph() {
       // 모션(레이아웃/카메라 애니메이션) 중 라벨 숨김 — 텍스트 래스터가 프레임 최대 비용. 정지 시 복원.
       { selector: "node.anim-hide-label", style: { "label": "" } },
       { selector: "node[label='Table']", style: { "font-weight": "bold" } },
+      // feature-0016 graphux5: Column 노드는 테이블 하단 세로 스택 — 라벨을 노드 오른쪽에 두어 세로 목록 가독성 확보.
+      { selector: "node[label='Column']", style: {
+          "text-valign": "center", "text-halign": "right", "text-margin-x": 4, "text-margin-y": 0,
+          "font-size": "10px", "text-max-width": "160px" } },
       // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
       { selector: "node:parent", style: {
           "background-color": "#3f4b8c", "background-opacity": 0.08,
@@ -3037,10 +3041,19 @@ function _metaInitGraph() {
       { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
       { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
       { selector: "node.dim", style: { "opacity": 0.35 } },
+      // feature-0016 graphux5: 기본 엣지는 직선이 아닌 완만한 곡선(unbundled-bezier) — 교차부 가독성.
       { selector: "edge", style: {
           "width": 1.4, "line-color": "#cbd2db", "target-arrow-color": "#cbd2db",
-          "target-arrow-shape": "triangle", "curve-style": "bezier",
+          "target-arrow-shape": "triangle", "curve-style": "unbundled-bezier",
+          "control-point-distances": "36", "control-point-weights": "0.5",
           "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
+      // feature-0016 graphux10: 테이블→컬럼(HAS_COLUMN)은 하단으로 '부드럽게 꺾이는' 직교 라우팅(round-taxi).
+      //   컬럼이 테이블 아래 세로로 펼쳐지며(_metaGraphPlaceColumns), 엣지가 아래로 내려가 각 컬럼으로 꺾인다.
+      { selector: "edge[label='HAS_COLUMN']", style: {
+          "curve-style": "round-taxi", "taxi-direction": "downward",
+          "taxi-turn": "24px", "taxi-turn-min-distance": "4px", "taxi-radius": 10,
+          "line-color": "#b7bfca", "target-arrow-color": "#b7bfca", "target-arrow-shape": "triangle",
+          "width": 1.3, "opacity": 0.9 } },
       // 레이아웃 애니메이션 중 엣지 숨김 — 매 프레임 엣지 지오메트리(bezier 제어점·화살표) 재계산이
       // 트윈 프레임의 주 비용(격리측정: 엣지표시 대비 트윈 40.8→21.4ms). 정착 시 복원.
       { selector: "edge.anim-hide", style: { "display": "none" } },
@@ -3074,6 +3087,9 @@ function _metaInitGraph() {
       _metaGraphShowDetail(key);       // 단일: 상세 카드만 갱신
     }
   });
+  // feature-0016 graphux5: 사용자가 Table 노드를 드래그하면 그 아래 컬럼 스택이 추종하도록 재정렬(lock 컬럼은
+  //   드래그 이동 불가 → 테이블만 이동, dragfree 에서 컬럼을 새 위치 아래로 재배치해 트리 구조 유지).
+  _metaGraph.cy.on("dragfree", "node[label='Table']", () => { _metaGraphPlaceColumns(); });
   // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
   if (window.ResizeObserver && !_metaGraph.ro) {
     let rt = null;
@@ -3198,7 +3214,7 @@ async function _metaGraphExpand(key) {
     _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus });
   } else {
     // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
-    try { const a = cy.getElementById(key); if (a && a.length) cy.center(a); } catch (_) {}
+    try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 350 }); } catch (_) {}
   }
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
@@ -3214,16 +3230,18 @@ function _metaGraphAddElements(nodes, edges) {
     if (!n || !n.key) return;
     // 스키마 노드 = 카테고리 컨테이너(compound parent)로 사용.
     if (n.label === "Schema") { _metaEnsureCat(cy, n.key); return; }
+    // feature-0016 graphux5: ordinal(실제 스키마 컬럼 순서) — Column 세로 정렬 정렬키. 숫자만 채택(그 외 null).
+    const ord = (typeof n.ordinal === "number" && isFinite(n.ordinal)) ? n.ordinal : null;
     const existing = cy.getElementById(n.key);
     if (existing.length) {
       existing.data({ label: n.label, name: n.name || n.fqn || n.key,
-        fqn: n.fqn || "", description: n.description || "", source: n.source || "" });
+        fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord });
       return;
     }
     const pid = _metaCatParent(n.key, n.fqn);
     if (pid) _metaEnsureCat(cy, pid);
     const data = { id: n.key, label: n.label || "Node", name: n.name || n.fqn || n.key,
-      fqn: n.fqn || "", description: n.description || "", source: n.source || "" };
+      fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
     if (pid) data.parent = pid;
     cy.add({ group: "nodes", data });
     added.push(n.key);
@@ -3242,11 +3260,51 @@ function _metaGraphAddElements(nodes, edges) {
   return added;
 }
 
+// feature-0016 graphux5: 각 Table 의 HAS_COLUMN 자식(Column)을 테이블 바로 아래에 실제 순서(ordinal)로
+//   세로 스택 배치하고 lock 한다. force layout 이 컬럼을 흩뿌려 순서 판독이 안 되고 타 테이블 엣지와 교차하던
+//   문제를 제거. ordinal 미상(null)은 뒤로 밀고 name 순 tie-break. 우측으로 들여써(INDENT_X) HAS_COLUMN
+//   엣지가 '아래로 내려가 오른쪽으로 꺾이는' 트리 모양(round-taxi)이 되도록 한다. layoutstop 마다 호출 →
+//   테이블이 이동해도 컬럼이 그 아래로 추종.
+function _metaGraphPlaceColumns() {
+  const cy = _metaGraph.cy;
+  if (!cy) return;
+  const INDENT_X = 54;     // 테이블 우하단 들여쓰기(엣지가 아래→오른쪽으로 꺾임)
+  const ROW_GAP = 30;      // 컬럼 간 세로 간격
+  try {
+    cy.batch(() => {
+      cy.nodes("[label='Table']").forEach((tbl) => {
+        if (tbl.isParent && tbl.isParent()) return;   // compound 부모(스키마)는 대상 아님
+        const cols = tbl.outgoers("edge[label='HAS_COLUMN']").targets().filter("[label='Column']");
+        if (!cols || !cols.length) return;
+        const arr = cols.toArray().sort((a, b) => {
+          const oa = a.data("ordinal"), ob = b.data("ordinal");
+          const na = (typeof oa === "number" && isFinite(oa)) ? oa : Number.MAX_SAFE_INTEGER;
+          const nb = (typeof ob === "number" && isFinite(ob)) ? ob : Number.MAX_SAFE_INTEGER;
+          if (na !== nb) return na - nb;
+          return String(a.data("name") || "").localeCompare(String(b.data("name") || ""));
+        });
+        const tp = tbl.position();
+        let th = 30; try { th = tbl.height() || 30; } catch (_) {}
+        const startY = tp.y + th / 2 + 40;   // 테이블(+하단 라벨) 아래 첫 컬럼
+        arr.forEach((c, i) => {
+          try {
+            c.unlock();
+            c.position({ x: tp.x + INDENT_X, y: startY + i * ROW_GAP });
+            c.lock();   // 이후 force layout 이 컬럼을 다시 흩뿌리지 않도록 고정(테이블 이동 시 재배치)
+          } catch (_) {}
+        });
+      });
+    });
+  } catch (_) {}
+}
+
 // opts.incremental=true(더블클릭 확장): 기존 노드 좌표를 fixedNodeConstraint 로 고정하고 신규 노드만
 //   국소 배치(randomize:false=PURE_INCREMENTAL). 전체 재무작위화·재프레이밍(fit)·proof 반복을 생략해
 //   '전체가 다시 튕겨 펼쳐지는' 지연을 제거한다. 인자 없음(초기 로드/검색): 좌표 없는 재구축이라
 //   randomize:true + packComponents + proof 유지(안 그러면 원점 뭉침 — fcose 는 randomize:false 시
 //   spectral/packComponents 를 끈다).
+// graphux5: 레이아웃 종료(layoutstop)마다 _metaGraphPlaceColumns 로 컬럼을 테이블 아래 세로 정렬 + lock.
+//   전체 재배치(non-incremental) 전에는 컬럼 lock 을 풀어(stale 고정점 왜곡 방지) force 에 참여시킨 뒤 재정렬.
 function _metaGraphLayout(opts) {
   if (!_metaGraph.cy) return;
   opts = opts || {};
@@ -3254,6 +3312,8 @@ function _metaGraphLayout(opts) {
   const cnt = cy.nodes().length;
   const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
+  // 전체 재배치는 컬럼 lock 해제 후 force 에 참여시킨다(종료 후 재정렬+재lock). 증분은 기존 컬럼 lock 유지(스택 보존).
+  if (!incremental) { try { cy.nodes("[label='Column']").unlock(); } catch (_) {} }
   const base = {
     nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
     uniformNodeDimensions: false,
@@ -3274,13 +3334,12 @@ function _metaGraphLayout(opts) {
           const p = n.position();
           fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
         });
-        // 확장은 element 애니메이션 없이 '즉시 배치'(animate:false). cytoscape 는 요소 애니메이션 중
-        // 매 프레임 전체 캔버스를 고DPI 로 재래스터하므로(몇 노드만 움직여도 수백 노드 전부) element 애니가
-        // 저프레임의 주원인이다. 노드는 즉시 놓고, '화면 이동'은 아래 카메라 애니(textureOnViewport 캐시)
-        // 로만 부드럽게 처리한다. numIter 축소로 동기 계산 hitch 도 완화. (초기 로드/검색의 펼침 애니는 유지.)
+        // 확장(더블클릭): 기존 노드는 fixedNodeConstraint 로 고정, 신규 노드만 펼침 애니메이션. animate 는
+        // 켜되(사용자 요청 = 애니 복원) 아래 hideMotion 으로 트윈 중 라벨·엣지를 숨겨 프레임당 재계산을
+        // 줄인다. numIter 축소로 동기 계산 hitch 완화.
         cfg = Object.assign({}, base, {
           name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
-          animate: false, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
+          animationDuration: 500, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
         });
       } else {
         // 초기 로드/검색 펼침 애니메이션. quality proof→default + numIter 대폭 축소로 **fcose 동기 계산
@@ -3293,28 +3352,33 @@ function _metaGraphLayout(opts) {
         });
       }
       const layout = cy.layout(cfg);
-      // 비증분(초기 로드/검색) element 애니 동안 라벨+엣지 숨김 → 프레임당 텍스트 래스터 + **엣지 지오메트리
-      // 재계산**(트윈 프레임의 주 비용, 격리측정 40.8→21.4ms) 생략 → 부드러운 프레임. 증분은 즉시 배치라 불필요.
-      const hideMotion = animate && !incremental;
+      // 애니메이션(초기 로드/검색/확장) 동안 라벨+엣지 숨김 → 프레임당 텍스트 래스터 + **엣지 지오메트리
+      // 재계산**(트윈 프레임의 주 비용, 격리측정 40.8→21.4ms) 생략 → 프레임 부담 최소화. 정착 시 복원.
+      const hideMotion = animate;
       if (hideMotion) {
         try { cy.nodes().addClass("anim-hide-label"); cy.edges().addClass("anim-hide"); } catch (_) {}
       }
       layout.one("layoutstop", () => {
         if (hideMotion) { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} }
-        if (incremental && opts.focusEles && opts.focusEles.length) {
-          // 카메라도 '즉시' 이동(cy.fit, 애니메이션 없음). viewport 애니메이션은 프레임당 전체 캔버스를
-          // 다시 채우므로(노드 수 무관 고정 오버헤드), HW 가속이 약하거나 캔버스가 큰 환경에선 소수 노드에서도
-          // 저프레임의 원인이 된다. 노드 배치·카메라 모두 무애니 → 더블클릭 전체에 끊길 프레임 자체가 없음.
-          try { cy.fit(opts.focusEles, 80); } catch (_) {}
-        }
+        _metaGraphPlaceColumns();   // graphux10: 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
+        // 확장: 신규 이웃 영역으로 카메라 부드럽게 이동(애니 복원). 초기 로드: 스프레드가 이미 애니라 즉시 맞춤.
+        try {
+          if (incremental && opts.focusEles && opts.focusEles.length) {
+            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" });
+          } else {
+            cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤(스프레드 애니 종료 후 1회)
+          }
+        } catch (_) {}
       });
       layout.run();
       return;
     } catch (_) {}
   }
   try {
-    _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
-      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental }).run();
+    const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
+      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
+    layout.one("layoutstop", () => { _metaGraphPlaceColumns(); });
+    layout.run();
   } catch (_) {}
 }
 
@@ -4696,7 +4760,9 @@ async function _metaBootstrapSave() {
       const orig = inp ? (inp.dataset.original || "") : "";
       if (desc && desc !== orig) rows.push({ schema_name: schemaName, table_name: tableName, description: desc });
     } else {
-      block.querySelectorAll(".admin-meta-bs-col").forEach((colRow) => {
+      // feature-0016 graphux5: 골격 컬럼 DOM 순서 = describe_columns(ORDINAL_POSITION) 순 = 실제 DDL 순.
+      //   행 인덱스(1-based)를 ordinal 로 전송 → 그래프 뷰가 컬럼을 테이블 아래 실제 순서로 세로 배치한다.
+      block.querySelectorAll(".admin-meta-bs-col").forEach((colRow, idx) => {
         const inp = colRow.querySelector(".admin-meta-bs-desc[data-kind='column']");
         const desc = inp ? (inp.value || "").trim() : "";
         const orig = inp ? (inp.dataset.original || "") : "";
@@ -4704,6 +4770,7 @@ async function _metaBootstrapSave() {
           rows.push({
             schema_name: schemaName, table_name: tableName,
             column_name: colRow.dataset.column || "", description: desc,
+            ordinal: idx + 1,
           });
         }
       });
@@ -4722,7 +4789,10 @@ async function _metaBootstrapSave() {
     const payload = { scope_key: scope, source: "bootstrap" };
     payload.schema_name = rows[i].schema_name;
     payload.table_name = rows[i].table_name;
-    if (mode === "columns") payload.column_name = rows[i].column_name;
+    if (mode === "columns") {
+      payload.column_name = rows[i].column_name;
+      if (rows[i].ordinal != null) payload.ordinal = rows[i].ordinal;   // graphux5: 실제 컬럼 순서
+    }
     payload.description = rows[i].description;
     try {
       await apiFetch(`/api/admin/metadata/${mode}`, { method: "POST", body: JSON.stringify(payload) });

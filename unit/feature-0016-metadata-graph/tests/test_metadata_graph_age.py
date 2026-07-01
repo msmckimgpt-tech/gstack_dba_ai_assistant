@@ -22,10 +22,11 @@ def main() -> int:
 
     # ── sync 샘플 (게임 도메인 모사) ──
     mg.sync_table(cur, "ds1", "dbo", "orders", "주문 테이블 — 고객 구매 거래", "manual")
-    mg.sync_column(cur, "ds1", "dbo", "orders", "id", "PK", "manual")
-    mg.sync_column(cur, "ds1", "dbo", "orders", "customer_id", "고객 FK", "manual")
+    # graphux5: ordinal(실제 스키마 순서) 투영 검증 — id=1, customer_id=2.
+    mg.sync_column(cur, "ds1", "dbo", "orders", "id", "PK", "manual", ordinal=1)
+    mg.sync_column(cur, "ds1", "dbo", "orders", "customer_id", "고객 FK", "manual", ordinal=2)
     mg.sync_table(cur, "ds1", "dbo", "customers", "고객 마스터", "manual")
-    mg.sync_column(cur, "ds1", "dbo", "customers", "id", "PK", "manual")
+    mg.sync_column(cur, "ds1", "dbo", "customers", "id", "PK", "manual", ordinal=1)
     mg.sync_relationship(cur, "ds1", "dbo.orders", "customer_id",
                          "dbo.customers", "id", "N:1", "fk_introspect", 1.0)
     mg.sync_glossary_term(cur, "ds1", "주문", "고객이 구매한 거래")
@@ -62,6 +63,10 @@ def main() -> int:
     # depth 2 에서 customer_id -[REFERENCES]-> customers.id 도달
     assert "dbo.customers.id" in fqns, f"nb 2-hop missing: {fqns}"
     assert "REFERENCES" in etypes, f"nb REFERENCES missing: {etypes}"
+    # ── 검증 4d (graphux5): Column 노드가 ordinal(실제 스키마 순서) 을 투영으로 보유 ──
+    ordby_fqn = {n["fqn"]: n.get("ordinal") for n in nb["nodes"] if n["label"] == "Column"}
+    assert ordby_fqn.get("dbo.orders.id") == 1, f"ordinal id!=1: {ordby_fqn}"
+    assert ordby_fqn.get("dbo.orders.customer_id") == 2, f"ordinal customer_id!=2: {ordby_fqn}"
 
     # ── 검증 4b (graphux4 raw-graphid 재작성): 엣지 방향 보존 ──
     # neighborhood 는 start_id=source·end_id=target 로 물리 저장 방향을 유지해야 한다. 라벨로 검증
