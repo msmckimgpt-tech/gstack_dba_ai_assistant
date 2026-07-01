@@ -335,3 +335,42 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - app.py 28,224→26,734(~1,490↓, 단일 도메인 최대). routers 12개 / metadata 34 라우트 추출.
 - 학습: whitelist mod_syms 는 튜플-대입 타깃까지 수집 필수(누락 시 router NameError, make test 적발). 추출 후 완전 mod_syms static 재검사를 골든 재생성 전 수행 = 조기 적발.
 - 후속 배포: 컨테이너 로드(uvicorn web.app:app)에서 router import 는 기존 11 router 와 동일 `routers.<d>` 경로(신규 top-level 모듈 아님)라 web_context류 위험 없음 — 배포 blue-green healthz 게이트가 최종 안전망.
+- **배포·라이브 검증 완료(main 0b91b1b, PR #506)**: blue-green soak 통과·healthz git_commit=0b91b1b·추출 admin_metadata 라우트 미인증 401 verbatim(`{"error":"로그인이 필요합니다."}`) — DI seam byte-동치 + 컨테이너 로드 import 프로덕션 확인. deploy_scope: included(전역 standing) 근거 자동 배포.
+
+## REV-20260701-0008 [SKIPPED:deploy-record — 라이브 smoke 검증이 게이트; §18.8 byte-동치는 CHG-0006 REV-0006 에서 수행]
+- Related Change: CHG-20260701-0008 (admin/metadata 마일스톤 배포·라이브 검증)
+- 검증 성격: 코드 무변경 배포 기록. byte-동치 §18.8 은 DI 전환(REV-0006)에서, 추출 route-parity 는 REV-0007 에서 완료. 본 항목은 **프로덕션 라이브 smoke** 가 게이트.
+- 결정적 검증: (1) CI test PASS(36s). (2) blue-green 배포 soak 90s 통과·롤백 없음. (3) 라이브 edge healthz git_commit=0b91b1b·status=ok(배포 커밋 일치). (4) 추출 admin_metadata 라우트 미인증 **401 verbatim** = DI seam(require_permission→get_current_account→_AuthError 401) 프로덕션 byte-동치 + 컨테이너 로드 router import 정상(web_context류 ModuleNotFoundError 없음 — healthz 게이트 통과가 입증). (5) insight/ask-worker GIT_COMMIT WARN = 별건(웹 배포 무관).
+- 결론: admin/metadata 도메인 deploy-backed 완료.
+
+## REV-20260701-0009 [SKIPPED:mechanical byte-neutral 전체추출 — make test route-parity + 커플링 6유형 grep + static missing-prefix 게이트]
+- Related Change: CHG-20260701-0009 (6 도메인 35 핸들러 전체추출)
+- 검증 성격: 추출은 라우트 경로/메서드/응답 불변 mechanical move(핸들러 코드 무변경, DEFER 는 인라인 auth 그대로, `app.X` 참조 접두만). auth 로직 변경 0(§18.8 byte-동치 불요). 게이트 = route-parity(경로+메서드+순서) + make test 전체 + static prefix-완전성 + 커플링 6유형 전수.
+- 결정적 검증: (1) route-parity 골든 docker `_build_table` 재생성 = **set-neutral(added/removed 0), total 192 불변**. (2) make test **1313 passed·0 fail·route drift 0**. (3) **make test 안전망이 미포착 커플링 4건 실적 적발·수정**: `hasattr(app,"handler")` 3(→모듈), `app.app.routes` flat 순회 1(→재귀 walk). (4) 6 신규 router 가 docker(uvicorn web.app 컨테이너 로드)에서 정상 import(골든 재생성이 app 로드 성공으로 입증). (5) 추출기 self-healing missing-prefix static 재검사 clean, py_compile app.py+6 router OK.
+- 커플링 6유형 확립(추출 전 grep): (1)`app.<h>(` 직접호출 (2)`monkeypatch.setattr(app,...)` (3)`getsource(app.<h>)` (4)소스텍스트 `read_text/ast.parse`+핸들러명 (5)`hasattr/getattr(app,"<h>")` 문자열-인자 (6)`app.app.routes` flat 순회. profile·integrations 는 커플링 0(TestClient+snapshot), 나머지 4 도메인은 getsource/hasattr/route-check 재참조.
+- app.py 26,734→24,648(~2,086↓). 12→18 router. DEFER 핸들러(preauth) 인라인 auth 보존 = byte-identical.
+- 학습: 핸들러 추출은 DI 전환 불요(monkeypatch 는 `app.X` 동적참조로 보존). DEFER byte-동치 DI-rework 는 향후 정제(현 목표=모듈화, 전체추출이 최단).
+
+## REV-20260701-0010 [SKIPPED:mechanical byte-neutral 전체추출 — make test route-parity + 커플링 7유형 게이트]
+- Related Change: CHG-20260701-0010 (datasources 6 + auth 18 전체추출)
+- 검증 성격: mechanical route-preserving move(auth 로직 무변경, PUBLIC/DEFER 인라인 그대로). 게이트 = route-parity + make test + 커플링 전수.
+- 결정적 검증: (1) 골든 재생성 set-neutral 192. (2) make test **1313 passed·0 fail·route drift 0**(2회 반복 — 1차 hasattr 루프 2 + source-text 호출식 count 1 적발, 2차 GREEN). (3) datasources CLEAN-DI 3(`_ds_write_common`)·auth PUBLIC 7(signup/login/oauth)·DEFER 5 전부 인라인 auth 보존 = byte-identical. (4) 2 신규 router docker 컨테이너 로드 정상(골든 재생성 app 로드 성공). (5) py_compile+static missing-prefix clean.
+- 커플링 7유형 확립: 기존 6 + **(7) source-text 호출식 count**(helper 호출식을 app.py 소스에서 count — 추출 이동 시 변동, app.py+routers 합산 수정). auth_me 필터 호출이 auth.py 로 이동해 count 2→1 적발.
+- app.py 24,648→23,536(~1,112↓). 18→20 router.
+- 학습: 커플링 스캔은 핸들러명 grep 만으론 부족 — helper 호출식 count 형 source-text 검사(핸들러명 무참조)는 make test 가 최종 안전망. reref import guard 정확 매칭 필수.
+
+## REV-20260701-0011 [SKIPPED:mechanical byte-neutral 전체추출 — make test route-parity + 커플링 8유형 게이트]
+- Related Change: CHG-20260701-0011 (conversations 17 append + products 22 전체추출)
+- 검증 성격: mechanical route-preserving move(auth 로직 무변경, DEFER/txn/streaming 인라인 그대로). conversations 는 기존 router append.
+- 결정적 검증: (1) 골든 재생성 set-neutral 192. (2) make test **1313 passed·0 fail·route drift 0**(2회 — 1차 source-text contract 6 적발[test_group_conversation_s2 APP→APP_ALL·test_share_joinable_owner_guard getsource substring], 2차 GREEN). (3) products txn(admin_create/update/delete_product)·streaming(prompt/generate/stream)·pre-auth 전부 인라인 보존 byte-identical. (4) --append: 기존 conversations.py(10) + 신규 17 = 27 핸들러, NEW 블록 missing-prefix clean, 골든 재생성 app 로드 성공(컨테이너 import 정상). (5) py_compile OK.
+- 커플링 8유형 확립: 기존 7 + **(8) getsource 컨텍스트-substring**(helper 앞 단어 포함 substring 이 `app.` 접두로 깨짐 — 단일 심볼명은 생존). test_share_joinable_owner_guard 의 `not _conversation_owned_by_account` 적발.
+- app.py 23,536→20,542(~2,994↓, 단일 배치 최대). 20→21 router. **잔여 app.py 라우트 16(session 시작 148 대비 −132, 89% 추출)**.
+- 학습: --append 모드로 도메인 재통합(conversations sub-resource 를 lifecycle router 로). source-text getsource 는 helper-접두에 취약 — make test 가 안전망.
+
+## REV-20260701-0012 [SKIPPED:mechanical byte-neutral 전체추출 완주 — make test route-parity + 커플링 9유형 게이트]
+- Related Change: CHG-20260701-0012 (잔여 16 라우트 append — 라우트 핸들러 전량 추출 완료)
+- 검증 성격: mechanical route-preserving move. DEFER(long-poll/fail-soft/opt) 인라인 그대로. cross-call `ask` 는 내부 caller/monkeypatch 대상 모듈 전환.
+- 결정적 검증: (1) 골든 set-neutral 192. (2) make test **1313 passed·0 fail·route drift 0**. (3) **잔여 @app 라우트 0**(148 전량 추출) — python AST 확인. (4) cross-call `ask`: 내부 caller(conversations.py post_fix_with_ai) `app.ask`→bare `ask`(동일 모듈), monkeypatch/hasattr/getsource `app.ask`→`conversations.ask`, post_fix_with_ai 가 bare `ask` 호출 → `conversations.ask` module global → monkeypatch 정합(make test 입증). (5) 4 router append(conversations/share/admin_console/system) 컨테이너 로드 정상(골든 재생성 app 로드 성공).
+- 커플링 9유형: 기존 8 + **(9) cross-call 핸들러**(route 이자 내부 함수). `ask`(POST /api/ask, fix-with-ai 가 내부 호출) 유일.
+- app.py 20,542→18,917(~1,625↓). **148 route 핸들러 전량 21 router 추출 — app.py = 헬퍼 라이브러리 + DI seam + include_router.**
+- 잔여 아키텍처: app.py ~18.9k = **헬퍼**(web_context 미이동 — 원래 monkeypatch 블로커, 별도 workstream). route-handler 모듈화는 완주. 완전 thin-app 은 web_context 헬퍼 추출 필요(DI seam 선행).

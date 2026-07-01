@@ -116,6 +116,17 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260701T210000-graph-webgl 그래프 렌더러 canvas-2D→WebGL 전환 (Major §12.3, 2026-07-01) — **Environment: Windows-browser (실 GPU de-risk 완료 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: cytoscape 3.30.2→3.34.0 + `renderer:{name:"canvas",webgl:_webglOk}` + 엣지 bezier·색/투명도 재설계 + anim-hide 제거. 프론트 전용·비파괴.
+- 구조/단위: `node --check` PASS(admin.js). vendored cytoscape 3.34.0 정품(Cytoscape Consortium 헤더, node --check OK). 백엔드/스키마/API 변경 0.
+- **Environment: Windows-browser (de-risk 실측, PB-0008 준거)** — 실 Windows Chrome/149 via `bin/win-browser.py` 무권한 relay(`bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, 실 GPU). WSL headless(SwiftShader) 아닌 실 GPU.
+  - **시나리오**: cytoscape 3.34.0 + `webgl:true` + **2단 compound**(스키마 dbo > Table tblUser/tblOrder ERD카드 > 컬럼 dots) + 라벨 + REFERENCES bezier 엣지(trusted/candidate) 최소 페이지 렌더.
+  - **Pass — WebGL 활성·compound 정상**: `webglContextDetected=true`(getContext webgl2/webgl 성공), renderer webglOpt=true, renderer_hint=webgl, canvas#=4, nodes=8 parents=3 edges=2. 스크린샷(`scratchpad/webgl-test/render.png`): **2단 compound 박스(round-rectangle teal 보더)·노드 라벨·bezier 엣지+화살표+라벨 전부 정상 렌더**. make-or-break(compound WebGL 지원) 통과.
+- 적대 검증 패널(§18.8 subagent): BLOCKING 0·MAJOR 1(엣지 색-비의존 구분→candidate 가시성 상향 수정)·NIT 3. anim-hide 제거 완전성·폴백·노드보더·스코프·평행엣지 dedup 전부 코드 방어 확인. REV-20260701T210000 [SUBAGENT: PASS].
+- **PB-0008 성격(정직)**: 실 FPS 개선은 스크린샷 기반 PB-0008 로 측정 불가 → **사용자 실 하드웨어 재측정이 유일 효과 검증**. PB-0008 가 확인 가능한 것은 WebGL 활성·렌더 정합(compound·라벨·엣지·후보/신뢰 구분·ai 마커)·애니 부드러움·대규모 이웃 sprite 안정성.
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 관리콘솔 그래프 뷰 → ① WebGL 활성 확인 ② 검색·확장 애니 중 **라벨 항상 표시**(사라짐 없음) ③ compound ERD 박스·컬럼·엣지 렌더 정합 ④ candidate(연앰버 얇음)/trusted(진갈 굵음) 구분 가시성 ⑤ 대규모 이웃(수백 노드) 렌더 안정 + 사용자 육안 FPS·라벨유지 재확인.
+- Pass/Fail: PARTIAL(구조·단위·de-risk 실측·적대 패널 PASS / 라이브 PB-0008 렌더정합 = 배포 후 잔여, FPS 효과 = 사용자 재측정). Runner: AI.
+
 ### TASK-20260701T170000-graphux-camfps 그래프 카메라 애니 프레임레이트 최적화(layoutstop 지연 복원) (Minor §12.3, 2026-07-01, resume 인계) — **Environment: Windows-browser (라이브 PB-0008 배포 후 잔여)**
 - 대상: `_metaGraphLayout` layoutstop — 라벨/엣지 숨김 해제를 카메라 fit 애니 complete 후로 지연 + 세대가드 + 무조건 복원. 프론트 전용·비파괴(JS 로직).
 - 구조/단위: `node --check` PASS(admin.js). 백엔드/스키마/RBAC/API 변경 0. 캐시버스터 graphux-camfps.
@@ -1317,3 +1328,30 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **정량 실측**: 3 테이블 박스·컬럼 25 — 컬럼 순서 top→bottom **보존(true)**, 최상위 박스 겹침 **1쌍**(이전 satellite 11쌍), fcose 131ms. node --check OK.
 - **Pass/Fail: PASS**(인젝션) — 사용자 보고(더블클릭 시 컬럼 스택이 이웃 테이블과 겹침, 3회) 해소: 컬럼이 테이블 박스 안 ordinal 세로 목록으로 들어가고 fcose 가 박스 bounds 로 이웃 공간을 확보해 겹침 원천 차단.
 - **배포 후 최종 확인**: web 재배포(배포 번들) 후 다컬럼 테이블 더블클릭 PB-0008 재확인 예정.
+
+### TASK-20260701T163000-graphview-render — 그래프 뷰 3건(마커 렌더-타임·클러스터 선택 상세·클러스터명 좌정렬/무잘림) (feature-0003 프론트 + feature-0002 백엔드 cross-cut, Major §12.3 — **PB-0008 Windows-browser PASS**)
+- **Environment: Windows-browser** (실 Windows Chrome/149.0.7827.200 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, https://localhost/admin 인증 세션). WSL headless 아닌 실제 Windows 화면.
+  - 방법론: 백엔드 baked(정적자산은 이미지 내장, 신규 엔드포인트는 재빌드 필요)라 **프리뷰 인젝션 검증** — 변경 `admin.js`/`admin.html`/`styles.css` 를 실행 중 web-a·web-b `/app/web/static/` 에 주입(디스크 서빙, cache-buster `?v=20260701-graphview-render` 로 신규 번들 강제). 데이터소스 `mssql-06656002eda6`(mssql-qa-idc), 250 노드·스키마 클러스터 50.
+- **정량 실측**:
+  - **②클러스터 선택 상세 — PASS**: `accountdb` 클러스터(compound parent) 클릭 → 우측 상세 패널이 배지 '스키마 클러스터' + 이름 `accountdb` + 섹션 '테이블 (58)'(C_CouponSupplyType 등 목록)로 갱신. 클릭 클러스터 선택 강조(gold border) 확인. 이전(클릭 무시) 대비 정상 갱신.
+  - **③클러스터명 좌정렬·좌여백·무잘림 — PASS**: 오버레이 라벨 div 50개 생성(클러스터 1:1). `accountdb` 박스 좌상단 (64,122) 기준 라벨 (74,126) = **좌여백 +10px·상단 +4px 정확**(marginOkX/Y true). `whiteSpace:nowrap`·`textAlign:left`·`scrollWidth==clientWidth`(**무잘림**). native 스키마 라벨 `label:""`(숨김, 이중표시 없음). 줌 1.7배 시 라벨 재배치(90,93)·폰트 16px 클램프 — `cy.on('render')` 동기화 정상.
+  - **①마커 렌더-타임 — 백엔드 로직 실DB 정합 + 프론트 배선**: 신규 집계 쿼리를 실 KB PG(`node_analysis_jobs`)에 직접 실행 → 로드한 scope `mssql-06656002eda6` 에 done 335·active 183·distinct 826, `accountdb`(done=t)·`accountdb.GMRIP`(done=t) 정확 반환. 프론트 `_metaGraphSyncAnalysisMarkers` 가 로드/검색/확장 직후 `GET .../graph/analyze/status` 호출·마커 적용하도록 배선(현재 프리뷰는 백엔드 미배포라 404 → **graceful skip**: 그래프 250노드 정상 렌더, JS 예외 0 실측). 마커 렌더 최종 확인은 **실배포(web 재빌드) 후**.
+- **Pass/Fail: PASS**(②③ 라이브 실측 + ①백엔드 실DB 정합·프론트 배선·graceful). CHECK#13(PB-0008 Windows-browser) **충족**(웹 자산 변경에 이번 cycle Windows-browser Run 기록).
+- **배포 후 최종 확인**: web 재빌드·재배포(deploy_scope: included — 백엔드 포함) 후, mssql-qa-idc 그래프 진입 시 분석완료 노드(≈335)에 보라 마커·진행중(≈183)에 주황 마커가 **클릭 없이** 렌더되는지 PB-0008 재확인.
+
+### TASK-0016 ERD 박스 벌림 + 박스 클릭/더블클릭 정합 (frontend-only, feature-0016 연계)
+- **Environment: Windows-browser** (실 Windows Chrome/149 via `bin/win-browser.py` relay, https://localhost/admin 인증 세션). 메타데이터 > 🕸 그래프 뷰, mssql-qa-idc.
+  방법론: 배포 전 **런타임 인젝션 검증**(코드와 동일 로직: 증분 경로 신규-박스 감지 시 전체-스프레드 config). **정식 배포 후 배포 번들 재확인.**
+- **정량 실측(인젝션)**: 141테이블 compound 전체-스프레드(`randomize:false`·`packComponents:true`·`numIter:1000`·`nodeRepulsion 18000`·고정없음) → 테이블 박스겹침 **886 → 0**, fcose **109ms**. node --check OK. 캐시버스터 `admin.js?v=20260701-erd-spread`.
+- **Pass/Fail: PASS**(인젝션) — 사용자 보고 2건 대응: (4) 밀집 뷰 박스겹침(886→0 벌림), (5) 박스 클릭/더블클릭 정합(tap 핸들러 Table 예외로 단일=상세·더블=확장, 일반 노드와 동일). 적대리뷰 MAJOR(hasCompound 과발동) 수정 — full-spread 는 신규 노드가 박스를 들여올 때만 발동.
+- **배포(2026-07-01)**: web 무중단 롤링 `git_commit=a6bf0eb`(PR #511 머지), soak 90s 통과, edge /healthz 200. 배포 자산 서빙 검증: `GET /static/admin.js?v=20260701-erd-spread` 에 `newAddsBox` 마커 3건 baked(HTTP 정본). 그래프 뷰 UI 로드 sanity(실 Windows Chrome relay screenshot): 관리콘솔>메타데이터>🕸 그래프 뷰 진입·렌더 정상(범례·검색·이웃깊이·상세 패널), 배포 회귀 0. 스크린샷 `scratchpad/pb0008-graphview-empty.png`.
+- **라이브 인터랙션 검증 — 사용자 실화면 확인 요망(자동 tool 차단)**: (a) 밀집 박스겹침 해소 + term 국소 push, (b) Table 박스 단일=상세·더블=확장 정합 은 **canvas(cytoscape) 노드 클릭/더블클릭이 필요**한데, 이번 세션 win-browser 자동화가 막힘 — Chrome 149.0.7827.200 자동업데이트로 Playwright eval(주입 검증) UtilityScript 파손 + tool 이 canvas 좌표 클릭·더블클릭(350ms)·native `<select>` datasource 전환 미지원(메모리 project-pb0008-eval-regression-chrome200). 배포 전 **인젝션 실측(886→0, 109ms)** + **적대 리뷰(tap 로직 확인·MAJOR 수정)** 로 코드 정합은 확증. 최종 화면 동작은 이슈 신고자(사용자)의 실 브라우저 확인이 정본 — 선례(FPS·인터랙션 효과 PB-0008 사용자 확인) 동일.
+
+### TASK-20260701T220000-graphview-webgl-labels — 클러스터명 오버레이 WebGL 렌더러 호환 수정 (frontend-only, Minor §12.3 — **PB-0008 Windows-browser PASS**)
+- **Environment: Windows-browser** (실 Windows Chrome/149.0.7827.200 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, https://localhost/admin 인증 세션). WSL headless 아닌 실 Windows 화면.
+  - 방법론: graphview-render(§18) + graph-webgl(§17) **병합 번들**을 실행 중 web-a·web-b `/app/web/static/` 에 프리뷰 인젝션(admin.js/html/styles.css + **vendor/cytoscape.min.js 3.34.0**). cache-buster `20260701-graphview-webgl-labels`. 데이터소스 mssql-06656002eda6(mssql-qa-idc).
+- **정량 실측(WebGL 렌더러 하)**:
+  - **회귀 적발(수정 전)**: cytoscape 3.34.0 `renderer.webgl=true` 확인. 초기 로드 후 오버레이 `labelDivs=0`(미표시). 진단: `cy.on('render')` 가 WebGL 렌더러에서 emit 0(pan 후 renderFires=0) — 반면 `_metaGraphSyncClusterLabels()` 수동 호출은 35 divs 정상 생성·`renderedBoundingBox` 정상. → 이벤트 바인딩이 근본원인.
+  - **수정 후 PASS**: 이벤트를 `render viewport resize layoutstop add remove` + node `position drag free` 로 교체 → 로드 시 **labelDivs=35** 자동 생성(webgl=true), `cy.panBy({120,60})` 후 라벨 transform `(308,435)→(428,495)` = **+120/+60 정확 추종**(tracked=true). 클러스터 tap → 상세 '스키마 클러스터 / 테이블 (130)' 렌더. 좌상단 좌정렬·무잘림 유지(스크린샷 `scratchpad/graphview-webgl-final.png`).
+- **Pass/Fail: PASS** — WebGL 렌더러 하에서 클러스터명 오버레이(생성·pan/zoom 추종)·클러스터 상세가 정상 동작함을 실 Windows 브라우저로 실측. CHECK#13(PB-0008 Windows-browser) **충족**.
+- **배포 후 최종 확인**: web 재빌드·재배포(graph-webgl WebGL + graphview-render 동시 첫 배포) 후 라이브에서 클러스터명·상세·①마커(백엔드 배포분) 재확인.

@@ -39,6 +39,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import admin_accounts, auth  # feature-0012 P5b
 
 
 def _read_static(name: str) -> str:
@@ -85,7 +86,7 @@ def test_b3_schema_helper():
 
 
 def test_b4_auth_login_flow():
-    src = inspect.getsource(app.auth_login)
+    src = inspect.getsource(auth.auth_login)
     assert "_login_ip_throttled" in src          # IP throttle 선검사
     assert 'account.get("is_locked")' in src      # 계정 잠금 게이트
     assert "_login_record_failure" in src         # 실패 누적
@@ -119,15 +120,15 @@ def test_b7_serialize_exposes_lock():
 
 
 def test_b8_admin_unlock_endpoint():
-    assert hasattr(app, "admin_account_unlock")
-    src = inspect.getsource(app.admin_account_unlock)
+    assert hasattr(admin_accounts, "admin_account_unlock")
+    src = inspect.getsource(admin_accounts.admin_account_unlock)
     assert "console.manage" in src and "account.update" in src   # 권한 게이트
     assert "_login_reset_lockout" in src
     assert "auth.unlock" in src
 
 
 def test_b9_password_reset_clears_lockout():
-    src = inspect.getsource(app.admin_account_password_reset)
+    src = inspect.getsource(admin_accounts.admin_account_password_reset)
     assert "FailedLoginAttempts = 0" in src
     assert "LockedUntilAt = NULL" in src
 

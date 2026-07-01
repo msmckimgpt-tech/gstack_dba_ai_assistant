@@ -38,7 +38,8 @@ def _import_app():
 
 
 app = _import_app()
-from routers import admin_quotas, admin_console  # feature-0012 P5b
+from routers import conversations  # feature-0012 P5b
+from routers import admin_quotas, admin_console, admin_accounts, admin_roles  # feature-0012 P5b
 
 
 def _read_static(name: str) -> str:
@@ -101,7 +102,7 @@ def test_b6_period_usage_source():
 
 
 def test_b7_ask_gate():
-    src = inspect.getsource(app.ask)
+    src = inspect.getsource(conversations.ask)
     assert "_check_account_token_quota(conn, account)" in src
     assert "429" in src
 
@@ -162,11 +163,11 @@ def test_b12_quota_strip_helper_and_gates():
     assert '"quota.read"' in strip_src
     assert 'pop("quota_daily"' in strip_src and 'pop("quota_monthly"' in strip_src
     # 엔드포인트들이 strip 헬퍼 + 조회 게이트를 호출.
-    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_accounts)
-    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_roles)
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(admin_accounts.admin_accounts)
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(admin_roles.admin_roles)
     assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(admin_console.admin_me)
     # outside-voice MAJOR-1 흡수: PATCH 응답(include_permissions=True)도 strip — account.update 만으로 한도 열람 우회 차단.
-    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_update_account)
+    assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(admin_accounts.admin_update_account)
     # GET /api/admin/quotas 는 quota.read 게이트.
     assert "quota.read" in inspect.getsource(admin_quotas.admin_list_quotas)
 

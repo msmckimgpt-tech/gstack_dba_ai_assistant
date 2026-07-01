@@ -40,6 +40,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import conversations  # feature-0012 P5b
 
 
 def _static_path(name: str) -> str:
@@ -54,18 +55,18 @@ def _read_static(name: str) -> str:
 
 # ── B: backend ──────────────────────────────────────────────────────────────
 def test_b1_create_endpoint_rejects_nonowner_joinable():
-    src = inspect.getsource(app.create_conversation_share)
+    src = inspect.getsource(conversations.create_conversation_share)
     # joinable 이 truthy 인데 owner 가 아니면 차단.
     assert "_conversation_owned_by_account(conn, cid, int(account[\"id\"]))" in src
-    assert "joinable and not _conversation_owned_by_account" in src
+    assert "joinable and not app._conversation_owned_by_account" in src
     # 403 + 명시 메시지(요청의 '차단' 직역, D1).
     assert "참여 허용 링크는 대화 생성자만 만들 수 있습니다" in src
     assert ", 403)" in src
 
 
 def test_b2_owner_gate_runs_before_insert():
-    src = inspect.getsource(app.create_conversation_share)
-    gate_idx = src.find("joinable and not _conversation_owned_by_account")
+    src = inspect.getsource(conversations.create_conversation_share)
+    gate_idx = src.find("joinable and not app._conversation_owned_by_account")
     insert_idx = src.find("INSERT INTO WebConversationShares")
     assert gate_idx != -1 and insert_idx != -1
     # 게이트가 INSERT 보다 먼저 — 비소유자의 joinable 링크는 DB 에 절대 기록되지 않는다.
@@ -79,9 +80,9 @@ def test_b3_owner_helper_strict_no_admin_bypass():
     assert "owner_account_id" in src
     assert "== int(account_id)" in src
     # 게이트 자체가 read.any/admin 예외를 두지 않는다.
-    gate_src = inspect.getsource(app.create_conversation_share)
+    gate_src = inspect.getsource(conversations.create_conversation_share)
     gate_line = next(
-        (ln for ln in gate_src.splitlines() if "joinable and not _conversation_owned_by_account" in ln),
+        (ln for ln in gate_src.splitlines() if "joinable and not app._conversation_owned_by_account" in ln),
         "",
     )
     assert "read.any" not in gate_line

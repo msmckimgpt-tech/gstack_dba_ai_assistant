@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 
 import app
+from routers import conversations  # feature-0012 P5b
 
 
 # ── fake DB (dictionary cursor) ─────────────────────────────────────────────
@@ -172,7 +173,7 @@ def test_l3_query_exception_returns_empty():
 def test_v1_list_endpoint_has_version_count_aggregate():
     import inspect
 
-    src = inspect.getsource(app.list_conversation_attachments)
+    src = inspect.getsource(conversations.list_conversation_attachments)
     # 체인 길이 집계 SQL(루트 기준 GROUP BY) + 응답 키.
     assert "GROUP BY COALESCE(RootAttachmentId, Id)" in src
     assert '"version_count"' in src or "version_count" in src
@@ -192,7 +193,7 @@ def test_v2_serialize_keeps_version_fields():
 def test_s1_ask_records_materialize_step():
     import inspect
 
-    src = inspect.getsource(app.ask) if hasattr(app, "ask") else ""
+    src = inspect.getsource(conversations.ask) if hasattr(conversations, "ask") else ""
     if not src:
         # ask 가 다른 이름이면 모듈 소스에서 확인.
         src = inspect.getsource(app)

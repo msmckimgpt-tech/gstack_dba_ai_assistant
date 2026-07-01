@@ -36,6 +36,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import admin_audits  # feature-0012 P5b
 
 
 def _read_static(name: str) -> str:
@@ -132,14 +133,14 @@ def test_b5b_seal_update_guard_and_drain():
     assert "WHERE Id = %s AND EventHash IS NULL" in seal_src
     # MAJOR-4: verify/purge 는 batch bound drain 사용(거대 batch=1000000 제거).
     assert hasattr(app, "_seal_audit_chain_drain")
-    vsrc = inspect.getsource(app.verify_audit_chain)
+    vsrc = inspect.getsource(admin_audits.verify_audit_chain)
     assert "_seal_audit_chain_drain(conn)" in vsrc
     assert "batch=1000000" not in vsrc
 
 
 def test_b6_verify_endpoint():
-    assert hasattr(app, "verify_audit_chain")
-    src = inspect.getsource(app.verify_audit_chain)
+    assert hasattr(admin_audits, "verify_audit_chain")
+    src = inspect.getsource(admin_audits.verify_audit_chain)
     assert "audit.read.any" in src                           # 권한
     assert "_seal_audit_chain" in src                        # 검증 전 catch-up
     assert "_audit_compute_hash" in src                      # 재계산
@@ -149,7 +150,7 @@ def test_b6_verify_endpoint():
 
 
 def test_b7_purge_checkpoint():
-    src = inspect.getsource(app.purge_audit_events)
+    src = inspect.getsource(admin_audits.purge_audit_events)
     assert "_seal_audit_chain" in src                        # 삭제 전 봉인
     assert "INSERT INTO WebAuditChainCheckpoint" in src      # 경계 재앵커
     assert "OccurredAt < %s AND EventHash IS NOT NULL" in src

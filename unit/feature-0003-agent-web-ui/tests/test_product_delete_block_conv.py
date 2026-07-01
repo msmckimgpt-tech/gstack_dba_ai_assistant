@@ -22,6 +22,8 @@ import asyncio
 import json
 
 import app
+from routers import conversations  # feature-0012 P5b
+from routers import admin_products  # feature-0012 P5b
 
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
@@ -116,7 +118,7 @@ def test_delete_product_allows_and_blocks_referencing(monkeypatch):
     store = {"referencing": 3, "dyn_perm_ids": []}
     conn = _Conn(store)
     _patch_delete(monkeypatch, conn)
-    resp = app.admin_delete_product(5, _Req())
+    resp = admin_products.admin_delete_product(5, _Req())
     assert resp.status_code == 200
     body = json.loads(resp.body)
     assert body["ok"] is True
@@ -134,7 +136,7 @@ def test_delete_product_no_referencing(monkeypatch):
     store = {"referencing": 0, "dyn_perm_ids": []}
     conn = _Conn(store)
     _patch_delete(monkeypatch, conn)
-    resp = app.admin_delete_product(7, _Req())
+    resp = admin_products.admin_delete_product(7, _Req())
     assert resp.status_code == 200
     body = json.loads(resp.body)
     assert body["blocked_conversations"] == 0
@@ -145,7 +147,7 @@ def test_delete_product_requires_permission(monkeypatch):
     store = {"referencing": 2}
     conn = _Conn(store)
     _patch_delete(monkeypatch, conn, has_perm=False)
-    resp = app.admin_delete_product(5, _Req())
+    resp = admin_products.admin_delete_product(5, _Req())
     assert resp.status_code == 403
     assert "update agentcoreconversations" not in " || ".join(store.get("executed", []))
 
@@ -200,6 +202,6 @@ def test_ask_rejects_blocked_conversation(monkeypatch):
         lambda cid, conn=None: (True, "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다."),
     )
     body = {"message": "안녕", "model": "claude-haiku-4-5-20251001", "conversation_id": "conv-1"}
-    resp = asyncio.run(app.ask(_Req(body)))
+    resp = asyncio.run(conversations.ask(_Req(body)))
     assert resp.status_code == 403
     assert "삭제" in json.loads(resp.body)["error"]

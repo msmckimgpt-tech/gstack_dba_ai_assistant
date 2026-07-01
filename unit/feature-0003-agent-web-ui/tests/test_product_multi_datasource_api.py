@@ -14,6 +14,7 @@ import asyncio
 import json
 
 import app
+from routers import admin_products  # feature-0012 P5b
 
 
 # ── Fakes ───────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ def test_add_product_datasource_rejects_unregistered(monkeypatch):
     conn = _Conn(store)
     _patch(monkeypatch, conn)
     monkeypatch.setattr("shared.datasources.resolve", lambda c, k: None)  # 미등록
-    resp = asyncio.run(app.admin_add_product_datasource(5, _Req({"datasource_key": "ghost"})))
+    resp = asyncio.run(admin_products.admin_add_product_datasource(5, _Req({"datasource_key": "ghost"})))
     assert resp.status_code == 400
 
 
@@ -129,7 +130,7 @@ def test_add_product_datasource_success(monkeypatch):
     conn = _Conn(store)
     _patch(monkeypatch, conn)
     monkeypatch.setattr("shared.datasources.resolve", lambda c, k: {"key": k, "engine": "mysql"})
-    resp = asyncio.run(app.admin_add_product_datasource(5, _Req({"datasource_key": "dsa"})))
+    resp = asyncio.run(admin_products.admin_add_product_datasource(5, _Req({"datasource_key": "dsa"})))
     body = json.loads(resp.body)
     assert body["datasource_key"] == "dsa"
     assert body["is_primary"] is True       # 첫 바인딩 → 강제 primary
@@ -141,7 +142,7 @@ def test_remove_product_datasource_not_bound(monkeypatch):
     store = {"bindings": []}  # 바인딩 없음 → fetchone None → 404
     conn = _Conn(store)
     _patch(monkeypatch, conn)
-    resp = asyncio.run(app.admin_remove_product_datasource(5, "dsa", _Req()))
+    resp = asyncio.run(admin_products.admin_remove_product_datasource(5, "dsa", _Req()))
     assert resp.status_code == 404
 
 
@@ -149,7 +150,7 @@ def test_remove_product_datasource_success(monkeypatch):
     store = {"bindings": [(0,)]}  # IsPrimary=0 행 존재(SELECT IsPrimary ... fetchone)
     conn = _Conn(store)
     _patch(monkeypatch, conn)
-    resp = asyncio.run(app.admin_remove_product_datasource(5, "dsb", _Req()))
+    resp = asyncio.run(admin_products.admin_remove_product_datasource(5, "dsb", _Req()))
     body = json.loads(resp.body)
     assert body["removed"] == "dsb"
     assert conn.committed

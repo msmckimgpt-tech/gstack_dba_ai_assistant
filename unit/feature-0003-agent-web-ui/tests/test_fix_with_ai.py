@@ -23,6 +23,7 @@ import asyncio
 import json
 
 import app
+from routers import conversations  # feature-0012 P5b
 
 
 # ── Fakes ──────────────────────────────────────────────────────────────────────
@@ -93,7 +94,7 @@ def _audit_capture(monkeypatch):
 
 
 def _patch_ask_capture(monkeypatch):
-    """app.ask 를 캡처용으로 교체 — 실제 LLM 파이프라인 미실행. 호출 시 받은 내부 request 의 body 회수."""
+    """conversations.ask 를 캡처용으로 교체 — 실제 LLM 파이프라인 미실행. 호출 시 받은 내부 request 의 body 회수."""
     captured: dict = {"called": False, "body": None}
 
     async def _fake_ask(internal_request):
@@ -103,7 +104,7 @@ def _patch_ask_capture(monkeypatch):
         return app.JSONResponse({"output": "고친 결과", "executed_sql": "SELECT 1",
                                  "conversation_id": "conv-1", "steps": [], "error": ""})
 
-    monkeypatch.setattr(app, "ask", _fake_ask)
+    monkeypatch.setattr(conversations, "ask", _fake_ask)
     return captured
 
 
@@ -115,7 +116,7 @@ def test_access_denied_404(monkeypatch):
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     monkeypatch.setattr(app, "_account_can_access_conversation", lambda *a, **k: False)
     cap = _patch_ask_capture(monkeypatch)
-    resp = asyncio.run(app.post_fix_with_ai("conv-x", _FakeRequest(
+    resp = asyncio.run(conversations.post_fix_with_ai("conv-x", _FakeRequest(
         {"executed_sql": "SELECT 1", "error_message": "boom"})))
     assert resp.status_code == 404
     assert cap["called"] is False, "접근 거부 시 ask 미dispatch"
@@ -132,7 +133,7 @@ def test_requires_ask_permission_403(monkeypatch):
     monkeypatch.setattr(app, "_account_has_permission",
                         lambda account, perm: perm != "conversation.ask")
     cap = _patch_ask_capture(monkeypatch)
-    resp = asyncio.run(app.post_fix_with_ai("conv-1", _FakeRequest(
+    resp = asyncio.run(conversations.post_fix_with_ai("conv-1", _FakeRequest(
         {"executed_sql": "SELECT 1", "error_message": "boom"})))
     assert resp.status_code == 403
     assert cap["called"] is False
@@ -147,7 +148,7 @@ def test_rate_limited_429(monkeypatch):
     monkeypatch.setattr(app, "_account_can_access_conversation", lambda *a, **k: True)
     monkeypatch.setattr(app, "_search_rate_limit_check", lambda *a, **k: False)
     cap = _patch_ask_capture(monkeypatch)
-    resp = asyncio.run(app.post_fix_with_ai("conv-1", _FakeRequest(
+    resp = asyncio.run(conversations.post_fix_with_ai("conv-1", _FakeRequest(
         {"executed_sql": "SELECT 1", "error_message": "boom"})))
     assert resp.status_code == 429
     assert cap["called"] is False
@@ -158,7 +159,7 @@ def test_rate_limited_429(monkeypatch):
 def test_empty_input_400(monkeypatch):
     # access/conn 검사 전 조기 차단 — _connect_memory 도 호출되지 않아야 안전하나, 안전망으로 patch.
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    resp = asyncio.run(app.post_fix_with_ai("conv-1", _FakeRequest(
+    resp = asyncio.run(conversations.post_fix_with_ai("conv-1", _FakeRequest(
         {"executed_sql": "   ", "error_message": ""})))
     assert resp.status_code == 400
 
@@ -166,7 +167,7 @@ def test_empty_input_400(monkeypatch):
 def test_oversized_input_400(monkeypatch):
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     huge = "A" * (app._FIX_WITH_AI_SQL_CAP * 4 + 10)
-    resp = asyncio.run(app.post_fix_with_ai("conv-1", _FakeRequest(
+    resp = asyncio.run(conversations.post_fix_with_ai("conv-1", _FakeRequest(
         {"executed_sql": huge, "error_message": "boom"})))
     assert resp.status_code == 400
 
@@ -235,7 +236,7 @@ def test_success_dispatches_correction_to_ask(monkeypatch):
     cap = _patch_ask_capture(monkeypatch)
 
     original_nl = "지난달 매출 상위 10개 제품을 보여줘"  # 원본 NL 질문 — 재전송되면 안 됨.
-    resp = asyncio.run(app.post_fix_with_ai("conv-1", _FakeRequest({
+    resp = asyncio.run(conversations.post_fix_with_ai("conv-1", _FakeRequest({
         "executed_sql": "SELECT * FROM sales WHERE",
         "error_message": "You have an error in your SQL syntax",
     })))

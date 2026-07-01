@@ -1,5 +1,34 @@
 # Report
 
+## 2026-07-01 · 렌더러 canvas-2D → WebGL 전환 (graph-webgl, 프레임레이트 근본 해소)
+
+### 배경 (사용자 육안 후속)
+camfps(카메라 애니 중 라벨 숨김) 배포 후 사용자 육안: "여전히 거친 프레임 + 애니 시작 시 라벨 사라짐(불호) +
+렌더링 엔진이 부드러운 프레임 지원하는지 검토". 사용자 직감이 정확했음.
+
+### 진단 확정 — 렌더링 엔진이 구조적 상한
+- vendored **Cytoscape 3.30.2 = canvas-2D 렌더러 전용**(`getContext("2d")`, `webgl` grep 0건). 매 프레임 그래프
+  전체를 CPU 재래스터.
+- 트레이스 재분석: 병목은 레이아웃 계산(fcose self 64ms) 아님 → **Cytoscape 코어 렌더 1040ms**(캔버스 재그리기).
+  rAF 60fps인데 표시 ~36fps 드롭. GPU(276ms)·컴포지터 유휴. chrome://gpu HW 가속 ON. = canvas-2D 재그리기+합성
+  체인의 지연 상한 → 라벨 숨김 등 미세 튜닝으로 못 넘음.
+
+### 결정 (AskUserQuestion 2단)
+① canvas 유지·애니 최소화(A) vs WebGL 업그레이드(B) vs 라벨만 복구(C) → **B**. ② WebGL 은 taxi→bezier·dashed→
+미지원 강등이 따름 → 강등 수용(A) / 엣지 재설계(B) / 보류(C) → **엣지 재설계(B)**.
+
+### de-risk (실 GPU) — make-or-break 통과
+그래프가 ERD-card compound(스키마>Table>컬럼 2단 중첩)로 진화 → WebGL compound 지원이 관건. **실 Windows 브라우저
+(win-browser)에서 cytoscape 3.34.0 + webgl:true + 2단 compound 최소 페이지 렌더** → webglContextDetected=true,
+compound 박스·라벨·bezier 엣지 전부 정상(스크린샷). 전체 구현 전 리스크 제거.
+
+### 구현
+- vendor cytoscape 3.30.2→**3.34.0**(unpkg 정품, fcose 2.2.0 호환 유지). `renderer:{name:"canvas",webgl:_webglOk}`
+  + feature-detect 폴백. 엣지 재설계(bezier·색/투명도 구분). 애니 중 라벨/엣지 숨김 전면 제거(항상 표시). pixelRatio 제거.
+
+### 검증
+- node --check PASS. 적대 리뷰 패널(§18.8) → REVIEW.md. PB-0008 실 Windows 브라우저(WebGL 활성·compound·라벨·엣지·
+  부드러움·대규모 이웃). **실 FPS 효과는 사용자 실 하드웨어 재측정이 유일 검증**.
 ## 2026-07-01 · AI 능동 분석 재귀 — 앵커-상대 관련도 게이팅 (node-analysis-anchor)
 
 ### 요청·증상

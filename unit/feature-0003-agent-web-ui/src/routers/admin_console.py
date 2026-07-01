@@ -181,3 +181,193 @@ def admin_health_attachment_grants(request: Request, account=Depends(app.require
             "healthy": len(drift) == 0,
         }
     )
+
+
+@router.get("/api/admin/system-prompts")
+def admin_get_system_prompt(
+    request: Request,
+    scope: str,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    if scope not in ("global", "product", "role", "account"):
+        return app._json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
+    # scope 별 권한 검사
+    if scope == "global":
+        # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
+        if not app._account_has_permission(actor, "system_prompt.global.read"):
+            return app._json_error("전역 시스템 프롬프트 조회 권한이 없습니다.", 403)
+        product_id = None
+        role_id = None
+        account_id = None
+    elif scope == "product":
+        if not app._account_has_permission(actor, "product.manage"):
+            return app._json_error("제품 시스템 프롬프트 조회 권한이 없습니다.", 403)
+    elif scope == "role":
+        if not app._account_has_permission(actor, "system_prompt.manage.role.any"):
+            return app._json_error("역할 시스템 프롬프트 조회 권한이 없습니다.", 403)
+    else:  # account
+        target_account = int(account_id or 0)
+        if target_account != int(actor["id"]) and not app._account_has_permission(actor, "system_prompt.manage.role.any"):
+            return app._json_error("타 계정 프롬프트 조회 권한이 없습니다.", 403)
+    row = app._load_system_prompt(
+        conn,
+        scope=scope,
+        product_id=int(product_id) if product_id else None,
+        role_id=int(role_id) if role_id else None,
+        account_id=int(account_id) if account_id else None,
+    )
+    return JSONResponse({"prompt": row, "scope": scope})
+
+@router.put("/api/admin/system-prompts")
+async def admin_put_system_prompt(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return app._json_error("invalid json", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    actor, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    scope = str(data.get("scope") or "").strip().lower()
+    if scope not in ("global", "product", "role", "account"):
+        conn.close()
+        return app._json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
+    content = str(data.get("content") or "")
+    product_id = int(data.get("product_id") or 0) or None
+    role_id = int(data.get("role_id") or 0) or None
+    account_id = int(data.get("account_id") or 0) or None
+    if scope == "global":
+        # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
+        if not app._account_has_permission(actor, "system_prompt.global.write"):
+            conn.close()
+            return app._json_error("전역 시스템 프롬프트 관리 권한이 없습니다.", 403)
+        product_id = None
+        role_id = None
+        account_id = None
+    elif scope == "product":
+        if not app._account_has_permission(actor, "product.manage"):
+            conn.close()
+            return app._json_error("제품 시스템 프롬프트 관리 권한이 없습니다.", 403)
+        if not product_id:
+            conn.close()
+            return app._json_error("product_id 가 필요합니다.", 400)
+        role_id = None
+        account_id = None
+    elif scope == "role":
+        if not app._account_has_permission(actor, "system_prompt.manage.role.any"):
+            conn.close()
+            return app._json_error("역할 시스템 프롬프트 관리 권한이 없습니다.", 403)
+        if not role_id:
+            conn.close()
+            return app._json_error("role_id 가 필요합니다.", 400)
+        account_id = None
+    else:  # account
+        target_account = account_id or int(actor["id"])
+        if target_account != int(actor["id"]) and not app._account_has_permission(actor, "system_prompt.manage.role.any"):
+            conn.close()
+            return app._json_error("타 계정 프롬프트 관리 권한이 없습니다.", 403)
+        account_id = target_account
+        role_id = None
+    # before-state 캡처 (audit) — 기존 prompt 본문 length 비교를 위해.
+    before_prompt = app._load_system_prompt(
+        conn, scope=scope, product_id=product_id, role_id=role_id, account_id=account_id,
+    ) or {}
+    new_id = app._upsert_system_prompt(
+        conn,
+        scope=scope,
+        content=content,
+        product_id=product_id,
+        role_id=role_id,
+        account_id=account_id,
+        updated_by_account_id=int(actor["id"]),
+    )
+    # TASK-0073 Phase A5: same-tx audit hook (system_prompt update).
+    try:
+        app._audit_admin_mutation(
+            conn,
+            request,
+            actor,
+            action="admin.system_prompt.update",
+            resource_type="system_prompt",
+            resource_id=f"{scope}:{product_id or 0}:{role_id or 0}:{account_id or 0}",
+            before={"content": str(before_prompt.get("content") or "")},
+            after={"content": content},
+            request_ctx={
+                "scope": scope,
+                "product_id": product_id,
+                "role_id": role_id,
+                "account_id": account_id,
+            },
+            target_account_id=int(account_id) if (scope == "account" and account_id) else None,
+        )
+        conn.commit()
+    except Exception as audit_exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+        return app._json_error(f"audit write failed: {audit_exc}", 500)
+    conn.close()
+    return JSONResponse({"ok": True, "id": new_id, "scope": scope, "deleted": new_id == 0})
+
+@router.get("/api/admin/dashboard/preferences")
+def admin_get_dashboard_prefs(request: Request, actor=Depends(app.require_permission("console.access", message="관리 콘솔 접근 권한이 필요합니다.")), conn=Depends(app.get_conn)) -> JSONResponse:
+    """TASK-0210: 본인 계정의 대시보드 위젯 표시/순서 prefs (없으면 권한 기반 기본값).
+
+    별도 RBAC 권한 없이 console.access 만 요구 — 본인 대시보드 레이아웃은 self-service.
+    """
+    defaults = app._dashboard_default_prefs(actor)
+    saved = app._load_dashboard_pref_row(conn, int(actor["id"]))
+    if saved and isinstance(saved.get("widgets"), list) and saved["widgets"]:
+        return JSONResponse({
+            "preferences": app._sanitize_dashboard_prefs(saved),
+            "defaults": defaults,
+            "customized": True,
+        })
+    return JSONResponse({"preferences": defaults, "defaults": defaults, "customized": False})
+
+@router.put("/api/admin/dashboard/preferences")
+async def admin_put_dashboard_prefs(request: Request) -> JSONResponse:
+    """TASK-0210: 본인 계정 대시보드 prefs 저장(영속). 알려진 위젯 키로만 정규화."""
+    try:
+        data = await request.json()
+    except Exception:
+        return app._json_error("invalid json", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        actor, error = app._require_account(request, conn)
+        if error:
+            return error
+        if not app._account_has_permission(actor, "console.access"):
+            return app._json_error("관리 콘솔 접근 권한이 필요합니다.", 403)
+        prefs = app._sanitize_dashboard_prefs(data if isinstance(data, dict) else {})
+        try:
+            app._save_dashboard_pref_row(conn, int(actor["id"]), prefs)
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            # REV-20260611-0210 MINOR: raw 예외 텍스트(드라이버 메시지·테이블/컬럼명)를
+            # 클라이언트에 노출하지 않는다(선례 엔드포인트 정합) — 서버측에만 기록.
+            logging.getLogger(__name__).warning("admin_put_dashboard_prefs: save failed", exc_info=True)
+            return app._json_error("대시보드 설정 저장에 실패했습니다.", 500)
+        return JSONResponse({"ok": True, "preferences": prefs})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
