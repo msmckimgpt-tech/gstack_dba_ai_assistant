@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260701T233000-ai-claude-feature-0016-node-analysis-anchor-liveverify
+- Date: 2026-07-01
+- Author: ai/claude (worktree ai/claude/feature-0016-node-analysis-anchor)
+- Grade: 문서 전용(코드 무변경) — node-analysis-anchor 배포 후 라이브 검증 결과 기록.
+- 내용: CHG-20260701T173000 배포 완료 후 라이브 실데이터 검증 결과를 REPORT/TEST/TASK 에 기록.
+  alembic 0029 라이브 적용(live=0029)·web-a/web-b 무중단 7bca9b2·insight-worker 7bca9b2 재기동.
+  실데이터 프로브(insight-worker 내부, LLM 0): `dk_data_release.Achievement` 하위 컬럼 4개 rel 1.0 통과 +
+  부모 Schema(형제 테이블 **123개**) 탈락 = fan-out 지배 경로 차단 정량 확인. AchievementReward 17컬럼 통과.
+- Files: REPORT.md / TEST.md / TASK.md(T16.8·T16.9 완료) / REVIEW.md([SKIPPED:docs-only] 항목).
+- Impact: 문서 전용, 코드·스키마·계약 무변경. ANCHOR §4 는 human 외부검증 전용이라 미기입(AI 프로브는 TEST/REPORT 기록).
+- Rollback Notes: 문서 되돌림 외 없음.
+
 ## CHG-20260701T210000-ai-claude-feature-0016-graph-webgl
 - Date: 2026-07-01
 - Related Requirement: 그래프 뷰 애니 프레임레이트 근본 해소 + 애니 중 라벨 유지 (사용자 육안 후속 — camfps 배포 후에도 거침 + 라벨 사라짐 불호 + 렌더링 엔진 검토 요청).

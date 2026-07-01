@@ -54,10 +54,14 @@ compound 박스·라벨·bezier 엣지 전부 정상(스크린샷). 전체 구�
 - 튜닝 노브(env): RELEVANCE_MIN(0.18)/_DEEP(0.34)/CROSS_SCOPE_FACTOR(0.25)/EXPAND_SCHEMA(off).
 
 ### 검증
-- 단위: `test_node_analysis_relevance.py` 12건 PASS(pytest). 핵심 — hub 컬럼 depth1 확장 시 교차-제품/무관
-  이웃 탈락 + 관련 이웃만 관련도순 유지; 루트 하위 컬럼(UniqueID 포함) 무조건 통과; Schema/broken=0.
-- 라이브(예정): alembic 0029 + 재배포 후 Achievement 능동 분석 → 분석 노드가 dk scope·Achievement 연관 안에
-  머무는지(마커) + generic-hub fan-out 억제 확인. PB-0008.
+- 단위: `test_node_analysis_relevance.py` **28건 PASS**(pytest, 초기 12 + 2라운드 적대 패널 16). 핵심 — hub 컬럼
+  depth1 확장 시 교차-제품/무관 이웃 탈락 + 관련 이웃만 관련도순 유지; 루트 하위 컬럼(UniqueID 포함) 무조건 통과;
+  Schema/broken=0; content-gate(신뢰·제품만으론 불통과); 한글 일반어·접두접미 부분연관.
+- 적대 검증: 2라운드 패널(REV-20260701T173000) R1 M1~M5 + R2 MAJOR·MINOR 전건 처리, BLOCKER 0.
+- **배포·라이브 검증 PASS** (2026-07-01): alembic 0029 라이브 적용(live=0029) · web-a/web-b 무중단 7bca9b2 ·
+  insight-worker 7bca9b2 재기동. 실데이터 프로브(insight-worker 내부, LLM 0) — `dk_data_release.Achievement`
+  하위 컬럼 4개 rel 1.0 통과 + **부모 Schema(형제 테이블 123개) 탈락 = fan-out 지배 경로 차단 정량 확인**.
+  그래프 UI 마커 시각 최종은 PB-0008 후속(웹 자산 무변경, 하드 게이트 아님).
 
 ### 범위 밖
 - 그래프 UI 마커/진행 패널 표시 자체는 변경 없음(백엔드 재귀 선정만). relevance 는 get_run_status 로 노출만 —
