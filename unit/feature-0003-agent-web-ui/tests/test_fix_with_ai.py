@@ -94,7 +94,7 @@ def _audit_capture(monkeypatch):
 
 
 def _patch_ask_capture(monkeypatch):
-    """app.ask 를 캡처용으로 교체 — 실제 LLM 파이프라인 미실행. 호출 시 받은 내부 request 의 body 회수."""
+    """conversations.ask 를 캡처용으로 교체 — 실제 LLM 파이프라인 미실행. 호출 시 받은 내부 request 의 body 회수."""
     captured: dict = {"called": False, "body": None}
 
     async def _fake_ask(internal_request):
@@ -104,7 +104,7 @@ def _patch_ask_capture(monkeypatch):
         return app.JSONResponse({"output": "고친 결과", "executed_sql": "SELECT 1",
                                  "conversation_id": "conv-1", "steps": [], "error": ""})
 
-    monkeypatch.setattr(app, "ask", _fake_ask)
+    monkeypatch.setattr(conversations, "ask", _fake_ask)
     return captured
 
 

@@ -18,6 +18,12 @@ from fastapi import File
 from fastapi import UploadFile
 import hashlib
 import secrets
+import asyncio
+from shared.model_catalog import API_DEFAULT_MODEL
+from pathlib import Path
+import json
+import threading
+import time
 import app
 
 router = APIRouter()
@@ -1394,7 +1400,7 @@ async def post_fix_with_ai(cid: str, request: Request) -> JSONResponse:
     # model 미지정 → ask 가 API_DEFAULT_MODEL 로 채움(정정도 동일 web 기본 모델 사용).
     ask_body = {"message": fix_message, "conversation_id": cid}
     internal_req = app._make_internal_ask_request(request, ask_body)
-    return await app.ask(internal_req)
+    return await ask(internal_req)  # feature-0012 P5b: 동일 모듈 내 ask (cross-call)
 
 @router.get("/api/conversations/{cid}/shares")
 def list_conversation_shares(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
@@ -1928,3 +1934,1086 @@ async def rename_conversation_title(conversation_id: str, request: Request) -> J
         return app._json_error("제목 변경에 실패했습니다.", 500)
     conn.close()
     return JSONResponse({"ok": True, "conversation_id": conversation_id, "title": title})
+
+
+@router.post("/api/fork_conversation")
+async def fork_conversation(request: Request) -> JSONResponse:
+    """원본 대화를 현재 계정 소유의 새 대화로 스냅샷 복제한다.
+
+    body: {source_conversation_id: str, from_message_id?: int}
+    - 원본에 대한 read 권한 + 현재 계정의 conversation.create 권한이 모두 필요하다.
+    - 실제 복제 로직은 `_fork_conversation_impl` 헬퍼가 수행한다 (share-token fork 와 공유).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return app._json_error("invalid json", 400)
+    source_id = str(data.get("source_conversation_id") or "").strip()
+    if not source_id:
+        return app._json_error("empty source_conversation_id", 400)
+    raw_from = data.get("from_message_id")
+    from_id: int | None = None
+    if raw_from is not None and str(raw_from).strip() != "":
+        try:
+            from_id = int(raw_from)
+        except Exception:
+            return app._json_error("invalid from_message_id", 400)
+
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        if not app._account_has_permission(account, "conversation.create"):
+            return app._json_error("요청을 수행할 수 없습니다.", 403)
+        if not app._account_can_access_conversation(
+            conn,
+            account,
+            source_id,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
+            return app._json_error("원본 대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        payload, err = app._fork_conversation_impl(conn, account, source_id, from_id)
+        if err:
+            return err
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+@router.post("/api/clear_memory")
+def clear_memory(request: Request) -> JSONResponse:
+    return app._json_error("전체 정리 기능은 제거되었습니다.", 410)
+
+@router.get("/api/progress")
+def progress(
+    request: Request,
+    conversation_id: str = "",
+    after_step: int = 0,
+    client_run_id: str = "",
+) -> JSONResponse:
+    """처리 중인 대화의 실시간 step 진행 상황을 반환."""
+    empty = JSONResponse({"steps": [], "status": "", "step_count": 0})
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return empty
+    account, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    cid = app._resolve_conversation_for_account(conn, account, conversation_id.strip())
+    try:
+        if not cid:
+            conn.close()
+            return empty
+        status, status_at, run_id = app._load_progress_status(conn, cid)
+        # feature-0009 그룹대화: 클라이언트가 추적 중인 run(client_run_id)이 대화의 현재 슬롯 run 과
+        # 다르면, 그 run 이 동시 run 충돌로 terminal write 를 잃었을 수 있다. per-run marker 로 자기
+        # run 의 종료를 해소해, 다른 사용자의 동시 run(슬롯 점유) 때문에 '처리 중' 에 갇히지 않게 한다.
+        _client_rid = str(client_run_id or "").strip()
+        if _client_rid and run_id and _client_rid != run_id:
+            _term_status, _term_at = app._load_run_terminal_marker(conn, cid, _client_rid)
+            if _term_status:
+                run_id = _client_rid
+                status = _term_status
+                status_at = _term_at or status_at
+        # KV 에 run_id 가 없는 경우 steps 테이블에서 최신 run 을 fallback 조회.
+        fallback_status = ""
+        if not run_id:
+            fallback_run_id, is_recent = app._load_latest_run_id_from_steps(cid)
+            if fallback_run_id:
+                run_id = fallback_run_id
+                fallback_status = "processing" if is_recent else "done"
+                status = fallback_status
+        next_after_step = max(0, int(after_step or 0))
+        if not run_id or str(client_run_id or "").strip() != run_id:
+            next_after_step = 0
+        step_count = app._load_step_count_for_run(conn, cid, run_id) if run_id else 0
+        new_steps = (
+            app._load_steps_for_run(conn, cid, run_id, after_step=next_after_step)
+            if run_id else []
+        )
+        # TASK-0061 Phase 3: stale 판정 — processing 이지만 만료 시간 동안 갱신 없음.
+        if fallback_status:
+            display_status, is_stale = fallback_status, False
+        else:
+            display_status, is_stale = app._compute_display_status(conn, cid, status, status_at, run_id)
+        conn.close()
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return empty
+    return JSONResponse({
+        "steps": new_steps,
+        "status": display_status,
+        "raw_status": status,
+        "display_status": display_status,
+        "is_stale": is_stale,
+        "status_at": status_at,
+        "step_count": step_count,
+        "run_id": run_id,
+        "conversation_id": cid,
+    })
+
+@router.get("/api/ask_result")
+async def ask_result(
+    request: Request,
+    conversation_id: str = "",
+    run_id: str = "",
+    wait: int = 30,
+) -> JSONResponse:
+    """대화의 terminal 상태를 long-poll 로 기다려 최종 assistant 응답을 반환.
+
+    - `run_id` 가 지정되면 그 run 이 terminal 에 도달할 때까지, 미지정이면 현재 run 이
+      terminal 에 도달할 때까지 대기.
+    - `wait` 은 초 단위, 기본 30s / 최대 60s. 초과 시 `{timeout: true}` 반환.
+    - read-only 경로. `/api/ask` 슬롯·cancel/finalize 플래그를 건드리지 않음.
+    """
+    wait_s = max(1, min(60, int(wait or 30)))
+    requested_run_id = str(run_id or "").strip()
+
+    # 권한 검사 (첫 커넥션 1 회만)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    account, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    cid = app._resolve_conversation_for_account(conn, account, conversation_id.strip())
+    if not cid:
+        conn.close()
+        return app._json_error("empty conversation_id", 400)
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        conn.close()
+        return app._json_error("권한이 없습니다.", 403)
+    conn.close()
+
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + wait_s
+    poll_interval = 0.5
+    last_snapshot: dict[str, Any] = {}
+    while True:
+        try:
+            poll_conn = app._connect_memory()
+        except Exception:
+            await asyncio.sleep(poll_interval)
+            if loop.time() >= deadline:
+                break
+            continue
+        try:
+            snapshot = app._build_ask_status_snapshot(poll_conn, cid)
+        finally:
+            poll_conn.close()
+        last_snapshot = snapshot
+        # TASK-0061 Phase 3: snapshot.status 는 display_status 이므로 raw_status 로 terminal 판정.
+        server_status = str(snapshot.get("raw_status") or snapshot.get("status") or "")
+        server_run_id = str(snapshot.get("run_id") or "")
+        run_ok = (not requested_run_id) or (requested_run_id == server_run_id)
+        is_stale = bool(snapshot.get("is_stale"))
+        # stale 도 terminal 로 취급해 attach long-poll 무한 대기 방지.
+        if run_ok and (server_status in app._ASK_TERMINAL_STATUSES or is_stale):
+            latest = snapshot.pop("_latest_assistant", {}) or {}
+            payload = {
+                "conversation_id": cid,
+                "status": snapshot.get("status", ""),
+                "raw_status": server_status,
+                "display_status": snapshot.get("display_status", ""),
+                "is_stale": is_stale,
+                "status_at": snapshot.get("status_at", ""),
+                "run_id": server_run_id,
+                "step_count": snapshot.get("step_count", 0),
+                "duration_ms": snapshot.get("duration_ms", 0),
+                "error": snapshot.get("error"),
+                "has_answer": snapshot.get("has_answer", False),
+                "assistant": latest if snapshot.get("has_answer") else None,
+                "timeout": False,
+            }
+            return JSONResponse(payload)
+        if loop.time() >= deadline:
+            break
+        await asyncio.sleep(poll_interval)
+
+    last_snapshot.pop("_latest_assistant", None)
+    return JSONResponse({
+        "conversation_id": cid,
+        "status": last_snapshot.get("status", "") or "processing",
+        "raw_status": last_snapshot.get("raw_status", ""),
+        "display_status": last_snapshot.get("display_status", ""),
+        "is_stale": bool(last_snapshot.get("is_stale")),
+        "status_at": last_snapshot.get("status_at", ""),
+        "run_id": last_snapshot.get("run_id", ""),
+        "step_count": last_snapshot.get("step_count", 0),
+        "duration_ms": last_snapshot.get("duration_ms", 0),
+        "error": last_snapshot.get("error"),
+        "has_answer": last_snapshot.get("has_answer", False),
+        "assistant": None,
+        "timeout": True,
+    })
+
+@router.get("/api/suggestions")
+def suggestions(request: Request, limit: int = 40) -> JSONResponse:
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return JSONResponse({"items": []})
+    account, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return JSONResponse({"items": []})
+    if not app._account_has_permission(account, "conversation.ask"):
+        conn.close()
+        return JSONResponse({"items": []})
+    conv_ids = [item["id"] for item in app._list_conversations(limit=200, account=account, conn=conn)]
+    if not conv_ids:
+        conn.close()
+        return JSONResponse({"items": []})
+    placeholders = ",".join(["%s"] * len(conv_ids))
+    # AR-M5 cutover: 메시지 정본이 MySQL AgentMemoryMessages → PG agent_runtime.messages 로
+    # 이전되며 MySQL 테이블이 DROP 되었다. _get_history 와 동일하게
+    # AGENT_RUNTIME_READ_BACKEND 로 분기하지 않으면 삭제된 테이블을 조회해 500 (입력
+    # 추천이 죽는다). 예외는 fail-soft 로 빈 items 처리(함수 기존 계약 유지).
+    rows: list = []
+    try:
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        f"SELECT content FROM agent_runtime.messages "
+                        f"WHERE role = 'user' AND conversation_id IN ({placeholders}) "
+                        f"ORDER BY created_at DESC LIMIT %s",
+                        tuple(conv_ids) + (int(limit) * 3,),
+                    )
+                    rows = pgcur.fetchall() or []
+            finally:
+                pg.close()
+        else:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+SELECT Content
+FROM AgentMemoryMessages
+WHERE Role = 'user'
+  AND ConversationId IN ({placeholders})
+ORDER BY CreatedAt DESC
+LIMIT %s
+                """,
+                tuple(conv_ids) + (int(limit) * 3,),
+            )
+            rows = cur.fetchall() or []
+            cur.close()
+    except Exception:
+        rows = []
+    conn.close()
+    items: list[str] = []
+    seen = set()
+    for (content,) in rows:
+        text = app._unwrap_followup_user_request(str(content or ""))
+        if len(text) < 6:
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        items.append(text)
+        if len(items) >= int(limit):
+            break
+    return JSONResponse({"items": items})
+
+
+@router.post("/api/ask")
+async def ask(request: Request) -> JSONResponse:
+    start_ts = time.time()
+    try:
+        data = await request.json()
+    except Exception:
+        return app._json_error("invalid json", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    account, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    message = str(data.get("message", "")).strip()
+    # feature-0007 (REQ-20260521-0001): `api_key_cipher` / `api_key_passphrase`
+    # 파라미터 폐기. backend 가 보유한 BEDROCK_GATEWAY_API_KEY (service-managed)
+    # 가 단일 자격증명. 구 클라이언트가 cipher 를 보내도 silently 무시.
+    model = str(data.get("model", "") or API_DEFAULT_MODEL).strip()
+    request_conversation_id = str(data.get("conversation_id", "")).strip()
+    # ── 기본 입력 검증 ──
+    if not message:
+        conn.close()
+        return app._json_error("empty message", 400)
+    elif not model:
+        conn.close()
+        return app._json_error("모델 설정이 필요합니다.", 400)
+    elif not app._is_safe_model_name(model):
+        conn.close()
+        return app._json_error("모델 이름 형식이 올바르지 않습니다.", 400)
+    elif not app._is_allowed_api_model(model):
+        conn.close()
+        return app._json_error("허용되지 않은 모델입니다.", 400)
+    # 자격증명 검증은 backend 단일 env 소스로 이동 (config.py 의 LLM_API_KEY).
+    # 호출 시점에 자격증명이 미설정이면 `_run_agent_core` 가 result["error"] 로
+    # 보고 → user 에게 503 안내.
+    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 사전 게이트(역할 기본 + 계정 특수).
+    # 무제한/미설정/인프라장애=통과(fail-open). 초과 시 429(slot 획득 전 조기 차단).
+    _quota_ok, _quota_msg = app._check_account_token_quota(conn, account)
+    if not _quota_ok:
+        conn.close()
+        return app._json_error(_quota_msg, 429)
+    # feature-0009 gc-participant-product-select: 공유 대화 참가자의 per-message 제품 override.
+    # 기존 대화 + 비-owner 멤버 분기에서만 채워진다(아래). owner·신규 대화 경로는 None 유지.
+    _participant_product_override: dict[str, Any] | None = None
+    if request_conversation_id:
+        if not app._conversation_exists(request_conversation_id, conn=conn):
+            conn.close()
+            return app._json_error("conversation not found", 404)
+        if not app._account_has_permission(account, "conversation.ask"):
+            conn.close()
+            return app._json_error("권한이 없습니다.", 403)
+        if not app._conversation_owned_by_account(conn, request_conversation_id, int(account["id"])):
+            # feature-0009 S4 (열람 ≠ 발화): 그룹 대화 멤버도 @assistant 발화 가능. 비-멤버는 차단.
+            if not app._account_is_conversation_member(request_conversation_id, int(account["id"])):
+                conn.close()
+                return app._json_error("타 계정 대화에는 요청을 이어서 보낼 수 없습니다.", 403)
+            # actor RBAC 게이트: 발신 멤버 본인이 이 대화의 데이터소스(pinned product)에 접근 권한이
+            # 있어야 발화(쿼리) 가능. 무권한 멤버는 열람만 — 결과·SQL 은 볼 수 있으나 새 질의는 거부.
+            # auto 모드(미고정)는 다운스트림 execute_sql 가 actor 접근 datasource 로 제한하므로 허용.
+            _ask_conv_prod = app._load_conversation_product(conn, request_conversation_id)
+            # feature-0009 gc-participant-product-select: 참가자가 이 요청에 대해 제품을 바꿔 보냈으면
+            # (body product override) 그 선택으로 발화한다. 선택 제품은 본인 RBAC 로 검증된 것만
+            # 통과(아래 helper)하므로, 대화 공통 pinned product 에 본인 접근권이 없어도 본인이 권한 가진
+            # 다른 제품으로 질의할 수 있다(ANCHOR §1 보존 — 권한 상속 아님, 본인 권한 범위 내 선택).
+            _participant_product_override = app._parse_participant_product_override(conn, account, data)
+            if _participant_product_override is not None and not _participant_product_override.get("ok"):
+                conn.close()
+                return app._json_error(
+                    _participant_product_override.get("error") or "요청을 수행할 수 없습니다.", 403
+                )
+            # override 가 없을 때만 대화 공통 pinned product 접근권을 게이트(기존 열람-전용 정책).
+            if _participant_product_override is None and (
+                _ask_conv_prod
+                and _ask_conv_prod.get("product_mode") == "pinned"
+                and _ask_conv_prod.get("product_id")
+                and not app._account_has_product_access(account, int(_ask_conv_prod["product_id"]), conn=conn)
+            ):
+                conn.close()
+                return app._json_error("이 대화의 데이터소스에 발화(질의) 권한이 없습니다. 열람만 가능합니다.", 403)
+        # TASK-0248: 참조 제품이 삭제되어 차단(blocked)된 대화는 진행 불가. 이력 열람·공유는
+        # 가능하나 새 메시지 전송은 거부. slot 획득 전(조기 차단)이라 동시성 카운터 영향 없음.
+        _is_blocked, _block_reason = app._conversation_block_info(request_conversation_id, conn=conn)
+        if _is_blocked:
+            conn.close()
+            return app._json_error(_block_reason or app._BLOCKED_PRODUCT_DELETED_REASON, 403)
+        # feature-0009 gc-group-authz-flag (#2 서버 방어선): 그룹 대화에서 @assistant 멘션이 없는
+        # 메시지는 사람-사람 채팅이므로 assistant 를 실행하지 않는다. 클라이언트 send-routing 이 이미
+        # store-only 로 보내지만(is_group/member_count), stale·직접 API 호출로 /api/ask 에 도달하면
+        # 여기서 거부(422 code=group_requires_mention)해 오호출을 차단한다(단일 실패점 제거). 멘션
+        # 판정은 서버측 재파싱(클라이언트 플래그 불신). 클라이언트는 이 code 수신 시 store-only 로 재라우팅.
+        try:
+            from modules.mentions import message_invokes_assistant as _msg_invokes_assistant
+            _server_invokes_assistant = bool(_msg_invokes_assistant(message))
+        except Exception:
+            _server_invokes_assistant = True  # 파서 장애 시 보수적으로 통과(기존 동작 유지)
+        if not _server_invokes_assistant and app._conversation_is_group(request_conversation_id):
+            conn.close()
+            return JSONResponse(
+                {
+                    "error": "그룹 대화에서는 @assistant 를 멘션해야 AI 가 응답합니다. (멘션 없는 메시지는 참여자 간 채팅으로 전송됩니다.)",
+                    "code": "group_requires_mention",
+                },
+                status_code=422,
+            )
+        conv_id = request_conversation_id
+    else:
+        if not app._account_has_permission(account, "conversation.create"):
+            conn.close()
+            return app._json_error("요청을 수행할 수 없습니다.", 403)
+        if not app._account_has_permission(account, "conversation.ask"):
+            conn.close()
+            return app._json_error("권한이 없습니다.", 403)
+        # TASK-0059: frontend "새 대화" 버튼 lazy 경로의 명시적 신규 의도. hint 가 있으면 직전
+        # 대화 (account.last_conversation_id) 로 폴백하지 않고 신규 cid 를 강제 생성한다.
+        # hint 없는 legacy client (세션 부트스트랩 후 직전 대화 자동 이어받기) 는 force_new=False
+        # 로 기존 동작 유지.
+        lazy_create_requested = bool(data.get("lazy_create"))
+        conv_id = app._resolve_conversation_for_account(
+            conn,
+            account,
+            request_conversation_id,
+            create_if_missing=True,
+            force_new=lazy_create_requested,
+        )
+        # TASK-0048: client (특히 사이드바 "새 대화" 버튼이 lazy 화된 frontend) 가 첫 메시지에 함께 보낸
+        # product hint 를 이 시점에 적용한다. /api/new_conversation 의 동등한 분기를 ask body 안으로 이식.
+        # 기존 대화(`request_conversation_id` 명시) 경로에는 적용하지 않는다 — 대화 product 는 이미 결정된
+        # 상태이며, 변경 경로는 `PATCH /api/conversations/{cid}/product` 의 race 가드 단독 진실(TASK-0047).
+        try:
+            hint_raw_mode = data.get("product_mode") if isinstance(data, dict) else None
+            hint_raw_pid = data.get("product_id") if isinstance(data, dict) else None
+            if hint_raw_mode is not None or hint_raw_pid is not None:
+                hint_mode = app._normalize_product_mode(hint_raw_mode, default="pinned")
+                hint_pid: int | None = None
+                if hint_raw_pid is not None and str(hint_raw_pid).strip() != "":
+                    try:
+                        hint_pid = int(hint_raw_pid)
+                    except Exception:
+                        hint_pid = None
+                if hint_mode == "auto":
+                    hint_pid = None
+                elif not hint_pid:
+                    hint_pid = app._get_default_product_id(conn) or None
+                # TASK-0052 Phase 1C G3: hint product_id 의 접근 권한 검사.
+                # 권한 없으면 auto 로 강등 + 사용자 직접 명시 hint 였다면 403 으로 차단.
+                if hint_mode == "pinned" and hint_pid:
+                    if not app._account_has_product_access(account, int(hint_pid), conn=conn):
+                        if hint_raw_pid not in (None, "", 0):
+                            conn.close()
+                            return app._json_error("요청을 수행할 수 없습니다.", 403)
+                        hint_mode = "auto"
+                        hint_pid = None
+                if conv_id:
+                    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+                        try:
+                            from shared.db import _pg_connect
+                            _pg_tmp = _pg_connect()
+                            with _pg_tmp.cursor() as _pgc:
+                                _pgc.execute(
+                                    "UPDATE agent_runtime.core_conversations SET product_id = %s, product_mode = %s WHERE conversation_id = %s",
+                                    (int(hint_pid) if hint_pid else None, hint_mode, conv_id),
+                                )
+                            _pg_tmp.close()
+                        except Exception:
+                            # fail-open: product hint 적용 실패는 ask 를 막지 않으나 조용한 PG 쓰기 실패를 가시화.
+                            logging.getLogger(__name__).warning(
+                                "ask: PG product hint update failed (conversation_id=%s mode=%s)",
+                                conv_id, hint_mode, exc_info=True,
+                            )
+                    else:
+                        cur_h = conn.cursor()
+                        cur_h.execute(
+                            "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+                            "WHERE conversation_id = %s",
+                            (int(hint_pid) if hint_pid else None, hint_mode, conv_id),
+                        )
+                        cur_h.close()
+                    app._save_account_product_pref(
+                        conn, int(account["id"]), mode=hint_mode, pinned_id=hint_pid
+                    )
+        except Exception:
+            # hint 적용 실패는 ask 자체를 막지 않는다 — default('pinned' + default product) 로 fallback.
+            pass
+    # TASK-0073 Phase A6: user endpoint best-effort audit hook (fail-open).
+    # conv_id 결정 직후, LLM 호출 전 시점에 audit row INSERT. 실패 = stderr only.
+    app._audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.ask",
+        resource_type="conversation",
+        resource_id=str(conv_id) if conv_id else None,
+        request_ctx={
+            "conversation_id": str(conv_id) if conv_id else None,
+            "model": model,
+            "lazy_create": bool(data.get("lazy_create")) if not request_conversation_id else False,
+            "prompt_length": len(message or ""),
+        },
+    )
+    slot_key = f"account:{int(account['id'])}"
+    if not app._acquire_request_slot(slot_key):
+        conn.close()
+        return app._json_error("동시 요청 제한에 도달했습니다. 잠시 후 다시 시도해주세요.", 429)
+    try:
+        # feature-0007: per-request api_key 분기 제거. LLM 자격증명은 service env
+        # 단일 소스 (config.py 의 LLM_API_KEY → BEDROCK_GATEWAY_API_KEY chain).
+        from agent_core import run_agent as _run_agent_core
+
+        temp_value = 0.0 if app._model_supports_temperature(model) else None
+
+        # ── Product / Role / Account 기반 system prompt depth 컨텍스트 해결 ──
+        # TASK-0047: 대화의 product_mode 까지 함께 조회. mode='auto' 면 product 한정 prompt/allowed schemas 를
+        # 주입하지 않고, 메타데이터 4 스키마만 허용한다(빈 리스트). 향후 LLM resolver 가 도입되면 그 시점에
+        # 한해 turn-local product 가 추론된다 (BRIEFING-product-selector-v1.md 참조).
+        product_mode_for_run: str = "pinned"
+        try:
+            product_id_for_run: int | None = None
+            if conv_id:
+                if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+                    try:
+                        from shared.db import _pg_connect
+                        _pg_tmp2 = _pg_connect()
+                        with _pg_tmp2.cursor() as _pgc2:
+                            _pgc2.execute(
+                                "SELECT product_id, product_mode FROM agent_runtime.core_conversations WHERE conversation_id = %s",
+                                (conv_id,),
+                            )
+                            row_p = _pgc2.fetchone()
+                        _pg_tmp2.close()
+                    except Exception:
+                        row_p = None
+                else:
+                    cur_p = conn.cursor()
+                    cur_p.execute(
+                        "SELECT product_id, product_mode FROM AgentCoreConversations WHERE conversation_id = %s",
+                        (conv_id,),
+                    )
+                    row_p = cur_p.fetchone()
+                    cur_p.close()
+                if row_p:
+                    if row_p[0] is not None:
+                        product_id_for_run = int(row_p[0])
+                    product_mode_for_run = app._normalize_product_mode(row_p[1], default="pinned")
+            # feature-0009 gc-participant-product-select: 참가자 per-message override 적용.
+            # 대화 공통 바인딩(row_p)을 읽은 뒤, 이 요청에 한해 참가자가 고른 제품으로 run product 를
+            # 덮어쓴다. 선택 제품은 member 분기에서 본인 RBAC 로 이미 검증됨. 대화 product_id 는
+            # persist 하지 않는다(아래 backfill UPDATE 를 override 시 skip) — 공통 바인딩 비파괴.
+            if _participant_product_override is not None and _participant_product_override.get("ok"):
+                if _participant_product_override.get("mode") == "pinned":
+                    product_mode_for_run = "pinned"
+                    product_id_for_run = int(_participant_product_override["product_id"])
+                else:
+                    product_mode_for_run = "auto"
+                    product_id_for_run = None
+            if product_mode_for_run == "auto":
+                # auto 모드: 기존 default 자동 채움 경로를 우회한다 (의도 보존).
+                product_id_for_run = None
+                allowed_schemas_for_run = []  # 메타 4 스키마만 허용 (cross-product leak 차단)
+            else:
+                if not product_id_for_run:
+                    product_id_for_run = app._get_default_product_id(conn) or None
+                # TASK-0052 Phase 1C G4 (Codex Claim 3): 기존 대화의 product_id_for_run 시점에도 권한 검사.
+                # 권한 회수 후에도 pinned 대화가 그대로 실행되던 갭 차단. α 정책 (briefing §3.4):
+                # 권한 없으면 403 + "이 대화의 제품 접근 권한이 회수되었습니다" 안내. frontend 에서 사용자가
+                # auto 모드로 전환하거나 admin 에게 권한 요청 후 재시도하도록 가이드.
+                if product_id_for_run and not app._account_has_product_access(account, int(product_id_for_run), conn=conn):
+                    # TASK-0169 (BL-1, outside-voice): slot 은 finally 가 단일 release 한다.
+                    # 여기서 명시 release 하면 finally 와 합쳐 이중 감산 → 계정 동시성 카운터
+                    # 손상(다른 in-flight 요청의 슬롯을 훔침). 다른 early-return 처럼 finally 에 위임.
+                    conn.close()
+                    return app._json_error(
+                        "이 대화의 제품 접근 권한이 회수되었습니다. 사이드바에서 auto 모드로 전환하거나 관리자에게 권한 요청 후 다시 시도해 주세요.",
+                        403,
+                    )
+                # feature-0009 gc-participant-product-select: 참가자 override 가 적용된 요청은 대화
+                # 공통 product_id 를 backfill 하지 않는다(per-message 선택이 대화 바인딩을 바꾸면 안 됨).
+                if product_id_for_run and conv_id and _participant_product_override is None:
+                    try:
+                        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+                            from shared.db import _pg_connect
+                            _pg_tmp3 = _pg_connect()
+                            with _pg_tmp3.cursor() as _pgc3:
+                                _pgc3.execute(
+                                    "UPDATE agent_runtime.core_conversations SET product_id = %s "
+                                    "WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
+                                    (int(product_id_for_run), conv_id),
+                                )
+                            _pg_tmp3.close()
+                        else:
+                            cur_u = conn.cursor()
+                            cur_u.execute(
+                                "UPDATE AgentCoreConversations SET product_id = %s "
+                                "WHERE conversation_id = %s AND (product_id IS NULL OR product_id = 0)",
+                                (int(product_id_for_run), conv_id),
+                            )
+                            cur_u.close()
+                    except Exception:
+                        # fail-open: 대화 product_id backfill 실패는 ask 를 막지 않으나 조용한 쓰기 실패를 가시화.
+                        logging.getLogger(__name__).warning(
+                            "ask: conversation product_id backfill failed "
+                            "(conversation_id=%s product_id=%s)",
+                            conv_id, product_id_for_run, exc_info=True,
+                        )
+                # re-gate(5차) BLOCKER5: "데이터소스 미바인딩/제품 없음 = 접근 0" (DB-단위 모델, flag ON).
+                #  - 제품 없음(default 도 없음) → allowed=[] (과거 None=무제한 → 데이터계정 GRANT 전체 누출).
+                #  - 제품이 datasource 미바인딩(DatasourceKey NULL) → allowed=[] (데이터는 데이터소스 종속).
+                # flag OFF(레거시 단일 MySQL)에서는 종전대로 None(제품 allowlist 미적용 경로 보존).
+                # re-gate(6차) MAJOR: config 와 **동일 파서** 사용(1/true/yes). 과거 web 은 "0/false/False"
+                # 외 전부 활성으로 봐 FALSE/no/off 에서 agent-core(OFF)와 불일치→레거시 정상조회 과차단.
+                _multi_ds = str(os.getenv("AGENT_MULTI_DATASOURCE_ENABLED", "0")).strip().lower() in ("1", "true", "yes")
+                if product_id_for_run:
+                    if _multi_ds and not app._product_has_datasource(conn, int(product_id_for_run)):
+                        allowed_schemas_for_run = []  # 미바인딩 = 접근 0
+                    else:
+                        allowed_schemas_for_run = app._product_allowed_schemas(conn, int(product_id_for_run))
+                elif _multi_ds:
+                    allowed_schemas_for_run = []  # 제품 없음 = 접근 0
+                else:
+                    allowed_schemas_for_run = None  # 레거시 단일 MySQL
+            role_id_for_run: int | None = None
+            try:
+                role_payload = app._role_payload(account) or {}
+                if role_payload.get("id"):
+                    role_id_for_run = int(role_payload["id"])
+            except Exception:
+                role_id_for_run = None
+        except Exception:
+            # re-gate BLOCKER5(2차): product/allowlist 해석 중 예외 → **ask 전면 중단(fail-closed)**.
+            # 과거엔 allowed=None(또는 [])로 폴백했으나, product_id=None + datasource 비활성 상태에서는
+            # 무자격 쿼리(SELECT * FROM Secrets)가 데이터 계정 GRANT 의 기본 DB 로 그대로 실행됐다(차단 우회).
+            # 권한 컨텍스트를 신뢰할 수 없는 상태에서 어떤 쿼리도 돌리지 않는다 — 사용자에게 재시도 안내.
+            logging.getLogger(__name__).error(
+                "ask: product/allowlist 해석 실패 — 권한 컨텍스트 불명, ask 중단(fail-closed)", exc_info=True,
+            )
+            try:
+                conn.close()  # 슬롯은 outer finally 가 해제, conn 은 per-return 정리 패턴 따름
+            except Exception:
+                pass
+            return app._json_error("권한 컨텍스트를 확인할 수 없어 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.", 503)
+
+        # feature-0007: api_key 인자 제거. agent_core 가 env 단일 소스로 자격증명
+        # 결정 (LLM_API_KEY → BEDROCK_GATEWAY_API_KEY chain).
+        # TASK-0094 Sprint 1 Phase 11: attachment_ids 를 env 로 전달 (D16 정합).
+        # compose_system_prompt 가 ATTACHMENT_IDS env 를 읽어 prompt 에 section 주입.
+        # 명시 안 되면 빈 list — 본 cycle 의 attachment 미주입 (minimum exposure).
+        attachment_ids_raw = data.get("attachment_ids") if isinstance(data.get("attachment_ids"), list) else []
+        attachment_ids_clean: list[int] = []
+        for v in attachment_ids_raw[:50]:  # cap 50 per request
+            try:
+                iv = int(v)
+                if iv > 0:
+                    attachment_ids_clean.append(iv)
+            except Exception:
+                continue
+        # TASK-0137: 첨부 메타는 os.environ 전역 대신 run_agent 의 contextvar kwarg 로 전달
+        # (동시 요청 격리). attachment_ids_clean 은 아래 to_thread 호출에서 kwarg 로 넘긴다.
+
+        # new_attachment_ids: 이번 요청에 새로 첨부된 파일 ID (프론트에서 source="new" 기준).
+        # agent_core 가 LLM 컨텍스트에서 신규/세션 파일을 구분해 라벨링하는 데 사용.
+        new_attachment_ids_raw = data.get("new_attachment_ids") if isinstance(data.get("new_attachment_ids"), list) else []
+        new_attachment_ids_clean: list[int] = []
+        for v in new_attachment_ids_raw[:50]:
+            try:
+                iv = int(v)
+                if iv > 0:
+                    new_attachment_ids_clean.append(iv)
+            except Exception:
+                continue
+        # TASK-0137: new_attachment_ids 도 contextvar kwarg 로 전달 (아래 to_thread 참조).
+
+        # TASK-0107 hotfix: UploadStatus 가 'uploaded' (ingest 미완) 또는 'failed' 인
+        # csv/xlsx attachment 를 /api/ask 진입 시점에 동기 ingest 해 LLM 호출 전에
+        # sandbox table 이 준비되도록 한다. timeout (최대 30s) 이내 완료 못 하면
+        # background 로 fallback — 이번 turn 은 metadata 만, 다음 turn 부터 full context.
+        if attachment_ids_clean:
+            try:
+                _placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                # TASK-0284: ConversationId 스코프(대화에 속한 csv/xlsx 만 ingest), 미결정 시 AccountId 폴백.
+                if conv_id:
+                    _pi_col, _pi_val = "ConversationId", str(conv_id)
+                else:
+                    _pi_col, _pi_val = "AccountId", int(account["id"])
+                _pending_cur = conn.cursor(dictionary=True)
+                _pending_cur.execute(
+                    f"SELECT Id, ConversationId, ObjectKey, Kind FROM WebConversationAttachments "
+                    f"WHERE Id IN ({_placeholders}) AND {_pi_col} = %s AND UploadStatus IN ('uploaded','failed') "
+                    f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL AND DeletePending = 0 LIMIT 10",
+                    tuple(attachment_ids_clean) + (_pi_val,),
+                )
+                _pending_rows = _pending_cur.fetchall() or []
+                _pending_cur.close()
+            except Exception:
+                _pending_rows = []
+            _ingest_threads = []
+            for _pr in _pending_rows:
+                try:
+                    _t = threading.Thread(
+                        target=app._ingest_attachment_background,
+                        kwargs={
+                            "attachment_id": int(_pr["Id"]),
+                            "conversation_id": str(_pr["ConversationId"]),
+                            "object_key": str(_pr["ObjectKey"]),
+                            "kind": str(_pr["Kind"]),
+                        },
+                        name=f"sandbox-sync-{_pr['Id']}",
+                        daemon=True,
+                    )
+                    _t.start()
+                    _ingest_threads.append(_t)
+                except Exception:
+                    # fail-open: 첨부 ingest 스레드 기동 실패는 ask 를 막지 않으나 가시화 (해당 첨부 미처리).
+                    logging.getLogger(__name__).warning(
+                        "ask: attachment ingest thread spawn failed (attachment_id=%s)",
+                        _pr.get("Id"), exc_info=True,
+                    )
+            # LLM 호출 전 최대 25s 대기 — 대부분의 소형 파일은 이 내에 완료.
+            for _t in _ingest_threads:
+                try:
+                    _t.join(timeout=25)
+                except Exception:
+                    pass
+
+        # TASK-0107: attachment sandbox 스키마를 allowed_schemas_for_run 에 추가.
+        # WebProductDatabases 기반 whitelist 는 동적 생성 sandbox 스키마를 모르므로
+        # 요청된 attachment_ids 의 MetaJson 에서 sandbox_schema_name 을 읽어 보충한다.
+        # allowed_schemas_for_run 이 None (whitelist 미적용) 이면 아무 작업 없음.
+        if attachment_ids_clean and allowed_schemas_for_run is not None:
+            try:
+                # TASK-0277: read cutover — PG 우선(IDOR AccountId 가드 동형, fail-closed: 누락 시
+                # 해당 sandbox 미허용=쿼리 거부로 안전). 실패 시 MySQL 폴백. 행 shape 는 (MetaJson,) 유지.
+                _sb_rows = None
+                try:
+                    from web.modules import attachment_pg_mirror as _apm
+                    if _apm.read_pg_enabled():
+                        _sb_rows = [
+                            (_m,) for _m in _apm.pg_select_ingested_meta(
+                                conv_id, int(account["id"]), attachment_ids_clean)
+                        ]
+                except Exception:
+                    _sb_rows = None
+                    logging.getLogger(__name__).warning(
+                        "ask: sandbox allowlist PG read failed → MySQL fallback", exc_info=True)
+                if _sb_rows is None:
+                    _sb_placeholders = ", ".join(["%s"] * len(attachment_ids_clean))
+                    # TASK-0284: ConversationId 스코프(대화 접근권은 ask 가 게이트), 미결정 시 AccountId 폴백.
+                    if conv_id:
+                        _sb_col, _sb_val = "ConversationId", str(conv_id)
+                    else:
+                        _sb_col, _sb_val = "AccountId", int(account["id"])
+                    _sb_cur = conn.cursor()
+                    _sb_cur.execute(
+                        f"SELECT MetaJson FROM WebConversationAttachments "
+                        f"WHERE Id IN ({_sb_placeholders}) AND {_sb_col} = %s AND UploadStatus = 'ingested' "
+                        f"AND Kind IN ('csv','xlsx') AND DeletedAt IS NULL",
+                        # TASK-0284: 타 대화 ingested 첨부의 sandbox 스키마를 allowlist 에 추가하지 못하도록
+                        # ConversationId 한정 (sandbox 교차-대화 접근 차단 — TASK-0132 의 계정 가드를 대화 단위로 일반화).
+                        tuple(attachment_ids_clean) + (_sb_val,),
+                    )
+                    _sb_rows = _sb_cur.fetchall() or []
+                    _sb_cur.close()
+                _sandbox_schemas: list[str] = []
+                for _sbr in _sb_rows:
+                    try:
+                        _meta = json.loads(_sbr[0] or "{}") if _sbr[0] else {}
+                        _sn = str(_meta.get("sandbox_schema_name") or "").strip()
+                        if _sn.startswith("agent_attachment_") and _sn not in _sandbox_schemas:
+                            _sandbox_schemas.append(_sn)
+                    except Exception:
+                        pass
+                if _sandbox_schemas:
+                    allowed_schemas_for_run = list(allowed_schemas_for_run) + _sandbox_schemas
+            except Exception:
+                pass
+
+        # TASK-0094 Sprint 2 (S2.4) — vision inline image pre-fetch.
+        # vision 미지원 모델 / image kind 0 → (None, 0, []) — 본 분기 skip.
+        # 정상 → env ATTACHMENT_IMAGE_INLINE_PATH 로 path 전달 + finally cleanup.
+        vision_inline_path: str | None = None
+        vision_inline_count = 0
+        vision_audit_attachments: list[dict[str, Any]] = []
+        try:
+            (
+                _vision_path,
+                _vision_count,
+                _vision_audit,
+            ) = app._prepare_vision_inline_images(
+                conn,
+                int(account["id"]),
+                attachment_ids_clean,
+                model=model,
+                conversation_id=conv_id,
+            )
+        except Exception:
+            _vision_path, _vision_count, _vision_audit = None, 0, []
+        if _vision_path:
+            vision_inline_path = _vision_path
+            vision_inline_count = int(_vision_count or 0)
+            vision_audit_attachments = list(_vision_audit or [])
+            # TASK-0137: inline image path 는 contextvar kwarg (image_inline_path) 로 전달.
+
+        # TASK-0124 — text kind 첨부파일 내용 pre-fetch.
+        # SQL/코드/텍스트 파일은 sandbox ingest 대상이 아니므로 MinIO 에서 직접 읽어
+        # env ATTACHMENT_TEXT_INLINE_PATH 로 agent_core 에 전달.
+        text_inline_path: str | None = None
+        if attachment_ids_clean:
+            try:
+                text_inline_path = app._prepare_text_inline_attachments(
+                    conn,
+                    int(account["id"]),
+                    attachment_ids_clean,
+                    conversation_id=conv_id,
+                )
+            except Exception:
+                text_inline_path = None
+        # TASK-0137: inline text path 는 contextvar kwarg (text_inline_path) 로 전달.
+
+        # gc-ask-sender-attrib (feature-0009): 그룹 대화 발신이면 actor username 을 sender_username
+        # 으로 실어, _run_agent_core 의 user 메시지 표시 store 미러 meta 가 실제 발신자 프로필로
+        # 표시되게 한다(미주입 시 FE 가 대화 owner=생성자 프로필로 폴백 → 오귀속). 1:1·신규 대화는
+        # None → 기존 동작(미러 meta 없음) 무변경. 조회 실패 시 _conversation_is_group=False 폴백.
+        _sender_username_for_run = (
+            str(account.get("username") or "")
+            if app._conversation_is_group(conv_id or "") else None
+        )
+
+        # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
+        # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
+        agent_result = await app._dispatch_ask_run(
+            conn=conn,
+            account=account,
+            conv_id=conv_id,
+            request=request,  # TASK-0241: attach 루프의 client-disconnect 감지용(웹 슬롯 즉시 반납).
+            inproc_fn=_run_agent_core,
+            run_kwargs=dict(
+                user_message=message,
+                conversation_id=conv_id or None,
+                conv_file=app._account_conv_file(int(account["id"])),
+                model=model,
+                temperature=temp_value,
+                output_mode="json",
+                product_id=product_id_for_run,
+                role_id=role_id_for_run,
+                account_id=int(account["id"]),
+                sender_username=_sender_username_for_run,  # gc-ask-sender-attrib: 그룹 한정 발신자 귀속
+                allowed_schemas=allowed_schemas_for_run,
+                product_mode=product_mode_for_run,
+                # TASK-0137: 첨부 메타를 os.environ 전역 대신 요청별 contextvar kwarg 로 전달.
+                attachment_ids=attachment_ids_clean,
+                new_attachment_ids=new_attachment_ids_clean,
+                image_inline_path=vision_inline_path,
+                text_inline_path=text_inline_path,
+            ),
+        )
+        # worker mode 의 빠른 실패(readiness 503 / slot 429 / enqueue 500)는 표준 에러로 표면화.
+        _dispatch_http_status = int(agent_result.get("_http_status") or 0)
+        if _dispatch_http_status and _dispatch_http_status != 200:
+            conn.close()
+            return app._json_error(
+                str(agent_result.get("error") or "요청 처리에 실패했습니다."),
+                _dispatch_http_status,
+            )
+        # 첨부 inline temp cleanup. worker mode 는 worker 가 terminal 시 정리(+고아 reaper)
+        # 하므로 web 은 손대지 않는다(requeue read-after-delete 방지 — M6). inprocess 만 정리.
+        if not app._is_worker_mode():
+            app._cleanup_vision_inline(vision_inline_path)
+            app._cleanup_text_inline(text_inline_path)
+        vision_inline_path = None
+        text_inline_path = None
+
+        # Sprint 2 (S2.5) — attachment.vision.invoke audit dispatch.
+        # vision_inline_count > 0 일 때만 (실제로 image 가 inline 송신된 경우).
+        # agent_result.error 가 있으면 status='failure' + error_reason 기록.
+        _agent_error = str(agent_result.get("error") or "").strip()
+        _vision_conv_id = str(agent_result.get("conversation_id") or conv_id or "")
+        if vision_inline_count > 0:
+            try:
+                app._audit_user_action(
+                    conn,
+                    request,
+                    account,
+                    action="attachment.vision.invoke",
+                    resource_type="conversation",
+                    resource_id=_vision_conv_id,
+                    request_ctx={
+                        "provider": app._model_to_llm_provider(model),
+                        "model": model,
+                        "conversation_id": _vision_conv_id,
+                        "attachment_count": vision_inline_count,
+                        "attachment_metas": vision_audit_attachments,
+                        "status": "failure" if _agent_error else "success",
+                        "error_reason": _agent_error or None,
+                    },
+                )
+            except Exception:
+                # audit 실패는 사용자 응답을 막지 않음 (fail-open, Sprint 1 패턴).
+                pass
+
+            # Sprint 2 (S2.6, D19) — vision invoke 성공 시 WebAttachmentDerivedMessages
+            # join row INSERT. D9 share redact 가 `_meta_has_attachment_derived` 검사
+            # (agent_core 가 mirror 시 MetaJson.attachment_derived=True 추가) +
+            # 본 join 으로 어떤 attachment 가 derive 했는지 추적.
+            # fail-open: INSERT 실패는 사용자 응답 차단 안 함.
+            if not _agent_error and _vision_conv_id:
+                try:
+                    _latest_msg = app._load_latest_assistant_message(conn, _vision_conv_id)
+                    _msg_id = int(_latest_msg.get("id") or 0)
+                    if _msg_id > 0 and vision_audit_attachments:
+                        _cur_d = conn.cursor()
+                        _derived_ids: list[int] = []
+                        try:
+                            for _att in vision_audit_attachments:
+                                _att_id = int(_att.get("attachment_id") or 0)
+                                if _att_id <= 0:
+                                    continue
+                                _cur_d.execute(
+                                    """
+                                    INSERT INTO WebAttachmentDerivedMessages
+                                        (AttachmentId, MessageId, DerivationType)
+                                    VALUES (%s, %s, 'vision_analysis')
+                                    """,
+                                    (_att_id, _msg_id),
+                                )
+                                try:
+                                    _derived_ids.append(int(_cur_d.lastrowid or 0))
+                                except Exception:
+                                    pass
+                            conn.commit()
+                            # TASK-0277: dual-write — vision 파생 join 행을 PG 로 미러(flag-gated, fail-soft).
+                            try:
+                                from web.modules import attachment_pg_mirror as _apm
+                                _apm.mirror_derived_messages(conn, [i for i in _derived_ids if i])
+                            except Exception:
+                                pass
+                        finally:
+                            _cur_d.close()
+                except Exception:
+                    # best-effort: vision 파생 메시지 provenance 기록 실패는 응답을 막지 않는다.
+                    logging.getLogger(__name__).warning(
+                        "ask: vision derived-message link write failed (conversation_id=%s)",
+                        _vision_conv_id, exc_info=True,
+                    )
+        conversation_id = str(agent_result.get("conversation_id") or "").strip()
+        if conversation_id:
+            app._assign_conversation_owner(conn, conversation_id, int(account["id"]))
+            app._set_account_current_conversation(conn, int(account["id"]), conversation_id)
+            account["last_conversation_id"] = conversation_id
+            try:
+                Path(app._account_conv_file(int(account["id"]))).write_text(conversation_id, encoding="utf-8")
+            except Exception:
+                # best-effort: 계정별 현재 대화 포인터 파일 기록 실패는 응답을 막지 않는다 (fail-open).
+                logging.getLogger(__name__).warning(
+                    "ask: account current-conversation pointer write failed (account_id=%s)",
+                    account.get("id"), exc_info=True,
+                )
+
+        render_output = agent_result.get("answer", "")
+        render_sql = agent_result.get("executed_sql", "")
+        render_steps = agent_result.get("steps", [])
+        render_csv_paths = agent_result.get("result_csv_paths", [])
+        render_rationale = agent_result.get("rationale", "")
+        if conversation_id:
+            latest_message = app._load_latest_assistant_message(conn, conversation_id)
+            latest_meta = latest_message.get("meta") if isinstance(latest_message, dict) else {}
+            if latest_message.get("content"):
+                render_output = latest_message.get("content", render_output)
+            if isinstance(latest_meta, dict):
+                if latest_meta.get("sql"):
+                    render_sql = latest_meta.get("sql", render_sql)
+                latest_steps = latest_meta.get("steps")
+                if isinstance(latest_steps, list) and latest_steps:
+                    render_steps = latest_steps
+                latest_csv_paths = latest_meta.get("csv_paths")
+                if isinstance(latest_csv_paths, list) and latest_csv_paths:
+                    render_csv_paths = latest_csv_paths
+                if latest_meta.get("rationale"):
+                    render_rationale = latest_meta.get("rationale", render_rationale)
+
+        # TASK-0274 (Task⑥): assistant 가 답변 본문에 ```attachment-edit``` 블록을 넣었으면
+        # 텍스트 계열 첨부의 새 버전으로 자동 materialize(사용자 결정). fail-open — 실패해도
+        # 사용자 답변은 그대로 반환. 생성된 버전은 응답 edited_attachments 로 표면화.
+        materialized_attachments: list[dict[str, Any]] = []
+        if conversation_id and render_output and not agent_result.get("error"):
+            try:
+                _edit_msg_id = int((latest_message or {}).get("id") or 0) if conversation_id else 0
+                materialized_attachments = app._materialize_assistant_attachment_edits(
+                    conn,
+                    account=account,
+                    conversation_id=conversation_id,
+                    answer=str(render_output),
+                    message_id=_edit_msg_id,
+                    request=request,
+                )
+            except Exception:
+                # best-effort: materialize 실패는 사용자 응답을 막지 않는다.
+                logging.getLogger(__name__).warning(
+                    "ask: assistant attachment-edit materialize failed (conversation_id=%s)",
+                    conversation_id, exc_info=True,
+                )
+            # ④ TASK-0285: 첨부 수정을 진행 단계(step)로 명시 출력. "단계 보기"/progress 에 노출되고
+            # history 재로드에도 영속(PG agent_runtime.steps). run_id 는 이 답변 run 의 step 에서
+            # 추출(step 이 없는 단순 답변이면 run_id 부재 → 기록 skip). fail-soft.
+            if materialized_attachments:
+                try:
+                    _edit_run_id = ""
+                    _edit_max_idx = -1
+                    for _s in (render_steps or []):
+                        if _s.get("run_id"):
+                            _edit_run_id = str(_s.get("run_id") or "")
+                        try:
+                            _edit_max_idx = max(_edit_max_idx, int(_s.get("step_index", 0) or 0))
+                        except Exception:
+                            pass
+                    if _edit_run_id:
+                        _edit_names = ", ".join(
+                            f"'{a.get('original_filename') or '파일'}'(v{a.get('version_number') or 2})"
+                            for a in materialized_attachments
+                        )
+                        _edit_step = {
+                            "step_index": _edit_max_idx + 1,
+                            "action": "attachment_edit",
+                            "tool": "materialize_attachment",
+                            "work": f"첨부 {_edit_names}을(를) 새 버전으로 저장했습니다.",
+                            "reason": "수정한 첨부를 사용자에게 새 버전으로 제공합니다.",
+                            "args": {"attachment_ids": [int(a.get("id") or 0) for a in materialized_attachments]},
+                        }
+                        from modules.memory import save_memory_step as _save_step
+                        _save_step(conn, conversation_id, _edit_run_id, _edit_step)
+                        # 응답 steps 에도 즉시 반영 — 프론트가 새로고침 없이 단계로 표시.
+                        render_steps = list(render_steps or []) + [
+                            {**_edit_step, "run_id": _edit_run_id, "work_source": "llm", "reason_source": "llm"}
+                        ]
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ask: materialize step record failed (conversation_id=%s)",
+                        conversation_id, exc_info=True,
+                    )
+
+        # ★ TASK-0286: attachment-edit 블록을 답변에서 제거 → 전체 수정본 본문이 채팅에 노출되지
+        # 않게 한다(변경점은 diff 블록으로, 전체 수정본은 첨부 새 버전으로 전달). materialize 성공분은
+        # "📎 수정본 전달" 명시 문구로 치환. render_output(응답)뿐 아니라 DB content 도 갱신해
+        # history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다. error 무관 — 블록 텍스트가
+        # 남아 있으면 항상 제거(본문 노출 방지).
+        if conversation_id and isinstance(render_output, str) and "attachment-edit" in render_output:
+            _stripped_out = app._strip_attachment_edit_blocks(render_output, materialized_attachments)
+            if _stripped_out != render_output:
+                render_output = _stripped_out
+                try:
+                    _strip_msg_id = int((latest_message or {}).get("id") or 0)
+                    if _strip_msg_id > 0:
+                        app._update_assistant_message_content(conn, conversation_id, _strip_msg_id, _stripped_out)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ask: attachment-edit strip content update failed (conversation_id=%s)",
+                        conversation_id, exc_info=True,
+                    )
+
+        result = {
+            "output": render_output,
+            "executed_sql": render_sql,
+            "conversation_id": conversation_id,
+            "steps": render_steps,
+            "result_csv_paths": render_csv_paths,
+            "rationale": render_rationale,
+            "error": agent_result.get("error", ""),
+            "duration_ms": round((time.time() - start_ts) * 1000, 2),
+        }
+        if materialized_attachments:
+            result["edited_attachments"] = materialized_attachments
+        conn.close()
+        return JSONResponse(result)
+    finally:
+        app._release_request_slot(slot_key)
+        # TASK-0124: exception 경로에서도 text inline temp file 정리.
+        # TASK-0169 (M6): worker mode 는 worker 가 terminal 시 정리(+고아 reaper)하므로
+        # web 은 손대지 않는다(enqueue 후 worker 가 아직 읽는 중이면 read-after-delete).
+        if not app._is_worker_mode():
+            try:
+                app._cleanup_text_inline(locals().get("text_inline_path"))
+            except Exception:
+                pass

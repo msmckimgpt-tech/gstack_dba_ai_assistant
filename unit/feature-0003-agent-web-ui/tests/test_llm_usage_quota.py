@@ -38,6 +38,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import conversations  # feature-0012 P5b
 from routers import admin_quotas, admin_console, admin_accounts, admin_roles  # feature-0012 P5b
 
 
@@ -101,7 +102,7 @@ def test_b6_period_usage_source():
 
 
 def test_b7_ask_gate():
-    src = inspect.getsource(app.ask)
+    src = inspect.getsource(conversations.ask)
     assert "_check_account_token_quota(conn, account)" in src
     assert "429" in src
 

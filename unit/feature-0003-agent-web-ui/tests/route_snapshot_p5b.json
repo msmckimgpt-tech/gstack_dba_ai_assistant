@@ -36,118 +36,6 @@
       "type": "Mount"
     },
     {
-      "path": "/livez",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/readyz",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/session",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/api-vault/options",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/ask",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/fork_conversation",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/public/share/{token}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/public/share/{token}/fork",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/clear_memory",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/progress",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/ask_result",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/suggestions",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/system-prompts",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/system-prompts",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/dashboard/preferences",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/dashboard/preferences",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
       "path": "/",
       "methods": [
         "GET"
@@ -232,6 +120,34 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/admin/system-prompts",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/system-prompts",
+      "methods": [
+        "PUT"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/dashboard/preferences",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/dashboard/preferences",
+      "methods": [
+        "PUT"
+      ],
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/share/{share_id}",
       "methods": [
         "DELETE"
@@ -246,6 +162,20 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/public/share/{token}",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/public/share/{token}/fork",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/llm/health",
       "methods": [
         "GET"
@@ -254,6 +184,34 @@
     },
     {
       "path": "/api/file",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/livez",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/readyz",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/session",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/api-vault/options",
       "methods": [
         "GET"
       ],
@@ -487,6 +445,48 @@
       "path": "/api/conversations/{conversation_id}/title",
       "methods": [
         "PATCH"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/fork_conversation",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/clear_memory",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/progress",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ask_result",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/suggestions",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ask",
+      "methods": [
+        "POST"
       ],
       "type": "APIRoute"
     },

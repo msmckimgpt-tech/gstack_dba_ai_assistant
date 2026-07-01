@@ -480,3 +480,15 @@ source_of_truth: true
 - Impact: **app.py 23,536→20,542 줄(~2,994↓).** 20→21 router(conversations append). make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral. **잔여 app.py 라우트 16(session 시작 148 대비)**.
 - 학습: getsource substring 검사는 **helper 앞 컨텍스트(`not X`, `= X`) 포함 시 app. 접두로 깨짐**(단일 심볼명은 부분문자열로 생존) → 추출 시 그런 substring 은 `app.` 접두형으로 갱신. --append 는 기존 router import 병합 + include_router 미추가. 커플링 8유형(신규 8=getsource 컨텍스트-substring).
 - Rollback: revert(conversations 17 append 제거 + admin_products 삭제 + app.py 39 복원 + 테스트 원복 + 골든).
+
+## CHG-20260701-0012
+- Date: 2026-07-01
+- Related Requirement: P5b 전체추출 batch4 — 잔여 16 라우트(misc/deferred/cross-call). **app.py 라우트 핸들러 전량(148) 추출 완료.**
+- Summary:
+  잔여 16 핸들러를 기존 router 에 그룹 append: conversations(ask·fork_conversation·clear_memory·progress·ask_result·suggestions 6) + share(public_share_view·public_share_fork 2) + admin_console(admin_get/put_system_prompt·admin_get/put_dashboard_prefs 4) + system(livez·readyz·get_session·get_api_vault_options 4). DEFER(ask_result long-poll·progress/suggestions fail-soft·public_share_view opt) 인라인 유지 byte-identical.
+  - **cross-call 핸들러 `ask` 처리(9번째 커플링 유형)**: `ask` 는 route 이자 내부 함수(conversations.py:1397 post_fix_with_ai 가 `app.ask(internal_req)` 호출 + test monkeypatch). conversations.py 로 append → 내부 caller `app.ask`→`ask`(동일 모듈 bare), 테스트 `monkeypatch.setattr(app,"ask")`→`conversations` + `hasattr(app,"ask")`→`conversations` + getsource/직접호출 reref.
+  - 동반 테스트 reref: suggestions/ask(conversations) + public_share_*(share) 등 6파일.
+- Files: src/routers/{conversations,share,admin_console,system}.py(append), src/app.py(16 제거), tests/(6 reref+cross-call fix), tests/route_snapshot_p5b.json(골든 set-neutral 192) + docs.
+- Impact: **app.py 20,542→18,917 줄(~1,625↓).** **잔여 @app 라우트 0 — 148 route 핸들러 전량 21 router 로 추출 완료.** app.py = 헬퍼 라이브러리 + DI seam + 미들웨어 + include_router(조립부). make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral.
+- 학습: 커플링 9유형 = 기존 8 + **(9) cross-call 핸들러**(route 이자 내부 함수 — 추출 시 내부 caller 참조 `app.X`→동일모듈 bare + monkeypatch/hasattr 대상 모듈 전환). app.py 잔여(~18.9k)=헬퍼(web_context 미이동, 원래 블로커 — 별도 workstream).
+- Rollback: revert(4 router append 제거 + app.py 16 복원 + ask cross-call 원복 + 테스트·골든).

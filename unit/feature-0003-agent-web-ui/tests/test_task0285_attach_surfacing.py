@@ -193,7 +193,7 @@ def test_v2_serialize_keeps_version_fields():
 def test_s1_ask_records_materialize_step():
     import inspect
 
-    src = inspect.getsource(app.ask) if hasattr(app, "ask") else ""
+    src = inspect.getsource(conversations.ask) if hasattr(conversations, "ask") else ""
     if not src:
         # ask 가 다른 이름이면 모듈 소스에서 확인.
         src = inspect.getsource(app)

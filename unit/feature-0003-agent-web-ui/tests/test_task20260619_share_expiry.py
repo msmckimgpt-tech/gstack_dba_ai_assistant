@@ -41,6 +41,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import share  # feature-0012 P5b
 from routers import conversations  # feature-0012 P5b
 
 
@@ -89,7 +90,7 @@ def test_b4_create_endpoint_parses_and_inserts_expiry():
 
 
 def test_b5_public_view_enforces_expiry():
-    src = inspect.getsource(app.public_share_view)
+    src = inspect.getsource(share.public_share_view)
     # ViewCount UPDATE 가 만료 predicate 포함 — 만료뷰 카운트 인플레 차단.
     assert "ExpiresAt IS NULL OR ExpiresAt > NOW()" in src
     # 만료 시 취소와 구분된 410 메시지.
@@ -100,7 +101,7 @@ def test_b5_public_view_enforces_expiry():
 
 
 def test_b6_fork_blocks_expired():
-    src = inspect.getsource(app.public_share_fork)
+    src = inspect.getsource(share.public_share_fork)
     assert "_share_row_expired" in src
     assert "만료되었습니다" in src
 

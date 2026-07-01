@@ -22,6 +22,7 @@ import asyncio
 import json
 
 import app
+from routers import conversations  # feature-0012 P5b
 from routers import admin_products  # feature-0012 P5b
 
 
@@ -201,6 +202,6 @@ def test_ask_rejects_blocked_conversation(monkeypatch):
         lambda cid, conn=None: (True, "참조 제품이 삭제되어 더 이상 대화를 진행할 수 없습니다."),
     )
     body = {"message": "안녕", "model": "claude-haiku-4-5-20251001", "conversation_id": "conv-1"}
-    resp = asyncio.run(app.ask(_Req(body)))
+    resp = asyncio.run(conversations.ask(_Req(body)))
     assert resp.status_code == 403
     assert "삭제" in json.loads(resp.body)["error"]
