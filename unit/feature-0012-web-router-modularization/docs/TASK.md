@@ -77,6 +77,7 @@ source_of_truth: true
       - [x] **batch2 datasources 6 + auth 18 전체추출**(CHG/REV-20260701-0010): routers/{admin_datasources,auth}.py. datasources CLEAN-DI 3·auth PUBLIC 7·DEFER 인라인 유지. 커플링 7유형(신규: source-text 호출식 count). **app.py 24,648→23,536(~1,112↓)**, 20 router. make test 1313·0 fail.
       - [x] **batch3 conversations 17(append) + products 22 전체추출**(CHG/REV-20260701-0011): conversations sub-resource → 기존 routers/conversations.py append(추출기 --append 신규), products → routers/admin_products.py. DEFER/txn/streaming 인라인 유지. 커플링 8유형(신규: getsource 컨텍스트-substring). **app.py 23,536→20,542(~2,994↓)**, 21 router. make test 1313·0 fail. **잔여 app.py 라우트 16(session 시작 148 대비 89% 추출)**.
       - [x] **batch4 잔여 16 라우트 그룹 append**(CHG/REV-20260701-0012): conversations(ask+5)·share(public 2)·admin_console(system-prompts/dashboard 4)·system(livez/readyz/session/vault 4). cross-call `ask`(9번째 커플링) 처리. **app.py 20,542→18,917(~1,625↓). 잔여 @app 라우트 0 — 148 route 핸들러 전량 21 router 추출 완료.** make test 1313·0 fail.
+      - [x] **batch4 bare-name 회귀 수정**(CHG/REV-20260702-0013): 추출된 핸들러가 bare app-global/import 참조를 `app.` 로 한정 안 해 런타임 `NameError`→라이브 500 3종(제품 DB 피커·상태 폴링·취소/즉시답변). `ruff --select F821` 전수 감사로 6심볼/10개소 확정 → `app.` 한정. ruff F821 clean(22 router)·45 테스트·§18.8 SUBAGENT 패널 PASS·배포 후 500→200. **추출 게이트에 F821 추가 권장(byte-neutral 게이트가 미커버 NameError 놓침).**
   - [x] **route-handler 모듈화 완주** — app.py = 헬퍼 라이브러리 + DI seam + include_router. (완전 thin-app: web_context 헬퍼 추출 = 별도 workstream, 원래 블로커.)
       - [ ] (향후 정제) DEFER preauth 핸들러 byte-동치 DI-rework(pre-auth gate → pre-auth dependency).
 - [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
@@ -88,6 +89,7 @@ source_of_truth: true
 - 없음. (브라우저 QA env "WSL 불가" 가정은 2026-06-29 오류로 판명 — PB-0008 `bin/win-browser.py` 로 실 Windows Chrome QA 가능. 머지 전 로그인 플로우 QA 는 Final 게이트.)
 
 ## 6. Done
+- **batch4 bare-name 회귀 수정(CHG/REV-20260702-0013, 라이브 500 3종)**: 전체추출(batch1~4)이 app.py 핸들러를 router 모듈로 옮기며 bare app-global/import 참조를 `app.` 로 한정하지 않아 런타임 `NameError`→500(제품 DB 피커·대화 상태 폴링·취소/즉시답변). graph-panel-perms 배포(91541447) 후 라이브 브라우저 검증 중 발견 → `ruff --select F821 routers/` 전수 감사로 6심볼/10개소 확정(브라우저 관측 2 + 감사 추가 4). `app.` 한정. ruff F821 clean(22 router)·py_compile·45 테스트 PASS·§18.8 SUBAGENT 패널 VERDICT PASS(정확성·완전성·회귀·부작용 4축 refute 실패). 배포 후 라이브 500→200. **교훈: 라우터 전체추출은 name-resolution 상 byte-neutral 아님 — 추출 게이트에 `ruff --select F821` 추가 권장. route-parity 골든 192 vs 실 193 stale 은 별도 미완.**
 - P5b plan-eng-review: APPROVE-WITH-CONDITIONS (REVIEW REV-0012-0001). §12 승인.
 - 안전망: `test_route_parity_p5b.py` — `app.routes` 정적 열람으로 경로·메서드·**순서**·count 를 골든(179 route)과 비교, drift 시 fail. `--no-deps` 동작. make test 회귀 0.
 - 의존성 audit: 핵심 = `_require_account`(118)·`_require_permission`(7)·`_account_has_permission`(120)·`_optional_account`(2)·`_json_error` + 전역.
