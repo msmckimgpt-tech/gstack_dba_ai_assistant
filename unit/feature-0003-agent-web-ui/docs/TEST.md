@@ -319,6 +319,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - TEST-0129: 관리 콘솔 릴리즈 노트 pane 세로 스크롤 — `styles.css` 에 `.admin-pane[data-admin-pane="release-notes"].is-active{overflow-y:auto}` 규칙 존재(소스 단언). 화면 정본 PB-0008(scrollHeight>clientHeight·하단 그룹 도달).
 
 ## 4. Test Run History
+- 2026-07-01 (feature-0016 graphux5-progress — AI 능동 분석 진행 현황 **화면 라이브·상세**(지속 진행 패널: 항목별 상태[분석중/완료/대기] + 진행바 + 분석중 주황 마커), **Major §12.3(비파괴 additive UI + 응답 필드)** — **PB-0008 Windows-browser 배포 후 라이브 검증 예정**):
+  - **Environment: python/node 정적 + 적대 리뷰(backend/frontend 렌즈)** — 정적 PASS: `node_analysis.py` py_compile · `admin.js` `node --check`. 배포 후 실 Windows 브라우저로 확인: (a) AI 능동 분석 시작 → 상단 진행 패널이 노드 선택과 무관하게 라이브 갱신, (b) 완료/분석중/대기/실패 카운트 + 진행바, (c) 항목별 상세 리스트(⏳ 컬럼 X·✅ 테이블 Y·깊이) 갱신, (d) 그래프에 분석중 주황 점선 + 완료 보라 마커. Evidence(예정): `artifacts/shared/win-browser-shots-graphux5-progress/`.
 - 2026-07-01 (feature-0016 graphux5 — 관리콘솔 그래프뷰 4항목 개선[검색 유사도 pg_trgm 명시·AI 능동분석 재귀/백그라운드·미분석 노드 컬럼 즉석 introspection·이웃깊이 드롭다운 즉시 갱신], **Major §12.3 + 외부 LLM 비용 + 신규 테이블 alembic 0028** — **PB-0008 Windows-browser DEFERRED(배포 후)**):
   - **Environment: python/node 정적 + 적대 리뷰 워크플로(backend/security/api/frontend/migration 5렌즈 → 발견별 검증, 확정 10건 전량 수정)** — 라이브 web 서버가 본 dev 셸에 이 worktree 로 미기동(미배포 worktree)이라 **실 Windows 브라우저 렌더 검증(그래프뷰 4항목 라이브)은 배포(deploy_scope: included) 후로 연기**. 정적: py_compile 6파일 + `node --check admin.js` + `migrate-lint --base main`(0028 expand-safe) 모두 PASS. 배포 후 확인: (1) 검색 시 노드 라벨 `이름 NN%`·상세 "유사도 NN%" 배지, (2) 상세 "✨ 능동 분석" → 폴링 진행·완료 노드 보라 마커·분석문 렌더, (3) 미큐레이션 Table 더블클릭 시 컬럼 즉석 전개(또는 명확 사유), (4) 이웃깊이 드롭다운 변경 시 즉시 재전개. Evidence(예정): `artifacts/shared/win-browser-shots-graphux5/`.
 - 2026-07-01 (feature-0016 implicit-edges — 그래프 뷰 암묵 관계 신뢰 시각화(신뢰=실선/추정=점선/파단=숨김) + 범례 + 상세 카드 신뢰 배지, **Major §12.3(비파괴 UI 추가)** — **PB-0008 Windows-browser DEFERRED(배포 후)**):
@@ -1295,4 +1297,4 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - locality: 반경 밖 far 노드 이동 최소(depth-2 far 4중 0 이동) — 원거리 문맥 보존.
 - **시각(스크린샷 아티팩트)**: `scratchpad/pb0008-04..06` — 신규 노드가 주변 테이블을 밀어내 겹침 해소, 컬럼 세로스택+round-taxi 유지.
 - **Pass/Fail: PASS**(인젝션 검증) — 사용자 보고 2건 해소: (1) 더블클릭 시 컬럼 세로스택 가시화(겹침 제거로 판독), (2) 신규 노드가 주변 노드를 부드럽게 밀어냄(겹침 502→17). 잔여 minor 겹침(극단 depth-2 17쌍)은 numIter 250(perf) 유지 trade-off.
-- **배포 후 최종 확인**: web 재배포(배포 번들) 후 동일 시나리오 PB-0008 재확인 예정(선례 패턴).
+- **배포 후 최종 확인 (배포 번들, 2026-07-01) PASS**: web 재배포(git_commit=e2efac2, soak 통과) 후 배포된 `admin.js?v=graphux-expand-relax` 로 동일 시나리오 재확인 — 검색 achievement→Achievement 더블클릭 확장(신규 120, 총 300노드) 결과 **겹침쌍 0**, Achievement 컬럼 ordinal 세로스택 유지(1@dy75·2@105·3@135·4@165). 스크린샷 `scratchpad/pb0008-07-DEPLOYED-final.png`.

@@ -6,7 +6,7 @@ pending 잡으로 넣는다. insight-worker 틱이 `process_pending()` 으로 pe
 pending 으로 재큐한다 — 이렇게 **선택 노드에서 시작해 관련 노드를 재귀적으로 탐색**한다.
 
 설계 원칙 (metadata_graph.py 동형):
-  - 저장소 = agent_kb PG 의 node_analysis_runs / node_analysis_jobs (alembic 0026).
+  - 저장소 = agent_kb PG 의 node_analysis_runs / node_analysis_jobs (alembic 0028).
   - 연결은 shared.db._pg_connect(RW). PG 미가용·예외 시 no-op — 코어 흐름 절대 비차단.
   - **비용 경계(사용자 결정 2026-07-01)**: run 마다 depth_budget/node_budget 로 재귀를 캡하고,
     UNIQUE(run_id,node_key) 로 dedupe 한다. "관련된 모든 노드"의 무한 확장(LLM 비용 폭증) 방지.
@@ -338,13 +338,25 @@ def get_run_status(run_id: str, conn=None) -> dict | None:
         if not r:
             cur.close()
             return None
-        # 완료된(done) 노드 키 목록 — 프론트가 그래프에 분석 마커 표시
-        cur.execute("SELECT node_key FROM node_analysis_jobs WHERE run_id=%s AND status='done'", (run_id,))
-        done_keys = [row[0] for row in cur.fetchall()]
+        # 그래프 마커용 완료/진행 키는 **전량(cap 없이)** 조회 — node_budget 최대 1000 이라도 마커 누락 방지.
+        #   키만 가져와 페이로드 작음(review fix: LIMIT 400 이 done_keys/running_keys 를 절단해 tail 노드 미표시).
+        cur.execute("SELECT node_key, status FROM node_analysis_jobs "
+                    "WHERE run_id=%s AND status IN ('done','running')", (run_id,))
+        done_keys, running_keys = [], []
+        for k, s in cur.fetchall():
+            (done_keys if s == "done" else running_keys).append(k)
+        # 항목별 상세 리스트(진행 패널 표시분) — 분석중→완료→깊이 순, UI 표시분만 cap(패널은 running+최근 done 만 노출).
+        cur.execute("SELECT node_key, node_label, node_name, node_fqn, status, depth "
+                    "FROM node_analysis_jobs WHERE run_id=%s "
+                    "ORDER BY (status='running') DESC, (status='done') DESC, depth ASC, node_name ASC "
+                    "LIMIT 80", (run_id,))
+        jobs = [{"node_key": row[0], "node_label": row[1], "node_name": row[2],
+                 "node_fqn": row[3], "status": row[4], "depth": row[5]} for row in cur.fetchall()]
         cur.close()
         return {"run_id": r[0], "scope_key": r[1], "root_key": r[2], "root_name": r[3],
                 "depth_budget": r[4], "node_budget": r[5], "status": r[6],
-                "enqueued": r[7], "done": r[8], "failed": r[9], "done_keys": done_keys}
+                "enqueued": r[7], "done": r[8], "failed": r[9],
+                "done_keys": done_keys, "running_keys": running_keys, "jobs": jobs}
     except Exception as exc:
         _log.debug("get_run_status_failed err=%r", exc)
         return None

@@ -7970,6 +7970,35 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-ai-box { margin-top: 8px; line-height: 1.5; }
 .admin-meta-graph-ai-box p { margin: 0 0 7px; }
 .admin-meta-graph-ai-summary { font-weight: 600; }
+/* graphux5-progress: AI 능동 분석 진행 현황 패널(라이브·상세) */
+.admin-meta-graph-progress {
+  margin: 8px 0 4px; padding: 10px 12px; border: 1px solid var(--border);
+  border-left: 3px solid #e08a1e; border-radius: 8px;
+  background: var(--surface-2, rgba(224, 138, 30, .05)); font-size: 12.5px;
+}
+.admin-meta-graph-progress .ampg-head { display: flex; align-items: center; gap: 8px; }
+.admin-meta-graph-progress .ampg-head strong { font-size: 13px; }
+.admin-meta-graph-progress .ampg-status {
+  font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  background: rgba(224, 138, 30, .15); color: #a5610d;
+}
+.admin-meta-graph-progress .ampg-st-done { background: rgba(123, 47, 190, .15); color: #6a24a5; }
+.admin-meta-graph-progress .ampg-st-failed { background: rgba(200, 60, 60, .15); color: #b23; }
+.admin-meta-graph-progress .ampg-close { margin-left: auto; border: none; background: none; cursor: pointer; color: var(--text-muted); font-size: 13px; padding: 0 4px; }
+.admin-meta-graph-progress .ampg-bar { height: 6px; border-radius: 4px; background: var(--border); overflow: hidden; margin: 8px 0 6px; }
+.admin-meta-graph-progress .ampg-bar-fill { height: 100%; background: linear-gradient(90deg, #e08a1e, #7b2fbe); transition: width .4s ease; }
+.admin-meta-graph-progress .ampg-counts { margin-bottom: 6px; }
+.admin-meta-graph-progress .ampg-counts b { color: var(--text); }
+.admin-meta-graph-progress .ampg-list { list-style: none; margin: 0; padding: 0; max-height: 168px; overflow-y: auto; }
+.admin-meta-graph-progress .ampg-item { padding: 2px 0; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin-meta-graph-progress .ampg-item .ampg-lbl {
+  font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 4px;
+  background: var(--border); color: var(--text-2, var(--text));
+}
+.admin-meta-graph-progress .ampg-item .ampg-nm { font-family: monospace; font-size: 11.5px; }
+.admin-meta-graph-progress .ampg-running { font-weight: 600; }
+.admin-meta-graph-progress .ampg-running .ampg-lbl { background: rgba(224, 138, 30, .2); color: #a5610d; }
+.admin-meta-graph-progress .ampg-fail { color: #b23; }
 @media (max-width: 900px) {
   /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소 */
   .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
