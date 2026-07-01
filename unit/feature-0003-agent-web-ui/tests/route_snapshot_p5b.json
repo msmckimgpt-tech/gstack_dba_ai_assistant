@@ -792,51 +792,9 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/admin/quotas",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/quotas/role/{role_id}",
-   "methods": [
-    "PUT"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/quotas/account/{account_id}",
-   "methods": [
-    "PUT"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/profile/usage/conversations",
    "methods": [
     "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/sample-feedback",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/sample-feedback/{feedback_id}/approve",
-   "methods": [
-    "POST"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/admin/sample-feedback/{feedback_id}/reject",
-   "methods": [
-    "POST"
    ],
    "type": "APIRoute"
   },
@@ -1194,6 +1152,48 @@
    "path": "/api/admin/usage/conversations",
    "methods": [
     "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/quotas",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/quotas/role/{role_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/quotas/account/{account_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/sample-feedback",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/sample-feedback/{feedback_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/sample-feedback/{feedback_id}/reject",
+   "methods": [
+    "POST"
    ],
    "type": "APIRoute"
   },

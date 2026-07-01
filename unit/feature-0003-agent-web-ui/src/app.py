@@ -24464,116 +24464,13 @@ def _quota_parse_limit(raw) -> "int | None":
     return min(v, 9_000_000_000_000_000)  # BIGINT 안전 상한 clamp (overflow 500 방지, outside-voice MINOR)
 
 
-@app.get("/api/admin/quotas")
-def admin_list_quotas(request: Request, actor=Depends(require_permission("console.access", "quota.read", message="LLM 사용 한도 조회 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
-    """역할별 기본 + 계정별 특수 LLM 토큰 한도 목록.
-    TASK-20260623T030418-quota-rbac-permission: 권한 quota.read(조회 전용 위임 가능)."""
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            "SELECT r.Id AS role_id, r.RoleKey AS role_key, r.Name AS name, "
-            "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
-            "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
-            "FROM WebRoles r LEFT JOIN WebRoleTokenQuotas q ON q.RoleId = r.Id "
-            "GROUP BY r.Id, r.RoleKey, r.Name ORDER BY r.Id"
-        )
-        roles = [
-            {"role_id": int(x["role_id"]), "role_key": x.get("role_key"), "name": x.get("name"),
-             "daily": int(x["daily"]) if x.get("daily") is not None else None,
-             "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
-            for x in (cur.fetchall() or [])
-        ]
-        cur.execute(
-            "SELECT a.Id AS account_id, a.Username AS username, "
-            "MAX(CASE WHEN q.QuotaType='daily' THEN q.TokenLimit END) AS daily, "
-            "MAX(CASE WHEN q.QuotaType='monthly' THEN q.TokenLimit END) AS monthly "
-            "FROM WebAccountTokenQuotas q JOIN WebAccounts a ON a.Id = q.AccountId "
-            "GROUP BY a.Id, a.Username ORDER BY a.Username"
-        )
-        overrides = [
-            {"account_id": int(x["account_id"]), "username": x.get("username"),
-             "daily": int(x["daily"]) if x.get("daily") is not None else None,
-             "monthly": int(x["monthly"]) if x.get("monthly") is not None else None}
-            for x in (cur.fetchall() or [])
-        ]
-    finally:
-        cur.close()
-    return JSONResponse({"roles": roles, "account_overrides": overrides, "enforce": bool(LLM_QUOTA_ENFORCE)})
+# feature-0012 P5b Final: admin_list_quotas 는 src/routers/admin_quotas.py 로 추출.
 
 
-@app.put("/api/admin/quotas/role/{role_id}")
-async def admin_set_role_quota(role_id: int, request: Request, actor=Depends(require_permission("console.access", "quota.read", "quota.manage", message="LLM 사용 한도 조절 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
-    """역할 기본 LLM 토큰 한도 설정. body {daily?, monthly?} — null/생략=상속 해제, 0=무제한.
-    TASK-20260623T030418-quota-rbac-permission: 권한 quota.manage(조절, quota.read 선행)."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): "조절은 조회 종속"을
-    #   서버에서 집행 — quota.manage 만으로 blind-write 불가. quota.read + quota.manage 동시 필요.
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT RoleKey FROM WebRoles WHERE Id = %s LIMIT 1", (int(role_id),))
-        rr = cur.fetchone()
-    finally:
-        cur.close()
-    if not rr:
-        return _json_error("role not found", 404)
-    daily = _quota_parse_limit(data.get("daily"))
-    monthly = _quota_parse_limit(data.get("monthly"))
-    try:
-        _quota_upsert(conn, "WebRoleTokenQuotas", "RoleId", int(role_id), daily, monthly)
-    except Exception:
-        return _json_error("한도 저장에 실패했습니다.", 500)
-    try:
-        _audit_admin_mutation(
-            conn, request, actor, action="quota.role.update", resource_type="role",
-            resource_id=str(role_id), before=None, after=None,
-            request_ctx={"role_id": int(role_id), "daily": daily, "monthly": monthly},
-        )
-        conn.commit()
-    except Exception as audit_exc:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return _json_error(f"audit write failed: {audit_exc}", 500)
-    return JSONResponse({"ok": True, "role_id": int(role_id), "daily": daily, "monthly": monthly})
+# feature-0012 P5b Final: admin_set_role_quota 는 src/routers/admin_quotas.py 로 추출.
 
 
-@app.put("/api/admin/quotas/account/{account_id}")
-async def admin_set_account_quota(account_id: int, request: Request, actor=Depends(require_permission("console.access", "quota.read", "quota.manage", message="LLM 사용 한도 조절 권한이 필요합니다.")), conn=Depends(get_conn)) -> JSONResponse:
-    """계정 특수(override) LLM 토큰 한도. body {daily?, monthly?} — null/생략=override 해제(역할 상속).
-    TASK-20260623T030418-quota-rbac-permission: 권한 quota.manage(조절, quota.read 선행)."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    # TASK-20260623T030418-quota-rbac-permission (outside-voice MAJOR-2 흡수): 조절은 조회 종속.
-    target = _load_account_by_id(conn, int(account_id))
-    if not target:
-        return _json_error("account not found", 404)
-    daily = _quota_parse_limit(data.get("daily"))
-    monthly = _quota_parse_limit(data.get("monthly"))
-    try:
-        _quota_upsert(conn, "WebAccountTokenQuotas", "AccountId", int(account_id), daily, monthly)
-    except Exception:
-        return _json_error("한도 저장에 실패했습니다.", 500)
-    try:
-        _audit_admin_mutation(
-            conn, request, actor, action="quota.account.update", resource_type="account",
-            resource_id=str(account_id), before=None, after=None,
-            request_ctx={"account_id": int(account_id), "daily": daily, "monthly": monthly},
-            target_account_id=int(account_id),
-        )
-        conn.commit()
-    except Exception as audit_exc:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return _json_error(f"audit write failed: {audit_exc}", 500)
-    return JSONResponse({"ok": True, "account_id": int(account_id), "daily": daily, "monthly": monthly})
+# feature-0012 P5b Final: admin_set_account_quota 는 src/routers/admin_quotas.py 로 추출.
 
 
 # feature-0012 P5b Final: admin_llm_usage(`GET /api/admin/usage`)는 src/routers/admin_usage.py 로 추출(맨 끝 include_router).
@@ -24842,172 +24739,13 @@ _ARCHIVED_CONV_LIMIT = 500
 _SAMPLE_FEEDBACK_LIMIT = 100
 
 
-@app.get("/api/admin/sample-feedback")
-def admin_list_sample_feedback(request: Request, account=Depends(require_permission("kb.sample.curate"))) -> JSONResponse:
-    """검수 큐 — pending 샘플 피드백 목록. 권한: kb.sample.curate.
-
-    PG(agent_kb) 의 sample_feedback(status='pending') 을 코어 list_pending_feedback 로 조회한다.
-    generated_sql 은 적재 시점에 이미 PII 마스킹돼 저장됨(추가 마스킹 불필요). scope_key 쿼리로 ds 한정 가능.
-    """
-
-    scope_key = (request.query_params.get("scope_key") or "").strip() or None
-    try:
-        limit = int(request.query_params.get("limit", str(_SAMPLE_FEEDBACK_LIMIT)))
-    except Exception:
-        limit = _SAMPLE_FEEDBACK_LIMIT
-    limit = max(1, min(_SAMPLE_FEEDBACK_LIMIT, limit))
-
-    from modules import sample_feedback as _sfb
-    from shared.db import _pg_connect_ro
-    try:
-        pg = _pg_connect_ro()
-    except Exception:
-        return _json_error("피드백 저장소(PG) 연결 실패", 503)
-    try:
-        rows = _sfb.list_pending_feedback(pg, scope_key=scope_key, limit=limit)
-    except Exception:
-        logging.getLogger(__name__).warning("admin_list_sample_feedback: 조회 실패", exc_info=True)
-        return _json_error("샘플 피드백 조회 실패", 503)
-    finally:
-        try:
-            pg.close()
-        except Exception:
-            pass
-
-    items: list[dict[str, Any]] = []
-    for r in rows:
-        # row: (id, scope_key, conversation_id, nl_question, generated_sql, vote, suggested, created_at)
-        items.append({
-            "id": int(r[0]),
-            "scope_key": str(r[1] or ""),
-            "conversation_id": (str(r[2]) if r[2] is not None else None),
-            "nl_question": str(r[3] or ""),
-            "generated_sql": str(r[4] or ""),
-            "vote": str(r[5] or "up"),
-            "suggested": bool(r[6]),
-            "created_at": (r[7].isoformat() if hasattr(r[7], "isoformat") else (str(r[7]) if r[7] is not None else None)),
-        })
-    return JSONResponse({"items": items, "count": len(items), "truncated": len(items) >= limit})
+# feature-0012 P5b Final: admin_list_sample_feedback 는 src/routers/admin_sample_feedback.py 로 추출.
 
 
-@app.post("/api/admin/sample-feedback/{feedback_id}/approve")
-async def admin_approve_sample_feedback(feedback_id: int, request: Request, account=Depends(require_permission("kb.sample.curate"))) -> JSONResponse:
-    """샘플 피드백 승급(promote) — sample_queries(approved=true, source_type='feedback'). 권한: kb.sample.curate.
-
-    코어 promote_feedback(PG/agent_kb conn). 👎(down)/비-pending 은 승급 대상 아님(sample_id=None).
-    embedding 미지정 → 코어가 titan-embed(1024-dim)로 임베딩. audit(memory conn) 분리 기록.
-    """
-
-    try:
-        body_raw = await request.body()
-        data = (await request.json()) if body_raw else {}
-    except Exception:
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    domain = str(data.get("domain") or "").strip()
-    try:
-        weight = int(data.get("weight") or 100)
-    except Exception:
-        weight = 100
-    weight = max(1, min(1000, weight))
-
-    from modules import sample_feedback as _sfb
-    from shared.db import _pg_connect
-    try:
-        # autocommit=False — register_sample(INSERT+임베딩) + status UPDATE 를 한 트랜잭션으로 묶어
-        # 부분 적용(승급은 됐는데 status 미갱신, 또는 그 반대)을 방지(원자성). 실패 시 전체 rollback.
-        pg = _pg_connect(autocommit=False)
-    except Exception:
-        return _json_error("피드백 저장소(PG) 연결 실패", 503)
-    try:
-        sample_id = _sfb.promote_feedback(
-            pg, feedback_id, approved_by=str((account or {}).get("username") or "") or None,
-            weight=weight, domain=domain,
-        )
-        pg.commit()
-    except Exception as exc:
-        try:
-            pg.rollback()
-        except Exception:
-            pass
-        logging.getLogger(__name__).warning("admin_approve_sample_feedback 실패 id=%s: %s", feedback_id, exc, exc_info=True)
-        return _json_error("샘플 승급 실패", 500)
-    finally:
-        try:
-            pg.close()
-        except Exception:
-            pass
-
-    if sample_id is None:
-        # 비-pending(이미 처리됨) 또는 👎(down, 승급 비대상). audit 없이 409 로 명시.
-        return _json_error("승급 대상이 아닙니다 (이미 처리되었거나 👎 피드백입니다).", 409)
-
-    # same-tx 아닌 별도 memory conn 으로 audit (작업은 PG, audit 은 MySQL — cross-DB 분리).
-    try:
-        mconn = _connect_memory()
-        try:
-            record_audit_event(
-                mconn,
-                actor=_build_actor_from_request(request, account, actor_type="account"),
-                action="sample.feedback.approve",
-                resource_type="sample_feedback",
-                resource_id=str(feedback_id),
-                change_json={"promoted_sample_id": sample_id, "weight": weight, "domain": domain},
-            )
-            mconn.commit()
-        finally:
-            mconn.close()
-    except Exception:
-        logging.getLogger(__name__).warning("sample.feedback.approve audit 실패 id=%s", feedback_id, exc_info=True)
-
-    return JSONResponse({"ok": True, "feedback_id": feedback_id, "sample_id": sample_id})
+# feature-0012 P5b Final: admin_approve_sample_feedback 는 src/routers/admin_sample_feedback.py 로 추출.
 
 
-@app.post("/api/admin/sample-feedback/{feedback_id}/reject")
-async def admin_reject_sample_feedback(feedback_id: int, request: Request, account=Depends(require_permission("kb.sample.curate"))) -> JSONResponse:
-    """샘플 피드백 거부(reject) — status='rejected'. sample_queries 미반영(poisoning 방어). 권한: kb.sample.curate."""
-
-    from modules import sample_feedback as _sfb
-    from shared.db import _pg_connect
-    try:
-        pg = _pg_connect(autocommit=False)
-    except Exception:
-        return _json_error("피드백 저장소(PG) 연결 실패", 503)
-    try:
-        _sfb.reject_feedback(pg, feedback_id)
-        pg.commit()
-    except Exception as exc:
-        try:
-            pg.rollback()
-        except Exception:
-            pass
-        logging.getLogger(__name__).warning("admin_reject_sample_feedback 실패 id=%s: %s", feedback_id, exc, exc_info=True)
-        return _json_error("샘플 거부 실패", 500)
-    finally:
-        try:
-            pg.close()
-        except Exception:
-            pass
-
-    try:
-        mconn = _connect_memory()
-        try:
-            record_audit_event(
-                mconn,
-                actor=_build_actor_from_request(request, account, actor_type="account"),
-                action="sample.feedback.reject",
-                resource_type="sample_feedback",
-                resource_id=str(feedback_id),
-                change_json={"status": "rejected"},
-            )
-            mconn.commit()
-        finally:
-            mconn.close()
-    except Exception:
-        logging.getLogger(__name__).warning("sample.feedback.reject audit 실패 id=%s", feedback_id, exc_info=True)
-
-    return JSONResponse({"ok": True, "feedback_id": feedback_id})
+# feature-0012 P5b Final: admin_reject_sample_feedback 는 src/routers/admin_sample_feedback.py 로 추출.
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -28599,6 +28337,8 @@ def get_profile_audit_event(event_id: int, request: Request) -> JSONResponse:
 from routers.static_pages import router as _static_pages_router  # noqa: E402
 from routers.admin_conversations import router as _admin_conversations_router  # noqa: E402
 from routers.admin_usage import router as _admin_usage_router  # noqa: E402
+from routers.admin_quotas import router as _admin_quotas_router  # noqa: E402
+from routers.admin_sample_feedback import router as _admin_sample_feedback_router  # noqa: E402
 from routers.conversations import router as _conversations_router  # noqa: E402
 from routers.media import router as _media_router  # noqa: E402
 from routers.keywords import router as _keywords_router  # noqa: E402
@@ -28606,6 +28346,8 @@ from routers.keywords import router as _keywords_router  # noqa: E402
 app.include_router(_static_pages_router)
 app.include_router(_admin_conversations_router)
 app.include_router(_admin_usage_router)
+app.include_router(_admin_quotas_router)
+app.include_router(_admin_sample_feedback_router)
 app.include_router(_conversations_router)
 app.include_router(_media_router)
 app.include_router(_keywords_router)

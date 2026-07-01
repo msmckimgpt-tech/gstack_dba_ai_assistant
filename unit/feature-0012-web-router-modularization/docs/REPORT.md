@@ -44,7 +44,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260630-0018: §18.8 ship-gate 패널(GO·blocking 0) 후속 주석 정정(WEB_TRUSTED_PROXIES fail-loud 순서 low + stale line-num). 코드 무변(주석-only).
 - CHG-20260701-0001: 배포 hotfix — 컨테이너 로드(uvicorn web.app:app) 시 추출 모듈 import 실패(ModuleNotFoundError: web_context) 수정. app.py 상단 sys.path append(insert 금지=modules shadow) + app alias. blue-green healthz 게이트가 배포 중 적발(web-b OLD 서빙→프로덕션 무영향). 컨테이너 실기동 검증+make test 575 pass. test-gap: make test/§18.8 이 top-level PYTHONPATH 만 써서 놓침.
 - CHG-20260701-0002: Final router 추출 #6 conversations 도메인 10 핸들러(대화 조작, 완전-DI) → routers/conversations.py. AST 경계 추출 + app.X rewrite + stdlib import 보강. **app.py 29,111→28,610줄(~500↓)**, route-parity 188, make test 통과.
-- 총 변경 횟수: 26
+- CHG-20260701-0003: Final router 추출 #7 admin_quotas(3)+admin_sample_feedback(3) 완전-DI RP → routers/. app.X(non-_ record_audit_event 포함)+stdlib+test 전환. **app.py 28,610→28,350(~260↓)**, route-parity 188, make test 통과.
+- 총 변경 횟수: 27
 
 ## 4. Dependency Audit (§ web_context 경계 — TASK-0012-3)
 plan-eng-review 가 요구한 "handler→전역/helper 매핑" 의 핵심 결과. app.py 는 `Depends()`=0(DI 미사용)이라

@@ -297,3 +297,11 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 188(set 불변·골든 재생성), py_compile OK. **app.py 29,111→28,610(~500↓).**
 - 학습: 추출 3원칙 = app-심볼 app.X 동적참조 + 핸들러-사용 stdlib 명시 import + AST 경계. make test 가 stdlib 누락/monkeypatch-miss 안전망.
 - 다음(순차): 완전-DI 잔여 도메인(admin_quotas 3·admin_sample_feedback 3 — test 커플링 전환 필요) → admin console singles → 그 후 inline-heavy(admin/metadata 30 등, DI 전환 선행).
+
+## REV-20260701-0003 [AGENT-TEAM:p5b-quotas-samplefeedback-self-review]
+- Related Change: CHG-20260701-0003 (admin_quotas + admin_sample_feedback 추출)
+- §18.8 Adversarial Panel: **SELF+make test 반복 검증(3 라운드).** 파이프라인 적대검증 기존 완료. 본건 신규 리스크 = (a) non-_ app 헬퍼 누락, (b) 다양한 test 참조 스타일.
+- 검증: (1) **non-_ 헬퍼 누락 적발**: 1차 make test 가 `NameError: record_audit_event`(admin_sample_feedback) → app.X whitelist 를 `_`한정에서 확장(app top-level def ∩ 호출 − builtins − `_`처리분)해 record_audit_event 접두. admin_quotas 는 non-_ 누락 0. (2) **test 참조 스타일 전수**: quota 는 getsource(app.admin_set_role/account_quota) 2 + `for fn: hasattr(app,fn)` 루프 1 + `_import_app()` 헬퍼(→ module-level import 필요); feedback 은 asyncio.run(app.admin_*(...)) 직접호출 4. 2·3차 라운드로 hasattr→admin_quotas + import 위치(app=_import_app() 뒤) 교정. (3) byte-동치: 핸들러 본문 AST 슬라이스 그대로 + app.X/stdlib import 만.
+- 결정적 검증: make test 전체 0 FAIL/ERROR·exit 0·route drift 0, route-parity 188, py_compile OK. **app.py 28,610→28,350(~260↓).**
+- 학습(파이프라인 보강): 추출 whitelist=`_`헬퍼+DI+**non-_ app 함수(record_audit_event류)**; test 전환=getsource/hasattr/직접호출/import-헬퍼 전수 점검. make test 가 최종 안전망(3 라운드 적발·교정).
+- 다음: admin console singles(admin_me·permissions·databases·overview·health) 등 완전-DI 잔여 → inline-heavy(DI 전환 선행).

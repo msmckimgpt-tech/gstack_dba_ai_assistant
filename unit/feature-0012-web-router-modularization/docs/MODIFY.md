@@ -375,3 +375,15 @@ source_of_truth: true
 - Impact: **app.py 29,111 → 28,610 줄(~500 감소).** make test 전체 통과·0 fail·route drift 0, route-parity 188(set 불변), py_compile OK. behavior-neutral(byte-동치, byte 그대로 슬라이스 + app.X/stdlib import 만).
 - 학습: 추출 router 는 (1) app-심볼=app.X 동적참조(monkeypatch 보존), (2) **핸들러가 쓰는 stdlib=명시 import 필요**, (3) 경계는 AST(multi-line sig). make test 가 stdlib 누락 안전망.
 - Rollback Notes: revert(conversations.py 삭제 + app.py 10 복원 + include_router/골든 복원).
+
+## CHG-20260701-0003
+- Date: 2026-07-01
+- Related Requirement: P5b Final router 추출 #7 — admin_quotas(3) + admin_sample_feedback(3) 완전-DI RP 도메인.
+- Summary:
+  완전-DI 도메인 2개 추출(AST 경계): admin_quotas(admin_list_quotas·admin_set_role_quota·admin_set_account_quota → src/routers/admin_quotas.py) + admin_sample_feedback(admin_list/approve/reject_sample_feedback → src/routers/admin_sample_feedback.py).
+  - app.X rewrite: `_`헬퍼 + DI seam + **non-_ app 헬퍼(record_audit_event)** 접두(← 학습: `_`만 접두하면 record_audit_event 같은 non-_ 헬퍼 누락 → NameError; make test 적발). stdlib(logging) 명시 import.
+  - 동반 테스트 전환: test_llm_usage_quota.py(getsource 2 + hasattr 루프 1 → admin_quotas.X; `_import_app()` 헬퍼 패턴이라 module-level `from routers import admin_quotas` 추가), test_sample_feedback_curation.py(직접호출 4 → admin_sample_feedback.X + import).
+- Files: src/routers/{admin_quotas,admin_sample_feedback}.py(신규), src/app.py(6 핸들러 제거 + include_router), tests/{test_llm_usage_quota,test_sample_feedback_curation}.py(전환), tests/route_snapshot_p5b.json(골든) + docs.
+- Impact: **app.py 28,610 → 28,350 줄(~260↓).** make test 전체 통과·0 fail·route drift 0, route-parity 188(set 불변), py_compile OK. behavior-neutral.
+- 학습: app.X whitelist 는 **non-_ app 함수(record_audit_event 등)도 포함** 필요(도출 시 `_`한정하면 누락). 테스트 전환은 getsource/hasattr/직접호출/`_import_app` 헬퍼 등 모든 참조 스타일 처리. make test 가 누락 안전망.
+- Rollback Notes: revert(2 router 삭제 + app.py 6 복원 + 테스트·골든 복원).
