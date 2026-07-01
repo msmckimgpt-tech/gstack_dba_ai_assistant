@@ -1443,3 +1443,19 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - verify-completion → commit(Task-Cycle: feature-0003-agent-web-ui) → push → PR → main merge → cycle-finalize → web 재배포(deploy_scope: included) → /healthz. (진행 시 hash·PR#·배포결과 갱신.)
 ### 잔여
 - PB-0008 Windows-browser 라이브(단일클릭 컬럼 펼침/접힘·**재펼침 재출현**·줌인 선명·더블클릭 무회귀) — 배포 후 사용자 실화면 확인 권장.
+
+## TASK-20260702-graph-panel-perms — 그래프 뷰 UX 3건 + 메타데이터 탭 권한 세분화(B안) (/_template:entry arg-given, PLAN-APPROVED, 2026-07-02)
+### Summary
+- 사용자 4건 요청(관리 콘솔 > 메타데이터): 그래프 뷰 상세 패널 드래그 리사이즈 · 확장 테이블 접기 버튼(박스 우측하단) · 첫 컬럼명 미표시 버그 · 메타데이터 탭 권한 세분화. 사용자 결정(AskUserQuestion): 권한=**B안 기능별 manage**, 진행=**1개 cycle 전체**.
+- 권한 세분화는 **비파괴·가역**: `kb.ingest.manual` 을 catalog umbrella 로 유지하고 `_apply_permission_overrides` 함의로 세부 권한 5개를 effective 자동 부여 → DB 마이그레이션 없이 기존 grant 무손실. 백엔드 28 핸들러 + 프론트 게이트를 세부 권한으로 전환.
+### Recent Changes
+- 병합: 착수 후 origin/main 이 2커밋(#521/#522 graphview-webgl-polish) 전진 → rebase(stash→ff 344a5a80→pop). admin.js/admin.html 자동병합(실 충돌 마커 0), 편집 마커 전량 잔존.
+- 코드: `app.py`(+권한 정의·함의·catchup·서버 서브탭 맵) · `routers/admin_metadata.py`(28 핸들러) · `static/admin.js`(리사이저·접기버튼·컬럼수정·권한맵) · `static/styles.css` · `static/admin.html`(캐시버스터 lockstep) · `tests/test_metadata_perm_split.py`(신규).
+- 검증: `node --check`·`py_compile` PASS. 신규 9/9 + 영향 테스트 무회귀. `test_route_parity_p5b`(192→193)는 origin/main 기존 결함(route 무추가로 무관). §18.8 적대 패널 2 렌즈.
+### Git 동기화 결과
+- verify-completion --pre-commit → commit(Task-Cycle: feature-0003-agent-web-ui) → push → PR → main merge → cycle-finalize → web 재빌드·재배포(deploy_scope: included) → /healthz. (진행 시 hash·PR#·배포결과 갱신.)
+### 잔여
+- PB-0008 Windows-browser 라이브(드래그 리사이즈·접기 버튼 클릭·첫 컬럼명 표시) — 그래프 canvas 인터랙션 자동화 회귀 이력이라 **배포 후 사용자 실화면 확인 권장**. 권한 세분화는 단위테스트+적대 패널로 확증(백엔드 로직·비파괴 함의).
+### 개선 제안(§8.1, 기록만)
+- `test_route_parity_p5b` golden 스냅샷이 origin/main 에서 stale(192 vs 실제 193) — feature-0012(P5b) 소관으로 golden 갱신 필요(본 cycle 범위 밖, route 추가한 feature 가 갱신 대상).
+- graph.read 가 그래프 뷰 내장 AI 분석(analyze, KB mutation)을 포함 — 추후 분석 트리거를 별도 권한으로 분리할지 검토 여지(현 B안은 "그래프 뷰 기능=1권한").

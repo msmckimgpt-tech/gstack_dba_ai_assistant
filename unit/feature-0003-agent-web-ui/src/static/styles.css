@@ -7929,10 +7929,26 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-legend .lg-line-solid { border-top: 2.5px solid #7a4f10; }
 .admin-meta-graph-legend .lg-line-dashed { border-top: 2px dashed #b0872f; }
 .admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
-/* 반응형 그래프 body: clamp 높이 + 패널 접기(.detail-collapsed) */
-.admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: stretch; }
+/* 반응형 그래프 body: clamp 높이 + 패널 접기(.detail-collapsed) + 드래그 리사이즈(--meta-graph-detail-w) */
+.admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 8px var(--meta-graph-detail-w, 340px); gap: 8px; align-items: stretch; }
 .admin-meta-graph.detail-collapsed .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
-.admin-meta-graph.detail-collapsed .admin-meta-graph-detail { display: none; }
+.admin-meta-graph.detail-collapsed .admin-meta-graph-detail,
+.admin-meta-graph.detail-collapsed .admin-meta-graph-resizer { display: none; }
+/* graph-panel-resize: 캔버스↔상세 패널 드래그 분리 바(세로). grip 표시 + hover/드래그 강조. */
+.admin-meta-graph-resizer {
+  align-self: stretch; width: 8px; border-radius: 4px; background: var(--border);
+  cursor: col-resize; position: relative; touch-action: none; user-select: none;
+  transition: background .15s ease;
+}
+.admin-meta-graph-resizer::before {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 2px; height: 26px; border-radius: 2px; background: var(--text-muted); opacity: .55;
+  transition: background .15s ease, opacity .15s ease;
+}
+.admin-meta-graph-resizer:hover, .admin-meta-graph-resizer:focus-visible,
+.admin-meta-graph-resizer.is-dragging { background: var(--primary); outline: none; }
+.admin-meta-graph-resizer:hover::before, .admin-meta-graph-resizer:focus-visible::before,
+.admin-meta-graph-resizer.is-dragging::before { background: #fff; opacity: .95; }
 .admin-meta-graph-canvas {
   min-width: 0; height: clamp(420px, 64vh, 760px); border: 1px solid var(--border);
   border-radius: 8px; background: #fbfcfd; overflow: hidden;
@@ -7948,6 +7964,19 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   white-space: nowrap; text-align: left; pointer-events: none; user-select: none;
   font-weight: 700; color: #3f4b8c; line-height: 1.1;
   text-shadow: 0 1px 2px rgba(251, 252, 253, .9), 0 0 2px rgba(251, 252, 253, .9);
+}
+/* graph-panel-perms(task2): 확장 테이블 우측하단 '접기' 버튼(오버레이). 레이어는 pointer-events:none 이라 버튼만 auto. */
+.admin-meta-graph-collapse-btn {
+  position: absolute; top: 0; left: 0; transform-origin: top left;
+  pointer-events: auto; cursor: pointer; z-index: 4;
+  width: 18px; height: 18px; padding: 0; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid #0a5b66; border-radius: 4px;
+  background: #fff; color: #0a5b66; font-size: 15px; font-weight: 700;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18);
+}
+.admin-meta-graph-collapse-btn:hover, .admin-meta-graph-collapse-btn:focus-visible {
+  background: #0f7d8c; color: #fff; outline: none;
 }
 .admin-meta-graph-detail {
   border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0;
@@ -8014,8 +8043,9 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-progress .ampg-running .ampg-lbl { background: rgba(224, 138, 30, .2); color: #a5610d; }
 .admin-meta-graph-progress .ampg-fail { color: #b23; }
 @media (max-width: 900px) {
-  /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소 */
+  /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소. 세로 스택에선 가로 리사이저 숨김. */
   .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
+  .admin-meta-graph-resizer { display: none; }
   .admin-meta-graph-canvas { height: clamp(360px, 56vh, 560px); }
   .admin-meta-graph-detail { height: auto; max-height: 380px; }
   .admin-meta-graph-legend-note { margin-left: 0; flex-basis: 100%; }

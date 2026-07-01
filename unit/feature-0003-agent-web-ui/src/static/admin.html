@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260702-graphview-webgl-polish" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260702-graph-panel-perms" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -726,6 +726,10 @@
           <div class="admin-meta-graph-body">
             <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
                  role="img" aria-label="메타데이터 관계 그래프"></div>
+            <!-- graph-panel-resize: 캔버스↔상세 패널 사이 드래그 분리 바. --meta-graph-detail-w 를 갱신해 패널 폭 조절(←/→ 키보드 접근). -->
+            <div class="admin-meta-graph-resizer" id="metadataGraphResizer" role="separator"
+                 aria-orientation="vertical" aria-label="상세 패널 크기 조절" tabindex="0"
+                 title="드래그하여 상세 패널 크기 조절 (←/→ 키로도 조절)"></div>
             <aside class="admin-meta-graph-detail" id="metadataGraphDetail">
               <!-- graphux5-panelmove: AI 능동 분석 진행 현황을 **우측 상세 패널 상단**에 배치한다(이전의 상단
                    full-width 바 제거 — 그래프를 아래로 밀어 구성이 무너지고 여백이 낭비되던 이슈 해소). 진행 패널은
@@ -839,7 +843,7 @@
   <script src="/static/vendor/layout-base.js?v=2.0.1"></script>
   <script src="/static/vendor/cose-base.js?v=2.2.0"></script>
   <script src="/static/vendor/cytoscape-fcose.js?v=2.2.0"></script>
-  <script src="/static/admin.js?v=20260702-graphview-webgl-polish"></script>
+  <script src="/static/admin.js?v=20260702-graph-panel-perms"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260630b-rn-0630"></script>

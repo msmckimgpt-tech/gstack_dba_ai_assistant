@@ -230,6 +230,13 @@ const PERMISSION_DEPENDENCIES = {
   "datasource.manage": "datasource.read",
   // TASK-20260623T090440-sample-feedback-curation: KB 샘플 검수/승급 — console.access 하위(콘솔 진입 필요).
   "kb.sample.curate": "console.access",
+  // graph-panel-perms(task4): 메타데이터 세부 권한(B안) — 모두 console.access 하위. 레거시 묶음 kb.ingest.manual 은
+  //   이들을 함의(effective)하며 루트 표시로 남긴다(하위호환 편의).
+  "metadata.glossary.manage": "console.access",
+  "metadata.enum.manage": "console.access",
+  "metadata.table.manage": "console.access",
+  "metadata.column.manage": "console.access",
+  "metadata.graph.read": "console.access",
   // TASK-0288: 제품 관리 — product.read 가 그룹 게이트(console.access 하위), manage/프롬프트는 read 선행.
   "product.read": "console.access",
   "product.manage": "product.read",
@@ -1989,7 +1996,11 @@ const ADMIN_TAB_PERMISSIONS = {
   // scope-key-unify: samples 서브뷰는 kb.sample.curate 권한이라, 부모 탭 게이트도 OR 로 넓혀
   // kb.sample.curate 단독 보유 큐레이터가 메타데이터 탭→samples 서브뷰에 도달 가능하게 한다
   // (서브뷰별 가시성은 _METADATA_SUBTAB_PERM 가 별도 분기).
-  metadata: ["kb.ingest.manual", "kb.sample.curate", "kb.glossary.curate"],
+  // graph-panel-perms(task4): 세부 권한 중 하나라도 있으면 탭 노출(예: 그래프 뷰만 조회 가능한 역할).
+  //   kb.ingest.manual(묶음)은 함의로 아래 5개를 effective 보유하므로 중복이나 명시성 위해 유지.
+  metadata: ["kb.ingest.manual", "metadata.glossary.manage", "metadata.enum.manage",
+             "metadata.table.manage", "metadata.column.manage", "metadata.graph.read",
+             "kb.sample.curate", "kb.glossary.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2358,18 +2369,18 @@ adminState.metadata = {
   },
 };
 
-// 서브뷰별 권한 — 서브탭/버튼 표시 게이트(실제 거부는 서버 403). samples 만 kb.sample.curate.
+// 서브뷰별 권한 — 서브탭/버튼 표시 게이트(실제 거부는 서버 403). graph-panel-perms(task4): 기능별 세부 권한으로 분리.
 const _METADATA_SUBTAB_PERM = {
-  glossary: "kb.ingest.manual",   // 단, 용어사전 서브탭은 OR(kb.glossary.curate) — _metaSubtabVisible 참조.
-  enums: "kb.ingest.manual",
-  tables: "kb.ingest.manual",
-  columns: "kb.ingest.manual",
+  glossary: "metadata.glossary.manage",   // 단, 용어사전 서브탭은 OR(kb.glossary.curate) — _metaSubtabVisible 참조.
+  enums: "metadata.enum.manage",
+  tables: "metadata.table.manage",
+  columns: "metadata.column.manage",
   samples: "kb.sample.curate",
-  graph: "kb.ingest.manual",      // feature-0016: 그래프 뷰(읽기 전용 탐색).
+  graph: "metadata.graph.read",           // feature-0016: 그래프 뷰(읽기 전용 탐색).
 };
 
 // 용어사전 2차 보기별 권한(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}).
-const _GLOSSARY_VIEW_PERM = { list: "kb.ingest.manual", review: "kb.glossary.curate" };
+const _GLOSSARY_VIEW_PERM = { list: "metadata.glossary.manage", review: "kb.glossary.curate" };
 
 // 용어사전 검토 큐 보기 활성 여부.
 function _metaIsGlossaryReview() {
@@ -2379,7 +2390,7 @@ function _metaIsGlossaryReview() {
 // 서브탭 표시 게이트 — 용어사전은 목록(kb.ingest.manual) 또는 검토 큐(kb.glossary.curate) 권한 중
 // 하나라도 있으면 표시(검토 큐를 용어사전 하위로 중첩했으므로 curate-only 사용자의 접근 보존).
 function _metaSubtabVisible(sub) {
-  if (sub === "glossary") return can("kb.ingest.manual") || can("kb.glossary.curate");
+  if (sub === "glossary") return can("metadata.glossary.manage") || can("kb.glossary.curate");
   const perm = _METADATA_SUBTAB_PERM[sub];
   return !perm || can(perm);
 }
@@ -2852,7 +2863,8 @@ function _metaRenderDetail() {
     if (_metaIsGlossaryReview()) mode = "empty";                                  // 검토 큐는 CRUD 폼 없음.
     else if (_METADATA_NO_CREATE[md.subTab] && !(md.editing && md.editing.id != null)) mode = "empty";  // samples 생성 비활성.
   }
-  if (mode === "bootstrap" && !((md.subTab === "tables" || md.subTab === "columns") && can("kb.ingest.manual"))) mode = "empty";
+  // graph-panel-perms(task4): 스키마 골격 부트스트랩은 테이블 골격 도구 → metadata.table.manage 게이트(백엔드 동치).
+  if (mode === "bootstrap" && !((md.subTab === "tables" || md.subTab === "columns") && can("metadata.table.manage"))) mode = "empty";
   md.detailMode = mode;
   const empty = document.getElementById("metadataDetailEmpty");
   const form = document.getElementById("metadataForm");
@@ -2885,7 +2897,7 @@ function _metaSyncListToolbar() {
   if (searchEl) searchEl.style.display = review ? "none" : "";
   const bsBtn = document.getElementById("metadataBootstrapOpenBtn");
   if (bsBtn) {
-    const showBs = (md.subTab === "tables" || md.subTab === "columns") && can("kb.ingest.manual") && !review;
+    const showBs = (md.subTab === "tables" || md.subTab === "columns") && can("metadata.table.manage") && !review;
     bsBtn.style.display = showBs ? "" : "none";
     bsBtn.classList.toggle("is-active", md.detailMode === "bootstrap");   // 진입 상태 시각 표시(토글).
   }
@@ -3075,12 +3087,17 @@ function _metaInitGraph() {
       { selector: "node[label='Schema']:parent", style: { "label": "" } },
       // feature-0016 ERD-card: 컬럼을 가진 Table 은 compound 박스(ERD 카드) — 이름 상단, 컬럼 목록 내부.
       //   스키마(점선 남색)와 구분되게 teal 실선. fcose 가 이 박스 bounds 로 이웃 공간확보 → 겹침 원천 차단.
+      //   graph-panel-perms(task3): 기존 text-margin-y:+2 는 타이틀을 박스 안쪽 최상단에 두어 **첫(최상단) 컬럼
+      //   dot·라벨과 겹쳐 첫 컬럼명이 가려졌다**. 타이틀을 박스 위로 띄우고(음수 margin) 가독 halo(캔버스색 배경
+      //   chip)를 얹어 첫 컬럼과의 충돌을 원천 제거한다. 박스 크기·fcose 간격은 불변(padding 유지).
       { selector: "node:parent[label='Table']", style: {
           "background-color": "#0f7d8c", "background-opacity": 0.07,
           "border-width": 1.5, "border-color": "#0f7d8c", "border-style": "solid",
           "shape": "round-rectangle", "padding": "10px",
           "label": "data(name)", "font-size": "12px", "font-weight": "bold", "color": "#0a5b66",
-          "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
+          "text-valign": "top", "text-halign": "center", "text-margin-y": -13,
+          "text-background-color": "#fbfcfd", "text-background-opacity": 0.85,
+          "text-background-padding": 2, "text-background-shape": "roundrectangle" } },
       // 검색 관련도 강조: rel 높을수록 진한 테두리.
       { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
       // 항목2: AI 능동 분석 완료 노드 — 보라 이중 테두리 마커(범례: ✨ AI 분석됨).
@@ -3122,7 +3139,11 @@ function _metaInitGraph() {
   _metaGraphEnsureLabelLayer(container);
   const _lblSync = () => {
     if (_metaGraph._lblRaf) return;
-    _metaGraph._lblRaf = requestAnimationFrame(() => { _metaGraph._lblRaf = null; _metaGraphSyncClusterLabels(); });
+    _metaGraph._lblRaf = requestAnimationFrame(() => {
+      _metaGraph._lblRaf = null;
+      _metaGraphSyncClusterLabels();
+      _metaGraphSyncCollapseButtons();   // graph-panel-perms(task2): 확장 테이블 접기 버튼도 같은 rAF 로 위치 동기화
+    });
   };
   _metaGraph.cy.on("render viewport resize layoutstop add remove", _lblSync);
   _metaGraph.cy.on("position drag free", "node", _lblSync);
@@ -3195,7 +3216,72 @@ function _metaInitGraph() {
       if (key) { _metaGraphExpand(key); }
       else { _metaGraphStatus(`이웃 깊이 ${depthSel.value}-hop 적용 — 노드를 선택/더블클릭하면 이 깊이로 확장됩니다.`); }
     });
+    // graph-panel-resize: 캔버스↔상세 패널 드래그 리사이저 초기화(폭 복원·드래그·키보드).
+    _metaGraphInitResizer();
   }
+}
+
+// graph-panel-resize: 상세 패널 폭을 드래그(및 ←/→ 키)로 조절 — CSS var(--meta-graph-detail-w) 갱신 + localStorage 영속.
+//   핸들은 캔버스 오른쪽·패널 왼쪽 사이의 세로 바(#metadataGraphResizer)라, 왼쪽으로 끌면 패널이 넓어진다.
+//   1fr 캔버스가 줄면 ResizeObserver(위)가 cy.resize()+fit 을 debounce 호출하므로 별도 라이브 리사이즈 불필요(놓을 때만 보강).
+function _metaGraphInitResizer() {
+  const handle = document.getElementById("metadataGraphResizer");
+  const body = document.querySelector(".admin-meta-graph-body");
+  const root = document.getElementById("metadataGraphView");
+  if (!handle || !body || !root || handle._bound) return;
+  handle._bound = true;
+  const MIN = 240, CANVAS_MIN = 360;   // 패널 최소폭 / 캔버스 보존 최소폭
+  const clampW = (w) => {
+    const total = body.clientWidth || 0;
+    const max = total > 0 ? Math.max(MIN, total - CANVAS_MIN - 16) : Math.max(MIN, w);
+    return Math.round(Math.min(Math.max(w, MIN), max));
+  };
+  const applyW = (w) => { root.style.setProperty("--meta-graph-detail-w", clampW(w) + "px"); };
+  const curW = () => {
+    const v = getComputedStyle(root).getPropertyValue("--meta-graph-detail-w").trim();
+    const n = parseInt(v, 10);
+    if (isFinite(n) && n > 0) return n;
+    const d = document.getElementById("metadataGraphDetail");
+    return (d && d.clientWidth) ? d.clientWidth : 340;
+  };
+  const persist = () => { try { localStorage.setItem("metaGraphDetailW", String(curW())); } catch (_) {} };
+  const refit = () => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } };
+  // 저장된 폭 복원(있으면).
+  try { const saved = parseInt(localStorage.getItem("metaGraphDetailW") || "", 10); if (isFinite(saved) && saved > 0) applyW(saved); } catch (_) {}
+  // 리뷰 fix(MEDIUM-2): 창 크기 변화 시 현재 폭을 새 body 폭 기준으로 재-clamp — 넓은 화면에서 저장한 폭이
+  //   좁은 화면에서 캔버스를 near-0 로 짓누르지 않게 한다(ResizeObserver 는 cy.resize 만 하고 폭 재적용 안 함).
+  let _rwT = null;
+  window.addEventListener("resize", () => {
+    if (_rwT) clearTimeout(_rwT);
+    _rwT = setTimeout(() => { applyW(curW()); }, 150);
+  });
+  let startX = 0, startW = 0;
+  const onMove = (e) => { applyW(startW + (startX - e.clientX)); };   // 왼쪽으로 끌면 패널 넓어짐
+  const endDrag = () => {
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", endDrag);
+    document.removeEventListener("pointercancel", endDrag);   // 리뷰 fix(MEDIUM-1): 터치 중단·제스처 취소 시에도 정리
+    handle.classList.remove("is-dragging");
+    document.body.style.userSelect = "";
+    persist(); refit();
+  };
+  handle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    startX = e.clientX; startW = curW();
+    handle.classList.add("is-dragging");
+    document.body.style.userSelect = "none";
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}   // 리뷰 fix(MEDIUM-1): 캡처로 out-of-window 이동·취소 확실 정리
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
+  });
+  // 키보드 접근(WAI-ARIA separator): ← 넓게 / → 좁게, 24px 단위.
+  handle.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    applyW(curW() + (e.key === "ArrowLeft" ? 24 : -24));
+    persist(); refit();
+  });
 }
 
 // 검색어 관련도 점수(0~1): exact name > prefix > name contains > fqn contains.
@@ -3950,6 +4036,74 @@ function _metaGraphSyncClusterLabels() {
   divs.forEach((div, id) => {
     if (!seen.has(id)) { try { div.remove(); } catch (_) {} divs.delete(id); }
   });
+}
+
+// graph-panel-perms(task2): 확장된 테이블(컬럼 자식을 가진 compound 박스)의 **우측 하단 구석**에 '접기' 버튼을
+//   HTML 오버레이로 얹는다. 캔버스가 canvas/WebGL 이라 노드에 네이티브 버튼을 못 붙이므로, 스키마 클러스터 라벨과
+//   동일한 오버레이 레이어(pointer-events:none, 버튼만 auto)·rAF 동기화 패턴을 재사용한다. 버튼 클릭 → _metaGraphCollapse.
+function _metaGraphSyncCollapseButtons() {
+  const cy = _metaGraph.cy, layer = _metaGraph.labelLayer;
+  if (!cy || !layer) return;
+  if (!_metaGraph.collapseBtns) _metaGraph.collapseBtns = new Map();
+  const btns = _metaGraph.collapseBtns;
+  const seen = new Set();
+  cy.nodes(":parent").forEach((n) => {
+    if (n.data("label") !== "Table") return;
+    if (!n.children('[label="Column"]').length) return;   // 확장 = 컬럼 자식 보유(펼쳐진 테이블만 버튼)
+    const id = n.id();
+    let bb;
+    try { bb = n.renderedBoundingBox({ includeLabels: false, includeOverlays: false }); }
+    catch (_) { bb = null; }
+    if (!bb || bb.w < 26 || bb.h < 26) {   // 너무 작으면(줌아웃) 버튼 생략
+      const ex = btns.get(id); if (ex) ex.style.display = "none";
+      return;
+    }
+    seen.add(id);
+    let btn = btns.get(id);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "admin-meta-graph-collapse-btn";
+      btn.setAttribute("aria-label", "테이블 접기");
+      btn.title = "이 테이블 컬럼 접기";
+      btn.textContent = "−";   // 마이너스(−) = 접기
+      // cytoscape 팬/탭이 버튼 조작을 가로채지 않도록 이벤트 격리.
+      btn.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
+      btn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+      btn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); _metaGraphCollapse(id); });
+      layer.appendChild(btn);
+      btns.set(id, btn);
+    }
+    // 우측 하단 구석에서 2px 안쪽(버튼 18px).
+    btn.style.transform = `translate(${Math.round(bb.x2 - 20)}px, ${Math.round(bb.y2 - 20)}px)`;
+    btn.style.display = "";
+  });
+  // 접힘/제거된 테이블의 버튼 정리.
+  btns.forEach((btn, id) => {
+    if (!seen.has(id)) { try { btn.remove(); } catch (_) {} btns.delete(id); }
+  });
+}
+
+// graph-panel-perms(task2): 확장 테이블 '접기' — 컬럼 자식(+연결 엣지)을 제거해 compound 박스를 dot 노드로 환원.
+//   introspect 캐시에서도 지워 재확장(더블클릭) 시 컬럼을 다시 조회하게 한다.
+function _metaGraphCollapse(key) {
+  const cy = _metaGraph.cy;
+  if (!cy || !key) return;
+  const t = cy.getElementById(key);
+  if (!t || !t.length || !(t.isParent && t.isParent())) return;
+  const cols = t.children('[label="Column"]');
+  if (!cols.length) return;
+  const nm = t.data("name") || key;
+  try {
+    cy.startBatch();
+    cols.connectedEdges().remove();   // 컬럼의 REFERENCES 등 연결 엣지 먼저
+    cols.remove();                     // 컬럼 노드 제거 → 부모 테이블은 leaf(dot) 노드로 환원
+    cy.endBatch();
+  } catch (_) { try { cy.endBatch(); } catch (_) {} }
+  if (_metaGraph.introspected) _metaGraph.introspected.delete(key);   // 재확장 시 즉석조회 재허용
+  _metaGraphSyncCollapseButtons();
+  _metaGraphSyncClusterLabels();
+  _metaGraphStatus(`'${nm}' 테이블 컬럼을 접었습니다 — 테이블을 클릭하면 다시 펼쳐집니다.`);
 }
 
 // 항목2: 스키마 클러스터(compound 컨테이너) 상세 — 스키마명·포함 테이블 목록·개수를 우측 상세 패널에 렌더.
@@ -4773,7 +4927,7 @@ async function _metaRemoveRelation(relationId, termId, listWrap) {
 //   한 페이지로 제한해 스크롤 길이를 고정한다(필터와 동일한 display 토글 — DOM 은 전체 보존).
 const META_BS_PAGE_SIZE = 30;
 
-// 현재 서브탭(tables/columns) + kb.ingest.manual 일 때만 부트스트랩 패널을 노출한다.
+// 현재 서브탭(tables/columns) + metadata.table.manage 일 때만 부트스트랩 패널을 노출한다(graph-panel-perms task4).
 // scope-single-ds-ui: 부트스트랩 데이터소스는 상단 스코프(metadataScopeSelect)를 상속한다.
 //   - 공용(common)/미매칭 스코프 → 실제 스키마 없음 → empty-state(#metadataBootstrapEmpty)만 노출.
 //   - 구체 데이터소스 스코프 → 골격 컨트롤(토글+본문) 노출 + 스코프 DS 상속·스키마 목록 로드.
@@ -4781,7 +4935,7 @@ function _metaSyncBootstrapVisibility() {
   const panel = document.getElementById("metadataBootstrap");
   if (!panel) return;
   const sub = adminState.metadata.subTab;
-  const applicable = (sub === "tables" || sub === "columns") && can("kb.ingest.manual");
+  const applicable = (sub === "tables" || sub === "columns") && can("metadata.table.manage");
   panel.style.display = applicable ? "" : "none";
   if (!applicable) return;
   const scopeDs = _metaScopeDatasourceKey();  // 공용/미매칭이면 빈 문자열.
