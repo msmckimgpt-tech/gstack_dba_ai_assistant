@@ -35,9 +35,11 @@ _ELABELS = {"USES", "HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "REFERENCES", "RELA
 _PROP_KEYS = {"key", "name", "fqn", "scope_key", "description", "source",
               "confidence", "cardinality", "datasource_key", "schema_name",
               "table_name", "column_name", "relation_type", "term",
-              "weight", "status"}
-# 숫자 리터럴로 SET 하는 속성(문자열 인용 금지)
+              "weight", "status", "ordinal"}
+# 숫자(float) 리터럴로 SET 하는 속성(문자열 인용 금지)
 _NUMERIC_PROP_KEYS = {"confidence", "weight"}
+# 정수 리터럴로 SET 하는 속성. feature-0016 graphux5: 컬럼 실제 순서(ordinal).
+_INT_PROP_KEYS = {"ordinal"}
 
 _NEIGHBOR_NODE_CAP = 300   # 투영 1회 최대 노드 수 (8K 규모 보호)
 _SEARCH_CAP = 80           # 검색 결과 최대 노드 수
@@ -100,7 +102,7 @@ def _cq(val) -> str:
 
 
 def _props_set(var: str, props: dict) -> str:
-    """props dict → 'var.k = lit, ...' (화이트리스트 키만). confidence/weight 는 숫자 리터럴."""
+    """props dict → 'var.k = lit, ...' (화이트리스트 키만). confidence/weight 는 float, ordinal 은 정수 리터럴."""
     parts = []
     for k, v in props.items():
         if k not in _PROP_KEYS:
@@ -113,6 +115,14 @@ def _props_set(var: str, props: dict) -> str:
             if not math.isfinite(fv):   # nan/inf 는 유효 Cypher 숫자 리터럴 아님(M1)
                 continue
             parts.append(f"{var}.{k} = {fv}")
+        elif k in _INT_PROP_KEYS:
+            if v is None:
+                continue                # None ordinal 은 미설정(SET 생략 — 기존값 보존)
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                continue
+            parts.append(f"{var}.{k} = {iv}")   # 정수 리터럴(따옴표 없음, 값이 int() 검증됨 = injection-safe)
         else:
             parts.append(f"{var}.{k} = {_cq(v)}")
     return ", ".join(parts)
@@ -225,8 +235,11 @@ def sync_table(cur, scope, schema, table, description=None, source="manual") -> 
     _merge_edge(cur, "Schema", skey, "HAS_TABLE", "Table", tkey)
 
 
-def sync_column(cur, scope, schema, table, column, description="", source="manual") -> None:
-    """Column 노드 + HAS_COLUMN 엣지 MERGE (Table 선행 가정 또는 동시 MERGE)."""
+def sync_column(cur, scope, schema, table, column, description="", source="manual", ordinal=None) -> None:
+    """Column 노드 + HAS_COLUMN 엣지 MERGE (Table 선행 가정 또는 동시 MERGE).
+
+    feature-0016 graphux5: ordinal(실제 스키마 컬럼 순서, 1-based) 을 Column 정점 속성으로 투영한다.
+    None 이면 SET 생략(기존 ordinal 보존) — _props_set 이 정수 리터럴로 처리(injection-safe)."""
     tfqn = f"{schema}.{table}" if schema else table
     cfqn = f"{tfqn}.{column}"
     tkey = _vkey(scope, tfqn)
@@ -237,7 +250,7 @@ def sync_column(cur, scope, schema, table, column, description="", source="manua
     _merge_vertex(cur, "Column", ckey,
                   {"name": column, "fqn": cfqn, "scope_key": scope,
                    "table_name": table, "column_name": column,
-                   "description": description, "source": source})
+                   "description": description, "source": source, "ordinal": ordinal})
     _merge_edge(cur, "Table", tkey, "HAS_COLUMN", "Column", ckey)
 
 
@@ -343,15 +356,19 @@ def sync_graph(conn=None, scope_key=None) -> dict:
                 rep["tables"] += 1
             except Exception:
                 rep["errors"] += 1
-        # 2) column_descriptions
-        cur.execute(f"SELECT scope_key, schema_name, table_name, column_name, description, source "
-                    f"FROM column_descriptions {scope_filter}", sf_args)
-        for sc, sch, tbl, col, desc, src in cur.fetchall():
-            try:
-                sync_column(cur, sc, sch or "", tbl, col, desc or "", src or "manual")
-                rep["columns"] += 1
-            except Exception:
-                rep["errors"] += 1
+        # 2) column_descriptions (feature-0016 graphux5: ordinal 투영 — 그래프 컬럼 세로 정렬용)
+        #    ordinal 컬럼 부재(마이그 미적용 구 DB) 등 SELECT 실패는 graceful — 다른 단계(관계/용어) 계속.
+        try:
+            cur.execute(f"SELECT scope_key, schema_name, table_name, column_name, description, source, ordinal "
+                        f"FROM column_descriptions {scope_filter}", sf_args)
+            for sc, sch, tbl, col, desc, src, ordn in cur.fetchall():
+                try:
+                    sync_column(cur, sc, sch or "", tbl, col, desc or "", src or "manual", ordinal=ordn)
+                    rep["columns"] += 1
+                except Exception:
+                    rep["errors"] += 1
+        except Exception:
+            pass  # column_descriptions 조회 실패(구 DB·권한) — 비차단(다음 단계 계속)
         # 3) table_relationships — broken(파단)은 그래프에서 **삭제**(가산적 MERGE 라 stale 방지,
         #    학습된 '비관계'), 그 외는 weight/status 와 함께 투영. (전량 스캔 후 status 로 분기.)
         rel_where = "" if scope_key is None else "WHERE scope_key = %s"
@@ -411,9 +428,20 @@ def sync_graph(conn=None, scope_key=None) -> dict:
 
 
 # ── 투영 (그래프 → {nodes, edges}) ───────────────────────────────────────
+def _as_int(v):
+    """agtype/JSON 스칼라 → int | None (ordinal 정규화). 실패 시 None."""
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _node_dict(row):
     return {"label": _unwrap(row[0]), "key": _unwrap(row[1]), "name": _unwrap(row[2]),
-            "fqn": _unwrap(row[3]), "description": _unwrap(row[4]), "source": _unwrap(row[5])}
+            "fqn": _unwrap(row[3]), "description": _unwrap(row[4]), "source": _unwrap(row[5]),
+            "ordinal": _as_int(_unwrap(row[6]))}
 
 
 def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=None) -> list:
@@ -432,7 +460,7 @@ def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=Non
         scope_clause = f" AND n.scope_key = {_cq(scope)}" if scope else ""
         rows = _cypher(cur,
             f"MATCH (n) WHERE (toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql}){scope_clause} "
-            f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source LIMIT {limit}", 6)
+            f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source, n.ordinal LIMIT {limit}", 7)
         out = [_node_dict(r) for r in rows]
         cur.close()
     except Exception as exc:
@@ -506,7 +534,7 @@ def _node_from_props(label: str, props: dict) -> dict:
     """라벨 테이블 properties(dict) → 노드 dict. _node_dict 와 동일 shape."""
     return {"label": label, "key": props.get("key"), "name": props.get("name"),
             "fqn": props.get("fqn"), "description": props.get("description"),
-            "source": props.get("source")}
+            "source": props.get("source"), "ordinal": _as_int(props.get("ordinal"))}
 
 
 def _gid_array(gids) -> str:

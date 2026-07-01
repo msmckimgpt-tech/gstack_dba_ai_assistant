@@ -39,4 +39,4 @@ Apache AGE 그래프 DB 를 도입하지?" → 라이브 데이터 검토 결과
 
 ## §4. 외부 검증 로그 (append-only)
 
-(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. A3 결정 근거는 RFC 아티팩트 v2 + 라이브 데이터 조회 기록 참조. implicit-edges(2026-07-01)의 AI 적대 패널 요약·시나리오 정합은 REVIEW.md REV-20260701-0002 + REPORT.md 2026-07-01 항목에 기록. 정식 human §4 외부검증은 cutover 된 AGE 스택에서 추정 엣지 출현·프로브 강화/파단·시각 확인 시 append 권장 — TASK T6.10 / PB-0008.)
+(엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. A3 결정 근거는 RFC 아티팩트 v2 + 라이브 데이터 조회 기록 참조. implicit-edges·graphux5(2026-07-01) AI 적대 패널 요약은 REVIEW.md + REPORT.md 2026-07-01 항목에 기록. 정식 human §4 외부검증은 cutover 된 AGE 스택에서 추정 엣지·프로브 강화/파단·그래프 UI(컬럼 세로배치·부드럽게 꺾이는 엣지) 시각 확인 시 append 권장 — TASK T6.10 / T9.12 / PB-0008.)

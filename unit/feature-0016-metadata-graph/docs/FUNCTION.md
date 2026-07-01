@@ -52,6 +52,9 @@ source_of_truth: true
 ### 4.1 노드 레이블
 - `Product` (제품) · `Datasource` (데이터소스) · `Schema` · `Table` · `Column` · `GlossaryTerm`
 - 공통 속성: `scope_key`, `fqn`, `name`, `description`, `source`, `confidence`, `updated_at`.
+- `Column` 추가 속성(graphux5): `ordinal` — 실제 스키마 컬럼 순서(1-based). 관계형 SSOT
+  `column_descriptions.ordinal`(부트스트랩 골격 = `describe_columns` ORDINAL_POSITION 순서 캡처)의 투영.
+  그래프 UI 가 이 값으로 Column 을 Table 하단에 실제 순서대로 세로 배치한다(미상 = name 순 fallback).
 
 ### 4.2 엣지 레이블
 - `(Datasource)-[:HAS_SCHEMA]->(Schema)` / `(Schema)-[:HAS_TABLE]->(Table)` / `(Table)-[:HAS_COLUMN]->(Column)`
@@ -90,6 +93,8 @@ FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 �
 - AGE `metadata_kb` 그래프 (관계형 투영).
 - 그래프 투영 API `{nodes[], edges[]}` (scope·검색·k-hop 필터).
 - 관리콘솔 그래프 UI (Cytoscape.js) + 통합 엔티티 상세 + 검색.
+  - graphux5: Column 노드를 소속 Table 하단에 `ordinal` 순으로 세로 배치(lock) + Table→Column 연결선을
+    부드럽게 꺾이는(round-taxi, 아래로 내려가 컬럼으로 꺾임) 라우팅, 그 외 엣지는 완만한 곡선(unbundled-bezier).
 - AI knowledge context 의 엔티티 묶음 + 이웃 digest + (선택) Cypher 네비게이션 tool.
 
 ## 7. Main Flow

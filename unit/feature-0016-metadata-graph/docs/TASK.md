@@ -109,3 +109,38 @@ source_of_truth: true
 - R2: 커스텀 이미지 cutover 가 무중단 배포(feature-0014)와 충돌 → Phase 5 게이트에서 정합·롤백 필수.
 - R3: 8K 노드 그래프 UI 성능 → 검색/이웃 스코프로 제한(전체 렌더 금지).
 - R4: FK 미선언으로 엣지 희소 → 대화 학습·LLM 추론으로 점진 보강(엣지 0 이어도 노드 그래프는 가치).
+
+## 9. graphux5 — 컬럼 세로 정렬(실제 순서) + 부드럽게 꺾이는 엣지 (2026-07-01)
+
+### 9.0 맥락 / 요구
+- 사용자 요청: 그래프 뷰에서 (1) 테이블(청색) 노드 하단으로 컬럼(회색) 노드가 **실제 순서대로** 세로로
+  펼쳐지고, (2) 연결선이 직선이 아닌 **부드럽게 꺾이는 선**이 되도록. 현재 fcose force layout 이 컬럼을
+  흩뿌려 순서 판독 불가 + 타 테이블 엣지와 교차.
+- 사용자 결정(2026-07-01, AskUserQuestion): **백엔드 ordinal 까지 한 번에** — 실제 DDL 순서 보장.
+- 등급: **Major** (agent_kb 마이그레이션 추가 + 그래프 재sync + web 재배포). 마이그는 비파괴 additive(ADD COLUMN nullable)라 expand-safe.
+
+### 9.1 백엔드 — ordinal 을 관계형 SSOT(column_descriptions)에 저장 → 그래프 투영
+- [ ] T9.1 alembic 0026 `20260701_0026_column_ordinal.py`: `column_descriptions.ordinal integer NULL` ADD
+      (idempotent `ADD COLUMN IF NOT EXISTS`) + 기존행 backfill(`row_number() OVER (PARTITION BY
+      scope_key,schema_name,table_name ORDER BY id)` — 부트스트랩이 DDL순 저장 ≈ 삽입순). downgrade=DROP.
+      `agent_kb_schema.sql` CREATE TABLE 에 ordinal 추가 + 방어적 ALTER.
+- [ ] T9.2 kb_metadata.py: `upsert_column_desc(ordinal=None)` INSERT+ON CONFLICT(COALESCE 보존),
+      `update_column_desc(ordinal=None)`, `list_column_desc_admin` SELECT ordinal + ORDER BY ordinal NULLS LAST.
+- [ ] T9.3 metadata_graph.py: `_PROP_KEYS += ordinal`, `_props_set` 정수 리터럴 처리, `sync_column(ordinal=None)`,
+      `sync_graph` 컬럼 SELECT 에 ordinal 추가, `_node_from_props`/`_node_dict`/`search_nodes` RETURN 에 ordinal.
+- [ ] T9.4 app.py: `POST/PUT /api/admin/metadata/columns` body 의 optional `ordinal` 통과,
+      `GET /columns` items 에 ordinal, graph 엔드포인트 노드 직렬화에 ordinal 포함 확인.
+
+### 9.2 프론트엔드 — 컬럼 세로 스택 + round-taxi 엣지 (admin.js)
+- [ ] T9.5 `_metaBootstrapSave`: 컬럼 저장 시 블록 내 col-row 인덱스(1-based, DOM=DDL순)를 `ordinal` 로 전송.
+- [ ] T9.6 `_metaGraphAddElements`: Column 노드 data 에 `ordinal` 보존.
+- [ ] T9.7 `_metaGraphPlaceColumns()` 신규: 각 Table 의 HAS_COLUMN 자식을 ordinal(NULLS LAST→name) 정렬해
+      테이블 바로 아래 세로 스택으로 배치 + lock. `_metaGraphLayout` layoutstop 마다 호출(테이블 이동 추종).
+- [ ] T9.8 cytoscape style: `edge[label='HAS_COLUMN']` = `round-taxi`/`taxi-direction:downward`/`taxi-radius`
+      (부드럽게 꺾임), 그 외 엣지 = `unbundled-bezier`(직선 아님·완만 곡선). 캐시버스터 graphux4→graphux5.
+
+### 9.3 검증
+- [ ] T9.9 테스트: ordinal sync→neighborhood 전파 + column_descriptions ordinal 왕복(기존 테스트 확장).
+- [ ] T9.10 `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph` + migrate-lint.
+- [ ] T9.11 배포: alembic upgrade(agent_kb) + `bin/metadata-graph-sync.sh` 재sync + web 재빌드/재배포(deploy_scope: included).
+- [ ] T9.12 **PB-0008 실 Windows 브라우저 시각검증**(visual_verification_scope: always, verify check #13 hard gate).

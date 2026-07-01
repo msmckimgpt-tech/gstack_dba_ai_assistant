@@ -3026,6 +3026,10 @@ function _metaInitGraph() {
       // 모션(레이아웃/카메라 애니메이션) 중 라벨 숨김 — 텍스트 래스터가 프레임 최대 비용. 정지 시 복원.
       { selector: "node.anim-hide-label", style: { "label": "" } },
       { selector: "node[label='Table']", style: { "font-weight": "bold" } },
+      // feature-0016 graphux5: Column 노드는 테이블 하단 세로 스택 — 라벨을 노드 오른쪽에 두어 세로 목록 가독성 확보.
+      { selector: "node[label='Column']", style: {
+          "text-valign": "center", "text-halign": "right", "text-margin-x": 4, "text-margin-y": 0,
+          "font-size": "10px", "text-max-width": "160px" } },
       // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
       { selector: "node:parent", style: {
           "background-color": "#3f4b8c", "background-opacity": 0.08,
@@ -3037,10 +3041,19 @@ function _metaInitGraph() {
       { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
       { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
       { selector: "node.dim", style: { "opacity": 0.35 } },
+      // feature-0016 graphux5: 기본 엣지는 직선이 아닌 완만한 곡선(unbundled-bezier) — 교차부 가독성.
       { selector: "edge", style: {
           "width": 1.4, "line-color": "#cbd2db", "target-arrow-color": "#cbd2db",
-          "target-arrow-shape": "triangle", "curve-style": "bezier",
+          "target-arrow-shape": "triangle", "curve-style": "unbundled-bezier",
+          "control-point-distances": "36", "control-point-weights": "0.5",
           "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
+      // feature-0016 graphux5: 테이블→컬럼(HAS_COLUMN)은 하단으로 '부드럽게 꺾이는' 직교 라우팅(round-taxi).
+      //   컬럼이 테이블 아래 세로로 펼쳐지며(_metaGraphPlaceColumns), 엣지가 아래로 내려가 각 컬럼으로 꺾인다.
+      { selector: "edge[label='HAS_COLUMN']", style: {
+          "curve-style": "round-taxi", "taxi-direction": "downward",
+          "taxi-turn": "24px", "taxi-turn-min-distance": "4px", "taxi-radius": 10,
+          "line-color": "#b7bfca", "target-arrow-color": "#b7bfca", "target-arrow-shape": "triangle",
+          "width": 1.3, "opacity": 0.9 } },
       { selector: "edge[label='REFERENCES']", style: {
           "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2.2, "label": "data(label)" } },
       // feature-0016 암묵 관계 신뢰 시각화: 추론/후보(candidate)=점선·반투명(검증 전),
@@ -3071,6 +3084,9 @@ function _metaInitGraph() {
       _metaGraphShowDetail(key);       // 단일: 상세 카드만 갱신
     }
   });
+  // feature-0016 graphux5: 사용자가 Table 노드를 드래그하면 그 아래 컬럼 스택이 추종하도록 재정렬(lock 컬럼은
+  //   드래그 이동 불가 → 테이블만 이동, dragfree 에서 컬럼을 새 위치 아래로 재배치해 트리 구조 유지).
+  _metaGraph.cy.on("dragfree", "node[label='Table']", () => { _metaGraphPlaceColumns(); });
   // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
   if (window.ResizeObserver && !_metaGraph.ro) {
     let rt = null;
@@ -3211,16 +3227,18 @@ function _metaGraphAddElements(nodes, edges) {
     if (!n || !n.key) return;
     // 스키마 노드 = 카테고리 컨테이너(compound parent)로 사용.
     if (n.label === "Schema") { _metaEnsureCat(cy, n.key); return; }
+    // feature-0016 graphux5: ordinal(실제 스키마 컬럼 순서) — Column 세로 정렬 정렬키. 숫자만 채택(그 외 null).
+    const ord = (typeof n.ordinal === "number" && isFinite(n.ordinal)) ? n.ordinal : null;
     const existing = cy.getElementById(n.key);
     if (existing.length) {
       existing.data({ label: n.label, name: n.name || n.fqn || n.key,
-        fqn: n.fqn || "", description: n.description || "", source: n.source || "" });
+        fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord });
       return;
     }
     const pid = _metaCatParent(n.key, n.fqn);
     if (pid) _metaEnsureCat(cy, pid);
     const data = { id: n.key, label: n.label || "Node", name: n.name || n.fqn || n.key,
-      fqn: n.fqn || "", description: n.description || "", source: n.source || "" };
+      fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
     if (pid) data.parent = pid;
     cy.add({ group: "nodes", data });
     added.push(n.key);
@@ -3239,11 +3257,51 @@ function _metaGraphAddElements(nodes, edges) {
   return added;
 }
 
+// feature-0016 graphux5: 각 Table 의 HAS_COLUMN 자식(Column)을 테이블 바로 아래에 실제 순서(ordinal)로
+//   세로 스택 배치하고 lock 한다. force layout 이 컬럼을 흩뿌려 순서 판독이 안 되고 타 테이블 엣지와 교차하던
+//   문제를 제거. ordinal 미상(null)은 뒤로 밀고 name 순 tie-break. 우측으로 들여써(INDENT_X) HAS_COLUMN
+//   엣지가 '아래로 내려가 오른쪽으로 꺾이는' 트리 모양(round-taxi)이 되도록 한다. layoutstop 마다 호출 →
+//   테이블이 이동해도 컬럼이 그 아래로 추종.
+function _metaGraphPlaceColumns() {
+  const cy = _metaGraph.cy;
+  if (!cy) return;
+  const INDENT_X = 54;     // 테이블 우하단 들여쓰기(엣지가 아래→오른쪽으로 꺾임)
+  const ROW_GAP = 30;      // 컬럼 간 세로 간격
+  try {
+    cy.batch(() => {
+      cy.nodes("[label='Table']").forEach((tbl) => {
+        if (tbl.isParent && tbl.isParent()) return;   // compound 부모(스키마)는 대상 아님
+        const cols = tbl.outgoers("edge[label='HAS_COLUMN']").targets().filter("[label='Column']");
+        if (!cols || !cols.length) return;
+        const arr = cols.toArray().sort((a, b) => {
+          const oa = a.data("ordinal"), ob = b.data("ordinal");
+          const na = (typeof oa === "number" && isFinite(oa)) ? oa : Number.MAX_SAFE_INTEGER;
+          const nb = (typeof ob === "number" && isFinite(ob)) ? ob : Number.MAX_SAFE_INTEGER;
+          if (na !== nb) return na - nb;
+          return String(a.data("name") || "").localeCompare(String(b.data("name") || ""));
+        });
+        const tp = tbl.position();
+        let th = 30; try { th = tbl.height() || 30; } catch (_) {}
+        const startY = tp.y + th / 2 + 40;   // 테이블(+하단 라벨) 아래 첫 컬럼
+        arr.forEach((c, i) => {
+          try {
+            c.unlock();
+            c.position({ x: tp.x + INDENT_X, y: startY + i * ROW_GAP });
+            c.lock();   // 이후 force layout 이 컬럼을 다시 흩뿌리지 않도록 고정(테이블 이동 시 재배치)
+          } catch (_) {}
+        });
+      });
+    });
+  } catch (_) {}
+}
+
 // opts.incremental=true(더블클릭 확장): 기존 노드 좌표를 fixedNodeConstraint 로 고정하고 신규 노드만
 //   국소 배치(randomize:false=PURE_INCREMENTAL). 전체 재무작위화·재프레이밍(fit)·proof 반복을 생략해
 //   '전체가 다시 튕겨 펼쳐지는' 지연을 제거한다. 인자 없음(초기 로드/검색): 좌표 없는 재구축이라
 //   randomize:true + packComponents + proof 유지(안 그러면 원점 뭉침 — fcose 는 randomize:false 시
 //   spectral/packComponents 를 끈다).
+// graphux5: 레이아웃 종료(layoutstop)마다 _metaGraphPlaceColumns 로 컬럼을 테이블 아래 세로 정렬 + lock.
+//   전체 재배치(non-incremental) 전에는 컬럼 lock 을 풀어(stale 고정점 왜곡 방지) force 에 참여시킨 뒤 재정렬.
 function _metaGraphLayout(opts) {
   if (!_metaGraph.cy) return;
   opts = opts || {};
@@ -3251,6 +3309,8 @@ function _metaGraphLayout(opts) {
   const cnt = cy.nodes().length;
   const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
+  // 전체 재배치는 컬럼 lock 해제 후 force 에 참여시킨다(종료 후 재정렬+재lock). 증분은 기존 컬럼 lock 유지(스택 보존).
+  if (!incremental) { try { cy.nodes("[label='Column']").unlock(); } catch (_) {} }
   const base = {
     nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
     uniformNodeDimensions: false,
@@ -3291,20 +3351,25 @@ function _metaGraphLayout(opts) {
       if (hideLabels) { try { cy.nodes().addClass("anim-hide-label"); } catch (_) {} }
       layout.one("layoutstop", () => {
         if (hideLabels) { try { cy.nodes().removeClass("anim-hide-label"); } catch (_) {} }
-        if (incremental && opts.focusEles && opts.focusEles.length) {
-          // 카메라도 '즉시' 이동(cy.fit, 애니메이션 없음). viewport 애니메이션은 프레임당 전체 캔버스를
-          // 다시 채우므로(노드 수 무관 고정 오버헤드), HW 가속이 약하거나 캔버스가 큰 환경에선 소수 노드에서도
-          // 저프레임의 원인이 된다. 노드 배치·카메라 모두 무애니 → 더블클릭 전체에 끊길 프레임 자체가 없음.
-          try { cy.fit(opts.focusEles, 80); } catch (_) {}
-        }
+        _metaGraphPlaceColumns();   // graphux9: 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
+        // 카메라는 '즉시' 이동(cy.fit, 애니메이션 없음 — graphux8b 저프레임 회피 결정 존중). 컬럼 배치 후 bounding box 반영.
+        try {
+          if (incremental && opts.focusEles && opts.focusEles.length) {
+            cy.fit(opts.focusEles, 80);
+          } else {
+            cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤
+          }
+        } catch (_) {}
       });
       layout.run();
       return;
     } catch (_) {}
   }
   try {
-    _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
-      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental }).run();
+    const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
+      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
+    layout.one("layoutstop", () => { _metaGraphPlaceColumns(); });
+    layout.run();
   } catch (_) {}
 }
 
@@ -4686,7 +4751,9 @@ async function _metaBootstrapSave() {
       const orig = inp ? (inp.dataset.original || "") : "";
       if (desc && desc !== orig) rows.push({ schema_name: schemaName, table_name: tableName, description: desc });
     } else {
-      block.querySelectorAll(".admin-meta-bs-col").forEach((colRow) => {
+      // feature-0016 graphux5: 골격 컬럼 DOM 순서 = describe_columns(ORDINAL_POSITION) 순 = 실제 DDL 순.
+      //   행 인덱스(1-based)를 ordinal 로 전송 → 그래프 뷰가 컬럼을 테이블 아래 실제 순서로 세로 배치한다.
+      block.querySelectorAll(".admin-meta-bs-col").forEach((colRow, idx) => {
         const inp = colRow.querySelector(".admin-meta-bs-desc[data-kind='column']");
         const desc = inp ? (inp.value || "").trim() : "";
         const orig = inp ? (inp.dataset.original || "") : "";
@@ -4694,6 +4761,7 @@ async function _metaBootstrapSave() {
           rows.push({
             schema_name: schemaName, table_name: tableName,
             column_name: colRow.dataset.column || "", description: desc,
+            ordinal: idx + 1,
           });
         }
       });
@@ -4712,7 +4780,10 @@ async function _metaBootstrapSave() {
     const payload = { scope_key: scope, source: "bootstrap" };
     payload.schema_name = rows[i].schema_name;
     payload.table_name = rows[i].table_name;
-    if (mode === "columns") payload.column_name = rows[i].column_name;
+    if (mode === "columns") {
+      payload.column_name = rows[i].column_name;
+      if (rows[i].ordinal != null) payload.ordinal = rows[i].ordinal;   // graphux5: 실제 컬럼 순서
+    }
     payload.description = rows[i].description;
     try {
       await apiFetch(`/api/admin/metadata/${mode}`, { method: "POST", body: JSON.stringify(payload) });
