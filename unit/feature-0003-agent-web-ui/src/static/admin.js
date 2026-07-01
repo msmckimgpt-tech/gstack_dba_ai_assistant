@@ -2945,6 +2945,11 @@ async function _metaGraphLoadRoots() {
   if (si) si.value = "";
   _metaGraph.lastQuery = "";   // fix(low): 검색 컨텍스트 종료 — 상세 유사도 배지 게이트가 참조
   _metaGraph.cy.elements().remove();
+  // 리뷰(REV-20260701T163000-graphview-render, MINOR): scope 전환/리셋 시 세션 마커 set 초기화.
+  //   이전 scope 의 stale 마커가 재방문 시(일괄 동기화가 404/실패해도) 재적용되는 것 차단 + Set 무한 성장 방지.
+  //   새 scope 마커는 _metaGraphSyncAnalysisMarkers 가 DB 에서 다시 채운다.
+  if (_metaGraph.analyzed) _metaGraph.analyzed.clear();
+  if (_metaGraph.running) _metaGraph.running.clear();
   if (!scope || scope === "common") {
     _metaGraphStatus("상단에서 데이터소스를 선택하면 그 데이터소스의 그래프가 표시됩니다. (공용 스코프는 검색으로 탐색)");
     _metaGraphRenderDetailEmpty();
@@ -2960,6 +2965,7 @@ async function _metaGraphLoadRoots() {
   }
   _metaGraphAddElements(data.nodes || [], data.edges || []);
   _metaGraphLayout();
+  _metaGraphSyncAnalysisMarkers(scope);   // 항목1: 이미 분석된/진행중 노드 마커를 클릭 없이 렌더 시점에 적용
   const n = (data.nodes || []).length;
   _metaGraphStatus(n ? `${scope}: ${n}개 노드 — 노드 클릭으로 확장, 또는 검색.` : `${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
 }
@@ -3050,6 +3056,11 @@ function _metaInitGraph() {
           "shape": "round-rectangle", "padding": "16px",
           "label": "data(name)", "font-size": "13px", "font-weight": "bold", "color": "#3f4b8c",
           "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
+      // 항목3: 스키마 클러스터 native 라벨은 숨긴다 — 캔버스 위 HTML 오버레이가 좌상단 정렬 + 좌측 여백 +
+      //   무잘림으로 대신 렌더한다(_metaGraphSyncClusterLabels). native 라벨은 중앙정렬 + text-max-width
+      //   ellipsis(상속) 라 명칭이 잘리던 원인. compound bounds 만 이 스타일에서 유지.
+      { selector: "node:parent[isCat = 1]", style: { "label": "" } },
+      { selector: "node[label='Schema']:parent", style: { "label": "" } },
       // feature-0016 ERD-card: 컬럼을 가진 Table 은 compound 박스(ERD 카드) — 이름 상단, 컬럼 목록 내부.
       //   스키마(점선 남색)와 구분되게 teal 실선. fcose 가 이 박스 bounds 로 이웃 공간확보 → 겹침 원천 차단.
       { selector: "node:parent[label='Table']", style: {
@@ -3090,13 +3101,24 @@ function _metaInitGraph() {
           "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "opacity": 0.75, "label": "data(label)" } },
     ],
   });
+  // 항목3: 스키마 클러스터명 HTML 오버레이 레이어 준비 + 렌더(pan/zoom/애니메이션)마다 위치 동기화.
+  //   클러스터는 스코프당 소수(≤ 수십)라 rAF 스로틀 DOM 동기화 비용 무시 가능(캔버스 raster 병목과 무관).
+  _metaGraphEnsureLabelLayer(container);
+  _metaGraph.cy.on("render", () => {
+    if (_metaGraph._lblRaf) return;
+    _metaGraph._lblRaf = requestAnimationFrame(() => { _metaGraph._lblRaf = null; _metaGraphSyncClusterLabels(); });
+  });
   // 단일 클릭 = 상세 조회만(그래프 유지), 더블 클릭 = 해당 노드 이웃 그래프로 확장/전환.
   // cytoscape 코어에 dbltap 이벤트가 없어 350ms 윈도우로 수동 감지한다.
   _metaGraph.cy.on("tap", "node", (evt) => {
     const t = evt.target;
-    // ERD-card: Table compound 박스는 클릭/더블클릭이 일반 노드와 동일하게 동작(상세/확장). 스키마 등
-    //   그 외 컨테이너(카테고리 박스)만 무시. (박스 안 Column 자식 클릭 시 target=컬럼 → 컬럼 상세.)
-    if (t.isParent && t.isParent() && t.data("label") !== "Table") return;
+    if (t.isParent && t.isParent()) {
+      // 항목2: 스키마 클러스터(compound 컨테이너) 클릭 시 클러스터 상세 갱신 — 클러스터 개요(스키마명·포함 테이블).
+      if (t.data("label") === "Schema" || t.data("isCat")) { _metaGraphShowClusterDetail(t); return; }
+      // ERD-card(origin/main): Table compound 박스는 클릭/더블클릭이 일반 노드와 동일(상세/확장)하게 흘려보냄.
+      //   그 외 컨테이너(카테고리 박스)만 무시. (박스 안 Column 자식 클릭 시 target=컬럼 → 컬럼 상세.)
+      if (t.data("label") !== "Table") return;
+    }
     const key = t.id();
     const now = (window.performance && performance.now) ? performance.now() : Date.now();
     const isDbl = (_metaGraph._lastTapKey === key && (now - (_metaGraph._lastTapAt || 0)) < 350);
@@ -3188,6 +3210,7 @@ async function _metaGraphSearch(q) {
     node.data("relLabel", node.data("name") + "  " + Math.round(rel * 100) + "%");
   });
   _metaGraphLayout();
+  _metaGraphSyncAnalysisMarkers(scope);   // 항목1: 검색 결과 노드에도 분석 마커 즉시 반영
   const n = (data.nodes || []).length;
   _metaGraphStatus(n ? `'${q}' ${n}개 — 라벨의 %가 검색어 유사도(pg_trgm), 클수록 유사. 노드 클릭으로 확장.` : "검색 결과 없음.");
 }
@@ -3277,6 +3300,8 @@ async function _metaGraphExpand(key) {
     try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 350 }); } catch (_) {}
   }
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}${introspectNote}`);
+  // 항목1: 확장으로 새로 들어온 노드에도 이미 분석된/진행중 마커를 즉시 반영(개별 클릭 불필요).
+  _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   const self = selfNode || { key, name: key };
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
 }
@@ -3721,6 +3746,137 @@ function _metaGraphMarkAnalyzed(keys) {
     _metaGraph.analyzed.add(k);
     try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("ai", 1); } catch (_) {}
   });
+}
+
+// 항목1: 스코프 내 이미 분석된/진행중 노드 마커를 그래프 로드/검색/확장 직후 **일괄** 적용 —
+//   노드를 개별 클릭하지 않아도 렌더 시점에 '분석됨'(보라)·'분석중'(주황) 표식이 나타나게 한다.
+//   기존엔 세션 로컬 set(_metaGraph.analyzed/running)이 현재 세션 폴 run 에서만 채워져, 새로고침/재진입 시
+//   DB 에 저장된 분석 상태가 클릭 전까지 반영되지 않던 근본 원인 수정. 활성 폴의 running set 은 덮어쓰지
+//   않도록 additive 로만 적용(clear 안 함).
+async function _metaGraphSyncAnalysisMarkers(scope) {
+  if (!_metaGraph.cy) return;
+  const sc = scope || adminState.metadata.scopeKey || "common";
+  if (!sc || sc === "common") return;   // 공용 스코프는 데이터소스 그래프 없음(마커 대상 없음)
+  let res;
+  try { res = await apiFetch(`/api/admin/metadata/graph/analyze/status?scope=${encodeURIComponent(sc)}`); }
+  catch (_) { return; }   // 실패해도 그래프는 정상 — 마커만 생략(graceful)
+  if (!res) return;
+  const done = res.done_keys || [];
+  _metaGraphMarkAnalyzed(done);   // 보라 '분석됨' + 세션 set 기억(재추가 시 유지)
+  if (!_metaGraph.running) _metaGraph.running = new Set();
+  const doneSet = new Set(done);
+  (res.running_keys || []).forEach((k) => {
+    if (doneSet.has(k)) return;
+    _metaGraph.running.add(k);
+    try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("aiRunning", 1); } catch (_) {}
+  });
+}
+
+// 항목3: 스키마 클러스터명 오버레이 레이어 — 캔버스 컨테이너 위에 pointer-events:none 오버레이 div 를 1회 생성.
+function _metaGraphEnsureLabelLayer(container) {
+  if (!container || _metaGraph.labelLayer) return;
+  try {
+    // cytoscape 는 컨테이너에 캔버스를 절대배치하므로 컨테이너는 position:relative 여야 오버레이가 정합(CSS 로 보장).
+    const layer = document.createElement("div");
+    layer.className = "admin-meta-graph-label-layer";
+    container.appendChild(layer);
+    _metaGraph.labelLayer = layer;
+    _metaGraph.labelDivs = new Map();
+  } catch (_) {}
+}
+
+// 항목3: 스키마 클러스터명을 각 클러스터 박스의 좌상단(좌측 약간 여백)에 렌더 + 무잘림. render 이벤트마다 rAF 로 위치 동기화.
+//   cytoscape native 라벨(중앙정렬 + text-max-width ellipsis 상속)의 잘림을 대체. 클러스터는 소수라 비용 무시 가능.
+function _metaGraphSyncClusterLabels() {
+  const cy = _metaGraph.cy, layer = _metaGraph.labelLayer;
+  if (!cy || !layer) return;
+  if (!_metaGraph.labelDivs) _metaGraph.labelDivs = new Map();
+  const divs = _metaGraph.labelDivs;
+  const seen = new Set();
+  // 줌에 따라 클러스터명 폰트를 완만히 스케일하되 항상 가독 범위로 클램프(둥근 사각형 존중 + 무잘림).
+  const z = (typeof cy.zoom === "function") ? cy.zoom() : 1;
+  const fs = Math.max(10, Math.min(16, Math.round(13 * z)));
+  const padX = 10, padY = 4;   // 좌측/상단 안쪽 여백(screen px) — 부드러운 사각형 모서리 존중
+  cy.nodes(":parent").forEach((n) => {
+    if (n.data("label") !== "Schema" && !n.data("isCat")) return;   // 스키마 클러스터만(테이블 ERD-카드는 native)
+    const id = n.id();
+    seen.add(id);
+    let div = divs.get(id);
+    if (!div) {
+      div = document.createElement("div");
+      div.className = "admin-meta-graph-cluster-label";
+      layer.appendChild(div);
+      divs.set(id, div);
+    }
+    const nm = n.data("name") || n.data("fqn") || id;
+    if (div._nm !== nm) { div.textContent = nm; div._nm = nm; }
+    let bb;
+    try { bb = n.renderedBoundingBox({ includeLabels: false, includeOverlays: false }); }
+    catch (_) { bb = null; }
+    if (!bb) { div.style.display = "none"; return; }
+    div.style.fontSize = fs + "px";
+    // 좌상단 정렬 + 좌측 여백. 이름은 잘리지 않고(무 max-width, nowrap) 필요 시 박스 밖으로 확장.
+    div.style.transform = `translate(${Math.round(bb.x1 + padX)}px, ${Math.round(bb.y1 + padY)}px)`;
+    div.style.display = "";
+  });
+  // 더 이상 존재하지 않는 클러스터의 라벨 div 제거(그래프 교체/리셋 대응).
+  divs.forEach((div, id) => {
+    if (!seen.has(id)) { try { div.remove(); } catch (_) {} divs.delete(id); }
+  });
+}
+
+// 항목2: 스키마 클러스터(compound 컨테이너) 상세 — 스키마명·포함 테이블 목록·개수를 우측 상세 패널에 렌더.
+//   개별 노드와 달리 '무엇을 담고 있는지'(스키마 경계)를 보여준다. depth=1 로 HAS_TABLE 이웃(테이블)을 수집.
+async function _metaGraphShowClusterDetail(node) {
+  if (!_metaGraph.cy || !node) return;
+  const key = node.id();
+  _metaGraph.lastDetailKey = key;   // 항목4: 깊이 변경 시 재전개 대상
+  try { _metaGraph.cy.$(":selected").unselect(); node.select(); } catch (_) {}
+  const schemaName = node.data("name") || node.data("fqn") || key;
+  _metaGraphStatus("클러스터 상세 조회 중…");
+  let data = null;
+  try { data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`); }
+  catch (_) { data = null; }
+  const tables = [];
+  if (data) {
+    const byKey = {};
+    (data.nodes || []).forEach((nd) => { if (nd && nd.key) byKey[nd.key] = nd; });
+    (data.edges || []).forEach((e) => {
+      if (e && e.type === "HAS_TABLE" && e.source === key && byKey[e.target]) tables.push(byKey[e.target]);
+    });
+    // HAS_TABLE 엣지가 없으면(투영 방식차) label=Table 노드로 폴백.
+    if (!tables.length) (data.nodes || []).forEach((nd) => { if (nd && nd.label === "Table" && nd.key !== key) tables.push(nd); });
+  }
+  // 캔버스에 이미 로드된 자식(테이블/컬럼) 개수로 보강.
+  let childTables = 0, childCols = 0;
+  try {
+    node.children().forEach((ch) => {
+      const l = ch.data("label");
+      if (l === "Table") childTables += 1; else if (l === "Column") childCols += 1;
+    });
+  } catch (_) {}
+  _metaGraphRenderClusterDetail(schemaName, node.data("fqn") || schemaName, tables, childTables, childCols);
+  _metaGraphStatus(`클러스터: ${schemaName} · 테이블 ${tables.length || childTables}개`);
+}
+
+// 항목2: 클러스터 상세 카드 렌더(우측 상세 패널 body). 노드 상세(_metaGraphRenderDetail)와 동일 컨테이너를 교체.
+function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols) {
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
+  if (!el) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const nTables = (tables && tables.length) || childTables || 0;
+  const parts = [];
+  parts.push(`<div class="admin-meta-graph-card">`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong></div>`);
+  if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
+  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
+  if (tables && tables.length) {
+    parts.push(`<div class="admin-meta-graph-sec"><h4>테이블 (${tables.length})</h4><ul>`);
+    tables.slice(0, 80).forEach((t) => parts.push(`<li><code>${esc(t.name || t.fqn || "")}</code>${t.description ? " — " + esc(t.description) : ""}</li>`));
+    parts.push(`</ul></div>`);
+  }
+  parts.push(`</div>`);
+  el.innerHTML = parts.join("");
 }
 
 // 노드의 최신 분석 상태/결과를 조회해 AI box 에 렌더(상세 패널 진입 시 + 폴링 완료 시).

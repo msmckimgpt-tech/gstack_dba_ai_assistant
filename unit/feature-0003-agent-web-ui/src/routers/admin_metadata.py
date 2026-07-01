@@ -1010,6 +1010,20 @@ def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.requ
         return app._json_error("조회 실패", 503)
     return JSONResponse(res)
 
+@router.get("/api/admin/metadata/graph/analyze/status")
+def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+    """스코프 내 노드들의 분석 상태 **일괄** 집계(그래프 초기 렌더 마커용, 항목1). 권한 kb.ingest.manual.
+    ?scope=<ds> — 그 datasource 스코프의 완료/진행중 node_key 집합을 반환한다. 프론트는 그래프 로드/검색/확장
+    직후 이 결과로 마커(보라 '분석됨'·주황 '분석중')를 **노드 클릭 없이** 즉시 적용한다.
+    반환 {done_keys:[...], running_keys:[...]}. PG 미가용 시 빈 집합(마커 없음 — 그래프는 정상)."""
+    scope = (request.query_params.get("scope") or "").strip() or "common"
+    from modules import node_analysis as _na
+    res = _na.get_scope_analysis_status(scope)
+    if res is None:
+        # PG 미가용/예외 — 그래프 자체는 렌더되어야 하므로 빈 집합으로 graceful(마커만 생략).
+        return JSONResponse({"done_keys": [], "running_keys": [], "unavailable": True})
+    return JSONResponse({"done_keys": res.get("done_keys", []), "running_keys": res.get("running_keys", [])})
+
 @router.get("/api/admin/metadata/graph/columns")
 def admin_metadata_graph_columns(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
     """더블클릭 컬럼 즉석 introspection(항목3). 권한 kb.ingest.manual. ?node=<table key `scope:schema.table`>.

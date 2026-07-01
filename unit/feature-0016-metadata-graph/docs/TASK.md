@@ -325,3 +325,11 @@ source_of_truth: true
 - [ ] T17.9 verify-completion --pre-commit + commit + PR + main 병합 + web 배포.
 - [ ] T17.10 **PB-0008 실 Windows 브라우저**(실측): WebGL 활성 확인 + 그래프 렌더 정합(compound 박스·라벨·엣지·후보/신뢰
       구분·ai 마커) + 애니 부드러움 + 대규모 이웃(sprite 아틀라스 한계) + **사용자 육안 FPS·라벨유지 재확인**.
+
+## 18. 그래프 뷰 출력 이슈 3건(마커 렌더-타임·클러스터 선택 상세·클러스터명 좌정렬/무잘림) (2026-07-01, cross-cut, 코드 거주 feature-0002/0003)
+- 사용자(`/_template:entry` arg-given): 관리 콘솔 > 메타데이터 > 그래프 뷰 — ①노드 표식(AI 분석중/분석됨)이 클릭 시에만 갱신 → 렌더-타임 갱신, ②DB(스키마 클러스터) 선택 시 상세 갱신, ③클러스터명 잘림 → 좌정렬·좌여백·무잘림.
+- [x] ① scope 단위 분석상태 일괄조회: 백엔드 `node_analysis.get_scope_analysis_status`(feature-0002) + `GET .../graph/analyze/status`(feature-0003) + 프론트 `_metaGraphSyncAnalysisMarkers`(로드/검색/확장 3경로, additive). 실 KB PG 정합 실측(scope mssql-06656002eda6 done 335·active 183).
+- [x] ② 스키마 클러스터 tap → `_metaGraphShowClusterDetail`(스키마명·테이블 목록·개수). §16.2 tap 병합(Table→통과·Schema→클러스터 상세·그 외 parent→무시). PB-0008 PASS('테이블(58)').
+- [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종, `cy.on('render')` 동기화 — 렌더러 무관이라 §17 WebGL 전환과 호환) + native 라벨 숨김. PB-0008 PASS(canvas-2D 프리뷰) → **§17 WebGL 병합 후 오버레이 정합 재확인 예정**.
+- [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD tap 정합·§17 graph-webgl 렌더러와 tap/스타일 병합 완료.)
+- [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 + WebGL 오버레이 PB-0008 최종 확인.
