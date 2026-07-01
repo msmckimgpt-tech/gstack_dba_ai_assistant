@@ -24697,15 +24697,12 @@ def _metadata_iso(v):
 # ── 용어사전(kb_glossary) ─────────────────────────────────────────────────────
 
 @app.get("/api/admin/metadata/glossary")
-def admin_list_glossary(request: Request) -> JSONResponse:
+def admin_list_glossary(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """용어 목록 — 단일 scope(역할 차원 포함). 권한 kb.ingest.manual.
 
     ?scope_key= (기본 'common'). ?role_key= 지정 시 그 역할 행만(공용 '*' 미포함) 필터 — 역할별
     조회. 미지정이면 scope 의 모든 역할 행(role_key 필드로 구분 표시).
     """
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
         return serr
@@ -24742,11 +24739,8 @@ def admin_list_glossary(request: Request) -> JSONResponse:
 
 
 @app.post("/api/admin/metadata/glossary")
-async def admin_create_glossary(request: Request) -> JSONResponse:
+async def admin_create_glossary(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """용어 생성(upsert). 권한 kb.ingest.manual. body: scope_key, term, definition."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -24788,11 +24782,8 @@ async def admin_create_glossary(request: Request) -> JSONResponse:
 
 
 @app.put("/api/admin/metadata/glossary/{term_id}")
-async def admin_update_glossary(term_id: int, request: Request) -> JSONResponse:
+async def admin_update_glossary(term_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """용어 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, term, definition."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -24844,11 +24835,8 @@ async def admin_update_glossary(term_id: int, request: Request) -> JSONResponse:
 
 
 @app.delete("/api/admin/metadata/glossary/{term_id}")
-def admin_delete_glossary(term_id: int, request: Request) -> JSONResponse:
+def admin_delete_glossary(term_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """용어 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
         return serr
@@ -24890,11 +24878,8 @@ def _glossary_feedback_iso(v):
 
 
 @app.get("/api/admin/metadata/glossary-feedback")
-def admin_list_glossary_feedback(request: Request) -> JSONResponse:
+def admin_list_glossary_feedback(request: Request, account=Depends(require_permission('kb.glossary.curate'))) -> JSONResponse:
     """검토 큐 목록. 권한 kb.glossary.curate. ?status=(기본 pending, 'all'=전체) &scope_key= &role_key=."""
-    account, error = _metadata_resolve_account_perm(request, "kb.glossary.curate")
-    if error:
-        return error
     status = str(request.query_params.get("status") or "pending").strip().lower()
     if status in ("all", ""):
         status = None
@@ -24940,11 +24925,8 @@ def admin_list_glossary_feedback(request: Request) -> JSONResponse:
 
 
 @app.post("/api/admin/metadata/glossary-feedback/{feedback_id}/promote")
-def admin_promote_glossary_feedback(feedback_id: int, request: Request) -> JSONResponse:
+def admin_promote_glossary_feedback(feedback_id: int, request: Request, account=Depends(require_permission('kb.glossary.curate'))) -> JSONResponse:
     """검토 큐(pending) → 용어사전 승급. 권한 kb.glossary.curate."""
-    account, error = _metadata_resolve_account_perm(request, "kb.glossary.curate")
-    if error:
-        return error
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect
     try:
@@ -24977,12 +24959,9 @@ def admin_promote_glossary_feedback(feedback_id: int, request: Request) -> JSONR
 
 
 @app.post("/api/admin/metadata/glossary-feedback/{feedback_id}/reject")
-def admin_reject_glossary_feedback(feedback_id: int, request: Request) -> JSONResponse:
+def admin_reject_glossary_feedback(feedback_id: int, request: Request, account=Depends(require_permission('kb.glossary.curate'))) -> JSONResponse:
     """검토 큐 거부(pending) 또는 자동등록 되돌리기(auto_promoted → source='auto' 행 회수).
     권한 kb.glossary.curate. 멱등."""
-    account, error = _metadata_resolve_account_perm(request, "kb.glossary.curate")
-    if error:
-        return error
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect
     try:
@@ -25014,11 +24993,8 @@ def admin_reject_glossary_feedback(feedback_id: int, request: Request) -> JSONRe
 # 역할별 비중복 namespace 라도 유사 의미 용어는 참조로 연결(역할 경계 횡단 허용). 권한 kb.ingest.manual.
 
 @app.get("/api/admin/metadata/glossary/{term_id}/relations")
-def admin_list_glossary_relations(term_id: int, request: Request) -> JSONResponse:
+def admin_list_glossary_relations(term_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """해당 용어의 인접 참조(유사어/동의어/see_also) 목록. 권한 kb.ingest.manual."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect_ro
     try:
@@ -25046,11 +25022,8 @@ def admin_list_glossary_relations(term_id: int, request: Request) -> JSONRespons
 
 
 @app.post("/api/admin/metadata/glossary/{term_id}/relations")
-async def admin_add_glossary_relation(term_id: int, request: Request) -> JSONResponse:
+async def admin_add_glossary_relation(term_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """유사어 참조 추가. 권한 kb.ingest.manual. body: to_id(필수), relation_type(synonym|similar|see_also)."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     try:
         to_id = int(data.get("to_id"))
@@ -25095,11 +25068,8 @@ async def admin_add_glossary_relation(term_id: int, request: Request) -> JSONRes
 
 
 @app.delete("/api/admin/metadata/glossary/relations/{relation_id}")
-def admin_delete_glossary_relation(relation_id: int, request: Request) -> JSONResponse:
+def admin_delete_glossary_relation(relation_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """유사어 참조 삭제(by relation id, 멱등). 권한 kb.ingest.manual."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect
     try:
@@ -25130,11 +25100,8 @@ def admin_delete_glossary_relation(relation_id: int, request: Request) -> JSONRe
 # ── ENUM 코드사전(enum_dictionary) ────────────────────────────────────────────
 
 @app.get("/api/admin/metadata/enums")
-def admin_list_enums(request: Request) -> JSONResponse:
+def admin_list_enums(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """ENUM 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
         return serr
@@ -25188,11 +25155,8 @@ def _metadata_enum_fields(data: dict):
 
 
 @app.post("/api/admin/metadata/enums")
-async def admin_create_enum(request: Request) -> JSONResponse:
+async def admin_create_enum(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """ENUM 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, code, label, schema_name?."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -25230,11 +25194,8 @@ async def admin_create_enum(request: Request) -> JSONResponse:
 
 
 @app.put("/api/admin/metadata/enums/{entry_id}")
-async def admin_update_enum(entry_id: int, request: Request) -> JSONResponse:
+async def admin_update_enum(entry_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """ENUM 수정(by id, scope 가드). 권한 kb.ingest.manual. body 동일."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -25279,11 +25240,8 @@ async def admin_update_enum(entry_id: int, request: Request) -> JSONResponse:
 
 
 @app.delete("/api/admin/metadata/enums/{entry_id}")
-def admin_delete_enum(entry_id: int, request: Request) -> JSONResponse:
+def admin_delete_enum(entry_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """ENUM 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
         return serr
@@ -25343,11 +25301,8 @@ _BOOTSTRAP_MYSQL_SYS_SCHEMAS = frozenset({
 # ── 테이블 설명(table_descriptions) ───────────────────────────────────────────
 
 @app.get("/api/admin/metadata/tables")
-def admin_list_table_desc(request: Request) -> JSONResponse:
+def admin_list_table_desc(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """테이블 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
         return serr
@@ -25377,11 +25332,8 @@ def admin_list_table_desc(request: Request) -> JSONResponse:
 
 
 @app.post("/api/admin/metadata/tables")
-async def admin_create_table_desc(request: Request) -> JSONResponse:
+async def admin_create_table_desc(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """테이블 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, description, schema_name?."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -25427,11 +25379,8 @@ async def admin_create_table_desc(request: Request) -> JSONResponse:
 
 
 @app.put("/api/admin/metadata/tables/{desc_id}")
-async def admin_update_table_desc(desc_id: int, request: Request) -> JSONResponse:
+async def admin_update_table_desc(desc_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """테이블 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?, table_name?."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -25485,11 +25434,8 @@ async def admin_update_table_desc(desc_id: int, request: Request) -> JSONRespons
 
 
 @app.delete("/api/admin/metadata/tables/{desc_id}")
-def admin_delete_table_desc(desc_id: int, request: Request) -> JSONResponse:
+def admin_delete_table_desc(desc_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """테이블 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
         return serr
@@ -25523,11 +25469,8 @@ def admin_delete_table_desc(desc_id: int, request: Request) -> JSONResponse:
 # ── 컬럼 설명(column_descriptions) — /tables 동형 + column_name 필드 ────────────
 
 @app.get("/api/admin/metadata/columns")
-def admin_list_column_desc(request: Request) -> JSONResponse:
+def admin_list_column_desc(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """컬럼 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
         return serr
@@ -25559,11 +25502,8 @@ def admin_list_column_desc(request: Request) -> JSONResponse:
 
 
 @app.post("/api/admin/metadata/columns")
-async def admin_create_column_desc(request: Request) -> JSONResponse:
+async def admin_create_column_desc(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """컬럼 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, description, schema_name?."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -25621,11 +25561,8 @@ async def admin_create_column_desc(request: Request) -> JSONResponse:
 
 
 @app.put("/api/admin/metadata/columns/{desc_id}")
-async def admin_update_column_desc(desc_id: int, request: Request) -> JSONResponse:
+async def admin_update_column_desc(desc_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """컬럼 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?/table_name?/column_name?."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -25692,11 +25629,8 @@ async def admin_update_column_desc(desc_id: int, request: Request) -> JSONRespon
 
 
 @app.delete("/api/admin/metadata/columns/{desc_id}")
-def admin_delete_column_desc(desc_id: int, request: Request) -> JSONResponse:
+def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """컬럼 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
         return serr
@@ -25729,7 +25663,7 @@ def admin_delete_column_desc(desc_id: int, request: Request) -> JSONResponse:
 
 # ── 메타데이터 지식그래프 투영 (feature-0016) — RBAC kb.ingest.manual, 읽기 전용 ──────
 @app.get("/api/admin/metadata/graph")
-def admin_metadata_graph(request: Request) -> JSONResponse:
+def admin_metadata_graph(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
 
     권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 세 모드:
@@ -25739,9 +25673,6 @@ def admin_metadata_graph(request: Request) -> JSONResponse:
     셋 다 없으면 빈 그래프. AGE cutover 전(확장 부재)엔 모듈이 graceful no-op → 빈 결과.
     scope 는 datasource scope_key(예: mssql-06656002eda6) — 각 데이터소스별 그래프 분리.
     """
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     q = (request.query_params.get("q") or "").strip()
     node = (request.query_params.get("node") or "").strip()
     scope = (request.query_params.get("scope") or "").strip() or None
@@ -25794,16 +25725,13 @@ def admin_metadata_graph(request: Request) -> JSONResponse:
 # ── feature-0016 graphux5: 그래프 노드 AI 능동 분석(재귀·백그라운드) — RBAC kb.ingest.manual ──
 
 @app.post("/api/admin/metadata/graph/analyze")
-async def admin_metadata_graph_analyze(request: Request) -> JSONResponse:
+async def admin_metadata_graph_analyze(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """그래프 노드 AI 능동 분석 트리거(항목2). 권한 kb.ingest.manual.
 
     body: {node_key, scope_key?, depth?, node_budget?}. run 을 만들고 즉시 202 반환 — 실제 분석은
     insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
     진행은 GET .../graph/analyze?run_id= 로 폴링, 노드 결과는 GET .../graph/analyze/node?node= 로 조회.
     """
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     node_key = str(data.get("node_key") or data.get("node") or "").strip()
     if not node_key or ":" not in node_key:
@@ -25829,12 +25757,9 @@ async def admin_metadata_graph_analyze(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/metadata/graph/analyze")
-def admin_metadata_graph_analyze_status(request: Request) -> JSONResponse:
+def admin_metadata_graph_analyze_status(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """분석 run 진행률 폴링(항목2). 권한 kb.ingest.manual. ?run_id=<hex>.
     반환 {status, enqueued, done, failed, done_keys[...]} — 프론트가 done_keys 로 분석 마커 표시."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     run_id = (request.query_params.get("run_id") or "").strip()
     if not run_id:
         return _json_error("run_id 는 필수입니다.", 400)
@@ -25846,12 +25771,9 @@ def admin_metadata_graph_analyze_status(request: Request) -> JSONResponse:
 
 
 @app.get("/api/admin/metadata/graph/analyze/node")
-def admin_metadata_graph_analyze_node(request: Request) -> JSONResponse:
+def admin_metadata_graph_analyze_node(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """노드의 최신 분석 상태/결과(상세 패널, 항목2). 권한 kb.ingest.manual. ?node=<key>[&scope=<ds>].
     반환 {status:'none'|'pending'|'running'|'done'|'failed', analysis:{summary,relationships,usage,caveats}}."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     node = (request.query_params.get("node") or "").strip()
     if not node:
         return _json_error("node 는 필수입니다.", 400)
@@ -25894,16 +25816,13 @@ def _graph_resolve_ds_by_scope(scope_key: str):
 
 
 @app.get("/api/admin/metadata/graph/columns")
-def admin_metadata_graph_columns(request: Request) -> JSONResponse:
+def admin_metadata_graph_columns(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """더블클릭 컬럼 즉석 introspection(항목3). 권한 kb.ingest.manual. ?node=<table key `scope:schema.table`>.
 
     그래프 투영(SSOT=column_descriptions)에 Column 노드가 없어(큐레이션/분석 미진행) 더블클릭해도
     컬럼이 안 펼쳐지던 문제를 해소한다. 그래프에 컬럼이 없으면 **데이터소스 information_schema 를 즉석
     조회**해 Column 노드 + HAS_COLUMN 엣지로 반환한다(read-only, 그래프 미저장). 실패 시 introspected=False
     + reason 으로 명확 피드백(silent no-op 금지)."""
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     node = (request.query_params.get("node") or "").strip()
     if not node or ":" not in node:
         return _json_error("node(테이블 키 `scope:schema.table`)는 필수입니다.", 400)
@@ -25997,11 +25916,8 @@ def _samples_resolve_account(request: Request):
 
 
 @app.get("/api/admin/metadata/samples")
-def admin_list_samples(request: Request) -> JSONResponse:
+def admin_list_samples(request: Request, account=Depends(require_permission('kb.sample.curate'))) -> JSONResponse:
     """샘플 목록 — 단일 scope. 권한 kb.sample.curate. ?scope_key= (기본 'common')."""
-    account, error = _samples_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
         return serr
@@ -26032,16 +25948,13 @@ def admin_list_samples(request: Request) -> JSONResponse:
 
 
 @app.put("/api/admin/metadata/samples/{sample_id}")
-async def admin_update_sample(sample_id: int, request: Request) -> JSONResponse:
+async def admin_update_sample(sample_id: int, request: Request, account=Depends(require_permission('kb.sample.curate'))) -> JSONResponse:
     """샘플 수정(by id, scope 가드). 권한 kb.sample.curate. body: scope_key, nl_question?, sql?, domain?, weight?, approved?.
 
     하이브리드 C 임베딩: nl_question 변경 시에만 kb_retrieval._embed_query_vector 동기 시도 →
     성공이면 embedding 갱신(status='active'), 실패면 embedding 무효화(status='stale', 재임베딩 대기).
     nl 미변경 시 embedding touch 안 함. weight 1~1000 clamp. nl 중복(UNIQUE) → 409.
     """
-    account, error = _samples_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     scope_key, serr = _metadata_check_scope(data.get("scope_key") or "")
     if serr:
@@ -26121,11 +26034,8 @@ async def admin_update_sample(sample_id: int, request: Request) -> JSONResponse:
 
 
 @app.delete("/api/admin/metadata/samples/{sample_id}")
-def admin_delete_sample(sample_id: int, request: Request) -> JSONResponse:
+def admin_delete_sample(sample_id: int, request: Request, account=Depends(require_permission('kb.sample.curate'))) -> JSONResponse:
     """샘플 삭제(by id, scope 가드, 멱등). 권한 kb.sample.curate. ?scope_key= 필수."""
-    account, error = _samples_resolve_account(request)
-    if error:
-        return error
     scope_key, serr = _metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
         return serr
@@ -26205,7 +26115,7 @@ def _bootstrap_activate_dialect(ds: dict, scope_key: str):
 
 
 @app.get("/api/admin/metadata/bootstrap/schemas")
-def admin_bootstrap_schemas(request: Request) -> JSONResponse:
+def admin_bootstrap_schemas(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """선택 datasource 의 골격 단위(unit) 목록. 권한 kb.ingest.manual. ?datasource=<key>.
 
     엔진별 unit 차이(metadata-table-desc-fix):
@@ -26216,9 +26126,6 @@ def admin_bootstrap_schemas(request: Request) -> JSONResponse:
         (#A0A50030 …)이 골격으로 잡혀 "테이블 명칭이 모두 올바르지 않은 값"으로 보였다.
     응답: {schemas:[...], datasource, engine, unit_kind:"database"|"schema"} — 프론트가 unit_kind 로 라벨 분기.
     """
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     ds, scope_key, derr = _bootstrap_resolve_datasource(request.query_params.get("datasource") or "")
     if derr:
         return derr
@@ -26259,16 +26166,13 @@ def admin_bootstrap_schemas(request: Request) -> JSONResponse:
 
 
 @app.post("/api/admin/metadata/bootstrap")
-async def admin_bootstrap(request: Request) -> JSONResponse:
+async def admin_bootstrap(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """선택 datasource+schema 의 테이블/컬럼 골격(미영속). 권한 kb.ingest.manual. body: datasource, schema.
 
     골격은 저장하지 않는다 — UI 가 설명 빈칸을 prefill, 사람이 채워 tables/columns POST(source='bootstrap')
     로 저장한다. dialect-aware: MSSQL 은 set_active_datasource(engine=) 로 활성화 후 dialect.describe_columns
     경유(MySQL 백틱 하드코딩 load_schema_metadata 우회). 자동 1행 샘플/list_indexes 호출 안 함(부하/PII).
     """
-    account, error = _metadata_resolve_account(request)
-    if error:
-        return error
     data = await _metadata_read_json(request)
     ds, scope_key, derr = _bootstrap_resolve_datasource(data.get("datasource") or "")
     if derr:
@@ -26810,16 +26714,13 @@ async def admin_metadata_suggest(sub: str, request: Request) -> JSONResponse:
 
 
 @app.post("/api/admin/metadata/bootstrap/describe")
-async def admin_metadata_bootstrap_describe(request: Request) -> JSONResponse:
+async def admin_metadata_bootstrap_describe(request: Request, account=Depends(require_permission('kb.ingest.manual'))) -> JSONResponse:
     """부트스트랩 일괄 AI 자동완성 — 골격(테이블/컬럼)의 설명을 1 LLM 호출로 생성(영속 안 함).
 
     프론트가 청크 단위(≤_METADATA_BULK_MAX_TABLES)로 호출해 진행률을 표면화한다. RBAC kb.ingest.manual.
     골격 식별자는 프롬프트 텍스트로만 사용(SQL 미사용)하므로 클라 제공 골격을 cap 후 신뢰한다.
     반환 results 는 {schema_name, table_name[, column_name], description} 리스트 — 프론트가 입력란에 채움.
     """
-    account, error = _metadata_resolve_account(request)  # kb.ingest.manual
-    if error:
-        return error
     # per-account rate-limit(429) — 청크 일괄 LLM dispatch 비용 DoS 방어. RBAC 통과 후 검사.
     if not _search_rate_limit_check(int(account.get("id") or 0), max_per_min=_METADATA_AI_RATE_PER_MIN):
         return _json_error("일괄 자동완성 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)

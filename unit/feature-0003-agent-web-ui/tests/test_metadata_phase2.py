@@ -151,78 +151,72 @@ def _pg(monkeypatch):
 
 # ── T403/C403: tables/columns RBAC 403 (코어 미호출) ───────────────────────────────
 
-def test_tables_endpoints_require_permission(monkeypatch):
-    _allow_scopes(monkeypatch)
-    _nobody(monkeypatch)
+def test_tables_endpoints_require_permission(monkeypatch, client, as_account):
+    as_account(perms={"console.access": True})  # kb.ingest.manual 없음 → require_permission 403
     called = {"hit": False}
     for fn in ("list_table_desc_admin", "upsert_table_desc", "update_table_desc", "delete_table_desc"):
         monkeypatch.setattr(_km, fn, lambda *a, **k: called.__setitem__("hit", True) or [])
 
-    assert app.admin_list_table_desc(_FakeRequest(query={"scope_key": "common"})).status_code == 403
-    assert asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "common", "table_name": "t", "description": "d"}))).status_code == 403
-    assert asyncio.run(app.admin_update_table_desc(1, _FakeRequest({"scope_key": "common", "description": "d"}))).status_code == 403
-    assert app.admin_delete_table_desc(1, _FakeRequest(query={"scope_key": "common"})).status_code == 403
+    assert client.get("/api/admin/metadata/tables?scope_key=common").status_code == 403
+    assert client.post("/api/admin/metadata/tables", json={"scope_key": "common", "table_name": "t", "description": "d"}).status_code == 403
+    assert client.put("/api/admin/metadata/tables/1", json={"scope_key": "common", "description": "d"}).status_code == 403
+    assert client.delete("/api/admin/metadata/tables/1?scope_key=common").status_code == 403
     assert called["hit"] is False
 
 
-def test_columns_endpoints_require_permission(monkeypatch):
-    _allow_scopes(monkeypatch)
-    _nobody(monkeypatch)
+def test_columns_endpoints_require_permission(monkeypatch, client, as_account):
+    as_account(perms={"console.access": True})  # kb.ingest.manual 없음 → require_permission 403
     called = {"hit": False}
     for fn in ("list_column_desc_admin", "upsert_column_desc", "update_column_desc", "delete_column_desc"):
         monkeypatch.setattr(_km, fn, lambda *a, **k: called.__setitem__("hit", True) or [])
 
-    assert app.admin_list_column_desc(_FakeRequest(query={"scope_key": "common"})).status_code == 403
     body = {"scope_key": "common", "table_name": "t", "column_name": "c", "description": "d"}
-    assert asyncio.run(app.admin_create_column_desc(_FakeRequest(body))).status_code == 403
-    assert asyncio.run(app.admin_update_column_desc(1, _FakeRequest({"scope_key": "common", "description": "d"}))).status_code == 403
-    assert app.admin_delete_column_desc(1, _FakeRequest(query={"scope_key": "common"})).status_code == 403
+    assert client.get("/api/admin/metadata/columns?scope_key=common").status_code == 403
+    assert client.post("/api/admin/metadata/columns", json=body).status_code == 403
+    assert client.put("/api/admin/metadata/columns/1", json={"scope_key": "common", "description": "d"}).status_code == 403
+    assert client.delete("/api/admin/metadata/columns/1?scope_key=common").status_code == 403
     assert called["hit"] is False
 
 
 # ── S403: samples RBAC 403 (kb.sample.curate) ──────────────────────────────────────
 
-def test_samples_endpoints_require_curate(monkeypatch):
-    _allow_scopes(monkeypatch)
-    _nobody(monkeypatch)  # kb.sample.curate 없음
+def test_samples_endpoints_require_curate(monkeypatch, client, as_account):
+    as_account(perms={"console.access": True})  # kb.sample.curate 없음 → require_permission 403
     called = {"hit": False}
     for fn in ("list_samples_admin", "update_sample", "delete_sample"):
         monkeypatch.setattr(_sq, fn, lambda *a, **k: called.__setitem__("hit", True) or [])
 
-    assert app.admin_list_samples(_FakeRequest(query={"scope_key": "common"})).status_code == 403
-    assert asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "weight": 50}))).status_code == 403
-    assert app.admin_delete_sample(1, _FakeRequest(query={"scope_key": "common"})).status_code == 403
+    assert client.get("/api/admin/metadata/samples?scope_key=common").status_code == 403
+    assert client.put("/api/admin/metadata/samples/1", json={"scope_key": "common", "weight": 50}).status_code == 403
+    assert client.delete("/api/admin/metadata/samples/1?scope_key=common").status_code == 403
     assert called["hit"] is False
 
 
-def test_samples_curate_only_not_ingest(monkeypatch):
+def test_samples_curate_only_not_ingest(client, as_account):
     """kb.ingest.manual 만 있고 kb.sample.curate 없으면 샘플 엔드포인트 403 (권한 분리 확인)."""
-    _allow_scopes(monkeypatch)
-    acct = {"id": 2, "username": "ing", "permissions": {"kb.ingest.manual": True}}  # curate 없음
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
-    assert app.admin_list_samples(_FakeRequest(query={"scope_key": "common"})).status_code == 403
+    as_account(perms={"kb.ingest.manual": True})  # curate 없음 → require_permission("kb.sample.curate") 403
+    assert client.get("/api/admin/metadata/samples?scope_key=common").status_code == 403
 
 
 # ── B403: bootstrap RBAC ───────────────────────────────────────────────────────────
 
-def test_bootstrap_requires_permission(monkeypatch):
-    _allow_scopes(monkeypatch)
-    _nobody(monkeypatch)
-    assert app.admin_bootstrap_schemas(_FakeRequest(query={"datasource": "default"})).status_code == 403
-    assert asyncio.run(app.admin_bootstrap(_FakeRequest({"datasource": "default", "schema": "dbo"}))).status_code == 403
+def test_bootstrap_requires_permission(client, as_account):
+    as_account(perms={"console.access": True})  # kb.ingest.manual 없음 → require_permission 403
+    assert client.get("/api/admin/metadata/bootstrap/schemas?datasource=default").status_code == 403
+    assert client.post("/api/admin/metadata/bootstrap", json={"datasource": "default", "schema": "dbo"}).status_code == 403
 
 
 # ── SV: scope 검증 (코어 미호출) ──────────────────────────────────────────────────
 
 def test_scope_rejects_unknown_and_empty(monkeypatch):
     _allow_scopes(monkeypatch, scopes=("common",))  # default 미허용
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     called = {"hit": False}
     monkeypatch.setattr(_km, "upsert_table_desc", lambda *a, **k: called.__setitem__("hit", True))
 
-    r1 = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "nope", "table_name": "t", "description": "d"})))
+    r1 = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "nope", "table_name": "t", "description": "d"}), account=acct))
     assert r1.status_code == 400
-    r2 = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "", "table_name": "t", "description": "d"})))
+    r2 = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "", "table_name": "t", "description": "d"}), account=acct))
     assert r2.status_code == 400
     assert called["hit"] is False
 
@@ -231,7 +225,7 @@ def test_scope_rejects_unknown_and_empty(monkeypatch):
 
 def test_table_create_calls_core_and_audits(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     pg = _pg(monkeypatch)
     captured = {}
 
@@ -244,7 +238,7 @@ def test_table_create_calls_core_and_audits(monkeypatch):
 
     resp = asyncio.run(app.admin_create_table_desc(_FakeRequest({
         "scope_key": "default", "schema_name": "  sales  ", "table_name": "  orders  ",
-        "description": "  주문 마스터  "})))
+        "description": "  주문 마스터  "}), account=acct))
     assert resp.status_code == 200
     assert captured["conn"] is pg
     assert captured["scope_key"] == "default" and captured["table_name"] == "orders"
@@ -257,20 +251,20 @@ def test_table_create_calls_core_and_audits(monkeypatch):
 
 def test_table_create_bootstrap_source(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     captured = {}
     monkeypatch.setattr(_km, "upsert_table_desc",
                         lambda conn, scope_key, table_name, description, schema_name="", source="manual", created_by=None: captured.update({"source": source}))
     _audit_capture(monkeypatch)
     resp = asyncio.run(app.admin_create_table_desc(_FakeRequest({
-        "scope_key": "default", "table_name": "t", "description": "d", "source": "bootstrap"})))
+        "scope_key": "default", "table_name": "t", "description": "d", "source": "bootstrap"}), account=acct))
     assert resp.status_code == 200 and captured["source"] == "bootstrap"
 
 
 def test_column_create_calls_core(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     pg = _pg(monkeypatch)
     captured = {}
 
@@ -282,7 +276,7 @@ def test_column_create_calls_core(monkeypatch):
     events = _audit_capture(monkeypatch)
     resp = asyncio.run(app.admin_create_column_desc(_FakeRequest({
         "scope_key": "default", "table_name": "orders", "column_name": "status",
-        "description": "주문 상태"})))  # schema_name 생략
+        "description": "주문 상태"}), account=acct))  # schema_name 생략
     assert resp.status_code == 200
     assert captured["column_name"] == "status" and captured["schema_name"] == ""
     assert pg.committed is True
@@ -293,38 +287,38 @@ def test_column_create_calls_core(monkeypatch):
 
 def test_table_update_affected_then_404(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     pg = _pg(monkeypatch)
     events = _audit_capture(monkeypatch)
 
     monkeypatch.setattr(_km, "update_table_desc", lambda *a, **k: 1)
-    r = asyncio.run(app.admin_update_table_desc(7, _FakeRequest({"scope_key": "common", "description": "d"})))
+    r = asyncio.run(app.admin_update_table_desc(7, _FakeRequest({"scope_key": "common", "description": "d"}), account=acct))
     assert r.status_code == 200 and pg.committed is True
     upd = [e for e in events if e.get("action") == "table_desc.update"]
     # _metadata_audit 가 resource_id 를 str 화해 record_audit_event 로 넘긴다(MVP-1 동형).
     assert len(upd) == 1 and upd[0]["resource_id"] == "7"
 
     monkeypatch.setattr(_km, "update_table_desc", lambda *a, **k: 0)
-    r2 = asyncio.run(app.admin_update_table_desc(8, _FakeRequest({"scope_key": "common", "description": "d"})))
+    r2 = asyncio.run(app.admin_update_table_desc(8, _FakeRequest({"scope_key": "common", "description": "d"}), account=acct))
     assert r2.status_code == 404
 
 
 def test_column_update_404(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     monkeypatch.setattr(_km, "update_column_desc", lambda *a, **k: 0)
-    r = asyncio.run(app.admin_update_column_desc(5, _FakeRequest({"scope_key": "common", "description": "d"})))
+    r = asyncio.run(app.admin_update_column_desc(5, _FakeRequest({"scope_key": "common", "description": "d"}), account=acct))
     assert r.status_code == 404
 
 
 def test_table_update_partial_schema_rejected(monkeypatch):
     """table_name 없이 schema_name 만 수정 → 400."""
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     monkeypatch.setattr(_km, "update_table_desc", lambda *a, **k: 1)
-    r = asyncio.run(app.admin_update_table_desc(1, _FakeRequest({"scope_key": "common", "description": "d", "schema_name": "s"})))
+    r = asyncio.run(app.admin_update_table_desc(1, _FakeRequest({"scope_key": "common", "description": "d", "schema_name": "s"}), account=acct))
     assert r.status_code == 400
 
 
@@ -332,18 +326,18 @@ def test_table_update_partial_schema_rejected(monkeypatch):
 
 def test_table_delete_idempotent_audit(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     events = _audit_capture(monkeypatch)
 
     monkeypatch.setattr(_km, "delete_table_desc", lambda *a, **k: 1)
-    r = app.admin_delete_table_desc(3, _FakeRequest(query={"scope_key": "common"}))
+    r = app.admin_delete_table_desc(3, _FakeRequest(query={"scope_key": "common"}), account=acct)
     assert r.status_code == 200 and _body(r)["deleted"] == 1
     assert any(e.get("action") == "table_desc.delete" for e in events)
 
     events.clear()
     monkeypatch.setattr(_km, "delete_table_desc", lambda *a, **k: 0)
-    r2 = app.admin_delete_table_desc(3, _FakeRequest(query={"scope_key": "common"}))
+    r2 = app.admin_delete_table_desc(3, _FakeRequest(query={"scope_key": "common"}), account=acct)
     assert r2.status_code == 200 and _body(r2)["deleted"] == 0
     assert not events, "미삭제(affected=0) 시 audit 미기록"
 
@@ -352,14 +346,14 @@ def test_table_delete_idempotent_audit(monkeypatch):
 
 def test_input_validation_caps(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     monkeypatch.setattr(_km, "upsert_table_desc", lambda *a, **k: None)
 
     # 필수필드 누락(table_name) → 400
-    r = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "common", "description": "d"})))
+    r = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "common", "description": "d"}), account=acct))
     assert r.status_code == 400
     # description cap=4000 초과 → 400
-    r2 = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "common", "table_name": "t", "description": "x" * 4001})))
+    r2 = asyncio.run(app.admin_create_table_desc(_FakeRequest({"scope_key": "common", "table_name": "t", "description": "x" * 4001}), account=acct))
     assert r2.status_code == 400
 
 
@@ -367,27 +361,27 @@ def test_input_validation_caps(monkeypatch):
 
 def test_sample_weight_clamp(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     _audit_capture(monkeypatch)
     captured = {}
     monkeypatch.setattr(_sq, "update_sample",
                         lambda conn, sid, scope_key, **kw: (captured.update(kw) or 1))
 
-    asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "weight": 999999})))
+    asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "weight": 999999}), account=acct))
     assert captured["weight"] == 1000, "상한 1000 clamp"
     captured.clear()
-    asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "weight": -5})))
+    asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "weight": -5}), account=acct))
     assert captured["weight"] == 1, "하한 1 clamp"
 
 
 def test_sample_update_no_fields_400(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     called = {"hit": False}
     monkeypatch.setattr(_sq, "update_sample", lambda *a, **k: called.__setitem__("hit", True) or 1)
-    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common"})))
+    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common"}), account=acct))
     assert r.status_code == 400 and called["hit"] is False
 
 
@@ -399,7 +393,7 @@ class UniqueViolation(Exception):
 
 def test_sample_nl_duplicate_409(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     _audit_capture(monkeypatch)
 
@@ -410,7 +404,7 @@ def test_sample_nl_duplicate_409(monkeypatch):
     # 임베딩 동기 시도(nl 변경) — 벡터 반환되게 fake
     import modules.kb_retrieval as _kr
     monkeypatch.setattr(_kr, "_embed_query_vector", lambda t: [0.1] * 1024)
-    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "nl_question": "중복 질문"})))
+    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "nl_question": "중복 질문"}), account=acct))
     assert r.status_code == 409
 
 
@@ -418,7 +412,7 @@ def test_sample_nl_duplicate_409(monkeypatch):
 
 def test_sample_embed_active_on_nl_change(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     _audit_capture(monkeypatch)
     captured = {}
@@ -427,14 +421,14 @@ def test_sample_embed_active_on_nl_change(monkeypatch):
     import modules.kb_retrieval as _kr
     monkeypatch.setattr(_kr, "_embed_query_vector", lambda t: [0.2] * 1024)  # 동기 성공
 
-    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "nl_question": "활성 사용자 수"})))
+    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "nl_question": "활성 사용자 수"}), account=acct))
     assert r.status_code == 200 and _body(r)["embedding_status"] == "active"
     assert captured.get("embedding") and len(captured["embedding"]) == 1024
 
 
 def test_sample_embed_stale_on_embed_failure(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     _audit_capture(monkeypatch)
     captured = {}
@@ -443,14 +437,14 @@ def test_sample_embed_stale_on_embed_failure(monkeypatch):
     import modules.kb_retrieval as _kr
     monkeypatch.setattr(_kr, "_embed_query_vector", lambda t: None)  # 임베딩 실패
 
-    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "nl_question": "신규 질문"})))
+    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "nl_question": "신규 질문"}), account=acct))
     assert r.status_code == 200 and _body(r)["embedding_status"] == "stale"
     assert captured.get("embedding") is None, "실패 → None → 코어가 status='stale'"
 
 
 def test_sample_embed_untouched_when_nl_unchanged(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _pg(monkeypatch)
     _audit_capture(monkeypatch)
     captured = {}
@@ -460,7 +454,7 @@ def test_sample_embed_untouched_when_nl_unchanged(monkeypatch):
     embed_calls = {"n": 0}
     monkeypatch.setattr(_kr, "_embed_query_vector", lambda t: embed_calls.__setitem__("n", embed_calls["n"] + 1) or [0.0] * 1024)
 
-    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "weight": 200})))
+    r = asyncio.run(app.admin_update_sample(1, _FakeRequest({"scope_key": "common", "weight": 200}), account=acct))
     assert r.status_code == 200 and _body(r)["embedding_status"] is None
     assert "embedding" not in captured["kw"], "nl 미변경 → embedding touch 안 함"
     assert embed_calls["n"] == 0, "nl 미변경 → 임베딩 호출 안 함"
@@ -470,23 +464,23 @@ def test_sample_embed_untouched_when_nl_unchanged(monkeypatch):
 
 def test_bootstrap_unknown_datasource_404(monkeypatch):
     _allow_scopes(monkeypatch, scopes=("common", "default"))
-    _admin(monkeypatch)
-    r = app.admin_bootstrap_schemas(_FakeRequest(query={"datasource": "ghost"}))
+    acct = _admin(monkeypatch)
+    r = app.admin_bootstrap_schemas(_FakeRequest(query={"datasource": "ghost"}), account=acct)
     assert r.status_code == 404
-    r2 = asyncio.run(app.admin_bootstrap(_FakeRequest({"datasource": "ghost", "schema": "dbo"})))
+    r2 = asyncio.run(app.admin_bootstrap(_FakeRequest({"datasource": "ghost", "schema": "dbo"}), account=acct))
     assert r2.status_code == 404
 
 
 def test_bootstrap_common_rejected(monkeypatch):
     _allow_scopes(monkeypatch)
-    _admin(monkeypatch)
-    r = app.admin_bootstrap_schemas(_FakeRequest(query={"datasource": "common"}))
+    acct = _admin(monkeypatch)
+    r = app.admin_bootstrap_schemas(_FakeRequest(query={"datasource": "common"}), account=acct)
     assert r.status_code == 400
 
 
 def test_bootstrap_schemas_happy(monkeypatch):
     _allow_scopes(monkeypatch, scopes=("common", "default"))
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     import shared.db as _db
     import modules.schema as _schema
     import shared.config as _cfg
@@ -496,7 +490,7 @@ def test_bootstrap_schemas_happy(monkeypatch):
     monkeypatch.setattr(_db, "connect", lambda **k: _BenignConn())
     monkeypatch.setattr(_schema, "load_known_schemas", lambda conn: ["dbo", "sales"])
 
-    r = app.admin_bootstrap_schemas(_FakeRequest(query={"datasource": "default"}))
+    r = app.admin_bootstrap_schemas(_FakeRequest(query={"datasource": "default"}), account=acct)
     assert r.status_code == 200
     out = _body(r)
     assert out["schemas"] == ["dbo", "sales"] and out["datasource"] == "default"
@@ -512,7 +506,7 @@ def test_bootstrap_schema_sqli_rejected(monkeypatch):
     도달하기 전 _safe_ident + load_known_schemas allowlist 로 차단된다. 인젝션 페이로드 → 404 +
     골격 수집(_bootstrap_collect_skeleton) 미도달. 정상 schema 는 통과."""
     _allow_scopes(monkeypatch, scopes=("common", "default"))
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     import shared.db as _db
     import modules.schema as _schema
     import shared.config as _cfg
@@ -528,11 +522,11 @@ def test_bootstrap_schema_sqli_rejected(monkeypatch):
     monkeypatch.setattr(app, "_bootstrap_collect_skeleton", _fake_collect)
     # 인젝션 페이로드(UNION/주석/따옴표) — allowlist 미포함 → 404, describe_schema_tables 미도달.
     payload = "dbo' UNION SELECT table_name FROM information_schema.tables --"
-    r = asyncio.run(app.admin_bootstrap(_FakeRequest({"datasource": "default", "schema": payload})))
+    r = asyncio.run(app.admin_bootstrap(_FakeRequest({"datasource": "default", "schema": payload}), account=acct))
     assert r.status_code == 404, "인젝션 schema 는 allowlist 미포함 → 404"
     assert hit["n"] == 0, "골격 수집(describe_schema_tables 실행)에 도달하면 안 됨"
     # 정상 schema(allowlist 포함)는 통과 — 골격 수집 1회 호출.
-    r2 = asyncio.run(app.admin_bootstrap(_FakeRequest({"datasource": "default", "schema": "dbo"})))
+    r2 = asyncio.run(app.admin_bootstrap(_FakeRequest({"datasource": "default", "schema": "dbo"}), account=acct))
     assert r2.status_code == 200 and hit["n"] == 1
 
 

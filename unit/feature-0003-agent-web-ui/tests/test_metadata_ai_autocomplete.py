@@ -239,42 +239,41 @@ def test_suggest_rate_limited_429_before_llm(monkeypatch):
 
 def test_bootstrap_rate_limited_429(monkeypatch):
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     called = _fake_llm(monkeypatch)
     monkeypatch.setattr(app, "_search_rate_limit_check", lambda *a, **k: False)
     resp = asyncio.run(app.admin_metadata_bootstrap_describe(
-        _FakeRequest({"mode": "tables", "tables": [{"table_name": "users"}]})))
+        _FakeRequest({"mode": "tables", "tables": [{"table_name": "users"}]}), account=acct))
     assert resp.status_code == 429
     assert called["n"] == 0
 
 
 # ── BR403/BIV: bootstrap RBAC + 입력검증 ──────────────────────────────────────────
 
-def test_bootstrap_requires_permission(monkeypatch):
-    _allow(monkeypatch)
-    _nobody(monkeypatch)
+def test_bootstrap_requires_permission(monkeypatch, client, as_account):
+    as_account(perms={"console.access": True})  # kb.ingest.manual 없음 → require_permission 403
     called = _fake_llm(monkeypatch)
-    resp = asyncio.run(app.admin_metadata_bootstrap_describe(
-        _FakeRequest({"mode": "tables", "tables": [{"table_name": "users"}]})))
+    resp = client.post("/api/admin/metadata/bootstrap/describe",
+                       json={"mode": "tables", "tables": [{"table_name": "users"}]})
     assert resp.status_code == 403
     assert called["n"] == 0
 
 
 def test_bootstrap_invalid_mode_400(monkeypatch):
     _allow(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _fake_llm(monkeypatch)
     resp = asyncio.run(app.admin_metadata_bootstrap_describe(
-        _FakeRequest({"mode": "rows", "tables": [{"table_name": "users"}]})))
+        _FakeRequest({"mode": "rows", "tables": [{"table_name": "users"}]}), account=acct))
     assert resp.status_code == 400
 
 
 def test_bootstrap_empty_tables_400(monkeypatch):
     _allow(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _fake_llm(monkeypatch)
     resp = asyncio.run(app.admin_metadata_bootstrap_describe(
-        _FakeRequest({"mode": "tables", "tables": []})))
+        _FakeRequest({"mode": "tables", "tables": []}), account=acct))
     assert resp.status_code == 400
 
 
@@ -282,14 +281,14 @@ def test_bootstrap_empty_tables_400(monkeypatch):
 
 def test_bootstrap_tables_shapes_results(monkeypatch):
     _allow(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     # LLM 이 {table_name: description} JSON(코드펜스 포함)을 반환 → results 로 정형.
     _fake_llm(monkeypatch, text='```json\n{"users": "사용자 계정 정보", "orders": "주문 내역"}\n```')
     resp = asyncio.run(app.admin_metadata_bootstrap_describe(_FakeRequest({
         "mode": "tables",
         "tables": [{"schema_name": "public", "table_name": "users"},
                    {"schema_name": "public", "table_name": "orders"}],
-    })))
+    }), account=acct))
     assert resp.status_code == 200
     b = _body(resp)
     assert b["mode"] == "tables"
@@ -300,14 +299,14 @@ def test_bootstrap_tables_shapes_results(monkeypatch):
 
 def test_bootstrap_columns_shapes_results(monkeypatch):
     _allow(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _fake_llm(monkeypatch, text='{"users": {"id": "기본키", "email": "이메일 주소"}}')
     resp = asyncio.run(app.admin_metadata_bootstrap_describe(_FakeRequest({
         "mode": "columns",
         "tables": [{"schema_name": "public", "table_name": "users",
                     "columns": [{"column_name": "id", "data_type": "int"},
                                 {"column_name": "email", "data_type": "varchar"}]}],
-    })))
+    }), account=acct))
     assert resp.status_code == 200
     got = {(r["table_name"], r["column_name"]): r["description"] for r in _body(resp)["results"]}
     assert got[("users", "id")] == "기본키"
@@ -316,10 +315,10 @@ def test_bootstrap_columns_shapes_results(monkeypatch):
 
 def test_bootstrap_unparseable_llm_502(monkeypatch):
     _allow(monkeypatch)
-    _admin(monkeypatch)
+    acct = _admin(monkeypatch)
     _fake_llm(monkeypatch, text="죄송하지만 JSON 을 만들 수 없습니다.")  # { } 없음 → parse None
     resp = asyncio.run(app.admin_metadata_bootstrap_describe(
-        _FakeRequest({"mode": "tables", "tables": [{"table_name": "users"}]})))
+        _FakeRequest({"mode": "tables", "tables": [{"table_name": "users"}]}), account=acct))
     assert resp.status_code == 502
 
 
