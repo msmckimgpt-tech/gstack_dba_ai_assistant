@@ -38,6 +38,7 @@ def _import_app():
 
 
 app = _import_app()
+from routers import admin_quotas  # feature-0012 P5b: quotas 추출
 
 
 def _read_static(name: str) -> str:
@@ -107,14 +108,14 @@ def test_b7_ask_gate():
 
 def test_b8_admin_endpoints():
     for fn in ("admin_list_quotas", "admin_set_role_quota", "admin_set_account_quota"):
-        assert hasattr(app, fn), fn
-    role_src = inspect.getsource(app.admin_set_role_quota)
+        assert hasattr(admin_quotas, fn), fn
+    role_src = inspect.getsource(admin_quotas.admin_set_role_quota)
     # TASK-20260623T030418-quota-rbac-permission: console.manage → quota.manage(조절 전용 권한).
     #   outside-voice MAJOR-2 흡수: "조절은 조회 종속" 서버 집행 → quota.read + quota.manage 동시 요구.
     assert "quota.manage" in role_src and "quota.read" in role_src and "console.manage" not in role_src
     assert "_quota_upsert" in role_src
     assert "quota.role.update" in role_src
-    acct_src = inspect.getsource(app.admin_set_account_quota)
+    acct_src = inspect.getsource(admin_quotas.admin_set_account_quota)
     assert "quota.manage" in acct_src and "quota.read" in acct_src and "console.manage" not in acct_src
     assert "quota.account.update" in acct_src
     upsert_src = inspect.getsource(app._quota_upsert)
@@ -167,7 +168,7 @@ def test_b12_quota_strip_helper_and_gates():
     # outside-voice MAJOR-1 흡수: PATCH 응답(include_permissions=True)도 strip — account.update 만으로 한도 열람 우회 차단.
     assert "_strip_quota_fields_if_unpermitted" in inspect.getsource(app.admin_update_account)
     # GET /api/admin/quotas 는 quota.read 게이트.
-    assert "quota.read" in inspect.getsource(app.admin_list_quotas)
+    assert "quota.read" in inspect.getsource(admin_quotas.admin_list_quotas)
 
     # 실 동작: list/dict 양형 + 보유 시 무변경.
     # _account_has_permission → _account_permissions 는 account["permissions"](code→bool) 를 읽는다.

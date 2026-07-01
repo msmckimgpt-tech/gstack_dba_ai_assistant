@@ -27,6 +27,7 @@ import datetime
 import json
 
 import app
+from routers import admin_sample_feedback
 import shared.db as _dbmod
 import modules.sample_feedback as _sfb
 
@@ -271,7 +272,7 @@ def test_approve_promotes_and_audits(monkeypatch):
     events = _audit_capture(monkeypatch)
 
     # P5b DI: account=Depends(require_permission) 마이그 → happy 경로는 account 명시 주입(require_permission 우회, 동작만 검증; perm-gate 는 별도 403 테스트).
-    resp = asyncio.run(app.admin_approve_sample_feedback(13, _FakeRequest({"weight": 90, "domain": "sales"}), account=admin))
+    resp = asyncio.run(admin_sample_feedback.admin_approve_sample_feedback(13, _FakeRequest({"weight": 90, "domain": "sales"}), account=admin))
     assert resp.status_code == 200
     out = _body(resp)
     assert out["ok"] is True
@@ -300,7 +301,7 @@ def test_approve_none_returns_409_no_audit(monkeypatch):
     monkeypatch.setattr(_sfb, "promote_feedback", lambda *a, **k: None)  # 👎 또는 비-pending
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.admin_approve_sample_feedback(99, _FakeRequest({}), account=admin))
+    resp = asyncio.run(admin_sample_feedback.admin_approve_sample_feedback(99, _FakeRequest({}), account=admin))
     assert resp.status_code == 409
     assert not any(e.get("action") == "sample.feedback.approve" for e in events), "비-승급 시 audit 미기록"
 
@@ -321,7 +322,7 @@ def test_reject_rejects_and_audits(monkeypatch):
     monkeypatch.setattr(_sfb, "reject_feedback", _fake_reject)
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.admin_reject_sample_feedback(21, _FakeRequest({}), account=admin))
+    resp = asyncio.run(admin_sample_feedback.admin_reject_sample_feedback(21, _FakeRequest({}), account=admin))
     assert resp.status_code == 200
     assert captured["conn"] is pg
     assert captured["feedback_id"] == 21
@@ -346,7 +347,7 @@ def test_list_serializes_pending_rows(monkeypatch):
     ]
     monkeypatch.setattr(_sfb, "list_pending_feedback", lambda conn, scope_key=None, limit=50: rows)
 
-    resp = app.admin_list_sample_feedback(_FakeRequest(), account=admin)
+    resp = admin_sample_feedback.admin_list_sample_feedback(_FakeRequest(), account=admin)
     assert resp.status_code == 200
     out = _body(resp)
     assert out["count"] == 2
