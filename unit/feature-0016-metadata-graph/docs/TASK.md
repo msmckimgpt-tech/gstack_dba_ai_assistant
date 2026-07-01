@@ -181,3 +181,24 @@ source_of_truth: true
   `unit/feature-0002-agent-core/alembic/versions/20260701_0028_node_analysis.py`,
   `unit/feature-0003-agent-web-ui/src/app.py`.
 - frontend: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`.
+
+## 11. graphux-expand-relax — 더블클릭 확장 시 신규노드 겹침 해소 (2026-07-01)
+
+### 11.0 맥락 / 요구
+- 사용자 후속 보고: 더블클릭 확장 시 (1) 컬럼이 세로로 안 펼쳐지고 (2) 신규 노드가 기존 노드와 겹쳐
+  가시성 매우 저하. "신규 노드를 나타낼 때 출현할 노드 주변의 노드를 부드럽게 밀어내 달라."
+- 진단: 컬럼 세로 스택 로직 자체는 정상(placeColumns). 근본원인 = 증분 레이아웃이 기존 노드 전부를
+  `fixedNodeConstraint` 로 고정 → 신규 노드(depth2 시 100+개)가 앵커 주변에 몰려 겹침(실측 seed 겹침쌍 502).
+- 등급: Minor (프론트 전용, 비파괴).
+
+### 11.1 구현 (admin.js)
+- [x] T11.1 `_metaGraphLayout` 증분 분기: 기존노드 전체고정 → **앵커만 고정 + 나머지 relax**
+      (nodeRepulsion 20000·idealEdgeLength 130·numIter 400·randomize:false·animate). 신규노드 반발이
+      주변을 밀어냄.
+- [x] T11.2 layout 전 컬럼 공통 unlock(force 참여·테이블 이동 추종) → layoutstop 재-스택+재-lock.
+- [x] T11.3 `_metaGraphExpand` 가 `anchorId` 전달. 캐시버스터 bump.
+
+### 11.2 검증
+- [x] T11.4 실측(라이브 인젝션): 128노드(신규127) 덴스 확장 seed 겹침쌍 502 → relax 후 **0**, fcose 68ms.
+- [x] T11.5 앵커 컬럼 스택 보존 확인(UniqueID→Type→Title→DLC, dx54·dy 55/85/115/145, round-taxi).
+- [ ] T11.6 적대 리뷰 + verify-completion + 배포(web) + PB-0008 라이브 최종 시각검증.

@@ -1284,3 +1284,15 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **§18.8 적대 패널 2렌즈**: 보안/authz VERDICT SAFE(5가설 REFUTED·BLOCKING 0), UX/regression VERDICT SOUND(5가설 REFUTED·BLOCKING 0). 상세 REV-20260630T005923-share-joinable-confirm-persist.
 - **Pass/Fail: PASS**. 요청1(생성 직후 참여 허용 확인 모달)·요청2(체크박스 상태 대화별 유지=회귀 해소) 코드/테스트 검증 완료.
 - **미수행(배포 후 사용자 확인 권장)**: PB-0008 Windows-browser 실 화면(링크 생성→'참여 허용 확인' 모달·취소 시 발급 중단·체크박스 토글 후 재진입 상태 유지) — WSL worktree 미실행(frontend render, 선례 동일).
+
+### TASK-0016 graphux-expand-relax — 더블클릭 확장 시 신규노드 겹침 해소(주변 노드 부드럽게 밀어냄) (frontend-only, feature-0016 연계)
+- **Environment: Windows-browser** (실제 Windows Chrome/149 via `bin/win-browser.py` relay `http://172.26.144.1:9223`, https://localhost/admin — 인증 세션). 관리콘솔 메타데이터 > 🕸 그래프 뷰, 데이터소스 mssql-qa-idc.
+  방법론: 배포 전 **런타임 인젝션 검증** — 실 그래프·실 데이터에 대해 신규 relax 설정(numIter 250·nodeRepulsion
+  16000·반경 R 밖 고정)을 그대로 실행해 실측·스크린샷 캡처(코드와 동일 config). **정식 배포 후 배포 번들로 최종 재확인.**
+- **정량 실측**:
+  - depth-2 덴스 확장(Achievement*, 128노드·신규 120): seed 겹침쌍 **502 → relax 후 17**(96.6%↓), fcose **153ms**.
+  - depth-1 확장(Achievement, 4컬럼): 겹침쌍 **4**, fcose **49ms**, 컬럼 ordinal 세로스택 보존(1@dy75·2@105·3@135·4@165).
+  - locality: 반경 밖 far 노드 이동 최소(depth-2 far 4중 0 이동) — 원거리 문맥 보존.
+- **시각(스크린샷 아티팩트)**: `scratchpad/pb0008-04..06` — 신규 노드가 주변 테이블을 밀어내 겹침 해소, 컬럼 세로스택+round-taxi 유지.
+- **Pass/Fail: PASS**(인젝션 검증) — 사용자 보고 2건 해소: (1) 더블클릭 시 컬럼 세로스택 가시화(겹침 제거로 판독), (2) 신규 노드가 주변 노드를 부드럽게 밀어냄(겹침 502→17). 잔여 minor 겹침(극단 depth-2 17쌍)은 numIter 250(perf) 유지 trade-off.
+- **배포 후 최종 확인**: web 재배포(배포 번들) 후 동일 시나리오 PB-0008 재확인 예정(선례 패턴).
