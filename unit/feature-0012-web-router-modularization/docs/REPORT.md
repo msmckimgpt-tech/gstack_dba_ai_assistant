@@ -54,7 +54,8 @@ P5b(app.py 모놀리스 router 분할, Critical). plan-eng-review(APPROVE-WITH-C
 - CHG-20260701-0011: **batch3 conversations 17(append) + products 22 전체추출** → conversations.py(append)·admin_products.py. 추출기 --append 모드 신규. 커플링 8유형(getsource 컨텍스트-substring). **app.py 23,536→20,542(~2,994↓)**, 21 router, make test 1313·0 fail. **잔여 app.py 라우트 16(session 시작 148 → 89% 추출)**.
 - 총 변경 횟수: 34
 - CHG-20260701-0012: **batch4 잔여 16 라우트 그룹 append** — conversations(ask+5)·share(2)·admin_console(4)·system(4). cross-call `ask` 처리(9번째 커플링). **app.py 20,542→18,917(~1,625↓). 잔여 @app 라우트 0 — 148 route 핸들러 전량 21 router 추출 완료.** make test 1313·0 fail. app.py = 헬퍼 + DI seam + include_router.
-- 총 변경 횟수: 35
+- CHG-20260701-0013: **batch4 배포·라이브 검증**(main b3175b6, PR #516). CI PASS → blue-green soak 통과. 라이브: healthz b3175b6·livez/readyz 200·ask 400 invalid-json(cross-call byte-동치)·system-prompts 401 verbatim. **route 핸들러 전량 추출 deploy-backed 완료.**
+- 총 변경 횟수: 36
 - **배포 20260701-b (batch1-3 마일스톤, main c031b5d, PR #513)**: CI PASS → blue-green soak 통과. 라이브(edge 112.185.196.20): healthz c031b5d·status=ok / 추출 6 라우트(accounts·profile·products·audits·datasources·conversations/members) 미인증 401 verbatim — 21 router 컨테이너 로드 정상 + DEFER/ALREADY-DI 인라인 auth byte-동치 프로덕션 확인. **app.py 28,224→20,542(session −7,682, 89% 추출).**
 - **배포 20260701 (admin/metadata 마일스톤, main 0b91b1b)**: PR #506 머지(CI test PASS 36s) → `sudo -E bin/deploy-web.sh` blue-green 무중단 롤링(web-a·web-b 순차 recreate, soak 90s 통과). deploy_scope: included(FIRST_REQUEST.md 전역 standing) 근거 자동 배포. **라이브 검증(edge 112.185.196.20)**: healthz git_commit=0b91b1b·status=ok / 추출 admin_metadata 라우트 `/api/admin/metadata/glossary`·`/samples` 미인증 **401 `{"error":"로그인이 필요합니다."}` verbatim**(DI seam byte-동치 프로덕션 확인 + 컨테이너 로드 import 정상, web_context류 위험 없음). insight/ask-worker GIT_COMMIT WARN 은 별건(웹 무관, quiet-time 재빌드 권장).
 

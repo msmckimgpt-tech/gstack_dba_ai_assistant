@@ -374,3 +374,8 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 커플링 9유형: 기존 8 + **(9) cross-call 핸들러**(route 이자 내부 함수). `ask`(POST /api/ask, fix-with-ai 가 내부 호출) 유일.
 - app.py 20,542→18,917(~1,625↓). **148 route 핸들러 전량 21 router 추출 — app.py = 헬퍼 라이브러리 + DI seam + include_router.**
 - 잔여 아키텍처: app.py ~18.9k = **헬퍼**(web_context 미이동 — 원래 monkeypatch 블로커, 별도 workstream). route-handler 모듈화는 완주. 완전 thin-app 은 web_context 헬퍼 추출 필요(DI seam 선행).
+
+## REV-20260701-0013 [SKIPPED:deploy-record — 라이브 smoke 게이트]
+- Related Change: CHG-20260701-0013 (batch4 배포·라이브 검증)
+- 결정적 검증: CI PASS(31s) → blue-green soak 통과·롤백 없음 → 라이브 edge healthz b3175b6·status=ok / livez·readyz 200 / **POST /api/ask 400 `invalid json`**(cross-call `ask` 의 pre-auth json 게이트 프로덕션 byte-동치 — 인라인 DEFER 로직 정상) / system-prompts·dashboard·public-share-fork 401 verbatim. 21 router 컨테이너 로드 정상.
+- 결론: **148 route 핸들러 전량 추출 deploy-backed 완료.** app.py session −9,307줄(~33%).

@@ -492,3 +492,11 @@ source_of_truth: true
 - Impact: **app.py 20,542→18,917 줄(~1,625↓).** **잔여 @app 라우트 0 — 148 route 핸들러 전량 21 router 로 추출 완료.** app.py = 헬퍼 라이브러리 + DI seam + 미들웨어 + include_router(조립부). make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral.
 - 학습: 커플링 9유형 = 기존 8 + **(9) cross-call 핸들러**(route 이자 내부 함수 — 추출 시 내부 caller 참조 `app.X`→동일모듈 bare + monkeypatch/hasattr 대상 모듈 전환). app.py 잔여(~18.9k)=헬퍼(web_context 미이동, 원래 블로커 — 별도 workstream).
 - Rollback: revert(4 router append 제거 + app.py 16 복원 + ask cross-call 원복 + 테스트·골든).
+
+## CHG-20260701-0013
+- Date: 2026-07-01
+- Related Requirement: P5b batch4(route 핸들러 전량 추출) 프로덕션 배포·라이브 검증(deploy-backed 완료).
+- Summary: PR #516 CI PASS → main 머지(b3175b6) → blue-green soak 통과. deploy_scope: included 자동. 라이브(edge 112.185.196.20): healthz b3175b6·status=ok / livez·readyz 200(public health 추출) / **POST /api/ask 400 `invalid json`(cross-call `ask` pre-auth json 게이트 byte-동치)** / system-prompts·dashboard·public/share/fork 401 verbatim.
+- Files: docs(코드 무변경, 배포 기록).
+- Impact: **route 핸들러 전량 추출 deploy-backed 완료.** app.py 28,224→18,917(session −9,307, ~33%). 21 도메인 router.
+- Rollback: `sudo -E bin/deploy-web.sh --rollback`.
