@@ -832,13 +832,14 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <!-- feature-0016: Cytoscape.js 3.30.2 (vendored, UMD window.cytoscape) — admin.js 의 그래프 뷰 의존. -->
-  <script src="/static/vendor/cytoscape.min.js?v=3.30.2"></script>
+  <!-- feature-0016 graph-webgl: Cytoscape.js 3.34.0 (vendored, UMD window.cytoscape) — WebGL 렌더러 지원 버전.
+       admin.js 가 renderer:{name:'canvas',webgl:true} 로 GPU 가속 렌더(canvas-2D 프레임 상한 해소). -->
+  <script src="/static/vendor/cytoscape.min.js?v=3.34.0"></script>
   <!-- feature-0016 graphux: fcose(compound 클러스터 force layout) 의존 체인 (순서 고정: layout-base→cose-base→fcose). -->
   <script src="/static/vendor/layout-base.js?v=2.0.1"></script>
   <script src="/static/vendor/cose-base.js?v=2.2.0"></script>
   <script src="/static/vendor/cytoscape-fcose.js?v=2.2.0"></script>
-  <script src="/static/admin.js?v=20260701-erd-spread"></script>
+  <script src="/static/admin.js?v=20260701-graph-webgl"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260630b-rn-0630"></script>
