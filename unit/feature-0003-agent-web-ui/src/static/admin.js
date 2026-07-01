@@ -3033,8 +3033,9 @@ function _metaInitGraph() {
       // 모션(레이아웃/카메라 애니메이션) 중 라벨 숨김 — 텍스트 래스터가 프레임 최대 비용. 정지 시 복원.
       { selector: "node.anim-hide-label", style: { "label": "" } },
       { selector: "node[label='Table']", style: { "font-weight": "bold" } },
-      // feature-0016 graphux5: Column 노드는 테이블 하단 세로 스택 — 라벨을 노드 오른쪽에 두어 세로 목록 가독성 확보.
+      // feature-0016 ERD-card: Column 은 테이블 compound 박스 안 세로 목록 — 작은 점 + 오른쪽 라벨.
       { selector: "node[label='Column']", style: {
+          "width": 12, "height": 12,
           "text-valign": "center", "text-halign": "right", "text-margin-x": 4, "text-margin-y": 0,
           "font-size": "10px", "text-max-width": "160px" } },
       // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
@@ -3043,6 +3044,14 @@ function _metaInitGraph() {
           "border-width": 1, "border-color": "#aab3c5", "border-style": "dashed",
           "shape": "round-rectangle", "padding": "16px",
           "label": "data(name)", "font-size": "13px", "font-weight": "bold", "color": "#3f4b8c",
+          "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
+      // feature-0016 ERD-card: 컬럼을 가진 Table 은 compound 박스(ERD 카드) — 이름 상단, 컬럼 목록 내부.
+      //   스키마(점선 남색)와 구분되게 teal 실선. fcose 가 이 박스 bounds 로 이웃 공간확보 → 겹침 원천 차단.
+      { selector: "node:parent[label='Table']", style: {
+          "background-color": "#0f7d8c", "background-opacity": 0.07,
+          "border-width": 1.5, "border-color": "#0f7d8c", "border-style": "solid",
+          "shape": "round-rectangle", "padding": "10px",
+          "label": "data(name)", "font-size": "12px", "font-weight": "bold", "color": "#0a5b66",
           "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
       // 검색 관련도 강조: rel 높을수록 진한 테두리.
       { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
@@ -3058,13 +3067,7 @@ function _metaInitGraph() {
           "target-arrow-shape": "triangle", "curve-style": "unbundled-bezier",
           "control-point-distances": "36", "control-point-weights": "0.5",
           "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
-      // feature-0016 graphux10: 테이블→컬럼(HAS_COLUMN)은 하단으로 '부드럽게 꺾이는' 직교 라우팅(round-taxi).
-      //   컬럼이 테이블 아래 세로로 펼쳐지며(_metaGraphPlaceColumns), 엣지가 아래로 내려가 각 컬럼으로 꺾인다.
-      { selector: "edge[label='HAS_COLUMN']", style: {
-          "curve-style": "round-taxi", "taxi-direction": "downward",
-          "taxi-turn": "24px", "taxi-turn-min-distance": "4px", "taxi-radius": 10,
-          "line-color": "#b7bfca", "target-arrow-color": "#b7bfca", "target-arrow-shape": "triangle",
-          "width": 1.3, "opacity": 0.9 } },
+      // ERD-card: HAS_COLUMN 은 compound 컨테인먼트로 표현(엣지 없음) — round-taxi 스타일 제거됨.
       // 레이아웃 애니메이션 중 엣지 숨김 — 매 프레임 엣지 지오메트리(bezier 제어점·화살표) 재계산이
       // 트윈 프레임의 주 비용(격리측정: 엣지표시 대비 트윈 40.8→21.4ms). 정착 시 복원.
       { selector: "edge.anim-hide", style: { "display": "none" } },
@@ -3098,9 +3101,7 @@ function _metaInitGraph() {
       _metaGraphShowDetail(key);       // 단일: 상세 카드만 갱신
     }
   });
-  // feature-0016 graphux5: 사용자가 Table 노드를 드래그하면 그 아래 컬럼 스택이 추종하도록 재정렬(lock 컬럼은
-  //   드래그 이동 불가 → 테이블만 이동, dragfree 에서 컬럼을 새 위치 아래로 재배치해 트리 구조 유지).
-  _metaGraph.cy.on("dragfree", "node[label='Table']", () => { if (!_metaGraph._layoutRunning) _metaGraphPlaceColumns(); });
+  // ERD-card: 컬럼은 테이블의 compound 자식 → 테이블(박스) 드래그 시 자식 컬럼이 자동 추종(별도 재배치 불필요).
   // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
   if (window.ResizeObserver && !_metaGraph.ro) {
     let rt = null;
@@ -3272,27 +3273,53 @@ async function _metaGraphExpand(key) {
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
 }
 
+// feature-0016 ERD-card: Column 의 compound 부모 = 소속 Table (scope:...fqn 에서 마지막 세그먼트 제거).
+//   컬럼을 테이블 박스 안에 넣어 겹침을 원천 차단(fcose 가 박스 bounds 로 이웃 공간확보). 미상 시 null.
+function _metaColParent(key, fqn) {
+  if (!key) return null;
+  const idx = key.indexOf(":");
+  if (idx < 0) return null;
+  const scope = key.slice(0, idx);
+  const f = fqn || key.slice(idx + 1);
+  if (!f) return null;
+  const parts = f.split(".");
+  if (parts.length < 2) return null;      // 최소 table.column
+  return scope + ":" + parts.slice(0, -1).join(".");   // 마지막(컬럼) 세그먼트 제거 → 테이블 fqn
+}
+
 // 반환: 이번에 새로 add 된 (compound 부모 제외) 노드 id 배열 — 증분 레이아웃이 이들만 자유 배치.
+//   ERD-card: Table/Schema 를 먼저 add(1-pass) 한 뒤 Column 을 add(2-pass) — 컬럼의 부모(테이블)가 존재하도록.
 function _metaGraphAddElements(nodes, edges) {
   const cy = _metaGraph.cy;
   if (!cy) return [];
   const added = [];
-  (nodes || []).forEach((n) => {
+  const arr = nodes || [];
+  const addNode = (n) => {
     if (!n || !n.key) return;
-    // 스키마 노드 = 카테고리 컨테이너(compound parent)로 사용.
     if (n.label === "Schema") { _metaEnsureCat(cy, n.key); return; }
-    // feature-0016 graphux5: ordinal(실제 스키마 컬럼 순서) — Column 세로 정렬 정렬키. 숫자만 채택(그 외 null).
     const ord = (typeof n.ordinal === "number" && isFinite(n.ordinal)) ? n.ordinal : null;
+    const isCol = (n.label === "Column");
+    // ERD-card: Column 부모 = 테이블(존재 시). 테이블 미존재(검색 nodes-only 등)면 스키마로 폴백.
+    let pid = null, isColFallback = false;
+    if (isCol) {
+      const tk = _metaColParent(n.key, n.fqn);
+      if (tk && cy.getElementById(tk).length) { pid = tk; }
+      else { pid = _metaCatParent(n.key, n.fqn); isColFallback = true; }   // 테이블 미존재 → 스키마 폴백(m2: 스키마 박스 보장)
+    } else {
+      pid = _metaCatParent(n.key, n.fqn);
+    }
     const existing = cy.getElementById(n.key);
     if (existing.length) {
       const upd = { label: n.label, name: n.name || n.fqn || n.key,
         fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
       if (typeof n.score === "number") upd.score = n.score;   // 항목1: pg_trgm 유사도
       existing.data(upd);
+      if (isCol && pid && existing.parent().id() !== pid && cy.getElementById(pid).length) {
+        try { existing.move({ parent: pid }); } catch (_) {}   // 컬럼을 테이블 박스로 재부모(스키마→테이블)
+      }
       return;
     }
-    const pid = _metaCatParent(n.key, n.fqn);
-    if (pid) _metaEnsureCat(cy, pid);
+    if (pid && (!isCol || isColFallback)) _metaEnsureCat(cy, pid);   // 스키마 컨테이너 보장(테이블 + 컬럼 스키마-폴백). 컬럼→테이블 부모는 존재 확인됨.
     const data = { id: n.key, label: n.label || "Node", name: n.name || n.fqn || n.key,
       fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
     if (typeof n.score === "number") data.score = n.score;   // 항목1: pg_trgm 유사도(엔드포인트 전달)
@@ -3301,10 +3328,13 @@ function _metaGraphAddElements(nodes, edges) {
     if (pid) data.parent = pid;
     cy.add({ group: "nodes", data });
     added.push(n.key);
-  });
+  };
+  arr.filter((n) => n && n.label !== "Column").forEach(addNode);   // 1-pass: Schema/Table/기타
+  arr.filter((n) => n && n.label === "Column").forEach(addNode);   // 2-pass: Column(부모 테이블 존재 후)
   (edges || []).forEach((e) => {
     if (!e || !e.source || !e.target) return;
-    if (e.type === "HAS_TABLE") return;   // 스키마→테이블은 compound 컨테인먼트로 표현(엣지 생략).
+    if (e.type === "HAS_TABLE") return;    // 스키마→테이블 = compound 컨테인먼트(엣지 생략).
+    if (e.type === "HAS_COLUMN") return;   // ERD-card: 테이블→컬럼 = compound 컨테인먼트(엣지 생략).
     const id = `${e.source}|${e.type}|${e.target}`;
     if (cy.getElementById(id).length) return;
     if (!cy.getElementById(e.source).length || !cy.getElementById(e.target).length) return;
@@ -3316,50 +3346,32 @@ function _metaGraphAddElements(nodes, edges) {
   return added;
 }
 
-// feature-0016 graphux5: 각 Table 의 HAS_COLUMN 자식(Column)을 테이블 바로 아래에 실제 순서(ordinal)로
-//   세로 스택 배치하고 lock 한다. force layout 이 컬럼을 흩뿌려 순서 판독이 안 되고 타 테이블 엣지와 교차하던
-//   문제를 제거. ordinal 미상(null)은 뒤로 밀고 name 순 tie-break. 우측으로 들여써(INDENT_X) HAS_COLUMN
-//   엣지가 '아래로 내려가 오른쪽으로 꺾이는' 트리 모양(round-taxi)이 되도록 한다. layoutstop 마다 호출 →
-//   테이블이 이동해도 컬럼이 그 아래로 추종.
-function _metaGraphPlaceColumns() {
+// feature-0016 ERD-card: fcose 제약으로 컬럼(테이블 compound 자식)을 박스 안에서 ordinal 세로 정렬 +
+//   fcose 가 각 테이블 박스 bounds 로 이웃 공간을 확보 → 겹침을 원천 차단(사후 배치·declutter 불필요; 실측:
+//   컬럼 순서 top→bottom 보존 + 박스 겹침 ~0). alignmentConstraint.vertical=컬럼 동일 x(세로 라인),
+//   relativePlacementConstraint=위→아래 gap(ordinal 순). 컬럼 노드는 compound 부모(테이블) 이동을 자동 추종.
+function _metaGraphColumnConstraints() {
   const cy = _metaGraph.cy;
-  if (!cy) return;
-  const INDENT_X = 54;     // 테이블 우하단 들여쓰기(엣지가 아래→오른쪽으로 꺾임)
-  const ROW_GAP = 30;      // 컬럼 간 세로 간격
+  const align = [], rel = [];
+  if (!cy) return { alignmentConstraint: { vertical: align }, relativePlacementConstraint: rel };
   try {
-    cy.batch(() => {
-      cy.nodes("[label='Table']").forEach((tbl) => {
-        if (tbl.isParent && tbl.isParent()) return;   // compound 부모(스키마)는 대상 아님
-        const cols = tbl.outgoers("edge[label='HAS_COLUMN']").targets().filter("[label='Column']");
-        if (!cols || !cols.length) return;
-        const arr = cols.toArray().sort((a, b) => {
-          const oa = a.data("ordinal"), ob = b.data("ordinal");
-          const na = (typeof oa === "number" && isFinite(oa)) ? oa : Number.MAX_SAFE_INTEGER;
-          const nb = (typeof ob === "number" && isFinite(ob)) ? ob : Number.MAX_SAFE_INTEGER;
-          if (na !== nb) return na - nb;
-          return String(a.data("name") || "").localeCompare(String(b.data("name") || ""));
-        });
-        const tp = tbl.position();
-        let th = 30; try { th = tbl.height() || 30; } catch (_) {}
-        const startY = tp.y + th / 2 + 40;   // 테이블(+하단 라벨) 아래 첫 컬럼
-        arr.forEach((c, i) => {
-          try {
-            c.unlock();
-            c.position({ x: tp.x + INDENT_X, y: startY + i * ROW_GAP });
-            c.lock();   // 이후 force layout 이 컬럼을 다시 흩뿌리지 않도록 고정(테이블 이동 시 재배치)
-          } catch (_) {}
-        });
+    cy.nodes("[label='Table']").forEach((t) => {
+      if (!(t.isParent && t.isParent())) return;
+      const cols = t.children("[label='Column']").toArray().sort((a, b) => {
+        const oa = a.data("ordinal"), ob = b.data("ordinal");
+        const na = (typeof oa === "number" && isFinite(oa)) ? oa : Number.MAX_SAFE_INTEGER;
+        const nb = (typeof ob === "number" && isFinite(ob)) ? ob : Number.MAX_SAFE_INTEGER;
+        if (na !== nb) return na - nb;
+        return String(a.data("name") || "").localeCompare(String(b.data("name") || ""));
       });
+      if (!cols.length) return;
+      if (cols.length >= 2) align.push(cols.map((c) => c.id()));
+      for (let i = 0; i < cols.length - 1; i++) rel.push({ top: cols[i].id(), bottom: cols[i + 1].id(), gap: 26 });
     });
   } catch (_) {}
+  return { alignmentConstraint: { vertical: align }, relativePlacementConstraint: rel };
 }
 
-// opts.incremental=true(더블클릭 확장): **신규 노드가 주변 기존 노드를 부드럽게 밀어내도록 relax**
-//   (앵커만 고정, 나머지 자유 + nodeRepulsion↑, randomize:false 로 현 배치에서 국소 완화). 이전의
-//   '기존 노드 전부 고정' 방식은 신규 노드를 앵커 주변에 몰아 겹침을 유발해 폐기(사용자 요청).
-//   인자 없음(초기 로드/검색): 좌표 없는 재구축이라 randomize:true + packComponents 유지(원점 뭉침 회피).
-// graphux: 레이아웃 종료(layoutstop)마다 _metaGraphPlaceColumns 로 컬럼을 테이블 아래 세로 정렬 + lock.
-//   두 경로 모두 layout 전 컬럼 lock 해제(stale 고정점 왜곡 방지 + 테이블 이동 추종) → 종료 후 재정렬+재lock.
 function _metaGraphLayout(opts) {
   if (!_metaGraph.cy) return;
   opts = opts || {};
@@ -3367,9 +3379,14 @@ function _metaGraphLayout(opts) {
   const cnt = cy.nodes().length;
   const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
-  // 두 경로 공통: layout 전 컬럼 lock 해제 → force 에 참여(테이블 이동 추종·stale 고정점 왜곡 방지),
-  //   layoutstop 에서 _metaGraphPlaceColumns 가 테이블 아래로 재-스택+재-lock.
-  try { cy.nodes("[label='Column']").unlock(); } catch (_) {}
+  // ERD-card: 컬럼(테이블 compound 자식)을 박스 안에서 ordinal 세로 정렬하도록 fcose 제약을 구성해 두 경로 cfg 에
+  //   병합한다. 컬럼은 compound 부모(테이블) 이동을 자동 추종 → 별도 lock/사후 배치 불필요.
+  //   **제약이 비면(컬럼 0개) cfg 에 넣지 않는다** — fcose 는 constraint 객체 존재만으로 tile/packComponents 를
+  //   꺼버려(빈 배열도 truthy) 검색·초기로드의 비연결 노드가 흩어짐. 제약이 있을 때만 병합(_ccCfg).
+  const _cc = _metaGraphColumnConstraints();
+  const _ccCfg = (_cc.relativePlacementConstraint.length || _cc.alignmentConstraint.vertical.length)
+    ? { alignmentConstraint: _cc.alignmentConstraint, relativePlacementConstraint: _cc.relativePlacementConstraint }
+    : {};
   const base = {
     nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
     uniformNodeDimensions: false,
@@ -3400,12 +3417,15 @@ function _metaGraphLayout(opts) {
         const R = 160 + Math.sqrt(Math.max(1, newCount)) * 55;   // 신규 규모에 비례한 완화 반경
         const fixed = [];
         cy.nodes().forEach((n) => {
-          if (n.isParent()) return;                                  // compound 부모는 자식으로 자동 산정
+          const isAnchor = !!(opts.anchorId && n.id() === opts.anchorId);
+          // M1: compound 부모는 자식이 대신 산정되나, **앵커(컬럼 보유 테이블=compound)는 반드시 고정**해 뷰
+          //   튐 방지. 앵커 parent 를 fixed 에 넣어도 alignment/relative 는 그 자식(컬럼)에 걸려 충돌 없음.
+          if (n.isParent() && !isAnchor) return;
           if (opts.newIdSet && opts.newIdSet.has(n.id())) return;     // 신규는 자유(push 주체)
-          if (n.data("label") === "Column") return;                  // 컬럼은 자유(후 재배치)
+          if (n.data("label") === "Column") return;                  // 컬럼은 제약(alignment/relative) 관리 — fixed 제외
           const p = n.position();
-          // 앵커는 항상 고정(뷰 안정). 반경 밖 노드도 고정(원거리 문맥 보존). 반경 안(앵커 제외)만 자유(밀림).
-          if ((opts.anchorId && n.id() === opts.anchorId) || Math.hypot(p.x - cx, p.y - cy0) > R) {
+          // 앵커는 항상 고정. 반경 밖 노드도 고정(원거리 문맥 보존). 반경 안(앵커 제외)만 자유(밀림).
+          if (isAnchor || Math.hypot(p.x - cx, p.y - cy0) > R) {
             fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
           }
         });
@@ -3414,6 +3434,7 @@ function _metaGraphLayout(opts) {
           animationDuration: 500, packComponents: false, numIter: 250,   // 프리즈 완화 커밋(1bb45f3) 수치 유지
           nodeRepulsion: () => 16000, idealEdgeLength: () => 130,         // 국소 push 용 완만한 반발(전 노드 자유 아님)
           fixedNodeConstraint: fixed,   // 앵커 + 반경 밖 노드 고정 → 항상 비어있지 않음(전체폭발 방지)
+          ..._ccCfg,   // 컬럼 있을 때만 alignment/relativePlacement 병합(M2: 빈 제약이 tile 끄는 것 방지)
         });
       } else {
         // 초기 로드/검색 펼침 애니메이션. quality proof→default + numIter 대폭 축소로 **fcose 동기 계산
@@ -3423,6 +3444,7 @@ function _metaGraphLayout(opts) {
         cfg = Object.assign({}, base, {
           name: "fcose", randomize: true, quality: "default", fit: true, padding: 40,
           animationDuration: 700, packComponents: true, numIter: cnt > 200 ? 600 : 1000,
+          ..._ccCfg,   // 컬럼 있을 때만 병합(M2: 빈 제약이 tile/packComponents 끄는 것 방지)
         });
       }
       try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}   // 동시성: 진행 중 레이아웃 중단(연타·경쟁 방지)
@@ -3437,7 +3459,7 @@ function _metaGraphLayout(opts) {
       layout.one("layoutstop", () => {
         _metaGraph._layoutRunning = false;
         if (hideMotion) { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} }
-        _metaGraphPlaceColumns();   // 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
+        // ERD-card: 컬럼은 제약(alignment/relativePlacement)으로 박스 안에 이미 ordinal 정렬됨 — 사후 배치 불필요.
         // 확장: 신규 이웃 영역으로 카메라 부드럽게 이동(애니 복원). 초기 로드: 스프레드가 이미 애니라 즉시 맞춤.
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
@@ -3456,7 +3478,7 @@ function _metaGraphLayout(opts) {
     const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
       idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
     _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; _metaGraphPlaceColumns(); });
+    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; });
     layout.run();
   } catch (_) {}
 }

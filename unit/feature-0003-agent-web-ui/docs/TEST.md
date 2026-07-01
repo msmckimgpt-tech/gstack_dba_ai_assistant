@@ -1298,3 +1298,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **시각(스크린샷 아티팩트)**: `scratchpad/pb0008-04..06` — 신규 노드가 주변 테이블을 밀어내 겹침 해소, 컬럼 세로스택+round-taxi 유지.
 - **Pass/Fail: PASS**(인젝션 검증) — 사용자 보고 2건 해소: (1) 더블클릭 시 컬럼 세로스택 가시화(겹침 제거로 판독), (2) 신규 노드가 주변 노드를 부드럽게 밀어냄(겹침 502→17). 잔여 minor 겹침(극단 depth-2 17쌍)은 numIter 250(perf) 유지 trade-off.
 - **배포 후 최종 확인 (배포 번들, 2026-07-01) PASS**: web 재배포(git_commit=e2efac2, soak 통과) 후 배포된 `admin.js?v=graphux-expand-relax` 로 동일 시나리오 재확인 — 검색 achievement→Achievement 더블클릭 확장(신규 120, 총 300노드) 결과 **겹침쌍 0**, Achievement 컬럼 ordinal 세로스택 유지(1@dy75·2@105·3@135·4@165). 스크린샷 `scratchpad/pb0008-07-DEPLOYED-final.png`.
+
+### TASK-0016 ERD 카드 — 컬럼을 테이블 compound 박스 안에(겹침 원천 차단) (frontend-only, feature-0016 연계)
+- **Environment: Windows-browser** (실 Windows Chrome/149 via `bin/win-browser.py` relay, https://localhost/admin 인증 세션). 메타데이터 > 🕸 그래프 뷰, mssql-qa-idc.
+  방법론: 배포 전 **런타임 인젝션 검증**(코드와 동일 로직: 컬럼을 테이블 compound 자식으로 재부모 + fcose alignment/relativePlacement 제약). **정식 배포 후 배포 번들 재확인.**
+- **정량 실측**: 3 테이블 박스·컬럼 25 — 컬럼 순서 top→bottom **보존(true)**, 최상위 박스 겹침 **1쌍**(이전 satellite 11쌍), fcose 131ms. node --check OK.
+- **Pass/Fail: PASS**(인젝션) — 사용자 보고(더블클릭 시 컬럼 스택이 이웃 테이블과 겹침, 3회) 해소: 컬럼이 테이블 박스 안 ordinal 세로 목록으로 들어가고 fcose 가 박스 bounds 로 이웃 공간을 확보해 겹침 원천 차단.
+- **배포 후 최종 확인**: web 재배포(배포 번들) 후 다컬럼 테이블 더블클릭 PB-0008 재확인 예정.
