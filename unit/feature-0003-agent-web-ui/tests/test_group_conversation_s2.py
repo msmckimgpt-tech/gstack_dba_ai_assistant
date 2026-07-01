@@ -15,6 +15,9 @@ from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 APP = (_SRC / "app.py").read_text(encoding="utf-8")
+# feature-0012 P5b: 추출된 도메인 router 텍스트도 포함(핸들러 이동 대응).
+ROUTERS = "".join(p.read_text(encoding="utf-8") for p in sorted((_SRC / "routers").glob("*.py")))
+APP_ALL = APP + ROUTERS
 ADMIN_JS = (_SRC / "static" / "admin.js").read_text(encoding="utf-8")
 
 
@@ -40,8 +43,8 @@ def test_member_endpoints_registered():
 
 def test_share_join_endpoint_registered():
     # feature-0009: 공유 링크로 참여(join) — username 직접 초대를 대체.
-    assert '@app.post("/api/share/{token}/join")' in APP
-    assert 'action="conversation.member.join"' in APP
+    assert '@app.post("/api/share/{token}/join")' in APP_ALL or '@router.post("/api/share/{token}/join")' in APP_ALL
+    assert 'action="conversation.member.join"' in APP_ALL
 
 
 def test_member_manage_permission_and_audit():
