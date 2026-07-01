@@ -1,5 +1,64 @@
 # Report
 
+## 2026-07-01 · 암묵 관계(FK 미선언) 추론 + 자기교정 강화 엔진 (implicit-edges cycle)
+
+**요청**: `관리 콘솔 > 메타데이터 > 그래프 뷰` 가 저장하는 연결에서, insight 가 파악한 데이터소스 중
+**FK 로 직접 확인 안 되는 뉘앙스적 연결(암묵 JOIN 관계)** 을 파악해 사람·AI 가 쉽게 보게 하되, 그 연결이
+정말 올바른지 **항상 검증**해 틀리면 가중치가 약해져 끊어지고(broken) 맞으면 강해져 신뢰(trusted) 관계로
+재구성되게 한다.
+
+**배경**: feature-0016 이 남긴 미완 과제(REPORT 하단 "엣지 적재: 현 0 … 대화 JOIN 학습·LLM 추론으로
+점증", "T1.6 FK 미선언 보완")의 본체. 게임 운영 DB 8,122 테이블이 FK 를 거의 선언 안 해 그래프에 선이 없다.
+
+**사용자 결정 (2026-07-01, entry persona dispatch)**:
+- 검증 방식 = **관찰 + 능동프로브 하이브리드**: AI JOIN 사용 성공(관찰) + insight 워커의 실데이터
+  겹침(EXISTS) 프로브(능동)로 양성/음성 신호 생성.
+- 범위 = **풀 슬라이스**: 추론 + 강화엔진 + 그래프 가중치 투영 + AI 컨텍스트 필터 + UI 신뢰/추정/파단 구분.
+
+### 설계 (정적 confidence ↔ 동적 weight 분리)
+- **스키마 (alembic 0026, 비파괴 ADD COLUMN)**: `table_relationships` 에 `weight`(동적 신뢰),
+  `positive_signals`/`negative_signals`, `status`(candidate/trusted/broken), `last_validated_at` 추가 +
+  source CHECK 에 `'inferred'` 추가 + 상태/가중 정렬 인덱스. 기존 행 backfill(weight←confidence).
+- **추론** (`relationships.infer_implicit_relationships`, 순수): 명명 규칙 2 휴리스틱 — (1) `<base>_id`
+  컬럼 → 동명 테이블 PK(name_fk), (2) 접두 있는 키 컬럼 공유(shared_key). 범용 컬럼·과다공유 차원 제외,
+  cap 으로 8K 폭주 방지. source='inferred', status='candidate' 로 시작.
+- **강화 엔진** (`next_reinforcement_state`, 순수 + `apply_relationship_signal`): 양성 `w+=step*(1-w)`(점근
+  상승), 음성 `w*=(1-step)`(더 빠른 감쇠 — 비대칭). w≤0.15 → broken, w≥0.85+양성누적 → trusted.
+  **FK 는 권위적 — 강등 없음.** upsert on-conflict 가 강화상태 보존(재추론이 파단 엣지 부활 안 함).
+- **"항상 파악" 2 경로**: (a) 대화 — 성공한 JOIN = 양성(`learn_relationships_from_sql` 이 upsert+강화),
+  (b) insight 워커 — candidate 를 실데이터 겹침 프로브로 검증(겹침률 ≥0.5 양성 / ==0 음성). 둘 다 guarded.
+- **노출**: read·context 주입은 broken 제외 + weight 정렬 + `[추정 w=…]`/`[신뢰]` 태그(AI 가 신뢰수준 인지).
+  그래프 투영은 REFERENCES 엣지에 weight/status → UI 신뢰=실선 / 추정=점선 / 파단=숨김 + 범례·상세 배지.
+- **config**: `AGENT_RELATIONSHIP_INFERENCE_ENABLED`·`_PROBE_ENABLED`(기본 ON) + `_INFER_CAP`/`_PROBE_CAP`/
+  `_PROBE_SAMPLE`.
+
+### 변경 파일
+- `feature-0002-agent-core`: `alembic/…0026_relationship_reinforcement.py`(신규), `modules/relationships.py`
+  (추론·강화·프로브 엔진), `modules/insight.py`(추론+프로브 훅), `modules/metadata_graph.py`(weight/status
+  투영·broken 제외), `modules/dialects.py`(probe_relationship_overlap MySQL/MSSQL).
+- `shared/config.py`(플래그 5).
+- `feature-0003-agent-web-ui`: `static/admin.js`(엣지 status/weight 데이터·신뢰 배지), `static/admin.html`
+  (범례·캐시버스터), `static/styles.css`(신뢰 스타일).
+
+### 검증
+- **단위 테스트 PASS** (`test_relationships.py`, 총 38건): 강화 전이(점근 상승·**비대칭 전 구간**·broken
+  파단·trusted 승격·FK 불변·50% 오양성에도 파단), 프로브 판정 임계·타임아웃, 추론 휴리스틱(name_fk·
+  shared_key·범용/과다공유 제외·cap), digest 신뢰 태그·7-tuple 하위호환, dialect 프로브 SQL(LIMIT/TOP·
+  식별자 이스케이프·시간상한).
+- py_compile 6 모듈 OK · admin.js `node --check` OK · ruff clean · 전체 suite collection EXIT=0(import 무회귀).
+- ON CONFLICT ↔ UNIQUE 불변식 테스트 유지(target 무변경).
+- **§18.8 적대 패널(security + backend/qa) 2회 — REV-20260701-0002**: SECURITY 1 MINOR(프로브 statement
+  timeout 부재) + BACKEND 4 MAJOR(비대칭 역전·테스트 은폐·파단 엣지 그래프 미회수·downgrade 실패) + 3 MINOR
+  (signal race·dead cap config·FK 승격 카운터) — **전건 수정 후 SHIP**. 특히 MAJOR-1(추론 시작 weight 0.30
+  구간에서 비대칭 역전 → 틀린 엣지 상승)은 곱셈 감쇠를 고정 감산으로 바꿔 전 구간 down>up 보장으로 해소.
+
+### 잔여 / 후속
+- **라이브 e2e = cutover 된 AGE 스택 필요**: alembic 0026 적용 + insight 워커 재빌드 후 `metadata-graph-sync
+  --rebuild` → 그래프에 추정 엣지(점선) 출현 확인은 배포 게이트 대상. 프로브는 운영 DB read-only(키 컬럼
+  표본 LIMIT 50, cap).
+- 주기 re-probe: 현재는 스키마 구조 변경/신규 시 프로브. 상시 재검증은 sync cron 확장(후속).
+- PB-0008 실제 브라우저에서 점선/실선·배지 시각 확인(배포 후).
+
 ## 2026-06-30 · 라벨 비겹침 펼침 + dbo→DB명 클러스터링
 
 **요청1 (라벨 겹침)**: dbo 클러스터 노드 라벨이 겹쳐 판독 불가 → fcose `nodeDimensionsIncludeLabels:true`
