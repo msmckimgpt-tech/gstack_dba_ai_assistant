@@ -1,5 +1,39 @@
 # Report
 
+## 2026-07-01 · 그래프 뷰 컬럼 테이블 하단 실제순서 세로배치 + 부드럽게 꺾이는 엣지 (graphux9/10, 배포 완료)
+
+**요청**: `관리 콘솔 > 메타데이터 > 그래프 뷰` 에서 청색(테이블) 노드에 연결된 회색(컬럼) 노드가 흩어져
+순서 판독이 안 되고 타 테이블 엣지와 교차 → (1) **테이블 노드 하단으로 컬럼을 실제 순서대로** 세로 배치,
+(2) 연결선을 직선이 아닌 **부드럽게 꺾이는 선**으로.
+
+**구현** (PR #496, `column-ordinal`):
+- **컬럼 순서(ordinal)를 관계형 SSOT 에 저장**: alembic **0027** `column_descriptions.ordinal`(비파괴 ADD +
+  삽입순 backfill, expand-safe) → `metadata_graph.sync_column` 이 AGE Column 정점에 정수 투영 → 그래프 API →
+  프론트 정렬키. 부트스트랩 골격 저장이 `describe_columns`(ORDINAL_POSITION) 순서를 ordinal 로 캡처.
+- **프론트(admin.js graphux10)**: `_metaGraphPlaceColumns` 가 각 Table 의 HAS_COLUMN 자식을 ordinal(NULLS
+  LAST→name) 정렬해 테이블 바로 아래(우측 54px 들여쓰기) 세로 스택 + lock, `dragfree` 로 테이블 이동 추종.
+  `HAS_COLUMN` 엣지 = `round-taxi`(아래→오른쪽 부드럽게 꺾임), 그 외 = `unbundled-bezier`(완만 곡선).
+- graphux8b/9(모션 성능·라벨/엣지 트윈 숨김) 정책과 정합(카메라 무애니 `cy.fit` 유지).
+
+**검증**:
+- 적대 리뷰 2패널(backend/security + frontend/ux) — 발견 결함 전건 수정(REVIEW.md REV-20260701-0003):
+  update_column_desc param 정합·sync_graph graceful·Table drag 컬럼 추종(dragfree)·ordinal 범위가드.
+- 순수함수 단위 8건 PASS(ordinal 직렬화·주입안전) · migrate-lint expand-safe · py_compile/node --check OK.
+- **배포**(deploy_scope: included): migrate 0027(라이브 적용, 기존 1030 컬럼행 ordinal backfill) + insight-worker
+  재빌드 + `metadata-graph-sync`(1030 컬럼 ordinal 투영, errors 0) + web 롤링 재배포(git_commit=47d0f1a,
+  edge /healthz 200 안정). ※ 초기 롤링 1회는 동시 재sync 부하로 /healthz 순간 503 → 자동 롤백된 false-positive,
+  재sync 종료 후 정상 배포 확정.
+- **PB-0008 실 Windows 브라우저 시각검증 PASS**(TEST.md §3): Achievement(4컬럼) 테이블 하단 UniqueID→Type→
+  Title→DLC 순 세로배치 + round-taxi 엣지, Item(75컬럼) ordinal 단조 정렬. API 도 1030 컬럼 ordinal 반환 확인.
+
+**주의(발견·복구)**: 최초 작업이 stale `graphux4` base(main 대비 −16커밋) 위에서 진행됨을 배포 직전 발견 →
+현재 main(graphux8b/9 + implicit-edges) 위로 재기반(충돌 6+1파일 해소, 성능 결정 존중, 마이그 0026→0027 재번호).
+
+**후속**: MSSQL `column_descriptions.schema_name`(DB명, 예 `dk_data_release`)과 `rag_objects` 투영 테이블 fqn
+(예 `dk_data_release_test.*`)의 **키 불일치**로, 일부 테이블은 그래프에서 rag-투영 노드와 curated-컬럼 노드가
+서로 다른 Table 키에 걸린다(REPORT 2026-06-30 dbo→DB명 정규화 잔여와 동일 계열). 컬럼이 보이는 것은
+curated schema_name 과 일치하는 Table 노드 확장 시 — 근본 정규화는 별도 initiative 권장.
+
 ## 2026-07-01 · 암묵 관계(FK 미선언) 추론 + 자기교정 강화 엔진 (implicit-edges cycle)
 
 **요청**: `관리 콘솔 > 메타데이터 > 그래프 뷰` 가 저장하는 연결에서, insight 가 파악한 데이터소스 중

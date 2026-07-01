@@ -53,8 +53,22 @@ docker run --rm --network container:pgage-t \
 - **AGE 통합(test_metadata_graph_age.py 검증 4d 추가)**: sync_column(ordinal=1/2) → neighborhood 노드가
   ordinal 보유. **컨테이너 재실행 필요**(AGE) — 배포 시 metadata-graph-sync 후 확인.
 - **admin.js 구문**: `node --check` OK.
-- **py_compile**: kb_metadata·metadata_graph·app.py·alembic 0026 OK.
-- **PB-0008 실 Windows 브라우저 시각검증**: 배포 후 수행(visual_verification_scope: always, verify check #13). 〔대기〕
+- **py_compile**: kb_metadata·metadata_graph·app.py·alembic 0027 OK.
+- **API e2e (배포 후, 인증 브라우저)**: `GET /api/admin/metadata/columns?scope_key=mssql-06656002eda6` → HTTP 200,
+  1030 컬럼 전건 `ordinal` 반환(예: Item 75컬럼 1:TemplateID·2:SortNum·3:Name…, DDL 순). ordinal 파이프라인
+  (migration 0027 → column_descriptions → sync → API) 정합 확인.
+
+#### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 2026-07-01 PASS
+- 절차: `bin/win-browser.py launch` (Chrome 149, relay mode) → 관리콘솔 `메타데이터 > 🕸 그래프 뷰` →
+  데이터소스 `mssql-qa-idc` 선택 → 검색/확장(`_metaGraphExpand`).
+- **케이스1 `dk_data_release.Achievement`(4컬럼)**: Table 노드 하단으로 컬럼이 **실제 순서대로 세로 배치** —
+  UniqueID(ord1,y65)→Type(ord2,y95)→Title(ord3,y125)→DLC(ord4,y155), x=172(테이블 x=118 +54 들여쓰기).
+  Table→Column 연결선이 **직선이 아닌 부드럽게 꺾이는 선(round-taxi)** 으로 아래→오른쪽 트리 라우팅.
+  스크린샷: `scratchpad/pb0008-03-columns-below-table.png`(세션 아티팩트).
+- **케이스2 `dk_data_release.Item`(75컬럼) 스케일**: 75 HAS_COLUMN 엣지, ordinal top→bottom **단조 정렬**
+  (1,2,3…73,74,75) — 대량 컬럼도 순서 정확. (긴 세로 스택은 줌으로 탐색, N1 판독성 MINOR 는 허용범위.)
+- **결과: PASS** — 두 사용자 요구(①컬럼 테이블 하단 실제순서 세로배치 ②부드럽게 꺾이는 연결선) 모두 라이브 충족.
+  배포 커밋 `git_commit=47d0f1a`, 자산 `admin.js?v=20260701-graphux10`, edge /healthz 200 안정.
 
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
