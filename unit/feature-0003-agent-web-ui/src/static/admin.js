@@ -3007,14 +3007,12 @@ function _metaInitGraph() {
     minZoom: 0.15, maxZoom: 2.5, wheelSensitivity: 0.3,
     // 렌더 성능(프레임 부드럽게): 아래는 전부 프레임당 그리기 부하를 '줄이는' 옵션이라 성능 저하 없음.
     // - pixelRatio:1 — 고DPI 디스플레이에서 캔버스를 devicePixelRatio(보통 2)² = 4배 픽셀로 래스터하던 것을
-    //   1x 로 고정. 프레임당 채우는 픽셀 수가 최대 병목(측정: 1x 전환 시 jank 프레임 21→9, 노드 더 많은데도 감소).
-    //   트레이드오프: 정지 화면이 약간 소프트해짐(그래프 도형/텍스트라 가독 영향 미미). 필요 시 1.5 로 상향 가능.
-    // - motionBlur: 모션 중 프레임 병합 렌더 → 부드러운 체감.
-    // - textureOnViewport: 팬/줌 시 캐시 텍스처 재사용(전 요소 재렌더 생략).
-    // - hideEdgesOnViewport: 팬/줌 중 엣지 그리기 생략.
-    // (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
+    //   1x 로 고정. 프레임당 채우는 픽셀 수가 최대 병목(격리측정: pixelRatio 만 지배적 — 30노드 fit-애니
+    //   jank 11→1). 트레이드오프: 정지 화면이 약간 소프트(그래프 도형/텍스트라 가독 영향 미미).
+    // - textureOnViewport / hideEdgesOnViewport: 수동 팬/줌 시 캐시 텍스처·엣지 생략(대형 그래프 도움).
+    // - motionBlur 는 제거함: 격리측정상 프레임 병합 합성 패스가 오히려 jank 를 늘림(11→14, 이득 0).
+    //   (라벨 텍스트 래스터도 프레임 큰 비용 — 모션 중 라벨 숨김은 _metaGraphLayout 에서 처리.)
     pixelRatio: 1,
-    motionBlur: true,
     textureOnViewport: true,
     hideEdgesOnViewport: true,
     style: [
@@ -3197,7 +3195,7 @@ async function _metaGraphExpand(key) {
     _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus });
   } else {
     // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
-    try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 300 }); } catch (_) {}
+    try { const a = cy.getElementById(key); if (a && a.length) cy.center(a); } catch (_) {}
   }
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
@@ -3294,8 +3292,10 @@ function _metaGraphLayout(opts) {
       layout.one("layoutstop", () => {
         if (hideLabels) { try { cy.nodes().removeClass("anim-hide-label"); } catch (_) {} }
         if (incremental && opts.focusEles && opts.focusEles.length) {
-          // 노드는 이미 즉시 배치됨 — 카메라만 신규 이웃 영역으로 부드럽게 이동(캐시 텍스처라 저부하).
-          try { cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" }); } catch (_) {}
+          // 카메라도 '즉시' 이동(cy.fit, 애니메이션 없음). viewport 애니메이션은 프레임당 전체 캔버스를
+          // 다시 채우므로(노드 수 무관 고정 오버헤드), HW 가속이 약하거나 캔버스가 큰 환경에선 소수 노드에서도
+          // 저프레임의 원인이 된다. 노드 배치·카메라 모두 무애니 → 더블클릭 전체에 끊길 프레임 자체가 없음.
+          try { cy.fit(opts.focusEles, 80); } catch (_) {}
         }
       });
       layout.run();
