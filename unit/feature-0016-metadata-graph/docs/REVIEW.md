@@ -66,3 +66,31 @@ source_of_truth: true
 - Open Questions: 없음.
 - Human Approval Needed: 프로브가 운영 DB 키 컬럼 실데이터를 read(집계만 egress) — deploy 전 데이터 접근
   정책 확인 권장. `AGENT_RELATIONSHIP_PROBE_ENABLED=0` 으로 프로브만 비활성 가능(추론·관찰 강화는 유지).
+
+## REV-20260701-0003 [SUBAGENT:graphux5-ordinal-column-layout-2panel]
+- Related Change: CHG-20260701-graphux5-column-ordinal (컬럼 세로 정렬 + ordinal 투영 + 부드럽게 꺾이는 엣지).
+- 방식: §18.8 적대 패널 2렌즈 병렬 — (a) backend/security(injection·SQL·migration·회귀), (b) frontend/ux
+  (lock/unlock·좌표·엣지 geometry·bootstrap ordinal 인덱스·회귀). 결함 적발 목적.
+- Backend/Security 결과:
+  - **injection: CLEAN** — `_props_set` 정수 분기는 `int(v)` 검증 후 `f"{iv}"`(=[0-9-] 만) 렌더라 Cypher/SQL
+    본문·dollar-quote 탈출 불가. app.py ordinal 도 int() + bind param. 적대 입력(`"1); DROP GRAPH"` 등) 전부 무해화.
+  - **MAJOR(latent) — `update_column_desc` placeholder/param 불일치**: `int()` 예외 시 `ordinal=%s` placeholder 는
+    남고 param 미추가 → 개수 불일치로 psycopg 에러. HTTP 경로는 app.py 선-coerce 로 미도달이나 직접 호출 시 결함.
+    **→ 수정**: coerce-first 후 성공 시에만 placeholder+param 추가(upsert 와 정합). (kb_metadata.py)
+  - **MINOR — `sync_graph` step2 SELECT graceful 미보장**: 마이그 전 DB(ordinal 컬럼 부재)에서 SELECT 실패 시
+    잔여 단계(관계/용어) 중단. 다른 단계(0/4/5)와 달리 try/except 부재. **→ 수정**: step2 를 try/except: pass 로 래핑.
+  - MINOR(21자리 ordinal → PG int 초과 500): app.py POST/PUT 에 `0<ordinal<=100000` 범위 가드 추가(→ None). **수정**.
+  - CLEAN: COALESCE(명시 우선·미제공 보존), 마이그 0026(expand-safe·backfill 파티션·IS NULL 보존·downgrade),
+    sync_graph unpack(7:7), search RETURN(ncols=7↔row[6]), 기존 호출부 무회귀.
+- Frontend/UX 결과:
+  - **MAJOR M1 — Table 드래그 시 locked 컬럼 미추종(주석 불일치)**: `_metaGraphPlaceColumns` 가 layoutstop 에서만
+    호출 → 사용자가 Table 드래그하면 컬럼은 고정·엣지만 늘어나 트리 붕괴. **→ 수정**: `cy.on("dragfree",
+    "node[label='Table']", _metaGraphPlaceColumns)` 추가 — 드롭 시 컬럼 재정렬로 트리 유지. (admin.js)
+  - MINOR N1(다수 컬럼 트렁크 겹침 판독성), N2(REFERENCES 크로스 엣지 자유도↓), N3(incremental 신규 컬럼 일시 흩뿌림
+    cosmetic): 기능 결함 아님 — PB-0008 시각검증에서 확인 후 필요 시 taxi geometry 튜닝. 원장 기록.
+  - CLEAN: bootstrap ordinal 인덱스(DOM순=describe_columns ORDINAL_POSITION순, 페이지네이션 DOM 보존, 변경행만
+    저장해도 전체 idx 정확), HAS_COLUMN 방향(source=Table), 초기 로드 no-op, lock/unlock 정합, curve-style 3.30.2 지원,
+    compound 좌표(model 절대좌표·padding 자동확장).
+- Risks (수정 후): 잔여 BLOCKER/MAJOR 0. N1~N3 MINOR 는 시각검증 게이트에서 판정. 라이브 e2e 는 PB-0008.
+- Open Questions: 없음.
+- Human Approval Needed: 없음(비파괴 additive·deploy_scope: included). PB-0008 실 브라우저 시각검증은 완료 hard gate(check #13).

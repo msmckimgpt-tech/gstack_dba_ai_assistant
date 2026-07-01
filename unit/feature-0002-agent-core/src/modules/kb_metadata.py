@@ -64,13 +64,17 @@ def list_table_desc_admin(conn, scope_key, limit=_TABLE_ADMIN_LIMIT):
 
 
 def list_column_desc_admin(conn, scope_key, limit=_COLUMN_ADMIN_LIMIT):
-    """admin 목록 — 단일 scope 의 컬럼 설명 행(id 포함). table/column 순."""
+    """admin 목록 — 단일 scope 의 컬럼 설명 행(id 포함). 테이블별로 실제 컬럼순(ordinal)→이름순.
+
+    feature-0016 graphux5: ordinal(실제 스키마 순서, NULL 가능)을 반환에 포함하고, 정렬도 테이블 내
+    ordinal(NULLS LAST)→column_name 순으로 바꿔 목록이 스키마 순서와 일치하도록 한다.
+    """
     cur = conn.cursor()
     try:
         cur.execute(
             "SELECT id, scope_key, schema_name, table_name, column_name, description, "
-            "source, created_at, updated_at FROM column_descriptions WHERE scope_key = %s "
-            "ORDER BY table_name, column_name, id LIMIT %s",
+            "source, created_at, updated_at, ordinal FROM column_descriptions WHERE scope_key = %s "
+            "ORDER BY table_name, ordinal NULLS LAST, column_name, id LIMIT %s",
             (_normalize_scope_key(scope_key), int(limit)),
         )
         return cur.fetchall() or []
@@ -99,20 +103,31 @@ def upsert_table_desc(conn, scope_key, table_name, description,
 
 
 def upsert_column_desc(conn, scope_key, table_name, column_name, description,
-                       schema_name="", source="manual", created_by=None) -> None:
-    """컬럼 설명 upsert(ON CONFLICT scope_key,schema_name,table_name,column_name)."""
+                       schema_name="", source="manual", created_by=None, ordinal=None) -> None:
+    """컬럼 설명 upsert(ON CONFLICT scope_key,schema_name,table_name,column_name).
+
+    feature-0016 graphux5: ordinal(실제 스키마 컬럼 순서, 1-based) 을 선택 저장. None 이면 미지정 —
+    기존 ordinal 은 COALESCE 로 보존한다(부트스트랩 재저장이 순서를 넘기지 않아도 이전 ordinal 유지).
+    """
+    ord_val = None
+    if ordinal is not None:
+        try:
+            ord_val = int(ordinal)
+        except (TypeError, ValueError):
+            ord_val = None
     cur = conn.cursor()
     try:
         cur.execute(
             "INSERT INTO column_descriptions "
-            "(scope_key, schema_name, table_name, column_name, description, source, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "(scope_key, schema_name, table_name, column_name, description, source, created_by, ordinal) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (scope_key, schema_name, table_name, column_name) "
             "DO UPDATE SET description = EXCLUDED.description, "
-            "source = EXCLUDED.source, updated_at = now()",
+            "source = EXCLUDED.source, updated_at = now(), "
+            "ordinal = COALESCE(EXCLUDED.ordinal, column_descriptions.ordinal)",
             (_normalize_scope_key(scope_key), str(schema_name or "").strip(),
              str(table_name).strip(), str(column_name).strip(),
-             str(description).strip(), str(source or "manual").strip(), created_by),
+             str(description).strip(), str(source or "manual").strip(), created_by, ord_val),
         )
     finally:
         cur.close()
@@ -146,29 +161,35 @@ def update_table_desc(conn, desc_id, scope_key, description,
 
 
 def update_column_desc(conn, desc_id, scope_key, description,
-                       schema_name=None, table_name=None, column_name=None) -> int:
+                       schema_name=None, table_name=None, column_name=None, ordinal=None) -> int:
     """컬럼 설명 수정(by id, scope 가드). 반영 행 수 반환(0=비존재/타-scope → 404).
 
     key 컬럼(schema/table/column) 은 전부 주어질 때만 수정(부분 None → 설명만 갱신).
+    feature-0016 graphux5: ordinal(실제 스키마 순서) 이 주어지면 함께 갱신(None → 미변경).
     UNIQUE(scope,schema,table,column) 충돌 시 호출측이 409 로 변환.
     """
+    set_cols = ["description = %s", "updated_at = now()"]
+    params = [str(description).strip()]
+    if not (schema_name is None and table_name is None and column_name is None):
+        set_cols[:0] = ["schema_name = %s", "table_name = %s", "column_name = %s"]
+        params[:0] = [str(schema_name or "").strip(), str(table_name or "").strip(),
+                      str(column_name or "").strip()]
+    if ordinal is not None:
+        try:
+            _ord = int(ordinal)
+        except (TypeError, ValueError):
+            _ord = None
+        if _ord is not None:   # 정수화 성공 시에만 placeholder+param 을 함께 추가(개수 정합 보장)
+            set_cols.append("ordinal = %s")
+            params.append(_ord)
+    params.extend([int(desc_id), _normalize_scope_key(scope_key)])
     cur = conn.cursor()
     try:
-        if schema_name is None and table_name is None and column_name is None:
-            cur.execute(
-                "UPDATE column_descriptions SET description = %s, updated_at = now() "
-                "WHERE id = %s AND scope_key = %s",
-                (str(description).strip(), int(desc_id), _normalize_scope_key(scope_key)),
-            )
-        else:
-            cur.execute(
-                "UPDATE column_descriptions SET schema_name = %s, table_name = %s, "
-                "column_name = %s, description = %s, updated_at = now() "
-                "WHERE id = %s AND scope_key = %s",
-                (str(schema_name or "").strip(), str(table_name or "").strip(),
-                 str(column_name or "").strip(), str(description).strip(),
-                 int(desc_id), _normalize_scope_key(scope_key)),
-            )
+        cur.execute(
+            "UPDATE column_descriptions SET " + ", ".join(set_cols)
+            + " WHERE id = %s AND scope_key = %s",
+            tuple(params),
+        )
         return int(cur.rowcount or 0)
     finally:
         cur.close()

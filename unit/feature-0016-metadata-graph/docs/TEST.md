@@ -42,7 +42,19 @@ docker run --rm --network container:pgage-t \
 2026-06-30 결과: `ALL ASSERTS PASS {search_orders:3, search_주문:1, nb_nodes:7, nb_edges:9, orders_node_count:1}`.
 
 ## 단위 테스트 (AGE 불요 — 순수 함수)
-- (예정) `_cq()` 이스케이프 · `_props_set()` 화이트리스트 · `_vkey()` — pytest, AGE 미필요.
+- `tests/test_metadata_graph_units.py` — `_props_set`(ordinal 정수 리터럴·None 생략·비정수 주입차단) ·
+  `_as_int` · `_node_dict`/`_node_from_props`(ordinal 반환). AGE·DB 불요.
+  실행: `PYTHONPATH=unit/feature-0002-agent-core/src/modules python3 unit/feature-0016-metadata-graph/tests/test_metadata_graph_units.py`
+  **2026-07-01 결과: PASS (8 tests)** — graphux5 ordinal 직렬화·주입방어 검증.
+- (예정) `_cq()` 이스케이프 · `_vkey()` 추가 커버.
+
+### graphux5 — 컬럼 세로정렬 + ordinal + 부드러운 엣지 (2026-07-01)
+- **순수 함수(위 test_metadata_graph_units.py)**: PASS (8). ordinal 정수 리터럴 SET·주입안전·노드 직렬화.
+- **AGE 통합(test_metadata_graph_age.py 검증 4d 추가)**: sync_column(ordinal=1/2) → neighborhood 노드가
+  ordinal 보유. **컨테이너 재실행 필요**(AGE) — 배포 시 metadata-graph-sync 후 확인.
+- **admin.js 구문**: `node --check` OK.
+- **py_compile**: kb_metadata·metadata_graph·app.py·alembic 0026 OK.
+- **PB-0008 실 Windows 브라우저 시각검증**: 배포 후 수행(visual_verification_scope: always, verify check #13). 〔대기〕
 
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
