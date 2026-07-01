@@ -5221,3 +5221,10 @@ source_of_truth: true
 - Verification: `node --check admin.js` PASS · `py_compile` node_analysis.py/admin_metadata.py PASS · CSS brace balance OK. PB-0008 Windows-browser 라이브 실측(프리뷰 인젝션, https://localhost/admin, mssql-qa-idc 250노드/클러스터 50): ②클러스터 클릭→상세 '테이블(58)' · ③좌상단(box+10/+4px)·좌정렬·무잘림·zoom 재배치 PASS. ①백엔드 집계 실 KB PG 정합(done 335·active 183) + 프론트 배선·404 graceful — 마커 렌더 최종 확인은 실배포 후. 적대 코드리뷰 패널 REV-20260701T163000-graphview-render.
 - Files: `unit/feature-0002-agent-core/src/modules/node_analysis.py`, `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`, `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`, `unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,TEST,REVIEW}.md`.
 - 무변경: RBAC 권한 코드(기존 kb.ingest.manual 재사용)·스키마/마이그·기존 엔드포인트·ask/worker 경로. cross-cut 백엔드 변경은 feature-0002 `docs/MODIFY.md`·feature-0016-metadata-graph `docs/TASK.md` 에도 상호참조.
+
+## CHG-20260701T220000-graphview-webgl-labels (TASK-20260701T220000-graphview-webgl-labels — 클러스터명 오버레이 WebGL 렌더러 호환 수정, Minor §12.3 — feature-0003 프론트 단독, graphview-render 후속)
+- 변경: `static/admin.js` — 클러스터명 오버레이 위치 동기화 이벤트 바인딩을 `cy.on("render", …)` 단일 → 렌더러 무관 코어 이벤트 `cy.on("render viewport resize layoutstop add remove", _lblSync)` + `cy.on("position drag free", "node", _lblSync)` 로 교체. `static/admin.html` — cache-buster 2건 bump `20260701-graphview-webgl-labels`(js==css).
+- 근본원인: graphview-render(§18) 오버레이가 `render` 이벤트에 의존했는데, 병렬 머지된 graph-webgl(§17, cytoscape 3.34.0 `webgl:true`) WebGL 렌더러는 `render` 를 emit 하지 않음(실측 renderFires=0) → 오버레이 라벨 미생성/미추종. 병합 번들 배포 전 PB-0008 프리뷰에서 적발.
+- Verification: `node --check` PASS. PB-0008 Windows-browser 라이브(병합 번들 프리뷰, `webgl:true` 확인): 로드 시 labelDivs=35 · pan +120/+60 정확 추종 · 클러스터 tap 상세('테이블 130') · 좌상단 좌정렬 무잘림 — WebGL 하 전부 PASS. [SKIPPED:minor-scoped-fix] 패널(REV-20260701T220000-graphview-webgl-labels).
+- Files: `static/admin.js`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,TEST,REVIEW}.md`.
+- 무변경: 오버레이 sync 함수 로직(`_metaGraphSyncClusterLabels`)·마커·클러스터 상세·백엔드·RBAC·스키마. 이벤트 바인딩만 교체(렌더러 호환).

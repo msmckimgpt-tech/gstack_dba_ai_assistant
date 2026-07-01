@@ -82,6 +82,47 @@ source_of_truth: true
 - Impact: 프론트 전용, 비파괴. 더블클릭 확장 시 ERD 카드 박스가 전체 재-스프레드되어 박스겹침 해소(문맥 일부 이동은 사용자 승인
   트레이드오프). Table 박스가 클릭/더블클릭에 일반 노드처럼 반응. 순수 노드(컬럼 미보유) 확장은 기존 국소 relax 불변.
 - Rollback Notes: admin.js 증분 경로를 단일 국소-relax 로 환원 + tap 핸들러를 `if (t.isParent()) return` 로 환원 + 캐시버스터 환원. DB/백엔드 무관.
+## CHG-20260701T173000-ai-claude-feature-0016-node-analysis-anchor
+- Date: 2026-07-01
+- Author: ai/claude (worktree ai/claude/feature-0016-node-analysis-anchor)
+- Grade: **Major** (재귀 탐색 동작 변경 + 비파괴 additive 마이그레이션). 파괴적 아님 — 기존 예산 캡·PG
+  미가용 no-op 보존, 인증/데이터 삭제 없음.
+- Request(2026-07-01): 관리콘솔 > 메타데이터 > 그래프 뷰 "AI 능동 분석" 재귀 탐색이 **원래 분석 대상**에
+  앵커되지 않고, 방문한 허브 노드(예 일반 컬럼 `UniqueID`, 부모 Schema)를 새 중심으로 무관 테이블까지
+  fan-out 하는 문제 해소. 하위 컬럼은 기본 분석하되, 깊은 확장은 "dk 제품(scope)·대상 엔티티(Achievement)"
+  연관 높은 대상으로만. 단순 컬럼명 일치·상위객체 무연관은 낮은 우선순위.
+- Root cause: `node_analysis._enqueue_neighbors` 가 방문 노드의 이웃 **전부**를 무차별 재큐(게이트=예산/dedup
+  뿐, 루트 관련도 판단 부재) → 무방향 BFS 라 허브에서 재-앵커링. 일반 컬럼/Schema 가 fan-out 진입점.
+- Decision: **앵커-상대 관련도 게이팅**(ADR-003). 재귀를 원래 루트(anchor)에 고정하고 후보 이웃을 루트와의
+  관련도(0~1)로 게이트·우선순위화.
+  1. `_build_anchor`/`_load_anchor` — run 의 루트 서술자(scope·table_fqn·이름/설명 토큰)를 run 당 1회 캐시.
+  2. `_relevance(node, meta, anchor)` — 같은 제품(scope) · 루트 테이블 서브트리 · 이름/설명 토큰 겹침(일반어
+     stoplist 제외) · GlossaryTerm · REFERENCES 신뢰(ADR-002 weight/status). 다른 제품 곱셈 감쇠, Schema·broken=0.
+  3. `_score_candidates` — 루트 직속 컬럼(depth 0 child)은 relevance 1.0 무조건 통과(하위 컬럼 기본 분석),
+     그 외는 임계 이상만(이웃 depth≥2 는 _DEEP 임계 상향) 관련도순 재큐.
+  4. `node_analysis_jobs.relevance`(alembic 0029) 영속 + claim `ORDER BY depth ASC, relevance DESC` → 예산을
+     가장 관련 높은 노드에 우선 소비(사용자 "낮은 우선순위로 판단" 요구의 영속 구현).
+- Files:
+  - `shared/config.py` (RELEVANCE_MIN 0.18 / _DEEP 0.34 / CROSS_SCOPE_FACTOR 0.25 / EXPAND_SCHEMA=off, 전부 env override)
+  - `unit/feature-0002-agent-core/src/modules/node_analysis.py` (토크나이저·stoplist·_build_anchor·_load_anchor·
+    _relevance·_score_candidates·_enqueue_neighbors 재작성·_fetch_context neighbor_meta·process_pending claim 정렬·
+    enqueue root relevance=1.0·get_run_status relevance 노출)
+  - `unit/feature-0002-agent-core/alembic/versions/20260701_0029_node_analysis_relevance.py` (신규 — ADD COLUMN
+    relevance real DEFAULT 0 + ix_node_analysis_jobs_claim_priority, expand-only, GRANT 는 0028 테이블단위 커버)
+  - `unit/feature-0002-agent-core/tests/test_node_analysis_relevance.py` (신규 순수함수 12건 — 토큰화·anchor·
+    관련도·게이팅. 핵심: hub 컬럼 depth1 확장 시 교차-제품/무관 이웃 탈락 + 루트 하위 컬럼 무조건 통과)
+- Impact: 비파괴 additive. 구버전 코드가 relevance 미지정 INSERT 해도 DEFAULT 0 안전(expand 단계). 그래프는
+  재생성 투영이라 즉시 반영. 외부 계약/인증/데이터 파괴 없음. 배포=alembic 0029 + web/insight 재배포.
+- Rollback Notes: alembic downgrade(0029 → DROP INDEX + DROP COLUMN relevance, 비파괴) + node_analysis.py 환원.
+  진행 중 run 은 relevance 소거돼도 claim 은 depth/created_at 로 graceful. 관계형 SSOT·그래프 무손상.
+- Hardening (2라운드 적대 패널 REV-20260701T173000, R1 M1~M5 + R2 재적대):
+  - **M1(MAJOR) content-gate**: `_relevance` 를 재작성 — content(서브트리·이름·설명·용어) 신호 0 이면 즉시 0.0,
+    신뢰(REFERENCES)/제품(scope)은 **부스터**로만. 신뢰·구조 링크만으론 재귀 불통과(사용자 요구 정합).
+  - **MAJOR(2R) 한글 일반어**: `_GENERIC_TOKENS` 라틴 전용 hole 로 M1 이 한글 경로 재발(설명 booster 가 게임/
+    정의/테이블 겹침으로 content 조작) → 한글 일반어·구조어 45+ 추가.
+  - M3 deep 임계 깊이 스케일(+0.06/depth, 상한 0.7) · M4 한글↔라틴 split + 접두/접미 부분연관(중간삽입 배제:
+    회원⊄비회원구매·업적⊄기업적자) · M5 tiebreak ordinal→name→key 전순서 결정 · M2 claim 공정성 주석 · meta None 방어.
+  - 테스트 12→28건(pytest PASS). 잔여 BLOCKER 0. 의도된 precision 트레이드오프(신뢰 FK 라도 내용 발산 시 제외) 고정.
 
 ## CHG-20260701T170000-ai-claude-feature-0016-erd-card
 - Date: 2026-07-01

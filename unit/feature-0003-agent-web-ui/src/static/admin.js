@@ -3104,13 +3104,19 @@ function _metaInitGraph() {
           "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "opacity": 0.75, "label": "data(label)" } },
     ],
   });
-  // 항목3: 스키마 클러스터명 HTML 오버레이 레이어 준비 + 렌더(pan/zoom/애니메이션)마다 위치 동기화.
+  // 항목3: 스키마 클러스터명 HTML 오버레이 레이어 준비 + 뷰포트/위치 변화마다 위치 동기화.
   //   클러스터는 스코프당 소수(≤ 수십)라 rAF 스로틀 DOM 동기화 비용 무시 가능(캔버스 raster 병목과 무관).
+  //   ⚠ WebGL 렌더러(§17 graph-webgl, cytoscape 3.31+ webgl:true)는 'render' 이벤트를 emit 하지 않는다
+  //   (실측 renderFires=0). 렌더러 무관 **코어** 이벤트로 동기화한다: viewport=pan+zoom(카메라 애니 per-frame),
+  //   position/drag(노드 이동·레이아웃 애니 per-frame), layoutstop/resize/add/remove(구조 변화). canvas-2D 폴백은
+  //   'render' 도 포함(무해 중복 — rAF 스로틀이 프레임당 1회로 병합).
   _metaGraphEnsureLabelLayer(container);
-  _metaGraph.cy.on("render", () => {
+  const _lblSync = () => {
     if (_metaGraph._lblRaf) return;
     _metaGraph._lblRaf = requestAnimationFrame(() => { _metaGraph._lblRaf = null; _metaGraphSyncClusterLabels(); });
-  });
+  };
+  _metaGraph.cy.on("render viewport resize layoutstop add remove", _lblSync);
+  _metaGraph.cy.on("position drag free", "node", _lblSync);
   // 단일 클릭 = 상세 조회만(그래프 유지), 더블 클릭 = 해당 노드 이웃 그래프로 확장/전환.
   // cytoscape 코어에 dbltap 이벤트가 없어 350ms 윈도우로 수동 감지한다.
   _metaGraph.cy.on("tap", "node", (evt) => {
