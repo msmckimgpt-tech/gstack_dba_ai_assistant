@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260701-graphux-progress" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260701-graphux-panelmove" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -723,16 +723,19 @@
             <span><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</span>
             <span class="admin-meta-graph-legend-note">크기·라벨% = 검색 유사도(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 주황 점선=AI 분석중 · 보라 테두리=AI 능동분석 완료</span>
           </div>
-          <!-- feature-0016 graphux5-progress: AI 능동 분석 진행 현황(노드 선택과 무관하게 화면에 라이브 갱신,
-               어떤 항목이 어느 상태[분석중/완료/대기]인지 상세 표시). admin.js _metaGraphRenderProgress 가 채운다. -->
-          <div class="admin-meta-graph-progress" id="metadataGraphProgress" style="display:none"></div>
           <div class="admin-meta-graph-body">
             <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
                  role="img" aria-label="메타데이터 관계 그래프"></div>
-            <aside class="admin-meta-graph-detail" id="metadataGraphDetail" aria-live="polite">
-              <div class="admin-detail-empty">
-                <p>노드를 <strong>한 번 클릭</strong>하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 여기에서 봅니다.</p>
-                <p class="admin-meta-detail-note"><strong>더블클릭</strong>하면 그 노드 중심의 이웃 그래프로 펼쳐집니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
+            <aside class="admin-meta-graph-detail" id="metadataGraphDetail">
+              <!-- graphux5-panelmove: AI 능동 분석 진행 현황을 **우측 상세 패널 상단**에 배치한다(이전의 상단
+                   full-width 바 제거 — 그래프를 아래로 밀어 구성이 무너지고 여백이 낭비되던 이슈 해소). 진행 패널은
+                   노드 선택과 무관하게 유지되고(_metaGraphRenderProgress), 노드 클릭 시엔 아래 detail-body 만 교체된다. -->
+              <div class="admin-meta-graph-progress" id="metadataGraphProgress" style="display:none"></div>
+              <div id="metadataGraphDetailBody" aria-live="polite">
+                <div class="admin-detail-empty">
+                  <p>노드를 <strong>한 번 클릭</strong>하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 여기에서 봅니다.</p>
+                  <p class="admin-meta-detail-note"><strong>더블클릭</strong>하면 그 노드 중심의 이웃 그래프로 펼쳐집니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
+                </div>
               </div>
             </aside>
           </div>
@@ -835,7 +838,7 @@
   <script src="/static/vendor/layout-base.js?v=2.0.1"></script>
   <script src="/static/vendor/cose-base.js?v=2.2.0"></script>
   <script src="/static/vendor/cytoscape-fcose.js?v=2.2.0"></script>
-  <script src="/static/admin.js?v=20260701-graphux-progress"></script>
+  <script src="/static/admin.js?v=20260701-graphux-panelmove-showfix"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260630b-rn-0630"></script>

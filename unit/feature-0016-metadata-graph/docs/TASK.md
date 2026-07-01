@@ -210,4 +210,18 @@ source_of_truth: true
 - [x] T12.2 `admin.js` — 지속 진행 패널 `_metaGraphRenderProgress`(노드 선택 무관 라이브, 진행바+완료/분석중/대기/실패 카운트+항목별 상세 리스트 한글 라벨/아이콘/깊이) + `_metaGraphMarkRunning`(분석중 주황 점선) + 폴 틱마다 갱신 + 시작 시 패널 표시 + 닫기(run 별 dismiss).
 - [x] T12.3 `admin.html` 진행 패널 컨테이너 + "AI 분석 중" 범례 + 캐시버스터. `styles.css` 패널/마커 스타일.
 - [x] T12.4 py_compile + node --check PASS.
-- [ ] T12.5 적대 리뷰(backend/frontend) + verify-completion + 배포 + PB-0008 라이브 검증.
+- [x] T12.5 적대 리뷰(7건 수정) + verify-completion + 배포(e12ac55) + PB-0008 라이브 검증 완료.
+
+## 13. graphux5-panelmove — 진행 패널을 우측 상세 패널로 이동 (2026-07-01)
+
+사용자 피드백: 능동 분석 화면을 **우측 상세정보 패널에 구성**. 상단 full-width 진행 바가 그래프를 밀어내 구성이 무너지고 사용 안 되는 여백이 큼. 등급 Major(프론트 전용·비파괴 레이아웃).
+- [x] T13.1 `admin.html` — 진행 패널(`#metadataGraphProgress`)을 상단 바에서 제거하고 상세 aside 상단으로 이동. 노드 상세를 신규 `#metadataGraphDetailBody` 로 분리(클릭 시 body 만 교체·진행 패널 유지). 캐시버스터.
+- [x] T13.2 `admin.js` — `_metaGraphRenderDetail`/`_metaGraphRenderDetailEmpty` 타깃을 `#metadataGraphDetailBody` 로 변경(진행 패널 미영향).
+- [x] T13.3 `styles.css` — 진행 패널 마진/리스트 높이를 좁은 aside 컬럼에 맞게 조정. 캐시버스터.
+- [x] T13.4 node --check PASS.
+- [x] T13.5 집중 프론트 리뷰 CLEAN(6/6 무결).
+- [x] T13.6 **후속 이슈 수정**(사용자: 진행률 항상 0%·다른 탭 진행 패널/마커 누락):
+      - **fairness (node_analysis.py)**: claim 순서 `depth ASC` 우선 — 대형 run 의 깊은 recursion 이 앞줄을 독점해 이후 단일노드 run 의 root 조차 처리 못 하던 starvation 해소. 모든 run 의 root 를 먼저 처리 → 즉시 진행 표시.
+      - **세션 독립 (admin.js)**: `_metaGraphLoadNodeAnalysis` 가 pending/running 노드의 run_id 로 폴링 자동 재개 → 다른 탭/새로고침에서도 진행 패널·주황 마커·진행률 표시.
+- [x] T13.7 verify-completion + 배포(web 90973df + insight-worker) — PB-0008 라이브: 패널 우측·진행률 갱신·세션독립 확인.
+- [x] T13.8 **showfix**: 세션 독립 재개 경로에서 진행 패널이 populated 되고도 숨김(display 미해제) 버그 → `_metaGraphRenderProgress` 가 display 직접 해제. 라이브 실측 PASS(01/02 스크린샷).
