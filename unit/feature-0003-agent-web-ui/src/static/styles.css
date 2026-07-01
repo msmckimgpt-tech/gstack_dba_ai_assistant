@@ -7958,6 +7958,18 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-sec ul { margin: 0; padding-left: 16px; }
 .admin-meta-graph-sec li { margin: 3px 0; line-height: 1.45; word-break: break-word; }
 .admin-meta-graph-sec code { font-size: 11.5px; }
+/* feature-0016 graphux5: 검색 유사도(pg_trgm) 배지 + AI 능동 분석 섹션 */
+.admin-meta-graph-relbadge {
+  font-size: 10.5px; font-weight: 600; color: #0a5b66;
+  background: rgba(15, 125, 140, .1); border: 1px solid rgba(15, 125, 140, .35);
+  padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+}
+.admin-meta-graph-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.admin-meta-graph-ai-head h4 { margin: 0; }
+.admin-meta-ai-btn { font-size: 11.5px; padding: 3px 10px; white-space: nowrap; }
+.admin-meta-graph-ai-box { margin-top: 8px; line-height: 1.5; }
+.admin-meta-graph-ai-box p { margin: 0 0 7px; }
+.admin-meta-graph-ai-summary { font-weight: 600; }
 @media (max-width: 900px) {
   /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소 */
   .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }

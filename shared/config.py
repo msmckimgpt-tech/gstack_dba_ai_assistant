@@ -893,6 +893,24 @@ AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = int(os.getenv("AGENT_RELATIONSHIP_PROBE_TI
 #  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.
 #  - 투영 API/모듈은 플래그와 무관하게 graceful no-op 이나, insight/cron 트리거는 이 플래그를 본다.
 AGENT_METADATA_GRAPH_SYNC_ENABLED = os.getenv("AGENT_METADATA_GRAPH_SYNC_ENABLED", "0").strip().lower() not in ("0", "false", "no", "")
+# feature-0016 graphux5: 그래프 노드 AI 능동 분석(재귀·백그라운드) 토글 + 경계.
+#  - 관리콘솔 그래프뷰 상세 패널의 "AI 능동 분석" 버튼이 큐에 넣은 잡을 insight-worker 가 소비.
+#  - 선택 노드를 시작으로 관련 노드를 k-hop 재귀 탐색하며 노드별 LLM 분석문을 생성·저장.
+#  - **외부 LLM 비용 직결** → 재귀는 depth/노드 예산 상한 + visited dedupe 로 경계(사용자 결정 2026-07-01).
+#  - 기본 ON(웹에서 명시 트리거해야만 잡 생성 — 상시 비용 아님). 완전 차단은 "0".
+AGENT_NODE_ANALYSIS_ENABLED = os.getenv("AGENT_NODE_ANALYSIS_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+# 재귀 기본 깊이 예산(요청이 미지정 시). 1..5 로 클램프. 이웃 hop 수 = 루트에서의 최대 거리.
+AGENT_NODE_ANALYSIS_DEFAULT_DEPTH = int(os.getenv("AGENT_NODE_ANALYSIS_DEFAULT_DEPTH", "2"))
+# 한 분석 run 이 방문·분석할 최대 노드 수(비용 상한, 요청이 미지정 시 기본값). 1..1000 로 클램프.
+AGENT_NODE_ANALYSIS_DEFAULT_BUDGET = int(os.getenv("AGENT_NODE_ANALYSIS_DEFAULT_BUDGET", "150"))
+# 요청이 지정할 수 있는 하드 상한(사용자 지정 depth/budget 도 이 값으로 캡).
+AGENT_NODE_ANALYSIS_MAX_DEPTH = int(os.getenv("AGENT_NODE_ANALYSIS_MAX_DEPTH", "5"))
+AGENT_NODE_ANALYSIS_MAX_BUDGET = int(os.getenv("AGENT_NODE_ANALYSIS_MAX_BUDGET", "1000"))
+# insight-worker 틱 1회에 처리할 노드 수(부하 분산 — 작게 잡아 워커/LLM 을 점유하지 않게).
+AGENT_NODE_ANALYSIS_BATCH_PER_TICK = int(os.getenv("AGENT_NODE_ANALYSIS_BATCH_PER_TICK", "4"))
+# stale 'running' 잡 lease(초). 워커 크래시/SIGTERM 로 running 에 갇힌 잡을 이 시간 초과 시 pending 으로
+# 되돌려 run 영구 미완료·재트리거 불가를 방지(reaper). LLM 타임아웃보다 넉넉히 크게(기본 15분).
+AGENT_NODE_ANALYSIS_LEASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_LEASE_SEC", "900"))
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────

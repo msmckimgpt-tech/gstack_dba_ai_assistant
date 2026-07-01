@@ -70,6 +70,27 @@ docker run --rm --network container:pgage-t \
 - **결과: PASS** — 두 사용자 요구(①컬럼 테이블 하단 실제순서 세로배치 ②부드럽게 꺾이는 연결선) 모두 라이브 충족.
   배포 커밋 `git_commit=47d0f1a`, 자산 `admin.js?v=20260701-graphux10`, edge /healthz 200 안정.
 
+## graphux5 UX 개선 (Phase 6, 2026-07-01)
+
+### 정적 검증 (AGE/라이브 불요)
+- [x] py_compile: `shared/config.py`, `modules/{metadata_graph,node_analysis,llm,insight}.py`,
+      `alembic/.../0026_node_analysis.py`, `app.py` — ALL OK.
+- [x] `node --check static/admin.js` — OK.
+- [x] `bin/migrate-lint.sh --base main` — 0026 **expand-safe PASS**(순수 CREATE TABLE/INDEX/GRANT, 비가산 없음).
+
+### 라이브 검증 대상 (AGE + web 컨테이너 필요 — cutover 완료 상태)
+- 항목1: `GET /api/admin/metadata/graph?q=<term>` 응답 node 에 `score`(0~1) 존재 + score DESC 정렬.
+  프론트: 노드 라벨 `이름  NN%` 표시, 상세 헤더 "유사도 NN%" 배지.
+- 항목2: 상세 "✨ 능동 분석" → `POST .../graph/analyze` 202 + run_id. insight-worker 틱이 node_analysis_jobs
+  소비 → 이웃 재귀 enqueue(예산 캡). `GET .../graph/analyze?run_id=` done_keys 증가, 완료 노드 보라 마커.
+  `GET .../graph/analyze/node?node=` 에 summary/relationships/usage/caveats.
+- 항목3: 컬럼 미큐레이션 Table 더블클릭 → `GET .../graph/columns` 즉석 introspection → Column 노드 전개.
+  실패 시 status 에 명확 사유(silent no-op 아님).
+- 항목4: 이웃 깊이 드롭다운 변경 → 선택/최근 노드 즉시 새 깊이 재전개(화면 갱신).
+
+### 단위 테스트 (예정 — 순수 함수)
+- `node_analysis._clamp` 경계 · `_build_payload` 이웃 cap · enqueue 중복 run 재사용.
+
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
 - KB 회귀 스위트(`make test`) — AI 정합(Phase 4) 후.

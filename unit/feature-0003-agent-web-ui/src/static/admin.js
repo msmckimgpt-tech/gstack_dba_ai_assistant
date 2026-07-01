@@ -2938,6 +2938,7 @@ async function _metaGraphLoadRoots() {
   const scope = adminState.metadata.scopeKey || "common";
   const si = document.getElementById("metadataGraphSearch");
   if (si) si.value = "";
+  _metaGraph.lastQuery = "";   // fix(low): 검색 컨텍스트 종료 — 상세 유사도 배지 게이트가 참조
   _metaGraph.cy.elements().remove();
   if (!scope || scope === "common") {
     _metaGraphStatus("상단에서 데이터소스를 선택하면 그 데이터소스의 그래프가 표시됩니다. (공용 스코프는 검색으로 탐색)");
@@ -3018,7 +3019,8 @@ function _metaInitGraph() {
     style: [
       { selector: "node", style: {
           "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
-          "label": "data(name)", "font-size": "11px", "color": "#161b22",
+          // 항목1: 검색 시 라벨에 유사도 %(relLabel)를 명시 표시, 그 외엔 이름만.
+          "label": (n) => n.data("relLabel") || n.data("name"), "font-size": "11px", "color": "#161b22",
           "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
           "width": _metaNodeSize, "height": _metaNodeSize,
           "min-zoomed-font-size": 7,   // 축소 시 작아진 라벨은 렌더 생략(줌아웃 프레임 비용↓)
@@ -3039,6 +3041,8 @@ function _metaInitGraph() {
           "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
       // 검색 관련도 강조: rel 높을수록 진한 테두리.
       { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
+      // 항목2: AI 능동 분석 완료 노드 — 보라 이중 테두리 마커(범례: ✨ AI 분석됨).
+      { selector: "node[ai = 1]", style: { "border-width": 3, "border-color": "#7b2fbe", "border-style": "double" } },
       { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
       { selector: "node.dim", style: { "opacity": 0.35 } },
       // feature-0016 graphux5: 기본 엣지는 직선이 아닌 완만한 곡선(unbundled-bezier) — 교차부 가독성.
@@ -3118,6 +3122,16 @@ function _metaInitGraph() {
       if (body) body.classList.toggle("detail-collapsed");
       setTimeout(() => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } }, 60);
     });
+    // 항목4: 이웃 깊이 드롭다운 변경 시 즉시 그래프 갱신(이전엔 change 리스너가 없어 더블클릭 전까지 무반응).
+    //   현재 선택 노드(없으면 마지막 상세 노드)를 새 깊이로 재전개한다. 대상이 없으면 안내만.
+    const depthSel = document.getElementById("metadataGraphDepth");
+    if (depthSel) depthSel.addEventListener("change", () => {
+      let key = null;
+      try { const sel = _metaGraph.cy ? _metaGraph.cy.$("node:selected") : null; if (sel && sel.length) key = sel[0].id(); } catch (_) {}
+      if (!key) key = _metaGraph.lastDetailKey || null;
+      if (key) { _metaGraphExpand(key); }
+      else { _metaGraphStatus(`이웃 깊이 ${depthSel.value}-hop 적용 — 노드를 선택/더블클릭하면 이 깊이로 확장됩니다.`); }
+    });
   }
 }
 
@@ -3148,20 +3162,24 @@ async function _metaGraphSearch(q) {
   if (q !== _metaGraph.lastQuery) return;
   _metaGraph.cy.elements().remove();
   _metaGraphAddElements(data.nodes || [], data.edges || []);
-  // 키워드 관련도 → 노드 크기 가산(검색 결과 prominence).
+  // 항목1: 유사도(rel) → 노드 크기 가산 + 라벨에 % 명시. 백엔드 pg_trgm 실측 score 우선, 없으면 클라 휴리스틱.
   const ql = q.toLowerCase();
   _metaGraph.cy.nodes().forEach((node) => {
     if (node.isParent()) return;
-    node.data("rel", _metaRelevance(node.data("name"), node.data("fqn"), ql));
+    const s = node.data("score");
+    const rel = (typeof s === "number") ? s : _metaRelevance(node.data("name"), node.data("fqn"), ql);
+    node.data("rel", rel);
+    node.data("relLabel", node.data("name") + "  " + Math.round(rel * 100) + "%");
   });
   _metaGraphLayout();
   const n = (data.nodes || []).length;
-  _metaGraphStatus(n ? `'${q}' ${n}개 — 관련도 높을수록 크게 표시. 노드 클릭으로 확장.` : "검색 결과 없음.");
+  _metaGraphStatus(n ? `'${q}' ${n}개 — 라벨의 %가 검색어 유사도(pg_trgm), 클수록 유사. 노드 클릭으로 확장.` : "검색 결과 없음.");
 }
 
 // 단일 클릭: 그래프 구조는 그대로 두고 상세 카드만 갱신. 1-hop 으로 컬럼·직접관계·용어를 충분히 채우면서 빠르다.
 async function _metaGraphShowDetail(key) {
   if (!_metaGraph.cy || !key) return;
+  _metaGraph.lastDetailKey = key;   // 항목4: 깊이 변경 시 재전개 대상
   _metaGraphStatus("상세 조회 중…");
   let data;
   try {
@@ -3184,6 +3202,7 @@ async function _metaGraphShowDetail(key) {
 
 async function _metaGraphExpand(key) {
   if (!_metaGraph.cy || !key) return;
+  _metaGraph.lastDetailKey = key;   // 항목4: 깊이 변경 시 재전개 대상
   const depthSel = document.getElementById("metadataGraphDepth");
   const depth = depthSel ? depthSel.value : "2";
   _metaGraphStatus("이웃 조회 중…");
@@ -3194,7 +3213,31 @@ async function _metaGraphExpand(key) {
     _metaGraphStatus((err && err.message) || "이웃 조회 실패");
     return;
   }
+  // 항목3: 분석/큐레이션 안 된 Table 은 그래프에 Column(HAS_COLUMN)이 없어 더블클릭해도 컬럼이 안 펼쳐진다.
+  //   그래프에 컬럼이 없으면 데이터소스 information_schema 를 즉석 조회(introspect)해 병합 → 항상 펼쳐지게 한다.
+  let introspectNote = "";
+  const selfNode = (data.nodes || []).find((x) => x.key === key);
+  const respHasCols = (data.edges || []).some((e) => e && e.type === "HAS_COLUMN" && e.source === key);
+  if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
+  let anchorHasCols = false;
+  try { anchorHasCols = _metaGraph.cy.getElementById(key).outgoers('edge[label="HAS_COLUMN"]').length > 0; } catch (_) {}
+  // fix(low): 이미 즉석조회했거나 그래프에 이미 컬럼이 있으면 재조회 skip(중복 DB 왕복 방지).
+  if (selfNode && selfNode.label === "Table" && !respHasCols && !anchorHasCols && !_metaGraph.introspected.has(key)) {
+    try {
+      const col = await apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`);
+      if (col && col.introspected && (col.nodes || []).length) {
+        _metaGraph.introspected.add(key);
+        data.nodes = (data.nodes || []).concat(col.nodes);
+        data.edges = (data.edges || []).concat(col.edges || []);
+        introspectNote = ` · 컬럼 ${col.nodes.length}개 즉석조회(introspect)`;
+      } else if (col && !col.introspected && col.reason) {
+        introspectNote = ` · 컬럼 없음: ${col.reason}`;
+      }
+    } catch (_) { /* graceful — 컬럼 조회 실패는 이웃 확장을 막지 않음 */ }
+  }
   const cy = _metaGraph.cy;
+  try { cy.nodes().removeData("relLabel"); } catch (_) {}   // fix(low): 이웃 탐색 진입 — 검색 유사도 % 라벨 제거
+  _metaGraph.lastQuery = "";                                 // 검색 컨텍스트 종료(상세 배지 게이트 참조)
   const newIds = _metaGraphAddElements(data.nodes || [], data.edges || []) || [];
   if (newIds.length > 0) {
     // 신규 노드를 앵커(더블클릭 노드) 좌표 근처에 seed → 원점(0,0) 겹침 방지 + fcose 가 국소 정착.
@@ -3216,8 +3259,8 @@ async function _metaGraphExpand(key) {
     // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
     try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 350 }); } catch (_) {}
   }
-  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}`);
-  const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
+  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}${introspectNote}`);
+  const self = selfNode || { key, name: key };
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
 }
 
@@ -3234,14 +3277,18 @@ function _metaGraphAddElements(nodes, edges) {
     const ord = (typeof n.ordinal === "number" && isFinite(n.ordinal)) ? n.ordinal : null;
     const existing = cy.getElementById(n.key);
     if (existing.length) {
-      existing.data({ label: n.label, name: n.name || n.fqn || n.key,
-        fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord });
+      const upd = { label: n.label, name: n.name || n.fqn || n.key,
+        fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
+      if (typeof n.score === "number") upd.score = n.score;   // 항목1: pg_trgm 유사도
+      existing.data(upd);
       return;
     }
     const pid = _metaCatParent(n.key, n.fqn);
     if (pid) _metaEnsureCat(cy, pid);
     const data = { id: n.key, label: n.label || "Node", name: n.name || n.fqn || n.key,
       fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
+    if (typeof n.score === "number") data.score = n.score;   // 항목1: pg_trgm 유사도(엔드포인트 전달)
+    if (_metaGraph.analyzed && _metaGraph.analyzed.has(n.key)) data.ai = 1;   // 항목2: 재추가 시 분석 마커 유지
     if (pid) data.parent = pid;
     cy.add({ group: "nodes", data });
     added.push(n.key);
@@ -3407,6 +3454,15 @@ function _metaEdgeTrustBadge(e) {
 function _metaGraphRenderDetail(self, nodes, edges) {
   const el = document.getElementById("metadataGraphDetail");
   if (!el) return;
+  // 항목1: 이 노드가 검색 결과라 그래프에 rel(유사도)이 실려 있으면 상세 헤더에 % 명시.
+  const selfScopeKey = (self.key && self.key.indexOf(":") >= 0)
+    ? self.key.slice(0, self.key.indexOf(":")) : (adminState.metadata.scopeKey || "common");
+  let relPct = null;
+  try {
+    const gn = _metaGraph.cy && _metaGraph.cy.getElementById(self.key);
+    // fix(low): 검색 컨텍스트(lastQuery 활성)일 때만 유사도 배지 — 확장/리셋 후 stale 배지 방지.
+    if (_metaGraph.lastQuery && gn && gn.length && typeof gn.data("rel") === "number") relPct = Math.round(gn.data("rel") * 100);
+  } catch (_) {}
   const byKey = {};
   (nodes || []).forEach((n) => { if (n && n.key) byKey[n.key] = n; });
   const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || k;
@@ -3424,7 +3480,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong></div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""}</div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
@@ -3443,8 +3499,111 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     terms.slice(0, 30).forEach((t) => parts.push(`<li><strong>${esc(t.name)}</strong>${t.description ? " — " + esc(t.description) : ""}</li>`));
     parts.push(`</ul></div>`);
   }
+  // 항목2: AI 능동 분석 섹션 — 버튼으로 트리거(백그라운드 재귀), box 에 진행/결과 렌더.
+  parts.push(`<div class="admin-meta-graph-sec admin-meta-graph-ai">`);
+  parts.push(`<div class="admin-meta-graph-ai-head"><h4>AI 능동 분석</h4><button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn">✨ 능동 분석</button></div>`);
+  parts.push(`<div class="admin-meta-graph-ai-box" id="metaGraphAiBox"><span class="admin-meta-graph-muted">이 노드에서 시작해 관련 노드를 AI가 재귀적으로 분석합니다(백그라운드).</span></div>`);
+  parts.push(`</div>`);
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
+  // 버튼 바인딩 + 기존 분석 결과가 있으면 즉시 로드.
+  const aiBtn = document.getElementById("metaGraphAiBtn");
+  if (aiBtn) aiBtn.addEventListener("click", () => _metaGraphAnalyze(self.key, selfScopeKey));
+  _metaGraphLoadNodeAnalysis(self.key);
+}
+
+// 항목2: 선택 노드에 대한 AI 능동 분석 트리거(POST → run 생성) + 진행 폴링 시작.
+async function _metaGraphAnalyze(key, scope) {
+  if (!key) return;
+  const box = document.getElementById("metaGraphAiBox");
+  const sc = scope || (key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
+  if (box) box.innerHTML = '<span class="admin-meta-graph-muted">AI 능동 분석 시작 중…</span>';
+  let res;
+  try {
+    res = await apiFetch(`/api/admin/metadata/graph/analyze`, {
+      method: "POST", body: JSON.stringify({ node_key: key, scope_key: sc }),
+    });
+  } catch (err) {
+    if (box) box.innerHTML = `<span class="admin-meta-graph-muted">시작 실패: ${(err && err.message) || "오류"}</span>`;
+    return;
+  }
+  if (res && res.run_id) {
+    if (box) box.innerHTML = '<span class="admin-meta-graph-muted">분석 중(백그라운드)… 관련 노드를 재귀 탐색합니다.</span>';
+    _metaGraphPollRun(res.run_id, key);
+  }
+}
+
+// run 진행률을 폴링하며 완료 노드에 그래프 마커 표시 + 초점 노드 분석 완료 시 결과 로드.
+function _metaGraphPollRun(runId, focusKey) {
+  if (!runId) return;
+  _metaGraph.activeRunId = runId;   // fix(low): 최신 run 만 유효 — 재분석 시 이전 폴 루프 무효화(중복 방지)
+  let tries = 0;
+  const tick = async () => {
+    if (_metaGraph.activeRunId !== runId) return;   // 다른 run 이 시작됨 → 이 루프 종료
+    tries += 1;
+    let st;
+    try { st = await apiFetch(`/api/admin/metadata/graph/analyze?run_id=${encodeURIComponent(runId)}`); }
+    catch (_) {
+      // fix(medium): 일시 오류/네트워크/일시 5xx 로 폴이 영구 중단되지 않게 재시도(bounded).
+      if (tries < 240 && _metaGraph.activeRunId === runId) setTimeout(tick, 2500);
+      return;
+    }
+    if (!st) { if (tries < 240 && _metaGraph.activeRunId === runId) setTimeout(tick, 2500); return; }
+    _metaGraphMarkAnalyzed(st.done_keys || []);   // 그래프 마커는 전역(어느 상세를 보든 유효)
+    const done = st.done || 0, total = st.enqueued || 0, failed = st.failed || 0;
+    // 상세 패널 box 갱신은 사용자가 아직 이 노드를 보고 있을 때만(다른 노드로 이동 시 오염 방지).
+    const onFocus = (_metaGraph.lastDetailKey === focusKey);
+    const box = document.getElementById("metaGraphAiBox");
+    if (onFocus && box && st.status === "running") {
+      box.innerHTML = `<span class="admin-meta-graph-muted">분석 중(백그라운드)… ${done}/${total} 노드 완료${failed ? " · 실패 " + failed : ""}</span>`;
+    }
+    if (onFocus && (st.done_keys || []).indexOf(focusKey) >= 0) _metaGraphLoadNodeAnalysis(focusKey);
+    _metaGraphStatus(`AI 능동 분석: ${done}/${total} 완료${failed ? " · 실패 " + failed : ""} (${st.status})`);
+    if (st.status === "running") {
+      if (tries < 240) { setTimeout(tick, 2500); }
+      else if (onFocus && box) { box.innerHTML = '<span class="admin-meta-graph-muted">분석이 오래 걸립니다 — 잠시 후 노드를 다시 클릭해 결과를 확인하세요.</span>'; }   // fix(low): 캡 도달 안내
+    } else if (onFocus) { _metaGraphLoadNodeAnalysis(focusKey); }
+  };
+  setTimeout(tick, 1500);
+}
+
+// 완료 노드 키에 그래프 분석 마커(data ai=1) 부여 + 세션 set 에 기억(재추가 시 유지).
+function _metaGraphMarkAnalyzed(keys) {
+  if (!_metaGraph.cy) return;
+  if (!_metaGraph.analyzed) _metaGraph.analyzed = new Set();
+  (keys || []).forEach((k) => {
+    _metaGraph.analyzed.add(k);
+    try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("ai", 1); } catch (_) {}
+  });
+}
+
+// 노드의 최신 분석 상태/결과를 조회해 AI box 에 렌더(상세 패널 진입 시 + 폴링 완료 시).
+async function _metaGraphLoadNodeAnalysis(key) {
+  const box = document.getElementById("metaGraphAiBox");
+  if (!box || !key) return;
+  let res;
+  try { res = await apiFetch(`/api/admin/metadata/graph/analyze/node?node=${encodeURIComponent(key)}`); }
+  catch (_) { return; }
+  if (!res) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  if (res.status === "done" && res.analysis) {
+    _metaGraphMarkAnalyzed([key]);
+    const a = res.analysis;
+    const rows = [];
+    if (a.summary) rows.push(`<p class="admin-meta-graph-ai-summary">${esc(a.summary)}</p>`);
+    if (a.relationships) rows.push(`<p><strong>관계</strong> — ${esc(a.relationships)}</p>`);
+    if (a.usage) rows.push(`<p><strong>활용</strong> — ${esc(a.usage)}</p>`);
+    if (a.caveats) rows.push(`<p class="admin-meta-graph-muted"><strong>주의</strong> — ${esc(a.caveats)}</p>`);
+    rows.push(`<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn2">↻ 재분석</button>`);
+    box.innerHTML = rows.join("") || '<span class="admin-meta-graph-muted">분석 결과 없음.</span>';
+    const b2 = document.getElementById("metaGraphAiBtn2");
+    if (b2) b2.addEventListener("click", () => _metaGraphAnalyze(key));
+  } else if (res.status === "pending" || res.status === "running") {
+    box.innerHTML = '<span class="admin-meta-graph-muted">분석 대기/진행 중(백그라운드)…</span>';
+  } else if (res.status === "failed") {
+    box.innerHTML = '<span class="admin-meta-graph-muted">이 노드 분석 실패. 재시도하려면 능동 분석을 다시 눌러 주세요.</span>';
+  }
+  // status === 'none' → 기본 안내 유지(버튼으로 시작).
 }
 
 // 폼 값 수집 — 체크박스는 boolean, 그 외는 trim 된 문자열. (number 변환은 _metaSubmitForm 에서.)

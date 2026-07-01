@@ -26041,6 +26041,191 @@ def admin_metadata_graph(request: Request) -> JSONResponse:
     })
 
 
+# ── feature-0016 graphux5: 그래프 노드 AI 능동 분석(재귀·백그라운드) — RBAC kb.ingest.manual ──
+
+@app.post("/api/admin/metadata/graph/analyze")
+async def admin_metadata_graph_analyze(request: Request) -> JSONResponse:
+    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 kb.ingest.manual.
+
+    body: {node_key, scope_key?, depth?, node_budget?}. run 을 만들고 즉시 202 반환 — 실제 분석은
+    insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
+    진행은 GET .../graph/analyze?run_id= 로 폴링, 노드 결과는 GET .../graph/analyze/node?node= 로 조회.
+    """
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    data = await _metadata_read_json(request)
+    node_key = str(data.get("node_key") or data.get("node") or "").strip()
+    if not node_key or ":" not in node_key:
+        return _json_error("node_key(그래프 노드 키)는 필수입니다.", 400)
+    scope_key = str(data.get("scope_key") or node_key.split(":", 1)[0] or "common").strip().lower()
+    depth = data.get("depth")
+    node_budget = data.get("node_budget")
+    from modules import node_analysis as _na
+    res = _na.enqueue_analysis(scope_key, node_key, depth_budget=depth, node_budget=node_budget,
+                               requested_by=str((account or {}).get("username") or "") or None)
+    if not res.get("ok"):
+        reason = res.get("reason") or "분석 시작 실패"
+        # fix: 서버측 실패(PG 미가용/disabled/enqueue 실패)는 5xx. 클라 입력 오류만 400(라우트가 이미
+        #   node_key 를 검증하므로 'node_key 필수'는 사실상 발생 안 함).
+        code = 400 if reason == "node_key 필수" else 503
+        return _json_error(f"AI 능동 분석 시작 실패: {reason}", code)
+    _metadata_audit(request, account, action="node_analysis.enqueue", resource_id=node_key,
+                    change_json={"scope_key": scope_key, "run_id": res.get("run_id"),
+                                 "depth": depth, "node_budget": node_budget,
+                                 "reused": res.get("reused", False)})
+    return JSONResponse({"ok": True, "run_id": res.get("run_id"), "status": res.get("status"),
+                         "reused": res.get("reused", False)}, status_code=202)
+
+
+@app.get("/api/admin/metadata/graph/analyze")
+def admin_metadata_graph_analyze_status(request: Request) -> JSONResponse:
+    """분석 run 진행률 폴링(항목2). 권한 kb.ingest.manual. ?run_id=<hex>.
+    반환 {status, enqueued, done, failed, done_keys[...]} — 프론트가 done_keys 로 분석 마커 표시."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    run_id = (request.query_params.get("run_id") or "").strip()
+    if not run_id:
+        return _json_error("run_id 는 필수입니다.", 400)
+    from modules import node_analysis as _na
+    st = _na.get_run_status(run_id)
+    if st is None:
+        return _json_error("run 을 찾을 수 없습니다.", 404)
+    return JSONResponse(st)
+
+
+@app.get("/api/admin/metadata/graph/analyze/node")
+def admin_metadata_graph_analyze_node(request: Request) -> JSONResponse:
+    """노드의 최신 분석 상태/결과(상세 패널, 항목2). 권한 kb.ingest.manual. ?node=<key>[&scope=<ds>].
+    반환 {status:'none'|'pending'|'running'|'done'|'failed', analysis:{summary,relationships,usage,caveats}}."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    node = (request.query_params.get("node") or "").strip()
+    if not node:
+        return _json_error("node 는 필수입니다.", 400)
+    scope = (request.query_params.get("scope") or "").strip() \
+        or (node.split(":", 1)[0] if ":" in node else "common")
+    from modules import node_analysis as _na
+    res = _na.get_node_analysis(scope, node)
+    if res is None:
+        return _json_error("조회 실패", 503)
+    return JSONResponse(res)
+
+
+def _graph_resolve_ds_by_scope(scope_key: str):
+    """scope_key → datasource dict. read(agent_core.set_active_datasource)와 동일 해소:
+    ds.get('scope_key') or ds.get('key') or 라벨. 반환 (ds, None) 또는 (None, reason:str)."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk or sk == "common":
+        return None, "데이터소스 스코프가 아닙니다(common)."
+    from shared import datasources as _dsr
+    mem = None
+    try:
+        mem = _connect_memory()
+    except Exception:
+        mem = None
+    try:
+        ds_map = _dsr.all_datasources(mem) or {}
+    except Exception:
+        ds_map = {}
+    finally:
+        if mem is not None:
+            try:
+                mem.close()
+            except Exception:
+                pass
+    for label, ds in ds_map.items():
+        cand = str((ds.get("scope_key") or ds.get("key") or label) or "").strip().lower()
+        if cand == sk:
+            return ds, None
+    return None, "해당 스코프의 데이터소스를 찾을 수 없습니다."
+
+
+@app.get("/api/admin/metadata/graph/columns")
+def admin_metadata_graph_columns(request: Request) -> JSONResponse:
+    """더블클릭 컬럼 즉석 introspection(항목3). 권한 kb.ingest.manual. ?node=<table key `scope:schema.table`>.
+
+    그래프 투영(SSOT=column_descriptions)에 Column 노드가 없어(큐레이션/분석 미진행) 더블클릭해도
+    컬럼이 안 펼쳐지던 문제를 해소한다. 그래프에 컬럼이 없으면 **데이터소스 information_schema 를 즉석
+    조회**해 Column 노드 + HAS_COLUMN 엣지로 반환한다(read-only, 그래프 미저장). 실패 시 introspected=False
+    + reason 으로 명확 피드백(silent no-op 금지)."""
+    account, error = _metadata_resolve_account(request)
+    if error:
+        return error
+    node = (request.query_params.get("node") or "").strip()
+    if not node or ":" not in node:
+        return _json_error("node(테이블 키 `scope:schema.table`)는 필수입니다.", 400)
+    scope_key = node.split(":", 1)[0]
+    fqn = node.split(":", 1)[1]
+    parts = [p for p in fqn.split(".") if p]
+    if len(parts) < 2:
+        return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node,
+                             "reason": "테이블 노드가 아니거나 스키마.테이블 형식이 아닙니다."})
+    schema = parts[0]
+    table = parts[-1]
+    import re as _re
+    _ident = r"^[A-Za-z0-9_$\- ]+$"
+    if not _re.match(_ident, schema) or not _re.match(_ident, table):
+        return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node,
+                             "reason": "식별자에 허용되지 않는 문자가 있어 조회를 건너뜁니다."})
+    ds, derr = _graph_resolve_ds_by_scope(scope_key)
+    if derr:
+        return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node, "reason": derr})
+    from shared import config as _cfg
+    from shared import db as _db
+    from modules import dialects as _dialects
+    conn = None
+    engine = ""
+    rows = []
+    try:
+        engine = _bootstrap_activate_dialect(ds, scope_key)
+        if engine == "mssql":
+            # MSSQL: fqn 첫 세그먼트가 DB(카탈로그) — 그 DB 에 연결 후 테이블명으로 컬럼 조회(스키마 무관).
+            conn = _db.connect(datasource=ds, database=schema, autocommit=True)
+            cur = conn.cursor()
+            cur.execute("SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                        f"WHERE TABLE_NAME = '{table}' ORDER BY ORDINAL_POSITION")
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            # MySQL: schema == database. information_schema 는 서버 전역 → 무-database 연결 + WHERE 필터.
+            conn = _db.connect(datasource=ds, autocommit=True)
+            dialect = _dialects.active()
+            cur = conn.cursor()
+            cur.execute(dialect.describe_columns(schema, table))  # SELECT COLUMN_NAME, COLUMN_TYPE, ...
+            rows = cur.fetchall()
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning("graph columns introspect 실패 node=%s", node, exc_info=True)
+        return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node,
+                             "reason": "데이터소스 컬럼 조회 실패(권한/연결 확인, 또는 AI 능동 분석 사용)."})
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        try:
+            _cfg.set_active_datasource(None)
+        except Exception:
+            pass
+    nodes, edges = [], []
+    for r in rows[:500]:
+        cname = str(r[0]) if r and r[0] is not None else ""
+        if not cname:
+            continue
+        ctype = str(r[1]) if len(r) > 1 and r[1] is not None else ""
+        ckey = f"{scope_key}:{fqn}.{cname}"
+        nodes.append({"label": "Column", "key": ckey, "name": cname,
+                      "fqn": f"{fqn}.{cname}", "description": ctype, "source": "introspect"})
+        edges.append({"source": node, "target": ckey, "type": "HAS_COLUMN",
+                      "cardinality": None, "edge_source": "introspect"})
+    return JSONResponse({"nodes": nodes, "edges": edges, "introspected": True,
+                         "count": len(nodes), "engine": engine, "node": node})
+
+
 # ── 샘플 admin(sample_queries) — RBAC kb.sample.curate ─────────────────────────
 
 def _samples_resolve_account(request: Request):

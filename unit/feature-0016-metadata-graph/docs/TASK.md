@@ -120,27 +120,64 @@ source_of_truth: true
 - 등급: **Major** (agent_kb 마이그레이션 추가 + 그래프 재sync + web 재배포). 마이그는 비파괴 additive(ADD COLUMN nullable)라 expand-safe.
 
 ### 9.1 백엔드 — ordinal 을 관계형 SSOT(column_descriptions)에 저장 → 그래프 투영
-- [ ] T9.1 alembic 0026 `20260701_0026_column_ordinal.py`: `column_descriptions.ordinal integer NULL` ADD
-      (idempotent `ADD COLUMN IF NOT EXISTS`) + 기존행 backfill(`row_number() OVER (PARTITION BY
-      scope_key,schema_name,table_name ORDER BY id)` — 부트스트랩이 DDL순 저장 ≈ 삽입순). downgrade=DROP.
-      `agent_kb_schema.sql` CREATE TABLE 에 ordinal 추가 + 방어적 ALTER.
-- [ ] T9.2 kb_metadata.py: `upsert_column_desc(ordinal=None)` INSERT+ON CONFLICT(COALESCE 보존),
-      `update_column_desc(ordinal=None)`, `list_column_desc_admin` SELECT ordinal + ORDER BY ordinal NULLS LAST.
-- [ ] T9.3 metadata_graph.py: `_PROP_KEYS += ordinal`, `_props_set` 정수 리터럴 처리, `sync_column(ordinal=None)`,
-      `sync_graph` 컬럼 SELECT 에 ordinal 추가, `_node_from_props`/`_node_dict`/`search_nodes` RETURN 에 ordinal.
-- [ ] T9.4 app.py: `POST/PUT /api/admin/metadata/columns` body 의 optional `ordinal` 통과,
-      `GET /columns` items 에 ordinal, graph 엔드포인트 노드 직렬화에 ordinal 포함 확인.
+- [x] T9.1 alembic 0026 `20260701_0026_column_ordinal.py`: `column_descriptions.ordinal integer NULL` ADD
+      + backfill. downgrade=DROP. `agent_kb_schema.sql` 정합.
+- [x] T9.2 kb_metadata.py: upsert/update/list ordinal.
+- [x] T9.3 metadata_graph.py: `_PROP_KEYS += ordinal`, 정수 리터럴, sync_column/sync_graph/직렬화 ordinal.
+- [x] T9.4 app.py: columns POST/PUT/GET + graph 노드 직렬화 ordinal.
 
 ### 9.2 프론트엔드 — 컬럼 세로 스택 + round-taxi 엣지 (admin.js)
-- [ ] T9.5 `_metaBootstrapSave`: 컬럼 저장 시 블록 내 col-row 인덱스(1-based, DOM=DDL순)를 `ordinal` 로 전송.
-- [ ] T9.6 `_metaGraphAddElements`: Column 노드 data 에 `ordinal` 보존.
-- [ ] T9.7 `_metaGraphPlaceColumns()` 신규: 각 Table 의 HAS_COLUMN 자식을 ordinal(NULLS LAST→name) 정렬해
-      테이블 바로 아래 세로 스택으로 배치 + lock. `_metaGraphLayout` layoutstop 마다 호출(테이블 이동 추종).
-- [ ] T9.8 cytoscape style: `edge[label='HAS_COLUMN']` = `round-taxi`/`taxi-direction:downward`/`taxi-radius`
-      (부드럽게 꺾임), 그 외 엣지 = `unbundled-bezier`(직선 아님·완만 곡선). 캐시버스터 graphux4→graphux5.
+- [x] T9.5~T9.8 bootstrap ordinal 캡처 · `_metaGraphPlaceColumns` 세로 스택 + lock · round-taxi/unbundled-bezier.
 
 ### 9.3 검증
-- [ ] T9.9 테스트: ordinal sync→neighborhood 전파 + column_descriptions ordinal 왕복(기존 테스트 확장).
-- [ ] T9.10 `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph` + migrate-lint.
-- [ ] T9.11 배포: alembic upgrade(agent_kb) + `bin/metadata-graph-sync.sh` 재sync + web 재빌드/재배포(deploy_scope: included).
-- [ ] T9.12 **PB-0008 실 Windows 브라우저 시각검증**(visual_verification_scope: always, verify check #13 hard gate).
+- [x] T9.9~T9.10 테스트 + verify-completion + migrate-lint.
+- [ ] T9.11~T9.12 배포(alembic upgrade + 재sync + web 재배포) + PB-0008 시각검증.
+
+## 10. Phase 6 — graphux5 그래프뷰 UX 4항목 개선 cycle (node-analysis, 2026-07-01, entry persona dispatch)
+
+사용자 요청 4건. 등급 **Major**(외부 LLM 비용 + 백그라운드 인프라 + 신규 테이블). 사용자 결정 3건
+(2026-07-01 AskUserQuestion): ① AI 재귀 = **경계 있는 재귀**(depth/node 예산 + visited dedupe),
+② 미분석 노드 컬럼 = **즉석 introspection**, ③ 검색 유사도 = **백엔드 pg_trgm 실측**.
+
+### 6.1 항목1 — 검색 유사도 명시 척도 ✅
+- [x] `modules/metadata_graph.py::search_nodes` — Cypher CONTAINS 후보에 **pg_trgm similarity()** 를
+      1왕복 계산(파라미터 바인딩) → `score`(0~1) 부여 + score DESC 정렬. 엔드포인트가 node dict 그대로
+      통과하므로 API 변경 불필요.
+- [x] `static/admin.js` — 노드 라벨에 유사도 %(relLabel) 표시 + 상세 헤더 유사도 배지 + 범례 갱신.
+      백엔드 score 우선, 부재 시 클라 휴리스틱 폴백.
+
+### 6.2 항목2 — AI 능동 분석(재귀·백그라운드) ✅
+- [x] alembic **0028** `node_analysis_runs`/`node_analysis_jobs`(비파괴 추가, GRANT, set_updated_at). ※ implicit-edges 동시 0026/0027 병합으로 0028 재번호.
+- [x] `modules/node_analysis.py`(신규) — enqueue_analysis(run+루트 잡) / process_pending(claim
+      `FOR UPDATE SKIP LOCKED` → llm_node_analysis → 저장 → 이웃 재큐, **depth/node 예산 캡 + dedupe**) /
+      get_run_status / get_node_analysis. 경계: `AGENT_NODE_ANALYSIS_*` config.
+- [x] `modules/llm.py::llm_node_analysis` + `NODE_ANALYSIS_PROMPT`(table_insight 동형).
+- [x] `modules/insight.py::run_insight_cycle` — 틱마다 `process_pending()` 훅(자체 PG + SKIP LOCKED,
+      advisory lock/readback 무관, 실패 삼킴). 부하 분산 = 틱당 `BATCH_PER_TICK`.
+- [x] API: `POST/GET /api/admin/metadata/graph/analyze`(+`/node`) — RBAC kb.ingest.manual, 202 + 폴링.
+- [x] `static/admin.js` — 상세 패널 "✨ 능동 분석" 버튼 + run 폴링 + 진행/결과 렌더 + 완료 노드 보라 마커.
+
+### 6.3 항목3 — 미분석 노드 더블클릭 컬럼 미전개 ✅ (검토결론: 투영 아티팩트 + UX 결함)
+- 원인: AGE 그래프는 SSOT(column_descriptions) 투영이라 컬럼 미큐레이션 테이블은 Column 노드 부재 →
+  더블클릭 시 silent no-op.
+- [x] `GET /api/admin/metadata/graph/columns` — 데이터소스 information_schema **즉석 introspection**
+      (dialect.describe_columns, MSSQL 은 DB 카탈로그 연결), Column 노드+HAS_COLUMN 반환(그래프 미저장).
+      실패 시 introspected=False+reason(명확 피드백, silent 금지).
+- [x] `static/admin.js::_metaGraphExpand` — Table 인데 그래프에 컬럼 없으면 즉석조회 병합 → 항상 펼침.
+
+### 6.4 항목4 — 이웃 깊이 드롭다운 미갱신 ✅ (검토결론: 버그)
+- 원인: `#metadataGraphDepth` 에 change 리스너 부재 — 더블클릭 시에만 값 read.
+- [x] `static/admin.js` — change 리스너 추가 → 현재 선택/최근 상세 노드를 새 깊이로 재전개.
+
+### 6.5 검증
+- [x] py_compile(config/metadata_graph/node_analysis/llm/insight/0028/app.py) + node --check admin.js PASS.
+- [x] 적대 리뷰 패널(5렌즈 backend/security/api/frontend/migration → 발견 16 → 확정 10건 전량 수정, REVIEW.md REV-graphux5).
+- [x] `bin/verify-completion.sh --pre-commit feature-0016-metadata-graph` PASS (전 게이트) + `migrate-lint --base main`(0028 expand-safe).
+- [ ] PB-0008 Windows 브라우저 시각검증(visual_verification_scope: always) — 그래프뷰 4항목 라이브(배포 후).
+- [ ] 배포 시 **alembic upgrade head**(0028 적용) + web 재빌드(deploy_scope: included).
+
+### 6.6 변경 파일
+- backend: `shared/config.py`, `unit/feature-0002-agent-core/src/modules/{metadata_graph,node_analysis,llm,insight}.py`,
+  `unit/feature-0002-agent-core/alembic/versions/20260701_0028_node_analysis.py`,
+  `unit/feature-0003-agent-web-ui/src/app.py`.
+- frontend: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`.
