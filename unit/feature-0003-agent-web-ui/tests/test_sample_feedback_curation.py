@@ -156,35 +156,33 @@ def test_curate_in_admin_seed_not_in_stock_roles():
 
 # ── S1/S2/S3: admin endpoint 권한 게이트 403 (코어 미호출) ───────────────────────────
 
-def test_list_requires_permission(monkeypatch):
-    nobody = {"id": 9, "permissions": {"console.access": True}}  # kb.sample.curate 없음
-    monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (nobody, None))
+def test_list_requires_permission(monkeypatch, client, as_account):
+    # P5b DI seam Phase 3: admin_list_sample_feedback 가 account=Depends(require_permission("kb.sample.curate"))
+    # 로 마이그됨 → perm 검사가 의존성으로 이동(직접호출 우회). TestClient + as_account(perm 없음)로 403 보존.
+    as_account(perms={"console.access": True})  # kb.sample.curate 없음
     called = {"list": False}
     monkeypatch.setattr(_sfb, "list_pending_feedback", lambda *a, **k: called.__setitem__("list", True) or [])
-    resp = app.admin_list_sample_feedback(_FakeRequest())
+    resp = client.get("/api/admin/sample-feedback")
     assert resp.status_code == 403
     assert called["list"] is False, "권한 거부 시 코어 list 미호출"
 
 
-def test_approve_requires_permission(monkeypatch):
-    nobody = {"id": 9, "permissions": {"console.access": True}}
-    monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (nobody, None))
+def test_approve_requires_permission(monkeypatch, client, as_account):
+    # P5b DI seam Phase 3: require_permission DI 로 이동 → TestClient + as_account(perm 없음)로 403 보존.
+    as_account(perms={"console.access": True})
     called = {"promote": False}
     monkeypatch.setattr(_sfb, "promote_feedback", lambda *a, **k: called.__setitem__("promote", True) or 1)
-    resp = asyncio.run(app.admin_approve_sample_feedback(7, _FakeRequest({})))
+    resp = client.post("/api/admin/sample-feedback/7/approve", json={})
     assert resp.status_code == 403
     assert called["promote"] is False, "권한 거부 시 승급 코어 미호출(보안 핵심)"
 
 
-def test_reject_requires_permission(monkeypatch):
-    nobody = {"id": 9, "permissions": {"console.access": True}}
-    monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (nobody, None))
+def test_reject_requires_permission(monkeypatch, client, as_account):
+    # P5b DI seam Phase 3: require_permission DI 로 이동 → TestClient + as_account(perm 없음)로 403 보존.
+    as_account(perms={"console.access": True})
     called = {"reject": False}
     monkeypatch.setattr(_sfb, "reject_feedback", lambda *a, **k: called.__setitem__("reject", True))
-    resp = asyncio.run(app.admin_reject_sample_feedback(7, _FakeRequest({})))
+    resp = client.post("/api/admin/sample-feedback/7/reject", json={})
     assert resp.status_code == 403
     assert called["reject"] is False
 
@@ -272,7 +270,8 @@ def test_approve_promotes_and_audits(monkeypatch):
     monkeypatch.setattr(_sfb, "promote_feedback", _fake_promote)
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.admin_approve_sample_feedback(13, _FakeRequest({"weight": 90, "domain": "sales"})))
+    # P5b DI: account=Depends(require_permission) 마이그 → happy 경로는 account 명시 주입(require_permission 우회, 동작만 검증; perm-gate 는 별도 403 테스트).
+    resp = asyncio.run(app.admin_approve_sample_feedback(13, _FakeRequest({"weight": 90, "domain": "sales"}), account=admin))
     assert resp.status_code == 200
     out = _body(resp)
     assert out["ok"] is True
@@ -301,7 +300,7 @@ def test_approve_none_returns_409_no_audit(monkeypatch):
     monkeypatch.setattr(_sfb, "promote_feedback", lambda *a, **k: None)  # 👎 또는 비-pending
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.admin_approve_sample_feedback(99, _FakeRequest({})))
+    resp = asyncio.run(app.admin_approve_sample_feedback(99, _FakeRequest({}), account=admin))
     assert resp.status_code == 409
     assert not any(e.get("action") == "sample.feedback.approve" for e in events), "비-승급 시 audit 미기록"
 
@@ -322,7 +321,7 @@ def test_reject_rejects_and_audits(monkeypatch):
     monkeypatch.setattr(_sfb, "reject_feedback", _fake_reject)
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.admin_reject_sample_feedback(21, _FakeRequest({})))
+    resp = asyncio.run(app.admin_reject_sample_feedback(21, _FakeRequest({}), account=admin))
     assert resp.status_code == 200
     assert captured["conn"] is pg
     assert captured["feedback_id"] == 21
@@ -347,7 +346,7 @@ def test_list_serializes_pending_rows(monkeypatch):
     ]
     monkeypatch.setattr(_sfb, "list_pending_feedback", lambda conn, scope_key=None, limit=50: rows)
 
-    resp = app.admin_list_sample_feedback(_FakeRequest())
+    resp = app.admin_list_sample_feedback(_FakeRequest(), account=admin)
     assert resp.status_code == 200
     out = _body(resp)
     assert out["count"] == 2

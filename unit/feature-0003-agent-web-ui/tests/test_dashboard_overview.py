@@ -88,7 +88,7 @@ def test_overview_console_only_excludes_resource_widgets(monkeypatch):
     operator = {"id": 5, "permissions": {"console.access": True}}
     _patch_common(monkeypatch, operator)
 
-    resp = app.admin_overview(_FakeRequest())
+    resp = app.admin_overview(_FakeRequest(), actor=operator, conn=_BenignConn())
     body = _body(resp)
 
     catalog_keys = {c["key"] for c in body["catalog"]}
@@ -107,7 +107,7 @@ def test_overview_resource_widgets_gated_by_resource_permission(monkeypatch):
         "console.access": True, "account.read": True, "product.manage": True}}
     _patch_common(monkeypatch, actor)
 
-    body = _body(app.admin_overview(_FakeRequest()))
+    body = _body(app.admin_overview(_FakeRequest(), actor=actor, conn=_BenignConn()))
     catalog_keys = {c["key"] for c in body["catalog"]}
     assert "accounts" in catalog_keys          # account.read
     assert "accounts" in body["widgets"]
@@ -134,7 +134,9 @@ def test_overview_admin_includes_all_widgets(monkeypatch):
     }
     _patch_common(monkeypatch, admin)
 
-    resp = app.admin_overview(_FakeRequest(days=30))
+    # P5b DI: admin_overview 가 actor=Depends(require_permission("console.access")), conn=Depends(get_conn) 로
+    # 마이그됨 → happy 경로는 actor/conn 명시 주입(require_permission 우회, 위젯 게이팅은 본문 _account_has_permission 그대로).
+    resp = app.admin_overview(_FakeRequest(days=30), actor=admin, conn=_BenignConn())
     body = _body(resp)
 
     catalog_keys = {c["key"] for c in body["catalog"]}
@@ -151,7 +153,7 @@ def test_overview_catalog_includes_client_widgets(monkeypatch):
     operator = {"id": 5, "permissions": {"console.access": True}}
     _patch_common(monkeypatch, operator)
 
-    body = _body(app.admin_overview(_FakeRequest()))
+    body = _body(app.admin_overview(_FakeRequest(), actor=operator, conn=_BenignConn()))
     catalog = {c["key"]: c for c in body["catalog"]}
     assert catalog.get("grant_health", {}).get("source") == "client"
     assert catalog.get("pending", {}).get("source") == "client"
@@ -162,10 +164,11 @@ def test_overview_catalog_includes_client_widgets(monkeypatch):
 
 # ── S2: console.access 미보유 403 ────────────────────────────────────────────
 
-def test_overview_requires_console_access(monkeypatch):
-    nobody = {"id": 9, "permissions": {"conversation.read": True}}
-    _patch_common(monkeypatch, nobody)
-    resp = app.admin_overview(_FakeRequest())
+def test_overview_requires_console_access(client, as_account):
+    # P5b DI: admin_overview 가 require_permission("console.access") 로 마이그 → perm 검사가 의존성으로 이동
+    # (직접호출 우회). TestClient + as_account(console.access 없음)로 require_permission 403 보존.
+    as_account(perms={"conversation.read": True})
+    resp = client.get("/api/admin/overview")
     assert resp.status_code == 403
 
 
@@ -337,7 +340,7 @@ def test_overview_window_propagates_to_time_widgets(monkeypatch):
     monkeypatch.setattr(app, "_dash_widget_audits", _fake_audits)
     monkeypatch.setattr(app, "_dash_widget_conversations", _fake_conv)
 
-    app.admin_overview(_FakeRequest(days=30))
+    app.admin_overview(_FakeRequest(days=30), actor=admin, conn=_BenignConn())
     assert captured.get("audits_days") == 30
     assert captured.get("conv_days") == 30
     # .any 보유 admin → scope='any'(cross-account)
@@ -366,7 +369,7 @@ def test_overview_own_user_sees_self_scoped_widgets(monkeypatch):
     monkeypatch.setattr(app, "_dash_widget_audits", _fake_audits)
     monkeypatch.setattr(app, "_dash_widget_conversations", _fake_conv)
 
-    body = _body(app.admin_overview(_FakeRequest()))
+    body = _body(app.admin_overview(_FakeRequest(), actor=own_user, conn=_BenignConn()))
     catalog_keys = {c["key"] for c in body["catalog"]}
     # .own 보유자도 위젯은 보임(가시성 = own|any)
     assert "audits" in catalog_keys

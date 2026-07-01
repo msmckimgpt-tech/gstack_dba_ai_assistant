@@ -17,6 +17,12 @@ from __future__ import annotations
 import json
 
 import app
+# feature-0012 P5b Final: admin_usage_conversations 가 routers/admin_usage.py 로 추출됨.
+# 핸들러는 app.<helper>(_account_has_permission·_query_usage_conversations·
+# _usage_account_ids_for_role 등)를 동적 참조하므로 monkeypatch.setattr(app, ...) 가로채기는
+# 그대로 유효(호출 위치만 routers.admin_usage 로 전환). _query_usage_conversations 헬퍼 단위
+# 테스트(app._query_usage_conversations) + profile 핸들러(app.py 잔류)는 무변.
+from routers import admin_usage
 
 
 class _FakeCursor:
@@ -202,7 +208,9 @@ def test_a1_admin_requires_usage_read(monkeypatch):
     actor = {"id": 1, "permissions": {"conversation.list.any": True}}  # usage.read 없음
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_usage_conversations(_Req())
+    # P5b DI seam Phase 3: admin_usage_conversations 가 account=Depends(get_current_account) 로 마이그됨
+    # → 직접호출 시 account/conn 명시 주입. AO 라 본문 perm 검사(usage.read+list.any)가 account 로 실행.
+    resp = admin_usage.admin_usage_conversations(_Req(), account=actor, conn=_Conn())
     assert resp.status_code == 403
 
 
@@ -210,7 +218,7 @@ def test_a1_admin_requires_list_any(monkeypatch):
     actor = {"id": 1, "permissions": {"console.usage.read": True}}  # list.any 없음
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_usage_conversations(_Req())
+    resp = admin_usage.admin_usage_conversations(_Req(), account=actor, conn=_Conn())
     assert resp.status_code == 403
 
 
@@ -221,18 +229,19 @@ def test_a2_system_role_empty(monkeypatch):
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
     monkeypatch.setattr(app, "_usage_account_ids_for_role", lambda conn, rk: None)  # 시스템
-    resp = app.admin_usage_conversations(_Req({"role": "(시스템)"}))
+    resp = admin_usage.admin_usage_conversations(_Req({"role": "(시스템)"}), account=actor, conn=_Conn())
     body = _body(resp)
     assert body["items"] == [] and body["truncated"] is False
 
 
 # ── P1: profile 권한 상승 차단 ───────────────────────────────────────────────
 
-def test_p1_profile_ignores_role_account(monkeypatch):
-    actor = {"id": 42, "permissions": {}}  # 일반 사용자
+def test_p1_profile_ignores_role_account(monkeypatch, client, as_account):
+    # P5b DI seam Phase 2: profile_usage_conversations 가 account=Depends(get_current_account) 로
+    # 마이그됨 → 직접 함수호출 대신 TestClient + as_account override(get_current_account).
+    as_account(id=42, perms={})  # 일반 사용자
     captured = {}
-    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
+    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())  # get_conn → fake conn(body 미사용)
     monkeypatch.setattr("shared.db._pg_connect", lambda: _FakePG([], []))
 
     def _fake_query(pg, **kw):
@@ -240,7 +249,11 @@ def test_p1_profile_ignores_role_account(monkeypatch):
         return ([], False)
     monkeypatch.setattr(app, "_query_usage_conversations", _fake_query)
     # role/account_id 를 주입해도 무시되고 owner_account_id=self(42) 강제여야 함
-    app.profile_usage_conversations(_Req({"role": "admin", "account_id": "999", "model": "claude-haiku-4"}))
+    resp = client.get(
+        "/api/profile/usage/conversations",
+        params={"role": "admin", "account_id": "999", "model": "claude-haiku-4"},
+    )
+    assert resp.status_code == 200
     assert captured.get("owner_account_id") == 42
     assert captured.get("account_ids") is None
     assert captured.get("model") == "claude-haiku-4"  # 모델 필터는 적용

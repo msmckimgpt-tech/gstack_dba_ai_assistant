@@ -83,7 +83,7 @@ def _install(monkeypatch, *, probe):
 # ── T1: 정상 결과 전달 ──────────────────────────────────────────────────────────
 def test_probe_ok_passthrough(monkeypatch):
     _install(monkeypatch, probe=lambda ds, *, timeout=None: (True, 12.3, ""))
-    resp = asyncio.run(app.admin_test_datasource("mysql-abc", _FakeRequest()))
+    resp = asyncio.run(app.admin_test_datasource("mysql-abc", _FakeRequest(), actor={"id": 1}, conn=_BenignConn()))
     assert resp.status_code == 200
     b = _body(resp)
     assert b["ok"] is True
@@ -96,7 +96,7 @@ def test_probe_ok_passthrough(monkeypatch):
 def test_probe_slow_marks_unstable(monkeypatch):
     """연결은 성공(1745ms)했지만 SLOW(1000ms) 이상이면 status=unstable(빨강 '연결 불안정')."""
     _install(monkeypatch, probe=lambda ds, *, timeout=None: (True, 1745.0, ""))
-    resp = asyncio.run(app.admin_test_datasource("mysql-slow", _FakeRequest()))
+    resp = asyncio.run(app.admin_test_datasource("mysql-slow", _FakeRequest(), actor={"id": 1}, conn=_BenignConn()))
     b = _body(resp)
     assert b["ok"] is True
     assert b["elapsed_ms"] == 1745.0
@@ -106,7 +106,7 @@ def test_probe_slow_marks_unstable(monkeypatch):
 # ── T2: 실패 결과 + errno 전달(자격증명 비유출) ─────────────────────────────────
 def test_probe_failure_errno(monkeypatch):
     _install(monkeypatch, probe=lambda ds, *, timeout=None: (False, 8000.0, "errno=2003"))
-    resp = asyncio.run(app.admin_test_datasource("mysql-abc", _FakeRequest()))
+    resp = asyncio.run(app.admin_test_datasource("mysql-abc", _FakeRequest(), actor={"id": 1}, conn=_BenignConn()))
     b = _body(resp)
     assert b["ok"] is False
     assert b["error"] == "errno=2003"
@@ -130,7 +130,7 @@ def test_concurrent_probes_do_not_block_event_loop(monkeypatch):
     async def _run_all():
         start = time.monotonic()
         results = await asyncio.gather(*[
-            app.admin_test_datasource(f"mysql-{i}", _FakeRequest()) for i in range(N)
+            app.admin_test_datasource(f"mysql-{i}", _FakeRequest(), actor={"id": 1}, conn=_BenignConn()) for i in range(N)
         ])
         return results, time.monotonic() - start
 

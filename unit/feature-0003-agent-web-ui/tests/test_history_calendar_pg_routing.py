@@ -114,11 +114,15 @@ def _body(resp):
 
 
 # ── T1: history_dates PG 라우팅 + MySQL 미접촉 회귀 가드 ──────────────────────
-def test_history_dates_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch):
+def test_history_dates_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch, client, as_account):
+    # P5b DI seam Phase 2: history_dates 가 account=Depends(get_current_account) 로 마이그됨
+    # → 직접 함수호출 대신 TestClient + as_account override. get_conn→_connect_memory(mem) 로
+    # conn=mem 유지(mem.cursor_calls 가드 보존). _resolve_conversation_for_account 패치는 _patch_auth 유지.
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     mem = _FakeMemConn()
     monkeypatch.setattr(app, "_connect_memory", lambda: mem)
     _patch_auth(monkeypatch)
+    as_account()
     pg = _FakePgConn(
         fetchall_rows=[
             ("2026-05-18", "09:05,14:30,14:30"),
@@ -127,8 +131,8 @@ def test_history_dates_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch):
     )
     monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
-    resp = app.history_dates(_DummyRequest(), conversation_id="conv-1")
-    body = _body(resp)
+    resp = client.get("/api/history_dates", params={"conversation_id": "conv-1"})
+    body = resp.json()
 
     # PG 행에서 조립 — 클릭 가능한 날짜가 생긴다(빈 dates 회귀 아님).
     assert body["dates"] == {"2026-05-18": ["09:05", "14:30"], "2026-05-19": ["10:00"]}
@@ -140,18 +144,22 @@ def test_history_dates_routes_to_pg_and_skips_dropped_mysql_table(monkeypatch):
 
 
 # ── T2: history_anchor 는 PG id 를 반환한다(DOM id-space 일치) ────────────────
-def test_history_anchor_returns_pg_id(monkeypatch):
+def test_history_anchor_returns_pg_id(monkeypatch, client, as_account):
+    # P5b DI seam Phase 2: history_anchor 가 account=Depends(get_current_account) 로 마이그됨
+    # → 직접 함수호출 대신 TestClient + as_account override (conn=mem 유지로 cursor_calls 가드 보존).
     monkeypatch.setenv("AGENT_RUNTIME_READ_BACKEND", "postgres")
     mem = _FakeMemConn()
     monkeypatch.setattr(app, "_connect_memory", lambda: mem)
     _patch_auth(monkeypatch)
+    as_account()
     pg = _FakePgConn(fetchone_row=(4242, "2026-05-18 14:30:00+09:00"))
     monkeypatch.setattr("shared.db._pg_connect", lambda: pg)
 
-    resp = app.history_anchor(
-        _DummyRequest(), conversation_id="conv-1", at="2026-05-18 14:30:00"
+    resp = client.get(
+        "/api/history_anchor",
+        params={"conversation_id": "conv-1", "at": "2026-05-18 14:30:00"},
     )
-    body = _body(resp)
+    body = resp.json()
 
     assert body["message_id"] == 4242
     assert mem.cursor_calls == 0, "PG 모드에서 삭제된 MySQL 테이블을 조회하면 안 됨"
@@ -162,12 +170,14 @@ def test_history_anchor_returns_pg_id(monkeypatch):
 
 
 # ── T3: legacy(env != postgres) 는 기존 MySQL 경로 유지 (back-compat) ─────────
-def test_history_dates_legacy_mysql_path_when_backend_not_postgres(monkeypatch):
+def test_history_dates_legacy_mysql_path_when_backend_not_postgres(monkeypatch, client, as_account):
+    # P5b DI seam Phase 2: TestClient + as_account override (history_dates DI 마이그).
     monkeypatch.delenv("AGENT_RUNTIME_READ_BACKEND", raising=False)
     # MySQL 경로: DATE(CreatedAt), GROUP_CONCAT 결과 형태.
     mem = _FakeMemConn(rows=[("2026-05-18", "09:05,14:30")])
     monkeypatch.setattr(app, "_connect_memory", lambda: mem)
     _patch_auth(monkeypatch)
+    as_account()
 
     # PG 가 호출되면 실패하도록 — legacy 경로는 PG 를 만지면 안 된다.
     def _boom():
@@ -175,8 +185,8 @@ def test_history_dates_legacy_mysql_path_when_backend_not_postgres(monkeypatch):
 
     monkeypatch.setattr("shared.db._pg_connect", _boom)
 
-    resp = app.history_dates(_DummyRequest(), conversation_id="conv-1")
-    body = _body(resp)
+    resp = client.get("/api/history_dates", params={"conversation_id": "conv-1"})
+    body = resp.json()
 
     assert body["dates"] == {"2026-05-18": ["09:05", "14:30"]}
     assert mem.cursor_calls >= 1, "legacy 경로는 MySQL cursor 를 사용해야 함"

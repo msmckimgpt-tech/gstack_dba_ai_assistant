@@ -271,7 +271,9 @@ def test_endpoint_requires_console_access(monkeypatch):
     nobody = {"id": 9, "permissions": {}}  # console.access 없음
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (nobody, None))
-    resp = app.admin_product_db_insights(1, _FakeRequest())
+    # P5b DI seam Phase 3: admin_product_db_insights 가 account=Depends(get_current_account) 로 마이그됨
+    # → 직접 함수호출 시 Depends 기본값(account/conn)을 명시 주입. AO 라 본문 perm 검사가 account 로 실행.
+    resp = app.admin_product_db_insights(1, _FakeRequest(), account=nobody, conn=_BenignConn())
     assert resp.status_code == 403
 
 
@@ -280,7 +282,7 @@ def test_endpoint_product_not_found(monkeypatch):
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     _patch_products(monkeypatch, [])
-    resp = app.admin_product_db_insights(999, _FakeRequest())
+    resp = app.admin_product_db_insights(999, _FakeRequest(), account=acct, conn=_BenignConn())
     assert resp.status_code == 404
 
 
@@ -293,7 +295,7 @@ def test_endpoint_unbound_datasource_rejected(monkeypatch):
         app, "_list_product_datasources",
         lambda conn, pid: [{"datasource_key": "main_mysql", "is_primary": True, "sort_order": 0}],
     )
-    resp = app.admin_product_db_insights(1, _FakeRequest({"datasource": "other_ds"}))
+    resp = app.admin_product_db_insights(1, _FakeRequest({"datasource": "other_ds"}), account=acct, conn=_BenignConn())
     assert resp.status_code == 400
 
 
@@ -309,7 +311,7 @@ def test_endpoint_ok_shape(monkeypatch):
             "worker": {"alive": True}, "scope": "x", "engine": "mysql", "datasource_key": None,
         },
     )
-    resp = app.admin_product_db_insights(1, _FakeRequest())
+    resp = app.admin_product_db_insights(1, _FakeRequest(), account=acct, conn=_BenignConn())
     assert resp.status_code == 200
     body = _body(resp)
     assert body["ok"] is True

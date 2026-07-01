@@ -142,11 +142,12 @@ class _Req:
         self.query_params = {}
 
 
-def test_a1_product_icon_delete_requires_manage(monkeypatch):
-    actor = {"id": 1, "permissions": {"console.access": True}}  # product.manage 없음
-    monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
-    monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.delete_product_icon(7, _Req())
+def test_a1_product_icon_delete_requires_manage(client, as_account):
+    # P5b DI seam Phase 3: delete_product_icon 가 account=Depends(require_permission("product.manage")) 로
+    # 마이그됨 → 직접 함수호출 대신 TestClient + as_account override. require_permission 은 override 하지 않고
+    # 실제 _account_has_permission 검사를 그대로 타므로, product.manage 없는 계정이면 403.
+    as_account(perms={"console.access": True})  # product.manage 없음
+    resp = client.delete("/api/admin/products/7/icon")
     assert resp.status_code == 403
 
 
