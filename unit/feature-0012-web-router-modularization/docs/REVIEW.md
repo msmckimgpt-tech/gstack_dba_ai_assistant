@@ -386,3 +386,13 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - 사전 검증: 관련 45 테스트 PASS(quota/history/finalize/product-conn-status/usage, CI PYTHONPATH 로 실행, exit 0 100%).
 - deploy-backed: 배포 후 라이브 `GET /api/admin/databases/available`·`/api/history` 상태·`/api/cancel`·`/api/finalize` 500→200 재검증(§16.3).
 - 학습: batch1~4 의 "byte-neutral" route-parity 게이트는 **테스트 미커버 핸들러의 NameError 를 놓쳤다** — 추출 게이트에 `ruff --select F821` 추가가 이 클래스 방어선.
+
+## REV-20260702-0014 [SKIPPED:mechanical 골든 재생성 — diff 정확히 +1 legit route(#514 analyze/status), route_parity 테스트 PASS, runtime 무변경]
+- Related Change: CHG-20260702-0014 (route-parity 골든 192→193 재생성 — CI red 해소)
+- 검증 성격: test fixture(golden snapshot) 전용 재생성. 런타임 코드 무변경(web 이미지 미반영).
+- 결정적 검증(패널 불요 사유 = auditable diff 가 검증 그 자체):
+  - (1) drift 원인 정밀 식별: `_build_table()` ordered 를 (path,methods) 키로 골든과 diff → **정확히 +1**(`GET /api/admin/metadata/graph/analyze/status`), 제거 0·중복 0·재정렬 0.
+  - (2) 추가 route 정당성: `admin_metadata.py:1013` 실핸들러 + `admin.js:3974` 프론트 실사용(그래프 AI 분석 상태 폴링). `git log -S` → feature-0016 `24445e94`(#514) 추가, 골든 미동반. → stale 확정(골든이 193 이어야 함).
+  - (3) 재생성 결과 auditable: `git diff route_snapshot_p5b.json` = total_routes/api_routes 2줄 + analyze/status 블록만(9 ins/2 del). 다른 192 route 불변 → masking 없음.
+  - (4) `test_route_parity_p5b` PASS(193/192).
+- 범위 규율: 추가 route 는 feature-0016(#514) 소산이나 골든은 feature-0012 route-parity 안전망 소관 → feature-0012 유지보수 cycle 로 처리(route 출처 명기).

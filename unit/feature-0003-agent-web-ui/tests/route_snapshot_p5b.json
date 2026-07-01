@@ -1,6 +1,6 @@
 {
-  "total_routes": 192,
-  "api_routes": 191,
+  "total_routes": 193,
+  "api_routes": 192,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -716,6 +716,13 @@
     },
     {
       "path": "/api/admin/metadata/graph/analyze/node",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/metadata/graph/analyze/status",
       "methods": [
         "GET"
       ],

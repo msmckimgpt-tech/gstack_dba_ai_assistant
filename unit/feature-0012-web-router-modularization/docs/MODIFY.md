@@ -507,3 +507,14 @@ source_of_truth: true
 - 검증: ruff F821 clean(22 router 전체), py_compile PASS, 관련 45 테스트 PASS(quota/history/finalize/conn-status/usage), §18.8 SUBAGENT 패널 VERDICT PASS(정확성·완전성·회귀·부작용 4축 refute 실패), 배포 후 라이브 3엔드포인트 500→200.
 - 학습: **라우터 전체추출은 name-resolution 상 byte-neutral 이 아니다** — 추출된 핸들러의 bare app-global/import 참조는 `app.` 한정 필수. batch1~4 의 "byte-neutral" 게이트(make test route-parity)는 *hit 되지 않은* 핸들러의 NameError 를 놓쳤다(테스트 미커버 경로). 향후 추출 시 `ruff --select F821` 를 추출 게이트에 추가 권장. (route-parity 골든 192 vs 실 193 stale 도 같은 batch4 미완 — 별도.)
 - Rollback: revert 3파일 `app.` 접두 제거(bare 복원).
+
+## CHG-20260702-0014
+- Date: 2026-07-02
+- Related Requirement: route-parity 골든 stale 해소(CI red `test_route_parity_p5b` 192→193). batch4(CHG-0012)가 골든을 192 로 set-neutral 했으나, 이후 feature-0016 `24445e94`(#514, "관리콘솔 메타데이터 그래프 뷰 출력 3건 수정")가 `GET /api/admin/metadata/graph/analyze/status` route 를 **추가하면서 골든을 갱신하지 않아** 실 193 vs 골든 192 drift → CI 상시 red.
+- Summary:
+  route-parity 안전망(`test_route_parity_p5b`)의 골든 스냅샷을 `_build_table()` 출력으로 재생성(테스트 docstring 의 sanctioned 갱신 방법). 정밀 diff 로 drift 원인을 **정확히 1개 route 추가**로 확정(제거·중복·재정렬 0): `GET /api/admin/metadata/graph/analyze/status`(`admin_metadata.py:1013` 정의, `admin.js:3974` 그래프 뷰 AI 분석 상태 폴링에 실사용 — 정당한 엔드포인트). 골든 `total_routes 192→193`, `api_routes 191→192`, analyze/status 블록 in-order 삽입.
+- Files: src/../tests/route_snapshot_p5b.json (골든만).
+- Impact: CI `test_route_parity_p5b` green 회복(→ 이후 PR 이 route-parity red 위로 머지하지 않음). **runtime 무변경** — 골든은 test fixture 이고 web 이미지(Dockerfile 은 src 만 COPY, tests/ 미포함)에 미반영 → web 재배포는 runtime no-op.
+- 검증: 재생성 후 `test_route_parity_p5b` PASS(총 193/api 192). git diff 가 count 2줄 + analyze/status 블록만 변경(9 ins/2 del) 임을 확인 — 다른 route 미변경(오갱신·masking 없음).
+- 학습: 의도적 route 추가 시 골든 갱신은 **route 추가 feature 의 책임**(여기선 #514 누락). route-parity 게이트가 이를 잡았으나, 추출-batch 들이 골든을 set-neutral 로 유지하는 사이 타 feature 의 route 추가와 겹쳐 blame 이 흐려졌다. 향후 route 추가 PR 은 골든 동반 갱신 필수(CI 가 강제).
+- Rollback: revert route_snapshot_p5b.json(192 복원 — CI red 재발).
