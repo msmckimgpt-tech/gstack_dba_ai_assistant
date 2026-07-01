@@ -183,15 +183,15 @@ def history(
     last_run_started_at = ""
     if conv_id:
         try:
-            last_status = str(load_memory_kv(conn, conv_id, "last_status") or "").strip()
+            last_status = str(app.load_memory_kv(conn, conv_id, "last_status") or "").strip()
             if last_status == "processing":
-                last_run_id = str(load_memory_kv(conn, conv_id, "last_status_run_id") or "").strip()
+                last_run_id = str(app.load_memory_kv(conn, conv_id, "last_status_run_id") or "").strip()
                 # 새로고침 후 pending bubble 의 경과시간이 0 으로 초기화되지 않도록 run
                 # 시작 시각(last_status_at)을 함께 반환한다. set_run_status 는 'processing'
                 # 전이 시 last_status_at 을 1 회만 기록하고 terminal(done/error/canceled)
                 # 시점까지 갱신하지 않으므로, processing 상태에서의 last_status_at 은 곧
                 # run 시작 시각이다(클라이언트가 elapsed 기준점으로 사용).
-                last_run_started_at = str(load_memory_kv(conn, conv_id, "last_status_at") or "").strip()
+                last_run_started_at = str(app.load_memory_kv(conn, conv_id, "last_status_at") or "").strip()
         except Exception:
             # best-effort: 상태 bubble 복원용 KV 조회 실패는 history 응답을 막지 않는다.
             logging.getLogger(__name__).warning(
@@ -475,9 +475,9 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
     # 은 기존대로 폐기 — 동작 무변경.
     _preserve_reasoning = bool(data.get("preserve_reasoning"))
     try:
-        run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+        run_id = str(app.load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         # running run 은 KV cancel_requested 플래그를 run_agent 가 폴링해 처리(§2.6 무변경).
-        mark_cancel_requested(conn, conversation_id, run_id=run_id, preserve_reasoning=_preserve_reasoning)
+        app.mark_cancel_requested(conn, conversation_id, run_id=run_id, preserve_reasoning=_preserve_reasoning)
         # TASK-0169 (2g): worker mode 에서 아직 claim 안 된 pending job 은 run_id 매칭
         # 대상이 없어 KV 플래그가 유실된다. 큐 레벨로 취소(canceled)해 취소 유실 방지.
         if app._is_worker_mode():
@@ -500,7 +500,7 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
         # write 를 건너뛰어 새 run 의 processing 을 클로버하지 않는다(취소 시점엔 run_id 가
         # 현재 run 이라 정상 기록). agent 루프의 terminal write 도 동일 가드를 쓴다(TASK-0241).
         try:
-            set_run_status(conn, conversation_id, "canceled", run_id=run_id, only_if_current_run=True)
+            app.set_run_status(conn, conversation_id, "canceled", run_id=run_id, only_if_current_run=True)
         except Exception:
             pass
     except Exception:
@@ -531,8 +531,8 @@ async def finalize_request(request: Request, account=Depends(app.get_current_acc
     ):
         return app._json_error("권한이 없습니다.", 403)
     try:
-        run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
-        mark_finalize_requested(conn, conversation_id, run_id=run_id)
+        run_id = str(app.load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+        app.mark_finalize_requested(conn, conversation_id, run_id=run_id)
     except Exception:
         return app._json_error("finalize failed", 500)
     return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})

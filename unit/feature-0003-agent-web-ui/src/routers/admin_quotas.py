@@ -49,7 +49,7 @@ def admin_list_quotas(request: Request, actor=Depends(app.require_permission("co
         ]
     finally:
         cur.close()
-    return JSONResponse({"roles": roles, "account_overrides": overrides, "enforce": bool(LLM_QUOTA_ENFORCE)})
+    return JSONResponse({"roles": roles, "account_overrides": overrides, "enforce": bool(app.LLM_QUOTA_ENFORCE)})
 
 
 @router.put("/api/admin/quotas/role/{role_id}")

@@ -492,3 +492,29 @@ source_of_truth: true
 - Impact: **app.py 20,542→18,917 줄(~1,625↓).** **잔여 @app 라우트 0 — 148 route 핸들러 전량 21 router 로 추출 완료.** app.py = 헬퍼 라이브러리 + DI seam + 미들웨어 + include_router(조립부). make test 1313·0 fail·route drift 0, route-parity 192, byte-neutral.
 - 학습: 커플링 9유형 = 기존 8 + **(9) cross-call 핸들러**(route 이자 내부 함수 — 추출 시 내부 caller 참조 `app.X`→동일모듈 bare + monkeypatch/hasattr 대상 모듈 전환). app.py 잔여(~18.9k)=헬퍼(web_context 미이동, 원래 블로커 — 별도 workstream).
 - Rollback: revert(4 router append 제거 + app.py 16 복원 + ask cross-call 원복 + 테스트·골든).
+
+## CHG-20260702-0013
+- Date: 2026-07-02
+- Related Requirement: batch4 전체추출(CHG-20260701-0012)의 **bare-name 회귀 수정** — 라우터 모듈이 app-모듈 전역/import 심볼을 `app.` 로 한정하지 않아 런타임 `NameError` → 라이브 500 3종.
+- Summary:
+  P5b batch4 가 app.py 핸들러를 router 모듈로 추출하며, 원래 app.py 네임스페이스에서 해소되던 bare 참조(`MEMORY_DB`, `load_memory_kv` 등)를 `app.` 으로 한정하지 않았다. router 모듈은 `import app` 만 하므로 해당 bare name 이 미해소 → 핸들러 실행 시 `NameError` → 500. CHG-0012 의 "byte-neutral" 주장은 name-resolution 관점에서 부정확(모듈 경계 이동 시 bare app-global 은 비-byte-neutral). 6심볼/10개소를 `app.<name>` 으로 한정.
+  - `admin_console.py:78` `MEMORY_DB` → `app.MEMORY_DB` (`GET /api/admin/databases/available` — 제품 DB 화이트리스트 피커).
+  - `admin_quotas.py:52` `LLM_QUOTA_ENFORCE` → `app.LLM_QUOTA_ENFORCE` (`GET /api/admin/quotas`).
+  - `conversations.py` `load_memory_kv`×5(186·188·194·478·534) + `mark_cancel_requested`(480) + `set_run_status`(503) + `mark_finalize_requested`(535) → 전부 `app.` 한정 (`/api/history` 상태 bubble · `/api/cancel` · `/api/finalize`).
+  - 발견 경위: graph-panel-perms(91541447) 배포 후 라이브 브라우저 검증 중 admin 콘솔 500 관측 → `ruff check --select F821 routers/` 전수 감사로 6심볼 확정(브라우저로는 2심볼만 관측, 감사로 LLM_QUOTA_ENFORCE·mark_cancel_requested·set_run_status·mark_finalize_requested 추가 색출).
+- Files: src/routers/{admin_console,admin_quotas,conversations}.py (10개소 `app.` 접두만).
+- Impact: 라이브 admin console 500 3종 해소(제품 DB 피커·대화 상태 폴링·취소/즉시답변). 순수 name-qualification — `app.X` 는 app.py 가 정의(MEMORY_DB L99·LLM_QUOTA_ENFORCE L758)/import(L48–59 from modules.memory)한 **동일 객체**라 동작 무변경. route 무추가(route-parity 불변).
+- 검증: ruff F821 clean(22 router 전체), py_compile PASS, 관련 45 테스트 PASS(quota/history/finalize/conn-status/usage), §18.8 SUBAGENT 패널 VERDICT PASS(정확성·완전성·회귀·부작용 4축 refute 실패), 배포 후 라이브 3엔드포인트 500→200.
+- 학습: **라우터 전체추출은 name-resolution 상 byte-neutral 이 아니다** — 추출된 핸들러의 bare app-global/import 참조는 `app.` 한정 필수. batch1~4 의 "byte-neutral" 게이트(make test route-parity)는 *hit 되지 않은* 핸들러의 NameError 를 놓쳤다(테스트 미커버 경로). 향후 추출 시 `ruff --select F821` 를 추출 게이트에 추가 권장. (route-parity 골든 192 vs 실 193 stale 도 같은 batch4 미완 — 별도.)
+- Rollback: revert 3파일 `app.` 접두 제거(bare 복원).
+
+## CHG-20260702-0014
+- Date: 2026-07-02
+- Related Requirement: route-parity 골든 stale 해소(CI red `test_route_parity_p5b` 192→193). batch4(CHG-0012)가 골든을 192 로 set-neutral 했으나, 이후 feature-0016 `24445e94`(#514, "관리콘솔 메타데이터 그래프 뷰 출력 3건 수정")가 `GET /api/admin/metadata/graph/analyze/status` route 를 **추가하면서 골든을 갱신하지 않아** 실 193 vs 골든 192 drift → CI 상시 red.
+- Summary:
+  route-parity 안전망(`test_route_parity_p5b`)의 골든 스냅샷을 `_build_table()` 출력으로 재생성(테스트 docstring 의 sanctioned 갱신 방법). 정밀 diff 로 drift 원인을 **정확히 1개 route 추가**로 확정(제거·중복·재정렬 0): `GET /api/admin/metadata/graph/analyze/status`(`admin_metadata.py:1013` 정의, `admin.js:3974` 그래프 뷰 AI 분석 상태 폴링에 실사용 — 정당한 엔드포인트). 골든 `total_routes 192→193`, `api_routes 191→192`, analyze/status 블록 in-order 삽입.
+- Files: src/../tests/route_snapshot_p5b.json (골든만).
+- Impact: CI `test_route_parity_p5b` green 회복(→ 이후 PR 이 route-parity red 위로 머지하지 않음). **runtime 무변경** — 골든은 test fixture 이고 web 이미지(Dockerfile 은 src 만 COPY, tests/ 미포함)에 미반영 → web 재배포는 runtime no-op.
+- 검증: 재생성 후 `test_route_parity_p5b` PASS(총 193/api 192). git diff 가 count 2줄 + analyze/status 블록만 변경(9 ins/2 del) 임을 확인 — 다른 route 미변경(오갱신·masking 없음).
+- 학습: 의도적 route 추가 시 골든 갱신은 **route 추가 feature 의 책임**(여기선 #514 누락). route-parity 게이트가 이를 잡았으나, 추출-batch 들이 골든을 set-neutral 로 유지하는 사이 타 feature 의 route 추가와 겹쳐 blame 이 흐려졌다. 향후 route 추가 PR 은 골든 동반 갱신 필수(CI 가 강제).
+- Rollback: revert route_snapshot_p5b.json(192 복원 — CI red 재발).

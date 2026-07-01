@@ -75,7 +75,7 @@ def admin_list_available_databases(request: Request, account=Depends(app.require
         for name in app._DATABASES_AVAILABLE_METADATA
     ]
     excluded = set(app._DATABASES_AVAILABLE_METADATA) | set(app._DATABASES_AVAILABLE_INTERNAL)
-    excluded.add(MEMORY_DB.lower())
+    excluded.add(app.MEMORY_DB.lower())
     user_schemas = sorted(
         name for name in present
         if name not in excluded and app._DATABASES_AVAILABLE_NAME_RE.match(name)
