@@ -10921,34 +10921,7 @@ def _read_llm_provider_status() -> "dict[str, Any]":
         return {"state": "unknown"}
 
 
-@app.get("/api/llm/health")
-def get_llm_health(request: Request, force: int = 0, conn=Depends(get_conn)) -> JSONResponse:
-    """TASK-20260619T014034: LLM provider health(외부요인 제한) 조회 + hybrid active probe.
-
-    프론트가 로드 시 + 주기적으로 폴링. probe 는 TTL(LLM_HEALTH_PROBE_TTL_SEC, 기본 60s) 내
-    재호출이면 skip(비용 최소화) — 단 `force=1`(배너 '다시 확인')은 TTL 무시. 인증 필요(외부
-    노출 최소화) — 미인증은 cheap read 만 반환.
-
-    [P5b DI seam Phase 1 파일럿] conn 공급을 get_conn DI 로 위임(behavior-neutral). 인증 해석은
-    legacy 와 동일하게 _get_authenticated_account 를 **직접** 호출한다 — get_optional_account 로
-    위임하면 인증 쿼리 예외를 삼켜(except→None) legacy 의 'conn-open + 인증쿼리 raise → 500 전파'
-    를 200 cheap-read 로 바꾸므로(적대 패널 REV HIGH-1) 의도적으로 inline 유지. 동치 경로:
-    conn 획득 실패(get_conn None)·미인증 → cheap read 200, 인증 쿼리 예외 → 전파(→500), 인증 성공 → probe.
-    (conn 은 get_conn 계약상 요청 teardown 까지 보유 — 관측 응답은 불변, §1.1 sanction 한 design tradeoff.)
-    """
-    if conn is None:
-        # conn 획득 실패: probe 트리거 없이 마지막 알려진 상태만 (legacy `except → cheap read` 동치).
-        return JSONResponse(_read_llm_provider_status())
-    account = _get_authenticated_account(conn, request)
-    if not account:
-        # 미인증: probe 트리거 없이 마지막 알려진 상태만.
-        return JSONResponse(_read_llm_provider_status())
-    try:
-        from modules.llm_provider_health import probe_provider
-        status = probe_provider(force=bool(force))
-    except Exception:
-        status = _read_llm_provider_status()
-    return JSONResponse(status)
+# feature-0012 P5b Final: get_llm_health 는 src/routers/system.py 로 추출(맨 끝 include_router).
 
 
 @app.get("/api/session")
@@ -15680,54 +15653,7 @@ ORDER BY CreatedAt DESC, Id DESC
     return JSONResponse({"items": items})
 
 
-@app.delete("/api/share/{share_id}")
-def revoke_share(share_id: int, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
-    """공유 링크 revoke. CreatedBy 본인 또는 admin (`conversation.read.any` 가진 자) 만 가능."""
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            "SELECT Id, ConversationId, CreatedBy, RevokedAt FROM WebConversationShares WHERE Id = %s LIMIT 1",
-            (int(share_id),),
-        )
-        row = cur.fetchone()
-    finally:
-        cur.close()
-    if not row:
-        return _json_error("공유 링크를 찾을 수 없습니다.", 404)
-    if row.get("RevokedAt") is not None:
-        return JSONResponse({"id": int(row.get("Id")), "already_revoked": True})
-    is_creator = int(row.get("CreatedBy") or 0) == int(account["id"])
-    is_admin = _account_has_permission(account, "conversation.read.any")
-    if not (is_creator or is_admin):
-        return _json_error("요청을 수행할 수 없습니다.", 403)
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-UPDATE WebConversationShares
-SET RevokedAt = CURRENT_TIMESTAMP, RevokedBy = %s
-WHERE Id = %s AND RevokedAt IS NULL
-            """,
-            (int(account["id"]), int(share_id)),
-        )
-        updated = int(cur.rowcount or 0)
-    finally:
-        cur.close()
-    # TASK-0073 Phase A6: user endpoint best-effort audit.
-    _audit_user_action(
-        conn,
-        request,
-        account,
-        action="conversation.share.revoke",
-        resource_type="share",
-        resource_id=str(share_id),
-        request_ctx={
-            "conversation_id": str(row.get("ConversationId") or ""),
-            "share_id": int(share_id),
-            "already_revoked": updated == 0,
-        },
-    )
-    return JSONResponse({"id": int(share_id), "revoked": updated > 0})
+# feature-0012 P5b Final: revoke_share 는 src/routers/share.py 로 추출(맨 끝 include_router).
 
 
 @app.get("/api/public/share/{token}")
@@ -15890,100 +15816,7 @@ WHERE Token = %s AND RevokedAt IS NULL
         conn.close()
 
 
-@app.post("/api/share/{token}/join")
-def join_conversation_via_share(token: str, request: Request, account=Depends(get_current_account), conn=Depends(get_conn)) -> JSONResponse:
-    """feature-0009: 공유 링크로 그룹 대화에 **참여(join)** — 로그인 viewer 를 멤버로 추가.
-
-    조건(전부 충족): 로그인 + 링크 활성(revoked/expired 아님) + Joinable=1 + 대화 비차단/비보관.
-    참여 시 발신자(actor)는 대화 전체(권한 멤버가 만든 datasource 결과 포함)를 열람하게 된다
-    (열람 ≠ 발화, AR-1). datasource 발화/쿼리는 여전히 본인 RBAC 게이트(S4). audit: conversation.member.join.
-    """
-    share = _share_load_active(conn, token)
-    if not share:
-        return _json_error("공유 링크를 찾을 수 없습니다.", 404)
-    if share.get("RevokedAt") is not None:
-        return _json_error("이 공유 링크는 취소되었습니다.", 410)
-    if _share_row_expired(conn, int(share.get("Id") or 0)):
-        return _json_error("이 공유 링크는 만료되었습니다.", 410)
-    if not bool(int(share.get("Joinable") if share.get("Joinable") is not None else 1)):
-        return _json_error("이 공유 링크는 대화 참여가 허용되지 않습니다.", 403)
-    cid = str(share.get("ConversationId") or "")
-    if not cid or not _conversation_exists(cid, conn=conn):
-        return _json_error("대화를 찾을 수 없습니다.", 404)
-    _is_blocked, _block_reason = _conversation_block_info(cid, conn=conn)
-    if _is_blocked:
-        return _json_error(_block_reason or _BLOCKED_PRODUCT_DELETED_REASON, 403)
-    # feature-0009 gc-group-authz-flag: join = 그룹 협업 확정 → owner 멤버십 보장(member_count
-    # under-count → 공유 직후 assistant 오호출 #2 자가치유) + is_group 플래그 set(#4). 기존
-    # backfill 미적용 대화도 이 시점에 정상화. best-effort(헬퍼가 예외 무시).
-    _ensure_owner_membership(cid)
-    _mark_conversation_group(cid)
-    actor_id = int(account["id"])
-    # feature-0009 member-kick-ban: 차단된 account 는 공유 링크로 재참여 불가(owner ban).
-    # owner 는 차단 불가(ban 엔드포인트 가드)라 owner self-join 은 영향 없음. _ensure_owner_membership
-    # 위에서 이미 owner 멤버십을 보장했고, 본 게이트는 차단된 비-owner actor 만 막는다.
-    try:
-        from shared.db import _pg_connect as _pg_connect_ban
-        from modules import group_members as _gm_ban
-        _pg_b = _pg_connect_ban()
-        try:
-            _is_banned = _gm_ban.is_banned(_pg_b, cid, actor_id)
-        finally:
-            _pg_b.close()
-    except Exception:
-        # 보안 게이트 fail-closed — 차단 여부 불명 시 참여 거부(가용성보다 ban 무결성 우선).
-        # join 은 어차피 add_member(동일 PG)를 요구하므로 PG 장애 시 추가 가용성 손실 없음.
-        logging.getLogger(__name__).warning(
-            "join: is_banned check failed — fail-closed", exc_info=True
-        )
-        return _json_error("참여 처리 중 오류가 발생했습니다. 다시 시도해 주세요.", 500)
-    if _is_banned:
-        _audit_user_action(
-            conn,
-            request,
-            account,
-            action="conversation.member.join_blocked",
-            resource_type="conversation_member",
-            resource_id=str(actor_id),
-            request_ctx={"conversation_id": cid, "via": "share_link", "reason": "banned"},
-        )
-        return _json_error("이 대화에서 차단되어 참여할 수 없습니다.", 403)
-    # 이미 소유자/멤버면 멱등 성공(중복 참여 무해).
-    already = _conversation_owned_by_account(conn, cid, actor_id) or _account_is_conversation_member(cid, actor_id)
-    if not already:
-        try:
-            from shared.db import _pg_connect
-            from modules import group_members
-            pg = _pg_connect()
-            try:
-                inviter = int(share.get("CreatedBy")) if share.get("CreatedBy") is not None else None
-                group_members.add_member(pg, cid, actor_id, role="member", invited_by_account_id=inviter)
-            finally:
-                pg.close()
-        except Exception:
-            # 진단 가시성: 실제 예외를 로깅(상위 ban 체크와 동일 정책). silent 500 은
-            # 근본원인 파악을 막는다(gc-join-ambiguous-param-fix 사례 — 멤버 INSERT 실패가
-            # 일반 500 으로만 표면화되어 진단이 지연됨).
-            logging.getLogger(__name__).warning(
-                "join: add_member failed — conversation_id=%s actor_id=%s", cid, actor_id,
-                exc_info=True,
-            )
-            return _json_error("대화 참여에 실패했습니다.", 500)
-        _audit_user_action(
-            conn,
-            request,
-            account,
-            action="conversation.member.join",
-            resource_type="conversation_member",
-            resource_id=str(actor_id),
-            request_ctx={
-                "conversation_id": cid,
-                "via": "share_link",
-                "share_id": int(share.get("Id") or 0) if share.get("Id") is not None else None,
-                "token_prefix": str(token)[:8],
-            },
-        )
-    return JSONResponse({"ok": True, "conversation_id": cid, "already_member": already})
+# feature-0012 P5b Final: join_conversation_via_share 는 src/routers/share.py 로 추출(맨 끝 include_router).
 
 
 @app.post("/api/public/share/{token}/fork")
@@ -17872,31 +17705,7 @@ LIMIT %s
     return JSONResponse({"items": items})
 
 
-@app.get("/api/file")
-def get_file(request: Request, path: str, conversation_id: str, max_bytes: int = 0, account=Depends(get_current_account), conn=Depends(get_conn)):
-    conversation_id = str(conversation_id or "").strip()
-    if not conversation_id:
-        return _json_error("conversation_id is required", 400)
-    if not _account_can_access_conversation(
-        conn,
-        account,
-        conversation_id,
-        "conversation.file.read.own",
-        "conversation.file.read.any",
-    ):
-        return _json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
-    safe = _safe_shared_path(path)
-    if not safe or not safe.exists():
-        return JSONResponse({"error": "file not found"}, status_code=404)
-    if max_bytes and max_bytes > 0:
-        try:
-            with open(safe, "rb") as f:
-                data = f.read(max_bytes)
-            text = data.decode("utf-8", errors="replace")
-        except Exception:
-            return JSONResponse({"error": "read failed"}, status_code=500)
-        return PlainTextResponse(text)
-    return FileResponse(safe)
+# feature-0012 P5b Final: get_file 는 src/routers/system.py 로 추출(맨 끝 include_router).
 
 
 # ---------------------------------------------------------------------------
@@ -28394,6 +28203,8 @@ from routers.static_pages import router as _static_pages_router  # noqa: E402
 from routers.admin_conversations import router as _admin_conversations_router  # noqa: E402
 from routers.admin_usage import router as _admin_usage_router  # noqa: E402
 from routers.admin_console import router as _admin_console_router  # noqa: E402
+from routers.share import router as _share_router  # noqa: E402
+from routers.system import router as _system_router  # noqa: E402
 from routers.admin_quotas import router as _admin_quotas_router  # noqa: E402
 from routers.admin_sample_feedback import router as _admin_sample_feedback_router  # noqa: E402
 from routers.conversations import router as _conversations_router  # noqa: E402
@@ -28404,6 +28215,8 @@ app.include_router(_static_pages_router)
 app.include_router(_admin_conversations_router)
 app.include_router(_admin_usage_router)
 app.include_router(_admin_console_router)
+app.include_router(_share_router)
+app.include_router(_system_router)
 app.include_router(_admin_quotas_router)
 app.include_router(_admin_sample_feedback_router)
 app.include_router(_conversations_router)

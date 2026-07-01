@@ -50,13 +50,6 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/llm/health",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/session",
    "methods": [
     "GET"
@@ -246,23 +239,9 @@
    "type": "APIRoute"
   },
   {
-   "path": "/api/share/{share_id}",
-   "methods": [
-    "DELETE"
-   ],
-   "type": "APIRoute"
-  },
-  {
    "path": "/api/public/share/{token}",
    "methods": [
     "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/share/{token}/join",
-   "methods": [
-    "POST"
    ],
    "type": "APIRoute"
   },
@@ -408,13 +387,6 @@
   },
   {
    "path": "/api/suggestions",
-   "methods": [
-    "GET"
-   ],
-   "type": "APIRoute"
-  },
-  {
-   "path": "/api/file",
    "methods": [
     "GET"
    ],
@@ -1178,6 +1150,34 @@
   },
   {
    "path": "/api/admin/health/attachment-grants",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/share/{share_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/share/{token}/join",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/llm/health",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/file",
    "methods": [
     "GET"
    ],
