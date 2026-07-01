@@ -225,3 +225,30 @@ source_of_truth: true
       - **세션 독립 (admin.js)**: `_metaGraphLoadNodeAnalysis` 가 pending/running 노드의 run_id 로 폴링 자동 재개 → 다른 탭/새로고침에서도 진행 패널·주황 마커·진행률 표시.
 - [x] T13.7 verify-completion + 배포(web 90973df + insight-worker) — PB-0008 라이브: 패널 우측·진행률 갱신·세션독립 확인.
 - [x] T13.8 **showfix**: 세션 독립 재개 경로에서 진행 패널이 populated 되고도 숨김(display 미해제) 버그 → `_metaGraphRenderProgress` 가 display 직접 해제. 라이브 실측 PASS(01/02 스크린샷).
+
+## 14. graphux-camfps — 카메라 애니메이션 프레임레이트 저하 수정 (2026-07-01, resume 인계)
+
+### 14.0 맥락 / 진단
+- 사용자 보고(이전 세션 2597e01c, 컨텍스트 초과로 진단 직전 중단 → resume 인계): 그래프 뷰 애니메이션이
+  **노드 수와 무관하게 FPS 낮음**(동작 속도·수동 팬은 정상). 이전 세션이 DevTools 실측을 요청했고 사용자가
+  Performance 트레이스(Trace-20260701T134334) + 환경정보(dpr1/zoom100%/1295x1073/refresh?) + chrome://gpu 샷 제공.
+- 트레이스 실측(10.4s/70418 events): 메인 busy 20% 중 **Scripting 65%(FunctionCall 1180ms)** = Cytoscape 캔버스
+  재렌더(`ts`·스타일 재계산·`calculateLabelDimensions`·`boundingBox`), Rendering/Painting 각 1%. **rAF 60fps(16.7ms)
+  인데 표시 프레임 ~36fps(27.8ms) 드롭.** GPU HW 가속 ON, 디스플레이 사실상 60Hz(144Hz 가설 기각).
+- 근본원인: 레이아웃 애니는 라벨/엣지 숨김 최적화됨(기존 anim-hide-label/anim-hide)이나, layoutstop 에서 **즉시
+  복원** 후 뒤이은 **450ms 카메라 fit 애니가 라벨·엣지를 켠 채** 돌아 매 프레임 텍스트 래스터+엣지 지오메트리
+  재계산 재발. 이 카메라 애니 구간이 체감 저프레임의 본체.
+- 등급: **Minor** (프론트 전용·비파괴, 애니 렌더 semantics 만 변경).
+
+### 14.1 구현 (admin.js)
+- [x] T14.1 `_metaGraphLayout` layoutstop: 숨김 즉시 해제 제거 → 카메라 fit 애니 `complete` 로 지연(세대가드
+      `restoreIfCurrent`). 즉시맞춤(cy.fit)·모든 예외/폴백 경로는 `clearMotionHide` 무조건 복원. `setTimeout(650ms)` fallback.
+- [x] T14.2 admin.html 캐시버스터 graphux-progress → graphux-camfps.
+
+### 14.2 검증
+- [x] T14.3 node --check admin.js PASS.
+- [x] T14.4 적대 리뷰 패널(§18.8, subagent 2라운드) — 1차 BLOCKING 2+MAJOR 3 발견 → hardened 재구현(세대가드+무조건복원) → 재검증 잔여 BLOCKING 0. REVIEW.md REV-20260701T170000 [SUBAGENT: PASS].
+- [x] T14.5 verify-completion --pre-commit PASS + commit + PR + main 병합.
+- [ ] T14.6 web 재배포(deploy_scope: included) + healthz/smoke.
+- [ ] T14.7 **사용자 실브라우저 FPS 재측정** — headless/WSL 은 실 GPU 프레임을 못 재므로(세션이 막힌 근본 이유)
+      배포 후 사용자님 브라우저에서 애니 FPS 재확인이 유일한 효과 검증. PB-0008 은 렌더 정합만 확인 가능.

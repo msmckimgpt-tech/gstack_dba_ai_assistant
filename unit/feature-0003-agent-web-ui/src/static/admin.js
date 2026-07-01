@@ -3367,6 +3367,13 @@ function _metaGraphLayout(opts) {
   const cnt = cy.nodes().length;
   const incremental = !!opts.incremental;
   const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
+  // graphux-camfps: 애니 중 숨긴 라벨/엣지의 '무조건 복원' 헬퍼 + 세대(gen) 토큰.
+  //   원칙: addClass("anim-hide-*") 한 뒤 어떤 예외/폴백/연타 경로로 빠지든 반드시 clearMotionHide 가
+  //   호출되어야 한다(비대칭 cleanup = 라벨/엣지 영구 숨김 회귀의 원인). 지연 복원(카메라 애니 후)은 gen 이
+  //   최신일 때만 수행 → 연타로 새 레이아웃(=_motionGen 증가)이 복원을 인계했으면 구세대 복원은 skip(깜빡임 방지),
+  //   _layoutRunning 고착과 무관하게 안전.
+  const gen = (_metaGraph._motionGen = (_metaGraph._motionGen || 0) + 1);
+  const clearMotionHide = () => { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} };
   // 두 경로 공통: layout 전 컬럼 lock 해제 → force 에 참여(테이블 이동 추종·stale 고정점 왜곡 방지),
   //   layoutstop 에서 _metaGraphPlaceColumns 가 테이블 아래로 재-스택+재-lock.
   try { cy.nodes("[label='Column']").unlock(); } catch (_) {}
@@ -3436,29 +3443,41 @@ function _metaGraphLayout(opts) {
       }
       layout.one("layoutstop", () => {
         _metaGraph._layoutRunning = false;
-        if (hideMotion) { try { cy.nodes().removeClass("anim-hide-label"); cy.edges().removeClass("anim-hide"); } catch (_) {} }
         _metaGraphPlaceColumns();   // 컬럼을 테이블 아래 실제순서(ordinal) 세로 정렬 + lock (force 결과 위에 적용)
-        // 확장: 신규 이웃 영역으로 카메라 부드럽게 이동(애니 복원). 초기 로드: 스프레드가 이미 애니라 즉시 맞춤.
+        // graphux-camfps: 라벨/엣지 숨김 해제를 '레이아웃 직후의 카메라 fit 애니 종료 후'로 미룬다.
+        //   기존엔 layoutstop 즉시 복원 → 뒤이은 450ms fit 애니가 라벨·엣지를 켠 채 돌아, 매 프레임 라벨
+        //   텍스트 래스터 + 엣지 지오메트리 재계산이 다시 발생(트레이스 실측: 카메라 애니 구간 rAF 는 60fps
+        //   인데 표시 프레임은 ~36fps 로 드롭, Scripting 이 busy 의 65% = Cytoscape 캔버스 재렌더가 주범).
+        //   fit 애니 동안에도 숨김을 유지 → complete 에서 복원. (레이아웃 애니에 이미 검증된 패턴의 카메라
+        //   애니 확장이라, 예전 hideEdgesOnViewport 전역옵션 버그와 무관.)
+        //   restoreIfCurrent: gen 이 최신일 때만 복원 → 연타로 새 레이아웃이 인계했으면 skip(깜빡임 방지).
+        //   그 외 모든 종결(즉시맞춤/예외/폴백)은 clearMotionHide 로 무조건 복원 → 영구 숨김 회귀 차단.
+        const restoreIfCurrent = () => { if (gen === _metaGraph._motionGen) clearMotionHide(); };
         try {
           if (incremental && opts.focusEles && opts.focusEles.length) {
-            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" });
+            // 확장: 카메라를 신규 이웃으로 이동(450ms). 이 애니 동안에도 숨김 유지 → complete 에서 복원.
+            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out", complete: restoreIfCurrent });
+            if (_metaGraph._restoreTimer) clearTimeout(_metaGraph._restoreTimer);   // 중첩 stale 타이머 누수 방지
+            _metaGraph._restoreTimer = setTimeout(restoreIfCurrent, 650);           // complete 미발화(애니 중단 등) 대비 fallback
           } else {
+            clearMotionHide();       // 즉시맞춤: 라벨/엣지 먼저 복원(숨김 상태로 fit 하면 라벨/엣지 잘린 프레이밍) 후 fit.
             cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤(스프레드 애니 종료 후 1회)
           }
-        } catch (_) {}
+        } catch (_) { clearMotionHide(); }   // 예외 시에도 무조건 복원(영구 숨김 회귀 차단)
       });
       layout.run();
       return;
-    } catch (_) {}
+    } catch (_) { clearMotionHide(); }   // fcose 경로 예외 → cose 폴백 진입 전 반드시 복원(폴백엔 addClass 없음 = 무해 no-op이나 이미 숨긴 걸 남기지 않기 위함)
   }
   try {
     try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}
     const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
       idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
     _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; _metaGraphPlaceColumns(); });
+    // 폴백도 fcose 경로에서 숨긴 라벨/엣지를 확실히 복원(비대칭 cleanup 차단). placeColumns 전에 복원.
+    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; clearMotionHide(); _metaGraphPlaceColumns(); });
     layout.run();
-  } catch (_) {}
+  } catch (_) { _metaGraph._layoutRunning = false; clearMotionHide(); }   // 폴백까지 예외 → running 해제 + 무조건 복원(영구 숨김·guard 고착 차단)
 }
 
 function _metaGraphRenderDetailEmpty() {
