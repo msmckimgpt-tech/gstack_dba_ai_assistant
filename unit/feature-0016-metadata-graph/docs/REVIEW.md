@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T190000-ai-claude-feature-0016-graphux5-panelmove-showfix [AGENT-TEAM: PASS] — 세션 독립 폴 재개 시 진행 패널 미표시 버그
+- Related Change: panelmove-showfix (`_metaGraphRenderProgress` 가 `display=""` 직접 설정).
+- 방식: 라이브 PB-0008 검증 중 적발 — 세션 독립 재개(fix B) 경로에서 status 바는 "0/1 running" 갱신되나 진행 패널이 populated 되고도 숨김(초기 display:none 미해제). 근본원인: display 해제가 `_metaGraphAnalyze`(버튼) 경로에만 있었음.
+- 결과: renderProgress 가 렌더마다 display 해제 → 모든 경로(버튼·재개·다른 탭)에서 표시. 라이브 재검증 예정.
+- Verdict: PASS — 버그 근본 수정. 프론트 1줄·비파괴, 회귀 0(버튼 경로 무변).
+- Human Approval Needed: 없음. 배포 deploy_scope: included.
+
 ## REV-20260701T180000-ai-claude-feature-0016-graphux5-panelmove [SUBAGENT: panelmove-frontend-layout] — 진행 패널 우측 이동 + 세션 독립 진행 표시
 - Related Change: graphux5-panelmove (진행 패널을 상단 바 → 우측 상세 aside 상단 이동, detailBody 분리) + 세션 독립 진행 폴링(사용자 후속 이슈: 다른 탭/새로고침 시 진행률·패널·마커 누락).
 - 방식: §18.8 집중 프론트 리뷰(Explore) — 6개 결함 카테고리(aside wipe·패널 id·AI 버튼 바인딩·aria-live·토글·레이아웃) 점검.

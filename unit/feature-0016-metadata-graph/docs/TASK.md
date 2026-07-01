@@ -223,4 +223,5 @@ source_of_truth: true
 - [x] T13.6 **후속 이슈 수정**(사용자: 진행률 항상 0%·다른 탭 진행 패널/마커 누락):
       - **fairness (node_analysis.py)**: claim 순서 `depth ASC` 우선 — 대형 run 의 깊은 recursion 이 앞줄을 독점해 이후 단일노드 run 의 root 조차 처리 못 하던 starvation 해소. 모든 run 의 root 를 먼저 처리 → 즉시 진행 표시.
       - **세션 독립 (admin.js)**: `_metaGraphLoadNodeAnalysis` 가 pending/running 노드의 run_id 로 폴링 자동 재개 → 다른 탭/새로고침에서도 진행 패널·주황 마커·진행률 표시.
-- [ ] T13.7 verify-completion + 배포(web + insight-worker) + PB-0008 라이브 검증.
+- [x] T13.7 verify-completion + 배포(web 90973df + insight-worker) — PB-0008 라이브: 패널 우측·진행률 갱신·세션독립 확인.
+- [x] T13.8 **showfix**: 세션 독립 재개 경로에서 진행 패널이 populated 되고도 숨김(display 미해제) 버그 → `_metaGraphRenderProgress` 가 display 직접 해제. 라이브 실측 PASS(01/02 스크린샷).
