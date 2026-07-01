@@ -5202,3 +5202,11 @@ source_of_truth: true
 - §18.8 적대 frontend state-machine 패널(7가설): VERDICT **FIX-THEN-SHIP→SHIP**(BLOCKING 0). MAJOR-2(행 keydown 이 내부 버튼 키 입력에 이중 발화) 수정(target 게이트)+테스트 잠금. MAJOR-1(검색이 편집중 항목 필터 시 list↔detail 시각 desync)=진행중 편집 보존 의도로 수용·문서화. NIT-1(stale CSS 주석) 정리. 전 테스트 108→ 신규 33 + 기존 75 green.
 - 분리 표기(§정직): 테스트·적대 패널로 "2단 구조·모드 배타 가시성·선택 wiring·검색·권한 게이트·이벤트 전파·회귀 0" 코드 검증. "실 화면에서 좌우 2단 렌더·행 선택→우측 편집·컬럼 독립 스크롤(짧은 viewport)·스크롤 점프 해소"는 배포 후 PB-0008 실 Windows 브라우저 실측 필요분(WSL headless 괴리).
 - Rollback: admin.html 메타데이터 pane 을 단일 컬럼(폼→목록)으로 복원 + admin.js detailMode/코디네이터/헬퍼/핸들러 변경 원복(_metaRenderForm/_metaSyncBootstrapVisibility 직접 호출) + styles.css 단일 스크롤 override 에 metadata 복원·폼 카드 chrome 복원·행 선택 규칙 제거 + cache-buster 원복 + 신규 테스트 삭제·scope-single-ds [B8] 원복.
+
+## CHG-20260630T230501-doc-sync-rn-2305 (TASK-20260630T230501-doc-sync-rn-2305 — 06-30 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 신규 '2026-06-30' 블록 10항목 prepend(기존 06-29 블록 11항목 보존) — [new admin] 관계도(그래프) 뷰 신규 · [improved admin] 그래프 자동정리·속도 · [improved admin] 스키마 설명 화면 list-detail 2단 · [improved admin] 데이터소스 선택 단일화 · [improved admin] 테이블 설명 인라인 입력 · [improved work] 관련 부분만 찾아 정확 답변 · [improved work] 질문 의도 이해·끈기 · [improved common] 무중단 업데이트 · [improved common] 안정성 개선 · [fixed admin] 스키마 가져오기 기존 설명 prefill. `generated` 2026-06-30 유지.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260630-rn-0630`→`?v=20260630b-rn-0630`.
+- Verification: `node --check` PASS + vm 로드 generated/06-30 블록 10항목·스키마 정합. 사용자향 평이화(내부용어 0)·ULTRACODE 5-stream 적대 패널 과대표현 2건(그래프 엣지=0 '관계 따라가기' / 무중단 '주요 기능 멈추지 않음') 완화 반영.
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·테이블/함수명·AGE/Cypher·마이그·cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·SECURITY·RELEASE_NOTES)는 별도 commit.

@@ -3034,10 +3034,22 @@ function _metaInitGraph() {
           "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "line-style": "dashed", "label": "data(label)" } },
     ],
   });
+  // 단일 클릭 = 상세 조회만(그래프 유지), 더블 클릭 = 해당 노드 이웃 그래프로 확장/전환.
+  // cytoscape 코어에 dbltap 이벤트가 없어 350ms 윈도우로 수동 감지한다.
   _metaGraph.cy.on("tap", "node", (evt) => {
     const t = evt.target;
     if (t.isParent && t.isParent()) return;   // 컨테이너 클릭은 무시
-    _metaGraphExpand(t.id());
+    const key = t.id();
+    const now = (window.performance && performance.now) ? performance.now() : Date.now();
+    const isDbl = (_metaGraph._lastTapKey === key && (now - (_metaGraph._lastTapAt || 0)) < 350);
+    _metaGraph._lastTapKey = key;
+    _metaGraph._lastTapAt = now;
+    if (isDbl) {
+      _metaGraph._lastTapKey = null;   // 트리플탭 중복 방지
+      _metaGraphExpand(key);           // 더블: 이웃 그래프 확장/전환
+    } else {
+      _metaGraphShowDetail(key);       // 단일: 상세 카드만 갱신
+    }
   });
   // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
   if (window.ResizeObserver && !_metaGraph.ro) {
@@ -3106,6 +3118,29 @@ async function _metaGraphSearch(q) {
   _metaGraphLayout();
   const n = (data.nodes || []).length;
   _metaGraphStatus(n ? `'${q}' ${n}개 — 관련도 높을수록 크게 표시. 노드 클릭으로 확장.` : "검색 결과 없음.");
+}
+
+// 단일 클릭: 그래프 구조는 그대로 두고 상세 카드만 갱신. 1-hop 으로 컬럼·직접관계·용어를 충분히 채우면서 빠르다.
+async function _metaGraphShowDetail(key) {
+  if (!_metaGraph.cy || !key) return;
+  _metaGraphStatus("상세 조회 중…");
+  let data;
+  try {
+    data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`);
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || "상세 조회 실패");
+    return;
+  }
+  // 캔버스에서 해당 노드만 선택 강조(그래프는 변경하지 않음).
+  try {
+    _metaGraph.cy.$(":selected").unselect();
+    const el = _metaGraph.cy.getElementById(key);
+    if (el && el.length) el.select();
+  } catch (_) {}
+  const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
+  _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
+  const nb = Math.max(0, (data.nodes || []).length - 1);
+  _metaGraphStatus(`상세: ${self.name || key} · 이웃 ${nb}개 (더블클릭 = 그래프 확장)`);
 }
 
 async function _metaGraphExpand(key) {

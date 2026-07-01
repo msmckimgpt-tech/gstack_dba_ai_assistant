@@ -63,7 +63,7 @@ DBA AI Assistant — 자연어 → SQL 추론 + 도구 실행 (`execute_sql`, `d
 
 ### 2.3 Feature 카드
 
-- [[Features/_Index|Features MOC]] — 13 feature 의 카드 (feature-0001 ~ feature-0013)
+- [[Features/_Index|Features MOC]] — feature-0001 ~ feature-0017 의 카드 (feature-0016 은 metadata-graph + zd-pg-pause-caddy 2 슬라이스 → 카드 18)
 
 ### 2.4 Decisions (ADR mirror)
 

@@ -174,3 +174,15 @@ HAS_TABLE 엣지·검색 scope·**큐레이션 설명 보존**(rag 투영 무덮
 - 이 단계 산출물은 worktree-local 비파괴(운영 무영향). 운영 cutover(이미지 교체+shared_preload+재시작)는
   비가역·외부영향 → Phase 5 별도 게이트 + 롤백 플랜(이미지 revert + drop_graph, 관계형 SSOT 무변경).
 - 적대 검증 패널(backend/security/qa)은 Phase 1b 코드 작성 후 수행 예정.
+
+### Post-cutover UX/성능 개선 — graphux3 (2026-06-30)
+- **이웃 조회 성능 60x**: AGE 엣지 라벨에 `start_id`/`end_id` btree, vertex 라벨에 `properties` GIN 부재 →
+  `(a)-[r]-(b)` traversal 과 `{key:'X'}` 앵커가 전 행 Seq Scan. 측정 Table depth1 **9454ms→151ms**,
+  depth2 **18564ms→300ms**, Schema depth1 2673→159ms(Schema depth2 30178→5999ms; schema=compound 라
+  클릭 비대상). RO(replica) 경로도 141/264ms — 물리복제로 인덱스 자동 전파(20개 확인).
+- **인덱스 영구화**: `metadata_graph._ensure_graph_indexes(cur)` 를 `sync_graph` 시작에서 호출(멱등
+  `CREATE INDEX IF NOT EXISTS`, drop_graph 재생성 생존). 인덱스명 = `ix_mkb_<label>_props|start|end`,
+  라이브와 정합(`term`→`glossaryterm` 1건 ALTER RENAME, product/datasource GIN 보강). 중복 생성 없음 확인.
+- **클릭 동작 분리**(admin.js): 단일 클릭 = `_metaGraphShowDetail`(depth=1 상세 카드만, 그래프 유지),
+  더블 클릭 = `_metaGraphExpand`(이웃 그래프 확장/전환, 기존 단일클릭 동작). cytoscape 코어에 dbltap
+  부재 → 350ms 윈도우 수동 감지. 힌트/주석/캐시버스터(graphux3) 갱신. node --check·py_compile OK.
