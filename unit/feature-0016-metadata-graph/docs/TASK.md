@@ -252,3 +252,20 @@ source_of_truth: true
 - [ ] T14.6 web 재배포(deploy_scope: included) + healthz/smoke.
 - [ ] T14.7 **사용자 실브라우저 FPS 재측정** — headless/WSL 은 실 GPU 프레임을 못 재므로(세션이 막힌 근본 이유)
       배포 후 사용자님 브라우저에서 애니 FPS 재확인이 유일한 효과 검증. PB-0008 은 렌더 정합만 확인 가능.
+
+## 15. ERD 카드 — 컬럼을 테이블 compound 박스 안에 (2026-07-01)
+
+### 15.0 맥락
+- 사용자 후속(3회차): relax 후에도 더블클릭 시 컬럼 세로 스택이 이웃 테이블과 겹침(스크린샷). 진단: 위성 컬럼을
+  layoutstop 후 배치 → force 가 우측 라벨 폭(~160px) 미예약 → 이웃 침범. 사후 밀어내기(declutter)는 적대검증상
+  인접 스택 진동 or 노드 쏠림으로 겹침을 옮길 뿐 → REJECT. 사용자 결정(AskUserQuestion): **ERD 카드** 채택.
+- 등급 Minor (프론트 전용, 비파괴).
+
+### 15.1 구현·검증 (admin.js)
+- [x] T15.1 컬럼을 소속 테이블의 **compound 자식**으로(`_metaColParent` 부모=테이블 key, 2-pass add). HAS_COLUMN
+      엣지·placeColumns·declutter·round-taxi·dragfree 재배치 제거(컨테인먼트로 대체).
+- [x] T15.2 `_metaGraphColumnConstraints()` — fcose `alignmentConstraint.vertical`(동일 x) +
+      `relativePlacementConstraint`(ordinal 위→아래 gap) 를 두 레이아웃 cfg 에 병합 → 박스 안 ordinal 세로 정렬.
+- [x] T15.3 Table compound 박스 스타일(teal 실선, 이름 상단) + Column 작은점+우측라벨.
+- [x] T15.4 실측(라이브 인젝션): 컬럼 순서 top→bottom 보존 + 최상위 박스 겹침 1쌍(이전 11) + fcose 131ms. node --check OK.
+- [ ] T15.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인.

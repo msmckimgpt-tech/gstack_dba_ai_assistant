@@ -1076,14 +1076,16 @@ def admin_metadata_graph_columns(request: Request, account=Depends(app.require_p
         except Exception:
             pass
     nodes, edges = [], []
+    ord_i = 0
     for r in rows[:500]:
         cname = str(r[0]) if r and r[0] is not None else ""
         if not cname:
             continue
         ctype = str(r[1]) if len(r) > 1 and r[1] is not None else ""
         ckey = f"{scope_key}:{fqn}.{cname}"
+        ord_i += 1   # describe_columns 는 ORDINAL_POSITION 순 → 인덱스가 실제 스키마 컬럼 순서(ERD 카드 정렬키)
         nodes.append({"label": "Column", "key": ckey, "name": cname,
-                      "fqn": f"{fqn}.{cname}", "description": ctype, "source": "introspect"})
+                      "fqn": f"{fqn}.{cname}", "description": ctype, "source": "introspect", "ordinal": ord_i})
         edges.append({"source": node, "target": ckey, "type": "HAS_COLUMN",
                       "cardinality": None, "edge_source": "introspect"})
     return JSONResponse({"nodes": nodes, "edges": edges, "introspected": True,

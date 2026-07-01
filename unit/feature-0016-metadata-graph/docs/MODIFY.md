@@ -8,6 +8,23 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260701T170000-ai-claude-feature-0016-erd-card
+- Date: 2026-07-01
+- Related Requirement: 사용자 후속(3회차) — 더블클릭 시 컬럼 세로 스택이 이웃 테이블과 여전히 겹침(스크린샷).
+  사용자 결정(AskUserQuestion): **ERD 카드(테이블 compound 박스 안 컬럼)** 로 전환.
+- Summary: 근본원인 = 위성 컬럼을 layoutstop **후** 배치해 force 가 그 공간(우측 라벨 폭 ~160px)을 예약 못 함 →
+  이웃 테이블 침범. 사후 밀어내기(declutter)는 적대검증상 인접 스택 진동 or 노드 쏠림(겹침을 옮길 뿐)으로 REJECT.
+  **해법 = 컬럼을 소속 테이블의 compound 자식**으로 만들고(부모=테이블 key, `_metaColParent`), fcose
+  `alignmentConstraint.vertical`(컬럼 동일 x) + `relativePlacementConstraint`(위→아래 gap, ordinal 순)로 박스 안
+  ordinal 세로 정렬 → fcose 가 **각 테이블 박스 bounds 로 이웃 공간을 확보**해 겹침을 원천 차단. HAS_COLUMN
+  엣지·placeColumns·declutter·round-taxi 제거(컨테인먼트로 대체). 실측: 컬럼 순서 top→bottom 보존·박스 겹침 1쌍·131ms.
+- Files: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaColParent·_metaGraphColumnConstraints 신규,
+  _metaGraphAddElements 2-pass+컬럼 테이블-부모, _metaGraphLayout 제약 병합, placeColumns/declutter/round-taxi/dragfree 제거,
+  Table compound 박스 스타일), `unit/feature-0003-agent-web-ui/src/static/admin.html`(캐시버스터 erd-card).
+- Impact: 프론트 전용, 비파괴. 테이블(컬럼 보유)이 compound 박스(ERD 카드)로 렌더 — 이름 상단, 컬럼 목록 내부.
+  스키마(점선 남색) > 테이블(teal 실선) > 컬럼 2단 중첩 compound. 컬럼 미보유 테이블은 평범 노드 유지. 상세 패널은
+  API 응답 edges 사용이라 무영향. round-taxi 꺾이는 선은 사용자 결정으로 컨테인먼트 대체(겹침 제거 우선).
+- Rollback Notes: admin.js 를 satellite 방식(위성 컬럼+placeColumns+round-taxi)으로 revert + 캐시버스터 환원. DB/백엔드 무관.
 ## CHG-20260701T190000-ai-claude-feature-0016-graphux5-panelmove-showfix
 - Date: 2026-07-01
 - Related Requirement: panelmove 세션 독립 폴 재개 시 진행 패널이 **표시되지 않던 버그** 수정(라이브 검증 중 적발 — status 바는 갱신되나 패널 숨김).
