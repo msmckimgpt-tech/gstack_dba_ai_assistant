@@ -14,6 +14,10 @@ from typing import Any
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 
+from fastapi import File
+from fastapi import UploadFile
+import hashlib
+import secrets
 import app
 
 router = APIRouter()
@@ -549,3 +553,1378 @@ def ask_status(request: Request, conversation_id: str = "", account=Depends(app.
     snapshot = app._build_ask_status_snapshot(conn, cid)
     snapshot.pop("_latest_assistant", None)
     return JSONResponse(snapshot)
+
+
+@router.patch("/api/conversations/{cid}/product")
+async def update_conversation_product(cid: str, request: Request) -> JSONResponse:
+    """대화의 product_id / product_mode 를 변경한다 (TASK-0047).
+
+    body: { product_id: int|null, mode: 'auto'|'pinned' }
+    - mode='auto' ⇒ product_id 는 무시되고 NULL 로 저장된다 (사용자 의도: 일반 대화).
+    - mode='pinned' ⇒ product_id 가 활성 product 여야 한다.
+    - 처리 중에도 변경을 허용한다 (REQ-20260626-product-chip-always-enabled, ADR-WEB-0006).
+      과거 turn 단위 immutability 409 가드(TASK-0047, Codex 검토 1차 구현)는 제거됨 —
+      제품은 `/api/ask` enqueue 시점에 run_kwargs(product_id/product_mode)로 캡처되어
+      in-flight 답변은 영향받지 않고, 이 변경은 '다음 요청'부터 반영된다(데이터 정합성 위험 0).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return app._json_error("invalid json", 400)
+    if not cid or not isinstance(cid, str):
+        return app._json_error("invalid conversation id", 400)
+    raw_mode = data.get("mode") if isinstance(data, dict) else None
+    raw_pid = data.get("product_id") if isinstance(data, dict) else None
+    mode = app._normalize_product_mode(raw_mode, default="pinned")
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    account, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    # 권한: 자기 대화에 ask 가능한 사용자만 변경 허용.
+    if not app._account_has_permission(account, "conversation.ask"):
+        conn.close()
+        return app._json_error("권한이 없습니다.", 403)
+    if not app._conversation_exists(cid, conn=conn):
+        conn.close()
+        return app._json_error("conversation not found", 404)
+    if not app._conversation_owned_by_account(conn, cid, int(account["id"])):
+        conn.close()
+        return app._json_error("타 계정 대화는 변경할 수 없습니다.", 403)
+    # REQ-20260626-product-chip-always-enabled (ADR-WEB-0006): 처리 중에도 제품 변경 허용.
+    #  과거 turn 단위 immutability 409 가드(TASK-0047)는 제거됐다 — in-flight 답변은 enqueue
+    #  시점에 캡처된 product 로 끝까지 실행되므로 영향받지 않고, 이 변경은 다음 /api/ask 부터
+    #  반영된다(setActiveProduct 토스트 "다음 답변부터 적용됩니다"와 정합).
+    pinned_id: int | None = None
+    if mode == "pinned":
+        if raw_pid in (None, "", 0):
+            conn.close()
+            return app._json_error("pinned 모드에서는 product_id 가 필요합니다.", 400)
+        try:
+            pinned_id = int(raw_pid)
+        except Exception:
+            conn.close()
+            return app._json_error("invalid product_id", 400)
+        # 활성 + 권한 가능성 검사.
+        try:
+            cur_v = conn.cursor()
+            cur_v.execute(
+                "SELECT IsActive FROM WebProducts WHERE Id = %s LIMIT 1",
+                (pinned_id,),
+            )
+            row_v = cur_v.fetchone()
+            cur_v.close()
+        except Exception:
+            row_v = None
+        if not row_v or not int(row_v[0] or 0):
+            conn.close()
+            return app._json_error("선택한 제품을 사용할 수 없습니다.", 400)
+        # TASK-0052 Phase 1C G1: product 접근 권한 검사 (briefing §3.4).
+        # 기존 코드는 IsActive 만 검사 → 모든 logged-in account 가 임의 product 에 pin 가능했음.
+        if not app._account_has_product_access(account, pinned_id, conn=conn):
+            conn.close()
+            return app._json_error("요청을 수행할 수 없습니다.", 403)
+
+    try:
+        if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+            from shared.db import _pg_connect
+            _pg_patch = _pg_connect()
+            with _pg_patch.cursor() as _pgpatch:
+                _pgpatch.execute(
+                    "UPDATE agent_runtime.core_conversations SET product_id = %s, product_mode = %s "
+                    "WHERE conversation_id = %s",
+                    (pinned_id, mode, cid),
+                )
+            _pg_patch.close()
+        else:
+            cur_u = conn.cursor()
+            cur_u.execute(
+                "UPDATE AgentCoreConversations SET product_id = %s, product_mode = %s "
+                "WHERE conversation_id = %s",
+                (pinned_id, mode, cid),
+            )
+            cur_u.close()
+    except Exception:
+        conn.close()
+        return app._json_error("대화 제품 정보를 변경하지 못했습니다.", 500)
+    # 사용자 직전 선택 보존.
+    app._save_account_product_pref(conn, int(account["id"]), mode=mode, pinned_id=pinned_id)
+    payload = app._load_conversation_product(conn, cid) or {
+        "product_id": pinned_id,
+        "product_mode": mode,
+        "product_key": None,
+        "product_name": None,
+    }
+    payload["conversation_id"] = cid
+    conn.close()
+    return JSONResponse(payload)
+
+@router.post("/api/conversations/{cid}/duplicate")
+def duplicate_conversation(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """REQ-20260518-0001: 본인 대화 또는 (.any) 타 사용자 대화를 본 계정 소유의 새 대화로 복제.
+
+    fork (`/api/fork_conversation`) 와의 차이:
+    - cid 가 path parameter (per-conversation "···" menu UX 정합).
+    - 메시지 전체 복제 (from_message_id 없음).
+    - 신규 권한 `conversation.duplicate.own` / `.any` 별도 gate. `.any` 가 superset.
+    - topic prefix = `사본:` (fork 의 `[Fork]` 와 구분되어 추적성 보존).
+    - 본체 복제는 `_fork_conversation_impl` 재활용 (share-token fork 와 helper 공유).
+    """
+    # Codex risk 5/6: read-gate 를 먼저 수행. 404 단일 메시지로 metadata leak 차단.
+    # (rename/delete 와 동일 wording — `_account_can_access_conversation` 이 존재성 + own/any 권한을 한 번에 검사)
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        return app._json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+    # Codex risk 7: .any superset semantics. mirror `_account_can_access_conversation` (app.py §3004-3008).
+    is_own = app._conversation_owned_by_account(conn, cid, int(account["id"]))
+    if not (
+        app._account_has_permission(account, "conversation.duplicate.any")
+        or (is_own and app._account_has_permission(account, "conversation.duplicate.own"))
+    ):
+        return app._json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+    if not app._account_has_permission(account, "conversation.create"):
+        return app._json_error("요청을 수행할 수 없습니다.", 403)
+    payload, err = app._fork_conversation_impl(conn, account, cid, None)
+    if err:
+        return err
+    # Codex risk 10: 그래프임 단위 안전 truncation. helper 가 만든 "[Fork] " 를 "사본: " 로 교체.
+    source_topic = str(payload.get("topic") or "")
+    base = source_topic[len("[Fork] "):] if source_topic.startswith("[Fork] ") else source_topic
+    max_base = max(0, 256 - len("사본: "))
+    new_topic = f"사본: {base[:max_base]}"
+    try:
+        app._conv_update_topic(conn, str(payload["conversation_id"]), new_topic)
+    except Exception:
+        # best-effort: 사본 topic 갱신 실패는 응답을 막지 않으나 조용한 쓰기 실패를 가시화.
+        logging.getLogger(__name__).warning(
+            "duplicate_conversation: topic update failed (conversation_id=%s)",
+            payload.get("conversation_id"), exc_info=True,
+        )
+    payload["topic"] = new_topic
+    return JSONResponse(payload)
+
+@router.post("/api/conversations/{cid}/share")
+async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
+    """공유 링크 생성. body: {scope_mode: 'full'|'anchored', anchor_message_id?: int}.
+
+    권한: `conversation.share.create` + (`conversation.read.own` 또는 `conversation.read.any`).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    scope_mode = str(data.get("scope_mode") or "full").strip().lower()
+    if scope_mode not in ("full", "anchored"):
+        return app._json_error("invalid scope_mode", 400)
+    # feature-0009: 공유 링크 참여(join) 허용 여부. 기본 ON(사용자 결정) — 명시 false 일 때만 OFF.
+    joinable = 0 if (data.get("joinable") is False) else 1
+    raw_anchor = data.get("anchor_message_id")
+    anchor_id: int | None = None
+    if scope_mode == "anchored":
+        if raw_anchor is None or str(raw_anchor).strip() == "":
+            return app._json_error("anchor_message_id required for scope_mode=anchored", 400)
+        try:
+            anchor_id = int(raw_anchor)
+        except Exception:
+            return app._json_error("invalid anchor_message_id", 400)
+    # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 만료 옵션.
+    # `expires_in_seconds` 누락 / null / 0 이하 = 무기한 (NULL, 기존 동작 무회귀).
+    # 상한 365 일 — 초과 시 400 (절대시각 폭주 차단).
+    raw_expires = data.get("expires_in_seconds")
+    expires_in_seconds: int | None = None
+    if raw_expires is not None and str(raw_expires).strip() != "":
+        try:
+            expires_in_seconds = int(raw_expires)
+        except Exception:
+            return app._json_error("invalid expires_in_seconds", 400)
+        if expires_in_seconds <= 0:
+            expires_in_seconds = None  # 0/음수 = 무기한 취급
+        elif expires_in_seconds > app._SHARE_EXPIRY_MAX_SECONDS:
+            return app._json_error("만료 기간이 너무 깁니다 (최대 365일).", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        if not app._account_has_permission(account, "conversation.share.create"):
+            return app._json_error("요청을 수행할 수 없습니다.", 403)
+        if not app._account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
+            return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # feature-0009-share-joinable-guard: '참여 허용(joinable)' 링크는 대화 생성자(owner)만
+        # 발급할 수 있다. 프런트는 비소유자에게 체크박스를 disabled 로 표시하지만, 브라우저
+        # 조작으로 joinable=true 를 보내도 백엔드에서 무조건 차단(403)한다. owner-only 엄격 적용
+        # — admin(conversation.read.any) 도 본인이 생성한 대화가 아니면 예외 없음(사용자 결정).
+        # joinable=0(view-only) 링크는 기존대로 conversation.share.create 권한자 누구나 발급 가능.
+        if joinable and not app._conversation_owned_by_account(conn, cid, int(account["id"])):
+            return app._json_error("참여 허용 링크는 대화 생성자만 만들 수 있습니다.", 403)
+        if anchor_id is not None and not app._share_anchor_belongs_to_conversation(conn, cid, anchor_id):
+            return app._json_error("anchor_message_id 가 대화에 속하지 않습니다.", 400)
+        # Token UNIQUE 충돌 retry loop (확률은 극히 낮지만 cheap).
+        # 만료: expires_in_seconds 가 있으면 ExpiresAt = DATE_ADD(NOW(), INTERVAL %s SECOND)
+        # (DB 시계 도메인 — view/fork 의 NOW() 비교와 정합). 무기한이면 NULL.
+        # 주의: expires_expr 는 코드 상수 (사용자 데이터 미포함) — SQL injection 무관.
+        if expires_in_seconds is None:
+            expires_expr = "NULL"
+            expires_params: tuple = ()
+        else:
+            expires_expr = "DATE_ADD(NOW(), INTERVAL %s SECOND)"
+            expires_params = (int(expires_in_seconds),)
+        share_id: int | None = None
+        token: str = ""
+        for _attempt in range(5):
+            token = app._share_generate_token()
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    f"""
+INSERT INTO WebConversationShares
+    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion, Joinable, ExpiresAt)
+VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
+                    """,
+                    (
+                        cid,
+                        token,
+                        scope_mode,
+                        int(anchor_id) if anchor_id is not None else None,
+                        int(account["id"]),
+                        app.SHARE_POLICY_VERSION_CURRENT,
+                        int(joinable),
+                        *expires_params,
+                    ),
+                )
+                share_id = int(cur.lastrowid or 0)
+                cur.close()
+                break
+            except Exception:
+                cur.close()
+                continue
+        if not share_id:
+            return app._json_error("공유 링크 생성 실패", 500)
+        # feature-0009 gc-group-authz-flag: joinable 공유 링크 생성 = 협업(그룹) 의도 → 대화를 즉시
+        # 그룹으로 전환한다(#4). owner 멤버십 보장(member_count 정합 — 공유 직후 비멘션 메시지가
+        # assistant 로 오라우팅되는 #2 버그 예방) + is_group 플래그 set. best-effort(헬퍼가 예외 무시).
+        if joinable:
+            app._ensure_owner_membership(cid)
+            app._mark_conversation_group(cid)
+        # 응답/감사에 실제 ExpiresAt (DB 계산값) 반환 — DATE_ADD 결과를 read-back.
+        expires_at_iso: str | None = None
+        if expires_in_seconds is not None:
+            cur = conn.cursor()
+            try:
+                cur.execute(
+                    "SELECT ExpiresAt FROM WebConversationShares WHERE Id = %s LIMIT 1",
+                    (int(share_id),),
+                )
+                _row = cur.fetchone()
+                _exp = _row[0] if _row else None
+                expires_at_iso = _exp.isoformat() if hasattr(_exp, "isoformat") else (str(_exp) if _exp else None)
+            except Exception:
+                expires_at_iso = None
+            finally:
+                cur.close()
+        # TASK-0073 Phase A6: user endpoint best-effort audit (token full X — prefix 8 char 만).
+        app._audit_user_action(
+            conn,
+            request,
+            account,
+            action="conversation.share.create",
+            resource_type="share",
+            resource_id=str(share_id),
+            request_ctx={
+                "conversation_id": cid,
+                "scope_mode": scope_mode,
+                "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "share_id": int(share_id),
+                "token_prefix": token[:8],
+                "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
+            },
+        )
+        return JSONResponse(
+            {
+                "id": share_id,
+                "token": token,
+                "conversation_id": cid,
+                "scope_mode": scope_mode,
+                "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "url": f"/share/{token}",
+                "expires_at": expires_at_iso,
+                "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
+            }
+        )
+    finally:
+        conn.close()
+
+@router.get("/api/conversations/{cid}/members")
+def list_conversation_members(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """그룹 대화 멤버 roster. 조회 권한: 대화 접근(멤버/owner/read.any)."""
+    if not app._account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            member_ids = group_members.list_member_account_ids(pg, cid)
+            roles = {
+                aid: (group_members.account_member_role(pg, cid, aid) or "member")
+                for aid in member_ids
+            }
+        finally:
+            pg.close()
+    except Exception:
+        return app._json_error("멤버 조회 실패", 500)
+    uname_map: dict[int, str] = {}
+    if member_ids:
+        cur = conn.cursor()
+        ph = ",".join(["%s"] * len(member_ids))
+        cur.execute(
+            f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(member_ids)
+        )
+        for mid, un in cur.fetchall() or []:
+            uname_map[int(mid)] = str(un or "")
+        cur.close()
+    owner_id = app._conversation_owner_account_id(conn, cid)
+    members = [
+        {
+            "account_id": aid,
+            "username": uname_map.get(aid, ""),
+            "role": roles.get(aid, "member"),
+        }
+        for aid in member_ids
+    ]
+    return JSONResponse(
+        {"conversation_id": cid, "owner_account_id": owner_id, "members": members}
+    )
+
+@router.delete("/api/conversations/{cid}/members/{account_id}")
+def remove_conversation_member(cid: str, account_id: int, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """그룹 대화 멤버 제거 또는 본인 나가기.
+
+    권한: owner/conversation.member.manage(타인 제거) 또는 본인(나가기). 대화 소유자는
+    멤버에서 제거 불가(409, 소유권 이전/대화 삭제는 별도 흐름). 메시지·첨부는 잔존(tombstone
+    author), 향후 접근만 차단 → audit conversation.member.remove.
+    """
+    if not app._account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    target_id = int(account_id)
+    is_owner = app._conversation_owned_by_account(conn, cid, actor_id)
+    is_self_leave = target_id == actor_id
+    if not (
+        is_self_leave
+        or is_owner
+        or app._account_has_permission(account, "conversation.member.manage")
+    ):
+        return app._json_error("멤버를 관리할 권한이 없습니다.", 403)
+    conv_owner = app._conversation_owner_account_id(conn, cid)
+    if conv_owner is not None and target_id == int(conv_owner):
+        return app._json_error("대화 소유자는 멤버에서 제거할 수 없습니다.", 409)
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            removed = group_members.remove_member(pg, cid, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return app._json_error("멤버 제거 실패", 500)
+    app._audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.member.remove",
+        resource_type="conversation_member",
+        resource_id=str(target_id),
+        request_ctx={
+            "conversation_id": cid,
+            "target_account_id": target_id,
+            "self_leave": is_self_leave,
+            "removed": removed,
+        },
+    )
+    return JSONResponse(
+        {"conversation_id": cid, "account_id": target_id, "removed": removed}
+    )
+
+@router.post("/api/conversations/{cid}/members/{account_id}/ban")
+async def ban_conversation_member(cid: str, account_id: int, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """그룹 대화 멤버 차단(ban) — 멤버십 제거 + 재참여 차단 목록 등재. **소유자 전용**.
+
+    추방(kick=DELETE /members/{id}, 재참여 가능)과 달리, 차단은 공유 링크로도 재참여 불가
+    (POST /api/share/{token}/join 의 is_banned 게이트). owner 자신/소유자는 차단 불가(409).
+    body: {reason?: str(<=512)}. audit: conversation.member.ban.
+    """
+    if not app._account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    target_id = int(account_id)
+    if target_id <= 0:
+        return app._json_error("유효하지 않은 대상입니다.", 400)
+    # 엄격 owner 전용(사용자 결정) — conversation.member.manage 보유자도 불가.
+    if not app._conversation_owned_by_account(conn, cid, actor_id):
+        return app._json_error("대화 소유자만 멤버를 차단할 수 있습니다.", 403)
+    conv_owner = app._conversation_owner_account_id(conn, cid)
+    if conv_owner is not None and target_id == int(conv_owner):
+        return app._json_error("대화 소유자는 차단할 수 없습니다.", 409)
+    if target_id == actor_id:
+        return app._json_error("자기 자신은 차단할 수 없습니다.", 409)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    reason = (str(data.get("reason") or "").strip()[:512]) or None
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            # ban 먼저, remove 나중 — 비원자 fail-window 를 안전 방향(차단 등재됨+멤버 잔존)으로.
+            # remove 먼저였다면 ban 실패 시 "제거됨+미차단=자유 재참여"(fail-open)였다(적대 리뷰 MINOR).
+            group_members.ban_member(
+                pg, cid, target_id, banned_by_account_id=actor_id, reason=reason
+            )
+            removed = group_members.remove_member(pg, cid, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return app._json_error("멤버 차단 실패", 500)
+    app._audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.member.ban",
+        resource_type="conversation_member",
+        resource_id=str(target_id),
+        request_ctx={
+            "conversation_id": cid,
+            "target_account_id": target_id,
+            "removed": removed,
+            "reason": reason or "",
+        },
+    )
+    return JSONResponse(
+        {"conversation_id": cid, "account_id": target_id, "banned": True, "removed": removed}
+    )
+
+@router.delete("/api/conversations/{cid}/members/{account_id}/ban")
+def unban_conversation_member(cid: str, account_id: int, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """그룹 대화 멤버 차단 해제(unban). **소유자 전용**. audit: conversation.member.unban.
+
+    해제만 수행 — 멤버십 자동 복원은 없다(account 가 다시 공유 링크로 참여할 수 있게 될 뿐).
+    """
+    if not app._account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    target_id = int(account_id)
+    if not app._conversation_owned_by_account(conn, cid, actor_id):
+        return app._json_error("대화 소유자만 차단을 해제할 수 있습니다.", 403)
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            removed = group_members.unban_member(pg, cid, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return app._json_error("차단 해제 실패", 500)
+    app._audit_user_action(
+        conn,
+        request,
+        account,
+        action="conversation.member.unban",
+        resource_type="conversation_member",
+        resource_id=str(target_id),
+        request_ctx={"conversation_id": cid, "target_account_id": target_id, "unbanned": removed},
+    )
+    return JSONResponse(
+        {"conversation_id": cid, "account_id": target_id, "unbanned": removed}
+    )
+
+@router.get("/api/conversations/{cid}/bans")
+def list_conversation_bans(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """그룹 대화 차단(ban) 목록. **소유자 전용** — '차단된 사용자' UI 가 소비."""
+    if not app._account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    actor_id = int(account["id"])
+    if not app._conversation_owned_by_account(conn, cid, actor_id):
+        return app._json_error("대화 소유자만 차단 목록을 조회할 수 있습니다.", 403)
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            bans = group_members.list_bans(pg, cid)
+        finally:
+            pg.close()
+    except Exception:
+        return app._json_error("차단 목록 조회 실패", 500)
+    uname_map: dict[int, str] = {}
+    ban_ids = [int(b["account_id"]) for b in bans]
+    if ban_ids:
+        cur = conn.cursor()
+        ph = ",".join(["%s"] * len(ban_ids))
+        cur.execute(
+            f"SELECT Id, Username FROM WebAccounts WHERE Id IN ({ph})", tuple(ban_ids)
+        )
+        for mid, un in cur.fetchall() or []:
+            uname_map[int(mid)] = str(un or "")
+        cur.close()
+    out = [
+        {
+            "account_id": b["account_id"],
+            "username": uname_map.get(b["account_id"], ""),
+            "banned_at": b["banned_at"],
+            "reason": b["reason"] or "",
+        }
+        for b in bans
+    ]
+    return JSONResponse({"conversation_id": cid, "bans": out})
+
+@router.post("/api/conversations/{cid}/messages")
+async def post_group_chat_message(cid: str, request: Request) -> JSONResponse:
+    """그룹 대화 사람-사람 채팅 메시지 저장 (LLM 미호출). @assistant 호출은 /api/ask.
+
+    권한: 대화 접근(멤버/owner/read.any). datasource 미접촉이라 무권한 멤버도 채팅 가능
+    (열람 ≠ 발화 — 사람 채팅은 '발화'(제품 사용)가 아니다). 발신자 귀속(sender_account_id).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    content = str(data.get("content") or data.get("message") or "").strip()
+    if not content:
+        return app._json_error("empty message", 400)
+    if len(content) > 8000:
+        return app._json_error("메시지가 너무 깁니다.", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        if not app._account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # 차단(blocked)·보관(archived) 대화는 진행 불가(채팅 포함).
+        _is_blocked, _block_reason = app._conversation_block_info(cid, conn=conn)
+        if _is_blocked:
+            return app._json_error(_block_reason or app._BLOCKED_PRODUCT_DELETED_REASON, 403)
+        mid = app._save_group_chat_message_pg(
+            cid, int(account["id"]), content, username=str(account.get("username") or "")
+        )
+        if not mid:
+            return app._json_error("메시지 저장 실패", 500)
+        return JSONResponse(
+            {"ok": True, "conversation_id": cid, "message_id": mid, "role": "user"}
+        )
+    finally:
+        conn.close()
+
+@router.post("/api/conversations/{cid}/read")
+async def mark_conversation_read(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """그룹 대화 읽음 처리 — 멤버의 last_read_message_id 커서를 전진(GREATEST) (feature-0009 gc-unread-badge).
+
+    사이드바 "안 읽은 메세지" 배지의 기준점. 대화를 열거나 활성 상태에서 새 메세지를 받으면
+    프론트가 호출한다. **서버는 요청 body 의 last_read_message_id 를 신뢰하지 않고, 항상 그 대화
+    core_messages 의 최대 id(=현재까지 전부 읽음)로 커서를 전진시킨다** (gc-unread-read-idspace-fix).
+    이유: FE 가 보내는 id 는 표시 store(agent_runtime.messages) 공간이고 읽음 커서·unread 집계는
+    core_messages 공간이라 두 id 공간이 분리되어, FE 값을 쓰면 GREATEST 가 항상 전진을 거부했다.
+    커서는 전진만(set_last_read 의 GREATEST) — 폴링/재진입 경합에도 되돌리지 않는다.
+
+    멤버십 게이트(read.own/.any) 통과 + 멤버 행이 있을 때만 갱신된다. 멤버가 아닌 admin(.any)
+    열람은 멤버 행이 없어 no-op (그들은 unread 추적 대상이 아님 — FE 도 본인/멤버 그룹대화만 배지 표시).
+    """
+    if not app._account_can_access_conversation(
+        conn, account, cid, "conversation.read.own", "conversation.read.any"
+    ):
+        return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    account_id = int(account["id"])
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            # feature-0009 gc-unread-read-idspace-fix: 읽음 커서(conversation_members.last_read_message_id)
+            # 와 unread 집계는 agent_runtime.core_messages.id 공간을 기준으로 한다. 그러나 FE 가 읽음
+            # 처리로 보내던 last_read_message_id 는 /api/history 가 채운 표시 store(agent_runtime.messages)
+            # 의 id 였고, 두 테이블은 별개 base table 로 id 공간이 분리(disjoint)되어 있다(같은 대화라도
+            # messages 는 수백 단위, core_messages 는 수천 단위). 그래서 FE 가 보낸 값은 커서보다 항상
+            # 작아 set_last_read 의 GREATEST(되돌림 방지)가 전진을 영구 거부했다 — 읽어도 사이드바 unread
+            # 배지가 줄지 않고 대화 전환 시 회귀하던 근본 원인. 대화 열람은 "현재까지 전부 읽음"이므로,
+            # FE 가 보낸 값과 무관하게 항상 이 대화 core_messages 의 MAX(id) 로 커서를 전진시킨다.
+            # (표시/카운트 store 가 분리된 현 구조상 FE 는 정확한 core id 를 알 수 없어 부분 읽음은
+            #  원래 불가능 — '열면 전부 읽음' 시맨틱. set_last_read 의 GREATEST 는 그대로 두어 폴링/
+            #  재진입 경합에도 커서가 되돌아가지 않는다.)
+            with pg.cursor() as _cur:
+                _cur.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM agent_runtime.core_messages "
+                    "WHERE conversation_id = %s",
+                    (cid,),
+                )
+                _row = _cur.fetchone()
+                target_id = int(_row[0]) if _row and _row[0] is not None else 0
+            updated = group_members.set_last_read(pg, cid, account_id, target_id)
+        finally:
+            pg.close()
+    except Exception:
+        return app._json_error("읽음 처리 실패", 500)
+    return JSONResponse(
+        {
+            "ok": True,
+            "conversation_id": cid,
+            "last_read_message_id": int(target_id),
+            "updated": int(updated),
+        }
+    )
+
+@router.post("/api/conversations/{cid}/sample-feedback")
+async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
+    """답변 피드백 적재 (👍/👎 + "샘플 등록"). sample_feedback(pending) 에 기록.
+
+    권한: 대화 접근(멤버/owner/read.any) — 발화 권한과 무관(피드백은 열람자도 가능).
+    body: {vote: "up"|"down", suggested: bool, nl_question: str, generated_sql?: str}.
+    generated_sql 은 코어(record_feedback)가 PII 마스킹 후 저장한다.
+    승급(promote)은 별도 관리 콘솔 검수 큐(명시 호출)만 — 본 endpoint 는 적재까지(자동학습 금지).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        return app._json_error("invalid body", 400)
+    vote = "down" if str(data.get("vote") or "up").strip().lower() in ("down", "negative", "0", "false") else "up"
+    suggested = bool(data.get("suggested"))
+    nl_question = str(data.get("nl_question") or "").strip()
+    generated_sql = str(data.get("generated_sql") or "")
+    # 답변(메시지) 식별자 — (created_by, message_id, message_id_space) 단위 고유 피드백 강제용.
+    # message_id = /api/history 가 m["id"] 로 노출하는 표시 store/core 메시지 id. 부재 시 None.
+    try:
+        message_id = int(data.get("message_id")) if str(data.get("message_id") or "").strip() != "" else None
+    except (TypeError, ValueError):
+        message_id = None
+    # id_space = m["id_space"]("display"|"core") — message_id 숫자가 두 store 공간서 겹쳐도 답변을
+    # 명확히 구분(H5(b) 해소). 미지정/비정상은 "display" 로 정규화(대다수 경로).
+    message_id_space = "core" if str(data.get("message_id_space") or "").strip().lower() == "core" else "display"
+    if not nl_question:
+        return app._json_error("nl_question 은 필수입니다.", 400)
+    if len(nl_question) > 8000:
+        return app._json_error("질문이 너무 깁니다.", 400)
+    if len(generated_sql) > 100_000:
+        return app._json_error("SQL 본문이 너무 깁니다.", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        if not app._account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # REV-…-item03-security MAJOR-1: 적재 endpoint per-account rate-limit — 미적용 시
+        # 열람자가 suggested 피드백을 spam 해 검수 큐를 채워 curator DoS. body-search 와 동형.
+        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=10):
+            return app._json_error("피드백 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        scope_key = app._conversation_scope_key(conn, cid)
+    finally:
+        conn.close()
+
+    # 적재는 PG(agent_kb) conn — 코어 정본 modules.sample_feedback.record_feedback.
+    from modules import sample_feedback as _sfb
+    from shared.db import _pg_connect
+    feedback_id: int | None = None
+    try:
+        # autocommit=False — UPSERT + RETURNING 을 한 트랜잭션으로 묶어 id 회수 정확성 보장.
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return app._json_error("피드백 저장소(PG) 연결 실패", 503)
+    try:
+        # record_feedback 가 UPSERT(ON CONFLICT (created_by, message_id, message_id_space) … DO UPDATE)
+        # RETURNING id 로 적재/갱신된 행 id 직접 반환 — lastval() 은 DO UPDATE 경로 부정확하므로 미사용.
+        feedback_id = _sfb.record_feedback(
+            pg, scope_key, nl_question, generated_sql,
+            vote=vote, suggested=suggested, conversation_id=cid,
+            created_by=str((account or {}).get("username") or "") or None,
+            message_id=message_id, message_id_space=message_id_space,
+        )
+        pg.commit()
+    except Exception as exc:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        import sys as _sys
+        _sys.stderr.write(f"[ITEM-03] sample-feedback 적재 실패 cid={cid}: {exc}\n")
+        return app._json_error("피드백 저장 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+    # best-effort audit (user endpoint 패턴, fail-open — 적재 성공을 막지 않는다).
+    try:
+        mconn = app._connect_memory()
+        try:
+            app.record_audit_event(
+                mconn,
+                actor=app._build_actor_from_request(request, account, actor_type="account"),
+                action="sample.feedback.submit",
+                resource_type="sample_feedback",
+                resource_id=str(feedback_id) if feedback_id is not None else None,
+                change_json={"vote": vote, "suggested": suggested,
+                             "scope_key": scope_key, "conversation_id": cid,
+                             "has_sql": bool(generated_sql)},
+            )
+            mconn.commit()
+        finally:
+            mconn.close()
+    except Exception:
+        pass
+
+    return JSONResponse({"ok": True, "feedback_id": feedback_id})
+
+@router.post("/api/conversations/{cid}/fix-with-ai")
+async def post_fix_with_ai(cid: str, request: Request) -> JSONResponse:
+    """ITEM-08 "AI 로 고치기" — 실패한 SQL 결과를 표적 정정(1회 dispatch).
+
+    가드 순서 = post_sample_feedback 동형: _require_account → _account_can_access_conversation
+    (미보유 404) → _search_rate_limit_check(429) → scope(발화 권한) → record_audit_event.
+    body: {executed_sql: str, error_message: str}. 서버가 정정 지시문을 구성하고 client 입력은
+    데이터 인용 블록으로만 삽입(프롬프트 인젝션 방어). 동일 conversation_id 로 기존 /api/ask
+    파이프라인에 1회 dispatch — self-reflection(ITEM-07, agent_core 무변경)이 표적 정정을 수행한다.
+    응답은 /api/ask 와 동일 result dict(프론트 부분 갱신용).
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        return app._json_error("invalid body", 400)
+    executed_sql = str(data.get("executed_sql") or "")
+    error_message = str(data.get("error_message") or "")
+    # 빈 값 거절(400) — 정정 대상이 없으면 의미 없는 full run 방지.
+    if not executed_sql.strip() and not error_message.strip():
+        return app._json_error("정정할 SQL 또는 오류 정보가 필요합니다.", 400)
+    # 과대 입력 거절(400) — 정제 cap 보다 한참 큰 입력은 조기 차단(악의적 페이로드/오용).
+    if len(executed_sql) > app._FIX_WITH_AI_SQL_CAP * 4 or len(error_message) > app._FIX_WITH_AI_ERR_CAP * 4:
+        return app._json_error("입력이 너무 깁니다.", 400)
+
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        # 대화 접근 가드(미보유 404) — sample-feedback 와 동일 wording.
+        if not app._account_can_access_conversation(
+            conn, account, cid, "conversation.read.own", "conversation.read.any"
+        ):
+            return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # per-account rate-limit(429) — 1회 dispatch 가 full LLM run 을 점유하므로 보수적 상한.
+        if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=app._FIX_WITH_AI_RATE_PER_MIN):
+            return app._json_error("재수정 요청이 너무 잦습니다. 잠시 후 다시 시도하세요.", 429)
+        # scope: 발화(질의) 권한이 있어야 정정 dispatch 가능(열람자는 불가) — ask 의 actor RBAC 와 정합.
+        if not app._account_has_permission(account, "conversation.ask"):
+            return app._json_error("이 대화에 발화(질의) 권한이 없습니다.", 403)
+        # best-effort audit — 정정 트리거 자체를 기록(LLM 응답 전, fail-open).
+        try:
+            app.record_audit_event(
+                conn,
+                actor=app._build_actor_from_request(request, account, actor_type="account"),
+                action="conversation.fix_with_ai",
+                resource_type="conversation",
+                resource_id=str(cid),
+                change_json={"conversation_id": cid,
+                             "has_sql": bool(executed_sql.strip()),
+                             "has_error": bool(error_message.strip())},
+            )
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        conn.close()
+
+    # 서버 구성 정정 메시지(client 입력은 nonce-봉인 데이터 블록으로만 삽입 — 프롬프트 인젝션 방어, REV M1).
+    import secrets
+    fix_message = app._build_fix_with_ai_message(executed_sql, error_message, nonce=secrets.token_hex(8))
+    # 동일 conversation_id 로 기존 /api/ask 핸들러에 1회 재dispatch.
+    #  - 원본 NL 질문 재전송이 아니라 표적 정정 지시만 보낸다(대화 맥락은 cid 가 보유).
+    #  - product/role/allowed_schemas 해석·동시성 슬롯·worker 분기·self-reflection 모두 ask 가 재사용.
+    #  - 추가 루프 없음(1회) — 재실패해도 self-reflection 내부 cap(AGENT_SELF_REFLECTION_MAX)이 처리.
+    # model 미지정 → ask 가 API_DEFAULT_MODEL 로 채움(정정도 동일 web 기본 모델 사용).
+    ask_body = {"message": fix_message, "conversation_id": cid}
+    internal_req = app._make_internal_ask_request(request, ask_body)
+    return await app.ask(internal_req)
+
+@router.get("/api/conversations/{cid}/shares")
+def list_conversation_shares(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """해당 대화의 share 목록 (활성 + revoked 모두). 조회 권한: read.own/any."""
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.read.own",
+        "conversation.read.any",
+    ):
+        return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+SELECT Id, Token, ScopeMode, AnchorMessageId, CreatedBy, CreatedAt,
+       RevokedAt, RevokedBy, ViewCount, LastViewedAt, ExpiresAt,
+       (ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()) AS IsExpired
+FROM WebConversationShares
+WHERE ConversationId = %s
+ORDER BY CreatedAt DESC, Id DESC
+            """,
+            (cid,),
+        )
+        rows = cur.fetchall() or []
+    finally:
+        cur.close()
+    items = []
+    for row in rows:
+        created_at = row.get("CreatedAt")
+        revoked_at = row.get("RevokedAt")
+        last_viewed_at = row.get("LastViewedAt")
+        expires_at = row.get("ExpiresAt")
+        # TASK-20260619T012028-share-link-expiry: 만료는 DB NOW() 평가(IsExpired)로 판정.
+        is_revoked = row.get("RevokedAt") is not None
+        is_expired = bool(row.get("IsExpired"))
+        items.append(
+            {
+                "id": int(row.get("Id") or 0),
+                "token": str(row.get("Token") or ""),
+                "scope_mode": str(row.get("ScopeMode") or "full"),
+                "anchor_message_id": int(row["AnchorMessageId"]) if row.get("AnchorMessageId") is not None else None,
+                "created_by": int(row.get("CreatedBy") or 0),
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
+                "revoked_at": revoked_at.isoformat() if hasattr(revoked_at, "isoformat") else (str(revoked_at) if revoked_at else None),
+                "revoked_by": int(row["RevokedBy"]) if row.get("RevokedBy") is not None else None,
+                "view_count": int(row.get("ViewCount") or 0),
+                "last_viewed_at": last_viewed_at.isoformat() if hasattr(last_viewed_at, "isoformat") else (str(last_viewed_at) if last_viewed_at else None),
+                "expires_at": expires_at.isoformat() if hasattr(expires_at, "isoformat") else (str(expires_at) if expires_at else None),
+                "is_expired": is_expired,
+                "url": f"/share/{row.get('Token')}",
+                # is_active = 활성(취소 안 됨 + 만료 안 됨). revoke 버튼 노출 조건.
+                "is_active": (not is_revoked) and (not is_expired),
+                "is_revoked": is_revoked,
+            }
+        )
+    return JSONResponse({"items": items})
+
+@router.post("/api/conversations/{cid}/attachments")
+async def upload_conversation_attachment(
+    cid: str,
+    request: Request,
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """첨부 multipart upload (BRIEFING §5.4 row 1).
+
+    권한: `conversation.attachment.upload.{own,any}` + 대상 conv 접근 권한.
+    검증: D7 서비스 자체 kind 추론(확장자 우선) + D8 size cap (per_file/conv/account) + D12 HMAC.
+    부작용: MinIO put_object + WebConversationAttachments INSERT + audit
+    `attachment.upload` dispatch.
+
+    Response: `{id, kind, signed_url (사내망 다운로드 전용), size, sha256, status}`
+    """
+    try:
+        from web.modules import storage_minio
+    except Exception as exc:
+        return app._json_error(f"storage 모듈 import 실패: {exc}", 500)
+
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error
+        # RBAC: upload.{own,any} + 대상 conv 접근.
+        if not app._account_can_access_conversation(
+            conn,
+            account,
+            cid,
+            "conversation.attachment.upload.own",
+            "conversation.attachment.upload.any",
+        ):
+            return app._json_error("이 대화에 첨부를 업로드할 권한이 없습니다.", 403)
+
+        # D7 — 서비스 자체 kind 추론 (확장자 우선, MIME 힌트 fallback).
+        # 클라이언트 MIME 을 신뢰하지 않으며 확장자 + MIME 조합으로 판단한다.
+        mime_type = (file.content_type or "").strip().lower()
+        filename = (file.filename or "unnamed").strip()
+        kind = app._infer_kind(filename, mime_type)
+
+        # 본문 read — D8 size cap pre-check 위해 in-memory read.
+        # Phase 11 (ingest pipeline) 진입 시 streaming upload + spool-to-disk 옵션 검토.
+        try:
+            body_bytes = await file.read()
+        except Exception as exc:
+            return app._json_error(f"첨부 본문 read 실패: {exc}", 400)
+        if not body_bytes:
+            return app._json_error("첨부 파일이 비어 있습니다.", 400)
+
+        # D8 size cap (per_file / per_conv / per_account).
+        ok, reason = app._check_attachment_size_caps(
+            conn,
+            account_id=int(account["id"]),
+            conversation_id=cid,
+            new_size_bytes=len(body_bytes),
+        )
+        if not ok:
+            return app._json_error(reason, 413)
+
+        # D12 categorical 메타.
+        # filename 은 위 kind 추론 단계에서 이미 추출.
+        filename_hmac = app._hmac_filename(filename)
+        ext_bucket = app._extension_bucket(filename)
+        size_bucket = app._size_bucket(len(body_bytes))
+        sha256_hex = hashlib.sha256(body_bytes).hexdigest()
+
+        # ObjectKey: <cid>/<attachment_uuid>/<safe_filename>.
+        import uuid as _uuid
+        attachment_uuid = str(_uuid.uuid4())
+        object_key = storage_minio.make_object_key(cid, attachment_uuid, filename)
+
+        # INSERT row first (uploaded 상태) — MinIO put 실패 시 rollback.
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO WebConversationAttachments (
+                    ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, MetaJson
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'uploaded', NULL)
+                """,
+                (
+                    cid,
+                    int(account["id"]),
+                    object_key,
+                    filename,
+                    filename_hmac,
+                    mime_type,
+                    len(body_bytes),
+                    size_bucket,
+                    sha256_hex,
+                    kind,
+                ),
+            )
+            attachment_id = int(cur.lastrowid or 0)
+        finally:
+            cur.close()
+        if not attachment_id:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return app._json_error("첨부 row 생성 실패", 500)
+
+        # MinIO put — D13 정합 (signed URL 송신 금지, server-side write).
+        try:
+            storage_minio.put_object_bytes(
+                object_key,
+                body_bytes,
+                content_type=mime_type,
+                metadata={
+                    "attachment-id": str(attachment_id),
+                    "conversation-id": cid,
+                    "uploader-account-id": str(account["id"]),
+                    "filename-hmac": filename_hmac,
+                },
+            )
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError) as exc:
+            try:
+                # MinIO put 실패 → row 즉시 hard-delete (orphan 방지).
+                _cur = conn.cursor()
+                _cur.execute(
+                    "DELETE FROM WebConversationAttachments WHERE Id = %s",
+                    (attachment_id,),
+                )
+                _cur.close()
+                conn.commit()
+            except Exception:
+                pass
+            return app._json_error(f"MinIO 업로드 실패: {exc}", 502)
+
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+        # TASK-0277: dual-write — 업로드 직후 MySQL 상태를 PG core_attachments 로 미러(flag-gated, fail-soft).
+        try:
+            from web.modules import attachment_pg_mirror as _apm
+            _apm.mirror_attachments(conn, [attachment_id])
+        except Exception:
+            pass
+
+        # audit dispatch — D12 raw filename / bytes 절대 제외.
+        attachment_row = app._load_attachment_row(conn, attachment_id)
+        try:
+            app._audit_user_action(
+                conn,
+                request,
+                account,
+                action="attachment.upload",
+                resource_type="attachment",
+                resource_id=str(attachment_id),
+                request_ctx=app._serialize_attachment_for_audit(attachment_row),
+            )
+        except Exception:
+            # fail-open: attachment.upload audit dispatch 실패는 업로드 응답을 막지 않으나 가시화.
+            logging.getLogger(__name__).warning(
+                "upload_conversation_attachment: upload audit dispatch failed (attachment_id=%s)",
+                attachment_id, exc_info=True,
+            )
+
+        # TASK-0107 Phase A.2 (수정): csv/xlsx kind 면 동기 ingest.
+        # 업로드 응답 전에 sandbox schema 생성 + table INSERT + MetaJson 갱신 완료.
+        # ingest 결과는 LLM prompt 의 ATTACHED FILES section 에서 즉시 활용된다.
+        if kind in ("csv", "xlsx"):
+            app._ingest_attachment_background(
+                attachment_id=attachment_id,
+                conversation_id=cid,
+                object_key=object_key,
+                kind=kind,
+            )
+            # 동기 ingest 후 최신 row 재조회 (UploadStatus='ingested' 반영)
+            try:
+                refreshed = app._load_attachment_row(conn, attachment_id)
+                if refreshed:
+                    attachment_row = refreshed
+            except Exception:
+                # best-effort: ingest 후 row 재조회 실패는 응답을 막지 않는다 (기존 row 사용).
+                logging.getLogger(__name__).warning(
+                    "upload_conversation_attachment: post-ingest row refresh failed (attachment_id=%s)",
+                    attachment_id, exc_info=True,
+                )
+
+        # signed URL 발급 (사내망 다운로드 전용 — D13). pending 은 발급 안 함 (D21).
+        signed_url: str | None = None
+        if not app._account_is_pending(account):
+            try:
+                signed_url = storage_minio.generate_presigned_get(
+                    object_key,
+                    response_filename=filename,
+                )
+            except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+                signed_url = None
+
+        payload = app._serialize_attachment_for_api(
+            attachment_row,
+            include_signed_url=bool(signed_url),
+            signed_url=signed_url,
+        )
+        return JSONResponse(payload)
+    finally:
+        conn.close()
+
+@router.get("/api/conversations/{cid}/attachments")
+def list_conversation_attachments(cid: str, request: Request, account=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
+    """대화의 active 첨부 목록 (DeletedAt IS NULL). 권한: read.{own,any}."""
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        cid,
+        "conversation.attachment.read.own",
+        "conversation.attachment.read.any",
+    ):
+        return app._json_error("이 대화의 첨부를 조회할 권한이 없습니다.", 403)
+
+    # TASK-0277: read cutover — PG 우선(권한은 위 _account_can_access_conversation 로 이미 게이트),
+    # PG read 실패 시 MySQL 폴백. PG helper 의 WHERE 는 MySQL 판과 동형(최신·미삭제).
+    rows = None
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_list_conversation_attachments(cid)
+    except Exception:
+        rows = None
+        logging.getLogger(__name__).warning(
+            "list_conversation_attachments: PG read failed → MySQL fallback (cid=%s)", cid, exc_info=True)
+    if rows is None:
+        cur = conn.cursor(dictionary=True)
+        try:
+            # TASK-0274: 버전 체인의 최신 버전만 목록에 노출(SupersededAt IS NULL).
+            # 구버전은 /api/attachments/{id}/versions 로 조회. 기존 단일 첨부는
+            # SupersededAt NULL + VersionNumber=1 이라 동작 동일(하위호환).
+            cur.execute(
+                """
+                SELECT
+                    Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                    FilenameHmac, MimeType, SizeBytes, SizeBucket, Sha256, Kind,
+                    UploadStatus, AttachmentDerivedMessages, CreatedAt, DeletedAt,
+                    DeletePending, DeleteReason, MetaJson,
+                    RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND DeletedAt IS NULL AND SupersededAt IS NULL
+                ORDER BY Id ASC
+                """,
+                (cid,),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+
+    # ② TASK-0285: 각 첨부의 버전 체인 길이(version_count) + AI 수정본 개수(ai_version_count)를
+    # 집계해 목록에 표면화한다. 목록 SQL 은 최신 버전만 노출(SupersededAt IS NULL)하므로, 같은
+    # 대화의 전체(미삭제) 버전에서 root 별 카운트를 한 번의 GROUP BY 로 구한다(N+1 회피). 첨부
+    # 정본은 MySQL(dual-write, TASK-0279) 이라 conn(MySQL) 집계가 정확. fail-soft — 집계 실패는
+    # 목록 자체를 막지 않는다(version_count 필드만 생략).
+    version_counts: dict[int, dict[str, int]] = {}
+    try:
+        vcur = conn.cursor()
+        try:
+            vcur.execute(
+                """
+                SELECT COALESCE(RootAttachmentId, Id) AS RootId,
+                       COUNT(*) AS Cnt,
+                       SUM(CASE WHEN CreatedByRole = 'assistant' THEN 1 ELSE 0 END) AS AiCnt
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND DeletedAt IS NULL
+                GROUP BY COALESCE(RootAttachmentId, Id)
+                """,
+                (cid,),
+            )
+            for vr in (vcur.fetchall() or []):
+                if vr and vr[0] is not None:
+                    version_counts[int(vr[0])] = {
+                        "count": int(vr[1] or 1),
+                        "ai_count": int(vr[2] or 0),
+                    }
+        finally:
+            vcur.close()
+    except Exception:
+        version_counts = {}
+
+    results = []
+    for row in rows:
+        ser = app._serialize_attachment_for_api(dict(row))
+        _vc = version_counts.get(int(ser.get("root_attachment_id") or ser.get("id") or 0))
+        if _vc:
+            ser["version_count"] = _vc["count"]
+            ser["ai_version_count"] = _vc["ai_count"]
+        results.append(ser)
+    return JSONResponse({"attachments": results})
+
+@router.get("/api/conversations")
+def conversations(
+    request: Request,
+    q: str | None = None,
+    owner_id: int | None = None,
+    product_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    cursor: str | None = None,
+    limit: int = 50,
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    """REQ-20260518-0010 (TASK-0072): list mode (no params) is backward-compatible.
+    Search mode triggered when any of {q, owner_id, product_id, date_from, date_to,
+    cursor} is provided. Body-search (q) requires rate limit + audit log."""
+    search_mode = any(
+        [q, owner_id is not None, product_id is not None, date_from, date_to, cursor]
+    )
+    if not search_mode:
+        # TASK-0124: 고아 대화 (topic=NULL, 메시지 없음, 1시간 이상 경과) 자동 soft-delete.
+        # early_cid 패턴으로 생성된 후 메시지가 오지 않은 빈 대화를 정리한다.
+        # fail-open: 정리 실패는 목록 조회를 차단하지 않는다.
+        try:
+            app._cleanup_orphan_conversations(conn, int(account["id"]))
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "conversations: orphan cleanup failed (account_id=%s)",
+                account.get("id"), exc_info=True,
+            )
+        payload = app._build_conversations_payload(conn, account)
+        return JSONResponse(payload)
+
+    # REQ-20260518-0010 risk 4: reject q that fails the normalize gate (covers
+    # q="%%"" post-escape 0 char, q="ab" < 3 char, etc.). 400 response body is
+    # generic to avoid distinguishing failure modes.
+    if q is not None and app._normalize_search_query(q) is None:
+        return app._json_error("invalid search query", 400)
+
+    has_any = app._account_has_permission(account, "conversation.list.any")
+    # adversarial risk 5: 404/403 metadata leak. For non-.any caller, owner_id
+    # is silently coerced to self (no error) so response shape is byte-equal
+    # regardless of input owner_id. _list_conversations sub-spec 1 enforces the
+    # same overwrite at SQL composition time; this layer makes the intent explicit
+    # for audit.
+    effective_owner_id: int | None
+    if has_any:
+        effective_owner_id = owner_id
+    else:
+        effective_owner_id = int(account["id"]) if account.get("id") else None
+
+    # Body-search rate limit (per-account, 10 req/min in-process token bucket).
+    body_search_active = bool(q and app._normalize_search_query(q))
+    if body_search_active:
+        if not app._search_rate_limit_check(int(account["id"]), max_per_min=10):
+            return app._json_error("rate limit exceeded — try again in a minute", 429)
+        # SET SESSION max_execution_time=3s for runaway query protection.
+        try:
+            cur_set = conn.cursor()
+            cur_set.execute("SET SESSION max_execution_time = 3000")
+            cur_set.close()
+        except Exception:
+            pass
+
+    try:
+        clamped_limit = max(1, min(int(limit or 50), 100))
+    except Exception:
+        clamped_limit = 50
+
+    items = app._list_conversations(
+        limit=clamped_limit,
+        account=account,
+        conn=conn,
+        q=q,
+        owner_id=effective_owner_id,
+        product_id=product_id,
+        date_from=date_from,
+        date_to=date_to,
+        cursor=cursor,
+    )
+
+    next_cursor: str | None = None
+    if len(items) >= clamped_limit and items:
+        last = items[-1]
+        last_at = last.get("last_activity_at") or last.get("created_at") or ""
+        if last_at and last.get("id"):
+            next_cursor = f"{last_at}|{last['id']}"
+
+    if body_search_active:
+        try:
+            app._log_search_activity(
+                conn,
+                account_id=int(account["id"]),
+                action="conversation.search.body",
+                target_owner_id=effective_owner_id,
+                query=q,
+                matched_count=len(items),
+            )
+        except Exception:
+            # fail-open: 검색 활동 audit 실패는 검색 응답을 막지 않으나 가시화.
+            logging.getLogger(__name__).warning(
+                "conversations: search activity audit failed (account_id=%s)",
+                account.get("id"), exc_info=True,
+            )
+
+    # REQ-20260519-0005 (TASK-0077): body-search 시 각 conv 의 매칭 message excerpt 첨부.
+    matched_excerpts: dict[str, str] = {}
+    if body_search_active and items:
+        normalized_q = app._normalize_search_query(q)
+        if normalized_q:
+            conv_ids = [str(it.get("id") or "") for it in items if it.get("id")]
+            try:
+                matched_excerpts = app._collect_matched_excerpts(conn, conv_ids, normalized_q)
+            except Exception:
+                matched_excerpts = {}
+
+    payload = {
+        "items": items,
+        "current": None,
+        "next_cursor": next_cursor,
+        "matched_count": len(items),
+        "search_mode": True,
+        "has_any": bool(has_any),
+        "matched_excerpts": matched_excerpts,
+    }
+    return JSONResponse(payload)
+
+@router.patch("/api/conversations/{conversation_id}/title")
+async def rename_conversation_title(conversation_id: str, request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return app._json_error("invalid json", 400)
+    title = app._normalize_topic(data.get("title"), "").strip()
+    if not title:
+        return app._json_error("empty title", 400)
+    if len(title) > 256:
+        return app._json_error("title too long", 400)
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return app._json_error("db connection failed", 500)
+    account, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return error
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.rename.own",
+        "conversation.rename.any",
+    ):
+        conn.close()
+        return app._json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
+    # feature-0009 gc-group-authz-flag (#1): 제목 변경은 대화 보유자(owner) 전용. 위 게이트는 그룹
+    # 대화 '열람' 경계(멤버 포함)라 conversation.rename.own 권한 멤버도 통과하므로, 소유 메타 변경(제목)
+    # 에는 2차 owner 게이트를 둔다. (delete 와 동일 패턴이나, update_conversation_product 와 달리
+    # admin(.any) 우회를 허용한다.) owner 미기록(NULL) 레거시 대화는 1차 게이트 판정을 존중해 fail-open.
+    _rename_owner_id = app._conversation_owner_account_id(conn, conversation_id)
+    if (
+        not app._account_has_permission(account, "conversation.rename.any")
+        and _rename_owner_id is not None
+        and _rename_owner_id != int(account.get("id") or 0)
+    ):
+        conn.close()
+        return app._json_error("소유자만 대화 제목을 변경할 수 있습니다.", 403)
+    # AR-M5 cutover: AgentCoreConversations MySQL 테이블이 DROP 됨. raw UPDATE 는 500 →
+    # 이미 PG 라우팅된 게이트 헬퍼 _conv_update_topic 재사용(PG agent_runtime.core_conversations).
+    try:
+        app._conv_update_topic(conn, conversation_id, title)
+    except Exception:
+        conn.close()
+        return app._json_error("제목 변경에 실패했습니다.", 500)
+    conn.close()
+    return JSONResponse({"ok": True, "conversation_id": conversation_id, "title": title})

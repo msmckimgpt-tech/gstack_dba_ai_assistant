@@ -22,6 +22,7 @@ import asyncio
 import json
 
 import app
+from routers import admin_datasources  # feature-0012 P5b
 
 _DS_ID = 42  # rename 후 WebDatasources 에서 해석되는 stable surrogate Id
 
@@ -110,7 +111,7 @@ def _run_rename(monkeypatch, body, *, has_dsid_col=True):
     cur = _RenameCursor(("mssql", "172.28.64.1", 14330, None, 1), has_dsid_col=has_dsid_col)
     conn = _RenameConn(cur)
     _patch(monkeypatch, conn)
-    resp = asyncio.run(app.admin_update_datasource("mssql_local", _FakeReq(body)))
+    resp = asyncio.run(admin_datasources.admin_update_datasource("mssql_local", _FakeReq(body)))
     return cur, conn, json.loads(resp.body)
 
 

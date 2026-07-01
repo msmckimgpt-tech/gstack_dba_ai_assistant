@@ -27,6 +27,7 @@ import datetime
 import json
 
 import app
+from routers import conversations  # feature-0012 P5b
 from routers import admin_sample_feedback
 import shared.db as _dbmod
 import modules.sample_feedback as _sfb
@@ -197,7 +198,7 @@ def test_user_feedback_access_denied(monkeypatch):
     monkeypatch.setattr(app, "_account_can_access_conversation", lambda *a, **k: False)
     called = {"record": False}
     monkeypatch.setattr(_sfb, "record_feedback", lambda *a, **k: called.__setitem__("record", True))
-    resp = asyncio.run(app.post_sample_feedback("conv-x", _FakeRequest({"vote": "up", "nl_question": "q"})))
+    resp = asyncio.run(conversations.post_sample_feedback("conv-x", _FakeRequest({"vote": "up", "nl_question": "q"})))
     assert resp.status_code == 404
     assert called["record"] is False, "접근 거부 시 적재 미호출"
 
@@ -222,7 +223,7 @@ def test_user_feedback_record_and_audit(monkeypatch):
     monkeypatch.setattr(_sfb, "record_feedback", _fake_record)
     events = _audit_capture(monkeypatch)
 
-    resp = asyncio.run(app.post_sample_feedback("conv-1", _FakeRequest({
+    resp = asyncio.run(conversations.post_sample_feedback("conv-1", _FakeRequest({
         "vote": "down", "suggested": True, "nl_question": "  매출 상위 10  ",
         "generated_sql": "SELECT 1", "message_id": 77, "message_id_space": "core",
     })))
@@ -250,7 +251,7 @@ def test_user_feedback_requires_nl_question(monkeypatch):
     monkeypatch.setattr(app, "_connect_memory", lambda: _BenignConn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (acct, None))
     # nl_question 누락 → 400 (conn/access 검사 전 조기 차단).
-    resp = asyncio.run(app.post_sample_feedback("conv-1", _FakeRequest({"vote": "up"})))
+    resp = asyncio.run(conversations.post_sample_feedback("conv-1", _FakeRequest({"vote": "up"})))
     assert resp.status_code == 400
 
 

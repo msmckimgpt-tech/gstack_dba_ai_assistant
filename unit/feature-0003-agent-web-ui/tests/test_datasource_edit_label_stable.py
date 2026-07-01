@@ -21,6 +21,7 @@ import asyncio
 import json
 
 import app
+from routers import admin_datasources  # feature-0012 P5b
 
 
 class _FakeReq:
@@ -99,7 +100,7 @@ def test_s1_edit_without_key_keeps_label(monkeypatch):
     cur = _EditCursor(("mssql", "172.28.64.1", 14330, None, 1))
     conn = _EditConn(cur)
     _patch(monkeypatch, conn)
-    resp = asyncio.run(app.admin_update_datasource("mssql_local", _FakeReq({"insight_enabled": True})))
+    resp = asyncio.run(admin_datasources.admin_update_datasource("mssql_local", _FakeReq({"insight_enabled": True})))
     body = json.loads(resp.body)
     assert body.get("key_changed") is False, f"라벨이 바뀜(해시 리버트 회귀): {body}"
     assert body.get("key") == "mssql_local", f"라벨 미유지: {body}"
@@ -112,7 +113,7 @@ def test_s2_edit_explicit_key_renames(monkeypatch):
     cur = _EditCursor(("mssql", "172.28.64.1", 14330, None, 1))
     conn = _EditConn(cur)
     _patch(monkeypatch, conn)
-    resp = asyncio.run(app.admin_update_datasource("mssql_local", _FakeReq({"key": "mssql_renamed"})))
+    resp = asyncio.run(admin_datasources.admin_update_datasource("mssql_local", _FakeReq({"key": "mssql_renamed"})))
     body = json.loads(resp.body)
     assert body.get("key_changed") is True, f"explicit rename 미반영: {body}"
     assert body.get("key") == "mssql_renamed", f"rename 결과 키 오류: {body}"
@@ -126,7 +127,7 @@ def test_s3_edit_host_change_keeps_label(monkeypatch):
     conn = _EditConn(cur)
     _patch(monkeypatch, conn)
     monkeypatch.setattr(app, "_ssrf_check_host", lambda h: (True, "", None))
-    resp = asyncio.run(app.admin_update_datasource("mssql_local", _FakeReq({"host": "10.0.0.5"})))
+    resp = asyncio.run(admin_datasources.admin_update_datasource("mssql_local", _FakeReq({"host": "10.0.0.5"})))
     body = json.loads(resp.body)
     assert body.get("key_changed") is False, f"host 변경 시 라벨이 해시로 리버트됨(회귀): {body}"
     assert body.get("key") == "mssql_local", f"라벨 미유지: {body}"

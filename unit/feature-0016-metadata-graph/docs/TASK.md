@@ -287,7 +287,7 @@ source_of_truth: true
 - [x] T16.2 box click/dblclick — tap 핸들러에 `t.data("label") !== "Table"` 조건 추가 → Table 박스는 일반 노드와 동일
       (단일=상세, 더블=확장), Schema 컨테이너만 무시 유지. 박스 안 컬럼 클릭은 target=컬럼(컬럼 상세).
 - [x] T16.3 실측(라이브 인젝션): 141테이블 compound 전체-스프레드 → 박스겹침 886→0, 109ms. node --check OK. 캐시버스터 erd-spread.
-- [ ] T16.4 적대 리뷰 + verify-completion + 배포(web) + PB-0008 라이브: (a) 밀집 박스겹침 해소 + (b) 박스 클릭/더블클릭 정합 확인.
+- [x] T16.4 적대 리뷰(REV-...-erd-box-spread-tap, MAJOR 수정) + verify-completion PASS + 배포(web `a6bf0eb`, PR #511, soak 통과). **PB-0008 라이브 인터랙션((a) 박스겹침 해소 (b) 클릭/더블클릭 정합)은 사용자 실화면 확인 요망** — 이번 세션 win-browser eval/canvas 클릭 자동화 차단(Chrome 149.0.7827.200/Playwright 회귀). 코드 정합은 인젝션 실측(886→0)+리뷰로 확증.
 
 ## 17. graph-webgl — 렌더러를 canvas-2D → WebGL 로 전환 (2026-07-01, 프레임레이트 근본 해소)
 

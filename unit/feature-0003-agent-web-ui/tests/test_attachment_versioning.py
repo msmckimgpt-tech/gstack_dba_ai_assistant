@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 
 import app
+from routers import conversations  # feature-0012 P5b
 
 
 # ── fake DB ────────────────────────────────────────────────────────────────
@@ -357,6 +358,6 @@ def test_n1_next_version_filename():
 def test_r1_list_filters_superseded():
     import inspect
 
-    src = inspect.getsource(app.list_conversation_attachments)
+    src = inspect.getsource(conversations.list_conversation_attachments)
     norm = " ".join(src.split()).lower()
     assert "supersededat is null" in norm, "목록은 최신 버전만 노출(SupersededAt IS NULL) 해야 함"

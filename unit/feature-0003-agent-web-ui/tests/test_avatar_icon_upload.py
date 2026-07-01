@@ -13,6 +13,8 @@ import sys
 import types
 
 import app
+from routers import admin_roles
+from routers import admin_accounts
 
 
 def _install_storage(monkeypatch, **funcs):
@@ -168,7 +170,7 @@ def test_a1_role_icon_delete_requires_role_update(monkeypatch):
     actor = {"id": 1, "permissions": {"console.access": True, "console.manage": True}}
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_delete_role_icon(3, _Req())
+    resp = admin_roles.admin_delete_role_icon(3, _Req())
     assert resp.status_code == 403
 
 
@@ -177,7 +179,7 @@ def test_a1_role_icon_delete_requires_console_manage(monkeypatch):
     actor = {"id": 1, "permissions": {"console.access": True, "role.update": True}}
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_delete_role_icon(3, _Req())
+    resp = admin_roles.admin_delete_role_icon(3, _Req())
     assert resp.status_code == 403
 
 
@@ -186,5 +188,5 @@ def test_a1_account_avatar_delete_requires_account_update(monkeypatch):
     actor = {"id": 1, "permissions": {"console.access": True, "console.manage": True}}
     monkeypatch.setattr(app, "_connect_memory", lambda: _Conn())
     monkeypatch.setattr(app, "_require_account", lambda request, conn: (actor, None))
-    resp = app.admin_delete_account_avatar(9, _Req())
+    resp = admin_accounts.admin_delete_account_avatar(9, _Req())
     assert resp.status_code == 403

@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import app  # noqa: E402
+from routers import conversations  # feature-0012 P5b
 
 
 def test_app_source_has_no_modules_db_import():
@@ -59,7 +60,7 @@ def test_read_handler_ignores_client_id_uses_core_messages_max():
     """
     import inspect
 
-    src = inspect.getsource(app.mark_conversation_read)
+    src = inspect.getsource(conversations.mark_conversation_read)
     # (1) client 가 보낸 값(requested/last_read_message_id)을 커서 target 으로 신뢰하면 안 된다.
     assert "target_id = requested" not in src, (
         "읽음 핸들러가 client last_read_message_id 를 커서로 신뢰함 — "
