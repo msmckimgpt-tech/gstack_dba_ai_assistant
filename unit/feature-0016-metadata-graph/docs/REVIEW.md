@@ -8,6 +8,53 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T210000-ai-claude-feature-0016-erd-box-spread-tap-deploy-record [SKIPPED:docs-only-deploy-verification-record-no-code-change] — 배포·검증 상태 기록(문서 전용)
+- Related Change: CHG-...-erd-box-spread-tap-deploy-record (배포 결과 + PB-0008 라이브 차단 기록, 코드 무변경).
+- 방식: 코드 diff 0(문서 전용) → 신규 적대 패널 불요. 기능 정합은 선행 REV-20260701T200000(box-spread-tap, MAJOR 수정 후 SHIP)에서 확증.
+- 기록 내용: web 배포 `a6bf0eb`(PR #511, soak 통과), 자산 HTTP 서빙 검증(newAddsBox 3건), 그래프 뷰 UI 로드 sanity PASS.
+  **라이브 canvas 인터랙션 PB-0008 은 tool 차단(Chrome 149.0.7827.200/Playwright eval UtilityScript 파손 + canvas 클릭·native select 미지원)** → 사용자 실화면 확인 요망. 코드 정합은 인젝션 실측(886→0)+선행 리뷰로 확증.
+- Verdict: N/A(문서 기록) — 코드 검증은 REV-20260701T200000 참조.
+- Human Approval Needed: 없음(문서). 단 그래프 인터랙션 최종 시각 확인은 사용자 실브라우저가 정본.
+
+## REV-20260701T200000-ai-claude-feature-0016-erd-box-spread-tap [SUBAGENT: box-spread-tap-adversarial] — 박스 벌림 + 박스 클릭/더블클릭 정합 적대 리뷰
+- Related Change: CHG-...-erd-box-spread-tap ((A) 증분 경로 hasCompound 분기+전체-스프레드로 박스 벌림, (B) tap 핸들러 Table 예외로 박스 클릭/더블클릭 일반 노드와 정합).
+- 방식: 적대 subagent — admin.js diff + cytoscape/fcose tap·compound·packComponents 의미 교차확인. 두 변경 각각 (a)~(e) 렌즈로 결함 적발.
+- 발견 → 처리:
+  - **CHANGE 1 (tap 핸들러): 정확.** Table 박스 응답·Schema 컨테이너 무시·target/key 정합(compound-parent id=실 노드 key)·박스↔자식 클릭 시 `_lastTapKey` 리셋으로 오검출 없음·트리플탭 가드 정상. 잔여는 pre-existing MINOR(label 기반 게이팅 결합도, 이미-펼쳐진 박스 더블탭 시 1회 중복 introspect — 둘 다 기존 동작, 이번 변경 무관).
+  - **M-MAJOR (CHANGE 2) — `hasCompound` 전체 그래프 스캔 → 과발동**: `_metaGraphColumnConstraints()` 가 전 그래프 Table 을 스캔해, 박스가 하나라도 있으면 **무관한 term/노드 확장까지** 전체-스프레드(고정 없음·전 그래프 이동) 경로로 빠짐 → 국소 relax(앵커 고정) 분기가 사실상 死. 사용자는 "박스 겹침 해소" 를 위한 이동을 승인했지 "모든 확장이 튀는" 것은 아님. **→ 수정**: `hasCompound` 를 **이번 확장의 신규 노드가 박스를 들여올 때**(newIdSet 에 Column 또는 새 compound Table)로 한정. 박스 추가 확장만 full-spread, 순수 노드·term 확장은 국소 relax 유지. `_ccCfg`(컬럼 정렬 제약)는 두 분기 공통 병합 유지라 기존 박스 컬럼 정렬 불변.
+  - **m-MINOR (packComponents:true) — 수용(근거 기록)**: `randomize:false` 라도 packComponents 가 비연결 컴포넌트를 재배치해 점프 증폭 가능. 그러나 (1) MAJOR fix 로 full-spread 는 박스 추가 확장에만 발동(빈도 급감), (2) 확장 시나리오는 대개 연결 그래프(이웃 확장)라 packing 영향 미미, (3) 실측 검증된 config(886→0, 109ms)가 packComponents:true 조합 → 미검증 변경 회피. 박스 추가 확장에서 벌림이 목적이라 packing 수용.
+  - CLEAN: 동시성 가드(`_layout.stop()`)는 분기 무관 무조건 실행 → 연타 안전. 카메라 focus-fit(focusEles=앵커+신규)은 if/else 밖이라 두 분기 공통 발화 → 전체-스프레드여도 신규 이웃으로 프레이밍(전 그래프 이동 체감 완화). brace/dead-code 없음(local-relax 계산은 else 스코프 내).
+- 검증: MAJOR 수정 후 node --check OK. 실측(인젝션) 141테이블 compound 전체-스프레드 박스겹침 886→0, 109ms. 캐시버스터 erd-spread.
+- Verdict: **SHIP**(수정 후) — MAJOR 처리, MINOR 수용(근거), CHANGE 1 결함 0. PB-0008 라이브 최종: (a) 밀집 박스겹침 해소 + (b) 박스 클릭/더블클릭 정합.
+- Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included). 박스 벌림 이동 트레이드오프는 사용자 사전 승인(AskUserQuestion).
+
+## REV-20260701T170000-ai-claude-feature-0016-erd-card [SUBAGENT: erd-card-compound-refactor] — 컬럼→테이블 compound(ERD 카드) 적대 리뷰
+- Related Change: CHG-...-erd-card (컬럼을 테이블 compound 자식으로 + fcose alignment/relativePlacement 로 박스 안 ordinal 정렬, 겹침 원천 차단). admin.js/admin.html + admin_metadata.py(introspect ordinal).
+- 방식: §18.8 적대 subagent — admin.js diff + fcose 벤더 내부 + AGE graph module + graph/columns 엔드포인트 교차확인. BLOCKER/MAJOR/MINOR 적발.
+- 발견 → 전건 처리:
+  - **M1(MAJOR) — 앵커 compound 미고정 → 뷰 튐**: 증분 relax 의 fixed 빌더가 `isParent()`(=컬럼보유 테이블=compound=앵커)와 Column 을 skip → 앵커가 고정 안 됨. **→ 수정**: 앵커는 parent 여도 fixed 에 포함(`isAnchor` 예외). 컬럼은 제약(alignment/relative) 관리라 fixed 제외 유지(충돌 회피).
+  - **M2(MAJOR) — 빈 제약이 fcose tile/packComponents 끔 → 검색·초기로드 노드 흩어짐**: `_metaGraphColumnConstraints` 가 컬럼 0개여도 truthy 객체 반환 → fcose `constraintExist` 참 → tile off. **→ 수정**: 제약 있을 때만 cfg 에 병합(`_ccCfg`, 없으면 `{}`).
+  - **m1(MINOR) — introspect 컬럼 ordinal 없음 → ERD 알파벳순**: `graph/columns` 엔드포인트가 Column 노드에 ordinal 미부여. **→ 수정**: `describe_columns`(ORDINAL_POSITION 순) 인덱스를 ordinal 로 부여(admin_metadata.py).
+  - **m2(MINOR) — 검색 컬럼(테이블 부재)이 스키마 박스 이탈**: 컬럼 스키마-폴백 시 `_metaEnsureCat` 미호출로 부모 없는 뜬 노드. **→ 수정**: 컬럼 스키마-폴백에도 cat 보장.
+  - **M3(오탐)** — "progress/resume 코드 삭제" 는 내 삭제가 아니라 **브랜치가 origin/main 대비 7커밋 뒤처져** 발생한 diff 아티팩트(ab1299c 등이 main 에 후행 추가). origin/main 병합으로 복원 확인(panel.style.display·resume 5건 존재).
+  - CLEAN: node --check·2-pass(Table 먼저)·`existing.move` 가드·상세패널 API edges 사용(HAS_COLUMN 그래프 엣지 제거 무영향)·fcose 3제약 공존(컬럼 fixed 제외로 충돌 없음)·compound 드래그 자식 자동 추종.
+- 검증: 실측(인젝션) 컬럼 순서 top→bottom 보존·박스 겹침 1쌍·131ms. 수정 후 node --check·py_compile OK. origin/main(camfps/panelmove) 병합(3 hunk 수동 해소: _ccCfg+gen/clearMotionHide 병존, restoreIfCurrent 유지·placeColumns 제거).
+- Verdict: **SHIP**(수정 후) — M1/M2/m1/m2 전건 처리, M3 오탐 확인. PB-0008 배포 후 라이브 최종.
+- Human Approval Needed: 없음(프론트+introspect 응답 필드, 비파괴, deploy_scope: included).
+
+## REV-20260701T170000-ai-claude-feature-0016-graphux-camfps [SUBAGENT: PASS] — 카메라 애니 프레임레이트 최적화(layoutstop 지연 복원) 적대 리뷰
+- Related Change: graphux-camfps (`_metaGraphLayout` layoutstop — 라벨/엣지 숨김 해제를 카메라 fit 애니 complete 후로 지연 + 세대 가드 + 무조건 복원 헬퍼).
+- 방식: §18.8 적대 subagent 패널 — cytoscape.min.js/fcose 번들 내부 의미(`stop()`→`layoutstop` 동기 발화, stopped-anim promise 미resolve, fcose `run()` 완전 동기, `cy` 비파괴)를 실측 확인 후 10+ 경로 적대 검증 → **2라운드**(1차 발견 → hardened 재구현 → 재검증).
+- 1차 발견 (5건, 전량 수정):
+  - **BLOCKING-1/2 — fcose `run()` 예외 시 라벨/엣지 영구 숨김**: addClass 후 fcose try 블록이 throw 하면 cose 폴백으로 빠지는데 폴백엔 복원 코드 부재 → 라벨/엣지 `display:none`/`""` 영구 잔존(새로고침 전 복구 불가, 사용자 회귀 부류). **→ 수정**: fcose outer catch + layoutstop 내부 catch + 폴백 layoutstop + 폴백 outer catch **모든 경로에 무조건 `clearMotionHide()`**.
+  - **MAJOR-3 — `!_layoutRunning` guard 고착**: 후속 레이아웃 이중 예외 시 `_layoutRunning` 이 true 로 고착되면 지연 복원이 영구 차단 + dragfree 2차 무력화. **→ 수정**: guard 를 **세대(gen) 토큰 `restoreIfCurrent`** 로 대체 — `_layoutRunning` 상태와 독립. 폴백 catch 가 `_layoutRunning=false` 보장.
+  - **MAJOR-2 — 숨긴 지오메트리로 fit → 프레이밍 어긋남**: else 경로가 엣지/라벨 숨긴 채 `cy.fit()`. **→ 수정**: else 는 `clearMotionHide()` **후** fit.
+  - **MAJOR-1 — setTimeout 누수**: 취소 안 되는 `setTimeout(restore,650)` 누적. **→ 수정**: `_metaGraph._restoreTimer` 단일 슬롯 + 재설정 전 `clearTimeout`.
+- 재검증 (hardened) 결과: **잔여 BLOCKING 0**. 핵심 불변식 확증 — "모든 비동기(지연) 복원은 gen-gated `restoreIfCurrent` 뿐, 무조건 `clearMotionHide()` 는 전부 동기 실행 경로" → 어떤 연타·예외·폴백·스코프전환 조합에서도 라벨/엣지 영구 숨김·깜빡임 재현 불가. 종결 경로(run 예외→catch / run 성공→layoutstop 항상 발화)가 모두 clearMotionHide 로 수렴.
+- 잔여 NIT(기능 회귀 아님, 원장 기록): N1 겹치는 cy.animate({fit}) 직렬 큐잉 더블팬(변경 전에도 존재), N2 구세대 _restoreTimer 최대 650ms 후 1회 no-op, N3 gen 정수 증가(오버플로 비현실적).
+- Risks (수정 후): 잔여 BLOCKER/MAJOR 0. node --check PASS.
+- Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included). **실 FPS 효과는 PB-0008(렌더 정합)로 확인 불가 — 사용자 실브라우저 재측정이 유일 검증**(headless/WSL 은 실 GPU 프레임 미측정).
+
 ## REV-20260701T190000-ai-claude-feature-0016-graphux5-panelmove-showfix [AGENT-TEAM: PASS] — 세션 독립 폴 재개 시 진행 패널 미표시 버그
 - Related Change: panelmove-showfix (`_metaGraphRenderProgress` 가 `display=""` 직접 설정).
 - 방식: 라이브 PB-0008 검증 중 적발 — 세션 독립 재개(fix B) 경로에서 status 바는 "0/1 running" 갱신되나 진행 패널이 populated 되고도 숨김(초기 display:none 미해제). 근본원인: display 해제가 `_metaGraphAnalyze`(버튼) 경로에만 있었음.

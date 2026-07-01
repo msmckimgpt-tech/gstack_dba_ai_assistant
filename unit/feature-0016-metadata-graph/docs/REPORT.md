@@ -1,5 +1,32 @@
 # Report
 
+## 2026-07-01 · 그래프 애니 프레임레이트 저하 — 카메라 애니 구간 라벨/엣지 숨김 (graphux-camfps, resume 인계)
+
+### 배경 (resume)
+이전 세션(2597e01c)이 "노드 수 무관 애니 FPS 저하" 를 8회 반복 진단하다 headless 로 실 FPS 재현 불가 →
+사용자에게 DevTools 실측 요청 직후 **컨텍스트 초과("Prompt is too long")로 중단**. 사용자가 트레이스+환경+GPU
+샷 제공. resume persona 로 인계해 트레이스 분석부터 재개.
+
+### 진단 (DevTools Performance 트레이스 실측 — Trace-20260701T134334, 10.4s / 70,418 events)
+- 메인스레드 busy = 전체의 **20%** (한가). 그중 **Scripting 65%(FunctionCall 1180ms)**, Rendering·Painting 각 1%.
+- JS 핫스팟 = Cytoscape 내부: `ts`(캔버스 draw 162ms)·`Cs.apply`/`parsedStyle`/`updateStyleHints`(스타일 재계산)·
+  `calculateLabelDimensions`/`boundingBox`(라벨 텍스트 측정·렌더).
+- **rAF(메인 JS) = 60fps(median 16.7ms) 로 정상**인데 **실제 표시 프레임(Swap) = ~36fps(median 27.8ms)** → 프레임 드롭.
+  대형 잭 189/105/76ms = 데이터 로드/레이아웃 시작 fcose 동기계산.
+- chrome://gpu: Canvas·Compositing·Rasterization **HW 가속 ON** (GPU 폴백 아님). rAF 16.7ms 고정 = 사실상 60Hz(144Hz 가설 기각).
+- **근본원인**: 레이아웃 애니는 라벨/엣지 숨김 최적화됨(기존)이나 layoutstop 즉시 복원 후 **450ms 카메라 fit 애니가
+  라벨·엣지를 켠 채** 돌아 per-frame 텍스트 래스터+엣지 지오메트리 재계산 재발.
+
+### 수정 (admin.js)
+- `_metaGraphLayout` layoutstop: 숨김 해제를 카메라 fit 애니 `complete` 후로 지연(`restoreMotion`, guard `!_layoutRunning`,
+  setTimeout 650ms fallback). 즉시맞춤/예외 경로는 동기 복원. 이미 레이아웃 애니에 검증된 패턴의 카메라 애니 확장 —
+  예전 hideEdgesOnViewport 전역옵션 버그와 무관. 등급 Minor(프론트·비파괴). 캐시버스터 graphux-camfps.
+
+### 검증
+- node --check PASS. 적대 리뷰 패널(§18.8) → REVIEW.md. verify-completion → commit/PR/merge → web 재배포.
+- **한계(정직)**: 실 FPS 개선은 **사용자 실브라우저에서만 확인 가능** — headless/WSL 은 실 GPU 프레임 미측정(세션이
+  막힌 근본 이유). 배포 후 사용자 재측정 필수. PB-0008 은 렌더 정합만 확인.
+
 ## 2026-07-01 · 그래프 뷰 컬럼 테이블 하단 실제순서 세로배치 + 부드럽게 꺾이는 엣지 (graphux9/10, 배포 완료)
 
 **요청**: `관리 콘솔 > 메타데이터 > 그래프 뷰` 에서 청색(테이블) 노드에 연결된 회색(컬럼) 노드가 흩어져

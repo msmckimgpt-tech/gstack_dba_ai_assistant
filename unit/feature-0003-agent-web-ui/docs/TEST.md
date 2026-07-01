@@ -116,6 +116,14 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260701T170000-graphux-camfps 그래프 카메라 애니 프레임레이트 최적화(layoutstop 지연 복원) (Minor §12.3, 2026-07-01, resume 인계) — **Environment: Windows-browser (라이브 PB-0008 배포 후 잔여)**
+- 대상: `_metaGraphLayout` layoutstop — 라벨/엣지 숨김 해제를 카메라 fit 애니 complete 후로 지연 + 세대가드 + 무조건 복원. 프론트 전용·비파괴(JS 로직).
+- 구조/단위: `node --check` PASS(admin.js). 백엔드/스키마/RBAC/API 변경 0. 캐시버스터 graphux-camfps.
+- 적대 검증 패널(§18.8 subagent, 2라운드): cytoscape/fcose 번들 내부(`stop()`→`layoutstop` 동기 발화·fcose run() 완전 동기·cy 비파괴) 실측 기반 10+ 경로. 1차 BLOCKING 2(fcose 예외→폴백 복원부재 영구숨김)+MAJOR 3 발견 → hardened 재구현 → 재검증 **잔여 BLOCKING 0**. 핵심 불변식(비동기 복원=gen-gated 뿐, 무조건 복원=전부 동기) 확증 → 어떤 연타·예외·폴백·스코프전환에서도 라벨/엣지 영구숨김·깜빡임 재현 불가. REV-20260701T170000 [SUBAGENT: PASS].
+- **PB-0008 Windows-browser 성격 (정직)**: 본 변경의 목표는 **애니 FPS 개선**인데, 실 FPS 는 PB-0008(스크린샷 기반)로 측정 불가하고 **사용자 실 하드웨어 재측정이 유일한 효과 검증**이다(headless/WSL 실 GPU 프레임 미측정 = 원 세션이 막힌 근본 이유). PB-0008 가 확인 가능한 것은 **렌더 정합**(라벨/엣지가 애니 후 정상 복원·영구숨김 회귀 없음·확장 동작).
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저, 브리지 relay 9223 available)**: ① 관리콘솔 > 메타데이터 > 그래프 뷰 로드 → 검색(초기 스프레드 애니) 후 **라벨·엣지 정상 표시**(영구숨김 없음) ② 노드 더블클릭 확장(카메라 fit 애니) → 애니 중 라벨/엣지 숨김·**정착 후 복원** ③ **연타(빠른 더블클릭 2~3회)** 후 최종 상태에서 라벨/엣지 정상(영구숨김 회귀 없음) ④ 데이터소스 전환/리셋 후 정상 렌더. + 사용자 애니 FPS 재측정(DevTools).
+- Pass/Fail: PARTIAL(구조·단위·2라운드 적대 패널 PASS / 라이브 PB-0008 렌더정합 = 배포 후 잔여, FPS 효과 = 사용자 재측정). Runner: AI.
+
 ### TASK-20260629T181648-point-scroll-easeoutexpo 공유 뷰 가이드 뱃지(point rail) + 클릭 스크롤 단축·EaseOutExpo (Minor §12.3, 2026-06-29) — **PB-0008 Windows-browser DEFERRED(배포 후)**
 - 구조/단위: `node --check` PASS(app.js·share.js). CSS 추가만(share.css), 백엔드/스키마/RBAC 0.
 - 적대 검증 패널(frontend 7-lens: 좌표계·EaseOutExpo 수식·메인 회귀·공유 엣지·anonymous XSS·성능/ResizeObserver 루프·a11y) → **VERDICT SHIP**(BLOCKER 0·MAJOR 0). EaseOutExpo `1-2^(-10t)` 수치검증 f(0)=0·f(1)=1·단조·보간 from→to 정확. ResizeObserver 자기-트리거 루프 부재(fixed rail↔observed messages 레이아웃 분리). title/aria XSS 무첨가(DOM API). MINOR 2(ResizeObserver 폴백·focus-visible)→ focus-visible 흡수, 나머지 follow-up. REV-20260629T181648-point-scroll-easeoutexpo.
@@ -1302,3 +1310,18 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **시각(스크린샷 아티팩트)**: `scratchpad/pb0008-04..06` — 신규 노드가 주변 테이블을 밀어내 겹침 해소, 컬럼 세로스택+round-taxi 유지.
 - **Pass/Fail: PASS**(인젝션 검증) — 사용자 보고 2건 해소: (1) 더블클릭 시 컬럼 세로스택 가시화(겹침 제거로 판독), (2) 신규 노드가 주변 노드를 부드럽게 밀어냄(겹침 502→17). 잔여 minor 겹침(극단 depth-2 17쌍)은 numIter 250(perf) 유지 trade-off.
 - **배포 후 최종 확인 (배포 번들, 2026-07-01) PASS**: web 재배포(git_commit=e2efac2, soak 통과) 후 배포된 `admin.js?v=graphux-expand-relax` 로 동일 시나리오 재확인 — 검색 achievement→Achievement 더블클릭 확장(신규 120, 총 300노드) 결과 **겹침쌍 0**, Achievement 컬럼 ordinal 세로스택 유지(1@dy75·2@105·3@135·4@165). 스크린샷 `scratchpad/pb0008-07-DEPLOYED-final.png`.
+
+### TASK-0016 ERD 카드 — 컬럼을 테이블 compound 박스 안에(겹침 원천 차단) (frontend-only, feature-0016 연계)
+- **Environment: Windows-browser** (실 Windows Chrome/149 via `bin/win-browser.py` relay, https://localhost/admin 인증 세션). 메타데이터 > 🕸 그래프 뷰, mssql-qa-idc.
+  방법론: 배포 전 **런타임 인젝션 검증**(코드와 동일 로직: 컬럼을 테이블 compound 자식으로 재부모 + fcose alignment/relativePlacement 제약). **정식 배포 후 배포 번들 재확인.**
+- **정량 실측**: 3 테이블 박스·컬럼 25 — 컬럼 순서 top→bottom **보존(true)**, 최상위 박스 겹침 **1쌍**(이전 satellite 11쌍), fcose 131ms. node --check OK.
+- **Pass/Fail: PASS**(인젝션) — 사용자 보고(더블클릭 시 컬럼 스택이 이웃 테이블과 겹침, 3회) 해소: 컬럼이 테이블 박스 안 ordinal 세로 목록으로 들어가고 fcose 가 박스 bounds 로 이웃 공간을 확보해 겹침 원천 차단.
+- **배포 후 최종 확인**: web 재배포(배포 번들) 후 다컬럼 테이블 더블클릭 PB-0008 재확인 예정.
+
+### TASK-0016 ERD 박스 벌림 + 박스 클릭/더블클릭 정합 (frontend-only, feature-0016 연계)
+- **Environment: Windows-browser** (실 Windows Chrome/149 via `bin/win-browser.py` relay, https://localhost/admin 인증 세션). 메타데이터 > 🕸 그래프 뷰, mssql-qa-idc.
+  방법론: 배포 전 **런타임 인젝션 검증**(코드와 동일 로직: 증분 경로 신규-박스 감지 시 전체-스프레드 config). **정식 배포 후 배포 번들 재확인.**
+- **정량 실측(인젝션)**: 141테이블 compound 전체-스프레드(`randomize:false`·`packComponents:true`·`numIter:1000`·`nodeRepulsion 18000`·고정없음) → 테이블 박스겹침 **886 → 0**, fcose **109ms**. node --check OK. 캐시버스터 `admin.js?v=20260701-erd-spread`.
+- **Pass/Fail: PASS**(인젝션) — 사용자 보고 2건 대응: (4) 밀집 뷰 박스겹침(886→0 벌림), (5) 박스 클릭/더블클릭 정합(tap 핸들러 Table 예외로 단일=상세·더블=확장, 일반 노드와 동일). 적대리뷰 MAJOR(hasCompound 과발동) 수정 — full-spread 는 신규 노드가 박스를 들여올 때만 발동.
+- **배포(2026-07-01)**: web 무중단 롤링 `git_commit=a6bf0eb`(PR #511 머지), soak 90s 통과, edge /healthz 200. 배포 자산 서빙 검증: `GET /static/admin.js?v=20260701-erd-spread` 에 `newAddsBox` 마커 3건 baked(HTTP 정본). 그래프 뷰 UI 로드 sanity(실 Windows Chrome relay screenshot): 관리콘솔>메타데이터>🕸 그래프 뷰 진입·렌더 정상(범례·검색·이웃깊이·상세 패널), 배포 회귀 0. 스크린샷 `scratchpad/pb0008-graphview-empty.png`.
+- **라이브 인터랙션 검증 — 사용자 실화면 확인 요망(자동 tool 차단)**: (a) 밀집 박스겹침 해소 + term 국소 push, (b) Table 박스 단일=상세·더블=확장 정합 은 **canvas(cytoscape) 노드 클릭/더블클릭이 필요**한데, 이번 세션 win-browser 자동화가 막힘 — Chrome 149.0.7827.200 자동업데이트로 Playwright eval(주입 검증) UtilityScript 파손 + tool 이 canvas 좌표 클릭·더블클릭(350ms)·native `<select>` datasource 전환 미지원(메모리 project-pb0008-eval-regression-chrome200). 배포 전 **인젝션 실측(886→0, 109ms)** + **적대 리뷰(tap 로직 확인·MAJOR 수정)** 로 코드 정합은 확증. 최종 화면 동작은 이슈 신고자(사용자)의 실 브라우저 확인이 정본 — 선례(FPS·인터랙션 효과 PB-0008 사용자 확인) 동일.

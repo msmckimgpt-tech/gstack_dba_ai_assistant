@@ -225,3 +225,66 @@ source_of_truth: true
       - **세션 독립 (admin.js)**: `_metaGraphLoadNodeAnalysis` 가 pending/running 노드의 run_id 로 폴링 자동 재개 → 다른 탭/새로고침에서도 진행 패널·주황 마커·진행률 표시.
 - [x] T13.7 verify-completion + 배포(web 90973df + insight-worker) — PB-0008 라이브: 패널 우측·진행률 갱신·세션독립 확인.
 - [x] T13.8 **showfix**: 세션 독립 재개 경로에서 진행 패널이 populated 되고도 숨김(display 미해제) 버그 → `_metaGraphRenderProgress` 가 display 직접 해제. 라이브 실측 PASS(01/02 스크린샷).
+
+## 14. graphux-camfps — 카메라 애니메이션 프레임레이트 저하 수정 (2026-07-01, resume 인계)
+
+### 14.0 맥락 / 진단
+- 사용자 보고(이전 세션 2597e01c, 컨텍스트 초과로 진단 직전 중단 → resume 인계): 그래프 뷰 애니메이션이
+  **노드 수와 무관하게 FPS 낮음**(동작 속도·수동 팬은 정상). 이전 세션이 DevTools 실측을 요청했고 사용자가
+  Performance 트레이스(Trace-20260701T134334) + 환경정보(dpr1/zoom100%/1295x1073/refresh?) + chrome://gpu 샷 제공.
+- 트레이스 실측(10.4s/70418 events): 메인 busy 20% 중 **Scripting 65%(FunctionCall 1180ms)** = Cytoscape 캔버스
+  재렌더(`ts`·스타일 재계산·`calculateLabelDimensions`·`boundingBox`), Rendering/Painting 각 1%. **rAF 60fps(16.7ms)
+  인데 표시 프레임 ~36fps(27.8ms) 드롭.** GPU HW 가속 ON, 디스플레이 사실상 60Hz(144Hz 가설 기각).
+- 근본원인: 레이아웃 애니는 라벨/엣지 숨김 최적화됨(기존 anim-hide-label/anim-hide)이나, layoutstop 에서 **즉시
+  복원** 후 뒤이은 **450ms 카메라 fit 애니가 라벨·엣지를 켠 채** 돌아 매 프레임 텍스트 래스터+엣지 지오메트리
+  재계산 재발. 이 카메라 애니 구간이 체감 저프레임의 본체.
+- 등급: **Minor** (프론트 전용·비파괴, 애니 렌더 semantics 만 변경).
+
+### 14.1 구현 (admin.js)
+- [x] T14.1 `_metaGraphLayout` layoutstop: 숨김 즉시 해제 제거 → 카메라 fit 애니 `complete` 로 지연(세대가드
+      `restoreIfCurrent`). 즉시맞춤(cy.fit)·모든 예외/폴백 경로는 `clearMotionHide` 무조건 복원. `setTimeout(650ms)` fallback.
+- [x] T14.2 admin.html 캐시버스터 graphux-progress → graphux-camfps.
+
+### 14.2 검증
+- [x] T14.3 node --check admin.js PASS.
+- [x] T14.4 적대 리뷰 패널(§18.8, subagent 2라운드) — 1차 BLOCKING 2+MAJOR 3 발견 → hardened 재구현(세대가드+무조건복원) → 재검증 잔여 BLOCKING 0. REVIEW.md REV-20260701T170000 [SUBAGENT: PASS].
+- [x] T14.5 verify-completion --pre-commit PASS + commit + PR + main 병합.
+- [ ] T14.6 web 재배포(deploy_scope: included) + healthz/smoke.
+- [ ] T14.7 **사용자 실브라우저 FPS 재측정** — headless/WSL 은 실 GPU 프레임을 못 재므로(세션이 막힌 근본 이유)
+      배포 후 사용자님 브라우저에서 애니 FPS 재확인이 유일한 효과 검증. PB-0008 은 렌더 정합만 확인 가능.
+
+## 15. ERD 카드 — 컬럼을 테이블 compound 박스 안에 (2026-07-01)
+
+### 15.0 맥락
+- 사용자 후속(3회차): relax 후에도 더블클릭 시 컬럼 세로 스택이 이웃 테이블과 겹침(스크린샷). 진단: 위성 컬럼을
+  layoutstop 후 배치 → force 가 우측 라벨 폭(~160px) 미예약 → 이웃 침범. 사후 밀어내기(declutter)는 적대검증상
+  인접 스택 진동 or 노드 쏠림으로 겹침을 옮길 뿐 → REJECT. 사용자 결정(AskUserQuestion): **ERD 카드** 채택.
+- 등급 Minor (프론트 전용, 비파괴).
+
+### 15.1 구현·검증 (admin.js)
+- [x] T15.1 컬럼을 소속 테이블의 **compound 자식**으로(`_metaColParent` 부모=테이블 key, 2-pass add). HAS_COLUMN
+      엣지·placeColumns·declutter·round-taxi·dragfree 재배치 제거(컨테인먼트로 대체).
+- [x] T15.2 `_metaGraphColumnConstraints()` — fcose `alignmentConstraint.vertical`(동일 x) +
+      `relativePlacementConstraint`(ordinal 위→아래 gap) 를 두 레이아웃 cfg 에 병합 → 박스 안 ordinal 세로 정렬.
+- [x] T15.3 Table compound 박스 스타일(teal 실선, 이름 상단) + Column 작은점+우측라벨.
+- [x] T15.4 실측(라이브 인젝션): 컬럼 순서 top→bottom 보존 + 최상위 박스 겹침 1쌍(이전 11) + fcose 131ms. node --check OK.
+- [x] T15.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인. (배포됨 — 밀집 뷰 박스겹침은 §16 후속)
+
+## 16. ERD 박스 벌림 + 박스 클릭/더블클릭 정합 (2026-07-01)
+
+### 16.0 맥락
+- 사용자 후속(4회차): ERD 카드 배포 후 **밀집 뷰에서 테이블 박스끼리 겹침**. 진단: 증분(더블클릭 확장) 경로가
+  국소 relax(먼 노드·앵커 고정)라 중첩 compound(tall ERD 박스)를 벌리지 못함(실측 141테이블 886쌍). 사용자 결정
+  (AskUserQuestion): **박스 벌림 튜닝 투자** — 문맥·프레임 일부 이동 감수하고 겹침 해소 우선.
+- 사용자 후속(5회차): **박스 클릭/더블클릭 동작이 기존 노드와 정합하지 않음**. 진단: tap 핸들러가 모든 compound
+  부모를 무시(`if (t.isParent()) return`) → Table ERD 카드 박스 클릭 무반응(일반 노드는 상세/확장 동작 → 불일치).
+- 등급 Minor (프론트 전용, 비파괴).
+
+### 16.1 구현·검증 (admin.js)
+- [x] T16.1 box-spread — `_metaGraphLayout` 증분 경로를 `hasCompound` 분기: compound(ERD 카드) 존재 시 **전체-스프레드**
+      (`randomize:false`·`packComponents:true`·`numIter:1000`·`nodeRepulsion 18000`·고정 없음)로 박스 벌림, compound 미존재 시
+      기존 국소 relax 유지. 카메라는 layoutstop focus-fit 이 앵커+신규 이웃 추종(문맥 추적 유지).
+- [x] T16.2 box click/dblclick — tap 핸들러에 `t.data("label") !== "Table"` 조건 추가 → Table 박스는 일반 노드와 동일
+      (단일=상세, 더블=확장), Schema 컨테이너만 무시 유지. 박스 안 컬럼 클릭은 target=컬럼(컬럼 상세).
+- [x] T16.3 실측(라이브 인젝션): 141테이블 compound 전체-스프레드 → 박스겹침 886→0, 109ms. node --check OK. 캐시버스터 erd-spread.
+- [x] T16.4 적대 리뷰(REV-...-erd-box-spread-tap, MAJOR 수정) + verify-completion PASS + 배포(web `a6bf0eb`, PR #511, soak 통과). **PB-0008 라이브 인터랙션((a) 박스겹침 해소 (b) 클릭/더블클릭 정합)은 사용자 실화면 확인 요망** — 이번 세션 win-browser eval/canvas 클릭 자동화 차단(Chrome 149.0.7827.200/Playwright 회귀, 메모리 project-pb0008-eval-regression-chrome200). 코드 정합은 인젝션 실측(886→0)+리뷰로 확증.

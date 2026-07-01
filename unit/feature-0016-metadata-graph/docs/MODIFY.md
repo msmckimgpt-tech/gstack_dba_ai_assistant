@@ -8,6 +8,55 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260701T210000-ai-claude-feature-0016-erd-box-spread-tap-deploy-record
+- Date: 2026-07-01
+- Related Requirement: CHG-...-erd-box-spread-tap 의 배포·검증 결과 기록(문서 전용, 코드 무변경).
+- Summary: box-spread + box-click 변경을 web 무중단 롤링 배포(`git_commit=a6bf0eb`, PR #511, soak 90s 통과, /healthz 200).
+  배포 자산 서빙 검증: `GET /static/admin.js?v=20260701-erd-spread` 에 `newAddsBox` 마커 3건 baked(HTTP 정본). 그래프 뷰
+  UI 로드 sanity(실 Windows Chrome relay screenshot) PASS. **라이브 canvas 인터랙션(박스 클릭/더블클릭·확장 스프레드)
+  PB-0008 은 이번 세션 자동화 차단** — Chrome 149.0.7827.200 자동업데이트가 win-browser Playwright eval(주입 검증)
+  UtilityScript 를 파손 + tool 이 canvas 좌표클릭·더블클릭·native select datasource 전환 미지원. 코드 정합은 배포 전
+  인젝션 실측(886→0)+적대리뷰(REV-...-erd-box-spread-tap, MAJOR 수정)로 확증. 화면 동작 정본은 사용자 실브라우저 확인.
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`·`unit/feature-0016-metadata-graph/docs/TEST.md`(배포·검증 상태 기록).
+- Impact: 문서 전용. 코드/배포 산출물 무변경(이미 a6bf0eb 로 라이브).
+- Rollback Notes: 해당 없음(문서). 코드 롤백은 CHG-...-erd-box-spread-tap 참조.
+
+## CHG-20260701T200000-ai-claude-feature-0016-erd-box-spread-tap
+- Date: 2026-07-01
+- Related Requirement: 사용자 후속(4·5회차) — (4) ERD 카드 배포 후 밀집 뷰에서 **테이블 박스끼리 겹침**(사용자 결정
+  AskUserQuestion: **박스 벌림 튜닝 투자**, 문맥·프레임 일부 감수). (5) **박스 클릭/더블클릭 동작이 기존 노드와 정합하지 않음**.
+- Summary:
+  (A) box-spread — 근본원인 = 증분(더블클릭 확장) 경로가 국소 relax(먼 노드·앵커 고정)라 **중첩 compound(tall ERD
+  박스)를 벌리지 못해** 밀집 시 박스겹침 누적(실측 141테이블 886쌍). 해법 = 증분 경로를 분기: **compound(ERD 카드) 존재
+  시 전체-스프레드**(`randomize:false`·`packComponents:true`·`numIter:1000`·`nodeRepulsion 18000`·고정 없음)로 박스를 벌리고,
+  compound 미존재(순수 노드 확장) 시 기존 국소 relax 유지. `randomize:false` 라 현 배치에서 완화(전면 재무작위화보다 덜 튐),
+  카메라는 layoutstop focus-fit 이 앵커+신규 이웃으로 추종(문맥 추적 유지). 실측(141테이블 compound): 박스겹침 886→0, 109ms.
+  (B) box click/dblclick 정합 — 근본원인 = tap 핸들러가 `if (t.isParent()) return` 으로 **모든 compound 부모를 무시** →
+  Table ERD 카드 박스 클릭이 무반응(일반 테이블 노드는 상세/확장 동작 → 불일치). 해법 = `t.data("label") !== "Table"` 조건 추가
+  → Table 박스는 일반 노드와 동일(단일=상세, 더블=확장), Schema 컨테이너(조직용)만 무시 유지. 박스 안 컬럼 클릭은 target=컬럼.
+- Files: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaGraphLayout 증분 경로 hasCompound 분기+전체-스프레드 cfg,
+  tap 핸들러 Table 예외), `unit/feature-0003-agent-web-ui/src/static/admin.html`(캐시버스터 erd-spread).
+- Impact: 프론트 전용, 비파괴. 더블클릭 확장 시 ERD 카드 박스가 전체 재-스프레드되어 박스겹침 해소(문맥 일부 이동은 사용자 승인
+  트레이드오프). Table 박스가 클릭/더블클릭에 일반 노드처럼 반응. 순수 노드(컬럼 미보유) 확장은 기존 국소 relax 불변.
+- Rollback Notes: admin.js 증분 경로를 단일 국소-relax 로 환원 + tap 핸들러를 `if (t.isParent()) return` 로 환원 + 캐시버스터 환원. DB/백엔드 무관.
+
+## CHG-20260701T170000-ai-claude-feature-0016-erd-card
+- Date: 2026-07-01
+- Related Requirement: 사용자 후속(3회차) — 더블클릭 시 컬럼 세로 스택이 이웃 테이블과 여전히 겹침(스크린샷).
+  사용자 결정(AskUserQuestion): **ERD 카드(테이블 compound 박스 안 컬럼)** 로 전환.
+- Summary: 근본원인 = 위성 컬럼을 layoutstop **후** 배치해 force 가 그 공간(우측 라벨 폭 ~160px)을 예약 못 함 →
+  이웃 테이블 침범. 사후 밀어내기(declutter)는 적대검증상 인접 스택 진동 or 노드 쏠림(겹침을 옮길 뿐)으로 REJECT.
+  **해법 = 컬럼을 소속 테이블의 compound 자식**으로 만들고(부모=테이블 key, `_metaColParent`), fcose
+  `alignmentConstraint.vertical`(컬럼 동일 x) + `relativePlacementConstraint`(위→아래 gap, ordinal 순)로 박스 안
+  ordinal 세로 정렬 → fcose 가 **각 테이블 박스 bounds 로 이웃 공간을 확보**해 겹침을 원천 차단. HAS_COLUMN
+  엣지·placeColumns·declutter·round-taxi 제거(컨테인먼트로 대체). 실측: 컬럼 순서 top→bottom 보존·박스 겹침 1쌍·131ms.
+- Files: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaColParent·_metaGraphColumnConstraints 신규,
+  _metaGraphAddElements 2-pass+컬럼 테이블-부모, _metaGraphLayout 제약 병합, placeColumns/declutter/round-taxi/dragfree 제거,
+  Table compound 박스 스타일), `unit/feature-0003-agent-web-ui/src/static/admin.html`(캐시버스터 erd-card).
+- Impact: 프론트 전용, 비파괴. 테이블(컬럼 보유)이 compound 박스(ERD 카드)로 렌더 — 이름 상단, 컬럼 목록 내부.
+  스키마(점선 남색) > 테이블(teal 실선) > 컬럼 2단 중첩 compound. 컬럼 미보유 테이블은 평범 노드 유지. 상세 패널은
+  API 응답 edges 사용이라 무영향. round-taxi 꺾이는 선은 사용자 결정으로 컨테인먼트 대체(겹침 제거 우선).
+- Rollback Notes: admin.js 를 satellite 방식(위성 컬럼+placeColumns+round-taxi)으로 revert + 캐시버스터 환원. DB/백엔드 무관.
 ## CHG-20260701T190000-ai-claude-feature-0016-graphux5-panelmove-showfix
 - Date: 2026-07-01
 - Related Requirement: panelmove 세션 독립 폴 재개 시 진행 패널이 **표시되지 않던 버그** 수정(라이브 검증 중 적발 — status 바는 갱신되나 패널 숨김).
@@ -23,6 +72,24 @@ source_of_truth: true
 - Files: `unit/feature-0002-agent-core/src/modules/node_analysis.py`(claim depth 우선); `unit/feature-0003-agent-web-ui/src/static/{admin.html,admin.js,styles.css}`.
 - Impact: 프론트 레이아웃 + 워커 claim 정렬 변경(비파괴). 진행률 0% 고착·세션 종속 표시 해소. 기존 마커·폴링·백엔드 저장 무변경. 그래프가 상단 바에 밀리지 않음.
 - Rollback Notes: admin.html 구조·렌더 타깃 환원 + claim `ORDER BY created_at ASC` 환원 + 캐시버스터 환원. DB/마이그레이션 무변경.
+
+## CHG-20260701T170000-ai-claude-feature-0016-graphux-camfps
+- Date: 2026-07-01
+- Related Requirement: 그래프 뷰 애니메이션 프레임레이트 저하 — "노드 수와 무관하게 애니메이션만 FPS 낮음(수동 팬은 매끄러움)" (사용자 보고, 이전 세션 컨텍스트 초과로 진단 중단분 인계).
+- 근본원인 (DevTools Performance 트레이스 실측, Trace-20260701T134334, 10.4s/70418 events): 메인스레드 busy 20%
+  중 **Scripting 65%(FunctionCall 1180ms) = Cytoscape 캔버스 재렌더**(핫스팟 `ts`/스타일 재계산/`calculateLabelDimensions`),
+  Rendering·Painting 각 1%. rAF 는 60fps(16.7ms) 인데 실제 표시 프레임 ~36fps(27.8ms)로 드롭. GPU HW 가속 ON(chrome://gpu),
+  디스플레이 사실상 60Hz. → 레이아웃 애니는 라벨/엣지 숨김 최적화됨(기존)이나, **그 직후의 450ms 카메라 fit 애니가
+  라벨·엣지를 켠 채 돌아** 매 프레임 텍스트 래스터+엣지 지오메트리 재계산 재발 = 저프레임 구간.
+- Summary: `_metaGraphLayout` 의 `layoutstop` 콜백에서 라벨(`anim-hide-label`)·엣지(`anim-hide`) 숨김 해제를
+  즉시 하지 않고 **뒤이은 카메라 fit 애니(450ms)의 `complete` 후로 미룸**. 즉시맞춤(`cy.fit`)·예외 경로는 동기 복원.
+  연타 경합 방지 guard(`!_layoutRunning`) + complete 미발화 대비 `setTimeout(650ms)` fallback(라벨/엣지 영구 숨김 회귀 차단).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraphLayout` layoutstop: restoreMotion 지연 복원)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (캐시버스터 graphux-progress → graphux-camfps)
+- Impact: 프론트 전용·비파괴. 애니 렌더 semantics 만 변경(라벨/엣지가 레이아웃 애니 + 직후 카메라 애니 동안 숨겨졌다
+  정착 시 복원 — 기존은 카메라 애니 중 표시). 백엔드·계약·인증·데이터 무변경. 배포=web 재빌드만(alembic/worker 무관).
+- Rollback Notes: admin.js layoutstop 콜백을 즉시-복원 형태로 환원 + 캐시버스터 graphux-progress 로 되돌림. DB·API 무관.
 
 ## CHG-20260701T160000-ai-claude-feature-0016-graphux5-progress
 - Date: 2026-07-01
