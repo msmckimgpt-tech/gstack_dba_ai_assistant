@@ -3263,11 +3263,13 @@ function _metaGraphLayout(opts) {
           const p = n.position();
           fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
         });
+        // 확장은 element 애니메이션 없이 '즉시 배치'(animate:false). cytoscape 는 요소 애니메이션 중
+        // 매 프레임 전체 캔버스를 고DPI 로 재래스터하므로(몇 노드만 움직여도 수백 노드 전부) element 애니가
+        // 저프레임의 주원인이다. 노드는 즉시 놓고, '화면 이동'은 아래 카메라 애니(textureOnViewport 캐시)
+        // 로만 부드럽게 처리한다. numIter 축소로 동기 계산 hitch 도 완화. (초기 로드/검색의 펼침 애니는 유지.)
         cfg = Object.assign({}, base, {
           name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
-          // numIter 축소: 증분은 기존 노드 고정·신규만 정착이라 반복이 적어도 충분. 동기 계산 hitch(측정
-          // max 120~155ms 스파이크) 완화 — fcose 반복은 메인 스레드 블로킹이라 프레임 시작 지연의 원인.
-          animationDuration: 450, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
+          animate: false, packComponents: false, numIter: 250, fixedNodeConstraint: fixed,
         });
       } else {
         cfg = Object.assign({}, base, {
@@ -3276,14 +3278,14 @@ function _metaGraphLayout(opts) {
         });
       }
       const layout = cy.layout(cfg);
-      // 모션 중 라벨 숨김 → 프레임당 텍스트 래스터(최대 비용) 생략 → 부드러운 프레임. 정지 시 복원.
-      if (animate) { try { cy.nodes().addClass("anim-hide-label"); } catch (_) {} }
+      // 비증분(초기 로드/검색)만 element 애니 → 그 동안 라벨 숨김(텍스트 래스터 최대 비용). 증분은 즉시 배치라 불필요.
+      const hideLabels = animate && !incremental;
+      if (hideLabels) { try { cy.nodes().addClass("anim-hide-label"); } catch (_) {} }
       layout.one("layoutstop", () => {
-        // 레이아웃 정착 즉시 라벨 복원(중단돼도 stuck 되지 않도록 무조건). 이후 카메라 팬은
-        // textureOnViewport 가 캐시 텍스처를 써서 라벨이 보여도 프레임 부담이 낮다.
-        try { cy.nodes().removeClass("anim-hide-label"); } catch (_) {}
+        if (hideLabels) { try { cy.nodes().removeClass("anim-hide-label"); } catch (_) {} }
         if (incremental && opts.focusEles && opts.focusEles.length) {
-          try { cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 400 }); } catch (_) {}
+          // 노드는 이미 즉시 배치됨 — 카메라만 신규 이웃 영역으로 부드럽게 이동(캐시 텍스처라 저부하).
+          try { cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" }); } catch (_) {}
         }
       });
       layout.run();
