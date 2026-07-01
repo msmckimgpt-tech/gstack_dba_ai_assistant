@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260701T220000-ai-claude-feature-0016-graph-perf2 [SUBAGENT: PASS] — 컬럼 결정론 배치(blob/거침) + 줌 적대 리뷰
+- Related Change: graph-perf2 (컬럼 정렬 fcose 제약 제거→layoutstop 결정론 배치, 세로 seed, wheelSensitivity 제거, PITCH/nodeSeparation).
+- 방식: 진단 워크플로(5에이전트: blob/거침/줌 3렌즈 진단 → 통합설계 → 회귀검증, verdict go-with-fixes) + §18.8 적대 subagent(admin.js 전량 + vendored cytoscape-fcose.js constraint/tile 로직 실측 대조, 7 우려경로).
+- 진단(워크플로): blob·거침 **동일 뿌리** — 컬럼 세로정렬을 fcose 제약에 위임 + 전체 테이블 제약을 numIter 1000 동기 tick 적용. fcose 완전 동기(cose-base while-loop, rAF yield 0)라 WebGL(렌더만 GPU화)이 거침 병목과 무관했음이 정합. → 컬럼 정렬을 결정론 코드로 이관해 blob·거침 동시 해소.
+- 적대 리뷰 결과: **BLOCKING 0 · MAJOR 0 · MINOR 1 · NIT 3**.
+  - **컬럼정렬 공백경로 = 없음**: 그래프 변형 전 진입점(loadRoots·search·expand full-spread/local-relax·cose 폴백)이 모두 동일 layoutstop→placeColumns 로 수렴(전수 확인). 영구 blob 경로 부재.
+  - **packComponents/tile = 오히려 안전해짐(긍정)**: vendored fcose L719-742 실측 — 제약 존재 시 `tile=false;packComponents=false` 강제. 이번엔 제약 '키 완전 제거' → constraintExist=false 확정 → full-spread/initial 의 packComponents:true 유효, 과거 '빈 제약이 tile 끔' 취약성 소멸.
+  - TDZ/스코프·wheelSensitivity·무게중심 부모위치 보존·batch/endBatch = 전부 안전.
+  - **MINOR-1(실측 해소)**: fcose→placeColumns pitch 재확장으로 tall 박스 인접 겹침 여지 → **de-risk 실측으로 PITCH18+nodeSep220 에서 박스겹침 0/7 확인**(하단 참조). 
+  - NIT 3: stale 주석 2건(→수정), 스키마-폴백 컬럼(테이블 부재) 정렬 제외 미문서화(기존 동작, 회귀 아님).
+- de-risk 실측(실 Windows 브라우저, win-browser): 17컬럼 AchievementReward + 6이웃 ERD 렌더 → **컬럼 x-spread 0.0px(완벽 세로스택·blob 소멸)** + **박스겹침 2→0**(PITCH18/nodeSep220). 스크린샷 render3.png.
+- Risks (수정 후): 잔여 BLOCKER/MAJOR 0. node --check PASS. 실 FPS·대규모(141테이블) 박스겹침·줌 체감은 **사용자 실 하드웨어 재확인이 최종 검증**(headless 실 GPU/체감 미측정).
+- Human Approval Needed: 없음(프론트 전용·비파괴·deploy_scope: included).
 ## REV-20260701T233000-ai-claude-feature-0016-node-analysis-anchor-liveverify [SKIPPED:docs-only-live-verification-record-no-code-change] — 라이브 검증 결과 기록(문서 전용)
 - Related Change: node-analysis-anchor 배포 후 라이브 실데이터 검증 결과를 ANCHOR §4 / TEST / REPORT / TASK 에 기록. 코드 무변경.
 - 방식: 코드 diff 0(문서 전용) → 신규 적대 패널 불요. 기능 정합은 선행 REV-20260701T173000(2라운드 패널, SHIP)에서 확증.

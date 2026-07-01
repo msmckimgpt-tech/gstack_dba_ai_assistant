@@ -333,11 +333,38 @@ source_of_truth: true
 - [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종, `cy.on('render')` 동기화 — 렌더러 무관이라 §17 WebGL 전환과 호환) + native 라벨 숨김. PB-0008 PASS(canvas-2D 프리뷰) → **§17 WebGL 병합 후 오버레이 정합 재확인 예정**.
 - [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD tap 정합·§17 graph-webgl 렌더러와 tap/스타일 병합 완료.)
 - [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 + WebGL 오버레이 PB-0008 최종 확인.
-- [ ] T15.5 적대 리뷰 + verify-completion + 배포(web) + PB-0008 다컬럼 라이브 겹침해소 확인.
+## 19. graph-perf2 — 컬럼 blob·프레임 거침·느린 줌 (WebGL 후속 육안 3건) (2026-07-01)
 
-## 16. AI 능동 분석 재귀 — 앵커-상대 관련도 게이팅 (2026-07-01, node-analysis-anchor)
+### 19.0 맥락 / 진단
+- 사용자 후속(WebGL 배포 후 육안): (1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌
+  **원형 뭉치(blob)**, (4) 휠 확대/축소 너무 느림. (2 라벨유지=OK.)
+- **진단 워크플로**(5에이전트: 3렌즈 진단 → 통합설계 → 적대검증, verify=go-with-fixes): blob·거침은 **동일 뿌리** —
+  컬럼 세로정렬을 fcose 제약(alignment/relativePlacement)에 위임 + 화면 전체 테이블 제약을 numIter 1000 동기 tick
+  마다 적용. (a) fcose 가 ring seed 다수 컬럼을 세로로 못 펼쳐 blob, (b) 제약 동기 계산(cose-base while-loop, rAF
+  yield 0)이 프레임 거침. WebGL 은 렌더만 GPU 화라 이 계산 병목과 무관(→ 거침 개선 없던 게 정합). 줌=독립(wheelSensitivity 0.3=기본 1/3).
+- 등급 **Major** (레이아웃 아키텍처 변경: 컬럼 정렬 주체 이전).
 
-### 16.0 맥락
+### 19.1 구현 (admin.js)
+- [x] T19.1 컬럼 정렬을 fcose 제약에서 **제거**(_metaGraphColumnConstraints·_ccCfg·..._ccCfg 병합 3곳 삭제, hasCompound=newAddsBox).
+- [x] T19.2 layoutstop 결정론 배치 `_metaGraphPlaceColumns`(batched, ordinal, 무게중심 상하대칭, x통일) — fcose success
+      + cose 폴백 **모든 경로** fit 전 호출. 정렬 헬퍼 단일화(`_metaGraphColCmp`/`_metaGraphOrderedColumns`).
+- [x] T19.3 신규 컬럼 seed ring→세로(부모별, 동일 비교자). `_META_COL_PITCH` 공유(seed·배치 drift 방지).
+- [x] T19.4 `wheelSensitivity:0.3` 제거 → 기본 1(줌 3배 회복). minZoom/maxZoom 클램프 유지(과확대/축소 없음).
+- [x] T19.5 박스 겹침 상쇄: `_META_COL_PITCH` 22→18(박스 세로↓) + nodeSeparation 150→220.
+
+### 19.2 검증
+- [x] T19.6 node --check PASS. 잔존 제약 참조 0. stale 주석 정리.
+- [x] T19.7 적대 리뷰 패널(§18.8 subagent) — **BLOCKING 0·MAJOR 0·MINOR 1(박스겹침 실측)·NIT 3**. 핵심: 컬럼정렬
+      공백경로 없음(전 경로 placeColumns 수렴), 제약 '키 제거'가 fcose tile/packComponents-off 과거 취약성 오히려 제거(더 안전). REVIEW REV-20260701T220000 [SUBAGENT: PASS].
+- [x] T19.8 **실 Windows 브라우저 de-risk**(win-browser): 17컬럼 + 6이웃 ERD 렌더 → **컬럼 x-spread 0.0px(완벽 세로스택,
+      blob 소멸)** + PITCH18·nodeSep220 으로 **박스겹침 2→0** 실측(스크린샷 render3.png).
+- [ ] T19.9 verify-completion + commit + PR + main 병합 + web 배포.
+- [ ] T19.10 **사용자 실브라우저 재확인**: (1) 프레임 거침 완화(더블클릭 확장) (3) 컬럼 세로스택(blob 없음) (4) 휠 줌 속도
+      + 박스 겹침/over-zoom 없음. (실 FPS·체감은 사용자 하드웨어가 최종.)
+
+## 20. AI 능동 분석 재귀 — 앵커-상대 관련도 게이팅 (2026-07-01, node-analysis-anchor)
+
+### 20.0 맥락
 - 사용자 요청: "AI 능동 분석" 재귀 기준이 불명확 — Achievement 분석 시 컬럼 따라 depth 깊어지면 대상 노드
   (UniqueID)를 기준으로 재탐색. 처음 분석 대상 기준으로 탐색되게, 하위 컬럼은 기본 분석, 깊은 확장은
   "dk 제품·Achievement" 연관 높은 대상만, 단순 컬럼명 일치·상위객체 무연관은 낮은 우선순위.
@@ -346,20 +373,20 @@ source_of_truth: true
 - 등급 **Major** (재귀 동작 변경 + 비파괴 additive 마이그레이션). 결정 근거·설계: DECISIONS ADR-003, MODIFY
   CHG-20260701T173000.
 
-### 16.1 구현 (node_analysis.py · config · alembic)
-- [x] T16.1 config 노브: RELEVANCE_MIN(0.18)/_DEEP(0.34)/CROSS_SCOPE_FACTOR(0.25)/EXPAND_SCHEMA(off), env override.
-- [x] T16.2 토크나이저(`_split_tokens` camel/snake, `_meaningful_tokens` 일반어 stoplist) + `_build_anchor`/`_load_anchor`.
-- [x] T16.3 `_relevance(node, meta, anchor)` — scope·서브트리·토큰·용어·REFERENCES 신뢰; Schema/broken=0; 교차제품 감쇠.
-- [x] T16.4 `_fetch_context` neighbor_meta(kind/weight/status/child) + `_score_candidates` 게이팅(루트 컬럼 무조건, 그 외 임계).
-- [x] T16.5 `_enqueue_neighbors` 앵커 관련도 게이트·우선순위 재큐; enqueue 루트 relevance=1.0; process_pending claim `depth ASC, relevance DESC`.
-- [x] T16.6 alembic 0029 — `node_analysis_jobs.relevance real DEFAULT 0` + `ix_node_analysis_jobs_claim_priority`(expand-only). get_run_status relevance 노출.
+### 20.1 구현 (node_analysis.py · config · alembic)
+- [x] T20.1 config 노브: RELEVANCE_MIN(0.18)/_DEEP(0.34)/CROSS_SCOPE_FACTOR(0.25)/EXPAND_SCHEMA(off), env override.
+- [x] T20.2 토크나이저(`_split_tokens` camel/snake, `_meaningful_tokens` 일반어 stoplist) + `_build_anchor`/`_load_anchor`.
+- [x] T20.3 `_relevance(node, meta, anchor)` — scope·서브트리·토큰·용어·REFERENCES 신뢰; Schema/broken=0; 교차제품 감쇠.
+- [x] T20.4 `_fetch_context` neighbor_meta(kind/weight/status/child) + `_score_candidates` 게이팅(루트 컬럼 무조건, 그 외 임계).
+- [x] T20.5 `_enqueue_neighbors` 앵커 관련도 게이트·우선순위 재큐; enqueue 루트 relevance=1.0; process_pending claim `depth ASC, relevance DESC`.
+- [x] T20.6 alembic 0029 — `node_analysis_jobs.relevance real DEFAULT 0` + `ix_node_analysis_jobs_claim_priority`(expand-only). get_run_status relevance 노출.
 
-### 16.2 검증
-- [x] T16.7 단위 `test_node_analysis_relevance.py` **28건 PASS**(pytest) — 토큰화·anchor·관련도·게이팅 + 2라운드
+### 20.2 검증
+- [x] T20.7 단위 `test_node_analysis_relevance.py` **28건 PASS**(pytest) — 토큰화·anchor·관련도·게이팅 + 2라운드
       적대 패널 반영(content-gate·한글 일반어·접두접미 부분연관·depth ramp·tiebreak·신뢰FK 트레이드오프).
-- [x] T16.8b 2라운드 적대 검증 패널(REV-20260701T173000 [AGENT-TEAM]) — R1 M1~M5 + R2 MAJOR·MINOR 전건 처리, BLOCKER 0.
-- [x] T16.8 verify-completion(--pre-commit) PASS + alembic 0029 라이브 적용(live=0029) + web-a/web-b 무중단
+- [x] T20.8b 2라운드 적대 검증 패널(REV-20260701T173000 [AGENT-TEAM]) — R1 M1~M5 + R2 MAJOR·MINOR 전건 처리, BLOCKER 0.
+- [x] T20.8 verify-completion(--pre-commit) PASS + alembic 0029 라이브 적용(live=0029) + web-a/web-b 무중단
       배포(7bca9b2) + insight-worker 재기동(7bca9b2). PR #518 main 병합.
-- [x] T16.9 라이브 실데이터 검증 PASS(LLM 0): `dk_data_release.Achievement` 하위 컬럼 4개 rel 1.0 통과 +
-      **부모 Schema(형제 테이블 123개) 탈락 = fan-out 지배 경로 차단 정량 확인**. ANCHOR §4 append 완료.
-      그래프 UI 마커 시각 최종은 PB-0008 후속(웹 자산 무변경, 하드 게이트 아님).
+- [x] T20.9 라이브 실데이터 검증 PASS(LLM 0): `dk_data_release.Achievement` 하위 컬럼 4개 rel 1.0 통과 +
+      **부모 Schema(형제 테이블 123개) 탈락 = fan-out 지배 경로 차단 정량 확인**. AchievementReward 17컬럼 통과.
+      ANCHOR §4 는 human 외부검증 전용이라 미기입(AI 프로브는 TEST/REPORT 기록). UI 마커 시각은 PB-0008 후속.
