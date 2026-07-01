@@ -406,3 +406,47 @@ def get_node_analysis(scope_key: str, node_key: str, conn=None) -> dict | None:
                 c.close()
             except Exception:
                 pass
+
+
+def get_scope_analysis_status(scope_key: str, node_keys=None, conn=None) -> dict | None:
+    """스코프 내 노드들의 최신 분석 상태를 **일괄** 집계 — 그래프 초기 렌더/검색/확장 시
+    마커(보라 '분석됨'·주황 '분석중')를 노드 클릭 없이 즉시 적용하기 위함.
+
+    반환 {done_keys:[...], running_keys:[...]}:
+      - done_keys    = 완료(done) 잡이 하나라도 있는 node_key
+      - running_keys = done 은 없고 pending/running 잡이 있는 node_key
+    node_keys 지정 시 그 부분집합만 조회(대형 그래프 payload 축소). PG 미가용/예외 → None(코어 비차단)."""
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return None
+    try:
+        cur = c.cursor()
+        params = [scope_key or "common"]
+        where = "scope_key=%s"
+        keys = [k for k in (node_keys or []) if k]
+        if keys:
+            where += " AND node_key = ANY(%s)"
+            params.append(keys)
+        cur.execute(
+            "SELECT node_key, "
+            "bool_or(status='done') AS has_done, "
+            "bool_or(status IN ('pending','running')) AS has_active "
+            "FROM node_analysis_jobs WHERE " + where + " GROUP BY node_key",
+            tuple(params))
+        done_keys, running_keys = [], []
+        for k, has_done, has_active in cur.fetchall():
+            if has_done:
+                done_keys.append(k)
+            elif has_active:
+                running_keys.append(k)
+        cur.close()
+        return {"done_keys": done_keys, "running_keys": running_keys}
+    except Exception as exc:
+        _log.debug("get_scope_analysis_status_failed err=%r", exc)
+        return None
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass

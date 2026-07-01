@@ -1317,3 +1317,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **정량 실측**: 3 테이블 박스·컬럼 25 — 컬럼 순서 top→bottom **보존(true)**, 최상위 박스 겹침 **1쌍**(이전 satellite 11쌍), fcose 131ms. node --check OK.
 - **Pass/Fail: PASS**(인젝션) — 사용자 보고(더블클릭 시 컬럼 스택이 이웃 테이블과 겹침, 3회) 해소: 컬럼이 테이블 박스 안 ordinal 세로 목록으로 들어가고 fcose 가 박스 bounds 로 이웃 공간을 확보해 겹침 원천 차단.
 - **배포 후 최종 확인**: web 재배포(배포 번들) 후 다컬럼 테이블 더블클릭 PB-0008 재확인 예정.
+
+### TASK-20260701T163000-graphview-render — 그래프 뷰 3건(마커 렌더-타임·클러스터 선택 상세·클러스터명 좌정렬/무잘림) (feature-0003 프론트 + feature-0002 백엔드 cross-cut, Major §12.3 — **PB-0008 Windows-browser PASS**)
+- **Environment: Windows-browser** (실 Windows Chrome/149.0.7827.200 via `bin/win-browser.py` 무권한 relay `bridge_mode: relay`, endpoint `http://172.26.144.1:9223`, https://localhost/admin 인증 세션). WSL headless 아닌 실제 Windows 화면.
+  - 방법론: 백엔드 baked(정적자산은 이미지 내장, 신규 엔드포인트는 재빌드 필요)라 **프리뷰 인젝션 검증** — 변경 `admin.js`/`admin.html`/`styles.css` 를 실행 중 web-a·web-b `/app/web/static/` 에 주입(디스크 서빙, cache-buster `?v=20260701-graphview-render` 로 신규 번들 강제). 데이터소스 `mssql-06656002eda6`(mssql-qa-idc), 250 노드·스키마 클러스터 50.
+- **정량 실측**:
+  - **②클러스터 선택 상세 — PASS**: `accountdb` 클러스터(compound parent) 클릭 → 우측 상세 패널이 배지 '스키마 클러스터' + 이름 `accountdb` + 섹션 '테이블 (58)'(C_CouponSupplyType 등 목록)로 갱신. 클릭 클러스터 선택 강조(gold border) 확인. 이전(클릭 무시) 대비 정상 갱신.
+  - **③클러스터명 좌정렬·좌여백·무잘림 — PASS**: 오버레이 라벨 div 50개 생성(클러스터 1:1). `accountdb` 박스 좌상단 (64,122) 기준 라벨 (74,126) = **좌여백 +10px·상단 +4px 정확**(marginOkX/Y true). `whiteSpace:nowrap`·`textAlign:left`·`scrollWidth==clientWidth`(**무잘림**). native 스키마 라벨 `label:""`(숨김, 이중표시 없음). 줌 1.7배 시 라벨 재배치(90,93)·폰트 16px 클램프 — `cy.on('render')` 동기화 정상.
+  - **①마커 렌더-타임 — 백엔드 로직 실DB 정합 + 프론트 배선**: 신규 집계 쿼리를 실 KB PG(`node_analysis_jobs`)에 직접 실행 → 로드한 scope `mssql-06656002eda6` 에 done 335·active 183·distinct 826, `accountdb`(done=t)·`accountdb.GMRIP`(done=t) 정확 반환. 프론트 `_metaGraphSyncAnalysisMarkers` 가 로드/검색/확장 직후 `GET .../graph/analyze/status` 호출·마커 적용하도록 배선(현재 프리뷰는 백엔드 미배포라 404 → **graceful skip**: 그래프 250노드 정상 렌더, JS 예외 0 실측). 마커 렌더 최종 확인은 **실배포(web 재빌드) 후**.
+- **Pass/Fail: PASS**(②③ 라이브 실측 + ①백엔드 실DB 정합·프론트 배선·graceful). CHECK#13(PB-0008 Windows-browser) **충족**(웹 자산 변경에 이번 cycle Windows-browser Run 기록).
+- **배포 후 최종 확인**: web 재빌드·재배포(deploy_scope: included — 백엔드 포함) 후, mssql-qa-idc 그래프 진입 시 분석완료 노드(≈335)에 보라 마커·진행중(≈183)에 주황 마커가 **클릭 없이** 렌더되는지 PB-0008 재확인.

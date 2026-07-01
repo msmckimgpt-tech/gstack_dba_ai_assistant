@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260701T163000-graphview-render — 관리콘솔 메타데이터 그래프 뷰 출력 이슈 3건(마커 렌더-타임 갱신·클러스터 선택 상세·클러스터명 잘림) (Major §12.3 — feature-0003 프론트 + feature-0002 백엔드 cross-cut)
+- 트리거: 사용자(`/_template:entry` arg-given) — "관리 콘솔 > 메타데이터 > 그래프 뷰 출력 이슈: ①각 노드 표식(AI 분석 중/분석됨)이 직접 클릭했을 때만 갱신 → 화면 출력 당시에도 렌더. ②DB(스키마 클러스터) 선택 시에도 상세 갱신. ③스키마 클러스터 명칭 잘림 → 좌정렬·좌여백(둥근 사각형 존중)·무잘림 확장."
+- 근본원인(코드 근거):
+  - ①: `_metaGraph.analyzed`/`running` 세트가 **세션 로컬**(현재 세션 폴 run 에서만 채워짐). `_metaGraphLoadRoots`/검색/확장은 DB 영속 분석상태를 조회하지 않아, 새로고침·재진입 시 노드를 개별 클릭(`_metaGraphLoadNodeAnalysis`)하기 전까지 마커 미표시. scope 단위 일괄 상태 조회 API 부재.
+  - ②: tap 핸들러가 `if (t.isParent()) return` 으로 compound 컨테이너(스키마 클러스터) 클릭을 완전히 무시 → 상세 패널 미갱신.
+  - ③: `node:parent` 스타일이 `node` 선택자의 `text-max-width:120px` + `text-wrap:ellipsis` 를 상속 + 중앙정렬 → 클러스터명이 120px 에서 ellipsis 로 잘림. cytoscape native 라벨은 가변폭에서 좌정렬·무잘림·좌여백을 동시에 보장 못 함.
+- 설계:
+  1. **백엔드(feature-0002 `node_analysis.py`)**: `get_scope_analysis_status(scope_key, node_keys=None)` — `node_analysis_jobs` 를 node_key 로 group_by 하여 `{done_keys, running_keys}`(bool_or 집계) 반환. **엔드포인트(feature-0003 `admin_metadata.py`)**: `GET /api/admin/metadata/graph/analyze/status?scope=` (권한 kb.ingest.manual, PG 미가용 시 빈 집합 graceful).
+  2. **프론트 ①(admin.js)**: `_metaGraphSyncAnalysisMarkers(scope)` — 로드/검색/확장 직후 일괄 상태 조회 → `_metaGraphMarkAnalyzed`(보라)·aiRunning(주황) **additive** 적용(활성 폴 running set 미clobber). 404/실패 시 graceful skip.
+  3. **프론트 ②(admin.js)**: tap 핸들러에서 스키마 클러스터(`label==='Schema'||isCat`) 클릭 시 `_metaGraphShowClusterDetail`(스키마명·포함 테이블 목록·개수 렌더, depth=1 HAS_TABLE 수집). Table ERD-카드 parent 는 일반 노드 상세/확장 경로로 흘려보냄(부수 개선).
+  4. **프론트 ③(admin.js+css)**: 스키마 클러스터명을 캔버스 위 HTML 오버레이(`_metaGraphEnsureLabelLayer`/`_metaGraphSyncClusterLabels`, render 이벤트 rAF 동기화)로 렌더 — 박스 좌상단 + 좌여백 10px·상단 4px, `nowrap`·max-width 없음(무잘림·확장), zoom 따라 폰트 10~16px 클램프. native 스키마 라벨은 `node:parent[isCat=1]` 스타일 `label:""` 로 숨김. 클러스터는 스코프당 소수(≤수십)라 DOM 동기화 비용 무시 가능.
+- Completion Checklist:
+  - [x] 백엔드: `node_analysis.get_scope_analysis_status` + `GET .../graph/analyze/status` 엔드포인트. `py_compile` PASS.
+  - [x] 프론트: `_metaGraphSyncAnalysisMarkers`(로드/검색/확장 3경로 wiring)·`_metaGraphShowClusterDetail`/`_metaGraphRenderClusterDetail`·`_metaGraphEnsureLabelLayer`/`_metaGraphSyncClusterLabels` + tap 핸들러 클러스터 분기 + `node:parent[isCat=1]` label 숨김. `node --check admin.js` PASS.
+  - [x] admin.html cache-buster 2건 bump → `admin.js`·`styles.css?v=20260701-graphview-render`(js==css lockstep).
+  - [x] PB-0008 **Windows-browser 라이브 실측**(프리뷰 인젝션 web-a/web-b, https://localhost/admin, mssql-qa-idc/250노드·클러스터 50): ②클러스터 클릭→상세 '테이블(58)' 렌더 PASS · ③클러스터명 좌상단(box+10/+4px)·좌정렬·무잘림(scrollWidth==clientWidth)·zoom 재배치/폰트 스케일 PASS. ①백엔드 집계 쿼리 실 KB PG 정합(scope done 335·active 183·`accountdb`/`GMRIP` done=t) + 프론트 배선·404 graceful 확인 — **마커 렌더 최종 확인은 실배포(백엔드 baked) 후**.
+  - [x] §18.8 적대 코드리뷰 패널(correctness) — REV-20260701T163000-graphview-render.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재빌드·재배포(deploy_scope: included — 백엔드 포함이라 web 이미지 재빌드) → 배포 후 PB-0008 ①마커 렌더 최종 확인.
+- Next Action: verify-completion → cycle-final → 배포 → 배포 후 ①마커 실측.
+
 ## TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill (Minor §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경, 비파괴)
 - 트리거: 사용자 — "관리콘솔 > 메타데이터 > 테이블 설명, 컬럼 설명 에서 스키마 골격을 가져왔을 때, 기존에 입력된 정보가 확인되지 않아 수정 필요."
 - 근본원인(코드 근거): 백엔드 `/api/admin/metadata/bootstrap`(app.py `admin_bootstrap`)은 **설계상 의도적으로 골격(테이블/컬럼 이름·타입)만** 반환하고 설명은 미영속(주석: "UI 가 설명 빈칸을 prefill"). 그러나 프론트 `_metaBootstrapRenderResult`(admin.js)가 입력란 생성 시 `adminState.metadata.items`(loadMetadata 가 현재 scope·서브탭 기준 적재한 저장 설명)와 매칭해 `inp.value` 를 채우는 **prefill 로직이 누락** → 골격을 가져오면 항상 빈칸으로 표시됨. (최근 metadata-bs-inline-desc/list-detail/paging 리팩터와 무관 — 애초 prefill 미구현.)
