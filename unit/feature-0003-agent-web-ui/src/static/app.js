@@ -5819,25 +5819,33 @@ async function selectConversation(conversationId) {
     return;
   }
   // conv-switch-fade: 클릭 즉시 직전 화면 fade-out 시작(목표 로딩 전). 콘텐츠 준비 후
-  // 아래에서 _commitConversationCrossfade 로 fade-in. 실패해도 전환 흐름은 막지 않는다.
+  // 아래 finally 의 _commitConversationCrossfade 로 fade-in. 실패해도 전환 흐름은 막지 않는다.
   try { _beginConversationCrossfade(); } catch (_) {}
-  // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.
-  if (state.pendingNewConversation) {
-    state.pendingNewConversation = false;
-  }
-  // 현재 in-flight pending bubble 보존 — 전환 후 돌아올 때 복원
-  const _prevConvId = state.activeConversationId;
-  if (_prevConvId && state.pendingBubble) {
-    if (!state._savedPendingBubbles) state._savedPendingBubbles = {};
-    state._savedPendingBubbles[_prevConvId] = state.pendingBubble;
-  }
-  // 이전 대화의 진행 상태(pending 말풍선 + progress polling + elapsed timer)를 현재
-  // 컨텍스트에서 분리한다. 이 detach 가 없으면 직전 대화의 "작업 중" 말풍선이 전환된
-  // 대화 하단에 그대로 누출된다(loadHistory→renderMessages 가 잔존 state.pendingBubble 을
-  // 렌더). beginPendingConversation 이 새 대화 진입 시 쓰는 것과 동일한 패턴이며,
-  // 위에서 스냅샷을 _savedPendingBubbles 에 보존했으므로 복귀 시 복원 가능하다.
-  stopProgressPolling({ reset: true });
+  // conv-switch-fade opacity-guard (TASK-20260701-convswitch-opacity-guard):
+  // _beginConversationCrossfade 는 messageLog 를 opacity:0 으로 숨긴다. 그 이후 어떤 경로로
+  // 함수를 빠져나가더라도(정상 완료 / apiFetch·loadHistory 예외 / 그 앞 risk window —
+  // stopProgressPolling·pending 스냅샷 — 에서의 예외) fade-in(_commitConversationCrossfade)
+  // 이 반드시 1회 실행되도록 try/finally 로 단일 보장한다. 이 보장이 없으면 begin 과 commit
+  // 사이의 예외가 messageLog 를 opacity 0 으로 남겨 "좌측 대화를 선택해도 대화창에 내용이
+  // 안 뜨는(=선택이 안 먹는 것처럼 보이는)" 빈 화면을 만든다. 기존에는 begin 뒤 risk window
+  // 가 try 밖에 있고 commit 이 성공/catch 두 곳에 중복 배치돼 이 구간이 무방비였다.
   try {
+    // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.
+    if (state.pendingNewConversation) {
+      state.pendingNewConversation = false;
+    }
+    // 현재 in-flight pending bubble 보존 — 전환 후 돌아올 때 복원
+    const _prevConvId = state.activeConversationId;
+    if (_prevConvId && state.pendingBubble) {
+      if (!state._savedPendingBubbles) state._savedPendingBubbles = {};
+      state._savedPendingBubbles[_prevConvId] = state.pendingBubble;
+    }
+    // 이전 대화의 진행 상태(pending 말풍선 + progress polling + elapsed timer)를 현재
+    // 컨텍스트에서 분리한다. 이 detach 가 없으면 직전 대화의 "작업 중" 말풍선이 전환된
+    // 대화 하단에 그대로 누출된다(loadHistory→renderMessages 가 잔존 state.pendingBubble 을
+    // 렌더). beginPendingConversation 이 새 대화 진입 시 쓰는 것과 동일한 패턴이며,
+    // 위에서 스냅샷을 _savedPendingBubbles 에 보존했으므로 복귀 시 복원 가능하다.
+    stopProgressPolling({ reset: true });
     await apiFetch("/api/use_conversation", {
       method: "POST",
       body: JSON.stringify({ conversation_id: conversationId }),
@@ -5852,15 +5860,11 @@ async function selectConversation(conversationId) {
       delete state._savedPendingBubbles[conversationId];
       renderMessages();
     }
-    // conv-switch-fade: 목표 대화 콘텐츠(history + 복원된 pending)가 준비됨 → 새 화면
-    // fade-in. 목표가 fade-out 보다 먼저 준비됐으면 남은 fade-out 을 가속해 크로스페이드.
+  } finally {
+    // 성공: 목표 대화 콘텐츠 준비됨 → fade-in(먼저 준비됐으면 남은 fade-out 가속).
+    // 예외: 목표를 못 불러와도 messageLog 가시성을 즉시 복원(고스트 제거 + opacity 1).
+    // finally 는 예외를 삼키지 않으므로 에러는 기존 의미대로 호출부로 그대로 전파된다.
     try { _commitConversationCrossfade(); } catch (_) {}
-  } catch (err) {
-    // conv-switch-fade 안전망: 네트워크 실패 등으로 목표 대화를 못 불러오면 messageLog 가
-    // opacity 0 으로 남아 빈 화면이 된다 — 가시성을 즉시 복원(고스트 제거 + opacity 1)하고
-    // 에러는 기존 의미대로 그대로 전파한다.
-    try { _commitConversationCrossfade(); } catch (_) {}
-    throw err;
   }
   // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
   try {
