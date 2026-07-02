@@ -3766,7 +3766,21 @@ def _run_agent_core(
                     and not _is_fixable_sql_error(tool_result)):
                 try:
                     from modules.relationships import learn_relationships_from_sql
-                    learn_relationships_from_sql(last_sql, source_run_id=run_id)
+                    from modules.tools import get_last_execute_sql_context
+                    # rel-selfheal: 미qualify 테이블의 스키마-slot 기본값 = 활성 DB(MSSQL=DB명 /
+                    # MySQL=schema). ''(미해석) 저장은 AGE 투영에서 실 Table 노드(`db.table` 키)와
+                    # 연결되지 않는 고아 Column 노드를 만들어 그래프 뷰 점선·graph_navigate 이웃에서
+                    # 관계가 비가시가 된다. MSSQL 은 slot lower() 정규화(적대 패널 QA-F4).
+                    #
+                    # 재검증 R-2: 컨텍스트는 **실행 시점 스냅샷**(tools.get_last_execute_sql_context)
+                    # 에서 읽는다 — 1:N 라우터가 tool 종료 시 primary 로 복원한 뒤라, 여기서
+                    # ContextVar 를 직접 읽으면 라우팅된 SQL 에 primary 의 engine/DB/scope 가
+                    # 오각인된다. 스냅샷 부재 시 default_schema 미채움(레거시 '' — 오각인보다 안전).
+                    _exec_ctx = get_last_execute_sql_context() or {}
+                    learn_relationships_from_sql(
+                        last_sql, _exec_ctx.get("scope_key"), source_run_id=run_id,
+                        default_schema=_exec_ctx.get("default_schema"),
+                        normalize_schema_lower=(_exec_ctx.get("engine") == "mssql"))
                 except Exception:
                     pass
 

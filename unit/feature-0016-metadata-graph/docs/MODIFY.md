@@ -8,6 +8,96 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260702T052630-ai-claude-feature-0016-rel-selfheal
+- Date: 2026-07-02
+- Related Requirement: CHG-20260702T024556 의 §18.8 적대 리뷰 패널(3렌즈 backend/security/qa, resume
+  세션 재실행 — 원 세션은 dispatch 직후 session limit 중단) 발견 반영. backend verdict **FAIL**(MAJOR 6,
+  2건 실행 재현) — 필수 발견 전량 수정 + 커버리지 보강.
+- Summary:
+  (1) **B-F1**: instance-scan interval 커서를 DB(catalog)별 분리(`insight._instance_scan_cursor_key`) —
+  ds-단위 단일 커서는 MSSQL multi-DB 순회에서 같은 cycle 의 첫 DB 스탬프가 나머지 DB 를 영원히 가로채
+  (항상 DB#1 만 interval 스캔), cadence 목표(기존 스키마 상시 유지보수)가 DB#2+ 에서 구조적 미달성.
+  MySQL 은 기존 키 불변(하위호환).
+  (2) **B-F2**: `apply_relationship_signal(a_schema=, b_schema=)` — 강화/파단 write-back 을 스키마-slot
+  까지 한정('' 레거시=wildcard, 미지정=기존 동작). 프로브·대화학습 호출부가 slot 전달 — 교차-DB 동명
+  테이블(23-DB dbo.T_ErrorLog 류) 오염 전파 차단.
+  (3) **B-F3**: `_GENERIC_KEY_COLS` 에 `uniqueid`/`unique_id` — heuristic-2(shared_key)의 PK≡PK
+  pairwise 쓰레기(실행 재현: Achievement 3테이블에서 3건) 차단. name_fk 타깃 역할은 유지.
+  (4) **B-F4**: 프로브 실행 예외 처리 — 객체-부재류(`_PROBE_MISSING_OBJECT_RE`: invalid object/
+  doesn't exist/42S02 등)는 **negative 신호**, 그 외 transient 는 failed 집계, 모든 실패에
+  `last_validated_at` 전진(`_touch_validated`) — 실행 불가 edge 의 영구 미파단 + NULLS FIRST 큐
+  head 고착(프로브 기아) 동시 차단.
+  (5) **Sec-F2**: probe_and_reinforce 에 cap≤500·sample≤200·timeout≤60s 코드 클램프.
+  (6) **QA-F4**: `learn_relationships_from_sql(normalize_schema_lower=)` — MSSQL 경로(agent_core 가
+  engine 판단) slot lower() 정규화, phantom 중복 노드 차단. MySQL 은 타이핑 케이스 보존.
+  (7) **QA-F1**: `test_anchor_relationship_live.py` 를 sibling 관례(main()+__name__ 가드)로 —
+  pytest 수집 시 KeyError/라이브 변조 부작용 제거.
+  (8) **B-F7/B-F11**: insight 신규 except 2곳 경고 로깅(조용한 정지 재발 방지) + 프로브
+  neutral/failed report 집계.
+  (9) **QA-F2 커버리지**: test_relationships.py +7(B-F2/B-F3/B-F4/Sec-F2/QA-F4/default_schema 채움) +
+  신규 `test_insight_rel_cadence.py` 3건(B-F1 커서 키·D1a 게이트 의미론) = **총 56건 PASS**.
+  (10) **B-F10**: star-export AST 가드 한계(지역 재바인딩 위음성) docstring 명시 — 명시 이름 고정
+  테스트가 최종 방어선.
+  (11) **재검증 R-1**(수정분 적대 재검증이 적발한 신규 결함): (4) 의 객체-부재→negative 가 ''-slot
+  wildcard fetch 와 결합해 MSSQL catalog 순회에서 레거시 실관계를 오답 catalog 프로브 2회만에 영구
+  broken 오파단 → negative 를 slot-확정 후보로 한정(`_slots_resolved` 가드), ''+db_scope 는
+  failed/touch-only. 테스트 2건.
+  (12) **재검증 R-2**: 1:N 라우터의 primary 복원 후 learn 이 ContextVar 를 읽어 라우팅된 SQL 에
+  primary engine/DB/scope 오각인 → tools.py 실행-시점 스냅샷(`_snapshot_sql_exec_ctx`/
+  `get_last_execute_sql_context`) + agent_core 학습이 스냅샷 사용(scope_key 오귀속 부수 해소,
+  부재 시 default_schema 미채움 안전 폴백). 테스트 2건(`test_tools_exec_ctx.py` 신규).
+  최종 재검증: **61건 PASS** + ruff clean.
+- 수용 한계(수정 안 함, ADR-005 Consequences ①~④ 기록): dbo-only slot 규약(비-dbo/교차-스키마 후보
+  영구 미프로브 — 후속 initiative), introspect 테이블명 케이스 플래핑(SSOT 레벨, TASK-0305 계열),
+  실효 cadence ≈30h(window 회전 곱), LEARNING↔PROBE 결합 권장.
+- Files: `unit/feature-0002-agent-core/src/modules/{insight,relationships}.py`,
+  `unit/feature-0002-agent-core/src/agent_core.py`,
+  `unit/feature-0002-agent-core/src/modules/tools.py`,
+  `unit/feature-0002-agent-core/tests/{test_relationships,test_config_star_export,test_insight_rel_cadence,test_tools_exec_ctx}.py`,
+  `unit/feature-0016-metadata-graph/tests/test_anchor_relationship_live.py`, ADR-005(DECISIONS.md).
+- Impact: 백엔드 전용·비파괴(마이그레이션 0). B-F1 로 첫 배포 사이클에 MSSQL 전 DB interval 스캔
+  백필(기존에도 cadence 백필 예정이었음 — 범위 동일, 커서만 정확해짐).
+- Rollback Notes: CHG-20260702T024556 와 동일(코드 롤백 = 이전 커밋 재빌드).
+
+## CHG-20260702T024556-ai-claude-feature-0016-rel-selfheal
+- Date: 2026-07-02
+- Related Requirement: 사용자 검증 요청 — 그래프 뷰 '신뢰/추정 관계'가 실제 구축·표시되고 이후 대화에서
+  assistant 추론에 활용되는지 검증, 아니면 의도대로 작동하도록 개선. 실측: inferred/trusted **0건**,
+  대화학습 2행(Achievement→Quest/Reward)은 스키마 미해석으로 **AGE 고아 엣지**(그래프 점선 비가시).
+- 근본원인: ① `AGENT_RELATIONSHIP_*` 가 config `__all__` 미등재 → star-import 소비자 insight.py 에서
+  NameError → per-schema `except: continue` 가 삼켜 **insight 스캔 스키마 처리 전체가 06-29 부터 조용히
+  정지**(table_insight max(updated_at)=06-29 13:58 실측; FK introspect·추론·프로브 0회의 1차 원인).
+  ② 훅 발화조건(구조변경/artifact 부재)이 기존 스캔완료 스키마에서 영원히 거짓(설계 갭). ③ `_pk_like` 가
+  게임 DB 관용 PK `UniqueID` 미인식 → name_fk 추론 불가. ④ 대화 JOIN 학습이 qualifier 를 버리고
+  default 도 없어 스키마-slot='' 저장 → 그래프 Table 키(`db.table`)와 불일치(고아 Column 노드).
+- Summary: (1) config `__all__` 에 관계 플래그 7종+`AGENT_SQL_FIX_MODEL`(동일 클래스, llm_fix_sql 무력화)
+  등재 + 신규 `AGENT_RELATIONSHIP_REINFER_SEC`(6h, ≤0 off). (2) insight 훅에 주기 cadence
+  (`relationship_infer_at` kv + `_is_refresh_due`) OR-게이트 — 첫 사이클이 전 스키마 백필.
+  (3) 스키마-slot 규약 통일: MSSQL 저장 라벨=순회 DB명(`store_schema` 질의/저장 분리), 프로브
+  `db_scope` 후보 필터+연결 DB qualifier 제거(교차-DB 오검증 차단). (4) 파서 qualifier 캡처
+  (`_alias_map` → (leaf, qual)) + `learn_relationships_from_sql(default_schema=활성 DB)`.
+  (5) `_pk_like` 에 `uniqueid`/`unique_id`. (6) 프로브 neutral 도 `last_validated_at` 전진(rotation 공정).
+  (7) 회귀 가드 신설 `tests/test_config_star_export.py` — star-import bare 이름 런타임 해석 AST 검사.
+  (8) `sync_relationship` REFERENCES 끝점 앵커링(`_anchor_relationship_column`) — 미큐레이션 컬럼도
+  Table/Schema 체인(HAS_TABLE/HAS_COLUMN) MERGE 로 점선이 실 테이블에 붙음(SET 생략으로 비파괴).
+- Files:
+  - `shared/config.py` (__all__ 등재 + AGENT_RELATIONSHIP_REINFER_SEC)
+  - `unit/feature-0002-agent-core/src/modules/insight.py` (cadence 게이트·store_schema·db_scope·스탬프)
+  - `unit/feature-0002-agent-core/src/modules/relationships.py` (qualifier 캡처·default_schema·store_schema·
+    db_scope 필터·uniqueid PK·neutral 터치)
+  - `unit/feature-0002-agent-core/src/modules/metadata_graph.py` (REFERENCES 끝점 Table/Schema 앵커링)
+  - `unit/feature-0002-agent-core/src/agent_core.py` (대화 학습 default_schema 전달)
+  - `unit/feature-0002-agent-core/tests/test_relationships.py` (+8 케이스, alias_map tuple 갱신)
+  - `unit/feature-0002-agent-core/tests/test_config_star_export.py` (신규 회귀 가드)
+- Impact: 백엔드 전용·비파괴(스키마 마이그레이션 0, 웹 자산 무변경). insight 파이프라인의 **인사이트
+  갱신 재개**(부수 복구) + 관계 추론·프로브 최초 실가동. 운영 DB 프로브(read-only EXISTS, cap 40/스키마·
+  timeout 5s)가 cadence 마다 실제 발생 — 기존 설계 승인 범위(ADR-002), env 로 조절 가능. 배포 =
+  insight-worker·ask-worker 재빌드 + web 롤링. 배포 후 데이터 정정(기존 2행 스키마 정규화 + AGE 고아
+  Column 3노드 회수 + 재sync) 필요 — REPORT 참조.
+- Rollback Notes: config `__all__` 등재는 유지해도 무해(이름 노출뿐). cadence 는
+  `AGENT_RELATIONSHIP_REINFER_SEC=0` 으로 off(기존 트리거만). 코드 롤백 시 이전 커밋으로 재빌드.
+  데이터 정정은 관계형 SSOT UPDATE 2행 — 역방향 UPDATE 로 복원 가능, AGE 는 재생성 가능 투영.
+
 ## CHG-20260701T220000-ai-claude-feature-0016-graph-perf2
 - Date: 2026-07-01
 - Related Requirement: WebGL 배포 후 사용자 육안 후속 3건 — (1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌 **원형 뭉치(blob)**, (4) 휠 확대/축소 너무 느림. (2 라벨유지는 OK.)

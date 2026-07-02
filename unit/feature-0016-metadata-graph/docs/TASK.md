@@ -413,3 +413,57 @@ source_of_truth: true
 ### 21.4 UX 개선 (graph-g6b, 사용자 요청: 기본 디자인·노드확장 가시성·UX)
 - [x] T21.10 라이브 실데이터에서 관측된 배치 문제(세로 과길이·fit 극소) 해소 — **클러스터 내 다열 masonry + 가변폭 shelf-packing**(`_metaG6Build`). WSL-headless-harness(14클러스터 확장 포함) PASS. cache-buster graph-g6b. (DECISIONS ADR-004 §Consequences 연장, MODIFY CHG-20260702-graph-g6b)
 - [ ] T21.11 graph-g6b 배포 + 라이브 PB-0008 재확인.
+
+## 22. 신뢰/추정 관계 자기교정 파이프라인 미가동 근본수정 (rel-selfheal, 2026-07-02, entry persona dispatch)
+
+### 22.0 맥락 (사용자 검증 요청 — "Achievement 신뢰/추정 관계가 실제 구축·표시·추론활용되는가")
+- 검증 실측: `table_relationships` 전체 **2행**(conversation candidate, Achievement→Quest/Reward w=0.49)
+  뿐 — **inferred 0건·trusted 0건·프로브 0회**. 그 2행도 스키마 미해석('')이라 AGE 투영에서 고아
+  Column 노드(`<ds>:Achievement.UniqueID`) — 실 Table 노드(`dk_data_release.Achievement`)와 미연결 →
+  **그래프 뷰에 추정 점선 비가시 + graph_navigate 이웃 미노출**. UI(G6 실선/점선/배지)·digest 주입은 정상.
+- 근본원인 4개:
+  - **D1b (치명)**: `AGENT_RELATIONSHIP_*` 7종이 `shared/config.py` `__all__` 미등재 → star-import 소비자
+    insight.py 에서 **NameError** → per-schema `except: continue` 가 삼켜 **insight 스캔의 스키마 처리
+    전체(인사이트 갱신+FK introspect+추론+프로브)가 06-29 13:58 부터 조용히 정지** (table_insight
+    max(updated_at) 실측). `AGENT_SQL_FIX_MODEL`(llm_fix_sql)도 동일 클래스.
+  - **D1a (설계 갭)**: 훅 발화조건이 `schema_structure_changed or schema_artifact_missing` 뿐 — 이미
+    스캔 완료된 기존 91개 스키마에서 영원히 미발화 (REPORT 06-30 "주기 re-probe 후속" 의 본체).
+  - **D2**: `_pk_like` 후보에 `uniqueid` 부재 — 이 게임 DB 관용 PK(`UniqueID`) 미인식 →
+    `<X>ID → X.UniqueID` name_fk 추론 전면 불가 (Achievement 시나리오 그 자체).
+  - **D3**: 대화 JOIN 학습이 스키마 미해석 leaf 저장(파서가 qualifier 버림 + default 부재) → 고아 엣지.
+- 등급 **Major** (여러 파일·라이브 파이프라인 복구·운영 DB 프로브 재가동). 정본: DECISIONS ADR-005,
+  MODIFY CHG-20260702T024556.
+
+### 22.1 구현
+- [x] T22.1 config: `AGENT_RELATIONSHIP_*` 7종 + `AGENT_SQL_FIX_MODEL` `__all__` 등재(D1b) +
+      신규 `AGENT_RELATIONSHIP_REINFER_SEC`(기본 21600=6h, ≤0 off).
+- [x] T22.2 insight.py: 관계 유지보수 주기 cadence — 스키마별 `relationship_infer_at` kv +
+      `_is_refresh_due` 게이트(구조변경/부재 조건에 OR), 수행 후 스탬프(D1a). 첫 사이클 = 전 스키마 백필.
+- [x] T22.3 스키마-slot 규약 통일(MSSQL=DB명): introspect/추론 저장 라벨 = 순회 중 DB명
+      (`store_schema` — 질의 스키마와 분리), 프로브 `db_scope` 필터 + 연결 DB qualifier 제거.
+- [x] T22.4 relationships.py: `_pk_like` 에 `uniqueid`/`unique_id`(D2) · `_alias_map`/parser qualifier
+      캡처(3-part=db, 2-part 비-dbo, dbo→'') + `learn_relationships_from_sql(default_schema=)`(D3) ·
+      프로브 neutral 도 `last_validated_at` 전진(동일 후보 반복 프로브 방지).
+- [x] T22.5 agent_core.py: 대화 학습 호출에 `default_schema=get_active_database() or get_active_default_db()`.
+
+### 22.2 검증
+- [x] T22.6 단위: test_relationships.py 43건 PASS(신규 5 — uniqueid PK name_fk(Achievement 실측 스키마),
+      parser qualifier 3종, alias_map tuple) + **신규 test_config_star_export.py 3건**(star-import bare
+      이름 런타임 해석 AST 가드 — 이 결함 클래스 봉인) + insight 인접 PASS + py_compile.
+- [x] T22.7 적대 리뷰(§18.8, 3렌즈 backend/security/qa — resume 세션에서 재실행) →
+      **backend FAIL(MAJOR 6)·security/qa PASS-WITH-FIXES** → 필수 발견 전량 수정 + 재검증:
+      - B-F1 instance-scan 커서 DB별 분리(`_instance_scan_cursor_key` — MSSQL multi-DB 첫-DB 독점 해소)
+      - B-F2 강화/파단 write-back 스키마-slot 한정(교차-DB 동명 오염 차단, '' wildcard)
+      - B-F3 `_GENERIC_KEY_COLS`+=uniqueid(PK≡PK shared_key 쓰레기 차단 — 실행 재현됨)
+      - B-F4 프로브 실행오류: 객체-부재=negative + 전 실패 last_validated_at 전진(영구 미파단·기아 차단)
+      - Sec-F2 프로브 cap/sample/timeout 코드 클램프(500/200/60s) · QA-F4 MSSQL slot lower() 정규화
+      - QA-F1 라이브 테스트 main() 가드(수집 안전) · B-F7 신규 except 경고 로깅 · B-F11 neutral/failed 집계
+      - 커버리지 보강(QA-F2): +7 relationships 테스트 + 신규 test_insight_rel_cadence.py 3건.
+      - **수정분 적대 재검증 라운드** → 신규 결함 2건 적발·수정: R-1(객체-부재 negative 를 slot-확정
+        후보로 한정 — ''-wildcard×오답 catalog 오파단 차단) + R-2(execute_sql 실행-시점 컨텍스트
+        스냅샷 — 라우터 primary 복원 후 학습 오각인 차단, tools.py). 회귀 테스트 +4.
+      - 최종 **61건 PASS** + ruff clean. 수용 한계는 ADR-005 Consequences ①~④(dbo-only·케이스
+        플래핑·실효 30h·프로브 결합).
+- [ ] T22.7b verify-completion + commit/PR/merge.
+- [ ] T22.8 배포(insight/ask-worker 재빌드 + web 롤링) + 데이터 정정(기존 2행 dk_data_release 정규화 +
+      AGE 고아 Column 3노드 회수 + 재sync) + 라이브 검증(inferred 적재·프로브 신호·그래프 점선·digest).

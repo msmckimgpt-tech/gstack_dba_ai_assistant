@@ -927,6 +927,22 @@ def _fk_raw_execute(conn, sql):
         cur.close()
 
 
+def _instance_scan_cursor_key() -> str:
+    """instance-scan interval 커서 키 (rel-selfheal 적대 패널 B-F1).
+
+    ds-단위 단일 커서는 MSSQL multi-DB 순회에서 같은 cycle 의 첫 DB 스탬프가 나머지 DB 의
+    interval 스캔을 매번 가로채(항상 DB#1 만 획득), 정상상태의 DB#2..#N 은 rescan·관계
+    유지보수(cadence 포함)가 영원히 미발화한다 — DB(catalog) 별로 커서를 분리한다.
+    MySQL(active db 없음)은 기존 키 그대로(하위호환 — 기존 스탬프 유효).
+    """
+    key = ds_scope_name("schema_instance_scan_at")
+    try:
+        adb = get_active_database()
+    except Exception:
+        adb = None
+    return f"{key}:db:{adb}" if adb else key
+
+
 def _scan_instance_schema_insights(
     db_conn,
     mem_conn,
@@ -997,6 +1013,9 @@ def _scan_instance_schema_insights(
     pending_repairs = _detect_pending_insight_repairs(db_conn, mem_conn, candidates)
     report["pending_schema_repairs"] = int(pending_repairs.get("pending_schema_repairs", 0) or 0)
     report["pending_table_repairs"] = int(pending_repairs.get("pending_table_repairs", 0) or 0)
+    # rel-selfheal 적대 패널 B-F1: instance-scan interval 커서를 DB(catalog) 별로 분리
+    # (_instance_scan_cursor_key docstring 참조 — MSSQL multi-DB 의 DB#1 독점 차단).
+    _scan_cursor_key = _instance_scan_cursor_key()
     # TASK-0305 (RC3): pending(미완성 artifact)만으로 트리거된 스캔인지 — 새 스키마(missing)는 항상 즉시.
     pending_only = bool(
         not missing
@@ -1013,7 +1032,7 @@ def _scan_instance_schema_insights(
         force_scan = bool(missing)  # missing 없으면 False → 아래 interval gate 로 위임
     if not force_scan:
         try:
-            last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"))
+            last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _scan_cursor_key)
             parsed = _parse_iso_time(str(last_scan)) if last_scan else None
             if parsed:
                 elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
@@ -1034,6 +1053,11 @@ def _scan_instance_schema_insights(
     table_refresh_sec = int(AGENT_TABLE_INSIGHT_RESCAN_SEC or 0)
     schema_refresh_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "schema_insight_refresh_at:")
     table_refresh_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "table_insight_refresh_at:")
+    # rel-selfheal: 관계 유지보수(FK introspect·암묵 추론·프로브) 주기 cadence 상태 —
+    # 스키마별 마지막 발화 시각(kv). 기존 트리거(구조변경/artifact 부재)만으로는 이미 스캔
+    # 완료된 스키마에서 영원히 미발화(라이브 inferred 0건·프로브 0회)라 주기 재발화를 보완한다.
+    rel_reinfer_sec = int(AGENT_RELATIONSHIP_REINFER_SEC or 0)
+    rel_infer_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "relationship_infer_at:")
     try:
         for schema in candidates:
             if time.perf_counter() - scan_start > budget_sec:
@@ -1090,11 +1114,33 @@ ORDER BY TABLE_NAME
                 )
                 schema_has_stored_fp = bool(stored_schema_fp)
 
-                # feature-0013 Phase 2: 스키마 구조 변경/신규 시에만 FK 관계를 introspect 해
-                # table_relationships 에 적재(source='fk_introspect'). 빈도 제한으로 8초 루프 부하 억제.
+                # feature-0013 Phase 2 + rel-selfheal: FK 관계 introspect → table_relationships
+                # (source='fk_introspect'). 발화 = 스키마 구조 변경/신규 **또는 주기 cadence 경과**
+                # (AGENT_RELATIONSHIP_REINFER_SEC — 기존 조건만으로는 이미 스캔된 스키마에서 영원히
+                # 미발화). 빈도 제한으로 8초 루프 부하 억제.
                 # 전부 guarded — 어떤 예외도 insight 스캔을 차단하지 않는다(PG 미가용 시 no-op).
+                rel_infer_key = ds_fact_key("relationship_infer_at", ds_object_suffix(schema))
+                rel_reinfer_due = bool(
+                    rel_reinfer_sec > 0
+                    and _is_refresh_due(rel_infer_map, rel_infer_key, rel_reinfer_sec)
+                )
+                rel_maintenance_due = bool(
+                    schema_structure_changed or schema_artifact_missing or rel_reinfer_due
+                )
+                # 저장용 스키마-slot: MSSQL 은 현재 순회 중인 DB(catalog)명 — 그래프 Table 키
+                # (`db.table`)·column_descriptions(schema_name=DB명) 규약과 정합. 실 스키마('dbo')
+                # 리터럴 저장은 AGE 투영에서 실 테이블과 연결되지 않는 고아 엣지를 만든다.
+                # 질의는 여전히 실 스키마(schema)로 수행한다(store/query 분리).
+                _rel_store_schema = schema
+                _rel_db_scope = None
+                try:
+                    if _dialects.active().name == "mssql":
+                        _rel_db_scope = get_active_database()
+                        _rel_store_schema = _rel_db_scope or schema
+                except Exception:
+                    pass
                 if (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
-                        and (schema_structure_changed or schema_artifact_missing)
+                        and rel_maintenance_due
                         and all_table_names):
                     try:
                         from . import relationships as _rel
@@ -1104,18 +1150,23 @@ ORDER BY TABLE_NAME
                             kb_conn=None, scope_key=_rel_scope,
                             datasource_key=str(_rel_scope or ""), source_run_id=run_id,
                             raw_execute=_fk_raw_execute,
+                            store_schema=_rel_store_schema,
                         )
                         report["relationships_introspected"] = int(
                             report.get("relationships_introspected", 0)) + int(_n_rel or 0)
                     except Exception:
-                        pass
+                        # B-F7: 이 cycle 이 고친 결함(D1b)이 "조용한 정지" 였다 — 같은 클래스의
+                        # 미래 회귀가 또 침묵하지 않도록 경고 1줄은 남긴다(스캔은 계속 비차단).
+                        logging.getLogger("insight").warning(
+                            "relationship_introspect_failed schema=%s", schema, exc_info=True)
 
                 # feature-0016 implicit-edges: FK 로 확인 안 되는 **암묵 관계**를 명명 규칙으로
                 # 추론(source='inferred', candidate)한 뒤, candidate 를 **실데이터 겹침 프로브**로
-                # 검증해 강화/감쇠한다("항상 올바른지 파악"). 스키마 구조 변경/신규 시에만(빈도 제한).
+                # 검증해 강화/감쇠한다("항상 올바른지 파악"). 발화 = 구조 변경/신규 **또는 주기
+                # cadence**(rel-selfheal — rel_maintenance_due, introspect 블록과 동일 게이트).
                 # 전부 guarded — insight 스캔을 절대 차단하지 않는다.
                 if (AGENT_RELATIONSHIP_INFERENCE_ENABLED
-                        and (schema_structure_changed or schema_artifact_missing)
+                        and rel_maintenance_due
                         and all_table_names):
                     try:
                         from . import relationships as _rel
@@ -1135,23 +1186,44 @@ ORDER BY TABLE_NAME
                         finally:
                             _ccur.close()
                         if _tc:
+                            # 저장 라벨 = _rel_store_schema (MSSQL=DB명 — 그래프 키 정합, store/query 분리)
                             _n_inf = _rel.store_inferred_relationships(
-                                None, _infer_scope, schema, _tc,
+                                None, _infer_scope, _rel_store_schema, _tc,
                                 datasource_key=str(_infer_scope or ""), source_run_id=run_id,
                                 cap=AGENT_RELATIONSHIP_INFER_CAP)
                             report["relationships_inferred"] = int(
                                 report.get("relationships_inferred", 0)) + int(_n_inf or 0)
                         # 능동 프로브(실데이터 겹침 검증) — 별 토글. 운영 DB read-only, cap+timeout 으로 부하 제한.
+                        # db_scope(MSSQL): 현재 연결 DB 의 후보만 프로브 — 다른 DB 후보를 이 연결에서
+                        # 실행하면 동명 테이블 오검증/불필요 실패(rel-selfheal).
                         if AGENT_RELATIONSHIP_PROBE_ENABLED:
                             _pr = _rel.probe_and_reinforce(
                                 db_conn, _dialects.active(), _infer_scope,
                                 kb_conn=None, raw_execute=_fk_raw_execute,
                                 sample=AGENT_RELATIONSHIP_PROBE_SAMPLE,
                                 cap=AGENT_RELATIONSHIP_PROBE_CAP,
-                                timeout_ms=AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS)
-                            for _k in ("probed", "positive", "negative"):
+                                timeout_ms=AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS,
+                                db_scope=_rel_db_scope)
+                            # neutral/failed 포함(B-F11) — neutral 위주 사이클이 telemetry 상
+                            # 무활동으로 보이지 않게.
+                            for _k in ("probed", "positive", "negative", "neutral", "failed"):
                                 _rk = "relationships_probe_" + _k
                                 report[_rk] = int(report.get(_rk, 0)) + int(_pr.get(_k, 0))
+                    except Exception:
+                        # B-F7: 조용한 정지 재발 방지 — 경고 1줄(비차단 유지).
+                        logging.getLogger("insight").warning(
+                            "relationship_infer_probe_failed schema=%s", schema, exc_info=True)
+
+                # rel-selfheal cadence 스탬프 — introspect/추론 어느 쪽이든 이번 사이클에 관계
+                # 유지보수를 수행했으면 기록(둘 다 off 면 미기록 → 활성화 시 즉시 발화).
+                if (rel_maintenance_due
+                        and (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
+                             or AGENT_RELATIONSHIP_INFERENCE_ENABLED)
+                        and all_table_names):
+                    try:
+                        _rel_now = utc_now_iso()
+                        save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, rel_infer_key, _rel_now)
+                        rel_infer_map[rel_infer_key] = _rel_now
                     except Exception:
                         pass
 
@@ -1602,7 +1674,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
         cur.close()
     try:
         if report.get("scan_started"):
-            save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"), utc_now_iso())
+            save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _scan_cursor_key, utc_now_iso())
             # TASK-0305 (RC3): 진전 기반 backoff 갱신. 생성·복구가 1건이라도 있으면(또는 missing 스캔)
             # backoff 해제 → 건강한 처리량 tick cadence 보존. pending-only 스캔이 무진전이면 backoff 설정
             # → 도달 못 하는 미완성 tail 의 매-tick spin 차단(rescan interval 동안 pending-only 억제).

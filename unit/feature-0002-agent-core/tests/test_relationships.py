@@ -81,18 +81,57 @@ def test_function_compare_ignored():
     assert R.parse_join_relationships(sql) == []
 
 
+# ── parse_join_relationships: qualifier 캡처 (rel-selfheal) ────────────────
+def test_parse_join_captures_explicit_qualifier():
+    """SQL 이 명시한 스키마/DB qualifier 를 edge 에 보존한다 — 미해석('') 저장은 AGE 고아 노드."""
+    sql = ("SELECT * FROM dk_data_release.Achievement a "
+           "JOIN dk_data_release.AchievementQuest q ON a.UniqueID = q.AchievementID")
+    edges = R.parse_join_relationships(sql)
+    assert len(edges) == 1
+    assert edges[0]["src_schema"] == "dk_data_release"
+    assert edges[0]["tgt_schema"] == "dk_data_release"
+
+
+def test_parse_join_unqualified_emits_empty_schema():
+    """미qualify 테이블은 schema='' — learn_relationships_from_sql 의 default_schema 가 채운다."""
+    sql = "SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id"
+    edges = R.parse_join_relationships(sql)
+    assert len(edges) == 1
+    assert edges[0]["src_schema"] == ""
+    assert edges[0]["tgt_schema"] == ""
+
+
+def test_parse_join_three_part_uses_db_and_dbo_dropped():
+    """3-part `db.dbo.table` → qualifier=db (MSSQL 스키마-slot=DB명 규약). 2-part dbo.x → ''."""
+    sql = ("SELECT * FROM dk_data_release.dbo.Achievement a "
+           "JOIN dbo.AchievementReward r ON a.UniqueID = r.AchievementID")
+    edges = R.parse_join_relationships(sql)
+    assert len(edges) == 1
+    schemas = {edges[0]["src_schema"], edges[0]["tgt_schema"]}
+    assert "dk_data_release" in schemas
+    assert "" in schemas
+
+
 # ── _alias_map ──────────────────────────────────────────────────────────
 def test_alias_map_three_part_leaf():
+    # rel-selfheal: 값 = (leaf, qualifier). 3-part 는 qualifier=db(첫 segment — MSSQL DB명 규약).
     amap = R._alias_map("from db.sales.orders o join customers c")
-    assert amap.get("o") == "orders"
-    assert amap.get("c") == "customers"
-    assert amap.get("orders") == "orders"  # 테이블명 자신도 키
+    assert amap.get("o") == ("orders", "db")
+    assert amap.get("c") == ("customers", "")
+    assert amap.get("orders") == ("orders", "db")  # 테이블명 자신도 키
 
 
 def test_alias_map_no_alias():
     amap = R._alias_map("from orders join customers on orders.cid = customers.id")
-    assert amap.get("orders") == "orders"
-    assert amap.get("customers") == "customers"
+    assert amap.get("orders") == ("orders", "")
+    assert amap.get("customers") == ("customers", "")
+
+
+def test_alias_map_two_part_schema_and_dbo():
+    # 2-part: qualifier 보존(MySQL schema). 단 'dbo' 는 DB 차원 소실이라 미채택('').
+    amap = R._alias_map("from sales.orders o join dbo.customers c")
+    assert amap.get("o") == ("orders", "sales")
+    assert amap.get("c") == ("customers", "")
 
 
 # ── build_relationship_digest ───────────────────────────────────────────
@@ -286,6 +325,22 @@ def test_infer_name_fk_heuristic():
     assert any(e["heuristic"] == "name_fk" for e in edges)
 
 
+def test_infer_name_fk_uniqueid_pk():
+    """rel-selfheal: `<X>ID` 컬럼 → X 테이블의 관용 PK `UniqueID` (dk_data_release 실측 패턴).
+
+    'uniqueid' 가 _pk_like 후보에 없으면 이 게임 DB 계열(PK=UniqueID)에서 name_fk 추론이
+    전면 불가였다 — Achievement/AchievementQuest/AchievementReward 는 사용자 검증 시나리오.
+    """
+    tc = {"Achievement": ["UniqueID", "Type", "Title", "DLC"],
+          "AchievementQuest": ["UniqueID", "AchievementID", "QuestType"],
+          "AchievementReward": ["UniqueID", "AchievementID", "RewardType"]}
+    edges = R.infer_implicit_relationships("dk_data_release", tc)
+    pairs = {(e["src_table"], e["src_column"], e["tgt_table"], e["tgt_column"]) for e in edges}
+    assert ("AchievementQuest", "AchievementID", "Achievement", "UniqueID") in pairs
+    assert ("AchievementReward", "AchievementID", "Achievement", "UniqueID") in pairs
+    assert all(e["src_schema"] == "dk_data_release" for e in edges)
+
+
 def test_infer_excludes_self_and_generic():
     """자기참조·범용 컬럼(id 단독)은 후보로 만들지 않는다."""
     tc = {"orders": ["id", "order_id"], "products": ["id"]}
@@ -372,3 +427,275 @@ def test_dialect_probe_sql_statement_timeout():
     assert ms.startswith("SET LOCK_TIMEOUT 3000;")
     assert "LOCK_TIMEOUT" not in D.get("mssql").probe_relationship_overlap(
         "s", "o", "c", "s", "t", "d", 50, timeout_ms=0)
+
+
+# ── rel-selfheal 적대 패널 반영 (B-F2/B-F3/B-F4/Sec-F2/QA-F2) ─────────────────
+
+def test_infer_uniqueid_excluded_from_shared_key():
+    """B-F3: 보편 PK 'UniqueID' 는 heuristic-2(shared_key) 제외 — PK≡PK 쓰레기 pairwise 차단.
+
+    _pk_like 의 FK **타깃** 역할(name_fk)은 유지된다(test_infer_name_fk_uniqueid_pk).
+    """
+    tc = {"Achievement": ["UniqueID", "Type", "Title", "DLC"],
+          "AchievementQuest": ["UniqueID", "AchievementID", "QuestType"],
+          "AchievementReward": ["UniqueID", "AchievementID", "RewardType"]}
+    edges = R.infer_implicit_relationships("dk_data_release", tc)
+    assert not any(
+        e["heuristic"] == "shared_key"
+        and e["src_column"].lower() in ("uniqueid", "unique_id")
+        and e["tgt_column"].lower() in ("uniqueid", "unique_id")
+        for e in edges
+    ), f"PK≡PK shared_key garbage: {edges}"
+    # name_fk 2건은 그대로 살아 있어야 한다(회귀 방지)
+    pairs = {(e["src_table"], e["src_column"], e["tgt_table"], e["tgt_column"]) for e in edges}
+    assert ("AchievementQuest", "AchievementID", "Achievement", "UniqueID") in pairs
+
+
+class _CapturingCursor:
+    def __init__(self, rows=None):
+        self.executed = []
+        self._rows = rows or []
+
+    def execute(self, sql, params=None):
+        self.executed.append((sql, params))
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def close(self):
+        pass
+
+
+class _CapturingConn:
+    def __init__(self, rows=None):
+        self.cursors = []
+        self._rows = rows
+
+    def cursor(self):
+        cur = _CapturingCursor(self._rows)
+        self.cursors.append(cur)
+        return cur
+
+
+def test_apply_signal_schema_slot_constraint_present():
+    """B-F2: a_schema/b_schema 지정 시 스키마-slot 매칭 한정('' 레거시는 wildcard).
+
+    미지정이면 기존 leaf-only 매칭(하위호환)."""
+    conn = _CapturingConn(rows=[])
+    R.apply_relationship_signal(conn, "scope", "A", "a", "B", "b", True,
+                                a_schema="db1", b_schema="db1")
+    sel = next(s for s, p in conn.cursors[0].executed if s.lstrip().startswith("SELECT"))
+    params = next(p for s, p in conn.cursors[0].executed if s.lstrip().startswith("SELECT"))
+    assert "lower(source_schema)=lower(%s)" in sel and "source_schema=''" in sel
+    assert list(params).count("db1") == 4  # 양방향 × (source, target)
+
+    conn2 = _CapturingConn(rows=[])
+    R.apply_relationship_signal(conn2, "scope", "A", "a", "B", "b", True)
+    sel2 = next(s for s, p in conn2.cursors[0].executed if s.lstrip().startswith("SELECT"))
+    assert "source_schema" not in sel2  # 미지정 = 제약 없음
+
+
+def test_probe_missing_object_error_is_negative(monkeypatch):
+    """B-F4: '객체 부재' 실행오류는 negative 신호 — 실행 불가 edge 의 영구 미파단 차단."""
+    monkeypatch.setattr(R, "fetch_probe_candidates",
+                        lambda conn, scope, limit, db_scope=None:
+                        [(7, "db1", "A", "a", "db1", "B", "b")])
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    signals = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: signals.append((a, k)) or 1)
+    touched = []
+    monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: touched.append(rid))
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return "SELECT 1"
+
+    def _raise_missing(conn, sql):
+        raise RuntimeError("('42S02', \"Invalid object name 'A'\")")
+
+    rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
+                                raw_execute=_raise_missing)
+    assert rep["negative"] == 1 and rep["failed"] == 0
+    assert touched == [7]                      # 큐 rotation 전진(head 고착 차단)
+    assert signals and signals[0][0][6] is False
+    assert signals[0][1] == {"a_schema": "db1", "b_schema": "db1"}
+
+
+def test_probe_transient_error_touches_and_counts_failed(monkeypatch):
+    """B-F4: transient 오류(타임아웃 등)는 신호 없이 timestamp 전진 + failed 집계."""
+    monkeypatch.setattr(R, "fetch_probe_candidates",
+                        lambda conn, scope, limit, db_scope=None:
+                        [(8, "db1", "A", "a", "db1", "B", "b")])
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    signals = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: signals.append(a) or 1)
+    touched = []
+    monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: touched.append(rid))
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return "SELECT 1"
+
+    def _raise_transient(conn, sql):
+        raise RuntimeError("timeout expired")
+
+    rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
+                                raw_execute=_raise_transient)
+    assert rep["failed"] == 1 and rep["negative"] == 0 and not signals
+    assert touched == [8]
+
+
+def test_probe_clamps_cap_sample_timeout(monkeypatch):
+    """Sec-F2: cap/sample/timeout misconfig 폭주를 코드 상한으로 클램프(dialect sample 클램프와 대칭)."""
+    seen = {}
+
+    def _fetch(conn, scope, limit, db_scope=None):
+        seen["limit"] = limit
+        return []
+
+    monkeypatch.setattr(R, "fetch_probe_candidates", _fetch)
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return ""
+
+    R.probe_and_reinforce(None, _D(), "s", kb_conn=object(),
+                          raw_execute=lambda c, q: ([], None),
+                          cap=10**6, sample=10**7, timeout_ms=10**9)
+    assert seen["limit"] == 500
+
+
+def test_learn_fills_default_schema_and_normalizes_lower(monkeypatch):
+    """QA-F2a/QA-F4: 미qualify 테이블은 default_schema 로 채우고, MSSQL 경로
+    (normalize_schema_lower=True)는 slot 을 lower() 정규화(phantom 중복 노드 차단)."""
+    ups = []
+    monkeypatch.setattr(R, "upsert_relationship", lambda c, s, **kw: ups.append(kw) or True)
+    sigs = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: sigs.append(k) or 1)
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    sql = ("SELECT * FROM Achievement a "
+           "JOIN AchievementQuest q ON a.UniqueID = q.AchievementID")
+    n = R.learn_relationships_from_sql(sql, "scope", default_schema="DK_Data_Release",
+                                       normalize_schema_lower=True)
+    assert n == 1
+    assert ups[0]["src_schema"] == "dk_data_release"
+    assert ups[0]["tgt_schema"] == "dk_data_release"
+    assert sigs[0] == {"a_schema": "dk_data_release", "b_schema": "dk_data_release"}
+
+
+def test_learn_keeps_typed_case_without_normalize(monkeypatch):
+    """QA-F4 대조군: MySQL 경로(normalize 미지정)는 실행 성공한 SQL 의 타이핑 케이스 보존."""
+    ups = []
+    monkeypatch.setattr(R, "upsert_relationship", lambda c, s, **kw: ups.append(kw) or True)
+    monkeypatch.setattr(R, "apply_relationship_signal", lambda *a, **k: 1)
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    sql = ("SELECT * FROM GameLogs.orders o "
+           "JOIN GameLogs.customers c ON o.customer_id = c.id")
+    n = R.learn_relationships_from_sql(sql, "scope")
+    assert n == 1
+    assert ups[0]["src_schema"] == "GameLogs" and ups[0]["tgt_schema"] == "GameLogs"
+
+
+def test_probe_missing_object_unresolved_slot_not_negative(monkeypatch):
+    """재검증 R-1: db_scope 순회에서 ''-slot(레거시 wildcard) 후보의 객체-부재 오류는
+    negative 가 아니라 failed — 소속 아닌 catalog 프로브 2회로 실관계가 broken 되는 오파단 차단."""
+    monkeypatch.setattr(R, "fetch_probe_candidates",
+                        lambda conn, scope, limit, db_scope=None:
+                        [(9, "", "A", "a", "", "B", "b")])
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    signals = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: signals.append(a) or 1)
+    touched = []
+    monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: touched.append(rid))
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return "SELECT 1"
+
+    def _raise_missing(conn, sql):
+        raise RuntimeError("('42S02', \"Invalid object name 'A'\")")
+
+    rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
+                                raw_execute=_raise_missing, db_scope="db1")
+    assert rep["failed"] == 1 and rep["negative"] == 0 and not signals
+    assert touched == [9]  # rotation 은 전진(head 고착 차단 유지)
+
+
+def test_probe_missing_object_resolved_slot_under_db_scope_is_negative(monkeypatch):
+    """재검증 R-1 대조군: db_scope 하에서 slot 이 그 catalog 로 확정된 후보의 객체-부재는
+    구조적 negative(선언된 DB 에 테이블이 실제 없음)."""
+    monkeypatch.setattr(R, "fetch_probe_candidates",
+                        lambda conn, scope, limit, db_scope=None:
+                        [(10, "db1", "A", "a", "db1", "B", "b")])
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    signals = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: signals.append(a) or 1)
+    monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: None)
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return "SELECT 1"
+
+    def _raise_missing(conn, sql):
+        raise RuntimeError("Invalid object name 'db1.A'")
+
+    rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
+                                raw_execute=_raise_missing, db_scope="db1")
+    assert rep["negative"] == 1 and rep["failed"] == 0 and signals
+
+
+def test_probe_missing_object_unresolved_slot_stays_failed(monkeypatch):
+    """재검증 R-1: db_scope(MSSQL catalog 순회) 하의 ''-slot 레거시 후보는 wildcard 로 모든
+    catalog 에 fetch 되므로, 소속 아닌 catalog 의 객체-부재 오류를 negative 로 먹이면
+    실관계가 오답 catalog 프로브 2회만에 영구 broken — failed/touch-only 로 남아야 한다."""
+    monkeypatch.setattr(R, "fetch_probe_candidates",
+                        lambda conn, scope, limit, db_scope=None:
+                        [(9, "", "A", "a", "", "B", "b")])
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    signals = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: signals.append(a) or 1)
+    touched = []
+    monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: touched.append(rid))
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return "SELECT 1"
+
+    def _raise_missing(conn, sql):
+        raise RuntimeError("Invalid object name 'A'")
+
+    rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
+                                raw_execute=_raise_missing, db_scope="db1")
+    assert rep["failed"] == 1 and rep["negative"] == 0 and not signals
+    assert touched == [9]
+
+
+def test_probe_missing_object_resolved_slot_under_db_scope_is_negative(monkeypatch):
+    """재검증 R-1 대조군: db_scope 하에서 양쪽 slot 이 채워진(=현 catalog 소속 확정) 후보의
+    객체-부재는 구조적 negative — 자기교정(B-F4) 유지."""
+    monkeypatch.setattr(R, "fetch_probe_candidates",
+                        lambda conn, scope, limit, db_scope=None:
+                        [(10, "db1", "A", "a", "db1", "B", "b")])
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    signals = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: signals.append(a) or 1)
+    monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: None)
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return "SELECT 1"
+
+    def _raise_missing(conn, sql):
+        raise RuntimeError("Invalid object name 'A'")
+
+    rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
+                                raw_execute=_raise_missing, db_scope="db1")
+    assert rep["negative"] == 1 and rep["failed"] == 0
+    assert signals and signals[0][6] is False

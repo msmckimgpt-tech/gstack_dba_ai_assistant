@@ -105,3 +105,66 @@ source_of_truth: true
   - Sigma.js v3(WebGL 초고속): compound/리치노드 약함 → ERD 카드 부적합(기각).
 - Supersedes: (graph-webgl 코드결정 — WebGL 렌더러 도입, 정식 ADR 아니었음. 본 ADR 로 대체.)
 - Superseded By:
+
+## ADR-005 — 관계 자기교정 파이프라인 상시화: 주기 cadence + 스키마-slot 규약(MSSQL=DB명) + config 노출 계약
+- Status: Accepted
+- Date: 2026-07-02
+- Context: 사용자 검증(Achievement 신뢰/추정 관계)에서 파이프라인이 실제로는 미가동임이 실측됨 —
+  inferred/trusted 0건. ① `AGENT_RELATIONSHIP_*` 가 config `__all__` 미등재 → star-import 소비자
+  insight.py 에서 NameError → per-schema except 가 삼켜 06-29 부터 insight 스키마 처리 전체가 조용히
+  정지(인사이트 갱신 포함). ② 훅 발화조건(구조변경/artifact 부재)이 기존 스키마에서 영원히 거짓.
+  ③ 대화 학습·MSSQL introspect 의 스키마-slot 이 그래프 Table 키(`db.table`) 규약과 불일치 → AGE
+  고아 엣지(그래프 점선 비가시). ④ `_pk_like` 가 게임 DB 관용 PK `UniqueID` 미인식.
+- Decision:
+  1. **주기 cadence**: `AGENT_RELATIONSHIP_REINFER_SEC`(기본 21600=6h, ≤0 off) — 스키마별
+     `relationship_infer_at` kv + `_is_refresh_due` 를 기존 트리거에 OR. FK introspect·추론·프로브가
+     같은 게이트(rel_maintenance_due)를 공유, 수행 후 스탬프. 첫 사이클 = 전 스키마 자연 백필.
+  2. **스키마-slot 규약 통일 — MSSQL 은 DB(catalog)명**: 저장 라벨과 질의 스키마를 분리
+     (introspect_and_store(store_schema=), 추론은 라벨만 사용). 근거: 그래프 Table 키(`db.table`,
+     rag_objects object_key 파싱)·column_descriptions(schema_name=DB명, 사용자 결정 06-29)과 정합 —
+     'dbo' 리터럴 저장은 고아 엣지. 프로브는 db_scope 로 현재 연결 DB 후보만 + qualifier 제거
+     (MSSQL `[db명].[table]` 은 스키마 오해석; 교차-DB 동명 테이블 오검증 차단).
+  3. **대화 학습 스키마 해석**: 파서가 SQL 명시 qualifier 보존(3-part=db, 2-part 비-dbo, dbo→'') +
+     미qualify 는 `default_schema=get_active_database() or get_active_default_db()`.
+  4. **config 노출 계약**: star-import 소비 모듈이 bare 로 쓰는 config 이름은 `__all__` 등재 의무 —
+     AST 회귀 가드(test_config_star_export.py)가 봉인. 불변식은 "런타임 해석 가능"(modules/__init__
+     주입 공급도 정당).
+  5. `_pk_like` 관용 PK 후보에 `uniqueid`/`unique_id` 추가 — 단 heuristic-2(shared_key)에서는
+     **제외**(`_GENERIC_KEY_COLS` — 보편 PK 라 PK≡PK pairwise 쓰레기 후보 방지, 'id' 와 대칭.
+     적대 패널 B-F3 실행 재현으로 확정).
+  6. **(적대 패널 반영, 2026-07-02)** instance-scan interval 커서를 DB(catalog)별 분리
+     (`_instance_scan_cursor_key` — B-F1: ds-단위 단일 커서는 MSSQL multi-DB 에서 첫 DB 만 interval
+     스캔을 영원히 독점, 본 cadence 목표가 DB#2+ 에서 구조적 미달성이었다). 강화/파단 write-back 도
+     스키마-slot 으로 한정(`apply_relationship_signal(a_schema=,b_schema=)` — B-F2: 교차-DB 동명
+     테이블 오염 차단, '' 레거시는 wildcard). 프로브 실행오류 중 객체-부재류는 negative 신호 +
+     모든 실패에 last_validated_at 전진(B-F4: 실행 불가 edge 영구 미파단·큐 head 고착 차단).
+     프로브 cap/sample/timeout 코드 상한 클램프(500/200/60s — Sec-F2). 대화 학습 MSSQL 경로는
+     스키마-slot lower() 정규화(QA-F4: KB DB-slot 규약 lower 와 정합, phantom 중복 노드 차단;
+     MySQL 은 실행-검증된 타이핑 케이스 보존). 재검증 라운드 반영: 객체-부재 negative 는
+     **slot-확정 후보 한정**(R-1 — ''-wildcard×오답 catalog 오파단 차단), 대화 학습 컨텍스트는
+     **execute_sql 실행-시점 스냅샷**에서 읽음(R-2 — 1:N 라우터 primary 복원 후 오각인 차단,
+     tools.get_last_execute_sql_context).
+- Consequences: 관계 추론·검증(ADR-002 자기교정)이 기존 스키마에서도 상시 가동 — 그래프에 추정 점선이
+  실 테이블에 붙어 출현하고, 프로브·대화 사용으로 trusted/broken 전이가 실제로 발생. 운영 DB 에
+  cadence 당 read-only EXISTS 프로브(cap 40/스키마·5s timeout)가 실발생 — env 로 조절(코드 상한
+  500/200/60s). 스키마-slot 규약 변경으로 기존 ''-slot 2행은 1회 데이터 정정(정규화) 필요. insight
+  인사이트 갱신 3일 정지의 부수 복구. 대화 SQL 이 잘못된 DB 를 명시하면 그 qualifier 가 저장될 수
+  있으나 프로브가 객체-부재 오류를 negative 로 분류해 파단시킨다(자기교정 경로 — B-F4 수정으로 실제
+  성립). **알려진 한계(적대 패널, 후속 initiative 범위)**: ① 스키마-slot=DB명 규약은 사실상
+  dbo-only 가정 — MSSQL 비-dbo(2-part `sales.T` 대화 학습분)·같은 DB 내 교차-스키마 FK 는 slot 이
+  규약과 달라 프로브 db_scope 필터에서 영구 제외(파단도 그래프 연결도 안 됨, QA-F3/B-F5). 현
+  운영 DB 군은 dbo 표준이라 실영향 최소 — 비-dbo 도입 시 slot 2-세그먼트 규약 확장 필요.
+  ② introspect 테이블명 케이스 플래핑(TASK-0305 실측)은 fqn 충돌키가 case-sensitive 라 중복 행
+  가능 — SSOT 레벨 정규화 후속(B-F6). ③ 실효 cadence 는 스키마 window 회전(MAX_SCHEMAS=20)과
+  곱해져 91-스키마 기준 ≈ REINFER × ceil(91/20) ≈ 30h (B-F8 — "6h" 는 스키마별 하한 아님).
+  ④ 대화학습(LEARNING)을 켜면 프로브(PROBE)도 켜 두어야 한다 — 프로브 off 면 사용자 세공 SQL 의
+  거짓 candidate 가 미검증 잔존(Sec-F4; candidate 는 [추정] 태그·w0.4 로 격리되나 자기교정은 프로브가 담당).
+- Alternatives:
+  - sync cron(metadata-graph-sync)에서 추론+프로브 실행: sync 는 PG 만 접속 — 프로브는 datasource
+    연결 인프라(insight worker)가 필요해 기각.
+  - 프로브 SQL 을 MSSQL 3-part(`[db].[dbo].[table]`)로 생성: 비-dbo 스키마 테이블 오패스, 연결 DB
+    재사용이 더 견고 → db_scope 필터 채택.
+  - config star-import 를 명시 import 로 전환(전 모듈): 안전하나 blast-radius 과대(수백 참조) —
+    __all__ 계약 + AST 가드로 봉인.
+- Supersedes: (ADR-002 의 발화 조건을 상시화로 확장 — 대체 아님, 상위호환)
+- Superseded By:

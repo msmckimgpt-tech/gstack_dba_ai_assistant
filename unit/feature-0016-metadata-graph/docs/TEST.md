@@ -144,3 +144,36 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
 - KB 회귀 스위트(`make test`) — AI 정합(Phase 4) 후.
 - PB-0008 라이브 브라우저 검증(그래프 UI) — cutover 후.
+
+## rel-selfheal 단위 테스트 (2026-07-02, AGE·DB 불요)
+- `unit/feature-0002-agent-core/tests/test_relationships.py` — **43건 PASS**(신규 +5; star-export
+  3건 합산 시 46 — 이전 "46건" 표기는 합산치였음, QA-F6 정정). 신규: `uniqueid` PK
+  name_fk 추론(Achievement/AchievementQuest/AchievementReward 실측 스키마), 파서 qualifier 캡처
+  (3-part=db · 2-part 비-dbo 보존 · dbo→'' · 미qualify=''), `_alias_map` (leaf, qual) tuple 갱신.
+- `unit/feature-0002-agent-core/tests/test_config_star_export.py` (신규 회귀 가드, 3건 PASS) —
+  star-import 소비 모듈이 bare 로 쓰는 config 이름의 **런타임 해석**을 AST 로 전수 검사.
+  배경: `AGENT_RELATIONSHIP_*` __all__ 누락 → insight per-schema NameError 3일 조용한 정지(REPORT).
+- insight 인접 58건 PASS (test_insight_degraded_backoff / test_mssql_three_tier_insight /
+  test_node_analysis_relevance / test_task0255_insight_edge_log / test_task0305_insight_bottleneck).
+- 실행(worktree, 워커 이미지 마운트):
+  `sudo docker run --rm --entrypoint sh -v <worktree>:/wt -e PYTHONPATH=/wt/unit/feature-0002-agent-core/src:/wt -w /wt repo-ask-worker -c "pip install -q pytest; python -m pytest unit/feature-0002-agent-core/tests/test_relationships.py unit/feature-0002-agent-core/tests/test_config_star_export.py -q"`
+- 웹 자산 무변경 — check #13(Windows-browser) 비대상. 라이브 e2e(추론 적재·프로브 신호·그래프 점선)는
+  배포 후 REPORT rel-selfheal 항목에 기록.
+
+### tests/test_anchor_relationship_live.py — rel-selfheal 앵커링 (라이브 AGE, throwaway)
+`sync_relationship` REFERENCES 끝점의 Table/Schema 앵커링 검증: qualified fqn → Schema→HAS_TABLE→
+Table→HAS_COLUMN→Column 체인 생성 · 기존 Table description/source 비파괴(SET 생략) · 레거시 ''-slot
+은 Table 미생성(Column 만) · 멱등(재실행 중복 0). 실행: throwaway `kb-pg-age:pg16`(+create_graph/라벨)
+에 metadata_graph.py 와 본 파일 마운트(python:3.11-slim, TEST.md 상단 harness 동형).
+**2026-07-02 결과: ANCHOR LIVE: ALL ASSERTS PASS.**
+
+### rel-selfheal 적대 패널 반영 후 재검증 (2026-07-02, REV-20260702T052630)
+- test_relationships.py **52건**(+9: B-F2 slot 한정 SQL·B-F3 uniqueid shared_key 부정 단언·B-F4
+  객체-부재→negative/transient→failed·Sec-F2 클램프·QA-F4 lower 정규화/케이스 보존·default_schema 채움·
+  재검증 R-1 미확정-slot failed 유지/확정-slot negative 2건)
+  + test_config_star_export.py 3건 + **신규 test_insight_rel_cadence.py 3건**(B-F1 커서 DB별 분리·
+  D1a `_is_refresh_due` 게이트 의미론·REINFER≤0 off) + **신규 test_tools_exec_ctx.py 2건**(재검증
+  R-2 실행-시점 스냅샷 — primary 복원 후 생존·default_db 폴백) ≈ 서브셋 61건 PASS
+  (feature-0002 tests 전체 EXIT=0). py_compile + ruff clean.
+- test_anchor_relationship_live.py 는 main()+__name__ 가드로 재구성(QA-F1 — pytest 수집 안전).
+  라이브 재실행은 배포 후 정정·재sync 검증과 함께.

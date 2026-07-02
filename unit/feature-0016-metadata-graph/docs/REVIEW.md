@@ -280,3 +280,61 @@ source_of_truth: true
   - **MINOR (수정 완료)**: 최악의 경우(최대길이 컬럼명 168 + 인접 내부열 high-rel wide 테이블 190) 컬럼 라벨이 인접 칩 좌변에 ~6.5px 겹침(텍스트 픽셀만, 히트박스·데이터 무관). → **COLW 214→224** 로 흡수(권고 반영).
 - Verdict: **PASS-WITH-FIXES** — CRITICAL/MAJOR 0. 유일 MINOR(라벨 6.5px 겹침) 수정 반영.
 - Human Approval Needed: graph-g6b 배포(web 재빌드·라이브 재시작) — deploy_scope: included + 사용자 "배포 진행" 승인.
+
+## REV-20260702T052630-ai-claude-feature-0016-rel-selfheal [SUBAGENT: PASS-WITH-FIXES] — 관계 자기교정 파이프라인 근본수정(rel-selfheal) 적대 리뷰
+- Related Change: CHG-20260702T024556(본체) + CHG-20260702T052630(패널 반영). shared/config.py ·
+  insight.py · relationships.py · metadata_graph.py · agent_core.py + 테스트 4파일. ADR-005.
+- Trigger: schema/foreign key/query + 운영 DB 프로브 keyword matched → backend·security·qa 3렌즈
+  (원 세션이 dispatch 직후 session limit 중단 → resume 세션에서 재실행).
+- Method: general-purpose subagent 3병렬 적대 리뷰(각각 diff 정독 + 소비자/헬퍼 추적 + 실행 검증 —
+  파서/프로브 빌더 적대 실행, 결함 재주입 red-green, fake-cursor 실험 포함).
+- Verdicts: **backend FAIL**(MAJOR 6, 그중 B-F3·B-F10 실행 재현) / **security PASS-WITH-FIXES**
+  (BLOCKING 0 — injection 3경로(파서 문자클래스 격리·dialect 식별자 이스케이프·Cypher _cq/dollar-quote·
+  PG 파라미터화) 라이브 적대 실행으로 안전 확증, 프로브 read-only·scope 격리·sample 하드캡 확인) /
+  **qa PASS-WITH-FIXES**(46건 red-green 실효성 실증 — D1b/D2/D3 재주입 적색 확인; D1a·저장계층 커버리지 갭).
+- Findings → 처리:
+  - **B-F1 (MAJOR, 수정)**: instance-scan interval 커서가 ds-단위 → MSSQL multi-DB 정상상태에서 첫 DB 만
+    영원히 interval 스캔 획득(코드 실측 교차확인). → `_instance_scan_cursor_key` DB별 분리.
+  - **B-F2 (MAJOR, 수정)**: `apply_relationship_signal` leaf-only 매칭 → 교차-DB 동명 edge 오염 전파.
+    → a_schema/b_schema slot 한정('' wildcard). 프로브·대화학습 호출부 전달.
+  - **B-F3 (MAJOR, 수정 — 재현됨)**: uniqueid 가 heuristic-2 미제외 → PK≡PK shared_key 쓰레기 3건 생성,
+    저역폭 정수 PK 겹침으로 trusted 승격 경로. → `_GENERIC_KEY_COLS` 등재 + 부정 단언 테스트.
+  - **B-F4 (MAJOR, 수정)**: 프로브 실행오류 무신호·무전진 → 영구 미파단 + NULLS FIRST 큐 head 고착.
+    → 객체-부재류 negative 분류 + 전 실패 timestamp 전진 + failed 집계.
+  - **B-F5/QA-F3 (MAJOR, 수용+문서화)**: slot=DB명 규약의 dbo-only 가정 — 비-dbo·교차-스키마 후보 영구
+    미프로브/그래프 비연결. 현 운영 DB 군 dbo 표준이라 실영향 최소 → ADR-005 Consequences ① 한계 명기,
+    후속 initiative(2-세그먼트 slot 확장) 범위로 이월.
+  - **B-F6 (MAJOR, 부분수정+이월)**: 케이스 비정규화 — 대화 경로는 QA-F4 lower() 정규화로 수정,
+    introspect 테이블명 플래핑(TASK-0305 실측)은 SSOT 레벨 후속(ADR-005 ②).
+  - **Sec-F2 (MINOR, 수정)**: cap/timeout 코드 상한 부재 → 클램프(500/200/60s).
+  - **Sec-F4 (MINOR, 문서화)**: PROBE off 시 conversation candidate 미검증 잔존 → LEARNING↔PROBE 결합
+    권장 ADR-005 ④ ([추정] 태그·w0.4·digest cap 60 이 blast radius 를 제한).
+  - **QA-F1 (MAJOR, 수정)**: 라이브 테스트 모듈-레벨 connect → main() 가드(수집 안전).
+  - **QA-F2 (MAJOR, 수정)**: D1a·default_schema 채움·저장계층 무테스트 → +10건 보강(총 56 PASS).
+  - **B-F7/QA-F5 (MINOR, 수정)**: 신규 except 무로깅 → warning 추가. 스탬프 실패-전진은 스핀 방지
+    트레이드오프로 유지(경고 로그가 가시성 담당).
+  - **B-F8 (MINOR, 문서화)**: 실효 cadence ≈ REINFER×ceil(N/window)≈30h — ADR-005 ③ 명기. jitter 미도입.
+  - **B-F10 (MINOR, 문서화 — 재현됨)**: AST 가드 지역 재바인딩 위음성 → docstring 한계 명시, 명시 이름
+    고정 테스트가 최종 방어선.
+  - **B-F11/QA-F7 (NIT, 일부 수정)**: neutral/failed report 집계 추가. 미러 행 neutral 미전진·교차-DB
+    self-join 보수적 폐기·브래킷-dot 식별자는 수용(보수적 손실).
+  - **QA-F6 (MINOR, 수정)**: 문서 수치 정정(46=43+3 합산 명시).
+- 재검증 라운드(수정분 적대 재검증 subagent): B-F1/B-F2/B-F3/Sec-F2 봉인 확인(PASS — 게이트·스탬프
+  동일 키/방향 스왑 slot 순서/param 개수/기본값 무변형까지 코드·실행 추적). 단 **신규 결함 2건 적발 → 즉시 수정**:
+  - **R-1 (중대, 수정)**: B-F4 의 객체-부재→negative 가 fetch 의 ''-slot wildcard 와 결합 —
+    MSSQL catalog 순회에서 레거시 '' 실관계가 오답 catalog 프로브 2회(0.4−0.14×2=0.12≤0.15)만에
+    영구 broken 오파단. → negative 는 slot 이 현 컨텍스트로 확정된 후보(db_scope 하 양쪽 slot 채움,
+    또는 db_scope 부재)에만 적용, ''-slot+db_scope 조합은 failed/touch-only. 회귀 테스트 2건.
+  - **R-2 (중간, 수정)**: 1:N 라우터 경로에서 tool 종료 finally 의 primary 복원 **후** learn 이
+    ContextVar 를 읽어, 라우팅된 execute_sql 에 primary 의 engine/DB(default_schema 오각인,
+    '' 레거시보다 악화)/scope 가 각인. → tools.py 에 실행-시점 스냅샷(`_snapshot_sql_exec_ctx`/
+    `get_last_execute_sql_context`) 신설, agent_core 학습이 스냅샷을 읽음(scope_key 의 기존
+    primary 오귀속도 부수 해소). 스냅샷 부재 시 default_schema 미채움(안전 폴백). 테스트 2건.
+  - 기록(저심각, 수용): param-'' 의 strict-empty 매칭(보수적 — '' 대화 edge 가 스키마-보유 inferred
+    를 교차 강화하지 못하는 기회 상실), MSSQL 비-dbo inferred 오파단 경로(ADR-005 ① dbo-only 한계
+    내), MySQL default_db 사전 lower 각인(schema-prefix 강제라 실효 낮음).
+- 재검증(최종): 수정 후 전체 **61건 PASS**(feature-0002 tests 전체 EXIT=0) + py_compile + ruff clean.
+  Verdict: **PASS-WITH-FIXES** — 필수(MAJOR 중 수정 가능 전건 + 재검증 R-1/R-2) 반영,
+  수용 한계는 ADR-005 Consequences ①~④.
+- Human Approval Needed: 없음(Major 승계 — 원 cycle 사용자 요청 범위 내, 비파괴·마이그레이션 0).
+  deploy_scope: included(FIRST_REQUEST 전역) 근거로 배포 자동 진행 + 첫 배포 직전 1줄 표면화.
