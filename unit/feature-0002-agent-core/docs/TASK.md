@@ -1158,3 +1158,13 @@ TASK-0015 (plan-review):
 - [x] **검증**: GPU 실효성 실측(bge-m3 1.2GB·100% GPU·warm 0.13s, GTX 1660 SUPER 6GB 충분) + 단위테스트(account_recall·sample_flywheel mock 시그니처 갱신, 통과; attachment_idor 4건은 사전존재 실패·무관) + 적대 backend 패널 **ACCEPT-WITH-NITS**(REV-20260625T035655: 캐싱·sentinel·ds-scope·timeout 정확, cosine(raw,norm)=1.000000, 전용 cold-load 3.63s<20s). chat(추론) 경로 무영향 확인.
 - [x] **배포(라이브)**: embed-ollama up + bge-m3 pull + gateway 재시작(litellm repoint) + ask-worker/insight-worker/web `--no-cache` 재빌드·재생성(새 코드 baked). 라이브 임베딩 0.13초 복귀 확인.
 - [ ] 후속(NIT·범위 밖): ① `kb_retrieval.py:458` agent-run RAG 경로는 timeout 300초 유지(준비 단계 아님 — 일관성 위해 후속 검토). ② gateway→embed-ollama `depends_on` 부재(최초 cold-boot pull 동안 grounding 일시 graceful-skip — 1회성·무해, 추가 시 gateway 기동 지연 trade-off). ③ 주석의 "AGENT_TIMEOUT_SEC(300s)" 는 `.env` 운영값(코드 기본 60s). ④ Bedrock Titan 자격 복구 시 litellm 토글 후 embed-ollama 비활성화 가능.
+
+### insight-load-spread — insight/graph 부하 분산 (TASK-0308, Major §12.3, cross-feature 0002·0016, 2026-07-03)
+- [x] **근본원인 조사**: insight.py·relationships.py·metadata_graph.py 정독 + Explore 2 fan-out + 라이브 실측(그래프 57,000+ 요소, circuit_open 38 = 네트워크 단절, probe_edge dblog/timeout/definer 반복). 4축 확정.
+- [x] **축② probe 격리**(relationships.py): `_PROBE_MISSING_OBJECT_RE`+`unknown database` → 없는 DB negative 파단; transient `_backoff_validated`(last_validated_at 미래로 누적 backoff); `fetch_probe_candidates` backoff-window(`<= now()`) 제외. env `AGENT_RELATIONSHIP_PROBE_FAIL_BACKOFF_SEC`(3600).
+- [x] **축① scan skip**(insight.py): datasource 순회 `conn_health.should_fast_fail`(DOWN 확정) skip + circuit_open health 기록. telemetry `db_skipped_circuit`.
+- [x] **축③ graph sync batched+incremental**(metadata_graph.py, sync CLI): `_SYNC_MERGE_BATCH`(500) 커밋(fsync 5.7만→~114), `since`=updated_at watermark(agent_runtime.kv), CLI `--incremental`/`--full`.
+- [x] **축④ 부하 분산**(bin, .env.example): cron 30분 `--incremental` + 04:17 `--full` 이중, wrapper 인자 pass-through, jitter/knob 문서화.
+- [x] **검증**: 신규 단위 10(relationships 6 + metadata_graph 4) + 기존 회귀 0(test_relationships 57·units 10·insight health 66) + AST/`bash -n`. 적대 backend+qa 패널(REVIEW REV-20260703T093000-insight-load-spread).
+- [ ] **배포(승인 필요)**: agent 이미지 재빌드 + insight-worker/local-llm-edge 재기동 + `sudo bin/install-metadata-graph-sync-cron.sh` 재설치. 라이브 검증 docker stats/WALSync/probe_edge 로그.
+- [ ] verify-completion → commit/push → (PR·머지·배포 confirm) → 마감.

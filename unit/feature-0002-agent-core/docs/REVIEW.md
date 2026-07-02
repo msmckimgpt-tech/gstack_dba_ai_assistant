@@ -1260,3 +1260,15 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (Minor — 비파괴 문구 분리, BLOCKING 0).
 - Verification: §18.8 적대 패널 + py_compile + ruff + 회귀 테스트(상기).
 - Cross-ref: CHG-20260625T164701-ds-conn-circuit-msg / FUNCTION ds-conn-circuit-msg / TASK-20260625T164701-ds-conn-circuit-msg.
+
+## REV-20260703T093000-insight-load-spread [SUBAGENT:insight-load-spread-adversarial-backend-qa]
+- 대상: TASK-0308 insight/graph 부하 분산 4축 (relationships.py probe 격리 / insight.py scan skip / metadata_graph.py+CLI batched·incremental / bin·.env.example 분산).
+- Round: 8축 적대 검증 — ① probe backoff SQL 정확성, ② fetch_probe_candidates rotation 회귀, ③ regex 오탐, ④ sync_graph batching 안전성(autocommit toggle·부분커밋 멱등·pgbouncer·owned=False), ⑤ incremental 정합(dropped node·column staleness·watermark 실패), ⑥ watermark kv PK, ⑦ should_fast_fail scope_key 정합, ⑧ 테스트 충분성. 라이브 테스트 실행 + regex 13메시지/backoff 동역학 시뮬레이션 동반.
+- VERDICT: **ACCEPT-WITH-NITS** (BLOCKER 0, MAJOR 0). 4 메커니즘 기능 건전 — SQL 문법 정확(psycopg3, make_interval/GREATEST/timestamptz), scope_key 는 양측 `compute_scope_key(engine,host,port)` 동일 도출로 정합, batching 멱등·pgbouncer transaction-mode 안전(ag_catalog 완전수식), fail-open 기본값 안전(미초기화·비-DOWN·예외 → 정상 스캔), regex well-behaved(MySQL transient 문자열과 무교집합). Ship-able.
+- MINOR 반영(3건 전부 이번 cycle 처리):
+  - ① **backoff "exponential-ish" 주장 정정** → 실제는 **flat 3600s throttle**: fetch filter 가 `last_validated_at > now()` 후보를 제외하므로 창 만료 후에만 재프로브되고 그때 GREATEST 가 now()로 collapse(누적 불가). 코드 주석(`relationships.py` `_PROBE_FAIL_BACKOFF_SEC`/`_backoff_validated`)·REPORT 문구 정정(spin 차단 목적은 flat 으로 충분; 진짜 누적은 별도 fail-count 컬럼 필요 — 미채택 명시).
+  - ② **`--full` node prune 명확화**: broken 관계만 delete(status 변경→updated_at→incremental·full 반영), dropped 테이블/컬럼 **노드** prune 은 pre-existing 범위 밖(가산적 재생성 투영). `sync_graph` docstring·REPORT 정정.
+  - ③ **테스트 보강**: watermark set/get round-trip + scope 격리, exception→rollback→autocommit 복원 경로 추가(mock).
+- Verification: test_relationships **57** + metadata_graph units **10** + load_spread **6** PASS. 신규 단위 = relationships 3(unknown database regex 매칭·negative 파단, backoff-window fetch 제외) + relationships 수정 3(transient→backoff) + metadata_graph 6(since 증분 필터 유무·batched commit·owned autocommit 복원·rollback·watermark round-trip). AST/`bash -n` OK. DB 통합(psycopg 필요)은 post-deploy(코드 대조로 owned=False 경로 기존 동일 확인).
+- Human Approval Needed: 아니오(BLOCKER/MAJOR 0). 단 배포(agent 이미지 재빌드 + insight-worker/local-llm-edge 재기동 + cron 재설치)는 외부영향 — 사용자 confirm.
+- Cross-ref: CHG-20260703T093000-insight-load-spread / TASK-0308 / feature-0016 REPORT "graph sync 부하 분산" / ANCHOR 0002 §3 · 0016 §1 무충돌.

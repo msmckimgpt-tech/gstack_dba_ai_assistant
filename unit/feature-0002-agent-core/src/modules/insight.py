@@ -2091,6 +2091,23 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                 _ds_engine = (_ds_coords.get("engine") if _ds_coords else None)
                 _ds_default_db = (_ds_coords.get("default_db") if _ds_coords else None)
 
+                # insight-load-spread: endpoint 가 circuit-open(status=down, 연속 실패 확정)이면 이
+                # datasource 의 DB 순회를 통째로 skip 한다. 과거엔 매 tick(8s)마다 DOWN 데이터소스의 20+
+                # DB 를 connect_with_retry→즉시 DatasourceCircuitOpen→로그로 도배(워커 점유 + scan_failed
+                # 로그 노이즈)했다. should_fast_fail 은 순수 조회(부작용 없음)이고, background conn_health
+                # 모니터가 복구를 감지하면 status 가 내려가 다음 tick 부터 자동 재개된다(실질 backoff).
+                # health 는 circuit_open 으로 기록(관리콘솔 가시화 유지). MySQL 기본 DB(_ds_key is None)는 제외.
+                if _ds_key is not None and _ds_scope:
+                    try:
+                        from shared import conn_health as _conn_health
+                        if _conn_health.should_fast_fail(_ds_scope):
+                            _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, "circuit_open")
+                            scan_report["db_skipped_circuit"] = int(
+                                scan_report.get("db_skipped_circuit", 0) or 0) + 1
+                            continue
+                    except Exception:
+                        pass
+
                 # TASK-0220: MSSQL 은 database.schema.table 3계층 → 제품 등록 DB(catalog) 마다 재연결해
                 # 각각 스캔한다(fact_key 에 database 포함, set_active_database). MySQL/기본 DB 는 종전대로
                 # database 차원 없이 1회 순회([None]). MSSQL 인데 발견 DB 가 없으면(미바인딩) 스캔 skip —

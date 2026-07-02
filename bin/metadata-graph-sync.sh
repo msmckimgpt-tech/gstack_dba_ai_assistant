@@ -8,17 +8,18 @@
 # cutover 전엔 sync_graph 가 graceful no-op(비차단). Phase 5 에서 cron 으로 주기 호출 예정.
 #
 # Usage:
-#   bin/metadata-graph-sync.sh                 # 전체 scope 동기화
-#   bin/metadata-graph-sync.sh --scope <key>   # 특정 datasource scope 만
+#   bin/metadata-graph-sync.sh                     # 전체 scope 동기화(full)
+#   bin/metadata-graph-sync.sh --scope <key>       # 특정 datasource scope 만
+#   bin/metadata-graph-sync.sh --incremental       # 변경분만(부하 절감, insight-load-spread)
+#   bin/metadata-graph-sync.sh --full              # 전량(삭제/파단 반영)
+#   (모든 인자는 scripts/metadata_graph_sync.py 로 그대로 전달)
 #
 # Exit: 0 성공 / 1 부분오류 / 2 워커 컨테이너 부재
 set -euo pipefail
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-repo}"
-PASS_ARGS=()
-if [ "${1:-}" = "--scope" ] && [ -n "${2:-}" ]; then
-  PASS_ARGS=(--scope "$2")
-fi
+# insight-load-spread: --scope 뿐 아니라 --incremental/--full/--quiet 등 모든 인자를 pass-through.
+PASS_ARGS=("$@")
 
 for svc in insight-worker ask-worker; do
   c="${COMPOSE_PROJECT_NAME}-${svc}-1"
