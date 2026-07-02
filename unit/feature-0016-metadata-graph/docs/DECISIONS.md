@@ -243,4 +243,18 @@ source_of_truth: true
   - fitView(이웃 전체) 애니: 형제 테이블 다수에 맞춰 줌아웃돼 앵커가 작아짐 — additive 확장에서 이미 A3 가 폐기한 방향(기각).
   - 줌도 애니: zoom-anim + pan-anim 순차는 지연 체감(≈2×) — 팬만 애니, 판독 clamp 는 즉시(채택).
 - Supersedes: (graph-initview A3 의 즉시 focus 를 애니로 — 대체 아님, 정제)
+- Superseded By: (구현 메커니즘은 ADR-009 로 교정 — 결정 자체는 유지)
+
+
+## ADR-009 — 카메라 애니 구현: G6 per-call 애니 대신 manual rAF tween (graph config `animation:false` 게이팅 회피)
+- Status: Accepted
+- Date: 2026-07-02
+- Context: ADR-008(더블클릭 카메라 애니) 배포 후 사용자 재보고 — **애니 없이 여전히 순간이동**. 근본원인 실증: 그래프는 `new G6.Graph({animation:false})` 로 생성되는데(graph-g6 가 setData 레이아웃 셔플 방지 위해 의도적 설정), G6 v5 에서 이 **전역 `animation:false` 가 `focusElement`/`zoomTo` 의 per-call `animation` 인자까지 무효화**한다. 헤드리스 실증: 동일 그래프에서 `animation:false`→`focusElement({duration:400})`=2ms(즉시), `animation:true`→412ms(애니). 즉 ADR-008 의 `focusElement(fel, {duration:420})` 는 no-op 였다.
+- Decision: 전역 `animation` 을 켜면 setData 레이아웃 셔플(graph-g6 가 제거한 문제)이 재발하므로 그 길은 막혀 있다. `setOptions({animation:true})` 로 focus 직전만 토글하는 방법도 실증했으나(동작함), 그 창(420ms) 동안 폴 `_metaGraphRefreshStates`→`_metaG6Apply` rebuild(setData)가 끼면 레이아웃이 애니(셔플)돼 회귀 위험. → **G6 애니 시스템을 우회하는 manual rAF tween** 채택: `_metaGraphAnimateFocus(key, seq)` 가 앵커 canvas 중심(`getElementRenderBounds`)에서 뷰포트 중앙(`getSize()`/2)까지 client-px delta 를 `getViewportByCanvas` 로 구해, requestAnimationFrame 루프로 이징 누적 `translateBy` 한다. setData 미사용·전역상태 무변경이라 셔플/동시성 무관, seq 로 연타 중단, 미렌더/API 실패는 즉시 focus 폴백.
+- Consequences: 더블클릭 시 카메라가 앵커로 실제 부드럽게 팬(순간이동 제거) — ADR-008 의 의도가 비로소 실현. tween 수학이 G6 자체 `focus` 공식과 동일(뷰포트 delta·translateBy zoom-보정)임을 vendored 소스로 확증, 앵커 정중앙 안착(시뮬 오차 ≤1e-13px). §18.8 적대 6축(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀) BLOCKING 0. NIT 2건(420ms 중 2차 더블클릭+fetch실패 시 카메라 중간잔류 자가치유 / 동시 휠줌 시 정렬 어긋남) 수용. 완료 게이트=PB-0008 실 Windows(부드러운 팬 육안).
+- Alternatives:
+  - 전역 `animation:true`: setData 레이아웃 셔플 재발(graph-g6 회귀) — 기각.
+  - focus 직전 `setOptions({animation:true})` 토글 후 복원: 동작하나 420ms 창의 동시 setData(폴 rebuild)가 셔플 — 전역상태 토글의 경합 위험(기각).
+  - G6 per-call `focusElement({duration})`: 전역 animation:false 가 무효화(실증) — no-op(기각, ADR-008 의 잘못된 가정).
+- Supersedes: ADR-008 의 구현 수단(focusElement per-call 애니) — 결정(애니 채택)은 유지, 수단만 교정.
 - Superseded By:

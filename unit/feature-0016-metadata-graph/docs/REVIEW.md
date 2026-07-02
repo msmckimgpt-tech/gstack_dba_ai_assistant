@@ -503,3 +503,20 @@ source_of_truth: true
   - **NIT (수용)**: additive 확장 후 첫 프레임 앵커가 이전 카메라 밖일 수 있으나 focus 팬이 즉시 이어받아 체감 짧음(모델 reset 아님 — blank-frame 위험은 focus 함수 전용, expand 무관). depth-select 재확장도 이 경로 타서 동일 애니(의도적).
 - Verdict: **PASS-WITH-FIXES** — BLOCKING(라우팅 오편집) 교정 완료, 회귀 0. 카메라 애니는 실 브라우저 시각(PB-0008)이 최종 확인.
 - Human Approval Needed: graph-dblclick-cam 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.
+
+
+## REV-20260702T230000-ai-claude-feature-0016-graph-dblclick-cam2 [SUBAGENT: PASS] — 더블클릭 카메라 애니 no-op 근본수정(manual rAF tween) 적대 리뷰
+- Related Change: graph-dblclick-cam2 (MODIFY CHG-20260702-graph-dblclick-cam2-manual-tween, DECISIONS ADR-009). `_metaGraphAnimateFocus` 신규 + `_metaGraphExpand` 카메라 1줄 교체.
+- Method: general-purpose subagent 적대 6축 + **vendored G6 v5.1.1 소스 대조**(focusElement/translateBy/getViewportByCanvas 구현) + 이징 누적 수치 시뮬.
+- Verified:
+  - **no-op 원인 확정**: graph `animation:false` 가 per-call 카메라 애니 게이팅(헤드리스 실증 false=2ms/true=412ms) → §30 focusElement({duration}) no-op. 이번 manual rAF tween 은 G6 애니 우회라 실제 동작.
+  - **중앙 정확성(수학 증명)**: `getViewportByCanvas`(viewport px 출력) + `translateBy`(relative, `translate/zoom` world 이동 = zoom-독립 viewport px 팬) 좌표계 일치. delta 공식 `W/2-start` = G6 내장 `focus` 의 `center-anchorViewport` 와 **동일**. 이징 telescoping 합=`Dx*ease(1)=Dx`(ease(1)=1.0). 시뮬 오차 ≤1e-13px → 앵커 정중앙 안착.
+  - **종료 안전**: `p>=1`(dur=420 고정, performance.now monotonic) / seq 가드 / translateBy throw 3중. 무한루프 경로 없음.
+  - **동시성**: 후속 op(`++_opSeq`)→tween 즉시 return. 2.5s 폴 rebuild(`_metaG6Apply(false)`, opSeq 미증가, fit=false 카메라 불변, 결정론 레이아웃 위치 불변)→tween 계속 유효. setData/translateBy 무경합.
+  - **폴백**: `_metaRenderedIdFor` null→no-op; getElementRenderBounds/getViewportByCanvas throw·NaN→즉시 focus 폴백(내부 catch). throw 전파 없음. `renderedIds` 는 `_metaG6Apply` setData(→build)에서 갱신 + `await draw` 후 헬퍼 실행이라 fel 정합.
+  - **줌순서**: zoomTo(clamp) await 후 bounds/size/viewport 판독 — clamp 새 줌 기준. 정확.
+  - **회귀 없음**: 헬퍼는 expand(더블클릭)만 호출. loadRoots/search/fitClamped/우클릭 중심보기/줌툴바 불변. diff=헬퍼+expand 1줄(admin.js 단일).
+- Findings:
+  - **NIT (수용)**: ① 420ms tween 중 2차 더블클릭이 opSeq 를 올렸으나 그 op 가 fetch 실패로 rebuild 없이 early-return 시 첫 tween 이 중간 팬 위치에 카메라 잔류(다음 성공 op 가 교정 — 항구적 아님). ② tween 중 사용자 능동 휠줌 시 start 캡처 줌 기준이라 최종 정렬 어긋남(420ms 내 동시 조작 필요, 희귀). 둘 다 "부드러운 팬" 목표 불파괴.
+- Verdict: **PASS** — BLOCKING 0. ADR-008 의 no-op 를 manual tween 으로 실제 해소(번들 소스 대조 확증). NIT 2건 수용.
+- Human Approval Needed: graph-dblclick-cam2 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.

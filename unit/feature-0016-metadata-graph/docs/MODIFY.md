@@ -556,3 +556,14 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-008),TASK(§30),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장 경로). 데이터 API·스키마·마커·다른 fit 경로(loadRoots/검색/리사이즈/우클릭 중심보기) **불변**. `focusElement`/`zoomTo` 는 viewport transform 만이라 노드 재렌더·프리즈 무관(ADR-006 무간섭). 마이그레이션 없음. 검증: `node --check` PASS · G6 카메라 애니 API 헤드리스 검증(animation:false 그래프에서 per-call 애니 스펙 동작) · §18.8 적대 리뷰(라우팅 오류 적발→교정, 앵커 노드 렌더 보장 확인). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(더블클릭 부드러운 팬).
 - Rollback Notes: `_metaGraphExpand` focus 애니 인자를 `false` 로 환원 + cache-buster 이전값(graph-expand-perf). 데이터·API 무손상.
+
+## CHG-20260702-graph-dblclick-cam2-manual-tween
+- Date: 2026-07-02
+- Related Requirement: 사용자 재보고 — graph-dblclick-cam 배포 후에도 더블클릭 시 **애니 없이 카메라 순간이동**. 근본원인: graph config `animation:false` 가 per-call 카메라 애니(focusElement/zoomTo 의 animation 인자)까지 무효화 → 지난 `focusElement({duration:420})` 는 no-op. 정본: DECISIONS ADR-009.
+- Summary: 실증(headless: animation:false→focusElement 2ms 즉시 / true→412ms 애니)으로 no-op 원인 특정. 전역 animation ON 은 setData 셔플 재발, setOptions 토글은 tween 창 동시 rebuild 셔플 위험 → **G6 애니 우회 manual rAF tween** 채택. 신규 `_metaGraphAnimateFocus(key, seq)`: 앵커 `getElementRenderBounds` 중심 → `getViewportByCanvas` → 뷰포트 중앙(`getSize()`/2) delta 를 rAF 이징 누적 `translateBy`(420ms). `_metaGraphExpand` 가 no-op focusElement 대신 이 헬퍼 호출. setData 미사용·전역상태 무변경.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraphAnimateFocus` 신규 헬퍼 + `_metaGraphExpand` 카메라 블록 1줄 교체; +45/−13)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-dblclick-cam2`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-009),TASK(§31),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로(loadRoots/검색/리사이즈/우클릭 중심보기) **불변**. 마이그레이션 없음. tween=viewport transform 만(노드 재렌더·프리즈 무관, ADR-006 무간섭). 검증: `node --check` PASS · manual tween 헤드리스 실증(앵커 정중앙 26프레임/434ms) · §18.8 적대 6축 BLOCKING 0(G6 번들 소스 대조 — tween 수학=G6 focus 공식 동일). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(부드러운 팬 육안).
+- Rollback Notes: `_metaGraphAnimateFocus` 호출을 `focusElement(fel, false)`(즉시) 로 환원 + 헬퍼 제거 + cache-buster 이전값(graph-dblclick-cam). 데이터·API 무손상.
