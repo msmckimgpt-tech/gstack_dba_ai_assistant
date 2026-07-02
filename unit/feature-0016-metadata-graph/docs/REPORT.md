@@ -1,6 +1,6 @@
 # Report
 
-## 2026-07-03 · 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 — 즉시 시작 + 적응형 follow (graph-dblclick-latency, ADR-010)
+## 2026-07-03 · 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 — 즉시 시작 + 적응형 follow (graph-dblclick-latency, ADR-011)
 
 ### 배경
 graph-dblclick-cam2(manual tween) 배포 후 사용자 관찰: 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. "렌더러 한계인지" 질의.
@@ -20,6 +20,72 @@ graph-dblclick-cam2(manual tween) 배포 후 사용자 관찰: 팬은 부드러�
 - 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬하는지 육안 확인.
 
 ---
+
+## 2026-07-03 · AI 능동 분석 완료 테이블 역할 시각 표식 (node-role-viz, ADR-010, TASK §33)
+
+### 배경 (사용자 요청 2026-07-02)
+그래프 뷰 노드가 "단순 사각형+글자" 라 예측 어렵게 나열되어 가시성 저하 — **AI 능동 분석 완료 노드에
+그 테이블이 수행하는 역할을 명시하는 시각 표식**을 웹 리서치 기반으로 검토 후 자율 구성 (entry persona dispatch).
+
+### 리서치 → 설계
+- 범주 인코딩 표준 = **색(≤8종 식별 한계)+아이콘 중복 인코딩+범례**(yFiles 지식그래프 가이드·Tom Sawyer·
+  CatPAW), 팔레트 = **Okabe-Ito 8색**(색약 안전 표준), 분류체계 = 고전 DB 테이블 분류(master/reference/
+  transaction/history)의 게임 운영 DB 조정.
+- 8종 고정 NODE_ROLES: master 기준·정의📘 #0072B2 / account 계정·유저👤 #56B4E9 / transaction 거래·행위💳
+  #009E73 / log 로그·이력📜 #E69F00 / mapping 매핑·연결🔗 #CC79A7 / config 설정⚙️ #D55E00 / stats 집계·통계📊
+  #F0E442 / etc 기타◽ #6e7681. 밝은 색 3종은 라벨 어두운 글자.
+
+### 구현 (BE=feature-0002 · UI=feature-0003 cross-cut)
+- 데이터: LLM 분석 계약 `role` enum 추가 → worker `_resolve_role`(LLM 유효값 우선 → 휴리스틱 이름 1-pass·
+  본문 2-pass 폴백, **Table 한정**) → `node_analysis_jobs.role`(alembic 0031 비파괴 ADD). 기존 done 행은
+  insight-worker 틱 `backfill_roles()` 휴리스틱 백필(LLM 재호출 없음·멱등·자기종결).
+- 조회: get_scope_analysis_status(roles 집계)·get_run_status(roles+jobs.role)·get_node_analysis(role) +
+  bulk status API `roles` 노출.
+- FE: 분석완료 테이블 칩 fill=역할색 + 라벨 앞 아이콘 + 역할 범례 행 + 상세/진행 패널 역할 칩(미분석 teal·
+  보라 테두리 유지). 역할은 bake 스타일이라 캐시 서명 `#R=` suffix 로 refreshStates 가 **rebuild 승격**
+  (ADR-006 rAF coalesce·~80–200ms). cache-buster `20260703-node-role-viz`.
+
+### 검증
+- 단위 13건(test_node_analysis_role.py — 분류 계약·휴리스틱 우선순위·LLM 우선/폴백·Table 한정) + 기존
+  relevance 25건 회귀 0. 전체 pytest(0002+0003) exit 0.
+- headless harness(실 admin.js + mock API): 미분석 teal / 폴 경로 role bake / sync 경로 / 무효 role 방어
+  ALL PASS·pageerror 0 + 시각 스크린샷(8종 칩+범례).
+
+### 잔여
+- §18.8 적대 패널 → 배포(alembic 0031 + web·insight-worker 재빌드) → **라이브 PB-0008 실 Windows**(역할 칩
+  색/아이콘/범례/상세 패널) → TEST.md POST-DEPLOY Run append.
+
+---
+
+---
+
+## 2026-07-03 · 접힌 상태 관계 표시 + 관계 클릭 추적 + AI 능동 분석 연동 (graph-reltrace)
+
+### 배경 (사용자 후속 3건 — 육안 확인 후)
+사용자가 대화-중 학습된 관계(`account`↔`arenabegin`)가 그래프에 표시됨을 육안 확인. 다만 3건 요청:
+① 테이블을 **더블클릭(컬럼 펼침)하기 전까지 관계가 안 보임** — 접힌 상태에서도 표시. ② 상세 패널에서
+각 관계 클릭 시 **대상 테이블·컬럼을 추적**. ③ **AI 능동 분석으로도 작동**.
+
+### 진단
+- ①의 근본원인: REFERENCES 는 Column→Column 이라 `_metaG6Build` 엣지 조립이 **양끝 컬럼이 렌더된
+  경우에만** 그렸고, 스키마 펼침 응답(`schema_tables`)은 HAS_TABLE 만 반환 → 접힌 테이블엔 관계
+  데이터 자체가 모델에 부재.
+
+### 구현 (백엔드 1 + 프론트 3)
+- **백엔드** `schema_tables`: 스키마 펼침에 스키마 내 컬럼의 나가는 REFERENCES 엣지 추가(FK null-status
+  포함·broken 제외·cap). 라이브 AGE 실행으로 `account.AccountId→arenabegin.AccountId` 반환 확인.
+- **프론트 ①** `_metaG6Build`: REFERENCES 끝점을 렌더 id 로 해소 — 컬럼 미렌더 시 소속 테이블로 승격
+  (키에서 부모 도출) + 같은 두 끝점 다수 컬럼-쌍 dedupe(최강 상태·count). 접힌 테이블 간 관계 렌더.
+- **프론트 ②** 신규 `_metaGraphTraceRelation`: 관계 클릭 → 대상 테이블 이웃 로드·스키마 펼침·컬럼 전개
+  + 대상 컬럼 강조·카메라 focus. 상세 패널 "관계(N)" 행 + "관계 상세" 행 공통 추적.
+- **프론트 ③** `_metaGraphLoadNodeAnalysis`: AI 능동 분석 결과에 구조화된 관계를 추적 가능 행으로 노출.
+
+### 검증
+- 프론트 엣지 집계 격리 Node 11/11 PASS + 추적 행 산출 검증 + node --check + py_compile + 라이브 Cypher.
+- 완료 하드 게이트 = 배포 후 PB-0008 실 Windows(3항목 육안).
+
+### 잔여 (게이트)
+- §18.8 적대 패널 → verify-completion → PR/merge → 배포(web+worker) → PB-0008.
 
 ## 2026-07-02 · 더블클릭 카메라 애니 no-op 근본수정 — manual rAF tween (graph-dblclick-cam2, ADR-009)
 

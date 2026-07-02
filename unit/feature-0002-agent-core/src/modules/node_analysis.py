@@ -28,6 +28,88 @@ from shared import config as _cfg
 _log = logging.getLogger("node_analysis")
 
 
+# ── 테이블 역할 분류 (feature-0016 node-role-viz, 2026-07-02) ─────────────────
+# 그래프 뷰에서 "AI 능동 분석 완료" 테이블 노드에 역할을 시각 표식(역할색·아이콘·범례)으로 명시하기
+# 위한 고정 분류체계. 고전 DB 테이블 분류(master/reference/transaction/history)를 게임 운영 DB 에
+# 맞게 8종으로 조정 — FE(_META_ROLE, admin.js)·LLM 계약(NODE_ANALYSIS_PROMPT "role")과 1:1 정합.
+NODE_ROLES = ("master", "account", "transaction", "log", "mapping", "config", "stats", "etc")
+
+# 휴리스틱 분류 규칙 — (role, 이름 토큰, 본문(요약·활용) 키워드). **순서 = 우선순위**:
+#   log 를 transaction 보다 먼저 봐야 PurchaseLog 류가 log 로 잡힌다. 이름 신호가 본문 신호보다
+#   우선(2-pass) — 이름이 도메인 관례(…Log, …Config)를 가장 신뢰도 높게 드러낸다.
+_ROLE_RULES = (
+    ("log", ("log", "logs", "hist", "history", "audit", "trace"),
+     ("로그", "이력", "감사")),
+    ("stats", ("stat", "stats", "rank", "ranking", "agg", "summary", "daily", "weekly", "monthly"),
+     ("통계", "집계", "랭킹", "순위", "스냅샷")),
+    ("config", ("config", "conf", "setting", "settings", "option", "options", "env", "param", "params"),
+     ("설정", "옵션", "파라미터", "환경값")),
+    ("mapping", ("map", "mapping", "link", "bridge", "xref", "junction"),
+     ("매핑", "다대다", "n:m", "교차 참조", "연결 테이블")),
+    ("account", ("user", "users", "member", "account", "char", "character", "player", "avatar"),
+     ("계정", "유저", "사용자", "회원", "캐릭터", "플레이어")),
+    ("transaction", ("order", "pay", "payment", "purchase", "buy", "sell", "trade", "reward",
+                     "billing", "cash", "gacha", "txn", "transaction"),
+     ("결제", "구매", "지급", "거래", "주문", "보상", "판매", "청구")),
+    ("master", ("master", "code", "codes", "define", "def", "dict", "meta", "item", "items", "release"),
+     ("정의", "기준정보", "마스터", "사전", "코드표", "기준 테이블")),
+)
+
+
+def _role_valid(role) -> str | None:
+    r = str(role or "").strip().lower()
+    return r if r in NODE_ROLES else None
+
+
+def classify_role_heuristic(name, fqn, analysis=None) -> str:
+    """테이블명·분석문 키워드 기반 역할 추정 — LLM role 누락 폴백 + 기존 done 행 백필용(LLM 재호출 없음).
+
+    1-pass: 이름(name + fqn 마지막 세그먼트) 토큰을 _ROLE_RULES 우선순위대로 매칭.
+    2-pass: 이름 무매칭 시 분석문(summary/usage/relationships) 본문 키워드 매칭. 둘 다 없으면 'etc'.
+    """
+    name_tokens = set(_split_tokens(name)) | set(_split_tokens((fqn or "").rsplit(".", 1)[-1]))
+    for role, name_keys, _text_keys in _ROLE_RULES:
+        if name_tokens & set(name_keys):
+            return role
+    text = ""
+    if isinstance(analysis, dict):
+        text = " ".join(str(analysis.get(k) or "") for k in ("summary", "usage", "relationships"))
+    elif analysis:
+        text = str(analysis)
+    if text:
+        low = text.lower()
+        for role, _name_keys, text_keys in _ROLE_RULES:
+            if any(k in low for k in text_keys):
+                return role
+    return "etc"
+
+
+def _resolve_role(node_label: str, llm_obj, node_name, node_fqn) -> str | None:
+    """저장할 role 결정 — Table 노드만 분류(그 외 NULL). LLM 값 우선, 무효/누락은 휴리스틱 폴백."""
+    if (node_label or "") != "Table":
+        return None
+    role = _role_valid(llm_obj.get("role") if isinstance(llm_obj, dict) else None)
+    if role:
+        return role
+    return classify_role_heuristic(node_name, node_fqn, llm_obj if isinstance(llm_obj, dict) else None)
+
+
+# 마이그레이션 창 방어(적대 패널 B1): role 컬럼(alembic 0031) 미적용 DB + 신 코드 조합(롤링 순서 실수·
+# 롤백에서 downgrade 를 코드 revert 보다 먼저 실행)에서 role 참조 쿼리가 UndefinedColumn 으로 죽으면 —
+# (a) 분석 파이프라인이 LLM 비용 소진 후 전건 terminal-failed, (b) run 폴링이 404 로 오표시된다.
+# 각 쿼리 지점이 실패 시 role 미포함 legacy 쿼리로 1회 폴백해 창 안에서도 기능을 보존한다(role 만 생략).
+# 경고는 프로세스당 1회(로그 홍수 방지). autocommit 연결(기본)에서 실패 statement 는 트랜잭션을 오염시키지
+# 않으므로 폴백 재실행이 안전하다(비-autocommit 주입 conn 은 폴백도 실패 → 기존 예외 경로와 동일 강도).
+_ROLE_COL_WARNED = {"done": False}
+
+
+def _warn_role_column_once(where: str, exc) -> None:
+    if not _ROLE_COL_WARNED["done"]:
+        _ROLE_COL_WARNED["done"] = True
+        _log.warning("node_analysis role 컬럼 접근 실패(%s) — alembic 0031 미적용 창으로 보고 legacy 폴백. err=%r",
+                     where, exc)
+
+
 # ── 앵커-상대 관련도 (feature-0016 node-analysis-anchor) ──────────────────────
 # 일반어(도메인 식별력 없는 토큰) — 이름이 이것만 겹치는 이웃은 "단순히 컬럼 명칭이 같은" 경우라
 # 관련도로 인정하지 않는다(사용자 요구). id/uniqueid/seq/regdate 등 관용 컬럼명·구조어 위주.
@@ -454,8 +536,19 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                     model = (getattr(_cfg, "AGENT_NODE_ANALYSIS_MODEL", None)
                              or getattr(_cfg, "AGENT_INSIGHT_MODEL", None)
                              or getattr(_cfg, "OPENAI_MODEL", None))
-                    cur.execute("UPDATE node_analysis_jobs SET status='done', analysis=%s, model=%s, error=NULL "
-                                "WHERE id=%s", (analysis_text, (str(model)[:128] if model else None), jid))
+                    # node-role-viz: Table 노드 역할 분류(LLM "role" 우선, 무효/누락 휴리스틱 폴백) —
+                    #   그래프 뷰 시각 표식(역할색·아이콘)의 데이터 원천. 그 외 라벨은 NULL.
+                    role = _resolve_role((root.get("label") or node_label), obj, node_name, node_fqn)
+                    try:
+                        cur.execute("UPDATE node_analysis_jobs SET status='done', analysis=%s, model=%s, role=%s, "
+                                    "error=NULL WHERE id=%s",
+                                    (analysis_text, (str(model)[:128] if model else None), role, jid))
+                    except Exception as role_exc:
+                        # 마이그레이션 창(role 컬럼 부재) — LLM 결과를 버리지 않게 role 제외 UPDATE 폴백(B1).
+                        _warn_role_column_once("process_pending", role_exc)
+                        cur.execute("UPDATE node_analysis_jobs SET status='done', analysis=%s, model=%s, "
+                                    "error=NULL WHERE id=%s",
+                                    (analysis_text, (str(model)[:128] if model else None), jid))
                     cur.execute("UPDATE node_analysis_runs SET done = done + 1 WHERE run_id=%s", (run_id,))
                     rep["done"] += 1
                 else:
@@ -499,6 +592,48 @@ def process_pending(max_nodes=None, conn=None) -> dict:
             except Exception:
                 pass
     return rep
+
+
+def backfill_roles(limit=200, conn=None) -> int:
+    """role 도입(alembic 0031) 이전의 done Table 잡에 역할을 휴리스틱으로 1회 백필(LLM 재호출 없음).
+
+    insight-worker 틱마다 소량(limit) 처리 — 잔여 0 이면 SELECT 만 하고 즉시 반환(자기 종결).
+    휴리스틱 결과가 'etc' 여도 저장하므로 같은 행을 재선택하지 않는다(멱등·수렴 보장). 반환: 갱신 수."""
+    if not _cfg_enabled():
+        return 0
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return 0
+    updated = 0
+    try:
+        cur = c.cursor()
+        cur.execute("SELECT id, node_name, node_fqn, analysis FROM node_analysis_jobs "
+                    "WHERE status='done' AND role IS NULL AND node_label='Table' "
+                    "ORDER BY id LIMIT %s", (max(1, int(limit)),))
+        rows = cur.fetchall()
+        for jid, node_name, node_fqn, analysis_text in rows:
+            analysis = None
+            if analysis_text:
+                try:
+                    analysis = json.loads(analysis_text)
+                except Exception:
+                    analysis = str(analysis_text)
+            role = classify_role_heuristic(node_name, node_fqn, analysis)
+            cur.execute("UPDATE node_analysis_jobs SET role=%s WHERE id=%s", (role, jid))
+            updated += 1
+        cur.close()
+        if updated:
+            _log.info("node_analysis role backfill: %d행 (휴리스틱)", updated)
+    except Exception as exc:
+        # B2: 신규 쓰기 경로 — 마이그레이션 누락 등 반복 실패가 프로덕션 로그레벨에서 무신호가 되지 않게 warning.
+        _log.warning("backfill_roles_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return updated
 
 
 def _load_anchor(c, cur, run_id: str, cache: dict) -> dict:
@@ -640,26 +775,48 @@ def get_run_status(run_id: str, conn=None) -> dict | None:
             return None
         # 그래프 마커용 완료/진행 키는 **전량(cap 없이)** 조회 — node_budget 최대 1000 이라도 마커 누락 방지.
         #   키만 가져와 페이로드 작음(review fix: LIMIT 400 이 done_keys/running_keys 를 절단해 tail 노드 미표시).
-        cur.execute("SELECT node_key, status FROM node_analysis_jobs "
-                    "WHERE run_id=%s AND status IN ('done','running')", (run_id,))
-        done_keys, running_keys = [], []
-        for k, s in cur.fetchall():
-            (done_keys if s == "done" else running_keys).append(k)
+        #   node-role-viz: done 키의 role 도 함께 — 폴 중 완료되는 노드에 역할 표식을 라이브 적용.
+        done_keys, running_keys, roles = [], [], {}
+        try:
+            cur.execute("SELECT node_key, status, role FROM node_analysis_jobs "
+                        "WHERE run_id=%s AND status IN ('done','running')", (run_id,))
+            rows = cur.fetchall()
+        except Exception as role_exc:
+            # 마이그레이션 창(role 컬럼 부재) — 폴링 404 회귀 방지: role 없이 legacy 조회(B1).
+            _warn_role_column_once("get_run_status", role_exc)
+            cur.execute("SELECT node_key, status, NULL FROM node_analysis_jobs "
+                        "WHERE run_id=%s AND status IN ('done','running')", (run_id,))
+            rows = cur.fetchall()
+        for k, s, role in rows:
+            if s == "done":
+                done_keys.append(k)
+                if role:
+                    roles[k] = role
+            else:
+                running_keys.append(k)
         # 항목별 상세 리스트(진행 패널 표시분) — 분석중→완료→깊이·관련도 순, UI 표시분만 cap(패널은 running+최근 done 만 노출).
         #   relevance 도 함께 노출 — UI 가 "원래 대상과의 관련도" 로 우선순위를 표시할 수 있게(node-analysis-anchor).
-        cur.execute("SELECT node_key, node_label, node_name, node_fqn, status, depth, relevance "
-                    "FROM node_analysis_jobs WHERE run_id=%s "
-                    "ORDER BY (status='running') DESC, (status='done') DESC, depth ASC, relevance DESC, node_name ASC "
-                    "LIMIT 80", (run_id,))
+        _JOBS_SQL = ("SELECT node_key, node_label, node_name, node_fqn, status, depth, relevance{role_col} "
+                     "FROM node_analysis_jobs WHERE run_id=%s "
+                     "ORDER BY (status='running') DESC, (status='done') DESC, depth ASC, relevance DESC, node_name ASC "
+                     "LIMIT 80")
+        try:
+            cur.execute(_JOBS_SQL.format(role_col=", role"), (run_id,))
+            job_rows = cur.fetchall()
+        except Exception as role_exc:
+            _warn_role_column_once("get_run_status.jobs", role_exc)
+            cur.execute(_JOBS_SQL.format(role_col=", NULL"), (run_id,))
+            job_rows = cur.fetchall()
         jobs = [{"node_key": row[0], "node_label": row[1], "node_name": row[2],
                  "node_fqn": row[3], "status": row[4], "depth": row[5],
-                 "relevance": round(float(row[6]), 4) if row[6] is not None else None}
-                for row in cur.fetchall()]
+                 "relevance": round(float(row[6]), 4) if row[6] is not None else None,
+                 "role": row[7]}
+                for row in job_rows]
         cur.close()
         return {"run_id": r[0], "scope_key": r[1], "root_key": r[2], "root_name": r[3],
                 "depth_budget": r[4], "node_budget": r[5], "status": r[6],
                 "enqueued": r[7], "done": r[8], "failed": r[9],
-                "done_keys": done_keys, "running_keys": running_keys, "jobs": jobs}
+                "done_keys": done_keys, "running_keys": running_keys, "roles": roles, "jobs": jobs}
     except Exception as exc:
         _log.debug("get_run_status_failed err=%r", exc)
         return None
@@ -680,11 +837,20 @@ def get_node_analysis(scope_key: str, node_key: str, conn=None) -> dict | None:
         return None
     try:
         cur = c.cursor()
-        cur.execute("SELECT status, analysis, model, updated_at, run_id FROM node_analysis_jobs "
+        # node-role-viz(적대 패널 Q1): "최신 done" 선택은 updated_at 이 아니라 **id(삽입 순 = 최신 run)**.
+        #   backfill_roles 의 UPDATE 가 updated_at 트리거를 발화시켜 과거 run 행이 재분석 행보다 "최신"으로
+        #   역전되던 결함 차단(get_scope_analysis_status 의 집계 정렬도 동일 기준).
+        _SEL_SQL = ("SELECT status, analysis, model, updated_at, run_id{role_col} FROM node_analysis_jobs "
                     "WHERE scope_key=%s AND node_key=%s "
-                    "ORDER BY (status='done') DESC, updated_at DESC LIMIT 1",
-                    (scope_key or "common", node_key))
-        r = cur.fetchone()
+                    "ORDER BY (status='done') DESC, id DESC LIMIT 1")
+        try:
+            cur.execute(_SEL_SQL.format(role_col=", role"), (scope_key or "common", node_key))
+            r = cur.fetchone()
+        except Exception as role_exc:
+            # 마이그레이션 창(role 컬럼 부재) — 상세 패널 503 회귀 방지: role 없이 legacy 조회(B1).
+            _warn_role_column_once("get_node_analysis", role_exc)
+            cur.execute(_SEL_SQL.format(role_col=", NULL"), (scope_key or "common", node_key))
+            r = cur.fetchone()
         cur.close()
         if not r:
             return {"status": "none", "analysis": None}
@@ -695,7 +861,8 @@ def get_node_analysis(scope_key: str, node_key: str, conn=None) -> dict | None:
             except Exception:
                 analysis = {"summary": str(r[1])}
         return {"status": r[0], "analysis": analysis, "model": r[2],
-                "updated_at": r[3].isoformat() if r[3] else None, "run_id": r[4]}
+                "updated_at": r[3].isoformat() if r[3] else None, "run_id": r[4],
+                "role": r[5]}
     except Exception as exc:
         _log.debug("get_node_analysis_failed err=%r", exc)
         return None
@@ -711,9 +878,10 @@ def get_scope_analysis_status(scope_key: str, node_keys=None, conn=None) -> dict
     """스코프 내 노드들의 최신 분석 상태를 **일괄** 집계 — 그래프 초기 렌더/검색/확장 시
     마커(보라 '분석됨'·주황 '분석중')를 노드 클릭 없이 즉시 적용하기 위함.
 
-    반환 {done_keys:[...], running_keys:[...]}:
+    반환 {done_keys:[...], running_keys:[...], roles:{node_key:role}}:
       - done_keys    = 완료(done) 잡이 하나라도 있는 node_key
       - running_keys = done 은 없고 pending/running 잡이 있는 node_key
+      - roles        = done node_key 의 최신 역할 분류(node-role-viz — Table 만, NULL 제외)
     node_keys 지정 시 그 부분집합만 조회(대형 그래프 payload 축소). PG 미가용/예외 → None(코어 비차단)."""
     c, owned = _rw_conn(conn)
     if c is None:
@@ -726,20 +894,31 @@ def get_scope_analysis_status(scope_key: str, node_keys=None, conn=None) -> dict
         if keys:
             where += " AND node_key = ANY(%s)"
             params.append(keys)
-        cur.execute(
-            "SELECT node_key, "
-            "bool_or(status='done') AS has_done, "
-            "bool_or(status IN ('pending','running')) AS has_active "
-            "FROM node_analysis_jobs WHERE " + where + " GROUP BY node_key",
-            tuple(params))
-        done_keys, running_keys = [], []
-        for k, has_done, has_active in cur.fetchall():
+        # role = 노드의 최신 done 잡(id DESC — Q1: backfill 의 updated_at bump 로 과거 run 역전 차단).
+        _AGG_SQL = ("SELECT node_key, "
+                    "bool_or(status='done') AS has_done, "
+                    "bool_or(status IN ('pending','running')) AS has_active{role_col} "
+                    "FROM node_analysis_jobs WHERE " + where + " GROUP BY node_key")
+        _ROLE_AGG = (", (array_agg(role ORDER BY id DESC) "
+                     " FILTER (WHERE status='done' AND role IS NOT NULL))[1] AS role")
+        try:
+            cur.execute(_AGG_SQL.format(role_col=_ROLE_AGG), tuple(params))
+            rows = cur.fetchall()
+        except Exception as role_exc:
+            # 마이그레이션 창(role 컬럼 부재) — 마커 회귀 방지: role 없이 legacy 집계(B1).
+            _warn_role_column_once("get_scope_analysis_status", role_exc)
+            cur.execute(_AGG_SQL.format(role_col=", NULL AS role"), tuple(params))
+            rows = cur.fetchall()
+        done_keys, running_keys, roles = [], [], {}
+        for k, has_done, has_active, role in rows:
             if has_done:
                 done_keys.append(k)
+                if role:
+                    roles[k] = role
             elif has_active:
                 running_keys.append(k)
         cur.close()
-        return {"done_keys": done_keys, "running_keys": running_keys}
+        return {"done_keys": done_keys, "running_keys": running_keys, "roles": roles}
     except Exception as exc:
         _log.debug("get_scope_analysis_status_failed err=%r", exc)
         return None

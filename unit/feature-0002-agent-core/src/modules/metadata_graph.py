@@ -675,6 +675,36 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
             if skey and tkey:
                 result["edges"].append({"source": skey, "target": tkey, "type": "HAS_TABLE",
                                         "cardinality": None, "edge_source": None})
+        # graph-reltrace ①: 스키마 내 컬럼에서 나가는 REFERENCES 엣지도 함께 반환한다.
+        #   기존에는 schema_tables 가 HAS_TABLE 만 줘서, 스키마를 펼쳐도(테이블 접힘) 관계 엣지가
+        #   모델에 없어 "테이블 더블클릭 전까지 관계 미표시" 였다. 여기서 Column→Column REFERENCES 를
+        #   실어 주면 프론트가 컬럼 키에서 소속 테이블을 도출해 **접힌 테이블 간 관계**를 그린다.
+        #   FK(status NULL) 포함, broken 만 제외(sync 삭제 + 감쇠 창 방어). 캡으로 폭주 차단.
+        try:
+            edge_cap = min(limit * 4, _NEIGHBOR_NODE_CAP * 4)
+            erows = _cypher(cur,
+                f"MATCH (s:Schema)-[:HAS_TABLE]->(:Table)-[:HAS_COLUMN]->(c:Column)"
+                f"-[r:REFERENCES]->(c2:Column) "
+                f"WHERE s.scope_key = {sc} AND s.key = {sk} "
+                f"AND (r.status IS NULL OR r.status <> 'broken') "
+                f"RETURN c.key, c2.key, r.status, r.weight, r.source, r.cardinality "
+                f"LIMIT {edge_cap}", 6)
+            eseen = set()
+            for er in erows:
+                cs = _unwrap(er[0]); ct = _unwrap(er[1])
+                if not cs or not ct:
+                    continue
+                ekey = (cs, ct)
+                if ekey in eseen:
+                    continue
+                eseen.add(ekey)
+                result["edges"].append({
+                    "source": cs, "target": ct, "type": "REFERENCES",
+                    "cardinality": _unwrap(er[5]), "edge_source": _unwrap(er[4]),
+                    "weight": _unwrap(er[3]), "status": _unwrap(er[2]),
+                })
+        except Exception as exc:
+            _log.debug("schema_tables_refs_failed err=%r", exc)   # 관계 부재는 비차단(테이블은 이미 반환)
         result["nodes"] = list(nodes.values())
         cur.close()
     except Exception as exc:

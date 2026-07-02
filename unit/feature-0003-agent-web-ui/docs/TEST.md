@@ -182,7 +182,7 @@ docker compose run --rm \
   - **후속(graph-dblclick-latency)**: 라이브서 팬 동작 확인됨. 잔여 = 팬 시작 ~350ms 텀 → 아래 TASK-20260703 에서 즉시 시작 + 적응형 follow 로 개선.
 
 ### TASK-20260703-graph-dblclick-latency 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (Major §12.3, 2026-07-03, feature-0016 cross-cut) — **Environment: Windows-browser (반응성은 실 브라우저 체감 — de-risk=헤드리스 실증+적대7축 + 라이브 PB-0008 배포 후 잔여)**
-- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 사용자 후속(cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 ~350ms 텀 뒤 시작(답답). 변경: admin.js `_metaGraphAnimateFocus` 적응형 follow 재작성 + `_metaGraphExpand` 팬 fetch 전 fire-and-forget 시작 + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-010 · MODIFY CHG-20260703-graph-dblclick-latency.
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 사용자 후속(cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 ~350ms 텀 뒤 시작(답답). 변경: admin.js `_metaGraphAnimateFocus` 적응형 follow 재작성 + `_metaGraphExpand` 팬 fetch 전 fire-and-forget 시작 + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-011 · MODIFY CHG-20260703-graph-dblclick-latency · TASK §34(병렬 재번호 §13.1).
 - **진단**: 팬이 파이프라인 맨 끝(fetch~135ms + setData/draw~200ms 뒤)에서 시작 → ~350ms 텀. 앵커는 이미 렌더인데 대기.
 - **구조·구문**: `node --check admin.js` PASS. diff = `_metaGraphAnimateFocus` 재작성 + `_metaGraphExpand` 팬 호출 위치 이동(2 hunk, 다른 카메라 경로 불변).
 - **헤드리스 실증**: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**(적응형 follow 가 이동 타겟 추종).
@@ -1503,7 +1503,6 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **배포 후 최종 확인(필수)**: web 재빌드·재배포(deploy_scope: included) 후 (a) baked 자산 검증 — `GET /static/app.js?v=20260702-attach-count-scope` 서빙 + 4개 `_renderAttachmentPills()` 훅 마커 확인, (b) **사용자 실화면 인터랙션 확인 요망**: ① 대화 A 에 파일 첨부 → "+" 열어 배지 개수 확인 → "새 대화" 클릭 → "+" 배지 **비워짐** / ② 대화 A 첨부 후 다른 기존 대화 B(첨부 없음) 전환 → 배지 비워짐, 첨부 있는 B 면 B 개수 / ③ 첨부 있는 활성 대화 **보관/나가기** 후 다른 대화 랜딩 → 배지가 삭제 대화 개수 잔류 안 함.
 - **Pass/Fail: 정적 PASS(코드정합·적대검증) · 라이브 = 배포 후 사용자 실화면 확인 대기**. CHECK#13(PB-0008 Windows-browser) 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).
 
-<<<<<<< HEAD
 ### Run (2026-07-02) — graph-ctxmenu: 메타데이터 그래프 뷰 노드 우클릭 상세 상호작용 (Major §12.3 — frontend-only, 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §24)
 - **정적·dev-loop 검증 PASS**: `node --check admin.js` PASS + WSL-headless-harness(그래프 블록 + 실 admin.html 마크업 + mock apiFetch) **28/28 PASS** — 네이티브 우클릭 이벤트 경로(canvas capture preventDefault + G6 node/combo/edge/canvas:contextmenu)·kind 별 메뉴·관계 상세 패널(방향·신뢰/추정 w·근거·로컬 조인 컬럼·행 클릭 이동)·중심 보기 지속 칩·1회성 hop 확장·기존 클릭/더블클릭/접기 회귀·콘솔 에러 0. 상세: `unit/feature-0016-metadata-graph/docs/TEST.md` graph-ctxmenu 절.
 - **§18.8**: ux/design/qa 3인 적대 패널 — MAJOR 3 전건 수정(엣지 우클릭 메뉴·로컬 조인 컬럼 표기·중심 보기 지속 칩). REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu (feature-0016 REVIEW.md).
@@ -1511,7 +1510,7 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **Pass/Fail: 정적·dev-loop·적대패널 PASS · 라이브 = 배포 후 PB-0008 실측 대기**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).
 - **[POST-DEPLOY 갱신 2026-07-02] PB-0008 Windows-browser 라이브 실측 PASS**: PR #538 main 병합(16fc1598) → deploy-web.sh 무중단 롤링(web-a/web-b git_commit=16fc1598, soak 90s 통과) → 자산 서빙 검증(`admin.js?v=20260702-graph-ctxmenu2` 신규 심볼 10건·`styles.css?v=20260702-graph-ctxmenu` 신규 클래스 20건·admin.html 버스터 정합). **실 Windows 브라우저(win-browser relay, Chrome 149 — Playwright eval 회귀 해소 확인) 라이브 실측**: 로그인 세션에서 메타데이터 > 그래프 뷰 → 데이터소스 `mssql-06656002eda6`(실데이터 239~258노드) 전환 후 ① **테이블 노드 우클릭(pointer 시퀀스) → 컨텍스트 메뉴 전 항목 표시**(dt_MonsterDrop — 배지·상세 보기 포커스 링·관계 상세·관계 확장 1/2/3-hop chips·중심 보기·컬럼 펼치기·AI 능동 분석·FQN 복사) ② **관계 상세 패널 렌더**(해당 노드 관계 0 → 빈 상태 안내 정상; 관계 행·신뢰 배지·근거·행 클릭 이동은 dev-loop harness 28/28 정본) ③ **중심 보기(메뉴 경유) → 지속 칩 "🎯 중심 보기: dbo ✕ 전체 보기" + 258노드 부분 그래프 → ✕ 클릭 → roots 복귀·칩 제거** ④ **스키마 클러스터 우클릭 메뉴**(클러스터 상세·스키마명 복사) ⑤ **Escape dismiss**. 브라우저 기본 메뉴 차단 확인(캔버스 영역 preventDefault). 스크린샷 4매: `artifacts/feature-0016-metadata-graph/20260702-graph-ctxmenu-pb0008/pb-{1..4}-*.png`. → CHECK#13 실충족.
 - **비고(라이브 데이터 상태)**: 현재 roots 투영은 REFERENCES 엣지 희소(게임 DB FK 미선언 — 알려진 상태). 관계 행이 채워진 패널·엣지 우클릭 메뉴는 harness(실 응답 shape mock) 28/28 로 검증 — 추정 관계 축적 후 라이브 재확인 권장.
-=======
+
 ### Run (2026-07-02) — TASK-20260702-aiops-activity-paging: 활동 페이징 + main agent latency (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
 - **단위 PASS**: `tests/test_ai_ops.py` **15/15**(신규 5) — `_query_activity` cursor 미지정(has_more→next_cursor=마지막 id, WHERE 없음, ORDER BY id DESC) / cursor 지정(WHERE id<%s, params=(cursor, limit+1), no-more→next_cursor null) / activity 엔드포인트 데이터(items limit + next_cursor) / PG degrade(200, items 빈, next_cursor null) / 권한 403(console.access-only, TestClient). agent latency 는 기존 `test_record_llm_usage_latency_column`(passthrough) 커버.
 - **회귀 PASS**: `test_route_parity_p5b`(골든 **195**, 신규 `/api/admin/ai-ops/activity` 반영) · permission 16 · dashboard 20 · usage 12 — 합 66 PASS. 전체 collection 무오류(agent_core 변경 import 포함).
@@ -1519,7 +1518,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **§18.8**: 2-렌즈 적대 패널(agent_core hot-path + 페이징 backend / 프론트 XSS·더보기) — REV-20260702T180000-aiops-activity-paging.
 - **Environment: Windows-browser (PB-0008)** — 배포 후 라이브 실측 예정(cache-buster admin.js bump): AI 운영 현황 → '최근 활동' **'더 보기' 클릭 → 과거 활동 append**(중복/누락 없이) + next_cursor 소진 시 '과거 기록 끝' + main agent 신규 호출의 latency 기록 확인 + 스크린샷.
 - **Pass/Fail: PASS(단위·회귀·정적·적대패널)**. CHECK#13(PB-0008)는 배포 후 '더 보기' 실측으로 충족 예정.
->>>>>>> origin/main
+
+### Run (2026-07-03) — graph-reltrace: 접힌 상태 관계 표시 + 관계 클릭 추적 + AI 능동 분석 연동 (Major §12.3 — frontend feature-0003 admin.js/styles/html + cross-unit feature-0002 metadata_graph 투영 / 문서 정본 feature-0016-metadata-graph TASK §32)
+- **정적·격리 검증 PASS**: `node --check admin.js` PASS + `py_compile metadata_graph.py` PASS + 신규 함수 참조 심볼 전수 정의 확인. **엣지 집계 로직 격리 Node 11/11 PASS**(접힘=테이블-레벨 승격·펼침=컬럼-레벨·혼합·미렌더 graceful·다수 컬럼쌍 dedupe/trusted 승급·intra-table 제외) + `_metaGraphRelTraceRowsHTML` 추적 행 산출(data-trace 대상 정확·방향화살표·힌트). **백엔드 라이브 AGE**: dblog 스키마 신규 REFERENCES Cypher 실행 → `account.AccountId→arenabegin.AccountId`(conversation·candidate) 반환(FK null-status 포함·broken 제외·34-47ms 실측).
+- **§18.8**: frontend + backend+qa 2렌즈 적대 패널 — frontend PASS-WITH-FIXES(MAJOR data-trace 따옴표 이스케이프 + MINOR 용어행 오라우팅·looksColumn 취약 전건 수정) / backend PASS(라이브 AGE 실측 확정). REV-20260703T152607-ai-root-feature-0016-graph-reltrace (feature-0016 REVIEW.md).
+- **Environment: Windows-browser (PB-0008)** — **배포 후 라이브 실측 예정(커밋 시점 미수행 사유 명시, 카고컬트 방지)**: 본 변경은 web 이미지에 baked 되는 정적 자산(admin.js/styles.css/admin.html) + 백엔드 metadata_graph 투영이고, 배포 스파인 `bin/deploy-web.sh` 는 origin/main HEAD 만 배포하므로 **머지 전 라이브 반영 불가**. cycle-finalize(main 병합) → web-a/web-b + insight/ask-worker 재배포(cache-buster admin.js/styles.css `?v=20260703-graph-reltrace` 신자산 강제 로드 + 백엔드 schema_tables REFERENCES 활성) → 실 Windows 브라우저(win-browser relay, Chrome 149)로 **① 접힌 상태 테이블 간 관계 엣지 표시**(더블클릭 전) **② 상세 패널 "관계(N)" 행 클릭 → 대상 테이블·컬럼 추적**(대상 강조·카메라 이동) **③ AI 능동 분석 결과의 추적 가능 관계 행** 실측하고 본 Run 에 POST-DEPLOY 갱신을 기록한다. (canvas 노드 클릭의 무인 자동화가 막히면 CDP 실좌표 클릭 + 스크린샷으로 실측.)
+- **Pass/Fail: 정적·격리(11/11)·라이브 Cypher·적대패널 PASS · 라이브 = 배포 후 PB-0008 실측 대기**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).
+- **비고(사전 결함 정리)**: 본 파일(feature-0003 TEST.md)에 origin/main 부터 미해결 병합 충돌 마커(`<<<<<<< / ======= / >>>>>>>`, graph-ctxmenu ↔ aiops-activity-paging Run)가 잔존해 있어, 두 Run 을 모두 보존하는 방향으로 함께 해소함(본 cycle 산출 아님·정리).
 
 ### Run (2026-07-02) — schema-card-ctxmenu: 스키마 카드 우클릭 + 카드 라벨 압축 (Minor §12.3 — frontend-only, 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §26)
 - **정적·dev-loop 검증 PASS**: `node --check admin.js` PASS + WSL-headless-harness **ctxmenu 10/10 PASS**(카드 라벨=스키마명 전용+개수 우상단 badge·접힌 카드 우클릭 메뉴 펼치기/클러스터 상세/스키마명 복사·펼친 스키마 접기 항목·빈 스키마 badge=0·에러 0) + **graph-initview 회귀 31/31 PASS**. 큰 수(8122) badge 넘침·크래시 없음 확인. 상세: `unit/feature-0016-metadata-graph/docs/TEST.md` schema-card-ctxmenu 절.
@@ -1534,3 +1539,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **jsdom DOM 렌더 검증(대체)**: `node verify_release_notes.mjs` — passed 33(전체 그룹 20·07-02 그룹 head 펼침·07-01 접힘·카운트 배지=항목수·관리 62/작업 85·work+common 96·XSS 제목/summary esc·빈 releases 가드) / failed 1(pre-existing admin release-notes pane `overflow-y:auto` CSS 규칙 — data-only 변경 무관, baseline 동일). `node --check release-notes-data.js` PASS.
 - **원천 UI 변경 07-02 PB-0008(provenance)**: 본 블록이 announce 하는 화면 변화 중 graph-ctxmenu(PR#538)·graph-initview·search-badge(PR#544)는 각 feature cycle 이 실 Windows-browser 로 검증 PASS(위 §3 Run 기록). G6 v5 렌더러 전면 교체·rel-selfheal·더블클릭 카메라 팬은 배포 후 사용자 실화면 확인 대기.
 - **Pass/Fail: PASS(콘텐츠 doc-only 정적+jsdom 검증)**. CHECK#13(PB-0008 Windows-browser) 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 계획 기록).
+
+### Run (2026-07-03) — node-role-viz: AI 능동 분석 완료 테이블 역할 시각 표식 (Major §12.3 — 코드 거주 feature-0002/0003 / 문서 정본 feature-0016-metadata-graph TASK §33, ADR-010)
+- **정적·단위·harness 검증 PASS**: `node --check admin.js` PASS · 신규 단위 test_node_analysis_role.py 10건 + relevance 28건 회귀 0 (합 38 PASS) · 전체 pytest(0002+0003) exit 0 · WSL-headless-harness(실 admin.html/admin.js/g6.min.js + mock API) 4 시나리오 ALL PASS·pageerror 0(미분석 teal 원형 / 폴 경로 role bake 칩색·아이콘·라벨색·캐시서명 / sync 경로 / 무효 role 방어) + 시각 스크린샷(역할 8종 칩+범례). 상세: `unit/feature-0016-metadata-graph/docs/TEST.md` node-role-viz 절.
+- **§18.8**: 적대 패널 4렌즈(backend/frontend/ux·design/qa) — 결과는 feature-0016 REVIEW.md REV 항목.
+- **Environment: Windows-browser (PB-0008)** — **배포 후 라이브 실측 예정(커밋 시점 미수행 사유 명시, 카고컬트 방지)**: 본 변경은 web 이미지 baked 정적 자산 + insight-worker 코드 + alembic 0031 이며 deploy-web.sh 는 origin/main HEAD 만 배포 — **머지 전 라이브 반영 불가**. cycle-finalize(main 병합) → alembic 0031 + web·insight-worker 재배포(cache-buster `admin.js?v=20260703-node-role-viz`) → 백필 role 데이터 생성 후 실 Windows 브라우저로 역할 칩 색/아이콘/범례/상세 패널 역할 칩을 실측하고 본 Run 에 POST-DEPLOY 갱신을 기록한다.
+- **Pass/Fail: 정적·단위·harness PASS · 라이브 = 배포 후 PB-0008 실측 대기**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).

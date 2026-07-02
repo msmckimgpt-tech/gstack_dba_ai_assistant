@@ -699,21 +699,99 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 ### 31.3 검증
 - [x] T31.5 manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS.
 - [x] T31.6 **§18.8 적대 6축**(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀): BLOCKING 0. G6 번들 소스 대조 — tween 수학=G6 자체 `focus` 공식 동일(앵커 정중앙 오차 ≤1e-13px). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 [SUBAGENT].
-- [x] T31.7 배포 + 라이브 PB-0008: **팬 동작 확인**(부드러운 이동). 잔여 = 팬 시작 ~350ms 텀(답답) → §32 로 개선.
+- [x] T31.7 배포 + 라이브 PB-0008: **팬 동작 확인**(부드러운 이동). 잔여 = 팬 시작 ~350ms 텀(답답) → §34 로 개선.
 
-## 32. graph-dblclick-latency — 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (2026-07-03, 사용자 후속 보고)
-사용자 관찰(graph-dblclick-cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. 정본: DECISIONS ADR-010, MODIFY CHG-20260703-graph-dblclick-latency.
+## 32. graph-reltrace — 접힌 상태 관계 표시 + 관계 클릭 추적 + AI 능동 분석 연동 (2026-07-03, 사용자 후속 요청)
+
+### 32.0 맥락 (사용자 요청 3건)
+- 이슈: 테이블을 **더블클릭(컬럼 펼침)하기 전까지 연결 관계가 그래프에 나타나지 않음** — REFERENCES 는
+  Column→Column 이라 두 테이블이 컬럼까지 펼쳐져야만 엣지가 렌더되던 구조(진단: `_metaG6Build` 엣지
+  조립이 양끝 노드 렌더 시에만 + `schema_tables` 가 HAS_TABLE 만 반환).
+- 요구 ①: **테이블이 접힌 상태에서도 연결 관계 표시**.
+- 요구 ②: **상세정보 패널에서 각 관계 클릭 시 대상 테이블·컬럼을 추적**(그래프에서 따라가기).
+- 요구 ③: **AI 능동 분석으로도 작동**.
+- 등급 **Major**(cross-cut 프론트 feature-0003 admin.js + 백엔드 feature-0002 metadata_graph 투영 1건 추가;
+  데이터 비파괴·마이그레이션 0). 정본: 본 TASK §32 · MODIFY CHG-20260703T · REVIEW REV-20260703T.
+
+### 32.1 구현
+- [x] T32.1 **백엔드**(metadata_graph.py `schema_tables`): 스키마 펼침 응답에 스키마 내 컬럼에서 나가는
+      **REFERENCES 엣지**(Column→Column, FK null-status 포함·broken 제외·cap)를 추가. 접힌 테이블에도
+      관계 데이터가 모델에 오도록.
+- [x] T32.2 **프론트 ①**(admin.js `_metaG6Build` 엣지 조립): REFERENCES 끝점을 **렌더된 id 로 해소** —
+      컬럼 렌더 시 컬럼-레벨, 미렌더 시 **소속 테이블로 승격**(키 문자열에서 부모 도출, 컬럼 노드 불요).
+      같은 두 렌더 끝점의 다수 컬럼-쌍은 하나로 dedupe(최강 상태 채택·count·pairs). → 접힌 테이블 간
+      관계 엣지 렌더. intra-table 자기참조 제외.
+- [x] T32.3 **프론트 ②**(신규 `_metaGraphTraceRelation`): 관계 클릭 → 대상 테이블을 이웃과 함께 화면에
+      가져오고(스키마 펼침) 컬럼 전개 + **대상 컬럼 강조 + 카메라 focus**. 상세 패널 "관계(N)" 행 +
+      기존 "관계 상세" 행이 공통 호출(showDetail→trace 통일). `_metaGraphBindTraceRows` 공용 바인더.
+- [x] T32.4 **프론트 ③**(`_metaGraphLoadNodeAnalysis` done): AI 능동 분석 결과 박스에 LLM prose 옆으로
+      **구조화된 관계를 추적 가능 행**(`_metaGraphRelTraceRowsHTML`)으로 노출 → 분석 결과에서도 대상 추적.
+      (AI 능동 분석 백엔드는 이미 REFERENCES 를 따라 이웃 재귀 — 그 관계를 UI 로 추적 가능하게 표면화.)
+- [x] T32.5 styles.css 추적 행 hover·"🔎 추적" 힌트 + admin.html 캐시버스터 `20260703-graph-reltrace`.
+
+### 32.2 검증
+- [x] T32.6 백엔드 신규 Cypher 라이브 AGE 실행: dblog 스키마에서 `account.AccountId → arenabegin.AccountId`
+      (conversation·candidate) 반환 확인.
+- [x] T32.7 프론트 엣지 집계 로직 격리 Node 검증 **11/11 PASS**(접힘=테이블승격·펼침=컬럼레벨·혼합·미렌더
+      graceful·dedupe/trusted승급·intra-table제외) + `_metaGraphRelTraceRowsHTML` 추적행 산출 검증(data-trace
+      대상 정확) + `node --check` admin.js + py_compile metadata_graph.py + 참조 심볼 전수 정의 확인.
+- [ ] T32.8 §18.8 적대 리뷰 패널(frontend/backend/qa) + verify-completion.
+- [ ] T32.9 배포(web 재빌드; 백엔드 포함이라 워커/web) + **PB-0008 실 Windows**: 접힌 상태 관계 표시 ·
+      관계 클릭 추적(대상 테이블·컬럼 강조) · AI 능동 분석 결과 추적 행 육안 확인.
+
+## 33. node-role-viz — AI 능동 분석 완료 노드 테이블 역할 시각 표식 (2026-07-02, entry persona dispatch)
+사용자 요청: 그래프 뷰 노드가 단순 사각형+글자라 가시성이 떨어짐 — **AI 능동 분석이 완료된 노드에 그 테이블이
+수행하는 역할을 명시적으로 알 수 있는 시각 표식**을 웹 리서치 기반으로 구성. 정본: DECISIONS ADR-010,
+MODIFY CHG-20260703-node-role-viz.
+등급: **Major**(다중 파일 + alembic 0031 비파괴 ADD COLUMN — FUNCTION.md §12 사전승인 범위 내).
+
+### 33.1 웹 리서치 → 설계 (ADR-010)
+- [x] T33.1 리서치: 범주 인코딩은 **색(≤8종)+아이콘 중복 인코딩+범례**가 표준(yFiles 지식그래프 가이드·
+      Tom Sawyer·CatPAW), 팔레트는 **Okabe-Ito 8색**(색약 안전 표준), 분류체계는 고전 DB 테이블 분류
+      (master/reference/transaction/history)를 게임 운영 DB 로 조정.
+- [x] T33.2 분류체계 확정 8종(NODE_ROLES): master 기준·정의📘 / account 계정·유저👤 / transaction 거래·행위💳 /
+      log 로그·이력📜 / mapping 매핑·연결🔗 / config 설정⚙️ / stats 집계·통계📊 / etc 기타◽.
+      인코딩 = 분석완료 테이블 **칩 fill=역할색 + 라벨 앞 아이콘 + 범례 행 + 상세패널 역할 칩**(미분석=teal 유지).
+
+### 33.2 구현 (BE=feature-0002 · UI=feature-0003 cross-cut)
+- [x] T33.3 alembic 0031 `node_analysis_jobs.role varchar(24)` 비파괴 ADD(GRANT 는 테이블 단위 승계).
+- [x] T33.4 LLM 계약: NODE_ANALYSIS_PROMPT 출력에 `role`(8종 enum, Table 한정) 추가. worker 가
+      `_resolve_role`(LLM 유효값 우선 → `classify_role_heuristic` 이름·본문 2-pass 폴백, Table 외 NULL)로 저장.
+- [x] T33.5 기존 done 행 백필: `backfill_roles()`(휴리스틱, LLM 재호출 없음) insight-worker 틱 배선 —
+      틱당 200행, 잔여 0 이면 즉시 no-op(자기 종결·멱등).
+- [x] T33.6 조회 확장: get_scope_analysis_status(roles 집계)·get_run_status(roles+jobs.role)·
+      get_node_analysis(role) + admin_metadata bulk status 응답 `roles` 노출.
+- [x] T33.7 FE(admin.js): `_metaGraph.roles` Map + `_META_ROLE` 상수 + `_metaTableStyle(role)` 칩 색/라벨색 +
+      `_metaG6Build` 아이콘 라벨 + 캐시 서명 `#R=` suffix(`_metaCacheSig`) → refreshStates 가 **역할 도착 시
+      rebuild 승격**(역할은 bake 스타일이라 setElementState 불가) + 마커 수신 3경로(폴·sync·상세) 배선 +
+      상세패널 역할 칩 + 진행패널 역할 병기. admin.html 역할 범례 행 + cache-buster `20260703-node-role-viz`.
+
+### 33.3 검증
+- [x] T33.8 단위: test_node_analysis_role.py 10건(분류체계 계약·휴리스틱 우선순위·LLM 우선/폴백·Table 한정) PASS
+      + 기존 relevance 28건 회귀 0 (합 38).
+- [x] T33.9 headless harness(실 admin.html/admin.js/g6.min.js + mock API): 미분석 teal 원형 / 폴 경로 role
+      bake(칩 색·아이콘·라벨색·캐시서명·analyzed state) / sync 경로 / 무효 role 방어 — ALL PASS, pageerror 0.
+      시각 스크린샷: 8종 역할 칩 + 범례 렌더 확인.
+- [x] T33.10 전체 pytest 회귀 (agent 컨테이너 worktree 마운트).
+- [x] T33.11 §18.8 적대 패널 4렌즈(backend/frontend/ux·design/qa) — MAJOR 5(마이그레이션 창 role 쿼리 폴백 B1·
+      backfill updated_at 역전 → id DESC 선택 Q1·selected 테두리 위장 U1·running 점선 불가시 U2·dark 플래그
+      오배정 U3) + MINOR 6 수정 반영, 수용 6건 근거 기록. REV-20260703T003000. 수정 후 53 단위 + harness +
+      전체 pytest 재검증 PASS.
+- [ ] T33.12 배포(web+insight-worker 재빌드+alembic 0031) + **라이브 PB-0008 실 Windows**: 분석 완료 테이블
+      칩 색/아이콘/범례 + 상세패널 역할 칩 육안 확인.
+## 34. graph-dblclick-latency — 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (2026-07-03, 사용자 후속 보고)
+사용자 관찰(graph-dblclick-cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. 정본: DECISIONS ADR-011, MODIFY CHG-20260703-graph-dblclick-latency.
 등급: **Major 승계**(프론트 카메라 1곳, 비파괴·데이터 API 불변·마이그레이션 없음).
 
-### 32.1 진단
-- [x] T32.1 원인: 팬(`_metaGraphAnimateFocus`)이 `_metaGraphExpand` 파이프라인 맨 끝(busy→yield→`/graph?depth=2` fetch~135ms→ingest→`_metaG6Apply` setData+draw~200ms→**그제서야** 팬)에서 시작. 앵커는 이미 렌더인데 fetch·rebuild 대기 → ~350ms 텀.
+### 34.1 진단
+- [x] T34.1 원인: 팬(`_metaGraphAnimateFocus`)이 `_metaGraphExpand` 파이프라인 맨 끝(busy→yield→`/graph?depth=2` fetch~135ms→ingest→`_metaG6Apply` setData+draw~200ms→**그제서야** 팬)에서 시작. 앵커는 이미 렌더인데 fetch·rebuild 대기 → ~350ms 텀.
 
-### 32.2 구현
-- [x] T32.2 `_metaGraphExpand`: 팬을 busy 직후 **fetch 전 fire-and-forget**(await 없이) 시작 → 즉시 반응. 파이프라인 끝 await 팬 호출 제거(중복 방지).
-- [x] T32.3 `_metaGraphAnimateFocus` 를 고정-duration → **적응형 follow** 재작성: 매 프레임 앵커 현재 뷰포트 위치 재조회 → 잔여 delta K=0.24 translateBy(ease-out). rebuild 로 앵커 이동/재생성돼도 최종 위치 수렴. 종료=수렴(<1.2px)/seq/MAXMS(1200ms) 단일 시간상한(프레임카운트 조기포기 제거). W/H 매 프레임 재조회, API 부재 시 focusElement 폴백.
-- [x] T32.4 cache-buster `admin.js?v=20260703-graph-dblclick-latency`. 다른 카메라 경로 불변.
+### 34.2 구현
+- [x] T34.2 `_metaGraphExpand`: 팬을 busy 직후 **fetch 전 fire-and-forget**(await 없이) 시작 → 즉시 반응. 파이프라인 끝 await 팬 호출 제거(중복 방지).
+- [x] T34.3 `_metaGraphAnimateFocus` 를 고정-duration → **적응형 follow** 재작성: 매 프레임 앵커 현재 뷰포트 위치 재조회 → 잔여 delta K=0.24 translateBy(ease-out). rebuild 로 앵커 이동/재생성돼도 최종 위치 수렴. 종료=수렴(<1.2px)/seq/MAXMS(1200ms) 단일 시간상한(프레임카운트 조기포기 제거). W/H 매 프레임 재조회, API 부재 시 focusElement 폴백.
+- [x] T34.4 cache-buster `admin.js?v=20260703-graph-dblclick-latency`. 다른 카메라 경로 불변.
 
-### 32.3 검증
-- [x] T32.5 헤드리스 실증: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**. `node --check` PASS.
-- [x] T32.6 **§18.8 적대 7축**(종료보장·fire-and-forget 동시성·이동수렴·fetch실패/seq·미렌더/폴백·회귀·K/임계): BLOCKING 0. **MEDIUM**(missStreak 프레임카운트 조기포기 — 저사양 rAF 탈동조로 팬 조기중단 위험) 적발 → **제거**(MAXMS 단일상한). NIT(API 폴백 손실·W/H 스테일) → API 가드 + W/H 매 프레임 재조회 반영. REV-20260703T003000 [SUBAGENT].
-- [ ] T32.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬하는지 육안 확인.
+### 34.3 검증
+- [x] T34.5 헤드리스 실증: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**. `node --check` PASS.
+- [x] T34.6 **§18.8 적대 7축**(종료보장·fire-and-forget 동시성·이동수렴·fetch실패/seq·미렌더/폴백·회귀·K/임계): BLOCKING 0. **MEDIUM**(missStreak 프레임카운트 조기포기 — 저사양 rAF 탈동조로 팬 조기중단 위험) 적발 → **제거**(MAXMS 단일상한). NIT(API 폴백 손실·W/H 스테일) → API 가드 + W/H 매 프레임 재조회 반영. REV-20260703T003000 [SUBAGENT].
+- [ ] T34.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬하는지 육안 확인.

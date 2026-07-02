@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T152607-ai-root-feature-0016-graph-reltrace
+- Date: 2026-07-03
+- Related Requirement: 사용자 후속 3건 — ① 테이블 접힌 상태에서도 연결 관계 표시(더블클릭 전 미표시 이슈),
+  ② 상세 패널 관계 클릭 시 대상 테이블·컬럼 추적, ③ AI 능동 분석으로도 작동.
+- 근본원인(①): REFERENCES 는 Column→Column 이라 `_metaG6Build` 가 양끝 컬럼 렌더 시에만 엣지를 그렸고,
+  `schema_tables`(스키마 펼침)는 HAS_TABLE 만 반환 → 접힌 테이블엔 관계 데이터 자체가 모델에 없었다.
+- Summary:
+  (1) **백엔드**(metadata_graph.py `schema_tables`): 스키마 펼침 응답에 스키마 내 컬럼에서 나가는
+  REFERENCES 엣지(Column→Column, FK null-status 포함·broken 제외·`edge_cap` 캡)를 추가.
+  (2) **프론트 ①**(`_metaG6Build`): REFERENCES 끝점을 렌더된 id 로 해소 — 컬럼 미렌더 시 소속 테이블로
+  승격(키 문자열에서 부모 도출), 같은 두 끝점 다수 컬럼-쌍은 하나로 dedupe(최강 상태·count·pairs).
+  intra-table 자기참조 제외. → 접힌 테이블 간 관계 엣지 렌더.
+  (3) **프론트 ②**(신규 `_metaGraphTraceRelation`/`_metaGraphBindTraceRows`): 관계 클릭 → 대상 테이블을
+  이웃과 함께 화면에 가져오고 컬럼 전개 + 대상 컬럼 강조·카메라 focus. 상세 패널 "관계(N)" 행 +
+  "관계 상세" 행 공통 추적(showDetail→trace 통일).
+  (4) **프론트 ③**(`_metaGraphLoadNodeAnalysis`): AI 능동 분석 결과 박스에 구조화된 관계를 추적 가능 행
+  (`_metaGraphRelTraceRowsHTML`)으로 노출 → 분석 결과에서도 대상 추적.
+  (5) styles.css 추적 행 hover·힌트 + admin.html 캐시버스터 `20260703-graph-reltrace`.
+- Files: `unit/feature-0002-agent-core/src/modules/metadata_graph.py`,
+  `unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}`.
+- Impact: 데이터 비파괴·마이그레이션 0. 백엔드는 schema_tables 응답에 엣지 추가(읽기 전용 투영).
+  배포 = web 재빌드(백엔드 metadata_graph 포함 → 워커도 재빌드 권장). 접힌 관계 데이터 피드가 늘어
+  스키마 펼침 payload 소폭 증가(cap 으로 제한).
+- Rollback Notes: 코드 롤백 = 이전 커밋 재빌드. 프론트 캐시버스터 되돌림.
+
 ## CHG-20260702T100500-ai-root-feature-0016-probe-mssqlfix
 - Date: 2026-07-02
 - Related Requirement: rel-selfheal(CHG-20260702T052630) 배포 후 라이브 검증에서 적발된 잠복 결함 —
@@ -568,13 +593,29 @@ source_of_truth: true
 - Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로(loadRoots/검색/리사이즈/우클릭 중심보기) **불변**. 마이그레이션 없음. tween=viewport transform 만(노드 재렌더·프리즈 무관, ADR-006 무간섭). 검증: `node --check` PASS · manual tween 헤드리스 실증(앵커 정중앙 26프레임/434ms) · §18.8 적대 6축 BLOCKING 0(G6 번들 소스 대조 — tween 수학=G6 focus 공식 동일). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(부드러운 팬 육안).
 - Rollback Notes: `_metaGraphAnimateFocus` 호출을 `focusElement(fel, false)`(즉시) 로 환원 + 헬퍼 제거 + cache-buster 이전값(graph-dblclick-cam). 데이터·API 무손상.
 
+## CHG-20260703-node-role-viz
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청(2026-07-02) — 그래프 뷰 노드가 단순 사각형+글자라 가시성 저하. **AI 능동 분석 완료 노드에 테이블 역할을 명시하는 시각 표식**을 웹 리서치 기반으로 구성. 정본: DECISIONS ADR-010, TASK §32.
+- Summary: 테이블 역할 8종 고정 분류(NODE_ROLES: master/account/transaction/log/mapping/config/stats/etc)를 도입하고 분석 완료 테이블 칩을 **역할색(Okabe-Ito 색약 안전 팔레트) + 라벨 앞 역할 아이콘 + 범례 행 + 상세/진행 패널 역할 칩**으로 인코딩. 데이터 경로: LLM 분석 계약(NODE_ANALYSIS_PROMPT)에 `role` enum 추가 → worker `_resolve_role`(LLM 유효값 우선, 무효/누락은 `classify_role_heuristic` 이름·본문 2-pass 폴백, Table 외 NULL) → `node_analysis_jobs.role`(alembic 0031 비파괴 ADD) 저장. 기존 done 행은 insight-worker 틱 `backfill_roles()`(휴리스틱, LLM 재호출 없음, 틱당 200행, 멱등·자기종결) 백필. 조회(get_scope_analysis_status/get_run_status/get_node_analysis) + bulk status API 에 roles 노출. FE 는 캐시 서명 `#R=` suffix 로 역할 도착 시 rebuild 승격(역할은 bake 스타일 — setElementState 불가).
+- Files:
+  - `unit/feature-0002-agent-core/alembic/versions/20260702_0031_node_analysis_role.py` (신규 — ADD COLUMN role)
+  - `unit/feature-0002-agent-core/src/modules/node_analysis.py` (NODE_ROLES·_ROLE_RULES·classify_role_heuristic·_resolve_role·role 저장·조회 3함수 확장·backfill_roles)
+  - `unit/feature-0002-agent-core/src/modules/llm.py` (NODE_ANALYSIS_PROMPT role 계약 + docstring)
+  - `unit/feature-0002-agent-core/src/modules/insight.py` (틱에 backfill_roles 배선)
+  - `unit/feature-0002-agent-core/tests/test_node_analysis_role.py` (신규 13건)
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (bulk status 응답 roles)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (_META_ROLE·roles Map·_metaTableStyle(role)·_metaG6Build 아이콘 라벨·_metaCacheSig/#R= 서명·refreshStates rebuild 승격·마커 3경로 배선·상세/진행 패널 역할 표기)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (역할 범례 행 + cache-buster 20260703-node-role-viz)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§32),DECISIONS(ADR-010),REPORT,REVIEW,TEST,FUNCTION}.md`
+- Impact: 비파괴 — 미분석 노드·기존 마커·데이터 API 계약(추가 필드만)·RBAC(`metadata.graph.read` dependency 불변)·그래프 스키마(AGE) 무변경. 마이그레이션 = ADD COLUMN 1개(expand-only, §12 사전승인). 배포 = alembic 0031 + web·insight-worker 재빌드. 검증: 단위 13건 + 전체 pytest 회귀 exit 0 + headless harness(실 admin.js + mock API) 4 시나리오 PASS·pageerror 0. 완료 게이트 = PB-0008 실 Windows 시각검증.
+- Rollback Notes: admin.js/admin.html/라우터/모듈 git revert + cache-buster 이전값. alembic downgrade = DROP COLUMN role(분류값만 소실 — 분석문 무손상, 재백필 가능).
 ## CHG-20260703-graph-dblclick-latency
 - Date: 2026-07-03
-- Related Requirement: 사용자 관찰(graph-dblclick-cam2 배포 후) — 카메라 팬이 부드럽긴 하나 더블클릭 직후가 아닌 **~350ms 텀을 두고 시작**돼 답답. 정본: DECISIONS ADR-010.
+- Related Requirement: 사용자 관찰(graph-dblclick-cam2 배포 후) — 카메라 팬이 부드럽긴 하나 더블클릭 직후가 아닌 **~350ms 텀을 두고 시작**돼 답답. 정본: DECISIONS ADR-011.
 - Summary: 원인 = 팬이 파이프라인 맨 끝(fetch+rebuild 후)에서 시작. 수정: (1) `_metaGraphExpand` 가 카메라 팬을 busy 직후 **fetch 전 fire-and-forget** 으로 시작(앵커 이미 렌더 → 즉시 반응), 파이프라인 끝 await 호출 제거. (2) `_metaGraphAnimateFocus` 를 고정-duration → **적응형 follow**(매 프레임 앵커 현재 위치 재조회 → 잔여 delta K=0.24 translateBy, ease-out)로 재작성 — rebuild 로 앵커 이동/재생성돼도 최종 위치 수렴. 종료=수렴/seq/MAXMS(1200ms) 단일 시간상한(프레임카운트 조기포기 제거 — 저사양 대비). W/H 매 프레임 재조회, API 부재 시 focusElement 폴백.
 - Files:
   - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraphAnimateFocus` 적응형 follow 재작성 + `_metaGraphExpand` 팬 호출을 fetch 전 fire-and-forget 으로 이동, 끝 await 제거)
   - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260703-graph-dblclick-latency`)
-  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-010),TASK(§32),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-011),TASK(§34),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로 **불변**. 마이그레이션 없음. tween=viewport transform 만(ADR-006 프리즈 무관). 검증: `node --check` PASS · 적응형 follow 헤드리스 실증(fire-and-forget 즉시 시작 + 중간 setData 앵커 이동 → 24프레임 중앙 수렴) · §18.8 적대 7축 BLOCKING 0(MEDIUM missStreak 조기포기→제거, NIT API폴백·W/H→반영). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(더블클릭 즉시 부드러운 팬).
 - Rollback Notes: `_metaGraphAnimateFocus` 를 이전(고정-duration) 으로 환원 + expand 팬 호출을 파이프라인 끝 await 로 복귀 + cache-buster 이전값(graph-dblclick-cam2). 데이터·API 무손상.

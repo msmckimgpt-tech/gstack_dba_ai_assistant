@@ -1,14 +1,15 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-07-02
+last_updated: 2026-07-03
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-07-02
+2026-07-03
 
 ## Key Recent Facts
+- feature-0016 graph-reltrace(07-03): 그래프 뷰 **접힌 상태 관계 표시 + 관계 클릭 추적 + AI 능동 분석 연동**. ① 테이블 더블클릭 전까지 관계 미표시 이슈 해소(백엔드 schema_tables 가 스키마 내 REFERENCES 반환 + 프론트가 끝점을 컬럼 미렌더 시 소속 테이블로 승격·dedupe → 접힌 테이블 간 관계 렌더) ② 상세 패널 관계 클릭 → 대상 테이블·컬럼 추적(`_metaGraphTraceRelation` 이웃로드·컬럼전개·카메라 focus) ③ AI 능동 분석 결과에도 추적 가능 관계 행. 비파괴·마이그 0. 코드 거주 feature-0002·0003.
 - feature-0016 그래프 뷰 07-02 후속 진화(merged; PB-0008 라이브 PASS=ctxmenu·초기뷰·검색 badge, G6 v5 렌더러 교체·masonry·카메라 팬·rel-selfheal 은 배포/PB-0008 라이브 잔여): 렌더링 엔진 **Cytoscape(WebGL)→AntV G6 v5(Canvas) 전면 교체**(ADR-004 — 07-01 WebGL 전환을 대체하는 대형 기반 교체, 프레임레이트·외곽선)+클러스터 다열 masonry/shelf-packing·**노드/스키마카드 우클릭 상세 상호작용**(kind별 컨텍스트 메뉴 — 상세·관계 상세·확장 1~3hop·중심 보기·컬럼 펼침·AI 능동 분석·FQN 복사 + 관계 상세 패널 방향/신뢰·추정 w/근거/조인컬럼 + 중심 보기 지속 칩)·**초기 진입 가시성**(스키마-우선+줌클램프+미니맵)·검색 스키마 카드 badge 매칭·노드 펼침 논블로킹(ADR-005)·프리즈 잔존 해소(per-node→setData rebuild, ADR-006)·더블클릭 카메라 앵커-중심 애니 팬(ADR-008)·그래프 분석 전용 모델 claude-haiku 분리. ADR-004~008 feature-local.
 - feature-0016 rel-selfheal(07-02): 신뢰/추정 관계 자기교정 파이프라인 **미가동 근본수정** — config `__all__` 누락 NameError 가 insight 스키마 처리 전체를 3일 조용히 정지시킨 결함(D1b) 포함 4중 원인 해소(주기 cadence 6h·스키마-slot 규약 MSSQL=DB명·파서 qualifier·uniqueid PK·AGE 앵커링). §18.8 적대 패널 backend FAIL(MAJOR 6) 전량 수정(instance-scan 커서 DB별 분리·write-back 스키마 한정·PK≡PK 차단·프로브 오류 negative). 단위 61 PASS. 배포+데이터 정정(2행 정규화·고아 3노드 회수·재sync) 동반. ADR-007.
 - feature-0003 AI 운영 관제 패널 신규(07-02, merged): `/api/admin/ai-ops` — **AI 운영 현황(관제) admin 화면 + LLM 계측 확장**(main agent latency·최근 활동 cursor 페이징 '더 보기'·pane 세로 스크롤). 감사 화면 정리(카테고리 순서 재구성·항목 툴팁·최근활동 클릭 상세 확장, audit-nav-ux). 최근활동 시스템 sentinel 대화 링크 깨짐 수정(aiops-conv-link-fix). 메타데이터(지식베이스) 권한 종속관계 그룹 게이트 계층화(metadata-perm-hier, SECURITY §19). "+" 메뉴 첨부 개수 배지 대화 전환 후 stale 수정(attach-count-scope). 권한 `console.aiops.read`(admin 전용). 코드 거주 feature-0003.
