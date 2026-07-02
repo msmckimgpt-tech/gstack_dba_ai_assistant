@@ -1,5 +1,31 @@
 # Report
 
+## 2026-07-02 · 그래프 뷰 테이블 노드 펼침 논블로킹 + 성능 최적화 (graph-perf-bg, ADR-005)
+
+### 배경 (사용자 관찰: 펼침 시 렌더 엔진 프리즈)
+관리콘솔 > 메타데이터 > 그래프 뷰에서 **테이블 노드 선택→컬럼 펼침 시 브라우저 렌더링 엔진이 멈춤**. 요청: 병목 구간을 백그라운드에서 진행되도록 구성 + 별도 성능 이슈 추가 검증.
+
+### 진단
+펼침 임계경로 = `/graph?node=&depth=1` + (미분석 테이블이면) `/graph/columns` **information_schema 라이브 조회(무캐시, 1~5초)** 2왕복 → `setData()`+`draw()` 전체 재구성, 이 전 구간이 busy 페인트 없이 동기적으로 이어져 메인스레드가 얼었다. 부수 병목: `_metaTableHasCols` 매 클릭 O(N) 전노드 스캔, `_metaGraphRefreshStates` 2.5s 폴 포함 매 호출 전노드 개별 `setElementState`.
+
+### 수정 (FE admin.js + BE admin_metadata.py)
+- **논블로킹 파이프라인**: busy 하이라이트(teal 점선) 페인트 → double-rAF(`_metaYieldPaint`) 양보 → fetch·재구성. `_opSeq` stale-render 토큰을 await 경계마다 대조(모델 교체 `_metaGraphResetModel`·`_metaGraphLoadRoots` 도 게이팅).
+- **O(1) 펼침 인덱스** `colsByTable`(`_metaTableHasCols` 단일소스) — 클릭당 전노드 스캔 제거.
+- **상태 적용 diff+batch**(`_metaGraphRefreshStates` 변화분-only + `startBatch`). busy = `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState`(요소적용과 `_stateCache` signature 동기화 — 폴 덮어쓰기·rebuild 재-bake·캐시 불일치 차단).
+- **레이아웃 churn 분리**(`_metaG6Build` Pass1 collapsed 배정 / Pass2 real push-down) — 형제 열-점프로 인한 setData update 집합 팽창 억제, shelf-packer 는 real 높이 소비(무겹침).
+- **BE introspection TTL 캐시**: `/graph/columns` 성공결과를 `(scope_key, fqn)` 프로세스-로컬 TTL(기본 300s) 캐시 — 반복 펼침·다중 사용자·재진입의 라이브 조회 왕복 제거. 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성, 마이그레이션 없음.
+
+### 검증 (§18.8 적대 패널 — 다단계)
+- 3렌즈 패널(race/index-drift/layout+cache): **4건 BLOCKING 적발** — ① reset/search/scope 경로가 `_opSeq` 미증가 → in-flight expand 가 검색·스코프 화면을 덮어씀(stale 렌더), ② 같은 race 로 `colsByTable` 포이즌(재펼침 영구 차단), ③ seq-mismatch early-return 이 busy 하이라이트 영구 잔류, ④ 2.5s 폴이 fetch 중 busy 제거 + `_stateCache` 불변식 위반. index-drift 렌즈는 steady-state 동치 확인, layout+cache 렌즈는 clean(오버랩 없음·캐시 보안/격리/축출 정상).
+- 5-agent 재검증 워크플로: 4건 **CLOSED** 확인 + **신규 BLOCKING 1건**(loadRoots reset-vs-reset — 자기 fetch 후 seq 재검 없이 additive ingest → 혼합-스코프 그래프) 적발.
+- loadRoots seq 가드 추가 후 최종 재검증: **reset-vs-reset 6조합 CLOSED, 정당 흐름 회귀 없음.** NIT(동시-key busy 깜빡임·후행 syncMarkers 일시 stale 텍스트·BE 캐시키 대소문자 fragmentation·백엔드 key/fqn 계약 의존)은 비-가시회귀로 수용 기록(REVIEW.md).
+- `node --check`·`py_compile` PASS. cache-buster `?v=20260702-graph-perf-bg`.
+
+### 잔여
+- graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 무프리즈 + busy 피드백 + 반복 펼침 즉시응답) — 정적 자산이 web 이미지에 baked 라 배포 후 수행.
+
+---
+
 ## 2026-07-02 · 그래프 관계 분석 LLM = claude-haiku (node-analysis-haiku)
 
 ### 배경 / 근본원인
@@ -27,6 +53,7 @@ resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)
 - insight-worker 이미지 재빌드(`repo-insight-worker` b5e23727, 새 코드 baked) + `docker compose up -d --no-deps --force-recreate insight-worker` → **healthy**. web-a/web-b·ask-worker 무영향(insight-worker 만 재생성).
 - **smoke PASS**: 컨테이너 env `NODE_ANALYSIS=claude-haiku-4`/`INSIGHT=edge`(격리) · `config.AGENT_NODE_ANALYSIS_MODEL='claude-haiku-4'`·`__all__` 노출 · `llm_node_analysis` 라우팅 소스 `_insight_model=AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 확인 · 클린 기동(traceback/critical 0).
 - 잔여(사용자 실검증): 관리콘솔 그래프뷰 "AI 능동 분석" 신규 run 의 model 라벨=claude-haiku 육안 확인. 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 LLM run 강제 불가 — 실 브라우저 확인 권장.
+---
 
 ## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
 

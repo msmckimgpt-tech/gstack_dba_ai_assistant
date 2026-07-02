@@ -428,3 +428,23 @@ source_of_truth: true
 - [x] T22.6 §18.8 적대적 코드리뷰(subagent — 격리·touchpoint 완결성·haiku 정합·폴백 안전). REVIEW.md 참조.
 - [x] T22.7 **배포 완료**(2026-07-02, node-haiku-deploy, 사용자 confirm 승인): `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영 + insight-worker 이미지 재빌드(새 코드 baked)·재기동(healthy). smoke 실증 — 컨테이너 env `NODE_ANALYSIS=claude-haiku-4`/`INSIGHT=edge`(분리 확인) + `config.AGENT_NODE_ANALYSIS_MODEL='claude-haiku-4'`·`__all__` 노출 + `llm_node_analysis` 라우팅 `_insight_model=AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 확인, 클린 기동(traceback 0).
 - [ ] T22.8 (사용자 실검증) 관리콘솔 그래프뷰 "AI 능동 분석" **신규 run 의 model 라벨 = claude-haiku** 육안 확인 — 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 run 강제 불가, 실 브라우저 확인 권장(PB-0008 계열).
+
+## 23. graph-perf-bg — 테이블 노드 펼침 논블로킹 + 성능 인덱스·상태 diff·introspect TTL 캐시 (2026-07-02, entry persona dispatch → resume 인계 완수)
+사용자 관찰: 관리콘솔 > 메타데이터 > 그래프 뷰에서 **테이블 노드 선택→펼침 시 브라우저 렌더 엔진 프리즈**. 요청: 병목 구간 백그라운드화 + 별도 성능 이슈 추가 검증. 정본: DECISIONS ADR-005, MODIFY CHG-20260702-graph-perf-bg.
+등급: **Major**(cross-cut 프론트 feature-0003 admin.js + BE admin_metadata.py 라우터 캐시; 데이터 API·스키마 불변·비파괴, 마이그레이션 없음).
+
+### 23.1 진단
+- [x] T23.1 프리즈 근본원인 확정: 펼침 임계경로가 `/graph?depth=1` + (미분석 시) `/graph/columns` **라이브 information_schema 무캐시 조회(1~5s)** 2왕복 → `setData`+`draw` 를 busy 페인트 없이 동기 진행. 부수: `_metaTableHasCols` O(N) 스캔, `_metaGraphRefreshStates` 2.5s 폴 전노드 개별 setElementState.
+
+### 23.2 구현 (FE admin.js + BE admin_metadata.py)
+- [x] T23.2 [FE] 논블로킹 파이프라인 — busy(teal 점선) 페인트 후 double-rAF(`_metaYieldPaint`) 양보 → fetch·재구성. `_opSeq` stale-render 토큰(await 경계마다 대조).
+- [x] T23.3 [FE] O(1) 펼침 인덱스 `colsByTable`(`_metaTableHasCols` 단일소스, ingest/collapse/reset 3경로 갱신) — 클릭당 전노드 스캔 제거.
+- [x] T23.4 [FE] `_metaGraphRefreshStates` 변화분-only diff + `startBatch` 일괄. busy = `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState`(요소적용·`_stateCache` signature 항상 동기화).
+- [x] T23.5 [FE] `_metaG6Build` 레이아웃 churn 분리 — Pass1(collapsed 균등높이 열배정, 펼침-불변) / Pass2(자기 열 real push-down). 형제 열-점프 제거(setData update 집합 최소화), shelf-packer 는 real h 소비(무겹침).
+- [x] T23.6 [BE] `/api/admin/metadata/graph/columns` introspection 성공결과 `(scope_key, fqn)` 프로세스-로컬 TTL 캐시(기본 300s, env `METADATA_GRAPH_COLUMNS_CACHE_TTL`, 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성). 권한 dependency 해소 후 캐시-히트.
+- [x] T23.7 [FE] cache-buster `admin.js?v=20260702-graph-perf-bg`.
+
+### 23.3 검증
+- [x] T23.8 `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS. leftover 디버그 마커 0.
+- [x] T23.9 **§18.8 적대 검증** — 3렌즈 패널(race/index-drift/layout+cache) → **4건 BLOCKING 적발**(reset 경로 `_opSeq` 미증가로 stale-render·colsByTable 포이즌, seq-mismatch busy 잔류, 폴이 busy 제거+`_stateCache` 불일치). 5-agent 워크플로 재검증 → 4건 CLOSED + **신규 BLOCKING 1건**(loadRoots reset-vs-reset) 적발. loadRoots seq 가드 추가 후 최종 재검증 → **reset-vs-reset 6조합 CLOSED·신규 회귀 없음**. NIT(동시-key busy 깜빡임·후행 syncMarkers stale 텍스트·BE 캐시키 대소문자 등)은 수용 기록. REV-20260702T120000 [AGENT-TEAM].
+- [ ] T23.10 graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 시 무프리즈 + busy teal 피드백 + 반복 펼침 즉시응답).

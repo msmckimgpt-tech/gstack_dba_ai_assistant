@@ -298,6 +298,18 @@ source_of_truth: true
 - Impact: 프론트 렌더 계층만(데이터 API 불변). 검증: WSL-headless-harness(14클러스터 스케일 mock, 확장 포함) 전 플로우 PASS·에러 0 + 라이브 PB-0008(실 Windows, 236노드) 확인. 배포=web 재빌드.
 - Rollback Notes: `_metaG6Build` git revert(단일 세로열 배치로 환원) + cache-buster graph-g6. 데이터·API 무손상.
 
+## CHG-20260702-graph-perf-bg-nonblocking-expand
+- Date: 2026-07-02
+- Related Requirement: 사용자 관찰 — 관리콘솔 > 메타데이터 > 그래프 뷰에서 테이블 노드 선택→펼침 시 브라우저 렌더 엔진 프리즈. "병목 구간 백그라운드화 + 별도 성능 이슈 추가 검증" 요청. 정본: DECISIONS ADR-005.
+- Summary: 그래프 뷰 펼침 임계경로를 논블로킹화하고 반복 병목을 제거. (FE) ① 논블로킹 파이프라인 — busy(teal 점선) 페인트 후 double-rAF(`_metaYieldPaint`) 양보 → fetch·`setData`+`draw`; ② stale-render 무효화 토큰 `_opSeq`(await 경계마다 대조, **`_metaGraphResetModel`·`_metaGraphLoadRoots` 도 게이팅**); ③ O(1) 펼침 인덱스 `colsByTable`(전 노드 O(N) 스캔 제거); ④ `_metaGraphRefreshStates` 변화분-only + `startBatch`; ⑤ busy 를 `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState` 로 표현(폴 덮어쓰기·rebuild 재-bake·`_stateCache` 불일치 차단). (BE) ⑥ `/api/admin/metadata/graph/columns` introspection 성공 결과를 `(scope_key, fqn)` 키 프로세스-로컬 TTL 캐시(기본 300s, 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`/graph/columns` TTL 캐시 `_COLUMNS_CACHE*` + get/put/ttl 헬퍼 + 엔드포인트 캐시-히트 early-return; +65)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraph` 모델에 `colsByTable`/`_opSeq`/`_stateCache`/`_busyKeys` + `_metaStateSig`/`_metaApplyState`/`_metaSetBusy`(소유권)/`_metaYieldPaint` + `_metaG6Build` 레이아웃 Pass1(collapsed 배정)/Pass2(real push-down) + toggle/expand 논블로킹·seq 가드 + `_metaGraphResetModel`/`_metaGraphLoadRoots` opSeq 게이팅 + `_metaTableHasCols` O(1) + `_metaGraphRefreshStates` diff+batch + `_metaGraphSetSelected` `_metaApplyState` 경유; +215/−51)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-perf-bg`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-005),TASK(§22),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 렌더/상호작용 계층 + BE 라우터 캐시 층만. 데이터 API 계약·그래프 스키마 **불변**. 권한/스코프 격리 불변(캐시-히트는 `Depends(require_permission)` 해소 후, 페이로드=물리 스키마만). 캐시=프로세스-로컬 → **마이그레이션 없음**(alembic 병렬 충돌 회피). 검증: §18.8 적대 패널(3렌즈 + 5-agent 재검증 + reset-vs-reset 후속) 4+1 BLOCKING 수정·재검증 PASS(REVIEW REV-20260702T120000). 배포=web 재빌드(정적 자산) — BE 캐시는 기존 web 프로세스에 포함. 완료 게이트=PB-0008 실 Windows 시각검증(펼침 무프리즈 + busy 피드백).
+- Rollback Notes: admin.js/admin_metadata.py git revert + cache-buster 이전값(graph-g6b). 데이터·API·스키마 무손상(렌더/캐시 계층만). BE 캐시만 비활성화하려면 env `METADATA_GRAPH_COLUMNS_CACHE_TTL=0`.
+
 ## CHG-20260702-node-analysis-haiku-model
 - Date: 2026-07-02
 - Related Requirement: 사용자 요청 — 관리콘솔 그래프뷰 "각 관계를 분석하는 LLM" 을 claude-haiku 로 작동하도록 구성. 로컬 gemma(edge) 로 작동하던 것은 의도하지 않은 구조. (범위 결정 2026-07-02: **그래프 관계 분석만** — schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL` 유지.)

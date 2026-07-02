@@ -287,6 +287,25 @@ source_of_truth: true
 - Human Approval Needed: graph-g6b 배포(web 재빌드·라이브 재시작) — deploy_scope: included + 사용자 "배포 진행" 승인.
 
 
+## REV-20260702T120000-ai-claude-feature-0016-graph-perf-bg [AGENT-TEAM: PASS-WITH-FIXES] — 테이블 노드 펼침 논블로킹 + 성능 최적화 적대 검증 (race/index-drift/layout/cache)
+- Related Change: graph-perf-bg (MODIFY CHG-20260702-graph-perf-bg, DECISIONS ADR-005). FE admin.js `_metaGraph*` 논블로킹 파이프라인·O(1) 인덱스·상태 diff·레이아웃 Pass1/2(+215/−51) + BE admin_metadata.py `/graph/columns` TTL 캐시(+65) + admin.html cache-buster. 데이터 API·스키마 불변.
+- Method: 다단계 §18.8 — (1) general-purpose subagent **3렌즈 병렬 패널**(race/concurrency · index-drift · layout+cache), 각 렌즈 적대적(결함 적발 목적) + 실 diff·번들/백엔드 교차검증. (2) **5-agent 재검증 워크플로**(각 BLOCKING closed 여부 + 신규 회귀 hunt, structured verdict). (3) loadRoots 가드 **최종 단일 재검증**(reset-vs-reset 전 조합 + 회귀).
+- Verified:
+  - `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS · leftover 디버그 마커 0.
+  - index-drift 렌즈: `colsByTable` 가 steady-state 에서 구 O(N) `_metaTableHasCols` 스캔과 **동치**(20k 랜덤 시뮬 0 불일치). node-cap 300 phantom-expand 는 **기존 동작(회귀 아님)**.
+  - layout 렌즈: Pass1(collapsed 배정)/Pass2(real push-down) **오버랩 없음**, `h`=real 높이로 shelf-packer 소비, `innerColsFor` 경계(0/1/6/14/27) 안전.
+  - cache 렌즈: BE TTL 캐시 **공유-가변 페이로드 손상 없음**(JSONResponse read-only 직렬화)·**스코프/테넌트 격리 유지**(scope→ds 는 배포전역 레지스트리, 페이로드=물리 스키마)·**권한 우회 없음**(캐시-히트는 `Depends(require_permission)` 해소 후)·축출/ TTL 파싱/빈결과 미캐시 정상.
+- Findings:
+  - **BLOCKING-1 (수정 완료)**: `_opSeq` 가 heavy op(expand/toggle)에서만 증가, reset/search/scope/loadRoots 경로 미증가 → in-flight expand 가 사용자가 방금 요청한 검색/스코프 화면을 덮어씀(stale 렌더). → `_metaGraphResetModel` 에 `_opSeq++` 추가(search·roots·scope·reset 전부 경유). 재검증 CLOSED.
+  - **BLOCKING-2 (수정 완료)**: 같은 race 로 reset 후 stale expand 가 컬럼 ingest → `colsByTable` 포이즌(존재하지 않는 테이블 hasCols=true → 재펼침 영구 차단). → BLOCKING-1 과 동일 수정(stale op 가 ingest 전 seq 체크에서 폐기 — ingest 직전 마지막 await 이후 seq 체크와 ingest 사이 await 없음 확인). 재검증 CLOSED.
+  - **BLOCKING-3 (수정 완료)**: seq-mismatch early-return 이 busy 하이라이트 미해제 → 후속 op 가 rebuild 없이 끝나면 busy 영구 잔류. → 모든 seq-mismatch return 이 `_metaSetBusy(key,false,seq)` 선행 + rebuild/reset 이 `_busyKeys.clear()` + off 는 소유(seq 일치) 시만 해제(같은 key 재트리거 시 신 op busy 보존). 재검증 CLOSED(전 종료경로 정리 확인).
+  - **BLOCKING-4 (수정 완료)**: `_metaGraphRefreshStates`(2.5s 폴)가 `_metaNodeStates`(busy 미포함)로 fetch 창 도중 busy 제거 + `_metaSetBusy`/`setSelected` 가 `_stateCache` 미갱신(false-negative 우려). → refreshStates 가 `_metaStateSig`(busy 포함) 사용 + 모든 명령형 writer 가 `_metaApplyState` 경유(요소적용·캐시 signature 항상 동기). 재검증 CLOSED(불변식: cache==요소 최종 state).
+  - **BLOCKING-5 (재검증서 신규 적발 → 수정 완료)**: `_metaGraphLoadRoots` 가 자기 `await apiFetch` 이후 `_opSeq` 재검 없이 additive ingest → reset-vs-reset(스코프 A 로딩 중 B 전환) 시 A 노드가 B 모델에 병합돼 **혼합-스코프 그래프**. → loadRoots resetModel 직후 `seq` 캡처 + ingest 전 `if(seq!==_opSeq) return`. 최종 재검증: reset-vs-reset 6조합(loadRoots↔loadRoots·loadRoots↔search·scope 전환·reset 버튼·common 분기·↔expand/toggle) **전부 CLOSED**, 첫진입/resize/단일로드 회귀 없음.
+  - **NIT (수용 기록, 비-가시회귀)**: ① 동시 다른-key heavy op 시 먼저 끝난 rebuild 의 `_busyKeys.clear()` 가 타 op busy 를 일시 under-show(깜빡임, stuck 아님). ② 후행 `_metaGraphSyncAnalysisMarkers`(loadRoots/search/expand 최종 `_metaG6Apply` 후)가 seq 재검 없이 자체 fetch → **일시 stale 상태텍스트만**(키가 scope-prefixed 라 마커 오적용·구조 오염 없음, 다음 폴에 자가치유). ③ BE 캐시키 `scope_key` 대소문자 미정규화 — 히트율 미세손실(손상/누출 없음). ④ `colsByTable` 불변식이 백엔드 Column key/fqn 부모 불변 계약에 의존(현 backend 준수, 도달 불가). ⑤ `_metaSetBusy` seq==null → -1 sentinel(현 호출부 전부 seq 전달, 방어적 사각).
+- Verdict: **PASS-WITH-FIXES** — CRITICAL 0. BLOCKING 5건(4 초기 + 1 재검증 신규) 전부 수정·재검증 CLOSED. NIT 5건 수용 기록.
+- Risks (수정 후): 잔여 0(구조/데이터). 완료 hard gate = PB-0008 실 Windows 시각검증(check #13) — 대량 스키마 펼침 무프리즈 + busy 피드백.
+- Human Approval Needed: graph-perf-bg 배포(web 재빌드·라이브 재시작) — deploy_scope: included(전역 FIRST_REQUEST) → 자동 배포하되 첫 배포 직전 1줄 표면화.
+
 ## REV-20260702T025245-ai-claude-feature-0016-node-analysis-haiku [SUBAGENT: PASS] — 그래프 관계 분석 전용 모델(claude-haiku) 분리 적대 리뷰
 - Related Change: node-analysis-haiku (MODIFY CHG-20260702-node-analysis-haiku-model). 전용 `AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`) 신설 + `llm_node_analysis` 라우팅 분리 + `process_pending` 저장 라벨 정합. ~15줄 diff(config/llm/node_analysis + 테스트).
 - Method: general-purpose subagent 적대 리뷰 — 실제 파일 Read + config/catalog/routing 로직 실행 검증. 5개 우려축(격리·touchpoint 완결성·haiku create() 정합·폴백 안전·워커 무회귀) 표적 반증 시도.
