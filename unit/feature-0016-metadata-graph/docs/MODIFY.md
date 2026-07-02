@@ -384,3 +384,18 @@ source_of_truth: true
   loaded 미마킹으로 재시도 보존), 구 admin.js+신 백엔드는 기존 scope_roots 경로 그대로. 인증/데이터 파괴 없음.
   배포=web 재빌드. 1·2차 적대 리뷰/검증 전건 반영(REVIEW.md), stale-base merge 재정합 2회(#533/#537, #538) 포함.
 - Rollback Notes: git revert(프론트 3파일+백엔드 2파일) + cache-buster 이전값(graph-ctxmenu2). 데이터·그래프 무손상.
+
+## CHG-20260702T172500-schema-card-ctxmenu
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청 — ① 미펼침 스키마 카드 우클릭 동작, ② 카드 "테이블" 문자열 공간 과점유 개선. TASK §26.
+- Summary: (1) `node:contextmenu` 가 스키마 카드 렌더 id 의 `SC:`/`XS:` prefix 를 벗기지 않아 우클릭이 무반응이던
+  결함 수정 — 신규 `_metaGraphCtxForSchema`(펼치기/접기·클러스터 상세·스키마명 복사) 로 라우팅, `_metaGraphCtxForCombo`
+  에 접기 파리티 추가. (2) 카드 라벨을 스키마명 전용으로 두고 테이블 개수를 우상단 **G6 badge** 로 이전 —
+  인라인 "· 테이블 N" 의 폭 과점유·이름 truncate 완화. 집계 실패는 badge 없음(배지없는 카드 강등 §25 V-H 정합).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`node:contextmenu` SC:/XS: 라우팅·`_metaGraphCtxForSchema` 신설·
+    `_metaGraphCtxForCombo` 접기 파리티·`_metaG6Build` 카드 라벨=이름+개수 badge)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `?v=20260702-schema-card-ctxmenu`)
+- Impact: frontend-only 비파괴 추가. 데이터 API·백엔드 무변경. 기존 combo/노드/엣지/캔버스 우클릭·좌클릭 회귀 없음
+  (harness 확인). 배포=web 재빌드(정적 자산).
+- Rollback Notes: admin.js 두 함수 diff revert + 카드 라벨 원복 + cache-buster 이전값(graph-initview2). 데이터 무손상.

@@ -229,3 +229,20 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
   라이브 실측 — 테이블 노드 우클릭 메뉴 전 항목·관계 상세 패널(빈 상태 안내)·중심 보기 지속 칩+"✕ 전체 보기"
   복귀·클러스터 combo 메뉴·Escape dismiss·기본 메뉴 차단·자산 버스터 서빙. 상세·스크린샷 경로는
   feature-0003 `docs/TEST.md` POST-DEPLOY 항목 + `artifacts/feature-0016-metadata-graph/20260702-graph-ctxmenu-pb0008/`.
+
+## graph-initview 후속 — 스키마 카드 우클릭 + 카드 라벨 압축 (schema-card-ctxmenu, 2026-07-02)
+
+미펼침 스키마 카드 우클릭 메뉴 + 카드 라벨의 "테이블" 문자열 제거(개수→우상단 badge). TASK §26.
+
+### admin.js 구문 — `node --check` PASS.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 **ctx 10/10 PASS + initview 회귀 31/31 PASS · 에러 0**
+그래프 블록 추출 + 실 admin.html 그래프 마크업 + mock apiFetch(7 스키마 fixture, zempty 포함):
+- **카드 badge**: `SC:` 카드 라벨=스키마명만("테이블" 문자열 없음), 개수는 우상단 badge(billing→"12", big_schema→"200", 빈 스키마 zempty→"0"). 이름이 카드 전체 폭 확보.
+- **접힌 카드 우클릭**: `node:contextmenu`(SC: 라우팅) → 메뉴 열림 — 헤더(스키마 배지+"billing · 테이블 12") + 펼치기(테이블 표시)/클러스터 상세(펼치지 않음)/스키마명 복사. 종전 무반응 결함 해소.
+- **펼친 스키마 우클릭**: 펼침 후 "접기 (카드로)" 항목 노출(XS: ctl·combo 양 경로).
+- initview 전체 플로우(카드 진입·per-schema 펼침·masonry·줌 클램프·툴바·점프·검색·이웃·접기·미니맵·stale-scope) 회귀 없음.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 예정 (본 cycle 배포 직후 수행)
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 스키마 카드 라벨=이름+개수 badge(테이블 문자열 없음)·**접힌 카드 우클릭 메뉴**(펼치기/클러스터 상세/스키마명 복사)·펼친 스키마 우클릭 접기·기존 우클릭(노드/엣지/combo/캔버스)·좌클릭 회귀.
+- 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 git_commit·자산 버전(`admin.js?v=20260702-schema-card-ctxmenu`) 명기.

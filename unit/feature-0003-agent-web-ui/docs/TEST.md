@@ -1465,3 +1465,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **Environment: Windows-browser (PB-0008)** — 배포 후 라이브 실측 예정(cache-buster admin.js bump): AI 운영 현황 → '최근 활동' **'더 보기' 클릭 → 과거 활동 append**(중복/누락 없이) + next_cursor 소진 시 '과거 기록 끝' + main agent 신규 호출의 latency 기록 확인 + 스크린샷.
 - **Pass/Fail: PASS(단위·회귀·정적·적대패널)**. CHECK#13(PB-0008)는 배포 후 '더 보기' 실측으로 충족 예정.
 >>>>>>> origin/main
+
+### Run (2026-07-02) — schema-card-ctxmenu: 스키마 카드 우클릭 + 카드 라벨 압축 (Minor §12.3 — frontend-only, 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §26)
+- **정적·dev-loop 검증 PASS**: `node --check admin.js` PASS + WSL-headless-harness **ctxmenu 10/10 PASS**(카드 라벨=스키마명 전용+개수 우상단 badge·접힌 카드 우클릭 메뉴 펼치기/클러스터 상세/스키마명 복사·펼친 스키마 접기 항목·빈 스키마 badge=0·에러 0) + **graph-initview 회귀 31/31 PASS**. 큰 수(8122) badge 넘침·크래시 없음 확인. 상세: `unit/feature-0016-metadata-graph/docs/TEST.md` schema-card-ctxmenu 절.
+- **§18.8**: general-purpose 적대 리뷰(G6 badge API·우클릭 라우팅·상태 정합·회귀). REV-20260702T172500 (feature-0016 REVIEW.md).
+- **Environment: Windows-browser (PB-0008)** — **배포 후 라이브 실측 예정(커밋 시점 미수행 사유 명시, 카고컬트 방지)**: 본 변경은 web 이미지에 baked 되는 정적 자산(admin.js/admin.html)이고 배포 스파인 `bin/deploy-web.sh` 는 origin/main HEAD 만 배포하므로 **머지 전 라이브 반영 불가**. cycle-finalize(main 병합) → web-a/web-b 재배포(cache-buster admin.js `?v=20260702-schema-card-ctxmenu` 신자산 강제 로드) → 실 Windows 브라우저(win-browser relay, Chrome 149)로 스키마 카드 라벨(이름+개수 badge, "테이블" 문자열 없음)·**접힌 카드 우클릭 메뉴**(펼치기/클러스터 상세/스키마명 복사)·펼친 스키마 우클릭 접기·기존 우클릭/좌클릭 회귀를 실측하고 본 Run 에 POST-DEPLOY 갱신을 기록한다.
+- **Pass/Fail: 정적·dev-loop·적대리뷰 PASS · 라이브 = 배포 후 PB-0008 실측 대기**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).

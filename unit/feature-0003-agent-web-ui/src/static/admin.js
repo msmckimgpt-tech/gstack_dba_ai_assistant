@@ -3315,10 +3315,18 @@ function _metaG6Build() {
       const cn = _metaGraph.nodes.get(id);
       const cnt = (cn && typeof cn.table_count === "number") ? cn.table_count : null;
       const nmc = _metaComboName(id);
+      // graph-initview UI: 라벨은 스키마명만(전체 폭 확보) + 개수는 우상단 **badge**(작은 pill).
+      //   기존 "· 테이블 N" 인라인은 "테이블" 3자+구분점이 카드 폭을 과점유 → 이름 truncate 유발.
+      //   badge 는 이름과 폭 경쟁 없이 개수를 노출(집계 실패 cnt=null 은 badge 없음 = 배지없는 카드 강등 정합).
+      const cardStyle = Object.assign(_metaSchemaCardStyle(L.x0 + _METLAY.CARDW / 2, L.y0 + _METLAY.CARDH / 2), {
+        labelText: nmc,
+        // review MINOR: offset 은 per-item 에 둬야 실제 transform 에 반영(node-level badgeOffsetX/Y 는 무시됨).
+        badges: cnt != null ? [{ text: String(cnt), placement: "right-top", offsetX: -2, offsetY: 2 }] : [],
+        badgeFontSize: 10, badgeFill: "#ffffff", badgeBackgroundFill: _META_GRAPH_COLOR.Schema, badgePadding: [1, 5],
+      });
       nodes.push({ id: "SC:" + id, type: _METtype, states: _metaNodeStates(id),
         data: { label: nmc, kind: "schema-card", schema: id, fqn: (cn && cn.fqn) || nmc, table_count: cnt },
-        style: Object.assign(_metaSchemaCardStyle(L.x0 + _METLAY.CARDW / 2, L.y0 + _METLAY.CARDH / 2),
-          { labelText: cnt != null ? `${nmc} · 테이블 ${cnt}` : nmc }) });
+        style: cardStyle });
       return;
     }
     combos.push({ id, type: _METtype, data: { label: _metaComboName(id), kind: "schema" }, style: Object.assign({ labelText: _metaComboName(id) }, _metaComboStyleFor(g.isTerms)) });
@@ -3592,8 +3600,12 @@ function _metaInitGraph() {
   graph.on("node:contextmenu", (e) => {
     let id = e && e.target && e.target.id;
     if (!id) return;
-    if (String(id).startsWith("X:")) id = String(id).slice(2);
     const p = _metaCtxPoint(e);
+    // graph-initview: 스키마 카드("SC:")·펼친 스키마 접기 ctl("XS:") 우클릭 → 스키마 전용 메뉴로 귀속.
+    //   이 prefix 를 안 벗기면 _metaGraphCtxForNode 가 모델(SC: 없는 순수 key)에서 노드를 못 찾아 무반응.
+    if (String(id).startsWith("SC:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
+    if (String(id).startsWith("XS:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
+    if (String(id).startsWith("X:")) id = String(id).slice(2);   // 테이블 접기 ctl → 소속 테이블 메뉴
     _metaGraphCtxForNode(id, p.x, p.y);
   });
   graph.on("combo:contextmenu", (e) => {
@@ -3904,13 +3916,40 @@ function _metaGraphCtxForNode(key, x, y) {
   _metaGraphCtxShow(items, x, y);
 }
 
-// 스키마 클러스터(combo) 우클릭 메뉴.
+// graph-initview: 스키마(접힌 카드 "SC:" 또는 펼친 스키마의 접기 ctl "XS:") 우클릭 메뉴.
+//   좌클릭(펼치기/접기)과 파리티 — 접힌 카드도 우클릭이 동작해 펼치기·상세·복사에 도달한다.
+function _metaGraphCtxForSchema(schemaKey, x, y) {
+  if (!schemaKey) return;
+  const n = _metaGraph.nodes.get(schemaKey);
+  const name = _metaComboName(schemaKey);
+  const expanded = _metaGraph.schemaExpanded.has(schemaKey);
+  const cnt = (n && typeof n.table_count === "number") ? n.table_count : null;
+  const items = [
+    { head: true, badge: "스키마", badgeColor: _META_GRAPH_COLOR.Schema, label: cnt != null ? `${name} · 테이블 ${cnt}` : name },
+  ];
+  items.push(expanded
+    ? { icon: "▦", label: "접기 (카드로)", onClick: () => _metaGraphCollapseSchema(schemaKey) }
+    : { icon: "▦", label: "펼치기 (테이블 표시)", hint: cnt != null ? `${cnt}개` : "", onClick: () => {
+        // 좌클릭 SC: 경로와 동일 — 펼침 성공/기존 상태에서만 로컬 클러스터 상세 렌더(실패·빈·stale 오도 방지).
+        //   ("already" 는 SC 경로에선 도달 불가 — expanded 면 위 접기 항목이 대신 붙음 — 이나 좌클릭과 대칭 유지.)
+        _metaGraphExpandSchema(schemaKey).then((st) => { if (st === "expanded" || st === "already") _metaGraphShowClusterDetailLocal(schemaKey); }).catch(() => {});
+      } });
+  // 클러스터 상세는 그래프를 펼치지 않고 API 로 테이블 목록을 조회(접힌 카드에서 "펼치지 않고 훑어보기").
+  items.push({ icon: "📋", label: "클러스터 상세", hint: "테이블 목록(펼치지 않음)", onClick: () => _metaGraphShowClusterDetailById(schemaKey) });
+  items.push({ icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) });
+  _metaGraphCtxShow(items, x, y);
+}
+
+// 스키마 클러스터(펼친 combo) 우클릭 메뉴 — combo 배경/테두리 우클릭. 접힌 카드는 _metaGraphCtxForSchema.
 function _metaGraphCtxForCombo(comboId, x, y) {
   const name = _metaComboName(comboId);
   const isTerms = comboId === _META_TERMS_COMBO;
   _metaGraphCtxShow([
     { head: true, badge: isTerms ? "묶음" : "스키마", badgeColor: isTerms ? _META_GRAPH_COLOR.GlossaryTerm : _META_GRAPH_COLOR.Schema, label: name },
     { icon: "📋", label: "클러스터 상세", hint: "테이블 목록", onClick: () => _metaGraphShowClusterDetailById(comboId) },
+    // graph-initview 파리티: 펼친 스키마 combo 우클릭도 카드로 접기 도달(기존엔 "−" ctl 클릭만).
+    (isTerms || !_metaGraph.schemaExpanded.has(comboId)) ? null
+      : { icon: "▦", label: "접기 (카드로)", onClick: () => _metaGraphCollapseSchema(comboId) },
     isTerms ? null : { icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) },
   ], x, y);
 }

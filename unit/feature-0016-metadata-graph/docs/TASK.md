@@ -531,3 +531,26 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 - [x] T25.9 배포 완료(deploy-web.sh 95b18045, 무중단 soak PASS, deploy_scope: included) + **PB-0008 실 Windows
       시각검증 PASS**(62 스키마 최악 케이스 라이브 실측 — 카드 진입 zoom 0.550·258 테이블 masonry 펼침·툴바/점프/
       접기/미니맵, §21 T21.8 통합) + TEST.md Run 기록.
+
+## 26. graph-initview 후속 — 스키마 카드 우클릭 + 카드 라벨 압축 (schema-card-ctxmenu, 2026-07-02, entry persona dispatch)
+사용자 요청 2건: ① 아직 펼쳐지지 않은 스키마 카드도 우클릭이 동작하게, ② 카드의 "테이블" 문자열이
+텍스트 공간을 과점유하는 것 개선. 등급 **Minor**(frontend-only 비파괴 추가, 코드 거주 feature-0003 admin.js).
+<!-- graph-initview(§25) 의 스키마 카드는 렌더 id 가 "SC:"+key 인데 node:contextmenu 가 이 prefix 를
+     안 벗겨 _metaGraphCtxForNode 가 모델(순수 key)에서 노드를 못 찾아 우클릭이 무반응이던 결함. -->
+
+### 26.1 구현
+- [x] T26.1 `node:contextmenu` 에 `SC:`(접힌 카드)·`XS:`(펼친 스키마 접기 ctl) prefix 라우팅 추가 →
+      신규 `_metaGraphCtxForSchema(schemaKey)` — 헤더(스키마 배지+이름+개수) + 펼치기/접기(상태별) +
+      클러스터 상세(펼치지 않고 API 조회) + 스키마명 복사. 좌클릭 SC: 경로와 동일한 성공-게이팅 상세 렌더.
+- [x] T26.2 `_metaGraphCtxForCombo` 파리티 — 펼친 스키마 combo 우클릭에도 "접기 (카드로)" 항목 추가
+      (기존엔 "−" ctl 클릭만 접기 가능).
+- [x] T26.3 카드 라벨 UI 압축 — 인라인 "· 테이블 N" 제거 → **라벨=스키마명 전용**(전체 폭 확보, 긴 이름
+      truncate 완화) + **개수는 우상단 G6 badge**(작은 pill, 이름과 폭 경쟁 없음). 집계 실패(cnt=null)는
+      badge 없음 = 배지없는 카드 강등 정합(§25 V-H). 우클릭 메뉴 헤더는 폭 여유가 있어 "테이블 N" 유지.
+- [x] T26.4 cache-buster `?v=20260702-schema-card-ctxmenu` (admin.js·styles.css).
+
+### 26.2 검증
+- [x] T26.5 node --check PASS. WSL-headless harness **ctxmenu 10/10 PASS**(카드 badge=이름만+개수 pill·접힌
+      카드 우클릭 펼치기/상세/복사·펼친 스키마 접기 항목·빈 스키마 badge=0·에러 0) + **initview 회귀 31/31 PASS**.
+- [ ] T26.6 verify-completion(--pre-commit) PASS + commit/push/PR/merge.
+- [ ] T26.7 배포(deploy_scope: included) + PB-0008 실 Windows 시각검증 + TEST.md Run 기록.
