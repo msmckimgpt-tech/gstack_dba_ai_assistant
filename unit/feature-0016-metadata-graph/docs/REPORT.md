@@ -55,6 +55,34 @@ resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)
 - 잔여(사용자 실검증): 관리콘솔 그래프뷰 "AI 능동 분석" 신규 run 의 model 라벨=claude-haiku 육안 확인. 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 LLM run 강제 불가 — 실 브라우저 확인 권장.
 ---
 
+## 2026-07-02 · 노드 우클릭 상세 상호작용 (graph-ctxmenu, REQ-20260702T113000)
+
+### 배경 (사용자 요청)
+그래프 뷰에서 각 노드의 **우클릭 상세 상호작용** — DB 스키마를 아직 파악하지 못한 사용자가
+선택 노드의 연관 관계를 상세하게 파악하는 과정을 지원.
+
+### 구현 (frontend-only — admin.js/styles.css/admin.html, TASK.md §24)
+- **우클릭 컨텍스트 메뉴**: G6 `node:/combo:/canvas:contextmenu` + container capture 리스너
+  (브라우저 기본 메뉴 차단 + 좌표 캡처). kind 별 항목 — Table(상세 보기·관계 상세·관계 확장
+  1~3-hop chips·중심 보기·컬럼 펼침/접기·AI 능동 분석·FQN 복사), Column(+소속 테이블 상세),
+  GlossaryTerm(이름 복사), 클러스터(클러스터 상세·스키마명 복사), 빈 캔버스(전체 맞춤·초기화).
+  HTML 오버레이 메뉴(전부 DOM 생성 — XSS 0, G6 setData 재구성과 무간섭). 뷰포트 clamp +
+  Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드 접근.
+- **관계 상세 패널**(핵심): 선택 노드의 관계를 **방향별**(→참조함/←참조받음/연관 용어/주변
+  관계)로 그룹해 추정/신뢰 배지 + weight + cardinality + **근거 한글 라벨**(FK 스키마 선언/
+  명명 규칙 추정/대화 JOIN 학습/AI 인사이트) + 상대 노드 설명과 함께 나열. 행 클릭 = 상대
+  노드 상세로 이동(연쇄 탐색). 상세 카드 head 의 "🔗 관계 상세" 링크로도 진입(발견성).
+- **중심 보기**: 모델 리셋 후 앵커 N-hop 만 로드 — 누적된 화면 없이 관심 노드 집중.
+- mutation 0(읽기성 탐색 + 기존 AI 분석 트리거 재사용) — RBAC(`metadata.graph.read`)·데이터
+  API·백엔드 불변. CONVENTIONS §10.7 pending 대상 아님.
+
+### 검증
+- `node --check` PASS · WSL-headless-harness **28/28 PASS**(네이티브 우클릭 이벤트 경로 실증
+  포함 — TEST.md). §18.8 적대 패널(ux/design/qa) MAJOR 3 전건 수정 — 엣지 우클릭 메뉴·앵커 측
+  조인 컬럼 표기·중심 보기 지속 칩("✕ 전체 보기" 복귀). REV-20260702T121500.
+- 잔여: 머지·배포 후 **PB-0008 실 Windows 시각검증**(hard gate — TEST.md 에 Run 후속 기록).
+
+---
 ## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
 
 ### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)

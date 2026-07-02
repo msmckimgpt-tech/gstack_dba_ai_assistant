@@ -448,3 +448,54 @@ source_of_truth: true
 - [x] T23.8 `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS. leftover 디버그 마커 0.
 - [x] T23.9 **§18.8 적대 검증** — 3렌즈 패널(race/index-drift/layout+cache) → **4건 BLOCKING 적발**(reset 경로 `_opSeq` 미증가로 stale-render·colsByTable 포이즌, seq-mismatch busy 잔류, 폴이 busy 제거+`_stateCache` 불일치). 5-agent 워크플로 재검증 → 4건 CLOSED + **신규 BLOCKING 1건**(loadRoots reset-vs-reset) 적발. loadRoots seq 가드 추가 후 최종 재검증 → **reset-vs-reset 6조합 CLOSED·신규 회귀 없음**. NIT(동시-key busy 깜빡임·후행 syncMarkers stale 텍스트·BE 캐시키 대소문자 등)은 수용 기록. REV-20260702T120000 [AGENT-TEAM].
 - [ ] T23.10 graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 시 무프리즈 + busy teal 피드백 + 반복 펼침 즉시응답).
+
+## 24. graph-ctxmenu — 노드 우클릭 상세 상호작용 (2026-07-02, entry persona dispatch)
+> §13.1 재번호: 병렬 세션이 §22(node-analysis-haiku)·§23(graph-perf-bg)을 점유 — 본 섹션 22→24, T24.x→T24.x.
+
+REQ-20260702T113000-graph-ctxmenu (사용자): 관리 콘솔 > 메타데이터 > 그래프 뷰에서 각 노드의
+**우클릭 상세 상호작용** — 스키마를 모르는 사용자가 선택 노드의 연관 관계를 상세하게 파악하는
+과정을 지원. 등급: **Major**(cross-cut 프론트 3파일, feature-0003 코드 거주; 데이터 API 불변·
+비파괴·RBAC 불변 — 기존 `metadata.graph.read` 읽기 표면만 사용).
+
+### 24.1 Implementation Plan (§7.1)
+
+- **파일**: `unit/feature-0003-agent-web-ui/src/static/admin.js`(그래프 블록 §3024~),
+  `styles.css`(메뉴·관계패널 스타일), `admin.html`(빈상태 안내문 + cache-buster
+  `?v=20260702-graph-ctxmenu`).
+- **symbol**: `_metaGraphCtxShow/_metaGraphCtxHide`(HTML 컨텍스트 메뉴, 뷰포트 clamp +
+  Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드), `_metaGraphCtxForNode/ForCombo/ForCanvas`
+  (kind 별 항목 구성), `_metaGraphShowRelations`(**관계 상세 패널** — depth=1 응답을
+  방향별(참조함→/참조받음←/주변 관계)로 그룹, FK/추정/신뢰 + weight + cardinality +
+  상대 노드 설명 1줄, 행 클릭 = 상대 노드 상세 이동), `_metaGraphFocus`(모델 리셋 후 앵커
+  N-hop 만 로드 — "이 노드 중심으로 보기"), `_metaInitGraph` 에 `node:contextmenu`/
+  `combo:contextmenu`/`canvas:contextmenu` 바인딩 + container capture 리스너(preventDefault
+  + 좌표 캡처).
+- **메뉴 항목**: Table=상세·관계 상세·관계 확장(1/2/3-hop chips)·중심 보기·컬럼 펼침/접기·
+  AI 능동 분석·FQN 복사. Column=상세·관계 상세·소속 테이블 상세·중심 보기·FQN 복사.
+  Term=상세·관계 상세·관계 확장·중심 보기·이름 복사. Combo=클러스터 상세·스키마명 복사.
+  Canvas=전체 맞춤·그래프 초기화. 상세 카드 head 에 "🔗 관계 상세" 링크 추가(비-우클릭 발견성).
+- **G6 v5 함정 준수**(BLUEPRINT §3): 전부 HTML 오버레이 메뉴(G6 요소 아님 — setData 재구성과
+  무간섭), 이벤트만 G6. mutation 0 (CONVENTIONS §10.7 pending 대상 아님 — 전부 읽기성 +
+  기존 analyze 트리거 재사용).
+- **AC**: (a) 노드 우클릭 시 브라우저 기본 메뉴 대신 커스텀 메뉴가 뜨고 kind 별 항목이 맞다.
+  (b) 관계 상세 패널이 방향·신뢰도·근거(edge_source)·상대 설명을 표시하고 행 클릭 시 상대
+  노드로 이동한다. (c) 중심 보기가 앵커 N-hop 만 남긴다. (d) 기존 클릭/더블클릭/접기 회귀 0.
+  (e) node --check + WSL-headless harness 전 플로우 PASS. (f) PB-0008 Windows-browser Run
+  기록(check #13 hard gate).
+
+### 24.2 구현
+- [x] T24.1 admin.js 컨텍스트 메뉴 인프라 + kind 별 메뉴 + 관계 상세 패널 + 중심 보기.
+      (패널 반영: 엣지 우클릭 메뉴 `_metaGraphCtxForEdge`·로컬 조인 컬럼 표기·중심 보기 지속
+      칩 `_metaGraphFocusChip`·hop chip 1회성 depth 인자·Column 관계 확장 파리티·복사 폴백·
+      wheel/재렌더 dismiss·Tab/포커스 복원.)
+- [x] T24.2 styles.css 메뉴·관계 패널·중심 칩 스타일 + admin.html 안내문·cache-buster bump
+      (styles `?v=20260702-graph-ctxmenu`, admin.js perf-bg 병합 후 `?v=20260702-graph-ctxmenu2`).
+
+### 24.3 검증
+- [x] T24.3 node --check + WSL-headless harness **28/28 PASS**(네이티브 우클릭 경로·엣지 메뉴·
+      중심 칩·로컬 조인 컬럼·1회성 hop·회귀·에러 0 — TEST.md).
+- [x] T24.4 §18.8 적대 패널(ux CHANGES-REQUESTED→MAJOR 3 전건 수정 / design PASS-WITH-NITS /
+      qa rate-limit 미완·한계 기록) → REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu.
+- [ ] T24.5 verify-completion(--pre-commit) PASS → commit/push/PR → cycle-finalize.
+- [ ] T24.6 라이브 배포(deploy-web.sh) + PB-0008 실 Windows 시각검증(겸 T21.11 재확인) →
+      TEST.md Run 후속 기록.

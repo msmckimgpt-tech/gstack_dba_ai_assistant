@@ -1448,6 +1448,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **배포 후 최종 확인(필수)**: web 재빌드·재배포(deploy_scope: included) 후 (a) baked 자산 검증 — `GET /static/app.js?v=20260702-attach-count-scope` 서빙 + 4개 `_renderAttachmentPills()` 훅 마커 확인, (b) **사용자 실화면 인터랙션 확인 요망**: ① 대화 A 에 파일 첨부 → "+" 열어 배지 개수 확인 → "새 대화" 클릭 → "+" 배지 **비워짐** / ② 대화 A 첨부 후 다른 기존 대화 B(첨부 없음) 전환 → 배지 비워짐, 첨부 있는 B 면 B 개수 / ③ 첨부 있는 활성 대화 **보관/나가기** 후 다른 대화 랜딩 → 배지가 삭제 대화 개수 잔류 안 함.
 - **Pass/Fail: 정적 PASS(코드정합·적대검증) · 라이브 = 배포 후 사용자 실화면 확인 대기**. CHECK#13(PB-0008 Windows-browser) 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).
 
+<<<<<<< HEAD
+### Run (2026-07-02) — graph-ctxmenu: 메타데이터 그래프 뷰 노드 우클릭 상세 상호작용 (Major §12.3 — frontend-only, 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §24)
+- **정적·dev-loop 검증 PASS**: `node --check admin.js` PASS + WSL-headless-harness(그래프 블록 + 실 admin.html 마크업 + mock apiFetch) **28/28 PASS** — 네이티브 우클릭 이벤트 경로(canvas capture preventDefault + G6 node/combo/edge/canvas:contextmenu)·kind 별 메뉴·관계 상세 패널(방향·신뢰/추정 w·근거·로컬 조인 컬럼·행 클릭 이동)·중심 보기 지속 칩·1회성 hop 확장·기존 클릭/더블클릭/접기 회귀·콘솔 에러 0. 상세: `unit/feature-0016-metadata-graph/docs/TEST.md` graph-ctxmenu 절.
+- **§18.8**: ux/design/qa 3인 적대 패널 — MAJOR 3 전건 수정(엣지 우클릭 메뉴·로컬 조인 컬럼 표기·중심 보기 지속 칩). REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu (feature-0016 REVIEW.md).
+- **Environment: Windows-browser (PB-0008)** — **배포 후 라이브 실측 예정(커밋 시점 미수행 사유 명시, 카고컬트 방지)**: 본 변경은 web 이미지에 baked 되는 정적 자산(admin.js/styles.css/admin.html)이고 배포 스파인 `bin/deploy-web.sh` 는 origin/main HEAD 만 배포하므로 **머지 전 라이브 반영 불가**. cycle-finalize(main 병합) → web-a/web-b 재배포(cache-buster admin.js `?v=20260702-graph-ctxmenu2`·styles.css `?v=20260702-graph-ctxmenu` 신자산 강제 로드) → 실 Windows 브라우저(win-browser relay)로 그래프 뷰 우클릭 메뉴(노드/컬럼/용어/클러스터/엣지/빈캔버스)·관계 상세 패널·중심 보기 칩·기본 메뉴 차단·기존 상호작용 회귀를 실측하고 본 Run 에 POST-DEPLOY 갱신을 기록한다. (canvas 노드 우클릭의 무인 자동화가 Chrome eval 제약으로 막히면 스크린샷+가능 범위 실측 후 사용자 실화면 확인 요망 항목을 명시.)
+- **Pass/Fail: 정적·dev-loop·적대패널 PASS · 라이브 = 배포 후 PB-0008 실측 대기**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).
+=======
 ### Run (2026-07-02) — TASK-20260702-aiops-activity-paging: 활동 페이징 + main agent latency (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
 - **단위 PASS**: `tests/test_ai_ops.py` **15/15**(신규 5) — `_query_activity` cursor 미지정(has_more→next_cursor=마지막 id, WHERE 없음, ORDER BY id DESC) / cursor 지정(WHERE id<%s, params=(cursor, limit+1), no-more→next_cursor null) / activity 엔드포인트 데이터(items limit + next_cursor) / PG degrade(200, items 빈, next_cursor null) / 권한 403(console.access-only, TestClient). agent latency 는 기존 `test_record_llm_usage_latency_column`(passthrough) 커버.
 - **회귀 PASS**: `test_route_parity_p5b`(골든 **195**, 신규 `/api/admin/ai-ops/activity` 반영) · permission 16 · dashboard 20 · usage 12 — 합 66 PASS. 전체 collection 무오류(agent_core 변경 import 포함).
@@ -1455,3 +1462,4 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **§18.8**: 2-렌즈 적대 패널(agent_core hot-path + 페이징 backend / 프론트 XSS·더보기) — REV-20260702T180000-aiops-activity-paging.
 - **Environment: Windows-browser (PB-0008)** — 배포 후 라이브 실측 예정(cache-buster admin.js bump): AI 운영 현황 → '최근 활동' **'더 보기' 클릭 → 과거 활동 append**(중복/누락 없이) + next_cursor 소진 시 '과거 기록 끝' + main agent 신규 호출의 latency 기록 확인 + 스크린샷.
 - **Pass/Fail: PASS(단위·회귀·정적·적대패널)**. CHECK#13(PB-0008)는 배포 후 '더 보기' 실측으로 충족 예정.
+>>>>>>> origin/main

@@ -322,3 +322,33 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{REPORT,TASK,MODIFY,REVIEW}.md`
 - Impact: 백엔드 모델 라우팅 계층만. schema/table/account insight·에이전트 추론·요약 등 다른 LLM 경로 불변(격리 확인). **외부 API 비용 발생**(그래프 노드 분석이 로컬 무료 gemma → Bedrock claude-haiku 유료 호출). 비용은 기존 node_analysis 예산 캡(depth_budget/node_budget/dedupe)으로 경계. 반영 조건: 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본값과 동일이므로 선택적·명시 권장) + **insight-worker 재빌드·재기동**(코드 baked). 기존 저장된 분석은 이전 model 라벨(gemma) 유지, 신규 run 부터 claude-haiku.
 - Rollback Notes: `AGENT_NODE_ANALYSIS_MODEL=edge` 로 .env override(즉시 gemma 환원, 재기동만) 또는 3개 코드 파일 git revert. 데이터·스키마 무손상(마이그레이션 없음).
+## CHG-20260702T120000-ai-claude-feature-0016-graph-ctxmenu
+- Date: 2026-07-02
+- Related Requirement: REQ-20260702T113000-graph-ctxmenu (TASK.md §24 — §13.1 재번호 22→24) — 그래프 뷰 노드 우클릭
+  상세 상호작용. 스키마 미숙지 사용자의 선택 노드 연관 관계 파악 지원.
+- Summary: (1) **우클릭 컨텍스트 메뉴** — node/combo/canvas `contextmenu` G6 이벤트 + container
+  capture 리스너(기본 메뉴 차단·좌표 캡처), kind 별 항목(Table=상세·관계 상세·관계 확장 1~3-hop
+  chips·중심 보기·컬럼 펼침/접기·AI 능동 분석·FQN 복사 / Column=+소속 테이블 상세 / Term /
+  Combo / Canvas). HTML 오버레이(DOM 생성, innerHTML 미사용)라 G6 setData 재구성과 무간섭.
+  뷰포트 clamp + Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드. (2) **관계 상세 패널**
+  (`_metaGraphShowRelations`) — depth=1 관계를 방향별(참조함→/참조받음←/연관 용어/주변 관계)로
+  그룹, 추정/신뢰 배지 + weight + cardinality + 근거 한글 라벨(fk_introspect/inferred/
+  conversation/llm_insight) + 상대 노드 설명, 행 클릭 = 상대 노드 상세 이동. 상세 카드 head 에
+  "🔗 관계 상세" 진입 링크(비-우클릭 발견성). (3) **중심 보기**(`_metaGraphFocus`) — 모델 리셋
+  후 앵커 N-hop 만 로드(누적 confusion 없이 관심 노드 집중). (4) 빈상태 안내·상태줄에 우클릭 힌트.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaCtx*`/`_metaGraphCtx*` 메뉴 인프라,
+    `_metaGraphShowRelations`/`_metaGraphRenderRelations`, `_metaGraphFocus`, `_metaInitGraph`
+    contextmenu 바인딩, `_META_EDGE_SOURCE_KO`/`_META_EDGE_TYPE_KO`, 상세 카드 rel 링크)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.admin-meta-graph-ctxmenu`/`.amgc-*`,
+    `.amgr-*` 관계 패널·진입 링크)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (빈상태 우클릭 안내, cache-buster
+    `styles.css` → `?v=20260702-graph-ctxmenu`, `admin.js` → `?v=20260702-graph-ctxmenu2`(perf-bg 병합 후 재부여))
+  - `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,REPORT,MODIFY}.md`
+- Impact: frontend-only(데이터 API·RBAC·백엔드 불변 — 기존 `metadata.graph.read` 읽기 표면만
+  사용, mutation 0 = CONVENTIONS §10.7 대상 아님). 검증: node --check + WSL-headless-harness
+  **28/28 PASS**(네이티브 우클릭 이벤트 경로 포함) + §18.8 적대 패널 MAJOR 3 전건 수정(엣지
+  우클릭 메뉴·로컬 조인 컬럼 표기·중심 보기 지속 칩 — REV-20260702T121500). 배포=web 재빌드
+  후 PB-0008 실 Windows 시각검증(TEST.md).
+- Rollback Notes: admin.js/styles.css/admin.html git revert + cache-buster 환원(graph-g6b·
+  aiops-scroll). 데이터·API 무손상.
