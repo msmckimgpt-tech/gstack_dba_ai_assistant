@@ -473,3 +473,23 @@ source_of_truth: true
   수용 한계는 ADR-007 Consequences ①~④.
 - Human Approval Needed: 없음(Major 승계 — 원 cycle 사용자 요청 범위 내, 비파괴·마이그레이션 0).
   deploy_scope: included(FIRST_REQUEST 전역) 근거로 배포 자동 진행 + 첫 배포 직전 1줄 표면화.
+
+## REV-20260702T100500-ai-root-feature-0016-probe-mssqlfix [SUBAGENT: PASS] — MSSQL 프로브 SQL 오류 130 hotfix 적대 리뷰
+- Related Change: CHG-20260702T100500(probe-mssqlfix). dialects.py MSSQL probe_relationship_overlap
+  재작성 + 회귀 테스트. rel-selfheal(REV-20260702T052630) 라이브 검증이 적발한 잠복 결함의 후속.
+- Trigger: query/스키마 keyword matched + 프로브 SQL 재작성 → backend+qa 집중 subagent 1렌즈.
+- Method: diff 정독 + 신·구 SQL 렌더링 실측(타임아웃·`]` 이스케이프·MySQL 경로) + pytest 54건 실행.
+- Verified: 의미 동일성(표본 모집단·중복·NULL→0 처리 전부 구와 동일) · T-SQL 문법 정당성(오류 130
+  제약은 집계 인자 내부에만 적용, 파생 테이블 SELECT list 의 CASE WHEN EXISTS 합법) · q() 이스케이프
+  6개 위치 전부 실측 · 기존 shape/escape/timeout 테스트 정합 · MySQL 경로 무변경(grep 중복 패턴 0).
+- Findings:
+  - MINOR-1 (수용): TOP row-goal 이 "정확히 n행만 EXISTS 평가" 보증을 구조적→옵티마이저 의존으로 —
+    스트리밍 plan 에선 ~n행 평가, 차단 연산자 없음. 구 SQL 은 실행된 적 없어(전면 130) 반사실 —
+    MySQL 쌍둥이와 의미 동치가 실질 기준(성립). 이중 중첩 구조화는 불필요 판단.
+  - MINOR-2 (수정 완료): EXISTS 상관 위치 `s0.<src_col>` 의 사용자 유래 식별자 이스케이프가 무봉인
+    → escaping 테스트에 `= s0.[c]]ol]` 단언 추가(55건 PASS).
+  - NIT (수용): 회귀 테스트는 형태 봉인 — T-SQL 파싱 합법성의 최종 증명은 배포 후 워커 로그
+    (오류 130 소멸 + (sampled, matched) 수신)로 확인.
+- Verdict: **PASS** — BLOCKING/MAJOR 0. 배포 후 라이브 확인 조건부.
+- Human Approval Needed: 없음(rel-selfheal Major 승계 — 라이브 검증 완결 범위). deploy_scope:
+  included 근거 자동 배포(워커 재빌드).
