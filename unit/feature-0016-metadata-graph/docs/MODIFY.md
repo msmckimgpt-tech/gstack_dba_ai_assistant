@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T160000-ai-root-feature-0016-reltrace-tabledetail
+- Date: 2026-07-03
+- Related Requirement: graph-reltrace(CHG-20260703T152607) PB-0008 후속 — 테이블 노드 단일클릭 상세에
+  "관계(N)" 섹션 미표시 갭(depth=1 fetch 는 테이블 기준 2-hop REFERENCES 미포함).
+- Summary: `_metaGraphRenderDetail`/`_metaGraphShowRelations` 가 fetched edges 에 더해 **모델
+  (_metaGraph.edges)에서 self(테이블이면 자기 컬럼 포함)에 닿는 REFERENCES 를 병합**(dedup·broken 제외)
+  → 테이블 단일클릭 상세/관계 상세에 관계 행 표시(기존 추적 행 렌더 그대로). counter 노드명 모델 폴백.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}`.
+- Impact: 프론트 전용·비파괴·마이그레이션 0. 배포 = web 재빌드만.
+- Rollback Notes: 코드 롤백 = 이전 커밋 재빌드.
+
 ## CHG-20260703T152607-ai-root-feature-0016-graph-reltrace
 - Date: 2026-07-03
 - Related Requirement: 사용자 후속 3건 — ① 테이블 접힌 상태에서도 연결 관계 표시(더블클릭 전 미표시 이슈),

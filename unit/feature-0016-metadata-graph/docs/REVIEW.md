@@ -563,6 +563,23 @@ source_of_truth: true
 - 검증: 수정 후 py_compile/node --check PASS · role 10 + relevance 28 + ai_ops 15 = 53 PASS · headless harness 4 시나리오 ALL PASS(pageerror 0) · 전체 pytest 회귀 재실행.
 - 병렬 재번호: 상류 #553 이 §31/ADR-009 선점 → 본 cycle 은 **§32/ADR-010** 으로 재번호(§13.1). 상류 main 의 feature-0003 TEST.md 커밋된 병합 마커(graph-ctxmenu↔aiops-activity-paging Run 충돌 잔재)를 위생 해소(두 Run 모두 보존).
 
+## REV-20260703T160000-ai-root-feature-0016-reltrace-tabledetail [SUBAGENT: PASS-WITH-FIXES] — 테이블 단일클릭 상세 관계 모델 병합 적대 리뷰
+- Related Change: CHG-20260703T160000(reltrace-tabledetail). admin.js `_metaGraphRenderDetail`/
+  `_metaGraphShowRelations` 모델 병합 + admin.html 캐시버스터. TASK §33. graph-reltrace PB-0008 후속.
+- Trigger: UI/graph + REFERENCES/relationship keyword matched → frontend 집중 1렌즈.
+- Method: general-purpose subagent — git diff 정독 + node --check + isSelf/dedup/방향/성능/회귀/XSS 재현 검증
+  + 백엔드 schema_tables 노드 계약 대조.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0. 핵심 로직(self 판정 scope-prefix 오판 없음·dedup 방향 정합·
+  around 오분류 없음·컬럼 단일클릭 회귀 없음·nm esc XSS 안전) 견고 확인.
+- Findings → 처리:
+  - **LOW (수정)**: 모델-병합 관계행의 상대 Column 노드가 `_metaGraph.nodes` 에 없을 수 있음(schema_tables
+    는 REFERENCES 끝점 Column 노드 미포함) → raw scoped key 표시·조인컬럼 주석 소실. → 신규
+    `_metaKeyDisplayNode`(scope 접두 제거 fqn + leaf) 로 nm 폴백 + 관계 상세 노드 보강.
+  - **LOW/cosmetic (수정)**: `_metaGraphIngest` 가 model 엣지에 cardinality 미저장 → 모델-only 관계행
+    `[cardinality]` 배지 항상 누락. → ingest 에 `cardinality` 저장.
+  - **INFO (수용)**: detail fetched-refs 루프의 broken 미필터는 백엔드가 응답·모델 양쪽 제외라 실질 no-op.
+- 재검증: node --check PASS + 모델병합 격리 Node 5/5 + `_metaKeyDisplayNode` 파생 정확(Column/Table label·fqn·leaf).
+- Human Approval Needed: 없음(Minor·프론트 전용·비파괴). deploy_scope: included 자동 배포 + PB-0008.
 ## REV-20260703T003000-ai-claude-feature-0016-graph-dblclick-latency [SUBAGENT: PASS] — 더블클릭 카메라 팬 반응 지연 제거(즉시 시작 + 적응형 follow) 적대 리뷰
 - Related Change: graph-dblclick-latency (MODIFY CHG-20260703-graph-dblclick-latency, DECISIONS ADR-011). `_metaGraphAnimateFocus` 적응형 follow 재작성 + `_metaGraphExpand` 팬 fetch 전 fire-and-forget 시작.
 - Method: general-purpose subagent 적대 7축 + G6 init/좌표 API 대조 + 종료·수렴 논리 검증.

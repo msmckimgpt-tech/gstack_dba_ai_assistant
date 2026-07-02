@@ -4791,6 +4791,18 @@ function _metaColParent(key, fqn) {
   return scope + ":" + parts.slice(0, -1).join(".");   // 마지막(컬럼) 세그먼트 제거 → 테이블 fqn
 }
 
+// reltrace-tabledetail(review): 모델에 없는 관계 끝점(컬럼)의 표시용 노드 파생 — scope 접두 제거한 fqn +
+//   leaf 명. schema_tables 는 REFERENCES 끝점 Column 노드를 nodes 에 싣지 않아, 모델-병합 관계행이
+//   raw scoped key(`scope:db.t.c`)로 뜨던 UX 저하를 해소(테이블-레벨/컬럼-레벨 읽기 쉬운 이름).
+function _metaKeyDisplayNode(key) {
+  const s = String(key || "");
+  const idx = s.indexOf(":");
+  const fqn = idx >= 0 ? s.slice(idx + 1) : s;
+  const segs = fqn.split(".");
+  const label = segs.length >= 3 ? "Column" : (segs.length === 2 ? "Table" : "Schema");
+  return { key, label, fqn, name: segs[segs.length - 1] || fqn };
+}
+
 // API nodes/edges → 모델(_metaGraph.nodes/edges Map) 병합. 반환: 새로 추가된 노드 key 배열.
 //   HAS_TABLE/HAS_COLUMN 은 containment(컬럼 fqn 으로 부모 도출)라 엣지로 저장하지 않는다.
 function _metaGraphIngest(nodes, edges) {
@@ -4831,6 +4843,7 @@ function _metaGraphIngest(nodes, edges) {
     if (_metaGraph.edges.has(id)) return;
     _metaGraph.edges.set(id, { id, source: e.source, target: e.target, type: e.type || "",
       status: e.status || "", edge_source: e.edge_source || "",
+      cardinality: e.cardinality || "",   // reltrace-tabledetail(review): 모델-병합 관계행의 [cardinality] 배지 보존
       weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" });
   });
   return added;
@@ -4882,17 +4895,34 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   } catch (_) {}
   const byKey = {};
   (nodes || []).forEach((n) => { if (n && n.key) byKey[n.key] = n; });
-  const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || k;
+  // counter 노드명: fetch(byKey) → 모델(_metaGraph.nodes) → key 파생(scope 접두 제거 fqn) 순 폴백.
+  //   raw scoped key 노출 방지(review LOW) — 모델에 없는 병합 끝점도 읽기 쉬운 fqn 으로 표시.
+  const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || ((_metaGraph.nodes.get(k) || {}).fqn) || ((_metaGraph.nodes.get(k) || {}).name) || _metaKeyDisplayNode(k).fqn || k;
   const selfKey = self.key;
   // 컬럼(HAS_COLUMN out), 관계(REFERENCES), 용어(GlossaryTerm), 부모 스키마(HAS_TABLE in)
   const columns = [], refs = [], terms = [];
+  const refSeen = new Set();
   (edges || []).forEach((e) => {
     if (!e) return;
     if (e.type === "HAS_COLUMN" && e.source === selfKey && byKey[e.target]) columns.push(byKey[e.target]);
-    if (e.type === "REFERENCES") refs.push(e);
+    if (e.type === "REFERENCES") { refs.push(e); refSeen.add((e.source || "") + "|" + (e.target || "")); }
     if (e.type === "DESCRIBES" && byKey[e.source] && byKey[e.source].label === "GlossaryTerm") terms.push(byKey[e.source]);
   });
   (nodes || []).forEach((n) => { if (n && n.label === "GlossaryTerm" && n.key !== selfKey && !terms.includes(n)) terms.push(n); });
+  // graph-reltrace(tabledetail): 테이블 단일클릭 상세는 depth=1 이라 컬럼의 REFERENCES(테이블 기준
+  //   2-hop)가 fetch 에 없어 "관계" 섹션이 비었다. 관계는 스키마 펼침 시 이미 모델(_metaGraph.edges)에
+  //   로드돼 있으므로, self(테이블이면 자기 컬럼 포함)에 닿는 REFERENCES 를 모델에서 병합한다(dedup).
+  //   컬럼 단일클릭(depth=1 에 REFERENCES 있음)은 fetch 로 이미 채워지고 여기서 dedup 로 중복 방지.
+  {
+    const isSelfEnd = (k) => k === selfKey || _metaColParent(k, (byKey[k] || {}).fqn || (_metaGraph.nodes.get(k) || {}).fqn) === selfKey;
+    _metaGraph.edges.forEach((e) => {
+      if (!e || e.type !== "REFERENCES" || e.status === "broken") return;
+      if (!isSelfEnd(e.source) && !isSelfEnd(e.target)) return;
+      const id = (e.source || "") + "|" + (e.target || "");
+      if (refSeen.has(id)) return;
+      refSeen.add(id); refs.push(e);
+    });
+  }
 
   // graph-reltrace(review MAJOR): 관계 행 data-trace 속성값(노드 키)에 쓰이므로 따옴표까지 이스케이프
   //   (DB 식별자에 인용부호 가능 — 속성 탈출 방어. sibling _metaGraphRelTraceRowsHTML 와 parity).
@@ -4975,7 +5005,30 @@ async function _metaGraphShowRelations(key) {
     return;
   }
   _metaGraphSetSelected(key);
-  _metaGraphRenderRelations(key, data.nodes || [], data.edges || []);
+  // graph-reltrace(tabledetail): 테이블 depth=1 은 컬럼 REFERENCES(2-hop) 미포함 → 모델에서 self
+  //   (자기 컬럼 포함)에 닿는 REFERENCES 를 병합해 "관계 상세" 도 테이블 관계를 표시(dedup).
+  const mNodes = (data.nodes || []).slice();
+  const mEdges = (data.edges || []).slice();
+  {
+    const seen = new Set(mEdges.map((e) => (e.source || "") + "|" + (e.type || "") + "|" + (e.target || "")));
+    const nodeKeys = new Set(mNodes.map((n) => n && n.key));
+    const isSelfEnd = (k) => k === key || _metaColParent(k, (_metaGraph.nodes.get(k) || {}).fqn) === key;
+    _metaGraph.edges.forEach((e) => {
+      if (!e || e.type !== "REFERENCES" || e.status === "broken") return;
+      if (!isSelfEnd(e.source) && !isSelfEnd(e.target)) return;
+      const id = (e.source || "") + "|REFERENCES|" + (e.target || "");
+      if (seen.has(id)) return;
+      seen.add(id); mEdges.push(e);
+      // 병합 엣지의 상대 노드 보강: 모델에 있으면 모델 노드, 없으면(schema_tables 는 REFERENCES 끝점
+      //   Column 노드를 안 실음) key 파생 노드로 — raw scoped key 표시·조인컬럼 주석 소실 방지(review LOW).
+      [e.source, e.target].forEach((k) => {
+        if (!k || nodeKeys.has(k)) return;
+        nodeKeys.add(k);
+        mNodes.push(_metaGraph.nodes.has(k) ? _metaGraph.nodes.get(k) : _metaKeyDisplayNode(k));
+      });
+    });
+  }
+  _metaGraphRenderRelations(key, mNodes, mEdges);
 }
 
 function _metaGraphRenderRelations(key, nodes, edges) {

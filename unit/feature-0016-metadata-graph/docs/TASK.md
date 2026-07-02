@@ -779,6 +779,24 @@ MODIFY CHG-20260703-node-role-viz.
       전체 pytest 재검증 PASS.
 - [ ] T33.12 배포(web+insight-worker 재빌드+alembic 0031) + **라이브 PB-0008 실 Windows**: 분석 완료 테이블
       칩 색/아이콘/범례 + 상세패널 역할 칩 육안 확인.
+
+
+## 33. reltrace-tabledetail — 테이블 단일클릭 상세에 관계 표시(모델 병합) (2026-07-03, graph-reltrace PB-0008 후속)
+
+### 33.0 맥락
+- graph-reltrace(§32) 배포 후 PB-0008 실측: ① 접힌 상태 관계 표시 PASS(`account─▶arenabegin` 점선).
+  그러나 **테이블 노드 단일클릭 상세 패널에 "관계(N)" 섹션이 안 뜸** — `_metaGraphShowDetail` 이
+  `?node=&depth=1` fetch 인데 테이블 기준 REFERENCES 는 (테이블→컬럼→참조) 2-hop 이라 depth=1 응답에
+  없음(컬럼 단일클릭 depth=1 엔 있음). 관계는 스키마 펼침 시 이미 모델에 로드됨.
+- 등급 Minor(프론트 전용·비파괴).
+
+### 33.1 구현·검증 (admin.js)
+- [x] T33.1 `_metaGraphRenderDetail`: refs 를 fetched edges + **모델(_metaGraph.edges)에서 self(테이블이면
+      자기 컬럼 포함)에 닿는 REFERENCES 병합**(dedup·broken 제외). `nm()` counter 노드명 모델 폴백.
+- [x] T33.2 `_metaGraphShowRelations`: 동일 모델 병합(mNodes/mEdges 보강) — "관계 상세" 도 테이블 관계 표시.
+- [x] T33.3 캐시버스터 `20260703-reltrace-tabledetail`. node --check PASS + 모델병합 로직 격리 Node 5/5 PASS.
+- [x] T33.4 §18.8 적대 리뷰 + verify-completion.
+- [ ] T33.5 배포 + PB-0008: 테이블 단일클릭 → "관계(N)" 행 표시 → 클릭 추적 육안.
 ## 34. graph-dblclick-latency — 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (2026-07-03, 사용자 후속 보고)
 사용자 관찰(graph-dblclick-cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. 정본: DECISIONS ADR-011, MODIFY CHG-20260703-graph-dblclick-latency.
 등급: **Major 승계**(프론트 카메라 1곳, 비파괴·데이터 API 불변·마이그레이션 없음).
