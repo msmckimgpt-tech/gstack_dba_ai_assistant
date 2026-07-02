@@ -179,6 +179,16 @@ docker compose run --rm \
 - **§18.8 적대 6축(SUBAGENT)**: 무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀 — **BLOCKING 0**(G6 v5 번들 소스 대조). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 (feature-0016 REVIEW.md).
 - **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 더블클릭 시 카메라가 앵커로 **실제 부드럽게 팬**(순간이동/급격 재배치 없음) 육안 확인 — 이번엔 실제 애니 발생 여부가 핵심.
 - Pass/Fail: **PASS**(구문·헤드리스 실증·적대6축·번들 소스 대조). 라이브 팬 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
+  - **후속(graph-dblclick-latency)**: 라이브서 팬 동작 확인됨. 잔여 = 팬 시작 ~350ms 텀 → 아래 TASK-20260703 에서 즉시 시작 + 적응형 follow 로 개선.
+
+### TASK-20260703-graph-dblclick-latency 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (Major §12.3, 2026-07-03, feature-0016 cross-cut) — **Environment: Windows-browser (반응성은 실 브라우저 체감 — de-risk=헤드리스 실증+적대7축 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 사용자 후속(cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 ~350ms 텀 뒤 시작(답답). 변경: admin.js `_metaGraphAnimateFocus` 적응형 follow 재작성 + `_metaGraphExpand` 팬 fetch 전 fire-and-forget 시작 + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-011 · MODIFY CHG-20260703-graph-dblclick-latency · TASK §34(병렬 재번호 §13.1).
+- **진단**: 팬이 파이프라인 맨 끝(fetch~135ms + setData/draw~200ms 뒤)에서 시작 → ~350ms 텀. 앵커는 이미 렌더인데 대기.
+- **구조·구문**: `node --check admin.js` PASS. diff = `_metaGraphAnimateFocus` 재작성 + `_metaGraphExpand` 팬 호출 위치 이동(2 hunk, 다른 카메라 경로 불변).
+- **헤드리스 실증**: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**(적응형 follow 가 이동 타겟 추종).
+- **§18.8 적대 7축(SUBAGENT)**: 종료보장·fire-and-forget 동시성·이동수렴·fetch실패/seq·미렌더/폴백·회귀·K/임계 — **BLOCKING 0**. **MEDIUM(missStreak 프레임카운트 조기포기 — 저사양 rAF 탈동조로 팬 조기중단 위험)** 적발→제거(MAXMS 단일상한). NIT(API 폴백·W/H 스테일)→반영. REV-20260703T003000 (feature-0016 REVIEW.md).
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬 + rebuild 로 노드 위치 정해진 뒤에도 매끄럽게 최종 중앙 수렴 육안 확인.
+- Pass/Fail: **PASS**(구문·헤드리스 실증·적대7축). 라이브 반응성 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
 
 ### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
 - 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.

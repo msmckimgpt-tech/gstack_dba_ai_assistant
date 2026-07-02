@@ -3588,40 +3588,47 @@ async function _metaGraphFitClamped(focusFirst) {
 //   **per-call 카메라 애니(focusElement/zoomTo 의 animation 인자)까지 무효화**한다(실증: false=2ms 즉시 vs true=412ms).
 //   전역 animation 을 켜면 setData 레이아웃 셔플이 재발하므로, G6 애니 시스템 대신 **manual rAF tween** 으로 앵커를 뷰포트
 //   중앙까지 translateBy(누적 이징) — setData 미사용이라 셔플·전역상태 무관. seq 로 연타 중단, 미렌더/ API 실패는 즉시 focus 폴백.
+// graph-dblclick-latency: 앵커-중심 팬을 **적응형 follow tween** 으로. 고정-duration(Dx/Dy 1회 캡처) 대신 매 프레임
+//   앵커의 **현재** 뷰포트 위치를 재조회해 뷰포트 중앙까지 잔여 delta 의 일정 비율(K)만큼 translateBy(ease-out).
+//   이 구조라 (a) fetch·rebuild 완료를 기다리지 않고 **더블클릭 즉시 fire-and-forget 으로 시작**해도(앵커는 이미 렌더됨)
+//   반응 텀이 사라지고, (b) 재빌드로 앵커가 이동/재생성돼도 최종 위치로 매끄럽게 수렴한다. seq 로 후속 op 시 폐기,
+//   재빌드 중 element 일시 미해소는 해당 프레임만 skip(프레임카운트 조기포기 없음 — 저사양 rAF 탈동조 대비). 종료는 수렴/seq/MAXMS.
+//   카메라 transform 만(노드 재렌더 없음)이라 프리즈 무관. API 부재 번들은 focusElement 즉시 폴백.
 async function _metaGraphAnimateFocus(key, seq) {
   const g = _metaGraph.graph;
   if (!g || !key) return;
-  const fel = (typeof _metaRenderedIdFor === "function") ? _metaRenderedIdFor(key) : key;
-  if (!fel) return;   // 미렌더 앵커 — 이동 안 함(throw 방지)
-  try {   // 판독 하한 줌 clamp(즉시 — 팬 tween 과 분리)
+  // API 부재 번들 폴백(getElementRenderBounds/getViewportByCanvas/translateBy 없으면 즉시 focus — 구 동작 보존).
+  if (typeof g.getElementRenderBounds !== "function" || typeof g.getViewportByCanvas !== "function" || typeof g.translateBy !== "function") {
+    try { const fel = _metaRenderedIdFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}
+    return;
+  }
+  try {   // 판독 하한 줌 clamp(즉시 — 팬보다 먼저)
     const z = (typeof g.getZoom === "function") ? g.getZoom() : 1;
     if (isFinite(z) && z < _META_MIN_READ_ZOOM) await g.zoomTo(_META_MIN_READ_ZOOM, false);
   } catch (_) {}
-  // 앵커 canvas 중심 → 뷰포트 중앙까지 delta(client px) 계산.
-  let cx, cy, W, H, start;
-  try {
-    const b = g.getElementRenderBounds(fel);
-    cx = (b.min[0] + b.max[0]) / 2; cy = (b.min[1] + b.max[1]) / 2;
-    const s = g.getSize(); W = s[0]; H = s[1];
-    start = g.getViewportByCanvas([cx, cy]);
-  } catch (_) { try { g.focusElement(fel, false); } catch (_2) {} return; }   // API 실패 → 즉시 focus 폴백
-  if (!start || !isFinite(start[0]) || !isFinite(start[1]) || !isFinite(W) || !isFinite(H)) {
-    try { g.focusElement(fel, false); } catch (_) {} return;
-  }
-  const Dx = W / 2 - start[0], Dy = H / 2 - start[1];
-  if (Math.abs(Dx) < 2 && Math.abs(Dy) < 2) return;   // 이미 중앙 근처 — 이동 불필요
   const now = () => (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-  const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
   const raf = () => new Promise((r) => { (typeof window !== "undefined" && window.requestAnimationFrame) ? window.requestAnimationFrame(() => r()) : setTimeout(r, 16); });
-  const dur = 420, t0 = now();
-  let prevE = 0;
+  const t0 = now(), MAXMS = 1200;   // **유일** 시간 상한 — av 미해소(재빌드 프리즈로 rAF 탈동조)여도 여기서 확정 종료.
+  const K = 0.24;                    // 프레임당 잔여 delta 비율(ease-out follow — 빠른 시작·부드러운 안착)
   while (true) {
-    if (seq != null && seq !== _metaGraph._opSeq) return;   // 후속 op 로 폐기 — tween 중단(잔여 카메라는 새 op 가 정리)
-    const p = Math.min(1, (now() - t0) / dur);
-    const e = ease(p);
-    try { g.translateBy([Dx * (e - prevE), Dy * (e - prevE)], false); } catch (_) { return; }
-    prevE = e;
-    if (p >= 1) return;
+    if (seq != null && seq !== _metaGraph._opSeq) return;   // 후속 op 로 폐기
+    if (now() - t0 > MAXMS) return;                          // 시간 상한(유일 안전망 — 프레임 카운트 기반 조기 포기 없음)
+    let W, H;   // 매 프레임 재조회 — 팬 중 컨테이너/창 리사이즈 대응(중앙 목표 스테일 방지).
+    try { const s = g.getSize(); W = s[0]; H = s[1]; } catch (_) { W = H = NaN; }
+    let av = null;   // 앵커 현재 뷰포트 위치 재조회 — 재빌드로 이동·재생성돼도 최종 위치로 수렴.
+    try {
+      const fel = _metaRenderedIdFor(key);
+      if (fel) {
+        const b = g.getElementRenderBounds(fel);
+        av = g.getViewportByCanvas([(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2]);
+      }
+    } catch (_) { av = null; }
+    if (isFinite(W) && isFinite(H) && av && isFinite(av[0]) && isFinite(av[1])) {
+      const rx = W / 2 - av[0], ry = H / 2 - av[1];
+      if (Math.abs(rx) < 1.2 && Math.abs(ry) < 1.2) return;   // 수렴 — 종료
+      try { g.translateBy([rx * K, ry * K], false); } catch (_) { return; }
+    }
+    // av 미해소(재빌드 중 일시)면 이 프레임 skip — MAXMS 까지 재시도(조기 포기 없음 → 저사양 프레임드롭에도 팬 미실패).
     await raf();
   }
 }
@@ -4643,6 +4650,9 @@ async function _metaGraphExpand(key, depthOverride) {
   const seq = ++_metaGraph._opSeq;
   _metaGraphStatus("이웃 조회 중…");
   _metaSetBusy(key, true, seq);
+  // graph-dblclick-latency: 앵커는 이미 렌더돼 있으므로 카메라 팬을 fetch·rebuild 를 기다리지 않고 **즉시** 시작(fire-and-forget).
+  //   적응형 follow 라 재빌드로 앵커가 이동해도 최종 위치로 수렴 — 더블클릭↔팬 시작 사이의 ~350ms 텀 제거. seq 로 폐기.
+  _metaGraphAnimateFocus(key, seq);
   await _metaYieldPaint();
   if (seq !== _metaGraph._opSeq) { _metaSetBusy(key, false, seq); return; }
   let data;
@@ -4694,11 +4704,10 @@ async function _metaGraphExpand(key, depthOverride) {
   }
   const anchorCols = (data.nodes || []).some((x) => x && x.label === "Column" && _metaColParent(x.key, x.fqn) === key);
   if (anchorCols) _metaGraph.expanded.add(key);
-  // graph-initview(A3): 이웃 확장은 전체-fit 대신 앵커 중심 국소 focus — 노드가 쌓여도 줌아웃 재발 없음.
-  //   graph-dblclick-cam2: 그 focus 를 **manual rAF tween(_metaGraphAnimateFocus)** 으로 부드럽게 — 더블클릭 시 카메라
-  //   순간이동 재배치 불편 해소. (지난 cycle 의 focusElement({duration}) 는 graph animation:false 때문에 no-op 였음 — 실증.)
-  await _metaG6Apply(false);   // busy 는 rebuild 로 소멸
-  if (seq === _metaGraph._opSeq) await _metaGraphAnimateFocus(key, seq);
+  // graph-initview(A3): 이웃 확장은 전체-fit 대신 앵커 중심 focus. graph-dblclick-cam2: manual rAF tween 으로 부드럽게.
+  //   graph-dblclick-latency: 그 tween 을 위(busy 직후)에서 이미 fire-and-forget 으로 시작함 — 적응형 follow 라 이 rebuild 로
+  //   앵커가 이동해도 자동 수렴. 여기서 재호출 불필요(중복 tween 방지).
+  await _metaG6Apply(false);   // busy 는 rebuild 로 소멸 (진행 중인 follow tween 이 새 위치로 이어서 수렴)
   _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };
