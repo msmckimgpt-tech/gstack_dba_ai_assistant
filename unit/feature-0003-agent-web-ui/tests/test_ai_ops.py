@@ -203,9 +203,13 @@ import datetime as _dt
 
 
 def _act_rows(n, start_id):
-    # (id, task, model, total, prompt, completion, latency, created_at)
-    return [(start_id - i, "agent", "claude-haiku-4", 100, 60, 40, 12,
-             _dt.datetime(2026, 7, 2, 0, 0, i % 60)) for i in range(n)]
+    # TASK-20260702-audit-nav-ux: SELECT 컬럼 확장 반영 —
+    # (id, task, model, resolved_model, total, prompt, completion, latency, created_at, run_id, conversation_id)
+    # conversation_id 는 짝수 index 만 부여(연결 대화 있음/없음 두 경로 모두 커버).
+    return [(start_id - i, "agent", "claude-haiku-4", "claude-haiku-4-served", 100, 60, 40, 12,
+             _dt.datetime(2026, 7, 2, 0, 0, i % 60),
+             "run-" + str(start_id - i), ("conv-" + str(start_id - i)) if (i % 2 == 0) else None)
+            for i in range(n)]
 
 
 class _PlainCur:
@@ -236,6 +240,14 @@ def test_query_activity_no_cursor_has_more():
     assert len(items) == 3
     assert nxt == items[-1]["id"]                  # has_more → next_cursor = 마지막 id
     assert {"id", "latency_ms", "cost_usd", "label"} <= set(items[0].keys())
+    # TASK-20260702-audit-nav-ux: 상세 확장용 additive 필드 노출 + 서빙/요청 모델 분리.
+    assert {"req_model", "resolved_model", "prompt_tokens", "completion_tokens",
+            "run_id", "conversation_id"} <= set(items[0].keys())
+    assert items[0]["model"] == "claude-haiku-4-served"     # 행 표시=서빙(resolved) 우선
+    assert items[0]["req_model"] == "claude-haiku-4"        # 요청 별칭 별도 보존
+    assert items[0]["prompt_tokens"] == 60 and items[0]["completion_tokens"] == 40
+    assert items[0]["run_id"] == "run-100" and items[0]["conversation_id"] == "conv-100"
+    assert items[1]["conversation_id"] is None              # 홀수 index=대화 미귀속(정직 안내 경로)
     assert "WHERE id <" not in cur.sql             # cursor 미지정 → WHERE 없음
     assert "ORDER BY id DESC" in cur.sql
 

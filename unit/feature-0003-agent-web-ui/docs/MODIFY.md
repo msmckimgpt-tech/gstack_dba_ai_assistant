@@ -9,6 +9,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260702T190000-audit-nav-ux (TASK-20260702-audit-nav-ux — 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장, Minor §12.3 — feature-0003 프론트 UI + 읽기전용 additive 백엔드, 비파괴)
+- Date: 2026-07-02 (worktree ai/claude/feature-0003-admin-audit-ux, base 44d958cd).
+- 요청(/_template:entry arg-given): "`관리 콘솔 > AI 운영 현황`에서 (1) `감사` 카테고리 순서 재구성: 감사 로그·보관 대화·LLM 사용량·AI 운영 현황 (2) 각 항목 hover 시 상세설명 툴팁 (3) '최근 활동' 클릭 시 상세 확장 — 구조는 `프로필 > 사용 내역 > 차트`·`LLM 사용량 > 차트` 그래프 클릭→대화 목록 드릴다운 참조."
+- 변경(`src/static/admin.html`): 감사 그룹에서 `보관 대화`(archives) 버튼을 `LLM 사용량`(usage) 앞으로 이동(요청 순서). 4개 감사 탭(audits/archives/usage/ai-ops)에 네이티브 `title` 상세설명. cache-buster `admin.js?v=20260702-audit-nav-ux`. 순서·title 은 표시 계층만 — 게이팅(`ADMIN_TAB_PERMISSIONS`)·서브탭·`applyAdminTabVisibility` 그룹경계 동적계산이 `data-admin-tab` 키 기반이라 불변.
+- 변경(`src/routers/ai_ops.py` `_query_activity`): SELECT 11열 확장(model, resolved_model, run_id, conversation_id 추가) + dict additive(`req_model`·`resolved_model`·`prompt_tokens`·`completion_tokens`·`run_id`·`conversation_id`). 기존 필드 byte-동치 보존(서빙=`r[3] or r[2]`; writer 가 빈 resolved_model→None → `or`==`COALESCE`). overview feed + `/api/admin/ai-ops/activity` 페이징 공용 헬퍼라 양쪽 자동 상속(신규 엔드포인트 무).
+- 변경(`src/static/admin.js`): `aiOpsActivityRowsHtml` 를 클릭 요약 행(`role=button`/`tabindex`/`aria-expanded`/caret) + 숨김 상세 패널(인라인 아코디언)로 재구성. 상세: 작업·요청→서빙 모델·토큰(프롬프트/완료/합계)·비용·지연·run_id·연결 대화(conversation_id→`/?conversation=<id>` 새 탭, 없으면 미귀속 안내). `_toggleAiOpsActRow`(링크 클릭 제외)·`bindAiOpsActivityToggle`(컨테이너 위임, 페이징 append 상속) 신설, `renderAiOps` 배선.
+- 변경(`tests/test_ai_ops.py`): `_act_rows` 11-tuple + 신규 필드/서빙 우선순위/conv 유·무 경로 assert.
+- 비변경: RBAC enforcement·인가·스키마·마이그레이션·파괴적 데이터·신규 엔드포인트 0. conversation_id/run_id 는 기존 `console.aiops.read` 게이트 + 기존 usage 모달 동일 노출 등급.
+- 검증: `py_compile`·`node --check` PASS · `make test` exit 0(feature-0002+0003, test_ai_ops.py 15/15) · ruff PASS · §18.8 3-렌즈 VERDICT SHIP → REV-20260702T190000-audit-nav-ux.
+
 ## CHG-20260630T174000-metadata-bs-prefill (TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill, Minor §12.3 — feature-0003 프론트 단독, 비파괴)
 - Date: 2026-06-30 (worktree ai/claude/feature-0003-metadata-bs-prefill, base dcb3e02).
 - 요청: 관리콘솔 > 메타데이터 > 테이블 설명/컬럼 설명 — "스키마 골격을 가져왔을 때 기존에 입력된 정보가 확인되지 않음".
