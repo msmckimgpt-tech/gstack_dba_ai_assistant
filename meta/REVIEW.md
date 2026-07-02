@@ -2,6 +2,14 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260702T110054-report-deck-hardening [SUBAGENT:report-deck-verification(codex + red team)] — report_deck 스킬 하드닝 (검증 라운드 6개 개선점 규율 승격)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02. 첫 실행(범위 2026-06-01~07-02 v1)을 사용자·`/codex`(독립 엔진)·red team(적대 감사)로 검증한 결과 반복 발생한 결함을 **스킬 규율로 승격**(1회성 패치가 아니라 다음 호출부터 자동 적용).
+- **변경(META, pure-meta)**: `.claude/commands/_dqa/report_deck.md` — 불변제약 3 신규(성장톤↔정직성 경계 / 발표자·청중 분리+식별자 스크럽 / KPI 검증 축) + §5.2 전후 폴백 **인라인 SVG 도식 강제**(텍스트-only 금지) + §5.3 **배지 색+라벨+형태**(리스트 배지 포함) + Phase 4 EVIDENCE **측정조건·산식·배포근거·stale 엄밀성** + Phase 6 게이트 4 신규(정직성 경계 / 식별자 스크럽 / 전후 SVG / KPI 검증축) + 설계근거 하드닝 이력. `meta/REVIEW.md`(본 entry).
+- **근거(검증 유래)**: codex [P1]×6(톤 과교정으로 미검증→"완료" 단정, KPI "완료" 모호, EVIDENCE 근거 압축) + [P2]×8(약어·코드중심 전후·배지 형태). red team [MAJOR](KPI "16" 도출 불투명·"검증됨" 오분류) + [MINOR](37% 산술오류·엔진 stale). 사용자 피드백(전후 시각 부실·발표자용 마지막 페이지·성장 지향 톤).
+- **검증**: `bash -n` 불요(md). markdown 구조·앵커 정합. verify-completion META mode.
+- **Human Approval Needed**: 아니오 — 소비자 스킬 규율 강화(비파괴 additive), 제품 런타임 동작 0. 전역 auto-sync 대상.
+
 ## REV-20260702T105343-report-deck-run-v1-review-fixes [SKIPPED:presentation-revision] — 외부 리뷰(codex + red team) 반영 (필수 3 + 후속 2)
 
 - **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (직전 revise 산출물의 외부 리뷰 반영).
