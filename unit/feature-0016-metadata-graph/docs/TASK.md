@@ -838,4 +838,4 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T35.6 격리 로직 Node **8/8 PASS**(방향별 개수·컬럼 그룹화·참조함/받음 대상·관계없는 컬럼 plain·컬럼 self
       분류·툴팁 방향문장+근거+신뢰도·FK 툴팁) + `node --check` admin.js.
 - [ ] T35.7 §18.8 적대 리뷰 + verify-completion.
-- [ ] T35.8 배포(web) + **PB-0008**: 컬럼 클릭 관계 펼침 · 참조함/받음 구분·개수 · hover 의미 툴팁 육안.
+- [x] T35.8 배포(web ecf84e24 롤링) + **PB-0008 실 Windows PASS**: ① 컬럼 클릭 관계 아코디언 펼침 ② 참조함(→)/참조받음(←) 그룹 구분 ③ 방향별 개수(→1 ←0 배지 + 요약) ④ hover 의미 툴팁(방향·근거 대화JOIN학습·신뢰도 49%) 전건 육안 충족. 스크린샷 04-accordion-expanded.png.
