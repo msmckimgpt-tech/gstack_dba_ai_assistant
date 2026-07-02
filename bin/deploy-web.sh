@@ -200,7 +200,10 @@ migrate_phase() {
   fi
   # expand 마이그레이션 적용. contract 는 게이트가 이미 차단했으므로 여기 적용분은 backward-compatible.
   if [ -x bin/alembic-migrate.sh ]; then
-    run bash bin/alembic-migrate.sh upgrade || die "마이그레이션 적용 실패. ABORT (swap 안 함)."
+    # 방금 빌드한 이미지로 alembic 실행(stale agent 이미지 회귀 차단). run 래퍼는 "$@" 를 그대로
+    # 실행하므로 env 로 MIGRATE_ALEMBIC_IMAGE 를 자식 bash 에 확실히 주입한다. (main 이 build_image 를
+    # migrate_phase 앞으로 부르므로 이 시점에 $IMAGE_REPO:$TARGET_SHA 가 이미 존재한다.)
+    run env MIGRATE_ALEMBIC_IMAGE="$IMAGE_REPO:$TARGET_SHA" bash bin/alembic-migrate.sh upgrade || die "마이그레이션 적용 실패. ABORT (swap 안 함)."
   else
     warn "bin/alembic-migrate.sh 없음 — 마이그레이션 적용 skip."
   fi
@@ -491,8 +494,13 @@ main() {
 
   preflight_fileset
   preflight_tls
-  migrate_phase
+  # feature-0014-migrate-fresh-image: build 를 migrate 앞으로. migrate_phase 가 방금 빌드한
+  # mysql-ai-web:<sha>(신규 마이그레이션 파일 포함)로 alembic 을 돌리게 한다. 과거엔 migrate 가
+  # build 전에 실행돼 `docker compose run agent`(stale 이미지)로 head 를 오판, 신규 마이그를
+  # 조용히 놓쳤다. build 는 swap(recreate) 전 단계라 이 순서에서도 expand-before-swap 불변 유지
+  # (build→migrate→recreate). build 후 migrate 실패 시에도 last-good=이전본 유지(rollback 정합).
   build_image "$TARGET_SHA"
+  migrate_phase
   asset_stamp_warn
 
   step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
