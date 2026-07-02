@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260702-node-haiku-deploy
+- Date: 2026-07-02
+- Related Requirement: node-analysis-haiku(CHG-20260702-node-analysis-haiku-model)의 배포 게이트 T22.7 완수 — 사용자 "랜딩+배포" confirm 승인.
+- Summary: PR #535 main 병합(617e9a74) 후 라이브 배포. `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영 + insight-worker 이미지 재빌드(새 코드 baked)·`--no-deps --force-recreate` 재기동(healthy). smoke 실증(env 격리·config 값·라우팅 소스·클린 기동). 코드/스키마 변경 없음 — 배포 실행 + 정본 doc-status 갱신(TASK T22.7 완료 표시·T22.8 사용자 실검증 잔여, REPORT 배포 결과).
+- Files:
+  - `repo/.env` (런타임, non-versioned) — `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 추가
+  - `unit/feature-0016-metadata-graph/docs/{TASK,REPORT}.md` (배포 완료 기록)
+- Impact: 운영 insight-worker 가 그래프 관계 분석을 claude-haiku 로 실제 라우팅. 외부 API 비용 발생 시작(예산 캡 경계). web/ask-worker·데이터·스키마 무영향.
+- Rollback Notes: `.env` `AGENT_NODE_ANALYSIS_MODEL=edge` override 후 insight-worker 재기동(즉시 gemma 환원) 또는 CHG-20260702-node-analysis-haiku-model 코드 revert.
+
 ## CHG-20260701T220000-ai-claude-feature-0016-graph-perf2
 - Date: 2026-07-01
 - Related Requirement: WebGL 배포 후 사용자 육안 후속 3건 — (1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌 **원형 뭉치(blob)**, (4) 휠 확대/축소 너무 느림. (2 라벨유지는 OK.)

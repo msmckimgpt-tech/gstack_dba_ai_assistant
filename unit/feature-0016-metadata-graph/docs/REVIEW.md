@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260702T031500-node-haiku-deploy [SKIPPED: doc-only 배포 기록] — node-analysis-haiku 배포 완수 + 정본 doc-status 갱신
+- Related Change: CHG-20260702-node-haiku-deploy (T22.7 배포 완수). 코드/스키마 변경 없음 — 배포 실행(.env + insight-worker 재빌드·재기동) + TASK/REPORT/MODIFY doc-status 갱신뿐.
+- Panel skip 사유: 적대 리뷰 대상인 코드 변경(config/llm/node_analysis 라우팅)은 선행 cycle 에서 이미 [SUBAGENT: PASS](REV-20260702T025245) 완료. 본 changeset 은 doc-only + 런타임 배포라 신규 코드 결함면 없음. 배포 정합은 smoke 실증(env 격리·config 값·라우팅 소스·healthy·traceback 0)으로 대체.
+- Human Approval: 사용자 "랜딩+배포" confirm 승인(외부 API 비용 인지).
+
 ## REV-20260701T220000-ai-claude-feature-0016-graph-perf2 [SUBAGENT: PASS] — 컬럼 결정론 배치(blob/거침) + 줌 적대 리뷰
 - Related Change: graph-perf2 (컬럼 정렬 fcose 제약 제거→layoutstop 결정론 배치, 세로 seed, wheelSensitivity 제거, PITCH/nodeSeparation).
 - 방식: 진단 워크플로(5에이전트: blob/거침/줌 3렌즈 진단 → 통합설계 → 회귀검증, verdict go-with-fixes) + §18.8 적대 subagent(admin.js 전량 + vendored cytoscape-fcose.js constraint/tile 로직 실측 대조, 7 우려경로).

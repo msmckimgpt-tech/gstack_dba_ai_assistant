@@ -21,6 +21,13 @@
 ### 반영 조건 / 비용
 반영엔 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본과 동일 — 명시 권장) + **insight-worker 재빌드·재기동**(코드 baked, 외부영향=배포 confirm). **외부 API 비용 발생**(그래프 노드 분석이 무료 로컬 gemma → Bedrock claude-haiku 유료). node_analysis 예산 캡(depth/node budget·dedupe)으로 run 당 경계. 기존 저장 분석은 이전 라벨 유지, 신규 run 부터 claude-haiku.
 
+### 배포 완료 (2026-07-02, node-haiku-deploy · 사용자 confirm 승인)
+resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)을 인계 → PR #535 main 병합(617e9a74) 후, 사용자 "랜딩+배포" 결정에 따라 라이브 배포·검증:
+- `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 추가(코드 기본값과 동일, 명시).
+- insight-worker 이미지 재빌드(`repo-insight-worker` b5e23727, 새 코드 baked) + `docker compose up -d --no-deps --force-recreate insight-worker` → **healthy**. web-a/web-b·ask-worker 무영향(insight-worker 만 재생성).
+- **smoke PASS**: 컨테이너 env `NODE_ANALYSIS=claude-haiku-4`/`INSIGHT=edge`(격리) · `config.AGENT_NODE_ANALYSIS_MODEL='claude-haiku-4'`·`__all__` 노출 · `llm_node_analysis` 라우팅 소스 `_insight_model=AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 확인 · 클린 기동(traceback/critical 0).
+- 잔여(사용자 실검증): 관리콘솔 그래프뷰 "AI 능동 분석" 신규 run 의 model 라벨=claude-haiku 육안 확인. 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 LLM run 강제 불가 — 실 브라우저 확인 권장.
+
 ## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
 
 ### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)
