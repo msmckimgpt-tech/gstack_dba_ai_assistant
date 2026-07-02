@@ -380,3 +380,17 @@ source_of_truth: true
 - 검증(수정 후): node --check PASS + harness ctxmenu 10/10 PASS(badge/우클릭/접기/빈스키마·에러 0) + initview 회귀 31/31 PASS + 큰 수(8122) badge 넘침·크래시 없음.
 - Verdict: **PASS-WITH-FIXES** — 차단 결함 0, MINOR 수정·NIT 주석 반영, NIT 1 은 pre-existing 후속.
 - Human Approval Needed: 없음(Minor §12.3 — frontend-only 비파괴). cycle-final 후 배포는 deploy_scope: included.
+
+## REV-20260702T173000-ai-claude-corp-feature-0016-search-badge [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: search-badge (MODIFY CHG-20260702T173000, TASK §27). 검색 시 스키마 카드 badge 매칭/전체 표기.
+- Method: general-purpose subagent 적대 리뷰 — diff 전체 Read + schemaTotals 생명주기·집계 정확성·상태 전이·badge 렌더·회귀 교차검증.
+- Findings: BLOCKER 0 · MAJOR 1 · MINOR 3(1 LOW-CONF) — 전건 반영.
+  - **MAJOR (수정)**: search_nodes cap(_SEARCH_CAP, 프론트 기본 50) 절단 시 매칭 카운트가 부분값인데 `매칭/전체` 를 정확값처럼 표기 → 응답이 cap 도달이면 `_metaGraph.searchCapped=true` + badge 를 `매칭+/전체`(≥) 로, status 에 "결과 상한(부분 카운트)" 안내(roots/expand 의 truncated 안내와 대칭).
+  - **MINOR (수정)**: terms-only 매칭(스키마 0)일 때 status 가 없는 카드 클릭을 지시 → `nSchemas===0` 분기 "용어·기타 N개 매칭(해당 스키마 테이블 없음)".
+  - **MINOR (수정)**: 스키마 세그먼트 없는 flat scope Table/Column 매칭이 카드·terms 어디에도 안 들어가 소실 → terms 로 폴백 ingest.
+  - **MINOR LOW-CONF (수정)**: search tail 에 `_opSeq` 세대 가드 부재 → scope 전환 status 레이스 → resetModel 직후 seq 캡처 후 apply 뒤 `if (seq!==_opSeq) return`(loadRoots 패턴 정합).
+- 검증한 비-결함(재확인): schemaTotals scope 키 네임스페이스로 stale 없음, Column→schema 도출 정합, null 가드, Set 중복제거로 Table+Column 이중 매칭 미이중계상, expand-during-search 정합.
+- 검증(수정 후): node --check PASS + harness initview 33/33 PASS + ctxmenu 10/10 PASS(에러 0).
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, MAJOR+MINOR 전건 수정.
+- Human Approval Needed: 없음(Minor §12.3 — frontend-only 비파괴). cycle-final 후 배포는 deploy_scope: included.
