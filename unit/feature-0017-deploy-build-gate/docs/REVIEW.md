@@ -32,3 +32,16 @@ source_of_truth: true
   5. **범위**: build_image 게이트 1곳만, swap/rollback/soak 무변경.
 - 격리 검증 결과(실 환경 재현): positive EXIT=1+이미지정상+마커→PASS(양성무시), negative 부재→ABORT.
 - Human Approval Needed: 아니오 (PLAN-APPROVED). 라이브 end-to-end 는 사용자 배포 승인 범위.
+
+## REV-20260702T160000-deploy-migrate-gate [SUBAGENT:deploy-migrate-gate-race-tolerance]
+- Related Change: CHG-20260702T160000 (migrate 게이트 race 관용 — build 게이트 계보 확장)
+- 검증 성격: 배포 스파인 migrate 게이트. 최대 위험 = **미적용 스키마로 swap**(데이터 정합) / **진짜 실패 은폐**.
+- §18.8 SUBAGENT 적대 패널 VERDICT **PASS (BLOCKING 0)** — 5축 refute:
+  - (미적용 swap, 최치명) refute: 재시도 exit 0 = head 도달 **참으로 보장**. alembic-migrate.sh upgrade 는 no-pending(live_current 로 실 alembic_version==head 확인) 또는 apply(ON_ERROR_STOP=1 psql 성공) 로만 exit 0. gen_sql race 는 `sql=$(gen_sql)` 의 `set -e` 로 즉시 die → false no-op 불가.
+  - (진짜 실패 은폐) refute: gen-time(잘못된 revision/의존성) alembic 오류·apply-time(잘못된 DDL) psql ON_ERROR_STOP 실패는 **양쪽 시도 모두 die**. 2차 exit 0 은 DB-anchored 라 1차 진짜 실패를 우연히 덮지 못함.
+  - (멱등성) refute: head 도달 시 재실행 no-op(DB 무접촉). 단건 적용 atomic(BEGIN..COMMIT + version UPDATE 1세션). alembic-migrate.sh 미변경(diff: bin/deploy-web.sh only).
+  - (set -e/die/run) refute: `if ! run …; then … run … || die; fi` 3케이스 격리 재현 — 1차ok→swap(재시도無)/1차실패·재시도ok→관용·swap/양쪽실패→die·no swap.
+  - (문법/dry-run) refute: bash -n clean, dry-run 은 `run` 이 0 반환 → retry 블록 미진입.
+- NIT 처리: **NIT-2(backoff) 반영** — `sleep ${MIGRATE_RETRY_BACKOFF:-5}`(dry-run skip)로 같은 race window 재적중 완화. **NIT-1(marker-gating 대비 blind retry)** — head-도달 검증을 정합근거로 **의도적 채택**(marker-only 는 self-healing transient 를 false-ABORT 해 더 약함; head 도달은 원인 무관 swap 안전을 참 보장). 주석 + 본 REV 에 근거 기록.
+- 격리 검증(3케이스, mock exit code): 1차ok(1콜·proceed) / 1차실패·재시도ok(관용·proceed) / 양쪽실패(die·no swap). 전부 PASS + bash -n PASS.
+- Human Approval Needed: 아니오(PLAN-APPROVED 계보, build 게이트와 동형 저위험). 라이브 end-to-end 는 다음 배포에서 자연 검증(이미 eadb4a9e 재배포로 migrate 게이트 통과 경로 관측).
