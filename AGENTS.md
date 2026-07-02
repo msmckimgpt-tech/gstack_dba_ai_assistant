@@ -4,7 +4,7 @@ scope: repository
 status: active
 edit_policy: human-guided
 source_of_truth: true
-template_version: v3.37.1
+template_version: v3.37.2
 domain: [governance, workflow, context, safety]
 ai_read_priority: 1
 ---
@@ -1616,7 +1616,10 @@ blocker 는 WSL2 portproxy stale-IP 였고 turn1 시점 검출가능했음. depl
   완료를 선언하면, **그 check 는 구조적 proxy(토큰 `expiresAt`·파일 존재여부·syntax 정합 등)가
   아니라 실제 end-capability(라이브 호출/실 사용 경로 1회 성공)를 검증해야 완료 근거로 인정**한다.
   예: 계정 가용성을 토큰 만료시각만으로 PASS 하면 quota 소진(HTTP 429) 같은 실-미가용을 놓친다 —
-  라이브 1-call 로 확인한다.
+  라이브 1-call 로 확인한다. **이 proxy≠ground-truth 원칙은 렌더-성능 축에도 적용된다** — 헤드리스
+  rAF-기반 FPS 는 실 GPU-합성 페인트의 proxy 일 뿐이다(rAF 60fps 인데 CDP 실-paint 7.9fps 인 사례).
+  프레임레이트·애니메이션 부드러움 주장은 CDP 실-paint 또는 host-side real-browser 실관측으로 확인한다
+  (§16.6 「렌더-성능/애니메이션 검증」).
 - **검증 사전-descope 금지**: 브라우저/시각 등 검증-요구 작업을 "환경상 불가"로 이월·축소하기
   **전에**, AI-주도 실측 경로(§16.6 의 `/browse` 스킬·host-side real-browser 동등 경로·Playwright
   via `/browse` MCP 등 프로젝트가 보유한 실측 수단)를 **반드시 먼저 consult** 한다. "브라우저 QA
@@ -1813,6 +1816,23 @@ evidence 로 첨부**한다 — 버튼이 보이는 것과 눌렀을 때 동작�
 금지). 또한 **동일 논리 액션이 복수 surface/entry-point(목록 패널·말풍선 칩·툴바 등)에 노출되면 각
 surface 에서 개별 실행 검증**이 필수다 — 한 경로 동작 확인을 전체 동작으로 추정하지 않는다(코드패스가
 갈릴 수 있음: 예 navigation vs fetch+blob — 한 surface 만 검증하면 다른 surface 의 실패가 누출된다).
+
+**렌더-성능/애니메이션 검증 (v3.37.2)**: 위 시각검증은 픽셀-정확성(레이아웃·정렬·overflow·인터랙션
+결과)을 다룬다. **프레임레이트·애니메이션 부드러움·jank** 등 렌더-성능 주장은 별도 축이며 다음을 따른다:
+- **헤드리스 rAF-FPS 는 ground-truth 불인정**: 헤드리스 브라우저의 `requestAnimationFrame` 기반 FPS 는
+  실 GPU-합성 페인트를 반영하지 못한다 — proxy 일 뿐이다(실측: 헤드리스 rAF 60fps 인데 CDP 실-paint
+  7.9fps 인 사례). 프레임레이트/부드러움 주장의 authoritative 신호는 **CDP 실-paint 지표(devtools
+  frame timing)** 또는 **host-side real-browser 실관측**(위 v3.29.1 동등 경로)이다. 헤드리스 rAF-FPS 를
+  완료 근거로 신뢰하지 않는다.
+- **증상-가림(애니 제거) 금지**: 애니메이션·효과를 제거·비활성화해 저프레임 "구간 자체를 없애는"
+  변경은 근본-fix 가 아니다(§16.5 완료 응답 금지 spirit). 근본 원인(동기 레이아웃 계산·per-frame
+  래스터 비용 등)을 규명·해소했는지로 완료를 판정한다 — 저프레임을 숨기는 것과 없애는 것은 다르다.
+- **§16.3 proxy≠ground-truth 연계**: 본 축은 §16.3 「검증 충실도 — proxy≠ground-truth」 의 렌더-성능
+  적용이다(가용성 축의 토큰만료 vs HTTP 429 와 동형). 완료 근거가 구조적 proxy 인지 실 end-capability
+  인지를 성능 측정에서도 점검한다.
+- **완료 게이트**: 렌더-성능/애니메이션 주장을 포함한 완료는 §16.2 Completion Checklist 의 시각검증
+  항목에 **CDP 실-paint 또는 host-side real-browser evidence** 첨부를 요구한다 — 헤드리스 rAF-FPS
+  수치는 이 게이트의 근거로 인정하지 않는다(수치가 실 체감과 반대일 수 있음).
 
 **체크리스트 연동**: §16.2 Completion Checklist 의 `(웹 UI 프로젝트만)` 항목으로 자동 참조 — 생성
 HTML 산출물의 author-added clickable 도 이 항목의 범위에 포함한다.
@@ -3477,6 +3497,34 @@ credential 을 해제한다. cron job 은 인증을 보유한 user 소유로 실
 스크립트화한다 (예: cron wrapper 가 `claude mcp login` 을 1회 선행 — 대화형 `/mcp` 부재 보완). MCP
 credential 도 토큰이므로 위 항목 3(cron clean-env hygiene)의 per-user credentials 규칙(소유 user
 실행·`chmod 600`·world-readable 금지)을 그대로 따른다.
+
+**6. 세션-한도(usage/quota) reset 경계 인지 — 발화시각 + 일시적-실패 분류 (v3.37.2)**
+
+cron 자기위임이 `claude` 스킬을 호출하면 실행 계정의 usage/quota 한도에 걸릴 수 있다. 이 **시간적
+차원**은 위 항목(1~5)이 다루지 않는다. 두 규칙:
+
+- **reset-경계 이후 발화**: cron 발화시각을 알려진 quota-reset 경계(예: `session limit · resets 11pm`)
+  *직후* 로 배치하고, 경계 *직전* 고정시각(예: 22:35 발화 vs 23:00 reset)은 피한다 — 경계 직전
+  발화는 소진 윈도우를 때려 그 사이클을 통째로 잃는다. reset 시각이 불명확하면 소진이 드문
+  시간대로 옮긴다.
+- **session/usage limit = 일시적(transient) 실패**: `"session limit · resets <T>"` / `usage limit`
+  류 실패는 인증(401)·billing 의 **비-일시적 rc=1 과 구분**해 일시적으로 분류한다 — reset 후
+  재시도하거나 window-preserving 으로 다음 fire 에 무손실 재시도한다. 영구실패(rc=1)로 오분류해
+  재시도를 포기하면 그 사이클 산출물이 누락된다(예: doc_sync 1일 누락).
+
+정본 reference: 이 인프라의 `scheduled-inspection/run.sh` 는 자기실행이 auth/limit 로 무위 종료돼도
+`last-checked` 를 갱신하지 않아 다음 fire 가 **무손실 재시도**한다(MISSED_CYCLES_BEFORE). 소비자 cron
+래퍼는 이 패턴을 모사한다 — 실패 시 진행 커서를 전진시키지 않고, reset-까지-대기 또는 윈도우 보존
+재발화로 다음 경계에서 회복한다. (quota 소진 자체는 §22.8 fallbackModel 이 복구 못하는 영역이므로,
+스케줄링 차원의 회피가 본 항목의 몫이다. 근거 inbox: T3-20260630T1235-001.)
+
+**재시도 상한·idempotency 전제 (MUST)**: window-preserving 재시도는 무한하지 않다 — 연속 N회(예:
+2~3 경계) 무손실 재시도 후에도 실패가 지속되면 커서를 전진시키고 loud alert 를 남긴다(persistent
+실패가 session-limit 문자열로 오분류돼 영구 self-stall 하는 것을 방지 — 문자열 기반 분류는 취약하다).
+또한 커서 미전진 재시도는 **작업이 idempotent(또는 checkpoint-resumable)** 임을 전제한다 — 비-idempotent
+자기위임 job(쓰기·외부 알림·deploy)은 부분 완료 후 재발화가 double-apply 를 낼 수 있으므로, 재시도
+전에 checkpoint 로 재진입 지점을 보장한다(reference run.sh 는 inspection 재실행이 무해한 idempotent
+설계라 본 전제를 자동 충족).
 
 **범위 밖 (비-actionable)**: 모델-tier 강제(예: ultracode 기본화)는 harness/모델 설정이지 코드
 템플릿이 강제할 수 있는 대상이 아니다. 본 recipe 는 **CLI/env 보편 사실의 문서화**에 한정하고,
