@@ -157,18 +157,20 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
     """llm_usage 활동 feed 를 id DESC(=created_at DESC — id BIGSERIAL 단조증가) 로 cursor 페이징.
     cursor(id) 미지정=최신부터. `WHERE id < cursor` + limit+1 조회로 has_more 판정 → 안정적
     keyset 페이징(OFFSET 아님). 반환 (items, next_cursor). 과거 기록 조회용(더 보기)."""
+    # TASK-20260702-audit-nav-ux: '최근 활동' 클릭 상세 확장을 위해 SELECT 컬럼을 확장한다.
+    #   요청 별칭(model)과 서빙 모델(resolved_model)을 분리 보존(요청→서빙 표시), run_id(요청 식별자),
+    #   conversation_id(연결 대화 드릴다운)를 추가. 기존 반환 필드(model=served/total/cost/latency/...)는
+    #   보존 — 상세 필드는 순수 additive(overview activity feed + /activity 페이징 공용, 신규 엔드포인트 무).
+    _COLS = ("id, task, model, resolved_model, total_tokens, prompt_tokens, "
+             "completion_tokens, latency_ms, created_at, run_id, conversation_id")
     if cursor is not None:
         cur.execute(
-            "SELECT id, task, COALESCE(resolved_model, model), total_tokens, prompt_tokens, "
-            "completion_tokens, latency_ms, created_at "
-            "FROM agent_runtime.llm_usage WHERE id < %s ORDER BY id DESC LIMIT %s",
+            "SELECT " + _COLS + " FROM agent_runtime.llm_usage WHERE id < %s ORDER BY id DESC LIMIT %s",
             (int(cursor), int(limit) + 1),
         )
     else:
         cur.execute(
-            "SELECT id, task, COALESCE(resolved_model, model), total_tokens, prompt_tokens, "
-            "completion_tokens, latency_ms, created_at "
-            "FROM agent_runtime.llm_usage ORDER BY id DESC LIMIT %s",
+            "SELECT " + _COLS + " FROM agent_runtime.llm_usage ORDER BY id DESC LIMIT %s",
             (int(limit) + 1,),
         )
     rows = cur.fetchall() or []
@@ -176,12 +178,19 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
     items = []
     for r in rows[:limit]:
         tx = taxonomy_for(r[1])
+        served = r[3] or r[2]  # COALESCE(resolved_model, model) — 행 표시·비용은 서빙 모델 기준(기존 규약 보존)
+        prompt_t = int(r[5] or 0)
+        completion_t = int(r[6] or 0)
         items.append({
             "id": int(r[0]), "task": r[1], "category": tx["category"], "label": tx["label"],
-            "model": r[2], "total_tokens": int(r[3] or 0),
-            "cost_usd": app._estimate_llm_cost_usd(r[2], int(r[4] or 0), int(r[5] or 0)),
-            "latency_ms": (int(r[6]) if r[6] is not None else None),
-            "created_at": (r[7].isoformat() if r[7] else None),
+            "model": served, "total_tokens": int(r[4] or 0),
+            "cost_usd": app._estimate_llm_cost_usd(served, prompt_t, completion_t),
+            "latency_ms": (int(r[7]) if r[7] is not None else None),
+            "created_at": (r[8].isoformat() if r[8] else None),
+            # ── 상세 확장용 additive 필드 ──
+            "req_model": r[2], "resolved_model": r[3],
+            "prompt_tokens": prompt_t, "completion_tokens": completion_t,
+            "run_id": r[9], "conversation_id": r[10],
         })
     next_cursor = items[-1]["id"] if (has_more and items) else None
     return items, next_cursor

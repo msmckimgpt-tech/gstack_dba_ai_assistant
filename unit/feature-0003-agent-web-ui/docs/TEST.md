@@ -116,6 +116,13 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260702-audit-nav-ux 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장 (Minor §12.3, 2026-07-02) — **Environment: Windows-browser (DOM 상호작용·툴팁·순서 — 코드/단위검증 완료 + 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
+- 대상: 관리콘솔 > 감사 그룹 nav 순서·툴팁 + AI 운영 현황 '최근 활동' 인라인 아코디언. 변경: `static/admin.html`(순서 swap·title·cache-buster), `static/admin.js`(aiOpsActivityRowsHtml·토글·renderAiOps 배선), `routers/ai_ops.py`(_query_activity additive), `tests/test_ai_ops.py`.
+- **구조·구문**: `python -m py_compile routers/ai_ops.py` PASS · `node --check static/admin.js` PASS.
+- **단위(agent 이미지 격리, DB 없이 monkeypatch/fake)**: `make test` **exit 0** (feature-0002 + feature-0003 전량). `test_ai_ops.py` **15/15 passed** — `_query_activity` 확장 SELECT/dict(신규 필드 req_model/resolved_model/prompt_tokens/completion_tokens/run_id/conversation_id) + `served=r[3] or r[2]` 우선순위 + conversation_id 유/무 두 경로 + 기존 cursor keyset·엔드포인트 degrade·권한 403 회귀. ruff PASS.
+- **§18.8 적대 패널(subagent, 3-렌즈: 백엔드 correctness/보안·프론트 XSS/UX·테스트 정합)**: **VERDICT SHIP** — BLOCKING/MAJOR/MINOR 0, NIT 3 비차단(REV-20260702T190000-audit-nav-ux, REVIEW.md).
+- **PB-0008 Windows-browser 라이브 실측 — DEFERRED(배포 후)**: (1) 감사 그룹 순서 감사 로그·보관 대화·LLM 사용량·AI 운영 현황 (2) 각 탭 hover 시 title 툴팁 표시 (3) AI 운영 현황 '최근 활동' 행 클릭 → 상세 패널 확장(토큰/모델/지연/run_id) + conversation_id 있는 행의 '대화 열기' 링크 새 탭 이동. baked 자산(admin.js/html)이라 배포 후 라이브 검증. 미수행 사유 명시(카고컬트 방지) — 배포 완료 시 본 케이스에 Run 기록 append.
+
 ### TASK-20260702-graph-g6 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (그래프 canvas 렌더·인터랙션 — de-risk=WSL-headless-harness 완료 + 라이브 PB-0008 배포 후 잔여)**
 - 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 변경: admin.js `_metaGraph*` 엔진 전면 재작성(Cytoscape→G6) + admin.html(g6.min.js) + styles.css(오버레이 CSS 제거). 정본: feature-0016 DECISIONS ADR-004 · `../../feature-0016-metadata-graph/g6-migration/BLUEPRINT.md`.
 - **구조·구문**: `node --check admin.js` PASS. 제거심볼(cytoscape/fcose/cy/오버레이 3종/Layout/AddElements) 참조 0.
