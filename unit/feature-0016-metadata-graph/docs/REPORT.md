@@ -32,7 +32,7 @@
    그래프 Table 키(`db.table`) 규약과 불일치(고아 엣지). MSSQL introspect/추론도 실 스키마('dbo') 저장
    시 동일 운명이었음(스키마-slot 규약 미통일).
 
-### 수정 (CHG-20260702T024556, ADR-005)
+### 수정 (CHG-20260702T024556, ADR-007)
 - config `__all__` 등재(D1b) + `AGENT_RELATIONSHIP_REINFER_SEC`(6h) 주기 cadence(D1a — kv
   `relationship_infer_at` + `_is_refresh_due` OR-게이트, 첫 사이클 = 전 스키마 자연 백필).
 - 스키마-slot 규약 통일: MSSQL 저장 라벨 = 순회 DB명(store/query 분리) + 프로브 db_scope 필터·
@@ -57,7 +57,7 @@
 - security/qa PASS-WITH-FIXES → cap/sample/timeout 클램프(Sec-F2), MSSQL slot lower 정규화(QA-F4),
   라이브 테스트 수집 가드(QA-F1), except 경고 로깅(B-F7), 커버리지 +10(QA-F2) — **총 56건 PASS**.
 - injection 3경로(파서 격리·dialect 이스케이프·Cypher _cq)는 보안 렌즈가 라이브 적대 실행으로 안전 확증.
-- 수용 한계(ADR-005 Consequences ①~④): dbo-only slot 규약 · introspect 케이스 플래핑(SSOT 후속) ·
+- 수용 한계(ADR-007 Consequences ①~④): dbo-only slot 규약 · introspect 케이스 플래핑(SSOT 후속) ·
   실효 cadence ≈30h(window 회전 곱) · LEARNING↔PROBE 결합 권장.
 
 ### 잔여 (배포 게이트)
@@ -66,6 +66,152 @@
 - 라이브 확인: insight 사이클 후 relationships_inferred>0 · 프로브 신호 · 그래프 점선(Achievement) ·
   digest 태그 — 본 cycle 종료 보고에 기록.
 
+## 2026-07-02 · 그래프 노드 더블클릭 프리즈 잔존 해소 — refreshStates per-node setElementState (graph-expand-perf, ADR-006)
+
+### 배경
+graph-perf-bg 배포 후 사용자 후속 보고: `mssql-qa-idc.dk_data_release.Achievement`(analyzed, 형제 246테이블 스키마) **더블클릭 시 2~3초 프리즈 잔존**.
+
+### 진단 (실측으로 후보 배제 → 병목 특정)
+- 헤드리스 harness(200노드+127엣지 G6): `setData`+`draw` = **~200ms** → 렌더는 병목 아님.
+- web 컨테이너 서버측 계측: AGE 이웃 `neighborhood(depth=2)` = **135ms**(128노드/127엣지) → fetch 도 병목 아님. Achievement 는 HAS_COLUMN 4개(analyzed) → `/graph/columns` introspection **SKIP**.
+- **진짜 병목**: `_metaGraphRefreshStates` 가 **전 노드마다 `g.setElementState` 를 개별 호출** — G6 v5 에서 건당 ~50ms(startBatch 로도 안 배칭). **실측 200노드 재적용 = 10,046ms.** 더블클릭 → `_metaG6Apply` 가 `_stateCache` clear → 직후 `_metaGraphSyncAnalysisMarkers`(+2.5s 폴)가 cold 로 전 노드 재-setElementState = 프리즈. (graph-perf-bg 의 diff 캐시가 poll 은 개선했으나 rebuild 직후 cold 경로가 남아 있었음.)
+
+### 수정 (FE admin.js)
+- `_metaG6Apply`: setData(build 의 `states:` 로 전 상태 bake) 후 `_stateCache` 를 clear 대신 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op.
+- `_metaGraphRefreshStates`: 변화분만 적용 + 변화 노드>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake, ~80–200ms 상수, 카메라 유지).
+- 폴 tick 이중 refresh(markAnalyzed+markRunning) 를 **rAF coalescing** 으로 1회 병합 — 이중 rebuild + in-flight setData/draw 재진입 방지.
+
+### 검증
+- 헤드리스 harness 실측: **post-rebuild refresh(마커 무변화)=0ms · bulk 55마커=rebuild 82ms · 구 per-node 200노드=8,890ms** → ~9s→~0–80ms.
+- §18.8 적대 2렌즈: 정확성/상태유실 BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음), 프리즈재발 렌즈의 폴 이중 refresh 지적 → coalescing 반영. NIT(combo/schema 캐시·THRESHOLD 200ms 경계)는 수용. (REV-20260702T133000 [AGENT-TEAM])
+- `node --check` PASS. cache-buster `?v=20260702-graph-expand-perf`.
+
+### 잔여
+- 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 대량 스키마 노드 더블클릭 시 프리즈 없이 즉시 확장 + AI 능동분석 중 stutter 없음(사용자 육안).
+## 2026-07-02 · 그래프 뷰 초기 진입 줌아웃 가시성 개선 — 스키마-우선 진입 (graph-initview)
+
+### 배경 (사용자 보고 + 다각도 검토 → Phase 1+2 통합 결정)
+스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit(`fitView`)이 콘텐츠 bbox 에 무제한 종속되어
+판독 불가 줌아웃 발생. 5축 검토 후 사용자 결정 **Phase 1+2 통합**(AskUserQuestion, 2026-07-02). 실데이터:
+최대 scope `mssql-06656002eda6` = **62 스키마 × ~257 테이블** — 구 진입 뷰는 cap 200 으로 전체의 ~1.2% 만
+무통보 부분표시. TASK §25.
+
+### 병렬 세션 정합 (2차 검증 workflow 가 stale-base 적발)
+착수 base 가 main 대비 23커밋 stale — 같은 날 병렬 머지된 **graph-g6b(#533, 클러스터 다열 masonry+가변폭
+shelf-packing)** 가 B축(레이아웃 밀도)을 선점, **graph-perf-bg(#537, `_opSeq` 세대·busy·_stateCache·O(1)
+colsByTable)** 가 동일 블록을 재작성. → merge 재정합: **main 판을 기준으로 C1/A/E 만 재적용**, 자체 wrap/
+shelf-packing 폐기(g6b masonry 채택), 세대 가드는 perf-bg `_opSeq` 에 편입.
+
+### 구현 (병합 최종본)
+- **C1 스키마-우선 진입**: roots=`?mode=schemas` 경량 뷰 → 스키마 카드(`SC:`+key, 테이블수 배지) → 클릭 시
+  `?schema=` per-schema lazy 로드 후 combo 승격("XS:" 접기=카드 복귀, 모델 유지라 재펼침 무-refetch).
+  백엔드 `scope_schemas`(count 집계·truncated·집계실패=배지없는 카드)·`schema_tables`(truncated) 신설,
+  신규 route 0. 검색/이웃 결과 스키마 자동 펼침(게이팅 모드-독립). 단일 스키마 DS 자동 펼침.
+  동일-id 카드↔combo 타입 전환의 G6 setData diff 자식 유실은 `SC:` 네임스페이스로 차단.
+- **A 뷰포트 정책**: `zoomRange [0.05,4]` + fit 클램프(0.55 하한/1.0 상한, focusFirst=초기·검색만) +
+  이웃확장 앵커 국소 focus(줌아웃 재발 차단). 미렌더 모델키 setElementState 는 renderedIds 매핑으로 차단
+  (_metaApplyState/refreshStates 단일 경로).
+- **E 내비게이션**: minimap(우하단 카드형) + 줌 툴바(−/+/전체/1:1 — '전체'는 의도적 무클램프 조망) +
+  스키마 점프 select.
+- **동시성**: ExpandSchema 를 perf-bg `_opSeq` 세대에 편입 — 사용자 클릭=새 세대(++), LoadRoots silent
+  자동펼침=부모 세대 상속, await 후 세대 불일치 시 ingest 없이 폐기(**교차 스코프 오염 원천 차단**) +
+  진입 scope 가드(이전 scope 카드 stale 클릭 차단) + 연타 in-flight 가드.
+
+### 검증
+- 1차 §18.8 적대 리뷰: BLOCKER 0·MAJOR 2(dead-card·roots race)·MINOR 7·NIT 3 — 전건 반영.
+- 2차 적대 검증 workflow(3렌즈 병렬): 17 findings(dedup 9) — stale-base MAJOR 포함 전건 반영/해소.
+- headless harness(Playwright, 실 마크업+mock API, 200테이블·빈스키마·혼합버전·연타·dead-card fixture)
+  병합 최종본 재검증 — TEST.md Run 기록. 라이브 AGE Cypher(count 집계·스키마 필터) 실증 0.23s.
+- 단위: metadata_graph units(graceful no-op 포함) PASS.
+
+### 잔여
+배포(deploy_scope: included) + PB-0008 실 Windows 시각검증(§21 T21.8 미완분 + graph-g6b·perf-bg 통합 확인).
+
+---
+
+## 2026-07-02 · 그래프 뷰 테이블 노드 펼침 논블로킹 + 성능 최적화 (graph-perf-bg, ADR-005)
+
+### 배경 (사용자 관찰: 펼침 시 렌더 엔진 프리즈)
+관리콘솔 > 메타데이터 > 그래프 뷰에서 **테이블 노드 선택→컬럼 펼침 시 브라우저 렌더링 엔진이 멈춤**. 요청: 병목 구간을 백그라운드에서 진행되도록 구성 + 별도 성능 이슈 추가 검증.
+
+### 진단
+펼침 임계경로 = `/graph?node=&depth=1` + (미분석 테이블이면) `/graph/columns` **information_schema 라이브 조회(무캐시, 1~5초)** 2왕복 → `setData()`+`draw()` 전체 재구성, 이 전 구간이 busy 페인트 없이 동기적으로 이어져 메인스레드가 얼었다. 부수 병목: `_metaTableHasCols` 매 클릭 O(N) 전노드 스캔, `_metaGraphRefreshStates` 2.5s 폴 포함 매 호출 전노드 개별 `setElementState`.
+
+### 수정 (FE admin.js + BE admin_metadata.py)
+- **논블로킹 파이프라인**: busy 하이라이트(teal 점선) 페인트 → double-rAF(`_metaYieldPaint`) 양보 → fetch·재구성. `_opSeq` stale-render 토큰을 await 경계마다 대조(모델 교체 `_metaGraphResetModel`·`_metaGraphLoadRoots` 도 게이팅).
+- **O(1) 펼침 인덱스** `colsByTable`(`_metaTableHasCols` 단일소스) — 클릭당 전노드 스캔 제거.
+- **상태 적용 diff+batch**(`_metaGraphRefreshStates` 변화분-only + `startBatch`). busy = `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState`(요소적용과 `_stateCache` signature 동기화 — 폴 덮어쓰기·rebuild 재-bake·캐시 불일치 차단).
+- **레이아웃 churn 분리**(`_metaG6Build` Pass1 collapsed 배정 / Pass2 real push-down) — 형제 열-점프로 인한 setData update 집합 팽창 억제, shelf-packer 는 real 높이 소비(무겹침).
+- **BE introspection TTL 캐시**: `/graph/columns` 성공결과를 `(scope_key, fqn)` 프로세스-로컬 TTL(기본 300s) 캐시 — 반복 펼침·다중 사용자·재진입의 라이브 조회 왕복 제거. 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성, 마이그레이션 없음.
+
+### 검증 (§18.8 적대 패널 — 다단계)
+- 3렌즈 패널(race/index-drift/layout+cache): **4건 BLOCKING 적발** — ① reset/search/scope 경로가 `_opSeq` 미증가 → in-flight expand 가 검색·스코프 화면을 덮어씀(stale 렌더), ② 같은 race 로 `colsByTable` 포이즌(재펼침 영구 차단), ③ seq-mismatch early-return 이 busy 하이라이트 영구 잔류, ④ 2.5s 폴이 fetch 중 busy 제거 + `_stateCache` 불변식 위반. index-drift 렌즈는 steady-state 동치 확인, layout+cache 렌즈는 clean(오버랩 없음·캐시 보안/격리/축출 정상).
+- 5-agent 재검증 워크플로: 4건 **CLOSED** 확인 + **신규 BLOCKING 1건**(loadRoots reset-vs-reset — 자기 fetch 후 seq 재검 없이 additive ingest → 혼합-스코프 그래프) 적발.
+- loadRoots seq 가드 추가 후 최종 재검증: **reset-vs-reset 6조합 CLOSED, 정당 흐름 회귀 없음.** NIT(동시-key busy 깜빡임·후행 syncMarkers 일시 stale 텍스트·BE 캐시키 대소문자 fragmentation·백엔드 key/fqn 계약 의존)은 비-가시회귀로 수용 기록(REVIEW.md).
+- `node --check`·`py_compile` PASS. cache-buster `?v=20260702-graph-perf-bg`.
+
+### 잔여
+- graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 무프리즈 + busy 피드백 + 반복 펼침 즉시응답) — 정적 자산이 web 이미지에 baked 라 배포 후 수행.
+
+---
+
+## 2026-07-02 · 그래프 관계 분석 LLM = claude-haiku (node-analysis-haiku)
+
+### 배경 / 근본원인
+사용자 보고: 관리콘솔 그래프뷰 상세 패널 "AI 능동 분석"(각 노드·관계 분석)이 **로컬 gemma(alias `edge`)** 로 작동 — 의도하지 않은 구조, claude-haiku 로 전환 요청. 진단 결과 관계 분석 함수 `llm_node_analysis`(`llm.py`)가 모델을 `AGENT_INSIGHT_MODEL or OPENAI_MODEL` 로 해석하는데, 운영 `.env` 의 `AGENT_INSIGHT_MODEL=edge` 가 이를 gemma 로 고정. 이 값은 `llm_schema_insight`/`llm_table_insight`/`llm_account_insight`(부트스트랩 테이블·컬럼 설명)와 **공유**된다.
+
+### 범위 결정 (사용자, 2026-07-02)
+**그래프 관계 분석만** claude-haiku 로 전환 — schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL`(gemma) 유지. (요청 문구 "그래프 뷰에서 각 관계를 분석하는 LLM" 에 정확 대응, 부트스트랩 설명 생성 비용 불변.)
+
+### 변경
+- **`shared/config.py`**: 전용 `AGENT_NODE_ANALYSIS_MODEL = os.getenv(...) or "claude-haiku-4"` 신설 + `__all__` 노출. 코드 기본값 자체가 claude-haiku 라 `.env` 미설정이어도 "의도한 구조"로 동작.
+- **`llm.py` `llm_node_analysis`**: 모델 = `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL`. max_tokens/temperature/timeout 경로는 기존과 동일(모델 catalog 가 `claude-*` cap·temperature 처리). insight 3함수는 손대지 않음(격리).
+- **`node_analysis.py` `process_pending`**: 저장·표시용 `model` 라벨을 라우팅과 동일 순서(`AGENT_NODE_ANALYSIS_MODEL` 우선)로 해석 — 상세 패널이 실제 사용 모델(claude-haiku)을 표시. 이 순서가 어긋나면 UI 에 gemma 오표시.
+
+### 검증
+- 회귀 테스트 4건(`test_llm_env_naming.py`): 기본값=`claude-haiku-4`(그리고 `AGENT_INSIGHT_MODEL=edge` 여도 node analysis 불영향=분리 확인)·env override·공백/whitespace 폴백·`__all__` 노출. **pytest 38 pass**(env-naming + node_analysis_relevance), ruff clean, config/llm/node_analysis compile·import OK.
+- 모델 정합: `claude-haiku-4` 는 model_catalog 카탈로그 기본값(`API_DEFAULT_MODEL`)이자 litellm_config.yaml 의 유효 alias(`anthropic/claude-haiku-4-5`).
+- §18.8 적대적 코드리뷰(subagent): 격리·touchpoint 완결성·haiku create() 정합·폴백 안전. REVIEW.md.
+
+### 반영 조건 / 비용
+반영엔 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본과 동일 — 명시 권장) + **insight-worker 재빌드·재기동**(코드 baked, 외부영향=배포 confirm). **외부 API 비용 발생**(그래프 노드 분석이 무료 로컬 gemma → Bedrock claude-haiku 유료). node_analysis 예산 캡(depth/node budget·dedupe)으로 run 당 경계. 기존 저장 분석은 이전 라벨 유지, 신규 run 부터 claude-haiku.
+
+### 배포 완료 (2026-07-02, node-haiku-deploy · 사용자 confirm 승인)
+resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)을 인계 → PR #535 main 병합(617e9a74) 후, 사용자 "랜딩+배포" 결정에 따라 라이브 배포·검증:
+- `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 추가(코드 기본값과 동일, 명시).
+- insight-worker 이미지 재빌드(`repo-insight-worker` b5e23727, 새 코드 baked) + `docker compose up -d --no-deps --force-recreate insight-worker` → **healthy**. web-a/web-b·ask-worker 무영향(insight-worker 만 재생성).
+- **smoke PASS**: 컨테이너 env `NODE_ANALYSIS=claude-haiku-4`/`INSIGHT=edge`(격리) · `config.AGENT_NODE_ANALYSIS_MODEL='claude-haiku-4'`·`__all__` 노출 · `llm_node_analysis` 라우팅 소스 `_insight_model=AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 확인 · 클린 기동(traceback/critical 0).
+- 잔여(사용자 실검증): 관리콘솔 그래프뷰 "AI 능동 분석" 신규 run 의 model 라벨=claude-haiku 육안 확인. 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 LLM run 강제 불가 — 실 브라우저 확인 권장.
+---
+
+## 2026-07-02 · 노드 우클릭 상세 상호작용 (graph-ctxmenu, REQ-20260702T113000)
+
+### 배경 (사용자 요청)
+그래프 뷰에서 각 노드의 **우클릭 상세 상호작용** — DB 스키마를 아직 파악하지 못한 사용자가
+선택 노드의 연관 관계를 상세하게 파악하는 과정을 지원.
+
+### 구현 (frontend-only — admin.js/styles.css/admin.html, TASK.md §24)
+- **우클릭 컨텍스트 메뉴**: G6 `node:/combo:/canvas:contextmenu` + container capture 리스너
+  (브라우저 기본 메뉴 차단 + 좌표 캡처). kind 별 항목 — Table(상세 보기·관계 상세·관계 확장
+  1~3-hop chips·중심 보기·컬럼 펼침/접기·AI 능동 분석·FQN 복사), Column(+소속 테이블 상세),
+  GlossaryTerm(이름 복사), 클러스터(클러스터 상세·스키마명 복사), 빈 캔버스(전체 맞춤·초기화).
+  HTML 오버레이 메뉴(전부 DOM 생성 — XSS 0, G6 setData 재구성과 무간섭). 뷰포트 clamp +
+  Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드 접근.
+- **관계 상세 패널**(핵심): 선택 노드의 관계를 **방향별**(→참조함/←참조받음/연관 용어/주변
+  관계)로 그룹해 추정/신뢰 배지 + weight + cardinality + **근거 한글 라벨**(FK 스키마 선언/
+  명명 규칙 추정/대화 JOIN 학습/AI 인사이트) + 상대 노드 설명과 함께 나열. 행 클릭 = 상대
+  노드 상세로 이동(연쇄 탐색). 상세 카드 head 의 "🔗 관계 상세" 링크로도 진입(발견성).
+- **중심 보기**: 모델 리셋 후 앵커 N-hop 만 로드 — 누적된 화면 없이 관심 노드 집중.
+- mutation 0(읽기성 탐색 + 기존 AI 분석 트리거 재사용) — RBAC(`metadata.graph.read`)·데이터
+  API·백엔드 불변. CONVENTIONS §10.7 pending 대상 아님.
+
+### 검증
+- `node --check` PASS · WSL-headless-harness **28/28 PASS**(네이티브 우클릭 이벤트 경로 실증
+  포함 — TEST.md). §18.8 적대 패널(ux/design/qa) MAJOR 3 전건 수정 — 엣지 우클릭 메뉴·앵커 측
+  조인 컬럼 표기·중심 보기 지속 칩("✕ 전체 보기" 복귀). REV-20260702T121500.
+- **PB-0008 라이브 실측 PASS(2026-07-02)**: 배포 16fc1598 후 실 Windows Chrome 에서 우클릭 메뉴 전 항목·관계 상세 패널·중심 보기 칩+복귀·클러스터 메뉴·Escape dismiss 실측(스크린샷 4매 artifacts). 잔여: 추정 관계 데이터 축적 후 관계 행·엣지 메뉴 라이브 재확인(권장).
+
+---
 ## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
 
 ### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)

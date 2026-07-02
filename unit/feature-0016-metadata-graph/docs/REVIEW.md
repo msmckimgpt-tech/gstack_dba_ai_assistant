@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260702T031500-node-haiku-deploy [SKIPPED: doc-only 배포 기록] — node-analysis-haiku 배포 완수 + 정본 doc-status 갱신
+- Related Change: CHG-20260702-node-haiku-deploy (T22.7 배포 완수). 코드/스키마 변경 없음 — 배포 실행(.env + insight-worker 재빌드·재기동) + TASK/REPORT/MODIFY doc-status 갱신뿐.
+- Panel skip 사유: 적대 리뷰 대상인 코드 변경(config/llm/node_analysis 라우팅)은 선행 cycle 에서 이미 [SUBAGENT: PASS](REV-20260702T025245) 완료. 본 changeset 은 doc-only + 런타임 배포라 신규 코드 결함면 없음. 배포 정합은 smoke 실증(env 격리·config 값·라우팅 소스·healthy·traceback 0)으로 대체.
+- Human Approval: 사용자 "랜딩+배포" confirm 승인(외부 API 비용 인지).
+
 ## REV-20260701T220000-ai-claude-feature-0016-graph-perf2 [SUBAGENT: PASS] — 컬럼 결정론 배치(blob/거침) + 줌 적대 리뷰
 - Related Change: graph-perf2 (컬럼 정렬 fcose 제약 제거→layoutstop 결정론 배치, 세로 seed, wheelSensitivity 제거, PITCH/nodeSeparation).
 - 방식: 진단 워크플로(5에이전트: blob/거침/줌 3렌즈 진단 → 통합설계 → 회귀검증, verdict go-with-fixes) + §18.8 적대 subagent(admin.js 전량 + vendored cytoscape-fcose.js constraint/tile 로직 실측 대조, 7 우려경로).
@@ -281,9 +286,139 @@ source_of_truth: true
 - Verdict: **PASS-WITH-FIXES** — CRITICAL/MAJOR 0. 유일 MINOR(라벨 6.5px 겹침) 수정 반영.
 - Human Approval Needed: graph-g6b 배포(web 재빌드·라이브 재시작) — deploy_scope: included + 사용자 "배포 진행" 승인.
 
+## REV-20260702T120000-ai-claude-feature-0016-graph-perf-bg [AGENT-TEAM: PASS-WITH-FIXES] — 테이블 노드 펼침 논블로킹 + 성능 최적화 적대 검증 (race/index-drift/layout/cache)
+- Related Change: graph-perf-bg (MODIFY CHG-20260702-graph-perf-bg, DECISIONS ADR-005). FE admin.js `_metaGraph*` 논블로킹 파이프라인·O(1) 인덱스·상태 diff·레이아웃 Pass1/2(+215/−51) + BE admin_metadata.py `/graph/columns` TTL 캐시(+65) + admin.html cache-buster. 데이터 API·스키마 불변.
+- Method: 다단계 §18.8 — (1) general-purpose subagent **3렌즈 병렬 패널**(race/concurrency · index-drift · layout+cache), 각 렌즈 적대적(결함 적발 목적) + 실 diff·번들/백엔드 교차검증. (2) **5-agent 재검증 워크플로**(각 BLOCKING closed 여부 + 신규 회귀 hunt, structured verdict). (3) loadRoots 가드 **최종 단일 재검증**(reset-vs-reset 전 조합 + 회귀).
+- Verified:
+  - `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS · leftover 디버그 마커 0.
+  - index-drift 렌즈: `colsByTable` 가 steady-state 에서 구 O(N) `_metaTableHasCols` 스캔과 **동치**(20k 랜덤 시뮬 0 불일치). node-cap 300 phantom-expand 는 **기존 동작(회귀 아님)**.
+  - layout 렌즈: Pass1(collapsed 배정)/Pass2(real push-down) **오버랩 없음**, `h`=real 높이로 shelf-packer 소비, `innerColsFor` 경계(0/1/6/14/27) 안전.
+  - cache 렌즈: BE TTL 캐시 **공유-가변 페이로드 손상 없음**(JSONResponse read-only 직렬화)·**스코프/테넌트 격리 유지**(scope→ds 는 배포전역 레지스트리, 페이로드=물리 스키마)·**권한 우회 없음**(캐시-히트는 `Depends(require_permission)` 해소 후)·축출/ TTL 파싱/빈결과 미캐시 정상.
+- Findings:
+  - **BLOCKING-1 (수정 완료)**: `_opSeq` 가 heavy op(expand/toggle)에서만 증가, reset/search/scope/loadRoots 경로 미증가 → in-flight expand 가 사용자가 방금 요청한 검색/스코프 화면을 덮어씀(stale 렌더). → `_metaGraphResetModel` 에 `_opSeq++` 추가(search·roots·scope·reset 전부 경유). 재검증 CLOSED.
+  - **BLOCKING-2 (수정 완료)**: 같은 race 로 reset 후 stale expand 가 컬럼 ingest → `colsByTable` 포이즌(존재하지 않는 테이블 hasCols=true → 재펼침 영구 차단). → BLOCKING-1 과 동일 수정(stale op 가 ingest 전 seq 체크에서 폐기 — ingest 직전 마지막 await 이후 seq 체크와 ingest 사이 await 없음 확인). 재검증 CLOSED.
+  - **BLOCKING-3 (수정 완료)**: seq-mismatch early-return 이 busy 하이라이트 미해제 → 후속 op 가 rebuild 없이 끝나면 busy 영구 잔류. → 모든 seq-mismatch return 이 `_metaSetBusy(key,false,seq)` 선행 + rebuild/reset 이 `_busyKeys.clear()` + off 는 소유(seq 일치) 시만 해제(같은 key 재트리거 시 신 op busy 보존). 재검증 CLOSED(전 종료경로 정리 확인).
+  - **BLOCKING-4 (수정 완료)**: `_metaGraphRefreshStates`(2.5s 폴)가 `_metaNodeStates`(busy 미포함)로 fetch 창 도중 busy 제거 + `_metaSetBusy`/`setSelected` 가 `_stateCache` 미갱신(false-negative 우려). → refreshStates 가 `_metaStateSig`(busy 포함) 사용 + 모든 명령형 writer 가 `_metaApplyState` 경유(요소적용·캐시 signature 항상 동기). 재검증 CLOSED(불변식: cache==요소 최종 state).
+  - **BLOCKING-5 (재검증서 신규 적발 → 수정 완료)**: `_metaGraphLoadRoots` 가 자기 `await apiFetch` 이후 `_opSeq` 재검 없이 additive ingest → reset-vs-reset(스코프 A 로딩 중 B 전환) 시 A 노드가 B 모델에 병합돼 **혼합-스코프 그래프**. → loadRoots resetModel 직후 `seq` 캡처 + ingest 전 `if(seq!==_opSeq) return`. 최종 재검증: reset-vs-reset 6조합(loadRoots↔loadRoots·loadRoots↔search·scope 전환·reset 버튼·common 분기·↔expand/toggle) **전부 CLOSED**, 첫진입/resize/단일로드 회귀 없음.
+  - **NIT (수용 기록, 비-가시회귀)**: ① 동시 다른-key heavy op 시 먼저 끝난 rebuild 의 `_busyKeys.clear()` 가 타 op busy 를 일시 under-show(깜빡임, stuck 아님). ② 후행 `_metaGraphSyncAnalysisMarkers`(loadRoots/search/expand 최종 `_metaG6Apply` 후)가 seq 재검 없이 자체 fetch → **일시 stale 상태텍스트만**(키가 scope-prefixed 라 마커 오적용·구조 오염 없음, 다음 폴에 자가치유). ③ BE 캐시키 `scope_key` 대소문자 미정규화 — 히트율 미세손실(손상/누출 없음). ④ `colsByTable` 불변식이 백엔드 Column key/fqn 부모 불변 계약에 의존(현 backend 준수, 도달 불가). ⑤ `_metaSetBusy` seq==null → -1 sentinel(현 호출부 전부 seq 전달, 방어적 사각).
+- Verdict: **PASS-WITH-FIXES** — CRITICAL 0. BLOCKING 5건(4 초기 + 1 재검증 신규) 전부 수정·재검증 CLOSED. NIT 5건 수용 기록.
+- Risks (수정 후): 잔여 0(구조/데이터). 완료 hard gate = PB-0008 실 Windows 시각검증(check #13) — 대량 스키마 펼침 무프리즈 + busy 피드백.
+- Human Approval Needed: graph-perf-bg 배포(web 재빌드·라이브 재시작) — deploy_scope: included(전역 FIRST_REQUEST) → 자동 배포하되 첫 배포 직전 1줄 표면화.
+
+## REV-20260702T025245-ai-claude-feature-0016-node-analysis-haiku [SUBAGENT: PASS] — 그래프 관계 분석 전용 모델(claude-haiku) 분리 적대 리뷰
+- Related Change: node-analysis-haiku (MODIFY CHG-20260702-node-analysis-haiku-model). 전용 `AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`) 신설 + `llm_node_analysis` 라우팅 분리 + `process_pending` 저장 라벨 정합. ~15줄 diff(config/llm/node_analysis + 테스트).
+- Method: general-purpose subagent 적대 리뷰 — 실제 파일 Read + config/catalog/routing 로직 실행 검증. 5개 우려축(격리·touchpoint 완결성·haiku create() 정합·폴백 안전·워커 무회귀) 표적 반증 시도.
+- Verified (전건 PASS):
+  - **격리**: `llm_schema_insight`(1373)·`llm_table_insight`(1410)·`llm_account_insight`(1449) 는 `AGENT_INSIGHT_MODEL or OPENAI_MODEL` 불변, `llm_node_analysis`(1494) 만 전환. 실행 증명: `AGENT_INSIGHT_MODEL=edge` 에서 node analysis=`claude-haiku-4`·insight=`edge`.
+  - **touchpoint 완결성**: `_max_tokens_kwargs`·`_temperature_kwargs`·`_get_llm_client`·`_record_llm_usage` 전부 동일 `_insight_model` 변수 사용 — node analysis 모델을 재해석하는 제2 지점 없음. `admin_metadata.py` 는 enqueue/read 만(독립 모델 해석 없음).
+  - **haiku 정합**: 카탈로그 실행 — `claude-haiku-4` → `is_allowed=True`·`is_local=False`(Bedrock 티어)·`max_tokens insight=18000`·`supports_temperature=False`(temperature kwarg 미주입=정상). litellm_config.yaml:43 유효 alias + `API_DEFAULT_MODEL`. `node_analysis` taxonomy 등록됨(계측 정상).
+  - **폴백 안전**: 공백/whitespace env → `claude-haiku-4`, 빈 문자열이 `model=` 로 도달 불가. terminal fallback `OPENAI_MODEL`(=claude-sonnet-4)도 non-empty.
+  - **라벨 정합·무회귀**: 저장 라벨(node_analysis.py:454) 을 라우팅과 동일 순서로 해석 → "gemma 표시·haiku 실행" 불일치 제거. `get_node_analysis` 가 per-job DB 컬럼에서 verbatim readback(point-in-time 스냅샷). 워커 제어흐름(claim/lease/enqueue/finalize) byte-불변, 라벨 2줄만 이동. `process_pending` 이 유일 호출처. test_llm_env_naming.py 10 passed(4 신규 + 6 기존).
+- Findings: CRITICAL/MAJOR/MINOR = 0. 전부 INFO(false-alarm).
+  - **INFO (수용, 미수정)**: config 기본값이 `model_catalog.API_DEFAULT_MODEL` 참조 대신 리터럴 `"claude-haiku-4"` 하드코딩. cosmetic — 현 영향 없음(값 동일), config→model_catalog import 가 레이어링상 부적절할 수 있어 리터럴 유지.
+- Verdict: **PASS** — 차단 결함 0. 명시 범위(그래프 관계 분석만 전환)에 대해 정확·격리·완결.
+- Human Approval Needed: `.env` 반영 + insight-worker 재빌드·재기동(외부영향=배포) + commit/push/PR = 사용자 confirm.
+## REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu [SUBAGENT: PASS-WITH-FIXES] — 노드 우클릭 상세 상호작용 적대 패널
+- Related Change: graph-ctxmenu (TASK §24 — §13.1 재번호 22→24, MODIFY CHG-20260702T120000). admin.js 우클릭 메뉴 + 관계 상세 패널 + 중심 보기 + styles.css/admin.html. frontend-only, 데이터 API·RBAC 불변.
+- Trigger: UI/화면/메뉴 keyword matched (§18.8 표 — UI/버튼/화면 행) → **ux + design** subset dispatch, 이벤트 배선 복잡도로 qa(정확성) 렌즈 추가.
+- Method: general-purpose subagent 3인 병렬 적대 리뷰 — diff 전문 + 그래프 블록·기존 함수 실계약 대조 + G6 vendor 번들 이벤트 지원 교차확인(edge:contextmenu 존재 검증) + 디자인 토큰/z-index 전수 + harness 스크린샷 시각 확인.
+- Verdicts: ux **CHANGES-REQUESTED**(MAJOR 3·MINOR 9·NIT 3) · design **PASS-WITH-NITS**(MINOR 4·NIT 3) · qa **미완**(subagent 세션 rate-limit 도달 — 아래 검증 한계).
+- 흡수한 MAJOR (전건 수정 + harness 재검증):
+  - **MAJOR-1 로컬 조인 컬럼 은닉**: 관계 행이 상대 endpoint 만 표기해 같은 대상으로 가는 FK 2개가 동일 행으로 보임 → row 에 앵커 측 컬럼 표기(`customer_id → s1.customers.id`, out/in 대칭). harness C9 PASS.
+  - **MAJOR-2 엣지 우클릭 dead zone**: 관계선 우클릭이 무반응 + 기본 메뉴도 차단 → `edge:contextmenu` 바인딩 + `_metaGraphCtxForEdge`(타입·신뢰/추정 w·cardinality·근거 info + 출발/도착 노드 상세 + 관계 상세 진입, 컬럼 엣지는 소속 테이블 앵커). harness H1 PASS.
+  - **MAJOR-3 중심 보기 모드 오인**: 1회성 status 뿐이라 부분 그래프를 전체로 오인 가능 + 복귀 경로 불명확 → 캔버스 좌상단 지속 칩 "🎯 중심 보기: <노드> ✕ 전체 보기"(roots 복귀), roots/검색 진입 시 자동 해제. harness D3/D4 PASS. (스냅샷 단위 undo 는 미채택 — 모델 단순성 유지, '전체 보기' 복귀로 충분하다고 판단·기록.)
+- 흡수한 MINOR/NIT (수정): focus 시 검색 input 클리어 · 절단 "… 외 N건"(참조함/참조받음/용어) · REFERENCES 외 타입 혼재 시 중립 헤더(나가는/들어오는 관계) · 이웃-이웃 term edge 를 연관 용어가 아닌 주변 관계로 라우팅 · hop chip 을 1회성 depth 인자로(전역 select 오염 제거, `_metaGraphExpand(key, depthOverride)`) · Column 에도 관계 확장(더블클릭 파리티) · 복사 실패 시 textarea 폴백+실패 토스트 · wheel/재렌더(_metaG6Apply) 메뉴 dismiss · Tab=닫기+포커스 복원(메뉴 내부 포커스일 때만)+chip role=menuitem+aria-label · chip-row hover 허위 affordance 제거 · 메뉴 max-height+스크롤 · focus-visible outline · `.amgr-main code` break-all · 메뉴 배지 `.admin-meta-graph-badge` 공용화 · AI hint "관련 노드 자동 분석" · ⧉→📑(tofu 방지).
+- 수용(미수정) 기록: 메뉴/패널 배지 표기 언어 차이(메뉴=한글 — 비전문 사용자 대상 의도) · 아이콘 컬러/단색 혼재(기존 관례 ✨/🕸 재사용, tofu 위험 낮음) · relbadge 의미 재사용(시각 무해 NIT) · radius/그림자 하드코딩(인접 블록 관례 정합).
+- 검증: 수정 후 `node --check` PASS + WSL-headless-harness **28/28 PASS**(네이티브 우클릭 경로·엣지 메뉴·중심 칩·로컬 조인 컬럼·1회성 hop·회귀 전부) + 콘솔 에러 0.
+- 검증 한계: qa(정확성) 렌즈 subagent 가 plan rate-limit 으로 미완 — 단, 해당 공격축(XSS esc/data-key·이벤트 순서·AI 폴링 가드·dismiss 경로·hop select 이중발동)은 ux 렌즈의 "검증 통과 축"과 harness 실측(에러 0·회귀 G1/G2)이 커버. 라이브 최종 확인은 PB-0008(check #13 hard gate).
+- Human Approval Needed: 아니오 — 비파괴 frontend 추가, RBAC/API 불변, deploy_scope: included(전역 선언) + §16.3 Step 4 자동 동기화 조건 충족(BLOCKED 0).
+## REV-20260702T140000-ai-claude-feature-0016-graph-ctxmenu-pb [SKIPPED:docs-only]
+- **cycle**: ai/claude/feature-0016-graph-ctxmenu-pb — graph-ctxmenu(PR #538, REV-20260702T121500) 의 배포·PB-0008 라이브 실측 결과를 정본 문서에 기록(T24.5/T24.6 완료 표시). 코드 무변경.
+- **changeset**: feature-0003 `docs/TEST.md`(POST-DEPLOY Run PASS) · feature-0016 `docs/{TEST,TASK,REPORT}.md` · `wiki/{Log,hot}.md` · 본 entry.
+- **panel**: SKIPPED — 비정책 doc-only(§18.8 표 첫 행). 실측 자체가 검증(배포 16fc1598 soak PASS·자산 서빙 grep·실 Windows 라이브 상호작용 5종·스크린샷 4매 artifacts).
+- **Human Approval Needed**: 아니오 (문서 전용, 코드·배포 산출물 무변경 — 이미 16fc1598 라이브).
+## REV-20260702T165800-ai-claude-corp-feature-0016-graph-initview [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: graph-initview (MODIFY CHG-20260702T114500-graph-initview, TASK §25). 그래프 뷰 초기 진입
+  줌아웃 가시성 개선 — 스키마-우선 진입 + 판독 줌 클램프 + 미니맵/줌툴바/점프.
+- Method: 2라운드 적대 검증.
+  - R1: general-purpose subagent 적대 코드리뷰(diff 전체 + G6 v5 계약·Cypher 안전·혼합버전·상태기계).
+  - R2: 3-렌즈 병렬 workflow(race/state/contract) — R1 수정 델타 자체가 만든 결함 적발 전용.
+- R1 Findings: BLOCKER 0 · MAJOR 2 · MINOR 7 · NIT 3 — 전건 수정.
+  - MAJOR-1 dead-card(Schema 노드 없는 자동펼침 combo 접기 후 재펼침 불능) → Schema 노드 합성 삽입.
+  - MAJOR-2 LoadRoots 세대 가드 부재(빠른 scope 전환 혼합) → 세대 가드(이후 R2 에서 perf-bg `_opSeq` 로 통합).
+  - MINOR: 혼합버전 loaded 오염(mode 판별 마킹)·카드 연타 이중 fetch(in-flight 가드)·빈 스키마 상태-렌더
+    불일치(비펼침)·scope_schemas cap silent(limit+1 truncated)·silent 자동펼침 truncated 안내 소실(Set 회수)·
+    refit focus 점프(focusFirst 분리)·common 점프 stale(FillJump([])). NIT: shelf 상단 돌출(g6b 병합으로 소멸)·
+    minimap fallback 잠복(수용 — 번들 교체 시 POC 재검증 전제, 주석 명문화)·카드 클릭 fetch 2회(로컬 상세로 대체).
+- R2 Findings: 17건(중복 제거 9) — 전건 반영/해소.
+  - **MAJOR stale-base**: 착수 base 가 origin/main 대비 23커밋 뒤(동일 `_metaGraph` 블록을 graph-g6b #533·
+    graph-perf-bg #537 이 병렬 재작성, 이후 #538 ctxmenu 추가 정합) → **merge 재정합**(main 판 기준 재적용,
+    자체 레이아웃 폐기·masonry 채택, TASK §22→§24→§25 재번호 §13.1).
+  - **MAJOR ExpandSchema 세대 미가드**(늦은 이전-scope 응답이 새 모델 오염) → `_opSeq` 편입(클릭=새 세대,
+    silent=부모 세대 상속, await 후 불일치 시 ingest 없이 폐기).
+  - **MAJOR 합성 노드가 stale 카드 클릭 안전장치 제거** → 진입 scope 가드(현재 scopeKey 소속만 진행).
+  - MAJOR(비대칭 가드 search↔roots) → resetModel 의 `_opSeq++` 공유로 해소(검색 reset 이 roots continuation 폐기).
+  - MINOR: 빈 스키마 loaded 고착(cnt>0 시만 마킹)·연타 시 빈 로컬상세(성공-게이팅 .then)·실패 후 로컬상세
+    (동일 게이팅)·클러스터 상세 총계 모순(table_count override+절단 노트)·집계실패 '테이블 0' 배지(None 강등).
+  - LOW-CONF(resetModel 의 lastDetailKey 잔존 → depth-select 교차 scope 확장): **기존(main 동일) 결함으로 판정,
+    본 cycle 미도입 — 후속 항목으로 기록**(REPORT §8 성격).
+- 검증: 병합 최종본 headless harness **31/31 PASS·에러 0**(dead-card·빈스키마·연타·혼합버전·stale-scope 회귀
+  포함) + 라이브 AGE Cypher 실증 + 단위 10 PASS + node --check/py_compile. TEST.md.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, R1+R2 지적 전건 수정(수용 2건은 근거 명기).
+- Human Approval Needed: 없음(Major 사전 계획 승인 완료) — cycle-final 후 배포는 deploy_scope: included.
+
+## REV-20260702T172500-ai-claude-corp-feature-0016-schema-card-ctxmenu [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: schema-card-ctxmenu (MODIFY CHG-20260702T172500, TASK §26). 스키마 카드 우클릭 메뉴 + 카드 라벨 압축(개수→badge).
+- Method: general-purpose subagent 적대 리뷰 — diff 전체 Read + G6 badge API(번들 `getBadgesStyle`/`Aw()` 경로)·우클릭 prefix 라우팅·상태 정합·회귀 교차검증.
+- Findings: BLOCKER 0 · MAJOR 0 · MINOR 1 · NIT 2.
+  - **MINOR (수정)**: node-level `badgeOffsetX/Y` 는 G6 v5 badge 파이프라인에서 무시됨(per-item `getBadgeStyle` 가 아이템 자신의 offset 만 소비) → badge 아이템 객체에 `offsetX/offsetY` 이설.
+  - **NIT (주석 반영)**: `_metaGraphCtxForSchema` 펼치기 onClick 의 `st === "already"` 는 SC 경로에서 도달 불가(방어적 잉여, 좌클릭과 대칭) → 주석 명시.
+  - **NIT (후속 기록, 본 cycle 범위 밖)**: `_metaGraphShowClusterDetailById` 는 `_opSeq`/scope 세대 가드가 없어 접힌 카드 "클러스터 상세" API 조회 대기 중 scope 전환 시 stale 패널 가능 — **기존 `combo:click` 도 동일 함수를 쓰는 pre-existing 동작**(본 cycle 은 진입점만 추가). 신규 결함 아님 → REPORT §8 성격 후속 항목.
+- 검증(수정 후): node --check PASS + harness ctxmenu 10/10 PASS(badge/우클릭/접기/빈스키마·에러 0) + initview 회귀 31/31 PASS + 큰 수(8122) badge 넘침·크래시 없음.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, MINOR 수정·NIT 주석 반영, NIT 1 은 pre-existing 후속.
+- Human Approval Needed: 없음(Minor §12.3 — frontend-only 비파괴). cycle-final 후 배포는 deploy_scope: included.
+
+## REV-20260702T173000-ai-claude-corp-feature-0016-search-badge [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: search-badge (MODIFY CHG-20260702T173000, TASK §27). 검색 시 스키마 카드 badge 매칭/전체 표기.
+- Method: general-purpose subagent 적대 리뷰 — diff 전체 Read + schemaTotals 생명주기·집계 정확성·상태 전이·badge 렌더·회귀 교차검증.
+- Findings: BLOCKER 0 · MAJOR 1 · MINOR 3(1 LOW-CONF) — 전건 반영.
+  - **MAJOR (수정)**: search_nodes cap(_SEARCH_CAP, 프론트 기본 50) 절단 시 매칭 카운트가 부분값인데 `매칭/전체` 를 정확값처럼 표기 → 응답이 cap 도달이면 `_metaGraph.searchCapped=true` + badge 를 `매칭+/전체`(≥) 로, status 에 "결과 상한(부분 카운트)" 안내(roots/expand 의 truncated 안내와 대칭).
+  - **MINOR (수정)**: terms-only 매칭(스키마 0)일 때 status 가 없는 카드 클릭을 지시 → `nSchemas===0` 분기 "용어·기타 N개 매칭(해당 스키마 테이블 없음)".
+  - **MINOR (수정)**: 스키마 세그먼트 없는 flat scope Table/Column 매칭이 카드·terms 어디에도 안 들어가 소실 → terms 로 폴백 ingest.
+  - **MINOR LOW-CONF (수정)**: search tail 에 `_opSeq` 세대 가드 부재 → scope 전환 status 레이스 → resetModel 직후 seq 캡처 후 apply 뒤 `if (seq!==_opSeq) return`(loadRoots 패턴 정합).
+- 검증한 비-결함(재확인): schemaTotals scope 키 네임스페이스로 stale 없음, Column→schema 도출 정합, null 가드, Set 중복제거로 Table+Column 이중 매칭 미이중계상, expand-during-search 정합.
+- 검증(수정 후): node --check PASS + harness initview 33/33 PASS + ctxmenu 10/10 PASS(에러 0).
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, MAJOR+MINOR 전건 수정.
+- Human Approval Needed: 없음(Minor §12.3 — frontend-only 비파괴). cycle-final 후 배포는 deploy_scope: included.
+
+## REV-20260702T175500-ai-claude-corp-feature-0016-search-badge-pb0008 [SKIPPED: docs-only]
+- Date: 2026-07-02
+- Related Change: CHG-20260702T175500-search-badge-pb0008 — search-badge PB-0008 라이브 실측 결과의 POST-DEPLOY 문서 기록.
+- Rationale: 코드/자산/데이터 변경 0, TEST.md·TASK.md Run·체크 라인만 추가. search-badge 코드 자체의 적대 리뷰는
+  REV-20260702T173000(PASS-WITH-FIXES)에서 완료. 본 cycle 은 그 배포 검증 결과 기록이라 §18.8 패널 skip.
+- Verdict: SKIPPED (docs-only, 리뷰 대상 코드 없음).
+
+## REV-20260702T133000-ai-claude-feature-0016-graph-expand-perf [AGENT-TEAM: PASS-WITH-FIXES] — 더블클릭 프리즈 잔존(refreshStates per-node setElementState) 적대 검증
+- Related Change: graph-expand-perf (MODIFY CHG-20260702-graph-expand-perf, DECISIONS ADR-006). FE admin.js `_metaG6Apply` 캐시 populate + `_metaGraphRefreshStates` 변화분/rebuild 폴백/rAF coalesce. 데이터 API·스키마·마커 시맨틱 불변.
+- Method: 실측 진단(헤드리스 G6 harness — build/setData/draw/fitView 분리 계측 + web 컨테이너 서버측 `metadata_graph.neighborhood` 지연) 으로 병목 특정 → 수정 후 general-purpose subagent **2렌즈 병렬 패널**(① 정확성/상태유실 ② 프리즈재발/신규 stutter), 각 실 diff·전체 setElementState 사용처 grep 교차검증.
+- Verified (실측):
+  - **병목 특정**: `setElementState` 건당 ~50ms(G6 v5) → 전 노드 루프 200개 = **10,046ms**(실측). 렌더(setData+draw 200노드+127엣지)=~200ms, AGE 이웃 depth=2=135ms, introspection=analyzed 라 skip → 이들은 병목 아님(모두 실측 배제).
+  - **수정 효과**: post-rebuild refresh(마커 무변화)=**0ms**, bulk 55마커 변화=**rebuild 82ms**, 구 per-node 200노드=**8,890ms**. ~9s→~0–80ms.
+  - **정확성(렌즈①)**: 캐시 populate 값 = `_metaStateSig`(populate 직전 `_busyKeys.clear()` 라 ≡ `_metaNodeStates`) = setData 가 bake 하는 `states:` 값과 **정확히 일치** → "캐시엔 있는데 요소 미적용" false-negative 없음. rebuild 폴백은 setData 로 전 상태 bake(fit=false 카메라 유지). `_metaG6Apply` 는 refreshStates 미호출(재귀 없음), 캐시 populate 가 `await draw` 이전 sync 라 중복 rebuild 없음. selected 는 `_metaNodeStates` 경유 bake 로 유지. per-node 인자 형태 원본 동일.
+  - **잔존 루프 없음(렌즈②)**: setElementState 사용처 = `_metaApplyState`(단일노드) + `_metaGraphRefreshStates`(변화분/폴백) 둘뿐. 노드 수 비례 벌크 루프 제거 확인.
+- Findings:
+  - **BLOCKING(렌즈② → 수정 완료)**: 폴 tick 이 `_metaGraphMarkAnalyzed`+`_metaGraphMarkRunning` 로 `_metaGraphRefreshStates` 를 **연속 2회** 호출 → AI 능동분석 활성 구간에서 tick(2.5s)당 rebuild 2회(160–400ms 이중 stutter) + 첫 `draw()` in-flight 중 둘째 `setData` 재진입 경합 가능. → `_metaGraphRefreshStates` 를 **rAF coalescing**(같은 프레임 다중 호출 1회 실행)으로 병합, 본문 `_metaGraphRefreshStatesNow` 분리. 폴 간격(2.5s) ≫ rebuild(~200ms)라 프레임 간 중첩 없음. 재검증: tick 당 refresh 1회.
+  - **NIT (수용 기록)**: ① combo(Schema) key 가 `_metaGraph.nodes` 에 있으나 G6 노드로 bake 안 됨 → analyzed 상태 시 setElementState throw(캐치)·캐시 "적용됨" 기록 — **pre-existing**, combo 는 analyzed 스타일 미정의라 화면 무해. ② THRESHOLD=4 경계: per-node(4×50=200ms)·rebuild(~200ms) 모두 ~200ms — 프리즈 상한은 잡았으나 stutter-free 는 아님(경계값 합리적). ③ `_metaApplyState` 단일호출 ~50ms — 더블클릭당 setSelected 2회≈100ms(프리즈 아님).
+- Verdict: **PASS-WITH-FIXES** — CRITICAL/상태유실 0. BLOCKING 1건(폴 이중 refresh) 수정·재검증 CLOSED. NIT 3건 수용.
+- Risks (수정 후): 잔여 0(상태 유실). 완료 hard gate = PB-0008 실 Windows(대량 스키마 노드 더블클릭 무프리즈 + AI 분석 중 stutter 없음).
+- Human Approval Needed: graph-expand-perf 배포(web 재빌드) — deploy_scope: included(전역 FIRST_REQUEST) → 자동 배포하되 첫 배포 직전 1줄 표면화.
+
 ## REV-20260702T052630-ai-claude-feature-0016-rel-selfheal [SUBAGENT: PASS-WITH-FIXES] — 관계 자기교정 파이프라인 근본수정(rel-selfheal) 적대 리뷰
 - Related Change: CHG-20260702T024556(본체) + CHG-20260702T052630(패널 반영). shared/config.py ·
-  insight.py · relationships.py · metadata_graph.py · agent_core.py + 테스트 4파일. ADR-005.
+  insight.py · relationships.py · metadata_graph.py · agent_core.py + 테스트 4파일. ADR-007.
 - Trigger: schema/foreign key/query + 운영 DB 프로브 keyword matched → backend·security·qa 3렌즈
   (원 세션이 dispatch 직후 session limit 중단 → resume 세션에서 재실행).
 - Method: general-purpose subagent 3병렬 적대 리뷰(각각 diff 정독 + 소비자/헬퍼 추적 + 실행 검증 —
@@ -302,18 +437,18 @@ source_of_truth: true
   - **B-F4 (MAJOR, 수정)**: 프로브 실행오류 무신호·무전진 → 영구 미파단 + NULLS FIRST 큐 head 고착.
     → 객체-부재류 negative 분류 + 전 실패 timestamp 전진 + failed 집계.
   - **B-F5/QA-F3 (MAJOR, 수용+문서화)**: slot=DB명 규약의 dbo-only 가정 — 비-dbo·교차-스키마 후보 영구
-    미프로브/그래프 비연결. 현 운영 DB 군 dbo 표준이라 실영향 최소 → ADR-005 Consequences ① 한계 명기,
+    미프로브/그래프 비연결. 현 운영 DB 군 dbo 표준이라 실영향 최소 → ADR-007 Consequences ① 한계 명기,
     후속 initiative(2-세그먼트 slot 확장) 범위로 이월.
   - **B-F6 (MAJOR, 부분수정+이월)**: 케이스 비정규화 — 대화 경로는 QA-F4 lower() 정규화로 수정,
-    introspect 테이블명 플래핑(TASK-0305 실측)은 SSOT 레벨 후속(ADR-005 ②).
+    introspect 테이블명 플래핑(TASK-0305 실측)은 SSOT 레벨 후속(ADR-007 ②).
   - **Sec-F2 (MINOR, 수정)**: cap/timeout 코드 상한 부재 → 클램프(500/200/60s).
   - **Sec-F4 (MINOR, 문서화)**: PROBE off 시 conversation candidate 미검증 잔존 → LEARNING↔PROBE 결합
-    권장 ADR-005 ④ ([추정] 태그·w0.4·digest cap 60 이 blast radius 를 제한).
+    권장 ADR-007 ④ ([추정] 태그·w0.4·digest cap 60 이 blast radius 를 제한).
   - **QA-F1 (MAJOR, 수정)**: 라이브 테스트 모듈-레벨 connect → main() 가드(수집 안전).
   - **QA-F2 (MAJOR, 수정)**: D1a·default_schema 채움·저장계층 무테스트 → +10건 보강(총 56 PASS).
   - **B-F7/QA-F5 (MINOR, 수정)**: 신규 except 무로깅 → warning 추가. 스탬프 실패-전진은 스핀 방지
     트레이드오프로 유지(경고 로그가 가시성 담당).
-  - **B-F8 (MINOR, 문서화)**: 실효 cadence ≈ REINFER×ceil(N/window)≈30h — ADR-005 ③ 명기. jitter 미도입.
+  - **B-F8 (MINOR, 문서화)**: 실효 cadence ≈ REINFER×ceil(N/window)≈30h — ADR-007 ③ 명기. jitter 미도입.
   - **B-F10 (MINOR, 문서화 — 재현됨)**: AST 가드 지역 재바인딩 위음성 → docstring 한계 명시, 명시 이름
     고정 테스트가 최종 방어선.
   - **B-F11/QA-F7 (NIT, 일부 수정)**: neutral/failed report 집계 추가. 미러 행 neutral 미전진·교차-DB
@@ -331,10 +466,10 @@ source_of_truth: true
     `get_last_execute_sql_context`) 신설, agent_core 학습이 스냅샷을 읽음(scope_key 의 기존
     primary 오귀속도 부수 해소). 스냅샷 부재 시 default_schema 미채움(안전 폴백). 테스트 2건.
   - 기록(저심각, 수용): param-'' 의 strict-empty 매칭(보수적 — '' 대화 edge 가 스키마-보유 inferred
-    를 교차 강화하지 못하는 기회 상실), MSSQL 비-dbo inferred 오파단 경로(ADR-005 ① dbo-only 한계
+    를 교차 강화하지 못하는 기회 상실), MSSQL 비-dbo inferred 오파단 경로(ADR-007 ① dbo-only 한계
     내), MySQL default_db 사전 lower 각인(schema-prefix 강제라 실효 낮음).
 - 재검증(최종): 수정 후 전체 **61건 PASS**(feature-0002 tests 전체 EXIT=0) + py_compile + ruff clean.
   Verdict: **PASS-WITH-FIXES** — 필수(MAJOR 중 수정 가능 전건 + 재검증 R-1/R-2) 반영,
-  수용 한계는 ADR-005 Consequences ①~④.
+  수용 한계는 ADR-007 Consequences ①~④.
 - Human Approval Needed: 없음(Major 승계 — 원 cycle 사용자 요청 범위 내, 비파괴·마이그레이션 0).
   deploy_scope: included(FIRST_REQUEST 전역) 근거로 배포 자동 진행 + 첫 배포 직전 1줄 표면화.

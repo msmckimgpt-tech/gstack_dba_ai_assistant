@@ -47,16 +47,18 @@ source_of_truth: true
   `get_last_execute_sql_context`) + agent_core 학습이 스냅샷 사용(scope_key 오귀속 부수 해소,
   부재 시 default_schema 미채움 안전 폴백). 테스트 2건(`test_tools_exec_ctx.py` 신규).
   최종 재검증: **61건 PASS** + ruff clean.
-- 수용 한계(수정 안 함, ADR-005 Consequences ①~④ 기록): dbo-only slot 규약(비-dbo/교차-스키마 후보
+- 수용 한계(수정 안 함, ADR-007 Consequences ①~④ 기록): dbo-only slot 규약(비-dbo/교차-스키마 후보
   영구 미프로브 — 후속 initiative), introspect 테이블명 케이스 플래핑(SSOT 레벨, TASK-0305 계열),
   실효 cadence ≈30h(window 회전 곱), LEARNING↔PROBE 결합 권장.
 - Files: `unit/feature-0002-agent-core/src/modules/{insight,relationships}.py`,
   `unit/feature-0002-agent-core/src/agent_core.py`,
   `unit/feature-0002-agent-core/src/modules/tools.py`,
   `unit/feature-0002-agent-core/tests/{test_relationships,test_config_star_export,test_insight_rel_cadence,test_tools_exec_ctx}.py`,
-  `unit/feature-0016-metadata-graph/tests/test_anchor_relationship_live.py`, ADR-005(DECISIONS.md).
+  `unit/feature-0016-metadata-graph/tests/test_anchor_relationship_live.py`, ADR-007(DECISIONS.md).
 - Impact: 백엔드 전용·비파괴(마이그레이션 0). B-F1 로 첫 배포 사이클에 MSSQL 전 DB interval 스캔
   백필(기존에도 cadence 백필 예정이었음 — 범위 동일, 커서만 정확해짐).
+- 재번호(§13.1 감지-후-재번호): 병렬 세션이 ADR-005/006·TASK §22~§28 을 선점 — 본 cycle 의
+  ADR 은 **ADR-007**, TASK 섹션은 **§29** 로 재번호 (main 병합 시점 2026-07-02).
 - Rollback Notes: CHG-20260702T024556 와 동일(코드 롤백 = 이전 커밋 재빌드).
 
 ## CHG-20260702T024556-ai-claude-feature-0016-rel-selfheal
@@ -97,6 +99,16 @@ source_of_truth: true
 - Rollback Notes: config `__all__` 등재는 유지해도 무해(이름 노출뿐). cadence 는
   `AGENT_RELATIONSHIP_REINFER_SEC=0` 으로 off(기존 트리거만). 코드 롤백 시 이전 커밋으로 재빌드.
   데이터 정정은 관계형 SSOT UPDATE 2행 — 역방향 UPDATE 로 복원 가능, AGE 는 재생성 가능 투영.
+
+## CHG-20260702-node-haiku-deploy
+- Date: 2026-07-02
+- Related Requirement: node-analysis-haiku(CHG-20260702-node-analysis-haiku-model)의 배포 게이트 T22.7 완수 — 사용자 "랜딩+배포" confirm 승인.
+- Summary: PR #535 main 병합(617e9a74) 후 라이브 배포. `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영 + insight-worker 이미지 재빌드(새 코드 baked)·`--no-deps --force-recreate` 재기동(healthy). smoke 실증(env 격리·config 값·라우팅 소스·클린 기동). 코드/스키마 변경 없음 — 배포 실행 + 정본 doc-status 갱신(TASK T22.7 완료 표시·T22.8 사용자 실검증 잔여, REPORT 배포 결과).
+- Files:
+  - `repo/.env` (런타임, non-versioned) — `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 추가
+  - `unit/feature-0016-metadata-graph/docs/{TASK,REPORT}.md` (배포 완료 기록)
+- Impact: 운영 insight-worker 가 그래프 관계 분석을 claude-haiku 로 실제 라우팅. 외부 API 비용 발생 시작(예산 캡 경계). web/ask-worker·데이터·스키마 무영향.
+- Rollback Notes: `.env` `AGENT_NODE_ANALYSIS_MODEL=edge` override 후 insight-worker 재기동(즉시 gemma 환원) 또는 CHG-20260702-node-analysis-haiku-model 코드 revert.
 
 ## CHG-20260701T220000-ai-claude-feature-0016-graph-perf2
 - Date: 2026-07-01
@@ -377,3 +389,141 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{REPORT,TEST,TASK}.md`
 - Impact: 프론트 렌더 계층만(데이터 API 불변). 검증: WSL-headless-harness(14클러스터 스케일 mock, 확장 포함) 전 플로우 PASS·에러 0 + 라이브 PB-0008(실 Windows, 236노드) 확인. 배포=web 재빌드.
 - Rollback Notes: `_metaG6Build` git revert(단일 세로열 배치로 환원) + cache-buster graph-g6. 데이터·API 무손상.
+
+## CHG-20260702-graph-perf-bg-nonblocking-expand
+- Date: 2026-07-02
+- Related Requirement: 사용자 관찰 — 관리콘솔 > 메타데이터 > 그래프 뷰에서 테이블 노드 선택→펼침 시 브라우저 렌더 엔진 프리즈. "병목 구간 백그라운드화 + 별도 성능 이슈 추가 검증" 요청. 정본: DECISIONS ADR-005.
+- Summary: 그래프 뷰 펼침 임계경로를 논블로킹화하고 반복 병목을 제거. (FE) ① 논블로킹 파이프라인 — busy(teal 점선) 페인트 후 double-rAF(`_metaYieldPaint`) 양보 → fetch·`setData`+`draw`; ② stale-render 무효화 토큰 `_opSeq`(await 경계마다 대조, **`_metaGraphResetModel`·`_metaGraphLoadRoots` 도 게이팅**); ③ O(1) 펼침 인덱스 `colsByTable`(전 노드 O(N) 스캔 제거); ④ `_metaGraphRefreshStates` 변화분-only + `startBatch`; ⑤ busy 를 `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState` 로 표현(폴 덮어쓰기·rebuild 재-bake·`_stateCache` 불일치 차단). (BE) ⑥ `/api/admin/metadata/graph/columns` introspection 성공 결과를 `(scope_key, fqn)` 키 프로세스-로컬 TTL 캐시(기본 300s, 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`/graph/columns` TTL 캐시 `_COLUMNS_CACHE*` + get/put/ttl 헬퍼 + 엔드포인트 캐시-히트 early-return; +65)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraph` 모델에 `colsByTable`/`_opSeq`/`_stateCache`/`_busyKeys` + `_metaStateSig`/`_metaApplyState`/`_metaSetBusy`(소유권)/`_metaYieldPaint` + `_metaG6Build` 레이아웃 Pass1(collapsed 배정)/Pass2(real push-down) + toggle/expand 논블로킹·seq 가드 + `_metaGraphResetModel`/`_metaGraphLoadRoots` opSeq 게이팅 + `_metaTableHasCols` O(1) + `_metaGraphRefreshStates` diff+batch + `_metaGraphSetSelected` `_metaApplyState` 경유; +215/−51)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-perf-bg`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-005),TASK(§22),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 렌더/상호작용 계층 + BE 라우터 캐시 층만. 데이터 API 계약·그래프 스키마 **불변**. 권한/스코프 격리 불변(캐시-히트는 `Depends(require_permission)` 해소 후, 페이로드=물리 스키마만). 캐시=프로세스-로컬 → **마이그레이션 없음**(alembic 병렬 충돌 회피). 검증: §18.8 적대 패널(3렌즈 + 5-agent 재검증 + reset-vs-reset 후속) 4+1 BLOCKING 수정·재검증 PASS(REVIEW REV-20260702T120000). 배포=web 재빌드(정적 자산) — BE 캐시는 기존 web 프로세스에 포함. 완료 게이트=PB-0008 실 Windows 시각검증(펼침 무프리즈 + busy 피드백).
+- Rollback Notes: admin.js/admin_metadata.py git revert + cache-buster 이전값(graph-g6b). 데이터·API·스키마 무손상(렌더/캐시 계층만). BE 캐시만 비활성화하려면 env `METADATA_GRAPH_COLUMNS_CACHE_TTL=0`.
+
+## CHG-20260702-node-analysis-haiku-model
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청 — 관리콘솔 그래프뷰 "각 관계를 분석하는 LLM" 을 claude-haiku 로 작동하도록 구성. 로컬 gemma(edge) 로 작동하던 것은 의도하지 않은 구조. (범위 결정 2026-07-02: **그래프 관계 분석만** — schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL` 유지.)
+- Summary: 그래프 노드 능동 분석(`llm_node_analysis`)이 4개 insight 함수와 공유하던 `AGENT_INSIGHT_MODEL`(운영 `.env`=`edge`=로컬 gemma)에 묶여 gemma 로 작동. 전용 config **`AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`)** 을 신설해 그래프 관계 분석만 claude-haiku 로 분리 라우팅. `.env` 미설정 시에도 기본 claude-haiku 로 동작(=의도한 구조). 저장·표시용 model 라벨도 동일 순서로 해석해 상세 패널이 실제 사용 모델을 표시.
+- Files:
+  - `shared/config.py` (`AGENT_NODE_ANALYSIS_MODEL` 신설 + `__all__` 노출)
+  - `unit/feature-0002-agent-core/src/modules/llm.py` (`llm_node_analysis` 모델 라우팅 = `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL`)
+  - `unit/feature-0002-agent-core/src/modules/node_analysis.py` (`process_pending` 저장 model 라벨 동일 순서 해석)
+  - `unit/feature-0002-agent-core/tests/test_llm_env_naming.py` (전용 모델 기본값/override/공백폴백/노출 회귀 테스트 4건)
+  - `unit/feature-0016-metadata-graph/docs/{REPORT,TASK,MODIFY,REVIEW}.md`
+- Impact: 백엔드 모델 라우팅 계층만. schema/table/account insight·에이전트 추론·요약 등 다른 LLM 경로 불변(격리 확인). **외부 API 비용 발생**(그래프 노드 분석이 로컬 무료 gemma → Bedrock claude-haiku 유료 호출). 비용은 기존 node_analysis 예산 캡(depth_budget/node_budget/dedupe)으로 경계. 반영 조건: 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본값과 동일이므로 선택적·명시 권장) + **insight-worker 재빌드·재기동**(코드 baked). 기존 저장된 분석은 이전 model 라벨(gemma) 유지, 신규 run 부터 claude-haiku.
+- Rollback Notes: `AGENT_NODE_ANALYSIS_MODEL=edge` 로 .env override(즉시 gemma 환원, 재기동만) 또는 3개 코드 파일 git revert. 데이터·스키마 무손상(마이그레이션 없음).
+## CHG-20260702T120000-ai-claude-feature-0016-graph-ctxmenu
+- Date: 2026-07-02
+- Related Requirement: REQ-20260702T113000-graph-ctxmenu (TASK.md §24 — §13.1 재번호 22→24) — 그래프 뷰 노드 우클릭
+  상세 상호작용. 스키마 미숙지 사용자의 선택 노드 연관 관계 파악 지원.
+- Summary: (1) **우클릭 컨텍스트 메뉴** — node/combo/canvas `contextmenu` G6 이벤트 + container
+  capture 리스너(기본 메뉴 차단·좌표 캡처), kind 별 항목(Table=상세·관계 상세·관계 확장 1~3-hop
+  chips·중심 보기·컬럼 펼침/접기·AI 능동 분석·FQN 복사 / Column=+소속 테이블 상세 / Term /
+  Combo / Canvas). HTML 오버레이(DOM 생성, innerHTML 미사용)라 G6 setData 재구성과 무간섭.
+  뷰포트 clamp + Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드. (2) **관계 상세 패널**
+  (`_metaGraphShowRelations`) — depth=1 관계를 방향별(참조함→/참조받음←/연관 용어/주변 관계)로
+  그룹, 추정/신뢰 배지 + weight + cardinality + 근거 한글 라벨(fk_introspect/inferred/
+  conversation/llm_insight) + 상대 노드 설명, 행 클릭 = 상대 노드 상세 이동. 상세 카드 head 에
+  "🔗 관계 상세" 진입 링크(비-우클릭 발견성). (3) **중심 보기**(`_metaGraphFocus`) — 모델 리셋
+  후 앵커 N-hop 만 로드(누적 confusion 없이 관심 노드 집중). (4) 빈상태 안내·상태줄에 우클릭 힌트.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaCtx*`/`_metaGraphCtx*` 메뉴 인프라,
+    `_metaGraphShowRelations`/`_metaGraphRenderRelations`, `_metaGraphFocus`, `_metaInitGraph`
+    contextmenu 바인딩, `_META_EDGE_SOURCE_KO`/`_META_EDGE_TYPE_KO`, 상세 카드 rel 링크)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.admin-meta-graph-ctxmenu`/`.amgc-*`,
+    `.amgr-*` 관계 패널·진입 링크)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (빈상태 우클릭 안내, cache-buster
+    `styles.css` → `?v=20260702-graph-ctxmenu`, `admin.js` → `?v=20260702-graph-ctxmenu2`(perf-bg 병합 후 재부여))
+  - `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,REPORT,MODIFY}.md`
+- Impact: frontend-only(데이터 API·RBAC·백엔드 불변 — 기존 `metadata.graph.read` 읽기 표면만
+  사용, mutation 0 = CONVENTIONS §10.7 대상 아님). 검증: node --check + WSL-headless-harness
+  **28/28 PASS**(네이티브 우클릭 이벤트 경로 포함) + §18.8 적대 패널 MAJOR 3 전건 수정(엣지
+  우클릭 메뉴·로컬 조인 컬럼 표기·중심 보기 지속 칩 — REV-20260702T121500). 배포=web 재빌드
+  후 PB-0008 실 Windows 시각검증(TEST.md).
+- Rollback Notes: admin.js/styles.css/admin.html git revert + cache-buster 환원(graph-g6b·
+  aiops-scroll). 데이터·API 무손상.
+## CHG-20260702T140000-ai-claude-feature-0016-graph-ctxmenu-pb
+- Date: 2026-07-02
+- Related Requirement: graph-ctxmenu(CHG-20260702T120000, PR #538)의 배포·PB-0008 라이브 실측 완수 기록 — 문서 전용, 코드 무변경.
+- Summary: PR #538 main 병합(16fc1598) → deploy-web.sh 무중단 롤링 배포(soak 90s 통과) → 자산 서빙 검증(admin.js ctxmenu2 심볼 10건·styles.css 클래스 20건) → **실 Windows Chrome 라이브 실측 PASS**(우클릭 메뉴 전 항목·관계 상세 패널·중심 보기 지속 칩+복귀·클러스터 메뉴·Escape dismiss — Chrome 149 Playwright eval 회귀 해소 확인, 스크린샷 4매 artifacts). TEST×2/TASK(T24.5·T24.6 완료)/REPORT/wiki(Log·hot) 정합.
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/{TEST,TASK,REPORT,REVIEW,MODIFY}.md`, `wiki/{Log,hot}.md`
+- Impact: 문서 전용. 코드/배포 산출물 무변경(이미 16fc1598 라이브).
+- Rollback Notes: 문서 되돌림 외 없음.
+## CHG-20260702T114500-graph-initview
+- Date: 2026-07-02
+- Related Requirement: 사용자 보고 — 스키마 클러스터 내 테이블·컬럼 노드가 많을 때 초기 전체-fit 과도 줌아웃으로
+  초반 가시성 붕괴. 다각도 검토 후 사용자 결정 "Phase 1+2 통합"(TASK §25, PLAN-APPROVED 2026-07-02).
+- Summary: 그래프 뷰 초기 진입을 **스키마-우선(카드+테이블수 배지 → per-schema lazy 펼침, "XS:" 접기)** 으로
+  재설계하고 **판독 줌 클램프**(fit 후 0.55 하한·1.0 상한, zoomRange [0.05,4]) + 이웃확장 **앵커 국소 focus** 로
+  줌아웃 재발을 차단, **미니맵·줌 툴바·스키마 점프** 추가. 레이아웃 밀도(다열)는 병렬 머지된 graph-g6b(#533)
+  masonry 를 채택(자체 구현 폐기)하고 graph-perf-bg(#537) `_opSeq` 세대에 ExpandSchema 를 편입(교차 스코프
+  오염·stale 렌더 차단), graph-ctxmenu(#538)와 정합. 카드↔combo 동일-id 타입 전환의 G6 setData diff 자식
+  유실은 `SC:` id 네임스페이스로 차단.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/metadata_graph.py` (`scope_schemas` count 집계·limit+1 truncated·집계실패
+    배지강등 / `schema_tables` truncated 신설)
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`?mode=schemas`/`?schema=` 분기 — 신규 route 0)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 카드 게이팅(masonry 통합)·`SC:`/`XS:` 라우팅·
+    `_metaGraphExpandSchema`/`CollapseSchema`/`ShowClusterDetailLocal`·`_metaGraphFitClamped`·renderedIds 매핑·
+    minimap/zoomRange/줌툴바/점프 바인딩·검색/이웃 스키마 자동펼침)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (툴바 줌컨트롤·점프 select·범례; cache-buster `?v=20260702-graph-initview2`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (줌 툴바·스키마카드 범례·minimap 카드 CSS)
+  - `unit/feature-0016-metadata-graph/{docs/*,tests/test_metadata_graph_units.py}` (§25·검증 기록·graceful 단위테스트)
+- Impact: 비파괴 additive — 기존 API 3모드(q/node/scope) 응답 shape 불변(`truncated` 필드만 추가), 신규 쿼리
+  파라미터만 추가. 혼합버전 안전: 구 백엔드+신 admin.js 는 mode 무시 응답을 카드 게이팅이 흡수(강등 동작,
+  loaded 미마킹으로 재시도 보존), 구 admin.js+신 백엔드는 기존 scope_roots 경로 그대로. 인증/데이터 파괴 없음.
+  배포=web 재빌드. 1·2차 적대 리뷰/검증 전건 반영(REVIEW.md), stale-base merge 재정합 2회(#533/#537, #538) 포함.
+- Rollback Notes: git revert(프론트 3파일+백엔드 2파일) + cache-buster 이전값(graph-ctxmenu2). 데이터·그래프 무손상.
+
+## CHG-20260702T172500-schema-card-ctxmenu
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청 — ① 미펼침 스키마 카드 우클릭 동작, ② 카드 "테이블" 문자열 공간 과점유 개선. TASK §26.
+- Summary: (1) `node:contextmenu` 가 스키마 카드 렌더 id 의 `SC:`/`XS:` prefix 를 벗기지 않아 우클릭이 무반응이던
+  결함 수정 — 신규 `_metaGraphCtxForSchema`(펼치기/접기·클러스터 상세·스키마명 복사) 로 라우팅, `_metaGraphCtxForCombo`
+  에 접기 파리티 추가. (2) 카드 라벨을 스키마명 전용으로 두고 테이블 개수를 우상단 **G6 badge** 로 이전 —
+  인라인 "· 테이블 N" 의 폭 과점유·이름 truncate 완화. 집계 실패는 badge 없음(배지없는 카드 강등 §25 V-H 정합).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`node:contextmenu` SC:/XS: 라우팅·`_metaGraphCtxForSchema` 신설·
+    `_metaGraphCtxForCombo` 접기 파리티·`_metaG6Build` 카드 라벨=이름+개수 badge)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `?v=20260702-schema-card-ctxmenu`)
+- Impact: frontend-only 비파괴 추가. 데이터 API·백엔드 무변경. 기존 combo/노드/엣지/캔버스 우클릭·좌클릭 회귀 없음
+  (harness 확인). 배포=web 재빌드(정적 자산).
+- Rollback Notes: admin.js 두 함수 diff revert + 카드 라벨 원복 + cache-buster 이전값(graph-initview2). 데이터 무손상.
+
+## CHG-20260702T173000-search-badge
+- Date: 2026-07-02
+- Related Requirement: 사용자 보고 — 검색 시 접힌 스키마 카드 테이블 개수 badge 소실. 요청 표기: 검색 없음 `[전체]`, 검색 `[매칭/전체]`. TASK §27.
+- Summary: 그래프 검색을 **스키마 카드 필터 뷰**로 재설계 — 이전엔 매칭 스키마를 combo 로 auto-expand 해 카드·badge 가 사라졌음.
+  이제 매칭을 스키마별로 집계해 카드를 유지하고 badge 를 `매칭/전체`(teal)로 표기, 검색 없을 땐 `전체`(남색). scope별 전체
+  테이블수를 `schemaTotals` 캐시(roots 재구축, resetModel 보존)로 유지해 검색 모델 리셋 후에도 분모(전체 개수)를 안다.
+  펼친 스키마 안에서 매칭 테이블은 rel 부스트로 크게 강조. GlossaryTerm/기타 매칭은 terms 로 표시.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraph` schemaTotals/searchMatch/searchMatchTables 필드·
+    resetModel 초기화(schemaTotals 보존)·loadRoots schemaTotals 재구축·`_metaGraphSearch` 카드필터 재설계·`_metaG6Build`
+    카드 badge 매칭/전체·매칭 테이블 rel 강조)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `?v=20260702-search-badge`)
+- Impact: frontend-only 비파괴. 데이터 API·백엔드 무변경(기존 search_nodes 응답 그대로 사용). 검색 UX 변경: 매칭 테이블
+  노드 직접 나열 → 스키마 카드(매칭/전체) 필터 후 카드 클릭 드릴다운(8K 규모 정합). 배포=web 재빌드.
+  알려진 한계: search_nodes cap(80) 초과 광역 검색은 매칭 카운트가 부분값(카드 클릭 펼침 시 실제 매칭은 rel 강조로 식별).
+- Rollback Notes: admin.js search/build/resetModel/loadRoots diff revert + cache-buster 이전값(schema-card-ctxmenu). 데이터 무손상.
+
+## CHG-20260702T175500-search-badge-pb0008
+- Date: 2026-07-02
+- Related Requirement: search-badge(CHG-20260702T173000, PR #544) 배포 후 PB-0008 실 Windows 시각검증 결과 기록. TASK §27 T27.7.
+- Summary: docs-only — 코드 변경 없음. 검색 시 스키마 카드 badge 매칭/전체(teal, cap `+`) 라이브 실측 PASS 를
+  feature-0003/feature-0016 TEST.md 에 POST-DEPLOY 갱신, TASK §27 T27.6/T27.7 완료 체크.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md` (Run 기록만).
+- Impact: 문서만. 코드·자산·데이터 무변경. 배포 불요.
+- Rollback Notes: 해당 Run/체크 라인 revert(무영향).
+## CHG-20260702-graph-expand-perf-refreshstates
+- Date: 2026-07-02
+- Related Requirement: 사용자 관찰(graph-perf-bg 배포 후) — `mssql-qa-idc.dk_data_release.Achievement` 테이블 노드 더블클릭 시 **2~3초 프리즈 잔존**, 개선 요청. 정본: DECISIONS ADR-006.
+- Summary: 실측 진단으로 프리즈 근본원인을 특정 — `_metaGraphRefreshStates` 의 **전 노드 개별 `g.setElementState`**(G6 v5 건당 ~50ms, 실측 200노드=10,046ms). fetch(AGE depth=2=135ms)·render(setData+draw≈200ms)·introspection(analyzed 라 skip) 모두 병목 아님. 수정: (1) `_metaG6Apply` 가 setData 후 `_stateCache` 를 clear 대신 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op, (2) `_metaGraphRefreshStates` 변화분만 적용 + 변화>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake), (3) 폴 tick 이중 refresh 를 **rAF coalescing** 으로 1회 병합(재진입 방지). 결과 ~9s→~0–80ms.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Apply` 캐시 populate; `_metaGraphRefreshStates` → 변화분+rebuild 폴백+rAF coalesce, 본문은 `_metaGraphRefreshStatesNow`)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-expand-perf`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-006),TASK(§24),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 렌더 상태-갱신 계층만. 데이터 API·그래프 스키마·마커 시맨틱 **불변**. setElementState 사용처를 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 로 한정. 마이그레이션 없음. 검증: 헤드리스 harness 실측(9s→82ms) + §18.8 적대 2렌즈(정확성 상태유실 BLOCKING 0 / 프리즈재발 — 폴 이중 refresh 지적→coalescing 반영). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(대량 스키마 노드 더블클릭 무프리즈).
+- Rollback Notes: admin.js git revert(graph-perf-bg 상태로) + cache-buster 이전값(graph-perf-bg). 데이터·API·스키마 무손상(상태-갱신 계층만).

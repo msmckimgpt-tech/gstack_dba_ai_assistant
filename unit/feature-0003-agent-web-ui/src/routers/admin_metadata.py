@@ -17,6 +17,60 @@ import app
 router = APIRouter()
 
 
+# ── graph-perf-bg: /graph/columns introspection TTL 캐시 ──────────────────────────
+#   /api/admin/metadata/graph/columns 는 그래프 투영에 Column 노드가 없는 테이블을 (더블)클릭할 때마다
+#   데이터소스 information_schema 를 **라이브 조회**했다 — 요청 스레드를 1~5초 블로킹하고 무캐시라, 펼침
+#   임계경로(그래프 fetch + columns fetch 2왕복)의 두 번째 왕복이 매번 재수행됐다. 성공한 introspection 을
+#   (scope_key, fqn) 키로 짧은 TTL(기본 300s) 동안 프로세스 내 캐시해 반복 펼침·다중 사용자·재진입 왕복을
+#   제거한다. **실패/빈 결과는 캐시하지 않는다**(일시 오류 재시도 보장). DDL 변경은 TTL 만료 후 자동 반영.
+#   프로세스별 캐시라 마이그레이션 불필요(alembic 병렬 충돌 회피). TTL<=0 이면 캐시 비활성(테스트/디버그).
+import os as _os
+import time as _time
+import threading as _threading
+
+_COLUMNS_CACHE = {}                        # (scope_key, fqn) -> (expires_at_monotonic, payload_dict)
+_COLUMNS_CACHE_LOCK = _threading.Lock()
+_COLUMNS_CACHE_MAX = 512                    # 무한 성장 방지 상한
+
+
+def _graph_columns_cache_ttl() -> float:
+    try:
+        return float(_os.environ.get("METADATA_GRAPH_COLUMNS_CACHE_TTL", "300") or 300)
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def _graph_columns_cache_get(scope_key: str, fqn: str):
+    """유효 캐시 payload 반환(없거나 만료면 None). 만료 항목은 조회 시 청소."""
+    if _graph_columns_cache_ttl() <= 0:
+        return None
+    now = _time.monotonic()
+    with _COLUMNS_CACHE_LOCK:
+        item = _COLUMNS_CACHE.get((scope_key, fqn))
+        if not item:
+            return None
+        exp, payload = item
+        if exp <= now:
+            _COLUMNS_CACHE.pop((scope_key, fqn), None)
+            return None
+        return payload
+
+
+def _graph_columns_cache_put(scope_key: str, fqn: str, payload) -> None:
+    """성공 introspection payload 를 TTL 캐시. 상한 초과 시 만료 항목 청소 후 최소-만료 항목 축출."""
+    ttl = _graph_columns_cache_ttl()
+    if ttl <= 0:
+        return
+    now = _time.monotonic()
+    with _COLUMNS_CACHE_LOCK:
+        if len(_COLUMNS_CACHE) >= _COLUMNS_CACHE_MAX:
+            for k in [k for k, (e, _p) in _COLUMNS_CACHE.items() if e <= now]:
+                _COLUMNS_CACHE.pop(k, None)
+            while len(_COLUMNS_CACHE) >= _COLUMNS_CACHE_MAX:
+                _COLUMNS_CACHE.pop(min(_COLUMNS_CACHE, key=lambda k: _COLUMNS_CACHE[k][0]), None)
+        _COLUMNS_CACHE[(scope_key, fqn)] = (now + ttl, payload)
+
+
 @router.get("/api/admin/metadata/glossary")
 def admin_list_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 목록 — 단일 scope(역할 차원 포함). 권한 kb.ingest.manual.
@@ -896,16 +950,20 @@ def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app
 def admin_metadata_graph(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
 
-    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 세 모드:
+    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 다섯 모드:
       - 이웃:    ?node=<key>&depth=1..3      → 해당 노드 k-hop (cap 적용)
       - 검색:    ?q=<부분일치>[&scope=<ds>]  → 이름/FQN CONTAINS (scope 지정 시 그 datasource 만)
-      - 진입:    ?scope=<ds>                 → 그 datasource 의 Schema→Table 서브그래프(초기 뷰)
+      - 스키마:  ?scope=<ds>&mode=schemas    → Schema 카드 + table_count (graph-initview 경량 진입)
+      - 단일스키마: ?scope=<ds>&schema=<key> → 그 스키마의 Table 만 (per-schema lazy, truncated 플래그)
+      - 진입:    ?scope=<ds>                 → 그 datasource 의 Schema→Table 서브그래프(하위호환 유지)
     셋 다 없으면 빈 그래프. AGE cutover 전(확장 부재)엔 모듈이 graceful no-op → 빈 결과.
     scope 는 datasource scope_key(예: mssql-06656002eda6) — 각 데이터소스별 그래프 분리.
     """
     q = (request.query_params.get("q") or "").strip()
     node = (request.query_params.get("node") or "").strip()
     scope = (request.query_params.get("scope") or "").strip() or None
+    schema = (request.query_params.get("schema") or "").strip()
+    mode_param = (request.query_params.get("mode") or "").strip()
     try:
         depth = int(request.query_params.get("depth") or "1")
     except (TypeError, ValueError):
@@ -929,6 +987,12 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         elif q:
             data = {"nodes": _mg.search_nodes(q, limit=limit, scope=scope, conn=pg), "edges": []}
             mode = "search"
+        elif scope and schema:
+            data = _mg.schema_tables(scope, schema, conn=pg)
+            mode = "schema_tables"
+        elif scope and mode_param == "schemas":
+            data = _mg.scope_schemas(scope, conn=pg)
+            mode = "scope_schemas"
         elif scope:
             data = _mg.scope_roots(scope, conn=pg)
             mode = "scope_roots"
@@ -948,6 +1012,7 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         "edges": data.get("edges", []),
         "mode": mode,
         "q": q, "node": node, "scope": scope or "", "depth": depth,
+        "truncated": bool(data.get("truncated", False)),
         "node_count": len(data.get("nodes", [])), "edge_count": len(data.get("edges", [])),
     })
 
@@ -1048,6 +1113,10 @@ def admin_metadata_graph_columns(request: Request, account=Depends(app.require_p
     if not _re.match(_ident, schema) or not _re.match(_ident, table):
         return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node,
                              "reason": "식별자에 허용되지 않는 문자가 있어 조회를 건너뜁니다."})
+    # graph-perf-bg: 성공 introspection 캐시 히트면 ds 해석·라이브 DB 연결·information_schema 조회 전량 우회.
+    _cached = _graph_columns_cache_get(scope_key, fqn)
+    if _cached is not None:
+        return JSONResponse(_cached)
     ds, derr = app._graph_resolve_ds_by_scope(scope_key)
     if derr:
         return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node, "reason": derr})
@@ -1102,8 +1171,11 @@ def admin_metadata_graph_columns(request: Request, account=Depends(app.require_p
                       "fqn": f"{fqn}.{cname}", "description": ctype, "source": "introspect", "ordinal": ord_i})
         edges.append({"source": node, "target": ckey, "type": "HAS_COLUMN",
                       "cardinality": None, "edge_source": "introspect"})
-    return JSONResponse({"nodes": nodes, "edges": edges, "introspected": True,
-                         "count": len(nodes), "engine": engine, "node": node})
+    payload = {"nodes": nodes, "edges": edges, "introspected": True,
+               "count": len(nodes), "engine": engine, "node": node}
+    if nodes:   # graph-perf-bg: 컬럼이 실제 조회된 성공만 캐시(빈/실패 결과는 재시도 보장 위해 미캐시)
+        _graph_columns_cache_put(scope_key, fqn, payload)
+    return JSONResponse(payload)
 
 @router.get("/api/admin/metadata/samples")
 def admin_list_samples(request: Request, account=Depends(app.require_permission('kb.sample.curate'))) -> JSONResponse:

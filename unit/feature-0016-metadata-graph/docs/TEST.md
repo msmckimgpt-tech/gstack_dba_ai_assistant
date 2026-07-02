@@ -140,10 +140,128 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 - 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: roots grid·제자리 펼침·재클릭 무접힘·"−" 접기·더블클릭 이웃확장·검색 유사도 크기·AI 마커·줌/스크롤 동기화(오버레이 지연 소멸)·테두리 선명·점선/실선 엣지.
 - 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 `git_commit`·자산 버전(`admin.js?v=20260702-graph-g6`) 명기. 브리지 불가 시 미수행 사유 명시(카고컬트 방지) 또는 `GSTACK_SKIP_VISUAL_VERIFICATION=1`.
 
+## 초기 진입 줌아웃 가시성 개선 (graph-initview, 2026-07-02)
+
+스키마-우선 진입(카드→per-schema lazy)+판독 줌 클램프+미니맵/툴바/점프(레이아웃 밀도는 graph-g6b masonry 채택). TASK §25.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 **31/31 PASS · 에러 0**
+실 admin.html 그래프 마크업 + admin.js `_metaGraph*` 블록(main graph-g6b masonry + graph-perf-bg `_opSeq` 와
+병합된 최종본) + mock apiFetch(실 응답 shape) + **대규모 fixture(7 스키마: 200/40/33/12/5/2/0 테이블)**:
+- roots: 스키마 카드 7장(테이블수 배지) 렌더, **zoom 0.60(판독선 0.55~1.0 클램프)**, 점프 select 채움(7+1).
+- 카드 클릭(`SC:` 라우팅): billing 12 테이블 per-schema lazy 펼침(combo 승격+"XS:" ctl), schemaExpanded 반영.
+- 200 테이블 스키마 펼침: **masonry 4열**·truncated 안내·**펼침 전후 zoom 불변(카메라 불점프)**.
+- 줌 툴바(실 DOM 클릭): '전체'=클램프 없는 조망(zoom 0.27 허용)·'1:1'=1.0·'−'=0.8·'+'=1.0. 스키마 점프 정상.
+- 검색: 결과 3스키마 자동 펼침·유사도 크기·zoom 클램프. 이웃확장: REFERENCES 2엣지(실선/점선) 렌더·교차
+  스키마 자동 펼침·**앵커 국소 focus(전체-fit 줌아웃 재발 없음)**. "XS:" 접기 → 카드 복귀. **미니맵 True**.
+- 리뷰 회귀 시나리오: **dead-card 복구**(Schema 노드 없는 combo 접기→카드 재클릭 재펼침) · **빈 스키마**
+  (미펼침+카드 유지+안내, loaded 비고착) · **카드 연타 단일 fetch**(in-flight 가드) · **혼합버전 구백엔드**
+  (mode 무시 응답 → 카드 진입+강등 펼침+loaded 미마킹) · **stale-scope 카드 클릭 blocked**(V-B, 교차 스코프
+  오염 없음). pageerror/console error 0.
+- harness 로 적발·수정한 결함: ① 동일 스키마 key 의 카드(노드)↔combo 타입 전환 시 G6 setData diff 자식 유실
+  → `SC:` 네임스페이스 분리. ② 미렌더 요소 `setElementState` async reject 가 pageerror 로 누출 → renderedIds
+  매핑+catch(_metaApplyState/refreshStates 단일 경로).
+
+### 라이브 AGE Cypher 검증 (Environment: live-pg-replica) — 2026-07-02 PASS
+`scope_schemas` 의 `count(t)` 집계·`schema_tables` 의 스키마 필터 쿼리를 replica psql 로 실증 —
+최대 scope `mssql-06656002eda6`(62 스키마·스키마당 ~257 테이블)에서 301행 0.23s. 구 진입 뷰가 cap 200 으로
+전체의 ~1.2% 만 표시하던 규모 실측.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-02 PASS**
+- 배포 `git_commit=95b18045`(deploy-web.sh 무중단 롤링+soak 통과), 자산 `admin.js?v=20260702-graph-initview2`·
+  `styles.css?v=20260702-graph-initview2` 서빙 확인. 실 Windows Chrome 149(relay). 스크린샷 5매:
+  `artifacts/feature-0016-metadata-graph/20260702-graph-initview-pb0008/`.
+- **최악 케이스 실측(mssql-06656002eda6, 62 스키마×~257 테이블)**: 그래프 뷰 진입 → **스키마 카드 62장,
+  zoom 0.550(판독 클램프 정확 발동)** — 카드 라벨("cc_test · 테이블 257" 등) 전부 판독 가능. 종전 전체-fit
+  줌아웃 붕괴(cap 200 테이블 세로 1열, ~1.2% 무통보 표시) 해소를 라이브 확인.
+- 카드 클릭(cc_tortusa) → **258 테이블 per-schema lazy 펼침(masonry 4열), zoom 0.550 유지(카메라 불점프)**,
+  상태줄 "258개 펼침 — '−' 로 접기" + 우측 클러스터 상세 로컬 렌더(테이블 258 목록). truncated 없음(258<300 정확).
+- 줌 툴바 실클릭: **'전체'=0.144 무클램프 조망**(62카드+펼친 combo 전경) · **'1:1'=1.000** · −/+ 동작.
+  **스키마 점프** → accountdb 카드 중앙 복귀(판독 줌 보장). **"XS:" 접기** → 카드 복귀+상태줄 안내.
+- **미니맵 렌더 확인**, analyzed 마커가 접힌 카드(SC:)에 매핑(accountdb 보라 테두리) — §21 T21.8 미완분(G6 엔진)
+  및 masonry(g6b)·논블로킹(perf-bg)·ctxmenu 공존 상태의 통합 시각검증 겸함.
+- 실측 방법: 화면 전환·툴바는 실 DOM 클릭, 캔버스 노드 상호작용은 클릭 핸들러 경로 호출(raw CDP eval — 실
+  사용자 클릭과 동일 코드 경로; 브리지가 canvas 좌표클릭 미지원, 기존 세션 관례와 동일) + 스크린샷 육안 대조.
+  참고: Chrome 200 eval 회귀는 Playwright UtilityScript 한정 — 본 드라이버(raw CDP)의 eval 은 정상(메모리 갱신 근거).
+
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
 - KB 회귀 스위트(`make test`) — AI 정합(Phase 4) 후.
 - PB-0008 라이브 브라우저 검증(그래프 UI) — cutover 후.
+
+## graph-ctxmenu — 노드 우클릭 상세 상호작용 (REQ-20260702T113000, 2026-07-02)
+
+우클릭 컨텍스트 메뉴(kind 별) + 관계 상세 패널(방향·신뢰도·근거) + 중심 보기. frontend-only.
+
+### admin.js 구문 — `node --check admin.js` PASS.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 PASS (28/28, 적대 패널 반영 후)
+그래프 블록 추출 + 실 admin.html 그래프 마크업 + mock apiFetch(실 응답 shape — AGE neighborhood
+서브그래프 내부 엣지 포함) harness. 스크린샷·드라이버: scratchpad `harness/` (shot-1~4).
+- **A 네이티브 우클릭 경로**: 빈 캔버스 우클릭 → canvas 메뉴(전체 맞춤·초기화) 표시 + 브라우저
+  기본 메뉴 차단(capture preventDefault) + Escape dismiss. **PASS**
+- **B 노드 우클릭(네이티브)**: `getElementPosition`→뷰포트 환산 좌표 실클릭으로 node:contextmenu
+  발화 → 테이블 메뉴(상세/관계 상세/관계 확장 1·2·3-hop chips/중심 보기/컬럼 펼치기/AI 능동
+  분석/FQN 복사) 전 항목 표시. **PASS** (emit 폴백 아님 — 실 이벤트 경로)
+- **C 관계 상세 패널**: 방향별 그룹(→참조함/←참조받음) + 추정/신뢰 배지·w 값 + 근거 한글
+  라벨(FK 스키마 선언/명명 규칙 추정/대화 JOIN 학습) + 상대 노드 설명 + 연관 용어 + 주변
+  관계(이웃-이웃) + 행 클릭 = 상대 노드 상세 이동 + 상세 카드 "🔗 관계 상세" 진입 링크. **PASS**
+- **D 중심 보기**: 모델 리셋 후 앵커 N-hop 만 로드, 앵커 선택 강조, 상태줄 복귀 안내. **PASS**
+- **E hop chip**: 1-hop chip 클릭 → depth=1 로 1회성 확장, 툴바 깊이 select 는 불변(전역 오염
+  없음 — 패널 반영). **PASS**
+- **F kind 별 메뉴**: Column(소속 테이블 상세·관계 확장, 컬럼 펼치기 없음)·GlossaryTerm(이름
+  복사·관계 확장)·클러스터 combo(클러스터 상세·스키마명 복사). **PASS**
+- **G 회귀**: 단일클릭 상세+컬럼 펼침 · "−" 접기 정상. **PASS**
+- **적대 패널 반영분**(REV-20260702T121500): C9 로컬 조인 컬럼 표기(`customer_id → s1.customers.id`) ·
+  D3/D4 중심 보기 지속 칩 + "✕ 전체 보기" 복귀 · H1 엣지 우클릭 메뉴(신뢰/추정 w·근거·양끝
+  노드 이동). **PASS**
+- **Z 콘솔/페이지 에러 0.**
+
+> harness 는 WSL headless 라 실 Windows 화면검증을 대체하지 않음(AGENTS.md §15.4.1). 아래 PB-0008 이 완료 하드 게이트.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser)
+- 커밋 시점 미수행 사유: 배포 스파인(`bin/deploy-web.sh`)이 origin/main HEAD 만 배포하므로
+  본 변경은 머지 전 라이브 반영 불가 — **머지·배포 직후 본 세션에서 즉시 수행**하고 Run 결과를
+  본 섹션에 후속 기록한다(카고컬트 방지 — 미수행을 수행으로 기재하지 않음).
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 노드/컬럼/용어/클러스터/빈캔버스 우클릭 메뉴 ·
+  관계 상세 패널(방향·신뢰 배지·근거·행 클릭 이동) · 중심 보기 · hop chips · 기본 메뉴 차단 ·
+  기존 클릭/더블클릭/접기 회귀 · 자산 버전(`admin.js?v=20260702-graph-ctxmenu2`·`styles.css?v=20260702-graph-ctxmenu`).
+- **Run 2026-07-02 (Environment: Windows-browser) — PASS**: 배포 16fc1598(soak 통과) 후 실 Windows Chrome(relay)
+  라이브 실측 — 테이블 노드 우클릭 메뉴 전 항목·관계 상세 패널(빈 상태 안내)·중심 보기 지속 칩+"✕ 전체 보기"
+  복귀·클러스터 combo 메뉴·Escape dismiss·기본 메뉴 차단·자산 버스터 서빙. 상세·스크린샷 경로는
+  feature-0003 `docs/TEST.md` POST-DEPLOY 항목 + `artifacts/feature-0016-metadata-graph/20260702-graph-ctxmenu-pb0008/`.
+
+## graph-initview 후속 — 스키마 카드 우클릭 + 카드 라벨 압축 (schema-card-ctxmenu, 2026-07-02)
+
+미펼침 스키마 카드 우클릭 메뉴 + 카드 라벨의 "테이블" 문자열 제거(개수→우상단 badge). TASK §26.
+
+### admin.js 구문 — `node --check` PASS.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 **ctx 10/10 PASS + initview 회귀 31/31 PASS · 에러 0**
+그래프 블록 추출 + 실 admin.html 그래프 마크업 + mock apiFetch(7 스키마 fixture, zempty 포함):
+- **카드 badge**: `SC:` 카드 라벨=스키마명만("테이블" 문자열 없음), 개수는 우상단 badge(billing→"12", big_schema→"200", 빈 스키마 zempty→"0"). 이름이 카드 전체 폭 확보.
+- **접힌 카드 우클릭**: `node:contextmenu`(SC: 라우팅) → 메뉴 열림 — 헤더(스키마 배지+"billing · 테이블 12") + 펼치기(테이블 표시)/클러스터 상세(펼치지 않음)/스키마명 복사. 종전 무반응 결함 해소.
+- **펼친 스키마 우클릭**: 펼침 후 "접기 (카드로)" 항목 노출(XS: ctl·combo 양 경로).
+- initview 전체 플로우(카드 진입·per-schema 펼침·masonry·줌 클램프·툴바·점프·검색·이웃·접기·미니맵·stale-scope) 회귀 없음.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-02 PASS**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 스키마 카드 라벨=이름+개수 badge(테이블 문자열 없음)·**접힌 카드 우클릭 메뉴**(펼치기/클러스터 상세/스키마명 복사)·펼친 스키마 우클릭 접기·기존 우클릭(노드/엣지/combo/캔버스)·좌클릭 회귀.
+- 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 git_commit·자산 버전(`admin.js?v=20260702-schema-card-ctxmenu`) 명기.
+- **Run 2026-07-02 PASS**: 배포 100535f8(soak 통과) → 실 Windows Chrome 149(relay) 라이브: 62 카드 라벨=이름+개수 badge("테이블" 문자열 0)·접힌 카드 우클릭 메뉴(펼치기/클러스터 상세/스키마명 복사) 표시·"펼치기" 클릭 58테이블 라이브 펼침·펼친 스키마 XS 우클릭 "접기" 항목. 종전 무반응 결함 라이브 해소. 스크린샷 `artifacts/feature-0016-metadata-graph/20260702-schema-card-ctxmenu-pb0008/`.
+
+## graph-initview 후속 — 검색 시 스키마 카드 badge 매칭/전체 (search-badge, 2026-07-02)
+
+검색 시 스키마 카드가 사라지지 않고 badge=`매칭/전체` 로 필터 표기. TASK §27.
+
+### admin.js 구문 — `node --check` PASS.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 **initview 33/33 PASS + ctxmenu 회귀 10/10 PASS · 에러 0**
+- **검색 카드 필터 뷰**: `search('pay')` → 매칭 스키마 3장 **카드 유지**(combo 0, auto-expand 안 함), badge = **매칭/전체**(billing `2/12`·dbo `1/40`·game_log `1/33`, teal bg). status "스키마 3개 매칭 · badge=매칭/전체".
+- **검색 클리어→roots**: `search('')` → roots 복귀, 카드 badge = **전체**(billing `12`, 남색). 검색 없음 표기 원복 확인.
+- 회귀: roots 카드 badge 전체·스키마 1개 자동펼침·stale-scope 차단·dead-card 복구·빈 스키마·혼합버전·이웃 확장(neighbor auto-expand 유지)·ctxmenu(SC/XS 우클릭) 전부 PASS.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-02 PASS**
+- 대상: 그래프 뷰 검색 시 스키마 카드 badge 매칭/전체. 게이트: `bin/win-browser.py` + PB-0008.
+- **Run 2026-07-02 PASS**: 배포 8fcda59c(soak 통과) → 실 Windows Chrome 149(relay, eval 1+1=2 OK), 자산 `admin.js?v=20260702-search-badge` 서빙 확인. `mssql-06656002eda6`(62 스키마): ① roots 카드 badge=**전체**(accountdb 58·AccountDB 33, 남색) ② 검색 `user` 입력 → **스키마 카드 12장 유지(combo 0), badge=매칭/전체(teal)** — accountdb `1+/58`·atum2_db_1 `11+/136`·atum2_db_7 `12+/137`, cap 도달분 `+`(부분 카운트) + status "결과 상한(부분 카운트)" 안내 ③ 검색 클리어 → roots 복귀·accountdb badge `58`(전체 원복). 종전 '검색 시 badge 소실' 결함 라이브 해소 확인. 스크린샷: `artifacts/feature-0016-metadata-graph/20260702-search-badge-pb0008/pb-search-badge-live.png`.
 
 ## rel-selfheal 단위 테스트 (2026-07-02, AGE·DB 불요)
 - `unit/feature-0002-agent-core/tests/test_relationships.py` — **43건 PASS**(신규 +5; star-export

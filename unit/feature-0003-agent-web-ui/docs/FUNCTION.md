@@ -1432,3 +1432,14 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 
 ## (TASK-20260702-aiops-scroll, 2026-07-02) AI 운영 현황 pane 세로 스크롤 (web/UI, Minor §12.3, aiops-panel 후속)
 - `styles.css` 의 pane 세로 스크롤 규칙(TASK-0167: list-detail 아닌 단순 세로 흐름 pane 에 `overflow-y:auto; overflow-x:hidden`)에 `ai-ops` pane 을 편입. AI 운영 현황 패널은 배너/축/KPI/Attention/카테고리 드릴다운/활동feed/커버리지의 긴 세로 흐름이라 admin-shell(overflow:hidden+100vh)에서 pane 자체 스크롤이 없으면 하단이 잘려 도달 불가. dashboard/usage 와 동일 처리. cache-buster styles.css bump. 신규 로직·백엔드·RBAC 무변경. PB-0008 스크롤 실측= 배포 후 TEST.md.
+
+## (attach-count-scope, 2026-07-02) "+" 메뉴 "첨부파일 목록" 개수 배지 — 대화 컨텍스트 정합 보장 (frontend-only, Minor §12.3)
+- 동작 보장(회귀 봉인): 요청 입력줄 "+" 메뉴 "첨부파일 목록" 항목의 개수 배지(`#composerAttachCountBadge`)는 **항상 현재 활성 대화 컨텍스트의 첨부만** 반영한다. 다른 대화로 전환하거나, "새 대화"/pending 대화로 진입하거나, 활성 대화를 삭제·보관·나가서 다른 대화(또는 빈 화면)에 랜딩해도, 배지는 직전 대화의 첨부 개수를 잔류시키지 않는다(첨부 없으면 비움).
+- 구현 불변식: 배지 textContent 는 `_renderAttachmentPills()`(활성 대화/sentinel 의 bucket 기준 산출 — 신규 첨부 수 우선, 없으면 전체 수) 에서만 mutate 된다. 따라서 **대화 컨텍스트가 바뀌는 모든 진입점은 그 직후 `_renderAttachmentPills()`(또는 이를 내부 호출하는 `_loadConversationAttachments`)를 1회 호출**해야 한다. 현재 보장 지점: `switchConversation`(→`_loadConversationAttachments`), `beginPendingConversation`, `_switchToPendingConversationContext`, `loadHistory`(빈/정상 두 exit — `refreshWorkspace`→`loadConversations`→`loadHistory` 로 도달하는 `deleteConversation`/`bulkDeleteConversations`/`leaveConversation` 랜딩 커버). 신규 컨텍스트-전환 경로 추가 시 동일 훅 유지 필요.
+- 범위: 배지 재렌더 훅만 추가. `_renderAttachmentPills` 본체·`_composerAttachmentKey`·bucket 스키마·업로드/선택/전송/버전 흐름(AC-0246/AC-0253/AC-0496/AC-0525)·첨부 사이드 패널 개폐 정책(패널은 사용자 "+"→"첨부파일 목록" 클릭 시에만 open) 전부 불변. RBAC/스키마/엔드포인트/백엔드 0.
+- cache-buster: `index.html` 의 `app.js?v=20260701-convswitch-opacity-guard`→`?v=20260702-attach-count-scope`. CHG/REV-20260702T021700-attach-count-scope.
+
+## (TASK-20260702-aiops-activity-paging, 2026-07-02) AI 운영 현황 활동 페이징 + main agent latency (web/UI·API + core, Major §12.3, aiops-panel 후속)
+- **활동 페이징**: 신규 `GET /api/admin/ai-ops/activity`(`routers/ai_ops.py`, 권한 console.aiops.read) — `_query_activity` keyset 헬퍼(`WHERE id < cursor ORDER BY id DESC LIMIT n+1`, id BIGSERIAL 단조=created_at DESC)로 '최근 활동'의 더 오래된 기록을 cursor 페이징. overview 는 최신 30건 + `activity_next_cursor`(has_more 시 마지막 id, 없으면 null) 반환. 프론트 renderAiOps 가 '더 보기' 버튼을 그리고, `loadAiOpsMoreActivity` 가 `/activity?cursor=` 로 더 오래된 페이지를 받아 `#aiOpsActivityList` 에 append(insertAdjacentHTML, 공용 `aiOpsActivityRowsHtml` esc row). next_cursor=null → "과거 기록 끝". OFFSET 아닌 keyset 이라 삽입 중 shift 없이 안정.
+- **main agent latency**(finding #1): `agent_core._call_llm`(task='agent', 사용자 대화 메인 추론·LLM 볼륨 최대)이 중앙 래퍼를 안 거쳐 latency 가 비어 있던 gap 을 보완 — create 직전 perf_counter 로 순수 왕복 측정 후 `_record_llm_usage(latency_ms=...)` 전달(best-effort try/except, 반환/흐름 무변경). 이로써 패널 latency KPI 가 최대 볼륨 경로까지 커버.
+- Verification: `test_ai_ops.py` 15/15(페이징 5 신규) + 회귀 66 PASS. route-parity 195. REV-20260702T180000-aiops-activity-paging. PB-0008= TEST.md.

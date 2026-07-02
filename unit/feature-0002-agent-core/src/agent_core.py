@@ -2619,14 +2619,18 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     token_limit = max_tokens_for_model(model, "agent")
     if token_limit is not None:
         kwargs["max_tokens"] = token_limit
+    _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)
     # TASK-0163: 메인 agentic loop 의 LLM 호출을 토큰 회계에 기록(best-effort).
     # 이전엔 _record_llm_usage chokepoint 를 우회해 사용자 대화 메인 추론이 한 건도
     # llm_usage 에 잡히지 않았다(계정별/역할별 집계가 비던 근본 원인 RC1).
     # in-process 동시 ask 의 cfg 전역 race 를 피하려 conversation_id/run_id 를 명시 전달.
+    # TASK-AIOPS: 이 경로가 LLM 볼륨 최대인데 중앙 래퍼를 안 거쳐 latency 가 비어 있던 gap 보완 —
+    # create 직후 latency_ms 를 함께 기록(래퍼 경로와 동일한 순수 왕복 측정 규약).
     try:
         _record_llm_usage(model, "agent", response,
-                          conversation_id=conversation_id, run_id=run_id)
+                          conversation_id=conversation_id, run_id=run_id,
+                          latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000))
     except Exception:
         pass
     return response.choices[0].message
