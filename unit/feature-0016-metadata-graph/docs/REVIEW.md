@@ -319,3 +319,19 @@ source_of_truth: true
   - **INFO (수용, 미수정)**: config 기본값이 `model_catalog.API_DEFAULT_MODEL` 참조 대신 리터럴 `"claude-haiku-4"` 하드코딩. cosmetic — 현 영향 없음(값 동일), config→model_catalog import 가 레이어링상 부적절할 수 있어 리터럴 유지.
 - Verdict: **PASS** — 차단 결함 0. 명시 범위(그래프 관계 분석만 전환)에 대해 정확·격리·완결.
 - Human Approval Needed: `.env` 반영 + insight-worker 재빌드·재기동(외부영향=배포) + commit/push/PR = 사용자 confirm.
+
+
+## REV-20260702T133000-ai-claude-feature-0016-graph-expand-perf [AGENT-TEAM: PASS-WITH-FIXES] — 더블클릭 프리즈 잔존(refreshStates per-node setElementState) 적대 검증
+- Related Change: graph-expand-perf (MODIFY CHG-20260702-graph-expand-perf, DECISIONS ADR-006). FE admin.js `_metaG6Apply` 캐시 populate + `_metaGraphRefreshStates` 변화분/rebuild 폴백/rAF coalesce. 데이터 API·스키마·마커 시맨틱 불변.
+- Method: 실측 진단(헤드리스 G6 harness — build/setData/draw/fitView 분리 계측 + web 컨테이너 서버측 `metadata_graph.neighborhood` 지연) 으로 병목 특정 → 수정 후 general-purpose subagent **2렌즈 병렬 패널**(① 정확성/상태유실 ② 프리즈재발/신규 stutter), 각 실 diff·전체 setElementState 사용처 grep 교차검증.
+- Verified (실측):
+  - **병목 특정**: `setElementState` 건당 ~50ms(G6 v5) → 전 노드 루프 200개 = **10,046ms**(실측). 렌더(setData+draw 200노드+127엣지)=~200ms, AGE 이웃 depth=2=135ms, introspection=analyzed 라 skip → 이들은 병목 아님(모두 실측 배제).
+  - **수정 효과**: post-rebuild refresh(마커 무변화)=**0ms**, bulk 55마커 변화=**rebuild 82ms**, 구 per-node 200노드=**8,890ms**. ~9s→~0–80ms.
+  - **정확성(렌즈①)**: 캐시 populate 값 = `_metaStateSig`(populate 직전 `_busyKeys.clear()` 라 ≡ `_metaNodeStates`) = setData 가 bake 하는 `states:` 값과 **정확히 일치** → "캐시엔 있는데 요소 미적용" false-negative 없음. rebuild 폴백은 setData 로 전 상태 bake(fit=false 카메라 유지). `_metaG6Apply` 는 refreshStates 미호출(재귀 없음), 캐시 populate 가 `await draw` 이전 sync 라 중복 rebuild 없음. selected 는 `_metaNodeStates` 경유 bake 로 유지. per-node 인자 형태 원본 동일.
+  - **잔존 루프 없음(렌즈②)**: setElementState 사용처 = `_metaApplyState`(단일노드) + `_metaGraphRefreshStates`(변화분/폴백) 둘뿐. 노드 수 비례 벌크 루프 제거 확인.
+- Findings:
+  - **BLOCKING(렌즈② → 수정 완료)**: 폴 tick 이 `_metaGraphMarkAnalyzed`+`_metaGraphMarkRunning` 로 `_metaGraphRefreshStates` 를 **연속 2회** 호출 → AI 능동분석 활성 구간에서 tick(2.5s)당 rebuild 2회(160–400ms 이중 stutter) + 첫 `draw()` in-flight 중 둘째 `setData` 재진입 경합 가능. → `_metaGraphRefreshStates` 를 **rAF coalescing**(같은 프레임 다중 호출 1회 실행)으로 병합, 본문 `_metaGraphRefreshStatesNow` 분리. 폴 간격(2.5s) ≫ rebuild(~200ms)라 프레임 간 중첩 없음. 재검증: tick 당 refresh 1회.
+  - **NIT (수용 기록)**: ① combo(Schema) key 가 `_metaGraph.nodes` 에 있으나 G6 노드로 bake 안 됨 → analyzed 상태 시 setElementState throw(캐치)·캐시 "적용됨" 기록 — **pre-existing**, combo 는 analyzed 스타일 미정의라 화면 무해. ② THRESHOLD=4 경계: per-node(4×50=200ms)·rebuild(~200ms) 모두 ~200ms — 프리즈 상한은 잡았으나 stutter-free 는 아님(경계값 합리적). ③ `_metaApplyState` 단일호출 ~50ms — 더블클릭당 setSelected 2회≈100ms(프리즈 아님).
+- Verdict: **PASS-WITH-FIXES** — CRITICAL/상태유실 0. BLOCKING 1건(폴 이중 refresh) 수정·재검증 CLOSED. NIT 3건 수용.
+- Risks (수정 후): 잔여 0(상태 유실). 완료 hard gate = PB-0008 실 Windows(대량 스키마 노드 더블클릭 무프리즈 + AI 분석 중 stutter 없음).
+- Human Approval Needed: graph-expand-perf 배포(web 재빌드) — deploy_scope: included(전역 FIRST_REQUEST) → 자동 배포하되 첫 배포 직전 1줄 표면화.

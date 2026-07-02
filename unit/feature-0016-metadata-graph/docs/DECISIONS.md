@@ -149,3 +149,20 @@ source_of_truth: true
   - busy 를 `_metaNodeStates` 에 포함: rebuild 마다 재-bake 되어 영구 하이라이트로 굳음 → `_busyKeys` 별도 추적(기각).
 - Supersedes:
 - Superseded By:
+
+
+## ADR-006 — 그래프 상태 갱신은 per-node setElementState 대신 setData rebuild (테이블 노드 더블클릭 프리즈 해소)
+- Status: Accepted
+- Date: 2026-07-02
+- Context: ADR-005(논블로킹 펼침) 배포 후에도 사용자 관찰 — `mssql-qa-idc.dk_data_release.Achievement`(analyzed, 형제 246테이블 스키마) **더블클릭 시 2~3초 프리즈** 잔존. 실측 진단(헤드리스 harness + web 컨테이너 서버측 계측): (a) AGE 이웃 depth=2 = **135ms**(128노드/127엣지 반환), (b) G6 `setData`+`draw` 200노드+127엣지 = **~200ms**, (c) introspection 은 Achievement 가 analyzed 라 **SKIP** — 즉 fetch·render 는 병목 아님. **진짜 병목**: `_metaGraphRefreshStates` 가 **전 노드마다 `g.setElementState` 를 개별 호출**하는데 G6 v5 에서 이 호출이 **건당 ~50ms**(startBatch 로도 안 배칭) → 실측 **200노드 재적용 = 10,046ms**. 더블클릭 → `_metaG6Apply` 가 `_stateCache` 를 clear → 직후 `_metaGraphSyncAnalysisMarkers`(및 2.5s 폴)가 cold 로 전 노드 재-setElementState = 프리즈.
+- Decision:
+  1. **rebuild 직후 refresh 를 no-op 화**: `_metaG6Apply` 가 `setData`(build 의 `states:` 로 전 노드 상태 이미 bake) 후 `_stateCache` 를 **clear 만 하지 않고 방금 bake 된 signature 로 populate**. 직후 `_metaGraphRefreshStates` 는 변화 0 → setElementState 0회.
+  2. **대량 상태변화는 per-node 대신 단일 rebuild**: `_metaGraphRefreshStates` 는 변화분(sig≠cache)만 모으고, 변화 노드 수 > THRESHOLD(4)면 per-node 루프 대신 `_metaG6Apply(false)` 1회(setData 가 전 상태를 한 번에 bake, fit=false 카메라 유지, ~80–200ms 상수). 소수(≤4)만 per-node.
+  3. **폴 tick 이중 refresh coalescing**: `_metaGraphMarkAnalyzed`+`_metaGraphMarkRunning` 이 한 tick 에 refresh 를 2회 부르고 syncMarkers 와도 겹친다 → `_metaGraphRefreshStates` 를 rAF 로 coalesce(같은 프레임 다중 호출 1회 실행) → tick 당 rebuild 1회 + in-flight setData/draw 재진입 방지.
+- Consequences: 더블클릭 프리즈 **~9초 → ~0–80ms**(헤드리스 실측: post-rebuild refresh 0ms, bulk 55마커 rebuild 82ms, 구 per-node 200노드 8,890ms). setElementState 사용처는 단일노드(`_metaApplyState`: busy/selected) + refreshStates(변화분/폴백) 둘로 한정. 데이터 API·스키마·마커 시맨틱 불변. §18.8 적대 2렌즈(정확성+프리즈재발) — 상태유실 BLOCKING 0, 폴 이중 refresh 지적 → coalescing 반영. 완료 게이트=PB-0008 실 Windows(대량 스키마 노드 더블클릭 무프리즈).
+- Alternatives:
+  - G6 setElementState 를 배치 API 로: startBatch/endBatch 로도 건당 비용(상태 attr diff+스타일 재계산 ~50ms)이 안 줄어듦(실측) → setData 경로가 유일한 벌크 최적화(기각).
+  - 폴 tick 에서 markAnalyzed/markRunning 의 refresh 를 제거하고 tick 이 1회만 호출: 타 caller(수동 트리거)가 refresh 를 잃음 → rAF coalescing 이 더 견고(채택).
+  - THRESHOLD 를 1(항상 rebuild): 단일 selection 변화도 rebuild flicker → 소수는 per-node 유지가 부드러움(기각, 4 채택).
+- Supersedes:
+- Superseded By:

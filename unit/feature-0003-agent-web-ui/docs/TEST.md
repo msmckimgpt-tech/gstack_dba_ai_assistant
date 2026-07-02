@@ -135,6 +135,15 @@ docker compose run --rm \
 - **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 정적 자산 baked → 배포(main 병합·web 재빌드) 후에만 실검증. 확인 항목 → ① **대량 스키마 테이블(수십 컬럼) 선택→펼침 시 렌더 엔진 무프리즈**(과거 dead-frozen 해소) ② 펼침 대기 중 **teal 점선 busy 피드백** 표시 후 자연 소멸 ③ **반복 펼침·재진입 즉시 응답**(introspection TTL 캐시 히트) ④ 펼침 중 스코프 전환/검색 시 **혼합-스코프 그래프 없음**(마지막 요청 화면으로 수렴) ⑤ 대량 그래프에서 AI 마커 폴(2.5s) 시 stutter 없음.
 - Pass/Fail: **PASS**(구문·다단계 적대패널). 라이브 프리즈 해소·성능 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
 
+### TASK-20260702-graph-expand-perf 그래프 노드 더블클릭 프리즈 잔존 해소 — refreshStates per-node setElementState (Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (프리즈 해소는 실 브라우저 렌더/상태 거동 — de-risk=헤드리스 실측+적대패널 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 사용자 후속 보고: graph-perf-bg 배포 후에도 `mssql-qa-idc.dk_data_release.Achievement` 더블클릭 시 2~3초 프리즈 잔존. 변경: admin.js `_metaG6Apply`(_stateCache populate)·`_metaGraphRefreshStates`(변화분/rebuild 폴백/rAF coalesce) + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-006 · MODIFY CHG-20260702-graph-expand-perf.
+- **실측 진단(근본원인)**: `_metaGraphRefreshStates` 의 전 노드 `g.setElementState` — G6 v5 건당 ~50ms, **200노드=10,046ms**(헤드리스 harness 실측). 렌더(setData+draw 200노드+127엣지=~200ms)·AGE 이웃(depth=2=135ms, web 컨테이너 서버측 계측)·introspection(analyzed 라 skip) 은 병목 아님(모두 실측 배제).
+- **구조·구문**: `node --check admin.js` PASS. setElementState 사용처 = 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 둘로 한정 확인.
+- **수정 효과(헤드리스 harness 실측)**: post-rebuild refresh(마커 무변화)=**0ms** · bulk 55마커 변화=**rebuild 82ms** · 구 per-node 200노드=**8,890ms** → ~9s→~0–80ms.
+- **§18.8 적대 검증(AGENT-TEAM, 2렌즈)**: ① 정확성/상태유실 — BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음, per-node 인자 동일). ② 프리즈재발 — 잔존 벌크 루프 0 확인, **폴 tick 이중 refresh** 지적 → rAF coalescing 반영. NIT 3건(combo/schema 캐시·THRESHOLD 200ms·_metaApplyState 단일 50ms) 수용. 상세 REV-20260702T133000 (feature-0016 REVIEW.md).
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 정적 자산 baked → 배포 후에만 실검증. 확인 항목 → ① **대량 스키마 노드(Achievement 등, 형제 246테이블) 더블클릭 시 프리즈 없이 즉시 확장**(과거 2~3초 프리즈 해소) ② AI 능동분석 진행(2.5s 폴) 중 주기적 stutter 없음 ③ 마커(analyzed 보라/running 주황/selected) 정상 표시 유지.
+- Pass/Fail: **PASS**(구문·헤드리스 실측·2렌즈 적대패널). 라이브 프리즈 해소 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
+
 ### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
 - 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.
 - 정적 검증(pre-commit): `node --check admin.js` PASS · `test_permission_dependency_map.py` 18개 PASS(신규 t5 계층 pin[metadata.*→kb.ingest.manual→console.access, depth manual=0·metadata.*=1] + t6 도달성[게이트 OFF 시 metadata hidden 이나 그룹 비은닉] + 기존 V1~V7 disclosure 무회귀) · §18.8 SUBAGENT 패널 PASS(BLOCKING 0).

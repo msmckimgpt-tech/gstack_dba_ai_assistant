@@ -3316,8 +3316,14 @@ async function _metaG6Apply(fit) {
   if (!g) return;
   try {
     g.setData(_metaG6Build());
-    _metaGraph._stateCache.clear();   // graph-perf-bg: rebuild 가 data.states 로 상태 재-bake → 명령형 캐시 무효화(다음 refresh 는 cold).
     _metaGraph._busyKeys.clear();     // graph-perf-bg fix: rebuild 는 요소를 재생성 → 명령형 busy 시각 소멸, 소유권 맵도 정리(stale busy 재적용·유령 소유 방지).
+    // graph-expand-perf fix(프리즈): setData 가 data.states(_metaG6Build 의 states:)로 모든 노드 상태를 이미 bake 한다.
+    //   예전엔 _stateCache 를 clear 만 해서, 직후 _metaGraphRefreshStates(syncMarkers·2.5s 폴)가 cold 로 **전 노드
+    //   setElementState** 를 돌렸다 — G6 v5 setElementState 는 건당 ~50ms 라 수백 노드면 수 초 메인스레드 프리즈
+    //   (실측: 200노드 재적용 = 10초). 대신 캐시를 방금 bake 된 signature 로 채워 rebuild 직후 refresh 를 no-op 로
+    //   만든다(진짜 변한 마커만 이후 소량 setElementState). _busyKeys clear 후라 sig=_metaNodeStates 와 일치.
+    _metaGraph._stateCache.clear();
+    _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaStateSig(n.key).join("|")); });
     await g.draw();
     if (fit) { try { await g.fitView({ padding: 30 }, false); } catch (_) {} }
   } catch (err) { _metaGraphStatus("그래프 렌더 오류: " + ((err && err.message) || err)); }
@@ -3987,19 +3993,41 @@ function _metaGraphPollRun(runId, focusKey) {
 }
 
 // 현재 렌더된 노드에 마커/선택 state 재적용(전체 rebuild 없이 — 위치 불변).
+// graph-perf-bg: 변화분만 적용(마지막 적용 signature 와 대조) — 폴(2.5s) 마다 전 노드 개별 setElementState 하던 stutter 제거.
+// graph-expand-perf fix(프리즈): G6 v5 setElementState 는 건당 ~50ms(실측). 변화 노드가 많으면 per-node 루프가 수 초
+//   메인스레드 프리즈를 낸다(200노드=10s). 그래서 변화 노드가 THRESHOLD 초과면 per-node 대신 **단일 setData rebuild**
+//   (_metaG6Apply 가 data.states 로 전 상태를 한 번에 bake, ~80–200ms 상수)로 폴백한다. rebuild 는 캐시를 새 sig 로
+//   채우므로(위 _metaG6Apply) 재귀·재적용 없음. 소수 변화는 per-node 유지(rebuild flicker 회피).
+//   graph-expand-perf fix(폴 tick 이중 refresh): 한 폴 tick 이 _metaGraphMarkAnalyzed + _metaGraphMarkRunning 로 refresh 를
+//   연속 2회 부르고 syncMarkers 등과도 겹친다 → 각기 rebuild 를 던지면 tick 당 2× rebuild + in-flight setData/draw 재진입.
+//   rAF 로 coalesce: 같은 프레임의 다중 호출을 1회 실행으로 병합(양쪽 set 갱신 후 한 번만 반영). 폴 간격(2.5s) ≫ rebuild(~200ms)라 프레임 간 중첩 없음.
 function _metaGraphRefreshStates() {
+  if (_metaGraph._refreshScheduled) return;
+  _metaGraph._refreshScheduled = true;
+  const run = () => { _metaGraph._refreshScheduled = false; _metaGraphRefreshStatesNow(); };
+  if (typeof window !== "undefined" && window.requestAnimationFrame) window.requestAnimationFrame(run);
+  else setTimeout(run, 0);
+}
+function _metaGraphRefreshStatesNow() {
   const g = _metaGraph.graph;
   if (!g) return;
-  // graph-perf-bg: 이전엔 매 호출(2.5s 폴 포함)마다 전 노드 개별 setElementState → 큰 그래프에서 stutter.
-  //   변경: 마지막 적용 signature 와 대조해 **변화분만** setElementState + startBatch 로 일괄(가능 시).
   const cache = _metaGraph._stateCache;
+  const changed = [];
+  _metaGraph.nodes.forEach((n) => {
+    const st = _metaStateSig(n.key);   // busy 포함 signature — 폴 tick 이 fetch 창 도중 busy 를 지우지 않도록 보존
+    const sig = st.join("|");
+    if (cache.get(n.key) !== sig) changed.push({ key: n.key, st, sig });
+  });
+  if (!changed.length) return;   // 변화 없음 — 즉시 반환(폴 tick 의 대다수, rebuild 직후 no-op)
+  const REBUILD_THRESHOLD = 4;   // per-node ~50ms/개 → 4개 초과면 rebuild(~200ms)가 저렴 + 프리즈 상한
+  if (changed.length > REBUILD_THRESHOLD) {
+    _metaG6Apply(false);   // setData 가 전 노드 상태 bake + _stateCache populate(카메라 유지, fit=false). fire-and-forget.
+    return;
+  }
   const apply = () => {
-    _metaGraph.nodes.forEach((n) => {
-      const st = _metaStateSig(n.key);   // graph-perf-bg fix: busy 포함 signature — 폴 tick 이 fetch 창 도중 busy 를 지우지 않도록 보존
-      const sig = st.join("|");
-      if (cache.get(n.key) === sig) return;   // 변화 없음 — skip
-      cache.set(n.key, sig);
-      try { g.setElementState(n.key, st); } catch (_) {}
+    changed.forEach(({ key, st, sig }) => {
+      cache.set(key, sig);
+      try { g.setElementState(key, st); } catch (_) {}
     });
   };
   try {

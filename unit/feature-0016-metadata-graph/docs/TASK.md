@@ -448,3 +448,23 @@ source_of_truth: true
 - [x] T23.8 `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS. leftover 디버그 마커 0.
 - [x] T23.9 **§18.8 적대 검증** — 3렌즈 패널(race/index-drift/layout+cache) → **4건 BLOCKING 적발**(reset 경로 `_opSeq` 미증가로 stale-render·colsByTable 포이즌, seq-mismatch busy 잔류, 폴이 busy 제거+`_stateCache` 불일치). 5-agent 워크플로 재검증 → 4건 CLOSED + **신규 BLOCKING 1건**(loadRoots reset-vs-reset) 적발. loadRoots seq 가드 추가 후 최종 재검증 → **reset-vs-reset 6조합 CLOSED·신규 회귀 없음**. NIT(동시-key busy 깜빡임·후행 syncMarkers stale 텍스트·BE 캐시키 대소문자 등)은 수용 기록. REV-20260702T120000 [AGENT-TEAM].
 - [ ] T23.10 graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 시 무프리즈 + busy teal 피드백 + 반복 펼침 즉시응답).
+
+## 24. graph-expand-perf — 테이블 노드 더블클릭 프리즈 잔존 해소 (refreshStates per-node setElementState) (2026-07-02, 사용자 후속 보고)
+사용자 관찰(graph-perf-bg 배포 후): `mssql-qa-idc.dk_data_release.Achievement` 더블클릭 시 **2~3초 프리즈 잔존**. 정본: DECISIONS ADR-006, MODIFY CHG-20260702-graph-expand-perf.
+등급: **Major**(프론트 렌더 상태-갱신 계층, 데이터 API·스키마 불변·비파괴, 마이그레이션 없음).
+
+### 24.1 진단 (실측 — 헤드리스 harness + web 컨테이너 서버측 계측)
+- [x] T24.1 후보 배제: AGE 이웃 depth=2 = **135ms**(128노드/127엣지) · G6 `setData`+`draw`(200노드+127엣지) = **~200ms**(헤드리스) · introspection = Achievement analyzed 라 **SKIP**. → fetch·render·introspection 모두 병목 아님.
+- [x] T24.2 진짜 병목 특정: `_metaGraphRefreshStates` 의 **전 노드 개별 `g.setElementState`** — G6 v5 건당 ~50ms(startBatch 무효), **실측 200노드 재적용 = 10,046ms**. 더블클릭 → `_metaG6Apply` 가 `_stateCache` clear → 직후 `_metaGraphSyncAnalysisMarkers`(+2.5s 폴)가 cold 로 전 노드 재-setElementState = 프리즈.
+
+### 24.2 구현 (FE admin.js)
+- [x] T24.3 `_metaG6Apply`: setData 후 `_stateCache` 를 clear 만 하지 않고 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op.
+- [x] T24.4 `_metaGraphRefreshStates`: 변화분(sig≠cache)만 적용 + 변화>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake, fit=false).
+- [x] T24.5 폴 tick 이중 refresh(markAnalyzed+markRunning) 를 **rAF coalescing**(같은 프레임 1회 실행)으로 병합 — 이중 rebuild + in-flight setData/draw 재진입 방지. 본문 `_metaGraphRefreshStatesNow`.
+- [x] T24.6 cache-buster `admin.js?v=20260702-graph-expand-perf`.
+
+### 24.3 검증
+- [x] T24.7 `node --check admin.js` PASS. setElementState 사용처 = 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 둘로 한정 확인.
+- [x] T24.8 **헤드리스 harness 실측**: post-rebuild refresh(마커 무변화) = **0ms**, bulk 55마커 변화 = **rebuild 82ms**, 동일상황 구 per-node = **8,890ms**. 즉 ~9s→~0–80ms.
+- [x] T24.9 **§18.8 적대 2렌즈**(정확성/상태유실 + 프리즈재발): 상태유실 BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음). 프리즈재발 렌즈가 폴 tick 이중 refresh 지적 → rAF coalescing 반영. NIT(combo/schema 캐시·THRESHOLD 경계 200ms)은 수용. REV-20260702T133000 [AGENT-TEAM].
+- [ ] T24.10 graph-expand-perf 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 대량 스키마 노드(Achievement 등) 더블클릭 시 **프리즈 없이 즉시 확장** + AI 능동분석 진행 중 stutter 없음.
