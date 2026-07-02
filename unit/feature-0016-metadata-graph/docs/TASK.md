@@ -409,3 +409,45 @@ source_of_truth: true
 - [x] T21.7 §18.8 적대적 코드리뷰(subagent, g6.min.js 번들 계약 교차검증) → **PASS-WITH-FIXES**(CRITICAL/MAJOR 0, MINOR 3건 수정·재검증). REV-20260702T003000 [SUBAGENT].
 - [ ] T21.8 실앱 배포(web 재빌드) + PB-0008 실 Windows 시각검증(하드 게이트) + verify-completion(--pre-commit) PASS.
 - [ ] T21.9 commit/push/PR → main 병합 (외부영향 — confirm).
+
+## 22. graph-initview — 초기 진입 줌아웃 가시성 개선 (2026-07-02, entry persona dispatch)
+사용자 보고: 스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit 이 지나친 줌아웃을 만들어
+초반 가시성이 붕괴. 다각도 검토(5축 A~E) 후 사용자 결정 **Phase 1+2 통합**(2026-07-02, AskUserQuestion):
+줌 클램프(A) + 레이아웃 밀도(B) + 스키마-우선 진입(C1) + 미니맵/줌툴바/스키마점프(E1~E3).
+등급: **Major**(cross-cut — 코드 거주 feature-0002 `metadata_graph.py`·feature-0003 `admin.js` 외 4파일,
+데이터 파괴 없음·기존 쿼리면 하위호환). ADR-004 결정론(무-shuffle·제자리) 불변식 보존, force 재도입 금지.
+<!-- PLAN-APPROVED by user on 2026-07-02 (AskUserQuestion: "Phase 1+2 통합" 선택) -->
+
+### 22.1 Implementation Plan (§7.1)
+- 백엔드 `unit/feature-0002-agent-core/src/modules/metadata_graph.py`:
+  - `scope_schemas(scope)` 신설 — Schema 노드 + per-schema `table_count` 집계 (진입 뷰 경량화, 91 스키마 전체 가능).
+  - `schema_tables(scope, schema_key, limit)` 신설 — 지정 스키마의 Table 만 반환 (per-schema lazy, cap 유지).
+  - AC: 기존 `scope_roots`/`search_nodes`/`neighborhood` 시그니처·동작 불변 (하위호환).
+- 라우터 `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` `admin_metadata_graph`:
+  - `?scope=&mode=schemas` → scope_schemas / `?scope=&schema=<key>` → schema_tables 분기 추가. 신규 route 없음
+    (route-parity 골든 불변). AC: 기존 3모드(q/node/scope) 응답 shape 불변.
+- 프론트 `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraph*` 블록):
+  - C1: roots = 스키마 카드(rect 노드 + "테이블 N" 배지). 클릭 = 클러스터 상세 + lazy 테이블 로드 → combo 로 승격
+    (제자리, fit 없음). "−" ctl(`XS:` prefix) 로 카드 복귀. `_metaGraph.schemaExpanded:Set` + `tableCount` 모델 확장.
+  - B1: combo 내부 테이블 다열 wrap(테이블 블록=테이블행+펼친컬럼, 열수는 블록수·높이 기반) — 자연정렬 열-우선 채움.
+  - B2: 고정 3열 grid → shelf packing(행 목표폭 = 콘텐츠 총면적×캔버스 종횡비 근사, 자연정렬 순서 보존).
+  - A1/A2: Graph `zoomRange:[0.02,4]` + `_metaG6Apply(fit)` 후 `getZoom()<0.5` 면 `zoomTo(0.5)`+첫 요소 focus.
+  - A3: 이웃확장(`_metaGraphExpand`)은 전체 fit → anchor `focusElement` 국소 focus 로 전환. resizer/토글 refit 동일 클램프.
+  - E1~E3: minimap 플러그인(번들 실증 후 채택/불가 시 생략 기록), 줌 툴바(+/−/전체/100%), 스키마 점프 select.
+  - AC: 200 테이블 mock 에서 초기 줌 ≥ 0.5 판독선, 스키마 카드 진입 → 클릭 펼침 e2e, 기존 검색/컬럼펼침/마커 회귀 0.
+- `admin.html`(툴바 마크업·범례) + `styles.css`(툴바·배지) + cache-buster `?v=20260702-graph-initview`.
+- 검증: node --check → Playwright headless harness(mock apiFetch, 대규모 200테이블 fixture) → verify-completion
+  → 배포(deploy_scope: included) → PB-0008 실 Windows 시각검증(check #13, §21 T21.8 미완분 통합 수행).
+
+### 22.2 진행
+- [x] T22.1 백엔드 scope_schemas(count 집계, 집계실패 시 배지없는 카드 강등)/schema_tables(truncated) + 라우터 분기(신규 route 0).
+- [x] T22.2 프론트 C1 스키마-우선 진입 — 카드(`SC:`+key)↔combo(id=key) 분리 id(동일-id 타입전환 setData diff 자식유실
+      결함을 harness 로 적발·수정)·per-schema lazy(`schemaLoaded` 재펼침 무-refetch)·"XS:" 접기·검색/이웃 자동펼침·
+      단일 스키마 자동 펼침. renderedIds 매핑으로 미렌더 setElementState async reject 수정.
+- [x] T22.3 프론트 B1/B2 다열 wrap(열수≈√(totalH/SW), 채움 시뮬레이션 치수 확정) + shelf packing(면적×종횡비 목표폭, 자연정렬 보존).
+- [x] T22.4 프론트 A1/A2/A3 zoomRange [0.05,4]·fit 클램프(0.55 하한/1.0 상한)·이웃확장 앵커 국소 focus·refit 전 경로 정합.
+- [x] T22.5 프론트 E1~E3 minimap 플러그인(harness 실증 True)·줌 툴바(−/+/전체/1:1)·스키마 점프 select.
+- [x] T22.6 admin.html(툴바·범례)/styles.css + cache-buster `?v=20260702-graph-initview`.
+- [x] T22.7 headless harness **24/24 PASS·에러 0**(대규모 200테이블 fixture) + 라이브 AGE Cypher 실증(62 스키마 scope, 0.23s). TEST.md.
+- [ ] T22.8 docs(REPORT/MODIFY/REVIEW/TEST) + §18.8 적대 리뷰 + verify-completion PASS.
+- [ ] T22.9 commit/push/PR/merge + 배포 + PB-0008 시각검증(§21 T21.8 통합).

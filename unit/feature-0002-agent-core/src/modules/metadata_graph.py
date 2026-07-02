@@ -551,6 +551,114 @@ def scope_roots(scope: str, limit: int = 200, conn=None) -> dict:
     return result
 
 
+def scope_schemas(scope: str, limit: int = 500, conn=None) -> dict:
+    """데이터소스(scope) 진입 그래프 **경량판** — Schema 노드 + per-schema 테이블 수(graph-initview).
+
+    초기 진입 뷰가 테이블 낱개 대신 스키마 카드만 그리도록 한다(8K 규모에서 전체-fit 줌아웃 방지).
+    각 Schema 노드에 `table_count`(cap 무관 실 카운트)를 붙여 UI 배지·lazy 로드 판단에 쓴다.
+    스키마 수 ≪ 테이블 수라 통상 전수 표시되며, cap(500) 초과는 `truncated: true` 로 명시한다.
+    """
+    result = {"nodes": [], "edges": [], "truncated": False}
+    if not scope:
+        return result
+    limit = max(1, min(int(limit or 500), 500))
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return result
+    try:
+        cur = c.cursor()
+        _set_age_path(cur)
+        sc = _cq(scope)
+        srows = _cypher(cur,
+            f"MATCH (s:Schema) WHERE s.scope_key = {sc} "
+            f"RETURN s.key, s.name, s.fqn LIMIT {limit + 1}", 3)
+        if len(srows) > limit:
+            result["truncated"] = True
+            srows = srows[:limit]
+        nodes = {}
+        for r in srows:
+            skey = _unwrap(r[0])
+            if skey and skey not in nodes:
+                nodes[skey] = {"label": "Schema", "key": skey, "name": _unwrap(r[1]),
+                               "fqn": _unwrap(r[2]), "description": None, "source": None,
+                               "table_count": 0}
+        if nodes:
+            try:
+                crows = _cypher(cur,
+                    f"MATCH (s:Schema)-[:HAS_TABLE]->(t:Table) WHERE s.scope_key = {sc} "
+                    f"RETURN s.key, count(t)", 2)
+                for r in crows:
+                    skey = _unwrap(r[0])
+                    cnt = _as_int(_unwrap(r[1]))
+                    if skey in nodes and cnt is not None:
+                        nodes[skey]["table_count"] = cnt
+            except Exception as exc:
+                # 집계 실패는 배지 없는 카드로 강등(스키마 목록 자체는 유지) — 빈 그래프 강등 방지.
+                _log.debug("scope_schemas_count_failed err=%r", exc)
+        result["nodes"] = list(nodes.values())
+        cur.close()
+    except Exception as exc:
+        _log.debug("scope_schemas_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return result
+
+
+def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> dict:
+    """지정 스키마의 Table 서브그래프(per-schema lazy 로드, graph-initview).
+
+    스키마 카드 클릭 시 그 스키마의 테이블만 로드해 초기 뷰 노드 폭증을 막는다.
+    cap(_NEIGHBOR_NODE_CAP) 초과 스키마는 `truncated: true` 로 부분 표시를 명시한다.
+    """
+    result = {"nodes": [], "edges": [], "truncated": False}
+    if not scope or not schema_key:
+        return result
+    limit = max(1, min(int(limit or 300), _NEIGHBOR_NODE_CAP))
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return result
+    try:
+        cur = c.cursor()
+        _set_age_path(cur)
+        sc = _cq(scope)
+        sk = _cq(schema_key)
+        rows = _cypher(cur,
+            f"MATCH (s:Schema)-[:HAS_TABLE]->(t:Table) "
+            f"WHERE s.scope_key = {sc} AND s.key = {sk} "
+            f"RETURN s.key, s.name, s.fqn, t.key, t.name, t.fqn, t.description, t.source "
+            f"LIMIT {limit + 1}", 8)
+        if len(rows) > limit:
+            result["truncated"] = True
+            rows = rows[:limit]
+        nodes = {}
+        for r in rows:
+            skey = _unwrap(r[0]); tkey = _unwrap(r[3])
+            if skey and skey not in nodes:
+                nodes[skey] = {"label": "Schema", "key": skey, "name": _unwrap(r[1]),
+                               "fqn": _unwrap(r[2]), "description": None, "source": None}
+            if tkey and tkey not in nodes:
+                nodes[tkey] = {"label": "Table", "key": tkey, "name": _unwrap(r[4]),
+                               "fqn": _unwrap(r[5]), "description": _unwrap(r[6]), "source": _unwrap(r[7])}
+            if skey and tkey:
+                result["edges"].append({"source": skey, "target": tkey, "type": "HAS_TABLE",
+                                        "cardinality": None, "edge_source": None})
+        result["nodes"] = list(nodes.values())
+        cur.close()
+    except Exception as exc:
+        _log.debug("schema_tables_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return result
+
+
 def _node_from_props(label: str, props: dict) -> dict:
     """라벨 테이블 properties(dict) → 노드 dict. _node_dict 와 동일 shape."""
     return {"label": label, "key": props.get("key"), "name": props.get("name"),

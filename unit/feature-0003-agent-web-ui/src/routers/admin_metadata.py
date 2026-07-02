@@ -896,16 +896,20 @@ def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app
 def admin_metadata_graph(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
 
-    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 세 모드:
+    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 다섯 모드:
       - 이웃:    ?node=<key>&depth=1..3      → 해당 노드 k-hop (cap 적용)
       - 검색:    ?q=<부분일치>[&scope=<ds>]  → 이름/FQN CONTAINS (scope 지정 시 그 datasource 만)
-      - 진입:    ?scope=<ds>                 → 그 datasource 의 Schema→Table 서브그래프(초기 뷰)
+      - 스키마:  ?scope=<ds>&mode=schemas    → Schema 카드 + table_count (graph-initview 경량 진입)
+      - 단일스키마: ?scope=<ds>&schema=<key> → 그 스키마의 Table 만 (per-schema lazy, truncated 플래그)
+      - 진입:    ?scope=<ds>                 → 그 datasource 의 Schema→Table 서브그래프(하위호환 유지)
     셋 다 없으면 빈 그래프. AGE cutover 전(확장 부재)엔 모듈이 graceful no-op → 빈 결과.
     scope 는 datasource scope_key(예: mssql-06656002eda6) — 각 데이터소스별 그래프 분리.
     """
     q = (request.query_params.get("q") or "").strip()
     node = (request.query_params.get("node") or "").strip()
     scope = (request.query_params.get("scope") or "").strip() or None
+    schema = (request.query_params.get("schema") or "").strip()
+    mode_param = (request.query_params.get("mode") or "").strip()
     try:
         depth = int(request.query_params.get("depth") or "1")
     except (TypeError, ValueError):
@@ -929,6 +933,12 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         elif q:
             data = {"nodes": _mg.search_nodes(q, limit=limit, scope=scope, conn=pg), "edges": []}
             mode = "search"
+        elif scope and schema:
+            data = _mg.schema_tables(scope, schema, conn=pg)
+            mode = "schema_tables"
+        elif scope and mode_param == "schemas":
+            data = _mg.scope_schemas(scope, conn=pg)
+            mode = "scope_schemas"
         elif scope:
             data = _mg.scope_roots(scope, conn=pg)
             mode = "scope_roots"
@@ -948,6 +958,7 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         "edges": data.get("edges", []),
         "mode": mode,
         "q": q, "node": node, "scope": scope or "", "depth": depth,
+        "truncated": bool(data.get("truncated", False)),
         "node_count": len(data.get("nodes", [])), "edge_count": len(data.get("edges", [])),
     })
 

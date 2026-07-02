@@ -276,3 +276,25 @@ source_of_truth: true
 - Impact: 프론트엔드 정적 자산만. 데이터 API(`/api/admin/metadata/graph*`) **불변**. 인증/데이터 파괴 없음.
   검증: WSL-headless-harness(실 마크업+mock API) 전 플로우 PASS·에러 0(TEST.md). 배포=web 재빌드(정적 자산). 완료 게이트=PB-0008 실 Windows 시각검증.
 - Rollback Notes: admin.html 스크립트를 cytoscape 4종으로 환원 + admin.js/styles.css git revert + cache-buster 이전값. 데이터·API 무손상(렌더 계층만).
+
+## CHG-20260702T114500-graph-initview
+- Date: 2026-07-02
+- Related Requirement: 사용자 보고 — 스키마 클러스터 내 테이블·컬럼 노드가 많을 때 초기 전체-fit 과도 줌아웃으로
+  초반 가시성 붕괴. 다각도 검토 후 사용자 결정 "Phase 1+2 통합"(TASK §22, PLAN-APPROVED 2026-07-02).
+- Summary: 그래프 뷰 초기 진입을 **스키마-우선(카드+테이블수 배지 → per-schema lazy 펼침)** 으로 재설계하고,
+  클러스터 내부 테이블 **다열 wrap** + grid **shelf packing**(캔버스 종횡비 근사)으로 밀도를 높이고,
+  **판독 줌 클램프**(fit 후 0.55 하한·1.0 상한, zoomRange [0.05,4]) + 이웃확장 **앵커 국소 focus** 로 줌아웃
+  재발을 차단하고, **미니맵·줌 툴바·스키마 점프** 를 추가. 스키마 key 의 카드(노드)↔combo 동일-id 타입 전환이
+  G6 setData diff 에서 자식 유실을 일으키는 결함을 `SC:` id 네임스페이스로 차단.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/metadata_graph.py` (`scope_schemas` count 집계·`schema_tables` truncated 신설)
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`?mode=schemas`/`?schema=` 분기 — 신규 route 0)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 카드 게이팅+wrap+packing, `_metaGraphFitClamped`,
+    `_metaGraphExpandSchema`/`CollapseSchema`, renderedIds 매핑, minimap/zoomRange/툴바/점프 바인딩)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (툴바 줌컨트롤·점프 select·범례; cache-buster `?v=20260702-graph-initview`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (줌 툴바·스키마카드 범례·minimap 카드 CSS)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§22),REPORT,TEST,REVIEW,MODIFY}.md`
+- Impact: 비파괴 additive — 기존 API 3모드(q/node/scope) 응답 shape 불변, 신규 쿼리 파라미터만 추가.
+  혼합버전 안전: 구 백엔드 + 신 admin.js 는 mode 무시 응답을 카드 게이팅이 흡수(강등 동작), 구 admin.js + 신
+  백엔드는 기존 scope_roots 경로 그대로. 인증/데이터 파괴 없음. 배포=web 재빌드(정적 자산+라우터).
+- Rollback Notes: git revert(프론트 3파일 + 백엔드 2파일) + cache-buster 이전값(graph-g6). 데이터·그래프 무손상.

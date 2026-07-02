@@ -1,5 +1,46 @@
 # Report
 
+## 2026-07-02 · 그래프 뷰 초기 진입 줌아웃 가시성 개선 (graph-initview, 4축 패키지)
+
+### 배경 (사용자 보고 + 다각도 검토 → Phase 1+2 통합 결정)
+스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit(`fitView`)이 콘텐츠 bounding box 에 무제한
+종속되어 판독 불가 줌아웃 발생. 5축(A 뷰포트 / B 레이아웃 밀도 / C 정보위계 / D 관련도 큐레이션 / E 내비게이션)
+검토 후 사용자 결정 **Phase 1+2 통합**(AskUserQuestion, 2026-07-02). 실데이터 근거: 최대 scope
+`mssql-06656002eda6` = **62 스키마 × 스키마당 ~257 테이블** — 구 진입 뷰는 cap 200 으로 전체의 ~1.2% 만
+무통보 부분표시 + 그마저 세로 1열 스택(46px/행)으로 zoom≈0.08 까지 줌아웃.
+
+### 구현 (4축)
+- **C1 스키마-우선 진입**: roots = 스키마 카드(`SC:`+key rect 노드, "이름 · 테이블 N" 배지) → 카드 클릭 시
+  per-schema lazy 로드(`?scope=&schema=`) 후 combo 승격(제자리, "XS:" ctl 로 접기). 백엔드
+  `scope_schemas`(Schema+count(t) 집계, cap 잘림 해소)·`schema_tables`(truncated 플래그) 신설 +
+  라우터 `?mode=schemas`/`?schema=` 분기(신규 route 0 — route-parity 골든 불변). 검색/이웃 흐름은 결과
+  테이블의 스키마를 schemaExpanded 에 자동 추가(카드 게이팅 모드-독립 단일소스). **동일 스키마 key 의
+  카드(노드)↔combo 타입 전환을 G6 setData diff 가 처리 못해 자식이 유실되는 결함을 SC: id 네임스페이스로
+  차단**(harness 로 적발·수정). 스키마 1개 datasource 는 자동 펼침(기존 즉시성 유지).
+- **B 레이아웃 밀도**: 클러스터 내부 테이블 **다열 wrap**(열수≈√(totalH/SW), 채움 시뮬레이션으로 치수 확정 —
+  불가분 블록 오버플로 안전) + 고정 3열 grid → **shelf packing**(콘텐츠 면적×캔버스 종횡비 근사 목표폭,
+  자연정렬 보존). ADR-004 결정론(무-shuffle·제자리·force 금지) 불변식 유지.
+- **A 뷰포트 정책**: Graph `zoomRange:[0.05,4]`(Cytoscape 시절 minZoom/maxZoom 의 G6 이식 — 전환 시 소실
+  회귀 복구) + `_metaGraphFitClamped()`(fit 후 zoom<0.55 면 0.55 로 클램프+첫 클러스터 focus, >1 이면 100%
+  상한) 를 roots/검색/토글/resizer 전 경로 적용. 이웃확장은 전체-fit → **앵커 국소 focus** 로 전환(노드가
+  쌓여도 줌아웃 재발 없음). `_metaGraphRefreshStates`/`SetSelected` 는 renderedIds 매핑 + async reject 흡수
+  (미렌더 요소 setElementState 가 pageerror 로 새던 결함 수정).
+- **E 내비게이션**: G6 **minimap 플러그인**(번들 내 실증 — 우하단 카드형) + 줌 툴바(−/+/전체/1:1 — '전체'는
+  의도적으로 클램프 없는 조망) + 스키마 점프 select(스키마 2개 이상 시 표시).
+
+### 검증
+- **WSL-headless-harness(Playwright) 24/24 PASS·에러 0** (TEST.md): 카드 진입(zoom 0.88 판독)·per-schema
+  펼침·200테이블 다열 wrap(6열)·truncated 안내·펼침 카메라 불점프·툴바 4버튼·점프·검색 자동펼침·이웃 국소
+  focus·"XS:" 접기 카드복귀·미니맵 표시.
+- **라이브 AGE Cypher 검증**: count(t) 집계·스키마 필터 쿼리 실 스택에서 유효(301행 0.23s).
+- node --check / py_compile PASS. §18.8 적대 리뷰 패널 결과는 REVIEW.md 참조.
+
+### 잔여
+배포(deploy_scope: included) 후 **PB-0008 실 Windows 시각검증**(§21 T21.8 미완분 — G6 엔진 교체 검증과 통합
+수행) + TEST.md Run 기록.
+
+---
+
 ## 2026-07-02 · 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (ADR-004, graph-g6)
 
 ### 배경 (사용자 관찰 5건 + 엔진 단위 개선 결정)
