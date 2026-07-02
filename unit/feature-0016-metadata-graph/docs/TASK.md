@@ -813,3 +813,29 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T34.5 헤드리스 실증: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**. `node --check` PASS.
 - [x] T34.6 **§18.8 적대 7축**(종료보장·fire-and-forget 동시성·이동수렴·fetch실패/seq·미렌더/폴백·회귀·K/임계): BLOCKING 0. **MEDIUM**(missStreak 프레임카운트 조기포기 — 저사양 rAF 탈동조로 팬 조기중단 위험) 적발 → **제거**(MAXMS 단일상한). NIT(API 폴백 손실·W/H 스테일) → API 가드 + W/H 매 프레임 재조회 반영. REV-20260703T003000 [SUBAGENT].
 - [ ] T34.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬하는지 육안 확인.
+
+## 35. reldetail-colexpand — 상세 패널 관계 컬럼별 아코디언 + 방향 구분·개수 + 의미 툴팁 (2026-07-03, 사용자 요청)
+
+### 35.0 맥락 (사용자 요청 4건)
+- ① 관계는 **컬럼 클릭 시 펼쳐지며** 나타나도록(상세 패널). ② **자신을 참조/상대를 참조** 관계 구분.
+  ③ 각 관계 **개수**를 각각 구분 표기. ④ 관계 **hover 툴팁 = 관계 의미 분석**.
+- 진단: 기존 상세 패널 "관계(N)"은 →/← 혼재 평면 목록이고 컬럼과 분리, 툴팁은 "클릭하면 추적" 안내뿐.
+- 등급 **Major**(cross-cut 프론트 UX, feature-0003 admin.js/styles/html; 데이터 비파괴·마이그레이션 0·백엔드 무변경).
+  ④의 "분석한 내용"은 per-edge LLM(hover 지연·비용 비현실적) 대신 **메타데이터 조합 의미 분석**으로 구현 —
+  노드 단위 LLM 분석은 기존 "AI 능동 분석"이 담당. 정본: TASK §35 · MODIFY CHG-20260703T · REVIEW REV-20260703T.
+
+### 35.1 구현 (admin.js / styles.css)
+- [x] T35.1 관계를 **소속 self측 컬럼별로 그룹화**(`colRel` Map) + 각 컬럼 안에서 참조함(out,→)/참조받음(in,←)
+      분리. `selfColKey` 로 self측 끝점 판정(테이블 self=자기 컬럼, 컬럼 self=자신).
+- [x] T35.2 컬럼(N) 목록을 **아코디언**: 관계 있는 컬럼은 🔗 + 토글 버튼 + `→N ←M` 개수 배지, 클릭 시
+      `.amgr-col-body` 펼침/접힘(caret ▸/▾·aria-expanded). 관계 없는 컬럼은 plain. 컬럼 self 는 방향 그룹 직접 표시.
+- [x] T35.3 전체 관계 요약 배지("관계 T · 참조함 X · 참조받음 Y") — h4 옆.
+- [x] T35.4 신규 `_metaRelSemanticTip(e,dir,selfEndFqn,otherFqn)` — 방향 문장 + 근거(대화학습/FK/추정/AI/수동)
+      + 신뢰도(신뢰/추정 w%) + cardinality + 근거별 의미 해석을 조합해 native title(다중줄) 툴팁으로. 각 관계 행에 적용.
+- [x] T35.5 styles.css 아코디언·방향 그룹·개수 배지 스타일 + admin.html 캐시버스터 `20260703-reldetail-colexpand`.
+
+### 35.2 검증
+- [x] T35.6 격리 로직 Node **8/8 PASS**(방향별 개수·컬럼 그룹화·참조함/받음 대상·관계없는 컬럼 plain·컬럼 self
+      분류·툴팁 방향문장+근거+신뢰도·FK 툴팁) + `node --check` admin.js.
+- [ ] T35.7 §18.8 적대 리뷰 + verify-completion.
+- [ ] T35.8 배포(web) + **PB-0008**: 컬럼 클릭 관계 펼침 · 참조함/받음 구분·개수 · hover 의미 툴팁 육안.

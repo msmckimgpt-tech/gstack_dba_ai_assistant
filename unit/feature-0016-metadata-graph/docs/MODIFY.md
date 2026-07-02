@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T165147-ai-root-feature-0016-reldetail-colexpand
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청 4건 — 상세 패널 관계를 ① 컬럼 클릭 시 펼침 ② 참조함/참조받음 구분
+  ③ 방향별 개수 ④ hover 툴팁=관계 의미 분석.
+- Summary: `_metaGraphRenderDetail` 관계 렌더를 재구성 — 관계를 self측 컬럼별로 그룹화(colRel), 컬럼(N)
+  목록을 아코디언(관계 있는 컬럼 🔗+토글+`→N ←M` 개수 배지, 클릭 펼침)으로, 각 컬럼 안에서 참조함(→)/
+  참조받음(←) 분리·개수. 전체 관계 요약 배지. 신규 `_metaRelSemanticTip`(방향 문장+근거+신뢰도+
+  cardinality+근거별 의미)를 관계 행 native title 로. 컬럼 self 는 방향 그룹 직접 표시. 아코디언 토글 바인딩.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}`.
+- Impact: 프론트 전용·비파괴·마이그레이션 0·백엔드 무변경. 기존 관계 추적(클릭)·AI 박스 무영향. 배포=web.
+- Rollback Notes: 코드 롤백 = 이전 커밋 재빌드.
+
 ## CHG-20260703T163000-ai-root-feature-0016-reltrace-postdeploy
 - Date: 2026-07-03
 - Related Requirement: graph-reltrace(§32)+reltrace-tabledetail(§33) 배포 후 PB-0008 실 Windows 라이브

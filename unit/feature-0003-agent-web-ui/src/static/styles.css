@@ -8052,6 +8052,23 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .amgr-row.amgr-trace:hover .amgr-tracehint, .amgr-row.amgr-trace:focus-visible .amgr-tracehint { opacity: 1; color: var(--primary); }
 .admin-meta-graph-ai-rels { margin-top: 8px; }
 .admin-meta-graph-ai-rels > strong { display: block; font-size: 11.5px; margin-bottom: 4px; }
+/* reldetail-colexpand ①②③: 컬럼 아코디언 + 방향 그룹 + 개수 배지 */
+ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
+.amgr-col { padding: 3px 0; }
+.amgr-col-plain { padding: 4px 2px; font-size: 12px; }
+.amgr-col-plain code { font-weight: 600; }
+.amgr-col-toggle {
+  display: flex; align-items: center; gap: 5px; width: 100%; text-align: left;
+  background: none; border: none; padding: 5px 6px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; color: inherit;
+}
+.amgr-col-toggle:hover, .amgr-col-toggle:focus-visible { background: var(--primary-soft); outline: none; }
+.amgr-col-toggle code { font-weight: 600; }
+.amgr-caret { flex: none; font-size: 10px; color: var(--text-2); width: 10px; }
+.amgr-col-relcount { flex: none; margin-left: auto; font-size: 10.5px; color: var(--primary); font-weight: 600; white-space: nowrap; }
+.amgr-col-body { padding: 2px 0 4px 18px; }
+.amgr-dir { margin: 4px 0; }
+.amgr-dir-head { font-size: 11px; font-weight: 600; color: var(--text-2); margin: 3px 0 2px; display: flex; align-items: center; gap: 4px; }
 .amgr-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .amgr-main code { word-break: break-all; }   /* 장문 무공백 FQN 이 패널 행을 뚫지 않게(review) */
 .amgr-arrow { flex: none; font-weight: 700; color: var(--text-2); }

@@ -596,3 +596,22 @@ source_of_truth: true
 - Trigger: 비-코드 doc-only(POST-DEPLOY 증적) → §18.8 표 "비정책 doc-only" 행 = panel SKIP.
 - 근거: 코드/정책 변경 0(순수 검증 결과 문서화). 실 검증은 PB-0008 라이브 실측(3항목 PASS, 스크린샷 5매)로
   이미 수행됨 — 본 항목은 그 결과의 정본 기록이며 별도 적대 리뷰 대상 아님.
+
+## REV-20260703T165147-ai-root-feature-0016-reldetail-colexpand [SUBAGENT: PASS-WITH-FIXES] — 상세 패널 관계 컬럼 아코디언+방향구분+의미툴팁 적대 리뷰
+- Related Change: CHG-20260703T165147(reldetail-colexpand). admin.js `_metaGraphRenderDetail` 관계 렌더
+  재구성 + 신규 `_metaRelSemanticTip` + styles.css + admin.html. TASK §35.
+- Trigger: UI/layout/graph + relationship keyword matched → frontend 집중 1렌즈.
+- Method: general-purpose subagent — git diff 정독 + node --check + 백엔드 REFERENCES 방향 계약 대조
+  (Column→Column directed, broken 제외) + 방향분류/개수/아코디언/XSS/회귀 재현 검증.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0. XSS(title esc 따옴표+개행 안전)·아코디언 독립성·리스너
+  누수 없음·dedup(refSeen)·reltrace 회귀(nested 행 bind)·TDZ 없음 전건 CLEAN.
+- Findings → 처리:
+  - **MAJOR (수정)**: intra-table self-FK(양끝 모두 self 컬럼, 예 employees.manager_id→id)에서
+    `if(sc) else if(tc)` 가 out 만 잡아 참조받음(←) 누락·totIn 저계상. → source 컬럼 out + target 컬럼 in
+    **둘 다 기록**(`addRel` 헬퍼, sc===tc 컬럼 자기참조는 out 만). 격리 재검증 PASS(out=1 in=1).
+  - **MINOR (수정)**: 미정의 CSS 변수 `--text-1`/`--surface-2`(폴백은 있었음) → 기존 토큰(inherit/
+    --primary-soft)으로 정리.
+  - **MINOR/consistency (수용)**: `_metaGraphRelTraceRowsHTML`(AI 박스 행)은 구 정적 title 유지 — 본 PR
+    범위 밖(별 경로), 기능 무결. 후속 통일 여지.
+- 재검증: node --check PASS + 격리 로직 8/8 + intra-table self-FK 2케이스 PASS.
+- Human Approval Needed: 없음(Major 승계·프론트 전용·비파괴). deploy_scope: included 자동 배포 + PB-0008.
