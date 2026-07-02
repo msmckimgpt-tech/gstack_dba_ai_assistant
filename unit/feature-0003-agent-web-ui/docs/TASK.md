@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260702-aiops-conv-link-fix — AI 운영 현황 '최근 활동' 상세: 시스템 sentinel 대화 링크 깨짐 수정 (Minor §12.3 — feature-0003 프론트 단독, 백엔드/스키마/RBAC 무변경. TASK-20260702-audit-nav-ux 후속 — PB-0008 라이브 적발)
+- 트리거(PB-0008 라이브 검증): audit-nav-ux 배포 후 실 브라우저 검증에서 발견 — '최근 활동' 행 클릭 시 상세의 '연결 대화' 가 insight/ask 워커·자율 호출(활동 대부분)에도 `/?conversation=__insight_worker__` 같은 **열 수 없는 링크**를 렌더. `__insight_worker__`·`__ask_worker__`·`__global__`·`__kb_manual__` 등은 실제 사용자 대화가 아닌 예약 sentinel(전부 `__` 접두)인데 `conversation_id != NULL` 이라 링크로 처리됨.
+- 해법(frontend only): `aiOpsActivityRowsHtml` 에서 `conversation_id` 가 `__` 접두 sentinel 이면 링크 대신 "시스템·자율 호출 (`<sentinel>`) — 특정 대화에 귀속되지 않습니다" 정직 안내. 실제 사용자 대화(비-`__`)만 `/?conversation=<id>` 링크 유지. NULL 은 기존 일반 안내.
+- Completion Checklist:
+  - [x] `static/admin.js` `aiOpsActivityRowsHtml`: `isSysConv`(cid 가 `__` 접두) 가드 — sentinel=안내(+sentinel 표기), 실대화=링크, NULL=일반 안내. node --check PASS.
+  - [x] `static/admin.html` cache-buster `admin.js?v=20260702-aiops-conv-link-fix`.
+  - [x] make test 회귀(백엔드 무변경 확인, exit 0) + node --check PASS.
+  - [x] §18.8 [SKIPPED:minor-frontend-guard] — REV-20260702T193000-aiops-conv-link-fix.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included) → PB-0008 재검증(sentinel 행=안내·링크 없음, 실대화 행=링크).
+
 ## TASK-20260702-audit-nav-ux — 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장 (Minor §12.3 — feature-0003 프론트 UI + 읽기전용 additive 백엔드, RBAC/스키마/인가/파괴적 변경 무. /_template:entry arg-given dispatch)
 - 트리거(사용자): "`관리 콘솔 > AI 운영 현황` 에서 (1) `감사` 카테고리 순서를 재구성: 감사 로그, 보관 대화, LLM 사용량, AI 운영 현황 (2) 각 항목 mouse hover 시 상세설명 툴팁 (3) 운영 현황 내부 '최근 활동' 클릭 시 상세 내용 확장 — 구조는 `프로필 > 계정 > 사용 내역 > 차트` 및 `관리 콘솔 > LLM 사용량 > 차트` 의 그래프 클릭 → 대화 목록 드릴다운 참조."
 - 설계:

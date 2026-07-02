@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260702T193000-aiops-conv-link-fix [SKIPPED:minor-frontend-guard] (TASK-20260702-aiops-conv-link-fix — '최근 활동' 상세 시스템 sentinel 대화 링크 깨짐 수정, Minor §12.3 — feature-0003 프론트 단독)
+- Panel skip 사유(§18.8): 변경은 `aiOpsActivityRowsHtml` 의 3-줄 조건 가드(`conversation_id` `__` 접두 sentinel → 링크 대신 안내) + cache-buster 뿐. 신규 로직·상태·API·RBAC·스키마 0, 백엔드 무변경. 직전 audit-nav-ux 패널(REV-20260702T190000, VERDICT SHIP)이 주변 렌더/XSS/토글을 이미 검증했고, 본 변경은 그 위 sentinel 분기 추가라 코드 적대 검증 신규 표면 없음. PB-0008 라이브가 정본(sentinel 행=안내·링크 없음, 실대화 행=링크).
+- sentinel 집합 근거: `shared/config.py`(`__insight_worker__`/`__ask_worker__`/`__global__`) · `kb_ingest.py`(`__kb_manual__`) · `account_recall.py`(`__account__:` 접두) — 전부 `__` 접두. 실 사용자 대화 ID 는 `__` 접두 아님(가드 오탐 없음).
+- XSS: sentinel 안내는 `E(cid)`(=`_aiOpsEscApg`) escape textContent, 링크 경로는 audit-nav-ux 와 동일(`encodeURIComponent`). 신규 노출/우회 없음.
+- 검증: `node --check`(admin.js) PASS · `make test` exit 0(백엔드 무변경 회귀) · PB-0008 재검증(배포 후).
+- Cross-ref: TASK-20260702-aiops-conv-link-fix / CHG-20260702T193000-aiops-conv-link-fix / REV-20260702T190000-audit-nav-ux(선행).
+
 ## REV-20260702T190000-audit-nav-ux [SUBAGENT:adversarial-3lens] (TASK-20260702-audit-nav-ux — 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장, Minor §12.3 — feature-0003 프론트 UI + 읽기전용 additive 백엔드)
 - 대상: `static/admin.html`(감사 그룹 archives↔usage 순서 swap + 4개 탭 title 툴팁 + cache-buster), `static/admin.js`(aiOpsActivityRowsHtml 요약행+숨김 상세패널 재구성·_toggleAiOpsActRow·bindAiOpsActivityToggle·renderAiOps 위임 배선), `routers/ai_ops.py`(_query_activity SELECT/dict additive: model/resolved_model/run_id/conversation_id), `tests/test_ai_ops.py`(_act_rows 11열 + 신규 필드 assert). 신규 RBAC/스키마/엔드포인트/마이그/파괴적 변경 0.
 - 3-렌즈 적대 패널(A 백엔드 correctness/보안 · B 프론트 XSS/UX/접근성 · C 테스트 정합) → **VERDICT: SHIP** (BLOCKING 0 · MAJOR 0 · MINOR 0 · NIT 3 비차단).

@@ -9,6 +9,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260702T193000-aiops-conv-link-fix (TASK-20260702-aiops-conv-link-fix — AI 운영 현황 '최근 활동' 상세 시스템 sentinel 대화 링크 깨짐 수정, Minor §12.3 — feature-0003 프론트 단독)
+- Date: 2026-07-02 (worktree ai/claude/feature-0003-aiops-conv-link-fix, base 4ec15191). TASK-20260702-audit-nav-ux 후속.
+- 트리거: audit-nav-ux(bc2a0fa6) 배포 후 PB-0008 라이브 검증 적발 — '최근 활동' 상세 '연결 대화' 가 insight/ask 워커·자율 호출(활동 대부분)에도 `/?conversation=__insight_worker__` 등 열 수 없는 링크 렌더.
+- 근본원인: `__insight_worker__`·`__ask_worker__`·`__global__`·`__kb_manual__`(shared/config.py·kb_ingest.py) 등 예약 sentinel(전부 `__` 접두)은 실제 대화 아님인데 `conversation_id != NULL` 이라 `aiOpsActivityRowsHtml` 이 링크로 처리.
+- 변경(`src/static/admin.js`): `isSysConv = cid && cid.slice(0,2)==="__"` 가드 추가 — sentinel=안내(sentinel id 표기)·링크 없음, 실 사용자 대화(비-`__`)=`/?conversation=<id>` 링크 유지, NULL=기존 일반 안내. `src/static/admin.html` cache-buster `admin.js?v=20260702-aiops-conv-link-fix`.
+- 비변경: 백엔드(`_query_activity`·엔드포인트)·스키마·RBAC·마이그 0. conversation_id 페이로드는 audit-nav-ux 그대로.
+- 검증: node --check PASS · make test(백엔드 무변경 회귀) · PB-0008 재검증(배포 후).
+
+
 ## CHG-20260702T190000-audit-nav-ux (TASK-20260702-audit-nav-ux — 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장, Minor §12.3 — feature-0003 프론트 UI + 읽기전용 additive 백엔드, 비파괴)
 - Date: 2026-07-02 (worktree ai/claude/feature-0003-admin-audit-ux, base 44d958cd).
 - 요청(/_template:entry arg-given): "`관리 콘솔 > AI 운영 현황`에서 (1) `감사` 카테고리 순서 재구성: 감사 로그·보관 대화·LLM 사용량·AI 운영 현황 (2) 각 항목 hover 시 상세설명 툴팁 (3) '최근 활동' 클릭 시 상세 확장 — 구조는 `프로필 > 사용 내역 > 차트`·`LLM 사용량 > 차트` 그래프 클릭→대화 목록 드릴다운 참조."
