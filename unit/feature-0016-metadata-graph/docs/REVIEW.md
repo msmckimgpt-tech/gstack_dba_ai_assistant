@@ -319,6 +319,67 @@ source_of_truth: true
   - **INFO (수용, 미수정)**: config 기본값이 `model_catalog.API_DEFAULT_MODEL` 참조 대신 리터럴 `"claude-haiku-4"` 하드코딩. cosmetic — 현 영향 없음(값 동일), config→model_catalog import 가 레이어링상 부적절할 수 있어 리터럴 유지.
 - Verdict: **PASS** — 차단 결함 0. 명시 범위(그래프 관계 분석만 전환)에 대해 정확·격리·완결.
 - Human Approval Needed: `.env` 반영 + insight-worker 재빌드·재기동(외부영향=배포) + commit/push/PR = 사용자 confirm.
+## REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu [SUBAGENT: PASS-WITH-FIXES] — 노드 우클릭 상세 상호작용 적대 패널
+- Related Change: graph-ctxmenu (TASK §24 — §13.1 재번호 22→24, MODIFY CHG-20260702T120000). admin.js 우클릭 메뉴 + 관계 상세 패널 + 중심 보기 + styles.css/admin.html. frontend-only, 데이터 API·RBAC 불변.
+- Trigger: UI/화면/메뉴 keyword matched (§18.8 표 — UI/버튼/화면 행) → **ux + design** subset dispatch, 이벤트 배선 복잡도로 qa(정확성) 렌즈 추가.
+- Method: general-purpose subagent 3인 병렬 적대 리뷰 — diff 전문 + 그래프 블록·기존 함수 실계약 대조 + G6 vendor 번들 이벤트 지원 교차확인(edge:contextmenu 존재 검증) + 디자인 토큰/z-index 전수 + harness 스크린샷 시각 확인.
+- Verdicts: ux **CHANGES-REQUESTED**(MAJOR 3·MINOR 9·NIT 3) · design **PASS-WITH-NITS**(MINOR 4·NIT 3) · qa **미완**(subagent 세션 rate-limit 도달 — 아래 검증 한계).
+- 흡수한 MAJOR (전건 수정 + harness 재검증):
+  - **MAJOR-1 로컬 조인 컬럼 은닉**: 관계 행이 상대 endpoint 만 표기해 같은 대상으로 가는 FK 2개가 동일 행으로 보임 → row 에 앵커 측 컬럼 표기(`customer_id → s1.customers.id`, out/in 대칭). harness C9 PASS.
+  - **MAJOR-2 엣지 우클릭 dead zone**: 관계선 우클릭이 무반응 + 기본 메뉴도 차단 → `edge:contextmenu` 바인딩 + `_metaGraphCtxForEdge`(타입·신뢰/추정 w·cardinality·근거 info + 출발/도착 노드 상세 + 관계 상세 진입, 컬럼 엣지는 소속 테이블 앵커). harness H1 PASS.
+  - **MAJOR-3 중심 보기 모드 오인**: 1회성 status 뿐이라 부분 그래프를 전체로 오인 가능 + 복귀 경로 불명확 → 캔버스 좌상단 지속 칩 "🎯 중심 보기: <노드> ✕ 전체 보기"(roots 복귀), roots/검색 진입 시 자동 해제. harness D3/D4 PASS. (스냅샷 단위 undo 는 미채택 — 모델 단순성 유지, '전체 보기' 복귀로 충분하다고 판단·기록.)
+- 흡수한 MINOR/NIT (수정): focus 시 검색 input 클리어 · 절단 "… 외 N건"(참조함/참조받음/용어) · REFERENCES 외 타입 혼재 시 중립 헤더(나가는/들어오는 관계) · 이웃-이웃 term edge 를 연관 용어가 아닌 주변 관계로 라우팅 · hop chip 을 1회성 depth 인자로(전역 select 오염 제거, `_metaGraphExpand(key, depthOverride)`) · Column 에도 관계 확장(더블클릭 파리티) · 복사 실패 시 textarea 폴백+실패 토스트 · wheel/재렌더(_metaG6Apply) 메뉴 dismiss · Tab=닫기+포커스 복원(메뉴 내부 포커스일 때만)+chip role=menuitem+aria-label · chip-row hover 허위 affordance 제거 · 메뉴 max-height+스크롤 · focus-visible outline · `.amgr-main code` break-all · 메뉴 배지 `.admin-meta-graph-badge` 공용화 · AI hint "관련 노드 자동 분석" · ⧉→📑(tofu 방지).
+- 수용(미수정) 기록: 메뉴/패널 배지 표기 언어 차이(메뉴=한글 — 비전문 사용자 대상 의도) · 아이콘 컬러/단색 혼재(기존 관례 ✨/🕸 재사용, tofu 위험 낮음) · relbadge 의미 재사용(시각 무해 NIT) · radius/그림자 하드코딩(인접 블록 관례 정합).
+- 검증: 수정 후 `node --check` PASS + WSL-headless-harness **28/28 PASS**(네이티브 우클릭 경로·엣지 메뉴·중심 칩·로컬 조인 컬럼·1회성 hop·회귀 전부) + 콘솔 에러 0.
+- 검증 한계: qa(정확성) 렌즈 subagent 가 plan rate-limit 으로 미완 — 단, 해당 공격축(XSS esc/data-key·이벤트 순서·AI 폴링 가드·dismiss 경로·hop select 이중발동)은 ux 렌즈의 "검증 통과 축"과 harness 실측(에러 0·회귀 G1/G2)이 커버. 라이브 최종 확인은 PB-0008(check #13 hard gate).
+- Human Approval Needed: 아니오 — 비파괴 frontend 추가, RBAC/API 불변, deploy_scope: included(전역 선언) + §16.3 Step 4 자동 동기화 조건 충족(BLOCKED 0).
+## REV-20260702T140000-ai-claude-feature-0016-graph-ctxmenu-pb [SKIPPED:docs-only]
+- **cycle**: ai/claude/feature-0016-graph-ctxmenu-pb — graph-ctxmenu(PR #538, REV-20260702T121500) 의 배포·PB-0008 라이브 실측 결과를 정본 문서에 기록(T24.5/T24.6 완료 표시). 코드 무변경.
+- **changeset**: feature-0003 `docs/TEST.md`(POST-DEPLOY Run PASS) · feature-0016 `docs/{TEST,TASK,REPORT}.md` · `wiki/{Log,hot}.md` · 본 entry.
+- **panel**: SKIPPED — 비정책 doc-only(§18.8 표 첫 행). 실측 자체가 검증(배포 16fc1598 soak PASS·자산 서빙 grep·실 Windows 라이브 상호작용 5종·스크린샷 4매 artifacts).
+- **Human Approval Needed**: 아니오 (문서 전용, 코드·배포 산출물 무변경 — 이미 16fc1598 라이브).
+## REV-20260702T165800-ai-claude-corp-feature-0016-graph-initview [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: graph-initview (MODIFY CHG-20260702T114500-graph-initview, TASK §25). 그래프 뷰 초기 진입
+  줌아웃 가시성 개선 — 스키마-우선 진입 + 판독 줌 클램프 + 미니맵/줌툴바/점프.
+- Method: 2라운드 적대 검증.
+  - R1: general-purpose subagent 적대 코드리뷰(diff 전체 + G6 v5 계약·Cypher 안전·혼합버전·상태기계).
+  - R2: 3-렌즈 병렬 workflow(race/state/contract) — R1 수정 델타 자체가 만든 결함 적발 전용.
+- R1 Findings: BLOCKER 0 · MAJOR 2 · MINOR 7 · NIT 3 — 전건 수정.
+  - MAJOR-1 dead-card(Schema 노드 없는 자동펼침 combo 접기 후 재펼침 불능) → Schema 노드 합성 삽입.
+  - MAJOR-2 LoadRoots 세대 가드 부재(빠른 scope 전환 혼합) → 세대 가드(이후 R2 에서 perf-bg `_opSeq` 로 통합).
+  - MINOR: 혼합버전 loaded 오염(mode 판별 마킹)·카드 연타 이중 fetch(in-flight 가드)·빈 스키마 상태-렌더
+    불일치(비펼침)·scope_schemas cap silent(limit+1 truncated)·silent 자동펼침 truncated 안내 소실(Set 회수)·
+    refit focus 점프(focusFirst 분리)·common 점프 stale(FillJump([])). NIT: shelf 상단 돌출(g6b 병합으로 소멸)·
+    minimap fallback 잠복(수용 — 번들 교체 시 POC 재검증 전제, 주석 명문화)·카드 클릭 fetch 2회(로컬 상세로 대체).
+- R2 Findings: 17건(중복 제거 9) — 전건 반영/해소.
+  - **MAJOR stale-base**: 착수 base 가 origin/main 대비 23커밋 뒤(동일 `_metaGraph` 블록을 graph-g6b #533·
+    graph-perf-bg #537 이 병렬 재작성, 이후 #538 ctxmenu 추가 정합) → **merge 재정합**(main 판 기준 재적용,
+    자체 레이아웃 폐기·masonry 채택, TASK §22→§24→§25 재번호 §13.1).
+  - **MAJOR ExpandSchema 세대 미가드**(늦은 이전-scope 응답이 새 모델 오염) → `_opSeq` 편입(클릭=새 세대,
+    silent=부모 세대 상속, await 후 불일치 시 ingest 없이 폐기).
+  - **MAJOR 합성 노드가 stale 카드 클릭 안전장치 제거** → 진입 scope 가드(현재 scopeKey 소속만 진행).
+  - MAJOR(비대칭 가드 search↔roots) → resetModel 의 `_opSeq++` 공유로 해소(검색 reset 이 roots continuation 폐기).
+  - MINOR: 빈 스키마 loaded 고착(cnt>0 시만 마킹)·연타 시 빈 로컬상세(성공-게이팅 .then)·실패 후 로컬상세
+    (동일 게이팅)·클러스터 상세 총계 모순(table_count override+절단 노트)·집계실패 '테이블 0' 배지(None 강등).
+  - LOW-CONF(resetModel 의 lastDetailKey 잔존 → depth-select 교차 scope 확장): **기존(main 동일) 결함으로 판정,
+    본 cycle 미도입 — 후속 항목으로 기록**(REPORT §8 성격).
+- 검증: 병합 최종본 headless harness **31/31 PASS·에러 0**(dead-card·빈스키마·연타·혼합버전·stale-scope 회귀
+  포함) + 라이브 AGE Cypher 실증 + 단위 10 PASS + node --check/py_compile. TEST.md.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, R1+R2 지적 전건 수정(수용 2건은 근거 명기).
+- Human Approval Needed: 없음(Major 사전 계획 승인 완료) — cycle-final 후 배포는 deploy_scope: included.
+
+## REV-20260702T172500-ai-claude-corp-feature-0016-schema-card-ctxmenu [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: schema-card-ctxmenu (MODIFY CHG-20260702T172500, TASK §26). 스키마 카드 우클릭 메뉴 + 카드 라벨 압축(개수→badge).
+- Method: general-purpose subagent 적대 리뷰 — diff 전체 Read + G6 badge API(번들 `getBadgesStyle`/`Aw()` 경로)·우클릭 prefix 라우팅·상태 정합·회귀 교차검증.
+- Findings: BLOCKER 0 · MAJOR 0 · MINOR 1 · NIT 2.
+  - **MINOR (수정)**: node-level `badgeOffsetX/Y` 는 G6 v5 badge 파이프라인에서 무시됨(per-item `getBadgeStyle` 가 아이템 자신의 offset 만 소비) → badge 아이템 객체에 `offsetX/offsetY` 이설.
+  - **NIT (주석 반영)**: `_metaGraphCtxForSchema` 펼치기 onClick 의 `st === "already"` 는 SC 경로에서 도달 불가(방어적 잉여, 좌클릭과 대칭) → 주석 명시.
+  - **NIT (후속 기록, 본 cycle 범위 밖)**: `_metaGraphShowClusterDetailById` 는 `_opSeq`/scope 세대 가드가 없어 접힌 카드 "클러스터 상세" API 조회 대기 중 scope 전환 시 stale 패널 가능 — **기존 `combo:click` 도 동일 함수를 쓰는 pre-existing 동작**(본 cycle 은 진입점만 추가). 신규 결함 아님 → REPORT §8 성격 후속 항목.
+- 검증(수정 후): node --check PASS + harness ctxmenu 10/10 PASS(badge/우클릭/접기/빈스키마·에러 0) + initview 회귀 31/31 PASS + 큰 수(8122) badge 넘침·크래시 없음.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, MINOR 수정·NIT 주석 반영, NIT 1 은 pre-existing 후속.
+- Human Approval Needed: 없음(Minor §12.3 — frontend-only 비파괴). cycle-final 후 배포는 deploy_scope: included.
 
 
 ## REV-20260702T133000-ai-claude-feature-0016-graph-expand-perf [AGENT-TEAM: PASS-WITH-FIXES] — 더블클릭 프리즈 잔존(refreshStates per-node setElementState) 적대 검증

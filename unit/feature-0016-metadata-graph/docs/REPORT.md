@@ -22,6 +22,44 @@ graph-perf-bg 배포 후 사용자 후속 보고: `mssql-qa-idc.dk_data_release.
 
 ### 잔여
 - 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 대량 스키마 노드 더블클릭 시 프리즈 없이 즉시 확장 + AI 능동분석 중 stutter 없음(사용자 육안).
+## 2026-07-02 · 그래프 뷰 초기 진입 줌아웃 가시성 개선 — 스키마-우선 진입 (graph-initview)
+
+### 배경 (사용자 보고 + 다각도 검토 → Phase 1+2 통합 결정)
+스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit(`fitView`)이 콘텐츠 bbox 에 무제한 종속되어
+판독 불가 줌아웃 발생. 5축 검토 후 사용자 결정 **Phase 1+2 통합**(AskUserQuestion, 2026-07-02). 실데이터:
+최대 scope `mssql-06656002eda6` = **62 스키마 × ~257 테이블** — 구 진입 뷰는 cap 200 으로 전체의 ~1.2% 만
+무통보 부분표시. TASK §25.
+
+### 병렬 세션 정합 (2차 검증 workflow 가 stale-base 적발)
+착수 base 가 main 대비 23커밋 stale — 같은 날 병렬 머지된 **graph-g6b(#533, 클러스터 다열 masonry+가변폭
+shelf-packing)** 가 B축(레이아웃 밀도)을 선점, **graph-perf-bg(#537, `_opSeq` 세대·busy·_stateCache·O(1)
+colsByTable)** 가 동일 블록을 재작성. → merge 재정합: **main 판을 기준으로 C1/A/E 만 재적용**, 자체 wrap/
+shelf-packing 폐기(g6b masonry 채택), 세대 가드는 perf-bg `_opSeq` 에 편입.
+
+### 구현 (병합 최종본)
+- **C1 스키마-우선 진입**: roots=`?mode=schemas` 경량 뷰 → 스키마 카드(`SC:`+key, 테이블수 배지) → 클릭 시
+  `?schema=` per-schema lazy 로드 후 combo 승격("XS:" 접기=카드 복귀, 모델 유지라 재펼침 무-refetch).
+  백엔드 `scope_schemas`(count 집계·truncated·집계실패=배지없는 카드)·`schema_tables`(truncated) 신설,
+  신규 route 0. 검색/이웃 결과 스키마 자동 펼침(게이팅 모드-독립). 단일 스키마 DS 자동 펼침.
+  동일-id 카드↔combo 타입 전환의 G6 setData diff 자식 유실은 `SC:` 네임스페이스로 차단.
+- **A 뷰포트 정책**: `zoomRange [0.05,4]` + fit 클램프(0.55 하한/1.0 상한, focusFirst=초기·검색만) +
+  이웃확장 앵커 국소 focus(줌아웃 재발 차단). 미렌더 모델키 setElementState 는 renderedIds 매핑으로 차단
+  (_metaApplyState/refreshStates 단일 경로).
+- **E 내비게이션**: minimap(우하단 카드형) + 줌 툴바(−/+/전체/1:1 — '전체'는 의도적 무클램프 조망) +
+  스키마 점프 select.
+- **동시성**: ExpandSchema 를 perf-bg `_opSeq` 세대에 편입 — 사용자 클릭=새 세대(++), LoadRoots silent
+  자동펼침=부모 세대 상속, await 후 세대 불일치 시 ingest 없이 폐기(**교차 스코프 오염 원천 차단**) +
+  진입 scope 가드(이전 scope 카드 stale 클릭 차단) + 연타 in-flight 가드.
+
+### 검증
+- 1차 §18.8 적대 리뷰: BLOCKER 0·MAJOR 2(dead-card·roots race)·MINOR 7·NIT 3 — 전건 반영.
+- 2차 적대 검증 workflow(3렌즈 병렬): 17 findings(dedup 9) — stale-base MAJOR 포함 전건 반영/해소.
+- headless harness(Playwright, 실 마크업+mock API, 200테이블·빈스키마·혼합버전·연타·dead-card fixture)
+  병합 최종본 재검증 — TEST.md Run 기록. 라이브 AGE Cypher(count 집계·스키마 필터) 실증 0.23s.
+- 단위: metadata_graph units(graceful no-op 포함) PASS.
+
+### 잔여
+배포(deploy_scope: included) + PB-0008 실 Windows 시각검증(§21 T21.8 미완분 + graph-g6b·perf-bg 통합 확인).
 
 ---
 
@@ -80,6 +118,34 @@ resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)
 - 잔여(사용자 실검증): 관리콘솔 그래프뷰 "AI 능동 분석" 신규 run 의 model 라벨=claude-haiku 육안 확인. 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 LLM run 강제 불가 — 실 브라우저 확인 권장.
 ---
 
+## 2026-07-02 · 노드 우클릭 상세 상호작용 (graph-ctxmenu, REQ-20260702T113000)
+
+### 배경 (사용자 요청)
+그래프 뷰에서 각 노드의 **우클릭 상세 상호작용** — DB 스키마를 아직 파악하지 못한 사용자가
+선택 노드의 연관 관계를 상세하게 파악하는 과정을 지원.
+
+### 구현 (frontend-only — admin.js/styles.css/admin.html, TASK.md §24)
+- **우클릭 컨텍스트 메뉴**: G6 `node:/combo:/canvas:contextmenu` + container capture 리스너
+  (브라우저 기본 메뉴 차단 + 좌표 캡처). kind 별 항목 — Table(상세 보기·관계 상세·관계 확장
+  1~3-hop chips·중심 보기·컬럼 펼침/접기·AI 능동 분석·FQN 복사), Column(+소속 테이블 상세),
+  GlossaryTerm(이름 복사), 클러스터(클러스터 상세·스키마명 복사), 빈 캔버스(전체 맞춤·초기화).
+  HTML 오버레이 메뉴(전부 DOM 생성 — XSS 0, G6 setData 재구성과 무간섭). 뷰포트 clamp +
+  Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드 접근.
+- **관계 상세 패널**(핵심): 선택 노드의 관계를 **방향별**(→참조함/←참조받음/연관 용어/주변
+  관계)로 그룹해 추정/신뢰 배지 + weight + cardinality + **근거 한글 라벨**(FK 스키마 선언/
+  명명 규칙 추정/대화 JOIN 학습/AI 인사이트) + 상대 노드 설명과 함께 나열. 행 클릭 = 상대
+  노드 상세로 이동(연쇄 탐색). 상세 카드 head 의 "🔗 관계 상세" 링크로도 진입(발견성).
+- **중심 보기**: 모델 리셋 후 앵커 N-hop 만 로드 — 누적된 화면 없이 관심 노드 집중.
+- mutation 0(읽기성 탐색 + 기존 AI 분석 트리거 재사용) — RBAC(`metadata.graph.read`)·데이터
+  API·백엔드 불변. CONVENTIONS §10.7 pending 대상 아님.
+
+### 검증
+- `node --check` PASS · WSL-headless-harness **28/28 PASS**(네이티브 우클릭 이벤트 경로 실증
+  포함 — TEST.md). §18.8 적대 패널(ux/design/qa) MAJOR 3 전건 수정 — 엣지 우클릭 메뉴·앵커 측
+  조인 컬럼 표기·중심 보기 지속 칩("✕ 전체 보기" 복귀). REV-20260702T121500.
+- **PB-0008 라이브 실측 PASS(2026-07-02)**: 배포 16fc1598 후 실 Windows Chrome 에서 우클릭 메뉴 전 항목·관계 상세 패널·중심 보기 칩+복귀·클러스터 메뉴·Escape dismiss 실측(스크린샷 4매 artifacts). 잔여: 추정 관계 데이터 축적 후 관계 행·엣지 메뉴 라이브 재확인(권장).
+
+---
 ## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
 
 ### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)

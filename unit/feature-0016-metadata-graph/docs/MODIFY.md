@@ -322,6 +322,83 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{REPORT,TASK,MODIFY,REVIEW}.md`
 - Impact: 백엔드 모델 라우팅 계층만. schema/table/account insight·에이전트 추론·요약 등 다른 LLM 경로 불변(격리 확인). **외부 API 비용 발생**(그래프 노드 분석이 로컬 무료 gemma → Bedrock claude-haiku 유료 호출). 비용은 기존 node_analysis 예산 캡(depth_budget/node_budget/dedupe)으로 경계. 반영 조건: 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본값과 동일이므로 선택적·명시 권장) + **insight-worker 재빌드·재기동**(코드 baked). 기존 저장된 분석은 이전 model 라벨(gemma) 유지, 신규 run 부터 claude-haiku.
 - Rollback Notes: `AGENT_NODE_ANALYSIS_MODEL=edge` 로 .env override(즉시 gemma 환원, 재기동만) 또는 3개 코드 파일 git revert. 데이터·스키마 무손상(마이그레이션 없음).
+## CHG-20260702T120000-ai-claude-feature-0016-graph-ctxmenu
+- Date: 2026-07-02
+- Related Requirement: REQ-20260702T113000-graph-ctxmenu (TASK.md §24 — §13.1 재번호 22→24) — 그래프 뷰 노드 우클릭
+  상세 상호작용. 스키마 미숙지 사용자의 선택 노드 연관 관계 파악 지원.
+- Summary: (1) **우클릭 컨텍스트 메뉴** — node/combo/canvas `contextmenu` G6 이벤트 + container
+  capture 리스너(기본 메뉴 차단·좌표 캡처), kind 별 항목(Table=상세·관계 상세·관계 확장 1~3-hop
+  chips·중심 보기·컬럼 펼침/접기·AI 능동 분석·FQN 복사 / Column=+소속 테이블 상세 / Term /
+  Combo / Canvas). HTML 오버레이(DOM 생성, innerHTML 미사용)라 G6 setData 재구성과 무간섭.
+  뷰포트 clamp + Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드. (2) **관계 상세 패널**
+  (`_metaGraphShowRelations`) — depth=1 관계를 방향별(참조함→/참조받음←/연관 용어/주변 관계)로
+  그룹, 추정/신뢰 배지 + weight + cardinality + 근거 한글 라벨(fk_introspect/inferred/
+  conversation/llm_insight) + 상대 노드 설명, 행 클릭 = 상대 노드 상세 이동. 상세 카드 head 에
+  "🔗 관계 상세" 진입 링크(비-우클릭 발견성). (3) **중심 보기**(`_metaGraphFocus`) — 모델 리셋
+  후 앵커 N-hop 만 로드(누적 confusion 없이 관심 노드 집중). (4) 빈상태 안내·상태줄에 우클릭 힌트.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaCtx*`/`_metaGraphCtx*` 메뉴 인프라,
+    `_metaGraphShowRelations`/`_metaGraphRenderRelations`, `_metaGraphFocus`, `_metaInitGraph`
+    contextmenu 바인딩, `_META_EDGE_SOURCE_KO`/`_META_EDGE_TYPE_KO`, 상세 카드 rel 링크)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.admin-meta-graph-ctxmenu`/`.amgc-*`,
+    `.amgr-*` 관계 패널·진입 링크)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (빈상태 우클릭 안내, cache-buster
+    `styles.css` → `?v=20260702-graph-ctxmenu`, `admin.js` → `?v=20260702-graph-ctxmenu2`(perf-bg 병합 후 재부여))
+  - `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,REPORT,MODIFY}.md`
+- Impact: frontend-only(데이터 API·RBAC·백엔드 불변 — 기존 `metadata.graph.read` 읽기 표면만
+  사용, mutation 0 = CONVENTIONS §10.7 대상 아님). 검증: node --check + WSL-headless-harness
+  **28/28 PASS**(네이티브 우클릭 이벤트 경로 포함) + §18.8 적대 패널 MAJOR 3 전건 수정(엣지
+  우클릭 메뉴·로컬 조인 컬럼 표기·중심 보기 지속 칩 — REV-20260702T121500). 배포=web 재빌드
+  후 PB-0008 실 Windows 시각검증(TEST.md).
+- Rollback Notes: admin.js/styles.css/admin.html git revert + cache-buster 환원(graph-g6b·
+  aiops-scroll). 데이터·API 무손상.
+## CHG-20260702T140000-ai-claude-feature-0016-graph-ctxmenu-pb
+- Date: 2026-07-02
+- Related Requirement: graph-ctxmenu(CHG-20260702T120000, PR #538)의 배포·PB-0008 라이브 실측 완수 기록 — 문서 전용, 코드 무변경.
+- Summary: PR #538 main 병합(16fc1598) → deploy-web.sh 무중단 롤링 배포(soak 90s 통과) → 자산 서빙 검증(admin.js ctxmenu2 심볼 10건·styles.css 클래스 20건) → **실 Windows Chrome 라이브 실측 PASS**(우클릭 메뉴 전 항목·관계 상세 패널·중심 보기 지속 칩+복귀·클러스터 메뉴·Escape dismiss — Chrome 149 Playwright eval 회귀 해소 확인, 스크린샷 4매 artifacts). TEST×2/TASK(T24.5·T24.6 완료)/REPORT/wiki(Log·hot) 정합.
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/{TEST,TASK,REPORT,REVIEW,MODIFY}.md`, `wiki/{Log,hot}.md`
+- Impact: 문서 전용. 코드/배포 산출물 무변경(이미 16fc1598 라이브).
+- Rollback Notes: 문서 되돌림 외 없음.
+## CHG-20260702T114500-graph-initview
+- Date: 2026-07-02
+- Related Requirement: 사용자 보고 — 스키마 클러스터 내 테이블·컬럼 노드가 많을 때 초기 전체-fit 과도 줌아웃으로
+  초반 가시성 붕괴. 다각도 검토 후 사용자 결정 "Phase 1+2 통합"(TASK §25, PLAN-APPROVED 2026-07-02).
+- Summary: 그래프 뷰 초기 진입을 **스키마-우선(카드+테이블수 배지 → per-schema lazy 펼침, "XS:" 접기)** 으로
+  재설계하고 **판독 줌 클램프**(fit 후 0.55 하한·1.0 상한, zoomRange [0.05,4]) + 이웃확장 **앵커 국소 focus** 로
+  줌아웃 재발을 차단, **미니맵·줌 툴바·스키마 점프** 추가. 레이아웃 밀도(다열)는 병렬 머지된 graph-g6b(#533)
+  masonry 를 채택(자체 구현 폐기)하고 graph-perf-bg(#537) `_opSeq` 세대에 ExpandSchema 를 편입(교차 스코프
+  오염·stale 렌더 차단), graph-ctxmenu(#538)와 정합. 카드↔combo 동일-id 타입 전환의 G6 setData diff 자식
+  유실은 `SC:` id 네임스페이스로 차단.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/metadata_graph.py` (`scope_schemas` count 집계·limit+1 truncated·집계실패
+    배지강등 / `schema_tables` truncated 신설)
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`?mode=schemas`/`?schema=` 분기 — 신규 route 0)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 카드 게이팅(masonry 통합)·`SC:`/`XS:` 라우팅·
+    `_metaGraphExpandSchema`/`CollapseSchema`/`ShowClusterDetailLocal`·`_metaGraphFitClamped`·renderedIds 매핑·
+    minimap/zoomRange/줌툴바/점프 바인딩·검색/이웃 스키마 자동펼침)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (툴바 줌컨트롤·점프 select·범례; cache-buster `?v=20260702-graph-initview2`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (줌 툴바·스키마카드 범례·minimap 카드 CSS)
+  - `unit/feature-0016-metadata-graph/{docs/*,tests/test_metadata_graph_units.py}` (§25·검증 기록·graceful 단위테스트)
+- Impact: 비파괴 additive — 기존 API 3모드(q/node/scope) 응답 shape 불변(`truncated` 필드만 추가), 신규 쿼리
+  파라미터만 추가. 혼합버전 안전: 구 백엔드+신 admin.js 는 mode 무시 응답을 카드 게이팅이 흡수(강등 동작,
+  loaded 미마킹으로 재시도 보존), 구 admin.js+신 백엔드는 기존 scope_roots 경로 그대로. 인증/데이터 파괴 없음.
+  배포=web 재빌드. 1·2차 적대 리뷰/검증 전건 반영(REVIEW.md), stale-base merge 재정합 2회(#533/#537, #538) 포함.
+- Rollback Notes: git revert(프론트 3파일+백엔드 2파일) + cache-buster 이전값(graph-ctxmenu2). 데이터·그래프 무손상.
+
+## CHG-20260702T172500-schema-card-ctxmenu
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청 — ① 미펼침 스키마 카드 우클릭 동작, ② 카드 "테이블" 문자열 공간 과점유 개선. TASK §26.
+- Summary: (1) `node:contextmenu` 가 스키마 카드 렌더 id 의 `SC:`/`XS:` prefix 를 벗기지 않아 우클릭이 무반응이던
+  결함 수정 — 신규 `_metaGraphCtxForSchema`(펼치기/접기·클러스터 상세·스키마명 복사) 로 라우팅, `_metaGraphCtxForCombo`
+  에 접기 파리티 추가. (2) 카드 라벨을 스키마명 전용으로 두고 테이블 개수를 우상단 **G6 badge** 로 이전 —
+  인라인 "· 테이블 N" 의 폭 과점유·이름 truncate 완화. 집계 실패는 badge 없음(배지없는 카드 강등 §25 V-H 정합).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`node:contextmenu` SC:/XS: 라우팅·`_metaGraphCtxForSchema` 신설·
+    `_metaGraphCtxForCombo` 접기 파리티·`_metaG6Build` 카드 라벨=이름+개수 badge)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `?v=20260702-schema-card-ctxmenu`)
+- Impact: frontend-only 비파괴 추가. 데이터 API·백엔드 무변경. 기존 combo/노드/엣지/캔버스 우클릭·좌클릭 회귀 없음
+  (harness 확인). 배포=web 재빌드(정적 자산).
+- Rollback Notes: admin.js 두 함수 diff revert + 카드 라벨 원복 + cache-buster 이전값(graph-initview2). 데이터 무손상.
 
 ## CHG-20260702-graph-expand-perf-refreshstates
 - Date: 2026-07-02
