@@ -5355,3 +5355,11 @@ source_of_truth: true
 - Verification: `test_ai_ops.py` 15/15 + 회귀 66 PASS + collection 무오류. route-parity 195 PASS. node --check(admin.js). py_compile(agent_core·ai_ops). §18.8 REV-20260702T180000-aiops-activity-paging. PB-0008= 배포 후.
 - Files: `feature-0002/src/agent_core.py`, `feature-0003/{src/routers/ai_ops.py, src/static/admin.js, src/static/admin.html, tests/route_snapshot_p5b.json, tests/test_ai_ops.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`.
 - keyset 선택 근거: OFFSET 은 대량 활동에서 성능·불안정(삽입 시 shift) → id BIGSERIAL 단조 keyset(`id < cursor`)로 안정 페이징. next_cursor=마지막 id(has_more 시), null=과거 끝.
+
+## CHG-20260702T230501-doc-sync-rn-0702 (TASK-20260702T230501-doc-sync-rn-0702 — 07-02 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 신규 '2026-07-02' 블록 8항목 prepend(07-01 블록 7항목 보존) — [new admin] 관계도 항목 우클릭 상세·주변 관계 · [improved admin] 초기 진입 전체 구조 가시성 · [improved admin] 스키마 카드 우클릭 메뉴+검색 강조 · [fixed admin] 두 번 눌러 펼칠 때 부드러운 이동 · [fixed admin] 추정 관계 자동 다듬기 실동작 수정 · [new admin] AI 운영 현황 화면 신설 · [improved admin] 감사 화면 메뉴 정리+설명 · [fixed work] '+' 첨부 개수 배지 대화 전환 후 정확 표시. `generated` 2026-07-01→2026-07-02.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260701-rn-0701`→`?v=20260702-rn-0702`.
+- Verification: `node --check` PASS + jsdom DOM 테스트 33 PASS(관리 62/작업 85/그룹 20 동적 카운트·XSS-safe)/1 pre-existing CSS FAIL(admin pane overflow-y, 무관). 사용자향 평이화(내부용어 0: G6/Cytoscape/WebGL/config/alembic/엔드포인트/권한키/모델명/ADR 비노출). feature-0012/0017 behavior-neutral 은 user-facing 제외(정직 분류).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·렌더러/마이그/엔드포인트/cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit(REV-20260702T230501-META-0019-doc-sync-0702).
