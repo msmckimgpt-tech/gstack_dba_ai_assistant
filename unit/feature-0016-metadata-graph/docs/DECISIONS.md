@@ -105,3 +105,47 @@ source_of_truth: true
   - Sigma.js v3(WebGL 초고속): compound/리치노드 약함 → ERD 카드 부적합(기각).
 - Supersedes: (graph-webgl 코드결정 — WebGL 렌더러 도입, 정식 ADR 아니었음. 본 ADR 로 대체.)
 - Superseded By:
+
+
+## ADR-005 — 그래프 뷰 테이블 노드 펼침 논블로킹 + O(1) 펼침 인덱스·상태 diff·컬럼 introspect TTL 캐시
+- Status: Accepted
+- Date: 2026-07-02
+- Context: 사용자 관찰 — 관리콘솔 > 메타데이터 > 그래프 뷰에서 **테이블 노드를 선택해 컬럼을 펼치면 브라우저 렌더링 엔진이
+  멈춘다**(dead-frozen). 진단: 펼침 임계경로가 (a) `/graph?node=&depth=1` + (b) 미분석 테이블이면 `/graph/columns`
+  즉석 introspection(information_schema **라이브 조회 1~5초, 무캐시**) 2왕복을 **요청 스레드 블로킹**으로 돌린 뒤,
+  결과를 받아 `setData()`+`draw()`(전체 재구성) — 이 전 구간이 busy 페인트 없이 동기적으로 이어져 메인스레드가 얼었다.
+  부수 병목: ① `_metaTableHasCols` 가 매 클릭·토글마다 전 노드 O(N) 선형 스캔, ② `_metaGraphRefreshStates` 가 2.5s
+  폴 포함 매 호출 전 노드 개별 `setElementState`(큰 그래프 stutter). 사용자 요청: "병목 구간을 백그라운드에서
+  진행되도록 + 별도 성능 이슈 추가 검증."
+- Decision:
+  1. **논블로킹 펼침/확장 파이프라인**(`_metaGraphToggleColumns`·`_metaGraphExpand`): busy 하이라이트(teal 점선)를
+     먼저 칠하고 **double-rAF(`_metaYieldPaint`)로 페인트를 양보**한 뒤 무거운 fetch·재구성을 수행 — 얼음 구간 제거.
+     단일 rAF 는 같은 프레임 병합, microtask 는 페인트 미유발이라 double-rAF 채택.
+  2. **stale-render 무효화 토큰(`_opSeq`)**: 조작마다 monotonic 시퀀스를 캡처하고 **모든 await(fetch·yield) 경계에서
+     대조** — 그 사이 다른 조작·모델 교체가 시작됐으면 그 continuation 을 폐기. **모델 교체(`_metaGraphResetModel`)도
+     `_opSeq` 를 올려** in-flight 펼침·확장을 무효화(reset 후 stale ingest 가 화면을 되돌리거나 인덱스를 오염시키는 것 차단).
+  3. **O(1) 펼침 인덱스(`colsByTable`)**: Table→펼친 Column 수 Map 을 `_metaTableHasCols` 단일소스로. ingest(증가)·
+     collapse(해제)·resetModel(초기화) 세 경로에서만 갱신 → 클릭당 O(N) 스캔 제거.
+  4. **상태 적용 diff + batch(`_metaGraphRefreshStates`)**: 마지막 적용 signature 와 대조해 **변화분만** `setElementState`
+     + `startBatch`/`endBatch` 일괄. busy 는 `_metaNodeStates` 가 아닌 **`_busyKeys`(소유 op 추적) + `_metaStateSig`**
+     로 표현해 rebuild 재-bake·폴 덮어쓰기·캐시 불일치를 원천 차단(_metaApplyState 단일 진입점이 요소 적용과 `_stateCache`
+     signature 를 항상 동기화).
+  5. **BE `/graph/columns` introspection TTL 캐시**(`admin_metadata.py`): 성공 introspection payload 를
+     `(scope_key, fqn)` 키로 짧은 TTL(기본 300s, env `METADATA_GRAPH_COLUMNS_CACHE_TTL`) 동안 **프로세스 내** 캐시 —
+     반복 펼침·다중 사용자·재진입의 두 번째 왕복(라이브 information_schema 조회) 제거. **실패/빈 결과는 미캐시**(일시오류
+     재시도 보장), DDL 변경은 TTL 만료 후 자동 반영, 상한 512(만료 청소 + 최소-만료 축출). TTL≤0 이면 비활성. 프로세스별
+     캐시라 **마이그레이션 불필요**(alembic 병렬 충돌 회피).
+- Consequences: 펼침 임계경로가 (1)(2)로 논블로킹화(busy 피드백 + 렌더 프리즈 해소), (5)로 반복 introspection 왕복
+  제거, (3)(4)로 클릭·폴당 상수시간 상태 갱신. 데이터 API 계약·그래프 스키마 **불변** — 프론트 렌더/상호작용 계층
+  (admin.js `_metaGraph*`) + BE 라우터 캐시 층만. 권한(`Depends(require_permission)`)·스코프 격리 불변(캐시-히트는
+  권한 dependency 해소 **이후**, 페이로드는 물리 스키마만). 검증: §18.8 적대 패널(race/index-drift/layout/cache 3렌즈
+  + 5-agent 재검증 + reset-vs-reset 후속) — 4+1 BLOCKING 적발·수정·재검증 PASS(REV-20260702T120000). 완료 게이트
+  = PB-0008 실 Windows 시각검증(펼침 시 무프리즈 + busy 피드백).
+- Alternatives:
+  - Web Worker 로 fetch 오프로드: fetch 는 이미 비동기라 얼음의 원인이 아님(원인은 페인트 미양보 + O(N) 스캔 + 무캐시
+    introspection). 렌더(setData/draw)는 메인스레드 전용이라 워커로 못 옮김 → 과설계(기각).
+  - introspection 결과 DB/Redis 영속 캐시: 크로스-프로세스 공유·영속 이점이나 운영 의존(Redis)·무효화 복잡·마이그레이션
+    부담. 펼침 재진입은 **동일 프로세스·짧은 창**이 지배적이라 프로세스-로컬 TTL 로 충분(보류 — 필요 시 승격).
+  - busy 를 `_metaNodeStates` 에 포함: rebuild 마다 재-bake 되어 영구 하이라이트로 굳음 → `_busyKeys` 별도 추적(기각).
+- Supersedes:
+- Superseded By:

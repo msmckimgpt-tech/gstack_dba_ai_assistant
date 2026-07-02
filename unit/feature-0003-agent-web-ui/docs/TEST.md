@@ -125,6 +125,16 @@ docker compose run --rm \
 - **라이브 PB-0008 실 Windows 브라우저 — PASS (2026-07-02, Environment: Windows-browser)**: graph-g6 무중단 배포(web-a/b `8c45f070`) 후 실 Windows Chrome/149(win-browser relay, `https://localhost/admin` 로그인 세션) 검증. 데이터소스 `mssql-06656002eda6` 실데이터 **236 노드·36 클러스터** → G6 Canvas 렌더 정상, teal 칩·클러스터 자연정렬·점선/실선 엣지, **노드 클릭=제자리 컬럼 펼침**(dt_EventItemWithMonster 12컬럼)·"−" 접기 실화면 동작 확인.
 - **후속 UX 개선(graph-g6b)**: 실데이터 관측 문제(세로 과길이·fit 극소) → `_metaG6Build` 클러스터 내 다열 masonry + 가변폭 shelf-packing 으로 해소. WSL-headless-harness(14클러스터 확장 포함) PASS. cache-buster `admin.js?v=20260702-graph-g6b`. 라이브 재확인=graph-g6b 배포 후.
 - Pass/Fail: **PASS** (구문·적대 코드리뷰·WSL-headless-harness·라이브 PB-0008 실 Windows 236노드 확인). Runner: AI.
+
+### TASK-20260702-graph-perf-bg 그래프 뷰 테이블 노드 펼침 논블로킹 + 성능 최적화 (Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (펼침 시 렌더 프리즈 해소는 실 브라우저 페인트 거동 — de-risk=구문/적대패널 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 변경: admin.js 논블로킹 펼침 파이프라인·`_opSeq` stale 토큰·O(1) `colsByTable`·`_metaGraphRefreshStates` diff+batch·busy(`_busyKeys`/`_metaStateSig`/`_metaApplyState`)·`_metaG6Build` Pass1/2 + admin_metadata.py `/graph/columns` TTL 캐시 + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-005 · MODIFY CHG-20260702-graph-perf-bg.
+- **구조·구문**: `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS · leftover 디버그 마커(console.log/debugger/TODO) 0.
+- **§18.8 적대 검증(AGENT-TEAM, 다단계)**: 3렌즈 병렬 패널(race/index-drift/layout+cache) → **BLOCKING 4건** 적발; 5-agent 재검증 워크플로 → 4건 CLOSED + **신규 BLOCKING 1건(loadRoots reset-vs-reset)** 적발; loadRoots 가드 추가 후 최종 재검증 → **reset-vs-reset 6조합 CLOSED·회귀 없음**. NIT 5건 수용. 상세 REV-20260702T120000 (feature-0016 REVIEW.md).
+  - 확인된 BLOCKING 수정: ① reset/search/scope 경로 `_opSeq++`(stale-render 차단) ② 동 race 로 인한 `colsByTable` 포이즌 차단 ③ seq-mismatch busy 소유권 해제(잔류 차단) ④ 폴이 busy 보존(`_metaStateSig`) + `_stateCache` 불변식 ⑤ loadRoots seq 가드(혼합-스코프 그래프 차단).
+  - BE 캐시 렌즈 clean: 공유-가변 손상·스코프 누출·권한 우회 없음(캐시-히트는 권한 dependency 후), 실패·빈결과 미캐시, 축출/ TTL 정상.
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 정적 자산 baked → 배포(main 병합·web 재빌드) 후에만 실검증. 확인 항목 → ① **대량 스키마 테이블(수십 컬럼) 선택→펼침 시 렌더 엔진 무프리즈**(과거 dead-frozen 해소) ② 펼침 대기 중 **teal 점선 busy 피드백** 표시 후 자연 소멸 ③ **반복 펼침·재진입 즉시 응답**(introspection TTL 캐시 히트) ④ 펼침 중 스코프 전환/검색 시 **혼합-스코프 그래프 없음**(마지막 요청 화면으로 수렴) ⑤ 대량 그래프에서 AI 마커 폴(2.5s) 시 stutter 없음.
+- Pass/Fail: **PASS**(구문·다단계 적대패널). 라이브 프리즈 해소·성능 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
+
 ### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
 - 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.
 - 정적 검증(pre-commit): `node --check admin.js` PASS · `test_permission_dependency_map.py` 18개 PASS(신규 t5 계층 pin[metadata.*→kb.ingest.manual→console.access, depth manual=0·metadata.*=1] + t6 도달성[게이트 OFF 시 metadata hidden 이나 그룹 비은닉] + 기존 V1~V7 disclosure 무회귀) · §18.8 SUBAGENT 패널 PASS(BLOCKING 0).
