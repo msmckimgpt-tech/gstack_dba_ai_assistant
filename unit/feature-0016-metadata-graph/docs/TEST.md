@@ -119,6 +119,27 @@ docker run --rm --network container:pgage-t \
   insight-worker 7bca9b2 재기동 확인.
 - 그래프 UI 마커 시각 최종(PB-0008): 웹 자산 무변경이라 이번 cycle 하드 게이트 아님 — 후속 시각 확인 권장.
 
+## G6 렌더링 엔진 교체 (ADR-004, 2026-07-02)
+
+Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: `../g6-migration/BLUEPRINT.md`.
+
+### admin.js 구문 — `node --check admin.js` PASS. 제거된 심볼(cy/오버레이/fcose) 참조 0 (grep clean).
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 PASS
+포팅된 admin.js 그래프 서브시스템(블록 추출) + 실 admin.html 그래프 마크업 + mock apiFetch(실 응답 shape)로 전 플로우 실증. 스크린샷 `../g6-migration/poc/`.
+- **roots**: 스키마 5클러스터 자연정렬 grid(무-shuffle, ④) · 테이블 teal 칩 · 점선(candidate)+실선(trusted) 엣지 복원 · AI 마커 자동(보라 analyzed / 주황 running, `/analyze/status`) · 선명 테두리(2x DPR, ⑤) · **에러/경고 0**.
+- **제자리 컬럼 펼침**(②): Payment 펼침 시 위치 유지 + 컬럼 4개 아래 스택 + 타 클러스터 무-재배치 + 카메라 무점프. "−" 컨트롤 표시.
+- **재클릭 무접힘**(①): 펼친 테이블 body 재클릭 → `hasCols` 유지(true) = 클릭으론 안 접힘.
+- **"−" 접기**: `hasCols` false 로 환원.
+- **검색**: `q=achiev` → 매칭 3클러스터만 grid, 정확매치 유사도 크기 가산 + 마커 유지.
+- 판정: 관찰 5건(①②③④⑤) + 점선 엣지 복원 전부 통과. ③(오버레이 동기화 지연)은 오버레이 전량 제거로 구조적 소멸(회귀 불가).
+
+> harness 는 WSL headless 라 실 Windows 화면검증을 **대체하지 않음**(AGENTS.md §15.4.1). 아래 PB-0008 이 완료 하드 게이트.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 예정 (실앱 배포 후)
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: roots grid·제자리 펼침·재클릭 무접힘·"−" 접기·더블클릭 이웃확장·검색 유사도 크기·AI 마커·줌/스크롤 동기화(오버레이 지연 소멸)·테두리 선명·점선/실선 엣지.
+- 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 `git_commit`·자산 버전(`admin.js?v=20260702-graph-g6`) 명기. 브리지 불가 시 미수행 사유 명시(카고컬트 방지) 또는 `GSTACK_SKIP_VISUAL_VERIFICATION=1`.
+
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
 - KB 회귀 스위트(`make test`) — AI 정합(Phase 4) 후.
