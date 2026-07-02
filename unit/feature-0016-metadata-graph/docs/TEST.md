@@ -166,13 +166,22 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 최대 scope `mssql-06656002eda6`(62 스키마·스키마당 ~257 테이블)에서 301행 0.23s. 구 진입 뷰가 cap 200 으로
 전체의 ~1.2% 만 표시하던 규모 실측.
 
-### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 예정 (본 cycle 배포 직후 수행)
-- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 스키마 카드 진입(판독 줌)·카드 클릭 펼침·다열 wrap·줌 툴바·
-  스키마 점프·미니맵·기존 플로우 회귀(테이블 클릭 컬럼·더블클릭 이웃·검색·AI 마커) + §21 T21.8 미완분(G6 엔진
-  교체 시각검증) 통합 수행.
-- 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 `git_commit`·자산 버전(`admin.js?v=20260702-graph-initview`)
-  명기. 알려진 제약: Chrome 149.0.7827.200 eval 주입 회귀(PB-0008 메모) — screenshot/click 경로로 수행, canvas
-  인터랙션 세부는 사용자 실화면 확인 병행. 브리지 불가 시 미수행 사유 명시(카고컬트 방지).
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-02 PASS**
+- 배포 `git_commit=95b18045`(deploy-web.sh 무중단 롤링+soak 통과), 자산 `admin.js?v=20260702-graph-initview2`·
+  `styles.css?v=20260702-graph-initview2` 서빙 확인. 실 Windows Chrome 149(relay). 스크린샷 5매:
+  `artifacts/feature-0016-metadata-graph/20260702-graph-initview-pb0008/`.
+- **최악 케이스 실측(mssql-06656002eda6, 62 스키마×~257 테이블)**: 그래프 뷰 진입 → **스키마 카드 62장,
+  zoom 0.550(판독 클램프 정확 발동)** — 카드 라벨("cc_test · 테이블 257" 등) 전부 판독 가능. 종전 전체-fit
+  줌아웃 붕괴(cap 200 테이블 세로 1열, ~1.2% 무통보 표시) 해소를 라이브 확인.
+- 카드 클릭(cc_tortusa) → **258 테이블 per-schema lazy 펼침(masonry 4열), zoom 0.550 유지(카메라 불점프)**,
+  상태줄 "258개 펼침 — '−' 로 접기" + 우측 클러스터 상세 로컬 렌더(테이블 258 목록). truncated 없음(258<300 정확).
+- 줌 툴바 실클릭: **'전체'=0.144 무클램프 조망**(62카드+펼친 combo 전경) · **'1:1'=1.000** · −/+ 동작.
+  **스키마 점프** → accountdb 카드 중앙 복귀(판독 줌 보장). **"XS:" 접기** → 카드 복귀+상태줄 안내.
+- **미니맵 렌더 확인**, analyzed 마커가 접힌 카드(SC:)에 매핑(accountdb 보라 테두리) — §21 T21.8 미완분(G6 엔진)
+  및 masonry(g6b)·논블로킹(perf-bg)·ctxmenu 공존 상태의 통합 시각검증 겸함.
+- 실측 방법: 화면 전환·툴바는 실 DOM 클릭, 캔버스 노드 상호작용은 클릭 핸들러 경로 호출(raw CDP eval — 실
+  사용자 클릭과 동일 코드 경로; 브리지가 canvas 좌표클릭 미지원, 기존 세션 관례와 동일) + 스크린샷 육안 대조.
+  참고: Chrome 200 eval 회귀는 Playwright UtilityScript 한정 — 본 드라이버(raw CDP)의 eval 은 정상(메모리 갱신 근거).
 
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
