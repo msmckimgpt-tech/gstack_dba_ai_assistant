@@ -352,3 +352,10 @@ source_of_truth: true
   후 PB-0008 실 Windows 시각검증(TEST.md).
 - Rollback Notes: admin.js/styles.css/admin.html git revert + cache-buster 환원(graph-g6b·
   aiops-scroll). 데이터·API 무손상.
+## CHG-20260702T140000-ai-claude-feature-0016-graph-ctxmenu-pb
+- Date: 2026-07-02
+- Related Requirement: graph-ctxmenu(CHG-20260702T120000, PR #538)의 배포·PB-0008 라이브 실측 완수 기록 — 문서 전용, 코드 무변경.
+- Summary: PR #538 main 병합(16fc1598) → deploy-web.sh 무중단 롤링 배포(soak 90s 통과) → 자산 서빙 검증(admin.js ctxmenu2 심볼 10건·styles.css 클래스 20건) → **실 Windows Chrome 라이브 실측 PASS**(우클릭 메뉴 전 항목·관계 상세 패널·중심 보기 지속 칩+복귀·클러스터 메뉴·Escape dismiss — Chrome 149 Playwright eval 회귀 해소 확인, 스크린샷 4매 artifacts). TEST×2/TASK(T24.5·T24.6 완료)/REPORT/wiki(Log·hot) 정합.
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/{TEST,TASK,REPORT,REVIEW,MODIFY}.md`, `wiki/{Log,hot}.md`
+- Impact: 문서 전용. 코드/배포 산출물 무변경(이미 16fc1598 라이브).
+- Rollback Notes: 문서 되돌림 외 없음.

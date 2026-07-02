@@ -182,3 +182,7 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 - 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 노드/컬럼/용어/클러스터/빈캔버스 우클릭 메뉴 ·
   관계 상세 패널(방향·신뢰 배지·근거·행 클릭 이동) · 중심 보기 · hop chips · 기본 메뉴 차단 ·
   기존 클릭/더블클릭/접기 회귀 · 자산 버전(`admin.js?v=20260702-graph-ctxmenu2`·`styles.css?v=20260702-graph-ctxmenu`).
+- **Run 2026-07-02 (Environment: Windows-browser) — PASS**: 배포 16fc1598(soak 통과) 후 실 Windows Chrome(relay)
+  라이브 실측 — 테이블 노드 우클릭 메뉴 전 항목·관계 상세 패널(빈 상태 안내)·중심 보기 지속 칩+"✕ 전체 보기"
+  복귀·클러스터 combo 메뉴·Escape dismiss·기본 메뉴 차단·자산 버스터 서빙. 상세·스크린샷 경로는
+  feature-0003 `docs/TEST.md` POST-DEPLOY 항목 + `artifacts/feature-0016-metadata-graph/20260702-graph-ctxmenu-pb0008/`.

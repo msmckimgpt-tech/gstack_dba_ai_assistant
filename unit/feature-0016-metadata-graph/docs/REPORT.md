@@ -80,7 +80,7 @@ resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)
 - `node --check` PASS · WSL-headless-harness **28/28 PASS**(네이티브 우클릭 이벤트 경로 실증
   포함 — TEST.md). §18.8 적대 패널(ux/design/qa) MAJOR 3 전건 수정 — 엣지 우클릭 메뉴·앵커 측
   조인 컬럼 표기·중심 보기 지속 칩("✕ 전체 보기" 복귀). REV-20260702T121500.
-- 잔여: 머지·배포 후 **PB-0008 실 Windows 시각검증**(hard gate — TEST.md 에 Run 후속 기록).
+- **PB-0008 라이브 실측 PASS(2026-07-02)**: 배포 16fc1598 후 실 Windows Chrome 에서 우클릭 메뉴 전 항목·관계 상세 패널·중심 보기 칩+복귀·클러스터 메뉴·Escape dismiss 실측(스크린샷 4매 artifacts). 잔여: 추정 관계 데이터 축적 후 관계 행·엣지 메뉴 라이브 재확인(권장).
 
 ---
 ## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
