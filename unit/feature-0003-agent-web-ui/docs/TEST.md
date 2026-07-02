@@ -116,6 +116,13 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260702-graph-g6 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (그래프 canvas 렌더·인터랙션 — de-risk=WSL-headless-harness 완료 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 변경: admin.js `_metaGraph*` 엔진 전면 재작성(Cytoscape→G6) + admin.html(g6.min.js) + styles.css(오버레이 CSS 제거). 정본: feature-0016 DECISIONS ADR-004 · `../../feature-0016-metadata-graph/g6-migration/BLUEPRINT.md`.
+- **구조·구문**: `node --check admin.js` PASS. 제거심볼(cytoscape/fcose/cy/오버레이 3종/Layout/AddElements) 참조 0.
+- **§18.8 적대 코드리뷰(subagent, g6.min.js 번들 계약 교차검증)**: **PASS-WITH-FIXES** — CRITICAL/MAJOR 0, MINOR 3건 수정·재검증(REV-20260702T003000, feature-0016 REVIEW.md).
+- **de-risk (Environment: WSL-headless-harness, Playwright chromium)** — 포팅된 admin.js 그래프 서브시스템(블록 추출) + **실 admin.html 그래프 마크업** + mock apiFetch(실 응답 shape)로 전 플로우 실증, **에러 0**: roots(스키마 자연정렬 grid·teal 칩·점선/실선 엣지·AI 마커 자동)·제자리 컬럼 펼침(무점프·무재배치)·펼친 테이블 재클릭 무접힘·"−" 접기·검색(유사도 크기)·더블클릭 이웃확장·클러스터 상세·AI 분석/진행패널. 스크린샷: `../../feature-0016-metadata-graph/g6-migration/poc/`. **주의: WSL headless 는 실 Windows 화면검증 대체 아님**(AGENTS.md §15.4.1).
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 정적 자산이 web 이미지에 baked 라 실데이터 시각검증은 **배포(main 병합 후 web 재빌드) 이후**에만 가능. 확인 항목 → ① roots 자연정렬 grid(클러스터 무-shuffle) ② 테이블 클릭=제자리 컬럼 펼침·재클릭 무접힘·"−" 접기 ③ 더블클릭 이웃확장 ④ 스크롤/줌 시 클러스터명·"−"·노드 **동시 갱신**(구버전 오버레이 지연 소멸 확인) ⑤ 테두리 선명(크기별 왜곡 없음) ⑥ 점선(추정)/실선(신뢰) 엣지 ⑦ AI 마커(보라/주황) + 검색 유사도 크기.
+- Pass/Fail: **PARTIAL** (구문·적대 코드리뷰·WSL-headless-harness 전 플로우 PASS / 라이브 PB-0008 실 Windows = 배포 후 잔여). Runner: AI.
 ### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
 - 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.
 - 정적 검증(pre-commit): `node --check admin.js` PASS · `test_permission_dependency_map.py` 18개 PASS(신규 t5 계층 pin[metadata.*→kb.ingest.manual→console.access, depth manual=0·metadata.*=1] + t6 도달성[게이트 OFF 시 metadata hidden 이나 그룹 비은닉] + 기존 V1~V7 disclosure 무회귀) · §18.8 SUBAGENT 패널 PASS(BLOCKING 0).

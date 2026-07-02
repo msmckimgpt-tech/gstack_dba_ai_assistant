@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260702-graph-panel-perms" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260702-graph-g6" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -858,14 +858,12 @@
 
   <div class="toast" id="adminToast"></div>
 
-  <!-- feature-0016 graph-webgl: Cytoscape.js 3.34.0 (vendored, UMD window.cytoscape) — WebGL 렌더러 지원 버전.
-       admin.js 가 renderer:{name:'canvas',webgl:true} 로 GPU 가속 렌더(canvas-2D 프레임 상한 해소). -->
-  <script src="/static/vendor/cytoscape.min.js?v=3.34.0"></script>
-  <!-- feature-0016 graphux: fcose(compound 클러스터 force layout) 의존 체인 (순서 고정: layout-base→cose-base→fcose). -->
-  <script src="/static/vendor/layout-base.js?v=2.0.1"></script>
-  <script src="/static/vendor/cose-base.js?v=2.2.0"></script>
-  <script src="/static/vendor/cytoscape-fcose.js?v=2.2.0"></script>
-  <script src="/static/admin.js?v=20260702-metadata-perm-hier"></script>
+  <!-- feature-0016 그래프 뷰 렌더링 엔진: AntV G6 v5.1.1 (vendored, UMD window.G6, MIT).
+       Cytoscape(WebGL)에서 교체 — 오버레이 동기화 지연·테두리 왜곡·클러스터 뒤섞임 구조적 해소 + 점선 엣지 복원.
+       설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
+       (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
+  <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
+  <script src="/static/admin.js?v=20260702-graph-g6"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260701-rn-0701"></script>

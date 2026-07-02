@@ -3021,8 +3021,178 @@ function _metaSyncListToolbar() {
   }
 }
 
-// ── feature-0016: 메타데이터 지식그래프 뷰 (Cytoscape + 투영 API) ─────────────────
-const _metaGraph = { cy: null, bound: false, lastQuery: "" };
+// ── feature-0016: 메타데이터 지식그래프 뷰 (AntV G6 v5 + 투영 API) ─────────────────
+//   렌더링 엔진: Cytoscape(WebGL) → AntV G6 v5(Canvas). 근거·설계·검증은
+//   unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md + DECISIONS ADR-004.
+//   구버전 대비 해소: ①클릭접힘 ②위치점프 ③줌 동기화지연(HTML오버레이 제거) ④클러스터 뒤섞임
+//   ⑤테두리 왜곡(WebGL 텍스처) — 전부 구조적 해소 + 점선 엣지 복원.
+//   아키텍처: JS 모델(_metaGraph.nodes/edges/expanded/…) → _metaG6Build() 로 위치 포함
+//   전체 G6 데이터 재구성 → graph.setData()+draw()(증분 add/translate 미사용 — 결정론·안정).
+const _metaGraph = {
+  graph: null,            // G6 Graph 인스턴스
+  bound: false,
+  lastQuery: "",
+  lastDetailKey: null,
+  activeRunId: null,
+  introspected: null,     // Set: information_schema 즉석조회한 테이블 key
+  mode: "roots",          // "roots"|"search"|"neighbor" (현재는 전부 결정론 grid)
+  nodes: new Map(),       // key -> {key,label,name,fqn,description,source,ordinal,score,rel,cardinality,edge_source}
+  edges: new Map(),       // id  -> {id,source,target,type,status,edge_source,weight}
+  expanded: new Set(),    // 컬럼 펼친 Table key
+  analyzed: new Set(),    // AI 분석 완료 key(보라 마커)
+  running: new Set(),     // AI 분석 중 key(주황 마커)
+  selected: null,         // 선택 강조 key
+};
+
+// ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
+const _METtype = "rect";
+const _METLAY = { COLS: 3, SW: 300, GAPX: 48, GAPY: 52, PADT: 34, PADX: 16, TROW: 34, CROW: 21, CIND: 26, TGAP: 12, TW: 150 };
+const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 클러스터
+
+// node key(`scope:fqn`) → 소속 스키마 클러스터 combo id. Table/Column 은 스키마, 그 외는 terms 클러스터.
+function _metaSchemaComboOf(n) {
+  if (!n) return _META_TERMS_COMBO;
+  if (n.label === "Schema") return n.key;
+  if (n.label === "Table" || n.label === "Column") {
+    const sc = _metaCatParent(n.key, n.fqn);
+    if (sc) return sc;
+  }
+  return _META_TERMS_COMBO;
+}
+function _metaComboName(id) {
+  if (id === _META_TERMS_COMBO) return "용어·기타";
+  const i = id.indexOf(":");
+  return i >= 0 ? id.slice(i + 1) : id;
+}
+const _metaNatSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+
+// G6 per-element inline style helpers (설정 매퍼 금지 — undefined→To() 크래시 회피, BLUEPRINT §3).
+function _metaTableStyle(x, y, rel) {
+  const w = Math.min(190, _METLAY.TW + (typeof rel === "number" ? Math.round(rel * 40) : 0));
+  return { x, y, size: [w, 24], radius: 6, fill: _META_GRAPH_COLOR.Table, stroke: "#ffffff", lineWidth: 1,
+    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: 176, cursor: "pointer" };
+}
+function _metaTermStyle(x, y, rel) {
+  const w = Math.min(180, 130 + (typeof rel === "number" ? Math.round(rel * 40) : 0));
+  return { x, y, size: [w, 22], radius: 11, fill: _META_GRAPH_COLOR.GlossaryTerm, stroke: "#ffffff", lineWidth: 1,
+    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700, labelMaxWidth: 168, cursor: "pointer" };
+}
+function _metaColStyle(x, y) {
+  return { x, y, size: 11, fill: _META_GRAPH_COLOR.Column, stroke: "#ffffff", lineWidth: 1,
+    labelPlacement: "right", labelFill: "#161b22", labelFontSize: 10, labelOffsetX: 5, labelMaxWidth: 168, cursor: "pointer" };
+}
+function _metaCtlStyle(x, y) {
+  return { x, y, size: [18, 18], radius: 4, fill: "#ffffff", stroke: "#0a5b66", lineWidth: 1.5,
+    labelText: "−", labelPlacement: "center", labelFill: "#0a5b66", labelFontSize: 15, labelFontWeight: 700, cursor: "pointer" };
+}
+function _metaComboStyleFor(isTerms) {
+  return { radius: 12, padding: [30, 16, 14, 16], labelPlacement: "top", labelFontWeight: 700, labelFontSize: 13,
+    labelFill: isTerms ? _META_GRAPH_COLOR.GlossaryTerm : _META_GRAPH_COLOR.Schema,
+    fill: isTerms ? _META_GRAPH_COLOR.GlossaryTerm : _META_GRAPH_COLOR.Schema,
+    fillOpacity: 0.045, stroke: isTerms ? "#d3b06a" : "#aab3c5", lineWidth: 1, lineDash: [6, 4], collapsedMarker: false };
+}
+function _metaEdgeStyleFor(status) {
+  const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#cbd2db"),
+    lineWidth: status === "trusted" ? 3 : (status === "candidate" ? 1.8 : 1.4), endArrow: true };
+  if (status === "candidate") s.lineDash = [6, 4];   // 실선은 lineDash 키 생략(false 금지 — G6 크래시, BLUEPRINT §3)
+  return s;
+}
+function _metaNodeStates(key) {
+  const st = [];
+  if (_metaGraph.analyzed.has(key)) st.push("analyzed");
+  if (_metaGraph.running.has(key)) st.push("running");
+  if (_metaGraph.selected === key) st.push("selected");
+  return st;
+}
+
+// 모델(_metaGraph.nodes/edges) → 위치 포함 G6 데이터. 스키마 클러스터를 자연정렬 grid 로,
+// 테이블을 클러스터 안 세로 스택으로, 펼친 테이블의 컬럼을 그 아래 세로열로 결정론 배치(무-shuffle).
+function _metaG6Build() {
+  const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
+  const ensureG = (id) => { if (!groups.has(id)) groups.set(id, { isTerms: id === _META_TERMS_COMBO, tables: [], terms: [], colsByTable: new Map() }); return groups.get(id); };
+  const tableByKey = new Map();
+  _metaGraph.nodes.forEach((n) => { if (n.label === "Table") tableByKey.set(n.key, n); });
+  _metaGraph.nodes.forEach((n) => {
+    if (n.label === "Schema") { ensureG(n.key); return; }
+    if (n.label === "Table") { ensureG(_metaSchemaComboOf(n)).tables.push(n); return; }
+    if (n.label === "Column") {
+      const tk = _metaColParent(n.key, n.fqn);
+      const g = ensureG(_metaSchemaComboOf(n));
+      if (tk && tableByKey.has(tk)) { if (!g.colsByTable.has(tk)) g.colsByTable.set(tk, []); g.colsByTable.get(tk).push(n); }
+      return;
+    }
+    ensureG(_META_TERMS_COMBO).terms.push(n);   // GlossaryTerm/Datasource/Product/기타
+  });
+  // 클러스터 순서: 실제 스키마 자연정렬, terms 클러스터는 항상 마지막.
+  const ids = [...groups.keys()].filter((k) => k !== _META_TERMS_COMBO).sort(_metaNatSort);
+  if (groups.has(_META_TERMS_COMBO)) ids.push(_META_TERMS_COMBO);
+
+  // 각 클러스터 높이(테이블+펼친 컬럼 / terms 행) 선산정 → 행별 top.
+  const heightOf = (id) => {
+    const g = groups.get(id); let y = _METLAY.PADT;
+    if (g.isTerms) { y += g.terms.length * (_METLAY.TROW); }
+    else g.tables.forEach((t) => { y += _METLAY.TROW; const cols = g.colsByTable.get(t.key); if (cols && cols.length) y += cols.length * _METLAY.CROW; y += _METLAY.TGAP; });
+    return y + 16;
+  };
+  const H = ids.map(heightOf);
+  const rowTop = []; let cy = 0;
+  for (let r = 0; r * _METLAY.COLS < ids.length; r++) {
+    rowTop[r] = cy; let mh = 0;
+    for (let c = 0; c < _METLAY.COLS; c++) { const i = r * _METLAY.COLS + c; if (i < ids.length) mh = Math.max(mh, H[i]); }
+    cy += mh + _METLAY.GAPY;
+  }
+  const combos = [], nodes = [], edges = [];
+  ids.forEach((id, i) => {
+    const g = groups.get(id);
+    const col = i % _METLAY.COLS, row = Math.floor(i / _METLAY.COLS);
+    const x0 = col * (_METLAY.SW + _METLAY.GAPX), y0 = rowTop[row];
+    combos.push({ id, type: _METtype, data: { label: _metaComboName(id), kind: "schema" }, style: Object.assign({ labelText: _metaComboName(id) }, _metaComboStyleFor(g.isTerms)) });
+    let y = y0 + _METLAY.PADT;
+    if (g.isTerms) {
+      g.terms.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key)).forEach((n) => {
+        nodes.push({ id: n.key, type: _METtype, combo: id, states: _metaNodeStates(n.key), data: { label: n.name || n.key, kind: "term", fqn: n.fqn }, style: Object.assign(_metaTermStyle(x0 + _METLAY.PADX + 80, y, n.rel), { labelText: n.name || n.key }) });
+        y += _METLAY.TROW;
+      });
+    } else {
+      g.tables.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key)).forEach((t) => {
+        const tx = x0 + _METLAY.PADX + 84;
+        nodes.push({ id: t.key, type: _METtype, combo: id, states: _metaNodeStates(t.key), data: { label: t.name || t.key, kind: "table", fqn: t.fqn }, style: Object.assign(_metaTableStyle(tx, y, t.rel), { labelText: t.name || t.key }) });
+        const cols = g.colsByTable.get(t.key);
+        if (cols && cols.length) {
+          nodes.push({ id: "X:" + t.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: t.key }, style: _metaCtlStyle(tx + Math.round((_metaTableStyle(tx, y, t.rel).size[0]) / 2) + 14, y) });
+          y += _METLAY.TROW;
+          cols.slice().sort(_metaGraphColCmp).forEach((c) => {
+            nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(tx + _METLAY.CIND, y), { labelText: c.name || c.key }) });
+            y += _METLAY.CROW;
+          });
+        } else { y += _METLAY.TROW; }
+        y += _METLAY.TGAP;
+      });
+    }
+  });
+  // 엣지: 양끝 노드가 모두 현재 데이터에 있을 때만(HAS_TABLE/HAS_COLUMN 은 containment 라 제외).
+  const present = new Set(nodes.map((n) => n.id));
+  _metaGraph.edges.forEach((e) => {
+    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN") return;
+    if (present.has(e.source) && present.has(e.target)) edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: _metaEdgeStyleFor(e.status) });
+  });
+  return { combos, nodes, edges };
+}
+
+// 모델 → 화면 반영(전체 재구성 setData + draw). fit=true 면 전체 맞춤.
+//   ⚠ 의도적 설계(BLUEPRINT §2 대비 divergence): roots/search/neighbor 전 모드가 **결정론 grid(setData+draw)**.
+//   blueprint 초안의 search/neighbor=render()+d3-force 는 채택 안 함 — force 는 ④(클러스터 뒤섞임)를 재유발하고
+//   POC 가 검증한 무-shuffle 보장을 깬다. 교차 스키마 이웃도 자기 스키마 combo 의 grid 셀에 배치(force 아님).
+//   이 주석은 후속 리뷰어가 render()+force 로 "되돌리는" 회귀를 막기 위함(review MINOR-2).
+async function _metaG6Apply(fit) {
+  const g = _metaGraph.graph;
+  if (!g) return;
+  try {
+    g.setData(_metaG6Build());
+    await g.draw();
+    if (fit) { try { await g.fitView({ padding: 30 }, false); } catch (_) {} }
+  } catch (err) { _metaGraphStatus("그래프 렌더 오류: " + ((err && err.message) || err)); }
+}
 
 // 라벨별 색 — RFC 팔레트(Table=teal, Column=slate, GlossaryTerm=amber, Schema=indigo, DS/Product=green).
 const _META_GRAPH_COLOR = {
@@ -3061,21 +3231,29 @@ function _metaShowGraph() {
   if (s && s.focus) try { s.focus(); } catch (_) {}
 }
 
+// 모델 초기화(그래프 교체/리셋/scope 전환 시). 노드·엣지·펼침·마커 clear.
+function _metaGraphResetModel() {
+  _metaGraph.nodes.clear();
+  _metaGraph.edges.clear();
+  _metaGraph.expanded.clear();
+  _metaGraph.analyzed.clear();
+  _metaGraph.running.clear();
+  _metaGraph.selected = null;
+  if (_metaGraph.introspected) _metaGraph.introspected.clear();
+}
+
 // 현재 선택 datasource(scope)의 진입 그래프(Schema→Table)를 로드. 'common'/미선택이면 안내.
 async function _metaGraphLoadRoots() {
-  if (!_metaGraph.cy) _metaInitGraph();
-  if (!_metaGraph.cy) return;
+  if (!_metaGraph.graph) _metaInitGraph();
+  if (!_metaGraph.graph) return;
   const scope = adminState.metadata.scopeKey || "common";
   const si = document.getElementById("metadataGraphSearch");
   if (si) si.value = "";
-  _metaGraph.lastQuery = "";   // fix(low): 검색 컨텍스트 종료 — 상세 유사도 배지 게이트가 참조
-  _metaGraph.cy.elements().remove();
-  // 리뷰(REV-20260701T163000-graphview-render, MINOR): scope 전환/리셋 시 세션 마커 set 초기화.
-  //   이전 scope 의 stale 마커가 재방문 시(일괄 동기화가 404/실패해도) 재적용되는 것 차단 + Set 무한 성장 방지.
-  //   새 scope 마커는 _metaGraphSyncAnalysisMarkers 가 DB 에서 다시 채운다.
-  if (_metaGraph.analyzed) _metaGraph.analyzed.clear();
-  if (_metaGraph.running) _metaGraph.running.clear();
+  _metaGraph.lastQuery = "";   // 검색 컨텍스트 종료 — 상세 유사도 배지 게이트가 참조
+  _metaGraph.mode = "roots";
+  _metaGraphResetModel();
   if (!scope || scope === "common") {
+    await _metaG6Apply(false);
     _metaGraphStatus("상단에서 데이터소스를 선택하면 그 데이터소스의 그래프가 표시됩니다. (공용 스코프는 검색으로 탐색)");
     _metaGraphRenderDetailEmpty();
     return;
@@ -3088,9 +3266,9 @@ async function _metaGraphLoadRoots() {
     _metaGraphStatus((err && err.message) || "그래프 로드 실패");
     return;
   }
-  _metaGraphAddElements(data.nodes || [], data.edges || []);
-  _metaGraphLayout();
-  _metaGraphSyncAnalysisMarkers(scope);   // 항목1: 이미 분석된/진행중 노드 마커를 클릭 없이 렌더 시점에 적용
+  _metaGraphIngest(data.nodes || [], data.edges || []);
+  await _metaG6Apply(true);
+  _metaGraphSyncAnalysisMarkers(scope);   // 이미 분석된/진행중 노드 마커를 클릭 없이 렌더 시점에 적용
   const n = (data.nodes || []).length;
   _metaGraphStatus(n ? `${scope}: ${n}개 노드 — 노드 클릭으로 확장, 또는 검색.` : `${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
 }
@@ -3100,14 +3278,6 @@ function _metaHideGraph() {
   if (view) view.style.display = "none";
   const ld = document.querySelector(".admin-meta-list-detail");
   if (ld) ld.style.display = "";
-}
-
-// 라벨별 기본 노드 크기. 검색 시 관련도(rel 0~1)에 따라 +최대 40 가산(키워드 prominence).
-const _META_NODE_BASE = { Schema: 30, Table: 30, Column: 18, GlossaryTerm: 26, Datasource: 34, Product: 34 };
-function _metaNodeSize(ele) {
-  const base = _META_NODE_BASE[ele.data("label")] || 22;
-  const rel = ele.data("rel");
-  return (typeof rel === "number") ? Math.round(base + rel * 40) : base;
 }
 
 // 노드 key(`scope:fqn`)에서 카테고리(스키마) compound parent id 도출. schema 없으면 null.
@@ -3120,217 +3290,80 @@ function _metaCatParent(key, fqn) {
   if (!f || f.indexOf(".") < 0) return null;   // 스키마 segment 없음(스키마 노드 자체 등)
   return scope + ":" + f.split(".")[0];
 }
-function _metaEnsureCat(cy, id) {
-  if (!id || cy.getElementById(id).length) return;
-  const nm = id.slice(id.indexOf(":") + 1);
-  cy.add({ group: "nodes", data: { id, label: "Schema", name: nm, fqn: nm, isCat: 1 } });
-}
 
+// G6 v5 그래프 초기화(1회). 이후 상태변경은 _metaG6Apply(setData+draw). Canvas 렌더러(선명·벡터).
 function _metaInitGraph() {
   const container = document.getElementById("metadataGraphCanvas");
   if (!container) return;
-  if (typeof window.cytoscape !== "function") {
-    _metaGraphStatus("그래프 라이브러리(cytoscape)를 불러오지 못했습니다.");
+  if (!window.G6 || typeof window.G6.Graph !== "function") {
+    _metaGraphStatus("그래프 라이브러리(G6)를 불러오지 못했습니다.");
     return;
   }
-  // fcose(compound 클러스터 force layout) 등록 — 1회. 미가용 시 built-in cose 폴백.
-  if (window.cytoscapeFcose && !_metaGraph.fcose) {
-    try { window.cytoscape.use(window.cytoscapeFcose); _metaGraph.fcose = true; } catch (_) {}
-  }
-  if (_metaGraph.cy) { try { _metaGraph.cy.resize(); } catch (_) {} return; }
-  // graph-webgl: WebGL 미지원 브라우저/GPU 는 canvas-2D 로 graceful fallback(그래프가 안 깨지게).
-  //   feature-detect(webgl2 우선, 없으면 webgl). 실패 시 webgl:false → 기존 canvas 렌더로 자동 회귀.
-  let _webglOk = false;
-  try { const _tc = document.createElement("canvas"); _webglOk = !!(_tc.getContext("webgl2") || _tc.getContext("webgl")); } catch (_) { _webglOk = false; }
-  _metaGraph.cy = window.cytoscape({
+  if (_metaGraph.graph) { try { _metaGraph.graph.resize(); } catch (_) {} return; }
+  if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
+  const graph = new window.G6.Graph({
     container,
-    elements: [],
-    // graph-perf2: wheelSensitivity 제거 → Cytoscape 기본값(1) 복원. 기존 0.3 은 기본의 1/3 스텝이라 휠당
-    //   줌 배율(zoom*10^(h*sensitivity))이 작아 확대/축소가 3배 이상 느리게 체감(사용자 불호). 기본 1 이
-    //   mainstream 마우스/트랙패드 튜닝값. minZoom/maxZoom 클램프 유지라 과확대·과축소는 없음(속도만 회복).
-    minZoom: 0.15, maxZoom: 2.5,
-    // feature-0016 graph-webgl: **WebGL 렌더러**(Cytoscape 3.31+ 실험적, vendored 3.34.0) 활성화.
-    //   근거: canvas-2D 렌더러(이전 3.30.2)는 매 프레임 그래프 전체를 CPU 로 재래스터 → 트레이스 실측상
-    //   rAF 는 60fps 인데 실제 표시 ~36fps 로 드롭(Scripting 이 busy 65% = Cytoscape 캔버스 재렌더), GPU·
-    //   컴포지터는 유휴. 이 canvas-2D 상한은 라벨 숨김 등 미세 튜닝으로 못 넘음(사용자 육안: 여전히 거침 +
-    //   라벨 사라짐 불호). WebGL 은 노드/라벨을 sprite-sheet 텍스처로 만들어 GPU 로 합성 → **라벨을 켠 채로도
-    //   부드러운 애니**. 노드/라벨/2단 compound(스키마>Table ERD카드>컬럼)는 완전 지원(실 Windows 브라우저
-    //   WebGL 실측 확인). 미지원 엣지 스타일(taxi/dashed)은 아래에서 bezier/색·투명도 구분으로 대체.
-    //   webgl:_webglOk — 미지원 환경은 위 feature-detect 로 false → canvas-2D 폴백(그래프 유지).
-    //   graphview-webgl-polish: **외곽선 뭉개짐 해소**. WebGL 은 각 노드/박스를 sprite atlas 셀
-    //   (기본 webglTexSize 2048 / webglTexRowsNodes 18 → 셀 ~113px)로 래스터한 뒤 화면 크기로 스케일한다.
-    //   줌인 시 노드·compound 박스가 셀 해상도를 초과하면 텍스처 업스케일 블러가 생긴다. 대책:
-    //     - webglTexSize 4096(노드 셀 ~227px·라벨 셀 상향; GPU MAX_TEXTURE_SIZE 초과분은 cytoscape 자동 클램프)
-    //     - pixelRatio 2(atlas 텍스처를 2× DPI 로 래스터 → 외곽선/텍스트 선명). canvas-2D 와 달리 WebGL 은
-    //       텍스처를 GPU 합성하므로 pixelRatio 상향의 프레임 비용이 낮다(graph-webgl 의 FPS 이득 유지).
-    //   ※ pixelRatio 는 **WebGL 경로에만** 부여한다. canvas-2D 폴백에 pixelRatio:1 을 강제하면 Cytoscape 가
-    //     device DPR 폴백(getPixelRatio: forcedPixelRatio!=null 이면 우선)을 건너뛰어 HiDPI(Retina·Windows
-    //     스케일)에서 오히려 흐려진다 → 폴백은 키를 생략해 기존 device-DPR 선명도를 보존(적대 리뷰 NIT).
-    renderer: { name: "canvas", webgl: _webglOk, webglTexSize: 4096 },
-    ...(_webglOk ? { pixelRatio: 2 } : {}),
-    style: [
-      { selector: "node", style: {
-          "background-color": (n) => _META_GRAPH_COLOR[n.data("label")] || "#5c6773",
-          // 항목1: 검색 시 라벨에 유사도 %(relLabel)를 명시 표시, 그 외엔 이름만.
-          "label": (n) => n.data("relLabel") || n.data("name"), "font-size": "11px", "color": "#161b22",
-          "text-valign": "bottom", "text-halign": "center", "text-margin-y": 3,
-          "width": _metaNodeSize, "height": _metaNodeSize,
-          "min-zoomed-font-size": 7,   // 축소 시 작아진 라벨은 렌더 생략(줌아웃 프레임 비용↓)
-          "text-wrap": "ellipsis", "text-max-width": "120px", "border-width": 0 } },
-      // graph-webgl: WebGL 은 라벨을 GPU 텍스처로 렌더 → 애니 중에도 라벨 유지 부담이 적다. 모션 중
-      //   라벨/엣지 숨김(anim-hide-*)은 제거 — 사용자가 "애니 시작 시 라벨 사라짐"을 불호했고, WebGL 로
-      //   숨길 필요가 없어졌다(항상 표시).
-      { selector: "node[label='Table']", style: { "font-weight": "bold" } },
-      // feature-0016 ERD-card: Column 은 테이블 compound 박스 안 세로 목록 — 작은 점 + 오른쪽 라벨.
-      { selector: "node[label='Column']", style: {
-          "width": 12, "height": 12,
-          "text-valign": "center", "text-halign": "right", "text-margin-x": 4, "text-margin-y": 0,
-          "font-size": "10px", "text-max-width": "160px" } },
-      // 카테고리(스키마) compound 컨테이너 — 같은 스키마 노드를 박스로 집적.
-      { selector: "node:parent", style: {
-          "background-color": "#3f4b8c", "background-opacity": 0.08,
-          "border-width": 1, "border-color": "#aab3c5", "border-style": "dashed",
-          "shape": "round-rectangle", "padding": "16px",
-          "label": "data(name)", "font-size": "13px", "font-weight": "bold", "color": "#3f4b8c",
-          "text-valign": "top", "text-halign": "center", "text-margin-y": 2 } },
-      // 항목3: 스키마 클러스터 native 라벨은 숨긴다 — 캔버스 위 HTML 오버레이가 좌상단 정렬 + 좌측 여백 +
-      //   무잘림으로 대신 렌더한다(_metaGraphSyncClusterLabels). native 라벨은 중앙정렬 + text-max-width
-      //   ellipsis(상속) 라 명칭이 잘리던 원인. compound bounds 만 이 스타일에서 유지.
-      { selector: "node:parent[isCat = 1]", style: { "label": "" } },
-      { selector: "node[label='Schema']:parent", style: { "label": "" } },
-      // feature-0016 ERD-card: 컬럼을 가진 Table 은 compound 박스(ERD 카드) — 이름 상단, 컬럼 목록 내부.
-      //   스키마(점선 남색)와 구분되게 teal 실선. fcose 가 이 박스 bounds 로 이웃 공간확보 → 겹침 원천 차단.
-      //   graph-panel-perms(task3): 기존 text-margin-y:+2 는 타이틀을 박스 안쪽 최상단에 두어 **첫(최상단) 컬럼
-      //   dot·라벨과 겹쳐 첫 컬럼명이 가려졌다**. 타이틀을 박스 위로 띄우고(음수 margin) 가독 halo(캔버스색 배경
-      //   chip)를 얹어 첫 컬럼과의 충돌을 원천 제거한다. 박스 크기·fcose 간격은 불변(padding 유지).
-      { selector: "node:parent[label='Table']", style: {
-          "background-color": "#0f7d8c", "background-opacity": 0.07,
-          "border-width": 1.5, "border-color": "#0f7d8c", "border-style": "solid",
-          "shape": "round-rectangle", "padding": "10px",
-          "label": "data(name)", "font-size": "12px", "font-weight": "bold", "color": "#0a5b66",
-          "text-valign": "top", "text-halign": "center", "text-margin-y": -13,
-          "text-background-color": "#fbfcfd", "text-background-opacity": 0.85,
-          "text-background-padding": 2, "text-background-shape": "roundrectangle" } },
-      // 검색 관련도 강조: rel 높을수록 진한 테두리.
-      { selector: "node[rel >= 0.8]", style: { "border-width": 3, "border-color": "#0a5b66" } },
-      // 항목2: AI 능동 분석 완료 노드 — 보라 이중 테두리 마커(범례: ✨ AI 분석됨).
-      { selector: "node[ai = 1]", style: { "border-width": 3, "border-color": "#7b2fbe", "border-style": "double" } },
-      // graphux5-progress: 현재 AI 분석 중인 노드 — 주황 점선(라이브 진행 시각화).
-      { selector: "node[aiRunning = 1]", style: { "border-width": 3, "border-color": "#e08a1e", "border-style": "dashed" } },
-      { selector: "node:selected", style: { "border-width": 4, "border-color": "#9c6515" } },
-      { selector: "node.dim", style: { "opacity": 0.35 } },
-      // graph-webgl: 기본 엣지는 bezier(완만한 곡선). WebGL 은 unbundled-bezier 미지원(bezier 로 강등)이라
-      //   처음부터 bezier 로 통일 — control-point 커스텀 제거(WebGL 은 표준 bezier 만 지원).
-      { selector: "edge", style: {
-          "width": 1.4, "line-color": "#cbd2db", "target-arrow-color": "#cbd2db",
-          "target-arrow-shape": "triangle", "curve-style": "bezier",
-          "font-size": "9px", "color": "#8a949f", "text-rotation": "autorotate" } },
-      // ERD-card: HAS_COLUMN 은 compound 컨테인먼트로 표현(엣지 없음).
-      { selector: "edge[label='REFERENCES']", style: {
-          "line-color": "#9c6515", "target-arrow-color": "#9c6515", "width": 2.2, "label": "data(label)" } },
-      // feature-0016 암묵 관계 신뢰 시각화: WebGL 은 dashed/hollow-arrow 미지원 → **두께(form)·색·투명도** 다채널로 구분.
-      //   적대리뷰 MAJOR: dashed 라는 비색상 채널을 잃어 색맹/저대비에서 붕괴 우려 + 얇은 candidate 묻힘 →
-      //   candidate 가시성 상향(width 1.3→1.8·opacity 0.45→0.6)해 "안 보임" 방지하고, trusted(3.2) 대비 두께비를
-      //   주 구분 채널(색-비의존)로 삼음. 완전한 dashed 등가는 WebGL 제약상 불가(엣지 라인 패턴 미지원).
-      //   추론/후보(candidate)=연앰버·반투명·중간두께(검증 전), 신뢰(trusted)=진갈·불투명·굵게. broken 은 백엔드 제외.
-      { selector: "edge[label='REFERENCES'][status='candidate']", style: {
-          "line-color": "#c9a24a", "target-arrow-color": "#c9a24a",
-          "opacity": 0.6, "width": 1.8 } },
-      { selector: "edge[label='REFERENCES'][status='trusted']", style: {
-          "line-color": "#6b4410", "target-arrow-color": "#6b4410", "opacity": 1, "width": 3.4 } },
-      // RELATED_TERM: WebGL 은 dashed 미지원 → 녹색·반투명으로 구분(용어 연관).
-      { selector: "edge[label='RELATED_TERM']", style: {
-          "line-color": "#2e7d52", "target-arrow-color": "#2e7d52", "opacity": 0.75, "label": "data(label)" } },
-    ],
+    autoResize: true,
+    // 상태 스타일만 config 로(기본 스타일은 per-element 인라인 — 매퍼 undefined→To() 크래시 회피).
+    node: { state: {
+      analyzed: { stroke: "#7b2fbe", lineWidth: 3 },
+      running: { stroke: "#e08a1e", lineWidth: 2, lineDash: [4, 3] },
+      selected: { stroke: "#9c6515", lineWidth: 3 },
+    } },
+    behaviors: ["drag-canvas", "zoom-canvas", "drag-element"],
+    animation: false,
   });
-  // 항목3: 스키마 클러스터명 HTML 오버레이 레이어 준비 + 뷰포트/위치 변화마다 위치 동기화.
-  //   클러스터는 스코프당 소수(≤ 수십)라 rAF 스로틀 DOM 동기화 비용 무시 가능(캔버스 raster 병목과 무관).
-  //   ⚠ WebGL 렌더러(§17 graph-webgl, cytoscape 3.31+ webgl:true)는 'render' 이벤트를 emit 하지 않는다
-  //   (실측 renderFires=0). 렌더러 무관 **코어** 이벤트로 동기화한다: viewport=pan+zoom(카메라 애니 per-frame),
-  //   position/drag(노드 이동·레이아웃 애니 per-frame), layoutstop/resize/add/remove(구조 변화). canvas-2D 폴백은
-  //   'render' 도 포함(무해 중복 — rAF 스로틀이 프레임당 1회로 병합).
-  _metaGraphEnsureLabelLayer(container);
-  const _lblSync = () => {
-    if (_metaGraph._lblRaf) return;
-    _metaGraph._lblRaf = requestAnimationFrame(() => {
-      _metaGraph._lblRaf = null;
-      _metaGraphSyncClusterLabels();
-      _metaGraphSyncCollapseButtons();   // graph-panel-perms(task2): 확장 테이블 접기 버튼도 같은 rAF 로 위치 동기화
-    });
-  };
-  _metaGraph.cy.on("render viewport resize layoutstop add remove", _lblSync);
-  _metaGraph.cy.on("position drag free", "node", _lblSync);
-  // 단일 클릭 = 상세 조회만(그래프 유지), 더블 클릭 = 해당 노드 이웃 그래프로 확장/전환.
-  // cytoscape 코어에 dbltap 이벤트가 없어 350ms 윈도우로 수동 감지한다.
-  _metaGraph.cy.on("tap", "node", (evt) => {
-    const t = evt.target;
-    if (t.isParent && t.isParent()) {
-      // 항목2: 스키마 클러스터(compound 컨테이너) 클릭 시 클러스터 상세 갱신 — 클러스터 개요(스키마명·포함 테이블).
-      if (t.data("label") === "Schema" || t.data("isCat")) { _metaGraphShowClusterDetail(t); return; }
-      // ERD-card(origin/main): Table compound 박스는 클릭/더블클릭이 일반 노드와 동일(상세/확장)하게 흘려보냄.
-      //   그 외 컨테이너(카테고리 박스)만 무시. (박스 안 Column 자식 클릭 시 target=컬럼 → 컬럼 상세.)
-      if (t.data("label") !== "Table") return;
-    }
-    const key = t.id();
-    const now = (window.performance && performance.now) ? performance.now() : Date.now();
-    const isDbl = (_metaGraph._lastTapKey === key && (now - (_metaGraph._lastTapAt || 0)) < 350);
-    _metaGraph._lastTapKey = key;
-    _metaGraph._lastTapAt = now;
-    if (isDbl) {
-      _metaGraph._lastTapKey = null;   // 트리플탭 중복 방지
-      if (_metaGraph._colTimer) { clearTimeout(_metaGraph._colTimer); _metaGraph._colTimer = null; }   // 단일-지연 컬럼 토글 취소(더블은 이웃 확장)
-      _metaGraphExpand(key);           // 더블: 이웃(관계) 그래프 확장/전환
-    } else {
-      _metaGraphShowDetail(key);       // 단일: 상세 카드 즉시 갱신(캔버스 무변경)
-      // webgl-polish 항목2: 테이블은 단일 클릭 시 **자신의 컬럼을 인라인 토글(펼침/접힘)**. 기본 접힘(roots).
-      //   더블클릭(이웃 확장)과 구분하려 300ms 지연 — 두 번째 탭이 오면 위 isDbl 분기가 이 타이머를 취소한다.
-      if (t.data("label") === "Table") {
-        if (_metaGraph._colTimer) clearTimeout(_metaGraph._colTimer);
-        _metaGraph._colTimer = setTimeout(() => { _metaGraph._colTimer = null; _metaGraphToggleColumns(key); }, 300);
-      }
-    }
-  });
-  // ERD-card: 컬럼은 테이블의 compound 자식 → 테이블(박스) 드래그 시 자식 컬럼이 자동 추종(별도 재배치 불필요).
-  // 반응형: 컨테이너 크기 변화 시 cytoscape resize + fit (창/패널 토글 대응).
-  if (window.ResizeObserver && !_metaGraph.ro) {
-    let rt = null;
-    _metaGraph.ro = new ResizeObserver(() => {
-      if (rt) clearTimeout(rt);
-      rt = setTimeout(() => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } }, 150);
-    });
-    try { _metaGraph.ro.observe(container); } catch (_) {}
-  }
+  _metaGraph.graph = graph;
+  graph.on("node:click", (e) => _metaGraphOnNodeClick(e));
+  graph.on("combo:click", (e) => { const id = e && e.target && e.target.id; if (id) _metaGraphShowClusterDetailById(id); });
   if (!_metaGraph.bound) {
     _metaGraph.bound = true;
     const s = document.getElementById("metadataGraphSearch");
     if (s) {
       let t = null;
-      s.addEventListener("input", () => {
-        if (t) clearTimeout(t);
-        t = setTimeout(() => _metaGraphSearch(s.value.trim()), 300);
-      });
+      s.addEventListener("input", () => { if (t) clearTimeout(t); t = setTimeout(() => _metaGraphSearch(s.value.trim()), 300); });
     }
     const reset = document.getElementById("metadataGraphResetBtn");
     if (reset) reset.addEventListener("click", () => { _metaGraphLoadRoots(); });
-    // 상세 패널 접기/펼치기(좁은 화면 대응).
     const tgl = document.getElementById("metadataGraphDetailToggle");
     if (tgl) tgl.addEventListener("click", () => {
       const body = document.getElementById("metadataGraphView");
       if (body) body.classList.toggle("detail-collapsed");
-      setTimeout(() => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } }, 60);
+      setTimeout(() => { if (_metaGraph.graph) { try { _metaGraph.graph.resize(); _metaGraph.graph.fitView({ padding: 30 }, false); } catch (_) {} } }, 60);
     });
-    // 항목4: 이웃 깊이 드롭다운 변경 시 즉시 그래프 갱신(이전엔 change 리스너가 없어 더블클릭 전까지 무반응).
-    //   현재 선택 노드(없으면 마지막 상세 노드)를 새 깊이로 재전개한다. 대상이 없으면 안내만.
     const depthSel = document.getElementById("metadataGraphDepth");
     if (depthSel) depthSel.addEventListener("change", () => {
-      let key = null;
-      try { const sel = _metaGraph.cy ? _metaGraph.cy.$("node:selected") : null; if (sel && sel.length) key = sel[0].id(); } catch (_) {}
-      if (!key) key = _metaGraph.lastDetailKey || null;
+      const key = _metaGraph.selected || _metaGraph.lastDetailKey || null;
       if (key) { _metaGraphExpand(key); }
       else { _metaGraphStatus(`이웃 깊이 ${depthSel.value}-hop 적용 — 노드를 선택/더블클릭하면 이 깊이로 확장됩니다.`); }
     });
-    // graph-panel-resize: 캔버스↔상세 패널 드래그 리사이저 초기화(폭 복원·드래그·키보드).
     _metaGraphInitResizer();
+  }
+}
+
+// 노드 클릭 라우팅: "−" ctl=접기 · 단일=상세(+테이블은 펼침 전용) · 더블(320ms)=이웃 확장.
+//   버그① 해소: 펼쳐진 테이블 body 클릭은 접지 않는다(접기는 "−" 컨트롤만).
+function _metaGraphOnNodeClick(e) {
+  const id = e && e.target && e.target.id;
+  if (!id) return;
+  if (String(id).startsWith("X:")) { _metaGraphCollapse(id.slice(2)); return; }
+  const now = (window.performance && performance.now) ? performance.now() : Date.now();
+  const isDbl = (_metaGraph._lastClickId === id && (now - (_metaGraph._lastClickAt || 0)) < 320);
+  _metaGraph._lastClickId = id; _metaGraph._lastClickAt = now;
+  if (isDbl) {
+    _metaGraph._lastClickId = null;
+    if (_metaGraph._clickTimer) { clearTimeout(_metaGraph._clickTimer); _metaGraph._clickTimer = null; }
+    _metaGraphExpand(id);
+    return;
+  }
+  const n = _metaGraph.nodes.get(id);
+  _metaGraphShowDetail(id);
+  if (n && n.label === "Table") {
+    if (_metaGraph._clickTimer) clearTimeout(_metaGraph._clickTimer);
+    _metaGraph._clickTimer = setTimeout(() => {
+      _metaGraph._clickTimer = null;
+      if (!_metaTableHasCols(id)) _metaGraphToggleColumns(id);   // 접힌 테이블만 펼침(펼쳐졌으면 no-op) — hasCols 단일소스
+    }, 340);   // 더블클릭 창(320ms) 초과로 설정 — 빠른 더블클릭이 컬럼펼침+이웃확장 동시발동하는 것 방지(review MINOR-1)
   }
 }
 
@@ -3358,7 +3391,7 @@ function _metaGraphInitResizer() {
     return (d && d.clientWidth) ? d.clientWidth : 340;
   };
   const persist = () => { try { localStorage.setItem("metaGraphDetailW", String(curW())); } catch (_) {} };
-  const refit = () => { if (_metaGraph.cy) { try { _metaGraph.cy.resize(); _metaGraph.cy.fit(undefined, 30); } catch (_) {} } };
+  const refit = () => { if (_metaGraph.graph) { try { _metaGraph.graph.resize(); _metaGraph.graph.fitView({ padding: 30 }, false); } catch (_) {} } };
   // 저장된 폭 복원(있으면).
   try { const saved = parseInt(localStorage.getItem("metaGraphDetailW") || "", 10); if (isFinite(saved) && saved > 0) applyW(saved); } catch (_) {}
   // 리뷰 fix(MEDIUM-2): 창 크기 변화 시 현재 폭을 새 body 폭 기준으로 재-clamp — 넓은 화면에서 저장한 폭이
@@ -3408,7 +3441,7 @@ function _metaRelevance(name, fqn, ql) {
 }
 
 async function _metaGraphSearch(q) {
-  if (!_metaGraph.cy) return;
+  if (!_metaGraph.graph) return;
   _metaGraph.lastQuery = q;
   if (!q) { _metaGraphLoadRoots(); return; }
   _metaGraphStatus("검색 중…");
@@ -3422,27 +3455,44 @@ async function _metaGraphSearch(q) {
     return;
   }
   if (q !== _metaGraph.lastQuery) return;
-  _metaGraph.cy.elements().remove();
-  _metaGraphAddElements(data.nodes || [], data.edges || []);
-  // 항목1: 유사도(rel) → 노드 크기 가산 + 라벨에 % 명시. 백엔드 pg_trgm 실측 score 우선, 없으면 클라 휴리스틱.
+  _metaGraph.mode = "search";
+  _metaGraphResetModel();
+  _metaGraphIngest(data.nodes || [], data.edges || []);
+  // 유사도(rel) → 테이블/용어 칩 크기 가산. 백엔드 pg_trgm score 우선, 없으면 클라 휴리스틱.
   const ql = q.toLowerCase();
-  _metaGraph.cy.nodes().forEach((node) => {
-    if (node.isParent()) return;
-    const s = node.data("score");
-    const rel = (typeof s === "number") ? s : _metaRelevance(node.data("name"), node.data("fqn"), ql);
-    node.data("rel", rel);
-    node.data("relLabel", node.data("name") + "  " + Math.round(rel * 100) + "%");
+  _metaGraph.nodes.forEach((n) => {
+    n.rel = (typeof n.score === "number") ? n.score : _metaRelevance(n.name, n.fqn, ql);
   });
-  _metaGraphLayout();
-  _metaGraphSyncAnalysisMarkers(scope);   // 항목1: 검색 결과 노드에도 분석 마커 즉시 반영
+  await _metaG6Apply(true);
+  _metaGraphSyncAnalysisMarkers(scope);
   const n = (data.nodes || []).length;
-  _metaGraphStatus(n ? `'${q}' ${n}개 — 라벨의 %가 검색어 유사도(pg_trgm), 클수록 유사. 노드 클릭으로 확장.` : "검색 결과 없음.");
+  _metaGraphStatus(n ? `'${q}' ${n}개 — 노드 크기가 검색 유사도(pg_trgm, 클수록 유사). 노드 클릭으로 상세·확장.` : "검색 결과 없음.");
 }
 
-// 단일 클릭: 그래프 구조는 그대로 두고 상세 카드만 갱신. 1-hop 으로 컬럼·직접관계·용어를 충분히 채우면서 빠르다.
+// 선택 강조: 모델 selected 갱신 + 이전/현재 노드 state 만 갱신(전체 rebuild 없이 가벼움).
+function _metaGraphSetSelected(key) {
+  const g = _metaGraph.graph;
+  const prev = _metaGraph.selected;
+  _metaGraph.selected = key || null;
+  if (!g) return;
+  try {
+    if (prev && prev !== key && _metaGraph.nodes.has(prev)) g.setElementState(prev, _metaNodeStates(prev));
+    if (key && _metaGraph.nodes.has(key)) g.setElementState(key, _metaNodeStates(key));
+  } catch (_) {}
+}
+
+// 테이블 key 에 (모델상) 컬럼 노드가 있으면 true — 펼침 상태의 단일 소스.
+function _metaTableHasCols(key) {
+  for (const n of _metaGraph.nodes.values()) {
+    if (n.label === "Column" && _metaColParent(n.key, n.fqn) === key) return true;
+  }
+  return false;
+}
+
+// 단일 클릭: 그래프 구조는 그대로 두고 상세 카드만 갱신(1-hop 으로 컬럼·직접관계·용어).
 async function _metaGraphShowDetail(key) {
-  if (!_metaGraph.cy || !key) return;
-  _metaGraph.lastDetailKey = key;   // 항목4: 깊이 변경 시 재전개 대상
+  if (!_metaGraph.graph || !key) return;
+  _metaGraph.lastDetailKey = key;
   _metaGraphStatus("상세 조회 중…");
   let data;
   try {
@@ -3451,42 +3501,20 @@ async function _metaGraphShowDetail(key) {
     _metaGraphStatus((err && err.message) || "상세 조회 실패");
     return;
   }
-  // 캔버스에서 해당 노드만 선택 강조(그래프는 변경하지 않음).
-  try {
-    _metaGraph.cy.$(":selected").unselect();
-    const el = _metaGraph.cy.getElementById(key);
-    if (el && el.length) el.select();
-  } catch (_) {}
+  _metaGraphSetSelected(key);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
   const nb = Math.max(0, (data.nodes || []).length - 1);
   _metaGraphStatus(`상세: ${self.name || key} · 이웃 ${nb}개 (더블클릭 = 관계 확장)`);
 }
 
-// webgl-polish 항목2: 테이블 단일 클릭 = **자신의 컬럼 인라인 토글(펼침/접힘)** 진입점.
-//   기본 접힘(roots 는 Schema→Table 만 로드). 펼침: depth=1 그래프 컬럼(HAS_COLUMN) → 없으면 datasource
-//   information_schema 즉석 조회(introspect). 접힘: compound 자식(Column) 제거 + introspected Set 에서 해제
-//   (해제해야 재펼침이 재-introspect). 이웃(관계) 확장은 더블클릭(_metaGraphExpand)이 책임 — 단, #519(graph-perf2)
-//   부터 미분석 테이블 더블클릭은 이웃 확장과 함께 컬럼도 introspect 한다(introspected Set·anchorHasCols 로 중복 회피).
+// 테이블 단일 클릭 = **자신의 컬럼 인라인 펼침(펼침 전용)**. 이미 펼쳐졌으면 no-op(버그① — 클릭으론 안 접힘).
+//   접힘: "−" 컨트롤(_metaGraphCollapse). 그래프 컬럼(HAS_COLUMN) 없으면 information_schema 즉석조회(introspect).
 async function _metaGraphToggleColumns(key) {
-  const cy = _metaGraph.cy;
-  if (!cy || !key) return;
-  const node = cy.getElementById(key);
-  if (!node || !node.length || node.data("label") !== "Table") return;
-  // 이미 펼쳐져 있으면(Column 자식 존재) 접기.
-  let cols = cy.collection();
-  try { cols = node.children().filter((c) => c.data("label") === "Column"); } catch (_) {}
-  if (cols.length) {
-    const nm = node.data("name") || key;
-    cols.remove();
-    // fix(webgl-polish): introspect(datasource information_schema)로 채운 컬럼은 그래프 DB 에 HAS_COLUMN 이
-    //   없어 재펼침 시 respHasCols=false 다. introspected Set 에 key 가 남으면 아래 펼침 분기의 재조회가 skip 되어
-    //   컬럼이 다시 안 나온다 → 접힘 시 key 를 해제해 재펼침이 재-introspect 하게 한다.
-    if (_metaGraph.introspected) _metaGraph.introspected.delete(key);
-    _metaGraphStatus(`${nm} 컬럼 접힘 (${cols.length}개) — 다시 클릭하면 펼침`);
-    return;
-  }
-  // 접혀 있으면 펼치기.
+  if (!_metaGraph.graph || !key) return;
+  const node = _metaGraph.nodes.get(key);
+  if (!node || node.label !== "Table") return;
+  if (_metaTableHasCols(key)) return;   // 이미 펼침 — 클릭으로 접지 않음(접기는 "−" 컨트롤)
   _metaGraphStatus("컬럼 조회 중…");
   let data;
   try { data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`); }
@@ -3504,33 +3532,42 @@ async function _metaGraphToggleColumns(key) {
       } else if (col && !col.introspected && col.reason) {
         note = ` (${col.reason})`;
       }
-    } catch (_) { /* graceful — 컬럼 조회 실패는 무시 */ }
+    } catch (_) { /* graceful */ }
   }
-  // 이웃 테이블/관계는 제외 — self(테이블) + Column + HAS_COLUMN 만 add(단일=컬럼 역할 유지).
-  const colNodes = (data.nodes || []).filter((x) => x && (x.key === key || x.label === "Column"));
-  const colEdges = (data.edges || []).filter((e) => e && e.type === "HAS_COLUMN");
-  const newIds = _metaGraphAddElements(colNodes, colEdges) || [];
-  const nm = node.data("name") || key;
-  if (newIds.length > 0) {
-    // graph-perf2 정합: 신규 컬럼을 부모 테이블 중심 기준 **세로 스택**으로 seed(옛 3-wide grid 아님). #519 가
-    //   fcose 컬럼 정렬 제약을 제거했으므로 fcose 는 컬럼을 정렬하지 않는다 — seed 는 randomize:false fcose 의
-    //   수렴 안정성 보험일 뿐이고, 컬럼 최종 배치는 layoutstop 의 _metaGraphPlaceColumns 결정론 배치가 보장한다.
-    const ap = node.position();
-    const newCols = newIds.map((id) => cy.getElementById(id)).filter((n) => n && n.length);
-    const y0 = ap.y - (newCols.length - 1) / 2 * _META_COL_PITCH;
-    newCols.forEach((nd, i) => { nd.position({ x: ap.x, y: y0 + i * _META_COL_PITCH }); });
-    const focus = cy.collection().merge(node);
-    newCols.forEach((nd) => focus.merge(nd));
-    _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus, anchorId: key });
-    _metaGraphStatus(`${nm} 컬럼 ${newIds.length}개 펼침 — 다시 클릭하면 접힘`);
+  // 이 테이블 소속 컬럼만(이웃 테이블 컬럼 제외).
+  const colNodes = (data.nodes || []).filter((x) => x && x.label === "Column" && _metaColParent(x.key, x.fqn) === key);
+  _metaGraphIngest(colNodes, []);
+  const nm = node.name || key;
+  if (colNodes.length > 0) {
+    _metaGraph.expanded.add(key);
+    await _metaG6Apply(false);   // fit=false — 제자리 펼침(버그② — 카메라 점프·재확산 없음)
+    _metaGraphStatus(`${nm} 컬럼 ${colNodes.length}개 펼침 — "−" 버튼으로 접기`);
   } else {
     _metaGraphStatus(`${nm} — 펼칠 컬럼 없음${note}`);
   }
 }
 
+// "−" 컨트롤 접기 — 이 테이블의 컬럼 노드(+연결 엣지) 모델에서 제거 + 재조회 재허용.
+function _metaGraphCollapse(key) {
+  if (!_metaGraph.graph || !key) return;
+  const node = _metaGraph.nodes.get(key);
+  const nm = (node && node.name) || key;
+  const toDel = [];
+  _metaGraph.nodes.forEach((n) => { if (n.label === "Column" && _metaColParent(n.key, n.fqn) === key) toDel.push(n.key); });
+  if (!toDel.length) return;
+  const delSet = new Set(toDel);
+  toDel.forEach((k) => _metaGraph.nodes.delete(k));
+  _metaGraph.edges.forEach((e, id) => { if (delSet.has(e.source) || delSet.has(e.target)) _metaGraph.edges.delete(id); });
+  _metaGraph.expanded.delete(key);
+  if (_metaGraph.introspected) _metaGraph.introspected.delete(key);
+  _metaG6Apply(false);
+  _metaGraphStatus(`'${nm}' 테이블 컬럼을 접었습니다 — 테이블을 클릭하면 다시 펼쳐집니다.`);
+}
+
+// 더블 클릭: 이웃(관계) 그래프로 확장. depth=N-hop 이웃을 모델에 병합.
 async function _metaGraphExpand(key) {
-  if (!_metaGraph.cy || !key) return;
-  _metaGraph.lastDetailKey = key;   // 항목4: 깊이 변경 시 재전개 대상
+  if (!_metaGraph.graph || !key) return;
+  _metaGraph.lastDetailKey = key;
   const depthSel = document.getElementById("metadataGraphDepth");
   const depth = depthSel ? depthSel.value : "2";
   _metaGraphStatus("이웃 조회 중…");
@@ -3541,15 +3578,12 @@ async function _metaGraphExpand(key) {
     _metaGraphStatus((err && err.message) || "이웃 조회 실패");
     return;
   }
-  // 항목3: 분석/큐레이션 안 된 Table 은 그래프에 Column(HAS_COLUMN)이 없어 더블클릭해도 컬럼이 안 펼쳐진다.
-  //   그래프에 컬럼이 없으면 데이터소스 information_schema 를 즉석 조회(introspect)해 병합 → 항상 펼쳐지게 한다.
+  // 미분석 테이블은 그래프에 컬럼(HAS_COLUMN)이 없어 즉석조회(introspect) 병합.
   let introspectNote = "";
   const selfNode = (data.nodes || []).find((x) => x.key === key);
   const respHasCols = (data.edges || []).some((e) => e && e.type === "HAS_COLUMN" && e.source === key);
   if (!_metaGraph.introspected) _metaGraph.introspected = new Set();
-  let anchorHasCols = false;
-  try { anchorHasCols = _metaGraph.cy.getElementById(key).outgoers('edge[label="HAS_COLUMN"]').length > 0; } catch (_) {}
-  // fix(low): 이미 즉석조회했거나 그래프에 이미 컬럼이 있으면 재조회 skip(중복 DB 왕복 방지).
+  const anchorHasCols = _metaTableHasCols(key);
   if (selfNode && selfNode.label === "Table" && !respHasCols && !anchorHasCols && !_metaGraph.introspected.has(key)) {
     try {
       const col = await apiFetch(`/api/admin/metadata/graph/columns?node=${encodeURIComponent(key)}`);
@@ -3561,58 +3595,23 @@ async function _metaGraphExpand(key) {
       } else if (col && !col.introspected && col.reason) {
         introspectNote = ` · 컬럼 없음: ${col.reason}`;
       }
-    } catch (_) { /* graceful — 컬럼 조회 실패는 이웃 확장을 막지 않음 */ }
+    } catch (_) { /* graceful */ }
   }
-  const cy = _metaGraph.cy;
-  try { cy.nodes().removeData("relLabel"); } catch (_) {}   // fix(low): 이웃 탐색 진입 — 검색 유사도 % 라벨 제거
-  _metaGraph.lastQuery = "";                                 // 검색 컨텍스트 종료(상세 배지 게이트 참조)
-  const newIds = _metaGraphAddElements(data.nodes || [], data.edges || []) || [];
-  if (newIds.length > 0) {
-    // graph-perf2: 신규 노드 seed. 비-컬럼(Table/기타)은 앵커 주위 ring, **컬럼은 부모 테이블별 세로 스택**으로 seed
-    //   (ring 아님) → randomize:false fcose 가 이미 세로 정렬된 상태에서 출발 → blob(원형 뭉치) 방지. 최종 정합은
-    //   layoutstop 의 _metaGraphPlaceColumns 결정론 배치가 보장(seed 는 수렴 안정성 보험).
-    const anchor = cy.getElementById(key);
-    const ap = (anchor && anchor.length) ? anchor.position() : { x: 0, y: 0 };
-    const nonCols = [], colsByParent = new Map();
-    newIds.forEach((id) => {
-      const nd = cy.getElementById(id);
-      if (!nd || !nd.length) return;
-      if (nd.data("label") === "Column") {
-        const pid = nd.parent().length ? nd.parent().id() : "";
-        if (!colsByParent.has(pid)) colsByParent.set(pid, []);
-        colsByParent.get(pid).push(nd);
-      } else { nonCols.push(nd); }
-    });
-    nonCols.forEach((nd, i) => {
-      const ang = (i / Math.max(1, nonCols.length)) * 2 * Math.PI;
-      nd.position({ x: ap.x + Math.cos(ang) * 90 + (i % 6) * 6, y: ap.y + Math.sin(ang) * 90 + (i % 5) * 6 });
-    });
-    colsByParent.forEach((cols, pid) => {
-      cols.sort(_metaGraphColCmp);   // 동일 ordinal 비교자 — 배치 로직과 drift 방지
-      const pnode = pid ? cy.getElementById(pid) : null;
-      const pc = (pnode && pnode.length) ? pnode.position() : ap;   // 부모 테이블 중심(없으면 앵커)
-      const y0 = pc.y - (cols.length - 1) / 2 * _META_COL_PITCH;
-      cols.forEach((c, j) => { c.position({ x: pc.x, y: y0 + j * _META_COL_PITCH }); });
-    });
-    // 증분 레이아웃: 앵커(더블클릭 노드)만 고정하고 나머지는 relax → 신규 노드가 주변 기존 노드를
-    //   '부드럽게 밀어내' 겹침을 없앤다. 전체 fit 대신 신규 영역으로 카메라 이동.
-    const focus = cy.collection();
-    if (anchor && anchor.length) focus.merge(anchor);
-    newIds.forEach((id) => { const n = cy.getElementById(id); if (n && n.length) focus.merge(n); });
-    _metaGraphLayout({ incremental: true, newIdSet: new Set(newIds), focusEles: focus, anchorId: key });
-  } else {
-    // 새 노드 없음(이미 펼쳐졌거나 이웃 없음): 재배치 불필요 — 앵커로만 부드럽게 이동.
-    try { const a = cy.getElementById(key); if (a && a.length) cy.animate({ center: { eles: a } }, { duration: 350 }); } catch (_) {}
-  }
-  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}${introspectNote}`);
-  // 항목1: 확장으로 새로 들어온 노드에도 이미 분석된/진행중 마커를 즉시 반영(개별 클릭 불필요).
+  _metaGraph.mode = "neighbor";
+  _metaGraph.lastQuery = "";
+  _metaGraph.nodes.forEach((n) => { delete n.rel; });   // 이웃 탐색 진입 — 검색 유사도 크기 해제
+  _metaGraphIngest(data.nodes || [], data.edges || []);
+  const anchorCols = (data.nodes || []).some((x) => x && x.label === "Column" && _metaColParent(x.key, x.fqn) === key);
+  if (anchorCols) _metaGraph.expanded.add(key);
+  await _metaG6Apply(true);
   _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
+  _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
+  _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}${introspectNote}`);
 }
 
-// feature-0016 ERD-card: Column 의 compound 부모 = 소속 Table (scope:...fqn 에서 마지막 세그먼트 제거).
-//   컬럼을 테이블 박스 안에 넣어 겹침을 원천 차단(fcose 가 박스 bounds 로 이웃 공간확보). 미상 시 null.
+// feature-0016 ERD-card: Column 의 소속 Table (scope:...fqn 에서 마지막 세그먼트 제거). 미상 시 null.
 function _metaColParent(key, fqn) {
   if (!key) return null;
   const idx = key.indexOf(":");
@@ -3625,239 +3624,43 @@ function _metaColParent(key, fqn) {
   return scope + ":" + parts.slice(0, -1).join(".");   // 마지막(컬럼) 세그먼트 제거 → 테이블 fqn
 }
 
-// 반환: 이번에 새로 add 된 (compound 부모 제외) 노드 id 배열 — 증분 레이아웃이 이들만 자유 배치.
-//   ERD-card: Table/Schema 를 먼저 add(1-pass) 한 뒤 Column 을 add(2-pass) — 컬럼의 부모(테이블)가 존재하도록.
-function _metaGraphAddElements(nodes, edges) {
-  const cy = _metaGraph.cy;
-  if (!cy) return [];
+// API nodes/edges → 모델(_metaGraph.nodes/edges Map) 병합. 반환: 새로 추가된 노드 key 배열.
+//   HAS_TABLE/HAS_COLUMN 은 containment(컬럼 fqn 으로 부모 도출)라 엣지로 저장하지 않는다.
+function _metaGraphIngest(nodes, edges) {
   const added = [];
-  const arr = nodes || [];
-  const addNode = (n) => {
+  (nodes || []).forEach((n) => {
     if (!n || !n.key) return;
-    if (n.label === "Schema") { _metaEnsureCat(cy, n.key); return; }
+    if (n.label === "Schema") { if (!_metaGraph.nodes.has(n.key)) { _metaGraph.nodes.set(n.key, { key: n.key, label: "Schema", name: n.name || n.fqn || n.key, fqn: n.fqn || "" }); } return; }
     const ord = (typeof n.ordinal === "number" && isFinite(n.ordinal)) ? n.ordinal : null;
-    const isCol = (n.label === "Column");
-    // ERD-card: Column 부모 = 테이블(존재 시). 테이블 미존재(검색 nodes-only 등)면 스키마로 폴백.
-    let pid = null, isColFallback = false;
-    if (isCol) {
-      const tk = _metaColParent(n.key, n.fqn);
-      if (tk && cy.getElementById(tk).length) { pid = tk; }
-      else { pid = _metaCatParent(n.key, n.fqn); isColFallback = true; }   // 테이블 미존재 → 스키마 폴백(m2: 스키마 박스 보장)
-    } else {
-      pid = _metaCatParent(n.key, n.fqn);
-    }
-    const existing = cy.getElementById(n.key);
-    if (existing.length) {
-      const upd = { label: n.label, name: n.name || n.fqn || n.key,
-        fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
-      if (typeof n.score === "number") upd.score = n.score;   // 항목1: pg_trgm 유사도
-      existing.data(upd);
-      if (isCol && pid && existing.parent().id() !== pid && cy.getElementById(pid).length) {
-        try { existing.move({ parent: pid }); } catch (_) {}   // 컬럼을 테이블 박스로 재부모(스키마→테이블)
-      }
-      return;
-    }
-    if (pid && (!isCol || isColFallback)) _metaEnsureCat(cy, pid);   // 스키마 컨테이너 보장(테이블 + 컬럼 스키마-폴백). 컬럼→테이블 부모는 존재 확인됨.
-    const data = { id: n.key, label: n.label || "Node", name: n.name || n.fqn || n.key,
-      fqn: n.fqn || "", description: n.description || "", source: n.source || "", ordinal: ord };
-    if (typeof n.score === "number") data.score = n.score;   // 항목1: pg_trgm 유사도(엔드포인트 전달)
-    if (_metaGraph.analyzed && _metaGraph.analyzed.has(n.key)) data.ai = 1;   // 항목2: 재추가 시 분석 마커 유지
-    if (_metaGraph.running && _metaGraph.running.has(n.key)) data.aiRunning = 1;   // graphux5-progress: 분석중 마커도 재추가 시 유지
-    if (pid) data.parent = pid;
-    cy.add({ group: "nodes", data });
-    added.push(n.key);
-  };
-  arr.filter((n) => n && n.label !== "Column").forEach(addNode);   // 1-pass: Schema/Table/기타
-  arr.filter((n) => n && n.label === "Column").forEach(addNode);   // 2-pass: Column(부모 테이블 존재 후)
+    const existing = _metaGraph.nodes.get(n.key);
+    const rec = existing || { key: n.key };
+    rec.label = n.label || rec.label || "Node";
+    rec.name = n.name || n.fqn || rec.name || n.key;
+    rec.fqn = n.fqn || rec.fqn || "";
+    rec.description = (n.description != null) ? n.description : (rec.description || "");
+    rec.source = n.source || rec.source || "";
+    if (ord != null) rec.ordinal = ord;
+    if (typeof n.score === "number") rec.score = n.score;
+    if (!existing) { _metaGraph.nodes.set(n.key, rec); added.push(n.key); }
+  });
   (edges || []).forEach((e) => {
     if (!e || !e.source || !e.target) return;
-    if (e.type === "HAS_TABLE") return;    // 스키마→테이블 = compound 컨테인먼트(엣지 생략).
-    if (e.type === "HAS_COLUMN") return;   // ERD-card: 테이블→컬럼 = compound 컨테인먼트(엣지 생략).
+    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN") return;   // containment
     const id = `${e.source}|${e.type}|${e.target}`;
-    if (cy.getElementById(id).length) return;
-    if (!cy.getElementById(e.source).length || !cy.getElementById(e.target).length) return;
-    // feature-0016: status/weight/edge_source 를 엣지 데이터로 실어 신뢰(실선)·추정(점선) 구분.
-    cy.add({ group: "edges", data: { id, source: e.source, target: e.target, label: e.type || "",
-      status: e.status || "", esource: e.edge_source || "",
-      weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" } });
+    if (_metaGraph.edges.has(id)) return;
+    _metaGraph.edges.set(id, { id, source: e.source, target: e.target, type: e.type || "",
+      status: e.status || "", edge_source: e.edge_source || "",
+      weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" });
   });
   return added;
 }
 
-// feature-0016 ERD-card: 컬럼(테이블 compound 자식)을 박스 안에서 ordinal 세로 정렬. graph-perf2 부터는 이를
-//   fcose 제약이 아니라 layoutstop 의 결정론 배치(_metaGraphPlaceColumns)로 수행 — fcose 제약은 다수 컬럼
-//   수렴 실패(blob)와 tick 당 동기 계산(프레임 거침)을 유발했다. 컬럼은 compound 부모(테이블) 이동을 자동 추종.
-// graph-perf2: 단일 정렬 비교자(ordinal 숫자 우선·미상=MAX, 동률 name localeCompare) — seed·결정론 배치가 공유(정렬 drift 방지).
+// 컬럼 정렬 비교자(모델 객체): ordinal 숫자 우선(미상=MAX), 동률 name.
 function _metaGraphColCmp(a, b) {
-  const oa = a.data("ordinal"), ob = b.data("ordinal");
-  const na = (typeof oa === "number" && isFinite(oa)) ? oa : Number.MAX_SAFE_INTEGER;
-  const nb = (typeof ob === "number" && isFinite(ob)) ? ob : Number.MAX_SAFE_INTEGER;
+  const na = (typeof a.ordinal === "number" && isFinite(a.ordinal)) ? a.ordinal : Number.MAX_SAFE_INTEGER;
+  const nb = (typeof b.ordinal === "number" && isFinite(b.ordinal)) ? b.ordinal : Number.MAX_SAFE_INTEGER;
   if (na !== nb) return na - nb;
-  return String(a.data("name") || "").localeCompare(String(b.data("name") || ""));
-}
-// 테이블별 컬럼을 ordinal 정렬해 Map<tableId,[colEls]> 반환(fcose 제약 대체 — 결정론 배치·seed 공용 소스).
-function _metaGraphOrderedColumns() {
-  const cy = _metaGraph.cy;
-  const map = new Map();
-  if (!cy) return map;
-  try {
-    cy.nodes("[label='Table']").forEach((t) => {
-      if (!(t.isParent && t.isParent())) return;
-      const cols = t.children("[label='Column']").toArray().sort(_metaGraphColCmp);
-      if (cols.length) map.set(t.id(), cols);
-    });
-  } catch (_) {}
-  return map;
-}
-const _META_COL_PITCH = 18;   // 컬럼 중심 간격(dot 12 + gap 6) — seed 와 결정론 배치 공유. 짧을수록 박스 세로↓=인접 겹침↓(라벨 가독 유지 하한)
-// graph-perf2: 컬럼을 부모 박스 안 ordinal 세로 스택으로 **결정론적** 배치(fcose 제약 대체). 근거: fcose
-//   post-constraint(alignment/relativePlacement)는 다수 컬럼의 ring seed 에서 세로 라인 수렴을 보장 못 해
-//   blob(원형 뭉치)이 잔존했고, 그 제약을 화면 전체 테이블에 매 tick(numIter 1000) 적용하는 동기 계산이 프레임
-//   거침의 주원인이었다. 컬럼 정렬을 fcose 밖 결정론 코드로 이관 → blob·거침 동시 해소(WebGL 은 렌더만 GPU 화라
-//   이 계산 병목과 무관했음). layoutstop(fcose 종료) 후 호출 — fcose 가 덮어쓰지 않음. batch 로 감싸 WebGL
-//   재업로드 프레임 튐/중간 리렌더 방지. 컬럼 position 만 set → Cytoscape 가 부모 compound bounds 자동 재계산 = containment 유지.
-function _metaGraphPlaceColumns() {
-  const cy = _metaGraph.cy;
-  if (!cy) return;
-  const byTable = _metaGraphOrderedColumns();
-  if (!byTable.size) return;
-  try {
-    cy.startBatch();
-    byTable.forEach((cols) => {
-      if (!cols.length) return;
-      let sx = 0, sy = 0;
-      cols.forEach((c) => { const p = c.position(); sx += p.x; sy += p.y; });
-      const cx = sx / cols.length;                                              // 현 컬럼 무게중심 x 로 통일(세로 라인)
-      const y0 = (sy / cols.length) - (cols.length - 1) / 2 * _META_COL_PITCH;  // 무게중심 기준 상하 대칭 → 부모 위치 보존
-      cols.forEach((c, i) => { c.position({ x: cx, y: y0 + i * _META_COL_PITCH }); });
-    });
-    cy.endBatch();
-  } catch (_) { try { cy.endBatch(); } catch (_) {} }
-}
-
-function _metaGraphLayout(opts) {
-  if (!_metaGraph.cy) return;
-  opts = opts || {};
-  const cy = _metaGraph.cy;
-  const cnt = cy.nodes().length;
-  const incremental = !!opts.incremental;
-  const animate = cnt <= 600;   // 초대형은 애니메이션 생략(성능)
-  // graph-perf2: 컬럼 세로정렬을 fcose 제약(alignment/relativePlacement)에서 **제거**하고 layoutstop 의
-  //   `_metaGraphPlaceColumns` 결정론 배치로 이관(blob·프레임 거침 동시 해소 — 위 헬퍼 주석 참조). fcose 는
-  //   이제 박스(테이블/스키마 compound)와 일반 노드 배치만 담당 → tick 당 제약 부하 소멸 = 동기 계산 급감.
-  const base = {
-    nodeDimensionsIncludeLabels: true,    // ★ 라벨 포함 충돌 회피(겹침 제거) — 두 경로 공통 유지
-    uniformNodeDimensions: false,
-    nodeSeparation: 220,   // graph-perf2: 150→220 — 컬럼 세로 스택으로 박스가 세로로 길어져(결정론 배치) 인접 compound 겹침 여지↑ → 박스 간격 확대로 상쇄
-
-    tilingPaddingVertical: 30, tilingPaddingHorizontal: 30,
-    nodeRepulsion: () => 12000, idealEdgeLength: () => 120, gravity: 0.2,
-    gravityRangeCompound: 1.5, gravityCompound: 1.0,
-    animate: animate, animationEasing: "ease-out",
-  };
-  if (_metaGraph.fcose) {
-    try {
-      let cfg;
-      if (incremental) {
-        // 적대리뷰 MAJOR fix: 전체-스프레드는 **이번 확장이 ERD 박스를 새로 들여올 때만** 발동한다. 예전엔
-        //   그래프에 박스가 하나라도 있으면(hasCompound=전체 스캔) 무관한 term/노드 확장까지 전체가 튀었다. 신규
-        //   노드에 Column(=박스 자식) 또는 새 compound Table 이 있을 때만 full-spread; 그 외(순수 노드·term 확장)는
-        //   기존 국소 relax(앵커·먼 노드 고정) 유지 → 박스 추가 시에만 벌림, 무관한 확장은 부드러운 국소 push.
-        let newAddsBox = false;
-        if (opts.newIdSet) {
-          for (const id of opts.newIdSet) {
-            const n = cy.getElementById(id);
-            if (!n || !n.length) continue;
-            const lbl = n.data("label");
-            if (lbl === "Column" || (lbl === "Table" && n.isParent && n.isParent())) { newAddsBox = true; break; }
-          }
-        }
-        const hasCompound = newAddsBox;   // graph-perf2: 컬럼 제약 제거로 _cc 참조 삭제 — 박스 신규 추가 여부만으로 판정
-        if (hasCompound) {
-        // ERD compound 박스 존재: 국소 relax(먼 노드 고정)는 중첩 compound(tall 박스)를 못 벌려 박스끼리 겹친다
-        //   → **전체 스프레드**(고정 없음·packComponents·반복↑)로 박스를 벌린다(사용자 결정: 겹침 해소 우선, 문맥
-        //   일부 이동 감수). randomize:false 라 현 배치에서 relax(full 재무작위화보다 덜 튐), 카메라는 layoutstop
-        //   focus-fit 이 앵커+신규로 따라감. 실측(141테이블 compound): 박스겹침 886→0, 109ms.
-        cfg = Object.assign({}, base, {
-          name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
-          animationDuration: 600, packComponents: true, numIter: 1000,
-          nodeRepulsion: () => 18000, idealEdgeLength: () => 130,
-        });
-        } else {
-        // 확장(더블클릭, 비-compound): **신규 노드 주변(반경 R)의 기존 노드만 relax → 부드럽게 밀어냄** (사용자 요청).
-        //   먼 노드·앵커는 고정 → 원거리 배치(문맥) 보존 + 뷰 안정. 신규 노드의 반발이 반경 안 이웃만 밀어내
-        //   겹침을 해소한다. randomize:false = 현 좌표에서 국소 완화. numIter 250 유지(프리즈 완화 커밋 수치).
-        let cx = 0, cy0 = 0;
-        const a = opts.anchorId ? cy.getElementById(opts.anchorId) : null;
-        if (a && a.length) { cx = a.position("x"); cy0 = a.position("y"); }
-        else {   // 앵커 부재/compound: 신규 노드 무게중심을 relax 중심으로(fail-open 방지)
-          let sx = 0, sy = 0, k = 0;
-          (opts.newIdSet ? [...opts.newIdSet] : []).forEach((id) => { const n = cy.getElementById(id); if (n && n.length) { sx += n.position("x"); sy += n.position("y"); k++; } });
-          cx = k ? sx / k : 0; cy0 = k ? sy / k : 0;
-        }
-        const newCount = opts.newIdSet ? opts.newIdSet.size : 0;
-        const R = 160 + Math.sqrt(Math.max(1, newCount)) * 55;   // 신규 규모에 비례한 완화 반경
-        const fixed = [];
-        cy.nodes().forEach((n) => {
-          const isAnchor = !!(opts.anchorId && n.id() === opts.anchorId);
-          // M1: compound 부모는 자식이 대신 산정되나, **앵커(컬럼 보유 테이블=compound)는 반드시 고정**해 뷰
-          //   튐 방지. 앵커 parent 를 fixed 에 넣어도 alignment/relative 는 그 자식(컬럼)에 걸려 충돌 없음.
-          if (n.isParent() && !isAnchor) return;
-          if (opts.newIdSet && opts.newIdSet.has(n.id())) return;     // 신규는 자유(push 주체)
-          if (n.data("label") === "Column") return;                  // 컬럼은 layoutstop 결정론 배치(_metaGraphPlaceColumns) 관리 — fixed 제외
-          const p = n.position();
-          // 앵커는 항상 고정. 반경 밖 노드도 고정(원거리 문맥 보존). 반경 안(앵커 제외)만 자유(밀림).
-          if (isAnchor || Math.hypot(p.x - cx, p.y - cy0) > R) {
-            fixed.push({ nodeId: n.id(), position: { x: p.x, y: p.y } });
-          }
-        });
-        cfg = Object.assign({}, base, {
-          name: "fcose", randomize: false, quality: "default", fit: false, padding: 40,
-          animationDuration: 500, packComponents: false, numIter: 250,   // 프리즈 완화 커밋(1bb45f3) 수치 유지
-          nodeRepulsion: () => 16000, idealEdgeLength: () => 130,         // 국소 push 용 완만한 반발(전 노드 자유 아님)
-          fixedNodeConstraint: fixed,   // 앵커 + 반경 밖 노드 고정 → 항상 비어있지 않음(전체폭발 방지)
-        });
-        }   // end else (비-compound 국소 relax)
-      } else {
-        // 초기 로드/검색 펼침 애니메이션. quality proof→default + numIter 대폭 축소로 **fcose 동기 계산
-        // 프리즈**를 줄인다(격리측정 400노드: proof/2500 프리즈 402ms → default/600 250ms). 계산은 메인스레드
-        // JS 라 HW 가속과 무관 — 저프레임 애니의 근본 원인 중 하나. nodeSeparation·nodeDimensionsIncludeLabels
-        // 유지라 비겹침 스프레드 품질은 보존.
-        cfg = Object.assign({}, base, {
-          name: "fcose", randomize: true, quality: "default", fit: true, padding: 40,
-          animationDuration: 700, packComponents: true, numIter: cnt > 200 ? 600 : 1000,
-        });
-      }
-      try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}   // 동시성: 진행 중 레이아웃 중단(연타·경쟁 방지)
-      const layout = cy.layout(cfg);
-      _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-      // graph-webgl: WebGL 렌더러가 GPU 로 부드럽게 그리므로 애니 중 라벨/엣지를 **숨기지 않는다**(항상 표시).
-      //   (canvas-2D 시절엔 프레임당 텍스트 래스터/엣지 재계산 비용 때문에 숨겼으나, WebGL 로 불필요 + 사용자 불호.)
-      layout.one("layoutstop", () => {
-        _metaGraph._layoutRunning = false;
-        // graph-perf2: fcose 종료 후 컬럼을 박스 안 ordinal 세로 스택으로 결정론 배치(fit 전 — fit 이 재배치된 박스
-        //   bounds 를 읽도록). fcose 제약을 뺐으므로 이 배치가 컬럼 정합의 유일·최종 소스(모든 fcose 경로 공통).
-        _metaGraphPlaceColumns();
-        try {
-          if (incremental && opts.focusEles && opts.focusEles.length) {
-            cy.animate({ fit: { eles: opts.focusEles, padding: 80 } }, { duration: 450, easing: "ease-out" });   // 확장: 카메라를 신규 이웃으로 이동
-          } else {
-            cy.fit(undefined, 40);   // 전체: 컬럼 포함 재맞춤(스프레드 애니 종료 후 1회)
-          }
-        } catch (_) {}
-      });
-      layout.run();
-      return;
-    } catch (_) {}
-  }
-  try {
-    try { if (_metaGraph._layout) _metaGraph._layout.stop(); } catch (_) {}
-    const layout = _metaGraph.cy.layout({ name: "cose", animate: animate, padding: 40, nodeRepulsion: 14000,
-      idealEdgeLength: 120, nodeDimensionsIncludeLabels: true, fit: !incremental });
-    _metaGraph._layout = layout; _metaGraph._layoutRunning = true;
-    layout.one("layoutstop", () => { _metaGraph._layoutRunning = false; _metaGraphPlaceColumns(); });   // graph-perf2: cose 폴백도 결정론 배치
-    layout.run();
-  } catch (_) { _metaGraph._layoutRunning = false; }
+  return String(a.name || "").localeCompare(String(b.name || ""));
 }
 
 function _metaGraphRenderDetailEmpty() {
@@ -3892,9 +3695,9 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     ? self.key.slice(0, self.key.indexOf(":")) : (adminState.metadata.scopeKey || "common");
   let relPct = null;
   try {
-    const gn = _metaGraph.cy && _metaGraph.cy.getElementById(self.key);
-    // fix(low): 검색 컨텍스트(lastQuery 활성)일 때만 유사도 배지 — 확장/리셋 후 stale 배지 방지.
-    if (_metaGraph.lastQuery && gn && gn.length && typeof gn.data("rel") === "number") relPct = Math.round(gn.data("rel") * 100);
+    const gn = _metaGraph.nodes.get(self.key);
+    // 검색 컨텍스트(lastQuery 활성)일 때만 유사도 배지 — 확장/리셋 후 stale 배지 방지.
+    if (_metaGraph.lastQuery && gn && typeof gn.rel === "number") relPct = Math.round(gn.rel * 100);
   } catch (_) {}
   const byKey = {};
   (nodes || []).forEach((n) => { if (n && n.key) byKey[n.key] = n; });
@@ -4015,21 +3818,18 @@ function _metaGraphPollRun(runId, focusKey) {
   setTimeout(tick, 1500);
 }
 
-// graphux5-progress: 현재 분석 중(running) 노드에 주황 점선 마커(aiRunning=1). 더 이상 running 아니면 해제.
+// 현재 렌더된 노드에 마커/선택 state 재적용(전체 rebuild 없이 — 위치 불변).
+function _metaGraphRefreshStates() {
+  const g = _metaGraph.graph;
+  if (!g) return;
+  _metaGraph.nodes.forEach((n) => { try { g.setElementState(n.key, _metaNodeStates(n.key)); } catch (_) {} });
+}
+
+// AI 분석 중(running) 노드 주황 점선 마커. done 은 제외.
 function _metaGraphMarkRunning(runningKeys, doneKeys) {
-  if (!_metaGraph.cy) return;
   const done = new Set(doneKeys || []);
-  const nowRunning = new Set(runningKeys || []);
-  if (_metaGraph.running) {
-    _metaGraph.running.forEach((k) => {
-      if (!nowRunning.has(k)) { try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("aiRunning", 0); } catch (_) {} }
-    });
-  }
-  _metaGraph.running = nowRunning;
-  (runningKeys || []).forEach((k) => {
-    if (done.has(k)) return;
-    try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("aiRunning", 1); } catch (_) {}
-  });
+  _metaGraph.running = new Set((runningKeys || []).filter((k) => !done.has(k)));
+  _metaGraphRefreshStates();
 }
 
 // graphux5-progress: AI 능동 분석 진행 현황을 상단 패널에 라이브 렌더. 노드 선택과 무관하게 항상 갱신하고,
@@ -4064,14 +3864,10 @@ function _metaGraphRenderProgress(st) {
   if (cb) cb.addEventListener("click", () => { panel.style.display = "none"; panel.dataset.dismissed = st.run_id || "1"; });
 }
 
-// 완료 노드 키에 그래프 분석 마커(data ai=1) 부여 + 세션 set 에 기억(재추가 시 유지).
+// 완료 노드 키에 분석 마커(보라). 세션 set 에 기억(rebuild 시 유지).
 function _metaGraphMarkAnalyzed(keys) {
-  if (!_metaGraph.cy) return;
-  if (!_metaGraph.analyzed) _metaGraph.analyzed = new Set();
-  (keys || []).forEach((k) => {
-    _metaGraph.analyzed.add(k);
-    try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("ai", 1); } catch (_) {}
-  });
+  (keys || []).forEach((k) => _metaGraph.analyzed.add(k));
+  _metaGraphRefreshStates();
 }
 
 // 항목1: 스코프 내 이미 분석된/진행중 노드 마커를 그래프 로드/검색/확장 직후 **일괄** 적용 —
@@ -4080,176 +3876,44 @@ function _metaGraphMarkAnalyzed(keys) {
 //   DB 에 저장된 분석 상태가 클릭 전까지 반영되지 않던 근본 원인 수정. 활성 폴의 running set 은 덮어쓰지
 //   않도록 additive 로만 적용(clear 안 함).
 async function _metaGraphSyncAnalysisMarkers(scope) {
-  if (!_metaGraph.cy) return;
+  if (!_metaGraph.graph) return;
   const sc = scope || adminState.metadata.scopeKey || "common";
-  if (!sc || sc === "common") return;   // 공용 스코프는 데이터소스 그래프 없음(마커 대상 없음)
+  if (!sc || sc === "common") return;
   let res;
   try { res = await apiFetch(`/api/admin/metadata/graph/analyze/status?scope=${encodeURIComponent(sc)}`); }
-  catch (_) { return; }   // 실패해도 그래프는 정상 — 마커만 생략(graceful)
+  catch (_) { return; }
   if (!res) return;
-  const done = res.done_keys || [];
-  _metaGraphMarkAnalyzed(done);   // 보라 '분석됨' + 세션 set 기억(재추가 시 유지)
-  if (!_metaGraph.running) _metaGraph.running = new Set();
-  const doneSet = new Set(done);
-  (res.running_keys || []).forEach((k) => {
-    if (doneSet.has(k)) return;
-    _metaGraph.running.add(k);
-    try { const n = _metaGraph.cy.getElementById(k); if (n && n.length) n.data("aiRunning", 1); } catch (_) {}
-  });
+  (res.done_keys || []).forEach((k) => _metaGraph.analyzed.add(k));
+  const doneSet = new Set(res.done_keys || []);
+  (res.running_keys || []).forEach((k) => { if (!doneSet.has(k)) _metaGraph.running.add(k); });
+  _metaGraphRefreshStates();
 }
 
-// 항목3: 스키마 클러스터명 오버레이 레이어 — 캔버스 컨테이너 위에 pointer-events:none 오버레이 div 를 1회 생성.
-function _metaGraphEnsureLabelLayer(container) {
-  if (!container || _metaGraph.labelLayer) return;
-  try {
-    // cytoscape 는 컨테이너에 캔버스를 절대배치하므로 컨테이너는 position:relative 여야 오버레이가 정합(CSS 로 보장).
-    const layer = document.createElement("div");
-    layer.className = "admin-meta-graph-label-layer";
-    container.appendChild(layer);
-    _metaGraph.labelLayer = layer;
-    _metaGraph.labelDivs = new Map();
-  } catch (_) {}
-}
-
-// 항목3: 스키마 클러스터명을 각 클러스터 박스의 좌상단(좌측 약간 여백)에 렌더 + 무잘림. render 이벤트마다 rAF 로 위치 동기화.
-//   cytoscape native 라벨(중앙정렬 + text-max-width ellipsis 상속)의 잘림을 대체. 클러스터는 소수라 비용 무시 가능.
-function _metaGraphSyncClusterLabels() {
-  const cy = _metaGraph.cy, layer = _metaGraph.labelLayer;
-  if (!cy || !layer) return;
-  if (!_metaGraph.labelDivs) _metaGraph.labelDivs = new Map();
-  const divs = _metaGraph.labelDivs;
-  const seen = new Set();
-  // 줌에 따라 클러스터명 폰트를 완만히 스케일하되 항상 가독 범위로 클램프(둥근 사각형 존중 + 무잘림).
-  const z = (typeof cy.zoom === "function") ? cy.zoom() : 1;
-  const fs = Math.max(10, Math.min(16, Math.round(13 * z)));
-  const padX = 10, padY = 4;   // 좌측/상단 안쪽 여백(screen px) — 부드러운 사각형 모서리 존중
-  cy.nodes(":parent").forEach((n) => {
-    if (n.data("label") !== "Schema" && !n.data("isCat")) return;   // 스키마 클러스터만(테이블 ERD-카드는 native)
-    const id = n.id();
-    seen.add(id);
-    let div = divs.get(id);
-    if (!div) {
-      div = document.createElement("div");
-      div.className = "admin-meta-graph-cluster-label";
-      layer.appendChild(div);
-      divs.set(id, div);
-    }
-    const nm = n.data("name") || n.data("fqn") || id;
-    if (div._nm !== nm) { div.textContent = nm; div._nm = nm; }
-    let bb;
-    try { bb = n.renderedBoundingBox({ includeLabels: false, includeOverlays: false }); }
-    catch (_) { bb = null; }
-    if (!bb) { div.style.display = "none"; return; }
-    div.style.fontSize = fs + "px";
-    // 좌상단 정렬 + 좌측 여백. 이름은 잘리지 않고(무 max-width, nowrap) 필요 시 박스 밖으로 확장.
-    div.style.transform = `translate(${Math.round(bb.x1 + padX)}px, ${Math.round(bb.y1 + padY)}px)`;
-    div.style.display = "";
-  });
-  // 더 이상 존재하지 않는 클러스터의 라벨 div 제거(그래프 교체/리셋 대응).
-  divs.forEach((div, id) => {
-    if (!seen.has(id)) { try { div.remove(); } catch (_) {} divs.delete(id); }
-  });
-}
-
-// graph-panel-perms(task2): 확장된 테이블(컬럼 자식을 가진 compound 박스)의 **우측 하단 구석**에 '접기' 버튼을
-//   HTML 오버레이로 얹는다. 캔버스가 canvas/WebGL 이라 노드에 네이티브 버튼을 못 붙이므로, 스키마 클러스터 라벨과
-//   동일한 오버레이 레이어(pointer-events:none, 버튼만 auto)·rAF 동기화 패턴을 재사용한다. 버튼 클릭 → _metaGraphCollapse.
-function _metaGraphSyncCollapseButtons() {
-  const cy = _metaGraph.cy, layer = _metaGraph.labelLayer;
-  if (!cy || !layer) return;
-  if (!_metaGraph.collapseBtns) _metaGraph.collapseBtns = new Map();
-  const btns = _metaGraph.collapseBtns;
-  const seen = new Set();
-  cy.nodes(":parent").forEach((n) => {
-    if (n.data("label") !== "Table") return;
-    if (!n.children('[label="Column"]').length) return;   // 확장 = 컬럼 자식 보유(펼쳐진 테이블만 버튼)
-    const id = n.id();
-    let bb;
-    try { bb = n.renderedBoundingBox({ includeLabels: false, includeOverlays: false }); }
-    catch (_) { bb = null; }
-    if (!bb || bb.w < 26 || bb.h < 26) {   // 너무 작으면(줌아웃) 버튼 생략
-      const ex = btns.get(id); if (ex) ex.style.display = "none";
-      return;
-    }
-    seen.add(id);
-    let btn = btns.get(id);
-    if (!btn) {
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "admin-meta-graph-collapse-btn";
-      btn.setAttribute("aria-label", "테이블 접기");
-      btn.title = "이 테이블 컬럼 접기";
-      btn.textContent = "−";   // 마이너스(−) = 접기
-      // cytoscape 팬/탭이 버튼 조작을 가로채지 않도록 이벤트 격리.
-      btn.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
-      btn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
-      btn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); _metaGraphCollapse(id); });
-      layer.appendChild(btn);
-      btns.set(id, btn);
-    }
-    // 우측 하단 구석에서 2px 안쪽(버튼 18px).
-    btn.style.transform = `translate(${Math.round(bb.x2 - 20)}px, ${Math.round(bb.y2 - 20)}px)`;
-    btn.style.display = "";
-  });
-  // 접힘/제거된 테이블의 버튼 정리.
-  btns.forEach((btn, id) => {
-    if (!seen.has(id)) { try { btn.remove(); } catch (_) {} btns.delete(id); }
-  });
-}
-
-// graph-panel-perms(task2): 확장 테이블 '접기' — 컬럼 자식(+연결 엣지)을 제거해 compound 박스를 dot 노드로 환원.
-//   introspect 캐시에서도 지워 재확장(더블클릭) 시 컬럼을 다시 조회하게 한다.
-function _metaGraphCollapse(key) {
-  const cy = _metaGraph.cy;
-  if (!cy || !key) return;
-  const t = cy.getElementById(key);
-  if (!t || !t.length || !(t.isParent && t.isParent())) return;
-  const cols = t.children('[label="Column"]');
-  if (!cols.length) return;
-  const nm = t.data("name") || key;
-  try {
-    cy.startBatch();
-    cols.connectedEdges().remove();   // 컬럼의 REFERENCES 등 연결 엣지 먼저
-    cols.remove();                     // 컬럼 노드 제거 → 부모 테이블은 leaf(dot) 노드로 환원
-    cy.endBatch();
-  } catch (_) { try { cy.endBatch(); } catch (_) {} }
-  if (_metaGraph.introspected) _metaGraph.introspected.delete(key);   // 재확장 시 즉석조회 재허용
-  _metaGraphSyncCollapseButtons();
-  _metaGraphSyncClusterLabels();
-  _metaGraphStatus(`'${nm}' 테이블 컬럼을 접었습니다 — 테이블을 클릭하면 다시 펼쳐집니다.`);
-}
-
-// 항목2: 스키마 클러스터(compound 컨테이너) 상세 — 스키마명·포함 테이블 목록·개수를 우측 상세 패널에 렌더.
-//   개별 노드와 달리 '무엇을 담고 있는지'(스키마 경계)를 보여준다. depth=1 로 HAS_TABLE 이웃(테이블)을 수집.
-async function _metaGraphShowClusterDetail(node) {
-  if (!_metaGraph.cy || !node) return;
-  const key = node.id();
-  _metaGraph.lastDetailKey = key;   // 항목4: 깊이 변경 시 재전개 대상
-  try { _metaGraph.cy.$(":selected").unselect(); node.select(); } catch (_) {}
-  const schemaName = node.data("name") || node.data("fqn") || key;
+// 스키마 클러스터(combo) 상세 — 스키마명·포함 테이블 목록·개수. combo:click 진입.
+async function _metaGraphShowClusterDetailById(comboId) {
+  if (!_metaGraph.graph || !comboId) return;
+  if (comboId === _META_TERMS_COMBO) { _metaGraphStatus("용어·기타 클러스터"); return; }
+  _metaGraph.lastDetailKey = comboId;
+  const schemaName = _metaComboName(comboId);
   _metaGraphStatus("클러스터 상세 조회 중…");
   let data = null;
-  try { data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(key)}&depth=1`); }
+  try { data = await apiFetch(`/api/admin/metadata/graph?node=${encodeURIComponent(comboId)}&depth=1`); }
   catch (_) { data = null; }
-  const tables = [];
+  let tables = [];
   if (data) {
     const byKey = {};
     (data.nodes || []).forEach((nd) => { if (nd && nd.key) byKey[nd.key] = nd; });
-    (data.edges || []).forEach((e) => {
-      if (e && e.type === "HAS_TABLE" && e.source === key && byKey[e.target]) tables.push(byKey[e.target]);
-    });
-    // HAS_TABLE 엣지가 없으면(투영 방식차) label=Table 노드로 폴백.
-    if (!tables.length) (data.nodes || []).forEach((nd) => { if (nd && nd.label === "Table" && nd.key !== key) tables.push(nd); });
+    (data.edges || []).forEach((e) => { if (e && e.type === "HAS_TABLE" && e.source === comboId && byKey[e.target]) tables.push(byKey[e.target]); });
+    if (!tables.length) (data.nodes || []).forEach((nd) => { if (nd && nd.label === "Table" && nd.key !== comboId) tables.push(nd); });
   }
-  // 캔버스에 이미 로드된 자식(테이블/컬럼) 개수로 보강.
+  // API 가 비면 모델에 로드된 이 스키마 테이블로 폴백.
   let childTables = 0, childCols = 0;
-  try {
-    node.children().forEach((ch) => {
-      const l = ch.data("label");
-      if (l === "Table") childTables += 1; else if (l === "Column") childCols += 1;
-    });
-  } catch (_) {}
-  _metaGraphRenderClusterDetail(schemaName, node.data("fqn") || schemaName, tables, childTables, childCols);
+  _metaGraph.nodes.forEach((n) => {
+    if (n.label === "Table" && _metaCatParent(n.key, n.fqn) === comboId) childTables += 1;
+    else if (n.label === "Column" && _metaCatParent(n.key, n.fqn) === comboId) childCols += 1;
+  });
+  if (!tables.length) _metaGraph.nodes.forEach((n) => { if (n.label === "Table" && _metaCatParent(n.key, n.fqn) === comboId) tables.push(n); });
+  _metaGraphRenderClusterDetail(schemaName, schemaName, tables, childTables, childCols);
   _metaGraphStatus(`클러스터: ${schemaName} · 테이블 ${tables.length || childTables}개`);
 }
 

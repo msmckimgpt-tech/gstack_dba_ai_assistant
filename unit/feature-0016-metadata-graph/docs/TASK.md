@@ -390,3 +390,22 @@ source_of_truth: true
 - [x] T20.9 라이브 실데이터 검증 PASS(LLM 0): `dk_data_release.Achievement` 하위 컬럼 4개 rel 1.0 통과 +
       **부모 Schema(형제 테이블 123개) 탈락 = fan-out 지배 경로 차단 정량 확인**. AchievementReward 17컬럼 통과.
       ANCHOR §4 는 human 외부검증 전용이라 미기입(AI 프로브는 TEST/REPORT 기록). UI 마커 시각은 PB-0008 후속.
+
+## 21. 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (graph-g6, 2026-07-02, entry persona dispatch)
+사용자 관찰 5건(①클릭접힘 ②위치점프 ③줌 동기화지연 ④클러스터 뒤섞임 ⑤테두리 왜곡) → 엔진 단위 개선.
+등급: **Major**(cross-cut 프론트, feature-0003 admin.js 코드 거주; 데이터 API 불변·비파괴). 정본: DECISIONS ADR-004.
+
+### 21.1 리서치·검증
+- [x] T21.1 프로덕션급 렌더러 리서치(G6/Sigma/yFiles/GoJS/Ogma/Cytoscape) → **AntV G6 v5(MIT)** 채택 + 사용자 승인.
+- [x] T21.2 POC(Playwright headless) 전 요소 실증 + G6 v5 함정 확정. `g6-migration/BLUEPRINT.md`·`poc/`.
+
+### 21.2 구현
+- [x] T21.3 G6 v5.1.1 vendored(`vendor/g6.min.js`). admin.html cytoscape·fcose 4종 제거 → g6.min.js. cache-buster `?v=20260702-graph-g6`.
+- [x] T21.4 admin.js 엔진 재작성: `_metaGraph` 모델 + `_metaG6Build`(결정론 grid)·`_metaG6Apply`(setData+draw) + init/loadRoots/search/showDetail/toggleColumns(펼침전용)/collapse("−")/expand/ingest/markers(node state)/clusterDetail. 오버레이 3함수 제거. DOM/API 함수 유지.
+- [x] T21.5 styles.css 오버레이 CSS 제거. `node --check` PASS, 제거심볼 참조 0.
+
+### 21.3 검증
+- [x] T21.6 dev-loop(WSL-headless-harness, 실 admin.html 마크업 + mock apiFetch) 전 플로우 PASS·에러 0: roots·제자리펼침·재클릭무접힘(①)·접기·검색·이웃확장·클러스터상세·AI분석·마커·점선/실선 엣지. (TEST.md)
+- [x] T21.7 §18.8 적대적 코드리뷰(subagent, g6.min.js 번들 계약 교차검증) → **PASS-WITH-FIXES**(CRITICAL/MAJOR 0, MINOR 3건 수정·재검증). REV-20260702T003000 [SUBAGENT].
+- [ ] T21.8 실앱 배포(web 재빌드) + PB-0008 실 Windows 시각검증(하드 게이트) + verify-completion(--pre-commit) PASS.
+- [ ] T21.9 commit/push/PR → main 병합 (외부영향 — confirm).

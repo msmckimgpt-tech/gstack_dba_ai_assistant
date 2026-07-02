@@ -258,3 +258,21 @@ source_of_truth: true
   재sync 로 반영. 외부 계약/인증/데이터 파괴 없음. 배포=alembic 0026 + graph re-sync + web 재배포.
 - Rollback Notes: alembic downgrade(0026 → DROP COLUMN ordinal, 비파괴) + admin.js 캐시버스터 graphux4 환원.
   관계형 SSOT·그래프 노드 자체는 무손상(ordinal 속성만 소거).
+
+## CHG-20260702-graph-g6-engine-swap
+- Date: 2026-07-02
+- Related Requirement: 그래프 뷰 사용자 관찰 5건(①클릭접힘 ②위치점프 ③줌 동기화지연 ④클러스터 뒤섞임 ⑤테두리 왜곡) → 엔진 단위 개선. DECISIONS ADR-004.
+- Summary: 관리콘솔 그래프 뷰 렌더링 엔진을 **Cytoscape.js(WebGL) → AntV G6 v5.1.1(Canvas)** 로 교체.
+  모델 B(2단): 스키마=combo·테이블=rect 칩·컬럼=circle·"−"=rect 컨트롤. JS 모델 → `_metaG6Build()`(위치 포함
+  결정론 grid) → `setData()`+`draw()`. HTML 오버레이(클러스터명·접기버튼) 전량 제거 → G6 네이티브 렌더(③ 소멸).
+  단일클릭=상세+펼침 전용(펼침이면 no-op → ①), "−"만 접기, 더블클릭(320ms)=이웃확장. 점선/실선 엣지 복원.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/vendor/g6.min.js` (신규 vendored, G6 5.1.1 UMD, MIT)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraph*` 엔진 전면 재작성 −762/+476; 오버레이·fcose·cy 로직 제거, DOM/API 함수 유지)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cytoscape·layout-base·cose-base·fcose 4종 제거 → g6.min.js; cache-buster `?v=20260702-graph-g6`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (오버레이 CSS 제거; cache-buster)
+  - `unit/feature-0016-metadata-graph/g6-migration/{BLUEPRINT.md, poc/}` (신규 설계·POC 참조)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-004),TASK(§21),REPORT,TEST}.md`
+- Impact: 프론트엔드 정적 자산만. 데이터 API(`/api/admin/metadata/graph*`) **불변**. 인증/데이터 파괴 없음.
+  검증: WSL-headless-harness(실 마크업+mock API) 전 플로우 PASS·에러 0(TEST.md). 배포=web 재빌드(정적 자산). 완료 게이트=PB-0008 실 Windows 시각검증.
+- Rollback Notes: admin.html 스크립트를 cytoscape 4종으로 환원 + admin.js/styles.css git revert + cache-buster 이전값. 데이터·API 무손상(렌더 계층만).

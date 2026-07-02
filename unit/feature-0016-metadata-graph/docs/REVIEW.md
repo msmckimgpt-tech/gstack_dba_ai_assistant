@@ -255,3 +255,18 @@ source_of_truth: true
 - Risks (수정 후): 잔여 BLOCKER/MAJOR 0. N1~N3 MINOR 는 시각검증 게이트에서 판정. 라이브 e2e 는 PB-0008.
 - Open Questions: 없음.
 - Human Approval Needed: 없음(비파괴 additive·deploy_scope: included). PB-0008 실 브라우저 시각검증은 완료 hard gate(check #13).
+
+## REV-20260702T003000-ai-claude-feature-0016-graph-g6 [SUBAGENT: PASS-WITH-FIXES] — Cytoscape(WebGL)→AntV G6 v5 엔진 교체 적대 리뷰
+- Related Change: graph-g6 (ADR-004). admin.js `_metaGraph*` 엔진 전면 재작성(−762/+476) + admin.html/styles.css. 데이터 API 불변.
+- Method: general-purpose subagent 적대 리뷰. BLUEPRINT.md + 전 `_metaGraph*` 블록 + git diff(vs main) + admin.html/styles.css + **vendored g6.min.js v5.1.1 이벤트 디스패치 내부** 교차검증(G6 v5 API 계약 실증).
+- Verified (전건 PASS): `node --check` PASS · 제거함수 참조 0(AddElements/Layout/PlaceColumns/OrderedColumns/오버레이 3종/cy/cytoscape/fcose) · **`lineDash:false` 부재**(실선은 키 생략) · element `type` 은 style 형제(combos/tables/terms/ctl/circle 전부) · **setData+draw 만**(render+addNodeData 크래시 경로 없음) · `e.target.id` 이벤트 라우팅 정확(번들 내부 7회 사용) · **combo:click 이 자식 노드 클릭 시 미발화**(디스패처 단일 `${targetType}:click`) · 리스너 누수 없음(그래프 on 은 init 가드 후·DOM 은 bound 게이트) · 모델 리셋 정합(roots/search clear, expand additive) · 11개 DOM id 존재.
+- 5개 버그 전부 구조적 해소·미재유발 확인(① toggle=expand-only+ctl only, ② apply(false) no-fit, ③ 오버레이 삭제, ④ _metaNatSort, ⑤ Canvas 벡터).
+- Findings:
+  - **MINOR-1 (수정 완료)**: 단일클릭 컬럼펼침 타이머(300ms)가 더블클릭 창(320ms)보다 짧아, 빠른 더블클릭이 컬럼펼침+이웃확장 동시발동 가능. → 타이머 340ms 로 상향(창 초과) + 게이트를 `_metaTableHasCols` 단일소스로 통일. harness 재검증(단일=펼침·재클릭=무접힘·ctl=접힘) PASS.
+  - **MINOR-2 (수정 완료)**: search/neighbor 가 BLUEPRINT §2 초안의 render()+d3-force 대신 결정론 draw() — **의도적**(force 는 ④ 재유발). `_metaG6Apply` 에 divergence 주석 추가(후속 리뷰어 회귀 방지).
+  - **MINOR-3 (수정 완료)**: styles.css `#metadataGraphCanvas position:relative` 의 오버레이 잔여 주석 정리.
+  - INFO: `X:` ctl-prefix 충돌은 scope 가 문자 그대로 "X:" 여야만 가능 → 실무상 불가.
+  - Edge case 확인 OK: 빈 common scope, search→reset, REFERENCES 엣지 보유 테이블 접기, `__terms__` 클러스터 상세, scalar size circle 컬럼.
+- Verdict: **PASS-WITH-FIXES** — CRITICAL/MAJOR 0. MINOR 3건 전부 수정 반영 + 재검증.
+- Risks (수정 후): 잔여 0. 완료 hard gate = PB-0008 실 Windows 시각검증(check #13).
+- Human Approval Needed: 배포(web 재빌드·라이브 컨테이너 재시작) + commit/push/PR = 외부영향 → confirm.
