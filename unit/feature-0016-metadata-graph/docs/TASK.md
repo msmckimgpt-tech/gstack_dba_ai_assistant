@@ -552,24 +552,50 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 ### 26.2 검증
 - [x] T26.5 node --check PASS. WSL-headless harness **ctxmenu 10/10 PASS**(카드 badge=이름만+개수 pill·접힌
       카드 우클릭 펼치기/상세/복사·펼친 스키마 접기 항목·빈 스키마 badge=0·에러 0) + **initview 회귀 31/31 PASS**.
+- [x] T26.6 verify-completion(--pre-commit) PASS + commit/push/PR #542 merge(100535f8).
+- [x] T26.7 배포(deploy-web.sh 100535f8, soak 통과) + **PB-0008 실 Windows 시각검증 PASS**(62 카드 badge·접힌 카드 우클릭 메뉴·펼치기 라이브 동작·펼친 스키마 접기) + TEST.md Run 기록.
+
+## 27. graph-initview 후속 — 검색 시 스키마 카드 badge 매칭/전체 표기 (search-badge, 2026-07-02, entry persona dispatch)
+사용자 보고: 접힌 스키마 카드는 테이블 개수 badge 가 정상 출력되나 **검색어가 포함되면 badge 가 사라짐**.
+요청 표기: 검색 없음 → `[전체 테이블 개수]`(현행 유지), 검색 필터 → `[검색 테이블 개수 / 전체 테이블 개수]`.
+등급 **Minor**(frontend-only 비파괴, 코드 거주 feature-0003 admin.js).
+<!-- 근본원인: 검색이 매칭 스키마를 combo 로 auto-expand 해 카드(badge 보유)가 사라지고, 스키마명 매칭
+     카드는 search_nodes 응답에 table_count 가 없어 badge 소실. -->
+
+### 27.1 구현
+- [x] T27.1 검색을 **스키마 카드 필터 뷰**로 재설계 — 매칭 노드를 스키마별 집계(Table→스키마, Column→소속
+      테이블의 스키마, Schema명 매칭→0매칭 카드) 후 매칭 스키마를 **카드로 유지**(auto-expand 폐기). 매칭
+      GlossaryTerm/기타는 terms 로 표시. `_metaGraph.searchMatch`(schemaKey→Set 매칭테이블)·`searchMatchTables` 저장.
+- [x] T27.2 `schemaTotals` 캐시(scope별 스키마→전체 테이블수) — roots `mode=schemas` 에서 재구축하고
+      resetModel 에서 **보존**(검색이 모델을 리셋해도 카드 badge 의 '전체 개수' 소스 유지).
+- [x] T27.3 카드 badge: 검색 없음 → `전체`(남색), 검색+매칭 → `매칭/전체`(teal 강조). cnt=null(집계 실패) →
+      matched-only 또는 badge 없음(배지없는 카드 강등 정합). 펼친 스키마 내 매칭 테이블은 rel 부스트로 강조.
+- [x] T27.4 cache-buster `?v=20260702-search-badge`.
+
+### 27.2 검증
+- [x] T27.5 node --check PASS + WSL-headless harness **initview 33/33 PASS**(검색 카드필터·badge 2/12·1/40·1/33·
+      검색 클리어→roots badge 전체(12) 복귀·stale-scope·dead-card·빈스키마·혼합버전) + **ctxmenu 회귀 10/10 PASS**.
+      라이브 badge(teal 매칭/전체) 스크린샷 확인.
+- [x] T27.6 §18.8 적대 리뷰(MAJOR 1+MINOR 3) 반영 + verify-completion PASS + PR #544 merge(8fcda59c).
+- [x] T27.7 배포(deploy-web.sh 8fcda59c, soak 통과) + **PB-0008 실 Windows 시각검증 PASS**(검색 `user` → 카드 12장 badge 매칭/전체 teal, cap `+` 표기, 검색 클리어 전체 원복) + TEST.md Run 기록.
 - [ ] T26.6 verify-completion(--pre-commit) PASS + commit/push/PR/merge.
 - [ ] T26.7 배포(deploy_scope: included) + PB-0008 실 Windows 시각검증 + TEST.md Run 기록.
-## 27. graph-expand-perf — 테이블 노드 더블클릭 프리즈 잔존 해소 (refreshStates per-node setElementState) (2026-07-02, 사용자 후속 보고)
+## 28. graph-expand-perf — 테이블 노드 더블클릭 프리즈 잔존 해소 (refreshStates per-node setElementState) (2026-07-02, 사용자 후속 보고)
 사용자 관찰(graph-perf-bg 배포 후): `mssql-qa-idc.dk_data_release.Achievement` 더블클릭 시 **2~3초 프리즈 잔존**. 정본: DECISIONS ADR-006, MODIFY CHG-20260702-graph-expand-perf.
 등급: **Major**(프론트 렌더 상태-갱신 계층, 데이터 API·스키마 불변·비파괴, 마이그레이션 없음).
 
-### 27.1 진단 (실측 — 헤드리스 harness + web 컨테이너 서버측 계측)
-- [x] T27.1 후보 배제: AGE 이웃 depth=2 = **135ms**(128노드/127엣지) · G6 `setData`+`draw`(200노드+127엣지) = **~200ms**(헤드리스) · introspection = Achievement analyzed 라 **SKIP**. → fetch·render·introspection 모두 병목 아님.
-- [x] T27.2 진짜 병목 특정: `_metaGraphRefreshStates` 의 **전 노드 개별 `g.setElementState`** — G6 v5 건당 ~50ms(startBatch 무효), **실측 200노드 재적용 = 10,046ms**. 더블클릭 → `_metaG6Apply` 가 `_stateCache` clear → 직후 `_metaGraphSyncAnalysisMarkers`(+2.5s 폴)가 cold 로 전 노드 재-setElementState = 프리즈.
+### 28.1 진단 (실측 — 헤드리스 harness + web 컨테이너 서버측 계측)
+- [x] T28.1 후보 배제: AGE 이웃 depth=2 = **135ms**(128노드/127엣지) · G6 `setData`+`draw`(200노드+127엣지) = **~200ms**(헤드리스) · introspection = Achievement analyzed 라 **SKIP**. → fetch·render·introspection 모두 병목 아님.
+- [x] T28.2 진짜 병목 특정: `_metaGraphRefreshStates` 의 **전 노드 개별 `g.setElementState`** — G6 v5 건당 ~50ms(startBatch 무효), **실측 200노드 재적용 = 10,046ms**. 더블클릭 → `_metaG6Apply` 가 `_stateCache` clear → 직후 `_metaGraphSyncAnalysisMarkers`(+2.5s 폴)가 cold 로 전 노드 재-setElementState = 프리즈.
 
-### 27.2 구현 (FE admin.js)
-- [x] T27.3 `_metaG6Apply`: setData 후 `_stateCache` 를 clear 만 하지 않고 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op.
-- [x] T27.4 `_metaGraphRefreshStates`: 변화분(sig≠cache)만 적용 + 변화>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake, fit=false).
-- [x] T27.5 폴 tick 이중 refresh(markAnalyzed+markRunning) 를 **rAF coalescing**(같은 프레임 1회 실행)으로 병합 — 이중 rebuild + in-flight setData/draw 재진입 방지. 본문 `_metaGraphRefreshStatesNow`.
-- [x] T27.6 cache-buster `admin.js?v=20260702-graph-expand-perf`.
+### 28.2 구현 (FE admin.js)
+- [x] T28.3 `_metaG6Apply`: setData 후 `_stateCache` 를 clear 만 하지 않고 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op.
+- [x] T28.4 `_metaGraphRefreshStates`: 변화분(sig≠cache)만 적용 + 변화>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake, fit=false).
+- [x] T28.5 폴 tick 이중 refresh(markAnalyzed+markRunning) 를 **rAF coalescing**(같은 프레임 1회 실행)으로 병합 — 이중 rebuild + in-flight setData/draw 재진입 방지. 본문 `_metaGraphRefreshStatesNow`.
+- [x] T28.6 cache-buster `admin.js?v=20260702-graph-expand-perf`.
 
-### 27.3 검증
-- [x] T27.7 `node --check admin.js` PASS. setElementState 사용처 = 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 둘로 한정 확인.
-- [x] T27.8 **헤드리스 harness 실측**: post-rebuild refresh(마커 무변화) = **0ms**, bulk 55마커 변화 = **rebuild 82ms**, 동일상황 구 per-node = **8,890ms**. 즉 ~9s→~0–80ms.
-- [x] T27.9 **§18.8 적대 2렌즈**(정확성/상태유실 + 프리즈재발): 상태유실 BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음). 프리즈재발 렌즈가 폴 tick 이중 refresh 지적 → rAF coalescing 반영. NIT(combo/schema 캐시·THRESHOLD 경계 200ms)은 수용. REV-20260702T133000 [AGENT-TEAM].
-- [ ] T27.10 graph-expand-perf 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 대량 스키마 노드(Achievement 등) 더블클릭 시 **프리즈 없이 즉시 확장** + AI 능동분석 진행 중 stutter 없음.
+### 28.3 검증
+- [x] T28.7 `node --check admin.js` PASS. setElementState 사용처 = 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 둘로 한정 확인.
+- [x] T28.8 **헤드리스 harness 실측**: post-rebuild refresh(마커 무변화) = **0ms**, bulk 55마커 변화 = **rebuild 82ms**, 동일상황 구 per-node = **8,890ms**. 즉 ~9s→~0–80ms.
+- [x] T28.9 **§18.8 적대 2렌즈**(정확성/상태유실 + 프리즈재발): 상태유실 BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음). 프리즈재발 렌즈가 폴 tick 이중 refresh 지적 → rAF coalescing 반영. NIT(combo/schema 캐시·THRESHOLD 경계 200ms)은 수용. REV-20260702T133000 [AGENT-TEAM].
+- [ ] T28.10 graph-expand-perf 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 대량 스키마 노드(Achievement 등) 더블클릭 시 **프리즈 없이 즉시 확장** + AI 능동분석 진행 중 stutter 없음.

@@ -3098,6 +3098,10 @@ const _metaGraph = {
   schemaTruncated: new Set(), // schema_tables 가 cap 절단을 보고한 Schema key
   firstElementId: null,       // 자연정렬 첫 요소 id(줌 클램프 시 시선 앵커, 카드는 SC:)
   renderedIds: null,          // 마지막 build 가 렌더한 요소 id 집합 — 미렌더 모델키 setElementState 차단
+  schemaTotals: null,         // graph-initview: scope 별 스키마→전체 테이블 수(roots mode=schemas 에서 캐시). search 리셋에도 보존(카드 badge 전체 수 소스).
+  searchMatch: null,          // 검색 필터 뷰: schemaKey -> Set(매칭 테이블 key). 카드 badge = 매칭/전체.
+  searchMatchTables: null,    // 검색 매칭 테이블 key Set(펼침 시 강조).
+  searchCapped: false,        // 검색 결과가 cap(_META_SEARCH_CAP) 도달 → 매칭 카운트는 부분값(badge 에 '+' 표기).
   // graph-perf-bg: 성능 인덱스·논블로킹 상태.
   colsByTable: new Map(), // Table key -> 펼쳐진 Column 개수(O(1) _metaTableHasCols 단일소스 — 매 클릭 전노드 스캔 제거).
   _opSeq: 0,              // 펼침/확장 조작 시퀀스 토큰. await(fetch·yield) 경계마다 대조해 stale 렌더 폐기.
@@ -3110,6 +3114,7 @@ const _METtype = "rect";
 const _METLAY = { COLS: 3, SW: 300, GAPX: 48, GAPY: 52, PADT: 34, PADX: 16, TROW: 34, CROW: 21, CIND: 26, TGAP: 12, TW: 150,
   CARDW: 210, CARDH: 44 };   // graph-initview: 접힌 스키마 카드 치수
 const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 배율 밑이면 판독 불가 — 클램프
+const _META_SEARCH_CAP = 50;        // search-badge: 백엔드 search_nodes 기본 limit(50) 미러 — 도달 시 매칭 카운트 부분값(badge '+')
 const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 클러스터
 
 // node key(`scope:fqn`) → 소속 스키마 클러스터 combo id. Table/Column 은 스키마, 그 외는 terms 클러스터.
@@ -3316,13 +3321,21 @@ function _metaG6Build() {
       const cnt = (cn && typeof cn.table_count === "number") ? cn.table_count : null;
       const nmc = _metaComboName(id);
       // graph-initview UI: 라벨은 스키마명만(전체 폭 확보) + 개수는 우상단 **badge**(작은 pill).
-      //   기존 "· 테이블 N" 인라인은 "테이블" 3자+구분점이 카드 폭을 과점유 → 이름 truncate 유발.
+      //   검색 없음 → [전체 테이블 개수]. 검색 필터 → [매칭 테이블 개수 / 전체 테이블 개수](사용자 요청).
       //   badge 는 이름과 폭 경쟁 없이 개수를 노출(집계 실패 cnt=null 은 badge 없음 = 배지없는 카드 강등 정합).
+      let badgeText = (cnt != null) ? String(cnt) : null;
+      let badgeBg = _META_GRAPH_COLOR.Schema;
+      if (_metaGraph.mode === "search" && _metaGraph.searchMatch && _metaGraph.searchMatch.has(id)) {
+        const matched = _metaGraph.searchMatch.get(id).size;
+        const plus = _metaGraph.searchCapped ? "+" : "";   // review MAJOR: cap 도달 시 부분 카운트 표기(≥)
+        badgeText = (cnt != null) ? `${matched}${plus}/${cnt}` : `${matched}${plus}`;
+        badgeBg = "#0a5b66";   // 검색 필터 badge 는 teal 강조(전체 카운트 남색과 구분)
+      }
       const cardStyle = Object.assign(_metaSchemaCardStyle(L.x0 + _METLAY.CARDW / 2, L.y0 + _METLAY.CARDH / 2), {
         labelText: nmc,
         // review MINOR: offset 은 per-item 에 둬야 실제 transform 에 반영(node-level badgeOffsetX/Y 는 무시됨).
-        badges: cnt != null ? [{ text: String(cnt), placement: "right-top", offsetX: -2, offsetY: 2 }] : [],
-        badgeFontSize: 10, badgeFill: "#ffffff", badgeBackgroundFill: _META_GRAPH_COLOR.Schema, badgePadding: [1, 5],
+        badges: badgeText != null ? [{ text: badgeText, placement: "right-top", offsetX: -2, offsetY: 2 }] : [],
+        badgeFontSize: 10, badgeFill: "#ffffff", badgeBackgroundFill: badgeBg, badgePadding: [1, 5],
       });
       nodes.push({ id: "SC:" + id, type: _METtype, states: _metaNodeStates(id),
         data: { label: nmc, kind: "schema-card", schema: id, fqn: (cn && cn.fqn) || nmc, table_count: cnt },
@@ -3343,10 +3356,13 @@ function _metaG6Build() {
         nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
         return;
       }
-      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn }, style: Object.assign(_metaTableStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
+      // graph-initview 검색: 펼친 스키마 안에서 검색 매칭 테이블은 크게(rel 부스트) 강조 — 카드 클릭 후 어느 테이블이 매칭인지 즉시 식별.
+      const trel = (_metaGraph.mode === "search" && _metaGraph.searchMatchTables && _metaGraph.searchMatchTables.has(it.key))
+        ? Math.max(typeof it.rel === "number" ? it.rel : 0, 0.9) : it.rel;
+      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn }, style: Object.assign(_metaTableStyle(tx, ty, trel), { labelText: it.name || it.key }) });
       const cols = g.colsByTable.get(it.key);
       if (cols && cols.length) {
-        nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_metaTableStyle(tx, ty, it.rel).size[0] / 2) + 14, ty) });
+        nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_metaTableStyle(tx, ty, trel).size[0] / 2) + 14, ty) });
         let cyCol = ty + _METLAY.TROW / 2 + CDROP + _METLAY.CROW / 2;   // 첫 컬럼 중심 y
         cols.slice().sort(_metaGraphColCmp).forEach((c) => {
           nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyCol), { labelText: c.name || c.key }) });
@@ -3471,6 +3487,10 @@ function _metaGraphResetModel() {
   //   방금 요청한 검색/스코프 화면을 되돌리고(stale 렌더), (b) reset 으로 비워진 모델에 컬럼을 ingest 해 colsByTable 를
   //   포이즌(존재하지 않는 테이블의 hasCols=true → 재펼침 영구 차단)한다. 토큰을 올리면 그 op 는 다음 seq 체크에서 폐기된다.
   _metaGraph._opSeq++;
+  // graph-initview: 검색 필터 뷰 상태 초기화(schemaTotals 는 scope 캐시라 보존 — loadRoots 가 재구축).
+  _metaGraph.searchMatch = null;
+  _metaGraph.searchMatchTables = null;
+  _metaGraph.searchCapped = false;
   // graph-initview: 스키마-우선 상태 초기화.
   _metaGraph.schemaExpanded.clear();
   _metaGraph.schemaLoaded.clear();
@@ -3514,6 +3534,10 @@ async function _metaGraphLoadRoots() {
   const schemaKeys = [];
   _metaGraph.nodes.forEach((sn) => { if (sn.label === "Schema") schemaKeys.push(sn.key); });
   schemaKeys.sort(_metaNatSort);
+  // graph-initview: scope 별 스키마→전체 테이블 수 캐시(재구축). 검색이 모델을 리셋해도 카드 badge 의
+  //   '전체 테이블 개수' 소스로 쓰이므로 여기서만 갱신하고 resetModel 에서는 보존한다.
+  _metaGraph.schemaTotals = new Map();
+  _metaGraph.nodes.forEach((sn) => { if (sn.label === "Schema" && typeof sn.table_count === "number") _metaGraph.schemaTotals.set(sn.key, sn.table_count); });
   _metaGraphFillJump(schemaKeys);
   let truncNote = data.truncated ? " · 스키마 표시 상한 도달(나머지는 검색)" : "";
   // 스키마 1개짜리 데이터소스는 카드 한 장이 무의미 — 즉시 펼쳐 기존 즉시성 유지(silent, 부모 seq 상속).
@@ -4085,23 +4109,53 @@ async function _metaGraphSearch(q) {
   _metaGraph.mode = "search";
   if (typeof _metaGraphFocusChip === "function") _metaGraphFocusChip(null);   // 검색 컨텍스트로 전환 — 중심 보기 칩 해제
   _metaGraphResetModel();
-  _metaGraphIngest(data.nodes || [], data.edges || []);
-  // graph-initview: 결과 테이블/컬럼의 스키마를 자동 펼침 — 카드 게이팅(모드-독립)에서 결과가 숨지 않게.
-  _metaGraph.nodes.forEach((n) => {
-    if (n.label === "Table" || n.label === "Column") {
-      const sc = _metaSchemaComboOf(n);
-      if (sc && sc !== _META_TERMS_COMBO) _metaGraph.schemaExpanded.add(sc);
-    }
+  const seq = _metaGraph._opSeq;   // review LOW-CONF: resetModel 직후 세대 캡처 — await 사이 scope 전환 시 tail(status) 폐기.
+  // graph-initview 검색 = **스키마 카드 필터 뷰**(사용자 요청): 매칭 테이블을 스키마별로 집계해 카드를
+  //   유지하고 badge 를 "매칭/전체" 로 표기(펼치지 않음). 카드 클릭 시 그 스키마를 펼쳐 매칭 테이블을 강조.
+  //   (이전엔 매칭 스키마를 combo 로 auto-expand 해 카드·badge 가 사라졌음.)
+  const matchBySchema = new Map();   // schemaKey -> Set(매칭 테이블 key)
+  const matchTables = new Set();     // 매칭 테이블 key(펼침 시 크기 강조)
+  const terms = [];                  // 매칭 GlossaryTerm/기타 + 스키마 미도출 Table/Column(카드 아닌 노드 — terms 클러스터로 표시)
+  const addMatch = (sc, tk) => { if (!matchBySchema.has(sc)) matchBySchema.set(sc, new Set()); if (tk) { matchBySchema.get(sc).add(tk); matchTables.add(tk); } };
+  (data.nodes || []).forEach((nd) => {
+    if (!nd || !nd.key) return;
+    if (nd.label === "Table") {
+      const sc = _metaSchemaComboOf(nd);
+      if (sc && sc !== _META_TERMS_COMBO) addMatch(sc, nd.key);
+      else terms.push(nd);   // review MINOR: 스키마 세그먼트 없는 flat scope 테이블 — 소실 방지(terms 로 표시)
+    } else if (nd.label === "Column") {
+      const tk = _metaColParent(nd.key, nd.fqn);
+      const sc = tk ? _metaCatParent(tk, tk.slice(tk.indexOf(":") + 1)) : null;
+      if (sc && sc !== _META_TERMS_COMBO) addMatch(sc, tk);
+      else terms.push(nd);
+    } else if (nd.label === "Schema") { addMatch(nd.key, null); }   // 스키마명 매칭 → 0 매칭이라도 카드 표시(0/전체)
+    else terms.push(nd);
   });
-  // 유사도(rel) → 테이블/용어 칩 크기 가산. 백엔드 pg_trgm score 우선, 없으면 클라 휴리스틱.
+  _metaGraph.searchMatch = matchBySchema;
+  _metaGraph.searchMatchTables = matchTables;
+  // review MAJOR: search_nodes 는 cap(_META_SEARCH_CAP) 로 평면 절단하고 truncated 플래그가 없다 →
+  //   응답이 cap 도달이면 스키마별 매칭 카운트는 부분값이므로 badge 에 '+'(≥) 로 표기해 오인 방지.
+  const nRaw = (data.nodes || []).length;
+  _metaGraph.searchCapped = nRaw >= _META_SEARCH_CAP;
+  // 매칭 스키마를 카드로 ingest(전체 총계는 roots 캐시 schemaTotals). auto-expand 하지 않음(카드 유지).
+  matchBySchema.forEach((set, sc) => {
+    const total = _metaGraph.schemaTotals ? _metaGraph.schemaTotals.get(sc) : null;
+    _metaGraphIngest([{ label: "Schema", key: sc, name: _metaComboName(sc), fqn: _metaComboName(sc), table_count: (typeof total === "number" ? total : null) }], []);
+  });
+  if (terms.length) _metaGraphIngest(terms, []);
+  // 유사도(rel) → 용어 칩 크기 가산. 백엔드 pg_trgm score 우선, 없으면 클라 휴리스틱.
   const ql = q.toLowerCase();
   _metaGraph.nodes.forEach((n) => {
     n.rel = (typeof n.score === "number") ? n.score : _metaRelevance(n.name, n.fqn, ql);
   });
   await _metaG6Apply(true);
+  if (seq !== _metaGraph._opSeq) return;   // await 사이 scope/roots 전환 — 이 검색의 tail(status) 폐기
   _metaGraphSyncAnalysisMarkers(scope);
-  const n = (data.nodes || []).length;
-  _metaGraphStatus(n ? `'${q}' ${n}개 — 노드 크기가 검색 유사도(pg_trgm, 클수록 유사). 노드 클릭으로 상세·확장.` : "검색 결과 없음.");
+  const nSchemas = matchBySchema.size;
+  const capNote = _metaGraph.searchCapped ? " · 결과 상한(부분 카운트, 검색어를 좁혀 정확도↑)" : "";
+  if (!nRaw) _metaGraphStatus("검색 결과 없음.");
+  else if (nSchemas === 0) _metaGraphStatus(`'${q}' — 용어·기타 ${terms.length}개 매칭(해당 스키마 테이블 없음).${capNote}`);
+  else _metaGraphStatus(`'${q}' — 스키마 ${nSchemas}개 매칭. 카드 badge = 매칭/전체 테이블. 카드 클릭으로 펼쳐 매칭 테이블(크게)을 확인.${capNote}`);
 }
 
 // 선택 강조: 모델 selected 갱신 + 이전/현재 노드 state 만 갱신(전체 rebuild 없이 가벼움).
