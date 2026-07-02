@@ -1,5 +1,44 @@
 # Report
 
+## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
+
+### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)
+graph-g6 무중단 배포(web-a/web-b `8c45f070`) 후, 실 Windows Chrome/149(win-browser relay, `https://localhost/admin` 로그인 세션)로 라이브 검증. 데이터소스 `mssql-06656002eda6`(실데이터 **236 노드·36 클러스터**) → G6 Canvas 렌더 정상, teal 테이블 칩·점선/실선 엣지·클러스터 자연정렬·노드 클릭 **제자리 컬럼 펼침**(예: dt_EventItemWithMonster 컬럼 12개)·"−" 접기 컨트롤 모두 실화면 확인. (초기 접근이 host-header 로 막힌 건 win-browser CLI 인자 오류였고 — `goto --url`/`eval --script` — 정정 후 정상. 최종 도달 URL = `https://localhost/admin`, WEB_ALLOWED_HOSTS ∋ localhost.)
+
+### 레이아웃 UX 개선 (사용자 요청: 기본 디자인·노드확장 가시성·UX)
+라이브 실데이터에서 드러난 문제: 구 결정론 배치가 **① 테이블 많은 스키마를 끝없는 세로 1열**로 만들고 **② 36클러스터를 세로로 쌓아 fit-all 시 전부 극소**. 개선:
+- **클러스터 내 다열 masonry**(테이블 수 기반 1~4 내부열, 최단열 배치로 높이 균형) — 24테이블 스키마가 24행→8행×3열. 펼친 테이블(컬럼 포함)도 masonry 높이에 반영돼 인접열과 무겹침.
+- **가변폭 클러스터 shelf-packing**(좌→우 채우고 폭 초과 시 다음 행) — 클러스터를 넓고 낮게 펼쳐 가로 활용 극대화, fit 가독성↑.
+- 검증: WSL-headless-harness(14 클러스터, 테이블 1~24, 확장 포함) 전 플로우 PASS·에러 0. cache-buster `admin.js?v=20260702-graph-g6b`.
+
+---
+
+## 2026-07-02 · 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (ADR-004, graph-g6)
+
+### 배경 (사용자 관찰 5건 + 엔진 단위 개선 결정)
+① 펼친 테이블 클릭 시 접힘 · ② 펼침이 다른 위치서 일어나고 카메라 점프 · ③ 줌/스크롤 시 HTML 오버레이(클러스터명·닫힘버튼)와 캔버스 갱신단위 불일치(오버레이가 먼저 줌) · ④ 유사 스키마 클러스터(dk_game_release_*) 순서 뒤섞여 난립 · ⑤ 테두리 크기 왜곡. 사용자 결정: "엔진 단위 개선 — 상용/프로덕션급 렌더러 리서치, 세련된 디자인 + 성능 안정 반응형". → 리서치 후 **AntV G6 v5(무료 MIT, 네이티브 combo·리치노드·Canvas)** 채택 + 사용자 승인("바로 G6 마이그레이션").
+
+### 진단
+③⑤ 근본원인 = 이전 **WebGL 렌더러**(sprite-atlas 텍스처 스케일 → ⑤; render 이벤트 미emit → 오버레이 동기화 불가 → ③). Cytoscape 는 리치노드(닫힘버튼·컬럼) 네이티브 미지원 → HTML 오버레이 hack 강제(③ 유발). ①②④=상호작용·fcose 힘배치.
+
+### 설계·검증 (POC 우선 — 브라우저 반복)
+G6 v5 전 요소를 Playwright headless POC 로 실증. **G6 v5 함정 확정**: element `type` 은 `style` 형제 / `render()` 초기·`draw()` 증분 / **`lineDash:false` 크래시**(실선은 키 생략) / 위치 `style.x/y` / 마커 `states`+node state config. 설계·POC: `../g6-migration/BLUEPRINT.md`·`poc/`.
+
+### 구현 (admin.js + admin.html + styles.css)
+- **모델 B(2단)**: 스키마=combo(점선 카드)·테이블=rect 칩·컬럼=circle·"−"=rect 컨트롤. JS 모델 → `_metaG6Build()`(위치 포함) → `setData`+`draw()`. 스키마 자연정렬 grid + 테이블 세로 스택 + 컬럼 세로열(**결정론 = ④ 무-shuffle, ② 제자리**).
+- **오버레이 3함수 전량 제거** — 클러스터명·접기·컬럼 모두 G6 네이티브 렌더 → **③ 동기화 지연 구조적 소멸**.
+- 상호작용: 단일클릭=상세+펼침 전용(펼침이면 no-op → **① 해소**), "−"만 접기, 더블클릭(320ms)=이웃확장. 마커=node state. 점선/실선 엣지 복원.
+- 유지(DOM/API): 상세 카드·진행 패널·AI 분석·클러스터 상세·resizer. 데이터 API 불변.
+- admin.html: cytoscape·layout-base·cose-base·fcose 4종 제거 → `g6.min.js?v=5.1.1`. cache-buster `?v=20260702-graph-g6`. styles.css 오버레이 CSS 제거.
+
+### 검증 (dev-loop, Environment: WSL-headless-harness — TEST.md 참조)
+포팅된 그래프 코드 + 실 admin.html 마크업 + mock apiFetch 로 전 플로우 **PASS, 에러 0**: roots(grid·마커·엣지)·제자리 펼침·재클릭 무접힘(hasCols 유지)·"−" 접기·검색(유사도 크기). `node --check` PASS, 제거심볼 참조 0.
+
+### 잔여
+실앱 배포(web 재빌드) + **PB-0008 실 Windows 시각검증(하드 게이트)** + `verify-completion.sh` + commit. (배포·commit=외부영향 → confirm.)
+
+---
+
 ## 2026-07-01 · 컬럼 blob·프레임 거침·느린 줌 수정 (graph-perf2, WebGL 후속)
 
 ### 배경 (WebGL 배포 후 사용자 육안 3건)

@@ -5273,6 +5273,20 @@ source_of_truth: true
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - 사용자향 평이화: 내부 구현·feature-id·테이블/함수명·렌더러/마이그·cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit.
 
+## CHG-20260702-metadata-perm-hier (TASK-20260702-metadata-perm-hier — 메타데이터(지식베이스) 권한 종속관계 정합화, Major §12.3 — feature-0003 프론트 단독, RBAC enforcement/스키마/백엔드/엔드포인트 무변경 · UI 표시 계층만)
+- 트리거(사용자): "다른 권한 구성과 같이 종속적인 관계가 정합하도록 구성. `지식베이스 > 메타데이터` 권한이 다른 권한 포맷과 차이가 확인됨."
+- 진단: `admin.js`의 `PERMISSION_DEPENDENCIES`(childCode→선행 parentCode, **UI progressive-disclosure 표시 계층** — authz enforcement 아님)에서, 관리 권한 다른 그룹은 전부 "그룹 게이트(read)→세부(manage)" 2단 계층(`account.read→console.access` + `account.*→account.read`; role/quota/datasource/product/audit 동형)인데 **메타데이터(kb 그룹)만 평면** — `metadata.{glossary,enum,table,column}.manage`·`metadata.graph.read` 5개가 전부 `console.access` 직속이고, 묶음 `kb.ingest.manual`은 맵에 부재해 게이트 없는 고아 root. → `_orderItemsAsTree`가 kb 그룹을 7개 flat 나열(타 그룹은 계층).
+- 변경(정합화, B안 유지):
+  - `static/admin.js` `PERMISSION_DEPENDENCIES`: `kb.ingest.manual`→`console.access`(다른 그룹 base 와 동형, 콘솔 게이트 하위) 추가 + 세부 5개 `metadata.*`→`kb.ingest.manual`(묶음 아래 nest). 결과 `console.access→kb.ingest.manual(묶음 게이트)→{용어사전·ENUM·테이블·컬럼·그래프뷰}` 2단 계층. `kb.sample.curate`는 별도 root 유지(다른 KB 기능).
+  - 근거: 백엔드 `_METADATA_MANUAL_IMPLIES`로 묶음이 이미 5개를 함의(effective) → 묶음을 게이트로 삼는 게 의미 정합. **enforcement 무변경**(맵은 표시 전용, 백엔드 authz 는 parent→child 종속 미사용).
+  - §18.8 NIT-1 흡수: `_applyPermissionDisclosure`에 `isGrantedForReach` 예측자 추가(explicit + override 상속-부여) → `_refreshGroupDisclosure`의 grantedCount·"N개 부여됨" cue 에 사용. 메타데이터를 게이트 하위로 옮기며, 역할이 개별 metadata.*를 (묶음 없이) 부여한 계정의 override 편집기 도달성 cue 회귀를 복원. checkbox(역할) 모드 무영향(inherited 비어 isExplicit 과 동일).
+  - `static/admin.html`: cache-buster `admin.js?v=20260702-graph-panel-perms`→`?v=20260702-metadata-perm-hier`.
+  - `tests/test_permission_dependency_map.py`: 신규 t5(계층 pin: metadata.*→kb.ingest.manual→console.access + 트리 depth manual=0·metadata.*=1) + t6(B안 개별부여 도달성: 게이트 OFF 시 metadata hidden 이나 묶음 root·kb.sample.curate 로 그룹 비은닉).
+- Files: `static/admin.js`, `static/admin.html`, `tests/test_permission_dependency_map.py`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`.
+- Impact: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터 권한이 다른 그룹과 동일한 2단 계층으로 표시(묶음→세부). **비파괴** — authz enforcement·기존 grant·백엔드 함의 전부 불변. 개별 metadata.* 부여는 "세부 권한 더 보기"로 여전히 가능(B안 보존).
+- 검증: `node --check` PASS, `test_permission_dependency_map.py` 18개(기존 16 + t5/t6) PASS, §18.8 SUBAGENT 패널 VERDICT PASS(BLOCKING 0 — 개별부여 회귀·은닉·enforcement·implies 상호작용 4축 refute; NIT-1 수정 반영·NIT-2 테스트 추가). 배포 후 라이브 그리드 계층 확인.
+- Rollback: revert admin.js(맵 원복 + isGrantedForReach 제거) + admin.html(캐시버스터) + 테스트.
+
 ## CHG-20260702-aiops-panel (TASK-20260702-aiops-panel — AI 운영 관제 패널 + LLM 계측 확장, Major §12.3 — feature-0003 web/UI·인가 + cross-unit feature-0002 core/alembic + shared. /_template:resume 재개, PLAN-APPROVED)
 - 변경(cross-unit — feature-0002 core/alembic, shared, feature-0003 web):
   - **feature-0002** `alembic/versions/20260702_0030_llm_usage_latency.py`(신규): PG `agent_runtime.llm_usage` 에 `latency_ms INTEGER`(nullable, DEFAULT 없음) `ADD COLUMN IF NOT EXISTS`(additive·idempotent, down=DROP IF EXISTS). down_revision=0029_node_analysis_relevance.
@@ -5288,3 +5302,10 @@ source_of_truth: true
 - Verification: `tests/test_ai_ops.py` **10/10 PASS** + 회귀 permission 16/dashboard 20/usage 28 PASS, 전체 collection 무오류. py_compile(app.py·llm.py·model_catalog.py·ai_ops.py·admin_console.py·마이그·test) + node --check(admin.js) PASS. 적대검증 REV-20260702T140000-aiops-panel. PB-0008 Windows-browser= TEST.md.
 - Files: `feature-0002/{alembic/versions/20260702_0030_llm_usage_latency.py, src/scripts/agent_runtime_schema.sql, src/modules/llm.py}`, `shared/model_catalog.py`, `feature-0003/{src/app.py, src/routers/ai_ops.py, src/routers/admin_console.py, src/static/admin.html, src/static/admin.js, tests/test_ai_ops.py, tests/test_permission_dependency_map.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`.
 - 계측 커버리지 정직성: 임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 부재 → 구조적 계측 불가로 '계측 커버리지' 각주에 미계측 명시('전체 비용' 오해 방지). cost 는 read-time 계산(단가표 web 전용) — DB 컬럼 미추가. 워커 프로세스 latency 는 web-only 배포로 미반영(quiet-time 워커 재빌드 후속).
+
+## CHG-20260702-aiops-scroll (TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤, Minor §12.3 — feature-0003 프론트 CSS 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 변경:
+  - `static/styles.css`: pane 세로 스크롤 규칙(TASK-0167) 셀렉터에 `.admin-pane[data-admin-pane="ai-ops"].is-active` 추가 — dashboard/usage/release-notes 와 동일 `overflow-y:auto; overflow-x:hidden`. AI 운영 현황 pane 은 list-detail 아닌 단순 세로 흐름이라 admin-shell(overflow:hidden+100vh)에서 하단(카테고리표·커버리지) 잘림 → pane 자체 스크롤 필요.
+  - `static/admin.html:7`: cache-buster `styles.css?v=20260702-graph-g6`→`?v=20260702-aiops-scroll`(CSS 실변경).
+- Verification: CSS brace balanced(1701/1701). ai-ops 셀렉터 적용 확인. §18.8 [SKIPPED:minor-css-scroll]. PB-0008 Windows-browser 세로 스크롤 실측 = 배포 후(TEST.md).
+- Files: `static/styles.css`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.

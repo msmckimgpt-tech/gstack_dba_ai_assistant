@@ -149,3 +149,10 @@ FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 �
 - DB 스키마 변경은 **비파괴 추가만** (AGE 확장·그래프 생성·신규 인덱스). 관계형 SSOT 무변경.
 - deploy_scope: 전역 FIRST_REQUEST.md `included` — cycle-final 후 배포. 단 **커스텀 PG 이미지
   cutover 는 운영 DB 교체라 별도 1줄 게이트 + 롤백 플랜 표면화 후 진행** (외부영향·비가역).
+
+## 13. 그래프 뷰 렌더링 엔진 (2026-07-02, ADR-004)
+관리콘솔 그래프 뷰(코드 거주 feature-0003 `src/static/admin.js`)의 렌더러 = **AntV G6 v5.1.1(Canvas, MIT, vendored
+`vendor/g6.min.js`)**. Cytoscape.js(WebGL)에서 교체 — 사용자 관찰 5건(클릭접힘·위치점프·줌 동기화지연·클러스터
+뒤섞임·테두리 왜곡) 구조적 해소 + 점선 엣지 복원. 모델: 스키마=combo·테이블=rect 노드·컬럼=circle·"−"=접기 컨트롤.
+JS 모델 → 위치 포함 전체 데이터 재구성 → `setData()`+`draw()`(결정론 grid, 무-shuffle·제자리). 데이터 API·상세
+패널·AI 분석 계층 불변. 사용자 사전승인("바로 G6 마이그레이션"). 상세: `../g6-migration/BLUEPRINT.md`.

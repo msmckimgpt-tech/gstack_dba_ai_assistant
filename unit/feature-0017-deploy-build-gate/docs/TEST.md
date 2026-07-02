@@ -43,3 +43,13 @@ source_of_truth: true
 
 ## 4. 미수행 사유
 - end-to-end 는 본 수정이 origin/main 에 머지된 뒤 deploy-web.sh(origin/main coalesce)로 수행.
+
+### Run 2026-07-02 — Environment: CLI (migrate 게이트 race 관용 격리 검증)
+- 대상: CHG-20260702T160000 migrate_phase 재시도 tolerance. **PB-0008 Windows-browser: N/A** — `bin/deploy-web.sh` 셸 스크립트만 변경, HTML/CSS/JS 등 UI 표면 0 → 화면 렌더 검증 대상 없음(CHECK#13 skip 대상).
+- 정적: `bash -n bin/deploy-web.sh` PASS. DRY_RUN/MIGRATE_RETRY_BACKOFF `set -u` 안전(DRY_RUN=0 정의, backoff default).
+- 격리 3케이스(mock alembic-migrate exit code, deploy-web migrate_phase 골격 재현):
+  1. 1차 ok(exit 0) → 재시도 없이 proceed. PASS.
+  2. 1차 실패(1)·재시도 ok(0) → race 관용, proceed(head 도달). PASS.
+  3. 양쪽 실패(1,1) → `die` "ABORT", swap 미진입(proceed 미출력, rc=1). PASS.
+- §18.8 SUBAGENT 적대 패널 VERDICT PASS(BLOCKING 0) — 미적용 swap·진짜실패 은폐·멱등성·set-e/die·문법 5축 refute. NIT-2(backoff)·NIT-1(head-anchored 명시) 흡수. REV-20260702T160000-deploy-migrate-gate.
+- 라이브 end-to-end: eadb4a9e 재배포에서 migrate 게이트 "pending 없음"(head=0030) 통과 경로 관측. 신규 revision 배포 시 재시도 tolerance 자연 검증 예정.

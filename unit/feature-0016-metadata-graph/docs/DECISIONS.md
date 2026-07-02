@@ -73,3 +73,35 @@ source_of_truth: true
   - 관련도 비영속(틱 내 정렬만): claim 이 tick 간 SQL 이라 우선순위 유지 불가 → relevance 컬럼 영속 채택.
 - Supersedes: (0028 node_analysis 무차별 이웃 재큐 → 앵커 관련도 게이팅으로 확장, 상위호환. 예산 캡·dedupe 유지.)
 - Superseded By:
+
+## ADR-004 — 그래프 뷰 렌더링 엔진 교체: Cytoscape(WebGL) → AntV G6 v5(Canvas) + 결정론적 배치
+- Status: Accepted
+- Date: 2026-07-02
+- Context: 관리콘솔 그래프 뷰에서 사용자 관찰 5건 — ① 펼친 테이블 클릭 시 접힘, ② 펼침이 다른 위치서
+  일어나고 카메라 점프, ③ 스크롤/줌 시 HTML 오버레이(클러스터명·닫힘버튼)와 캔버스의 갱신 단위 불일치
+  (오버레이가 먼저 줌, 나머지 지연), ④ 유사 스키마 클러스터(dk_game_release_*)가 순서 뒤섞여 난립,
+  ⑤ 테두리가 크기에 따라 왜곡. 근본원인: ③⑤ 는 이전 커밋의 **WebGL 렌더러**(sprite-atlas 텍스처 스케일링 +
+  render 이벤트 미emit 로 오버레이 동기화 불가). Cytoscape 는 리치 노드(닫힘버튼·컬럼)를 네이티브 지원 못 해
+  HTML 오버레이 hack 이 강제됐고 이것이 ③ 유발. ①②④ 는 상호작용·fcose 힘배치 로직. 사용자 결정: 엔진 단위
+  개선 — 세련된 디자인 + 성능 안정 반응형 UI 를 만족하는 상용/프로덕션급 렌더러 채택.
+- Decision:
+  1. 렌더러를 **AntV G6 v5.1.1(MIT, vendored UMD `vendor/g6.min.js`)** 로 교체. 후보 비교(yFiles/GoJS/Ogma
+     유료·Sigma compound 약함) 중 G6 가 네이티브 Combo(2단 중첩)·리치 노드·멀티 렌더러·폴리시로 요구 최적합·무료.
+  2. 렌더러 **Canvas**(벡터·2x DPR) — WebGL 텍스처 왜곡(⑤) 소멸, 모든 줌 선명.
+  3. **모델 B(2단)**: 스키마=combo(점선 카드), 테이블=rect 노드(teal 칩), 컬럼=circle 노드, "−"=rect 컨트롤 노드.
+     클러스터명·접기컨트롤·컬럼을 **G6 네이티브 요소로 렌더 → HTML 오버레이 전량 제거**(③ 동기화 지연 구조 소멸).
+  4. **결정론적 배치**: JS 모델 → `_metaG6Build()`(위치 x/y 포함 전체 데이터) → `graph.setData()`+`draw()`.
+     스키마 클러스터 자연정렬 grid + 테이블 세로 스택 + 컬럼 세로열(④ 무-shuffle, ② 제자리 펼침 — 힘배치·점프 없음).
+  5. **상호작용**: 단일클릭=상세+테이블 펼침 전용(이미 펼침이면 no-op — ① 해소), "−" 컨트롤만 접기,
+     더블클릭(320ms)=이웃 확장. AI 마커=노드 state(보라 analyzed / 주황 running). 점선(candidate)·실선(trusted) 엣지 복원.
+- Consequences: 5개 관찰 전부 구조적 해소 + 점선 엣지 복원. 데이터 API(`/api/admin/metadata/graph*`) 불변 —
+  렌더/레이아웃/상호작용 계층(admin.js `_metaGraph*`)만 재작성, DOM/API 함수(상세·진행·분석)는 유지. Cytoscape·
+  fcose vendor 4종 제거, G6 vendor 1종 추가. 검증: Playwright headless harness(실 admin.html 마크업 + mock API)로
+  전 플로우 PASS(roots/제자리펼침/재클릭-무접힘/접기/검색/마커/엣지, 에러 0). 완료 게이트=PB-0008 실 Windows 시각검증.
+  설계·함정·POC 는 `../g6-migration/BLUEPRINT.md` + `../g6-migration/poc/`.
+- Alternatives:
+  - canvas-2D 로만 복귀(Cytoscape 유지): ③⑤ 는 해소되나 오버레이 hack·힘배치 뒤섞임(①②④) 잔존 → 사용자 "엔진 단위" 요구 위배(기각, 부분해).
+  - 유료 상용(yFiles/Ogma): 최상급 폴리시이나 라이선스 비용 + G6 가 무료로 요구 충족(보류 — 향후 필요 시).
+  - Sigma.js v3(WebGL 초고속): compound/리치노드 약함 → ERD 카드 부적합(기각).
+- Supersedes: (graph-webgl 코드결정 — WebGL 렌더러 도입, 정식 ADR 아니었음. 본 ADR 로 대체.)
+- Superseded By:

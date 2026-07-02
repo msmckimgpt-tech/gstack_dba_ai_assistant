@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"/><title>G6 POC3b — inline styles</title>
+<style>
+ html,body{margin:0;height:100%;font-family:system-ui,'Malgun Gothic',sans-serif;background:#fbfcfd;}
+ #canvas{width:100%;height:100vh;position:relative;}
+ #log{position:fixed;right:8px;top:8px;max-width:330px;max-height:34vh;overflow:auto;background:rgba(255,255,255,.95);
+      border:1px solid #ccc;border-radius:6px;padding:6px 8px;font:11px/1.3 monospace;white-space:pre-wrap;z-index:9;}
+</style></head><body>
+<div id="canvas"></div><pre id="log"></pre>
+<script src="./g6.min.js"></script>
+<script>
+const logEl=document.getElementById('log');const log=(m)=>{logEl.textContent+=m+"\n";};
+window.__err=[];window.addEventListener('error',e=>{window.__err.push(''+e.message);log('ERR '+e.message);});
+const COLOR={Table:"#0f7d8c",Column:"#5c6773",Schema:"#3f4b8c"};
+const MOCK={
+ schemas:["dk_game_release_2","dk_game_release_10","dk_game_release_1","dk_data_release","cc_account"],
+ tables:{dk_game_release_1:["Achievement","Item"],dk_game_release_2:["Achievement","Reward"],
+   dk_game_release_10:["Achievement"],dk_data_release:["Payment","Log"],cc_account:["User"]},
+ columns:{"dk_data_release.Payment":[{name:"PaymentID",o:1},{name:"UserID",o:2},{name:"Amount",o:3},{name:"RegDate",o:4}],
+   "dk_game_release_1.Achievement":[{name:"AchID",o:1},{name:"UserID",o:2},{name:"Score",o:3}]},
+ refs:[{s:"dk_data_release.Payment",t:"dk_game_release_1.Achievement",status:"candidate"},
+   {s:"dk_game_release_1.Item",t:"dk_game_release_1.Achievement",status:"trusted"}],
+};
+const G=window.G6;log("G6 "+(G&&G.version));
+const S=(s)=>"S:"+s,T=(s,t)=>"T:"+s+"."+t,Cid=(f,c)=>"C:"+f+"."+c,X=(f)=>"X:"+f;
+const M={expanded:new Set(),analyzed:new Set(),running:new Set(),selected:null,rel:{}};
+const natSort=(a,b)=>a.localeCompare(b,undefined,{numeric:true});
+const LP={COLS:3,SW:300,GAPX:48,GAPY:52,PADT:34,PADX:16,TROW:34,CROW:21,CIND:26,TGAP:12};
+// per-element inline styles (no config mappers → avoids To() undefined)
+function tableStyle(x,y,rel){return{x,y,size:[Math.min(180,150+((rel||0)*40)),24],radius:6,fill:COLOR.Table,stroke:'#ffffff',lineWidth:1,
+  labelText:undefined,labelPlacement:'center',labelFill:'#ffffff',labelFontSize:12,labelFontWeight:700,labelMaxWidth:150};}
+function colStyle(x,y){return{x,y,size:[10,10],radius:5,fill:COLOR.Column,stroke:'#ffffff',lineWidth:1,
+  labelPlacement:'right',labelFill:'#161b22',labelFontSize:10,labelOffsetX:5,labelMaxWidth:150};}
+function ctlStyle(x,y){return{x,y,size:[18,18],radius:4,fill:'#ffffff',stroke:'#0a5b66',lineWidth:1.5,
+  labelText:'−',labelPlacement:'center',labelFill:'#0a5b66',labelFontSize:14,labelFontWeight:700};}
+function comboStyle(){return{radius:12,padding:[30,16,14,16],labelPlacement:'top',labelFontWeight:700,labelFontSize:13,
+  labelFill:COLOR.Schema,fill:COLOR.Schema,fillOpacity:0.045,stroke:'#aab3c5',lineWidth:1,lineDash:[6,4],collapsedMarker:false};}
+function edgeStyle(status){const s={stroke:status==='trusted'?'#6b4410':(status==='candidate'?'#c9a24a':'#cbd2db'),
+  lineWidth:status==='trusted'?3:1.8,endArrow:true};
+  if(status==='candidate')s.lineDash=[6,4];   // solid edges: OMIT lineDash (lineDash:false crashes G6 To() normalizer)
+  return s;}
+function build(){
+ const combos=[],nodes=[],edges=[];
+ const schemas=MOCK.schemas.slice().sort(natSort);
+ const H=schemas.map(s=>{let y=LP.PADT;(MOCK.tables[s]||[]).forEach(t=>{y+=LP.TROW;
+   if(M.expanded.has(T(s,t)))y+=(MOCK.columns[s+'.'+t]||[]).length*LP.CROW;y+=LP.TGAP;});return y+14;});
+ const rowTop=[];let cy=0;
+ for(let r=0;r*LP.COLS<schemas.length;r++){rowTop[r]=cy;let mh=0;
+   for(let c=0;c<LP.COLS;c++){const i=r*LP.COLS+c;if(i<schemas.length)mh=Math.max(mh,H[i]);}cy+=mh+LP.GAPY;}
+ schemas.forEach((s,i)=>{
+  const col=i%LP.COLS,row=Math.floor(i/LP.COLS),x0=col*(LP.SW+LP.GAPX),y0=rowTop[row];
+  combos.push({id:S(s),type:'rect',data:{label:s,kind:'schema'},style:Object.assign({labelText:s},comboStyle())});
+  let y=y0+LP.PADT;
+  (MOCK.tables[s]||[]).slice().sort(natSort).forEach(t=>{
+   const fqn=s+'.'+t,tx=x0+LP.PADX+80,rel=M.rel[T(s,t)];
+   const states=[];if(M.analyzed.has(T(s,t)))states.push('analyzed');if(M.running.has(T(s,t)))states.push('running');if(M.selected===T(s,t))states.push('selected');
+   nodes.push({id:T(s,t),type:'rect',combo:S(s),states,data:{label:t,kind:'table',fqn},style:Object.assign(tableStyle(tx,y,rel),{labelText:t})});
+   if(M.expanded.has(T(s,t))){
+    nodes.push({id:X(fqn),type:'rect',combo:S(s),data:{label:'−',kind:'ctl',table:T(s,t)},style:ctlStyle(tx+72,y)});
+    y+=LP.TROW;
+    (MOCK.columns[fqn]||[]).slice().sort((a,b)=>a.o-b.o).forEach(cc=>{
+     nodes.push({id:Cid(fqn,cc.name),type:'circle',combo:S(s),data:{label:cc.name,kind:'column'},style:Object.assign(colStyle(tx+LP.CIND,y),{labelText:cc.name})});y+=LP.CROW;});
+   } else y+=LP.TROW;
+   y+=LP.TGAP;
+  });
+ });
+ const ids=new Set(nodes.map(n=>n.id));
+ MOCK.refs.forEach(r=>{const a='T:'+r.s,b='T:'+r.t;if(ids.has(a)&&ids.has(b))
+   edges.push({id:'E:'+r.s+'>'+r.t,source:a,target:b,style:edgeStyle(r.status)});});
+ return {combos,nodes,edges};
+}
+let graph;
+async function apply(fit){graph.setData(build());await graph.draw();if(fit){try{await graph.fitView({},false);}catch(e){}}}
+async function init(){
+ graph=new G.Graph({container:'canvas',autoResize:true,
+   node:{state:{analyzed:{stroke:'#7b2fbe',lineWidth:3},running:{stroke:'#e08a1e',lineWidth:2,lineDash:[4,3]},selected:{stroke:'#9c6515',lineWidth:3}}},
+   behaviors:['drag-canvas','zoom-canvas','drag-element'],animation:false});
+ await apply(true);
+ log('init nodes='+graph.getNodeData().length+' combos='+graph.getComboData().length+' edges='+graph.getEdgeData().length);
+ window.poc={
+   async expand(s,t){M.expanded.add(T(s,t));await apply(false);log('expand '+t);},
+   async collapse(s,t){M.expanded.delete(T(s,t));await apply(false);log('collapse '+t);},
+   async mark(k,s,t){M[k].add(T(s,t));await apply(false);log('mark '+k+' '+t);},
+   async fit(){await apply(true);},
+ };
+ log('READY');
+}
+init().catch(e=>{log('INIT FAIL '+e.message+'\n'+(e.stack||'').split('\n').slice(0,3).join('\n'));window.__err.push(''+e.message);});
+</script></body></html>

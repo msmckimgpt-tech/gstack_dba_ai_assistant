@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤 구성 (Minor §12.3 — feature-0003 프론트 CSS 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 트리거(사용자): "내용이 화면 너머까지 출력되고 있지만 해당 화면을 볼 방법이 없습니다 — 화면 내 세로 스크롤을 구성해주세요." AI 운영 현황 패널(배너+축+KPI+Attention+카테고리표 13행+활동feed+커버리지)이 길어 admin-shell(overflow:hidden+100vh) 뷰포트 아래로 넘치는데 pane 에 세로 스크롤이 없어 하단(카테고리표·커버리지)에 도달 불가. PB-0008 스크린샷에서도 커버리지 잘림 관측.
+- 근본원인: `styles.css` 의 pane 세로 스크롤 규칙(TASK-0167 — dashboard/usage/release-notes 처럼 list-detail 아닌 단순 세로 흐름 pane 에 `overflow-y:auto`)에 `ai-ops` pane 이 누락. (다른 pane 은 내부 admin-list 가 스크롤하거나 이 규칙에 포함돼 있어 정상.)
+- Completion Checklist:
+  - [x] `static/styles.css`: pane 세로 스크롤 셀렉터에 `.admin-pane[data-admin-pane="ai-ops"].is-active` 추가(dashboard/usage 와 동일 `overflow-y:auto; overflow-x:hidden`). brace balanced.
+  - [x] `static/admin.html`: cache-buster `styles.css?v=20260702-aiops-scroll` bump(CSS 실변경).
+  - [x] §18.8 패널 [SKIPPED:minor-css-scroll] — 2줄 CSS 셀렉터 추가(신규 로직 0, 기존 검증된 규칙에 pane 편입), 라이브 PB-0008 이 정본. REV-20260702T170000-aiops-scroll.
+  - [ ] PB-0008 Windows-browser 실측(패널 세로 스크롤 동작 + 하단 커버리지 도달) — 배포 후 라이브.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included) → 배포 후 스크롤 실측.
+
+## TASK-20260702-metadata-perm-hier — 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3 — feature-0003 프론트 단독, RBAC enforcement/스키마/백엔드/엔드포인트 무변경 · UI 표시 계층만)
+- 트리거(사용자): "다른 권한 구성과 같이 종속적인 관계가 정합하도록 구성. `지식베이스 > 메타데이터` 권한이 다른 권한 포맷과 차이 확인."
+- 진단: `admin.js` `PERMISSION_DEPENDENCIES`(UI progressive-disclosure 표시 계층, enforcement 아님)에서 다른 관리 그룹은 "그룹 게이트(read)→세부(manage)" 2단 계층인데 메타데이터(kb)만 평면(5개 metadata.* 전부 console.access 직속 + 묶음 kb.ingest.manual 은 맵 부재 고아). → kb 그룹만 flat 나열.
+- 해법(B안 유지): 묶음 `kb.ingest.manual`을 그룹 게이트로 삼아 정합화. `kb.ingest.manual→console.access`, 세부 5개 `metadata.*→kb.ingest.manual`. 백엔드 함의(_METADATA_MANUAL_IMPLIES)와 의미 정합. enforcement 무변경.
+- Completion Checklist:
+  - [x] `static/admin.js` `PERMISSION_DEPENDENCIES` 정합화(kb.ingest.manual 게이트화 + metadata.* nest). `node --check` PASS.
+  - [x] §18.8 NIT-1 흡수: `isGrantedForReach`(explicit + override 상속-부여)로 override 도달성 cue 회귀 복원. checkbox 모드 무영향.
+  - [x] `static/admin.html` cache-buster `admin.js?v=20260702-metadata-perm-hier` bump.
+  - [x] `tests/test_permission_dependency_map.py` t5(계층 pin)/t6(도달성) 추가 — 18개 전부 PASS.
+  - [x] §18.8 SUBAGENT 적대 패널 VERDICT PASS(BLOCKING 0 — 개별부여·은닉·enforcement·implies 4축 refute + NIT 2 흡수). REV-20260702T010000-metadata-perm-hier.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 배포(deploy_scope: included) → 배포 후 라이브 그리드 2단 계층 실측.
 ## TASK-20260702-aiops-panel — AI 운영 관제 패널 (관리 콘솔 > 감사 > AI 운영 현황) + LLM 계측 확장 (Major §12.3 — feature-0003 web/UI + 인가, cross-unit feature-0002 core/alembic + shared. /_template:resume 재개, PLAN-APPROVED)
 - 트리거(사용자, 원 세션 /_template:entry → /_template:resume 재개): "프로젝트 내부에서 동작 중인 AI 현황을 모니터링할 관제패널을 `관리 콘솔 > 감사 > (적절한 명칭)` 에 구성. insight-worker·요청수행 LLM·자동분석 LLM·메타데이터 능동분석 LLM 등 각 동작 카테고리를 세분화하고, 이후 추가될 기능에 확장성 있게." 4개 제품결정 확정: 배치=감사 그룹 유지(명칭 'AI 운영 현황') · v1 범위=**+계측 지금 포함** · 대시보드 KPI 타일 추가 · 권한=console.aiops.read admin 전용.
 - 설계 근거: 14-에이전트 계획 + Workflow(ground 4 → design 3 판정 → 적대검증 6축 28-fix) grounding. 계측 범위 현실: chat 4경로만 계측 가능(임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 부재 → 구조적 계측 불가, '계측 커버리지'로 정직 노출). cost 는 단가표가 web app.py 전용이라 read-time 계산 유지(DB 컬럼 미추가), latency_ms 만 additive 컬럼.
