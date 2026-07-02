@@ -303,7 +303,18 @@ Table→HAS_COLUMN→Column 체인 생성 · 기존 Table description/source 비
   timeout 3건 정합 유지 — test_relationships.py **53건 PASS**. 라이브 최종 검증 = 워커 재배포 후
   프로브 신호(오류 130 소멸 + pos/neg 전이) 관측.
 
-## node-role-viz — AI 능동 분석 완료 테이블 역할 시각 표식 (2026-07-03, TASK §32 / ADR-010)
+### graph-reltrace — 접힌 관계 표시 + 관계 클릭 추적 + AI 연동 (2026-07-03)
+- **백엔드 라이브 AGE**: dblog 스키마 신규 REFERENCES Cypher 실행 → `account.AccountId → arenabegin.AccountId`
+  (conversation·candidate) 반환 확인(FK null-status 포함·broken 제외).
+- **프론트 엣지 집계 격리 Node 검증 11/11 PASS**: T1 두 테이블 접힘=테이블-레벨 승격 집계 엣지 1개(status 유지)
+  · T2 둘 다 펼침=컬럼-레벨 정밀 · T3 한쪽만 펼침=혼합(컬럼→테이블) · T4 대상 미렌더=엣지 0(graceful)
+  · T5 다수 컬럼-쌍 dedupe 1개·count 2·trusted 승급 · T6 intra-table 자기참조 제외.
+- **추적 행 산출 검증**: `_metaGraphRelTraceRowsHTML`(실 소스 추출) — self=account 테이블 → 대상
+  `arenabegin.AccountId` data-trace 정확·방향화살표·"🔎 추적" 힌트.
+- `node --check` admin.js PASS · `py_compile` metadata_graph.py PASS · 신규 함수 참조 심볼 전수 정의 확인.
+- **완료 하드 게이트 = PB-0008 실 Windows**(배포 후): 접힌 상태 관계 표시 · 관계 클릭 추적 · AI 결과 추적.
+
+## node-role-viz — AI 능동 분석 완료 테이블 역할 시각 표식 (2026-07-03, TASK §33 / ADR-010)
 
 ### 단위 — tests/test_node_analysis_role.py (Environment: CLI, agent 컨테이너) — Run 2026-07-03 PASS
 분류체계 계약(NODE_ROLES 8종·규칙 role 정합)·_role_valid 정규화·휴리스틱 이름 1-pass(로그>거래 우선순위,

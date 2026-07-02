@@ -521,6 +521,33 @@ source_of_truth: true
 - Verdict: **PASS** — BLOCKING 0. ADR-008 의 no-op 를 manual tween 으로 실제 해소(번들 소스 대조 확증). NIT 2건 수용.
 - Human Approval Needed: graph-dblclick-cam2 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.
 
+## REV-20260703T152607-ai-root-feature-0016-graph-reltrace [SUBAGENT: PASS-WITH-FIXES] — 접힌 관계 표시 + 관계 추적 + AI 연동 적대 리뷰
+- Related Change: CHG-20260703T152607(graph-reltrace). admin.js 그래프 뷰(엣지 집계·추적·AI 연동) +
+  styles.css + admin.html + metadata_graph.py schema_tables REFERENCES 조회. TASK §32.
+- Trigger: UI/layout/graph + schema/REFERENCES keyword matched → frontend + backend+qa 2렌즈 병렬.
+- Method: general-purpose subagent 2병렬 — (frontend) git diff 정독 + node --check + 심볼 정의 전수 +
+  seq/스타일/XSS 경로 추적; (backend+qa) **라이브 AGE(15022 Table/9562 REFERENCES) 에서 신규 Cypher
+  직접 실행·EXPLAIN·경계테스트**(status-null 임시엣지 생성→ROLLBACK, leftover 0).
+- Verdicts: **frontend PASS-WITH-FIXES** / **backend+qa PASS**.
+- Findings → 처리:
+  - **frontend MAJOR (수정)**: 상세 패널 `data-trace` 가 따옴표 미이스케이프 `esc` 사용 → 속성 탈출
+    가능(DB 식별자 인용부호). → `_metaGraphRenderDetail` esc 에 `"`→`&quot;` 추가(sibling parity).
+  - **frontend MINOR (수정)**: "관계 상세" 용어(GlossaryTerm) 행이 showDetail→trace 변경으로 오라우팅.
+    → `_metaGraphTraceRelation` 이 비-Table/Column 대상은 showDetail 로 라우팅.
+  - **frontend MINOR (수정)**: `looksColumn`(세그먼트≥3)이 3-part fqn 테이블에서 오판 잠복. → node
+    label 우선 판정(`label==="Column"`), label 부재 시에만 세그먼트 폴백.
+  - **frontend NIT (수용)**: AI 박스 렌더마다 전체 엣지 O(E) 스캔 — 현 규모 무해, 성장 시 인덱스 검토.
+  - **frontend CLEARED**: 스타일 객체 mutation(신규 객체 반환 확인)·집계 id 충돌(agg: 네임스페이스)·
+    G6 미지원 style 키 크래시(data 로 분리)·seq 경합(await 후 seq 캡처)·바인딩 누수(innerHTML 교체) 전건 무결.
+  - **backend PASS (라이브 확정)**: FK status-null 포함(`IS NULL OR <>'broken'` 정확, 임시엣지 실측)·
+    `_cq` 주입안전·6컬럼 정합·intra-schema 소스캡처 100%(dblog 346엣지 실측)·성능 34-47ms·graceful
+    (try/except 로 테이블 반환)·프론트 ingest 계약 정합. 관찰(LOW): 글로벌 Column/Table Seq Scan 이
+    라벨 크기 선형(수만 테이블 성장 시 raw graphid 우회 여지) — 현 카드 클릭당 1회 lazy 라 수용.
+- 재검증: 수정 후 node --check PASS + 엣지집계 격리 Node 11/11 재실행 PASS(로직 불변).
+- Verdict: **PASS-WITH-FIXES** — frontend MAJOR+MINOR 2 전건 수정, backend PASS. BLOCKING 0.
+- Human Approval Needed: 없음(Major 승계 — 사용자 요청 범위, 비파괴·마이그레이션 0). deploy_scope:
+  included(전역) 근거 자동 배포(web+worker) + PB-0008 완료 하드 게이트.
+
 ## REV-20260703T003000-ai-claude-corp-feature-0016-node-role-viz [SUBAGENT: PASS-WITH-FIXES] — 분석완료 노드 역할 시각 표식(node-role-viz) 적대 패널 4렌즈
 - Trigger: UI/화면/범례(ux, design) + schema/migration/query(backend, qa) keyword matched — §18.8 dispatch.
 - 구성: general-purpose 적대 리뷰어 4(backend / frontend 정확성 / ux·design / qa 회귀·엣지), 전원 REFUTE 관점. 대상 = node-role-viz 전체 diff(alembic 0031·node_analysis·llm·insight·admin_metadata·admin.js/html/css).

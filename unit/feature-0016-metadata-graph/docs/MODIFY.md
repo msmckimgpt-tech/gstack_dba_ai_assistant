@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T152607-ai-root-feature-0016-graph-reltrace
+- Date: 2026-07-03
+- Related Requirement: 사용자 후속 3건 — ① 테이블 접힌 상태에서도 연결 관계 표시(더블클릭 전 미표시 이슈),
+  ② 상세 패널 관계 클릭 시 대상 테이블·컬럼 추적, ③ AI 능동 분석으로도 작동.
+- 근본원인(①): REFERENCES 는 Column→Column 이라 `_metaG6Build` 가 양끝 컬럼 렌더 시에만 엣지를 그렸고,
+  `schema_tables`(스키마 펼침)는 HAS_TABLE 만 반환 → 접힌 테이블엔 관계 데이터 자체가 모델에 없었다.
+- Summary:
+  (1) **백엔드**(metadata_graph.py `schema_tables`): 스키마 펼침 응답에 스키마 내 컬럼에서 나가는
+  REFERENCES 엣지(Column→Column, FK null-status 포함·broken 제외·`edge_cap` 캡)를 추가.
+  (2) **프론트 ①**(`_metaG6Build`): REFERENCES 끝점을 렌더된 id 로 해소 — 컬럼 미렌더 시 소속 테이블로
+  승격(키 문자열에서 부모 도출), 같은 두 끝점 다수 컬럼-쌍은 하나로 dedupe(최강 상태·count·pairs).
+  intra-table 자기참조 제외. → 접힌 테이블 간 관계 엣지 렌더.
+  (3) **프론트 ②**(신규 `_metaGraphTraceRelation`/`_metaGraphBindTraceRows`): 관계 클릭 → 대상 테이블을
+  이웃과 함께 화면에 가져오고 컬럼 전개 + 대상 컬럼 강조·카메라 focus. 상세 패널 "관계(N)" 행 +
+  "관계 상세" 행 공통 추적(showDetail→trace 통일).
+  (4) **프론트 ③**(`_metaGraphLoadNodeAnalysis`): AI 능동 분석 결과 박스에 구조화된 관계를 추적 가능 행
+  (`_metaGraphRelTraceRowsHTML`)으로 노출 → 분석 결과에서도 대상 추적.
+  (5) styles.css 추적 행 hover·힌트 + admin.html 캐시버스터 `20260703-graph-reltrace`.
+- Files: `unit/feature-0002-agent-core/src/modules/metadata_graph.py`,
+  `unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}`.
+- Impact: 데이터 비파괴·마이그레이션 0. 백엔드는 schema_tables 응답에 엣지 추가(읽기 전용 투영).
+  배포 = web 재빌드(백엔드 metadata_graph 포함 → 워커도 재빌드 권장). 접힌 관계 데이터 피드가 늘어
+  스키마 펼침 payload 소폭 증가(cap 으로 제한).
+- Rollback Notes: 코드 롤백 = 이전 커밋 재빌드. 프론트 캐시버스터 되돌림.
+
 ## CHG-20260702T100500-ai-root-feature-0016-probe-mssqlfix
 - Date: 2026-07-02
 - Related Requirement: rel-selfheal(CHG-20260702T052630) 배포 후 라이브 검증에서 적발된 잠복 결함 —
