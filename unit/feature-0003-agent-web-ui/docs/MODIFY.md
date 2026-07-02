@@ -5325,3 +5325,14 @@ source_of_truth: true
 - Files: `static/app.js`, `static/index.html`, `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
 - 검증: `node --check app.js` PASS. §18.8 적대검증 REV-20260702T021700-attach-count-scope — VERDICT: MAJOR 1 적발(delete/leave 계열 갭) → **수정 반영 후 재검증 정합**, MINOR 1(logout, 비가시·자동정정 — 무수정 확인). PB-0008 Windows-browser = 배포 후 라이브(TEST.md §3, baked 자산·relay 라이브검증 사용자 실화면 필요 사유).
 - Rollback: revert app.js(4개 `_renderAttachmentPills()` 호출 제거) + index.html(캐시버스터 원복).
+
+## CHG-20260702-aiops-activity-paging (TASK-20260702-aiops-activity-paging — 활동 페이징 + main agent latency, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
+- 변경:
+  - **feature-0002** `src/agent_core.py` `_call_llm`: create 직전 `time.perf_counter_ns()` → `_record_llm_usage(..., latency_ms=int((now-t0)//1e6))`. main agent 경로(LLM 볼륨 최대, task='agent')의 latency gap 보완. best-effort try/except 내(기존 예외격리 유지), 반환값·control flow 무변경.
+  - **feature-0003** `src/routers/ai_ops.py`: `_query_activity(cur, taxonomy_for, *, cursor, limit)` keyset 헬퍼(`WHERE id < %s ORDER BY id DESC LIMIT n+1`, has_more=len>limit → next_cursor) + 신규 `GET /api/admin/ai-ops/activity`(console.aiops.read, cursor/limit 파라미터, `_pg_connect_ro` 부분 degrade) + overview 활동을 `_query_activity` 로 리팩터(created_at DESC → id DESC 등가) + `activity_next_cursor` 반환.
+  - **feature-0003** `src/static/admin.js`: `aiOpsActivityRowsHtml`(초기+append 공용 esc row) + `loadAiOpsMoreActivity`(cursor append, insertAdjacentHTML, next_cursor 갱신/과거끝 disabled/에러 재시도) + renderAiOps '더 보기' 버튼(activity_next_cursor 있을 때) + body.innerHTML 후 배선.
+  - **feature-0003** `src/static/admin.html`: cache-buster `admin.js?v=20260702-aiops-activity-paging`.
+  - **feature-0003** `tests/route_snapshot_p5b.json`: 신규 activity 라우트로 194→195 재생성. `tests/test_ai_ops.py`: 신규 5건.
+- Verification: `test_ai_ops.py` 15/15 + 회귀 66 PASS + collection 무오류. route-parity 195 PASS. node --check(admin.js). py_compile(agent_core·ai_ops). §18.8 REV-20260702T180000-aiops-activity-paging. PB-0008= 배포 후.
+- Files: `feature-0002/src/agent_core.py`, `feature-0003/{src/routers/ai_ops.py, src/static/admin.js, src/static/admin.html, tests/route_snapshot_p5b.json, tests/test_ai_ops.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`.
+- keyset 선택 근거: OFFSET 은 대량 활동에서 성능·불안정(삽입 시 shift) → id BIGSERIAL 단조 keyset(`id < cursor`)로 안정 페이징. next_cursor=마지막 id(has_more 시), null=과거 끝.

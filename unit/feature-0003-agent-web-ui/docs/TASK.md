@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260702-aiops-activity-paging — AI 운영 현황 '최근 활동' 과거 기록 페이징 + main agent latency 계측 (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
+- 트리거(사용자): "'최근 활동'을 페이징하여 과거기록도 조회할 수 있도록 구성해주세요." + "이전 작업에서 확인했던 남은 발견 사항도 진행" (finding #1 agent_core latency).
+- 구성:
+  1. **활동 페이징**(feature-0003): 기존 최근 활동 feed 는 최근 30건만 표시 → cursor(id) keyset 페이징 추가. 신규 `GET /api/admin/ai-ops/activity?cursor=<id>&limit=<1~100>`(console.aiops.read) 가 `WHERE id < cursor ORDER BY id DESC LIMIT n+1` 로 더 오래된 활동 조회(OFFSET 아닌 안정 keyset). overview 는 최신 페이지 + `activity_next_cursor` 반환. 프론트 '더 보기' 버튼이 append.
+  2. **agent_core latency**(finding #1, feature-0002): main agent 경로(`agent_core._call_llm`, task='agent')는 LLM 볼륨 최대인데 중앙 래퍼를 안 거쳐 latency 가 비어 있던 gap 보완 — create 직후 latency_ms 를 `_record_llm_usage` 에 함께 전달(래퍼 경로와 동일 순수 왕복 규약, best-effort try/except).
+  3. **finding #3**: 스크롤 PB-0008 라이브 PASS 결과를 TEST.md 에 기록. (finding #2 datasource circuit_open 은 환경 이슈 — 코드 무관, 미대상.)
+- Completion Checklist:
+  - [x] `routers/ai_ops.py`: `_query_activity`(cursor keyset 헬퍼, id DESC) + 신규 `/api/admin/ai-ops/activity` 엔드포인트(권한·부분 degrade) + overview `activity_next_cursor`.
+  - [x] `agent_core.py`: `_call_llm` create 직전 perf_counter → `_record_llm_usage(latency_ms=...)`. (cross-unit feature-0002)
+  - [x] `static/admin.js`: `aiOpsActivityRowsHtml`(공용 esc row) + `loadAiOpsMoreActivity`(cursor append) + renderAiOps '더 보기' 버튼 + 배선. `static/admin.html`: cache-buster `admin.js?v=20260702-aiops-activity-paging`.
+  - [x] 단위테스트 `test_ai_ops.py` 15/15(신규 5: _query_activity cursor/next_cursor·엔드포인트 degrade·권한 403). 회귀 66 PASS. route-parity 골든 **194→195**(신규 activity 라우트). node --check(admin.js). py_compile 전체.
+  - [x] §18.8 적대 패널(2-렌즈 AGENT-TEAM: backend BLOCKING 0/NIT 4 + frontend BLOCKING 1 흡수/NIT 2) → REV-20260702T180000-aiops-activity-paging.
+  - [ ] PB-0008 Windows-browser: '더 보기' 클릭 → 과거 활동 append 실측 + agent latency 기록 확인 — 배포 후.
+  - [ ] verify-completion PASS → commit → PR/merge → web 재배포(deploy_scope: included) → PB-0008.
+
 ## TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤 구성 (Minor §12.3 — feature-0003 프론트 CSS 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
 - 트리거(사용자): "내용이 화면 너머까지 출력되고 있지만 해당 화면을 볼 방법이 없습니다 — 화면 내 세로 스크롤을 구성해주세요." AI 운영 현황 패널(배너+축+KPI+Attention+카테고리표 13행+활동feed+커버리지)이 길어 admin-shell(overflow:hidden+100vh) 뷰포트 아래로 넘치는데 pane 에 세로 스크롤이 없어 하단(카테고리표·커버리지)에 도달 불가. PB-0008 스크린샷에서도 커버리지 잘림 관측.
 - 근본원인: `styles.css` 의 pane 세로 스크롤 규칙(TASK-0167 — dashboard/usage/release-notes 처럼 list-detail 아닌 단순 세로 흐름 pane 에 `overflow-y:auto`)에 `ai-ops` pane 이 누락. (다른 pane 은 내부 admin-list 가 스크롤하거나 이 규칙에 포함돼 있어 정상.)
