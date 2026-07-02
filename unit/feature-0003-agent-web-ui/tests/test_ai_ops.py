@@ -196,3 +196,75 @@ def test_record_llm_usage_skips_without_usage(monkeypatch):
     # usage 없음(스트리밍 include_usage 미지원 등) → INSERT 미실행(정직 스킵)
     llm._record_llm_usage("m", "prompt_gen", SimpleNamespace(usage=None, model="m"), latency_ms=50)
     assert sink == []
+
+
+# ── 활동 feed 페이징(TASK-AIOPS-paging): cursor keyset + next_cursor + 엔드포인트 degrade/권한 ─
+import datetime as _dt
+
+
+def _act_rows(n, start_id):
+    # (id, task, model, total, prompt, completion, latency, created_at)
+    return [(start_id - i, "agent", "claude-haiku-4", 100, 60, 40, 12,
+             _dt.datetime(2026, 7, 2, 0, 0, i % 60)) for i in range(n)]
+
+
+class _PlainCur:
+    def __init__(self, rows): self._rows = rows; self.sql = None; self.params = None
+    def execute(self, sql, params=None): self.sql = sql; self.params = params
+    def fetchall(self): return self._rows
+
+
+class _CtxCur(_PlainCur):
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+class _RowConn:
+    def __init__(self, rows): self._cur = _CtxCur(rows)
+    def cursor(self, *a, **k): return self._cur
+    def close(self): return None
+
+
+class _ReqQ:
+    def __init__(self, **params): self.query_params = {k: str(v) for k, v in params.items()}
+
+
+def test_query_activity_no_cursor_has_more():
+    from routers.ai_ops import _query_activity
+    cur = _PlainCur(_act_rows(4, 100))  # limit=3, 4 rows → has_more
+    items, nxt = _query_activity(cur, taxonomy_for, limit=3)
+    assert len(items) == 3
+    assert nxt == items[-1]["id"]                  # has_more → next_cursor = 마지막 id
+    assert {"id", "latency_ms", "cost_usd", "label"} <= set(items[0].keys())
+    assert "WHERE id <" not in cur.sql             # cursor 미지정 → WHERE 없음
+    assert "ORDER BY id DESC" in cur.sql
+
+
+def test_query_activity_with_cursor_no_more():
+    from routers.ai_ops import _query_activity
+    cur = _PlainCur(_act_rows(3, 50))              # limit=3, 3 rows → no has_more
+    items, nxt = _query_activity(cur, taxonomy_for, cursor=97, limit=3)
+    assert len(items) == 3 and nxt is None
+    assert "WHERE id < %s" in cur.sql
+    assert cur.params[0] == 97 and cur.params[1] == 4   # (cursor, limit+1)
+
+
+def test_activity_endpoint_with_data(monkeypatch):
+    monkeypatch.setattr("shared.db._pg_connect_ro", lambda *a, **k: _RowConn(_act_rows(4, 200)), raising=False)
+    body = _body(ai_ops.admin_ai_ops_activity(_ReqQ(limit=3, cursor=500), account={"id": 1}, conn=None))
+    assert body["pg_available"] is True
+    assert len(body["items"]) == 3
+    assert body["next_cursor"] == body["items"][-1]["id"]
+
+
+def test_activity_endpoint_pg_degrade(monkeypatch):
+    def _boom(*a, **k): raise RuntimeError("pg down")
+    monkeypatch.setattr("shared.db._pg_connect_ro", _boom, raising=False)
+    body = _body(ai_ops.admin_ai_ops_activity(_ReqQ(), account={"id": 1}, conn=None))
+    assert body["pg_available"] is False and body["items"] == [] and body["next_cursor"] is None
+
+
+def test_activity_endpoint_requires_permission(client, as_account):
+    as_account(perms={"console.access": True})  # console.aiops.read 없음
+    resp = client.get("/api/admin/ai-ops/activity")
+    assert resp.status_code == 403

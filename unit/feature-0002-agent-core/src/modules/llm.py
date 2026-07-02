@@ -1483,10 +1483,15 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
 def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
     """feature-0016 graphux5: 그래프 노드 1개 + 이웃을 능동 분석한다(재귀 워커가 노드마다 호출).
 
-    schema/table insight 와 동일 티어 라우팅·예외·JSON 추출. 반환 dict
-    `{"summary","relationships","usage","caveats"}` 또는 None(실패). 호출측(node_analysis.py)이
-    None 을 status='failed' 로 기록하고 재귀는 계속한다(1개 실패가 run 전체를 막지 않음)."""
-    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    schema/table insight 와 동일 max_tokens·예외·JSON 추출 경로를 쓰되, **모델은 전용
+    AGENT_NODE_ANALYSIS_MODEL(기본 claude-haiku-4)** 로 라우팅한다 — 관리콘솔 그래프뷰의
+    "각 관계 분석" 은 로컬 gemma(edge) 가 아니라 claude-haiku 로 작동해야 한다는 사용자 결정
+    (2026-07-02, feature-0016 node-analysis-haiku). schema/table/account insight 는 여전히
+    공유 AGENT_INSIGHT_MODEL 을 쓴다. 반환 dict `{"summary","relationships","usage","caveats"}`
+    또는 None(실패). 호출측(node_analysis.py)이 None 을 status='failed' 로 기록하고 재귀는
+    계속한다(1개 실패가 run 전체를 막지 않음)."""
+    # 전용 모델(insight 공유값과 분리). 빈 문자열 방어 위해 or-체인으로 폴백 유지.
+    _insight_model = AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL
     client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None

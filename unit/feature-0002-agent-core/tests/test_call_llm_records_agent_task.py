@@ -40,10 +40,12 @@ class _Client:
 
 def test_call_llm_records_with_agent_task(monkeypatch):
     calls = []
+    # TASK-AIOPS: _call_llm 이 이제 latency_ms 도 전달하므로 mock 이 이를 수용해야 한다
+    # (미수용 시 TypeError → _call_llm 의 try/except 가 삼켜 기록 0건으로 회귀).
     monkeypatch.setattr(
         agent_core, "_record_llm_usage",
-        lambda model, task, resp, conversation_id=None, run_id=None: calls.append(
-            (model, task, resp, conversation_id, run_id)
+        lambda model, task, resp, conversation_id=None, run_id=None, latency_ms=None: calls.append(
+            (model, task, resp, conversation_id, run_id, latency_ms)
         ),
     )
     # 부수 의존 무력화 (vision/attachment/catalog 는 본 테스트 관심 밖).
@@ -60,12 +62,14 @@ def test_call_llm_records_with_agent_task(monkeypatch):
 
     assert out == "FINAL_MESSAGE"
     assert len(calls) == 1
-    model, task, resp, conv, run = calls[0]
+    model, task, resp, conv, run, latency_ms = calls[0]
     assert model == "auto"
     assert task == "agent"
     assert resp.usage.total_tokens == 2
     assert conv == "conv-X"
     assert run == "run-X"
+    # TASK-AIOPS: main agent 경로도 latency 기록(중앙 래퍼 미경유 gap 보완).
+    assert isinstance(latency_ms, int) and latency_ms >= 0
 
 
 def test_call_llm_record_failure_does_not_break(monkeypatch):

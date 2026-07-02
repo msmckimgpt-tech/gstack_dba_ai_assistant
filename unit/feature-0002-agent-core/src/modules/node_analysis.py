@@ -448,7 +448,12 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                         "usage": str(obj.get("usage") or "").strip(),
                         "caveats": str(obj.get("caveats") or "").strip(),
                     }, ensure_ascii=False)
-                    model = getattr(_cfg, "AGENT_INSIGHT_MODEL", None) or getattr(_cfg, "OPENAI_MODEL", None)
+                    # 저장·표시용 모델 라벨은 llm_node_analysis 의 실제 라우팅과 동일 순서로 해석
+                    # (전용 AGENT_NODE_ANALYSIS_MODEL 우선) — 상세 패널이 실제 사용 모델(claude-haiku)을
+                    # 표시하도록. 이 순서가 어긋나면 UI 에 gemma(edge)로 오표시된다.
+                    model = (getattr(_cfg, "AGENT_NODE_ANALYSIS_MODEL", None)
+                             or getattr(_cfg, "AGENT_INSIGHT_MODEL", None)
+                             or getattr(_cfg, "OPENAI_MODEL", None))
                     cur.execute("UPDATE node_analysis_jobs SET status='done', analysis=%s, model=%s, error=NULL "
                                 "WHERE id=%s", (analysis_text, (str(model)[:128] if model else None), jid))
                     cur.execute("UPDATE node_analysis_runs SET done = done + 1 WHERE run_id=%s", (run_id,))

@@ -72,7 +72,40 @@ def test_openai_api_base_removed(monkeypatch):
     assert "OPENAI_API_BASE" not in getattr(c, "__all__", [])
 
 
+# ── feature-0016 node-analysis-haiku: 그래프 관계 분석 전용 모델 ────────────────
+def test_node_analysis_model_defaults_to_haiku(monkeypatch):
+    """AGENT_NODE_ANALYSIS_MODEL 미설정 시 claude-haiku-4 기본값 — 그래프 관계 분석은
+    로컬 gemma(edge)가 아니라 claude-haiku 로 작동해야 한다(사용자 결정 2026-07-02).
+    AGENT_INSIGHT_MODEL=edge 여도 node analysis 는 이 값에 영향받지 않는다."""
+    monkeypatch.delenv("AGENT_NODE_ANALYSIS_MODEL", raising=False)
+    monkeypatch.setenv("AGENT_INSIGHT_MODEL", "edge")  # insight 는 gemma 라도
+    c = _reload_config()
+    assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-haiku-4"  # node analysis 는 haiku
+    assert c.AGENT_INSIGHT_MODEL == "edge"                  # 공유 안 함(분리 확인)
+
+
+def test_node_analysis_model_env_override(monkeypatch):
+    """운영에서 다른 모델로 바꾸려면 .env AGENT_NODE_ANALYSIS_MODEL override 가 우선."""
+    monkeypatch.setenv("AGENT_NODE_ANALYSIS_MODEL", "claude-sonnet-4")
+    c = _reload_config()
+    assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-sonnet-4"
+
+
+def test_node_analysis_model_blank_env_falls_back_to_haiku(monkeypatch):
+    """빈 문자열/공백 override 는 기본값으로 폴백(빈 모델명 라우팅 방지)."""
+    monkeypatch.setenv("AGENT_NODE_ANALYSIS_MODEL", "   ")
+    c = _reload_config()
+    assert c.AGENT_NODE_ANALYSIS_MODEL == "claude-haiku-4"
+
+
+def test_node_analysis_model_exported(monkeypatch):
+    """from shared.config import * 로 llm.py 가 읽을 수 있게 __all__ 에 노출."""
+    c = _reload_config()
+    assert "AGENT_NODE_ANALYSIS_MODEL" in getattr(c, "__all__", [])
+
+
 def teardown_module(module):
     """env 조작이 다른 테스트에 새지 않도록 config 를 깨끗이 reload."""
-    _clear("LLM_MODEL", "OPENAI_MODEL", "AGENT_LLM_MAX_RETRIES", "AGENT_OPENAI_MAX_RETRIES")
+    _clear("LLM_MODEL", "OPENAI_MODEL", "AGENT_LLM_MAX_RETRIES", "AGENT_OPENAI_MAX_RETRIES",
+           "AGENT_NODE_ANALYSIS_MODEL", "AGENT_INSIGHT_MODEL")
     importlib.reload(config)

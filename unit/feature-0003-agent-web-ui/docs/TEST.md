@@ -125,6 +125,16 @@ docker compose run --rm \
 - **라이브 PB-0008 실 Windows 브라우저 — PASS (2026-07-02, Environment: Windows-browser)**: graph-g6 무중단 배포(web-a/b `8c45f070`) 후 실 Windows Chrome/149(win-browser relay, `https://localhost/admin` 로그인 세션) 검증. 데이터소스 `mssql-06656002eda6` 실데이터 **236 노드·36 클러스터** → G6 Canvas 렌더 정상, teal 칩·클러스터 자연정렬·점선/실선 엣지, **노드 클릭=제자리 컬럼 펼침**(dt_EventItemWithMonster 12컬럼)·"−" 접기 실화면 동작 확인.
 - **후속 UX 개선(graph-g6b)**: 실데이터 관측 문제(세로 과길이·fit 극소) → `_metaG6Build` 클러스터 내 다열 masonry + 가변폭 shelf-packing 으로 해소. WSL-headless-harness(14클러스터 확장 포함) PASS. cache-buster `admin.js?v=20260702-graph-g6b`. 라이브 재확인=graph-g6b 배포 후.
 - Pass/Fail: **PASS** (구문·적대 코드리뷰·WSL-headless-harness·라이브 PB-0008 실 Windows 236노드 확인). Runner: AI.
+
+### TASK-20260702-graph-perf-bg 그래프 뷰 테이블 노드 펼침 논블로킹 + 성능 최적화 (Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (펼침 시 렌더 프리즈 해소는 실 브라우저 페인트 거동 — de-risk=구문/적대패널 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 변경: admin.js 논블로킹 펼침 파이프라인·`_opSeq` stale 토큰·O(1) `colsByTable`·`_metaGraphRefreshStates` diff+batch·busy(`_busyKeys`/`_metaStateSig`/`_metaApplyState`)·`_metaG6Build` Pass1/2 + admin_metadata.py `/graph/columns` TTL 캐시 + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-005 · MODIFY CHG-20260702-graph-perf-bg.
+- **구조·구문**: `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS · leftover 디버그 마커(console.log/debugger/TODO) 0.
+- **§18.8 적대 검증(AGENT-TEAM, 다단계)**: 3렌즈 병렬 패널(race/index-drift/layout+cache) → **BLOCKING 4건** 적발; 5-agent 재검증 워크플로 → 4건 CLOSED + **신규 BLOCKING 1건(loadRoots reset-vs-reset)** 적발; loadRoots 가드 추가 후 최종 재검증 → **reset-vs-reset 6조합 CLOSED·회귀 없음**. NIT 5건 수용. 상세 REV-20260702T120000 (feature-0016 REVIEW.md).
+  - 확인된 BLOCKING 수정: ① reset/search/scope 경로 `_opSeq++`(stale-render 차단) ② 동 race 로 인한 `colsByTable` 포이즌 차단 ③ seq-mismatch busy 소유권 해제(잔류 차단) ④ 폴이 busy 보존(`_metaStateSig`) + `_stateCache` 불변식 ⑤ loadRoots seq 가드(혼합-스코프 그래프 차단).
+  - BE 캐시 렌즈 clean: 공유-가변 손상·스코프 누출·권한 우회 없음(캐시-히트는 권한 dependency 후), 실패·빈결과 미캐시, 축출/ TTL 정상.
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 정적 자산 baked → 배포(main 병합·web 재빌드) 후에만 실검증. 확인 항목 → ① **대량 스키마 테이블(수십 컬럼) 선택→펼침 시 렌더 엔진 무프리즈**(과거 dead-frozen 해소) ② 펼침 대기 중 **teal 점선 busy 피드백** 표시 후 자연 소멸 ③ **반복 펼침·재진입 즉시 응답**(introspection TTL 캐시 히트) ④ 펼침 중 스코프 전환/검색 시 **혼합-스코프 그래프 없음**(마지막 요청 화면으로 수렴) ⑤ 대량 그래프에서 AI 마커 폴(2.5s) 시 stutter 없음.
+- Pass/Fail: **PASS**(구문·다단계 적대패널). 라이브 프리즈 해소·성능 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
+
 ### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
 - 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.
 - 정적 검증(pre-commit): `node --check admin.js` PASS · `test_permission_dependency_map.py` 18개 PASS(신규 t5 계층 pin[metadata.*→kb.ingest.manual→console.access, depth manual=0·metadata.*=1] + t6 도달성[게이트 OFF 시 metadata hidden 이나 그룹 비은닉] + 기존 V1~V7 disclosure 무회귀) · §18.8 SUBAGENT 패널 PASS(BLOCKING 0).
@@ -1430,6 +1440,7 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **§18.8**: [SKIPPED:minor-css-scroll] — 2줄 CSS 셀렉터 편입, 신규 로직 0. REV-20260702T170000-aiops-scroll.
 - **Environment: Windows-browser (PB-0008)** — 배포 후 라이브 실측 예정: web 재배포(cache-buster styles.css bump 로 신 CSS 강제 로드) → 실 Windows 브라우저에서 AI 운영 현황 탭 진입 → **pane 세로 스크롤 동작 + 하단 커버리지 섹션 도달** 실측 + 스크롤 스크린샷. (CSS-only 변경이나 실 렌더 스크롤은 PB-0008 이 정본.)
 - **Pass/Fail: PASS(정적·CSS·적대 skip 근거)**. CHECK#13(PB-0008)는 배포 후 스크롤 실측으로 충족 예정.
+- **[POST-DEPLOY 갱신 2026-07-02] PB-0008 세로 스크롤 라이브 PASS**: PR #531 병합(b915e121) → web 재배포(soak 통과, git_commit=b915e121, 신 CSS `styles.css?v=20260702-aiops-scroll` 서빙 확인) → 실 Windows 브라우저(win-browser relay, Chrome 149) 실측: AI 운영 현황 pane `overflow-y:auto`·`overflow-x:hidden`, scrollHeight 1340 > clientHeight 684 (**canScroll=true**), 하단까지 스크롤(scrollTop=656=maxScroll) → **이전에 잘려 도달 불가하던 '계측 커버리지' 섹션 완전 노출**(스크린샷 pb0008_scroll_bottom). → CHECK#13 실충족.
 
 ### TASK-20260702T021700-attach-count-scope — "+" 메뉴 첨부 개수 배지 대화 전환 후 stale 수정 (frontend-only, Minor §12.3 — /_template:entry arg-given)
 - **정적 검증(pre-commit 정본)**: `node --check app.js` **PASS**. 근본원인·수정 정합 §18.8 적대 패널 REV-20260702T021700-attach-count-scope — 초기 FAIL(MAJOR 1: delete/leave 계열 갭) → loadHistory 두 exit 배지 재렌더 추가로 수정 반영 후 정합(BLOCKING 0). 코드 trace: 배지 setter = `_renderAttachmentPills` 유일 / 재렌더 훅 4지점(beginPendingConversation·_switchToPendingConversationContext·loadHistory×2)이 switchConversation 외 모든 컨텍스트 진입·전환·삭제 랜딩 경로 커버.
@@ -1437,8 +1448,18 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **배포 후 최종 확인(필수)**: web 재빌드·재배포(deploy_scope: included) 후 (a) baked 자산 검증 — `GET /static/app.js?v=20260702-attach-count-scope` 서빙 + 4개 `_renderAttachmentPills()` 훅 마커 확인, (b) **사용자 실화면 인터랙션 확인 요망**: ① 대화 A 에 파일 첨부 → "+" 열어 배지 개수 확인 → "새 대화" 클릭 → "+" 배지 **비워짐** / ② 대화 A 첨부 후 다른 기존 대화 B(첨부 없음) 전환 → 배지 비워짐, 첨부 있는 B 면 B 개수 / ③ 첨부 있는 활성 대화 **보관/나가기** 후 다른 대화 랜딩 → 배지가 삭제 대화 개수 잔류 안 함.
 - **Pass/Fail: 정적 PASS(코드정합·적대검증) · 라이브 = 배포 후 사용자 실화면 확인 대기**. CHECK#13(PB-0008 Windows-browser) 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).
 
-### Run (2026-07-02) — graph-ctxmenu: 메타데이터 그래프 뷰 노드 우클릭 상세 상호작용 (Major §12.3 — frontend-only, 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §22)
+<<<<<<< HEAD
+### Run (2026-07-02) — graph-ctxmenu: 메타데이터 그래프 뷰 노드 우클릭 상세 상호작용 (Major §12.3 — frontend-only, 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §24)
 - **정적·dev-loop 검증 PASS**: `node --check admin.js` PASS + WSL-headless-harness(그래프 블록 + 실 admin.html 마크업 + mock apiFetch) **28/28 PASS** — 네이티브 우클릭 이벤트 경로(canvas capture preventDefault + G6 node/combo/edge/canvas:contextmenu)·kind 별 메뉴·관계 상세 패널(방향·신뢰/추정 w·근거·로컬 조인 컬럼·행 클릭 이동)·중심 보기 지속 칩·1회성 hop 확장·기존 클릭/더블클릭/접기 회귀·콘솔 에러 0. 상세: `unit/feature-0016-metadata-graph/docs/TEST.md` graph-ctxmenu 절.
 - **§18.8**: ux/design/qa 3인 적대 패널 — MAJOR 3 전건 수정(엣지 우클릭 메뉴·로컬 조인 컬럼 표기·중심 보기 지속 칩). REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu (feature-0016 REVIEW.md).
-- **Environment: Windows-browser (PB-0008)** — **배포 후 라이브 실측 예정(커밋 시점 미수행 사유 명시, 카고컬트 방지)**: 본 변경은 web 이미지에 baked 되는 정적 자산(admin.js/styles.css/admin.html)이고 배포 스파인 `bin/deploy-web.sh` 는 origin/main HEAD 만 배포하므로 **머지 전 라이브 반영 불가**. cycle-finalize(main 병합) → web-a/web-b 재배포(cache-buster `?v=20260702-graph-ctxmenu` 신자산 강제 로드) → 실 Windows 브라우저(win-browser relay)로 그래프 뷰 우클릭 메뉴(노드/컬럼/용어/클러스터/엣지/빈캔버스)·관계 상세 패널·중심 보기 칩·기본 메뉴 차단·기존 상호작용 회귀를 실측하고 본 Run 에 POST-DEPLOY 갱신을 기록한다. (canvas 노드 우클릭의 무인 자동화가 Chrome eval 제약으로 막히면 스크린샷+가능 범위 실측 후 사용자 실화면 확인 요망 항목을 명시.)
+- **Environment: Windows-browser (PB-0008)** — **배포 후 라이브 실측 예정(커밋 시점 미수행 사유 명시, 카고컬트 방지)**: 본 변경은 web 이미지에 baked 되는 정적 자산(admin.js/styles.css/admin.html)이고 배포 스파인 `bin/deploy-web.sh` 는 origin/main HEAD 만 배포하므로 **머지 전 라이브 반영 불가**. cycle-finalize(main 병합) → web-a/web-b 재배포(cache-buster admin.js `?v=20260702-graph-ctxmenu2`·styles.css `?v=20260702-graph-ctxmenu` 신자산 강제 로드) → 실 Windows 브라우저(win-browser relay)로 그래프 뷰 우클릭 메뉴(노드/컬럼/용어/클러스터/엣지/빈캔버스)·관계 상세 패널·중심 보기 칩·기본 메뉴 차단·기존 상호작용 회귀를 실측하고 본 Run 에 POST-DEPLOY 갱신을 기록한다. (canvas 노드 우클릭의 무인 자동화가 Chrome eval 제약으로 막히면 스크린샷+가능 범위 실측 후 사용자 실화면 확인 요망 항목을 명시.)
 - **Pass/Fail: 정적·dev-loop·적대패널 PASS · 라이브 = 배포 후 PB-0008 실측 대기**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·배포 후 수행 계획 기록).
+=======
+### Run (2026-07-02) — TASK-20260702-aiops-activity-paging: 활동 페이징 + main agent latency (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
+- **단위 PASS**: `tests/test_ai_ops.py` **15/15**(신규 5) — `_query_activity` cursor 미지정(has_more→next_cursor=마지막 id, WHERE 없음, ORDER BY id DESC) / cursor 지정(WHERE id<%s, params=(cursor, limit+1), no-more→next_cursor null) / activity 엔드포인트 데이터(items limit + next_cursor) / PG degrade(200, items 빈, next_cursor null) / 권한 403(console.access-only, TestClient). agent latency 는 기존 `test_record_llm_usage_latency_column`(passthrough) 커버.
+- **회귀 PASS**: `test_route_parity_p5b`(골든 **195**, 신규 `/api/admin/ai-ops/activity` 반영) · permission 16 · dashboard 20 · usage 12 — 합 66 PASS. 전체 collection 무오류(agent_core 변경 import 포함).
+- **정적**: `node --check` admin.js PASS. `py_compile` agent_core.py·ai_ops.py PASS.
+- **§18.8**: 2-렌즈 적대 패널(agent_core hot-path + 페이징 backend / 프론트 XSS·더보기) — REV-20260702T180000-aiops-activity-paging.
+- **Environment: Windows-browser (PB-0008)** — 배포 후 라이브 실측 예정(cache-buster admin.js bump): AI 운영 현황 → '최근 활동' **'더 보기' 클릭 → 과거 활동 append**(중복/누락 없이) + next_cursor 소진 시 '과거 기록 끝' + main agent 신규 호출의 latency 기록 확인 + 스크린샷.
+- **Pass/Fail: PASS(단위·회귀·정적·적대패널)**. CHECK#13(PB-0008)는 배포 후 '더 보기' 실측으로 충족 예정.
+>>>>>>> origin/main
