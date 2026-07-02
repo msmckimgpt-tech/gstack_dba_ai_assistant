@@ -116,12 +116,23 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260702-aiops-conv-link-fix '최근 활동' 상세 시스템 sentinel 대화 링크 깨짐 수정 (Minor §12.3, 2026-07-02, audit-nav-ux 후속) — **Environment: Windows-browser (DOM 링크 렌더 — node --check + 배포 후 PB-0008 재검증, visual_verification_scope: always)**
+- 대상: 관리콘솔 > 감사 > AI 운영 현황 > 최근 활동 상세 '연결 대화'. 변경: `static/admin.js` `aiOpsActivityRowsHtml`(sentinel 가드) + `static/admin.html`(cache-buster). 백엔드 무변경.
+- **구조·구문**: `node --check static/admin.js` PASS.
+- **회귀**: `make test` **exit 0**(백엔드 `_query_activity`·엔드포인트 무변경 — feature-0002+0003 전량 그대로 PASS).
+- **§18.8**: `[SKIPPED:minor-frontend-guard]` — 3-줄 조건 가드, 선행 audit-nav-ux 패널(REV-20260702T190000 SHIP)이 주변 검증 완료, PB-0008 이 정본. REV-20260702T193000-aiops-conv-link-fix.
+- **PB-0008 Windows-browser 라이브 실측 — DEFERRED(배포 후)**: sentinel 활동 행(insight/ask 워커 등) 클릭 → '연결 대화' 가 "시스템·자율 호출 (`__insight_worker__`) — 미귀속" 안내(링크 없음). 실 사용자 대화 활동 행 → '대화 열기' 링크 유지. 배포 후 본 케이스에 Run 기록 append.
+
 ### TASK-20260702-audit-nav-ux 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장 (Minor §12.3, 2026-07-02) — **Environment: Windows-browser (DOM 상호작용·툴팁·순서 — 코드/단위검증 완료 + 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
 - 대상: 관리콘솔 > 감사 그룹 nav 순서·툴팁 + AI 운영 현황 '최근 활동' 인라인 아코디언. 변경: `static/admin.html`(순서 swap·title·cache-buster), `static/admin.js`(aiOpsActivityRowsHtml·토글·renderAiOps 배선), `routers/ai_ops.py`(_query_activity additive), `tests/test_ai_ops.py`.
 - **구조·구문**: `python -m py_compile routers/ai_ops.py` PASS · `node --check static/admin.js` PASS.
 - **단위(agent 이미지 격리, DB 없이 monkeypatch/fake)**: `make test` **exit 0** (feature-0002 + feature-0003 전량). `test_ai_ops.py` **15/15 passed** — `_query_activity` 확장 SELECT/dict(신규 필드 req_model/resolved_model/prompt_tokens/completion_tokens/run_id/conversation_id) + `served=r[3] or r[2]` 우선순위 + conversation_id 유/무 두 경로 + 기존 cursor keyset·엔드포인트 degrade·권한 403 회귀. ruff PASS.
 - **§18.8 적대 패널(subagent, 3-렌즈: 백엔드 correctness/보안·프론트 XSS/UX·테스트 정합)**: **VERDICT SHIP** — BLOCKING/MAJOR/MINOR 0, NIT 3 비차단(REV-20260702T190000-audit-nav-ux, REVIEW.md).
-- **PB-0008 Windows-browser 라이브 실측 — DEFERRED(배포 후)**: (1) 감사 그룹 순서 감사 로그·보관 대화·LLM 사용량·AI 운영 현황 (2) 각 탭 hover 시 title 툴팁 표시 (3) AI 운영 현황 '최근 활동' 행 클릭 → 상세 패널 확장(토큰/모델/지연/run_id) + conversation_id 있는 행의 '대화 열기' 링크 새 탭 이동. baked 자산(admin.js/html)이라 배포 후 라이브 검증. 미수행 사유 명시(카고컬트 방지) — 배포 완료 시 본 케이스에 Run 기록 append.
+- **PB-0008 Windows-browser 라이브 실측 (Environment: Windows-browser, 2026-07-02, bc2a0fa6 배포 후, 실 Windows Chrome/149 via bin/win-browser.py relay @ 172.26.144.1:9223, https://localhost/admin 로그인 세션)**:
+  - **(1) 순서 — PASS**: 감사 그룹 DOM 순서 = 감사 로그 · 보관 대화 · LLM 사용량 · AI 운영 현황(요청과 일치). 새 `admin.js?v=20260702-audit-nav-ux` 로드 확인.
+  - **(2) 툴팁 — PASS**: 4개 탭 모두 `title` 상세설명 부착 확인(audits/archives/usage/ai-ops).
+  - **(3) 상세 확장 — PASS(부분)**: '최근 활동' 30행 렌더, 첫 행 클릭 → aria-expanded=true·caret ▾·상세 패널 display=block, 필드 8종(시각/작업/모델(edge→gemma4:e2b)/토큰(201/357/558)/추정 비용/지연/요청 ID/연결 대화) 표시.
+  - **결함 적발 → 후속 수정**: 첫 행(insight worker `table_insight`)의 '연결 대화' 가 `/?conversation=__insight_worker__`(sentinel) 열 수 없는 링크로 렌더 — 활동 대부분인 시스템·자율 호출에 깨진 링크. → TASK-20260702-aiops-conv-link-fix 로 수정(sentinel 가드), 위 test case 참조.
 
 ### TASK-20260702-graph-g6 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (그래프 canvas 렌더·인터랙션 — de-risk=WSL-headless-harness 완료 + 라이브 PB-0008 배포 후 잔여)**
 - 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 변경: admin.js `_metaGraph*` 엔진 전면 재작성(Cytoscape→G6) + admin.html(g6.min.js) + styles.css(오버레이 CSS 제거). 정본: feature-0016 DECISIONS ADR-004 · `../../feature-0016-metadata-graph/g6-migration/BLUEPRINT.md`.
