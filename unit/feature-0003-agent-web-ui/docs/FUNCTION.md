@@ -1429,3 +1429,6 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 계측 커버리지 한계(정직): 임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 필드 부재 → 구조적 계측 불가(패널 각주 명시). cost 는 read-time 계산(단가표 web 전용, DB 컬럼 미추가). 워커 프로세스 latency 는 web 배포로 미반영(후속 워커 재빌드).
 - Verification: `tests/test_ai_ops.py` 10/10 + 회귀 PASS. REV-20260702T140000-aiops-panel. PB-0008= TEST.md.
 - Route-parity: 신규 `GET /api/admin/ai-ops` 1개 추가로 route-parity 골든(`tests/route_snapshot_p5b.json`) **193→194** 갱신(origin/main #525 머지 후 머지된 앱 기준 재생성). `test_route_parity_p5b.py` PASS.
+
+## (TASK-20260702-aiops-scroll, 2026-07-02) AI 운영 현황 pane 세로 스크롤 (web/UI, Minor §12.3, aiops-panel 후속)
+- `styles.css` 의 pane 세로 스크롤 규칙(TASK-0167: list-detail 아닌 단순 세로 흐름 pane 에 `overflow-y:auto; overflow-x:hidden`)에 `ai-ops` pane 을 편입. AI 운영 현황 패널은 배너/축/KPI/Attention/카테고리 드릴다운/활동feed/커버리지의 긴 세로 흐름이라 admin-shell(overflow:hidden+100vh)에서 pane 자체 스크롤이 없으면 하단이 잘려 도달 불가. dashboard/usage 와 동일 처리. cache-buster styles.css bump. 신규 로직·백엔드·RBAC 무변경. PB-0008 스크롤 실측= 배포 후 TEST.md.

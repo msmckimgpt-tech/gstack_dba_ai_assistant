@@ -4396,3 +4396,8 @@ source_of_truth: true
   - [수용·기록] R1-NIT3 프론트 days 미전달(v1 고정 7일 window, 새로고침 재조회) — UX 한계, correctness 무관. v1 수용.
   - [수용·기록] R3 원거리 주의: (a) 부분 degrade 의 `_pg_connect_ro(autocommit=True)` 기본값 암묵 의존 — autocommit=False 리팩터 시 부분 degrade 붕괴, 회귀 게이트로 명시. (b) `_parse_kv_timestamp` space+offset aware 반환은 heartbeat writer 포맷 변경 시 TASK-0169 재발 원거리 함정(현재 writer=utc_now_iso T-separated 라 미도달).
 - 실측: tests/test_ai_ops.py 10/10 · 회귀 permission 16/dashboard 20/usage 28 PASS · 전체 collection 무오류 · migrate-lint expand-safe · py_compile 전체 · node --check(admin.js/mjs). PB-0008 Windows-browser= 배포 후 라이브(TEST.md).
+
+## REV-20260702T170000-aiops-scroll [SKIPPED:minor-css-scroll] (TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤, Minor §12.3 — feature-0003 프론트 CSS 단독)
+- Panel skip 사유(§18.8): 변경은 `styles.css` 의 기존 검증된 pane 세로 스크롤 규칙(TASK-0167, dashboard/usage/release-notes) 셀렉터에 `ai-ops` pane 1개 편입(2줄) + cache-buster bump. 신규 로직 경로 0, 백엔드/RBAC/스키마/엔드포인트 무변경, 핵심경로 인접 0 → §18.8 dispatch 키워드 미매칭. 실 스크롤 동작은 라이브 PB-0008 이 정본.
+- 검증: CSS brace balanced(1701/1701). `.admin-pane[data-admin-pane="ai-ops"].is-active` 가 dashboard/usage 와 동일 `overflow-y:auto; overflow-x:hidden` 상속 확인. node --check 무관(CSS). PB-0008 Windows-browser 세로 스크롤 + 하단 커버리지 도달 실측 = 배포 후(TEST.md).
+- Cross-ref: aiops-panel(REV-20260702T140000) 후속 UX 보정 — 패널 콘텐츠가 뷰포트 초과 시 하단 미도달 사용자 리포트.
