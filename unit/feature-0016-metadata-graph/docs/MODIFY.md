@@ -660,3 +660,14 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-011),TASK(§34),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로 **불변**. 마이그레이션 없음. tween=viewport transform 만(ADR-006 프리즈 무관). 검증: `node --check` PASS · 적응형 follow 헤드리스 실증(fire-and-forget 즉시 시작 + 중간 setData 앵커 이동 → 24프레임 중앙 수렴) · §18.8 적대 7축 BLOCKING 0(MEDIUM missStreak 조기포기→제거, NIT API폴백·W/H→반영). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(더블클릭 즉시 부드러운 팬).
 - Rollback Notes: `_metaGraphAnimateFocus` 를 이전(고정-duration) 으로 환원 + expand 팬 호출을 파이프라인 끝 await 로 복귀 + cache-buster 이전값(graph-dblclick-cam2). 데이터·API 무손상.
+
+## CHG-20260703-role-legend-panel
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청(그래프 뷰 노드 시각화 개선) — "테이블 역할(AI 분석 완료 시 칩 색)" 범례를 **다른 위치에 세로로 구성 + 접힐 수 있도록**. node-role-viz(CHG-20260703-node-role-viz, PR #555 병합·배포 완료) 위에 얹는 UI 개선. 배치 위치는 사용자가 "우측 상세 패널 상단" 선택.
+- Summary: 역할 범례를 툴바 아래 **가로 전폭 2번째 범례 행**(`.admin-meta-graph-legend-roles`)에서 **우측 상세 패널**(`aside#metadataGraphDetail`) **최상단**의 **세로 스택 + 네이티브 접힘**(`<details class="admin-meta-graph-rolelegend" open>`) 카드로 이전. summary=토글 헤더(커스텀 카펫 `▸`/rotate, `::-webkit-details-marker` 제거), 칩 8종(색+아이콘+라벨)은 `<ul><li>` 세로 스택으로 유지. 전폭 행 제거로 그래프 세로 공간 확보. 무JS(네이티브 details). 범례는 detailBody 의 형제(위)라 노드 선택·능동분석 렌더(detailBody/progress 만 innerHTML 교체)에 지워지지 않음.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (전폭 `.admin-meta-graph-legend-roles` 행 제거 → `aside#metadataGraphDetail` 최상단 `<details>` 범례 삽입 + cache-buster `styles.css?v=20260703-reldetail-colexpand-role-legend-panel`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.admin-meta-graph-legend-roles` 가로 규칙 2줄 제거 → `.admin-meta-graph-rolelegend` 세로·접힘 카드 규칙 추가)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§35),REPORT,REVIEW}.md`
+- Impact: 프론트 **표현 전용**(admin 그래프 뷰 역할 범례 위치·레이아웃만). 데이터 API·스키마(AGE)·마커·칩 색/아이콘 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 폭 조회(`d.clientWidth`)로만 참조되고 innerHTML 교체 없음 → 범례 wipe 없음. 부작용: "상세 ⇆"(`#metadataGraphDetailToggle`)로 상세 패널 접으면 범례도 같이 숨음(패널 종속 — 사용자 선택 위치의 자연 귀결). 검증: 구조 정합(무JS·`<details>` 관용구 기존 line 512 재사용) + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
+- Rollback Notes: admin.html/styles.css git revert + cache-buster 이전값(reltrace-tabledetail). 데이터·API·JS 무손상(표현 전용이라 revert 리스크 최소).

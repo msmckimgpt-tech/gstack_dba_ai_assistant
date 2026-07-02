@@ -616,8 +616,22 @@ source_of_truth: true
 - 재검증: node --check PASS + 격리 로직 8/8 + intra-table self-FK 2케이스 PASS.
 - Human Approval Needed: 없음(Major 승계·프론트 전용·비파괴). deploy_scope: included 자동 배포 + PB-0008.
 
-
 ## REV-20260703T170000-ai-root-feature-0016-colexpand-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY PB-0008 결과 기록
 - Related Change: CHG-20260703T170000. feature-0003 TEST.md POST-DEPLOY PASS(4항목) + TASK §35 완료.
 - Trigger: 비-코드 doc-only(POST-DEPLOY 증적) → §18.8 "비정책 doc-only" = panel SKIP.
 - 근거: 코드/정책 변경 0. 실 검증은 PB-0008 라이브(4항목 PASS, 스크린샷 5매)로 수행됨 — 본 항목은 정본 기록.
+
+## REV-20260703T020000-ai-claude-feature-0016-role-legend-panel [SUBAGENT: PASS] — 역할 범례 우측 상세 패널 상단 세로·접힘 이전 적대 리뷰 7축
+- Related Change: CHG-20260703-role-legend-panel (TASK §36 — reldetail-colexpand 가 §35 선점해 §36 재번호). 프론트 표현 전용(admin 그래프 뷰 역할 범례 위치·레이아웃).
+- Trigger: 가시 UI 변경(그래프 뷰 렌더 인접) → §18.8 적대 패널 [SUBAGENT] dispatch.
+- 점검 7축 판정 (subagent, 파일:라인 근거 기반):
+  1. [PASS] 회귀(범례 wipe) 없음 — 상세 렌더 4곳(admin.js:4862/4885/5035/5368) 모두 `metadataGraphDetailBody`(실존) `.innerHTML` 만 교체, aside 는 `d.clientWidth` 폭 조회(admin.js:4245)로만 참조. 새 `<details>` 는 body/progress 의 형제(위) → 안 지워짐.
+  2. [PASS] 잔여 참조 0 — `legend-roles` html·css·js grep 0건(문서 서술만).
+  3. [PASS] CSS 변수 유효 — `--border/--surface/--text-2/--text/--text-muted/--primary` 전부 `:root`(styles.css:10-21) 정의. 단일 light 팔레트(다크 블록은 토큰 재정의 안 함) → 다크 회귀 대상 없음. 신규 규칙 폴백(`var(--surface,#fff)` 등)까지 방어적.
+  4. [PASS] 접힘 UX/접근성 — `<details open>` 기본 펼침, `list-style:none`+`::-webkit-details-marker{display:none}` 로 네이티브 마커 제거, 커스텀 카펫 `▸`/`[open]` rotate. summary 네이티브 button 역할(키보드/SR) 유지. 구 `aria-hidden="true"` → `<ul aria-label>` 노출로 SR 개선.
+  5. [PASS·주의] 상세 패널 종속 — `#metadataGraphDetailToggle`(admin.js:3900) 의 `.detail-collapsed` 가 aside 를 `display:none`(styles.css:7976) → 패널 접으면 범례도 동반 은닉. 사용자 선택 위치("우측 상세 패널 상단")의 자연 귀결로 수용. MODIFY/TASK 에 부작용 명시.
+  6. [PASS] 레이아웃/반응형 — aside `overflow-y:auto`+height clamp 로 8줄+progress+body 스크롤. `@media(max-width:900px)` 1열 스택 + aside `max-height:380px` → 그래프 아래로 흐름, 겹침 없음.
+  7. [PASS] 시인성/칩 정합 — 밝은 dot(#F0E442·#56B4E9) border 유지, 칩 8종 색/아이콘/라벨/순서가 `_META_ROLE`(admin.js:3214-3221)와 1:1 완전 일치.
+- BLOCKING: 0.
+- NIT(가시 회귀 아님 — 수용 기록, 미수정): (a) summary `:focus-visible` 커스텀 아웃라인 없음(네이티브 포커스 링 의존 — 기능상 OK). (b) summary 텍스트와 `<ul aria-label>` 의 "테이블 역할" SR 이중 낭독 가능성(경미).
+- 총평: 배포 가능(PASS). 설계 의도 정확 충족, 최대 리스크(범례 wipe)는 구조적 방지. 완료 게이트=PB-0008 실 Windows 라이브 육안(세로 표시 + 접힘 동작).

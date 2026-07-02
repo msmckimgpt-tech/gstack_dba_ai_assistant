@@ -839,3 +839,18 @@ MODIFY CHG-20260703-node-role-viz.
       분류·툴팁 방향문장+근거+신뢰도·FK 툴팁) + `node --check` admin.js.
 - [ ] T35.7 §18.8 적대 리뷰 + verify-completion.
 - [x] T35.8 배포(web ecf84e24 롤링) + **PB-0008 실 Windows PASS**: ① 컬럼 클릭 관계 아코디언 펼침 ② 참조함(→)/참조받음(←) 그룹 구분 ③ 방향별 개수(→1 ←0 배지 + 요약) ④ hover 의미 툴팁(방향·근거 대화JOIN학습·신뢰도 49%) 전건 육안 충족. 스크린샷 04-accordion-expanded.png.
+
+## 36. role-legend-panel — 역할 범례를 우측 상세 패널 상단 세로·접힘으로 이전 (2026-07-03, 사용자 후속 요청)
+사용자 요청(그래프 뷰 노드 시각화 개선): "테이블 역할(AI 분석 완료 시 칩 색)" 범례를 **다른 위치에 세로로 구성 + 접힐 수 있도록**. node-role-viz(§33, PR #555 병합·배포 완료) 위 UI 개선. 배치 위치는 AskUserQuestion 으로 **"우측 상세 패널 상단"** 사용자 선택. 정본: MODIFY CHG-20260703-role-legend-panel. (원래 §35 로 작성했으나 reldetail-colexpand 가 §35 를 선점·선병합해 §36 으로 재번호.)
+등급: **Minor**(프론트 표현 전용 — 데이터 API·스키마·JS 로직 불변, 비파괴, 마이그레이션 없음).
+
+### 36.1 구현
+- [x] T36.1 admin.html: 툴바 아래 전폭 `.admin-meta-graph-legend-roles` 범례 행 제거.
+- [x] T36.2 admin.html: `aside#metadataGraphDetail` 최상단(progress 위)에 `<details class="admin-meta-graph-rolelegend" open>` 삽입 — summary 헤더 "테이블 역할 · AI 분석 완료 시 칩 색" + 칩 8종 `<ul><li>` 세로 스택. 네이티브 접힘(무JS). `<details>` 관용구는 기존 line 512(admin-usage-details) 재사용.
+- [x] T36.3 styles.css: `.admin-meta-graph-legend-roles` 가로 규칙 2줄 제거 → `.admin-meta-graph-rolelegend` 세로·접힘 카드 규칙(카펫 `▸`/rotate, `::-webkit-details-marker` 제거, 세로 flex, 밝은 dot border 유지) 추가.
+- [x] T36.4 cache-buster `styles.css?v=20260703-role-legend-panel`(admin.js 무변경). merge 후 reldetail-colexpand 와 합쳐 `20260703-reldetail-colexpand-role-legend-panel` 로 통합.
+
+### 36.2 검증
+- [x] T36.5 구조 정합: `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 `d.clientWidth` 폭 조회로만 참조되고 innerHTML 교체 없음(노드 선택·능동분석 렌더는 `metadataGraphDetailBody`/`metadataGraphProgress` 만 교체) → 범례 wipe 없음 확인.
+- [x] T36.6 **§18.8 적대 리뷰 [SUBAGENT]**(회귀·잔여참조·CSS변수·접힘UX·패널접기부작용·레이아웃·시인성 7축): BLOCKING 0·NIT 2 수용. 결과 REVIEW REV-20260703T020000-ai-claude-feature-0016-role-legend-panel 참조.
+- [ ] T36.7 배포(web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 그래프 뷰에서 역할 범례가 우측 상세 패널 상단에 세로로 표시되고 summary 클릭으로 접힘/펼침 동작 육안 확인.
