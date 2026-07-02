@@ -280,3 +280,18 @@ source_of_truth: true
   - **MINOR (수정 완료)**: 최악의 경우(최대길이 컬럼명 168 + 인접 내부열 high-rel wide 테이블 190) 컬럼 라벨이 인접 칩 좌변에 ~6.5px 겹침(텍스트 픽셀만, 히트박스·데이터 무관). → **COLW 214→224** 로 흡수(권고 반영).
 - Verdict: **PASS-WITH-FIXES** — CRITICAL/MAJOR 0. 유일 MINOR(라벨 6.5px 겹침) 수정 반영.
 - Human Approval Needed: graph-g6b 배포(web 재빌드·라이브 재시작) — deploy_scope: included + 사용자 "배포 진행" 승인.
+
+
+## REV-20260702T025245-ai-claude-feature-0016-node-analysis-haiku [SUBAGENT: PASS] — 그래프 관계 분석 전용 모델(claude-haiku) 분리 적대 리뷰
+- Related Change: node-analysis-haiku (MODIFY CHG-20260702-node-analysis-haiku-model). 전용 `AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`) 신설 + `llm_node_analysis` 라우팅 분리 + `process_pending` 저장 라벨 정합. ~15줄 diff(config/llm/node_analysis + 테스트).
+- Method: general-purpose subagent 적대 리뷰 — 실제 파일 Read + config/catalog/routing 로직 실행 검증. 5개 우려축(격리·touchpoint 완결성·haiku create() 정합·폴백 안전·워커 무회귀) 표적 반증 시도.
+- Verified (전건 PASS):
+  - **격리**: `llm_schema_insight`(1373)·`llm_table_insight`(1410)·`llm_account_insight`(1449) 는 `AGENT_INSIGHT_MODEL or OPENAI_MODEL` 불변, `llm_node_analysis`(1494) 만 전환. 실행 증명: `AGENT_INSIGHT_MODEL=edge` 에서 node analysis=`claude-haiku-4`·insight=`edge`.
+  - **touchpoint 완결성**: `_max_tokens_kwargs`·`_temperature_kwargs`·`_get_llm_client`·`_record_llm_usage` 전부 동일 `_insight_model` 변수 사용 — node analysis 모델을 재해석하는 제2 지점 없음. `admin_metadata.py` 는 enqueue/read 만(독립 모델 해석 없음).
+  - **haiku 정합**: 카탈로그 실행 — `claude-haiku-4` → `is_allowed=True`·`is_local=False`(Bedrock 티어)·`max_tokens insight=18000`·`supports_temperature=False`(temperature kwarg 미주입=정상). litellm_config.yaml:43 유효 alias + `API_DEFAULT_MODEL`. `node_analysis` taxonomy 등록됨(계측 정상).
+  - **폴백 안전**: 공백/whitespace env → `claude-haiku-4`, 빈 문자열이 `model=` 로 도달 불가. terminal fallback `OPENAI_MODEL`(=claude-sonnet-4)도 non-empty.
+  - **라벨 정합·무회귀**: 저장 라벨(node_analysis.py:454) 을 라우팅과 동일 순서로 해석 → "gemma 표시·haiku 실행" 불일치 제거. `get_node_analysis` 가 per-job DB 컬럼에서 verbatim readback(point-in-time 스냅샷). 워커 제어흐름(claim/lease/enqueue/finalize) byte-불변, 라벨 2줄만 이동. `process_pending` 이 유일 호출처. test_llm_env_naming.py 10 passed(4 신규 + 6 기존).
+- Findings: CRITICAL/MAJOR/MINOR = 0. 전부 INFO(false-alarm).
+  - **INFO (수용, 미수정)**: config 기본값이 `model_catalog.API_DEFAULT_MODEL` 참조 대신 리터럴 `"claude-haiku-4"` 하드코딩. cosmetic — 현 영향 없음(값 동일), config→model_catalog import 가 레이어링상 부적절할 수 있어 리터럴 유지.
+- Verdict: **PASS** — 차단 결함 0. 명시 범위(그래프 관계 분석만 전환)에 대해 정확·격리·완결.
+- Human Approval Needed: `.env` 반영 + insight-worker 재빌드·재기동(외부영향=배포) + commit/push/PR = 사용자 confirm.

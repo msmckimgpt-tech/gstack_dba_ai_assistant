@@ -413,3 +413,17 @@ source_of_truth: true
 ### 21.4 UX 개선 (graph-g6b, 사용자 요청: 기본 디자인·노드확장 가시성·UX)
 - [x] T21.10 라이브 실데이터에서 관측된 배치 문제(세로 과길이·fit 극소) 해소 — **클러스터 내 다열 masonry + 가변폭 shelf-packing**(`_metaG6Build`). WSL-headless-harness(14클러스터 확장 포함) PASS. cache-buster graph-g6b. (DECISIONS ADR-004 §Consequences 연장, MODIFY CHG-20260702-graph-g6b)
 - [ ] T21.11 graph-g6b 배포 + 라이브 PB-0008 재확인.
+
+## 22. 그래프 관계 분석 LLM = claude-haiku (node-analysis-haiku, 사용자 요청 2026-07-02)
+사용자 보고: 관리콘솔 그래프뷰 "각 관계를 분석하는 LLM" 이 로컬 gemma(edge)로 작동 — 의도하지 않은 구조. claude-haiku 로 전환. 범위 결정 = **그래프 관계 분석만**(schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL` 유지).
+
+### 22.1 구현
+- [x] T22.1 근본원인 진단 — `llm_node_analysis` 가 4개 insight 함수와 공유하는 `AGENT_INSIGHT_MODEL`(운영 `.env`=`edge`=gemma)에 묶여 있음.
+- [x] T22.2 전용 config `AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`) 신설 + `__all__` 노출 (`shared/config.py`).
+- [x] T22.3 `llm_node_analysis` 모델 라우팅을 `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 로 분리 (`llm.py`); insight 3함수 불변.
+- [x] T22.4 `process_pending` 저장·표시용 model 라벨을 동일 순서로 해석 (`node_analysis.py`) — 상세 패널이 실제 사용 모델 표시.
+
+### 22.2 검증
+- [x] T22.5 회귀 테스트 4건 추가(기본값 haiku·env override·공백 폴백·`__all__` 노출) + insight 분리 확인 (`test_llm_env_naming.py`). pytest 38 pass, ruff clean, import/compile OK.
+- [x] T22.6 §18.8 적대적 코드리뷰(subagent — 격리·touchpoint 완결성·haiku 정합·폴백 안전). REVIEW.md 참조.
+- [ ] T22.7 `.env` 런타임 반영(`AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4`) + insight-worker 재빌드·재기동(배포=외부영향, 사용자 confirm) + 라이브 그래프뷰 실검증(신규 run model 라벨=claude-haiku).
