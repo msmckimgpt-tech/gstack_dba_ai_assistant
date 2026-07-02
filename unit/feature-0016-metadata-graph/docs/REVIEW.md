@@ -333,6 +333,11 @@ source_of_truth: true
 - 검증: 수정 후 `node --check` PASS + WSL-headless-harness **28/28 PASS**(네이티브 우클릭 경로·엣지 메뉴·중심 칩·로컬 조인 컬럼·1회성 hop·회귀 전부) + 콘솔 에러 0.
 - 검증 한계: qa(정확성) 렌즈 subagent 가 plan rate-limit 으로 미완 — 단, 해당 공격축(XSS esc/data-key·이벤트 순서·AI 폴링 가드·dismiss 경로·hop select 이중발동)은 ux 렌즈의 "검증 통과 축"과 harness 실측(에러 0·회귀 G1/G2)이 커버. 라이브 최종 확인은 PB-0008(check #13 hard gate).
 - Human Approval Needed: 아니오 — 비파괴 frontend 추가, RBAC/API 불변, deploy_scope: included(전역 선언) + §16.3 Step 4 자동 동기화 조건 충족(BLOCKED 0).
+## REV-20260702T140000-ai-claude-feature-0016-graph-ctxmenu-pb [SKIPPED:docs-only]
+- **cycle**: ai/claude/feature-0016-graph-ctxmenu-pb — graph-ctxmenu(PR #538, REV-20260702T121500) 의 배포·PB-0008 라이브 실측 결과를 정본 문서에 기록(T24.5/T24.6 완료 표시). 코드 무변경.
+- **changeset**: feature-0003 `docs/TEST.md`(POST-DEPLOY Run PASS) · feature-0016 `docs/{TEST,TASK,REPORT}.md` · `wiki/{Log,hot}.md` · 본 entry.
+- **panel**: SKIPPED — 비정책 doc-only(§18.8 표 첫 행). 실측 자체가 검증(배포 16fc1598 soak PASS·자산 서빙 grep·실 Windows 라이브 상호작용 5종·스크린샷 4매 artifacts).
+- **Human Approval Needed**: 아니오 (문서 전용, 코드·배포 산출물 무변경 — 이미 16fc1598 라이브).
 ## REV-20260702T165800-ai-claude-corp-feature-0016-graph-initview [SUBAGENT: PASS-WITH-FIXES]
 - Date: 2026-07-02
 - Related Change: graph-initview (MODIFY CHG-20260702T114500-graph-initview, TASK §25). 그래프 뷰 초기 진입

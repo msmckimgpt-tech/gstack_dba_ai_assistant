@@ -496,6 +496,8 @@ REQ-20260702T113000-graph-ctxmenu (사용자): 관리 콘솔 > 메타데이터 >
       중심 칩·로컬 조인 컬럼·1회성 hop·회귀·에러 0 — TEST.md).
 - [x] T24.4 §18.8 적대 패널(ux CHANGES-REQUESTED→MAJOR 3 전건 수정 / design PASS-WITH-NITS /
       qa rate-limit 미완·한계 기록) → REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu.
+- [x] T24.5 verify-completion(--pre-commit) PASS → commit(11da6da0)+origin/main 병합(§24 재번호·perf-bg seq 통합) → PR #538 → main 병합(16fc1598) + cycle-finalize cleanup.
+- [x] T24.6 라이브 배포(deploy-web.sh 16fc1598, 무중단 soak PASS) + **PB-0008 실 Windows 시각검증 PASS**(우클릭 메뉴·관계 패널·중심 칩·클러스터 메뉴·Escape — TEST.md Run·스크린샷 4매, 겸 T21.11 G6 라이브 재확인) → TEST.md POST-DEPLOY 기록.
 - [ ] T24.5 verify-completion(--pre-commit) PASS → commit/push/PR → cycle-finalize.
 - [ ] T24.6 라이브 배포(deploy-web.sh) + PB-0008 실 Windows 시각검증(겸 T21.11 재확인) →
       TEST.md Run 후속 기록.
