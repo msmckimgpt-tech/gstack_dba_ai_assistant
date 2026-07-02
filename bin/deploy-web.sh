@@ -200,10 +200,26 @@ migrate_phase() {
   fi
   # expand 마이그레이션 적용. contract 는 게이트가 이미 차단했으므로 여기 적용분은 backward-compatible.
   if [ -x bin/alembic-migrate.sh ]; then
-    # 방금 빌드한 이미지로 alembic 실행(stale agent 이미지 회귀 차단). run 래퍼는 "$@" 를 그대로
-    # 실행하므로 env 로 MIGRATE_ALEMBIC_IMAGE 를 자식 bash 에 확실히 주입한다. (main 이 build_image 를
-    # migrate_phase 앞으로 부르므로 이 시점에 $IMAGE_REPO:$TARGET_SHA 가 이미 존재한다.)
-    run env MIGRATE_ALEMBIC_IMAGE="$IMAGE_REPO:$TARGET_SHA" bash bin/alembic-migrate.sh upgrade || die "마이그레이션 적용 실패. ABORT (swap 안 함)."
+    # [feature-0014-migrate-fresh-image + feature-0017-deploy-migrate-gate 결합]
+    # (1) fresh 이미지: main 이 build_image 를 migrate_phase 앞으로 부르므로 $IMAGE_REPO:$TARGET_SHA
+    #     (신규 alembic 마이그 파일 포함)가 이미 존재한다. MIGRATE_ALEMBIC_IMAGE 로 그 이미지를 넘겨
+    #     `docker compose run agent`(stale 기본 이미지 → head 오판 → 신규 마이그 no-pending silent-skip,
+    #     2026-07-02 마이그 0030 실측 회귀)를 우회한다. run 래퍼는 "$@" 를 그대로 실행하므로 env 로
+    #     자식 bash 에 확실히 주입(_mig_env 배열).
+    # (2) race 관용: snap-docker `docker run`/`compose run` 은 build 와 동일한 metadata-file race 로
+    #     작업 성공에도 exit≠0 를 낼 수 있다. **정합 근거 = head 도달**: alembic-migrate.sh 는 멱등이고
+    #     그 upgrade 는 라이브 alembic_version 이 실제 head 일 때만 exit 0(no-pending 은 live_current head
+    #     확인, apply 는 ON_ERROR_STOP=1 psql 성공 후 fall-through). fresh 이미지(1)로 head 감지가 정확해져
+    #     이 head-anchored 안전 논리가 성립한다. 1차 exit≠0 이면 backoff 후 1회 멱등 재시도 — 재시도 exit 0
+    #     = head 도달로 판정(race/transient 무관 swap 안전). 재시도도 실패 = 진짜 실패 → ABORT(미적용 미배포).
+    _mig_env=(env "MIGRATE_ALEMBIC_IMAGE=$IMAGE_REPO:$TARGET_SHA")
+    if ! run "${_mig_env[@]}" bash bin/alembic-migrate.sh upgrade; then
+      warn "alembic-migrate 1차 exit≠0 — snap-docker docker-run race/일시 blip 가능성. ${MIGRATE_RETRY_BACKOFF:-5}s backoff 후 멱등 재시도로 head 도달 판정."
+      [ "$DRY_RUN" -eq 1 ] || sleep "${MIGRATE_RETRY_BACKOFF:-5}"   # 같은 race window 재적중 완화(dry-run 은 skip)
+      run "${_mig_env[@]}" bash bin/alembic-migrate.sh upgrade \
+        || die "마이그레이션 적용 실패(재시도도 실패 — 진짜 실패). ABORT (swap 안 함, 마이그레이션 미적용 상태 미배포)."
+      log "재시도 exit 0 = 라이브 alembic_version head 도달 확인 — 1차 exit≠0 은 docker-run race/transient 양성으로 무시(swap 안전)."
+    fi
   else
     warn "bin/alembic-migrate.sh 없음 — 마이그레이션 적용 skip."
   fi
