@@ -276,3 +276,14 @@ source_of_truth: true
 - Impact: 프론트엔드 정적 자산만. 데이터 API(`/api/admin/metadata/graph*`) **불변**. 인증/데이터 파괴 없음.
   검증: WSL-headless-harness(실 마크업+mock API) 전 플로우 PASS·에러 0(TEST.md). 배포=web 재빌드(정적 자산). 완료 게이트=PB-0008 실 Windows 시각검증.
 - Rollback Notes: admin.html 스크립트를 cytoscape 4종으로 환원 + admin.js/styles.css git revert + cache-buster 이전값. 데이터·API 무손상(렌더 계층만).
+
+## CHG-20260702-graph-g6b-masonry-layout
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청(라이브 PB-0008 후) — 그래프 뷰 기본 디자인·노드확장 가시성·UX 개선. 실데이터(236노드/36클러스터)에서 구 배치의 세로 과길이·fit 극소 문제 관측.
+- Summary: `_metaG6Build` 레이아웃 재작성 — (1) **클러스터 내 다열 masonry**(테이블 수 기반 1~4 내부열, 최단열 배치로 높이 균형; 펼친 테이블 컬럼 높이 반영), (2) **가변폭 클러스터 shelf-packing**(좌→우, 폭 MAXROWW 초과 시 래핑). 끝없는 세로 1열·fit 극소 해소, 자연정렬·제자리 펼침·"−" 접기 불변.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 배치 로직 masonry+shelf-pack, `_METLAY` 보강)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-g6b`)
+  - `unit/feature-0016-metadata-graph/docs/{REPORT,TEST,TASK}.md`
+- Impact: 프론트 렌더 계층만(데이터 API 불변). 검증: WSL-headless-harness(14클러스터 스케일 mock, 확장 포함) 전 플로우 PASS·에러 0 + 라이브 PB-0008(실 Windows, 236노드) 확인. 배포=web 재빌드.
+- Rollback Notes: `_metaG6Build` git revert(단일 세로열 배치로 환원) + cache-buster graph-g6. 데이터·API 무손상.

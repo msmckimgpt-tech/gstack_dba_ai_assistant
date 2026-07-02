@@ -1,5 +1,18 @@
 # Report
 
+## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
+
+### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)
+graph-g6 무중단 배포(web-a/web-b `8c45f070`) 후, 실 Windows Chrome/149(win-browser relay, `https://localhost/admin` 로그인 세션)로 라이브 검증. 데이터소스 `mssql-06656002eda6`(실데이터 **236 노드·36 클러스터**) → G6 Canvas 렌더 정상, teal 테이블 칩·점선/실선 엣지·클러스터 자연정렬·노드 클릭 **제자리 컬럼 펼침**(예: dt_EventItemWithMonster 컬럼 12개)·"−" 접기 컨트롤 모두 실화면 확인. (초기 접근이 host-header 로 막힌 건 win-browser CLI 인자 오류였고 — `goto --url`/`eval --script` — 정정 후 정상. 최종 도달 URL = `https://localhost/admin`, WEB_ALLOWED_HOSTS ∋ localhost.)
+
+### 레이아웃 UX 개선 (사용자 요청: 기본 디자인·노드확장 가시성·UX)
+라이브 실데이터에서 드러난 문제: 구 결정론 배치가 **① 테이블 많은 스키마를 끝없는 세로 1열**로 만들고 **② 36클러스터를 세로로 쌓아 fit-all 시 전부 극소**. 개선:
+- **클러스터 내 다열 masonry**(테이블 수 기반 1~4 내부열, 최단열 배치로 높이 균형) — 24테이블 스키마가 24행→8행×3열. 펼친 테이블(컬럼 포함)도 masonry 높이에 반영돼 인접열과 무겹침.
+- **가변폭 클러스터 shelf-packing**(좌→우 채우고 폭 초과 시 다음 행) — 클러스터를 넓고 낮게 펼쳐 가로 활용 극대화, fit 가독성↑.
+- 검증: WSL-headless-harness(14 클러스터, 테이블 1~24, 확장 포함) 전 플로우 PASS·에러 0. cache-buster `admin.js?v=20260702-graph-g6b`.
+
+---
+
 ## 2026-07-02 · 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (ADR-004, graph-g6)
 
 ### 배경 (사용자 관찰 5건 + 엔진 단위 개선 결정)
