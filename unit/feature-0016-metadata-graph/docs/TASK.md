@@ -777,8 +777,10 @@ MODIFY CHG-20260703-node-role-viz.
       backfill updated_at 역전 → id DESC 선택 Q1·selected 테두리 위장 U1·running 점선 불가시 U2·dark 플래그
       오배정 U3) + MINOR 6 수정 반영, 수용 6건 근거 기록. REV-20260703T003000. 수정 후 53 단위 + harness +
       전체 pytest 재검증 PASS.
-- [ ] T33.12 배포(web+insight-worker 재빌드+alembic 0031) + **라이브 PB-0008 실 Windows**: 분석 완료 테이블
-      칩 색/아이콘/범례 + 상세패널 역할 칩 육안 확인.
+- [x] T33.12 배포 완료 — PR #555 병합(7f2b9aa7) → deploy-web.sh(alembic 0031 적용·롤링·soak PASS) +
+      insight-worker/ask-worker 재빌드 + role 백필 509/509. **라이브 PB-0008 실 Windows PASS**: 역할 범례
+      행·역할 칩 123개(색·아이콘·dark 라벨·보라 테두리)·selected 어두운 테두리·상세 패널 역할 칩 실측
+      (스크린샷 3매, TEST.md POST-DEPLOY 절).
 
 
 ## 33. reltrace-tabledetail — 테이블 단일클릭 상세에 관계 표시(모델 병합) (2026-07-03, graph-reltrace PB-0008 후속)

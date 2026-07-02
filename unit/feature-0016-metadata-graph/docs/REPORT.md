@@ -51,9 +51,11 @@ graph-dblclick-cam2(manual tween) 배포 후 사용자 관찰: 팬은 부드러�
 - headless harness(실 admin.js + mock API): 미분석 teal / 폴 경로 role bake / sync 경로 / 무효 role 방어
   ALL PASS·pageerror 0 + 시각 스크린샷(8종 칩+범례).
 
-### 잔여
-- §18.8 적대 패널 → 배포(alembic 0031 + web·insight-worker 재빌드) → **라이브 PB-0008 실 Windows**(역할 칩
-  색/아이콘/범례/상세 패널) → TEST.md POST-DEPLOY Run append.
+### 완결 (2026-07-03)
+- §18.8 적대 패널 4렌즈(MAJOR 5·MINOR 6 수정, REV-20260703T003000) → PR #555 병합 → 배포(alembic 0031·
+  web 롤링 soak PASS·insight/ask-worker 재빌드) → role 백필 509/509 → **라이브 PB-0008 실 Windows PASS**
+  (역할 칩 123개·범례·상세 패널 역할 칩·selected 어두운 테두리 실측, 스크린샷 3매). 잔여 없음 —
+  후속 관찰: 휴리스틱 백필 분류 정밀도(재분석 시 LLM role 로 자연 교정), etc 비중(114/509) 라이브 관측.
 
 ---
 
