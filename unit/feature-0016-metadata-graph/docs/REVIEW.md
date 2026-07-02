@@ -473,3 +473,14 @@ source_of_truth: true
   수용 한계는 ADR-007 Consequences ①~④.
 - Human Approval Needed: 없음(Major 승계 — 원 cycle 사용자 요청 범위 내, 비파괴·마이그레이션 0).
   deploy_scope: included(FIRST_REQUEST 전역) 근거로 배포 자동 진행 + 첫 배포 직전 1줄 표면화.
+
+
+## REV-20260702T190000-ai-claude-feature-0016-graph-dblclick-cam [SUBAGENT: PASS-WITH-FIXES] — 더블클릭 카메라 순간이동 해소(앵커-중심 애니 팬) 적대 리뷰
+- Related Change: graph-dblclick-cam (MODIFY CHG-20260702-graph-dblclick-cam-anim, DECISIONS ADR-008). `_metaGraphExpand` 카메라 focus 를 즉시→애니메이션 + seq 가드.
+- Method: general-purpose subagent 적대 리뷰 — G6 번들 focusElement/zoomTo/viewport transform 계약 실증 + 카메라 경로 라우팅 교차검증 + 헤드리스 카메라 애니 API 검증(별도).
+- Findings:
+  - **BLOCKING (적발 → 교정 완료)**: 최초 수정이 **라우팅 오인** — 더블클릭이 아니라 우클릭 컨텍스트 메뉴 "중심 보기"(`_metaGraphFocus`, 모델 reset) 함수를 편집했고, 그 함수는 `schemaExpanded.add` 가 없어 Table/Column 앵커가 카드로만 렌더 → `_metaRenderedIdFor`=null → `focusElement(rawKey)` throw → catch 폴백으로 **즉시 fit-to-all**(제거 목표였던 그것) 실행 = 수정 무효. **교정**: 실제 더블클릭 경로 `_metaGraphExpand`(4391, additive, `schemaExpanded.add` 로 앵커 노드 렌더 보장)의 기존 즉시 focus 를 애니메이션화 + focus 함수 원복 + 헬퍼 제거. `if(fel)` 가드 유지로 미렌더 앵커는 throw 없이 skip.
+  - **PASS (교정 후)**: 회귀 없음 — loadRoots(_metaG6Apply(true))·검색·리사이즈(_metaGraphFitClamped)·우클릭 중심보기(_metaGraphFocus) 전부 불변, 변경은 `_metaGraphExpand` 카메라 블록 1곳. 줌 정규화 NaN/getZoom부재 안전. `focusElement`/`zoomTo` = viewport transform 만(노드 재렌더·setElementState 없음) → ADR-006 프리즈 수정과 무간섭. seq 가드로 연타 stale 애니 방지.
+  - **NIT (수용)**: additive 확장 후 첫 프레임 앵커가 이전 카메라 밖일 수 있으나 focus 팬이 즉시 이어받아 체감 짧음(모델 reset 아님 — blank-frame 위험은 focus 함수 전용, expand 무관). depth-select 재확장도 이 경로 타서 동일 애니(의도적).
+- Verdict: **PASS-WITH-FIXES** — BLOCKING(라우팅 오편집) 교정 완료, 회귀 0. 카메라 애니는 실 브라우저 시각(PB-0008)이 최종 확인.
+- Human Approval Needed: graph-dblclick-cam 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.

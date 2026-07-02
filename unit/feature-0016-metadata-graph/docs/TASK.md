@@ -653,3 +653,21 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 - [ ] T29.7b verify-completion + commit/PR/merge.
 - [ ] T29.8 배포(insight/ask-worker 재빌드 + web 롤링) + 데이터 정정(기존 2행 dk_data_release 정규화 +
       AGE 고아 Column 3노드 회수 + 재sync) + 라이브 검증(inferred 적재·프로브 신호·그래프 점선·digest).
+
+## 30. graph-dblclick-cam — 더블클릭 카메라 순간이동 재배치 해소(앵커-중심 애니 팬) (2026-07-02, 사용자 후속 보고)
+사용자 관찰(프리즈 해소 후): 테이블 노드 **더블클릭 시 카메라가 순간이동 재배치되어 불편**. "카메라 [고정/애니메이션] 자율 판단하여 개선" 위임. 정본: DECISIONS ADR-008, MODIFY CHG-20260702-graph-dblclick-cam-anim.
+등급: **Minor→Major 승계**(프론트 카메라 거동 1곳, 비파괴·데이터 API 불변·마이그레이션 없음; feature-0016 cross-cut).
+
+### 30.1 조사·자율판단
+- [x] T30.1 더블클릭 카메라 거동 조사: `_metaGraphExpand`(4391, 더블클릭) 는 graph-initview(A3)로 이미 앵커-중심 국소 focus 이나 **`focusElement`/`zoomTo` 를 animation=false(즉시)** 로 호출 → 순간이동. (우클릭 "중심 보기" `_metaGraphFocus` 는 별개 함수.)
+- [x] T30.2 자율판단 = **애니메이션(앵커-중심 팬)**. 고정(무이동)은 additive 확장에서 새 이웃/앵커가 화면 밖이라 부적합 → 앵커-중심 focus 로 클릭 대상 프로미넌트 유지 + 부드러운 전환. (ADR-008)
+- [x] T30.3 G6 카메라 애니 API 헤드리스 검증: `focusElement(id,{duration,easing})`·`zoomTo(z,{duration})` 가 graph `animation:false` 에서도 per-call 애니 스펙 동작·throw 없음·카메라 실제 이동 확인.
+
+### 30.2 구현
+- [x] T30.4 `_metaGraphExpand` 카메라 블록: `focusElement(fel, false)` → `focusElement(fel, {duration:420, easing:'ease-in-out'})`. 판독 하한 clamp(zoomTo)는 즉시 유지(팬 애니 중첩 회피). seq 가드(`if (seq===_metaGraph._opSeq)`)로 연타 stale 애니 방지. 앵커는 schemaExpanded(4436-4448)로 노드 렌더 보장 + `if(fel)` 가드로 미렌더 시 throw 없이 skip.
+- [x] T30.5 cache-buster `admin.js?v=20260702-graph-dblclick-cam`. loadRoots/검색/리사이즈 fit·우클릭 중심보기는 불변.
+
+### 30.3 검증
+- [x] T30.6 `node --check admin.js` PASS. diff = `_metaGraphExpand` 카메라 블록 1곳(헬퍼 없이 인라인).
+- [x] T30.7 **§18.8 적대 리뷰**: 최초 오편집(우클릭 `_metaGraphFocus` 수정 — 라우팅 오인) + 그 함수의 `schemaExpanded.add` 누락→앵커 카드-렌더→focusElement throw→fit-to-all 폴백(BLOCKING) 적발 → **진짜 더블클릭 `_metaGraphExpand` 로 교정**(앵커 노드 렌더 보장 경로) + focus 함수 원복 + 헬퍼 제거. 카메라 op=viewport transform 만(프리즈 무관) 확인. REV-20260702T190000 [SUBAGENT].
+- [ ] T30.8 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 **부드럽게 팬**(순간이동 없음) 육안 확인.

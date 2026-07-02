@@ -527,3 +527,14 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-006),TASK(§24),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 렌더 상태-갱신 계층만. 데이터 API·그래프 스키마·마커 시맨틱 **불변**. setElementState 사용처를 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 로 한정. 마이그레이션 없음. 검증: 헤드리스 harness 실측(9s→82ms) + §18.8 적대 2렌즈(정확성 상태유실 BLOCKING 0 / 프리즈재발 — 폴 이중 refresh 지적→coalescing 반영). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(대량 스키마 노드 더블클릭 무프리즈).
 - Rollback Notes: admin.js git revert(graph-perf-bg 상태로) + cache-buster 이전값(graph-perf-bg). 데이터·API·스키마 무손상(상태-갱신 계층만).
+
+## CHG-20260702-graph-dblclick-cam-anim
+- Date: 2026-07-02
+- Related Requirement: 사용자 관찰(프리즈 해소 후) — 테이블 노드 더블클릭 시 카메라가 순간이동 재배치되어 불편. "카메라 [고정/애니메이션] 자율 판단하여 개선" 위임. 정본: DECISIONS ADR-008.
+- Summary: 더블클릭 이웃 확장(`_metaGraphExpand`)의 앵커-중심 국소 focus 를 **즉시(animation=false) → 애니메이션(`{duration:420,easing:'ease-in-out'}`)** 으로. 판독 하한 clamp(zoomTo)는 즉시 유지(팬 애니 중첩 회피), seq 가드로 연타 stale 애니 방지. 자율 판단 = 애니(고정은 새 이웃이 화면 밖이라 부적합; 앵커-중심 focus 로 클릭 대상 프로미넌트 유지 + 부드러운 전환). 적대 검증이 최초 오편집(우클릭 `_metaGraphFocus` 함수 수정)을 적발 → 진짜 더블클릭 `_metaGraphExpand` 로 교정 + focus 함수 원복.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraphExpand` 카메라 블록: `focusElement(fel, false)` → `focusElement(fel, {duration:420,easing})` + seq 가드)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-dblclick-cam`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-008),TASK(§30),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장 경로). 데이터 API·스키마·마커·다른 fit 경로(loadRoots/검색/리사이즈/우클릭 중심보기) **불변**. `focusElement`/`zoomTo` 는 viewport transform 만이라 노드 재렌더·프리즈 무관(ADR-006 무간섭). 마이그레이션 없음. 검증: `node --check` PASS · G6 카메라 애니 API 헤드리스 검증(animation:false 그래프에서 per-call 애니 스펙 동작) · §18.8 적대 리뷰(라우팅 오류 적발→교정, 앵커 노드 렌더 보장 확인). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(더블클릭 부드러운 팬).
+- Rollback Notes: `_metaGraphExpand` focus 애니 인자를 `false` 로 환원 + cache-buster 이전값(graph-expand-perf). 데이터·API 무손상.
