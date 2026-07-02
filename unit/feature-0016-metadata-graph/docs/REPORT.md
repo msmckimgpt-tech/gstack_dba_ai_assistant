@@ -1,5 +1,27 @@
 # Report
 
+## 2026-07-02 · 그래프 노드 더블클릭 프리즈 잔존 해소 — refreshStates per-node setElementState (graph-expand-perf, ADR-006)
+
+### 배경
+graph-perf-bg 배포 후 사용자 후속 보고: `mssql-qa-idc.dk_data_release.Achievement`(analyzed, 형제 246테이블 스키마) **더블클릭 시 2~3초 프리즈 잔존**.
+
+### 진단 (실측으로 후보 배제 → 병목 특정)
+- 헤드리스 harness(200노드+127엣지 G6): `setData`+`draw` = **~200ms** → 렌더는 병목 아님.
+- web 컨테이너 서버측 계측: AGE 이웃 `neighborhood(depth=2)` = **135ms**(128노드/127엣지) → fetch 도 병목 아님. Achievement 는 HAS_COLUMN 4개(analyzed) → `/graph/columns` introspection **SKIP**.
+- **진짜 병목**: `_metaGraphRefreshStates` 가 **전 노드마다 `g.setElementState` 를 개별 호출** — G6 v5 에서 건당 ~50ms(startBatch 로도 안 배칭). **실측 200노드 재적용 = 10,046ms.** 더블클릭 → `_metaG6Apply` 가 `_stateCache` clear → 직후 `_metaGraphSyncAnalysisMarkers`(+2.5s 폴)가 cold 로 전 노드 재-setElementState = 프리즈. (graph-perf-bg 의 diff 캐시가 poll 은 개선했으나 rebuild 직후 cold 경로가 남아 있었음.)
+
+### 수정 (FE admin.js)
+- `_metaG6Apply`: setData(build 의 `states:` 로 전 상태 bake) 후 `_stateCache` 를 clear 대신 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op.
+- `_metaGraphRefreshStates`: 변화분만 적용 + 변화 노드>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake, ~80–200ms 상수, 카메라 유지).
+- 폴 tick 이중 refresh(markAnalyzed+markRunning) 를 **rAF coalescing** 으로 1회 병합 — 이중 rebuild + in-flight setData/draw 재진입 방지.
+
+### 검증
+- 헤드리스 harness 실측: **post-rebuild refresh(마커 무변화)=0ms · bulk 55마커=rebuild 82ms · 구 per-node 200노드=8,890ms** → ~9s→~0–80ms.
+- §18.8 적대 2렌즈: 정확성/상태유실 BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음), 프리즈재발 렌즈의 폴 이중 refresh 지적 → coalescing 반영. NIT(combo/schema 캐시·THRESHOLD 200ms 경계)는 수용. (REV-20260702T133000 [AGENT-TEAM])
+- `node --check` PASS. cache-buster `?v=20260702-graph-expand-perf`.
+
+### 잔여
+- 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 대량 스키마 노드 더블클릭 시 프리즈 없이 즉시 확장 + AI 능동분석 중 stutter 없음(사용자 육안).
 ## 2026-07-02 · 그래프 뷰 초기 진입 줌아웃 가시성 개선 — 스키마-우선 진입 (graph-initview)
 
 ### 배경 (사용자 보고 + 다각도 검토 → Phase 1+2 통합 결정)

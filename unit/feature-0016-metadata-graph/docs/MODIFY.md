@@ -425,3 +425,13 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md` (Run 기록만).
 - Impact: 문서만. 코드·자산·데이터 무변경. 배포 불요.
 - Rollback Notes: 해당 Run/체크 라인 revert(무영향).
+## CHG-20260702-graph-expand-perf-refreshstates
+- Date: 2026-07-02
+- Related Requirement: 사용자 관찰(graph-perf-bg 배포 후) — `mssql-qa-idc.dk_data_release.Achievement` 테이블 노드 더블클릭 시 **2~3초 프리즈 잔존**, 개선 요청. 정본: DECISIONS ADR-006.
+- Summary: 실측 진단으로 프리즈 근본원인을 특정 — `_metaGraphRefreshStates` 의 **전 노드 개별 `g.setElementState`**(G6 v5 건당 ~50ms, 실측 200노드=10,046ms). fetch(AGE depth=2=135ms)·render(setData+draw≈200ms)·introspection(analyzed 라 skip) 모두 병목 아님. 수정: (1) `_metaG6Apply` 가 setData 후 `_stateCache` 를 clear 대신 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op, (2) `_metaGraphRefreshStates` 변화분만 적용 + 변화>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake), (3) 폴 tick 이중 refresh 를 **rAF coalescing** 으로 1회 병합(재진입 방지). 결과 ~9s→~0–80ms.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Apply` 캐시 populate; `_metaGraphRefreshStates` → 변화분+rebuild 폴백+rAF coalesce, 본문은 `_metaGraphRefreshStatesNow`)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-expand-perf`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-006),TASK(§24),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 렌더 상태-갱신 계층만. 데이터 API·그래프 스키마·마커 시맨틱 **불변**. setElementState 사용처를 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 로 한정. 마이그레이션 없음. 검증: 헤드리스 harness 실측(9s→82ms) + §18.8 적대 2렌즈(정확성 상태유실 BLOCKING 0 / 프리즈재발 — 폴 이중 refresh 지적→coalescing 반영). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(대량 스키마 노드 더블클릭 무프리즈).
+- Rollback Notes: admin.js git revert(graph-perf-bg 상태로) + cache-buster 이전값(graph-perf-bg). 데이터·API·스키마 무손상(상태-갱신 계층만).
