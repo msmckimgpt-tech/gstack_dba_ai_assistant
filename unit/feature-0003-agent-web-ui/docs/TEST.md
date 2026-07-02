@@ -169,6 +169,16 @@ docker compose run --rm \
 - **§18.8 적대 리뷰(SUBAGENT)**: 최초 오편집(우클릭 `_metaGraphFocus`≠더블클릭, 라우팅 오인) + 그 함수 `schemaExpanded.add` 누락→앵커 카드렌더→focusElement throw→fit-to-all 폴백(BLOCKING) 적발 → 진짜 더블클릭 `_metaGraphExpand`(앵커 노드 렌더 보장)로 교정 + focus 함수 원복. 카메라 op=viewport transform(프리즈 무관·ADR-006 무간섭) 확인. REV-20260702T190000 (feature-0016 REVIEW.md).
 - **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: ① 대량 스키마 노드 **더블클릭 시 카메라가 앵커로 부드럽게 팬**(순간이동/급격 줌아웃 재배치 없음) ② 앵커가 화면 중앙·판독 배율 유지 ③ 연타 시 카메라 튐 없음.
 - Pass/Fail: **PASS**(구문·헤드리스 API 검증·적대리뷰 교정). 라이브 팬 부드러움 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
+  - **⚠ 후속 정정(graph-dblclick-cam2)**: 위 "per-call 애니 스펙 동작" 헤드리스 판정은 duration 미측정 오판이었음 — 실제로는 graph `animation:false` 가 per-call 카메라 애니를 무효화해 **no-op**(사용자 재보고). 아래 TASK-20260702-graph-dblclick-cam2 에서 manual rAF tween 으로 근본수정.
+
+### TASK-20260702-graph-dblclick-cam2 더블클릭 카메라 애니 no-op 근본수정 — manual rAF tween (Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (카메라 팬 부드러움은 실 브라우저 시각 — de-risk=헤드리스 실증+적대6축 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 사용자 재보고: graph-dblclick-cam 배포 후에도 더블클릭 시 애니 없이 카메라 순간이동. 변경: admin.js `_metaGraphAnimateFocus` 신규(manual rAF tween) + `_metaGraphExpand` 1줄 교체 + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-009 · MODIFY CHG-20260702-graph-dblclick-cam2-manual-tween.
+- **근본원인 실증(헤드리스)**: graph `animation:false`(레이아웃 셔플 방지)가 per-call 카메라 애니까지 무효화 — 동일 그래프 `animation:false`→`focusElement({duration:400})`=**2ms(즉시)** / `animation:true`→**412ms(애니)**. → §30 focusElement({duration}) no-op 확정.
+- **구조·구문**: `node --check admin.js` PASS. diff = `_metaGraphAnimateFocus` 헬퍼 + `_metaGraphExpand` 1줄(다른 카메라 경로 불변).
+- **manual tween 헤드리스 실증**: `getElementRenderBounds`+`getViewportByCanvas`+`translateBy` rAF 이징 누적 → 앵커가 뷰포트 정중앙에 **26프레임/434ms 안착**(오차 ≤1e-13px, G6 자체 focus 공식과 동일).
+- **§18.8 적대 6축(SUBAGENT)**: 무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀 — **BLOCKING 0**(G6 v5 번들 소스 대조). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 (feature-0016 REVIEW.md).
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 더블클릭 시 카메라가 앵커로 **실제 부드럽게 팬**(순간이동/급격 재배치 없음) 육안 확인 — 이번엔 실제 애니 발생 여부가 핵심.
+- Pass/Fail: **PASS**(구문·헤드리스 실증·적대6축·번들 소스 대조). 라이브 팬 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
 
 ### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
 - 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.

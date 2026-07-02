@@ -3503,6 +3503,48 @@ async function _metaGraphFitClamped(focusFirst) {
   } catch (_) {}
 }
 
+// graph-dblclick-cam2: 더블클릭 앵커 focus 를 부드러운 팬으로. 그래프 config `animation:false`(레이아웃 셔플 방지용)가
+//   **per-call 카메라 애니(focusElement/zoomTo 의 animation 인자)까지 무효화**한다(실증: false=2ms 즉시 vs true=412ms).
+//   전역 animation 을 켜면 setData 레이아웃 셔플이 재발하므로, G6 애니 시스템 대신 **manual rAF tween** 으로 앵커를 뷰포트
+//   중앙까지 translateBy(누적 이징) — setData 미사용이라 셔플·전역상태 무관. seq 로 연타 중단, 미렌더/ API 실패는 즉시 focus 폴백.
+async function _metaGraphAnimateFocus(key, seq) {
+  const g = _metaGraph.graph;
+  if (!g || !key) return;
+  const fel = (typeof _metaRenderedIdFor === "function") ? _metaRenderedIdFor(key) : key;
+  if (!fel) return;   // 미렌더 앵커 — 이동 안 함(throw 방지)
+  try {   // 판독 하한 줌 clamp(즉시 — 팬 tween 과 분리)
+    const z = (typeof g.getZoom === "function") ? g.getZoom() : 1;
+    if (isFinite(z) && z < _META_MIN_READ_ZOOM) await g.zoomTo(_META_MIN_READ_ZOOM, false);
+  } catch (_) {}
+  // 앵커 canvas 중심 → 뷰포트 중앙까지 delta(client px) 계산.
+  let cx, cy, W, H, start;
+  try {
+    const b = g.getElementRenderBounds(fel);
+    cx = (b.min[0] + b.max[0]) / 2; cy = (b.min[1] + b.max[1]) / 2;
+    const s = g.getSize(); W = s[0]; H = s[1];
+    start = g.getViewportByCanvas([cx, cy]);
+  } catch (_) { try { g.focusElement(fel, false); } catch (_2) {} return; }   // API 실패 → 즉시 focus 폴백
+  if (!start || !isFinite(start[0]) || !isFinite(start[1]) || !isFinite(W) || !isFinite(H)) {
+    try { g.focusElement(fel, false); } catch (_) {} return;
+  }
+  const Dx = W / 2 - start[0], Dy = H / 2 - start[1];
+  if (Math.abs(Dx) < 2 && Math.abs(Dy) < 2) return;   // 이미 중앙 근처 — 이동 불필요
+  const now = () => (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+  const raf = () => new Promise((r) => { (typeof window !== "undefined" && window.requestAnimationFrame) ? window.requestAnimationFrame(() => r()) : setTimeout(r, 16); });
+  const dur = 420, t0 = now();
+  let prevE = 0;
+  while (true) {
+    if (seq != null && seq !== _metaGraph._opSeq) return;   // 후속 op 로 폐기 — tween 중단(잔여 카메라는 새 op 가 정리)
+    const p = Math.min(1, (now() - t0) / dur);
+    const e = ease(p);
+    try { g.translateBy([Dx * (e - prevE), Dy * (e - prevE)], false); } catch (_) { return; }
+    prevE = e;
+    if (p >= 1) return;
+    await raf();
+  }
+}
+
 // 라벨별 색 — RFC 팔레트(Table=teal, Column=slate, GlossaryTerm=amber, Schema=indigo, DS/Product=green).
 const _META_GRAPH_COLOR = {
   Table: "#0f7d8c", Column: "#5c6773", GlossaryTerm: "#9c6515",
@@ -4497,20 +4539,10 @@ async function _metaGraphExpand(key, depthOverride) {
   const anchorCols = (data.nodes || []).some((x) => x && x.label === "Column" && _metaColParent(x.key, x.fqn) === key);
   if (anchorCols) _metaGraph.expanded.add(key);
   // graph-initview(A3): 이웃 확장은 전체-fit 대신 앵커 중심 국소 focus — 노드가 쌓여도 줌아웃 재발 없음.
-  //   graph-dblclick-cam: 그 국소 focus 를 즉시(animation=false)가 아닌 **애니메이션**으로 — 더블클릭 시 카메라가
-  //   순간이동 재배치되어 생기던 불편을 부드러운 팬으로 해소. 판독 하한 clamp 는 즉시 유지(팬 애니와 중첩 회피).
-  //   focusElement 는 카메라 transform 만(노드 재렌더 없음)이라 프리즈 무관. graph animation:false 여도 per-call
-  //   애니 스펙은 동작(헤드리스 검증). seq 가드로 연타 시 stale 카메라 애니 방지. 앵커는 schemaExpanded(위)로 노드 렌더 보장.
+  //   graph-dblclick-cam2: 그 focus 를 **manual rAF tween(_metaGraphAnimateFocus)** 으로 부드럽게 — 더블클릭 시 카메라
+  //   순간이동 재배치 불편 해소. (지난 cycle 의 focusElement({duration}) 는 graph animation:false 때문에 no-op 였음 — 실증.)
   await _metaG6Apply(false);   // busy 는 rebuild 로 소멸
-  if (seq === _metaGraph._opSeq) {
-    try {
-      const gz = _metaGraph.graph;
-      const z = (gz && typeof gz.getZoom === "function") ? gz.getZoom() : 1;
-      if (gz && isFinite(z) && z < _META_MIN_READ_ZOOM) await gz.zoomTo(_META_MIN_READ_ZOOM, false);
-      const fel = _metaRenderedIdFor(key);
-      if (gz && fel && seq === _metaGraph._opSeq) await gz.focusElement(fel, { duration: 420, easing: "ease-in-out" });
-    } catch (_) {}
-  }
+  if (seq === _metaGraph._opSeq) await _metaGraphAnimateFocus(key, seq);
   _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };

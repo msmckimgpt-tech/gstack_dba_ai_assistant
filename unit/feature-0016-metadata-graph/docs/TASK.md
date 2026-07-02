@@ -682,4 +682,21 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 ### 30.3 검증
 - [x] T30.6 `node --check admin.js` PASS. diff = `_metaGraphExpand` 카메라 블록 1곳(헬퍼 없이 인라인).
 - [x] T30.7 **§18.8 적대 리뷰**: 최초 오편집(우클릭 `_metaGraphFocus` 수정 — 라우팅 오인) + 그 함수의 `schemaExpanded.add` 누락→앵커 카드-렌더→focusElement throw→fit-to-all 폴백(BLOCKING) 적발 → **진짜 더블클릭 `_metaGraphExpand` 로 교정**(앵커 노드 렌더 보장 경로) + focus 함수 원복 + 헬퍼 제거. 카메라 op=viewport transform 만(프리즈 무관) 확인. REV-20260702T190000 [SUBAGENT].
-- [ ] T30.8 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 **부드럽게 팬**(순간이동 없음) 육안 확인.
+- [x] T30.8 배포(web 재빌드) + 라이브 PB-0008: **애니 미발생**(순간이동 잔존) 사용자 재보고 → §31 로 근본수정(no-op 원인 = graph animation:false 게이팅).
+
+## 31. graph-dblclick-cam2 — 더블클릭 카메라 애니 no-op 근본수정(manual rAF tween) (2026-07-02, 사용자 재보고)
+사용자 재보고(graph-dblclick-cam 배포 후): 더블클릭 시 **애니 없이 카메라 순간이동**. 근본원인: graph config `animation:false`(레이아웃 셔플 방지)가 per-call 카메라 애니(`focusElement`/`zoomTo` animation 인자)까지 무효화 → §30 의 `focusElement({duration:420})` 는 no-op. 정본: DECISIONS ADR-009, MODIFY CHG-20260702-graph-dblclick-cam2-manual-tween.
+등급: **Major 승계**(프론트 카메라 1곳, 비파괴·데이터 API 불변·마이그레이션 없음).
+
+### 31.1 진단(실증)
+- [x] T31.1 헤드리스 실증: 동일 그래프 `animation:false`→`focusElement({duration:400})`=**2ms(즉시)** / `animation:true`→**412ms(애니)**. 즉 전역 animation:false 가 per-call 카메라 애니 게이팅 → §30 no-op 확정.
+- [x] T31.2 대안 배제: 전역 animation ON=setData 레이아웃 셔플 재발(graph-g6 회귀); `setOptions({animation:true})` 토글=동작하나 tween 창 동시 rebuild 셔플 위험(전역상태 경합). → G6 애니 우회 필요.
+
+### 31.2 구현
+- [x] T31.3 신규 `_metaGraphAnimateFocus(key, seq)` — **manual rAF tween**: 앵커 `getElementRenderBounds` 중심(canvas) → `getViewportByCanvas` → 뷰포트 중앙(`getSize()`/2) delta(client px) 를 requestAnimationFrame 이징 누적 `translateBy`(420ms). 판독 하한 줌 clamp 즉시. setData 미사용·전역상태 무변경. seq 로 연타 중단, 미렌더/API 실패는 즉시 focus 폴백.
+- [x] T31.4 `_metaGraphExpand`: no-op `focusElement({duration})` → `await _metaGraphAnimateFocus(key, seq)`. cache-buster `admin.js?v=20260702-graph-dblclick-cam2`. 다른 카메라 경로 불변.
+
+### 31.3 검증
+- [x] T31.5 manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS.
+- [x] T31.6 **§18.8 적대 6축**(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀): BLOCKING 0. G6 번들 소스 대조 — tween 수학=G6 자체 `focus` 공식 동일(앵커 정중앙 오차 ≤1e-13px). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 [SUBAGENT].
+- [ ] T31.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 **실제 부드럽게 팬**(순간이동 없음) 육안 확인.

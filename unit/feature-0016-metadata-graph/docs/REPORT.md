@@ -1,5 +1,25 @@
 # Report
 
+## 2026-07-02 · 더블클릭 카메라 애니 no-op 근본수정 — manual rAF tween (graph-dblclick-cam2, ADR-009)
+
+### 배경
+graph-dblclick-cam(ADR-008) 배포 후 사용자 재보고: 더블클릭 시 **애니 없이 카메라 순간이동**(수정이 안 먹힘).
+
+### 근본원인(실증)
+그래프는 `new G6.Graph({animation:false})`(graph-g6 가 setData 레이아웃 셔플 방지 위해 의도)로 생성 — G6 v5 에서 이 **전역 `animation:false` 가 `focusElement`/`zoomTo` 의 per-call `animation` 인자까지 무효화**한다. 헤드리스 실증: 동일 그래프 `animation:false`→`focusElement({duration:400})`=**2ms(즉시)** / `animation:true`→**412ms(애니)**. 즉 ADR-008 의 `focusElement({duration:420})` 는 no-op 였다.
+
+### 수정 (FE admin.js)
+전역 animation ON=셔플 재발, setOptions 토글=tween 창 동시 rebuild 셔플 위험 → **G6 애니 우회 manual rAF tween**. 신규 `_metaGraphAnimateFocus(key, seq)`: 앵커 `getElementRenderBounds` 중심(canvas) → `getViewportByCanvas` → 뷰포트 중앙(`getSize()`/2) delta(client px) 를 requestAnimationFrame 이징 누적 `translateBy`(420ms). setData 미사용·전역상태 무변경. seq 로 연타 중단, 미렌더/API 실패는 즉시 focus 폴백. `_metaGraphExpand` 가 no-op focusElement 대신 이 헬퍼 호출.
+
+### 검증
+- manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS. cache-buster `?v=20260702-graph-dblclick-cam2`.
+- §18.8 적대 6축(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀) BLOCKING 0 — **G6 번들 소스 대조로 tween 수학=G6 자체 focus 공식 동일**(앵커 정중앙 오차 ≤1e-13px). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000.
+
+### 잔여
+- 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 **실제 부드럽게 팬**(순간이동 없음) 육안 확인.
+
+---
+
 ## 2026-07-02 · 그래프 더블클릭 카메라 순간이동 재배치 해소 — 앵커-중심 애니 팬 (graph-dblclick-cam, ADR-008)
 
 ### 배경
