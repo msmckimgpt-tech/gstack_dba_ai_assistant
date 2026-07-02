@@ -7998,6 +7998,72 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: rgba(15, 125, 140, .1); border: 1px solid rgba(15, 125, 140, .35);
   padding: 1px 6px; border-radius: 999px; white-space: nowrap;
 }
+/* graph-ctxmenu: 노드 우클릭 컨텍스트 메뉴 (HTML 오버레이 — G6 캔버스와 무간섭) */
+.admin-meta-graph-ctxmenu {
+  position: fixed; z-index: 10000; min-width: 216px; max-width: 300px;
+  max-height: calc(100vh - 16px); overflow-y: auto;   /* 낮은 뷰포트에서 하단 잘림 방지(review) */
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 18, 12, .18); padding: 5px; font-size: 12.5px;
+}
+.admin-meta-graph-ctxmenu .amgc-head {
+  display: flex; align-items: center; gap: 6px; padding: 7px 9px 6px;
+  border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px;
+}
+.admin-meta-graph-ctxmenu .amgc-head strong { font-size: 12.5px; word-break: break-all; line-height: 1.3; }
+.admin-meta-graph-ctxmenu .amgc-badge { flex: none; }   /* 시각은 .admin-meta-graph-badge 공용(디자인 통일) */
+.admin-meta-graph-ctxmenu .amgc-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px;
+  border: 0; background: none; border-radius: 6px; text-align: left; cursor: pointer;
+  color: var(--text); font-size: 12.5px; font-family: inherit;
+}
+.admin-meta-graph-ctxmenu .amgc-item:hover:not(:disabled),
+.admin-meta-graph-ctxmenu .amgc-item:focus-visible { background: var(--primary-soft); outline: none; }
+.admin-meta-graph-ctxmenu .amgc-item:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }   /* ↑/↓ 현재 항목 식별(review) */
+.admin-meta-graph-ctxmenu .amgc-chip-row:hover { background: none; }   /* 행 자체는 비클릭 — 허위 affordance 제거(review) */
+.admin-meta-graph-ctxmenu .amgc-item:disabled { opacity: .45; cursor: default; }
+.admin-meta-graph-ctxmenu .amgc-label { flex: 1; }
+.admin-meta-graph-ctxmenu .amgc-hint { flex: none; color: var(--text-muted); font-size: 10.5px; }
+.admin-meta-graph-ctxmenu .amgc-sep { height: 1px; background: var(--border-subtle); margin: 4px 6px; }
+.admin-meta-graph-ctxmenu .amgc-chip-row { cursor: default; }
+.admin-meta-graph-ctxmenu .amgc-chip {
+  flex: none; border: 1px solid var(--border); background: var(--surface); border-radius: 6px;
+  padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--text-2); font-family: inherit;
+}
+.admin-meta-graph-ctxmenu .amgc-chip:hover,
+.admin-meta-graph-ctxmenu .amgc-chip:focus-visible {
+  background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); outline: none;
+}
+/* graph-ctxmenu: 관계 상세 패널 — 방향별 관계 행(클릭=상대 노드 이동) */
+.admin-meta-graph-sec ul.amgr-list { list-style: none; margin: 0; padding: 0; }
+.amgr-row { padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 8px; margin: 4px 0; }
+.amgr-row[data-key] { cursor: pointer; }
+.amgr-row[data-key]:hover, .amgr-row[data-key]:focus-visible {
+  border-color: var(--primary); background: var(--primary-soft); outline: none;
+}
+.amgr-row.amgr-plain { border-style: dashed; }
+.amgr-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.amgr-main code { word-break: break-all; }   /* 장문 무공백 FQN 이 패널 행을 뚫지 않게(review) */
+.amgr-arrow { flex: none; font-weight: 700; color: var(--text-2); }
+.amgr-sub { font-size: 11px; margin-top: 2px; line-height: 1.4; word-break: break-word; }
+.amgr-actions { display: flex; gap: 6px; margin-top: 12px; }
+.amgr-actions .btn-secondary { font-size: 11.5px; padding: 3px 10px; }
+.amgr-link {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 1px 7px;
+  font-size: 10.5px; cursor: pointer; color: var(--text-2); margin-left: auto; flex: none; white-space: nowrap;
+}
+.amgr-link:hover { border-color: var(--primary); color: var(--primary-dark); background: var(--primary-soft); }
+/* graph-ctxmenu(review MAJOR-3): 중심 보기 지속 표시 칩 — 캔버스 좌상단, "✕ 전체 보기" 복귀 버튼 포함 */
+.amgr-focus-chip {
+  position: absolute; top: 10px; left: 10px; z-index: 5;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--primary); border-radius: 999px;
+  padding: 4px 10px; font-size: 11.5px; box-shadow: 0 2px 8px rgba(20, 18, 12, .12);
+}
+.amgr-focus-chip button {
+  border: 0; background: none; color: var(--primary-dark); cursor: pointer;
+  font-size: 11px; padding: 0; font-family: inherit; white-space: nowrap;
+}
+.amgr-focus-chip button:hover { text-decoration: underline; }
 .admin-meta-graph-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .admin-meta-graph-ai-head h4 { margin: 0; }
 .admin-meta-ai-btn { font-size: 11.5px; padding: 3px 10px; white-space: nowrap; }

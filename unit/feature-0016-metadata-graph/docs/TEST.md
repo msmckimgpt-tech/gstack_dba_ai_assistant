@@ -142,7 +142,7 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 
 ## 초기 진입 줌아웃 가시성 개선 (graph-initview, 2026-07-02)
 
-스키마-우선 진입(카드→per-schema lazy)+판독 줌 클램프+미니맵/툴바/점프(레이아웃 밀도는 graph-g6b masonry 채택). TASK §24.
+스키마-우선 진입(카드→per-schema lazy)+판독 줌 클램프+미니맵/툴바/점프(레이아웃 밀도는 graph-g6b masonry 채택). TASK §25.
 
 ### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 **31/31 PASS · 에러 0**
 실 admin.html 그래프 마크업 + admin.js `_metaGraph*` 블록(main graph-g6b masonry + graph-perf-bg `_opSeq` 와
@@ -178,3 +178,41 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
 - KB 회귀 스위트(`make test`) — AI 정합(Phase 4) 후.
 - PB-0008 라이브 브라우저 검증(그래프 UI) — cutover 후.
+
+## graph-ctxmenu — 노드 우클릭 상세 상호작용 (REQ-20260702T113000, 2026-07-02)
+
+우클릭 컨텍스트 메뉴(kind 별) + 관계 상세 패널(방향·신뢰도·근거) + 중심 보기. frontend-only.
+
+### admin.js 구문 — `node --check admin.js` PASS.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 PASS (28/28, 적대 패널 반영 후)
+그래프 블록 추출 + 실 admin.html 그래프 마크업 + mock apiFetch(실 응답 shape — AGE neighborhood
+서브그래프 내부 엣지 포함) harness. 스크린샷·드라이버: scratchpad `harness/` (shot-1~4).
+- **A 네이티브 우클릭 경로**: 빈 캔버스 우클릭 → canvas 메뉴(전체 맞춤·초기화) 표시 + 브라우저
+  기본 메뉴 차단(capture preventDefault) + Escape dismiss. **PASS**
+- **B 노드 우클릭(네이티브)**: `getElementPosition`→뷰포트 환산 좌표 실클릭으로 node:contextmenu
+  발화 → 테이블 메뉴(상세/관계 상세/관계 확장 1·2·3-hop chips/중심 보기/컬럼 펼치기/AI 능동
+  분석/FQN 복사) 전 항목 표시. **PASS** (emit 폴백 아님 — 실 이벤트 경로)
+- **C 관계 상세 패널**: 방향별 그룹(→참조함/←참조받음) + 추정/신뢰 배지·w 값 + 근거 한글
+  라벨(FK 스키마 선언/명명 규칙 추정/대화 JOIN 학습) + 상대 노드 설명 + 연관 용어 + 주변
+  관계(이웃-이웃) + 행 클릭 = 상대 노드 상세 이동 + 상세 카드 "🔗 관계 상세" 진입 링크. **PASS**
+- **D 중심 보기**: 모델 리셋 후 앵커 N-hop 만 로드, 앵커 선택 강조, 상태줄 복귀 안내. **PASS**
+- **E hop chip**: 1-hop chip 클릭 → depth=1 로 1회성 확장, 툴바 깊이 select 는 불변(전역 오염
+  없음 — 패널 반영). **PASS**
+- **F kind 별 메뉴**: Column(소속 테이블 상세·관계 확장, 컬럼 펼치기 없음)·GlossaryTerm(이름
+  복사·관계 확장)·클러스터 combo(클러스터 상세·스키마명 복사). **PASS**
+- **G 회귀**: 단일클릭 상세+컬럼 펼침 · "−" 접기 정상. **PASS**
+- **적대 패널 반영분**(REV-20260702T121500): C9 로컬 조인 컬럼 표기(`customer_id → s1.customers.id`) ·
+  D3/D4 중심 보기 지속 칩 + "✕ 전체 보기" 복귀 · H1 엣지 우클릭 메뉴(신뢰/추정 w·근거·양끝
+  노드 이동). **PASS**
+- **Z 콘솔/페이지 에러 0.**
+
+> harness 는 WSL headless 라 실 Windows 화면검증을 대체하지 않음(AGENTS.md §15.4.1). 아래 PB-0008 이 완료 하드 게이트.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser)
+- 커밋 시점 미수행 사유: 배포 스파인(`bin/deploy-web.sh`)이 origin/main HEAD 만 배포하므로
+  본 변경은 머지 전 라이브 반영 불가 — **머지·배포 직후 본 세션에서 즉시 수행**하고 Run 결과를
+  본 섹션에 후속 기록한다(카고컬트 방지 — 미수행을 수행으로 기재하지 않음).
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 노드/컬럼/용어/클러스터/빈캔버스 우클릭 메뉴 ·
+  관계 상세 패널(방향·신뢰 배지·근거·행 클릭 이동) · 중심 보기 · hop chips · 기본 메뉴 차단 ·
+  기존 클릭/더블클릭/접기 회귀 · 자산 버전(`admin.js?v=20260702-graph-ctxmenu2`·`styles.css?v=20260702-graph-ctxmenu`).
