@@ -2040,6 +2040,11 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             _na_rep = _node_analysis.process_pending()
             if _na_rep.get("claimed"):
                 scan_report["node_analysis"] = _na_rep
+            # node-role-viz: role 도입(0031) 이전 done Table 잡 역할 휴리스틱 백필 — 잔여 0 이면
+            #   SELECT 1회 후 즉시 no-op(자기 종결). LLM 재호출 없음, 실패는 삼켜 코어 비차단.
+            _na_backfilled = _node_analysis.backfill_roles()
+            if _na_backfilled:
+                scan_report["node_analysis_role_backfill"] = _na_backfilled
         except Exception:
             logging.getLogger("insight").warning("node_analysis process_pending 실패", exc_info=True)
         if not lock_acquired:
