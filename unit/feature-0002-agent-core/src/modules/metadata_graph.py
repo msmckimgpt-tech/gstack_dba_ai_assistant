@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 
 _log = logging.getLogger("metadata_graph")
 
@@ -44,6 +45,9 @@ _INT_PROP_KEYS = {"ordinal"}
 _NEIGHBOR_NODE_CAP = 300   # 투영 1회 최대 노드 수 (8K 규모 보호)
 _SEARCH_CAP = 80           # 검색 결과 최대 노드 수
 _SYNC_BATCH_LOG = 500      # 동기화 진행 로그 간격
+# insight-load-spread: sync_graph 의 batched commit 크기. 이 개수의 MERGE 마다 1회 커밋으로 묶어
+# 개별-커밋(autocommit) 시 8K 규모 5.7만 WAL fsync 폭주(30분 cron 스파이크)를 ~100 회로 줄인다.
+_SYNC_MERGE_BATCH = max(1, int(os.getenv("AGENT_METADATA_GRAPH_SYNC_BATCH", "500") or "500"))
 
 
 # ── 연결 헬퍼 (relationships.py 동형) ─────────────────────────────────────
@@ -328,23 +332,65 @@ def sync_glossary_relation(cur, scope, from_term, to_term, relation_type="simila
 
 
 # ── 전체 동기화 (관계형 테이블 → 그래프) ──────────────────────────────────
-def sync_graph(conn=None, scope_key=None) -> dict:
+def sync_graph(conn=None, scope_key=None, since=None) -> dict:
     """관계형 SSOT 를 읽어 metadata_kb 그래프로 투영. 반환: 카운트 telemetry.
 
     멱등(MERGE) — 반복 호출 안전. 예외는 삼키고 부분 카운트 반환(비차단).
     scope_key=None 이면 모든 scope 동기화.
+
+    insight-load-spread (부하 분산):
+      - **batched commit**: 과거엔 _rw_conn(autocommit=True)로 노드/엣지마다 개별 커밋 → 8K 규모에서
+        매 sync 5.7만 WAL fsync 폭주(30분 cron 스파이크)를 유발했다. _SYNC_MERGE_BATCH(기본 500)개마다
+        1회 커밋으로 묶어 fsync 를 ~100 회로 줄인다(정합성 불변 — 여전히 전량 MERGE, 트랜잭션 경계만 묶음).
+      - **since(증분)**: 지정 시 updated_at > since 인 변경분만 MERGE → 변경 없는 cycle 은 거의 no-op
+        (MERGE 실행 CPU + AGE 처리 절감). 파단(broken) 관계 삭제는 status 변경이 updated_at 을 올려
+        incremental·full 모두 delete_relationship 으로 반영된다. 단 **dropped 테이블/컬럼 노드 자체의
+        prune** 은 예나 지금이나 sync_graph 범위 밖(가산적 재생성 투영 — pre-existing; full 도 노드 prune 안 함).
+        워터마크 관리는 호출측(CLI)이 담당하고, synced_at(이번 sync 서버시각)을 반환해 다음 워터마크로 쓴다.
+        owned=False(외부 conn 주입) 시엔 트랜잭션 경계를 호출측이 소유하므로 batching 을 적용하지 않는다.
     """
     rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0,
-           "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "errors": 0}
+           "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "errors": 0,
+           "since": since, "synced_at": None, "commits": 0}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
+    _pending = [0]
+
+    def _tick(force=False):
+        # batched commit — owned(자체 생성) 연결일 때만 트랜잭션 경계를 관리한다.
+        if not owned:
+            return
+        if force or _pending[0] >= _SYNC_MERGE_BATCH:
+            try:
+                c.commit()
+                if _pending[0]:
+                    rep["commits"] += 1
+            except Exception:
+                pass
+            _pending[0] = 0
+
+    def _scope_since_where():
+        # scope_key + since(updated_at) 를 합친 WHERE 절과 args (updated_at 컬럼 보유 테이블 공용).
+        conds, args = [], []
+        if scope_key is not None:
+            conds.append("scope_key = %s"); args.append(scope_key)
+        if since:
+            conds.append("updated_at > %s"); args.append(since)
+        w = (" WHERE " + " AND ".join(conds)) if conds else ""
+        return w, tuple(args)
+
     try:
         cur = c.cursor()
         _set_age_path(cur)
         _ensure_graph_indexes(cur)   # 성능 인덱스 보장(이웃 조회 60x) — drop_graph 재생성 생존
-        scope_filter = "" if scope_key is None else "WHERE scope_key = %s"
-        sf_args = () if scope_key is None else (scope_key,)
+        try:
+            cur.execute("SELECT now()")   # 다음 워터마크(이번 sync 서버시각) — batching 트랜잭션 시작 전 고정
+            rep["synced_at"] = str(cur.fetchone()[0])
+        except Exception:
+            pass
+        if owned:
+            c.autocommit = False   # batched 트랜잭션 시작 (인덱스 DDL·now() 커밋 이후)
 
         # 0) rag_objects (auto-discovered 스키마/테이블) → datasource_key 별 노드 베이스.
         #    각 데이터소스가 그래프를 갖게 하는 핵심(table_descriptions 는 1개 ds 만 커버).
@@ -353,51 +399,54 @@ def sync_graph(conn=None, scope_key=None) -> dict:
         #    DB 차원이 소실되고 다중 DB 동명 테이블(예: 23개 DB 의 dbo.T_ErrorLog)이 한 노드로 충돌한다.
         #    DB명은 object_key(`<ds>:db.dbo.table`)에 있으므로 그걸 파싱해 DB명을 스키마(클러스터)로 사용.
         try:
-            rag_where = "object_type = 'table' AND datasource_key <> '' AND table_name <> ''"
-            rag_args = ()
+            rag_conds = ["object_type = 'table'", "datasource_key <> ''", "table_name <> ''"]
+            rag_args = []
             if scope_key is not None:
-                rag_where += " AND datasource_key = %s"
-                rag_args = (scope_key,)
-            cur.execute(f"SELECT datasource_key, schema_name, table_name, object_key "
-                        f"FROM rag_objects WHERE {rag_where}", rag_args)
+                rag_conds.append("datasource_key = %s"); rag_args.append(scope_key)
+            if since:
+                rag_conds.append("updated_at > %s"); rag_args.append(since)
+            cur.execute("SELECT datasource_key, schema_name, table_name, object_key "
+                        "FROM rag_objects WHERE " + " AND ".join(rag_conds), tuple(rag_args))
             for ds, sch, tbl, okey in cur.fetchall():
                 try:
                     eff_sch, eff_tbl = _rag_effective(ds, okey, sch, tbl)
                     sync_table(cur, ds, eff_sch, eff_tbl, description=None, source="insight")
-                    rep["rag_tables"] += 1
+                    rep["rag_tables"] += 1; _pending[0] += 1; _tick()
                 except Exception:
                     rep["errors"] += 1
         except Exception:
             pass  # rag_objects 부재(구버전)·조회 실패 — graceful(다른 단계 계속)
 
         # 1) table_descriptions
-        cur.execute(f"SELECT scope_key, schema_name, table_name, description, source "
-                    f"FROM table_descriptions {scope_filter}", sf_args)
+        _w, _a = _scope_since_where()
+        cur.execute("SELECT scope_key, schema_name, table_name, description, source "
+                    "FROM table_descriptions" + _w, _a)
         for sc, sch, tbl, desc, src in cur.fetchall():
             try:
                 sync_table(cur, sc, sch or "", tbl, desc or "", src or "manual")
-                rep["tables"] += 1
+                rep["tables"] += 1; _pending[0] += 1; _tick()
             except Exception:
                 rep["errors"] += 1
         # 2) column_descriptions (feature-0016 graphux5: ordinal 투영 — 그래프 컬럼 세로 정렬용)
         #    ordinal 컬럼 부재(마이그 미적용 구 DB) 등 SELECT 실패는 graceful — 다른 단계(관계/용어) 계속.
         try:
-            cur.execute(f"SELECT scope_key, schema_name, table_name, column_name, description, source, ordinal "
-                        f"FROM column_descriptions {scope_filter}", sf_args)
+            _w, _a = _scope_since_where()
+            cur.execute("SELECT scope_key, schema_name, table_name, column_name, description, source, ordinal "
+                        "FROM column_descriptions" + _w, _a)
             for sc, sch, tbl, col, desc, src, ordn in cur.fetchall():
                 try:
                     sync_column(cur, sc, sch or "", tbl, col, desc or "", src or "manual", ordinal=ordn)
-                    rep["columns"] += 1
+                    rep["columns"] += 1; _pending[0] += 1; _tick()
                 except Exception:
                     rep["errors"] += 1
         except Exception:
             pass  # column_descriptions 조회 실패(구 DB·권한) — 비차단(다음 단계 계속)
         # 3) table_relationships — broken(파단)은 그래프에서 **삭제**(가산적 MERGE 라 stale 방지,
         #    학습된 '비관계'), 그 외는 weight/status 와 함께 투영. (전량 스캔 후 status 로 분기.)
-        rel_where = "" if scope_key is None else "WHERE scope_key = %s"
-        cur.execute(f"SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
-                    f"target_column, cardinality, source, confidence, weight, status "
-                    f"FROM table_relationships {rel_where}", sf_args)
+        _w, _a = _scope_since_where()
+        cur.execute("SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
+                    "target_column, cardinality, source, confidence, weight, status "
+                    "FROM table_relationships" + _w, _a)
         for sc, sfqn, scol, tfqn, tcol, card, src, conf, wgt, st in cur.fetchall():
             try:
                 if st == "broken":
@@ -408,21 +457,24 @@ def sync_graph(conn=None, scope_key=None) -> dict:
                                       src or "fk_introspect", conf if conf is not None else 1.0,
                                       weight=wgt, status=st or "")
                     rep["relationships"] += 1
+                _pending[0] += 1; _tick()
             except Exception:
                 rep["errors"] += 1
         # 4) kb_glossary
         try:
-            cur.execute(f"SELECT scope_key, term, definition, source "
-                        f"FROM kb_glossary {scope_filter}", sf_args)
+            _w, _a = _scope_since_where()
+            cur.execute("SELECT scope_key, term, definition, source "
+                        "FROM kb_glossary" + _w, _a)
             for sc, term, defn, src in cur.fetchall():
                 try:
                     sync_glossary_term(cur, sc, term, defn or "", src or "manual")
-                    rep["glossary"] += 1
+                    rep["glossary"] += 1; _pending[0] += 1; _tick()
                 except Exception:
                     rep["errors"] += 1
         except Exception:
             pass  # kb_glossary 없을 수 있음
-        # 5) glossary_relations (term id → term 매핑)
+        # 5) glossary_relations (term id → term 매핑) — updated_at 부재(created_at only) + 소규모라
+        #    증분 대상에서 제외하고 항상 full 투영(작아서 batching 만으로 충분).
         try:
             cur.execute(
                 "SELECT g1.scope_key, g1.term, g2.term, gr.relation_type "
@@ -432,22 +484,93 @@ def sync_graph(conn=None, scope_key=None) -> dict:
             for sc, ft, tt, rt in cur.fetchall():
                 try:
                     sync_glossary_relation(cur, sc, ft, tt, rt or "similar")
-                    rep["glossary_relations"] += 1
+                    rep["glossary_relations"] += 1; _pending[0] += 1; _tick()
                 except Exception:
                     rep["errors"] += 1
         except Exception:
             pass
+        _tick(force=True)   # 잔여분 최종 커밋
         cur.close()
     except Exception as exc:
         _log.warning("sync_graph_failed err=%r", exc)
         rep["errors"] += 1
+        if owned:
+            try:
+                c.rollback()
+            except Exception:
+                pass
     finally:
+        if owned:
+            try:
+                c.autocommit = True   # autocommit 복원(연결 close 안전)
+            except Exception:
+                pass
         if owned and c is not None:
             try:
                 c.close()
             except Exception:
                 pass
     return rep
+
+
+# ── 증분 sync 워터마크 (insight-load-spread) ──────────────────────────────
+# 직전 성공 sync 의 서버시각을 agent_runtime.kv 에 저장해, 다음 --incremental 호출이 그 이후 변경분만
+# MERGE 하게 한다(cron 30분마다 전량 5.7만 MERGE 를 도는 CPU 낭비 차단). scope 별 독립 워터마크.
+# 실패는 graceful(None → full sync 로 안전 폴백). 삭제/파단 반영은 주기 full sync(--full)가 담당.
+_SYNC_WM_CONV = "__metadata_graph_sync__"
+
+
+def get_sync_watermark(scope_key=None, conn=None):
+    """직전 성공 sync 서버시각(ISO text) 조회. 없거나 실패면 None(→ full). agent_runtime.kv PK(conv,key)."""
+    key = "watermark:" + (scope_key or "__all__")
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return None
+    try:
+        cur = c.cursor()
+        try:
+            cur.execute("SELECT value FROM agent_runtime.kv WHERE conversation_id = %s AND key = %s",
+                        (_SYNC_WM_CONV, key))
+            row = cur.fetchone()
+            return row[0] if row and row[0] else None
+        finally:
+            cur.close()
+    except Exception:
+        return None
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+
+def set_sync_watermark(ts, scope_key=None, conn=None) -> None:
+    """sync 워터마크 저장(다음 --incremental 의 since). 실패 graceful(다음 full). ts 는 sync_graph.synced_at."""
+    if not ts:
+        return
+    key = "watermark:" + (scope_key or "__all__")
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return
+    try:
+        cur = c.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO agent_runtime.kv (conversation_id, key, value, updated_at) "
+                "VALUES (%s, %s, %s, now()) "
+                "ON CONFLICT (conversation_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                (_SYNC_WM_CONV, key, str(ts)))
+        finally:
+            cur.close()
+    except Exception:
+        pass
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
 
 
 # ── 투영 (그래프 → {nodes, edges}) ───────────────────────────────────────

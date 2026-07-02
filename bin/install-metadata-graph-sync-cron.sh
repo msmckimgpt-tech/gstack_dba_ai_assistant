@@ -40,7 +40,11 @@ CUR="$(crontab -l 2>/dev/null || true)"
 # 기존 marker 라인 제거(멱등 재설치 / remove 공통)
 STRIPPED="$(printf '%s\n' "$CUR" | grep -vF "$MARK" || true)"
 
-SYNC_LINE="*/30 * * * * cd $REPO_ROOT && bin/metadata-graph-sync.sh >> $LOG_PATH 2>&1 $MARK"
+# insight-load-spread (부하 분산): 매 30분 --incremental(변경분만, 거의 no-op — WAL/CPU 스파이크 제거) +
+# 매일 04:17 --full(삭제/파단 노드 정리, 워터마크 무시). 과거엔 30분마다 전량 5.7만 MERGE 를 autocommit
+# 개별 커밋으로 돌려 30분 주기 WAL fsync 폭주를 만들었다. 증분+batched 로 상시 부하를 평탄화한다.
+SYNC_LINE="*/30 * * * * cd $REPO_ROOT && bin/metadata-graph-sync.sh --incremental >> $LOG_PATH 2>&1 $MARK"
+FULL_LINE="17 4 * * * cd $REPO_ROOT && bin/metadata-graph-sync.sh --full >> $LOG_PATH 2>&1 $MARK"
 
 case "$MODE" in
   remove)
@@ -48,13 +52,14 @@ case "$MODE" in
     echo "[cron] feature-0016 metadata-graph-sync cron 제거됨."
     ;;
   print)
-    echo "[cron] 설치될 항목:"; echo "  $SYNC_LINE"
+    echo "[cron] 설치될 항목:"; echo "  $SYNC_LINE"; echo "  $FULL_LINE"
     echo "[cron] 현재 crontab:"; printf '%s\n' "$CUR" | sed 's/^/  /'
     ;;
   install)
-    { printf '%s\n' "$STRIPPED"; echo "$SYNC_LINE"; } | grep -vE '^\s*$' | crontab -
+    { printf '%s\n' "$STRIPPED"; echo "$SYNC_LINE"; echo "$FULL_LINE"; } | grep -vE '^\s*$' | crontab -
     echo "[cron] 설치 완료 (멱등):"
-    echo "  매 30분  bin/metadata-graph-sync.sh"
+    echo "  매 30분   bin/metadata-graph-sync.sh --incremental (변경분만)"
+    echo "  매일 04:17 bin/metadata-graph-sync.sh --full (삭제/파단 정리)"
     echo "  로그: $LOG_PATH"
     ;;
 esac

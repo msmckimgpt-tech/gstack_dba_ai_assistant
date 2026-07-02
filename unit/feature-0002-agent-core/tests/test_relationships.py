@@ -298,6 +298,67 @@ def test_classify_probe_positive_negative_neutral():
     assert R.classify_probe(2, 0) == "neutral"        # 표본 부족(< min) — 음성 오판 방지
 
 
+# ── insight-load-spread: probe 실패 격리 (unknown database·backoff) ─────────
+def test_probe_missing_object_re_matches_unknown_database():
+    """_PROBE_MISSING_OBJECT_RE 가 MySQL 'Unknown database'(1049, 예: dblog)를 구조부재로 매칭.
+    기존 매칭(invalid object·doesn't exist)은 유지, transient(timeout)는 미매칭(backoff 대상)."""
+    assert R._PROBE_MISSING_OBJECT_RE.search("Unknown database 'dblog'")
+    assert R._PROBE_MISSING_OBJECT_RE.search("(1049, \"Unknown database 'x'\")")
+    assert R._PROBE_MISSING_OBJECT_RE.search("Invalid object name 'A'")          # 기존 유지
+    assert R._PROBE_MISSING_OBJECT_RE.search("Table 'db.x' doesn't exist")       # 기존 유지
+    assert not R._PROBE_MISSING_OBJECT_RE.search("timeout expired")              # transient → backoff
+    assert not R._PROBE_MISSING_OBJECT_RE.search("Lock wait timeout exceeded")   # transient → backoff
+
+
+def test_probe_unknown_database_resolved_slot_is_negative(monkeypatch):
+    """insight-load-spread: 존재하지 않는 DB(dblog) 참조 관계는 slot 확정 시 구조부재 → negative(파단).
+    없는 DB 를 매 cadence 재프로브하던 probe_edge_failed 도배의 근본 차단."""
+    monkeypatch.setattr(R, "fetch_probe_candidates",
+                        lambda conn, scope, limit, db_scope=None:
+                        [(11, "db1", "A", "a", "db1", "B", "b")])
+    monkeypatch.setattr(R, "_rw_conn", lambda c: (object(), False))
+    signals = []
+    monkeypatch.setattr(R, "apply_relationship_signal",
+                        lambda *a, **k: signals.append(a) or 1)
+    monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: None)
+
+    class _D:
+        def probe_relationship_overlap(self, *a, **k):
+            return "SELECT 1"
+
+    def _raise_unknown_db(conn, sql):
+        raise RuntimeError("(1049, \"Unknown database 'dblog'\")")
+
+    rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
+                                raw_execute=_raise_unknown_db, db_scope="db1")
+    assert rep["negative"] == 1 and rep["failed"] == 0 and signals
+    assert signals[0][6] is False                     # negative(파단) 신호
+
+
+def test_fetch_probe_candidates_excludes_backoff_window(monkeypatch):
+    """insight-load-spread: fetch_probe_candidates 가 backoff(미래로 밀린) 후보를 SQL 에서 제외한다
+    (last_validated_at IS NULL OR <= now()) — backoff 창 동안 재프로브 0회."""
+    captured = {}
+
+    class _Cur:
+        def execute(self, sql, params):
+            captured["sql"] = sql
+
+        def fetchall(self):
+            return []
+
+        def close(self):
+            pass
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+    monkeypatch.setattr(R, "_ro_conn", lambda c: (_Conn(), False))
+    R.fetch_probe_candidates(object(), "scope", 40)
+    assert "last_validated_at IS NULL OR last_validated_at <= now()" in captured["sql"]
+
+
 # ── 명명 규칙 헬퍼 ────────────────────────────────────────────────────────
 def test_col_key_base_variants():
     assert R._col_key_base("customer_id") == "customer"
@@ -526,8 +587,10 @@ def test_probe_missing_object_error_is_negative(monkeypatch):
     assert signals[0][1] == {"a_schema": "db1", "b_schema": "db1"}
 
 
-def test_probe_transient_error_touches_and_counts_failed(monkeypatch):
-    """B-F4: transient 오류(타임아웃 등)는 신호 없이 timestamp 전진 + failed 집계."""
+def test_probe_transient_error_backs_off_and_counts_failed(monkeypatch):
+    """B-F4 + insight-load-spread: transient 오류(타임아웃 등)는 신호 없이 failed 집계하되, rotation
+    전진(_touch_validated) 대신 재프로브 backoff(_backoff_validated — last_validated_at 미래로 밀기)로
+    같은 대상을 매 cadence 재프로브하던 spin(probe_edge_failed 도배 + 소스DB timeout 반복)을 차단한다."""
     monkeypatch.setattr(R, "fetch_probe_candidates",
                         lambda conn, scope, limit, db_scope=None:
                         [(8, "db1", "A", "a", "db1", "B", "b")])
@@ -536,7 +599,10 @@ def test_probe_transient_error_touches_and_counts_failed(monkeypatch):
     monkeypatch.setattr(R, "apply_relationship_signal",
                         lambda *a, **k: signals.append(a) or 1)
     touched = []
+    backed_off = []
     monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: touched.append(rid))
+    monkeypatch.setattr(R, "_backoff_validated",
+                        lambda kc, rid, sec: backed_off.append((rid, sec)))
 
     class _D:
         def probe_relationship_overlap(self, *a, **k):
@@ -548,7 +614,8 @@ def test_probe_transient_error_touches_and_counts_failed(monkeypatch):
     rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
                                 raw_execute=_raise_transient)
     assert rep["failed"] == 1 and rep["negative"] == 0 and not signals
-    assert touched == [8]
+    assert touched == []                                       # transient 는 rotation 전진 아님
+    assert backed_off == [(8, R._PROBE_FAIL_BACKOFF_SEC)]      # 미래로 밀어 재프로브 backoff
 
 
 def test_probe_clamps_cap_sample_timeout(monkeypatch):
@@ -605,7 +672,8 @@ def test_learn_keeps_typed_case_without_normalize(monkeypatch):
 
 def test_probe_missing_object_unresolved_slot_not_negative(monkeypatch):
     """재검증 R-1: db_scope 순회에서 ''-slot(레거시 wildcard) 후보의 객체-부재 오류는
-    negative 가 아니라 failed — 소속 아닌 catalog 프로브 2회로 실관계가 broken 되는 오파단 차단."""
+    negative 가 아니라 failed — 소속 아닌 catalog 프로브 2회로 실관계가 broken 되는 오파단 차단.
+    insight-load-spread: failed 는 rotation 전진 대신 재프로브 backoff(_backoff_validated)."""
     monkeypatch.setattr(R, "fetch_probe_candidates",
                         lambda conn, scope, limit, db_scope=None:
                         [(9, "", "A", "a", "", "B", "b")])
@@ -614,7 +682,10 @@ def test_probe_missing_object_unresolved_slot_not_negative(monkeypatch):
     monkeypatch.setattr(R, "apply_relationship_signal",
                         lambda *a, **k: signals.append(a) or 1)
     touched = []
+    backed_off = []
     monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: touched.append(rid))
+    monkeypatch.setattr(R, "_backoff_validated",
+                        lambda kc, rid, sec: backed_off.append((rid, sec)))
 
     class _D:
         def probe_relationship_overlap(self, *a, **k):
@@ -626,7 +697,7 @@ def test_probe_missing_object_unresolved_slot_not_negative(monkeypatch):
     rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
                                 raw_execute=_raise_missing, db_scope="db1")
     assert rep["failed"] == 1 and rep["negative"] == 0 and not signals
-    assert touched == [9]  # rotation 은 전진(head 고착 차단 유지)
+    assert touched == [] and backed_off == [(9, R._PROBE_FAIL_BACKOFF_SEC)]  # rotation 아닌 backoff
 
 
 def test_probe_missing_object_resolved_slot_under_db_scope_is_negative(monkeypatch):
@@ -656,7 +727,8 @@ def test_probe_missing_object_resolved_slot_under_db_scope_is_negative(monkeypat
 def test_probe_missing_object_unresolved_slot_stays_failed(monkeypatch):
     """재검증 R-1: db_scope(MSSQL catalog 순회) 하의 ''-slot 레거시 후보는 wildcard 로 모든
     catalog 에 fetch 되므로, 소속 아닌 catalog 의 객체-부재 오류를 negative 로 먹이면
-    실관계가 오답 catalog 프로브 2회만에 영구 broken — failed/touch-only 로 남아야 한다."""
+    실관계가 오답 catalog 프로브 2회만에 영구 broken — failed 로 남아야 한다.
+    insight-load-spread: failed 는 rotation 전진 대신 재프로브 backoff(_backoff_validated)."""
     monkeypatch.setattr(R, "fetch_probe_candidates",
                         lambda conn, scope, limit, db_scope=None:
                         [(9, "", "A", "a", "", "B", "b")])
@@ -665,7 +737,10 @@ def test_probe_missing_object_unresolved_slot_stays_failed(monkeypatch):
     monkeypatch.setattr(R, "apply_relationship_signal",
                         lambda *a, **k: signals.append(a) or 1)
     touched = []
+    backed_off = []
     monkeypatch.setattr(R, "_touch_validated", lambda kc, rid: touched.append(rid))
+    monkeypatch.setattr(R, "_backoff_validated",
+                        lambda kc, rid, sec: backed_off.append((rid, sec)))
 
     class _D:
         def probe_relationship_overlap(self, *a, **k):
@@ -677,7 +752,7 @@ def test_probe_missing_object_unresolved_slot_stays_failed(monkeypatch):
     rep = R.probe_and_reinforce(None, _D(), "scope", kb_conn=object(),
                                 raw_execute=_raise_missing, db_scope="db1")
     assert rep["failed"] == 1 and rep["negative"] == 0 and not signals
-    assert touched == [9]
+    assert touched == [] and backed_off == [(9, R._PROBE_FAIL_BACKOFF_SEC)]
 
 
 def test_probe_missing_object_resolved_slot_under_db_scope_is_negative(monkeypatch):

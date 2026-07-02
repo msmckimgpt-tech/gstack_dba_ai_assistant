@@ -710,3 +710,16 @@ HAS_TABLE 엣지·검색 scope·**큐레이션 설명 보존**(rag 투영 무덮
 - **범위 밖(별도 이슈로 보고)**: 형제 테이블 edge-type 필터 제거는 **미채택** — HAS_TABLE 은 이미 비가시
   (compound), 제거 시 노드만 사라지고 컬럼 미투영 99% 테이블 확장이 텅 빔("느림"→"빈 결과"). 데이터 완전성
   갭(REFERENCES=0, HAS_COLUMN 커버 0.78%)은 FK/컬럼 introspect 파이프라인 후속 initiative 로 분리.
+
+### graph sync 부하 분산 — batched commit + incremental (TASK-0308, 2026-07-03, worktree=insight-load-spread)
+
+**문제**: `sync_graph` 가 실측 규모 **Table 15,022 / Column 8,709 / REFERENCES 9,562 / HAS_TABLE 15,022 ≈ 57,000+ 노드·엣지**를 `_rw_conn(autocommit=True)` 로 노드/엣지당 **개별 MERGE** → cron 30분마다 **~5.7만 WAL fsync** 폭주. pg_stat_activity 에 `ag_catalog.cypher('metadata_kb', MERGE (n:Schema ...))` WALSync 대기가 주기적 CPU/디스크 부하 스파이크로 관측됨. 변경감지 없이 full sync(변경 없어도 매번 전량 MERGE).
+
+**수정** ([metadata_graph.py](../../feature-0002-agent-core/src/modules/metadata_graph.py), [metadata_graph_sync.py](../../feature-0002-agent-core/src/scripts/metadata_graph_sync.py), [bin/metadata-graph-sync.sh](../../../bin/metadata-graph-sync.sh), [bin/install-metadata-graph-sync-cron.sh](../../../bin/install-metadata-graph-sync-cron.sh)):
+- **batched commit**: `sync_graph` 가 `_SYNC_MERGE_BATCH`(env `AGENT_METADATA_GRAPH_SYNC_BATCH`, 기본 500)개 MERGE 마다 1회 커밋. 인덱스 DDL·`SELECT now()`(워터마크) 이후 `c.autocommit=False` 로 트랜잭션 시작, `_tick(force=True)` 로 잔여 커밋, `finally` 에서 autocommit 복원. **fsync ~5.7만 → ~114**(정합성 불변 — 여전히 전량 MERGE, 트랜잭션 경계만 묶음). **owned=True(자체 conn)에서만** 트랜잭션 관리 → conn 주입(통합 테스트·외부 호출)은 기존 autocommit 동작 그대로.
+- **incremental**: `sync_graph(since=...)` 지정 시 각 관계형 SELECT 에 `updated_at > since` 증분 필터 → 변경분만 MERGE(변경 없는 cycle 은 거의 no-op, MERGE 실행 CPU·AGE 처리 절감). 워터마크는 `agent_runtime.kv`(신규 `get_sync_watermark`/`set_sync_watermark`, scope별, 실패 graceful→full 폴백). `synced_at`(서버 `now()`) 반환 → CLI 가 다음 since 로 저장. glossary_relations(created_at only)·삭제/파단 노드는 **full 이 담당**.
+- **CLI/wrapper/cron**: `metadata_graph_sync.py` 에 `--incremental`/`--full`(+env `AGENT_METADATA_GRAPH_SYNC_INCREMENTAL`), wrapper `metadata-graph-sync.sh` 가 모든 인자 pass-through(기존 `--scope` 만 처리 → `"$@"`). cron 을 **30분 `--incremental`(변경분만) + 매일 04:17 `--full`(삭제/파단 정리)** 이중 스케줄로 전환.
+
+**검증**: 신규 [test_metadata_graph_load_spread.py](../tests/test_metadata_graph_load_spread.py) **4**(since 증분 필터 유무, batched commit 발생, owned autocommit 복원) + units 10 회귀 PASS. AST OK. 통합(psycopg 필요)은 배포 후 — conn 주입 owned=False 경로가 기존과 동일함을 코드 대조로 확인(통합 테스트는 `autocommit=True` conn 주입).
+
+**정합**: ANCHOR §1 "관계형은 SSOT, AGE 는 **재생성 가능한 투영**" — 투영을 더 효율적으로 재생성하는 변경(정합성·멱등 불변). feature-0002 REPORT TASK-0308(축①② insight/probe)와 동일 cycle.

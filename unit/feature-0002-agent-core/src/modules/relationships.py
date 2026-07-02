@@ -24,6 +24,7 @@ feature-0016 implicit-edges (2026-07-01): FK 로 직접 확인되지 않는 **�
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from modules.utils import _normalize_scope_key, _scope_candidates
@@ -53,6 +54,16 @@ _INJECT_CAP = 60        # knowledge context 주입 최대 edge 수
 _READ_LIMIT = 400       # scope 당 최대 read edge 수
 _INTROSPECT_TABLE_CAP = 200  # insight cycle 1회 introspect 최대 테이블 수(과부하 방지)
 _INFER_CAP = 400        # 1회 추론 최대 후보 edge 수(8K 규모 폭주 방지)
+
+# insight-load-spread: probe transient 실패(타임아웃·연결·존재하지 않는 DB 등 — 구조오류로 negative
+# 판정되지 않는 것) 시 last_validated_at 을 미래로 밀어 재프로브를 backoff 한다. 같은 실패 대상을 매
+# cadence(REINFER_SEC)마다 재시도해 워커/소스DB CPU 를 몰아쓰던 spin(probe_edge_failed 도배)을 차단.
+# **간격은 flat**(재시도마다 now()+backoff 의 일정 상수, 누적 아님): fetch_probe_candidates 가
+# last_validated_at > now() 후보를 제외하므로 backoff 창 동안 재프로브 0회이고, 창이 만료돼 재프로브할
+# 때는 last_validated_at 이 이미 과거(<= now())라 GREATEST 가 now() 로 collapse 한다. 시간당 1회 throttle
+# 로 spin 은 완전히 차단되며, 진짜 누적(exponential)이 필요하면 별도 fail-count 컬럼이 필요(현재 미채택).
+# 성공(verdict 판정)하면 last_validated_at=now() 로 리셋 → 정상 rotation 복귀. 0 이면 backoff off(기존 동작).
+_PROBE_FAIL_BACKOFF_SEC = max(0, int(os.getenv("AGENT_RELATIONSHIP_PROBE_FAIL_BACKOFF_SEC", "3600") or "3600"))
 
 
 # ── 연결 헬퍼 (kb_metadata._ro_conn 동형) ────────────────────────────────
@@ -876,6 +887,9 @@ def fetch_probe_candidates(conn, scope_key, limit, db_scope=None):
                 "FROM table_relationships "
                 "WHERE scope_key = ANY(%s) AND status = 'candidate' "
                 "  AND source IN ('inferred', 'conversation', 'llm_insight') "
+                # insight-load-spread: transient 실패로 backoff(미래로 밀린) 후보는 그 창 동안 제외 —
+                # 존재하지 않는 DB·timeout edge 를 매 cadence 재프로브하던 부하 spin 차단. NULL/과거는 정상 대상.
+                "  AND (last_validated_at IS NULL OR last_validated_at <= now()) "
                 + db_filter +
                 "ORDER BY last_validated_at ASC NULLS FIRST, weight ASC LIMIT %s",
                 tuple(params),
@@ -919,10 +933,13 @@ def classify_probe(sampled, matched):
 # negative 로 분류한다(적대 패널 B-F4 — 이 클래스가 영구 미파단 + 큐 head 고착의 근본).
 _PROBE_MISSING_OBJECT_RE = re.compile(
     # MSSQL: "Invalid object name 'x'"(208/42S02) · "Invalid column name 'y'"(207/42S22)
-    # MySQL: "Table 'db.x' doesn't exist"(1146) · "Unknown column"(1054)
+    # MySQL: "Table 'db.x' doesn't exist"(1146) · "Unknown column"(1054) · "Unknown database 'x'"(1049)
+    # insight-load-spread: "Unknown database"(존재하지 않는 DB — 예: dblog) 도 구조 부재로 편입 —
+    # 없는 DB 를 참조하는 관계는 실행 불가라 negative(파단) 대상. 없는 DB probe 를 매 cadence 반복하던
+    # probe_edge_failed 도배의 근본 차단(slot 확정 시). slot 미확정(레거시)은 transient→backoff 로 커버.
     # bare 에러번호 매칭은 무관 숫자(예: "timeout after 208ms") 오탐 위험이라 텍스트/SQLSTATE 만.
     r"invalid (object|column) name|doesn't exist|does not exist|unknown column"
-    r"|no such table|42S02|42S22",
+    r"|unknown database|no such (table|database)|42S02|42S22",
     re.I,
 )
 
@@ -937,6 +954,33 @@ def _touch_validated(kc, rid):
                 "WHERE id = %s", (rid,))
         finally:
             _tc2.close()
+    except Exception:
+        pass
+
+
+def _backoff_validated(kc, rid, backoff_sec):
+    """insight-load-spread: transient probe 실패 시 last_validated_at 을 미래로 밀어 재프로브 backoff.
+
+    `GREATEST(now(), COALESCE(last_validated_at, now())) + backoff` — GREATEST/COALESCE 는 NULL·과거값
+    방어일 뿐 **누적이 아니다**: fetch_probe_candidates 가 `last_validated_at <= now()` 후보만 가져오므로
+    재프로브는 backoff 창이 만료된(= last_validated_at 이 과거인) 뒤에만 일어나고, 그 시점 GREATEST 는
+    now() 로 collapse → 매 재시도 간격은 **flat 상수(기본 3600s)**. 창 동안 재프로브 0회라 존재하지 않는
+    DB·timeout edge 의 매-cadence spin 은 완전히 차단된다(시간당 1회 throttle). 성공(verdict 판정)하면
+    _touch_validated 가 now() 로 리셋해 정상 rotation 복귀. backoff_sec<=0 이면 now() 전진(기존 동작)으로
+    폴백. 실패 무시(비차단)."""
+    if backoff_sec is None or int(backoff_sec) <= 0:
+        _touch_validated(kc, rid)
+        return
+    try:
+        _tc3 = kc.cursor()
+        try:
+            _tc3.execute(
+                "UPDATE table_relationships "
+                "SET last_validated_at = GREATEST(now(), COALESCE(last_validated_at, now())) "
+                "    + make_interval(secs => %s) "
+                "WHERE id = %s", (int(backoff_sec), rid))
+        finally:
+            _tc3.close()
     except Exception:
         pass
 
@@ -1018,9 +1062,14 @@ def probe_and_reinforce(ds_conn, dialect, scope_key, *, kb_conn=None, raw_execut
                     apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, False,
                                               a_schema=ssch, b_schema=tsch)
                     rep["negative"] += 1
+                    # 구조 부재(없는 객체·DB)는 negative 감쇠가 곧 파단 → candidate 제외. now() 로 정상 rotation.
+                    _touch_validated(kc, rid)
                 else:
                     rep["failed"] += 1
-                _touch_validated(kc, rid)
+                    # insight-load-spread: transient(타임아웃·연결·slot 미확정 레거시)는 파단하지 않고
+                    # 미래로 밀어 backoff — 같은 대상을 매 cadence 재프로브하던 spin(probe_edge_failed
+                    # 도배 + 소스DB timeout 쿼리 반복)을 차단한다(반복 실패 누적 backoff).
+                    _backoff_validated(kc, rid, _PROBE_FAIL_BACKOFF_SEC)
                 _log.warning("probe_edge_failed id=%s err=%r", rid, exc)
                 continue
     finally:
