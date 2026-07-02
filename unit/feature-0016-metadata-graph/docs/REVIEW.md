@@ -394,3 +394,10 @@ source_of_truth: true
 - 검증(수정 후): node --check PASS + harness initview 33/33 PASS + ctxmenu 10/10 PASS(에러 0).
 - Verdict: **PASS-WITH-FIXES** — 차단 결함 0, MAJOR+MINOR 전건 수정.
 - Human Approval Needed: 없음(Minor §12.3 — frontend-only 비파괴). cycle-final 후 배포는 deploy_scope: included.
+
+## REV-20260702T175500-ai-claude-corp-feature-0016-search-badge-pb0008 [SKIPPED: docs-only]
+- Date: 2026-07-02
+- Related Change: CHG-20260702T175500-search-badge-pb0008 — search-badge PB-0008 라이브 실측 결과의 POST-DEPLOY 문서 기록.
+- Rationale: 코드/자산/데이터 변경 0, TEST.md·TASK.md Run·체크 라인만 추가. search-badge 코드 자체의 적대 리뷰는
+  REV-20260702T173000(PASS-WITH-FIXES)에서 완료. 본 cycle 은 그 배포 검증 결과 기록이라 §18.8 패널 skip.
+- Verdict: SKIPPED (docs-only, 리뷰 대상 코드 없음).
