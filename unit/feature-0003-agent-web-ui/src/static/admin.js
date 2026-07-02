@@ -4492,14 +4492,20 @@ async function _metaGraphExpand(key, depthOverride) {
   const anchorCols = (data.nodes || []).some((x) => x && x.label === "Column" && _metaColParent(x.key, x.fqn) === key);
   if (anchorCols) _metaGraph.expanded.add(key);
   // graph-initview(A3): 이웃 확장은 전체-fit 대신 앵커 중심 국소 focus — 노드가 쌓여도 줌아웃 재발 없음.
+  //   graph-dblclick-cam: 그 국소 focus 를 즉시(animation=false)가 아닌 **애니메이션**으로 — 더블클릭 시 카메라가
+  //   순간이동 재배치되어 생기던 불편을 부드러운 팬으로 해소. 판독 하한 clamp 는 즉시 유지(팬 애니와 중첩 회피).
+  //   focusElement 는 카메라 transform 만(노드 재렌더 없음)이라 프리즈 무관. graph animation:false 여도 per-call
+  //   애니 스펙은 동작(헤드리스 검증). seq 가드로 연타 시 stale 카메라 애니 방지. 앵커는 schemaExpanded(위)로 노드 렌더 보장.
   await _metaG6Apply(false);   // busy 는 rebuild 로 소멸
-  try {
-    const gz = _metaGraph.graph;
-    const z = (gz && typeof gz.getZoom === "function") ? gz.getZoom() : 1;
-    if (gz && isFinite(z) && z < _META_MIN_READ_ZOOM) await gz.zoomTo(_META_MIN_READ_ZOOM, false);
-    const fel = _metaRenderedIdFor(key);
-    if (gz && fel) await gz.focusElement(fel, false);
-  } catch (_) {}
+  if (seq === _metaGraph._opSeq) {
+    try {
+      const gz = _metaGraph.graph;
+      const z = (gz && typeof gz.getZoom === "function") ? gz.getZoom() : 1;
+      if (gz && isFinite(z) && z < _META_MIN_READ_ZOOM) await gz.zoomTo(_META_MIN_READ_ZOOM, false);
+      const fel = _metaRenderedIdFor(key);
+      if (gz && fel && seq === _metaGraph._opSeq) await gz.focusElement(fel, { duration: 420, easing: "ease-in-out" });
+    } catch (_) {}
+  }
   _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };

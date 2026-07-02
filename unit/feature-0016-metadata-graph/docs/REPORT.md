@@ -1,5 +1,27 @@
 # Report
 
+## 2026-07-02 · 그래프 더블클릭 카메라 순간이동 재배치 해소 — 앵커-중심 애니 팬 (graph-dblclick-cam, ADR-008)
+
+### 배경
+프리즈 해소(graph-expand-perf) 후 사용자 관찰: 테이블 노드 **더블클릭 시 카메라가 순간이동 재배치되어 불편**. "카메라 [고정/애니메이션] 자율 판단하여 개선" 위임.
+
+### 조사·자율판단
+- 더블클릭 = `_metaGraphExpand`(additive 이웃 확장). graph-initview(A3)로 이미 "전체-fit 대신 앵커-중심 국소 focus" 였으나 `focusElement`/`zoomTo` 를 **animation=false(즉시)** 로 호출 → 앵커로 카메라 순간 텔레포트.
+- 자율판단 = **애니메이션(앵커-중심 팬)**. 고정(무이동)은 additive 확장에서 새 이웃/앵커가 화면 밖이라 부적합 → 앵커-중심 focus 로 클릭 대상 프로미넌트 유지 + 부드러운 전환(고정·애니 두 요구의 절충). ADR-008.
+- G6 카메라 애니 API 헤드리스 검증: graph `animation:false` 여도 `focusElement(id,{duration,easing})`/`zoomTo(z,{duration})` per-call 스펙 동작·throw 없음·카메라 실이동.
+
+### 수정 (FE admin.js)
+- `_metaGraphExpand` 카메라 블록: `focusElement(fel, false)` → `focusElement(fel, {duration:420, easing:'ease-in-out'})`. 판독 하한 clamp(zoomTo)는 즉시 유지(팬 애니 중첩 회피), seq 가드로 연타 stale 애니 방지.
+
+### 검증
+- `node --check` PASS · cache-buster `?v=20260702-graph-dblclick-cam`.
+- §18.8 적대 리뷰: **최초 오편집 적발** — 더블클릭이 아닌 우클릭 "중심 보기"(`_metaGraphFocus`) 함수를 편집(라우팅 오인) + 그 함수 `schemaExpanded.add` 누락→앵커 카드렌더→focusElement throw→fit-to-all 폴백(BLOCKING). **교정**: 진짜 더블클릭 `_metaGraphExpand`(앵커 노드 렌더 보장)로 이동 + focus 함수 원복 + 헬퍼 제거. 카메라 op=viewport transform(프리즈 무관). REV-20260702T190000.
+
+### 잔여
+- 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 부드럽게 팬(순간이동 없음) 육안 확인.
+
+---
+
 ## 2026-07-02 · 신뢰/추정 관계 자기교정 파이프라인 미가동 근본수정 (rel-selfheal)
 
 ### 배경 (사용자 검증 요청)

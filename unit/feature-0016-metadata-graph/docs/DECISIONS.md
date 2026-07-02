@@ -229,3 +229,18 @@ source_of_truth: true
     __all__ 계약 + AST 가드로 봉인.
 - Supersedes: (ADR-002 의 발화 조건을 상시화로 확장 — 대체 아님, 상위호환)
 - Superseded By:
+
+
+## ADR-008 — 그래프 노드 더블클릭(이웃 확장) 카메라: 즉시 점프 대신 앵커-중심 애니메이션 팬
+- Status: Accepted
+- Date: 2026-07-02
+- Context: 사용자 관찰(프리즈 해소 후) — 테이블 노드 **더블클릭 시 카메라가 순간이동 재배치되어 불편**. 진단: 더블클릭(`_metaGraphExpand`, additive 이웃 확장)은 graph-initview(A3)에서 이미 "전체-fit 대신 앵커 중심 국소 focus"로 바뀌어 있었으나, 그 `focusElement`/`zoomTo` 를 **`animation=false`(즉시)** 로 호출 → 앵커로 카메라가 순간 텔레포트. 사용자가 "카메라 [고정/애니메이션] 자율 판단" 을 위임.
+- Decision: **애니메이션(부드러운 앵커-중심 팬) 채택.** 더블클릭 이웃 확장은 모델을 reset 하지 않고(additive) 앵커의 스키마를 `schemaExpanded` 로 펼쳐 앵커를 노드로 렌더한다. 그 앵커로의 `focusElement` 를 `{ duration: 420, easing: "ease-in-out" }` 로 애니메이션. 판독 하한 clamp(`z < _META_MIN_READ_ZOOM → zoomTo(_META_MIN_READ_ZOOM)`)는 **즉시 유지**(팬 애니와 중첩 회피). seq 토큰 가드로 연타 시 stale 카메라 애니 방지.
+- 왜 "고정" 이 아닌가: 이웃 확장은 새 노드가 화면 밖 레이아웃 위치에 추가될 수 있어, 카메라를 완전 고정하면 사용자가 방금 더블클릭한 대상·새 이웃이 화면에서 벗어난다. 앵커-중심 focus 는 클릭 대상을 계속 프로미넌트하게 유지하면서(고정의 이점) 전환을 부드럽게(애니의 이점) 한다 — 두 요구의 절충이 "앵커-중심 애니 팬".
+- Consequences: 더블클릭 시 카메라가 앵커로 부드럽게 팬(순간이동 제거). `focusElement`/`zoomTo` 는 순수 viewport transform(노드 재렌더 없음)이라 ADR-006 프리즈 수정과 무간섭. 변경 범위 = `_metaGraphExpand` 카메라 블록 1곳(더블클릭 + depth-select 재확장). loadRoots/검색/리사이즈의 즉시 fit(`_metaGraphFitClamped`)과 우클릭 "중심 보기"(`_metaGraphFocus`)는 **불변**(불편 대상 아님). 미렌더 앵커는 `if(fel)` 가드로 focus skip(throw 없음). 완료 게이트=PB-0008 실 Windows(더블클릭 시 부드러운 팬 육안).
+- Alternatives:
+  - 카메라 완전 고정(무이동): 새 이웃/앵커가 화면 밖일 수 있어 "확장을 봤다"는 피드백 상실(기각).
+  - fitView(이웃 전체) 애니: 형제 테이블 다수에 맞춰 줌아웃돼 앵커가 작아짐 — additive 확장에서 이미 A3 가 폐기한 방향(기각).
+  - 줌도 애니: zoom-anim + pan-anim 순차는 지연 체감(≈2×) — 팬만 애니, 판독 clamp 는 즉시(채택).
+- Supersedes: (graph-initview A3 의 즉시 focus 를 애니로 — 대체 아님, 정제)
+- Superseded By:

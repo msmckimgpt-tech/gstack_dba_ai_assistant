@@ -151,6 +151,14 @@ docker compose run --rm \
 - **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: 정적 자산 baked → 배포 후에만 실검증. 확인 항목 → ① **대량 스키마 노드(Achievement 등, 형제 246테이블) 더블클릭 시 프리즈 없이 즉시 확장**(과거 2~3초 프리즈 해소) ② AI 능동분석 진행(2.5s 폴) 중 주기적 stutter 없음 ③ 마커(analyzed 보라/running 주황/selected) 정상 표시 유지.
 - Pass/Fail: **PASS**(구문·헤드리스 실측·2렌즈 적대패널). 라이브 프리즈 해소 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
 
+### TASK-20260702-graph-dblclick-cam 더블클릭 카메라 순간이동 재배치 해소 — 앵커-중심 애니 팬 (Minor→Major §12.3, 2026-07-02, feature-0016 cross-cut) — **Environment: Windows-browser (카메라 팬 부드러움은 실 브라우저 시각 — de-risk=헤드리스 API 검증+적대리뷰 + 라이브 PB-0008 배포 후 잔여)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 사용자 후속(프리즈 해소 후): 테이블 노드 더블클릭 시 카메라 순간이동 재배치 불편. 변경: admin.js `_metaGraphExpand` 카메라 focus 를 즉시→애니메이션(`{duration:420,easing}`) + seq 가드 + admin.html cache-buster. 정본: feature-0016 DECISIONS ADR-008 · MODIFY CHG-20260702-graph-dblclick-cam-anim.
+- **구조·구문**: `node --check admin.js` PASS. diff = `_metaGraphExpand` 카메라 블록 1곳(loadRoots/검색/리사이즈 fit·우클릭 중심보기 불변).
+- **G6 카메라 애니 API 헤드리스 검증**: graph `animation:false` 에서도 `focusElement(id,{duration,easing})`·`zoomTo(z,{duration})` per-call 애니 스펙 동작(throw 없음)·카메라 실이동·zoom 변경 확인.
+- **§18.8 적대 리뷰(SUBAGENT)**: 최초 오편집(우클릭 `_metaGraphFocus`≠더블클릭, 라우팅 오인) + 그 함수 `schemaExpanded.add` 누락→앵커 카드렌더→focusElement throw→fit-to-all 폴백(BLOCKING) 적발 → 진짜 더블클릭 `_metaGraphExpand`(앵커 노드 렌더 보장)로 교정 + focus 함수 원복. 카메라 op=viewport transform(프리즈 무관·ADR-006 무간섭) 확인. REV-20260702T190000 (feature-0016 REVIEW.md).
+- **배포 후 라이브 PB-0008 잔여(실 Windows 브라우저)**: ① 대량 스키마 노드 **더블클릭 시 카메라가 앵커로 부드럽게 팬**(순간이동/급격 줌아웃 재배치 없음) ② 앵커가 화면 중앙·판독 배율 유지 ③ 연타 시 카메라 튐 없음.
+- Pass/Fail: **PASS**(구문·헤드리스 API 검증·적대리뷰 교정). 라이브 팬 부드러움 실검증은 배포 후 §4 Run 에 기록. Runner: AI.
+
 ### TASK-20260702-metadata-perm-hier 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3, 2026-07-02) — **Environment: Windows-browser (권한 그리드는 DOM — 배포 후 라이브 검증, 캔버스 무관)**
 - 대상: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터(kb 그룹)가 다른 관리 그룹과 동일한 "그룹 게이트(묶음)→세부" 2단 계층으로 표시. 묶음 `kb.ingest.manual`("메타데이터 관리 전체 묶음")이 depth-0 그룹 루트, 세부 5개 metadata.*가 depth-1 자식.
 - 정적 검증(pre-commit): `node --check admin.js` PASS · `test_permission_dependency_map.py` 18개 PASS(신규 t5 계층 pin[metadata.*→kb.ingest.manual→console.access, depth manual=0·metadata.*=1] + t6 도달성[게이트 OFF 시 metadata hidden 이나 그룹 비은닉] + 기존 V1~V7 disclosure 무회귀) · §18.8 SUBAGENT 패널 PASS(BLOCKING 0).
