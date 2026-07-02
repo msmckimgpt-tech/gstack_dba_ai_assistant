@@ -103,3 +103,28 @@ edit_policy: append-only
 
 ### 잔여
 - `web_context` 헬퍼 전체 추출(별도 workstream)·프론트(admin.js/app.js/styles.css) 분할·Final 로그인 QA. 정본: `unit/feature-0012-web-router-modularization/docs/{REPORT,TASK}.md`.
+
+## 2026-07-02 — feature-0016-metadata-graph: 그래프 뷰 상호작용·가시성 진화 (렌더러 G6 전환 · 우클릭 상세 · 초기 진입 · 검색 강조 · 더블클릭 카메라 · 추정관계 자기교정 실동작)
+
+### 변경 (관리자/운영자 영향)
+- **그래프 렌더러 Cytoscape(WebGL) → AntV G6 v5(Canvas) 전면 교체 (ADR-004)** — 대규모 스키마 그래프의 확대·이동·펼침 매끄러움/선명도 기반 재정비. 클러스터 다열 masonry + 가변폭 shelf-packing 레이아웃(graph-g6b)으로 카드 배치 밀도 개선.
+- **노드 우클릭 상세 상호작용 (graph-ctxmenu)** — 노드 컨텍스트 메뉴 + 관계 상세 패널 + 해당 노드 중심 보기(center-on). 스키마 카드 우클릭 메뉴 + 카드 라벨을 개수 badge 로 압축(schema-card-ctxmenu). 검색 시 스키마 카드 badge 매칭/전체 표기(search-badge).
+- **초기 진입 가시성 개선 (graph-initview)** — 진입 시 스키마-우선 배치 + 줌 클램프 + 미니맵. 넓은 그래프에서 현재 위치 파악 용이화.
+- **노드 펼침/더블클릭 성능·카메라 정비** — 테이블 노드 펼침 논블로킹화(graph-perf-bg, ADR-005) + 더블클릭 프리즈 잔존 해소 per-node setElementState→setData rebuild(graph-expand-perf, ADR-006) + 더블클릭 카메라 순간이동 재배치 해소를 앵커-중심 애니 팬으로 교체(graph-dblclick-cam, ADR-008).
+- **추정/신뢰 관계 자기교정 파이프라인 미가동 근본수정 (rel-selfheal, ADR-007)** — 07-01 발표한 추정(inferred)·신뢰(trusted) 관계 자기교정이, config `__all__` 누락으로 star-import 소비자(insight)에서 발생한 NameError 를 per-schema except 가 삼켜 06-29 부터 3일간 insight 스키마 처리(인사이트 갱신+FK introspect+추론+프로브) 전체가 조용히 정지했던 결함 해소. AST 회귀가드 신설 + 주기 cadence(reinfer) + 게임 DB 관용 PK(uniqueid/unique_id) 인식 + 파서 qualifier/스키마-slot 규약 통일. §18.8 적대 패널 재검증 라운드(instance-scan 커서 DB별 분리·write-back slot 한정·프로브 실행오류·1:N 라우터 컨텍스트 스냅샷) 반영.
+- **그래프 관계 분석 전용 모델 분리 (node-analysis-haiku)** — 그래프 관계 능동 분석 경로를 claude-haiku 로 분리(내부 모델 라우팅, 사용자 무체감).
+
+### 잔여
+- PB-0008 라이브 브라우저 그래프 UI 실화면 검증(G6 렌더러 교체 후 우클릭/중심보기/초기진입/검색강조/더블클릭 카메라·추정↔신뢰 엣지 시각)은 배포 후. 정본: `unit/feature-0016-metadata-graph/docs/{REPORT,DECISIONS,TEST}.md`(ADR-004~008).
+
+## 2026-07-02 — feature-0003-agent-web-ui: AI 운영 관제 패널 + LLM 계측 확장 + 감사 UX 정비
+
+### 변경 (관리자/운영자 영향)
+- **관리 콘솔 > 감사 > 'AI 운영 현황' 탭 신설 (aiops-panel)** — 상태 배너(worst-of 롤업)·KPI·Attention·카테고리 드릴다운·활동 feed·계측 커버리지. `/api/admin/ai-ops` (권한 `console.aiops.read`, admin 전용, 5곳 sync + fail-open 방지). 대시보드에 AI 상태 타일(deep-link) 추가.
+- **web 4경로 LLM 계측 확장** — 프롬프트 자동생성(비스트리밍/스트리밍)·자율 sweep·메타 자동완성 경로 계측 + `agent_runtime.llm_usage.latency_ms` 마이그(0030) + shared taxonomy 레지스트리(self-surface). main agent latency 계측 및 최근 활동 cursor 페이징(‘더 보기’, aiops-activity-paging) 추가.
+- **최근 활동 클릭 상세 확장 + 감사 UX 정비 (audit-nav-ux)** — 최근 활동 행을 클릭 요약행 + 인라인 아코디언 상세(작업·서빙 모델·토큰·비용·지연·run_id·연결 대화 딥링크)로 재구성. 감사 카테고리 순서 재구성 + 4개 탭 네이티브 툴팁. 시스템 sentinel 활동의 대화 링크 깨짐 수정(aiops-conv-link-fix). AI 운영 현황 pane 세로 스크롤 수정(aiops-scroll).
+- **메타데이터 관리 권한 그리드 계층 정합 (metadata-perm-hier)** — 07-01 세분화한 `metadata.*` 5키를 권한 그리드에서 다른 관리 그룹과 동일한 ‘그룹 게이트→세부’ 2단 계층으로 표시 정합화(표시 계층만 — RBAC enforcement/스키마/개별 부여성 B안 무변경).
+- **첨부 개수 배지 stale 수정 (attach-count-scope, work)** — 입력창 ‘+’ 메뉴 첨부 개수 배지가 대화 전환 후 이전 대화 개수를 보이던 문제 수정(대화 스코프 정합).
+
+### 잔여
+- web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 라이브 실측. 정본: `unit/feature-0003-agent-web-ui/docs/{REPORT,TASK,TEST}.md`.

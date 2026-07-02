@@ -37,6 +37,8 @@ sources:
 
 > **2026-06 확장 (§2.5)**: 관리 콘솔이 **데이터소스 CRUD + DB-단위 접근 + 대시보드 위젯/CloudWatch + LLM 사용량 대시보드 + 제품 insight 완료율**까지 포괄하도록 성장. agent 실행은 **ask-worker out-of-process 큐**로 cutover (orphan-on-redeploy 제거). 요청 중단·즉시 재요청, 프롬프트 자동작성 SSE 스트리밍 추가.
 
+> **2026-07-02 확장 (§2.6)**: **AI 운영 관제 패널**(`/api/admin/ai-ops` 신규 admin 화면 + LLM 계측 확장·main agent latency·최근 활동 cursor 페이징) 추가. 감사 화면 정리(카테고리 순서·툴팁·최근활동 상세 확장), 메타데이터(지식베이스) 권한 종속관계 그룹 게이트 계층화, 최근활동 sentinel 대화 링크·첨부 개수 배지 stale 수정.
+
 ## 2. 상세
 
 ### 2.1 책임 경계
@@ -97,6 +99,17 @@ sources:
 | **제품 아이콘 편집 ✎ 오버레이** | 제품 아이콘 hover 시 편집 오버레이 (PB-0008 PASS) | TASK-0283 |
 | **fork = hybrid deep-copy** | pure git-lineage 반려(F1~F6) → `core_messages` deep-copy snapshot | ADR-WEB-0005 (TASK-0170) |
 | **진입점 없는 기능 복구** | 즉시답변·공유관리·audit.purge·내활동·facet 등 7개 발굴·구성 | TASK-0158 (DESIGN-entry-points) |
+
+### 2.6 AI 운영 관제 + 감사 UX + 권한 계층화 (2026-07-02)
+
+| 영역 | 내용 | 관련 |
+|---|---|---|
+| **AI 운영 관제 패널 (신규)** | `/api/admin/ai-ops` — LLM 계측 확장 + AI 운영 현황(관제) admin 화면. main agent latency 계측 | TASK §20 (aiops-panel) |
+| **최근 활동 cursor 페이징** | AI 운영 현황 '최근 활동' 더 보기(cursor 페이징) + pane 세로 스크롤 | aiops-activity-paging · aiops-scroll |
+| **감사 화면 정리** | 감사 카테고리 순서 재구성 + 항목 툴팁 + 최근활동 클릭 상세 확장 | audit-nav-ux |
+| **최근활동 conv 링크 fix** | 최근 활동 시스템 sentinel 대화 링크 깨짐 수정 | aiops-conv-link-fix (feature-0003) |
+| **메타데이터 권한 종속관계 계층화** | 메타데이터(지식베이스) 권한 묶음을 그룹 게이트로 계층화 — 종속관계 정합화 | metadata-perm-hier · SECURITY §19 |
+| **첨부 개수 배지 stale fix** | "+" 메뉴 첨부 개수 배지가 대화 전환 후 stale 하던 것 수정(scope) | attach-count-scope (work/chat) |
 
 ## 3. 특징
 
