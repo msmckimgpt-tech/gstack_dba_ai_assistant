@@ -3159,6 +3159,7 @@ const _metaGraph = {
   expanded: new Set(),    // 컬럼 펼친 Table key
   analyzed: new Set(),    // AI 분석 완료 key(보라 마커)
   running: new Set(),     // AI 분석 중 key(주황 마커)
+  roles: new Map(),       // node-role-viz: 분석 완료 Table key -> 역할 분류(_META_ROLE 키). 칩 색·아이콘 표식 소스.
   selected: null,         // 선택 강조 key
   // graph-initview: 스키마-우선 진입 상태.
   schemaExpanded: new Set(),  // 테이블을 펼친 Schema key(roots 진입은 스키마 카드만)
@@ -3203,11 +3204,34 @@ function _metaComboName(id) {
 }
 const _metaNatSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 
+// ── node-role-viz: AI 능동 분석 완료 테이블의 역할 분류 → 시각 표식(칩 색 + 아이콘 + 범례) ──
+//   분류체계는 BE(node_analysis.NODE_ROLES)와 1:1. 팔레트 = Okabe-Ito 8색(색약 안전 표준) —
+//   색(범주 최강 채널) + 아이콘(중복 인코딩, 색약·흑백 대응) + 범례/상세패널 라벨 3중 인코딩.
+//   dark=true 는 밝은 색이라 흰 라벨 대비가 부족한 항목 — 라벨을 어두운 글자로 전환.
+const _META_ROLE = {
+  // dark 배정(적대 패널 U3): 12px bold 흰 라벨 대비가 부족한 밝은/중간 색은 어두운 라벨(#161b22) —
+  //   account 2.2 / log 1.9 / stats 1.1 / mapping 3.1 / transaction 3.4 (흰 라벨 대비, 전부 4.5 미달) → dark.
+  master:      { ko: "기준·정의", icon: "📘", color: "#0072B2", dark: false },
+  account:     { ko: "계정·유저", icon: "👤", color: "#56B4E9", dark: true },
+  transaction: { ko: "거래·행위", icon: "💳", color: "#009E73", dark: true },
+  log:         { ko: "로그·이력", icon: "📜", color: "#E69F00", dark: true },
+  mapping:     { ko: "매핑·연결", icon: "🔗", color: "#CC79A7", dark: true },
+  config:      { ko: "설정",     icon: "⚙️", color: "#D55E00", dark: false },
+  stats:       { ko: "집계·통계", icon: "📊", color: "#F0E442", dark: true },
+  etc:         { ko: "기타",     icon: "📦", color: "#6e7681", dark: false },   // ◽ 는 회색 칩 위 tofu 처럼 비가시(패널 U4) → 📦
+};
+function _metaRoleOf(key) {
+  const r = _metaGraph.roles.get(key);
+  return (r && _META_ROLE[r]) ? r : null;
+}
+
 // G6 per-element inline style helpers (설정 매퍼 금지 — undefined→To() 크래시 회피, BLUEPRINT §3).
-function _metaTableStyle(x, y, rel) {
+function _metaTableStyle(x, y, rel, role) {
   const w = Math.min(190, _METLAY.TW + (typeof rel === "number" ? Math.round(rel * 40) : 0));
-  return { x, y, size: [w, 24], radius: 6, fill: _META_GRAPH_COLOR.Table, stroke: "#ffffff", lineWidth: 1,
-    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: 176, cursor: "pointer" };
+  // node-role-viz: 분석 완료 + 역할 분류가 있으면 칩 색 = 역할색(미분석은 기존 teal 유지 — 색 자체가 "분석됨+역할" 신호).
+  const rd = role ? _META_ROLE[role] : null;
+  return { x, y, size: [w, 24], radius: 6, fill: rd ? rd.color : _META_GRAPH_COLOR.Table, stroke: "#ffffff", lineWidth: 1,
+    labelPlacement: "center", labelFill: rd && rd.dark ? "#161b22" : "#ffffff", labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: 176, cursor: "pointer" };
 }
 function _metaTermStyle(x, y, rel) {
   const w = Math.min(180, 130 + (typeof rel === "number" ? Math.round(rel * 40) : 0));
@@ -3273,6 +3297,17 @@ function _metaStateSig(key) {
   if (_metaGraph._busyKeys.has(key)) st.push("busy");
   return st;
 }
+// node-role-viz: 캐시 서명 = state 서명 + 역할 suffix. 역할은 G6 state 가 아니라 **build 시 칩 색/라벨로
+//   bake 되는 style** 이라 setElementState 로 반영할 수 없다 — 대신 서명에 포함시켜 refreshStates 가
+//   "역할 도착"을 변화로 감지하고 rebuild(_metaG6Apply)로 승격하게 한다. setElementState 에는 넘기지 않는다.
+function _metaCacheSig(key) {
+  const role = _metaGraph.roles.get(key);
+  return _metaStateSig(key).join("|") + (role ? "#R=" + role : "");
+}
+function _metaSigRole(sig) {
+  const i = (sig || "").indexOf("#R=");
+  return i >= 0 ? sig.slice(i + 3) : "";
+}
 // 요소 state 적용 단일 진입점 — 적용과 동시에 _stateCache signature 를 동기화한다.
 //   불변식: _stateCache.get(key) === 요소에 마지막 적용된 state 의 signature. 명령형 writer(busy·selected)도 이 경로를 쓰면
 //   refreshStates 가 "변화 없음"으로 오판해 필요한 재적용을 건너뛰는 false-negative 가 원천 차단된다.
@@ -3284,7 +3319,7 @@ function _metaApplyState(key) {
   // setElementState 하면 async reject 가 pageerror 로 새므로 skip + promise reject 흡수.
   const el = _metaRenderedIdFor(key);
   if (el) { try { Promise.resolve(g.setElementState(el, st)).catch(() => {}); } catch (_) {} }
-  _metaGraph._stateCache.set(key, st.join("|"));
+  _metaGraph._stateCache.set(key, _metaCacheSig(key));   // node-role-viz: 역할 suffix 포함(불변식 유지)
 }
 
 // 클릭 노드에 임시 busy 하이라이트(명령형). **_metaNodeStates 에는 넣지 않는다**(rebuild 마다 재-bake 되어 영구
@@ -3428,7 +3463,10 @@ function _metaG6Build() {
       // graph-initview 검색: 펼친 스키마 안에서 검색 매칭 테이블은 크게(rel 부스트) 강조 — 카드 클릭 후 어느 테이블이 매칭인지 즉시 식별.
       const trel = (_metaGraph.mode === "search" && _metaGraph.searchMatchTables && _metaGraph.searchMatchTables.has(it.key))
         ? Math.max(typeof it.rel === "number" ? it.rel : 0, 0.9) : it.rel;
-      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn }, style: Object.assign(_metaTableStyle(tx, ty, trel), { labelText: it.name || it.key }) });
+      // node-role-viz: 분석 완료 테이블 역할 표식 — 칩 색 = 역할색(Okabe-Ito) + 라벨 앞 역할 아이콘(색약·흑백 중복 인코딩).
+      const role = _metaRoleOf(it.key);
+      const tLabel = (role ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
+      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, trel, role), { labelText: tLabel }) });
       const cols = g.colsByTable.get(it.key);
       if (cols && cols.length) {
         nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_metaTableStyle(tx, ty, trel).size[0] / 2) + 14, ty) });
@@ -3479,7 +3517,7 @@ async function _metaG6Apply(fit) {
     //   (실측: 200노드 재적용 = 10초). 대신 캐시를 방금 bake 된 signature 로 채워 rebuild 직후 refresh 를 no-op 로
     //   만든다(진짜 변한 마커만 이후 소량 setElementState). _busyKeys clear 후라 sig=_metaNodeStates 와 일치.
     _metaGraph._stateCache.clear();
-    _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaStateSig(n.key).join("|")); });
+    _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaCacheSig(n.key)); });   // node-role-viz: 역할 suffix 포함 — rebuild 가 역할 칩 색을 이미 bake 했으므로 직후 refresh 는 no-op
     await g.draw();
     if (fit) { await _metaGraphFitClamped(true); }
   } catch (err) { _metaGraphStatus("그래프 렌더 오류: " + ((err && err.message) || err)); }
@@ -3589,6 +3627,7 @@ function _metaGraphResetModel() {
   _metaGraph.expanded.clear();
   _metaGraph.analyzed.clear();
   _metaGraph.running.clear();
+  _metaGraph.roles.clear();   // node-role-viz: 역할 표식도 모델과 함께 초기화(sync 가 재적재)
   _metaGraph.selected = null;
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
@@ -3715,8 +3754,12 @@ function _metaInitGraph() {
     // 상태 스타일만 config 로(기본 스타일은 per-element 인라인 — 매퍼 undefined→To() 크래시 회피).
     node: { state: {
       analyzed: { stroke: "#7b2fbe", lineWidth: 3 },
-      running: { stroke: "#e08a1e", lineWidth: 2, lineDash: [4, 3] },
-      selected: { stroke: "#9c6515", lineWidth: 3 },
+      // node-role-viz(적대 패널 U2): 역할색 fill(특히 log #E69F00) 위에서 주황 점선이 위장되지 않게
+      //   진행 중엔 fill 을 desaturate — 어느 역할색 위에서도 "분석 중" 이 읽힌다(재분석 경로 실재).
+      running: { stroke: "#e08a1e", lineWidth: 2, lineDash: [4, 3], fillOpacity: 0.45 },
+      // node-role-viz(적대 패널 U1): 선택 테두리 #9c6515(앰버)는 log/config 역할색과 동계열이라 위장 —
+      //   전 역할색·teal 위에서 성립하는 어두운 무채색으로 교체(흰 캔버스 경계 대비 확보).
+      selected: { stroke: "#161b22", lineWidth: 3 },
       busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] },   // graph-perf-bg: 펼침/확장 조회 중 임시 표시(teal 점선)
     } },
     behaviors: ["drag-canvas", "zoom-canvas", "drag-element"],
@@ -4946,7 +4989,7 @@ function _metaGraphPollRun(runId, focusKey) {
       return;
     }
     // graphux5-progress: 그래프 마커(완료/분석중) + 진행 패널은 노드 선택과 무관하게 항상 갱신(화면 라이브).
-    _metaGraphMarkAnalyzed(st.done_keys || []);
+    _metaGraphMarkAnalyzed(st.done_keys || [], st.roles || null);   // node-role-viz: 완료 즉시 역할 칩 색 라이브 반영
     _metaGraphMarkRunning(st.running_keys || [], st.done_keys || []);
     _metaGraphRenderProgress(st);
     const done = st.done || 0, total = st.enqueued || 0, failed = st.failed || 0;
@@ -4991,14 +5034,22 @@ function _metaGraphRefreshStatesNow() {
   if (!g) return;
   const cache = _metaGraph._stateCache;
   const changed = [];
+  let roleChanged = false;   // node-role-viz: 역할 도착/변경은 칩 색·라벨(bake 스타일)이라 setElementState 불가 → rebuild 강제
   _metaGraph.nodes.forEach((n) => {
     const st = _metaStateSig(n.key);   // busy 포함 signature — 폴 tick 이 fetch 창 도중 busy 를 지우지 않도록 보존
-    const sig = st.join("|");
-    if (cache.get(n.key) !== sig) changed.push({ key: n.key, st, sig });
+    const sig = _metaCacheSig(n.key);  // node-role-viz: 역할 suffix 포함 비교
+    const prev = cache.get(n.key);
+    if (prev !== sig) {
+      changed.push({ key: n.key, st, sig });
+      if (_metaSigRole(prev) !== _metaSigRole(sig)) roleChanged = true;
+    }
   });
   if (!changed.length) return;   // 변화 없음 — 즉시 반환(폴 tick 의 대다수, rebuild 직후 no-op)
   const REBUILD_THRESHOLD = 4;   // per-node ~50ms/개 → 4개 초과면 rebuild(~200ms)가 저렴 + 프리즈 상한
-  if (changed.length > REBUILD_THRESHOLD) {
+  if (roleChanged || changed.length > REBUILD_THRESHOLD) {
+    // node-role-viz(적대 패널 F2): 펼침/확장 fetch 창(busy) 중엔 rebuild 를 유예 — rebuild 는 _busyKeys 를
+    //   소멸시켜 진행 피드백을 지운다. 캐시를 갱신하지 않고 반환하므로 다음 tick(≤2.5s)이 재감지해 수행.
+    if (_metaGraph._busyKeys.size) return;
     _metaG6Apply(false);   // setData 가 전 노드 상태 bake + _stateCache populate(카메라 유지, fit=false). fire-and-forget.
     return;
   }
@@ -5041,7 +5092,9 @@ function _metaGraphRenderProgress(st) {
   const ko = (l) => _META_LABEL_KO[l] || l || "노드";
   const statusKo = st.status === "running" ? "진행 중" : st.status === "done" ? "완료" : st.status === "failed" ? "실패" : (st.status || "");
   const stCls = { running: "ampg-st-running", done: "ampg-st-done", failed: "ampg-st-failed" }[st.status] || "";   // review fix: 값을 class 속성에 직접 보간하지 않음
-  const item = (j, cls, ic) => `<li class="ampg-item ${cls}">${ic} <span class="ampg-lbl">${esc(ko(j.node_label))}</span> <span class="ampg-nm">${esc(j.node_name || j.node_key || "")}</span><span class="admin-meta-graph-muted"> · 깊이 ${j.depth}</span></li>`;
+  // node-role-viz: 완료 항목에 AI 분류 역할(아이콘+라벨) 병기 — 진행 패널에서도 역할이 즉시 읽히게.
+  const roleTag = (j) => (j.role && _META_ROLE[j.role]) ? ` <span class="admin-meta-graph-muted">${_META_ROLE[j.role].icon} ${esc(_META_ROLE[j.role].ko)}</span>` : "";
+  const item = (j, cls, ic) => `<li class="ampg-item ${cls}">${ic} <span class="ampg-lbl">${esc(ko(j.node_label))}</span> <span class="ampg-nm">${esc(j.node_name || j.node_key || "")}</span>${roleTag(j)}<span class="admin-meta-graph-muted"> · 깊이 ${j.depth}</span></li>`;
   const rows = [];
   running.forEach((j) => rows.push(item(j, "ampg-running", "⏳")));
   jobs.filter((j) => j.status === "done").slice(0, 12).forEach((j) => rows.push(item(j, "ampg-done", "✅")));
@@ -5058,8 +5111,10 @@ function _metaGraphRenderProgress(st) {
 }
 
 // 완료 노드 키에 분석 마커(보라). 세션 set 에 기억(rebuild 시 유지).
-function _metaGraphMarkAnalyzed(keys) {
+// node-role-viz: roles({key:role})가 오면 역할 표식도 병합 — refreshStates 가 역할 변화를 감지해 rebuild 로 칩 색/아이콘 반영.
+function _metaGraphMarkAnalyzed(keys, roles) {
   (keys || []).forEach((k) => _metaGraph.analyzed.add(k));
+  if (roles) Object.keys(roles).forEach((k) => { if (roles[k] && _META_ROLE[roles[k]]) _metaGraph.roles.set(k, roles[k]); });
   _metaGraphRefreshStates();
 }
 
@@ -5079,6 +5134,9 @@ async function _metaGraphSyncAnalysisMarkers(scope) {
   (res.done_keys || []).forEach((k) => _metaGraph.analyzed.add(k));
   const doneSet = new Set(res.done_keys || []);
   (res.running_keys || []).forEach((k) => { if (!doneSet.has(k)) _metaGraph.running.add(k); });
+  // node-role-viz: DB 에 저장된 역할 분류를 렌더 시점에 일괄 적용(새로고침/재진입에도 칩 색·아이콘 복원).
+  const roles = res.roles || {};
+  Object.keys(roles).forEach((k) => { if (roles[k] && _META_ROLE[roles[k]]) _metaGraph.roles.set(k, roles[k]); });
   _metaGraphRefreshStates();
 }
 
@@ -5143,9 +5201,12 @@ async function _metaGraphLoadNodeAnalysis(key) {
   if (!res) return;
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   if (res.status === "done" && res.analysis) {
-    _metaGraphMarkAnalyzed([key]);
+    const roleObj = (res.role && _META_ROLE[res.role]) ? _META_ROLE[res.role] : null;
+    _metaGraphMarkAnalyzed([key], roleObj ? { [key]: res.role } : null);
     const a = res.analysis;
     const rows = [];
+    // node-role-viz: AI 분류 역할 칩 — 그래프 칩 색과 동일 색/아이콘으로 상세 패널에서도 역할을 명시.
+    if (roleObj) rows.push(`<p><span class="admin-meta-graph-badge" style="background:${roleObj.color}${roleObj.dark ? ";color:#161b22" : ""}">${roleObj.icon} ${esc(roleObj.ko)}</span> <span class="admin-meta-graph-muted">AI 분류 테이블 역할</span></p>`);
     if (a.summary) rows.push(`<p class="admin-meta-graph-ai-summary">${esc(a.summary)}</p>`);
     if (a.relationships) rows.push(`<p><strong>관계</strong> — ${esc(a.relationships)}</p>`);
     if (a.usage) rows.push(`<p><strong>활용</strong> — ${esc(a.usage)}</p>`);

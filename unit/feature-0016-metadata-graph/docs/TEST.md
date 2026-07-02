@@ -302,3 +302,27 @@ Table→HAS_COLUMN→Column 체인 생성 · 기존 Table description/source 비
 - 수정 후: `test_dialect_mssql_probe_no_subquery_inside_aggregate`(신규) + 기존 probe shape/escape/
   timeout 3건 정합 유지 — test_relationships.py **53건 PASS**. 라이브 최종 검증 = 워커 재배포 후
   프로브 신호(오류 130 소멸 + pos/neg 전이) 관측.
+
+## node-role-viz — AI 능동 분석 완료 테이블 역할 시각 표식 (2026-07-03, TASK §32 / ADR-010)
+
+### 단위 — tests/test_node_analysis_role.py (Environment: CLI, agent 컨테이너) — Run 2026-07-03 PASS
+분류체계 계약(NODE_ROLES 8종·규칙 role 정합)·_role_valid 정규화·휴리스틱 이름 1-pass(로그>거래 우선순위,
+fqn 세그먼트 폴백)·본문 2-pass·etc 폴백·비-dict analysis 방어·_resolve_role(LLM 유효값 우선/무효 폴백/
+Table 외 None) 10건 PASS. 기존 test_node_analysis_relevance.py 28건 회귀 0 (합계 38 PASS).
+
+### 전체 회귀 — pytest feature-0002+0003 (Environment: CLI, agent 컨테이너 worktree 마운트) — Run 2026-07-03 PASS
+`python -m pytest -q unit/feature-0002-agent-core/tests unit/feature-0003-agent-web-ui/tests` exit 0 (전건 PASS).
+(worktree 에 .env 부재로 `make test` 의 dc-build 는 불가 — 기존 agent 이미지 마운트 방식으로 동등 실행.)
+
+### headless harness — 실 admin.html/admin.js/g6.min.js + mock API (Environment: WSL-headless-harness, Playwright chromium) — Run 2026-07-03 ALL PASS · pageerror 0
+- T1 미분석 테이블 칩 = teal(#0f7d8c)·라벨 원형·흰 글자 (역할 인코딩 미적용 확인).
+- T2 폴 경로: `_metaGraphMarkAnalyzed(keys, roles)` → rAF coalesce → rebuild 로 칩 fill=#E69F00(log)·
+  라벨 "📜 PurchaseLog"·어두운 라벨색(#161b22)·캐시서명 `analyzed#R=log`·states=[analyzed] 반영.
+- T3 scope sync 경로: `/graph/analyze/status` mock roles → ItemDefine 칩 #0072B2(master)+📘.
+- T4 무효 role("banana") 방어: roles 미등록 + 칩 teal 유지.
+- 시각 스크린샷: 8종 역할 칩(색+아이콘+보라 분석완료 테두리) + 미분석 teal + 역할 범례 행 렌더 확인.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 배포 후 라이브 Run 을 본 섹션에 append (§15.4.1)
+본 cycle 은 deploy_scope: included 로 merge 직후 web+insight-worker 배포 → 라이브 그래프 뷰에서
+분석 완료 테이블의 역할 칩 색/아이콘/범례/상세패널 역할 칩을 실 Windows Chrome 으로 육안 확인 예정.
+(pre-commit 시점 미수행 사유: 역할 데이터는 alembic 0031 + insight-worker 백필 배포 후에만 라이브에 존재.)

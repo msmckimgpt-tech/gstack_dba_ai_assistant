@@ -258,3 +258,47 @@ source_of_truth: true
   - G6 per-call `focusElement({duration})`: 전역 animation:false 가 무효화(실증) — no-op(기각, ADR-008 의 잘못된 가정).
 - Supersedes: ADR-008 의 구현 수단(focusElement per-call 애니) — 결정(애니 채택)은 유지, 수단만 교정.
 - Superseded By:
+
+## ADR-010 — AI 능동 분석 완료 테이블 역할 시각 표식: 8종 고정 분류 + Okabe-Ito 색·아이콘 이중 인코딩
+- Status: Accepted
+- Date: 2026-07-02
+- Context: 사용자 관찰 — 그래프 뷰 노드가 "단순한 사각형+글자" 라 예측 어렵게 나열되어 가시성이 떨어짐.
+  요청: **AI 능동 분석이 완료된 노드에 그 테이블이 수행하는 역할을 명시적으로 알 수 있는 시각 표식**을 웹
+  리서치 기반으로 검토 후 자율 구성. 기존 분석 산출물({summary,relationships,usage,caveats})에는 역할
+  분류 필드 자체가 없어 표식의 데이터 원천이 부재했다.
+- Decision:
+  1. **분류체계 = 8종 고정(NODE_ROLES)**: master 기준·정의 / account 계정·유저 / transaction 거래·행위 /
+     log 로그·이력 / mapping 매핑·연결 / config 설정 / stats 집계·통계 / etc 기타. 근거: 고전 DB 테이블
+     분류(master/reference/transaction/history)를 게임 운영 DB 도메인으로 조정 + 범주 색은 7~9종 이하가
+     식별 한계(리서치: yFiles 지식그래프 가이드·Tom Sawyer).
+  2. **인코딩 = 색+아이콘+범례+텍스트 4중**: 분석완료 테이블 칩 fill=역할색(**Okabe-Ito 8색** — 색약 안전
+     표준 팔레트), 라벨 앞 역할 아이콘(📘👤💳📜🔗⚙️📊◽ — 색 지각 불가 환경 중복 인코딩, CatPAW 계열 근거),
+     툴바 아래 역할 범례 행, 상세 패널·진행 패널에 역할 한글 라벨 칩. 미분석 테이블은 기존 teal 유지 —
+     "역할색 = 분석됨+역할" 신호가 자연 성립(보라 분석완료 테두리는 유지). 밝은 색(account/log/stats)은
+     라벨을 어두운 글자로(#161b22, 대비 확보).
+  3. **데이터 경로**: LLM 분석 계약(NODE_ANALYSIS_PROMPT)에 `role`(enum) 추가 → worker 가 LLM 값 검증
+     (`_role_valid`) 후 저장, 무효/누락은 `classify_role_heuristic`(이름 토큰 1-pass → 분석문 본문 2-pass,
+     우선순위 log>stats>config>mapping>account>transaction>master) 폴백. **Table 노드만**(Column/Schema/
+     GlossaryTerm 은 NULL). 저장 = `node_analysis_jobs.role`(alembic 0031 비파괴 ADD, §12 사전승인 범위).
+  4. **기존 분석분 백필 = 휴리스틱**(LLM 재호출 없음): insight-worker 틱당 200행 `backfill_roles()`,
+     'etc' 도 저장해 재선택 없음(멱등·자기 종결).
+  5. **FE 반영 = rebuild 승격**: 역할은 G6 state 가 아니라 build 시 bake 되는 style(fill/labelText)이라
+     setElementState 로 반영 불가 — 캐시 서명에 `#R=<role>` suffix(`_metaCacheSig`)를 넣어 refreshStates 가
+     역할 도착을 감지하면 변화 수와 무관하게 `_metaG6Apply(false)` rebuild(ADR-006 실측 ~80–200ms,
+     rAF coalesce)로 승격.
+- Consequences: 분석 완료 테이블이 한눈에 역할별 색·아이콘으로 구분되고(범례 대조), 상세/진행 패널에서도
+  역할이 명시된다. 분석이 진행될수록 그래프가 "단색 사각형 나열"에서 "역할 지도"로 점진 전환. LLM 은 이미
+  호출하던 분석에 필드 1개 추가라 비용 증가 ≈ 0. 알려진 한계: ① 휴리스틱 이름 규칙의 도메인 모호성
+  (예: WorldMap 은 게임 지도 정의=master 이나 'map' 토큰이 mapping 매칭 — LLM 값이 우선이라 신규 분석은
+  자연 교정, 백필분은 재분석 시 갱신) ② 역할은 노드당 최신 done 잡 기준(재분석 시 갱신) ③ 캔버스 이모지는
+  플랫폼 폰트에 따라 단색 렌더 가능(Windows Chrome 은 컬러) — 색·범례가 1차 채널이라 허용.
+- Alternatives:
+  - 노드 옆 badge pill(색+글자): 세로 스택 밀도(TROW=34px)에서 위 칩과 겹침 + 지면 경쟁 → 칩 fill 교체가
+    더 시인성 높고 무겹침(기각).
+  - 역할별 노드 모양(shape) 변경: 테이블=rect 칩 형태가 "테이블" 정체성 인코딩이라 유지 — 모양 변경은
+    노드 타입(테이블/컬럼/용어) 채널과 충돌(기각).
+  - LLM 으로 기존 분석분 전량 재분류: 비용/시간 대비 이득 낮음 — 휴리스틱 백필 + 재분석 시 LLM 교정(기각).
+  - role 을 analysis JSON 내부에만 저장(컬럼 없이): scope 일괄 집계가 매 호출 JSON 파싱/캐스트 — 컬럼이
+    조회 단순·견고(기각).
+- Supersedes: (ADR-004 의 AI 마커(보라 테두리)를 대체하지 않음 — 분석완료 신호 유지, 역할 채널 추가)
+- Superseded By:

@@ -520,3 +520,18 @@ source_of_truth: true
   - **NIT (수용)**: ① 420ms tween 중 2차 더블클릭이 opSeq 를 올렸으나 그 op 가 fetch 실패로 rebuild 없이 early-return 시 첫 tween 이 중간 팬 위치에 카메라 잔류(다음 성공 op 가 교정 — 항구적 아님). ② tween 중 사용자 능동 휠줌 시 start 캡처 줌 기준이라 최종 정렬 어긋남(420ms 내 동시 조작 필요, 희귀). 둘 다 "부드러운 팬" 목표 불파괴.
 - Verdict: **PASS** — BLOCKING 0. ADR-008 의 no-op 를 manual tween 으로 실제 해소(번들 소스 대조 확증). NIT 2건 수용.
 - Human Approval Needed: graph-dblclick-cam2 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.
+
+## REV-20260703T003000-ai-claude-corp-feature-0016-node-role-viz [SUBAGENT: PASS-WITH-FIXES] — 분석완료 노드 역할 시각 표식(node-role-viz) 적대 패널 4렌즈
+- Trigger: UI/화면/범례(ux, design) + schema/migration/query(backend, qa) keyword matched — §18.8 dispatch.
+- 구성: general-purpose 적대 리뷰어 4(backend / frontend 정확성 / ux·design / qa 회귀·엣지), 전원 REFUTE 관점. 대상 = node-role-viz 전체 diff(alembic 0031·node_analysis·llm·insight·admin_metadata·admin.js/html/css).
+- Verdict: backend PASS-WITH-FIXES · frontend PASS-WITH-FIXES · ux/design PASS-WITH-FIXES · qa PASS-WITH-FIXES → 전 findings 수정/기록 후 정합.
+- **수정 반영 (MAJOR 5)**:
+  - [backend B1] 마이그레이션 창(0031 미적용 DB + 신 코드 — 롤링 순서 실수·downgrade-먼저 롤백) 에서 role UPDATE 가 UndefinedColumn → 분석 전건 terminal-failed(LLM 비용 소진) + run 폴링 404 오표시 → **role 참조 4개 쿼리 지점에 legacy(role 제외) 폴백** + 프로세스당 1회 경고(_warn_role_column_once).
+  - [qa Q1] backfill 의 UPDATE 가 updated_at 트리거를 발화 → "최신 done" 선택(get_node_analysis·scope 집계)이 과거 run 행으로 역전(재분석 결과가 화면에서 롤백) → **선택 기준을 id DESC(삽입 순 = 최신 run)로 교체**(양쪽).
+  - [ux U1] 선택 테두리 #9c6515(앰버)가 log #E69F00(2.18:1)·config #D55E00(1.27:1) 역할색과 동계열 위장 → **selected stroke #161b22(어두운 무채색)**.
+  - [ux U2] "분석 중" 주황 점선이 log 역할 칩 위 1.19:1 로 불가시(재분석 메뉴 경로 실재) → **running state 에 fillOpacity 0.45(desaturate)** — 어느 역할색 위에서도 판독.
+  - [ux U3] mapping #CC79A7(흰 3.06:1)·transaction #009E73(흰 3.42:1) dark 플래그 오배정 → **dark:true 플립**(어두운 라벨).
+- **수정 반영 (MINOR)**: [backend B2] backfill 예외 debug→warning · [B3/docs] 단위 테스트 건수 실측 정정(13→10, relevance 25→28) · [ux U4] etc 아이콘 ◽(tofu 비가시)→📦, 역할 범례 dot 에 1px border · [ux U5·fe F1] 역할 범례 행 우측 플러시(legend-note margin-left:auto 상속) → 좌측 정렬 override CSS · [fe F2] role 도착 rebuild 승격이 busy(펼침 fetch) 표식을 조기 소멸 → **busy 창에는 rebuild 유예**(캐시 미갱신 → 다음 tick 재감지).
+- **수용·기록 (수정 없음, 근거 명시)**: [fe] 검증 — 캐시 서명 3-writer(_metaApplyState/_metaG6Apply/refreshStates) 통일·setElementState state 순수성·XSS 화이트리스트 게이트·reset race 기존 시맨틱 동일 무회귀. [qa Q2] node_label='' Table done 행(그래프 미투영 시 enqueue 폴백)은 백필 영구 스킵 — 빈도 낮고 재분석 자기치유, 시각 결손만. [qa Q3] roles Map sync↔폴 last-write-wins 경합 — run 진행 중 폴이 매 tick 전량 재전송해 자기치유, run 종료 직후 수백 ms 창 한정 stale(다음 상호작용 복구). [qa Q4] _metaApplyState 의 ~16ms bake-전 도장 창 — 코스메틱·다음 rebuild 복구. [qa Q5] role 저장 경로(UPDATE·backfill) DB-의존 테스트 부재 — 순수함수 10건 + 배포 후 라이브 실측으로 보강(알려진 갭). [ux U6] 💳 아이콘의 비화폐 행위 오독 소지(📜 와의 형태 변별 우선 유지)·용어 amber↔log 근접(노드 형태+테두리 이중 인코딩으로 변별)·미분석 teal↔transaction green 근접(아이콘 유무 변별) — 라이브 관측 후 조정. [fe F3] 아이콘 prefix 로 긴 테이블명 ellipsis 2-3자 조기화 — 코스메틱.
+- 검증: 수정 후 py_compile/node --check PASS · role 10 + relevance 28 + ai_ops 15 = 53 PASS · headless harness 4 시나리오 ALL PASS(pageerror 0) · 전체 pytest 회귀 재실행.
+- 병렬 재번호: 상류 #553 이 §31/ADR-009 선점 → 본 cycle 은 **§32/ADR-010** 으로 재번호(§13.1). 상류 main 의 feature-0003 TEST.md 커밋된 병합 마커(graph-ctxmenu↔aiops-activity-paging Run 충돌 잔재)를 위생 해소(두 Run 모두 보존).

@@ -7935,6 +7935,11 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 /* graph-initview: 스키마 카드 범례(진입 뷰 기본 표현 — 클릭=그 스키마 테이블 펼침) */
 .admin-meta-graph-legend .lg-schemacard { width: 16px; height: 11px; border: 1.5px solid #3f4b8c; border-radius: 4px; background: #eef0f8; display: inline-block; }
 .admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
+/* node-role-viz(ADR-010, 적대 패널 U5/F1): 역할 범례 행 — lead-in 이 legend-note 라
+   margin-left:auto 가 행 전체를 우측 플러시시키던 것을 해제(1행 범례와 좌측 정렬 일치).
+   밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
+.admin-meta-graph-legend-roles .admin-meta-graph-legend-note { margin-left: 0; }
+.admin-meta-graph-legend-roles .lg-dot { border: 1px solid #c4cad3; }
 /* graph-initview(E2): 줌 컨트롤 버튼 묶음 — 컴팩트 정사각 버튼 */
 .admin-meta-graph-zoomctl { display: inline-flex; align-items: center; gap: 4px; }
 .admin-meta-graph-zoomctl .btn-secondary { min-width: 30px; padding: 4px 8px; font-weight: 700; }

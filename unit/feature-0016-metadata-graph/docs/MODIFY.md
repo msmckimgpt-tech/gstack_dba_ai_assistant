@@ -567,3 +567,20 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-009),TASK(§31),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로(loadRoots/검색/리사이즈/우클릭 중심보기) **불변**. 마이그레이션 없음. tween=viewport transform 만(노드 재렌더·프리즈 무관, ADR-006 무간섭). 검증: `node --check` PASS · manual tween 헤드리스 실증(앵커 정중앙 26프레임/434ms) · §18.8 적대 6축 BLOCKING 0(G6 번들 소스 대조 — tween 수학=G6 focus 공식 동일). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(부드러운 팬 육안).
 - Rollback Notes: `_metaGraphAnimateFocus` 호출을 `focusElement(fel, false)`(즉시) 로 환원 + 헬퍼 제거 + cache-buster 이전값(graph-dblclick-cam). 데이터·API 무손상.
+
+## CHG-20260703-node-role-viz
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청(2026-07-02) — 그래프 뷰 노드가 단순 사각형+글자라 가시성 저하. **AI 능동 분석 완료 노드에 테이블 역할을 명시하는 시각 표식**을 웹 리서치 기반으로 구성. 정본: DECISIONS ADR-010, TASK §32.
+- Summary: 테이블 역할 8종 고정 분류(NODE_ROLES: master/account/transaction/log/mapping/config/stats/etc)를 도입하고 분석 완료 테이블 칩을 **역할색(Okabe-Ito 색약 안전 팔레트) + 라벨 앞 역할 아이콘 + 범례 행 + 상세/진행 패널 역할 칩**으로 인코딩. 데이터 경로: LLM 분석 계약(NODE_ANALYSIS_PROMPT)에 `role` enum 추가 → worker `_resolve_role`(LLM 유효값 우선, 무효/누락은 `classify_role_heuristic` 이름·본문 2-pass 폴백, Table 외 NULL) → `node_analysis_jobs.role`(alembic 0031 비파괴 ADD) 저장. 기존 done 행은 insight-worker 틱 `backfill_roles()`(휴리스틱, LLM 재호출 없음, 틱당 200행, 멱등·자기종결) 백필. 조회(get_scope_analysis_status/get_run_status/get_node_analysis) + bulk status API 에 roles 노출. FE 는 캐시 서명 `#R=` suffix 로 역할 도착 시 rebuild 승격(역할은 bake 스타일 — setElementState 불가).
+- Files:
+  - `unit/feature-0002-agent-core/alembic/versions/20260702_0031_node_analysis_role.py` (신규 — ADD COLUMN role)
+  - `unit/feature-0002-agent-core/src/modules/node_analysis.py` (NODE_ROLES·_ROLE_RULES·classify_role_heuristic·_resolve_role·role 저장·조회 3함수 확장·backfill_roles)
+  - `unit/feature-0002-agent-core/src/modules/llm.py` (NODE_ANALYSIS_PROMPT role 계약 + docstring)
+  - `unit/feature-0002-agent-core/src/modules/insight.py` (틱에 backfill_roles 배선)
+  - `unit/feature-0002-agent-core/tests/test_node_analysis_role.py` (신규 13건)
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (bulk status 응답 roles)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (_META_ROLE·roles Map·_metaTableStyle(role)·_metaG6Build 아이콘 라벨·_metaCacheSig/#R= 서명·refreshStates rebuild 승격·마커 3경로 배선·상세/진행 패널 역할 표기)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (역할 범례 행 + cache-buster 20260703-node-role-viz)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§32),DECISIONS(ADR-010),REPORT,REVIEW,TEST,FUNCTION}.md`
+- Impact: 비파괴 — 미분석 노드·기존 마커·데이터 API 계약(추가 필드만)·RBAC(`metadata.graph.read` dependency 불변)·그래프 스키마(AGE) 무변경. 마이그레이션 = ADD COLUMN 1개(expand-only, §12 사전승인). 배포 = alembic 0031 + web·insight-worker 재빌드. 검증: 단위 13건 + 전체 pytest 회귀 exit 0 + headless harness(실 admin.js + mock API) 4 시나리오 PASS·pageerror 0. 완료 게이트 = PB-0008 실 Windows 시각검증.
+- Rollback Notes: admin.js/admin.html/라우터/모듈 git revert + cache-buster 이전값. alembic downgrade = DROP COLUMN role(분류값만 소실 — 분석문 무손상, 재백필 가능).

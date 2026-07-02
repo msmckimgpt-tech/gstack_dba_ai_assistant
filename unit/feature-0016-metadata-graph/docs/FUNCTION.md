@@ -162,3 +162,13 @@ FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 �
 뒤섞임·테두리 왜곡) 구조적 해소 + 점선 엣지 복원. 모델: 스키마=combo·테이블=rect 노드·컬럼=circle·"−"=접기 컨트롤.
 JS 모델 → 위치 포함 전체 데이터 재구성 → `setData()`+`draw()`(결정론 grid, 무-shuffle·제자리). 데이터 API·상세
 패널·AI 분석 계층 불변. 사용자 사전승인("바로 G6 마이그레이션"). 상세: `../g6-migration/BLUEPRINT.md`.
+
+## 14. AI 능동 분석 테이블 역할 시각 표식 (2026-07-02, node-role-viz, ADR-010)
+AI 능동 분석(node_analysis)이 완료된 **Table** 노드는 역할 8종(NODE_ROLES: master 기준·정의 / account
+계정·유저 / transaction 거래·행위 / log 로그·이력 / mapping 매핑·연결 / config 설정 / stats 집계·통계 /
+etc 기타)으로 분류되어 `node_analysis_jobs.role`(alembic 0031, 비파괴 ADD)에 저장된다. 분류 = LLM 분석
+계약(NODE_ANALYSIS_PROMPT `role`, 유효값 우선) → 휴리스틱(`classify_role_heuristic` 이름 1-pass·본문
+2-pass) 폴백; 기존 분석분은 insight-worker 가 휴리스틱 백필(`backfill_roles`, LLM 재호출 없음, 멱등).
+그래프 뷰는 분석 완료 테이블 칩을 **역할색(Okabe-Ito 색약 안전 팔레트) + 라벨 앞 역할 아이콘 + 역할 범례
+행 + 상세/진행 패널 역할 칩**으로 표시한다(미분석=teal 유지, 보라 분석완료 테두리 유지). 조회 API
+(run status·scope bulk status·node analysis)가 roles 를 함께 반환한다.

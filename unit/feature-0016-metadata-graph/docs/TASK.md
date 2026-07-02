@@ -700,3 +700,44 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 - [x] T31.5 manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS.
 - [x] T31.6 **§18.8 적대 6축**(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀): BLOCKING 0. G6 번들 소스 대조 — tween 수학=G6 자체 `focus` 공식 동일(앵커 정중앙 오차 ≤1e-13px). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 [SUBAGENT].
 - [ ] T31.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 **실제 부드럽게 팬**(순간이동 없음) 육안 확인.
+
+## 32. node-role-viz — AI 능동 분석 완료 노드 테이블 역할 시각 표식 (2026-07-02, entry persona dispatch)
+사용자 요청: 그래프 뷰 노드가 단순 사각형+글자라 가시성이 떨어짐 — **AI 능동 분석이 완료된 노드에 그 테이블이
+수행하는 역할을 명시적으로 알 수 있는 시각 표식**을 웹 리서치 기반으로 구성. 정본: DECISIONS ADR-010,
+MODIFY CHG-20260703-node-role-viz.
+등급: **Major**(다중 파일 + alembic 0031 비파괴 ADD COLUMN — FUNCTION.md §12 사전승인 범위 내).
+
+### 32.1 웹 리서치 → 설계 (ADR-010)
+- [x] T32.1 리서치: 범주 인코딩은 **색(≤8종)+아이콘 중복 인코딩+범례**가 표준(yFiles 지식그래프 가이드·
+      Tom Sawyer·CatPAW), 팔레트는 **Okabe-Ito 8색**(색약 안전 표준), 분류체계는 고전 DB 테이블 분류
+      (master/reference/transaction/history)를 게임 운영 DB 로 조정.
+- [x] T32.2 분류체계 확정 8종(NODE_ROLES): master 기준·정의📘 / account 계정·유저👤 / transaction 거래·행위💳 /
+      log 로그·이력📜 / mapping 매핑·연결🔗 / config 설정⚙️ / stats 집계·통계📊 / etc 기타◽.
+      인코딩 = 분석완료 테이블 **칩 fill=역할색 + 라벨 앞 아이콘 + 범례 행 + 상세패널 역할 칩**(미분석=teal 유지).
+
+### 32.2 구현 (BE=feature-0002 · UI=feature-0003 cross-cut)
+- [x] T32.3 alembic 0031 `node_analysis_jobs.role varchar(24)` 비파괴 ADD(GRANT 는 테이블 단위 승계).
+- [x] T32.4 LLM 계약: NODE_ANALYSIS_PROMPT 출력에 `role`(8종 enum, Table 한정) 추가. worker 가
+      `_resolve_role`(LLM 유효값 우선 → `classify_role_heuristic` 이름·본문 2-pass 폴백, Table 외 NULL)로 저장.
+- [x] T32.5 기존 done 행 백필: `backfill_roles()`(휴리스틱, LLM 재호출 없음) insight-worker 틱 배선 —
+      틱당 200행, 잔여 0 이면 즉시 no-op(자기 종결·멱등).
+- [x] T32.6 조회 확장: get_scope_analysis_status(roles 집계)·get_run_status(roles+jobs.role)·
+      get_node_analysis(role) + admin_metadata bulk status 응답 `roles` 노출.
+- [x] T32.7 FE(admin.js): `_metaGraph.roles` Map + `_META_ROLE` 상수 + `_metaTableStyle(role)` 칩 색/라벨색 +
+      `_metaG6Build` 아이콘 라벨 + 캐시 서명 `#R=` suffix(`_metaCacheSig`) → refreshStates 가 **역할 도착 시
+      rebuild 승격**(역할은 bake 스타일이라 setElementState 불가) + 마커 수신 3경로(폴·sync·상세) 배선 +
+      상세패널 역할 칩 + 진행패널 역할 병기. admin.html 역할 범례 행 + cache-buster `20260703-node-role-viz`.
+
+### 32.3 검증
+- [x] T32.8 단위: test_node_analysis_role.py 10건(분류체계 계약·휴리스틱 우선순위·LLM 우선/폴백·Table 한정) PASS
+      + 기존 relevance 28건 회귀 0 (합 38).
+- [x] T32.9 headless harness(실 admin.html/admin.js/g6.min.js + mock API): 미분석 teal 원형 / 폴 경로 role
+      bake(칩 색·아이콘·라벨색·캐시서명·analyzed state) / sync 경로 / 무효 role 방어 — ALL PASS, pageerror 0.
+      시각 스크린샷: 8종 역할 칩 + 범례 렌더 확인.
+- [x] T32.10 전체 pytest 회귀 (agent 컨테이너 worktree 마운트).
+- [x] T32.11 §18.8 적대 패널 4렌즈(backend/frontend/ux·design/qa) — MAJOR 5(마이그레이션 창 role 쿼리 폴백 B1·
+      backfill updated_at 역전 → id DESC 선택 Q1·selected 테두리 위장 U1·running 점선 불가시 U2·dark 플래그
+      오배정 U3) + MINOR 6 수정 반영, 수용 6건 근거 기록. REV-20260703T003000. 수정 후 53 단위 + harness +
+      전체 pytest 재검증 PASS.
+- [ ] T32.12 배포(web+insight-worker 재빌드+alembic 0031) + **라이브 PB-0008 실 Windows**: 분석 완료 테이블
+      칩 색/아이콘/범례 + 상세패널 역할 칩 육안 확인.

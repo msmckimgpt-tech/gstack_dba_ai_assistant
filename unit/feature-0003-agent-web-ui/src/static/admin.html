@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260702-search-badge" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260703-node-role-viz" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -764,6 +764,19 @@
             <span><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</span>
             <span class="admin-meta-graph-legend-note">크기·라벨% = 검색 유사도(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 주황 점선=AI 분석중 · 보라 테두리=AI 능동분석 완료</span>
           </div>
+          <!-- node-role-viz: AI 능동 분석 완료 테이블의 역할 분류 범례 — 칩 색(Okabe-Ito 색약 안전 팔레트)+아이콘 이중 인코딩.
+               _META_ROLE(admin.js)·NODE_ROLES(node_analysis.py)와 1:1 정합. -->
+          <div class="admin-meta-graph-legend admin-meta-graph-legend-roles" aria-hidden="true">
+            <span class="admin-meta-graph-legend-note">테이블 역할(AI 분석 완료 시 칩 색):</span>
+            <span><i class="lg-dot" style="background:#0072B2"></i>📘 기준·정의</span>
+            <span><i class="lg-dot" style="background:#56B4E9"></i>👤 계정·유저</span>
+            <span><i class="lg-dot" style="background:#009E73"></i>💳 거래·행위</span>
+            <span><i class="lg-dot" style="background:#E69F00"></i>📜 로그·이력</span>
+            <span><i class="lg-dot" style="background:#CC79A7"></i>🔗 매핑·연결</span>
+            <span><i class="lg-dot" style="background:#D55E00"></i>⚙️ 설정</span>
+            <span><i class="lg-dot" style="background:#F0E442"></i>📊 집계·통계</span>
+            <span><i class="lg-dot" style="background:#6e7681"></i>📦 기타</span>
+          </div>
           <div class="admin-meta-graph-body">
             <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
                  role="img" aria-label="메타데이터 관계 그래프"></div>
@@ -882,7 +895,7 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
-  <script src="/static/admin.js?v=20260702-graph-dblclick-cam2"></script>
+  <script src="/static/admin.js?v=20260703-node-role-viz"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260702-rn-0702"></script>

@@ -1,5 +1,41 @@
 # Report
 
+## 2026-07-03 · AI 능동 분석 완료 테이블 역할 시각 표식 (node-role-viz, ADR-010, TASK §32)
+
+### 배경 (사용자 요청 2026-07-02)
+그래프 뷰 노드가 "단순 사각형+글자" 라 예측 어렵게 나열되어 가시성 저하 — **AI 능동 분석 완료 노드에
+그 테이블이 수행하는 역할을 명시하는 시각 표식**을 웹 리서치 기반으로 검토 후 자율 구성 (entry persona dispatch).
+
+### 리서치 → 설계
+- 범주 인코딩 표준 = **색(≤8종 식별 한계)+아이콘 중복 인코딩+범례**(yFiles 지식그래프 가이드·Tom Sawyer·
+  CatPAW), 팔레트 = **Okabe-Ito 8색**(색약 안전 표준), 분류체계 = 고전 DB 테이블 분류(master/reference/
+  transaction/history)의 게임 운영 DB 조정.
+- 8종 고정 NODE_ROLES: master 기준·정의📘 #0072B2 / account 계정·유저👤 #56B4E9 / transaction 거래·행위💳
+  #009E73 / log 로그·이력📜 #E69F00 / mapping 매핑·연결🔗 #CC79A7 / config 설정⚙️ #D55E00 / stats 집계·통계📊
+  #F0E442 / etc 기타◽ #6e7681. 밝은 색 3종은 라벨 어두운 글자.
+
+### 구현 (BE=feature-0002 · UI=feature-0003 cross-cut)
+- 데이터: LLM 분석 계약 `role` enum 추가 → worker `_resolve_role`(LLM 유효값 우선 → 휴리스틱 이름 1-pass·
+  본문 2-pass 폴백, **Table 한정**) → `node_analysis_jobs.role`(alembic 0031 비파괴 ADD). 기존 done 행은
+  insight-worker 틱 `backfill_roles()` 휴리스틱 백필(LLM 재호출 없음·멱등·자기종결).
+- 조회: get_scope_analysis_status(roles 집계)·get_run_status(roles+jobs.role)·get_node_analysis(role) +
+  bulk status API `roles` 노출.
+- FE: 분석완료 테이블 칩 fill=역할색 + 라벨 앞 아이콘 + 역할 범례 행 + 상세/진행 패널 역할 칩(미분석 teal·
+  보라 테두리 유지). 역할은 bake 스타일이라 캐시 서명 `#R=` suffix 로 refreshStates 가 **rebuild 승격**
+  (ADR-006 rAF coalesce·~80–200ms). cache-buster `20260703-node-role-viz`.
+
+### 검증
+- 단위 13건(test_node_analysis_role.py — 분류 계약·휴리스틱 우선순위·LLM 우선/폴백·Table 한정) + 기존
+  relevance 25건 회귀 0. 전체 pytest(0002+0003) exit 0.
+- headless harness(실 admin.js + mock API): 미분석 teal / 폴 경로 role bake / sync 경로 / 무효 role 방어
+  ALL PASS·pageerror 0 + 시각 스크린샷(8종 칩+범례).
+
+### 잔여
+- §18.8 적대 패널 → 배포(alembic 0031 + web·insight-worker 재빌드) → **라이브 PB-0008 실 Windows**(역할 칩
+  색/아이콘/범례/상세 패널) → TEST.md POST-DEPLOY Run append.
+
+---
+
 ## 2026-07-02 · 더블클릭 카메라 애니 no-op 근본수정 — manual rAF tween (graph-dblclick-cam2, ADR-009)
 
 ### 배경

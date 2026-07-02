@@ -845,7 +845,8 @@ Output (JSON only):
   "summary": "Korean 1-2 sentences — 이 노드가 무엇을 담고/의미하고, 도메인상 역할",
   "relationships": "Korean 1-2 sentences — 이웃(컬럼/참조/관련용어)과 어떻게 연결되는지. 이웃 정보가 없으면 '연결 정보 없음'",
   "usage": "Korean 1 sentence — 운영/분석에서 이 노드를 어떻게 조회·활용하는지",
-  "caveats": "Korean, 있으면 데이터 품질/민감정보/주의점 1문장, 없으면 빈 문자열"
+  "caveats": "Korean, 있으면 데이터 품질/민감정보/주의점 1문장, 없으면 빈 문자열",
+  "role": "label=Table 일 때만: 테이블의 역할 분류 — 다음 중 정확히 하나. master(기준·정의: 컨텐츠/코드/사전 등 원본 정의), account(계정·유저: 사용자/캐릭터 상태), transaction(거래·행위: 결제/구매/지급/보상 기록), log(로그·이력: 이벤트/감사/히스토리), mapping(매핑·연결: N:M 교차/연결), config(설정: 시스템/게임 파라미터), stats(집계·통계: 랭킹/스냅샷/합산), etc(그 외). label 이 Table 이 아니면 빈 문자열"
 }""".strip()
 
 
@@ -1487,8 +1488,9 @@ def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
     AGENT_NODE_ANALYSIS_MODEL(기본 claude-haiku-4)** 로 라우팅한다 — 관리콘솔 그래프뷰의
     "각 관계 분석" 은 로컬 gemma(edge) 가 아니라 claude-haiku 로 작동해야 한다는 사용자 결정
     (2026-07-02, feature-0016 node-analysis-haiku). schema/table/account insight 는 여전히
-    공유 AGENT_INSIGHT_MODEL 을 쓴다. 반환 dict `{"summary","relationships","usage","caveats"}`
-    또는 None(실패). 호출측(node_analysis.py)이 None 을 status='failed' 로 기록하고 재귀는
+    공유 AGENT_INSIGHT_MODEL 을 쓴다. 반환 dict `{"summary","relationships","usage","caveats","role"}`
+    (role 은 Table 노드 역할 분류 — node-role-viz, 무효값은 호출측 휴리스틱 폴백) 또는 None(실패).
+    호출측(node_analysis.py)이 None 을 status='failed' 로 기록하고 재귀는
     계속한다(1개 실패가 run 전체를 막지 않음)."""
     # 전용 모델(insight 공유값과 분리). 빈 문자열 방어 위해 or-체인으로 폴백 유지.
     _insight_model = AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL
