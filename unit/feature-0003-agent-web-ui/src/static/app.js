@@ -5561,6 +5561,13 @@ async function loadHistory({ append = false } = {}) {
     renderMessages();
     renderProgress();
     renderComposer();
+    // attach-count-scope: 활성 대화가 없는 컨텍스트(대화 삭제/보관/나가기 후 랜딩·
+    // 마지막 대화 삭제)로 진입해도 첨부 배지를 재렌더한다. 이 경로는 switchConversation
+    // (→_loadConversationAttachments) 을 거치지 않고 refreshWorkspace→loadHistory 로만
+    // 도달하므로, 이 호출이 없으면 #composerAttachCountBadge 가 삭제된 대화의 개수를
+    // 그대로 유지한다(사용자 보고 버그와 동일 class). key 는 ""(또는 pending sentinel)
+    // 로 해소돼 빈 배지(또는 해당 pending 컨텍스트 개수)로 정정된다.
+    _renderAttachmentPills();
     return;
   }
   const params = new URLSearchParams({
@@ -5627,6 +5634,12 @@ async function loadHistory({ append = false } = {}) {
     renderProgress();
   }
   renderComposer();
+  // attach-count-scope: 활성 대화 history 를 (재)로드한 컨텍스트의 첨부 배지를 그 대화
+  // 기준으로 재렌더한다. refreshWorkspace(대화 삭제/보관/나가기 후 다른 대화로 랜딩)는
+  // switchConversation 을 거치지 않아 이 지점이 아니면 배지가 직전 대화 값으로 잔류한다.
+  // switchConversation 경로는 직후 _loadConversationAttachments 가 서버 ground truth 로
+  // 다시 확정하므로 이 렌더는 무해한 선-렌더(항상 현재 활성 대화 컨텍스트 기준).
+  _renderAttachmentPills();
 }
 
 async function loadConversations(preferredConversationId = "", { allowCurrentFallback = true } = {}) {
@@ -5929,6 +5942,12 @@ function beginPendingConversation() {
   renderMessages();
   renderProgress();
   renderComposer();
+  // attach-count-scope: 새 대화(pending) 진입 시 첨부 배지를 새 컨텍스트(비어 있는
+  // pendingSentinel bucket)로 즉시 재렌더한다. 이 호출이 없으면 #composerAttachCountBadge
+  // 가 직전 대화의 textContent 를 그대로 유지해, "+" 목록에 이전 대화의 첨부 개수가
+  // 남아 표시된다(사용자 보고 버그). switchConversation 은 _loadConversationAttachments
+  // 를 경유해 이미 재렌더하지만 이 pending 경로에는 그 훅이 없었다.
+  _renderAttachmentPills();
   if (promptInputEl) promptInputEl.focus();
 }
 
@@ -5966,6 +5985,10 @@ function _switchToPendingConversationContext(entry) {
   renderMessages();
   renderProgress();
   renderComposer();
+  // attach-count-scope: pending 대화 컨텍스트로 swap 시 첨부 배지를 그 sentinel bucket
+  // 기준으로 재렌더(해당 컨텍스트에 stage 된 첨부가 있으면 그 개수, 없으면 비움). 이
+  // 호출이 없으면 직전 컨텍스트의 배지 값이 잔존한다(beginPendingConversation 과 동일 결함).
+  _renderAttachmentPills();
   startElapsedTimer();
   if (promptInputEl) promptInputEl.focus();
 }

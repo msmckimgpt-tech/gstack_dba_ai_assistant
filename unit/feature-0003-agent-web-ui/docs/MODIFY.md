@@ -5309,3 +5309,19 @@ source_of_truth: true
   - `static/admin.html:7`: cache-buster `styles.css?v=20260702-graph-g6`→`?v=20260702-aiops-scroll`(CSS 실변경).
 - Verification: CSS brace balanced(1701/1701). ai-ops 셀렉터 적용 확인. §18.8 [SKIPPED:minor-css-scroll]. PB-0008 Windows-browser 세로 스크롤 실측 = 배포 후(TEST.md).
 - Files: `static/styles.css`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+
+## CHG-20260702T021700-attach-count-scope (TASK-20260702T021700-attach-count-scope — "+" 메뉴 첨부파일 목록 개수 배지 대화 전환 후 잔류(stale) 수정, Minor §12.3 — feature-0003 프론트 단독, /_template:entry arg-given)
+- 증상(사용자 보고): 어떤 대화에서 assistant 에 첨부 파일을 전달한 뒤 다른 대화창으로 전환해도, 요청 입력줄 "+" 메뉴의 "첨부파일 목록" 항목 우측 개수 배지(`#composerAttachCountBadge`)가 이전 대화의 첨부 개수를 그대로 표시. (오른쪽 첨부 사이드 패널은 "첨부 파일이 없습니다" 로 정상 — 배지만 stale.)
+- 근본 원인: 배지 textContent 는 오직 `_renderAttachmentPills()` (app.js:7316, `:7344` clear / `:7349` set) 에서만 mutate 된다. 기존 대화 전환 `switchConversation`(app.js:5853) 은 `_loadConversationAttachments`(:5883)→`_renderAttachmentPills` 로 배지를 새 컨텍스트 기준 재렌더하지만, **다음 컨텍스트 진입/전환 경로들이 이 재렌더 훅을 누락**해 배지가 직전 대화 값으로 잔류:
+  1. `beginPendingConversation()` (app.js:5907, "새 대화" 버튼) — activeConversationId="" + 새 pendingSentinel 부여 후 렌더하지만 배지 미갱신.
+  2. `_switchToPendingConversationContext()` (app.js:5939, 사이드바 pending 대화 항목 클릭) — 동일 결함.
+  3. **(적대검증 적발 갭)** `deleteConversation`(:6693)·`bulkDeleteConversations`(:5120)·`leaveConversation`(:6737) — 활성 대화 삭제/보관/나가기 후 `refreshWorkspace`→`loadConversations`→`loadHistory` 로 다른 대화(또는 빈 화면)에 랜딩. 이 경로는 switchConversation 을 거치지 않아 배지가 삭제된 대화 개수로 잔류(동일 stale class).
+- 변경(`static/app.js`, 배지 재렌더 훅 4개 추가 — 신규 로직/상태/API/RBAC/스키마 0):
+  - `beginPendingConversation` 의 `renderComposer()` 뒤 `_renderAttachmentPills()` 추가 → 새 대화 진입 시 빈 pendingSentinel bucket 기준 배지 비움.
+  - `_switchToPendingConversationContext` 의 `renderComposer()` 뒤 `_renderAttachmentPills()` 추가 → 해당 sentinel 컨텍스트(stage 된 첨부 있으면 그 개수, 없으면 비움) 기준 재렌더.
+  - `loadHistory()` 의 **빈 대화 early-return**(:5556-5564) 과 **정상 종료**(:5629) 두 exit 모두에 `_renderAttachmentPills()` 추가 → refreshWorkspace 계열(delete/bulk-delete/leave/empty)이 loadHistory 로 도달하는 모든 랜딩에서 배지를 현재 활성 대화 기준으로 정정. loadHistory 는 switchConversation·refreshWorkspace 공통 sink 이라 단일 지점으로 delete/leave 갭 전량 커버(switchConversation 은 직후 `_loadConversationAttachments` 가 서버 ground truth 로 재확정 — 무해한 선-렌더).
+- 미변경(범위 봉인): `_renderAttachmentPills` 본체·`_composerAttachmentKey`·bucket 스키마·업로드/제거/전송 첨부 흐름·사이드 패널 개폐 정책(패널은 사용자 "+" 클릭 시에만 open — 본 재렌더는 empty 시 hide/repopulate 만 하고 강제 open 안 함) 전부 불변. logout(:8997) 잔류 배지는 auth 오버레이 뒤 비가시 + 재로그인 시 refreshWorkspace→loadHistory 로 자동 정정이라 별도 수정 안 함(MINOR, 적대검증 확인).
+- 배포 전파: `index.html` `app.js?v=20260701-convswitch-opacity-guard`→`?v=20260702-attach-count-scope` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘, baked 이미지 → web 재배포 시 반영). deploy_scope: included(FIRST_REQUEST 전역) — cycle-final 후 web 재배포.
+- Files: `static/app.js`, `static/index.html`, `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
+- 검증: `node --check app.js` PASS. §18.8 적대검증 REV-20260702T021700-attach-count-scope — VERDICT: MAJOR 1 적발(delete/leave 계열 갭) → **수정 반영 후 재검증 정합**, MINOR 1(logout, 비가시·자동정정 — 무수정 확인). PB-0008 Windows-browser = 배포 후 라이브(TEST.md §3, baked 자산·relay 라이브검증 사용자 실화면 필요 사유).
+- Rollback: revert app.js(4개 `_renderAttachmentPills()` 호출 제거) + index.html(캐시버스터 원복).
