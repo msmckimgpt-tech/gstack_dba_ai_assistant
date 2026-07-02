@@ -368,3 +368,15 @@ source_of_truth: true
   포함) + 라이브 AGE Cypher 실증 + 단위 10 PASS + node --check/py_compile. TEST.md.
 - Verdict: **PASS-WITH-FIXES** — 차단 결함 0, R1+R2 지적 전건 수정(수용 2건은 근거 명기).
 - Human Approval Needed: 없음(Major 사전 계획 승인 완료) — cycle-final 후 배포는 deploy_scope: included.
+
+## REV-20260702T172500-ai-claude-corp-feature-0016-schema-card-ctxmenu [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: schema-card-ctxmenu (MODIFY CHG-20260702T172500, TASK §26). 스키마 카드 우클릭 메뉴 + 카드 라벨 압축(개수→badge).
+- Method: general-purpose subagent 적대 리뷰 — diff 전체 Read + G6 badge API(번들 `getBadgesStyle`/`Aw()` 경로)·우클릭 prefix 라우팅·상태 정합·회귀 교차검증.
+- Findings: BLOCKER 0 · MAJOR 0 · MINOR 1 · NIT 2.
+  - **MINOR (수정)**: node-level `badgeOffsetX/Y` 는 G6 v5 badge 파이프라인에서 무시됨(per-item `getBadgeStyle` 가 아이템 자신의 offset 만 소비) → badge 아이템 객체에 `offsetX/offsetY` 이설.
+  - **NIT (주석 반영)**: `_metaGraphCtxForSchema` 펼치기 onClick 의 `st === "already"` 는 SC 경로에서 도달 불가(방어적 잉여, 좌클릭과 대칭) → 주석 명시.
+  - **NIT (후속 기록, 본 cycle 범위 밖)**: `_metaGraphShowClusterDetailById` 는 `_opSeq`/scope 세대 가드가 없어 접힌 카드 "클러스터 상세" API 조회 대기 중 scope 전환 시 stale 패널 가능 — **기존 `combo:click` 도 동일 함수를 쓰는 pre-existing 동작**(본 cycle 은 진입점만 추가). 신규 결함 아님 → REPORT §8 성격 후속 항목.
+- 검증(수정 후): node --check PASS + harness ctxmenu 10/10 PASS(badge/우클릭/접기/빈스키마·에러 0) + initview 회귀 31/31 PASS + 큰 수(8122) badge 넘침·크래시 없음.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, MINOR 수정·NIT 주석 반영, NIT 1 은 pre-existing 후속.
+- Human Approval Needed: 없음(Minor §12.3 — frontend-only 비파괴). cycle-final 후 배포는 deploy_scope: included.
