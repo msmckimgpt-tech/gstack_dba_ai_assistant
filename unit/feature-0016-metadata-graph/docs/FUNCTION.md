@@ -99,10 +99,16 @@ FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 �
 
 ## 7. Main Flow
 1. (적재) insight worker FK introspection + 대화 JOIN 학습 → `table_relationships` upsert.
+   대화 학습은 SQL 명시 qualifier 를 보존하고, 미qualify 테이블은 활성 DB 로 스키마-slot 을 채운다
+   (rel-selfheal — ''-slot 저장은 AGE 고아 엣지). 스키마-slot 규약: MySQL=schema / **MSSQL=DB명**
+   (질의는 실 스키마, 저장 라벨만 DB명 — ADR-005).
 1b. (추론) insight worker 가 FK 미선언 스키마에서 명명 규칙으로 암묵 관계를 추론(source='inferred',
     candidate) → upsert. (`AGENT_RELATIONSHIP_INFERENCE_ENABLED`)
 1c. (검증) insight worker 가 candidate 를 실데이터 겹침 프로브(EXISTS)로 검증 → 양성/음성 강화. 대화에서
     성공한 JOIN 은 상시 양성 강화. weight/status 전이(§4.2.1). (`AGENT_RELATIONSHIP_PROBE_ENABLED`)
+1d. (상시화) 1/1b/1c 는 스키마 신규/구조변경 **또는 주기 cadence**(`AGENT_RELATIONSHIP_REINFER_SEC`,
+    기본 6h — 스키마별 `relationship_infer_at` kv)로 발화한다(ADR-005). 기존 조건만으로는 이미 스캔된
+    스키마에서 영원히 미발화였다(rel-selfheal 근본수정).
 2. (동기화) `metadata-graph-sync` 가 관계형 → AGE `metadata_kb` 그래프 upsert (증분/전체). broken 제외.
 3. (조회) 투영 API 가 Cypher 로 검색·k-hop 이웃을 `{nodes,edges}`(weight/status 포함) 로 반환.
 4. (UI) 관리콘솔이 Cytoscape 로 그래프 렌더(신뢰=실선/추정=점선), 노드 클릭 → 통합 엔티티 카드(관계에

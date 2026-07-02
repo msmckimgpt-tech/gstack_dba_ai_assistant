@@ -133,6 +133,20 @@ __all__ = [
     "AGENT_RAG_PRIORITY_SHORT_CIRCUIT",
     "AGENT_RAG_PRIORITY_SHORT_CIRCUIT_ALLOW_WITH_PASSTHROUGH",
     "AGENT_RAG_PRIORITY_TIMEOUT_SEC",
+    # rel-selfheal: AGENT_RELATIONSHIP_* 가 __all__ 에 누락돼 `from shared.config import *`
+    # 소비자(insight.py)에서 NameError → per-schema `except: continue` 가 삼켜 **insight 스캔의
+    # 스키마 처리 전체(인사이트 갱신 + FK introspect + 암묵 추론 + 프로브)가 3일간 조용히 정지**
+    # 했던 근본원인. star-import 소비 모듈에서 bare 로 쓰는 이름은 반드시 여기 등재한다
+    # (회귀 가드: tests/test_config_star_export.py).
+    "AGENT_RELATIONSHIP_INFERENCE_ENABLED",
+    "AGENT_RELATIONSHIP_INFER_CAP",
+    "AGENT_RELATIONSHIP_INTROSPECT_ENABLED",
+    "AGENT_RELATIONSHIP_LEARNING_ENABLED",
+    "AGENT_RELATIONSHIP_PROBE_CAP",
+    "AGENT_RELATIONSHIP_PROBE_ENABLED",
+    "AGENT_RELATIONSHIP_PROBE_SAMPLE",
+    "AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS",
+    "AGENT_RELATIONSHIP_REINFER_SEC",
     "AGENT_SCHEMA_BIAS_PENALTY",
     "AGENT_SCHEMA_BIAS_STEP_WINDOW",
     "AGENT_SCHEMA_BIAS_THRESHOLD",
@@ -159,6 +173,7 @@ __all__ = [
     "AGENT_SIMILAR_RETRY_LIMIT",
     "AGENT_SIMILAR_RETRY_THRESHOLD",
     "AGENT_SQL_COMPOSE_MODEL",
+    "AGENT_SQL_FIX_MODEL",
     "AGENT_SQL_GROUNDED_BLOCK_ON_FAIL",
     "AGENT_SQL_GROUNDED_REVIEW",
     "AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC",
@@ -892,6 +907,11 @@ AGENT_RELATIONSHIP_LEARNING_ENABLED = os.getenv("AGENT_RELATIONSHIP_LEARNING_ENA
 AGENT_RELATIONSHIP_INFERENCE_ENABLED = os.getenv("AGENT_RELATIONSHIP_INFERENCE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_RELATIONSHIP_PROBE_ENABLED = os.getenv("AGENT_RELATIONSHIP_PROBE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_RELATIONSHIP_INFER_CAP = int(os.getenv("AGENT_RELATIONSHIP_INFER_CAP", "400") or "400")
+# rel-selfheal: 관계 유지보수(FK introspect·암묵 추론·프로브) 주기 재발화 간격(초).
+# 기존 트리거(스키마 신규/구조변경)만으로는 이미 스캔 완료된 스키마에서 영원히 미발화 —
+# 라이브 inferred 0건·프로브 0회의 설계 갭 보완. 0 이하 = cadence off(기존 트리거만).
+# 기본 21600(6h) — 프로브 cap/timeout 이 사이클당 운영 DB 부하를 상한.
+AGENT_RELATIONSHIP_REINFER_SEC = int(os.getenv("AGENT_RELATIONSHIP_REINFER_SEC", "21600") or "21600")
 AGENT_RELATIONSHIP_PROBE_CAP = int(os.getenv("AGENT_RELATIONSHIP_PROBE_CAP", "40") or "40")
 AGENT_RELATIONSHIP_PROBE_SAMPLE = int(os.getenv("AGENT_RELATIONSHIP_PROBE_SAMPLE", "50") or "50")
 # 프로브 statement 시간 상한(ms). 운영 DB 상 unindexed 키 컬럼 대상 correlated EXISTS 폭주 차단

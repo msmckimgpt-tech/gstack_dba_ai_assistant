@@ -1361,6 +1361,33 @@ def _tool_graph_navigate(conn, args: dict) -> str:
 
 # ── 도구 디스패처 ────────────────────────────────────────────────
 
+# rel-selfheal 재검증 R-2: 대화 JOIN 학습(agent_core)은 tool 실행 **후** — 1:N 라우터의
+# finally 가 primary 컨텍스트로 복원한 뒤 — ContextVar 를 읽으므로, 라우팅된 execute_sql 의
+# 학습 slot 에 primary 의 engine/DB 가 오각인된다(타 datasource SQL 에 primary DB명 각인 =
+# '' 레거시보다 악화). 실행 시점 컨텍스트를 스냅샷해 학습이 그것을 읽게 한다
+# (부수로 scope_key 의 primary 오귀속도 함께 해소).
+_LAST_SQL_EXEC_CTX = contextvars.ContextVar("last_sql_exec_ctx", default=None)
+
+
+def _snapshot_sql_exec_ctx():
+    """현 시점(라우팅 활성화 직후)의 execute_sql 실행 컨텍스트 스냅샷. 실패 무해."""
+    try:
+        import shared.config as _cfg
+        _LAST_SQL_EXEC_CTX.set({
+            "scope_key": _cfg.get_active_datasource(),
+            "engine": str(_cfg.get_active_datasource_engine() or "").strip().lower(),
+            "default_schema": (_cfg.get_active_database()
+                               or _cfg.get_active_default_db()),
+        })
+    except Exception:
+        pass
+
+
+def get_last_execute_sql_context():
+    """직전 execute_sql 의 실행 컨텍스트 {scope_key, engine, default_schema} 또는 None."""
+    return _LAST_SQL_EXEC_CTX.get()
+
+
 _TOOL_HANDLERS = {
     "list_schemas": _tool_list_schemas,
     "describe_schema": _tool_describe_schema,
@@ -1410,6 +1437,8 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
         if ds_conn is None:
             return f"데이터소스 '{label}' 를 사용할 수 없습니다."
         router.activate(label)
+        if tool_name == "execute_sql":
+            _snapshot_sql_exec_ctx()  # R-2: primary 복원 전 실행 컨텍스트 캡처
         try:
             return handler(ds_conn, arguments)
         except Exception as e:
@@ -1417,6 +1446,8 @@ def execute_tool(conn, tool_name: str, arguments: dict[str, Any]) -> str:
         finally:
             # 다음 tool 호출의 기본값이 흔들리지 않도록 primary 컨텍스트로 복원.
             router.activate(router.resolve_label(None))
+    if tool_name == "execute_sql":
+        _snapshot_sql_exec_ctx()  # R-2: 비라우팅 경로도 동일 캡처(학습이 단일 소스만 읽게)
     try:
         return handler(conn, arguments)
     except Exception as e:

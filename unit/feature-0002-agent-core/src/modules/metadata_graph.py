@@ -254,22 +254,45 @@ def sync_column(cur, scope, schema, table, column, description="", source="manua
     _merge_edge(cur, "Table", tkey, "HAS_COLUMN", "Column", ckey)
 
 
+def _anchor_relationship_column(cur, scope, tbl_fqn, col) -> str:
+    """REFERENCES 끝점 Column 을 소속 Table(·Schema)에 앵커링하고 Column key 반환 (rel-selfheal).
+
+    과거에는 Column 정점만 MERGE 해, 미큐레이션 컬럼(HAS_COLUMN 부재)이 **고아 노드**로 떠서
+    그래프 뷰에서 추정 점선이 실 테이블에 붙지 않았다. 테이블 fqn(`db.table`)에서 Table·Schema 를
+    유도해 HAS_TABLE/HAS_COLUMN 체인을 보장한다. description/source/ordinal 은 건드리지 않아
+    (SET 생략) 큐레이션·rag 투영과 비파괴 공존한다. fqn 에 스키마 세그먼트가 없으면(레거시
+    ''-slot) 종전과 같이 Column 만 MERGE — 잘못된 Table 키 생성을 피한다.
+    """
+    ckey = _vkey(scope, f"{tbl_fqn}.{col}")
+    parts = [p for p in str(tbl_fqn or "").split(".") if p]
+    table = parts[-1] if parts else ""
+    schema = ".".join(parts[:-1]) if len(parts) >= 2 else ""
+    _merge_vertex(cur, "Column", ckey,
+                  {"name": col, "fqn": f"{tbl_fqn}.{col}", "scope_key": scope,
+                   "column_name": col})
+    if table and schema:
+        tkey = _vkey(scope, tbl_fqn)
+        skey = _vkey(scope, schema)
+        _merge_vertex(cur, "Table", tkey,
+                      {"name": table, "fqn": tbl_fqn, "scope_key": scope,
+                       "schema_name": schema, "table_name": table})
+        _merge_vertex(cur, "Schema", skey,
+                      {"name": schema, "fqn": schema, "scope_key": scope})
+        _merge_edge(cur, "Schema", skey, "HAS_TABLE", "Table", tkey)
+        _merge_edge(cur, "Table", tkey, "HAS_COLUMN", "Column", ckey)
+    return ckey
+
+
 def sync_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col,
                       cardinality="", source="fk_introspect", confidence=1.0,
                       weight=None, status="") -> None:
-    """REFERENCES 엣지 (Column→Column) MERGE. 양끝 Column 노드도 보장.
+    """REFERENCES 엣지 (Column→Column) MERGE. 양끝 Column 노드 + Table/Schema 앵커링 보장.
 
     weight/status(feature-0016): 동적 신뢰 가중치·상태(candidate/trusted/broken)를 엣지에 투영해
     UI 가 신뢰 실선 / 추정 점선으로 구분. broken 은 애초에 sync_graph 가 투영에서 제외한다.
     """
-    s_ckey = _vkey(scope, f"{src_fqn}.{src_col}")
-    t_ckey = _vkey(scope, f"{tgt_fqn}.{tgt_col}")
-    _merge_vertex(cur, "Column", s_ckey,
-                  {"name": src_col, "fqn": f"{src_fqn}.{src_col}", "scope_key": scope,
-                   "column_name": src_col})
-    _merge_vertex(cur, "Column", t_ckey,
-                  {"name": tgt_col, "fqn": f"{tgt_fqn}.{tgt_col}", "scope_key": scope,
-                   "column_name": tgt_col})
+    s_ckey = _anchor_relationship_column(cur, scope, src_fqn, src_col)
+    t_ckey = _anchor_relationship_column(cur, scope, tgt_fqn, tgt_col)
     eprops = {"cardinality": cardinality, "source": source, "confidence": confidence}
     if weight is not None:
         eprops["weight"] = weight

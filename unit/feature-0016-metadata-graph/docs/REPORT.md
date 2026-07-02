@@ -1,5 +1,71 @@
 # Report
 
+## 2026-07-02 · 신뢰/추정 관계 자기교정 파이프라인 미가동 근본수정 (rel-selfheal)
+
+### 배경 (사용자 검증 요청)
+"그래프 뷰의 신뢰/추정 관계가 정상 구성되는지 — Achievement 구조 분석 후 실제 관계 구축·UI 표시·이후
+대화 추론 활용을 검증, 아니면 개선 완수" (entry persona dispatch).
+
+### 검증 실측 (라이브)
+- `table_relationships` 전체 **2행**(conversation candidate w=0.49, Achievement.UniqueID→AchievementQuest/
+  AchievementReward.AchievementID, 07-02 11:02 대화 학습) — **inferred 0·trusted 0·프로브 0회**.
+- 그 2행은 스키마-slot='' → AGE 투영이 고아 Column 노드(`<ds>:Achievement.UniqueID`, HAS_COLUMN 부모 0)
+  생성 — 실 Table 노드(`<ds>:dk_data_release.Achievement`, 컬럼 4개 보유)와 분리 → **그래프 뷰에서
+  Achievement 를 봐도 추정 점선 비가시** + graph_navigate 이웃 미노출.
+- UI(G6, 8c45f070 배포): trusted=실선/candidate=점선/broken=숨김 + 상세 배지 — **구현 정상**(데이터 갭).
+- digest 주입: 라이브 시뮬레이션 PASS — `[추정 w=0.49]` 태그 2건 주입(leaf-명 매칭이라 스키마 무관).
+- 사용자의 Achievement 능동 분석 run(7248b020, 07-01 15:29)은 anchor 게이팅 배포(18:52) **이전** —
+  rel 전부 0.000 + Schema 경유 형제 123 테이블 fan-out 기록(현행 코드는 게이팅 활성, 기대 동작).
+
+### 근본원인 (4중)
+1. **D1b (치명, 3일 조용한 정지)**: `AGENT_RELATIONSHIP_*` 7종이 `shared/config.py` `__all__` 미등재 →
+   `from shared.config import *` 소비자 insight.py 에서 **NameError** → per-schema `except: continue` 가
+   삼켜 **스키마 처리 전체(테이블/스키마 인사이트 갱신 + FK introspect + 암묵 추론 + 프로브) 06-29 부터
+   정지**. 실증: 라이브 컨테이너 `eval(...insight.__dict__)` NameError + `fact_entries` table_insight
+   max(updated_at)=06-29 13:58 / schema_insight=06-29 07:50 (account_insight 는 별도 경로라 07-02 정상).
+   `AGENT_SQL_FIX_MODEL`(llm.llm_fix_sql)도 동일 클래스 — SQL 자가수정 조용히 무력화.
+2. **D1a (설계 갭)**: 훅 발화조건 = 구조변경/artifact 부재 뿐 → 이미 스캔 완료된 91개 스키마에서 영원히
+   미발화. (implicit-edges REPORT "주기 re-probe 후속" 의 본체.)
+3. **D2**: `_pk_like` 후보에 `uniqueid` 부재 → 이 게임 DB 관용 PK(`UniqueID`) 미인식 —
+   `AchievementID → Achievement.UniqueID` 같은 name_fk 추론 전면 불가.
+4. **D3**: 대화 JOIN 학습이 SQL qualifier 를 버리고(파서 leaf 화) default 도 없어 스키마-slot='' 저장 →
+   그래프 Table 키(`db.table`) 규약과 불일치(고아 엣지). MSSQL introspect/추론도 실 스키마('dbo') 저장
+   시 동일 운명이었음(스키마-slot 규약 미통일).
+
+### 수정 (CHG-20260702T024556, ADR-007)
+- config `__all__` 등재(D1b) + `AGENT_RELATIONSHIP_REINFER_SEC`(6h) 주기 cadence(D1a — kv
+  `relationship_infer_at` + `_is_refresh_due` OR-게이트, 첫 사이클 = 전 스키마 자연 백필).
+- 스키마-slot 규약 통일: MSSQL 저장 라벨 = 순회 DB명(store/query 분리) + 프로브 db_scope 필터·
+  연결 DB qualifier 제거(D3 계열 + 교차-DB 오검증 차단).
+- 파서 qualifier 캡처 + `default_schema=활성 DB` 학습(D3) + `uniqueid` PK 후보(D2) + 프로브 neutral
+  `last_validated_at` 전진(rotation 공정).
+- 그래프 투영 앵커링: `sync_relationship` 이 REFERENCES 끝점 Column 을 소속 Table/Schema 체인에
+  MERGE(비파괴 — description/source SET 생략) — 미큐레이션 컬럼(target 측 다수)도 점선이 실 테이블에 붙음.
+- **회귀 가드 신설** `test_config_star_export.py` — star-import bare 이름의 런타임 해석을 AST 로 전수
+  검사(이 결함 클래스 봉인; domain/kb_scope 의 주입-공급 4건은 정당 케이스로 실측 반영).
+
+### 검증
+- 단위 43건 PASS(test_relationships — Achievement 실측 스키마의 name_fk 추론 케이스 포함) + 신규 가드
+  3건(합산 46) + insight 인접 PASS + py_compile. 웹 자산 무변경(check #13 비대상).
+
+### §18.8 적대 리뷰 패널 + 반영 (REV-20260702T052630, resume 세션)
+- 3렌즈(backend/security/qa) 병렬 적대 리뷰 — 원 세션이 dispatch 직후 session limit 중단되어 재실행.
+- **backend FAIL(MAJOR 6)** → 필수 전량 수정: ① instance-scan 커서 DB별 분리(B-F1 — MSSQL multi-DB
+  첫-DB 독점으로 cadence 목표가 DB#2+ 미달성이던 구조 결함), ② 강화/파단 write-back 스키마-slot 한정
+  (B-F2 — 교차-DB 동명 오염), ③ uniqueid shared_key 제외(B-F3 — PK≡PK 쓰레기, 실행 재현),
+  ④ 프로브 실행오류 처리(B-F4 — 객체-부재=negative + 전 실패 timestamp 전진; 영구 미파단·큐 기아 차단).
+- security/qa PASS-WITH-FIXES → cap/sample/timeout 클램프(Sec-F2), MSSQL slot lower 정규화(QA-F4),
+  라이브 테스트 수집 가드(QA-F1), except 경고 로깅(B-F7), 커버리지 +10(QA-F2) — **총 56건 PASS**.
+- injection 3경로(파서 격리·dialect 이스케이프·Cypher _cq)는 보안 렌즈가 라이브 적대 실행으로 안전 확증.
+- 수용 한계(ADR-007 Consequences ①~④): dbo-only slot 규약 · introspect 케이스 플래핑(SSOT 후속) ·
+  실효 cadence ≈30h(window 회전 곱) · LEARNING↔PROBE 결합 권장.
+
+### 잔여 (배포 게이트)
+- verify-completion → commit/PR/merge → insight/ask-worker 재빌드 + web 롤링 배포(deploy_scope: included).
+- 배포 후 데이터 정정: 기존 2행 스키마 정규화(→dk_data_release) + AGE 고아 Column 3노드 회수 + 재sync.
+- 라이브 확인: insight 사이클 후 relationships_inferred>0 · 프로브 신호 · 그래프 점선(Achievement) ·
+  digest 태그 — 본 cycle 종료 보고에 기록.
+
 ## 2026-07-02 · 그래프 노드 더블클릭 프리즈 잔존 해소 — refreshStates per-node setElementState (graph-expand-perf, ADR-006)
 
 ### 배경
