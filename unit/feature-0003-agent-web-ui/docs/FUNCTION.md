@@ -1432,3 +1432,9 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 
 ## (TASK-20260702-aiops-scroll, 2026-07-02) AI 운영 현황 pane 세로 스크롤 (web/UI, Minor §12.3, aiops-panel 후속)
 - `styles.css` 의 pane 세로 스크롤 규칙(TASK-0167: list-detail 아닌 단순 세로 흐름 pane 에 `overflow-y:auto; overflow-x:hidden`)에 `ai-ops` pane 을 편입. AI 운영 현황 패널은 배너/축/KPI/Attention/카테고리 드릴다운/활동feed/커버리지의 긴 세로 흐름이라 admin-shell(overflow:hidden+100vh)에서 pane 자체 스크롤이 없으면 하단이 잘려 도달 불가. dashboard/usage 와 동일 처리. cache-buster styles.css bump. 신규 로직·백엔드·RBAC 무변경. PB-0008 스크롤 실측= 배포 후 TEST.md.
+
+## (attach-count-scope, 2026-07-02) "+" 메뉴 "첨부파일 목록" 개수 배지 — 대화 컨텍스트 정합 보장 (frontend-only, Minor §12.3)
+- 동작 보장(회귀 봉인): 요청 입력줄 "+" 메뉴 "첨부파일 목록" 항목의 개수 배지(`#composerAttachCountBadge`)는 **항상 현재 활성 대화 컨텍스트의 첨부만** 반영한다. 다른 대화로 전환하거나, "새 대화"/pending 대화로 진입하거나, 활성 대화를 삭제·보관·나가서 다른 대화(또는 빈 화면)에 랜딩해도, 배지는 직전 대화의 첨부 개수를 잔류시키지 않는다(첨부 없으면 비움).
+- 구현 불변식: 배지 textContent 는 `_renderAttachmentPills()`(활성 대화/sentinel 의 bucket 기준 산출 — 신규 첨부 수 우선, 없으면 전체 수) 에서만 mutate 된다. 따라서 **대화 컨텍스트가 바뀌는 모든 진입점은 그 직후 `_renderAttachmentPills()`(또는 이를 내부 호출하는 `_loadConversationAttachments`)를 1회 호출**해야 한다. 현재 보장 지점: `switchConversation`(→`_loadConversationAttachments`), `beginPendingConversation`, `_switchToPendingConversationContext`, `loadHistory`(빈/정상 두 exit — `refreshWorkspace`→`loadConversations`→`loadHistory` 로 도달하는 `deleteConversation`/`bulkDeleteConversations`/`leaveConversation` 랜딩 커버). 신규 컨텍스트-전환 경로 추가 시 동일 훅 유지 필요.
+- 범위: 배지 재렌더 훅만 추가. `_renderAttachmentPills` 본체·`_composerAttachmentKey`·bucket 스키마·업로드/선택/전송/버전 흐름(AC-0246/AC-0253/AC-0496/AC-0525)·첨부 사이드 패널 개폐 정책(패널은 사용자 "+"→"첨부파일 목록" 클릭 시에만 open) 전부 불변. RBAC/스키마/엔드포인트/백엔드 0.
+- cache-buster: `index.html` 의 `app.js?v=20260701-convswitch-opacity-guard`→`?v=20260702-attach-count-scope`. CHG/REV-20260702T021700-attach-count-scope.
