@@ -416,3 +416,12 @@ source_of_truth: true
   노드 직접 나열 → 스키마 카드(매칭/전체) 필터 후 카드 클릭 드릴다운(8K 규모 정합). 배포=web 재빌드.
   알려진 한계: search_nodes cap(80) 초과 광역 검색은 매칭 카운트가 부분값(카드 클릭 펼침 시 실제 매칭은 rel 강조로 식별).
 - Rollback Notes: admin.js search/build/resetModel/loadRoots diff revert + cache-buster 이전값(schema-card-ctxmenu). 데이터 무손상.
+
+## CHG-20260702T175500-search-badge-pb0008
+- Date: 2026-07-02
+- Related Requirement: search-badge(CHG-20260702T173000, PR #544) 배포 후 PB-0008 실 Windows 시각검증 결과 기록. TASK §27 T27.7.
+- Summary: docs-only — 코드 변경 없음. 검색 시 스키마 카드 badge 매칭/전체(teal, cap `+`) 라이브 실측 PASS 를
+  feature-0003/feature-0016 TEST.md 에 POST-DEPLOY 갱신, TASK §27 T27.6/T27.7 완료 체크.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md` (Run 기록만).
+- Impact: 문서만. 코드·자산·데이터 무변경. 배포 불요.
+- Rollback Notes: 해당 Run/체크 라인 revert(무영향).

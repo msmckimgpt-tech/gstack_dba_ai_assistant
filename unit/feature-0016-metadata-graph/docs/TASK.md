@@ -576,5 +576,5 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 - [x] T27.5 node --check PASS + WSL-headless harness **initview 33/33 PASS**(검색 카드필터·badge 2/12·1/40·1/33·
       검색 클리어→roots badge 전체(12) 복귀·stale-scope·dead-card·빈스키마·혼합버전) + **ctxmenu 회귀 10/10 PASS**.
       라이브 badge(teal 매칭/전체) 스크린샷 확인.
-- [ ] T27.6 §18.8 적대 리뷰 반영 + verify-completion + commit/push/PR/merge.
-- [ ] T27.7 배포(deploy_scope: included) + PB-0008 실 Windows 시각검증(검색 badge 매칭/전체) + TEST.md Run 기록.
+- [x] T27.6 §18.8 적대 리뷰(MAJOR 1+MINOR 3) 반영 + verify-completion PASS + PR #544 merge(8fcda59c).
+- [x] T27.7 배포(deploy-web.sh 8fcda59c, soak 통과) + **PB-0008 실 Windows 시각검증 PASS**(검색 `user` → 카드 12장 badge 매칭/전체 teal, cap `+` 표기, 검색 클리어 전체 원복) + TEST.md Run 기록.

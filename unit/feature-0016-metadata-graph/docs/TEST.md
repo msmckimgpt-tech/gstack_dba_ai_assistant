@@ -259,6 +259,6 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 - **검색 클리어→roots**: `search('')` → roots 복귀, 카드 badge = **전체**(billing `12`, 남색). 검색 없음 표기 원복 확인.
 - 회귀: roots 카드 badge 전체·스키마 1개 자동펼침·stale-scope 차단·dead-card 복구·빈 스키마·혼합버전·이웃 확장(neighbor auto-expand 유지)·ctxmenu(SC/XS 우클릭) 전부 PASS.
 
-### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 예정 (본 cycle 배포 직후 수행)
-- 대상: 그래프 뷰. 확인: 검색어 입력 시 스키마 카드 유지 + badge `매칭/전체`(teal), 검색 클리어 시 badge `전체`(남색), 카드 클릭 펼침 시 매칭 테이블 강조.
-- 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 git_commit·자산 버전(`admin.js?v=20260702-search-badge`) 명기.
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-02 PASS**
+- 대상: 그래프 뷰 검색 시 스키마 카드 badge 매칭/전체. 게이트: `bin/win-browser.py` + PB-0008.
+- **Run 2026-07-02 PASS**: 배포 8fcda59c(soak 통과) → 실 Windows Chrome 149(relay, eval 1+1=2 OK), 자산 `admin.js?v=20260702-search-badge` 서빙 확인. `mssql-06656002eda6`(62 스키마): ① roots 카드 badge=**전체**(accountdb 58·AccountDB 33, 남색) ② 검색 `user` 입력 → **스키마 카드 12장 유지(combo 0), badge=매칭/전체(teal)** — accountdb `1+/58`·atum2_db_1 `11+/136`·atum2_db_7 `12+/137`, cap 도달분 `+`(부분 카운트) + status "결과 상한(부분 카운트)" 안내 ③ 검색 클리어 → roots 복귀·accountdb badge `58`(전체 원복). 종전 '검색 시 badge 소실' 결함 라이브 해소 확인. 스크린샷: `artifacts/feature-0016-metadata-graph/20260702-search-badge-pb0008/pb-search-badge-live.png`.
