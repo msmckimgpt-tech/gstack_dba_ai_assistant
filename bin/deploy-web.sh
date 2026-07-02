@@ -200,22 +200,23 @@ migrate_phase() {
   fi
   # expand 마이그레이션 적용. contract 는 게이트가 이미 차단했으므로 여기 적용분은 backward-compatible.
   if [ -x bin/alembic-migrate.sh ]; then
-    # snap-docker `docker compose run`(alembic-migrate.sh 의 gen_sql: 일회성 agent 컨테이너에서 alembic
-    # --sql 생성) 은 build 단계와 동일한 metadata-file race 로 작업 성공에도 exit≠0 를 낼 수 있다
-    # (관측: 2026-07-02 첫 0029→0030 적용이 exit≠0 로 false-ABORT 했으나 마이그레이션은 실제 head 도달).
-    #
-    # **정합 근거 = head 도달**(build 게이트의 image+GIT_COMMIT 정합에 대응하는 migrate 측 positive
-    # evidence): alembic-migrate.sh 는 멱등이고, 그 upgrade 는 **오직 라이브 alembic_version 이 실제로
-    # head 일 때만** exit 0 을 낸다(no-pending 은 live_current 로 head 확인, apply 는 ON_ERROR_STOP=1
-    # psql 성공 후 fall-through). 따라서 1차 exit≠0 이면 backoff 후 1회 재시도해, **재시도 exit 0 =
-    # head 도달**로 판정한다(race 든 일시적 blip 이든 head 도달이면 swap 안전). 재시도도 실패 = 진짜
-    # 마이그레이션 실패 → ABORT(마이그레이션 미적용 상태로 절대 swap 안 함). marker-gating 대신
-    # head-도달 검증을 쓴 이유: head 도달은 원인(race/transient) 무관하게 swap 안전을 참으로 보장하고,
-    # marker-only 는 self-healing transient 를 false-ABORT 할 수 있어 더 약하다(REV 근거).
-    if ! run bash bin/alembic-migrate.sh upgrade; then
+    # [feature-0014-migrate-fresh-image + feature-0017-deploy-migrate-gate 결합]
+    # (1) fresh 이미지: main 이 build_image 를 migrate_phase 앞으로 부르므로 $IMAGE_REPO:$TARGET_SHA
+    #     (신규 alembic 마이그 파일 포함)가 이미 존재한다. MIGRATE_ALEMBIC_IMAGE 로 그 이미지를 넘겨
+    #     `docker compose run agent`(stale 기본 이미지 → head 오판 → 신규 마이그 no-pending silent-skip,
+    #     2026-07-02 마이그 0030 실측 회귀)를 우회한다. run 래퍼는 "$@" 를 그대로 실행하므로 env 로
+    #     자식 bash 에 확실히 주입(_mig_env 배열).
+    # (2) race 관용: snap-docker `docker run`/`compose run` 은 build 와 동일한 metadata-file race 로
+    #     작업 성공에도 exit≠0 를 낼 수 있다. **정합 근거 = head 도달**: alembic-migrate.sh 는 멱등이고
+    #     그 upgrade 는 라이브 alembic_version 이 실제 head 일 때만 exit 0(no-pending 은 live_current head
+    #     확인, apply 는 ON_ERROR_STOP=1 psql 성공 후 fall-through). fresh 이미지(1)로 head 감지가 정확해져
+    #     이 head-anchored 안전 논리가 성립한다. 1차 exit≠0 이면 backoff 후 1회 멱등 재시도 — 재시도 exit 0
+    #     = head 도달로 판정(race/transient 무관 swap 안전). 재시도도 실패 = 진짜 실패 → ABORT(미적용 미배포).
+    _mig_env=(env "MIGRATE_ALEMBIC_IMAGE=$IMAGE_REPO:$TARGET_SHA")
+    if ! run "${_mig_env[@]}" bash bin/alembic-migrate.sh upgrade; then
       warn "alembic-migrate 1차 exit≠0 — snap-docker docker-run race/일시 blip 가능성. ${MIGRATE_RETRY_BACKOFF:-5}s backoff 후 멱등 재시도로 head 도달 판정."
       [ "$DRY_RUN" -eq 1 ] || sleep "${MIGRATE_RETRY_BACKOFF:-5}"   # 같은 race window 재적중 완화(dry-run 은 skip)
-      run bash bin/alembic-migrate.sh upgrade \
+      run "${_mig_env[@]}" bash bin/alembic-migrate.sh upgrade \
         || die "마이그레이션 적용 실패(재시도도 실패 — 진짜 실패). ABORT (swap 안 함, 마이그레이션 미적용 상태 미배포)."
       log "재시도 exit 0 = 라이브 alembic_version head 도달 확인 — 1차 exit≠0 은 docker-run race/transient 양성으로 무시(swap 안전)."
     fi
@@ -509,8 +510,13 @@ main() {
 
   preflight_fileset
   preflight_tls
-  migrate_phase
+  # feature-0014-migrate-fresh-image: build 를 migrate 앞으로. migrate_phase 가 방금 빌드한
+  # mysql-ai-web:<sha>(신규 마이그레이션 파일 포함)로 alembic 을 돌리게 한다. 과거엔 migrate 가
+  # build 전에 실행돼 `docker compose run agent`(stale 이미지)로 head 를 오판, 신규 마이그를
+  # 조용히 놓쳤다. build 는 swap(recreate) 전 단계라 이 순서에서도 expand-before-swap 불변 유지
+  # (build→migrate→recreate). build 후 migrate 실패 시에도 last-good=이전본 유지(rollback 정합).
   build_image "$TARGET_SHA"
+  migrate_phase
   asset_stamp_warn
 
   step "one-at-a-time 롤링 (항상 ≥1 healthy upstream)"
