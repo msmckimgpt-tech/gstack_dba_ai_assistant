@@ -4879,6 +4879,36 @@ function _metaEdgeTrustBadge(e) {
   return "";
 }
 
+// reldetail-colexpand ④: 관계 hover 툴팁용 **의미 분석** 텍스트(즉시 조합 — LLM 지연 없음).
+//   방향(참조함/참조받음)·연결 컬럼·근거(대화학습/FK/추정)·신뢰도를 해석해 "이 관계가 무엇을
+//   뜻하는지" 를 문장으로 설명한다. dir: "out"(self 가 상대를 참조) | "in"(상대가 self 를 참조).
+//   selfEndFqn/otherFqn 은 표시용 fqn(scope 접두 제거). native title 속성값으로 쓰여 다중 줄로 표시.
+function _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn) {
+  const src = _META_EDGE_SOURCE_KO[e.edge_source] || e.edge_source || "미상";
+  const w = (e.weight != null && e.weight !== "") ? Number(e.weight) : null;
+  const wPct = (w != null && !isNaN(w)) ? Math.round(w * 100) + "%" : null;
+  const trust = e.status === "trusted"
+    ? "검증된 신뢰 관계"
+    : (e.status === "candidate"
+        ? ("추정 관계" + (wPct ? " (신뢰도 " + wPct + " — 실사용·프로브로 강화·감쇠)" : ""))
+        : (e.edge_source === "fk_introspect" ? "FK 스키마 선언 관계" : "관계"));
+  // 방향 문장: 물리적 참조 방향을 자연어로.
+  const arrowSent = dir === "out"
+    ? (selfEndFqn + " 이(가) " + otherFqn + " 을(를) 참조합니다.")
+    : (otherFqn + " 이(가) " + selfEndFqn + " 을(를) 참조합니다.");
+  // 근거별 의미 해석.
+  const meaningBy = {
+    fk_introspect: "데이터베이스에 선언된 외래키(FK)로, 두 테이블 행이 이 컬럼으로 확정 연결됩니다.",
+    conversation: "사용자 대화의 실제 JOIN 질의에서 학습된 연결 — 실무에서 함께 조회되는 관계입니다.",
+    inferred: "컬럼 명명 규칙으로 추론된 암묵 관계 — 실데이터 겹침 프로브로 신뢰도가 조정됩니다.",
+    llm_insight: "AI 인사이트가 제안한 연관 관계입니다.",
+    manual: "관리자가 수동 등록한 관계입니다.",
+  };
+  const meaning = meaningBy[e.edge_source] || "두 컬럼이 연관됩니다.";
+  const card = e.cardinality ? ("\n관계 형태(cardinality): " + e.cardinality) : "";
+  return "관계 의미 분석\n" + arrowSent + "\n근거: " + src + " · " + trust + card + "\n" + meaning;
+}
+
 // 통합 엔티티 카드 — 클릭 노드의 이웃을 카테고리(컬럼·관계·용어)로 묶어 표시.
 function _metaGraphRenderDetail(self, nodes, edges) {
   // graphux5-panelmove: 노드 상세는 body 서브컨테이너에만 렌더(진행 패널은 aside 상단에 유지).
@@ -4933,30 +4963,94 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
-  if (columns.length) {
-    parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})</h4><ul>`);
-    columns.slice(0, 50).forEach((c) => parts.push(`<li><code>${esc(c.name)}</code>${c.description ? " — " + esc(c.description) : ""}</li>`));
-    parts.push(`</ul></div>`);
-  }
-  if (refs.length) {
-    // graph-reltrace ②: 관계 행을 **클릭 시 대상 테이블·컬럼으로 추적**하도록 구성.
-    //   self(테이블이면 자기 컬럼 포함)가 아닌 반대쪽 끝점을 추적 대상으로 삼는다.
-    const isSelfEnd = (k) => k === selfKey || _metaColParent(k, (byKey[k] || {}).fqn || (_metaGraph.nodes.get(k) || {}).fqn) === selfKey;
-    parts.push(`<div class="admin-meta-graph-sec"><h4>관계 (${refs.length})</h4><p class="admin-meta-detail-note">행을 클릭하면 대상 테이블·컬럼으로 그래프를 추적합니다.</p><ul class="amgr-list">`);
-    refs.slice(0, 50).forEach((e) => {
-      const sSelf = isSelfEnd(e.source);
-      const other = sSelf ? e.target : e.source;
-      const arrow = sSelf ? "→" : "←";
-      parts.push(
-        `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
-        `title="클릭하면 대상 테이블·컬럼으로 그래프를 추적합니다">` +
-        `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(nm(other))}</code>` +
-        `${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}` +
-        `${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(e.edge_source) + ")</span>" : ""}` +
-        `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`
-      );
-    });
-    parts.push(`</ul></div>`);
+  // reldetail-colexpand ①②③: 관계를 **소속 컬럼별**로 그룹화하고, 각 컬럼 안에서 참조함(→)/참조받음(←)
+  //   을 분리·개수 표기. 관계 있는 컬럼은 아코디언(클릭 시 펼침)으로 관계 행을 노출한다.
+  //   self 측 끝점(테이블이면 자기 컬럼, 컬럼이면 자신)을 기준으로 방향을 정한다.
+  const selfIsColumn = (self.label === "Column");
+  const selfColKey = (k) => {   // 엣지 끝점 k 가 self 소속이면 그 self측 컬럼 키, 아니면 null
+    if (selfIsColumn) return (k === selfKey) ? selfKey : null;
+    // 테이블 self: 끝점이 self 테이블의 컬럼이면 그 컬럼 키.
+    if (k === selfKey) return null;   // 테이블 자신은 컬럼 아님(REFERENCES 끝점은 항상 컬럼)
+    return (_metaColParent(k, (byKey[k] || {}).fqn || (_metaGraph.nodes.get(k) || {}).fqn) === selfKey) ? k : null;
+  };
+  // colKey -> { out:[{e,other}], in:[{e,other}] }
+  const colRel = new Map();
+  let totOut = 0, totIn = 0;
+  const addRel = (colKey, dir, e, other) => {
+    if (!colRel.has(colKey)) colRel.set(colKey, { out: [], in: [] });
+    colRel.get(colKey)[dir].push({ e, other });
+    if (dir === "out") totOut += 1; else totIn += 1;
+  };
+  refs.forEach((e) => {
+    const sc = selfColKey(e.source), tc = selfColKey(e.target);
+    // review MAJOR: intra-table self-FK(양끝이 모두 self 컬럼, 예: employees.manager_id→employees.id)는
+    //   source 컬럼의 참조함(→)과 target 컬럼의 참조받음(←)을 **둘 다** 기록해야 방향별 개수가 정확하다
+    //   (else-if 로 out 만 잡으면 참조받음이 누락·totIn 저계상). sc===tc(컬럼 자기참조)면 out 만(중복 방지).
+    if (sc) addRel(sc, "out", e, e.target);        // self 컬럼이 source → 참조함
+    if (tc && tc !== sc) addRel(tc, "in", e, e.source);   // self 컬럼이 target → 참조받음
+    // sc·tc 모두 falsy = self 무관(모델 병합 방어) → 무시.
+  });
+
+  const relRow = (item, dir) => {   // 추적 가능 관계 행(툴팁 = 의미 분석)
+    const { e, other } = item;
+    const arrow = dir === "out" ? "→" : "←";
+    const selfEndFqn = dir === "out" ? nm(e.source) : nm(e.target);
+    const otherFqn = nm(other);
+    const tip = _metaRelSemanticTip(e, dir, selfEndFqn, otherFqn);
+    return `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
+      `title="${esc(tip)}">` +
+      `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(otherFqn)}</code>` +
+      `${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}` +
+      `${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(_META_EDGE_SOURCE_KO[e.edge_source] || e.edge_source) + ")</span>" : ""}` +
+      `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`;
+  };
+  const dirGroup = (list, dir) => {   // 방향 그룹(참조함/참조받음) + 개수
+    if (!list.length) return "";
+    const label = dir === "out" ? "참조함" : "참조받음";
+    const arrow = dir === "out" ? "→" : "←";
+    return `<div class="amgr-dir"><div class="amgr-dir-head"><span class="amgr-arrow">${arrow}</span> ${label} (${list.length})</div>` +
+      `<ul class="amgr-list">${list.map((it) => relRow(it, dir)).join("")}</ul></div>`;
+  };
+
+  if (columns.length || selfIsColumn) {
+    // 전체 관계 요약(방향별 개수).
+    const relSummary = (totOut + totIn) > 0
+      ? ` <span class="admin-meta-graph-relbadge" title="이 노드의 관계 방향별 개수">관계 ${totOut + totIn} · 참조함 ${totOut} · 참조받음 ${totIn}</span>`
+      : "";
+    if (selfIsColumn) {
+      // 컬럼 상세: 컬럼 자신의 관계를 방향별로 바로 표시(아코디언 불필요).
+      const cr = colRel.get(selfKey) || { out: [], in: [] };
+      parts.push(`<div class="admin-meta-graph-sec"><h4>관계${relSummary}</h4>`);
+      if (cr.out.length || cr.in.length) {
+        parts.push(`<p class="admin-meta-detail-note">행 hover 시 관계 의미, 클릭 시 대상 추적.</p>`);
+        parts.push(dirGroup(cr.out, "out"));
+        parts.push(dirGroup(cr.in, "in"));
+      } else {
+        parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">기록된 관계가 없습니다.</p>`);
+      }
+      parts.push(`</div>`);
+    } else {
+      // 테이블 상세: 컬럼 목록 — 관계 있는 컬럼은 아코디언(클릭 펼침).
+      parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})${relSummary}</h4>`);
+      parts.push(`<p class="admin-meta-detail-note">관계가 있는 컬럼(🔗)을 클릭하면 참조함/참조받음 관계가 펼쳐집니다. 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
+      columns.slice(0, 80).forEach((c) => {
+        const cr = colRel.get(c.key);
+        const nOut = cr ? cr.out.length : 0, nIn = cr ? cr.in.length : 0;
+        if (!cr || (nOut + nIn) === 0) {
+          parts.push(`<li class="amgr-col amgr-col-plain"><code>${esc(c.name)}</code>${c.description ? " <span class=\"admin-meta-graph-muted\">— " + esc(c.description) + "</span>" : ""}</li>`);
+          return;
+        }
+        parts.push(
+          `<li class="amgr-col amgr-col-rel">` +
+          `<button type="button" class="amgr-col-toggle" aria-expanded="false" data-colrel="${esc(c.key)}">` +
+          `<span class="amgr-caret">▸</span> 🔗 <code>${esc(c.name)}</code>` +
+          `<span class="amgr-col-relcount" title="참조함 ${nOut} · 참조받음 ${nIn}">→${nOut} ←${nIn}</span></button>` +
+          `<div class="amgr-col-body" data-colbody="${esc(c.key)}" hidden>${dirGroup(cr.out, "out")}${dirGroup(cr.in, "in")}</div>` +
+          `</li>`
+        );
+      });
+      parts.push(`</ul></div>`);
+    }
   }
   if (terms.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul>`);
@@ -4976,6 +5070,20 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   const relBtn = document.getElementById("metaGraphRelBtn");
   if (relBtn) relBtn.addEventListener("click", () => _metaGraphShowRelations(self.key));
   _metaGraphBindTraceRows(el);   // graph-reltrace ②: 관계 행 클릭 → 대상 추적
+  // reldetail-colexpand ①: 컬럼 아코디언 토글 — 클릭 시 그 컬럼의 관계 펼침/접힘.
+  //   body 는 버튼의 형제(같은 li 내 .amgr-col-body)로 찾는다(키의 CSS 특수문자 셀렉터 이스케이프 회피).
+  el.querySelectorAll(".amgr-col-toggle[data-colrel]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const li = btn.closest(".amgr-col-rel");
+      const body = li ? li.querySelector(".amgr-col-body") : null;
+      const open = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", open ? "false" : "true");
+      const caret = btn.querySelector(".amgr-caret");
+      if (caret) caret.textContent = open ? "▸" : "▾";
+      if (body) body.hidden = open;
+    });
+  });
   _metaGraphLoadNodeAnalysis(self.key);
 }
 
