@@ -1,43 +1,111 @@
 # Report
 
-## 2026-07-02 · 그래프 뷰 초기 진입 줌아웃 가시성 개선 (graph-initview, 4축 패키지)
+## 2026-07-02 · 그래프 뷰 초기 진입 줌아웃 가시성 개선 — 스키마-우선 진입 (graph-initview)
 
 ### 배경 (사용자 보고 + 다각도 검토 → Phase 1+2 통합 결정)
-스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit(`fitView`)이 콘텐츠 bounding box 에 무제한
-종속되어 판독 불가 줌아웃 발생. 5축(A 뷰포트 / B 레이아웃 밀도 / C 정보위계 / D 관련도 큐레이션 / E 내비게이션)
-검토 후 사용자 결정 **Phase 1+2 통합**(AskUserQuestion, 2026-07-02). 실데이터 근거: 최대 scope
-`mssql-06656002eda6` = **62 스키마 × 스키마당 ~257 테이블** — 구 진입 뷰는 cap 200 으로 전체의 ~1.2% 만
-무통보 부분표시 + 그마저 세로 1열 스택(46px/행)으로 zoom≈0.08 까지 줌아웃.
+스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit(`fitView`)이 콘텐츠 bbox 에 무제한 종속되어
+판독 불가 줌아웃 발생. 5축 검토 후 사용자 결정 **Phase 1+2 통합**(AskUserQuestion, 2026-07-02). 실데이터:
+최대 scope `mssql-06656002eda6` = **62 스키마 × ~257 테이블** — 구 진입 뷰는 cap 200 으로 전체의 ~1.2% 만
+무통보 부분표시. TASK §24.
 
-### 구현 (4축)
-- **C1 스키마-우선 진입**: roots = 스키마 카드(`SC:`+key rect 노드, "이름 · 테이블 N" 배지) → 카드 클릭 시
-  per-schema lazy 로드(`?scope=&schema=`) 후 combo 승격(제자리, "XS:" ctl 로 접기). 백엔드
-  `scope_schemas`(Schema+count(t) 집계, cap 잘림 해소)·`schema_tables`(truncated 플래그) 신설 +
-  라우터 `?mode=schemas`/`?schema=` 분기(신규 route 0 — route-parity 골든 불변). 검색/이웃 흐름은 결과
-  테이블의 스키마를 schemaExpanded 에 자동 추가(카드 게이팅 모드-독립 단일소스). **동일 스키마 key 의
-  카드(노드)↔combo 타입 전환을 G6 setData diff 가 처리 못해 자식이 유실되는 결함을 SC: id 네임스페이스로
-  차단**(harness 로 적발·수정). 스키마 1개 datasource 는 자동 펼침(기존 즉시성 유지).
-- **B 레이아웃 밀도**: 클러스터 내부 테이블 **다열 wrap**(열수≈√(totalH/SW), 채움 시뮬레이션으로 치수 확정 —
-  불가분 블록 오버플로 안전) + 고정 3열 grid → **shelf packing**(콘텐츠 면적×캔버스 종횡비 근사 목표폭,
-  자연정렬 보존). ADR-004 결정론(무-shuffle·제자리·force 금지) 불변식 유지.
-- **A 뷰포트 정책**: Graph `zoomRange:[0.05,4]`(Cytoscape 시절 minZoom/maxZoom 의 G6 이식 — 전환 시 소실
-  회귀 복구) + `_metaGraphFitClamped()`(fit 후 zoom<0.55 면 0.55 로 클램프+첫 클러스터 focus, >1 이면 100%
-  상한) 를 roots/검색/토글/resizer 전 경로 적용. 이웃확장은 전체-fit → **앵커 국소 focus** 로 전환(노드가
-  쌓여도 줌아웃 재발 없음). `_metaGraphRefreshStates`/`SetSelected` 는 renderedIds 매핑 + async reject 흡수
-  (미렌더 요소 setElementState 가 pageerror 로 새던 결함 수정).
-- **E 내비게이션**: G6 **minimap 플러그인**(번들 내 실증 — 우하단 카드형) + 줌 툴바(−/+/전체/1:1 — '전체'는
-  의도적으로 클램프 없는 조망) + 스키마 점프 select(스키마 2개 이상 시 표시).
+### 병렬 세션 정합 (2차 검증 workflow 가 stale-base 적발)
+착수 base 가 main 대비 23커밋 stale — 같은 날 병렬 머지된 **graph-g6b(#533, 클러스터 다열 masonry+가변폭
+shelf-packing)** 가 B축(레이아웃 밀도)을 선점, **graph-perf-bg(#537, `_opSeq` 세대·busy·_stateCache·O(1)
+colsByTable)** 가 동일 블록을 재작성. → merge 재정합: **main 판을 기준으로 C1/A/E 만 재적용**, 자체 wrap/
+shelf-packing 폐기(g6b masonry 채택), 세대 가드는 perf-bg `_opSeq` 에 편입.
+
+### 구현 (병합 최종본)
+- **C1 스키마-우선 진입**: roots=`?mode=schemas` 경량 뷰 → 스키마 카드(`SC:`+key, 테이블수 배지) → 클릭 시
+  `?schema=` per-schema lazy 로드 후 combo 승격("XS:" 접기=카드 복귀, 모델 유지라 재펼침 무-refetch).
+  백엔드 `scope_schemas`(count 집계·truncated·집계실패=배지없는 카드)·`schema_tables`(truncated) 신설,
+  신규 route 0. 검색/이웃 결과 스키마 자동 펼침(게이팅 모드-독립). 단일 스키마 DS 자동 펼침.
+  동일-id 카드↔combo 타입 전환의 G6 setData diff 자식 유실은 `SC:` 네임스페이스로 차단.
+- **A 뷰포트 정책**: `zoomRange [0.05,4]` + fit 클램프(0.55 하한/1.0 상한, focusFirst=초기·검색만) +
+  이웃확장 앵커 국소 focus(줌아웃 재발 차단). 미렌더 모델키 setElementState 는 renderedIds 매핑으로 차단
+  (_metaApplyState/refreshStates 단일 경로).
+- **E 내비게이션**: minimap(우하단 카드형) + 줌 툴바(−/+/전체/1:1 — '전체'는 의도적 무클램프 조망) +
+  스키마 점프 select.
+- **동시성**: ExpandSchema 를 perf-bg `_opSeq` 세대에 편입 — 사용자 클릭=새 세대(++), LoadRoots silent
+  자동펼침=부모 세대 상속, await 후 세대 불일치 시 ingest 없이 폐기(**교차 스코프 오염 원천 차단**) +
+  진입 scope 가드(이전 scope 카드 stale 클릭 차단) + 연타 in-flight 가드.
 
 ### 검증
-- **WSL-headless-harness(Playwright) 24/24 PASS·에러 0** (TEST.md): 카드 진입(zoom 0.88 판독)·per-schema
-  펼침·200테이블 다열 wrap(6열)·truncated 안내·펼침 카메라 불점프·툴바 4버튼·점프·검색 자동펼침·이웃 국소
-  focus·"XS:" 접기 카드복귀·미니맵 표시.
-- **라이브 AGE Cypher 검증**: count(t) 집계·스키마 필터 쿼리 실 스택에서 유효(301행 0.23s).
-- node --check / py_compile PASS. §18.8 적대 리뷰 패널 결과는 REVIEW.md 참조.
+- 1차 §18.8 적대 리뷰: BLOCKER 0·MAJOR 2(dead-card·roots race)·MINOR 7·NIT 3 — 전건 반영.
+- 2차 적대 검증 workflow(3렌즈 병렬): 17 findings(dedup 9) — stale-base MAJOR 포함 전건 반영/해소.
+- headless harness(Playwright, 실 마크업+mock API, 200테이블·빈스키마·혼합버전·연타·dead-card fixture)
+  병합 최종본 재검증 — TEST.md Run 기록. 라이브 AGE Cypher(count 집계·스키마 필터) 실증 0.23s.
+- 단위: metadata_graph units(graceful no-op 포함) PASS.
 
 ### 잔여
-배포(deploy_scope: included) 후 **PB-0008 실 Windows 시각검증**(§21 T21.8 미완분 — G6 엔진 교체 검증과 통합
-수행) + TEST.md Run 기록.
+배포(deploy_scope: included) + PB-0008 실 Windows 시각검증(§21 T21.8 미완분 + graph-g6b·perf-bg 통합 확인).
+
+---
+
+## 2026-07-02 · 그래프 뷰 테이블 노드 펼침 논블로킹 + 성능 최적화 (graph-perf-bg, ADR-005)
+
+### 배경 (사용자 관찰: 펼침 시 렌더 엔진 프리즈)
+관리콘솔 > 메타데이터 > 그래프 뷰에서 **테이블 노드 선택→컬럼 펼침 시 브라우저 렌더링 엔진이 멈춤**. 요청: 병목 구간을 백그라운드에서 진행되도록 구성 + 별도 성능 이슈 추가 검증.
+
+### 진단
+펼침 임계경로 = `/graph?node=&depth=1` + (미분석 테이블이면) `/graph/columns` **information_schema 라이브 조회(무캐시, 1~5초)** 2왕복 → `setData()`+`draw()` 전체 재구성, 이 전 구간이 busy 페인트 없이 동기적으로 이어져 메인스레드가 얼었다. 부수 병목: `_metaTableHasCols` 매 클릭 O(N) 전노드 스캔, `_metaGraphRefreshStates` 2.5s 폴 포함 매 호출 전노드 개별 `setElementState`.
+
+### 수정 (FE admin.js + BE admin_metadata.py)
+- **논블로킹 파이프라인**: busy 하이라이트(teal 점선) 페인트 → double-rAF(`_metaYieldPaint`) 양보 → fetch·재구성. `_opSeq` stale-render 토큰을 await 경계마다 대조(모델 교체 `_metaGraphResetModel`·`_metaGraphLoadRoots` 도 게이팅).
+- **O(1) 펼침 인덱스** `colsByTable`(`_metaTableHasCols` 단일소스) — 클릭당 전노드 스캔 제거.
+- **상태 적용 diff+batch**(`_metaGraphRefreshStates` 변화분-only + `startBatch`). busy = `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState`(요소적용과 `_stateCache` signature 동기화 — 폴 덮어쓰기·rebuild 재-bake·캐시 불일치 차단).
+- **레이아웃 churn 분리**(`_metaG6Build` Pass1 collapsed 배정 / Pass2 real push-down) — 형제 열-점프로 인한 setData update 집합 팽창 억제, shelf-packer 는 real 높이 소비(무겹침).
+- **BE introspection TTL 캐시**: `/graph/columns` 성공결과를 `(scope_key, fqn)` 프로세스-로컬 TTL(기본 300s) 캐시 — 반복 펼침·다중 사용자·재진입의 라이브 조회 왕복 제거. 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성, 마이그레이션 없음.
+
+### 검증 (§18.8 적대 패널 — 다단계)
+- 3렌즈 패널(race/index-drift/layout+cache): **4건 BLOCKING 적발** — ① reset/search/scope 경로가 `_opSeq` 미증가 → in-flight expand 가 검색·스코프 화면을 덮어씀(stale 렌더), ② 같은 race 로 `colsByTable` 포이즌(재펼침 영구 차단), ③ seq-mismatch early-return 이 busy 하이라이트 영구 잔류, ④ 2.5s 폴이 fetch 중 busy 제거 + `_stateCache` 불변식 위반. index-drift 렌즈는 steady-state 동치 확인, layout+cache 렌즈는 clean(오버랩 없음·캐시 보안/격리/축출 정상).
+- 5-agent 재검증 워크플로: 4건 **CLOSED** 확인 + **신규 BLOCKING 1건**(loadRoots reset-vs-reset — 자기 fetch 후 seq 재검 없이 additive ingest → 혼합-스코프 그래프) 적발.
+- loadRoots seq 가드 추가 후 최종 재검증: **reset-vs-reset 6조합 CLOSED, 정당 흐름 회귀 없음.** NIT(동시-key busy 깜빡임·후행 syncMarkers 일시 stale 텍스트·BE 캐시키 대소문자 fragmentation·백엔드 key/fqn 계약 의존)은 비-가시회귀로 수용 기록(REVIEW.md).
+- `node --check`·`py_compile` PASS. cache-buster `?v=20260702-graph-perf-bg`.
+
+### 잔여
+- graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 무프리즈 + busy 피드백 + 반복 펼침 즉시응답) — 정적 자산이 web 이미지에 baked 라 배포 후 수행.
+
+---
+
+## 2026-07-02 · 그래프 관계 분석 LLM = claude-haiku (node-analysis-haiku)
+
+### 배경 / 근본원인
+사용자 보고: 관리콘솔 그래프뷰 상세 패널 "AI 능동 분석"(각 노드·관계 분석)이 **로컬 gemma(alias `edge`)** 로 작동 — 의도하지 않은 구조, claude-haiku 로 전환 요청. 진단 결과 관계 분석 함수 `llm_node_analysis`(`llm.py`)가 모델을 `AGENT_INSIGHT_MODEL or OPENAI_MODEL` 로 해석하는데, 운영 `.env` 의 `AGENT_INSIGHT_MODEL=edge` 가 이를 gemma 로 고정. 이 값은 `llm_schema_insight`/`llm_table_insight`/`llm_account_insight`(부트스트랩 테이블·컬럼 설명)와 **공유**된다.
+
+### 범위 결정 (사용자, 2026-07-02)
+**그래프 관계 분석만** claude-haiku 로 전환 — schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL`(gemma) 유지. (요청 문구 "그래프 뷰에서 각 관계를 분석하는 LLM" 에 정확 대응, 부트스트랩 설명 생성 비용 불변.)
+
+### 변경
+- **`shared/config.py`**: 전용 `AGENT_NODE_ANALYSIS_MODEL = os.getenv(...) or "claude-haiku-4"` 신설 + `__all__` 노출. 코드 기본값 자체가 claude-haiku 라 `.env` 미설정이어도 "의도한 구조"로 동작.
+- **`llm.py` `llm_node_analysis`**: 모델 = `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL`. max_tokens/temperature/timeout 경로는 기존과 동일(모델 catalog 가 `claude-*` cap·temperature 처리). insight 3함수는 손대지 않음(격리).
+- **`node_analysis.py` `process_pending`**: 저장·표시용 `model` 라벨을 라우팅과 동일 순서(`AGENT_NODE_ANALYSIS_MODEL` 우선)로 해석 — 상세 패널이 실제 사용 모델(claude-haiku)을 표시. 이 순서가 어긋나면 UI 에 gemma 오표시.
+
+### 검증
+- 회귀 테스트 4건(`test_llm_env_naming.py`): 기본값=`claude-haiku-4`(그리고 `AGENT_INSIGHT_MODEL=edge` 여도 node analysis 불영향=분리 확인)·env override·공백/whitespace 폴백·`__all__` 노출. **pytest 38 pass**(env-naming + node_analysis_relevance), ruff clean, config/llm/node_analysis compile·import OK.
+- 모델 정합: `claude-haiku-4` 는 model_catalog 카탈로그 기본값(`API_DEFAULT_MODEL`)이자 litellm_config.yaml 의 유효 alias(`anthropic/claude-haiku-4-5`).
+- §18.8 적대적 코드리뷰(subagent): 격리·touchpoint 완결성·haiku create() 정합·폴백 안전. REVIEW.md.
+
+### 반영 조건 / 비용
+반영엔 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본과 동일 — 명시 권장) + **insight-worker 재빌드·재기동**(코드 baked, 외부영향=배포 confirm). **외부 API 비용 발생**(그래프 노드 분석이 무료 로컬 gemma → Bedrock claude-haiku 유료). node_analysis 예산 캡(depth/node budget·dedupe)으로 run 당 경계. 기존 저장 분석은 이전 라벨 유지, 신규 run 부터 claude-haiku.
+
+### 배포 완료 (2026-07-02, node-haiku-deploy · 사용자 confirm 승인)
+resume 세션이 원본(세션 63cc38df — commit/push 직전 사용자 중단)을 인계 → PR #535 main 병합(617e9a74) 후, 사용자 "랜딩+배포" 결정에 따라 라이브 배포·검증:
+- `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 추가(코드 기본값과 동일, 명시).
+- insight-worker 이미지 재빌드(`repo-insight-worker` b5e23727, 새 코드 baked) + `docker compose up -d --no-deps --force-recreate insight-worker` → **healthy**. web-a/web-b·ask-worker 무영향(insight-worker 만 재생성).
+- **smoke PASS**: 컨테이너 env `NODE_ANALYSIS=claude-haiku-4`/`INSIGHT=edge`(격리) · `config.AGENT_NODE_ANALYSIS_MODEL='claude-haiku-4'`·`__all__` 노출 · `llm_node_analysis` 라우팅 소스 `_insight_model=AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 확인 · 클린 기동(traceback/critical 0).
+- 잔여(사용자 실검증): 관리콘솔 그래프뷰 "AI 능동 분석" 신규 run 의 model 라벨=claude-haiku 육안 확인. 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 LLM run 강제 불가 — 실 브라우저 확인 권장.
+---
+
+## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
+
+### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)
+graph-g6 무중단 배포(web-a/web-b `8c45f070`) 후, 실 Windows Chrome/149(win-browser relay, `https://localhost/admin` 로그인 세션)로 라이브 검증. 데이터소스 `mssql-06656002eda6`(실데이터 **236 노드·36 클러스터**) → G6 Canvas 렌더 정상, teal 테이블 칩·점선/실선 엣지·클러스터 자연정렬·노드 클릭 **제자리 컬럼 펼침**(예: dt_EventItemWithMonster 컬럼 12개)·"−" 접기 컨트롤 모두 실화면 확인. (초기 접근이 host-header 로 막힌 건 win-browser CLI 인자 오류였고 — `goto --url`/`eval --script` — 정정 후 정상. 최종 도달 URL = `https://localhost/admin`, WEB_ALLOWED_HOSTS ∋ localhost.)
+
+### 레이아웃 UX 개선 (사용자 요청: 기본 디자인·노드확장 가시성·UX)
+라이브 실데이터에서 드러난 문제: 구 결정론 배치가 **① 테이블 많은 스키마를 끝없는 세로 1열**로 만들고 **② 36클러스터를 세로로 쌓아 fit-all 시 전부 극소**. 개선:
+- **클러스터 내 다열 masonry**(테이블 수 기반 1~4 내부열, 최단열 배치로 높이 균형) — 24테이블 스키마가 24행→8행×3열. 펼친 테이블(컬럼 포함)도 masonry 높이에 반영돼 인접열과 무겹침.
+- **가변폭 클러스터 shelf-packing**(좌→우 채우고 폭 초과 시 다음 행) — 클러스터를 넓고 낮게 펼쳐 가로 활용 극대화, fit 가독성↑.
+- 검증: WSL-headless-harness(14 클러스터, 테이블 1~24, 확장 포함) 전 플로우 PASS·에러 0. cache-buster `admin.js?v=20260702-graph-g6b`.
 
 ---
 

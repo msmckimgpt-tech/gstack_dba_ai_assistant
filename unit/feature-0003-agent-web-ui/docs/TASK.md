@@ -8,6 +8,31 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260702-aiops-activity-paging — AI 운영 현황 '최근 활동' 과거 기록 페이징 + main agent latency 계측 (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
+- 트리거(사용자): "'최근 활동'을 페이징하여 과거기록도 조회할 수 있도록 구성해주세요." + "이전 작업에서 확인했던 남은 발견 사항도 진행" (finding #1 agent_core latency).
+- 구성:
+  1. **활동 페이징**(feature-0003): 기존 최근 활동 feed 는 최근 30건만 표시 → cursor(id) keyset 페이징 추가. 신규 `GET /api/admin/ai-ops/activity?cursor=<id>&limit=<1~100>`(console.aiops.read) 가 `WHERE id < cursor ORDER BY id DESC LIMIT n+1` 로 더 오래된 활동 조회(OFFSET 아닌 안정 keyset). overview 는 최신 페이지 + `activity_next_cursor` 반환. 프론트 '더 보기' 버튼이 append.
+  2. **agent_core latency**(finding #1, feature-0002): main agent 경로(`agent_core._call_llm`, task='agent')는 LLM 볼륨 최대인데 중앙 래퍼를 안 거쳐 latency 가 비어 있던 gap 보완 — create 직후 latency_ms 를 `_record_llm_usage` 에 함께 전달(래퍼 경로와 동일 순수 왕복 규약, best-effort try/except).
+  3. **finding #3**: 스크롤 PB-0008 라이브 PASS 결과를 TEST.md 에 기록. (finding #2 datasource circuit_open 은 환경 이슈 — 코드 무관, 미대상.)
+- Completion Checklist:
+  - [x] `routers/ai_ops.py`: `_query_activity`(cursor keyset 헬퍼, id DESC) + 신규 `/api/admin/ai-ops/activity` 엔드포인트(권한·부분 degrade) + overview `activity_next_cursor`.
+  - [x] `agent_core.py`: `_call_llm` create 직전 perf_counter → `_record_llm_usage(latency_ms=...)`. (cross-unit feature-0002)
+  - [x] `static/admin.js`: `aiOpsActivityRowsHtml`(공용 esc row) + `loadAiOpsMoreActivity`(cursor append) + renderAiOps '더 보기' 버튼 + 배선. `static/admin.html`: cache-buster `admin.js?v=20260702-aiops-activity-paging`.
+  - [x] 단위테스트 `test_ai_ops.py` 15/15(신규 5: _query_activity cursor/next_cursor·엔드포인트 degrade·권한 403). 회귀 66 PASS. route-parity 골든 **194→195**(신규 activity 라우트). node --check(admin.js). py_compile 전체.
+  - [x] §18.8 적대 패널(2-렌즈 AGENT-TEAM: backend BLOCKING 0/NIT 4 + frontend BLOCKING 1 흡수/NIT 2) → REV-20260702T180000-aiops-activity-paging.
+  - [ ] PB-0008 Windows-browser: '더 보기' 클릭 → 과거 활동 append 실측 + agent latency 기록 확인 — 배포 후.
+  - [ ] verify-completion PASS → commit → PR/merge → web 재배포(deploy_scope: included) → PB-0008.
+
+## TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤 구성 (Minor §12.3 — feature-0003 프론트 CSS 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 트리거(사용자): "내용이 화면 너머까지 출력되고 있지만 해당 화면을 볼 방법이 없습니다 — 화면 내 세로 스크롤을 구성해주세요." AI 운영 현황 패널(배너+축+KPI+Attention+카테고리표 13행+활동feed+커버리지)이 길어 admin-shell(overflow:hidden+100vh) 뷰포트 아래로 넘치는데 pane 에 세로 스크롤이 없어 하단(카테고리표·커버리지)에 도달 불가. PB-0008 스크린샷에서도 커버리지 잘림 관측.
+- 근본원인: `styles.css` 의 pane 세로 스크롤 규칙(TASK-0167 — dashboard/usage/release-notes 처럼 list-detail 아닌 단순 세로 흐름 pane 에 `overflow-y:auto`)에 `ai-ops` pane 이 누락. (다른 pane 은 내부 admin-list 가 스크롤하거나 이 규칙에 포함돼 있어 정상.)
+- Completion Checklist:
+  - [x] `static/styles.css`: pane 세로 스크롤 셀렉터에 `.admin-pane[data-admin-pane="ai-ops"].is-active` 추가(dashboard/usage 와 동일 `overflow-y:auto; overflow-x:hidden`). brace balanced.
+  - [x] `static/admin.html`: cache-buster `styles.css?v=20260702-aiops-scroll` bump(CSS 실변경).
+  - [x] §18.8 패널 [SKIPPED:minor-css-scroll] — 2줄 CSS 셀렉터 추가(신규 로직 0, 기존 검증된 규칙에 pane 편입), 라이브 PB-0008 이 정본. REV-20260702T170000-aiops-scroll.
+  - [ ] PB-0008 Windows-browser 실측(패널 세로 스크롤 동작 + 하단 커버리지 도달) — 배포 후 라이브.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included) → 배포 후 스크롤 실측.
+
 ## TASK-20260702-metadata-perm-hier — 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3 — feature-0003 프론트 단독, RBAC enforcement/스키마/백엔드/엔드포인트 무변경 · UI 표시 계층만)
 - 트리거(사용자): "다른 권한 구성과 같이 종속적인 관계가 정합하도록 구성. `지식베이스 > 메타데이터` 권한이 다른 권한 포맷과 차이 확인."
 - 진단: `admin.js` `PERMISSION_DEPENDENCIES`(UI progressive-disclosure 표시 계층, enforcement 아님)에서 다른 관리 그룹은 "그룹 게이트(read)→세부(manage)" 2단 계층인데 메타데이터(kb)만 평면(5개 metadata.* 전부 console.access 직속 + 묶음 kb.ingest.manual 은 맵 부재 고아). → kb 그룹만 flat 나열.
@@ -5135,3 +5160,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS + vm 로드 generated=2026-07-01·07-01 블록 7항목(2 improved/admin·3 new/admin·1 fixed/admin·1 fixed/work) + 스키마(type/area/title/detail) 정합. 06-30 블록 10항목 보존.
 - [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260630b-rn-0630`→`?v=20260701-rn-0701` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘). verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·배포는 cron wrapper 소관(deploy_scope: included). META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit.
 - [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트는 콘텐츠 데이터/캐시버스터 변경만(렌더 로직 불변) — 본 무인 cycle 은 인터랙티브 Windows-browser 브리지 미가동, 배포는 wrapper 소관(post-merge). 원천 UI 변경(그래프 뷰·convswitch)은 각 feature cycle 이 07-01 PB-0008 PASS 기록(graphview-render·graphview-webgl-labels·convswitch-opacity-guard). 사유는 TEST.md §3 Windows-browser Run 에 기록(CHECK#13).
+
+### TASK-20260702T021700-attach-count-scope — "+" 메뉴 "첨부파일 목록" 개수 배지 대화 전환 후 stale 수정 (Minor §12.3, frontend-only, /_template:entry arg-given, 2026-07-02)
+- 트리거: 사용자 보고 — assistant 에 첨부 파일을 전달한 뒤 다른 대화창으로 전환해도 "+" 메뉴 "첨부파일 목록" 우측 개수 배지가 이전 대화의 첨부 개수를 그대로 표시(오른쪽 첨부 패널은 "첨부 파일이 없습니다" 로 정상 — 배지만 stale). 근본원인: 배지 setter 는 `_renderAttachmentPills()` 유일인데 switchConversation 외 컨텍스트 진입/전환/삭제-랜딩 경로가 재렌더 훅 누락.
+- [x] **근본원인 특정**: `#composerAttachCountBadge` setter = `_renderAttachmentPills`(app.js:7344/:7349) 유일 확인(grep). `_loadConversationAttachments` 호출 site = switchConversation(:5883) 단 1곳 → 비-switch 진입 경로 stale.
+- [x] **pending 진입 2경로 수정**: `beginPendingConversation`(:5907, "새 대화")·`_switchToPendingConversationContext`(:5939, pending 항목 클릭) 의 `renderComposer()` 뒤 `_renderAttachmentPills()` 추가.
+- [x] **삭제/보관/나가기 랜딩 갭 수정**(적대검증 MAJOR 적발): `loadHistory` 두 exit(빈 early-return·정상 종료)에 `_renderAttachmentPills()` 추가 → `refreshWorkspace`→`loadConversations`→`loadHistory` 로 랜딩하는 `deleteConversation`/`bulkDeleteConversations`/`leaveConversation` 전량 커버(loadHistory = switchConversation·refreshWorkspace 공통 sink, switchConversation 은 직후 `_loadConversationAttachments` 재확정).
+- [x] **캐시버스터**: `index.html` `app.js?v=20260701-convswitch-opacity-guard`→`?v=20260702-attach-count-scope`(정적 자산 유일 전파 메커니즘).
+- [x] **정적 검증**: `node --check app.js` PASS. §18.8 적대검증 REV-20260702T021700-attach-count-scope — 초기 FAIL(MAJOR 1: delete/leave 갭 + MINOR 1: logout 비가시) → loadHistory 수정 반영 후 정합(BLOCKING 0), logout 은 재로그인 자동정정이라 무수정 확인. MODIFY/REVIEW/TEST/REPORT 갱신.
+- [ ] **PB-0008 Windows-browser 시각 검증**: client-JS baked(재배포 전 라이브 미서빙) + relay 라이브검증은 사용자 실 Chrome 점유 필요 → **배포 후 사용자 실화면 확인**(① 첨부 후 새 대화 클릭 시 배지 비움 ② 다른 대화 전환 시 그 대화 개수/비움 ③ 첨부 대화 보관·나가기 후 배지 잔류 안 함). 사유는 TEST.md §3 Windows-browser Run 기록(CHECK#13).
+- [ ] verify-completion --pre-commit PASS → commit → push → PR → main merge → cycle-finalize → web 재빌드·재배포(deploy_scope: included, frontend-only → web 이미지) → /healthz.

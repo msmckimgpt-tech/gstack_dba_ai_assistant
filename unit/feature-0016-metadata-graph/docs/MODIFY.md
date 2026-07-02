@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260702-node-haiku-deploy
+- Date: 2026-07-02
+- Related Requirement: node-analysis-haiku(CHG-20260702-node-analysis-haiku-model)의 배포 게이트 T22.7 완수 — 사용자 "랜딩+배포" confirm 승인.
+- Summary: PR #535 main 병합(617e9a74) 후 라이브 배포. `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영 + insight-worker 이미지 재빌드(새 코드 baked)·`--no-deps --force-recreate` 재기동(healthy). smoke 실증(env 격리·config 값·라우팅 소스·클린 기동). 코드/스키마 변경 없음 — 배포 실행 + 정본 doc-status 갱신(TASK T22.7 완료 표시·T22.8 사용자 실검증 잔여, REPORT 배포 결과).
+- Files:
+  - `repo/.env` (런타임, non-versioned) — `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 추가
+  - `unit/feature-0016-metadata-graph/docs/{TASK,REPORT}.md` (배포 완료 기록)
+- Impact: 운영 insight-worker 가 그래프 관계 분석을 claude-haiku 로 실제 라우팅. 외부 API 비용 발생 시작(예산 캡 경계). web/ask-worker·데이터·스키마 무영향.
+- Rollback Notes: `.env` `AGENT_NODE_ANALYSIS_MODEL=edge` override 후 insight-worker 재기동(즉시 gemma 환원) 또는 CHG-20260702-node-analysis-haiku-model 코드 revert.
+
 ## CHG-20260701T220000-ai-claude-feature-0016-graph-perf2
 - Date: 2026-07-01
 - Related Requirement: WebGL 배포 후 사용자 육안 후속 3건 — (1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌 **원형 뭉치(blob)**, (4) 휠 확대/축소 너무 느림. (2 라벨유지는 OK.)
@@ -277,24 +287,63 @@ source_of_truth: true
   검증: WSL-headless-harness(실 마크업+mock API) 전 플로우 PASS·에러 0(TEST.md). 배포=web 재빌드(정적 자산). 완료 게이트=PB-0008 실 Windows 시각검증.
 - Rollback Notes: admin.html 스크립트를 cytoscape 4종으로 환원 + admin.js/styles.css git revert + cache-buster 이전값. 데이터·API 무손상(렌더 계층만).
 
+## CHG-20260702-graph-g6b-masonry-layout
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청(라이브 PB-0008 후) — 그래프 뷰 기본 디자인·노드확장 가시성·UX 개선. 실데이터(236노드/36클러스터)에서 구 배치의 세로 과길이·fit 극소 문제 관측.
+- Summary: `_metaG6Build` 레이아웃 재작성 — (1) **클러스터 내 다열 masonry**(테이블 수 기반 1~4 내부열, 최단열 배치로 높이 균형; 펼친 테이블 컬럼 높이 반영), (2) **가변폭 클러스터 shelf-packing**(좌→우, 폭 MAXROWW 초과 시 래핑). 끝없는 세로 1열·fit 극소 해소, 자연정렬·제자리 펼침·"−" 접기 불변.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 배치 로직 masonry+shelf-pack, `_METLAY` 보강)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-g6b`)
+  - `unit/feature-0016-metadata-graph/docs/{REPORT,TEST,TASK}.md`
+- Impact: 프론트 렌더 계층만(데이터 API 불변). 검증: WSL-headless-harness(14클러스터 스케일 mock, 확장 포함) 전 플로우 PASS·에러 0 + 라이브 PB-0008(실 Windows, 236노드) 확인. 배포=web 재빌드.
+- Rollback Notes: `_metaG6Build` git revert(단일 세로열 배치로 환원) + cache-buster graph-g6. 데이터·API 무손상.
+
+## CHG-20260702-graph-perf-bg-nonblocking-expand
+- Date: 2026-07-02
+- Related Requirement: 사용자 관찰 — 관리콘솔 > 메타데이터 > 그래프 뷰에서 테이블 노드 선택→펼침 시 브라우저 렌더 엔진 프리즈. "병목 구간 백그라운드화 + 별도 성능 이슈 추가 검증" 요청. 정본: DECISIONS ADR-005.
+- Summary: 그래프 뷰 펼침 임계경로를 논블로킹화하고 반복 병목을 제거. (FE) ① 논블로킹 파이프라인 — busy(teal 점선) 페인트 후 double-rAF(`_metaYieldPaint`) 양보 → fetch·`setData`+`draw`; ② stale-render 무효화 토큰 `_opSeq`(await 경계마다 대조, **`_metaGraphResetModel`·`_metaGraphLoadRoots` 도 게이팅**); ③ O(1) 펼침 인덱스 `colsByTable`(전 노드 O(N) 스캔 제거); ④ `_metaGraphRefreshStates` 변화분-only + `startBatch`; ⑤ busy 를 `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState` 로 표현(폴 덮어쓰기·rebuild 재-bake·`_stateCache` 불일치 차단). (BE) ⑥ `/api/admin/metadata/graph/columns` introspection 성공 결과를 `(scope_key, fqn)` 키 프로세스-로컬 TTL 캐시(기본 300s, 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`/graph/columns` TTL 캐시 `_COLUMNS_CACHE*` + get/put/ttl 헬퍼 + 엔드포인트 캐시-히트 early-return; +65)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraph` 모델에 `colsByTable`/`_opSeq`/`_stateCache`/`_busyKeys` + `_metaStateSig`/`_metaApplyState`/`_metaSetBusy`(소유권)/`_metaYieldPaint` + `_metaG6Build` 레이아웃 Pass1(collapsed 배정)/Pass2(real push-down) + toggle/expand 논블로킹·seq 가드 + `_metaGraphResetModel`/`_metaGraphLoadRoots` opSeq 게이팅 + `_metaTableHasCols` O(1) + `_metaGraphRefreshStates` diff+batch + `_metaGraphSetSelected` `_metaApplyState` 경유; +215/−51)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260702-graph-perf-bg`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-005),TASK(§22),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 렌더/상호작용 계층 + BE 라우터 캐시 층만. 데이터 API 계약·그래프 스키마 **불변**. 권한/스코프 격리 불변(캐시-히트는 `Depends(require_permission)` 해소 후, 페이로드=물리 스키마만). 캐시=프로세스-로컬 → **마이그레이션 없음**(alembic 병렬 충돌 회피). 검증: §18.8 적대 패널(3렌즈 + 5-agent 재검증 + reset-vs-reset 후속) 4+1 BLOCKING 수정·재검증 PASS(REVIEW REV-20260702T120000). 배포=web 재빌드(정적 자산) — BE 캐시는 기존 web 프로세스에 포함. 완료 게이트=PB-0008 실 Windows 시각검증(펼침 무프리즈 + busy 피드백).
+- Rollback Notes: admin.js/admin_metadata.py git revert + cache-buster 이전값(graph-g6b). 데이터·API·스키마 무손상(렌더/캐시 계층만). BE 캐시만 비활성화하려면 env `METADATA_GRAPH_COLUMNS_CACHE_TTL=0`.
+
+## CHG-20260702-node-analysis-haiku-model
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청 — 관리콘솔 그래프뷰 "각 관계를 분석하는 LLM" 을 claude-haiku 로 작동하도록 구성. 로컬 gemma(edge) 로 작동하던 것은 의도하지 않은 구조. (범위 결정 2026-07-02: **그래프 관계 분석만** — schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL` 유지.)
+- Summary: 그래프 노드 능동 분석(`llm_node_analysis`)이 4개 insight 함수와 공유하던 `AGENT_INSIGHT_MODEL`(운영 `.env`=`edge`=로컬 gemma)에 묶여 gemma 로 작동. 전용 config **`AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`)** 을 신설해 그래프 관계 분석만 claude-haiku 로 분리 라우팅. `.env` 미설정 시에도 기본 claude-haiku 로 동작(=의도한 구조). 저장·표시용 model 라벨도 동일 순서로 해석해 상세 패널이 실제 사용 모델을 표시.
+- Files:
+  - `shared/config.py` (`AGENT_NODE_ANALYSIS_MODEL` 신설 + `__all__` 노출)
+  - `unit/feature-0002-agent-core/src/modules/llm.py` (`llm_node_analysis` 모델 라우팅 = `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL`)
+  - `unit/feature-0002-agent-core/src/modules/node_analysis.py` (`process_pending` 저장 model 라벨 동일 순서 해석)
+  - `unit/feature-0002-agent-core/tests/test_llm_env_naming.py` (전용 모델 기본값/override/공백폴백/노출 회귀 테스트 4건)
+  - `unit/feature-0016-metadata-graph/docs/{REPORT,TASK,MODIFY,REVIEW}.md`
+- Impact: 백엔드 모델 라우팅 계층만. schema/table/account insight·에이전트 추론·요약 등 다른 LLM 경로 불변(격리 확인). **외부 API 비용 발생**(그래프 노드 분석이 로컬 무료 gemma → Bedrock claude-haiku 유료 호출). 비용은 기존 node_analysis 예산 캡(depth_budget/node_budget/dedupe)으로 경계. 반영 조건: 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본값과 동일이므로 선택적·명시 권장) + **insight-worker 재빌드·재기동**(코드 baked). 기존 저장된 분석은 이전 model 라벨(gemma) 유지, 신규 run 부터 claude-haiku.
+- Rollback Notes: `AGENT_NODE_ANALYSIS_MODEL=edge` 로 .env override(즉시 gemma 환원, 재기동만) 또는 3개 코드 파일 git revert. 데이터·스키마 무손상(마이그레이션 없음).
+
 ## CHG-20260702T114500-graph-initview
 - Date: 2026-07-02
 - Related Requirement: 사용자 보고 — 스키마 클러스터 내 테이블·컬럼 노드가 많을 때 초기 전체-fit 과도 줌아웃으로
-  초반 가시성 붕괴. 다각도 검토 후 사용자 결정 "Phase 1+2 통합"(TASK §22, PLAN-APPROVED 2026-07-02).
-- Summary: 그래프 뷰 초기 진입을 **스키마-우선(카드+테이블수 배지 → per-schema lazy 펼침)** 으로 재설계하고,
-  클러스터 내부 테이블 **다열 wrap** + grid **shelf packing**(캔버스 종횡비 근사)으로 밀도를 높이고,
-  **판독 줌 클램프**(fit 후 0.55 하한·1.0 상한, zoomRange [0.05,4]) + 이웃확장 **앵커 국소 focus** 로 줌아웃
-  재발을 차단하고, **미니맵·줌 툴바·스키마 점프** 를 추가. 스키마 key 의 카드(노드)↔combo 동일-id 타입 전환이
-  G6 setData diff 에서 자식 유실을 일으키는 결함을 `SC:` id 네임스페이스로 차단.
+  초반 가시성 붕괴. 다각도 검토 후 사용자 결정 "Phase 1+2 통합"(TASK §24, PLAN-APPROVED 2026-07-02).
+- Summary: 그래프 뷰 초기 진입을 **스키마-우선(카드+테이블수 배지 → per-schema lazy 펼침, "XS:" 접기)** 으로
+  재설계하고 **판독 줌 클램프**(fit 후 0.55 하한·1.0 상한, zoomRange [0.05,4]) + 이웃확장 **앵커 국소 focus** 로
+  줌아웃 재발을 차단, **미니맵·줌 툴바·스키마 점프** 추가. 레이아웃 밀도(다열)는 병렬 머지된 graph-g6b(#533)
+  masonry 를 채택(자체 구현 폐기)하고 graph-perf-bg(#537) `_opSeq` 세대에 ExpandSchema 를 편입(교차 스코프
+  오염·stale 렌더 차단). 카드↔combo 동일-id 타입 전환의 G6 setData diff 자식 유실은 `SC:` id 네임스페이스로 차단.
 - Files:
-  - `unit/feature-0002-agent-core/src/modules/metadata_graph.py` (`scope_schemas` count 집계·`schema_tables` truncated 신설)
+  - `unit/feature-0002-agent-core/src/modules/metadata_graph.py` (`scope_schemas` count 집계·limit+1 truncated·집계실패
+    배지강등 / `schema_tables` truncated 신설)
   - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`?mode=schemas`/`?schema=` 분기 — 신규 route 0)
-  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 카드 게이팅+wrap+packing, `_metaGraphFitClamped`,
-    `_metaGraphExpandSchema`/`CollapseSchema`, renderedIds 매핑, minimap/zoomRange/툴바/점프 바인딩)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 카드 게이팅(masonry 통합)·`SC:`/`XS:` 라우팅·
+    `_metaGraphExpandSchema`/`CollapseSchema`/`ShowClusterDetailLocal`·`_metaGraphFitClamped`·renderedIds 매핑·
+    minimap/zoomRange/줌툴바/점프 바인딩·검색/이웃 스키마 자동펼침)
   - `unit/feature-0003-agent-web-ui/src/static/admin.html` (툴바 줌컨트롤·점프 select·범례; cache-buster `?v=20260702-graph-initview`)
   - `unit/feature-0003-agent-web-ui/src/static/styles.css` (줌 툴바·스키마카드 범례·minimap 카드 CSS)
-  - `unit/feature-0016-metadata-graph/docs/{TASK(§22),REPORT,TEST,REVIEW,MODIFY}.md`
-- Impact: 비파괴 additive — 기존 API 3모드(q/node/scope) 응답 shape 불변, 신규 쿼리 파라미터만 추가.
-  혼합버전 안전: 구 백엔드 + 신 admin.js 는 mode 무시 응답을 카드 게이팅이 흡수(강등 동작), 구 admin.js + 신
-  백엔드는 기존 scope_roots 경로 그대로. 인증/데이터 파괴 없음. 배포=web 재빌드(정적 자산+라우터).
-- Rollback Notes: git revert(프론트 3파일 + 백엔드 2파일) + cache-buster 이전값(graph-g6). 데이터·그래프 무손상.
+  - `unit/feature-0016-metadata-graph/{docs/*,tests/test_metadata_graph_units.py}` (§24·검증 기록·graceful 단위테스트)
+- Impact: 비파괴 additive — 기존 API 3모드(q/node/scope) 응답 shape 불변(`truncated` 필드만 추가), 신규 쿼리
+  파라미터만 추가. 혼합버전 안전: 구 백엔드+신 admin.js 는 mode 무시 응답을 카드 게이팅이 흡수(강등 동작,
+  loaded 미마킹으로 재시도 보존), 구 admin.js+신 백엔드는 기존 scope_roots 경로 그대로. 인증/데이터 파괴 없음.
+  배포=web 재빌드. 1·2차 적대 리뷰/검증 전건 반영(REVIEW.md), stale-base(23커밋) merge 재정합 포함.
+- Rollback Notes: git revert(프론트 3파일+백엔드 2파일) + cache-buster 이전값(graph-perf-bg). 데이터·그래프 무손상.

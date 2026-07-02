@@ -1,6 +1,6 @@
 {
-  "total_routes": 194,
-  "api_routes": 193,
+  "total_routes": 195,
+  "api_routes": 194,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -1346,6 +1346,13 @@
     },
     {
       "path": "/api/admin/products/{product_id}/prompt/generate/stream",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/ai-ops/activity",
       "methods": [
         "GET"
       ],

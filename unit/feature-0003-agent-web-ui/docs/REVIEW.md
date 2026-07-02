@@ -4396,3 +4396,27 @@ source_of_truth: true
   - [수용·기록] R1-NIT3 프론트 days 미전달(v1 고정 7일 window, 새로고침 재조회) — UX 한계, correctness 무관. v1 수용.
   - [수용·기록] R3 원거리 주의: (a) 부분 degrade 의 `_pg_connect_ro(autocommit=True)` 기본값 암묵 의존 — autocommit=False 리팩터 시 부분 degrade 붕괴, 회귀 게이트로 명시. (b) `_parse_kv_timestamp` space+offset aware 반환은 heartbeat writer 포맷 변경 시 TASK-0169 재발 원거리 함정(현재 writer=utc_now_iso T-separated 라 미도달).
 - 실측: tests/test_ai_ops.py 10/10 · 회귀 permission 16/dashboard 20/usage 28 PASS · 전체 collection 무오류 · migrate-lint expand-safe · py_compile 전체 · node --check(admin.js/mjs). PB-0008 Windows-browser= 배포 후 라이브(TEST.md).
+
+## REV-20260702T170000-aiops-scroll [SKIPPED:minor-css-scroll] (TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤, Minor §12.3 — feature-0003 프론트 CSS 단독)
+- Panel skip 사유(§18.8): 변경은 `styles.css` 의 기존 검증된 pane 세로 스크롤 규칙(TASK-0167, dashboard/usage/release-notes) 셀렉터에 `ai-ops` pane 1개 편입(2줄) + cache-buster bump. 신규 로직 경로 0, 백엔드/RBAC/스키마/엔드포인트 무변경, 핵심경로 인접 0 → §18.8 dispatch 키워드 미매칭. 실 스크롤 동작은 라이브 PB-0008 이 정본.
+- 검증: CSS brace balanced(1701/1701). `.admin-pane[data-admin-pane="ai-ops"].is-active` 가 dashboard/usage 와 동일 `overflow-y:auto; overflow-x:hidden` 상속 확인. node --check 무관(CSS). PB-0008 Windows-browser 세로 스크롤 + 하단 커버리지 도달 실측 = 배포 후(TEST.md).
+- Cross-ref: aiops-panel(REV-20260702T140000) 후속 UX 보정 — 패널 콘텐츠가 뷰포트 초과 시 하단 미도달 사용자 리포트.
+
+## REV-20260702T021700-attach-count-scope [SUBAGENT:adversarial-correctness] (TASK-20260702T021700-attach-count-scope — "+" 메뉴 첨부 개수 배지 대화 전환 후 stale 수정, Minor §12.3 — feature-0003 프론트 단독, /_template:entry arg-given)
+- Trigger(§18.8): UI 상태·렌더 흐름 단일 렌즈(frontend) — `static/app.js` 대화 컨텍스트 전환 시 `#composerAttachCountBadge` 동기화. 스키마/RBAC/API/엔드포인트 0.
+- 적대 코드리뷰(작업트리 diff 정독 + `_renderAttachmentPills`/`_composerAttachmentKey`/`_ensureComposerBucket`/`loadHistory`/`loadConversations`/`refreshWorkspace`/모든 `state.activeConversationId=` write-site trace, 앱 미실행 정적) → **초기 VERDICT: FAIL (BLOCKING 0, MAJOR 1, MINOR 1)** → 지적 수정 반영 후 정합.
+  1. 근본원인 확정 — 배지 setter 는 `_renderAttachmentPills`(:7344 clear/:7349 set) 유일(grep `composerAttachCountBadge` = getElementById + fix 주석 외 setter 0). `_loadConversationAttachments` 호출 site 는 `switchConversation`(:5883) 단 1곳 → 비-switch 진입 경로가 배지 stale.
+  2. key 해소 정확 — `beginPendingConversation`(""+fresh sentinel→byConv[fresh] undefined→items=[]→배지 "") · `_switchToPendingConversationContext`(""+entry.sentinel→해당 bucket 개수 또는 "") 모두 올바른 컨텍스트로 해소.
+  3. 부작용 무해 — `_renderAttachmentPills` 는 empty 시 사이드 패널 hide, non-empty 시 innerHTML 재구성만; 강제 open 없음(:7347 설계 주석). 전환 시 직전 대화 패널이 열려 있었으면 정정-hide = 이득.
+  4. **[MAJOR — FIXED]** 완결성 갭: `deleteConversation`(:6693)·`bulkDeleteConversations`(:5120/:5165-5180)·`leaveConversation`(:6737) 이 `refreshWorkspace`→`loadConversations`→`loadHistory` 로 랜딩하는데 이 3함수 어디도 배지 재렌더 미호출 → 활성 대화 보관/나가기 후 삭제된 대화 개수 잔류(동일 stale class, fix 자체 이론 대비 불완전). **수정**: `loadHistory` 두 exit(빈 early-return :5556-5564 + 정상 종료 :5629)에 `_renderAttachmentPills()` 추가 — loadHistory 가 switchConversation·refreshWorkspace 공통 sink 이라 단일 지점으로 delete/leave/empty 전량 커버(switchConversation 은 직후 `_loadConversationAttachments` 재확정 — 무해 선-렌더). `node --check` 재확인 PASS.
+  5. **[MINOR — 무수정 확인]** `handleLogout`(:8997) 배지 미클리어. auth 오버레이 뒤라 비가시 + 재로그인 시 refreshWorkspace→loadHistory(수정된 exit) 로 자동 정정 → 사용자 미노출·자동 해소라 무수정(카고컬트 방지).
+  6. ordering/timing — `renderComposer(); _renderAttachmentPills();` 동기 연속(사이 await 없음), pending 경로는 convId 없어 서버 fetch race 없음. focus()/startElapsedTimer() 앞 배치 정합.
+- 라이브 실측(정본 분리, §정직): 적대 패널은 정적 코드 정합만 검증. 실 화면(첨부 후 대화 전환·새 대화·삭제/나가기 랜딩 시 배지 정정)은 **PB-0008 Windows-browser = 배포 후 사용자 실화면 확인**(baked 정적 자산이라 pre-commit 시 라이브 미서빙 + relay 라이브검증은 사용자 실 Chrome 점유 필요 — TEST.md §3 Run 미수행 사유 기록). `node --check app.js` PASS.
+
+## REV-20260702T180000-aiops-activity-paging [AGENT-TEAM:backend-agentcore-paging+frontend-paging] (TASK-20260702-aiops-activity-paging — 활동 페이징 + main agent latency, Major §12.3, cross-unit feature-0002/0003)
+- 2-렌즈 병렬 적대 패널(통과 아닌 결함 적발): 렌즈별 —
+  - **backend(agent_core hot-path + 페이징 SQL/keyset/보안)** (BLOCKING 0 / NIT 4): agent_core `_call_llm` latency 측정이 참조 wrapper 규약과 **byte-동일**(perf_counter create 직전~후, floor)·반환/control flow 무변경·best-effort 예외격리 · keyset(`WHERE id<%s ORDER BY id DESC LIMIT n+1`, id BIGSERIAL unique/immutable PK)로 dup/gap-free · SQL 인젝션 방어(cursor/limit **이중 int + %s 바인딩**, limit clamp 1~100) · 권한·`_pg_connect_ro` 부분 degrade 정합 · **`id` 컬럼 추가로 인한 cost 인덱스 시프트 회귀 없음**(r[2]/r[4]/r[5] model/prompt/completion 정확 반영) · 정보노출 0(conversation_id/run_id/프롬프트 본문 미포함). NIT 4 전부 cosmetic/무해(redundant conn param·불가능 조합·의도된 20→30 표시·BIGINT overflow degrade).
+  - **frontend(XSS·더보기 상태·엣지)** (BLOCKING 1 / NIT 2): XSS 0(공용 `aiOpsActivityRowsHtml` 이 초기+append 동일 esc, data-cursor 정수) · 재렌더 재바인딩·double-click disabled·에러 재시도(cursor 보존)·keyset off-by-one 없음 전부 CLEAN.
+- **흡수한 BLOCKING (frontend)**: **PG-degrade 오표시** — `/activity` 가 PG 미가용 시 HTTP 200 + `pg_available:false`·빈 items·next_cursor null 반환 → apiFetch throw 안 함 → 성공 경로가 "과거 기록 끝"+영구 disable 로 오인(일시 PG 장애를 히스토리 끝으로). → `loadAiOpsMoreActivity` 가 `data.pg_available===false` 를 먼저 체크해 append/종료 없이 "더 보기 (재시도)"+재활성(재시도 가능)으로 복구.
+- **흡수한 NIT (frontend)**: 타임스탬프 연도 누락(MM-DD) — 과거 페이징 시 연도 경계 모호 → `slice(0,19)` 전체(YYYY-MM-DD HH:MM:SS) + ts span 96→118px. (NIT: append 후 스크롤 큐 부재 — 수용, pane 스크롤로 신규 행 가시.)
+- 검증: `test_ai_ops.py` 15/15 + 회귀 66 PASS · route-parity 195 · node --check(admin.js) · py_compile(agent_core·ai_ops). PB-0008 '더 보기' 실측 = 배포 후(TEST.md).

@@ -407,47 +407,75 @@ source_of_truth: true
 ### 21.3 검증
 - [x] T21.6 dev-loop(WSL-headless-harness, 실 admin.html 마크업 + mock apiFetch) 전 플로우 PASS·에러 0: roots·제자리펼침·재클릭무접힘(①)·접기·검색·이웃확장·클러스터상세·AI분석·마커·점선/실선 엣지. (TEST.md)
 - [x] T21.7 §18.8 적대적 코드리뷰(subagent, g6.min.js 번들 계약 교차검증) → **PASS-WITH-FIXES**(CRITICAL/MAJOR 0, MINOR 3건 수정·재검증). REV-20260702T003000 [SUBAGENT].
-- [ ] T21.8 실앱 배포(web 재빌드) + PB-0008 실 Windows 시각검증(하드 게이트) + verify-completion(--pre-commit) PASS.
-- [ ] T21.9 commit/push/PR → main 병합 (외부영향 — confirm).
+- [x] T21.8 실앱 배포(무중단 롤링 web-a/b `8c45f070`, soak PASS) + **PB-0008 실 Windows 시각검증 PASS**(실데이터 236노드/36클러스터, 렌더·제자리펼침·"−"접기·엣지 확인) + verify-completion(--pre-commit) PASS.
+- [x] T21.9 commit/push/PR #528 → main 병합(충돌 해소).
 
-## 22. graph-initview — 초기 진입 줌아웃 가시성 개선 (2026-07-02, entry persona dispatch)
+### 21.4 UX 개선 (graph-g6b, 사용자 요청: 기본 디자인·노드확장 가시성·UX)
+- [x] T21.10 라이브 실데이터에서 관측된 배치 문제(세로 과길이·fit 극소) 해소 — **클러스터 내 다열 masonry + 가변폭 shelf-packing**(`_metaG6Build`). WSL-headless-harness(14클러스터 확장 포함) PASS. cache-buster graph-g6b. (DECISIONS ADR-004 §Consequences 연장, MODIFY CHG-20260702-graph-g6b)
+- [ ] T21.11 graph-g6b 배포 + 라이브 PB-0008 재확인.
+
+## 22. 그래프 관계 분석 LLM = claude-haiku (node-analysis-haiku, 사용자 요청 2026-07-02)
+사용자 보고: 관리콘솔 그래프뷰 "각 관계를 분석하는 LLM" 이 로컬 gemma(edge)로 작동 — 의도하지 않은 구조. claude-haiku 로 전환. 범위 결정 = **그래프 관계 분석만**(schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL` 유지).
+
+### 22.1 구현
+- [x] T22.1 근본원인 진단 — `llm_node_analysis` 가 4개 insight 함수와 공유하는 `AGENT_INSIGHT_MODEL`(운영 `.env`=`edge`=gemma)에 묶여 있음.
+- [x] T22.2 전용 config `AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`) 신설 + `__all__` 노출 (`shared/config.py`).
+- [x] T22.3 `llm_node_analysis` 모델 라우팅을 `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 로 분리 (`llm.py`); insight 3함수 불변.
+- [x] T22.4 `process_pending` 저장·표시용 model 라벨을 동일 순서로 해석 (`node_analysis.py`) — 상세 패널이 실제 사용 모델 표시.
+
+### 22.2 검증
+- [x] T22.5 회귀 테스트 4건 추가(기본값 haiku·env override·공백 폴백·`__all__` 노출) + insight 분리 확인 (`test_llm_env_naming.py`). pytest 38 pass, ruff clean, import/compile OK.
+- [x] T22.6 §18.8 적대적 코드리뷰(subagent — 격리·touchpoint 완결성·haiku 정합·폴백 안전). REVIEW.md 참조.
+- [x] T22.7 **배포 완료**(2026-07-02, node-haiku-deploy, 사용자 confirm 승인): `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영 + insight-worker 이미지 재빌드(새 코드 baked)·재기동(healthy). smoke 실증 — 컨테이너 env `NODE_ANALYSIS=claude-haiku-4`/`INSIGHT=edge`(분리 확인) + `config.AGENT_NODE_ANALYSIS_MODEL='claude-haiku-4'`·`__all__` 노출 + `llm_node_analysis` 라우팅 `_insight_model=AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 확인, 클린 기동(traceback 0).
+- [ ] T22.8 (사용자 실검증) 관리콘솔 그래프뷰 "AI 능동 분석" **신규 run 의 model 라벨 = claude-haiku** 육안 확인 — 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 run 강제 불가, 실 브라우저 확인 권장(PB-0008 계열).
+
+## 23. graph-perf-bg — 테이블 노드 펼침 논블로킹 + 성능 인덱스·상태 diff·introspect TTL 캐시 (2026-07-02, entry persona dispatch → resume 인계 완수)
+사용자 관찰: 관리콘솔 > 메타데이터 > 그래프 뷰에서 **테이블 노드 선택→펼침 시 브라우저 렌더 엔진 프리즈**. 요청: 병목 구간 백그라운드화 + 별도 성능 이슈 추가 검증. 정본: DECISIONS ADR-005, MODIFY CHG-20260702-graph-perf-bg.
+등급: **Major**(cross-cut 프론트 feature-0003 admin.js + BE admin_metadata.py 라우터 캐시; 데이터 API·스키마 불변·비파괴, 마이그레이션 없음).
+
+### 23.1 진단
+- [x] T23.1 프리즈 근본원인 확정: 펼침 임계경로가 `/graph?depth=1` + (미분석 시) `/graph/columns` **라이브 information_schema 무캐시 조회(1~5s)** 2왕복 → `setData`+`draw` 를 busy 페인트 없이 동기 진행. 부수: `_metaTableHasCols` O(N) 스캔, `_metaGraphRefreshStates` 2.5s 폴 전노드 개별 setElementState.
+
+### 23.2 구현 (FE admin.js + BE admin_metadata.py)
+- [x] T23.2 [FE] 논블로킹 파이프라인 — busy(teal 점선) 페인트 후 double-rAF(`_metaYieldPaint`) 양보 → fetch·재구성. `_opSeq` stale-render 토큰(await 경계마다 대조).
+- [x] T23.3 [FE] O(1) 펼침 인덱스 `colsByTable`(`_metaTableHasCols` 단일소스, ingest/collapse/reset 3경로 갱신) — 클릭당 전노드 스캔 제거.
+- [x] T23.4 [FE] `_metaGraphRefreshStates` 변화분-only diff + `startBatch` 일괄. busy = `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState`(요소적용·`_stateCache` signature 항상 동기화).
+- [x] T23.5 [FE] `_metaG6Build` 레이아웃 churn 분리 — Pass1(collapsed 균등높이 열배정, 펼침-불변) / Pass2(자기 열 real push-down). 형제 열-점프 제거(setData update 집합 최소화), shelf-packer 는 real h 소비(무겹침).
+- [x] T23.6 [BE] `/api/admin/metadata/graph/columns` introspection 성공결과 `(scope_key, fqn)` 프로세스-로컬 TTL 캐시(기본 300s, env `METADATA_GRAPH_COLUMNS_CACHE_TTL`, 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성). 권한 dependency 해소 후 캐시-히트.
+- [x] T23.7 [FE] cache-buster `admin.js?v=20260702-graph-perf-bg`.
+
+### 23.3 검증
+- [x] T23.8 `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS. leftover 디버그 마커 0.
+- [x] T23.9 **§18.8 적대 검증** — 3렌즈 패널(race/index-drift/layout+cache) → **4건 BLOCKING 적발**(reset 경로 `_opSeq` 미증가로 stale-render·colsByTable 포이즌, seq-mismatch busy 잔류, 폴이 busy 제거+`_stateCache` 불일치). 5-agent 워크플로 재검증 → 4건 CLOSED + **신규 BLOCKING 1건**(loadRoots reset-vs-reset) 적발. loadRoots seq 가드 추가 후 최종 재검증 → **reset-vs-reset 6조합 CLOSED·신규 회귀 없음**. NIT(동시-key busy 깜빡임·후행 syncMarkers stale 텍스트·BE 캐시키 대소문자 등)은 수용 기록. REV-20260702T120000 [AGENT-TEAM].
+- [ ] T23.10 graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 시 무프리즈 + busy teal 피드백 + 반복 펼침 즉시응답).
+
+## 24. graph-initview — 초기 진입 줌아웃 가시성 개선: 스키마-우선 진입 (2026-07-02, entry persona dispatch)
 사용자 보고: 스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit 이 지나친 줌아웃을 만들어
-초반 가시성이 붕괴. 다각도 검토(5축 A~E) 후 사용자 결정 **Phase 1+2 통합**(2026-07-02, AskUserQuestion):
-줌 클램프(A) + 레이아웃 밀도(B) + 스키마-우선 진입(C1) + 미니맵/줌툴바/스키마점프(E1~E3).
-등급: **Major**(cross-cut — 코드 거주 feature-0002 `metadata_graph.py`·feature-0003 `admin.js` 외 4파일,
-데이터 파괴 없음·기존 쿼리면 하위호환). ADR-004 결정론(무-shuffle·제자리) 불변식 보존, force 재도입 금지.
+초반 가시성 붕괴. 5축(A 뷰포트/B 밀도/C 정보위계/D 큐레이션/E 내비게이션) 검토 후 사용자 결정
+**Phase 1+2 통합**(AskUserQuestion 2026-07-02). 등급 **Major**(cross-cut — 코드 거주 feature-0002/0003).
+병렬 세션 정합: 착수 base(15e0befc)가 main 대비 23커밋 stale — **B축(다열·shelf-packing)은 병렬 머지된
+graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-perf-bg(#537)의 `_opSeq`/busy/_stateCache
+기계와 세대 가드를 통합(merge 재정합, §13.1 재번호 §22→§24).
 <!-- PLAN-APPROVED by user on 2026-07-02 (AskUserQuestion: "Phase 1+2 통합" 선택) -->
 
-### 22.1 Implementation Plan (§7.1)
-- 백엔드 `unit/feature-0002-agent-core/src/modules/metadata_graph.py`:
-  - `scope_schemas(scope)` 신설 — Schema 노드 + per-schema `table_count` 집계 (진입 뷰 경량화, 91 스키마 전체 가능).
-  - `schema_tables(scope, schema_key, limit)` 신설 — 지정 스키마의 Table 만 반환 (per-schema lazy, cap 유지).
-  - AC: 기존 `scope_roots`/`search_nodes`/`neighborhood` 시그니처·동작 불변 (하위호환).
-- 라우터 `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` `admin_metadata_graph`:
-  - `?scope=&mode=schemas` → scope_schemas / `?scope=&schema=<key>` → schema_tables 분기 추가. 신규 route 없음
-    (route-parity 골든 불변). AC: 기존 3모드(q/node/scope) 응답 shape 불변.
-- 프론트 `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraph*` 블록):
-  - C1: roots = 스키마 카드(rect 노드 + "테이블 N" 배지). 클릭 = 클러스터 상세 + lazy 테이블 로드 → combo 로 승격
-    (제자리, fit 없음). "−" ctl(`XS:` prefix) 로 카드 복귀. `_metaGraph.schemaExpanded:Set` + `tableCount` 모델 확장.
-  - B1: combo 내부 테이블 다열 wrap(테이블 블록=테이블행+펼친컬럼, 열수는 블록수·높이 기반) — 자연정렬 열-우선 채움.
-  - B2: 고정 3열 grid → shelf packing(행 목표폭 = 콘텐츠 총면적×캔버스 종횡비 근사, 자연정렬 순서 보존).
-  - A1/A2: Graph `zoomRange:[0.02,4]` + `_metaG6Apply(fit)` 후 `getZoom()<0.5` 면 `zoomTo(0.5)`+첫 요소 focus.
-  - A3: 이웃확장(`_metaGraphExpand`)은 전체 fit → anchor `focusElement` 국소 focus 로 전환. resizer/토글 refit 동일 클램프.
-  - E1~E3: minimap 플러그인(번들 실증 후 채택/불가 시 생략 기록), 줌 툴바(+/−/전체/100%), 스키마 점프 select.
-  - AC: 200 테이블 mock 에서 초기 줌 ≥ 0.5 판독선, 스키마 카드 진입 → 클릭 펼침 e2e, 기존 검색/컬럼펼침/마커 회귀 0.
-- `admin.html`(툴바 마크업·범례) + `styles.css`(툴바·배지) + cache-buster `?v=20260702-graph-initview`.
-- 검증: node --check → Playwright headless harness(mock apiFetch, 대규모 200테이블 fixture) → verify-completion
-  → 배포(deploy_scope: included) → PB-0008 실 Windows 시각검증(check #13, §21 T21.8 미완분 통합 수행).
-
-### 22.2 진행
-- [x] T22.1 백엔드 scope_schemas(count 집계, 집계실패 시 배지없는 카드 강등)/schema_tables(truncated) + 라우터 분기(신규 route 0).
-- [x] T22.2 프론트 C1 스키마-우선 진입 — 카드(`SC:`+key)↔combo(id=key) 분리 id(동일-id 타입전환 setData diff 자식유실
-      결함을 harness 로 적발·수정)·per-schema lazy(`schemaLoaded` 재펼침 무-refetch)·"XS:" 접기·검색/이웃 자동펼침·
-      단일 스키마 자동 펼침. renderedIds 매핑으로 미렌더 setElementState async reject 수정.
-- [x] T22.3 프론트 B1/B2 다열 wrap(열수≈√(totalH/SW), 채움 시뮬레이션 치수 확정) + shelf packing(면적×종횡비 목표폭, 자연정렬 보존).
-- [x] T22.4 프론트 A1/A2/A3 zoomRange [0.05,4]·fit 클램프(0.55 하한/1.0 상한)·이웃확장 앵커 국소 focus·refit 전 경로 정합.
-- [x] T22.5 프론트 E1~E3 minimap 플러그인(harness 실증 True)·줌 툴바(−/+/전체/1:1)·스키마 점프 select.
-- [x] T22.6 admin.html(툴바·범례)/styles.css + cache-buster `?v=20260702-graph-initview`.
-- [x] T22.7 headless harness **24/24 PASS·에러 0**(대규모 200테이블 fixture) + 라이브 AGE Cypher 실증(62 스키마 scope, 0.23s). TEST.md.
-- [ ] T22.8 docs(REPORT/MODIFY/REVIEW/TEST) + §18.8 적대 리뷰 + verify-completion PASS.
-- [ ] T22.9 commit/push/PR/merge + 배포 + PB-0008 시각검증(§21 T21.8 통합).
+### 24.1 구현 (원 계획 §7.1 은 초판 커밋 bafe5a71 참조 — 아래는 병합 최종본)
+- [x] T24.1 백엔드 `scope_schemas`(Schema+count(t) 집계, limit+1 truncated, 집계실패=배지없는 카드 강등)
+      /`schema_tables`(per-schema lazy, truncated) + 라우터 `?mode=schemas`/`?schema=` 분기(신규 route 0 — 골든 불변).
+- [x] T24.2 C1 스키마-우선 진입: roots = 스키마 카드(`SC:`+key, "이름 · 테이블 N" 배지) → 클릭 시 per-schema
+      lazy 펼침(combo 승격, "XS:" 접기=카드 복귀, 재펼침 무-refetch). 카드↔combo **동일-id 타입 전환의 G6
+      setData diff 자식 유실**을 SC: 네임스페이스로 차단(harness 적발). 검색/이웃 결과 스키마 자동 펼침,
+      단일 스키마 DS 자동 펼침(기존 즉시성 유지). 게이팅은 masonry layouts 선산정에 통합.
+- [x] T24.3 A 뷰포트: Graph `zoomRange [0.05,4]`(G6 전환 때 소실된 min/maxZoom 이식) + `_metaGraphFitClamped`
+      (fit 후 0.55 하한/1.0 상한, focusFirst 는 초기로드·검색만 — refit 은 현 위치 보존) + 이웃확장 전체-fit →
+      **앵커 국소 focus**. 상세토글/리사이저 refit 클램프 정합.
+- [x] T24.4 E 내비게이션: minimap 플러그인(번들 실증) + 줌 툴바(−/+/전체/1:1) + 스키마 점프 select(2개 이상 시).
+- [x] T24.5 §18.8 1차 적대 리뷰(BLOCKER 0·MAJOR 2·MINOR 7·NIT 3) 전건 반영 — dead-card 합성 복구·
+      혼합버전 loaded 미마킹·연타 가드·빈 스키마 비펼침·truncated 표면화·점프 stale 정리 등. REVIEW.md.
+- [x] T24.6 2차 적대 검증 workflow(3렌즈, 17 findings→dedup 9) 반영 — **stale-base 감지(23커밋·동일 블록
+      병렬 재작성 2건)** → merge 재정합, ExpandSchema 를 `_opSeq` 세대에 편입(교차 스코프 오염 차단) +
+      scope 가드(이전 scope 카드 클릭 차단) + 상세 로컬렌더 성공-게이팅 + 빈 스키마 loaded 비고착 +
+      클러스터 상세 실총계(table_count)·절단 노트 + 집계실패 배지 강등. REVIEW.md.
+- [x] T24.7 headless harness(실 마크업+mock API, 대규모 200테이블+빈스키마+혼합버전 fixture) — 병합 최종본
+      재검증 결과는 TEST.md Run 기록.
+- [x] T24.8 verify-completion(--pre-commit) PASS(#13 Windows-browser 기록 게이트 포함) + REVIEW 2라운드 원장.
+- [ ] T24.9 배포(deploy_scope: included) + PB-0008 실 Windows 시각검증(§21 T21.8 미완분 통합) + TEST.md Run 기록.

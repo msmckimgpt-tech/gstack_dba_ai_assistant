@@ -581,19 +581,25 @@ def scope_schemas(scope: str, limit: int = 500, conn=None) -> dict:
             if skey and skey not in nodes:
                 nodes[skey] = {"label": "Schema", "key": skey, "name": _unwrap(r[1]),
                                "fqn": _unwrap(r[2]), "description": None, "source": None,
-                               "table_count": 0}
+                               "table_count": None}
         if nodes:
             try:
                 crows = _cypher(cur,
                     f"MATCH (s:Schema)-[:HAS_TABLE]->(t:Table) WHERE s.scope_key = {sc} "
                     f"RETURN s.key, count(t)", 2)
+                # 집계 성공 시에만 0 기본값(테이블 없는 스키마=0) — 실패 시 None 유지(아래 except).
+                for v in nodes.values():
+                    v["table_count"] = 0
                 for r in crows:
                     skey = _unwrap(r[0])
                     cnt = _as_int(_unwrap(r[1]))
                     if skey in nodes and cnt is not None:
                         nodes[skey]["table_count"] = cnt
             except Exception as exc:
-                # 집계 실패는 배지 없는 카드로 강등(스키마 목록 자체는 유지) — 빈 그래프 강등 방지.
+                # 집계 실패는 **배지 없는 카드**(table_count=None)로 강등(스키마 목록 자체는 유지) —
+                # 0 으로 두면 UI 가 '테이블 0' 배지를 그려 빈 스키마와 구분 불가(2차 검증 V-H).
+                for v in nodes.values():
+                    v["table_count"] = None
                 _log.debug("scope_schemas_count_failed err=%r", exc)
         result["nodes"] = list(nodes.values())
         cur.close()

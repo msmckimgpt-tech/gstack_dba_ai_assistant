@@ -2,6 +2,43 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260702T110054-report-deck-hardening [SUBAGENT:report-deck-verification(codex + red team)] — report_deck 스킬 하드닝 (검증 라운드 6개 개선점 규율 승격)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02. 첫 실행(범위 2026-06-01~07-02 v1)을 사용자·`/codex`(독립 엔진)·red team(적대 감사)로 검증한 결과 반복 발생한 결함을 **스킬 규율로 승격**(1회성 패치가 아니라 다음 호출부터 자동 적용).
+- **변경(META, pure-meta)**: `.claude/commands/_dqa/report_deck.md` — 불변제약 3 신규(성장톤↔정직성 경계 / 발표자·청중 분리+식별자 스크럽 / KPI 검증 축) + §5.2 전후 폴백 **인라인 SVG 도식 강제**(텍스트-only 금지) + §5.3 **배지 색+라벨+형태**(리스트 배지 포함) + Phase 4 EVIDENCE **측정조건·산식·배포근거·stale 엄밀성** + Phase 6 게이트 4 신규(정직성 경계 / 식별자 스크럽 / 전후 SVG / KPI 검증축) + 설계근거 하드닝 이력. `meta/REVIEW.md`(본 entry).
+- **근거(검증 유래)**: codex [P1]×6(톤 과교정으로 미검증→"완료" 단정, KPI "완료" 모호, EVIDENCE 근거 압축) + [P2]×8(약어·코드중심 전후·배지 형태). red team [MAJOR](KPI "16" 도출 불투명·"검증됨" 오분류) + [MINOR](37% 산술오류·엔진 stale). 사용자 피드백(전후 시각 부실·발표자용 마지막 페이지·성장 지향 톤).
+- **검증**: `bash -n` 불요(md). markdown 구조·앵커 정합. verify-completion META mode.
+- **Human Approval Needed**: 아니오 — 소비자 스킬 규율 강화(비파괴 additive), 제품 런타임 동작 0. 전역 auto-sync 대상.
+
+## REV-20260702T105343-report-deck-run-v1-review-fixes [SKIPPED:presentation-revision] — 외부 리뷰(codex + red team) 반영 (필수 3 + 후속 2)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (직전 revise 산출물의 외부 리뷰 반영).
+- **외부 리뷰**: `/codex`(독립 엔진, [P1]×6 + [P2]×8) + red team 적대 감사(정량 주장 소스 1:1 교차확인, verdict SHIP-WITH-FIXES, BLOCKER 0). 두 리뷰 공통 지목 = 요약 KPI 취약 + 성장-톤 과교정으로 '확인필요→완료' 경계 침범.
+- **반영(필수 3)**: (1) **KPI "16 묶음"** — 배지 '검증됨'→'개발 이력 집계 · 논리 작업 단위', "완료(개발 기준)" 한정, EVIDENCE E-001 에 **도출 산식 명시**(1,084+ 커밋 → 사용자 체감 논리 작업 단위 그룹핑; 9 feature + feature 미귀속 인프라 포함 → feature/커밋/TASK 수와 다른 축). (2) **톤 경계 재조정** — 리스크 표 "완료"→"완료 · 라이브 적용/검증 전", 마무리 "라이브 적용까지 검증"→핵심 인프라로 스코프 한정+나머지 순차 적용, SCRIPT agenda "완료·배포까지"→"개발 완료·핵심만 라이브 확인". (3) **EVIDENCE 정정** — E-012 "37%"→"약 35%(스냅샷)", U-003/E-010 WebGL·FPS→엔진 중립 + 그래프 렌더 엔진 교체(PR#528/ADR-004) 다음 기간 이월, E-009 배포 근거 basis 명시(운영 로그 원장 미인용).
+- **반영(후속 2)**: 기술 약어 gloss(화이트리스트→허용 목록, 로드밸런서→분배기, 21개 모듈→21개 구성 단위), agenda 배지에 **형태 아이콘** 추가(색+라벨+형태 일관).
+- **정직성 유지**: 성장 지향 톤은 유지하되, 미검증을 '완료/검증'으로 단정하던 표현만 정정 — 검증됨 ↔ 발전 과제 경계 재확립(정직성 아키텍처는 red team 이 '모범'으로 평가한 부분 보존).
+- **재검증**: 14 슬라이드 · 외부참조 0 · 민감정보 0 · 과대주장 잔여 0 · agenda 배지 형태 아이콘 · HTML 균형 PASS. verify-completion META mode.
+- **[SKIPPED] 사유**: 발표자료 콘텐츠 개정(정책·코드·정본 무변경). **Human Approval Needed**: 아니오 — main 랜딩은 사용자 판단.
+
+## REV-20260702T101457-report-deck-run-v1-revise [SKIPPED:presentation-revision] — 사용자 리뷰 피드백 2건 반영 (전/후 시각 도식 강화 + 발표자 전용 내용 분리)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (직전 REV-20260702T025852 산출물의 리뷰 반영 개정).
+- **피드백 반영**: (1) **전/후 비교 시각 부실** → 7개 기능 전부 **인라인 SVG 개념 도식**(전=회색 계열/후=accent, 좌→우 화살표)으로 교체 — 접속(경고→방패·2단계), 작업화면(텍스트→+/− 색 diff), 정확도(일회성→선순환 루프), 데이터소스(단일 DB→다중 DB＋게이트·상태점), 그룹(1:1→다인·@멘션), 지식그래프(평면 목록→노드 그래프·점선=추정/실선=신뢰), 무중단(단일 서버 중단→2대 롤링 중단0). 각 SVG `role=img`+aria-label. (2) **마지막 페이지 부적절**(발표자 전용 '확인 필요 색인' 슬라이드가 청중에 내부 코드·메모 노출) → **청중 덱에서 제거**(15→14 슬라이드, `마무리`가 마지막), 발표자 Q&A 대비는 `SCRIPT.md` [발표자 전용]+`EVIDENCE.md §2`로만. 아울러 청중 덱의 **내부 식별자 스크럽**(E-/U- 코드·EVIDENCE.md/SCRIPT.md·PB-0008·feature-000x·git 이력 제거, 배지는 평이어 "검증됨/확인 중/개발 완료").
+- **변경(META, pure-meta, doc-only)**: `docs/presentation/2026-06-01_2026-07-02/v1/deck.html`(개정) · `SCRIPT.md`(발표자 전용 분리·딥링크 정정) · `meta/REVIEW.md`(본 entry). EVIDENCE.md 는 발표자·근거 문서라 U-/E- 코드 유지(의도).
+- **재검증(Phase 6)**: 슬라이드 14 정합 · 부록/발표자용 슬라이드 0 · 내부 코드 노출 0 · 전후 도식 7 · 외부참조 0(자기완결) · 민감정보 0 · SVG role=img 14 · HTML 균형 · 구조·서사·디자인 언어(§5.0) 불변(디자인/시각효과만 강화). verify-completion META mode.
+- **톤 패스(동 cycle 추가 반영)**: 사용자 피드백 "작업이 미흡하게 표현되기보다 발전 가능성으로" → 정직성(검증 vs 미검증 구분)은 유지하되 프레이밍을 **성장 지향**으로 전환. 배지 "확인 중"→"고도화 예정/수치 측정 예정", impact 우측 "단정하지 않는 것"→"앞으로 더 키울 발전 과제"(callout warn→일반), risk 슬라이드 "리스크·후속/남은 위험·할 일"→"개선 과제·발전 방향"(로드맵 프레이밍, "현재 수준→발전 방향"), 기능 effect·outro·SCRIPT 대사 동반. 과거 문제(배경 before) 서술의 "미흡/부족"은 개선 동기라 유지.
+- **[SKIPPED] 사유**: 발표자료 콘텐츠 개정(정책·코드·정본 무변경). **Human Approval Needed**: 아니오 — 단 발표자료는 리뷰 콘텐츠, main 랜딩은 사용자 판단.
+
+## REV-20260702T025852-report-deck-run-20260601-20260702 [SKIPPED:presentation-generation] — /_dqa:report_deck 검증 실행 산출물 (2026-06-01~07-02 개발 진척 발표자료 v1)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (base 2a4a8d3d). `/_dqa:report_deck "2026-06-01 ~ 2026-07-02"` 실행 — 스킬 end-to-end **검증 겸 실제 발표자료 생성**.
+- **변경(META, pure-meta, doc-only)**: `docs/presentation/2026-06-01_2026-07-02/v1/{deck.html, SCRIPT.md, EVIDENCE.md}` 신규 + `meta/REVIEW.md`(본 entry). 코드·정본·정책 무변경(신규 버전 dir, 기존 자산 미덮어씀).
+- **수집(5채널, 병렬 subagent)**: git main 반영분(16 논리 단위·1,084 커밋, baseline 44d42997@05-29) · 정책/릴리즈노트(배경·선택근거·운영영향·리스크) · unit feature 기록(feature-0003·0012·0014·0015·0016 등 배경/전후/시행착오/배포상태) · 개발 세션 transcript(보조·두 홈 하이픈-slug, 의사결정·시행착오) · 이전 발표자료(기간 스코프 report_deck 산출물 없음 — 제품 소개 index/practitioner 만 존재, 성격 상이).
+- **정직성(확인 vs 확인필요)**: 확인 15건(무중단 zero-502 부하실증·그래프 서버조회 60x·DB재시작 오류0·백업복원 PASS·라우터 배포·다중DB/보안6대/협업/정확도수단 머지) / 확인필요 8건(정확도·FPS 수치 미측정·일부 라이브 배포·PB-0008 시각검증·자동롤백·transcript 단독 결정·문서 경미 불일치). **배포여부·테스트·성능수치·재발방지·전후자료·문서코드불일치 단정 금지** 준수 — 덱·스크립트가 EVIDENCE 원장과 1:1 정합.
+- **자기검증(Phase 6)**: 외부 리소스 참조 0(자기완결 offline — CDN·원격폰트·원격이미지·외부JS 0) · 민감정보 0(계정·비번·토큰·접속좌표·개인정보) · focus-visible(신규)·prefers-reduced-motion·keep-all·색+라벨+형태 배지 28 · `--diff-*` before-after 오용 0 · backdrop-filter 미사용(주석만) · HTML 균형 · 슬라이드 15 정합. §5.0 디자인(봉투 토큰 상속+파생, 시스템폰트, 접근성-우선 clamp rem+문서스크롤 모드) 적용.
+- **[SKIPPED] 사유**: 발표자료 **콘텐츠 생성**(정책 의미 변경 없음, 코드/정본 무변경) — 정책 코히런스 패널 불요(선례 REV-20260624T090355 presentation-title-rename 동일 계열). 콘텐츠 신뢰성은 `EVIDENCE.md` 원장 + Phase 6 자기검증으로 담보. 실 브라우저 시각검증(PB-0008)은 문서 exempt(check #13) + EVIDENCE U-002 로 확인필요 명시.
+- **Human Approval Needed**: 아니오(additive doc-only, 제품 런타임 동작 0). 단 **발표자료는 리뷰 콘텐츠**이므로 main 랜딩 전 사용자 검토 권장(확인필요 8건 담당자 점검) — 본 실행은 스킬 검증 목적, 랜딩은 사용자 판단.
+
 ## REV-20260702T022910-report-deck-skill [SUBAGENT:report-deck-fit-review + design-trends-workflow] — `/_dqa:report_deck` 신설 (기간별 개발 진척 상부보고 발표자료 생성 persona)
 
 - **cycle**: ai/claude/dqa-report-deck (base c5e259db). 사용자 요청(2026-07-02): 특정 개발 일정 범위("YYYY-MM-DD ~ YYYY-MM-DD")를 입력받아 그 기간 작업을 git·정책문서·unit 기록·개발 대화기록·릴리즈노트로 종합, **비전문가(기획·운영·관리) 포함 상부보고용 발표자료**(자기완결 HTML 덱 + 발표 스크립트 + 근거·확인필요 원장)를 `docs/presentation/<범위>/<버전>/` 에 생성하는 reporting persona 를 신설. 발표 형식은 세션 공동 설계(AskUserQuestion 4결정: 하이브리드 골격/고정 5블록/자산우선+폴백/3종 세트) + 상부보고·발표 웹 리서치(SCQA·피라미드·outcome-over-output·전후 병치)로 확정.

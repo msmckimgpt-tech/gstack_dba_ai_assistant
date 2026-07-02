@@ -4231,7 +4231,11 @@ a { color: inherit; }
    pane 단일 overflow 를 남기면 list-detail 의 flex:1 fill + 컬럼 독립 스크롤과 충돌(이중 스크롤). */
 .admin-pane[data-admin-pane="dashboard"].is-active,
 .admin-pane[data-admin-pane="usage"].is-active,
+.admin-pane[data-admin-pane="ai-ops"].is-active,
 .admin-pane[data-admin-pane="release-notes"].is-active {
+  /* aiops-scroll: AI 운영 현황 pane 은 배너/축/KPI/Attention/카테고리표/활동feed/커버리지의
+     단순 세로 흐름(list-detail 아님)이라 dashboard/usage 와 동일하게 pane 자체 세로 스크롤 부여.
+     누락 시 admin-shell(overflow:hidden+100vh)에서 하단(카테고리표·커버리지)이 잘려 도달 불가. */
   overflow-y: auto;
   /* TASK-0198: 좌우 스크롤 차단 — 카드 min-width 누적/SVG 폭/표 넓이로 가로 넘침이 발생하던 회귀 차단.
      내부 요소는 min-width:min(Npx,100%) + 표는 카드 내부 스크롤로 흡수(아래). */
