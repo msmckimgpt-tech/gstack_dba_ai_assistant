@@ -407,5 +407,9 @@ source_of_truth: true
 ### 21.3 검증
 - [x] T21.6 dev-loop(WSL-headless-harness, 실 admin.html 마크업 + mock apiFetch) 전 플로우 PASS·에러 0: roots·제자리펼침·재클릭무접힘(①)·접기·검색·이웃확장·클러스터상세·AI분석·마커·점선/실선 엣지. (TEST.md)
 - [x] T21.7 §18.8 적대적 코드리뷰(subagent, g6.min.js 번들 계약 교차검증) → **PASS-WITH-FIXES**(CRITICAL/MAJOR 0, MINOR 3건 수정·재검증). REV-20260702T003000 [SUBAGENT].
-- [ ] T21.8 실앱 배포(web 재빌드) + PB-0008 실 Windows 시각검증(하드 게이트) + verify-completion(--pre-commit) PASS.
-- [ ] T21.9 commit/push/PR → main 병합 (외부영향 — confirm).
+- [x] T21.8 실앱 배포(무중단 롤링 web-a/b `8c45f070`, soak PASS) + **PB-0008 실 Windows 시각검증 PASS**(실데이터 236노드/36클러스터, 렌더·제자리펼침·"−"접기·엣지 확인) + verify-completion(--pre-commit) PASS.
+- [x] T21.9 commit/push/PR #528 → main 병합(충돌 해소).
+
+### 21.4 UX 개선 (graph-g6b, 사용자 요청: 기본 디자인·노드확장 가시성·UX)
+- [x] T21.10 라이브 실데이터에서 관측된 배치 문제(세로 과길이·fit 극소) 해소 — **클러스터 내 다열 masonry + 가변폭 shelf-packing**(`_metaG6Build`). WSL-headless-harness(14클러스터 확장 포함) PASS. cache-buster graph-g6b. (DECISIONS ADR-004 §Consequences 연장, MODIFY CHG-20260702-graph-g6b)
+- [ ] T21.11 graph-g6b 배포 + 라이브 PB-0008 재확인.

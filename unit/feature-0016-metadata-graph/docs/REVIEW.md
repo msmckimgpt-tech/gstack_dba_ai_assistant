@@ -270,3 +270,13 @@ source_of_truth: true
 - Verdict: **PASS-WITH-FIXES** — CRITICAL/MAJOR 0. MINOR 3건 전부 수정 반영 + 재검증.
 - Risks (수정 후): 잔여 0. 완료 hard gate = PB-0008 실 Windows 시각검증(check #13).
 - Human Approval Needed: 배포(web 재빌드·라이브 컨테이너 재시작) + commit/push/PR = 외부영향 → confirm.
+
+
+## REV-20260702T010000-ai-claude-feature-0016-graph-g6b [SUBAGENT: PASS-WITH-FIXES] — 클러스터 다열 masonry + 가변폭 shelf-packing 적대 리뷰
+- Related Change: graph-g6b (MODIFY CHG-20260702-graph-g6b). `_metaG6Build` 배치만 변경(masonry + shelf-pack), 나머지 엔진/이벤트/확장/API 불변(REV-20260702T003000 기검증).
+- Method: general-purpose subagent focused 리뷰 — diff + 좌표 기하 수치 검증(scratchpad 계산).
+- Verified (전건 PASS): `node --check` PASS · **결정론**(Math.random/Date 없음, 최단열 tie-break 좌측 안정, 자연정렬 유지) · **masonry 높이 정합 정확**(itemH = TROW + n*CROW + CDROP + TGAP, 동일 내부열 항목 간 상수 17px 간격, N=1/2/3/5/10 무drift) · **중심좌표 처리 정확**(top→center 변환, 첫 컬럼 offset TROW/2+CDROP+CROW/2) · **엣지케이스 안전**(0테이블 ic=1 유효박스, Math.max PADT seed, innerColsFor 경계 6/7·14/15·27/28, shelf `cx>0` 가드) · **terms 클러스터**(uniform TROW, 29px 여유) · **클러스터 간 73.5px 여유**(무충돌) · 확장/접기/검색 무회귀.
+- Findings:
+  - **MINOR (수정 완료)**: 최악의 경우(최대길이 컬럼명 168 + 인접 내부열 high-rel wide 테이블 190) 컬럼 라벨이 인접 칩 좌변에 ~6.5px 겹침(텍스트 픽셀만, 히트박스·데이터 무관). → **COLW 214→224** 로 흡수(권고 반영).
+- Verdict: **PASS-WITH-FIXES** — CRITICAL/MAJOR 0. 유일 MINOR(라벨 6.5px 겹침) 수정 반영.
+- Human Approval Needed: graph-g6b 배포(web 재빌드·라이브 재시작) — deploy_scope: included + 사용자 "배포 진행" 승인.

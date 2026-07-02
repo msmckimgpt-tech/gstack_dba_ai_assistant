@@ -3127,48 +3127,63 @@ function _metaG6Build() {
   const ids = [...groups.keys()].filter((k) => k !== _META_TERMS_COMBO).sort(_metaNatSort);
   if (groups.has(_META_TERMS_COMBO)) ids.push(_META_TERMS_COMBO);
 
-  // 각 클러스터 높이(테이블+펼친 컬럼 / terms 행) 선산정 → 행별 top.
-  const heightOf = (id) => {
-    const g = groups.get(id); let y = _METLAY.PADT;
-    if (g.isTerms) { y += g.terms.length * (_METLAY.TROW); }
-    else g.tables.forEach((t) => { y += _METLAY.TROW; const cols = g.colsByTable.get(t.key); if (cols && cols.length) y += cols.length * _METLAY.CROW; y += _METLAY.TGAP; });
-    return y + 16;
+  // ── 클러스터 내 다열 masonry(높이 균형) + 가변폭 클러스터 shelf-packing ──
+  //   구버전(단일 세로열 + 고정 3열 grid)은 테이블 많은 스키마가 끝없이 길어지고 36클러스터가 세로로 쌓여
+  //   fit-all 시 전부 극소로 축소됐다. 다열 masonry 로 클러스터를 넓고 낮게, shelf-pack 으로 가로 활용을 극대화한다.
+  const COLW = 224;                 // 클러스터 내부 열 폭(테이블 칩 190 + 펼친 컬럼 라벨 168 여유; review MINOR: 214→224 로 최대길이 컬럼명이 인접열 칩에 겹치지 않게)
+  const TXOFF = 95;                 // 열 좌측 기준 테이블 중심 x
+  const CDROP = 6;                  // 테이블↔첫 컬럼 간격
+  const MAXROWW = 2400;             // shelf(행) 목표 최대 폭(모델 px) — 초과 시 다음 행으로 래핑
+  const innerColsFor = (n) => (n <= 6 ? 1 : n <= 14 ? 2 : n <= 27 ? 3 : 4);
+  const itemH = (g, t) => {         // 한 테이블 항목이 열에서 차지하는 높이
+    const cols = g.colsByTable.get(t.key);
+    return _METLAY.TROW + ((cols && cols.length) ? cols.length * _METLAY.CROW + CDROP : 0) + _METLAY.TGAP;
   };
-  const H = ids.map(heightOf);
-  const rowTop = []; let cy = 0;
-  for (let r = 0; r * _METLAY.COLS < ids.length; r++) {
-    rowTop[r] = cy; let mh = 0;
-    for (let c = 0; c < _METLAY.COLS; c++) { const i = r * _METLAY.COLS + c; if (i < ids.length) mh = Math.max(mh, H[i]); }
-    cy += mh + _METLAY.GAPY;
-  }
-  const combos = [], nodes = [], edges = [];
-  ids.forEach((id, i) => {
+  // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 배치). 자연정렬 유지.
+  const layouts = ids.map((id) => {
     const g = groups.get(id);
-    const col = i % _METLAY.COLS, row = Math.floor(i / _METLAY.COLS);
-    const x0 = col * (_METLAY.SW + _METLAY.GAPX), y0 = rowTop[row];
+    const items = (g.isTerms ? g.terms : g.tables).slice().sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+    const ic = innerColsFor(items.length);
+    const colCur = new Array(ic).fill(_METLAY.PADT);   // 각 내부 열의 다음 항목 top-y(클러스터 상대)
+    const place = items.map((it) => {
+      let c = 0; for (let k = 1; k < ic; k++) if (colCur[k] < colCur[c]) c = k;   // 최단 열
+      const top = colCur[c];
+      colCur[c] += g.isTerms ? _METLAY.TROW : itemH(g, it);
+      return { it, col: c, top };
+    });
+    const w = _METLAY.PADX * 2 + ic * COLW;
+    const h = Math.max(_METLAY.PADT, ...colCur) + 16;
+    return { id, g, ic, place, w, h, x0: 0, y0: 0 };
+  });
+  // shelf-packing: 가변폭 클러스터를 좌→우로 채우고, 폭 초과 시 다음 행으로.
+  { let cx = 0, cyy = 0, shelfH = 0;
+    layouts.forEach((L) => {
+      if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; cyy += shelfH + _METLAY.GAPY; shelfH = 0; }
+      L.x0 = cx; L.y0 = cyy; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
+    }); }
+  const combos = [], nodes = [], edges = [];
+  layouts.forEach((L) => {
+    const { id, g } = L;
     combos.push({ id, type: _METtype, data: { label: _metaComboName(id), kind: "schema" }, style: Object.assign({ labelText: _metaComboName(id) }, _metaComboStyleFor(g.isTerms)) });
-    let y = y0 + _METLAY.PADT;
-    if (g.isTerms) {
-      g.terms.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key)).forEach((n) => {
-        nodes.push({ id: n.key, type: _METtype, combo: id, states: _metaNodeStates(n.key), data: { label: n.name || n.key, kind: "term", fqn: n.fqn }, style: Object.assign(_metaTermStyle(x0 + _METLAY.PADX + 80, y, n.rel), { labelText: n.name || n.key }) });
-        y += _METLAY.TROW;
-      });
-    } else {
-      g.tables.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key)).forEach((t) => {
-        const tx = x0 + _METLAY.PADX + 84;
-        nodes.push({ id: t.key, type: _METtype, combo: id, states: _metaNodeStates(t.key), data: { label: t.name || t.key, kind: "table", fqn: t.fqn }, style: Object.assign(_metaTableStyle(tx, y, t.rel), { labelText: t.name || t.key }) });
-        const cols = g.colsByTable.get(t.key);
-        if (cols && cols.length) {
-          nodes.push({ id: "X:" + t.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: t.key }, style: _metaCtlStyle(tx + Math.round((_metaTableStyle(tx, y, t.rel).size[0]) / 2) + 14, y) });
-          y += _METLAY.TROW;
-          cols.slice().sort(_metaGraphColCmp).forEach((c) => {
-            nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(tx + _METLAY.CIND, y), { labelText: c.name || c.key }) });
-            y += _METLAY.CROW;
-          });
-        } else { y += _METLAY.TROW; }
-        y += _METLAY.TGAP;
-      });
-    }
+    L.place.forEach(({ it, col, top }) => {
+      const colLeftX = L.x0 + _METLAY.PADX + col * COLW;
+      const tx = colLeftX + TXOFF;
+      const ty = L.y0 + top + _METLAY.TROW / 2;   // 항목(테이블/용어) 중심 y
+      if (g.isTerms) {
+        nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
+        return;
+      }
+      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn }, style: Object.assign(_metaTableStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
+      const cols = g.colsByTable.get(it.key);
+      if (cols && cols.length) {
+        nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_metaTableStyle(tx, ty, it.rel).size[0] / 2) + 14, ty) });
+        let cyCol = ty + _METLAY.TROW / 2 + CDROP + _METLAY.CROW / 2;   // 첫 컬럼 중심 y
+        cols.slice().sort(_metaGraphColCmp).forEach((c) => {
+          nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyCol), { labelText: c.name || c.key }) });
+          cyCol += _METLAY.CROW;
+        });
+      }
+    });
   });
   // 엣지: 양끝 노드가 모두 현재 데이터에 있을 때만(HAS_TABLE/HAS_COLUMN 은 containment 라 제외).
   const present = new Set(nodes.map((n) => n.id));
