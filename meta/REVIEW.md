@@ -2,6 +2,16 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260702T105343-report-deck-run-v1-review-fixes [SKIPPED:presentation-revision] — 외부 리뷰(codex + red team) 반영 (필수 3 + 후속 2)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (직전 revise 산출물의 외부 리뷰 반영).
+- **외부 리뷰**: `/codex`(독립 엔진, [P1]×6 + [P2]×8) + red team 적대 감사(정량 주장 소스 1:1 교차확인, verdict SHIP-WITH-FIXES, BLOCKER 0). 두 리뷰 공통 지목 = 요약 KPI 취약 + 성장-톤 과교정으로 '확인필요→완료' 경계 침범.
+- **반영(필수 3)**: (1) **KPI "16 묶음"** — 배지 '검증됨'→'개발 이력 집계 · 논리 작업 단위', "완료(개발 기준)" 한정, EVIDENCE E-001 에 **도출 산식 명시**(1,084+ 커밋 → 사용자 체감 논리 작업 단위 그룹핑; 9 feature + feature 미귀속 인프라 포함 → feature/커밋/TASK 수와 다른 축). (2) **톤 경계 재조정** — 리스크 표 "완료"→"완료 · 라이브 적용/검증 전", 마무리 "라이브 적용까지 검증"→핵심 인프라로 스코프 한정+나머지 순차 적용, SCRIPT agenda "완료·배포까지"→"개발 완료·핵심만 라이브 확인". (3) **EVIDENCE 정정** — E-012 "37%"→"약 35%(스냅샷)", U-003/E-010 WebGL·FPS→엔진 중립 + 그래프 렌더 엔진 교체(PR#528/ADR-004) 다음 기간 이월, E-009 배포 근거 basis 명시(운영 로그 원장 미인용).
+- **반영(후속 2)**: 기술 약어 gloss(화이트리스트→허용 목록, 로드밸런서→분배기, 21개 모듈→21개 구성 단위), agenda 배지에 **형태 아이콘** 추가(색+라벨+형태 일관).
+- **정직성 유지**: 성장 지향 톤은 유지하되, 미검증을 '완료/검증'으로 단정하던 표현만 정정 — 검증됨 ↔ 발전 과제 경계 재확립(정직성 아키텍처는 red team 이 '모범'으로 평가한 부분 보존).
+- **재검증**: 14 슬라이드 · 외부참조 0 · 민감정보 0 · 과대주장 잔여 0 · agenda 배지 형태 아이콘 · HTML 균형 PASS. verify-completion META mode.
+- **[SKIPPED] 사유**: 발표자료 콘텐츠 개정(정책·코드·정본 무변경). **Human Approval Needed**: 아니오 — main 랜딩은 사용자 판단.
+
 ## REV-20260702T101457-report-deck-run-v1-revise [SKIPPED:presentation-revision] — 사용자 리뷰 피드백 2건 반영 (전/후 시각 도식 강화 + 발표자 전용 내용 분리)
 
 - **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (직전 REV-20260702T025852 산출물의 리뷰 반영 개정).
