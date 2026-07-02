@@ -1,5 +1,26 @@
 # Report
 
+## 2026-07-02 · 그래프 관계 분석 LLM = claude-haiku (node-analysis-haiku)
+
+### 배경 / 근본원인
+사용자 보고: 관리콘솔 그래프뷰 상세 패널 "AI 능동 분석"(각 노드·관계 분석)이 **로컬 gemma(alias `edge`)** 로 작동 — 의도하지 않은 구조, claude-haiku 로 전환 요청. 진단 결과 관계 분석 함수 `llm_node_analysis`(`llm.py`)가 모델을 `AGENT_INSIGHT_MODEL or OPENAI_MODEL` 로 해석하는데, 운영 `.env` 의 `AGENT_INSIGHT_MODEL=edge` 가 이를 gemma 로 고정. 이 값은 `llm_schema_insight`/`llm_table_insight`/`llm_account_insight`(부트스트랩 테이블·컬럼 설명)와 **공유**된다.
+
+### 범위 결정 (사용자, 2026-07-02)
+**그래프 관계 분석만** claude-haiku 로 전환 — schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL`(gemma) 유지. (요청 문구 "그래프 뷰에서 각 관계를 분석하는 LLM" 에 정확 대응, 부트스트랩 설명 생성 비용 불변.)
+
+### 변경
+- **`shared/config.py`**: 전용 `AGENT_NODE_ANALYSIS_MODEL = os.getenv(...) or "claude-haiku-4"` 신설 + `__all__` 노출. 코드 기본값 자체가 claude-haiku 라 `.env` 미설정이어도 "의도한 구조"로 동작.
+- **`llm.py` `llm_node_analysis`**: 모델 = `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL`. max_tokens/temperature/timeout 경로는 기존과 동일(모델 catalog 가 `claude-*` cap·temperature 처리). insight 3함수는 손대지 않음(격리).
+- **`node_analysis.py` `process_pending`**: 저장·표시용 `model` 라벨을 라우팅과 동일 순서(`AGENT_NODE_ANALYSIS_MODEL` 우선)로 해석 — 상세 패널이 실제 사용 모델(claude-haiku)을 표시. 이 순서가 어긋나면 UI 에 gemma 오표시.
+
+### 검증
+- 회귀 테스트 4건(`test_llm_env_naming.py`): 기본값=`claude-haiku-4`(그리고 `AGENT_INSIGHT_MODEL=edge` 여도 node analysis 불영향=분리 확인)·env override·공백/whitespace 폴백·`__all__` 노출. **pytest 38 pass**(env-naming + node_analysis_relevance), ruff clean, config/llm/node_analysis compile·import OK.
+- 모델 정합: `claude-haiku-4` 는 model_catalog 카탈로그 기본값(`API_DEFAULT_MODEL`)이자 litellm_config.yaml 의 유효 alias(`anthropic/claude-haiku-4-5`).
+- §18.8 적대적 코드리뷰(subagent): 격리·touchpoint 완결성·haiku create() 정합·폴백 안전. REVIEW.md.
+
+### 반영 조건 / 비용
+반영엔 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본과 동일 — 명시 권장) + **insight-worker 재빌드·재기동**(코드 baked, 외부영향=배포 confirm). **외부 API 비용 발생**(그래프 노드 분석이 무료 로컬 gemma → Bedrock claude-haiku 유료). node_analysis 예산 캡(depth/node budget·dedupe)으로 run 당 경계. 기존 저장 분석은 이전 라벨 유지, 신규 run 부터 claude-haiku.
+
 ## 2026-07-02 · 그래프 뷰 PB-0008 라이브 검증 + 레이아웃 UX 개선 (graph-g6b)
 
 ### PB-0008 실 Windows 브라우저 시각검증 — PASS (핵심 마이그레이션)

@@ -287,3 +287,16 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{REPORT,TEST,TASK}.md`
 - Impact: 프론트 렌더 계층만(데이터 API 불변). 검증: WSL-headless-harness(14클러스터 스케일 mock, 확장 포함) 전 플로우 PASS·에러 0 + 라이브 PB-0008(실 Windows, 236노드) 확인. 배포=web 재빌드.
 - Rollback Notes: `_metaG6Build` git revert(단일 세로열 배치로 환원) + cache-buster graph-g6. 데이터·API 무손상.
+
+## CHG-20260702-node-analysis-haiku-model
+- Date: 2026-07-02
+- Related Requirement: 사용자 요청 — 관리콘솔 그래프뷰 "각 관계를 분석하는 LLM" 을 claude-haiku 로 작동하도록 구성. 로컬 gemma(edge) 로 작동하던 것은 의도하지 않은 구조. (범위 결정 2026-07-02: **그래프 관계 분석만** — schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL` 유지.)
+- Summary: 그래프 노드 능동 분석(`llm_node_analysis`)이 4개 insight 함수와 공유하던 `AGENT_INSIGHT_MODEL`(운영 `.env`=`edge`=로컬 gemma)에 묶여 gemma 로 작동. 전용 config **`AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`)** 을 신설해 그래프 관계 분석만 claude-haiku 로 분리 라우팅. `.env` 미설정 시에도 기본 claude-haiku 로 동작(=의도한 구조). 저장·표시용 model 라벨도 동일 순서로 해석해 상세 패널이 실제 사용 모델을 표시.
+- Files:
+  - `shared/config.py` (`AGENT_NODE_ANALYSIS_MODEL` 신설 + `__all__` 노출)
+  - `unit/feature-0002-agent-core/src/modules/llm.py` (`llm_node_analysis` 모델 라우팅 = `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL`)
+  - `unit/feature-0002-agent-core/src/modules/node_analysis.py` (`process_pending` 저장 model 라벨 동일 순서 해석)
+  - `unit/feature-0002-agent-core/tests/test_llm_env_naming.py` (전용 모델 기본값/override/공백폴백/노출 회귀 테스트 4건)
+  - `unit/feature-0016-metadata-graph/docs/{REPORT,TASK,MODIFY,REVIEW}.md`
+- Impact: 백엔드 모델 라우팅 계층만. schema/table/account insight·에이전트 추론·요약 등 다른 LLM 경로 불변(격리 확인). **외부 API 비용 발생**(그래프 노드 분석이 로컬 무료 gemma → Bedrock claude-haiku 유료 호출). 비용은 기존 node_analysis 예산 캡(depth_budget/node_budget/dedupe)으로 경계. 반영 조건: 런타임 `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영(코드 기본값과 동일이므로 선택적·명시 권장) + **insight-worker 재빌드·재기동**(코드 baked). 기존 저장된 분석은 이전 model 라벨(gemma) 유지, 신규 run 부터 claude-haiku.
+- Rollback Notes: `AGENT_NODE_ANALYSIS_MODEL=edge` 로 .env override(즉시 gemma 환원, 재기동만) 또는 3개 코드 파일 git revert. 데이터·스키마 무손상(마이그레이션 없음).
