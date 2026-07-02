@@ -5302,3 +5302,10 @@ source_of_truth: true
 - Verification: `tests/test_ai_ops.py` **10/10 PASS** + 회귀 permission 16/dashboard 20/usage 28 PASS, 전체 collection 무오류. py_compile(app.py·llm.py·model_catalog.py·ai_ops.py·admin_console.py·마이그·test) + node --check(admin.js) PASS. 적대검증 REV-20260702T140000-aiops-panel. PB-0008 Windows-browser= TEST.md.
 - Files: `feature-0002/{alembic/versions/20260702_0030_llm_usage_latency.py, src/scripts/agent_runtime_schema.sql, src/modules/llm.py}`, `shared/model_catalog.py`, `feature-0003/{src/app.py, src/routers/ai_ops.py, src/routers/admin_console.py, src/static/admin.html, src/static/admin.js, tests/test_ai_ops.py, tests/test_permission_dependency_map.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`.
 - 계측 커버리지 정직성: 임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 부재 → 구조적 계측 불가로 '계측 커버리지' 각주에 미계측 명시('전체 비용' 오해 방지). cost 는 read-time 계산(단가표 web 전용) — DB 컬럼 미추가. 워커 프로세스 latency 는 web-only 배포로 미반영(quiet-time 워커 재빌드 후속).
+
+## CHG-20260702-aiops-scroll (TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤, Minor §12.3 — feature-0003 프론트 CSS 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 변경:
+  - `static/styles.css`: pane 세로 스크롤 규칙(TASK-0167) 셀렉터에 `.admin-pane[data-admin-pane="ai-ops"].is-active` 추가 — dashboard/usage/release-notes 와 동일 `overflow-y:auto; overflow-x:hidden`. AI 운영 현황 pane 은 list-detail 아닌 단순 세로 흐름이라 admin-shell(overflow:hidden+100vh)에서 하단(카테고리표·커버리지) 잘림 → pane 자체 스크롤 필요.
+  - `static/admin.html:7`: cache-buster `styles.css?v=20260702-graph-g6`→`?v=20260702-aiops-scroll`(CSS 실변경).
+- Verification: CSS brace balanced(1701/1701). ai-ops 셀렉터 적용 확인. §18.8 [SKIPPED:minor-css-scroll]. PB-0008 Windows-browser 세로 스크롤 실측 = 배포 후(TEST.md).
+- Files: `static/styles.css`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.

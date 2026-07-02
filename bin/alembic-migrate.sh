@@ -33,10 +33,30 @@ live_current() {
   psql_super -tAc "SELECT version_num FROM alembic_version LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true
 }
 
-# agent 컨테이너에서 alembic offline --sql 생성(DB 무연결). 표준출력=순수 SQL.
+# alembic 실행 컨텍스트. 기본은 agent 서비스(docker compose run). 단 MIGRATE_ALEMBIC_IMAGE 가
+# 설정되면(배포가 방금 빌드한 mysql-ai-web:<sha> 를 넘김) 그 이미지로 docker run 한다 — 배포의
+# `docker compose run agent` 가 stale agent 이미지(신규 마이그 파일 부재)를 써 신규 마이그레이션을
+# "current==head, 적용 없음" 으로 조용히 놓치던 회귀를 차단한다(feature-0014-migrate-fresh-image).
+# offline(--sql)·heads 는 DB 무연결이라 .env* 의 KB PG 설정만 있으면 된다(존재하는 파일만 주입).
+_alembic_sh() {  # $1 = 컨테이너 안에서 실행할 alembic 명령 (예: "alembic heads")
+  local inner="pip install -q --no-cache-dir alembic 'psycopg[binary]' sqlalchemy >/tmp/pa.log 2>&1 || { cat /tmp/pa.log; exit 1; }; $1"
+  if [ -n "${MIGRATE_ALEMBIC_IMAGE:-}" ]; then
+    local envargs=() f
+    for f in .env .env.postgres .env.mysql; do [ -f "$f" ] && envargs+=(--env-file "$f"); done
+    docker run --rm -w /app --entrypoint sh "${envargs[@]}" "$MIGRATE_ALEMBIC_IMAGE" -lc "$inner"
+  else
+    COMPOSE_BAKE=false docker compose run --rm --no-deps -w /app --entrypoint sh agent -lc "$inner"
+  fi
+}
+
+# alembic offline --sql 생성(DB 무연결). 성공 시 stdout=순수 SQL, 실패 시 non-zero rc 전파.
+# (기존 `2>/dev/null` 만으로는 docker/pip/alembic 실패가 빈 SQL 로 삼켜져 upgrade 가 "pending 없음"
+#  으로 false-green → swap 진행하던 silent-miss 클래스가 남았다. 이제 rc 를 살려 호출부가 die 한다.)
 gen_sql() {  # $1 = alembic 인자 (예: "upgrade 0001:head")
-  COMPOSE_BAKE=false docker compose run --rm --no-deps -w /app --entrypoint sh agent -lc \
-    "pip install -q --no-cache-dir alembic 'psycopg[binary]' sqlalchemy >/tmp/pa.log 2>&1 || { cat /tmp/pa.log; exit 1; }; alembic $1 --sql" 2>/dev/null
+  local out rc
+  out="$(_alembic_sh "alembic $1 --sql" 2>/dev/null)" && rc=0 || rc=$?
+  printf '%s' "$out"
+  return "$rc"
 }
 
 case "$ACTION" in
@@ -47,7 +67,7 @@ case "$ACTION" in
 
   stamp)
     # 기존(이미 스키마 보유) DB 를 head 로 표시. alembic_version 멱등 보장.
-    head_rev="$(COMPOSE_BAKE=false docker compose run --rm --no-deps -w /app --entrypoint sh agent -lc "pip install -q alembic 'psycopg[binary]' sqlalchemy >/dev/null 2>&1; alembic heads" 2>/dev/null | awk 'NF{print $1; exit}')"
+    head_rev="$(_alembic_sh "alembic heads" 2>/dev/null | awk 'NF{print $1; exit}')"
     head_rev="${head_rev:-0001_baseline}"
     echo "stamp → ${head_rev}"
     psql_super <<SQL
@@ -76,7 +96,10 @@ SQL
     else
       spec="upgrade ${cur}:head"
     fi
-    sql="$(gen_sql "$spec")"
+    if ! sql="$(gen_sql "$spec")"; then
+      echo "마이그레이션 SQL 생성 실패 (docker/이미지/pip/alembic). ABORT — swap 안 함." >&2
+      exit 1
+    fi
     # BEGIN/COMMIT/주석/빈줄 외 실제 statement 가 있는지 확인
     if [ -z "$(printf '%s\n' "$sql" | grep -ivE '^\s*(BEGIN|COMMIT|--|UPDATE alembic_version|$)')" ]; then
       echo "적용할 pending 마이그레이션 없음 (current=${cur} == head)."

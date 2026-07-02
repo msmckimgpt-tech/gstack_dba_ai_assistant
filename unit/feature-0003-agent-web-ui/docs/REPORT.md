@@ -1463,3 +1463,10 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 ### 개선 제안(§8.1, 기록만)
 - `test_route_parity_p5b` golden 스냅샷이 origin/main 에서 stale(192 vs 실제 193) — feature-0012(P5b) 소관으로 golden 갱신 필요(본 cycle 범위 밖, route 추가한 feature 가 갱신 대상).
 - graph.read 가 그래프 뷰 내장 AI 분석(analyze, KB mutation)을 포함 — 추후 분석 트리거를 별도 권한으로 분리할지 검토 여지(현 B안은 "그래프 뷰 기능=1권한").
+
+## 2026-07-02 — AI 운영 관제 패널 배포 후속 운영 (aiops-panel post-deploy)
+- **PB-0008 라이브 PASS**: 패널 배포(c5e259db) 후 실 Windows 브라우저 실측 — 렌더·권한 게이팅·대시보드 타일 deep-link 전부 PASS(TEST.md). 
+- **마이그 0030 hotfix**: 배포 자동 마이그레이션이 stale agent 이미지로 0030(llm_usage.latency_ms)을 미적용(deploy exit 0)한 것을 포착 → superuser 로 직접 적용·검증. 근본원인·근본수정은 아래.
+- **배포 마이그 근본수정(PR #530, feature-0014-migrate-fresh-image)**: `deploy-web.sh` 가 마이그를 이미지 빌드 전에 stale `docker compose run agent` 로 돌려 신규 마이그를 head 오판(silent-skip)하던 회귀 수정 — build→migrate reorder + `MIGRATE_ALEMBIC_IMAGE`(방금 빌드한 이미지로 alembic) + gen_sql fail-loud. feature-0017 의 race-retry 와 결합. §18.8 BLOCKING 0.
+- **워커 재빌드(15e0befc)**: insight/ask-worker 를 계측 포함 코드로 재빌드·recreate(healthy) — 워커 wrapper 경유 LLM 호출(insight/aux)이 latency 기록. (환경상 datasource circuit_open 이라 insight LLM 호출 라이브 미발생.)
+- **잔여(별도 검토)**: main `agent` task(`agent_core._call_llm`)는 중앙 래퍼 미경유라 latency 미기록 — LLM 볼륨 최대 경로. latency KPI 완결하려면 이 경로 계측 필요(승인 범위 밖, 확장 제안).

@@ -43,3 +43,9 @@ race** 로 모든 web 배포를 false-failure 차단하던 버그를 수정한�
 
 > 근거: snap-docker(29.3.1/compose v5.1.1/buildx v0.31.1) strict confinement 의 /tmp metadata-file
 > 처리 race. dc-build 가 이미 동일 우회(`grep compose-build-metadataFile` → EXIT 무시)를 쓴다.
+
+## migrate_phase — snap-docker `docker compose run` race 관용 (CHG-20260702T160000)
+- `bin/deploy-web.sh` `migrate_phase()`: swap 전 `bin/alembic-migrate.sh upgrade` 로 expand 마이그레이션 적용. 기존엔 exit≠0 즉시 `die`(build 게이트와 달리 race 무관용).
+- 보강: 1차 exit≠0 → `${MIGRATE_RETRY_BACKOFF:-5}`s backoff 후 **1회 멱등 재시도**. 재시도 exit 0 = 라이브 `alembic_version` head 도달(positive evidence; build 게이트의 image+GIT_COMMIT 정합에 대응) → swap 진행. 재시도도 실패 = 진짜 실패 → `die`(마이그레이션 미적용 상태로 절대 swap 안 함).
+- 정합근거를 marker-gating 이 아닌 **head-도달 검증**으로 둔 이유: head 도달은 원인(race/transient) 무관하게 swap 안전을 참 보장하고, marker-only 는 self-healing transient 를 false-ABORT 해 더 약하다.
+> 근거: `alembic-migrate.sh` 의 `gen_sql`(일회성 agent 컨테이너 `docker compose run` → `alembic --sql`)이 build 와 동일한 snap-docker /tmp metadata-file race 로 작업 성공에도 EXIT≠0 를 낼 수 있다. 2026-07-02 첫 0029→0030 적용이 이 사유로 false-ABORT(마이그레이션은 실제 head 도달).
