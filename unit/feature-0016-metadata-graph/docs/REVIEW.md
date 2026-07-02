@@ -589,3 +589,7 @@ source_of_truth: true
   - **NIT (반영)**: ① API 부재(getElementRenderBounds/getViewportByCanvas/translateBy 미지원) 번들서 구버전 focusElement 폴백 손실 → 진입부 API 가드 + focusElement 즉시 폴백 복원. ② W/H 1회 캡처 → 팬 중 리사이즈 시 중앙 목표 스테일 → **W/H 매 프레임 재조회**.
 - Verdict: **PASS** — BLOCKING 0. MEDIUM 수정(missStreak 제거)·NIT 2건 반영. 실제 애니 반응성은 PB-0008(실 브라우저)이 최종.
 - Human Approval Needed: graph-dblclick-latency 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.
+
+## REV-20260703T014500-ai-claude-corp-feature-0016-node-role-viz-postdeploy [SKIPPED:non-policy-doc] — POST-DEPLOY 기록 doc-only
+- Trigger: 비정책 doc-only(TEST/TASK/MODIFY/REPORT Run 기록·체크) — §18.8 표 SKIP 행. 코드 변경 0.
+- 근거: 본 cycle 의 코드 diff 는 REV-20260703T003000(4렌즈 적대 패널)에서 검증 완료. 본 커밋은 배포·PB-0008 실측 결과의 기록만.

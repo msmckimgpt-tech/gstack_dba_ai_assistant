@@ -337,3 +337,7 @@ Table 외 None) 10건 PASS. 기존 test_node_analysis_relevance.py 28건 회귀 
 본 cycle 은 deploy_scope: included 로 merge 직후 web+insight-worker 배포 → 라이브 그래프 뷰에서
 분석 완료 테이블의 역할 칩 색/아이콘/범례/상세패널 역할 칩을 실 Windows Chrome 으로 육안 확인 예정.
 (pre-commit 시점 미수행 사유: 역할 데이터는 alembic 0031 + insight-worker 백필 배포 후에만 라이브에 존재.)
+
+### [POST-DEPLOY 갱신 2026-07-03] PB-0008 Windows-browser 라이브 실측 PASS (Environment: Windows-browser)
+PR #555 main 병합(7f2b9aa7) → deploy-web.sh 무중단 롤링(**alembic 0031 적용 확인** `live current: 0031_node_analysis_role`, web-a/b git_commit=7f2b9aa7, soak 90s 통과) → insight-worker/ask-worker 재빌드(신 코드 grep 확인) → **role 백필 완주 509/509**(분포: etc 114·master 112·account 64·log 61·transaction 54·stats 47·config 44·mapping 13). **실 Windows Chrome 149(relay, eval 1+1 프로브 OK) 라이브 실측**(검증 시점 라이브 자산은 후속 병렬 배포 buster `graph-dblclick-latency` — 커밋 계보로 본 cycle 포함 확인 `_META_ROLE` 8종 라이브): ① 그래프 뷰 진입 시 **역할 범례 행 렌더 + 좌측 정렬**(margin-left override 0px 실측) ② scope `mssql-06656002eda6` 동기화로 **roles 384·analyzed 403 적재** ③ dk_data_release 펼침 → **역할 칩 123개 라이브 렌더** — Okabe-Ito 색+아이콘+dark 라벨 정확(💳 AchievementQuest green/dark·📘 Attribute blue/white·📦 Achievement gray, 보라 분석완료 테두리·추정 점선 공존) ④ Achievement 클릭 → **selected 어두운 테두리(#161b22, 패널 U1 수정) 라이브 확인** + 상세 패널 AI box **역할 칩 "📦 기타"(bg #6e7681)** DOM 실측 ⑤ 스크린샷 3매 `artifacts/feature-0016-metadata-graph/20260703-node-role-viz-pb0008/pb-{1-roots-legend,2-role-chips-expanded,3-detail-role-chip}.png`. → CHECK#13 실충족. (참고: insight-worker unhealthy 는 일부 외부 datasource 회로차단(mssql-web-qa 등) 기존 환경 이슈 — 본 cycle 무관, 백필·분석 틱은 정상 가동 실증.)
+

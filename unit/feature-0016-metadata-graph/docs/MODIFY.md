@@ -630,3 +630,11 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-011),TASK(§34),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로 **불변**. 마이그레이션 없음. tween=viewport transform 만(ADR-006 프리즈 무관). 검증: `node --check` PASS · 적응형 follow 헤드리스 실증(fire-and-forget 즉시 시작 + 중간 setData 앵커 이동 → 24프레임 중앙 수렴) · §18.8 적대 7축 BLOCKING 0(MEDIUM missStreak 조기포기→제거, NIT API폴백·W/H→반영). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(더블클릭 즉시 부드러운 팬).
 - Rollback Notes: `_metaGraphAnimateFocus` 를 이전(고정-duration) 으로 환원 + expand 팬 호출을 파이프라인 끝 await 로 복귀 + cache-buster 이전값(graph-dblclick-cam2). 데이터·API 무손상.
+
+## CHG-20260703-node-role-viz-postdeploy
+- Date: 2026-07-03
+- Related Requirement: CHG-20260703-node-role-viz 의 라이브 완결 — 배포 + PB-0008 실측 기록 (TASK §33 T33.12).
+- Summary: PR #555 병합(7f2b9aa7) 후 deploy-web.sh(alembic 0031 `live current` 확인·web-a/b 롤링·soak 90s PASS) + insight-worker/ask-worker 재빌드(snap-docker metadata-race 경고는 feature-0017 알려진 양성 — 신 코드 grep 검증) + role 휴리스틱 백필 완주 509/509(분포 etc 114·master 112·account 64·log 61·transaction 54·stats 47·config 44·mapping 13). PB-0008 실 Windows Chrome 라이브 실측 PASS — feature-0016/0003 TEST.md 에 POST-DEPLOY Run 기록, TASK §33 T33.12 완료 체크.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST,MODIFY,REVIEW,REPORT}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md` (POST-DEPLOY 기록만).
+- Impact: 문서만. 코드·자산·데이터 무변경. 배포 불요.
+- Rollback Notes: 해당 Run/체크 라인 revert(무영향).
