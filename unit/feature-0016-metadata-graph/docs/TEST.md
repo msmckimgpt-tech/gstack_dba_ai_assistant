@@ -243,6 +243,22 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 - **펼친 스키마 우클릭**: 펼침 후 "접기 (카드로)" 항목 노출(XS: ctl·combo 양 경로).
 - initview 전체 플로우(카드 진입·per-schema 펼침·masonry·줌 클램프·툴바·점프·검색·이웃·접기·미니맵·stale-scope) 회귀 없음.
 
-### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 예정 (본 cycle 배포 직후 수행)
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-02 PASS**
 - 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 스키마 카드 라벨=이름+개수 badge(테이블 문자열 없음)·**접힌 카드 우클릭 메뉴**(펼치기/클러스터 상세/스키마명 복사)·펼친 스키마 우클릭 접기·기존 우클릭(노드/엣지/combo/캔버스)·좌클릭 회귀.
 - 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 git_commit·자산 버전(`admin.js?v=20260702-schema-card-ctxmenu`) 명기.
+- **Run 2026-07-02 PASS**: 배포 100535f8(soak 통과) → 실 Windows Chrome 149(relay) 라이브: 62 카드 라벨=이름+개수 badge("테이블" 문자열 0)·접힌 카드 우클릭 메뉴(펼치기/클러스터 상세/스키마명 복사) 표시·"펼치기" 클릭 58테이블 라이브 펼침·펼친 스키마 XS 우클릭 "접기" 항목. 종전 무반응 결함 라이브 해소. 스크린샷 `artifacts/feature-0016-metadata-graph/20260702-schema-card-ctxmenu-pb0008/`.
+
+## graph-initview 후속 — 검색 시 스키마 카드 badge 매칭/전체 (search-badge, 2026-07-02)
+
+검색 시 스키마 카드가 사라지지 않고 badge=`매칭/전체` 로 필터 표기. TASK §27.
+
+### admin.js 구문 — `node --check` PASS.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 **initview 33/33 PASS + ctxmenu 회귀 10/10 PASS · 에러 0**
+- **검색 카드 필터 뷰**: `search('pay')` → 매칭 스키마 3장 **카드 유지**(combo 0, auto-expand 안 함), badge = **매칭/전체**(billing `2/12`·dbo `1/40`·game_log `1/33`, teal bg). status "스키마 3개 매칭 · badge=매칭/전체".
+- **검색 클리어→roots**: `search('')` → roots 복귀, 카드 badge = **전체**(billing `12`, 남색). 검색 없음 표기 원복 확인.
+- 회귀: roots 카드 badge 전체·스키마 1개 자동펼침·stale-scope 차단·dead-card 복구·빈 스키마·혼합버전·이웃 확장(neighbor auto-expand 유지)·ctxmenu(SC/XS 우클릭) 전부 PASS.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 예정 (본 cycle 배포 직후 수행)
+- 대상: 그래프 뷰. 확인: 검색어 입력 시 스키마 카드 유지 + badge `매칭/전체`(teal), 검색 클리어 시 badge `전체`(남색), 카드 클릭 펼침 시 매칭 테이블 강조.
+- 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 git_commit·자산 버전(`admin.js?v=20260702-search-badge`) 명기.
