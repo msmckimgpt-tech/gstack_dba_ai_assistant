@@ -295,3 +295,10 @@ Table→HAS_COLUMN→Column 체인 생성 · 기존 Table description/source 비
   (feature-0002 tests 전체 EXIT=0). py_compile + ruff clean.
 - test_anchor_relationship_live.py 는 main()+__name__ 가드로 재구성(QA-F1 — pytest 수집 안전).
   라이브 재실행은 배포 후 정정·재sync 검증과 함께.
+
+### probe-mssqlfix — MSSQL 프로브 SQL 오류 130 회귀 봉인 (2026-07-02)
+- 라이브 실측: insight-worker `probe_edge_failed ... OperationalError(130, ...)` 다수 — 구
+  `SUM(CASE WHEN EXISTS ...)` 가 MSSQL 집계식-내-서브쿼리 금지에 저촉(전면 실패).
+- 수정 후: `test_dialect_mssql_probe_no_subquery_inside_aggregate`(신규) + 기존 probe shape/escape/
+  timeout 3건 정합 유지 — test_relationships.py **53건 PASS**. 라이브 최종 검증 = 워커 재배포 후
+  프로브 신호(오류 130 소멸 + pos/neg 전이) 관측.

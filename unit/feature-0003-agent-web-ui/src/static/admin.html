@@ -46,25 +46,32 @@
         </button>
 
         <!-- TASK-0073 Phase C: 감사 로그 tab -->
+        <!-- TASK-20260702-audit-nav-ux: 감사 그룹 순서 재구성(감사 로그 · 보관 대화 · LLM 사용량 · AI 운영 현황)
+             + 각 탭 hover 상세설명(title). 순서·title 은 표시 계층 — data-admin-tab 키 기반 권한 게이팅
+             (ADMIN_TAB_PERMISSIONS)·서브탭 로직·applyAdminTabVisibility 그룹 경계 동적 계산 모두 불변. -->
         <div class="admin-tab-group-divider"></div>
         <div class="admin-tab-group-label">감사</div>
-        <button type="button" class="admin-tab" data-admin-tab="audits" id="adminTabAudits">
+        <button type="button" class="admin-tab" data-admin-tab="audits" id="adminTabAudits"
+                title="관리자·사용자의 콘솔 접근과 계정·역할·데이터소스 등 변경 이력을 시간순으로 조회합니다.">
           <span class="admin-tab-label">감사 로그</span>
           <!-- TASK-0161: #tabCountAudits stale 뱃지 제거 (admin.js 가 채우지 않아 영구 "—"). 감사는 cursor 페이지네이션이라 고정 총계 없음. -->
         </button>
 
-        <!-- TASK-0136: LLM 사용량 tab (admin 전용 — console.usage.read 없으면 숨김) -->
-        <button type="button" class="admin-tab" data-admin-tab="usage" id="adminTabUsage" style="display:none">
-          <span class="admin-tab-label">LLM 사용량</span>
-        </button>
-
         <!-- TASK-0273: 보관 대화 tab (conversation.archive.read.any 없으면 숨김) -->
-        <button type="button" class="admin-tab" data-admin-tab="archives" id="adminTabArchives" style="display:none">
+        <button type="button" class="admin-tab" data-admin-tab="archives" id="adminTabArchives" style="display:none"
+                title="종료·보관 처리된 대화를 감사·규정 준수 목적으로 조회합니다.">
           <span class="admin-tab-label">보관 대화</span>
         </button>
 
+        <!-- TASK-0136: LLM 사용량 tab (admin 전용 — console.usage.read 없으면 숨김) -->
+        <button type="button" class="admin-tab" data-admin-tab="usage" id="adminTabUsage" style="display:none"
+                title="모델별·기간별 LLM 토큰 사용량과 추정 비용을 집계하고, 차트에서 관련 대화로 드릴다운합니다.">
+          <span class="admin-tab-label">LLM 사용량</span>
+        </button>
+
         <!-- TASK-AIOPS: AI 운영 현황 tab (console.aiops.read 없으면 숨김 — canSeeTab + ADMIN_TAB_PERMISSIONS["ai-ops"]) -->
-        <button type="button" class="admin-tab" data-admin-tab="ai-ops" id="adminTabAiOps" style="display:none">
+        <button type="button" class="admin-tab" data-admin-tab="ai-ops" id="adminTabAiOps" style="display:none"
+                title="insight 워커·요청 처리·자동 분석 등 AI 구성요소의 실시간 상태와 최근 활동을 모니터링합니다.">
           <span class="admin-tab-label">AI 운영 현황</span>
         </button>
 

@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260702-audit-nav-ux — 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장 (Minor §12.3 — feature-0003 프론트 UI + 읽기전용 additive 백엔드, RBAC/스키마/인가/파괴적 변경 무. /_template:entry arg-given dispatch)
+- 트리거(사용자): "`관리 콘솔 > AI 운영 현황` 에서 (1) `감사` 카테고리 순서를 재구성: 감사 로그, 보관 대화, LLM 사용량, AI 운영 현황 (2) 각 항목 mouse hover 시 상세설명 툴팁 (3) 운영 현황 내부 '최근 활동' 클릭 시 상세 내용 확장 — 구조는 `프로필 > 계정 > 사용 내역 > 차트` 및 `관리 콘솔 > LLM 사용량 > 차트` 의 그래프 클릭 → 대화 목록 드릴다운 참조."
+- 설계:
+  1. **순서 재구성**(Task 1): `admin.html` 감사 그룹에서 `보관 대화`(data-admin-tab=archives) 버튼 블록을 `LLM 사용량`(usage) 앞으로 이동. 권한 게이팅(ADMIN_TAB_PERMISSIONS)·서브탭 로직은 `data-admin-tab` 키 단위 독립이라 DOM 순서 변경만으로 불변(applyAdminTabVisibility 가 그룹 경계를 DOM 순서로 동적 계산).
+  2. **툴팁**(Task 2): 감사 그룹 4개 탭 버튼에 네이티브 `title` 속성(상세설명) 추가 — 감사 로그/보관 대화/LLM 사용량/AI 운영 현황. admin.html 기존 `title` 관례(집계 기간·필터 등)와 정합, 접근성·무레이아웃리스크.
+  3. **최근 활동 상세 확장**(Task 3): 참조 드릴다운 구조(요약→상세)를 인라인 아코디언으로 구현. 활동 행 클릭 시 하위 상세 패널 확장 — 작업(label+task), 요청→서빙 모델(model→resolved_model), 토큰(프롬프트/완료/합계), 추정 비용, 지연(latency_ms), run_id, **연결 대화**(conversation_id 있으면 `/?conversation=<id>` 새 탭 링크 — showUsageConvModal 대화 open 규약 재사용, 없으면 "시스템/자율 호출 — 특정 대화 미귀속" 안내). 백엔드는 신규 엔드포인트 없이 `_query_activity`(overview activity feed + /api/admin/ai-ops/activity 페이징 공용 헬퍼) SELECT/dict 에 `resolved_model·prompt_tokens·completion_tokens·run_id·conversation_id` **additive** 노출 → 페이징 append 도 자동 상속.
+- Completion Checklist:
+  - [x] `static/admin.html`: 감사 그룹 archives↔usage 순서 재배치 + 4개 탭 `title` 툴팁 + admin.js cache-buster bump(`?v=20260702-audit-nav-ux`).
+  - [x] `routers/ai_ops.py` `_query_activity`: SELECT 컬럼 확장(model, resolved_model, run_id, conversation_id) + dict additive 필드(req_model/resolved_model/prompt_tokens/completion_tokens/run_id/conversation_id). 기존 필드(id/task/category/label/model(served)/total_tokens/cost_usd/latency_ms/created_at) byte-동치 보존.
+  - [x] `static/admin.js` `aiOpsActivityRowsHtml`: 클릭 요약 행(role=button/tabindex/aria-expanded/caret) + 하위 숨김 상세 패널 + `_toggleAiOpsActRow`/`bindAiOpsActivityToggle`. `renderAiOps` 에 aiOpsActivityList 위임 click/keydown 토글 배선(페이징 append 상속).
+  - [x] `tests/test_ai_ops.py`: `_act_rows` 11열 tuple + 신규 필드 assert(req_model/resolved_model/prompt/completion/run_id/conversation_id, served 우선순위, conv 유/무 경로). test_ai_ops.py 15/15 + make test exit 0(feature-0002+0003 전량, ruff PASS).
+  - [x] py_compile(ai_ops.py) + node --check(admin.js) 구문 검증 PASS.
+  - [x] §18.8 적대 패널(3-렌즈) VERDICT SHIP(BLOCKING/MAJOR/MINOR 0, NIT 3 비차단) → REV-20260702T190000-audit-nav-ux.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 라이브 실측(순서·툴팁·활동 클릭 상세 확장·대화 링크).
+
 ## TASK-20260702-aiops-activity-paging — AI 운영 현황 '최근 활동' 과거 기록 페이징 + main agent latency 계측 (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
 - 트리거(사용자): "'최근 활동'을 페이징하여 과거기록도 조회할 수 있도록 구성해주세요." + "이전 작업에서 확인했던 남은 발견 사항도 진행" (finding #1 agent_core latency).
 - 구성:

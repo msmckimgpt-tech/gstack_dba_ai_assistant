@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260702T190000-audit-nav-ux [SUBAGENT:adversarial-3lens] (TASK-20260702-audit-nav-ux — 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장, Minor §12.3 — feature-0003 프론트 UI + 읽기전용 additive 백엔드)
+- 대상: `static/admin.html`(감사 그룹 archives↔usage 순서 swap + 4개 탭 title 툴팁 + cache-buster), `static/admin.js`(aiOpsActivityRowsHtml 요약행+숨김 상세패널 재구성·_toggleAiOpsActRow·bindAiOpsActivityToggle·renderAiOps 위임 배선), `routers/ai_ops.py`(_query_activity SELECT/dict additive: model/resolved_model/run_id/conversation_id), `tests/test_ai_ops.py`(_act_rows 11열 + 신규 필드 assert). 신규 RBAC/스키마/엔드포인트/마이그/파괴적 변경 0.
+- 3-렌즈 적대 패널(A 백엔드 correctness/보안 · B 프론트 XSS/UX/접근성 · C 테스트 정합) → **VERDICT: SHIP** (BLOCKING 0 · MAJOR 0 · MINOR 0 · NIT 3 비차단).
+- **견고 확인(반증 실패)**:
+  - A1 SELECT `_COLS`(11열 idx0-10) ↔ dict `r[0]..r[10]` 1:1 정합, off-by-one 없음.
+  - A2 `served = r[3] or r[2]` byte-동치 — writer(feature-0002 llm.py:669)가 빈 resolved_model 을 None 강제 → Python `or` == SQL `COALESCE`. cost_usd 입력·행 표시 model 불변(회계 무변경).
+  - A3 cursor/no-cursor 분기 SQL·params(`WHERE id < %s`/`ORDER BY id DESC`/`LIMIT`, `(cursor,limit+1)`/`(limit+1,)`) keyset·has_more·next_cursor 무변경.
+  - A4 conversation_id/run_id 노출: 기존 console.aiops.read 게이트 그대로 + conversation_id 는 이미 showUsageConvModal 이 admin 에게 동일 등급 노출 중 → 신규 노출 등급·신규 authz 경로·IDOR 없음.
+  - B1 XSS: 신규 사용자데이터 삽입 속성은 href 하나(`encodeURIComponent(cid)` — 쿼리파라미터 고정, 스킴화·breakout 불가). 나머지 표시값 전부 `_aiOpsEscApg` escape + 속성 double-quote.
+  - B2 위임 토글: 리스너는 컨테이너 위임(append 행 상속), 전체 재렌더 시 리스트 노드 재생성→`_aiOpsActBound` 가드로 1회 바인딩(누수·중복 없음).
+  - B3 링크 클릭 `closest("a")` 가드로 토글 제외 + keydown Enter/Space `preventDefault` + aria-expanded/caret 갱신(접근성 정상).
+  - B4 그룹 순서 = 같은 감사 그룹 내 sibling swap 뿐 → applyAdminTabVisibility 그룹경계·ADMIN_TAB_PERMISSIONS(data-admin-tab 키) 게이팅 무영향.
+  - B5 `.aiops-act*` 클래스는 외부 CSS 규칙 없음(전부 inline, JS 셀렉터 전용) → 레이아웃 리스크 없음.
+  - C1/C2 `_act_rows` 11-tuple ↔ `_COLS` 순서 일치, `served` 우선순위 실증(model==resolved), conversation_id 짝/홀 두 경로 커버, 기존 assert(params[1]==4 등) 유효 — 전 스위트 **15 passed**.
+- **NIT (비차단, 수용)**: N1 `_aiOpsEscApg` single-quote 미이스케이프 — 현 diff 는 안전(속성 전부 double-quote), 공유 헬퍼 하드닝은 범위 밖으로 수용. N2 TASK 체크리스트 반영(커밋 전 완료 — 반영함). N3 PB-0008 Windows-browser 라이브 실측(순서·툴팁·클릭 상세·대화 링크)은 배포 후 필수(체크리스트대로).
+- 검증: `py_compile`(ai_ops.py)·`node --check`(admin.js) PASS · `make test` exit 0(feature-0002+0003, test_ai_ops.py 15/15) · ruff PASS.
+- Cross-ref: TASK-20260702-audit-nav-ux / REPORT.md 2026-07-02.
+
 ## REV-20260630T174000-metadata-bs-prefill [SUBAGENT:adversarial-frontend-8hyp] (TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill, Minor §12.3 — feature-0003 프론트 단독)
 - 대상: `static/admin.js`(prefill 색인/조회 헬퍼 `_metaBootstrapBuildDescIndex`·`_metaBootstrapDescLookup`, in-place 갱신 `_metaBootstrapRefreshPrefill`, `_metaBootstrapRenderResult` prefill+dataset.original, `loadMetadata` 재prefill, `_metaBootstrapSave` 변경분만 저장), `static/admin.html`(cache-buster lockstep). 백엔드/route/RBAC/스키마/엔드포인트/마이그 0.
 - 적대 패널 8-가설(H1 타이밍/staleness·H2 중복렌더/상태리셋·H3 키정합 케이스·H4 변경감지·H5 provenance·H6 데이터손실·H7 XSS·H8 성능) → **1차 VERDICT: FIX-THEN-SHIP** (BLOCKER 0 · MAJOR 1 · MINOR 2).

@@ -2081,12 +2081,73 @@ function applyAdminTabVisibility() {
 function _aiOpsEscApg(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 function _aiOpsFmtNumApg(v) { return v == null ? "0" : Number(v).toLocaleString(); }
 function _aiOpsFmtMsApg(v) { return v == null ? "—" : (v >= 1000 ? (v / 1000).toFixed(2) + "s" : Math.round(v) + "ms"); }
+function _aiOpsFmtUsdApg(v) { return v == null ? "—" : "$" + (Number(v) < 1 ? Number(v).toFixed(4) : Number(v).toFixed(2)); }
+// TASK-20260702-audit-nav-ux: 활동 행 = 클릭 요약 행 + 숨김 상세 패널(인라인 아코디언).
+//   상세 구조는 참조 드릴다운(차트→대화 목록)과 동일한 "요약→상세" 흐름 — 단건 llm_usage 이므로
+//   해당 호출의 전체 회계(토큰 분해·모델·지연·비용·run_id) + 연결 대화(conversation_id) 드릴다운.
+//   행/상세 모두 HTML 문자열이라 페이징 '더 보기' append 와 호환(위임 토글이 append 행도 커버).
 function aiOpsActivityRowsHtml(items) {
+  const E = _aiOpsEscApg;
   return (items || []).map((r) => {
     // 과거 기록 페이징이라 연도까지 표시(YYYY-MM-DD HH:MM:SS) — 연도 경계 넘어가는 모호성 방지.
     const ts = String(r.created_at || "").replace("T", " ").slice(0, 19);
-    return `<div style="display:flex;gap:10px;padding:3px 0;border-bottom:1px solid #f0f2f4"><span style="color:#57606a;width:118px;flex:none">${_aiOpsEscApg(ts)}</span><span style="flex:1;min-width:0"><b>${_aiOpsEscApg(r.label)}</b> <span style="color:#8c959f">${_aiOpsEscApg(r.model || "")}</span></span><span style="color:#57606a;width:74px;text-align:right">${_aiOpsFmtNumApg(r.total_tokens)} tok</span><span style="color:#57606a;width:60px;text-align:right">${_aiOpsFmtMsApg(r.latency_ms)}</span></div>`;
+    const reqM = r.req_model || "";
+    const srvM = r.resolved_model || r.model || "";
+    const modelDetail = (reqM && srvM && reqM !== srvM) ? (E(reqM) + " → " + E(srvM)) : E(srvM || reqM || "—");
+    const cid = r.conversation_id;
+    const convHtml = cid
+      ? `<a href="/?conversation=${encodeURIComponent(cid)}" target="_blank" rel="noopener">대화 열기 ↗</a> <span style="color:#8c959f">${E(String(cid).slice(0, 8))}…</span>`
+      : `<span style="color:#8c959f">시스템·자율 호출 — 특정 대화에 귀속되지 않습니다.</span>`;
+    const dl = (kk, vv) => `<span style="color:#8c959f">${E(kk)}</span><span style="min-width:0;word-break:break-word">${vv}</span>`;
+    const detail =
+      `<div class="aiops-act-detail" style="display:none;padding:8px 12px 10px 24px;background:#f6f8fa;border-bottom:1px solid #f0f2f4;font-size:12px">`
+      + `<div style="display:grid;grid-template-columns:auto 1fr;gap:3px 14px;align-items:baseline">`
+      + dl("시각", E(ts))
+      + dl("작업", `<b>${E(r.label)}</b> <span style="color:#8c959f">(${E(r.task)})</span>`)
+      + dl("모델", modelDetail)
+      + dl("토큰", `${_aiOpsFmtNumApg(r.prompt_tokens)} 프롬프트 · ${_aiOpsFmtNumApg(r.completion_tokens)} 완료 · <b>${_aiOpsFmtNumApg(r.total_tokens)}</b> 합계`)
+      + dl("추정 비용", _aiOpsFmtUsdApg(r.cost_usd))
+      + dl("지연", _aiOpsFmtMsApg(r.latency_ms))
+      + dl("요청 ID", r.run_id ? `<span style="font-family:monospace;font-size:11px">${E(r.run_id)}</span>` : "—")
+      + dl("연결 대화", convHtml)
+      + `</div></div>`;
+    const row =
+      `<div class="aiops-act-row" role="button" tabindex="0" aria-expanded="false" title="클릭하면 이 활동의 상세를 봅니다" style="cursor:pointer;display:flex;gap:10px;padding:3px 0;border-bottom:1px solid #f0f2f4">`
+      + `<span class="aiops-act-caret" aria-hidden="true" style="width:12px;flex:none;color:#8c959f">▸</span>`
+      + `<span style="color:#57606a;width:118px;flex:none">${E(ts)}</span>`
+      + `<span style="flex:1;min-width:0"><b>${E(r.label)}</b> <span style="color:#8c959f">${E(r.model || "")}</span></span>`
+      + `<span style="color:#57606a;width:74px;text-align:right">${_aiOpsFmtNumApg(r.total_tokens)} tok</span>`
+      + `<span style="color:#57606a;width:60px;text-align:right">${_aiOpsFmtMsApg(r.latency_ms)}</span>`
+      + `</div>`;
+    return `<div class="aiops-act">` + row + detail + `</div>`;
   }).join("");
+}
+
+// 활동 행 상세 토글(인라인 아코디언). 대화 링크 클릭은 토글에서 제외.
+function _toggleAiOpsActRow(row) {
+  const item = row.closest ? row.closest(".aiops-act") : null;
+  const detail = item ? item.querySelector(".aiops-act-detail") : null;
+  if (!detail) return;
+  const open = !detail.style.display || detail.style.display === "none";
+  detail.style.display = open ? "block" : "none";
+  row.setAttribute("aria-expanded", open ? "true" : "false");
+  const caret = row.querySelector(".aiops-act-caret");
+  if (caret) caret.textContent = open ? "▾" : "▸";
+}
+// aiOpsActivityList 위임 배선(초기 렌더 + 페이징 append 공용). 요소 재생성마다 1회 바인딩.
+function bindAiOpsActivityToggle(list) {
+  if (!list || list._aiOpsActBound) return;
+  list._aiOpsActBound = true;
+  list.addEventListener("click", (e) => {
+    if (e.target.closest && e.target.closest("a")) return; // 대화 열기 링크는 토글 아님
+    const row = e.target.closest ? e.target.closest(".aiops-act-row") : null;
+    if (row && list.contains(row)) _toggleAiOpsActRow(row);
+  });
+  list.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+    const row = e.target.closest ? e.target.closest(".aiops-act-row") : null;
+    if (row && list.contains(row)) { e.preventDefault(); _toggleAiOpsActRow(row); }
+  });
 }
 
 // '더 보기' — cursor(id) keyset 페이징으로 더 오래된 활동을 조회해 목록에 append.
@@ -2210,6 +2271,9 @@ function renderAiOps(data) {
   // '더 보기' 배선(innerHTML 재설정 후이므로 매 렌더마다 재바인딩).
   const _moreBtn = $("aiOpsActivityMore");
   if (_moreBtn) _moreBtn.addEventListener("click", loadAiOpsMoreActivity);
+  // TASK-20260702-audit-nav-ux: 활동 행 클릭 상세 확장 위임 배선(페이징 append 행도 커버).
+  const _actList = $("aiOpsActivityList");
+  if (_actList) bindAiOpsActivityToggle(_actList);
 }
 
 function switchTab(tabName) {

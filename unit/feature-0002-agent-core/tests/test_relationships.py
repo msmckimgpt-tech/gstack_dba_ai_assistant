@@ -414,6 +414,10 @@ def test_dialect_probe_sql_identifier_escaping():
     assert "we``ird" in my
     ms = D.get("mssql").probe_relationship_overlap("", "we]rd", "c", "", "t", "d", 10)
     assert "we]]rd" in ms
+    # probe-mssqlfix 리뷰 MINOR-2: 신 SQL 의 EXISTS 상관 위치(s0.<src_col>)에 사용자 유래
+    # 식별자가 새로 노출 — 그 자리의 q() 이스케이프도 봉인한다.
+    ms2 = D.get("mssql").probe_relationship_overlap("", "src", "c]ol", "", "t", "d", 10)
+    assert "= s0.[c]]ol]" in ms2
 
 
 def test_dialect_probe_sql_statement_timeout():
@@ -699,3 +703,16 @@ def test_probe_missing_object_resolved_slot_under_db_scope_is_negative(monkeypat
                                 raw_execute=_raise_missing, db_scope="db1")
     assert rep["negative"] == 1 and rep["failed"] == 0
     assert signals and signals[0][6] is False
+
+
+def test_dialect_mssql_probe_no_subquery_inside_aggregate():
+    """probe-mssqlfix: MSSQL 은 집계식 내 서브쿼리 금지(오류 130) — SUM 인자는 파생 테이블의
+    단순 컬럼이어야 하고 CASE/EXISTS 는 파생 테이블 안에 있어야 한다(라이브 전면 실패 회귀 봉인)."""
+    import re as _re
+    from modules import dialects as D
+    ms = D.get("mssql").probe_relationship_overlap("db1", "Achievement", "UniqueID",
+                                                   "db1", "AchievementQuest", "AchievementID", 50)
+    assert _re.search(r"SUM\(\s*CASE", ms) is None      # 집계가 서브쿼리 식을 직접 감싸면 안 됨
+    assert "SUM(s.m)" in ms and "CASE WHEN EXISTS" in ms
+    assert ms.index("CASE WHEN EXISTS") > ms.index("FROM (")  # CASE 는 파생 테이블 내부
+    assert "TOP 50" in ms and "IS NOT NULL" in ms

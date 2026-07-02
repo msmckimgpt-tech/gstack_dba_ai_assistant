@@ -8,6 +8,24 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260702T100500-ai-root-feature-0016-probe-mssqlfix
+- Date: 2026-07-02
+- Related Requirement: rel-selfheal(CHG-20260702T052630) 배포 후 라이브 검증에서 적발된 잠복 결함 —
+  MSSQL 프로브 SQL 이 오류 130("Cannot perform an aggregate function on an expression containing
+  an aggregate or a subquery")으로 **전면 실패**(insight-worker 로그 다수 실측; B-F7 경고 로깅이
+  노출 — 파이프라인 정지 동안 한 번도 실행되지 않아 숨어 있던 결함).
+- Summary: `dialects.MSSQLDialect.probe_relationship_overlap` 재작성 — `SUM(CASE WHEN EXISTS ...)`
+  (집계식이 서브쿼리 포함 = MSSQL 금지)를 CASE/EXISTS 를 파생 테이블 내부로 내리고 바깥에서
+  `SUM(s.m)` 단순 컬럼 집계로 변경. 의미(표본 TOP n 중 tgt 겹침 수) 동일. MySQL 경로 무변경.
+  회귀 테스트 1건 추가(집계가 서브쿼리 식을 직접 감싸지 않음 + CASE 는 파생 테이블 내부).
+  실패 기간의 후보들은 B-F4/R-1 가드 덕에 failed 집계+timestamp 전진만 발생(오파단 0) —
+  hotfix 후 rotation 으로 자연 재프로브된다.
+- Files: `unit/feature-0002-agent-core/src/modules/dialects.py`,
+  `unit/feature-0002-agent-core/tests/test_relationships.py`.
+- Impact: 백엔드 전용·비파괴. MSSQL 프로브(자기교정의 능동 검증 경로) 최초 실가동. 배포 =
+  insight/ask-worker 재빌드.
+- Rollback Notes: 코드 롤백 = 이전 커밋 재빌드(구 SQL 은 MSSQL 에서 전면 실패라 롤백 실익 없음).
+
 ## CHG-20260702T052630-ai-claude-feature-0016-rel-selfheal
 - Date: 2026-07-02
 - Related Requirement: CHG-20260702T024556 의 §18.8 적대 리뷰 패널(3렌즈 backend/security/qa, resume

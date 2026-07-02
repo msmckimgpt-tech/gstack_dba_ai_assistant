@@ -650,6 +650,18 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
         스냅샷 — 라우터 primary 복원 후 학습 오각인 차단, tools.py). 회귀 테스트 +4.
       - 최종 **61건 PASS** + ruff clean. 수용 한계는 ADR-007 Consequences ①~④(dbo-only·케이스
         플래핑·실효 30h·프로브 결합).
+- [x] T29.7b verify-completion PASS + commit 961a2a4b + main 병합(재번호 ADR-007/§29) + PR #547 머지
+      (a619da29) + cycle-finalize.
+- [x] T29.8 배포(insight/ask-worker 재빌드 + web 롤링 soak PASS) + 데이터 정정(2행 dk_data_release
+      정규화 — source/target_schema 와 **table_fqn 컬럼 동시** 갱신 필요(1차 시도가 fqn 미갱신으로
+      고아 재생성, 재정정 완료) + AGE 고아 Column 3노드 회수 + 재sync) + 라이브 검증:
+      - inferred candidate 2,601 · fk_introspect trusted 49 · inferred broken 110(프로브 자기교정 실동작)
+      - 그래프: `dk_data_release.Achievement` 실 Table 체인에 candidate 점선 4엣지(conversation w0.49 ×2
+        + inferred name_fk w0.35 ×2) 투영, 고아 0
+      - digest: load_relationship_context 가 `[추정 w=]` 태그로 Achievement 관계 주입 확인
+- [x] T29.9 (라이브 후속 hotfix, probe-mssqlfix) **MSSQL 프로브 SQL 오류 130 전면 실패** 적발
+      (B-F7 경고 로깅이 노출한 잠복 결함) → `SUM(CASE WHEN EXISTS)` → 파생 테이블 내 CASE +
+      바깥 `SUM(s.m)` 재작성 + 회귀 테스트. CHG-20260702T100500. 실패 기간 오파단 0(R-1 가드).
 - [ ] T29.7b verify-completion + commit/PR/merge.
 - [ ] T29.8 배포(insight/ask-worker 재빌드 + web 롤링) + 데이터 정정(기존 2행 dk_data_release 정규화 +
       AGE 고아 Column 3노드 회수 + 재sync) + 라이브 검증(inferred 적재·프로브 신호·그래프 점선·digest).

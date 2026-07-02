@@ -637,12 +637,17 @@ class MSSQLDialect(Dialect):
         src = f"{q(src_schema)}.{q(src_table)}" if src_schema else q(src_table)
         tgt = f"{q(tgt_schema)}.{q(tgt_table)}" if tgt_schema else q(tgt_table)
         prefix = f"SET LOCK_TIMEOUT {int(timeout_ms)}; " if int(timeout_ms or 0) > 0 else ""
+        # rel-selfheal 라이브 후속(probe-mssqlfix): MSSQL 은 집계식이 서브쿼리를 포함할 수 없다
+        # (오류 130 "Cannot perform an aggregate function on an expression containing an
+        # aggregate or a subquery") — SUM(CASE WHEN EXISTS ...) 가 라이브에서 전면 실패했다
+        # (파이프라인 정지 동안 미노출이던 잠복 결함). CASE/EXISTS 를 파생 테이블 안으로
+        # 내리고 바깥에서 SUM(단순 컬럼) 집계로 재작성 — 의미(표본 n 중 겹침 수) 동일.
         return (
-            f"{prefix}SELECT COUNT(*) AS sampled, "
-            f"SUM(CASE WHEN EXISTS (SELECT 1 FROM {tgt} t WHERE t.{q(tgt_col)} = s.v) "
-            f"THEN 1 ELSE 0 END) AS matched "
-            f"FROM (SELECT TOP {n} {q(src_col)} AS v FROM {src} "
-            f"WHERE {q(src_col)} IS NOT NULL) s"
+            f"{prefix}SELECT COUNT(*) AS sampled, SUM(s.m) AS matched FROM ("
+            f"SELECT TOP {n} CASE WHEN EXISTS "
+            f"(SELECT 1 FROM {tgt} t WHERE t.{q(tgt_col)} = s0.{q(src_col)}) "
+            f"THEN 1 ELSE 0 END AS m "
+            f"FROM {src} s0 WHERE s0.{q(src_col)} IS NOT NULL) s"
         )
 
 
