@@ -5286,3 +5286,19 @@ source_of_truth: true
 - Impact: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터 권한이 다른 그룹과 동일한 2단 계층으로 표시(묶음→세부). **비파괴** — authz enforcement·기존 grant·백엔드 함의 전부 불변. 개별 metadata.* 부여는 "세부 권한 더 보기"로 여전히 가능(B안 보존).
 - 검증: `node --check` PASS, `test_permission_dependency_map.py` 18개(기존 16 + t5/t6) PASS, §18.8 SUBAGENT 패널 VERDICT PASS(BLOCKING 0 — 개별부여 회귀·은닉·enforcement·implies 상호작용 4축 refute; NIT-1 수정 반영·NIT-2 테스트 추가). 배포 후 라이브 그리드 계층 확인.
 - Rollback: revert admin.js(맵 원복 + isGrantedForReach 제거) + admin.html(캐시버스터) + 테스트.
+
+## CHG-20260702-aiops-panel (TASK-20260702-aiops-panel — AI 운영 관제 패널 + LLM 계측 확장, Major §12.3 — feature-0003 web/UI·인가 + cross-unit feature-0002 core/alembic + shared. /_template:resume 재개, PLAN-APPROVED)
+- 변경(cross-unit — feature-0002 core/alembic, shared, feature-0003 web):
+  - **feature-0002** `alembic/versions/20260702_0030_llm_usage_latency.py`(신규): PG `agent_runtime.llm_usage` 에 `latency_ms INTEGER`(nullable, DEFAULT 없음) `ADD COLUMN IF NOT EXISTS`(additive·idempotent, down=DROP IF EXISTS). down_revision=0029_node_analysis_relevance.
+  - **feature-0002** `src/scripts/agent_runtime_schema.sql`: bootstrap `llm_usage` DDL 에 `latency_ms INTEGER` parity 추가(0002 resolved_model 관례).
+  - **feature-0002** `src/modules/llm.py`: `_record_llm_usage` 에 `latency_ms:int|None=None` 인자 + INSERT 컬럼 추가(미전달=NULL → agent-core 11경로 byte-동치). 중앙 래퍼 `_openai_chat_completion_with_deadline` 순수 API 왕복(submit~result) latency 측정→전달.
+  - **shared** `model_catalog.py`: `TASK_TAXONOMY`(14 task→6 category) + `taxonomy_for()`(미등록→`ai.other.unmapped` self-surface) + `ai_categories()` 추가.
+  - **feature-0003** `src/app.py`: web 4경로 계측(프롬프트 자동생성 비스트리밍 16xx executor 람다 내부·스트리밍 produce() include_usage+choices 가드 앞 usage 선포착+SENTINEL 1회·자율 sweep daemon thread conv_id=None·메타 자동완성 executor 람다 metadata_ 접두). 권한 `console.aiops.read` PERMISSION_DEFINITIONS+admin catchup. `_ask_worker_age_sec` 헬퍼(3-state). `_DASHBOARD_WIDGETS` ai_ops + `_dash_widget_ai_ops`(tab='ai-ops'). `include_router(ai_ops)`.
+  - **feature-0003** `src/routers/ai_ops.py`(신규): GET `/api/admin/ai-ops`(console.aiops.read) — 상태 축 worst-of 배너(inprocess ask-worker N/A 제외) + KPI + Attention + 카테고리 드릴다운 + 활동 feed + 커버리지. PG 부분 degrade(200, `_pg_connect_ro`).
+  - **feature-0003** `src/routers/admin_console.py`: overview 에 `_isolate("ai_ops", …)` dispatch.
+  - **feature-0003** `src/static/admin.html`: 감사 그룹 `data-admin-tab="ai-ops"` 탭 + pane(#aiOpsBody) + cache-buster css/js `?v=20260702-ai-ops`.
+  - **feature-0003** `src/static/admin.js`: `PERMISSION_DEPENDENCIES`+`ADMIN_TAB_PERMISSIONS["ai-ops"]`(fail-open 방지) + `adminState.aiOps` + switchTab lazy-load + `loadAiOps`/`renderAiOps` + 새로고침 배선.
+  - **feature-0003** `tests/test_permission_dependency_map.py`: v2 리스트에 console.aiops.read. `tests/test_ai_ops.py`(신규 10건).
+- Verification: `tests/test_ai_ops.py` **10/10 PASS** + 회귀 permission 16/dashboard 20/usage 28 PASS, 전체 collection 무오류. py_compile(app.py·llm.py·model_catalog.py·ai_ops.py·admin_console.py·마이그·test) + node --check(admin.js) PASS. 적대검증 REV-20260702T140000-aiops-panel. PB-0008 Windows-browser= TEST.md.
+- Files: `feature-0002/{alembic/versions/20260702_0030_llm_usage_latency.py, src/scripts/agent_runtime_schema.sql, src/modules/llm.py}`, `shared/model_catalog.py`, `feature-0003/{src/app.py, src/routers/ai_ops.py, src/routers/admin_console.py, src/static/admin.html, src/static/admin.js, tests/test_ai_ops.py, tests/test_permission_dependency_map.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`.
+- 계측 커버리지 정직성: 임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 부재 → 구조적 계측 불가로 '계측 커버리지' 각주에 미계측 명시('전체 비용' 오해 방지). cost 는 read-time 계산(단가표 web 전용) — DB 컬럼 미추가. 워커 프로세스 latency 는 web-only 배포로 미반영(quiet-time 워커 재빌드 후속).

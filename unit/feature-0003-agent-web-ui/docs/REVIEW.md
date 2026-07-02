@@ -4383,3 +4383,16 @@ source_of_truth: true
 - NIT 처리(§18.8 "가시 회귀만 수정"): **NIT-1(가시 회귀) 수정** — override 모드 상속-부여를 reachability 카운트에 포함(`isGrantedForReach`)해 "N개 부여됨" cue 복원. **NIT-2 수정** — t5(계층 pin)/t6(도달성) 테스트 추가.
 - 사전 검증: `node --check` PASS, `test_permission_dependency_map.py` 18개 PASS(V1~V7 disclosure 로직 무회귀 + t5/t6 신규).
 - deploy-backed: 배포 후 라이브 권한 그리드에서 메타데이터 2단 계층(묶음→세부) + 개별 부여 도달성 실측.
+## REV-20260702T140000-aiops-panel [AGENT-TEAM:correctness-hotpath+security-authz+db-migration-degrade] (TASK-20260702-aiops-panel — AI 운영 관제 패널 + LLM 계측 확장, Major §12.3, cross-unit feature-0002/shared/0003)
+- 3-렌즈 병렬 적대 패널(통과가 아니라 결함 적발): **BLOCKING 0 (전 축)**, NIT 5. 렌즈별 —
+  - **correctness·hot-path** (BLOCKING 0 / NIT 3): latency 측정 지점(submit 전~result 후, PG write 제외) 정확 · agent-core 11경로 byte-동치(latency_ms 미전달=NULL, 실측 params[-1] is None) · 4경로 create+record 둘 다 executor/daemon 스레드(이벤트 루프 무블로킹) · 스트리밍 choices 가드 앞 usage 선포착+SENTINEL 1회+미지원 정직 스킵 · 계측 예외 비전파. 25건 회귀 실측 통과.
+  - **security·authz** (BLOCKING 0 / NIT 2): console.aiops.read 5곳 sync 완전·admin 전용 격리(operator/sales/dba/pending 0) · canSeeTab fail-open 방지(ADMIN_TAB_PERMISSIONS["ai-ops"] hyphen 일치) · 엔드포인트/위젯 require_permission 게이트 · 정보노출 0(provider message/scope_key/conversation_id/prompt 본문 미노출) · SQL 인젝션 0(days int-clamp, task/model=dict 키) · 읽기전용(_pg_connect_ro) · XSS esc().
+  - **db-migration-degrade** (BLOCKING 0 / NIT 0): migrate-lint **실행 확인 `✓ PASS expand-safe`** · additive nullable/멱등/down_revision 0029 체인 · 부분 degrade(PG 미가용 200, autocommit=True 로 실패 쿼리 트랜잭션 미오염) · DB 경계 축별 try/except 이중 방어 · inprocess ask-worker na 롤업 제외 · ts naive/aware 규약 준수(실제 heartbeat writer utc_now_iso 포맷으로 TypeError 없음 값 재현) · percentile latency_ms IS NOT NULL 필터.
+- NIT 처리:
+  - [반영] R1-NIT2 스트리밍 `stream_options` 하드거부 회귀 방지 — create 를 include_usage 로 1차 시도, 예외(TypeError/400) 시 stream_options 없이 재시도해 프롬프트 자동작성 스트리밍 기능 보전(계측만 포기). app.py produce().
+  - [반영] R2-NIT2 styles.css cache-buster 되돌림(CSS 미변경) + 미사용 `.aiops-body` 클래스 제거.
+  - [반영] R2-NIT1 `verify_admin_tab_gating.mjs` 에 ai-ops fail-open 회귀 케이스 2건 추가(admin 표시 + 빈권한 숨김) — jsdom 실행 시 **둘 다 PASS**(delta +2 passed; 기존 2 FAIL '시스템 그룹라벨'은 로컬 jsdom@22 artifact, main 동일 선재·feature 무관).
+  - [수용·기록] R1-NIT1 스트리밍 latency 의미(생성지속 vs 왕복) 혼합 — 두 transport 모두 prompt_gen 계측, 패널 aggregate AI latency 관점에서 정직. v1 수용.
+  - [수용·기록] R1-NIT3 프론트 days 미전달(v1 고정 7일 window, 새로고침 재조회) — UX 한계, correctness 무관. v1 수용.
+  - [수용·기록] R3 원거리 주의: (a) 부분 degrade 의 `_pg_connect_ro(autocommit=True)` 기본값 암묵 의존 — autocommit=False 리팩터 시 부분 degrade 붕괴, 회귀 게이트로 명시. (b) `_parse_kv_timestamp` space+offset aware 반환은 heartbeat writer 포맷 변경 시 TASK-0169 재발 원거리 함정(현재 writer=utc_now_iso T-separated 라 미도달).
+- 실측: tests/test_ai_ops.py 10/10 · 회귀 permission 16/dashboard 20/usage 28 PASS · 전체 collection 무오류 · migrate-lint expand-safe · py_compile 전체 · node --check(admin.js/mjs). PB-0008 Windows-browser= 배포 후 라이브(TEST.md).

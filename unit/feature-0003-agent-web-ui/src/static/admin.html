@@ -63,6 +63,11 @@
           <span class="admin-tab-label">보관 대화</span>
         </button>
 
+        <!-- TASK-AIOPS: AI 운영 현황 tab (console.aiops.read 없으면 숨김 — canSeeTab + ADMIN_TAB_PERMISSIONS["ai-ops"]) -->
+        <button type="button" class="admin-tab" data-admin-tab="ai-ops" id="adminTabAiOps" style="display:none">
+          <span class="admin-tab-label">AI 운영 현황</span>
+        </button>
+
         <!-- admin-metadata-relocate: 메타데이터/샘플 검수는 '감사'(읽기전용 모니터링)가 아닌
              지식베이스(KB) 거버넌스(kb.* 권한)라 별도 그룹으로 분리한다. 그룹 경계는
              admin.js applyAdminTabVisibility() 가 DOM 순서로 동적 계산하고 권한 게이팅은
@@ -553,6 +558,23 @@
               <p class="admin-archive-detail-note">사용자가 "삭제"한 대화는 hard-delete 되지 않고 보관됩니다. 데이터·첨부는 보존되어 오용 방지 감사·맥락 참조에 사용됩니다. 소유 계정 목록에서는 숨겨지고 새 메시지 진행이 차단됩니다.</p>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- TASK-AIOPS: AI 운영 현황 pane (console.aiops.read). 내부 콘텐츠(배너/KPI/Attention/
+           카테고리 드릴다운/활동 feed/커버리지)는 admin.js renderAiOps() 가 #aiOpsBody 에 동적 렌더. -->
+      <section class="admin-pane" data-admin-pane="ai-ops">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">AI Ops</div>
+            <h2>AI 운영 현황</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="aiOpsRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="aiOpsBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
         </div>
       </section>
 
