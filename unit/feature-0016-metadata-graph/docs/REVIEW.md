@@ -562,3 +562,21 @@ source_of_truth: true
 - **수용·기록 (수정 없음, 근거 명시)**: [fe] 검증 — 캐시 서명 3-writer(_metaApplyState/_metaG6Apply/refreshStates) 통일·setElementState state 순수성·XSS 화이트리스트 게이트·reset race 기존 시맨틱 동일 무회귀. [qa Q2] node_label='' Table done 행(그래프 미투영 시 enqueue 폴백)은 백필 영구 스킵 — 빈도 낮고 재분석 자기치유, 시각 결손만. [qa Q3] roles Map sync↔폴 last-write-wins 경합 — run 진행 중 폴이 매 tick 전량 재전송해 자기치유, run 종료 직후 수백 ms 창 한정 stale(다음 상호작용 복구). [qa Q4] _metaApplyState 의 ~16ms bake-전 도장 창 — 코스메틱·다음 rebuild 복구. [qa Q5] role 저장 경로(UPDATE·backfill) DB-의존 테스트 부재 — 순수함수 10건 + 배포 후 라이브 실측으로 보강(알려진 갭). [ux U6] 💳 아이콘의 비화폐 행위 오독 소지(📜 와의 형태 변별 우선 유지)·용어 amber↔log 근접(노드 형태+테두리 이중 인코딩으로 변별)·미분석 teal↔transaction green 근접(아이콘 유무 변별) — 라이브 관측 후 조정. [fe F3] 아이콘 prefix 로 긴 테이블명 ellipsis 2-3자 조기화 — 코스메틱.
 - 검증: 수정 후 py_compile/node --check PASS · role 10 + relevance 28 + ai_ops 15 = 53 PASS · headless harness 4 시나리오 ALL PASS(pageerror 0) · 전체 pytest 회귀 재실행.
 - 병렬 재번호: 상류 #553 이 §31/ADR-009 선점 → 본 cycle 은 **§32/ADR-010** 으로 재번호(§13.1). 상류 main 의 feature-0003 TEST.md 커밋된 병합 마커(graph-ctxmenu↔aiops-activity-paging Run 충돌 잔재)를 위생 해소(두 Run 모두 보존).
+
+## REV-20260703T160000-ai-root-feature-0016-reltrace-tabledetail [SUBAGENT: PASS-WITH-FIXES] — 테이블 단일클릭 상세 관계 모델 병합 적대 리뷰
+- Related Change: CHG-20260703T160000(reltrace-tabledetail). admin.js `_metaGraphRenderDetail`/
+  `_metaGraphShowRelations` 모델 병합 + admin.html 캐시버스터. TASK §33. graph-reltrace PB-0008 후속.
+- Trigger: UI/graph + REFERENCES/relationship keyword matched → frontend 집중 1렌즈.
+- Method: general-purpose subagent — git diff 정독 + node --check + isSelf/dedup/방향/성능/회귀/XSS 재현 검증
+  + 백엔드 schema_tables 노드 계약 대조.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0. 핵심 로직(self 판정 scope-prefix 오판 없음·dedup 방향 정합·
+  around 오분류 없음·컬럼 단일클릭 회귀 없음·nm esc XSS 안전) 견고 확인.
+- Findings → 처리:
+  - **LOW (수정)**: 모델-병합 관계행의 상대 Column 노드가 `_metaGraph.nodes` 에 없을 수 있음(schema_tables
+    는 REFERENCES 끝점 Column 노드 미포함) → raw scoped key 표시·조인컬럼 주석 소실. → 신규
+    `_metaKeyDisplayNode`(scope 접두 제거 fqn + leaf) 로 nm 폴백 + 관계 상세 노드 보강.
+  - **LOW/cosmetic (수정)**: `_metaGraphIngest` 가 model 엣지에 cardinality 미저장 → 모델-only 관계행
+    `[cardinality]` 배지 항상 누락. → ingest 에 `cardinality` 저장.
+  - **INFO (수용)**: detail fetched-refs 루프의 broken 미필터는 백엔드가 응답·모델 양쪽 제외라 실질 no-op.
+- 재검증: node --check PASS + 모델병합 격리 Node 5/5 + `_metaKeyDisplayNode` 파생 정확(Column/Table label·fqn·leaf).
+- Human Approval Needed: 없음(Minor·프론트 전용·비파괴). deploy_scope: included 자동 배포 + PB-0008.
