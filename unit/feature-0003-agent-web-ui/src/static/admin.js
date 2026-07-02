@@ -3440,11 +3440,54 @@ function _metaG6Build() {
       }
     });
   });
-  // 엣지: 양끝 노드가 모두 현재 데이터에 있을 때만(HAS_TABLE/HAS_COLUMN 은 containment 라 제외).
+  // 엣지 조립 — HAS_TABLE/HAS_COLUMN 은 containment 라 제외.
+  //   graph-reltrace ①: REFERENCES(Column→Column) 끝점을 **렌더된 id 로 해소**한다 — 컬럼이
+  //   렌더돼 있으면 컬럼-레벨, 아니면 소속 테이블 노드로 승격. 두 테이블이 접힌 상태에서도 테이블
+  //   간 관계 엣지가 보이도록(사용자 요청: "테이블 더블클릭 전까지 관계 미표시" 해소). 같은 두
+  //   렌더 끝점으로 승격된 다수 컬럼-쌍은 하나의 집계 엣지로 dedupe 하고, 상태는 최강(trusted>
+  //   candidate)을 채택하며 하위 컬럼-쌍을 pairs 로 실어 추적/툴팁에 쓴다.
   const present = new Set(nodes.map((n) => n.id));
+  const renderEndpoint = (nodeKey) => {   // 컬럼 미렌더 시 소속 테이블로 승격
+    if (present.has(nodeKey)) return nodeKey;
+    // 컬럼 노드가 모델에 없어도(접힌 스키마 = 테이블만 로드) REFERENCES 끝점은 항상 컬럼 키이므로
+    // 키 문자열에서 소속 테이블 키를 직접 도출한다(_metaColParent 는 fqn 없으면 key 로 파싱).
+    const gn = _metaGraph.nodes.get(nodeKey);
+    const pk = _metaColParent(nodeKey, gn && gn.fqn);
+    return (pk && present.has(pk)) ? pk : null;
+  };
+  const aggMap = new Map();   // "src::tgt" → 집계 엣지(테이블-레벨 승격분)
   _metaGraph.edges.forEach((e) => {
     if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN") return;
-    if (present.has(e.source) && present.has(e.target)) edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: _metaEdgeStyleFor(e.status) });
+    // 비-REFERENCES(DESCRIBES/RELATED_TERM 등)는 기존대로 양끝 직접 렌더 시에만.
+    if (e.type !== "REFERENCES") {
+      if (present.has(e.source) && present.has(e.target)) {
+        edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: _metaEdgeStyleFor(e.status) });
+      }
+      return;
+    }
+    const rs = renderEndpoint(e.source), rt = renderEndpoint(e.target);
+    if (!rs || !rt || rs === rt) return;   // 미렌더 끝점 or 동일 테이블 내부(intra-table) 제외
+    const colLevel = (rs === e.source && rt === e.target);
+    if (colLevel) {
+      // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지).
+      edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true }, style: _metaEdgeStyleFor(e.status) });
+      return;
+    }
+    // 한쪽 이상이 테이블로 승격 — 집계 엣지에 병합(dedupe + 상태 승급 + pairs 누적).
+    const ak = rs + "::" + rt;
+    let agg = aggMap.get(ak);
+    if (!agg) { agg = { id: "agg:" + ak, source: rs, target: rt, status: e.status || "", count: 0, pairs: [] }; aggMap.set(ak, agg); }
+    agg.count += 1;
+    if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.status });
+    if (e.status === "trusted" || (e.status === "candidate" && agg.status !== "trusted")) agg.status = e.status;   // 최강 상태 채택
+  });
+  aggMap.forEach((agg) => {
+    // 집계 엣지는 여러 컬럼-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
+    const st = _metaEdgeStyleFor(agg.status);
+    if (agg.count > 1) st.lineWidth = (st.lineWidth || 1.4) + 0.8;
+    edges.push({ id: agg.id, source: agg.source, target: agg.target,
+      data: { label: "REFERENCES", status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs },
+      style: st });
   });
   // graph-initview: 렌더된 요소 id 집합(노드+combo) — setElementState/focus 가 미렌더 요소를 건드리지 않게.
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id).concat(combos.map((c) => c.id)));
@@ -4306,6 +4349,76 @@ async function _metaGraphShowDetail(key) {
   _metaGraphStatus(`상세: ${self.name || key} · 이웃 ${nb}개 (더블클릭 = 관계 확장 · 우클릭 = 상호작용 메뉴)`);
 }
 
+// graph-reltrace ②③: 관계 클릭 → **대상 테이블·컬럼으로 그래프 추적**.
+//   상세 패널/관계 상세/AI 능동 분석 결과의 관계 행이 공통으로 호출한다. 대상 테이블을 이웃과 함께
+//   화면에 가져오고(스키마 펼침·관계 엣지 로드), 컬럼을 전개해 **대상 컬럼을 강조+카메라 focus** 한다.
+//   기존 "상대 노드 상세만 교체"(showDetail)와 달리 사용자가 연결을 실제 화면에서 따라가게 한다.
+async function _metaGraphTraceRelation(targetKey) {
+  if (!_metaGraph.graph || !targetKey) return;
+  // review MINOR: 대상이 컬럼/테이블이 아닌 노드(용어 GlossaryTerm 등)면 추적(테이블·컬럼 강조)이
+  //   의미 없으므로 상세 보기로 라우팅. "관계 상세" 의 연관 용어 행이 trace 로 넘어오던 오라우팅 해소.
+  const tgtNode = _metaGraph.nodes.get(targetKey);
+  if (tgtNode && tgtNode.label && tgtNode.label !== "Table" && tgtNode.label !== "Column") {
+    return _metaGraphShowDetail(targetKey);
+  }
+  // review MINOR: 컬럼 판정은 **node label 우선**(세그먼트≥3 은 3-part fqn 테이블에서 오판 가능) —
+  //   모델에 label 이 있으면 그것으로, 없으면(집계 대상 미로드) 세그먼트 수 휴리스틱 폴백.
+  const idx = String(targetKey).indexOf(":");
+  const segs = idx >= 0 ? String(targetKey).slice(idx + 1).split(".") : [];
+  const looksColumn = tgtNode ? (tgtNode.label === "Column") : (segs.length >= 3);
+  const tableKey = looksColumn ? (_metaColParent(targetKey, tgtNode && tgtNode.fqn) || targetKey) : targetKey;
+  // 1) 대상 테이블을 이웃과 함께 화면에 가져오고 스키마 펼침 + 카메라 이동 (REFERENCES 엣지도 로드).
+  await _metaGraphExpand(tableKey);
+  // 2) 대상 테이블 컬럼 전개(펼침 전용) — 컬럼까지 추적 가능하게(이웃 응답에 컬럼이 이미 오면 no-op).
+  if (!_metaTableHasCols(tableKey)) { try { await _metaGraphToggleColumns(tableKey); } catch (_) { /* graceful */ } }
+  // 3) 대상 컬럼 강조 + 카메라 focus (렌더된 경우). 미렌더(컬럼 introspect 불가 등)면 테이블 강조 유지.
+  const focusKey = (looksColumn && _metaRenderedIdFor(targetKey)) ? targetKey : tableKey;
+  _metaGraphSetSelected(focusKey);
+  const seq = _metaGraph._opSeq;
+  try { await _metaGraphAnimateFocus(focusKey, seq); } catch (_) { /* graceful */ }
+  const nm = (_metaGraph.nodes.get(focusKey) || {}).name || focusKey;
+  _metaGraphStatus(`관계 추적 → ${nm} (대상 테이블·컬럼 강조).`);
+}
+
+// graph-reltrace ②③: 컨테이너 내 `.amgr-trace[data-trace]` 행에 추적 클릭/키보드 바인딩(공용).
+function _metaGraphBindTraceRows(el) {
+  if (!el) return;
+  el.querySelectorAll(".amgr-trace[data-trace]").forEach((r) => {
+    const k = r.getAttribute("data-trace");
+    if (!k) return;
+    const go = (ev) => { if (ev) ev.stopPropagation(); _metaGraphTraceRelation(k); };
+    r.addEventListener("click", go);
+    r.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(ev); } });
+  });
+}
+
+// graph-reltrace ②③: 노드(테이블이면 자기 컬럼 포함)에 닿는 REFERENCES 관계를 추적 행 HTML 로.
+//   edges 미지정 시 모델(_metaGraph.edges)에서 수집(AI 박스용). broken 제외. 반환: {html, count}.
+function _metaGraphRelTraceRowsHTML(nodeKey, edges) {
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const nmOf = (k) => { const n = _metaGraph.nodes.get(k); return (n && (n.fqn || n.name)) || String(k).split(".").pop(); };
+  const isSelf = (k) => k === nodeKey || _metaColParent(k, (_metaGraph.nodes.get(k) || {}).fqn) === nodeKey;
+  const src = edges || Array.from(_metaGraph.edges.values());
+  const seen = new Set();
+  const rows = [];
+  src.forEach((e) => {
+    if (!e || e.type !== "REFERENCES" || e.status === "broken") return;
+    const sSelf = isSelf(e.source), tSelf = isSelf(e.target);
+    if (!sSelf && !tSelf) return;      // self 무관 엣지 제외
+    const other = sSelf ? e.target : e.source;
+    if (!other || seen.has(other)) return;
+    seen.add(other);
+    const arrow = sSelf ? "→" : "←";
+    rows.push(
+      `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
+      `title="클릭하면 대상 테이블·컬럼으로 그래프를 추적합니다">` +
+      `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(nmOf(other))}</code>` +
+      `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`
+    );
+  });
+  return { html: rows.join(""), count: rows.length };
+}
+
 // 테이블 단일 클릭 = **자신의 컬럼 인라인 펼침(펼침 전용)**. 이미 펼쳐졌으면 no-op(버그① — 클릭으론 안 접힘).
 //   접힘: "−" 컨트롤(_metaGraphCollapse). 그래프 컬럼(HAS_COLUMN) 없으면 information_schema 즉석조회(introspect).
 async function _metaGraphToggleColumns(key) {
@@ -4729,7 +4842,9 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   });
   (nodes || []).forEach((n) => { if (n && n.label === "GlossaryTerm" && n.key !== selfKey && !terms.includes(n)) terms.push(n); });
 
-  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // graph-reltrace(review MAJOR): 관계 행 data-trace 속성값(노드 키)에 쓰이므로 따옴표까지 이스케이프
+  //   (DB 식별자에 인용부호 가능 — 속성 탈출 방어. sibling _metaGraphRelTraceRowsHTML 와 parity).
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
   parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button></div>`);
@@ -4742,8 +4857,23 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     parts.push(`</ul></div>`);
   }
   if (refs.length) {
-    parts.push(`<div class="admin-meta-graph-sec"><h4>관계 (${refs.length})</h4><ul>`);
-    refs.slice(0, 50).forEach((e) => parts.push(`<li><code>${esc(nm(e.source))}</code> → <code>${esc(nm(e.target))}</code>${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(e.edge_source) + ")</span>" : ""}${_metaEdgeTrustBadge(e)}</li>`));
+    // graph-reltrace ②: 관계 행을 **클릭 시 대상 테이블·컬럼으로 추적**하도록 구성.
+    //   self(테이블이면 자기 컬럼 포함)가 아닌 반대쪽 끝점을 추적 대상으로 삼는다.
+    const isSelfEnd = (k) => k === selfKey || _metaColParent(k, (byKey[k] || {}).fqn || (_metaGraph.nodes.get(k) || {}).fqn) === selfKey;
+    parts.push(`<div class="admin-meta-graph-sec"><h4>관계 (${refs.length})</h4><p class="admin-meta-detail-note">행을 클릭하면 대상 테이블·컬럼으로 그래프를 추적합니다.</p><ul class="amgr-list">`);
+    refs.slice(0, 50).forEach((e) => {
+      const sSelf = isSelfEnd(e.source);
+      const other = sSelf ? e.target : e.source;
+      const arrow = sSelf ? "→" : "←";
+      parts.push(
+        `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
+        `title="클릭하면 대상 테이블·컬럼으로 그래프를 추적합니다">` +
+        `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(nm(other))}</code>` +
+        `${e.cardinality ? " [" + esc(e.cardinality) + "]" : ""}` +
+        `${e.edge_source && e.edge_source !== "fk_introspect" ? " <span class=\"admin-meta-graph-muted\">(" + esc(e.edge_source) + ")</span>" : ""}` +
+        `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`
+      );
+    });
     parts.push(`</ul></div>`);
   }
   if (terms.length) {
@@ -4763,6 +4893,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   if (aiBtn) aiBtn.addEventListener("click", () => _metaGraphAnalyze(self.key, selfScopeKey));
   const relBtn = document.getElementById("metaGraphRelBtn");
   if (relBtn) relBtn.addEventListener("click", () => _metaGraphShowRelations(self.key));
+  _metaGraphBindTraceRows(el);   // graph-reltrace ②: 관계 행 클릭 → 대상 추적
   _metaGraphLoadNodeAnalysis(self.key);
 }
 
@@ -4889,7 +5020,9 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   el.innerHTML = parts.join("");
   el.querySelectorAll(".amgr-row[data-key]").forEach((r) => {
     const k = r.getAttribute("data-key");
-    const go = () => { _metaGraphShowDetail(k); };
+    // graph-reltrace ②: 관계 상세 행 클릭도 **그래프 추적**(대상 테이블·컬럼 강조)으로 통일.
+    //   기존엔 상대 노드 상세만 교체해 "화면에서 연결을 따라간다" 느낌이 약했다.
+    const go = () => { _metaGraphTraceRelation(k); };
     r.addEventListener("click", go);
     r.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } });
   });
@@ -5150,8 +5283,17 @@ async function _metaGraphLoadNodeAnalysis(key) {
     if (a.relationships) rows.push(`<p><strong>관계</strong> — ${esc(a.relationships)}</p>`);
     if (a.usage) rows.push(`<p><strong>활용</strong> — ${esc(a.usage)}</p>`);
     if (a.caveats) rows.push(`<p class="admin-meta-graph-muted"><strong>주의</strong> — ${esc(a.caveats)}</p>`);
+    // graph-reltrace ③: AI 능동 분석은 REFERENCES 를 따라 이웃을 재귀 분석한다(백엔드 node_analysis).
+    //   그 분석이 따라간 **구조화된 관계**를 추적 가능한 행으로 노출 — LLM prose(위)는 서술이라
+    //   클릭 대상이 없으므로, 분석 결과에서도 대상 테이블·컬럼을 직접 추적하게 한다(사용자 요청 ③).
+    const trace = _metaGraphRelTraceRowsHTML(key, null);
+    if (trace.count) {
+      rows.push(`<div class="admin-meta-graph-ai-rels"><strong>연결 관계 추적 (${trace.count})</strong>` +
+        `<ul class="amgr-list">${trace.html}</ul></div>`);
+    }
     rows.push(`<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn2">↻ 재분석</button>`);
     box.innerHTML = rows.join("") || '<span class="admin-meta-graph-muted">분석 결과 없음.</span>';
+    _metaGraphBindTraceRows(box);   // graph-reltrace ③: AI 결과의 관계 행도 추적
     const b2 = document.getElementById("metaGraphAiBtn2");
     if (b2) b2.addEventListener("click", () => _metaGraphAnalyze(key));
   } else if (res.status === "pending" || res.status === "running") {

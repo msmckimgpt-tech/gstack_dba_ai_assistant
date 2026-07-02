@@ -700,3 +700,41 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 - [x] T31.5 manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS.
 - [x] T31.6 **§18.8 적대 6축**(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀): BLOCKING 0. G6 번들 소스 대조 — tween 수학=G6 자체 `focus` 공식 동일(앵커 정중앙 오차 ≤1e-13px). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 [SUBAGENT].
 - [ ] T31.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 **실제 부드럽게 팬**(순간이동 없음) 육안 확인.
+
+## 32. graph-reltrace — 접힌 상태 관계 표시 + 관계 클릭 추적 + AI 능동 분석 연동 (2026-07-03, 사용자 후속 요청)
+
+### 32.0 맥락 (사용자 요청 3건)
+- 이슈: 테이블을 **더블클릭(컬럼 펼침)하기 전까지 연결 관계가 그래프에 나타나지 않음** — REFERENCES 는
+  Column→Column 이라 두 테이블이 컬럼까지 펼쳐져야만 엣지가 렌더되던 구조(진단: `_metaG6Build` 엣지
+  조립이 양끝 노드 렌더 시에만 + `schema_tables` 가 HAS_TABLE 만 반환).
+- 요구 ①: **테이블이 접힌 상태에서도 연결 관계 표시**.
+- 요구 ②: **상세정보 패널에서 각 관계 클릭 시 대상 테이블·컬럼을 추적**(그래프에서 따라가기).
+- 요구 ③: **AI 능동 분석으로도 작동**.
+- 등급 **Major**(cross-cut 프론트 feature-0003 admin.js + 백엔드 feature-0002 metadata_graph 투영 1건 추가;
+  데이터 비파괴·마이그레이션 0). 정본: 본 TASK §32 · MODIFY CHG-20260703T · REVIEW REV-20260703T.
+
+### 32.1 구현
+- [x] T32.1 **백엔드**(metadata_graph.py `schema_tables`): 스키마 펼침 응답에 스키마 내 컬럼에서 나가는
+      **REFERENCES 엣지**(Column→Column, FK null-status 포함·broken 제외·cap)를 추가. 접힌 테이블에도
+      관계 데이터가 모델에 오도록.
+- [x] T32.2 **프론트 ①**(admin.js `_metaG6Build` 엣지 조립): REFERENCES 끝점을 **렌더된 id 로 해소** —
+      컬럼 렌더 시 컬럼-레벨, 미렌더 시 **소속 테이블로 승격**(키 문자열에서 부모 도출, 컬럼 노드 불요).
+      같은 두 렌더 끝점의 다수 컬럼-쌍은 하나로 dedupe(최강 상태 채택·count·pairs). → 접힌 테이블 간
+      관계 엣지 렌더. intra-table 자기참조 제외.
+- [x] T32.3 **프론트 ②**(신규 `_metaGraphTraceRelation`): 관계 클릭 → 대상 테이블을 이웃과 함께 화면에
+      가져오고(스키마 펼침) 컬럼 전개 + **대상 컬럼 강조 + 카메라 focus**. 상세 패널 "관계(N)" 행 +
+      기존 "관계 상세" 행이 공통 호출(showDetail→trace 통일). `_metaGraphBindTraceRows` 공용 바인더.
+- [x] T32.4 **프론트 ③**(`_metaGraphLoadNodeAnalysis` done): AI 능동 분석 결과 박스에 LLM prose 옆으로
+      **구조화된 관계를 추적 가능 행**(`_metaGraphRelTraceRowsHTML`)으로 노출 → 분석 결과에서도 대상 추적.
+      (AI 능동 분석 백엔드는 이미 REFERENCES 를 따라 이웃 재귀 — 그 관계를 UI 로 추적 가능하게 표면화.)
+- [x] T32.5 styles.css 추적 행 hover·"🔎 추적" 힌트 + admin.html 캐시버스터 `20260703-graph-reltrace`.
+
+### 32.2 검증
+- [x] T32.6 백엔드 신규 Cypher 라이브 AGE 실행: dblog 스키마에서 `account.AccountId → arenabegin.AccountId`
+      (conversation·candidate) 반환 확인.
+- [x] T32.7 프론트 엣지 집계 로직 격리 Node 검증 **11/11 PASS**(접힘=테이블승격·펼침=컬럼레벨·혼합·미렌더
+      graceful·dedupe/trusted승급·intra-table제외) + `_metaGraphRelTraceRowsHTML` 추적행 산출 검증(data-trace
+      대상 정확) + `node --check` admin.js + py_compile metadata_graph.py + 참조 심볼 전수 정의 확인.
+- [ ] T32.8 §18.8 적대 리뷰 패널(frontend/backend/qa) + verify-completion.
+- [ ] T32.9 배포(web 재빌드; 백엔드 포함이라 워커/web) + **PB-0008 실 Windows**: 접힌 상태 관계 표시 ·
+      관계 클릭 추적(대상 테이블·컬럼 강조) · AI 능동 분석 결과 추적 행 육안 확인.
