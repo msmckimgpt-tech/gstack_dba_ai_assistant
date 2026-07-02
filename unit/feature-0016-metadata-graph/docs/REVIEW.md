@@ -615,3 +615,9 @@ source_of_truth: true
     범위 밖(별 경로), 기능 무결. 후속 통일 여지.
 - 재검증: node --check PASS + 격리 로직 8/8 + intra-table self-FK 2케이스 PASS.
 - Human Approval Needed: 없음(Major 승계·프론트 전용·비파괴). deploy_scope: included 자동 배포 + PB-0008.
+
+
+## REV-20260703T170000-ai-root-feature-0016-colexpand-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY PB-0008 결과 기록
+- Related Change: CHG-20260703T170000. feature-0003 TEST.md POST-DEPLOY PASS(4항목) + TASK §35 완료.
+- Trigger: 비-코드 doc-only(POST-DEPLOY 증적) → §18.8 "비정책 doc-only" = panel SKIP.
+- 근거: 코드/정책 변경 0. 실 검증은 PB-0008 라이브(4항목 PASS, 스크린샷 5매)로 수행됨 — 본 항목은 정본 기록.

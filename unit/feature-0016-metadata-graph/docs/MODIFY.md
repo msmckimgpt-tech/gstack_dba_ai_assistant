@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T170000-ai-root-feature-0016-colexpand-postdeploy
+- Date: 2026-07-03
+- Related Requirement: reldetail-colexpand(§35) 배포 후 PB-0008 실 Windows 실측 결과 기록(deploy-backed 증적). 코드 무변경 — doc-only.
+- Summary: feature-0003 TEST.md reldetail-colexpand Run 에 POST-DEPLOY PASS(4항목) 기록 + TASK §35 T35.8 완료. 스크린샷 5매.
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/TASK.md`.
+- Impact: 문서만. 코드·배포 무변경.
+- Rollback Notes: 해당 없음(기록).
+
 ## CHG-20260703T165147-ai-root-feature-0016-reldetail-colexpand
 - Date: 2026-07-03
 - Related Requirement: 사용자 요청 4건 — 상세 패널 관계를 ① 컬럼 클릭 시 펼침 ② 참조함/참조받음 구분
