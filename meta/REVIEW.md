@@ -2,6 +2,15 @@
 
 > META-layer 변경(`.claude/commands/`, `meta/`, `docs/improvements/` 등)의 검증 패널 기록. AGENTS.md §18.4 / §18.8 / §16.3 check #9.
 
+## REV-20260702T101457-report-deck-run-v1-revise [SKIPPED:presentation-revision] — 사용자 리뷰 피드백 2건 반영 (전/후 시각 도식 강화 + 발표자 전용 내용 분리)
+
+- **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (직전 REV-20260702T025852 산출물의 리뷰 반영 개정).
+- **피드백 반영**: (1) **전/후 비교 시각 부실** → 7개 기능 전부 **인라인 SVG 개념 도식**(전=회색 계열/후=accent, 좌→우 화살표)으로 교체 — 접속(경고→방패·2단계), 작업화면(텍스트→+/− 색 diff), 정확도(일회성→선순환 루프), 데이터소스(단일 DB→다중 DB＋게이트·상태점), 그룹(1:1→다인·@멘션), 지식그래프(평면 목록→노드 그래프·점선=추정/실선=신뢰), 무중단(단일 서버 중단→2대 롤링 중단0). 각 SVG `role=img`+aria-label. (2) **마지막 페이지 부적절**(발표자 전용 '확인 필요 색인' 슬라이드가 청중에 내부 코드·메모 노출) → **청중 덱에서 제거**(15→14 슬라이드, `마무리`가 마지막), 발표자 Q&A 대비는 `SCRIPT.md` [발표자 전용]+`EVIDENCE.md §2`로만. 아울러 청중 덱의 **내부 식별자 스크럽**(E-/U- 코드·EVIDENCE.md/SCRIPT.md·PB-0008·feature-000x·git 이력 제거, 배지는 평이어 "검증됨/확인 중/개발 완료").
+- **변경(META, pure-meta, doc-only)**: `docs/presentation/2026-06-01_2026-07-02/v1/deck.html`(개정) · `SCRIPT.md`(발표자 전용 분리·딥링크 정정) · `meta/REVIEW.md`(본 entry). EVIDENCE.md 는 발표자·근거 문서라 U-/E- 코드 유지(의도).
+- **재검증(Phase 6)**: 슬라이드 14 정합 · 부록/발표자용 슬라이드 0 · 내부 코드 노출 0 · 전후 도식 7 · 외부참조 0(자기완결) · 민감정보 0 · SVG role=img 14 · HTML 균형 · 구조·서사·디자인 언어(§5.0) 불변(디자인/시각효과만 강화). verify-completion META mode.
+- **톤 패스(동 cycle 추가 반영)**: 사용자 피드백 "작업이 미흡하게 표현되기보다 발전 가능성으로" → 정직성(검증 vs 미검증 구분)은 유지하되 프레이밍을 **성장 지향**으로 전환. 배지 "확인 중"→"고도화 예정/수치 측정 예정", impact 우측 "단정하지 않는 것"→"앞으로 더 키울 발전 과제"(callout warn→일반), risk 슬라이드 "리스크·후속/남은 위험·할 일"→"개선 과제·발전 방향"(로드맵 프레이밍, "현재 수준→발전 방향"), 기능 effect·outro·SCRIPT 대사 동반. 과거 문제(배경 before) 서술의 "미흡/부족"은 개선 동기라 유지.
+- **[SKIPPED] 사유**: 발표자료 콘텐츠 개정(정책·코드·정본 무변경). **Human Approval Needed**: 아니오 — 단 발표자료는 리뷰 콘텐츠, main 랜딩은 사용자 판단.
+
 ## REV-20260702T025852-report-deck-run-20260601-20260702 [SKIPPED:presentation-generation] — /_dqa:report_deck 검증 실행 산출물 (2026-06-01~07-02 개발 진척 발표자료 v1)
 
 - **cycle**: ai/claude/report-deck-2026-06-01_2026-07-02 (base 2a4a8d3d). `/_dqa:report_deck "2026-06-01 ~ 2026-07-02"` 실행 — 스킬 end-to-end **검증 겸 실제 발표자료 생성**.
