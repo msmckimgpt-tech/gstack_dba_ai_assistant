@@ -63,6 +63,11 @@
           <span class="admin-tab-label">보관 대화</span>
         </button>
 
+        <!-- TASK-AIOPS: AI 운영 현황 tab (console.aiops.read 없으면 숨김 — canSeeTab + ADMIN_TAB_PERMISSIONS["ai-ops"]) -->
+        <button type="button" class="admin-tab" data-admin-tab="ai-ops" id="adminTabAiOps" style="display:none">
+          <span class="admin-tab-label">AI 운영 현황</span>
+        </button>
+
         <!-- admin-metadata-relocate: 메타데이터/샘플 검수는 '감사'(읽기전용 모니터링)가 아닌
              지식베이스(KB) 거버넌스(kb.* 권한)라 별도 그룹으로 분리한다. 그룹 경계는
              admin.js applyAdminTabVisibility() 가 DOM 순서로 동적 계산하고 권한 게이팅은
@@ -556,6 +561,23 @@
         </div>
       </section>
 
+      <!-- TASK-AIOPS: AI 운영 현황 pane (console.aiops.read). 내부 콘텐츠(배너/KPI/Attention/
+           카테고리 드릴다운/활동 feed/커버리지)는 admin.js renderAiOps() 가 #aiOpsBody 에 동적 렌더. -->
+      <section class="admin-pane" data-admin-pane="ai-ops">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">AI Ops</div>
+            <h2>AI 운영 현황</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="aiOpsRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <div id="aiOpsBody">
+          <div class="admin-detail-empty">불러오는 중…</div>
+        </div>
+      </section>
+
       <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP dba-ai-nl2sql ITEM-03):
            피드백 → 샘플쿼리 KB 환류 flywheel 검수 큐. 권한 kb.sample.curate. 사용자 답변
            피드백(👍/👎/"샘플 등록")으로 적재된 pending 항목을 검토해 KB(sample_queries)로
@@ -838,7 +860,8 @@
 
   <!-- feature-0016 그래프 뷰 렌더링 엔진: AntV G6 v5.1.1 (vendored, UMD window.G6, MIT).
        Cytoscape(WebGL)에서 교체 — 오버레이 동기화 지연·테두리 왜곡·클러스터 뒤섞임 구조적 해소 + 점선 엣지 복원.
-       설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md. -->
+       설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
+       (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
   <script src="/static/admin.js?v=20260702-graph-g6"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>

@@ -4370,3 +4370,29 @@ source_of_truth: true
 - Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`) + cache-buster(`index/admin.html`) 뿐 — 비-정책 doc-only. 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC·엔드포인트 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현은 doc_sync ULTRACODE 적대 워크플로(ground-truth 3-agent + 적대 verify)가 정본 대비 직접 검증.
 - 타깃별 실질 검증(doc_sync Phase 4): `node --check release-notes-data.js` PASS + vm 로드 `generated`=2026-07-01·신규 '2026-07-01' 블록 7항목·스키마(type/area/title/detail) 정합·06-30 블록 10항목 보존. 적대 사실검증 — 사용자향 평이화·내부 비노출(feature-id/테이블/WebGL/Cytoscape/AGE/Cypher/마이그/권한키 `metadata.*.manage`/cache-buster 슬러그 0)·추정 관계 정직 프레이밍(점선·자기교정)·feature-0012 behavior-neutral 내부 리팩터는 user-facing 제외(정직 분류).
 - Cross-ref: CHG/TASK/FUNCTION-20260701T230501-doc-sync-rn-0701 / 원천 머지 feature-0016 그래프 뷰 07-01 진화(WebGL·암묵 관계 ADR-002·AI 능동 분석 ADR-003·ERD ordinal)·feature-0003 graph-panel-perms(권한 5분할)·convswitch-opacity-guard·graphview-webgl-polish. 원천 UI PB-0008 07-01 PASS(graphview-render/webgl-labels/convswitch). META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit/META mode(REV-20260701T230501-META-0018-doc-sync-0701).
+
+## REV-20260702T010000-metadata-perm-hier [SUBAGENT:authz-perm-hierarchy] (TASK-20260702-metadata-perm-hier — 메타데이터 권한 종속관계 정합화, Major §12.3 — feature-0003 프론트, UI 표시 계층·enforcement 무변경)
+- Related Change: CHG-20260702-metadata-perm-hier (PERMISSION_DEPENDENCIES 메타데이터 게이트 계층화 + NIT-1 disclosure 수정)
+- 검증 성격: 프론트 권한 그리드 표시 계층 재구성(authz enforcement 아님). 핵심 리스크 = B안 개별 부여 회귀 / 기존 grant 은닉.
+- §18.8 SUBAGENT 패널(general-purpose, 적대적 refute) — **VERDICT: PASS**(BLOCKING 0, NIT 2 흡수). 5축 refute:
+  - (#1 개별 부여 회귀) **refute 성공**: renderPermissionGrid 저장 경로(role `:checked`/account `[data-override-code]`)가 hidden 행도 수집 → hidden 은 저장 무영향. "세부 권한 더 보기"(showAll→forceShow)로 게이트 미체크 상태에서도 개별 metadata.* 부여 가능. B안 보존.
+  - (#2 기존 grant 은닉) **refute 성공**: kb 그룹은 루트 권한(kb.ingest.manual 게이트 자체 + kb.sample.curate)이 항상 visible → `hiddenCount===rows.length` 불성립 → 그룹 details 절대 vanish 안 함. 부여 권한 도달성 보장. (NIT-1 로 override 상속-부여 cue 회귀 발견 → 수정 반영.)
+  - (#3 enforcement 오해) **refute 성공**: `PERMISSION_DEPENDENCIES` 는 admin.js(+CSS 주석)에만 존재, app.py 4개 참조 전부 주석. 백엔드 authz 는 parent→child 종속 미사용(effective 는 `_apply_permission_overrides`/`_METADATA_MANUAL_IMPLIES` 독립). 순수 표시 변경 확정.
+  - (#4 implies↔gate 상호작용) 경미한 표시 불일치(묶음 체크 시 자식 unchecked 박스 노출)만 — 기존 조건, DENY 존중(R4)·역함의 없음(R5) 보안 정상.
+  - (#5 커버리지) NIT-2: metadata/kb 특정 단언 부재 → t5/t6 추가로 해소.
+- NIT 처리(§18.8 "가시 회귀만 수정"): **NIT-1(가시 회귀) 수정** — override 모드 상속-부여를 reachability 카운트에 포함(`isGrantedForReach`)해 "N개 부여됨" cue 복원. **NIT-2 수정** — t5(계층 pin)/t6(도달성) 테스트 추가.
+- 사전 검증: `node --check` PASS, `test_permission_dependency_map.py` 18개 PASS(V1~V7 disclosure 로직 무회귀 + t5/t6 신규).
+- deploy-backed: 배포 후 라이브 권한 그리드에서 메타데이터 2단 계층(묶음→세부) + 개별 부여 도달성 실측.
+## REV-20260702T140000-aiops-panel [AGENT-TEAM:correctness-hotpath+security-authz+db-migration-degrade] (TASK-20260702-aiops-panel — AI 운영 관제 패널 + LLM 계측 확장, Major §12.3, cross-unit feature-0002/shared/0003)
+- 3-렌즈 병렬 적대 패널(통과가 아니라 결함 적발): **BLOCKING 0 (전 축)**, NIT 5. 렌즈별 —
+  - **correctness·hot-path** (BLOCKING 0 / NIT 3): latency 측정 지점(submit 전~result 후, PG write 제외) 정확 · agent-core 11경로 byte-동치(latency_ms 미전달=NULL, 실측 params[-1] is None) · 4경로 create+record 둘 다 executor/daemon 스레드(이벤트 루프 무블로킹) · 스트리밍 choices 가드 앞 usage 선포착+SENTINEL 1회+미지원 정직 스킵 · 계측 예외 비전파. 25건 회귀 실측 통과.
+  - **security·authz** (BLOCKING 0 / NIT 2): console.aiops.read 5곳 sync 완전·admin 전용 격리(operator/sales/dba/pending 0) · canSeeTab fail-open 방지(ADMIN_TAB_PERMISSIONS["ai-ops"] hyphen 일치) · 엔드포인트/위젯 require_permission 게이트 · 정보노출 0(provider message/scope_key/conversation_id/prompt 본문 미노출) · SQL 인젝션 0(days int-clamp, task/model=dict 키) · 읽기전용(_pg_connect_ro) · XSS esc().
+  - **db-migration-degrade** (BLOCKING 0 / NIT 0): migrate-lint **실행 확인 `✓ PASS expand-safe`** · additive nullable/멱등/down_revision 0029 체인 · 부분 degrade(PG 미가용 200, autocommit=True 로 실패 쿼리 트랜잭션 미오염) · DB 경계 축별 try/except 이중 방어 · inprocess ask-worker na 롤업 제외 · ts naive/aware 규약 준수(실제 heartbeat writer utc_now_iso 포맷으로 TypeError 없음 값 재현) · percentile latency_ms IS NOT NULL 필터.
+- NIT 처리:
+  - [반영] R1-NIT2 스트리밍 `stream_options` 하드거부 회귀 방지 — create 를 include_usage 로 1차 시도, 예외(TypeError/400) 시 stream_options 없이 재시도해 프롬프트 자동작성 스트리밍 기능 보전(계측만 포기). app.py produce().
+  - [반영] R2-NIT2 styles.css cache-buster 되돌림(CSS 미변경) + 미사용 `.aiops-body` 클래스 제거.
+  - [반영] R2-NIT1 `verify_admin_tab_gating.mjs` 에 ai-ops fail-open 회귀 케이스 2건 추가(admin 표시 + 빈권한 숨김) — jsdom 실행 시 **둘 다 PASS**(delta +2 passed; 기존 2 FAIL '시스템 그룹라벨'은 로컬 jsdom@22 artifact, main 동일 선재·feature 무관).
+  - [수용·기록] R1-NIT1 스트리밍 latency 의미(생성지속 vs 왕복) 혼합 — 두 transport 모두 prompt_gen 계측, 패널 aggregate AI latency 관점에서 정직. v1 수용.
+  - [수용·기록] R1-NIT3 프론트 days 미전달(v1 고정 7일 window, 새로고침 재조회) — UX 한계, correctness 무관. v1 수용.
+  - [수용·기록] R3 원거리 주의: (a) 부분 degrade 의 `_pg_connect_ro(autocommit=True)` 기본값 암묵 의존 — autocommit=False 리팩터 시 부분 degrade 붕괴, 회귀 게이트로 명시. (b) `_parse_kv_timestamp` space+offset aware 반환은 heartbeat writer 포맷 변경 시 TASK-0169 재발 원거리 함정(현재 writer=utc_now_iso T-separated 라 미도달).
+- 실측: tests/test_ai_ops.py 10/10 · 회귀 permission 16/dashboard 20/usage 28 PASS · 전체 collection 무오류 · migrate-lint expand-safe · py_compile 전체 · node --check(admin.js/mjs). PB-0008 Windows-browser= 배포 후 라이브(TEST.md).

@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260702-metadata-perm-hier — 메타데이터(지식베이스) 권한 종속관계 정합화 (Major §12.3 — feature-0003 프론트 단독, RBAC enforcement/스키마/백엔드/엔드포인트 무변경 · UI 표시 계층만)
+- 트리거(사용자): "다른 권한 구성과 같이 종속적인 관계가 정합하도록 구성. `지식베이스 > 메타데이터` 권한이 다른 권한 포맷과 차이 확인."
+- 진단: `admin.js` `PERMISSION_DEPENDENCIES`(UI progressive-disclosure 표시 계층, enforcement 아님)에서 다른 관리 그룹은 "그룹 게이트(read)→세부(manage)" 2단 계층인데 메타데이터(kb)만 평면(5개 metadata.* 전부 console.access 직속 + 묶음 kb.ingest.manual 은 맵 부재 고아). → kb 그룹만 flat 나열.
+- 해법(B안 유지): 묶음 `kb.ingest.manual`을 그룹 게이트로 삼아 정합화. `kb.ingest.manual→console.access`, 세부 5개 `metadata.*→kb.ingest.manual`. 백엔드 함의(_METADATA_MANUAL_IMPLIES)와 의미 정합. enforcement 무변경.
+- Completion Checklist:
+  - [x] `static/admin.js` `PERMISSION_DEPENDENCIES` 정합화(kb.ingest.manual 게이트화 + metadata.* nest). `node --check` PASS.
+  - [x] §18.8 NIT-1 흡수: `isGrantedForReach`(explicit + override 상속-부여)로 override 도달성 cue 회귀 복원. checkbox 모드 무영향.
+  - [x] `static/admin.html` cache-buster `admin.js?v=20260702-metadata-perm-hier` bump.
+  - [x] `tests/test_permission_dependency_map.py` t5(계층 pin)/t6(도달성) 추가 — 18개 전부 PASS.
+  - [x] §18.8 SUBAGENT 적대 패널 VERDICT PASS(BLOCKING 0 — 개별부여·은닉·enforcement·implies 4축 refute + NIT 2 흡수). REV-20260702T010000-metadata-perm-hier.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 배포(deploy_scope: included) → 배포 후 라이브 그리드 2단 계층 실측.
+## TASK-20260702-aiops-panel — AI 운영 관제 패널 (관리 콘솔 > 감사 > AI 운영 현황) + LLM 계측 확장 (Major §12.3 — feature-0003 web/UI + 인가, cross-unit feature-0002 core/alembic + shared. /_template:resume 재개, PLAN-APPROVED)
+- 트리거(사용자, 원 세션 /_template:entry → /_template:resume 재개): "프로젝트 내부에서 동작 중인 AI 현황을 모니터링할 관제패널을 `관리 콘솔 > 감사 > (적절한 명칭)` 에 구성. insight-worker·요청수행 LLM·자동분석 LLM·메타데이터 능동분석 LLM 등 각 동작 카테고리를 세분화하고, 이후 추가될 기능에 확장성 있게." 4개 제품결정 확정: 배치=감사 그룹 유지(명칭 'AI 운영 현황') · v1 범위=**+계측 지금 포함** · 대시보드 KPI 타일 추가 · 권한=console.aiops.read admin 전용.
+- 설계 근거: 14-에이전트 계획 + Workflow(ground 4 → design 3 판정 → 적대검증 6축 28-fix) grounding. 계측 범위 현실: chat 4경로만 계측 가능(임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 부재 → 구조적 계측 불가, '계측 커버리지'로 정직 노출). cost 는 단가표가 web app.py 전용이라 read-time 계산 유지(DB 컬럼 미추가), latency_ms 만 additive 컬럼.
+- Completion Checklist:
+  - [x] 마이그 `alembic/versions/20260702_0030_llm_usage_latency.py`: PG `agent_runtime.llm_usage` 에 `latency_ms INTEGER`(nullable, DEFAULT 없음=미측정 NULL) `ADD COLUMN IF NOT EXISTS`. `agent_runtime_schema.sql` bootstrap parity 반영. (cross-unit feature-0002)
+  - [x] 계측 헬퍼 `modules/llm.py` `_record_llm_usage`: `latency_ms` 인자 + INSERT 컬럼 추가(agent-core 11경로 미전달=NULL byte-동치). 중앙 래퍼 `_openai_chat_completion_with_deadline` 순수 API 왕복 latency 측정. (cross-unit feature-0002)
+  - [x] taxonomy 레지스트리 `shared/model_catalog.py`: `TASK_TAXONOMY`+`taxonomy_for()`+`ai_categories()` — 미등록 task self-surface(ai.other.unmapped). (cross-unit shared)
+  - [x] web 4경로 계측 배선(app.py): 프롬프트 자동생성 비스트리밍(executor 람다 내부)·스트리밍(include_usage + choices 가드 앞 usage 선포착 + SENTINEL 1회)·자율 sweep(daemon thread, conv_id=None)·메타데이터 자동완성(executor 람다 내부, metadata_ 접두 task). 이벤트 루프 무블로킹.
+  - [x] 권한 `console.aiops.read` 5곳 동시 sync: PERMISSION_DEFINITIONS + admin catchup(lockout 방지) + admin.js PERMISSION_DEPENDENCIES + ADMIN_TAB_PERMISSIONS(fail-open 방지 필수) + test v2 리스트.
+  - [x] 라우터 `routers/ai_ops.py` GET `/api/admin/ai-ops`(console.aiops.read): 상태 축(provider/ask-worker/insight-worker/datasource) worst-of 배너 + inprocess N/A 롤업 제외 + KPI + Attention + 카테고리 드릴다운 + 활동 feed + 커버리지. PG 부분 degrade(200 유지, `_pg_connect_ro` least-priv). app.py include_router + `_ask_worker_age_sec` 헬퍼(3-state).
+  - [x] 대시보드 KPI 타일: `_DASHBOARD_WIDGETS` ai_ops + `_dash_widget_ai_ops`(tab='ai-ops' deep-link) + admin_console `_isolate` dispatch.
+  - [x] 프론트: admin.html 감사 그룹 탭 `data-admin-tab="ai-ops"` + pane + cache-buster(css/js `?v=20260702-ai-ops`). admin.js adminState.aiOps + switchTab lazy-load + loadAiOps/renderAiOps(배너·KPI·Attention·카테고리·활동·커버리지) + 새로고침 배선.
+  - [x] 단위테스트 `tests/test_ai_ops.py` **10/10 PASS**(taxonomy self-surface·ask-worker age 밴드·datasource worst-of·inprocess N/A·PG degrade 200·PG empty·권한 403·latency NULL byte-동치·usage 스킵). 회귀 permission 16/dashboard 20/usage 28 PASS, 전체 collection 무오류.
+  - [x] §18.8 적대 검증 패널(구현 diff, 3-렌즈 AGENT-TEAM) **BLOCKING 0** → REV-20260702T140000-aiops-panel. NIT 3 반영·2 수용.
+  - [ ] PB-0008 Windows-browser 실측(패널 렌더 + 타일 deep-link + 탭 권한 게이팅) + TEST.md Windows Run — 배포 후 라이브(win-browser 브리지 doctor OK).
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included, 마이그 0030 자동적용) → healthz/smoke.
+
 ## TASK-20260701T100738-convswitch-opacity-guard — 좌측 대화 선택 시 대화창 미표시 방어 하드닝 (Minor §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
 - 트리거(사용자 /_template:entry, 유저 admin): "작업 화면(메인 채팅)에서 좌측 대화 항목을 선택해도 대화창에 내용이 안 뜬다 — 선택이 아예 안 먹는 것처럼". 조사: 현재 배포본(b3175b6) 백엔드·프론트 모두 재현 안 됨(curl `/api/use_conversation`·`/api/history` 200+메시지, fresh 브라우저에서 admin 과 동일 role id3 계정 headless 10대화·race·PB-0008 Windows 정상, 캐시버스터 정합) → stale client(캐시된 구버전 app.js / 장시간 열어둔 탭) 유력. 사용자 결정: 재발 불가하도록 방어 하드닝 배포.
 - 근본 취약점: `static/app.js` `selectConversation` conv-switch-fade 의 begin(opacity:0)↔commit(opacity:1) 사이 risk window(pendingNewConversation 리셋·pending 스냅샷·`stopProgressPolling`)가 try 밖 → 예외 시 opacity:0 잔류로 대화창 빈 화면 가능.

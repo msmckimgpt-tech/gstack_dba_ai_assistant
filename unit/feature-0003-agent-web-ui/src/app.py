@@ -163,6 +163,16 @@ PERMISSION_DEFINITIONS = (
         "group": "console",
     },
     {
+        # TASK-AIOPS: AI 운영 관제 패널(관리 콘솔 > 감사 > AI 운영 현황) 조회 권한. 운영 민감
+        # 정보(워커 상태·provider 헬스·AI 활동 계측)라 admin 한정 — admin seed(=set(PERMISSION_CODES))
+        # 자동 부여 + 아래 _ensure_seed_roles catchup 으로 기존 admin row backfill.
+        # operator/sales/dba/pending 미부여 (least-privilege).
+        "code": "console.aiops.read",
+        "label": "AI 운영 현황 조회",
+        "description": "AI 운영 관제 패널(워커 상태·provider 헬스·AI 활동 계측)을 조회할 수 있다 (운영자 전용).",
+        "group": "console",
+    },
+    {
         # TASK-0228: insight-worker 가 생성한 schema/table 분석(fact/rag/fingerprint)을
         # 접근 가능 데이터베이스(DB) 단위로 초기화(삭제)한다. 잘못 분석된 내용을 되돌릴 수단.
         # **파괴적** — audit.purge 와 동급으로 admin 한정 (admin seed = set(PERMISSION_CODES)
@@ -2741,6 +2751,10 @@ def _ensure_seed_roles(conn) -> None:
             "metadata.table.manage",
             "metadata.column.manage",
             "metadata.graph.read",
+            # TASK-AIOPS: admin 의 AI 운영 현황 조회 권한 catchup. **필수** — 신규 권한은 role 생성 시
+            # seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row 에는 retroactive 미적용.
+            # 미보정 시 기존 admin 이 AI 운영 현황 탭을 못 본다(lockout, PB-0008 적발). operator/sales/dba 미부여.
+            "console.aiops.read",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -11379,6 +11393,25 @@ def _ask_worker_ready(conn) -> bool:
         return False
 
 
+def _ask_worker_age_sec(conn) -> float | None:
+    """AI 운영 관제(TASK-AIOPS): ask-worker heartbeat 나이(초). 3-state(정상/저하/중단) 판정용 —
+    _ask_worker_ready 의 bool 만으로는 '저하' 중간대역을 구분할 수 없다. heartbeat 부재/파싱 실패는
+    None(→ 중단). _ask_worker_ready 와 **동일한 naive-UTC 규약**(_parse_kv_timestamp; aware now 와
+    혼용 시 TypeError → 영구 오탐, TASK-0169 함정)."""
+    try:
+        from shared.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
+        raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY)
+        if not raw:
+            return None
+        parsed = _parse_kv_timestamp(raw)
+        if parsed is None:
+            return None
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        return max(0.0, (now_naive - parsed).total_seconds())
+    except Exception:
+        return None
+
+
 async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn, request=None):
     """agent 실행을 mode 에 따라 분기. 두 경로 모두 동일 shape 의 agent_result dict 반환.
 
@@ -14620,7 +14653,19 @@ def _autonomous_generate_product_prompt(product_id: int) -> dict:
 
     # 2) LLM 호출 (동기 — sweep 은 daemon thread 컨텍스트라 이벤트 루프 블로킹 없음).
     try:
+        _aiops_t0 = time.perf_counter_ns()
         resp = ctx["openai_client"].chat.completions.create(**ctx["create_kwargs"])
+        # AI 운영 관제 계측(TASK-AIOPS): daemon thread 라 그대로 기록(이벤트 루프 무영향).
+        # system actor → conversation_id=None 명시(cfg 전역 race 차단).
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                str(ctx.get("llm_model") or ""), "prompt_gen", resp,
+                conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+            )
+        except Exception:
+            pass
         choice = resp.choices[0]
         generated = (choice.message.content or "").strip()
         truncated = getattr(choice, "finish_reason", None) == "length"
@@ -16372,10 +16417,25 @@ async def _prompt_generate_json_response(ctx: dict, *, log_label: str, log_ctx: 
     """
     openai_client = ctx["openai_client"]
     create_kwargs = ctx["create_kwargs"]
+    _aiops_model = str(ctx.get("llm_model") or "")
+
+    def _aiops_create_and_record():
+        # AI 운영 관제 계측(TASK-AIOPS): create + 회계를 둘 다 executor 스레드에서 실행 →
+        # uvicorn 이벤트 루프에서 동기 PG I/O 금지. 순수 API 왕복 지연만 측정.
+        _t0 = time.perf_counter_ns()
+        r = openai_client.chat.completions.create(**create_kwargs)
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                _aiops_model, "prompt_gen", r, conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _t0) // 1_000_000),
+            )
+        except Exception:
+            pass
+        return r
+
     try:
-        resp = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: openai_client.chat.completions.create(**create_kwargs)
-        )
+        resp = await asyncio.get_event_loop().run_in_executor(None, _aiops_create_and_record)
         choice = resp.choices[0]
         generated = choice.message.content or ""
         # TASK-0232: max_tokens 도달로 본문이 잘렸는지 명시 검출 — 조용한 잘림 방지.
@@ -16423,9 +16483,29 @@ def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str)
                     loop.call_soon_threadsafe(q.put_nowait, item)
                 except Exception:
                     pass
+            # AI 운영 관제 계측(TASK-AIOPS): usage 는 choices=[] 인 마지막 청크로 오므로
+            # include_usage 로 요청하고 choices 가드 앞에서 선포착 → 스트림 완료 후 1회 기록.
+            # produce() 는 executor 스레드에서 도므로 회계 PG I/O 가 이벤트 루프를 막지 않는다.
+            _aiops_t0 = time.perf_counter_ns()
+            _aiops_usage = None
+            _aiops_served = None
             try:
-                stream = openai_client.chat.completions.create(**create_kwargs, stream=True)
+                try:
+                    stream = openai_client.chat.completions.create(
+                        **create_kwargs, stream=True, stream_options={"include_usage": True}
+                    )
+                except Exception:
+                    # AI 운영 관제 계측: stream_options(include_usage)를 거부하는 SDK/게이트웨이
+                    # (TypeError 또는 400)로부터 프롬프트 자동작성 스트리밍 기능을 보전 — 계측만 포기하고
+                    # stream_options 없이 재시도. 재시도도 실패하면 외곽 except 가 SSE error 로 전달.
+                    stream = openai_client.chat.completions.create(**create_kwargs, stream=True)
                 for chunk in stream:
+                    u = getattr(chunk, "usage", None)
+                    if u is not None:
+                        _aiops_usage = u
+                        _rm = getattr(chunk, "model", None)
+                        if _rm:
+                            _aiops_served = _rm
                     if not getattr(chunk, "choices", None):
                         continue
                     ch = chunk.choices[0]
@@ -16438,6 +16518,21 @@ def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str)
             except Exception as e:  # noqa: BLE001 — 어떤 LLM 오류든 SSE error 로 전달
                 _emit(("error", str(e)))
             finally:
+                # include_usage 미지원 provider 는 _aiops_usage=None → 기록 스킵(정직 폴백).
+                if _aiops_usage is not None:
+                    try:
+                        from modules.llm import _record_llm_usage
+                        from types import SimpleNamespace
+                        _shim = SimpleNamespace(
+                            usage=_aiops_usage,
+                            model=_aiops_served or str(llm_model or ""),
+                        )
+                        _record_llm_usage(
+                            str(llm_model or ""), "prompt_gen", _shim, conversation_id=None,
+                            latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+                        )
+                    except Exception:
+                        pass
                 _emit(("__end__", SENTINEL))
 
         # 진행 단계 표면화(수집은 이미 끝났으므로 즉시 generating 으로). 사용자에게 "멈춤 아님" 신호.
@@ -18403,10 +18498,24 @@ async def _metadata_llm_complete(messages: list, *, task: str = "summary", tempe
         create_kwargs["max_tokens"] = mt
     if model_supports_temperature(llm_model):
         create_kwargs["temperature"] = temperature
+
+    def _aiops_create_and_record():
+        # AI 운영 관제 계측(TASK-AIOPS): create + 회계를 executor 스레드에서 함께 실행(이벤트 루프 무영향).
+        # task 는 reasoning 'summary' 와 구분되게 metadata_ 접두(taxonomy: ai.metadata.autocomplete).
+        _t0 = time.perf_counter_ns()
+        r = client.chat.completions.create(**create_kwargs)
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                str(llm_model or ""), f"metadata_{task}", r, conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _t0) // 1_000_000),
+            )
+        except Exception:
+            pass
+        return r
+
     try:
-        resp = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: client.chat.completions.create(**create_kwargs)
-        )
+        resp = await asyncio.get_event_loop().run_in_executor(None, _aiops_create_and_record)
         choice = resp.choices[0]
         text = (choice.message.content or "").strip()
         truncated = getattr(choice, "finish_reason", None) == "length"
@@ -18445,6 +18554,8 @@ _DASHBOARD_WIDGETS: tuple[dict, ...] = (
     # 본인 스코프(_dash_widget_* 의 scope 인자). cross-account 는 `.any` 전용. 가시성=둘 중 하나.
     {"key": "conversations", "title": "대화·활동",    "permission": ["conversation.list.own", "conversation.list.any"], "source": "server"},
     {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read",               "source": "server"},
+    # TASK-AIOPS: AI 운영 상태 요약 타일 → 클릭 시 AI 운영 현황 탭(tab='ai-ops') deep-link.
+    {"key": "ai_ops",        "title": "AI 상태",      "permission": "console.aiops.read",               "source": "server"},
     {"key": "audits",        "title": "감사 활동",    "permission": ["audit.read.own", "audit.read.any"], "source": "server"},
     {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",                   "source": "client"},
     {"key": "accounts",      "title": "계정",         "permission": "account.read",                     "source": "server"},
@@ -18865,6 +18976,40 @@ def _dash_widget_usage(pg, days: int) -> dict:
     }
 
 
+def _dash_widget_ai_ops(conn) -> dict:
+    """TASK-AIOPS: 대시보드 'AI 상태' 요약 타일 — 상태 배너(정상/저하/중단) + 워커/provider 요약.
+    클릭 → AI 운영 현황 탭 deep-link(tab='ai-ops'). 상세(활동·비용·지연·카테고리 드릴다운)는 패널에서.
+
+    상태 축 로직은 routers.ai_ops 를 재사용한다(request 시 lazy import — app↔routers 순환 회피).
+    각 축 헬퍼가 provider/datasource PG 를 자체 RO 연결로 읽고 worker 는 conn(heartbeat)으로 읽어,
+    한 축의 실패가 타 축에 전파되지 않는다(_isolate 위젯 격리 + 축별 try/except 이중 방어)."""
+    from routers.ai_ops import (
+        _provider_axis, _ask_worker_axis, _insight_worker_axis, _datasource_axis,
+        _SEV, _SEV_LABEL,
+    )
+    axes = [_provider_axis(), _ask_worker_axis(conn), _insight_worker_axis(conn), _datasource_axis()]
+    rolled = [a for a in axes if a["state"] != "na"]
+    banner_state = "ok"
+    for a in rolled:
+        if _SEV.get(a["state"], 0) > _SEV.get(banner_state, 0):
+            banner_state = a["state"]
+    sentiment = {"ok": "good", "unknown": "warn", "degraded": "bad", "down": "bad"}.get(banner_state, "warn")
+    workers_ok = sum(1 for a in (axes[1], axes[2]) if a["state"] == "ok")
+    workers_total = sum(1 for a in (axes[1], axes[2]) if a["state"] != "na")
+    return {
+        "tab": "ai-ops",
+        "metrics": [
+            {"label": "종합 상태", "value": _SEV_LABEL.get(banner_state, banner_state),
+             "primary": True, "sentiment": sentiment},
+            {"label": "워커 정상", "value": f"{workers_ok}/{workers_total}"},
+            {"label": "LLM 제공자", "value": _SEV_LABEL.get(axes[0]["state"], axes[0]["state"])},
+        ],
+        "lists": [{"title": "상태 축", "rows": [
+            {"label": a["label"], "value": _SEV_LABEL.get(a["state"], a["state"])} for a in axes
+        ]}],
+    }
+
+
 # feature-0012 P5b Final: admin_overview 는 src/routers/admin_console.py 로 추출(맨 끝 include_router).
 
 
@@ -18979,3 +19124,7 @@ app.include_router(_auth_router)
 # feature-0012 P5b: admin_products router (맨 끝 — 순환 안전)
 from routers.admin_products import router as _admin_products_router  # noqa: E402
 app.include_router(_admin_products_router)
+
+# TASK-AIOPS: AI 운영 관제 패널 API (GET /api/admin/ai-ops, 권한 console.aiops.read).
+from routers.ai_ops import router as _ai_ops_router  # noqa: E402
+app.include_router(_ai_ops_router)

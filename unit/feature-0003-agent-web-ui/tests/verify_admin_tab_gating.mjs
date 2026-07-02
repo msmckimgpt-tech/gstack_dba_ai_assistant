@@ -126,7 +126,7 @@ function run(permissionList, activeTab = "dashboard") {
   const r = run([
     "console.access", "account.read", "role.read", "product.read", "product.manage",
     "datasource.read", "datasource.manage", "audit.read.own", "audit.read.any",
-    "console.usage.read", "conversation.archive.read.any",
+    "console.usage.read", "console.aiops.read", "conversation.archive.read.any",
     "system_prompt.global.read", "system_prompt.global.write",
   ]);
   ok("[admin] 대시보드 표시", r.tabVisible("dashboard"));
@@ -135,6 +135,7 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[admin] 제품 표시", r.tabVisible("products"));
   ok("[admin] 데이터소스 표시", r.tabVisible("datasources"));
   ok("[admin] 설정 표시", r.tabVisible("settings"));
+  ok("[admin] AI 운영 현황 표시 (console.aiops.read)", r.tabVisible("ai-ops"));
   ok("[admin] 계정 그룹라벨 표시", r.groupLabelVisible("계정"));
   ok("[admin] 제품 그룹라벨 표시", r.groupLabelVisible("제품"));
 }
@@ -177,6 +178,7 @@ function run(permissionList, activeTab = "dashboard") {
   ok("[빈권한] 대시보드만 표시", r.tabVisible("dashboard"));
   ok("[빈권한] 계정 숨김", !r.tabVisible("accounts"));
   ok("[빈권한] 감사로그 숨김", !r.tabVisible("audits"));
+  ok("[빈권한] AI 운영 현황 숨김 (fail-open 방지)", !r.tabVisible("ai-ops"));
   ok("[빈권한] 계정/제품/감사/시스템 라벨 전부 숨김",
     !r.groupLabelVisible("계정") && !r.groupLabelVisible("제품")
     && !r.groupLabelVisible("감사") && !r.groupLabelVisible("시스템"));

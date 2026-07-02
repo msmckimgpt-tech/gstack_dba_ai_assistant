@@ -190,3 +190,72 @@ def max_tokens_for_model(model: str | None, task: str = "agent") -> int | None:
     # TASK-0237: 구 주석 "OpenAI direct legacy" 정정 — 카탈로그에 GPT 모델 0개라 GPT 경로는 없으나,
     # 잘못된/미등록 model 문자열 입력에 대한 fallback 으로 None(무제한) 유지 (동작 무변경).
     return None
+
+
+# ── AI 활동 taxonomy (AI 운영 관제 패널 — 확장 레지스트리, TASK-AIOPS) ────────────
+# llm_usage.task literal 을 관제 카테고리로 매핑한다. 신규 AI 활동은 아래 dict 에 한 줄만
+# 추가하면 패널 드릴다운에 편입되고, 미등록 task 는 taxonomy_for() 가 ai.other.unmapped 로
+# self-surface 한다 (등록 누락·오타·신규 task 도 사라지지 않고 패널 Attention 에 노출).
+# 스키마/마이그레이션 불필요 — task 는 llm_usage.task(VARCHAR64) 자유 문자열이므로 DISTINCT
+# 후 매핑만 하면 된다.
+#
+# 계측 커버리지 주의: 임베딩(client.embeddings.create) 과 provider health probe 는 응답에
+# usage 필드가 없어(SDK 한계) llm_usage 에 기록되지 않는다 → taxonomy 등록 대상 아님.
+# 패널의 '계측 커버리지' 각주에서 미계측으로 정직하게 노출한다('전체 비용' 오해 방지).
+TASK_TAXONOMY: dict[str, dict[str, Any]] = {
+    # 메인 추론 (사용자 대면)
+    "agent":               {"category": "ai.reasoning.agent",       "label": "에이전트 추론"},
+    # 보조 추론 (대화 파이프라인 내부 소량 호출)
+    "validate":            {"category": "ai.reasoning.aux",         "label": "단계 JSON 검증"},
+    "summary":             {"category": "ai.reasoning.aux",         "label": "대화 요약"},
+    "classify":            {"category": "ai.reasoning.aux",         "label": "주제 이탈 판정"},
+    "topic":               {"category": "ai.reasoning.aux",         "label": "대화 주제 추론"},
+    "sql_fix":             {"category": "ai.reasoning.aux",         "label": "SQL 오류 수정"},
+    # 지식베이스 보강
+    "glossary_suggest":    {"category": "ai.kb.enrich",             "label": "용어사전 후보"},
+    # 인사이트 분석
+    "schema_insight":      {"category": "ai.insight.analyze",       "label": "스키마 분석"},
+    "table_insight":       {"category": "ai.insight.analyze",       "label": "테이블 분석"},
+    "account_insight":     {"category": "ai.insight.analyze",       "label": "계정 분석"},
+    "node_analysis":       {"category": "ai.insight.analyze",       "label": "그래프 노드 분석"},
+    # 프롬프트 자동생성 (신규 계측 — 제품/역할/계정 생성 + 자율 sweep 워커)
+    "prompt_gen":          {"category": "ai.prompt.autogen",        "label": "프롬프트 자동생성"},
+    # 메타데이터 자동완성 (신규 계측)
+    "metadata_summary":    {"category": "ai.metadata.autocomplete", "label": "메타 설명 자동완성"},
+    "metadata_prompt_gen": {"category": "ai.metadata.autocomplete", "label": "메타 프롬프트 자동생성"},
+}
+
+# 카테고리 → 표시 라벨 (패널 드릴다운 accordion 상위 그룹 라벨). 표시 순서는 dict 삽입 순서.
+AI_CATEGORY_LABELS: dict[str, str] = {
+    "ai.reasoning.agent":       "에이전트 추론",
+    "ai.reasoning.aux":         "보조 추론",
+    "ai.kb.enrich":             "지식베이스 보강",
+    "ai.insight.analyze":       "인사이트 분석",
+    "ai.prompt.autogen":        "프롬프트 자동생성",
+    "ai.metadata.autocomplete": "메타데이터 자동완성",
+    "ai.other.unmapped":        "미분류 활동",
+}
+
+_UNMAPPED_CATEGORY = "ai.other.unmapped"
+
+
+def taxonomy_for(task: str | None) -> dict[str, Any]:
+    """llm_usage.task → 관제 taxonomy 항목 {task, category, label}.
+
+    미등록/오타/신규 task 는 ai.other.unmapped 로 self-surface (패널에서 '미분류 활동'으로
+    노출 — 등록 누락도 조용히 사라지지 않는다). label 은 원본 task 문자열을 그대로 보존해
+    운영자가 어떤 미등록 활동인지 식별할 수 있게 한다."""
+    key = str(task or "").strip()
+    entry = TASK_TAXONOMY.get(key)
+    if entry is not None:
+        return {"task": key, "category": entry["category"], "label": entry["label"]}
+    return {
+        "task": key or "(none)",
+        "category": _UNMAPPED_CATEGORY,
+        "label": key or "(미상)",
+    }
+
+
+def ai_categories() -> dict[str, str]:
+    """카테고리 코드 → 표시 라벨 (패널 드릴다운 그룹 라벨). 등록 category 의 상위 그룹핑."""
+    return dict(AI_CATEGORY_LABELS)

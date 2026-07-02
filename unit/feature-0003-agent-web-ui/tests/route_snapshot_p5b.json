@@ -1,6 +1,6 @@
 {
-  "total_routes": 192,
-  "api_routes": 191,
+  "total_routes": 194,
+  "api_routes": 193,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -722,6 +722,13 @@
       "type": "APIRoute"
     },
     {
+      "path": "/api/admin/metadata/graph/analyze/status",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
       "path": "/api/admin/metadata/graph/columns",
       "methods": [
         "GET"
@@ -1339,6 +1346,13 @@
     },
     {
       "path": "/api/admin/products/{product_id}/prompt/generate/stream",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/ai-ops",
       "methods": [
         "GET"
       ],
