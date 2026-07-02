@@ -567,3 +567,14 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-009),TASK(§31),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로(loadRoots/검색/리사이즈/우클릭 중심보기) **불변**. 마이그레이션 없음. tween=viewport transform 만(노드 재렌더·프리즈 무관, ADR-006 무간섭). 검증: `node --check` PASS · manual tween 헤드리스 실증(앵커 정중앙 26프레임/434ms) · §18.8 적대 6축 BLOCKING 0(G6 번들 소스 대조 — tween 수학=G6 focus 공식 동일). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(부드러운 팬 육안).
 - Rollback Notes: `_metaGraphAnimateFocus` 호출을 `focusElement(fel, false)`(즉시) 로 환원 + 헬퍼 제거 + cache-buster 이전값(graph-dblclick-cam). 데이터·API 무손상.
+
+## CHG-20260703-graph-dblclick-latency
+- Date: 2026-07-03
+- Related Requirement: 사용자 관찰(graph-dblclick-cam2 배포 후) — 카메라 팬이 부드럽긴 하나 더블클릭 직후가 아닌 **~350ms 텀을 두고 시작**돼 답답. 정본: DECISIONS ADR-010.
+- Summary: 원인 = 팬이 파이프라인 맨 끝(fetch+rebuild 후)에서 시작. 수정: (1) `_metaGraphExpand` 가 카메라 팬을 busy 직후 **fetch 전 fire-and-forget** 으로 시작(앵커 이미 렌더 → 즉시 반응), 파이프라인 끝 await 호출 제거. (2) `_metaGraphAnimateFocus` 를 고정-duration → **적응형 follow**(매 프레임 앵커 현재 위치 재조회 → 잔여 delta K=0.24 translateBy, ease-out)로 재작성 — rebuild 로 앵커 이동/재생성돼도 최종 위치 수렴. 종료=수렴/seq/MAXMS(1200ms) 단일 시간상한(프레임카운트 조기포기 제거 — 저사양 대비). W/H 매 프레임 재조회, API 부재 시 focusElement 폴백.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaGraphAnimateFocus` 적응형 follow 재작성 + `_metaGraphExpand` 팬 호출을 fetch 전 fire-and-forget 으로 이동, 끝 await 제거)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260703-graph-dblclick-latency`)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-010),TASK(§32),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 카메라 거동만(더블클릭·depth-select 재확장). 데이터 API·스키마·마커·다른 카메라 경로 **불변**. 마이그레이션 없음. tween=viewport transform 만(ADR-006 프리즈 무관). 검증: `node --check` PASS · 적응형 follow 헤드리스 실증(fire-and-forget 즉시 시작 + 중간 setData 앵커 이동 → 24프레임 중앙 수렴) · §18.8 적대 7축 BLOCKING 0(MEDIUM missStreak 조기포기→제거, NIT API폴백·W/H→반영). 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows(더블클릭 즉시 부드러운 팬).
+- Rollback Notes: `_metaGraphAnimateFocus` 를 이전(고정-duration) 으로 환원 + expand 팬 호출을 파이프라인 끝 await 로 복귀 + cache-buster 이전값(graph-dblclick-cam2). 데이터·API 무손상.

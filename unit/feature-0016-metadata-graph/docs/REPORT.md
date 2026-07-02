@@ -1,5 +1,26 @@
 # Report
 
+## 2026-07-03 · 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 — 즉시 시작 + 적응형 follow (graph-dblclick-latency, ADR-010)
+
+### 배경
+graph-dblclick-cam2(manual tween) 배포 후 사용자 관찰: 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. "렌더러 한계인지" 질의.
+
+### 진단
+렌더러 한계 아님. 팬(`_metaGraphAnimateFocus`)이 `_metaGraphExpand` 파이프라인 **맨 끝**에서 시작 — busy → `/graph?depth=2` fetch(~135ms) → ingest → `_metaG6Apply` setData+draw(~200ms) → **그제서야** 팬. 앵커(클릭 노드)는 이미 렌더돼 있는데 fetch·rebuild 를 기다림 → ~350ms 텀.
+
+### 수정 (FE admin.js)
+- **fetch 전 즉시 시작**: `_metaGraphExpand` 가 팬을 busy 직후 fetch 를 await 하기 전에 fire-and-forget(await 없이) 호출 → 클릭 즉시 반응. 파이프라인 끝 await 팬 호출 제거.
+- **적응형 follow tween**: 고정-duration(delta 1회 캡처) → 매 프레임 앵커 **현재** 뷰포트 위치 재조회 → 잔여 delta K=0.24 translateBy(ease-out). fetch·rebuild 로 앵커가 이동/재생성돼도 최종 위치로 수렴. 종료=수렴(<1.2px)/seq/MAXMS(1200ms) 단일 시간상한. W/H 매 프레임 재조회(리사이즈 대응), API 부재 시 focusElement 폴백.
+
+### 검증
+- 헤드리스 실증: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**. `node --check` PASS. cache-buster `?v=20260703-graph-dblclick-latency`.
+- §18.8 적대 7축 BLOCKING 0. **MEDIUM(missStreak 조기포기 — 저사양 rAF 탈동조로 팬 조기중단)** 적발 → 제거(MAXMS 단일상한). NIT(API 폴백·W/H 스테일) 반영. REV-20260703T003000.
+
+### 잔여
+- 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬하는지 육안 확인.
+
+---
+
 ## 2026-07-02 · 더블클릭 카메라 애니 no-op 근본수정 — manual rAF tween (graph-dblclick-cam2, ADR-009)
 
 ### 배경

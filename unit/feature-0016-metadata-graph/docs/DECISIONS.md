@@ -257,4 +257,20 @@ source_of_truth: true
   - focus 직전 `setOptions({animation:true})` 토글 후 복원: 동작하나 420ms 창의 동시 setData(폴 rebuild)가 셔플 — 전역상태 토글의 경합 위험(기각).
   - G6 per-call `focusElement({duration})`: 전역 animation:false 가 무효화(실증) — no-op(기각, ADR-008 의 잘못된 가정).
 - Supersedes: ADR-008 의 구현 수단(focusElement per-call 애니) — 결정(애니 채택)은 유지, 수단만 교정.
+- Superseded By: (구현 정제는 ADR-010 — 결정 유지, 지연 제거)
+
+
+## ADR-010 — 더블클릭 카메라 팬 반응 지연 제거: fetch 전 즉시 시작 + 적응형 follow tween
+- Status: Accepted
+- Date: 2026-07-03
+- Context: ADR-009(manual rAF tween) 배포 후 사용자 관찰 — 팬이 부드럽게 되긴 하나 **더블클릭 직후가 아닌 ~350ms 텀을 두고** 시작돼 답답. 원인: 더블클릭(`_metaGraphExpand`)이 팬을 파이프라인 **맨 끝**(busy → `await _metaYieldPaint` → `await /graph?depth=2` fetch(~135ms+) → ingest → `await _metaG6Apply(false)` setData+draw(~200ms) → **그제서야** `await _metaGraphAnimateFocus`)에서 시작. 앵커(클릭 노드)는 이미 렌더돼 있는데 fetch·rebuild 를 기다린 뒤 움직임.
+- Decision: 두 가지를 함께 적용.
+  1. **fetch 전 즉시 시작(fire-and-forget)**: `_metaGraphExpand` 가 busy 페인트 직후, fetch/rebuild 를 await 하기 전에 `_metaGraphAnimateFocus(key, seq)` 를 await 없이 호출 → 팬이 클릭 즉시 시작. 파이프라인 끝의 await 호출은 제거(중복 tween 방지).
+  2. **적응형 follow tween**: 고정-duration(delta 1회 캡처) 대신 매 프레임 앵커의 **현재** 뷰포트 위치를 재조회해 뷰포트 중앙까지 잔여 delta 의 K(0.24)만큼 translateBy(ease-out). fetch·rebuild 로 앵커가 이동/재생성돼도 최종 위치로 수렴. 종료 = 수렴(<1.2px) / seq 폐기 / MAXMS(1200ms) 단일 시간상한(프레임카운트 조기포기 없음 — 저사양 rAF 탈동조 대비). W/H 매 프레임 재조회(팬 중 리사이즈 대응). API 부재 번들은 focusElement 즉시 폴백.
+- Consequences: 더블클릭↔팬 시작 사이 ~350ms 텀 제거(즉시 반응). rebuild 동안 앵커가 이동해도 follow 가 최종 위치로 매끄럽게 수렴(헤드리스 실증: 중간 setData 이동 후 24프레임에 중앙 안착). §18.8 적대 7축(종료·동시성·이동수렴·fetch실패/seq·미렌더·회귀·K/임계) BLOCKING 0; MEDIUM(missStreak 조기포기)→제거, NIT(API폴백·W/H 스테일)→반영. 카메라 transform 만(ADR-006 프리즈 무관). 완료 게이트=PB-0008 실 Windows(더블클릭 즉시 부드러운 팬).
+- Alternatives:
+  - rebuild 후에만 팬 시작(기존): 앵커 이미 렌더인데 대기 → ~350ms 텀(기각).
+  - 고정-duration tween 을 즉시 시작: rebuild 로 앵커 이동 시 캡처한 delta 가 스테일 → 빗나감(기각 — 적응형 follow 필요).
+  - missStreak 프레임카운트 조기포기: rebuild 프리즈로 rAF 탈동조돼 저사양서 팬 조기중단(텀 재발) → 제거, MAXMS 단일상한(채택).
+- Supersedes: ADR-009 의 팬 시작 시점(rebuild 후 await) + 고정-duration — 결정(manual tween 애니) 유지, 지연·적응성 정제.
 - Superseded By:

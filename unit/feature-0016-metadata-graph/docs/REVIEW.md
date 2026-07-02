@@ -520,3 +520,14 @@ source_of_truth: true
   - **NIT (수용)**: ① 420ms tween 중 2차 더블클릭이 opSeq 를 올렸으나 그 op 가 fetch 실패로 rebuild 없이 early-return 시 첫 tween 이 중간 팬 위치에 카메라 잔류(다음 성공 op 가 교정 — 항구적 아님). ② tween 중 사용자 능동 휠줌 시 start 캡처 줌 기준이라 최종 정렬 어긋남(420ms 내 동시 조작 필요, 희귀). 둘 다 "부드러운 팬" 목표 불파괴.
 - Verdict: **PASS** — BLOCKING 0. ADR-008 의 no-op 를 manual tween 으로 실제 해소(번들 소스 대조 확증). NIT 2건 수용.
 - Human Approval Needed: graph-dblclick-cam2 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.
+
+
+## REV-20260703T003000-ai-claude-feature-0016-graph-dblclick-latency [SUBAGENT: PASS] — 더블클릭 카메라 팬 반응 지연 제거(즉시 시작 + 적응형 follow) 적대 리뷰
+- Related Change: graph-dblclick-latency (MODIFY CHG-20260703-graph-dblclick-latency, DECISIONS ADR-010). `_metaGraphAnimateFocus` 적응형 follow 재작성 + `_metaGraphExpand` 팬 fetch 전 fire-and-forget 시작.
+- Method: general-purpose subagent 적대 7축 + G6 init/좌표 API 대조 + 종료·수렴 논리 검증.
+- Verified: 종료 보장(수렴/seq/MAXMS 1200 — MAXMS 가 av 무관 최상단 평가라 무조건 종료) · 이동 앵커 수렴(매 프레임 재조회 → 잔여 K 접근, rebuild 1회성이라 수렴) · fire-and-forget 동시성(rebuild 동기 setData+draw 는 rAF 점유라 miss 미누적, 완료 후 av 해소) · fetch실패/seq(catch 는 opSeq 미증가 → 팬 계속 앵커 정렬; 후속 op 는 seq 폐기) · translateBy vs draw 무경합(동기) · `_metaRenderedIdFor` 매 프레임 재조회로 카드↔노드 전환 자기치유 · K<1 단조수렴(오버슈트/진동 없음) · 회귀 없음(헬퍼는 expand 1곳, 다른 카메라 경로 불변).
+- Findings:
+  - **MEDIUM (적발 → 수정 완료)**: `missStreak>30` 조기포기가 "연속 rAF 콜백" 기준인데 rebuild 프리즈 구간엔 rAF 가 거의 안 돌아 벽시계와 탈동조 → 저사양·대형 rebuild·프레임드롭 환경에서 팬이 조용히 중단돼 "텀/미완 팬" 확률적 재발. → **missStreak 제거, MAXMS(1200ms) 단일 시간상한**으로 종료 판정(av 미해소 프레임은 skip 후 재시도). 조기포기 위험 제거.
+  - **NIT (반영)**: ① API 부재(getElementRenderBounds/getViewportByCanvas/translateBy 미지원) 번들서 구버전 focusElement 폴백 손실 → 진입부 API 가드 + focusElement 즉시 폴백 복원. ② W/H 1회 캡처 → 팬 중 리사이즈 시 중앙 목표 스테일 → **W/H 매 프레임 재조회**.
+- Verdict: **PASS** — BLOCKING 0. MEDIUM 수정(missStreak 제거)·NIT 2건 반영. 실제 애니 반응성은 PB-0008(실 브라우저)이 최종.
+- Human Approval Needed: graph-dblclick-latency 배포(web 재빌드) — deploy_scope: included(전역) → 자동 배포 + 첫 배포 직전 1줄 표면화.

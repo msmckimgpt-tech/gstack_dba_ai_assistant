@@ -699,4 +699,21 @@ graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-p
 ### 31.3 검증
 - [x] T31.5 manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS.
 - [x] T31.6 **§18.8 적대 6축**(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀): BLOCKING 0. G6 번들 소스 대조 — tween 수학=G6 자체 `focus` 공식 동일(앵커 정중앙 오차 ≤1e-13px). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 [SUBAGENT].
-- [ ] T31.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 앵커로 **실제 부드럽게 팬**(순간이동 없음) 육안 확인.
+- [x] T31.7 배포 + 라이브 PB-0008: **팬 동작 확인**(부드러운 이동). 잔여 = 팬 시작 ~350ms 텀(답답) → §32 로 개선.
+
+## 32. graph-dblclick-latency — 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (2026-07-03, 사용자 후속 보고)
+사용자 관찰(graph-dblclick-cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. 정본: DECISIONS ADR-010, MODIFY CHG-20260703-graph-dblclick-latency.
+등급: **Major 승계**(프론트 카메라 1곳, 비파괴·데이터 API 불변·마이그레이션 없음).
+
+### 32.1 진단
+- [x] T32.1 원인: 팬(`_metaGraphAnimateFocus`)이 `_metaGraphExpand` 파이프라인 맨 끝(busy→yield→`/graph?depth=2` fetch~135ms→ingest→`_metaG6Apply` setData+draw~200ms→**그제서야** 팬)에서 시작. 앵커는 이미 렌더인데 fetch·rebuild 대기 → ~350ms 텀.
+
+### 32.2 구현
+- [x] T32.2 `_metaGraphExpand`: 팬을 busy 직후 **fetch 전 fire-and-forget**(await 없이) 시작 → 즉시 반응. 파이프라인 끝 await 팬 호출 제거(중복 방지).
+- [x] T32.3 `_metaGraphAnimateFocus` 를 고정-duration → **적응형 follow** 재작성: 매 프레임 앵커 현재 뷰포트 위치 재조회 → 잔여 delta K=0.24 translateBy(ease-out). rebuild 로 앵커 이동/재생성돼도 최종 위치 수렴. 종료=수렴(<1.2px)/seq/MAXMS(1200ms) 단일 시간상한(프레임카운트 조기포기 제거). W/H 매 프레임 재조회, API 부재 시 focusElement 폴백.
+- [x] T32.4 cache-buster `admin.js?v=20260703-graph-dblclick-latency`. 다른 카메라 경로 불변.
+
+### 32.3 검증
+- [x] T32.5 헤드리스 실증: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**. `node --check` PASS.
+- [x] T32.6 **§18.8 적대 7축**(종료보장·fire-and-forget 동시성·이동수렴·fetch실패/seq·미렌더/폴백·회귀·K/임계): BLOCKING 0. **MEDIUM**(missStreak 프레임카운트 조기포기 — 저사양 rAF 탈동조로 팬 조기중단 위험) 적발 → **제거**(MAXMS 단일상한). NIT(API 폴백 손실·W/H 스테일) → API 가드 + W/H 매 프레임 재조회 반영. REV-20260703T003000 [SUBAGENT].
+- [ ] T32.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬하는지 육안 확인.
