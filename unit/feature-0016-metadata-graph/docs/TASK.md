@@ -796,7 +796,7 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T33.2 `_metaGraphShowRelations`: 동일 모델 병합(mNodes/mEdges 보강) — "관계 상세" 도 테이블 관계 표시.
 - [x] T33.3 캐시버스터 `20260703-reltrace-tabledetail`. node --check PASS + 모델병합 로직 격리 Node 5/5 PASS.
 - [x] T33.4 §18.8 적대 리뷰 + verify-completion.
-- [ ] T33.5 배포 + PB-0008: 테이블 단일클릭 → "관계(N)" 행 표시 → 클릭 추적 육안.
+- [x] T33.5 배포(web b14eb117 롤링) + **PB-0008 실 Windows PASS**: 테이블 단일클릭 상세 "관계(1)" 행 표시 → 클릭 추적(대상 컬럼 강조·카메라 이동) + graph-reltrace 3항목(① 접힌관계 ② 관계클릭추적 ③ AI분석추적) 통합 충족. 스크린샷 5매(feature-0003 TEST §3 POST-DEPLOY).
 ## 34. graph-dblclick-latency — 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (2026-07-03, 사용자 후속 보고)
 사용자 관찰(graph-dblclick-cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. 정본: DECISIONS ADR-011, MODIFY CHG-20260703-graph-dblclick-latency.
 등급: **Major 승계**(프론트 카메라 1곳, 비파괴·데이터 API 불변·마이그레이션 없음).
