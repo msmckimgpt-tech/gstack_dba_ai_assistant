@@ -149,6 +149,90 @@ _COVERAGE = {
     "note": "위 미계측 활동은 llm_usage 에 기록되지 않아 KPI·비용 합계에서 제외됩니다('전체 비용' 아님).",
 }
 
+_ACTIVITY_LIMIT_DEFAULT = 30
+_ACTIVITY_LIMIT_MAX = 100
+
+
+def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEFAULT):
+    """llm_usage 활동 feed 를 id DESC(=created_at DESC — id BIGSERIAL 단조증가) 로 cursor 페이징.
+    cursor(id) 미지정=최신부터. `WHERE id < cursor` + limit+1 조회로 has_more 판정 → 안정적
+    keyset 페이징(OFFSET 아님). 반환 (items, next_cursor). 과거 기록 조회용(더 보기)."""
+    if cursor is not None:
+        cur.execute(
+            "SELECT id, task, COALESCE(resolved_model, model), total_tokens, prompt_tokens, "
+            "completion_tokens, latency_ms, created_at "
+            "FROM agent_runtime.llm_usage WHERE id < %s ORDER BY id DESC LIMIT %s",
+            (int(cursor), int(limit) + 1),
+        )
+    else:
+        cur.execute(
+            "SELECT id, task, COALESCE(resolved_model, model), total_tokens, prompt_tokens, "
+            "completion_tokens, latency_ms, created_at "
+            "FROM agent_runtime.llm_usage ORDER BY id DESC LIMIT %s",
+            (int(limit) + 1,),
+        )
+    rows = cur.fetchall() or []
+    has_more = len(rows) > limit
+    items = []
+    for r in rows[:limit]:
+        tx = taxonomy_for(r[1])
+        items.append({
+            "id": int(r[0]), "task": r[1], "category": tx["category"], "label": tx["label"],
+            "model": r[2], "total_tokens": int(r[3] or 0),
+            "cost_usd": app._estimate_llm_cost_usd(r[2], int(r[4] or 0), int(r[5] or 0)),
+            "latency_ms": (int(r[6]) if r[6] is not None else None),
+            "created_at": (r[7].isoformat() if r[7] else None),
+        })
+    next_cursor = items[-1]["id"] if (has_more and items) else None
+    return items, next_cursor
+
+
+@router.get("/api/admin/ai-ops/activity")
+def admin_ai_ops_activity(
+    request: Request,
+    account=Depends(app.require_permission("console.aiops.read", message="AI 운영 현황 조회 권한이 필요합니다 (운영자 전용).")),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    """AI 운영 현황 '최근 활동' 과거 기록 페이징 — cursor(id) keyset 로 더 오래된 활동 조회.
+    Query: cursor(id, 이 값보다 오래된 것), limit(기본 30, 1~100). PG 미가용 시 부분 degrade."""
+    from shared.model_catalog import taxonomy_for
+
+    try:
+        limit = int(request.query_params.get("limit", str(_ACTIVITY_LIMIT_DEFAULT)))
+    except Exception:
+        limit = _ACTIVITY_LIMIT_DEFAULT
+    limit = max(1, min(_ACTIVITY_LIMIT_MAX, limit))
+    cursor_raw = request.query_params.get("cursor")
+    cursor = None
+    if cursor_raw:
+        try:
+            cursor = int(cursor_raw)
+        except Exception:
+            cursor = None
+
+    items: list[dict] = []
+    next_cursor = None
+    pg_available = True
+    try:
+        from shared.db import _pg_connect_ro
+        pg = _pg_connect_ro()
+    except Exception:
+        pg = None
+        pg_available = False
+    if pg is not None:
+        try:
+            with pg.cursor() as cur:
+                items, next_cursor = _query_activity(cur, taxonomy_for, cursor=cursor, limit=limit)
+        except Exception:
+            _log.debug("ai_ops activity paging query failed", exc_info=True)
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+    return JSONResponse({"items": items, "next_cursor": next_cursor, "pg_available": pg_available})
+
 
 @router.get("/api/admin/ai-ops")
 def admin_ai_ops(
@@ -180,6 +264,7 @@ def admin_ai_ops(
     pg_available = True
     categories: list[dict] = []
     activity: list[dict] = []
+    activity_next_cursor = None
     latency = {"measured_calls": 0, "avg_ms": None, "p50_ms": None, "p95_ms": None}
     activity_24h = {"calls": 0, "requests": 0}
     unmapped_tasks: list[str] = []
@@ -273,22 +358,10 @@ def admin_ai_ops(
                 except Exception:
                     _log.debug("ai_ops 24h activity query failed", exc_info=True)
 
-                # 5) 최근 활동 feed ("방금 무엇을 했나").
+                # 5) 최근 활동 feed ("방금 무엇을 했나") — 최신 페이지 + 과거 페이징용 next_cursor.
                 try:
-                    cur.execute(
-                        "SELECT task, COALESCE(resolved_model, model), total_tokens, prompt_tokens, "
-                        "completion_tokens, latency_ms, created_at "
-                        "FROM agent_runtime.llm_usage ORDER BY created_at DESC LIMIT 30"
-                    )
-                    for r in (cur.fetchall() or []):
-                        tx = taxonomy_for(r[0])
-                        activity.append({
-                            "task": r[0], "category": tx["category"], "label": tx["label"],
-                            "model": r[1], "total_tokens": int(r[2] or 0),
-                            "cost_usd": app._estimate_llm_cost_usd(r[1], int(r[3] or 0), int(r[4] or 0)),
-                            "latency_ms": (int(r[5]) if r[5] is not None else None),
-                            "created_at": (r[6].isoformat() if r[6] else None),
-                        })
+                    activity, activity_next_cursor = _query_activity(
+                        cur, taxonomy_for, limit=_ACTIVITY_LIMIT_DEFAULT)
                 except Exception:
                     _log.debug("ai_ops activity feed query failed", exc_info=True)
 
@@ -346,6 +419,7 @@ def admin_ai_ops(
         "attention": attention,
         "categories": categories,
         "activity": activity,
+        "activity_next_cursor": activity_next_cursor,
         "coverage": _COVERAGE,
         "pg_available": pg_available,
         # 위젯 deep-link 계약: 대시보드 타일 → 이 탭. data-admin-tab 값(hyphen)과 정확히 일치.

@@ -2077,6 +2077,50 @@ function applyAdminTabVisibility() {
 }
 
 // ── TASK-AIOPS: AI 운영 현황 패널 (관리 콘솔 > 감사 > AI 운영 현황) ──────────────
+// TASK-AIOPS-paging: 활동 row HTML(초기 렌더 + '더 보기' append 공용) — 자체 esc/포맷(모듈 스코프).
+function _aiOpsEscApg(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function _aiOpsFmtNumApg(v) { return v == null ? "0" : Number(v).toLocaleString(); }
+function _aiOpsFmtMsApg(v) { return v == null ? "—" : (v >= 1000 ? (v / 1000).toFixed(2) + "s" : Math.round(v) + "ms"); }
+function aiOpsActivityRowsHtml(items) {
+  return (items || []).map((r) => {
+    // 과거 기록 페이징이라 연도까지 표시(YYYY-MM-DD HH:MM:SS) — 연도 경계 넘어가는 모호성 방지.
+    const ts = String(r.created_at || "").replace("T", " ").slice(0, 19);
+    return `<div style="display:flex;gap:10px;padding:3px 0;border-bottom:1px solid #f0f2f4"><span style="color:#57606a;width:118px;flex:none">${_aiOpsEscApg(ts)}</span><span style="flex:1;min-width:0"><b>${_aiOpsEscApg(r.label)}</b> <span style="color:#8c959f">${_aiOpsEscApg(r.model || "")}</span></span><span style="color:#57606a;width:74px;text-align:right">${_aiOpsFmtNumApg(r.total_tokens)} tok</span><span style="color:#57606a;width:60px;text-align:right">${_aiOpsFmtMsApg(r.latency_ms)}</span></div>`;
+  }).join("");
+}
+
+// '더 보기' — cursor(id) keyset 페이징으로 더 오래된 활동을 조회해 목록에 append.
+async function loadAiOpsMoreActivity() {
+  const btn = $("aiOpsActivityMore");
+  const list = $("aiOpsActivityList");
+  if (!btn || !list) return;
+  const cursor = btn.getAttribute("data-cursor") || "";
+  btn.disabled = true;
+  btn.textContent = "불러오는 중…";
+  try {
+    const data = await apiFetch("/api/admin/ai-ops/activity?cursor=" + encodeURIComponent(cursor));
+    // 계측 저장소(PG) 일시 미가용은 HTTP 200 + pg_available:false 로 오므로 '과거 끝'으로 오인 금지 —
+    // 재시도 가능 상태로 복구(빈 items 를 append 하지도, 버튼을 영구 disable 하지도 않음).
+    if (data.pg_available === false) {
+      btn.disabled = false;
+      btn.textContent = "더 보기 (재시도)";
+      return;
+    }
+    list.insertAdjacentHTML("beforeend", aiOpsActivityRowsHtml(data.items || []));
+    if (data.next_cursor != null) {
+      btn.setAttribute("data-cursor", String(data.next_cursor));
+      btn.disabled = false;
+      btn.textContent = "더 보기";
+    } else {
+      btn.textContent = "과거 기록 끝";
+      btn.disabled = true;   // 더 이상 없음
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = "더 보기 (재시도)";
+  }
+}
+
 async function loadAiOps() {
   const body = $("aiOpsBody");
   if (body) body.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
@@ -2145,12 +2189,14 @@ function renderAiOps(data) {
   // 최근 활동 feed
   const act = data.activity || [];
   if (act.length) {
-    h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">최근 활동</div><div style="font-size:12px">`
-      + act.slice(0, 20).map((r) => {
-        const ts = String(r.created_at || "").replace("T", " ").slice(5, 19);
-        return `<div style="display:flex;gap:10px;padding:3px 0;border-bottom:1px solid #f0f2f4"><span style="color:#57606a;width:96px;flex:none">${esc(ts)}</span><span style="flex:1;min-width:0"><b>${esc(r.label)}</b> <span style="color:#8c959f">${esc(r.model || "")}</span></span><span style="color:#57606a;width:74px;text-align:right">${fmtNum(r.total_tokens)} tok</span><span style="color:#57606a;width:60px;text-align:right">${fmtMs(r.latency_ms)}</span></div>`;
-      }).join("")
-      + `</div></div>`;
+    h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">최근 활동</div>`
+      + `<div style="font-size:12px" id="aiOpsActivityList">`
+      + aiOpsActivityRowsHtml(act)
+      + `</div>`
+      + (data.activity_next_cursor != null
+          ? `<div style="margin-top:8px;text-align:center"><button type="button" id="aiOpsActivityMore" class="btn-secondary" data-cursor="${esc(String(data.activity_next_cursor))}">더 보기</button></div>`
+          : "")
+      + `</div>`;
   }
   // 계측 커버리지 (정직 노출)
   const cov = data.coverage || {};
@@ -2161,6 +2207,9 @@ function renderAiOps(data) {
     + (cov.note ? `<div style="margin-top:3px;font-style:italic">${esc(cov.note)}</div>` : "")
     + `</div>`;
   body.innerHTML = h;
+  // '더 보기' 배선(innerHTML 재설정 후이므로 매 렌더마다 재바인딩).
+  const _moreBtn = $("aiOpsActivityMore");
+  if (_moreBtn) _moreBtn.addEventListener("click", loadAiOpsMoreActivity);
 }
 
 function switchTab(tabName) {
