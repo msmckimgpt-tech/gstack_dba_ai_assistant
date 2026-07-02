@@ -140,6 +140,40 @@ Cytoscape(WebGL) → AntV G6 v5.1.1(Canvas) + 결정론적 배치. 설계·POC: 
 - 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: roots grid·제자리 펼침·재클릭 무접힘·"−" 접기·더블클릭 이웃확장·검색 유사도 크기·AI 마커·줌/스크롤 동기화(오버레이 지연 소멸)·테두리 선명·점선/실선 엣지.
 - 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 `git_commit`·자산 버전(`admin.js?v=20260702-graph-g6`) 명기. 브리지 불가 시 미수행 사유 명시(카고컬트 방지) 또는 `GSTACK_SKIP_VISUAL_VERIFICATION=1`.
 
+## 초기 진입 줌아웃 가시성 개선 (graph-initview, 2026-07-02)
+
+스키마-우선 진입(카드→per-schema lazy)+판독 줌 클램프+미니맵/툴바/점프(레이아웃 밀도는 graph-g6b masonry 채택). TASK §25.
+
+### dev-loop 검증 (Environment: WSL-headless-harness, Playwright chromium) — 2026-07-02 **31/31 PASS · 에러 0**
+실 admin.html 그래프 마크업 + admin.js `_metaGraph*` 블록(main graph-g6b masonry + graph-perf-bg `_opSeq` 와
+병합된 최종본) + mock apiFetch(실 응답 shape) + **대규모 fixture(7 스키마: 200/40/33/12/5/2/0 테이블)**:
+- roots: 스키마 카드 7장(테이블수 배지) 렌더, **zoom 0.60(판독선 0.55~1.0 클램프)**, 점프 select 채움(7+1).
+- 카드 클릭(`SC:` 라우팅): billing 12 테이블 per-schema lazy 펼침(combo 승격+"XS:" ctl), schemaExpanded 반영.
+- 200 테이블 스키마 펼침: **masonry 4열**·truncated 안내·**펼침 전후 zoom 불변(카메라 불점프)**.
+- 줌 툴바(실 DOM 클릭): '전체'=클램프 없는 조망(zoom 0.27 허용)·'1:1'=1.0·'−'=0.8·'+'=1.0. 스키마 점프 정상.
+- 검색: 결과 3스키마 자동 펼침·유사도 크기·zoom 클램프. 이웃확장: REFERENCES 2엣지(실선/점선) 렌더·교차
+  스키마 자동 펼침·**앵커 국소 focus(전체-fit 줌아웃 재발 없음)**. "XS:" 접기 → 카드 복귀. **미니맵 True**.
+- 리뷰 회귀 시나리오: **dead-card 복구**(Schema 노드 없는 combo 접기→카드 재클릭 재펼침) · **빈 스키마**
+  (미펼침+카드 유지+안내, loaded 비고착) · **카드 연타 단일 fetch**(in-flight 가드) · **혼합버전 구백엔드**
+  (mode 무시 응답 → 카드 진입+강등 펼침+loaded 미마킹) · **stale-scope 카드 클릭 blocked**(V-B, 교차 스코프
+  오염 없음). pageerror/console error 0.
+- harness 로 적발·수정한 결함: ① 동일 스키마 key 의 카드(노드)↔combo 타입 전환 시 G6 setData diff 자식 유실
+  → `SC:` 네임스페이스 분리. ② 미렌더 요소 `setElementState` async reject 가 pageerror 로 누출 → renderedIds
+  매핑+catch(_metaApplyState/refreshStates 단일 경로).
+
+### 라이브 AGE Cypher 검증 (Environment: live-pg-replica) — 2026-07-02 PASS
+`scope_schemas` 의 `count(t)` 집계·`schema_tables` 의 스키마 필터 쿼리를 replica psql 로 실증 —
+최대 scope `mssql-06656002eda6`(62 스키마·스키마당 ~257 테이블)에서 301행 0.23s. 구 진입 뷰가 cap 200 으로
+전체의 ~1.2% 만 표시하던 규모 실측.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 예정 (본 cycle 배포 직후 수행)
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰. 확인: 스키마 카드 진입(판독 줌)·카드 클릭 펼침·다열 wrap·줌 툴바·
+  스키마 점프·미니맵·기존 플로우 회귀(테이블 클릭 컬럼·더블클릭 이웃·검색·AI 마커) + §21 T21.8 미완분(G6 엔진
+  교체 시각검증) 통합 수행.
+- 게이트: `bin/win-browser.py` + PB-0008. PASS 기록 시 배포 `git_commit`·자산 버전(`admin.js?v=20260702-graph-initview`)
+  명기. 알려진 제약: Chrome 149.0.7827.200 eval 주입 회귀(PB-0008 메모) — screenshot/click 경로로 수행, canvas
+  인터랙션 세부는 사용자 실화면 확인 병행. 브리지 불가 시 미수행 사유 명시(카고컬트 방지).
+
 ## 후속 (Phase 2~5)
 - 투영 API 계약 테스트(cap·scope 격리·빈 그래프 graceful).
 - KB 회귀 스위트(`make test`) — AI 정합(Phase 4) 후.

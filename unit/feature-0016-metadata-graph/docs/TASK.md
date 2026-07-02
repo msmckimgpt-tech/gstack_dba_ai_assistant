@@ -498,3 +498,37 @@ REQ-20260702T113000-graph-ctxmenu (사용자): 관리 콘솔 > 메타데이터 >
       qa rate-limit 미완·한계 기록) → REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu.
 - [x] T24.5 verify-completion(--pre-commit) PASS → commit(11da6da0)+origin/main 병합(§24 재번호·perf-bg seq 통합) → PR #538 → main 병합(16fc1598) + cycle-finalize cleanup.
 - [x] T24.6 라이브 배포(deploy-web.sh 16fc1598, 무중단 soak PASS) + **PB-0008 실 Windows 시각검증 PASS**(우클릭 메뉴·관계 패널·중심 칩·클러스터 메뉴·Escape — TEST.md Run·스크린샷 4매, 겸 T21.11 G6 라이브 재확인) → TEST.md POST-DEPLOY 기록.
+- [ ] T24.5 verify-completion(--pre-commit) PASS → commit/push/PR → cycle-finalize.
+- [ ] T24.6 라이브 배포(deploy-web.sh) + PB-0008 실 Windows 시각검증(겸 T21.11 재확인) →
+      TEST.md Run 후속 기록.
+
+## 25. graph-initview — 초기 진입 줌아웃 가시성 개선: 스키마-우선 진입 (2026-07-02, entry persona dispatch)
+사용자 보고: 스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit 이 지나친 줌아웃을 만들어
+초반 가시성 붕괴. 5축(A 뷰포트/B 밀도/C 정보위계/D 큐레이션/E 내비게이션) 검토 후 사용자 결정
+**Phase 1+2 통합**(AskUserQuestion 2026-07-02). 등급 **Major**(cross-cut — 코드 거주 feature-0002/0003).
+병렬 세션 정합: 착수 base(15e0befc)가 main 대비 stale — **B축(다열·shelf-packing)은 병렬 머지된
+graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-perf-bg(#537)의 `_opSeq`/busy/_stateCache
+기계와 세대 가드를 통합, graph-ctxmenu(#538)와 재정합(§13.1 재번호 §22→§24→**§25**).
+<!-- PLAN-APPROVED by user on 2026-07-02 (AskUserQuestion: "Phase 1+2 통합" 선택) -->
+
+### 25.1 구현 (원 계획 §7.1 은 초판 커밋 bafe5a71 참조 — 아래는 병합 최종본)
+- [x] T25.1 백엔드 `scope_schemas`(Schema+count(t) 집계, limit+1 truncated, 집계실패=배지없는 카드 강등)
+      /`schema_tables`(per-schema lazy, truncated) + 라우터 `?mode=schemas`/`?schema=` 분기(신규 route 0 — 골든 불변).
+- [x] T25.2 C1 스키마-우선 진입: roots = 스키마 카드(`SC:`+key, "이름 · 테이블 N" 배지) → 클릭 시 per-schema
+      lazy 펼침(combo 승격, "XS:" 접기=카드 복귀, 재펼침 무-refetch). 카드↔combo **동일-id 타입 전환의 G6
+      setData diff 자식 유실**을 SC: 네임스페이스로 차단(harness 적발). 검색/이웃 결과 스키마 자동 펼침,
+      단일 스키마 DS 자동 펼침(기존 즉시성 유지). 게이팅은 masonry layouts 선산정에 통합.
+- [x] T25.3 A 뷰포트: Graph `zoomRange [0.05,4]`(G6 전환 때 소실된 min/maxZoom 이식) + `_metaGraphFitClamped`
+      (fit 후 0.55 하한/1.0 상한, focusFirst 는 초기로드·검색만 — refit 은 현 위치 보존) + 이웃확장 전체-fit →
+      **앵커 국소 focus**. 상세토글/리사이저 refit 클램프 정합.
+- [x] T25.4 E 내비게이션: minimap 플러그인(번들 실증) + 줌 툴바(−/+/전체/1:1) + 스키마 점프 select(2개 이상 시).
+- [x] T25.5 §18.8 1차 적대 리뷰(BLOCKER 0·MAJOR 2·MINOR 7·NIT 3) 전건 반영 — dead-card 합성 복구·
+      혼합버전 loaded 미마킹·연타 가드·빈 스키마 비펼침·truncated 표면화·점프 stale 정리 등. REVIEW.md.
+- [x] T25.6 2차 적대 검증 workflow(3렌즈, 17 findings→dedup 9) 반영 — **stale-base 감지(동일 블록 병렬
+      재작성 다건)** → merge 재정합, ExpandSchema 를 `_opSeq` 세대에 편입(교차 스코프 오염 차단) +
+      scope 가드(이전 scope 카드 클릭 차단) + 상세 로컬렌더 성공-게이팅 + 빈 스키마 loaded 비고착 +
+      클러스터 상세 실총계(table_count)·절단 노트 + 집계실패 배지 강등. REVIEW.md.
+- [x] T25.7 headless harness(실 마크업+mock API, 대규모 200테이블+빈스키마+혼합버전+stale-scope fixture)
+      **31/31 PASS·에러 0**(병합 최종본) + 라이브 AGE Cypher 실증(62 스키마 scope, 0.23s). TEST.md.
+- [x] T25.8 verify-completion(--pre-commit) PASS(#13 Windows-browser 기록 게이트 포함) + REVIEW 2라운드 원장.
+- [ ] T25.9 배포(deploy_scope: included) + PB-0008 실 Windows 시각검증(§21 T21.8 미완분 통합) + TEST.md Run 기록.

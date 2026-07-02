@@ -7932,7 +7932,18 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-legend .lg-line { width: 16px; height: 0; display: inline-block; }
 .admin-meta-graph-legend .lg-line-solid { border-top: 2.5px solid #7a4f10; }
 .admin-meta-graph-legend .lg-line-dashed { border-top: 2px dashed #b0872f; }
+/* graph-initview: 스키마 카드 범례(진입 뷰 기본 표현 — 클릭=그 스키마 테이블 펼침) */
+.admin-meta-graph-legend .lg-schemacard { width: 16px; height: 11px; border: 1.5px solid #3f4b8c; border-radius: 4px; background: #eef0f8; display: inline-block; }
 .admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
+/* graph-initview(E2): 줌 컨트롤 버튼 묶음 — 컴팩트 정사각 버튼 */
+.admin-meta-graph-zoomctl { display: inline-flex; align-items: center; gap: 4px; }
+.admin-meta-graph-zoomctl .btn-secondary { min-width: 30px; padding: 4px 8px; font-weight: 700; }
+/* graph-initview(E1): G6 minimap 플러그인 컨테이너 — 캔버스 우하단 카드형 */
+.admin-meta-graph-canvas .g6-minimap {
+  position: absolute; right: 10px; bottom: 10px; z-index: 5;
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .12); overflow: hidden;
+}
 /* 반응형 그래프 body: clamp 높이 + 패널 접기(.detail-collapsed) + 드래그 리사이즈(--meta-graph-detail-w) */
 .admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 8px var(--meta-graph-detail-w, 340px); gap: 8px; align-items: stretch; }
 .admin-meta-graph.detail-collapsed .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }

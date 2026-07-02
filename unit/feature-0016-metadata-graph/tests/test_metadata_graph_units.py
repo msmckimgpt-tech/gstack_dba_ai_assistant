@@ -77,6 +77,22 @@ def test_node_from_props_includes_ordinal():
     assert d2["ordinal"] is None, d2
 
 
+def test_scope_schemas_graceful_noop():
+    # graph-initview: 빈 scope / PG 미가용 환경에서 빈 결과 graceful(코어 비차단 원칙). truncated 명시 shape.
+    base = {"nodes": [], "edges": [], "truncated": False}
+    assert mg.scope_schemas("") == base
+    out = mg.scope_schemas("ds-x")   # host 에 PG 없음 → _ro_conn None → 빈 결과
+    assert out == base, out
+
+
+def test_schema_tables_graceful_noop_and_shape():
+    # graph-initview: 빈 인자·PG 미가용 → truncated False 포함 고정 shape.
+    base = {"nodes": [], "edges": [], "truncated": False}
+    assert mg.schema_tables("", "s") == base
+    assert mg.schema_tables("ds-x", "") == base
+    assert mg.schema_tables("ds-x", "ds-x:db") == base
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

@@ -1,5 +1,46 @@
 # Report
 
+## 2026-07-02 · 그래프 뷰 초기 진입 줌아웃 가시성 개선 — 스키마-우선 진입 (graph-initview)
+
+### 배경 (사용자 보고 + 다각도 검토 → Phase 1+2 통합 결정)
+스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit(`fitView`)이 콘텐츠 bbox 에 무제한 종속되어
+판독 불가 줌아웃 발생. 5축 검토 후 사용자 결정 **Phase 1+2 통합**(AskUserQuestion, 2026-07-02). 실데이터:
+최대 scope `mssql-06656002eda6` = **62 스키마 × ~257 테이블** — 구 진입 뷰는 cap 200 으로 전체의 ~1.2% 만
+무통보 부분표시. TASK §25.
+
+### 병렬 세션 정합 (2차 검증 workflow 가 stale-base 적발)
+착수 base 가 main 대비 23커밋 stale — 같은 날 병렬 머지된 **graph-g6b(#533, 클러스터 다열 masonry+가변폭
+shelf-packing)** 가 B축(레이아웃 밀도)을 선점, **graph-perf-bg(#537, `_opSeq` 세대·busy·_stateCache·O(1)
+colsByTable)** 가 동일 블록을 재작성. → merge 재정합: **main 판을 기준으로 C1/A/E 만 재적용**, 자체 wrap/
+shelf-packing 폐기(g6b masonry 채택), 세대 가드는 perf-bg `_opSeq` 에 편입.
+
+### 구현 (병합 최종본)
+- **C1 스키마-우선 진입**: roots=`?mode=schemas` 경량 뷰 → 스키마 카드(`SC:`+key, 테이블수 배지) → 클릭 시
+  `?schema=` per-schema lazy 로드 후 combo 승격("XS:" 접기=카드 복귀, 모델 유지라 재펼침 무-refetch).
+  백엔드 `scope_schemas`(count 집계·truncated·집계실패=배지없는 카드)·`schema_tables`(truncated) 신설,
+  신규 route 0. 검색/이웃 결과 스키마 자동 펼침(게이팅 모드-독립). 단일 스키마 DS 자동 펼침.
+  동일-id 카드↔combo 타입 전환의 G6 setData diff 자식 유실은 `SC:` 네임스페이스로 차단.
+- **A 뷰포트 정책**: `zoomRange [0.05,4]` + fit 클램프(0.55 하한/1.0 상한, focusFirst=초기·검색만) +
+  이웃확장 앵커 국소 focus(줌아웃 재발 차단). 미렌더 모델키 setElementState 는 renderedIds 매핑으로 차단
+  (_metaApplyState/refreshStates 단일 경로).
+- **E 내비게이션**: minimap(우하단 카드형) + 줌 툴바(−/+/전체/1:1 — '전체'는 의도적 무클램프 조망) +
+  스키마 점프 select.
+- **동시성**: ExpandSchema 를 perf-bg `_opSeq` 세대에 편입 — 사용자 클릭=새 세대(++), LoadRoots silent
+  자동펼침=부모 세대 상속, await 후 세대 불일치 시 ingest 없이 폐기(**교차 스코프 오염 원천 차단**) +
+  진입 scope 가드(이전 scope 카드 stale 클릭 차단) + 연타 in-flight 가드.
+
+### 검증
+- 1차 §18.8 적대 리뷰: BLOCKER 0·MAJOR 2(dead-card·roots race)·MINOR 7·NIT 3 — 전건 반영.
+- 2차 적대 검증 workflow(3렌즈 병렬): 17 findings(dedup 9) — stale-base MAJOR 포함 전건 반영/해소.
+- headless harness(Playwright, 실 마크업+mock API, 200테이블·빈스키마·혼합버전·연타·dead-card fixture)
+  병합 최종본 재검증 — TEST.md Run 기록. 라이브 AGE Cypher(count 집계·스키마 필터) 실증 0.23s.
+- 단위: metadata_graph units(graceful no-op 포함) PASS.
+
+### 잔여
+배포(deploy_scope: included) + PB-0008 실 Windows 시각검증(§21 T21.8 미완분 + graph-g6b·perf-bg 통합 확인).
+
+---
+
 ## 2026-07-02 · 그래프 뷰 테이블 노드 펼침 논블로킹 + 성능 최적화 (graph-perf-bg, ADR-005)
 
 ### 배경 (사용자 관찰: 펼침 시 렌더 엔진 프리즈)

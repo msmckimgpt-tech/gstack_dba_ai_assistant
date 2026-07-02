@@ -359,3 +359,28 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/{TEST,TASK,REPORT,REVIEW,MODIFY}.md`, `wiki/{Log,hot}.md`
 - Impact: 문서 전용. 코드/배포 산출물 무변경(이미 16fc1598 라이브).
 - Rollback Notes: 문서 되돌림 외 없음.
+## CHG-20260702T114500-graph-initview
+- Date: 2026-07-02
+- Related Requirement: 사용자 보고 — 스키마 클러스터 내 테이블·컬럼 노드가 많을 때 초기 전체-fit 과도 줌아웃으로
+  초반 가시성 붕괴. 다각도 검토 후 사용자 결정 "Phase 1+2 통합"(TASK §25, PLAN-APPROVED 2026-07-02).
+- Summary: 그래프 뷰 초기 진입을 **스키마-우선(카드+테이블수 배지 → per-schema lazy 펼침, "XS:" 접기)** 으로
+  재설계하고 **판독 줌 클램프**(fit 후 0.55 하한·1.0 상한, zoomRange [0.05,4]) + 이웃확장 **앵커 국소 focus** 로
+  줌아웃 재발을 차단, **미니맵·줌 툴바·스키마 점프** 추가. 레이아웃 밀도(다열)는 병렬 머지된 graph-g6b(#533)
+  masonry 를 채택(자체 구현 폐기)하고 graph-perf-bg(#537) `_opSeq` 세대에 ExpandSchema 를 편입(교차 스코프
+  오염·stale 렌더 차단), graph-ctxmenu(#538)와 정합. 카드↔combo 동일-id 타입 전환의 G6 setData diff 자식
+  유실은 `SC:` id 네임스페이스로 차단.
+- Files:
+  - `unit/feature-0002-agent-core/src/modules/metadata_graph.py` (`scope_schemas` count 집계·limit+1 truncated·집계실패
+    배지강등 / `schema_tables` truncated 신설)
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` (`?mode=schemas`/`?schema=` 분기 — 신규 route 0)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_metaG6Build` 카드 게이팅(masonry 통합)·`SC:`/`XS:` 라우팅·
+    `_metaGraphExpandSchema`/`CollapseSchema`/`ShowClusterDetailLocal`·`_metaGraphFitClamped`·renderedIds 매핑·
+    minimap/zoomRange/줌툴바/점프 바인딩·검색/이웃 스키마 자동펼침)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (툴바 줌컨트롤·점프 select·범례; cache-buster `?v=20260702-graph-initview2`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (줌 툴바·스키마카드 범례·minimap 카드 CSS)
+  - `unit/feature-0016-metadata-graph/{docs/*,tests/test_metadata_graph_units.py}` (§25·검증 기록·graceful 단위테스트)
+- Impact: 비파괴 additive — 기존 API 3모드(q/node/scope) 응답 shape 불변(`truncated` 필드만 추가), 신규 쿼리
+  파라미터만 추가. 혼합버전 안전: 구 백엔드+신 admin.js 는 mode 무시 응답을 카드 게이팅이 흡수(강등 동작,
+  loaded 미마킹으로 재시도 보존), 구 admin.js+신 백엔드는 기존 scope_roots 경로 그대로. 인증/데이터 파괴 없음.
+  배포=web 재빌드. 1·2차 적대 리뷰/검증 전건 반영(REVIEW.md), stale-base merge 재정합 2회(#533/#537, #538) 포함.
+- Rollback Notes: git revert(프론트 3파일+백엔드 2파일) + cache-buster 이전값(graph-ctxmenu2). 데이터·그래프 무손상.

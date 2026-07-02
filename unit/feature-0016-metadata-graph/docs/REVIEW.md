@@ -338,3 +338,33 @@ source_of_truth: true
 - **changeset**: feature-0003 `docs/TEST.md`(POST-DEPLOY Run PASS) · feature-0016 `docs/{TEST,TASK,REPORT}.md` · `wiki/{Log,hot}.md` · 본 entry.
 - **panel**: SKIPPED — 비정책 doc-only(§18.8 표 첫 행). 실측 자체가 검증(배포 16fc1598 soak PASS·자산 서빙 grep·실 Windows 라이브 상호작용 5종·스크린샷 4매 artifacts).
 - **Human Approval Needed**: 아니오 (문서 전용, 코드·배포 산출물 무변경 — 이미 16fc1598 라이브).
+## REV-20260702T165800-ai-claude-corp-feature-0016-graph-initview [SUBAGENT: PASS-WITH-FIXES]
+- Date: 2026-07-02
+- Related Change: graph-initview (MODIFY CHG-20260702T114500-graph-initview, TASK §25). 그래프 뷰 초기 진입
+  줌아웃 가시성 개선 — 스키마-우선 진입 + 판독 줌 클램프 + 미니맵/줌툴바/점프.
+- Method: 2라운드 적대 검증.
+  - R1: general-purpose subagent 적대 코드리뷰(diff 전체 + G6 v5 계약·Cypher 안전·혼합버전·상태기계).
+  - R2: 3-렌즈 병렬 workflow(race/state/contract) — R1 수정 델타 자체가 만든 결함 적발 전용.
+- R1 Findings: BLOCKER 0 · MAJOR 2 · MINOR 7 · NIT 3 — 전건 수정.
+  - MAJOR-1 dead-card(Schema 노드 없는 자동펼침 combo 접기 후 재펼침 불능) → Schema 노드 합성 삽입.
+  - MAJOR-2 LoadRoots 세대 가드 부재(빠른 scope 전환 혼합) → 세대 가드(이후 R2 에서 perf-bg `_opSeq` 로 통합).
+  - MINOR: 혼합버전 loaded 오염(mode 판별 마킹)·카드 연타 이중 fetch(in-flight 가드)·빈 스키마 상태-렌더
+    불일치(비펼침)·scope_schemas cap silent(limit+1 truncated)·silent 자동펼침 truncated 안내 소실(Set 회수)·
+    refit focus 점프(focusFirst 분리)·common 점프 stale(FillJump([])). NIT: shelf 상단 돌출(g6b 병합으로 소멸)·
+    minimap fallback 잠복(수용 — 번들 교체 시 POC 재검증 전제, 주석 명문화)·카드 클릭 fetch 2회(로컬 상세로 대체).
+- R2 Findings: 17건(중복 제거 9) — 전건 반영/해소.
+  - **MAJOR stale-base**: 착수 base 가 origin/main 대비 23커밋 뒤(동일 `_metaGraph` 블록을 graph-g6b #533·
+    graph-perf-bg #537 이 병렬 재작성, 이후 #538 ctxmenu 추가 정합) → **merge 재정합**(main 판 기준 재적용,
+    자체 레이아웃 폐기·masonry 채택, TASK §22→§24→§25 재번호 §13.1).
+  - **MAJOR ExpandSchema 세대 미가드**(늦은 이전-scope 응답이 새 모델 오염) → `_opSeq` 편입(클릭=새 세대,
+    silent=부모 세대 상속, await 후 불일치 시 ingest 없이 폐기).
+  - **MAJOR 합성 노드가 stale 카드 클릭 안전장치 제거** → 진입 scope 가드(현재 scopeKey 소속만 진행).
+  - MAJOR(비대칭 가드 search↔roots) → resetModel 의 `_opSeq++` 공유로 해소(검색 reset 이 roots continuation 폐기).
+  - MINOR: 빈 스키마 loaded 고착(cnt>0 시만 마킹)·연타 시 빈 로컬상세(성공-게이팅 .then)·실패 후 로컬상세
+    (동일 게이팅)·클러스터 상세 총계 모순(table_count override+절단 노트)·집계실패 '테이블 0' 배지(None 강등).
+  - LOW-CONF(resetModel 의 lastDetailKey 잔존 → depth-select 교차 scope 확장): **기존(main 동일) 결함으로 판정,
+    본 cycle 미도입 — 후속 항목으로 기록**(REPORT §8 성격).
+- 검증: 병합 최종본 headless harness **31/31 PASS·에러 0**(dead-card·빈스키마·연타·혼합버전·stale-scope 회귀
+  포함) + 라이브 AGE Cypher 실증 + 단위 10 PASS + node --check/py_compile. TEST.md.
+- Verdict: **PASS-WITH-FIXES** — 차단 결함 0, R1+R2 지적 전건 수정(수용 2건은 근거 명기).
+- Human Approval Needed: 없음(Major 사전 계획 승인 완료) — cycle-final 후 배포는 deploy_scope: included.
