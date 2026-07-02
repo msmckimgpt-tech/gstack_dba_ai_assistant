@@ -8,6 +8,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T163000-ai-root-feature-0016-reltrace-postdeploy
+- Date: 2026-07-03
+- Related Requirement: graph-reltrace(§32)+reltrace-tabledetail(§33) 배포 후 PB-0008 실 Windows 라이브
+  실측 결과 기록(deploy-backed 완료 증적). 코드 변경 없음 — doc-only.
+- Summary: feature-0003 TEST.md reltrace-tabledetail Run 에 POST-DEPLOY PASS(3항목 통합) 기록 +
+  TASK §33 T33.5 완료 체크. 스크린샷 5매 아카이브(01 접힌관계·02 테이블상세관계·03/04 추적·05 AI추적).
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/TASK.md`.
+- Impact: 문서만. 코드·배포 무변경.
+- Rollback Notes: 해당 없음(기록).
+
 ## CHG-20260703T160000-ai-root-feature-0016-reltrace-tabledetail
 - Date: 2026-07-03
 - Related Requirement: graph-reltrace(CHG-20260703T152607) PB-0008 후속 — 테이블 노드 단일클릭 상세에
