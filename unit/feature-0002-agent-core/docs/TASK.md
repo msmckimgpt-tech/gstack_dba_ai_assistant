@@ -1168,3 +1168,9 @@ TASK-0015 (plan-review):
 - [x] **검증**: 신규 단위 10(relationships 6 + metadata_graph 4) + 기존 회귀 0(test_relationships 57·units 10·insight health 66) + AST/`bash -n`. 적대 backend+qa 패널(REVIEW REV-20260703T093000-insight-load-spread).
 - [ ] **배포(승인 필요)**: agent 이미지 재빌드 + insight-worker/local-llm-edge 재기동 + `sudo bin/install-metadata-graph-sync-cron.sh` 재설치. 라이브 검증 docker stats/WALSync/probe_edge 로그.
 - [ ] verify-completion → commit/push → (PR·머지·배포 confirm) → 마감.
+
+### insight-heartbeat-liveness — healthcheck false-negative 해소 (Minor §12.3, 2026-07-03)
+- [x] **진단**: "AI 운영 현황" insight-worker 중단(unhealthy) 표시 but 실제 claude 로 활발 작동 → healthcheck 가 `insight_worker_last_cycle_at`(cycle 완료 시각)만 봐 9.4분+ 긴 cycle 을 stale→unhealthy 오판(false-negative).
+- [x] **수정**(insight.py): `_touch_worker_heartbeat_progress`(30s throttle) 신규 + 스키마·테이블 순회에 삽입 → 진행 중 heartbeat 갱신. status 미변경, hang 탐지 보존.
+- [x] **검증**: 신규 test 2 + insight 회귀 0(12 PASS) + AST OK. 경량 cycle SKIPPED 리뷰.
+- [ ] **배포**: agent 이미지 재빌드 + insight-worker 재기동 → docker inspect healthy 확인.
