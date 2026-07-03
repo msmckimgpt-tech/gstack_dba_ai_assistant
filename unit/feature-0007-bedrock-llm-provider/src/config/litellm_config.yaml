@@ -43,12 +43,36 @@ model_list:
   - model_name: claude-haiku-4
     litellm_params:
       # 개발 단계 (2026-06-23): claude-corp OAuth → Anthropic direct. 배포 시 Bedrock 복구.
+      # insight-llm-fallback(2026-07-03): 1순위 = claude-corp OAuth. deployment 별 키 분리를 위해
+      # api_key 명시(두 계정 병행). 429(burst rate-limit) 시 litellm fallbacks 가 root → edge 로 즉시 우회.
       model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
       # model: bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0   # 배포용 (Bedrock)
       # aws_region_name: ap-northeast-2                                   # 배포용 (Bedrock)
       thinking:
         type: "enabled"
         budget_tokens: 5000
+
+  # ── insight-llm-fallback(2026-07-03): claude-haiku-4 의 2순위 폴백 = root(개인 Max 5x) 계정 ──
+  # refresh-claude-oauth-token.sh 가 root OAuth 토큰을 ANTHROPIC_API_KEY_ROOT 에 병행 주입.
+  # 1순위(claude-corp)가 burst rate-limit(429)로 막혀도 root 로 즉시 우회(요청-레벨 fallback).
+  - model_name: claude-haiku-4-root
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+      thinking:
+        type: "enabled"
+        budget_tokens: 5000
+
+  # ── insight-llm-fallback: 최종(3순위) 폴백 = 로컬 gemma(edge) via local-llm-gateway ──
+  # claude-corp·root 두 계정 모두 429/실패 시 로컬 LLM 으로 우회(rate-limit 없음). local-llm-gateway 는
+  # OpenAI 호환 chat(gemma4:e2b) — thinking 미지원이라 litellm drop_params 가 thinking 파라미터 제거.
+  # api_key 는 비밀 아님(로컬 게이트웨이) — 리터럴.
+  - model_name: edge-fallback
+    litellm_params:
+      model: openai/gemma4:e2b
+      api_base: http://local-llm-gateway:8080/v1
+      api_key: "local-no-key"
 
   # ── KB 임베딩 alias `titan-embed` (1024-dim) — TASK-0135 (#13) ────────
   # texts.embedding(vector(1024)) + sample_queries.embedding(vector(1024)) 백필
@@ -107,6 +131,12 @@ general_settings:
 litellm_settings:
   drop_params: true
   request_timeout: 120
+  # insight-llm-fallback(2026-07-03): claude-haiku-4(claude-corp) 실패(429 rate-limit 등) 시 순서 폴백 —
+  # claude-haiku-4-root(root Max 5x) → edge-fallback(로컬 gemma). insight 의 burst 호출이 한 계정의
+  # RPM/TPM 을 넘겨 429 가 나도 다음 계정/로컬로 즉시 우회해 생성이 끊기지 않는다. num_retries=1 로
+  # 동일 deployment 1회 재시도 후 폴백(빠른 전환). num_retries=0 이면 즉시 폴백도 가능.
+  num_retries: 1
+  fallbacks: [{"claude-haiku-4": ["claude-haiku-4-root", "edge-fallback"]}]
 
 # ── 모니터링 (옵션) ───────────────────────────────────────────────────
 # LiteLLM 의 success/failure callback hook 으로 audit 확장 가능. 본 cycle 에서는

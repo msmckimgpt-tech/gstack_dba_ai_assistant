@@ -45,6 +45,20 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
     작성.
 
 ## 3. Recent Changes
+- **CHG-20260703-insight-llm-fallback** (2026-07-03): insight-worker LLM(`claude-haiku-4`)의 claude-corp
+  **burst rate-limit(429)** 대응 — **litellm 요청-레벨 fallback 체인** 구성. TASK-0308(insight 부하 분산)
+  후속: insight 를 `AGENT_INSIGHT_MODEL=claude-haiku-4` 로 돌리자 schema/table 생성 burst 가 claude-corp
+  OAuth 의 RPM/TPM 을 초과해 429(200 성공 0)로 완전 차단됐다(계정 자체는 probe 200 = 유효). 기존
+  refresh 스크립트의 계정-폴백은 계정 **완전 소진(probe 429)** 시만 작동해 burst 를 못 잡음 → 요청-레벨 필요.
+  변경 2건: **(1) `litellm_config.yaml`** — `claude-haiku-4`(claude-corp, api_key=ANTHROPIC_API_KEY) →
+  `claude-haiku-4-root`(root Max, api_key=ANTHROPIC_API_KEY_ROOT) → `edge-fallback`(로컬 gemma
+  `openai/gemma4:e2b` via local-llm-gateway, api_key 리터럴)의 3-deployment + `litellm_settings.fallbacks:
+  [{"claude-haiku-4":["claude-haiku-4-root","edge-fallback"]}]` + `num_retries:1`. **(2)
+  `bin/refresh-claude-oauth-token.sh`** — 기존 단일-slot 택일 폴백 → **병행 주입**: ANTHROPIC_API_KEY ←
+  우선순위($ACCOUNTS) 첫 사용가능, ANTHROPIC_API_KEY_ROOT ← root 전용. 각 slot 독립 검사(static+라이브
+  probe), 사용가능 시만 갱신, 둘 다 불가면 exit 1. 두 토큰이 각 env 에 동시 존재해야 요청-레벨 fallback
+  성립. cron(`0,30 10-18 * * 1-5`) 주기 갱신 유지. ANCHOR §1(운영자 자격 일원화)·§2(LiteLLM gateway) 정합
+  — 사용자별 키 아님(운영자 두 계정 + 로컬). 비밀정보는 `.env.bedrock`(gitignored)에만.
 - **CHG-20260625T171844** (2026-06-25): 개발 단계 LLM provider **호출 주체** 임시 전환 —
   claude-corp 회사 OAuth → **root 개인 OAuth** (`/root/.claude/.credentials.json`,
   subscriptionType `max`). 사용자 지시 (DQA LLM 게이트를 개인 계정으로 일시 우회 —
