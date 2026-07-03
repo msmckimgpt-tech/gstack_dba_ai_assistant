@@ -635,3 +635,23 @@ source_of_truth: true
 - BLOCKING: 0.
 - NIT(가시 회귀 아님 — 수용 기록, 미수정): (a) summary `:focus-visible` 커스텀 아웃라인 없음(네이티브 포커스 링 의존 — 기능상 OK). (b) summary 텍스트와 `<ul aria-label>` 의 "테이블 역할" SR 이중 낭독 가능성(경미).
 - 총평: 배포 가능(PASS). 설계 의도 정확 충족, 최대 리스크(범례 wipe)는 구조적 방지. 완료 게이트=PB-0008 실 Windows 라이브 육안(세로 표시 + 접힘 동작).
+
+## REV-20260703T014113-ai-claude-corp-feature-0016-graph-rel-layout [SUBAGENT: PASS-WITH-FIXES] — 관계 기반 배치(교차 최소화) 적대 리뷰 4축
+- 대상: CHG-20260703-graph-rel-layout (admin.js `_metaG6Build` 관계 기반 배치 pre-pass, ADR-012, TASK §37).
+- 방식: ultracode workflow(wf_73ab2394-003) — 4축 finder(알고리즘 정합성/G6 통합/UX/성능) 병렬 + 발견별
+  2-refuter 적대 검증(과반 기각 시 kill). 총 14 agents, findings 5 → 확정 4(refute 0/2)·기각 1(refute 2/2).
+- 확정 1 [MAJOR, g6+ux 중복 발견]: `_metaGraphCollapse`(컬럼 접기)가 컬럼 끝점 엣지 전부 삭제 → REFERENCES 가
+  모델에서 소실 → 배치가 edges 순수함수가 된 본 변경에서 접기 제스처가 스키마 seriation·barycenter 를 연쇄
+  변경(전면 재셔플, 앵커 없음, 재펼침 비가역 — ToggleColumns 는 엣지 미재조회). 수정: collapse 의 엣지 삭제를
+  `e.type !== "REFERENCES"` 로 한정(containment 만 삭제) — 렌더는 graph-reltrace renderEndpoint 승격이 이미
+  처리하므로 접힌 테이블 간 관계 표시가 오히려 정합 회복(기존 소실 버그 동시 해소).
+- 확정 2 [MINOR, ux]: 더블클릭 이웃 확장 fetch(이웃+introspect) 합계 >1.2s 시 follow tween(MAXMS)이 구 위치에
+  종료된 뒤 rebuild — 관계 재배치로 앵커 원거리 이동 시 시야 이탈. 수정: `_metaGraph._focusLive` 생존 마커
+  (try/finally 소유 해제) + expand 의 rebuild 직후 tween 사망 시 무애니 `focusElement` 1회 폴백.
+- 확정 3 [MINOR, perf]: `_metaG6Build` 의 itemsNat 이 비-terms 스키마에서 무조건 정렬 후 폐기(relOrder 가 항상
+  존재) — 대규모 펼침에서 rebuild 당 ~20ms 낭비. 수정: relOrder 직접 소비, terms/방어 분기만 즉석 정렬.
+- 기각 1 [perf 주장 MAJOR]: "pre-pass 86ms/rebuild(91 스키마·3000 테이블·10K 엣지)" — 2 refuter 일치 기각:
+  백엔드가 전체 덤프 금지 + 응답 상한(_NEIGHBOR_NODE_CAP 300 노드/1200 엣지, search ≤80)이라 해당 규모의
+  클라이언트 모델이 성립 불가, 라이브 관계 행 규모도 그에 못 미침. memoization 불채택(현실 규모 ms 단위).
+- 판정: 확정 3건 전량 수정 + 회귀 방지 구조 테스트(t8 collapse-REFERENCES 보존, t9 expand focus 폴백) 추가,
+  격리 테스트 10/10 PASS. BLOCKING 0 잔여.

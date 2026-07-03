@@ -831,3 +831,18 @@ HAS_TABLE 엣지·검색 scope·**큐레이션 설명 보존**(rag 투영 무덮
 **검증**: 신규 [test_metadata_graph_load_spread.py](../tests/test_metadata_graph_load_spread.py) **4**(since 증분 필터 유무, batched commit 발생, owned autocommit 복원) + units 10 회귀 PASS. AST OK. 통합(psycopg 필요)은 배포 후 — conn 주입 owned=False 경로가 기존과 동일함을 코드 대조로 확인(통합 테스트는 `autocommit=True` conn 주입).
 
 **정합**: ANCHOR §1 "관계형은 SSOT, AGE 는 **재생성 가능한 투영**" — 투영을 더 효율적으로 재생성하는 변경(정합성·멱등 불변). feature-0002 REPORT TASK-0308(축①② insight/probe)와 동일 cycle.
+
+### 관계 기반 배치 — graph-rel-layout (2026-07-03, worktree=feature-0016-graph-layout)
+
+**문제**: 관계가 쌓일수록 그래프 뷰 가시성 저하(사용자 보고). 배치가 관계 무반영 — 스키마 클러스터
+자연정렬 shelf-packing + 클러스터 내 테이블 자연정렬 masonry 라서 연결 노드가 흩어지고 엣지 장거리 교차 양산.
+
+**수정** ([admin.js](../../feature-0003-agent-web-ui/src/static/admin.js) `_metaG6Build` pre-pass, ADR-012):
+`_metaRelAdjacency`(REFERENCES→테이블 승격 인접행렬, 유사도 w=trusted 2·그 외 1) → ① `_metaRelSchemaOrder`
+greedy seriation(연결 스키마 shelf 인접) ② `_metaRelTableOrder` 컴포넌트 BFS 군집(+외부앵커·고립 자연정렬)
+③ `_metaRelOrderAll` barycenter 4-sweep(gpos=schemaIdx+로컬 rank) — 순서 입력만 교체, 결정론 grid·펼침-불변
+(ADR-004 ②)·masonry/카드 게이팅 골격 불변. 관계 0 = 기존과 완전 동일, 관계 축적 시 rebuild 마다 관계 기준 수렴.
+
+**검증**: Node 격리 8/8 PASS(회귀0·seriation·군집·상호교차 해소·결정론·벌크 감소·펼침-비의존) + 파라미터
+벤치(시드 3 × 랜덤/허브: 2D 세그먼트 교차 12~30% 감소, 1D 층간 역전 59→52, SPAN=1 채택 근거) + node --check.
+완료 게이트 = 배포 후 PB-0008 실 Windows 라이브 육안(TASK T37.8).
