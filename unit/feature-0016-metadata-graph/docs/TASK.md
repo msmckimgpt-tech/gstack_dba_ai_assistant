@@ -913,5 +913,6 @@ MODIFY CHG-20260703-node-role-viz.
       사망 시 무애니 focusElement 1회 폴백 ③ [MINOR] itemsNat 중복 nat-sort 낭비 — relOrder 직접 소비로
       lazy 화. 회귀 방지 구조 테스트 t8(collapse REFERENCES 보존)·t9(expand focus 폴백) 추가 → 10/10 PASS.
       결과 정본: REVIEW REV-20260703T014113-ai-claude-corp-feature-0016-graph-rel-layout.
-- [ ] T38.8 배포(deploy_scope: included) + **PB-0008 실 Windows 라이브 시각검증**(관계 있는 스키마 인접 배치·
-      연결 테이블 군집·교차 감소 육안 확인, TEST.md Run append).
+- [x] T38.8 배포(web-a/b `5f439788` 무중단 롤링·soak 통과, deploy_scope: included) + **PB-0008 실 Windows 라이브
+      시각검증 PASS**: 관계쌍 평균 배치 거리 32.5→3.2(90% 감소)·군집 육안·collapse REFERENCES 145→145 보존·
+      순서 불변·이웃확장/검색 pageerror 0. 상세 TEST.md POST-DEPLOY Run.

@@ -669,3 +669,9 @@ source_of_truth: true
   클라이언트 모델이 성립 불가, 라이브 관계 행 규모도 그에 못 미침. memoization 불채택(현실 규모 ms 단위).
 - 판정: 확정 3건 전량 수정 + 회귀 방지 구조 테스트(t8 collapse-REFERENCES 보존, t9 expand focus 폴백) 추가,
   격리 테스트 10/10 PASS. BLOCKING 0 잔여.
+
+## REV-20260703T023000-ai-claude-corp-feature-0016-graph-rel-layout-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY PB-0008 결과 기록
+- 배포 web-a/b `5f439788`(무중단 롤링·soak) 후 실 Windows Chrome PB-0008 라이브 검증 **전건 PASS** 결과를
+  TEST.md(graph-rel-layout POST-DEPLOY Run)·TASK §38(T38.8) 에 기록하는 doc-only 후속 — 코드 무변경이라
+  §18.8 패널 skip. 핵심 실측: 관계쌍 평균 배치 순서 거리 32.5→3.2(90% 감소, gunzgame 115쌍) · collapse
+  REFERENCES 145→145 보존·배치 불변(§18.8 MAJOR 수정 실증) · 이웃확장/검색 pageerror 0.
