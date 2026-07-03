@@ -956,7 +956,7 @@ MODIFY CHG-20260703-node-role-viz.
 ### 40.4 검증
 - [x] T40.9 컨테이너 make test 전건 PASS(ruff clean): test_ai_ops 17/17(target 통과 + 컬럼부재 폴백 + INSERT 폴백) + test_llm_usage_record 7/7(param 순서) + test_call_llm 2/2(mock target=None). py_compile OK + alembic 단일 head=0032.
 - [x] T40.10 §18.8 적대 리뷰 2라운드 PASS-WITH-FIXES(BLOCKING 0 — 빈캔버스·노트북스크롤·가드취약·테스트NIT 전부 수정) + verify-completion --pre-commit PASS. REVIEW REV-20260703T105541-graphux6-panelbottom-responsive-obs.
-- [ ] T40.11 배포(alembic upgrade 0032 + web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: ① 패널 하단(노드 상세 안 밀림) ② 세로 좁은 창 미절단 ③ 최근활동 대상 표시 육안. 배포 후 `alembic_version`=0032 직접 검증(memory: deploy-migration-stale-agent-image).
+- [x] T40.11 배포 완료(PR #570 머지 → 9e1156d6): `make migrate` agent 재빌드 후 **live alembic_version 0031→0032 확인**(stale image 회피) + `make deploy-web` 무중단 롤링(web-a/b 9e1156d6, soak 90s 통과) + `make insight-up` insight-worker 재빌드(GIT_COMMIT=9e1156d6, ③ target 기록 반영). **라이브 PB-0008 실 Windows PASS(3/3)**: ① progress 최하단(progressIsLastChild=true, 노드 상세 안 밀림) ② 캔버스 flex-fill 415px=pane 바닥(잘림 0) + 제약 시 200 floor 축소·스크롤 ③ 최근활동 '테이블 분석'이 `schema.table` 대상 표시(실데이터, 계정분석은 PII 공백). 상세 feature-0003 TEST.md §3 Run.
 
 ## 41. graph-drag — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (2026-07-03, 사용자 요청)
 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰): ① 마우스 중간(휠) 버튼을 통한 drag&drop 을 객체 상호작용이
