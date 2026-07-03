@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260703-graph-freeplace" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260704-graph-ux3fix" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -85,6 +85,10 @@
         <!-- TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1): 메타데이터 tab (kb.ingest.manual 없으면 숨김) -->
         <button type="button" class="admin-tab" data-admin-tab="metadata" id="adminTabMetadata" style="display:none">
           <span class="admin-tab-label">메타데이터</span>
+        </button>
+        <!-- feature-0016 §45: 그래프 뷰 — 메타데이터에서 분리한 지식베이스 최상위 탭. metadata.graph.read(또는 kb.ingest.manual 함의) 게이트. -->
+        <button type="button" class="admin-tab" data-admin-tab="graph" id="adminTabGraph" style="display:none">
+          <span class="admin-tab-label">그래프 뷰</span>
         </button>
         <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 샘플 검수 tab (kb.sample.curate 없으면 숨김) -->
         <button type="button" class="admin-tab" data-admin-tab="sample-review" id="adminTabSampleReview" style="display:none">
@@ -634,8 +638,6 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="tables" role="tab">테이블 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
-          <!-- feature-0016: 메타데이터 지식그래프 뷰(Apache AGE 투영) — 테이블/컬럼/관계/용어를 한 그래프로 탐색·검색. -->
-          <button type="button" class="admin-meta-subtab" data-meta-subtab="graph" role="tab">🕸 그래프 뷰</button>
         </div>
         <!-- 용어사전 2차 보기 탭(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). admin.js 가
              용어사전 서브탭일 때만 노출 + 권한별로 보기 버튼을 숨긴다(목록=kb.ingest.manual, 검토 큐=kb.glossary.curate). -->
@@ -720,12 +722,27 @@
         </form>
           </div><!-- /.admin-detail-col #metadataDetail -->
         </div><!-- /.admin-list-detail -->
+      </section>
 
-        <!-- feature-0016: 메타데이터 지식그래프 뷰. '그래프 뷰' 서브탭일 때만 표시(admin.js 토글).
+      <!-- feature-0016 §45: 그래프 뷰를 지식베이스 최상위 pane 으로 승격(메타데이터에서 분리).
+           자체 pane-head + 데이터소스 스코프 select 를 두고, 서브탭 바 없이 캔버스가 pane 전체 높이를 사용한다. -->
+      <section class="admin-pane" data-admin-pane="graph">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Knowledge Graph</div>
+            <h2>그래프 뷰</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <label class="admin-meta-scope-label" for="graphScopeSelect">데이터소스</label>
+            <select id="graphScopeSelect" class="admin-meta-scope-select" aria-label="그래프 스코프(데이터소스)"></select>
+          </div>
+        </header>
+
+        <!-- feature-0016: 메타데이터 지식그래프 뷰 — 지식베이스 > 그래프 뷰 pane 의 본체.
              검색→투영 API(/api/admin/metadata/graph?q=) 노드 렌더, 노드 단일클릭→상세(?node=&depth=1) 카드만,
              더블클릭→이웃(?node=&depth=) 그래프 확장 + 우측 통합 엔티티 카드(설명+컬럼+관계+용어).
              8K 규모라 검색·이웃 스코프만(전체 렌더 안 함). -->
-        <div class="admin-meta-graph" id="metadataGraphView" style="display:none">
+        <div class="admin-meta-graph" id="metadataGraphView">
           <div class="admin-meta-graph-toolbar">
             <input type="search" id="metadataGraphSearch" class="admin-search admin-meta-graph-search"
                    placeholder="테이블·컬럼·용어 검색…" autocomplete="off" aria-label="그래프 노드 검색" />
@@ -752,7 +769,7 @@
             <button type="button" class="btn-secondary" id="metadataGraphDetailToggle" aria-label="상세 패널 접기/펼치기" title="상세 패널 접기/펼치기">상세 ⇆</button>
             <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
           </div>
-          <!-- 범례: 노드 색=카테고리(라벨), 크기=검색 관련도, 점선 박스=스키마 클러스터.
+          <!-- 범례: 노드 색=카테고리(라벨), 검색 매칭=앰버 글로우(§45 — 예전 '크기 증가' 대체), 점선 박스=스키마 클러스터.
                feature-0016: 실선=신뢰(FK·검증됨) 관계, 점선=추정(암묵 JOIN, 검증 전) 관계. -->
           <div class="admin-meta-graph-legend" aria-hidden="true">
             <span><i class="lg-dot" style="background:#0f7d8c"></i>테이블</span>
@@ -764,7 +781,8 @@
             <span><i class="lg-line lg-line-dashed"></i>추정 관계</span>
             <span><i class="lg-dot" style="background:#fff;border:2px dashed #e08a1e"></i>AI 분석 중</span>
             <span><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</span>
-            <span class="admin-meta-graph-legend-note">크기·라벨% = 검색 유사도(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 주황 점선=AI 분석중 · 보라 테두리=AI 능동분석 완료 · 색 배경 박스=유사 속성 그룹(이름·관계·역할 자동 묶음)</span>
+            <span><i class="lg-dot" style="background:#f4b400;box-shadow:0 0 5px 2px rgba(244,180,0,.85)"></i>검색 매칭</span>
+            <span class="admin-meta-graph-legend-note">앰버 글로우 = 검색 매칭(§45 — 예전 '크기 증가' 대체) · 상세 카드 유사도%(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 주황 점선=AI 분석중 · 보라 테두리=AI 능동분석 완료 · 색 배경 박스=유사 속성 그룹(이름·관계·역할 자동 묶음)</span>
           </div>
           <div class="admin-meta-graph-body">
             <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
@@ -902,7 +920,7 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
-  <script src="/static/admin.js?v=20260703-graph-freeplace"></script>
+  <script src="/static/admin.js?v=20260704-graph-ux3fix"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260702-rn-0702"></script>

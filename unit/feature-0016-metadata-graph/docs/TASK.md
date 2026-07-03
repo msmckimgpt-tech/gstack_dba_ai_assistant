@@ -1099,3 +1099,33 @@ MODIFY CHG-20260703-node-role-viz.
   clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
 - [x] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
   회귀 접기/펼치기). 라이브 canvas 드래그 자동화 곤란 → 실 Windows 확인 게이트.
+
+## 45. graph-ux3fix — 3대 UX 개선: 그래프 뷰 최상위 탭 분리 · 검색 부드러운 하이라이트 · 더블클릭 재배치(후속) (2026-07-04, 사용자 요청)
+
+사용자 요청 3건 (`관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 개선):
+① 그래프 뷰를 `지식베이스 > 그래프 뷰` 최상위 탭으로 **분리**(메타데이터의 형제) — 화면 높이를 더 넓게 사용.
+② 노드 **더블클릭 시 전체 재배치** 이슈 수정 — 이동해둔(드래그) 노드 위치 보존, 비조작 노드가 우선 밀림(밀린 노드는 조작 노드 아님).
+③ [테이블·컬럼·용어] 검색 시 **테이블 너비 증가** → **부드러운 하이라이트**.
+
+REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 UX). frontend-only(admin.html/js/styles.css, feature-0003 거주).
+
+### 45.1 ① 그래프 뷰 최상위 탭 분리 + 높이 확장 (admin.html/js + styles.css)
+- [x] T45.1 admin.html: 지식베이스 그룹에 `data-admin-tab="graph"` 탭 버튼 추가 · 메타데이터 서브탭 `data-meta-subtab="graph"` 제거 · `#metadataGraphView` 블록을 새 `<section data-admin-pane="graph">`(자체 pane-head + `#graphScopeSelect` 데이터소스 select)로 이동 · 인라인 `display:none` 제거(pane display 가 가시성 관장) · 범례에 "검색 매칭=앰버 글로우" 칩·문구.
+- [x] T45.2 admin.js: `ADMIN_TAB_PERMISSIONS.graph`(metadata.graph.read/kb.ingest.manual 게이트, fail-open 방지) 추가 + 메타데이터 탭 OR-배열에서 `metadata.graph.read` 제거(graph 전용 역할이 서브탭 없는 빈 메타데이터 탭 안 보게) + `switchTab` graph 분기(첫 진입 init+roots, 재진입 상태 보존) + `_METADATA_SUBTAB_PERM`/`_METADATA_NO_CREATE`/`_metaBindControls` graph 배선 제거 + `_metaShowGraph` 스트립(메타 pane DOM 숨김 불요) + `_metaHideGraph` 삭제 + `_metaPopulateScopeSelect` 양 select 동기화 + `#graphScopeSelect` change 1회 바인딩(scope 재로드).
+- [x] T45.3 styles.css: 그래프-모드 세로스크롤 셀렉터를 `[data-admin-pane="graph"].is-active`로 전환(:has(#metadataGraphView) 게이트 제거 — 전용 pane) + 좁은화면 캔버스 높이 clamp 상향(300→320 / 56→60dvh / 560→640) · cache-buster `styles.css?v=20260704-graph-ux3fix`.
+- [x] T45.4 (§18.8 적대리뷰 D1) **크로스탭 스코프 stale 봉인**: `_metaGraph.loadedScope`·`adminState.metadata.loadedScope`(마지막 렌더 스코프) 추적 → 탭 재진입 시 scopeKey diverge 면 그래프/메타데이터를 그 스코프로 재로드. 미수정 시 "select 는 dsB · 캔버스는 dsA" 무성 불일치 발생(그래프가 별 pane 이 되며 metadataScopeSelect 공유 단절).
+
+### 45.2 ③ 검색 부드러운 하이라이트 (admin.js)
+- [x] T45.5 `_metaTableStyle`/`_metaTermStyle` 폭을 rel 무관 **고정**(TW=150 / 130) — 검색 매칭이 노드 너비를 늘리던 동작 제거(가변 폭은 setData 재packing 유발·가시성 저하). `_metaG6Build` 의 `trel` 폭부스트 제거, `X:` 접기 ctl offset 은 `_METLAY.TW`(고정 폭).
+- [x] T45.6 `node.state.match` **soft glow**(앰버 `shadowColor:#f4b400 shadowBlur:18` + stroke) 추가 — shadow 계열이라 selected/analyzed stroke 와 독립 공존. `_metaNodeStates` 가 `mode==="search" && searchMatchNodes.has(key)` 시 "match" push. 신규 `searchMatchNodes`(백엔드 `search_nodes` = 직접 매칭만, `data.nodes` 전체 key) 채움(`_metaGraphSearch`)·리셋(`_metaGraphResetModel`). 상태 문구·범례 glow 로 갱신.
+- [x] T45.7 (§18.8 적대리뷰 D1) 폭 고정으로 라벨이 박스를 넘치지 않게 `labelMaxWidth` 클램프(테이블 176→`TW-10`, 용어 168→118). 비검색 뷰의 기존 넘침도 함께 정리.
+
+### 45.3 ② 더블클릭 재배치 — 후속(라이브 반복 검증 필요, 본 cycle 미포함)
+- [~] T45.8 1차 접근 = **클러스터 원점 sticky**(`clusterBase`: 기존 클러스터 원점 유지, 신규만 아래 packing). §18.8 3-렌즈 적대리뷰 중 **2/3(레이아웃·검색)가 독립적으로 회귀 확정**: 카드→combo 확장 시 고정된 (작은) 카드 원점을 재사용 → 확장된 combo 가 이웃 카드/클러스터와 **겹침**. 카드 개요에서 스키마 펼침 = 지배적 흐름이고 세션 내 재packing 탈출구 없음 → 다중 스키마 확장 레이아웃 사실상 불가. **되돌림**(회귀 미출하).
+- [~] T45.9 근본 트레이드오프: 노드 확장은 공간 필요 → 이웃 이동(현재: 깔끔하나 전체 이동) vs 이웃 겹침(위치고정). 요구②(드래그 보존·비조작 밀림)의 정합 구현 = **충돌 해소 레이아웃** = 정교하게 튜닝된 엔진의 대변경. 직전 graph cycle(§40~44) 전부 PB-0008 실 브라우저 라이브 반복으로 레이아웃 튜닝 → 무인 세션 라이브 육안 불가(3중 라우팅 벽). **사용자 결정(2026-07-04): ①·③ 먼저 출하, ②는 라이브 반복 후속 cycle.**
+
+### 45.4 검증
+- [x] T45.10 `node --check` admin.js PASS. clusterBase 완전 제거(잔존 0), 검색 glow·loadedScope 배선 무결.
+- [x] T45.11 §18.8 **3-렌즈 적대 리뷰**(레이아웃 clusterBase · IA/권한 배선 · 검색 highlight): 확정 결함 3건 반영 — (a) 위치고정 겹침[HIGH]→②되돌림, (b) 크로스탭 scope stale[MED]→loadedScope 수정, (c) 라벨 박스 넘침[LOW]→클램프 수정. 각 렌즈가 나머지 축은 clean 판정(dangling ref 0·권한 가시성·mode 게이팅·G6 shadow 안전·rel 상세배지 유지·req②③④ trace). REV-20260704T014646-ai-claude-feature-0016-graph-ux3fix.
+- [ ] T45.12 **PB-0008 실 Windows 시각검증(하드 게이트 — visual_verification_scope: always)**: ① `지식베이스 > 그래프 뷰` 탭 분리·전체 높이·데이터소스 select 동작 ③ 검색 시 매칭 노드 앰버 glow(너비 불변) — 무인 세션 3중 라우팅 벽으로 **미수행**, 사용자 육안 확인 필요. cache-buster `admin.js?v=20260704-graph-ux3fix`.
+- [ ] T45.13 배포(deploy_scope: included, web 롤링): 사용자 시각검증 PASS 후 main 병합 → web-a/web-b 재배포.

@@ -2017,11 +2017,16 @@ const ADMIN_TAB_PERMISSIONS = {
   // scope-key-unify: samples 서브뷰는 kb.sample.curate 권한이라, 부모 탭 게이트도 OR 로 넓혀
   // kb.sample.curate 단독 보유 큐레이터가 메타데이터 탭→samples 서브뷰에 도달 가능하게 한다
   // (서브뷰별 가시성은 _METADATA_SUBTAB_PERM 가 별도 분기).
-  // graph-panel-perms(task4): 세부 권한 중 하나라도 있으면 탭 노출(예: 그래프 뷰만 조회 가능한 역할).
-  //   kb.ingest.manual(묶음)은 함의로 아래 5개를 effective 보유하므로 중복이나 명시성 위해 유지.
+  // graph-panel-perms(task4): 세부 권한 중 하나라도 있으면 탭 노출.
+  //   kb.ingest.manual(묶음)은 함의로 아래 관리 권한을 effective 보유하므로 명시성 위해 유지.
+  //   feature-0016 §45: graph.read 는 여기서 제거 — 그래프 뷰가 별도 최상위 탭(ADMIN_TAB_PERMISSIONS.graph)이 되어
+  //   메타데이터 서브탭에서 빠졌으므로, graph.read 만 가진 역할이 서브탭 없는 빈 메타데이터 탭을 보지 않게 한다.
   metadata: ["kb.ingest.manual", "metadata.glossary.manage", "metadata.enum.manage",
-             "metadata.table.manage", "metadata.column.manage", "metadata.graph.read",
+             "metadata.table.manage", "metadata.column.manage",
              "kb.sample.curate", "kb.glossary.curate"],
+  // feature-0016 §45: 그래프 뷰 최상위 탭 — metadata.graph.read 게이트(kb.ingest.manual 묶음이 함의).
+  //   **필수(fail-open 방지)** — canSeeTab() 은 매핑 없는 탭을 fail-open 하므로 누락 = 권한 없는 사용자에게 탭 노출.
+  graph: ["metadata.graph.read", "kb.ingest.manual"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2338,10 +2343,30 @@ function switchTab(tabName) {
     } else {
       // 재진입(REV MINOR-2): 첫 진입이 datasources 로드 전이었을 수 있으니 scope/부트스트랩 DS 드롭다운 재채움(선택 보존).
       _metaPopulateScopeSelect();
+      // feature-0016 §45(적대리뷰 D1 대칭): 그래프 탭에서 데이터소스를 바꿨으면 메타데이터 목록도 그 스코프로 재로드(값↔목록 불일치 방지).
+      if ((adminState.metadata.loadedScope || "common") !== (adminState.metadata.scopeKey || "common")) loadMetadata();
       _metaApplySubtabPermissions();
       _metaSyncGlossaryViews();        // 재진입 시 용어사전 2차 보기 strip 가시성·active 재동기화(권한 변동 방어).
       _metaRenderDetail();             // metadata-list-detail: 우측 상세(현재 모드)·목록 툴바·부트스트랩 가시성 재동기화.
       _metaPrimeReviewBadge();         // 검토 큐 pending 배지 best-effort 재반영(다른 화면에서 큐 변동 시 stale 방지).
+    }
+  }
+  // feature-0016 §45: 그래프 뷰 최상위 탭 — 첫 진입 시 그래프 init + roots 로드, 재진입은 탐색 상태 보존(리사이즈만).
+  if (tabName === "graph") {
+    _metaPopulateScopeSelect();   // graphScopeSelect 옵션 채움/갱신(선택 보존) — datasources 로드 후 재진입 대비.
+    if (!adminState.graphInitialized) {
+      adminState.graphInitialized = true;
+      _metaShowGraph();
+    } else if (_metaGraph.graph) {
+      _metaRoleLegendTips();
+      // feature-0016 §45(적대리뷰 D1): 다른 탭에서 데이터소스(scopeKey)를 바꿨으면 재진입 시 그 스코프로 재로드한다.
+      //   _metaPopulateScopeSelect 가 graphScopeSelect 값은 새 스코프로 동기화하지만 canvas 는 별도라, 재로드 없이는
+      //   'select 는 dsB · 그래프는 dsA' 무성(silent) 불일치가 남는다. loadedScope(마지막 렌더 스코프)와 비교해 diverge 시만 재로드.
+      if ((_metaGraph.loadedScope || "common") !== (adminState.metadata.scopeKey || "common")) {
+        _metaGraphLoadRoots();
+      } else {
+        try { if (_metaGraph.graph.resize) _metaGraph.graph.resize(); } catch (_) {}
+      }
     }
   }
   // 릴리즈 노트 — 정적 콘텐츠라 진입 시 렌더(가벼움). 렌더러는 release-notes.js, 작업 화면과 공유.
@@ -2612,7 +2637,7 @@ const _METADATA_SUBTAB_PERM = {
   tables: "metadata.table.manage",
   columns: "metadata.column.manage",
   samples: "kb.sample.curate",
-  graph: "metadata.graph.read",           // feature-0016: 그래프 뷰(읽기 전용 탐색).
+  // feature-0016 §45: graph 서브탭 제거 — 그래프 뷰는 지식베이스 최상위 탭(ADMIN_TAB_PERMISSIONS.graph)으로 이관.
 };
 
 // 용어사전 2차 보기별 권한(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}).
@@ -2632,7 +2657,7 @@ function _metaSubtabVisible(sub) {
 }
 
 // 생성 폼 비활성 서브뷰 — samples 는 검수 경로(ITEM-03)가 생성 정본이라 수정 전용. graph 는 읽기 전용 탐색.
-const _METADATA_NO_CREATE = { samples: true, graph: true };
+const _METADATA_NO_CREATE = { samples: true };
 
 // 서브뷰별 폼 필드 정의 — label/key/type/required/placeholder/min/max. 렌더/검증/payload 조립에 공용 사용.
 // type: text | textarea | number | checkbox.
@@ -2751,8 +2776,11 @@ function _metaSyncGlossaryViews() {
 
 // scope 드롭다운: '공용(common)' + 등록된 datasource key 목록(기존 adminState.datasources 재사용).
 function _metaPopulateScopeSelect() {
-  const sel = document.getElementById("metadataScopeSelect");
-  if (!sel) return;
+  // feature-0016 §45: 메타데이터 pane 스코프 select 와 그래프 pane 자체 스코프 select 를 같은 옵션·선택으로 동기화한다
+  //   (그래프가 최상위 pane 으로 분리되며 metadataScopeSelect 를 더 이상 공유하지 못하므로 graphScopeSelect 신설).
+  const selMeta = document.getElementById("metadataScopeSelect");
+  const selGraph = document.getElementById("graphScopeSelect");
+  if (!selMeta && !selGraph) return;
   const opts = [{ value: "common", label: "공용 (common)" }];
   for (const ds of (adminState.datasources || [])) {
     const label = String((ds && ds.key) || "").trim().toLowerCase();
@@ -2763,18 +2791,22 @@ function _metaPopulateScopeSelect() {
     const scope = String((ds && ds.scope_key) || label).trim().toLowerCase();
     opts.push({ value: scope, label: label });
   }
-  // textContent 기반 option 생성(XSS 안전).
-  sel.replaceChildren();
-  for (const o of opts) {
-    const el = document.createElement("option");
-    el.value = o.value;
-    el.textContent = o.label;
-    sel.appendChild(el);
-  }
-  // 현재 선택 보존(없으면 common).
+  // 현재 선택 보존(없으면 common) — 두 select 공통 해소값.
   const cur = adminState.metadata.scopeKey || "common";
-  sel.value = opts.some((o) => o.value === cur) ? cur : "common";
-  adminState.metadata.scopeKey = sel.value;
+  const resolved = opts.some((o) => o.value === cur) ? cur : "common";
+  // textContent 기반 option 생성(XSS 안전). 존재하는 select 각각에 동일 옵션/선택 반영.
+  for (const sel of [selMeta, selGraph]) {
+    if (!sel) continue;
+    sel.replaceChildren();
+    for (const o of opts) {
+      const el = document.createElement("option");
+      el.value = o.value;
+      el.textContent = o.label;
+      sel.appendChild(el);
+    }
+    sel.value = resolved;
+  }
+  adminState.metadata.scopeKey = resolved;
 }
 
 function _metaBindControls() {
@@ -2785,8 +2817,6 @@ function _metaBindControls() {
       adminState.metadata.scopeKey = sel.value || "common";
       adminState.metadata.editing = null;
       adminState.metadata.selectedId = null;
-      // feature-0016: 그래프 뷰 활성 시 datasource 변경 → 그 데이터소스의 그래프(roots) 재로드.
-      if (adminState.metadata.subTab === "graph") { _metaGraphLoadRoots(); return; }
       // scope-single-ds-ui + metadata-list-detail: 스코프가 부트스트랩 DS 를 결정하므로 bootstrap 모드면
       // 유지하며 재동기화(공용=empty-state, 구체 DS=골격 컨트롤·상속 DS·스키마 재로드). form/empty 는 선택 무효 → empty.
       if (adminState.metadata.detailMode !== "bootstrap") adminState.metadata.detailMode = "empty";
@@ -2809,12 +2839,6 @@ function _metaBindControls() {
       adminState.metadata.search = "";
       const searchEl = document.getElementById("metadataSearch");
       if (searchEl) searchEl.value = "";
-      // feature-0016: 그래프 뷰 서브탭은 list-detail 대신 Cytoscape 캔버스로 전환(별도 적재 경로).
-      if (sub === "graph") {
-        _metaShowGraph();
-        return;
-      }
-      _metaHideGraph();
       // metadata-list-detail: bootstrap 모드는 tables↔columns 간 유지(골격 결과 보존 + 새 mode 재렌더), 그 외 서브탭은 empty.
       if (!(adminState.metadata.detailMode === "bootstrap" && (sub === "tables" || sub === "columns"))) {
         adminState.metadata.detailMode = "empty";
@@ -3176,6 +3200,7 @@ const _metaGraph = {
   schemaTotals: null,         // graph-initview: scope 별 스키마→전체 테이블 수(roots mode=schemas 에서 캐시). search 리셋에도 보존(카드 badge 전체 수 소스).
   searchMatch: null,          // 검색 필터 뷰: schemaKey -> Set(매칭 테이블 key). 카드 badge = 매칭/전체.
   searchMatchTables: null,    // 검색 매칭 테이블 key Set(펼침 시 강조).
+  searchMatchNodes: null,     // feature-0016 §45: 검색 직접 매칭 노드 key Set(테이블/컬럼/용어) — 'match' 상태 soft glow 대상(너비 증가 대체).
   searchCapped: false,        // 검색 결과가 cap(_META_SEARCH_CAP) 도달 → 매칭 카운트는 부분값(badge 에 '+' 표기).
   // graph-perf-bg: 성능 인덱스·논블로킹 상태.
   colsByTable: new Map(), // Table key -> 펼쳐진 Column 개수(O(1) _metaTableHasCols 단일소스 — 매 클릭 전노드 스캔 제거).
@@ -3256,16 +3281,21 @@ function _metaRoleOf(key) {
 
 // G6 per-element inline style helpers (설정 매퍼 금지 — undefined→To() 크래시 회피, BLUEPRINT §3).
 function _metaTableStyle(x, y, rel, role) {
-  const w = Math.min(190, _METLAY.TW + (typeof rel === "number" ? Math.round(rel * 40) : 0));
+  // feature-0016 §45: 검색 매칭 표현을 '너비 증가'에서 'match 상태 soft glow'로 이관 — 노드 폭은 rel 과 무관하게 고정한다
+  //   (가변 폭은 setData 재packing 을 유발하고 검색 가시성도 떨어졌다). rel 인자는 호출부 호환 위해 유지(폭 계산엔 미사용).
+  const w = _METLAY.TW;
   // node-role-viz: 분석 완료 + 역할 분류가 있으면 칩 색 = 역할색(미분석은 기존 teal 유지 — 색 자체가 "분석됨+역할" 신호).
   const rd = role ? _META_ROLE[role] : null;
   return { x, y, size: [w, 24], radius: 6, fill: rd ? rd.color : _META_GRAPH_COLOR.Table, stroke: "#ffffff", lineWidth: 1,
-    labelPlacement: "center", labelFill: rd && rd.dark ? "#161b22" : "#ffffff", labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: 176, cursor: "pointer" };
+    // feature-0016 §45: 폭이 rel 무관 고정(TW=150)이 되며 라벨이 박스를 넘치지 않도록 labelMaxWidth 를 박스 안으로 클램프(예전 176 은 rel 부스트로 최대 190 폭일 때 기준).
+    labelPlacement: "center", labelFill: rd && rd.dark ? "#161b22" : "#ffffff", labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: _METLAY.TW - 10, cursor: "pointer" };
 }
 function _metaTermStyle(x, y, rel) {
-  const w = Math.min(180, 130 + (typeof rel === "number" ? Math.round(rel * 40) : 0));
+  // feature-0016 §45: 용어 노드 폭도 rel 무관 고정(검색 매칭은 match 상태 soft glow 로 표시). rel 인자는 호환 유지.
+  const w = 130;
   return { x, y, size: [w, 22], radius: 11, fill: _META_GRAPH_COLOR.GlossaryTerm, stroke: "#ffffff", lineWidth: 1,
-    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700, labelMaxWidth: 168, cursor: "pointer" };
+    // feature-0016 §45: 폭 고정(130)에 맞춰 라벨을 박스 안으로 클램프(예전 168 은 rel 부스트 폭 기준).
+    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700, labelMaxWidth: 118, cursor: "pointer" };
 }
 function _metaColStyle(x, y) {
   return { x, y, size: 11, fill: _META_GRAPH_COLOR.Column, stroke: "#ffffff", lineWidth: 1,
@@ -3302,6 +3332,9 @@ function _metaEdgeStyleFor(status) {
 }
 function _metaNodeStates(key) {
   const st = [];
+  // feature-0016 §45: 검색 매칭 노드 = 'match' 상태 soft glow(예전 '너비 증가' 대체). glow 는 shadow 라
+  //   뒤의 selected/analyzed stroke 와 독립적으로 공존한다(테두리색 충돌 없음).
+  if (_metaGraph.mode === "search" && _metaGraph.searchMatchNodes && _metaGraph.searchMatchNodes.has(key)) st.push("match");
   if (_metaGraph.analyzed.has(key)) st.push("analyzed");
   if (_metaGraph.running.has(key)) st.push("running");
   if (_metaGraph.selected === key) st.push("selected");
@@ -3899,17 +3932,15 @@ function _metaG6Build() {
         nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
         return;
       }
-      // graph-initview 검색: 펼친 스키마 안에서 검색 매칭 테이블은 크게(rel 부스트) 강조 — 카드 클릭 후 어느 테이블이 매칭인지 즉시 식별.
-      const trel = (_metaGraph.mode === "search" && _metaGraph.searchMatchTables && _metaGraph.searchMatchTables.has(it.key))
-        ? Math.max(typeof it.rel === "number" ? it.rel : 0, 0.9) : it.rel;
+      // feature-0016 §45: 검색 매칭 강조는 노드 'match' 상태 soft glow(_metaNodeStates)로 이관 — 폭 부스트(trel) 제거.
       // node-role-viz: 분석 완료 테이블 역할 표식 — 칩 색 = 역할색(Okabe-Ito) + 라벨 앞 역할 아이콘(색약·흑백 중복 인코딩).
       const role = _metaRoleOf(it.key);
       const tLabel = (role ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
-      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, trel, role), { labelText: tLabel }) });
+      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role), { labelText: tLabel }) });
       const cols = g.colsByTable.get(it.key);
       if (cols && cols.length) {
         const depIds = ["X:" + it.key];   // graph-drag(REQ ②): 종속 UI = 접기 ctl + 컬럼 노드들
-        nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_metaTableStyle(tx, ty, trel).size[0] / 2) + 14, ty) });
+        nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_METLAY.TW / 2) + 14, ty) });
         let cyCol = ty + _METLAY.TROW / 2 + CDROP + _METLAY.CROW / 2;   // 첫 컬럼 중심 y
         cols.slice().sort(_metaGraphColCmp).forEach((c) => {
           nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyCol), { labelText: c.name || c.key }) });
@@ -4153,19 +4184,8 @@ function _metaGraphStatus(msg) {
 }
 
 function _metaShowGraph() {
-  const ld = document.querySelector(".admin-meta-list-detail");
-  if (ld) ld.style.display = "none";
-  const bs = document.getElementById("metadataBootstrap");
-  if (bs) bs.style.display = "none";
-  const gv = document.getElementById("metadataGlossaryViews");
-  if (gv) gv.style.display = "none";
-  // 그래프 모드에선 생성/골격 버튼 무의미 — 숨김.
-  const newBtn = document.getElementById("metadataNewBtn");
-  if (newBtn) newBtn.style.display = "none";
-  const bsBtn = document.getElementById("metadataBootstrapOpenBtn");
-  if (bsBtn) bsBtn.style.display = "none";
-  const view = document.getElementById("metadataGraphView");
-  if (view) view.style.display = "";
+  // feature-0016 §45: 그래프 뷰는 자체 pane(data-admin-pane="graph") 이라 메타데이터 pane DOM 을 숨길 필요가 없다
+  //   (pane display 가 가시성을 관장). 여기선 그래프 init + 진입 로드만 수행한다.
   _metaInitGraph();
   _metaRoleLegendTips();   // role-cluster-prefix: 역할 범례 hover 툴팁(desc) 주입(정적 <li data-role> → _META_ROLE 단일 소스).
   // feature-0016: 그래프 뷰 진입 시 현재 선택 datasource 의 그래프(roots)를 즉시 로드 — 각 데이터소스별 그래프 출현.
@@ -4194,6 +4214,7 @@ function _metaGraphResetModel() {
   // graph-initview: 검색 필터 뷰 상태 초기화(schemaTotals 는 scope 캐시라 보존 — loadRoots 가 재구축).
   _metaGraph.searchMatch = null;
   _metaGraph.searchMatchTables = null;
+  _metaGraph.searchMatchNodes = null;   // feature-0016 §45: 검색 매칭 glow 집합 초기화.
   _metaGraph.searchCapped = false;
   // graph-initview: 스키마-우선 상태 초기화.
   _metaGraph.schemaExpanded.clear();
@@ -4218,6 +4239,7 @@ async function _metaGraphLoadProducts(scope) {
   if (si) si.value = "";
   _metaGraph.lastQuery = "";
   _metaGraph.mode = "products";                 // resetModel 은 mode 를 건드리지 않음(loadRoots 와 동형 순서)
+  _metaGraph.loadedScope = scope || "common";   // feature-0016 §45 D1: 제품 개요도 마지막 렌더 스코프 기록.
   if (typeof _metaGraphFocusChip === "function") _metaGraphFocusChip(null);
   _metaGraphResetModel();
   _metaGraph.mode = "products";                 // resetModel 이후 재확정(방어)
@@ -4249,6 +4271,7 @@ async function _metaGraphLoadRoots() {
   if (!_metaGraph.graph) _metaInitGraph();
   if (!_metaGraph.graph) return;
   const scope = adminState.metadata.scopeKey || "common";
+  _metaGraph.loadedScope = scope;   // feature-0016 §45 D1: 마지막 렌더 스코프 기록(탭 재진입 시 diverge 재로드 판정).
   // graph-product-cat(§43): 데이터소스 미선택(공용) 또는 제품 scope 는 제품 카테고리 개요를 랜딩으로 보여준다.
   if (!scope || scope === "common" || scope === "__products__" || String(scope).startsWith("product:")) {
     return _metaGraphLoadProducts(scope);
@@ -4310,13 +4333,6 @@ function _metaGraphFillJump(schemaKeys) {
   (schemaKeys || []).forEach((k) => { opts.push(`<option value="${escA(k)}">${escA(_metaComboName(k))}</option>`); });
   sel.innerHTML = opts.join("");
   sel.style.display = (schemaKeys && schemaKeys.length > 1) ? "" : "none";
-}
-
-function _metaHideGraph() {
-  const view = document.getElementById("metadataGraphView");
-  if (view) view.style.display = "none";
-  const ld = document.querySelector(".admin-meta-list-detail");
-  if (ld) ld.style.display = "";
 }
 
 // 노드 key(`scope:fqn`)에서 카테고리(스키마) compound parent id 도출. schema 없으면 null.
@@ -4480,6 +4496,10 @@ function _metaInitGraph() {
     zoomRange: [0.05, 4],
     // 상태 스타일만 config 로(기본 스타일은 per-element 인라인 — 매퍼 undefined→To() 크래시 회피).
     node: { state: {
+      // feature-0016 §45: 검색 매칭 soft glow — 예전 '너비 증가' 대신 부드러운 앰버 글로우(shadow)로 매칭 강조.
+      //   shadow 계열이라 selected/analyzed 의 stroke 와 독립적으로 공존(테두리색 충돌 없음). animation:false 라
+      //   전환은 즉시지만 넓은 blur 가 시각적으로 '부드러운' 하이라이트로 읽힌다.
+      match: { stroke: "#e8a400", lineWidth: 2, shadowColor: "#f4b400", shadowBlur: 18 },
       analyzed: { stroke: "#7b2fbe", lineWidth: 3 },
       // node-role-viz(적대 패널 U2): 역할색 fill(특히 log #E69F00) 위에서 주황 점선이 위장되지 않게
       //   진행 중엔 fill 을 desaturate — 어느 역할색 위에서도 "분석 중" 이 읽힌다(재분석 경로 실재).
@@ -4508,6 +4528,18 @@ function _metaInitGraph() {
   }
   if (!graph) { _metaGraphStatus("그래프 초기화 실패(G6)."); return; }
   _metaGraph.graph = graph;
+  // feature-0016 §45: 그래프 pane 자체 데이터소스 스코프 select — 변경 시 그 데이터소스 그래프(roots) 재로드.
+  //   메타데이터 pane 의 metadataScopeSelect 와 상태(scopeKey)를 공유하되 양쪽 select 값을 동기화한다. 1회 바인딩.
+  const _gsc = document.getElementById("graphScopeSelect");
+  if (_gsc && !_gsc.dataset.bound) {
+    _gsc.dataset.bound = "1";
+    _gsc.addEventListener("change", () => {
+      adminState.metadata.scopeKey = _gsc.value || "common";
+      const ms = document.getElementById("metadataScopeSelect");
+      if (ms) ms.value = _gsc.value || "common";
+      _metaGraphLoadRoots();
+    });
+  }
   graph.on("node:click", (e) => _metaGraphOnNodeClick(e));
   graph.on("combo:click", (e) => { const id = e && e.target && e.target.id; if (id) _metaGraphShowClusterDetailById(id); });
   // graph-ctxmenu: 우클릭 상호작용 메뉴(REQ-20260702T113000). 좌표는 container capture 리스너가
@@ -5065,6 +5097,10 @@ async function _metaGraphSearch(q) {
   });
   _metaGraph.searchMatch = matchBySchema;
   _metaGraph.searchMatchTables = matchTables;
+  // feature-0016 §45: 직접 매칭 노드(테이블/컬럼/용어) key 집합 — 렌더 시 'match' 상태 soft glow 대상(너비 증가 대체).
+  const matchNodes = new Set();
+  (data.nodes || []).forEach((nd) => { if (nd && nd.key) matchNodes.add(nd.key); });
+  _metaGraph.searchMatchNodes = matchNodes;
   // review MAJOR: search_nodes 는 cap(_META_SEARCH_CAP) 로 평면 절단하고 truncated 플래그가 없다 →
   //   응답이 cap 도달이면 스키마별 매칭 카운트는 부분값이므로 badge 에 '+'(≥) 로 표기해 오인 방지.
   const nRaw = (data.nodes || []).length;
@@ -5087,7 +5123,7 @@ async function _metaGraphSearch(q) {
   const capNote = _metaGraph.searchCapped ? " · 결과 상한(부분 카운트, 검색어를 좁혀 정확도↑)" : "";
   if (!nRaw) _metaGraphStatus("검색 결과 없음.");
   else if (nSchemas === 0) _metaGraphStatus(`'${q}' — 용어·기타 ${terms.length}개 매칭(해당 스키마 테이블 없음).${capNote}`);
-  else _metaGraphStatus(`'${q}' — 스키마 ${nSchemas}개 매칭. 카드 badge = 매칭/전체 테이블. 카드 클릭으로 펼쳐 매칭 테이블(크게)을 확인.${capNote}`);
+  else _metaGraphStatus(`'${q}' — 스키마 ${nSchemas}개 매칭. 카드 badge = 매칭/전체 테이블. 카드 클릭으로 펼쳐 매칭 테이블(앰버 글로우)을 확인.${capNote}`);
 }
 
 // 선택 강조: 모델 selected 갱신 + 이전/현재 노드 state 만 갱신(전체 rebuild 없이 가벼움).
@@ -6340,6 +6376,7 @@ async function loadMetadata() {
     return;
   }
   const scope = adminState.metadata.scopeKey || "common";
+  adminState.metadata.loadedScope = scope;   // feature-0016 §45 D1: 메타데이터 목록이 로드된 스코프 기록(탭 재진입 diverge 재로드 판정).
   adminState.metadata.loading = true;
   listEl.replaceChildren();
   const loading = document.createElement("div");
