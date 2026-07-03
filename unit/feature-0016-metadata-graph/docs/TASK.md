@@ -1141,5 +1141,11 @@ REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메�
 - [x] T45.4 (③) parent-table same-depth 승격(node_analysis, ADR-017).
 - [x] T45.5 (④) 재분석 버튼·라벨 제거. (⑤) hover 지침 popover → prompt → user_prompt → user_intent.
 - [x] T45.6 단위 테스트(신규 15 + 회귀 108 PASS) + `node --check`/`py_compile` PASS + verify-completion.
-- [ ] T45.7 배포(deploy_scope: included) + alembic **0034** 도달 검증(stale agent 이미지 주의) +
-      insight-worker 재빌드 + PB-0008 시각검증(TEST.md §graph-funcproc — 배포 선행 사유 기록됨).
+- [x] T45.7 배포(deploy_scope: included) 완수 — PR #579 머지(main 3933d5aa) → `make migrate`(live
+      alembic **0034_routine_objects** 도달·Routine/HAS_ROUTINE/ROUTINE_USES 라벨 생성 확인) →
+      `make deploy-web`(무중단 롤링·soak 90s 통과) → `make insight-up`(routines 모듈 로드·토글 ON 확인).
+      **PB-0008 라이브 실측**: ②미니맵 anchor+리사이즈 추종 PASS(gap 11px 불변) · ④재분석 부재 PASS ·
+      ⑤popover 표시/입력 PASS + **Esc 고착 결함 적발**(→ T45.8 hotfix). ①Routine 칩은 introspect 첫
+      cadence 후 육안 확인 이월(feature-0003 TEST.md Run 정본).
+- [ ] T45.8 funcproc-esc-hotfix — popover Esc 닫힘 고착(focus-show 재발화 + hide 타이머 취소) 수정
+      (`escClosing` 300ms 억제) + cache-buster `20260703-funcproc-esc` + 배포·라이브 재실측.

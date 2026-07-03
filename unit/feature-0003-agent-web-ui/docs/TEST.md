@@ -1656,3 +1656,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 ### Run (2026-07-03) — graph-funcproc-uxfix: 함수·프로시저 노드 + 미니맵 리사이즈 추종 + AI 능동 분석 UX 3건 (Major §12.3 — 코드 거주 feature-0002/0003 / 문서 정본 feature-0016-metadata-graph TASK §45, ADR-016·017)
 - **정적·문법 검증 PASS**: `node --check admin.js` PASS. Routine 렌더(ƒ/⚙ 보라 칩·ROUTINE_USES 보라 잔점선·범례·상세 유형/파라미터/사용 목록)·`_metaGraphMinimapAnchor`(미니맵 inline left/top→CSS 앵커)·'↻ 재분석' 제거·AI 능동 분석 hover 지침 popover(`_metaGraphBindAiPopover`). 단위 pytest 신규 15 + 회귀 108 PASS(정본 feature-0016 TEST.md §graph-funcproc-uxfix).
 - **Environment: Windows-browser (PB-0008) — 미수행(사유): Routine 노드·hover 지침 반영 분석문은 alembic 0034 적용 + insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재** — deploy_scope: included 로 merge 직후 배포 후 라이브 그래프 뷰에서 ① ƒ/⚙ 칩+보라 잔점선 ② 패널 리사이즈 시 미니맵 우하단 추종 ③ hover popover→분석문 지침 반영 ④ 재분석 버튼 부재 를 실 Windows Chrome 으로 육안 확인 예정(POST-DEPLOY Run 을 본 섹션에 append).
+
+### Run (2026-07-03) — graph-funcproc-uxfix POST-DEPLOY PB-0008 라이브 실측 + funcproc-esc-hotfix (Minor §12.3 — 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §45)
+- **Environment: Windows-browser (PB-0008) — 라이브 실측 (배포 3933d5aa, 실 Windows Chrome/149, relay 172.26.144.1:9223, `https://localhost/admin` 인증 세션)**:
+  - 신 자산 강제 로드: `admin.js?v=20260703-graph-funcproc` · `styles.css?v=20260703-graph-funcproc` 서빙 확인.
+  - **② 미니맵 PASS**: 그래프 로드 후 `.g6-minimap` inline left/top = `auto`(anchor 정규화 동작), 캔버스 우하단 gap 11px/11px. **패널 리사이즈 실측** — `--meta-graph-detail-w` 340→560px(캔버스 617→397px 축소) 후에도 gap 11px 불변·캔버스 내 유지(inCanvas true) = 리사이즈 자동 추종.
+  - **④ 재분석 부재 PASS**: 테이블 상세(gunzgame.survivalcharacterinfo)에서 `#metaGraphAiBtn2` 부재 + AI box 에 '재분석' 문구 0 (서빙 admin.js 의 잔여 매치 1건은 제거 이력 주석).
+  - **⑤ hover popover PASS(표시·입력·시작)**: 버튼 mouseenter → popover 표시, textarea maxlength=400, '분석 시작' 버튼 존재. **결함 적발: Esc 닫힘 고착** — Esc 핸들러의 `btn.focus()` 가 focus-show 를 재발화 + `show()` 가 blur hide 타이머를 취소해 620ms 후에도 미닫힘(실측).
+  - ①(ƒ/⚙ Routine 칩·보라 잔점선)은 insight-worker routine introspect 첫 cadence 후 데이터 생성 — 후속 육안 확인 항목으로 이월.
+- **funcproc-esc-hotfix**: Esc 직후 300ms show 억제 플래그(`escClosing`)로 닫힘 확정(focus 복귀는 유지 — a11y). cache-buster `admin.js?v=20260703-funcproc-esc`. `node --check` PASS. 배포 후 Esc 닫힘 라이브 재실측 예정(본 섹션에 append).

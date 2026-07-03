@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703-funcproc-esc-hotfix (ai/claude/feature-0016-funcproc-esc-hotfix)
+- Date: 2026-07-03
+- Related Requirement: TASK §45 T45.8 — graph-funcproc-uxfix 배포 후 PB-0008 라이브 실측이 적발한
+  hover 지침 popover **Esc 닫힘 고착** 수정(Minor·1파일 FE).
+- Summary: Esc 핸들러의 `btn.focus()` 가 focus-show 를 재발화하고 `show()` 가 blur 경로 hide 타이머를
+  취소해 Esc 후 popover 가 닫히지 않던 결함(라이브 620ms 실측) — Esc 직후 300ms `escClosing` 플래그로
+  show 를 억제해 닫힘 확정(포커스 복귀는 유지, a11y). cache-buster `admin.js?v=20260703-funcproc-esc`.
+  동반: feature-0003 TEST.md 에 graph-funcproc POST-DEPLOY PB-0008 라이브 Run(②④⑤ PASS + 본 결함) 기록.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}`,
+  `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md`.
+- Impact: FE 상호작용 전용(데이터 API·스키마·RBAC 불변). 회귀면 = popover show/hide 경로만.
+- Rollback Notes: 커밋 되돌림 + cache-buster 재bump.
+
 ## CHG-20260703-graph-funcproc-uxfix (ai/claude/feature-0016-graph-funcproc-uxfix)
 - Date: 2026-07-03
 - Related Requirement: REQ-20260703-graph-funcproc-uxfix (TASK §45, ADR-016·017) — ① 함수·프로시저 노드

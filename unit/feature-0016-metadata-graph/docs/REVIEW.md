@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260703T140000-funcproc-esc-hotfix [SKIPPED:minor-1file-live-verified] — popover Esc 고착 hotfix (PB-0008 적발분)
+- Related Change: CHG-20260703-funcproc-esc-hotfix (TASK §45 T45.8).
+- Panel skip 사유(§18.8 — Minor + 1파일 + 정책 doc 무변경): 5줄 FE 상호작용 수정. 결함 자체가 PB-0008
+  라이브 실측으로 적발·재현(620ms 후에도 미닫힘)됐고, 수정 검증도 배포 후 동일 라이브 경로로 재실측한다.
+  본체 cycle(graph-funcproc-uxfix)은 직전 REV-20260703T113500 에서 3렌즈 적대 패널 완료.
+- Human Approval: deploy_scope: included(전역) — 자동 배포 범위.
+
 ## REV-20260703T113500-graph-funcproc-uxfix [SUBAGENT: FIX-THEN-SHIP→PASS] — 함수·프로시저 노드 + 그래프/능동분석 UX 4건 적대 패널 (3렌즈 + MAJOR+ 교차검증, ULTRACODE workflow)
 - Related Change: CHG-20260703-graph-funcproc-uxfix (TASK §45, ADR-016·017). worktree feature-0016-graph-funcproc-uxfix.
 - 리뷰 방식: Workflow 병렬 3렌즈(backend 정확성 / security·injection / frontend 회귀·G6) 각 독립 발굴 + **BLOCKING/MAJOR 전건을 별도 refuter subagent 가 교차 재검증**(9 agents). staged diff 전체 + 주변 소스·vendored g6.min.js 실측.
