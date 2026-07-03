@@ -13,6 +13,7 @@ __all__ = [
     "AGENT_CONVO_SEARCH_AUTO",
     "AGENT_CONVO_SEARCH_LIMIT",
     "AGENT_CSV_ANALYZE_MAX_BYTES",
+    "AGENT_CONN_AVG_WINDOW",
     "AGENT_CONN_DOWN_AFTER_FAILS",
     "AGENT_CONN_HEALTH_ENABLED",
     "AGENT_CONN_HEALTH_TICK_SEC",
@@ -1038,6 +1039,12 @@ AGENT_CONN_SLOW_MS = max(1, int(os.getenv("AGENT_CONN_SLOW_MS", "1000") or "1000
 # 끊김 판정 임계 — 연속 연결 실패가 이 횟수 이상이면 unstable(빨강) 이 아니라 down(회색, "연결 끊김").
 # 1회성 blip 은 unstable 로 두고(간헐 불안정), 반복 실패해야 끊김으로 확정(flapping 방지).
 AGENT_CONN_DOWN_AFTER_FAILS = max(1, int(os.getenv("AGENT_CONN_DOWN_AFTER_FAILS", "2") or "2"))
+# 평균 연결 응답 시간 window(표본 수) — 백그라운드 모니터가 성공 probe 마다 측정한 elapsed_ms 를
+# 이 개수만큼 rolling 으로 보관해 산술평균(관리 콘솔 데이터소스 상세 패널의 "연결 응답 시간(평균)")을
+# 낸다. 마지막 1회 값(last_elapsed_ms)은 순간 변동(다른 워크로드·GC blip)에 흔들려 대표성이 약하므로
+# 최근 N회 평균이 데이터소스별 상시 연결 품질을 더 안정적으로 나타낸다. 실패 probe 는 응답시간 의미가
+# 없어 표본에서 제외. 1 이상(0/음수 입력은 1 로 클램프 — 사실상 마지막값과 동일).
+AGENT_CONN_AVG_WINDOW = max(1, int(os.getenv("AGENT_CONN_AVG_WINDOW", "20") or "20"))
 # ── MySQL 커넥션 풀 (TASK-0144, opt-in / 기본 OFF / 폴백 안전) ──────────────
 # 기본 비활성(False) → db.connect() 가 기존 connect-per-request 경로 그대로 사용
 # (동작 0 변경). True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서

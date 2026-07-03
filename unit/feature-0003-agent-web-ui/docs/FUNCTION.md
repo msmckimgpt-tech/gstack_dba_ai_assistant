@@ -1456,3 +1456,12 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **계측 위치**(core): `agent_core._run_agent_core` 루프가 라운드별 `_call_llm` 종료 perf_counter 를 기억해 다음 라운드 호출 직전 gap 을 산출, `_call_llm(step_gap_ms=)`→`_record_llm_usage(step_gap_ms=)` best-effort 기록. run_id 첫 라운드/단발 호출/비-agent task 는 NULL(→ KPI 자동 제외). 즉 step_gap_ms 는 다단계 agentic 루프 전용 신호.
 - **다단계 요청 분모**(F2, 오인 방지): step_gap 은 다단계(≥2 라운드) 요청에서만 표본이 나오므로, 단발 요청 위주 window 에서 빈 tile 을 '고장' 으로 오인하지 않도록 KPI 서브에 `multistep_requests/agent_requests`("다단계 요청 M/R") 노출.
 - 스키마: alembic 0033 `agent_runtime.llm_usage.step_gap_ms INTEGER` additive nullable(expand-only, down_revision 0032) + 부트스트랩 DDL parity. RBAC/엔드포인트/권한키(`console.aiops.read`) 무변경. cache-buster `admin.js?v=20260703-aiops-stepgap`. PB-0008 라이브 실측(KPI 라벨·값·step_gap_ms 행 생성)= 배포 후 TEST.md.
+
+## (ds-avg-latency, 2026-07-03) 관리 콘솔 데이터소스 상세 패널 — 평균 연결 응답 시간 (web/UI·API + shared/conn_health, Major §12.3)
+- **기능**: `관리 콘솔 > 데이터소스` 에서 항목 선택 시 우측 상세 패널(`_dsRenderDetail`)에 "연결 상태" 섹션이 표시된다 — (1) 상태(정상/불안정/끊김/확인 중) (2) **연결 응답 시간(평균)** (3) 최근 응답 시간(순간값) (4) 마지막 확인 시각. 핵심 요청 요소는 (2) 평균이다.
+- **"평균 연결 응답 시간" 정의(계약)**: `shared/conn_health.py` background 모니터가 각 데이터소스를 주기 probe(TCP 선검사 + 실제 DB connect + `SELECT 1`)할 때, **성공한 background DB probe(`source=="probe-db"`, `ok`, `elapsed_ms>0`)의 elapsed_ms** 를 데이터소스별 window(`AGENT_CONN_AVG_WINDOW`, 기본 20)에 누적해 산술평균한 값(`avg_elapsed_ms`, ms, 소수1). 표본이 아직 없으면(신규·연속 실패·미probe) `null`(+`sample_count=0`) → UI 는 "측정 중 (연결 성공 시 집계)". 순간값(`last_elapsed_ms`)과 별개 — 평균이 상시 연결 품질의 대표값.
+- **표본 포함/제외 규칙**: 실패 probe(연결 안 됨)와 foreground 피드백(elapsed 미측정=0.0)은 응답시간 의미가 없어 **제외**. 느린 성공(elapsed≥SLOW → 상태 unstable)은 응답시간이 유효하므로 **포함**(상태와 무관하게 성공 elapsed 는 평균에 반영).
+- **비노출 불변식**: `snapshot()`/API `conn_status` 는 timing aggregate(status/last_elapsed_ms/avg_elapsed_ms/sample_count/checked_at/last_error/fails)만 노출 — host/port/user/password 절대 비노출(원시 표본 deque 는 `_SAMPLES` 에만, snapshot 미포함). `test_snapshot_hides_coordinates` 가 키셋 회귀 봉인.
+- **부하 0**: 관리 콘솔은 background 모니터가 미리 계산해 둔 `avg_elapsed_ms` 를 읽기만 함 — 상세 패널 진입·목록 로드 시 추가 probe/연결테스트 없음(기존 conn-health-monitor 사전계산 패턴 재사용).
+- **범위 봉인(무변경)**: status 3단계 분류(classify)·gating(should_fast_fail)·`last_elapsed_ms`·probe 스케줄·`_attach_product_conn_status`(제품 경로 conn_status 3키) 전부 불변. 스키마/마이그/RBAC/엔드포인트 신규 0(기존 `/api/admin/datasources` 응답 필드 additive만).
+- cache-buster: `admin.html` 의 `admin.js?v=20260703-graph-simgroups`→`?v=20260703-ds-avg-latency`. CHG/REV-20260703T085511-ds-avg-latency. PB-0008 Windows-browser= 배포 후 라이브(TEST.md §3).

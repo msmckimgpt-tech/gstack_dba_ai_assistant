@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260703-graph-simgroups" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260703-graph-product-cat" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -740,6 +740,8 @@
               <option value="">스키마 이동…</option>
             </select>
             <button type="button" class="btn-secondary" id="metadataGraphResetBtn">초기화</button>
+            <!-- graph-product-cat(§43): 제품(Products) 단위 카테고리 개요 — 제품→데이터소스 계층을 보여주고 데이터소스 클릭으로 drill -->
+            <button type="button" class="btn-secondary" id="metadataGraphProductsBtn" title="제품(Products) 단위로 데이터소스를 묶어 봅니다" aria-label="제품 카테고리 개요">🗂 제품 카테고리</button>
             <!-- graph-initview(E2): 줌 컨트롤 — 초기 화면이 판독 줌 클램프로 '부분'일 수 있어 조망/복귀 버튼 제공 -->
             <span class="admin-meta-graph-zoomctl" role="group" aria-label="그래프 줌 컨트롤">
               <button type="button" class="btn-secondary" id="metaGraphZoomOut" title="축소" aria-label="축소">−</button>
@@ -900,7 +902,7 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
-  <script src="/static/admin.js?v=20260703-aiops-stepgap"></script>
+  <script src="/static/admin.js?v=20260703-aiops-stepgap-pc"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260702-rn-0702"></script>

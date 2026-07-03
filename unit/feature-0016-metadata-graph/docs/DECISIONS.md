@@ -384,3 +384,34 @@ source_of_truth: true
   - **underscore/camelCase 토큰화**: 연접 소문자 이름에서 무력(기각 — affix 가 상위 호환).
 - Supersedes: (ADR-012 의 순서 계층은 그룹 내부/그룹 간 순서로 계승 — 대체 아님)
 - Superseded By:
+
+## ADR-014 — 그래프 뷰 제품(Products) 단위 카테고리: 투영 API 질의시점 합성(AGE 미저장) + 제품 개요 랜딩
+- Status: accepted (2026-07-03)
+- Context: 사용자 요청 3대 개선 中 A — "구분해둔 제품(Products)에 따른 카테고리 단위로 구분". 실측: 그래프 모델은
+  `Product`/`Datasource` 라벨·`USES` 엣지를 **예약만** 하고 `sync_graph` 는 실제로 Schema→Table→Column+REFERENCES
+  만 투영한다. scope 선택은 datasource 단위뿐이고, Product 노드가 온다 해도 프론트가 `_META_TERMS_COMBO`("용어·기타")로
+  흘려 카테고리 컨테이너가 되지 못한다. Product↔Datasource SSOT(`WebProducts`·`WebProductDatasources` N:M·
+  `WebProductDatabases`)는 MySQL(web-ui runtime)에 완비. 그래프(AGE)는 Postgres `agent_kb` — 두 스토어가 분리.
+- Decision: 제품 카테고리를 **투영 API 계층(web-ui, MySQL 접근)에서 질의시점에 합성**한다. AGE 에 Product/Datasource
+  정점을 물리 저장하지 않는다.
+  1. **백엔드**: `GET /api/admin/metadata/graph?mode=products`(전체) · `?product=<id>`(단일) → `_product_overview_graph`
+     가 MySQL SSOT 로부터 `Product`(key=`product:<id>`)·`Datasource`(key=`ds:<scope_key>`) 노드 + `USES` 엣지 합성.
+     datasource-scoped 진입(scope_roots/schemas) 응답에 `_products_for_scope` 로 소속 제품(`products`) 첨부(배너).
+  2. **프론트**: `_metaG6BuildProducts` 전용 2-열 결정론 배치(Product 좌·Datasource 우, USES 엣지, combo 미사용 —
+     기존 스키마 masonry 무간섭). 그래프 진입 랜딩(공용/미선택)을 제품 개요로 전환. Datasource 노드 클릭 → 그
+     데이터소스 스키마 그래프로 drill(scope 전환), Product 노드 클릭 → 단일 제품 focus. 툴바 "🗂 제품 카테고리" 버튼.
+  3. **read-axis 정렬(불변식)**: datasource 그래프 scope 는 `admin_datasources` 가 노출하는 read 축
+     `scope_key or key`(DB-등록=엔드포인트 해시, .env 레거시=라벨)와 **반드시 일치**한다. `shared.datasources.scope_key`
+     (.env 도 해시 계산)를 쓰면 어긋나 빈 그래프를 부르므로 **금지**(REV-20260703T091737 MAJOR).
+- Consequences: 그래프 뷰가 "데이터소스 나열" → "제품(카테고리)→데이터소스 계층"으로 진입한다. **DB 스키마 변경·마이그
+  레이션 0**(합성은 read-only, AGE 투영 로직 불변), 권한 `metadata.graph.read` 보존, mutation 0. 후속 Phase C(의미
+  임베딩)·B(크로스-데이터소스 관계)가 이 제품 경계를 재사용할 수 있다(제품=관련 데이터소스 묶음). 한계: 개요는 제품→
+  datasource 2계층까지(스키마/테이블은 drill 후 기존 뷰); 제품별 통합 스키마 union 뷰는 미도입(후속 여지).
+- Alternatives:
+  - **AGE 에 Product/Datasource 정점 물리 저장(sync_graph 확장)**: FUNCTION.md 모델 의도엔 부합하나 MySQL→Postgres
+    브리지 sync 경로·이중 정합·마이그레이션 필요. 질의시점 합성이 "projection(진실의 사본)" 원칙에 더 정합하고 즉시
+    가치(비파괴). AI 컨텍스트가 Product 노드를 그래프에서 탐색해야 하는 요구가 서면 그때 승격(후속).
+  - **공유 scope select 에 제품 옵션 추가**: scope select 는 그래프+비그래프 메타데이터 뷰가 공유 → `product:` 값이
+    list/bootstrap 경로를 오염. 툴바 버튼 + 랜딩 전환으로 분리(select 는 datasource 전용 유지).
+- Supersedes:
+- Superseded By:

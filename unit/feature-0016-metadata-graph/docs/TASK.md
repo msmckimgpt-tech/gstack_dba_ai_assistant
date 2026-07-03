@@ -1038,3 +1038,38 @@ MODIFY CHG-20260703-node-role-viz.
       시각검증 PASS**: 그룹 박스 22 + 헤더 칩 22(item·21/character·17/account·6/…) 렌더·영역 가시성·GB 클릭
       클러스터 상세 위임(데드존 수정 실증)·패널 그룹 헤딩 aria·컬럼 펼침11/접기 REFERENCES 145→145·검색 정상·
       pageerror 0. 상세 TEST.md POST-DEPLOY Run.
+
+## 43. graph-product-cat — 제품(Products) 단위 카테고리 구분 (2026-07-03, 사용자 요청 — 3대 개선 中 A)
+
+- Related Requirement: 사용자 요청 "구분해둔 제품(Products)에 따른 카테고리 단위로 구분이 가능하도록 구성".
+  entry persona dispatch(A→C→B 순차 연속 완주, 크로스-DB=크로스-데이터소스 결정). 정본: DECISIONS ADR-014.
+- 등급: **Major** (신규 API mode + 프론트 신규 진입 경로, 비파괴·마이그레이션 없음). deploy_scope: included.
+- 배경(코드 실측): 그래프 모델은 `Product`/`Datasource` 라벨·`USES` 엣지를 **예약만** 하고 `sync_graph` 가
+  실제 생성 안 함(Schema→Table→Column+REFERENCES 만 투영). 프론트는 scope 선택이 데이터소스 단위뿐이고
+  Product 노드는 `_META_TERMS_COMBO`("용어·기타")로 흘러감. 관계형 SSOT(MySQL `WebProducts`·
+  `WebProductDatasources` N:M·`WebProductDatabases`)는 완비. 그래프는 Postgres `agent_kb` → MySQL SSOT 는
+  투영 API(web-ui, MySQL 접근) 계층에서 **질의시점 합성**(AGE 저장 불필요·마이그 회피·"projection" 원칙 정합).
+
+### 43.1 백엔드 (admin_metadata.py — 투영 API 제품 모드, MySQL 합성)
+- [x] T43.1 `admin_metadata_graph` 에 `conn=Depends(app.get_conn)` 추가 + 신규 분기:
+  `?mode=products` → 전체 활성 제품, `?product=<id>` → 단일 제품. `_pg_connect_ro()` 이전에 early-return(PG 불필요).
+- [x] T43.2 헬퍼 `_product_overview_graph(conn, product_id=None)`: `Product`(key=`product:<id>`)+`Datasource`
+  (key=`ds:<scope_key>`) 노드 + `USES` 엣지 합성. 브리지 `_list_product_datasources → datasource_key →
+  _dsr.resolve → _dsr.scope_key`. 중복 datasource dedup(여러 제품 공유 가능).
+- [x] T43.3 헬퍼 `_products_for_scope(conn, scope_key)`: 역방향 맵(scope_key→제품 목록). datasource-scoped
+  응답 meta 에 `products` 필드로 반환(그 데이터소스를 쓰는 제품 배너용).
+
+### 43.2 프론트 (admin.js + admin.html + cache-buster)
+- [x] T43.4 제품 개요 진입 = **툴바 "🗂 제품 카테고리" 버튼 + 그래프 랜딩 전환**(공유 scope select 오염 회피 —
+  select 는 datasource 전용 유지, 리뷰 근거로 optgroup 재구성 대신 채택). 랜딩(공용/미선택)이 제품 개요.
+- [x] T43.5 `_metaGraphLoadRoots` 분기: `__products__`/`product:<id>` → `?mode=products`/`?product=<id>` 로드
+  (mode="products"). 그 외 기존. datasource-scoped 응답의 `products` → 상태 배너.
+- [x] T43.6 `_metaG6Build` 상단 **제품 개요 전용 early-return**(mode==="products"): Product(좌열)·Datasource
+  (우열) rect 노드 2-열 결정론 배치 + USES 엣지, combo 미사용(기존 스키마 masonry 무간섭·저위험).
+- [x] T43.7 `_metaGraphOnNodeClick` 에 `ds:` 노드 클릭 → scopeKey=그 scope 로 drill(`_metaGraphLoadRoots`),
+  `product:` 노드 클릭 → 그 제품으로 필터. cache-buster `20260703-graph-product-cat`.
+
+### 43.3 검증
+- [x] T43.8 격리 테스트(합성 그래프 노드/엣지 무결성) + `node --check` admin.js.
+- [x] T43.9 §18.8 적대 리뷰(합성 정합·권한·XSS·회귀) + verify-completion.
+- [x] T43.10 배포(web 롤링) + **PB-0008 실 Windows 시각검증**(제품 개요 렌더·datasource drill·배너).

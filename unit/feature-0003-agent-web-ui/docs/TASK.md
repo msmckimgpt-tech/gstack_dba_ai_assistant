@@ -29,6 +29,23 @@ source_of_truth: true
   - [x] §18.8 적대 패널 2렌즈×2라운드 → SHIP. REV-20260703T094539-aiops-stepgap.
   - [ ] verify-completion --pre-commit PASS → commit → PR/merge → 배포(마이그 0033 + web + agent/ask-worker 재빌드, deploy_scope: included) → **라이브 검증(F6): 다라운드 에이전트 구동 → step_gap_ms 행 생성 확인 + KPI "단계 간 간격" 실값 렌더 (PB-0008)**.
 
+## TASK-20260703T085511-ds-avg-latency — 관리 콘솔 > 데이터소스 상세 패널에 평균 연결 응답 시간 표시 (Major §12.3 — feature-0003 web/UI·API + cross-unit shared/conn_health·config, migration 없음. /_template:entry arg-given dispatch)
+- 트리거(사용자): "프로젝트 내 서비스의 `관리 콘솔 > 데이터소스` 에서, 각 항목을 선택했을 때 나타나는 상세 정보 패널에 평균적인 연결 응답 시간을 보여주세요."
+- 설계(평균의 의미): `shared/conn_health.py` 백그라운드 모니터가 각 데이터소스를 주기적으로 probe(TCP 선검사 + 실제 DB connect + `SELECT 1`)하며 `last_elapsed_ms`(마지막 1회)만 보관하던 것을, **최근 성공 background DB probe elapsed 의 이동평균**(`avg_elapsed_ms`, window=AGENT_CONN_AVG_WINDOW 기본 20)으로 확장. 순간값보다 대표성이 높고, 추가 probe·연결테스트 없이(이미 측정 중인 값 재사용) 상시 표시. 실패 probe·foreground(elapsed 미측정 0.0)는 표본 제외, 느린 성공(unstable)은 응답시간 유효하므로 포함.
+- 구성:
+  1. **shared/config.py**: `AGENT_CONN_AVG_WINDOW`(기본 20, 1 클램프) 신규 + `__all__` 등록(`from .config import *` export 계약 — 누락 시 NameError).
+  2. **shared/conn_health.py**: `_SAMPLES: dict[scope_key→deque(maxlen=window)]`(원시 표본, `_STATE` 와 분리 — 좌표/표본 비노출 불변식) + `_sample_avg_elapsed()`(산술평균, `_LOCK` 안) + `_apply_result` 성공 probe-db 분기에서 표본화 → `avg_elapsed_ms` 갱신 + `snapshot()` 에 `avg_elapsed_ms`/`sample_count` 노출 + `_prune_state`/`_reset_state` 에서 `_SAMPLES` 동기 정리.
+  3. **routers/admin_datasources.py**: `/api/admin/datasources` 응답 `conn_status` 에 `avg_elapsed_ms`/`sample_count` additive(좌표 비노출 유지). `_attach_product_conn_status`(제품 경로)는 요청 범위 밖이라 무변경(3키 유지).
+  4. **static/admin.js**: `_dsRenderDetail` 상세 패널에 "연결 상태" 섹션 신설 — 상태(`_dsConnStatusLabel`)·**연결 응답 시간(평균)**(`avg_elapsed_ms` + `최근 N회 평균`, 표본 없으면 "측정 중")·최근 응답 시간(순간값)·마지막 확인. cache-buster `admin.js?v=20260703-ds-avg-latency`.
+- Completion Checklist:
+  - [x] shared/config.py `AGENT_CONN_AVG_WINDOW` + `__all__`. py_compile PASS.
+  - [x] shared/conn_health.py 이동평균(deque window·산술평균·표본 게이트·prune/reset 동기). py_compile PASS.
+  - [x] routers/admin_datasources.py conn_status avg 필드 additive. py_compile PASS.
+  - [x] static/admin.js "연결 상태" 섹션 + `_dsConnStatusLabel` + cache-buster bump. node --check PASS.
+  - [x] 단위테스트: test_conn_health.py 갱신(snapshot 키셋) + 신규 5건(평균 누적·window bound·실패/foreground 제외·느린성공 포함·prune 표본정리). feature-0002+0003 전량 회귀 0(컨테이너 전용 test_share_redaction_invariant 제외 — `import web.app` 환경 아티팩트, 본 변경 무관).
+  - [x] §18.8 적대 리뷰(백엔드 정확성·스레드안전·좌표 비노출 불변식·회귀) — REV-20260703T085511-ds-avg-latency.
+  - [x] verify-completion --pre-commit PASS → commit(b8c386a2) → PR #575 merge(main 7ad4378b) → web 무중단 재배포(deploy_scope: included, web-a/web-b 7ad4378b soak 통과) → **PB-0008 Windows-browser 라이브 실측 PASS**(실 Windows Chrome/149 win-browser relay @ 172.26.144.1:9223, `https://localhost/admin` 로그인 세션): 데이터소스 상세 패널 "연결 상태" 섹션 렌더 + `mssql-dk-dev` **연결 응답 시간(평균) = "11.7 ms · 최근 6회 평균"**·`mssql-qa-idc` "133.4 ms · 최근 6회 평균"(healthy)·down 데이터소스(`mssql-web-qa`/`mssql_local`)는 "측정 중 (연결 성공 시 집계)"(성공 표본 없음, stale 값 미표시). 스크린샷 증적 확보. POST-DEPLOY 문서 기록 = TASK-20260703T085511-ds-avg-latency-postverify.
+
 ## TASK-20260702-aiops-conv-link-fix — AI 운영 현황 '최근 활동' 상세: 시스템 sentinel 대화 링크 깨짐 수정 (Minor §12.3 — feature-0003 프론트 단독, 백엔드/스키마/RBAC 무변경. TASK-20260702-audit-nav-ux 후속 — PB-0008 라이브 적발)
 - 트리거(PB-0008 라이브 검증): audit-nav-ux 배포 후 실 브라우저 검증에서 발견 — '최근 활동' 행 클릭 시 상세의 '연결 대화' 가 insight/ask 워커·자율 호출(활동 대부분)에도 `/?conversation=__insight_worker__` 같은 **열 수 없는 링크**를 렌더. `__insight_worker__`·`__ask_worker__`·`__global__`·`__kb_manual__` 등은 실제 사용자 대화가 아닌 예약 sentinel(전부 `__` 접두)인데 `conversation_id != NULL` 이라 링크로 처리됨.
 - 해법(frontend only): `aiOpsActivityRowsHtml` 에서 `conversation_id` 가 `__` 접두 sentinel 이면 링크 대신 "시스템·자율 호출 (`<sentinel>`) — 특정 대화에 귀속되지 않습니다" 정직 안내. 실제 사용자 대화(비-`__`)만 `/?conversation=<id>` 링크 유지. NULL 은 기존 일반 안내.

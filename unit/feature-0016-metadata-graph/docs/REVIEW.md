@@ -8,6 +8,26 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260703T091737-ai-claude-feature-0016-graph-product-cat [SUBAGENT: PASS-WITH-FIXES] — 제품 카테고리 개요(§43) 적대 리뷰
+- 대상: CHG-20260703T091737-graph-product-cat (admin_metadata.py `_product_overview_graph`/`_products_for_scope` +
+  admin.js `_metaG6BuildProducts`/라우팅/노드클릭 + admin.html 툴바, ADR-014, TASK §43).
+- 방법: general-purpose 적대 서브에이전트 — diff-only 결함 헌트 5축(정합성 scope_key 브리지·XSS/injection·robustness
+  conn=None/dedup·회귀·G6 style 안전).
+- 확정·수정:
+  - **[MAJOR] scope_key read-axis 불일치**: 헬퍼가 `_dsr.scope_key(ds)`(.env 도 엔드포인트 해시로 계산)를 써서
+    그래프 read 축(`admin_datasources.py:70` = `scope_key or key` → **.env=라벨**)과 어긋남 → .env-등록 datasource
+    바인딩 제품의 datasource-drill 이 **빈 그래프**, 배너도 미표시. **수정**: 두 헬퍼 모두
+    `(ds.get("scope_key") if ds else None) or dsk` 로 전환(dsk=소문자 라벨=`v.key`) → read 축과 byte-정합.
+  - **[NIT] 비숫자 `?product=`** 가 전체 제품 반환 → 조건을 `mode=="products" or product.isdigit()` 로 좁혀
+    비숫자는 일반 dispatch 통과.
+- 기각/SAFE 확인: XSS 0(G6 rect `labelText`=canvas 텍스트·상태배너 `textContent`), SQL/Cypher injection 0(전부
+  파라미터라이즈 + products 모드는 PG/Cypher 이전 early-return), 권한 `metadata.graph.read` 보존, conn=None graceful
+  (헬퍼 try/except→[], 엔드포인트 503 no-stack-leak), datasource dedup + 엣지 id 재키잉(`src|type|tgt`)로 공유
+  datasource 중복 crash 0, `endArrow` 유효·`lineDash` 생략(G6 크래시 회피), `_metaGraphResetModel` 이 mode 미변경
+  (products 모드 보존), combo 미부여 노드 = 스키마 카드와 동형(안전). 회귀 0(datasource/schema 경로 무영향,
+  common 랜딩만 제품 개요로 대체 — 의존 caller 없음).
+- 판정: **PASS-WITH-FIXES** — MAJOR 1 + NIT 1 반영 후 배포 안전(적대 리뷰어 "safe to deploy" 확인, .env fix 적용 조건 충족).
+
 ## REV-20260703T105541-graphux6-panelbottom-responsive-obs [SUBAGENT: PASS-WITH-FIXES] — 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 대상 관측 적대 리뷰
 - Related Change: CHG-20260703T105541-ai-claude-feature-0016-graphux6-panelbottom-responsive-obs (TASK §37). worktree feature-0016-graphux6-panel-obs.
 - 리뷰 방식: subagent 적대 5축 — ① CSS 반응형 회귀 ② 패널이동 부작용 ③ target 계측 정합(자가치유 INSERT·rollback·overview 다중 SELECT·`len(r)>11` 가드) ④ payload 대상 추출·XSS ⑤ 마이그 안전(additive nullable·단일 head·배포순서). diff 전체 + 주변 소스(_record_llm_usage, _query_activity, admin.js 토글/progress, admin.shell→canvas CSS 체인, 0032, 테스트) 정독.

@@ -1047,6 +1047,39 @@ a { color: inherit; }
   }
 }
 
+/* feature-0009 gc-join-notice: 참여 알림 등 이벤트 메시지 — 좌/우 말풍선이 아닌
+   가운데 정렬 시스템 pill(Slack/Discord "X joined" 패턴). */
+.message-event {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0;
+  text-align: center;
+}
+.message-event-pill {
+  display: inline-block;
+  max-width: 80%;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-muted, #e2e8f0);
+  color: var(--text-muted, #475569);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.message-event-time {
+  font-size: 10px;
+  color: var(--text-muted, #475569);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .message-event-pill {
+    background: rgba(148, 163, 184, 0.18);
+    color: var(--text-muted, #94a3b8);
+  }
+}
+
 .message-meta-duration {
   font-size: 10px;
   opacity: 0.7;
