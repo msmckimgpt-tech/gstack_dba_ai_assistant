@@ -13,6 +13,7 @@ __all__ = [
     "AGENT_CONVO_SEARCH_AUTO",
     "AGENT_CONVO_SEARCH_LIMIT",
     "AGENT_CSV_ANALYZE_MAX_BYTES",
+    "AGENT_CONN_AVG_WINDOW",
     "AGENT_CONN_DOWN_AFTER_FAILS",
     "AGENT_CONN_HEALTH_ENABLED",
     "AGENT_CONN_HEALTH_TICK_SEC",
@@ -58,6 +59,9 @@ __all__ = [
     "AGENT_INLINE_INSIGHT_ON_ASK",
     "AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH",
     "AGENT_INSIGHT_MODEL",
+    "AGENT_INSIGHT_TABLE_GROUPING_ENABLED",
+    "AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS",
+    "AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX",
     "AGENT_NODE_ANALYSIS_MODEL",
     "AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT",
     "AGENT_INSIGHT_OBJECT_FASTPATH",
@@ -869,6 +873,19 @@ AGENT_SCHEMA_INSIGHT_MAX_COLS = int(os.getenv("AGENT_SCHEMA_INSIGHT_MAX_COLS", "
 AGENT_TABLE_INSIGHT_MAX_COLS = int(os.getenv("AGENT_TABLE_INSIGHT_MAX_COLS", "15"))
 AGENT_SCHEMA_INSIGHT_RESCAN_SEC = int(os.getenv("AGENT_SCHEMA_INSIGHT_RESCAN_SEC", "3600"))
 AGENT_TABLE_INSIGHT_RESCAN_SEC = int(os.getenv("AGENT_TABLE_INSIGHT_RESCAN_SEC", "3600"))
+# feature-0002 insight-table-grouping (2026-07-03): 동일 구조(컬럼 지문) + 동일 이름-family
+# (날짜/번호 suffix 만 다른) 테이블을 한 그룹으로 묶어 대표 1개만 LLM 분석하고, 나머지 형제는
+# LLM 없이 인사이트를 전파(fan-out)한다. 날짜 샤드(daily_league_ranking_1_20250727,
+# _20250726 …) 수백 개를 개별 LLM 분석하던 낭비 제거(사용자 결정 2026-07-03). per-table
+# table_insight fact 는 그대로 유지 → grounding(NL→SQL) 무회귀. 그룹 대표의 분석 dict 는
+# table_group_insight:<fp>:<stem> KV 에 캐시되어 다음 cycle 의 신규 샤드가 LLM 없이 상속한다.
+AGENT_INSIGHT_TABLE_GROUPING_ENABLED = (
+    os.getenv("AGENT_INSIGHT_TABLE_GROUPING_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+)
+# 그룹으로 인정할 최소 멤버 수(이 미만은 기존 per-table 동작 그대로 — 무회귀 보장).
+AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS = int(os.getenv("AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS", "2"))
+# 한 cycle 에서 LLM 없이 fan-out(전파)할 테이블 상한(budget_sec 와 함께 이중 상한 — spike 방지).
+AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX = int(os.getenv("AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX", "200"))
 AGENT_SUMMARY_REFRESH = os.getenv("AGENT_SUMMARY_REFRESH", "1").strip().lower() in ("1", "true", "yes")
 AGENT_SUMMARY_REFRESH_EVERY = int(os.getenv("AGENT_SUMMARY_REFRESH_EVERY", "1"))
 AGENT_SUMMARY_MAX_RECENT = int(os.getenv("AGENT_SUMMARY_MAX_RECENT", "8"))
@@ -1031,6 +1048,12 @@ AGENT_CONN_SLOW_MS = max(1, int(os.getenv("AGENT_CONN_SLOW_MS", "1000") or "1000
 # 끊김 판정 임계 — 연속 연결 실패가 이 횟수 이상이면 unstable(빨강) 이 아니라 down(회색, "연결 끊김").
 # 1회성 blip 은 unstable 로 두고(간헐 불안정), 반복 실패해야 끊김으로 확정(flapping 방지).
 AGENT_CONN_DOWN_AFTER_FAILS = max(1, int(os.getenv("AGENT_CONN_DOWN_AFTER_FAILS", "2") or "2"))
+# 평균 연결 응답 시간 window(표본 수) — 백그라운드 모니터가 성공 probe 마다 측정한 elapsed_ms 를
+# 이 개수만큼 rolling 으로 보관해 산술평균(관리 콘솔 데이터소스 상세 패널의 "연결 응답 시간(평균)")을
+# 낸다. 마지막 1회 값(last_elapsed_ms)은 순간 변동(다른 워크로드·GC blip)에 흔들려 대표성이 약하므로
+# 최근 N회 평균이 데이터소스별 상시 연결 품질을 더 안정적으로 나타낸다. 실패 probe 는 응답시간 의미가
+# 없어 표본에서 제외. 1 이상(0/음수 입력은 1 로 클램프 — 사실상 마지막값과 동일).
+AGENT_CONN_AVG_WINDOW = max(1, int(os.getenv("AGENT_CONN_AVG_WINDOW", "20") or "20"))
 # ── MySQL 커넥션 풀 (TASK-0144, opt-in / 기본 OFF / 폴백 안전) ──────────────
 # 기본 비활성(False) → db.connect() 가 기존 connect-per-request 경로 그대로 사용
 # (동작 0 변경). True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서

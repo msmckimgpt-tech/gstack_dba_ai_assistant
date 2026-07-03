@@ -981,8 +981,124 @@ MODIFY CHG-20260703-node-role-viz.
       절대이동 + dragend 재정합으로 1-frame lag 제거).
 - [x] T41.4 검증: `node --check` PASS + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 번들 실측 4축 BLOCKING 0) + **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 실측** —
       Test A(중간버튼 팬: 노드 월드 [0,0] + 화면 팬) PASS, Test B(좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]) PASS.
+- [x] T41.5 배포 완료(PR #571 머지 → 29c3a07c): `make deploy-web` 무중단 롤링(web-a/b `29c3a07c`, one-at-a-time, soak 90s 통과). 마이그레이션 pending 0(0032==head, graphux6 선적용). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz `status:ok git_commit=29c3a07c mysql_ok/pg_ok:true`, 라이브 admin.js graph-drag 심볼 12·role 심볼 2(병합 보존)·admin.html 버스터 `admin.js?v=20260703-graph-drag`. 실 Windows 육안은 머지 전 PB-0008 PASS(Test A/B)로 갈음(무인 라우팅 3중벽).
 - [ ] T41.5 배포(deploy_scope: included): main 병합 → web-a/web-b 재배포(cache-buster `admin.js?v=20260703-graph-drag`).
 
+## 42. graph-simgroups — 유사 속성 그룹 블록: 스키마 클러스터 내부를 배경 박스+헤더의 가시적 영역으로 분할 (2026-07-03, 사용자 요청)
+사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰, graph-rel-layout 후속): 관계 순서 배치만으로는 여전히 낮은
+가시성 — "각 테이블이 서로 유사한 속성끼리 배치되도록(속성 또한 범위가 가시적으로 나타나도록) 근본적인 개선".
+군집을 '순서'가 아니라 **'영역'** 으로 승격: 유사 속성 그룹을 색 배경 박스 + 헤더 칩(스템 라벨 + 개수)으로
+렌더. 정본: MODIFY CHG-20260703-graph-simgroups / DECISIONS ADR-013.
+등급: **Minor~Major**(프론트 배치·표현 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
+
+### 42.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`: 신규 `_metaSimFamilies`(이름 affix family, 4~16자
+  접두/접미 토큰 지원도×길이 스코어)·`_metaSimGroups`(family → 관계 attach → 역할 → 기타, 싱글턴 흡수,
+  그룹 seriation + 그룹-간 barycenter — `_metaRelSchemaOrder`/`_metaRelOrderAll` 컨테이너 재사용)·
+  `_META_GROUP_TINTS`(연틴트 8종) + `_metaG6Build` 그룹 블록 레이아웃(packGroup 2-pass masonry + 블록
+  shelf-pack, place `{it,lx,top}` 정규화) + GB:/GH: 장식 노드(클릭·ctx·드래그 무시) + 클러스터 상세 목록
+  그룹 헤딩.
+- `admin.html`(캡션 + cache-buster `20260703-graph-simgroups`) / `styles.css`(`.amgr-ct-group`).
+- AC: (a) 그룹 <2 스키마·terms = 기존 평면 masonry 그대로(회귀 0) (b) 그룹 ≥2 → 배경 박스·헤더로 영역
+  가시화, bg 무겹침·칩 소속 박스 내 포함·칩 무겹침 (c) 결정론·펼침-불변(배정 x 고정, push-down 만)
+  (d) 실측 fixture(gunzgame 68 테이블·145 관계)에서 유의미 그룹(character·item·shop·mission·clan 류).
+
+### 42.2 구현
+- [x] T42.1 `_metaSimFamilies` — 정규화(소문자·view_ 제거) 접두/접미 토큰(4~16자) 지원도 집계, per-table
+      best = 지원도×길이 최대(동률 사전순), 지원도 ≥2 만.
+- [x] T42.2 `_metaSimGroups` — ① 이름 family(≥2) ② 무family → 관계 가중 최대 family 1-pass attach
+      ③ 역할 family ④ 기타(싱글턴 흡수·항상 후미). 그룹 순서 = 크기 desc → 관계 seriation(misc 제외),
+      그룹 내 순서 = 컴포넌트 BFS + 그룹-간 barycenter(_metaRelOrderAll 재사용). 라벨 = 멤버 실명 최장
+      공통 접두/접미(자연 스템) + 방향 말줄임(`character…`/`…shop`).
+- [x] T42.3 그룹 블록 레이아웃 — packGroup(그룹 내부 1~3열, Pass1 collapsed 배정=펼침-불변 / Pass2 실높이
+      push-down) + 블록 shelf-pack(행 배정=폭만, 행 y=실높이 누적) + 클러스터 place 정규화 `{it,lx,top}`
+      (평면/그룹 공용 렌더 루프).
+- [x] T42.4 GB:(배경 박스, 틴트 8종 순환, zIndex -2)·GH:(헤더 칩 `라벨 · n`, zIndex -1) 장식 노드 +
+      클릭/ctx/드래그 핸들러 GB:/GH: 무시(비상호작용·박스-칩 분리 방지).
+- [x] T42.5 클러스터 상세 목록 그룹 헤딩(`.amgr-ct-group`, 캔버스와 동일 그룹) + 캡션 범례 문구 +
+      cache-buster admin.js/styles.css `20260703-graph-simgroups`.
+
+### 42.3 검증
+- [x] T42.6 격리 테스트(실 _metaG6Build Node 구동, 실측 gunzgame fixture) **25/25 PASS**: family 유의미성·
+      그룹 무결성(전량 1회 커버·misc 후미·싱글턴 흡수)·bg 무겹침·칩 1-bg 포함·칩 무겹침·헤더 포함·결정론·
+      펼침-불변(x 불변·무상승·펼친 후 무겹침)·평면 폴백(그룹<2 → GB: 0)·엣지 조립 보존(GB/GH 끝점 0)·
+      빌드 5.1ms. `node --check` PASS.
+- [x] T42.7 §18.8 적대 리뷰(ultracode workflow 4축 + 2-refuter) + verify-completion. 패널이 Fable 5 사용량 한도로
+      refuter 17개 조기 종료 → 미검증 findings 를 (Opus 전환 후) **직접 코드 판정**. 확정·수정 4건: ① [MAJOR]
+      GB:/GH: 그룹 박스가 펼친 클러스터 내부를 덮어 combo 배경 클릭·우클릭(클러스터 상세·스키마 메뉴)을
+      데드존화 → 박스 클릭=클러스터 상세·우클릭=스키마 메뉴로 위임(드래그는 여전히 불가). ② [MAJOR] 2차 관계
+      attach 가 갱신 중 famOf 를 읽어 입력순서 의존 연쇄 → 1차 스냅샷 `fam1` 에서만 읽어 무연쇄 보장. ③ [MINOR]
+      `view` 접두 정규화가 "viewer…"를 절단 → `view_`(구분자) 접두만 제거하는 공용 `_metaViewNorm`. ④ [NIT]
+      패널 그룹 헤딩 aria-hidden 제거 + role="group"/aria-label 노출 + 80행 캡 그룹경계 절단·(shown/n) 표식.
+      기각: 방향 말줄임 탈락(반박됨 — 의미상 정당), role 재편(ADR-012 데이터-수렴 철학·misc→role 1회 전이로
+      국한, 문서화 유지). errored geo/interact 축은 직접 검증(G6 style 키 vendored 지원·packGroup 빈배열 방어·
+      GB/GH 가 nodes/stateCache/tableDeps 미유입). 회귀 방지 t10~t12 추가 → 25/25. 정본: REVIEW
+      REV-20260703T043659-ai-claude-corp-feature-0016-graph-simgroups.
+- [x] T42.8 배포(web-a/b `abc78b00` 무중단 롤링·soak, deploy_scope: included) + **PB-0008 실 Windows 라이브
+      시각검증 PASS**: 그룹 박스 22 + 헤더 칩 22(item·21/character·17/account·6/…) 렌더·영역 가시성·GB 클릭
+      클러스터 상세 위임(데드존 수정 실증)·패널 그룹 헤딩 aria·컬럼 펼침11/접기 REFERENCES 145→145·검색 정상·
+      pageerror 0. 상세 TEST.md POST-DEPLOY Run.
+
+## 43. graph-product-cat — 제품(Products) 단위 카테고리 구분 (2026-07-03, 사용자 요청 — 3대 개선 中 A)
+
+- Related Requirement: 사용자 요청 "구분해둔 제품(Products)에 따른 카테고리 단위로 구분이 가능하도록 구성".
+  entry persona dispatch(A→C→B 순차 연속 완주, 크로스-DB=크로스-데이터소스 결정). 정본: DECISIONS ADR-014.
+- 등급: **Major** (신규 API mode + 프론트 신규 진입 경로, 비파괴·마이그레이션 없음). deploy_scope: included.
+- 배경(코드 실측): 그래프 모델은 `Product`/`Datasource` 라벨·`USES` 엣지를 **예약만** 하고 `sync_graph` 가
+  실제 생성 안 함(Schema→Table→Column+REFERENCES 만 투영). 프론트는 scope 선택이 데이터소스 단위뿐이고
+  Product 노드는 `_META_TERMS_COMBO`("용어·기타")로 흘러감. 관계형 SSOT(MySQL `WebProducts`·
+  `WebProductDatasources` N:M·`WebProductDatabases`)는 완비. 그래프는 Postgres `agent_kb` → MySQL SSOT 는
+  투영 API(web-ui, MySQL 접근) 계층에서 **질의시점 합성**(AGE 저장 불필요·마이그 회피·"projection" 원칙 정합).
+
+### 43.1 백엔드 (admin_metadata.py — 투영 API 제품 모드, MySQL 합성)
+- [x] T43.1 `admin_metadata_graph` 에 `conn=Depends(app.get_conn)` 추가 + 신규 분기:
+  `?mode=products` → 전체 활성 제품, `?product=<id>` → 단일 제품. `_pg_connect_ro()` 이전에 early-return(PG 불필요).
+- [x] T43.2 헬퍼 `_product_overview_graph(conn, product_id=None)`: `Product`(key=`product:<id>`)+`Datasource`
+  (key=`ds:<scope_key>`) 노드 + `USES` 엣지 합성. 브리지 `_list_product_datasources → datasource_key →
+  _dsr.resolve → _dsr.scope_key`. 중복 datasource dedup(여러 제품 공유 가능).
+- [x] T43.3 헬퍼 `_products_for_scope(conn, scope_key)`: 역방향 맵(scope_key→제품 목록). datasource-scoped
+  응답 meta 에 `products` 필드로 반환(그 데이터소스를 쓰는 제품 배너용).
+
+### 43.2 프론트 (admin.js + admin.html + cache-buster)
+- [x] T43.4 제품 개요 진입 = **툴바 "🗂 제품 카테고리" 버튼 + 그래프 랜딩 전환**(공유 scope select 오염 회피 —
+  select 는 datasource 전용 유지, 리뷰 근거로 optgroup 재구성 대신 채택). 랜딩(공용/미선택)이 제품 개요.
+- [x] T43.5 `_metaGraphLoadRoots` 분기: `__products__`/`product:<id>` → `?mode=products`/`?product=<id>` 로드
+  (mode="products"). 그 외 기존. datasource-scoped 응답의 `products` → 상태 배너.
+- [x] T43.6 `_metaG6Build` 상단 **제품 개요 전용 early-return**(mode==="products"): Product(좌열)·Datasource
+  (우열) rect 노드 2-열 결정론 배치 + USES 엣지, combo 미사용(기존 스키마 masonry 무간섭·저위험).
+- [x] T43.7 `_metaGraphOnNodeClick` 에 `ds:` 노드 클릭 → scopeKey=그 scope 로 drill(`_metaGraphLoadRoots`),
+  `product:` 노드 클릭 → 그 제품으로 필터. cache-buster `20260703-graph-product-cat`.
+
+### 43.3 검증
+- [x] T43.8 격리 테스트(합성 그래프 노드/엣지 무결성) + `node --check` admin.js.
+- [x] T43.9 §18.8 적대 리뷰(합성 정합·권한·XSS·회귀) + verify-completion.
+- [x] T43.10 배포(web 롤링) + **PB-0008 실 Windows 시각검증**(제품 개요 렌더·datasource drill·배너).
+
+## 44. graph-freeplace — 그래프 클러스터 자유 배치 상호작용 복원 (2026-07-03, 사용자 회귀 보고)
+
+- Related Requirement: 사용자 후속 보고 — "테이블 컨텐츠 카테고리(분류) 구성 패널 상호작용 누락: [분류 접기/펼치기]·
+  [분류 drag&drop 위치 이동]·[분류 내부 노드 이동 반응형 크기 조정]이 모두 사라짐. 데이터소스 선택 후 스키마 클러스터
+  화면." 정본: DECISIONS ADR-015 / MODIFY CHG-20260703T101622.
+- 등급: **Major** (프론트 상호작용 재구현, 검증된 G6 렌더러 코어 place-loop 편집). 비파괴·마이그레이션 없음.
+- 근본원인(조사): abc78b00(graph-simgroups, 상호작용 정상 T42.8) 이후 admin.js 변경 2건(ds-avg-latency=데이터소스 패널만·
+  graph-product-cat=제품모드만)은 클러스터 상호작용 코드 미변경 → **내 회귀 아님**. ADR-004 Cytoscape→G6 결정론 배치가
+  자유배치(드래그 위치유지·리사이즈)를 미이관한 feature gap(사용자 "재구현" 결정).
+
+### 44.1 구현 (admin.js frontend-only)
+- [x] T44.1 state: `clusterOffset`(comboId→{dx,dy}) + `nodePos`(nodeId→[x,y]) + resetModel clear.
+- [x] T44.2 drag: `_metaComboDragStart`/`_metaComboDragEnd`/`_metaClusterDragCommit`/`_metaClusterOffsetAccumulate`
+  (combo·접힌 카드 → clusterOffset 누적) + `_metaNodeDragEnd`(테이블/용어 → nodePos, 컬럼 제외) +
+  `_metaNodeDragStart` SC: 시작 기록 + combo:dragstart/dragend 바인딩.
+- [x] T44.3 build: clusterOffset → L.x0/L.y0 가산(shelf-packing 후, 클러스터 전체 이동) + place-loop nodePos
+  델타로 테이블+종속 시프트(`const`→`let`).
+- [x] T44.4 접기/펼치기(#1) 유지 · combo auto-fit 반응형 리사이즈(#3) · cache-buster `20260703-graph-freeplace`.
+
+### 44.2 검증
+- [x] T44.5 `node --check` PASS.
+- [x] T44.6 §18.8 적대 리뷰(REV-20260703T101622): 좌표프레임·offset수학·drag pairing·회귀 6축 → MAJOR 1(nodePos가
+  clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
+- [x] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
+  회귀 접기/펼치기). 라이브 canvas 드래그 자동화 곤란 → 실 Windows 확인 게이트.
 ## 45. graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프 뷰/AI 능동 분석 UX 4건 (2026-07-03, entry persona dispatch)
 
 REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메타데이터 > 그래프 뷰):

@@ -375,6 +375,77 @@ SPAN=4096 은 1D 층간 역전을 되레 증가(59→74)시켜 기각 — ADR-01
 - 회귀 스팟: 이웃 확장(`_metaGraphExpand`) nodes 125→133 정상 병합·pageerror 0 · 검색 모드
   (`_metaGraphSearch('character')`) 스키마 카드 badge 매칭 정상·pageerror 0.
 
+## graph-simgroups — 유사 속성 그룹 영역화 (ADR-013, 2026-07-03)
+
+### Node 격리 (Environment: CLI, node — 실 _metaG6Build 구동 + 실측 fixture) — Run 2026-07-03 **25/25 PASS**
+admin.js 에서 _metaG6Build + 의존 25종을 소스 추출해 실측 gunzgame fixture(테이블 68·관계 145, SSOT 조회)로
+구동: ① family 유의미성(character·shop suffix·cash 스템) ② 그룹 무결성(전량 1회 커버·misc 후미·싱글턴 흡수)
+③ 배경 박스 상호 무겹침·모든 칩 중심이 정확히 자기 그룹 박스 1개 안·헤더 박스 내 포함 ④ 칩 무겹침(68/68)
+⑤ 결정론(2회 JSON 동일) ⑥ 펼침-불변(컬럼 3개 펼침 → 전 칩 x 불변·무상승·펼친 후 무겹침) ⑦ 평면 폴백
+(유사성 없는 3 테이블 스키마 → GB: 0, 기존 masonry) ⑧ 엣지 조립 보존(REFERENCES 승격 유지·GB/GH 끝점 0)
+⑨ 빌드 평균 7.5ms + §18.8 수정 회귀방지 ⑩ view norm 가드(viewer 미절단·view_ 절단) ⑪ 2차 attach 무연쇄(fam1 스냅샷) ⑫ GB:/GH: 클릭 클러스터 상세 위임. `node --check` PASS. 그룹 산출: character(14) item(17) characterinfo(4) battletimereward…(4)
+…shop(3) mission(4) clanmember(3) attendence(3) account(3) 등 13 + 기타(2).
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 배포 후 라이브 Run 을 본 섹션에 append (§15.4.1)
+본 cycle 은 deploy_scope: included 로 merge 직후 web 배포 → 라이브 그래프 뷰(gunzgame 등)에서 ① 유사 속성
+그룹 배경 박스·헤더 칩 렌더 ② 영역 단위 가시성(칩 나열 대비) ③ 컬럼 펼침/접기·테이블 드래그·검색·역할칩
+회귀 0 을 실 Windows Chrome 으로 육안 확인 예정. (pre-commit 시점 미수행 사유: 배포 선행 — deploy-web.sh 는
+origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 데이터 규모 필요.)
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-03 PASS (POST-DEPLOY)**
+배포 web-a/b `abc78b00`(무중단 롤링·soak 통과) 후 실 Windows Chrome/149(relay `http://172.26.144.1:9223`,
+`https://localhost/admin` 인증 세션)로 그래프 뷰(mysql-gz-dev · gunzgame 스키마 펼침, 테이블 115) 검증:
+- 신 자산 강제 로드: `admin.js?v=20260703-graph-simgroups` 서빙 + `_metaSimGroups` 정의 확인.
+- **① 유사 속성 그룹 박스·헤더(핵심)**: 캔버스에 **그룹 배경 박스 22개 + 헤더 칩 22개**(스템 라벨·개수) 렌더 —
+  item·21 / character·17 / account·6 / battletimereward… / …grade·2 / blitzkrieg…·4 / …ranking·3 / mission·5 /
+  …type(currencytype·gametype·renttype·servertype) / attendence 등. 테이블 칩 115개가 각 그룹 박스로 구획.
+  (스크린샷 simgroups-01-boxes.png, 02-detail.png)
+- **② 영역 단위 가시성**: "균일 칩 평면 나열"이 색 배경 박스 + 라벨 헤더로 영역화 — 유사 속성 범위가 시각적으로 노출.
+- **③ GB/GH 데드존 수정(§18.8 MAJOR 실증)**: 그룹 배경 박스 클릭 → 클러스터 상세 패널 렌더(스키마 클러스터
+  표기)·상세 목록에 그룹 헤딩 43개 + role="group" aria + (shown/n) 절단표식 노출. pageerror 0.
+- **④ 회귀 0**: account 컬럼 펼침 11개(이웃확장 경로) · 컬럼 접기 후 REFERENCES **145→145 보존**(§38) ·
+  검색 모드(`_metaGraphSearch('character')`) 정상 진입 · 전 경로 pageerror 0.
+
+## graph-product-cat — 제품(Products) 단위 카테고리 (ADR-014, TASK §43, 2026-07-03)
+
+### 케이스
+- TC-43-1 (백엔드 합성): `?mode=products` 가 활성 제품마다 `Product`(key=`product:<id>`) 노드 + 바인딩
+  datasource 마다 `Datasource`(key=`ds:<scope_key>`) 노드(dedup) + `USES` 엣지를 반환. `?product=<id>` 는 단일 제품.
+- TC-43-2 (read-axis 정합): 합성 datasource key 의 scope 가 datasource-scoped 그래프 read 축(`scope_key or 라벨`)과
+  일치 — `ds:` drill 이 실 스키마 그래프를 로드(빈 그래프 아님). DB-등록=해시·.env=라벨 양쪽.
+- TC-43-3 (배너): datasource 진입(scope_roots/schemas) 응답 `products` 필드로 소속 제품명 상태 배너 표시.
+- TC-43-4 (프론트 렌더): 제품 개요 진입 시 `_metaG6BuildProducts` 2-열(Product 좌·Datasource 우) + USES 엣지,
+  datasource 노드 클릭 → 그 데이터소스 스키마 그래프 drill, Product 클릭 → 단일 제품 focus.
+- TC-43-5 (회귀): datasource/schema 그래프 경로·검색·이웃 무영향. 권한 `metadata.graph.read` 보존. mutation 0.
+
+### Run (2026-07-03) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS** · `ast.parse admin_metadata.py` **PASS**.
+- 격리 pytest(repo-agent 이미지 + worktree 마운트, PYTHONDONTWRITEBYTECODE=1): `test_permission_dependency_map.py`
+  + `test_metadata_graph_units.py` **28 PASS**(DI 권한 맵·metadata_graph 단위 무회귀 — 엔드포인트에 `conn=Depends`
+  추가가 권한 게이트·투영 모듈 불변 확인).
+- §18.8 적대 리뷰(general-purpose): read-axis MAJOR + 비숫자 product NIT 반영 후 PASS-WITH-FIXES (REV-20260703T091737).
+- **POST-DEPLOY 실 Windows 브라우저(PB-0008) = PASS(2026-07-03, 배포 `4f34e5fa`)**: 실 Windows Chrome 실측 —
+  제품 개요 "제품 카테고리 15개 · 데이터소스 18개" 렌더(Product/Datasource 노드 + USES 엣지 + 툴바 버튼) · datasource
+  drill(`mssql-dk-dev`) → **스키마 11개**(비어있지 않음 = read-axis fix 실증) + 제품 배너 "제품: DK온라인 - 개발" ·
+  pageerror 0. 정본 Run: feature-0003 TEST.md §3 `Environment: Windows-browser`(스크린샷 pb0008-product-overview.png).
+
+## graph-freeplace — 클러스터 자유 배치 상호작용 복원 (ADR-015, TASK §44, 2026-07-03)
+
+### 케이스
+- TC-44-1 (#2 클러스터 드래그): combo 또는 접힌 스키마 카드를 드래그 → clusterOffset 누적 → 클러스터 전체(카드·테이블·
+  컬럼·장식) coherent 이동 + 펼침/접기 rebuild 후 위치 유지.
+- TC-44-2 (#3 노드 이동 반응형 리사이즈): 클러스터 내부 테이블 드래그 → nodePos 기록 → 테이블+종속(컬럼·"X:") 델타 시프트 +
+  combo auto-fit 리사이즈 + rebuild 유지.
+- TC-44-3 (#1 접기/펼치기): 스키마 카드↔펼친 combo 전환 유지(회귀 0).
+- TC-44-4 (정합 불변식): 테이블 개별 이동 후 클러스터 통째 이동 → 그 테이블도 동반(분리 없음, 리뷰 MAJOR fix).
+- TC-44-5 (리셋): 스코프 전환·초기화 버튼 → clusterOffset/nodePos clear(결정론 배치 복귀).
+
+### Run (2026-07-03) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS**.
+- §18.8 적대 리뷰(general-purpose, 6축): 좌표프레임 정합(getElementPosition=center=build tx/ty, 점프 없음)·offset 수학·
+  drag pairing·G6 combo drag 확인. MAJOR 1(nodePos override 분리) + NIT 1(컬럼 dead) 반영 → PASS-WITH-FIXES (REV-20260703T101622).
+- **POST-DEPLOY 실 Windows 브라우저(PB-0008)**: 배포 후 4-상호작용 수동 검증 예정(접힌 카드 드래그·combo 드래그·테이블 드래그+
+  펼침·접기/펼치기 회귀) — feature-0003 TEST.md §3 `Environment: Windows-browser`. 라이브 canvas 드래그 자동화 곤란 → 실 Windows 게이트.
 ## graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프/능동분석 UX 4건 (2026-07-03, TASK §45 / ADR-016·017)
 
 ### 단위 — tests/test_graph_funcproc_uxfix.py (Environment: unit/pytest, DB 불요) — Run 2026-07-03 **19 PASS** (§18.8 패널 수정 반영 후)

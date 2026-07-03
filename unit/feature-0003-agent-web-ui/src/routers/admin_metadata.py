@@ -946,11 +946,105 @@ def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app
                         resource_id=int(desc_id), change_json={"scope_key": scope_key})
     return JSONResponse({"ok": True, "id": int(desc_id), "deleted": int(affected)})
 
+
+# ── graph-product-cat (feature-0016 §43): 제품(Products) 단위 카테고리 투영 ──────────────
+#   그래프(AGE)는 Postgres `agent_kb` 에 있고 Product↔Datasource SSOT 는 MySQL(`WebProducts`·
+#   `WebProductDatasources`)에 있다. AGE 에 Product/Datasource 노드를 물리 저장하는 대신, 투영 API 가
+#   **질의시점에 MySQL SSOT 로부터 합성**한다("projection" 원칙 정합 — 마이그레이션·이중 정합 회피).
+#   브리지: product → _list_product_datasources → datasource_key → shared.datasources.resolve → scope_key
+#   (= 그래프 scope). scope_key 는 그대로 datasource-scoped 그래프(scope_roots/schemas)의 진입 키.
+def _product_overview_graph(conn, product_id=None) -> dict:
+    """활성 제품(product_id 지정 시 단일) + 바인딩 Datasource 노드 + USES 엣지 합성.
+
+    노드: Product(key=`product:<id>`) · Datasource(key=`ds:<scope_key>`, scope_key 로 drill).
+    여러 제품이 같은 datasource 를 공유할 수 있어 Datasource 노드는 dedup(엣지는 각 제품마다)."""
+    from shared import datasources as _dsr
+    try:
+        products = app._list_products(conn)
+    except Exception:
+        products = []
+    if product_id is not None:
+        products = [p for p in products if int(p.get("id") or 0) == int(product_id)]
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ds: set[str] = set()
+    for p in products:
+        pid = int(p.get("id") or 0)
+        if pid <= 0:
+            continue
+        pkey = "product:%d" % pid
+        ds_list = p.get("datasources") or []
+        nodes.append({
+            "label": "Product", "key": pkey,
+            "name": p.get("name") or p.get("product_key") or ("제품#%d" % pid),
+            "fqn": p.get("product_key") or "", "scope_key": "",
+            "product_key": p.get("product_key") or "", "datasource_count": len(ds_list),
+        })
+        for d in ds_list:
+            dsk = d.get("datasource_key")
+            if not dsk:
+                continue
+            try:
+                ds = _dsr.resolve(conn, dsk)
+            except Exception:
+                ds = None
+            # read-axis 정렬(§43 리뷰 MAJOR): 그래프 scope 는 admin_datasources 가 노출하는 read 축
+            #   `scope_key or key`(DB-등록=엔드포인트 해시, .env 레거시=라벨)여야 drill-down 이 실 그래프와 일치한다.
+            #   `_dsr.scope_key(ds)` 는 .env 도 해시로 계산해 read 축(라벨)과 어긋나 빈 그래프를 부른다 — 금지.
+            sk = ((ds.get("scope_key") if ds else None) or str(dsk).strip().lower())
+            if not sk:
+                continue
+            dnode = "ds:%s" % sk
+            if dnode not in seen_ds:
+                seen_ds.add(dnode)
+                nodes.append({
+                    "label": "Datasource", "key": dnode,
+                    "name": (ds.get("name") if ds else None) or dsk,
+                    "fqn": sk, "scope_key": sk, "datasource_key": str(dsk).strip().lower(),
+                })
+            edges.append({
+                "id": "uses:%d:%s" % (pid, sk), "type": "USES",
+                "source": pkey, "target": dnode, "status": "",
+                "data": {"is_primary": bool(d.get("is_primary"))},
+            })
+    return {"nodes": nodes, "edges": edges}
+
+
+def _products_for_scope(conn, scope_key) -> list[dict]:
+    """그래프 scope(=datasource scope_key)를 사용하는 제품 목록(배너용). common/미지정은 []."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk or sk == "common":
+        return []
+    from shared import datasources as _dsr
+    try:
+        products = app._list_products(conn)
+    except Exception:
+        return []
+    out: list[dict] = []
+    for p in products:
+        for d in (p.get("datasources") or []):
+            dsk = d.get("datasource_key")
+            if not dsk:
+                continue
+            try:
+                ds = _dsr.resolve(conn, dsk)
+            except Exception:
+                ds = None
+            # read-axis 정렬(§43 리뷰 MAJOR): _product_overview_graph 와 동일 규약 — scope_key or 라벨.
+            rk = ((ds.get("scope_key") if ds else None) or str(dsk).strip().lower())
+            if rk == sk:
+                out.append({"id": int(p.get("id") or 0), "name": p.get("name") or "",
+                            "product_key": p.get("product_key") or ""})
+                break
+    return out
+
+
 @router.get("/api/admin/metadata/graph")
-def admin_metadata_graph(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
+def admin_metadata_graph(request: Request, account=Depends(app.require_permission('metadata.graph.read')), conn=Depends(app.get_conn)) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
 
-    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 다섯 모드:
+    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 모드:
+      - 제품:    ?mode=products / ?product=<id> → 제품(카테고리)→Datasource 개요 (MySQL SSOT 합성, graph-product-cat)
       - 이웃:    ?node=<key>&depth=1..3      → 해당 노드 k-hop (cap 적용)
       - 검색:    ?q=<부분일치>[&scope=<ds>]  → 이름/FQN CONTAINS (scope 지정 시 그 datasource 만)
       - 스키마:  ?scope=<ds>&mode=schemas    → Schema 카드 + table_count (graph-initview 경량 진입)
@@ -964,6 +1058,7 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
     scope = (request.query_params.get("scope") or "").strip() or None
     schema = (request.query_params.get("schema") or "").strip()
     mode_param = (request.query_params.get("mode") or "").strip()
+    product = (request.query_params.get("product") or "").strip()
     try:
         depth = int(request.query_params.get("depth") or "1")
     except (TypeError, ValueError):
@@ -973,6 +1068,22 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         limit = int(request.query_params.get("limit") or "50")
     except (TypeError, ValueError):
         limit = 50
+
+    # graph-product-cat (§43): 제품 카테고리 개요 — MySQL SSOT 합성(PG 불필요, early-return).
+    #   product 는 숫자일 때만 단일 제품 트리거(비숫자는 통과 → 일반 dispatch; 리뷰 NIT 방어).
+    if mode_param == "products" or product.isdigit():
+        pid = int(product) if product.isdigit() else None
+        try:
+            pdata = _product_overview_graph(conn, product_id=pid)
+        except Exception:
+            logging.getLogger(__name__).warning("admin_metadata_graph products 조회 실패", exc_info=True)
+            return app._json_error("제품 그래프 조회 실패", 503)
+        return JSONResponse({
+            "nodes": pdata.get("nodes", []), "edges": pdata.get("edges", []),
+            "mode": "products", "q": "", "node": "", "scope": product or "", "depth": 1,
+            "truncated": False, "products": [],
+            "node_count": len(pdata.get("nodes", [])), "edge_count": len(pdata.get("edges", [])),
+        })
 
     from modules import metadata_graph as _mg
     from shared.db import _pg_connect_ro
@@ -1007,12 +1118,21 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
             pg.close()
         except Exception:
             pass
+    # graph-product-cat (§43): 진입 모드(scope_roots/schemas)에서만 이 datasource 를 쓰는 제품 목록 첨부(배너용).
+    #   neighborhood/search/schema_tables 등 임계경로 모드는 skip(MySQL 왕복 절감).
+    scope_products = []
+    if scope and mode in ("scope_roots", "scope_schemas"):
+        try:
+            scope_products = _products_for_scope(conn, scope)
+        except Exception:
+            scope_products = []
     return JSONResponse({
         "nodes": data.get("nodes", []),
         "edges": data.get("edges", []),
         "mode": mode,
         "q": q, "node": node, "scope": scope or "", "depth": depth,
         "truncated": bool(data.get("truncated", False)),
+        "products": scope_products,
         "node_count": len(data.get("nodes", [])), "edge_count": len(data.get("edges", [])),
     })
 

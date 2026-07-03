@@ -183,8 +183,65 @@ def test_record_foreground_result():
 def test_snapshot_hides_coordinates():
     ch.record_foreground_result(_DS, ok=True, elapsed_ms=3.2)
     entry = ch.snapshot()[_key()]
-    assert set(entry.keys()) == {"label", "engine", "status", "last_elapsed_ms", "checked_at", "last_error", "fails"}
+    # ds-avg-latency: 평균 응답시간(avg_elapsed_ms) + 표본 수(sample_count)를 노출 집합에 추가.
+    # 좌표/비번은 여전히 비노출 — 신규 키는 timing aggregate 만이라 누출 불변식 유지.
+    assert set(entry.keys()) == {"label", "engine", "status", "last_elapsed_ms", "avg_elapsed_ms",
+                                 "sample_count", "checked_at", "last_error", "fails"}
     assert "10.9.9.9" not in str(entry) and "password" not in entry and "p" != entry.get("label")
+
+
+# ── 6b. 평균 연결 응답 시간(ds-avg-latency) ──────────────────────────────────
+def test_avg_elapsed_accumulates_over_probe_db():
+    """성공 background DB probe elapsed 가 window 산술평균으로 누적된다."""
+    key = _key()
+    for ms in (10.0, 20.0, 30.0):
+        ch._apply_result(key, _DS, True, ms, "", "probe-db")
+    e = ch._STATE[key]
+    assert e["avg_elapsed_ms"] == pytest.approx(20.0)   # (10+20+30)/3
+    snap = ch.snapshot()[key]
+    assert snap["avg_elapsed_ms"] == pytest.approx(20.0)
+    assert snap["sample_count"] == 3
+    assert snap["last_elapsed_ms"] == pytest.approx(30.0)  # 순간값은 마지막 probe
+
+
+def test_avg_window_is_bounded(monkeypatch):
+    """window(AGENT_CONN_AVG_WINDOW) 초과 시 가장 오래된 표본이 밀려나 최근 N개만 평균."""
+    monkeypatch.setattr(ch, "AGENT_CONN_AVG_WINDOW", 3)
+    key = _key()
+    for ms in (100.0, 100.0, 100.0, 40.0, 40.0, 40.0):  # 마지막 3개(40)만 남아야 함
+        ch._apply_result(key, _DS, True, ms, "", "probe-db")
+    assert ch._STATE[key]["avg_elapsed_ms"] == pytest.approx(40.0)
+    assert ch.snapshot()[key]["sample_count"] == 3
+
+
+def test_avg_excludes_failures_and_foreground():
+    """실패 probe·foreground 성공(elapsed 미측정)은 응답시간 표본에서 제외된다."""
+    key = _key()
+    ch._apply_result(key, _DS, False, 8000.0, "timeout", "probe-tcp")   # 실패 — 제외
+    ch.record_foreground_result(_DS, ok=True)                            # foreground(0.0) — 제외
+    assert ch._STATE[key]["avg_elapsed_ms"] is None
+    assert ch.snapshot()[key]["sample_count"] == 0
+    ch._apply_result(key, _DS, True, 50.0, "", "probe-db")               # 진짜 성공 probe — 포함
+    assert ch._STATE[key]["avg_elapsed_ms"] == pytest.approx(50.0)
+    assert ch.snapshot()[key]["sample_count"] == 1
+
+
+def test_avg_includes_slow_success():
+    """느린 성공(unstable)도 응답시간은 유효 — 표본에 포함된다."""
+    key = _key()
+    ch._apply_result(key, _DS, True, 1745.0, "", "probe-db")   # 성공이지만 SLOW 이상 → unstable
+    e = ch._STATE[key]
+    assert e["status"] == ch.UNSTABLE
+    assert e["avg_elapsed_ms"] == pytest.approx(1745.0)
+
+
+def test_prune_removes_samples():
+    """prune 시 상태뿐 아니라 응답시간 표본(_SAMPLES)도 정리된다(메모리 누수 방지)."""
+    key = _key()
+    ch._apply_result(key, _DS, True, 10.0, "", "probe-db")
+    assert key in ch._SAMPLES
+    ch._prune_state(set())          # keep 없음 → 전부 prune
+    assert key not in ch._SAMPLES and key not in ch._STATE
 
 
 # ── 7. db.connect_with_retry 통합 ────────────────────────────────────────────

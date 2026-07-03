@@ -2113,7 +2113,7 @@ function aiOpsActivityRowsHtml(items) {
       + dl("모델", modelDetail)
       + dl("토큰", `${_aiOpsFmtNumApg(r.prompt_tokens)} 프롬프트 · ${_aiOpsFmtNumApg(r.completion_tokens)} 완료 · <b>${_aiOpsFmtNumApg(r.total_tokens)}</b> 합계`)
       + dl("추정 비용", _aiOpsFmtUsdApg(r.cost_usd))
-      + dl("지연", _aiOpsFmtMsApg(r.latency_ms))
+      + dl("왕복", _aiOpsFmtMsApg(r.latency_ms))  // 호출 전체 왕복(생성 포함). KPI '단계 간 간격' 은 라운드 사이 gap(step_gap_ms) 별도 축.
       + dl("요청 ID", r.run_id ? `<span style="font-family:monospace;font-size:11px">${E(r.run_id)}</span>` : "—")
       + dl("연결 대화", convHtml)
       + `</div></div>`;
@@ -2231,7 +2231,7 @@ function renderAiOps(data) {
   h += `<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px">`
     + kpi("워커 정상", `${esc(k.workers_ok)}/${esc(k.workers_total)}`, "요청·인사이트 워커")
     + kpi("24시간 활동", fmtNum(a24.calls) + "회", (a24.requests || 0) + "개 요청")
-    + kpi("지연 p50 / p95", fmtMs(lat.p50_ms) + " / " + fmtMs(lat.p95_ms), (lat.measured_calls || 0) + "건 측정(계측 이후)")
+    + kpi("단계 간 간격 p50 / p95", fmtMs(lat.p50_ms) + " / " + fmtMs(lat.p95_ms), "추론 단계 사이(도구·오케스트레이션) · 다단계 요청 " + (lat.multistep_requests || 0) + "/" + (lat.agent_requests || 0) + " · 간격 " + (lat.measured_calls || 0) + "건")
     + `</div>`;
   // Attention
   const att = data.attention || [];
@@ -2244,11 +2244,11 @@ function renderAiOps(data) {
   const cats = data.categories || [];
   h += `<div style="margin-bottom:18px"><div style="font-weight:700;margin-bottom:6px">AI 활동 카테고리 (최근 ${esc(data.window_days)}일)</div>`;
   if (cats.length) {
-    h += `<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:#57606a;border-bottom:1px solid #d0d7de"><th style="padding:4px 6px">카테고리 / 활동</th><th style="padding:4px 6px">호출</th><th style="padding:4px 6px">토큰</th><th style="padding:4px 6px">추정 비용 · p95</th></tr></thead><tbody>`;
+    h += `<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:#57606a;border-bottom:1px solid #d0d7de"><th style="padding:4px 6px">카테고리 / 활동</th><th style="padding:4px 6px">호출</th><th style="padding:4px 6px">토큰</th><th style="padding:4px 6px">추정 비용 · 간격 p95</th></tr></thead><tbody>`;
     cats.forEach((c) => {
       h += `<tr style="border-bottom:1px solid #eaeef2"><td style="padding:4px 6px"><b>${esc(c.label)}</b></td><td style="padding:4px 6px">${fmtNum(c.calls)}</td><td style="padding:4px 6px">${fmtNum(c.total_tokens)}</td><td style="padding:4px 6px">${fmtUsd(c.cost_usd)}</td></tr>`;
       (c.tasks || []).forEach((t) => {
-        const p95 = (t.p95_ms != null) ? "p95 " + fmtMs(t.p95_ms) : "";
+        const p95 = (t.p95_ms != null) ? "간격 p95 " + fmtMs(t.p95_ms) : "";
         h += `<tr style="color:#57606a"><td style="padding:2px 6px 2px 20px">· ${esc(t.label)} <span style="font-size:11px">(${esc(t.task)})</span></td><td style="padding:2px 6px">${fmtNum(t.calls)}</td><td style="padding:2px 6px">${fmtNum(t.total_tokens)}</td><td style="padding:2px 6px;font-size:11px">${esc(p95)}</td></tr>`;
       });
     });
@@ -3185,6 +3185,14 @@ const _metaGraph = {
   tableDeps: new Map(),   // graph-drag(REQ ②): Table key -> [종속 UI 노드 id](접기 "X:" ctl + 컬럼 노드). 매 _metaG6Build 재구성. 테이블 드래그 시 함께 이동.
   _drag: null,            // graph-drag(REQ ②): 진행 중 테이블 드래그 상태 {id, offs:[{id,ox,oy}]}(종속별 테이블 대비 월드 오프셋). null=비활성.
   aiPrompt: "",           // graph-funcproc(ADR-017): AI 능동 분석 hover 지침 — 세션 내 보존(상세 재렌더 시 prefill).
+  // graph-freeplace: 자유 배치 persistence(ADR-004 결정론 배치가 rebuild 마다 초기화하던 것을 복원 — 사용자 후속 회귀 보고).
+  //   clusterOffset: 스키마 클러스터(combo) 단위 사용자 드래그 누적 이동(dx,dy) — build 가 L.x0/L.y0 에 가산해 클러스터
+  //     전체(카드·테이블·컬럼·장식)를 coherent 하게 이동시키고 rebuild(펼침/접기) 후에도 유지. combo:dragend 가 누적.
+  //   nodePos: 개별 노드(주로 테이블) 사용자 드래그 최종 절대위치 — build place-loop 이 그 노드+종속을 델타 시프트해
+  //     유지 + combo auto-fit 리사이즈(#3). node:dragend 가 기록. 둘 다 resetModel(스코프 전환·초기화)에서 clear.
+  clusterOffset: new Map(),   // comboId(schema key) -> {dx, dy}
+  nodePos: new Map(),         // nodeId -> [x, y] (사용자 확정 절대 위치)
+  _comboDragStart: null,      // combo:dragstart 시 {id, x, y}(중심) — dragend 델타 산출용
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3524,9 +3532,159 @@ function _metaRelOrderAll(groups, ids, adj, schemaIdx, schemaOf) {
   return orderBySchema;
 }
 
+// ── graph-simgroups: 유사 속성 그룹 — 이름 affix family + 관계 attach + 역할 폴백 ──
+//   사용자 요청 "각 테이블이 서로 유사한 속성끼리 배치 + 속성 범위가 가시적으로": 스키마 클러스터 내부를
+//   유사 속성 그룹 블록(배경 박스 + 헤더 칩)으로 분할해, 군집이 '순서'가 아니라 '영역'으로 보이게 한다.
+//   그룹핑은 (테이블명, 관계, 역할)의 순수 함수 — 결정론·펼침-비의존(schemaExpanded 무참조).
+
+// 테이블명 affix family: 이름의 접두/접미 토큰(4~12자) 중 지원도(공유 테이블 수) ≥2 인 것에서
+//   score = 지원도×길이 최대 토큰을 family 로 채택. "view_" 접두는 정규화 시 제거(뷰는 원본 가족으로).
+//   반환: Map(tableKey → token|null). 게임 DB 처럼 구분자 없는 소문자 연접 이름에서도 동작하는 유일한
+//   실용 신호가 공유 affix 다(underscore/camel 분할은 이런 이름에 무력).
+// graph-simgroups: 테이블명 정규화 — 소문자화 + view 접두 제거(뷰는 원본 가족으로 묶기 위해).
+//   §18.8 패널 MINOR: bare "view" 를 무조건 4자 절단하면 "viewer_log"→"er_log" mangle. 구분자 있는
+//   "view_" 접두만 제거하고, 그 외 "view" 로 시작하는 실명(viewer 등)은 보존한다.
+function _metaViewNorm(t) {
+  const s = String((t && (t.name || t.key)) || "").toLowerCase();
+  return s.startsWith("view_") ? s.slice(5) : s;
+}
+function _metaSimFamilies(tables) {
+  const norm = _metaViewNorm;
+  const support = new Map();   // token -> Set(tableKey)
+  const bump = (tok, k) => { let s = support.get(tok); if (!s) { s = new Set(); support.set(tok, s); } s.add(k); };
+  tables.forEach((t) => {
+    const nm = norm(t);
+    const L = Math.min(nm.length, 16);   // 16자: battletimereward 류 긴 스템 보존(12는 중간 절단)
+    for (let l = 4; l <= L; l++) { bump(nm.slice(0, l), t.key); if (l < nm.length) bump(nm.slice(nm.length - l), t.key); }
+  });
+  const fam = new Map();
+  tables.forEach((t) => {
+    const nm = norm(t);
+    let best = null, bs = 0;
+    const L = Math.min(nm.length, 16);
+    const consider = (tok) => {
+      const sup = support.get(tok) ? support.get(tok).size : 0;
+      if (sup < 2) return;
+      const score = sup * tok.length;
+      if (score > bs || (score === bs && best != null && tok < best)) { bs = score; best = tok; }
+    };
+    for (let l = 4; l <= L; l++) { consider(nm.slice(0, l)); if (l < nm.length) consider(nm.slice(nm.length - l)); }
+    fam.set(t.key, best);
+  });
+  return fam;
+}
+
+// 그룹 조립: ① 이름 family ② family 없음 → 관계 가중 최대 family 로 attach ③ 역할 family ④ 기타.
+//   싱글턴 family 는 ②~④ 로 강등(1개짜리 박스 노이즈 방지). 그룹 순서 = 관계 seriation(무관계는
+//   크기 desc·라벨 natural), 그룹 내 테이블 순서 = _metaRelOrderAll 재사용(컴포넌트 군집 + barycenter —
+//   "그룹"을 컨테이너로 취급). 반환: { list: [{key,label,n,tables[]}], orderIds: [...] } (결정론).
+function _metaSimGroups(schemaId, tables, adj) {
+  const fam = _metaSimFamilies(tables);
+  const roleFam = (t) => { const r = _metaRoleOf(t.key); return r ? "role:" + r : null; };
+  // 1차 배정 + 싱글턴 판정
+  const byFam = new Map();
+  tables.forEach((t) => { const f = fam.get(t.key); if (f) { if (!byFam.has(f)) byFam.set(f, []); byFam.get(f).push(t); } });
+  const famOf = new Map();   // tKey -> famKey (확정)
+  tables.forEach((t) => {
+    const f = fam.get(t.key);
+    if (f && byFam.get(f).length >= 2) { famOf.set(t.key, "nm:" + f); return; }
+    famOf.set(t.key, null);   // 싱글턴/무family — 2차에서 attach
+  });
+  // 2차: 관계 가중 최대 family attach — **1차 확정(nm:) family 만** 부착 대상.
+  //   §18.8 패널 MAJOR: 이웃 family 를 갱신 중인 live famOf 에서 읽으면 방금 2차-배정된 이웃으로 연쇄
+  //   attach 되어 입력순서 의존 그룹이 생긴다(주석의 "무연쇄" 위배). 1차 스냅샷 fam1 에서만 읽어 연쇄 차단.
+  const fam1 = new Map(famOf);
+  tables.forEach((t) => {
+    if (famOf.get(t.key)) return;
+    const m = adj.get(t.key);
+    if (!m) return;
+    const wByFam = new Map();
+    m.forEach((w, o) => { const f = fam1.get(o); if (f) wByFam.set(f, (wByFam.get(f) || 0) + w); });
+    let best = null, bw = 0;
+    [...wByFam.keys()].sort(_metaNatSort).forEach((f) => { const w = wByFam.get(f); if (w > bw) { bw = w; best = f; } });
+    if (best) famOf.set(t.key, best);
+  });
+  // 3차: 역할 family → 기타
+  tables.forEach((t) => { if (!famOf.get(t.key)) famOf.set(t.key, roleFam(t) || "misc"); });
+  // 역할/기타 family 도 싱글턴이면 기타로 흡수 (nm: 은 2차 attach 로 커질 수 있어 유지)
+  const cnt = new Map();
+  famOf.forEach((f) => cnt.set(f, (cnt.get(f) || 0) + 1));
+  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("nm:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
+  // 그룹 리스트 + 라벨
+  const groupsBy = new Map();
+  tables.forEach((t) => { const f = famOf.get(t.key); if (!groupsBy.has(f)) groupsBy.set(f, []); groupsBy.get(f).push(t); });
+  const normNm = _metaViewNorm;   // §18.8 MINOR: view_ 만 제거(viewer 등 실명 보존) — _metaSimFamilies 와 동일 규칙
+  const commonAffix = (arr) => {   // 멤버 정규화 이름의 최장 공통 접두/접미 중 긴 쪽(≥4) — 자연 스템 라벨
+    if (!arr.length) return null;
+    const ns = arr.map(normNm);
+    let p = ns[0], sfx = ns[0];
+    ns.forEach((x) => {
+      let i = 0; while (i < p.length && i < x.length && p[i] === x[i]) i++;
+      p = p.slice(0, i);
+      let j = 0; while (j < sfx.length && j < x.length && sfx[sfx.length - 1 - j] === x[x.length - 1 - j]) j++;
+      sfx = sfx.slice(sfx.length - j);
+    });
+    const best = p.length >= sfx.length ? p : sfx;
+    return best.length >= 4 ? best : null;
+  };
+  const labelOf = (f, members) => {
+    if (f === "misc") return "기타";
+    if (f.startsWith("role:")) { const r = f.slice(5); const R = _META_ROLE[r]; return R ? R.icon + " " + R.ko : r; }
+    let tok = f.slice(3);   // nm:token
+    if (members && members.length >= 2) { const ca = commonAffix(members); if (ca && ca.length > tok.length) tok = ca; }
+    if (members && members.length) {   // 방향 말줄임 — "이 스템으로 시작/끝나는 테이블들" 범위 신호(정확 일치 멤버가 있으면 생략)
+      const ns = members.map(normNm);
+      if (!ns.some((x) => x === tok)) {
+        if (ns.every((x) => x.startsWith(tok))) return tok + "…";
+        if (ns.every((x) => x.endsWith(tok))) return "…" + tok;
+      }
+    }
+    return tok;
+  };
+  const nsKey = (f) => schemaId + "\u0001" + f;   // 그룹 키 네임스페이스(스키마별 유일, 제어문자 구분자)
+  const baseOrder = [...groupsBy.keys()].sort((a, b) => (groupsBy.get(b).length - groupsBy.get(a).length) || _metaNatSort(labelOf(a, groupsBy.get(a)), labelOf(b, groupsBy.get(b))));
+  // misc 는 항상 마지막(잡동사니가 seriation 으로 가운데 끼는 것 방지)
+  const miscIdx = baseOrder.indexOf("misc");
+  if (miscIdx >= 0) { baseOrder.splice(miscIdx, 1); baseOrder.push("misc"); }
+  const nsIds = baseOrder.map(nsKey);
+  const groupOfT = new Map();
+  groupsBy.forEach((arr, f) => arr.forEach((t) => groupOfT.set(t.key, nsKey(f))));
+  const groupOf = (tk) => groupOfT.get(tk) || null;
+  // 그룹 seriation(관계 많은 그룹끼리 인접) — misc 제외 후 재부착(항상 마지막 유지)
+  const serIds = _metaRelSchemaOrder(nsIds.filter((k) => k !== nsKey("misc")), adj, groupOf);
+  if (groupsBy.has("misc")) serIds.push(nsKey("misc"));
+  const gIdx = new Map(serIds.map((k, i) => [k, i]));
+  // 그룹 내 순서: 컴포넌트 군집 + 그룹-간 barycenter (컨테이너=그룹으로 _metaRelOrderAll 재사용)
+  const pseudo = new Map();
+  groupsBy.forEach((arr, f) => pseudo.set(nsKey(f), { isTerms: false, tables: arr, terms: [], colsByTable: new Map() }));
+  const ordered = _metaRelOrderAll(pseudo, serIds, adj, gIdx, groupOf);
+  const list = serIds.map((k) => {
+    const f = k.slice(schemaId.length + 1);
+    const arr = ordered.get(k) || groupsBy.get(f) || [];
+    return { key: k, fam: f, label: labelOf(f, arr), n: arr.length, tables: arr };
+  }).filter((g) => g.n > 0);
+  return list;
+}
+
+// 그룹 블록 시각 팔레트(연한 틴트 8종 순환 — 칩 teal·역할색과 경쟁하지 않는 저채도 배경/테두리)
+const _META_GROUP_TINTS = [
+  { bg: "#eef4fb", hd: "#dbe7f7", bd: "#b9cfe8" },
+  { bg: "#eff8f1", hd: "#dcefe1", bd: "#bcdcc6" },
+  { bg: "#fdf6ec", hd: "#f7e8cf", bd: "#e6cfa3" },
+  { bg: "#f7f0fa", hd: "#ecdcf3", bd: "#d5b9e4" },
+  { bg: "#fbf0f2", hd: "#f4dbe1", bd: "#e4b9c4" },
+  { bg: "#eef7f9", hd: "#d9edf2", bd: "#b3d8e2" },
+  { bg: "#f4f6ee", hd: "#e7ecd7", bd: "#cdd8ab" },
+  { bg: "#f3f4f7", hd: "#e3e6ec", bd: "#c6ccd8" },
+];
+
 // 모델(_metaGraph.nodes/edges) → 위치 포함 G6 데이터. 스키마 클러스터를 관계 seriation(무관계 시 자연정렬)
-// grid 로, 테이블을 클러스터 안 관계-군집 순 스택으로, 펼친 테이블의 컬럼을 그 아래 세로열로 결정론 배치(무-shuffle).
+// grid 로, 클러스터 내부는 유사 속성 그룹 블록(배경 박스+헤더, graph-simgroups)으로, 펼친 테이블의 컬럼을
+// 그 아래 세로열로 결정론 배치(무-shuffle). 그룹이 1개뿐이면 기존 평면 masonry 그대로(시각 노이즈 방지).
 function _metaG6Build() {
+  // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
+  //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
+  if (_metaGraph.mode === "products") return _metaG6BuildProducts();
   _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
   const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
   const ensureG = (id) => { if (!groups.has(id)) groups.set(id, { isTerms: id === _META_TERMS_COMBO, tables: [], terms: [], colsByTable: new Map() }); return groups.get(id); };
@@ -3576,7 +3734,35 @@ function _metaG6Build() {
     const cols = g.colsByTable.get(t.key);
     return _METLAY.TROW + ((cols && cols.length) ? cols.length * _METLAY.CROW + CDROP : 0) + _METLAY.TGAP;
   };
-  // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 배치). 자연정렬 유지.
+  // ── graph-simgroups: 그룹 블록 기하 상수 + 그룹 내부 2-pass masonry ──
+  const GHH = 26;                   // 그룹 헤더 행 높이(헤더 칩 + 상단 여백)
+  const GPX = 12;                   // 그룹 블록 내부 좌우 pad
+  const GPB = 10;                   // 그룹 블록 하단 pad
+  const GGX = 14, GGY = 16;         // 그룹 블록 간 가로/세로 간격
+  const TRW = 4 * COLW + 3 * GGX;   // 클러스터 내부 그룹 행 목표 폭(≈기존 4열 masonry 폭 유지)
+  const gInnerColsFor = (n) => (n <= 4 ? 1 : n <= 12 ? 2 : 3);
+  // 그룹 내부 masonry(기존 철학 동일): Pass1 배정=collapsed(펼침-불변), Pass2 top=실 높이 push-down.
+  const packGroup = (g, arr) => {
+    const gic = gInnerColsFor(arr.length);
+    const colBase = new Array(gic).fill(0);
+    const assigned = arr.map((it) => {
+      let c = 0; for (let k = 1; k < gic; k++) if (colBase[k] < colBase[c]) c = k;
+      colBase[c] += assignH(g);
+      return { it, col: c };
+    });
+    const colTop = new Array(gic).fill(0);
+    const inner = assigned.map(({ it, col }) => {
+      const top = colTop[col];
+      colTop[col] += realH(g, it);
+      return { it, col, top };
+    });
+    return { gic, inner,
+      w: GPX * 2 + gic * COLW,
+      h: GHH + Math.max(0, ...colTop) + GPB };   // 실 높이(펼친 컬럼 포함) — 행 y push-down 이 소비
+  };
+  // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 절대 오프셋 배치).
+  //   place 항목은 {it, lx(열 좌측 x — 클러스터 상대), top(항목 상단 y — 클러스터 상대)} 로 정규화 —
+  //   평면/그룹 두 경로가 같은 렌더 루프를 공유한다.
   const layouts = ids.map((id) => {
     const g = groups.get(id);
     // graph-initview: 스키마 카드 게이팅(모드-독립 단일소스 schemaExpanded) — 접힌 스키마는 카드로만.
@@ -3585,6 +3771,40 @@ function _metaG6Build() {
     if (!g.isTerms && !gatedTables.length && !g.terms.length) {
       return { id, g, kind: "card", w: _METLAY.CARDW, h: _METLAY.CARDH, x0: 0, y0: 0 };
     }
+    // graph-simgroups: 유사 속성 그룹 분할 — 2개 이상일 때만 그룹 블록 렌더(1개면 기존 평면 masonry 유지).
+    const simGroups = (!g.isTerms && gatedTables.length) ? _metaSimGroups(id, gatedTables, relAdj) : null;
+    if (simGroups && simGroups.length >= 2) {
+      // 그룹 블록 shelf-pack: 행 배정은 블록 폭(펼침-불변)만 소비, 행 y 는 실 높이 누적(push-down —
+      //   펼친 컬럼이 자기 블록 높이를 키우면 아래 "행"만 밀리고 좌우 이웃 블록 x 는 불변).
+      const blocks = simGroups.map((sg, gi) => Object.assign({ sg, gi }, packGroup(g, sg.tables)));
+      const rows = [];
+      { let cur = { blocks: [], w: 0 };
+        blocks.forEach((b) => {
+          if (cur.blocks.length && cur.w + b.w > TRW) { rows.push(cur); cur = { blocks: [], w: 0 }; }
+          b.bxRel = _METLAY.PADX + cur.w; cur.blocks.push(b); cur.w += b.w + GGX;
+        });
+        if (cur.blocks.length) rows.push(cur); }
+      let byy = _METLAY.PADT + 6, contentW = 0;
+      rows.forEach((row) => {
+        const rowH = Math.max(...row.blocks.map((b) => b.h));
+        row.blocks.forEach((b) => { b.byRel = byy; });
+        contentW = Math.max(contentW, row.w - GGX);
+        byy += rowH + GGY;
+      });
+      const place = [];
+      const groupsMeta = [];
+      blocks.forEach((b) => {
+        groupsMeta.push({ key: b.sg.key, label: b.sg.label, n: b.sg.n, x: b.bxRel, y: b.byRel, w: b.w, h: b.h,
+          tint: _META_GROUP_TINTS[b.gi % _META_GROUP_TINTS.length] });
+        b.inner.forEach(({ it, col, top }) => {
+          place.push({ it, lx: b.bxRel + GPX + col * COLW, top: b.byRel + GHH + top });
+        });
+      });
+      const w = _METLAY.PADX * 2 + contentW;
+      const h = byy - GGY + 16;   // 마지막 행 실 높이 포함(펼친 컬럼 auto-grow 겹침 방지 — collapsed 로 얼리지 말 것)
+      return { id, g, place, groupsMeta, w, h, x0: 0, y0: 0 };
+    }
+    // ── 평면 masonry(기존 경로): terms 클러스터 · 그룹 <2 스키마 — place 를 {it,lx,top} 로 정규화 ──
     // graph-rel-layout: 테이블 순서는 _metaRelOrderAll 사전 산정분(관계-군집+barycenter, 무관계 시 자연정렬과
     //   동일)을 그대로 소비 — 여기서 재정렬하면 같은 배열의 중복 nat-sort(§18.8 패널 MINOR). terms 만 즉석 정렬.
     const items = g.isTerms
@@ -3603,11 +3823,11 @@ function _metaG6Build() {
     const place = assigned.map(({ it, col }) => {
       const top = colTop[col];
       colTop[col] += g.isTerms ? _METLAY.TROW : realH(g, it);
-      return { it, col, top };
+      return { it, lx: _METLAY.PADX + col * COLW, top };
     });
     const w = _METLAY.PADX * 2 + ic * COLW;
     const h = Math.max(_METLAY.PADT, ...colTop) + 16;   // 실제 높이 — shelf-packer 가 소비(겹침 방지, 절대 collapsed 로 얼리지 말 것)
-    return { id, g, ic, place, w, h, x0: 0, y0: 0 };
+    return { id, g, place, w, h, x0: 0, y0: 0 };
   });
   // shelf-packing: 가변폭 클러스터를 좌→우로 채우고, 폭 초과 시 다음 행으로.
   { let cx = 0, cyy = 0, shelfH = 0;
@@ -3615,6 +3835,13 @@ function _metaG6Build() {
       if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; cyy += shelfH + _METLAY.GAPY; shelfH = 0; }
       L.x0 = cx; L.y0 = cyy; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
     }); }
+  // graph-freeplace: 사용자 드래그 클러스터 offset 을 packing 결과에 가산(렌더 위치만 — 폭 누적/행 배정엔 미개입).
+  //   L.x0/L.y0 가 카드·테이블·컬럼·장식·combo 의 공통 기준이라, 여기서 가산하면 클러스터 전체가 coherent 하게
+  //   이동하고 펼침/접기 rebuild 후에도 유지된다(자유 배치 persistence — ADR-004 결정론 배치 회귀 복원).
+  layouts.forEach((L) => {
+    const off = _metaGraph.clusterOffset.get(L.id);
+    if (off) { L.x0 += off.dx; L.y0 += off.dy; }
+  });
   const combos = [], nodes = [], edges = [];
   _metaGraph.firstElementId = null;
   layouts.forEach((L) => {
@@ -3654,14 +3881,42 @@ function _metaG6Build() {
       nodes.push({ id: "XS:" + id, type: _METtype, combo: id, data: { label: "−", kind: "schema-ctl", schema: id },
         style: _metaSchemaCtlStyle(L.x0 + L.w - 20, L.y0 + _METLAY.PADT - 26) });
     }
-    L.place.forEach(({ it, col, top }) => {
-      const colLeftX = L.x0 + _METLAY.PADX + col * COLW;
-      const tx = colLeftX + TXOFF;
-      const ty = L.y0 + top + _METLAY.TROW / 2;   // 항목(테이블/용어) 중심 y
+    // graph-simgroups: 그룹 배경 박스 + 헤더 칩 — 칩보다 먼저 push(그리기 순서) + zIndex 음수(이중 안전).
+    //   비상호작용 장식(kind: group-bg/group-hd) — 클릭·ctx·드래그 핸들러가 GB:/GH: prefix 로 무시.
+    if (L.groupsMeta) {
+      L.groupsMeta.forEach((gm) => {
+        const gx = L.x0 + gm.x, gy = L.y0 + gm.y;
+        nodes.push({ id: "GB:" + gm.key, type: _METtype, combo: id,
+          data: { kind: "group-bg", group: gm.key, schema: id },
+          style: { x: gx + gm.w / 2, y: gy + gm.h / 2, size: [gm.w, gm.h], radius: 10,
+            fill: gm.tint.bg, fillOpacity: 0.75, stroke: gm.tint.bd, lineWidth: 1.2, zIndex: -2 } });
+        const hdText = `${gm.label} · ${gm.n}`;
+        const hdW = Math.min(Math.max(46, Math.round(hdText.length * 7.2) + 18), gm.w - 16);
+        nodes.push({ id: "GH:" + gm.key, type: _METtype, combo: id,
+          data: { kind: "group-hd", group: gm.key, schema: id, label: gm.label },
+          style: { x: gx + 8 + hdW / 2, y: gy + 13, size: [hdW, 18], radius: 9,
+            fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: -1,
+            labelText: hdText, labelFill: "#273449", labelFontSize: 10.5, labelFontWeight: 600,
+            labelPlacement: "center" } });
+      });
+    }
+    L.place.forEach(({ it, lx, top }) => {
+      let colLeftX = L.x0 + lx;
+      let tx = colLeftX + TXOFF;
+      let ty = L.y0 + top + _METLAY.TROW / 2;   // 항목(테이블/용어) 중심 y
+      // graph-freeplace: 개별 노드 사용자 드래그 위치 유지(테이블은 종속 컬럼·"X:" ctl 과 함께 델타 시프트,
+      //   용어는 자기 위치). colLeftX/ty 를 옮기면 아래 컬럼(colLeftX 기반 x·ty 기반 cyCol)이 자동 동반된다.
+      //   clusterOffset(클러스터 전체) 위에 얹히는 개별 이동 — combo 는 자식에 맞춰 auto-fit(반응형 리사이즈 #3).
+      const _fp = _metaGraph.nodePos.get(it.key);
+      if (_fp && isFinite(_fp[0]) && isFinite(_fp[1])) {
+        const ddx = _fp[0] - tx, ddy = _fp[1] - ty;
+        colLeftX += ddx; tx += ddx; ty += ddy;
+      }
       if (it.label === "Routine") {
         // graph-funcproc(ADR-016): 함수(ƒ)/프로시저(⚙) 칩 — 검색 매칭 강조는 테이블과 동일 룰.
         //   §18.8 패널(NIT): isTerms 분기보다 먼저 — 스키마 세그먼트 없는 flat-scope Routine 이
         //   terms 클러스터로 강등돼도 용어 칩이 아닌 ƒ/⚙ 보라 칩으로 렌더된다.
+        //   freeplace(_fp)·simgroups 배치(lx/top)는 위 공통 시프트가 이미 반영 — Routine 도 자유 배치 유지.
         const rrel = (_metaGraph.mode === "search" && _metaGraph.searchMatchTables && _metaGraph.searchMatchTables.has(it.key))
           ? Math.max(typeof it.rel === "number" ? it.rel : 0, 0.9) : it.rel;
         const rLabel = _metaRoutineIcon(it.routine_type) + " " + (it.name || it.key);
@@ -3748,6 +4003,57 @@ function _metaG6Build() {
   // graph-initview: 렌더된 요소 id 집합(노드+combo) — setElementState/focus 가 미렌더 요소를 건드리지 않게.
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id).concat(combos.map((c) => c.id)));
   return { combos, nodes, edges };
+}
+
+// graph-product-cat(§43): 제품 카테고리 개요 전용 빌드 — Product(좌열)·Datasource(우열) rect 노드 +
+//   USES 엣지. combo 미사용(결정론 2-열 배치). 여러 제품이 공유하는 datasource 는 1개 노드로 dedup(백엔드가
+//   이미 dedup)하고 각 제품→datasource 엣지를 그린다. 노드 클릭: Datasource → 그 데이터소스 그래프로 drill,
+//   Product → 그 제품만 focus(단일 제품 개요).
+function _metaG6BuildProducts() {
+  _metaGraph.tableDeps = new Map();
+  _metaGraph.firstElementId = null;
+  const prods = [], dss = [];
+  _metaGraph.nodes.forEach((n) => {
+    if (n.label === "Product") prods.push(n);
+    else if (n.label === "Datasource") dss.push(n);
+  });
+  prods.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+  dss.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+  const nodes = [], edges = [];
+  const TOP = 40, ROWH = 66, RH = 46;
+  const PW = 240, PX = 40, DW = 230, DX = 440;   // 제품 좌열 / 데이터소스 우열
+  prods.forEach((p, i) => {
+    if (!_metaGraph.firstElementId) _metaGraph.firstElementId = p.key;
+    const cy = TOP + i * ROWH + RH / 2;
+    const cnt = (typeof p.datasource_count === "number") ? p.datasource_count : null;
+    nodes.push({ id: p.key, type: _METtype, states: _metaNodeStates(p.key),
+      data: { label: p.name || p.key, kind: "product" },
+      style: { x: PX + PW / 2, y: cy, size: [PW, RH], radius: 10,
+        fill: "#e7f4ec", stroke: _META_GRAPH_COLOR.Product, lineWidth: 1.6,
+        labelText: "🗂 " + (p.name || p.key) + (cnt != null ? "  · " + cnt : ""),
+        labelPlacement: "center", labelFill: "#1c5c39", labelFontSize: 12, labelFontWeight: 700,
+        labelMaxWidth: PW - 18, cursor: "pointer" } });
+  });
+  dss.forEach((d, i) => {
+    if (!_metaGraph.firstElementId) _metaGraph.firstElementId = d.key;
+    const cy = TOP + i * ROWH + RH / 2;
+    nodes.push({ id: d.key, type: _METtype, states: _metaNodeStates(d.key),
+      data: { label: d.name || d.key, kind: "datasource", scope: d.scope_key || "" },
+      style: { x: DX + DW / 2, y: cy, size: [DW, RH], radius: 10,
+        fill: "#eef6f1", stroke: _META_GRAPH_COLOR.Datasource, lineWidth: 1.4,
+        labelText: "🔗 " + (d.name || d.key),
+        labelPlacement: "center", labelFill: "#20603f", labelFontSize: 11.5, labelFontWeight: 600,
+        labelMaxWidth: DW - 18, cursor: "pointer" } });
+  });
+  const present = new Set(nodes.map((n) => n.id));
+  _metaGraph.edges.forEach((e) => {
+    if (!e || e.type !== "USES") return;
+    if (!present.has(e.source) || !present.has(e.target)) return;
+    edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
+      style: { stroke: "#8fbfa3", lineWidth: 1.5, endArrow: true } });   // 실선(lineDash 생략 — G6 크래시 방지)
+  });
+  _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));
+  return { combos: [], nodes, edges };
 }
 
 // graph-initview: 모델 key → 실제 렌더된 요소 id (접힌 스키마 카드는 "SC:"+key). 미렌더면 null.
@@ -3950,13 +4256,57 @@ function _metaGraphResetModel() {
   _metaGraph.schemaTruncated.clear();
   _metaGraph.firstElementId = null;
   if (_metaGraph.introspected) _metaGraph.introspected.clear();
+  // graph-freeplace: 자유 배치는 스코프 전환·초기화 시 리셋(다른 데이터소스는 다른 클러스터 — 위치 무의미).
+  //   펼침/접기(rebuild)는 resetModel 을 거치지 않으므로 그 경로에선 위치가 유지된다(핵심 요구).
+  _metaGraph.clusterOffset.clear();
+  _metaGraph.nodePos.clear();
+  _metaGraph._comboDragStart = null;
 }
 
-// 현재 선택 datasource(scope)의 진입 그래프(Schema→Table)를 로드. 'common'/미선택이면 안내.
+// graph-product-cat(§43): 제품 카테고리 개요 로드 — Product→Datasource 개요(MySQL SSOT 합성).
+//   scope='product:<id>' 면 단일 제품 focus, 그 외(common/__products__)는 전체 제품. 데이터소스 노드 클릭으로 drill.
+async function _metaGraphLoadProducts(scope) {
+  if (!_metaGraph.graph) _metaInitGraph();
+  if (!_metaGraph.graph) return;
+  const si = document.getElementById("metadataGraphSearch");
+  if (si) si.value = "";
+  _metaGraph.lastQuery = "";
+  _metaGraph.mode = "products";                 // resetModel 은 mode 를 건드리지 않음(loadRoots 와 동형 순서)
+  if (typeof _metaGraphFocusChip === "function") _metaGraphFocusChip(null);
+  _metaGraphResetModel();
+  _metaGraph.mode = "products";                 // resetModel 이후 재확정(방어)
+  const seq = _metaGraph._opSeq;
+  _metaGraphFillJump([]);
+  const s = String(scope || "");
+  const pid = s.startsWith("product:") ? s.slice("product:".length) : "";
+  const url = pid
+    ? `/api/admin/metadata/graph?product=${encodeURIComponent(pid)}`
+    : `/api/admin/metadata/graph?mode=products`;
+  _metaGraphStatus("제품 카테고리 로딩…");
+  let data;
+  try { data = await apiFetch(url); }
+  catch (err) { if (seq === _metaGraph._opSeq) _metaGraphStatus((err && err.message) || "제품 그래프 로드 실패"); return; }
+  if (seq !== _metaGraph._opSeq) return;
+  _metaGraphIngest(data.nodes || [], data.edges || []);
+  await _metaG6Apply(true);
+  if (seq !== _metaGraph._opSeq) return;
+  const np = (data.nodes || []).filter((n) => n && n.label === "Product").length;
+  const nd = (data.nodes || []).filter((n) => n && n.label === "Datasource").length;
+  _metaGraphRenderDetailEmpty();
+  _metaGraphStatus(np
+    ? `제품 카테고리 ${np}개 · 데이터소스 ${nd}개 — 데이터소스 노드를 클릭하면 그 데이터소스의 스키마 그래프로 이동합니다.`
+    : "등록된 제품이 없습니다. (관리 콘솔 > 제품 에서 등록 후 데이터소스를 바인딩하세요.)");
+}
+
+// 현재 선택 datasource(scope)의 진입 그래프(Schema→Table)를 로드. 'common'/미선택/제품 scope 는 제품 카테고리 개요.
 async function _metaGraphLoadRoots() {
   if (!_metaGraph.graph) _metaInitGraph();
   if (!_metaGraph.graph) return;
   const scope = adminState.metadata.scopeKey || "common";
+  // graph-product-cat(§43): 데이터소스 미선택(공용) 또는 제품 scope 는 제품 카테고리 개요를 랜딩으로 보여준다.
+  if (!scope || scope === "common" || scope === "__products__" || String(scope).startsWith("product:")) {
+    return _metaGraphLoadProducts(scope);
+  }
   const si = document.getElementById("metadataGraphSearch");
   if (si) si.value = "";
   _metaGraph.lastQuery = "";   // 검색 컨텍스트 종료 — 상세 유사도 배지 게이트가 참조
@@ -3964,13 +4314,6 @@ async function _metaGraphLoadRoots() {
   if (typeof _metaGraphFocusChip === "function") _metaGraphFocusChip(null);   // 중심 보기 종료(전체 복귀)
   _metaGraphResetModel();
   const seq = _metaGraph._opSeq;   // graph-perf-bg fix: resetModel 직후 세대 캡처 — await 도중 다른 reset(loadRoots/search/scope 전환) 이 _opSeq 를 올리면 이 continuation 을 폐기.
-  if (!scope || scope === "common") {
-    _metaGraphFillJump([]);   // graph-initview: 이전 scope 의 점프 옵션 stale 방지
-    await _metaG6Apply(false);
-    _metaGraphStatus("상단에서 데이터소스를 선택하면 그 데이터소스의 그래프가 표시됩니다. (공용 스코프는 검색으로 탐색)");
-    _metaGraphRenderDetailEmpty();
-    return;
-  }
   _metaGraphStatus("데이터소스 그래프 로딩…");
   let data;
   try {
@@ -4002,11 +4345,14 @@ async function _metaGraphLoadRoots() {
   if (seq !== _metaGraph._opSeq) return;
   _metaGraphSyncAnalysisMarkers(scope);   // 이미 분석된/진행중 노드 마커를 클릭 없이 렌더 시점에 적용
   const n = (data.nodes || []).length;
+  // graph-product-cat(§43): 이 데이터소스를 쓰는 제품(카테고리) 배너 — 어느 제품 소속인지 즉시 식별.
+  const prodNames = Array.isArray(data.products) ? data.products.map((p) => p && p.name).filter(Boolean) : [];
+  const prodPrefix = prodNames.length ? `제품: ${prodNames.join(", ")} · ` : "";
   _metaGraphStatus(n
     ? (schemaKeys.length > 1
-        ? `${scope}: 스키마 ${schemaKeys.length}개 — 카드를 클릭하면 그 스키마의 테이블을 펼칩니다. 검색으로 바로 탐색도 가능.${truncNote}`
-        : `${scope}: ${_metaGraph.nodes.size}개 노드 — 노드 클릭으로 확장, 또는 검색.${truncNote}`)
-    : `${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
+        ? `${prodPrefix}${scope}: 스키마 ${schemaKeys.length}개 — 카드를 클릭하면 그 스키마의 테이블을 펼칩니다. 검색으로 바로 탐색도 가능.${truncNote}`
+        : `${prodPrefix}${scope}: ${_metaGraph.nodes.size}개 노드 — 노드 클릭으로 확장, 또는 검색.${truncNote}`)
+    : `${prodPrefix}${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
 }
 
 // graph-initview(E3): 툴바 스키마 점프 select 채움 — 선택 시 해당 클러스터/카드로 focus.
@@ -4061,19 +4407,50 @@ function _metaCanvasDragEnable(e) {
 }
 // graph-drag(REQ ①): drag-element 활성 판정 — 노드 이동은 좌클릭만. 중간 버튼은 카메라 팬에
 //   양보해 "객체 상호작용(노드 이동)"이 아니라 카메라 드래그가 되게 한다.
-function _metaElementDragEnable(e) { return !_metaIsMiddleDrag(e); }
+function _metaElementDragEnable(e) {
+  const id = e && e.target && e.target.id;
+  if (id && (String(id).startsWith("GB:") || String(id).startsWith("GH:"))) return false;   // graph-simgroups: 그룹 장식은 이동 불가(박스-칩 분리 방지)
+  return !_metaIsMiddleDrag(e);
+}
 
 // graph-drag(REQ ②): 테이블 노드 드래그 시 종속 UI(접기 "X:" ctl + 컬럼 노드) 동반 이동.
 //   dragstart 에서 각 종속의 테이블 대비 오프셋(월드좌표)을 고정 기록하고, drag/dragend 마다
 //   종속을 "테이블 현재위치 + 오프셋" 으로 절대 이동(translateElementTo)한다.
 //   절대-오프셋 방식은 이벤트 실행 순서(내 핸들러 vs drag-element)에 무관하다: dragend 시점엔
 //   drag-element 가 이미 테이블을 최종 위치로 옮겨 놓았으므로 재정합으로 1-frame lag 이 제거된다.
+// graph-freeplace: 클러스터 offset 누적(combo 드래그 · 접힌 카드 드래그 공용). curId 의 현재 위치와
+//   기록된 시작 위치의 델타를 clusterOffset[comboId] 에 누적한다(반복 드래그 정합, 미동 무시).
+function _metaClusterOffsetAccumulate(comboId, startX, startY, curId) {
+  const g = _metaGraph.graph;
+  if (!g || !comboId) return;
+  let p; try { p = g.getElementPosition(curId); } catch (_) { return; }
+  if (!p || !isFinite(p[0]) || !isFinite(p[1])) return;
+  const dx = p[0] - startX, dy = p[1] - startY;
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+  const prev = _metaGraph.clusterOffset.get(comboId) || { dx: 0, dy: 0 };
+  _metaGraph.clusterOffset.set(comboId, { dx: prev.dx + dx, dy: prev.dy + dy });
+  // graph-freeplace(리뷰 MAJOR fix): 클러스터를 통째로 옮기면, 그 클러스터에 속한 **개별 배치된 노드
+  //   (nodePos, 절대좌표)** 도 같은 델타로 함께 옮긴다. 안 그러면 nodePos 가 절대값이라 clusterOffset 를
+  //   덮어써(build 최종 tx=fp[0]) 그 노드만 원위치에 남아 클러스터에서 분리된다(table-then-cluster 순서).
+  _metaGraph.nodePos.forEach((pos, nid) => {
+    const n = _metaGraph.nodes.get(nid);
+    if (n && _metaSchemaComboOf(n) === comboId) { pos[0] += dx; pos[1] += dy; }
+  });
+}
+
 function _metaNodeDragStart(e) {
   _metaGraph._drag = null;
+  _metaGraph._comboDragStart = null;
   if (_metaIsMiddleDrag(e)) return;             // 중간 버튼은 카메라 팬 — 노드 이동 아님
   const g = _metaGraph.graph;
   const id = e && e.target && e.target.id;
   if (!g || !id) return;
+  // graph-freeplace: 접힌 스키마 카드("SC:") 드래그 = 클러스터 위치 이동(combo 드래그와 동일 clusterOffset).
+  //   L.x0/L.y0 는 카드·펼친 combo 공용 기준이라, 카드에서 옮겨도 펼쳤을 때 같은 offset 이 유지된다.
+  if (String(id).startsWith("SC:")) {
+    try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id.slice(3), curId: id, x: p[0], y: p[1] }; } catch (_) {}
+    return;
+  }
   const deps = _metaGraph.tableDeps.get(id);    // 테이블 key 만 등록됨(ctl/컬럼/용어/카드는 단독 이동)
   if (!deps || !deps.length) return;
   let tp;
@@ -4103,7 +4480,42 @@ function _metaNodeDrag() {
   try { g.translateElementTo(to, false); } catch (_) {}
 }
 // dragend: 최종 위치 재정합(내 핸들러가 drag-element 보다 먼저 실행돼도 마지막 프레임 lag 제거) + 상태 해제.
-function _metaNodeDragEnd() { _metaNodeDrag(); _metaGraph._drag = null; }
+function _metaNodeDragEnd(e) {
+  _metaNodeDrag();
+  const g = _metaGraph.graph;
+  const id = e && e.target && e.target.id;
+  // graph-freeplace: 접힌 스키마 카드("SC:") 드래그 = 클러스터 이동 → clusterOffset(combo 드래그와 통합).
+  if (id && String(id).startsWith("SC:")) { _metaClusterDragCommit(); _metaGraph._drag = null; return; }
+  // 그 외 이동 가능 노드(테이블·컬럼·용어)의 최종 절대위치를 nodePos 에 기록 → rebuild 후에도 유지.
+  //   컨트롤/장식(X:/XS:/GB:/GH:)은 제외. 테이블은 위치만 기록하고, 종속(컬럼·"X:")은 build 가 테이블 델타로 시프트.
+  if (g && id && !/^(X:|XS:|GB:|GH:)/.test(String(id))) {
+    // 컬럼은 소속 테이블에서 재파생(build)되므로 개별 위치를 기록하지 않는다(dead 엔트리·재빌드 snap-back 방지, 리뷰 NIT).
+    const _n = _metaGraph.nodes.get(id);
+    if (!_n || _n.label !== "Column") {
+      try { const p = g.getElementPosition(id); if (p && isFinite(p[0]) && isFinite(p[1])) _metaGraph.nodePos.set(id, [p[0], p[1]]); } catch (_) {}
+    }
+  }
+  _metaGraph._drag = null;
+}
+
+// graph-freeplace: 스키마 클러스터(combo) 드래그 — 전체 클러스터 위치 이동("분류 drag&drop 위치 이동").
+//   dragstart 에서 중심을 기록하고 dragend 에서 델타를 clusterOffset 에 누적 → build 가 L.x0/L.y0 에 가산해
+//   카드·테이블·컬럼·장식을 coherent 하게 이동시키고 rebuild(펼침/접기) 후에도 유지한다.
+function _metaComboDragStart(e) {
+  const g = _metaGraph.graph;
+  const id = e && e.target && e.target.id;
+  _metaGraph._comboDragStart = null;
+  if (!g || !id) return;
+  try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id, curId: id, x: p[0], y: p[1] }; } catch (_) {}
+}
+function _metaComboDragEnd() { _metaClusterDragCommit(); }
+// combo:dragend · 접힌 카드 dragend 공용 커밋: _comboDragStart 의 델타를 clusterOffset 에 누적 후 클리어.
+function _metaClusterDragCommit() {
+  const st = _metaGraph._comboDragStart;
+  _metaGraph._comboDragStart = null;
+  if (!st || !st.comboId) return;
+  _metaClusterOffsetAccumulate(st.comboId, st.x, st.y, st.curId);
+}
 
 // G6 v5 그래프 초기화(1회). 이후 상태변경은 _metaG6Apply(setData+draw). Canvas 렌더러(선명·벡터).
 function _metaInitGraph() {
@@ -4161,6 +4573,11 @@ function _metaInitGraph() {
     const p = _metaCtxPoint(e);
     // graph-initview: 스키마 카드("SC:")·펼친 스키마 접기 ctl("XS:") 우클릭 → 스키마 전용 메뉴로 귀속.
     //   이 prefix 를 안 벗기면 _metaGraphCtxForNode 가 모델(SC: 없는 순수 key)에서 노드를 못 찾아 무반응.
+    if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
+      const gk = String(id).slice(3), sep = gk.indexOf("\u0001");
+      if (sep >= 0) _metaGraphCtxForSchema(gk.slice(0, sep), p.x, p.y); else _metaGraphCtxHide();
+      return;
+    }
     if (String(id).startsWith("SC:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
     if (String(id).startsWith("XS:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
     if (String(id).startsWith("X:")) id = String(id).slice(2);   // 테이블 접기 ctl → 소속 테이블 메뉴
@@ -4199,7 +4616,10 @@ function _metaInitGraph() {
   //   — 절대-오프셋이라 핸들러 실행 순서·누적 delta·줌 배율에 무관(월드좌표 기준).
   graph.on("node:dragstart", (e) => _metaNodeDragStart(e));
   graph.on("node:drag", (e) => _metaNodeDrag(e));
-  graph.on("node:dragend", () => _metaNodeDragEnd());
+  graph.on("node:dragend", (e) => _metaNodeDragEnd(e));
+  // graph-freeplace: 클러스터(combo) 드래그 = 분류 위치 이동(clusterOffset 누적 → rebuild 유지).
+  graph.on("combo:dragstart", (e) => _metaComboDragStart(e));
+  graph.on("combo:dragend", (e) => _metaComboDragEnd(e));
   if (!_metaGraph.bound) {
     _metaGraph.bound = true;
     const s = document.getElementById("metadataGraphSearch");
@@ -4209,6 +4629,9 @@ function _metaInitGraph() {
     }
     const reset = document.getElementById("metadataGraphResetBtn");
     if (reset) reset.addEventListener("click", () => { _metaGraphLoadRoots(); });
+    // graph-product-cat(§43): 제품 카테고리 개요 진입 — scope 를 제품 개요로 전환(공유 scope select 는 datasource 전용 유지).
+    const prodBtn = document.getElementById("metadataGraphProductsBtn");
+    if (prodBtn) prodBtn.addEventListener("click", () => { adminState.metadata.scopeKey = "__products__"; _metaGraphLoadProducts("__products__"); });
     // graph-initview(E2): 줌 툴바 — +/− 단계 줌, 전체(클램프 없는 조망), 100%.
     const zin = document.getElementById("metaGraphZoomIn");
     if (zin) zin.addEventListener("click", () => { const g = _metaGraph.graph; if (g) { try { g.zoomBy(1.25, false); } catch (_) {} } });
@@ -4253,6 +4676,14 @@ function _metaInitGraph() {
 function _metaGraphOnNodeClick(e) {
   const id = e && e.target && e.target.id;
   if (!id) return;
+  // graph-simgroups(§18.8 패널 MAJOR): 그룹 배경 박스/헤더는 펼친 클러스터 내부 대부분을 덮어, 예전
+  //   combo 배경 클릭(→ 클러스터 상세)을 가로챈다. 데드존이 되지 않게 소속 스키마 클러스터 상세로 위임
+  //   (박스는 이동 불가라 드래그와 무충돌 — _metaElementDragEnable 에서 이미 차단).
+  if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {
+    const gk = String(id).slice(3), sep = gk.indexOf("\u0001"), sc = sep >= 0 ? gk.slice(0, sep) : null;
+    if (sc) _metaGraphShowClusterDetailById(sc);
+    return;
+  }
   if (String(id).startsWith("XS:")) { _metaGraphCollapseSchema(id.slice(3)); return; }   // graph-initview: 스키마 접기
   if (String(id).startsWith("X:")) { _metaGraphCollapse(id.slice(2)); return; }
   if (String(id).startsWith("SC:")) {
@@ -4262,6 +4693,21 @@ function _metaGraphOnNodeClick(e) {
     _metaGraphExpandSchema(sk).then((st) => {
       if (st === "expanded" || st === "already") _metaGraphShowClusterDetailLocal(sk);
     }).catch(() => {});
+    return;
+  }
+  // graph-product-cat(§43): 제품 개요 노드 — Datasource 클릭 → 그 데이터소스 스키마 그래프로 drill(scope 전환),
+  //   Product 클릭 → 단일 제품 focus(그 제품의 데이터소스만).
+  if (String(id).startsWith("ds:")) {
+    const sc = id.slice(3);
+    adminState.metadata.scopeKey = sc;
+    const selEl = document.getElementById("metadataScopeSelect");
+    if (selEl) { try { selEl.value = sc; } catch (_) {} }   // 드롭다운 동기화(datasource 옵션 존재 시)
+    _metaGraphLoadRoots();
+    return;
+  }
+  if (String(id).startsWith("product:")) {
+    adminState.metadata.scopeKey = id;
+    _metaGraphLoadProducts(id);
     return;
   }
   const now = (window.performance && performance.now) ? performance.now() : Date.now();
@@ -5188,6 +5634,9 @@ function _metaGraphIngest(nodes, edges) {
     // graph-funcproc(ADR-016): 함수·프로시저 속성 보존(칩 접두 ƒ/⚙ + 상세 파라미터 표시).
     if (n.routine_type) rec.routine_type = n.routine_type;
     if (n.params != null && n.params !== "") rec.params = n.params;
+    // graph-product-cat(§43): Product/Datasource 부가 필드 보존(제품 라벨 개수 · datasource scope drill).
+    if (n.scope_key != null) rec.scope_key = n.scope_key;
+    if (typeof n.datasource_count === "number") rec.datasource_count = n.datasource_count;
     if (!existing) {
       _metaGraph.nodes.set(n.key, rec); added.push(n.key);
       // graph-perf-bg: 새 Column 노드면 소속 테이블의 colsByTable 카운트 증가(_metaTableHasCols O(1) 단일소스).
@@ -5926,12 +6375,32 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>테이블 (${tables.length})</h4><ul class="amgr-cluster-tables">`);
-    tables.slice(0, 80).forEach((t) => {
-      // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
+    // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
+    const rowHTML = (t) => {
       const role = _metaRoleOf(t.key);
       const prefix = role ? _metaRoleChipHTML(role, esc, true) : `<span class="amgr-role-chip amgr-role-chip-sm amgr-role-none" aria-hidden="true"></span>`;
-      parts.push(`<li><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="클릭하면 이 테이블 노드를 선택합니다">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`);
-    });
+      return `<li><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="클릭하면 이 테이블 노드를 선택합니다">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`;
+    };
+    // graph-simgroups: 캔버스와 동일한 유사 속성 그룹으로 목록도 구획(헤딩 행) — 2그룹 이상일 때만. 실패 시 평면 폴백.
+    let sgs = null;
+    try {
+      const tbk = new Map(tables.map((t) => [t.key, t]));
+      sgs = _metaSimGroups("panel:" + String(name), tables, _metaRelAdjacency(tbk));
+    } catch (_) { sgs = null; }
+    if (sgs && sgs.length >= 2) {
+      // §18.8 패널: 그룹 헤딩은 목록의 실제 구획 의미(장식 아님) → aria-hidden 금지. role="group"+aria-label
+      //   로 보조기기에 "그룹명·개수"를 노출. 80행 캡은 그룹 경계에서만 끊고 절단 표식을 남긴다(개수 모순 방지).
+      let emitted = 0;
+      sgs.forEach((sg) => {
+        if (emitted >= 80) return;
+        const shown = Math.min(sg.tables.length, 80 - emitted);
+        const trunc = shown < sg.tables.length ? ` <span class="amgr-ct-group-trunc">(${shown}/${sg.n})</span>` : "";
+        parts.push(`<li class="amgr-ct-group" role="group" aria-label="${esc(sg.label)} 그룹 · 테이블 ${sg.n}개"><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
+        sg.tables.slice(0, shown).forEach((t) => { parts.push(rowHTML(t)); emitted++; });
+      });
+    } else {
+      tables.slice(0, 80).forEach((t) => parts.push(rowHTML(t)));
+    }
     parts.push(`</ul></div>`);
   }
   parts.push(`</div>`);
@@ -7793,6 +8262,17 @@ function _dsInsightHealthLabel(ih) {
   return st ? `연결 ${st}` : "—";
 }
 
+// conn-health 3단계 status → 사람-친화 한글 라벨(상세 패널 "연결 상태" 행). 배지 텍스트("연결 정상/
+// 불안정/끊김", admin.js ~1290)와 어휘 정합. background 모니터 사전계산값(snapshot)을 그대로 반영.
+function _dsConnStatusLabel(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "healthy":  return "정상 (연결 성공)";
+    case "unstable": return "불안정 (느리거나 간헐적)";
+    case "down":     return "끊김 (도달 불가)";
+    default:         return "확인 중";
+  }
+}
+
 function _dsRenderDetail(ds) {
   const detailEl = $("datasourceDetail");
   if (!detailEl || !ds) return;
@@ -7824,6 +8304,29 @@ function _dsRenderDetail(ds) {
   // 중립 tempdb). 데이터소스 레벨 기본 DB 개념 제거.
   sec1.appendChild(dl1);
   detailEl.appendChild(sec1);
+
+  // 연결 상태 · 응답 시간 — background conn_health 모니터가 미리 계산한 값(추가 probe·연결테스트 불필요).
+  //   핵심: "연결 응답 시간(평균)" = 최근 sample_count(≤AGENT_CONN_AVG_WINDOW)회 성공 DB probe elapsed 의
+  //   산술평균(ms). 순간값(최근 응답 시간)보다 대표성이 높아 데이터소스별 상시 연결 품질을 나타낸다.
+  //   표본이 아직 없으면(신규·연속 실패) "측정 중". conn_status 는 API(admin_datasources)가 첨부.
+  const cs = ds.conn_status || null;
+  const sec3 = document.createElement("div"); sec3.className = "admin-detail-section";
+  const t3 = document.createElement("div"); t3.className = "admin-detail-section-title"; t3.textContent = "연결 상태"; sec3.appendChild(t3);
+  const dl3 = document.createElement("dl"); dl3.className = "admin-kv";
+  _dsKvRow(dl3, "상태", _dsConnStatusLabel(cs && cs.status));
+  if (cs && cs.avg_elapsed_ms != null) {
+    const n = Number(cs.sample_count || 0);
+    _dsKvRow(dl3, "연결 응답 시간(평균)", n > 1 ? `${cs.avg_elapsed_ms} ms · 최근 ${n}회 평균` : `${cs.avg_elapsed_ms} ms`);
+  } else {
+    _dsKvRow(dl3, "연결 응답 시간(평균)", "측정 중 (연결 성공 시 집계)");
+  }
+  // 참고값: 마지막 1회 응답 시간(순간값) + 마지막 확인 시각(epoch 초 → ms 변환).
+  //   `> 0` 가드(평균 행과 동일): foreground 성공 피드백은 elapsed 미측정(0.0-coerce)이라 "0 ms" 로
+  //   표시되면 평균값(예: 45ms)과 모순돼 보인다 → 0/음수 순간값은 표시 생략(background probe 값만 노출).
+  if (cs && cs.elapsed_ms != null && cs.elapsed_ms > 0) _dsKvRow(dl3, "최근 응답 시간", `${cs.elapsed_ms} ms`);
+  if (cs && cs.checked_at) _dsKvRow(dl3, "마지막 확인", formatDateTime(Number(cs.checked_at) * 1000));
+  sec3.appendChild(dl3);
+  detailEl.appendChild(sec3);
 
   // 출처 · 보안
   const sec2 = document.createElement("div"); sec2.className = "admin-detail-section";

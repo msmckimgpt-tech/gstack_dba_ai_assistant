@@ -740,6 +740,8 @@
               <option value="">스키마 이동…</option>
             </select>
             <button type="button" class="btn-secondary" id="metadataGraphResetBtn">초기화</button>
+            <!-- graph-product-cat(§43): 제품(Products) 단위 카테고리 개요 — 제품→데이터소스 계층을 보여주고 데이터소스 클릭으로 drill -->
+            <button type="button" class="btn-secondary" id="metadataGraphProductsBtn" title="제품(Products) 단위로 데이터소스를 묶어 봅니다" aria-label="제품 카테고리 개요">🗂 제품 카테고리</button>
             <!-- graph-initview(E2): 줌 컨트롤 — 초기 화면이 판독 줌 클램프로 '부분'일 수 있어 조망/복귀 버튼 제공 -->
             <span class="admin-meta-graph-zoomctl" role="group" aria-label="그래프 줌 컨트롤">
               <button type="button" class="btn-secondary" id="metaGraphZoomOut" title="축소" aria-label="축소">−</button>
@@ -763,7 +765,7 @@
             <span><i class="lg-line lg-line-dashed"></i>추정 관계</span>
             <span><i class="lg-dot" style="background:#fff;border:2px dashed #e08a1e"></i>AI 분석 중</span>
             <span><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</span>
-            <span class="admin-meta-graph-legend-note">크기·라벨% = 검색 유사도(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 보라 잔점선=함수·프로시저의 테이블 사용 · 주황 점선=AI 분석중 · 보라 테두리=AI 능동분석 완료</span>
+            <span class="admin-meta-graph-legend-note">크기·라벨% = 검색 유사도(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 보라 잔점선=함수·프로시저의 테이블 사용 · 주황 점선=AI 분석중 · 보라 테두리=AI 능동분석 완료 · 색 배경 박스=유사 속성 그룹(이름·관계·역할 자동 묶음)</span>
           </div>
           <div class="admin-meta-graph-body">
             <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"

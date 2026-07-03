@@ -216,6 +216,14 @@ ORDER BY id ASC
 LIMIT %(limit)s
 """
 
+# feature-0009 gc-join-notice: 시스템/멤버십 이벤트(참여 알림 등) core_message 의 `name` sentinel.
+# 이런 이벤트는 unread 배지 집계(role IN ('user','assistant'))에 포함되도록 role='user' 로
+# 기록하되, LLM 대화 히스토리 조립(_normalize_history_rows)에서는 이 name 을 보고 완전히
+# 배제한다 — 안 그러면 "X님이 참여했습니다" 가 발신자 라벨 붙은 user 턴으로 LLM 에 주입돼
+# assistant 오응답·맥락 오염을 일으킨다(§18.8 적대 패널 BLOCKING). writer(feature-0003
+# app._save_group_join_event_pg)와 filter(feature-0002 agent_core)가 이 단일 상수를 공유한다.
+EVENT_MESSAGE_NAME = "__event__"
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

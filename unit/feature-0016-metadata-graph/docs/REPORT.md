@@ -49,6 +49,49 @@
 - 배포(deploy_scope: included): main 병합 → `make migrate`(alembic **0034** 도달 검증 — stale agent
   이미지 주의) → web·insight-worker 재빌드 → routine introspect 첫 cadence 후 그래프 확인.
 - PB-0008 실 Windows 시각검증(ƒ/⚙ 칩·미니맵 리사이즈 추종·hover popover·재분석 부재).
+## 2026-07-03 · 그래프 클러스터 자유 배치 상호작용 복원 (graph-freeplace, TASK §44, ADR-015)
+
+### 배경 (사용자 회귀 보고)
+데이터소스 스키마 클러스터 화면에서 "분류 접기/펼치기·분류 drag&drop 위치 이동·분류 내부 노드 이동 반응형 크기 조정"이
+사라짐. **조사(git bisect)**: 마지막 정상(abc78b00 graph-simgroups, T42.8 PASS) 이후 admin.js 변경 2건(ds-avg-latency=
+데이터소스 상세 패널만·graph-product-cat=제품모드만)은 클러스터 상호작용 코드 미변경 → **내 Phase A/최근 변경 회귀 아님**.
+근본원인 = ADR-004 Cytoscape→G6 결정론 배치가 자유배치 persistence 를 미이관한 feature gap. 사용자 "G6 재구현" 결정.
+
+### 구현 (frontend-only, admin.js)
+- **결정론 배치 위에 사용자 드래그 offset 레이어**(ADR-015): `clusterOffset`(combo/카드 드래그 → 클러스터 전체 이동,
+  build L.x0/L.y0 가산) + `nodePos`(개별 테이블/용어 → place-loop 델타 시프트, combo auto-fit 리사이즈). 접기/펼치기 유지,
+  스코프전환·초기화 리셋, 펼침/접기 rebuild 유지. combo:dragstart/dragend + node:dragend 훅.
+- cache-buster `20260703-graph-freeplace`.
+
+### 검증
+- `node --check` PASS · §18.8 적대 리뷰(REV-20260703T101622): 6축 → **MAJOR 1**(nodePos 절대좌표가 clusterOffset override →
+  클러스터 이동 시 소속 nodePos 동반 가산으로 fix)·NIT 1(컬럼 dead 엔트리 제외) 반영 → PASS-WITH-FIXES.
+- POST-DEPLOY 실 Windows PB-0008 4-상호작용 수동 검증 예정(라이브 canvas 드래그 자동화 곤란).
+
+## 2026-07-03 · 제품(Products) 단위 카테고리 구분 (graph-product-cat, TASK §43, ADR-014)
+
+### 배경 (사용자 요청 — 3대 개선 中 A)
+관리 콘솔 > 메타데이터 > 그래프 뷰: "구분해둔 제품(Products)에 따른 카테고리 단위로 구분이 가능하도록 구성". 실측상
+그래프 모델은 `Product`/`Datasource` 라벨·`USES` 엣지를 예약만 하고 실제 투영 안 함(scope=datasource 단위뿐). Product↔
+Datasource SSOT 는 MySQL(`WebProducts`·`WebProductDatasources`)에 완비, 그래프는 Postgres `agent_kb` 로 분리.
+
+### 구현 (투영 API 질의시점 합성 + 프론트 개요, 마이그레이션 0)
+- **백엔드**([admin_metadata.py](../../feature-0003-agent-web-ui/src/routers/admin_metadata.py)): `admin_metadata_graph`
+  에 `conn=Depends(app.get_conn)` + `?mode=products`/`?product=<id>` 분기(PG 이전 early-return). `_product_overview_graph`
+  가 MySQL SSOT 로 Product/Datasource 노드 + USES 엣지 합성(datasource dedup). `_products_for_scope` 가 datasource
+  진입 응답에 소속 제품(`products`) 첨부. **read-axis 정렬**: scope=`scope_key or 라벨`(DB=해시·.env=라벨).
+- **프론트**([admin.js](../../feature-0003-agent-web-ui/src/static/admin.js)): `_metaG6BuildProducts` 전용 2-열 배치
+  (combo 미사용, 기존 masonry 무간섭) + `_metaGraphLoadProducts` + 랜딩/노드클릭 라우팅 + datasource 뷰 제품 배너.
+  툴바 "🗂 제품 카테고리" 버튼(admin.html) + cache-buster `20260703-graph-product-cat`.
+
+### 검증
+- `node --check` PASS · Python ast PASS · 격리 pytest **28 PASS**(DI 권한 맵·metadata_graph 단위 무회귀).
+- §18.8 적대 리뷰(general-purpose): **read-axis MAJOR** (.env datasource drill 빈 그래프) + 비숫자 product NIT 반영
+  → PASS-WITH-FIXES. 정본 REVIEW REV-20260703T091737.
+- POST-DEPLOY 실 Windows 브라우저(PB-0008) 배포 후 기록 예정.
+
+### 후속 정합 (동일 요청의 Phase C·B)
+- Phase C(ADR-013 의미 임베딩)·Phase B(크로스-데이터소스 관계)가 본 제품 경계(제품=관련 데이터소스 묶음)를 재사용.
 
 ## 2026-07-03 · 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (graph-drag, TASK §41)
 
@@ -962,3 +1005,18 @@ greedy seriation(연결 스키마 shelf 인접) ② `_metaRelTableOrder` 컴포�
 **검증**: Node 격리 8/8 PASS(회귀0·seriation·군집·상호교차 해소·결정론·벌크 감소·펼침-비의존) + 파라미터
 벤치(시드 3 × 랜덤/허브: 2D 세그먼트 교차 12~30% 감소, 1D 층간 역전 59→52, SPAN=1 채택 근거) + node --check.
 완료 게이트 = 배포 후 PB-0008 실 Windows 라이브 육안(TASK T38.8).
+
+### 유사 속성 그룹 영역화 — graph-simgroups (2026-07-03, worktree=feature-0016-graph-simgroups)
+
+**문제**: graph-rel-layout 후에도 "균일 칩 평면 나열"이라 군집이 영역으로 안 읽힘(사용자: 유사 속성끼리 +
+범위 가시화 + 근본 개선). 게임 DB 는 구분자 없는 연접 테이블명·FK 부분 선언·role 부분 존재.
+
+**수정** ([admin.js](../../feature-0003-agent-web-ui/src/static/admin.js), ADR-013): 3-신호 그룹핑(이름 affix
+family 지원도×길이 → 관계 attach → 역할 → 기타) + 그룹 블록 렌더(배경 박스 틴트 8종 + 헤더 칩 `스템 · n`,
+GB:/GH: 비상호작용 장식) + 그룹 내부 2-pass masonry·블록 shelf-pack(펼침-불변 배정, ADR-004 ② 계승) +
+클러스터 상세 목록 동일 그룹 헤딩. ADR-012 순서 계층(seriation·barycenter)은 컨테이너=그룹으로 재사용.
+
+**검증**: 실 _metaG6Build Node 구동(실측 gunzgame 68 테이블·145 관계) 격리 **25/25 PASS**(§18.8 수정 회귀방지 t10~t12 포함) — 그룹 무결성·bg
+무겹침·칩 1-bg 포함·칩/펼침 무겹침·결정론·펼침-불변·평면 폴백·엣지 조립 보존·빌드 5.1ms. 그룹 산출:
+character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·mission(4)·clanmember(3) 등 13+기타.
+완료 게이트 = 배포 후 PB-0008 실 Windows(TASK T42.8).

@@ -351,6 +351,94 @@ source_of_truth: true
 - Supersedes: (ADR-004 의 "자연정렬 grid" 순서 부분만 대체 — 결정론 grid 골격·불변식은 계승)
 - Superseded By:
 
+## ADR-013 — 그래프 뷰 유사 속성 그룹: 이름 affix family 휴리스틱 + 가시적 영역(배경 박스) 렌더 (백엔드 시맨틱 클러스터링 이연)
+- Status: accepted (2026-07-03)
+- Context: graph-rel-layout(ADR-012)이 관계 기반 '순서'는 만들었으나, 균일 칩의 평면 나열이라 군집이
+  화면에서 '영역'으로 읽히지 않는다는 사용자 후속 보고("유사한 속성끼리 배치 + 속성 범위가 가시적으로").
+  라이브 데이터 특성: 게임 DB 는 구분자 없는 소문자 연접 테이블명(charactercurrency, cashshopnewitem)이
+  지배적이고, FK 미선언이라 관계는 부분적이며, 역할(role)은 AI 분석 완료 노드에만 존재한다.
+- Decision: 클라이언트 순수 함수 3-신호 그룹핑 + 그룹 블록 렌더.
+  1. **이름 affix family(1차)**: 정규화(소문자·view_ 제거) 이름의 접두/접미 토큰(4~16자) 중 지원도(공유
+     테이블 수) ≥2 에서 지원도×길이 최대 토큰을 family 로. 구분자 없는 연접 이름에서 동작하는 유일한
+     실용 신호가 공유 affix — underscore/camel 분할은 무력. 라벨은 멤버 실명의 최장 공통 접두/접미
+     (자연 스템) + 방향 말줄임(`character…`/`…shop`).
+  2. **관계 attach(2차)**: family 없는 테이블은 관계 가중 최대 family 로 1-pass 부착(무연쇄 — 블롭 방지).
+  3. **역할 family(3차)** → **기타(후미 고정)**. 싱글턴 named family 는 흡수(1개짜리 박스 노이즈 방지).
+  렌더: 그룹 = 배경 박스(연틴트 8종 순환, zIndex -2) + 헤더 칩(`라벨 · n`) — "범위의 가시화". 그룹 내부
+  1~3열 2-pass masonry(Pass1 collapsed 배정=펼침-불변 / Pass2 실높이 push-down, ADR-004 ② 계승) + 블록
+  shelf-pack(행 배정=폭, 행 y=실높이). 그룹 순서/그룹 내 순서는 ADR-012 의 seriation·barycenter 를
+  "컨테이너=그룹" 으로 재사용. 그룹 <2 스키마·terms 는 기존 평면 masonry 그대로(회귀 0).
+- Consequences: 스키마 클러스터가 "균일 칩 나열" → "라벨 붙은 유사 속성 영역들"로 읽힌다. 클러스터 상세
+  목록도 동일 그룹 헤딩으로 정합. 실측(gunzgame 68 테이블·145 관계): character(14)·item(17)·characterinfo(4)·
+  battletimereward…(4)·…shop(3)·mission(4)·clanmember(3) 등 13 그룹 + 기타(2), 빌드 5.1ms. 알려진 한계:
+  ① affix 휴리스틱은 시맨틱 임베딩이 아니다 — 컬럼 시그니처·설명 임베딩 기반 백엔드 클러스터링은 별도
+  initiative(이연 사유: 서버 계산·저장 스키마 필요, 프론트만으로 즉시 가치 전달 우선) ② 역할 도착·관계
+  증가 시 rebuild 에서 그룹이 재편될 수 있음(기존 role-chip rebuild 관용구와 동일 흡수) ③ 관계 attach 된
+  멤버는 그룹 라벨과 이름이 다를 수 있음(의도 — 관계 소속).
+- Alternatives:
+  - **백엔드 시맨틱 클러스터링(임베딩·컬럼 시그니처)**: 정확도 최상이나 서버 계산/저장/동기화 필요 —
+    후속 initiative 로 이연(본 ADR 의 그룹 렌더 계층은 재사용 가능).
+  - **G6 중첩 combo(그룹=combo-in-combo)**: G6 v5 중첩 combo + 수동 좌표의 상호작용이 미검증(ADR-004
+    setData diff 취약점) — 장식 rect 노드가 저위험·결정론(기각).
+  - **역할(role)만으로 그룹핑**: 라이브 대부분 미분석(role 부재) — 커버리지 부족(보조 신호로만).
+  - **underscore/camelCase 토큰화**: 연접 소문자 이름에서 무력(기각 — affix 가 상위 호환).
+- Supersedes: (ADR-012 의 순서 계층은 그룹 내부/그룹 간 순서로 계승 — 대체 아님)
+- Superseded By:
+
+## ADR-014 — 그래프 뷰 제품(Products) 단위 카테고리: 투영 API 질의시점 합성(AGE 미저장) + 제품 개요 랜딩
+- Status: accepted (2026-07-03)
+- Context: 사용자 요청 3대 개선 中 A — "구분해둔 제품(Products)에 따른 카테고리 단위로 구분". 실측: 그래프 모델은
+  `Product`/`Datasource` 라벨·`USES` 엣지를 **예약만** 하고 `sync_graph` 는 실제로 Schema→Table→Column+REFERENCES
+  만 투영한다. scope 선택은 datasource 단위뿐이고, Product 노드가 온다 해도 프론트가 `_META_TERMS_COMBO`("용어·기타")로
+  흘려 카테고리 컨테이너가 되지 못한다. Product↔Datasource SSOT(`WebProducts`·`WebProductDatasources` N:M·
+  `WebProductDatabases`)는 MySQL(web-ui runtime)에 완비. 그래프(AGE)는 Postgres `agent_kb` — 두 스토어가 분리.
+- Decision: 제품 카테고리를 **투영 API 계층(web-ui, MySQL 접근)에서 질의시점에 합성**한다. AGE 에 Product/Datasource
+  정점을 물리 저장하지 않는다.
+  1. **백엔드**: `GET /api/admin/metadata/graph?mode=products`(전체) · `?product=<id>`(단일) → `_product_overview_graph`
+     가 MySQL SSOT 로부터 `Product`(key=`product:<id>`)·`Datasource`(key=`ds:<scope_key>`) 노드 + `USES` 엣지 합성.
+     datasource-scoped 진입(scope_roots/schemas) 응답에 `_products_for_scope` 로 소속 제품(`products`) 첨부(배너).
+  2. **프론트**: `_metaG6BuildProducts` 전용 2-열 결정론 배치(Product 좌·Datasource 우, USES 엣지, combo 미사용 —
+     기존 스키마 masonry 무간섭). 그래프 진입 랜딩(공용/미선택)을 제품 개요로 전환. Datasource 노드 클릭 → 그
+     데이터소스 스키마 그래프로 drill(scope 전환), Product 노드 클릭 → 단일 제품 focus. 툴바 "🗂 제품 카테고리" 버튼.
+  3. **read-axis 정렬(불변식)**: datasource 그래프 scope 는 `admin_datasources` 가 노출하는 read 축
+     `scope_key or key`(DB-등록=엔드포인트 해시, .env 레거시=라벨)와 **반드시 일치**한다. `shared.datasources.scope_key`
+     (.env 도 해시 계산)를 쓰면 어긋나 빈 그래프를 부르므로 **금지**(REV-20260703T091737 MAJOR).
+- Consequences: 그래프 뷰가 "데이터소스 나열" → "제품(카테고리)→데이터소스 계층"으로 진입한다. **DB 스키마 변경·마이그
+  레이션 0**(합성은 read-only, AGE 투영 로직 불변), 권한 `metadata.graph.read` 보존, mutation 0. 후속 Phase C(의미
+  임베딩)·B(크로스-데이터소스 관계)가 이 제품 경계를 재사용할 수 있다(제품=관련 데이터소스 묶음). 한계: 개요는 제품→
+  datasource 2계층까지(스키마/테이블은 drill 후 기존 뷰); 제품별 통합 스키마 union 뷰는 미도입(후속 여지).
+- Alternatives:
+  - **AGE 에 Product/Datasource 정점 물리 저장(sync_graph 확장)**: FUNCTION.md 모델 의도엔 부합하나 MySQL→Postgres
+    브리지 sync 경로·이중 정합·마이그레이션 필요. 질의시점 합성이 "projection(진실의 사본)" 원칙에 더 정합하고 즉시
+    가치(비파괴). AI 컨텍스트가 Product 노드를 그래프에서 탐색해야 하는 요구가 서면 그때 승격(후속).
+  - **공유 scope select 에 제품 옵션 추가**: scope select 는 그래프+비그래프 메타데이터 뷰가 공유 → `product:` 값이
+    list/bootstrap 경로를 오염. 툴바 버튼 + 랜딩 전환으로 분리(select 는 datasource 전용 유지).
+- Supersedes:
+- Superseded By:
+
+## ADR-015 — 그래프 뷰 자유 배치 상호작용 persistence(결정론 배치 위에 사용자 드래그 offset 레이어)
+- Status: accepted (2026-07-03)
+- Context: 사용자 회귀 보고 — 데이터소스 스키마 클러스터 화면에서 "분류 접기/펼치기·분류 drag&drop 위치 이동·분류 내부
+  노드 이동 반응형 크기 조정"이 사라짐. 조사(git bisect): 마지막 정상(abc78b00 graph-simgroups, T42.8 PASS) 이후 admin.js
+  변경은 ds-avg-latency(데이터소스 상세 패널 전용)·graph-product-cat(제품모드 전용) 2건뿐 — **둘 다 클러스터 상호작용 코드
+  미변경**. 근본원인은 ADR-004 **Cytoscape→G6 결정론 배치**(매 rebuild `setData+draw` 로 위치 재계산) 전환이 Cytoscape 시절
+  자유 배치(드래그 위치 유지·노드이동 리사이즈)를 이관하지 않은 것(graph-drag T41 은 세션 내 테이블 드래그만 추가, persistence 부재).
+- Decision: 결정론 배치를 유지하되 그 **위에 사용자 드래그 offset 레이어**를 얹어 자유 배치를 persistence 한다(둘의 정합).
+  - **clusterOffset**(comboId→{dx,dy}): 클러스터(combo) 또는 접힌 카드 드래그의 누적 델타. build 가 shelf-packing 후
+    L.x0/L.y0(카드·테이블·컬럼·장식·combo 공통 기준)에 가산 → 클러스터 전체 coherent 이동, 펼침/접기 후 유지.
+  - **nodePos**(nodeId→[x,y]): 개별 테이블/용어 드래그의 절대 위치(center 프레임 = build tx/ty). build place-loop 이 델타로
+    테이블+종속(컬럼·"X:" ctl) 시프트. combo 는 명시 size 없이 자식 auto-fit → **노드 이동 시 반응형 리사이즈**(#3).
+  - 접기/펼치기(#1): 기존 SC:↔combo 유지. 위치는 스코프 전환·초기화(resetModel)에서 리셋, 펼침/접기 rebuild 에선 유지.
+  - **정합 불변식**: 클러스터를 통째로 옮기면 소속 nodePos 도 동반 가산(절대좌표가 clusterOffset 를 덮어써 개별노드가
+    분리되지 않게 — REV-20260703T101622 MAJOR).
+- Consequences: ADR-004 의 "결정론 배치(무-shuffle·제자리)" 는 **초기/rebuild 기본 배치로 유지**되고, 사용자가 명시적으로
+  드래그한 것만 offset 로 덮어쓴다(force layout 재도입 아님 — ④ 클러스터 뒤섞임 회귀 없음). 프론트 전용·마이그레이션 0.
+  한계(수용): 검색은 자유배치 리셋(model 교체), 펼친 그룹 스키마 combo 드래그 표면 얇음(접힌 카드 드래그가 주 경로),
+  카드 드래그 offset 은 펼침 시 변위만 유지(결정론 재packing 본질). 라이브 canvas 드래그 자동화 곤란 → PB-0008 수동 게이트.
+- Alternatives:
+  - **Cytoscape 로 롤백**: ADR-004 가 해소한 5개 관찰 결함(클릭접힘·위치점프·줌지연·클러스터뒤섞임·테두리왜곡) 재발 — 기각.
+  - **force layout 재도입**: ④ 클러스터 뒤섞임 재유발(ADR-004 기각 사유) — 기각. offset 레이어가 결정론 유지하며 자유배치 제공.
+- Supersedes: (ADR-004 의 결정론 배치를 대체하지 않음 — 그 위에 opt-in offset 레이어 추가)
 ## ADR-016 — 함수·프로시저 노드: routine_objects SSOT + AGE Routine 라벨 + INFORMATION_SCHEMA 공통 경로 + 정의 파싱 참조
 - Status: Accepted
 - Date: 2026-07-03
