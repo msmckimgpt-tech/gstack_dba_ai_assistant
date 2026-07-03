@@ -5380,3 +5380,9 @@ source_of_truth: true
 - Files: `shared/config.py`, `shared/conn_health.py`, `feature-0003/{src/routers/admin_datasources.py, src/static/admin.js, src/static/admin.html, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`, `feature-0002/tests/test_conn_health.py`.
 - 설계 근거: 마지막값(`last_elapsed_ms`)은 순간 변동(다른 워크로드·GC blip·원거리 리전 RTT spike)에 흔들려 대표성이 약함 → 최근 N회 평균이 데이터소스별 상시 연결 품질을 더 안정적으로 반영. background 모니터 사전계산값 재사용이라 관리 콘솔 진입 시 추가 DB 부하·지연 0.
 - Rollback: revert 5개 소스 파일(config/conn_health/admin_datasources/admin.js/admin.html) + cache-buster 원복. in-memory only(스키마·마이그·영속 상태 무 — 롤백 부작용 없음).
+
+## CHG-20260703T085511-ds-avg-latency-postverify (TASK-20260703T085511-ds-avg-latency-postverify — ds-avg-latency POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- 변경: 선행 cycle(CHG-20260703T085511-ds-avg-latency, PR #575 머지 7ad4378b + web 배포)의 **배포 후 라이브 PB-0008 실측 결과**를 TASK.md(최종 체크박스 확정)·TEST.md §3(POST-DEPLOY PASS Run)에 기록. 코드/자산 무변경(doc-only).
+- 검증 결과 요지(실 Windows Chrome/149 win-browser relay, `https://localhost/admin`): 상세 패널 "연결 상태" 섹션 렌더 + `mssql-dk-dev` 평균 "11.7 ms · 최근 6회"·`mssql-qa-idc` "133.4 ms · 최근 6회"(healthy 평균 산출)·down 데이터소스 "측정 중"(성공 표본 없음 — stale 미표시). MINOR(0ms 가드) 실효. 스크린샷 증적.
+- Files: `docs/{TASK,MODIFY,TEST,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260703T085511-ds-avg-latency-postverify [SKIPPED:post-deploy-verification-record]
