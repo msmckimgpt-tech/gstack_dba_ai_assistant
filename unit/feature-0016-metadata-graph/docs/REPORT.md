@@ -1,5 +1,26 @@
 # Report
 
+## 2026-07-03 · 역할 범례를 우측 상세 패널 상단 세로·접힘으로 이전 (role-legend-panel, TASK §36)
+
+### 배경 (사용자 후속 요청)
+"그래프 뷰 노드 시각화 개선" — "테이블 역할(AI 분석 완료 시 칩 색)" 범례를 **다른 위치에 세로로 구성 + 접힐 수 있도록**. node-role-viz(§33, PR #555 병합·배포 완료)로 도입된 칩 시각화 위에 얹는 UI 개선. 기존 범례는 툴바 아래 **가로 전폭 2번째 행**으로 그래프 본문을 아래로 밀었음.
+
+### 배치 결정
+AskUserQuestion 으로 3안(캔버스 좌하단 오버레이 / 우측 상세 패널 상단 / 툴바 접힘 드롭다운) 제시 → 사용자 **"우측 상세 패널 상단"** 선택(그래프를 안 덮음, 노드 상세와 세로 공존).
+
+### 구현 (FE 표현 전용)
+- admin.html: 전폭 `.admin-meta-graph-legend-roles` 행 제거 → `aside#metadataGraphDetail` 최상단에 `<details class="admin-meta-graph-rolelegend" open>`(summary 토글 + 칩 8종 `<ul><li>` 세로 스택) 삽입. 네이티브 접힘(무JS).
+- styles.css: 가로 legend-roles 규칙 → 세로·접힘 `.admin-meta-graph-rolelegend` 카드 규칙(커스텀 카펫, marker 제거, 세로 flex, 밝은 dot border).
+- cache-buster `styles.css?v=20260703-reldetail-colexpand-role-legend-panel`.
+
+### 검증
+- 구조 정합: legend-roles 잔여 참조 0. aside 는 폭 조회로만 참조(innerHTML 교체 없음) → 노드 선택·능동분석 렌더에 범례 wipe 없음.
+- §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-role-legend-panel.
+
+### 잔여
+- 배포(web 재빌드, deploy_scope: included) + 라이브 PB-0008 실 Windows 육안 검증(세로 표시 + 접힘 동작).
+- 부작용(수용): "상세 ⇆"로 상세 패널 접으면 범례도 같이 숨음(사용자 선택 위치의 자연 귀결).
+
 ## 2026-07-03 · 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 — 즉시 시작 + 적응형 follow (graph-dblclick-latency, ADR-011)
 
 ### 배경
