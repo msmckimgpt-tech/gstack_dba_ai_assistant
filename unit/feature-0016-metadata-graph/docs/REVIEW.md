@@ -718,3 +718,7 @@ source_of_truth: true
   - N5 [수용]: `translateElementTo` 가 종속 z 를 0 리셋(2D 무해).
   - N6 [처리완료]: 브랜치 stale — `_metaRoleChipHTML` 등 역할 기능은 main 선안착분. origin/main(9e1156d6) 3-way 병합으로 역할(admin.js grep=2)+드래그(함수 8) 양쪽 보존 확인, §40→§41 재리넘버.
 - **판정**: BLOCKING 0. REQ①(중간버튼 팬)·REQ②(종속 동반이동) G6 v5.1.1 실측 시맨틱 정합. N1 수정 완료, N2~N6 수용/처리.
+
+## REV-20260703T132403-ai-claude-feature-0016-graph-drag-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY 자산검증 결과 기록 (코드 무변경)
+- 대상: graph-drag(TASK §41) 배포 후 문서 갱신 — TASK T41.5 [x], MODIFY CHG-…-graph-drag-postdeploy, TEST POST-DEPLOY Run. **코드·자산 무변경(doc-only)** → §18.8 적대 패널 비적용(SKIPPED).
+- 근거: PR #571 머지(29c3a07c) → `make deploy-web` 무중단 롤링 soak 90s 통과. WSL localhost caddy edge :443 자산검증 PASS — healthz `status:ok / git_commit=29c3a07c / mysql_ok / pg_ok`, 라이브 admin.js graph-drag 심볼 12·`_metaRoleChipHTML` 2(병합 보존)·admin.html 버스터 `admin.js?v=20260703-graph-drag`. 코드 품질 검증은 원 cycle REV-20260703T021144-graph-drag [SUBAGENT: PASS] 에서 완료.
