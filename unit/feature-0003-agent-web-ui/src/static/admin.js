@@ -3211,15 +3211,29 @@ const _metaNatSort = (a, b) => String(a).localeCompare(String(b), undefined, { n
 const _META_ROLE = {
   // dark 배정(적대 패널 U3): 12px bold 흰 라벨 대비가 부족한 밝은/중간 색은 어두운 라벨(#161b22) —
   //   account 2.2 / log 1.9 / stats 1.1 / mapping 3.1 / transaction 3.4 (흰 라벨 대비, 전부 4.5 미달) → dark.
-  master:      { ko: "기준·정의", icon: "📘", color: "#0072B2", dark: false },
-  account:     { ko: "계정·유저", icon: "👤", color: "#56B4E9", dark: true },
-  transaction: { ko: "거래·행위", icon: "💳", color: "#009E73", dark: true },
-  log:         { ko: "로그·이력", icon: "📜", color: "#E69F00", dark: true },
-  mapping:     { ko: "매핑·연결", icon: "🔗", color: "#CC79A7", dark: true },
-  config:      { ko: "설정",     icon: "⚙️", color: "#D55E00", dark: false },
-  stats:       { ko: "집계·통계", icon: "📊", color: "#F0E442", dark: true },
-  etc:         { ko: "기타",     icon: "📦", color: "#6e7681", dark: false },   // ◽ 는 회색 칩 위 tofu 처럼 비가시(패널 U4) → 📦
+  // desc: 범례 hover 툴팁·클러스터 상세 접두사 툴팁의 단일 소스. BE node_analysis.NODE_ROLES 휴리스틱과 정합.
+  master:      { ko: "기준·정의", icon: "📘", color: "#0072B2", dark: false, desc: "다른 테이블이 참조하는 기준·마스터·코드성 데이터 (코드표·정의·사전 등)" },
+  account:     { ko: "계정·유저", icon: "👤", color: "#56B4E9", dark: true,  desc: "사용자·계정·회원 등 주체 정보 (캐릭터·플레이어 포함)" },
+  transaction: { ko: "거래·행위", icon: "💳", color: "#009E73", dark: true,  desc: "결제·주문·구매·보상 등 거래·행위 이벤트 (핵심 비즈니스 팩트)" },
+  log:         { ko: "로그·이력", icon: "📜", color: "#E69F00", dark: true,  desc: "시간순 로그·이력·감사 기록 (주로 append)" },
+  mapping:     { ko: "매핑·연결", icon: "🔗", color: "#CC79A7", dark: true,  desc: "두 엔티티를 잇는 N:M 매핑·연결(교차 참조) 테이블" },
+  config:      { ko: "설정",     icon: "⚙️", color: "#D55E00", dark: false, desc: "시스템·기능 설정·옵션·파라미터·환경값" },
+  stats:       { ko: "집계·통계", icon: "📊", color: "#F0E442", dark: true,  desc: "집계·통계·랭킹·스냅샷 등 파생·요약 데이터" },
+  etc:         { ko: "기타",     icon: "📦", color: "#6e7681", dark: false, desc: "위 분류에 속하지 않는 테이블" },   // ◽ 는 회색 칩 위 tofu 처럼 비가시(패널 U4) → 📦
 };
+// role-cluster-prefix: 역할 칩 HTML 조립(그래프 칩·상세 배지와 동일 색/아이콘). small=상세 테이블 목록 접두사(고정 폭).
+function _metaRoleChipHTML(role, esc, small) {
+  const rd = _META_ROLE[role]; if (!rd) return "";
+  const tip = esc(`${rd.icon} ${rd.ko} — ${rd.desc}`);
+  return `<span class="amgr-role-chip${small ? " amgr-role-chip-sm" : ""}" style="background:${rd.color}${rd.dark ? ";color:#161b22" : ""}" title="${tip}">${rd.icon}</span>`;
+}
+// role-cluster-prefix: 정적 역할 범례 <li data-role> 에 hover 툴팁(desc) 주입 — _META_ROLE 단일 소스. 그래프 뷰 진입 시 1회.
+function _metaRoleLegendTips() {
+  document.querySelectorAll(".admin-meta-graph-rolelegend-list li[data-role]").forEach((li) => {
+    const rd = _META_ROLE[li.getAttribute("data-role")];
+    if (rd) li.title = `${rd.icon} ${rd.ko} — ${rd.desc}`;
+  });
+}
 function _metaRoleOf(key) {
   const r = _metaGraph.roles.get(key);
   return (r && _META_ROLE[r]) ? r : null;
@@ -3837,6 +3851,7 @@ function _metaShowGraph() {
   const view = document.getElementById("metadataGraphView");
   if (view) view.style.display = "";
   _metaInitGraph();
+  _metaRoleLegendTips();   // role-cluster-prefix: 역할 범례 hover 툴팁(desc) 주입(정적 <li data-role> → _META_ROLE 단일 소스).
   // feature-0016: 그래프 뷰 진입 시 현재 선택 datasource 의 그래프(roots)를 즉시 로드 — 각 데이터소스별 그래프 출현.
   _metaGraphLoadRoots();
   const s = document.getElementById("metadataGraphSearch");
@@ -5668,12 +5683,27 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {
-    parts.push(`<div class="admin-meta-graph-sec"><h4>테이블 (${tables.length})</h4><ul>`);
-    tables.slice(0, 80).forEach((t) => parts.push(`<li><code>${esc(t.name || t.fqn || "")}</code>${t.description ? " — " + esc(t.description) : ""}</li>`));
+    parts.push(`<div class="admin-meta-graph-sec"><h4>테이블 (${tables.length})</h4><ul class="amgr-cluster-tables">`);
+    tables.slice(0, 80).forEach((t) => {
+      // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
+      const role = _metaRoleOf(t.key);
+      const prefix = role ? _metaRoleChipHTML(role, esc, true) : `<span class="amgr-role-chip amgr-role-chip-sm amgr-role-none" aria-hidden="true"></span>`;
+      parts.push(`<li><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="클릭하면 이 테이블 노드를 선택합니다">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`);
+    });
     parts.push(`</ul></div>`);
   }
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
+  // role-cluster-prefix: 테이블 행 클릭 → 해당 노드 선택(_metaGraphShowDetail = 하이라이트 setSelected + 상세 렌더) + 렌더돼 있으면 카메라 focus.
+  el.querySelectorAll(".amgr-ct-row[data-node-key]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const k = btn.getAttribute("data-node-key");
+      if (!k) return;
+      _metaGraphShowDetail(k);
+      const g = _metaGraph.graph, rel = _metaRenderedIdFor(k);
+      if (g && rel && typeof g.focusElement === "function") { try { Promise.resolve(g.focusElement(rel, false)).catch(() => {}); } catch (_) {} }
+    });
+  });
 }
 
 // 노드의 최신 분석 상태/결과를 조회해 AI box 에 렌더(상세 패널 진입 시 + 폴링 완료 시).

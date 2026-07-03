@@ -1,5 +1,24 @@
 # Report
 
+## 2026-07-03 · 클러스터 상세 테이블 목록 역할 접두사 + 행 클릭 노드 선택 + 범례 hover 툴팁 (cluster-role-prefix, TASK §39)
+
+### 배경 (사용자 후속 요청 3건)
+① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 문자열·배치 뒤틀리지 않게 기본 왼쪽 여백). ② 그 목록 **각 테이블 클릭 → 해당 노드 선택**. ③ 역할 **범례 hover 시 상세 툴팁**.
+
+### 구현 (FE — admin.js/admin.html/styles.css)
+- `_META_ROLE` 에 `desc` 필드(범례·접두사 툴팁 단일 소스, BE NODE_ROLES 정합). 신규 `_metaRoleChipHTML`.
+- `_metaGraphRenderClusterDetail`: 각 행 `<button data-node-key>`, 분석 완료=역할 칩 접두사·미분석=`amgr-role-none`(18px 빈 슬롯 → 라벨 정렬 유지). 클릭 → `_metaGraphShowDetail`(select 하이라이트+상세) + focusElement.
+- 신규 `_metaRoleLegendTips()`: 정적 범례 `<li data-role>` 에 `desc` 로 hover title 주입(그래프 진입 시). admin.html `<li>` data-role 추가.
+- cache-buster `?v=20260703-cluster-role-prefix`(admin.js·styles.css).
+
+### 검증
+- `node --check` PASS. headless playwright 렌더 격리 실증: 분석/미분석 5행 → 전 라벨 left=45px 정렬(`allCodesAligned`), 칩 18px 균일, 전 행 button. 스크린샷 확인.
+- §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-cluster-role-prefix.
+- 부수: graph-rel-layout §38 병합이 MODIFY.md 에 남긴 미해결 conflict 마커 정리(양쪽 CHG 보존).
+
+### 잔여
+- 배포(web, deploy_scope: included) + 라이브 PB-0008 실 Windows 육안(접두사·정렬·행 클릭 선택·범례 툴팁).
+
 ## 2026-07-03 · 역할 범례를 상세 패널 하단으로 이동 + 확장 시 밀림/뒤틀림 해소 (role-legend-bottom, TASK §37)
 
 ### 배경 (사용자 후속 피드백)

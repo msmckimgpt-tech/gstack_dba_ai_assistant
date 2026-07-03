@@ -675,3 +675,18 @@ source_of_truth: true
   TEST.md(graph-rel-layout POST-DEPLOY Run)·TASK §38(T38.8) 에 기록하는 doc-only 후속 — 코드 무변경이라
   §18.8 패널 skip. 핵심 실측: 관계쌍 평균 배치 순서 거리 32.5→3.2(90% 감소, gunzgame 115쌍) · collapse
   REFERENCES 145→145 보존·배치 불변(§18.8 MAJOR 수정 실증) · 이웃확장/검색 pageerror 0.
+
+## REV-20260703T040000-ai-claude-feature-0016-cluster-role-prefix [SUBAGENT: PASS] — 클러스터 상세 역할 접두사 + 행 클릭 선택 + 범례 툴팁 적대 리뷰 7축
+- Related Change: CHG-20260703-cluster-role-prefix (TASK §39). 프론트 표현 + 클릭 상호작용(클러스터 상세 목록·범례 툴팁).
+- Trigger: 가시 UI + 클릭 상호작용(select) + 새 데이터 경로 → §18.8 적대 패널 [SUBAGENT] dispatch. + headless 렌더 격리 실증 선행.
+- 점검 7축 판정 (subagent, 파일:라인 근거):
+  1. [PASS/NIT] XSS/속성: 칩·버튼 `title` 은 `_META_ROLE` 신뢰 상수·정적 문자열, `t.description` 은 텍스트 위치 esc. NIT — `data-node-key="${esc(t.key)}"` 의 로컬 `esc` 가 `"` 미escape → 키에 `"` 시 속성 breakout 이론상 가능(단 `<>` escape 로 태그주입 불가). **기존 4개 사이트(data-key/data-trace) 동일 패턴 = 회귀 아님**, admin-only + DB식별자에 `"`+페이로드 동시 필요라 저위험. 수용(하드닝은 공유 esc 일괄 강화 별도 maintenance).
+  2. [PASS] 클릭 핸들러: 두 진입 경로(Local/ById) 모두 render 거쳐 innerHTML 직후 1회 바인딩. showDetail → 동일 컨테이너 innerHTML 교체로 옛 버튼+리스너 GC → 누수/좀비/중복 없음.
+  3. [PASS] select semantics: showDetail 이 `_metaGraphSetSelected`(하이라이트, 렌더된 노드만 apply) 호출. 미렌더 노드는 selected 변수만 세팅(무해), focusElement 는 `_metaRenderedIdFor` null 가드로 skip. showDetail 은 렌더 무관 동작.
+  4. [PASS] 범례 tips: data-role 8개 ↔ `_META_ROLE` 키/아이콘/색 1:1 완전 일치. 정적 `<li>` 상주라 호출 타이밍 무관, title 재주입 idempotent.
+  5. [PASS] 칩 헬퍼: `if(!rd) return ""` + 호출부 `_metaRoleOf` 유효성 이중 방어. small=18px 고정, dark 라벨색, 미분석 `amgr-role-none` transparent+폭 유지.
+  6. [PASS] CSS: `.amgr-cluster-tables`(0,2,1) > `.admin-meta-graph-sec ul`(0,1,1) padding-left:0 승리, 스코프 한정으로 타 ul 무영향. `--primary-soft`·`--text-muted` 정의 존재. code{flex:none}+18px 슬롯 → 정렬 보장(allCodesAligned 재확인).
+  7. [PASS] 회귀: `_META_ROLE.desc` 순수 additive(기존 소비처 특정 필드만 접근). 클러스터 상세 외 렌더 경로 무영향. `node --check` OK.
+- BLOCKING: 0.
+- NIT(수용): esc 따옴표 미escape(위 1축 — 기존 패턴·저위험). 
+- 총평: 배포 가능(GO). 사용자 3요구(접두사+정렬·행클릭 선택·범례 툴팁) 코드·헤드리스 렌더 양측 충족. 완료 게이트=PB-0008 실 Windows.

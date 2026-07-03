@@ -672,7 +672,6 @@ source_of_truth: true
 - Impact: 프론트 **표현 전용**(admin 그래프 뷰 역할 범례 위치·레이아웃만). 데이터 API·스키마(AGE)·마커·칩 색/아이콘 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 폭 조회(`d.clientWidth`)로만 참조되고 innerHTML 교체 없음 → 범례 wipe 없음. 부작용: "상세 ⇆"(`#metadataGraphDetailToggle`)로 상세 패널 접으면 범례도 같이 숨음(패널 종속 — 사용자 선택 위치의 자연 귀결). 검증: 구조 정합(무JS·`<details>` 관용구 기존 line 512 재사용) + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html/styles.css git revert + cache-buster 이전값(reltrace-tabledetail). 데이터·API·JS 무손상(표현 전용이라 revert 리스크 최소).
 
-<<<<<<< HEAD
 ## CHG-20260703-graph-rel-layout
 - Date: 2026-07-03
 - Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — 관계 연결이 복잡해질수록 가시성 저하, 스키마 카드 내 테이블의 단순 나열이 이를 악화. ① 연결선이 되도록 교차하지 않게 ② 관계가 확보될수록 연결·유사도 기준으로 노드 배치. 정본: DECISIONS ADR-012 / TASK §38.
@@ -684,7 +683,7 @@ source_of_truth: true
 - Impact: 프론트 **배치 순서 전용** — 데이터 API·AGE 스키마·마커·상태·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·펼침-불변(ADR-004 ②)·카드 게이팅·masonry/shelf-pack 골격 유지(순서 입력만 교체). 배치 변화는 관계 데이터가 늘어난 rebuild 시점뿐(기존 shelf 재배치 시야고정 경로가 흡수). 검증: Node 격리 8/8 + 벤치(2D 교차 12~30% 감소) + node --check. 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows.
 - §18.8 패널 후속 수정(같은 cycle): ① `_metaGraphCollapse` — 컬럼 접기 시 REFERENCES 모델 엣지 **보존**(containment 만 삭제; 접기 제스처의 배치 재셔플(MAJOR)과 접힌 테이블 관계 표시 소실을 동시 해소) ② `_metaGraphExpand` — rebuild 후 follow tween 사망 시 무애니 focusElement 폴백(`_metaGraph._focusLive` 생존 마커, `_metaGraphAnimateFocus` 를 marker 래퍼+`_metaGraphAnimateFocusRun` 으로 분리) ③ `_metaG6Build` — itemsNat 중복 정렬 제거(relOrder 직접 소비). 격리 테스트 10/10(구조 회귀 방지 t8·t9 포함).
 - Rollback Notes: admin.js 신규 함수 5종 제거 + `_metaG6Build` 의 ids/items 를 자연정렬로 환원 + collapse/expand/AnimateFocus 를 이전 형태로 복원 + cache-buster 이전값(20260703-reldetail-colexpand). 데이터·API 무손상(표현 전용).
-=======
+
 ## CHG-20260703-role-legend-bottom
 - Date: 2026-07-03
 - Related Requirement: 사용자 후속 피드백(role-legend-panel 배포 후) — ① 역할 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI(노드 상세)를 밀어 내용이 뒤틀리는 문제** 해소. role-legend-panel(CHG-20260703-role-legend-panel) 위 후속 개선.
@@ -695,7 +694,18 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{TASK(§38),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 **표현 전용**(상세 패널 내부 레이아웃만). 데이터 API·스키마·마커·칩 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. 범례는 여전히 detailBody 형제(이제 아래)라 innerHTML 교체(detailBody/progress 만)에 지워지지 않음. 검증: **headless playwright 렌더 격리 실증** — 빈 상세=범례 바닥고정(pinnedNearBottom, 위 여백 262px), 긴 상세 30행=노드 상세 firstNodeH 32(온전·미압축)·dbH==dbScrollH(983, 잘림 없음)·aside canScroll=true(스크롤) → 밀림/뒤틀림 없음. + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html(범례 위치 원복)·styles.css(flex/margin 원복) git revert + cache-buster 이전값(reldetail-colexpand-role-legend-panel). 데이터·API·JS 무손상.
->>>>>>> origin/main
+
+## CHG-20260703-cluster-role-prefix
+- Date: 2026-07-03
+- Related Requirement: 사용자 후속 요청(그래프 뷰) 3건 — ① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 동일 폭 빈 슬롯 → 라벨 정렬 유지, 뒤틀림 방지) ② 그 목록 **각 행 클릭 → 해당 노드 선택** ③ 역할 **범례 hover 툴팁**.
+- Summary: (1) `_META_ROLE` 에 `desc`(역할 설명) 필드 추가 — 범례 툴팁·접두사 툴팁 단일 소스(BE node_analysis.NODE_ROLES 휴리스틱 정합). (2) 신규 `_metaRoleChipHTML(role,esc,small)` 역할 칩 조립 헬퍼. (3) `_metaGraphRenderClusterDetail` 테이블 목록: 각 행을 `<button class="amgr-ct-row" data-node-key>` 로, `_metaRoleOf(key)` 있으면 역할 칩 접두사, 없으면 `amgr-role-none`(transparent, 18px 폭 유지) → `<code>` 라벨 좌측 정렬 보존. innerHTML 직후 행 클릭 바인딩 → `_metaGraphShowDetail(key)`(setSelected 하이라이트+상세) + 렌더 시 `focusElement`. (4) 신규 `_metaRoleLegendTips()` — 정적 범례 `<li data-role>` 에 `_META_ROLE.desc` 로 hover `title` 주입, 그래프 뷰 진입 시 1회 호출. admin.html 범례 `<li>` 에 `data-role` 추가.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_META_ROLE.desc` + `_metaRoleChipHTML` + `_metaRoleLegendTips`(진입 함수 배선) + `_metaGraphRenderClusterDetail` 테이블 목록 접두사·행 버튼·클릭 바인딩)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (범례 `<li>` 에 `data-role` 8개 + cache-buster `admin.js`·`styles.css` `?v=20260703-cluster-role-prefix`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.amgr-cluster-tables`/`.amgr-ct-row`/`.amgr-role-chip(-sm)`/`.amgr-role-none`/`.amgr-ct-desc` 규칙)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§39),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 **표현 + 클릭 상호작용**(클러스터 상세 목록 + 범례 툴팁). 데이터 API·AGE 스키마·RBAC·마이그레이션 **불변**. `_META_ROLE.desc` 추가는 기존 소비처(칩 색·배지) 무영향(신규 필드). 클릭은 기존 `_metaGraphShowDetail` 재사용(선택 semantics 동일). 미분석 테이블 정렬 = `amgr-role-chip-sm` 고정 18px 슬롯. 검증: `node --check` PASS + **headless playwright 렌더 격리 실증**(분석/미분석 5행 → 전 라벨 left=45px 정렬 `allCodesAligned`, 칩 18px 균일, 전 행 button) + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows. (부수: 이 cycle 이 편집한 MODIFY.md 에 graph-rel-layout §38 병합이 남긴 미해결 conflict 마커를 함께 정리 — 양쪽 CHG 보존.)
+- Rollback Notes: admin.js(3함수/헬퍼 제거·클러스터 목록 원복)·admin.html(data-role·버스터)·styles.css(amgr-* 규칙) git revert + 버스터 이전값(role-legend-bottom). 데이터·API 무손상.
 
 ## CHG-20260703-graph-rel-layout-postdeploy
 - Date: 2026-07-03
