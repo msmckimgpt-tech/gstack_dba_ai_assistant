@@ -3178,7 +3178,7 @@ const _metaGraph = {
   _stateCache: new Map(), // key -> 마지막 적용된 state signature. _metaGraphRefreshStates 가 변화분만 setElementState.
   _busyKeys: new Map(),   // graph-perf-bg fix: key -> busy 를 세운 _opSeq(소유권). refreshStates 가 busy 를 보존·복원하고, 같은 key 재트리거 시 신 op busy 를 stale op 가 지우지 않게 한다.
   tableDeps: new Map(),   // graph-drag(REQ ②): Table key -> [종속 UI 노드 id](접기 "X:" ctl + 컬럼 노드). 매 _metaG6Build 재구성. 테이블 드래그 시 함께 이동.
-  _drag: null,            // graph-drag(REQ ②): 진행 중 테이블 드래그 상태 {id, lastX, lastY, deps:[...]}. null=비활성.
+  _drag: null,            // graph-drag(REQ ②): 진행 중 테이블 드래그 상태 {id, offs:[{id,ox,oy}]}(종속별 테이블 대비 월드 오프셋). null=비활성.
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3991,7 +3991,10 @@ function _metaCanvasDragEnable(e) {
 function _metaElementDragEnable(e) { return !_metaIsMiddleDrag(e); }
 
 // graph-drag(REQ ②): 테이블 노드 드래그 시 종속 UI(접기 "X:" ctl + 컬럼 노드) 동반 이동.
-//   dragstart 에서 대상이 "종속 UI 를 가진 테이블 + 좌클릭(노드 이동)" 일 때만 추적을 켠다.
+//   dragstart 에서 각 종속의 테이블 대비 오프셋(월드좌표)을 고정 기록하고, drag/dragend 마다
+//   종속을 "테이블 현재위치 + 오프셋" 으로 절대 이동(translateElementTo)한다.
+//   절대-오프셋 방식은 이벤트 실행 순서(내 핸들러 vs drag-element)에 무관하다: dragend 시점엔
+//   drag-element 가 이미 테이블을 최종 위치로 옮겨 놓았으므로 재정합으로 1-frame lag 이 제거된다.
 function _metaNodeDragStart(e) {
   _metaGraph._drag = null;
   if (_metaIsMiddleDrag(e)) return;             // 중간 버튼은 카메라 팬 — 노드 이동 아님
@@ -4000,31 +4003,34 @@ function _metaNodeDragStart(e) {
   if (!g || !id) return;
   const deps = _metaGraph.tableDeps.get(id);    // 테이블 key 만 등록됨(ctl/컬럼/용어/카드는 단독 이동)
   if (!deps || !deps.length) return;
-  let p;
-  try { p = g.getElementPosition(id); } catch (_) { return; }
-  if (!p) return;
+  let tp;
+  try { tp = g.getElementPosition(id); } catch (_) { return; }
+  if (!tp) return;
   const rendered = _metaGraph.renderedIds;       // 렌더된 종속 노드만(접힘 등 미렌더 제외)
-  const targets = rendered ? deps.filter((d) => rendered.has(d)) : deps.slice();
-  if (!targets.length) return;
-  _metaGraph._drag = { id, lastX: p[0], lastY: p[1], deps: targets };
+  const offs = [];
+  deps.forEach((d) => {
+    if (rendered && !rendered.has(d)) return;
+    let dp;
+    try { dp = g.getElementPosition(d); } catch (_) { return; }
+    if (dp) offs.push({ id: d, ox: dp[0] - tp[0], oy: dp[1] - tp[1] });
+  });
+  if (!offs.length) return;
+  _metaGraph._drag = { id, offs };
 }
-// drag: 테이블의 현재 월드좌표 변위(drag-element 가 이미 적용)를 읽어 종속 노드에 같은 변위 적용.
-//   내부 delta/zoom 수학 비의존 — translateElementBy 는 종속 노드 각각에 [dx,dy] 를 준다.
+// drag: 종속을 "테이블 현재위치 + 고정 오프셋" 으로 절대 이동(누적 drift·zoom 수학 비의존).
 function _metaNodeDrag() {
   const st = _metaGraph._drag;
   const g = _metaGraph.graph;
   if (!st || !g) return;
-  let p;
-  try { p = g.getElementPosition(st.id); } catch (_) { return; }
-  if (!p) return;
-  const dx = p[0] - st.lastX, dy = p[1] - st.lastY;
-  if (dx === 0 && dy === 0) return;
-  st.lastX = p[0]; st.lastY = p[1];
-  const move = {};
-  st.deps.forEach((d) => { move[d] = [dx, dy]; });
-  try { g.translateElementBy(move, false); } catch (_) {}
+  let tp;
+  try { tp = g.getElementPosition(st.id); } catch (_) { return; }
+  if (!tp) return;
+  const to = {};
+  st.offs.forEach((o) => { to[o.id] = [tp[0] + o.ox, tp[1] + o.oy]; });
+  try { g.translateElementTo(to, false); } catch (_) {}
 }
-function _metaNodeDragEnd() { _metaGraph._drag = null; }
+// dragend: 최종 위치 재정합(내 핸들러가 drag-element 보다 먼저 실행돼도 마지막 프레임 lag 제거) + 상태 해제.
+function _metaNodeDragEnd() { _metaNodeDrag(); _metaGraph._drag = null; }
 
 // G6 v5 그래프 초기화(1회). 이후 상태변경은 _metaG6Apply(setData+draw). Canvas 렌더러(선명·벡터).
 function _metaInitGraph() {
@@ -4115,9 +4121,9 @@ function _metaInitGraph() {
     if (ev.button === 1) ev.preventDefault();
   }, true);
   // graph-drag(REQ ②): 테이블 노드를 드래그하면 그 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도
-  //   같은 변위만큼 함께 이동한다. drag-element 가 테이블 노드를 움직인 뒤(등록 순서상 먼저 실행)
-  //   node:drag 마다 테이블의 현재 월드좌표 변위를 읽어 종속 노드에 translateElementBy 로 전달한다
-  //   — 내부 delta/zoom 수학에 의존하지 않아 번들 차이·줌 배율에 안전.
+  //   함께 이동한다. dragstart 에서 각 종속의 테이블 대비 월드 오프셋을 고정 기록하고, node:drag/
+  //   dragend 마다 종속을 "테이블 현재 월드좌표 + 오프셋" 으로 translateElementTo 절대이동한다
+  //   — 절대-오프셋이라 핸들러 실행 순서·누적 delta·줌 배율에 무관(월드좌표 기준).
   graph.on("node:dragstart", (e) => _metaNodeDragStart(e));
   graph.on("node:drag", (e) => _metaNodeDrag(e));
   graph.on("node:dragend", () => _metaNodeDragEnd());

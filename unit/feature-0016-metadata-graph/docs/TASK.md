@@ -915,3 +915,28 @@ MODIFY CHG-20260703-node-role-viz.
       결과 정본: REVIEW REV-20260703T014113-ai-claude-corp-feature-0016-graph-rel-layout.
 - [ ] T38.8 배포(deploy_scope: included) + **PB-0008 실 Windows 라이브 시각검증**(관계 있는 스키마 인접 배치·
       연결 테이블 군집·교차 감소 육안 확인, TEST.md Run append).
+
+## 40. graph-drag — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (2026-07-03, 사용자 요청)
+사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰): ① 마우스 중간(휠) 버튼을 통한 drag&drop 을 객체 상호작용이
+아닌 **카메라 드래그(팬)**로, ② **테이블 노드를 옮길 때 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도 같이
+드래그**. 정본: MODIFY CHG-20260703-graph-drag / TEST.md graph-drag Run / REVIEW REV-20260703T021144-graph-drag.
+등급: **Minor**(프론트 상호작용 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
+(§39 = cluster-role-prefix 가 main 선점 — 본 절은 §40 으로 리넘버.)
+
+### 40.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`: `behaviors` object-form + `enable` 오버라이드
+  (`_metaCanvasDragEnable`/`_metaElementDragEnable`, `_metaEventButtons`/`_metaIsMiddleDrag`), 컨테이너
+  mousedown autoscroll 억제, `node:dragstart/drag/dragend` 핸들러(`_metaNodeDragStart`/`_metaNodeDrag`/
+  `_metaNodeDragEnd`), `_metaGraph.tableDeps` 맵 + `_metaG6Build` 배선.
+- `unit/feature-0003-agent-web-ui/src/static/admin.html`: cache-buster `admin.js?v=20260703-graph-drag`.
+- AC: (a) 중간버튼 드래그는 노드 위에서든 카메라 팬(노드 월드좌표 불변) (b) 좌클릭 빈 캔버스 팬·좌클릭 노드
+  이동·휠 줌·클릭·우클릭 메뉴 회귀 0 (c) 테이블 노드 좌클릭 드래그 시 종속(X:ctl+컬럼) 전부 동일 델타 동반 이동.
+
+### 40.2 구현·검증
+- [x] T40.1 (①) behaviors object-form + enable 오버라이드(중간버튼 팬 / 노드 이동은 좌클릭만) + buttons 비트마스크 판정.
+- [x] T40.2 (①) 컨테이너 mousedown(button===1) preventDefault — 브라우저 autoscroll(팬 커서) 억제(pointer 흐름 유지).
+- [x] T40.3 (②) `_metaGraph.tableDeps` (`_metaG6Build` 리셋·재채움) + node:drag 핸들러(offset 기록 → translateElementTo
+      절대이동 + dragend 재정합으로 1-frame lag 제거).
+- [x] T40.4 검증: `node --check` PASS + §18.8 적대 리뷰 + **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 실측** —
+      Test A(중간버튼 팬: 노드 월드 [0,0] + 화면 팬) PASS, Test B(좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]) PASS.
+- [ ] T40.5 배포(deploy_scope: included): main 병합 → web-a/web-b 재배포(cache-buster `admin.js?v=20260703-graph-drag`).

@@ -672,7 +672,6 @@ source_of_truth: true
 - Impact: 프론트 **표현 전용**(admin 그래프 뷰 역할 범례 위치·레이아웃만). 데이터 API·스키마(AGE)·마커·칩 색/아이콘 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 폭 조회(`d.clientWidth`)로만 참조되고 innerHTML 교체 없음 → 범례 wipe 없음. 부작용: "상세 ⇆"(`#metadataGraphDetailToggle`)로 상세 패널 접으면 범례도 같이 숨음(패널 종속 — 사용자 선택 위치의 자연 귀결). 검증: 구조 정합(무JS·`<details>` 관용구 기존 line 512 재사용) + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html/styles.css git revert + cache-buster 이전값(reltrace-tabledetail). 데이터·API·JS 무손상(표현 전용이라 revert 리스크 최소).
 
-<<<<<<< HEAD
 ## CHG-20260703-graph-rel-layout
 - Date: 2026-07-03
 - Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — 관계 연결이 복잡해질수록 가시성 저하, 스키마 카드 내 테이블의 단순 나열이 이를 악화. ① 연결선이 되도록 교차하지 않게 ② 관계가 확보될수록 연결·유사도 기준으로 노드 배치. 정본: DECISIONS ADR-012 / TASK §38.
@@ -684,7 +683,7 @@ source_of_truth: true
 - Impact: 프론트 **배치 순서 전용** — 데이터 API·AGE 스키마·마커·상태·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·펼침-불변(ADR-004 ②)·카드 게이팅·masonry/shelf-pack 골격 유지(순서 입력만 교체). 배치 변화는 관계 데이터가 늘어난 rebuild 시점뿐(기존 shelf 재배치 시야고정 경로가 흡수). 검증: Node 격리 8/8 + 벤치(2D 교차 12~30% 감소) + node --check. 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows.
 - §18.8 패널 후속 수정(같은 cycle): ① `_metaGraphCollapse` — 컬럼 접기 시 REFERENCES 모델 엣지 **보존**(containment 만 삭제; 접기 제스처의 배치 재셔플(MAJOR)과 접힌 테이블 관계 표시 소실을 동시 해소) ② `_metaGraphExpand` — rebuild 후 follow tween 사망 시 무애니 focusElement 폴백(`_metaGraph._focusLive` 생존 마커, `_metaGraphAnimateFocus` 를 marker 래퍼+`_metaGraphAnimateFocusRun` 으로 분리) ③ `_metaG6Build` — itemsNat 중복 정렬 제거(relOrder 직접 소비). 격리 테스트 10/10(구조 회귀 방지 t8·t9 포함).
 - Rollback Notes: admin.js 신규 함수 5종 제거 + `_metaG6Build` 의 ids/items 를 자연정렬로 환원 + collapse/expand/AnimateFocus 를 이전 형태로 복원 + cache-buster 이전값(20260703-reldetail-colexpand). 데이터·API 무손상(표현 전용).
-=======
+
 ## CHG-20260703-role-legend-bottom
 - Date: 2026-07-03
 - Related Requirement: 사용자 후속 피드백(role-legend-panel 배포 후) — ① 역할 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI(노드 상세)를 밀어 내용이 뒤틀리는 문제** 해소. role-legend-panel(CHG-20260703-role-legend-panel) 위 후속 개선.
@@ -695,4 +694,13 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{TASK(§38),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 **표현 전용**(상세 패널 내부 레이아웃만). 데이터 API·스키마·마커·칩 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. 범례는 여전히 detailBody 형제(이제 아래)라 innerHTML 교체(detailBody/progress 만)에 지워지지 않음. 검증: **headless playwright 렌더 격리 실증** — 빈 상세=범례 바닥고정(pinnedNearBottom, 위 여백 262px), 긴 상세 30행=노드 상세 firstNodeH 32(온전·미압축)·dbH==dbScrollH(983, 잘림 없음)·aside canScroll=true(스크롤) → 밀림/뒤틀림 없음. + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html(범례 위치 원복)·styles.css(flex/margin 원복) git revert + cache-buster 이전값(reldetail-colexpand-role-legend-panel). 데이터·API·JS 무손상.
->>>>>>> origin/main
+
+## CHG-20260703-graph-drag
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — ① 마우스 중간(휠) 버튼 드래그를 객체 상호작용이 아닌 **카메라 드래그(팬)**로, ② **테이블 노드 이동 시 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드) 동반 이동**. 정본: TASK §40 / REVIEW REV-20260703T021144-graph-drag.
+- Summary: (①) G6 `behaviors` 를 문자열 → object-form 으로 전환 + `enable` 오버라이드 — `_metaCanvasDragEnable`(중간버튼이면 targetType 무관 팬 허용, 아니면 기존대로 빈 캔버스만) + `_metaElementDragEnable`(중간버튼이면 노드 이동 거부 → 팬에 양보). `_metaEventButtons`/`_metaIsMiddleDrag` 로 buttons 비트마스크(4=중간) 견고 판정(G dragstart 의 button=-1 대비 buttons·nativeEvent fallback). 컨테이너 `mousedown`(button===1) `preventDefault` 로 브라우저 autoscroll(팬 커서) 억제 — pointer 이벤트 흐름은 유지되므로 drag-canvas 정상. (②) `node:dragstart/drag/dragend` 리스너 + `_metaGraph.tableDeps`(Table key → 종속 노드 id[], `_metaG6Build` 매 재구성 리셋·재채움). dragstart 에서 각 종속의 테이블 대비 오프셋(월드) 기록, drag/dragend 에서 `translateElementTo(테이블 현재위치 + 오프셋)` 절대이동 — 핸들러 실행 순서 무관(dragend 재정합으로 1-frame lag 제거).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (behaviors object-form + `_metaEventButtons`/`_metaIsMiddleDrag`/`_metaCanvasDragEnable`/`_metaElementDragEnable`/`_metaNodeDragStart`/`_metaNodeDrag`/`_metaNodeDragEnd` 신규 + `_metaGraph.tableDeps`/`_drag` 필드 + `_metaG6Build` tableDeps 배선 + 컨테이너 mousedown·node:drag 리스너)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§40),MODIFY,REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 **상호작용 전용** — 데이터 API·AGE 스키마·마커·상태·칩 인코딩·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·기존 zoom-canvas/node:click/contextmenu/미니맵/우클릭 메뉴 무변경. 종속 동반 이동은 drag-element 단일 노드 이동과 동일하게 transient(다음 setData 재구성 시 grid 로 복귀). 검증: `node --check` + §18.8 적대 리뷰 + **라이브 실 Windows 브라우저(Chrome/149) PB-0008 PASS**(Test A 중간버튼 팬: 노드 월드 [0,0] + 화면 팬 / Test B 좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]). 배포=web 재빌드.
+- Rollback Notes: admin.js 신규 7함수 + `tableDeps`/`_drag` 필드 + behaviors object-form + 두 리스너 제거, behaviors 를 `["drag-canvas","zoom-canvas","drag-element"]` 문자열로 환원. 데이터·API 무손상(상호작용 전용).
