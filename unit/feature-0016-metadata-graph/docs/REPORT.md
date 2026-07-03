@@ -1,5 +1,23 @@
 # Report
 
+## 2026-07-03 · 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (graph-drag, TASK §41)
+
+### 배경 (사용자 요청)
+관리 콘솔 > 메타데이터 > 그래프 뷰: ① 마우스 **중간(휠) 버튼 드래그를 객체 상호작용이 아닌 카메라 팬**으로, ② **테이블 노드를 옮길 때 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도 동반 이동**.
+
+### 구현 (FE 상호작용 전용, admin.js)
+- (①) G6 `behaviors` 문자열→object-form + `enable` 오버라이드: `_metaCanvasDragEnable`(중간버튼이면 노드 위에서도 팬)·`_metaElementDragEnable`(중간버튼이면 노드 이동 거부→팬 양보). `_metaEventButtons`/`_metaIsMiddleDrag` 로 buttons 비트마스크(4=중간) 판정. 컨테이너 `mousedown`(button===1) `preventDefault` 로 브라우저 autoscroll 억제(pointer 흐름 유지).
+- (②) `_metaGraph.tableDeps`(Table key→종속 id[], `_metaG6Build` 리셋·재채움) + `node:dragstart/drag/dragend`. dragstart 에서 각 종속의 테이블 대비 오프셋(월드) 고정 기록 → drag/dragend `translateElementTo(테이블 현재위치+오프셋)` 절대이동 + dragend 재정합(핸들러 순서 무관, 1-frame lag 제거).
+- cache-buster `admin.js?v=20260703-graph-drag`.
+
+### 검증
+- `node --check` PASS. §18.8 적대 리뷰 [SUBAGENT: PASS] (G6 v5.1.1 번들 역어셈블 실측 — 4축 BLOCKING 0, NIT 6건 중 N1 주석 정정·나머지 수용) — REVIEW REV-20260703T021144-graph-drag.
+- **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 PASS** (머지 전 pre-verify): Test A(중간버튼 팬 — 노드 월드 [0,0] + 화면 팬), Test B(좌클릭 테이블 — 종속 5개 동일 델타 [191.35,-131.55]).
+
+### 잔여
+- 배포(web 재빌드, deploy_scope: included) + 라이브 PB-0008 POST-DEPLOY 재확인.
+- (병합 메모) origin/main(9e1156d6) 3-way 병합으로 §40=graphux6·§39=cluster-role-prefix·역할 기능 보존, graph-drag 는 §41 로 리넘버·admin.js 자동병합(role grep=2, drag 함수 8 보존).
+
 ## 2026-07-03 · AI 능동분석 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (graphux6-panelbottom-responsive-obs, TASK §40)
 
 사용자 요청 3건. worktree `feature-0016-graphux6-panel-obs`, 등급 Major(③ 마이그레이션 포함). §37~39 와 병렬 진행 → main 병합 시 §37 role-legend-bottom 과 aside 구조 통합.

@@ -957,3 +957,28 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T40.9 컨테이너 make test 전건 PASS(ruff clean): test_ai_ops 17/17(target 통과 + 컬럼부재 폴백 + INSERT 폴백) + test_llm_usage_record 7/7(param 순서) + test_call_llm 2/2(mock target=None). py_compile OK + alembic 단일 head=0032.
 - [x] T40.10 §18.8 적대 리뷰 2라운드 PASS-WITH-FIXES(BLOCKING 0 — 빈캔버스·노트북스크롤·가드취약·테스트NIT 전부 수정) + verify-completion --pre-commit PASS. REVIEW REV-20260703T105541-graphux6-panelbottom-responsive-obs.
 - [x] T40.11 배포 완료(PR #570 머지 → 9e1156d6): `make migrate` agent 재빌드 후 **live alembic_version 0031→0032 확인**(stale image 회피) + `make deploy-web` 무중단 롤링(web-a/b 9e1156d6, soak 90s 통과) + `make insight-up` insight-worker 재빌드(GIT_COMMIT=9e1156d6, ③ target 기록 반영). **라이브 PB-0008 실 Windows PASS(3/3)**: ① progress 최하단(progressIsLastChild=true, 노드 상세 안 밀림) ② 캔버스 flex-fill 415px=pane 바닥(잘림 0) + 제약 시 200 floor 축소·스크롤 ③ 최근활동 '테이블 분석'이 `schema.table` 대상 표시(실데이터, 계정분석은 PII 공백). 상세 feature-0003 TEST.md §3 Run.
+
+## 41. graph-drag — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (2026-07-03, 사용자 요청)
+사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰): ① 마우스 중간(휠) 버튼을 통한 drag&drop 을 객체 상호작용이
+아닌 **카메라 드래그(팬)**로, ② **테이블 노드를 옮길 때 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도 같이
+드래그**. 정본: MODIFY CHG-20260703-graph-drag / TEST.md graph-drag Run / REVIEW REV-20260703T021144-graph-drag.
+등급: **Minor**(프론트 상호작용 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
+(§39=cluster-role-prefix·§40=graphux6-panelbottom-responsive-obs 가 main 선점 — 본 절은 §41 로 리넘버.)
+
+### 41.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`: `behaviors` object-form + `enable` 오버라이드
+  (`_metaCanvasDragEnable`/`_metaElementDragEnable`, `_metaEventButtons`/`_metaIsMiddleDrag`), 컨테이너
+  mousedown autoscroll 억제, `node:dragstart/drag/dragend` 핸들러(`_metaNodeDragStart`/`_metaNodeDrag`/
+  `_metaNodeDragEnd`), `_metaGraph.tableDeps` 맵 + `_metaG6Build` 배선.
+- `unit/feature-0003-agent-web-ui/src/static/admin.html`: cache-buster `admin.js?v=20260703-graph-drag`.
+- AC: (a) 중간버튼 드래그는 노드 위에서든 카메라 팬(노드 월드좌표 불변) (b) 좌클릭 빈 캔버스 팬·좌클릭 노드
+  이동·휠 줌·클릭·우클릭 메뉴 회귀 0 (c) 테이블 노드 좌클릭 드래그 시 종속(X:ctl+컬럼) 전부 동일 델타 동반 이동.
+
+### 41.2 구현·검증
+- [x] T41.1 (①) behaviors object-form + enable 오버라이드(중간버튼 팬 / 노드 이동은 좌클릭만) + buttons 비트마스크 판정.
+- [x] T41.2 (①) 컨테이너 mousedown(button===1) preventDefault — 브라우저 autoscroll(팬 커서) 억제(pointer 흐름 유지).
+- [x] T41.3 (②) `_metaGraph.tableDeps` (`_metaG6Build` 리셋·재채움) + node:drag 핸들러(offset 기록 → translateElementTo
+      절대이동 + dragend 재정합으로 1-frame lag 제거).
+- [x] T41.4 검증: `node --check` PASS + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 번들 실측 4축 BLOCKING 0) + **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 실측** —
+      Test A(중간버튼 팬: 노드 월드 [0,0] + 화면 팬) PASS, Test B(좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]) PASS.
+- [ ] T41.5 배포(deploy_scope: included): main 병합 → web-a/web-b 재배포(cache-buster `admin.js?v=20260703-graph-drag`).

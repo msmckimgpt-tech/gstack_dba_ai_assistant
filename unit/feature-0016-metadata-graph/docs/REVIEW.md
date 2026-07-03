@@ -701,3 +701,20 @@ source_of_truth: true
 - BLOCKING: 0.
 - NIT(수용): esc 따옴표 미escape(위 1축 — 기존 패턴·저위험). 
 - 총평: 배포 가능(GO). 사용자 3요구(접두사+정렬·행클릭 선택·범례 툴팁) 코드·헤드리스 렌더 양측 충족. 완료 게이트=PB-0008 실 Windows.
+
+## REV-20260703T021144-ai-claude-feature-0016-graph-drag [SUBAGENT: PASS] — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 적대 리뷰 4축
+- 대상: working-tree admin.js graph-drag 변경(behaviors object-form + `enable` 오버라이드, `node:dragstart/drag/dragend`, `tableDeps` 맵). 커밋 3d12fb08 의 상대방식(`translateElementBy`+delta)을 절대-오프셋(`translateElementTo`+offset)으로 리팩터한 **최종 워킹트리** 기준. resume 세션에서 재실행·확정.
+- 방법: 적대 subagent — G6 v5.1.1 vendor 번들(`vendor/g6.min.js`)을 역어셈블해 API 시맨틱·이벤트 latch·좌표계까지 실측 교차검증(통과 아닌 결함 적발 목적).
+- **4축 전부 PASS (BLOCKING 0)**:
+  - 축1 회귀: behaviors 3종(drag-canvas/zoom-canvas/drag-element) 개수·종류 동일(유실 없음). `_metaCanvasDragEnable` 비-중간 분기가 번들 drag-canvas 기본 enable 과 문자열까지 동일 → 좌클릭 빈캔버스 팬·좌클릭 노드 이동·휠 줌·node:click·우클릭 ctx·미니맵 무회귀. mousedown capture 는 `button===1` 만 preventDefault(좌0/우2 무영향, pointer 취소 아님 → G6 팬 흐름 유지).
+  - 축2 엣지: 접힌 테이블·컬럼/용어/카드/"X:"ctl 직접 드래그 → `tableDeps` 미등록 → 단독 이동. `renderedIds` 필터 + `getElementPosition` try/catch 로 stale/미렌더 종속 배제. 중간버튼 드래그 시 `_drag=null` 유지 → drag/dragend no-op.
+  - 축3 G6 API(번들 실측): `translateElementTo({id:[x,y]}, false)` multi-key 지원 확정. `getElementPosition`·`translateElementTo` 모두 **모델(월드)좌표** 동일계 → 오프셋 수학 성립. `enable` 콜백 이벤트 1인자 시그니처 정합. DragCanvas 가 DRAG_START 에서 enable 1회 latch + `buttons=4` 판정 → 노드 위 중간버튼도 팬(REQ① 성립).
+  - 축4 좌표계/오프셋: drag-element 의 `translateElementBy` 가 모델 x/y 를 **동기** 갱신 후 커스텀 `node:drag` 가 읽어 프레임 지연 없음. 오프셋을 dragstart 월드좌표로 고정 → 매 프레임 절대 배치라 zoom 배율·카메라 팬·누적 drift 무관. dragend 재호출은 핸들러 순서 안전망 → 커밋의 상대방식(순서 뒤바뀌면 delta 중복/누락) 대비 **개선**.
+- **NIT 6건 (전부 비차단)**:
+  - N1 [수정완료]: `_drag` 필드 주석(`{id,lastX,lastY,deps}`→`{id,offs}`) + `node:drag` 배선 주석(`translateElementBy` delta→`translateElementTo` 절대오프셋) 구방식 서술 → 실제 절대방식으로 정정(admin.js, 주석 전용·로직 무변).
+  - N2 [수용]: `_metaG6Build` 가 `tableDeps` 만 리셋, `_drag` 미리셋 — 단 dragend 에서 반드시 null 화 + rebuild 는 드래그 밖 트리거라 self-heal(버그 아님).
+  - N3 [수용]: `_metaEventButtons` 최후폴백(`button===-1`→좌1)은 buttons·nativeEvent.buttons 둘 다 부재 시만 도달 — DOM 규격상 pointer drag 은 buttons 항상 존재라 사실상 도달 불가.
+  - N4 [수용, 선재]: "−" 접기 ctl 직접 드래그 단독 이동, 노드 위 중간'클릭'(드래그 아님) node:click 발화 가능 — 둘 다 본 변경 이전부터 존재(범위 밖).
+  - N5 [수용]: `translateElementTo` 가 종속 z 를 0 리셋(2D 무해).
+  - N6 [처리완료]: 브랜치 stale — `_metaRoleChipHTML` 등 역할 기능은 main 선안착분. origin/main(9e1156d6) 3-way 병합으로 역할(admin.js grep=2)+드래그(함수 8) 양쪽 보존 확인, §40→§41 재리넘버.
+- **판정**: BLOCKING 0. REQ①(중간버튼 팬)·REQ②(종속 동반이동) G6 v5.1.1 실측 시맨틱 정합. N1 수정 완료, N2~N6 수용/처리.

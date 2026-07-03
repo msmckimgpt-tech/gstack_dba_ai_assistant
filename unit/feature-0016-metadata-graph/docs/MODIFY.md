@@ -733,3 +733,13 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
 - Rollback Notes: 해당 doc 라인 revert.
+
+## CHG-20260703-graph-drag
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — ① 마우스 중간(휠) 버튼 드래그를 객체 상호작용이 아닌 **카메라 드래그(팬)**로, ② **테이블 노드 이동 시 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드) 동반 이동**. 정본: TASK §41 / REVIEW REV-20260703T021144-graph-drag.
+- Summary: (①) G6 `behaviors` 를 문자열 → object-form 으로 전환 + `enable` 오버라이드 — `_metaCanvasDragEnable`(중간버튼이면 targetType 무관 팬 허용, 아니면 기존대로 빈 캔버스만) + `_metaElementDragEnable`(중간버튼이면 노드 이동 거부 → 팬에 양보). `_metaEventButtons`/`_metaIsMiddleDrag` 로 buttons 비트마스크(4=중간) 견고 판정(G dragstart 의 button=-1 대비 buttons·nativeEvent fallback). 컨테이너 `mousedown`(button===1) `preventDefault` 로 브라우저 autoscroll(팬 커서) 억제 — pointer 이벤트 흐름은 유지되므로 drag-canvas 정상. (②) `node:dragstart/drag/dragend` 리스너 + `_metaGraph.tableDeps`(Table key → 종속 노드 id[], `_metaG6Build` 매 재구성 리셋·재채움). dragstart 에서 각 종속의 테이블 대비 오프셋(월드) 기록, drag/dragend 에서 `translateElementTo(테이블 현재위치 + 오프셋)` 절대이동 — 핸들러 실행 순서 무관(dragend 재정합으로 1-frame lag 제거).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (behaviors object-form + `_metaEventButtons`/`_metaIsMiddleDrag`/`_metaCanvasDragEnable`/`_metaElementDragEnable`/`_metaNodeDragStart`/`_metaNodeDrag`/`_metaNodeDragEnd` 신규 + `_metaGraph.tableDeps`/`_drag` 필드 + `_metaG6Build` tableDeps 배선 + 컨테이너 mousedown·node:drag 리스너)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§41),MODIFY,REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 **상호작용 전용** — 데이터 API·AGE 스키마·마커·상태·칩 인코딩·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·기존 zoom-canvas/node:click/contextmenu/미니맵/우클릭 메뉴 무변경. 종속 동반 이동은 drag-element 단일 노드 이동과 동일하게 transient(다음 setData 재구성 시 grid 로 복귀). 검증: `node --check` + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 v5.1.1 번들 실측 4축 BLOCKING 0) + **라이브 실 Windows 브라우저(Chrome/149) PB-0008 PASS**(Test A 중간버튼 팬: 노드 월드 [0,0] + 화면 팬 / Test B 좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]). 배포=web 재빌드.
+- Rollback Notes: admin.js 신규 7함수 + `tableDeps`/`_drag` 필드 + behaviors object-form + 두 리스너 제거, behaviors 를 `["drag-canvas","zoom-canvas","drag-element"]` 문자열로 환원. 데이터·API 무손상(상호작용 전용).
