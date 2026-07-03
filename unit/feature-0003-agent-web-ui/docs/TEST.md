@@ -1665,3 +1665,4 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **⑤ hover popover PASS(표시·입력·시작)**: 버튼 mouseenter → popover 표시, textarea maxlength=400, '분석 시작' 버튼 존재. **결함 적발: Esc 닫힘 고착** — Esc 핸들러의 `btn.focus()` 가 focus-show 를 재발화 + `show()` 가 blur hide 타이머를 취소해 620ms 후에도 미닫힘(실측).
   - ①(ƒ/⚙ Routine 칩·보라 잔점선)은 insight-worker routine introspect 첫 cadence 후 데이터 생성 — 후속 육안 확인 항목으로 이월.
 - **funcproc-esc-hotfix**: Esc 직후 300ms show 억제 플래그(`escClosing`)로 닫힘 확정(focus 복귀는 유지 — a11y). cache-buster `admin.js?v=20260703-funcproc-esc`. `node --check` PASS. 배포 후 Esc 닫힘 라이브 재실측 예정(본 섹션에 append).
+- **POST-DEPLOY 재실측 (Environment: Windows-browser, e1c71589 배포 후) — Esc 닫힘 PASS**: `admin.js?v=20260703-funcproc-esc` 강제 로드 → hover 표시 → Esc 후 **120ms 내 닫힘 + 620ms 유지** + 억제 창(300ms) 이후 재-hover 정상 재오픈. graph-funcproc ⑤ 전 항목 라이브 완결(①Routine 칩만 introspect 첫 cadence 후 육안 이월).

@@ -1147,5 +1147,7 @@ REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메�
       **PB-0008 라이브 실측**: ②미니맵 anchor+리사이즈 추종 PASS(gap 11px 불변) · ④재분석 부재 PASS ·
       ⑤popover 표시/입력 PASS + **Esc 고착 결함 적발**(→ T45.8 hotfix). ①Routine 칩은 introspect 첫
       cadence 후 육안 확인 이월(feature-0003 TEST.md Run 정본).
-- [ ] T45.8 funcproc-esc-hotfix — popover Esc 닫힘 고착(focus-show 재발화 + hide 타이머 취소) 수정
-      (`escClosing` 300ms 억제) + cache-buster `20260703-funcproc-esc` + 배포·라이브 재실측.
+- [x] T45.8 funcproc-esc-hotfix 완수 — popover Esc 닫힘 고착(focus-show 재발화 + hide 타이머 취소)
+      수정(`escClosing` 300ms 억제) + cache-buster `20260703-funcproc-esc`. PR #580 머지(e1c71589) →
+      web 롤링 재배포(soak 통과) → **라이브 재실측 PASS**(Esc 120ms 내 닫힘·재-hover 정상, feature-0003
+      TEST.md Run). 잔여: ①Routine ƒ/⚙ 칩 육안 확인(introspect 첫 cadence 후 — 후속 확인 항목).
