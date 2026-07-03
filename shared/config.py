@@ -58,6 +58,9 @@ __all__ = [
     "AGENT_INLINE_INSIGHT_ON_ASK",
     "AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH",
     "AGENT_INSIGHT_MODEL",
+    "AGENT_INSIGHT_TABLE_GROUPING_ENABLED",
+    "AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS",
+    "AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX",
     "AGENT_NODE_ANALYSIS_MODEL",
     "AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT",
     "AGENT_INSIGHT_OBJECT_FASTPATH",
@@ -866,6 +869,19 @@ AGENT_SCHEMA_INSIGHT_MAX_COLS = int(os.getenv("AGENT_SCHEMA_INSIGHT_MAX_COLS", "
 AGENT_TABLE_INSIGHT_MAX_COLS = int(os.getenv("AGENT_TABLE_INSIGHT_MAX_COLS", "15"))
 AGENT_SCHEMA_INSIGHT_RESCAN_SEC = int(os.getenv("AGENT_SCHEMA_INSIGHT_RESCAN_SEC", "3600"))
 AGENT_TABLE_INSIGHT_RESCAN_SEC = int(os.getenv("AGENT_TABLE_INSIGHT_RESCAN_SEC", "3600"))
+# feature-0002 insight-table-grouping (2026-07-03): 동일 구조(컬럼 지문) + 동일 이름-family
+# (날짜/번호 suffix 만 다른) 테이블을 한 그룹으로 묶어 대표 1개만 LLM 분석하고, 나머지 형제는
+# LLM 없이 인사이트를 전파(fan-out)한다. 날짜 샤드(daily_league_ranking_1_20250727,
+# _20250726 …) 수백 개를 개별 LLM 분석하던 낭비 제거(사용자 결정 2026-07-03). per-table
+# table_insight fact 는 그대로 유지 → grounding(NL→SQL) 무회귀. 그룹 대표의 분석 dict 는
+# table_group_insight:<fp>:<stem> KV 에 캐시되어 다음 cycle 의 신규 샤드가 LLM 없이 상속한다.
+AGENT_INSIGHT_TABLE_GROUPING_ENABLED = (
+    os.getenv("AGENT_INSIGHT_TABLE_GROUPING_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+)
+# 그룹으로 인정할 최소 멤버 수(이 미만은 기존 per-table 동작 그대로 — 무회귀 보장).
+AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS = int(os.getenv("AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS", "2"))
+# 한 cycle 에서 LLM 없이 fan-out(전파)할 테이블 상한(budget_sec 와 함께 이중 상한 — spike 방지).
+AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX = int(os.getenv("AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX", "200"))
 AGENT_SUMMARY_REFRESH = os.getenv("AGENT_SUMMARY_REFRESH", "1").strip().lower() in ("1", "true", "yes")
 AGENT_SUMMARY_REFRESH_EVERY = int(os.getenv("AGENT_SUMMARY_REFRESH_EVERY", "1"))
 AGENT_SUMMARY_MAX_RECENT = int(os.getenv("AGENT_SUMMARY_MAX_RECENT", "8"))

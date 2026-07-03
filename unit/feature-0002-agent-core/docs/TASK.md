@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260703-insight-table-grouping — insight-worker 동일구조 테이블 그룹화(대표 1회 분석 + 형제 전파) (Major §12.3, 사용자 요청, feature-0016 metadata 효율 교차) — code+unit done
+- 출처: `/_template:entry`(2026-07-03). 사용자 관측 — "AI 운영 현황"의 "테이블 분석"이 날짜/번호 suffix 만 다른 동일구조 샤드(`web_ranking.daily_league_ranking_1_20250727`, `_20250726` …, `web_statistics.DayuPoint_20260211`, `_20260210` …)를 **각각 개별 LLM(claude-haiku) 분석**해 비효율. 요청: "유사한 형식의 구조는 일반적 분류로 구분해 한 번에 처리". PLAN-APPROVED(AskUserQuestion — 접근 A+B 결합, worktree+plan).
+- 근본원인: `_scan_instance_schema_insights`(insight.py) 가 테이블마다 `llm_table_insight` 1회 호출. `table_insight:` fact 키가 테이블명별 유니크라 동일 지문(`_compute_table_fingerprint` = 컬럼명+타입 해시)이어도 각 샤드가 `artifact_missing` 로 개별 LLM. 지문은 변경감지에만 쓰이고 그룹화 미사용. 분석문(`_format_table_insight_text`)은 **구조(컬럼)에서만** 파생 → 샤드끼리 사실상 동일(테이블명은 prefix 한 줄만).
+- [x] `shared/config.py`: `AGENT_INSIGHT_TABLE_GROUPING_ENABLED`(기본 on)·`AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS`(2)·`AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX`(200) 신규 + `__all__` 등록(star-export NameError 방지 — feature-0016 config `__all__` 누락 선례 반영).
+- [x] `insight.py` 순수 헬퍼: `_table_base_stem`(후행 날짜/번호/백업 suffix 반복 strip, 최소 2글자 보존)·`_table_group_sig`·`_build_table_groups`(그룹 키=(base_stem, fingerprint) — 지문=구조 동일, base_stem=이름-family 동일 **둘 다** 요구 → 구조만 우연히 같고 도메인 다른 테이블 오합침 방지)·`_group_insight_kv_key`/`_load_group_insight_kv`/`_save_group_insight_kv`(대표 분석 dict 를 `table_group_insight:<fp>:<stem>` KV 캐시 — fp 변경 시 키 자기무효화).
+- [x] `insight.py` 발행 단일화: `_publish_table_insight`(렌더→publish→verify→fp저장→refresh→telemetry) 헬퍼로 대표·형제 경로 통합(발행 로직 drift 방지, 기존 경로 verbatim 추출).
+- [x] `_scan_instance_schema_insights` 통합: 대표 분석 확보 순서 = cycle cache → KV 상속(이전 cycle 대표, LLM 0) → LLM(대표만, KV 시드). 이어서 같은 그룹 ready(미완/변경/refresh) 형제에게 LLM 없이 fan-out(대표 분석 dict + 대표 컬럼 재사용 — 동일 지문이라 컬럼 동일). per-table `table_insight` fact 유지 → grounding(NL→SQL) 무회귀. B-라벨: `source_meta.table_family`(base_stem·members·via) + telemetry `insight_via` + report `insight_llm_calls`/`tables_fanout`. `made_progress` 에 fan-out 포함(무진전 오판 backoff 방지).
+- [x] 무회귀 게이트: grouping off → 기존 동작 그대로. 싱글턴/그룹 미형성 → 기존 per-table LLM. 지문 변경 → 새 sig → fresh LLM. 다른 도메인 동일구조 → 다른 base_stem → 미병합.
+- [x] 단위 테스트 `tests/test_insight_table_grouping.py` +16(stem strip 6·그룹 서명/구조가드/도메인가드 5·KV 상속 roundtrip/무효화 3·포매터 방어 2). 로컬 PASS. 기존 insight 계열 79 PASS(회귀 0), config star-export PASS. **컨테이너 `make test` PASS(ruff All checks passed, exit 0)** — 리뷰 수정 후 재실행 포함.
+- [x] §18.8 적대적 backend/correctness 트레이스(REV-20260703-insight-table-grouping) — CHANGES-REQUESTED → **확정버그 2(BUG1 cross-schema fan-out 무력화·BUG2 repair 이중처리) + actionable 우려 2(P1 대표 샤드명 날짜누출→family 패턴명 일반화·P2 malformed dict KV wedge→성공후 저장+포매터 방어) 전건 흡수** → SHIP-WITH-FIXES. 나머지 refuted/residual.
+- [ ] verify-completion(§16.3) → commit → cycle-final → 배포(deploy_scope: included — insight-worker 재기동, 백엔드 변경이라 PB-0008 시각검증 대상 아님).
+- Cross-ref: feature-0016-metadata-graph(8,122 테이블 컨텍스트 효율 비전 정합, node_analysis 그래프 버튼 트리거는 별도 예산 시스템이라 범위 밖). 근거: `docs/FUNCTION.md:203`(~11s/LLM 호출·3000-테이블 DB 완주 12~26h 병목).
+
 ## TASK-20260629T142624-active-interp-modality — 능동해석 지침 modality-무관 일반화 + MySQL casing (Major §12.3, conversation_audit FR-nl2sql 후속) — done
 - 출처: `/_dqa:conversation_audit` 가 라이브 1:1 conv …91655acc 를 감사해 마찰 `FR-nl2sql-schema-discovery-giveup` 적발 — assistant 가 스키마 `dbGame`→`dbgame` 소문자화→`1049 Unknown database`→8 tool 후 give-up·대량 재질문. 근본원인: (a) 능동해석 지침이 그룹대화에만 주입돼 1:1 무방비, (b) MySQL 식별자 case-sensitivity 안내 부재. PLAN-APPROVED.
 - [x] `_GROUP_CONVERSATION_GUIDANCE` 의 modality-무관 본문(능동 해석·합리적 추정·스키마 발견·데이터소스 일관성·give-up 금지)을 `_ACTIVE_INTERPRETATION_GUIDANCE` 로 분리, `_run_agent_core` 에서 그룹 조건(`if _group_sender_labels`) **밖에서 무조건 주입**(1:1·그룹 모두). 그룹 블록엔 다자-특화(발신자 라벨·사람-사람 맥락)만 잔존 + 능동 해석 절 cross-ref.

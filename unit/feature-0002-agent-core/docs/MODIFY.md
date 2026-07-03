@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T083758-insight-table-grouping (TASK-20260703-insight-table-grouping — insight-worker 동일구조 테이블 그룹화, Major §12.3)
+- Date: 2026-07-03. insight-worker 가 날짜/번호 suffix 만 다른 동일구조 샤드를 각각 개별 LLM 분석하던 낭비 제거(사용자 요청).
+- `shared/config.py`: `AGENT_INSIGHT_TABLE_GROUPING_ENABLED`(기본 on)·`AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS`(2)·`AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX`(200) + `__all__` 등록.
+- `src/modules/insight.py`: 순수 헬퍼(`_table_base_stem`·`_table_group_sig`·`_build_table_groups`·`_group_insight_kv_key`/`_load_group_insight_kv`/`_save_group_insight_kv`) + 발행 단일화 헬퍼 `_publish_table_insight` + `_scan_instance_schema_insights` 통합(대표 확보 cycle cache→KV 상속→LLM, 이후 ready 형제 LLM-free fan-out). 그룹키=(base_stem, fingerprint). 대표 LLM payload 는 family 패턴명(`base_stem+"_*"`)으로 일반화(날짜 누출 차단). KV/cache 는 발행 성공 후에만 저장(malformed wedge 차단). report `insight_llm_calls`/`tables_fanout` + `made_progress` 반영.
+- `src/modules/utils.py`: `_format_table_insight_text`·`_format_schema_insight_text` 에 non-시퀀스 `key_columns` 방어(리뷰 P2).
+- 무회귀: grouping off·싱글턴·fp 변경 시 기존 per-table 동작. per-table `table_insight` fact 유지 → grounding 무회귀.
+- 검증: `tests/test_insight_table_grouping.py` 16 + 기존 insight 79 회귀 0 + 컨테이너 `make test` PASS(ruff clean). §18.8 적대 리뷰 REV-20260703T083758-insight-table-grouping(확정버그 2+우려 2 전건 흡수).
+- 배포: deploy_scope:included — insight-worker 재기동(백엔드, PB-0008 비대상).
+
 ## CHG-20260629T142624-active-interp-modality (TASK-20260629T142624-active-interp-modality — 능동해석 modality 일반화 + MySQL casing, Major §12.3)
 - Date: 2026-06-29. conversation_audit `FR-nl2sql-schema-discovery-giveup`(1:1 conv …91655acc give-up) 근본원인 수정.
 - `src/agent_core.py`: `_GROUP_CONVERSATION_GUIDANCE` 의 능동 해석 본문을 분리해 신설 `_ACTIVE_INTERPRETATION_GUIDANCE`(modality-무관), `_run_agent_core` 에서 그룹 조건 밖 **무조건 주입**(1:1 무방비 회귀 수복 — 종전 그룹-한정). 그룹 블록은 다자-특화(발신자 라벨)만 + cross-ref. `_MYSQL_DIALECT_GUIDANCE` 에 case-sensitivity 블록(표기 보존·소문자화 금지·`1049`/`1146`·`SCHEMA()=NULL` qualify) 추가.
