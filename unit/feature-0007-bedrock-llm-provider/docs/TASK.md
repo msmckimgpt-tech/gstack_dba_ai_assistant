@@ -284,6 +284,11 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
 ## 6. Done
 - TASK-A0: Plan 작성 + ANCHOR §1~§3 작성 + PLAN-APPROVED 마커 부여 완료
   (2026-05-21).
+- [x] **insight-llm-fallback** (2026-07-03, TASK-0308 후속): insight LLM(claude-haiku-4)의 claude-corp
+  burst 429 대응 — litellm 요청-레벨 fallback(claude-corp → root Max → edge/gemma) + refresh 병행 주입.
+  litellm_config 3-deployment + fallbacks, refresh 두 slot(ANTHROPIC_API_KEY/ANTHROPIC_API_KEY_ROOT) 주입.
+  검증: YAML/bash -n OK, --check(corp 200/root 200) PASS, 적대 패널, ANCHOR §1·§2 무충돌.
+  (CHG-20260703-insight-llm-fallback / REV-20260703T101500-insight-llm-fallback)
 
 ## 7. Next Action
 - AI: 다음 turn 의 사용자 지시 (또는 `/goal` 연장) 에 따라 Phase A1 (`litellm_config.yaml`

@@ -1272,3 +1272,10 @@ source_of_truth: true
 - Verification: test_relationships **57** + metadata_graph units **10** + load_spread **6** PASS. 신규 단위 = relationships 3(unknown database regex 매칭·negative 파단, backoff-window fetch 제외) + relationships 수정 3(transient→backoff) + metadata_graph 6(since 증분 필터 유무·batched commit·owned autocommit 복원·rollback·watermark round-trip). AST/`bash -n` OK. DB 통합(psycopg 필요)은 post-deploy(코드 대조로 owned=False 경로 기존 동일 확인).
 - Human Approval Needed: 아니오(BLOCKER/MAJOR 0). 단 배포(agent 이미지 재빌드 + insight-worker/local-llm-edge 재기동 + cron 재설치)는 외부영향 — 사용자 confirm.
 - Cross-ref: CHG-20260703T093000-insight-load-spread / TASK-0308 / feature-0016 REPORT "graph sync 부하 분산" / ANCHOR 0002 §3 · 0016 §1 무충돌.
+
+## REV-20260703T104500-insight-heartbeat-liveness [SKIPPED:heartbeat-throttle-liveness]
+- 대상: insight.py `_touch_worker_heartbeat_progress`(진행-중 heartbeat throttle) + 스키마·테이블 순회 삽입.
+- SKIP 근거(§18.4 경량 cycle): (1) 로직 단순 — monotonic throttle + `save_memory_kv` 1회(기존 line 2273 갱신과 동일 KV·동일 함수), (2) **healthcheck 판정식 미변경** — 갱신 **지점**만 추가(cycle 완료 시각→진행 중에도), (3) status/hang 탐지 의미 보존(status 미변경, 생성 정지 시 stale 유지), (4) 신규 단위테스트 2(throttle 억제/경과 저장·None no-op·예외 삼킴) + insight 회귀 0(12 PASS) + AST 로 커버. 데이터손상/크래시/보안 표면 0.
+- 잔여 인지(비차단): throttle 30s + `_is_insight_worker_heartbeat_fresh` age≤30s 경계 → inline-scan gate 가 가끔 stale 판정 가능(성능 이슈지 health 아님, docker health(age≤180s)는 확실 해소). 필요 시 throttle↓ 또는 STALE_SEC 조정 후속.
+- Verification: 신규 test_insight_heartbeat_liveness.py 2 PASS + datasource_health·degraded_backoff 12 PASS + AST OK. 배포 후 docker inspect healthy 라이브 확인.
+- Cross-ref: CHG-20260703-insight-heartbeat-liveness / feature-0002 REPORT·TASK insight-heartbeat-liveness.

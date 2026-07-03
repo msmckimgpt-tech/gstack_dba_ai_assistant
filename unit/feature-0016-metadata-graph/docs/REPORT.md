@@ -1,16 +1,52 @@
 # Report
 
-## 2026-07-03 · 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (graphux6-panelbottom-responsive-obs, TASK §37)
+## 2026-07-03 · AI 능동분석 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (graphux6-panelbottom-responsive-obs, TASK §40)
 
-사용자 요청 3건(관리콘솔 그래프뷰·AI 운영 현황). worktree `feature-0016-graphux6-panel-obs`, 등급 Major(③ 마이그레이션 포함).
+사용자 요청 3건. worktree `feature-0016-graphux6-panel-obs`, 등급 Major(③ 마이그레이션 포함). §37~39 와 병렬 진행 → main 병합 시 §37 role-legend-bottom 과 aside 구조 통합.
 
-**① AI 능동 분석 패널 → 상세 패널 하단** ([admin.html](../../feature-0003-agent-web-ui/src/static/admin.html), [styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 이전 graphux5-panelmove 는 진행 패널(`#metadataGraphProgress`)을 상세 aside **상단**(role-legend 아래·노드 상세 위)에 뒀는데, 분석 시작 시 노드 상세를 아래로 밀어내는 이슈가 재확인됨. `#metadataGraphProgress` 를 `#metadataGraphDetailBody` **아래**(aside 최하단)로 이동 — 이제 노드 상세를 밀지 않고 그 아래에 나타난다(aside `overflow-y:auto` 로 스크롤). JS 무변경(getElementById). progress 여백을 `margin-bottom`→`margin-top` 으로(하단 배치 구분).
+**① AI 능동 분석 패널 → 상세 패널 하단** ([admin.html](../../feature-0003-agent-web-ui/src/static/admin.html), [styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 진행 패널(`#metadataGraphProgress`)이 노드 상세 위에 있어 분석 시작 시 상세를 밀어내던 이슈 → aside 최하단으로 이동. main 의 §37(역할 범례를 하단 `margin-top:auto` 고정)과 병합해 최종 aside 순서 = **detailBody → 역할범례(하단고정) → 진행패널(최하단)**, 둘 다 바닥이라 노드 상세를 밀지 않음. JS 무변경(getElementById).
 
-**② 그래프 반응형 높이** ([styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 캔버스·상세가 `height: clamp(420px, 64vh, 760px)` 였는데 **420px 하한**이 metadata pane(admin-shell `overflow:hidden`+`100vh`, metadata 는 pane 단일스크롤 제외)의 가용높이를 초과해 세로 좁은 뷰포트에서 하단이 잘렸다. wide 레이아웃을 **flex-fill**(`.admin-meta-graph`·`.admin-meta-graph-body` `flex:1 1 auto; min-height:0` + body `grid-template-rows: minmax(0,1fr)`)로 전환 — 캔버스·상세가 pane 남은 세로를 채우고 짧은 뷰포트에선 잘리지 않고 축소된다. 고정 height 제거(min-height:0). G6 `autoResize:true`(admin.js:3801, ResizeObserver)가 컨테이너 리사이즈를 자동 반영해 JS 무변경. 좁은화면(≤900px 세로스택)은 fill 해제 + 캔버스 `clamp(300px,56dvh,560px)` + 그래프 모드일 때만 `:has(> #metadataGraphView:not([style*=none]))` pane 스크롤(list-detail 숨김이라 이중스크롤 무).
+**② 그래프 반응형 높이** ([styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 캔버스·상세 `height: clamp(420px,64vh,760px)` 의 420px 하한이 metadata pane(admin-shell `overflow:hidden`+`100vh`) 가용높이를 초과해 세로 좁은 뷰포트에서 잘리던 이슈 → **flex-fill**(`flex:1 1 auto` + body `grid-template-rows: minmax(0,1fr)`)로 pane 남은 세로를 채워 축소·미절단. 고정 height 제거, 캔버스 `min-height:200`(§18.8 M1 빈 캔버스 방어) — 그래프 블록 자체엔 하한 없음(흔한 노트북 불필요 스크롤 회피, §18.8 round-2). 전너비 `:has()` graph-mode pane 스크롤(캔버스 floor 가 가용높이 초과하는 ≈<560px viewport 에서만 발동, 이중 :not 정밀 가드). G6 `autoResize` 로 JS 무변경. 상세는 #565 flex-column 보존.
 
-**③ 최근 활동 분석 대상 관측** (migration [0032](../../feature-0002-agent-core/alembic/versions/20260703_0032_llm_usage_target.py) / [llm.py](../../feature-0002-agent-core/src/modules/llm.py) / [ai_ops.py](../../feature-0003-agent-web-ui/src/routers/ai_ops.py) / [admin.js](../../feature-0003-agent-web-ui/src/static/admin.js)): '테이블 분석'·'노드 분석'이 화면에 라벨만 뜨고 **어떤 대상**인지 안 보이던 이유는 `llm_usage.task` 가 `table_insight`/`node_analysis` 같은 **저카디널리티 카테고리 키**(KPI 드릴다운이 `GROUP BY task`·taxonomy 정확매칭에 의존)라 대상을 담지 않아서다. 대상을 task 에 접합하면 집계가 붕괴하므로 **`target VARCHAR(200)` additive nullable 컬럼**(0030 latency 패턴 동형, `ADD COLUMN IF NOT EXISTS`, 부트스트랩 DDL parity)을 분리 신설. `_record_llm_usage(target=)` 가 schema_insight=스키마·table_insight=schema.table·node_analysis=fqn/name 을 payload 에서 추출해 기록(account_insight 은 대화/계정 PII 라 제외). 배포순서 역전·**stale agent image 로 마이그 누락**(memory: deploy-migration-stale-agent-image)에도 계측이 끊기지 않게 **자가치유 INSERT**(target 포함 실패→rollback→target 제외 재INSERT) + read측 `_query_activity` 도 컬럼 부재 시 base 컬럼 재조회 폴백. admin.js 최근활동 행 라벨 옆 인라인 대상 + 상세 '대상' 행 표시.
+**③ 최근 활동 분석 대상 관측** (migration [0032](../../feature-0002-agent-core/alembic/versions/20260703_0032_llm_usage_target.py) / [llm.py](../../feature-0002-agent-core/src/modules/llm.py) / [ai_ops.py](../../feature-0003-agent-web-ui/src/routers/ai_ops.py) / [admin.js](../../feature-0003-agent-web-ui/src/static/admin.js)): '테이블 분석'·'노드 분석'이 라벨만 뜨고 대상이 안 보이던 이유 = `llm_usage.task` 가 저카디널리티 카테고리 키(KPI `GROUP BY task` 의존)라 대상 미포함. → `target VARCHAR(200)` additive nullable 컬럼(task 집계와 분리, 0030 패턴) + `_record_llm_usage(target=)`(schema=스키마·table=schema.table·node=fqn/name, account 은 PII 제외) + **자가치유**(INSERT 실패→rollback→base 재INSERT / SELECT 폴백, stale image 대비) + admin.js 최근활동 행·상세 대상 표시.
 
-**검증**: 컨테이너 `make test` **전건 PASS**(feature-0002+0003, ruff clean). test_ai_ops 16/16(신규 target 통과 + 컬럼부재 폴백 `test_query_activity_target_column_absent_fallback`) + test_llm_usage_record 7/7(param 순서 보존 — target 을 total_tokens·latency_ms 사이 삽입해 pt=5·lat=마지막 유지). py_compile OK + alembic 단일 head=0032. 배포 + 라이브 PB-0008 실 Windows(3건 육안) + `alembic_version`=0032 직접 검증은 T37.11(POST-DEPLOY).
+**검증**: 컨테이너 `make test` **전건 PASS**(ruff clean). test_ai_ops 17/17(target 통과 + 컬럼부재 폴백 + INSERT 폴백), test_llm_usage_record 7/7(param 순서 보존), test_call_llm 2/2(mock target). **§18.8 적대 2라운드 PASS-WITH-FIXES**(BLOCKING 0 — 빈캔버스·노트북스크롤·가드취약·테스트NIT 전부 수정). verify-completion PASS. alembic 단일 head=0032. 배포(0032 마이그 + web) + PB-0008 실 Windows 3건 + `alembic_version`=0032 검증은 POST-DEPLOY(T40.11).
+
+## 2026-07-03 · 클러스터 상세 테이블 목록 역할 접두사 + 행 클릭 노드 선택 + 범례 hover 툴팁 (cluster-role-prefix, TASK §39)
+
+### 배경 (사용자 후속 요청 3건)
+① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 문자열·배치 뒤틀리지 않게 기본 왼쪽 여백). ② 그 목록 **각 테이블 클릭 → 해당 노드 선택**. ③ 역할 **범례 hover 시 상세 툴팁**.
+
+### 구현 (FE — admin.js/admin.html/styles.css)
+- `_META_ROLE` 에 `desc` 필드(범례·접두사 툴팁 단일 소스, BE NODE_ROLES 정합). 신규 `_metaRoleChipHTML`.
+- `_metaGraphRenderClusterDetail`: 각 행 `<button data-node-key>`, 분석 완료=역할 칩 접두사·미분석=`amgr-role-none`(18px 빈 슬롯 → 라벨 정렬 유지). 클릭 → `_metaGraphShowDetail`(select 하이라이트+상세) + focusElement.
+- 신규 `_metaRoleLegendTips()`: 정적 범례 `<li data-role>` 에 `desc` 로 hover title 주입(그래프 진입 시). admin.html `<li>` data-role 추가.
+- cache-buster `?v=20260703-cluster-role-prefix`(admin.js·styles.css).
+
+### 검증
+- `node --check` PASS. headless playwright 렌더 격리 실증: 분석/미분석 5행 → 전 라벨 left=45px 정렬(`allCodesAligned`), 칩 18px 균일, 전 행 button. 스크린샷 확인.
+- §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-cluster-role-prefix.
+- 부수: graph-rel-layout §38 병합이 MODIFY.md 에 남긴 미해결 conflict 마커 정리(양쪽 CHG 보존).
+
+### 잔여
+- 배포(web, deploy_scope: included) + 라이브 PB-0008 실 Windows 육안(접두사·정렬·행 클릭 선택·범례 툴팁).
+
+## 2026-07-03 · 역할 범례를 상세 패널 하단으로 이동 + 확장 시 밀림/뒤틀림 해소 (role-legend-bottom, TASK §37)
+
+### 배경 (사용자 후속 피드백)
+role-legend-panel(§36) 배포 후: ① 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI(노드 상세)를 밀어 내용이 뒤틀림**. 원인 = 범례가 aside 첫 자식(open)이라 고정높이 패널에서 확장이 아래 노드 상세를 밀어냄.
+
+### 구현 (FE 표현 전용)
+- admin.html: 범례 `<details>` 를 aside **첫 자식 → 마지막 자식**(detailBody 뒤)으로 이동.
+- styles.css: aside `display:flex; flex-direction:column` + `.admin-meta-graph-detail > * {flex-shrink:0}`(자식 압축 금지→컨테이너 스크롤) + 범례 `margin-top:auto`(바닥 고정).
+- cache-buster `styles.css?v=20260703-role-legend-bottom`.
+
+### 검증
+- headless playwright 렌더 격리 실증: 빈 상세=범례 바닥 고정(위 여백 262px), 긴 상세 30행=노드 상세 온전(firstNodeH 32·미압축)·잘림 없음(dbH==dbScrollH)·패널 스크롤 → 밀림/뒤틀림 없음. 스크린샷 확인.
+- §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-role-legend-bottom.
+
+### 잔여
+- 배포(web, deploy_scope: included) + 라이브 PB-0008 실 Windows 육안(하단 배치 + 확장 시 위 상세 안 밀림).
 
 ## 2026-07-03 · 역할 범례를 우측 상세 패널 상단 세로·접힘으로 이전 (role-legend-panel, TASK §36)
 
@@ -843,3 +879,18 @@ HAS_TABLE 엣지·검색 scope·**큐레이션 설명 보존**(rag 투영 무덮
 **검증**: 신규 [test_metadata_graph_load_spread.py](../tests/test_metadata_graph_load_spread.py) **4**(since 증분 필터 유무, batched commit 발생, owned autocommit 복원) + units 10 회귀 PASS. AST OK. 통합(psycopg 필요)은 배포 후 — conn 주입 owned=False 경로가 기존과 동일함을 코드 대조로 확인(통합 테스트는 `autocommit=True` conn 주입).
 
 **정합**: ANCHOR §1 "관계형은 SSOT, AGE 는 **재생성 가능한 투영**" — 투영을 더 효율적으로 재생성하는 변경(정합성·멱등 불변). feature-0002 REPORT TASK-0308(축①② insight/probe)와 동일 cycle.
+
+### 관계 기반 배치 — graph-rel-layout (2026-07-03, worktree=feature-0016-graph-layout)
+
+**문제**: 관계가 쌓일수록 그래프 뷰 가시성 저하(사용자 보고). 배치가 관계 무반영 — 스키마 클러스터
+자연정렬 shelf-packing + 클러스터 내 테이블 자연정렬 masonry 라서 연결 노드가 흩어지고 엣지 장거리 교차 양산.
+
+**수정** ([admin.js](../../feature-0003-agent-web-ui/src/static/admin.js) `_metaG6Build` pre-pass, ADR-012):
+`_metaRelAdjacency`(REFERENCES→테이블 승격 인접행렬, 유사도 w=trusted 2·그 외 1) → ① `_metaRelSchemaOrder`
+greedy seriation(연결 스키마 shelf 인접) ② `_metaRelTableOrder` 컴포넌트 BFS 군집(+외부앵커·고립 자연정렬)
+③ `_metaRelOrderAll` barycenter 4-sweep(gpos=schemaIdx+로컬 rank) — 순서 입력만 교체, 결정론 grid·펼침-불변
+(ADR-004 ②)·masonry/카드 게이팅 골격 불변. 관계 0 = 기존과 완전 동일, 관계 축적 시 rebuild 마다 관계 기준 수렴.
+
+**검증**: Node 격리 8/8 PASS(회귀0·seriation·군집·상호교차 해소·결정론·벌크 감소·펼침-비의존) + 파라미터
+벤치(시드 3 × 랜덤/허브: 2D 세그먼트 교차 12~30% 감소, 1D 층간 역전 59→52, SPAN=1 채택 근거) + node --check.
+완료 게이트 = 배포 후 PB-0008 실 Windows 라이브 육안(TASK T38.8).

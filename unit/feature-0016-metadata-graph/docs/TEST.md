@@ -337,3 +337,40 @@ Table 외 None) 10건 PASS. 기존 test_node_analysis_relevance.py 28건 회귀 
 본 cycle 은 deploy_scope: included 로 merge 직후 web+insight-worker 배포 → 라이브 그래프 뷰에서
 분석 완료 테이블의 역할 칩 색/아이콘/범례/상세패널 역할 칩을 실 Windows Chrome 으로 육안 확인 예정.
 (pre-commit 시점 미수행 사유: 역할 데이터는 alembic 0031 + insight-worker 백필 배포 후에만 라이브에 존재.)
+
+## graph-rel-layout — 관계 기반 배치(교차 최소화) (ADR-012, 2026-07-03)
+
+### Node 격리 로직 (Environment: CLI, node — admin.js 함수 추출) — Run 2026-07-03 **10/10 PASS**
+`_metaRelAdjacency`/`_metaRelSchemaOrder`/`_metaRelTableOrder`/`_metaRelOrderAll` 를 소스 추출로 격리 실행:
+① 관계 0 → 스키마·테이블 순서가 기존 자연정렬과 동일(회귀 0) ② seriation(B↔D 강연결·C 약연결·A 고립 →
+[D,B,C,A]) ③ 컴포넌트 BFS(가중 desc + 외부앵커 + 고립 후미) ④ 나란한 두 클러스터 상호 교차(a↔d,b↔c) sweep
+후 0 ⑤ 결정론(같은 입력 2회 = 동일 출력) ⑥ 벌크(30 스키마·300 테이블·시드 고정 400 엣지) 1D 층간 역전
+59→52 감소 ⑦ 함수 소스 schemaExpanded 무참조(펼침-비의존 구조 검증) ⑧ `_metaGraphCollapse` 의 REFERENCES 보존(§18.8
+패널 MAJOR 회귀 방지 — 접기 제스처의 배치 입력 불변) ⑨ `_metaGraphExpand` rebuild 후 tween-사망 focus 폴백
+존재(§18.8 패널 MINOR 회귀 방지). `node --check admin.js` PASS.
+
+### 파라미터 벤치 (Environment: CLI, node — 합성 그래프) — Run 2026-07-03
+시드 3종(42/7/20260703) × 토폴로지 2종(랜덤/허브) × SPAN{4096,30,10,1} × barycenter pass 수 매트릭스:
+2D 세그먼트 교차(shelf 근사 기하) 전 구성 12~30% 감소, SPAN=1 이 6구성 중 5 최선(채택), 4-pass 수렴 확인.
+SPAN=4096 은 1D 층간 역전을 되레 증가(59→74)시켜 기각 — ADR-012 Alternatives 참조.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 배포 후 라이브 Run 을 본 섹션에 append (§15.4.1)
+본 cycle 은 deploy_scope: included 로 merge 직후 web 배포 → 라이브 그래프 뷰에서 ① 관계 많은 스키마 카드가
+인접 배치 ② 펼친 스키마 안 연결 테이블 군집 ③ 관계선 교차가 자연정렬 대비 감소 를 실 Windows Chrome 으로
+육안 확인 예정. (pre-commit 시점 미수행 사유: 배치는 라이브 관계 데이터 규모에서만 육안 판별 가능 — 배포 선행.)
+
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-03 PASS (POST-DEPLOY, graph-rel-layout)**
+배포 web-a/b `5f439788`(무중단 롤링·soak 통과) 후 실 Windows Chrome/149(relay `http://172.26.144.1:9223`,
+`https://localhost/admin` 인증 세션)로 그래프 뷰(mysql-gz-dev · gunzgame 테이블 120 · REFERENCES 165) 검증:
+- 신 자산 강제 로드 확인: `admin.js?v=20260703-graph-rel-layout` 서빙.
+- **② 관계 군집(핵심)**: 페이지 내 실측정 — 관계쌍(115쌍) 평균 배치 순서 거리 **32.5 → 3.2 (90% 감소)**.
+  육안: account·character·usergrade·accountitem·friend / medalshop·cashshop·rentcashshopprice30day·
+  cashshopnewitem / item·reward 군집 인접 배치, 관계선 단거리 정돈(스크린샷 pb0008-rel-layout-01-clustered.png).
+- **③ 교차 감소**: 군집화로 장거리 관계선 소멸 — 육안 교차 현저 감소(같은 스크린샷).
+- **① seriation**: 라이브 전 scope 스키마 간(cross-schema) 관계 0행 실측(SSOT 조회) → 스키마 카드 순서
+  자연정렬 유지 = 설계 정합(무관계 강등 없음). 알고리즘 자체는 격리 테스트 t2·t4 검증.
+- **④ collapse 불변(§18.8 MAJOR 수정 실증)**: account 컬럼 4개 접기 → REFERENCES **145→145 보존**·배치 순서
+  **완전 불변**·관계선 유지(스크린샷 pb0008-rel-layout-02-collapsed-refs-kept.png).
+- 회귀 스팟: 이웃 확장(`_metaGraphExpand`) nodes 125→133 정상 병합·pageerror 0 · 검색 모드
+  (`_metaGraphSearch('character')`) 스키마 카드 badge 매칭 정상·pageerror 0.

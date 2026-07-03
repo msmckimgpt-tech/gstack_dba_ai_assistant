@@ -7942,12 +7942,17 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 /* graph-initview: 스키마 카드 범례(진입 뷰 기본 표현 — 클릭=그 스키마 테이블 펼침) */
 .admin-meta-graph-legend .lg-schemacard { width: 16px; height: 11px; border: 1.5px solid #3f4b8c; border-radius: 4px; background: #eef0f8; display: inline-block; }
 .admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
-/* node-role-viz(ADR-010) + role-legend-panel: 역할 범례를 전폭 상단 바에서 **우측 상세 패널 상단**의
-   세로·접힘(details) 카드로 이전. summary=토글 헤더(카펫 회전), 칩은 세로 스택.
-   밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
+/* node-role-viz(ADR-010) + role-legend-panel → role-legend-bottom: 역할 범례를 전폭 상단 바에서
+   우측 상세 패널의 세로·접힘(details) 카드로 이전. **위치는 role-legend-bottom 에서 패널 상단 → 하단으로 이동**
+   (상단+open 이면 확장 시 아래 노드 상세를 밀어 뒤틀림 → 마지막 자식으로 옮겨 해소). summary=토글 헤더(카펫 회전),
+   칩은 세로 스택. 밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
+/* role-legend-bottom: aside flex 컬럼의 자식은 압축 금지(overflow 시 컨테이너가 스크롤하도록) —
+   기본 flex-shrink:1 이면 노드 상세(detailBody)가 눌려 내용이 잘리는 뒤틀림 발생. */
+.admin-meta-graph-detail > * { flex-shrink: 0; }
 .admin-meta-graph-rolelegend {
   border: 1px solid var(--border); border-radius: 8px; background: var(--surface, #fff);
-  margin-bottom: 12px; font-size: 12px; color: var(--text-muted);
+  /* margin-top:auto = 패널 바닥 고정(내용 짧을 때). 마지막 자식이라 접힘/펼침이 위 내용을 밀지 않음. */
+  margin-top: auto; font-size: 12px; color: var(--text-muted);
 }
 .admin-meta-graph-rolelegend > summary {
   cursor: pointer; list-style: none; padding: 8px 10px; font-weight: 600;
@@ -8016,6 +8021,10 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
      패널)는 overflow-y:auto 로 상세 패널 안에서 스크롤한다(pane 를 밀거나 잘리지 않음). */
   border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0;
   background: var(--surface, #fff); overflow-y: auto; min-height: 0; font-size: 13px;
+  /* role-legend-bottom(#565): flex 컬럼 — 역할 범례 카드(margin-top:auto)를 패널 바닥에 고정. 나머지 자식은 자연 흐름.
+     graphux6-responsive: 고정 height 대신 min-height:0 + 그리드 행이 detail 높이를 채우고, 내부는 이 flex 컬럼으로
+     노드 상세(자연 흐름) + progress + 역할범례(하단 고정) 를 배치. overflow-y:auto 로 내부 스크롤. */
+  display: flex; flex-direction: column;
 }
 .admin-meta-graph-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .admin-meta-graph-badge {
@@ -8033,6 +8042,25 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-sec h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--text-2, var(--text)); }
 .admin-meta-graph-sec ul { margin: 0; padding-left: 16px; }
 .admin-meta-graph-sec li { margin: 3px 0; line-height: 1.45; word-break: break-word; }
+/* role-cluster-prefix: 스키마 클러스터 상세의 테이블 목록 — 각 행에 역할 칩 접두사(분석 완료) 또는 동일 폭 빈 슬롯(미분석),
+   행 전체를 클릭 버튼으로(→ 노드 선택). 접두사 고정 폭이 라벨 좌측 정렬을 보장(뒤틀림 방지). */
+.admin-meta-graph-sec ul.amgr-cluster-tables { list-style: none; padding-left: 0; }
+.admin-meta-graph-sec ul.amgr-cluster-tables li { margin: 1px 0; }
+.amgr-ct-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  background: none; border: none; border-radius: 5px; padding: 3px 5px; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+}
+.amgr-ct-row:hover, .amgr-ct-row:focus-visible { background: var(--primary-soft, #eff6ff); outline: none; }
+.amgr-ct-row code { flex: none; }
+.amgr-ct-desc { color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* 역할 칩 — 그래프 노드 칩·상세 배지와 동일 색/아이콘. -sm(고정 18px)은 목록 접두사 정렬 슬롯. */
+.amgr-role-chip {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 4px; color: #fff; line-height: 1;
+}
+.amgr-role-chip-sm { width: 18px; height: 18px; font-size: 11px; }
+.amgr-role-none { background: transparent !important; }   /* 미분석: 폭만 유지(정렬 슬롯), 시각 표식 없음 */
 .admin-meta-graph-sec code { font-size: 11.5px; }
 /* feature-0016 graphux5: 검색 유사도(pg_trgm) 배지 + AI 능동 분석 섹션 */
 .admin-meta-graph-relbadge {

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260703-reldetail-colexpand-role-legend-panel" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260703-cluster-role-prefix" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -772,33 +772,33 @@
                  aria-orientation="vertical" aria-label="상세 패널 크기 조절" tabindex="0"
                  title="드래그하여 상세 패널 크기 조절 (←/→ 키로도 조절)"></div>
             <aside class="admin-meta-graph-detail" id="metadataGraphDetail">
-              <!-- role-legend-panel: AI 능동 분석 완료 테이블의 역할 분류 범례. 전폭 상단 바에서
-                   **우측 상세 패널 상단**의 세로·접힘(details) 카드로 이전 — 그래프 세로 공간 확보 +
-                   노드 상세와 세로 공존. 칩 색(Okabe-Ito 색약 안전 팔레트)+아이콘 이중 인코딩.
-                   _META_ROLE(admin.js)·NODE_ROLES(node_analysis.py)와 1:1 정합. summary=네이티브 접힘 토글(무JS). -->
-              <details class="admin-meta-graph-rolelegend" open>
-                <summary>테이블 역할 <span class="admin-meta-graph-rolelegend-sub">· AI 분석 완료 시 칩 색</span></summary>
-                <ul class="admin-meta-graph-rolelegend-list" aria-label="테이블 역할 범례">
-                  <li><i class="lg-dot" style="background:#0072B2"></i>📘 기준·정의</li>
-                  <li><i class="lg-dot" style="background:#56B4E9"></i>👤 계정·유저</li>
-                  <li><i class="lg-dot" style="background:#009E73"></i>💳 거래·행위</li>
-                  <li><i class="lg-dot" style="background:#E69F00"></i>📜 로그·이력</li>
-                  <li><i class="lg-dot" style="background:#CC79A7"></i>🔗 매핑·연결</li>
-                  <li><i class="lg-dot" style="background:#D55E00"></i>⚙️ 설정</li>
-                  <li><i class="lg-dot" style="background:#F0E442"></i>📊 집계·통계</li>
-                  <li><i class="lg-dot" style="background:#6e7681"></i>📦 기타</li>
-                </ul>
-              </details>
               <div id="metadataGraphDetailBody" aria-live="polite">
                 <div class="admin-detail-empty">
                   <p>노드를 <strong>한 번 클릭</strong>하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 여기에서 봅니다.</p>
                   <p class="admin-meta-detail-note"><strong>더블클릭</strong>하면 그 노드 중심의 이웃 그래프로 펼쳐집니다. <strong>우클릭</strong>하면 상세 보기·관계 상세(방향·신뢰도·근거)·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
                 </div>
               </div>
-              <!-- graphux6-panelbottom: AI 능동 분석 진행 현황을 **상세 패널 하단**에 배치한다. 이전 graphux5-panelmove 의
-                   상단(role-legend 아래·노드 상세 위) 배치가 분석 시작 시 노드 상세를 아래로 밀어내는 이슈가 재확인되어,
-                   상단→하단으로 재배치했다. 이제 진행 패널은 노드 상세를 밀지 않고 그 아래에 나타난다(aside overflow-y:auto 로 스크롤).
-                   진행 패널은 노드 선택과 무관하게 유지되고(_metaGraphRenderProgress), 노드 클릭 시엔 위 detail-body 만 교체된다. -->
+              <!-- role-legend-bottom(#565) + role-cluster-prefix(#569): 역할 분류 범례를 상세 패널 하단에 배치.
+                   aside=flex 컬럼 + 본 카드 margin-top:auto 로 바닥 고정 → 접힘/펼침 시 위의 노드 상세를 밀지 않는다.
+                   칩 색(Okabe-Ito)+아이콘 이중 인코딩. data-role → admin.js _metaRoleLegendTips() 가 _META_ROLE.desc 로
+                   hover title 주입(단일 소스). _META_ROLE(admin.js)·NODE_ROLES(node_analysis.py)와 1:1 정합. -->
+              <details class="admin-meta-graph-rolelegend" open>
+                <summary>테이블 역할 <span class="admin-meta-graph-rolelegend-sub">· AI 분석 완료 시 칩 색</span></summary>
+                <ul class="admin-meta-graph-rolelegend-list" aria-label="테이블 역할 범례">
+                  <li data-role="master"><i class="lg-dot" style="background:#0072B2"></i>📘 기준·정의</li>
+                  <li data-role="account"><i class="lg-dot" style="background:#56B4E9"></i>👤 계정·유저</li>
+                  <li data-role="transaction"><i class="lg-dot" style="background:#009E73"></i>💳 거래·행위</li>
+                  <li data-role="log"><i class="lg-dot" style="background:#E69F00"></i>📜 로그·이력</li>
+                  <li data-role="mapping"><i class="lg-dot" style="background:#CC79A7"></i>🔗 매핑·연결</li>
+                  <li data-role="config"><i class="lg-dot" style="background:#D55E00"></i>⚙️ 설정</li>
+                  <li data-role="stats"><i class="lg-dot" style="background:#F0E442"></i>📊 집계·통계</li>
+                  <li data-role="etc"><i class="lg-dot" style="background:#6e7681"></i>📦 기타</li>
+                </ul>
+              </details>
+              <!-- graphux6-panelbottom: AI 능동 분석 진행 패널을 상세 패널 **최하단**(마지막 자식)에 배치 — 이전 상단(노드
+                   상세 위) 배치가 분석 시작 시 노드 상세를 아래로 밀어내던 이슈 해소. rolelegend(margin-top:auto)와 함께 바닥에
+                   위치해 노드 상세를 밀지 않는다. 노드 선택과 무관하게 유지(_metaGraphRenderProgress), 노드 클릭 시엔 위
+                   detail-body 만 교체된다. -->
               <div class="admin-meta-graph-progress" id="metadataGraphProgress" style="display:none"></div>
             </aside>
           </div>
@@ -900,7 +900,7 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
-  <script src="/static/admin.js?v=20260703-reldetail-colexpand"></script>
+  <script src="/static/admin.js?v=20260703-cluster-role-prefix"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260702-rn-0702"></script>

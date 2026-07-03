@@ -457,3 +457,26 @@ source_of_truth: true
     응답 model=titan-embed (2026-06-23). 검증 후 컨테이너 제거.
   - `docker compose config` (env symlink 보강) PASS — bedrock-gateway networks =
     [dbnet, llm-shared] 파싱 확인.
+
+## CHG-20260703-insight-llm-fallback
+- Date: 2026-07-03
+- Related: TASK-0308(insight 부하 분산) 후속 — insight LLM burst 429 대응.
+- Summary: insight-worker LLM(`claude-haiku-4`)의 claude-corp **burst rate-limit(429)** 대응
+  **litellm 요청-레벨 fallback 체인**. **(1) `litellm_config.yaml`**: `claude-haiku-4`(claude-corp) →
+  `claude-haiku-4-root`(root Max) → `edge-fallback`(로컬 gemma `openai/gemma4:e2b` via local-llm-gateway)
+  3-deployment + `litellm_settings.fallbacks: [{"claude-haiku-4":["claude-haiku-4-root","edge-fallback"]}]`
+  + `num_retries:1`. deployment 별 `api_key` 명시(ANTHROPIC_API_KEY / ANTHROPIC_API_KEY_ROOT), edge 는
+  `local-no-key` 리터럴(로컬 게이트웨이·비밀 아님). **(2) `bin/refresh-claude-oauth-token.sh`**: 단일-slot
+  택일 폴백 → **병행 주입**(ANTHROPIC_API_KEY ← 우선순위($ACCOUNTS) 첫 사용가능, ANTHROPIC_API_KEY_ROOT ←
+  root 전용). 각 slot 독립 검사(static+라이브 probe), 사용가능 시만 갱신, 둘 다 불가면 exit 1. header 주석
+  병행 주입 반영.
+- 근거: insight `AGENT_INSIGHT_MODEL=claude-haiku-4` 전환 시 schema/table 생성 burst 가 claude-corp
+  RPM/TPM 초과 → 429(200 성공 0, 라이브 관측). 계정 자체 유효(probe 200) but burst 차단. 기존
+  refresh 계정-폴백은 계정 **완전소진(probe 429)** 시만 작동 → 요청-레벨 fallback 필요.
+- Verification: `litellm_config` YAML OK(5 deployment, fallbacks 정확), refresh `bash -n` OK, `--check`
+  병행주입 진단(claude-corp 200 / root 200, root slot 신규 주입 예정) PASS. 적대 backend+infra 패널
+  (REV-20260703T101500-insight-llm-fallback). fallback 동작은 배포 후 라이브 검증.
+- Deploy(외부영향 — 사용자 confirm): refresh 실행(root slot 주입) + bedrock-gateway 재생성(litellm_config 반영).
+- Rollback: litellm_config 의 root/edge deployment·fallbacks 제거 + refresh 단일-slot 복원 + (또는)
+  `AGENT_INSIGHT_MODEL=edge`.
+- ANCHOR 정합: §1(운영자 자격 일원화 — 사용자별 키 아님, 운영자 두 계정 + 로컬)·§2(Alt-A LiteLLM gateway) 무충돌.

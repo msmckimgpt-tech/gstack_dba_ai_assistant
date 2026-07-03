@@ -3216,15 +3216,29 @@ const _metaNatSort = (a, b) => String(a).localeCompare(String(b), undefined, { n
 const _META_ROLE = {
   // dark 배정(적대 패널 U3): 12px bold 흰 라벨 대비가 부족한 밝은/중간 색은 어두운 라벨(#161b22) —
   //   account 2.2 / log 1.9 / stats 1.1 / mapping 3.1 / transaction 3.4 (흰 라벨 대비, 전부 4.5 미달) → dark.
-  master:      { ko: "기준·정의", icon: "📘", color: "#0072B2", dark: false },
-  account:     { ko: "계정·유저", icon: "👤", color: "#56B4E9", dark: true },
-  transaction: { ko: "거래·행위", icon: "💳", color: "#009E73", dark: true },
-  log:         { ko: "로그·이력", icon: "📜", color: "#E69F00", dark: true },
-  mapping:     { ko: "매핑·연결", icon: "🔗", color: "#CC79A7", dark: true },
-  config:      { ko: "설정",     icon: "⚙️", color: "#D55E00", dark: false },
-  stats:       { ko: "집계·통계", icon: "📊", color: "#F0E442", dark: true },
-  etc:         { ko: "기타",     icon: "📦", color: "#6e7681", dark: false },   // ◽ 는 회색 칩 위 tofu 처럼 비가시(패널 U4) → 📦
+  // desc: 범례 hover 툴팁·클러스터 상세 접두사 툴팁의 단일 소스. BE node_analysis.NODE_ROLES 휴리스틱과 정합.
+  master:      { ko: "기준·정의", icon: "📘", color: "#0072B2", dark: false, desc: "다른 테이블이 참조하는 기준·마스터·코드성 데이터 (코드표·정의·사전 등)" },
+  account:     { ko: "계정·유저", icon: "👤", color: "#56B4E9", dark: true,  desc: "사용자·계정·회원 등 주체 정보 (캐릭터·플레이어 포함)" },
+  transaction: { ko: "거래·행위", icon: "💳", color: "#009E73", dark: true,  desc: "결제·주문·구매·보상 등 거래·행위 이벤트 (핵심 비즈니스 팩트)" },
+  log:         { ko: "로그·이력", icon: "📜", color: "#E69F00", dark: true,  desc: "시간순 로그·이력·감사 기록 (주로 append)" },
+  mapping:     { ko: "매핑·연결", icon: "🔗", color: "#CC79A7", dark: true,  desc: "두 엔티티를 잇는 N:M 매핑·연결(교차 참조) 테이블" },
+  config:      { ko: "설정",     icon: "⚙️", color: "#D55E00", dark: false, desc: "시스템·기능 설정·옵션·파라미터·환경값" },
+  stats:       { ko: "집계·통계", icon: "📊", color: "#F0E442", dark: true,  desc: "집계·통계·랭킹·스냅샷 등 파생·요약 데이터" },
+  etc:         { ko: "기타",     icon: "📦", color: "#6e7681", dark: false, desc: "위 분류에 속하지 않는 테이블" },   // ◽ 는 회색 칩 위 tofu 처럼 비가시(패널 U4) → 📦
 };
+// role-cluster-prefix: 역할 칩 HTML 조립(그래프 칩·상세 배지와 동일 색/아이콘). small=상세 테이블 목록 접두사(고정 폭).
+function _metaRoleChipHTML(role, esc, small) {
+  const rd = _META_ROLE[role]; if (!rd) return "";
+  const tip = esc(`${rd.icon} ${rd.ko} — ${rd.desc}`);
+  return `<span class="amgr-role-chip${small ? " amgr-role-chip-sm" : ""}" style="background:${rd.color}${rd.dark ? ";color:#161b22" : ""}" title="${tip}">${rd.icon}</span>`;
+}
+// role-cluster-prefix: 정적 역할 범례 <li data-role> 에 hover 툴팁(desc) 주입 — _META_ROLE 단일 소스. 그래프 뷰 진입 시 1회.
+function _metaRoleLegendTips() {
+  document.querySelectorAll(".admin-meta-graph-rolelegend-list li[data-role]").forEach((li) => {
+    const rd = _META_ROLE[li.getAttribute("data-role")];
+    if (rd) li.title = `${rd.icon} ${rd.ko} — ${rd.desc}`;
+  });
+}
 function _metaRoleOf(key) {
   const r = _metaGraph.roles.get(key);
   return (r && _META_ROLE[r]) ? r : null;
@@ -3342,8 +3356,163 @@ function _metaSetBusy(key, on, seq) {
   _metaApplyState(key);
 }
 
-// 모델(_metaGraph.nodes/edges) → 위치 포함 G6 데이터. 스키마 클러스터를 자연정렬 grid 로,
-// 테이블을 클러스터 안 세로 스택으로, 펼친 테이블의 컬럼을 그 아래 세로열로 결정론 배치(무-shuffle).
+// ── graph-rel-layout: 관계(REFERENCES) 기반 배치 pre-pass — 엣지 교차 최소화 ──
+//   배치 순서(스키마 seriation + 클러스터 내 테이블 군집 순서)를 관계 가중치의 순수 함수로 결정한다.
+//   유사도 w = Σ 컬럼-쌍(trusted=2 · 그 외 1). 관계 0 이면 기존 자연정렬과 동일(강등 없음) — 관계가
+//   쌓일수록 다음 rebuild 에서 배치가 관계 기준으로 수렴한다(사용자 요청: 관계 확보에 따른 기준 배치).
+//   결정론·펼침-불변: schemaExpanded 를 읽지 않는다(ADR-004 ② 배정 불변식 유지) — 입력(nodes+edges)이
+//   같으면 출력이 같고, 순서 변경은 관계 데이터가 늘어난 rebuild 시점(기존 shelf 재배치 시야고정 경로)뿐.
+
+// REFERENCES 끝점(항상 컬럼 키, 간혹 테이블 키) → 소속 테이블 키. 미해석 시 null.
+function _metaRelTableKeyOf(k) {
+  const n = _metaGraph.nodes.get(k);
+  if (n && n.label === "Table") return k;
+  return _metaColParent(k, n && n.fqn);
+}
+// 테이블-레벨 무향 인접행렬: tKey -> Map(tKey -> w). 모델에 실재하는 테이블 쌍만.
+function _metaRelAdjacency(tableByKey) {
+  const adj = new Map();
+  const bump = (a, b, w) => { let m = adj.get(a); if (!m) { m = new Map(); adj.set(a, m); } m.set(b, (m.get(b) || 0) + w); };
+  _metaGraph.edges.forEach((e) => {
+    if (e.type !== "REFERENCES") return;
+    const a = _metaRelTableKeyOf(e.source), b = _metaRelTableKeyOf(e.target);
+    if (!a || !b || a === b || !tableByKey.has(a) || !tableByKey.has(b)) return;
+    const w = e.status === "trusted" ? 2 : 1;   // 신뢰 관계를 유사도에 더 크게 반영
+    bump(a, b, w); bump(b, a, w);
+  });
+  return adj;
+}
+// 스키마 seriation(greedy attachment): 관계 가중치가 큰 스키마끼리 shelf 순서상 인접 → 교차 엣지가 짧아진다.
+//   seed = 총 외부 가중 최대 → 이후 "이미 배치된 집합과의 가중 합" 최대를 반복 선택(다른 연결군이면 새 seed).
+//   tie-break 는 자연정렬 입력 순서(ids)의 first-win — 결정론. 관계 없는 스키마는 자연정렬 그대로 후미.
+function _metaRelSchemaOrder(ids, adj, schemaOf) {
+  const pairW = new Map(), deg = new Map();
+  adj.forEach((m, a) => m.forEach((w, b) => {
+    if (a >= b) return;                                       // 무향 1회
+    const sa = schemaOf(a), sb = schemaOf(b);
+    if (!sa || !sb || sa === sb) return;
+    const k = sa < sb ? sa + "\n" + sb : sb + "\n" + sa;
+    pairW.set(k, (pairW.get(k) || 0) + w);
+    deg.set(sa, (deg.get(sa) || 0) + w);
+    deg.set(sb, (deg.get(sb) || 0) + w);
+  }));
+  if (!pairW.size) return ids;                                // 스키마 간 관계 없음 → 자연정렬 유지
+  const pw = (x, y) => pairW.get(x < y ? x + "\n" + y : y + "\n" + x) || 0;
+  const connected = ids.filter((s) => (deg.get(s) || 0) > 0);
+  const isolated = ids.filter((s) => !((deg.get(s) || 0) > 0));
+  const remaining = new Set(connected), out = [], att = new Map();   // att = 배치 집합과의 누적 가중
+  while (remaining.size) {
+    let best = null, bw = -1;
+    for (const s of connected) {
+      if (!remaining.has(s)) continue;
+      const w = out.length ? (att.get(s) || 0) : (deg.get(s) || 0);
+      if (w > bw) { bw = w; best = s; }
+    }
+    if (out.length && bw === 0) {                             // 남은 것이 전부 미연결(다른 연결군) → 새 seed
+      bw = -1;
+      for (const s of connected) { if (!remaining.has(s)) continue; const w = deg.get(s) || 0; if (w > bw) { bw = w; best = s; } }
+    }
+    out.push(best); remaining.delete(best);
+    for (const s of connected) if (remaining.has(s)) att.set(s, (att.get(s) || 0) + pw(s, best));
+  }
+  return out.concat(isolated);
+}
+// 클러스터 내 테이블 순서: 스키마 내부 관계의 연결 컴포넌트를 군집으로 붙이고(BFS, 가중 내림차순),
+//   내부 무관계지만 외부 관계 보유 테이블은 이웃 스키마 seriation idx 순으로, 완전 고립은 자연정렬 그대로.
+//   masonry Pass1 은 균등높이 최단열(=행 우선 채움)이라 순서상 인접 = 화면상 인접 → 관계 테이블이 모인다.
+function _metaRelTableOrder(items, adj, schemaIdx, schemaOf) {
+  if (!adj.size || items.length < 3) return items;
+  const keys = items.map((t) => t.key), inSet = new Set(keys);
+  const intra = new Map(), deg = new Map(), extAnchor = new Map();
+  keys.forEach((k) => {
+    const m = adj.get(k);
+    let d = 0, ei = 0, ew = 0;
+    if (m) m.forEach((w, o) => {
+      if (inSet.has(o)) { let im = intra.get(k); if (!im) { im = new Map(); intra.set(k, im); } im.set(o, w); d += w; }
+      else { const oi = schemaIdx.get(schemaOf(o)); if (oi != null) { ei += oi * w; ew += w; } }
+    });
+    deg.set(k, d);
+    if (ew > 0) extAnchor.set(k, ei / ew);
+  });
+  const visited = new Set(), comps = [];
+  keys.forEach((k) => {                                       // 컴포넌트 수집 — 입력(자연정렬) 순 seed, 결정론
+    if (visited.has(k) || !(deg.get(k) > 0)) return;
+    const comp = [], q = [k]; visited.add(k);
+    while (q.length) {
+      const c = q.shift(); comp.push(c);
+      const im = intra.get(c);
+      if (im) [...im.keys()].sort(_metaNatSort).forEach((o) => { if (!visited.has(o)) { visited.add(o); q.push(o); } });
+    }
+    comps.push(comp);
+  });
+  if (!comps.length && !extAnchor.size) return items;
+  const compW = (comp) => comp.reduce((a, k) => a + (deg.get(k) || 0), 0);
+  comps.sort((a, b) => (compW(b) - compW(a)) || (b.length - a.length) || _metaNatSort(a[0], b[0]));
+  const orderComp = (comp) => {                               // 군집 내부: 최고 가중度 seed → BFS(간선 가중 내림차순)
+    const cs = new Set(comp);
+    const seed = comp.slice().sort((a, b) => ((deg.get(b) || 0) - (deg.get(a) || 0)) || _metaNatSort(a, b))[0];
+    const out = [], seen = new Set([seed]), q = [seed];
+    while (q.length) {
+      const c = q.shift(); out.push(c);
+      const im = intra.get(c);
+      if (im) [...im.entries()].filter(([o]) => cs.has(o) && !seen.has(o))
+        .sort((x, y) => (y[1] - x[1]) || _metaNatSort(x[0], y[0]))
+        .forEach(([o]) => { seen.add(o); q.push(o); });
+    }
+    return out;
+  };
+  const ordered = [];
+  comps.forEach((comp) => ordered.push(...orderComp(comp)));
+  const rest = keys.filter((k) => !visited.has(k));
+  const ext = rest.filter((k) => extAnchor.has(k)).sort((a, b) => (extAnchor.get(a) - extAnchor.get(b)) || _metaNatSort(a, b));
+  const iso = rest.filter((k) => !extAnchor.has(k));          // 입력 자연정렬 순서 보존
+  const pos = new Map(); let pi = 0;
+  ordered.concat(ext, iso).forEach((k) => pos.set(k, pi++));
+  return items.slice().sort((a, b) => pos.get(a.key) - pos.get(b.key));
+}
+// 전 스키마 테이블 순서 선산정: 군집 초기순서(_metaRelTableOrder) 위에 **barycenter 4-sweep** —
+//   각 테이블을 이웃(스키마 내부+외부 관계 상대)들의 전역 위치 가중평균 순으로 재정렬하는 층별
+//   교차 최소화 휴리스틱. 스키마-레벨 앵커만으로는 나란한 두 클러스터 사이의 상호 교차(a↔d, b↔c)를
+//   못 풀기 때문에, 이웃 "테이블" 위치 기준 정렬로 관계선이 평행에 가깝게 정돈된다.
+//   이웃 없는 테이블은 자기 현재 위치가 barycenter(제자리 안정). 접힌 스키마 테이블도 순서를 계산해
+//   이웃 위치 근사에 쓴다(렌더 여부는 layouts 의 카드 게이팅이 결정 — 본 pre-pass 는 펼침-비의존).
+function _metaRelOrderAll(groups, ids, adj, schemaIdx, schemaOf) {
+  const orderBySchema = new Map();
+  ids.forEach((s) => {
+    const g = groups.get(s);
+    if (!g || g.isTerms) return;
+    const nat = g.tables.slice().sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+    orderBySchema.set(s, adj.size ? _metaRelTableOrder(nat, adj, schemaIdx, schemaOf) : nat);
+  });
+  if (!adj.size) return orderBySchema;
+  // SPAN=1(gpos = schemaIdx + 로컬 rank): 상대 테이블의 "클러스터 내 순위"가 barycenter 를 지배하고
+  //   스키마 원근은 약한 앵커로만 작용. 합성 벤치(시드 3종 × 랜덤/허브 토폴로지 6구성, 2D 세그먼트
+  //   교차)에서 SPAN∈{4096,30,10,1} 중 5/6 최선·1D 층간 역전도 유일 개선(59→51) — 원거리 스키마
+  //   위치가 지배(SPAN=4096)하면 같은 스키마쌍 엣지들의 상호 정렬이 무너져 1D 역전이 되레 늘었다.
+  const SPAN = 1;
+  const gpos = new Map();
+  ids.forEach((s) => { const arr = orderBySchema.get(s); if (arr) arr.forEach((n, i) => gpos.set(n.key, schemaIdx.get(s) * SPAN + i)); });
+  for (let pass = 0; pass < 4; pass++) {   // 벤치 기준 4-pass 수렴(2-pass 는 미수렴 잔차)
+    ids.forEach((s) => {
+      const arr = orderBySchema.get(s);
+      if (!arr || arr.length < 2) return;
+      const base = schemaIdx.get(s) * SPAN;
+      const bc = new Map();
+      arr.forEach((n) => {
+        const m = adj.get(n.key);
+        let acc = 0, tw = 0;
+        if (m) m.forEach((w, o) => { const p = gpos.get(o); if (p != null) { acc += p * w; tw += w; } });
+        bc.set(n.key, tw > 0 ? acc / tw : gpos.get(n.key));
+      });
+      arr.sort((a, b) => (bc.get(a.key) - bc.get(b.key)) || (gpos.get(a.key) - gpos.get(b.key)));
+      arr.forEach((n, i) => gpos.set(n.key, base + i));
+    });
+  }
+  return orderBySchema;
+}
+
+// 모델(_metaGraph.nodes/edges) → 위치 포함 G6 데이터. 스키마 클러스터를 관계 seriation(무관계 시 자연정렬)
+// grid 로, 테이블을 클러스터 안 관계-군집 순 스택으로, 펼친 테이블의 컬럼을 그 아래 세로열로 결정론 배치(무-shuffle).
 function _metaG6Build() {
   const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
   const ensureG = (id) => { if (!groups.has(id)) groups.set(id, { isTerms: id === _META_TERMS_COMBO, tables: [], terms: [], colsByTable: new Map() }); return groups.get(id); };
@@ -3360,9 +3529,13 @@ function _metaG6Build() {
     }
     ensureG(_META_TERMS_COMBO).terms.push(n);   // GlossaryTerm/Datasource/Product/기타
   });
-  // 클러스터 순서: 실제 스키마 자연정렬, terms 클러스터는 항상 마지막.
-  const ids = [...groups.keys()].filter((k) => k !== _META_TERMS_COMBO).sort(_metaNatSort);
+  // 클러스터 순서: 관계 seriation(graph-rel-layout, 무관계 시 자연정렬 유지), terms 클러스터는 항상 마지막.
+  const relAdj = _metaRelAdjacency(tableByKey);
+  const relSchemaOf = (tk) => { const n = tableByKey.get(tk); return n ? _metaSchemaComboOf(n) : null; };
+  const ids = _metaRelSchemaOrder([...groups.keys()].filter((k) => k !== _META_TERMS_COMBO).sort(_metaNatSort), relAdj, relSchemaOf);
   if (groups.has(_META_TERMS_COMBO)) ids.push(_META_TERMS_COMBO);
+  const schemaIdx = new Map(ids.map((s, i) => [s, i]));   // 테이블 순서의 외부-관계 앵커(이웃 스키마 방향) 조회용
+  const relOrder = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf);   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
 
   // ── 클러스터 내 다열 masonry(높이 균형) + 가변폭 클러스터 shelf-packing ──
   //   구버전(단일 세로열 + 고정 3열 grid)은 테이블 많은 스키마가 끝없이 길어지고 36클러스터가 세로로 쌓여
@@ -3392,7 +3565,11 @@ function _metaG6Build() {
     if (!g.isTerms && !gatedTables.length && !g.terms.length) {
       return { id, g, kind: "card", w: _METLAY.CARDW, h: _METLAY.CARDH, x0: 0, y0: 0 };
     }
-    const items = (g.isTerms ? g.terms : gatedTables).slice().sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+    // graph-rel-layout: 테이블 순서는 _metaRelOrderAll 사전 산정분(관계-군집+barycenter, 무관계 시 자연정렬과
+    //   동일)을 그대로 소비 — 여기서 재정렬하면 같은 배열의 중복 nat-sort(§18.8 패널 MINOR). terms 만 즉석 정렬.
+    const items = g.isTerms
+      ? g.terms.slice().sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key))
+      : (relOrder.get(id) || gatedTables.slice().sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key)));
     const ic = innerColsFor(items.length);
     // Pass 1(배정): collapsed 균등 높이로 최단 열 선택 → col 은 펼침-불변(형제 열-점프 제거).
     const colBase = new Array(ic).fill(_METLAY.PADT);
@@ -3602,6 +3779,16 @@ async function _metaGraphFitClamped(focusFirst) {
 async function _metaGraphAnimateFocus(key, seq) {
   const g = _metaGraph.graph;
   if (!g || !key) return;
+  // graph-rel-layout(§18.8 패널 MINOR): tween 생존 마커 — expand 가 rebuild 후 "tween 이 이미 죽었는지"를
+  //   판정해 시야 보정 폴백을 결정한다(관계 재배치로 앵커가 원거리 이동 가능해져 필요해짐). seq 소유 기준.
+  _metaGraph._focusLive = seq == null ? -1 : seq;
+  try {
+    await _metaGraphAnimateFocusRun(g, key, seq);
+  } finally {
+    if (_metaGraph._focusLive === (seq == null ? -1 : seq)) _metaGraph._focusLive = null;
+  }
+}
+async function _metaGraphAnimateFocusRun(g, key, seq) {
   // API 부재 번들 폴백(getElementRenderBounds/getViewportByCanvas/translateBy 없으면 즉시 focus — 구 동작 보존).
   if (typeof g.getElementRenderBounds !== "function" || typeof g.getViewportByCanvas !== "function" || typeof g.translateBy !== "function") {
     try { const fel = _metaRenderedIdFor(key); if (fel && typeof g.focusElement === "function") await g.focusElement(fel, false); } catch (_) {}
@@ -3669,6 +3856,7 @@ function _metaShowGraph() {
   const view = document.getElementById("metadataGraphView");
   if (view) view.style.display = "";
   _metaInitGraph();
+  _metaRoleLegendTips();   // role-cluster-prefix: 역할 범례 hover 툴팁(desc) 주입(정적 <li data-role> → _META_ROLE 단일 소스).
   // feature-0016: 그래프 뷰 진입 시 현재 선택 datasource 의 그래프(roots)를 즉시 로드 — 각 데이터소스별 그래프 출현.
   _metaGraphLoadRoots();
   const s = document.getElementById("metadataGraphSearch");
@@ -4626,7 +4814,10 @@ function _metaGraphShowClusterDetailLocal(comboId) {
   _metaGraphRenderClusterDetail(nm, nm, tables, tables.length, childCols, total, truncated);
 }
 
-// "−" 컨트롤 접기 — 이 테이블의 컬럼 노드(+연결 엣지) 모델에서 제거 + 재조회 재허용.
+// "−" 컨트롤 접기 — 이 테이블의 컬럼 노드(+containment 엣지) 모델에서 제거 + 재조회 재허용.
+//   graph-rel-layout(§18.8 패널 MAJOR): **REFERENCES 는 보존** — 관계 데이터는 배치 순서(_metaRelAdjacency)와
+//   접힌 테이블 간 관계 표시(graph-reltrace renderEndpoint 승격)의 입력이라, 접기 제스처가 지우면 (a) 전면
+//   재셔플(펼침-불변 계약 위반) (b) 관계선 소실이 재펼침(ToggleColumns 는 엣지 미재조회)으로도 복원 불가.
 function _metaGraphCollapse(key) {
   if (!_metaGraph.graph || !key) return;
   const node = _metaGraph.nodes.get(key);
@@ -4636,7 +4827,7 @@ function _metaGraphCollapse(key) {
   if (!toDel.length) return;
   const delSet = new Set(toDel);
   toDel.forEach((k) => _metaGraph.nodes.delete(k));
-  _metaGraph.edges.forEach((e, id) => { if (delSet.has(e.source) || delSet.has(e.target)) _metaGraph.edges.delete(id); });
+  _metaGraph.edges.forEach((e, id) => { if (e.type !== "REFERENCES" && (delSet.has(e.source) || delSet.has(e.target))) _metaGraph.edges.delete(id); });
   _metaGraph.expanded.delete(key);
   _metaGraph.colsByTable.delete(key);   // graph-perf-bg: 컬럼 전부 제거 → 인덱스 카운트 해제(O(1) hasCols 정합).
   if (_metaGraph.introspected) _metaGraph.introspected.delete(key);
@@ -4713,6 +4904,12 @@ async function _metaGraphExpand(key, depthOverride) {
   //   graph-dblclick-latency: 그 tween 을 위(busy 직후)에서 이미 fire-and-forget 으로 시작함 — 적응형 follow 라 이 rebuild 로
   //   앵커가 이동해도 자동 수렴. 여기서 재호출 불필요(중복 tween 방지).
   await _metaG6Apply(false);   // busy 는 rebuild 로 소멸 (진행 중인 follow tween 이 새 위치로 이어서 수렴)
+  // graph-rel-layout(§18.8 패널 MINOR): fetch(이웃+introspect) 합계가 tween MAXMS(1.2s)를 넘으면 follow tween 이
+  //   앵커 '구 위치'에 수렴·종료한 뒤 rebuild 가 일어난다 — 관계 재배치로 앵커가 다른 shelf 행으로 원거리 이동
+  //   가능하므로, tween 이 이미 죽었으면 무애니 focusElement 1회로 시야 보정(살아 있으면 adaptive follow 가 수렴).
+  if (_metaGraph._focusLive !== seq) {
+    try { const fel = _metaRenderedIdFor(key); if (fel) await _metaGraph.graph.focusElement(fel, false); } catch (_) {}
+  }
   _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };
@@ -5491,12 +5688,27 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {
-    parts.push(`<div class="admin-meta-graph-sec"><h4>테이블 (${tables.length})</h4><ul>`);
-    tables.slice(0, 80).forEach((t) => parts.push(`<li><code>${esc(t.name || t.fqn || "")}</code>${t.description ? " — " + esc(t.description) : ""}</li>`));
+    parts.push(`<div class="admin-meta-graph-sec"><h4>테이블 (${tables.length})</h4><ul class="amgr-cluster-tables">`);
+    tables.slice(0, 80).forEach((t) => {
+      // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
+      const role = _metaRoleOf(t.key);
+      const prefix = role ? _metaRoleChipHTML(role, esc, true) : `<span class="amgr-role-chip amgr-role-chip-sm amgr-role-none" aria-hidden="true"></span>`;
+      parts.push(`<li><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="클릭하면 이 테이블 노드를 선택합니다">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`);
+    });
     parts.push(`</ul></div>`);
   }
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
+  // role-cluster-prefix: 테이블 행 클릭 → 해당 노드 선택(_metaGraphShowDetail = 하이라이트 setSelected + 상세 렌더) + 렌더돼 있으면 카메라 focus.
+  el.querySelectorAll(".amgr-ct-row[data-node-key]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const k = btn.getAttribute("data-node-key");
+      if (!k) return;
+      _metaGraphShowDetail(k);
+      const g = _metaGraph.graph, rel = _metaRenderedIdFor(k);
+      if (g && rel && typeof g.focusElement === "function") { try { Promise.resolve(g.focusElement(rel, false)).catch(() => {}); } catch (_) {} }
+    });
+  });
 }
 
 // 노드의 최신 분석 상태/결과를 조회해 AI box 에 렌더(상세 패널 진입 시 + 폴링 완료 시).

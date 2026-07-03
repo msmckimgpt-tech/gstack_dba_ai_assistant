@@ -646,3 +646,58 @@ source_of_truth: true
 - BLOCKING: 0.
 - NIT(가시 회귀 아님 — 수용 기록, 미수정): (a) summary `:focus-visible` 커스텀 아웃라인 없음(네이티브 포커스 링 의존 — 기능상 OK). (b) summary 텍스트와 `<ul aria-label>` 의 "테이블 역할" SR 이중 낭독 가능성(경미).
 - 총평: 배포 가능(PASS). 설계 의도 정확 충족, 최대 리스크(범례 wipe)는 구조적 방지. 완료 게이트=PB-0008 실 Windows 라이브 육안(세로 표시 + 접힘 동작).
+
+## REV-20260703T030000-ai-claude-feature-0016-role-legend-bottom [SUBAGENT: PASS] — 역할 범례 상세 패널 하단 이동 + 확장 밀림/뒤틀림 해소 적대 리뷰 7축
+- Related Change: CHG-20260703-role-legend-bottom (TASK §37). 프론트 표현 전용(상세 패널 내부 레이아웃 — 범례 첫 자식 → 마지막 자식, aside flex 컬럼 + margin-top:auto + 자식 flex-shrink:0).
+- Trigger: 가시 레이아웃 변경(상세 패널 flex 화) → §18.8 적대 패널 [SUBAGENT] dispatch. + headless playwright 렌더 격리 실증(2시나리오) 선행.
+- 점검 7축 판정 (subagent, 파일:라인 근거 — 격리 렌더 결과를 코드로 반증 시도했으나 전건 재확인):
+  1. [PASS] detailBody wipe 회귀 없음 — 렌더 4함수(admin.js:4862/4915/5143/5476) `metadataGraphDetailBody` `.innerHTML` 만 교체, aside 는 clientWidth(4245) 읽기만, progress 렌더는 progress 만. 범례 클래스 admin.js 참조 0(무JS) → 하단 이동 후에도 안 지워짐.
+  2. [PASS] flex 컬럼 부작용 없음 — progress 표시화는 `style.display=""`(인라인 해제)라 flex 아이템 blockify 정상. aside 직속 3자식(progress/detailBody/legend) 고정, stretch 전폭.
+  3. [PASS] margin-top:auto+overflow — 짧으면 바닥 고정, 길면 auto=0 + flex-shrink:0 로 detailBody 미압축·컨테이너 스크롤(dbH==dbScrollH 983·canScroll). 범례 최하단이라 상단 클리핑 조건 불성립.
+  4. [PASS] detail-collapsed 토글 — `.admin-meta-graph.detail-collapsed .admin-meta-graph-detail{display:none}`(0,3,0) 가 `.admin-meta-graph-detail{display:flex}`(0,1,0) 를 특이도·순서로 이김 → 접힘 정상. `> *` 규칙은 aside 직속만.
+  5. [PASS] 반응형(@media max-width:900px) — height:auto → free space 0 → margin-top:auto=0, 범례가 detailBody 뒤 자연 흐름 + max-height:380px 스크롤. 그래프 아래로 정상.
+  6. [PASS] 잔여/버스터 — `<details>` 정확히 1개(상단 중복 없음, 이동이지 복제 아님), 캐시버스터 `styles.css?v=20260703-role-legend-bottom` bump. `admin-meta-graph-detail` 클래스 aside 1개에만, datasourceDetail append 는 무관 별개 요소.
+  7. [PASS] 접근성/시맨틱 — `<details open>`/summary 토글·detailBody aria-live·`<ul aria-label>` 유지. DOM 순서 progress→detail→legend 는 시각 순서와 일치.
+- BLOCKING: 0.
+- NIT: (a) styles.css 상단 role-legend-panel 옛 주석이 "상단"으로 남음 → **수정함**(하단 이동 반영, 본 cycle 에서 정정). (b) 색 범례 SR 도달이 노드 상세 뒤 — 시각 순서·사용자 의도(하단)와 정합, 수용.
+- 총평: 배포 가능(PASS). 사용자 후속 피드백 2건(하단 이동 + 확장 밀림 해소) 모두 `margin-top:auto`+`flex-shrink:0` 로 코드·렌더 양측 충족. 완료 게이트=PB-0008 실 Windows(하단 배치 + 확장 시 위 상세 안 밀림).
+## REV-20260703T014113-ai-claude-corp-feature-0016-graph-rel-layout [SUBAGENT: PASS-WITH-FIXES] — 관계 기반 배치(교차 최소화) 적대 리뷰 4축
+- 대상: CHG-20260703-graph-rel-layout (admin.js `_metaG6Build` 관계 기반 배치 pre-pass, ADR-012, TASK §38).
+- 방식: ultracode workflow(wf_73ab2394-003) — 4축 finder(알고리즘 정합성/G6 통합/UX/성능) 병렬 + 발견별
+  2-refuter 적대 검증(과반 기각 시 kill). 총 14 agents, findings 5 → 확정 4(refute 0/2)·기각 1(refute 2/2).
+- 확정 1 [MAJOR, g6+ux 중복 발견]: `_metaGraphCollapse`(컬럼 접기)가 컬럼 끝점 엣지 전부 삭제 → REFERENCES 가
+  모델에서 소실 → 배치가 edges 순수함수가 된 본 변경에서 접기 제스처가 스키마 seriation·barycenter 를 연쇄
+  변경(전면 재셔플, 앵커 없음, 재펼침 비가역 — ToggleColumns 는 엣지 미재조회). 수정: collapse 의 엣지 삭제를
+  `e.type !== "REFERENCES"` 로 한정(containment 만 삭제) — 렌더는 graph-reltrace renderEndpoint 승격이 이미
+  처리하므로 접힌 테이블 간 관계 표시가 오히려 정합 회복(기존 소실 버그 동시 해소).
+- 확정 2 [MINOR, ux]: 더블클릭 이웃 확장 fetch(이웃+introspect) 합계 >1.2s 시 follow tween(MAXMS)이 구 위치에
+  종료된 뒤 rebuild — 관계 재배치로 앵커 원거리 이동 시 시야 이탈. 수정: `_metaGraph._focusLive` 생존 마커
+  (try/finally 소유 해제) + expand 의 rebuild 직후 tween 사망 시 무애니 `focusElement` 1회 폴백.
+- 확정 3 [MINOR, perf]: `_metaG6Build` 의 itemsNat 이 비-terms 스키마에서 무조건 정렬 후 폐기(relOrder 가 항상
+  존재) — 대규모 펼침에서 rebuild 당 ~20ms 낭비. 수정: relOrder 직접 소비, terms/방어 분기만 즉석 정렬.
+- 기각 1 [perf 주장 MAJOR]: "pre-pass 86ms/rebuild(91 스키마·3000 테이블·10K 엣지)" — 2 refuter 일치 기각:
+  백엔드가 전체 덤프 금지 + 응답 상한(_NEIGHBOR_NODE_CAP 300 노드/1200 엣지, search ≤80)이라 해당 규모의
+  클라이언트 모델이 성립 불가, 라이브 관계 행 규모도 그에 못 미침. memoization 불채택(현실 규모 ms 단위).
+- 판정: 확정 3건 전량 수정 + 회귀 방지 구조 테스트(t8 collapse-REFERENCES 보존, t9 expand focus 폴백) 추가,
+  격리 테스트 10/10 PASS. BLOCKING 0 잔여.
+
+## REV-20260703T023000-ai-claude-corp-feature-0016-graph-rel-layout-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY PB-0008 결과 기록
+- 배포 web-a/b `5f439788`(무중단 롤링·soak) 후 실 Windows Chrome PB-0008 라이브 검증 **전건 PASS** 결과를
+  TEST.md(graph-rel-layout POST-DEPLOY Run)·TASK §38(T38.8) 에 기록하는 doc-only 후속 — 코드 무변경이라
+  §18.8 패널 skip. 핵심 실측: 관계쌍 평균 배치 순서 거리 32.5→3.2(90% 감소, gunzgame 115쌍) · collapse
+  REFERENCES 145→145 보존·배치 불변(§18.8 MAJOR 수정 실증) · 이웃확장/검색 pageerror 0.
+
+## REV-20260703T040000-ai-claude-feature-0016-cluster-role-prefix [SUBAGENT: PASS] — 클러스터 상세 역할 접두사 + 행 클릭 선택 + 범례 툴팁 적대 리뷰 7축
+- Related Change: CHG-20260703-cluster-role-prefix (TASK §39). 프론트 표현 + 클릭 상호작용(클러스터 상세 목록·범례 툴팁).
+- Trigger: 가시 UI + 클릭 상호작용(select) + 새 데이터 경로 → §18.8 적대 패널 [SUBAGENT] dispatch. + headless 렌더 격리 실증 선행.
+- 점검 7축 판정 (subagent, 파일:라인 근거):
+  1. [PASS/NIT] XSS/속성: 칩·버튼 `title` 은 `_META_ROLE` 신뢰 상수·정적 문자열, `t.description` 은 텍스트 위치 esc. NIT — `data-node-key="${esc(t.key)}"` 의 로컬 `esc` 가 `"` 미escape → 키에 `"` 시 속성 breakout 이론상 가능(단 `<>` escape 로 태그주입 불가). **기존 4개 사이트(data-key/data-trace) 동일 패턴 = 회귀 아님**, admin-only + DB식별자에 `"`+페이로드 동시 필요라 저위험. 수용(하드닝은 공유 esc 일괄 강화 별도 maintenance).
+  2. [PASS] 클릭 핸들러: 두 진입 경로(Local/ById) 모두 render 거쳐 innerHTML 직후 1회 바인딩. showDetail → 동일 컨테이너 innerHTML 교체로 옛 버튼+리스너 GC → 누수/좀비/중복 없음.
+  3. [PASS] select semantics: showDetail 이 `_metaGraphSetSelected`(하이라이트, 렌더된 노드만 apply) 호출. 미렌더 노드는 selected 변수만 세팅(무해), focusElement 는 `_metaRenderedIdFor` null 가드로 skip. showDetail 은 렌더 무관 동작.
+  4. [PASS] 범례 tips: data-role 8개 ↔ `_META_ROLE` 키/아이콘/색 1:1 완전 일치. 정적 `<li>` 상주라 호출 타이밍 무관, title 재주입 idempotent.
+  5. [PASS] 칩 헬퍼: `if(!rd) return ""` + 호출부 `_metaRoleOf` 유효성 이중 방어. small=18px 고정, dark 라벨색, 미분석 `amgr-role-none` transparent+폭 유지.
+  6. [PASS] CSS: `.amgr-cluster-tables`(0,2,1) > `.admin-meta-graph-sec ul`(0,1,1) padding-left:0 승리, 스코프 한정으로 타 ul 무영향. `--primary-soft`·`--text-muted` 정의 존재. code{flex:none}+18px 슬롯 → 정렬 보장(allCodesAligned 재확인).
+  7. [PASS] 회귀: `_META_ROLE.desc` 순수 additive(기존 소비처 특정 필드만 접근). 클러스터 상세 외 렌더 경로 무영향. `node --check` OK.
+- BLOCKING: 0.
+- NIT(수용): esc 따옴표 미escape(위 1축 — 기존 패턴·저위험). 
+- 총평: 배포 가능(GO). 사용자 3요구(접두사+정렬·행클릭 선택·범례 툴팁) 코드·헤드리스 렌더 양측 충족. 완료 게이트=PB-0008 실 Windows.
