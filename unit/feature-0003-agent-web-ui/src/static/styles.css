@@ -8024,6 +8024,25 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-sec h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--text-2, var(--text)); }
 .admin-meta-graph-sec ul { margin: 0; padding-left: 16px; }
 .admin-meta-graph-sec li { margin: 3px 0; line-height: 1.45; word-break: break-word; }
+/* role-cluster-prefix: 스키마 클러스터 상세의 테이블 목록 — 각 행에 역할 칩 접두사(분석 완료) 또는 동일 폭 빈 슬롯(미분석),
+   행 전체를 클릭 버튼으로(→ 노드 선택). 접두사 고정 폭이 라벨 좌측 정렬을 보장(뒤틀림 방지). */
+.admin-meta-graph-sec ul.amgr-cluster-tables { list-style: none; padding-left: 0; }
+.admin-meta-graph-sec ul.amgr-cluster-tables li { margin: 1px 0; }
+.amgr-ct-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  background: none; border: none; border-radius: 5px; padding: 3px 5px; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+}
+.amgr-ct-row:hover, .amgr-ct-row:focus-visible { background: var(--primary-soft, #eff6ff); outline: none; }
+.amgr-ct-row code { flex: none; }
+.amgr-ct-desc { color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* 역할 칩 — 그래프 노드 칩·상세 배지와 동일 색/아이콘. -sm(고정 18px)은 목록 접두사 정렬 슬롯. */
+.amgr-role-chip {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 4px; color: #fff; line-height: 1;
+}
+.amgr-role-chip-sm { width: 18px; height: 18px; font-size: 11px; }
+.amgr-role-none { background: transparent !important; }   /* 미분석: 폭만 유지(정렬 슬롯), 시각 표식 없음 */
 .admin-meta-graph-sec code { font-size: 11.5px; }
 /* feature-0016 graphux5: 검색 유사도(pg_trgm) 배지 + AI 능동 분석 섹션 */
 .admin-meta-graph-relbadge {

@@ -916,3 +916,21 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T38.8 배포(web-a/b `5f439788` 무중단 롤링·soak 통과, deploy_scope: included) + **PB-0008 실 Windows 라이브
       시각검증 PASS**: 관계쌍 평균 배치 거리 32.5→3.2(90% 감소)·군집 육안·collapse REFERENCES 145→145 보존·
       순서 불변·이웃확장/검색 pageerror 0. 상세 TEST.md POST-DEPLOY Run.
+
+## 39. cluster-role-prefix — 클러스터 상세 테이블 목록 역할 접두사 + 행 클릭 노드 선택 + 범례 hover 툴팁 (2026-07-03, 사용자 후속 요청)
+사용자 후속 요청 3건(그래프 뷰): ① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 동일 폭 빈 슬롯 → 라벨 정렬 유지) ② 그 목록 **각 행 클릭 → 해당 노드 선택** ③ 역할 **범례 hover 툴팁**. 정본: MODIFY CHG-20260703-cluster-role-prefix.
+등급: **Minor**(프론트 표현 + 기존 select 재사용 클릭 — 데이터 API·스키마·마이그레이션 불변, 비파괴).
+
+### 39.1 구현 (admin.js / admin.html / styles.css)
+- [x] T39.1 `_META_ROLE` 에 `desc` 필드 8종 추가(범례·접두사 툴팁 단일 소스, BE NODE_ROLES 휴리스틱 정합).
+- [x] T39.2 신규 `_metaRoleChipHTML(role, esc, small)` — 그래프 칩·상세 배지와 동일 색/아이콘 칩 조립(dark 라벨색·title=desc).
+- [x] T39.3 `_metaGraphRenderClusterDetail` 테이블 목록: 각 행 `<button class="amgr-ct-row" data-node-key>`, `_metaRoleOf(key)` 있으면 역할 칩 접두사·없으면 `amgr-role-none`(transparent, 18px 폭) → `<code>` 좌측 정렬 보존. innerHTML 직후 클릭 바인딩 → `_metaGraphShowDetail(key)`(setSelected+상세) + 렌더 시 `focusElement`.
+- [x] T39.4 신규 `_metaRoleLegendTips()` — 정적 범례 `<li data-role>` 에 `_META_ROLE.desc` 로 hover `title` 주입, 그래프 뷰 진입 함수에서 1회 호출. admin.html 범례 `<li>` 에 `data-role` 추가.
+- [x] T39.5 styles.css `.amgr-cluster-tables`/`.amgr-ct-row`(버튼·hover)/`.amgr-role-chip(-sm)`/`.amgr-role-none`/`.amgr-ct-desc` + cache-buster `admin.js`·`styles.css` `?v=20260703-cluster-role-prefix`.
+- [x] T39.6 부수: 이 cycle 이 편집한 MODIFY.md 에 graph-rel-layout §38 병합이 남긴 미해결 conflict 마커(675/687/698) 정리 — 양쪽 CHG 보존.
+
+### 39.2 검증
+- [x] T39.7 `node --check admin.js` PASS. 신규 심볼 정합.
+- [x] T39.8 **headless playwright 렌더 격리 실증**: 분석/미분석 혼합 5행 → 전 `<code>` left=45px 동일(`allCodesAligned:true`, 미분석도 슬롯 유지로 정렬 뒤틀림 없음), 칩 폭 전부 18px, 전 행 `<button>`. 스크린샷(색상 칩 접두사 + 미분석 빈 슬롯) 육안 확인.
+- [x] T39.9 **§18.8 적대 리뷰 [SUBAGENT]**(XSS/속성안전·클릭 바인딩·select semantics·범례 tips 정합·칩 헬퍼·CSS·회귀 7축): 결과 REVIEW REV-20260703-cluster-role-prefix 참조.
+- [ ] T39.10 배포(web, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 클러스터 상세 목록 접두사·정렬·행 클릭 노드 선택·범례 hover 툴팁 육안 확인.
