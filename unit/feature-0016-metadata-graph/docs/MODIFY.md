@@ -696,3 +696,11 @@ source_of_truth: true
 - Impact: 프론트 **표현 전용**(상세 패널 내부 레이아웃만). 데이터 API·스키마·마커·칩 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. 범례는 여전히 detailBody 형제(이제 아래)라 innerHTML 교체(detailBody/progress 만)에 지워지지 않음. 검증: **headless playwright 렌더 격리 실증** — 빈 상세=범례 바닥고정(pinnedNearBottom, 위 여백 262px), 긴 상세 30행=노드 상세 firstNodeH 32(온전·미압축)·dbH==dbScrollH(983, 잘림 없음)·aside canScroll=true(스크롤) → 밀림/뒤틀림 없음. + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html(범례 위치 원복)·styles.css(flex/margin 원복) git revert + cache-buster 이전값(reldetail-colexpand-role-legend-panel). 데이터·API·JS 무손상.
 >>>>>>> origin/main
+
+## CHG-20260703-graph-rel-layout-postdeploy
+- Date: 2026-07-03
+- Related Requirement: CHG-20260703-graph-rel-layout 의 완료 게이트(TASK §38 T38.8) — 배포 후 PB-0008 라이브 실측 기록.
+- Summary: doc-only — 배포 web-a/b `5f439788`(무중단 롤링·soak) 후 실 Windows Chrome PB-0008 라이브 검증 전건 PASS 를 TEST.md(POST-DEPLOY Run)·TASK §38(T38.8 [x])·REVIEW(REV-…-postdeploy) 에 기록. 핵심 실측: 관계쌍 평균 배치 순서 거리 32.5→3.2(90% 감소, gunzgame 115쌍)·군집 육안·collapse REFERENCES 145→145 보존·배치 불변·이웃확장/검색 pageerror 0.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.
