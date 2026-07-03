@@ -424,5 +424,7 @@ origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 �
   + `test_metadata_graph_units.py` **28 PASS**(DI 권한 맵·metadata_graph 단위 무회귀 — 엔드포인트에 `conn=Depends`
   추가가 권한 게이트·투영 모듈 불변 확인).
 - §18.8 적대 리뷰(general-purpose): read-axis MAJOR + 비숫자 product NIT 반영 후 PASS-WITH-FIXES (REV-20260703T091737).
-- **POST-DEPLOY 실 Windows 브라우저(PB-0008)**: 배포 후 기록 예정 — feature-0003 TEST.md §3 `Environment: Windows-browser`
-  (제품 개요 렌더·datasource drill·제품 배너·회귀 0). visual_verification_scope: always 게이트 충족 조건.
+- **POST-DEPLOY 실 Windows 브라우저(PB-0008) = PASS(2026-07-03, 배포 `4f34e5fa`)**: 실 Windows Chrome 실측 —
+  제품 개요 "제품 카테고리 15개 · 데이터소스 18개" 렌더(Product/Datasource 노드 + USES 엣지 + 툴바 버튼) · datasource
+  drill(`mssql-dk-dev`) → **스키마 11개**(비어있지 않음 = read-axis fix 실증) + 제품 배너 "제품: DK온라인 - 개발" ·
+  pageerror 0. 정본 Run: feature-0003 TEST.md §3 `Environment: Windows-browser`(스크린샷 pb0008-product-overview.png).

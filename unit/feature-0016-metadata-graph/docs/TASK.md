@@ -1072,4 +1072,4 @@ MODIFY CHG-20260703-node-role-viz.
 ### 43.3 검증
 - [x] T43.8 격리 테스트(합성 그래프 노드/엣지 무결성) + `node --check` admin.js.
 - [x] T43.9 §18.8 적대 리뷰(합성 정합·권한·XSS·회귀) + verify-completion.
-- [ ] T43.10 배포(web 롤링) + **PB-0008 실 Windows 시각검증**(제품 개요 렌더·datasource drill·배너).
+- [x] T43.10 배포(web 롤링) + **PB-0008 실 Windows 시각검증**(제품 개요 렌더·datasource drill·배너).
