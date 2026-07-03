@@ -763,3 +763,10 @@ source_of_truth: true
 - Impact: 프론트 배치·표현 전용 — 데이터 API·AGE 스키마·RBAC·마이그레이션·graph-drag 종속 UI 계약(tableDeps) 불변. GB:/GH: 는 비상호작용 장식(이벤트 무시·드래그 불가·엣지 끝점 불가). 검증: 실 _metaG6Build Node 구동 격리 22/22(무겹침·포함·결정론·펼침-불변·평면 폴백·5.1ms) + node --check. 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows.
 - §18.8 패널 후속 수정(같은 cycle, REVIEW REV-20260703T043659): ① GB:/GH: 클릭→`_metaGraphShowClusterDetailById`·우클릭→`_metaGraphCtxForSchema` 위임(combo 배경 데드존 방지) ② 2차 관계 attach 를 1차 스냅샷 `fam1` 참조로 무연쇄화 ③ view 정규화를 공용 `_metaViewNorm`(view_ 접두만) 으로 통일(viewer 미절단) ④ 패널 그룹 헤딩 aria-hidden 제거·role="group"/aria-label·80행 그룹경계 절단표식. 회귀방지 t10~t12(25/25).
 - Rollback Notes: admin.js 신규 함수·GB:/GH: 방출·핸들러 분기(클릭/우클릭 위임 포함)·패널 헤딩 revert + admin.html/styles.css cache-buster 이전값(20260703-graph-drag / 20260703-cluster-role-prefix). 데이터·API 무손상.
+## CHG-20260703-graph-simgroups-postdeploy
+- Date: 2026-07-03
+- Related Requirement: CHG-20260703-graph-simgroups 완료 게이트(TASK §42 T42.8) — 배포 후 PB-0008 라이브 실측 기록.
+- Summary: doc-only — 배포 web-a/b `abc78b00`(무중단 롤링·soak) 후 실 Windows Chrome PB-0008 전건 PASS 를 TEST.md POST-DEPLOY Run·TASK §42(T42.8 [x])·REVIEW(REV-…-postdeploy) 에 기록. 핵심 실측: 그룹 배경 박스 22 + 헤더 칩 22(item·21/character·17/account·6/…) 렌더·영역 가시성·GB 클릭 클러스터 상세 위임(데드존 수정 실증)·컬럼 접기 REFERENCES 145→145·pageerror 0.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.

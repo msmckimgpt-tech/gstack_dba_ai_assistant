@@ -391,3 +391,17 @@ admin.js 에서 _metaG6Build + 의존 25종을 소스 추출해 실측 gunzgame 
 그룹 배경 박스·헤더 칩 렌더 ② 영역 단위 가시성(칩 나열 대비) ③ 컬럼 펼침/접기·테이블 드래그·검색·역할칩
 회귀 0 을 실 Windows Chrome 으로 육안 확인 예정. (pre-commit 시점 미수행 사유: 배포 선행 — deploy-web.sh 는
 origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 데이터 규모 필요.)
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — **Run 2026-07-03 PASS (POST-DEPLOY)**
+배포 web-a/b `abc78b00`(무중단 롤링·soak 통과) 후 실 Windows Chrome/149(relay `http://172.26.144.1:9223`,
+`https://localhost/admin` 인증 세션)로 그래프 뷰(mysql-gz-dev · gunzgame 스키마 펼침, 테이블 115) 검증:
+- 신 자산 강제 로드: `admin.js?v=20260703-graph-simgroups` 서빙 + `_metaSimGroups` 정의 확인.
+- **① 유사 속성 그룹 박스·헤더(핵심)**: 캔버스에 **그룹 배경 박스 22개 + 헤더 칩 22개**(스템 라벨·개수) 렌더 —
+  item·21 / character·17 / account·6 / battletimereward… / …grade·2 / blitzkrieg…·4 / …ranking·3 / mission·5 /
+  …type(currencytype·gametype·renttype·servertype) / attendence 등. 테이블 칩 115개가 각 그룹 박스로 구획.
+  (스크린샷 simgroups-01-boxes.png, 02-detail.png)
+- **② 영역 단위 가시성**: "균일 칩 평면 나열"이 색 배경 박스 + 라벨 헤더로 영역화 — 유사 속성 범위가 시각적으로 노출.
+- **③ GB/GH 데드존 수정(§18.8 MAJOR 실증)**: 그룹 배경 박스 클릭 → 클러스터 상세 패널 렌더(스키마 클러스터
+  표기)·상세 목록에 그룹 헤딩 43개 + role="group" aria + (shown/n) 절단표식 노출. pageerror 0.
+- **④ 회귀 0**: account 컬럼 펼침 11개(이웃확장 경로) · 컬럼 접기 후 REFERENCES **145→145 보존**(§38) ·
+  검색 모드(`_metaGraphSearch('character')`) 정상 진입 · 전 경로 pageerror 0.
