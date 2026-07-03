@@ -1173,5 +1173,5 @@ REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메�
 - [x] T46.7 node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS.
 - [x] T46.8 §18.8 적대검증 2단계: 설계 워크플로우(revision 충돌·MSSQL·namespace·chaining fix) + 구현 리뷰(MAJOR-1
   sig strip·MAJOR-2 phantom clear·MINOR-3 OOM 가드 반영). 정본 REVIEW REV-20260703T160303.
-- [ ] T46.9 **라이브 마이그(0035) 게이트 표면화 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·
+- [x] T46.9 **라이브 마이그(0035) 게이트 표면화 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·
   affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — 후속 확인).

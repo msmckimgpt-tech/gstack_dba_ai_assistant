@@ -1666,3 +1666,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - ①(ƒ/⚙ Routine 칩·보라 잔점선)은 insight-worker routine introspect 첫 cadence 후 데이터 생성 — 후속 육안 확인 항목으로 이월.
 - **funcproc-esc-hotfix**: Esc 직후 300ms show 억제 플래그(`escClosing`)로 닫힘 확정(focus 복귀는 유지 — a11y). cache-buster `admin.js?v=20260703-funcproc-esc`. `node --check` PASS. 배포 후 Esc 닫힘 라이브 재실측 예정(본 섹션에 append).
 - **POST-DEPLOY 재실측 (Environment: Windows-browser, e1c71589 배포 후) — Esc 닫힘 PASS**: `admin.js?v=20260703-funcproc-esc` 강제 로드 → hover 표시 → Esc 후 **120ms 내 닫힘 + 620ms 유지** + 억제 창(300ms) 이후 재-hover 정상 재오픈. graph-funcproc ⑤ 전 항목 라이브 완결(①Routine 칩만 introspect 첫 cadence 후 육안 이월).
+
+### Run (2026-07-03) — semantic-embed: 메타데이터 의미 임베딩·클러스터링 (Phase C, Major §12.3 — backend+frontend, 코드 거주 feature-0002/0003 / 문서 정본 feature-0016-metadata-graph TASK §46, ADR-018) — **Environment: Windows-browser**
+- **정적·§18.8 PASS**: node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS. 설계 워크플로우 + 구현 적대리뷰(MAJOR-1 sig strip·MAJOR-2 phantom clear·MINOR-3 OOM 가드 반영, REV-20260703T160303).
+- **배포 `53532241`**(web-a/b 무중단 롤링·soak 통과). **라이브 마이그 0035 적용 확인**: alembic_version=`0035_rag_objects_semantic_cluster`, rag_objects 에 signature_text_hash·semantic_cluster_id·semantic_cluster_label 3 컬럼 존재.
+- **insight-worker 재빌드 + 데몬 실동작 실증**: 재시작 후 semantic_cluster 데몬 첫 패스가 **table 객체 200건(=SIG_BATCH)에 signature_text_hash 채움**(총 15,686 — 이후 cadence 로 진행). 모듈 import OK. 컨테이너 healthy.
+- **라이브 브라우저(win-browser, Chrome149)**: 새 프론트 라이브 확인(admin.js `20260704-semantic-embed`, beOf/cluster_label 매칭). 메타데이터 > 🕸 그래프 뷰 → datasource(`mssql-dk-dev`) 선택 → 스키마 카드 11개 정상 렌더 + 스키마 점프 펼침 정상 + **pageerror 0**(신규 _metaSimGroups/labelOf/ingest·투영 cluster_id RETURN 런타임 오류 0). 스크린샷 `scratchpad/phaseC-schema-simgroups.png`.
+- **be: 의미 그룹 시각확인 = eventual(후속)**: 현재 cluster_id 전부 NULL → 프론트 affix 폴백(무회귀). 클러스터 값은 embedding 데몬(60s)+클러스터 데몬(6h cadence) 후 채워짐 → be: 그룹 라벨은 그 이후 육안 확인 이월(설계상 eventual, kill switch AUTO 보유).
