@@ -1034,5 +1034,7 @@ MODIFY CHG-20260703-node-role-viz.
       국한, 문서화 유지). errored geo/interact 축은 직접 검증(G6 style 키 vendored 지원·packGroup 빈배열 방어·
       GB/GH 가 nodes/stateCache/tableDeps 미유입). 회귀 방지 t10~t12 추가 → 25/25. 정본: REVIEW
       REV-20260703T043659-ai-claude-corp-feature-0016-graph-simgroups.
-- [ ] T42.8 배포(deploy_scope: included) + **PB-0008 실 Windows 라이브 시각검증**(그룹 박스·헤더 렌더,
-      영역 가시성, 접기/펼침·드래그·검색 회귀, TEST.md Run append).
+- [x] T42.8 배포(web-a/b `abc78b00` 무중단 롤링·soak, deploy_scope: included) + **PB-0008 실 Windows 라이브
+      시각검증 PASS**: 그룹 박스 22 + 헤더 칩 22(item·21/character·17/account·6/…) 렌더·영역 가시성·GB 클릭
+      클러스터 상세 위임(데드존 수정 실증)·패널 그룹 헤딩 aria·컬럼 펼침11/접기 REFERENCES 145→145·검색 정상·
+      pageerror 0. 상세 TEST.md POST-DEPLOY Run.

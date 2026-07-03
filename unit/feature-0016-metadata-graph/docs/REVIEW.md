@@ -746,3 +746,8 @@ source_of_truth: true
   vendored g6.min.js·기존 _metaTableStyle 에서 사용 중(크래시 없음), packGroup 은 `Math.max(0, ...)` 로 빈
   배열 방어, GB:/GH: 는 `_metaGraph.nodes` 미등록이라 refreshStates·_stateCache·tableDeps·focus 경로 미유입.
 - 판정: 확정 4건 수정 + 회귀방지 t10~t12, 격리 25/25 PASS, node --check PASS. BLOCKING 0.
+## REV-20260703T045000-ai-claude-corp-feature-0016-graph-simgroups-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY PB-0008 결과 기록
+- 배포 web-a/b `abc78b00`(무중단 롤링·soak) 후 실 Windows Chrome PB-0008 라이브 검증 **전건 PASS** 를 TEST.md
+  (graph-simgroups POST-DEPLOY Run)·TASK §42(T42.8) 에 기록하는 doc-only 후속 — 코드 무변경 §18.8 skip. 핵심:
+  그룹 배경 박스 22 + 헤더 칩 22 렌더(item·21/character·17/…)·GB 클릭 클러스터 상세 위임(§18.8 MAJOR 수정
+  실증)·패널 그룹 헤딩 aria·컬럼 접기 REFERENCES 145→145 보존·검색 정상·pageerror 0.
