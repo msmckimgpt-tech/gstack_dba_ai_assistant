@@ -6114,7 +6114,15 @@ function _metaGraphBindAiPopover(key, scope) {
   if (!pop || !ta || !go) return;   // popover 마크업 부재(비정상) — 버튼 단독 동작 보존
   if (_metaGraph.aiPrompt) ta.value = _metaGraph.aiPrompt;
   let hideT = null;
-  const show = () => { if (hideT) { clearTimeout(hideT); hideT = null; } pop.hidden = false; };
+  // funcproc-esc-hotfix(PB-0008 라이브 적발): Esc 가 pop 을 닫고 btn.focus() 로 포커스를 돌려주는데,
+  // btn 의 focus-show 가 즉시 재열고 show() 가 blur 경로의 hide 타이머까지 취소해 **popover 고착**.
+  // Esc 직후 짧은 창(300ms) 동안 show 를 억제해 닫힘을 확정한다(focus 복귀는 유지 — a11y).
+  let escClosing = false;
+  const show = () => {
+    if (escClosing) return;
+    if (hideT) { clearTimeout(hideT); hideT = null; }
+    pop.hidden = false;
+  };
   const hideSoon = () => {
     if (hideT) clearTimeout(hideT);
     hideT = setTimeout(() => { if (document.activeElement !== ta) pop.hidden = true; }, 250);
@@ -6123,7 +6131,12 @@ function _metaGraphBindAiPopover(key, scope) {
   btn.addEventListener("focus", show);
   if (sec) { sec.addEventListener("mouseleave", hideSoon); sec.addEventListener("mouseenter", show); }
   ta.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape") { pop.hidden = true; try { btn.focus(); } catch (_) {} }
+    if (ev.key === "Escape") {
+      escClosing = true;
+      pop.hidden = true;
+      try { btn.focus(); } catch (_) {}
+      setTimeout(() => { escClosing = false; }, 300);
+    }
     if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); start(); }
   });
   ta.addEventListener("blur", hideSoon);
