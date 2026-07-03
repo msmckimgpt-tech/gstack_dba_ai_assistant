@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260703T083758-insight-table-grouping [AGENT-TEAM:adversarial-backend-correctness-trace] — insight-worker 동일구조 테이블 그룹화 (TASK-20260703-insight-table-grouping, Major §12.3)
+- Date: 2026-07-03. §18.8 backend/qa dispatch — Major 라이브 워커 변경이라 커밋 전 적대적 correctness 트레이스(REFUTE-우선) 1패널. 대상: insight.py 그룹화·fan-out·KV 상속·`_publish_table_insight` + config knob.
+- verdict: **CHANGES-REQUESTED → 전건 흡수 → SHIP-WITH-FIXES**. 확정 버그 2 + actionable 우려 2 반영, 나머지는 refuted/documented-residual.
+- **BUG1(medium, 흡수)**: `fanned_out_groups` 가 cycle-global 인데 sig=(base_stem, fp)가 스키마-무관 → 구조·이름이 겹치는 **두 번째 스키마부터 fan-out 이 통째로 skip**(멀티 DB 가 같은 샤드 템플릿 공유 시 기능 무력화). → `fanned_out_groups` 를 **스키마별 리셋**(members_of 도 스키마별 재구성이라 dedupe 스코프 정합). `group_insight_cache`·`fanout_used` 는 cross-schema 유익이라 cycle-global 유지.
+- **BUG2(low-med, 흡수)**: artifact_missing **repair 성공 후 `continue`** 가 `processed_this_cycle` 미등록 → 같은 그룹 형제의 fan-out 이 그 테이블 고유 insight 를 그룹 일반 insight 로 **덮어쓰고 이중 카운트**. → repair `continue` 직전 `processed_this_cycle.add(table)`.
+- **P1(강한 잔여위험, 흡수)**: 대표의 **개별 샤드명**(…_20250727)을 LLM 에 보내면 summary/domain 에 특정 날짜가 박혀, 형제(_20250726)에 전파 시 "그 날짜" 오기재(fact prefix 는 실명이라 SQL 타겟은 정상이나 서술 텍스트 drift). → 대표 LLM payload 의 table 을 **family 패턴명 `base_stem + "_*"`** 로 일반화(사용자 "일반적 분류" 의도와도 정합) — 분석문이 날짜-불문 일반 분류가 됨. fact 키·prefix·참조는 실명 유지 → grounding 무회귀. 콘솔 "테이블 분석"도 `…daily_league_ranking_*` 로 family 단위 표기.
+- **P2(persistent-wedge, 흡수)**: 갓 LLM dict 를 **publish 전** KV 저장 → malformed dict(예: key_columns 비-시퀀스)가 `_format_table_insight_text` 에서 TypeError → 스키마 스캔 abort + KV 영속 → 매 cycle 재크래시. → (a) KV/cache 저장을 **`table_complete` 성공 후로 이동**(검증된 dict 만 영속), (b) `_format_table_insight_text`·`_format_schema_insight_text` 에 non-시퀀스 key_columns 방어 가드.
+- **refuted/residual**: fp 변경 시 stale KV 상속(불가능 — sig/KV 키가 현재 fp 임베드) · round-robin 커서 오염(무관 — offset 은 선-선택서 산출) · bad-insight 전파(불가 — fan-out 이 table_complete+dict 게이트) · made_progress/backoff(정상 — fan-out 포함) · 캐시 dict 변이(안전 — dict() 얕은복사) · 동시성(advisory lock 직렬). **P3(casefold 컬럼 케이싱 drift)·P4(stem over-strip)**: MySQL/MSSQL 식별자 대소문자 무관 + 분석문 구조-파생이라 저위험 — documented residual(P1 일반화로 P4 영향 무해화).
+- 테스트: 신규 `test_insight_table_grouping.py` **16**(그룹 로직 11 + KV 3 + 포매터 방어 2), 기존 insight 계열 79 회귀 0, config star-export PASS, 컨테이너 `make test` PASS(ruff clean).
+- Human Approval Needed: 없음(PLAN-APPROVED 승계 + 자동 동기화). 배포: deploy_scope:included(insight-worker 재기동, 백엔드라 PB-0008 비대상).
+
 ## REV-20260629T142624-active-interp-modality [AGENT-TEAM:conv-audit-fix-panel-3lens+adversarial-verify] — 능동해석 modality 일반화 + MySQL casing (TASK-20260629T142624-active-interp-modality, Major §12.3)
 - Date: 2026-06-29. §18.8 full 패널(프롬프트 변경 = full default): 3 독립 적대 렌즈(qa·회귀·정합성 / security·over-reach / rootcause-completeness) + 비차단 finding 적대 검증(refute-or-confirm). resume(session limit 으로 중단됐던 QA 리뷰어 재실행).
 - verdict: qa-regression **PASS-WITH-NITS**(split 정확·회귀 0 실측), security-overreach **PASS-WITH-NITS**(가드 코드 미접촉·신규 공격표면/PII 노출 없음·injection 등 보안경계 스위트 PASS), rootcause-completeness **CHANGES-REQUESTED**(BLOCKER1+MAJOR3).

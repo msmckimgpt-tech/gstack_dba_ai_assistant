@@ -106,6 +106,197 @@ def _compute_table_fingerprints_batch(db_conn, schema: str, tables: list[str]) -
         cur.close()
 
 
+# ── 동일구조 테이블 그룹화 (feature-0002 insight-table-grouping, 2026-07-03) ──────────
+# 날짜/번호 suffix 만 다른 동일구조 샤드(daily_league_ranking_1_20250727, _20250726 …)를
+# 한 그룹으로 묶어 대표 1개만 LLM 분석하고 나머지는 LLM 없이 인사이트를 전파한다.
+# 그룹 키 = (base_stem, column-fingerprint) — 지문이 같아 "구조 동일"을, base_stem 이 같아
+# "같은 이름-family"를 함께 요구한다(구조만 우연히 같고 도메인 다른 테이블의 오그룹 방지).
+_TABLE_STEM_BACKUP_RX = re.compile(r"[_-](?:bk|bak|backup|old|new|tmp|temp|copy|org|orig)$", re.IGNORECASE)
+_TABLE_STEM_NUM_RX = re.compile(r"[_-]?\d+$")
+
+
+def _table_base_stem(name: str) -> str:
+    """테이블명에서 후행 날짜/번호/백업 suffix 를 반복 제거한 base stem 을 반환한다.
+
+    daily_league_ranking_1_20250727 -> daily_league_ranking (날짜 8자리 → 번호 _1 순차 strip),
+    DayuPoint_20230801_bk -> DayuPoint, Stat_ActiveUser_Again_20120918 -> Stat_ActiveUser_Again.
+    최소 2글자 base 를 보존한다(start<2 인 strip 은 수행 안 함) — 전부 숫자/짧은 이름은 원본 유지.
+    날짜는 연속 숫자열이라 일반 번호 strip 이 원자적으로 제거하므로 별도 날짜 정규식은 불필요."""
+    s = str(name or "").strip()
+    if not s:
+        return s
+    prev = None
+    while s != prev:
+        prev = s
+        m = _TABLE_STEM_BACKUP_RX.search(s)
+        if m and m.start() >= 2:
+            s = s[: m.start()]
+            continue
+        m = _TABLE_STEM_NUM_RX.search(s)
+        if m and m.start() >= 2:
+            s = s[: m.start()]
+            continue
+    return s
+
+
+def _table_group_sig(table: str, table_fps: dict[str, str]):
+    """테이블의 그룹 서명 (base_stem, fingerprint). fp 부재/stem<2 면 None(그룹 제외 — pure LLM)."""
+    fp = (table_fps.get(table) or "").strip()
+    stem = _table_base_stem(table)
+    if not fp or len(stem) < 2:
+        return None
+    return (stem, fp)
+
+
+def _build_table_groups(table_names: list[str], table_fps: dict[str, str]):
+    """all_table_names 를 그룹 서명별로 묶는다.
+
+    반환 (sig_of, members_of):
+      - sig_of[table]  = (base_stem, fp)  — 그룹 서명을 가진 모든 테이블(단일 멤버 포함, KV 상속용).
+      - members_of[sig] = 정렬된 멤버 리스트 — cycle 내 fan-out 대상 후보(min_members 게이트는 호출측).
+    """
+    sig_of: dict[str, tuple] = {}
+    members_of: dict[tuple, list] = {}
+    for t in table_names:
+        sig = _table_group_sig(t, table_fps)
+        if sig is None:
+            continue
+        sig_of[t] = sig
+        members_of.setdefault(sig, []).append(t)
+    for sig in members_of:
+        members_of[sig].sort()
+    return sig_of, members_of
+
+
+def _group_insight_kv_key(sig: tuple) -> str:
+    """그룹 대표 분석 dict 의 KV 키. fp 가 구조를 인코딩하므로 fp 가 바뀌면 키가 바뀌어 자기 무효화."""
+    stem, fp = sig
+    return "table_group_insight:" + str(fp) + ":" + str(stem)[:120]
+
+
+def _load_group_insight_kv(mem_conn, sig):
+    """이전 cycle 대표가 저장한 그룹 분석 dict 를 KV 에서 로드(LLM 없이 상속). 없으면/오류 None."""
+    if sig is None or mem_conn is None:
+        return None
+    try:
+        raw = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _group_insight_kv_key(sig))
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _save_group_insight_kv(mem_conn, sig, insight) -> None:
+    """그룹 대표의 LLM 분석 dict 를 KV 에 저장 — 다음 cycle 신규 샤드가 LLM 없이 상속하게 한다."""
+    if sig is None or mem_conn is None or not isinstance(insight, dict):
+        return
+    try:
+        save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _group_insight_kv_key(sig),
+                       json.dumps(insight, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def _publish_table_insight(
+    mem_conn, run_id, schema, table, insight, table_error, col_name_list,
+    table_key, table_refs, table_reason, table_refresh_key,
+    current_tfp, stored_table_fps, table_refresh_map, report,
+    *, insight_via: str = "llm", family=None,
+) -> bool:
+    """table_insight dict 를 렌더→publish→verify→fp저장→refresh→telemetry 하고 완료 여부를 반환.
+
+    대표(LLM/KV/cache 유래) 와 fan-out(형제 전파) 공용 — 두 경로의 발행 로직을 단일화해 drift 를 막는다.
+    insight_via/family 는 관측·그룹 라벨(B)용 telemetry·source_meta 부가정보. tables_generated/
+    tables_fanout 카운트와 table_seen_map 갱신은 호출측 책임(경로별 의미 분리)."""
+    table_started = time.perf_counter()
+    insight_dict = insight if isinstance(insight, dict) else None
+    table_text = _format_table_insight_text(schema, table, insight_dict, col_names=col_name_list)
+    source_meta = None
+    if insight_dict is not None:
+        source_meta = dict(insight_dict)
+        if family is not None:
+            source_meta["table_family"] = family
+    publish_attempted = False
+    publish_skip_reason = ""
+    if (
+        not table_error
+        and table_text
+        and _should_publish_global_fact(table_key, "schema_insight", 4, table_text)
+    ):
+        _publish_fact(
+            mem_conn,
+            _insight_target_conversation_id(),
+            table_key,
+            table_text,
+            4,
+            scope_key=FACT_SCOPE_COMMON,
+            source_type="schema_insight",
+            source_run_id=run_id,
+            source_sql="",
+            source_meta=source_meta,
+        )
+        publish_attempted = True
+    elif table_error:
+        publish_skip_reason = "llm_error"
+    elif insight_dict is None:
+        publish_skip_reason = "invalid_response"
+    elif not table_text:
+        publish_skip_reason = "empty_text"
+    else:
+        publish_skip_reason = "publish_filtered"
+    verified_table_state = _load_insight_artifact_states(mem_conn, [table_key]).get(
+        table_key, _empty_insight_artifact_state(table_key)
+    )
+    table_complete = _insight_artifact_complete(verified_table_state)
+    result = "ok" if table_complete else "partial_persist"
+    if table_error:
+        result = "publish_failed"
+        report["publish_failed"] = int(report.get("publish_failed", 0)) + 1
+    _trace_insight_worker_event(
+        run_id,
+        "publish",
+        schema,
+        "table",
+        table,
+        table_reason,
+        "generate_insight",
+        referenced_objects=table_refs,
+        result=result,
+        duration_ms=(time.perf_counter() - table_started) * 1000.0,
+        error=table_error,
+        extra={
+            "missing_parts": _insight_missing_parts(verified_table_state),
+            "publish_attempted": bool(publish_attempted),
+            "publish_skip_reason": publish_skip_reason,
+            "insight_via": insight_via,
+        },
+    )
+    _trace_insight_worker_event(
+        run_id,
+        "verify",
+        schema,
+        "table",
+        table,
+        table_reason,
+        "verify_persist",
+        referenced_objects=table_refs,
+        result="ok" if table_complete else "partial_persist",
+        extra={"missing_parts": _insight_missing_parts(verified_table_state)},
+    )
+    if table_complete:
+        _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
+        tfp_key = ds_fact_key("table_fp", ds_object_suffix(schema, table))
+        if current_tfp:
+            _save_fingerprint(mem_conn, tfp_key, current_tfp)
+            stored_table_fps[tfp_key] = current_tfp
+    return table_complete
+
+
 def _load_stored_fingerprints(mem_conn, prefix: str) -> dict[str, str]:
     """KV에서 특정 prefix의 핑거프린트들을 로드한다."""
     return _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, prefix)
@@ -965,6 +1156,11 @@ def _scan_instance_schema_insights(
         "pending_table_repairs": 0,
         # TASK-0131 (#10): publish 실패(주로 LLM 호출 실패) 누적 — 사이클 status degrade 판정용.
         "publish_failed": 0,
+        # insight-table-grouping (2026-07-03): 동일구조 그룹 전파 관측.
+        #   insight_llm_calls = 실제 llm_table_insight 호출 수(대표만),
+        #   tables_fanout     = LLM 없이 형제로 전파된 테이블 수(= 절약된 LLM 호출 수).
+        "insight_llm_calls": 0,
+        "tables_fanout": 0,
     }
     if not db_conn or not mem_conn or not AGENT_SCHEMA_INSTANCE_SCAN or not AGENT_SCHEMA_INSIGHT:
         return report
@@ -1058,6 +1254,16 @@ def _scan_instance_schema_insights(
     # 완료된 스키마에서 영원히 미발화(라이브 inferred 0건·프로브 0회)라 주기 재발화를 보완한다.
     rel_reinfer_sec = int(AGENT_RELATIONSHIP_REINFER_SEC or 0)
     rel_infer_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "relationship_infer_at:")
+    # insight-table-grouping (2026-07-03): 동일구조 그룹 상태(cycle 전역 — 스키마 간 KV/cache 공유).
+    grouping_enabled = bool(AGENT_INSIGHT_TABLE_GROUPING_ENABLED)
+    group_min = max(2, int(AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS))
+    fanout_max = max(0, int(AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX))
+    group_insight_cache: dict[tuple, dict] = {}   # sig -> 대표 분석 dict (cycle 전역 — 스키마 간 재사용 OK)
+    fanout_used = 0                               # 이번 cycle fan-out 한 테이블 수(fanout_max cycle 상한)
+    # NOTE(리뷰 BUG1): fan-out 중복 방지 집합 `fanned_out_groups` 는 **스키마마다 리셋**한다(아래 루프 내).
+    #   sig=(base_stem, fp) 가 스키마-무관이라 cycle 전역이면 구조·이름이 겹치는 두 번째 스키마의 fan-out 이
+    #   통째로 skip 돼 기능이 무력화된다(멀티 DB 가 같은 샤드 템플릿을 공유하는 흔한 경우). members_of 는
+    #   스키마별로 재구성되므로 dedupe 도 스키마 스코프여야 정합.
     try:
         for schema in candidates:
             if time.perf_counter() - scan_start > budget_sec:
@@ -1490,9 +1696,19 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         table_cols.setdefault(tname, []).append(
                             (name, str(data_type or "").strip())
                         )
+                # insight-table-grouping: 스키마 내 (base_stem, fp) 그룹 서명 + 이번 cycle ready 집합.
+                if grouping_enabled:
+                    group_sig_of, members_of = _build_table_groups(all_table_names, current_table_fps)
+                else:
+                    group_sig_of, members_of = {}, {}
+                ready_all = set(artifact_missing_tables) | set(changed_tables) | set(refresh_due_tables)
+                processed_this_cycle: set = set()   # 이번 스키마에서 이미 발행(대표/전파)한 테이블
+                fanned_out_groups: set = set()      # (리뷰 BUG1) 이번 스키마에서 이미 fan-out 한 그룹 — 스키마 스코프
                 for table in selected_tables:
                     if time.perf_counter() - scan_start > budget_sec:
                         break
+                    if table in processed_this_cycle:
+                        continue                    # 앞선 그룹 대표의 fan-out 이 이미 발행함
                     _touch_worker_heartbeat_progress(mem_conn)  # insight-heartbeat-liveness: 테이블 진행 중 heartbeat
                     col_rows = table_cols.get(table) or []
                     if not col_rows:
@@ -1561,101 +1777,99 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                                     stored_table_fps[tfp_key] = current_tfp
                                 report["tables_repaired"] = int(report.get("tables_repaired", 0)) + 1
                                 table_seen_map.setdefault(schema, set()).add(table)
+                                # insight-table-grouping(리뷰 BUG2): repair 로 마감한 테이블도 이번 cycle
+                                #   처리 완료로 표시 — 같은 그룹 형제의 fan-out 이 이 테이블 고유 insight 를
+                                #   그룹 일반 insight 로 덮어쓰거나(clobber) 이중 카운트하지 않게 한다.
+                                processed_this_cycle.add(table)
                                 continue
+                    sig = group_sig_of.get(table)
+                    grp_members = members_of.get(sig) if sig is not None else None
+                    grp_size = len(grp_members) if grp_members else 0
+                    # insight-table-grouping(P1/리뷰): 그룹 대표는 개별 샤드명이 아니라 **family 패턴명**
+                    #   (base_stem + "_*")으로 LLM 분석한다 — 분석문(summary/domain)이 특정 날짜·번호에
+                    #   묶이지 않고 일반 분류가 되어, 형제에게 전파해도 "그 날짜" 오기재가 없다(사용자 "일반적
+                    #   분류" 의도 정합). fact 키·prefix·참조는 실제 테이블명을 유지 → grounding 무회귀.
+                    #   그룹 아님(sig None)이면 실제 이름 그대로 분석.
+                    payload_table = (str(sig[0]) + "_*") if sig is not None else table
                     table_payload = {
                         "schema": schema,
-                        "table": table,
+                        "table": payload_table,
                         "columns": cols_payload[: max(1, int(AGENT_TABLE_INSIGHT_MAX_COLS))],
                     }
-                    table_started = time.perf_counter()
                     table_refresh_key = ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, table))
+                    # 그룹 대표 분석 확보 순서 — cycle cache → KV 상속 → LLM. 동일구조(같은 fp+base_stem)
+                    #   형제는 대표 분석 dict 를 재사용해 LLM 을 태우지 않는다.
                     table_error = ""
                     table_insight = None
-                    try:
-                        table_insight = llm_table_insight(table_payload)
-                    except Exception as exc:
-                        table_error = str(exc)
-                    table_text = _format_table_insight_text(
-                        schema,
-                        table,
-                        table_insight if isinstance(table_insight, dict) else None,
-                        col_names=col_name_list,
-                    )
-                    publish_attempted = False
-                    publish_skip_reason = ""
-                    if (
-                        not table_error
-                        and table_text
-                        and _should_publish_global_fact(table_key, "schema_insight", 4, table_text)
-                    ):
-                        _publish_fact(
-                            mem_conn,
-                            _insight_target_conversation_id(),
-                            table_key,
-                            table_text,
-                            4,
-                            scope_key=FACT_SCOPE_COMMON,
-                            source_type="schema_insight",
-                            source_run_id=run_id,
-                            source_sql="",
-                            source_meta=table_insight if isinstance(table_insight, dict) else None,
-                        )
-                        publish_attempted = True
-                    elif table_error:
-                        publish_skip_reason = "llm_error"
-                    elif not isinstance(table_insight, dict):
-                        publish_skip_reason = "invalid_response"
-                    elif not table_text:
-                        publish_skip_reason = "empty_text"
+                    insight_via = "llm"
+                    if sig is not None and sig in group_insight_cache:
+                        table_insight = group_insight_cache[sig]          # 같은 cycle 대표 재사용
+                        insight_via = "group_cache"
                     else:
-                        publish_skip_reason = "publish_filtered"
-                    verified_table_state = _load_insight_artifact_states(mem_conn, [table_key]).get(
-                        table_key, _empty_insight_artifact_state(table_key)
+                        kv_insight = _load_group_insight_kv(mem_conn, sig) if sig is not None else None
+                        if isinstance(kv_insight, dict):
+                            table_insight = kv_insight                    # 이전 cycle 대표 상속(LLM 0)
+                            insight_via = "kv_inherit"
+                            if sig is not None:
+                                group_insight_cache[sig] = kv_insight
+                        else:
+                            try:
+                                table_insight = llm_table_insight(table_payload)
+                            except Exception as exc:
+                                table_error = str(exc)
+                            report["insight_llm_calls"] = int(report.get("insight_llm_calls", 0)) + 1
+                    family = None
+                    if sig is not None and grp_size >= group_min:
+                        family = {"base_stem": sig[0], "fingerprint": sig[1],
+                                  "members": grp_size, "via": insight_via}
+                    current_tfp = current_table_fps.get(table, "")
+                    table_complete = _publish_table_insight(
+                        mem_conn, run_id, schema, table, table_insight, table_error, col_name_list,
+                        table_key, table_refs, table_reason, table_refresh_key,
+                        current_tfp, stored_table_fps, table_refresh_map, report,
+                        insight_via=insight_via, family=family,
                     )
-                    table_complete = _insight_artifact_complete(verified_table_state)
-                    result = "ok" if table_complete else "partial_persist"
-                    if table_error:
-                        result = "publish_failed"
-                        report["publish_failed"] = int(report.get("publish_failed", 0)) + 1
-                    _trace_insight_worker_event(
-                        run_id,
-                        "publish",
-                        schema,
-                        "table",
-                        table,
-                        table_reason,
-                        "generate_insight",
-                        referenced_objects=table_refs,
-                        result=result,
-                        duration_ms=(time.perf_counter() - table_started) * 1000.0,
-                        error=table_error,
-                        extra={
-                            "missing_parts": _insight_missing_parts(verified_table_state),
-                            "publish_attempted": bool(publish_attempted),
-                            "publish_skip_reason": publish_skip_reason,
-                        },
-                    )
-                    _trace_insight_worker_event(
-                        run_id,
-                        "verify",
-                        schema,
-                        "table",
-                        table,
-                        table_reason,
-                        "verify_persist",
-                        referenced_objects=table_refs,
-                        result="ok" if table_complete else "partial_persist",
-                        extra={"missing_parts": _insight_missing_parts(verified_table_state)},
-                    )
+                    # insight-table-grouping(P2/리뷰): 갓 LLM 분석한 대표 dict 는 **발행이 실제로 완료된
+                    #   경우에만** cache/KV 에 저장한다 — 렌더/발행에 실패하는 malformed dict 가 KV 에 영속돼
+                    #   매 cycle 같은 스키마를 재크래시(persistent wedge)하는 것을 차단. 상속/캐시 유래는 검증됨.
+                    if (insight_via == "llm" and table_complete and sig is not None
+                            and isinstance(table_insight, dict)):
+                        group_insight_cache[sig] = table_insight
+                        _save_group_insight_kv(mem_conn, sig, table_insight)
+                    processed_this_cycle.add(table)
                     if table_complete:
-                        _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
-                        tfp_key = ds_fact_key("table_fp", ds_object_suffix(schema, table))
-                        current_tfp = current_table_fps.get(table, "")
-                        if current_tfp:
-                            _save_fingerprint(mem_conn, tfp_key, current_tfp)
-                            stored_table_fps[tfp_key] = current_tfp
                         table_seen_map.setdefault(schema, set()).add(table)
                         report["tables_generated"] = int(report.get("tables_generated", 0)) + 1
+                        # ── fan-out: 같은 그룹의 나머지 ready 형제에게 LLM 없이 대표 분석 전파 ──
+                        #   같은 cycle 에 대표를 확보한 그룹만(대표 분석 dict 재사용), ready(미완/변경/refresh)
+                        #   형제에게만, fanout_max·budget_sec 이중 상한 내에서 전파한다.
+                        if (grouping_enabled and grp_members and grp_size >= group_min
+                                and isinstance(table_insight, dict) and sig not in fanned_out_groups):
+                            fanned_out_groups.add(sig)
+                            fam_fanout = {"base_stem": sig[0], "fingerprint": sig[1],
+                                          "members": grp_size, "via": "fanout"}
+                            for m in grp_members:
+                                if fanout_used >= fanout_max:
+                                    break
+                                if time.perf_counter() - scan_start > budget_sec:
+                                    break
+                                if m == table or m in processed_this_cycle or m not in ready_all:
+                                    continue
+                                processed_this_cycle.add(m)
+                                m_key = ds_fact_key("table_insight", ds_object_suffix(schema, m))
+                                m_refs = _build_insight_references(schema, table=m, col_names=col_name_list)
+                                m_refresh_key = ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, m))
+                                m_tfp = current_table_fps.get(m, "")
+                                m_complete = _publish_table_insight(
+                                    mem_conn, run_id, schema, m, table_insight, "", col_name_list,
+                                    m_key, m_refs, "grouped_fanout", m_refresh_key,
+                                    m_tfp, stored_table_fps, table_refresh_map, report,
+                                    insight_via="fanout", family=fam_fanout,
+                                )
+                                if m_complete:
+                                    table_seen_map.setdefault(schema, set()).add(m)
+                                    report["tables_fanout"] = int(report.get("tables_fanout", 0)) + 1
+                                    fanout_used += 1
                 if primary_len > 0:
                     step = primary_selected if primary_selected > 0 else 1
                     new_offset = (offset + max(1, step)) % primary_len
@@ -1685,6 +1899,9 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                 + int(report.get("schemas_repaired", 0) or 0)
                 + int(report.get("tables_generated", 0) or 0)
                 + int(report.get("tables_repaired", 0) or 0)
+                # insight-table-grouping: LLM 없이 형제로 전파한 것도 진전 — fan-out-only cycle 이
+                #   무진전으로 오판돼 pending-only backoff 로 억제되지 않게 한다.
+                + int(report.get("tables_fanout", 0) or 0)
             ) > 0
             if made_progress or missing:
                 _clear_repair_backoff(mem_conn)
