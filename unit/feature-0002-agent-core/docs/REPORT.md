@@ -360,3 +360,17 @@ app.py 조회실패 debug 로그) 반영.
 **배포(외부영향 — 승인 필요)**: agent 이미지 재빌드(insight-worker baked, 마이그 없음) + insight-worker 재기동 + local-llm-edge 재기동. cron 재설치 `sudo bin/install-metadata-graph-sync-cron.sh`(incremental 30분 + full 04:17). 라이브 검증: `docker stats`(insight/postgres CPU) + pg_stat_activity WALSync 하강 + `probe_edge_failed`/`scan_failed` 로그 감소.
 
 **설계 정합**: ANCHOR feature-0002 §3(insight-worker 복구는 fact 우선 순서 유지 — LLM 비용 폭발 방지)·feature-0016 §1(AGE=재생성 가능한 투영) **무충돌**. 실패 대상 격리는 §3 정신(불필요 LLM/probe 억제)과 정합.
+
+### insight-heartbeat-liveness — healthcheck false-negative 해소 (2026-07-03, 경량 cycle)
+
+**증상**: 관리콘솔 "AI 운영 현황"에서 insight-worker 가 **중단(unhealthy)** 으로 표시되나, 실제로는 claude-haiku-4 로 테이블 분석이 **활발히 작동**(table_insight_refresh_at 5초마다 갱신, 30% CPU). `docker inspect` 도 `unhealthy`.
+
+**근본 원인**: [healthcheck_insight_worker.py](../src/scripts/healthcheck_insight_worker.py)·`_is_insight_worker_heartbeat_fresh` 가 `insight_worker_last_cycle_at` heartbeat 신선도로 생존 판정(각 180s·30s 임계)하는데, 이 heartbeat 는 [insight.py](../src/modules/insight.py) `run_insight_cycle` **finally(= cycle 완료 시)에만** 갱신. TASK-0308 로 insight LLM 을 gemma→claude 전환(feature-0007) 후 대량 백로그를 claude 로 생성하며 **한 cycle 이 9.4분+** 로 길어져, cycle 완료 전까지 heartbeat 가 stale → 180s 초과 → **unhealthy false-negative**(worker 는 생산적으로 작동 중). healthcheck(TASK-0130)의 긴-cycle 미고려 결함이 claude 전환으로 표면화.
+
+**수정** ([insight.py](../src/modules/insight.py)): 신규 `_touch_worker_heartbeat_progress(mem_conn, min_interval_sec=30)` — cycle 진행 중(스키마 순회 `for schema in candidates`, 테이블 순회 `for table in selected_tables`)에 `insight_worker_last_cycle_at` 을 **throttle(30s) 갱신**. 긴 cycle 에도 heartbeat 신선 유지 → healthy. **진짜 hang**(생성 정지) 시엔 이 호출 경로가 함께 멈춰 stale→unhealthy 로 감지(hang 탐지 의도 보존). status(insight_worker_last_status)는 미변경 — cycle 완료 시 finally 가 확정하고 본 갱신은 liveness(age)만 전진. (`_is_insight_worker_heartbeat_fresh` 는 status ok/skip_locked + age≤30s 를 요구하므로 inline-scan gate 는 직전 cycle status 를 유지 — docker health(age만)가 주 해소 대상.)
+
+**검증**: 신규 [test_insight_heartbeat_liveness.py](../tests/test_insight_heartbeat_liveness.py) 2(throttle 억제/경과 저장·None no-op·예외 삼킴) + insight 회귀 0(datasource_health·degraded_backoff 12 PASS) + AST OK. 배포 후 `docker inspect` healthy 복귀 확인.
+
+**리뷰**: 경량 cycle(§18.4) — heartbeat throttle 단순 로직 + 테스트 커버 + healthcheck 판정식 미변경(갱신 지점만 추가) → 적대 패널 SKIPPED(REV [SKIPPED:heartbeat-throttle-liveness]).
+
+**배포**: agent 이미지 재빌드(insight-worker baked) + insight-worker 재기동 → `docker inspect ... Health.Status` healthy 확인.

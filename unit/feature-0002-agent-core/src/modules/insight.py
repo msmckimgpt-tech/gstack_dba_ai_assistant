@@ -1062,6 +1062,7 @@ def _scan_instance_schema_insights(
         for schema in candidates:
             if time.perf_counter() - scan_start > budget_sec:
                 break
+            _touch_worker_heartbeat_progress(mem_conn)  # insight-heartbeat-liveness: 스키마 진행 중 heartbeat
             try:
                 report["schemas_evaluated"] = int(report.get("schemas_evaluated", 0)) + 1
                 # 스키마 핑거프린트 계산 (테이블 목록 기반)
@@ -1492,6 +1493,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                 for table in selected_tables:
                     if time.perf_counter() - scan_start > budget_sec:
                         break
+                    _touch_worker_heartbeat_progress(mem_conn)  # insight-heartbeat-liveness: 테이블 진행 중 heartbeat
                     col_rows = table_cols.get(table) or []
                     if not col_rows:
                         continue
@@ -1691,6 +1693,32 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
     except Exception:
         pass
     return report
+
+
+# insight-heartbeat-liveness(2026-07-03): 긴 cycle(대량 테이블 LLM 생성) 동안 heartbeat 를 진행-중에도
+# throttle 갱신하기 위한 monotonic 커서. healthcheck_insight_worker.py(age ≤ 180s)·_is_insight_worker_
+# heartbeat_fresh 가 insight_worker_last_cycle_at 을 cycle **완료 시각**으로만 보던 탓에, claude 로 수천
+# 테이블을 생성하는 9분+ cycle 이 heartbeat stale → **unhealthy false-negative** 로 오판되던 것을 해소.
+_LAST_WORKER_HB_MONO = [0.0]
+
+
+def _touch_worker_heartbeat_progress(mem_conn, *, min_interval_sec: float = 30.0) -> None:
+    """cycle 진행 중(스키마·테이블 순회)에 insight_worker_last_cycle_at heartbeat 를 throttle 갱신.
+
+    healthcheck 가 긴 cycle 을 죽은 것으로 오판(unhealthy)하던 false-negative 를 없앤다. **진짜 hang**
+    (생성 자체가 멈춤)이면 이 호출 경로가 함께 멈춰 heartbeat 가 stale→unhealthy 로 감지되므로 hang
+    탐지 의도(TASK-0129/0130)는 보존된다. status(insight_worker_last_status)는 미변경 — cycle 완료 시
+    run_insight_cycle finally 가 확정하고, 본 갱신은 liveness(age)만 전진시킨다. 실패는 삼킨다(비차단)."""
+    if not mem_conn:
+        return
+    try:
+        now = time.monotonic()
+        if now - _LAST_WORKER_HB_MONO[0] < max(1.0, float(min_interval_sec)):
+            return
+        _LAST_WORKER_HB_MONO[0] = now
+        save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_cycle_at", utc_now_iso())
+    except Exception:
+        pass
 
 
 def _is_insight_worker_heartbeat_fresh(mem_conn) -> bool:
