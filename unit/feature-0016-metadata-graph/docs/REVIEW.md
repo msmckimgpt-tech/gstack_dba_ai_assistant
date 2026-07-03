@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260703T105541-graphux6-panelbottom-responsive-obs [SUBAGENT: PASS-WITH-FIXES] — 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 대상 관측 적대 리뷰
+- Related Change: CHG-20260703T105541-ai-claude-feature-0016-graphux6-panelbottom-responsive-obs (TASK §37). worktree feature-0016-graphux6-panel-obs.
+- 리뷰 방식: subagent 적대 5축 — ① CSS 반응형 회귀 ② 패널이동 부작용 ③ target 계측 정합(자가치유 INSERT·rollback·overview 다중 SELECT·`len(r)>11` 가드) ④ payload 대상 추출·XSS ⑤ 마이그 안전(additive nullable·단일 head·배포순서). diff 전체 + 주변 소스(_record_llm_usage, _query_activity, admin.js 토글/progress, admin.shell→canvas CSS 체인, 0032, 테스트) 정독.
+- **결과: BLOCKING 0 · MAJOR 0 · MEDIUM 1 · NIT 4**.
+  - ②③④⑤ 전부 견고 확인: params 순서(pt=5·lat=마지막) 보존, pgbouncer rollback→동일커서 재사용 안전(_get_pg_runtime_conn 은 per-call conn), overview 에서 `_query_activity` 는 마지막 쿼리라 rollback 이 선행 결과 무손실(+stale 창에선 오히려 피드 복구), `len(r)>11` 가드로 IndexError 무, payload 키(schema/schema.table/fqn·name) 실측 정합, `str(target).strip()[:200]` 로 VARCHAR(200) 초과 방지, admin.js `E()`(_aiOpsEscApg) XSS 이스케이프, 0032 additive nullable·단일 head(0032→0031→0030)·양방향 배포순서 안전.
+  - **MEDIUM M1 (수정 완료)**: ① flex-fill 에서 캔버스 고정높이 하한을 제거해, **width>900px(좁은화면 미디어쿼리 미적용) + 세로 매우 짧은 창**에서 그리드 행 minmax(0,1fr)+min-height:0 캔버스가 0px 로 붕괴 → **G6 빈 캔버스** + wide 모드 pane 스크롤 부재. → **수정**: `.admin-meta-graph { min-height:440px }` 하한 + `.admin-meta-graph-canvas { min-height:200px }` 방어 floor + `:has()` graph-mode pane 세로스크롤을 **전 너비**로 승격(이전 ≤900px 한정). 하한까지 축소 후 초과분은 스크롤 → '빈 캔버스'·'하단 잘림' 둘 다 차단. 정상/큰 화면은 flex-fill 이 pane 을 정확히 채워 overflow 미발생(스퓨리어스 스크롤바 없음).
+  - **NIT (수정)**: ⓐ ≤900px 세로스택에서 `.admin-meta-graph { flex:1 1 auto }` 미리셋 → tall-narrow 빈공간 → `.admin-meta-graph { flex:0 1 auto; min-height:0 }` 리셋 추가. ⓑ test_call_llm_records_agent_task mock lambda 가 `target=` 미수용(향후 agent 경로 target 전달 시 TypeError 잠재) → `target=None` 파라미터 추가. ⓒ llm.py INSERT 폴백(target 실패→rollback→base 재INSERT) 무테스트 → `test_record_llm_usage_target_column_absent_fallback` 신규 추가.
+  - **NIT (수용/미조치)**: ⓓ `:has()` 는 Chrome<105 등 구형 미지원 — PB-0008 대상 Windows Chrome(현행)은 지원, graceful degradation 이라 수용. ⓔ (기존 결함, 본 diff 무관) 0030+0032 동시 미적용 시 overview #2/#3 쿼리 abort 가 #4 로 전파되는 pre-existing fragility — 본 변경이 악화시키지 않음(정보성).
+- Round-2 재검증(CSS M1 보정 집중 subagent, 6축: 스퓨리어스 스크롤바·min-height 과잉·리사이저 드래그·detail-collapsed·≤900px 정합·헤더 스크롤아웃): **BLOCKING 0**. 신규 **MEDIUM**(내가 넣은 `min-height:440px` floor 가 과해 흔한 768급 노트북(가용 ~370-410px)에서 불필요 pane 스크롤 + 그때 헤더·서브탭 스크롤아웃 — 자매 list-detail 뷰와 불일치) 적발 → **재보정**: 그래프 하한 440px **제거**(→`min-height:0` 순수 flex-fill, 흔한 노트북은 스크롤 없이 축소·헤더 유지), '빈 캔버스' 방어는 **캔버스 min-height:200px 만**으로 유지. 스크롤은 캔버스 200px 가 가용높이를 초과하는 ≈<560px viewport(희귀)에서만 발동. **NIT-1**(`[style*="none"]` 부분매칭 취약) → 가드를 `display:none`(authored 무공백)·`display: none`(CSSOM 공백) **이중 :not** 로 정밀화. 잔여(≈<560px viewport 에서 헤더 스크롤) 는 희귀 NIT 로 수용(공유 클래스 sticky 는 상시 그래프뷰에 리스크라 미채택). round-2 는 CSS-only 변경이라 make test 결과 유효.
+- Human Approval: 사용자 "continue" 로 작업 진행 승인. 배포(마이그 0032 포함)는 커밋 후 별도 confirm 예정(외부 영향).
+
 ## REV-20260702T031500-node-haiku-deploy [SKIPPED: doc-only 배포 기록] — node-analysis-haiku 배포 완수 + 정본 doc-status 갱신
 - Related Change: CHG-20260702-node-haiku-deploy (T22.7 배포 완수). 코드/스키마 변경 없음 — 배포 실행(.env + insight-worker 재빌드·재기동) + TASK/REPORT/MODIFY doc-status 갱신뿐.
 - Panel skip 사유: 적대 리뷰 대상인 코드 변경(config/llm/node_analysis 라우팅)은 선행 cycle 에서 이미 [SUBAGENT: PASS](REV-20260702T025245) 완료. 본 changeset 은 doc-only + 런타임 배포라 신규 코드 결함면 없음. 배포 정합은 smoke 실증(env 격리·config 값·라우팅 소스·healthy·traceback 0)으로 대체.

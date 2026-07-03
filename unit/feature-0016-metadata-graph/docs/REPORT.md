@@ -1,5 +1,17 @@
 # Report
 
+## 2026-07-03 · AI 능동분석 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (graphux6-panelbottom-responsive-obs, TASK §40)
+
+사용자 요청 3건. worktree `feature-0016-graphux6-panel-obs`, 등급 Major(③ 마이그레이션 포함). §37~39 와 병렬 진행 → main 병합 시 §37 role-legend-bottom 과 aside 구조 통합.
+
+**① AI 능동 분석 패널 → 상세 패널 하단** ([admin.html](../../feature-0003-agent-web-ui/src/static/admin.html), [styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 진행 패널(`#metadataGraphProgress`)이 노드 상세 위에 있어 분석 시작 시 상세를 밀어내던 이슈 → aside 최하단으로 이동. main 의 §37(역할 범례를 하단 `margin-top:auto` 고정)과 병합해 최종 aside 순서 = **detailBody → 역할범례(하단고정) → 진행패널(최하단)**, 둘 다 바닥이라 노드 상세를 밀지 않음. JS 무변경(getElementById).
+
+**② 그래프 반응형 높이** ([styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 캔버스·상세 `height: clamp(420px,64vh,760px)` 의 420px 하한이 metadata pane(admin-shell `overflow:hidden`+`100vh`) 가용높이를 초과해 세로 좁은 뷰포트에서 잘리던 이슈 → **flex-fill**(`flex:1 1 auto` + body `grid-template-rows: minmax(0,1fr)`)로 pane 남은 세로를 채워 축소·미절단. 고정 height 제거, 캔버스 `min-height:200`(§18.8 M1 빈 캔버스 방어) — 그래프 블록 자체엔 하한 없음(흔한 노트북 불필요 스크롤 회피, §18.8 round-2). 전너비 `:has()` graph-mode pane 스크롤(캔버스 floor 가 가용높이 초과하는 ≈<560px viewport 에서만 발동, 이중 :not 정밀 가드). G6 `autoResize` 로 JS 무변경. 상세는 #565 flex-column 보존.
+
+**③ 최근 활동 분석 대상 관측** (migration [0032](../../feature-0002-agent-core/alembic/versions/20260703_0032_llm_usage_target.py) / [llm.py](../../feature-0002-agent-core/src/modules/llm.py) / [ai_ops.py](../../feature-0003-agent-web-ui/src/routers/ai_ops.py) / [admin.js](../../feature-0003-agent-web-ui/src/static/admin.js)): '테이블 분석'·'노드 분석'이 라벨만 뜨고 대상이 안 보이던 이유 = `llm_usage.task` 가 저카디널리티 카테고리 키(KPI `GROUP BY task` 의존)라 대상 미포함. → `target VARCHAR(200)` additive nullable 컬럼(task 집계와 분리, 0030 패턴) + `_record_llm_usage(target=)`(schema=스키마·table=schema.table·node=fqn/name, account 은 PII 제외) + **자가치유**(INSERT 실패→rollback→base 재INSERT / SELECT 폴백, stale image 대비) + admin.js 최근활동 행·상세 대상 표시.
+
+**검증**: 컨테이너 `make test` **전건 PASS**(ruff clean). test_ai_ops 17/17(target 통과 + 컬럼부재 폴백 + INSERT 폴백), test_llm_usage_record 7/7(param 순서 보존), test_call_llm 2/2(mock target). **§18.8 적대 2라운드 PASS-WITH-FIXES**(BLOCKING 0 — 빈캔버스·노트북스크롤·가드취약·테스트NIT 전부 수정). verify-completion PASS. alembic 단일 head=0032. 배포(0032 마이그 + web) + PB-0008 실 Windows 3건 + `alembic_version`=0032 검증은 POST-DEPLOY(T40.11).
+
 ## 2026-07-03 · 클러스터 상세 테이블 목록 역할 접두사 + 행 클릭 노드 선택 + 범례 hover 툴팁 (cluster-role-prefix, TASK §39)
 
 ### 배경 (사용자 후속 요청 3건)

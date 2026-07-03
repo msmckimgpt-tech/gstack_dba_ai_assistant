@@ -44,7 +44,9 @@ def test_call_llm_records_with_agent_task(monkeypatch):
     # (미수용 시 TypeError → _call_llm 의 try/except 가 삼켜 기록 0건으로 회귀).
     monkeypatch.setattr(
         agent_core, "_record_llm_usage",
-        lambda model, task, resp, conversation_id=None, run_id=None, latency_ms=None: calls.append(
+        # 0032: target=None 도 수용해야 한다(_record_llm_usage 신규 kwarg) — 미수용 시 향후 agent 경로가
+        # target 을 넘기면 TypeError → _call_llm try/except 가 삼켜 기록 0건 회귀. latency_ms 와 동일 방어.
+        lambda model, task, resp, conversation_id=None, run_id=None, latency_ms=None, target=None: calls.append(
             (model, task, resp, conversation_id, run_id, latency_ms)
         ),
     )

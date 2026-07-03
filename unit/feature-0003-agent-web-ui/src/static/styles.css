@@ -7918,7 +7918,14 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-form-actions { display: flex; gap: 8px; }
 
 /* feature-0016: 메타데이터 지식그래프 뷰 (Cytoscape 캔버스 + 통합 엔티티 카드) */
-.admin-meta-graph { display: flex; flex-direction: column; gap: 10px; }
+/* graphux6-responsive: 그래프 뷰가 활성 pane(=admin-shell 100vh 기반)의 남은 세로 공간을
+   flex-fill 로 채운다(고정 height 대신 가용 높이에 반응). 세로 긴/보통 화면(≈≥560px viewport, 흔한
+   768급 노트북 포함)에선 캔버스가 남은 공간을 채우며 축소돼 **스크롤 없이** 전체가 보인다(헤더·서브탭
+   유지). '빈 캔버스'(§18.8 M1) 방어는 여기 그래프 하한이 아니라 **캔버스 자체 min-height 200px** 로 한다
+   — 그래프에 440px 류 하한을 두면 흔한 노트북에서까지 pane 스크롤이 유발돼 헤더·서브탭이 스크롤아웃되는
+   회귀(§18.8 round-2 MEDIUM)가 생기기 때문. 아주 짧은 창(캔버스 200px floor 가 가용높이를 초과, ≈<560px
+   viewport)에서만 아래 graph-mode overflow-y:auto 로 스크롤(잘림 방지, 희귀). */
+.admin-meta-graph { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; }
 .admin-meta-graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .admin-meta-graph-search { flex: 1 1 240px; min-width: 180px; }
 .admin-meta-graph-depth-label { font-size: 12px; color: var(--text-muted); }
@@ -7975,8 +7982,10 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: #fff; border: 1px solid var(--border); border-radius: 6px;
   box-shadow: 0 2px 8px rgba(15, 23, 42, .12); overflow: hidden;
 }
-/* 반응형 그래프 body: clamp 높이 + 패널 접기(.detail-collapsed) + 드래그 리사이즈(--meta-graph-detail-w) */
-.admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 8px var(--meta-graph-detail-w, 340px); gap: 8px; align-items: stretch; }
+/* 반응형 그래프 body: 패널 접기(.detail-collapsed) + 드래그 리사이즈(--meta-graph-detail-w).
+   graphux6-responsive: 단일 행 minmax(0,1fr) = 행이 body 높이만큼 확장(캔버스·상세가 stretch 로 채움),
+   flex:1 1 auto + min-height:0 = 툴바·범례 아래 남은 세로 공간을 body 가 흡수. */
+.admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 8px var(--meta-graph-detail-w, 340px); grid-template-rows: minmax(0, 1fr); gap: 8px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 .admin-meta-graph.detail-collapsed .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
 .admin-meta-graph.detail-collapsed .admin-meta-graph-detail,
 .admin-meta-graph.detail-collapsed .admin-meta-graph-resizer { display: none; }
@@ -7996,16 +8005,25 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-resizer:hover::before, .admin-meta-graph-resizer:focus-visible::before,
 .admin-meta-graph-resizer.is-dragging::before { background: #fff; opacity: .95; }
 .admin-meta-graph-canvas {
-  min-width: 0; height: clamp(420px, 64vh, 760px); border: 1px solid var(--border);
+  /* graphux6-responsive: 고정 height(clamp 420px 하한) 제거 → 그리드 행 minmax(0,1fr)이 채운다.
+     G6 는 autoResize:true(admin.js)로 컨테이너 리사이즈를 ResizeObserver 로 자동 반영하므로
+     명시 height 없이도 세로 반응형이 안전하다. min-height 200px 는 §18.8 M1 방어(그리드 행 0px
+     붕괴→G6 빈 캔버스 차단) — 상위 .admin-meta-graph min-height 440px + graph-mode pane 스크롤과
+     합쳐 캔버스가 절대 사라지지 않는다. 좁은 화면 미디어쿼리에선 명시 height 로 재부여. */
+  min-width: 0; min-height: 200px; border: 1px solid var(--border);   /* 200px = '빈 캔버스'(§18.8 M1) 방어 하한(그래프 블록엔 하한 없음 — round-2 노트북 스크롤 회귀 회피) */
   border-radius: 8px; background: #fbfcfd; overflow: hidden;
   position: relative;   /* G6 캔버스 절대배치 컨테이너 기준(오버레이 레이어는 G6 마이그레이션으로 제거됨) */
 }
 /* feature-0016 G6 마이그레이션: 클러스터명·접기버튼 HTML 오버레이 레이어 제거(캔버스 위 rAF 동기화 지연의 근원 —
    구버전 ③ 이슈). G6 는 클러스터명(combo 라벨)·"−" 접기 컨트롤·컬럼을 모두 네이티브 캔버스 요소로 렌더 → 오버레이 CSS 불필요. */
 .admin-meta-graph-detail {
+  /* graphux6-responsive: 고정 height 제거 → 그리드 행이 채운다. 내부 콘텐츠(노드 상세 + 하단 진행
+     패널)는 overflow-y:auto 로 상세 패널 안에서 스크롤한다(pane 를 밀거나 잘리지 않음). */
   border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0;
-  background: var(--surface, #fff); overflow-y: auto; height: clamp(420px, 64vh, 760px); font-size: 13px;
-  /* role-legend-bottom: flex 컬럼 — 역할 범례 카드(margin-top:auto)를 패널 바닥에 고정. 나머지 자식은 자연 흐름. */
+  background: var(--surface, #fff); overflow-y: auto; min-height: 0; font-size: 13px;
+  /* role-legend-bottom(#565): flex 컬럼 — 역할 범례 카드(margin-top:auto)를 패널 바닥에 고정. 나머지 자식은 자연 흐름.
+     graphux6-responsive: 고정 height 대신 min-height:0 + 그리드 행이 detail 높이를 채우고, 내부는 이 flex 컬럼으로
+     노드 상세(자연 흐름) + progress + 역할범례(하단 고정) 를 배치. overflow-y:auto 로 내부 스크롤. */
   display: flex; flex-direction: column;
 }
 .admin-meta-graph-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -8149,7 +8167,9 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 /* graphux5-panelmove: 진행 패널은 우측 상세 aside 상단에 배치(상단 full-width 바 아님) — 좁은 컬럼에 맞춰
    여백 최소화, 노드 상세와 구분되게 아래 마진. */
 .admin-meta-graph-progress {
-  margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--border);
+  /* graphux6-panelbottom: 상세 패널 '하단' 배치 — 노드 상세와의 구분 여백을 상단(margin-top)으로 둔다
+     (이전 상단 배치 때의 margin-bottom 을 대체). 마지막 자식이라 하단 여백은 불필요. */
+  margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border);
   border-left: 3px solid #e08a1e; border-radius: 8px;
   background: var(--surface-2, rgba(224, 138, 30, .05)); font-size: 12.5px;
 }
@@ -8176,11 +8196,30 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .admin-meta-graph-progress .ampg-running { font-weight: 600; }
 .admin-meta-graph-progress .ampg-running .ampg-lbl { background: rgba(224, 138, 30, .2); color: #a5610d; }
 .admin-meta-graph-progress .ampg-fail { color: #b23; }
+/* graphux6-responsive(§18.8 M1): 그래프 모드일 때만 metadata pane 세로 스크롤을 **전 너비**에서 허용.
+   flex-fill 로 pane 을 채우다가 .admin-meta-graph min-height 440px 하한이 pane 가용높이를 초과하면
+   (세로 짧은 창) 잘리는 대신 스크롤로 넘어간다 → '빈 캔버스'(하한)와 '하단 잘림'(스크롤) 둘 다 차단.
+   정상/긴 화면에선 flex-fill 이 pane 을 정확히 채워 overflow 미발생 → 스크롤바 안 뜸(스퓨리어스 없음).
+   그래프 모드는 list-detail 이 display:none 이라 §4229 의 이중 스크롤 충돌이 없다. :has() 로 그래프 뷰
+   '표시' 상태에만 스코프. 가드는 `display:none`(admin.html authored, 무공백) 과 `display: none`(admin.js
+   `.style.display="none"` CSSOM 직렬화, 공백) **두 형태 모두** 이중 :not 으로 배제 — 단순 `none` 부분매칭은
+   향후 #metadataGraphView 의 다른 inline 값(background:none 등)이 스코프를 깨뜨릴 수 있어(§18.8 NIT-1)
+   `display` 한정. show=`.style.display=""`(→ `--meta-graph-detail-w:Npx;` 만 남아 두 :not 통과=매칭=스크롤),
+   hide=둘 중 한 형태 존재=배제=스크롤 안 켬. (:has() 미지원 구형 브라우저는 graceful — PB-0008 대상
+   Windows Chrome 은 지원.) */
+.admin-pane[data-admin-pane="metadata"].is-active:has(> #metadataGraphView:not([style*="display:none"]):not([style*="display: none"])) {
+  overflow-y: auto; overflow-x: hidden;
+}
 @media (max-width: 900px) {
-  /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소. 세로 스택에선 가로 리사이저 숨김. */
-  .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
+  /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소. 세로 스택에선 가로 리사이저 숨김.
+     graphux6-responsive: 세로 스택에선 단일 행 fill(minmax(0,1fr))·flex-fill 을 해제하고 자연 높이로
+     흐르게 한다(캔버스는 아래 명시 height, 상세는 auto). dvh 로 모바일 브라우저 UI bar 변화도 반영.
+     §18.8 NIT: .admin-meta-graph 도 flex:0 1 auto 로 리셋 — 세로 스택이 pane 보다 짧을 때 그래프 블록이
+     grow 해 상세 아래 빈 공간이 생기던 것 방지(자연 높이로 흐름). */
+  .admin-meta-graph { flex: 0 1 auto; min-height: 0; }
+  .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; flex: 0 0 auto; }
   .admin-meta-graph-resizer { display: none; }
-  .admin-meta-graph-canvas { height: clamp(360px, 56vh, 560px); }
+  .admin-meta-graph-canvas { height: clamp(300px, 56dvh, 560px); }
   .admin-meta-graph-detail { height: auto; max-height: 380px; }
   .admin-meta-graph-legend-note { margin-left: 0; flex-basis: 100%; }
 }

@@ -321,6 +321,7 @@ CREATE TABLE IF NOT EXISTS agent_runtime.llm_usage (
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens      INTEGER NOT NULL DEFAULT 0,
     latency_ms        INTEGER,
+    target            VARCHAR(200),   -- 0032: 인사이트 분석 대상(schema / schema.table / 노드 FQN). 표시 전용, 집계 무영향(task 분리).
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_llm_usage_created ON agent_runtime.llm_usage (created_at DESC);
