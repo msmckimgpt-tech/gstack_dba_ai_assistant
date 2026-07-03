@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T091737-ai-claude-feature-0016-graph-product-cat
+- What: 그래프 뷰에 제품(Products) 단위 카테고리 개요를 추가 (TASK §43, ADR-014). Product→Datasource 계층을
+  MySQL SSOT(`WebProducts`·`WebProductDatasources`)에서 **질의시점 합성**해 투영(AGE 미저장 — 마이그레이션 0).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`: `admin_metadata_graph` 에
+    `conn=Depends(app.get_conn)` + `?mode=products`/`?product=<id>` 분기(PG 이전 early-return) +
+    헬퍼 `_product_overview_graph`(Product/Datasource 노드 + USES 엣지, datasource dedup) ·
+    `_products_for_scope`(scope→제품 배너, scope_roots/schemas 응답 `products` 필드).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `_metaG6BuildProducts`(제품 개요 전용 2-열 빌드,
+    combo 미사용 — 기존 masonry 무간섭) + `_metaG6Build` early-return(mode==="products") +
+    `_metaGraphLoadProducts` + `_metaGraphLoadRoots` 라우팅(common/`__products__`/`product:` → 개요) +
+    `_metaGraphOnNodeClick` `ds:`/`product:` 처리(datasource drill·단일제품 focus) + datasource 뷰 제품 배너 +
+    `_metaGraphIngest` Product/Datasource 부가필드 보존.
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 툴바 "🗂 제품 카테고리" 버튼 + cache-buster
+    `20260703-graph-product-cat`(admin.js·styles.css).
+- Impact: 프론트+투영 API 표현 계층. **데이터 API·AGE 스키마·RBAC·마이그레이션 불변**(권한 `metadata.graph.read`
+  보존, mutation 0). read-axis 정렬(리뷰 MAJOR fix): scope 는 `scope_key or 라벨`(DB=해시·.env=라벨)로 그래프
+  read 축과 일치 — `_dsr.scope_key`(해시 강제) 미사용.
+- Related Requirement: 사용자 요청 3대 개선 中 A(제품 카테고리). 정본: TASK §43 / DECISIONS ADR-014.
+- 검증: `node --check` PASS · Python ast PASS · 격리 pytest 28 PASS(DI map·metadata_graph units 무회귀) ·
+  §18.8 적대 리뷰(read-axis MAJOR + 비숫자 product NIT 반영, REV-20260703T091737) · 배포+PB-0008 실 Windows(예정).
+
 ## CHG-20260703T115500-ai-claude-feature-0016-graphux6-postdeploy
 - Date: 2026-07-03
 - Related Requirement: graphux6-panelbottom-responsive-obs(§40) 배포 후 PB-0008 실 Windows 실측 결과 기록(deploy-backed 증적). 코드 무변경 — doc-only.

@@ -1,5 +1,30 @@
 # Report
 
+## 2026-07-03 · 제품(Products) 단위 카테고리 구분 (graph-product-cat, TASK §43, ADR-014)
+
+### 배경 (사용자 요청 — 3대 개선 中 A)
+관리 콘솔 > 메타데이터 > 그래프 뷰: "구분해둔 제품(Products)에 따른 카테고리 단위로 구분이 가능하도록 구성". 실측상
+그래프 모델은 `Product`/`Datasource` 라벨·`USES` 엣지를 예약만 하고 실제 투영 안 함(scope=datasource 단위뿐). Product↔
+Datasource SSOT 는 MySQL(`WebProducts`·`WebProductDatasources`)에 완비, 그래프는 Postgres `agent_kb` 로 분리.
+
+### 구현 (투영 API 질의시점 합성 + 프론트 개요, 마이그레이션 0)
+- **백엔드**([admin_metadata.py](../../feature-0003-agent-web-ui/src/routers/admin_metadata.py)): `admin_metadata_graph`
+  에 `conn=Depends(app.get_conn)` + `?mode=products`/`?product=<id>` 분기(PG 이전 early-return). `_product_overview_graph`
+  가 MySQL SSOT 로 Product/Datasource 노드 + USES 엣지 합성(datasource dedup). `_products_for_scope` 가 datasource
+  진입 응답에 소속 제품(`products`) 첨부. **read-axis 정렬**: scope=`scope_key or 라벨`(DB=해시·.env=라벨).
+- **프론트**([admin.js](../../feature-0003-agent-web-ui/src/static/admin.js)): `_metaG6BuildProducts` 전용 2-열 배치
+  (combo 미사용, 기존 masonry 무간섭) + `_metaGraphLoadProducts` + 랜딩/노드클릭 라우팅 + datasource 뷰 제품 배너.
+  툴바 "🗂 제품 카테고리" 버튼(admin.html) + cache-buster `20260703-graph-product-cat`.
+
+### 검증
+- `node --check` PASS · Python ast PASS · 격리 pytest **28 PASS**(DI 권한 맵·metadata_graph 단위 무회귀).
+- §18.8 적대 리뷰(general-purpose): **read-axis MAJOR** (.env datasource drill 빈 그래프) + 비숫자 product NIT 반영
+  → PASS-WITH-FIXES. 정본 REVIEW REV-20260703T091737.
+- POST-DEPLOY 실 Windows 브라우저(PB-0008) 배포 후 기록 예정.
+
+### 후속 정합 (동일 요청의 Phase C·B)
+- Phase C(ADR-013 의미 임베딩)·Phase B(크로스-데이터소스 관계)가 본 제품 경계(제품=관련 데이터소스 묶음)를 재사용.
+
 ## 2026-07-03 · 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (graph-drag, TASK §41)
 
 ### 배경 (사용자 요청)

@@ -3663,6 +3663,9 @@ const _META_GROUP_TINTS = [
 // grid 로, 클러스터 내부는 유사 속성 그룹 블록(배경 박스+헤더, graph-simgroups)으로, 펼친 테이블의 컬럼을
 // 그 아래 세로열로 결정론 배치(무-shuffle). 그룹이 1개뿐이면 기존 평면 masonry 그대로(시각 노이즈 방지).
 function _metaG6Build() {
+  // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
+  //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
+  if (_metaGraph.mode === "products") return _metaG6BuildProducts();
   _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
   const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
   const ensureG = (id) => { if (!groups.has(id)) groups.set(id, { isTerms: id === _META_TERMS_COMBO, tables: [], terms: [], colsByTable: new Map() }); return groups.get(id); };
@@ -3948,6 +3951,57 @@ function _metaG6Build() {
   return { combos, nodes, edges };
 }
 
+// graph-product-cat(§43): 제품 카테고리 개요 전용 빌드 — Product(좌열)·Datasource(우열) rect 노드 +
+//   USES 엣지. combo 미사용(결정론 2-열 배치). 여러 제품이 공유하는 datasource 는 1개 노드로 dedup(백엔드가
+//   이미 dedup)하고 각 제품→datasource 엣지를 그린다. 노드 클릭: Datasource → 그 데이터소스 그래프로 drill,
+//   Product → 그 제품만 focus(단일 제품 개요).
+function _metaG6BuildProducts() {
+  _metaGraph.tableDeps = new Map();
+  _metaGraph.firstElementId = null;
+  const prods = [], dss = [];
+  _metaGraph.nodes.forEach((n) => {
+    if (n.label === "Product") prods.push(n);
+    else if (n.label === "Datasource") dss.push(n);
+  });
+  prods.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+  dss.sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key));
+  const nodes = [], edges = [];
+  const TOP = 40, ROWH = 66, RH = 46;
+  const PW = 240, PX = 40, DW = 230, DX = 440;   // 제품 좌열 / 데이터소스 우열
+  prods.forEach((p, i) => {
+    if (!_metaGraph.firstElementId) _metaGraph.firstElementId = p.key;
+    const cy = TOP + i * ROWH + RH / 2;
+    const cnt = (typeof p.datasource_count === "number") ? p.datasource_count : null;
+    nodes.push({ id: p.key, type: _METtype, states: _metaNodeStates(p.key),
+      data: { label: p.name || p.key, kind: "product" },
+      style: { x: PX + PW / 2, y: cy, size: [PW, RH], radius: 10,
+        fill: "#e7f4ec", stroke: _META_GRAPH_COLOR.Product, lineWidth: 1.6,
+        labelText: "🗂 " + (p.name || p.key) + (cnt != null ? "  · " + cnt : ""),
+        labelPlacement: "center", labelFill: "#1c5c39", labelFontSize: 12, labelFontWeight: 700,
+        labelMaxWidth: PW - 18, cursor: "pointer" } });
+  });
+  dss.forEach((d, i) => {
+    if (!_metaGraph.firstElementId) _metaGraph.firstElementId = d.key;
+    const cy = TOP + i * ROWH + RH / 2;
+    nodes.push({ id: d.key, type: _METtype, states: _metaNodeStates(d.key),
+      data: { label: d.name || d.key, kind: "datasource", scope: d.scope_key || "" },
+      style: { x: DX + DW / 2, y: cy, size: [DW, RH], radius: 10,
+        fill: "#eef6f1", stroke: _META_GRAPH_COLOR.Datasource, lineWidth: 1.4,
+        labelText: "🔗 " + (d.name || d.key),
+        labelPlacement: "center", labelFill: "#20603f", labelFontSize: 11.5, labelFontWeight: 600,
+        labelMaxWidth: DW - 18, cursor: "pointer" } });
+  });
+  const present = new Set(nodes.map((n) => n.id));
+  _metaGraph.edges.forEach((e) => {
+    if (!e || e.type !== "USES") return;
+    if (!present.has(e.source) || !present.has(e.target)) return;
+    edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
+      style: { stroke: "#8fbfa3", lineWidth: 1.5, endArrow: true } });   // 실선(lineDash 생략 — G6 크래시 방지)
+  });
+  _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));
+  return { combos: [], nodes, edges };
+}
+
 // graph-initview: 모델 key → 실제 렌더된 요소 id (접힌 스키마 카드는 "SC:"+key). 미렌더면 null.
 function _metaRenderedIdFor(key) {
   const r = _metaGraph.renderedIds;
@@ -4127,11 +4181,50 @@ function _metaGraphResetModel() {
   if (_metaGraph.introspected) _metaGraph.introspected.clear();
 }
 
-// 현재 선택 datasource(scope)의 진입 그래프(Schema→Table)를 로드. 'common'/미선택이면 안내.
+// graph-product-cat(§43): 제품 카테고리 개요 로드 — Product→Datasource 개요(MySQL SSOT 합성).
+//   scope='product:<id>' 면 단일 제품 focus, 그 외(common/__products__)는 전체 제품. 데이터소스 노드 클릭으로 drill.
+async function _metaGraphLoadProducts(scope) {
+  if (!_metaGraph.graph) _metaInitGraph();
+  if (!_metaGraph.graph) return;
+  const si = document.getElementById("metadataGraphSearch");
+  if (si) si.value = "";
+  _metaGraph.lastQuery = "";
+  _metaGraph.mode = "products";                 // resetModel 은 mode 를 건드리지 않음(loadRoots 와 동형 순서)
+  if (typeof _metaGraphFocusChip === "function") _metaGraphFocusChip(null);
+  _metaGraphResetModel();
+  _metaGraph.mode = "products";                 // resetModel 이후 재확정(방어)
+  const seq = _metaGraph._opSeq;
+  _metaGraphFillJump([]);
+  const s = String(scope || "");
+  const pid = s.startsWith("product:") ? s.slice("product:".length) : "";
+  const url = pid
+    ? `/api/admin/metadata/graph?product=${encodeURIComponent(pid)}`
+    : `/api/admin/metadata/graph?mode=products`;
+  _metaGraphStatus("제품 카테고리 로딩…");
+  let data;
+  try { data = await apiFetch(url); }
+  catch (err) { if (seq === _metaGraph._opSeq) _metaGraphStatus((err && err.message) || "제품 그래프 로드 실패"); return; }
+  if (seq !== _metaGraph._opSeq) return;
+  _metaGraphIngest(data.nodes || [], data.edges || []);
+  await _metaG6Apply(true);
+  if (seq !== _metaGraph._opSeq) return;
+  const np = (data.nodes || []).filter((n) => n && n.label === "Product").length;
+  const nd = (data.nodes || []).filter((n) => n && n.label === "Datasource").length;
+  _metaGraphRenderDetailEmpty();
+  _metaGraphStatus(np
+    ? `제품 카테고리 ${np}개 · 데이터소스 ${nd}개 — 데이터소스 노드를 클릭하면 그 데이터소스의 스키마 그래프로 이동합니다.`
+    : "등록된 제품이 없습니다. (관리 콘솔 > 제품 에서 등록 후 데이터소스를 바인딩하세요.)");
+}
+
+// 현재 선택 datasource(scope)의 진입 그래프(Schema→Table)를 로드. 'common'/미선택/제품 scope 는 제품 카테고리 개요.
 async function _metaGraphLoadRoots() {
   if (!_metaGraph.graph) _metaInitGraph();
   if (!_metaGraph.graph) return;
   const scope = adminState.metadata.scopeKey || "common";
+  // graph-product-cat(§43): 데이터소스 미선택(공용) 또는 제품 scope 는 제품 카테고리 개요를 랜딩으로 보여준다.
+  if (!scope || scope === "common" || scope === "__products__" || String(scope).startsWith("product:")) {
+    return _metaGraphLoadProducts(scope);
+  }
   const si = document.getElementById("metadataGraphSearch");
   if (si) si.value = "";
   _metaGraph.lastQuery = "";   // 검색 컨텍스트 종료 — 상세 유사도 배지 게이트가 참조
@@ -4139,13 +4232,6 @@ async function _metaGraphLoadRoots() {
   if (typeof _metaGraphFocusChip === "function") _metaGraphFocusChip(null);   // 중심 보기 종료(전체 복귀)
   _metaGraphResetModel();
   const seq = _metaGraph._opSeq;   // graph-perf-bg fix: resetModel 직후 세대 캡처 — await 도중 다른 reset(loadRoots/search/scope 전환) 이 _opSeq 를 올리면 이 continuation 을 폐기.
-  if (!scope || scope === "common") {
-    _metaGraphFillJump([]);   // graph-initview: 이전 scope 의 점프 옵션 stale 방지
-    await _metaG6Apply(false);
-    _metaGraphStatus("상단에서 데이터소스를 선택하면 그 데이터소스의 그래프가 표시됩니다. (공용 스코프는 검색으로 탐색)");
-    _metaGraphRenderDetailEmpty();
-    return;
-  }
   _metaGraphStatus("데이터소스 그래프 로딩…");
   let data;
   try {
@@ -4177,11 +4263,14 @@ async function _metaGraphLoadRoots() {
   if (seq !== _metaGraph._opSeq) return;
   _metaGraphSyncAnalysisMarkers(scope);   // 이미 분석된/진행중 노드 마커를 클릭 없이 렌더 시점에 적용
   const n = (data.nodes || []).length;
+  // graph-product-cat(§43): 이 데이터소스를 쓰는 제품(카테고리) 배너 — 어느 제품 소속인지 즉시 식별.
+  const prodNames = Array.isArray(data.products) ? data.products.map((p) => p && p.name).filter(Boolean) : [];
+  const prodPrefix = prodNames.length ? `제품: ${prodNames.join(", ")} · ` : "";
   _metaGraphStatus(n
     ? (schemaKeys.length > 1
-        ? `${scope}: 스키마 ${schemaKeys.length}개 — 카드를 클릭하면 그 스키마의 테이블을 펼칩니다. 검색으로 바로 탐색도 가능.${truncNote}`
-        : `${scope}: ${_metaGraph.nodes.size}개 노드 — 노드 클릭으로 확장, 또는 검색.${truncNote}`)
-    : `${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
+        ? `${prodPrefix}${scope}: 스키마 ${schemaKeys.length}개 — 카드를 클릭하면 그 스키마의 테이블을 펼칩니다. 검색으로 바로 탐색도 가능.${truncNote}`
+        : `${prodPrefix}${scope}: ${_metaGraph.nodes.size}개 노드 — 노드 클릭으로 확장, 또는 검색.${truncNote}`)
+    : `${prodPrefix}${scope}: 그래프 데이터 없음(설명/인사이트 미적재).`);
 }
 
 // graph-initview(E3): 툴바 스키마 점프 select 채움 — 선택 시 해당 클러스터/카드로 focus.
@@ -4393,6 +4482,9 @@ function _metaInitGraph() {
     }
     const reset = document.getElementById("metadataGraphResetBtn");
     if (reset) reset.addEventListener("click", () => { _metaGraphLoadRoots(); });
+    // graph-product-cat(§43): 제품 카테고리 개요 진입 — scope 를 제품 개요로 전환(공유 scope select 는 datasource 전용 유지).
+    const prodBtn = document.getElementById("metadataGraphProductsBtn");
+    if (prodBtn) prodBtn.addEventListener("click", () => { adminState.metadata.scopeKey = "__products__"; _metaGraphLoadProducts("__products__"); });
     // graph-initview(E2): 줌 툴바 — +/− 단계 줌, 전체(클램프 없는 조망), 100%.
     const zin = document.getElementById("metaGraphZoomIn");
     if (zin) zin.addEventListener("click", () => { const g = _metaGraph.graph; if (g) { try { g.zoomBy(1.25, false); } catch (_) {} } });
@@ -4454,6 +4546,21 @@ function _metaGraphOnNodeClick(e) {
     _metaGraphExpandSchema(sk).then((st) => {
       if (st === "expanded" || st === "already") _metaGraphShowClusterDetailLocal(sk);
     }).catch(() => {});
+    return;
+  }
+  // graph-product-cat(§43): 제품 개요 노드 — Datasource 클릭 → 그 데이터소스 스키마 그래프로 drill(scope 전환),
+  //   Product 클릭 → 단일 제품 focus(그 제품의 데이터소스만).
+  if (String(id).startsWith("ds:")) {
+    const sc = id.slice(3);
+    adminState.metadata.scopeKey = sc;
+    const selEl = document.getElementById("metadataScopeSelect");
+    if (selEl) { try { selEl.value = sc; } catch (_) {} }   // 드롭다운 동기화(datasource 옵션 존재 시)
+    _metaGraphLoadRoots();
+    return;
+  }
+  if (String(id).startsWith("product:")) {
+    adminState.metadata.scopeKey = id;
+    _metaGraphLoadProducts(id);
     return;
   }
   const now = (window.performance && performance.now) ? performance.now() : Date.now();
@@ -5364,6 +5471,9 @@ function _metaGraphIngest(nodes, edges) {
     rec.source = n.source || rec.source || "";
     if (ord != null) rec.ordinal = ord;
     if (typeof n.score === "number") rec.score = n.score;
+    // graph-product-cat(§43): Product/Datasource 부가 필드 보존(제품 라벨 개수 · datasource scope drill).
+    if (n.scope_key != null) rec.scope_key = n.scope_key;
+    if (typeof n.datasource_count === "number") rec.datasource_count = n.datasource_count;
     if (!existing) {
       _metaGraph.nodes.set(n.key, rec); added.push(n.key);
       // graph-perf-bg: 새 Column 노드면 소속 테이블의 colsByTable 카운트 증가(_metaTableHasCols O(1) 단일소스).
