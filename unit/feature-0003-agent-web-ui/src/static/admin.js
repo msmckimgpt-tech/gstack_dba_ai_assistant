@@ -3184,6 +3184,14 @@ const _metaGraph = {
   _busyKeys: new Map(),   // graph-perf-bg fix: key -> busy 를 세운 _opSeq(소유권). refreshStates 가 busy 를 보존·복원하고, 같은 key 재트리거 시 신 op busy 를 stale op 가 지우지 않게 한다.
   tableDeps: new Map(),   // graph-drag(REQ ②): Table key -> [종속 UI 노드 id](접기 "X:" ctl + 컬럼 노드). 매 _metaG6Build 재구성. 테이블 드래그 시 함께 이동.
   _drag: null,            // graph-drag(REQ ②): 진행 중 테이블 드래그 상태 {id, offs:[{id,ox,oy}]}(종속별 테이블 대비 월드 오프셋). null=비활성.
+  // graph-freeplace: 자유 배치 persistence(ADR-004 결정론 배치가 rebuild 마다 초기화하던 것을 복원 — 사용자 후속 회귀 보고).
+  //   clusterOffset: 스키마 클러스터(combo) 단위 사용자 드래그 누적 이동(dx,dy) — build 가 L.x0/L.y0 에 가산해 클러스터
+  //     전체(카드·테이블·컬럼·장식)를 coherent 하게 이동시키고 rebuild(펼침/접기) 후에도 유지. combo:dragend 가 누적.
+  //   nodePos: 개별 노드(주로 테이블) 사용자 드래그 최종 절대위치 — build place-loop 이 그 노드+종속을 델타 시프트해
+  //     유지 + combo auto-fit 리사이즈(#3). node:dragend 가 기록. 둘 다 resetModel(스코프 전환·초기화)에서 clear.
+  clusterOffset: new Map(),   // comboId(schema key) -> {dx, dy}
+  nodePos: new Map(),         // nodeId -> [x, y] (사용자 확정 절대 위치)
+  _comboDragStart: null,      // combo:dragstart 시 {id, x, y}(중심) — dragend 델타 산출용
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3810,6 +3818,13 @@ function _metaG6Build() {
       if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; cyy += shelfH + _METLAY.GAPY; shelfH = 0; }
       L.x0 = cx; L.y0 = cyy; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
     }); }
+  // graph-freeplace: 사용자 드래그 클러스터 offset 을 packing 결과에 가산(렌더 위치만 — 폭 누적/행 배정엔 미개입).
+  //   L.x0/L.y0 가 카드·테이블·컬럼·장식·combo 의 공통 기준이라, 여기서 가산하면 클러스터 전체가 coherent 하게
+  //   이동하고 펼침/접기 rebuild 후에도 유지된다(자유 배치 persistence — ADR-004 결정론 배치 회귀 복원).
+  layouts.forEach((L) => {
+    const off = _metaGraph.clusterOffset.get(L.id);
+    if (off) { L.x0 += off.dx; L.y0 += off.dy; }
+  });
   const combos = [], nodes = [], edges = [];
   _metaGraph.firstElementId = null;
   layouts.forEach((L) => {
@@ -3869,9 +3884,17 @@ function _metaG6Build() {
       });
     }
     L.place.forEach(({ it, lx, top }) => {
-      const colLeftX = L.x0 + lx;
-      const tx = colLeftX + TXOFF;
-      const ty = L.y0 + top + _METLAY.TROW / 2;   // 항목(테이블/용어) 중심 y
+      let colLeftX = L.x0 + lx;
+      let tx = colLeftX + TXOFF;
+      let ty = L.y0 + top + _METLAY.TROW / 2;   // 항목(테이블/용어) 중심 y
+      // graph-freeplace: 개별 노드 사용자 드래그 위치 유지(테이블은 종속 컬럼·"X:" ctl 과 함께 델타 시프트,
+      //   용어는 자기 위치). colLeftX/ty 를 옮기면 아래 컬럼(colLeftX 기반 x·ty 기반 cyCol)이 자동 동반된다.
+      //   clusterOffset(클러스터 전체) 위에 얹히는 개별 이동 — combo 는 자식에 맞춰 auto-fit(반응형 리사이즈 #3).
+      const _fp = _metaGraph.nodePos.get(it.key);
+      if (_fp && isFinite(_fp[0]) && isFinite(_fp[1])) {
+        const ddx = _fp[0] - tx, ddy = _fp[1] - ty;
+        colLeftX += ddx; tx += ddx; ty += ddy;
+      }
       if (g.isTerms) {
         nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
         return;
@@ -4179,6 +4202,11 @@ function _metaGraphResetModel() {
   _metaGraph.schemaTruncated.clear();
   _metaGraph.firstElementId = null;
   if (_metaGraph.introspected) _metaGraph.introspected.clear();
+  // graph-freeplace: 자유 배치는 스코프 전환·초기화 시 리셋(다른 데이터소스는 다른 클러스터 — 위치 무의미).
+  //   펼침/접기(rebuild)는 resetModel 을 거치지 않으므로 그 경로에선 위치가 유지된다(핵심 요구).
+  _metaGraph.clusterOffset.clear();
+  _metaGraph.nodePos.clear();
+  _metaGraph._comboDragStart = null;
 }
 
 // graph-product-cat(§43): 제품 카테고리 개요 로드 — Product→Datasource 개요(MySQL SSOT 합성).
@@ -4336,12 +4364,39 @@ function _metaElementDragEnable(e) {
 //   종속을 "테이블 현재위치 + 오프셋" 으로 절대 이동(translateElementTo)한다.
 //   절대-오프셋 방식은 이벤트 실행 순서(내 핸들러 vs drag-element)에 무관하다: dragend 시점엔
 //   drag-element 가 이미 테이블을 최종 위치로 옮겨 놓았으므로 재정합으로 1-frame lag 이 제거된다.
+// graph-freeplace: 클러스터 offset 누적(combo 드래그 · 접힌 카드 드래그 공용). curId 의 현재 위치와
+//   기록된 시작 위치의 델타를 clusterOffset[comboId] 에 누적한다(반복 드래그 정합, 미동 무시).
+function _metaClusterOffsetAccumulate(comboId, startX, startY, curId) {
+  const g = _metaGraph.graph;
+  if (!g || !comboId) return;
+  let p; try { p = g.getElementPosition(curId); } catch (_) { return; }
+  if (!p || !isFinite(p[0]) || !isFinite(p[1])) return;
+  const dx = p[0] - startX, dy = p[1] - startY;
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+  const prev = _metaGraph.clusterOffset.get(comboId) || { dx: 0, dy: 0 };
+  _metaGraph.clusterOffset.set(comboId, { dx: prev.dx + dx, dy: prev.dy + dy });
+  // graph-freeplace(리뷰 MAJOR fix): 클러스터를 통째로 옮기면, 그 클러스터에 속한 **개별 배치된 노드
+  //   (nodePos, 절대좌표)** 도 같은 델타로 함께 옮긴다. 안 그러면 nodePos 가 절대값이라 clusterOffset 를
+  //   덮어써(build 최종 tx=fp[0]) 그 노드만 원위치에 남아 클러스터에서 분리된다(table-then-cluster 순서).
+  _metaGraph.nodePos.forEach((pos, nid) => {
+    const n = _metaGraph.nodes.get(nid);
+    if (n && _metaSchemaComboOf(n) === comboId) { pos[0] += dx; pos[1] += dy; }
+  });
+}
+
 function _metaNodeDragStart(e) {
   _metaGraph._drag = null;
+  _metaGraph._comboDragStart = null;
   if (_metaIsMiddleDrag(e)) return;             // 중간 버튼은 카메라 팬 — 노드 이동 아님
   const g = _metaGraph.graph;
   const id = e && e.target && e.target.id;
   if (!g || !id) return;
+  // graph-freeplace: 접힌 스키마 카드("SC:") 드래그 = 클러스터 위치 이동(combo 드래그와 동일 clusterOffset).
+  //   L.x0/L.y0 는 카드·펼친 combo 공용 기준이라, 카드에서 옮겨도 펼쳤을 때 같은 offset 이 유지된다.
+  if (String(id).startsWith("SC:")) {
+    try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id.slice(3), curId: id, x: p[0], y: p[1] }; } catch (_) {}
+    return;
+  }
   const deps = _metaGraph.tableDeps.get(id);    // 테이블 key 만 등록됨(ctl/컬럼/용어/카드는 단독 이동)
   if (!deps || !deps.length) return;
   let tp;
@@ -4371,7 +4426,42 @@ function _metaNodeDrag() {
   try { g.translateElementTo(to, false); } catch (_) {}
 }
 // dragend: 최종 위치 재정합(내 핸들러가 drag-element 보다 먼저 실행돼도 마지막 프레임 lag 제거) + 상태 해제.
-function _metaNodeDragEnd() { _metaNodeDrag(); _metaGraph._drag = null; }
+function _metaNodeDragEnd(e) {
+  _metaNodeDrag();
+  const g = _metaGraph.graph;
+  const id = e && e.target && e.target.id;
+  // graph-freeplace: 접힌 스키마 카드("SC:") 드래그 = 클러스터 이동 → clusterOffset(combo 드래그와 통합).
+  if (id && String(id).startsWith("SC:")) { _metaClusterDragCommit(); _metaGraph._drag = null; return; }
+  // 그 외 이동 가능 노드(테이블·컬럼·용어)의 최종 절대위치를 nodePos 에 기록 → rebuild 후에도 유지.
+  //   컨트롤/장식(X:/XS:/GB:/GH:)은 제외. 테이블은 위치만 기록하고, 종속(컬럼·"X:")은 build 가 테이블 델타로 시프트.
+  if (g && id && !/^(X:|XS:|GB:|GH:)/.test(String(id))) {
+    // 컬럼은 소속 테이블에서 재파생(build)되므로 개별 위치를 기록하지 않는다(dead 엔트리·재빌드 snap-back 방지, 리뷰 NIT).
+    const _n = _metaGraph.nodes.get(id);
+    if (!_n || _n.label !== "Column") {
+      try { const p = g.getElementPosition(id); if (p && isFinite(p[0]) && isFinite(p[1])) _metaGraph.nodePos.set(id, [p[0], p[1]]); } catch (_) {}
+    }
+  }
+  _metaGraph._drag = null;
+}
+
+// graph-freeplace: 스키마 클러스터(combo) 드래그 — 전체 클러스터 위치 이동("분류 drag&drop 위치 이동").
+//   dragstart 에서 중심을 기록하고 dragend 에서 델타를 clusterOffset 에 누적 → build 가 L.x0/L.y0 에 가산해
+//   카드·테이블·컬럼·장식을 coherent 하게 이동시키고 rebuild(펼침/접기) 후에도 유지한다.
+function _metaComboDragStart(e) {
+  const g = _metaGraph.graph;
+  const id = e && e.target && e.target.id;
+  _metaGraph._comboDragStart = null;
+  if (!g || !id) return;
+  try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id, curId: id, x: p[0], y: p[1] }; } catch (_) {}
+}
+function _metaComboDragEnd() { _metaClusterDragCommit(); }
+// combo:dragend · 접힌 카드 dragend 공용 커밋: _comboDragStart 의 델타를 clusterOffset 에 누적 후 클리어.
+function _metaClusterDragCommit() {
+  const st = _metaGraph._comboDragStart;
+  _metaGraph._comboDragStart = null;
+  if (!st || !st.comboId) return;
+  _metaClusterOffsetAccumulate(st.comboId, st.x, st.y, st.curId);
+}
 
 // G6 v5 그래프 초기화(1회). 이후 상태변경은 _metaG6Apply(setData+draw). Canvas 렌더러(선명·벡터).
 function _metaInitGraph() {
@@ -4472,7 +4562,10 @@ function _metaInitGraph() {
   //   — 절대-오프셋이라 핸들러 실행 순서·누적 delta·줌 배율에 무관(월드좌표 기준).
   graph.on("node:dragstart", (e) => _metaNodeDragStart(e));
   graph.on("node:drag", (e) => _metaNodeDrag(e));
-  graph.on("node:dragend", () => _metaNodeDragEnd());
+  graph.on("node:dragend", (e) => _metaNodeDragEnd(e));
+  // graph-freeplace: 클러스터(combo) 드래그 = 분류 위치 이동(clusterOffset 누적 → rebuild 유지).
+  graph.on("combo:dragstart", (e) => _metaComboDragStart(e));
+  graph.on("combo:dragend", (e) => _metaComboDragEnd(e));
   if (!_metaGraph.bound) {
     _metaGraph.bound = true;
     const s = document.getElementById("metadataGraphSearch");

@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260703T101622-ai-claude-feature-0016-graph-freeplace [SUBAGENT: PASS-WITH-FIXES] — 클러스터 자유배치 상호작용 복원(§44) 적대 리뷰
+- 대상: CHG-20260703T101622-graph-freeplace (admin.js clusterOffset/nodePos persistence + combo/카드 드래그 핸들러 +
+  build 위치 적용, ADR-015, TASK §44).
+- 방법: general-purpose 적대 서브에이전트 — 좌표 프레임·offset 수학·drag pairing·getElementPosition 신뢰성·회귀·G6 specifics 6축.
+- 확정·수정:
+  - **[MAJOR] nodePos 절대좌표가 clusterOffset 를 덮어써 개별배치 노드 분리**: 테이블을 개별 이동(nodePos, 절대)한 뒤
+    클러스터를 통째로 옮기면(clusterOffset), 다음 rebuild 에서 그 테이블만 원위치에 남아 클러스터에서 이탈(table-then-cluster
+    순서). **수정**: `_metaClusterOffsetAccumulate` 가 클러스터 델타를 소속 노드의 nodePos 에도 동반 가산(`_metaSchemaComboOf`
+    매칭). cluster-first 순서는 무영향.
+  - **[NIT] 컬럼 드래그가 dead nodePos 엔트리 생성**(build 는 컬럼을 테이블에서 재파생) → `_metaNodeDragEnd` 가 label==="Column"
+    노드는 nodePos 기록 제외.
+- 검증·SAFE 확인(리뷰어 실측): 좌표 프레임 정합(`getElementPosition`=`[style.x,style.y]`=build tx/ty center → 첫 rebuild 점프
+  없음), clusterOffset 가 shelf-packing 폭 누적 미오염(packing 후 가산), 델타-시프트가 테이블+종속(컬럼 colLeftX·"X:" ctl) 정확
+  동반, drag start/end pairing 무교차오염(_comboDragStart null-reset + combo/카드/테이블 분리 dispatch, comboId 키 정합), maps
+  bounded+resetModel clear, _metaInitGraph idempotent(중복 리스너 0), 제품모드 early-return 무영향, G6 v5.1.1 combo drag 자식이동+
+  combo:dragend 발화 확인.
+- 알려진 한계(수용): 검색 입력이 자유배치 리셋(model 교체 규칙 — 스코프 내 보존은 후속), 펼친 그룹 스키마의 combo 드래그 표면이
+  얇음(GB/GH 비드래그 — 접힌 카드 드래그가 주 경로로 커버), 카드 offset 이 펼침 시 정확 위치 아닌 변위만 유지(결정론 재packing 본질).
+- 판정: **PASS-WITH-FIXES** — crash/NaN/데이터손상 경로 0(모든 getElementPosition guard), MAJOR 1 + NIT 1 반영 후 배포 안전.
+  라이브 canvas 드래그는 자동화 곤란 → PB-0008 실 Windows 수동 4-상호작용 확인 게이트.
+
 ## REV-20260703T091737-ai-claude-feature-0016-graph-product-cat [SUBAGENT: PASS-WITH-FIXES] — 제품 카테고리 개요(§43) 적대 리뷰
 - 대상: CHG-20260703T091737-graph-product-cat (admin_metadata.py `_product_overview_graph`/`_products_for_scope` +
   admin.js `_metaG6BuildProducts`/라우팅/노드클릭 + admin.html 툴바, ADR-014, TASK §43).

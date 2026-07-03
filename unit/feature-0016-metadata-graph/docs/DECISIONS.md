@@ -415,3 +415,28 @@ source_of_truth: true
     list/bootstrap 경로를 오염. 툴바 버튼 + 랜딩 전환으로 분리(select 는 datasource 전용 유지).
 - Supersedes:
 - Superseded By:
+
+## ADR-015 — 그래프 뷰 자유 배치 상호작용 persistence(결정론 배치 위에 사용자 드래그 offset 레이어)
+- Status: accepted (2026-07-03)
+- Context: 사용자 회귀 보고 — 데이터소스 스키마 클러스터 화면에서 "분류 접기/펼치기·분류 drag&drop 위치 이동·분류 내부
+  노드 이동 반응형 크기 조정"이 사라짐. 조사(git bisect): 마지막 정상(abc78b00 graph-simgroups, T42.8 PASS) 이후 admin.js
+  변경은 ds-avg-latency(데이터소스 상세 패널 전용)·graph-product-cat(제품모드 전용) 2건뿐 — **둘 다 클러스터 상호작용 코드
+  미변경**. 근본원인은 ADR-004 **Cytoscape→G6 결정론 배치**(매 rebuild `setData+draw` 로 위치 재계산) 전환이 Cytoscape 시절
+  자유 배치(드래그 위치 유지·노드이동 리사이즈)를 이관하지 않은 것(graph-drag T41 은 세션 내 테이블 드래그만 추가, persistence 부재).
+- Decision: 결정론 배치를 유지하되 그 **위에 사용자 드래그 offset 레이어**를 얹어 자유 배치를 persistence 한다(둘의 정합).
+  - **clusterOffset**(comboId→{dx,dy}): 클러스터(combo) 또는 접힌 카드 드래그의 누적 델타. build 가 shelf-packing 후
+    L.x0/L.y0(카드·테이블·컬럼·장식·combo 공통 기준)에 가산 → 클러스터 전체 coherent 이동, 펼침/접기 후 유지.
+  - **nodePos**(nodeId→[x,y]): 개별 테이블/용어 드래그의 절대 위치(center 프레임 = build tx/ty). build place-loop 이 델타로
+    테이블+종속(컬럼·"X:" ctl) 시프트. combo 는 명시 size 없이 자식 auto-fit → **노드 이동 시 반응형 리사이즈**(#3).
+  - 접기/펼치기(#1): 기존 SC:↔combo 유지. 위치는 스코프 전환·초기화(resetModel)에서 리셋, 펼침/접기 rebuild 에선 유지.
+  - **정합 불변식**: 클러스터를 통째로 옮기면 소속 nodePos 도 동반 가산(절대좌표가 clusterOffset 를 덮어써 개별노드가
+    분리되지 않게 — REV-20260703T101622 MAJOR).
+- Consequences: ADR-004 의 "결정론 배치(무-shuffle·제자리)" 는 **초기/rebuild 기본 배치로 유지**되고, 사용자가 명시적으로
+  드래그한 것만 offset 로 덮어쓴다(force layout 재도입 아님 — ④ 클러스터 뒤섞임 회귀 없음). 프론트 전용·마이그레이션 0.
+  한계(수용): 검색은 자유배치 리셋(model 교체), 펼친 그룹 스키마 combo 드래그 표면 얇음(접힌 카드 드래그가 주 경로),
+  카드 드래그 offset 은 펼침 시 변위만 유지(결정론 재packing 본질). 라이브 canvas 드래그 자동화 곤란 → PB-0008 수동 게이트.
+- Alternatives:
+  - **Cytoscape 로 롤백**: ADR-004 가 해소한 5개 관찰 결함(클릭접힘·위치점프·줌지연·클러스터뒤섞임·테두리왜곡) 재발 — 기각.
+  - **force layout 재도입**: ④ 클러스터 뒤섞임 재유발(ADR-004 기각 사유) — 기각. offset 레이어가 결정론 유지하며 자유배치 제공.
+- Supersedes: (ADR-004 의 결정론 배치를 대체하지 않음 — 그 위에 opt-in offset 레이어 추가)
+- Superseded By:

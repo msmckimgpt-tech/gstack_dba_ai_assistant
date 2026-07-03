@@ -428,3 +428,21 @@ origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 �
   제품 개요 "제품 카테고리 15개 · 데이터소스 18개" 렌더(Product/Datasource 노드 + USES 엣지 + 툴바 버튼) · datasource
   drill(`mssql-dk-dev`) → **스키마 11개**(비어있지 않음 = read-axis fix 실증) + 제품 배너 "제품: DK온라인 - 개발" ·
   pageerror 0. 정본 Run: feature-0003 TEST.md §3 `Environment: Windows-browser`(스크린샷 pb0008-product-overview.png).
+
+## graph-freeplace — 클러스터 자유 배치 상호작용 복원 (ADR-015, TASK §44, 2026-07-03)
+
+### 케이스
+- TC-44-1 (#2 클러스터 드래그): combo 또는 접힌 스키마 카드를 드래그 → clusterOffset 누적 → 클러스터 전체(카드·테이블·
+  컬럼·장식) coherent 이동 + 펼침/접기 rebuild 후 위치 유지.
+- TC-44-2 (#3 노드 이동 반응형 리사이즈): 클러스터 내부 테이블 드래그 → nodePos 기록 → 테이블+종속(컬럼·"X:") 델타 시프트 +
+  combo auto-fit 리사이즈 + rebuild 유지.
+- TC-44-3 (#1 접기/펼치기): 스키마 카드↔펼친 combo 전환 유지(회귀 0).
+- TC-44-4 (정합 불변식): 테이블 개별 이동 후 클러스터 통째 이동 → 그 테이블도 동반(분리 없음, 리뷰 MAJOR fix).
+- TC-44-5 (리셋): 스코프 전환·초기화 버튼 → clusterOffset/nodePos clear(결정론 배치 복귀).
+
+### Run (2026-07-03) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS**.
+- §18.8 적대 리뷰(general-purpose, 6축): 좌표프레임 정합(getElementPosition=center=build tx/ty, 점프 없음)·offset 수학·
+  drag pairing·G6 combo drag 확인. MAJOR 1(nodePos override 분리) + NIT 1(컬럼 dead) 반영 → PASS-WITH-FIXES (REV-20260703T101622).
+- **POST-DEPLOY 실 Windows 브라우저(PB-0008)**: 배포 후 4-상호작용 수동 검증 예정(접힌 카드 드래그·combo 드래그·테이블 드래그+
+  펼침·접기/펼치기 회귀) — feature-0003 TEST.md §3 `Environment: Windows-browser`. 라이브 canvas 드래그 자동화 곤란 → 실 Windows 게이트.

@@ -1,5 +1,24 @@
 # Report
 
+## 2026-07-03 · 그래프 클러스터 자유 배치 상호작용 복원 (graph-freeplace, TASK §44, ADR-015)
+
+### 배경 (사용자 회귀 보고)
+데이터소스 스키마 클러스터 화면에서 "분류 접기/펼치기·분류 drag&drop 위치 이동·분류 내부 노드 이동 반응형 크기 조정"이
+사라짐. **조사(git bisect)**: 마지막 정상(abc78b00 graph-simgroups, T42.8 PASS) 이후 admin.js 변경 2건(ds-avg-latency=
+데이터소스 상세 패널만·graph-product-cat=제품모드만)은 클러스터 상호작용 코드 미변경 → **내 Phase A/최근 변경 회귀 아님**.
+근본원인 = ADR-004 Cytoscape→G6 결정론 배치가 자유배치 persistence 를 미이관한 feature gap. 사용자 "G6 재구현" 결정.
+
+### 구현 (frontend-only, admin.js)
+- **결정론 배치 위에 사용자 드래그 offset 레이어**(ADR-015): `clusterOffset`(combo/카드 드래그 → 클러스터 전체 이동,
+  build L.x0/L.y0 가산) + `nodePos`(개별 테이블/용어 → place-loop 델타 시프트, combo auto-fit 리사이즈). 접기/펼치기 유지,
+  스코프전환·초기화 리셋, 펼침/접기 rebuild 유지. combo:dragstart/dragend + node:dragend 훅.
+- cache-buster `20260703-graph-freeplace`.
+
+### 검증
+- `node --check` PASS · §18.8 적대 리뷰(REV-20260703T101622): 6축 → **MAJOR 1**(nodePos 절대좌표가 clusterOffset override →
+  클러스터 이동 시 소속 nodePos 동반 가산으로 fix)·NIT 1(컬럼 dead 엔트리 제외) 반영 → PASS-WITH-FIXES.
+- POST-DEPLOY 실 Windows PB-0008 4-상호작용 수동 검증 예정(라이브 canvas 드래그 자동화 곤란).
+
 ## 2026-07-03 · 제품(Products) 단위 카테고리 구분 (graph-product-cat, TASK §43, ADR-014)
 
 ### 배경 (사용자 요청 — 3대 개선 中 A)

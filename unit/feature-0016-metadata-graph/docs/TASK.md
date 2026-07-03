@@ -1073,3 +1073,29 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T43.8 격리 테스트(합성 그래프 노드/엣지 무결성) + `node --check` admin.js.
 - [x] T43.9 §18.8 적대 리뷰(합성 정합·권한·XSS·회귀) + verify-completion.
 - [x] T43.10 배포(web 롤링) + **PB-0008 실 Windows 시각검증**(제품 개요 렌더·datasource drill·배너).
+
+## 44. graph-freeplace — 그래프 클러스터 자유 배치 상호작용 복원 (2026-07-03, 사용자 회귀 보고)
+
+- Related Requirement: 사용자 후속 보고 — "테이블 컨텐츠 카테고리(분류) 구성 패널 상호작용 누락: [분류 접기/펼치기]·
+  [분류 drag&drop 위치 이동]·[분류 내부 노드 이동 반응형 크기 조정]이 모두 사라짐. 데이터소스 선택 후 스키마 클러스터
+  화면." 정본: DECISIONS ADR-015 / MODIFY CHG-20260703T101622.
+- 등급: **Major** (프론트 상호작용 재구현, 검증된 G6 렌더러 코어 place-loop 편집). 비파괴·마이그레이션 없음.
+- 근본원인(조사): abc78b00(graph-simgroups, 상호작용 정상 T42.8) 이후 admin.js 변경 2건(ds-avg-latency=데이터소스 패널만·
+  graph-product-cat=제품모드만)은 클러스터 상호작용 코드 미변경 → **내 회귀 아님**. ADR-004 Cytoscape→G6 결정론 배치가
+  자유배치(드래그 위치유지·리사이즈)를 미이관한 feature gap(사용자 "재구현" 결정).
+
+### 44.1 구현 (admin.js frontend-only)
+- [x] T44.1 state: `clusterOffset`(comboId→{dx,dy}) + `nodePos`(nodeId→[x,y]) + resetModel clear.
+- [x] T44.2 drag: `_metaComboDragStart`/`_metaComboDragEnd`/`_metaClusterDragCommit`/`_metaClusterOffsetAccumulate`
+  (combo·접힌 카드 → clusterOffset 누적) + `_metaNodeDragEnd`(테이블/용어 → nodePos, 컬럼 제외) +
+  `_metaNodeDragStart` SC: 시작 기록 + combo:dragstart/dragend 바인딩.
+- [x] T44.3 build: clusterOffset → L.x0/L.y0 가산(shelf-packing 후, 클러스터 전체 이동) + place-loop nodePos
+  델타로 테이블+종속 시프트(`const`→`let`).
+- [x] T44.4 접기/펼치기(#1) 유지 · combo auto-fit 반응형 리사이즈(#3) · cache-buster `20260703-graph-freeplace`.
+
+### 44.2 검증
+- [x] T44.5 `node --check` PASS.
+- [x] T44.6 §18.8 적대 리뷰(REV-20260703T101622): 좌표프레임·offset수학·drag pairing·회귀 6축 → MAJOR 1(nodePos가
+  clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
+- [ ] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
+  회귀 접기/펼치기). 라이브 canvas 드래그 자동화 곤란 → 실 Windows 확인 게이트.

@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T101622-ai-claude-feature-0016-graph-freeplace
+- What: 그래프 뷰 스키마 클러스터 **자유 배치 상호작용 복원**(사용자 회귀 보고, TASK §44, ADR-015). ADR-004
+  Cytoscape→G6 결정론 배치가 rebuild(펼침/접기)마다 위치를 초기화하던 것을, 사용자 드래그 위치를 **persistence**
+  해 유지한다. combo(클러스터) 드래그 이동 + 개별 노드 이동 + combo auto-fit 반응형 리사이즈 + 접기/펼치기 유지.
+- Files (frontend-only, admin.js + cache-buster):
+  - `_metaGraph.clusterOffset`(comboId→{dx,dy}) + `nodePos`(nodeId→[x,y]) state + resetModel clear.
+  - drag 핸들러: `_metaComboDragStart`/`_metaComboDragEnd`/`_metaClusterDragCommit`/`_metaClusterOffsetAccumulate`
+    (combo·접힌 카드 드래그 → clusterOffset 누적), `_metaNodeDragEnd`(테이블/용어 → nodePos, 컬럼 제외),
+    `_metaNodeDragStart`(SC: 카드 시작 기록). combo:dragstart/dragend 바인딩 추가.
+  - `_metaG6Build`: shelf-packing 후 clusterOffset 를 L.x0/L.y0 에 가산(클러스터 전체 coherent 이동) +
+    place-loop 에서 nodePos 델타로 테이블+종속(컬럼·"X:") 시프트(colLeftX/tx/ty `const`→`let`).
+  - cache-buster `20260703-graph-freeplace`(admin.js·styles.css).
+- Impact: 프론트 표현·상호작용 전용. **데이터 API·AGE·RBAC·마이그레이션 불변**. 위치는 스코프 전환·초기화 시 리셋,
+  펼침/접기 rebuild 는 유지. clusterOffset 는 델타 누적(프레임 무관), nodePos 는 절대(center 프레임 — getElementPosition
+  == build tx/ty, 점프 없음). 리뷰 MAJOR fix: 클러스터 이동 시 소속 nodePos 동반 이동(개별배치 노드 분리 방지).
+- Related Requirement: 사용자 회귀 보고("분류 접기/펼치기·drag&drop 위치 이동·노드이동 반응형 리사이즈 사라짐").
+  근본원인: ADR-004 결정론 배치 마이그레이션의 자유배치 미이관(내 Phase A/ds-avg-latency 회귀 아님 — 조사 확인).
+- 검증: `node --check` PASS · §18.8 적대 리뷰(REV-20260703T101622, MAJOR 1 + NIT 1 반영) · 배포+PB-0008(예정).
+
 ## CHG-20260703T091737-ai-claude-feature-0016-graph-product-cat
 - What: 그래프 뷰에 제품(Products) 단위 카테고리 개요를 추가 (TASK §43, ADR-014). Product→Datasource 계층을
   MySQL SSOT(`WebProducts`·`WebProductDatasources`)에서 **질의시점 합성**해 투영(AGE 미저장 — 마이그레이션 0).
