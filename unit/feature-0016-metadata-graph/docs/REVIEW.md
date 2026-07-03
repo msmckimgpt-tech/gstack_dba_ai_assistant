@@ -8,6 +8,22 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260703T113500-graph-funcproc-uxfix [SUBAGENT: FIX-THEN-SHIP→PASS] — 함수·프로시저 노드 + 그래프/능동분석 UX 4건 적대 패널 (3렌즈 + MAJOR+ 교차검증, ULTRACODE workflow)
+- Related Change: CHG-20260703-graph-funcproc-uxfix (TASK §45, ADR-016·017). worktree feature-0016-graph-funcproc-uxfix.
+- 리뷰 방식: Workflow 병렬 3렌즈(backend 정확성 / security·injection / frontend 회귀·G6) 각 독립 발굴 + **BLOCKING/MAJOR 전건을 별도 refuter subagent 가 교차 재검증**(9 agents). staged diff 전체 + 주변 소스·vendored g6.min.js 실측.
+- **결과: BLOCKING 1 + MAJOR 5 + MINOR 6 + NIT 3 적발 — 교차검증 전건 real 판정 → 전량 수정 후 재검증 PASS**.
+  - **B1(BLOCKING→MAJOR 조정, 수정)**: 루트가 Column 인 run 에서 부모 테이블이 depth 0 으로 same-depth 승격 → depth-0 '하위 컬럼 무조건 통과(rel=1.0)' 규칙이 승격 테이블에 재발화해 전 sibling 컬럼 flood(예산 붕괴·LLM 비용 폭증). → 승격 same_depth 를 `cur_depth > 0` 로 한정(depth-0 자동통과는 실제 루트 전용 보존, 부모는 depth 1 로 분석 + 컬럼은 앵커 게이팅). 회귀 테스트 `test_score_candidates_parent_depth0_not_same_depth`.
+  - **M1(수정)**: neighborhood() UNION ALL raw SQL 이 신규 Routine 라벨 테이블을 하드 참조 — 0034 미적용 skew 창(stale 이미지 사례 실재)에서 UndefinedTable 로 **전체 이웃 조회 붕괴**. → `_existing_labels()`(to_regclass 실존 필터) 도입.
+  - **M2(수정)**: sync_graph 3b SELECT 실패(0034 미적용)가 owned 배치 트랜잭션을 poisoned 로 만들어 이후 glossary 단계 조용한 실패 + pending MERGE 롤백. → 3b 진입 전 `_tick(force=True)` 강제 커밋 + 실패 시 rollback 복구.
+  - **M3(수정)**: ROUTINE_USES 가산적 MERGE 만으로 정의 변경 시 stale 엣지 영구 잔존(REFERENCES broken 클래스 재도입). → sync_routine delete-then-merge(기존 ROUTINE_USES 회수 후 현재 참조 재-MERGE) + introspect 완전 스캔 시 SSOT prune(cap 절단 시 미수행 가드).
+  - **M4(수정, FE)**: G6 minimap 컨테이너가 AFTER_DRAW 후 128ms trailing debounce 로 lazy 생성 — post-draw 즉시 anchor 정규화가 요소를 못 찾아 첫 리사이즈에서 REQ ② 재발. → 미발견 시 200ms×4 재시도.
+  - **M5(수정, FE)**: 함수·프로시저만 있는 스키마(테이블 0)가 '빈 스키마' 오판 → 영구 펼침 불능(Routine 도달 불가). → 펼침 콘텐츠 카운트에 Routine 포함.
+  - **MINOR(전건 수정)**: ⓐ insight cadence 스탬프 조건이 routine 훅 게이트와 불일치(테이블 0 스키마·관계 off 구성에서 매 cycle 재-introspect spin) → 스탬프 조건에 ROUTINE 토글 합류 ⓑ 0034 §4 metadata_kb GRANT 무가드(스키마 부재 시 hard-fail — §3 graceful 과 모순) → pg_namespace 가드 ⓒ 정의 파싱 주석(--,/**/) 유령 참조 → 파싱 전 제거 ⓓ MSSQL alias-UPDATE write→read 오분류 → alias 역참조 write 승격 ⓔ _metaGraphExpand 이웃 자동 펼침에 Routine 미포함(접힌 타 스키마 Routine 비가시) → 포함 ⓕ ctxmenu AI 분석이 stale aiPrompt 암묵 전송 → ctx 경로 지침 미전송(popover 만) ⓖ 검색 badge 분자에 Routine 가산(분모=테이블 총계와 모순 N>M) → 카운트 미가산·강조만 유지 ⓗ LLM user_intent·이웃값 untrusted-data 규칙 명문화(§14 정합) ⓘ analyze docstring 권한 표기 정정.
+  - **NIT(수정)**: ROUTINES ORDER BY(cap 절단 결정성)·upsert 카운트 rowcount 기준(무변경 미집계)·관계 상세 containment 에 HAS_ROUTINE 제외·flat-scope Routine 이 term 칩으로 렌더(Routine 분기 우선).
+  - 견고 확인(반증 실패) 31건: %s 파라미터 방언 호환(mysql.connector·pymssql pyformat)·__all__ 계약·IS DISTINCT FROM 트리거 비발화·sync_routine 큐레이션 비파괴·jsonb 타입 분기·edge_hits tuple 소비처 정합·insight 훅 비차단·user_prompt autocommit 폴백 안전·Cypher dollar-tag/_cq 방어·XSS esc()/data-rtuse 인용 이스케이프·RBAC 게이트·audit len+preview·400자 서버 cap·run dedupe·클릭/드래그/ctxmenu generic 경로·_metaColParent 비유입 등.
+- 재검증: 수정 후 단위 **126 PASS**(신규 19 + 회귀 107) + `node --check`·`py_compile`·migrate-lint PASS.
+- Human Approval: Major(비파괴 마이그레이션·사전승인 범위 내) — §16.3 Step 4 조건표(BLOCKED 없음) 따라 자동 동기화 대상. 배포는 deploy_scope: included(전역 선언).
+
 ## REV-20260703T105541-graphux6-panelbottom-responsive-obs [SUBAGENT: PASS-WITH-FIXES] — 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 대상 관측 적대 리뷰
 - Related Change: CHG-20260703T105541-ai-claude-feature-0016-graphux6-panelbottom-responsive-obs (TASK §37). worktree feature-0016-graphux6-panel-obs.
 - 리뷰 방식: subagent 적대 5축 — ① CSS 반응형 회귀 ② 패널이동 부작용 ③ target 계측 정합(자가치유 INSERT·rollback·overview 다중 SELECT·`len(r)>11` 가드) ④ payload 대상 추출·XSS ⑤ 마이그 안전(additive nullable·단일 head·배포순서). diff 전체 + 주변 소스(_record_llm_usage, _query_activity, admin.js 토글/progress, admin.shell→canvas CSS 체인, 0032, 테스트) 정독.

@@ -8160,6 +8160,21 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .admin-meta-graph-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .admin-meta-graph-ai-head h4 { margin: 0; }
 .admin-meta-ai-btn { font-size: 11.5px; padding: 3px 10px; white-space: nowrap; }
+/* graph-funcproc(ADR-014): AI 능동 분석 hover 지침 popover — 버튼 아래 툴팁형 입력 카드.
+   섹션(position:relative) 기준 절대 배치 대신 in-flow 카드(패널 폭이 좁아 오버레이가 내용을 가림). */
+.admin-meta-ai-pop {
+  margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: #f7f8fb; box-shadow: 0 2px 8px rgba(15, 23, 42, .08);
+}
+.admin-meta-ai-pop label { display: block; font-size: 11px; font-weight: 700; color: #3a4356; margin-bottom: 4px; }
+.admin-meta-ai-pop textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px;
+  font-size: 12px; line-height: 1.45; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; font-family: inherit;
+}
+.admin-meta-ai-pop textarea:focus { outline: none; border-color: var(--primary); }
+.admin-meta-ai-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.admin-meta-ai-pop-foot .admin-meta-graph-muted { font-size: 10.5px; line-height: 1.35; }
 .admin-meta-graph-ai-box { margin-top: 8px; line-height: 1.5; }
 .admin-meta-graph-ai-box p { margin: 0 0 7px; }
 .admin-meta-graph-ai-summary { font-weight: 600; }

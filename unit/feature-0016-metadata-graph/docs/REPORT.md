@@ -1,5 +1,55 @@
 # Report
 
+## 2026-07-03 · 함수·프로시저 노드 + 그래프/능동분석 UX 4건 (graph-funcproc-uxfix, TASK §45, ADR-016·017)
+
+### 배경 (사용자 요청 5건)
+관리 콘솔 > 메타데이터 > 그래프 뷰: ① [추가 구조] **함수 & 프로시저 노드** + 분석·관계 구성 ② [상세
+패널] 리사이즈 시 **미니맵 위치 미갱신** 수정 ③ [AI 능동 분석] 재귀로 참조 컬럼이 분석돼도 **부모
+테이블이 분석되지 않는 이슈**(테이블까진 분석, 앵커 연관성으로 심화 억제) ④ '재분석' 제거(UX 중복)
+⑤ hover 프롬프트 입력 툴팁 → LLM 자율 반영.
+
+### 구현 (BE=feature-0002 · UI=feature-0003 cross-cut)
+- ① **routine_objects SSOT**(alembic 0034, 비파괴) ← insight-worker 가 rel_maintenance_due(ADR-007
+  cadence) 게이트에서 `INFORMATION_SCHEMA.ROUTINES/PARAMETERS`(MySQL·MSSQL 공통 뷰) introspect
+  (`modules/routines.py` 신규, 반환형=PARAMETERS pos0 공통 규약, 스키마-slot=ADR-007) + **정의 파싱
+  참조 테이블**(FROM/JOIN=read·INSERT/UPDATE/DELETE/MERGE=write, 실재 테이블만·cap). 투영: AGE
+  vlabel `Routine`(key=`schema.name()` — 동명 테이블 충돌 방지 네임스페이스) + `HAS_ROUTINE`·
+  `ROUTINE_USES{relation_type}` → schema_tables/검색/이웃 노출 → 그래프 ƒ/⚙ 보라 칩(#7b5cd6)·보라
+  잔점선 엣지·범례·상세(유형·파라미터·사용 테이블/사용 루틴 상호 이동)·AI 능동 분석(ROUTINE_USES
+  content 0.35 + NODE_ANALYSIS_PROMPT Routine 계약). 토글 `AGENT_ROUTINE_INTROSPECT_ENABLED`(기본 ON)
+  ·`AGENT_ROUTINE_INTROSPECT_CAP`(300) — config `__all__` 등재(ADR-007 star-import 계약).
+- ② 원인 실증: G6 v5 minimap 플러그인이 컨테이너 생성 시 **inline left/top 을 1회 계산 고정**(vendored
+  번들 Z$ 확인) — styles.css 의 right/bottom 앵커가 inline 에 짐. `_metaGraphMinimapAnchor()` 가
+  inline 좌표를 auto 로 지워 CSS 앵커 전환(멱등, `_metaG6Apply` post-draw) → 이후 패널 드래그/접기/창
+  리사이즈를 레이아웃이 자동 추종.
+- ③ `_fetch_context` 가 Column 노드의 HAS_COLUMN 부모 Table 을 parent 메타로 기록 → `_score_candidates`
+  가 임계 무관 승격(고정 rel 0.5, 교차 제품 감쇠) → `_enqueue_neighbors` 가 **same-depth** enqueue
+  ("소속"은 추가 hop 아님 — depth_budget 마지막 층 컬럼의 테이블도 분석). 승격 테이블의 다음 확장은
+  기존 앵커 게이팅(ADR-003)이 차단 — 재귀 심화 억제(ADR-017).
+- ④ 분석 완료 box '↻ 재분석' 버튼 + ctxmenu 'AI 재분석' 라벨 제거 — '✨ 능동 분석' 단일 진입점.
+- ⑤ 버튼 hover 지침 popover(≤400자·Esc·Ctrl+Enter) → analyze POST `prompt`(audit prompt_len/preview)
+  → `node_analysis_runs.user_prompt`(0034, 마이그 창 legacy 폴백) → 앵커 토큰 합류(재귀 방향 반영) +
+  payload `user_intent`(LLM "자율 반영·출력 계약 불변" 가드). 진행 중 run 재사용 시 새 지침 무시.
+- cache-buster `admin.js?v=20260703-graph-funcproc` / `styles.css?v=20260703-graph-funcproc`.
+
+### 검증
+- **§18.8 적대 패널 (ULTRACODE workflow, 3렌즈 + MAJOR+ 교차검증 9 agents)**: BLOCKING 1 + MAJOR 5 +
+  MINOR 6 + NIT 3 적발 — 교차검증 전건 real 판정 → **전량 수정**(핵심: Column-루트 parent 승격
+  depth-0 flood 차단 / neighborhood 라벨 실존 필터(0034 skew 창 붕괴 방지) / sync_graph 3b poisoned
+  트랜잭션 복구 / ROUTINE_USES delete-then-merge + SSOT prune / minimap lazy 생성 재시도 / routine-only
+  스키마 펼침). 상세 정본: REVIEW.md REV-20260703T113500-graph-funcproc-uxfix.
+- 단위: 신규 `test_graph_funcproc_uxfix.py` **19 PASS**(정의 파싱 read/write·주석 제거·alias-UPDATE
+  승격·제외 규칙·store_schema 라벨·sync_routine Cypher 형태+stale 회수·라벨 화이트리스트·parent 승격
+  same-depth+depth-0 차단·교차 제품 감쇠·budget 경계·user_prompt 저장/폴백/앵커 토큰·routine_use
+  관련도) + 회귀 **107 PASS**(relevance 28[3-tuple 갱신]·role 10·config_star·relationships 57·
+  metadata_graph_units 10 등) = 합계 **126 PASS**. `node --check`·`py_compile`·migrate-lint PASS.
+- 라이브 검증(AGE·introspect·PB-0008)은 배포 후 수행 — 아래 잔여.
+
+### 잔여
+- 배포(deploy_scope: included): main 병합 → `make migrate`(alembic **0034** 도달 검증 — stale agent
+  이미지 주의) → web·insight-worker 재빌드 → routine introspect 첫 cadence 후 그래프 확인.
+- PB-0008 실 Windows 시각검증(ƒ/⚙ 칩·미니맵 리사이즈 추종·hover popover·재분석 부재).
+
 ## 2026-07-03 · 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (graph-drag, TASK §41)
 
 ### 배경 (사용자 요청)

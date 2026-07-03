@@ -147,6 +147,9 @@ __all__ = [
     "AGENT_RELATIONSHIP_PROBE_SAMPLE",
     "AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS",
     "AGENT_RELATIONSHIP_REINFER_SEC",
+    # graph-funcproc(ADR-016): insight.py(star-import) 가 bare 로 소비 — 등재 의무(rel-selfheal 계약).
+    "AGENT_ROUTINE_INTROSPECT_CAP",
+    "AGENT_ROUTINE_INTROSPECT_ENABLED",
     "AGENT_SCHEMA_BIAS_PENALTY",
     "AGENT_SCHEMA_BIAS_STEP_WINDOW",
     "AGENT_SCHEMA_BIAS_THRESHOLD",
@@ -918,6 +921,12 @@ AGENT_RELATIONSHIP_PROBE_SAMPLE = int(os.getenv("AGENT_RELATIONSHIP_PROBE_SAMPLE
 # (보안 패널 MINOR — _fk_raw_execute 가 _apply_query_cap 을 우회). MySQL=MAX_EXECUTION_TIME 힌트,
 # MSSQL=SET LOCK_TIMEOUT(락 대기 상한). 0 이면 미적용.
 AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = int(os.getenv("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", "5000") or "5000")
+# feature-0016 graph-funcproc(ADR-016): 함수·프로시저(routine) introspection 토글·캡. 기본 ON.
+#  - insight worker 가 관계 유지보수 게이트(rel_maintenance_due)와 같은 cadence 로
+#    INFORMATION_SCHEMA.ROUTINES/PARAMETERS 를 조회해 routine_objects(SSOT)에 upsert →
+#    metadata_graph.sync_graph 가 AGE Routine 노드 + ROUTINE_USES(참조 테이블) 로 투영.
+AGENT_ROUTINE_INTROSPECT_ENABLED = os.getenv("AGENT_ROUTINE_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_ROUTINE_INTROSPECT_CAP = int(os.getenv("AGENT_ROUTINE_INTROSPECT_CAP", "300") or "300")
 # feature-0016 metadata-graph: 관계형 SSOT → Apache AGE `metadata_kb` 그래프 투영 토글.
 #  - 기본 OFF — AGE 확장 미설치(cutover 전) 상태에서 sync/projection 이 no-op 되도록.
 #  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.

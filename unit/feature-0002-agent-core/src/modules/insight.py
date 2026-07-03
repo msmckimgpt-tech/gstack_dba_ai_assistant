@@ -1215,12 +1215,36 @@ ORDER BY TABLE_NAME
                         logging.getLogger("insight").warning(
                             "relationship_infer_probe_failed schema=%s", schema, exc_info=True)
 
-                # rel-selfheal cadence 스탬프 — introspect/추론 어느 쪽이든 이번 사이클에 관계
-                # 유지보수를 수행했으면 기록(둘 다 off 면 미기록 → 활성화 시 즉시 발화).
+                # feature-0016 graph-funcproc(ADR-016): 함수·프로시저 introspect → routine_objects.
+                # 발화 게이트 = rel_maintenance_due(관계 유지보수와 동일 cadence). 정의 파싱으로
+                # 참조 테이블(read/write)을 추출해 그래프 ROUTINE_USES 투영 입력으로 쓴다.
+                # 전부 guarded — insight 스캔을 절대 차단하지 않는다(B-F7: 실패는 경고 1줄).
+                if AGENT_ROUTINE_INTROSPECT_ENABLED and rel_maintenance_due:
+                    try:
+                        from . import routines as _routines
+                        _rt_scope = get_active_datasource()
+                        _n_rt = _routines.introspect_and_store(
+                            db_conn, schema, all_table_names,
+                            kb_conn=None, scope_key=_rt_scope,
+                            datasource_key=str(_rt_scope or ""), source_run_id=run_id,
+                            store_schema=_rel_store_schema,
+                            cap=AGENT_ROUTINE_INTROSPECT_CAP)
+                        report["routines_introspected"] = int(
+                            report.get("routines_introspected", 0)) + int(_n_rt or 0)
+                    except Exception:
+                        logging.getLogger("insight").warning(
+                            "routine_introspect_failed schema=%s", schema, exc_info=True)
+
+                # rel-selfheal cadence 스탬프 — introspect/추론/routine 어느 쪽이든 이번 사이클에
+                # 유지보수를 수행했으면 기록(전부 off 면 미기록 → 활성화 시 즉시 발화).
+                # graph-funcproc(§18.8 패널 MINOR): routine 훅은 all_table_names 없이도(테이블 0·
+                # 프로시저만 있는 스키마) 발화하므로, 스탬프도 같은 조건으로 남겨야 매 cycle
+                # ROUTINES/PARAMETERS 재조회 spin 이 없다 — 게이트/스탬프 조건 정합.
                 if (rel_maintenance_due
-                        and (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
-                             or AGENT_RELATIONSHIP_INFERENCE_ENABLED)
-                        and all_table_names):
+                        and ((AGENT_RELATIONSHIP_INTROSPECT_ENABLED
+                              or AGENT_RELATIONSHIP_INFERENCE_ENABLED)
+                             and all_table_names
+                             or AGENT_ROUTINE_INTROSPECT_ENABLED)):
                     try:
                         _rel_now = utc_now_iso()
                         save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, rel_infer_key, _rel_now)

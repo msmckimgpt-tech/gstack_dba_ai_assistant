@@ -1018,10 +1018,12 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
 
 @router.post("/api/admin/metadata/graph/analyze")
 async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 kb.ingest.manual.
+    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 metadata.graph.read(우산 kb.ingest.manual 함의).
 
-    body: {node_key, scope_key?, depth?, node_budget?}. run 을 만들고 즉시 202 반환 — 실제 분석은
-    insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
+    body: {node_key, scope_key?, depth?, node_budget?, prompt?}. run 을 만들고 즉시 202 반환 — 실제
+    분석은 insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
+    prompt(ADR-017, 선택 ≤400자): hover 툴팁으로 입력한 사용자 분석 지침 — run 에 저장돼 앵커 토큰
+    합류 + LLM user_intent 로 자율 반영된다.
     진행은 GET .../graph/analyze?run_id= 로 폴링, 노드 결과는 GET .../graph/analyze/node?node= 로 조회.
     """
     data = await app._metadata_read_json(request)
@@ -1031,9 +1033,11 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
     scope_key = str(data.get("scope_key") or node_key.split(":", 1)[0] or "common").strip().lower()
     depth = data.get("depth")
     node_budget = data.get("node_budget")
+    user_prompt = str(data.get("prompt") or "").strip()[:400] or None
     from modules import node_analysis as _na
     res = _na.enqueue_analysis(scope_key, node_key, depth_budget=depth, node_budget=node_budget,
-                               requested_by=str((account or {}).get("username") or "") or None)
+                               requested_by=str((account or {}).get("username") or "") or None,
+                               user_prompt=user_prompt)
     if not res.get("ok"):
         reason = res.get("reason") or "분석 시작 실패"
         # fix: 서버측 실패(PG 미가용/disabled/enqueue 실패)는 5xx. 클라 입력 오류만 400(라우트가 이미
@@ -1043,7 +1047,9 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
     app._metadata_audit(request, account, action="node_analysis.enqueue", resource_id=node_key,
                     change_json={"scope_key": scope_key, "run_id": res.get("run_id"),
                                  "depth": depth, "node_budget": node_budget,
-                                 "reused": res.get("reused", False)})
+                                 "reused": res.get("reused", False),
+                                 "prompt_len": len(user_prompt or ""),
+                                 "prompt_preview": (user_prompt or "")[:120] or None})
     return JSONResponse({"ok": True, "run_id": res.get("run_id"), "status": res.get("status"),
                          "reused": res.get("reused", False)}, status_code=202)
 

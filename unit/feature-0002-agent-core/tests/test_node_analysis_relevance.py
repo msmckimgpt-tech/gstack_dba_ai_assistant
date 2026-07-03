@@ -130,7 +130,7 @@ def test_deep_threshold_scales_with_depth():
                "name": "AchievementReward", "fqn": "dbo.AchievementReward"}
     ctx = {"neighbors": [related], "neighbor_meta": {related["key"]: {"kind": "reference"}}}
     # depth1(→ neighbor depth2, 임계 0.34): 통과.
-    assert [n["key"] for _, n in na._score_candidates(ctx, cur_depth=1, anchor=a)] == [related["key"]]
+    assert [n["key"] for _, n, _s in na._score_candidates(ctx, cur_depth=1, anchor=a)] == [related["key"]]
     # depth4(→ neighbor depth5, 임계 0.34+0.06*3=0.52): 0.38 < 0.52 → 탈락.
     assert na._score_candidates(ctx, cur_depth=4, anchor=a) == []
 
@@ -145,7 +145,7 @@ def test_score_candidates_child_tiebreak_by_ordinal_deterministic():
     ctx = {"neighbors": [c2, c1],
            "neighbor_meta": {c2["key"]: {"kind": "column", "child": True},
                              c1["key"]: {"kind": "column", "child": True}}}
-    ordered = [n["key"] for _, n in na._score_candidates(ctx, cur_depth=0, anchor=a)]
+    ordered = [n["key"] for _, n, _s in na._score_candidates(ctx, cur_depth=0, anchor=a)]
     assert ordered == [c1["key"], c2["key"]]   # ordinal 1 먼저
 
 
@@ -180,12 +180,12 @@ def test_root_depth0_child_columns_always_pass_incl_generic():
         },
     }
     kept = na._score_candidates(ctx, cur_depth=0, anchor=a)
-    keys = [n["key"] for _, n in kept]
+    keys = [n["key"] for _, n, _s in kept]
     assert generic_child["key"] in keys       # 일반명이라도 루트 하위 컬럼 → 분석
     assert named_child["key"] in keys
     assert schema["key"] not in keys           # Schema 허브는 확장 제외
     # child 컬럼은 relevance 1.0(최상위).
-    rels = {n["key"]: rel for rel, n in kept}
+    rels = {n["key"]: rel for rel, n, _s in kept}
     assert rels[generic_child["key"]] == 1.0
 
 
@@ -210,7 +210,7 @@ def test_hub_column_depth1_filters_unrelated_fanout():
         },
     }
     kept = na._score_candidates(ctx, cur_depth=1, anchor=a)
-    keys = [n["key"] for _, n in kept]
+    keys = [n["key"] for _, n, _s in kept]
     assert related["key"] in keys              # Achievement 연관 → 재귀 유지
     assert cross["key"] not in keys            # 교차-제품 일반명 → 탈락
     assert unrelated["key"] not in keys        # 같은 제품이라도 무관 일반명 → 탈락
@@ -229,7 +229,7 @@ def test_score_candidates_null_anchor_conservative():
                           other["key"]: {"kind": "reference"}},
     }
     kept = na._score_candidates(ctx, cur_depth=0, anchor=None)
-    keys = [n["key"] for _, n in kept]
+    keys = [n["key"] for _, n, _s in kept]
     assert child["key"] in keys
     assert other["key"] not in keys
 
@@ -275,7 +275,7 @@ def test_trusted_related_passes_at_depth1_via_booster():
     ctx = {"neighbors": [related],
            "neighbor_meta": {related["key"]: {"kind": "reference", "status": "trusted"}}}
     kept = na._score_candidates(ctx, cur_depth=1, anchor=a)
-    assert [n["key"] for _, n in kept] == [related["key"]]
+    assert [n["key"] for _, n, _s in kept] == [related["key"]]
 
 
 def test_trusted_unrelated_excluded_at_depth1_tradeoff():
@@ -294,7 +294,7 @@ def test_depth_ramp_boundary_nd3_pinned():
     related = {"label": "Table", "key": "dk_data_release:dbo.AchievementReward",
                "name": "AchievementReward", "fqn": "dbo.AchievementReward"}
     ctx = {"neighbors": [related], "neighbor_meta": {related["key"]: {"kind": "reference"}}}
-    assert [n["key"] for _, n in na._score_candidates(ctx, cur_depth=1, anchor=a)] == [related["key"]]  # nd2=0.34
+    assert [n["key"] for _, n, _s in na._score_candidates(ctx, cur_depth=1, anchor=a)] == [related["key"]]  # nd2=0.34
     assert na._score_candidates(ctx, cur_depth=2, anchor=a) == []   # nd3=0.40 > 0.38
 
 
@@ -308,8 +308,8 @@ def test_tiebreak_same_name_distinct_key_deterministic():
     mk = lambda order: {"neighbors": order,
                         "neighbor_meta": {n1["key"]: {"kind": "reference"},
                                           n2["key"]: {"kind": "reference"}}}
-    a1 = [n["key"] for _, n in na._score_candidates(mk([n1, n2]), cur_depth=1, anchor=a)]
-    a2 = [n["key"] for _, n in na._score_candidates(mk([n2, n1]), cur_depth=1, anchor=a)]
+    a1 = [n["key"] for _, n, _s in na._score_candidates(mk([n1, n2]), cur_depth=1, anchor=a)]
+    a2 = [n["key"] for _, n, _s in na._score_candidates(mk([n2, n1]), cur_depth=1, anchor=a)]
     assert a1 == a2 == [n1["key"], n2["key"]]   # 입력 순서 뒤집어도 동일(key 오름차순)
 
 

@@ -110,6 +110,17 @@ def _warn_role_column_once(where: str, exc) -> None:
                      where, exc)
 
 
+# user_prompt(alembic 0034, ADR-017) 마이그레이션 창 방어 — role 컬럼(B1)과 동형 legacy 폴백.
+_UPROMPT_COL_WARNED = {"done": False}
+
+
+def _warn_uprompt_column_once(where: str, exc) -> None:
+    if not _UPROMPT_COL_WARNED["done"]:
+        _UPROMPT_COL_WARNED["done"] = True
+        _log.warning("node_analysis user_prompt 컬럼 접근 실패(%s) — alembic 0034 미적용 창으로 보고 legacy 폴백. err=%r",
+                     where, exc)
+
+
 # ── 앵커-상대 관련도 (feature-0016 node-analysis-anchor) ──────────────────────
 # 일반어(도메인 식별력 없는 토큰) — 이름이 이것만 겹치는 이웃은 "단순히 컬럼 명칭이 같은" 경우라
 # 관련도로 인정하지 않는다(사용자 요구). id/uniqueid/seq/regdate 등 관용 컬럼명·구조어 위주.
@@ -264,6 +275,11 @@ def _relevance(node: dict, meta: dict, anchor: dict) -> float:
     # 4) 관련 용어(GlossaryTerm) 는 그 자체가 도메인 개념 앵커 — content 로 인정.
     if label == "GlossaryTerm":
         content += 0.18
+    # 4b) 함수·프로시저 사용 관계(ROUTINE_USES, graph-funcproc ADR-016) — 현재 노드의 테이블을
+    #     실제로 읽고 쓰는 코드 객체(또는 그 역방향)는 도메인 연관 신호. 깊을수록 임계 상향이
+    #     자연 억제하므로 중간 강도(0.35)로 인정.
+    if (meta.get("kind") == "routine_use") and label in ("Routine", "Table"):
+        content += 0.35
 
     if content <= 0.0:
         return 0.0   # 내용 연관 전무 → 신뢰/제품만으론 재귀 제외(M1: 단순 명칭·구조 링크 배제)
@@ -326,14 +342,16 @@ def _fetch_context(node_key: str, conn):
     #   child=True → node_key(현재 노드)의 직속 HAS_COLUMN 자식(=하위 컬럼). 우선순위: 신뢰 REFERENCES > child > 그 외.
     neighbor_meta: dict = {}
 
-    def _record(k, kind, weight=None, status=None, child=False):
+    def _record(k, kind, weight=None, status=None, child=False, parent=False):
         if not k or k == node_key:
             return
         cur = neighbor_meta.get(k)
         if cur is None:
-            neighbor_meta[k] = {"kind": kind, "weight": weight, "status": status, "child": child}
+            neighbor_meta[k] = {"kind": kind, "weight": weight, "status": status,
+                                "child": child, "parent": parent}
             return
         cur["child"] = cur["child"] or child
+        cur["parent"] = cur.get("parent") or parent
         if weight is not None and cur.get("weight") is None:
             cur["weight"] = weight
         if status and not cur.get("status"):
@@ -347,6 +365,13 @@ def _fetch_context(node_key: str, conn):
             if t:
                 columns.append(t)
             _record(tgt, "column", child=True)
+        elif et == "HAS_COLUMN" and tgt == node_key:
+            # graph-funcproc(ADR-017): 현재 노드가 Column 일 때 그 **소속(부모) 테이블** — 재귀로
+            # 참조 컬럼이 분석되면 소속 테이블까지 분석되도록 _score_candidates 가 승격한다.
+            _record(src, "parent_table", parent=True)
+        elif et == "ROUTINE_USES":
+            # graph-funcproc(ADR-016): 함수·프로시저 ↔ 테이블 사용 관계 — 도메인 연관 신호로 채점.
+            _record(tgt if src == node_key else src, "routine_use")
         elif et == "REFERENCES":
             references.append({"from": src, "to": tgt, "cardinality": e.get("cardinality"),
                                "weight": e.get("weight"), "status": e.get("status")})
@@ -398,10 +423,15 @@ def _build_payload(node: dict, ctx: dict) -> dict:
 
 # ── enqueue (웹 트리거) ──────────────────────────────────────────────────────
 def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budget=None,
-                     requested_by=None, conn=None) -> dict:
+                     requested_by=None, user_prompt=None, conn=None) -> dict:
     """루트 노드로 분석 run 생성 + 루트 pending 잡 삽입. 반환 {ok, run_id, status, reason?}.
 
-    같은 (scope_key, root_key) 로 진행 중(status='running') run 이 있으면 그 run_id 를 재사용(중복 방지).
+    같은 (scope_key, root_key) 로 진행 중(status='running') run 이 있으면 그 run_id 를 재사용(중복 방지 —
+    이 경우 새 user_prompt 는 무시된다: 진행 중 run 의 지침을 중간에 바꾸면 앞뒤 분석문의 관점이 갈린다).
+
+    user_prompt(ADR-017): 그래프 뷰 'AI 능동 분석' hover 툴팁으로 입력한 사용자 지침(≤400자) —
+    run 에 저장되어 (a) 앵커 토큰에 합류(관련도 채점이 지침 어휘를 따라가게), (b) LLM payload 의
+    `user_intent` 로 주입돼 분석문에 자율 반영된다.
     """
     if not _cfg_enabled():
         return {"ok": False, "reason": "disabled"}
@@ -432,14 +462,26 @@ def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budg
         ctx = _fetch_context(node_key, c)
         root = ctx.get("root") or {"label": "", "name": node_key, "fqn": ""}
         run_id = _new_run_id()
-        cur.execute(
-            "INSERT INTO node_analysis_runs "
-            "(run_id, scope_key, root_key, root_label, root_name, depth_budget, node_budget, "
-            " status, enqueued, done, failed, requested_by) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,'running',1,0,0,%s)",
-            (run_id, sk, node_key, (root.get("label") or "")[:32],
-             (root.get("name") or node_key)[:512], depth_budget, node_budget,
-             (requested_by or None)))
+        up = (str(user_prompt).strip()[:400] or None) if user_prompt else None
+        base_cols = (run_id, sk, node_key, (root.get("label") or "")[:32],
+                     (root.get("name") or node_key)[:512], depth_budget, node_budget,
+                     (requested_by or None))
+        try:
+            cur.execute(
+                "INSERT INTO node_analysis_runs "
+                "(run_id, scope_key, root_key, root_label, root_name, depth_budget, node_budget, "
+                " status, enqueued, done, failed, requested_by, user_prompt) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,'running',1,0,0,%s,%s)",
+                base_cols + (up,))
+        except Exception as up_exc:
+            # 마이그레이션 창(user_prompt 컬럼 부재, alembic 0034) — 지침만 생략하고 run 은 생성(B1 동형).
+            _warn_uprompt_column_once("enqueue_analysis", up_exc)
+            cur.execute(
+                "INSERT INTO node_analysis_runs "
+                "(run_id, scope_key, root_key, root_label, root_name, depth_budget, node_budget, "
+                " status, enqueued, done, failed, requested_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,'running',1,0,0,%s)",
+                base_cols)
         cur.execute(
             "INSERT INTO node_analysis_jobs "
             "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
@@ -522,6 +564,9 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                 root = ctx.get("root") or {"label": node_label, "name": node_name,
                                            "fqn": node_fqn, "key": node_key}
                 payload = _build_payload(root, ctx)
+                # ADR-017: hover 프롬프트 지침을 run 전 노드 분석에 주입 — LLM 이 자율 판단해 반영.
+                if anchor and anchor.get("prompt"):
+                    payload["user_intent"] = anchor["prompt"]
                 obj = _llm.llm_node_analysis(payload)
                 if isinstance(obj, dict):
                     analysis_text = json.dumps({
@@ -644,11 +689,19 @@ def _load_anchor(c, cur, run_id: str, cache: dict) -> dict:
         return cache[run_id]
     anchor = None
     try:
-        cur.execute("SELECT root_key, root_label, root_name FROM node_analysis_runs WHERE run_id=%s",
-                    (run_id,))
-        r = cur.fetchone()
+        try:
+            cur.execute("SELECT root_key, root_label, root_name, user_prompt "
+                        "FROM node_analysis_runs WHERE run_id=%s", (run_id,))
+            r = cur.fetchone()
+        except Exception as up_exc:
+            # 마이그레이션 창(user_prompt 컬럼 부재) — 지침 없이 legacy 조회(B1 동형).
+            _warn_uprompt_column_once("load_anchor", up_exc)
+            cur.execute("SELECT root_key, root_label, root_name, NULL "
+                        "FROM node_analysis_runs WHERE run_id=%s", (run_id,))
+            r = cur.fetchone()
         if r:
             root_key, root_label, root_name = r[0], (r[1] or ""), (r[2] or "")
+            user_prompt = (str(r[3]).strip() if r[3] else "")
             root_desc = ""
             try:
                 rnode = (_fetch_context(root_key, c).get("root")) or {}
@@ -656,6 +709,10 @@ def _load_anchor(c, cur, run_id: str, cache: dict) -> dict:
             except Exception:
                 pass
             anchor = _build_anchor(root_key, root_label, root_name, root_desc)
+            if user_prompt:
+                # ADR-017: 사용자 지침 어휘를 앵커 토큰에 합류 — 관련도 채점(재귀 방향)이 지침을 따른다.
+                anchor["prompt"] = user_prompt
+                anchor["tokens"] = (anchor.get("tokens") or set()) | _meaningful_tokens(user_prompt)
     except Exception as exc:
         _log.debug("load_anchor_failed err=%r", exc)
     cache[run_id] = anchor
@@ -682,19 +739,33 @@ def _score_candidates(ctx: dict, cur_depth: int, anchor: dict) -> list:
         min_rel = min_val
     else:
         min_rel = min(0.7, deep_val + 0.06 * (neighbor_depth - 2))
-    kept = []
+    kept = []   # (rel, node, same_depth) — same_depth=True 는 depth 를 늘리지 않는 승격(부모 테이블)
     for n in (ctx.get("neighbors") or []):
         k = n.get("key")
         if not k:
             continue
         meta = meta_map.get(k) or {}
         if cur_depth == 0 and meta.get("child"):
-            rel = 1.0                    # 원래 대상의 직속 하위 컬럼 → 기본 분석
-        else:
-            rel = _relevance(n, meta, anchor)
-            if rel < min_rel:
-                continue                 # 관련도 미달 → 재귀 제외
-        kept.append((rel, n))
+            kept.append((1.0, n, False))   # 원래 대상의 직속 하위 컬럼 → 기본 분석
+            continue
+        if meta.get("parent") and (n.get("label") or "") == "Table":
+            # graph-funcproc(ADR-017): 재귀로 분석된 **참조 컬럼의 소속(부모) 테이블**은 임계와
+            # 무관하게 분석 대상으로 승격(사용자 요구 "테이블까진 분석"). 고정 승격값(교차 제품은
+            # 감쇠)이라 그 테이블의 *다음* 확장은 여전히 앵커 게이팅이 막는다 — 재귀 심화 억제.
+            # depth 는 컬럼과 같은 층(same_depth) — "컬럼의 소속" 은 추가 hop 이 아니다(예산 정합).
+            # §18.8 패널(BLOCKING→수정): 단 **cur_depth==0(루트가 Column)** 일 땐 same-depth 금지 —
+            # 부모가 depth 0 으로 들어가면 위의 depth-0 '하위 컬럼 무조건 통과' 규칙이 그 테이블에
+            # 재발화해 전 sibling 컬럼이 rel=1.0 으로 flood(예산 붕괴). depth 1 승격이면 부모는
+            # 분석되되 그 컬럼들은 앵커 게이팅을 받는다(depth-0 자동통과는 실제 루트 전용으로 보존).
+            pr = float(getattr(_cfg, "AGENT_NODE_ANALYSIS_PARENT_TABLE_REL", 0.5))
+            if _scope_of(k) != (anchor.get("scope") or ""):
+                pr *= max(0.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR", 0.25)))
+            kept.append((max(_relevance(n, meta, anchor), pr), n, cur_depth > 0))
+            continue
+        rel = _relevance(n, meta, anchor)
+        if rel < min_rel:
+            continue                 # 관련도 미달 → 재귀 제외
+        kept.append((rel, n, False))
     # 관련도 높은 순 — 예산 우선 소비. 동점(특히 하위 컬럼 1.0)은 ordinal→name 으로 **결정적** 정렬:
     #   예산 절단 시 어느 컬럼이 분석되는지 재현 가능 + 컬럼은 ordinal 순 우선(M5).
     def _tiebreak(node):
@@ -729,12 +800,15 @@ def _enqueue_neighbors(c, cur, run_id: str, scope_key: str, ctx: dict, cur_depth
             if not row:
                 return 0
             depth_budget, node_budget, enqueued = int(row[0]), int(row[1]), int(row[2])
-            if cur_depth + 1 > depth_budget:
-                return 0
             remaining = node_budget - enqueued
             if remaining <= 0:
                 return 0
-            for rel, n in candidates:
+            for rel, n, same_depth in candidates:
+                # ADR-017: 부모 테이블 승격(same_depth)은 depth 를 늘리지 않는다 — depth_budget
+                # 마지막 층의 컬럼도 소속 테이블까지는 분석된다. 그 외는 기존 +1 규칙.
+                d = cur_depth if same_depth else cur_depth + 1
+                if d > depth_budget:
+                    continue
                 if remaining <= 0:
                     break
                 k = n.get("key")
@@ -744,7 +818,7 @@ def _enqueue_neighbors(c, cur, run_id: str, scope_key: str, ctx: dict, cur_depth
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending') "
                     "ON CONFLICT (run_id, node_key) DO NOTHING RETURNING id",
                     (run_id, sk, k, (n.get("label") or "")[:32],
-                     (n.get("name") or k)[:512], (n.get("fqn") or ""), cur_depth + 1,
+                     (n.get("name") or k)[:512], (n.get("fqn") or ""), d,
                      round(float(rel), 4)))
                 if cur.fetchone():
                     inserted += 1
