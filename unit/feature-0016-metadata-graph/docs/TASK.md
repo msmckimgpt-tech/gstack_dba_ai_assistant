@@ -1097,5 +1097,5 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T44.5 `node --check` PASS.
 - [x] T44.6 §18.8 적대 리뷰(REV-20260703T101622): 좌표프레임·offset수학·drag pairing·회귀 6축 → MAJOR 1(nodePos가
   clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
-- [ ] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
+- [x] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
   회귀 접기/펼치기). 라이브 canvas 드래그 자동화 곤란 → 실 Windows 확인 게이트.

@@ -1639,6 +1639,12 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **③ 회귀·안정**: pageerror 0(제품 개요·drill 전 경로). datasource 그래프 경로·검색 무영향.
 - Runner: AI(win-browser eval/goto/screenshot, Chrome149). visual_verification_scope: always 게이트(#13) 충족.
 - **Pass/Fail: 단위·회귀·구문·§18.8 PASS · 라이브 PB-0008 = POST-DEPLOY PASS(2026-07-03)**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·수행 계획 기록).
+
+### Run (2026-07-03) — graph-freeplace: 그래프 클러스터 자유 배치 상호작용 복원 (Major §12.3 — frontend 상호작용, 코드 거주 feature-0003 / 문서 정본 feature-0016-metadata-graph TASK §44, ADR-015) — **Environment: Windows-browser**
+- **정적·§18.8 PASS**: `node --check admin.js` PASS. §18.8 적대 리뷰 REV-20260703T101622(좌표프레임·offset수학·drag pairing 6축 → MAJOR 1 nodePos override 분리 + NIT 1 컬럼 dead 반영, PASS-WITH-FIXES).
+- **배포 `f67c5f8f`**(web-a/b 무중단 롤링·soak 통과 — 첫 시도는 동시 PG 부하 soak false-positive 롤백 후 재시도 성공, 양 replica commit 일치 교차검증). 새 freeplace 코드 라이브 확인(deployed admin.js 에 `_metaClusterOffsetAccumulate`/`combo:dragend`/`clusterOffset` 18매칭).
+- **라이브 실측(자동 가능 범위)**: 메타데이터 > 🕸 그래프 뷰 → datasource(`mssql-dk-dev`) 선택 → 스키마 클러스터 카드 11개 정상 렌더 + 접기/펼치기 어포던스("카드 클릭 시 펼침", #1 유지) + **pageerror 0**(신규 drag 핸들러/build 위치적용 런타임 오류 0). 스크린샷 `scratchpad/freeplace-01-schema-view.png`(레이아웃 무붕괴).
+- **드래그 persistence(#2 클러스터 이동·#3 노드이동 리사이즈) = 사용자 라이브 확인 필요**: G6 Canvas 드래그는 win-browser 하네스로 자동 구동 불가(합성 pointer 이벤트가 @antv/g 히트테스트 미도달, click 은 selector 전용). 코드-레벨 정합은 적대 리뷰로 검증됨(좌표프레임 정합·델타수학·MAJOR fix). 사용자 실 브라우저에서 (a) 접힌 스키마 카드/펼친 combo 드래그 → 클러스터 이동·펼침 후 유지, (b) 클러스터 내 테이블 드래그 → combo 리사이즈·유지, (c) 접기/펼치기 회귀 0 을 확인 요망.
 - **POST-DEPLOY PB-0008 Windows-browser 라이브 실측 — PASS (Environment: Windows-browser, 2026-07-03, 배포 7ad4378b 후, 실 Windows Chrome/149 via bin/win-browser.py relay @ 172.26.144.1:9223, `https://localhost/admin` 로그인 세션)**: 새 admin.js(`?v=20260703-ds-avg-latency`) 로드 확인(`typeof _dsConnStatusLabel`=="function") → 관리 콘솔 > 데이터소스(20건) → 항목 선택 시 상세 패널 섹션 순서 **[연결 좌표, 연결 상태, 출처·보안]**(신규 "연결 상태" 삽입 확인). eval DOM 실측:
   - `mssql-dk-dev`(10.200.104.21): 상태 "정상 (연결 성공)" · **연결 응답 시간(평균) "11.7 ms · 최근 6회 평균"** · 최근 응답 시간 "12.3 ms" · 마지막 확인 "2026. 07. 03. 오후 06:10". ✅
   - `mssql-qa-idc`: 상태 "정상" · **연결 응답 시간(평균) "133.4 ms · 최근 6회 평균"**(다른 지연대 데이터소스도 평균 정상 산출). ✅
