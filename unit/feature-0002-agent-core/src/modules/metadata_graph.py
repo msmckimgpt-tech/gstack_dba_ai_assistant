@@ -28,15 +28,17 @@ _log = logging.getLogger("metadata_graph")
 
 GRAPH = "metadata_kb"
 
-# alembic 0025 사전선언 라벨 화이트리스트 (런타임 동적 라벨 생성 금지)
-_VLABELS = {"Product", "Datasource", "Schema", "Table", "Column", "GlossaryTerm"}
-_ELABELS = {"USES", "HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "REFERENCES", "RELATED_TERM", "DESCRIBES"}
+# alembic 0025(+0034 Routine) 사전선언 라벨 화이트리스트 (런타임 동적 라벨 생성 금지)
+_VLABELS = {"Product", "Datasource", "Schema", "Table", "Column", "GlossaryTerm", "Routine"}
+_ELABELS = {"USES", "HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "REFERENCES", "RELATED_TERM", "DESCRIBES",
+            "HAS_ROUTINE", "ROUTINE_USES"}
 # 노드/엣지 속성 화이트리스트 (Cypher SET 대상 — 임의 키 주입 차단)
 #  weight/status: feature-0016 강화 상태 투영(REFERENCES 엣지) — UI 가 신뢰/추정/파단을 구분.
+#  routine_type/params: 함수·프로시저 노드(graph-funcproc, ADR-016).
 _PROP_KEYS = {"key", "name", "fqn", "scope_key", "description", "source",
               "confidence", "cardinality", "datasource_key", "schema_name",
               "table_name", "column_name", "relation_type", "term",
-              "weight", "status", "ordinal"}
+              "weight", "status", "ordinal", "routine_type", "params"}
 # 숫자(float) 리터럴로 SET 하는 속성(문자열 인용 금지)
 _NUMERIC_PROP_KEYS = {"confidence", "weight"}
 # 정수 리터럴로 SET 하는 속성. feature-0016 graphux5: 컬럼 실제 순서(ordinal).
@@ -318,6 +320,46 @@ def delete_relationship(cur, scope, src_fqn, src_col, tgt_fqn, tgt_col) -> None:
     _cypher(cur, q, 1)
 
 
+def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", refs=None) -> None:
+    """Routine 노드 + HAS_ROUTINE(Schema→Routine) + ROUTINE_USES(Routine→Table) MERGE (ADR-016).
+
+    key/fqn 은 `schema.name()` — 뒤의 `()` 가 동명 테이블 키(`schema.name`)와의 전역 key 충돌을
+    막는 네임스페이스이자 사람이 읽는 함수 표기다. refs = [{fqn:'schema.table', kind:'read|write'}]
+    (routine_objects.referenced_tables). 참조 Table 은 최소 MERGE(설명 미설정 — 큐레이션 비파괴)로
+    앵커링해 고아 엣지를 막는다(_anchor_relationship_column 동형)."""
+    fqn = f"{schema}.{name}()" if schema else f"{name}()"
+    skey = _vkey(scope, schema or "(default)")
+    rkey = _vkey(scope, fqn)
+    _merge_vertex(cur, "Schema", skey,
+                  {"name": schema or "(default)", "fqn": schema or "(default)", "scope_key": scope})
+    _merge_vertex(cur, "Routine", rkey,
+                  {"name": name, "fqn": fqn, "scope_key": scope, "schema_name": schema or "",
+                   "routine_type": routine_type or "procedure", "params": (params or "")[:500],
+                   "source": "routine_introspect"})
+    _merge_edge(cur, "Schema", skey, "HAS_ROUTINE", "Routine", rkey)
+    # §18.8 패널(MAJOR): 가산적 MERGE 만으로는 정의 변경으로 사라진 참조가 그래프에 영구 잔존
+    # (REFERENCES 의 broken stale-edge 클래스 재도입). refs 가 이 routine 의 **전량**이므로
+    # 기존 ROUTINE_USES 를 먼저 회수하고 현재 참조만 재-MERGE 한다(멱등·결정적).
+    try:
+        _cypher(cur, f"MATCH (r:Routine {{key: {_cq(rkey)}}})-[u:ROUTINE_USES]->() DELETE u RETURN 1", 1)
+    except Exception:
+        pass   # 라벨 부재(0034 미적용) 등 — MERGE 단계가 어차피 실패해 호출측 errors 로 집계
+    for r in (refs or []):
+        tfqn = str((r or {}).get("fqn") or "").strip()
+        if not tfqn:
+            continue
+        parts = [p for p in tfqn.split(".") if p]
+        table = parts[-1] if parts else ""
+        if not table:
+            continue
+        tkey = _vkey(scope, tfqn)
+        _merge_vertex(cur, "Table", tkey,
+                      {"name": table, "fqn": tfqn, "scope_key": scope,
+                       "schema_name": ".".join(parts[:-1]), "table_name": table})
+        _merge_edge(cur, "Routine", rkey, "ROUTINE_USES", "Table", tkey,
+                    {"relation_type": (r or {}).get("kind") or "read"})
+
+
 def sync_glossary_term(cur, scope, term, definition="", source="manual") -> None:
     gkey = _vkey(scope, f"term:{term}")
     _merge_vertex(cur, "GlossaryTerm", gkey,
@@ -350,8 +392,8 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
         owned=False(외부 conn 주입) 시엔 트랜잭션 경계를 호출측이 소유하므로 batching 을 적용하지 않는다.
     """
     rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0,
-           "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "errors": 0,
-           "since": since, "synced_at": None, "commits": 0}
+           "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "routines": 0,
+           "errors": 0, "since": since, "synced_at": None, "commits": 0}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
@@ -460,6 +502,33 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                 _pending[0] += 1; _tick()
             except Exception:
                 rep["errors"] += 1
+        # 3b) routine_objects (함수·프로시저, graph-funcproc ADR-016) — Routine 노드 +
+        #     HAS_ROUTINE + 참조 테이블 ROUTINE_USES. 테이블 부재(구 DB·0034 미적용)는 graceful.
+        #     §18.8 패널(MAJOR): owned 배치 트랜잭션에서 SELECT 실패(UndefinedTable)는 트랜잭션을
+        #     aborted 로 만들어 이후 4)·5) 단계까지 조용히 실패시킨다 — 진입 전 pending 을 강제
+        #     커밋하고, 실패 시 rollback 으로 트랜잭션을 복구해 다음 단계를 살린다.
+        _tick(force=True)
+        try:
+            _w, _a = _scope_since_where()
+            cur.execute("SELECT scope_key, schema_name, routine_name, routine_type, params, "
+                        "referenced_tables FROM routine_objects" + _w, _a)
+            for sc, sch, name, rtype, params, refs in cur.fetchall():
+                try:
+                    if isinstance(refs, str):
+                        refs = json.loads(refs or "[]")
+                    sync_routine(cur, sc, sch or "", name, rtype or "procedure",
+                                 params or "", refs if isinstance(refs, list) else [])
+                    rep["routines"] += 1; _pending[0] += 1; _tick()
+                except Exception:
+                    rep["errors"] += 1
+        except Exception:
+            # routine_objects 부재(0034 미적용) — poisoned 트랜잭션 복구 후 비차단(다음 단계 계속)
+            if owned:
+                try:
+                    c.rollback()
+                except Exception:
+                    pass
+            _pending[0] = 0
         # 4) kb_glossary
         try:
             _w, _a = _scope_since_where()
@@ -585,9 +654,12 @@ def _as_int(v):
 
 
 def _node_dict(row):
-    return {"label": _unwrap(row[0]), "key": _unwrap(row[1]), "name": _unwrap(row[2]),
-            "fqn": _unwrap(row[3]), "description": _unwrap(row[4]), "source": _unwrap(row[5]),
-            "ordinal": _as_int(_unwrap(row[6]))}
+    d = {"label": _unwrap(row[0]), "key": _unwrap(row[1]), "name": _unwrap(row[2]),
+         "fqn": _unwrap(row[3]), "description": _unwrap(row[4]), "source": _unwrap(row[5]),
+         "ordinal": _as_int(_unwrap(row[6]))}
+    if len(row) > 7:   # graph-funcproc: 함수·프로시저 구분(FE ƒ/⚙ 표기)
+        d["routine_type"] = _unwrap(row[7])
+    return d
 
 
 def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=None) -> list:
@@ -606,7 +678,8 @@ def search_nodes(query: str, limit: int = 50, scope: str | None = None, conn=Non
         scope_clause = f" AND n.scope_key = {_cq(scope)}" if scope else ""
         rows = _cypher(cur,
             f"MATCH (n) WHERE (toLower(n.name) CONTAINS {ql} OR toLower(n.fqn) CONTAINS {ql}){scope_clause} "
-            f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source, n.ordinal LIMIT {limit}", 7)
+            f"RETURN label(n), n.key, n.name, n.fqn, n.description, n.source, n.ordinal, "
+            f"n.routine_type LIMIT {limit}", 8)
         out = [_node_dict(r) for r in rows]
         # feature-0016 graphux5: pg_trgm 실측 유사도 점수(검색어 대비) 부여 + 내림차순 정렬.
         #   Cypher CONTAINS 로 얻은 후보의 name/fqn 에 pg_trgm similarity() 를 1왕복으로 계산해 score(0~1)
@@ -828,6 +901,44 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
                 })
         except Exception as exc:
             _log.debug("schema_tables_refs_failed err=%r", exc)   # 관계 부재는 비차단(테이블은 이미 반환)
+        # graph-funcproc(ADR-016): 스키마의 함수·프로시저(Routine) 노드 + 참조 테이블 엣지도 함께 반환 —
+        #   클러스터 펼침 시 테이블과 나란히 ƒ/⚙ 칩으로 렌더된다. 라벨 부재(0034 미적용)는 비차단.
+        try:
+            rrows = _cypher(cur,
+                f"MATCH (s:Schema)-[:HAS_ROUTINE]->(r:Routine) "
+                f"WHERE s.scope_key = {sc} AND s.key = {sk} "
+                f"RETURN r.key, r.name, r.fqn, r.description, r.routine_type, r.params "
+                f"LIMIT {limit}", 6)
+            skey0 = None
+            for r in rrows:
+                rkey = _unwrap(r[0])
+                if not rkey:
+                    continue
+                if rkey not in nodes:
+                    nodes[rkey] = {"label": "Routine", "key": rkey, "name": _unwrap(r[1]),
+                                   "fqn": _unwrap(r[2]), "description": _unwrap(r[3]),
+                                   "source": "routine_introspect",
+                                   "routine_type": _unwrap(r[4]), "params": _unwrap(r[5])}
+                if skey0 is None:
+                    skey0 = schema_key
+                result["edges"].append({"source": skey0, "target": rkey, "type": "HAS_ROUTINE",
+                                        "cardinality": None, "edge_source": None})
+            if rrows:
+                urows = _cypher(cur,
+                    f"MATCH (s:Schema)-[:HAS_ROUTINE]->(r:Routine)-[u:ROUTINE_USES]->(t:Table) "
+                    f"WHERE s.scope_key = {sc} AND s.key = {sk} "
+                    f"RETURN r.key, t.key, u.relation_type LIMIT {limit * 4}", 3)
+                useen = set()
+                for ur in urows:
+                    rk = _unwrap(ur[0]); tk = _unwrap(ur[1])
+                    if not rk or not tk or (rk, tk) in useen:
+                        continue
+                    useen.add((rk, tk))
+                    result["edges"].append({"source": rk, "target": tk, "type": "ROUTINE_USES",
+                                            "cardinality": None, "edge_source": None,
+                                            "relation_type": _unwrap(ur[2]) or "read"})
+        except Exception as exc:
+            _log.debug("schema_tables_routines_failed err=%r", exc)
         result["nodes"] = list(nodes.values())
         cur.close()
     except Exception as exc:
@@ -843,15 +954,37 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
 
 def _node_from_props(label: str, props: dict) -> dict:
     """라벨 테이블 properties(dict) → 노드 dict. _node_dict 와 동일 shape."""
-    return {"label": label, "key": props.get("key"), "name": props.get("name"),
-            "fqn": props.get("fqn"), "description": props.get("description"),
-            "source": props.get("source"), "ordinal": _as_int(props.get("ordinal"))}
+    d = {"label": label, "key": props.get("key"), "name": props.get("name"),
+         "fqn": props.get("fqn"), "description": props.get("description"),
+         "source": props.get("source"), "ordinal": _as_int(props.get("ordinal"))}
+    if label == "Routine":   # graph-funcproc: 함수/프로시저 구분 + 파라미터(상세 패널 표시)
+        d["routine_type"] = props.get("routine_type")
+        d["params"] = props.get("params")
+    return d
 
 
 def _gid_array(gids) -> str:
     """graphid 정수 목록 → `ARRAY['<int>'::ag_catalog.graphid, ...]` SQL 리터럴.
     gids 는 전부 DB 에서 온 정수라 int() 검증만으로 injection-safe(문자열 보간 없음)."""
     return "ARRAY[" + ", ".join(f"'{int(g)}'::ag_catalog.graphid" for g in gids) + "]"
+
+
+def _existing_labels(cur, labels) -> list:
+    """화이트리스트 라벨 중 **라벨 테이블이 실존하는 것만**(to_regclass) — 정렬 순서 보존.
+
+    §18.8 패널(MAJOR): neighborhood 의 UNION ALL raw SQL 은 나열된 전 라벨 테이블을 하드 참조한다 —
+    신규 라벨(예: Routine, alembic 0034) 미적용 DB 에서 UndefinedTable 로 **전체 쿼리가 실패**해
+    모든 이웃 조회가 빈 결과가 되는 배포 skew 창(stale 이미지 사례 실재)을 여기서 차단한다.
+    labels 는 상수 화이트리스트(_VLABELS/_ELABELS)라 보간 injection-safe."""
+    names = sorted(labels)
+    try:
+        checks = ", ".join(f"to_regclass('metadata_kb.\"{l}\"')" for l in names)
+        cur.execute(f"SELECT {checks}")
+        row = cur.fetchone() or ()
+        out = [l for l, reg in zip(names, row) if reg is not None]
+        return out if out else names   # 전부 미검출(권한 등 이상)이면 종전 동작 보존
+    except Exception:
+        return names
 
 
 def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
@@ -878,8 +1011,9 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
         _set_age_path(cur)
         seen_nodes = {}    # key -> node dict
         gid2key = {}       # graphid(int) -> key
-        vlabels = sorted(_VLABELS)   # 결정적 순서
-        elabels = sorted(_ELABELS)
+        # 라벨 테이블 실존 필터(§18.8 MAJOR — 0034 미적용 skew 창에서 전체 이웃 조회 붕괴 방지)
+        vlabels = _existing_labels(cur, _VLABELS)   # 결정적 순서(내부 sorted)
+        elabels = _existing_labels(cur, _ELABELS)
         # (1) 시작 노드: vertex 라벨 UNION ALL 을 GIN containment 로 1왕복 조회(파라미터화 = injection-safe).
         #     key 는 라벨 전역 유일(ds:db / ds:db.table / ds:db.table.col)이라 최대 1개 매칭.
         key_param = json.dumps({"key": node_key})
@@ -913,8 +1047,9 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
             for s, e, pr, et in cur.fetchall():
                 sg = int(s); eg = int(e); ep = json.loads(pr) if pr else {}
                 # weight/status(feature-0016): REFERENCES 엣지 강화상태 투영 — UI 신뢰/추정/파단 구분.
+                # relation_type: RELATED_TERM(유사어)·ROUTINE_USES(read/write, graph-funcproc) 공용.
                 edge_hits.append((sg, eg, et, ep.get("cardinality"), ep.get("source"),
-                                  ep.get("weight"), ep.get("status")))
+                                  ep.get("weight"), ep.get("status"), ep.get("relation_type")))
                 if sg not in gid2key:
                     neigh_gids.add(sg)
                 if eg not in gid2key:
@@ -939,7 +1074,7 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                         seen_nodes[k] = _node_from_props(lbl, props)
                         next_frontier.append(g)
             # (4) 엣지 빌드 — 양 끝점이 해소된 것만, 방향(source=start,target=end) + dedup.
-            for sg, eg, et, card, esrc, ewgt, estatus in edge_hits:
+            for sg, eg, et, card, esrc, ewgt, estatus, erel in edge_hits:
                 sk = gid2key.get(sg); tk = gid2key.get(eg)
                 if not sk or not tk:   # cap 로 미해소된 이웃과의 엣지는 생략
                     continue
@@ -952,7 +1087,8 @@ def neighborhood(node_key: str, depth: int = 1, conn=None) -> dict:
                 seen_edges.add(ekey)
                 result["edges"].append({"source": sk, "target": tk, "type": et,
                                         "cardinality": card, "edge_source": esrc,
-                                        "weight": ewgt, "status": estatus})
+                                        "weight": ewgt, "status": estatus,
+                                        "relation_type": erel})
             frontier = next_frontier
         result["nodes"] = list(seen_nodes.values())
         cur.close()

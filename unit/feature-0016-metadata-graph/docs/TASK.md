@@ -1099,3 +1099,47 @@ MODIFY CHG-20260703-node-role-viz.
   clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
 - [x] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
   회귀 접기/펼치기). 라이브 canvas 드래그 자동화 곤란 → 실 Windows 확인 게이트.
+## 45. graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프 뷰/AI 능동 분석 UX 4건 (2026-07-03, entry persona dispatch)
+
+REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메타데이터 > 그래프 뷰):
+① [추가 구조] **함수 & 프로시저 노드** 구성 + 분석·관계 구성. ② [상세 패널] 패널 리사이즈 시 **미니맵
+위치 고정** 수정. ③ [AI 능동 분석] 재귀로 참조 컬럼이 분석돼도 **그 부모 테이블이 분석되지 않는 이슈**
+개선(테이블까진 분석, 앵커 연관성으로 재귀 깊이 억제). ④ 분석 완료 항목의 **'재분석' 버튼 제거**(UX 중복).
+⑤ 'AI 능동 분석' hover 시 **프롬프트 입력 툴팁** → LLM 자율 판단 하 분석 내용에 반영.
+등급: **Major**(비파괴 마이그레이션 + BE/FE 다수 파일 — FUNCTION.md §12 사전승인 범위 내 비파괴 추가만).
+정본: DECISIONS ADR-016(함수·프로시저 구조)·ADR-017(능동 분석 정제) / MODIFY CHG-20260703-graph-funcproc-uxfix.
+
+### 45.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- **① BE**: `alembic/versions/20260703_0034_routine_objects.py`(`routine_objects` SSOT + `node_analysis_runs.user_prompt`
+  + AGE vlabel `Routine`·elabel `HAS_ROUTINE`/`ROUTINE_USES` + GRANT) · `modules/routines.py` 신규
+  (`introspect_and_store` — INFORMATION_SCHEMA.ROUTINES/PARAMETERS(MySQL·MSSQL 공통) + 정의 파싱 참조테이블
+  추출) · `modules/insight.py` rel_maintenance_due 블록 훅(`AGENT_ROUTINE_INTROSPECT_ENABLED`) ·
+  `modules/metadata_graph.py`(`_VLABELS`/`_ELABELS`/`_PROP_KEYS` 확장, `sync_routine`, sync_graph 0b 단계,
+  `schema_tables` Routine 반환, search `routine_type`) · `shared/config.py`(+`__all__`, ADR-007 계약).
+- **① FE**: `admin.js` `_META_GRAPH_COLOR/_META_LABEL_KO.Routine`, `_metaRoutineStyle`, `_metaSchemaComboOf`,
+  `_metaG6Build` 클러스터 합류(kind="routine"), `ROUTINE_USES` 엣지 스타일·`_META_EDGE_TYPE_KO`.
+- **②**: `admin.js` `_metaGraphMinimapAnchor()` — G6 minimap inline left/top 제거(멱등) → CSS right/bottom 앵커,
+  `_metaG6Apply` post-draw 호출.
+- **③**: `modules/node_analysis.py` `_fetch_context`(HAS_COLUMN tgt==self → parent 메타) + `_score_candidates`
+  (parent 승격 rel=max(계산, `AGENT_NODE_ANALYSIS_PARENT_TABLE_REL` 0.5, cross-scope 감쇠)) +
+  `_enqueue_neighbors`(parent 는 same-depth enqueue — depth_budget 소진 없이 "테이블까진 분석").
+- **④**: `admin.js` `metaGraphAiBtn2`(↻ 재분석) 제거 + ctxmenu 라벨 "AI 능동 분석" 고정.
+- **⑤**: `admin.js` AI 버튼 hover popover(지침 textarea ≤400자) → `_metaGraphAnalyze(key, scope, prompt)` ·
+  `routers/admin_metadata.py` analyze POST `prompt` 수용 · `node_analysis.py` `enqueue_analysis(user_prompt=)`
+  runs 저장(마이그 창 legacy 폴백) + 앵커 토큰 합류 + payload `user_intent` · `llm.py` NODE_ANALYSIS_PROMPT
+  user_intent 지침(출력 계약 유지 가드) + Routine 라벨 반영.
+- **AC**: (a) MySQL/MSSQL 스키마의 함수·프로시저가 `routine_objects` 에 적재되고 그래프에 Routine 노드(ƒ 칩)
+  + Schema 소속 + 참조 테이블 점선 엣지로 렌더 (b) Routine 노드 상세/관계/AI 능동 분석 동작 (c) 패널
+  리사이즈·접기 후 미니맵이 캔버스 우하단 유지 (d) 참조 컬럼 분석 시 소속 테이블이 같은 run 에서 분석되고
+  그 테이블 이웃으로의 무관 fan-out 없음 (e) 분석 완료 box 에 재분석 버튼 없음(능동 분석 버튼으로 재실행 가능)
+  (f) hover 지침 입력 시 runs.user_prompt 저장 + 분석문에 지침 맥락 반영(LLM 자율).
+
+### 45.2 구현·검증
+- [x] T45.1 (①) alembic 0034 + routines.py + insight 훅 + metadata_graph 확장 + config(__all__).
+- [x] T45.2 (①) FE Routine 렌더(ƒ/⚙ 보라 칩·보라 잔점선·범례·상세 유형/파라미터/사용 목록·검색 badge).
+- [x] T45.3 (②) 미니맵 anchor 정규화(`_metaGraphMinimapAnchor`, inline left/top→CSS right/bottom).
+- [x] T45.4 (③) parent-table same-depth 승격(node_analysis, ADR-017).
+- [x] T45.5 (④) 재분석 버튼·라벨 제거. (⑤) hover 지침 popover → prompt → user_prompt → user_intent.
+- [x] T45.6 단위 테스트(신규 15 + 회귀 108 PASS) + `node --check`/`py_compile` PASS + verify-completion.
+- [ ] T45.7 배포(deploy_scope: included) + alembic **0034** 도달 검증(stale agent 이미지 주의) +
+      insight-worker 재빌드 + PB-0008 시각검증(TEST.md §graph-funcproc — 배포 선행 사유 기록됨).

@@ -8,6 +8,38 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703-graph-funcproc-uxfix (ai/claude/feature-0016-graph-funcproc-uxfix)
+- Date: 2026-07-03
+- Related Requirement: REQ-20260703-graph-funcproc-uxfix (TASK §45, ADR-016·017) — ① 함수·프로시저 노드
+  +분석·관계 ② 패널 리사이즈 시 미니맵 위치 고정 수정 ③ 재귀 분석의 참조 컬럼 부모 테이블 미분석 개선
+  ④ '재분석' 버튼 제거 ⑤ AI 능동 분석 hover 프롬프트 입력→LLM 자율 반영.
+- Summary:
+  - ① [alembic 0034] `routine_objects` SSOT + `node_analysis_runs.user_prompt` + AGE vlabel `Routine`
+    ·elabel `HAS_ROUTINE`/`ROUTINE_USES` + GRANT. [routines.py 신규] INFORMATION_SCHEMA.ROUTINES/
+    PARAMETERS(MySQL·MSSQL 공통) introspect + 정의 파싱 참조 테이블(read/write, 실재 테이블만) +
+    변경분만 upsert. [insight.py] rel_maintenance_due 게이트 훅(`AGENT_ROUTINE_INTROSPECT_ENABLED`).
+    [metadata_graph.py] 라벨/속성 화이트리스트 확장 + `sync_routine`(key=`schema.name()`) + sync_graph
+    3b 단계 + schema_tables Routine·ROUTINE_USES 반환 + neighborhood/검색 relation_type·routine_type
+    노출. [config] 토글·캡 + `__all__` 등재(ADR-007 계약). [admin.js/html/css] ƒ/⚙ 보라 칩·보라 잔점선
+    엣지·범례·상세(유형·파라미터·사용 테이블/사용 루틴)·검색 스키마 badge 합류. [llm.py] Routine 라벨 계약.
+  - ② [admin.js] `_metaGraphMinimapAnchor()` — G6 minimap 플러그인의 1회 고정 inline left/top 을 auto 로
+    지워 CSS right/bottom 앵커 전환(멱등, `_metaG6Apply` post-draw 호출).
+  - ③ [node_analysis.py] `_fetch_context` 가 Column 노드의 부모 테이블을 parent 메타로 기록 →
+    `_score_candidates` 승격(고정 rel 0.5·교차 제품 감쇠) → `_enqueue_neighbors` **same-depth** enqueue
+    (depth_budget 마지막 층 컬럼의 테이블도 분석). ROUTINE_USES 이웃 content 신호 0.35.
+  - ④ [admin.js] 분석 완료 box '↻ 재분석' 버튼·ctxmenu 'AI 재분석' 라벨 제거(능동 분석 단일 진입점).
+  - ⑤ [admin.js] '✨ 능동 분석' hover 지침 popover(≤400자, Esc/Ctrl+Enter) → [admin_metadata.py]
+    analyze POST `prompt` 수용(+audit prompt_len/preview) → [node_analysis.py] runs.user_prompt 저장
+    (마이그 창 legacy 폴백)·앵커 토큰 합류·payload `user_intent` → [llm.py] user_intent 자율 반영 가드.
+- Files: `unit/feature-0002-agent-core/alembic/versions/20260703_0034_routine_objects.py`(신규),
+  `unit/feature-0002-agent-core/src/modules/{routines.py(신규),metadata_graph.py,node_analysis.py,insight.py,llm.py}`,
+  `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`,
+  `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`, `shared/config.py`,
+  `unit/feature-0002-agent-core/tests/{test_graph_funcproc_uxfix.py(신규),test_node_analysis_relevance.py}`.
+- Impact: 마이그레이션은 비파괴 추가만(FUNCTION §12 사전승인 범위). 기존 그래프·분석 경로 무변경 시
+  회귀 0(단위 123 PASS — 신규 15 + 회귀 108). routine introspect 는 read-only + cap + cadence 게이트.
+- Rollback Notes: 코드 revert + (원하면) alembic downgrade 0034(=user_prompt/routine_objects DROP —
+  AGE Routine 라벨·노드는 보존되며 재-introspect 로 재생성 가능). FE 는 cache-buster 재bump.
 ## CHG-20260703T101622-ai-claude-feature-0016-graph-freeplace
 - What: 그래프 뷰 스키마 클러스터 **자유 배치 상호작용 복원**(사용자 회귀 보고, TASK §44, ADR-015). ADR-004
   Cytoscape→G6 결정론 배치가 rebuild(펼침/접기)마다 위치를 초기화하던 것을, 사용자 드래그 위치를 **persistence**

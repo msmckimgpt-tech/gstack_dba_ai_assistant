@@ -1651,3 +1651,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - `mssql-web-qa`·`mssql_local`(끊김): 상태 "끊김 (도달 불가)" · 연결 응답 시간(평균) "측정 중 (연결 성공 시 집계)" — 성공 표본 0 이라 오해 소지 stale 값 미표시(설계대로). ✅
   - MINOR(0 ms 순간값 가드) 실효 확인: 표시된 "최근 응답 시간"은 모두 >0(foreground 0.0-coerce 미표시). 스크린샷 증적 `scratchpad/ds-avg-latency-verify.png`(레이아웃 무붕괴).
   - Runner: AI(win-browser eval, Chrome149 eval 채널 정상 — "1+1"→2 프로브). pageerror 0.
+- **Pass/Fail: 정적·문법·§18.8·라이브 PB-0008 실측 전부 PASS**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 기록 — 라이브 PASS). POST-DEPLOY: 병합·재배포 후 cache-buster `admin.js?v=20260703-graph-drag` 로 재확인 예정.
+
+### Run (2026-07-03) — graph-funcproc-uxfix: 함수·프로시저 노드 + 미니맵 리사이즈 추종 + AI 능동 분석 UX 3건 (Major §12.3 — 코드 거주 feature-0002/0003 / 문서 정본 feature-0016-metadata-graph TASK §45, ADR-016·017)
+- **정적·문법 검증 PASS**: `node --check admin.js` PASS. Routine 렌더(ƒ/⚙ 보라 칩·ROUTINE_USES 보라 잔점선·범례·상세 유형/파라미터/사용 목록)·`_metaGraphMinimapAnchor`(미니맵 inline left/top→CSS 앵커)·'↻ 재분석' 제거·AI 능동 분석 hover 지침 popover(`_metaGraphBindAiPopover`). 단위 pytest 신규 15 + 회귀 108 PASS(정본 feature-0016 TEST.md §graph-funcproc-uxfix).
+- **Environment: Windows-browser (PB-0008) — 미수행(사유): Routine 노드·hover 지침 반영 분석문은 alembic 0034 적용 + insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재** — deploy_scope: included 로 merge 직후 배포 후 라이브 그래프 뷰에서 ① ƒ/⚙ 칩+보라 잔점선 ② 패널 리사이즈 시 미니맵 우하단 추종 ③ hover popover→분석문 지침 반영 ④ 재분석 버튼 부재 를 실 Windows Chrome 으로 육안 확인 예정(POST-DEPLOY Run 을 본 섹션에 append).

@@ -25,6 +25,12 @@ source_of_truth: true
   Graph DB 모델로 명시하며 (c) UI를 그래프 형태 + 검색 가능하게 하고 (d) AI가 그 메타데이터를
   통해 요청을 수행하는 부분을 정합한다. (e) KB 전용 PG 의 그래프 플러그인(Apache AGE)을
   내부 구조로 함께 도입한다.
+- REQ-20260703-graph-funcproc-uxfix: (a) **함수·프로시저 노드**를 그래프에 구성하고 분석·관계
+  (참조 테이블)를 함께 구성한다. (b) 상세 패널 리사이즈 시 미니맵 위치 미갱신을 수정한다.
+  (c) AI 능동 분석 재귀에서 참조 컬럼이 분석되면 그 **소속 테이블까지 분석**하되 앵커 연관성으로
+  재귀 심화를 억제한다. (d) 분석 완료 항목의 '재분석' 버튼을 제거한다(능동 분석 재실행으로 충분).
+  (e) 'AI 능동 분석' hover 시 프롬프트 입력 툴팁을 제공하고, 입력 지침을 LLM 이 자율 판단 하
+  분석 내용에 반영한다. (TASK §45 / ADR-016·017)
 
 ### 사용자 결정 (2026-06-30, entry persona dispatch)
 - **A3 — AGE 즉시 도입**: 게임 서비스 특성상 컨텐츠·기능 용어 기반 LLM 질의가 잦고, AI 컨텍스트
@@ -51,7 +57,11 @@ source_of_truth: true
 
 ### 4.1 노드 레이블
 - `Product` (제품) · `Datasource` (데이터소스) · `Schema` · `Table` · `Column` · `GlossaryTerm`
+  · `Routine` (함수·프로시저, graph-funcproc ADR-016 — alembic 0034)
 - 공통 속성: `scope_key`, `fqn`, `name`, `description`, `source`, `confidence`, `updated_at`.
+- `Routine` 추가 속성: `routine_type`(function|procedure) · `params`(introspect 된 시그니처).
+  key/fqn = `schema.name()` — `()` 가 동명 테이블 키와의 전역 key 충돌을 막는 네임스페이스.
+  SSOT = 관계형 `routine_objects`(INFORMATION_SCHEMA.ROUTINES/PARAMETERS introspect + 정의 파싱).
 - `Column` 추가 속성(graphux5): `ordinal` — 실제 스키마 컬럼 순서(1-based). 관계형 SSOT
   `column_descriptions.ordinal`(부트스트랩 골격 = `describe_columns` ORDINAL_POSITION 순서 캡처)의 투영.
   그래프 UI 가 이 값으로 Column 을 Table 하단에 실제 순서대로 세로 배치한다(미상 = name 순 fallback).
@@ -65,6 +75,8 @@ source_of_truth: true
   UI 는 trusted=실선 / candidate=점선 / broken=숨김. broken 은 투영에서 제외(학습된 '비관계').
 - `(GlossaryTerm)-[:RELATED_TERM {relation_type}]->(GlossaryTerm)` — synonym/similar/see_also
 - `(GlossaryTerm)-[:DESCRIBES]->(Table|Column)` — 용어↔객체 연결 (확장)
+- `(Schema)-[:HAS_ROUTINE]->(Routine)` / `(Routine)-[:ROUTINE_USES {relation_type: read|write}]->(Table)`
+  — 함수·프로시저 소속 + 정의 파싱으로 추출한 참조 테이블(graph-funcproc, ADR-016). UI 는 보라 잔점선.
 
 ### 4.2.1 암묵 관계 자기교정 (implicit-edges, 2026-07-01)
 FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 추론**(source='inferred', status='candidate')한

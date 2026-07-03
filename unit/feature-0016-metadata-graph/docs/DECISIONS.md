@@ -439,4 +439,81 @@ source_of_truth: true
   - **Cytoscape 로 롤백**: ADR-004 가 해소한 5개 관찰 결함(클릭접힘·위치점프·줌지연·클러스터뒤섞임·테두리왜곡) 재발 — 기각.
   - **force layout 재도입**: ④ 클러스터 뒤섞임 재유발(ADR-004 기각 사유) — 기각. offset 레이어가 결정론 유지하며 자유배치 제공.
 - Supersedes: (ADR-004 의 결정론 배치를 대체하지 않음 — 그 위에 opt-in offset 레이어 추가)
+## ADR-016 — 함수·프로시저 노드: routine_objects SSOT + AGE Routine 라벨 + INFORMATION_SCHEMA 공통 경로 + 정의 파싱 참조
+- Status: Accepted
+- Date: 2026-07-03
+- Context: 사용자 요청(REQ-20260703-graph-funcproc-uxfix ①) — 그래프 뷰에 **함수 & 프로시저 노드**를
+  구성하고 분석·관계도 구성. 기존 그래프는 Table/Column/GlossaryTerm 만 다뤄 DB 의 코드 객체(프로시저·
+  함수)가 완전히 비가시였다 — 게임 운영 DB 는 지급/정산 로직이 프로시저에 있는 경우가 많아 "이 테이블을
+  누가 읽고 쓰는가"의 큰 축이 빠져 있었다.
+- Decision:
+  1. **SSOT = 신규 관계형 `routine_objects`**(alembic 0034, 비파괴 추가) — AGE 는 투영(FUNCTION §4.3
+     원칙 불변). insight-worker 가 관계 유지보수 게이트(rel_maintenance_due, ADR-007 cadence)에서
+     `INFORMATION_SCHEMA.ROUTINES/PARAMETERS`(MySQL·MSSQL **공통 뷰**)를 조회해 upsert(`modules/
+     routines.py`). 반환형은 방언별 컬럼이 갈려(MySQL DTD_IDENTIFIER vs MSSQL DATA_TYPE) PARAMETERS
+     의 ORDINAL_POSITION=0(공통 규약)에서 얻는다. 스키마-slot 은 ADR-007 규약(MySQL=schema/MSSQL=DB명,
+     store/query 분리). 변경 없는 행은 updated_at 불변(IS DISTINCT FROM 가드 — 증분 sync 정합).
+  2. **참조 테이블 = 정의 텍스트 보수적 파싱**: FROM/JOIN(read)·INSERT INTO/UPDATE/DELETE FROM/
+     MERGE INTO(write) 뒤 식별자를 leaf 정규화해 **그 스키마에 실재하는 테이블만** 채택(임시 #·변수 @·
+     미존재·자기자신 제외, 테이블당 1 entry — write 우선). MSSQL 정의는 4000자 절단본이라 부분 커버
+     수용(정확도보다 안전 우선).
+  3. **그래프 모델**: vlabel `Routine`(props: routine_type function|procedure, params) + elabel
+     `HAS_ROUTINE`(Schema→Routine)·`ROUTINE_USES`(Routine→Table, relation_type read|write).
+     key/fqn = `schema.name()` — 뒤의 `()` 가 동명 테이블 키(`schema.name`)와의 전역 key 충돌을 막는
+     네임스페이스(GlossaryTerm `term:` prefix 와 동형 발상)이자 사람이 읽는 함수 표기. 참조 Table 은
+     최소 MERGE 앵커링(고아 엣지 방지 — _anchor_relationship_column 동형).
+  4. **노출**: schema_tables 가 Routine+ROUTINE_USES 를 함께 반환(클러스터 펼침 시 테이블과 나란히
+     ƒ/⚙ 보라 칩 #7b5cd6, 사용 엣지=보라 잔점선) · 검색(routine_type 포함) · 상세 패널(유형·파라미터·
+     사용 테이블/사용 루틴 상호 이동) · AI 능동 분석(ROUTINE_USES = content 신호 0.35, NODE_ANALYSIS_PROMPT
+     에 Routine 라벨 계약 추가).
+- Consequences: 프로시저/함수가 스키마 클러스터 안에 테이블과 나란히 출현하고, 어떤 테이블을 읽고
+  쓰는지가 그래프·상세·AI 분석에서 관측된다. introspection 은 read-only + 스키마당 cap
+  (`AGENT_ROUTINE_INTROSPECT_CAP` 300) + cadence 게이트라 부하 제한적. 알려진 한계: ① 정의 접근 권한
+  부재 시 ROUTINE_DEFINITION NULL — 노드는 생기고 참조만 빈다(graceful). ② 동적 SQL(EXEC(@s))·절단
+  정의의 참조는 누락 가능 — MSSQL sys.sql_expression_dependencies 승격은 후속. ③ routine→routine
+  호출(EXEC) 관계는 v1 범위 밖. ④ ROUTINE_USES 엣지는 양끝이 렌더된 경우만 표시(접힌 스키마 카드로의
+  승격은 후속).
+- Alternatives:
+  - rag_objects 에 object_type='routine' 편입: 기존 object_type='table' 가정 소비처(그래프 sync·검색·
+    insight)의 blast-radius 큼 + referenced_tables/params 필드 부재 → 전용 테이블(기각).
+  - 라벨 2개(Function/Procedure): 화이트리스트·색·범례 2배 — routine_type 속성 1개가 단순(기각).
+  - MSSQL sys.sql_expression_dependencies: 정확하나 방언 분기 확대 — v1 은 공통 뷰 단일 경로, 정확도
+    요구 확인 후 승격(보류).
+- Supersedes:
+- Superseded By:
+
+## ADR-017 — AI 능동 분석 정제: 참조 컬럼의 부모 테이블 same-depth 승격 + hover 지침(user_prompt) 주입 + '재분석' 제거
+- Status: Accepted
+- Date: 2026-07-03
+- Context: 사용자 관찰 3건(REQ-20260703 ③④⑤). ③ 앵커 게이팅(ADR-003) 이후, 재귀가 참조 **컬럼**까지는
+  분석하지만 그 컬럼의 **소속 테이블**은 이름·설명이 앵커와 무관하면 content=0 으로 탈락 — "컬럼은
+  분석됐는데 그 부모 테이블은 미분석"인 어색한 절단(예: Achievement.ItemID→ItemMaster.ItemID 컬럼은
+  분석, ItemMaster 테이블은 미분석). ④ 분석 완료 box 의 '↻ 재분석' 버튼은 헤더 '✨ 능동 분석' 재실행과
+  중복(UX). ⑤ 분석 의도를 전달할 입력이 없어 항상 같은 관점의 분석문만 생성.
+- Decision:
+  1. **부모 테이블 same-depth 승격**: 분석되는 노드가 Column 이면 그 HAS_COLUMN 부모 Table 을 임계와
+     무관하게 승격 enqueue — 관련도는 고정 0.5(교차 제품은 CROSS_SCOPE_FACTOR 감쇠, env
+     `AGENT_NODE_ANALYSIS_PARENT_TABLE_REL`), **depth 는 컬럼과 같은 층**("소속"은 추가 hop 이 아니다 —
+     depth_budget 마지막 층 컬럼의 테이블도 분석됨). 그 테이블의 *다음* 확장은 여전히 앵커 게이팅이
+     막아 재귀 심화를 억제(사용자 요구 "테이블까진 분석하되 너무 깊어지진 않게"의 구현). node_budget·
+     dedupe(UNIQUE run_id,node_key) 불변.
+  2. **'재분석' 제거**: box 의 '↻ 재분석' 버튼·ctxmenu 'AI 재분석' 라벨 삭제 — 능동 분석 재실행이 곧
+     재분석(단일 진입점).
+  3. **hover 지침**: '✨ 능동 분석' 버튼 hover 시 툴팁형 입력(≤400자, Esc 닫기·Ctrl+Enter 시작) →
+     `analyze POST prompt` → `node_analysis_runs.user_prompt`(alembic 0034) 저장 → (a) **앵커 토큰에
+     합류**(관련도 채점이 지침 어휘를 따라 재귀 방향에 반영) + (b) LLM payload `user_intent` 주입
+     (NODE_ANALYSIS_PROMPT 에 "분석 관점으로 자율 반영하되 출력 계약·데이터 불변" 가드 명문화 —
+     사용자 요구 "llm의 자율적인 판단 하에" 정합). 진행 중 run 재사용 시 새 지침은 무시(앞뒤 분석문
+     관점 혼합 방지). 마이그 창(컬럼 부재)은 role(B1) 동형 legacy 폴백 + 1회 경고.
+- Consequences: 참조 컬럼이 분석되면 소속 테이블도 같은 run 에서 분석돼 "테이블까지" 완결되고, 무관
+  fan-out 은 앵커 게이팅·예산이 그대로 차단. 지침 입력 시 재귀 방향·분석문이 사용자 의도를 따른다
+  (soft 신호 — 강제 아님). UI 는 버튼 1개로 단순화. 알려진 한계: 승격은 Column→Table 1단만(Schema
+  허브 차단 불변). audit 에는 prompt_len + 120자 preview 만 기록.
+- Alternatives:
+  - depth+1 로 부모 enqueue: depth_budget 마지막 층에서 여전히 탈락 — 사용자 관찰 그대로 재발(기각).
+  - 관련도 상속(컬럼 rel×계수): claim 쿼리에 rel 반환 추가 필요 + 깊을수록 0 수렴해 승격 실패 —
+    고정값 + 교차 제품 감쇠가 단순·예측 가능(기각).
+  - 지침을 노드 필터로 강제: LLM 자율성 상실 + 빈 결과 위험 — soft 신호(토큰 합류 + user_intent)로
+    절충(기각).
+- Supersedes: (ADR-003 게이팅에 승격 예외 1종 추가 — 대체 아님, 정제)
 - Superseded By:

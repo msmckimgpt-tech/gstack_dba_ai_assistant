@@ -446,3 +446,31 @@ origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 �
   drag pairing·G6 combo drag 확인. MAJOR 1(nodePos override 분리) + NIT 1(컬럼 dead) 반영 → PASS-WITH-FIXES (REV-20260703T101622).
 - **POST-DEPLOY 실 Windows 브라우저(PB-0008)**: 배포 후 4-상호작용 수동 검증 예정(접힌 카드 드래그·combo 드래그·테이블 드래그+
   펼침·접기/펼치기 회귀) — feature-0003 TEST.md §3 `Environment: Windows-browser`. 라이브 canvas 드래그 자동화 곤란 → 실 Windows 게이트.
+## graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프/능동분석 UX 4건 (2026-07-03, TASK §45 / ADR-016·017)
+
+### 단위 — tests/test_graph_funcproc_uxfix.py (Environment: unit/pytest, DB 불요) — Run 2026-07-03 **19 PASS** (§18.8 패널 수정 반영 후)
+- ① 정의 파싱: read/write kind 분류(FROM/JOIN vs INSERT/UPDATE/DELETE)·write 우선 dedupe·임시(#)/변수(@)/
+  미존재/자기자신 제외·3-part 인용 식별자 leaf 정규화·빈 입력. introspect_and_store: routine_objects
+  upsert 형태(ON CONFLICT 4키·store_schema 라벨·참조 fqn 라벨 접두·params/반환형 pos0).
+- ① sync_routine Cypher: `MERGE (n:Routine {key: '...usp_GiveReward()'})`(동명 테이블 충돌 방지 `()`
+  네임스페이스)·routine_type SET·HAS_ROUTINE·ROUTINE_USES relation_type·참조 Table 앵커링. 라벨/속성
+  화이트리스트(Routine·HAS_ROUTINE·ROUTINE_USES·routine_type/params) 등재 확인.
+- ③ parent 승격: _fetch_context 가 Column 의 부모 Table 을 parent 메타로 기록 → _score_candidates 승격
+  (rel≥0.5·same_depth=True·교차 제품 감쇠<0.5) → _enqueue_neighbors 가 depth_budget 마지막 층에서도
+  부모를 same-depth 로 삽입(일반 이웃은 예산 초과 미삽입 — 경계 검증).
+- ⑤ user_prompt: enqueue INSERT 저장(strip·마지막 파라미터)·마이그 창(UndefinedColumn) legacy 폴백·
+  _load_anchor 지침 토큰 합류(결제/환불 + 기존 앵커 토큰 보존)·ROUTINE_USES 이웃 content 인정.
+- 실행: `python3 -m pytest unit/feature-0002-agent-core/tests/test_graph_funcproc_uxfix.py -q`
+
+### 회귀 — pytest (Environment: unit/pytest) — Run 2026-07-03 **107 PASS · 실패 0** (합계 126 — §18.8 패널 BLOCKING 1·MAJOR 5 전량 수정 후 재실행; 패널 정본 REVIEW.md REV-20260703T113500-graph-funcproc-uxfix)
+`test_node_analysis_relevance.py`(28 — _score_candidates 3-tuple 반환 확장에 맞춰 unpack 갱신) ·
+`test_node_analysis_role.py`(10) · `test_config_star_export.py`(AST 가드 — 신규 AGENT_ROUTINE_* __all__
+등재 통과) · `test_relationships.py`(57) · `test_metadata_graph_units.py`(10). `node --check admin.js`
+· `python3 -m py_compile`(변경 py 전건) PASS.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 배포 후 라이브 Run 을 본 섹션에 append (§15.4.1)
+본 cycle 은 deploy_scope: included 로 merge 직후 web+insight-worker 배포 + alembic 0034 적용 →
+라이브 그래프 뷰에서 ① ƒ/⚙ 함수·프로시저 칩 + 보라 잔점선(테이블 사용) ② 상세 패널 리사이즈 시
+미니맵 우하단 추종 ③ hover 지침 popover → 분석문 반영 ④ 분석 완료 box 재분석 버튼 부재 를 실
+Windows Chrome 으로 육안 확인 예정. (pre-commit 시점 미수행 사유: Routine 노드는 alembic 0034 +
+insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 — 배포 선행 필요.)
