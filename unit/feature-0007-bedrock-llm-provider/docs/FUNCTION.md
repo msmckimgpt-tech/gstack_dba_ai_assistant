@@ -124,6 +124,20 @@ source_of_truth: true
   로 graceful degrade (catalog 갱신 + ADR 보강).
 
 ## 9. Error Handling
+- **LLM 계정 rate-limit 요청-레벨 fallback** (insight-llm-fallback, 2026-07-03): `claude-haiku-4` 호출이
+  429(RateLimitError) 또는 실패 시 litellm `fallbacks` 가 **순서 폴백** — `claude-haiku-4-root`(root Max
+  계정) → `edge-fallback`(로컬 gemma, rate-limit 없음). `num_retries:1`(동일 deployment 1회 재시도 후
+  폴백). insight 의 burst 호출이 claude-corp RPM/TPM 을 넘겨 429 가 나도 다음 계정/로컬로 즉시 우회해 생성
+  무중단. deployment 별 자격: `claude-haiku-4`=ANTHROPIC_API_KEY(claude-corp), `claude-haiku-4-root`=
+  ANTHROPIC_API_KEY_ROOT(root). 두 토큰은 `bin/refresh-claude-oauth-token.sh` 가 병행 주입(각 slot 독립
+  static+probe 검사, 사용가능 시만 갱신, 만료/401/429 는 litellm 이 다음 fallback 으로 흡수). edge 는
+  thinking 미지원이나 `drop_params:true` 가 미지원 파라미터 제거. `claude-sonnet-4`(=ANTHROPIC_API_KEY)는
+  fallback 미구성(주력 대화용, 별도).
+  - **운영 인지(강등 SLO)**: refresh cron 은 평일 업무시간(`0,30 10-18 * * 1-5`)만 돈다. root/claude-corp
+    accessToken 은 short-lived(~수시간)이므로 **야간·주말**에는 두 토큰이 만료돼 claude 요청이 401 →
+    litellm 이 최종 `edge-fallback`(gemma)으로 **상시 강등**한다(하드실패 아님, best-effort — gemma JSON 품질이
+    낮아 일부 insight 는 skip 수렴). "root Max 품질" 이점은 업무시간 + 신선 토큰 창에서만 신뢰적. 24/7 품질이
+    필요하면 refresh cron 을 상시화하거나(토큰 갱신 빈도↑) Bedrock 자격 복구가 후속 과제.
 - gateway 503 → `/api/ask` 가 사용자에게 "LLM 서비스 일시 장애" 안내. 재시도
   가능. agent loop 가 중단되어도 conversation 은 보존.
 - Bedrock 자격증명 회수 / 만료: gateway 컨테이너 startup fail-loud (gateway

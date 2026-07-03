@@ -855,37 +855,56 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T36.6 **§18.8 적대 리뷰 [SUBAGENT]**(회귀·잔여참조·CSS변수·접힘UX·패널접기부작용·레이아웃·시인성 7축): BLOCKING 0·NIT 2 수용. 결과 REVIEW REV-20260703T020000-ai-claude-feature-0016-role-legend-panel 참조.
 - [ ] T36.7 배포(web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 그래프 뷰에서 역할 범례가 우측 상세 패널 상단에 세로로 표시되고 summary 클릭으로 접힘/펼침 동작 육안 확인.
 
-## 37. graph-rel-layout — 관계 기반 배치(엣지 교차 최소화): 스키마 seriation + 클러스터 내 관계 군집·barycenter 정렬 (2026-07-03, 사용자 요청)
+## 37. role-legend-bottom — 역할 범례를 상세 패널 하단으로 이동 + 확장 시 밀림/뒤틀림 해소 (2026-07-03, 사용자 후속 피드백)
+사용자 후속 피드백(role-legend-panel 배포 후): ① 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI 를 밀어 내용이 뒤틀림**. 정본: MODIFY CHG-20260703-role-legend-bottom.
+등급: **Minor**(프론트 표현 전용 — 데이터 API·스키마·JS 로직 불변, 비파괴, 마이그레이션 없음).
+
+### 37.0 진단
+- [x] T37.0 원인: 범례가 aside 의 **첫 자식**(progress/detailBody 앞)이고 `open` 이라, 고정높이(`clamp(420px,64vh,760px)`)+`overflow-y:auto` 패널에서 범례 확장이 아래의 노드 상세를 밀어내려 상세가 뷰 밖으로 밀림 → "뒤틀림" 체감.
+
+### 37.1 구현
+- [x] T37.1 admin.html: 범례 `<details>` 블록을 aside **첫 자식 → 마지막 자식**(detailBody 뒤)으로 이동. 범례가 마지막이라 접힘/펼침이 위 콘텐츠를 밀지 않음.
+- [x] T37.2 styles.css: `.admin-meta-graph-detail` 에 `display:flex; flex-direction:column` 추가 + `.admin-meta-graph-detail > * { flex-shrink:0 }`(자식 압축 금지 → overflow 시 컨테이너 스크롤, 노드 상세 눌림/잘림 방지).
+- [x] T37.3 styles.css: `.admin-meta-graph-rolelegend` `margin-bottom:12px` → `margin-top:auto`(콘텐츠 짧을 때 패널 **바닥 고정**).
+- [x] T37.4 cache-buster `styles.css?v=20260703-role-legend-bottom`(admin.js 무변경).
+
+### 37.2 검증
+- [x] T37.5 **headless playwright 렌더 격리 실증**(실제 규칙 복제, 2시나리오): (A) 빈 상세=범례 바닥 고정(`pinnedNearBottom:true`, 위 여백 262px). (B) 긴 상세 30행=노드 상세 `firstNodeH:32`(온전·미압축)·`dbH==dbScrollH(983)`(잘림 없음)·aside `canScroll:true`(스크롤) → 상세 밀림/뒤틀림 없음. 스크린샷 육안 확인.
+- [x] T37.6 **§18.8 적대 리뷰 [SUBAGENT]**(detailBody wipe 회귀·flex 부작용·margin-top:auto+overflow·detail-collapsed 토글·반응형·잔여/버스터·접근성): 결과 REVIEW REV-20260703-role-legend-bottom 참조.
+- [ ] T37.7 배포(web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 그래프 뷰에서 역할 범례가 상세 패널 **하단**에 표시되고, 접힘/펼침 시 위 노드 상세가 밀리지 않는지 육안 확인.
+
+## 38. graph-rel-layout — 관계 기반 배치(엣지 교차 최소화): 스키마 seriation + 클러스터 내 관계 군집·barycenter 정렬 (2026-07-03, 사용자 요청)
 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰): 관계 연결이 복잡해질수록 화면 가시성 저하 — 스키마 카드 내
 테이블이 단순 기준(자연정렬)으로 나열되어 악화. ① 노드 연결선이 되도록 교차하지 않게 ② 관계가 확보될수록
 각 연결·유사도 기준에 따라 노드가 배치되도록. 정본: MODIFY CHG-20260703-graph-rel-layout / DECISIONS ADR-012.
+(원래 §37 로 작성했으나 role-legend-bottom 이 §37 을 선점·선병합해 §38 로 재번호.)
 등급: **Minor**(프론트 배치 로직 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
 
-### 37.1 계획 (§7.1 — 파일·심볼·수용 기준)
+### 38.1 계획 (§7.1 — 파일·심볼·수용 기준)
 - `unit/feature-0003-agent-web-ui/src/static/admin.js`: 신규 `_metaRelTableKeyOf`·`_metaRelAdjacency`·
   `_metaRelSchemaOrder`·`_metaRelTableOrder`·`_metaRelOrderAll` + `_metaG6Build` 배선(ids seriation·relOrder).
 - `unit/feature-0003-agent-web-ui/src/static/admin.html`: cache-buster `admin.js?v=20260703-graph-rel-layout`.
 - AC: (a) 관계 0 → 기존 자연정렬 배치와 완전 동일(회귀 0) (b) 관계 존재 → 스키마 seriation+군집+barycenter 로
   교차 감소(격리 벤치 정량) (c) 결정론(같은 입력=같은 출력)·펼침-불변(ADR-004 ② 배정 불변식 유지).
 
-### 37.2 구현 (admin.js)
-- [x] T37.1 관계 인접행렬 `_metaRelAdjacency` — REFERENCES 끝점(컬럼 키)→소속 테이블 승격(`_metaRelTableKeyOf`),
+### 38.2 구현 (admin.js)
+- [x] T38.1 관계 인접행렬 `_metaRelAdjacency` — REFERENCES 끝점(컬럼 키)→소속 테이블 승격(`_metaRelTableKeyOf`),
       유사도 w = trusted 2 · 그 외 1, 모델 실재 테이블 쌍만 무향 누적.
-- [x] T37.2 스키마 seriation `_metaRelSchemaOrder` — greedy attachment(총 가중 최대 seed → 배치 집합과의 가중
+- [x] T38.2 스키마 seriation `_metaRelSchemaOrder` — greedy attachment(총 가중 최대 seed → 배치 집합과의 가중
       합 최대 반복 선택, 다른 연결군은 새 seed) → 관계 많은 스키마끼리 shelf 순서 인접. 무관계 스키마는
       자연정렬 그대로 후미(관계 0 이면 전체가 기존과 동일).
-- [x] T37.3 클러스터 내 군집 `_metaRelTableOrder` — 스키마 내부 관계 연결 컴포넌트(가중 desc)별 BFS(간선 가중
+- [x] T38.3 클러스터 내 군집 `_metaRelTableOrder` — 스키마 내부 관계 연결 컴포넌트(가중 desc)별 BFS(간선 가중
       내림차순) + 내부 무관계·외부 관계 보유는 이웃 스키마 seriation idx 순 + 완전 고립은 자연정렬.
-- [x] T37.4 barycenter 4-sweep `_metaRelOrderAll` — 각 테이블을 이웃(내부+외부) 전역 위치(gpos = schemaIdx +
+- [x] T38.4 barycenter 4-sweep `_metaRelOrderAll` — 각 테이블을 이웃(내부+외부) 전역 위치(gpos = schemaIdx +
       로컬 rank, SPAN=1) 가중평균 순으로 재정렬(층별 교차 최소화 휴리스틱). 접힌 스키마 테이블도 순서 계산
       (펼침-비의존, 렌더 여부는 기존 카드 게이팅).
-- [x] T37.5 `_metaG6Build` 배선(ids·relOrder·items) + admin.html cache-buster `20260703-graph-rel-layout`.
+- [x] T38.5 `_metaG6Build` 배선(ids·relOrder·items) + admin.html cache-buster `20260703-graph-rel-layout`.
 
-### 37.3 검증
-- [x] T37.6 Node 격리 **10/10 PASS**(관계0 회귀·seriation·컴포넌트BFS·나란한 클러스터 상호교차 해소·결정론·
+### 38.3 검증
+- [x] T38.6 Node 격리 **10/10 PASS**(관계0 회귀·seriation·컴포넌트BFS·나란한 클러스터 상호교차 해소·결정론·
       벌크 교차감소·펼침-비의존) + 파라미터 벤치(시드 3종 × 랜덤/허브 토폴로지: 2D 세그먼트 교차 12~30% 감소,
       1D 층간 역전 59→52, SPAN∈{4096,30,10,1} 중 SPAN=1 이 5/6 최선) + `node --check` PASS.
-- [x] T37.7 §18.8 적대 리뷰 [SUBAGENT: PASS-WITH-FIXES] — ultracode workflow(4축 finder + 발견별 2-refuter
+- [x] T38.7 §18.8 적대 리뷰 [SUBAGENT: PASS-WITH-FIXES] — ultracode workflow(4축 finder + 발견별 2-refuter
       적대검증, 14 agents): findings 5 → **확정 4·기각 1**(비현실 규모 perf). 확정 전건 수정: ① [MAJOR]
       `_metaGraphCollapse` 가 컬럼 접기 시 REFERENCES 모델 엣지까지 삭제 → 배치가 edges 순수함수가 되면서
       접기 제스처가 전면 재셔플 유발(비가역) — **collapse 시 REFERENCES 보존**(containment 만 삭제, 렌더는
@@ -894,5 +913,5 @@ MODIFY CHG-20260703-node-role-viz.
       사망 시 무애니 focusElement 1회 폴백 ③ [MINOR] itemsNat 중복 nat-sort 낭비 — relOrder 직접 소비로
       lazy 화. 회귀 방지 구조 테스트 t8(collapse REFERENCES 보존)·t9(expand focus 폴백) 추가 → 10/10 PASS.
       결과 정본: REVIEW REV-20260703T014113-ai-claude-corp-feature-0016-graph-rel-layout.
-- [ ] T37.8 배포(deploy_scope: included) + **PB-0008 실 Windows 라이브 시각검증**(관계 있는 스키마 인접 배치·
+- [ ] T38.8 배포(deploy_scope: included) + **PB-0008 실 Windows 라이브 시각검증**(관계 있는 스키마 인접 배치·
       연결 테이블 군집·교차 감소 육안 확인, TEST.md Run append).

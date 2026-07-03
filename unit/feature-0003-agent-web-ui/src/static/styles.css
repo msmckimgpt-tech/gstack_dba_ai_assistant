@@ -7935,12 +7935,17 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 /* graph-initview: 스키마 카드 범례(진입 뷰 기본 표현 — 클릭=그 스키마 테이블 펼침) */
 .admin-meta-graph-legend .lg-schemacard { width: 16px; height: 11px; border: 1.5px solid #3f4b8c; border-radius: 4px; background: #eef0f8; display: inline-block; }
 .admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
-/* node-role-viz(ADR-010) + role-legend-panel: 역할 범례를 전폭 상단 바에서 **우측 상세 패널 상단**의
-   세로·접힘(details) 카드로 이전. summary=토글 헤더(카펫 회전), 칩은 세로 스택.
-   밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
+/* node-role-viz(ADR-010) + role-legend-panel → role-legend-bottom: 역할 범례를 전폭 상단 바에서
+   우측 상세 패널의 세로·접힘(details) 카드로 이전. **위치는 role-legend-bottom 에서 패널 상단 → 하단으로 이동**
+   (상단+open 이면 확장 시 아래 노드 상세를 밀어 뒤틀림 → 마지막 자식으로 옮겨 해소). summary=토글 헤더(카펫 회전),
+   칩은 세로 스택. 밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
+/* role-legend-bottom: aside flex 컬럼의 자식은 압축 금지(overflow 시 컨테이너가 스크롤하도록) —
+   기본 flex-shrink:1 이면 노드 상세(detailBody)가 눌려 내용이 잘리는 뒤틀림 발생. */
+.admin-meta-graph-detail > * { flex-shrink: 0; }
 .admin-meta-graph-rolelegend {
   border: 1px solid var(--border); border-radius: 8px; background: var(--surface, #fff);
-  margin-bottom: 12px; font-size: 12px; color: var(--text-muted);
+  /* margin-top:auto = 패널 바닥 고정(내용 짧을 때). 마지막 자식이라 접힘/펼침이 위 내용을 밀지 않음. */
+  margin-top: auto; font-size: 12px; color: var(--text-muted);
 }
 .admin-meta-graph-rolelegend > summary {
   cursor: pointer; list-style: none; padding: 8px 10px; font-weight: 600;
@@ -8000,6 +8005,8 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-detail {
   border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0;
   background: var(--surface, #fff); overflow-y: auto; height: clamp(420px, 64vh, 760px); font-size: 13px;
+  /* role-legend-bottom: flex 컬럼 — 역할 범례 카드(margin-top:auto)를 패널 바닥에 고정. 나머지 자식은 자연 흐름. */
+  display: flex; flex-direction: column;
 }
 .admin-meta-graph-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .admin-meta-graph-badge {

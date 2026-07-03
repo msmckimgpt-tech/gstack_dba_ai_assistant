@@ -2,19 +2,24 @@
 # =============================================================================
 # refresh-claude-oauth-token.sh — 개발 단계 전용 (2026-06-23, fallback+probe 2026-06-29)
 # =============================================================================
-# 지정된 계정의 Claude Code OAuth access token 을 읽어
-# bedrock-gateway(litellm) 의 ANTHROPIC_API_KEY 로 주입한다.
+# 지정된 계정의 Claude Code OAuth access token 을 읽어 bedrock-gateway(litellm) 에 주입한다.
 #
-# 계정 선택 정책 (2026-06-29 — 서비스 내부 폴백 + 라이브 probe):
-#   - 기본: claude-corp 계정을 우선 사용하고, 사용 불가 시 root 계정으로 자동 폴백.
+# 주입 정책 (2026-07-03 insight-llm-fallback — **병행 주입** + 라이브 probe):
+#   - **두 slot 을 동시에 채운다** (택일이 아니라 병행):
+#       ANTHROPIC_API_KEY      ← 우선순위($ACCOUNTS, claude-corp 우선 + root 폴백) 첫 사용가능 계정.
+#       ANTHROPIC_API_KEY_ROOT ← root 계정 전용 토큰.
+#     litellm_config 가 claude-haiku-4(=ANTHROPIC_API_KEY, claude-corp) → claude-haiku-4-root
+#     (=ANTHROPIC_API_KEY_ROOT, root Max) → edge-fallback(로컬 gemma) 로 **요청-레벨 fallback** 하므로,
+#     한 계정이 burst rate-limit(429)로 막혀도 litellm 이 다음 계정/로컬로 즉시 우회한다. 두 토큰이
+#     각 env 에 동시에 존재해야 이 체인이 성립하므로 병행 주입한다.
 #       claude-corp : 회사가 발급한 Claude Team 구독 계정 (/home/claude-corp/.claude)
-#       root        : 개인 max 계정 (/root/.claude) — 회사 계정 사용 불가 시 폴백
-#   - 우선순위는 CLAUDE_OAUTH_ACCOUNTS 로 직접 지정 가능 (공백 구분, 기본 "claude-corp root").
-#   - CLAUDE_OAUTH_ACCOUNT 가 명시되면 그 계정만 사용 (폴백 없음 — 기존 수동 전환 호환).
+#       root        : 개인 Max 계정 (/root/.claude) — 2순위 fallback (rate-limit tier 가 더 높음)
+#   - 각 slot 은 독립 검사(static+probe)해 사용가능 시에만 갱신(사용불가는 게이트웨이 미중단 위해 기존값
+#     유지 — litellm 이 401/429 를 다음 fallback 으로 흡수). 두 slot 모두 사용불가면 미변경 + exit 1.
+#   - 우선순위는 CLAUDE_OAUTH_ACCOUNTS 로 지정 가능 (공백 구분, 기본 "claude-corp root"). CLAUDE_OAUTH_ACCOUNT
+#     명시 시 1순위 slot 은 그 계정만 사용(root slot 은 항상 root — litellm root deployment 용).
 #
-#   이전(전): cron 에서 CLAUDE_OAUTH_ACCOUNT 를 켜고/끄며 대상 계정을 명시 전환했다.
-#   이후(후): 스크립트가 내부에서 claude-corp 우선 + root 폴백을 수행하므로
-#             cron 구성 수정 없이 계정 전환이 자동으로 일어난다.
+#   (이전 2026-06-29: 단일 slot 택일 폴백 → cron 이 계정 전환. 이후: 병행 주입 + litellm 요청-레벨 fallback.)
 #
 # "사용 불가(실패)" 판정 — 후보 계정을 다음 두 단계로 검사하고, 하나라도 걸리면 건너뛴다:
 #   [정적 검사] (cheap, 네트워크 없음)
@@ -181,51 +186,77 @@ sys.exit(1)
 PY
 }
 
-# 1) 계정 선택 + 토큰 추출 (정적 검사 + 라이브 probe)
-SEL="$(select_account $ACCOUNTS)" || { log "ERROR: 토큰 주입 중단 — 사용 가능한 계정 없음 (후보: $ACCOUNTS). 게이트웨이 미변경(현 토큰 유지)."; exit 1; }
-ACCOUNT="${SEL%%$'\t'*}"
-TOKEN="${SEL#*$'\t'}"
-[ -n "$ACCOUNT" ] && [ -n "$TOKEN" ] || { log "ERROR: 계정/토큰 추출 실패 (sel=$ACCOUNT)"; exit 1; }
+# insight-llm-fallback(2026-07-03): **병행 주입** — 1순위 slot(ANTHROPIC_API_KEY)과 2순위 slot
+# (ANTHROPIC_API_KEY_ROOT)에 각각 토큰을 주입한다. litellm_config 의 claude-haiku-4(corp) →
+# claude-haiku-4-root(root) → edge-fallback 요청-레벨 fallback 이 작동하려면 두 토큰이 각 env 에
+# 동시에 존재해야 한다(한 계정이 burst 429 로 막혀도 litellm 이 다음 계정/로컬로 즉시 우회).
+#   - ANTHROPIC_API_KEY      ← 기존 우선순위($ACCOUNTS, claude-corp 우선 + root 폴백) 첫 사용가능 계정.
+#   - ANTHROPIC_API_KEY_ROOT ← root 계정 전용(claude-haiku-4-root deployment). 사용불가면 기존값 유지.
+# 각 slot 은 독립 검사(static+probe)하고 사용가능 시에만 갱신(사용불가는 게이트웨이 미중단 위해 기존값
+# 유지 — litellm 이 401/429 시 다음 fallback 으로 흡수). 하나라도 변경되면 bedrock-gateway 재생성 1회.
 
-# 2) 현재 게이트웨이가 들고 있는 토큰과 비교
-CUR="$(grep -m1 '^ANTHROPIC_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
-
-# --check: 진단만 (변경 없음)
-if [ "$DRY_RUN" = 1 ]; then
-  if [ "$TOKEN" = "$CUR" ]; then
-    log "[check] 선택 계정=$ACCOUNT — 게이트웨이 토큰과 동일 (recreate 불필요)"
-  else
-    log "[check] 선택 계정=$ACCOUNT — 게이트웨이 토큰과 다름 (실행 시 recreate)"
-  fi
-  exit 0
-fi
-
-# 변경 시에만 반영
-if [ "$TOKEN" = "$CUR" ]; then
-  log "[$ACCOUNT] 토큰 변경 없음 — skip (recreate 안 함)"
-  exit 0
-fi
-
-# 3) .env.bedrock 의 ANTHROPIC_API_KEY 갱신 (없으면 추가). 토큰에 특수문자 가능 → python 으로 안전 치환
-python3 - "$ENV_FILE" "$TOKEN" <<'PY'
+write_env_key() {  # $1=key $2=token — .env.bedrock 의 key= 안전 치환(없으면 추가). 특수문자 대응 python.
+  python3 - "$ENV_FILE" "$1" "$2" <<'PY'
 import sys
-path, tok = sys.argv[1], sys.argv[2]
+path, key, tok = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     lines = open(path).read().splitlines()
 except FileNotFoundError:
     lines = []
 out, done = [], False
 for l in lines:
-    if l.startswith('ANTHROPIC_API_KEY='):
-        out.append('ANTHROPIC_API_KEY=' + tok); done = True
+    if l.startswith(key + '='):
+        out.append(key + '=' + tok); done = True
     else:
         out.append(l)
 if not done:
-    out.append('ANTHROPIC_API_KEY=' + tok)
+    out.append(key + '=' + tok)
 open(path, 'w').write('\n'.join(out) + '\n')
 PY
+}
+cur_env_key() { grep -m1 "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true; }
 
-# 4) 토큰 변경 반영 — restart 는 env_file 재로드 안 하므로 반드시 재생성
+# 1순위 slot: 기존 우선순위 순회(claude-corp 우선 + root 폴백) 첫 사용가능 계정.
+SEL="$(select_account $ACCOUNTS)" || SEL=""
+PRIMARY_ACCT="(none)"; PRIMARY_TOKEN=""
+if [ -n "$SEL" ]; then PRIMARY_ACCT="${SEL%%$'\t'*}"; PRIMARY_TOKEN="${SEL#*$'\t'}"; fi
+
+# 2순위 slot: root 계정 전용(claude-haiku-4-root deployment 용).
+ROOT_SEL="$(select_account root)" || ROOT_SEL=""
+ROOT_TOKEN=""
+case "$ROOT_SEL" in *$'\t'*) ROOT_TOKEN="${ROOT_SEL#*$'\t'}";; esac
+
+CUR_PRIMARY="$(cur_env_key ANTHROPIC_API_KEY)"
+CUR_ROOT="$(cur_env_key ANTHROPIC_API_KEY_ROOT)"
+
+# --check: 진단만 (변경 없음)
+if [ "$DRY_RUN" = 1 ]; then
+  log "[check] 1순위 ANTHROPIC_API_KEY=$PRIMARY_ACCT — $([ -z "$PRIMARY_TOKEN" ] && echo '사용불가·미변경' || { [ "$PRIMARY_TOKEN" = "$CUR_PRIMARY" ] && echo 동일 || echo '변경(실행 시 recreate)'; })"
+  log "[check] 2순위 ANTHROPIC_API_KEY_ROOT=root — $([ -z "$ROOT_TOKEN" ] && echo '사용불가·미변경' || { [ "$ROOT_TOKEN" = "$CUR_ROOT" ] && echo 동일 || echo '변경(실행 시 recreate)'; })"
+  exit 0
+fi
+
+if [ -z "$PRIMARY_TOKEN" ] && [ -z "$ROOT_TOKEN" ]; then
+  log "ERROR: 두 slot 모두 사용 가능 계정 없음 — 게이트웨이 미변경(현 토큰 유지)."
+  exit 1
+fi
+
+CHANGED=0
+if [ -n "$PRIMARY_TOKEN" ] && [ "$PRIMARY_TOKEN" != "$CUR_PRIMARY" ]; then
+  write_env_key ANTHROPIC_API_KEY "$PRIMARY_TOKEN"; CHANGED=1
+  log "[$PRIMARY_ACCT → ANTHROPIC_API_KEY] 토큰 갱신"
+fi
+if [ -n "$ROOT_TOKEN" ] && [ "$ROOT_TOKEN" != "$CUR_ROOT" ]; then
+  write_env_key ANTHROPIC_API_KEY_ROOT "$ROOT_TOKEN"; CHANGED=1
+  log "[root → ANTHROPIC_API_KEY_ROOT] 토큰 갱신"
+fi
+
+if [ "$CHANGED" = 0 ]; then
+  log "토큰 변경 없음(1순위=$PRIMARY_ACCT, root slot 동일) — skip (recreate 안 함)"
+  exit 0
+fi
+
+# 토큰 변경 반영 — restart 는 env_file 재로드 안 하므로 반드시 재생성
 cd "$REPO"
 docker compose -f docker-compose.yml up -d --force-recreate bedrock-gateway >/dev/null 2>&1
-log "[$ACCOUNT] OAuth 토큰 갱신됨 → bedrock-gateway 재생성 완료"
+log "OAuth 토큰 갱신 완료(1순위=$PRIMARY_ACCT, root slot=$([ -n "$ROOT_TOKEN" ] && echo '갱신/동일' || echo 미변경)) → bedrock-gateway 재생성"

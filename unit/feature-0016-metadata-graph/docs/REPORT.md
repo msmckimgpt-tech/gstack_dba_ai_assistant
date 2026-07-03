@@ -1,5 +1,22 @@
 # Report
 
+## 2026-07-03 · 역할 범례를 상세 패널 하단으로 이동 + 확장 시 밀림/뒤틀림 해소 (role-legend-bottom, TASK §37)
+
+### 배경 (사용자 후속 피드백)
+role-legend-panel(§36) 배포 후: ① 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI(노드 상세)를 밀어 내용이 뒤틀림**. 원인 = 범례가 aside 첫 자식(open)이라 고정높이 패널에서 확장이 아래 노드 상세를 밀어냄.
+
+### 구현 (FE 표현 전용)
+- admin.html: 범례 `<details>` 를 aside **첫 자식 → 마지막 자식**(detailBody 뒤)으로 이동.
+- styles.css: aside `display:flex; flex-direction:column` + `.admin-meta-graph-detail > * {flex-shrink:0}`(자식 압축 금지→컨테이너 스크롤) + 범례 `margin-top:auto`(바닥 고정).
+- cache-buster `styles.css?v=20260703-role-legend-bottom`.
+
+### 검증
+- headless playwright 렌더 격리 실증: 빈 상세=범례 바닥 고정(위 여백 262px), 긴 상세 30행=노드 상세 온전(firstNodeH 32·미압축)·잘림 없음(dbH==dbScrollH)·패널 스크롤 → 밀림/뒤틀림 없음. 스크린샷 확인.
+- §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-role-legend-bottom.
+
+### 잔여
+- 배포(web, deploy_scope: included) + 라이브 PB-0008 실 Windows 육안(하단 배치 + 확장 시 위 상세 안 밀림).
+
 ## 2026-07-03 · 역할 범례를 우측 상세 패널 상단 세로·접힘으로 이전 (role-legend-panel, TASK §36)
 
 ### 배경 (사용자 후속 요청)
@@ -845,4 +862,4 @@ greedy seriation(연결 스키마 shelf 인접) ② `_metaRelTableOrder` 컴포�
 
 **검증**: Node 격리 8/8 PASS(회귀0·seriation·군집·상호교차 해소·결정론·벌크 감소·펼침-비의존) + 파라미터
 벤치(시드 3 × 랜덤/허브: 2D 세그먼트 교차 12~30% 감소, 1D 층간 역전 59→52, SPAN=1 채택 근거) + node --check.
-완료 게이트 = 배포 후 PB-0008 실 Windows 라이브 육안(TASK T37.8).
+완료 게이트 = 배포 후 PB-0008 실 Windows 라이브 육안(TASK T38.8).

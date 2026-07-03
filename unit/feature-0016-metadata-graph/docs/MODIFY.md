@@ -672,14 +672,27 @@ source_of_truth: true
 - Impact: 프론트 **표현 전용**(admin 그래프 뷰 역할 범례 위치·레이아웃만). 데이터 API·스키마(AGE)·마커·칩 색/아이콘 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 폭 조회(`d.clientWidth`)로만 참조되고 innerHTML 교체 없음 → 범례 wipe 없음. 부작용: "상세 ⇆"(`#metadataGraphDetailToggle`)로 상세 패널 접으면 범례도 같이 숨음(패널 종속 — 사용자 선택 위치의 자연 귀결). 검증: 구조 정합(무JS·`<details>` 관용구 기존 line 512 재사용) + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html/styles.css git revert + cache-buster 이전값(reltrace-tabledetail). 데이터·API·JS 무손상(표현 전용이라 revert 리스크 최소).
 
+<<<<<<< HEAD
 ## CHG-20260703-graph-rel-layout
 - Date: 2026-07-03
-- Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — 관계 연결이 복잡해질수록 가시성 저하, 스키마 카드 내 테이블의 단순 나열이 이를 악화. ① 연결선이 되도록 교차하지 않게 ② 관계가 확보될수록 연결·유사도 기준으로 노드 배치. 정본: DECISIONS ADR-012 / TASK §37.
+- Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — 관계 연결이 복잡해질수록 가시성 저하, 스키마 카드 내 테이블의 단순 나열이 이를 악화. ① 연결선이 되도록 교차하지 않게 ② 관계가 확보될수록 연결·유사도 기준으로 노드 배치. 정본: DECISIONS ADR-012 / TASK §38.
 - Summary: `_metaG6Build` 의 배치 순서를 자연정렬 → **관계(REFERENCES) 가중치의 순수 함수**로 승격. (1) `_metaRelAdjacency`: 엣지 끝점을 테이블로 승격해 무향 인접행렬(유사도 w=trusted 2·그 외 1). (2) `_metaRelSchemaOrder`: greedy attachment seriation — 관계 많은 스키마끼리 shelf 순서 인접. (3) `_metaRelTableOrder`: 클러스터 내부를 관계 연결 컴포넌트 BFS(가중 desc) 군집 + 외부앵커 + 고립 자연정렬. (4) `_metaRelOrderAll`: barycenter 4-sweep(gpos=schemaIdx+로컬 rank, SPAN=1) 으로 이웃 위치 가중평균 재정렬 — 나란한 클러스터 간 상호 교차 해소. 관계 0 이면 기존 자연정렬과 완전 동일(강등 없음), 관계가 쌓일수록 rebuild 시 배치가 관계 기준으로 수렴(사용자 요청 ②의 자연 구현).
 - Files:
   - `unit/feature-0003-agent-web-ui/src/static/admin.js` (신규 `_metaRelTableKeyOf`/`_metaRelAdjacency`/`_metaRelSchemaOrder`/`_metaRelTableOrder`/`_metaRelOrderAll` + `_metaG6Build` ids·items 배선)
   - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `admin.js?v=20260703-graph-rel-layout`)
-  - `unit/feature-0016-metadata-graph/docs/{TASK(§37),DECISIONS(ADR-012),MODIFY,REPORT,TEST,REVIEW}.md`
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§38),DECISIONS(ADR-012),MODIFY,REPORT,TEST,REVIEW}.md`
 - Impact: 프론트 **배치 순서 전용** — 데이터 API·AGE 스키마·마커·상태·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·펼침-불변(ADR-004 ②)·카드 게이팅·masonry/shelf-pack 골격 유지(순서 입력만 교체). 배치 변화는 관계 데이터가 늘어난 rebuild 시점뿐(기존 shelf 재배치 시야고정 경로가 흡수). 검증: Node 격리 8/8 + 벤치(2D 교차 12~30% 감소) + node --check. 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows.
 - §18.8 패널 후속 수정(같은 cycle): ① `_metaGraphCollapse` — 컬럼 접기 시 REFERENCES 모델 엣지 **보존**(containment 만 삭제; 접기 제스처의 배치 재셔플(MAJOR)과 접힌 테이블 관계 표시 소실을 동시 해소) ② `_metaGraphExpand` — rebuild 후 follow tween 사망 시 무애니 focusElement 폴백(`_metaGraph._focusLive` 생존 마커, `_metaGraphAnimateFocus` 를 marker 래퍼+`_metaGraphAnimateFocusRun` 으로 분리) ③ `_metaG6Build` — itemsNat 중복 정렬 제거(relOrder 직접 소비). 격리 테스트 10/10(구조 회귀 방지 t8·t9 포함).
 - Rollback Notes: admin.js 신규 함수 5종 제거 + `_metaG6Build` 의 ids/items 를 자연정렬로 환원 + collapse/expand/AnimateFocus 를 이전 형태로 복원 + cache-buster 이전값(20260703-reldetail-colexpand). 데이터·API 무손상(표현 전용).
+=======
+## CHG-20260703-role-legend-bottom
+- Date: 2026-07-03
+- Related Requirement: 사용자 후속 피드백(role-legend-panel 배포 후) — ① 역할 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI(노드 상세)를 밀어 내용이 뒤틀리는 문제** 해소. role-legend-panel(CHG-20260703-role-legend-panel) 위 후속 개선.
+- Summary: 역할 범례 `<details class="admin-meta-graph-rolelegend">` 를 `aside#metadataGraphDetail` **최상단(progress/detailBody 앞) → 최하단(마지막 자식)**으로 이동. aside 를 `display:flex; flex-direction:column` 으로, 범례에 `margin-top:auto`(콘텐츠 짧을 때 패널 **바닥 고정**), `.admin-meta-graph-detail > * { flex-shrink:0 }`(자식 압축 금지 → overflow 시 컨테이너 스크롤, 노드 상세가 눌려 잘리는 뒤틀림 방지). 범례가 **마지막 자식**이라 접힘/펼침이 위의 progress·노드 상세를 **밀지 않음** → "확장 시 뒤틀림" 근본 해소.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (범례 블록을 aside 첫 자식 → 마지막 자식(detailBody 뒤)으로 이동 + cache-buster `styles.css?v=20260703-role-legend-bottom`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.admin-meta-graph-detail` 에 `display:flex; flex-direction:column` + `.admin-meta-graph-detail > * {flex-shrink:0}` + `.admin-meta-graph-rolelegend` `margin-bottom:12px` → `margin-top:auto`)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§38),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 **표현 전용**(상세 패널 내부 레이아웃만). 데이터 API·스키마·마커·칩 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. 범례는 여전히 detailBody 형제(이제 아래)라 innerHTML 교체(detailBody/progress 만)에 지워지지 않음. 검증: **headless playwright 렌더 격리 실증** — 빈 상세=범례 바닥고정(pinnedNearBottom, 위 여백 262px), 긴 상세 30행=노드 상세 firstNodeH 32(온전·미압축)·dbH==dbScrollH(983, 잘림 없음)·aside canScroll=true(스크롤) → 밀림/뒤틀림 없음. + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
+- Rollback Notes: admin.html(범례 위치 원복)·styles.css(flex/margin 원복) git revert + cache-buster 이전값(reldetail-colexpand-role-legend-panel). 데이터·API·JS 무손상.
+>>>>>>> origin/main
