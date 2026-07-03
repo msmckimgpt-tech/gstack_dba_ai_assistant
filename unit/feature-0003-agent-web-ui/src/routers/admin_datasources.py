@@ -55,12 +55,17 @@ async def admin_list_datasources(request: Request, actor=Depends(app.get_current
             "editable": (v.get("_source") == "db"),  # .env datasource 는 UI 수정 불가(운영자 .env 편집)
             # TASK-0215: insight-worker 탐색 토글(.env 데이터소스는 컬럼 부재 → True 기본).
             "insight_enabled": bool(v.get("insight_enabled", True)),
-            # conn-health: 사전 계산된 연결 상태(좌표 비노출 — status/elapsed/checked_at 만).
+            # conn-health: 사전 계산된 연결 상태(좌표 비노출 — status/elapsed/avg/checked_at 만).
+            #   avg_elapsed_ms: 최근 sample_count(≤AGENT_CONN_AVG_WINDOW)회 성공 DB probe 응답시간 평균(ms).
+            #   상세 패널의 "연결 응답 시간(평균)" 표시용 — background 모니터 사전계산값 재사용(추가 probe 없음).
             "conn_status": ({
                 "status": _h.get("status"),
                 "elapsed_ms": _h.get("last_elapsed_ms"),
+                "avg_elapsed_ms": _h.get("avg_elapsed_ms"),
+                "sample_count": _h.get("sample_count"),
                 "checked_at": _h.get("checked_at"),
-            } if _h else {"status": "unknown", "elapsed_ms": None, "checked_at": None}),
+            } if _h else {"status": "unknown", "elapsed_ms": None, "avg_elapsed_ms": None,
+                          "sample_count": 0, "checked_at": None}),
             # TASK-0255 R2: insight-worker 스캔 관점(PG 정본) — 미커버 사유 구분(연결 불안정/권한). None=insight 미기록.
             "insight_health": (_insight_health.get(_sk) if _sk else None),
             # scope-key-unify: 메타데이터 admin scope 드롭다운이 쓸 scope 식별자 — **질의 시점 read 와

@@ -5363,3 +5363,26 @@ source_of_truth: true
 - Verification: `node --check` PASS + jsdom DOM 테스트 33 PASS(관리 62/작업 85/그룹 20 동적 카운트·XSS-safe)/1 pre-existing CSS FAIL(admin pane overflow-y, 무관). 사용자향 평이화(내부용어 0: G6/Cytoscape/WebGL/config/alembic/엔드포인트/권한키/모델명/ADR 비노출). feature-0012/0017 behavior-neutral 은 user-facing 제외(정직 분류).
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - 사용자향 평이화: 내부 구현·feature-id·렌더러/마이그/엔드포인트/cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit(REV-20260702T230501-META-0019-doc-sync-0702).
+
+## CHG-20260703T085511-ds-avg-latency (TASK-20260703T085511-ds-avg-latency — 데이터소스 상세 패널 평균 연결 응답 시간, Major §12.3 — feature-0003 web/UI·API + cross-unit shared/conn_health·config)
+- 변경:
+  - **shared** `config.py`: `AGENT_CONN_AVG_WINDOW`(env, 기본 20, `max(1,...)` 클램프) 신규 + `__all__` 에 등록(`conn_health` 가 `from .config import *` 로 소비 — `__all__` 누락 시 NameError, ADR-007 교훈 반영).
+  - **shared** `conn_health.py`: 성공 background DB probe 응답시간의 이동평균 추가.
+    - `_SAMPLES: dict[scope_key→deque(maxlen=AGENT_CONN_AVG_WINDOW)]` 모듈 dict 신설 — 원시 elapsed 표본은 여기에만, `_STATE` 에는 산술평균(`avg_elapsed_ms`)만(좌표/표본 비노출 불변식 보존). 접근은 항상 `_LOCK` 안.
+    - `_sample_avg_elapsed(key, elapsed_ms)`: 표본 append + 최근 N개 산술평균(소수1) 재계산. window 크기 변경(config reload) 시 기존 표본 보존하며 deque 재생성.
+    - `_apply_result`: 성공 분기에서 `source=="probe-db" and last_elapsed_ms is not None and >0.0` 일 때만 표본화(실패 probe·foreground 0.0-coerce 제외, 느린 성공 unstable 포함) → `avg_elapsed_ms` 갱신. status 분류·gating·`last_elapsed_ms` 등 기존 거동 무변경(additive).
+    - `_ensure_entry` 신규 entry 에 `avg_elapsed_ms:None` · `snapshot()` 에 `avg_elapsed_ms`+`sample_count`(=len(_SAMPLES[k])) 추가 · `_prune_state`/`_reset_state` 에서 `_SAMPLES` lockstep 정리.
+  - **feature-0003** `routers/admin_datasources.py`: `GET /api/admin/datasources` 의 각 datasource `conn_status` 에 `avg_elapsed_ms`·`sample_count` additive(snapshot 사전계산값 재사용 — 추가 probe 없음). `_h` 부재 시 `avg_elapsed_ms:None, sample_count:0`. 좌표 비노출 유지.
+  - **feature-0003** `static/admin.js`: `_dsConnStatusLabel(status)` 헬퍼(healthy/unstable/down/unknown→한글) + `_dsRenderDetail` 에 "연결 상태" 섹션(연결 좌표 다음) — 상태·**연결 응답 시간(평균)**(`avg_elapsed_ms` + `· 최근 N회 평균`, 표본 0/None 이면 "측정 중 (연결 성공 시 집계)")·최근 응답 시간(순간값)·마지막 확인(epoch×1000). null-guard 완비(“null ms” 방지).
+  - **feature-0003** `static/admin.html`: cache-buster `admin.js?v=20260703-graph-simgroups`→`?v=20260703-ds-avg-latency`.
+  - **feature-0002** `tests/test_conn_health.py`: `test_snapshot_hides_coordinates` 키셋에 avg_elapsed_ms/sample_count 추가 + 신규 5건(평균 누적·window bound·실패/foreground 제외·느린성공 포함·prune 표본정리).
+- Verification: py_compile(config/conn_health/admin_datasources) + `node --check admin.js` PASS. 직접 pytest — test_conn_health.py 32 PASS + 대상 회귀(test_product_conn_status 등) PASS + feature-0002/0003 전량 PASS(컨테이너 전용 `test_share_redaction_invariant.py` 제외 — `import web.app` 환경 아티팩트, 본 변경 무관). §18.8 적대 리뷰 REV-20260703T085511-ds-avg-latency. PB-0008 Windows-browser= 배포 후 라이브(TEST.md §3, baked 자산·표본 누적 필요 사유).
+- Files: `shared/config.py`, `shared/conn_health.py`, `feature-0003/{src/routers/admin_datasources.py, src/static/admin.js, src/static/admin.html, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`, `feature-0002/tests/test_conn_health.py`.
+- 설계 근거: 마지막값(`last_elapsed_ms`)은 순간 변동(다른 워크로드·GC blip·원거리 리전 RTT spike)에 흔들려 대표성이 약함 → 최근 N회 평균이 데이터소스별 상시 연결 품질을 더 안정적으로 반영. background 모니터 사전계산값 재사용이라 관리 콘솔 진입 시 추가 DB 부하·지연 0.
+- Rollback: revert 5개 소스 파일(config/conn_health/admin_datasources/admin.js/admin.html) + cache-buster 원복. in-memory only(스키마·마이그·영속 상태 무 — 롤백 부작용 없음).
+
+## CHG-20260703T085511-ds-avg-latency-postverify (TASK-20260703T085511-ds-avg-latency-postverify — ds-avg-latency POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- 변경: 선행 cycle(CHG-20260703T085511-ds-avg-latency, PR #575 머지 7ad4378b + web 배포)의 **배포 후 라이브 PB-0008 실측 결과**를 TASK.md(최종 체크박스 확정)·TEST.md §3(POST-DEPLOY PASS Run)에 기록. 코드/자산 무변경(doc-only).
+- 검증 결과 요지(실 Windows Chrome/149 win-browser relay, `https://localhost/admin`): 상세 패널 "연결 상태" 섹션 렌더 + `mssql-dk-dev` 평균 "11.7 ms · 최근 6회"·`mssql-qa-idc` "133.4 ms · 최근 6회"(healthy 평균 산출)·down 데이터소스 "측정 중"(성공 표본 없음 — stale 미표시). MINOR(0ms 가드) 실효. 스크린샷 증적.
+- Files: `docs/{TASK,MODIFY,TEST,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260703T085511-ds-avg-latency-postverify [SKIPPED:post-deploy-verification-record]

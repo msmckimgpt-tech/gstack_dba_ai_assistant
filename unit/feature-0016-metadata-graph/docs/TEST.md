@@ -405,3 +405,24 @@ origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 �
   표기)·상세 목록에 그룹 헤딩 43개 + role="group" aria + (shown/n) 절단표식 노출. pageerror 0.
 - **④ 회귀 0**: account 컬럼 펼침 11개(이웃확장 경로) · 컬럼 접기 후 REFERENCES **145→145 보존**(§38) ·
   검색 모드(`_metaGraphSearch('character')`) 정상 진입 · 전 경로 pageerror 0.
+
+## graph-product-cat — 제품(Products) 단위 카테고리 (ADR-014, TASK §43, 2026-07-03)
+
+### 케이스
+- TC-43-1 (백엔드 합성): `?mode=products` 가 활성 제품마다 `Product`(key=`product:<id>`) 노드 + 바인딩
+  datasource 마다 `Datasource`(key=`ds:<scope_key>`) 노드(dedup) + `USES` 엣지를 반환. `?product=<id>` 는 단일 제품.
+- TC-43-2 (read-axis 정합): 합성 datasource key 의 scope 가 datasource-scoped 그래프 read 축(`scope_key or 라벨`)과
+  일치 — `ds:` drill 이 실 스키마 그래프를 로드(빈 그래프 아님). DB-등록=해시·.env=라벨 양쪽.
+- TC-43-3 (배너): datasource 진입(scope_roots/schemas) 응답 `products` 필드로 소속 제품명 상태 배너 표시.
+- TC-43-4 (프론트 렌더): 제품 개요 진입 시 `_metaG6BuildProducts` 2-열(Product 좌·Datasource 우) + USES 엣지,
+  datasource 노드 클릭 → 그 데이터소스 스키마 그래프 drill, Product 클릭 → 단일 제품 focus.
+- TC-43-5 (회귀): datasource/schema 그래프 경로·검색·이웃 무영향. 권한 `metadata.graph.read` 보존. mutation 0.
+
+### Run (2026-07-03) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS** · `ast.parse admin_metadata.py` **PASS**.
+- 격리 pytest(repo-agent 이미지 + worktree 마운트, PYTHONDONTWRITEBYTECODE=1): `test_permission_dependency_map.py`
+  + `test_metadata_graph_units.py` **28 PASS**(DI 권한 맵·metadata_graph 단위 무회귀 — 엔드포인트에 `conn=Depends`
+  추가가 권한 게이트·투영 모듈 불변 확인).
+- §18.8 적대 리뷰(general-purpose): read-axis MAJOR + 비숫자 product NIT 반영 후 PASS-WITH-FIXES (REV-20260703T091737).
+- **POST-DEPLOY 실 Windows 브라우저(PB-0008)**: 배포 후 기록 예정 — feature-0003 TEST.md §3 `Environment: Windows-browser`
+  (제품 개요 렌더·datasource drill·제품 배너·회귀 0). visual_verification_scope: always 게이트 충족 조건.
