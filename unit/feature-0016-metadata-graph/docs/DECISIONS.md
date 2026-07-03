@@ -350,3 +350,37 @@ source_of_truth: true
   - **엣지 곡선/번들링만으로 완화**: 배치가 그대로면 장거리 교차 자체가 남음 — 배치 우선, 곡선은 후속 옵션.
 - Supersedes: (ADR-004 의 "자연정렬 grid" 순서 부분만 대체 — 결정론 grid 골격·불변식은 계승)
 - Superseded By:
+
+## ADR-013 — 그래프 뷰 유사 속성 그룹: 이름 affix family 휴리스틱 + 가시적 영역(배경 박스) 렌더 (백엔드 시맨틱 클러스터링 이연)
+- Status: accepted (2026-07-03)
+- Context: graph-rel-layout(ADR-012)이 관계 기반 '순서'는 만들었으나, 균일 칩의 평면 나열이라 군집이
+  화면에서 '영역'으로 읽히지 않는다는 사용자 후속 보고("유사한 속성끼리 배치 + 속성 범위가 가시적으로").
+  라이브 데이터 특성: 게임 DB 는 구분자 없는 소문자 연접 테이블명(charactercurrency, cashshopnewitem)이
+  지배적이고, FK 미선언이라 관계는 부분적이며, 역할(role)은 AI 분석 완료 노드에만 존재한다.
+- Decision: 클라이언트 순수 함수 3-신호 그룹핑 + 그룹 블록 렌더.
+  1. **이름 affix family(1차)**: 정규화(소문자·view_ 제거) 이름의 접두/접미 토큰(4~16자) 중 지원도(공유
+     테이블 수) ≥2 에서 지원도×길이 최대 토큰을 family 로. 구분자 없는 연접 이름에서 동작하는 유일한
+     실용 신호가 공유 affix — underscore/camel 분할은 무력. 라벨은 멤버 실명의 최장 공통 접두/접미
+     (자연 스템) + 방향 말줄임(`character…`/`…shop`).
+  2. **관계 attach(2차)**: family 없는 테이블은 관계 가중 최대 family 로 1-pass 부착(무연쇄 — 블롭 방지).
+  3. **역할 family(3차)** → **기타(후미 고정)**. 싱글턴 named family 는 흡수(1개짜리 박스 노이즈 방지).
+  렌더: 그룹 = 배경 박스(연틴트 8종 순환, zIndex -2) + 헤더 칩(`라벨 · n`) — "범위의 가시화". 그룹 내부
+  1~3열 2-pass masonry(Pass1 collapsed 배정=펼침-불변 / Pass2 실높이 push-down, ADR-004 ② 계승) + 블록
+  shelf-pack(행 배정=폭, 행 y=실높이). 그룹 순서/그룹 내 순서는 ADR-012 의 seriation·barycenter 를
+  "컨테이너=그룹" 으로 재사용. 그룹 <2 스키마·terms 는 기존 평면 masonry 그대로(회귀 0).
+- Consequences: 스키마 클러스터가 "균일 칩 나열" → "라벨 붙은 유사 속성 영역들"로 읽힌다. 클러스터 상세
+  목록도 동일 그룹 헤딩으로 정합. 실측(gunzgame 68 테이블·145 관계): character(14)·item(17)·characterinfo(4)·
+  battletimereward…(4)·…shop(3)·mission(4)·clanmember(3) 등 13 그룹 + 기타(2), 빌드 5.1ms. 알려진 한계:
+  ① affix 휴리스틱은 시맨틱 임베딩이 아니다 — 컬럼 시그니처·설명 임베딩 기반 백엔드 클러스터링은 별도
+  initiative(이연 사유: 서버 계산·저장 스키마 필요, 프론트만으로 즉시 가치 전달 우선) ② 역할 도착·관계
+  증가 시 rebuild 에서 그룹이 재편될 수 있음(기존 role-chip rebuild 관용구와 동일 흡수) ③ 관계 attach 된
+  멤버는 그룹 라벨과 이름이 다를 수 있음(의도 — 관계 소속).
+- Alternatives:
+  - **백엔드 시맨틱 클러스터링(임베딩·컬럼 시그니처)**: 정확도 최상이나 서버 계산/저장/동기화 필요 —
+    후속 initiative 로 이연(본 ADR 의 그룹 렌더 계층은 재사용 가능).
+  - **G6 중첩 combo(그룹=combo-in-combo)**: G6 v5 중첩 combo + 수동 좌표의 상호작용이 미검증(ADR-004
+    setData diff 취약점) — 장식 rect 노드가 저위험·결정론(기각).
+  - **역할(role)만으로 그룹핑**: 라이브 대부분 미분석(role 부재) — 커버리지 부족(보조 신호로만).
+  - **underscore/camelCase 토큰화**: 연접 소문자 이름에서 무력(기각 — affix 가 상위 호환).
+- Supersedes: (ADR-012 의 순서 계층은 그룹 내부/그룹 간 순서로 계승 — 대체 아님)
+- Superseded By:

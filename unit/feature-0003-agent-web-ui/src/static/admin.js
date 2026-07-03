@@ -3513,8 +3513,155 @@ function _metaRelOrderAll(groups, ids, adj, schemaIdx, schemaOf) {
   return orderBySchema;
 }
 
+// ── graph-simgroups: 유사 속성 그룹 — 이름 affix family + 관계 attach + 역할 폴백 ──
+//   사용자 요청 "각 테이블이 서로 유사한 속성끼리 배치 + 속성 범위가 가시적으로": 스키마 클러스터 내부를
+//   유사 속성 그룹 블록(배경 박스 + 헤더 칩)으로 분할해, 군집이 '순서'가 아니라 '영역'으로 보이게 한다.
+//   그룹핑은 (테이블명, 관계, 역할)의 순수 함수 — 결정론·펼침-비의존(schemaExpanded 무참조).
+
+// 테이블명 affix family: 이름의 접두/접미 토큰(4~12자) 중 지원도(공유 테이블 수) ≥2 인 것에서
+//   score = 지원도×길이 최대 토큰을 family 로 채택. "view_" 접두는 정규화 시 제거(뷰는 원본 가족으로).
+//   반환: Map(tableKey → token|null). 게임 DB 처럼 구분자 없는 소문자 연접 이름에서도 동작하는 유일한
+//   실용 신호가 공유 affix 다(underscore/camel 분할은 이런 이름에 무력).
+// graph-simgroups: 테이블명 정규화 — 소문자화 + view 접두 제거(뷰는 원본 가족으로 묶기 위해).
+//   §18.8 패널 MINOR: bare "view" 를 무조건 4자 절단하면 "viewer_log"→"er_log" mangle. 구분자 있는
+//   "view_" 접두만 제거하고, 그 외 "view" 로 시작하는 실명(viewer 등)은 보존한다.
+function _metaViewNorm(t) {
+  const s = String((t && (t.name || t.key)) || "").toLowerCase();
+  return s.startsWith("view_") ? s.slice(5) : s;
+}
+function _metaSimFamilies(tables) {
+  const norm = _metaViewNorm;
+  const support = new Map();   // token -> Set(tableKey)
+  const bump = (tok, k) => { let s = support.get(tok); if (!s) { s = new Set(); support.set(tok, s); } s.add(k); };
+  tables.forEach((t) => {
+    const nm = norm(t);
+    const L = Math.min(nm.length, 16);   // 16자: battletimereward 류 긴 스템 보존(12는 중간 절단)
+    for (let l = 4; l <= L; l++) { bump(nm.slice(0, l), t.key); if (l < nm.length) bump(nm.slice(nm.length - l), t.key); }
+  });
+  const fam = new Map();
+  tables.forEach((t) => {
+    const nm = norm(t);
+    let best = null, bs = 0;
+    const L = Math.min(nm.length, 16);
+    const consider = (tok) => {
+      const sup = support.get(tok) ? support.get(tok).size : 0;
+      if (sup < 2) return;
+      const score = sup * tok.length;
+      if (score > bs || (score === bs && best != null && tok < best)) { bs = score; best = tok; }
+    };
+    for (let l = 4; l <= L; l++) { consider(nm.slice(0, l)); if (l < nm.length) consider(nm.slice(nm.length - l)); }
+    fam.set(t.key, best);
+  });
+  return fam;
+}
+
+// 그룹 조립: ① 이름 family ② family 없음 → 관계 가중 최대 family 로 attach ③ 역할 family ④ 기타.
+//   싱글턴 family 는 ②~④ 로 강등(1개짜리 박스 노이즈 방지). 그룹 순서 = 관계 seriation(무관계는
+//   크기 desc·라벨 natural), 그룹 내 테이블 순서 = _metaRelOrderAll 재사용(컴포넌트 군집 + barycenter —
+//   "그룹"을 컨테이너로 취급). 반환: { list: [{key,label,n,tables[]}], orderIds: [...] } (결정론).
+function _metaSimGroups(schemaId, tables, adj) {
+  const fam = _metaSimFamilies(tables);
+  const roleFam = (t) => { const r = _metaRoleOf(t.key); return r ? "role:" + r : null; };
+  // 1차 배정 + 싱글턴 판정
+  const byFam = new Map();
+  tables.forEach((t) => { const f = fam.get(t.key); if (f) { if (!byFam.has(f)) byFam.set(f, []); byFam.get(f).push(t); } });
+  const famOf = new Map();   // tKey -> famKey (확정)
+  tables.forEach((t) => {
+    const f = fam.get(t.key);
+    if (f && byFam.get(f).length >= 2) { famOf.set(t.key, "nm:" + f); return; }
+    famOf.set(t.key, null);   // 싱글턴/무family — 2차에서 attach
+  });
+  // 2차: 관계 가중 최대 family attach — **1차 확정(nm:) family 만** 부착 대상.
+  //   §18.8 패널 MAJOR: 이웃 family 를 갱신 중인 live famOf 에서 읽으면 방금 2차-배정된 이웃으로 연쇄
+  //   attach 되어 입력순서 의존 그룹이 생긴다(주석의 "무연쇄" 위배). 1차 스냅샷 fam1 에서만 읽어 연쇄 차단.
+  const fam1 = new Map(famOf);
+  tables.forEach((t) => {
+    if (famOf.get(t.key)) return;
+    const m = adj.get(t.key);
+    if (!m) return;
+    const wByFam = new Map();
+    m.forEach((w, o) => { const f = fam1.get(o); if (f) wByFam.set(f, (wByFam.get(f) || 0) + w); });
+    let best = null, bw = 0;
+    [...wByFam.keys()].sort(_metaNatSort).forEach((f) => { const w = wByFam.get(f); if (w > bw) { bw = w; best = f; } });
+    if (best) famOf.set(t.key, best);
+  });
+  // 3차: 역할 family → 기타
+  tables.forEach((t) => { if (!famOf.get(t.key)) famOf.set(t.key, roleFam(t) || "misc"); });
+  // 역할/기타 family 도 싱글턴이면 기타로 흡수 (nm: 은 2차 attach 로 커질 수 있어 유지)
+  const cnt = new Map();
+  famOf.forEach((f) => cnt.set(f, (cnt.get(f) || 0) + 1));
+  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("nm:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
+  // 그룹 리스트 + 라벨
+  const groupsBy = new Map();
+  tables.forEach((t) => { const f = famOf.get(t.key); if (!groupsBy.has(f)) groupsBy.set(f, []); groupsBy.get(f).push(t); });
+  const normNm = _metaViewNorm;   // §18.8 MINOR: view_ 만 제거(viewer 등 실명 보존) — _metaSimFamilies 와 동일 규칙
+  const commonAffix = (arr) => {   // 멤버 정규화 이름의 최장 공통 접두/접미 중 긴 쪽(≥4) — 자연 스템 라벨
+    if (!arr.length) return null;
+    const ns = arr.map(normNm);
+    let p = ns[0], sfx = ns[0];
+    ns.forEach((x) => {
+      let i = 0; while (i < p.length && i < x.length && p[i] === x[i]) i++;
+      p = p.slice(0, i);
+      let j = 0; while (j < sfx.length && j < x.length && sfx[sfx.length - 1 - j] === x[x.length - 1 - j]) j++;
+      sfx = sfx.slice(sfx.length - j);
+    });
+    const best = p.length >= sfx.length ? p : sfx;
+    return best.length >= 4 ? best : null;
+  };
+  const labelOf = (f, members) => {
+    if (f === "misc") return "기타";
+    if (f.startsWith("role:")) { const r = f.slice(5); const R = _META_ROLE[r]; return R ? R.icon + " " + R.ko : r; }
+    let tok = f.slice(3);   // nm:token
+    if (members && members.length >= 2) { const ca = commonAffix(members); if (ca && ca.length > tok.length) tok = ca; }
+    if (members && members.length) {   // 방향 말줄임 — "이 스템으로 시작/끝나는 테이블들" 범위 신호(정확 일치 멤버가 있으면 생략)
+      const ns = members.map(normNm);
+      if (!ns.some((x) => x === tok)) {
+        if (ns.every((x) => x.startsWith(tok))) return tok + "…";
+        if (ns.every((x) => x.endsWith(tok))) return "…" + tok;
+      }
+    }
+    return tok;
+  };
+  const nsKey = (f) => schemaId + "\u0001" + f;   // 그룹 키 네임스페이스(스키마별 유일, 제어문자 구분자)
+  const baseOrder = [...groupsBy.keys()].sort((a, b) => (groupsBy.get(b).length - groupsBy.get(a).length) || _metaNatSort(labelOf(a, groupsBy.get(a)), labelOf(b, groupsBy.get(b))));
+  // misc 는 항상 마지막(잡동사니가 seriation 으로 가운데 끼는 것 방지)
+  const miscIdx = baseOrder.indexOf("misc");
+  if (miscIdx >= 0) { baseOrder.splice(miscIdx, 1); baseOrder.push("misc"); }
+  const nsIds = baseOrder.map(nsKey);
+  const groupOfT = new Map();
+  groupsBy.forEach((arr, f) => arr.forEach((t) => groupOfT.set(t.key, nsKey(f))));
+  const groupOf = (tk) => groupOfT.get(tk) || null;
+  // 그룹 seriation(관계 많은 그룹끼리 인접) — misc 제외 후 재부착(항상 마지막 유지)
+  const serIds = _metaRelSchemaOrder(nsIds.filter((k) => k !== nsKey("misc")), adj, groupOf);
+  if (groupsBy.has("misc")) serIds.push(nsKey("misc"));
+  const gIdx = new Map(serIds.map((k, i) => [k, i]));
+  // 그룹 내 순서: 컴포넌트 군집 + 그룹-간 barycenter (컨테이너=그룹으로 _metaRelOrderAll 재사용)
+  const pseudo = new Map();
+  groupsBy.forEach((arr, f) => pseudo.set(nsKey(f), { isTerms: false, tables: arr, terms: [], colsByTable: new Map() }));
+  const ordered = _metaRelOrderAll(pseudo, serIds, adj, gIdx, groupOf);
+  const list = serIds.map((k) => {
+    const f = k.slice(schemaId.length + 1);
+    const arr = ordered.get(k) || groupsBy.get(f) || [];
+    return { key: k, fam: f, label: labelOf(f, arr), n: arr.length, tables: arr };
+  }).filter((g) => g.n > 0);
+  return list;
+}
+
+// 그룹 블록 시각 팔레트(연한 틴트 8종 순환 — 칩 teal·역할색과 경쟁하지 않는 저채도 배경/테두리)
+const _META_GROUP_TINTS = [
+  { bg: "#eef4fb", hd: "#dbe7f7", bd: "#b9cfe8" },
+  { bg: "#eff8f1", hd: "#dcefe1", bd: "#bcdcc6" },
+  { bg: "#fdf6ec", hd: "#f7e8cf", bd: "#e6cfa3" },
+  { bg: "#f7f0fa", hd: "#ecdcf3", bd: "#d5b9e4" },
+  { bg: "#fbf0f2", hd: "#f4dbe1", bd: "#e4b9c4" },
+  { bg: "#eef7f9", hd: "#d9edf2", bd: "#b3d8e2" },
+  { bg: "#f4f6ee", hd: "#e7ecd7", bd: "#cdd8ab" },
+  { bg: "#f3f4f7", hd: "#e3e6ec", bd: "#c6ccd8" },
+];
+
 // 모델(_metaGraph.nodes/edges) → 위치 포함 G6 데이터. 스키마 클러스터를 관계 seriation(무관계 시 자연정렬)
-// grid 로, 테이블을 클러스터 안 관계-군집 순 스택으로, 펼친 테이블의 컬럼을 그 아래 세로열로 결정론 배치(무-shuffle).
+// grid 로, 클러스터 내부는 유사 속성 그룹 블록(배경 박스+헤더, graph-simgroups)으로, 펼친 테이블의 컬럼을
+// 그 아래 세로열로 결정론 배치(무-shuffle). 그룹이 1개뿐이면 기존 평면 masonry 그대로(시각 노이즈 방지).
 function _metaG6Build() {
   _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
   const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
@@ -3559,7 +3706,35 @@ function _metaG6Build() {
     const cols = g.colsByTable.get(t.key);
     return _METLAY.TROW + ((cols && cols.length) ? cols.length * _METLAY.CROW + CDROP : 0) + _METLAY.TGAP;
   };
-  // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 배치). 자연정렬 유지.
+  // ── graph-simgroups: 그룹 블록 기하 상수 + 그룹 내부 2-pass masonry ──
+  const GHH = 26;                   // 그룹 헤더 행 높이(헤더 칩 + 상단 여백)
+  const GPX = 12;                   // 그룹 블록 내부 좌우 pad
+  const GPB = 10;                   // 그룹 블록 하단 pad
+  const GGX = 14, GGY = 16;         // 그룹 블록 간 가로/세로 간격
+  const TRW = 4 * COLW + 3 * GGX;   // 클러스터 내부 그룹 행 목표 폭(≈기존 4열 masonry 폭 유지)
+  const gInnerColsFor = (n) => (n <= 4 ? 1 : n <= 12 ? 2 : 3);
+  // 그룹 내부 masonry(기존 철학 동일): Pass1 배정=collapsed(펼침-불변), Pass2 top=실 높이 push-down.
+  const packGroup = (g, arr) => {
+    const gic = gInnerColsFor(arr.length);
+    const colBase = new Array(gic).fill(0);
+    const assigned = arr.map((it) => {
+      let c = 0; for (let k = 1; k < gic; k++) if (colBase[k] < colBase[c]) c = k;
+      colBase[c] += assignH(g);
+      return { it, col: c };
+    });
+    const colTop = new Array(gic).fill(0);
+    const inner = assigned.map(({ it, col }) => {
+      const top = colTop[col];
+      colTop[col] += realH(g, it);
+      return { it, col, top };
+    });
+    return { gic, inner,
+      w: GPX * 2 + gic * COLW,
+      h: GHH + Math.max(0, ...colTop) + GPB };   // 실 높이(펼친 컬럼 포함) — 행 y push-down 이 소비
+  };
+  // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 절대 오프셋 배치).
+  //   place 항목은 {it, lx(열 좌측 x — 클러스터 상대), top(항목 상단 y — 클러스터 상대)} 로 정규화 —
+  //   평면/그룹 두 경로가 같은 렌더 루프를 공유한다.
   const layouts = ids.map((id) => {
     const g = groups.get(id);
     // graph-initview: 스키마 카드 게이팅(모드-독립 단일소스 schemaExpanded) — 접힌 스키마는 카드로만.
@@ -3568,6 +3743,40 @@ function _metaG6Build() {
     if (!g.isTerms && !gatedTables.length && !g.terms.length) {
       return { id, g, kind: "card", w: _METLAY.CARDW, h: _METLAY.CARDH, x0: 0, y0: 0 };
     }
+    // graph-simgroups: 유사 속성 그룹 분할 — 2개 이상일 때만 그룹 블록 렌더(1개면 기존 평면 masonry 유지).
+    const simGroups = (!g.isTerms && gatedTables.length) ? _metaSimGroups(id, gatedTables, relAdj) : null;
+    if (simGroups && simGroups.length >= 2) {
+      // 그룹 블록 shelf-pack: 행 배정은 블록 폭(펼침-불변)만 소비, 행 y 는 실 높이 누적(push-down —
+      //   펼친 컬럼이 자기 블록 높이를 키우면 아래 "행"만 밀리고 좌우 이웃 블록 x 는 불변).
+      const blocks = simGroups.map((sg, gi) => Object.assign({ sg, gi }, packGroup(g, sg.tables)));
+      const rows = [];
+      { let cur = { blocks: [], w: 0 };
+        blocks.forEach((b) => {
+          if (cur.blocks.length && cur.w + b.w > TRW) { rows.push(cur); cur = { blocks: [], w: 0 }; }
+          b.bxRel = _METLAY.PADX + cur.w; cur.blocks.push(b); cur.w += b.w + GGX;
+        });
+        if (cur.blocks.length) rows.push(cur); }
+      let byy = _METLAY.PADT + 6, contentW = 0;
+      rows.forEach((row) => {
+        const rowH = Math.max(...row.blocks.map((b) => b.h));
+        row.blocks.forEach((b) => { b.byRel = byy; });
+        contentW = Math.max(contentW, row.w - GGX);
+        byy += rowH + GGY;
+      });
+      const place = [];
+      const groupsMeta = [];
+      blocks.forEach((b) => {
+        groupsMeta.push({ key: b.sg.key, label: b.sg.label, n: b.sg.n, x: b.bxRel, y: b.byRel, w: b.w, h: b.h,
+          tint: _META_GROUP_TINTS[b.gi % _META_GROUP_TINTS.length] });
+        b.inner.forEach(({ it, col, top }) => {
+          place.push({ it, lx: b.bxRel + GPX + col * COLW, top: b.byRel + GHH + top });
+        });
+      });
+      const w = _METLAY.PADX * 2 + contentW;
+      const h = byy - GGY + 16;   // 마지막 행 실 높이 포함(펼친 컬럼 auto-grow 겹침 방지 — collapsed 로 얼리지 말 것)
+      return { id, g, place, groupsMeta, w, h, x0: 0, y0: 0 };
+    }
+    // ── 평면 masonry(기존 경로): terms 클러스터 · 그룹 <2 스키마 — place 를 {it,lx,top} 로 정규화 ──
     // graph-rel-layout: 테이블 순서는 _metaRelOrderAll 사전 산정분(관계-군집+barycenter, 무관계 시 자연정렬과
     //   동일)을 그대로 소비 — 여기서 재정렬하면 같은 배열의 중복 nat-sort(§18.8 패널 MINOR). terms 만 즉석 정렬.
     const items = g.isTerms
@@ -3586,11 +3795,11 @@ function _metaG6Build() {
     const place = assigned.map(({ it, col }) => {
       const top = colTop[col];
       colTop[col] += g.isTerms ? _METLAY.TROW : realH(g, it);
-      return { it, col, top };
+      return { it, lx: _METLAY.PADX + col * COLW, top };
     });
     const w = _METLAY.PADX * 2 + ic * COLW;
     const h = Math.max(_METLAY.PADT, ...colTop) + 16;   // 실제 높이 — shelf-packer 가 소비(겹침 방지, 절대 collapsed 로 얼리지 말 것)
-    return { id, g, ic, place, w, h, x0: 0, y0: 0 };
+    return { id, g, place, w, h, x0: 0, y0: 0 };
   });
   // shelf-packing: 가변폭 클러스터를 좌→우로 채우고, 폭 초과 시 다음 행으로.
   { let cx = 0, cyy = 0, shelfH = 0;
@@ -3637,8 +3846,27 @@ function _metaG6Build() {
       nodes.push({ id: "XS:" + id, type: _METtype, combo: id, data: { label: "−", kind: "schema-ctl", schema: id },
         style: _metaSchemaCtlStyle(L.x0 + L.w - 20, L.y0 + _METLAY.PADT - 26) });
     }
-    L.place.forEach(({ it, col, top }) => {
-      const colLeftX = L.x0 + _METLAY.PADX + col * COLW;
+    // graph-simgroups: 그룹 배경 박스 + 헤더 칩 — 칩보다 먼저 push(그리기 순서) + zIndex 음수(이중 안전).
+    //   비상호작용 장식(kind: group-bg/group-hd) — 클릭·ctx·드래그 핸들러가 GB:/GH: prefix 로 무시.
+    if (L.groupsMeta) {
+      L.groupsMeta.forEach((gm) => {
+        const gx = L.x0 + gm.x, gy = L.y0 + gm.y;
+        nodes.push({ id: "GB:" + gm.key, type: _METtype, combo: id,
+          data: { kind: "group-bg", group: gm.key, schema: id },
+          style: { x: gx + gm.w / 2, y: gy + gm.h / 2, size: [gm.w, gm.h], radius: 10,
+            fill: gm.tint.bg, fillOpacity: 0.75, stroke: gm.tint.bd, lineWidth: 1.2, zIndex: -2 } });
+        const hdText = `${gm.label} · ${gm.n}`;
+        const hdW = Math.min(Math.max(46, Math.round(hdText.length * 7.2) + 18), gm.w - 16);
+        nodes.push({ id: "GH:" + gm.key, type: _METtype, combo: id,
+          data: { kind: "group-hd", group: gm.key, schema: id, label: gm.label },
+          style: { x: gx + 8 + hdW / 2, y: gy + 13, size: [hdW, 18], radius: 9,
+            fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: -1,
+            labelText: hdText, labelFill: "#273449", labelFontSize: 10.5, labelFontWeight: 600,
+            labelPlacement: "center" } });
+      });
+    }
+    L.place.forEach(({ it, lx, top }) => {
+      const colLeftX = L.x0 + lx;
       const tx = colLeftX + TXOFF;
       const ty = L.y0 + top + _METLAY.TROW / 2;   // 항목(테이블/용어) 중심 y
       if (g.isTerms) {
@@ -4008,7 +4236,11 @@ function _metaCanvasDragEnable(e) {
 }
 // graph-drag(REQ ①): drag-element 활성 판정 — 노드 이동은 좌클릭만. 중간 버튼은 카메라 팬에
 //   양보해 "객체 상호작용(노드 이동)"이 아니라 카메라 드래그가 되게 한다.
-function _metaElementDragEnable(e) { return !_metaIsMiddleDrag(e); }
+function _metaElementDragEnable(e) {
+  const id = e && e.target && e.target.id;
+  if (id && (String(id).startsWith("GB:") || String(id).startsWith("GH:"))) return false;   // graph-simgroups: 그룹 장식은 이동 불가(박스-칩 분리 방지)
+  return !_metaIsMiddleDrag(e);
+}
 
 // graph-drag(REQ ②): 테이블 노드 드래그 시 종속 UI(접기 "X:" ctl + 컬럼 노드) 동반 이동.
 //   dragstart 에서 각 종속의 테이블 대비 오프셋(월드좌표)을 고정 기록하고, drag/dragend 마다
@@ -4108,6 +4340,11 @@ function _metaInitGraph() {
     const p = _metaCtxPoint(e);
     // graph-initview: 스키마 카드("SC:")·펼친 스키마 접기 ctl("XS:") 우클릭 → 스키마 전용 메뉴로 귀속.
     //   이 prefix 를 안 벗기면 _metaGraphCtxForNode 가 모델(SC: 없는 순수 key)에서 노드를 못 찾아 무반응.
+    if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
+      const gk = String(id).slice(3), sep = gk.indexOf("\u0001");
+      if (sep >= 0) _metaGraphCtxForSchema(gk.slice(0, sep), p.x, p.y); else _metaGraphCtxHide();
+      return;
+    }
     if (String(id).startsWith("SC:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
     if (String(id).startsWith("XS:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
     if (String(id).startsWith("X:")) id = String(id).slice(2);   // 테이블 접기 ctl → 소속 테이블 메뉴
@@ -4200,6 +4437,14 @@ function _metaInitGraph() {
 function _metaGraphOnNodeClick(e) {
   const id = e && e.target && e.target.id;
   if (!id) return;
+  // graph-simgroups(§18.8 패널 MAJOR): 그룹 배경 박스/헤더는 펼친 클러스터 내부 대부분을 덮어, 예전
+  //   combo 배경 클릭(→ 클러스터 상세)을 가로챈다. 데드존이 되지 않게 소속 스키마 클러스터 상세로 위임
+  //   (박스는 이동 불가라 드래그와 무충돌 — _metaElementDragEnable 에서 이미 차단).
+  if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {
+    const gk = String(id).slice(3), sep = gk.indexOf("\u0001"), sc = sep >= 0 ? gk.slice(0, sep) : null;
+    if (sc) _metaGraphShowClusterDetailById(sc);
+    return;
+  }
   if (String(id).startsWith("XS:")) { _metaGraphCollapseSchema(id.slice(3)); return; }   // graph-initview: 스키마 접기
   if (String(id).startsWith("X:")) { _metaGraphCollapse(id.slice(2)); return; }
   if (String(id).startsWith("SC:")) {
@@ -5779,12 +6024,32 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>테이블 (${tables.length})</h4><ul class="amgr-cluster-tables">`);
-    tables.slice(0, 80).forEach((t) => {
-      // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
+    // role-cluster-prefix: AI 능동 분석 완료 테이블은 역할 칩을 접두사로, 미분석은 동일 폭 빈 슬롯(라벨 좌측 정렬 유지 — 뒤틀림 방지).
+    const rowHTML = (t) => {
       const role = _metaRoleOf(t.key);
       const prefix = role ? _metaRoleChipHTML(role, esc, true) : `<span class="amgr-role-chip amgr-role-chip-sm amgr-role-none" aria-hidden="true"></span>`;
-      parts.push(`<li><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="클릭하면 이 테이블 노드를 선택합니다">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`);
-    });
+      return `<li><button type="button" class="amgr-ct-row" data-node-key="${esc(t.key)}" title="클릭하면 이 테이블 노드를 선택합니다">${prefix}<code>${esc(t.name || t.fqn || "")}</code>${t.description ? `<span class="amgr-ct-desc"> — ${esc(t.description)}</span>` : ""}</button></li>`;
+    };
+    // graph-simgroups: 캔버스와 동일한 유사 속성 그룹으로 목록도 구획(헤딩 행) — 2그룹 이상일 때만. 실패 시 평면 폴백.
+    let sgs = null;
+    try {
+      const tbk = new Map(tables.map((t) => [t.key, t]));
+      sgs = _metaSimGroups("panel:" + String(name), tables, _metaRelAdjacency(tbk));
+    } catch (_) { sgs = null; }
+    if (sgs && sgs.length >= 2) {
+      // §18.8 패널: 그룹 헤딩은 목록의 실제 구획 의미(장식 아님) → aria-hidden 금지. role="group"+aria-label
+      //   로 보조기기에 "그룹명·개수"를 노출. 80행 캡은 그룹 경계에서만 끊고 절단 표식을 남긴다(개수 모순 방지).
+      let emitted = 0;
+      sgs.forEach((sg) => {
+        if (emitted >= 80) return;
+        const shown = Math.min(sg.tables.length, 80 - emitted);
+        const trunc = shown < sg.tables.length ? ` <span class="amgr-ct-group-trunc">(${shown}/${sg.n})</span>` : "";
+        parts.push(`<li class="amgr-ct-group" role="group" aria-label="${esc(sg.label)} 그룹 · 테이블 ${sg.n}개"><span class="amgr-ct-group-label">${esc(sg.label)}</span><span class="amgr-ct-group-n">${sg.n}</span>${trunc}</li>`);
+        sg.tables.slice(0, shown).forEach((t) => { parts.push(rowHTML(t)); emitted++; });
+      });
+    } else {
+      tables.slice(0, 80).forEach((t) => parts.push(rowHTML(t)));
+    }
     parts.push(`</ul></div>`);
   }
   parts.push(`</div>`);

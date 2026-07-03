@@ -374,3 +374,20 @@ SPAN=4096 은 1D 층간 역전을 되레 증가(59→74)시켜 기각 — ADR-01
   **완전 불변**·관계선 유지(스크린샷 pb0008-rel-layout-02-collapsed-refs-kept.png).
 - 회귀 스팟: 이웃 확장(`_metaGraphExpand`) nodes 125→133 정상 병합·pageerror 0 · 검색 모드
   (`_metaGraphSearch('character')`) 스키마 카드 badge 매칭 정상·pageerror 0.
+
+## graph-simgroups — 유사 속성 그룹 영역화 (ADR-013, 2026-07-03)
+
+### Node 격리 (Environment: CLI, node — 실 _metaG6Build 구동 + 실측 fixture) — Run 2026-07-03 **25/25 PASS**
+admin.js 에서 _metaG6Build + 의존 25종을 소스 추출해 실측 gunzgame fixture(테이블 68·관계 145, SSOT 조회)로
+구동: ① family 유의미성(character·shop suffix·cash 스템) ② 그룹 무결성(전량 1회 커버·misc 후미·싱글턴 흡수)
+③ 배경 박스 상호 무겹침·모든 칩 중심이 정확히 자기 그룹 박스 1개 안·헤더 박스 내 포함 ④ 칩 무겹침(68/68)
+⑤ 결정론(2회 JSON 동일) ⑥ 펼침-불변(컬럼 3개 펼침 → 전 칩 x 불변·무상승·펼친 후 무겹침) ⑦ 평면 폴백
+(유사성 없는 3 테이블 스키마 → GB: 0, 기존 masonry) ⑧ 엣지 조립 보존(REFERENCES 승격 유지·GB/GH 끝점 0)
+⑨ 빌드 평균 7.5ms + §18.8 수정 회귀방지 ⑩ view norm 가드(viewer 미절단·view_ 절단) ⑪ 2차 attach 무연쇄(fam1 스냅샷) ⑫ GB:/GH: 클릭 클러스터 상세 위임. `node --check` PASS. 그룹 산출: character(14) item(17) characterinfo(4) battletimereward…(4)
+…shop(3) mission(4) clanmember(3) attendence(3) account(3) 등 13 + 기타(2).
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 배포 후 라이브 Run 을 본 섹션에 append (§15.4.1)
+본 cycle 은 deploy_scope: included 로 merge 직후 web 배포 → 라이브 그래프 뷰(gunzgame 등)에서 ① 유사 속성
+그룹 배경 박스·헤더 칩 렌더 ② 영역 단위 가시성(칩 나열 대비) ③ 컬럼 펼침/접기·테이블 드래그·검색·역할칩
+회귀 0 을 실 Windows Chrome 으로 육안 확인 예정. (pre-commit 시점 미수행 사유: 배포 선행 — deploy-web.sh 는
+origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 데이터 규모 필요.)

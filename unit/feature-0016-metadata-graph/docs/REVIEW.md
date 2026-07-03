@@ -722,3 +722,27 @@ source_of_truth: true
 ## REV-20260703T132403-ai-claude-feature-0016-graph-drag-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY 자산검증 결과 기록 (코드 무변경)
 - 대상: graph-drag(TASK §41) 배포 후 문서 갱신 — TASK T41.5 [x], MODIFY CHG-…-graph-drag-postdeploy, TEST POST-DEPLOY Run. **코드·자산 무변경(doc-only)** → §18.8 적대 패널 비적용(SKIPPED).
 - 근거: PR #571 머지(29c3a07c) → `make deploy-web` 무중단 롤링 soak 90s 통과. WSL localhost caddy edge :443 자산검증 PASS — healthz `status:ok / git_commit=29c3a07c / mysql_ok / pg_ok`, 라이브 admin.js graph-drag 심볼 12·`_metaRoleChipHTML` 2(병합 보존)·admin.html 버스터 `admin.js?v=20260703-graph-drag`. 코드 품질 검증은 원 cycle REV-20260703T021144-graph-drag [SUBAGENT: PASS] 에서 완료.
+## REV-20260703T043659-ai-claude-corp-feature-0016-graph-simgroups [SUBAGENT: PASS-WITH-FIXES] — 유사 속성 그룹 영역화 적대 리뷰 4축
+- 대상: CHG-20260703-graph-simgroups (admin.js `_metaG6Build` 유사 속성 그룹 블록, ADR-013, TASK §42).
+- 방식: ultracode workflow(wf_a6044ac9-72a) — 4축 finder(그룹핑 알고리즘/기하·G6 통합/UX/상호작용 회귀) +
+  발견별 2-refuter. **한계**: 패널 실행 중 Fable 5 사용량 한도로 refuter 17개·finder 2개(geo/interact)가
+  조기 에러 종료 → 워크플로우 자동집계의 "기각"은 신뢰 불가(미검증). Opus 전환 후 **미검증 findings 를 직접
+  코드 판정**하고 errored 축을 직접 검증.
+- 확정·수정 4건:
+  - [MAJOR] GB:/GH: 그룹 배경 박스가 펼친 클러스터 내부 대부분을 덮어(fillOpacity 0.75 는 히트테스트 유지)
+    기존 combo:click(클러스터 상세)·combo:contextmenu(스키마 메뉴)를 데드존화. 수정: 박스 클릭→소속 스키마
+    `_metaGraphShowClusterDetailById`, 우클릭→`_metaGraphCtxForSchema` 위임(드래그는 계속 불가 — 박스-칩 분리 방지).
+  - [MAJOR] 2차 관계 attach(_metaSimGroups)가 갱신 중 famOf 를 읽어 방금 배정된 이웃으로 연쇄 attach →
+    입력순서 의존(주석 "무연쇄" 위배). 수정: 1차 스냅샷 `fam1 = new Map(famOf)` 에서만 읽어 무연쇄·순서독립.
+  - [MINOR] `view` 접두 정규화가 "viewer_log"를 "er_log"로 절단. 수정: 공용 `_metaViewNorm` 가 `view_`(구분자)
+    접두만 제거, 그 외 view 로 시작하는 실명 보존. _metaSimFamilies·_metaSimGroups 동일 규칙.
+  - [NIT] 패널 그룹 헤딩 li aria-hidden="true" → 보조기기에서 구획 소거. 수정: aria-hidden 제거 + role="group"
+    + aria-label("<라벨> 그룹 · 테이블 N개"). 겸사 80행 캡을 그룹경계에서만 끊고 (shown/n) 절단표식.
+- 기각(직접 판정): 방향 말줄임 탈락(refuter 완료·반박 — 관계 attach 로 스템 불일치 시 말줄임 생략이 의미상
+  정당) / role 도착 재편(role 은 3차만 — name·relation 그룹 미보유 misc 테이블만 영향, 1회 전이. ADR-012
+  "데이터 축적에 따른 배치 수렴"·role-viz 점진 채색 철학과 정합 — 유지·문서화) / 결정론 위반 주장(same-model
+  same-order 이므로 t5 로 확인, 연쇄는 별개 품질 이슈로 위 ②에서 해소).
+- errored geo/interact 축 직접 검증: G6 style 키(zIndex/radius/fillOpacity/labelFontWeight/labelPlacement)는
+  vendored g6.min.js·기존 _metaTableStyle 에서 사용 중(크래시 없음), packGroup 은 `Math.max(0, ...)` 로 빈
+  배열 방어, GB:/GH: 는 `_metaGraph.nodes` 미등록이라 refreshStates·_stateCache·tableDeps·focus 경로 미유입.
+- 판정: 확정 4건 수정 + 회귀방지 t10~t12, 격리 25/25 PASS, node --check PASS. BLOCKING 0.
