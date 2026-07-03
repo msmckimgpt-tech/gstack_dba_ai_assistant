@@ -912,3 +912,18 @@ greedy seriation(연결 스키마 shelf 인접) ② `_metaRelTableOrder` 컴포�
 **검증**: Node 격리 8/8 PASS(회귀0·seriation·군집·상호교차 해소·결정론·벌크 감소·펼침-비의존) + 파라미터
 벤치(시드 3 × 랜덤/허브: 2D 세그먼트 교차 12~30% 감소, 1D 층간 역전 59→52, SPAN=1 채택 근거) + node --check.
 완료 게이트 = 배포 후 PB-0008 실 Windows 라이브 육안(TASK T38.8).
+
+### 유사 속성 그룹 영역화 — graph-simgroups (2026-07-03, worktree=feature-0016-graph-simgroups)
+
+**문제**: graph-rel-layout 후에도 "균일 칩 평면 나열"이라 군집이 영역으로 안 읽힘(사용자: 유사 속성끼리 +
+범위 가시화 + 근본 개선). 게임 DB 는 구분자 없는 연접 테이블명·FK 부분 선언·role 부분 존재.
+
+**수정** ([admin.js](../../feature-0003-agent-web-ui/src/static/admin.js), ADR-013): 3-신호 그룹핑(이름 affix
+family 지원도×길이 → 관계 attach → 역할 → 기타) + 그룹 블록 렌더(배경 박스 틴트 8종 + 헤더 칩 `스템 · n`,
+GB:/GH: 비상호작용 장식) + 그룹 내부 2-pass masonry·블록 shelf-pack(펼침-불변 배정, ADR-004 ② 계승) +
+클러스터 상세 목록 동일 그룹 헤딩. ADR-012 순서 계층(seriation·barycenter)은 컨테이너=그룹으로 재사용.
+
+**검증**: 실 _metaG6Build Node 구동(실측 gunzgame 68 테이블·145 관계) 격리 **25/25 PASS**(§18.8 수정 회귀방지 t10~t12 포함) — 그룹 무결성·bg
+무겹침·칩 1-bg 포함·칩/펼침 무겹침·결정론·펼침-불변·평면 폴백·엣지 조립 보존·빌드 5.1ms. 그룹 산출:
+character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·mission(4)·clanmember(3) 등 13+기타.
+완료 게이트 = 배포 후 PB-0008 실 Windows(TASK T42.8).

@@ -743,3 +743,16 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{TASK(§41),MODIFY,REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 **상호작용 전용** — 데이터 API·AGE 스키마·마커·상태·칩 인코딩·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·기존 zoom-canvas/node:click/contextmenu/미니맵/우클릭 메뉴 무변경. 종속 동반 이동은 drag-element 단일 노드 이동과 동일하게 transient(다음 setData 재구성 시 grid 로 복귀). 검증: `node --check` + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 v5.1.1 번들 실측 4축 BLOCKING 0) + **라이브 실 Windows 브라우저(Chrome/149) PB-0008 PASS**(Test A 중간버튼 팬: 노드 월드 [0,0] + 화면 팬 / Test B 좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]). 배포=web 재빌드.
 - Rollback Notes: admin.js 신규 7함수 + `tableDeps`/`_drag` 필드 + behaviors object-form + 두 리스너 제거, behaviors 를 `["drag-canvas","zoom-canvas","drag-element"]` 문자열로 환원. 데이터·API 무손상(상호작용 전용).
+
+## CHG-20260703-graph-simgroups
+- Date: 2026-07-03
+- Related Requirement: 사용자 후속 요청(graph-rel-layout 뒤) — "테이블 노드가 나열되는 배치라 여전히 낮은 가시성. 각 테이블이 서로 유사한 속성끼리 배치되도록(속성 범위가 가시적으로 나타나도록) 근본적인 개선". 정본: DECISIONS ADR-013 / TASK §42.
+- Summary: 스키마 클러스터 내부를 **유사 속성 그룹 블록**(색 배경 박스 + 헤더 칩 `스템라벨 · n`)으로 분할 — 군집을 '순서'에서 '가시적 영역'으로 승격. 그룹핑 = (테이블명 affix family 4~16자 지원도×길이) → (관계 가중 attach) → (역할) → (기타), 순수 함수·결정론. 그룹 순서/내부 순서는 ADR-012 seriation·barycenter 컨테이너 재사용. 그룹 블록 2-pass masonry + shelf-pack(펼침-불변 배정·실높이 push-down, ADR-004 ② 계승). 클러스터 상세 목록도 동일 그룹 헤딩. 그룹 <2 스키마·terms 는 기존 평면 masonry(회귀 0).
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (신규 `_metaSimFamilies`/`_metaSimGroups`/`_META_GROUP_TINTS` + `_metaG6Build` 그룹 블록 레이아웃(packGroup·place 정규화)·GB:/GH: 장식 노드 + 클릭/ctx/드래그 GB:/GH: 무시 + `_metaGraphRenderClusterDetail` 그룹 헤딩)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (캡션 범례 "색 배경 박스=유사 속성 그룹" + cache-buster admin.js/styles.css `20260703-graph-simgroups`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.amgr-ct-group` 헤딩 행)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§42),DECISIONS(ADR-013),MODIFY,REPORT,TEST,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 배치·표현 전용 — 데이터 API·AGE 스키마·RBAC·마이그레이션·graph-drag 종속 UI 계약(tableDeps) 불변. GB:/GH: 는 비상호작용 장식(이벤트 무시·드래그 불가·엣지 끝점 불가). 검증: 실 _metaG6Build Node 구동 격리 22/22(무겹침·포함·결정론·펼침-불변·평면 폴백·5.1ms) + node --check. 배포=web 재빌드. 완료 게이트=PB-0008 실 Windows.
+- §18.8 패널 후속 수정(같은 cycle, REVIEW REV-20260703T043659): ① GB:/GH: 클릭→`_metaGraphShowClusterDetailById`·우클릭→`_metaGraphCtxForSchema` 위임(combo 배경 데드존 방지) ② 2차 관계 attach 를 1차 스냅샷 `fam1` 참조로 무연쇄화 ③ view 정규화를 공용 `_metaViewNorm`(view_ 접두만) 으로 통일(viewer 미절단) ④ 패널 그룹 헤딩 aria-hidden 제거·role="group"/aria-label·80행 그룹경계 절단표식. 회귀방지 t10~t12(25/25).
+- Rollback Notes: admin.js 신규 함수·GB:/GH: 방출·핸들러 분기(클릭/우클릭 위임 포함)·패널 헤딩 revert + admin.html/styles.css cache-buster 이전값(20260703-graph-drag / 20260703-cluster-role-prefix). 데이터·API 무손상.
