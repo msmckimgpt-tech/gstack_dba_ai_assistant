@@ -3177,6 +3177,8 @@ const _metaGraph = {
   _opSeq: 0,              // 펼침/확장 조작 시퀀스 토큰. await(fetch·yield) 경계마다 대조해 stale 렌더 폐기.
   _stateCache: new Map(), // key -> 마지막 적용된 state signature. _metaGraphRefreshStates 가 변화분만 setElementState.
   _busyKeys: new Map(),   // graph-perf-bg fix: key -> busy 를 세운 _opSeq(소유권). refreshStates 가 busy 를 보존·복원하고, 같은 key 재트리거 시 신 op busy 를 stale op 가 지우지 않게 한다.
+  tableDeps: new Map(),   // graph-drag(REQ ②): Table key -> [종속 UI 노드 id](접기 "X:" ctl + 컬럼 노드). 매 _metaG6Build 재구성. 테이블 드래그 시 함께 이동.
+  _drag: null,            // graph-drag(REQ ②): 진행 중 테이블 드래그 상태 {id, lastX, lastY, deps:[...]}. null=비활성.
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3495,6 +3497,7 @@ function _metaRelOrderAll(groups, ids, adj, schemaIdx, schemaOf) {
 // 모델(_metaGraph.nodes/edges) → 위치 포함 G6 데이터. 스키마 클러스터를 관계 seriation(무관계 시 자연정렬)
 // grid 로, 테이블을 클러스터 안 관계-군집 순 스택으로, 펼친 테이블의 컬럼을 그 아래 세로열로 결정론 배치(무-shuffle).
 function _metaG6Build() {
+  _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
   const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
   const ensureG = (id) => { if (!groups.has(id)) groups.set(id, { isTerms: id === _META_TERMS_COMBO, tables: [], terms: [], colsByTable: new Map() }); return groups.get(id); };
   const tableByKey = new Map();
@@ -3632,12 +3635,15 @@ function _metaG6Build() {
       nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, trel, role), { labelText: tLabel }) });
       const cols = g.colsByTable.get(it.key);
       if (cols && cols.length) {
+        const depIds = ["X:" + it.key];   // graph-drag(REQ ②): 종속 UI = 접기 ctl + 컬럼 노드들
         nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_metaTableStyle(tx, ty, trel).size[0] / 2) + 14, ty) });
         let cyCol = ty + _METLAY.TROW / 2 + CDROP + _METLAY.CROW / 2;   // 첫 컬럼 중심 y
         cols.slice().sort(_metaGraphColCmp).forEach((c) => {
           nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyCol), { labelText: c.name || c.key }) });
+          depIds.push(c.key);
           cyCol += _METLAY.CROW;
         });
+        _metaGraph.tableDeps.set(it.key, depIds);   // graph-drag(REQ ②): 테이블 → 종속 노드 id 맵
       }
     });
   });
@@ -3959,6 +3965,67 @@ function _metaCatParent(key, fqn) {
   return scope + ":" + f.split(".")[0];
 }
 
+// graph-drag: 이벤트의 눌린 버튼 비트마스크(buttons)를 견고하게 추출한다.
+//   G6/G 의 drag lifecycle 이벤트(node:dragstart, 전역 dragstart)는 pointermove 에서 합성돼
+//   `button` 이 -1 일 수 있으므로, 현재 눌림 상태를 나타내는 `buttons`(1=좌,2=우,4=중간)를 우선한다.
+//   nativeEvent fallback + button→bitmask 최종 폴백으로 번들 차이에도 안전.
+function _metaEventButtons(e) {
+  if (!e) return 1;
+  if (typeof e.buttons === "number" && e.buttons > 0) return e.buttons;
+  const ne = e.nativeEvent || e.originalEvent;
+  if (ne && typeof ne.buttons === "number" && ne.buttons > 0) return ne.buttons;
+  const b = (typeof e.button === "number") ? e.button
+    : (ne && typeof ne.button === "number") ? ne.button : 0;
+  return b === 1 ? 4 : b === 2 ? 2 : 1;   // button: 0=좌→1, 1=중간→4, 2=우→2
+}
+// graph-drag: 중간(휠) 버튼으로 시작한 드래그인지.
+function _metaIsMiddleDrag(e) { return (_metaEventButtons(e) & 4) === 4; }
+// graph-drag(REQ ①): drag-canvas 활성 판정 — 중간 버튼은 노드 위에서든 어디서든 카메라 팬으로 허용,
+//   그 외(좌클릭)는 G6 기본대로 빈 캔버스에서만 팬(노드는 drag-element 가 처리).
+function _metaCanvasDragEnable(e) {
+  if (_metaIsMiddleDrag(e)) return true;
+  return !(e && "targetType" in e) || (e && e.targetType === "canvas");
+}
+// graph-drag(REQ ①): drag-element 활성 판정 — 노드 이동은 좌클릭만. 중간 버튼은 카메라 팬에
+//   양보해 "객체 상호작용(노드 이동)"이 아니라 카메라 드래그가 되게 한다.
+function _metaElementDragEnable(e) { return !_metaIsMiddleDrag(e); }
+
+// graph-drag(REQ ②): 테이블 노드 드래그 시 종속 UI(접기 "X:" ctl + 컬럼 노드) 동반 이동.
+//   dragstart 에서 대상이 "종속 UI 를 가진 테이블 + 좌클릭(노드 이동)" 일 때만 추적을 켠다.
+function _metaNodeDragStart(e) {
+  _metaGraph._drag = null;
+  if (_metaIsMiddleDrag(e)) return;             // 중간 버튼은 카메라 팬 — 노드 이동 아님
+  const g = _metaGraph.graph;
+  const id = e && e.target && e.target.id;
+  if (!g || !id) return;
+  const deps = _metaGraph.tableDeps.get(id);    // 테이블 key 만 등록됨(ctl/컬럼/용어/카드는 단독 이동)
+  if (!deps || !deps.length) return;
+  let p;
+  try { p = g.getElementPosition(id); } catch (_) { return; }
+  if (!p) return;
+  const rendered = _metaGraph.renderedIds;       // 렌더된 종속 노드만(접힘 등 미렌더 제외)
+  const targets = rendered ? deps.filter((d) => rendered.has(d)) : deps.slice();
+  if (!targets.length) return;
+  _metaGraph._drag = { id, lastX: p[0], lastY: p[1], deps: targets };
+}
+// drag: 테이블의 현재 월드좌표 변위(drag-element 가 이미 적용)를 읽어 종속 노드에 같은 변위 적용.
+//   내부 delta/zoom 수학 비의존 — translateElementBy 는 종속 노드 각각에 [dx,dy] 를 준다.
+function _metaNodeDrag() {
+  const st = _metaGraph._drag;
+  const g = _metaGraph.graph;
+  if (!st || !g) return;
+  let p;
+  try { p = g.getElementPosition(st.id); } catch (_) { return; }
+  if (!p) return;
+  const dx = p[0] - st.lastX, dy = p[1] - st.lastY;
+  if (dx === 0 && dy === 0) return;
+  st.lastX = p[0]; st.lastY = p[1];
+  const move = {};
+  st.deps.forEach((d) => { move[d] = [dx, dy]; });
+  try { g.translateElementBy(move, false); } catch (_) {}
+}
+function _metaNodeDragEnd() { _metaGraph._drag = null; }
+
 // G6 v5 그래프 초기화(1회). 이후 상태변경은 _metaG6Apply(setData+draw). Canvas 렌더러(선명·벡터).
 function _metaInitGraph() {
   const container = document.getElementById("metadataGraphCanvas");
@@ -3985,7 +4052,12 @@ function _metaInitGraph() {
       selected: { stroke: "#161b22", lineWidth: 3 },
       busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] },   // graph-perf-bg: 펼침/확장 조회 중 임시 표시(teal 점선)
     } },
-    behaviors: ["drag-canvas", "zoom-canvas", "drag-element"],
+    // graph-drag: 중간 버튼 드래그 = 카메라 팬(어디서든), 좌클릭 = 기존대로(빈 캔버스 팬 / 노드 이동).
+    behaviors: [
+      { type: "drag-canvas", key: "drag-canvas", enable: _metaCanvasDragEnable },
+      "zoom-canvas",
+      { type: "drag-element", key: "drag-element", enable: _metaElementDragEnable },
+    ],
     animation: false,
   };
   // graph-initview(E1): 미니맵 — 초기 화면이 "부분"이 될 수 있으므로 전체 지도+뷰포트 표시로 보완.
@@ -4037,6 +4109,18 @@ function _metaInitGraph() {
     ev.preventDefault();
     _metaCtx.x = ev.clientX; _metaCtx.y = ev.clientY;
   }, true);
+  // graph-drag(REQ ①): 중간(휠) 버튼 mousedown 의 브라우저 기본 동작(자동 스크롤 = 팬 커서)을
+  //   억제해 G6 카메라 팬만 남긴다. pointer 이벤트 흐름은 유지되므로 drag-canvas 는 정상 작동.
+  container.addEventListener("mousedown", (ev) => {
+    if (ev.button === 1) ev.preventDefault();
+  }, true);
+  // graph-drag(REQ ②): 테이블 노드를 드래그하면 그 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도
+  //   같은 변위만큼 함께 이동한다. drag-element 가 테이블 노드를 움직인 뒤(등록 순서상 먼저 실행)
+  //   node:drag 마다 테이블의 현재 월드좌표 변위를 읽어 종속 노드에 translateElementBy 로 전달한다
+  //   — 내부 delta/zoom 수학에 의존하지 않아 번들 차이·줌 배율에 안전.
+  graph.on("node:dragstart", (e) => _metaNodeDragStart(e));
+  graph.on("node:drag", (e) => _metaNodeDrag(e));
+  graph.on("node:dragend", () => _metaNodeDragEnd());
   if (!_metaGraph.bound) {
     _metaGraph.bound = true;
     const s = document.getElementById("metadataGraphSearch");
