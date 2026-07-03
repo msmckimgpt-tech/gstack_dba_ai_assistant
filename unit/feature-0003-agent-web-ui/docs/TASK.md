@@ -23,7 +23,7 @@ source_of_truth: true
   - [x] static/admin.js "연결 상태" 섹션 + `_dsConnStatusLabel` + cache-buster bump. node --check PASS.
   - [x] 단위테스트: test_conn_health.py 갱신(snapshot 키셋) + 신규 5건(평균 누적·window bound·실패/foreground 제외·느린성공 포함·prune 표본정리). feature-0002+0003 전량 회귀 0(컨테이너 전용 test_share_redaction_invariant 제외 — `import web.app` 환경 아티팩트, 본 변경 무관).
   - [x] §18.8 적대 리뷰(백엔드 정확성·스레드안전·좌표 비노출 불변식·회귀) — REV-20260703T085511-ds-avg-latency.
-  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 라이브 실측(데이터소스 선택 → 상세 패널 "연결 응답 시간(평균)" 표시; 배포 후 모니터가 표본 누적할 때까지 초기엔 "측정 중" → 1~2 probe 주기 후 평균 표시).
+  - [x] verify-completion --pre-commit PASS → commit(b8c386a2) → PR #575 merge(main 7ad4378b) → web 무중단 재배포(deploy_scope: included, web-a/web-b 7ad4378b soak 통과) → **PB-0008 Windows-browser 라이브 실측 PASS**(실 Windows Chrome/149 win-browser relay @ 172.26.144.1:9223, `https://localhost/admin` 로그인 세션): 데이터소스 상세 패널 "연결 상태" 섹션 렌더 + `mssql-dk-dev` **연결 응답 시간(평균) = "11.7 ms · 최근 6회 평균"**·`mssql-qa-idc` "133.4 ms · 최근 6회 평균"(healthy)·down 데이터소스(`mssql-web-qa`/`mssql_local`)는 "측정 중 (연결 성공 시 집계)"(성공 표본 없음, stale 값 미표시). 스크린샷 증적 확보. POST-DEPLOY 문서 기록 = TASK-20260703T085511-ds-avg-latency-postverify.
 
 ## TASK-20260702-aiops-conv-link-fix — AI 운영 현황 '최근 활동' 상세: 시스템 sentinel 대화 링크 깨짐 수정 (Minor §12.3 — feature-0003 프론트 단독, 백엔드/스키마/RBAC 무변경. TASK-20260702-audit-nav-ux 후속 — PB-0008 라이브 적발)
 - 트리거(PB-0008 라이브 검증): audit-nav-ux 배포 후 실 브라우저 검증에서 발견 — '최근 활동' 행 클릭 시 상세의 '연결 대화' 가 insight/ask 워커·자율 호출(활동 대부분)에도 `/?conversation=__insight_worker__` 같은 **열 수 없는 링크**를 렌더. `__insight_worker__`·`__ask_worker__`·`__global__`·`__kb_manual__` 등은 실제 사용자 대화가 아닌 예약 sentinel(전부 `__` 접두)인데 `conversation_id != NULL` 이라 링크로 처리됨.
