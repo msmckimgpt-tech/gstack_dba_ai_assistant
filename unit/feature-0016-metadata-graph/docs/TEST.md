@@ -474,3 +474,20 @@ origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 �
 미니맵 우하단 추종 ③ hover 지침 popover → 분석문 반영 ④ 분석 완료 box 재분석 버튼 부재 를 실
 Windows Chrome 으로 육안 확인 예정. (pre-commit 시점 미수행 사유: Routine 노드는 alembic 0034 +
 insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 — 배포 선행 필요.)
+
+## semantic-embed — 메타데이터 의미 임베딩·클러스터링 (Phase C, ADR-018, TASK §46, 2026-07-03)
+
+### 케이스
+- TC-46-1 (마이그): alembic 0035 가 rag_objects 에 3 nullable 컬럼+인덱스2 를 비파괴 적용(카탈로그 전용·<1s), head=0035, migrate-lint expand-safe, downgrade DROP.
+- TC-46-2 (시그니처): run_signature_backfill_pass 가 table 객체마다 결정론 시그니처를 texts 에 적재(strip-hash=join-key 정합) + signature_text_hash set. 변경 없으면 no-op(멱등).
+- TC-46-3 (임베딩): 기존 embedding 데몬이 시그니처 texts 를 bge-m3 1024d 임베딩(신규 경로 0).
+- TC-46-4 (클러스터): scope 별 kNN(τ)+union-find, degree-cap chaining 억제, N>FULLMATRIX_MAX_N skip, cluster_id 결정 배정, un-cluster=NULL.
+- TC-46-5 (투영·프론트): AGE Table 정점 cluster_id/label → scope_roots/schema_tables RETURN → _metaSimGroups be: 그룹(≥2), 없으면 affix 폴백. un-cluster=phantom 없음.
+- TC-46-6 (kill switch/회귀): AUTO=0 데몬 미기동. 기존 pgvector RAG·category_* 무영향.
+
+### Run (2026-07-03) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS** · py ast(semantic_cluster/insight/metadata_graph/config/0035) **PASS** · `migrate-lint` **PASS(expand-safe)**.
+- 순수함수 격리(컨테이너 numpy) **4/4 PASS**: 시그니처 결정론·commonAffix 라벨·kNN+union-find(degree-cap distinct 노드 분리)·MAJOR-1 strip-hash 정합.
+- metadata_graph 회귀(test_metadata_graph_units + test_sync_graph_from_relational) **10 PASS**(sync_table/scope_roots/schema_tables 변경 무회귀).
+- §18.8 2단계 적대검증(설계 워크플로우 + 구현 리뷰): MAJOR-1/MAJOR-2/MINOR-3 반영. REV-20260703T160303.
+- **POST-DEPLOY**: alembic 0035 라이브 적용 + web/insight-worker 재배포 + PB-0008(그래프 렌더·affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — feature-0003 TEST.md §3 Windows-browser Run).

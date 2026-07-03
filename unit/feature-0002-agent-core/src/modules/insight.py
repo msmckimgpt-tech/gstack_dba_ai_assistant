@@ -2826,6 +2826,46 @@ def _start_embedding_backfill_thread() -> None:
         logging.getLogger("insight").warning("embedding_backfill 스레드 기동 실패(무시): %s", exc)
 
 
+def _semantic_cluster_loop() -> None:
+    """feature-0016 Phase C: 메타데이터 시그니처 백필 + scope 별 의미 클러스터링 백그라운드 루프.
+
+    embedding 데몬(위)과 동형 — 별도 데몬 스레드에서 돌며 tick(8s)을 블로킹하지 않는다(임베딩·유사도 계산은
+    gateway/PG 지연 bound·batchy). pass 당 signature 백필 + cadence-due scope 클러스터링. fail-soft."""
+    interval = max(60, int(AGENT_METADATA_CLUSTER_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from modules import semantic_cluster
+            rep = semantic_cluster.run_cluster_maintenance()
+            sig = (rep or {}).get("signature") or {}
+            if int(sig.get("changed") or 0) > 0 or int((rep or {}).get("updated") or 0) > 0:
+                _log.info(
+                    "semantic_cluster sig_changed=%s scopes=%s clustered=%s updated=%s",
+                    sig.get("changed"), (rep or {}).get("scopes"),
+                    (rep or {}).get("clustered"), (rep or {}).get("updated"),
+                )
+        except Exception as exc:   # 스레드 보호 — 어떤 예외도 루프를 죽이지 않음
+            _log.warning("semantic_cluster pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_semantic_cluster_thread() -> None:
+    """AUTO 켜짐 시 Phase C 클러스터링 데몬 스레드 1회 기동(embedding 백필 스레드와 동형·분리)."""
+    if not AGENT_METADATA_CLUSTER_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_semantic_cluster_loop, name="meta-semantic-cluster", daemon=True)
+        t.start()
+        logging.getLogger("insight").info(
+            "semantic_cluster 스레드 기동(interval=%ss, recompute=%ss, sig_batch=%s)",
+            AGENT_METADATA_CLUSTER_INTERVAL_SEC, AGENT_METADATA_CLUSTER_RECOMPUTE_SEC,
+            AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS,
+        )
+    except Exception as exc:
+        logging.getLogger("insight").warning("semantic_cluster 스레드 기동 실패(무시): %s", exc)
+
+
 # feature-0015: SIGTERM/SIGINT → graceful. 현재 cycle 을 마저 끝내고(루프 경계에서) 종료.
 # insight 쓰기는 멱등(_upsert_fact autocommit 단일-fact + advisory lock + 다음 스캔 재유도)이라
 # SIGKILL 도 데이터 손상은 없으나, graceful 종료로 (a) 진행 cycle 의 불필요한 중단/LLM 비용 낭비,
@@ -2870,6 +2910,8 @@ def run_insight_worker_loop() -> None:
         logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)
     # TASK-0307: embedding 백필 데몬 스레드 기동(본 tick 루프와 분리 — 블로킹 방지).
     _start_embedding_backfill_thread()
+    # feature-0016 Phase C: 메타데이터 시그니처 임베딩 + 의미 클러스터링 데몬 스레드(embedding 스레드와 분리·동형).
+    _start_semantic_cluster_thread()
     while not _INSIGHT_SHUTDOWN.is_set():
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()

@@ -3581,11 +3581,22 @@ function _metaSimFamilies(tables) {
 function _metaSimGroups(schemaId, tables, adj) {
   const fam = _metaSimFamilies(tables);
   const roleFam = (t) => { const r = _metaRoleOf(t.key); return r ? "role:" + r : null; };
+  // Phase C(ADR-013 후속, semantic-embed): 백엔드 의미 클러스터(be:) 우선. namespace 는 정확히 1회('be:'+id)
+  //   부여 — 하류 nm: 재접두 대상에서 제외(verify MAJOR: 이중 namespace 방지). 이 스키마 내 be: 멤버 ≥2 일
+  //   때만 그룹화하고, 싱글턴이면 affix 폴백(be: 클러스터는 datasource 전역이라 한 스키마엔 1개만 있을 수 있음).
+  const beOf = new Map(), beCnt = new Map();
+  tables.forEach((t) => {
+    const be = (t.cluster_id != null && String(t.cluster_id) !== "") ? ("be:" + t.cluster_id) : null;
+    beOf.set(t.key, be);
+    if (be) beCnt.set(be, (beCnt.get(be) || 0) + 1);
+  });
   // 1차 배정 + 싱글턴 판정
   const byFam = new Map();
   tables.forEach((t) => { const f = fam.get(t.key); if (f) { if (!byFam.has(f)) byFam.set(f, []); byFam.get(f).push(t); } });
   const famOf = new Map();   // tKey -> famKey (확정)
   tables.forEach((t) => {
+    const be = beOf.get(t.key);
+    if (be && beCnt.get(be) >= 2) { famOf.set(t.key, be); return; }   // 백엔드 클러스터 우선(namespace 1회)
     const f = fam.get(t.key);
     if (f && byFam.get(f).length >= 2) { famOf.set(t.key, "nm:" + f); return; }
     famOf.set(t.key, null);   // 싱글턴/무family — 2차에서 attach
@@ -3609,7 +3620,7 @@ function _metaSimGroups(schemaId, tables, adj) {
   // 역할/기타 family 도 싱글턴이면 기타로 흡수 (nm: 은 2차 attach 로 커질 수 있어 유지)
   const cnt = new Map();
   famOf.forEach((f) => cnt.set(f, (cnt.get(f) || 0) + 1));
-  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("nm:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
+  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("nm:") && !f.startsWith("be:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
   // 그룹 리스트 + 라벨
   const groupsBy = new Map();
   tables.forEach((t) => { const f = famOf.get(t.key); if (!groupsBy.has(f)) groupsBy.set(f, []); groupsBy.get(f).push(t); });
@@ -3630,6 +3641,12 @@ function _metaSimGroups(schemaId, tables, adj) {
   const labelOf = (f, members) => {
     if (f === "misc") return "기타";
     if (f.startsWith("role:")) { const r = f.slice(5); const R = _META_ROLE[r]; return R ? R.icon + " " + R.ko : r; }
+    if (f.startsWith("be:")) {   // Phase C: 백엔드 의미 클러스터 — 서버 라벨 우선, 없으면 affix/멤버 폴백
+      const m = (members || []).find((x) => x && x.cluster_label);
+      if (m && m.cluster_label) return String(m.cluster_label);
+      const ca = commonAffix(members || []);
+      return ca || ("의미군 " + f.slice(3));
+    }
     let tok = f.slice(3);   // nm:token
     if (members && members.length >= 2) { const ca = commonAffix(members); if (ca && ca.length > tok.length) tok = ca; }
     if (members && members.length) {   // 방향 말줄임 — "이 스템으로 시작/끝나는 테이블들" 범위 신호(정확 일치 멤버가 있으면 생략)
@@ -5637,6 +5654,9 @@ function _metaGraphIngest(nodes, edges) {
     // graph-product-cat(§43): Product/Datasource 부가 필드 보존(제품 라벨 개수 · datasource scope drill).
     if (n.scope_key != null) rec.scope_key = n.scope_key;
     if (typeof n.datasource_count === "number") rec.datasource_count = n.datasource_count;
+    // Phase C(semantic-embed): 의미 클러스터 id/라벨 보존 → _metaSimGroups 가 be: 그룹으로 소비(affix 폴백).
+    if (n.cluster_id != null) rec.cluster_id = n.cluster_id;
+    if (n.cluster_label != null) rec.cluster_label = n.cluster_label;
     if (!existing) {
       _metaGraph.nodes.set(n.key, rec); added.push(n.key);
       // graph-perf-bg: 새 Column 노드면 소속 테이블의 colsByTable 카운트 증가(_metaTableHasCols O(1) 단일소스).

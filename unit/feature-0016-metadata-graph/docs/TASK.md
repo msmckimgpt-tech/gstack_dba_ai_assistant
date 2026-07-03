@@ -1151,3 +1151,27 @@ REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메�
       수정(`escClosing` 300ms 억제) + cache-buster `20260703-funcproc-esc`. PR #580 머지(e1c71589) →
       web 롤링 재배포(soak 통과) → **라이브 재실측 PASS**(Esc 120ms 내 닫힘·재-hover 정상, feature-0003
       TEST.md Run). 잔여: ①Routine ƒ/⚙ 칩 육안 확인(introspect 첫 cadence 후 — 후속 확인 항목).
+
+## 46. semantic-embed — 메타데이터 객체 의미 임베딩·클러스터링 (Phase C, ADR-013 후속, ADR-018, 2026-07-03 사용자 3대 개선 中 C)
+
+- Related Requirement: 사용자 "ADR-013(의미적 데이터 임베딩에 따른 실제 분류 구분)도 정합하도록 진행". 정본: DECISIONS ADR-018.
+- 등급: **Major** (라이브 agent_kb 마이그 0035 비파괴 additive + insight-worker 신규 데몬 + 임베딩 컴퓨트).
+- 설계: ultracode 워크플로우(understand6+design2+적대검증4) → 구현 → 구현 적대리뷰 → verify 픽스 반영.
+
+### 46.1 구현
+- [x] T46.1 alembic 0035: rag_objects 에 signature_text_hash·semantic_cluster_id·semantic_cluster_label 3 nullable
+  컬럼 + 인덱스 2개(비파괴·카탈로그 전용·expand-safe, down_revision=0034_routine_objects).
+- [x] T46.2 shared/config.py: AGENT_METADATA_CLUSTER_* 9 노브(+__all__).
+- [x] T46.3 semantic_cluster.py(신규): 시그니처 빌더(DB-distinct)·백필(strip-hash 정합)·kNN(degree-cap)+union-find
+  클러스터링(N>MAX skip 가드)·commonAffix 라벨·run_cluster_maintenance(PG kv cadence).
+- [x] T46.4 insight.py: _semantic_cluster_loop/_start_semantic_cluster_thread(embedding 데몬 동형·분리) 등록.
+- [x] T46.5 metadata_graph.py: sync_table(_UNSET·None=clear)·sync_graph 투영·scope_roots/schema_tables RETURN·
+  _PROP_KEYS/_NULLABLE_PROP_KEYS/_props_set(=null clear).
+- [x] T46.6 admin.js: _metaSimGroups be: 우선(namespace 1회·≥2)·labelOf be:·ingest 보존. cache-buster.
+
+### 46.2 검증
+- [x] T46.7 node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS.
+- [x] T46.8 §18.8 적대검증 2단계: 설계 워크플로우(revision 충돌·MSSQL·namespace·chaining fix) + 구현 리뷰(MAJOR-1
+  sig strip·MAJOR-2 phantom clear·MINOR-3 OOM 가드 반영). 정본 REVIEW REV-20260703T160303.
+- [ ] T46.9 **라이브 마이그(0035) 게이트 표면화 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·
+  affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — 후속 확인).

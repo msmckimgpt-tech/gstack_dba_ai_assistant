@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260703T160303-ai-claude-feature-0016-semantic-embed [SUBAGENT: PASS-WITH-FIXES] — Phase C 의미 임베딩·클러스터링(§46, ADR-018) 설계+구현 적대검증
+- 대상: CHG-20260703T160303-semantic-embed (alembic 0035 + semantic_cluster.py + insight 데몬 + metadata_graph 투영 + 프론트).
+- 방법(2단계): (1) **설계 워크플로우**(ultracode: understand 6 + design 2 + 적대검증 4 에이전트) — 마이그 안전성·정확성·비용 6축.
+  (2) **구현 diff 적대리뷰**(general-purpose) — 런타임 crash·conn/txn·투영·프론트·MSSQL·워커 6축.
+- 설계검증 확정·수정(NEEDS-FIXES → 반영):
+  - [CRITICAL] alembic revision 충돌(실제 head=0034_routine_objects) → C=**0035**/B=0036 renumber.
+  - [MAJOR] MSSQL 다중 DB 시그니처 오염 → 시그니처에 object_key effective schema(DB명) 포함(DB-distinct).
+  - [MAJOR] 프론트 be: namespace 이중적용 → namespace 1회 + ≥2 게이팅 + affix 폴백.
+  - [MAJOR] 클러스터 chaining(단일연결 τ) → 노드당 MAX_DEGREE 이웃 상한.
+- 구현검증 확정·수정(NEEDS-FIXES → 반영):
+  - **[MAJOR-1]** 시그니처 write-key(`_text_hash(sig)`) ≠ texts join-key(`_text_store_insert` 내부 strip) — 컬럼 없는
+    테이블 trailing space 로 해시 divergence → 영구 미클러스터(기능 무력화). **fix**: `_text_hash(sig.strip())`.
+  - **[MAJOR-2]** un-cluster(→NULL) 시 sync_table None-skip → AGE 정점 stale cluster_id 잔존 → phantom be: 그룹.
+    **fix**: `_NULLABLE_PROP_KEYS` + `_props_set` `= null` + sync_table `_UNSET` 센티넬(미전달≠명시 None).
+  - **[MINOR-3]** FULLMATRIX_MAX_N/KNN_K dead config(항상 full N×N, 8K scope 256MB OOM 위험). **fix**: N>MAX_N skip→
+    affix 폴백 가드 + config 주석 정정(KNN_K=예약).
+- SAFE 확인(리뷰어 실측): cursor 재사용/double-close 안전(autocommit·client 버퍼), `_cypher` 10-col 정합·`_unwrap` NULL 처리,
+  `_props_set` injection-safe, argpartition k∈[1,n-1], union-find 결정론, 프론트 be: 1회·싱글턴 affix 폴백·labelOf 멤버 라벨,
+  MSSQL DB-distinct=_rag_effective 정합, 데몬 fail-soft·tick 무블로킹, 마이그 linear chain·비파괴·카탈로그 전용.
+- 판정: **PASS-WITH-FIXES** — MAJOR-1/2 + MINOR-3 반영 후. 라이브 마이그(0035) SAFE(expand-safe·additive). 코드 deploy 저위험
+  (kill switch·fail-soft·affix 폴백). 클러스터 값은 eventual(데몬 cadence). 라이브 canvas 는 PB-0008 배포 후 확인.
+
 ## REV-20260703T140000-funcproc-esc-hotfix [SKIPPED:minor-1file-live-verified] — popover Esc 고착 hotfix (PB-0008 적발분)
 - Related Change: CHG-20260703-funcproc-esc-hotfix (TASK §45 T45.8).
 - Panel skip 사유(§18.8 — Minor + 1파일 + 정책 doc 무변경): 5줄 FE 상호작용 수정. 결함 자체가 PB-0008

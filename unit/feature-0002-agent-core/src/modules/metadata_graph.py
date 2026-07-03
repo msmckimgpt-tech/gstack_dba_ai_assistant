@@ -35,14 +35,21 @@ _ELABELS = {"USES", "HAS_SCHEMA", "HAS_TABLE", "HAS_COLUMN", "REFERENCES", "RELA
 # 노드/엣지 속성 화이트리스트 (Cypher SET 대상 — 임의 키 주입 차단)
 #  weight/status: feature-0016 강화 상태 투영(REFERENCES 엣지) — UI 가 신뢰/추정/파단을 구분.
 #  routine_type/params: 함수·프로시저 노드(graph-funcproc, ADR-016).
+#  semantic_cluster_id/label: feature-0016 Phase C(ADR-013 후속) 의미 클러스터 투영 — 프론트 sim-group 서버 신호.
 _PROP_KEYS = {"key", "name", "fqn", "scope_key", "description", "source",
               "confidence", "cardinality", "datasource_key", "schema_name",
               "table_name", "column_name", "relation_type", "term",
-              "weight", "status", "ordinal", "routine_type", "params"}
+              "weight", "status", "ordinal", "routine_type", "params",
+              "semantic_cluster_id", "semantic_cluster_label"}
 # 숫자(float) 리터럴로 SET 하는 속성(문자열 인용 금지)
 _NUMERIC_PROP_KEYS = {"confidence", "weight"}
-# 정수 리터럴로 SET 하는 속성. feature-0016 graphux5: 컬럼 실제 순서(ordinal).
-_INT_PROP_KEYS = {"ordinal"}
+# 정수 리터럴로 SET 하는 속성. feature-0016 graphux5: 컬럼 실제 순서(ordinal). Phase C: 의미 클러스터 id.
+_INT_PROP_KEYS = {"ordinal", "semantic_cluster_id"}
+# None 이 "미설정(skip)"이 아니라 "명시적 clear(= null)"를 의미하는 속성. Phase C: rag_objects 가 클러스터의
+# SSOT 라, 테이블이 클러스터에서 이탈(→NULL)하면 그래프 정점의 stale cluster_id 를 반드시 null 로 지워야
+# phantom be: 그룹(리뷰 MAJOR-2)이 안 생긴다. sync_table 은 _UNSET 센티넬로 "미전달(보존)"과 "None(clear)"을 구분.
+_NULLABLE_PROP_KEYS = {"semantic_cluster_id", "semantic_cluster_label"}
+_UNSET = object()   # sync_table cluster 인자 "미전달" 센티넬(≠ 명시 None=clear)
 
 _NEIGHBOR_NODE_CAP = 300   # 투영 1회 최대 노드 수 (8K 규모 보호)
 _SEARCH_CAP = 80           # 검색 결과 최대 노드 수
@@ -112,6 +119,9 @@ def _props_set(var: str, props: dict) -> str:
     parts = []
     for k, v in props.items():
         if k not in _PROP_KEYS:
+            continue
+        if k in _NULLABLE_PROP_KEYS and v is None:
+            parts.append(f"{var}.{k} = null")   # 명시적 clear(un-cluster 반영 — MAJOR-2). AGE 는 =null 로 속성 제거.
             continue
         if k in _NUMERIC_PROP_KEYS:
             try:
@@ -223,11 +233,15 @@ def _rag_effective(ds, object_key, schema_name, table_name):
 
 
 # ── 고수준 동기화 (관계형 → 그래프) ───────────────────────────────────────
-def sync_table(cur, scope, schema, table, description=None, source="manual") -> None:
+def sync_table(cur, scope, schema, table, description=None, source="manual",
+               cluster_id=_UNSET, cluster_label=_UNSET) -> None:
     """Schema·Table 노드 + HAS_TABLE 엣지 MERGE.
 
     description=None 이면 description 속성을 **건드리지 않는다**(rag_objects 노드 투영이 큐레이션
-    설명을 덮어쓰지 않도록). 빈 문자열("")은 명시적으로 빈 설명을 set."""
+    설명을 덮어쓰지 않도록). 빈 문자열("")은 명시적으로 빈 설명을 set.
+    cluster_id/cluster_label(Phase C): 기본 _UNSET=미전달(보존). rag_objects 투영은 **항상 현재값(None 포함)을
+    전달** — None 이면 _props_set 이 `= null` 로 clear(테이블이 클러스터에서 이탈 시 stale phantom 그룹 방지,
+    리뷰 MAJOR-2). scope_roots/schema_tables 가 RETURN → 프론트 sim-group 서버 신호."""
     fqn = f"{schema}.{table}" if schema else table
     skey = _vkey(scope, schema or "(default)")
     tkey = _vkey(scope, fqn)
@@ -237,6 +251,10 @@ def sync_table(cur, scope, schema, table, description=None, source="manual") -> 
               "schema_name": schema or "", "table_name": table, "source": source}
     if description is not None:
         tprops["description"] = description
+    if cluster_id is not _UNSET:
+        tprops["semantic_cluster_id"] = cluster_id      # None → _props_set 이 = null 로 clear
+    if cluster_label is not _UNSET:
+        tprops["semantic_cluster_label"] = cluster_label
     _merge_vertex(cur, "Table", tkey, tprops)
     _merge_edge(cur, "Schema", skey, "HAS_TABLE", "Table", tkey)
 
@@ -447,17 +465,22 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                 rag_conds.append("datasource_key = %s"); rag_args.append(scope_key)
             if since:
                 rag_conds.append("updated_at > %s"); rag_args.append(since)
-            cur.execute("SELECT datasource_key, schema_name, table_name, object_key "
+            # Phase C: 의미 클러스터(semantic_cluster_id/label)도 투영 — Table 정점에 실어 scope_roots/schema_tables 가 RETURN.
+            #   컬럼 부재(마이그 0035 미적용 구 DB)면 SELECT 실패 → 아래 except 로 graceful(클러스터 없이 rag 투영은 다음 tick).
+            cur.execute("SELECT datasource_key, schema_name, table_name, object_key, "
+                        "semantic_cluster_id, semantic_cluster_label "
                         "FROM rag_objects WHERE " + " AND ".join(rag_conds), tuple(rag_args))
-            for ds, sch, tbl, okey in cur.fetchall():
+            for ds, sch, tbl, okey, ccid, clab in cur.fetchall():
                 try:
                     eff_sch, eff_tbl = _rag_effective(ds, okey, sch, tbl)
-                    sync_table(cur, ds, eff_sch, eff_tbl, description=None, source="insight")
+                    sync_table(cur, ds, eff_sch, eff_tbl, description=None, source="insight",
+                               cluster_id=(int(ccid) if ccid is not None else None),
+                               cluster_label=(clab if clab else None))
                     rep["rag_tables"] += 1; _pending[0] += 1; _tick()
                 except Exception:
                     rep["errors"] += 1
         except Exception:
-            pass  # rag_objects 부재(구버전)·조회 실패 — graceful(다른 단계 계속)
+            pass  # rag_objects 부재(구버전)·semantic_cluster_* 컬럼 부재(0035 미적용)·조회 실패 — graceful(다른 단계 계속)
 
         # 1) table_descriptions
         _w, _a = _scope_since_where()
@@ -733,8 +756,9 @@ def scope_roots(scope: str, limit: int = 200, conn=None) -> dict:
         sc = _cq(scope)
         rows = _cypher(cur,
             f"MATCH (s:Schema)-[:HAS_TABLE]->(t:Table) WHERE s.scope_key = {sc} "
-            f"RETURN s.key, s.name, s.fqn, t.key, t.name, t.fqn, t.description, t.source "
-            f"LIMIT {limit}", 8)
+            f"RETURN s.key, s.name, s.fqn, t.key, t.name, t.fqn, t.description, t.source, "
+            f"t.semantic_cluster_id, t.semantic_cluster_label "
+            f"LIMIT {limit}", 10)
         nodes = {}
         for r in rows:
             skey = _unwrap(r[0]); tkey = _unwrap(r[3])
@@ -743,7 +767,8 @@ def scope_roots(scope: str, limit: int = 200, conn=None) -> dict:
                                "fqn": _unwrap(r[2]), "description": None, "source": None}
             if tkey and tkey not in nodes:
                 nodes[tkey] = {"label": "Table", "key": tkey, "name": _unwrap(r[4]),
-                               "fqn": _unwrap(r[5]), "description": _unwrap(r[6]), "source": _unwrap(r[7])}
+                               "fqn": _unwrap(r[5]), "description": _unwrap(r[6]), "source": _unwrap(r[7]),
+                               "cluster_id": _unwrap(r[8]), "cluster_label": _unwrap(r[9])}
             if skey and tkey:
                 result["edges"].append({"source": skey, "target": tkey, "type": "HAS_TABLE",
                                         "cardinality": None, "edge_source": None})
@@ -854,8 +879,9 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
         rows = _cypher(cur,
             f"MATCH (s:Schema)-[:HAS_TABLE]->(t:Table) "
             f"WHERE s.scope_key = {sc} AND s.key = {sk} "
-            f"RETURN s.key, s.name, s.fqn, t.key, t.name, t.fqn, t.description, t.source "
-            f"LIMIT {limit + 1}", 8)
+            f"RETURN s.key, s.name, s.fqn, t.key, t.name, t.fqn, t.description, t.source, "
+            f"t.semantic_cluster_id, t.semantic_cluster_label "
+            f"LIMIT {limit + 1}", 10)
         if len(rows) > limit:
             result["truncated"] = True
             rows = rows[:limit]
@@ -867,7 +893,8 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
                                "fqn": _unwrap(r[2]), "description": None, "source": None}
             if tkey and tkey not in nodes:
                 nodes[tkey] = {"label": "Table", "key": tkey, "name": _unwrap(r[4]),
-                               "fqn": _unwrap(r[5]), "description": _unwrap(r[6]), "source": _unwrap(r[7])}
+                               "fqn": _unwrap(r[5]), "description": _unwrap(r[6]), "source": _unwrap(r[7]),
+                               "cluster_id": _unwrap(r[8]), "cluster_label": _unwrap(r[9])}
             if skey and tkey:
                 result["edges"].append({"source": skey, "target": tkey, "type": "HAS_TABLE",
                                         "cardinality": None, "edge_source": None})

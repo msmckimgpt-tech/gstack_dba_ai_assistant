@@ -8,6 +8,29 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T160303-ai-claude-feature-0016-semantic-embed
+- What: Phase C(ADR-013 후속, ADR-018) — 메타데이터 객체(테이블) 의미 임베딩·클러스터링. 시그니처 텍스트를
+  기존 texts 저장소에 적재→기존 embedding 데몬이 bge-m3 1024d 임베딩→scope 별 kNN+union-find 클러스터링→
+  rag_objects 역기록→AGE 정점 투영→프론트 sim-group(be:) 우선(affix 폴백). TASK §46.
+- Files:
+  - `alembic/versions/20260704_0035_rag_objects_semantic_cluster.py`(신규): rag_objects 에 signature_text_hash·
+    semantic_cluster_id·semantic_cluster_label 3 nullable 컬럼 + 인덱스 2개(비파괴·expand-safe·카탈로그 전용).
+  - `shared/config.py`: AGENT_METADATA_CLUSTER_* 9 노브(+__all__).
+  - `modules/semantic_cluster.py`(신규 425줄): build_table_signature_text(DB-distinct)·run_signature_backfill_pass
+    (`_text_hash(sig.strip())` write=join 정합)·_cluster_edges(numpy N×N+degree-cap)·_union_find·run_semantic_cluster_pass
+    (N>FULLMATRIX_MAX_N skip 가드)·_label_cluster(commonAffix 서버포트)·run_cluster_maintenance(단일 conn·PG kv cadence).
+  - `modules/insight.py`: `_semantic_cluster_loop`/`_start_semantic_cluster_thread`(embedding 데몬 동형·분리) 등록.
+  - `modules/metadata_graph.py`: sync_table(_UNSET 센티넬·None=clear)·sync_graph step-0(cluster 투영)·scope_roots/
+    schema_tables RETURN + node dict(cluster_id/label)·_PROP_KEYS/_INT_PROP_KEYS/_NULLABLE_PROP_KEYS/_props_set(=null).
+  - `static/admin.js`: _metaSimGroups(be: 우선·namespace 1회·≥2 게이팅)·labelOf(be: 라벨)·_metaGraphIngest(보존).
+    cache-buster admin.js `20260704-semantic-embed`.
+- Impact: 프론트+백엔드 additive. **기존 pgvector RAG(texts HNSW·kb_retrieval)·category_* 무영향**. kill switch
+  AGENT_METADATA_CLUSTER_AUTO=0·fail-soft·affix 폴백. 클러스터는 eventual(데몬 cadence). 라이브 마이그=비파괴 additive.
+- Related Requirement: 사용자 3대 개선 中 C(ADR-013 의미 임베딩 분류). 정본: TASK §46 / DECISIONS ADR-018.
+- 검증: node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS. 설계 워크플로우
+  적대검증(NEEDS-FIXES→renumber/MSSQL/namespace) + 구현 적대리뷰(MAJOR-1 sig strip·MAJOR-2 phantom clear·MINOR-3 OOM
+  가드 반영). 정본 REVIEW REV-20260703T160303. 배포+PB-0008 배포 후.
+
 ## CHG-20260703-funcproc-esc-hotfix (ai/claude/feature-0016-funcproc-esc-hotfix)
 - Date: 2026-07-03
 - Related Requirement: TASK §45 T45.8 — graph-funcproc-uxfix 배포 후 PB-0008 라이브 실측이 적발한

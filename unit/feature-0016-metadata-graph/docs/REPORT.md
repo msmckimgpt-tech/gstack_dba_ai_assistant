@@ -1,5 +1,28 @@
 # Report
 
+## 2026-07-03 · 메타데이터 객체 의미 임베딩·클러스터링 (semantic-embed, Phase C, TASK §46, ADR-018)
+
+### 배경 (사용자 3대 개선 中 C)
+ADR-013 이 이연한 "컬럼 시그니처·설명 임베딩 기반 백엔드 클러스터링". affix 휴리스틱(클라) 위에 서버측 의미 신호를 additive 로 얹는다.
+
+### 구현 (ultracode 워크플로우 설계 → 구현 → 적대리뷰)
+- **시그니처 임베딩(재사용)**: 테이블 시그니처(이름+설명+컬럼+역할, DB-distinct)를 기존 texts 저장소에 적재 → 기존
+  embedding 데몬이 bge-m3 1024d 임베딩(신규 경로 0). rag_objects.signature_text_hash(strip-hash 정합).
+- **저장(비파괴, alembic 0035)**: rag_objects 3 nullable 컬럼 + 인덱스 2. **클러스터링**: insight-worker 데몬이 scope 별
+  kNN(τ)+union-find(degree-cap chaining 억제, N>MAX skip OOM 가드), 6h cadence. **투영·프론트**: AGE Table 정점 →
+  scope_roots/schema_tables RETURN → `_metaSimGroups` be: 우선(affix 폴백). un-cluster=명시 null clear(phantom 방지).
+- kill switch(AGENT_METADATA_CLUSTER_AUTO=0)·fail-soft·affix 폴백. 클러스터 값은 eventual(데몬 cadence).
+
+### 검증
+- node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS.
+- **§18.8 2단계 적대검증**: 설계 워크플로우(understand6+design2+적대4) → CRITICAL revision 충돌(0034_routine_objects
+  → C=0035)·MAJOR MSSQL 오염·namespace·chaining 반영. 구현 리뷰 → **MAJOR-1 sig strip 정합**(컬럼 없는 테이블 미클러스터
+  버그)·**MAJOR-2 phantom be: 그룹 clear**·MINOR-3 OOM 가드 반영. 정본 REVIEW REV-20260703T160303.
+- 라이브 마이그(0035) 게이트 + 배포(web+insight-worker) + PB-0008 배포 후.
+
+### 후속 정합 (Phase B)
+- Phase B(크로스-데이터소스 관계)가 본 시그니처 임베딩을 재사용해 크로스-ds 후보를 유사도로 발굴(신뢰 게이팅).
+
 ## 2026-07-03 · 함수·프로시저 노드 + 그래프/능동분석 UX 4건 (graph-funcproc-uxfix, TASK §45, ADR-016·017)
 
 ### 배경 (사용자 요청 5건)

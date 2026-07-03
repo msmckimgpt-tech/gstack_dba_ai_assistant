@@ -517,3 +517,32 @@ source_of_truth: true
     절충(기각).
 - Supersedes: (ADR-003 게이팅에 승격 예외 1종 추가 — 대체 아님, 정제)
 - Superseded By:
+
+## ADR-018 — 메타데이터 객체 의미 임베딩·클러스터링 (Phase C, ADR-013 후속 initiative 이행)
+- Status: accepted (2026-07-03)
+- Context: ADR-013 이 "affix 휴리스틱은 시맨틱 임베딩이 아니다 — 컬럼 시그니처·설명 임베딩 기반 백엔드 클러스터링은
+  별도 initiative(서버 계산·저장 스키마 필요)"로 이연한 후속 과제. 사용자 3대 개선 中 C. 임베딩 인프라는 이미 완비
+  (texts 저장소·bge-m3 1024d·embedding 데몬·pgvector HNSW)이나 **메타데이터 객체(테이블/컬럼)는 미임베딩**.
+- Decision: 결정론 배치·affix 위에 **서버측 의미 클러스터 신호**를 additive 로 얹는다.
+  1. **시그니처 임베딩(재사용)**: 테이블별 시그니처 텍스트(이름+설명+정렬 컬럼명+역할/도메인, DB-distinct=object_key
+     effective schema 포함)를 기존 `texts` 저장소에 적재(dedup by sha256) → **기존 embedding 데몬이 자동 임베딩**
+     (신규 embedding 경로 0, ADR-0021 "one embedding per text_hash" 계약). rag_objects 에 `signature_text_hash`
+     (texts join 키·변경감지) 컬럼. **write-key=join-key 정합**: `_text_hash(sig.strip())`(리뷰 MAJOR-1 — 컬럼 없는
+     테이블 trailing space divergence 방지).
+  2. **저장(비파괴, alembic 0035)**: rag_objects 에 `signature_text_hash`·`semantic_cluster_id`·`semantic_cluster_label`
+     3 nullable 컬럼 + 인덱스 2개. category_* denormalization 과 대칭(신규 테이블 회피 — 0017/0028 GRANT trap 회피).
+  3. **클러스터링(insight-worker 데몬 스레드)**: scope(scope_key,datasource_key)별 kNN(코사인 τ)+union-find 단일연결.
+     노드당 이웃 상한(MAX_DEGREE)로 chaining 억제(리뷰 MAJOR). numpy N×N(FULLMATRIX_MAX_N 이하), 초과 scope 는
+     skip→affix 폴백(OOM 가드, 리뷰 MINOR). cluster_id=멤버 min(object_key) 순 결정 배정. 6h cadence(PG kv).
+  4. **투영·프론트**: sync_table/sync_graph 가 클러스터를 AGE Table 정점에 실어 scope_roots/schema_tables 가 RETURN
+     (`cluster_id`/`cluster_label`). 프론트 `_metaSimGroups` 가 backend 클러스터(`be:`) 우선, 없으면 affix 폴백
+     (namespace 1회, ≥2 게이팅). **un-cluster(→NULL)는 명시 clear**(_NULLABLE_PROP_KEYS → `= null`, phantom be: 그룹
+     방지, 리뷰 MAJOR-2).
+- Consequences: affix(클라 휴리스틱) → 의미 임베딩(서버) 상위 신호로 sim-group 정밀도 향상. **DB 스키마 비파괴
+  (nullable 추가)·기존 pgvector RAG 무영향·kill switch(AGENT_METADATA_CLUSTER_AUTO=0)·fail-soft·affix 폴백**.
+  임베딩·클러스터는 eventual(데몬 cadence — 배포 직후엔 affix, 몇 cycle 후 클러스터 채워짐). Phase B(크로스-데이터소스
+  관계)가 이 시그니처 임베딩을 재사용해 크로스-ds 후보를 유사도로 발굴한다.
+- Alternatives: 신규 테이블(중복 keying·GRANT·인덱스·sync 표면↑, 기각) / rag_objects 자체 vector 컬럼(texts dedup
+  이점 상실, 기각) / sklearn·scipy(신규 heavy dep, 기각 — numpy만) / LLM 라벨(비용, 후속 옵션 — 현재 commonAffix 서버포트).
+- Supersedes: (ADR-013 의 이연분 이행 — affix 계층은 폴백으로 계승, 대체 아님)
+- Superseded By:

@@ -262,6 +262,15 @@ __all__ = [
     "AGENT_KB_EMBEDDING_AUTO",
     "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS",
     "AGENT_KB_EMBEDDING_INTERVAL_SEC",
+    "AGENT_METADATA_CLUSTER_AUTO",
+    "AGENT_METADATA_CLUSTER_INTERVAL_SEC",
+    "AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS",
+    "AGENT_METADATA_CLUSTER_RECOMPUTE_SEC",
+    "AGENT_METADATA_CLUSTER_SIM_THRESHOLD",
+    "AGENT_METADATA_CLUSTER_KNN_K",
+    "AGENT_METADATA_CLUSTER_MIN_SIZE",
+    "AGENT_METADATA_CLUSTER_MAX_DEGREE",
+    "AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -613,6 +622,23 @@ AGENT_KB_HYBRID_TRIGRAM_FLOOR = float(os.getenv("AGENT_KB_HYBRID_TRIGRAM_FLOOR",
 AGENT_KB_EMBEDDING_AUTO = os.getenv("AGENT_KB_EMBEDDING_AUTO", "1").strip().lower() in ("1", "true", "yes")
 AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "100") or "100")
 AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC", "60") or "60")
+# feature-0016 Phase C (ADR-013 후속, semantic-embed): 메타데이터 객체(테이블) 시그니처 임베딩 → scope 별
+# 의미 클러스터링. embedding 자체는 기존 embedding 데몬(위 AGENT_KB_EMBEDDING_*)이 texts 를 임베딩하므로
+# 신규 embedding 노브 없음 — 아래는 시그니처 백필 + 클러스터링 전용 데몬 스레드(임베딩 데몬과 분리, tick 무블로킹).
+#   AUTO=0 → Phase C 전면 비활성(kill switch, 프론트는 affix 폴백). RECOMPUTE_SEC → scope 재클러스터 cadence(6h).
+#   SIM_THRESHOLD → 코사인 τ(단일연결 컷). FULLMATRIX_MAX_N → numpy N×N 코사인 행렬 메모리 가드: 이하만
+#   클러스터링, 초과 scope 는 skip(프론트 affix 폴백 — OOM 방지). MAX_DEGREE → 노드당 이웃 상한(단일연결
+#   chaining 억제 — verify MAJOR). KNN_K → 예약(향후 대형 scope pgvector kNN 폴백용, 현재 미사용).
+#   τ=0.82 는 라이브 임베딩 코사인 분포로 재보정 대상(초기 안전값).
+AGENT_METADATA_CLUSTER_AUTO = os.getenv("AGENT_METADATA_CLUSTER_AUTO", "1").strip().lower() in ("1", "true", "yes")
+AGENT_METADATA_CLUSTER_INTERVAL_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_INTERVAL_SEC", "900") or "900")
+AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "200") or "200")
+AGENT_METADATA_CLUSTER_RECOMPUTE_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_RECOMPUTE_SEC", "21600") or "21600")
+AGENT_METADATA_CLUSTER_SIM_THRESHOLD = float(os.getenv("AGENT_METADATA_CLUSTER_SIM_THRESHOLD", "0.82") or "0.82")
+AGENT_METADATA_CLUSTER_KNN_K = int(os.getenv("AGENT_METADATA_CLUSTER_KNN_K", "15") or "15")
+AGENT_METADATA_CLUSTER_MIN_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MIN_SIZE", "2") or "2")
+AGENT_METADATA_CLUSTER_MAX_DEGREE = int(os.getenv("AGENT_METADATA_CLUSTER_MAX_DEGREE", "8") or "8")
+AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N = int(os.getenv("AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N", "2000") or "2000")
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(
