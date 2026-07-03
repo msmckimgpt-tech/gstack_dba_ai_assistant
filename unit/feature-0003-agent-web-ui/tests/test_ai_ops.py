@@ -175,17 +175,20 @@ def test_record_llm_usage_latency_column(monkeypatch):
     sink: list = []
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: _CaptureConn(sink))
 
-    # 미전달 → latency_ms=NULL (agent-core 11경로 byte-동치)
+    # 미전달 → latency_ms=NULL 및 step_gap_ms=NULL (미측정=NULL). 0033: 컬럼 순서 (…, target,
+    #   latency_ms, step_gap_ms) — latency=params[-2], step_gap=params[-1] (신규 컬럼 맨 끝 additive).
     llm._record_llm_usage("claude-haiku-4", "agent", _resp())
     assert len(sink) == 1
     sql, params = sink[0]
-    assert "latency_ms" in sql
-    assert params[-1] is None, "latency 미전달 시 NULL 이어야 함(byte-동치)"
+    assert "latency_ms" in sql and "step_gap_ms" in sql
+    assert params[-2] is None, "latency 미전달 시 NULL"
+    assert params[-1] is None, "step_gap 미전달 시 NULL"
 
-    # 명시값 → 그대로 전달
+    # 명시값 → 그대로 전달 (latency=params[-2], step_gap=params[-1])
     sink.clear()
-    llm._record_llm_usage("claude-haiku-4", "prompt_gen", _resp(), latency_ms=123)
-    assert sink[0][1][-1] == 123
+    llm._record_llm_usage("claude-haiku-4", "agent", _resp(), latency_ms=123, step_gap_ms=1300)
+    assert sink[0][1][-2] == 123    # latency_ms(전체 왕복)
+    assert sink[0][1][-1] == 1300   # step_gap_ms(단계 간 간격)
 
 
 def test_record_llm_usage_skips_without_usage(monkeypatch):
@@ -198,39 +201,57 @@ def test_record_llm_usage_skips_without_usage(monkeypatch):
     assert sink == []
 
 
-class _TargetFailCur:
-    """0032: target 컬럼 부재 시뮬레이션 — 'target' 포함 INSERT 첫 실행은 예외, 재실행(base)은 통과."""
-    def __init__(self, sink): self.sink = sink; self._raised = False
+class _ColAbsentCur:
+    """지정 컬럼이 스키마에 없다고 시뮬레이션 — 그 컬럼명을 포함한 INSERT 는 매번 예외(0033 3단 cascade 검증)."""
+    def __init__(self, sink, absent_col): self.sink = sink; self.absent = absent_col
     def __enter__(self): return self
     def __exit__(self, *a): return False
     def execute(self, sql, params=None):
-        if "target" in sql and not self._raised:
-            self._raised = True
-            raise RuntimeError('column "target" does not exist')
+        if self.absent in sql:
+            raise RuntimeError(f'column "{self.absent}" does not exist')
         self.sink.append((sql, params))
 
 
-class _TargetFailConn:
-    def __init__(self, sink): self.sink = sink; self.rolled_back = False; self._cur = _TargetFailCur(sink)
+class _ColAbsentConn:
+    def __init__(self, sink, absent_col):
+        self.sink = sink; self.rolled_back = 0; self._cur = _ColAbsentCur(sink, absent_col)
     def cursor(self, *a, **k): return self._cur
     def commit(self): return None
-    def rollback(self): self.rolled_back = True
+    def rollback(self): self.rolled_back += 1
     def close(self): return None
 
 
-def test_record_llm_usage_target_column_absent_fallback(monkeypatch):
-    # 0032: target 컬럼 부재(마이그 미적용/agent image stale)에서 _record_llm_usage 가 target 포함 INSERT
-    # 실패 → rollback → target 제외 base INSERT 로 폴백해 usage 행 자체는 보존(계측 무중단)하는지 검증.
+def test_record_llm_usage_step_gap_column_absent_fallback(monkeypatch):
+    # 0033: step_gap_ms 컬럼 부재(0033 미적용, 0032 target 은 적용 — agent image stale 등) →
+    # step_gap 포함 INSERT 실패 → rollback → (target, latency_ms) 로 폴백해 usage 행 보존.
     import modules.llm as llm
     import modules.runtime_backend as rb
     sink: list = []
-    conn = _TargetFailConn(sink)
+    conn = _ColAbsentConn(sink, "step_gap_ms")
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: conn)
-    llm._record_llm_usage("claude-haiku-4", "table_insight", _resp(), target="public.users", latency_ms=42)
-    assert conn.rolled_back is True          # abort 트랜잭션 정리 후 폴백
-    assert len(sink) == 1                     # 최종 1건만 기록(폴백 INSERT)
+    llm._record_llm_usage("claude-haiku-4", "agent", _resp(),
+                          target="public.users", latency_ms=42, step_gap_ms=1300)
+    assert conn.rolled_back == 1              # step_gap 포함 INSERT 1회 실패 → rollback
+    assert len(sink) == 1
     sql, params = sink[0]
-    assert "target" not in sql                # 폴백 = base 컬럼(target 미포함)
+    assert "step_gap_ms" not in sql and "target" in sql   # 폴백 = (…, target, latency_ms)
+    assert params[-1] == 42                    # latency 마지막(step_gap 없는 폴백)
+
+
+def test_record_llm_usage_target_column_absent_fallback(monkeypatch):
+    # 0032: target 컬럼 부재(마이그 미적용) → target 포함 INSERT 전부(step_gap·target 2단) 실패 →
+    # 최소 base(latency) 로 폴백해 usage 행 보존(계측 무중단).
+    import modules.llm as llm
+    import modules.runtime_backend as rb
+    sink: list = []
+    conn = _ColAbsentConn(sink, "target")
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: conn)
+    llm._record_llm_usage("claude-haiku-4", "table_insight", _resp(),
+                          target="public.users", latency_ms=42, step_gap_ms=1300)
+    assert conn.rolled_back == 2              # step_gap-포함 + target-포함 INSERT 2회 실패
+    assert len(sink) == 1
+    sql, params = sink[0]
+    assert "target" not in sql and "step_gap_ms" not in sql   # 폴백 = base 컬럼
     assert params[4] == "table_insight"       # task 보존
     assert params[-1] == 42                    # latency 마지막 위치 보존
 

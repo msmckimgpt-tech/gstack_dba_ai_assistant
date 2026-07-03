@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격 (Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI. /_template:entry arg-given dispatch)
+<!-- PLAN-APPROVED by mckim on 2026-07-03 (AskUserQuestion 정의 재확정=A 단계 간 간격) -->
+- 트리거(사용자): "`관리 콘솔 > AI 운영 현황` 에서 에이전트 추론 p95 측정 단위를 검토 — 지연 기준은 답변 받는 총 시간이 아니라 각 추론이 진행되는 단계 간 나타나는 간격으로 구성되어야."
+- 검토 결론: 현행 `latency_ms` = 에이전트 추론 호출 전체 왕복(생성 포함). 실제 라이브 기록 경로는 `agent_core._call_llm`(중앙 래퍼 `_openai_chat_completion_with_deadline` 는 dead — `llm_plan` 호출자 0). 왕복은 답변 길이 비례 → "답변 받는 시간" 쪽. 사용자 기준(단계 간 간격)과 불일치.
+- **경로 정정 이력**: 1차 시도는 `_openai_chat_completion_with_deadline`(죽은 코드)를 TTFT 스트리밍 계측 → 적대 패널이 "라이브 경로 미계측·KPI 공백" BLOCKING 적발 → revert. 사용자 재확정 = 정의 **A(단계 간 간격)**, 실제 경로 `_call_llm` + 루프 계측으로 재구현.
+- 설계(정의 A — 스트리밍 불요, 저위험):
+  1. **[feature-0002] `agent_core._run_agent_core` 루프**: `_prev_llm_end_ns`(직전 라운드 LLM 종료 perf_counter) 추적. 다음 라운드 `_call_llm` 직전 gap = (now − prev_end) 계산해 `step_gap_ms` 로 전달, 호출 성공 후 prev_end 갱신. 첫 라운드/`_call_llm` 예외(→break)는 None.
+  2. **[feature-0002] `_call_llm`**: `step_gap_ms` 파라미터 추가 → `_record_llm_usage(step_gap_ms=)` 전달.
+  3. **[feature-0002] `_record_llm_usage`**: `step_gap_ms` 파라미터 + 3단 INSERT cascade(target+latency+step_gap → target+latency → latency 자가치유). `latency_ms`(왕복) 보존.
+  4. **[feature-0002] 마이그 0033 + 부트스트랩 DDL parity**: `step_gap_ms INTEGER` additive nullable. down_revision=0032. 과거 행 NULL → KPI 자동 제외(cutover 오염 0).
+  5. **[feature-0003] ai_ops.py**: KPI query#2(태스크별)·#3(전체) `percentile_cont … latency_ms` → `step_gap_ms`. F2: 다단계 요청 분모(multistep/agent_requests)도 노출(단발 위주 window 빈 tile 오인 방지).
+  6. **[feature-0003] admin.js**: KPI "지연 p50/p95" → "단계 간 간격 p50/p95" + 서브 "추론 단계 사이(도구·오케스트레이션) · 다단계 요청 M/R · 간격 N건". per-task "간격 p95". activity 상세 latency_ms 는 "왕복" 라벨로 구분. cache-buster `?v=20260703-aiops-stepgap`.
+- Risk: **Major** — 코어 에이전트 루프 계측 추가(additive, best-effort, 예외 무전파). 파괴적/인증/PII 무관. 완화: 적대 2렌즈×2라운드 SHIP + 배포 후 라이브 step_gap_ms 행 검증(F6).
+- Completion Checklist:
+  - [x] 마이그 0033 step_gap_ms + 부트스트랩 DDL parity (migrate-lint expand-safe).
+  - [x] agent_core 루프 gap 추적 + `_call_llm(step_gap_ms=)` + `_record_llm_usage` cascade. py_compile PASS.
+  - [x] ai_ops.py query#2/#3 → step_gap_ms + 다단계 분모. admin.js 라벨 + cache-buster. node --check PASS.
+  - [x] 테스트: step_gap 기록/omit/음수, `_call_llm` forwarding, cascade 폴백(step_gap/target 부재). make test 1430 passed(회귀 0) + ruff.
+  - [x] §18.8 적대 패널 2렌즈×2라운드 → SHIP. REV-20260703T094539-aiops-stepgap.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → 배포(마이그 0033 + web + agent/ask-worker 재빌드, deploy_scope: included) → **라이브 검증(F6): 다라운드 에이전트 구동 → step_gap_ms 행 생성 확인 + KPI "단계 간 간격" 실값 렌더 (PB-0008)**.
+
 ## TASK-20260703T085511-ds-avg-latency — 관리 콘솔 > 데이터소스 상세 패널에 평균 연결 응답 시간 표시 (Major §12.3 — feature-0003 web/UI·API + cross-unit shared/conn_health·config, migration 없음. /_template:entry arg-given dispatch)
 - 트리거(사용자): "프로젝트 내 서비스의 `관리 콘솔 > 데이터소스` 에서, 각 항목을 선택했을 때 나타나는 상세 정보 패널에 평균적인 연결 응답 시간을 보여주세요."
 - 설계(평균의 의미): `shared/conn_health.py` 백그라운드 모니터가 각 데이터소스를 주기적으로 probe(TCP 선검사 + 실제 DB connect + `SELECT 1`)하며 `last_elapsed_ms`(마지막 1회)만 보관하던 것을, **최근 성공 background DB probe elapsed 의 이동평균**(`avg_elapsed_ms`, window=AGENT_CONN_AVG_WINDOW 기본 20)으로 확장. 순간값보다 대표성이 높고, 추가 probe·연결테스트 없이(이미 측정 중인 값 재사용) 상시 표시. 실패 probe·foreground(elapsed 미측정 0.0)는 표본 제외, 느린 성공(unstable)은 응답시간 유효하므로 포함.

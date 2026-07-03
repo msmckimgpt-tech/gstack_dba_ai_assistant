@@ -641,6 +641,7 @@ def _record_llm_usage(
     model: str, task: str, resp,
     conversation_id: str | None = None, run_id: str | None = None,
     latency_ms: int | None = None, target: str | None = None,
+    step_gap_ms: int | None = None,
 ) -> None:
     """TASK-0136 (#11): LLM 호출 토큰 사용량을 agent_runtime.llm_usage 에 기록 (best-effort).
     모든 LLM 호출의 단일 chokepoint 에서 포착 → 비용 가시성. 실패해도 LLM 응답에 무영향.
@@ -667,7 +668,7 @@ def _record_llm_usage(
         # TASK-0163: provider 가 응답으로 반환한 실제 서빙 모델명(LiteLLM 이 별칭을 해소한
         # 결과). 요청 별칭(model)만으론 claude 계열 구분 불가 → resolved_model 로 보존.
         served = str(getattr(resp, "model", "") or "")[:128] or None
-        # AI 운영 관제 계측(TASK-AIOPS): 순수 API 왕복 지연(ms). 미측정(latency_ms 미전달)은
+        # AI 운영 관제 계측(TASK-AIOPS): latency_ms = LLM 호출 전체 왕복(생성 포함) ms. 미측정(미전달)은
         # NULL 로 남겨 통계(p50/p95)에서 제외 — DEFAULT 0 을 쓰지 않는 이유(미측정=0ms 오염 방지).
         try:
             lat = int(latency_ms) if latency_ms is not None else None
@@ -675,6 +676,15 @@ def _record_llm_usage(
                 lat = None
         except Exception:
             lat = None
+        # TASK-20260703-aiops-ttft-latency (정의 A): step_gap_ms = 직전 에이전트 라운드 LLM 호출 종료 →
+        # 이번 라운드 호출 시작 사이의 간격(도구 실행 + 오케스트레이션) ms. 지연 KPI 의 '단계 간 간격' 축.
+        # 첫 라운드/단발 호출(미전달)은 NULL → 통계 제외. agent_core `_run_agent_core` 루프가 계산해 전달.
+        try:
+            gap = int(step_gap_ms) if step_gap_ms is not None else None
+            if gap is not None and gap < 0:
+                gap = None
+        except Exception:
+            gap = None
         # AI 운영 현황 '최근 활동' 대상 관측(0032): 인사이트 분석이 '어떤 대상'에 동작했는지
         # (schema / schema.table / 노드 FQN). 표시 전용 — 저카디널리티 task 와 분리해 집계 무영향.
         tgt = (str(target).strip()[:200] or None) if target is not None else None
@@ -685,28 +695,40 @@ def _record_llm_usage(
         try:
             with pg.cursor() as cur:
                 try:
-                    # 컬럼 순서: target 을 total_tokens 와 latency_ms 사이에 둔다 — 기존 param 위치
-                    #   (pt=5·ct=6·tt=7, latency=마지막)를 보존해 계측 회귀 테스트와 byte-동치 유지.
+                    # 컬럼 순서: pt=5·ct=6·tt=7 는 계측 회귀 테스트(byte-동치) 보존, 신규 컬럼은 맨 끝에
+                    #   additive — target(0032) → latency_ms(0030) → step_gap_ms(0033, 마지막).
                     cur.execute(
                         "INSERT INTO agent_runtime.llm_usage "
-                        "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, target, latency_ms) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                        (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, tgt, lat),
+                        "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, target, latency_ms, step_gap_ms) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, tgt, lat, gap),
                     )
                 except Exception:
-                    # target 컬럼 부재(마이그레이션 미적용/agent image stale — memory: deploy-migration-stale-agent-image)
-                    # 시 target 제외 INSERT 로 폴백해 usage 행 자체는 보존(계측이 조용히 끊기지 않음).
-                    # 실패 트랜잭션은 abort 상태라 재쿼리 전 rollback 필수.
+                    # step_gap_ms 컬럼 부재(0033 미적용 / agent image stale — memory: deploy-migration-stale-agent-image)
+                    # → target+latency 로 폴백(0032 적용 상태). 실패 트랜잭션은 abort 라 재쿼리 전 rollback 필수.
                     try:
                         pg.rollback()
                     except Exception:
                         pass
-                    cur.execute(
-                        "INSERT INTO agent_runtime.llm_usage "
-                        "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, latency_ms) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                        (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, lat),
-                    )
+                    try:
+                        cur.execute(
+                            "INSERT INTO agent_runtime.llm_usage "
+                            "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, target, latency_ms) "
+                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                            (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, tgt, lat),
+                        )
+                    except Exception:
+                        # target 컬럼도 부재(0032 미적용) → 최소 컬럼(latency)으로 폴백해 usage 행 자체는 보존.
+                        try:
+                            pg.rollback()
+                        except Exception:
+                            pass
+                        cur.execute(
+                            "INSERT INTO agent_runtime.llm_usage "
+                            "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, latency_ms) "
+                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                            (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, lat),
+                        )
             pg.commit()
         finally:
             try:

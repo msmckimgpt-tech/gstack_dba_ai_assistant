@@ -2600,7 +2600,8 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
               temperature: float | None = None,
               tools: list[dict] | None = None,
               conversation_id: str | None = None,
-              run_id: str | None = None) -> Any:
+              run_id: str | None = None,
+              step_gap_ms: int | None = None) -> Any:
     """OpenAI API를 호출한다.
 
     TASK-0094 Sprint 2 (D13): vision 가능 모델 + env ATTACHMENT_IMAGE_INLINE_PATH
@@ -2636,10 +2637,14 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # in-process 동시 ask 의 cfg 전역 race 를 피하려 conversation_id/run_id 를 명시 전달.
     # TASK-AIOPS: 이 경로가 LLM 볼륨 최대인데 중앙 래퍼를 안 거쳐 latency 가 비어 있던 gap 보완 —
     # create 직후 latency_ms 를 함께 기록(래퍼 경로와 동일한 순수 왕복 측정 규약).
+    # TASK-20260703-aiops-ttft-latency (정의 A): step_gap_ms(직전 라운드 종료→이번 호출 시작 사이의
+    #   도구·오케스트레이션 간격)를 함께 기록 — 지연 KPI 의 '단계 간 간격' 축. 호출측(_run_agent_core
+    #   루프)이 라운드 간 gap 을 계산해 전달(첫 라운드는 None → NULL).
     try:
         _record_llm_usage(model, "agent", response,
                           conversation_id=conversation_id, run_id=run_id,
-                          latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000))
+                          latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+                          step_gap_ms=step_gap_ms)
     except Exception:
         pass
     return response.choices[0].message
@@ -3533,6 +3538,10 @@ def _run_agent_core(
     empty_retries = 0
     reflection_count = 0  # ITEM-07: run 당 SQL 자가수정 넛지 횟수(cap=AGENT_SELF_REFLECTION_MAX)
     llm_round = 0  # TASK-0289: LLM 추론 호출 회차(activity 노출용)
+    # TASK-20260703-aiops-ttft-latency (정의 A): 직전 라운드 LLM 호출 종료 시각(perf_counter_ns).
+    #   다음 라운드 호출 직전 gap(도구 실행 + 오케스트레이션 = '단계 간 간격')을 산출해 계측한다.
+    #   None = 아직 첫 라운드 전(첫 라운드는 선행 단계 없음 → step_gap_ms NULL).
+    _prev_llm_end_ns: int | None = None
 
     while step_count < max_steps:
         if _cancel_requested_for_run(mem_conn, cid, run_id):
@@ -3567,6 +3576,12 @@ def _run_agent_core(
         )
         # TASK-0228 (1:N): 멀티 datasource 면 각 도구에 `datasource` 선택 인자를 주입한 정의를 쓴다.
         use_tools = None if finalize_now else _run_tool_defs
+        # TASK-20260703-aiops-ttft-latency (정의 A): 이번 라운드 LLM 호출 시작 직전, 직전 라운드
+        #   종료로부터의 간격(도구 실행 + 오케스트레이션)을 계산. 첫 라운드는 None(선행 단계 없음).
+        _step_gap_ms = (
+            int((time.perf_counter_ns() - _prev_llm_end_ns) // 1_000_000)
+            if _prev_llm_end_ns is not None else None
+        )
         try:
             response_message = _call_llm(
                 client, messages, model,
@@ -3574,7 +3589,9 @@ def _run_agent_core(
                 tools=use_tools,
                 conversation_id=cid,  # TASK-0163: race-free 토큰 귀속 (in-process 동시 ask)
                 run_id=run_id,
+                step_gap_ms=_step_gap_ms,
             )
+            _prev_llm_end_ns = time.perf_counter_ns()  # 이 라운드 LLM 종료 시각 → 다음 라운드 gap 기산점
         except Exception as e:
             error_msg = f"LLM 호출 오류: {e}"
             # TASK-20260619T014034: 외부요인(자격증명 만료·인증실패·쓰로틀·서비스불가)이면

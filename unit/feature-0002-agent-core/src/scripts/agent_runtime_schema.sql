@@ -320,8 +320,9 @@ CREATE TABLE IF NOT EXISTS agent_runtime.llm_usage (
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens      INTEGER NOT NULL DEFAULT 0,
-    latency_ms        INTEGER,
+    latency_ms        INTEGER,        -- 0030: LLM 호출 전체 왕복(생성 포함) ms. best-effort, 미측정 NULL.
     target            VARCHAR(200),   -- 0032: 인사이트 분석 대상(schema / schema.table / 노드 FQN). 표시 전용, 집계 무영향(task 분리).
+    step_gap_ms       INTEGER,        -- 0033: 에이전트 라운드 간 간격(도구·오케스트레이션) ms. 지연 KPI(p50/p95)의 '단계 간 간격' 축. 첫 라운드/단발 호출 NULL.
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_llm_usage_created ON agent_runtime.llm_usage (created_at DESC);

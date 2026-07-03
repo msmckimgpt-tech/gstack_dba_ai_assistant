@@ -21,6 +21,12 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: mistake
 
+### LRN-20260703-0001 — metric 이 기록되는 코드 경로를 "중앙 helper 가 있는 모듈"에서만 grep 하면 실제 라이브 경로를 놓친다
+- Source: TASK-20260703-aiops-ttft-latency (AI 운영 현황 지연 p95 재정의)
+- Mistake: "어느 경로가 `latency_ms` 를 기록하나" 를 `llm.py` 안에서만 grep 해 `_openai_chat_completion_with_deadline` 를 유일 계측점으로 단정했다. 그러나 이 중앙 래퍼의 유일 호출자 `llm_plan` 은 **호출자가 0인 죽은 코드**였고, 실제 메인 에이전트 추론(`task='agent'`)은 `agent_core._call_llm` 이 래퍼를 우회해 직접 기록한다(TASK-0163 RC1 이 이미 문서화). 잘못된 함수(죽은 코드)를 계측·스트리밍 전환하고 KPI 를 그 컬럼으로 돌려, 배포됐다면 패널이 영구 공백 + 작동하던 지표 폐기(순 회귀)될 뻔했다. 적대 리뷰 패널(2렌즈 독립)이 커밋 전 BLOCKING 으로 적발.
+- Correct approach: metric 기록 경로를 찾을 때는 (1) **레포 전역**(`agent_core.py` 포함)에서 `_record_llm_usage`/기록 함수 호출부를 grep, (2) 각 후보 함수의 **호출자 존재를 grep 으로 확인**(dead code 배제), (3) 정책/이력 문서(TASK.md·REPORT.md)에 "이 경로가 중앙 래퍼를 우회한다" 류 단서가 있는지 교차확인. 단일 모듈 grep 으로 계측점을 단정하지 않는다.
+- Verified: true (적대 패널 CONFIRMED + `_call_llm` 단일 호출자 재확인).
+
 ### LRN-20260415-0001 — Web UI 카드 적층 구조는 항상 외부 스크롤을 유발한다
 - Source: feature-0003 UI 개편 작업 (2026-04-15)
 - Mistake: `surface-card` 요소를 세로로 쌓으면 콘텐츠 총 높이 > 100vh가 되어 페이지 전체 스크롤이 발생한다. 이는 AI 채팅 앱에서 치명적인 UX 결함이다.
