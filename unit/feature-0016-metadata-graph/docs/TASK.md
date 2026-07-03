@@ -981,6 +981,7 @@ MODIFY CHG-20260703-node-role-viz.
       절대이동 + dragend 재정합으로 1-frame lag 제거).
 - [x] T41.4 검증: `node --check` PASS + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 번들 실측 4축 BLOCKING 0) + **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 실측** —
       Test A(중간버튼 팬: 노드 월드 [0,0] + 화면 팬) PASS, Test B(좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]) PASS.
+- [x] T41.5 배포 완료(PR #571 머지 → 29c3a07c): `make deploy-web` 무중단 롤링(web-a/b `29c3a07c`, one-at-a-time, soak 90s 통과). 마이그레이션 pending 0(0032==head, graphux6 선적용). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz `status:ok git_commit=29c3a07c mysql_ok/pg_ok:true`, 라이브 admin.js graph-drag 심볼 12·role 심볼 2(병합 보존)·admin.html 버스터 `admin.js?v=20260703-graph-drag`. 실 Windows 육안은 머지 전 PB-0008 PASS(Test A/B)로 갈음(무인 라우팅 3중벽).
 - [ ] T41.5 배포(deploy_scope: included): main 병합 → web-a/web-b 재배포(cache-buster `admin.js?v=20260703-graph-drag`).
 
 ## 42. graph-simgroups — 유사 속성 그룹 블록: 스키마 클러스터 내부를 배경 박스+헤더의 가시적 영역으로 분할 (2026-07-03, 사용자 요청)
