@@ -7913,6 +7913,17 @@ function _dsInsightHealthLabel(ih) {
   return st ? `연결 ${st}` : "—";
 }
 
+// conn-health 3단계 status → 사람-친화 한글 라벨(상세 패널 "연결 상태" 행). 배지 텍스트("연결 정상/
+// 불안정/끊김", admin.js ~1290)와 어휘 정합. background 모니터 사전계산값(snapshot)을 그대로 반영.
+function _dsConnStatusLabel(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "healthy":  return "정상 (연결 성공)";
+    case "unstable": return "불안정 (느리거나 간헐적)";
+    case "down":     return "끊김 (도달 불가)";
+    default:         return "확인 중";
+  }
+}
+
 function _dsRenderDetail(ds) {
   const detailEl = $("datasourceDetail");
   if (!detailEl || !ds) return;
@@ -7944,6 +7955,29 @@ function _dsRenderDetail(ds) {
   // 중립 tempdb). 데이터소스 레벨 기본 DB 개념 제거.
   sec1.appendChild(dl1);
   detailEl.appendChild(sec1);
+
+  // 연결 상태 · 응답 시간 — background conn_health 모니터가 미리 계산한 값(추가 probe·연결테스트 불필요).
+  //   핵심: "연결 응답 시간(평균)" = 최근 sample_count(≤AGENT_CONN_AVG_WINDOW)회 성공 DB probe elapsed 의
+  //   산술평균(ms). 순간값(최근 응답 시간)보다 대표성이 높아 데이터소스별 상시 연결 품질을 나타낸다.
+  //   표본이 아직 없으면(신규·연속 실패) "측정 중". conn_status 는 API(admin_datasources)가 첨부.
+  const cs = ds.conn_status || null;
+  const sec3 = document.createElement("div"); sec3.className = "admin-detail-section";
+  const t3 = document.createElement("div"); t3.className = "admin-detail-section-title"; t3.textContent = "연결 상태"; sec3.appendChild(t3);
+  const dl3 = document.createElement("dl"); dl3.className = "admin-kv";
+  _dsKvRow(dl3, "상태", _dsConnStatusLabel(cs && cs.status));
+  if (cs && cs.avg_elapsed_ms != null) {
+    const n = Number(cs.sample_count || 0);
+    _dsKvRow(dl3, "연결 응답 시간(평균)", n > 1 ? `${cs.avg_elapsed_ms} ms · 최근 ${n}회 평균` : `${cs.avg_elapsed_ms} ms`);
+  } else {
+    _dsKvRow(dl3, "연결 응답 시간(평균)", "측정 중 (연결 성공 시 집계)");
+  }
+  // 참고값: 마지막 1회 응답 시간(순간값) + 마지막 확인 시각(epoch 초 → ms 변환).
+  //   `> 0` 가드(평균 행과 동일): foreground 성공 피드백은 elapsed 미측정(0.0-coerce)이라 "0 ms" 로
+  //   표시되면 평균값(예: 45ms)과 모순돼 보인다 → 0/음수 순간값은 표시 생략(background probe 값만 노출).
+  if (cs && cs.elapsed_ms != null && cs.elapsed_ms > 0) _dsKvRow(dl3, "최근 응답 시간", `${cs.elapsed_ms} ms`);
+  if (cs && cs.checked_at) _dsKvRow(dl3, "마지막 확인", formatDateTime(Number(cs.checked_at) * 1000));
+  sec3.appendChild(dl3);
+  detailEl.appendChild(sec3);
 
   // 출처 · 보안
   const sec2 = document.createElement("div"); sec2.className = "admin-detail-section";
