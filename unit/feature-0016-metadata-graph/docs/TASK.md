@@ -854,3 +854,21 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T36.5 구조 정합: `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 `d.clientWidth` 폭 조회로만 참조되고 innerHTML 교체 없음(노드 선택·능동분석 렌더는 `metadataGraphDetailBody`/`metadataGraphProgress` 만 교체) → 범례 wipe 없음 확인.
 - [x] T36.6 **§18.8 적대 리뷰 [SUBAGENT]**(회귀·잔여참조·CSS변수·접힘UX·패널접기부작용·레이아웃·시인성 7축): BLOCKING 0·NIT 2 수용. 결과 REVIEW REV-20260703T020000-ai-claude-feature-0016-role-legend-panel 참조.
 - [ ] T36.7 배포(web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 그래프 뷰에서 역할 범례가 우측 상세 패널 상단에 세로로 표시되고 summary 클릭으로 접힘/펼침 동작 육안 확인.
+
+## 37. role-legend-bottom — 역할 범례를 상세 패널 하단으로 이동 + 확장 시 밀림/뒤틀림 해소 (2026-07-03, 사용자 후속 피드백)
+사용자 후속 피드백(role-legend-panel 배포 후): ① 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI 를 밀어 내용이 뒤틀림**. 정본: MODIFY CHG-20260703-role-legend-bottom.
+등급: **Minor**(프론트 표현 전용 — 데이터 API·스키마·JS 로직 불변, 비파괴, 마이그레이션 없음).
+
+### 37.0 진단
+- [x] T37.0 원인: 범례가 aside 의 **첫 자식**(progress/detailBody 앞)이고 `open` 이라, 고정높이(`clamp(420px,64vh,760px)`)+`overflow-y:auto` 패널에서 범례 확장이 아래의 노드 상세를 밀어내려 상세가 뷰 밖으로 밀림 → "뒤틀림" 체감.
+
+### 37.1 구현
+- [x] T37.1 admin.html: 범례 `<details>` 블록을 aside **첫 자식 → 마지막 자식**(detailBody 뒤)으로 이동. 범례가 마지막이라 접힘/펼침이 위 콘텐츠를 밀지 않음.
+- [x] T37.2 styles.css: `.admin-meta-graph-detail` 에 `display:flex; flex-direction:column` 추가 + `.admin-meta-graph-detail > * { flex-shrink:0 }`(자식 압축 금지 → overflow 시 컨테이너 스크롤, 노드 상세 눌림/잘림 방지).
+- [x] T37.3 styles.css: `.admin-meta-graph-rolelegend` `margin-bottom:12px` → `margin-top:auto`(콘텐츠 짧을 때 패널 **바닥 고정**).
+- [x] T37.4 cache-buster `styles.css?v=20260703-role-legend-bottom`(admin.js 무변경).
+
+### 37.2 검증
+- [x] T37.5 **headless playwright 렌더 격리 실증**(실제 규칙 복제, 2시나리오): (A) 빈 상세=범례 바닥 고정(`pinnedNearBottom:true`, 위 여백 262px). (B) 긴 상세 30행=노드 상세 `firstNodeH:32`(온전·미압축)·`dbH==dbScrollH(983)`(잘림 없음)·aside `canScroll:true`(스크롤) → 상세 밀림/뒤틀림 없음. 스크린샷 육안 확인.
+- [x] T37.6 **§18.8 적대 리뷰 [SUBAGENT]**(detailBody wipe 회귀·flex 부작용·margin-top:auto+overflow·detail-collapsed 토글·반응형·잔여/버스터·접근성): 결과 REVIEW REV-20260703-role-legend-bottom 참조.
+- [ ] T37.7 배포(web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 그래프 뷰에서 역할 범례가 상세 패널 **하단**에 표시되고, 접힘/펼침 시 위 노드 상세가 밀리지 않는지 육안 확인.

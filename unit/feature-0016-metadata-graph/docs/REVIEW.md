@@ -635,3 +635,18 @@ source_of_truth: true
 - BLOCKING: 0.
 - NIT(가시 회귀 아님 — 수용 기록, 미수정): (a) summary `:focus-visible` 커스텀 아웃라인 없음(네이티브 포커스 링 의존 — 기능상 OK). (b) summary 텍스트와 `<ul aria-label>` 의 "테이블 역할" SR 이중 낭독 가능성(경미).
 - 총평: 배포 가능(PASS). 설계 의도 정확 충족, 최대 리스크(범례 wipe)는 구조적 방지. 완료 게이트=PB-0008 실 Windows 라이브 육안(세로 표시 + 접힘 동작).
+
+## REV-20260703T030000-ai-claude-feature-0016-role-legend-bottom [SUBAGENT: PASS] — 역할 범례 상세 패널 하단 이동 + 확장 밀림/뒤틀림 해소 적대 리뷰 7축
+- Related Change: CHG-20260703-role-legend-bottom (TASK §37). 프론트 표현 전용(상세 패널 내부 레이아웃 — 범례 첫 자식 → 마지막 자식, aside flex 컬럼 + margin-top:auto + 자식 flex-shrink:0).
+- Trigger: 가시 레이아웃 변경(상세 패널 flex 화) → §18.8 적대 패널 [SUBAGENT] dispatch. + headless playwright 렌더 격리 실증(2시나리오) 선행.
+- 점검 7축 판정 (subagent, 파일:라인 근거 — 격리 렌더 결과를 코드로 반증 시도했으나 전건 재확인):
+  1. [PASS] detailBody wipe 회귀 없음 — 렌더 4함수(admin.js:4862/4915/5143/5476) `metadataGraphDetailBody` `.innerHTML` 만 교체, aside 는 clientWidth(4245) 읽기만, progress 렌더는 progress 만. 범례 클래스 admin.js 참조 0(무JS) → 하단 이동 후에도 안 지워짐.
+  2. [PASS] flex 컬럼 부작용 없음 — progress 표시화는 `style.display=""`(인라인 해제)라 flex 아이템 blockify 정상. aside 직속 3자식(progress/detailBody/legend) 고정, stretch 전폭.
+  3. [PASS] margin-top:auto+overflow — 짧으면 바닥 고정, 길면 auto=0 + flex-shrink:0 로 detailBody 미압축·컨테이너 스크롤(dbH==dbScrollH 983·canScroll). 범례 최하단이라 상단 클리핑 조건 불성립.
+  4. [PASS] detail-collapsed 토글 — `.admin-meta-graph.detail-collapsed .admin-meta-graph-detail{display:none}`(0,3,0) 가 `.admin-meta-graph-detail{display:flex}`(0,1,0) 를 특이도·순서로 이김 → 접힘 정상. `> *` 규칙은 aside 직속만.
+  5. [PASS] 반응형(@media max-width:900px) — height:auto → free space 0 → margin-top:auto=0, 범례가 detailBody 뒤 자연 흐름 + max-height:380px 스크롤. 그래프 아래로 정상.
+  6. [PASS] 잔여/버스터 — `<details>` 정확히 1개(상단 중복 없음, 이동이지 복제 아님), 캐시버스터 `styles.css?v=20260703-role-legend-bottom` bump. `admin-meta-graph-detail` 클래스 aside 1개에만, datasourceDetail append 는 무관 별개 요소.
+  7. [PASS] 접근성/시맨틱 — `<details open>`/summary 토글·detailBody aria-live·`<ul aria-label>` 유지. DOM 순서 progress→detail→legend 는 시각 순서와 일치.
+- BLOCKING: 0.
+- NIT: (a) styles.css 상단 role-legend-panel 옛 주석이 "상단"으로 남음 → **수정함**(하단 이동 반영, 본 cycle 에서 정정). (b) 색 범례 SR 도달이 노드 상세 뒤 — 시각 순서·사용자 의도(하단)와 정합, 수용.
+- 총평: 배포 가능(PASS). 사용자 후속 피드백 2건(하단 이동 + 확장 밀림 해소) 모두 `margin-top:auto`+`flex-shrink:0` 로 코드·렌더 양측 충족. 완료 게이트=PB-0008 실 Windows(하단 배치 + 확장 시 위 상세 안 밀림).

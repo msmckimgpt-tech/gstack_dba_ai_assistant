@@ -671,3 +671,14 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{TASK(§35),REPORT,REVIEW}.md`
 - Impact: 프론트 **표현 전용**(admin 그래프 뷰 역할 범례 위치·레이아웃만). 데이터 API·스키마(AGE)·마커·칩 색/아이콘 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 폭 조회(`d.clientWidth`)로만 참조되고 innerHTML 교체 없음 → 범례 wipe 없음. 부작용: "상세 ⇆"(`#metadataGraphDetailToggle`)로 상세 패널 접으면 범례도 같이 숨음(패널 종속 — 사용자 선택 위치의 자연 귀결). 검증: 구조 정합(무JS·`<details>` 관용구 기존 line 512 재사용) + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html/styles.css git revert + cache-buster 이전값(reltrace-tabledetail). 데이터·API·JS 무손상(표현 전용이라 revert 리스크 최소).
+
+## CHG-20260703-role-legend-bottom
+- Date: 2026-07-03
+- Related Requirement: 사용자 후속 피드백(role-legend-panel 배포 후) — ① 역할 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI(노드 상세)를 밀어 내용이 뒤틀리는 문제** 해소. role-legend-panel(CHG-20260703-role-legend-panel) 위 후속 개선.
+- Summary: 역할 범례 `<details class="admin-meta-graph-rolelegend">` 를 `aside#metadataGraphDetail` **최상단(progress/detailBody 앞) → 최하단(마지막 자식)**으로 이동. aside 를 `display:flex; flex-direction:column` 으로, 범례에 `margin-top:auto`(콘텐츠 짧을 때 패널 **바닥 고정**), `.admin-meta-graph-detail > * { flex-shrink:0 }`(자식 압축 금지 → overflow 시 컨테이너 스크롤, 노드 상세가 눌려 잘리는 뒤틀림 방지). 범례가 **마지막 자식**이라 접힘/펼침이 위의 progress·노드 상세를 **밀지 않음** → "확장 시 뒤틀림" 근본 해소.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (범례 블록을 aside 첫 자식 → 마지막 자식(detailBody 뒤)으로 이동 + cache-buster `styles.css?v=20260703-role-legend-bottom`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.admin-meta-graph-detail` 에 `display:flex; flex-direction:column` + `.admin-meta-graph-detail > * {flex-shrink:0}` + `.admin-meta-graph-rolelegend` `margin-bottom:12px` → `margin-top:auto`)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§37),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 **표현 전용**(상세 패널 내부 레이아웃만). 데이터 API·스키마·마커·칩 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. 범례는 여전히 detailBody 형제(이제 아래)라 innerHTML 교체(detailBody/progress 만)에 지워지지 않음. 검증: **headless playwright 렌더 격리 실증** — 빈 상세=범례 바닥고정(pinnedNearBottom, 위 여백 262px), 긴 상세 30행=노드 상세 firstNodeH 32(온전·미압축)·dbH==dbScrollH(983, 잘림 없음)·aside canScroll=true(스크롤) → 밀림/뒤틀림 없음. + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
+- Rollback Notes: admin.html(범례 위치 원복)·styles.css(flex/margin 원복) git revert + cache-buster 이전값(reldetail-colexpand-role-legend-panel). 데이터·API·JS 무손상.

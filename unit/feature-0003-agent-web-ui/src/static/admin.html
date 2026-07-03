@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260703-reldetail-colexpand-role-legend-panel" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260703-role-legend-bottom" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -772,9 +772,19 @@
                  aria-orientation="vertical" aria-label="상세 패널 크기 조절" tabindex="0"
                  title="드래그하여 상세 패널 크기 조절 (←/→ 키로도 조절)"></div>
             <aside class="admin-meta-graph-detail" id="metadataGraphDetail">
-              <!-- role-legend-panel: AI 능동 분석 완료 테이블의 역할 분류 범례. 전폭 상단 바에서
-                   **우측 상세 패널 상단**의 세로·접힘(details) 카드로 이전 — 그래프 세로 공간 확보 +
-                   노드 상세와 세로 공존. 칩 색(Okabe-Ito 색약 안전 팔레트)+아이콘 이중 인코딩.
+              <!-- graphux5-panelmove: AI 능동 분석 진행 현황을 **우측 상세 패널 상단**에 배치한다(이전의 상단
+                   full-width 바 제거 — 그래프를 아래로 밀어 구성이 무너지고 여백이 낭비되던 이슈 해소). 진행 패널은
+                   노드 선택과 무관하게 유지되고(_metaGraphRenderProgress), 노드 클릭 시엔 아래 detail-body 만 교체된다. -->
+              <div class="admin-meta-graph-progress" id="metadataGraphProgress" style="display:none"></div>
+              <div id="metadataGraphDetailBody" aria-live="polite">
+                <div class="admin-detail-empty">
+                  <p>노드를 <strong>한 번 클릭</strong>하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 여기에서 봅니다.</p>
+                  <p class="admin-meta-detail-note"><strong>더블클릭</strong>하면 그 노드 중심의 이웃 그래프로 펼쳐집니다. <strong>우클릭</strong>하면 상세 보기·관계 상세(방향·신뢰도·근거)·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
+                </div>
+              </div>
+              <!-- role-legend-bottom: 역할 분류 범례를 상세 패널 **하단**(마지막 자식)에 배치.
+                   aside=flex 컬럼 + 본 카드 margin-top:auto 로 바닥 고정. 마지막 자식이라 접힘/펼침 시
+                   위의 진행·노드 상세를 밀지 않아 레이아웃 뒤틀림 없음. 칩 색(Okabe-Ito)+아이콘 이중 인코딩.
                    _META_ROLE(admin.js)·NODE_ROLES(node_analysis.py)와 1:1 정합. summary=네이티브 접힘 토글(무JS). -->
               <details class="admin-meta-graph-rolelegend" open>
                 <summary>테이블 역할 <span class="admin-meta-graph-rolelegend-sub">· AI 분석 완료 시 칩 색</span></summary>
@@ -789,16 +799,6 @@
                   <li><i class="lg-dot" style="background:#6e7681"></i>📦 기타</li>
                 </ul>
               </details>
-              <!-- graphux5-panelmove: AI 능동 분석 진행 현황을 **우측 상세 패널 상단**에 배치한다(이전의 상단
-                   full-width 바 제거 — 그래프를 아래로 밀어 구성이 무너지고 여백이 낭비되던 이슈 해소). 진행 패널은
-                   노드 선택과 무관하게 유지되고(_metaGraphRenderProgress), 노드 클릭 시엔 아래 detail-body 만 교체된다. -->
-              <div class="admin-meta-graph-progress" id="metadataGraphProgress" style="display:none"></div>
-              <div id="metadataGraphDetailBody" aria-live="polite">
-                <div class="admin-detail-empty">
-                  <p>노드를 <strong>한 번 클릭</strong>하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 여기에서 봅니다.</p>
-                  <p class="admin-meta-detail-note"><strong>더블클릭</strong>하면 그 노드 중심의 이웃 그래프로 펼쳐집니다. <strong>우클릭</strong>하면 상세 보기·관계 상세(방향·신뢰도·근거)·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
-                </div>
-              </div>
             </aside>
           </div>
         </div>
