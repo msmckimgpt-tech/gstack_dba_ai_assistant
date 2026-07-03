@@ -743,3 +743,11 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{TASK(§41),MODIFY,REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 **상호작용 전용** — 데이터 API·AGE 스키마·마커·상태·칩 인코딩·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·기존 zoom-canvas/node:click/contextmenu/미니맵/우클릭 메뉴 무변경. 종속 동반 이동은 drag-element 단일 노드 이동과 동일하게 transient(다음 setData 재구성 시 grid 로 복귀). 검증: `node --check` + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 v5.1.1 번들 실측 4축 BLOCKING 0) + **라이브 실 Windows 브라우저(Chrome/149) PB-0008 PASS**(Test A 중간버튼 팬: 노드 월드 [0,0] + 화면 팬 / Test B 좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]). 배포=web 재빌드.
 - Rollback Notes: admin.js 신규 7함수 + `tableDeps`/`_drag` 필드 + behaviors object-form + 두 리스너 제거, behaviors 를 `["drag-canvas","zoom-canvas","drag-element"]` 문자열로 환원. 데이터·API 무손상(상호작용 전용).
+
+## CHG-20260703T132403-ai-claude-feature-0016-graph-drag-postdeploy
+- Date: 2026-07-03
+- Related Requirement: CHG-20260703-graph-drag 의 완료 게이트(TASK §41 T41.5) — 배포 후 자산검증 기록.
+- Summary: doc-only — PR #571 머지(29c3a07c) 후 `make deploy-web` 무중단 롤링(web-a/b one-at-a-time, soak 90s 통과). 마이그레이션 pending 0(0032==head, graphux6 선적용). **POST-DEPLOY 자산검증 PASS**(WSL localhost caddy edge :443): healthz `status:ok / git_commit=29c3a07c / mysql_ok / pg_ok`, 라이브 admin.js graph-drag 심볼 12·`_metaRoleChipHTML`(역할 기능 병합 보존) 2·admin.html 버스터 `admin.js?v=20260703-graph-drag`. 실 Windows 육안은 머지 전 PB-0008 실측(Test A 중간버튼 팬·Test B 종속 5개 동일 델타)으로 갈음 — 무인 그래프뷰 접근은 TrustedHostMiddleware·인증세션·Windows→WSL 라우팅 3중벽 제약(PB-0008 무인 blocker).
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.

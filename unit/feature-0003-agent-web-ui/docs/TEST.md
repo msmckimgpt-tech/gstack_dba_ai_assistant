@@ -1605,4 +1605,5 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **Test A (중간버튼 팬)**: account 노드 위에서 중간버튼(button=1/buttons=4) 드래그 → **노드 월드좌표 델타 [0,0](이동 안 함) + 노드 화면좌표 델타 [-78,48]·[90,54](카메라 팬)** = 중간버튼은 카메라 드래그, 객체 상호작용 아님. ✅
   - **Test B (종속 동반)**: account 노드 좌클릭 드래그 [191.35,-131.55] → **종속 5개(X:ctl + 컬럼4) 전부 동일 델타 [191.35,-131.55] 이동(오차 0)** = 하위 종속 UI 동반 이동. ✅
   - 라이브 반영: worktree admin.js 를 web-a/web-b `/app/web/static/admin.js` 로 docker cp(머지 전 pre-verify — 배포 시 origin/main 재빌드로 정합). 그래프 렌더 정상(스크린샷 `scratchpad/graph-drag-verify.png`), 회귀 없음.
-- **Pass/Fail: 정적·문법·§18.8·라이브 PB-0008 실측 전부 PASS**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 기록 — 라이브 PASS). POST-DEPLOY: 병합·재배포 후 cache-buster `admin.js?v=20260703-graph-drag` 로 재확인 예정.
+- **Pass/Fail: 정적·문법·§18.8·라이브 PB-0008 실측 전부 PASS**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run 기록 — 라이브 PASS).
+- **POST-DEPLOY (PR #571 머지 29c3a07c → `make deploy-web` soak 90s 통과) 자산검증 PASS**: WSL localhost caddy edge :443 — healthz `status:ok / git_commit=29c3a07c / mysql_ok / pg_ok / insight_heartbeat 9s`, 라이브 `admin.js?v=20260703-graph-drag` 서빙(admin.html 버스터 일치) + graph-drag 심볼 12(드래그 함수/필드) + `_metaRoleChipHTML` 2(main 병합 역할 기능 보존). 실 Windows 그래프뷰 육안은 머지 전 PB-0008 실측(Test A/B PASS)으로 갈음 — 무인 접근 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL 라우팅) 제약 시 사용자 육안 위임.
