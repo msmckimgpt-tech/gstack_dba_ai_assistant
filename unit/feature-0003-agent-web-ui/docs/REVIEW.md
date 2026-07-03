@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260703T094539-aiops-stepgap [SUBAGENT:adversarial-2lens×2round] (TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격, Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI)
+- 요청: "에이전트 추론 p95 측정 단위 검토 — 지연 기준은 답변 받는 총 시간이 아니라 각 추론 단계 간 간격". 사용자 정의 확정 = **A(단계 간 간격)**.
+- 대상: `agent_core.py`(`_run_agent_core` 루프 `_prev_llm_end_ns` 추적 + 라운드 간 gap 계산 → `_call_llm(step_gap_ms=)` 전달 → `_record_llm_usage`), `llm.py`(`_record_llm_usage` step_gap_ms 파라미터 + 3단 INSERT cascade), 마이그 0033(`step_gap_ms INTEGER` additive) + 부트스트랩 DDL parity, `ai_ops.py`(KPI query#2/#3 → step_gap_ms + 다단계 요청 분모), `admin.js`(KPI "단계 간 간격 p50/p95" + per-task "간격 p95" + activity "왕복"). RBAC/파괴적 변경 0.
+- **1차 패널(적대 2렌즈: backend·qa) → VERDICT NO-SHIP (BLOCKING)**: 최초 구현이 **죽은 코드(`_openai_chat_completion_with_deadline`←`llm_plan`, 호출자 0)** 를 스트리밍 계측해, 실제 라이브 경로 `agent_core._call_llm` 은 미계측 → KPI 영구 공백 + 작동하던 latency_ms 폐기(순 회귀). 양 렌즈 독립 적발. **전면 revert 후 정의 A 로 재확정**(사용자 재승인).
+- **2차 패널(적대 2렌즈: backend·qa, 재구현 대상) → 양측 VERDICT SHIP** (BLOCKING/MAJOR correctness 0):
+  - backend: `_call_llm` 단일 라이브 호출자(루프 3577)에서 step_gap_ms 전달 확인(죽은코드 재발 없음). gap 수명주기 exception-safe(성공 후 `_prev_llm_end_ns` set, 실패 시 except→break — stale gap 미기록). 3단 cascade rollback·no-double-insert·conn-safe 실증. 마이그 0032→0033 linear·expand-only. 집계 WHERE step_gap_ms IS NOT NULL 이 agent 라운드 gap 만 격리(aux task NULL).
+  - qa: 정의 A 가 요청 문언("단계 간 간격")에 부합. 단발 요청=0 표본은 정의상 정상. 라벨 정확.
+- **MAJOR(observability, 2건) 처리**: (F2) KPI 가 다단계 요청에서만 표본 → 단발 위주 window 에서 빈 tile 오인 방지 위해 **다단계 요청 분모(multistep/agent_requests) KPI 서브에 노출**(반영 완료). (F6) 루프 gap 계산 e2e 미검증 — 플럼빙(record·forwarding·cascade)은 단위테스트로 커버, **루프 첫 라운드 None/2라운드>0 는 배포 후 라이브 검증 필수**(직전 죽은코드 실패의 재발 방지 게이트).
+- 검증: `make test` 1430 passed/2 skipped(회귀 0) · ruff PASS · migrate-lint 0033 expand-safe · py_compile · node --check.
+- Cross-ref: TASK-20260703-aiops-ttft-latency / 선행 TASK-20260702-aiops-activity-paging(latency_ms 계측 도입) / LEARNINGS LRN-20260703(metric 경로 오스코핑).
+
 ## REV-20260702T193000-aiops-conv-link-fix [SKIPPED:minor-frontend-guard] (TASK-20260702-aiops-conv-link-fix — '최근 활동' 상세 시스템 sentinel 대화 링크 깨짐 수정, Minor §12.3 — feature-0003 프론트 단독)
 - Panel skip 사유(§18.8): 변경은 `aiOpsActivityRowsHtml` 의 3-줄 조건 가드(`conversation_id` `__` 접두 sentinel → 링크 대신 안내) + cache-buster 뿐. 신규 로직·상태·API·RBAC·스키마 0, 백엔드 무변경. 직전 audit-nav-ux 패널(REV-20260702T190000, VERDICT SHIP)이 주변 렌더/XSS/토글을 이미 검증했고, 본 변경은 그 위 sentinel 분기 추가라 코드 적대 검증 신규 표면 없음. PB-0008 라이브가 정본(sentinel 행=안내·링크 없음, 실대화 행=링크).
 - sentinel 집합 근거: `shared/config.py`(`__insight_worker__`/`__ask_worker__`/`__global__`) · `kb_ingest.py`(`__kb_manual__`) · `account_recall.py`(`__account__:` 접두) — 전부 `__` 접두. 실 사용자 대화 ID 는 `__` 접두 아님(가드 오탐 없음).

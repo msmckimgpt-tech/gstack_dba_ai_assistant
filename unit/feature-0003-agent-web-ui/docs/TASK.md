@@ -8,6 +8,27 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격 (Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI. /_template:entry arg-given dispatch)
+<!-- PLAN-APPROVED by mckim on 2026-07-03 (AskUserQuestion 정의 재확정=A 단계 간 간격) -->
+- 트리거(사용자): "`관리 콘솔 > AI 운영 현황` 에서 에이전트 추론 p95 측정 단위를 검토 — 지연 기준은 답변 받는 총 시간이 아니라 각 추론이 진행되는 단계 간 나타나는 간격으로 구성되어야."
+- 검토 결론: 현행 `latency_ms` = 에이전트 추론 호출 전체 왕복(생성 포함). 실제 라이브 기록 경로는 `agent_core._call_llm`(중앙 래퍼 `_openai_chat_completion_with_deadline` 는 dead — `llm_plan` 호출자 0). 왕복은 답변 길이 비례 → "답변 받는 시간" 쪽. 사용자 기준(단계 간 간격)과 불일치.
+- **경로 정정 이력**: 1차 시도는 `_openai_chat_completion_with_deadline`(죽은 코드)를 TTFT 스트리밍 계측 → 적대 패널이 "라이브 경로 미계측·KPI 공백" BLOCKING 적발 → revert. 사용자 재확정 = 정의 **A(단계 간 간격)**, 실제 경로 `_call_llm` + 루프 계측으로 재구현.
+- 설계(정의 A — 스트리밍 불요, 저위험):
+  1. **[feature-0002] `agent_core._run_agent_core` 루프**: `_prev_llm_end_ns`(직전 라운드 LLM 종료 perf_counter) 추적. 다음 라운드 `_call_llm` 직전 gap = (now − prev_end) 계산해 `step_gap_ms` 로 전달, 호출 성공 후 prev_end 갱신. 첫 라운드/`_call_llm` 예외(→break)는 None.
+  2. **[feature-0002] `_call_llm`**: `step_gap_ms` 파라미터 추가 → `_record_llm_usage(step_gap_ms=)` 전달.
+  3. **[feature-0002] `_record_llm_usage`**: `step_gap_ms` 파라미터 + 3단 INSERT cascade(target+latency+step_gap → target+latency → latency 자가치유). `latency_ms`(왕복) 보존.
+  4. **[feature-0002] 마이그 0033 + 부트스트랩 DDL parity**: `step_gap_ms INTEGER` additive nullable. down_revision=0032. 과거 행 NULL → KPI 자동 제외(cutover 오염 0).
+  5. **[feature-0003] ai_ops.py**: KPI query#2(태스크별)·#3(전체) `percentile_cont … latency_ms` → `step_gap_ms`. F2: 다단계 요청 분모(multistep/agent_requests)도 노출(단발 위주 window 빈 tile 오인 방지).
+  6. **[feature-0003] admin.js**: KPI "지연 p50/p95" → "단계 간 간격 p50/p95" + 서브 "추론 단계 사이(도구·오케스트레이션) · 다단계 요청 M/R · 간격 N건". per-task "간격 p95". activity 상세 latency_ms 는 "왕복" 라벨로 구분. cache-buster `?v=20260703-aiops-stepgap`.
+- Risk: **Major** — 코어 에이전트 루프 계측 추가(additive, best-effort, 예외 무전파). 파괴적/인증/PII 무관. 완화: 적대 2렌즈×2라운드 SHIP + 배포 후 라이브 step_gap_ms 행 검증(F6).
+- Completion Checklist:
+  - [x] 마이그 0033 step_gap_ms + 부트스트랩 DDL parity (migrate-lint expand-safe).
+  - [x] agent_core 루프 gap 추적 + `_call_llm(step_gap_ms=)` + `_record_llm_usage` cascade. py_compile PASS.
+  - [x] ai_ops.py query#2/#3 → step_gap_ms + 다단계 분모. admin.js 라벨 + cache-buster. node --check PASS.
+  - [x] 테스트: step_gap 기록/omit/음수, `_call_llm` forwarding, cascade 폴백(step_gap/target 부재). make test 1430 passed(회귀 0) + ruff.
+  - [x] §18.8 적대 패널 2렌즈×2라운드 → SHIP. REV-20260703T094539-aiops-stepgap.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → 배포(마이그 0033 + web + agent/ask-worker 재빌드, deploy_scope: included) → **라이브 검증(F6): 다라운드 에이전트 구동 → step_gap_ms 행 생성 확인 + KPI "단계 간 간격" 실값 렌더 (PB-0008)**.
+
 ## TASK-20260702-aiops-conv-link-fix — AI 운영 현황 '최근 활동' 상세: 시스템 sentinel 대화 링크 깨짐 수정 (Minor §12.3 — feature-0003 프론트 단독, 백엔드/스키마/RBAC 무변경. TASK-20260702-audit-nav-ux 후속 — PB-0008 라이브 적발)
 - 트리거(PB-0008 라이브 검증): audit-nav-ux 배포 후 실 브라우저 검증에서 발견 — '최근 활동' 행 클릭 시 상세의 '연결 대화' 가 insight/ask 워커·자율 호출(활동 대부분)에도 `/?conversation=__insight_worker__` 같은 **열 수 없는 링크**를 렌더. `__insight_worker__`·`__ask_worker__`·`__global__`·`__kb_manual__` 등은 실제 사용자 대화가 아닌 예약 sentinel(전부 `__` 접두)인데 `conversation_id != NULL` 이라 링크로 처리됨.
 - 해법(frontend only): `aiOpsActivityRowsHtml` 에서 `conversation_id` 가 `__` 접두 sentinel 이면 링크 대신 "시스템·자율 호출 (`<sentinel>`) — 특정 대화에 귀속되지 않습니다" 정직 안내. 실제 사용자 대화(비-`__`)만 `/?conversation=<id>` 링크 유지. NULL 은 기존 일반 안내.

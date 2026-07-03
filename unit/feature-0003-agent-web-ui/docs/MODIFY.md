@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T094539-aiops-stepgap (TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격, Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI)
+- Date: 2026-07-03 (worktree ai/claude-corp/feature-0003-aiops-ttft, base 9665430c).
+- 트리거(사용자): "에이전트 추론 p95 측정 단위 검토 — 지연은 답변 받는 총 시간이 아니라 각 추론 단계 간 나타나는 간격으로." 정의 확정 = A(단계 간 간격).
+- 근본원인: 현행 KPI 는 `latency_ms`(호출 전체 왕복, 생성 포함 → 답변 길이 비례). 사용자 기준(단계 간 간격)과 불일치. 실제 계측 경로는 `agent_core._call_llm`(중앙 래퍼 `_openai_chat_completion_with_deadline`←`llm_plan` 은 dead — 1차 시도가 이를 오계측해 적대 패널 BLOCKING 적발·revert. LRN-20260703-0001).
+- 변경:
+  - `unit/feature-0002-agent-core/src/agent_core.py`: `_run_agent_core` 루프 `_prev_llm_end_ns` 추적 → 라운드 간 gap(도구·오케스트레이션) 계산해 `_call_llm(step_gap_ms=)` 전달(첫 라운드/예외→break 시 None). `_call_llm` step_gap_ms 파라미터 → `_record_llm_usage` 전달.
+  - `unit/feature-0002-agent-core/src/modules/llm.py`: `_record_llm_usage` step_gap_ms 파라미터 + 3단 INSERT cascade(target+latency+step_gap → target+latency → latency 자가치유). latency_ms(왕복) 보존.
+  - `unit/feature-0002-agent-core/alembic/versions/20260703_0033_llm_usage_step_gap.py` + `src/scripts/agent_runtime_schema.sql`: `step_gap_ms INTEGER` additive nullable(down_revision 0032, expand-only). 과거 행 NULL → KPI 자동 제외.
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`: KPI query#2(태스크별)·#3(전체) `latency_ms` → `step_gap_ms` + 다단계 요청 분모(multistep/agent_requests, F2 오인 방지).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`+`admin.html`: KPI "지연"→"단계 간 간격 p50/p95"+서브(다단계 M/R·간격 N건), per-task "간격 p95", activity 상세 latency_ms="왕복". cache-buster `?v=20260703-aiops-stepgap`.
+  - 테스트: `test_llm_usage_record.py`(step_gap 기록/omit/음수), `test_call_llm_records_agent_task.py`(forwarding), `test_ai_ops.py`(cascade step_gap/target 부재 + params 위치).
+- 검증: make test 1430 passed/2 skipped(회귀 0) · ruff · migrate-lint 0033 expand-safe · py_compile · node --check · 적대 2렌즈×2라운드 SHIP(REV-20260703T094539-aiops-stepgap). 라이브 step_gap_ms 행 검증 + PB-0008 = 배포 후.
+
 ## CHG-20260702T193000-aiops-conv-link-fix (TASK-20260702-aiops-conv-link-fix — AI 운영 현황 '최근 활동' 상세 시스템 sentinel 대화 링크 깨짐 수정, Minor §12.3 — feature-0003 프론트 단독)
 - Date: 2026-07-02 (worktree ai/claude/feature-0003-aiops-conv-link-fix, base 4ec15191). TASK-20260702-audit-nav-ux 후속.
 - 트리거: audit-nav-ux(bc2a0fa6) 배포 후 PB-0008 라이브 검증 적발 — '최근 활동' 상세 '연결 대화' 가 insight/ask 워커·자율 호출(활동 대부분)에도 `/?conversation=__insight_worker__` 등 열 수 없는 링크 렌더.

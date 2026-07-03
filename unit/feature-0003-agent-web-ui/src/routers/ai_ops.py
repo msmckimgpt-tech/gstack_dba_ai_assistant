@@ -294,7 +294,8 @@ def admin_ai_ops(
     categories: list[dict] = []
     activity: list[dict] = []
     activity_next_cursor = None
-    latency = {"measured_calls": 0, "avg_ms": None, "p50_ms": None, "p95_ms": None}
+    latency = {"measured_calls": 0, "avg_ms": None, "p50_ms": None, "p95_ms": None,
+               "multistep_requests": 0, "agent_requests": 0}
     activity_24h = {"calls": 0, "requests": 0}
     unmapped_tasks: list[str] = []
 
@@ -337,14 +338,17 @@ def admin_ai_ops(
                 except Exception:
                     _log.debug("ai_ops categories query failed", exc_info=True)
 
-                # 2) 태스크별 latency (컬럼 부재/마이그 전이면 실패 → 스킵, 부분 degrade).
+                # 2) 태스크별 지연 = 단계 간 간격 (TASK-20260703-aiops-ttft-latency, 정의 A). p50/p95 는
+                #    step_gap_ms(에이전트 라운드 사이 도구·오케스트레이션 간격)로 집계 — 호출 전체 왕복이
+                #    아닌 '단계 간 간격'. step_gap_ms 는 다단계 agentic 루프(task='agent')만 비-NULL이라
+                #    사실상 에이전트 추론 전용. 컬럼 부재/마이그(0033) 전이면 실패 → 스킵(부분 degrade).
                 try:
                     cur.execute(
-                        f"SELECT task, count(latency_ms), avg(latency_ms), "
-                        f"percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms), "
-                        f"percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) "
+                        f"SELECT task, count(step_gap_ms), avg(step_gap_ms), "
+                        f"percentile_cont(0.5) WITHIN GROUP (ORDER BY step_gap_ms), "
+                        f"percentile_cont(0.95) WITHIN GROUP (ORDER BY step_gap_ms) "
                         f"FROM agent_runtime.llm_usage "
-                        f"WHERE created_at >= {win} AND latency_ms IS NOT NULL GROUP BY task"
+                        f"WHERE created_at >= {win} AND step_gap_ms IS NOT NULL GROUP BY task"
                     )
                     for r in (cur.fetchall() or []):
                         lat_by_task[r[0]] = {
@@ -354,16 +358,23 @@ def admin_ai_ops(
                             "p95_ms": (round(float(r[4]), 1) if r[4] is not None else None),
                         }
                 except Exception:
-                    _log.debug("ai_ops latency-by-task query failed (latency_ms 컬럼 부재?)", exc_info=True)
+                    _log.debug("ai_ops step-gap-by-task query failed (step_gap_ms 컬럼 부재?)", exc_info=True)
 
-                # 3) 전체 latency KPI (계측 이후 window 만 — 마이그 이전 행은 NULL 제외).
+                # 3) 전체 지연 KPI = 단계 간 간격. 계측(0033) 이후 — step_gap_ms=NULL(첫 라운드·단발 호출·
+                #    마이그 이전 행) 은 집계에서 자동 제외(aggregate 는 NULL 무시 → cutover 오염 0). '지연' =
+                #    사용자가 답변을 받는 총 시간이 아니라 각 추론 단계 간 나타나는 간격(도구 실행 + 오케스트레이션).
+                #    F2(observability): 다단계 요청 분모도 함께 — step_gap 은 다단계(≥2 라운드) 요청에서만
+                #    표본이 나오므로, 단발 요청 위주 window 에서 빈 tile 을 '고장' 으로 오인하지 않도록
+                #    multistep_requests(간격 표본 있는 run_id 수) / agent_requests(전체 에이전트 요청 수) 노출.
                 try:
                     cur.execute(
-                        f"SELECT count(latency_ms), avg(latency_ms), "
-                        f"percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms), "
-                        f"percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) "
+                        f"SELECT count(step_gap_ms), avg(step_gap_ms), "
+                        f"percentile_cont(0.5) WITHIN GROUP (ORDER BY step_gap_ms), "
+                        f"percentile_cont(0.95) WITHIN GROUP (ORDER BY step_gap_ms), "
+                        f"count(DISTINCT run_id) FILTER (WHERE step_gap_ms IS NOT NULL), "
+                        f"count(DISTINCT run_id) FILTER (WHERE task = 'agent') "
                         f"FROM agent_runtime.llm_usage "
-                        f"WHERE created_at >= {win} AND latency_ms IS NOT NULL"
+                        f"WHERE created_at >= {win}"
                     )
                     lr = cur.fetchone()
                     if lr:
@@ -372,9 +383,11 @@ def admin_ai_ops(
                             "avg_ms": (round(float(lr[1]), 1) if lr[1] is not None else None),
                             "p50_ms": (round(float(lr[2]), 1) if lr[2] is not None else None),
                             "p95_ms": (round(float(lr[3]), 1) if lr[3] is not None else None),
+                            "multistep_requests": int(lr[4] or 0),
+                            "agent_requests": int(lr[5] or 0),
                         }
                 except Exception:
-                    _log.debug("ai_ops latency KPI query failed", exc_info=True)
+                    _log.debug("ai_ops step-gap KPI query failed", exc_info=True)
 
                 # 4) 최근 24h 활동.
                 try:
