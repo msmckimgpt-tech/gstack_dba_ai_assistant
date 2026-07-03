@@ -81,6 +81,13 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
+- **gc-join-notice** (공유 링크 참여 시 대화 내 '참여 알림' 이벤트, Major §12.3 cross-feature 0003+0002): 중단 세션 7d92a878 resume(session limit) — 새 멤버가 공유 링크로 참여하면 "X님이 대화에 참여했습니다." 를 ① core_messages(role=user, name=EVENT_MESSAGE_NAME, sender=가입자)로 기록해 기존 멤버 unread +1(가입자 제외), ② 표시 store(event_type='member_joined')로 미러해 프론트 가운데 pill 렌더. share.py join 핸들러 best-effort 호출(`if not already:` → 재참여 중복 없음). anonymous 공유뷰는 event 가드로 멤버 username 비노출. **§18.8 BLOCKING #1(join 이벤트가 LLM 히스토리에 발신자라벨 user 턴으로 주입→assistant 오응답) 적발→수정**: name sentinel + `_normalize_history_rows` 배제(unread 는 name 미참조라 유지). 컨테이너 pytest 36 PASS(신규 5). (CHG/REV-20260703T182740)
+  - [x] BE: `_save_group_join_event_pg`(이중 기록) + `_share_load_messages` event 가드 (feature-0003 app.py)
+  - [x] BE: join 핸들러 best-effort 호출 (feature-0003 routers/share.py)
+  - [x] BE: `EVENT_MESSAGE_NAME` sentinel + `_normalize_history_rows` 배제 (feature-0002 runtime_backend·agent_core) — §18.8 BLOCKING #1 수정
+  - [x] FE: renderMessages event pill(textContent) + styles.css + 캐시버스터 gc-join-notice (feature-0003 static)
+  - [x] 신규 회귀 `test_gc_join_event_history.py` 5 + 컨테이너 pytest 36 PASS + §18.8 패널 재검증 BLOCKING 0
+  - [ ] verify-completion → PR → 라이브 배포(web 재빌드, deploy_scope included) → **PB-0008 실측(pill·기존멤버 unread +1·@assistant 오응답 없음)**
 - **gc-unread-read-idspace-fix** (읽음 커서 id-space 불일치 → 읽어도 unread 배지 미감소·전환 시 회귀, Major §12.3 서버 read 핸들러): 사용자 4차 재보고(resume) — gc-unread-read-500-fix(read 200 복구) 후에도 "진입 시 배지 사라지나 다른 대화 전환 시 즉시 회귀". **최종 근본 원인**: 읽음 커서·unread 집계는 `agent_runtime.core_messages.id` 공간(대화 3369~3655)인데 FE 가 보내던 `last_read_message_id` 는 `/api/history` 가 채운 표시 store `agent_runtime.messages` id(750~845)라 두 공간이 disjoint → `set_last_read` GREATEST 가 항상 전진 거부(영구 no-op, updated=1·200 OK 이나 값 불변). 핸들러 폴백(MAX core_messages)은 requested<=0 에서만 발동 → FE 양수라 미발동. 수정=핸들러가 requested 무시하고 항상 MAX(core_messages.id) 전진 + id-space 계약 회귀 테스트. (CHG/REV-20260625T225851)
   - [x] `mark_conversation_read`: body last_read_message_id 파싱 제거 + 항상 MAX(core_messages.id) 전진 + docstring
   - [x] 회귀 가드 `test_read_handler_ignores_client_id_uses_core_messages_max` (핸들러 소스 계약 정적 보장)

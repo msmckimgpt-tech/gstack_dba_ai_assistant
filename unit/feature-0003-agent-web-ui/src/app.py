@@ -12848,6 +12848,18 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
         )
         if _is_internal_message(role, content, meta_str):
             continue
+        # feature-0009 gc-join-notice: 멤버십 이벤트(참여 알림)는 대화 내부 멤버 전용 in-room
+        # 표식이다. anonymous 공유 스냅샷에는 노출하지 않는다(멤버 username 비노출 + share.js
+        # 는 pill 렌더 분기가 없어 정합성도 깨짐). in-room /api/history 경로에서만 pill 로 보인다.
+        _ev_meta = meta_json if isinstance(meta_json, dict) else None
+        if _ev_meta is None and isinstance(meta_json, str) and meta_json:
+            try:
+                _parsed_ev = json.loads(meta_json)
+                _ev_meta = _parsed_ev if isinstance(_parsed_ev, dict) else None
+            except Exception:
+                _ev_meta = None
+        if _ev_meta and _ev_meta.get("event_type"):
+            continue
         meta_obj: Any = None
         if isinstance(meta_json, dict):
             meta_obj = dict(meta_json)
@@ -12944,6 +12956,85 @@ def _save_group_chat_message_pg(
         except Exception:
             logging.getLogger(__name__).warning(
                 "group chat display mirror failed (conversation_id=%s)", conversation_id, exc_info=True
+            )
+        try:
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE agent_runtime.core_conversations SET updated_at = now() WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+            pg_conn.commit()
+        except Exception:
+            pass
+        return int(mid or 0)
+    finally:
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
+
+
+def _save_group_join_event_pg(
+    conversation_id: str, joined_account_id: int, joined_username: str | None = None
+) -> int:
+    """feature-0009 gc-join-notice: 공유 링크로 **새 멤버가 참여**했을 때 대화 안에
+    '참여 알림' 이벤트 메시지를 남겨 대화 내부의 (기존) 멤버에게 참가 사실을 전파한다.
+
+    `_save_group_chat_message_pg` 와 동일한 **이중 기록** 패턴 — 두 store 의 역할이 다르다:
+      - core_messages(role=user, name=EVENT_MESSAGE_NAME, sender_account_id=가입자): unread
+        배지 집계(role IN ('user','assistant') + `sender_account_id IS DISTINCT FROM self`)에는
+        포함되나, name sentinel 로 **LLM 대화 히스토리에서는 배제**된다(agent_core
+        _normalize_history_rows). 이벤트 문장을 발신자 라벨 붙은 user 턴으로 LLM 에 주입하지
+        않기 위함(§18.8 BLOCKING). sender=가입자라 **가입자 본인은 자기 참여를 unread 로 받지
+        않고**(IS DISTINCT FROM self = false), 기존 멤버만 +1 로 집계된다.
+      - messages(표시 store, /api/history 가 primary 로 읽음): meta_json 에
+        `event_type='member_joined'` 를 담아 프론트가 좌/우 말풍선이 아닌 **가운데 정렬
+        시스템 pill** 로 렌더하게 한다.
+
+    best-effort — 이벤트 기록이 실패해도 join 자체(멤버는 이미 add_member 로 추가됨)를 무르지
+    않는다(호출부가 예외를 무시). returns core message_id(0=실패).
+    """
+    from modules.runtime_backend import (
+        _get_pg_runtime_backend,
+        _get_pg_runtime_conn,
+        EVENT_MESSAGE_NAME,
+    )
+    name = str(joined_username or "").strip() or f"계정 {int(joined_account_id)}"
+    content = f"{name}님이 대화에 참여했습니다."
+    pg_conn = _get_pg_runtime_conn()
+    if not pg_conn:
+        return 0
+    try:
+        be = _get_pg_runtime_backend()
+        # core_messages: unread 집계(role IN user/assistant)용으로 role='user' 기록. sender=가입자
+        # → 가입자 본인 제외 + 기존 멤버 +1 이 sender 규칙만으로 성립. name=EVENT_MESSAGE_NAME
+        # sentinel 로 LLM 히스토리 조립에서는 배제된다(agent_core _normalize_history_rows).
+        mid = be.save_core_message(
+            pg_conn,
+            conversation_id=conversation_id,
+            role="user",
+            content=content,
+            name=EVENT_MESSAGE_NAME,
+            sender_account_id=int(joined_account_id),
+        )
+        # 표시 store 미러 — event_type 으로 프론트 pill 렌더 유도(role='system' 은
+        # _is_internal_message 를 통과하며 표시 store 읽기에 role 필터가 없어 그대로 노출된다).
+        try:
+            meta = json.dumps(
+                {
+                    "event_type": "member_joined",
+                    "sender_account_id": int(joined_account_id),
+                    "sender_username": name,
+                    "group_chat": True,
+                },
+                ensure_ascii=False,
+            )
+            be.save_memory_message(
+                pg_conn, conversation_id=conversation_id, role="system", content=content, meta_json=meta
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "group join event display mirror failed (conversation_id=%s)", conversation_id, exc_info=True
             )
         try:
             with pg_conn.cursor() as cur:

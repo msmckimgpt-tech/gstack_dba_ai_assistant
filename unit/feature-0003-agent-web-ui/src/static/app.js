@@ -3950,6 +3950,29 @@ function renderMessages() {
       }
     }
 
+    // feature-0009 gc-join-notice: 참여 알림 등 이벤트 메시지는 좌/우 말풍선이 아닌
+    // 가운데 정렬 시스템 pill 로 렌더한다(Slack/Discord "X joined" 패턴). 표시 store
+    // meta_json 의 event_type 으로 식별하며, 식별되면 일반 말풍선 렌더는 건너뛴다.
+    const _eventType = message.meta && message.meta.event_type;
+    if (_eventType) {
+      const evRow = document.createElement("div");
+      evRow.className = `message-event is-event-${_eventType}`;
+      if (message.id != null) {
+        evRow.id = `message-${message.id}`;
+        evRow.dataset.messageId = String(message.id);
+      }
+      const pill = document.createElement("span");
+      pill.className = "message-event-pill";
+      pill.textContent = String(message.content || "");
+      evRow.appendChild(pill);
+      const evTime = document.createElement("time");
+      evTime.className = "message-event-time";
+      evTime.textContent = formatDateTime(message.created_at);
+      evRow.appendChild(evTime);
+      messageLogEl.appendChild(evRow);
+      return;
+    }
+
     const row = document.createElement("article");
     const role = message.role === "user" ? "user" : "assistant";
     // feature-0009: 그룹 채팅 메시지는 메시지별 발신자(meta.sender_*) 우선 — 누가 보냈는지 표시.

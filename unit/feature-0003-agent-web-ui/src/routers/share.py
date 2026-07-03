@@ -158,6 +158,16 @@ def join_conversation_via_share(token: str, request: Request, account=Depends(ap
                 "token_prefix": str(token)[:8],
             },
         )
+        # feature-0009 gc-join-notice: 새 멤버 참여를 대화 안에 '참여 알림' 메시지로 전파한다
+        # (기존 멤버는 폴링/재조회로 pill + unread 배지로 인지). add_member 로 멤버는 이미
+        # 추가됐으므로, 이벤트 기록 실패가 join 성공을 무르지 않도록 best-effort 로 감싼다.
+        try:
+            app._save_group_join_event_pg(cid, actor_id, account.get("username"))
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "join: group join-notice event failed — conversation_id=%s actor_id=%s",
+                cid, actor_id, exc_info=True,
+            )
     return JSONResponse({"ok": True, "conversation_id": cid, "already_member": already})
 
 

@@ -1574,7 +1574,16 @@ def _normalize_history_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         pending_tool_ids = set()
         pending_tool_rows = []
 
+    from modules.runtime_backend import EVENT_MESSAGE_NAME
+
     for row in rows:
+        # feature-0009 gc-join-notice: 시스템/멤버십 이벤트(name==EVENT_MESSAGE_NAME)는 unread
+        # 집계용으로 core_messages 에 role='user' 로 기록되지만 LLM 대화 히스토리에는 절대
+        # 포함하지 않는다 — 여기서 배제하면 윈도우·kept_users·발신자 라벨·연속 user 병합 어디에도
+        # 들어가지 않는다. 안 그러면 "X님이 참여했습니다" 가 발신자 라벨 붙은 user 턴으로 LLM 에
+        # 주입돼 assistant 오응답·맥락 오염을 일으킨다(§18.8 적대 패널 BLOCKING #1).
+        if str(row.get("name") or "") == EVENT_MESSAGE_NAME:
+            continue
         role = str(row.get("role") or "")
         raw_tool_calls = row.get("tool_calls")
         if role == "assistant" and raw_tool_calls:

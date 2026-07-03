@@ -460,3 +460,20 @@ source_of_truth: true
 - 핵심 판정: **SHIP. BLOCKING 0.** NIT 3(MySQL write 경로 선행부재 / 고착대화 lazy-correction 의도 / 테스트 import-path는 baked 이미지 harness 전제·정적 assertion diff 확인). 전부 수용/추적.
 - Verification: `py_compile`(app.py·test) PASS + 핸들러 소스 계약 4/4(target_id=requested 부재·body 파싱 부재·MAX core_messages·set_last_read) + 라이브 재현(cursor 3655 → unread 0). **배포 후 web 로그 read 200 + 멤버 커서 conv_max 전진 + 전환·폴링 후 미회귀 실증 필수**(deploy-backed 완료 기준).
 - Human Approval Needed: 아니오 (사용자 보고 직접 수정, 서버 버그 정정, 게이트·스키마·인가 무변경). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.
+
+## REV-20260703T182740-gc-join-notice [SUBAGENT:LLM히스토리·unread·anon-leak·meta정합·best-effort·XSS·멱등 1렌즈 §18.8]
+- Date: 2026-07-03
+- Cycle: gc-join-notice (CHG-20260703T182740-gc-join-notice) — 공유 링크 참여 시 대화 내 '참여 알림' 이벤트(pill + 기존 멤버 unread). **Major §12.3**(share/join 멤버십 경로 + 메시지 렌더 + LLM 히스토리 인접, cross-feature 0003+0002). 중단 세션 7d92a878 resume(session limit).
+- Related Change: feature-0003 `src/app.py`(`_save_group_join_event_pg` + `_share_load_messages` guard)·`src/routers/share.py`(join 핸들러 호출)·`src/static/{app.js,index.html,styles.css}`, feature-0002 `src/modules/runtime_backend.py`(`EVENT_MESSAGE_NAME`)·`src/agent_core.py`(`_normalize_history_rows` 배제), `tests/test_gc_join_event_history.py`(신규 5). cross-feature, FUNCTION.md §13 사전 승인.
+- Reason: 핵심 경로(공유 join 멤버십 + 메시지 렌더 + LLM 히스토리 소스인 core_messages 기록) → §18.8 dispatch. 적대 패널 1렌즈(general-purpose, 코드 직접 read + 주변 함수 추적)로 7개 실패 모드 결함 적발 시도.
+- 적대적 검증(general-purpose 서브에이전트 1, "결함 적발" 목적):
+  - **#1 LLM 히스토리 오염 — CONFIRMED-DEFECT (BLOCKING)**: join 이벤트가 core_messages(role=user)로 기록되고 그 store 가 `_PG_LOAD_CORE_MESSAGES`(role/event 필터 없음)→`_normalize_history_rows`(user 행 유지)→`_format_core_messages`(발신자 라벨 부착)로 LLM 히스토리에 그대로 흘러 `[Alice]: Alice님이 대화에 참여했습니다.` user 턴 주입 + `_merge_consecutive_user_messages` 로 실제 질문에 융합 → assistant 오응답/컨텍스트 낭비. 저자 docstring 이 "LLM 히스토리 포함"을 의도로 기술했으나 완화책 부재. **→ 수정: `EVENT_MESSAGE_NAME='__event__'` sentinel(name 컬럼)로 표식하고 `_normalize_history_rows` 최상단에서 배제. unread SQL 은 name 미참조라 role='user' 집계 유지. 재검증: 컨테이너 pytest 36 PASS(신규 5 — 배제·미주입·name매칭·슬롯 미잠식).**
+  - **#2 unread 집계 정확 — NO-DEFECT**: PG 쿼리 `role IN ('user','assistant')`+`tool_calls NULL`+`content<>''` 통과, `sender IS DISTINCT FROM self` 로 가입자 제외·기존 멤버 +1. add_member 가 이벤트 INSERT **전** last_read=MAX 설정 → off-by-one 없음.
+  - **#3 anonymous 공유 leak — NO-DEFECT(이벤트 한정)**: 공유뷰 `_share_load_messages` 가 event_type 파싱 가드로 join 이벤트(및 username) 억제(PG dict·MySQL str 양형 robust). ADJACENT NIT(이번 diff 무관, 선행): 일반 그룹채팅 메시지의 `meta.sender_username` 은 여전히 anonymous 공유에 노출 — 후속 티켓 권고.
+  - **#4 meta 읽기/쓰기 정합 — NO-DEFECT**: 표시 store 기록→`/api/history`(system 행이 `_is_internal_message` 통과)→`message.meta.event_type` 프론트 노출→pill 발화 end-to-end 확인. NIT: `_get_agent_core_history` 폴백(희귀)은 event_type 부재라 일반 버블로 degrade(leak 아님, 표현만).
+  - **#5 best-effort — NO-DEFECT**: add_member 선행 commit(autocommit) 후 이벤트 호출 try/except, 성공 응답은 try 밖 무조건. 이벤트 예외가 join 롤백 없음.
+  - **#6 XSS — NO-DEFECT**: `pill.textContent`/`evTime.textContent` 사용, innerHTML sink 0. className/dataset 은 DOM property 대입(마크업 파싱 아님).
+  - **#7 멱등 — NO-DEFECT(순차)**: 이벤트 호출이 `if not already:` 내부 → 재참여/기존 멤버 재호출 시 스킵(중복 알림 없음). NIT(UNCERTAIN): 락·유니크 제약 부재로 진짜 동시(더블클릭) 2요청이 둘 다 `already=False` 읽으면 이벤트 2건 가능 — 관측 시 dedupe 가드 권고.
+- 핵심 판정: **BLOCKING #1 적발 → 수정 후 재검증 통과. 최종 BLOCKING 0.** NIT 3(#3 선행 anon-leak / #4 폴백 표현 / #7 동시 double-submit) 수용·추적.
+- Verification: `py_compile`(agent_core·runtime_backend·app.py·share.py) + `node --check`(app.js) + agent 컨테이너 pytest **36 PASS**(신규 `test_gc_join_event_history` 5 + 회귀 dialect/tooluse-sanitize/group-history-merge/group-members). **배포 후 라이브 그룹 공유 join → pill 렌더 + 기존 멤버 unread +1 + @assistant 가 "참여했습니다"에 오응답 안 함 실측 필수**(PB-0008, deploy-backed 완료 기준).
+- Human Approval Needed: 아니오 (기존 의도 완수 resume, additive 기능, 인가·스키마 무변경). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.
