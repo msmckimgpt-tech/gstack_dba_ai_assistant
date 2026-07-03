@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T115500-ai-claude-feature-0016-graphux6-postdeploy
+- Date: 2026-07-03
+- Related Requirement: graphux6-panelbottom-responsive-obs(§40) 배포 후 PB-0008 실 Windows 실측 결과 기록(deploy-backed 증적). 코드 무변경 — doc-only.
+- Summary: PR #570 머지(9e1156d6) 후 배포 완수 — `make migrate`(agent 재빌드→live alembic_version 0031→**0032** 확인, stale image 회피) + `make deploy-web`(무중단 롤링, soak 90s 통과) + `make insight-up`(insight-worker 9e1156d6 재빌드, ③ target 기록 반영). **라이브 PB-0008 실 Windows PASS 3/3**: ① progress 최하단(progressIsLastChild) ② 캔버스 flex-fill 415px=pane 바닥(잘림 0)·제약 시 200 floor 축소 ③ 최근활동 '테이블 분석' `schema.table` 실데이터 표시(계정분석 PII 공백). feature-0003 TEST.md §3 Run + TASK §40 T40.11 완료.
+- Files: `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/TASK.md`, `unit/feature-0016-metadata-graph/docs/MODIFY.md`.
+- Impact: 문서만. 코드·스키마·배포 무변경(배포는 이미 완료된 것을 기록).
+- Rollback Notes: 해당 없음(기록).
+
 ## CHG-20260703T105541-ai-claude-feature-0016-graphux6-panelbottom-responsive-obs
 - Date: 2026-07-03
 - Related Requirement: 사용자 요청 3건 — ① 그래프뷰 'AI 능동 분석' 패널을 상세 패널 하단으로(상단 배치가 노드 상세를 밀어냄), ② 그래프 UI 고정높이→화면 반응형(세로 좁은 뷰포트 하단 잘림), ③ AI 운영 현황 최근 활동에 '테이블 분석'·'노드 분석' 대상 표시. 정본 TASK §37.
