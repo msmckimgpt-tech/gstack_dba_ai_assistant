@@ -116,6 +116,13 @@ docker compose run --rm \
 
 ## 3. Test Cases
 
+### TASK-20260703-graphux6-panelbottom-responsive-obs 상세 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (Major §12.3, 2026-07-03, feature-0016 cross-cut) — **Environment: Windows-browser (①패널 배치·②세로 반응형 레이아웃·③최근활동 대상 표시는 실 브라우저 렌더/뷰포트 거동 — de-risk=컨테이너 make test 전건 + 적대리뷰 + 라이브 PB-0008 배포 후 잔여, visual_verification_scope: always)**
+- 대상: 관리콘솔 > 메타데이터 > 그래프 뷰(패널 하단·반응형 높이) + AI 운영 현황 > 최근 활동(분석 대상). 변경: `static/admin.html`·`static/styles.css`·`static/admin.js`·`routers/ai_ops.py` + feature-0002 `modules/llm.py`·`scripts/agent_runtime_schema.sql`·`alembic 0032_llm_usage_target` + `tests/test_ai_ops.py`.
+- **구조·구문**: `py_compile` (ai_ops.py·llm.py·0032) PASS · `node --check admin.js` PASS · alembic 단일 head=0032.
+- **단위(agent 이미지 격리, DB 없이 monkeypatch/fake)**: 컨테이너 `make test` **전건 PASS**(feature-0002+0003, ruff clean). `test_ai_ops.py` **16/16** — target SELECT/item 통과(짝수=`public.tbl_*` 대상, 홀수 None) + 신규 컬럼부재 폴백 `test_query_activity_target_column_absent_fallback`(rollback→base 재조회→target=None) + 기존 회귀. `test_llm_usage_record.py` **7/7** — target 을 total_tokens·latency_ms 사이 삽입해 param 위치(pt=5·lat=마지막) 보존.
+- **§18.8 적대 패널(subagent 2라운드)**: **VERDICT PASS-WITH-FIXES** — round-1(5축) BLOCKING 0·MEDIUM 1(M1 wide-short 빈 캔버스)·NIT 4, round-2(CSS 집중 6축) BLOCKING 0·MEDIUM 1(440 floor 과잉→노트북 스크롤·헤더 아웃). **모든 지적 수정**: 캔버스 min-height:200(빈캔버스 방어)·그래프 하한 제거(노트북 스크롤 회피)·전너비 :has() pane 스크롤(잘림 방지)·이중 :not 가드·test mock target=None·INSERT 폴백 테스트. 잔여 NIT(≈<560px viewport 헤더 스크롤, :has() 구형 미지원) 수용. REVIEW.md REV-20260703T105541-graphux6-panelbottom-responsive-obs 참조.
+- **PB-0008 Windows-browser 라이브 실측 — DEFERRED(배포 후)**: ① 그래프 뷰에서 'AI 능동 분석' 진행 패널이 상세 패널 **하단**에 나타나고 분석 시작 시 노드 상세를 위로 밀어내지 않음 ② 브라우저 세로 길이를 줄여도 그래프가 **축소될 뿐 하단이 잘리지 않음**(캔버스·상세·범례 가시) ③ AI 운영 현황 최근 활동에서 '테이블 분석'→`schema.table`, '그래프 노드 분석'→노드 FQN 대상이 라벨 옆·상세에 표시. 배포 후 본 케이스에 Run 기록 append + `alembic_version`=0032_llm_usage_target 확인.
+
 ### TASK-20260702-aiops-conv-link-fix '최근 활동' 상세 시스템 sentinel 대화 링크 깨짐 수정 (Minor §12.3, 2026-07-02, audit-nav-ux 후속) — **Environment: Windows-browser (DOM 링크 렌더 — node --check + 배포 후 PB-0008 재검증, visual_verification_scope: always)**
 - 대상: 관리콘솔 > 감사 > AI 운영 현황 > 최근 활동 상세 '연결 대화'. 변경: `static/admin.js` `aiOpsActivityRowsHtml`(sentinel 가드) + `static/admin.html`(cache-buster). 백엔드 무변경.
 - **구조·구문**: `node --check static/admin.js` PASS.

@@ -640,7 +640,7 @@ _get_openai_client = _get_llm_client
 def _record_llm_usage(
     model: str, task: str, resp,
     conversation_id: str | None = None, run_id: str | None = None,
-    latency_ms: int | None = None,
+    latency_ms: int | None = None, target: str | None = None,
 ) -> None:
     """TASK-0136 (#11): LLM 호출 토큰 사용량을 agent_runtime.llm_usage 에 기록 (best-effort).
     모든 LLM 호출의 단일 chokepoint 에서 포착 → 비용 가시성. 실패해도 LLM 응답에 무영향.
@@ -675,18 +675,38 @@ def _record_llm_usage(
                 lat = None
         except Exception:
             lat = None
+        # AI 운영 현황 '최근 활동' 대상 관측(0032): 인사이트 분석이 '어떤 대상'에 동작했는지
+        # (schema / schema.table / 노드 FQN). 표시 전용 — 저카디널리티 task 와 분리해 집계 무영향.
+        tgt = (str(target).strip()[:200] or None) if target is not None else None
         from .runtime_backend import _get_pg_runtime_conn
         pg = _get_pg_runtime_conn()
         if not pg:
             return
         try:
             with pg.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO agent_runtime.llm_usage "
-                    "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, latency_ms) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, lat),
-                )
+                try:
+                    # 컬럼 순서: target 을 total_tokens 와 latency_ms 사이에 둔다 — 기존 param 위치
+                    #   (pt=5·ct=6·tt=7, latency=마지막)를 보존해 계측 회귀 테스트와 byte-동치 유지.
+                    cur.execute(
+                        "INSERT INTO agent_runtime.llm_usage "
+                        "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, target, latency_ms) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, tgt, lat),
+                    )
+                except Exception:
+                    # target 컬럼 부재(마이그레이션 미적용/agent image stale — memory: deploy-migration-stale-agent-image)
+                    # 시 target 제외 INSERT 로 폴백해 usage 행 자체는 보존(계측이 조용히 끊기지 않음).
+                    # 실패 트랜잭션은 abort 상태라 재쿼리 전 rollback 필수.
+                    try:
+                        pg.rollback()
+                    except Exception:
+                        pass
+                    cur.execute(
+                        "INSERT INTO agent_runtime.llm_usage "
+                        "(conversation_id, run_id, model, resolved_model, task, prompt_tokens, completion_tokens, total_tokens, latency_ms) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        (conv, run, str(model or "")[:128], served, str(task or "")[:64], pt, ct, tt, lat),
+                    )
             pg.commit()
         finally:
             try:
@@ -1386,7 +1406,10 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
-        _record_llm_usage(_insight_model, "schema_insight", resp)  # TASK-0136 (#11)
+        _record_llm_usage(  # TASK-0136 (#11)
+            _insight_model, "schema_insight", resp,
+            target=(str(payload.get("schema") or "").strip() or None),  # 0032: 대상=스키마
+        )
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_schema_insight", "exception", str(exc))
@@ -1423,7 +1446,14 @@ def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
-        _record_llm_usage(_insight_model, "table_insight", resp)  # TASK-0136 (#11)
+        _record_llm_usage(  # TASK-0136 (#11)
+            _insight_model, "table_insight", resp,
+            # 0032: 대상=schema.table (빈 파트는 제외). llm_table_insight payload 계약: {schema, table, columns}.
+            target=(".".join(p for p in (
+                str(payload.get("schema") or "").strip(),
+                str(payload.get("table") or "").strip(),
+            ) if p) or None),
+        )
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_table_insight", "exception", str(exc))
@@ -1508,7 +1538,11 @@ def llm_node_analysis(payload: dict[str, Any]) -> dict[str, Any] | None:
             **_temperature_kwargs(_insight_model),
             timeout=_openai_request_timeout(AGENT_INSIGHT_TIMEOUT_SEC),
         )
-        _record_llm_usage(_insight_model, "node_analysis", resp)
+        _record_llm_usage(
+            _insight_model, "node_analysis", resp,
+            # 0032: 대상=노드 FQN(없으면 name). _build_payload 계약: {label, name, fqn, ...}.
+            target=(str(payload.get("fqn") or payload.get("name") or "").strip() or None),
+        )
         text = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         _log_llm_warn("llm_node_analysis", "exception", str(exc))

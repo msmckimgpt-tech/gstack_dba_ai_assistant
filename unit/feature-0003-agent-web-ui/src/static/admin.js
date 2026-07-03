@@ -2109,6 +2109,7 @@ function aiOpsActivityRowsHtml(items) {
       + `<div style="display:grid;grid-template-columns:auto 1fr;gap:3px 14px;align-items:baseline">`
       + dl("시각", E(ts))
       + dl("작업", `<b>${E(r.label)}</b> <span style="color:#8c959f">(${E(r.task)})</span>`)
+      + (r.target ? dl("대상", `<span style="font-family:monospace;word-break:break-all">${E(r.target)}</span>`) : "")  // 0032: 인사이트 분석 대상
       + dl("모델", modelDetail)
       + dl("토큰", `${_aiOpsFmtNumApg(r.prompt_tokens)} 프롬프트 · ${_aiOpsFmtNumApg(r.completion_tokens)} 완료 · <b>${_aiOpsFmtNumApg(r.total_tokens)}</b> 합계`)
       + dl("추정 비용", _aiOpsFmtUsdApg(r.cost_usd))
@@ -2120,7 +2121,11 @@ function aiOpsActivityRowsHtml(items) {
       `<div class="aiops-act-row" role="button" tabindex="0" aria-expanded="false" title="클릭하면 이 활동의 상세를 봅니다" style="cursor:pointer;display:flex;gap:10px;padding:3px 0;border-bottom:1px solid #f0f2f4">`
       + `<span class="aiops-act-caret" aria-hidden="true" style="width:12px;flex:none;color:#8c959f">▸</span>`
       + `<span style="color:#57606a;width:118px;flex:none">${E(ts)}</span>`
-      + `<span style="flex:1;min-width:0"><b>${E(r.label)}</b> <span style="color:#8c959f">${E(r.model || "")}</span></span>`
+      + `<span style="flex:1;min-width:0"><b>${E(r.label)}</b>`
+      // 0032: 인사이트 분석 '대상'(schema/schema.table/노드 FQN)을 라벨 옆에 인라인 표시 —
+      //   '테이블 분석'·'그래프 노드 분석' 이 어떤 대상에 동작하는지 목록에서 바로 관측. 대상 없으면 생략.
+      + (r.target ? ` <span class="aiops-act-target" style="color:#0a5b66;font-family:monospace;font-size:11.5px;word-break:break-all" title="분석 대상">${E(r.target)}</span>` : "")
+      + ` <span style="color:#8c959f">${E(r.model || "")}</span></span>`
       + `<span style="color:#57606a;width:74px;text-align:right">${_aiOpsFmtNumApg(r.total_tokens)} tok</span>`
       + `<span style="color:#57606a;width:60px;text-align:right">${_aiOpsFmtMsApg(r.latency_ms)}</span>`
       + `</div>`;

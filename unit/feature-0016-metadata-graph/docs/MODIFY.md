@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T105541-ai-claude-feature-0016-graphux6-panelbottom-responsive-obs
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청 3건 — ① 그래프뷰 'AI 능동 분석' 패널을 상세 패널 하단으로(상단 배치가 노드 상세를 밀어냄), ② 그래프 UI 고정높이→화면 반응형(세로 좁은 뷰포트 하단 잘림), ③ AI 운영 현황 최근 활동에 '테이블 분석'·'노드 분석' 대상 표시. 정본 TASK §37.
+- Summary:
+  - ① [admin.html] `#metadataGraphProgress` 를 `#metadataGraphDetailBody` 위→아래(aside 최하단) 이동(JS 무변경). [styles.css] progress 여백 margin-bottom→margin-top.
+  - ② [styles.css] `.admin-meta-graph`·`.admin-meta-graph-body` flex-fill + body `grid-template-rows: minmax(0,1fr)`, 캔버스·상세 고정 height 제거(min-height:0) → pane 가용높이 반응(짧은 뷰포트 축소·미절단). G6 autoResize 로 JS 무변경. 좁은화면(≤900px) 세로스택 보존 + 그래프 모드 `:has()` pane 스크롤.
+  - ③ [migration 0032] `agent_runtime.llm_usage.target VARCHAR(200)` additive nullable(task 저카디널리티 KPI 집계와 분리) + 부트스트랩 DDL parity. [llm.py] `_record_llm_usage(target=)` + 자가치유 INSERT(target 실패→rollback→제외 재INSERT), schema/table/node insight call site 대상 추출(account 은 PII 제외). [ai_ops.py] `_query_activity` target SELECT + 컬럼부재 폴백. [admin.js] 최근활동 행·상세 대상 표시.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.html,styles.css,admin.js}`, `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`, `unit/feature-0002-agent-core/src/modules/llm.py`, `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql`, `unit/feature-0002-agent-core/alembic/versions/20260703_0032_llm_usage_target.py`, `unit/feature-0003-agent-web-ui/tests/test_ai_ops.py`.
+- Impact: ①② 프론트 비파괴(데이터/API/스키마 불변). ③ additive nullable 마이그레이션(기존 INSERT/SELECT 무영향, 배포순서 역전·stale image 자가치유). KPI·taxonomy 집계 무영향.
+- Rollback Notes: 프론트는 커밋 되돌림. 마이그 0032 는 nullable·미참조 무해 — 이미지 롤백만 하고 downgrade 불필요(컬럼 잔존 무영향). 필요 시 `DROP COLUMN IF EXISTS target`.
+
 ## CHG-20260703T170000-ai-root-feature-0016-colexpand-postdeploy
 - Date: 2026-07-03
 - Related Requirement: reldetail-colexpand(§35) 배포 후 PB-0008 실 Windows 실측 결과 기록(deploy-backed 증적). 코드 무변경 — doc-only.

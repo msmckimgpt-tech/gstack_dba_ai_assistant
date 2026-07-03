@@ -198,6 +198,43 @@ def test_record_llm_usage_skips_without_usage(monkeypatch):
     assert sink == []
 
 
+class _TargetFailCur:
+    """0032: target 컬럼 부재 시뮬레이션 — 'target' 포함 INSERT 첫 실행은 예외, 재실행(base)은 통과."""
+    def __init__(self, sink): self.sink = sink; self._raised = False
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def execute(self, sql, params=None):
+        if "target" in sql and not self._raised:
+            self._raised = True
+            raise RuntimeError('column "target" does not exist')
+        self.sink.append((sql, params))
+
+
+class _TargetFailConn:
+    def __init__(self, sink): self.sink = sink; self.rolled_back = False; self._cur = _TargetFailCur(sink)
+    def cursor(self, *a, **k): return self._cur
+    def commit(self): return None
+    def rollback(self): self.rolled_back = True
+    def close(self): return None
+
+
+def test_record_llm_usage_target_column_absent_fallback(monkeypatch):
+    # 0032: target 컬럼 부재(마이그 미적용/agent image stale)에서 _record_llm_usage 가 target 포함 INSERT
+    # 실패 → rollback → target 제외 base INSERT 로 폴백해 usage 행 자체는 보존(계측 무중단)하는지 검증.
+    import modules.llm as llm
+    import modules.runtime_backend as rb
+    sink: list = []
+    conn = _TargetFailConn(sink)
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: conn)
+    llm._record_llm_usage("claude-haiku-4", "table_insight", _resp(), target="public.users", latency_ms=42)
+    assert conn.rolled_back is True          # abort 트랜잭션 정리 후 폴백
+    assert len(sink) == 1                     # 최종 1건만 기록(폴백 INSERT)
+    sql, params = sink[0]
+    assert "target" not in sql                # 폴백 = base 컬럼(target 미포함)
+    assert params[4] == "table_insight"       # task 보존
+    assert params[-1] == 42                    # latency 마지막 위치 보존
+
+
 # ── 활동 feed 페이징(TASK-AIOPS-paging): cursor keyset + next_cursor + 엔드포인트 degrade/권한 ─
 import datetime as _dt
 
@@ -206,9 +243,11 @@ def _act_rows(n, start_id):
     # TASK-20260702-audit-nav-ux: SELECT 컬럼 확장 반영 —
     # (id, task, model, resolved_model, total, prompt, completion, latency, created_at, run_id, conversation_id)
     # conversation_id 는 짝수 index 만 부여(연결 대화 있음/없음 두 경로 모두 커버).
+    # 0032(TASK-20260703-aiops-target): 12번째 컬럼 target 추가 — 짝수 index 만 대상 부여(대상 있음/없음 두 경로).
     return [(start_id - i, "agent", "claude-haiku-4", "claude-haiku-4-served", 100, 60, 40, 12,
              _dt.datetime(2026, 7, 2, 0, 0, i % 60),
-             "run-" + str(start_id - i), ("conv-" + str(start_id - i)) if (i % 2 == 0) else None)
+             "run-" + str(start_id - i), ("conv-" + str(start_id - i)) if (i % 2 == 0) else None,
+             ("public.tbl_" + str(start_id - i)) if (i % 2 == 0) else None)
             for i in range(n)]
 
 
@@ -248,6 +287,10 @@ def test_query_activity_no_cursor_has_more():
     assert items[0]["prompt_tokens"] == 60 and items[0]["completion_tokens"] == 40
     assert items[0]["run_id"] == "run-100" and items[0]["conversation_id"] == "conv-100"
     assert items[1]["conversation_id"] is None              # 홀수 index=대화 미귀속(정직 안내 경로)
+    # 0032: 인사이트 분석 대상(target) 컬럼이 SELECT 되고 item 으로 통과 — 짝수=대상 있음, 홀수=None.
+    assert ", target" in cur.sql
+    assert items[0]["target"] == "public.tbl_100"
+    assert items[1]["target"] is None
     assert "WHERE id <" not in cur.sql             # cursor 미지정 → WHERE 없음
     assert "ORDER BY id DESC" in cur.sql
 
@@ -259,6 +302,32 @@ def test_query_activity_with_cursor_no_more():
     assert len(items) == 3 and nxt is None
     assert "WHERE id < %s" in cur.sql
     assert cur.params[0] == 97 and cur.params[1] == 4   # (cursor, limit+1)
+
+
+class _NoTargetCur(_PlainCur):
+    """0032: target 컬럼 부재(마이그 미적용/agent image stale) 시뮬레이션 —
+    SELECT 에 ', target' 포함 첫 실행은 UndefinedColumn 흉내로 예외, 재실행(base 컬럼)은 통과.
+    _query_activity 의 자가치유 폴백(rollback → base 컬럼 재조회)을 검증한다."""
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.connection = self       # cur.connection.rollback() 대상
+        self._raised = False
+    def execute(self, sql, params=None):
+        if ", target" in sql and not self._raised:
+            self._raised = True
+            raise RuntimeError('column "target" does not exist')
+        super().execute(sql, params)
+    def rollback(self):
+        return None
+
+
+def test_query_activity_target_column_absent_fallback():
+    from routers.ai_ops import _query_activity
+    cur = _NoTargetCur(_act_rows(3, 80))           # rows 는 target 포함이나 SELECT 는 폴백돼야 함
+    items, nxt = _query_activity(cur, taxonomy_for, limit=3)
+    assert len(items) == 3                         # 폴백해도 피드는 살아있음(usage 계측 무중단)
+    assert all(it["target"] is None for it in items)   # target 컬럼 부재 → 전부 None(가드)
+    assert ", target" not in cur.sql               # 최종 실행 SQL = base 컬럼(폴백 성공)
 
 
 def test_activity_endpoint_with_data(monkeypatch):

@@ -1,5 +1,17 @@
 # Report
 
+## 2026-07-03 · 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (graphux6-panelbottom-responsive-obs, TASK §37)
+
+사용자 요청 3건(관리콘솔 그래프뷰·AI 운영 현황). worktree `feature-0016-graphux6-panel-obs`, 등급 Major(③ 마이그레이션 포함).
+
+**① AI 능동 분석 패널 → 상세 패널 하단** ([admin.html](../../feature-0003-agent-web-ui/src/static/admin.html), [styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 이전 graphux5-panelmove 는 진행 패널(`#metadataGraphProgress`)을 상세 aside **상단**(role-legend 아래·노드 상세 위)에 뒀는데, 분석 시작 시 노드 상세를 아래로 밀어내는 이슈가 재확인됨. `#metadataGraphProgress` 를 `#metadataGraphDetailBody` **아래**(aside 최하단)로 이동 — 이제 노드 상세를 밀지 않고 그 아래에 나타난다(aside `overflow-y:auto` 로 스크롤). JS 무변경(getElementById). progress 여백을 `margin-bottom`→`margin-top` 으로(하단 배치 구분).
+
+**② 그래프 반응형 높이** ([styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 캔버스·상세가 `height: clamp(420px, 64vh, 760px)` 였는데 **420px 하한**이 metadata pane(admin-shell `overflow:hidden`+`100vh`, metadata 는 pane 단일스크롤 제외)의 가용높이를 초과해 세로 좁은 뷰포트에서 하단이 잘렸다. wide 레이아웃을 **flex-fill**(`.admin-meta-graph`·`.admin-meta-graph-body` `flex:1 1 auto; min-height:0` + body `grid-template-rows: minmax(0,1fr)`)로 전환 — 캔버스·상세가 pane 남은 세로를 채우고 짧은 뷰포트에선 잘리지 않고 축소된다. 고정 height 제거(min-height:0). G6 `autoResize:true`(admin.js:3801, ResizeObserver)가 컨테이너 리사이즈를 자동 반영해 JS 무변경. 좁은화면(≤900px 세로스택)은 fill 해제 + 캔버스 `clamp(300px,56dvh,560px)` + 그래프 모드일 때만 `:has(> #metadataGraphView:not([style*=none]))` pane 스크롤(list-detail 숨김이라 이중스크롤 무).
+
+**③ 최근 활동 분석 대상 관측** (migration [0032](../../feature-0002-agent-core/alembic/versions/20260703_0032_llm_usage_target.py) / [llm.py](../../feature-0002-agent-core/src/modules/llm.py) / [ai_ops.py](../../feature-0003-agent-web-ui/src/routers/ai_ops.py) / [admin.js](../../feature-0003-agent-web-ui/src/static/admin.js)): '테이블 분석'·'노드 분석'이 화면에 라벨만 뜨고 **어떤 대상**인지 안 보이던 이유는 `llm_usage.task` 가 `table_insight`/`node_analysis` 같은 **저카디널리티 카테고리 키**(KPI 드릴다운이 `GROUP BY task`·taxonomy 정확매칭에 의존)라 대상을 담지 않아서다. 대상을 task 에 접합하면 집계가 붕괴하므로 **`target VARCHAR(200)` additive nullable 컬럼**(0030 latency 패턴 동형, `ADD COLUMN IF NOT EXISTS`, 부트스트랩 DDL parity)을 분리 신설. `_record_llm_usage(target=)` 가 schema_insight=스키마·table_insight=schema.table·node_analysis=fqn/name 을 payload 에서 추출해 기록(account_insight 은 대화/계정 PII 라 제외). 배포순서 역전·**stale agent image 로 마이그 누락**(memory: deploy-migration-stale-agent-image)에도 계측이 끊기지 않게 **자가치유 INSERT**(target 포함 실패→rollback→target 제외 재INSERT) + read측 `_query_activity` 도 컬럼 부재 시 base 컬럼 재조회 폴백. admin.js 최근활동 행 라벨 옆 인라인 대상 + 상세 '대상' 행 표시.
+
+**검증**: 컨테이너 `make test` **전건 PASS**(feature-0002+0003, ruff clean). test_ai_ops 16/16(신규 target 통과 + 컬럼부재 폴백 `test_query_activity_target_column_absent_fallback`) + test_llm_usage_record 7/7(param 순서 보존 — target 을 total_tokens·latency_ms 사이 삽입해 pt=5·lat=마지막 유지). py_compile OK + alembic 단일 head=0032. 배포 + 라이브 PB-0008 실 Windows(3건 육안) + `alembic_version`=0032 직접 검증은 T37.11(POST-DEPLOY).
+
 ## 2026-07-03 · 역할 범례를 우측 상세 패널 상단 세로·접힘으로 이전 (role-legend-panel, TASK §36)
 
 ### 배경 (사용자 후속 요청)
