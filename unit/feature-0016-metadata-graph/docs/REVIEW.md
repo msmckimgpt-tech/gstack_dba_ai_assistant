@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260703T105541-graphux6-panelbottom-responsive-obs [SUBAGENT: PASS-WITH-FIXES] — 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 대상 관측 적대 리뷰
+- Related Change: CHG-20260703T105541-ai-claude-feature-0016-graphux6-panelbottom-responsive-obs (TASK §37). worktree feature-0016-graphux6-panel-obs.
+- 리뷰 방식: subagent 적대 5축 — ① CSS 반응형 회귀 ② 패널이동 부작용 ③ target 계측 정합(자가치유 INSERT·rollback·overview 다중 SELECT·`len(r)>11` 가드) ④ payload 대상 추출·XSS ⑤ 마이그 안전(additive nullable·단일 head·배포순서). diff 전체 + 주변 소스(_record_llm_usage, _query_activity, admin.js 토글/progress, admin.shell→canvas CSS 체인, 0032, 테스트) 정독.
+- **결과: BLOCKING 0 · MAJOR 0 · MEDIUM 1 · NIT 4**.
+  - ②③④⑤ 전부 견고 확인: params 순서(pt=5·lat=마지막) 보존, pgbouncer rollback→동일커서 재사용 안전(_get_pg_runtime_conn 은 per-call conn), overview 에서 `_query_activity` 는 마지막 쿼리라 rollback 이 선행 결과 무손실(+stale 창에선 오히려 피드 복구), `len(r)>11` 가드로 IndexError 무, payload 키(schema/schema.table/fqn·name) 실측 정합, `str(target).strip()[:200]` 로 VARCHAR(200) 초과 방지, admin.js `E()`(_aiOpsEscApg) XSS 이스케이프, 0032 additive nullable·단일 head(0032→0031→0030)·양방향 배포순서 안전.
+  - **MEDIUM M1 (수정 완료)**: ① flex-fill 에서 캔버스 고정높이 하한을 제거해, **width>900px(좁은화면 미디어쿼리 미적용) + 세로 매우 짧은 창**에서 그리드 행 minmax(0,1fr)+min-height:0 캔버스가 0px 로 붕괴 → **G6 빈 캔버스** + wide 모드 pane 스크롤 부재. → **수정**: `.admin-meta-graph { min-height:440px }` 하한 + `.admin-meta-graph-canvas { min-height:200px }` 방어 floor + `:has()` graph-mode pane 세로스크롤을 **전 너비**로 승격(이전 ≤900px 한정). 하한까지 축소 후 초과분은 스크롤 → '빈 캔버스'·'하단 잘림' 둘 다 차단. 정상/큰 화면은 flex-fill 이 pane 을 정확히 채워 overflow 미발생(스퓨리어스 스크롤바 없음).
+  - **NIT (수정)**: ⓐ ≤900px 세로스택에서 `.admin-meta-graph { flex:1 1 auto }` 미리셋 → tall-narrow 빈공간 → `.admin-meta-graph { flex:0 1 auto; min-height:0 }` 리셋 추가. ⓑ test_call_llm_records_agent_task mock lambda 가 `target=` 미수용(향후 agent 경로 target 전달 시 TypeError 잠재) → `target=None` 파라미터 추가. ⓒ llm.py INSERT 폴백(target 실패→rollback→base 재INSERT) 무테스트 → `test_record_llm_usage_target_column_absent_fallback` 신규 추가.
+  - **NIT (수용/미조치)**: ⓓ `:has()` 는 Chrome<105 등 구형 미지원 — PB-0008 대상 Windows Chrome(현행)은 지원, graceful degradation 이라 수용. ⓔ (기존 결함, 본 diff 무관) 0030+0032 동시 미적용 시 overview #2/#3 쿼리 abort 가 #4 로 전파되는 pre-existing fragility — 본 변경이 악화시키지 않음(정보성).
+- Round-2 재검증(CSS M1 보정 집중 subagent, 6축: 스퓨리어스 스크롤바·min-height 과잉·리사이저 드래그·detail-collapsed·≤900px 정합·헤더 스크롤아웃): **BLOCKING 0**. 신규 **MEDIUM**(내가 넣은 `min-height:440px` floor 가 과해 흔한 768급 노트북(가용 ~370-410px)에서 불필요 pane 스크롤 + 그때 헤더·서브탭 스크롤아웃 — 자매 list-detail 뷰와 불일치) 적발 → **재보정**: 그래프 하한 440px **제거**(→`min-height:0` 순수 flex-fill, 흔한 노트북은 스크롤 없이 축소·헤더 유지), '빈 캔버스' 방어는 **캔버스 min-height:200px 만**으로 유지. 스크롤은 캔버스 200px 가 가용높이를 초과하는 ≈<560px viewport(희귀)에서만 발동. **NIT-1**(`[style*="none"]` 부분매칭 취약) → 가드를 `display:none`(authored 무공백)·`display: none`(CSSOM 공백) **이중 :not** 로 정밀화. 잔여(≈<560px viewport 에서 헤더 스크롤) 는 희귀 NIT 로 수용(공유 클래스 sticky 는 상시 그래프뷰에 리스크라 미채택). round-2 는 CSS-only 변경이라 make test 결과 유효.
+- Human Approval: 사용자 "continue" 로 작업 진행 승인. 배포(마이그 0032 포함)는 커밋 후 별도 confirm 예정(외부 영향).
+
 ## REV-20260702T031500-node-haiku-deploy [SKIPPED: doc-only 배포 기록] — node-analysis-haiku 배포 완수 + 정본 doc-status 갱신
 - Related Change: CHG-20260702-node-haiku-deploy (T22.7 배포 완수). 코드/스키마 변경 없음 — 배포 실행(.env + insight-worker 재빌드·재기동) + TASK/REPORT/MODIFY doc-status 갱신뿐.
 - Panel skip 사유: 적대 리뷰 대상인 코드 변경(config/llm/node_analysis 라우팅)은 선행 cycle 에서 이미 [SUBAGENT: PASS](REV-20260702T025245) 완료. 본 changeset 은 doc-only + 런타임 배포라 신규 코드 결함면 없음. 배포 정합은 smoke 실증(env 격리·config 값·라우팅 소스·healthy·traceback 0)으로 대체.
@@ -670,19 +681,40 @@ source_of_truth: true
 - 판정: 확정 3건 전량 수정 + 회귀 방지 구조 테스트(t8 collapse-REFERENCES 보존, t9 expand focus 폴백) 추가,
   격리 테스트 10/10 PASS. BLOCKING 0 잔여.
 
+## REV-20260703T023000-ai-claude-corp-feature-0016-graph-rel-layout-postdeploy [SKIPPED:doc-only-postdeploy] — POST-DEPLOY PB-0008 결과 기록
+- 배포 web-a/b `5f439788`(무중단 롤링·soak) 후 실 Windows Chrome PB-0008 라이브 검증 **전건 PASS** 결과를
+  TEST.md(graph-rel-layout POST-DEPLOY Run)·TASK §38(T38.8) 에 기록하는 doc-only 후속 — 코드 무변경이라
+  §18.8 패널 skip. 핵심 실측: 관계쌍 평균 배치 순서 거리 32.5→3.2(90% 감소, gunzgame 115쌍) · collapse
+  REFERENCES 145→145 보존·배치 불변(§18.8 MAJOR 수정 실증) · 이웃확장/검색 pageerror 0.
+
+## REV-20260703T040000-ai-claude-feature-0016-cluster-role-prefix [SUBAGENT: PASS] — 클러스터 상세 역할 접두사 + 행 클릭 선택 + 범례 툴팁 적대 리뷰 7축
+- Related Change: CHG-20260703-cluster-role-prefix (TASK §39). 프론트 표현 + 클릭 상호작용(클러스터 상세 목록·범례 툴팁).
+- Trigger: 가시 UI + 클릭 상호작용(select) + 새 데이터 경로 → §18.8 적대 패널 [SUBAGENT] dispatch. + headless 렌더 격리 실증 선행.
+- 점검 7축 판정 (subagent, 파일:라인 근거):
+  1. [PASS/NIT] XSS/속성: 칩·버튼 `title` 은 `_META_ROLE` 신뢰 상수·정적 문자열, `t.description` 은 텍스트 위치 esc. NIT — `data-node-key="${esc(t.key)}"` 의 로컬 `esc` 가 `"` 미escape → 키에 `"` 시 속성 breakout 이론상 가능(단 `<>` escape 로 태그주입 불가). **기존 4개 사이트(data-key/data-trace) 동일 패턴 = 회귀 아님**, admin-only + DB식별자에 `"`+페이로드 동시 필요라 저위험. 수용(하드닝은 공유 esc 일괄 강화 별도 maintenance).
+  2. [PASS] 클릭 핸들러: 두 진입 경로(Local/ById) 모두 render 거쳐 innerHTML 직후 1회 바인딩. showDetail → 동일 컨테이너 innerHTML 교체로 옛 버튼+리스너 GC → 누수/좀비/중복 없음.
+  3. [PASS] select semantics: showDetail 이 `_metaGraphSetSelected`(하이라이트, 렌더된 노드만 apply) 호출. 미렌더 노드는 selected 변수만 세팅(무해), focusElement 는 `_metaRenderedIdFor` null 가드로 skip. showDetail 은 렌더 무관 동작.
+  4. [PASS] 범례 tips: data-role 8개 ↔ `_META_ROLE` 키/아이콘/색 1:1 완전 일치. 정적 `<li>` 상주라 호출 타이밍 무관, title 재주입 idempotent.
+  5. [PASS] 칩 헬퍼: `if(!rd) return ""` + 호출부 `_metaRoleOf` 유효성 이중 방어. small=18px 고정, dark 라벨색, 미분석 `amgr-role-none` transparent+폭 유지.
+  6. [PASS] CSS: `.amgr-cluster-tables`(0,2,1) > `.admin-meta-graph-sec ul`(0,1,1) padding-left:0 승리, 스코프 한정으로 타 ul 무영향. `--primary-soft`·`--text-muted` 정의 존재. code{flex:none}+18px 슬롯 → 정렬 보장(allCodesAligned 재확인).
+  7. [PASS] 회귀: `_META_ROLE.desc` 순수 additive(기존 소비처 특정 필드만 접근). 클러스터 상세 외 렌더 경로 무영향. `node --check` OK.
+- BLOCKING: 0.
+- NIT(수용): esc 따옴표 미escape(위 1축 — 기존 패턴·저위험). 
+- 총평: 배포 가능(GO). 사용자 3요구(접두사+정렬·행클릭 선택·범례 툴팁) 코드·헤드리스 렌더 양측 충족. 완료 게이트=PB-0008 실 Windows.
+
 ## REV-20260703T021144-ai-claude-feature-0016-graph-drag [SUBAGENT: PASS] — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 적대 리뷰 4축
-- 대상: working-tree admin.js graph-drag 변경(behaviors object-form + `enable` 오버라이드, `node:dragstart/drag/dragend`, `tableDeps` 맵). 커밋 3d12fb08 의 상대방식(`translateElementBy`+delta)을 절대-오프셋(`translateElementTo`+offset)으로 리팩터한 **최종 워킹트리** 기준(과업 설명과 일치). resume 세션에서 재실행·확정.
+- 대상: working-tree admin.js graph-drag 변경(behaviors object-form + `enable` 오버라이드, `node:dragstart/drag/dragend`, `tableDeps` 맵). 커밋 3d12fb08 의 상대방식(`translateElementBy`+delta)을 절대-오프셋(`translateElementTo`+offset)으로 리팩터한 **최종 워킹트리** 기준. resume 세션에서 재실행·확정.
 - 방법: 적대 subagent — G6 v5.1.1 vendor 번들(`vendor/g6.min.js`)을 역어셈블해 API 시맨틱·이벤트 latch·좌표계까지 실측 교차검증(통과 아닌 결함 적발 목적).
 - **4축 전부 PASS (BLOCKING 0)**:
   - 축1 회귀: behaviors 3종(drag-canvas/zoom-canvas/drag-element) 개수·종류 동일(유실 없음). `_metaCanvasDragEnable` 비-중간 분기가 번들 drag-canvas 기본 enable 과 문자열까지 동일 → 좌클릭 빈캔버스 팬·좌클릭 노드 이동·휠 줌·node:click·우클릭 ctx·미니맵 무회귀. mousedown capture 는 `button===1` 만 preventDefault(좌0/우2 무영향, pointer 취소 아님 → G6 팬 흐름 유지).
   - 축2 엣지: 접힌 테이블·컬럼/용어/카드/"X:"ctl 직접 드래그 → `tableDeps` 미등록 → 단독 이동. `renderedIds` 필터 + `getElementPosition` try/catch 로 stale/미렌더 종속 배제. 중간버튼 드래그 시 `_drag=null` 유지 → drag/dragend no-op.
-  - 축3 G6 API(번들 실측): `translateElementTo({id:[x,y]}, false)` multi-key 지원 확정. `getElementPosition`·`translateElementTo` 모두 **모델(월드)좌표** 동일계 → 오프셋 수학 성립. `enable` 콜백 이벤트 1인자 시그니처 정합. DragCanvas 가 DRAG_START 에서 enable 1회 latch + `buttons=4` 판정(`_metaEventButtons` buttons 우선) → 노드 위 중간버튼도 팬(REQ① 성립).
+  - 축3 G6 API(번들 실측): `translateElementTo({id:[x,y]}, false)` multi-key 지원 확정. `getElementPosition`·`translateElementTo` 모두 **모델(월드)좌표** 동일계 → 오프셋 수학 성립. `enable` 콜백 이벤트 1인자 시그니처 정합. DragCanvas 가 DRAG_START 에서 enable 1회 latch + `buttons=4` 판정 → 노드 위 중간버튼도 팬(REQ① 성립).
   - 축4 좌표계/오프셋: drag-element 의 `translateElementBy` 가 모델 x/y 를 **동기** 갱신 후 커스텀 `node:drag` 가 읽어 프레임 지연 없음. 오프셋을 dragstart 월드좌표로 고정 → 매 프레임 절대 배치라 zoom 배율·카메라 팬·누적 drift 무관. dragend 재호출은 핸들러 순서 안전망 → 커밋의 상대방식(순서 뒤바뀌면 delta 중복/누락) 대비 **개선**.
 - **NIT 6건 (전부 비차단)**:
   - N1 [수정완료]: `_drag` 필드 주석(`{id,lastX,lastY,deps}`→`{id,offs}`) + `node:drag` 배선 주석(`translateElementBy` delta→`translateElementTo` 절대오프셋) 구방식 서술 → 실제 절대방식으로 정정(admin.js, 주석 전용·로직 무변).
-  - N2 [수용]: `_metaG6Build` 가 `tableDeps` 만 리셋, `_drag` 미리셋. 단 `_drag` 는 dragend 에서 반드시 null 화 + rebuild 는 드래그 밖 트리거라 self-heal(제스처 누출 없음) — 정돈 여지만, 버그 아님.
-  - N3 [수용]: `_metaEventButtons` 최후폴백(`button===-1`→좌1)은 `e.buttons`·`nativeEvent.buttons` 둘 다 부재 시에만 도달 — DOM 규격상 pointer drag 은 buttons 항상 존재라 사실상 도달 불가(1차 경로 견고).
-  - N4 [수용, 선재]: "−" 접기 ctl 직접 드래그는 단독 분리 이동, 노드 위 중간'클릭'(드래그 아님)은 node:click 발화 가능. 둘 다 본 변경 이전부터 존재(범위 밖).
-  - N5 [수용]: `translateElementTo`→`translateNodeTo` 가 종속 z 를 0 리셋(2D 무해).
-  - N6 [처리]: 브랜치가 `main` 뒤짐(merge-base 5f439788) — `_metaRoleChipHTML` 등 역할 기능은 브랜치 base 이후 main 선안착분(우리 HEAD 미보유). 랜딩 시 origin/main 3-way 병합으로 역할+드래그 양쪽 보존 확인(병합 후 grep 검증).
+  - N2 [수용]: `_metaG6Build` 가 `tableDeps` 만 리셋, `_drag` 미리셋 — 단 dragend 에서 반드시 null 화 + rebuild 는 드래그 밖 트리거라 self-heal(버그 아님).
+  - N3 [수용]: `_metaEventButtons` 최후폴백(`button===-1`→좌1)은 buttons·nativeEvent.buttons 둘 다 부재 시만 도달 — DOM 규격상 pointer drag 은 buttons 항상 존재라 사실상 도달 불가.
+  - N4 [수용, 선재]: "−" 접기 ctl 직접 드래그 단독 이동, 노드 위 중간'클릭'(드래그 아님) node:click 발화 가능 — 둘 다 본 변경 이전부터 존재(범위 밖).
+  - N5 [수용]: `translateElementTo` 가 종속 z 를 0 리셋(2D 무해).
+  - N6 [처리완료]: 브랜치 stale — `_metaRoleChipHTML` 등 역할 기능은 main 선안착분. origin/main(9e1156d6) 3-way 병합으로 역할(admin.js grep=2)+드래그(함수 8) 양쪽 보존 확인, §40→§41 재리넘버.
 - **판정**: BLOCKING 0. REQ①(중간버튼 팬)·REQ②(종속 동반이동) G6 v5.1.1 실측 시맨틱 정합. N1 수정 완료, N2~N6 수용/처리.

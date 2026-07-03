@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260703T105541-ai-claude-feature-0016-graphux6-panelbottom-responsive-obs
+- Date: 2026-07-03
+- Related Requirement: 사용자 요청 3건 — ① 그래프뷰 'AI 능동 분석' 패널을 상세 패널 하단으로(상단 배치가 노드 상세를 밀어냄), ② 그래프 UI 고정높이→화면 반응형(세로 좁은 뷰포트 하단 잘림), ③ AI 운영 현황 최근 활동에 '테이블 분석'·'노드 분석' 대상 표시. 정본 TASK §37.
+- Summary:
+  - ① [admin.html] `#metadataGraphProgress` 를 `#metadataGraphDetailBody` 위→아래(aside 최하단) 이동(JS 무변경). [styles.css] progress 여백 margin-bottom→margin-top.
+  - ② [styles.css] `.admin-meta-graph`·`.admin-meta-graph-body` flex-fill + body `grid-template-rows: minmax(0,1fr)`, 캔버스·상세 고정 height 제거(min-height:0) → pane 가용높이 반응(짧은 뷰포트 축소·미절단). G6 autoResize 로 JS 무변경. 좁은화면(≤900px) 세로스택 보존 + 그래프 모드 `:has()` pane 스크롤.
+  - ③ [migration 0032] `agent_runtime.llm_usage.target VARCHAR(200)` additive nullable(task 저카디널리티 KPI 집계와 분리) + 부트스트랩 DDL parity. [llm.py] `_record_llm_usage(target=)` + 자가치유 INSERT(target 실패→rollback→제외 재INSERT), schema/table/node insight call site 대상 추출(account 은 PII 제외). [ai_ops.py] `_query_activity` target SELECT + 컬럼부재 폴백. [admin.js] 최근활동 행·상세 대상 표시.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.html,styles.css,admin.js}`, `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`, `unit/feature-0002-agent-core/src/modules/llm.py`, `unit/feature-0002-agent-core/src/scripts/agent_runtime_schema.sql`, `unit/feature-0002-agent-core/alembic/versions/20260703_0032_llm_usage_target.py`, `unit/feature-0003-agent-web-ui/tests/test_ai_ops.py`.
+- Impact: ①② 프론트 비파괴(데이터/API/스키마 불변). ③ additive nullable 마이그레이션(기존 INSERT/SELECT 무영향, 배포순서 역전·stale image 자가치유). KPI·taxonomy 집계 무영향.
+- Rollback Notes: 프론트는 커밋 되돌림. 마이그 0032 는 nullable·미참조 무해 — 이미지 롤백만 하고 downgrade 불필요(컬럼 잔존 무영향). 필요 시 `DROP COLUMN IF EXISTS target`.
+
 ## CHG-20260703T170000-ai-root-feature-0016-colexpand-postdeploy
 - Date: 2026-07-03
 - Related Requirement: reldetail-colexpand(§35) 배포 후 PB-0008 실 Windows 실측 결과 기록(deploy-backed 증적). 코드 무변경 — doc-only.
@@ -695,12 +706,32 @@ source_of_truth: true
 - Impact: 프론트 **표현 전용**(상세 패널 내부 레이아웃만). 데이터 API·스키마·마커·칩 인코딩·RBAC·JS 로직 **전부 불변**. 마이그레이션 없음. 범례는 여전히 detailBody 형제(이제 아래)라 innerHTML 교체(detailBody/progress 만)에 지워지지 않음. 검증: **headless playwright 렌더 격리 실증** — 빈 상세=범례 바닥고정(pinnedNearBottom, 위 여백 262px), 긴 상세 30행=노드 상세 firstNodeH 32(온전·미압축)·dbH==dbScrollH(983, 잘림 없음)·aside canScroll=true(스크롤) → 밀림/뒤틀림 없음. + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows.
 - Rollback Notes: admin.html(범례 위치 원복)·styles.css(flex/margin 원복) git revert + cache-buster 이전값(reldetail-colexpand-role-legend-panel). 데이터·API·JS 무손상.
 
+## CHG-20260703-cluster-role-prefix
+- Date: 2026-07-03
+- Related Requirement: 사용자 후속 요청(그래프 뷰) 3건 — ① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 동일 폭 빈 슬롯 → 라벨 정렬 유지, 뒤틀림 방지) ② 그 목록 **각 행 클릭 → 해당 노드 선택** ③ 역할 **범례 hover 툴팁**.
+- Summary: (1) `_META_ROLE` 에 `desc`(역할 설명) 필드 추가 — 범례 툴팁·접두사 툴팁 단일 소스(BE node_analysis.NODE_ROLES 휴리스틱 정합). (2) 신규 `_metaRoleChipHTML(role,esc,small)` 역할 칩 조립 헬퍼. (3) `_metaGraphRenderClusterDetail` 테이블 목록: 각 행을 `<button class="amgr-ct-row" data-node-key>` 로, `_metaRoleOf(key)` 있으면 역할 칩 접두사, 없으면 `amgr-role-none`(transparent, 18px 폭 유지) → `<code>` 라벨 좌측 정렬 보존. innerHTML 직후 행 클릭 바인딩 → `_metaGraphShowDetail(key)`(setSelected 하이라이트+상세) + 렌더 시 `focusElement`. (4) 신규 `_metaRoleLegendTips()` — 정적 범례 `<li data-role>` 에 `_META_ROLE.desc` 로 hover `title` 주입, 그래프 뷰 진입 시 1회 호출. admin.html 범례 `<li>` 에 `data-role` 추가.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (`_META_ROLE.desc` + `_metaRoleChipHTML` + `_metaRoleLegendTips`(진입 함수 배선) + `_metaGraphRenderClusterDetail` 테이블 목록 접두사·행 버튼·클릭 바인딩)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (범례 `<li>` 에 `data-role` 8개 + cache-buster `admin.js`·`styles.css` `?v=20260703-cluster-role-prefix`)
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css` (`.amgr-cluster-tables`/`.amgr-ct-row`/`.amgr-role-chip(-sm)`/`.amgr-role-none`/`.amgr-ct-desc` 규칙)
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§39),REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 **표현 + 클릭 상호작용**(클러스터 상세 목록 + 범례 툴팁). 데이터 API·AGE 스키마·RBAC·마이그레이션 **불변**. `_META_ROLE.desc` 추가는 기존 소비처(칩 색·배지) 무영향(신규 필드). 클릭은 기존 `_metaGraphShowDetail` 재사용(선택 semantics 동일). 미분석 테이블 정렬 = `amgr-role-chip-sm` 고정 18px 슬롯. 검증: `node --check` PASS + **headless playwright 렌더 격리 실증**(분석/미분석 5행 → 전 라벨 left=45px 정렬 `allCodesAligned`, 칩 18px 균일, 전 행 button) + §18.8 적대 리뷰 [SUBAGENT](REVIEW REV 참조) + 배포=web 재빌드 + 완료 게이트 PB-0008 실 Windows. (부수: 이 cycle 이 편집한 MODIFY.md 에 graph-rel-layout §38 병합이 남긴 미해결 conflict 마커를 함께 정리 — 양쪽 CHG 보존.)
+- Rollback Notes: admin.js(3함수/헬퍼 제거·클러스터 목록 원복)·admin.html(data-role·버스터)·styles.css(amgr-* 규칙) git revert + 버스터 이전값(role-legend-bottom). 데이터·API 무손상.
+
+## CHG-20260703-graph-rel-layout-postdeploy
+- Date: 2026-07-03
+- Related Requirement: CHG-20260703-graph-rel-layout 의 완료 게이트(TASK §38 T38.8) — 배포 후 PB-0008 라이브 실측 기록.
+- Summary: doc-only — 배포 web-a/b `5f439788`(무중단 롤링·soak) 후 실 Windows Chrome PB-0008 라이브 검증 전건 PASS 를 TEST.md(POST-DEPLOY Run)·TASK §38(T38.8 [x])·REVIEW(REV-…-postdeploy) 에 기록. 핵심 실측: 관계쌍 평균 배치 순서 거리 32.5→3.2(90% 감소, gunzgame 115쌍)·군집 육안·collapse REFERENCES 145→145 보존·배치 불변·이웃확장/검색 pageerror 0.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.
+
 ## CHG-20260703-graph-drag
 - Date: 2026-07-03
-- Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — ① 마우스 중간(휠) 버튼 드래그를 객체 상호작용이 아닌 **카메라 드래그(팬)**로, ② **테이블 노드 이동 시 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드) 동반 이동**. 정본: TASK §40 / REVIEW REV-20260703T021144-graph-drag.
+- Related Requirement: 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰) — ① 마우스 중간(휠) 버튼 드래그를 객체 상호작용이 아닌 **카메라 드래그(팬)**로, ② **테이블 노드 이동 시 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드) 동반 이동**. 정본: TASK §41 / REVIEW REV-20260703T021144-graph-drag.
 - Summary: (①) G6 `behaviors` 를 문자열 → object-form 으로 전환 + `enable` 오버라이드 — `_metaCanvasDragEnable`(중간버튼이면 targetType 무관 팬 허용, 아니면 기존대로 빈 캔버스만) + `_metaElementDragEnable`(중간버튼이면 노드 이동 거부 → 팬에 양보). `_metaEventButtons`/`_metaIsMiddleDrag` 로 buttons 비트마스크(4=중간) 견고 판정(G dragstart 의 button=-1 대비 buttons·nativeEvent fallback). 컨테이너 `mousedown`(button===1) `preventDefault` 로 브라우저 autoscroll(팬 커서) 억제 — pointer 이벤트 흐름은 유지되므로 drag-canvas 정상. (②) `node:dragstart/drag/dragend` 리스너 + `_metaGraph.tableDeps`(Table key → 종속 노드 id[], `_metaG6Build` 매 재구성 리셋·재채움). dragstart 에서 각 종속의 테이블 대비 오프셋(월드) 기록, drag/dragend 에서 `translateElementTo(테이블 현재위치 + 오프셋)` 절대이동 — 핸들러 실행 순서 무관(dragend 재정합으로 1-frame lag 제거).
 - Files:
   - `unit/feature-0003-agent-web-ui/src/static/admin.js` (behaviors object-form + `_metaEventButtons`/`_metaIsMiddleDrag`/`_metaCanvasDragEnable`/`_metaElementDragEnable`/`_metaNodeDragStart`/`_metaNodeDrag`/`_metaNodeDragEnd` 신규 + `_metaGraph.tableDeps`/`_drag` 필드 + `_metaG6Build` tableDeps 배선 + 컨테이너 mousedown·node:drag 리스너)
-  - `unit/feature-0016-metadata-graph/docs/{TASK(§40),MODIFY,REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
-- Impact: 프론트 **상호작용 전용** — 데이터 API·AGE 스키마·마커·상태·칩 인코딩·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·기존 zoom-canvas/node:click/contextmenu/미니맵/우클릭 메뉴 무변경. 종속 동반 이동은 drag-element 단일 노드 이동과 동일하게 transient(다음 setData 재구성 시 grid 로 복귀). 검증: `node --check` + §18.8 적대 리뷰 + **라이브 실 Windows 브라우저(Chrome/149) PB-0008 PASS**(Test A 중간버튼 팬: 노드 월드 [0,0] + 화면 팬 / Test B 좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]). 배포=web 재빌드.
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§41),MODIFY,REPORT,REVIEW}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 **상호작용 전용** — 데이터 API·AGE 스키마·마커·상태·칩 인코딩·RBAC·마이그레이션 전부 불변. 결정론 grid(setData+draw)·기존 zoom-canvas/node:click/contextmenu/미니맵/우클릭 메뉴 무변경. 종속 동반 이동은 drag-element 단일 노드 이동과 동일하게 transient(다음 setData 재구성 시 grid 로 복귀). 검증: `node --check` + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 v5.1.1 번들 실측 4축 BLOCKING 0) + **라이브 실 Windows 브라우저(Chrome/149) PB-0008 PASS**(Test A 중간버튼 팬: 노드 월드 [0,0] + 화면 팬 / Test B 좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]). 배포=web 재빌드.
 - Rollback Notes: admin.js 신규 7함수 + `tableDeps`/`_drag` 필드 + behaviors object-form + 두 리스너 제거, behaviors 를 `["drag-canvas","zoom-canvas","drag-element"]` 문자열로 환원. 데이터·API 무손상(상호작용 전용).

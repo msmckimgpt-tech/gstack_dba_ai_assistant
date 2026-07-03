@@ -161,19 +161,36 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
     #   요청 별칭(model)과 서빙 모델(resolved_model)을 분리 보존(요청→서빙 표시), run_id(요청 식별자),
     #   conversation_id(연결 대화 드릴다운)를 추가. 기존 반환 필드(model=served/total/cost/latency/...)는
     #   보존 — 상세 필드는 순수 additive(overview activity feed + /activity 페이징 공용, 신규 엔드포인트 무).
-    _COLS = ("id, task, model, resolved_model, total_tokens, prompt_tokens, "
-             "completion_tokens, latency_ms, created_at, run_id, conversation_id")
-    if cursor is not None:
-        cur.execute(
-            "SELECT " + _COLS + " FROM agent_runtime.llm_usage WHERE id < %s ORDER BY id DESC LIMIT %s",
-            (int(cursor), int(limit) + 1),
-        )
-    else:
-        cur.execute(
-            "SELECT " + _COLS + " FROM agent_runtime.llm_usage ORDER BY id DESC LIMIT %s",
-            (int(limit) + 1,),
-        )
-    rows = cur.fetchall() or []
+    _BASE_COLS = ("id, task, model, resolved_model, total_tokens, prompt_tokens, "
+                  "completion_tokens, latency_ms, created_at, run_id, conversation_id")
+
+    # TASK-20260703-aiops-target(0032): '최근 활동' 에 인사이트 분석 대상(schema/schema.table/노드 FQN)을
+    # 표시하기 위해 target 컬럼을 additive 로 SELECT(맨 끝 인덱스 11). 컬럼 부재(마이그 미적용 / agent image
+    # stale — memory: deploy-migration-stale-agent-image)면 base 컬럼만으로 재조회해 피드가 깨지지 않게
+    # 자가치유(has_target=False → target=None). SELECT 전용이라 rollback 은 무손실.
+    def _fetch(cols: str):
+        if cursor is not None:
+            cur.execute(
+                "SELECT " + cols + " FROM agent_runtime.llm_usage WHERE id < %s ORDER BY id DESC LIMIT %s",
+                (int(cursor), int(limit) + 1),
+            )
+        else:
+            cur.execute(
+                "SELECT " + cols + " FROM agent_runtime.llm_usage ORDER BY id DESC LIMIT %s",
+                (int(limit) + 1,),
+            )
+        return cur.fetchall() or []
+
+    try:
+        rows = _fetch(_BASE_COLS + ", target")
+        has_target = True
+    except Exception:
+        try:
+            cur.connection.rollback()  # abort 트랜잭션 정리 후 target 제외 재조회
+        except Exception:
+            pass
+        rows = _fetch(_BASE_COLS)
+        has_target = False
     has_more = len(rows) > limit
     items = []
     for r in rows[:limit]:
@@ -191,6 +208,9 @@ def _query_activity(cur, taxonomy_for, *, cursor=None, limit=_ACTIVITY_LIMIT_DEF
             "req_model": r[2], "resolved_model": r[3],
             "prompt_tokens": prompt_t, "completion_tokens": completion_t,
             "run_id": r[9], "conversation_id": r[10],
+            # 0032: 인사이트 분석 대상(schema/schema.table/노드 FQN). 대상 없는 활동(추론·요약 등)·컬럼 부재 시 None.
+            #   len(r) > 11 가드: 폴백 경로(base 컬럼만)나 target 미포함 행에서 IndexError 방지(방어심층).
+            "target": ((r[11] or None) if (has_target and len(r) > 11) else None),
         })
     next_cursor = items[-1]["id"] if (has_more and items) else None
     return items, next_cursor

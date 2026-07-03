@@ -1,6 +1,6 @@
 # Report
 
-## 2026-07-03 · 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (graph-drag, TASK §40)
+## 2026-07-03 · 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (graph-drag, TASK §41)
 
 ### 배경 (사용자 요청)
 관리 콘솔 > 메타데이터 > 그래프 뷰: ① 마우스 **중간(휠) 버튼 드래그를 객체 상호작용이 아닌 카메라 팬**으로, ② **테이블 노드를 옮길 때 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도 동반 이동**.
@@ -16,7 +16,38 @@
 
 ### 잔여
 - 배포(web 재빌드, deploy_scope: included) + 라이브 PB-0008 POST-DEPLOY 재확인.
-- (병합 메모) 브랜치가 main 대비 뒤져(behind) `cluster-role-prefix`(§39·admin.js/html)·역할 기능이 main 선안착 — origin/main 3-way 병합으로 양쪽 보존(§39↔§40 리넘버, cache-buster 1줄, `_metaRoleChipHTML` grep 검증).
+- (병합 메모) origin/main(9e1156d6) 3-way 병합으로 §40=graphux6·§39=cluster-role-prefix·역할 기능 보존, graph-drag 는 §41 로 리넘버·admin.js 자동병합(role grep=2, drag 함수 8 보존).
+
+## 2026-07-03 · AI 능동분석 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (graphux6-panelbottom-responsive-obs, TASK §40)
+
+사용자 요청 3건. worktree `feature-0016-graphux6-panel-obs`, 등급 Major(③ 마이그레이션 포함). §37~39 와 병렬 진행 → main 병합 시 §37 role-legend-bottom 과 aside 구조 통합.
+
+**① AI 능동 분석 패널 → 상세 패널 하단** ([admin.html](../../feature-0003-agent-web-ui/src/static/admin.html), [styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 진행 패널(`#metadataGraphProgress`)이 노드 상세 위에 있어 분석 시작 시 상세를 밀어내던 이슈 → aside 최하단으로 이동. main 의 §37(역할 범례를 하단 `margin-top:auto` 고정)과 병합해 최종 aside 순서 = **detailBody → 역할범례(하단고정) → 진행패널(최하단)**, 둘 다 바닥이라 노드 상세를 밀지 않음. JS 무변경(getElementById).
+
+**② 그래프 반응형 높이** ([styles.css](../../feature-0003-agent-web-ui/src/static/styles.css)): 캔버스·상세 `height: clamp(420px,64vh,760px)` 의 420px 하한이 metadata pane(admin-shell `overflow:hidden`+`100vh`) 가용높이를 초과해 세로 좁은 뷰포트에서 잘리던 이슈 → **flex-fill**(`flex:1 1 auto` + body `grid-template-rows: minmax(0,1fr)`)로 pane 남은 세로를 채워 축소·미절단. 고정 height 제거, 캔버스 `min-height:200`(§18.8 M1 빈 캔버스 방어) — 그래프 블록 자체엔 하한 없음(흔한 노트북 불필요 스크롤 회피, §18.8 round-2). 전너비 `:has()` graph-mode pane 스크롤(캔버스 floor 가 가용높이 초과하는 ≈<560px viewport 에서만 발동, 이중 :not 정밀 가드). G6 `autoResize` 로 JS 무변경. 상세는 #565 flex-column 보존.
+
+**③ 최근 활동 분석 대상 관측** (migration [0032](../../feature-0002-agent-core/alembic/versions/20260703_0032_llm_usage_target.py) / [llm.py](../../feature-0002-agent-core/src/modules/llm.py) / [ai_ops.py](../../feature-0003-agent-web-ui/src/routers/ai_ops.py) / [admin.js](../../feature-0003-agent-web-ui/src/static/admin.js)): '테이블 분석'·'노드 분석'이 라벨만 뜨고 대상이 안 보이던 이유 = `llm_usage.task` 가 저카디널리티 카테고리 키(KPI `GROUP BY task` 의존)라 대상 미포함. → `target VARCHAR(200)` additive nullable 컬럼(task 집계와 분리, 0030 패턴) + `_record_llm_usage(target=)`(schema=스키마·table=schema.table·node=fqn/name, account 은 PII 제외) + **자가치유**(INSERT 실패→rollback→base 재INSERT / SELECT 폴백, stale image 대비) + admin.js 최근활동 행·상세 대상 표시.
+
+**검증**: 컨테이너 `make test` **전건 PASS**(ruff clean). test_ai_ops 17/17(target 통과 + 컬럼부재 폴백 + INSERT 폴백), test_llm_usage_record 7/7(param 순서 보존), test_call_llm 2/2(mock target). **§18.8 적대 2라운드 PASS-WITH-FIXES**(BLOCKING 0 — 빈캔버스·노트북스크롤·가드취약·테스트NIT 전부 수정). verify-completion PASS. alembic 단일 head=0032. 배포(0032 마이그 + web) + PB-0008 실 Windows 3건 + `alembic_version`=0032 검증은 POST-DEPLOY(T40.11).
+
+## 2026-07-03 · 클러스터 상세 테이블 목록 역할 접두사 + 행 클릭 노드 선택 + 범례 hover 툴팁 (cluster-role-prefix, TASK §39)
+
+### 배경 (사용자 후속 요청 3건)
+① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 문자열·배치 뒤틀리지 않게 기본 왼쪽 여백). ② 그 목록 **각 테이블 클릭 → 해당 노드 선택**. ③ 역할 **범례 hover 시 상세 툴팁**.
+
+### 구현 (FE — admin.js/admin.html/styles.css)
+- `_META_ROLE` 에 `desc` 필드(범례·접두사 툴팁 단일 소스, BE NODE_ROLES 정합). 신규 `_metaRoleChipHTML`.
+- `_metaGraphRenderClusterDetail`: 각 행 `<button data-node-key>`, 분석 완료=역할 칩 접두사·미분석=`amgr-role-none`(18px 빈 슬롯 → 라벨 정렬 유지). 클릭 → `_metaGraphShowDetail`(select 하이라이트+상세) + focusElement.
+- 신규 `_metaRoleLegendTips()`: 정적 범례 `<li data-role>` 에 `desc` 로 hover title 주입(그래프 진입 시). admin.html `<li>` data-role 추가.
+- cache-buster `?v=20260703-cluster-role-prefix`(admin.js·styles.css).
+
+### 검증
+- `node --check` PASS. headless playwright 렌더 격리 실증: 분석/미분석 5행 → 전 라벨 left=45px 정렬(`allCodesAligned`), 칩 18px 균일, 전 행 button. 스크린샷 확인.
+- §18.8 적대 리뷰 [SUBAGENT] — REVIEW REV-20260703-cluster-role-prefix.
+- 부수: graph-rel-layout §38 병합이 MODIFY.md 에 남긴 미해결 conflict 마커 정리(양쪽 CHG 보존).
+
+### 잔여
+- 배포(web, deploy_scope: included) + 라이브 PB-0008 실 Windows 육안(접두사·정렬·행 클릭 선택·범례 툴팁).
 
 ## 2026-07-03 · 역할 범례를 상세 패널 하단으로 이동 + 확장 시 밀림/뒤틀림 해소 (role-legend-bottom, TASK §37)
 

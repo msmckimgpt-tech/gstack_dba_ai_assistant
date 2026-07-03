@@ -913,17 +913,59 @@ MODIFY CHG-20260703-node-role-viz.
       사망 시 무애니 focusElement 1회 폴백 ③ [MINOR] itemsNat 중복 nat-sort 낭비 — relOrder 직접 소비로
       lazy 화. 회귀 방지 구조 테스트 t8(collapse REFERENCES 보존)·t9(expand focus 폴백) 추가 → 10/10 PASS.
       결과 정본: REVIEW REV-20260703T014113-ai-claude-corp-feature-0016-graph-rel-layout.
-- [ ] T38.8 배포(deploy_scope: included) + **PB-0008 실 Windows 라이브 시각검증**(관계 있는 스키마 인접 배치·
-      연결 테이블 군집·교차 감소 육안 확인, TEST.md Run append).
+- [x] T38.8 배포(web-a/b `5f439788` 무중단 롤링·soak 통과, deploy_scope: included) + **PB-0008 실 Windows 라이브
+      시각검증 PASS**: 관계쌍 평균 배치 거리 32.5→3.2(90% 감소)·군집 육안·collapse REFERENCES 145→145 보존·
+      순서 불변·이웃확장/검색 pageerror 0. 상세 TEST.md POST-DEPLOY Run.
 
-## 40. graph-drag — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (2026-07-03, 사용자 요청)
+## 39. cluster-role-prefix — 클러스터 상세 테이블 목록 역할 접두사 + 행 클릭 노드 선택 + 범례 hover 툴팁 (2026-07-03, 사용자 후속 요청)
+사용자 후속 요청 3건(그래프 뷰): ① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 동일 폭 빈 슬롯 → 라벨 정렬 유지) ② 그 목록 **각 행 클릭 → 해당 노드 선택** ③ 역할 **범례 hover 툴팁**. 정본: MODIFY CHG-20260703-cluster-role-prefix.
+등급: **Minor**(프론트 표현 + 기존 select 재사용 클릭 — 데이터 API·스키마·마이그레이션 불변, 비파괴).
+
+### 39.1 구현 (admin.js / admin.html / styles.css)
+- [x] T39.1 `_META_ROLE` 에 `desc` 필드 8종 추가(범례·접두사 툴팁 단일 소스, BE NODE_ROLES 휴리스틱 정합).
+- [x] T39.2 신규 `_metaRoleChipHTML(role, esc, small)` — 그래프 칩·상세 배지와 동일 색/아이콘 칩 조립(dark 라벨색·title=desc).
+- [x] T39.3 `_metaGraphRenderClusterDetail` 테이블 목록: 각 행 `<button class="amgr-ct-row" data-node-key>`, `_metaRoleOf(key)` 있으면 역할 칩 접두사·없으면 `amgr-role-none`(transparent, 18px 폭) → `<code>` 좌측 정렬 보존. innerHTML 직후 클릭 바인딩 → `_metaGraphShowDetail(key)`(setSelected+상세) + 렌더 시 `focusElement`.
+- [x] T39.4 신규 `_metaRoleLegendTips()` — 정적 범례 `<li data-role>` 에 `_META_ROLE.desc` 로 hover `title` 주입, 그래프 뷰 진입 함수에서 1회 호출. admin.html 범례 `<li>` 에 `data-role` 추가.
+- [x] T39.5 styles.css `.amgr-cluster-tables`/`.amgr-ct-row`(버튼·hover)/`.amgr-role-chip(-sm)`/`.amgr-role-none`/`.amgr-ct-desc` + cache-buster `admin.js`·`styles.css` `?v=20260703-cluster-role-prefix`.
+- [x] T39.6 부수: 이 cycle 이 편집한 MODIFY.md 에 graph-rel-layout §38 병합이 남긴 미해결 conflict 마커(675/687/698) 정리 — 양쪽 CHG 보존.
+
+### 39.2 검증
+- [x] T39.7 `node --check admin.js` PASS. 신규 심볼 정합.
+- [x] T39.8 **headless playwright 렌더 격리 실증**: 분석/미분석 혼합 5행 → 전 `<code>` left=45px 동일(`allCodesAligned:true`, 미분석도 슬롯 유지로 정렬 뒤틀림 없음), 칩 폭 전부 18px, 전 행 `<button>`. 스크린샷(색상 칩 접두사 + 미분석 빈 슬롯) 육안 확인.
+- [x] T39.9 **§18.8 적대 리뷰 [SUBAGENT]**(XSS/속성안전·클릭 바인딩·select semantics·범례 tips 정합·칩 헬퍼·CSS·회귀 7축): 결과 REVIEW REV-20260703-cluster-role-prefix 참조.
+- [ ] T39.10 배포(web, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 클러스터 상세 목록 접두사·정렬·행 클릭 노드 선택·범례 hover 툴팁 육안 확인.
+
+## 40. graphux6-panelbottom-responsive-obs — AI 능동분석 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (2026-07-03, 사용자 요청 3건)
+사용자 요청(3건): ① 관리콘솔>메타데이터>그래프뷰의 'AI 능동 분석' 패널을 **상세 패널 하단**에 배치(기존 상단 배치가 노드 상세를 밀어냄). ② 그래프 UI 를 **고정 높이 → 화면 반응형**(세로 좁은 뷰포트 하단 잘림). ③ 관리콘솔>AI 운영 현황 최근 활동에서 '테이블 분석'·'노드 분석'이 **어떤 대상**에 동작하는지 관측. 정본: TASK §40 · 신규 migration 0032_llm_usage_target. worktree `feature-0016-graphux6-panel-obs`. (§37~39 와 병렬 진행 — main 병합 시 §37 role-legend-bottom 과 aside 구조 통합: detailBody → 역할범례(margin-top:auto 하단고정) → 진행패널(최하단), 둘 다 바닥이라 노드 상세 안 밀림.)
+등급: **Major** — ①② 프론트(비파괴), ③ 은 `llm_usage.target` additive nullable 마이그(0032) + 백엔드 계측(feature-0002 llm.py) + 프론트(feature-0003).
+
+### 40.1 ① AI 능동 분석 패널 → 상세 패널 하단 (admin.html / styles.css)
+- [x] T40.1 admin.html: `#metadataGraphProgress` 를 aside 최하단(역할범례 다음 마지막 자식)으로 이동. JS 무변경(getElementById). §37 role-legend-bottom 병합 반영 — detailBody → rolelegend(margin-top:auto) → progress 순.
+- [x] T40.2 styles.css: `.admin-meta-graph-progress` 여백 margin-bottom→margin-top(하단 배치 구분).
+
+### 40.2 ② 그래프 UI 반응형 높이 (styles.css)
+- [x] T40.3 원인: 캔버스·상세 `height: clamp(420px,64vh,760px)` — 420px 하한이 metadata pane(admin-shell overflow:hidden+100vh) 가용높이 초과 시 하단 잘림.
+- [x] T40.4 flex-fill: `.admin-meta-graph`·`.body` `flex:1 1 auto` + body `grid-template-rows:minmax(0,1fr)` → 캔버스·상세가 pane 남은 세로 채움. 고정 height 제거. 캔버스 `min-height:200`(빈 캔버스 방어, §18.8 M1) — 그래프 블록엔 하한 없음(흔한 노트북 불필요 스크롤 회피, §18.8 round-2). G6 autoResize 로 JS 무변경. 상세는 #565 flex-column(역할범례 하단고정) 보존.
+- [x] T40.5 전너비 `:has(> #metadataGraphView:not([style*=display:none]):not([style*=display: none]))` graph-mode pane 세로 스크롤 — 캔버스 200 floor 가 가용높이 초과(≈<560px viewport)할 때만 발동해 잘림 방지(정상/노트북 미발동). 이중 :not(authored 무공백 + CSSOM 공백) 정밀 가드. 좁은화면(≤900px) 세로스택 보존(flex 리셋 + 캔버스 clamp(300px,56dvh,560px)).
+
+### 40.3 ③ 운영현황 최근 활동 분석 대상 표시 (migration 0032 / llm.py / ai_ops.py / admin.js)
+- [x] T40.6 migration 0032_llm_usage_target: `llm_usage.target VARCHAR(200)` additive nullable(`ADD COLUMN IF NOT EXISTS`, 0030 패턴) + 부트스트랩 DDL parity. task(저카디널리티 KPI 집계)와 분리 — 대상은 별도 컬럼(표시 전용).
+- [x] T40.7 llm.py `_record_llm_usage(target=)` + 자가치유 INSERT(target 실패→rollback→base 재INSERT). target 을 total_tokens·latency_ms 사이 삽입(param 위치 보존). call site: schema=스키마·table=schema.table·node=fqn/name(account 은 PII 제외).
+- [x] T40.8 ai_ops.py `_query_activity` target SELECT + 컬럼부재 폴백(rollback→base 재조회) + `len(r)>11` 가드. admin.js 최근활동 행·상세 대상 표시(esc XSS).
+
+### 40.4 검증
+- [x] T40.9 컨테이너 make test 전건 PASS(ruff clean): test_ai_ops 17/17(target 통과 + 컬럼부재 폴백 + INSERT 폴백) + test_llm_usage_record 7/7(param 순서) + test_call_llm 2/2(mock target=None). py_compile OK + alembic 단일 head=0032.
+- [x] T40.10 §18.8 적대 리뷰 2라운드 PASS-WITH-FIXES(BLOCKING 0 — 빈캔버스·노트북스크롤·가드취약·테스트NIT 전부 수정) + verify-completion --pre-commit PASS. REVIEW REV-20260703T105541-graphux6-panelbottom-responsive-obs.
+- [ ] T40.11 배포(alembic upgrade 0032 + web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: ① 패널 하단(노드 상세 안 밀림) ② 세로 좁은 창 미절단 ③ 최근활동 대상 표시 육안. 배포 후 `alembic_version`=0032 직접 검증(memory: deploy-migration-stale-agent-image).
+
+## 41. graph-drag — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (2026-07-03, 사용자 요청)
 사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰): ① 마우스 중간(휠) 버튼을 통한 drag&drop 을 객체 상호작용이
 아닌 **카메라 드래그(팬)**로, ② **테이블 노드를 옮길 때 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도 같이
 드래그**. 정본: MODIFY CHG-20260703-graph-drag / TEST.md graph-drag Run / REVIEW REV-20260703T021144-graph-drag.
 등급: **Minor**(프론트 상호작용 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
-(§39 = cluster-role-prefix 가 main 선점 — 본 절은 §40 으로 리넘버.)
+(§39=cluster-role-prefix·§40=graphux6-panelbottom-responsive-obs 가 main 선점 — 본 절은 §41 로 리넘버.)
 
-### 40.1 계획 (§7.1 — 파일·심볼·수용 기준)
+### 41.1 계획 (§7.1 — 파일·심볼·수용 기준)
 - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `behaviors` object-form + `enable` 오버라이드
   (`_metaCanvasDragEnable`/`_metaElementDragEnable`, `_metaEventButtons`/`_metaIsMiddleDrag`), 컨테이너
   mousedown autoscroll 억제, `node:dragstart/drag/dragend` 핸들러(`_metaNodeDragStart`/`_metaNodeDrag`/
@@ -932,11 +974,11 @@ MODIFY CHG-20260703-node-role-viz.
 - AC: (a) 중간버튼 드래그는 노드 위에서든 카메라 팬(노드 월드좌표 불변) (b) 좌클릭 빈 캔버스 팬·좌클릭 노드
   이동·휠 줌·클릭·우클릭 메뉴 회귀 0 (c) 테이블 노드 좌클릭 드래그 시 종속(X:ctl+컬럼) 전부 동일 델타 동반 이동.
 
-### 40.2 구현·검증
-- [x] T40.1 (①) behaviors object-form + enable 오버라이드(중간버튼 팬 / 노드 이동은 좌클릭만) + buttons 비트마스크 판정.
-- [x] T40.2 (①) 컨테이너 mousedown(button===1) preventDefault — 브라우저 autoscroll(팬 커서) 억제(pointer 흐름 유지).
-- [x] T40.3 (②) `_metaGraph.tableDeps` (`_metaG6Build` 리셋·재채움) + node:drag 핸들러(offset 기록 → translateElementTo
+### 41.2 구현·검증
+- [x] T41.1 (①) behaviors object-form + enable 오버라이드(중간버튼 팬 / 노드 이동은 좌클릭만) + buttons 비트마스크 판정.
+- [x] T41.2 (①) 컨테이너 mousedown(button===1) preventDefault — 브라우저 autoscroll(팬 커서) 억제(pointer 흐름 유지).
+- [x] T41.3 (②) `_metaGraph.tableDeps` (`_metaG6Build` 리셋·재채움) + node:drag 핸들러(offset 기록 → translateElementTo
       절대이동 + dragend 재정합으로 1-frame lag 제거).
-- [x] T40.4 검증: `node --check` PASS + §18.8 적대 리뷰 + **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 실측** —
+- [x] T41.4 검증: `node --check` PASS + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 번들 실측 4축 BLOCKING 0) + **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 실측** —
       Test A(중간버튼 팬: 노드 월드 [0,0] + 화면 팬) PASS, Test B(좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]) PASS.
-- [ ] T40.5 배포(deploy_scope: included): main 병합 → web-a/web-b 재배포(cache-buster `admin.js?v=20260703-graph-drag`).
+- [ ] T41.5 배포(deploy_scope: included): main 병합 → web-a/web-b 재배포(cache-buster `admin.js?v=20260703-graph-drag`).
