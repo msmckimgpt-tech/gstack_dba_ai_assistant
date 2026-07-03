@@ -426,3 +426,30 @@ source_of_truth: true
   ③ bge-m3 모델 의존 추적(fresh host provisioning) + litellm 이미지 핀.
 - Human Approval Needed: no (사용자 임무 지시로 본 전환 명시 위임. PR 생성·머지·
   gateway restart 는 메인 세션 마감 — 본 cycle scope 외).
+
+## REV-20260703T101500-insight-llm-fallback [SUBAGENT:insight-llm-fallback-adversarial-backend-infra]
+- 대상: litellm_config.yaml(3-deployment fallback 체인) + bin/refresh-claude-oauth-token.sh(병행 주입). TASK-0308 후속.
+- Round: 7축 적대 검증 — ① fallbacks 동작(429 순서 폴백), ② thinking 파라미터+gemma, ③ refresh 병행주입 셸 정확성(a~d),
+  ④ 토큰 만료 처리, ⑤ 기존 동작 회귀, ⑥ 보안, ⑦ 재생성 안전성. 라우팅(llm.py `_resolve_tier_endpoint`)·게이트웨이
+  (docker-compose)·edge alias(local_llm router `gemma4:e2b`) 배선 사실 코드 인용 확인.
+- VERDICT: **ACCEPT-WITH-NITS** (BLOCKER 0, MAJOR 0). 셸 4개 하위검증(SEL set-e 흡수·탭 매칭·조합 매트릭스·write_env_key
+  append) 전부 정확, 게이트웨이 기동 안전(미설정 _ROOT → get_secret None·edge api_base startup probe 안 함 → config
+  파싱실패로 sonnet/haiku 함께 안 죽음), fallback 체인·thinking deployment-scoped 격리·라우팅 성립. 크래시/데이터손상/
+  기동실패 경로 없음. Ship-able.
+- 확정 사실: insight 는 `claude-haiku-4` 를 bedrock-gateway(litellm)로 보냄(`_resolve_tier_endpoint`) → fallbacks 실적용.
+  edge `gemma4:e2b` 는 local_llm router 의 default-edge 로 정상 라우팅. insight 는 thinking/temperature 미전송 →
+  edge 폴백 시 미지원 파라미터 누출 경로 없음(+drop_params 2차 안전망).
+- MINOR/NIT(비차단, 대부분 graceful degradation):
+  - MINOR ① **cron 창 밖 강등**: refresh cron(`0,30 10-18 * * 1-5`)은 평일 업무시간만. root accessToken short-lived →
+    야간/주말 두 토큰 만료 시 insight 가 edge(gemma)로 **상시 강등**(하드실패 아님, best-effort). "root Max 품질" 이점은
+    업무시간+신선 토큰 창에서만. → **FUNCTION §9 · REPORT 에 운영 인지 명시**.
+  - MINOR ② **degenerate hop**: claude-corp down 시 PRIMARY 도 root 로 폴백 → ANTHROPIC_API_KEY==ANTHROPIC_API_KEY_ROOT
+    → root deployment fallback 이 같은 계정 2번 hop 후 edge. 정합성 버그 아님·자가회복(claude-corp 복구 시 분리).
+  - MINOR ③ **첫 배포~첫 refresh 사이**: _ROOT 부재 → root deployment api_key=None → litellm 이 env ANTHROPIC_API_KEY
+    (=corp)로 축퇴 → root hop 이 corp 재시도. graceful. (배포 시 refresh 선실행으로 해소.)
+  - MINOR ④ edge fallback 은 best-effort: gemma JSON 구조화 품질 낮아 `_extract_json_object` 실패 → insight skip 수렴(무해).
+  - NIT: litellm `main-stable` 미고정(fallback 시맨틱 버전 의존) → **배포 후 실 429/401 유발 라이브 fallback 검증 권장**;
+    root 이중 probe(최대 2회/cron); .env.bedrock 에 두 OAuth 토큰 평문 병행(마운트 bedrock-gateway 한정·short-lived 완화).
+- 배포 전 권장(비차단): (1) 라이브 fallback 실측(main-stable unpinned), (2) cron 창 밖 강등 운영 문서화, (3) litellm 버전 핀.
+- Verification: litellm_config YAML OK(5 deployment)·refresh bash -n OK·--check(corp 200/root 200) PASS. ANCHOR §1·§2 무충돌.
+- Cross-ref: CHG-20260703-insight-llm-fallback / TASK-0308 / feature-0002 REPORT.
