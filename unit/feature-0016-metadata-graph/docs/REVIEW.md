@@ -915,3 +915,20 @@ source_of_truth: true
   - [NIT/②③ perf] 그룹소속 테이블 단독 드래그 dragend 마다 full rebuild(1회/드래그, per-frame 아님) — 박스 재파생 위해
     필요·수용. [NIT/②] 재군집 시 groupOffset key(fam) orphan(무해, resetModel clear·groupOrder 안정화로 대부분 방지).
 - 재검증: node --check PASS + headless _metaG6Build 격리 **25/25 PASS**(수정 후). 라이브 canvas 상호작용은 T50.8 PB-0008.
+## REV-20260704T162548-ai-claude-feature-0016-group-drag-hotfix [SKIPPED:pb0008-live-driven-hotfix] — GH 헤더 hit-test zIndex 수정 (라이브 실측이 포착·검증)
+- 대상: §50 group-interact 의 그룹 드래그 결함 hotfix(TASK §50.3 T50.9) — GH 헤더 zIndex −1→5.
+- §18.8 subagent 패널 대신 **PB-0008 라이브 실측이 적대 검증 역할**을 수행(패널보다 강함): §50 배포본(fb88b19e)을 실 Windows
+  Chrome(Playwright `connect_over_cdp` real mouse)로 검증하던 중, 그룹 헤더 드래그가 **그룹 이동이 아니라 클러스터 이동**
+  으로 발화함을 실측 포착(groupOffset 미설정·clusterOffset 설정·전체 클러스터 shift). 원인 규명: GH(zIndex −1)가 combo
+  배경(z0) 뒤라 @antv/g hit-test 에서 가려짐. **라이브 GH zIndex 패치(5) 후 재드래그 → groupOffset 설정·타 그룹(t_account)
+  불변** 으로 수정 실증. 코드 반영(GH z−1→5 + cursor:move).
+- 코드 품질: 원 cycle REV-20260704T154756(3-렌즈 적대 패널) 에서 완료. 본 hotfix 는 1-속성(zIndex) hit-test 수정 —
+  로직·좌표수학·회귀 표면 무변경(GB 배경 z−2·GX z1 불변, 헤더 스트립 멤버 없어 시각 회귀 0). headless T8 로 잠금.
+- 재검증: node --check PASS + headless **29/29 PASS**(T8: GH zIndex 양수·cursor move·GB 음수·GX 양수). 재배포 후 그룹
+  드래그 라이브 재검증(패치 없이 groupOffset 설정 확인).
+## REV-20260704T163510-ai-claude-feature-0016-group-drag-liveverify [SKIPPED:doc-only-postdeploy] — 그룹 드래그 hotfix 재배포 후 라이브 재검증 결과 기록 (코드 무변경)
+- 대상: hotfix(T50.9) 재배포(a9492afe) 후 그룹 드래그 라이브 재검증을 T50.10 [x]·MODIFY CHG-…-group-drag-liveverify·
+  TEST(group-drag-hotfix Run POST-DEPLOY)에 기록하는 doc-only 후속. **코드·자산 무변경** → §18.8 적대 패널 비적용(SKIPPED).
+- 근거: 배포본(admin.js `?v=20260704-group-drag-hotfix`·GH zIndex 5 서빙) 에서 **라이브 패치 없이** notice 그룹 헤더
+  드래그 → groupOffset={dx:141,dy:−77} 설정·accountdb clusterOffset=null(그룹 드래그·combo 아님)·notice 만 이동·
+  t_account 불변·pageerror 0(gi-06). 코드 품질은 REV-…-group-drag-hotfix·REV-…-group-interact 에서 완료.

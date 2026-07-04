@@ -4049,10 +4049,14 @@ function _metaG6Build() {
             fill: gm.tint.bg, fillOpacity: 0.75, stroke: gm.tint.bd, lineWidth: 1.2, zIndex: -2 } });
         const hdText = `${gm.label} · ${gm.n}`;
         const hdW = Math.min(Math.max(46, Math.round(hdText.length * 7.2) + 18), bw - 36);   // GX 컨트롤 자리(우측 ~20px) 확보
+        // group-interact(§50 hotfix, PB-0008): GH 헤더 zIndex 를 **양수(5)** 로 — 음수(-1)면 combo 배경(z0)
+        //   뒤에 렌더돼 @antv/g hit-test 에서 combo 에 가려, 헤더 드래그가 node:dragstart 대신 combo:dragstart
+        //   (클러스터 이동)로 발화된다(라이브 실측 결함 — 헤드리스는 zIndex hit-test 미모델). 양수로 올려 헤더가
+        //   그룹 드래그 핸들로 잡히게 하고(헤더 스트립엔 멤버 없어 시각 회귀 0), cursor:move 로 핸들임을 표시.
         nodes.push({ id: "GH:" + gm.key, type: _METtype, combo: id,
           data: { kind: "group-hd", group: gm.key, schema: id, label: gm.label },
           style: { x: left + 8 + hdW / 2, y: top + 13, size: [hdW, 18], radius: 9,
-            fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: -1,
+            fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: 5, cursor: "move",
             labelText: hdText, labelFill: "#273449", labelFontSize: 10.5, labelFontWeight: 600,
             labelPlacement: "center" } });
         // group-interact(§50): 접기/펼치기 토글 컨트롤(그룹 헤더 우측) — 클릭 전용(드래그 불가).
