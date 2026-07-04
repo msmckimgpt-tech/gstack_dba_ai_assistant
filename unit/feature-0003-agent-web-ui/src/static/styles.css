@@ -1267,6 +1267,18 @@ a { color: inherit; }
 .message.is-user.is-own-message .message-action-btn:hover {
   background: #fff;
 }
+/* share-visibility-window: 말풍선 액션 통합 ☰ 트리거 — .message-action-btn pill 을 재사용하고
+   ☰ 글리프 크기 + 열림(is-open) 강조만 덧붙인다. 실 <button> 이라 Enter/Space 는 native 로 동작. */
+.message-menu-trigger {
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 8px;
+}
+.message-menu-trigger.is-open {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37,99,235,.25);
+}
 
 /* Message content markdown */
 .message-content p          { margin: 0 0 10px; }
@@ -7826,6 +7838,96 @@ a { color: inherit; }
 .message-fix-btn:disabled {
   opacity: .5;
   pointer-events: none;
+}
+/* share-visibility-window: '여기부터 공유'(floor) arm 표시 — 시작 말풍선 링 + '공유 시작' 칩. */
+.message.is-share-floor .message-bubble,
+.message-bubble.is-share-floor {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: var(--r-md, 10px);
+}
+.share-floor-chip {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+  background: var(--primary-soft, #eff6ff);
+  border: 1px solid rgba(37,99,235,.25);
+}
+/* share-visibility-window: '여기부터 공유' 상단 안내 배너 — .messages-wrap 내 absolute 오버레이.
+   messageLogEl.innerHTML='' 재렌더에도 살아남도록 로그 element 바깥(.messages-wrap)에 부착. */
+.share-range-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--primary-soft, #eff6ff);
+  border-bottom: 1px solid rgba(37,99,235,.25);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,.08));
+}
+.share-range-banner-text {
+  flex: 1;
+  min-width: 180px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text, #26251e);
+}
+.share-range-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.share-range-banner-btn {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e6e5e0);
+  background: var(--surface, #fff);
+  color: var(--text-2, #5a5852);
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.share-range-banner-btn:hover {
+  border-color: var(--primary, #2563eb);
+  color: var(--primary, #2563eb);
+}
+.share-range-banner-btn.is-primary {
+  background: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+  color: #fff;
+}
+.share-range-banner-btn.is-primary:hover {
+  background: var(--primary-dark, #1d4ed8);
+  border-color: var(--primary-dark, #1d4ed8);
+  color: #fff;
+}
+/* 다크 모드 parity — 인접한 message-highlight 규칙(@media prefers-color-scheme: dark)과 동일 패턴.
+   반투명 브랜드 오버레이라 base 표면 색과 무관하게 자연스럽게 읽힌다. */
+@media (prefers-color-scheme: dark) {
+  .share-floor-chip {
+    background: rgba(37,99,235,.20);
+    color: #93c5fd;
+    border-color: rgba(37,99,235,.42);
+  }
+  .share-range-banner {
+    background: rgba(37,99,235,.16);
+    border-bottom-color: rgba(37,99,235,.42);
+  }
+  .share-range-banner-btn {
+    background: var(--surface, #1e1e22);
+    border-color: var(--border, rgba(255,255,255,.14));
+    color: var(--text-2, #cbd5e1);
+  }
 }
 /* 검수 큐(샘플 검수 탭) */
 .admin-sf-row {

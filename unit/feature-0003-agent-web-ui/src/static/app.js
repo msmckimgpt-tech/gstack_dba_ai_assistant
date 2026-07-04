@@ -154,6 +154,10 @@ const state = {
   pendingBubble: null,  // null | { startedAt, runId, steps, status, displayStatus, isStale, error, userMessage }
   lastCompletedRunSteps: null,  // null | { steps, runId, convId } — 완료된 run 의 단계 목록 (단계 보기 버튼용)
   messageAttachments: {},  // { messageId: attachment[] } — refreshWorkspace 이후에도 칩 유지용 persistent 맵
+  // share-visibility-window: '여기부터 공유'(floor) arm 상태. null | { floorMessageId, floorMsgIdx }.
+  // id/index 만 보관(메시지 내용은 절대 미보관). '여기까지 공유'(ceiling) 와 결합하면 [from,to] 윈도 공유.
+  // 대화 전환 시 반드시 cancelShareRange() 로 초기화(loadConversations 재할당 지점 + renderMessages 가드).
+  shareRange: null,
   stepSidePanelConvId: null,
   // 실행 단계 패널이 현재 *라이브* run(state.pendingBubble)을 표시 중인지 여부.
   // 폴링(refreshStepSidePanel)은 라이브 패널일 때만 덮어쓴다 — 진행 중 새 요청을
@@ -3808,6 +3812,15 @@ function _buildFixWithAiControl(message) {
   wrap.appendChild(status);
   return wrap;
 }
+// ITEM-03 / share-visibility-window: sample-feedback POST 를 모듈 레벨로 추출해 재사용.
+// 투표(👍/👎) 경로와 ☰ 메뉴 '샘플 등록'(suggested=true) 이 동일 endpoint/바디로 호출한다.
+// 요청 바디는 기존 send() 인라인 호출과 byte-for-byte 동일(중복 부여 방지 uniqueness key 포함).
+function _submitSampleFeedback({ cid, vote, suggested, nlQuestion, generatedSql, messageId, messageIdSpace }) {
+  return apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
+    method: "POST",
+    body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId, message_id_space: messageIdSpace }),
+  });
+}
 function _buildSampleFeedbackControls(message, msgIdx) {
   const wrap = document.createElement("span");
   wrap.className = "message-feedback";
@@ -3857,10 +3870,7 @@ function _buildSampleFeedbackControls(message, msgIdx) {
     wrap.dataset.busy = "1";
     wrap.querySelectorAll("button").forEach((b) => { b.disabled = true; });
     try {
-      await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
-        method: "POST",
-        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId, message_id_space: messageIdSpace }),
-      });
+      await _submitSampleFeedback({ cid, vote, suggested, nlQuestion, generatedSql, messageId, messageIdSpace });
       if (suggested) {
         status.textContent = "샘플 등록 요청됨 (검수 대기)";
       } else {
@@ -3881,23 +3891,26 @@ function _buildSampleFeedbackControls(message, msgIdx) {
   wrap.appendChild(upBtn);
   wrap.appendChild(downBtn);
 
-  // "샘플 등록" — 좋은 질문↔SQL 쌍을 KB 후보로 제출(검수 큐 경유 승급). SQL 이 있을 때만 노출.
-  // 투표 고유성과 분리(suggested=true 는 별 행) — 검수 큐 제출이므로 투표 활성표시에 영향 없음.
-  if (generatedSql) {
-    const sampleBtn = document.createElement("button");
-    sampleBtn.type = "button";
-    sampleBtn.className = "message-action-btn message-feedback-btn";
-    sampleBtn.textContent = "샘플 등록";
-    sampleBtn.title = "이 질문↔SQL 쌍을 샘플 쿼리(KB) 후보로 제출합니다. 검수 후 반영됩니다.";
-    sampleBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("up", true); });
-    wrap.appendChild(sampleBtn);
-  }
+  // share-visibility-window: "샘플 등록" 은 인라인에서 제거하고 말풍선 ☰ 메뉴(submitSampleFromMenu)로 이동.
+  // 본 컨트롤은 투표(👍/👎) 전용으로 남는다(behavior-neutral) — 투표 요청 바디/상태 텍스트 불변.
   wrap.appendChild(status);
   reflectVote();  // 초기 렌더에 기존 투표 반영.
   return wrap;
 }
 
 function renderMessages() {
+  // share-visibility-window: arm 된 floor 가 현재 로드된 창(state.messages)에 없으면(대화 전환·스크롤
+  // 아웃) 공유 range 를 해제한다. cancelShareRange 가 state.shareRange=null 로 만든 뒤 renderMessages 를
+  // 재호출하므로(그때는 이 가드 통과) 현재 프레임은 즉시 반환해 이중 렌더를 피한다.
+  if (state.shareRange) {
+    const _floorId = Number(state.shareRange.floorMessageId);
+    const _floorPresent = (Array.isArray(state.messages) ? state.messages : [])
+      .some((m) => m && m.id != null && Number(m.id) === _floorId);
+    if (!_floorPresent) {
+      cancelShareRange();
+      return;
+    }
+  }
   messageLogEl.innerHTML = "";
   const hasPendingBubble = Boolean(state.pendingBubble);
   if (!state.messages.length && !hasPendingBubble) {
@@ -4067,9 +4080,13 @@ function renderMessages() {
       bubble.appendChild(attachRow);
     }
 
-    // 말풍선 단위 분기 / 공유 / 피드백 버튼.
+    // 말풍선 단위 액션. share-visibility-window: 샘플 등록/분기/공유 3종은 인라인 버튼을 없애고
+    // ☰ 드롭다운(openMessageBubbleMenu)으로 통합한다. 👍/👎 피드백과 "AI 로 고치기"는 인라인 유지.
     const canShareHere = can("conversation.share.create") && message.id != null;
-    // ITEM-03 (sample-feedback-curation): assistant 답변에 👍/👎 + "샘플 등록" 피드백 버튼.
+    const canForkHere = canFork && message.id != null;
+    // '샘플 등록' 게이트 — assistant 답변 + 본문에 SQL 코드블록이 있을 때만(권한 코드 없음).
+    const canSampleHere = role === "assistant" && Boolean(_extractSqlFromContent(message.content));
+    // ITEM-03 (sample-feedback-curation): assistant 답변에 👍/👎 피드백 버튼(인라인 유지, 투표 전용).
     // 적재 endpoint 는 대화 접근자면 누구나 가능(열람자 포함) → 게이트는 활성 대화 + assistant + id.
     const canFeedbackHere = role === "assistant" && message.id != null && Boolean(state.activeConversationId);
     // ITEM-08: 실패한 execute_sql step 을 가진 assistant 답변 + 발화 권한 보유 시 "AI 로 고치기" 노출.
@@ -4078,7 +4095,8 @@ function renderMessages() {
       && Boolean(state.activeConversationId)
       && can("conversation.ask")
       && Boolean(_failedSqlStepFromMessage(message));
-    if ((canFork && message.id != null) || canShareHere || canFeedbackHere || canFixHere) {
+    const hasBubbleMenu = canSampleHere || canForkHere || canShareHere;
+    if (hasBubbleMenu || canFeedbackHere || canFixHere) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
       if (canFixHere) {
@@ -4088,35 +4106,22 @@ function renderMessages() {
       if (canFeedbackHere) {
         actions.appendChild(_buildSampleFeedbackControls(message, _msgIdx));
       }
-      if (canFork && message.id != null) {
-        const forkBtn = document.createElement("button");
-        forkBtn.type = "button";
-        forkBtn.className = "message-action-btn";
-        forkBtn.textContent = "여기서 분기";
-        forkBtn.title = "이 말풍선까지의 기록을 내 계정의 새 대화로 복제합니다.";
-        forkBtn.addEventListener("click", (event) => {
+      if (hasBubbleMenu) {
+        const menuTrigger = document.createElement("button");
+        menuTrigger.type = "button";
+        menuTrigger.className = "message-action-btn message-menu-trigger";
+        menuTrigger.setAttribute("aria-haspopup", "menu");
+        menuTrigger.setAttribute("aria-expanded", "false");
+        menuTrigger.setAttribute("aria-label", "메시지 작업 메뉴");
+        menuTrigger.title = "이 말풍선의 작업 메뉴 (샘플 등록 · 분기 · 공유)";
+        menuTrigger.textContent = "☰";
+        // <button> 은 Enter/Space 로 native click 을 발화하므로 click 만 배선한다(중복 토글 회피).
+        menuTrigger.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          forkConversation({ fromMessageId: message.id }).catch((error) => {
-            showToast(error.message || "대화 분기에 실패했습니다.", true);
-          });
+          openMessageBubbleMenu(message, _msgIdx, menuTrigger);
         });
-        actions.appendChild(forkBtn);
-      }
-      if (canShareHere) {
-        const shareHereBtn = document.createElement("button");
-        shareHereBtn.type = "button";
-        shareHereBtn.className = "message-action-btn";
-        shareHereBtn.textContent = "여기까지 공유";
-        shareHereBtn.title = "이 말풍선까지의 기록을 anonymous 공유 링크로 발급합니다.";
-        shareHereBtn.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          createConversationShare({ anchorMessageId: message.id }).catch((error) => {
-            showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
-          });
-        });
-        actions.appendChild(shareHereBtn);
+        actions.appendChild(menuTrigger);
       }
       bubble.appendChild(actions);
     }
@@ -4126,6 +4131,16 @@ function renderMessages() {
       row.id = `message-${message.id}`;
       row.dataset.messageId = String(message.id);
       row.dataset.messageRole = role;
+    }
+
+    // share-visibility-window: '여기부터 공유'(floor) 로 arm 된 말풍선을 시각 표시(링 + '공유 시작' 칩).
+    if (state.shareRange && message.id != null && Number(state.shareRange.floorMessageId) === Number(message.id)) {
+      row.classList.add("is-share-floor");
+      bubble.classList.add("is-share-floor");
+      const floorChip = document.createElement("span");
+      floorChip.className = "share-floor-chip";
+      floorChip.textContent = "공유 시작";
+      bubble.appendChild(floorChip);
     }
 
     // feature-0009: 발신자 프로필 아이콘(참가자 식별 용이). user=발신자 아바타, assistant=AI 배지.
@@ -5672,6 +5687,7 @@ async function loadConversations(preferredConversationId = "", { allowCurrentFal
   // 다른 비동기 path 가 refreshWorkspace 를 호출하면 payload.current (직전 대화 id) 로 active 가
   // 복귀해 신규 의도가 깨지던 회귀를 차단. pending 모드일 때는 사이드바 리스트만 갱신하고 active 는 보존.
   if (!state.pendingNewConversation) {
+    const _prevActiveId = state.activeConversationId;
     const preferredExists = state.conversations.some((item) => item.id === preferredConversationId);
     if (preferredExists) {
       state.activeConversationId = preferredConversationId;
@@ -5681,6 +5697,10 @@ async function loadConversations(preferredConversationId = "", { allowCurrentFal
     } else {
       // 처음 진입(initializeWorkspace) — 직전 대화를 자동 선택하지 않고 빈 화면으로 시작.
       state.activeConversationId = "";
+    }
+    // share-visibility-window: 대화가 실제로 바뀌면 arm 된 공유 range 해제(floor id/idx 는 이전 대화 기준).
+    if (state.shareRange && String(_prevActiveId) !== String(state.activeConversationId)) {
+      cancelShareRange();
     }
   }
   renderConversationList();
@@ -6149,10 +6169,20 @@ function shareExpiryLabel(seconds) {
 // 공유 링크 발급 공통 처리: POST /share → (joinable 시) is_group 즉시 전환 + 목록 재동기화 →
 // 절대 URL 을 clipboard 에 복사 + toast. createConversationShare(앵커/만료 prompt 경로)와
 // openShareDialog(통합 팝업 폼 경로)가 공용으로 호출 — 발급 로직 단일화로 drift 방지.
-async function _issueConversationShare({ cid, scopeMode = "full", anchorMessageId = null, joinable = true, seconds = null }) {
-  const body = anchorMessageId != null
-    ? { scope_mode: "anchored", anchor_message_id: Number(anchorMessageId) }
-    : { scope_mode: scopeMode };
+async function _issueConversationShare({ cid, scopeMode = "full", anchorMessageId = null, floorMessageId = null, joinable = true, seconds = null }) {
+  // share-visibility-window: 두 경계로 scope 결정.
+  //  floor 있음 → windowed [floor, anchor?]  (anchor 생략 = 라이브 끝까지)
+  //  floor 없음 + anchor 있음 → anchored (기존 '여기까지 공유' — UNCHANGED)
+  //  둘 다 없음 → full(=scopeMode).
+  let body;
+  if (floorMessageId != null) {
+    body = { scope_mode: "windowed", floor_message_id: Number(floorMessageId) };
+    if (anchorMessageId != null) body.anchor_message_id = Number(anchorMessageId);
+  } else if (anchorMessageId != null) {
+    body = { scope_mode: "anchored", anchor_message_id: Number(anchorMessageId) };
+  } else {
+    body = { scope_mode: scopeMode };
+  }
   if (seconds != null) body.expires_in_seconds = Number(seconds);
   // feature-0009: 참여 허용 여부(기본 ON). 명시 false 일 때만 OFF 로 전달.
   body.joinable = joinable !== false;
@@ -6189,7 +6219,7 @@ async function _issueConversationShare({ cid, scopeMode = "full", anchorMessageI
   return payload;
 }
 
-async function createConversationShare({ anchorMessageId = null, conversationId = null } = {}) {
+async function createConversationShare({ anchorMessageId = null, floorMessageId = null, conversationId = null } = {}) {
   const cid = conversationId || state.activeConversationId;
   if (!cid) return null;
   if (!can("conversation.share.create")) {
@@ -6209,8 +6239,9 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
   if (!choice || choice.cancelled) return null;
   return _issueConversationShare({
     cid,
-    scopeMode: "full", // 비앵커 케이스 명시(앵커면 _issueConversationShare 가 anchored 로 무시). openShareDialog 호출부와 대칭.
+    scopeMode: "full", // 비앵커/비윈도 케이스 명시(_issueConversationShare 가 경계 유무로 scope 결정). openShareDialog 호출부와 대칭.
     anchorMessageId,
+    floorMessageId,
     joinable: choice.joinable !== false,
     seconds: choice.seconds,
   });
@@ -6795,56 +6826,59 @@ async function leaveConversation(targetCid = "") {
 
 // REQ-20260518-0001: per-conversation "···" menu 의 lifecycle 관리.
 // menu 는 body 에 mount 하여 conv-item overflow 에 묶이지 않게 한다. ESC / outside click / scroll / resize 닫기.
-function closeConversationItemMenu() {
-  const existing = document.getElementById("convItemMenu");
-  if (existing) existing.remove();
-  // trigger aria-expanded 갱신
-  document.querySelectorAll(".conv-item-menu-trigger.is-open").forEach((t) => {
+// share-visibility-window: 좌측 conv-item ··· 메뉴와 말풍선 ☰ 메뉴가 공유하는 floating-menu
+// primitive 3종. 기존 openConversationItemMenu 는 openFloatingMenu 의 thin caller 로 재구현하여
+// mount/viewport-clamp/positioning + outside-click·ESC·scroll·resize teardown 로직 drift 를 없앤다.
+function closeFloatingMenus() {
+  ["convItemMenu", "bubbleMsgMenu"].forEach((id) => {
+    const existing = document.getElementById(id);
+    if (existing) existing.remove();
+  });
+  // trigger aria-expanded 갱신(conv-item ··· + 말풍선 ☰ 양쪽).
+  document.querySelectorAll(".conv-item-menu-trigger.is-open, .message-menu-trigger.is-open").forEach((t) => {
     t.classList.remove("is-open");
     t.setAttribute("aria-expanded", "false");
   });
 }
+function closeConversationItemMenu() {
+  closeFloatingMenus();
+}
 
-function openConversationItemMenu(cid, triggerEl) {
-  closeConversationItemMenu();
-  const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
-  if (!conversation) return;
+// role="menuitem" 버튼 + 권한 게이트 팩토리. action==null 이면(예: '샘플 등록' — 권한 코드 없음)
+// RBAC markAccessBlocked 게이트를 건너뛴다.
+function makeMenuItem(label, { action = null, conversation = null, danger = false, onSelect } = {}) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "conv-menu-item";
+  if (danger) item.classList.add("is-danger");
+  item.setAttribute("role", "menuitem");
+  item.textContent = label;
+  if (action != null) markAccessBlocked(item, action, conversation);
+  item.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    // 권한 부재 시 markAccessBlocked 가 aria-disabled=true 로 표시 — handler 가 한 번 더 게이트.
+    if (item.classList.contains("is-access-blocked")) {
+      showPermissionDeniedToast(action, conversation);
+      return;
+    }
+    closeFloatingMenus();
+    Promise.resolve()
+      .then(() => onSelect())
+      .catch((err) => showToast(err.message || "작업 실패", true));
+  });
+  return item;
+}
+
+function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", dataset = {}, buildItems } = {}) {
+  closeFloatingMenus();
   const menu = document.createElement("div");
-  menu.id = "convItemMenu";
-  menu.className = "conv-item-menu";
+  menu.id = id;
+  menu.className = className;
   menu.setAttribute("role", "menu");
-  menu.dataset.conversationId = String(cid);
+  Object.keys(dataset).forEach((k) => { menu.dataset[k] = dataset[k]; });
 
-  const makeItem = (label, action, handler, opts = {}) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "conv-menu-item";
-    if (opts.danger) item.classList.add("is-danger");
-    item.setAttribute("role", "menuitem");
-    item.textContent = label;
-    markAccessBlocked(item, action, conversation);
-    item.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      // 권한 부재 시 markAccessBlocked 가 aria-disabled=true 로 표시 — handler 가 한 번 더 게이트.
-      if (item.classList.contains("is-access-blocked")) {
-        showPermissionDeniedToast(action, conversation);
-        return;
-      }
-      closeConversationItemMenu();
-      Promise.resolve()
-        .then(() => handler())
-        .catch((err) => showToast(err.message || "작업 실패", true));
-    });
-    return item;
-  };
-
-  // gc-settings-archive-leave UI 정리: '보관'을 ··· 메뉴에서 제거하고 '설정' 팝업의
-  // '대화 관리' 섹션(openConversationSettings)으로 이동한다. 보관 권한이 없는 그룹 대화
-  // 참여자에게는 같은 섹션에서 보관 대신 '나가기'(self-leave)를 노출한다. '복사' 제거(메시지
-  // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 설정.
-  menu.appendChild(makeItem("공유", "conversation.share", () => openShareDialog(cid)));
-  menu.appendChild(makeItem("설정", "conversation.read", () => openConversationSettings(cid)));
+  if (typeof buildItems === "function") buildItems(menu, makeMenuItem);
 
   document.body.appendChild(menu);
 
@@ -6873,19 +6907,19 @@ function openConversationItemMenu(cid, triggerEl) {
   const onDocClick = (ev) => {
     if (menu.contains(ev.target)) return;
     if (triggerEl.contains(ev.target)) return;
-    closeConversationItemMenu();
+    closeFloatingMenus();
     detach();
   };
   const onKey = (ev) => {
     if (ev.key === "Escape") {
       ev.preventDefault();
-      closeConversationItemMenu();
+      closeFloatingMenus();
       detach();
       try { triggerEl.focus(); } catch (e) {}
     }
   };
   const onScroll = () => {
-    closeConversationItemMenu();
+    closeFloatingMenus();
     detach();
   };
   // outside-click listener 를 다음 tick 으로 늦춰 trigger 의 click 자체가 close 로 잡히지 않게 한다.
@@ -6895,6 +6929,195 @@ function openConversationItemMenu(cid, triggerEl) {
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onScroll, true);
   }, 0);
+  return menu;
+}
+
+function openConversationItemMenu(cid, triggerEl) {
+  const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
+  if (!conversation) return;
+  openFloatingMenu(triggerEl, {
+    id: "convItemMenu",
+    className: "conv-item-menu",
+    dataset: { conversationId: String(cid) },
+    // gc-settings-archive-leave UI 정리: '보관'을 ··· 메뉴에서 제거하고 '설정' 팝업의
+    // '대화 관리' 섹션(openConversationSettings)으로 이동한다. 보관 권한이 없는 그룹 대화
+    // 참여자에게는 같은 섹션에서 보관 대신 '나가기'(self-leave)를 노출한다. '복사' 제거(메시지
+    // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 설정.
+    buildItems: (menu, make) => {
+      menu.appendChild(make("공유", { action: "conversation.share", conversation, onSelect: () => openShareDialog(cid) }));
+      menu.appendChild(make("설정", { action: "conversation.read", conversation, onSelect: () => openConversationSettings(cid) }));
+    },
+  });
+}
+
+// share-visibility-window: 말풍선 ☰ 메뉴 — 샘플 등록 · 여기서 분기 · 여기까지/여기부터 공유.
+// conv-item ··· 토글과 대칭으로, 같은 message.id 의 메뉴가 열려 있으면 토글 close.
+function openMessageBubbleMenu(message, msgIdx, triggerEl) {
+  const existing = document.getElementById("bubbleMsgMenu");
+  if (existing && existing.dataset.messageId === String(message.id)) {
+    closeFloatingMenus();
+    return;
+  }
+  const conversation = currentConversation();
+  const role = message.role === "user" ? "user" : "assistant";
+  const canSampleHere = role === "assistant" && Boolean(_extractSqlFromContent(message.content));
+  const canForkHere = Boolean(state.activeConversationId) && can("conversation.create") && message.id != null;
+  const canShareHere = can("conversation.share.create") && message.id != null;
+  openFloatingMenu(triggerEl, {
+    id: "bubbleMsgMenu",
+    className: "conv-item-menu bubble-msg-menu",
+    dataset: { messageId: String(message.id) },
+    buildItems: (menu, make) => {
+      if (canSampleHere) {
+        menu.appendChild(make("샘플 등록", { onSelect: () => submitSampleFromMenu(message, msgIdx) }));
+      }
+      if (canForkHere) {
+        menu.appendChild(make("여기서 분기", {
+          action: "conversation.create",
+          conversation,
+          onSelect: () => forkConversation({ fromMessageId: message.id }),
+        }));
+      }
+      if (canShareHere) {
+        menu.appendChild(make("여기까지 공유", {
+          action: "conversation.share.create",
+          conversation,
+          onSelect: () => onShareCeiling(message, msgIdx),
+        }));
+        menu.appendChild(make("여기부터 공유", {
+          action: "conversation.share.create",
+          conversation,
+          onSelect: () => beginShareFloor(message, msgIdx),
+        }));
+      }
+    },
+  });
+}
+
+// ☰ 메뉴 '샘플 등록' — 인라인 send("up", true) 를 대체. nl_question / generated_sql 도출은 기존 방식과 동일.
+async function submitSampleFromMenu(message, msgIdx) {
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  const nlQuestion = _precedingUserQuestion(msgIdx);
+  const generatedSql = _extractSqlFromContent(message.content);
+  if (!nlQuestion) {
+    showToast("이 답변에 연결된 질문을 찾지 못해 피드백을 보낼 수 없습니다.", true);
+    return;
+  }
+  const messageId = (message && message.id != null) ? message.id : null;
+  const messageIdSpace = (message && message.id_space) ? message.id_space : "display";
+  try {
+    await _submitSampleFeedback({ cid, vote: "up", suggested: true, nlQuestion, generatedSql, messageId, messageIdSpace });
+    showToast("샘플 등록 요청됨 (검수 대기)");
+  } catch (error) {
+    showToast((error && error.message) || "피드백 전송에 실패했습니다.", true);
+  }
+}
+
+// ☰ 메뉴 '여기까지 공유' — floor 가 arm 되어 있으면 [floor, this] 윈도 공유, 아니면 기존 anchored 공유.
+function onShareCeiling(message, msgIdx) {
+  if (state.shareRange) {
+    if (msgIdx >= state.shareRange.floorMsgIdx) {
+      const floor = state.shareRange.floorMessageId;
+      cancelShareRange();
+      return createConversationShare({ floorMessageId: floor, anchorMessageId: message.id }).catch((error) => {
+        showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
+      });
+    }
+    showToast("종료 지점은 시작 지점 이후의 말풍선이어야 합니다.", true);
+    return;
+  }
+  // floor 미armed — 기존 '여기까지 공유' 동작 그대로(scope_mode:'anchored').
+  return createConversationShare({ anchorMessageId: message.id }).catch((error) => {
+    showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
+  });
+}
+
+// ☰ 메뉴 '여기부터 공유' — floor(하한) 를 arm 하고 마커 + 상단 배너를 표시한다.
+function beginShareFloor(message, msgIdx) {
+  state.shareRange = { floorMessageId: message.id, floorMsgIdx: msgIdx };
+  renderMessages();          // floor 마커('공유 시작') 페인트.
+  renderShareRangeBanner();  // 상단 안내 배너.
+}
+
+function cancelShareRange() {
+  state.shareRange = null;
+  const banner = document.getElementById("shareRangeBanner");
+  if (banner) banner.remove();
+  _detachShareRangeEsc();
+  renderMessages();
+}
+
+let _shareRangeEscHandler = null;
+function _attachShareRangeEsc() {
+  if (_shareRangeEscHandler) return;
+  _shareRangeEscHandler = (ev) => {
+    if (ev.key !== "Escape") return;
+    if (!state.shareRange) return;
+    // 플로팅 메뉴가 열려 있으면 메뉴 자체 ESC 핸들러에 양보(메뉴만 닫힘).
+    if (document.getElementById("bubbleMsgMenu") || document.getElementById("convItemMenu")) return;
+    ev.preventDefault();
+    cancelShareRange();
+  };
+  document.addEventListener("keydown", _shareRangeEscHandler, true);
+}
+function _detachShareRangeEsc() {
+  if (!_shareRangeEscHandler) return;
+  document.removeEventListener("keydown", _shareRangeEscHandler, true);
+  _shareRangeEscHandler = null;
+}
+
+// 상단 배너 — messageLogEl.innerHTML='' 재렌더에도 살아남도록 .messages-wrap(외부)에 append.
+function renderShareRangeBanner() {
+  if (!state.shareRange) return;
+  const wrap = messageLogEl ? messageLogEl.closest(".messages-wrap") : null;
+  if (!wrap) return;
+  const prev = document.getElementById("shareRangeBanner");
+  if (prev) prev.remove();
+
+  const banner = document.createElement("div");
+  banner.id = "shareRangeBanner";
+  banner.className = "share-range-banner";
+  banner.setAttribute("role", "status");
+
+  const text = document.createElement("span");
+  text.className = "share-range-banner-text";
+  text.textContent = "여기부터 공유: 시작 지점을 선택했습니다. 종료 지점 말풍선의 ☰에서 «여기까지 공유»를 고르거나, 여기부터 끝까지 공유하세요.";
+  banner.appendChild(text);
+
+  const actions = document.createElement("div");
+  actions.className = "share-range-banner-actions";
+
+  const toEndBtn = document.createElement("button");
+  toEndBtn.type = "button";
+  toEndBtn.className = "share-range-banner-btn is-primary";
+  toEndBtn.textContent = "여기부터 끝까지 공유";
+  toEndBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!state.shareRange) return;
+    const f = state.shareRange.floorMessageId;
+    cancelShareRange();
+    createConversationShare({ floorMessageId: f, anchorMessageId: null }).catch((error) => {
+      showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
+    });
+  });
+  actions.appendChild(toEndBtn);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "share-range-banner-btn";
+  cancelBtn.textContent = "취소";
+  cancelBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    cancelShareRange();
+  });
+  actions.appendChild(cancelBtn);
+
+  banner.appendChild(actions);
+  wrap.appendChild(banner);
+  _attachShareRangeEsc();  // ESC 로도 range 취소(idempotent).
 }
 
 async function cancelCurrentRun() {
