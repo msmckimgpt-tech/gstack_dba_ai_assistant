@@ -9983,8 +9983,87 @@ def _attach_user_feedback(messages: list[dict[str, Any]], by_message: dict[tuple
             m["feedback"] = fb
 
 
+def _resolve_display_window(conn, conversation_id: str, account_id):
+    """share-visibility-window: 발신자의 표시(view) 가시 window 해석 (DISPLAY id-space + joined_at).
+
+    반환: None(무제한) | 'DENY'(빈 뷰, fail-closed) | {floor_id, ceiling_id, joined_at, floor_ca}.
+    _resolve_recall_visibility(agent_core, core id-space) 의 표시-측 대응. 규칙 동일:
+      비-PG/컬럼부재/미제약/owner/full/비멤버 → None; PG 오류 → 'DENY'; bounded → window dict.
+    """
+    if not _runtime_backend_is_pg():
+        return None
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT c.has_restricted_members, m.role, m.visible_floor_message_id, "
+                    "       m.visible_ceiling_message_id, m.joined_at, m.visible_floor_created_at "
+                    "FROM agent_runtime.core_conversations c "
+                    "LEFT JOIN agent_runtime.conversation_members m "
+                    "  ON m.conversation_id = c.conversation_id AND m.account_id = %s "
+                    "WHERE c.conversation_id = %s LIMIT 1",
+                    (int(account_id) if account_id is not None else None, conversation_id),
+                )
+                row = pgcur.fetchone()
+        finally:
+            pg.close()
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "sqlstate", None) == "42703":
+            return None  # pre-migration: windowed 멤버 부재 → 안전.
+        return "DENY"
+    if row is None or not bool(row[0]):
+        return None
+    role = row[1]
+    if role is None or role == "owner":
+        return None
+    floor_id, ceiling_id, joined_at, floor_ca = row[2], row[3], row[4], row[5]
+    if floor_id is None and ceiling_id is None:
+        return None
+    return {"floor_id": floor_id, "ceiling_id": ceiling_id, "joined_at": joined_at, "floor_ca": floor_ca}
+
+
+def _msg_outside_window(msg_id, created_at, meta, role, window) -> bool:
+    """이 표시 메세지가 뷰어의 가시 window 밖(숨겨야 하나)인가. share-visibility-window.
+
+    window = {floor_id, ceiling_id, joined_at, floor_ca}. 가시범위 = [floor,ceiling] ∪ [joined,∞).
+    추가로 owner-answer 누출면(display-tag, Step7): 뷰어 floor 아래 문맥을 그린 assistant 답변 은닉.
+    비교 불가/파싱 불가는 fail-closed(숨김).
+    """
+    try:
+        floor_id = window.get("floor_id")
+        ceiling_id = window.get("ceiling_id")
+        joined_at = window.get("joined_at")
+        if floor_id is not None and int(msg_id) < int(floor_id):
+            return True
+        if ceiling_id is not None and int(msg_id) > int(ceiling_id):
+            if joined_at is None:
+                return True
+            try:
+                if created_at is None or created_at < joined_at:
+                    return True
+            except TypeError:
+                return True
+        # owner-answer display-tag: assistant 답변이 뷰어 floor 아래 문맥을 그렸으면 숨김.
+        if str(role or "").lower() == "assistant" and isinstance(meta, dict):
+            vf = window.get("floor_ca")
+            if vf is not None:
+                if meta.get("recall_full"):
+                    return True
+                rfc = meta.get("recall_floor_created_at")
+                if rfc is not None:
+                    from datetime import datetime as _dt
+                    rfc_dt = _dt.fromisoformat(rfc) if isinstance(rfc, str) else rfc
+                    if rfc_dt < vf:
+                        return True
+    except Exception:
+        return True  # 어떤 비교 실패도 fail-closed(숨김).
+    return False
+
+
 def _get_history(
-    conversation_id: str, limit: int = 5, before_id: int | None = None
+    conversation_id: str, limit: int = 5, before_id: int | None = None, window=None
 ) -> tuple[list[dict[str, Any]], bool, int | None, int, int]:
     if not conversation_id:
         return [], False, None, 0, 0
@@ -10038,6 +10117,8 @@ def _get_history(
                     meta["steps"] = steps_v
                     meta["rationale"] = _summarize_rationale(steps_v)
                     meta["run_id"] = steps_v[0].get("run_id")
+            if window and _msg_outside_window(msg_id, created_at, meta, role, window):
+                continue  # share-visibility-window: 가려진 구간은 표시(view)에서도 배제.
             messages_pg.append({
                 "id": int(msg_id),
                 "id_space": "display",  # agent_runtime.messages.id(표시 store) — 피드백 고유성 키 공간
@@ -10047,7 +10128,9 @@ def _get_history(
                 "meta": meta,
             })
         needs_core_pg = not messages_pg or not any(str(i.get("role", "")).lower() == "assistant" for i in messages_pg)
-        if needs_core_pg:
+        # share-visibility-window: bounded 멤버(window 지정)는 core fallback(core_messages 직접
+        # 읽기 — window 미적용)을 건너뛴다. 표시 store 만으로 window 정합 응답을 준다(유출 방지).
+        if needs_core_pg and window is None:
             core_msgs, core_hm, core_oid, core_tc, core_uc = _get_agent_core_history(
                 conn, conversation_id, limit=limit, before_id=before_id
             )
@@ -10115,6 +10198,8 @@ LIMIT %s
                 meta["steps"] = steps
                 meta["rationale"] = _summarize_rationale(steps)
                 meta["run_id"] = steps[0].get("run_id")
+        if window and _msg_outside_window(msg_id, created_at, meta, role, window):
+            continue  # share-visibility-window: 가려진 구간은 표시(view)에서도 배제 (parity).
         messages.append(
             {
                 "id": int(msg_id),
@@ -10129,7 +10214,7 @@ LIMIT %s
     # ③ TASK-0285: assistant 말풍선 첨부 칩 영속 — assistant 생성 첨부를 message_id 로 주입 (MySQL 경로).
     _attach_assistant_attachments(messages, _load_assistant_attachments_by_message(conn, conversation_id))
     needs_core_fallback = not messages or not any(str(item.get("role", "")).lower() == "assistant" for item in messages)
-    if needs_core_fallback:
+    if needs_core_fallback and window is None:  # share-visibility-window: bounded 멤버는 core fallback skip.
         core_messages, core_has_more, core_oldest_id, core_total_count, core_user_count = _get_agent_core_history(
             conn,
             conversation_id,
@@ -11886,6 +11971,113 @@ def _conv_message_exists(conn, conversation_id: str, message_id: int) -> bool:
         return cur.fetchone() is not None
     finally:
         cur.close()
+
+
+def _conv_message_created_at(conn, conversation_id: str, message_id: int):
+    """message_id(DISPLAY id-space)의 created_at 반환 (backend-aware). 없으면 None.
+
+    share-visibility-window: join stamp 시 경계 메세지(DISPLAY messages.id)의 created_at 을
+    스냅샷해 conversation_members.visible_floor/ceiling_created_at 에 비정규화한다. 이 값이
+    독립 id-space 인 core_messages(LLM recall)를 필터하는 유일한 bridge다(anchored fork 동형).
+    """
+    if _runtime_backend_is_pg():
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT created_at FROM agent_runtime.messages "
+                        "WHERE conversation_id = %s AND id = %s LIMIT 1",
+                        (conversation_id, int(message_id)),
+                    )
+                    row = pgcur.fetchone()
+                    return row[0] if row else None
+            finally:
+                pg.close()
+        except Exception:
+            return None
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT CreatedAt FROM AgentMemoryMessages WHERE ConversationId = %s AND Id = %s LIMIT 1",
+            (conversation_id, int(message_id)),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close()
+
+
+def _conversation_has_restricted_members(conn, conversation_id: str) -> bool:
+    """core_conversations.has_restricted_members 게이트 플래그 (PG 전용).
+
+    False(거의 모든 대화) → 가시성 필터 완전 우회(fast path, 무회귀). True → loader 가
+    actor window 를 해석하고 fail-closed. PG 미가용/예외 시 False(비-windowed 대화 가정 —
+    windowed 대화는 애초에 PG 런타임에서만 생성되고, 예외를 True 로 오판하면 무해한 대화까지
+    DENY 되어 가용성 회귀).
+    """
+    if not _runtime_backend_is_pg():
+        return False
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT has_restricted_members FROM agent_runtime.core_conversations "
+                    "WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+                return bool(row[0]) if row else False
+        finally:
+            pg.close()
+    except Exception:
+        return False
+
+
+def _member_visibility_window(conn, conversation_id: str, account_id: int):
+    """멤버의 가시 경계 window 조회 (share-visibility-window, DISPLAY id-space).
+
+    반환:
+      - (None, None) : 무제한(owner·floor 미설정 멤버·비-PG·비멤버). caller 의 share-token/
+        read.any grant 가 접근을 지배 — window 는 추가 제약 없음.
+      - (floor_id|None, ceil_id|None) : 멤버의 [floor, ceiling] (DISPLAY messages.id, inclusive).
+      - 'DENY' : PG 예외 등으로 window 를 확인할 수 없음 → **fail-closed**. 호출자(fork/recall)는
+        무제한 복사/전체 recall 대신 거부·은닉해야 한다. fork/recall 은 어차피 PG 를 요구하므로
+        PG 예외 시 DENY 는 실질 가용성 회귀가 아니다(가려진 구간 유출 방지 우선).
+
+    role='owner' 는 항상 (None,None) — 소유자는 본인 콘텐츠에 정당한 전체 접근.
+    """
+    if not _runtime_backend_is_pg():
+        return (None, None)
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT role, visible_floor_message_id, visible_ceiling_message_id "
+                    "FROM agent_runtime.conversation_members "
+                    "WHERE conversation_id = %s AND account_id = %s LIMIT 1",
+                    (conversation_id, int(account_id)),
+                )
+                row = pgcur.fetchone()
+        finally:
+            pg.close()
+    except Exception:
+        return "DENY"
+    if not row:
+        # 비멤버: 이 함수는 window 만 판정하고 멤버십 접근 게이트는 호출자 책임.
+        return (None, None)
+    role, floor_id, ceil_id = row[0], row[1], row[2]
+    if role == "owner":
+        return (None, None)
+    return (
+        int(floor_id) if floor_id is not None else None,
+        int(ceil_id) if ceil_id is not None else None,
+    )
 
 
 def _conv_update_topic_product(

@@ -158,9 +158,16 @@ def history(
             create_if_missing=False,
         )
     if conv_id:
-        messages, has_more, oldest_id, total_count, user_count = app._get_history(
-            conv_id, limit=limit, before_id=before_id
-        )
+        # share-visibility-window: 발신자의 표시 가시 window(DISPLAY id-space + joined_at)를 해석해
+        # 가려진 pre-floor/중간 구간을 view 에서 배제. DENY(제약 대화인데 window 미해석) → 빈 응답.
+        _display_window = app._resolve_display_window(conn, conv_id, (account or {}).get("id"))
+        if _display_window == "DENY":
+            messages, has_more, oldest_id, total_count, user_count = [], False, None, 0, 0
+        else:
+            messages, has_more, oldest_id, total_count, user_count = app._get_history(
+                conv_id, limit=limit, before_id=before_id,
+                window=(_display_window if isinstance(_display_window, dict) else None),
+            )
         # 새로고침·대화 전환 후에도 이미 부여한 👍/👎 를 복원해 중복 부여를 막는다(고유 피드백).
         # best-effort: 피드백 상태 복원 실패는 history 응답을 막지 않는다(첨부 영속과 동형 fail-soft).
         try:

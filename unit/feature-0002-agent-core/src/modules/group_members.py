@@ -208,6 +208,125 @@ def add_member(
     pg_conn.commit()
 
 
+# ── share-visibility-window: 멤버별 가시 경계 window (floor/ceiling) ──────────
+# 공유 링크의 [FloorMessageId, AnchorMessageId] window 를 join 시 멤버 행에 각인한다.
+# DISPLAY id-space(visible_*_message_id) + core bridge 스냅샷(visible_*_created_at).
+_PG_GET_MEMBER_VISIBILITY = """
+SELECT role, visible_floor_message_id, visible_ceiling_message_id,
+       visible_floor_created_at, visible_ceiling_created_at
+FROM agent_runtime.conversation_members
+WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
+LIMIT 1
+"""
+
+_PG_SET_MEMBER_VISIBILITY = """
+UPDATE agent_runtime.conversation_members
+SET visible_floor_message_id    = %(floor_id)s,
+    visible_ceiling_message_id  = %(ceiling_id)s,
+    visible_floor_created_at    = %(floor_ca)s,
+    visible_ceiling_created_at  = %(ceiling_ca)s
+WHERE conversation_id = %(conversation_id)s AND account_id = %(account_id)s
+"""
+
+_PG_MARK_RESTRICTED = """
+UPDATE agent_runtime.core_conversations
+SET has_restricted_members = true
+WHERE conversation_id = %(conversation_id)s
+"""
+
+
+def get_member_visibility(pg_conn, conversation_id: str, account_id: int) -> Optional[dict[str, Any]]:
+    """멤버의 가시 경계 조회. 비멤버면 None.
+
+    반환 dict: {role, floor_id, ceiling_id, floor_created_at, ceiling_created_at}
+    (floor/ceiling 은 NULL 가능 = 그 방향 무제한). share-visibility-window 의 create-endpoint
+    widen-guard(본인 window 밖 재공유 차단)와 recall/display 필터가 소비.
+    """
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            _PG_GET_MEMBER_VISIBILITY,
+            {"conversation_id": conversation_id, "account_id": int(account_id)},
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "role": row[0],
+        "floor_id": row[1],
+        "ceiling_id": row[2],
+        "floor_created_at": row[3],
+        "ceiling_created_at": row[4],
+    }
+
+
+def stamp_member_visibility(
+    pg_conn,
+    conversation_id: str,
+    account_id: int,
+    *,
+    is_new_member: bool,
+    floor_id: Optional[int],
+    ceiling_id: Optional[int],
+    floor_created_at=None,
+    ceiling_created_at=None,
+) -> None:
+    """share window([floor_id, ceiling_id])를 멤버 가시경계에 각인 (never-widen, fail-closed 정합).
+
+    규칙 (권한상승·의도치 않은 강등 동시 차단):
+      - role='owner'                : 각인 안 함(소유자는 본인 콘텐츠 전체 접근 정당).
+      - is_new_member=True          : share window 를 **그대로** 각인(신규 참여자는 딱 그만큼 열람).
+      - 기존 full 멤버(floor·ceiling 모두 NULL) : 각인 안 함(이미 정당한 전체 접근 — 좁히지 않음).
+      - 기존 windowed 멤버            : **교집합**(floor=더 높은 id, ceiling=더 낮은 id) — 절대 넓히지 않음.
+    각인 결과가 windowed(floor 또는 ceiling 존재)면 core_conversations.has_restricted_members=true 로
+    게이트를 켠다(loader 가 이 대화에서 actor window 를 해석하도록).
+
+    created_at 스냅샷은 id 승자를 따라간다(id 순서 == created_at 순서). 교집합에서 기존 값이 이기면
+    기존 스냅샷 보존, share 값이 이기면 share 스냅샷 사용.
+    """
+    existing = get_member_visibility(pg_conn, conversation_id, account_id)
+    if existing is None:
+        return  # 멤버가 아님 — 각인 대상 없음(호출자가 add_member 선행).
+    if existing["role"] == "owner":
+        return
+
+    if is_new_member:
+        new_floor_id, new_floor_ca = floor_id, floor_created_at
+        new_ceiling_id, new_ceiling_ca = ceiling_id, ceiling_created_at
+    else:
+        ex_floor, ex_ceiling = existing["floor_id"], existing["ceiling_id"]
+        if ex_floor is None and ex_ceiling is None:
+            return  # 기존 full 멤버 — 좁히지 않음(least-restrictive for pre-existing full access).
+        # 교집합: floor = 더 제약적인(더 높은 id), ceiling = 더 제약적인(더 낮은 id). 절대 넓히지 않음.
+        if floor_id is None:
+            new_floor_id, new_floor_ca = ex_floor, existing["floor_created_at"]
+        elif ex_floor is None or int(floor_id) >= int(ex_floor):
+            new_floor_id, new_floor_ca = floor_id, floor_created_at
+        else:
+            new_floor_id, new_floor_ca = ex_floor, existing["floor_created_at"]
+        if ceiling_id is None:
+            new_ceiling_id, new_ceiling_ca = ex_ceiling, existing["ceiling_created_at"]
+        elif ex_ceiling is None or int(ceiling_id) <= int(ex_ceiling):
+            new_ceiling_id, new_ceiling_ca = ceiling_id, ceiling_created_at
+        else:
+            new_ceiling_id, new_ceiling_ca = ex_ceiling, existing["ceiling_created_at"]
+
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            _PG_SET_MEMBER_VISIBILITY,
+            {
+                "conversation_id": conversation_id,
+                "account_id": int(account_id),
+                "floor_id": int(new_floor_id) if new_floor_id is not None else None,
+                "ceiling_id": int(new_ceiling_id) if new_ceiling_id is not None else None,
+                "floor_ca": new_floor_ca,
+                "ceiling_ca": new_ceiling_ca,
+            },
+        )
+        if new_floor_id is not None or new_ceiling_id is not None:
+            cur.execute(_PG_MARK_RESTRICTED, {"conversation_id": conversation_id})
+    pg_conn.commit()
+
+
 def remove_member(pg_conn, conversation_id: str, account_id: int) -> int:
     """멤버 제거 (S2 제거/나가기 엔드포인트가 호출).
 

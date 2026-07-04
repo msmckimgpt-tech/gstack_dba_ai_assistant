@@ -1842,20 +1842,36 @@ def _assemble_core_messages(
 def _load_conversation_messages(
     conn, conversation_id: str, max_messages: int = 50,
     sender_labels: dict[int, str] | None = None,
+    visibility=None,
 ) -> list[dict]:
     """대화 메시지를 OpenAI 메시지 형식으로 로드.
 
     gc-assistant-dialect-context (RC-2): sender_labels(account_id→표시명)가 주어지면(그룹대화)
     각 user 메시지에 발신자 라벨을 부착한다(REQ-GC-R5). PG/MySQL 양 경로 모두 sender_account_id 를
     함께 로드한다.
+
+    share-visibility-window: `visibility` 가 현재 턴 발신자의 가시 경계를 결정한다.
+      - None            : 필터 없음(거의 모든 대화 — 무회귀).
+      - 'DENY'          : **fail-closed** — prior history [] 반환(가려진 구간이 모델에 전혀 안 들어감).
+      - dict(floor_ca=, ceil_ca=, joined_ca=) : core_messages 를 created_at 범위로 필터.
+    windowed recall 은 PG 전용이며 PG 읽기 실패 시 unfiltered MySQL 로 **fall-through 금지** —
+    가려진 구간 유출 방지가 가용성보다 우선(빈 history 로 fail-closed).
     """
+    if visibility == "DENY":
+        return []
+    win = visibility if isinstance(visibility, dict) else None
+
     raw_limit = max(int(max_messages or 50) * 4, 80)
 
     # M4: PG read path
     from modules.runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
     if AGENT_RUNTIME_READ_BACKEND == "postgres":
-        pg_rows = _read_runtime_pg("load_core_messages",
-                                   conversation_id=conversation_id, limit=raw_limit)
+        _pg_kwargs = {"conversation_id": conversation_id, "limit": raw_limit}
+        if win is not None:
+            _pg_kwargs["floor_ca"] = win.get("floor_ca")
+            _pg_kwargs["ceil_ca"] = win.get("ceil_ca")
+            _pg_kwargs["joined_ca"] = win.get("joined_ca")
+        pg_rows = _read_runtime_pg("load_core_messages", **_pg_kwargs)
         if pg_rows is not None:
             # PG: (role, content, tool_calls, tool_call_id, name, sender_account_id) — tool_calls is
             # already a Python object (psycopg3 JSONB auto-parse). Serialize back to JSON string so
@@ -1871,6 +1887,12 @@ def _load_conversation_messages(
                 for r in pg_rows
             ]
             return _assemble_core_messages(dict_rows, max_messages, sender_labels)
+
+    # share-visibility-window: windowed recall 은 PG 전용. PG 읽기 실패(pg_rows None) 또는
+    # 비-PG 백엔드에서 window 가 지정됐다면, unfiltered MySQL 로 내려가 가려진 구간을 노출하는
+    # 대신 **빈 history 로 fail-closed**. (windowed 멤버는 PG 런타임에서만 생성됨.)
+    if win is not None:
+        return []
 
     cur = conn.cursor(dictionary=True)
     cur.execute(
@@ -3075,6 +3097,44 @@ def run_agent(
         _INLINE_TEXT_PATH_CTX.reset(_att_tokens[3])
 
 
+def _resolve_recall_visibility(conversation_id: str, account_id):
+    """share-visibility-window: 현재 턴 발신자(account_id)의 LLM recall 가시 경계 해석.
+
+    반환: None(필터 없음) | 'DENY'(빈 history, fail-closed) | {floor_ca, ceil_ca, joined_ca}.
+
+    fail-closed 정책 (bounded 멤버가 unfiltered recall 을 받는 일이 없도록):
+      - 비-PG 백엔드                : None(windowing PG 전용).
+      - visible_* 컬럼 부재(pre-mig): None(windowed 멤버가 존재할 수 없음 — 안전).
+      - PG 조회 실패(그 외 예외/무연결): **'DENY'** — 발신자 bounds 를 확인할 수 없으면 은닉.
+        (unrestricted 대화는 실제 PG 장애 때만 이 비용을 치르며, 그때는 recall 자체가 이미 degrade.)
+      - has_restricted=false        : None(거의 모든 대화 — fast path).
+      - 발신자 비멤버(role None)     : None(bounded 멤버 아님 — display-tag 가 bounded '뷰어'를 보호).
+      - role='owner' / floor·ceil 모두 NULL(full 멤버): None(정당한 전체 접근).
+      - floor 또는 ceiling 존재       : window dict.
+    """
+    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _read_runtime_pg
+    if AGENT_RUNTIME_READ_BACKEND != "postgres":
+        return None
+    res = _read_runtime_pg(
+        "load_member_visibility",
+        conversation_id=conversation_id,
+        account_id=(int(account_id) if account_id is not None else None),
+    )
+    if res is None:
+        return "DENY"  # PG 무연결/비-42703 예외 → fail-closed.
+    if res.get("schema_missing"):
+        return None
+    if not res.get("has_restricted"):
+        return None
+    role = res.get("role")
+    if role is None or role == "owner":
+        return None
+    floor_ca, ceil_ca = res.get("floor_ca"), res.get("ceil_ca")
+    if floor_ca is None and ceil_ca is None:
+        return None
+    return {"floor_ca": floor_ca, "ceil_ca": ceil_ca, "joined_ca": res.get("joined_ca")}
+
+
 def _run_agent_core(
     user_message: str,
     conversation_id: str | None = None,
@@ -3326,8 +3386,14 @@ def _run_agent_core(
         _group_sender_labels = _resolve_group_sender_labels(mem_conn, cid)
     except Exception:
         _group_sender_labels = None
+    # share-visibility-window: 발신자(account_id = ask 호출자, claim 시 확정·위조 불가)의 가시
+    # 경계를 해석해 windowed 멤버의 LLM recall 을 그 window 로 제한한다. 가려진 pre-floor 구간의
+    # core_messages 행은 애초에 로드되지 않아 프롬프트 인젝션으로도 추출 불가(물리 배제). owner·
+    # full 멤버·시스템은 None(전체 recall) — 그들의 답변 누출면은 display-tag 로 별도 봉인(Step7).
+    _recall_visibility = _resolve_recall_visibility(cid, account_id)
     history = _load_conversation_messages(
-        mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels
+        mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels,
+        visibility=_recall_visibility,
     )
 
     # ── 사용자 메시지 저장 ──
