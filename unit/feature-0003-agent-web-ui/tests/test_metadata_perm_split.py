@@ -117,7 +117,9 @@ def test_r8_frontend_subtab_perm_map_split():
     m = re.search(r"const _METADATA_SUBTAB_PERM\s*=\s*\{(.*?)\};", text, re.DOTALL)
     assert m, "_METADATA_SUBTAB_PERM 블록을 admin.js 에서 찾지 못함"
     body = m.group(1)
+    # feature-0016 §45: graph 서브탭은 admin.js 에서 제거됨(그래프 뷰=지식베이스 최상위 탭 ADMIN_TAB_PERMISSIONS.graph
+    # 으로 이관). _METADATA_SUBTAB_PERM 에서 graph 키가 사라진 것과 정합하도록 기대에서 제외(stale 테스트 정정,
+    # share-visibility-window 머지 위생).
     for sub, perm in (("glossary", "metadata.glossary.manage"), ("enums", "metadata.enum.manage"),
-                      ("tables", "metadata.table.manage"), ("columns", "metadata.column.manage"),
-                      ("graph", "metadata.graph.read")):
+                      ("tables", "metadata.table.manage"), ("columns", "metadata.column.manage")):
         assert re.search(rf'{sub}:\s*"{re.escape(perm)}"', body), f"admin.js 서브탭 {sub} → {perm} 미갱신"
