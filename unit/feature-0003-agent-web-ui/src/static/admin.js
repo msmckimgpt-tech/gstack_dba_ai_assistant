@@ -3263,6 +3263,16 @@ const _METtype = "rect";
 const _METLAY = { COLS: 3, SW: 300, GAPX: 48, GAPY: 52, PADT: 34, PADX: 16, TROW: 34, CROW: 21, CIND: 26, TGAP: 12, TW: 150,
   CARDW: 210, CARDH: 44 };   // graph-initview: 접힌 스키마 카드 치수
 const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 배율 밑이면 판독 불가 — 클램프
+// graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
+//   페인팅·hit-test 하므로, 전 요소에 zIndex 를 명시해 setData diff 의 생성 순서·드래그 이력(내장
+//   drag-element 의 frontElement 영구 승격)이 페인팅 순서를 결정하지 못하게 한다. 의미 계층:
+//   클러스터 배경(COMBO) < 그룹 배경(GROUP_BG) < 관계선(EDGE) < 컬럼(COLUMN) < 칩·카드(NODE)
+//   < 그룹 헤더(GROUP_HD, §50 드래그 핸들 hit-test) < 컨트롤(CTL, 항상 클릭 가능). DRAG_BOOST 는
+//   드래그 중 임시 부스트 오프셋(canonical+1000) — dragend 에 canonical 복원(_metaDragZRestore).
+//   흐름 내 per-table "X:" ctl 은 NODE 밴드(허위 소속 어포던스 방지, 패널 ux MINOR) — 자기 칩과 비겹침이라
+//   클릭성 손실 없음. 코너 앵커 컨트롤(GX/XS)만 CTL(항상 클릭 가능).
+//   EDGE 층 내부는 신뢰 강도 소수 오프셋(trusted+0.2 > candidate/교차DB+0.1)으로 tie 분해(_metaEdgeStyleFor).
+const _METZ = { COMBO: 0, GROUP_BG: 1, EDGE: 2, COLUMN: 3, NODE: 4, GROUP_HD: 5, CTL: 6, DRAG_BOOST: 1000 };
 const _META_SEARCH_CAP = 50;        // search-badge: 백엔드 search_nodes 기본 limit(50) 미러 — 도달 시 매칭 카운트 부분값(badge '+')
 const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 클러스터
 
@@ -3353,41 +3363,131 @@ function _metaRoleOf(key) {
 }
 
 // G6 per-element inline style helpers (설정 매퍼 금지 — undefined→To() 크래시 회피, BLUEPRINT §3).
+// graph-zorder(§52): 렌더 요소 id → canonical(의미) zIndex. build bake·dragend 복원의 공용 해석기.
+//   장식 prefix(GB/GH/GX/X/XS/SC)가 우선하고, 그 외는 모델 label(Column/Schema)로 판정.
+//   combo id == Schema 모델 key(펼침 시) — COMBO 층. 미상은 칩과 동급(NODE).
+function _metaZFor(id) {
+  const s = String(id);
+  if (s.startsWith("GB:")) return _METZ.GROUP_BG;
+  if (s.startsWith("GH:")) return _METZ.GROUP_HD;
+  if (s.startsWith("GX:") || s.startsWith("XS:")) return _METZ.CTL;
+  if (s.startsWith("X:")) return _METZ.NODE;   // 패널 ux MINOR: 흐름 내 per-table ctl 은 칩과 같은 밴드(bake 와 1:1)
+  if (s.startsWith("SC:")) return _METZ.NODE;
+  if (s === _META_TERMS_COMBO) return _METZ.COMBO;   // 용어·기타 클러스터 combo — 모델 노드 없음(합성 id)
+  const n = _metaGraph.nodes.get(id);
+  if (n && n.label === "Column") return _METZ.COLUMN;
+  if (n && n.label === "Schema") return _METZ.COMBO;
+  return _METZ.NODE;
+}
+// graph-zorder(§52): 드래그 중 대상+종속을 canonical+DRAG_BOOST 로 결정론 승격. 내장 drag-element 는
+//   grabbed 만 frontElement(전역 max+1, **영구**)로 올려 종속(컬럼·ctl)과 계층이 찢어지고 드래그
+//   이력이 z-order 로 굳는다 — 부스트가 그 값을 덮고(호출이 늦어 우선), dragend 가 canonical 복원.
+function _metaDragZBoost(ids) { _metaDragZApply(ids, _METZ.DRAG_BOOST); }
+// dragend 복원 — rebuild(_metaG6Apply)도 canonical 을 재-bake 하므로 이중 안전망(자가 치유).
+function _metaDragZRestore(ids) { _metaDragZApply(ids, 0); }
+function _metaDragZApply(ids, boost) {
+  const g = _metaGraph.graph;
+  if (!g || !ids || !ids.length) return;
+  // setElementZIndex 는 미존재 id 1개로도 전체 reject — 마지막 build 의 renderedIds 로 필터
+  //   (드래그 중 rebuild 로 요소가 제거된 edge case 에 나머지 복원까지 무산되지 않게).
+  const r = _metaGraph.renderedIds;
+  const m = {};
+  let n = 0;
+  ids.forEach((id) => { if (!r || r.has(id)) { m[id] = _metaZFor(id) + boost; n += 1; } });
+  if (!n) return;
+  try { Promise.resolve(g.setElementZIndex(m)).catch(() => {}); } catch (_) {}
+}
+// graph-zorder(§52): 렌더 요소 id → 소속 클러스터(combo id). 장식 prefix 는 파싱, 그 외는 모델 기반.
+function _metaComboOwnerOf(id) {
+  const s = String(id);
+  if (s.startsWith("SC:") || s.startsWith("XS:")) return s.slice(3);
+  if (s.startsWith("GB:") || s.startsWith("GH:") || s.startsWith("GX:")) {
+    const gk = s.slice(3), sep = gk.indexOf("\u0001");
+    return sep >= 0 ? gk.slice(0, sep) : null;
+  }
+  if (s.startsWith("X:")) {
+    const n = _metaGraph.nodes.get(s.slice(2));
+    return n ? _metaSchemaComboOf(n) : null;
+  }
+  const n = _metaGraph.nodes.get(s);
+  return n ? _metaSchemaComboOf(n) : null;
+}
+// graph-zorder(§52): combo(클러스터)의 렌더된 하위 요소 id 전부 — 내장 frontElement 가 combo 드래그
+//   시 하위 전체를 델타 승격하므로, dragend canonical 복원 대상을 같은 범위로 재구성한다.
+function _metaComboMemberIds(comboId) {
+  const out = [];
+  const r = _metaGraph.renderedIds;
+  if (!r || !comboId) return out;
+  r.forEach((id) => {
+    if (String(id) === comboId) return;
+    if (_metaComboOwnerOf(id) === comboId) out.push(id);
+  });
+  return out;
+}
+// graph-zorder(§52, 패널 ux BLOCKING): 엣지 datum → canonical zIndex — _metaEdgeStyleFor/_metaRoutineEdgeStyle
+//   의 bake 규칙과 1:1 (EDGE + trusted 0.2 / candidate·교차DB 0.1 / 그 외 0, ROUTINE_USES·USES = EDGE).
+function _metaEdgeZFor(ed) {
+  const d = (ed && ed.data) || {};
+  if (d.label === "ROUTINE_USES") return _METZ.EDGE;
+  if (d.cross_ds) return _METZ.EDGE + 0.1;
+  return _METZ.EDGE + (d.status === "trusted" ? 0.2 : (d.status === "candidate" ? 0.1 : 0));
+}
+// graph-zorder(§52, 패널 ux BLOCKING): 내장 frontElement 는 combo 드래그 시 **내부 엣지**도 델타 승격한다
+//   (번들 실측: getRelatedEdgesData(...).internal). 노드+콤보만 복원하면 관계선이 칩(4)·헤더(5)·컨트롤(6)
+//   위로 영구 잔존(반복 드래그 시 단조 증가 — 콤보 드래그는 rebuild 를 유발하지 않아 다음 rebuild 까지
+//   지속) — combo 소속 끝점을 가진 엣지 전부를 canonical 로 복원한다(내장의 internal 범위 상위집합 —
+//   비승격분 재-세팅은 no-op 라 무해).
+function _metaComboEdgesRestore(comboId) {
+  const g = _metaGraph.graph;
+  if (!g || !comboId) return;
+  let eds;
+  try { eds = g.getEdgeData(); } catch (_) { eds = null; }
+  if (!eds || !eds.length) return;
+  const m = {};
+  let n = 0;
+  eds.forEach((ed) => {
+    if (!ed || ed.id == null) return;
+    if (_metaComboOwnerOf(ed.source) === comboId || _metaComboOwnerOf(ed.target) === comboId) { m[ed.id] = _metaEdgeZFor(ed); n += 1; }
+  });
+  if (!n) return;
+  try { Promise.resolve(g.setElementZIndex(m)).catch(() => {}); } catch (_) {}
+}
+
 function _metaTableStyle(x, y, rel, role) {
   // feature-0016 §45: 검색 매칭 표현을 '너비 증가'에서 'match 상태 soft glow'로 이관 — 노드 폭은 rel 과 무관하게 고정한다
   //   (가변 폭은 setData 재packing 을 유발하고 검색 가시성도 떨어졌다). rel 인자는 호출부 호환 위해 유지(폭 계산엔 미사용).
   const w = _METLAY.TW;
   // node-role-viz: 분석 완료 + 역할 분류가 있으면 칩 색 = 역할색(미분석은 기존 teal 유지 — 색 자체가 "분석됨+역할" 신호).
   const rd = role ? _META_ROLE[role] : null;
-  return { x, y, size: [w, 24], radius: 6, fill: rd ? rd.color : _META_GRAPH_COLOR.Table, stroke: "#ffffff", lineWidth: 1,
+  return { x, y, size: [w, 24], radius: 6, fill: rd ? rd.color : _META_GRAPH_COLOR.Table, stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.NODE,
     // feature-0016 §45: 폭이 rel 무관 고정(TW=150)이 되며 라벨이 박스를 넘치지 않도록 labelMaxWidth 를 박스 안으로 클램프(예전 176 은 rel 부스트로 최대 190 폭일 때 기준).
     labelPlacement: "center", labelFill: rd && rd.dark ? "#161b22" : "#ffffff", labelFontSize: 12, labelFontWeight: 700, labelMaxWidth: _METLAY.TW - 10, cursor: "pointer" };
 }
 function _metaTermStyle(x, y, rel) {
   // feature-0016 §45: 용어 노드 폭도 rel 무관 고정(검색 매칭은 match 상태 soft glow 로 표시). rel 인자는 호환 유지.
   const w = 130;
-  return { x, y, size: [w, 22], radius: 11, fill: _META_GRAPH_COLOR.GlossaryTerm, stroke: "#ffffff", lineWidth: 1,
+  return { x, y, size: [w, 22], radius: 11, fill: _META_GRAPH_COLOR.GlossaryTerm, stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.NODE,
     // feature-0016 §45: 폭 고정(130)에 맞춰 라벨을 박스 안으로 클램프(예전 168 은 rel 부스트 폭 기준).
     labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700, labelMaxWidth: 118, cursor: "pointer" };
 }
 function _metaColStyle(x, y) {
-  return { x, y, size: 11, fill: _META_GRAPH_COLOR.Column, stroke: "#ffffff", lineWidth: 1,
+  return { x, y, size: 11, fill: _META_GRAPH_COLOR.Column, stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.COLUMN,
     labelPlacement: "right", labelFill: "#161b22", labelFontSize: 10, labelOffsetX: 5, labelMaxWidth: 168, cursor: "pointer" };
 }
 // graph-funcproc(ADR-016): 함수·프로시저 칩 — 테이블 칩과 같은 자리(클러스터 열)에 서되 보라 + 둥근 모서리로 구분.
 function _metaRoutineStyle(x, y, rel) {
   const w = Math.min(190, _METLAY.TW + (typeof rel === "number" ? Math.round(rel * 40) : 0));
-  return { x, y, size: [w, 24], radius: 12, fill: _META_GRAPH_COLOR.Routine, stroke: "#ffffff", lineWidth: 1,
+  return { x, y, size: [w, 24], radius: 12, fill: _META_GRAPH_COLOR.Routine, stroke: "#ffffff", lineWidth: 1, zIndex: _METZ.NODE,
     labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700, labelMaxWidth: 176, cursor: "pointer" };
 }
 function _metaCtlStyle(x, y) {
-  return { x, y, size: [18, 18], radius: 4, fill: "#ffffff", stroke: "#0a5b66", lineWidth: 1.5,
+  return { x, y, size: [18, 18], radius: 4, fill: "#ffffff", stroke: "#0a5b66", lineWidth: 1.5, zIndex: _METZ.CTL,
     labelText: "−", labelPlacement: "center", labelFill: "#0a5b66", labelFontSize: 15, labelFontWeight: 700, cursor: "pointer" };
 }
 // graph-initview: 접힌 스키마 카드(진입 뷰 기본) — 클릭 시 그 스키마의 테이블만 lazy 펼침.
 function _metaSchemaCardStyle(x, y) {
   return { x, y, size: [_METLAY.CARDW, _METLAY.CARDH], radius: 10, fill: "#eef0f8",
-    stroke: _META_GRAPH_COLOR.Schema, lineWidth: 1.5,
+    stroke: _META_GRAPH_COLOR.Schema, lineWidth: 1.5, zIndex: _METZ.NODE,
     labelPlacement: "center", labelFill: "#2a3567", labelFontSize: 12, labelFontWeight: 700,
     labelMaxWidth: _METLAY.CARDW - 16, cursor: "pointer" };
 }
@@ -3395,26 +3495,31 @@ function _metaSchemaCardStyle(x, y) {
 function _metaSchemaCtlStyle(x, y) {
   return { x, y, size: [18, 18], radius: 4, fill: "#ffffff", stroke: _META_GRAPH_COLOR.Schema, lineWidth: 1.5,
     labelText: "−", labelPlacement: "center", labelFill: _META_GRAPH_COLOR.Schema, labelFontSize: 15,
-    labelFontWeight: 700, cursor: "pointer" };
+    labelFontWeight: 700, cursor: "pointer", zIndex: _METZ.CTL };
 }
 function _metaComboStyleFor(isTerms) {
   return { radius: 12, padding: [30, 16, 14, 16], labelPlacement: "top", labelFontWeight: 700, labelFontSize: 13,
     labelFill: isTerms ? _META_GRAPH_COLOR.GlossaryTerm : _META_GRAPH_COLOR.Schema,
     fill: isTerms ? _META_GRAPH_COLOR.GlossaryTerm : _META_GRAPH_COLOR.Schema,
-    fillOpacity: 0.045, stroke: isTerms ? "#d3b06a" : "#aab3c5", lineWidth: 1, lineDash: [6, 4], collapsedMarker: false };
+    fillOpacity: 0.045, stroke: isTerms ? "#d3b06a" : "#aab3c5", lineWidth: 1, lineDash: [6, 4], collapsedMarker: false,
+    zIndex: _METZ.COMBO };   // graph-zorder(§52): 클러스터 배경 = 최하층 — 드래그 frontElement 잔존 승격도 rebuild 재-bake 로 복원
 }
 function _metaEdgeStyleFor(status, crossDs) {
   // crossds-rel(ADR-019): 교차DB 관계는 상태 무관 별도 클래스 — 마젠타 점선(same-ds candidate 골드 점선과 구분).
   //   프로브 검증 불가라 항상 추정성. trusted 승격돼도 교차DB 임을 시각 유지.
-  if (crossDs) return { stroke: "#a855c7", lineWidth: 1.8, lineDash: [2, 4], endArrow: true };
+  // graph-zorder(§52, 패널 design MINOR): EDGE 층 내부 tie 를 의미로 분해 — 신뢰 강도가 강한 엣지가
+  //   교차점에서 위에 그려지게 소수 오프셋(trusted +0.2 > candidate/교차DB +0.1 > 기본 +0). @antv/g 는
+  //   수치 정렬이라 유효. 층 상한(COLUMN=3) 미만 유지.
+  if (crossDs) return { stroke: "#a855c7", lineWidth: 1.8, lineDash: [2, 4], endArrow: true, zIndex: _METZ.EDGE + 0.1 };
   const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#cbd2db"),
-    lineWidth: status === "trusted" ? 3 : (status === "candidate" ? 1.8 : 1.4), endArrow: true };
+    lineWidth: status === "trusted" ? 3 : (status === "candidate" ? 1.8 : 1.4), endArrow: true,
+    zIndex: _METZ.EDGE + (status === "trusted" ? 0.2 : (status === "candidate" ? 0.1 : 0)) };
   if (status === "candidate") s.lineDash = [6, 4];   // 실선은 lineDash 키 생략(false 금지 — G6 크래시, BLUEPRINT §3)
   return s;
 }
 // graph-funcproc(ADR-016): 함수·프로시저 → 테이블 사용 엣지(ROUTINE_USES) — 보라 잔점선(추정 점선과 구분).
 function _metaRoutineEdgeStyle() {
-  return { stroke: _META_GRAPH_COLOR.Routine, lineWidth: 1.5, lineDash: [2, 3], endArrow: true };
+  return { stroke: _META_GRAPH_COLOR.Routine, lineWidth: 1.5, lineDash: [2, 3], endArrow: true, zIndex: _METZ.EDGE };
 }
 function _metaNodeStates(key) {
   const st = [];
@@ -4104,23 +4209,28 @@ function _metaG6Build() {
         nodes.push({ id: "GB:" + gm.key, type: _METtype, combo: id,
           data: { kind: "group-bg", group: gm.key, schema: id },
           style: { x: left + bw / 2, y: top + bh / 2, size: [bw, bh], radius: 10,
-            fill: gm.tint.bg, fillOpacity: 0.75, stroke: gm.tint.bd, lineWidth: 1.2, zIndex: -2 } });
+            // graph-zorder(§52): GROUP_BG(1) — 예전 -2 는 combo 배경(z0) **아래**라 @antv/g hit-test 에서 combo 에
+            //   삼켜져 §50 그룹 상호작용(배경 드래그=그룹 이동·클릭·우클릭)이 dead 였고, 그룹 배경을 잡으면
+            //   클러스터 전체가 이동했다(의미 불일치). combo 위·엣지(2)/칩(4) 아래로 정렬해 의미·hit-test 정합.
+            // 패널 ux MAJOR: GB 는 이제 그룹 드래그 핸들로 실동작 — cursor:move 로 어포던스 표시
+            //   (클러스터 이동은 combo 여백·라벨·접힌 카드 경로 — 범례에 안내).
+            fill: gm.tint.bg, fillOpacity: 0.75, stroke: gm.tint.bd, lineWidth: 1.2, zIndex: _METZ.GROUP_BG, cursor: "move" } });
         const hdText = `${gm.label} · ${gm.n}`;
         const hdW = Math.min(Math.max(46, Math.round(hdText.length * 7.2) + 18), bw - 36);   // GX 컨트롤 자리(우측 ~20px) 확보
-        // group-interact(§50 hotfix, PB-0008): GH 헤더 zIndex 를 **양수(5)** 로 — 음수(-1)면 combo 배경(z0)
-        //   뒤에 렌더돼 @antv/g hit-test 에서 combo 에 가려, 헤더 드래그가 node:dragstart 대신 combo:dragstart
-        //   (클러스터 이동)로 발화된다(라이브 실측 결함 — 헤드리스는 zIndex hit-test 미모델). 양수로 올려 헤더가
-        //   그룹 드래그 핸들로 잡히게 하고(헤더 스트립엔 멤버 없어 시각 회귀 0), cursor:move 로 핸들임을 표시.
+        // group-interact(§50 hotfix, PB-0008) + graph-zorder(§52): GH 헤더 = GROUP_HD(5) — 칩(4) 위 드래그
+        //   핸들. 음수면 combo 배경(z0) 뒤에 렌더돼 @antv/g hit-test 에서 combo 에 가려, 헤더 드래그가
+        //   node:dragstart 대신 combo:dragstart(클러스터 이동)로 발화된다(라이브 실측 결함 — 헤드리스는
+        //   zIndex hit-test 미모델). 헤더 스트립엔 멤버가 없어 시각 회귀 0, cursor:move 로 핸들임을 표시.
         nodes.push({ id: "GH:" + gm.key, type: _METtype, combo: id,
           data: { kind: "group-hd", group: gm.key, schema: id, label: gm.label },
           style: { x: left + 8 + hdW / 2, y: top + 13, size: [hdW, 18], radius: 9,
-            fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: 5, cursor: "move",
+            fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: _METZ.GROUP_HD, cursor: "move",
             labelText: hdText, labelFill: "#273449", labelFontSize: 10.5, labelFontWeight: 600,
             labelPlacement: "center" } });
         // group-interact(§50): 접기/펼치기 토글 컨트롤(그룹 헤더 우측) — 클릭 전용(드래그 불가).
         nodes.push({ id: "GX:" + gm.key, type: _METtype, combo: id,
           data: { label: gm.collapsed ? "+" : "−", kind: "group-ctl", group: gm.key, schema: id },
-          style: Object.assign(_metaCtlStyle(right - 13, top + 13), { zIndex: 1, size: [16, 16], labelText: gm.collapsed ? "+" : "−", labelFontSize: 14 }) });
+          style: Object.assign(_metaCtlStyle(right - 13, top + 13), { size: [16, 16], labelText: gm.collapsed ? "+" : "−", labelFontSize: 14 }) });   // graph-zorder(§52): zIndex 는 _metaCtlStyle 의 CTL(6) — GH(5) 위, 항상 클릭 가능
       });
     }
     L.place.forEach(({ it, lx, top }) => {
@@ -4160,7 +4270,11 @@ function _metaG6Build() {
       const cols = g.colsByTable.get(it.key);
       if (cols && cols.length) {
         const depIds = ["X:" + it.key];   // graph-drag(REQ ②): 종속 UI = 접기 ctl + 컬럼 노드들
-        nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key }, style: _metaCtlStyle(tx + Math.round(_METLAY.TW / 2) + 14, ty) });
+        nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key },
+          // graph-zorder(§52, 패널 ux MINOR): 흐름 내 per-table ctl 은 NODE 밴드 — CTL(6) 전역 최상층이면
+          //   타 칩을 그 위로 자유배치했을 때 "−" 가 뚫고 나와 허위 소속(원거리 접기)으로 오독된다.
+          //   자기 칩과는 비겹침(+14px 우측) + 같은 밴드 삽입순이라 클릭성 손실 없음. GX/XS(코너 앵커)는 CTL 유지.
+          style: Object.assign(_metaCtlStyle(tx + Math.round(_METLAY.TW / 2) + 14, ty), { zIndex: _METZ.NODE }) });
         let cyCol = ty + _METLAY.TROW / 2 + CDROP + _METLAY.CROW / 2;   // 첫 컬럼 중심 y
         cols.slice().sort(_metaGraphColCmp).forEach((c) => {
           nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyCol), { labelText: c.name || c.key }) });
@@ -4250,7 +4364,7 @@ function _metaG6BuildProducts() {
     const cnt = (typeof p.datasource_count === "number") ? p.datasource_count : null;
     nodes.push({ id: p.key, type: _METtype, states: _metaNodeStates(p.key),
       data: { label: p.name || p.key, kind: "product" },
-      style: { x: PX + PW / 2, y: cy, size: [PW, RH], radius: 10,
+      style: { x: PX + PW / 2, y: cy, size: [PW, RH], radius: 10, zIndex: _METZ.NODE,
         fill: "#e7f4ec", stroke: _META_GRAPH_COLOR.Product, lineWidth: 1.6,
         labelText: "🗂 " + (p.name || p.key) + (cnt != null ? "  · " + cnt : ""),
         labelPlacement: "center", labelFill: "#1c5c39", labelFontSize: 12, labelFontWeight: 700,
@@ -4261,7 +4375,7 @@ function _metaG6BuildProducts() {
     const cy = TOP + i * ROWH + RH / 2;
     nodes.push({ id: d.key, type: _METtype, states: _metaNodeStates(d.key),
       data: { label: d.name || d.key, kind: "datasource", scope: d.scope_key || "" },
-      style: { x: DX + DW / 2, y: cy, size: [DW, RH], radius: 10,
+      style: { x: DX + DW / 2, y: cy, size: [DW, RH], radius: 10, zIndex: _METZ.NODE,
         fill: "#eef6f1", stroke: _META_GRAPH_COLOR.Datasource, lineWidth: 1.4,
         labelText: "🔗 " + (d.name || d.key),
         labelPlacement: "center", labelFill: "#20603f", labelFontSize: 11.5, labelFontWeight: 600,
@@ -4272,7 +4386,7 @@ function _metaG6BuildProducts() {
     if (!e || e.type !== "USES") return;
     if (!present.has(e.source) || !present.has(e.target)) return;
     edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
-      style: { stroke: "#8fbfa3", lineWidth: 1.5, endArrow: true } });   // 실선(lineDash 생략 — G6 크래시 방지)
+      style: { stroke: "#8fbfa3", lineWidth: 1.5, endArrow: true, zIndex: _METZ.EDGE } });   // 실선(lineDash 생략 — G6 크래시 방지)
   });
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));
   return { combos: [], nodes, edges };
@@ -4669,6 +4783,7 @@ function _metaNodeDragStart(e) {
   //   L.x0/L.y0 는 카드·펼친 combo 공용 기준이라, 카드에서 옮겨도 펼쳤을 때 같은 offset 이 유지된다.
   if (String(id).startsWith("SC:")) {
     try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id.slice(3), curId: id, x: p[0], y: p[1] }; } catch (_) {}
+    _metaDragZBoost([id]);   // graph-zorder(§52): 내장 frontElement(영구 max+1) 대신 결정론 부스트 — dragend 복원
     return;
   }
   // group-interact(§50): sim-group(GB 배경/GH 헤더) 드래그 = 카테고리 그룹 통째 리지드 이동.
@@ -4694,10 +4809,13 @@ function _metaNodeDragStart(e) {
       if (dp) offs.push({ id: eid, ox: dp[0] - ap[0], oy: dp[1] - ap[1] });
     });
     _metaGraph._drag = { id, offs, group: gk, startX: ap[0], startY: ap[1] };
+    // graph-zorder(§52): 그룹 묶음(박스·헤더·컨트롤·멤버·종속) 전체를 함께 부스트 — grabbed 만 오르며
+    //   계층이 찢어지던 내장 frontElement 를 덮는다(호출이 늦어 우선). dragend 에 canonical 복원.
+    _metaDragZBoost([id].concat(offs.map((o) => o.id)));
     return;
   }
   const deps = _metaGraph.tableDeps.get(id);    // 테이블 key 만 등록됨(ctl/컬럼/용어/카드는 단독 이동)
-  if (!deps || !deps.length) return;
+  if (!deps || !deps.length) { _metaDragZBoost([id]); return; }   // graph-zorder(§52): 종속 없는 단독 노드도 부스트+복원 대칭
   let tp;
   try { tp = g.getElementPosition(id); } catch (_) { return; }
   if (!tp) return;
@@ -4709,8 +4827,11 @@ function _metaNodeDragStart(e) {
     try { dp = g.getElementPosition(d); } catch (_) { return; }
     if (dp) offs.push({ id: d, ox: dp[0] - tp[0], oy: dp[1] - tp[1] });
   });
-  if (!offs.length) return;
+  if (!offs.length) { _metaDragZBoost([id]); return; }
   _metaGraph._drag = { id, offs };
+  // graph-zorder(§52): 테이블+종속(컬럼·"X:" ctl)을 함께 부스트 — 드래그 중 칩만 최상층으로 떠서
+  //   자기 컬럼과 계층이 찢어지던 내장 frontElement 단독 승격을 결정론 부스트로 대체(dragend 복원).
+  _metaDragZBoost([id].concat(offs.map((o) => o.id)));
 }
 // drag: 종속을 "테이블 현재위치 + 고정 오프셋" 으로 절대 이동(누적 drift·zoom 수학 비의존).
 function _metaNodeDrag() {
@@ -4729,6 +4850,16 @@ function _metaNodeDragEnd(e) {
   _metaNodeDrag();
   const g = _metaGraph.graph;
   const id = e && e.target && e.target.id;
+  // graph-zorder(§52): 드래그 임시 부스트(+내장 frontElement 잔존) canonical 복원 — 이후 분기(그룹
+  //   커밋·nodePos 기록·rebuild)와 직교. 드래그 이력이 z-order 로 굳지 않는 것이 본 cycle 의 핵심 불변식.
+  {
+    const dz = _metaGraph._drag;
+    const rids = [];
+    if (id) rids.push(id);
+    if (dz && dz.id && dz.id !== id) rids.push(dz.id);
+    if (dz && dz.offs) dz.offs.forEach((o) => rids.push(o.id));
+    _metaDragZRestore(rids);
+  }
   // group-interact(§50): sim-group 리지드 드래그 종료 → grabbed 델타를 groupOffset 에 누적 + 소속 멤버
   //   nodePos(절대좌표)도 같은 델타로 시프트(freeplace clusterOffset MAJOR fix 동형 — 개별 배치 노드가
   //   그룹 이동에서 분리되지 않게). 시각 위치는 이미 drag-element+리지드 핸들러가 최종화 — 즉시 rebuild 불요.
@@ -4774,7 +4905,15 @@ function _metaComboDragStart(e) {
   if (!g || !id) return;
   try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id, curId: id, x: p[0], y: p[1] }; } catch (_) {}
 }
-function _metaComboDragEnd() { _metaClusterDragCommit(); }
+function _metaComboDragEnd(e) {
+  const id = e && e.target && e.target.id;
+  _metaClusterDragCommit();
+  // graph-zorder(§52): 내장 drag-element frontElement 는 combo 드래그 시 combo+**하위 전체(내부 엣지
+  //   포함)**를 델타 승격(영구 잔존·반복 시 단조 증가 — 드래그 이력이 클러스터 간 z-order 로 굳음).
+  //   드래그 중에는 그 coherent 승격을 그대로 쓰고(시각적으로 자연), 종료 시 같은 범위를 canonical 로
+  //   복원한다 — 노드+콤보(_metaComboMemberIds) + 엣지(_metaComboEdgesRestore, 패널 ux BLOCKING).
+  if (id) { _metaDragZRestore([id].concat(_metaComboMemberIds(id))); _metaComboEdgesRestore(id); }
+}
 // combo:dragend · 접힌 카드 dragend 공용 커밋: _comboDragStart 의 델타를 clusterOffset 에 누적 후 클리어.
 function _metaClusterDragCommit() {
   const st = _metaGraph._comboDragStart;

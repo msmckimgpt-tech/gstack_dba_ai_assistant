@@ -944,3 +944,35 @@ source_of_truth: true
 - 근거: 배포본(admin.js `?v=20260704-group-drag-hotfix`·GH zIndex 5 서빙) 에서 **라이브 패치 없이** notice 그룹 헤더
   드래그 → groupOffset={dx:141,dy:−77} 설정·accountdb clusterOffset=null(그룹 드래그·combo 아님)·notice 만 이동·
   t_account 불변·pageerror 0(gi-06). 코드 품질은 REV-…-group-drag-hotfix·REV-…-group-interact 에서 완료.
+
+## REV-20260704T112513-ai-claude-feature-0016-graph-zorder [SUBAGENT: PASS-WITH-FIXES] — 그래프 뷰 z-order 의미 정합 (§18.8 적대 패널 3-렌즈)
+- Trigger: UI/화면/레이아웃/드래그 keyword matched (그래프 뷰 표시 계층·hit-test) → ux, design dispatch
+  + frontend correctness(G6 렌더링 정합) 보강 렌즈. Code change (admin.js/admin.html).
+- 대상: TASK §52 graph-zorder — 의미 z-스케일 `_METZ`(COMBO 0 < GROUP_BG 1 < EDGE 2 < COLUMN 3 <
+  NODE 4 < GROUP_HD 5 < CTL 6) build bake + 드래그 boost/restore(내장 drag-element frontElement
+  영구 승격 상쇄) + GB hit-test 회복.
+- **design: PASS** (MINOR 2 · NIT 2) — MINOR-1 EDGE 층 내부 무순서(trusted 3px 가 교차점에서 약한
+  엣지에 덮임) → 신뢰 강도 소수 오프셋(trusted +0.2/candidate·교차DB +0.1)으로 **반영**. MINOR-2
+  "X:" ctl 전역 최상층 trade-off 문서화 권고 → ux MINOR 반영(NODE 밴드 이동)으로 **초과 해소**.
+  NIT(GH>칩 겹침·combo 라벨<엣지)는 근거 검토 후 수용(회귀 아님/§50 hit-test 요구).
+- **ux: FAIL → 전건 해소** —
+  - BLOCKING(콤보 드래그 시 내장 frontElement 가 **내부 엣지**도 델타 승격하는데 복원은 노드+콤보만
+    → 관계선이 칩·헤더·컨트롤 위 영구 잔존·단조 증가): `_metaComboEdgesRestore`(combo 소속 끝점 엣지
+    전부 canonical 복원, `_metaEdgeZFor` bake-1:1) **반영**.
+  - MAJOR-1(`__terms__` 합성 combo 를 `_metaZFor` 가 NODE 오판 → 복원 시 배경이 칩과 동률로 떠서
+    hit-test 가로챔): 명시 분기 **반영**.
+  - MAJOR-2(GB 승격으로 그룹 스키마 내부 드래그=그룹 이동인데 어포던스 부재): GB cursor:move +
+    범례 문구("배경·헤더 드래그=그룹 이동 · 클러스터 이동은 여백/이름/카드") **반영**. §50 의미
+    정합(AC-4) 자체는 리뷰어도 타당 판정.
+  - MINOR-1(드롭 순간 동률-z 가라앉음·클러스터 겹침 샌드위치): 의미-계층 우선 설계의 의도적
+    trade-off 로 **수용** — TASK §52.3 known trade-offs 명문화.
+  - MINOR-2("X:" per-table ctl CTL 최상층의 허위 소속 어포던스): NODE 밴드 이동 **반영**(자기 칩과
+    비겹침이라 클릭성 손실 없음, GX/XS 코너 앵커만 CTL 유지).
+  - NIT(드래그 중 연결 엣지 비부스트): 기존 동작 동등(회귀 아님) — **수용**.
+- **frontend correctness: 세션 한도 조기종료** → 잔여 포인트 메인 세션 직접 검증으로 대체:
+  setElementZIndex(id→z 맵) 공개 API 형태 번들 실측(`zt(t)?t:{[t]:e}`) · zIndex 반영 경로 =
+  model.updateData style 병합(+draw stage:"zIndex") · 내장 behavior 가 constructor 등록이라 앱
+  핸들러보다 선실행(boost 후승 확정) · dragstart 는 이동 임계 후 발화(클릭-무이동 잔존 없음) ·
+  bake↔`_metaZFor`/`_metaEdgeZFor` 1:1 표 대조(누락 0) · `_metaComboOwnerOf` 가 build 의
+  `_metaSchemaComboOf`+장식 prefix 규약과 동일 · TDZ 무해(전역 const 가 함수 실행 전 정의).
+- 재검증: node --check PASS(반영 후 3회). 라이브 계층 검증은 T52.7 POST-DEPLOY PB-0008.

@@ -966,3 +966,11 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
 - Rollback Notes: 해당 doc 라인 revert.
+
+## CHG-20260704T091432-ai-claude-feature-0016-graph-zorder
+- Date: 2026-07-04
+- Related Requirement: REQ-20260704T120000-graph-zorder (TASK §52) — 그래프 뷰 요소가 의미와 정합하는 z-order 로 구성되도록. 사용자 보고: 상호작용에 따라 순서가 의미와 무관하게 뒤바뀌고, 요소 성질 변경 시 z-order 자체가 뒤틀림.
+- Summary: 캔버스 요소 **의미 z-스케일 `_METZ`** 단일 소스 도입 — `COMBO(0) < GROUP_BG(1) < EDGE(2) < COLUMN(3) < NODE(칩·카드 4) < GROUP_HD(5) < CTL(6)` 을 build(_metaG6Build/_metaG6BuildProducts)가 전 요소에 bake. 근본 원인 2축 해소: ① G6 v5 내장 drag-element 가 dragstart 마다 `frontElement`(전역 max+1, **영구·단조증가**) 호출 — 드래그 이력이 z-order 로 굳던 것을 드래그 중 `canonical+DRAG_BOOST(1000)` 결정론 부스트(대상+종속/그룹 묶음) + dragend `canonical` 복원(`_metaDragZBoost/_metaDragZRestore`, combo 는 `_metaComboMemberIds` 로 하위 전체 복원)으로 대체. ② zIndex 미지정(z0) 요소가 @antv/g 삽입순(renderOrder)에 의존해 setData diff 의 생성 순서(펼침·접기·검색·카드↔combo 전환)마다 순서가 재편되던 것을 명시 bake 로 제거(잔존 승격도 rebuild 재-bake 로 자가 치유). 부수 정합: GB(그룹 배경) z −2→1 — combo(0) 뒤라 hit-test 에 삼켜져 §50 그룹 상호작용(배경 드래그=그룹 이동·클릭·우클릭)이 dead 였던 것을 회복(그룹 배경을 잡으면 이제 그룹이 이동, 클러스터 이동은 combo 여백·라벨·카드 경로 유지). GX z 1→CTL(6). 엣지 EDGE(2) 로 항상 칩 아래.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}` · `unit/feature-0016-metadata-graph/docs/{TASK,REPORT,TEST,REVIEW,MODIFY}.md`
+- Impact: frontend-only 표시 계층·hit-test 정합. **마이그 없음·인가 무변경·데이터 무영향·API 무변경**. 정적 자산 baked → web 재배포 필요(insight-worker 불요). cache-buster `admin.js?v=20260704-graph-zorder`.
+- Rollback Notes: admin.js/admin.html 단일 커밋 revert + web 재배포로 즉시 복원. DB 변경 없음.
