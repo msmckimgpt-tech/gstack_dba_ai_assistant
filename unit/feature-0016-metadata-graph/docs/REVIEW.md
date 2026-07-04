@@ -8,6 +8,9 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260704T075100-ai-claude-feature-0016-graphux7-postdeploy [SKIPPED:doc-only-postdeploy] — graphux7 POST-DEPLOY PB-0008 결과 기록 (코드 무변경)
+- 근거: PR #587 병합(325f5de4) → `make deploy-web` 무중단 롤링(web-a/b·soak 90s 통과) 후 실 Windows Chrome PB-0008 라이브 PASS(#1 nav "2/2"·#3 3탭+pg_trgm 제거·#7 "▦ 접기"·#4 Set·#5 라벨·pageerror 0)를 TASK §51.10 [x]·TEST(graphux7 Run POST-DEPLOY)·MODIFY(CHG-…-postdeploy)에 기록. 코드 품질 검증은 원 cycle REV-20260704T071838-graphux7 [SUBAGENT: PASS-WITH-FIXES]에서 완료. 본 커밋은 doc-only.
+
 ## REV-20260704T151336-ai-claude-feature-0016-graph-dblclick-stable [SUBAGENT: PASS-WITH-FIXES] — 더블클릭 재배치 순서 안정화(§49) 적대 리뷰 2라운드
 - 대상: 그래프 더블클릭 전체 재배치 수정 — 배치 순서 안정화(`_metaStableSeq` + clusterOrder/tableOrder/groupOrder/groupTableOrder).
 - 방법: §18.8 적대 리뷰(general-purpose), 8개 결함 클래스 프로브(mutation·ordering·simgroups·leak·threshold·nodePos·fresh-load·재출현).

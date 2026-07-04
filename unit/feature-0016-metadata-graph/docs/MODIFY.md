@@ -958,3 +958,11 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}` · `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` · `unit/feature-0002-agent-core/src/modules/node_analysis.py` · `unit/feature-0002-agent-core/tests/test_graph_funcproc_uxfix.py` · `unit/feature-0016-metadata-graph/docs/{TASK,REPORT,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 UI 상호작용·표시 개선 + 백엔드 비파괴 reused-progress passthrough. **마이그 없음·인가 무변경·데이터 무영향**. 정적 자산 baked → web 재배포 필요(insight-worker 불요). cache-buster `admin.js/styles.css?v=20260704-graphux7`.
 - Rollback Notes: 5 코드 파일 + test revert (단일 커밋). 정적 자산이라 web 이미지 재배포로 즉시 복원. DB 변경 없음.
+
+## CHG-20260704T075100-ai-claude-feature-0016-graphux7-postdeploy
+- Date: 2026-07-04
+- Related Requirement: CHG-…-graphux7(§51) 완료 게이트(TASK §51.10) — 배포 후 PB-0008 실 Windows 라이브 실측 기록.
+- Summary: doc-only — PR #587 병합(325f5de4) → `make deploy-web` 무중단 롤링(web-a/b→325f5de4·soak 90s 통과) 후 실 Windows Chrome(win-browser relay)로 PB-0008 PASS: #1 nav 바 출현("2/2"·뒤로 활성·이력≤1 `[hidden]` 숨김) · #3 3탭 렌더+전환·pg_trgm 제거·검색매칭/§50 그룹힌트 parity · #7 "▦ 접기" 버튼 클릭→접힘 · #4 `_analyzePending` Set 라이브 · #5 라벨 헬퍼 라이브 · pageerror 0. 서빙 `admin.js?v=20260704-graphux7`. TASK §51.10 [x], TEST(graphux7 Run POST-DEPLOY) 갱신. (#2 단/더블 실 마우스 육안·#6 실드래그[§50 이 실대상 해결]는 후속.)
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.
