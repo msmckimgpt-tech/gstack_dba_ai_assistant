@@ -40,8 +40,3 @@ datasource 무권한이라 이어지는 질문은 맥락이 끊긴다(수용된 
 ## §4. 외부 검증 로그 (append-only)
 (엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. eng-review/cso 검증 기록은 REVIEW.md)
 
-<!-- share-visibility-window(TASK-20260704) 은 §1·§2-Alt-C 를 확장한다(뒤집지 않음): owner 가 공유
-     열람 범위를 [from,to] window 로 좁히는 opt-in 추가, AR-1/AR-2 는 windowed 한정 반전. 사용자 결정
-     "라이브룸 + 멤버 필터" + owner-answer "표시 태그만". 근거·적대검증 정본 = REVIEW.md 해당 cycle 엔트리
-     + SECURITY.md §21. §4 는 human 외부검증 전용이라 본 AI-cycle 근거는 여기 주석으로만 남긴다. -->
-
