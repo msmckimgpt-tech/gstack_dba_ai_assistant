@@ -982,3 +982,11 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}` · `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: frontend-only. 마이그 0·인가 무변경. web 재배포 필요. cache-buster `admin.js?v=20260704-graph-zorder-h2`.
 - Rollback Notes: 단일 커밋 revert + web 재배포.
+
+## CHG-20260704T120651-ai-claude-feature-0016-graph-zorder-postdeploy
+- Date: 2026-07-04
+- Related Requirement: TASK §52 완료 게이트(T52.7/T52.9) — 배포 후 PB-0008 라이브 실측 기록.
+- Summary: doc-only — PR #589(3b20e77c)·h2 PR #590(e76642e9) 배포 후 실 Windows Chrome real-mouse PB-0008 **강화판 15/15 PASS** (S1 bake 전수 · S2 드래그 부스트/복원 · S3 콤보 내부엣지 비잔존 · S4 GB 그룹 드래그 · S5/S5b rebuild canonical 불변 · pageerror 0). TASK T52.7/T52.9 [x], feature-0003 TEST.md §3 라이브 Run append. 증적 artifacts/feature-0016-metadata-graph/20260704-graph-zorder/.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용 — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.

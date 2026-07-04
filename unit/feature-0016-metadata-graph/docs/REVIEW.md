@@ -991,3 +991,11 @@ source_of_truth: true
 - **NIT 반영**: h2 주석 정밀화 — 접힌 카드 SC:·products 노드는 combo 키 부재라 애초 평탄화 비대상.
 - 재검증: node --check PASS(반영 후). 라이브 실측은 h2 배포 후 PB-0008 강화판(S2-after canonical ·
   S5 canonical 전수 · S5b 순수 update-rebuild 프로브) — T52.9.
+
+## REV-20260704T120651-ai-claude-feature-0016-graph-zorder-postdeploy [SKIPPED:doc-only-postdeploy] — 배포 후 PB-0008 라이브 실측 기록 (코드 무변경)
+- 대상: graph-zorder(PR #589)·h2(PR #590) 배포 후 라이브 실측 결과를 TASK T52.7/T52.9·feature-0003
+  TEST.md §3·MODIFY 에 기록하는 doc-only 후속. **코드·자산 무변경** → §18.8 적대 패널 비적용(SKIPPED).
+- 근거: 강화판 15/15 PASS — 특히 1차 실측 FAIL 이던 S2-drag-after 가 {4/3/4} canonical 복원으로 전환
+  (h2 실효), S5b 순수 update-rebuild 프로브 canonical 위반 0(computeZIndex 평탄화 해소 실증),
+  콤보 드래그 내부 엣지 비잔존(1차 cycle ux BLOCKING 회귀 없음). 코드 품질은
+  REV-…-graph-zorder(3-렌즈)·REV-…-graph-zorder-h2(6-포인트)에서 완료.
