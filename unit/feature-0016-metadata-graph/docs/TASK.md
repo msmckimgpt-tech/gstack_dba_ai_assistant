@@ -1098,7 +1098,18 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T44.6 §18.8 적대 리뷰(REV-20260703T101622): 좌표프레임·offset수학·drag pairing·회귀 6축 → MAJOR 1(nodePos가
   clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
 - [x] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
-  회귀 접기/펼치기). 라이브 canvas 드래그 자동화 곤란 → 실 Windows 확인 게이트.
+  회귀 접기/펼치기).
+- [x] T44.8 **POST-DEPLOY 라이브 드래그 검증 — PASS (Environment: Windows-browser, 2026-07-04)**: 초기엔 "canvas 드래그
+  자동화 곤란"으로 육안 게이트 유보했으나, **Playwright `connect_over_cdp`(win-browser relay @172.26.144.1:9223)로
+  실 Windows Chrome 에 attach → `page.mouse.move→down→16-step move→up` 실제 마우스 드래그 자동화 성공**. 실측 결과:
+  ① **접힌 카드(클러스터) 드래그 이동**: accountdb 카드 (548,524)→(430,415) 실이동(fp-03). ② **combo 드래그 이동**:
+  펼친 클러스터 combo 헤더 드래그로 clusterOffset 누적(fp-06). ③ **테이블 노드 드래그 + combo 반응형 리사이즈**:
+  tapjoy combo 내 MessageQueue 노드 (535,505)→(470,630) 이동 시 combo 배경 박스가 이동 노드 포함하도록 아래로
+  auto-fit 리사이즈 + ROUTINE_USES 엣지 재라우팅(fp-07). ④ **접기/펼치기 회귀**: accountdb·tapjoy 펼침 시
+  masonry 재배치 + sim-group 배경 상자 정상(fp-04). ⑤ **드래그 위치 persistence(rebuild-safe)**: statsdb
+  (548,576)→(400,400) 드래그 후 tapjoy 펼침(setData+draw rebuild)에도 statsdb 오프셋 유지·snap-back 없음(fp-06).
+  ⑥ **초기화**: 리셋 시 clusterOffset·nodePos clear → accountdb 원위치 복귀(fp-05). 전 상호작용 통틀어 **pageerror 0**.
+  증적 fp-03~fp-07.png. Runner: AI(Playwright real mouse via CDP). → **초기 "실 Windows 확인 게이트" 유보 해소**.
 ## 45. graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프 뷰/AI 능동 분석 UX 4건 (2026-07-03, entry persona dispatch)
 
 REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메타데이터 > 그래프 뷰):
@@ -1175,3 +1186,87 @@ REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메�
   sig strip·MAJOR-2 phantom clear·MINOR-3 OOM 가드 반영). 정본 REVIEW REV-20260703T160303.
 - [x] T46.9 **라이브 마이그(0035) 게이트 표면화 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·
   affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — 후속 확인).
+
+## 47. crossds-rel — 크로스-데이터소스 관계 (Phase B, ADR-019, 2026-07-04 사용자 3대 개선 中 B)
+
+- Related Requirement: 사용자 "다른 DB 간 관계가 구성될 수 있으니 그 구조를 위한 연결 구축". 정본: DECISIONS ADR-019.
+- 등급: **Major** (라이브 agent_kb 마이그 0036 비파괴 + 관계 엔진 크로스-ds 확장 + insight-worker 신규 데몬 OFF).
+- 설계: ultracode 워크플로우(understand6+design2+적대4, C 와 공동) → 구현 → 구현 적대리뷰 → flip-전 블로커 반영.
+
+### 47.1 구현
+- [x] T47.1 alembic 0036: source/target_datasource_key + 7-col UNIQUE + CHECK 'manual' + ds 인덱스 2(비파괴·backfill·migrate-lint ACK).
+- [x] T47.2 relationships.py: upsert 7-col + manual 승격 + 프로브 skip 가드 + infer_cross_datasource/store_xds(effective schema·reverse-dup·per-ds cap) + 컨텍스트 제외 + [교차DB] digest + apply_signal intra-ds 가드.
+- [x] T47.3 metadata_graph.py: sync_relationship/delete tgt_scope+cross_ds + sync_graph 관계 투영 ds→scope(intra-ds 보존) + neighborhood cross_ds emit.
+- [x] T47.4 node_analysis.py: cross_ds 완화(_relevance/parent-table) + _record 캡처 + _enqueue 자기-scope. insight.py: xds 데몬(OFF). config 7 노브. schema.sql 정합. admin.js 마젠타 점선.
+
+### 47.2 검증
+- [x] T47.5 node --check·py ast·migrate-lint ACK·pytest **67 PASS**(head-aware ON-CONFLICT==UNIQUE 불변식 포함).
+- [x] T47.6 §18.8 2단계 적대검증: 설계 워크플로우 + 구현 리뷰 **SHIP(inert)**. flip-전 블로커(MSSQL effective schema
+  MAJOR·negative-decay 가드·reverse-dup·cap) 반영. REVIEW REV-20260704T043653.
+- [x] T47.7 **라이브 마이그(0036) 게이트 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·관계 무회귀·
+  pageerror 0; 크로스-ds 엣지는 데몬 AUTO=1 flip + 임베딩 populate 후 eventual — 후속 확인).
+
+## 48. graph-ux3fix — 3대 UX 개선: 그래프 뷰 최상위 탭 분리 · 검색 부드러운 하이라이트 · 더블클릭 재배치(후속) (2026-07-04, 사용자 요청)
+
+> 번호 주의: 본 작업은 §45 로 시작했으나, 병렬 세션이 §45(graph-funcproc-uxfix)·§46·§47 을 먼저 머지해 번호가 충돌 → §48 로 재번호(§13.1 감지-후-재번호). 코드/캐시버스터 slug 는 `graph-ux3fix` 유지.
+
+사용자 요청 3건 (`관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 개선):
+① 그래프 뷰를 `지식베이스 > 그래프 뷰` 최상위 탭으로 **분리**(메타데이터의 형제) — 화면 높이를 더 넓게 사용.
+② 노드 **더블클릭 시 전체 재배치** 이슈 수정 — 이동해둔(드래그) 노드 위치 보존, 비조작 노드가 우선 밀림(밀린 노드는 조작 노드 아님).
+③ [테이블·컬럼·용어] 검색 시 **테이블 너비 증가** → **부드러운 하이라이트**.
+
+REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 UX). frontend-only(admin.html/js/styles.css, feature-0003 거주). 현재 main(§47) 위에 병합·통합 완료(admin.js/styles 자동병합, admin.html 범례+캐시버스터 충돌 해소, funcproc 범례 항목 보존).
+
+### 48.1 ① 그래프 뷰 최상위 탭 분리 + 높이 확장 (admin.html/js + styles.css)
+- [x] T48.1 admin.html: 지식베이스 그룹에 `data-admin-tab="graph"` 탭 버튼 추가 · 메타데이터 서브탭 `data-meta-subtab="graph"` 제거 · `#metadataGraphView` 블록을 새 `<section data-admin-pane="graph">`(자체 pane-head + `#graphScopeSelect`)로 이동 · 인라인 `display:none` 제거 · 범례 glow 칩(+funcproc "함수·프로시저" 항목 병합 보존).
+- [x] T48.2 admin.js: `ADMIN_TAB_PERMISSIONS.graph` 추가 + 메타데이터 OR-배열에서 `metadata.graph.read` 제거 + `switchTab` graph 분기 + `_METADATA_SUBTAB_PERM`/`_METADATA_NO_CREATE`/`_metaBindControls` graph 배선·`_metaHideGraph` 제거 + `_metaShowGraph` 스트립 + `_metaPopulateScopeSelect` 양 select 동기화 + `#graphScopeSelect` 바인딩.
+- [x] T48.3 styles.css: 스크롤 셀렉터 `[data-admin-pane="graph"]` 전환 + 좁은화면 캔버스 높이 clamp 상향.
+- [x] T48.4 (적대리뷰 D1) 크로스탭 스코프 stale 봉인: `_metaGraph.loadedScope`·`adminState.metadata.loadedScope` 추적 → 재진입 diverge 시 재로드(양방향).
+
+### 48.2 ③ 검색 부드러운 하이라이트 (admin.js)
+- [x] T48.5 `_metaTableStyle`/`_metaTermStyle` 폭 rel-무관 고정(TW=150 / 130) + `_metaG6Build` `trel` 부스트 제거, `X:` ctl offset `_METLAY.TW`.
+- [x] T48.6 `node.state.match` soft glow(앰버 shadow) + `_metaNodeStates` match push(mode==="search" && searchMatchNodes) + `searchMatchNodes` 채움/리셋. 범례·상태문구 glow. (funcproc 함수·프로시저 노드도 동일 match 상태로 glow 가능 — 코드 정합.)
+- [x] T48.7 (적대리뷰 D1) labelMaxWidth 클램프(테이블 TW-10, 용어 118) — 폭 고정으로 라벨 박스 넘침 방지.
+
+### 48.3 ② 더블클릭 재배치 — 후속(라이브 반복 검증 필요)
+- [~] T48.8 1차 접근(클러스터 원점 sticky clusterBase) §18.8 3-렌즈 적대리뷰 2/3 회귀 확정(카드→combo 확장 이웃 겹침) → **되돌림**. 요구②의 정합 구현 = 충돌해소 레이아웃 = 라이브 반복 후속 cycle. **사용자 결정(2026-07-04): ①·③ 먼저 출하, ②는 후속.**
+
+### 48.4 검증·통합·배포
+- [x] T48.9 `node --check` admin.js PASS(clusterBase 되돌림 잔존 0). §18.8 3-렌즈 적대 리뷰(REV-20260704T014646) 확정결함 3건(겹침→②되돌림·크로스탭 stale·라벨넘침) 반영.
+- [x] T48.10 현재 main(§47, 069b8934) 병합·통합: admin.js/styles.css 자동병합(내 IA·검색 배선 무결 + funcproc/embed/crossds 요소 46 보존, 옛 서브탭 경로 접근 코드 0), admin.html 충돌 3건(캐시버스터×2·범례) 해소(범례에 funcproc 항목 병합 보존), 문서 append-only 충돌 keep-both, §45→§48 재번호.
+- [x] T48.11 **PB-0008 실 Windows 시각검증 PASS**(2026-07-04, 실 Windows Chrome/149 via bin/win-browser.py relay @172.26.144.1:9223, `https://localhost/admin` 로그인 세션, 배포 f3b60f1d 후): **①** 좌측 `지식베이스` 그룹에 `메타데이터`·`그래프 뷰` 별도 최상위 탭 렌더(그래프 뷰 클릭→전용 pane, canvas 476×617 전체높이, G6 5레이어, 데이터소스 select 20건, 스키마 카드 렌더). **③** 검색 `log`→'스키마 7개 매칭·매칭 테이블(앰버 글로우)' 상태 + 스키마 펼침 시 매칭 노드 **부드러운 앰버 글로우**(너비 불변, 미니맵에도 glow) 육안 확인. 메타 서브탭 graph 부재·범례 glow 칩·funcproc 병합 보존 확인. 증적 스크린샷 pb0008-graph-tab.png·pb0008-search-glow-expanded.png. Runner: AI(win-browser eval/screenshot, pageerror 0).
+- [x] T48.12 배포 완료(PR #581 → main f3b60f1d, gh 토큰 HTTPS push): `deploy-web.sh` 무중단 롤링(web-a/web-b f3b60f1d, one-at-a-time, soak 90s 통과, Caddy blip 0). 마이그 pending 0(0036==head, frontend-only). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz status:ok git_commit=f3b60f1d(양 replica), 캐시버스터 admin.js/styles.css?v=20260704-graph-ux3fix, 라이브 admin.js 심볼(switchTab graph·graphScopeSelect·searchMatchNodes·match glow·loadedScope, clusterBase/_metaHideGraph 제거 0), admin.html data-admin-pane/tab="graph"·graphScopeSelect 존재·메타 서브탭 graph 0. **실 Windows PB-0008 육안은 무인 3중벽으로 미수행 → 사용자 확인 대기(T48.11).**
+
+## 49. graph-dblclick-stable — 더블클릭 재배치 수정: 배치 순서 안정화 (2026-07-04, 사용자 요청 ② 후속 cycle)
+
+사용자 요청 ②(§48 에서 후속으로 미룬 것): 노드 더블클릭 시 전체 재배치 이슈 수정 — 이동해둔(드래그) 노드 위치 보존, 비조작 노드가 우선 밀림(밀린 노드는 조작 노드 아님).
+
+배경: §48 의 1차 접근(클러스터 원점 고정 clusterBase)은 적대리뷰에서 카드→combo 확장 겹침 회귀로 되돌림. 근본원인 재분석: 더블클릭(`_metaGraphExpand`)이 이웃을 ingest 후 `_metaG6Build` 재실행 → 클러스터 순서(`_metaRelSchemaOrder`)·클러스터내 테이블 순서(`_metaRelOrderAll`)를 매번 **re-seriate** → 기존 노드가 그리드를 점프. 위험도 Major(레이아웃 엔진). frontend-only(admin.js).
+
+### 49.1 구현 — 배치 순서 안정화 (admin.js)
+- [x] T49.1 `_metaStableSeq(fresh, savedKeys, keyOf)` 순수함수: 저장 순서 항목 먼저(현존만) + 신규는 fresh(seriated) 순서 append.
+- [x] T49.2 state `clusterOrder`(클러스터 순서)·`tableOrder`(flat masonry 테이블)·`groupOrder`/`groupTableOrder`(simgroups 그룹·그룹내 테이블), `_metaGraphResetModel` 에서 clear(fresh load = 순수 seriation).
+- [x] T49.3 `_metaG6Build`: ids(클러스터)·relOrder(flat 테이블) 안정화. `_metaSimGroups`: serIds(그룹)·ordered(그룹내 테이블) 안정화(적대리뷰 R1 반영).
+- [x] T49.4 효과: 기존 노드는 masonry 열/슬롯 유지(제자리), 신규만 append, 비조작 노드는 클러스터 폭 변화 시 밀림(요구③), 드래그(nodePos)는 직교 보존(요구②), packer 유지로 **겹침 없음**(clusterBase 위치고정 접근의 겹침 회귀 회피).
+
+### 49.2 검증
+- [x] T49.5 `node --check` PASS + `_metaStableSeq` 격리 단위테스트 **6/6 PASS**(순수 seriation·기존 순서 보존·신규 append·제거 drop·5회 반복 drift 0·객체 keyOf).
+- [x] T49.6 §18.8 적대 리뷰 2라운드: **핵심 로직 clean**(ids `length=0` mutation 비별칭·schemaIdx/relOrder 안정화후 계산·leak 없음(collapse 는 컬럼만·resetModel clear)·nodePos 직교(base slot 위 델타)·fresh-load 동치·클러스터 재출현 coherent). **R1**(simgroups 미커버) → `_metaSimGroups` 안정화 반영. **R2**(innerCols 임계 7/15/28 교차 시 클러스터 재열)는 반응형 레이아웃 고유 트레이드오프 — 비파괴·'공간 확보' 성격으로 문서화(범위 외). REV-20260704T151336-graph-dblclick-stable.
+- [x] T49.7 배포 완료(PR #583 → main 1df96431, gh 토큰 HTTPS push): `deploy-web.sh` 무중단 롤링(web-a/b 1df96431, one-at-a-time, soak 통과). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz git_commit=1df96431, 캐시버스터 `admin.js?v=20260704-graph-dblclick`, 라이브 심볼 `_metaStableSeq`·clusterOrder/tableOrder·groupOrder/groupTableOrder. 그래프 탭·스키마 카드 렌더·데이터소스 로드 라이브 확인, pageerror 0.
+- [~] T49.8 **더블클릭 canvas 상호작용 라이브 육안 = 사용자 확인 필요**: G6 canvas 노드 더블클릭은 win-browser 로 자동 구동 불가(CDP 좌표 마우스 미지원 + 합성 pointer 이벤트가 @antv/g 히트테스트 미도달 — graph-drag §41 등 직전 cycle 과 동일 canvas 한계). 코드-레벨(격리테스트·적대리뷰 6축)·배포·자산·렌더링은 검증됨. 사용자 실 마우스로 (a) 스키마 2개 펼침 → 한 테이블 더블클릭 → 기존 노드 제자리·신규 이웃만 추가·겹침 0, (b) 노드 드래그 후 더블클릭 → 드래그 위치 보존 확인 요망. (참고: freeplace liveverify(§44 T44.8)에서 Playwright `connect_over_cdp` real mouse 로 G6 canvas 드래그 자동 구동이 실증됨 — 후속 PB-0008 은 이 방법 사용 가능.)
+
+## 50. group-interact — 카테고리 그룹(sim-group) 상호작용: 드래그·접기·반응형 리사이즈 (2026-07-04, 사용자 회귀 재보고)
+
+사용자 재보고: "스키마 클러스터 내 각 테이블을 그룹 단위로 묶어둔 구조(카테고리 그룹)가 드래그 및 접기, 그 외 UI 조작이 진행되지 않는다. 첫 의도는 카테고리 그룹에 대한 작업이었는데 현재는 테이블 노드 단위로 진행됐다." → freeplace(ADR-015)가 combo·테이블 노드 레벨에만 상호작용을 복원했고, 그 사이 계층인 **카테고리 그룹**(= 유사 속성 그룹 / sim-group, ADR-013 의 GB 배경박스/GH 헤더칩)은 비상호작용 장식으로 남아 있던 것이 근본원인. 등급 **Major**(프론트 상호작용·다수 상태/build/wiring). 정본 ADR-020 / frontend-only(admin.js, 코드 거주 feature-0003). PLAN-APPROVED(사용자 플랜 승인 2026-07-04).
+
+### 50.1 구현 (admin.js frontend-only)
+- [x] T50.1 state: `groupOffset`(groupKey→{dx,dy})·`groupCollapsed`(Set)·`groupMembers`(groupKey→[테이블id])·`groupOf`(테이블id→groupKey) + `_metaGraphResetModel` 에서 groupOffset/groupCollapsed/groupMembers/groupOf clear + build 초입 groupMembers/groupOf 재초기화.
+- [x] T50.2 build sim-group 분기: 접기(`isCollapsed` — groupCollapsed & 검색 매칭 시 강제 펼침; `hEff`=헤더만 → shelf-pack reflow; 멤버 place 미방출) + groupOffset 3계층 가산(블록 위치·멤버 place lx/top) + place 에 `group` 태그.
+- [x] T50.3 build emission: pre-pass 로 그룹별 멤버 최종 bbox(nodePos 적용) 산출 + groupMembers/groupOf 채움 → GB 박스를 **멤버 bbox+패딩**에서 파생(#3 반응형; 무-offset 시 packGroup 기하와 정확 일치) + GH 헤더 + **GX 접기 컨트롤**("−"/"+") 방출.
+- [x] T50.4 wiring: `_metaElementDragEnable`(GX 만 드래그 차단, GB/GH 허용) + `_metaNodeDragStart` 그룹 리지드 드래그 분기(`_drag={id,offs,group}`) + `_metaNodeDragEnd` groupOffset 누적 + 멤버 nodePos 델타 시프트 + 그룹소속 테이블 단독 드래그 시 rebuild(박스 재파생) + `_metaGraphOnNodeClick` GX 접기 토글(GB/GH 클릭=스키마 상세 위임 보존).
+- [x] T50.5 admin.html: cache-buster `?v=20260704-group-interact`(admin.js·styles.css) + 범례 문구(헤더 드래그 이동·−/+ 접기).
+
+### 50.2 검증
+- [x] T50.6 `node --check` PASS + headless `_metaG6Build` 격리 단위검증 **22/22 PASS**(그룹당 GB/GH/GX 방출·멤버 박스 포함·접기 멤버 미방출·박스 헤더높이·GX '+'·타그룹 불변·groupOffset 3계층 시프트·nodePos 반응형 확장·평면 폴백 회귀 0·검색 자동펼침+의도 보존).
+- [ ] T50.7 §18.8 적대 리뷰(좌표수학·상호작용 wiring·회귀·통합 3~4렌즈) + 수정.
+- [ ] T50.8 배포(web 롤링) + **PB-0008 실 Windows 라이브 검증**(Playwright `connect_over_cdp` real mouse): (a) 그룹 헤더/박스 드래그 → 그룹 통째 이동·rebuild 유지, (b) GX 클릭 → 접기/펼침, (c) 그룹 내부 테이블 드래그 → GB 박스 반응형 리사이즈, (d) 스키마 접기/펼치기·클러스터 드래그 회귀 0, pageerror 0.

@@ -34,7 +34,7 @@ _log = logging.getLogger("relationships")
 # 출처별 기본 confidence(정적 prior) 및 초기 weight
 CONFIDENCE = {"fk_introspect": 1.0, "llm_insight": 0.6, "conversation": 0.4, "inferred": 0.3}
 # 즉시 신뢰(권위적)하는 출처 — 나머지는 candidate 로 시작해 강화·검증을 거친다.
-_TRUSTED_SOURCES = {"fk_introspect"}
+_TRUSTED_SOURCES = {"fk_introspect", "manual"}   # crossds-rel: manual=사람 큐레이션(cross-ds 후보 승격 경로 — 프로브 불가)
 
 # ── 강화(reinforcement) 파라미터 (feature-0016) ───────────────────────────
 # 비대칭 불변식: **모든 동작 구간에서 1회 음성 감쇠 > 1회 양성 상승** 이어야 틀린 관계가 확실히 끊어진다.
@@ -94,6 +94,7 @@ def _fqn(schema, table) -> str:
 # ── upsert ──────────────────────────────────────────────────────────────
 def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tgt_column,
                         source, src_schema="", tgt_schema="", datasource_key="",
+                        source_datasource_key="", target_datasource_key="",
                         constraint_name="", cardinality="", confidence=None,
                         source_run_id=None) -> bool:
     """관계 1 edge upsert. 성공 True. conn 미지정이면 RW 연결을 열어 사용(autocommit).
@@ -109,7 +110,11 @@ def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tg
     if confidence is None:
         confidence = CONFIDENCE.get(source, 0.5)
     init_weight = float(confidence)
+    # crossds-rel(ADR-019): 'manual'(사람 큐레이션)도 권위적 출처 — cross-ds 후보의 유일한 승격 경로(프로브 불가).
     init_status = "trusted" if source in _TRUSTED_SOURCES else "candidate"
+    # 엔드포인트별 datasource — 미지정 시 단일 datasource_key 로 폴백(intra-ds 하위호환).
+    src_ds = str(source_datasource_key or datasource_key or "")
+    tgt_ds = str(target_datasource_key or datasource_key or "")
     c, owned = _rw_conn(conn)
     if c is None:
         return False
@@ -118,11 +123,12 @@ def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tg
         try:
             cur.execute(
                 "INSERT INTO table_relationships "
-                "(scope_key, datasource_key, source_schema, source_table, source_column, "
+                "(scope_key, datasource_key, source_datasource_key, target_datasource_key, "
+                " source_schema, source_table, source_column, "
                 " target_schema, target_table, target_column, source_table_fqn, target_table_fqn, "
                 " constraint_name, cardinality, source, confidence, weight, status, source_run_id) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                "ON CONFLICT (scope_key, source_table_fqn, source_column, target_table_fqn, target_column) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (scope_key, source_datasource_key, source_table_fqn, source_column, target_datasource_key, target_table_fqn, target_column) "
                 "DO UPDATE SET "
                 "  constraint_name = COALESCE(NULLIF(EXCLUDED.constraint_name,''), table_relationships.constraint_name), "
                 "  cardinality = COALESCE(NULLIF(EXCLUDED.cardinality,''), table_relationships.cardinality), "
@@ -130,16 +136,17 @@ def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tg
                 "  source = CASE WHEN EXCLUDED.confidence >= table_relationships.confidence "
                 "                THEN EXCLUDED.source ELSE table_relationships.source END, "
                 "  confidence = GREATEST(EXCLUDED.confidence, table_relationships.confidence), "
-                # 강화상태 보존 — 권위적 출처(FK)로 재확인될 때만 신뢰 승격 + weight 회복 + 음성카운터 리셋.
-                "  weight = CASE WHEN EXCLUDED.source = 'fk_introspect' THEN 1.0 "
+                # 강화상태 보존 — 권위적 출처(FK·manual)로 재확인될 때만 신뢰 승격 + weight 회복 + 음성카운터 리셋.
+                #   crossds-rel: 'manual'(사람 큐레이션)을 승격 경로에 포함 — cross-ds 후보는 프로브 불가라 이것이 유일 승격.
+                "  weight = CASE WHEN EXCLUDED.source IN ('fk_introspect','manual') THEN 1.0 "
                 "                ELSE table_relationships.weight END, "
-                "  status = CASE WHEN EXCLUDED.source = 'fk_introspect' THEN 'trusted' "
+                "  status = CASE WHEN EXCLUDED.source IN ('fk_introspect','manual') THEN 'trusted' "
                 "                ELSE table_relationships.status END, "
-                "  negative_signals = CASE WHEN EXCLUDED.source = 'fk_introspect' THEN 0 "
+                "  negative_signals = CASE WHEN EXCLUDED.source IN ('fk_introspect','manual') THEN 0 "
                 "                          ELSE table_relationships.negative_signals END, "
                 "  source_run_id = COALESCE(EXCLUDED.source_run_id, table_relationships.source_run_id), "
                 "  updated_at = now()",
-                (_normalize_scope_key(scope_key), str(datasource_key or ""),
+                (_normalize_scope_key(scope_key), str(datasource_key or ""), src_ds, tgt_ds,
                  str(src_schema or ""), str(src_table), str(src_column),
                  str(tgt_schema or ""), str(tgt_table), str(tgt_column),
                  _fqn(src_schema, src_table), _fqn(tgt_schema, tgt_table),
@@ -165,10 +172,14 @@ def _fetch_relationships(conn, scopes):
     cur = conn.cursor()
     try:
         # broken(파단) edge 는 주입 대상에서 제외 — 학습된 '비관계'. weight 내림차순(신뢰 우선).
+        # crossds-rel(verify MAJOR): 크로스-ds edge 는 프로브 검증이 불가라, 미검증 candidate 가 AI 컨텍스트를
+        #   오염하지 않도록 **trusted(대화 JOIN 성공/manual 승격)일 때만** 주입. intra-ds 는 종전대로 candidate 포함.
         cur.execute(
             "SELECT source_table_fqn, source_column, target_table_fqn, target_column, "
-            "       cardinality, source, confidence, weight, status "
+            "       cardinality, source, confidence, weight, status, "
+            "       source_datasource_key, target_datasource_key "
             "FROM table_relationships WHERE scope_key = ANY(%s) AND status <> 'broken' "
+            "  AND (source_datasource_key = target_datasource_key OR status = 'trusted') "
             "ORDER BY weight DESC, confidence DESC, source_table_fqn, target_table_fqn LIMIT %s",
             (list(scopes), _READ_LIMIT),
         )
@@ -236,6 +247,10 @@ def build_relationship_digest(rows, msg_lower: str = "") -> str:
             continue
         weight = r[7] if len(r) > 7 else None
         status = r[8] if len(r) > 8 else None
+        # crossds-rel: 엔드포인트 datasource(선택 컬럼) — 다르면 교차DB(프로브 미검증) 마커.
+        src_ds = r[9] if len(r) > 9 else None
+        tgt_ds = r[10] if len(r) > 10 else None
+        cross_ds = bool(src_ds is not None and tgt_ds is not None and src_ds != tgt_ds)
         if status == "broken":     # 직접 호출 방어 — 파단 관계는 주입 금지
             continue
         if msg_lower:
@@ -256,7 +271,8 @@ def build_relationship_digest(rows, msg_lower: str = "") -> str:
                     trust_s = " [추정]"
             elif status == "trusted":
                 trust_s = " [신뢰]"
-        out.append(f"- {src_fqn}.{src_col} → {tgt_fqn}.{tgt_col}{card_s}{src_tag}{trust_s}")
+        xds_s = " [교차DB]" if cross_ds else ""   # crossds-rel: 두 데이터소스 간 관계(프로브 미검증 — 신뢰 승격분만 주입됨)
+        out.append(f"- {src_fqn}.{src_col} → {tgt_fqn}.{tgt_col}{card_s}{src_tag}{trust_s}{xds_s}")
         if len(out) >= _INJECT_CAP:
             break
     if not out:
@@ -637,7 +653,9 @@ def apply_relationship_signal(conn, scope_key, a_table, a_col, b_table, b_col, p
             cur.execute("BEGIN")
             cur.execute(
                 "SELECT id, weight, positive_signals, negative_signals, status, source "
-                "FROM table_relationships WHERE scope_key = ANY(%s) AND ("
+                # crossds-rel(리뷰 MINOR): 강화 신호(대화 JOIN 양성·프로브 음성)는 intra-ds 전용 — 크로스-ds 엣지
+                #   (src_ds<>tgt_ds)는 동명 테이블/컬럼 충돌로 오염 감쇠되지 않게 제외. cross-ds 승격은 manual upsert 만.
+                "FROM table_relationships WHERE scope_key = ANY(%s) AND source_datasource_key = target_datasource_key AND ("
                 "  (lower(source_table)=lower(%s) AND lower(source_column)=lower(%s) "
                 "   AND lower(target_table)=lower(%s) AND lower(target_column)=lower(%s) "
                 + _slot_ab +
@@ -843,6 +861,150 @@ def store_inferred_relationships(conn, scope_key, schema, tables_columns, *,
     return n
 
 
+# ── 크로스-데이터소스 추론 (Phase B, ADR-019 — Phase C 시그니처 임베딩 구동) ──────────────
+#   서로 다른 datasource 의 의미-유사 테이블(시그니처 코사인 ≥ MIN_SIM) 쌍에서, 양쪽에 공통으로 존재하는
+#   join-key 성 컬럼(동명·식별자형)을 관계 후보로 발굴한다. 프로브 검증 불가(교차 엔드포인트)라 status='candidate'
+#   영구 유지(fetch_probe_candidates 가드) — 승격은 대화 JOIN 성공/manual 큐레이션(source='manual')만.
+#   **데몬 기본 OFF**(AGENT_XDS_RELATIONSHIP_INFER_AUTO=0) — Phase C 임베딩 populate 후 flip.
+_XDS_KEY_SUFFIXES = ("id", "key", "code", "no", "seq", "num")
+
+
+def _is_keyish(col: str) -> bool:
+    c = str(col or "").strip().lower()
+    return bool(c) and (c.endswith(_XDS_KEY_SUFFIXES) or c in ("id", "key"))
+
+
+def _fetch_table_columns_map(cur, scope_key, schema_name, table_name):
+    """(scope,schema,table) 의 컬럼명 set(소문자). semantic_cluster 와 동일 키 소싱."""
+    try:
+        cur.execute(
+            "SELECT column_name FROM column_descriptions "
+            "WHERE scope_key=%s AND schema_name=%s AND table_name=%s",
+            (scope_key, schema_name or "", table_name),
+        )
+        return {str(r[0]).strip().lower() for r in cur.fetchall() if r and r[0]}
+    except Exception:
+        return set()
+
+
+def infer_cross_datasource_relationships(conn=None, *, min_sim=None, batch_max=None, max_per_scope=None) -> list:
+    """Phase C 시그니처 임베딩으로 크로스-ds 관계 후보 발굴. 반환: [{src_*, tgt_*, confidence, ...}] (미저장).
+
+    rag_objects.signature_text_hash → texts.embedding(bge-m3 1024d) 조인. 각 table 을 다른 datasource 의
+    table 과 pgvector 코사인 kNN 매칭(sim ≥ min_sim). 유사 테이블 쌍에서 양쪽 공통 join-key 컬럼을 후보 엣지로.
+    """
+    from shared import config as _cfg
+    min_sim = float(min_sim if min_sim is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_MIN_SIM", 0.90))
+    batch_max = int(batch_max if batch_max is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_BATCH_MAX", 200))
+    max_per_scope = int(max_per_scope if max_per_scope is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE", 50))
+    knn_k = int(getattr(_cfg, "AGENT_XDS_RELATIONSHIP_KNN_K", 10))
+    out = []
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return out
+    from .semantic_cluster import _effective_schema   # MSSQL DB-distinct effective schema(=graph 노드 scope 정합)
+    try:
+        cur = c.cursor()
+        try:
+            # 임베딩 보유 table 후보(배치 상한). embedding 은 pgvector — kNN 질의에 재사용. object_key → effective schema.
+            cur.execute(
+                "SELECT o.scope_key, o.datasource_key, o.schema_name, o.table_name, o.object_key, t.embedding::text "
+                "FROM rag_objects o JOIN texts t ON o.signature_text_hash = t.text_hash "
+                "WHERE o.object_type='table' AND o.signature_text_hash IS NOT NULL "
+                "AND t.embedding IS NOT NULL ORDER BY o.updated_at DESC NULLS LAST LIMIT %s",
+                (batch_max,),
+            )
+            base = cur.fetchall()
+            per_ds = {}
+            for (sc, dsk, sch, tbl, okey, emb_txt) in base:
+                if per_ds.get(dsk, 0) >= max_per_scope:   # cap 은 source datasource 기준(리뷰 MINOR — scope_key='common' 회피)
+                    continue
+                # MAJOR fix: 그래프 Table 노드는 effective schema(_rag_effective — MSSQL DB명)로 투영되고,
+                #   column_descriptions 도 그 값으로 키됨. raw schema_name('dbo')로 조회하면 MSSQL 컬럼 0건→후보 0/고아.
+                eff_a = _effective_schema(dsk, okey, sch)
+                # 다른 datasource 의 의미-유사 table kNN (pgvector <=> 코사인 거리).
+                cur.execute(
+                    "SELECT o2.scope_key, o2.datasource_key, o2.schema_name, o2.table_name, o2.object_key, "
+                    "       1 - (t2.embedding <=> %s::vector) AS sim "
+                    "FROM rag_objects o2 JOIN texts t2 ON o2.signature_text_hash = t2.text_hash "
+                    "WHERE o2.object_type='table' AND o2.datasource_key <> %s "
+                    "AND t2.embedding IS NOT NULL "
+                    "ORDER BY t2.embedding <=> %s::vector LIMIT %s",
+                    (emb_txt, dsk, emb_txt, knn_k),
+                )
+                cols_a = None
+                for (sc2, dsk2, sch2, tbl2, okey2, sim) in cur.fetchall():
+                    if sim is None or float(sim) < min_sim:
+                        continue
+                    # reverse-dup 카논화(리뷰 MINOR): A→B·B→A 양방향 중복 방지 — 사전순 작은 ds 에서만 발화.
+                    if str(dsk) >= str(dsk2):
+                        continue
+                    if per_ds.get(dsk, 0) >= max_per_scope:
+                        break
+                    eff_b = _effective_schema(dsk2, okey2, sch2)
+                    if cols_a is None:
+                        cols_a = _fetch_table_columns_map(cur, sc, eff_a, tbl)
+                    cols_b = _fetch_table_columns_map(cur, sc2, eff_b, tbl2)
+                    # 공통 join-key 컬럼(동명·식별자형)만 후보. FQN 은 effective schema 로 저장(그래프 노드 정합).
+                    shared = sorted((cols_a & cols_b))
+                    for col in shared:
+                        if not _is_keyish(col):
+                            continue
+                        # scope_key = source datasource_key: 그래프 노드 scope prefix 는 rag_objects.datasource_key
+                        #   (rag_objects.scope_key 는 'common'). table_relationships.scope_key 관례와 정합.
+                        out.append({
+                            "scope_key": dsk, "src_ds": dsk, "tgt_ds": dsk2,
+                            "src_schema": eff_a, "src_table": tbl, "src_column": col,
+                            "tgt_schema": eff_b, "tgt_table": tbl2, "tgt_column": col,
+                            "confidence": round(float(sim), 4),
+                        })
+                        per_ds[dsk] = per_ds.get(dsk, 0) + 1
+                        if per_ds[dsk] >= max_per_scope:
+                            break
+        finally:
+            cur.close()
+    except Exception as exc:
+        _log.warning("infer_cross_datasource 실패: %r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return out
+
+
+def store_xds_inferred_relationships(conn=None, candidates=None) -> int:
+    """크로스-ds 후보를 table_relationships 에 upsert(source='inferred', 엔드포인트별 ds, status=candidate). 반환: upsert 수."""
+    cands = candidates if candidates is not None else infer_cross_datasource_relationships(conn=conn)
+    if not cands:
+        return 0
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return 0
+    n = 0
+    try:
+        for e in cands:
+            if upsert_relationship(
+                c, e["scope_key"],
+                src_schema=e["src_schema"], src_table=e["src_table"], src_column=e["src_column"],
+                tgt_schema=e["tgt_schema"], tgt_table=e["tgt_table"], tgt_column=e["tgt_column"],
+                source="inferred", datasource_key=e["src_ds"],
+                source_datasource_key=e["src_ds"], target_datasource_key=e["tgt_ds"],
+                confidence=e.get("confidence"),
+            ):
+                n += 1
+    except Exception as exc:
+        _log.debug("store_xds_inferred_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return n
+
+
 # ── 능동 프로브 (실데이터 겹침으로 candidate 검증) ─────────────────────────
 def _parse_probe_counts(results):
     """프로브 result → (sampled, matched). 첫 행 두 컬럼(COUNT, SUM(EXISTS))."""
@@ -887,6 +1049,10 @@ def fetch_probe_candidates(conn, scope_key, limit, db_scope=None):
                 "FROM table_relationships "
                 "WHERE scope_key = ANY(%s) AND status = 'candidate' "
                 "  AND source IN ('inferred', 'conversation', 'llm_insight') "
+                # crossds-rel(verify CRITICAL): 크로스-데이터소스 edge 는 프로브 대상에서 **영구 제외**. 단일 커넥션
+                #   프로브가 다른 datasource 끝점을 조인하면 missing-object → 음성 오분류 → 2회만에 broken 파단된다.
+                #   이 가드가 cross-ds 후보를 'candidate' 로 유지(승격은 대화 JOIN 성공/manual 큐레이션만).
+                "  AND source_datasource_key = target_datasource_key "
                 # insight-load-spread: transient 실패로 backoff(미래로 밀린) 후보는 그 창 동안 제외 —
                 # 존재하지 않는 DB·timeout edge 를 매 cadence 재프로브하던 부하 spin 차단. NULL/과거는 정상 대상.
                 "  AND (last_validated_at IS NULL OR last_validated_at <= now()) "

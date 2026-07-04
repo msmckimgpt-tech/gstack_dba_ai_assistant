@@ -546,3 +546,64 @@ source_of_truth: true
   이점 상실, 기각) / sklearn·scipy(신규 heavy dep, 기각 — numpy만) / LLM 라벨(비용, 후속 옵션 — 현재 commonAffix 서버포트).
 - Supersedes: (ADR-013 의 이연분 이행 — affix 계층은 폴백으로 계승, 대체 아님)
 - Superseded By:
+
+## ADR-019 — 크로스-데이터소스 관계 (Phase B, 의미 임베딩 구동 후보 + 신뢰 게이팅)
+- Status: accepted (2026-07-04)
+- Context: 사용자 3대 개선 中 B — "다른 DB 간 관계가 구성될 수 있으니 그 구조를 위한 연결 구축". 실측상 관계 엔진은 3중
+  경계(table_relationships 단일 scope_key/datasource_key·추론 per-schema·프로브 단일 커넥션)로 datasource 내부에만
+  갇혀 있었다(조사 확인). 크로스-데이터소스 조인은 FK·프로브가 불가능(다른 엔드포인트)하므로 **의미 유사도**로만
+  후보 발굴 가능 — Phase C(ADR-018) 시그니처 임베딩이 그 토대.
+- Decision: 사용자 결정(크로스-데이터소스까지)대로 데이터소스 경계를 넘는 관계를 additive 로 표현·발굴·표시.
+  1. **data model(alembic 0036, 비파괴)**: table_relationships 에 source/target_datasource_key(default '', 기존 행
+     backfill=datasource_key) + UNIQUE 7-col 진화(intra-ds refine) + CHECK 에 'manual' 추가. upsert ON CONFLICT 7-col.
+  2. **추론(insight-worker 데몬, 기본 OFF)**: Phase C 시그니처 임베딩 pgvector 코사인으로 서로 다른 datasource 의
+     의미-유사 테이블을 찾고, 양쪽 공통 join-key 컬럼(동명·식별자형)을 후보(source='inferred', status='candidate')로.
+     effective schema(MSSQL DB명) 사용(그래프 노드 정합). AGENT_XDS_RELATIONSHIP_INFER_AUTO=0 로 ship — 임베딩
+     populate 후 flip.
+  3. **신뢰 게이팅**: 크로스-ds 는 프로브 검증 불가 → fetch_probe_candidates 가 src_ds=tgt_ds 만 프로브(영구 candidate,
+     오분류 파단 방지) + apply_relationship_signal 도 intra-ds 전용(오염 감쇠 방지). **승격은 manual 큐레이션(source=
+     'manual'→trusted)만**(대화 JOIN 은 단일 커넥션이라 실질 불가). AI 컨텍스트는 크로스-ds 는 **trusted 만 주입**
+     (미검증 candidate 오염 차단, load_relationship_context). 주입 시 [교차DB] 마커.
+  4. **그래프 투영·완화**: sync_relationship 이 각 끝점을 **자기 datasource scope**(_vkey)로 앵커(cross_ds edge 속성).
+     neighborhood BFS 는 scope-무관이라 크로스 엣지 자동 노출. node_analysis 는 **의도적 cross_ds REFERENCES** 로 도달한
+     이웃의 cross-scope 감쇠를 완화(1.0, 우연 교차는 0.25 유지) + 이웃 job 을 자기 scope 로 기록.
+  5. **UI**: 크로스-ds 엣지 = 마젠타 점선(same-ds candidate 골드와 구분) + [교차DB] 데이터.
+- Consequences: 데이터소스 경계를 넘는 관계가 표현·발굴·표시된다. **비파괴·데몬 OFF ship(스키마·UI·완화만 즉시,
+  추론 inert)**. 마이그 mixed-version 창은 fail-soft(OLD 5-col ON CONFLICT 가 7-col DB 에서 실패해도 upsert try/except).
+  크로스-ds 는 검증 불가라 보수적(높은 MIN_SIM·trusted-only 주입·manual 승격). Phase C 임베딩 populate 후 AUTO=1 flip.
+- Alternatives: 데이터소스 내 카탈로그 크로스만(프로브 가능·안전하나 사용자 "다른 DB 간" 미충족, 기각) / cross-ds 를
+  probe(불가 — 다른 엔드포인트, 기각) / auto-promote to trusted(검증 없이 신뢰=오염 위험, 기각 — manual/대화만).
+- Supersedes:
+- Superseded By:
+
+## ADR-020 — 카테고리 그룹(sim-group) 상호작용: 드래그·접기·반응형 리사이즈 (ADR-015 자유배치를 그룹 계층으로 확장)
+- Status: accepted (2026-07-04)
+- Context: 사용자 회귀 재보고 — ADR-015(freeplace)가 자유배치 드래그·접기를 **스키마 클러스터(combo)** 와 **개별 테이블
+  노드** 레벨에만 복원했으나, 사용자 첫 의도는 그 사이 계층인 **카테고리 그룹**(= 스키마 클러스터 내부에서 유사 테이블을
+  묶는 유사 속성 그룹 / sim-group, ADR-013 의 색 배경 박스 GB + 헤더 칩 GH)이었다. 당시 sim-group 은 `_metaElementDragEnable`
+  에서 드래그가 차단된 **비상호작용 장식**(클릭·우클릭은 소속 스키마로 위임만)이라, 사용자가 기대한 [그룹 드래그 이동]·
+  [그룹 접기/펼치기]·[그룹 내부 노드 이동에 따른 박스 반응형 리사이즈]가 동작하지 않았다.
+- Decision: sim-group 을 combo·테이블 노드와 동일한 자유배치 상호작용 대상으로 승격(ADR-015 offset 레이어를 그룹 계층으로 확장).
+  좌표는 **3계층 offset**: cluster `L.x0/L.y0`(clusterOffset 포함) → group `groupOffset` → node `nodePos`.
+  - **groupOffset**(groupKey→{dx,dy}): GB/GH 드래그의 누적 델타. build 가 그룹 블록 위치(bxRel/byRel)와 그 멤버 place
+    (lx/top)에 공통 가산 → 박스·헤더·멤버·컬럼이 coherent 이동, rebuild(펼침/접기) 후 유지. 리지드 드래그는 grabbed 요소를
+    anchor 로 그룹 전 요소(GB·GH·GX·멤버 테이블·종속)를 고정 오프셋으로 묶어 이동(graph-drag 테이블-종속 기전 재사용).
+  - **groupCollapsed**(Set): 접힌 그룹은 멤버 place 미방출·블록 높이를 헤더만(GHH+GPB)으로 축소 → shelf-pack 자동 reflow.
+    헤더 칩(개수 표시)은 유지. 전용 토글 컨트롤 **GX**("−"/"+", 그룹 헤더 우측 — 스키마 XS: 패턴 재사용) 클릭으로 토글.
+    검색 매칭 멤버가 있는 그룹은 접힘 상태여도 build 가 강제 펼침(결과 가시 — schemaExpanded 자동추가와 동형, 사용자 의도 보존).
+  - **반응형 리사이즈(#3)**: 펼친 그룹의 GB 박스 기하를 **멤버(테이블+펼친 컬럼)의 최종 place bbox + 패딩**에서 파생 —
+    개별 노드 이동(nodePos)·그룹 이동(groupOffset) 양쪽에 박스가 자동으로 맞춰진다(드래그·리사이즈 단일 메커니즘 통합).
+    무-offset 시 이 파생 박스는 packGroup 기하와 정확히 일치(회귀 0). 그룹 소속 테이블 단독 드래그 dragend 는 rebuild 를
+    트리거해 박스 재파생(평면·비그룹 테이블은 기존대로 combo auto-fit 만 — rebuild 없음).
+  - **정합 불변식**: 그룹을 통째로 옮기면 소속 멤버 nodePos(절대좌표)도 동반 가산(ADR-015 clusterOffset MAJOR fix 동형).
+- Consequences: ADR-013 sim-group 이 '가시적 영역'에서 '조작 가능한 그룹'으로 승격. ADR-004 결정론 배치·§49 순서 안정화는
+  불변(offset·방출여부만 개입, 배정/순서 미변경). 프론트 전용·마이그레이션 0. 한계(수용): GB 배경이 combo 내부를 덮어
+  combo(클러스터) 드래그 표면은 헤더/여백으로 얇아짐(접힌 카드·헤더 경로 유지). 라이브 canvas 드래그 자동화는 PB-0008
+  Playwright real mouse 로 검증.
+- Alternatives:
+  - **GB 를 G6 combo 로 승격(자식 자동 fit)**: combo 중첩(그룹⊂스키마) — setData diff·이벤트 복잡도·회귀 위험 큼, 기각.
+    파생 bbox 가 combo 없이 반응형 리사이즈 제공.
+  - **헤더 칩 클릭으로 접기 토글**(GX 컨트롤 없이): 기존 GB/GH 클릭=스키마 상세 위임(데드존 방지)과 충돌 — 기각, 전용 GX.
+  - **접기 시 그룹 블록 폭도 축소**: 펼침/접힘 간 가로 reflow 요동 — 안정성 위해 폭 유지(헤더 높이만 축소), 기각.
+- Supersedes: (ADR-015 를 대체하지 않음 — 그 offset 레이어를 그룹 계층으로 확장)
+- Superseded By:

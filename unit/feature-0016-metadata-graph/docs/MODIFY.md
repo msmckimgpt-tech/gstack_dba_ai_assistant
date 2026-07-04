@@ -8,6 +8,42 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260704T014646-ai-claude-feature-0016-graph-ux3fix
+- 요청(사용자, 2026-07-04): `관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 3대 개선 — ① 최상위 탭 분리+높이 ② 더블클릭 재배치 수정 ③ 검색 부드러운 하이라이트.
+- **① 그래프 뷰 최상위 탭 분리 (admin.html/js + styles.css)**:
+  - admin.html: 지식베이스 그룹에 `data-admin-tab="graph"` 탭 + 새 `<section data-admin-pane="graph">`(자체 pane-head + `#graphScopeSelect`)로 `#metadataGraphView` 이동, 메타데이터 서브탭 `graph` 제거, 범례 glow 칩.
+  - admin.js: `ADMIN_TAB_PERMISSIONS.graph` 추가 + 메타데이터 OR-배열 graph.read 제거 + `switchTab` graph 분기 + `_METADATA_SUBTAB_PERM`/`_METADATA_NO_CREATE`/`_metaBindControls` graph 배선·`_metaHideGraph` 제거 + `_metaShowGraph` 스트립 + `_metaPopulateScopeSelect` 양 select 동기화 + `#graphScopeSelect` 바인딩.
+  - styles.css: 스크롤 셀렉터 `[data-admin-pane="graph"]` 전환, 좁은화면 캔버스 높이 clamp 상향.
+  - (적대리뷰 수정) `loadedScope` 추적 → 크로스탭 스코프 stale 재로드.
+- **③ 검색 부드러운 하이라이트 (admin.js)**: `_metaTableStyle`/`_metaTermStyle` 폭 rel-무관 고정 + `trel` 부스트 제거, `node.state.match` soft glow(앰버 shadow) + `_metaNodeStates` match push + `searchMatchNodes` 채움/리셋, 범례·상태문구·labelMaxWidth 클램프.
+- **② 더블클릭 재배치**: 1차 접근(클러스터 원점 sticky clusterBase) 적대리뷰 회귀(카드→combo 겹침) 확정 → **되돌림**. 충돌해소 레이아웃 = 라이브 반복 후속 cycle(사용자 결정).
+- cache-buster: `admin.js` / `styles.css` `?v=20260704-graph-ux3fix`.
+- 검증: `node --check` PASS · §18.8 3-렌즈 적대 리뷰(REV-20260704T014646) · **PB-0008 시각검증 미수행(무인)** — 사용자 육안 후 배포.
+
+## CHG-20260704T043653-ai-claude-feature-0016-crossds-rel
+- What: Phase B(ADR-019) — 크로스-데이터소스 관계. table_relationships 에 엔드포인트별 datasource + Phase C 시그니처
+  임베딩 구동 후보 추론(데몬 기본 OFF) + 프로브/컨텍스트/승격 신뢰 게이팅 + 그래프 scope 완화 + UI 마젠타 점선. TASK §47.
+- Files:
+  - `alembic/versions/20260704_0036_relationship_cross_datasource.py`(신규): source/target_datasource_key 2컬럼 +
+    7-col UNIQUE + CHECK 'manual' + ds 인덱스 2(비파괴·backfill·migrate-lint ACK Python 주석).
+  - `modules/relationships.py`: upsert 7-col ON CONFLICT(한 줄) + manual 승격(_TRUSTED_SOURCES+DO UPDATE) +
+    fetch_probe_candidates cross-ds skip 가드 + infer_cross_datasource_relationships/store_xds(신규, effective schema·
+    reverse-dup 카논화·per-ds cap) + _fetch_relationships 크로스-ds candidate 컨텍스트 제외 + [교차DB] digest 마커 +
+    apply_relationship_signal intra-ds 가드.
+  - `modules/metadata_graph.py`: sync_relationship/delete_relationship +tgt_scope +cross_ds edge 속성 + sync_graph
+    관계 투영 src/tgt ds→scope 매핑(intra-ds 완전 보존) + neighborhood cross_ds emit + _PROP_KEYS+cross_ds.
+  - `modules/node_analysis.py`: _relevance/parent-table cross_ds 완화 + _record cross_ds 캡처 + _enqueue 이웃 자기-scope.
+  - `modules/insight.py`: xds 추론 데몬(기본 OFF, AGENT_XDS_RELATIONSHIP_INFER_AUTO).
+  - `shared/config.py`: AGENT_XDS_* 7 노브(+__all__). `agent_kb_schema.sql`: 문서 정합(0036 반영).
+  - `static/admin.js`: _metaEdgeStyleFor(crossDs 마젠타 점선) + 엣지 ingest/build cross_ds. cache-buster `20260704-crossds-rel`.
+  - `tests/test_relationships.py`: ON-CONFLICT==UNIQUE 불변식 head-aware(최신 마이그 UPGRADE UNIQUE).
+- Impact: 백엔드+프론트 additive. **데몬 OFF ship**(스키마·UI·scope 완화만 즉시, 추론 inert). 마이그 mixed-version 창
+  fail-soft. 크로스-ds 는 프로브 불가라 보수적(높은 MIN_SIM·trusted-only 주입·manual 승격). Phase C 임베딩 후 AUTO=1 flip.
+- Related Requirement: 사용자 3대 개선 中 B(다른 DB 간 관계). 정본: TASK §47 / DECISIONS ADR-019.
+- 검증: node --check·py ast·migrate-lint ACK·pytest 67 PASS(head-aware ON-CONFLICT 불변식 포함). §18.8 2단계 적대검증
+  (설계 워크플로우 + 구현 리뷰 SHIP-for-inert). flip-전 블로커(MSSQL effective schema·negative-decay 가드·reverse-dup·
+  cap) 반영. 정본 REVIEW REV-20260704T043653. 배포+PB-0008 배포 후.
+
 ## CHG-20260703T160303-ai-claude-feature-0016-semantic-embed
 - What: Phase C(ADR-013 후속, ADR-018) — 메타데이터 객체(테이블) 의미 임베딩·클러스터링. 시그니처 텍스트를
   기존 texts 저장소에 적재→기존 embedding 데몬이 bge-m3 1024d 임베딩→scope 별 kNN+union-find 클러스터링→
@@ -879,3 +915,21 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
 - Rollback Notes: 해당 doc 라인 revert.
+## CHG-20260704T143839-ai-claude-feature-0016-freeplace-liveverify
+- Date: 2026-07-04
+- Related Requirement: 사용자 요청 "G6 수정사항에 대한 실제 브라우저 내 동작 검증도 진행" — CHG(graph-freeplace, ADR-015) 자유배치 드래그 4-상호작용의 완료 게이트(TASK §44 T44.7) 라이브 실측 기록.
+- Summary: doc-only — 초기 "G6 Canvas 드래그는 win-browser 합성 pointer 가 @antv/g 히트테스트 미도달 → 사용자 라이브 확인 필요"로 유보됐던 부분을, **Playwright `connect_over_cdp`(win-browser relay @172.26.144.1:9223)로 실 Windows Chrome 에 attach → `page.mouse` 실제 이벤트(move→down→16-step move→up)로 G6 Canvas 드래그 자동 구동**하여 검증 완료. 실측 전건 PASS: 접힌 카드 드래그(accountdb 548,524→430,415)·combo 드래그·테이블 노드 드래그+combo auto-fit 반응형 리사이즈(MessageQueue 535,505→470,630, ROUTINE_USES 재라우팅)·접기/펼치기 회귀 0(masonry+sim-group)·드래그 위치 persistence(statsdb rebuild 후 오프셋 유지·snap-back 없음)·초기화 clear. 전 구간 pageerror 0. 증적 fp-03~fp-07.png. TASK §44 T44.8 [x], TEST(freeplace Run POST-DEPLOY) 갱신.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.
+## CHG-20260704T154756-ai-claude-feature-0016-group-interact
+- Date: 2026-07-04
+- Related Requirement: 사용자 회귀 재보고 — "스키마 클러스터 내 각 테이블을 그룹 단위로 묶어둔 구조(카테고리 그룹)가 드래그 및 접기, 그 외 UI 조작이 진행되지 않는다. 첫 의도는 카테고리 그룹이었는데 테이블 노드 단위로 진행됐다." 정본 ADR-020 / TASK §50. PLAN-APPROVED(2026-07-04).
+- Summary: freeplace(ADR-015)가 combo·테이블 노드 레벨에만 복원한 자유배치 상호작용을, 그 사이 계층인 **카테고리 그룹**(= 유사 속성 그룹 / sim-group, ADR-013 의 GB 배경박스/GH 헤더칩)으로 확장. 비상호작용 장식이던 sim-group 을 드래그·접기·반응형 리사이즈 대상으로 승격. 좌표 3계층 offset(cluster→group→node): **groupOffset**(GB/GH 리지드 드래그 누적 — 박스·헤더·멤버·컬럼 coherent 이동)·**groupCollapsed**(전용 GX "−/+" 컨트롤 토글, 접힘 시 멤버 미방출·헤더만·shelf-pack reflow, 검색 매칭 그룹 강제 펼침)·**GB 박스 멤버 bbox 파생**(개별 nodePos·그룹 groupOffset 양쪽에 반응형 자동 맞춤, 무-offset 시 packGroup 기하 정확 일치). 그룹 소속 테이블 단독 드래그 dragend 는 rebuild 로 박스 재파생.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (state groupOffset/groupCollapsed/groupMembers/groupOf + resetModel clear + build sim-group 분기 접기/groupOffset/멤버인덱스 + emission pre-pass 반응형 bbox·GB/GH/GX 방출 + `_metaElementDragEnable`/`_metaNodeDragStart`/`_metaNodeDragEnd` 그룹 리지드 드래그 + `_metaGraphOnNodeClick` GX 토글 + node:contextmenu GX 라우팅)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster admin.js/styles.css `?v=20260704-group-interact` + 범례 문구)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-020),TASK(§50),MODIFY,REVIEW,TEST}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 상호작용·표현 전용 — 데이터 API·AGE 스키마·RBAC·마이그레이션 불변. ADR-004 결정론 배치·§49 순서 안정화는 불변(offset·방출여부만 개입). 배포=web 재빌드(자산 baked). 완료 게이트=PB-0008 실 Windows(T50.8).
+- §18.8 패널 반영(REV-20260704T154756): [MAJOR] 접힌 그룹 드래그 시 nodePos 멤버 분리 → groupMembers/groupOf 를 build 분기에서 **전체 멤버(접힘 포함)** 로 채움(headless T7). [NIT] GX 우클릭 스키마 메뉴 라우팅·범례 문구 정밀화. 수용: combo 드래그 hit-area 축소(헤더/여백 경로 유지)·그룹소속 테이블 드래그 rebuild(1회/드래그).
+- Rollback Notes: admin.js 신규 상태·build 그룹 분기·emission pre-pass/GB·GH·GX 방출·드래그/클릭 핸들러 분기 revert + admin.html cache-buster 이전값(20260704-graph-dblclick / 20260704-graph-ux3fix)·범례 문구 복원. 데이터·API 무손상.

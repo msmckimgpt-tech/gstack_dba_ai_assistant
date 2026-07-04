@@ -2866,6 +2866,40 @@ def _start_semantic_cluster_thread() -> None:
         logging.getLogger("insight").warning("semantic_cluster 스레드 기동 실패(무시): %s", exc)
 
 
+def _xds_relationship_infer_loop() -> None:
+    """feature-0016 Phase B(ADR-019): 크로스-데이터소스 관계 추론 백그라운드 루프(Phase C 임베딩 구동).
+
+    embedding/cluster 데몬과 동형·분리 — tick 무블로킹. pass 당 infer_cross_datasource_relationships +
+    store_xds_inferred_relationships. **기본 OFF**(AGENT_XDS_RELATIONSHIP_INFER_AUTO) — 임베딩 populate 후 flip. fail-soft."""
+    interval = max(300, int(AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from modules import relationships as _rel
+            n = _rel.store_xds_inferred_relationships()
+            if n:
+                _log.info("xds_relationship_infer upserted=%s", n)
+        except Exception as exc:   # 스레드 보호
+            _log.warning("xds_relationship_infer pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_xds_relationship_infer_thread() -> None:
+    """AUTO 켜짐 시 크로스-ds 관계 추론 데몬 스레드 1회 기동(기본 OFF — 임베딩 populate 후 flip)."""
+    if not AGENT_XDS_RELATIONSHIP_INFER_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_xds_relationship_infer_loop, name="xds-relationship-infer", daemon=True)
+        t.start()
+        logging.getLogger("insight").info(
+            "xds_relationship_infer 스레드 기동(interval=%ss, min_sim=%s)",
+            AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC, AGENT_XDS_RELATIONSHIP_MIN_SIM,
+        )
+    except Exception as exc:
+        logging.getLogger("insight").warning("xds_relationship_infer 스레드 기동 실패(무시): %s", exc)
+
+
 # feature-0015: SIGTERM/SIGINT → graceful. 현재 cycle 을 마저 끝내고(루프 경계에서) 종료.
 # insight 쓰기는 멱등(_upsert_fact autocommit 단일-fact + advisory lock + 다음 스캔 재유도)이라
 # SIGKILL 도 데이터 손상은 없으나, graceful 종료로 (a) 진행 cycle 의 불필요한 중단/LLM 비용 낭비,
@@ -2912,6 +2946,8 @@ def run_insight_worker_loop() -> None:
     _start_embedding_backfill_thread()
     # feature-0016 Phase C: 메타데이터 시그니처 임베딩 + 의미 클러스터링 데몬 스레드(embedding 스레드와 분리·동형).
     _start_semantic_cluster_thread()
+    # feature-0016 Phase B: 크로스-데이터소스 관계 추론 데몬 스레드(기본 OFF — AGENT_XDS_RELATIONSHIP_INFER_AUTO).
+    _start_xds_relationship_infer_thread()
     while not _INSIGHT_SHUTDOWN.is_set():
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()

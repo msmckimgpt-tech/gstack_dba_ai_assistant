@@ -294,7 +294,12 @@ def _relevance(node: dict, meta: dict, anchor: dict) -> float:
     if _scope_of(node.get("key") or "") == anchor["scope"]:
         score += 0.08
     else:
-        score *= max(0.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR", 0.25)))
+        # crossds-rel(ADR-019): **의도적 교차DB REFERENCES** 엣지로 도달한 이웃은 감쇠 완화(기본 1.0=무감쇠) —
+        #   Phase B 가 만든 크로스-ds 관계는 우연 교차가 아니라 의도된 연결. 그 외 우연 교차-scope 는 0.25 유지.
+        if meta.get("cross_ds"):
+            score *= max(0.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR", 1.0)))
+        else:
+            score *= max(0.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR", 0.25)))
 
     return max(0.0, min(1.0, score))
 
@@ -342,13 +347,13 @@ def _fetch_context(node_key: str, conn):
     #   child=True → node_key(현재 노드)의 직속 HAS_COLUMN 자식(=하위 컬럼). 우선순위: 신뢰 REFERENCES > child > 그 외.
     neighbor_meta: dict = {}
 
-    def _record(k, kind, weight=None, status=None, child=False, parent=False):
+    def _record(k, kind, weight=None, status=None, child=False, parent=False, cross_ds=None):
         if not k or k == node_key:
             return
         cur = neighbor_meta.get(k)
         if cur is None:
             neighbor_meta[k] = {"kind": kind, "weight": weight, "status": status,
-                                "child": child, "parent": parent}
+                                "child": child, "parent": parent, "cross_ds": cross_ds}
             return
         cur["child"] = cur["child"] or child
         cur["parent"] = cur.get("parent") or parent
@@ -356,6 +361,8 @@ def _fetch_context(node_key: str, conn):
             cur["weight"] = weight
         if status and not cur.get("status"):
             cur["status"] = status
+        if cross_ds and not cur.get("cross_ds"):
+            cur["cross_ds"] = cross_ds   # crossds-rel: 교차DB 의도적 REFERENCES 표식(_relevance/pagerank 완화)
 
     for e in edges:
         et = e.get("type")
@@ -374,10 +381,12 @@ def _fetch_context(node_key: str, conn):
             _record(tgt if src == node_key else src, "routine_use")
         elif et == "REFERENCES":
             references.append({"from": src, "to": tgt, "cardinality": e.get("cardinality"),
-                               "weight": e.get("weight"), "status": e.get("status")})
+                               "weight": e.get("weight"), "status": e.get("status"),
+                               "cross_ds": e.get("cross_ds")})
             other_key = tgt if src == node_key else (src if tgt == node_key else None)
             if other_key:
-                _record(other_key, "reference", weight=e.get("weight"), status=e.get("status"))
+                _record(other_key, "reference", weight=e.get("weight"), status=e.get("status"),
+                        cross_ds=e.get("cross_ds"))
         elif et in ("RELATED_TERM", "DESCRIBES"):
             _record(tgt if src == node_key else src, "term")
         else:  # HAS_TABLE, HAS_SCHEMA, USES 등 구조 엣지
@@ -759,7 +768,11 @@ def _score_candidates(ctx: dict, cur_depth: int, anchor: dict) -> list:
             # 분석되되 그 컬럼들은 앵커 게이팅을 받는다(depth-0 자동통과는 실제 루트 전용으로 보존).
             pr = float(getattr(_cfg, "AGENT_NODE_ANALYSIS_PARENT_TABLE_REL", 0.5))
             if _scope_of(k) != (anchor.get("scope") or ""):
-                pr *= max(0.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR", 0.25)))
+                # crossds-rel: 의도적 교차DB REFERENCES 로 도달한 부모 테이블은 완화(기본 1.0), 우연 교차는 0.25.
+                if meta.get("cross_ds"):
+                    pr *= max(0.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR", 1.0)))
+                else:
+                    pr *= max(0.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR", 0.25)))
             kept.append((max(_relevance(n, meta, anchor), pr), n, cur_depth > 0))
             continue
         rel = _relevance(n, meta, anchor)
@@ -812,12 +825,15 @@ def _enqueue_neighbors(c, cur, run_id: str, scope_key: str, ctx: dict, cur_depth
                 if remaining <= 0:
                     break
                 k = n.get("key")
+                # crossds-rel: 이웃 job 은 **이웃 자신의 scope**(_scope_of(k))로 기록 — 크로스-ds 엣지로 도달한
+                #   이웃을 run 의 단일 sk 로 넣으면 그 이웃의 재분석이 잘못된 scope 에서 이웃을 찾는다. prefix 없으면 sk 폴백.
+                nsk = (_scope_of(k) or sk)[:96]
                 cur.execute(
                     "INSERT INTO node_analysis_jobs "
                     "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending') "
                     "ON CONFLICT (run_id, node_key) DO NOTHING RETURNING id",
-                    (run_id, sk, k, (n.get("label") or "")[:32],
+                    (run_id, nsk, k, (n.get("label") or "")[:32],
                      (n.get("name") or k)[:512], (n.get("fqn") or ""), d,
                      round(float(rel), 4)))
                 if cur.fetchone():

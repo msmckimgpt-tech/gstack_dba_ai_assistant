@@ -8,6 +8,45 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260704T151336-ai-claude-feature-0016-graph-dblclick-stable [SUBAGENT: PASS-WITH-FIXES] — 더블클릭 재배치 순서 안정화(§49) 적대 리뷰 2라운드
+- 대상: 그래프 더블클릭 전체 재배치 수정 — 배치 순서 안정화(`_metaStableSeq` + clusterOrder/tableOrder/groupOrder/groupTableOrder).
+- 방법: §18.8 적대 리뷰(general-purpose), 8개 결함 클래스 프로브(mutation·ordering·simgroups·leak·threshold·nodePos·fresh-load·재출현).
+- 판정: **핵심 로직 correct & safe** — `ids.length=0` mutation(비별칭, terms 항상 마지막)·schemaIdx/relOrder(안정화 후 계산, barycenter 는 신규 테이블에만)·leak 없음(collapse=컬럼만 제거·resetModel clear·_metaStableSeq self-prune)·nodePos 직교(order=base slot, nodePos=절대 델타)·fresh-load 동치(saved=[] → fresh passthrough)·클러스터 재출현 coherent — 전부 clean.
+- 확정 residual 2건:
+  - **R1(HIGH residual → 수정)**: simgroups(구조화 스키마) 경로가 relOrder 미사용·`_metaSimGroups` 가 그룹/테이블 순서를 매 rebuild 재-seriate → flat 경로만 안정화되고 구조화 스키마 내부 잔여 재배치. **수정**: `_metaSimGroups` 에 동일 `_metaStableSeq`(groupOrder[schemaId]·groupTableOrder[groupKey]) 적용.
+  - **R2(MODERATE residual → 문서화)**: `innerColsFor` 임계(7/15/28, 그룹 4/12) 교차 시 열 수 변경으로 해당 클러스터 전 열 재배치 — 반응형 레이아웃 고유. 비파괴·'공간 확보' 성격, 범위 외.
+- 미결: 더블클릭 canvas 상호작용 라이브 육안(win-browser CDP 좌표 마우스 미지원·synthetic 히트테스트 미도달 → 사용자 실 마우스 확인).
+
+## REV-20260704T014646-ai-claude-feature-0016-graph-ux3fix [SUBAGENT: PASS-WITH-FIXES] — 3대 UX 개선(§45) 3-렌즈 적대 리뷰
+- 대상: CHG-20260704T014646-graph-ux3fix (admin.html/js/styles.css — ① 그래프 뷰 최상위 탭 분리+높이 ③ 검색 soft glow / ② 클러스터 원점 sticky 는 되돌림).
+- 방법: §18.8 3-렌즈 병렬 적대 리뷰(general-purpose, 통과 아닌 결함 적발 목적) — (A) 레이아웃 clusterBase, (B) IA/탭/권한 배선, (C) 검색 highlight. 각 렌즈에 diff + 전체 함수 컨텍스트 제공, 실패 시나리오 요구.
+- **확정 결함 3건 반영**:
+  - **(A-HIGH) 클러스터 원점 sticky 겹침 회귀** — 카드→combo 확장 시 고정된 (작은) 카드 원점을 재사용하면 확장된 combo(폭 256~940·높이 326+)가 이웃 카드(258px pitch·96px row)와 겹침. 카드 개요에서 스키마 펼침=지배적 흐름이고 세션 내 재packing 탈출구 없음 → 다중 스키마 확장 레이아웃 사실상 불가. (C 렌즈도 동일 vertical overlap 독립 지적.) **판정: 되돌림**(요구②는 충돌해소 레이아웃 필요 = 라이브 반복 후속). req①-④ trace·clusterOffset 무중복·first-build 동치·products↔schema reset 은 clean 확인됨(내부 정합은 정상, overlap 부작용이 치명).
+  - **(B-MED) 크로스탭 스코프 stale** — 그래프가 별 pane 이 되며 metadataScopeSelect 공유가 끊겨, 다른 탭에서 데이터소스 변경 후 재진입 시 select 값은 갱신되나 canvas 는 이전 스코프(무성 불일치). **수정**: `_metaGraph.loadedScope`·`adminState.metadata.loadedScope` 추적 → 재진입 diverge 시 재로드(양방향).
+  - **(C-LOW) 라벨 박스 넘침** — 매칭 노드 폭 고정(rel 부스트 제거)으로 `labelMaxWidth`(176/168)가 박스(150/130)를 초과 → 라벨이 glow 밖으로 흘림. **수정**: `labelMaxWidth` 를 박스 안으로 클램프(TW-10 / 118).
+- **clean 판정(각 렌즈)**: dangling ref 0(_metaHideGraph·subTab==="graph"·no-create 잔존 없음)·첫진입/재진입 가시성(pane display)·권한 가시성(graph 전용 역할↔빈 메타탭 방지, group-hide 정합)·landing null-safe·검색 mode 게이팅(neighbor/roots 전환 시 glow 소멸)·G6 shadow state 안전(animation:false 무 To() 크래시, circle 컬럼도 glow)·searchMatchNodes 완전성(백엔드 직접매칭만, false glow 0)·rel 상세배지 유지.
+- 리스크·비용: 없음(frontend-only, 비파괴, 인증/데이터/마이그레이션 무변경). 검색 glow 범위가 기존(테이블만)보다 넓어짐(컬럼·용어·스키마명 매칭도) — 개선으로 채택.
+- 미결: **PB-0008 실 Windows 시각검증(하드 게이트)** 무인 미수행 → 사용자 육안 후 배포(T45.12/13). ② 후속 cycle.
+
+## REV-20260704T043653-ai-claude-feature-0016-crossds-rel [SUBAGENT: SHIP-FOR-INERT / NEEDS-FIXES-BEFORE-FLIP] — Phase B 크로스-데이터소스 관계(§47, ADR-019) 설계+구현 적대검증
+- 대상: CHG-20260704T043653-crossds-rel (alembic 0036 + relationships/metadata_graph/node_analysis/insight/frontend).
+- 방법(2단계): 설계 워크플로우(ultracode understand6+design2+적대4) + 구현 diff 적대리뷰(general-purpose) 7축(마이그
+  mixed-version·scope 매핑·프로브 가드·컨텍스트 제외·추론 정확성·node_analysis 스레딩·프론트).
+- 설계검증 확정·수정: CRITICAL revision 충돌(head=0035 → B=0036), migrate-lint 주석 SQL→Python, manual 승격 배선,
+  cross_ds 를 neighborhood 까지 스레딩, 컨텍스트 오염 제외 — 전부 구현에 반영.
+- 구현검증(SHIP for inert deploy — 데몬 OFF):
+  - **SAFE 확인**: 마이그 0036 mixed-version 창 fail-soft(OLD 5-col ON CONFLICT 실패해도 upsert try/except+autocommit,
+    caller wrapped, 워커 무크래시·자가치유), 7-col UNIQUE ADD 는 backfill 후 refine(위반 0), intra-ds/794 레거시 scope
+    동작 byte-보존, 프로브 가드 완전, 컨텍스트 제외 정확(digest 9→11col 호환), SQL(embedding::text→::vector·kNN) 정상,
+    node_analysis cross_ds 컬럼 경로 완전, _enqueue 자기-scope 는 개선(claim 무-scope-filter·anchor 보존), 프론트 G6 안전.
+  - **flip-전 수정(반영)**: [MAJOR] MSSQL raw schema_name('dbo')→effective schema(DB명) 미사용으로 크로스-ds 추론이
+    MSSQL 에서 컬럼 0건→무산/고아 → `_effective_schema` 로 column-fetch + FQN 정합. [MINOR] apply_relationship_signal
+    negative-decay 가 동명 크로스-ds 오염 → intra-ds 가드. [MINOR] reverse-dup(A→B·B→A) → dsk<dsk2 카논화. [MINOR]
+    cap 이 scope_key='common' 로 전역 → source datasource_key 기준.
+  - 잔여(무해·후속): parent-table cross_ds 완화 dead branch(보수적 under-expand), inferred→trusted 라벨 '[추정]'(보수적).
+- 판정: **SHIP(inert deploy)** — 데몬 OFF 라 스키마·UI·scope 완화만 라이브, 마이그 0036 안전. flip-전 블로커(MAJOR+
+  MINOR negative-decay) 반영 완료 → AUTO=1 안전. 크로스-ds 라이브 시각확인은 임베딩 populate + AUTO=1 후 이월.
+
 ## REV-20260703T160303-ai-claude-feature-0016-semantic-embed [SUBAGENT: PASS-WITH-FIXES] — Phase C 의미 임베딩·클러스터링(§46, ADR-018) 설계+구현 적대검증
 - 대상: CHG-20260703T160303-semantic-embed (alembic 0035 + semantic_cluster.py + insight 데몬 + metadata_graph 투영 + 프론트).
 - 방법(2단계): (1) **설계 워크플로우**(ultracode: understand 6 + design 2 + 적대검증 4 에이전트) — 마이그 안전성·정확성·비용 6축.
@@ -836,3 +875,43 @@ source_of_truth: true
   (graph-simgroups POST-DEPLOY Run)·TASK §42(T42.8) 에 기록하는 doc-only 후속 — 코드 무변경 §18.8 skip. 핵심:
   그룹 배경 박스 22 + 헤더 칩 22 렌더(item·21/character·17/…)·GB 클릭 클러스터 상세 위임(§18.8 MAJOR 수정
   실증)·패널 그룹 헤딩 aria·컬럼 접기 REFERENCES 145→145 보존·검색 정상·pageerror 0.
+## REV-20260704T143839-ai-claude-feature-0016-freeplace-liveverify [SKIPPED:doc-only-postdeploy] — freeplace 드래그 4-상호작용 라이브 검증 결과 기록 (코드 무변경)
+- 대상: graph-freeplace(ADR-015, TASK §44) 자유배치 드래그의 완료 게이트(T44.7) 라이브 실측을 T44.8 [x]·
+  MODIFY CHG-…-freeplace-liveverify·TEST(freeplace Run POST-DEPLOY)·해당 doc 에 기록하는 doc-only 후속.
+  **코드·자산 무변경(doc-only)** → §18.8 적대 패널 비적용(SKIPPED). 코드 품질 검증은 원 cycle
+  REV-20260703T101622(freeplace 6축 적대 리뷰, PASS-WITH-FIXES — nodePos override 분리 MAJOR 반영)에서 완료.
+- 근거: 초기 "G6 Canvas 드래그는 win-browser 합성 pointer 가 @antv/g 히트테스트 미도달 → 사용자 라이브 확인 필요"
+  유보를, **Playwright `connect_over_cdp`(win-browser relay @172.26.144.1:9223)로 실 Windows Chrome attach →
+  `page.mouse` 실제 이벤트(move→down→16-step move→up)** 로 자동 구동하여 해소. 실측 전건 PASS: 접힌 카드
+  드래그(accountdb 548,524→430,415, fp-03)·combo 드래그(fp-06)·테이블 노드 드래그+combo auto-fit 반응형
+  리사이즈(MessageQueue 535,505→470,630 + ROUTINE_USES 재라우팅, fp-07)·접기/펼치기 회귀 0(masonry+sim-group,
+  fp-04)·드래그 위치 persistence(statsdb 548,576→400,400 후 tapjoy 펼침 setData+draw rebuild 에도 오프셋 유지·
+  snap-back 없음, fp-06)·초기화 clusterOffset/nodePos clear→원위치(fp-05). 전 구간 pageerror 0.
+## REV-20260704T154756-ai-claude-feature-0016-group-interact [SUBAGENT: PASS-WITH-FIXES] — 카테고리 그룹(sim-group) 상호작용(드래그·접기·반응형) 3-렌즈 적대 패널
+- Trigger: 가시 UI + 신규 드래그/클릭 상호작용 + 좌표 3계층 수학(ADR-020) → §18.8 적대 패널 [SUBAGENT] dispatch.
+  3 병렬 렌즈(① 좌표·레이아웃 수학 ② 상호작용 wiring ③ 회귀·통합) + 선행 headless 격리 실증(_metaG6Build 25/25).
+- ① **좌표 수학 — CLEAN**: GB 반응형 박스가 무-offset 시 packGroup 기하와 **4변 정확 일치**(off-by-one 0 — assignH 상수·
+  n≥gic·col0 top0 불변식 검증), pre-pass↔place-loop nodePos 계산 **bit-identical**(둘 다 colLeftX=_fp[0]−TXOFF·ty=_fp[1]),
+  GH 헤더(right−28)↔GX(right−21) 7px gap·bw≥248 로 음수 폭 불가, 접기 reflow(hEff·contentW·byy) 자기정합, combo
+  auto-fit 는 기존 freeplace 와 동일 기전.
+- ② **상호작용 wiring — PASS-WITH-FIXES**: 리지드 드래그(anchor grabbed 제외·GB 항상 포함)·델타 누적(부호·반복 정합)·
+  nodePos 시프트(clusterOffset MAJOR fix 동형)·drag/click 판정(GX first·GB 무이동 클릭 위임 보존)·이벤트 바인딩 CLEAN.
+- ③ **회귀·통합 — CLEAN(MAJOR 회귀 0)**: 평면 masonry 폴백(groupsMeta 없음→pre-pass 게이트·groupOf 미populate→rebuild
+  없음, freeplace #3 회귀 0)·freeplace SC/combo/table 드래그 무간섭(dragstart 순서 SC→GB/GH→table·_drag 매회 null 리셋·
+  group 분기 gd.group 게이트)·§49 순서 안정화 무충돌(필드명 분리)·be:/nm:/role:/misc 균일(nsKey 공통)·admin.html 캐시버스터
+  양측·resetModel 4필드 clear 확인.
+- **확정결함 반영**:
+  - [MAJOR/①②③ 공통] **접힌 그룹 드래그 시 개별배치(nodePos) 멤버 분리**: groupMembers 가 방출된(펼친) 멤버만 담겨,
+    접힌 그룹 헤더 드래그 시 그 멤버 nodePos 시프트가 스킵→펼치면 nodePos 멤버만 옛 좌표에 남아 분리. **수정**:
+    groupOf/groupMembers 를 emission pre-pass(방출분) 대신 **build sim-group 분기에서 b.sg.tables(전체 멤버, 접힘 포함)**
+    로 채움 → 접힌 그룹도 dragend 에서 전 멤버 nodePos 델타 시프트. headless T7 추가(접힌 그룹 groupMembers 전체 등록 검증).
+  - [NIT/③] **GX 우클릭 무메뉴**(GB/GH 와 불일치): node:contextmenu 의 GB/GH 분기에 GX 추가 → 소속 스키마 메뉴 위임.
+  - [NIT/③] **범례 문구 정밀화**: "헤더 드래그" → "박스/헤더 드래그로 그룹 이동"(GB 전체가 draggable).
+- **수용/이연(비파괴)**:
+  - [MINOR/③] combo(클러스터) 드래그 hit-area 축소(GB 가 combo 내부 덮음) — 헤더 스트립·그룹 간격·여백으로 여전히 도달
+    가능(ADR-020 한계 문서화). PB-0008 라이브 QA 로 밀집 클러스터 확인.
+  - [NIT/②③] 드래그-후 node:click 재발화 여부는 G6 v5 이동 임계값 의존(기존 draggable+clickable 테이블·SC 카드와 동일
+    parity — 신규 위험 아님) → PB-0008 "그룹 드래그 후 상세패널 미개방" 확인.
+  - [NIT/②③ perf] 그룹소속 테이블 단독 드래그 dragend 마다 full rebuild(1회/드래그, per-frame 아님) — 박스 재파생 위해
+    필요·수용. [NIT/②] 재군집 시 groupOffset key(fam) orphan(무해, resetModel clear·groupOrder 안정화로 대부분 방지).
+- 재검증: node --check PASS + headless _metaG6Build 격리 **25/25 PASS**(수정 후). 라이브 canvas 상호작용은 T50.8 PB-0008.
