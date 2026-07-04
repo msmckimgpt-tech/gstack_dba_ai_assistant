@@ -575,3 +575,35 @@ source_of_truth: true
   probe(불가 — 다른 엔드포인트, 기각) / auto-promote to trusted(검증 없이 신뢰=오염 위험, 기각 — manual/대화만).
 - Supersedes:
 - Superseded By:
+
+## ADR-020 — 카테고리 그룹(sim-group) 상호작용: 드래그·접기·반응형 리사이즈 (ADR-015 자유배치를 그룹 계층으로 확장)
+- Status: accepted (2026-07-04)
+- Context: 사용자 회귀 재보고 — ADR-015(freeplace)가 자유배치 드래그·접기를 **스키마 클러스터(combo)** 와 **개별 테이블
+  노드** 레벨에만 복원했으나, 사용자 첫 의도는 그 사이 계층인 **카테고리 그룹**(= 스키마 클러스터 내부에서 유사 테이블을
+  묶는 유사 속성 그룹 / sim-group, ADR-013 의 색 배경 박스 GB + 헤더 칩 GH)이었다. 당시 sim-group 은 `_metaElementDragEnable`
+  에서 드래그가 차단된 **비상호작용 장식**(클릭·우클릭은 소속 스키마로 위임만)이라, 사용자가 기대한 [그룹 드래그 이동]·
+  [그룹 접기/펼치기]·[그룹 내부 노드 이동에 따른 박스 반응형 리사이즈]가 동작하지 않았다.
+- Decision: sim-group 을 combo·테이블 노드와 동일한 자유배치 상호작용 대상으로 승격(ADR-015 offset 레이어를 그룹 계층으로 확장).
+  좌표는 **3계층 offset**: cluster `L.x0/L.y0`(clusterOffset 포함) → group `groupOffset` → node `nodePos`.
+  - **groupOffset**(groupKey→{dx,dy}): GB/GH 드래그의 누적 델타. build 가 그룹 블록 위치(bxRel/byRel)와 그 멤버 place
+    (lx/top)에 공통 가산 → 박스·헤더·멤버·컬럼이 coherent 이동, rebuild(펼침/접기) 후 유지. 리지드 드래그는 grabbed 요소를
+    anchor 로 그룹 전 요소(GB·GH·GX·멤버 테이블·종속)를 고정 오프셋으로 묶어 이동(graph-drag 테이블-종속 기전 재사용).
+  - **groupCollapsed**(Set): 접힌 그룹은 멤버 place 미방출·블록 높이를 헤더만(GHH+GPB)으로 축소 → shelf-pack 자동 reflow.
+    헤더 칩(개수 표시)은 유지. 전용 토글 컨트롤 **GX**("−"/"+", 그룹 헤더 우측 — 스키마 XS: 패턴 재사용) 클릭으로 토글.
+    검색 매칭 멤버가 있는 그룹은 접힘 상태여도 build 가 강제 펼침(결과 가시 — schemaExpanded 자동추가와 동형, 사용자 의도 보존).
+  - **반응형 리사이즈(#3)**: 펼친 그룹의 GB 박스 기하를 **멤버(테이블+펼친 컬럼)의 최종 place bbox + 패딩**에서 파생 —
+    개별 노드 이동(nodePos)·그룹 이동(groupOffset) 양쪽에 박스가 자동으로 맞춰진다(드래그·리사이즈 단일 메커니즘 통합).
+    무-offset 시 이 파생 박스는 packGroup 기하와 정확히 일치(회귀 0). 그룹 소속 테이블 단독 드래그 dragend 는 rebuild 를
+    트리거해 박스 재파생(평면·비그룹 테이블은 기존대로 combo auto-fit 만 — rebuild 없음).
+  - **정합 불변식**: 그룹을 통째로 옮기면 소속 멤버 nodePos(절대좌표)도 동반 가산(ADR-015 clusterOffset MAJOR fix 동형).
+- Consequences: ADR-013 sim-group 이 '가시적 영역'에서 '조작 가능한 그룹'으로 승격. ADR-004 결정론 배치·§49 순서 안정화는
+  불변(offset·방출여부만 개입, 배정/순서 미변경). 프론트 전용·마이그레이션 0. 한계(수용): GB 배경이 combo 내부를 덮어
+  combo(클러스터) 드래그 표면은 헤더/여백으로 얇아짐(접힌 카드·헤더 경로 유지). 라이브 canvas 드래그 자동화는 PB-0008
+  Playwright real mouse 로 검증.
+- Alternatives:
+  - **GB 를 G6 combo 로 승격(자식 자동 fit)**: combo 중첩(그룹⊂스키마) — setData diff·이벤트 복잡도·회귀 위험 큼, 기각.
+    파생 bbox 가 combo 없이 반응형 리사이즈 제공.
+  - **헤더 칩 클릭으로 접기 토글**(GX 컨트롤 없이): 기존 GB/GH 클릭=스키마 상세 위임(데드존 방지)과 충돌 — 기각, 전용 GX.
+  - **접기 시 그룹 블록 폭도 축소**: 펼침/접힘 간 가로 reflow 요동 — 안정성 위해 폭 유지(헤더 높이만 축소), 기각.
+- Supersedes: (ADR-015 를 대체하지 않음 — 그 offset 레이어를 그룹 계층으로 확장)
+- Superseded By:
