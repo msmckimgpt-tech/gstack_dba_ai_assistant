@@ -866,3 +866,15 @@ source_of_truth: true
   (graph-simgroups POST-DEPLOY Run)·TASK §42(T42.8) 에 기록하는 doc-only 후속 — 코드 무변경 §18.8 skip. 핵심:
   그룹 배경 박스 22 + 헤더 칩 22 렌더(item·21/character·17/…)·GB 클릭 클러스터 상세 위임(§18.8 MAJOR 수정
   실증)·패널 그룹 헤딩 aria·컬럼 접기 REFERENCES 145→145 보존·검색 정상·pageerror 0.
+## REV-20260704T143839-ai-claude-feature-0016-freeplace-liveverify [SKIPPED:doc-only-postdeploy] — freeplace 드래그 4-상호작용 라이브 검증 결과 기록 (코드 무변경)
+- 대상: graph-freeplace(ADR-015, TASK §44) 자유배치 드래그의 완료 게이트(T44.7) 라이브 실측을 T44.8 [x]·
+  MODIFY CHG-…-freeplace-liveverify·TEST(freeplace Run POST-DEPLOY)·해당 doc 에 기록하는 doc-only 후속.
+  **코드·자산 무변경(doc-only)** → §18.8 적대 패널 비적용(SKIPPED). 코드 품질 검증은 원 cycle
+  REV-20260703T101622(freeplace 6축 적대 리뷰, PASS-WITH-FIXES — nodePos override 분리 MAJOR 반영)에서 완료.
+- 근거: 초기 "G6 Canvas 드래그는 win-browser 합성 pointer 가 @antv/g 히트테스트 미도달 → 사용자 라이브 확인 필요"
+  유보를, **Playwright `connect_over_cdp`(win-browser relay @172.26.144.1:9223)로 실 Windows Chrome attach →
+  `page.mouse` 실제 이벤트(move→down→16-step move→up)** 로 자동 구동하여 해소. 실측 전건 PASS: 접힌 카드
+  드래그(accountdb 548,524→430,415, fp-03)·combo 드래그(fp-06)·테이블 노드 드래그+combo auto-fit 반응형
+  리사이즈(MessageQueue 535,505→470,630 + ROUTINE_USES 재라우팅, fp-07)·접기/펼치기 회귀 0(masonry+sim-group,
+  fp-04)·드래그 위치 persistence(statsdb 548,576→400,400 후 tapjoy 펼침 setData+draw rebuild 에도 오프셋 유지·
+  snap-back 없음, fp-06)·초기화 clusterOffset/nodePos clear→원위치(fp-05). 전 구간 pageerror 0.
