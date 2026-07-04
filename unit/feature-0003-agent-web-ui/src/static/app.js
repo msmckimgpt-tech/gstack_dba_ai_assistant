@@ -3754,63 +3754,35 @@ function _failedSqlStepFromMessage(message) {
   });
   return found;
 }
-function _buildFixWithAiControl(message) {
+// ITEM-08 / share-visibility-window: "AI 로 고치기" 액션을 모듈 레벨로 추출해 ☰ 메뉴에서 호출.
+// (사용자 요청 2026-07-04: 피드백 👍/👎 만 외부, 나머지 액션은 ☰ 내부로.) 메뉴는 선택 시 닫히므로
+// 인라인 버튼 상태(busy/라벨) 대신 toast 로 진행/결과를 안내한다.
+async function _submitFixWithAi(message) {
   const failedStep = _failedSqlStepFromMessage(message);
-  if (!failedStep) return null;
   const cid = state.activeConversationId;
-  if (!cid) return null;
-
-  const wrap = document.createElement("span");
-  wrap.className = "message-fix-with-ai";
-
-  const status = document.createElement("span");
-  status.className = "message-fix-status";
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "message-action-btn message-fix-btn";
-  btn.textContent = "AI 로 고치기";
-  btn.title = "실패한 SQL 의 오류를 AI 가 진단해 자동으로 수정·재실행합니다.";
-
-  btn.addEventListener("click", async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (wrap.dataset.busy === "1") return;  // 더블클릭 가드(요청 중 재진입 차단).
-    wrap.dataset.busy = "1";
-    btn.disabled = true;
-    const _label = btn.textContent;
-    btn.textContent = "AI 가 고치는 중…";
-    status.textContent = "";
-    try {
-      // executed_sql / error_message 는 실패 step 에서 그대로 — 서버가 데이터 인용 블록으로만 삽입.
-      const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/fix-with-ai`, {
-        method: "POST",
-        body: JSON.stringify({
-          executed_sql: String(failedStep.sql || ""),
-          error_message: String(failedStep.error || ""),
-        }),
-      });
-      // 성공 응답(= /api/ask 와 동일 result dict)이 또 error 를 담을 수 있음(정정 실패) — 안내.
-      if (payload && String(payload.error || "").trim()) {
-        showToast(`수정에 실패했습니다: ${payload.error}`, true);
-      } else {
-        showToast("AI 가 수정한 결과를 추가했습니다.");
-      }
-      // 대화를 reload → 수정된 결과(같은 cid 의 새 assistant message)가 부분 추가/갱신된다.
-      const newCid = String((payload && payload.conversation_id) || cid || "");
-      await refreshWorkspace(newCid);
-      return;  // refreshWorkspace 가 renderMessages 를 다시 그리므로 이 wrap 은 폐기됨.
-    } catch (error) {
-      showToast((error && error.message) || "수정 요청에 실패했습니다.", true);
-      btn.disabled = false;
-      btn.textContent = _label;
-      wrap.dataset.busy = "0";
+  if (!failedStep || !cid) return;
+  showToast("AI 가 고치는 중…");
+  try {
+    // executed_sql / error_message 는 실패 step 에서 그대로 — 서버가 데이터 인용 블록으로만 삽입.
+    const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/fix-with-ai`, {
+      method: "POST",
+      body: JSON.stringify({
+        executed_sql: String(failedStep.sql || ""),
+        error_message: String(failedStep.error || ""),
+      }),
+    });
+    // 성공 응답(= /api/ask 와 동일 result dict)이 또 error 를 담을 수 있음(정정 실패) — 안내.
+    if (payload && String(payload.error || "").trim()) {
+      showToast(`수정에 실패했습니다: ${payload.error}`, true);
+    } else {
+      showToast("AI 가 수정한 결과를 추가했습니다.");
     }
-  });
-
-  wrap.appendChild(btn);
-  wrap.appendChild(status);
-  return wrap;
+    // 대화를 reload → 수정된 결과(같은 cid 의 새 assistant message)가 부분 추가/갱신된다.
+    const newCid = String((payload && payload.conversation_id) || cid || "");
+    await refreshWorkspace(newCid);
+  } catch (error) {
+    showToast((error && error.message) || "수정 요청에 실패했습니다.", true);
+  }
 }
 // ITEM-03 / share-visibility-window: sample-feedback POST 를 모듈 레벨로 추출해 재사용.
 // 투표(👍/👎) 경로와 ☰ 메뉴 '샘플 등록'(suggested=true) 이 동일 endpoint/바디로 호출한다.
@@ -4080,8 +4052,8 @@ function renderMessages() {
       bubble.appendChild(attachRow);
     }
 
-    // 말풍선 단위 액션. share-visibility-window: 샘플 등록/분기/공유 3종은 인라인 버튼을 없애고
-    // ☰ 드롭다운(openMessageBubbleMenu)으로 통합한다. 👍/👎 피드백과 "AI 로 고치기"는 인라인 유지.
+    // 말풍선 단위 액션. share-visibility-window: 샘플 등록/분기/공유 + "AI 로 고치기"는 인라인 버튼을
+    // 없애고 ☰ 드롭다운(openMessageBubbleMenu)으로 통합한다. 👍/👎 피드백만 외부에 유지(사용자 결정).
     const canShareHere = can("conversation.share.create") && message.id != null;
     const canForkHere = canFork && message.id != null;
     // '샘플 등록' 게이트 — assistant 답변 + 본문에 SQL 코드블록이 있을 때만(권한 코드 없음).
@@ -4090,19 +4062,15 @@ function renderMessages() {
     // 적재 endpoint 는 대화 접근자면 누구나 가능(열람자 포함) → 게이트는 활성 대화 + assistant + id.
     const canFeedbackHere = role === "assistant" && message.id != null && Boolean(state.activeConversationId);
     // ITEM-08: 실패한 execute_sql step 을 가진 assistant 답변 + 발화 권한 보유 시 "AI 로 고치기" 노출.
-    // (열람 전용 멤버는 발화 불가 → 서버도 403 으로 거부하므로 UI 도 동일 게이트.)
+    // (열람 전용 멤버는 발화 불가 → 서버도 403 으로 거부하므로 UI 도 동일 게이트.) 이제 ☰ 메뉴 항목.
     const canFixHere = role === "assistant"
       && Boolean(state.activeConversationId)
       && can("conversation.ask")
       && Boolean(_failedSqlStepFromMessage(message));
-    const hasBubbleMenu = canSampleHere || canForkHere || canShareHere;
-    if (hasBubbleMenu || canFeedbackHere || canFixHere) {
+    const hasBubbleMenu = canSampleHere || canForkHere || canShareHere || canFixHere;
+    if (hasBubbleMenu || canFeedbackHere) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
-      if (canFixHere) {
-        const fixCtl = _buildFixWithAiControl(message);
-        if (fixCtl) actions.appendChild(fixCtl);
-      }
       if (canFeedbackHere) {
         actions.appendChild(_buildSampleFeedbackControls(message, _msgIdx));
       }
@@ -4113,7 +4081,7 @@ function renderMessages() {
         menuTrigger.setAttribute("aria-haspopup", "menu");
         menuTrigger.setAttribute("aria-expanded", "false");
         menuTrigger.setAttribute("aria-label", "메시지 작업 메뉴");
-        menuTrigger.title = "이 말풍선의 작업 메뉴 (샘플 등록 · 분기 · 공유)";
+        menuTrigger.title = "이 말풍선의 작업 메뉴 (샘플 등록 · 분기 · 공유 · AI 로 고치기)";
         menuTrigger.textContent = "☰";
         // <button> 은 Enter/Space 로 native click 을 발화하므로 click 만 배선한다(중복 토글 회피).
         menuTrigger.addEventListener("click", (event) => {
@@ -6963,6 +6931,12 @@ function openMessageBubbleMenu(message, msgIdx, triggerEl) {
   const canSampleHere = role === "assistant" && Boolean(_extractSqlFromContent(message.content));
   const canForkHere = Boolean(state.activeConversationId) && can("conversation.create") && message.id != null;
   const canShareHere = can("conversation.share.create") && message.id != null;
+  // ITEM-08 (사용자 결정 2026-07-04): "AI 로 고치기"도 ☰ 메뉴 항목. 실패한 execute_sql step 보유 +
+  // 발화 권한(conversation.ask). 열람 전용 멤버는 서버 403 → 동일 게이트.
+  const canFixHere = role === "assistant"
+    && Boolean(state.activeConversationId)
+    && can("conversation.ask")
+    && Boolean(_failedSqlStepFromMessage(message));
   openFloatingMenu(triggerEl, {
     id: "bubbleMsgMenu",
     className: "conv-item-menu bubble-msg-menu",
@@ -6970,6 +6944,13 @@ function openMessageBubbleMenu(message, msgIdx, triggerEl) {
     buildItems: (menu, make) => {
       if (canSampleHere) {
         menu.appendChild(make("샘플 등록", { onSelect: () => submitSampleFromMenu(message, msgIdx) }));
+      }
+      if (canFixHere) {
+        menu.appendChild(make("AI 로 고치기", {
+          action: "conversation.ask",
+          conversation,
+          onSelect: () => _submitFixWithAi(message),
+        }));
       }
       if (canForkHere) {
         menu.appendChild(make("여기서 분기", {
