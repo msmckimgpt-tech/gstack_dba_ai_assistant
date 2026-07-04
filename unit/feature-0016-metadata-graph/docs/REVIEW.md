@@ -8,6 +8,25 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260704T043653-ai-claude-feature-0016-crossds-rel [SUBAGENT: SHIP-FOR-INERT / NEEDS-FIXES-BEFORE-FLIP] — Phase B 크로스-데이터소스 관계(§47, ADR-019) 설계+구현 적대검증
+- 대상: CHG-20260704T043653-crossds-rel (alembic 0036 + relationships/metadata_graph/node_analysis/insight/frontend).
+- 방법(2단계): 설계 워크플로우(ultracode understand6+design2+적대4) + 구현 diff 적대리뷰(general-purpose) 7축(마이그
+  mixed-version·scope 매핑·프로브 가드·컨텍스트 제외·추론 정확성·node_analysis 스레딩·프론트).
+- 설계검증 확정·수정: CRITICAL revision 충돌(head=0035 → B=0036), migrate-lint 주석 SQL→Python, manual 승격 배선,
+  cross_ds 를 neighborhood 까지 스레딩, 컨텍스트 오염 제외 — 전부 구현에 반영.
+- 구현검증(SHIP for inert deploy — 데몬 OFF):
+  - **SAFE 확인**: 마이그 0036 mixed-version 창 fail-soft(OLD 5-col ON CONFLICT 실패해도 upsert try/except+autocommit,
+    caller wrapped, 워커 무크래시·자가치유), 7-col UNIQUE ADD 는 backfill 후 refine(위반 0), intra-ds/794 레거시 scope
+    동작 byte-보존, 프로브 가드 완전, 컨텍스트 제외 정확(digest 9→11col 호환), SQL(embedding::text→::vector·kNN) 정상,
+    node_analysis cross_ds 컬럼 경로 완전, _enqueue 자기-scope 는 개선(claim 무-scope-filter·anchor 보존), 프론트 G6 안전.
+  - **flip-전 수정(반영)**: [MAJOR] MSSQL raw schema_name('dbo')→effective schema(DB명) 미사용으로 크로스-ds 추론이
+    MSSQL 에서 컬럼 0건→무산/고아 → `_effective_schema` 로 column-fetch + FQN 정합. [MINOR] apply_relationship_signal
+    negative-decay 가 동명 크로스-ds 오염 → intra-ds 가드. [MINOR] reverse-dup(A→B·B→A) → dsk<dsk2 카논화. [MINOR]
+    cap 이 scope_key='common' 로 전역 → source datasource_key 기준.
+  - 잔여(무해·후속): parent-table cross_ds 완화 dead branch(보수적 under-expand), inferred→trusted 라벨 '[추정]'(보수적).
+- 판정: **SHIP(inert deploy)** — 데몬 OFF 라 스키마·UI·scope 완화만 라이브, 마이그 0036 안전. flip-전 블로커(MAJOR+
+  MINOR negative-decay) 반영 완료 → AUTO=1 안전. 크로스-ds 라이브 시각확인은 임베딩 populate + AUTO=1 후 이월.
+
 ## REV-20260703T160303-ai-claude-feature-0016-semantic-embed [SUBAGENT: PASS-WITH-FIXES] — Phase C 의미 임베딩·클러스터링(§46, ADR-018) 설계+구현 적대검증
 - 대상: CHG-20260703T160303-semantic-embed (alembic 0035 + semantic_cluster.py + insight 데몬 + metadata_graph 투영 + 프론트).
 - 방법(2단계): (1) **설계 워크플로우**(ultracode: understand 6 + design 2 + 적대검증 4 에이전트) — 마이그 안전성·정확성·비용 6축.

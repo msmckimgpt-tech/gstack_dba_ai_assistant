@@ -546,3 +546,32 @@ source_of_truth: true
   이점 상실, 기각) / sklearn·scipy(신규 heavy dep, 기각 — numpy만) / LLM 라벨(비용, 후속 옵션 — 현재 commonAffix 서버포트).
 - Supersedes: (ADR-013 의 이연분 이행 — affix 계층은 폴백으로 계승, 대체 아님)
 - Superseded By:
+
+## ADR-019 — 크로스-데이터소스 관계 (Phase B, 의미 임베딩 구동 후보 + 신뢰 게이팅)
+- Status: accepted (2026-07-04)
+- Context: 사용자 3대 개선 中 B — "다른 DB 간 관계가 구성될 수 있으니 그 구조를 위한 연결 구축". 실측상 관계 엔진은 3중
+  경계(table_relationships 단일 scope_key/datasource_key·추론 per-schema·프로브 단일 커넥션)로 datasource 내부에만
+  갇혀 있었다(조사 확인). 크로스-데이터소스 조인은 FK·프로브가 불가능(다른 엔드포인트)하므로 **의미 유사도**로만
+  후보 발굴 가능 — Phase C(ADR-018) 시그니처 임베딩이 그 토대.
+- Decision: 사용자 결정(크로스-데이터소스까지)대로 데이터소스 경계를 넘는 관계를 additive 로 표현·발굴·표시.
+  1. **data model(alembic 0036, 비파괴)**: table_relationships 에 source/target_datasource_key(default '', 기존 행
+     backfill=datasource_key) + UNIQUE 7-col 진화(intra-ds refine) + CHECK 에 'manual' 추가. upsert ON CONFLICT 7-col.
+  2. **추론(insight-worker 데몬, 기본 OFF)**: Phase C 시그니처 임베딩 pgvector 코사인으로 서로 다른 datasource 의
+     의미-유사 테이블을 찾고, 양쪽 공통 join-key 컬럼(동명·식별자형)을 후보(source='inferred', status='candidate')로.
+     effective schema(MSSQL DB명) 사용(그래프 노드 정합). AGENT_XDS_RELATIONSHIP_INFER_AUTO=0 로 ship — 임베딩
+     populate 후 flip.
+  3. **신뢰 게이팅**: 크로스-ds 는 프로브 검증 불가 → fetch_probe_candidates 가 src_ds=tgt_ds 만 프로브(영구 candidate,
+     오분류 파단 방지) + apply_relationship_signal 도 intra-ds 전용(오염 감쇠 방지). **승격은 manual 큐레이션(source=
+     'manual'→trusted)만**(대화 JOIN 은 단일 커넥션이라 실질 불가). AI 컨텍스트는 크로스-ds 는 **trusted 만 주입**
+     (미검증 candidate 오염 차단, load_relationship_context). 주입 시 [교차DB] 마커.
+  4. **그래프 투영·완화**: sync_relationship 이 각 끝점을 **자기 datasource scope**(_vkey)로 앵커(cross_ds edge 속성).
+     neighborhood BFS 는 scope-무관이라 크로스 엣지 자동 노출. node_analysis 는 **의도적 cross_ds REFERENCES** 로 도달한
+     이웃의 cross-scope 감쇠를 완화(1.0, 우연 교차는 0.25 유지) + 이웃 job 을 자기 scope 로 기록.
+  5. **UI**: 크로스-ds 엣지 = 마젠타 점선(same-ds candidate 골드와 구분) + [교차DB] 데이터.
+- Consequences: 데이터소스 경계를 넘는 관계가 표현·발굴·표시된다. **비파괴·데몬 OFF ship(스키마·UI·완화만 즉시,
+  추론 inert)**. 마이그 mixed-version 창은 fail-soft(OLD 5-col ON CONFLICT 가 7-col DB 에서 실패해도 upsert try/except).
+  크로스-ds 는 검증 불가라 보수적(높은 MIN_SIM·trusted-only 주입·manual 승격). Phase C 임베딩 populate 후 AUTO=1 flip.
+- Alternatives: 데이터소스 내 카탈로그 크로스만(프로브 가능·안전하나 사용자 "다른 DB 간" 미충족, 기각) / cross-ds 를
+  probe(불가 — 다른 엔드포인트, 기각) / auto-promote to trusted(검증 없이 신뢰=오염 위험, 기각 — manual/대화만).
+- Supersedes:
+- Superseded By:

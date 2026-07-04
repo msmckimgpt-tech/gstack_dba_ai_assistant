@@ -399,6 +399,8 @@ CREATE TABLE IF NOT EXISTS table_relationships (
     id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     scope_key         varchar(96)  NOT NULL DEFAULT 'common',
     datasource_key    varchar(64)  NOT NULL DEFAULT '',
+    source_datasource_key varchar(64) NOT NULL DEFAULT '',  -- crossds-rel(0036): 엔드포인트별 datasource
+    target_datasource_key varchar(64) NOT NULL DEFAULT '',
     source_schema     varchar(128) NOT NULL DEFAULT '',
     source_table      varchar(128) NOT NULL,
     source_column     varchar(128) NOT NULL,
@@ -415,11 +417,14 @@ CREATE TABLE IF NOT EXISTS table_relationships (
     created_at        timestamptz  NOT NULL DEFAULT now(),
     updated_at        timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT ck_table_relationships_source
-        CHECK (source IN ('fk_introspect', 'conversation', 'llm_insight')),
-    CONSTRAINT ux_table_relationships_edge
-        UNIQUE (scope_key, source_table_fqn, source_column, target_table_fqn, target_column)
+        CHECK (source IN ('fk_introspect', 'conversation', 'llm_insight', 'inferred', 'manual')),  -- 0026 inferred + 0036 manual
+    CONSTRAINT ux_table_relationships_edge  -- 0036: 엔드포인트별 datasource 편입(7-col, cross-ds 지원)
+        UNIQUE (scope_key, source_datasource_key, source_table_fqn, source_column,
+                target_datasource_key, target_table_fqn, target_column)
 );
 CREATE INDEX IF NOT EXISTS ix_table_relationships_src ON table_relationships (scope_key, source_table_fqn);
+CREATE INDEX IF NOT EXISTS ix_table_relationships_src_ds ON table_relationships (scope_key, source_datasource_key);  -- 0036
+CREATE INDEX IF NOT EXISTS ix_table_relationships_tgt_ds ON table_relationships (scope_key, target_datasource_key);  -- 0036
 CREATE INDEX IF NOT EXISTS ix_table_relationships_tgt ON table_relationships (scope_key, target_table_fqn);
 DROP TRIGGER IF EXISTS trg_table_relationships_updated_at ON table_relationships;
 CREATE TRIGGER trg_table_relationships_updated_at

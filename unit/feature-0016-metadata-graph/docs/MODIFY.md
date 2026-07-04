@@ -8,6 +8,30 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260704T043653-ai-claude-feature-0016-crossds-rel
+- What: Phase B(ADR-019) — 크로스-데이터소스 관계. table_relationships 에 엔드포인트별 datasource + Phase C 시그니처
+  임베딩 구동 후보 추론(데몬 기본 OFF) + 프로브/컨텍스트/승격 신뢰 게이팅 + 그래프 scope 완화 + UI 마젠타 점선. TASK §47.
+- Files:
+  - `alembic/versions/20260704_0036_relationship_cross_datasource.py`(신규): source/target_datasource_key 2컬럼 +
+    7-col UNIQUE + CHECK 'manual' + ds 인덱스 2(비파괴·backfill·migrate-lint ACK Python 주석).
+  - `modules/relationships.py`: upsert 7-col ON CONFLICT(한 줄) + manual 승격(_TRUSTED_SOURCES+DO UPDATE) +
+    fetch_probe_candidates cross-ds skip 가드 + infer_cross_datasource_relationships/store_xds(신규, effective schema·
+    reverse-dup 카논화·per-ds cap) + _fetch_relationships 크로스-ds candidate 컨텍스트 제외 + [교차DB] digest 마커 +
+    apply_relationship_signal intra-ds 가드.
+  - `modules/metadata_graph.py`: sync_relationship/delete_relationship +tgt_scope +cross_ds edge 속성 + sync_graph
+    관계 투영 src/tgt ds→scope 매핑(intra-ds 완전 보존) + neighborhood cross_ds emit + _PROP_KEYS+cross_ds.
+  - `modules/node_analysis.py`: _relevance/parent-table cross_ds 완화 + _record cross_ds 캡처 + _enqueue 이웃 자기-scope.
+  - `modules/insight.py`: xds 추론 데몬(기본 OFF, AGENT_XDS_RELATIONSHIP_INFER_AUTO).
+  - `shared/config.py`: AGENT_XDS_* 7 노브(+__all__). `agent_kb_schema.sql`: 문서 정합(0036 반영).
+  - `static/admin.js`: _metaEdgeStyleFor(crossDs 마젠타 점선) + 엣지 ingest/build cross_ds. cache-buster `20260704-crossds-rel`.
+  - `tests/test_relationships.py`: ON-CONFLICT==UNIQUE 불변식 head-aware(최신 마이그 UPGRADE UNIQUE).
+- Impact: 백엔드+프론트 additive. **데몬 OFF ship**(스키마·UI·scope 완화만 즉시, 추론 inert). 마이그 mixed-version 창
+  fail-soft. 크로스-ds 는 프로브 불가라 보수적(높은 MIN_SIM·trusted-only 주입·manual 승격). Phase C 임베딩 후 AUTO=1 flip.
+- Related Requirement: 사용자 3대 개선 中 B(다른 DB 간 관계). 정본: TASK §47 / DECISIONS ADR-019.
+- 검증: node --check·py ast·migrate-lint ACK·pytest 67 PASS(head-aware ON-CONFLICT 불변식 포함). §18.8 2단계 적대검증
+  (설계 워크플로우 + 구현 리뷰 SHIP-for-inert). flip-전 블로커(MSSQL effective schema·negative-decay 가드·reverse-dup·
+  cap) 반영. 정본 REVIEW REV-20260704T043653. 배포+PB-0008 배포 후.
+
 ## CHG-20260703T160303-ai-claude-feature-0016-semantic-embed
 - What: Phase C(ADR-013 후속, ADR-018) — 메타데이터 객체(테이블) 의미 임베딩·클러스터링. 시그니처 텍스트를
   기존 texts 저장소에 적재→기존 embedding 데몬이 bge-m3 1024d 임베딩→scope 별 kNN+union-find 클러스터링→

@@ -191,14 +191,24 @@ def test_rows_from_outgoing_skips_incomplete():
 
 # ── 불변식: upsert ON CONFLICT 대상 == migration UNIQUE 제약 (desync = 런타임 오류) ──
 def test_onconflict_target_matches_unique_constraint():
-    """REV 패널 백엔드 최고위험 항목 lock — 둘 중 한쪽만 수정되면 ON CONFLICT 런타임 실패."""
+    """REV 패널 백엔드 최고위험 항목 lock — 둘 중 한쪽만 수정되면 ON CONFLICT 런타임 실패.
+
+    crossds-rel: head-aware — ux_table_relationships_edge 를 (재)정의하는 **최신 마이그의 UPGRADE 쪽** UNIQUE 와
+    비교한다(0036 이 7-col 로 진화). DOWNGRADE 의 구형 정의는 배제. 다음 마이그가 또 바꿔도 자동 추종."""
     import os
     import re
+    import glob
     base = os.path.join(os.path.dirname(__file__), "..")
     rel = open(os.path.join(base, "src/modules/relationships.py")).read()
-    mig = open(os.path.join(base, "alembic/versions/20260629_0024_table_relationships.py")).read()
     on_conf = re.search(r"ON CONFLICT \(([^)]+)\)", rel).group(1)
-    uniq = re.search(r"ux_table_relationships_edge\s+UNIQUE \(([^)]+)\)", mig).group(1)
+    uniq = None
+    for f in sorted(glob.glob(os.path.join(base, "alembic/versions/*.py"))):
+        txt = open(f).read()
+        up = txt.split("DOWNGRADE_SQL", 1)[0]   # UPGRADE 부분만(다운그레이드의 구형 UNIQUE 배제)
+        m = re.search(r"ux_table_relationships_edge\s+UNIQUE \(([^)]+)\)", up)
+        if m:
+            uniq = m.group(1)   # 파일명 오름차순 — 마지막(최신)이 최종 정의
+    assert uniq is not None, "no ux_table_relationships_edge UNIQUE found in migrations"
     norm = lambda s: [c.strip() for c in s.replace("\n", " ").split(",")]
     assert norm(on_conf) == norm(uniq), f"ON CONFLICT {norm(on_conf)} != UNIQUE {norm(uniq)}"
 

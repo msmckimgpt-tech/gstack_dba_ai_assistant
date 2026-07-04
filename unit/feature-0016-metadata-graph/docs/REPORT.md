@@ -1,5 +1,27 @@
 # Report
 
+## 2026-07-04 · 크로스-데이터소스 관계 (crossds-rel, Phase B, TASK §47, ADR-019)
+
+### 배경 (사용자 3대 개선 中 B)
+"다른 DB 간 관계가 구성될 수 있으니 그 구조를 위한 연결 구축". 관계 엔진이 3중 경계(단일 scope/ds·per-schema 추론·
+단일-커넥션 프로브)로 datasource 내부에만 갇혀 있던 것을, Phase C 의미 임베딩 구동으로 데이터소스 경계를 넘게 확장.
+
+### 구현 (ultracode 워크플로우 설계 → 구현 → 적대리뷰 → flip-전 블로커 반영)
+- **data model(0036, 비파괴)**: table_relationships 엔드포인트별 datasource + 7-col UNIQUE + CHECK 'manual'.
+- **추론(데몬 기본 OFF)**: Phase C 시그니처 임베딩 pgvector 코사인 → 서로 다른 datasource 의 유사 테이블 공통 join-key
+  컬럼을 후보(inferred/candidate). effective schema(MSSQL DB명) 정합.
+- **신뢰 게이팅**: 프로브 skip(cross-ds 는 검증 불가·오분류 파단 방지) + AI 컨텍스트 trusted-only 주입 + 승격은 manual만.
+- **그래프·완화**: 각 끝점 자기 scope 앵커(cross_ds edge) + neighborhood 자동 노출 + node_analysis cross_ds 완화. UI 마젠타 점선.
+
+### 검증
+- node --check·py ast·migrate-lint ACK·pytest **67 PASS**(head-aware ON-CONFLICT 불변식). §18.8 2단계 적대검증:
+  설계 워크플로우 + 구현 리뷰 **SHIP(inert deploy)**. flip-전 블로커(**MSSQL effective schema MAJOR**·negative-decay
+  가드·reverse-dup·cap) 반영. 정본 REVIEW REV-20260704T043653.
+- 라이브 마이그 0036 + 배포(web+insight-worker) + PB-0008 배포 후. 크로스-ds 엣지는 AUTO=1 flip + 임베딩 populate 후 eventual.
+
+### 3대 개선 완주
+- A(제품 카테고리, ADR-014)·C(의미 임베딩, ADR-018)·B(크로스-ds, ADR-019) — 사용자 3대 개선 모두 출하. ADR-013 정합.
+
 ## 2026-07-03 · 메타데이터 객체 의미 임베딩·클러스터링 (semantic-embed, Phase C, TASK §46, ADR-018)
 
 ### 배경 (사용자 3대 개선 中 C)

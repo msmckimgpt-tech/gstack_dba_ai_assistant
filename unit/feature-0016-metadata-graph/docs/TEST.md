@@ -491,3 +491,21 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - metadata_graph 회귀(test_metadata_graph_units + test_sync_graph_from_relational) **10 PASS**(sync_table/scope_roots/schema_tables 변경 무회귀).
 - §18.8 2단계 적대검증(설계 워크플로우 + 구현 리뷰): MAJOR-1/MAJOR-2/MINOR-3 반영. REV-20260703T160303.
 - **POST-DEPLOY**: alembic 0035 라이브 적용 + web/insight-worker 재배포 + PB-0008(그래프 렌더·affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — feature-0003 TEST.md §3 Windows-browser Run).
+
+## crossds-rel — 크로스-데이터소스 관계 (Phase B, ADR-019, TASK §47, 2026-07-04)
+
+### 케이스
+- TC-47-1 (마이그 0036): table_relationships 에 source/target_datasource_key + 7-col UNIQUE + CHECK 'manual' + ds 인덱스 2 를 비파괴 적용(backfill src_ds=tgt_ds=datasource_key). head=0036, migrate-lint ACK.
+- TC-47-2 (ON-CONFLICT 불변식): upsert 7-col ON CONFLICT == 최신 마이그 UPGRADE 7-col UNIQUE (head-aware 테스트).
+- TC-47-3 (프로브 가드): fetch_probe_candidates 가 src_ds=tgt_ds 만 반환 → 크로스-ds candidate 영구 유지(파단 없음).
+- TC-47-4 (manual 승격): source='manual' upsert → status='trusted'(_TRUSTED_SOURCES + DO UPDATE). 크로스-ds 유일 승격 경로.
+- TC-47-5 (컨텍스트 제외): _fetch_relationships 가 크로스-ds candidate 제외(trusted만), [교차DB] 마커. 9-col caller 호환.
+- TC-47-6 (그래프 투영): 크로스-ds 엣지 각 끝점 자기 datasource scope 앵커(cross_ds), neighborhood 자동 노출. intra-ds/794 레거시 scope byte-보존.
+- TC-47-7 (추론, 데몬 OFF): infer_cross_datasource — effective schema(MSSQL DB명)·유사도≥MIN_SIM·공통 keyish 컬럼·reverse-dup 카논화·per-ds cap.
+- TC-47-8 (UI): 크로스-ds 엣지 마젠타 점선(same-ds candidate 골드와 구분).
+
+### Run (2026-07-04) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS** · py ast(relationships/metadata_graph/node_analysis/insight/config/0036) **PASS** · `migrate-lint` **ACK**(서명 annotation, contract 2-phase 전제·fail-soft).
+- pytest **67 PASS**(test_relationships 전체 — head-aware ON-CONFLICT==UNIQUE 불변식 포함 + metadata_graph 회귀). semantic_cluster._effective_schema import OK.
+- §18.8 2단계 적대검증(설계 워크플로우 + 구현 리뷰): **SHIP for inert deploy**(데몬 OFF). flip-전 블로커 MSSQL effective schema(MAJOR)·negative-decay 가드·reverse-dup·cap 반영. REV-20260704T043653.
+- **POST-DEPLOY**: alembic 0036 라이브 적용 + web/insight-worker 재배포 + PB-0008(그래프 렌더·관계 무회귀·pageerror 0; 크로스-ds 엣지는 AUTO=1 flip + 임베딩 populate 후 eventual — feature-0003 TEST.md §3 Windows-browser Run).

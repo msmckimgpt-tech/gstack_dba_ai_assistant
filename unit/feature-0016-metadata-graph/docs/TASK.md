@@ -1175,3 +1175,22 @@ REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메�
   sig strip·MAJOR-2 phantom clear·MINOR-3 OOM 가드 반영). 정본 REVIEW REV-20260703T160303.
 - [x] T46.9 **라이브 마이그(0035) 게이트 표면화 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·
   affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — 후속 확인).
+
+## 47. crossds-rel — 크로스-데이터소스 관계 (Phase B, ADR-019, 2026-07-04 사용자 3대 개선 中 B)
+
+- Related Requirement: 사용자 "다른 DB 간 관계가 구성될 수 있으니 그 구조를 위한 연결 구축". 정본: DECISIONS ADR-019.
+- 등급: **Major** (라이브 agent_kb 마이그 0036 비파괴 + 관계 엔진 크로스-ds 확장 + insight-worker 신규 데몬 OFF).
+- 설계: ultracode 워크플로우(understand6+design2+적대4, C 와 공동) → 구현 → 구현 적대리뷰 → flip-전 블로커 반영.
+
+### 47.1 구현
+- [x] T47.1 alembic 0036: source/target_datasource_key + 7-col UNIQUE + CHECK 'manual' + ds 인덱스 2(비파괴·backfill·migrate-lint ACK).
+- [x] T47.2 relationships.py: upsert 7-col + manual 승격 + 프로브 skip 가드 + infer_cross_datasource/store_xds(effective schema·reverse-dup·per-ds cap) + 컨텍스트 제외 + [교차DB] digest + apply_signal intra-ds 가드.
+- [x] T47.3 metadata_graph.py: sync_relationship/delete tgt_scope+cross_ds + sync_graph 관계 투영 ds→scope(intra-ds 보존) + neighborhood cross_ds emit.
+- [x] T47.4 node_analysis.py: cross_ds 완화(_relevance/parent-table) + _record 캡처 + _enqueue 자기-scope. insight.py: xds 데몬(OFF). config 7 노브. schema.sql 정합. admin.js 마젠타 점선.
+
+### 47.2 검증
+- [x] T47.5 node --check·py ast·migrate-lint ACK·pytest **67 PASS**(head-aware ON-CONFLICT==UNIQUE 불변식 포함).
+- [x] T47.6 §18.8 2단계 적대검증: 설계 워크플로우 + 구현 리뷰 **SHIP(inert)**. flip-전 블로커(MSSQL effective schema
+  MAJOR·negative-decay 가드·reverse-dup·cap) 반영. REVIEW REV-20260704T043653.
+- [ ] T47.7 **라이브 마이그(0036) 게이트 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·관계 무회귀·
+  pageerror 0; 크로스-ds 엣지는 데몬 AUTO=1 flip + 임베딩 populate 후 eventual — 후속 확인).
