@@ -19,6 +19,16 @@ gateway 경유) 으로 모든 LLM 호출을 라우팅하도록 provider 통합�
 완료. Phase E (실 환경 회귀 검증) 사용자 위임. 위험 등급 Major (§12.3) —
 Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한정으로 완화.
 
+**후속 (llm-routing-interactive-split, 2026-07-04, ADR-002)**: insight-worker 가
+주말/야간 내내 gemma 로 고착(refresh-oauth cron 평일한정 → 토큰 만료 방치 → litellm
+401 → edge-fallback 강등)하던 현상을 진단하고 용도별 모델 라우팅을 재구성했다.
+① litellm alias 분리 — 사람 실시간 호출(대화·AI 능동 분석)은 `claude-haiku-4-interactive`
+(+`-root`)로 항상 claude, 백그라운드 insight 배치는 시각 기반(`_effective_insight_model`,
+평일 근무 claude / 야간·주말 edge) 강등. ② fallback 체인 결함(`No fallback model group
+found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록으로 gemma 도달 보장.
+③ 운영: `.env` 대화/분석 모델을 interactive 로 재배치 + refresh/keepalive cron 24/7 확장
+(토큰 상시 유효화). 단위 회귀 `test_insight_offhours_routing.py`(13) + `test_llm_env_naming.py`.
+
 ## 2. Progress
 - Planned: Phase E (실 환경 + AWS 자격증명 회귀 검증), Phase F (verify-completion
   PASS + commit + PR).

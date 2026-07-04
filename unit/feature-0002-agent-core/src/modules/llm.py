@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import concurrent.futures
 import mysql.connector
 import os
@@ -1414,10 +1414,38 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _effective_insight_model(now: "datetime | None" = None) -> str:
+    """insight 백그라운드 배치(schema/table/account) 전용 모델 선택 (llm-routing-interactive-split, 2026-07-04).
+
+    사용자 결정(2026-07-04): 사람 호출(대화·node_analysis)은 항상 claude 로 유지하되, **백그라운드
+    insight 배치는 평일 근무시간엔 claude, 야간·주말엔 gemma(edge)** 로 강등해 비용을 절감한다.
+    OAuth 토큰이 24/7 유효해도 insight 만 off-hours 에 gemma 로 내려가야 하므로, litellm fallback 이
+    아니라 여기서 현재 시각을 보고 모델을 고른다(사람 호출은 이 함수를 쓰지 않음).
+
+    - 평일([START, END) 시, 로컬=KST) → AGENT_INSIGHT_MODEL (기본 claude-haiku-4)
+    - 그 외(야간·주말)                 → AGENT_INSIGHT_OFFHOURS_MODEL (기본 edge=gemma)
+    - OFFHOURS_MODEL 이 빈 값이거나 base 와 동일하면 강등 비활성(항상 base).
+
+    now 는 테스트 주입용(미전달 시 현재 UTC). 컨테이너 로컬 TZ 설정에 의존하지 않도록 UTC 기준
+    계산 후 TZ_OFFSET_HOURS(기본 +9=KST)로 보정한다 — 배포 재현성."""
+    base = (AGENT_INSIGHT_MODEL or OPENAI_MODEL)
+    off = (AGENT_INSIGHT_OFFHOURS_MODEL or "").strip()
+    if not off or off == base:
+        return base
+    _now = now if now is not None else datetime.now(timezone.utc)
+    if _now.tzinfo is None:  # tz-naive 입력은 UTC 로 간주(테스트 편의)
+        _now = _now.replace(tzinfo=timezone.utc)
+    local = _now.astimezone(timezone(timedelta(hours=int(AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS))))
+    is_weekday = local.weekday() < 5  # 0=월 … 4=금, 5=토·6=일
+    in_hours = int(AGENT_INSIGHT_BUSINESS_START_HOUR) <= local.hour < int(AGENT_INSIGHT_BUSINESS_END_HOUR)
+    return base if (is_weekday and in_hours) else off
+
+
 def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
     # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
-    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    # llm-routing-interactive-split(2026-07-04): 시간 기반 강등 — 평일 주간=claude, 야간·주말=gemma.
+    _insight_model = _effective_insight_model()
     client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None
@@ -1457,7 +1485,7 @@ def llm_schema_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
 def llm_table_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     # TASK-0135 (#3 fix): model 을 client 생성에 전달 — 직접 create 호출이 티어 라우터를
     # 우회해 edge 모델을 Bedrock 에 보내 400 폭증하던 버그(Task4 미커버 경로) 수정.
-    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    _insight_model = _effective_insight_model()  # llm-routing-interactive-split: 평일 주간=claude, 야간·주말=gemma
     client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None
@@ -1503,7 +1531,7 @@ def llm_account_insight(payload: dict[str, Any]) -> dict[str, Any] | None:
     추출한다(계정 cross-conversation 회상 소스). schema/table insight 와 동일 티어 라우팅·
     예외 처리. 반환 dict `{"insight": "..."}` 또는 None(실패). PII 제거는 프롬프트가 강제하되
     호출측이 2차 마스킹을 적용한다(방어심층)."""
-    _insight_model = AGENT_INSIGHT_MODEL or OPENAI_MODEL
+    _insight_model = _effective_insight_model()  # llm-routing-interactive-split: 평일 주간=claude, 야간·주말=gemma
     client = _get_llm_client(timeout_sec=AGENT_INSIGHT_TIMEOUT_SEC, model=_insight_model)
     if client is None:
         return None
