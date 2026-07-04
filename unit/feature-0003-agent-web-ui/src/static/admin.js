@@ -3217,6 +3217,13 @@ const _metaGraph = {
   //     유지 + combo auto-fit 리사이즈(#3). node:dragend 가 기록. 둘 다 resetModel(스코프 전환·초기화)에서 clear.
   clusterOffset: new Map(),   // comboId(schema key) -> {dx, dy}
   nodePos: new Map(),         // nodeId -> [x, y] (사용자 확정 절대 위치)
+  // group-interact(§50): sim-group(카테고리 그룹 = 유사 속성 그룹, ADR-013) 자유 배치·접기 상호작용.
+  //   clusterOffset·nodePos 사이 계층(cluster → group → node)의 offset. GB 박스는 멤버 bbox 에서 파생돼
+  //   그룹 이동(groupOffset)·개별 노드 이동(nodePos) 양쪽에 반응형으로 맞춰진다(#3). resetModel 에서 clear.
+  groupOffset: new Map(),     // groupKey -> {dx, dy} (sim-group 단위 드래그 누적 — clusterOffset 의 그룹판)
+  groupCollapsed: new Set(),  // 접힌 sim-group key(멤버 미방출·헤더만)
+  groupMembers: new Map(),    // groupKey -> [멤버 테이블 id] (드래그 시 묶음 이동 — 매 build 재구성, 펼친 그룹만)
+  groupOf: new Map(),         // 테이블 id -> groupKey (멤버 이동 시 GB 박스 반응형 rebuild 판정 — 매 build 재구성)
   // feature-0016 §49(요구②): 배치 순서 안정화 — 이웃확장/펼침 rebuild 시 re-seriation 으로 노드가 그리드를 점프하지
   //   않도록 직전 클러스터·테이블 순서를 보존하고 신규만 seriated 순서로 append. 드래그(nodePos/clusterOffset)와 직교.
   //   resetModel(스코프 전환·초기화)에서 clear → fresh load 는 순수 seriation.
@@ -3769,6 +3776,8 @@ function _metaG6Build() {
   //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
   if (_metaGraph.mode === "products") return _metaG6BuildProducts();
   _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
+  _metaGraph.groupMembers = new Map();   // group-interact(§50): 매 build 그룹→멤버 인덱스 재구성(펼친 그룹만 emission 에서 채움).
+  _metaGraph.groupOf = new Map();        // group-interact(§50): 매 build 테이블→groupKey 역인덱스 재구성.
   const groups = new Map();   // comboId -> {isTerms, tables:[], terms:[], colsByTable:Map(tKey->[cols])}
   const ensureG = (id) => { if (!groups.has(id)) groups.set(id, { isTerms: id === _META_TERMS_COMBO, tables: [], terms: [], colsByTable: new Map() }); return groups.get(id); };
   const tableByKey = new Map();
@@ -3879,7 +3888,17 @@ function _metaG6Build() {
     if (simGroups && simGroups.length >= 2) {
       // 그룹 블록 shelf-pack: 행 배정은 블록 폭(펼침-불변)만 소비, 행 y 는 실 높이 누적(push-down —
       //   펼친 컬럼이 자기 블록 높이를 키우면 아래 "행"만 밀리고 좌우 이웃 블록 x 는 불변).
-      const blocks = simGroups.map((sg, gi) => Object.assign({ sg, gi }, packGroup(g, sg.tables)));
+      // group-interact(§50): 접힌 그룹은 헤더만(HDONLY) 높이로 블록 축소 → shelf-pack 자동 reflow.
+      //   검색 매칭 멤버가 있는 그룹은 접힘 상태여도 강제 펼침(결과 가시 — schemaExpanded 자동추가와 동형).
+      const HDONLY = GHH + GPB;
+      const smt = (_metaGraph.mode === "search") ? _metaGraph.searchMatchTables : null;
+      const isCollapsed = (sg) => _metaGraph.groupCollapsed.has(sg.key)
+        && !(smt && sg.tables.some((t) => smt.has(t.key)));
+      const blocks = simGroups.map((sg, gi) => {
+        const p = packGroup(g, sg.tables);
+        const collapsed = isCollapsed(sg);
+        return Object.assign({ sg, gi, collapsed, hEff: collapsed ? HDONLY : p.h }, p);
+      });
       const rows = [];
       { let cur = { blocks: [], w: 0 };
         blocks.forEach((b) => {
@@ -3889,7 +3908,7 @@ function _metaG6Build() {
         if (cur.blocks.length) rows.push(cur); }
       let byy = _METLAY.PADT + 6, contentW = 0;
       rows.forEach((row) => {
-        const rowH = Math.max(...row.blocks.map((b) => b.h));
+        const rowH = Math.max(...row.blocks.map((b) => b.hEff));   // 접힌 블록은 헤더만 소비(펼친 이웃 높이에 얹힘)
         row.blocks.forEach((b) => { b.byRel = byy; });
         contentW = Math.max(contentW, row.w - GGX);
         byy += rowH + GGY;
@@ -3897,10 +3916,24 @@ function _metaG6Build() {
       const place = [];
       const groupsMeta = [];
       blocks.forEach((b) => {
-        groupsMeta.push({ key: b.sg.key, label: b.sg.label, n: b.sg.n, x: b.bxRel, y: b.byRel, w: b.w, h: b.h,
-          tint: _META_GROUP_TINTS[b.gi % _META_GROUP_TINTS.length] });
+        // group-interact(§50): sim-group 자유 배치 offset(드래그 누적) — 박스·헤더·멤버 place 공통 가산
+        //   (cluster L.x0/L.y0 위, node nodePos 아래 — 3계층). GB 박스 실제 기하는 emission 이 멤버 bbox 로 파생.
+        const goff = _metaGraph.groupOffset.get(b.sg.key);
+        const gdx = goff ? goff.dx : 0, gdy = goff ? goff.dy : 0;
+        // group-interact(§50, REV-wiring MAJOR fix): groupMembers/groupOf 는 **전체 멤버**(접힘 포함)로 채운다.
+        //   emission pre-pass 는 방출된(펼친) 멤버만 알아 접힌 그룹이 인덱스에서 누락 → 접힌 그룹 드래그 시 그
+        //   멤버 nodePos 시프트가 스킵돼(펼치면 nodePos 멤버만 옛 좌표에 남아 분리). 여기서 b.sg.tables 로 전량 등록.
+        b.sg.tables.forEach((t) => {
+          _metaGraph.groupOf.set(t.key, b.sg.key);
+          let mm = _metaGraph.groupMembers.get(b.sg.key); if (!mm) { mm = []; _metaGraph.groupMembers.set(b.sg.key, mm); } mm.push(t.key);
+        });
+        groupsMeta.push({ key: b.sg.key, label: b.sg.label, n: b.sg.n,
+          x: b.bxRel + gdx, y: b.byRel + gdy, w: b.w, h: b.collapsed ? HDONLY : b.h,
+          collapsed: b.collapsed, tint: _META_GROUP_TINTS[b.gi % _META_GROUP_TINTS.length] });
+        if (b.collapsed) return;   // 접힌 그룹은 멤버 미방출(헤더 칩만 — 개수로 내용 인지)
         b.inner.forEach(({ it, col, top }) => {
-          place.push({ it, lx: b.bxRel + GPX + col * COLW, top: b.byRel + GHH + top });
+          place.push({ it, group: b.sg.key,
+            lx: b.bxRel + gdx + GPX + col * COLW, top: b.byRel + gdy + GHH + top });
         });
       });
       const w = _METLAY.PADX * 2 + contentW;
@@ -3984,23 +4017,48 @@ function _metaG6Build() {
       nodes.push({ id: "XS:" + id, type: _METtype, combo: id, data: { label: "−", kind: "schema-ctl", schema: id },
         style: _metaSchemaCtlStyle(L.x0 + L.w - 20, L.y0 + _METLAY.PADT - 26) });
     }
-    // graph-simgroups: 그룹 배경 박스 + 헤더 칩 — 칩보다 먼저 push(그리기 순서) + zIndex 음수(이중 안전).
-    //   비상호작용 장식(kind: group-bg/group-hd) — 클릭·ctx·드래그 핸들러가 GB:/GH: prefix 로 무시.
+    // graph-simgroups + group-interact(§50): 그룹 배경 박스 + 헤더 칩 + 접기 컨트롤(GX).
+    //   #3 반응형: 펼친 그룹의 GB 박스 기하는 **멤버(테이블+펼친 컬럼)의 최종 place bbox + 패딩**에서 파생 —
+    //   개별 노드 이동(nodePos)·그룹 이동(groupOffset) 양쪽에 박스가 자동으로 맞춰진다. 접힌 그룹은 헤더 기하.
+    //   pre-pass 는 방출된(펼친) 멤버 place 를 1회 훑어 groupBox(절대 경계)를 계산한다(groupMembers/groupOf 는
+    //   layout 분기에서 전체 멤버로 이미 채움 — 접힌 그룹 포함, REV-wiring MAJOR fix).
     if (L.groupsMeta) {
+      const grpBox = new Map();
+      L.place.forEach(({ it, lx, top, group }) => {
+        if (!group) return;
+        let colLeftX = L.x0 + lx;
+        let ty = L.y0 + top + _METLAY.TROW / 2;
+        const _fp = _metaGraph.nodePos.get(it.key);   // 개별 드래그 위치(place-loop 과 동일 수학)
+        if (_fp && isFinite(_fp[0]) && isFinite(_fp[1])) { colLeftX += _fp[0] - (colLeftX + TXOFF); ty = _fp[1]; }
+        const topAbs = ty - _METLAY.TROW / 2, memBottom = topAbs + realH(g, it);
+        let bx = grpBox.get(group);
+        if (!bx) { bx = { minL: Infinity, minT: Infinity, maxR: -Infinity, maxB: -Infinity }; grpBox.set(group, bx); }
+        bx.minL = Math.min(bx.minL, colLeftX); bx.maxR = Math.max(bx.maxR, colLeftX + COLW);
+        bx.minT = Math.min(bx.minT, topAbs);   bx.maxB = Math.max(bx.maxB, memBottom);
+      });
       L.groupsMeta.forEach((gm) => {
-        const gx = L.x0 + gm.x, gy = L.y0 + gm.y;
+        // 펼침: 멤버 bbox 파생(무멤버 방어 시 패킹 폴백) · 접힘: 패킹 헤더 기하.
+        const bx = (!gm.collapsed) ? grpBox.get(gm.key) : null;
+        let left, top, right, bottom;
+        if (bx && isFinite(bx.minL)) { left = bx.minL - GPX; top = bx.minT - GHH; right = bx.maxR + GPX; bottom = bx.maxB + GPB; }
+        else { left = L.x0 + gm.x; top = L.y0 + gm.y; right = left + gm.w; bottom = top + gm.h; }
+        const bw = right - left, bh = bottom - top;
         nodes.push({ id: "GB:" + gm.key, type: _METtype, combo: id,
           data: { kind: "group-bg", group: gm.key, schema: id },
-          style: { x: gx + gm.w / 2, y: gy + gm.h / 2, size: [gm.w, gm.h], radius: 10,
+          style: { x: left + bw / 2, y: top + bh / 2, size: [bw, bh], radius: 10,
             fill: gm.tint.bg, fillOpacity: 0.75, stroke: gm.tint.bd, lineWidth: 1.2, zIndex: -2 } });
         const hdText = `${gm.label} · ${gm.n}`;
-        const hdW = Math.min(Math.max(46, Math.round(hdText.length * 7.2) + 18), gm.w - 16);
+        const hdW = Math.min(Math.max(46, Math.round(hdText.length * 7.2) + 18), bw - 36);   // GX 컨트롤 자리(우측 ~20px) 확보
         nodes.push({ id: "GH:" + gm.key, type: _METtype, combo: id,
           data: { kind: "group-hd", group: gm.key, schema: id, label: gm.label },
-          style: { x: gx + 8 + hdW / 2, y: gy + 13, size: [hdW, 18], radius: 9,
+          style: { x: left + 8 + hdW / 2, y: top + 13, size: [hdW, 18], radius: 9,
             fill: gm.tint.hd, stroke: gm.tint.bd, lineWidth: 1, zIndex: -1,
             labelText: hdText, labelFill: "#273449", labelFontSize: 10.5, labelFontWeight: 600,
             labelPlacement: "center" } });
+        // group-interact(§50): 접기/펼치기 토글 컨트롤(그룹 헤더 우측) — 클릭 전용(드래그 불가).
+        nodes.push({ id: "GX:" + gm.key, type: _METtype, combo: id,
+          data: { label: gm.collapsed ? "+" : "−", kind: "group-ctl", group: gm.key, schema: id },
+          style: Object.assign(_metaCtlStyle(right - 13, top + 13), { zIndex: 1, size: [16, 16], labelText: gm.collapsed ? "+" : "−", labelFontSize: 14 }) });
       });
     }
     L.place.forEach(({ it, lx, top }) => {
@@ -4352,6 +4410,10 @@ function _metaGraphResetModel() {
   //   펼침/접기(rebuild)는 resetModel 을 거치지 않으므로 그 경로에선 위치가 유지된다(핵심 요구).
   _metaGraph.clusterOffset.clear();
   _metaGraph.nodePos.clear();
+  _metaGraph.groupOffset.clear();      // group-interact(§50): sim-group 자유 배치·접기도 fresh load 시 리셋(다른 스코프 = 다른 그룹).
+  _metaGraph.groupCollapsed.clear();
+  _metaGraph.groupMembers.clear();
+  _metaGraph.groupOf.clear();
   _metaGraph.clusterOrder = [];        // feature-0016 §49: 순서 안정화도 fresh load(스코프 전환·초기화) 시 리셋 → 순수 seriation.
   _metaGraph.tableOrder.clear();
   _metaGraph.groupOrder.clear();       // feature-0016 §49(R1): simgroups 순서 안정화도 fresh load 시 리셋.
@@ -4500,7 +4562,9 @@ function _metaCanvasDragEnable(e) {
 //   양보해 "객체 상호작용(노드 이동)"이 아니라 카메라 드래그가 되게 한다.
 function _metaElementDragEnable(e) {
   const id = e && e.target && e.target.id;
-  if (id && (String(id).startsWith("GB:") || String(id).startsWith("GH:"))) return false;   // graph-simgroups: 그룹 장식은 이동 불가(박스-칩 분리 방지)
+  // group-interact(§50): 그룹 접기 컨트롤(GX)만 이동 불가(클릭 전용). GB(배경)/GH(헤더)는 그룹 리지드 드래그 허용
+  //   (예전 graph-simgroups 의 GB/GH 이동 차단을 해제 — 카테고리 그룹 drag&drop 위치 이동 복원).
+  if (id && String(id).startsWith("GX:")) return false;
   return !_metaIsMiddleDrag(e);
 }
 
@@ -4542,6 +4606,31 @@ function _metaNodeDragStart(e) {
     try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id.slice(3), curId: id, x: p[0], y: p[1] }; } catch (_) {}
     return;
   }
+  // group-interact(§50): sim-group(GB 배경/GH 헤더) 드래그 = 카테고리 그룹 통째 리지드 이동.
+  //   grabbed 요소를 anchor 로, 그룹 박스·헤더·컨트롤 + 멤버 테이블 + 그 종속(컬럼·"X:")을 고정 오프셋으로
+  //   묶어 _drag.offs 에 담는다(테이블 종속 드래그와 동일 기전 재사용). dragend 에 groupOffset 누적.
+  if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {
+    const gk = String(id).slice(3);
+    let ap; try { ap = g.getElementPosition(id); } catch (_) { return; }
+    if (!ap) return;
+    const rendered = _metaGraph.renderedIds;
+    const ids = ["GB:" + gk, "GH:" + gk, "GX:" + gk];
+    const members = _metaGraph.groupMembers.get(gk);
+    if (members) members.forEach((tk) => {
+      ids.push(tk);
+      const deps = _metaGraph.tableDeps.get(tk);
+      if (deps) deps.forEach((d) => ids.push(d));
+    });
+    const offs = [];
+    ids.forEach((eid) => {
+      if (eid === id) return;                        // grabbed 자신은 anchor(offs 제외)
+      if (rendered && !rendered.has(eid)) return;
+      let dp; try { dp = g.getElementPosition(eid); } catch (_) { return; }
+      if (dp) offs.push({ id: eid, ox: dp[0] - ap[0], oy: dp[1] - ap[1] });
+    });
+    _metaGraph._drag = { id, offs, group: gk, startX: ap[0], startY: ap[1] };
+    return;
+  }
   const deps = _metaGraph.tableDeps.get(id);    // 테이블 key 만 등록됨(ctl/컬럼/용어/카드는 단독 이동)
   if (!deps || !deps.length) return;
   let tp;
@@ -4575,16 +4664,37 @@ function _metaNodeDragEnd(e) {
   _metaNodeDrag();
   const g = _metaGraph.graph;
   const id = e && e.target && e.target.id;
+  // group-interact(§50): sim-group 리지드 드래그 종료 → grabbed 델타를 groupOffset 에 누적 + 소속 멤버
+  //   nodePos(절대좌표)도 같은 델타로 시프트(freeplace clusterOffset MAJOR fix 동형 — 개별 배치 노드가
+  //   그룹 이동에서 분리되지 않게). 시각 위치는 이미 drag-element+리지드 핸들러가 최종화 — 즉시 rebuild 불요.
+  const gd = _metaGraph._drag;
+  if (gd && gd.group) {
+    _metaGraph._drag = null;
+    let p; try { p = g && g.getElementPosition(gd.id); } catch (_) { p = null; }
+    if (p && isFinite(p[0]) && isFinite(p[1])) {
+      const dx = p[0] - gd.startX, dy = p[1] - gd.startY;
+      if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
+        const prev = _metaGraph.groupOffset.get(gd.group) || { dx: 0, dy: 0 };
+        _metaGraph.groupOffset.set(gd.group, { dx: prev.dx + dx, dy: prev.dy + dy });
+        const members = _metaGraph.groupMembers.get(gd.group);
+        if (members) members.forEach((tk) => { const pos = _metaGraph.nodePos.get(tk); if (pos) { pos[0] += dx; pos[1] += dy; } });
+      }
+    }
+    return;
+  }
   // graph-freeplace: 접힌 스키마 카드("SC:") 드래그 = 클러스터 이동 → clusterOffset(combo 드래그와 통합).
   if (id && String(id).startsWith("SC:")) { _metaClusterDragCommit(); _metaGraph._drag = null; return; }
   // 그 외 이동 가능 노드(테이블·컬럼·용어)의 최종 절대위치를 nodePos 에 기록 → rebuild 후에도 유지.
-  //   컨트롤/장식(X:/XS:/GB:/GH:)은 제외. 테이블은 위치만 기록하고, 종속(컬럼·"X:")은 build 가 테이블 델타로 시프트.
-  if (g && id && !/^(X:|XS:|GB:|GH:)/.test(String(id))) {
+  //   컨트롤/장식(X:/XS:/GB:/GH:/GX:)은 제외. 테이블은 위치만 기록하고, 종속(컬럼·"X:")은 build 가 테이블 델타로 시프트.
+  if (g && id && !/^(X:|XS:|GB:|GH:|GX:)/.test(String(id))) {
     // 컬럼은 소속 테이블에서 재파생(build)되므로 개별 위치를 기록하지 않는다(dead 엔트리·재빌드 snap-back 방지, 리뷰 NIT).
     const _n = _metaGraph.nodes.get(id);
     if (!_n || _n.label !== "Column") {
       try { const p = g.getElementPosition(id); if (p && isFinite(p[0]) && isFinite(p[1])) _metaGraph.nodePos.set(id, [p[0], p[1]]); } catch (_) {}
     }
+    // group-interact(§50, #3 반응형): 그룹 소속 테이블을 옮기면 GB 박스가 새 경계를 감싸도록 rebuild(박스=멤버 bbox 파생).
+    //   비-그룹(평면 masonry) 테이블은 기존대로 combo auto-fit 만 — rebuild 없음(회귀 0).
+    if (_metaGraph.groupOf.get(id)) { _metaGraph._drag = null; _metaG6Apply(false); return; }
   }
   _metaGraph._drag = null;
 }
@@ -4680,7 +4790,7 @@ function _metaInitGraph() {
     const p = _metaCtxPoint(e);
     // graph-initview: 스키마 카드("SC:")·펼친 스키마 접기 ctl("XS:") 우클릭 → 스키마 전용 메뉴로 귀속.
     //   이 prefix 를 안 벗기면 _metaGraphCtxForNode 가 모델(SC: 없는 순수 key)에서 노드를 못 찾아 무반응.
-    if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
+    if (String(id).startsWith("GB:") || String(id).startsWith("GH:") || String(id).startsWith("GX:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스/헤더/컨트롤(GX 포함, group-interact §50 REV) 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
       const gk = String(id).slice(3), sep = gk.indexOf("\u0001");
       if (sep >= 0) _metaGraphCtxForSchema(gk.slice(0, sep), p.x, p.y); else _metaGraphCtxHide();
       return;
@@ -4783,9 +4893,18 @@ function _metaInitGraph() {
 function _metaGraphOnNodeClick(e) {
   const id = e && e.target && e.target.id;
   if (!id) return;
-  // graph-simgroups(§18.8 패널 MAJOR): 그룹 배경 박스/헤더는 펼친 클러스터 내부 대부분을 덮어, 예전
-  //   combo 배경 클릭(→ 클러스터 상세)을 가로챈다. 데드존이 되지 않게 소속 스키마 클러스터 상세로 위임
-  //   (박스는 이동 불가라 드래그와 무충돌 — _metaElementDragEnable 에서 이미 차단).
+  // group-interact(§50): 카테고리 그룹 접기/펼치기 토글(GX 컨트롤 — GB/GH 보다 먼저 판정). groupCollapsed 는
+  //   사용자 지속 의도로 보존하고, 검색 시 매칭 그룹만 build 가 강제 펼침(결과 가시).
+  if (String(id).startsWith("GX:")) {
+    const gk = String(id).slice(3);
+    if (_metaGraph.groupCollapsed.has(gk)) _metaGraph.groupCollapsed.delete(gk);
+    else _metaGraph.groupCollapsed.add(gk);
+    _metaG6Apply(false);
+    return;
+  }
+  // graph-simgroups(§18.8 패널 MAJOR): 그룹 배경/헤더의 **클릭(무이동)** 은 소속 스키마 클러스터 상세로 위임
+  //   (데드존 방지). group-interact(§50): GB/GH 는 이제 드래그 가능 — G6 이동 임계값으로 click/drag 를 구분하므로
+  //   무이동 클릭만 여기 도달(드래그는 node:dragstart/end 리지드 경로).
   if (String(id).startsWith("GB:") || String(id).startsWith("GH:")) {
     const gk = String(id).slice(3), sep = gk.indexOf("\u0001"), sc = sep >= 0 ? gk.slice(0, sep) : null;
     if (sc) _metaGraphShowClusterDetailById(sc);

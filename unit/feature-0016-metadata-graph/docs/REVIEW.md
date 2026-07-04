@@ -887,3 +887,31 @@ source_of_truth: true
   리사이즈(MessageQueue 535,505→470,630 + ROUTINE_USES 재라우팅, fp-07)·접기/펼치기 회귀 0(masonry+sim-group,
   fp-04)·드래그 위치 persistence(statsdb 548,576→400,400 후 tapjoy 펼침 setData+draw rebuild 에도 오프셋 유지·
   snap-back 없음, fp-06)·초기화 clusterOffset/nodePos clear→원위치(fp-05). 전 구간 pageerror 0.
+## REV-20260704T154756-ai-claude-feature-0016-group-interact [SUBAGENT: PASS-WITH-FIXES] — 카테고리 그룹(sim-group) 상호작용(드래그·접기·반응형) 3-렌즈 적대 패널
+- Trigger: 가시 UI + 신규 드래그/클릭 상호작용 + 좌표 3계층 수학(ADR-020) → §18.8 적대 패널 [SUBAGENT] dispatch.
+  3 병렬 렌즈(① 좌표·레이아웃 수학 ② 상호작용 wiring ③ 회귀·통합) + 선행 headless 격리 실증(_metaG6Build 25/25).
+- ① **좌표 수학 — CLEAN**: GB 반응형 박스가 무-offset 시 packGroup 기하와 **4변 정확 일치**(off-by-one 0 — assignH 상수·
+  n≥gic·col0 top0 불변식 검증), pre-pass↔place-loop nodePos 계산 **bit-identical**(둘 다 colLeftX=_fp[0]−TXOFF·ty=_fp[1]),
+  GH 헤더(right−28)↔GX(right−21) 7px gap·bw≥248 로 음수 폭 불가, 접기 reflow(hEff·contentW·byy) 자기정합, combo
+  auto-fit 는 기존 freeplace 와 동일 기전.
+- ② **상호작용 wiring — PASS-WITH-FIXES**: 리지드 드래그(anchor grabbed 제외·GB 항상 포함)·델타 누적(부호·반복 정합)·
+  nodePos 시프트(clusterOffset MAJOR fix 동형)·drag/click 판정(GX first·GB 무이동 클릭 위임 보존)·이벤트 바인딩 CLEAN.
+- ③ **회귀·통합 — CLEAN(MAJOR 회귀 0)**: 평면 masonry 폴백(groupsMeta 없음→pre-pass 게이트·groupOf 미populate→rebuild
+  없음, freeplace #3 회귀 0)·freeplace SC/combo/table 드래그 무간섭(dragstart 순서 SC→GB/GH→table·_drag 매회 null 리셋·
+  group 분기 gd.group 게이트)·§49 순서 안정화 무충돌(필드명 분리)·be:/nm:/role:/misc 균일(nsKey 공통)·admin.html 캐시버스터
+  양측·resetModel 4필드 clear 확인.
+- **확정결함 반영**:
+  - [MAJOR/①②③ 공통] **접힌 그룹 드래그 시 개별배치(nodePos) 멤버 분리**: groupMembers 가 방출된(펼친) 멤버만 담겨,
+    접힌 그룹 헤더 드래그 시 그 멤버 nodePos 시프트가 스킵→펼치면 nodePos 멤버만 옛 좌표에 남아 분리. **수정**:
+    groupOf/groupMembers 를 emission pre-pass(방출분) 대신 **build sim-group 분기에서 b.sg.tables(전체 멤버, 접힘 포함)**
+    로 채움 → 접힌 그룹도 dragend 에서 전 멤버 nodePos 델타 시프트. headless T7 추가(접힌 그룹 groupMembers 전체 등록 검증).
+  - [NIT/③] **GX 우클릭 무메뉴**(GB/GH 와 불일치): node:contextmenu 의 GB/GH 분기에 GX 추가 → 소속 스키마 메뉴 위임.
+  - [NIT/③] **범례 문구 정밀화**: "헤더 드래그" → "박스/헤더 드래그로 그룹 이동"(GB 전체가 draggable).
+- **수용/이연(비파괴)**:
+  - [MINOR/③] combo(클러스터) 드래그 hit-area 축소(GB 가 combo 내부 덮음) — 헤더 스트립·그룹 간격·여백으로 여전히 도달
+    가능(ADR-020 한계 문서화). PB-0008 라이브 QA 로 밀집 클러스터 확인.
+  - [NIT/②③] 드래그-후 node:click 재발화 여부는 G6 v5 이동 임계값 의존(기존 draggable+clickable 테이블·SC 카드와 동일
+    parity — 신규 위험 아님) → PB-0008 "그룹 드래그 후 상세패널 미개방" 확인.
+  - [NIT/②③ perf] 그룹소속 테이블 단독 드래그 dragend 마다 full rebuild(1회/드래그, per-frame 아님) — 박스 재파생 위해
+    필요·수용. [NIT/②] 재군집 시 groupOffset key(fam) orphan(무해, resetModel clear·groupOrder 안정화로 대부분 방지).
+- 재검증: node --check PASS + headless _metaG6Build 격리 **25/25 PASS**(수정 후). 라이브 canvas 상호작용은 T50.8 PB-0008.

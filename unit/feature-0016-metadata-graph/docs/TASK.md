@@ -1253,4 +1253,20 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T49.5 `node --check` PASS + `_metaStableSeq` 격리 단위테스트 **6/6 PASS**(순수 seriation·기존 순서 보존·신규 append·제거 drop·5회 반복 drift 0·객체 keyOf).
 - [x] T49.6 §18.8 적대 리뷰 2라운드: **핵심 로직 clean**(ids `length=0` mutation 비별칭·schemaIdx/relOrder 안정화후 계산·leak 없음(collapse 는 컬럼만·resetModel clear)·nodePos 직교(base slot 위 델타)·fresh-load 동치·클러스터 재출현 coherent). **R1**(simgroups 미커버) → `_metaSimGroups` 안정화 반영. **R2**(innerCols 임계 7/15/28 교차 시 클러스터 재열)는 반응형 레이아웃 고유 트레이드오프 — 비파괴·'공간 확보' 성격으로 문서화(범위 외). REV-20260704T151336-graph-dblclick-stable.
 - [x] T49.7 배포 완료(PR #583 → main 1df96431, gh 토큰 HTTPS push): `deploy-web.sh` 무중단 롤링(web-a/b 1df96431, one-at-a-time, soak 통과). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz git_commit=1df96431, 캐시버스터 `admin.js?v=20260704-graph-dblclick`, 라이브 심볼 `_metaStableSeq`·clusterOrder/tableOrder·groupOrder/groupTableOrder. 그래프 탭·스키마 카드 렌더·데이터소스 로드 라이브 확인, pageerror 0.
-- [~] T49.8 **더블클릭 canvas 상호작용 라이브 육안 = 사용자 확인 필요**: G6 canvas 노드 더블클릭은 win-browser 로 자동 구동 불가(CDP 좌표 마우스 미지원 + 합성 pointer 이벤트가 @antv/g 히트테스트 미도달 — graph-drag §41 등 직전 cycle 과 동일 canvas 한계). 코드-레벨(격리테스트·적대리뷰 6축)·배포·자산·렌더링은 검증됨. 사용자 실 마우스로 (a) 스키마 2개 펼침 → 한 테이블 더블클릭 → 기존 노드 제자리·신규 이웃만 추가·겹침 0, (b) 노드 드래그 후 더블클릭 → 드래그 위치 보존 확인 요망.
+- [~] T49.8 **더블클릭 canvas 상호작용 라이브 육안 = 사용자 확인 필요**: G6 canvas 노드 더블클릭은 win-browser 로 자동 구동 불가(CDP 좌표 마우스 미지원 + 합성 pointer 이벤트가 @antv/g 히트테스트 미도달 — graph-drag §41 등 직전 cycle 과 동일 canvas 한계). 코드-레벨(격리테스트·적대리뷰 6축)·배포·자산·렌더링은 검증됨. 사용자 실 마우스로 (a) 스키마 2개 펼침 → 한 테이블 더블클릭 → 기존 노드 제자리·신규 이웃만 추가·겹침 0, (b) 노드 드래그 후 더블클릭 → 드래그 위치 보존 확인 요망. (참고: freeplace liveverify(§44 T44.8)에서 Playwright `connect_over_cdp` real mouse 로 G6 canvas 드래그 자동 구동이 실증됨 — 후속 PB-0008 은 이 방법 사용 가능.)
+
+## 50. group-interact — 카테고리 그룹(sim-group) 상호작용: 드래그·접기·반응형 리사이즈 (2026-07-04, 사용자 회귀 재보고)
+
+사용자 재보고: "스키마 클러스터 내 각 테이블을 그룹 단위로 묶어둔 구조(카테고리 그룹)가 드래그 및 접기, 그 외 UI 조작이 진행되지 않는다. 첫 의도는 카테고리 그룹에 대한 작업이었는데 현재는 테이블 노드 단위로 진행됐다." → freeplace(ADR-015)가 combo·테이블 노드 레벨에만 상호작용을 복원했고, 그 사이 계층인 **카테고리 그룹**(= 유사 속성 그룹 / sim-group, ADR-013 의 GB 배경박스/GH 헤더칩)은 비상호작용 장식으로 남아 있던 것이 근본원인. 등급 **Major**(프론트 상호작용·다수 상태/build/wiring). 정본 ADR-020 / frontend-only(admin.js, 코드 거주 feature-0003). PLAN-APPROVED(사용자 플랜 승인 2026-07-04).
+
+### 50.1 구현 (admin.js frontend-only)
+- [x] T50.1 state: `groupOffset`(groupKey→{dx,dy})·`groupCollapsed`(Set)·`groupMembers`(groupKey→[테이블id])·`groupOf`(테이블id→groupKey) + `_metaGraphResetModel` 에서 groupOffset/groupCollapsed/groupMembers/groupOf clear + build 초입 groupMembers/groupOf 재초기화.
+- [x] T50.2 build sim-group 분기: 접기(`isCollapsed` — groupCollapsed & 검색 매칭 시 강제 펼침; `hEff`=헤더만 → shelf-pack reflow; 멤버 place 미방출) + groupOffset 3계층 가산(블록 위치·멤버 place lx/top) + place 에 `group` 태그.
+- [x] T50.3 build emission: pre-pass 로 그룹별 멤버 최종 bbox(nodePos 적용) 산출 + groupMembers/groupOf 채움 → GB 박스를 **멤버 bbox+패딩**에서 파생(#3 반응형; 무-offset 시 packGroup 기하와 정확 일치) + GH 헤더 + **GX 접기 컨트롤**("−"/"+") 방출.
+- [x] T50.4 wiring: `_metaElementDragEnable`(GX 만 드래그 차단, GB/GH 허용) + `_metaNodeDragStart` 그룹 리지드 드래그 분기(`_drag={id,offs,group}`) + `_metaNodeDragEnd` groupOffset 누적 + 멤버 nodePos 델타 시프트 + 그룹소속 테이블 단독 드래그 시 rebuild(박스 재파생) + `_metaGraphOnNodeClick` GX 접기 토글(GB/GH 클릭=스키마 상세 위임 보존).
+- [x] T50.5 admin.html: cache-buster `?v=20260704-group-interact`(admin.js·styles.css) + 범례 문구(헤더 드래그 이동·−/+ 접기).
+
+### 50.2 검증
+- [x] T50.6 `node --check` PASS + headless `_metaG6Build` 격리 단위검증 **22/22 PASS**(그룹당 GB/GH/GX 방출·멤버 박스 포함·접기 멤버 미방출·박스 헤더높이·GX '+'·타그룹 불변·groupOffset 3계층 시프트·nodePos 반응형 확장·평면 폴백 회귀 0·검색 자동펼침+의도 보존).
+- [ ] T50.7 §18.8 적대 리뷰(좌표수학·상호작용 wiring·회귀·통합 3~4렌즈) + 수정.
+- [ ] T50.8 배포(web 롤링) + **PB-0008 실 Windows 라이브 검증**(Playwright `connect_over_cdp` real mouse): (a) 그룹 헤더/박스 드래그 → 그룹 통째 이동·rebuild 유지, (b) GX 클릭 → 접기/펼침, (c) 그룹 내부 테이블 드래그 → GB 박스 반응형 리사이즈, (d) 스키마 접기/펼치기·클러스터 드래그 회귀 0, pageerror 0.

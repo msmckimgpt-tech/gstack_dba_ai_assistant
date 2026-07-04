@@ -922,3 +922,14 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
 - Rollback Notes: 해당 doc 라인 revert.
+## CHG-20260704T154756-ai-claude-feature-0016-group-interact
+- Date: 2026-07-04
+- Related Requirement: 사용자 회귀 재보고 — "스키마 클러스터 내 각 테이블을 그룹 단위로 묶어둔 구조(카테고리 그룹)가 드래그 및 접기, 그 외 UI 조작이 진행되지 않는다. 첫 의도는 카테고리 그룹이었는데 테이블 노드 단위로 진행됐다." 정본 ADR-020 / TASK §50. PLAN-APPROVED(2026-07-04).
+- Summary: freeplace(ADR-015)가 combo·테이블 노드 레벨에만 복원한 자유배치 상호작용을, 그 사이 계층인 **카테고리 그룹**(= 유사 속성 그룹 / sim-group, ADR-013 의 GB 배경박스/GH 헤더칩)으로 확장. 비상호작용 장식이던 sim-group 을 드래그·접기·반응형 리사이즈 대상으로 승격. 좌표 3계층 offset(cluster→group→node): **groupOffset**(GB/GH 리지드 드래그 누적 — 박스·헤더·멤버·컬럼 coherent 이동)·**groupCollapsed**(전용 GX "−/+" 컨트롤 토글, 접힘 시 멤버 미방출·헤더만·shelf-pack reflow, 검색 매칭 그룹 강제 펼침)·**GB 박스 멤버 bbox 파생**(개별 nodePos·그룹 groupOffset 양쪽에 반응형 자동 맞춤, 무-offset 시 packGroup 기하 정확 일치). 그룹 소속 테이블 단독 드래그 dragend 는 rebuild 로 박스 재파생.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (state groupOffset/groupCollapsed/groupMembers/groupOf + resetModel clear + build sim-group 분기 접기/groupOffset/멤버인덱스 + emission pre-pass 반응형 bbox·GB/GH/GX 방출 + `_metaElementDragEnable`/`_metaNodeDragStart`/`_metaNodeDragEnd` 그룹 리지드 드래그 + `_metaGraphOnNodeClick` GX 토글 + node:contextmenu GX 라우팅)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster admin.js/styles.css `?v=20260704-group-interact` + 범례 문구)
+  - `unit/feature-0016-metadata-graph/docs/{DECISIONS(ADR-020),TASK(§50),MODIFY,REVIEW,TEST}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 상호작용·표현 전용 — 데이터 API·AGE 스키마·RBAC·마이그레이션 불변. ADR-004 결정론 배치·§49 순서 안정화는 불변(offset·방출여부만 개입). 배포=web 재빌드(자산 baked). 완료 게이트=PB-0008 실 Windows(T50.8).
+- §18.8 패널 반영(REV-20260704T154756): [MAJOR] 접힌 그룹 드래그 시 nodePos 멤버 분리 → groupMembers/groupOf 를 build 분기에서 **전체 멤버(접힘 포함)** 로 채움(headless T7). [NIT] GX 우클릭 스키마 메뉴 라우팅·범례 문구 정밀화. 수용: combo 드래그 hit-area 축소(헤더/여백 경로 유지)·그룹소속 테이블 드래그 rebuild(1회/드래그).
+- Rollback Notes: admin.js 신규 상태·build 그룹 분기·emission pre-pass/GB·GH·GX 방출·드래그/클릭 핸들러 분기 revert + admin.html cache-buster 이전값(20260704-graph-dblclick / 20260704-graph-ux3fix)·범례 문구 복원. 데이터·API 무손상.
