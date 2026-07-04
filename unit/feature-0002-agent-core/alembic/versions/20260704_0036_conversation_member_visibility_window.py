@@ -76,12 +76,21 @@ ALTER TABLE agent_runtime.conversation_members
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS has_restricted_members boolean NOT NULL DEFAULT false;
 
+-- owner-answer display-tag 의 recall-측 봉인(REVIEW M1): assistant 답변이 그린 recall 하한을
+-- core_messages 에 기록해, windowed recall 쿼리가 '뷰어 floor 아래 문맥을 그린 답변'을 배제한다.
+-- NULL=미태깅(레거시/비제약). recall_full 은 epoch sentinel(1970-01-01)로 기록(어떤 floor 보다 이름).
+ALTER TABLE agent_runtime.core_messages
+    ADD COLUMN IF NOT EXISTS recall_floor_created_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS ix_core_messages_conv_created
     ON agent_runtime.core_messages (conversation_id, created_at);
 """
 
 DOWNGRADE_SQL = r"""
 DROP INDEX IF EXISTS agent_runtime.ix_core_messages_conv_created;
+
+ALTER TABLE agent_runtime.core_messages
+    DROP COLUMN IF EXISTS recall_floor_created_at;
 
 ALTER TABLE agent_runtime.core_conversations
     DROP COLUMN IF EXISTS has_restricted_members;

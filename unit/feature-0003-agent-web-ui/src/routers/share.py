@@ -149,14 +149,26 @@ def join_conversation_via_share(token: str, request: Request, account=Depends(ap
             pg = _pg_connect()
             try:
                 inviter = int(share.get("CreatedBy")) if share.get("CreatedBy") is not None else None
-                group_members.add_member(pg, cid, actor_id, role="member", invited_by_account_id=inviter)
+                # REVIEW M3(share-visibility-window): add_member + stamp 를 **단일 트랜잭션**으로 —
+                # stamp 실패 시 멤버가 무제한 접근(NULL window)으로 커밋돼 남는 fail-open 봉인.
+                group_members.add_member(
+                    pg, cid, actor_id, role="member", invited_by_account_id=inviter, commit=False
+                )
                 # 신규 멤버는 공유 window 를 그대로 각인(딱 [floor, ceiling] 만 열람).
                 if _share_windowed:
                     group_members.stamp_member_visibility(
                         pg, cid, actor_id, is_new_member=True,
                         floor_id=_share_floor, ceiling_id=_share_ceiling,
                         floor_created_at=_floor_ca, ceiling_created_at=_ceiling_ca,
+                        commit=False,
                     )
+                pg.commit()  # add_member + stamp atomic commit
+            except Exception:
+                try:
+                    pg.rollback()
+                except Exception:
+                    pass
+                raise
             finally:
                 pg.close()
         except Exception:
@@ -359,7 +371,10 @@ WHERE Token = %s AND RevokedAt IS NULL
                     "expires_at": share_expires_at.isoformat() if hasattr(share_expires_at, "isoformat") else (str(share_expires_at) if share_expires_at else None),
                 },
                 "conversation": {
-                    "topic": str(conv_meta.get("topic") or "대화"),
+                    # REVIEW m2(share-visibility-window): topic 은 대화 첫 요청(origin, 가려졌을 수
+                    # 있는 구간)에서 파생될 수 있어, 하단 경계가 있는 windowed 공유의 익명 뷰에서는
+                    # 요약 누출을 막기 위해 genericize 한다. (상단만 있는 anchored 공유는 종전대로.)
+                    "topic": ("공유된 대화" if floor_id_view_int is not None else str(conv_meta.get("topic") or "대화")),
                     "owner_username": str(conv_meta.get("owner_username") or ""),
                     "product_key": str(conv_meta.get("product_key") or ""),
                     "product_name": str(conv_meta.get("product_name") or ""),

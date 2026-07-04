@@ -42,9 +42,21 @@ def test_answer_tag_deny_is_empty_recall():
     assert agent_core._answer_recall_tag("DENY", has_restricted=True) == {"recall_empty": True}
 
 
-def test_answer_tag_bounded_ceiling_only_no_floor_is_empty():
-    # ceiling 만 있고 floor 없음 → 그린 문맥에 하단 은닉 없음.
-    assert agent_core._answer_recall_tag({"floor_ca": None, "ceil_ca": _dt.datetime(2026, 1, 1)}, has_restricted=True) == {}
+def test_answer_tag_ceiling_only_is_recall_full():
+    # REVIEW M2: ceiling-only 멤버(floor_ca None)는 recall 하한 무제한 → 모든 floor 뷰어에게 은닉해야 함.
+    assert agent_core._answer_recall_tag({"floor_ca": None, "ceil_ca": _dt.datetime(2026, 1, 1)}, has_restricted=True) == {"recall_full": True}
+
+
+def test_answer_recall_floor_ca_values():
+    # REVIEW M1: core_messages.recall_floor_created_at 값(recall-측 봉인).
+    assert agent_core._answer_recall_floor_ca(None, has_restricted=False) is None
+    fc = _dt.datetime(2026, 7, 4, tzinfo=_dt.timezone.utc)
+    assert agent_core._answer_recall_floor_ca({"floor_ca": fc}, has_restricted=True) == fc
+    # ceiling-only / owner / full → epoch sentinel(어떤 floor 보다 이름)
+    assert agent_core._answer_recall_floor_ca({"floor_ca": None}, has_restricted=True) == agent_core._RECALL_FULL_SENTINEL_CA
+    assert agent_core._answer_recall_floor_ca(None, has_restricted=True) == agent_core._RECALL_FULL_SENTINEL_CA
+    # DENY(빈 recall) → 태깅 없음
+    assert agent_core._answer_recall_floor_ca("DENY", has_restricted=True) is None
 
 
 # ── _resolve_recall_visibility (monkeypatched runtime backend) ────────────────
@@ -193,3 +205,23 @@ def test_windowed_core_query_has_created_at_predicate():
     assert "created_at >= %(floor_ca)s" in q
     assert "created_at <= %(ceil_ca)s" in q
     assert "created_at >= %(joined_ca)s" in q
+
+
+def test_windowed_core_query_excludes_below_floor_answers():
+    # REVIEW M1: owner-answer recall-측 봉인 — 뷰어 floor 아래 문맥을 그린 답변 배제 술어.
+    q = runtime_backend._PG_LOAD_CORE_MESSAGES_WINDOWED
+    assert "recall_floor_created_at IS NOT NULL" in q
+    assert "recall_floor_created_at < %(floor_ca)s" in q
+
+
+def test_core_insert_carries_recall_floor_column():
+    # recall_floor_created_at 이 core_messages INSERT 에 실리고, legacy(컬럼부재) fallback 상수도 존재.
+    assert "recall_floor_created_at" in runtime_backend._PG_INSERT_CORE_MESSAGE
+    assert "recall_floor_created_at" not in runtime_backend._PG_INSERT_CORE_MESSAGE_LEGACY
+
+
+def test_add_member_and_stamp_support_commit_false():
+    # REVIEW M3: join 원자화용 commit 파라미터.
+    import inspect
+    assert "commit" in inspect.signature(group_members.add_member).parameters
+    assert "commit" in inspect.signature(group_members.stamp_member_visibility).parameters

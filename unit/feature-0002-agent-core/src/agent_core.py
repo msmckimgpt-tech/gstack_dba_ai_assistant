@@ -1912,11 +1912,14 @@ def _save_message(conn, conversation_id: str, role: str,
                   tool_calls: list | None = None,
                   tool_call_id: str | None = None,
                   name: str | None = None,
-                  sender_account_id: int | None = None):
+                  sender_account_id: int | None = None,
+                  recall_floor_created_at=None):
     """메시지를 DB에 저장.
 
     feature-0009: sender_account_id 는 user 메시지의 발신 멤버(그룹 대화 발신자 귀속).
     assistant/tool 메시지는 None(AI/시스템). nullable 이라 기존 호출 무회귀.
+    share-visibility-window(REVIEW M1): recall_floor_created_at = 이 assistant 답변이 그린 recall
+    하한(owner-answer recall-측 봉인). None=미태깅.
     """
     from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
     pg_conn = _get_pg_runtime_conn()
@@ -1926,7 +1929,8 @@ def _save_message(conn, conversation_id: str, role: str,
                 conversation_id=conversation_id, role=role,
                 content=content, tool_calls=tool_calls,
                 tool_call_id=tool_call_id, name=name,
-                sender_account_id=sender_account_id)
+                sender_account_id=sender_account_id,
+                recall_floor_created_at=recall_floor_created_at)
         except Exception as _exc:
             logger.warning("_save_message PG write failed: %s", _exc)
         finally:
@@ -3103,12 +3107,18 @@ def run_agent(
         _INLINE_TEXT_PATH_CTX.reset(_att_tokens[3])
 
 
+# owner-answer recall/display 봉인 sentinel: recall 하한 무제한(전체 문맥) 답변을 어떤 floor 보다
+# 이른 시각으로 표기 → 모든 floor-bounded 뷰어/recall 에서 배제(REVIEW M1/M2).
+_RECALL_FULL_SENTINEL_CA = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 def _answer_recall_tag(visibility, has_restricted: bool) -> dict:
     """assistant 답변에 실을 recall 출처 태그 (share-visibility-window, owner-answer display-tag).
 
     display loader(_msg_outside_window)가 이 태그로 '뷰어 floor 아래 문맥을 그린 답변'을 은닉한다:
       - unrestricted 대화                 : {} (bounded 뷰어 없음 — 태그 불필요).
       - bounded 발신자(window, floor_ca=X): {recall_floor_created_at: X} — floor 가 X 초과인 뷰어에게 은닉.
+      - ceiling-only 멤버(floor_ca=None) + restricted : {recall_full: True} — recall 하한 무제한(REVIEW M2).
       - owner/full/시스템(None) + restricted: {recall_full: True} — 전체 문맥 → 모든 bounded 뷰어에게 은닉.
       - DENY(빈 recall)                    : {recall_empty: True} — 그린 문맥 없음(은닉 불필요, 명시).
     """
@@ -3118,10 +3128,29 @@ def _answer_recall_tag(visibility, has_restricted: bool) -> dict:
         fc = visibility.get("floor_ca")
         if fc is not None:
             return {"recall_floor_created_at": fc.isoformat() if hasattr(fc, "isoformat") else str(fc)}
-        return {}
+        # ceiling-only 멤버: floor 무제한(하한 -∞) → recall 이 대화 처음까지 도달 → 모든 floor 뷰어에게 은닉.
+        return {"recall_full": True}
     if visibility == "DENY":
         return {"recall_empty": True}
     return {"recall_full": True}
+
+
+def _answer_recall_floor_ca(visibility, has_restricted: bool):
+    """core_messages.recall_floor_created_at 에 기록할 값 (owner-answer recall-측 봉인, REVIEW M1).
+
+    windowed recall 쿼리가 '이 답변이 그린 recall 하한이 뷰어 floor 보다 이르면 배제'하도록 한다.
+    None=미태깅(비제약/빈 recall). bounded=floor_ca. ceiling-only/owner/full=epoch sentinel(어떤 floor 보다 이름).
+    """
+    if not has_restricted:
+        return None
+    if isinstance(visibility, dict):
+        fc = visibility.get("floor_ca")
+        if fc is not None:
+            return fc
+        return _RECALL_FULL_SENTINEL_CA  # ceiling-only 멤버 — 하한 무제한
+    if visibility == "DENY":
+        return None  # 빈 recall — 그린 문맥 없음
+    return _RECALL_FULL_SENTINEL_CA  # owner / full 멤버
 
 
 def _resolve_recall_visibility(conversation_id: str, account_id):
@@ -3423,6 +3452,14 @@ def _run_agent_core(
     # recall 출처를 assistant 답변 meta 에 실어, display loader 가 뷰어 floor 아래 문맥을 그린
     # 답변을 bounded 멤버에게 은닉하게 한다(무제한 recall 인 owner 답변의 누출면 봉인).
     _answer_recall_meta = _answer_recall_tag(_recall_visibility, _conv_has_restricted)
+    # REVIEW M1: display-tag 를 recall 까지 확장 — assistant core_message 에 recall 하한을 기록해
+    # windowed recall 쿼리가 뷰어 floor 아래 문맥을 그린 답변을 배제하게 한다("표시 태그만" 을 recall 로
+    # 완성; owner 생성은 무손상 — 클램프 아님).
+    _answer_recall_floor_ca_val = _answer_recall_floor_ca(_recall_visibility, _conv_has_restricted)
+    # REVIEW B1: bounded 발신자(window/DENY)에게는 대화 origin_request/thread_goal(CONVERSATION CONTEXT)
+    # 주입을 억제한다 — origin 은 message id 에 묶이지 않은 자유 텍스트라 window 로 자를 수 없어(가려진
+    # 대화 첫 요청이 그대로 남음) self-service 인젝션으로 추출 가능하기 때문. None(비제약)만 주입 허용.
+    _suppress_conversation_context = _recall_visibility is not None
     history = _load_conversation_messages(
         mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels,
         visibility=_recall_visibility,
@@ -3595,7 +3632,10 @@ def _run_agent_core(
         system_content += _GROUP_CONVERSATION_GUIDANCE
 
     # Inject conversation context (origin_request + thread_goal)
-    if prev_origin or thread_goal:
+    # REVIEW B1(share-visibility-window): bounded 발신자에게는 억제. origin/thread_goal 은 대화의
+    # (가려졌을 수 있는) 첫 요청에서 파생된 자유 텍스트라 window 로 자를 수 없어, 주입하면 self-service
+    # 프롬프트 인젝션으로 가려진 구간 요약이 유출된다. _suppress_conversation_context=True 면 전체 스킵.
+    if (prev_origin or thread_goal) and not _suppress_conversation_context:
         ctx_parts: list[str] = []
         if prev_origin:
             ctx_parts.append(f"- Original user request (origin): {prev_origin}")
@@ -3771,7 +3811,7 @@ def _run_agent_core(
                 mirror_meta["attachment_derived"] = True
                 mirror_meta["derivation_type"] = "vision_analysis"
             if _writes_allowed(mem_conn, cid):
-                _save_message(mem_conn, cid, "assistant", content=answer)
+                _save_message(mem_conn, cid, "assistant", content=answer, recall_floor_created_at=_answer_recall_floor_ca_val)
                 _mirror_message(mem_conn, cid, "assistant", answer, run_id,
                                 meta=mirror_meta, recall_tag=_answer_recall_meta)
 
@@ -3993,7 +4033,7 @@ def _run_agent_core(
         # max_steps 초과
         result["answer"] = f"최대 도구 호출 횟수({max_steps})를 초과했습니다."
         if _writes_allowed(mem_conn, cid):
-            _save_message(mem_conn, cid, "assistant", content=result["answer"])
+            _save_message(mem_conn, cid, "assistant", content=result["answer"], recall_floor_created_at=_answer_recall_floor_ca_val)
             _mirror_message(mem_conn, cid, "assistant", result["answer"], run_id, recall_tag=_answer_recall_meta)
         if output_mode == "console":
             console.print(f"[yellow]{result['answer']}[/yellow]")
@@ -4026,7 +4066,7 @@ def _run_agent_core(
                     _partial = str(result.get("rationale") or "").strip() or str(result.get("answer") or "").strip()
                     if _partial:
                         _kept = f"(이전 요청이 중단되어, 진행된 내용까지 보존합니다.)\n\n{_partial}"
-                        _save_message(mem_conn, cid, "assistant", content=_kept)
+                        _save_message(mem_conn, cid, "assistant", content=_kept, recall_floor_created_at=_answer_recall_floor_ca_val)
                         _mirror_message(mem_conn, cid, "assistant", _kept, run_id, meta={"interrupted": True}, recall_tag=_answer_recall_meta)
             except Exception:
                 pass
@@ -4055,7 +4095,7 @@ def _run_agent_core(
             pass
     elif result["error"]:
         error_text = f"오류: {result['error']}"
-        _save_message(mem_conn, cid, "assistant", content=error_text)
+        _save_message(mem_conn, cid, "assistant", content=error_text, recall_floor_created_at=_answer_recall_floor_ca_val)
         _mirror_message(mem_conn, cid, "assistant", error_text, run_id, meta={"internal": False}, recall_tag=_answer_recall_meta)
         try:
             # TASK-0241: terminal write 는 모두 supersede 가드 — lease-fencing 으로 박탈된

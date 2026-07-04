@@ -187,8 +187,14 @@ def add_member(
     account_id: int,
     role: str = "member",
     invited_by_account_id: Optional[int] = None,
+    commit: bool = True,
 ) -> None:
-    """멤버 추가/역할 갱신 (S2 초대 엔드포인트가 호출). role 검증 포함."""
+    """멤버 추가/역할 갱신 (S2 초대 엔드포인트가 호출). role 검증 포함.
+
+    share-visibility-window(REVIEW M3): commit=False 로 호출하면 커밋을 caller 에 위임한다 —
+    join 흐름이 add_member + stamp_member_visibility 를 단일 트랜잭션으로 묶어, stamp 실패 시
+    멤버가 무제한 접근으로 남는 fail-open(비원자) 구멍을 없앤다.
+    """
     if role not in VALID_ROLES:
         raise ValueError(f"invalid role: {role!r} (allowed: {VALID_ROLES})")
     with pg_conn.cursor() as cur:
@@ -205,7 +211,8 @@ def add_member(
                 ),
             },
         )
-    pg_conn.commit()
+    if commit:
+        pg_conn.commit()
 
 
 # ── share-visibility-window: 멤버별 가시 경계 window (floor/ceiling) ──────────
@@ -269,6 +276,7 @@ def stamp_member_visibility(
     ceiling_id: Optional[int],
     floor_created_at=None,
     ceiling_created_at=None,
+    commit: bool = True,
 ) -> None:
     """share window([floor_id, ceiling_id])를 멤버 가시경계에 각인 (never-widen, fail-closed 정합).
 
@@ -324,7 +332,8 @@ def stamp_member_visibility(
         )
         if new_floor_id is not None or new_ceiling_id is not None:
             cur.execute(_PG_MARK_RESTRICTED, {"conversation_id": conversation_id})
-    pg_conn.commit()
+    if commit:
+        pg_conn.commit()
 
 
 def remove_member(pg_conn, conversation_id: str, account_id: int) -> int:

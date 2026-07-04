@@ -12593,6 +12593,9 @@ def _fork_conversation_impl(
     # core_messages(LLM 문맥) 와 첨부(WebConversationAttachments.CreatedAt) clip 에 공유.
     _win_lower_ca = src_rows[0][3] if (lower_id is not None and src_rows) else None
     _win_upper_ca = src_rows[-1][3] if (upper_id is not None and src_rows) else None
+    # REVIEW m1: window(하단/상단 경계) 활성인데 표시 행이 비어 있으면(경계 안 메세지 전부 삭제 등)
+    # created_at 경계가 None 으로 떨어져 core 를 무필터 전량 복사하던 폴백 봉인 — core 도 복사 안 함.
+    _win_bounded_empty = (lower_id is not None or upper_id is not None) and not src_rows
 
     # 원본 대화의 product_id / product_mode 조회 (없으면 기본 Product).
     # TASK-0052 Phase 1C G5 (Codex Claim 4 fork product_mode 복사 fix): product_mode 도 함께 조회하여 'auto' 보존.
@@ -12647,9 +12650,12 @@ def _fork_conversation_impl(
     core_copied = 0
     try:
         # share-visibility-window: core(LLM 문맥)도 [lower, upper] 로 clip (공유 created_at 경계).
-        src_core_rows = _conv_load_core_messages_raw(
-            conn, source_id, _win_upper_ca, from_created_at=_win_lower_ca
-        )
+        if _win_bounded_empty:
+            src_core_rows = []  # window 활성 + 표시 행 0 → core 무필터 복사 방지(REVIEW m1).
+        else:
+            src_core_rows = _conv_load_core_messages_raw(
+                conn, source_id, _win_upper_ca, from_created_at=_win_lower_ca
+            )
         core_copied = _conv_copy_core_messages(conn, new_cid, src_core_rows)
     except Exception:
         # core_messages 복사 실패 시 fork 를 통째로 정리하고 fail-loud — 문맥 없는 반쪽

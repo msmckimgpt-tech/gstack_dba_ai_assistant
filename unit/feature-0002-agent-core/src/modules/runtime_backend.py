@@ -93,6 +93,15 @@ RETURNING conversation_id, (xmax = 0) AS pg_inserted
 
 _PG_INSERT_CORE_MESSAGE = """
 INSERT INTO agent_runtime.core_messages
+    (conversation_id, role, content, tool_calls, tool_call_id, name, sender_account_id, recall_floor_created_at)
+VALUES
+    (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s, %(sender_account_id)s, %(recall_floor_created_at)s)
+RETURNING id
+"""
+
+# deploy-gap fallback: recall_floor_created_at 컬럼(alembic 0036) 부재 시(pre-mig) 사용.
+_PG_INSERT_CORE_MESSAGE_LEGACY = """
+INSERT INTO agent_runtime.core_messages
     (conversation_id, role, content, tool_calls, tool_call_id, name, sender_account_id)
 VALUES
     (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s, %(sender_account_id)s)
@@ -211,6 +220,9 @@ WHERE conversation_id = %(conversation_id)s
   AND (%(floor_ca)s IS NULL OR created_at >= %(floor_ca)s)
   AND (%(ceil_ca)s IS NULL OR created_at <= %(ceil_ca)s
        OR (%(joined_ca)s IS NOT NULL AND created_at >= %(joined_ca)s))
+  AND NOT (recall_floor_created_at IS NOT NULL
+           AND %(floor_ca)s IS NOT NULL
+           AND recall_floor_created_at < %(floor_ca)s)
 ORDER BY id ASC
 LIMIT %(limit)s
 """
@@ -386,19 +398,32 @@ class PgRuntimeBackend:
         tool_call_id: Optional[str] = None,
         name: Optional[str] = None,
         sender_account_id: Optional[int] = None,
+        recall_floor_created_at=None,
     ) -> int:
         import json as _json
         tc_json = _json.dumps(tool_calls, ensure_ascii=False) if tool_calls is not None else None
+        params = {
+            "conversation_id": conversation_id,
+            "role": role,
+            "content": content,
+            "tool_calls": tc_json,
+            "tool_call_id": tool_call_id,
+            "name": name,
+            "sender_account_id": int(sender_account_id) if sender_account_id is not None else None,
+            "recall_floor_created_at": recall_floor_created_at,
+        }
         with conn.cursor() as cur:
-            cur.execute(_PG_INSERT_CORE_MESSAGE, {
-                "conversation_id": conversation_id,
-                "role": role,
-                "content": content,
-                "tool_calls": tc_json,
-                "tool_call_id": tool_call_id,
-                "name": name,
-                "sender_account_id": int(sender_account_id) if sender_account_id is not None else None,
-            })
+            try:
+                cur.execute(_PG_INSERT_CORE_MESSAGE, params)
+            except Exception as exc:  # noqa: BLE001
+                # deploy-gap: recall_floor_created_at 컬럼 부재(42703, pre-mig 0036) → 그 컬럼 없이 재삽입.
+                # (windowed 멤버는 컬럼 존재 후에만 생성되므로 이 fallback 로 답변이 유실되지 않는다.)
+                if getattr(exc, "sqlstate", None) == "42703":
+                    cur.execute(_PG_INSERT_CORE_MESSAGE_LEGACY, {
+                        k: v for k, v in params.items() if k != "recall_floor_created_at"
+                    })
+                else:
+                    raise
             row = cur.fetchone()
             return int(row[0]) if row else 0
 
