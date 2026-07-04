@@ -532,3 +532,20 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - 최신 main(7facb804) rebase — 자동 병합 무결(제 상태 필드·#4 와 main Esc-fix·Phase B/C 공존), admin.html cache-buster 충돌만 해소. cache-buster `admin.js?v=20260704-graphux7`·`styles.css?v=20260704-graphux7`.
 - §18.8 적대 리뷰 REV-20260704T071838-graphux7. 라이브 관측(win-browser 실 Chrome): #5 라벨·#6 좌표계·#7 "−" off-screen 확인.
 - **POST-DEPLOY**: web 재배포(정적 자산 baked, 마이그 없음) + **PB-0008 실 Windows 브라우저** — #1 nav 바·#2 단/더블·#3 3탭 렌더·#4 reused 메시지·#5 라벨·#7 접기 버튼 시각검증, pageerror 0 (feature-0003 TEST.md §3 Windows-browser Run).
+
+## graph-zorder — 그래프 뷰 z-order 의미 정합 (TASK §52, 2026-07-04)
+
+### 케이스
+- TC-52-1 (bake 전수): _metaG6Build/_metaG6BuildProducts 산출 전 요소(combos/nodes/edges — SC/XS/GB/GH/GX/X/테이블/루틴/용어/컬럼/제품/데이터소스/전 엣지 스타일)가 _METZ 의미 계층 zIndex 를 갖는다. 삽입순(renderOrder) 의존 없음.
+- TC-52-2 (드래그 복원): 테이블/카드/그룹(GB·GH)/combo 드래그 종료 후 대상+종속의 zIndex 가 canonical(_metaZFor)로 복원된다 — 드래그 이력이 z-order 로 잔존하지 않음(내장 frontElement 영구 승격 상쇄).
+- TC-52-3 (드래그 중 계층): 드래그 중 대상+종속(컬럼·ctl/그룹 묶음)이 함께 부스트 층(+1000)으로 떠서 칩만 뜨고 컬럼이 남는 계층 찢어짐이 없다.
+- TC-52-4 (GB hit-test 회복): 그룹 배경(GB, z1) 빈 공간 드래그 = 그룹 이동(클러스터 아님). 클러스터 이동은 combo 여백/라벨/접힌 카드로 가능. GB 클릭=스키마 상세·우클릭=스키마 메뉴 유지.
+- TC-52-5 (성질 변경 불변): 스키마 카드↔combo 전환·그룹 접힘↔펼침·컬럼 펼침·검색·역할(role) 도착 rebuild 후에도 계층 불변(신규 요소가 기존 요소 위로 튀지 않음).
+- TC-52-6 (엣지 계층): REFERENCES/ROUTINE_USES/USES 엣지가 배경(combo·GB) 위·컬럼/칩 아래 — 이웃 확장으로 늦게 추가된 엣지도 동일.
+- TC-52-7 (오버레이 무회귀): 미니맵(z5)·focus chip(z5)·컨텍스트 메뉴(z10000)·ai-pop/progress(in-flow) 표시 무회귀. pageerror 0.
+
+### Run (2026-07-04) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS**. zIndex bake 16개소 정적 전수 확인(빌드 nodes/edges/combos push 지점 대조 — 누락 0).
+- vendored g6.min.js API 확인: `setElementZIndex(id→z 맵)`·`getElementZIndex(id)` 존재, 내장 drag-element 의 `frontElement(this.target)` onDragStart 호출 실측(minified 소스 grep) — 근본 원인·복원 경로의 번들 정합 확인.
+- §18.8 적대 패널(ux·design·frontend correctness 3-렌즈) — design PASS(MINOR 2 반영), ux FAIL→전건 해소(BLOCKING: 콤보 내부엣지 미복원 → _metaComboEdgesRestore · MAJOR: __terms__ 오판/GB 어포던스 · MINOR: X: ctl NODE 밴드), frontend 잔여 포인트 메인 세션 직접 검증. 상세 REVIEW.md REV entry. 반영 후 node --check 재PASS.
+- **PB-0008 실 Windows 시각검증(하드 게이트, visual_verification_scope: always)**: pre-commit 시점 미수행 사유 — 정적 자산이 web 이미지에 baked 되어 라이브 반영은 merge+재배포 선행 필요(§51 graphux7 와 동일 패턴). POST-DEPLOY 에서 수행 후 본 섹션·feature-0003 TEST.md §3 에 Run append 예정.

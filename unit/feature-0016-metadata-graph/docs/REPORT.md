@@ -1118,3 +1118,38 @@ GB:/GH: 비상호작용 장식) + 그룹 내부 2-pass masonry·블록 shelf-pac
 무겹침·칩 1-bg 포함·칩/펼침 무겹침·결정론·펼침-불변·평면 폴백·엣지 조립 보존·빌드 5.1ms. 그룹 산출:
 character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·mission(4)·clanmember(3) 등 13+기타.
 완료 게이트 = 배포 후 PB-0008 실 Windows(TASK T42.8).
+
+## 2026-07-04 · 그래프 뷰 z-order 의미 정합 (graph-zorder, TASK §52)
+
+### 요청 (사용자)
+`관리 콘솔 > 지식베이스 > 그래프 뷰` 의 각 요소가 적절한 z-order 로 구성되도록 검토 — 현재 상호작용에
+따라 순서가 의미와 정합하지 않게 뒤바뀌고, 요소 성질이 변경되며 z-order 자체가 뒤틀리는 이슈.
+
+### 근본 원인 (조사 확정)
+1. **G6 v5 내장 drag-element 의 `frontElement` 영구 승격** — 모든 dragstart 마다 대상 zIndex 를 전역
+   max+1 로 올리고 복원하지 않음(반복 드래그 시 단조 증가). 노드 드래그는 종속(컬럼·"X:" ctl)이 함께
+   오르지 않아 계층이 찢어지고, combo(클러스터) 드래그는 클러스터 전체가 다른 클러스터 위로 영구 상승
+   — **상호작용 이력이 곧 z-order** 가 됨.
+2. **캔버스 요소 대부분 zIndex 미지정(z0)** — @antv/g 는 zIndex → 삽입순(renderOrder) 페인팅이라,
+   setData diff 로 나중에 추가/재생성되는 요소(펼친 컬럼·카드↔combo 전환·그룹 재펼침·신규 엣지)가
+   항상 기존 요소 위로 append — **성질 변경마다 순서 재편**.
+3. **GB(그룹 배경) z −2 가 combo(0) 아래** — hit-test 에서 combo 에 삼켜져 §50 그룹 상호작용(배경
+   드래그·클릭·우클릭)이 dead, 그룹 배경을 잡으면 클러스터 전체가 이동(의미 불일치).
+4. HTML 오버레이(미니맵 z5·focus chip z5·ctxmenu z10000·ai-pop/progress in-flow)는 정합 — 무변경.
+
+### 처리 결과 (frontend-only, admin.js + admin.html cache-buster)
+- **의미 z-스케일 `_METZ` 단일 소스**: `COMBO(0) < GROUP_BG(1) < EDGE(2) < COLUMN(3) < NODE(4)
+  < GROUP_HD(5) < CTL(6)` — build 가 전 요소(combos/nodes/edges, products 경로 포함)에 bake.
+  삽입순 의존 제거 + 잔존 승격 자가 치유(rebuild 재-bake).
+- **드래그 transient**: dragstart 에 대상+종속(테이블+컬럼+ctl / 그룹 박스·헤더·컨트롤·멤버·종속)을
+  `canonical+1000` 결정론 부스트(내장 frontElement 를 덮음), dragend 에 canonical 복원. combo 드래그는
+  내장의 coherent 하위 승격을 드래그 중 그대로 쓰고 종료 시 `_metaComboMemberIds` 로 동일 범위 복원.
+- **GB 1 로 상향**: §50 그룹 상호작용(배경 드래그=그룹 이동) hit-test 회복. 클러스터 이동은 combo
+  여백·라벨·접힌 카드 경로로 유지.
+- **엣지 EDGE(2)**: 이웃 확장/추적으로 나중에 추가된 관계선이 칩 위를 지나던 것 해소(배경 위·칩 아래 고정).
+
+### 검증
+- `node --check` PASS · zIndex bake 16개소(빌드 산출 전 요소) · §18.8 적대 패널(ux·design·frontend
+  correctness 3-렌즈) — 결과는 REVIEW.md 참조.
+- **POST-DEPLOY**: web 재배포(정적 자산 baked, 마이그 없음) + PB-0008 실 Windows 시각검증 — 드래그
+  전/중/후 계층, 펼침/접기/검색 rebuild 후 계층 불변, GB 그룹 드래그 회복, pageerror 0.

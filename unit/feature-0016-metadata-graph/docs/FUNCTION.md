@@ -175,6 +175,13 @@ FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 �
 JS 모델 → 위치 포함 전체 데이터 재구성 → `setData()`+`draw()`(결정론 grid, 무-shuffle·제자리). 데이터 API·상세
 패널·AI 분석 계층 불변. 사용자 사전승인("바로 G6 마이그레이션"). 상세: `../g6-migration/BLUEPRINT.md`.
 
+**z-order 의미 스케일 (2026-07-04, graph-zorder, TASK §52)**: 캔버스 요소는 단일 소스 `_METZ` 의 의미 계층
+zIndex 를 build 시 bake 한다 — `COMBO(클러스터 배경 0) < GROUP_BG(그룹 배경 1) < EDGE(관계선 2) <
+COLUMN(3) < NODE(칩·카드 4) < GROUP_HD(그룹 헤더 5) < CTL(컨트롤 6)`. @antv/g 는 zIndex → 삽입순으로
+페인팅·hit-test 하므로 명시 bake 가 setData diff 생성 순서 의존을 제거한다. 드래그 중에는 대상+종속을
+`canonical+1000` 으로 결정론 부스트하고 dragend 에 canonical 복원 — G6 내장 drag-element 의
+`frontElement` 영구 승격(드래그 이력이 z-order 로 굳는 원인)을 상쇄한다.
+
 ## 14. AI 능동 분석 테이블 역할 시각 표식 (2026-07-02, node-role-viz, ADR-010)
 AI 능동 분석(node_analysis)이 완료된 **Table** 노드는 역할 8종(NODE_ROLES: master 기준·정의 / account
 계정·유저 / transaction 거래·행위 / log 로그·이력 / mapping 매핑·연결 / config 설정 / stats 집계·통계 /

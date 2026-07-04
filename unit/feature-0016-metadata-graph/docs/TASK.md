@@ -1308,3 +1308,72 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T51.8 node --check(admin.js) PASS · py_compile(node_analysis.py·admin_metadata.py) PASS · funcproc 테스트 19 PASS(신규 reused-progress).
 - [x] T51.9 §18.8 적대 리뷰 — REVIEW REV-20260704T071838-graphux7(BLOCKING 0, MAJOR 1[nav `[hidden]`]·MINOR 1[_analyzePending Set] 수정).
 - [x] T51.10 **배포 + POST-DEPLOY PB-0008 — PASS** (Environment: Windows-browser, 2026-07-04). PR #587 병합(325f5de4) → `make deploy-web` 무중단 롤링(web-a/b→325f5de4, soak 90s 통과) → 실 Windows Chrome/149(win-browser relay). 서빙 `admin.js?v=20260704-graphux7`·healthz git_commit=325f5de4. 라이브 실측: **#1** 노드 2개 조회 후 상세 패널 nav 바 출현(navHidden:true→false, 뒤로 활성, 라벨 "2/2"; 이력 0~1 시 `[hidden]` 숨김) · **#3** 3탭(노드 종류/관계·AI 상태/테이블 역할) 렌더+탭 전환(hidden 토글)·pg_trgm 문구 제거·검색매칭+§50 그룹힌트 parity · **#7** 스키마 펼침→상세 패널 "▦ 접기" 버튼 클릭→카드 접힘 · **#4** `_analyzePending instanceof Set`=true 라이브 · **#5** `_metaDatasourceLabelOf` 라이브. pageerror 0. 마이그 없음. 증적 scratchpad/postdeploy_graphux7.png. (#2 단/더블 카메라 동작은 바인딩 라이브 확인, 실 마우스 육안은 후속.)
+
+## 52. graph-zorder — 그래프 뷰 요소 z-order 의미 정합 (2026-07-04, entry persona dispatch)
+
+- Related Requirement: REQ-20260704T120000-graph-zorder — `관리 콘솔 > 지식베이스 > 그래프 뷰` 의 각 요소가
+  의미(계층)와 정합하는 z-order 로 구성되어야 한다. 현재 ① 상호작용(드래그·펼침·접기·검색)에 따라
+  순서가 의미와 무관하게 뒤바뀌고 ② 요소 성질 변경(카드↔클러스터, 그룹 접힘↔펼침, 컬럼 펼침) 시
+  z-order 자체가 뒤틀린다 (사용자 보고).
+- 근본 원인 (조사 확정):
+  1. **G6 v5 내장 drag-element 가 dragstart 마다 `graph.frontElement(대상)` 을 호출** — 대상 zIndex 를
+     전역 max+1 로 **영구** 승격(복원 없음, 단조 증가). 노드 드래그는 종속(컬럼·"X:" ctl)이 함께 오르지
+     않아 계층이 찢어지고, combo(클러스터) 드래그는 클러스터 전체가 다른 클러스터 위로 영구 상승.
+     상호작용 이력이 곧 z-order 가 됨.
+  2. **캔버스 요소 대부분 zIndex 미지정(z0)** — @antv/g 는 zIndex → 삽입순(renderOrder) 정렬이라,
+     setData diff 로 나중에 추가/재생성되는 요소(펼친 컬럼, 카드→combo 전환, 그룹 재펼침 멤버, 신규
+     엣지)가 항상 기존 요소 위로 append → 성질 변경마다 순서 재편.
+  3. **GB(그룹 배경) zIndex -2 가 combo(0) 아래** — hit-test 에서 combo 에 삼켜져 §50 그룹 상호작용
+     (배경 드래그=그룹 이동·클릭·우클릭)이 사실상 dead, 그룹 배경을 잡으면 클러스터 전체가 이동(의미
+     불일치). GH 헤더만 z5 hotfix 로 생존한 상태.
+  4. 엣지 zIndex 미지정 — 이웃 확장/추적으로 나중에 추가된 엣지가 기존 칩 위를 지나감.
+  5. HTML 오버레이(미니맵 z5·focus chip z5·ctxmenu z10000·ai-pop/progress in-flow)는 정합 — 변경 불요.
+- 접근: **의미 z-스케일 단일 소스 `_METZ`** 를 도입해 build 가 전 요소에 zIndex 를 bake —
+  `COMBO(0) < GROUP_BG(1) < EDGE(2) < COLUMN(3) < NODE(칩·카드 4) < GROUP_HD(5) < CTL(6)`.
+  드래그 중에는 대상+종속을 `canonical+DRAG_BOOST(1000)` 로 결정론 승격, dragend 에 canonical 복원
+  (combo 드래그는 내장 frontElement 가 하위 전체를 델타 승격하므로 dragend 복원만). rebuild 는 항상
+  canonical 을 재-bake 하므로 잔존 승격도 자가 치유.
+- 영향 파일/심볼: `unit/feature-0003-agent-web-ui/src/static/admin.js`
+  (`_METZ`·`_metaZFor`·`_metaDragZBoost/Restore`·`_metaComboMemberIds` 신설; `_metaTableStyle`·
+  `_metaTermStyle`·`_metaColStyle`·`_metaRoutineStyle`·`_metaCtlStyle`·`_metaSchemaCardStyle`·
+  `_metaSchemaCtlStyle`·`_metaComboStyleFor`·`_metaEdgeStyleFor`·`_metaRoutineEdgeStyle`·
+  `_metaG6Build`(GB/GH/GX)·`_metaG6BuildProducts`·`_metaNodeDragStart/End`·`_metaComboDragEnd` 수정),
+  `admin.html` (cache-buster bump). frontend-only·비파괴·마이그 0·인가 무변경.
+- 완료 판정 (AC):
+  - AC-1: 모든 캔버스 요소가 의미 계층 zIndex 를 갖는다(build 산출물 검사) — 삽입순 의존 제거.
+  - AC-2: 드래그 후(dragend) 요소 z 가 canonical 로 복원된다 — 드래그 이력이 z-order 로 잔존하지 않음.
+  - AC-3: 드래그 중 대상+종속(테이블+컬럼+ctl / 그룹 묶음)이 함께 최상층으로 떠서 계층이 찢어지지 않는다.
+  - AC-4: 그룹 배경(GB) 드래그가 클러스터가 아닌 **그룹**을 이동시킨다(hit-test 회복, §50 의미 정합).
+  - AC-5: 펼침/접기/검색/역할 도착(rebuild) 후에도 계층 불변. pageerror 0.
+- 위험도: **Minor** (§12.3 — 비파괴 frontend 표시 계층 정리, 스키마·인가 무관). §7.1 다파일(2)이라 본 계획 문서화.
+
+### 52.1 구현
+- [x] T52.1 `_METZ` 의미 z-스케일 + `_metaZFor(id)` canonical 해석기 + 스타일 함수 전체에 zIndex bake.
+- [x] T52.2 GB -2→GROUP_BG(1)·GX 1→CTL(6)·GH 5=GROUP_HD 정합(주석 갱신), 엣지 EDGE(2)+신뢰 강도 소수
+  오프셋(trusted +0.2 > candidate/교차DB +0.1 — 패널 design MINOR), products 경로 NODE/EDGE.
+  흐름 내 per-table "X:" ctl 은 NODE 밴드(허위 소속 어포던스 방지 — 패널 ux MINOR; GX/XS 는 CTL 유지).
+- [x] T52.3 드래그 transient: dragstart boost(대상+종속·그룹 묶음, renderedIds 필터로 부분실패 방지) +
+  dragend canonical 복원. **콤보 드래그는 내장 frontElement 가 내부 엣지까지 델타 승격**(번들 실측) —
+  dragend 에 노드+콤보(_metaComboMemberIds) + 엣지(_metaComboEdgesRestore, `_metaEdgeZFor` bake-1:1) 복원
+  (패널 ux BLOCKING 해소). `__terms__` 합성 combo 는 `_metaZFor` 명시 분기(패널 ux MAJOR 해소).
+  GB 에 cursor:move + 범례 문구로 "배경 드래그=그룹 이동 / 클러스터 이동=여백·이름·카드" 어포던스
+  (패널 ux MAJOR 완화).
+- [x] T52.4 admin.html cache-buster bump (`v=20260704-graph-zorder`) + 범례 그룹 안내 문구 갱신.
+
+### 52.2 검증
+- [x] T52.5 node --check(admin.js) PASS + build 산출물 zIndex 전수 검사(정적 — bake↔_metaZFor/_metaEdgeZFor
+  1:1 정합 표 대조, 누락 0). vendored 번들 API 실측: setElementZIndex(id→z 맵)·getEdgeData·frontElement
+  의 combo 내부엣지 승격.
+- [x] T52.6 §18.8 적대 리뷰(ux·design·frontend 3-렌즈) — design PASS(MINOR 2 반영·NIT 2 수용),
+  ux FAIL→전건 해소(BLOCKING 1: 콤보 내부엣지 미복원 · MAJOR 2: __terms__ 오판/GB 어포던스 ·
+  MINOR 2: 드롭 동률-z 가라앉음+샌드위치[known trade-off 수용]/X: ctl 밴드 · NIT 1: 드래그 중 엣지
+  비부스트[기존 동작 동등 — 수용]). frontend 리뷰어는 세션 한도 조기종료 → 잔여 포인트(맵 API·diff
+  merge·레이스·복원 대칭·TDZ) 메인 세션 직접 검증. REVIEW.md REV entry 참조.
+- [ ] T52.7 배포 + POST-DEPLOY PB-0008 실 Windows 시각검증 — 드래그/펼침/접기/검색 후 계층 정합·pageerror 0.
+
+### 52.3 Known trade-offs (패널 수용 항목)
+- 드롭 순간 동률-z(같은 밴드) 겹침은 삽입순 tie-break — 자유배치로 칩을 칩 위에 겹친 경우 놓는 순간
+  아래로 갈 수 있음(의미-계층 우선 설계의 의도적 결과). 클러스터 겹침 샌드위치(타 클러스터 헤더·컨트롤이
+  칩 위) 동일 — 사용자가 만든 겹침 상태 한정.
+- 드래그 중 연결 엣지는 비부스트(z2 유지) — 기존(내장 frontElement) 동작과 동등, 회귀 아님.
+- combo 라벨은 combo 요소(z0)와 일체라 엣지(2) 아래 — G6 구조 한계, 수정 전과 동일(회귀 아님).
