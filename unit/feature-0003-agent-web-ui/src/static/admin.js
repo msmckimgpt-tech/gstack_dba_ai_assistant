@@ -3221,7 +3221,9 @@ const _metaGraph = {
   //   않도록 직전 클러스터·테이블 순서를 보존하고 신규만 seriated 순서로 append. 드래그(nodePos/clusterOffset)와 직교.
   //   resetModel(스코프 전환·초기화)에서 clear → fresh load 는 순수 seriation.
   clusterOrder: [],           // 안정화된 클러스터(comboId) 순서
-  tableOrder: new Map(),      // comboId -> 안정화된 테이블/루틴 key 순서
+  tableOrder: new Map(),      // comboId -> 안정화된 테이블/루틴 key 순서(flat masonry 경로)
+  groupOrder: new Map(),      // feature-0016 §49(R1): schemaId -> 안정화된 simgroups 그룹 순서
+  groupTableOrder: new Map(), // feature-0016 §49(R1): groupKey -> 안정화된 그룹내 테이블 key 순서
   _comboDragStart: null,      // combo:dragstart 시 {id, x, y}(중심) — dragend 델타 산출용
 };
 
@@ -3709,13 +3711,24 @@ function _metaSimGroups(schemaId, tables, adj) {
   groupsBy.forEach((arr, f) => arr.forEach((t) => groupOfT.set(t.key, nsKey(f))));
   const groupOf = (tk) => groupOfT.get(tk) || null;
   // 그룹 seriation(관계 많은 그룹끼리 인접) — misc 제외 후 재부착(항상 마지막 유지)
-  const serIds = _metaRelSchemaOrder(nsIds.filter((k) => k !== nsKey("misc")), adj, groupOf);
+  let serIds = _metaRelSchemaOrder(nsIds.filter((k) => k !== nsKey("misc")), adj, groupOf);
   if (groupsBy.has("misc")) serIds.push(nsKey("misc"));
+  // feature-0016 §49(요구②, 적대리뷰 R1): 그룹 순서 안정화 — 이웃확장 rebuild 시 그룹이 재-seriate 되어 형제가 점프하지
+  //   않도록 직전 순서(groupOrder[schemaId])를 보존하고 신규 그룹만 append. (misc 는 위에서 이미 마지막.)
+  serIds = _metaStableSeq(serIds, _metaGraph.groupOrder.get(schemaId), (x) => x);
+  _metaGraph.groupOrder.set(schemaId, serIds.slice());
   const gIdx = new Map(serIds.map((k, i) => [k, i]));
   // 그룹 내 순서: 컴포넌트 군집 + 그룹-간 barycenter (컨테이너=그룹으로 _metaRelOrderAll 재사용)
   const pseudo = new Map();
   groupsBy.forEach((arr, f) => pseudo.set(nsKey(f), { isTerms: false, tables: arr, terms: [], colsByTable: new Map() }));
   const ordered = _metaRelOrderAll(pseudo, serIds, adj, gIdx, groupOf);
+  // feature-0016 §49(R1): 그룹 내 테이블 순서 안정화 — 신규 테이블만 append(기존 테이블 그룹내 열/행 위치 유지).
+  serIds.forEach((k) => {
+    const _fr = ordered.get(k); if (!_fr) return;
+    const _st = _metaStableSeq(_fr, _metaGraph.groupTableOrder.get(k), (t) => t.key);
+    ordered.set(k, _st);
+    _metaGraph.groupTableOrder.set(k, _st.map((t) => t.key));
+  });
   const list = serIds.map((k) => {
     const f = k.slice(schemaId.length + 1);
     const arr = ordered.get(k) || groupsBy.get(f) || [];
@@ -3794,7 +3807,9 @@ function _metaG6Build() {
   const schemaIdx = new Map(ids.map((s, i) => [s, i]));   // 테이블 순서의 외부-관계 앵커(이웃 스키마 방향) 조회용
   const relOrder = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf);   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
   // feature-0016 §49(요구②): 클러스터 내 테이블 순서 안정화(flat masonry 경로) — 신규 테이블/루틴만 append → 기존
-  //   테이블이 masonry 열/슬롯을 유지(이웃확장 시 형제 점프 제거). simgroups 경로는 name-family 그룹핑이라 자체 안정적.
+  //   테이블이 masonry 열/슬롯을 유지(이웃확장 시 형제 점프 제거). simgroups(구조화 스키마) 경로는 _metaSimGroups
+  //   내부에서 그룹 순서·그룹내 테이블 순서를 동일 방식으로 안정화(적대리뷰 R1 반영). 잔여(R2): innerCols 임계
+  //   (7/15/28) 교차 시 열 수가 바뀌어 해당 클러스터만 재열 — 반응형 레이아웃 고유 트레이드오프(비파괴, '공간 확보').
   ids.forEach((id) => {
     if (id === _META_TERMS_COMBO) return;
     const _fresh = relOrder.get(id); if (!_fresh) return;
@@ -4339,6 +4354,8 @@ function _metaGraphResetModel() {
   _metaGraph.nodePos.clear();
   _metaGraph.clusterOrder = [];        // feature-0016 §49: 순서 안정화도 fresh load(스코프 전환·초기화) 시 리셋 → 순수 seriation.
   _metaGraph.tableOrder.clear();
+  _metaGraph.groupOrder.clear();       // feature-0016 §49(R1): simgroups 순서 안정화도 fresh load 시 리셋.
+  _metaGraph.groupTableOrder.clear();
   _metaGraph._comboDragStart = null;
 }
 
