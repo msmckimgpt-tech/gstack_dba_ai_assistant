@@ -446,6 +446,12 @@ origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 �
   drag pairing·G6 combo drag 확인. MAJOR 1(nodePos override 분리) + NIT 1(컬럼 dead) 반영 → PASS-WITH-FIXES (REV-20260703T101622).
 - **POST-DEPLOY 실 Windows 브라우저(PB-0008)**: 배포 후 4-상호작용 수동 검증 예정(접힌 카드 드래그·combo 드래그·테이블 드래그+
   펼침·접기/펼치기 회귀) — feature-0003 TEST.md §3 `Environment: Windows-browser`. 라이브 canvas 드래그 자동화 곤란 → 실 Windows 게이트.
+
+### Run (2026-07-04) — graph-ux3fix(§45) 격리 검증
+- `node --check admin.js` **PASS**. clusterBase 완전 제거(grep 잔존 0)·검색 glow(searchMatchNodes/match state)·loadedScope 배선 무결.
+- **§18.8 3-렌즈 적대 리뷰(general-purpose)**: (A) 레이아웃 clusterBase, (B) IA/탭/권한 배선, (C) 검색 highlight — 각 렌즈 diff+함수컨텍스트 제공, 실패 시나리오 요구. 확정결함 3건: (A-HIGH) 위치고정 겹침→②되돌림, (B-MED) 크로스탭 scope stale→loadedScope 수정, (C-LOW) 라벨 넘침→클램프. 나머지 축(dangling ref·권한 가시성·mode 게이팅·G6 shadow 안전·rel 상세배지·req②③④ trace) clean. REV-20260704T014646.
+- 격리 알고리즘 테스트(scratchpad): clusterBase sticky 불변식 15/15 PASS(원점 불변·신규 아래 배치·드리프트 0) — 단 적대리뷰가 카드→combo 겹침 회귀를 별도로 적발해 해당 접근을 되돌림(알고리즘 자체는 정합이나 부작용이 치명).
+- **PB-0008 실 Windows 시각검증(하드 게이트, visual_verification_scope: always)**: `Environment: Windows-browser` — **무인 세션 3중 라우팅 벽으로 미수행**(TrustedHostMiddleware·인증세션·Windows→WSL). 검증 항목: ① `지식베이스 > 그래프 뷰` 탭 분리·전체 높이·데이터소스 select 로 스키마 그래프 로드 ③ 검색어 입력 시 매칭 노드가 앰버 glow 로 강조(너비 불변)·비검색 복귀 시 glow 소멸. **사용자 육안 확인 후 배포** — 미수행 사유 명시(카고컬트 방지, FIRST_REQUEST.md 정책). 정본 Run: feature-0003 TEST.md §3.
 ## graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프/능동분석 UX 4건 (2026-07-03, TASK §45 / ADR-016·017)
 
 ### 단위 — tests/test_graph_funcproc_uxfix.py (Environment: unit/pytest, DB 불요) — Run 2026-07-03 **19 PASS** (§18.8 패널 수정 반영 후)

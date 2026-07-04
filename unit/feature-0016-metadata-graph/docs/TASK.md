@@ -1194,3 +1194,34 @@ REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메�
   MAJOR·negative-decay 가드·reverse-dup·cap) 반영. REVIEW REV-20260704T043653.
 - [x] T47.7 **라이브 마이그(0036) 게이트 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·관계 무회귀·
   pageerror 0; 크로스-ds 엣지는 데몬 AUTO=1 flip + 임베딩 populate 후 eventual — 후속 확인).
+
+## 48. graph-ux3fix — 3대 UX 개선: 그래프 뷰 최상위 탭 분리 · 검색 부드러운 하이라이트 · 더블클릭 재배치(후속) (2026-07-04, 사용자 요청)
+
+> 번호 주의: 본 작업은 §45 로 시작했으나, 병렬 세션이 §45(graph-funcproc-uxfix)·§46·§47 을 먼저 머지해 번호가 충돌 → §48 로 재번호(§13.1 감지-후-재번호). 코드/캐시버스터 slug 는 `graph-ux3fix` 유지.
+
+사용자 요청 3건 (`관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 개선):
+① 그래프 뷰를 `지식베이스 > 그래프 뷰` 최상위 탭으로 **분리**(메타데이터의 형제) — 화면 높이를 더 넓게 사용.
+② 노드 **더블클릭 시 전체 재배치** 이슈 수정 — 이동해둔(드래그) 노드 위치 보존, 비조작 노드가 우선 밀림(밀린 노드는 조작 노드 아님).
+③ [테이블·컬럼·용어] 검색 시 **테이블 너비 증가** → **부드러운 하이라이트**.
+
+REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 UX). frontend-only(admin.html/js/styles.css, feature-0003 거주). 현재 main(§47) 위에 병합·통합 완료(admin.js/styles 자동병합, admin.html 범례+캐시버스터 충돌 해소, funcproc 범례 항목 보존).
+
+### 48.1 ① 그래프 뷰 최상위 탭 분리 + 높이 확장 (admin.html/js + styles.css)
+- [x] T48.1 admin.html: 지식베이스 그룹에 `data-admin-tab="graph"` 탭 버튼 추가 · 메타데이터 서브탭 `data-meta-subtab="graph"` 제거 · `#metadataGraphView` 블록을 새 `<section data-admin-pane="graph">`(자체 pane-head + `#graphScopeSelect`)로 이동 · 인라인 `display:none` 제거 · 범례 glow 칩(+funcproc "함수·프로시저" 항목 병합 보존).
+- [x] T48.2 admin.js: `ADMIN_TAB_PERMISSIONS.graph` 추가 + 메타데이터 OR-배열에서 `metadata.graph.read` 제거 + `switchTab` graph 분기 + `_METADATA_SUBTAB_PERM`/`_METADATA_NO_CREATE`/`_metaBindControls` graph 배선·`_metaHideGraph` 제거 + `_metaShowGraph` 스트립 + `_metaPopulateScopeSelect` 양 select 동기화 + `#graphScopeSelect` 바인딩.
+- [x] T48.3 styles.css: 스크롤 셀렉터 `[data-admin-pane="graph"]` 전환 + 좁은화면 캔버스 높이 clamp 상향.
+- [x] T48.4 (적대리뷰 D1) 크로스탭 스코프 stale 봉인: `_metaGraph.loadedScope`·`adminState.metadata.loadedScope` 추적 → 재진입 diverge 시 재로드(양방향).
+
+### 48.2 ③ 검색 부드러운 하이라이트 (admin.js)
+- [x] T48.5 `_metaTableStyle`/`_metaTermStyle` 폭 rel-무관 고정(TW=150 / 130) + `_metaG6Build` `trel` 부스트 제거, `X:` ctl offset `_METLAY.TW`.
+- [x] T48.6 `node.state.match` soft glow(앰버 shadow) + `_metaNodeStates` match push(mode==="search" && searchMatchNodes) + `searchMatchNodes` 채움/리셋. 범례·상태문구 glow. (funcproc 함수·프로시저 노드도 동일 match 상태로 glow 가능 — 코드 정합.)
+- [x] T48.7 (적대리뷰 D1) labelMaxWidth 클램프(테이블 TW-10, 용어 118) — 폭 고정으로 라벨 박스 넘침 방지.
+
+### 48.3 ② 더블클릭 재배치 — 후속(라이브 반복 검증 필요)
+- [~] T48.8 1차 접근(클러스터 원점 sticky clusterBase) §18.8 3-렌즈 적대리뷰 2/3 회귀 확정(카드→combo 확장 이웃 겹침) → **되돌림**. 요구②의 정합 구현 = 충돌해소 레이아웃 = 라이브 반복 후속 cycle. **사용자 결정(2026-07-04): ①·③ 먼저 출하, ②는 후속.**
+
+### 48.4 검증·통합·배포
+- [x] T48.9 `node --check` admin.js PASS(clusterBase 되돌림 잔존 0). §18.8 3-렌즈 적대 리뷰(REV-20260704T014646) 확정결함 3건(겹침→②되돌림·크로스탭 stale·라벨넘침) 반영.
+- [x] T48.10 현재 main(§47, 069b8934) 병합·통합: admin.js/styles.css 자동병합(내 IA·검색 배선 무결 + funcproc/embed/crossds 요소 46 보존, 옛 서브탭 경로 접근 코드 0), admin.html 충돌 3건(캐시버스터×2·범례) 해소(범례에 funcproc 항목 병합 보존), 문서 append-only 충돌 keep-both, §45→§48 재번호.
+- [ ] T48.11 **PB-0008 실 Windows 시각검증(하드 게이트, visual_verification_scope: always)**: ① `지식베이스 > 그래프 뷰` 탭 분리·전체 높이·데이터소스 select ③ 검색 매칭 노드 앰버 glow(너비 불변) — 무인 3중벽 미수행, 사용자 육안. cache-buster `20260704-graph-ux3fix`.
+- [ ] T48.12 배포(deploy_scope: included, web 롤링): 통합 브랜치 push(gh 토큰)→PR→main 병합→web-a/web-b 재배포.

@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260704T014646-ai-claude-feature-0016-graph-ux3fix
+- 요청(사용자, 2026-07-04): `관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 3대 개선 — ① 최상위 탭 분리+높이 ② 더블클릭 재배치 수정 ③ 검색 부드러운 하이라이트.
+- **① 그래프 뷰 최상위 탭 분리 (admin.html/js + styles.css)**:
+  - admin.html: 지식베이스 그룹에 `data-admin-tab="graph"` 탭 + 새 `<section data-admin-pane="graph">`(자체 pane-head + `#graphScopeSelect`)로 `#metadataGraphView` 이동, 메타데이터 서브탭 `graph` 제거, 범례 glow 칩.
+  - admin.js: `ADMIN_TAB_PERMISSIONS.graph` 추가 + 메타데이터 OR-배열 graph.read 제거 + `switchTab` graph 분기 + `_METADATA_SUBTAB_PERM`/`_METADATA_NO_CREATE`/`_metaBindControls` graph 배선·`_metaHideGraph` 제거 + `_metaShowGraph` 스트립 + `_metaPopulateScopeSelect` 양 select 동기화 + `#graphScopeSelect` 바인딩.
+  - styles.css: 스크롤 셀렉터 `[data-admin-pane="graph"]` 전환, 좁은화면 캔버스 높이 clamp 상향.
+  - (적대리뷰 수정) `loadedScope` 추적 → 크로스탭 스코프 stale 재로드.
+- **③ 검색 부드러운 하이라이트 (admin.js)**: `_metaTableStyle`/`_metaTermStyle` 폭 rel-무관 고정 + `trel` 부스트 제거, `node.state.match` soft glow(앰버 shadow) + `_metaNodeStates` match push + `searchMatchNodes` 채움/리셋, 범례·상태문구·labelMaxWidth 클램프.
+- **② 더블클릭 재배치**: 1차 접근(클러스터 원점 sticky clusterBase) 적대리뷰 회귀(카드→combo 겹침) 확정 → **되돌림**. 충돌해소 레이아웃 = 라이브 반복 후속 cycle(사용자 결정).
+- cache-buster: `admin.js` / `styles.css` `?v=20260704-graph-ux3fix`.
+- 검증: `node --check` PASS · §18.8 3-렌즈 적대 리뷰(REV-20260704T014646) · **PB-0008 시각검증 미수행(무인)** — 사용자 육안 후 배포.
+
 ## CHG-20260704T043653-ai-claude-feature-0016-crossds-rel
 - What: Phase B(ADR-019) — 크로스-데이터소스 관계. table_relationships 에 엔드포인트별 datasource + Phase C 시그니처
   임베딩 구동 후보 추론(데몬 기본 OFF) + 프로브/컨텍스트/승격 신뢰 게이팅 + 그래프 scope 완화 + UI 마젠타 점선. TASK §47.

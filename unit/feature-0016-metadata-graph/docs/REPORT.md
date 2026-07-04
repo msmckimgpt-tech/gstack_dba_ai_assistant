@@ -1,5 +1,19 @@
 # Report
 
+## 2026-07-04 · 그래프 뷰 3대 UX 개선 (graph-ux3fix, TASK §45)
+
+### 요청 (사용자)
+`관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 3건: ① 그래프 뷰를 `지식베이스 > 그래프 뷰` 최상위 탭으로 분리(높이 확장) ② 노드 더블클릭 시 전체 재배치 수정(드래그 노드 보존·비조작 노드 우선 밀림) ③ [테이블·컬럼·용어] 검색 시 너비 증가 → 부드러운 하이라이트.
+
+### 처리 결과 (frontend-only, admin.html/js/styles.css)
+- **① 완료** — 그래프 뷰가 독립 최상위 탭(`data-admin-pane="graph"`)으로 분리. 자체 pane-head + 데이터소스 select, 서브탭 바 제거로 캔버스가 pane 전체 높이 사용. 권한(`ADMIN_TAB_PERMISSIONS.graph`)·스코프 동기화(`loadedScope` 크로스탭 stale 봉인) 포함.
+- **③ 완료** — 검색 매칭 표현을 노드 너비 증가에서 **앰버 soft glow(`node.state.match`)** 로 전환(테이블·컬럼·용어). 폭 고정(rel-무관)으로 setData 재packing·가시성 저하 제거, 라벨 박스 클램프.
+- **② 되돌림(후속)** — 1차 접근(클러스터 원점 sticky)이 §18.8 적대 리뷰에서 **회귀 확정**(카드→combo 확장 시 이웃 겹침, 다중 스키마 확장 불가). 요구②의 정합 구현 = 충돌 해소 레이아웃(정교한 엔진 대변경, 라이브 반복 검증 필요) → **사용자 결정으로 ①·③ 먼저, ②는 라이브 후속 cycle**.
+
+### 검증·미결
+- `node --check` PASS · §18.8 3-렌즈 적대 리뷰(레이아웃·IA·검색, REV-20260704T014646) 확정결함 3건 반영.
+- **미결(하드 게이트)**: PB-0008 실 Windows 시각검증(visual_verification_scope: always) 무인 미수행 → **사용자 육안 확인 후 main 병합·web 롤링 배포**(cache-buster `20260704-graph-ux3fix`). ② 후속 cycle.
+
 ## 2026-07-04 · 크로스-데이터소스 관계 (crossds-rel, Phase B, TASK §47, ADR-019)
 
 ### 배경 (사용자 3대 개선 中 B)

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260704T014646-ai-claude-feature-0016-graph-ux3fix [SUBAGENT: PASS-WITH-FIXES] — 3대 UX 개선(§45) 3-렌즈 적대 리뷰
+- 대상: CHG-20260704T014646-graph-ux3fix (admin.html/js/styles.css — ① 그래프 뷰 최상위 탭 분리+높이 ③ 검색 soft glow / ② 클러스터 원점 sticky 는 되돌림).
+- 방법: §18.8 3-렌즈 병렬 적대 리뷰(general-purpose, 통과 아닌 결함 적발 목적) — (A) 레이아웃 clusterBase, (B) IA/탭/권한 배선, (C) 검색 highlight. 각 렌즈에 diff + 전체 함수 컨텍스트 제공, 실패 시나리오 요구.
+- **확정 결함 3건 반영**:
+  - **(A-HIGH) 클러스터 원점 sticky 겹침 회귀** — 카드→combo 확장 시 고정된 (작은) 카드 원점을 재사용하면 확장된 combo(폭 256~940·높이 326+)가 이웃 카드(258px pitch·96px row)와 겹침. 카드 개요에서 스키마 펼침=지배적 흐름이고 세션 내 재packing 탈출구 없음 → 다중 스키마 확장 레이아웃 사실상 불가. (C 렌즈도 동일 vertical overlap 독립 지적.) **판정: 되돌림**(요구②는 충돌해소 레이아웃 필요 = 라이브 반복 후속). req①-④ trace·clusterOffset 무중복·first-build 동치·products↔schema reset 은 clean 확인됨(내부 정합은 정상, overlap 부작용이 치명).
+  - **(B-MED) 크로스탭 스코프 stale** — 그래프가 별 pane 이 되며 metadataScopeSelect 공유가 끊겨, 다른 탭에서 데이터소스 변경 후 재진입 시 select 값은 갱신되나 canvas 는 이전 스코프(무성 불일치). **수정**: `_metaGraph.loadedScope`·`adminState.metadata.loadedScope` 추적 → 재진입 diverge 시 재로드(양방향).
+  - **(C-LOW) 라벨 박스 넘침** — 매칭 노드 폭 고정(rel 부스트 제거)으로 `labelMaxWidth`(176/168)가 박스(150/130)를 초과 → 라벨이 glow 밖으로 흘림. **수정**: `labelMaxWidth` 를 박스 안으로 클램프(TW-10 / 118).
+- **clean 판정(각 렌즈)**: dangling ref 0(_metaHideGraph·subTab==="graph"·no-create 잔존 없음)·첫진입/재진입 가시성(pane display)·권한 가시성(graph 전용 역할↔빈 메타탭 방지, group-hide 정합)·landing null-safe·검색 mode 게이팅(neighbor/roots 전환 시 glow 소멸)·G6 shadow state 안전(animation:false 무 To() 크래시, circle 컬럼도 glow)·searchMatchNodes 완전성(백엔드 직접매칭만, false glow 0)·rel 상세배지 유지.
+- 리스크·비용: 없음(frontend-only, 비파괴, 인증/데이터/마이그레이션 무변경). 검색 glow 범위가 기존(테이블만)보다 넓어짐(컬럼·용어·스키마명 매칭도) — 개선으로 채택.
+- 미결: **PB-0008 실 Windows 시각검증(하드 게이트)** 무인 미수행 → 사용자 육안 후 배포(T45.12/13). ② 후속 cycle.
+
 ## REV-20260704T043653-ai-claude-feature-0016-crossds-rel [SUBAGENT: SHIP-FOR-INERT / NEEDS-FIXES-BEFORE-FLIP] — Phase B 크로스-데이터소스 관계(§47, ADR-019) 설계+구현 적대검증
 - 대상: CHG-20260704T043653-crossds-rel (alembic 0036 + relationships/metadata_graph/node_analysis/insight/frontend).
 - 방법(2단계): 설계 워크플로우(ultracode understand6+design2+적대4) + 구현 diff 적대리뷰(general-purpose) 7축(마이그
