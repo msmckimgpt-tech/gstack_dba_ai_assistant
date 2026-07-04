@@ -3228,6 +3228,7 @@ const _metaGraph = {
   _busyKeys: new Map(),   // graph-perf-bg fix: key -> busy 를 세운 _opSeq(소유권). refreshStates 가 busy 를 보존·복원하고, 같은 key 재트리거 시 신 op busy 를 stale op 가 지우지 않게 한다.
   tableDeps: new Map(),   // graph-drag(REQ ②): Table key -> [종속 UI 노드 id](접기 "X:" ctl + 컬럼 노드). 매 _metaG6Build 재구성. 테이블 드래그 시 함께 이동.
   _drag: null,            // graph-drag(REQ ②): 진행 중 테이블 드래그 상태 {id, offs:[{id,ox,oy}]}(종속별 테이블 대비 월드 오프셋). null=비활성.
+  _dragZBoosted: new Set(),   // graph-zorder h2(리뷰 MINOR): 드래그 부스트 중 id — rebuild 의 _metaGraphZAssert 가 canonical 로 회수하지 않게 보호(dragend 복원 시 해제).
   aiPrompt: "",           // graph-funcproc(ADR-017): AI 능동 분석 hover 지침 — 세션 내 보존(상세 재렌더 시 prefill).
   // graph-freeplace: 자유 배치 persistence(ADR-004 결정론 배치가 rebuild 마다 초기화하던 것을 복원 — 사용자 후속 회귀 보고).
   //   clusterOffset: 스키마 클러스터(combo) 단위 사용자 드래그 누적 이동(dx,dy) — build 가 L.x0/L.y0 에 가산해 클러스터
@@ -3393,7 +3394,15 @@ function _metaDragZApply(ids, boost) {
   const r = _metaGraph.renderedIds;
   const m = {};
   let n = 0;
-  ids.forEach((id) => { if (!r || r.has(id)) { m[id] = _metaZFor(id) + boost; n += 1; } });
+  ids.forEach((id) => {
+    if (!r || r.has(id)) {
+      m[id] = _metaZFor(id) + boost;
+      n += 1;
+      // h2(리뷰 MINOR): 부스트 중 id 를 기록 — 백그라운드 rebuild(_metaGraphZAssert)가 드래그 도중
+      //   canonical 로 회수하지 않게 보호. 복원(boost=0) 시 해제.
+      if (boost > 0) _metaGraph._dragZBoosted.add(id); else _metaGraph._dragZBoosted.delete(id);
+    }
+  });
   if (!n) return;
   try { Promise.resolve(g.setElementZIndex(m)).catch(() => {}); } catch (_) {}
 }
@@ -3449,6 +3458,35 @@ function _metaComboEdgesRestore(comboId) {
     if (!ed || ed.id == null) return;
     if (_metaComboOwnerOf(ed.source) === comboId || _metaComboOwnerOf(ed.target) === comboId) { m[ed.id] = _metaEdgeZFor(ed); n += 1; }
   });
+  if (!n) return;
+  try { Promise.resolve(g.setElementZIndex(m)).catch(() => {}); } catch (_) {}
+}
+// graph-zorder h2(§52.4, PB-0008 라이브 실측 적발): G6 v5 computeZIndex 는 setData diff 의 **update** 에서
+//   datum 에 `combo` 키가 있으면(combo-자식 노드 datum 은 항상 combo: 포함 — 접힌 카드 SC:·products
+//   빌드 노드는 combo 키가 없어 애초 평탄화 비대상) 제공된 style.zIndex 를 무시하고 comboZ+1(=1) 로
+//   재산정한다 — add 는 명시 zIndex 존중(skip). 즉 첫 렌더는 canonical, **기존 요소가 업데이트되는
+//   rebuild 마다 combo-자식 전부 z1 평탄화**(실측: 그룹 멤버 드래그 rebuild 후 칩/컬럼/ctl=1). 엣지는
+//   명시 zIndex 정의 시 항상 skip 이라 무영향. setElementZIndex 경로는 datum 에 combo 키가 없어 재산정을
+//   우회(sticky)하므로, 매 rebuild(draw) 직후 canonical 과 어긋난 요소만 골라 일괄 re-assert 한다.
+function _metaGraphZAssert() {
+  const g = _metaGraph.graph;
+  if (!g || !_metaGraph.renderedIds) return;
+  const m = {};
+  let n = 0;
+  _metaGraph.renderedIds.forEach((id) => {
+    if (_metaGraph._dragZBoosted.has(id)) return;   // h2(리뷰 MINOR): 드래그 부스트 중 — 회수 금지(dragend 가 복원)
+    let z; try { z = g.getElementZIndex(id); } catch (_) { return; }
+    const want = _metaZFor(id);
+    if (z !== want) { m[id] = want; n += 1; }
+  });
+  try {
+    g.getEdgeData().forEach((ed) => {
+      if (!ed || ed.id == null) return;
+      let z; try { z = g.getElementZIndex(ed.id); } catch (_) { return; }
+      const want = _metaEdgeZFor(ed);
+      if (z !== want) { m[ed.id] = want; n += 1; }
+    });
+  } catch (_) {}
   if (!n) return;
   try { Promise.resolve(g.setElementZIndex(m)).catch(() => {}); } catch (_) {}
 }
@@ -4422,6 +4460,7 @@ async function _metaG6Apply(fit) {
     _metaGraph._stateCache.clear();
     _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaCacheSig(n.key)); });   // node-role-viz: 역할 suffix 포함 — rebuild 가 역할 칩 색을 이미 bake 했으므로 직후 refresh 는 no-op
     await g.draw();
+    _metaGraphZAssert();   // graph-zorder h2: setData update 의 combo-hierarchy z 평탄화(comboZ+1) 를 canonical 로 재-assert
     _metaGraphMinimapAnchor();   // graph-minimap-fix: 플러그인 컨테이너 inline left/top → CSS 앵커 정규화(멱등)
     if (fit) { await _metaGraphFitClamped(true); }
   } catch (err) { _metaGraphStatus("그래프 렌더 오류: " + ((err && err.message) || err)); }

@@ -974,3 +974,11 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}` · `unit/feature-0016-metadata-graph/docs/{TASK,REPORT,TEST,REVIEW,MODIFY}.md`
 - Impact: frontend-only 표시 계층·hit-test 정합. **마이그 없음·인가 무변경·데이터 무영향·API 무변경**. 정적 자산 baked → web 재배포 필요(insight-worker 불요). cache-buster `admin.js?v=20260704-graph-zorder`.
 - Rollback Notes: admin.js/admin.html 단일 커밋 revert + web 재배포로 즉시 복원. DB 변경 없음.
+
+## CHG-20260704T115255-ai-claude-feature-0016-graph-zorder-h2
+- Date: 2026-07-04
+- Related Requirement: REQ-20260704T120000-graph-zorder (TASK §52.4) — 1차 POST-DEPLOY PB-0008 실측에서 적발된 rebuild z 평탄화 hotfix.
+- Summary: G6 v5 `computeZIndex` 가 setData diff **update** 에서 combo-자식 datum 의 zIndex 를 comboZ+1(=1) 로 강제 재산정(bake 무시)하는 것을 라이브 실측·번들 소스로 확정 — `_metaGraphZAssert()` 를 `_metaG6Apply` draw 직후 choke-point 로 추가해 canonical(_metaZFor/_metaEdgeZFor)과 어긋난 요소만 `setElementZIndex` 로 일괄 재-assert(combo 키 없는 경로라 재산정 우회·sticky, diff-필터라 정상 no-op).
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}` · `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: frontend-only. 마이그 0·인가 무변경. web 재배포 필요. cache-buster `admin.js?v=20260704-graph-zorder-h2`.
+- Rollback Notes: 단일 커밋 revert + web 재배포.

@@ -1371,6 +1371,18 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   merge·레이스·복원 대칭·TDZ) 메인 세션 직접 검증. REVIEW.md REV entry 참조.
 - [ ] T52.7 배포 + POST-DEPLOY PB-0008 실 Windows 시각검증 — 드래그/펼침/접기/검색 후 계층 정합·pageerror 0.
 
+### 52.4 h2 hotfix — setData update 의 combo-hierarchy z 평탄화 재-assert (PB-0008 라이브 실측 결함)
+- 적발(1차 POST-DEPLOY PB-0008, 2026-07-04): 그룹 멤버 테이블 드래그 → dragend rebuild 직후 칩/컬럼/ctl
+  z 가 전부 **1** 로 평탄화 (S2-drag-after FAIL). 번들 실측 근본 원인: G6 v5 `computeZIndex` 가 setData
+  diff 의 **update** 에서 datum 에 `combo` 키가 있으면(본 build 는 항상 포함) 제공된 style.zIndex 를
+  무시하고 comboZ+1(=1) 로 강제 재산정 — add 는 명시 zIndex 존중(그래서 첫 렌더·재펼침은 canonical).
+  엣지는 명시 zIndex 정의 시 항상 skip(무영향 — 실측 정합). 기존(z-미지정) 코드에서는 add 조차 1 로
+  산정되어 전 요소가 z1 평탄이었음 — "성질 변경 시 z-order 뒤틀림"의 마지막 축.
+- [x] T52.8 `_metaGraphZAssert()` — `_metaG6Apply` 의 draw 직후, 현재 z ≠ canonical(_metaZFor/_metaEdgeZFor)
+  인 요소만 골라 `setElementZIndex(맵)` 일괄 재-assert (이 경로는 datum 에 combo 키가 없어 재산정 우회,
+  sticky). diff-필터라 정상 상태 no-op. cache-buster `v=20260704-graph-zorder-h2`.
+- [ ] T52.9 h2 배포 + PB-0008 강화판 재실측 — S2-after canonical(4/3/4) 포함 전 항목.
+
 ### 52.3 Known trade-offs (패널 수용 항목)
 - 드롭 순간 동률-z(같은 밴드) 겹침은 삽입순 tie-break — 자유배치로 칩을 칩 위에 겹친 경우 놓는 순간
   아래로 갈 수 있음(의미-계층 우선 설계의 의도적 결과). 클러스터 겹침 샌드위치(타 클러스터 헤더·컨트롤이

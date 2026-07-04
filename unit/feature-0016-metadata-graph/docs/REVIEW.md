@@ -976,3 +976,18 @@ source_of_truth: true
   bake↔`_metaZFor`/`_metaEdgeZFor` 1:1 표 대조(누락 0) · `_metaComboOwnerOf` 가 build 의
   `_metaSchemaComboOf`+장식 prefix 규약과 동일 · TDZ 무해(전역 const 가 함수 실행 전 정의).
 - 재검증: node --check PASS(반영 후 3회). 라이브 계층 검증은 T52.7 POST-DEPLOY PB-0008.
+
+## REV-20260704T120213-ai-claude-feature-0016-graph-zorder-h2 [SUBAGENT: PASS-WITH-FIXES] — rebuild z 평탄화 재-assert hotfix (1-함수 choke-point)
+- Trigger: UI/화면/드래그 keyword + 1차 POST-DEPLOY PB-0008 실측 FAIL(S2-drag-after) → frontend correctness+ux 겸임 단일 적대 리뷰어 dispatch (원 cycle 3-렌즈 패널 REV-…-graph-zorder 의 후속 hotfix scope).
+- 대상: `_metaGraphZAssert()` — G6 v5 computeZIndex 가 setData **update** 에서 combo-자식 datum 의
+  zIndex 를 comboZ+1(=1) 로 강제 재산정(bake 무시)하는 평탄화를, rebuild draw 직후 canonical 재-assert
+  로 상쇄. 번들 실측 6개 적대 포인트 전부 REFUTE 실패(= 설계 성립):
+  ① setData 호출처 전수 1곳(_metaG6Apply) — 배치 지점 정확 ② 평탄화는 setData 내 동기 실행 —
+  draw 후 assert 역전 불가 ③ setElementZIndex 는 combo 키 없는 datum + preventUpdateNodeLikeHierarchy
+  라 순환 되평탄화 없음 ④ O(N) diff-필터 읽기 — draw 대비 무시 가능, per-id try/catch 완비
+  ⑤ setData→draw await 갭 dragstart 부스트 회수(MINOR) ⑥ 엣지/노드 canonical↔bake 4 생성처 전수 일치.
+- **MINOR 반영**: `_metaGraph._dragZBoosted`(Set) — 부스트 중 id 를 기록하고 assert 가 skip, dragend
+  복원 시 해제 (draw-await 갭 드래그의 부스트 상실 창 봉인).
+- **NIT 반영**: h2 주석 정밀화 — 접힌 카드 SC:·products 노드는 combo 키 부재라 애초 평탄화 비대상.
+- 재검증: node --check PASS(반영 후). 라이브 실측은 h2 배포 후 PB-0008 강화판(S2-after canonical ·
+  S5 canonical 전수 · S5b 순수 update-rebuild 프로브) — T52.9.
