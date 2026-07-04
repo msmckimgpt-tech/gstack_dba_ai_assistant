@@ -1307,5 +1307,4 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 ### 51.2 검증
 - [x] T51.8 node --check(admin.js) PASS · py_compile(node_analysis.py·admin_metadata.py) PASS · funcproc 테스트 19 PASS(신규 reused-progress).
 - [x] T51.9 §18.8 적대 리뷰 — REVIEW REV-20260704T071838-graphux7(BLOCKING 0, MAJOR 1[nav `[hidden]`]·MINOR 1[_analyzePending Set] 수정).
-- [ ] T51.10 **배포(deploy_scope: included): main 병합 → web 재배포(정적 자산 baked) → PB-0008 실 Windows 브라우저**
-  (#1 nav 바·#2 단/더블·#3 3탭 렌더·#4 reused 메시지·#5 라벨·#7 접기 버튼 시각검증; pageerror 0). 마이그 없음.
+- [x] T51.10 **배포 + POST-DEPLOY PB-0008 — PASS** (Environment: Windows-browser, 2026-07-04). PR #587 병합(325f5de4) → `make deploy-web` 무중단 롤링(web-a/b→325f5de4, soak 90s 통과) → 실 Windows Chrome/149(win-browser relay). 서빙 `admin.js?v=20260704-graphux7`·healthz git_commit=325f5de4. 라이브 실측: **#1** 노드 2개 조회 후 상세 패널 nav 바 출현(navHidden:true→false, 뒤로 활성, 라벨 "2/2"; 이력 0~1 시 `[hidden]` 숨김) · **#3** 3탭(노드 종류/관계·AI 상태/테이블 역할) 렌더+탭 전환(hidden 토글)·pg_trgm 문구 제거·검색매칭+§50 그룹힌트 parity · **#7** 스키마 펼침→상세 패널 "▦ 접기" 버튼 클릭→카드 접힘 · **#4** `_analyzePending instanceof Set`=true 라이브 · **#5** `_metaDatasourceLabelOf` 라이브. pageerror 0. 마이그 없음. 증적 scratchpad/postdeploy_graphux7.png. (#2 단/더블 카메라 동작은 바인딩 라이브 확인, 실 마우스 육안은 후속.)
