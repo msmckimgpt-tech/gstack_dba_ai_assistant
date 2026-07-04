@@ -40,12 +40,8 @@ datasource 무권한이라 이어지는 질문은 맥락이 끊긴다(수용된 
 ## §4. 외부 검증 로그 (append-only)
 (엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. eng-review/cso 검증 기록은 REVIEW.md)
 
-- **[2026-07-04] share-visibility-window (TASK-20260704) — §1·§2-Alt-C 확장, AR-1/AR-2 부분 반전.**
-  §1 은 "초대=이 방의 내용을 당신과 공유하는 신뢰 행위 + 권한 없어도 열람 가능"을 정본으로 했고
-  Alt-C(완전 RBAC 격리)를 "협업 가치 소멸"로 기각하며 fork 전체 반출까지 수용(AR-2)했다. 본 cycle 은
-  그 결정을 **뒤집지 않되**, owner 가 공유 시 열람 범위를 `[from,to]` window 로 **좁힐 수 있는 opt-in**을
-  추가한다. 사용자 결정(2026-07-03) = **"라이브룸 + 멤버 필터"**(격리 분기 아님): 참여자는 여전히 라이브
-  멤버지만 가려진 구간은 뷰·LLM recall·fork 전부에서 물리 배제(프롬프트 인젝션 방어). full 공유는 종전
-  전체 열람 그대로(무회귀). 이로써 SECURITY.md §18 AR-1(join 전체열람)·AR-2/F3(fork 전체반출)는
-  **windowed share 에 한해 반전**된다(SECURITY.md §21 정본). owner-answer 누출면은 "표시 태그만"으로 봉인
-  (생성시점 클램프는 별 cycle 승격 여지 — §21.4 잔여리스크). 적대 검증: REVIEW.md 참조.
+<!-- share-visibility-window(TASK-20260704) 은 §1·§2-Alt-C 를 확장한다(뒤집지 않음): owner 가 공유
+     열람 범위를 [from,to] window 로 좁히는 opt-in 추가, AR-1/AR-2 는 windowed 한정 반전. 사용자 결정
+     "라이브룸 + 멤버 필터" + owner-answer "표시 태그만". 근거·적대검증 정본 = REVIEW.md 해당 cycle 엔트리
+     + SECURITY.md §21. §4 는 human 외부검증 전용이라 본 AI-cycle 근거는 여기 주석으로만 남긴다. -->
+

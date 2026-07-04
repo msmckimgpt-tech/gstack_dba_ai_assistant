@@ -657,17 +657,23 @@ feature-0009 의 기존 수용 위험을 **windowed share 에 한해 반전**한
   복제. 가려진 구간은 fork 본의 core_messages 에 물리적으로 부재 → 인젝션 반출 불가.
 - ban 게이트(§18.2)는 그대로 최외곽 — window clip 은 직교·가산.
 
-### 21.4 owner-answer 누출면 — 표시 태그(display-tag) (사용자 결정 "표시 태그만")
+### 21.4 owner-answer 누출면 — 표시 태그(display-tag), recall 까지 확장 (사용자 결정 "표시 태그만")
 
 owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistant 를 호출하면 full-context 답변이
-라이브 스트림에 남아 bounded 멤버에게 노출될 수 있다. 사용자 결정 = **생성시점 클램프 대신 표시 태그**:
-assistant 답변 meta 에 `recall_floor_created_at`(또는 `recall_full`)을 실어(`_answer_recall_tag` +
-`_mirror_message(recall_tag)`), display loader(`_msg_outside_window`)가 **뷰어 floor 아래 문맥을 그린
-답변을 bounded 멤버에게 은닉**한다. 태그 미해석/파싱 실패는 fail-closed(은닉).
+라이브 스트림에 남아 bounded 멤버에게 노출될 수 있다. 사용자 결정 = **생성시점 클램프 대신 표시 태그**.
+초기 구현은 display 만 태깅해 recall 은 누출됐고(적대 패널 REVIEW M1 적발), **태그를 recall 까지 확장**해
+봉인했다 — owner 생성은 여전히 무손상(클램프 아님, "표시 태그만" 결정 정합), tag 기반으로 display+recall
+양쪽에서 은닉:
+- assistant 답변 저장 시 recall 하한을 기록: display store meta `recall_floor_created_at`/`recall_full`
+  (`_answer_recall_tag` + `_mirror_message`) **및** `agent_runtime.core_messages.recall_floor_created_at`
+  (`_answer_recall_floor_ca`, recall_full=epoch sentinel; alembic 0036).
+- **display**: `_msg_outside_window` 가 뷰어 floor 아래 문맥을 그린 답변을 은닉(태그 미해석=fail-closed).
+- **recall**: `_PG_LOAD_CORE_MESSAGES_WINDOWED` 가 `NOT (recall_floor_created_at < 뷰어 floor_ca)` 로
+  그런 답변을 bounded 멤버의 LLM 컨텍스트에서 배제 → 프롬프트 인젝션으로도 추출 불가.
+- ceiling-only 멤버(하한 무제한) 답변은 `recall_full` 로 태깅(REVIEW M2). B1: bounded 발신자에겐
+  origin_request/thread_goal(CONVERSATION CONTEXT) 주입 자체를 스킵(window 로 못 자르는 자유 텍스트).
 
-**[수용 잔여 리스크]** 이 경로는 display-단 필터 정확성에 의존한다(생성시점 물리 배제 아님). 강한 보장이
-필요하면 별 cycle 에서 "bounded 멤버 존재 시 모든 답변 recall 을 최엄격 floor 로 클램프" 승격. 또한 사람
-멤버가 가려진 내용을 **직접 인용해 전달**하는 것은 기술로 못 막음(사회적 경계).
+**[수용 잔여]** 사람 멤버가 가려진 내용을 **직접 인용해 전달**하는 것은 기술로 못 막음(사회적 경계).
 
 ### 21.5 알려진 한계 / 배포 전 보완 (TODO)
 
@@ -677,5 +683,8 @@ assistant 답변 meta 에 `recall_floor_created_at`(또는 `recall_full`)을 실
 2. **account cross-conv recall**(§14 3번째 경로): owner-scoped 라 windowed joiner(비-owner)는 공유 대화를
    본인 cross-conv recall population 에 넣을 수 없어 **구조적 fail-closed**. 불변식: account_insight 는
    반드시 owner_account_id 키 유지. per-joined-member 추출로 바뀌면 floor 를 recall 에 전파해야 함.
-3. **PG 전용**: windowing 은 PG 런타임에서만 유효(MySQL-only 배포는 익명 뷰 snapshot 만).
-4. **외부 배포**: §7.2 IP allowlist / token 비밀번호가 windowed 공유에도 동일 적용(외부 노출 시).
+3. **존재 oracle (MINOR, 콘텐츠 미노출)**: (a) sample-feedback 상단 gap probe(하단 floor 만 게이트),
+   (b) `/api/history` `has_more` 가 필터 전 raw 로 산출돼 "가려진 하위 이력 존재" 만 노출, (c) 로그인 bounded
+   멤버 대화목록의 topic(익명 뷰는 §21.2 에서 genericize, 로그인 멤버 목록은 잔여). 전부 존재 여부만·콘텐츠 0.
+4. **PG 전용**: windowing 은 PG 런타임에서만 유효(MySQL-only 배포는 익명 뷰 snapshot 만).
+5. **외부 배포**: §7.2 IP allowlist / token 비밀번호가 windowed 공유에도 동일 적용(외부 노출 시).
