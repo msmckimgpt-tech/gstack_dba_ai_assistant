@@ -1269,4 +1269,7 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 ### 50.2 검증
 - [x] T50.6 `node --check` PASS + headless `_metaG6Build` 격리 단위검증 **22/22 PASS**(그룹당 GB/GH/GX 방출·멤버 박스 포함·접기 멤버 미방출·박스 헤더높이·GX '+'·타그룹 불변·groupOffset 3계층 시프트·nodePos 반응형 확장·평면 폴백 회귀 0·검색 자동펼침+의도 보존).
 - [ ] T50.7 §18.8 적대 리뷰(좌표수학·상호작용 wiring·회귀·통합 3~4렌즈) + 수정.
-- [ ] T50.8 배포(web 롤링) + **PB-0008 실 Windows 라이브 검증**(Playwright `connect_over_cdp` real mouse): (a) 그룹 헤더/박스 드래그 → 그룹 통째 이동·rebuild 유지, (b) GX 클릭 → 접기/펼침, (c) 그룹 내부 테이블 드래그 → GB 박스 반응형 리사이즈, (d) 스키마 접기/펼치기·클러스터 드래그 회귀 0, pageerror 0.
+- [x] T50.8 배포(web 롤링 fb88b19e) + **PB-0008 실 Windows 라이브 검증**(Playwright `connect_over_cdp` real mouse, mssql-dk-dev accountdb 34그룹): (b) **GX 클릭 접기 ✅**(collapsed·멤버 미렌더·GB 높이 36 헤더급·GX '+'), **GX 펼치기 ✅**(멤버 3 재렌더·GX '−'), (c) **그룹 내부 테이블 드래그 반응형 ✅**(L_Notice 이동 시 GB [248×174]→[299×227] 확장·멤버 박스 내 포함, gi-05), 전 구간 pageerror 0. **(a) 그룹 드래그 = 배포본 결함 발견**: GH 헤더 zIndex −1 이 combo 배경(z0) 뒤라 hit-test 에서 가려져 combo:dragstart(클러스터 이동, clusterOffset 설정)로 발화 — 라이브 GH zIndex 패치 시 정상(groupOffset 설정·타 그룹 불변 실증) → T50.9 hotfix.
+
+### 50.3 hotfix — GH 헤더 hit-test (PB-0008 라이브 실측 결함)
+- [x] T50.9 **GH 헤더 zIndex −1 → 5(양수)** + `cursor:move`: combo 배경 위로 렌더해 헤더가 그룹 드래그 핸들로 hit-test 되게(헤더 스트립엔 멤버 없어 시각 회귀 0). GB 배경은 z−2 유지(combo 에 가려 미-grab — 헤더가 유일 핸들, 범례 "헤더 칩 드래그로 그룹 이동"·박스 body 드래그는 클러스터 이동으로 폴백). admin.html cache-buster `?v=20260704-group-drag-hotfix`. 검증: node --check + headless **29/29 PASS**(T8: GH zIndex 양수·cursor move·GB 음수·GX 양수 잠금). 재배포 후 그룹 드래그 라이브 재검증(패치 없이).
