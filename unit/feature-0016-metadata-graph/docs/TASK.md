@@ -1098,7 +1098,18 @@ MODIFY CHG-20260703-node-role-viz.
 - [x] T44.6 §18.8 적대 리뷰(REV-20260703T101622): 좌표프레임·offset수학·drag pairing·회귀 6축 → MAJOR 1(nodePos가
   clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
 - [x] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
-  회귀 접기/펼치기). 라이브 canvas 드래그 자동화 곤란 → 실 Windows 확인 게이트.
+  회귀 접기/펼치기).
+- [x] T44.8 **POST-DEPLOY 라이브 드래그 검증 — PASS (Environment: Windows-browser, 2026-07-04)**: 초기엔 "canvas 드래그
+  자동화 곤란"으로 육안 게이트 유보했으나, **Playwright `connect_over_cdp`(win-browser relay @172.26.144.1:9223)로
+  실 Windows Chrome 에 attach → `page.mouse.move→down→16-step move→up` 실제 마우스 드래그 자동화 성공**. 실측 결과:
+  ① **접힌 카드(클러스터) 드래그 이동**: accountdb 카드 (548,524)→(430,415) 실이동(fp-03). ② **combo 드래그 이동**:
+  펼친 클러스터 combo 헤더 드래그로 clusterOffset 누적(fp-06). ③ **테이블 노드 드래그 + combo 반응형 리사이즈**:
+  tapjoy combo 내 MessageQueue 노드 (535,505)→(470,630) 이동 시 combo 배경 박스가 이동 노드 포함하도록 아래로
+  auto-fit 리사이즈 + ROUTINE_USES 엣지 재라우팅(fp-07). ④ **접기/펼치기 회귀**: accountdb·tapjoy 펼침 시
+  masonry 재배치 + sim-group 배경 상자 정상(fp-04). ⑤ **드래그 위치 persistence(rebuild-safe)**: statsdb
+  (548,576)→(400,400) 드래그 후 tapjoy 펼침(setData+draw rebuild)에도 statsdb 오프셋 유지·snap-back 없음(fp-06).
+  ⑥ **초기화**: 리셋 시 clusterOffset·nodePos clear → accountdb 원위치 복귀(fp-05). 전 상호작용 통틀어 **pageerror 0**.
+  증적 fp-03~fp-07.png. Runner: AI(Playwright real mouse via CDP). → **초기 "실 Windows 확인 게이트" 유보 해소**.
 ## 45. graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프 뷰/AI 능동 분석 UX 4건 (2026-07-03, entry persona dispatch)
 
 REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메타데이터 > 그래프 뷰):

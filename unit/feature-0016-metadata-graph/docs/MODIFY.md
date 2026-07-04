@@ -915,3 +915,10 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
 - Rollback Notes: 해당 doc 라인 revert.
+## CHG-20260704T143839-ai-claude-feature-0016-freeplace-liveverify
+- Date: 2026-07-04
+- Related Requirement: 사용자 요청 "G6 수정사항에 대한 실제 브라우저 내 동작 검증도 진행" — CHG(graph-freeplace, ADR-015) 자유배치 드래그 4-상호작용의 완료 게이트(TASK §44 T44.7) 라이브 실측 기록.
+- Summary: doc-only — 초기 "G6 Canvas 드래그는 win-browser 합성 pointer 가 @antv/g 히트테스트 미도달 → 사용자 라이브 확인 필요"로 유보됐던 부분을, **Playwright `connect_over_cdp`(win-browser relay @172.26.144.1:9223)로 실 Windows Chrome 에 attach → `page.mouse` 실제 이벤트(move→down→16-step move→up)로 G6 Canvas 드래그 자동 구동**하여 검증 완료. 실측 전건 PASS: 접힌 카드 드래그(accountdb 548,524→430,415)·combo 드래그·테이블 노드 드래그+combo auto-fit 반응형 리사이즈(MessageQueue 535,505→470,630, ROUTINE_USES 재라우팅)·접기/펼치기 회귀 0(masonry+sim-group)·드래그 위치 persistence(statsdb rebuild 후 오프셋 유지·snap-back 없음)·초기화 clear. 전 구간 pageerror 0. 증적 fp-03~fp-07.png. TASK §44 T44.8 [x], TEST(freeplace Run POST-DEPLOY) 갱신.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.
