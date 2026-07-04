@@ -5073,6 +5073,7 @@ def _ensure_web_conversation_shares_schema(conn) -> None:
                 Token VARCHAR(64) NOT NULL UNIQUE,
                 ScopeMode VARCHAR(16) NOT NULL DEFAULT 'full',
                 AnchorMessageId BIGINT NULL,
+                FloorMessageId BIGINT NULL,
                 CreatedBy BIGINT NOT NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 RevokedAt DATETIME NULL,
@@ -5160,6 +5161,31 @@ def _ensure_web_share_links_joinable_column(conn) -> None:
         try:
             cur.execute(
                 "ALTER TABLE WebConversationShares ADD COLUMN Joinable TINYINT(1) NOT NULL DEFAULT 1"
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
+def _ensure_web_share_links_floor_column(conn) -> None:
+    """share-visibility-window: WebConversationShares 에 `FloorMessageId BIGINT NULL` column 추가.
+
+    "여기부터 공유"(하단 경계)를 저장한다. AnchorMessageId(상단, "여기까지 공유", inclusive
+    `Id <= AnchorMessageId`)와 짝을 이뤄 windowed share 는 [FloorMessageId, AnchorMessageId]
+    구간만 노출한다(inclusive `Id >= FloorMessageId`). 둘 다 DISPLAY id-space
+    (AgentMemoryMessages.Id / agent_runtime.messages.id), AnchorMessageId 계약과 동일.
+
+    기본 NULL = 하단 무제한 = 첫 메세지부터(기존 'full'/'anchored' share 무회귀). 익명 공유 뷰·
+    join stamp·fork 가 이 값을 읽어 가려진 pre-floor 구간을 뷰·멤버십·fork·LLM recall 전부에서 배제한다.
+
+    PolicyVersion/ExpiresAt/Joinable 헬퍼 idiom 동형 — fast/slow path 양쪽에서 호출되어 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "ALTER TABLE WebConversationShares ADD COLUMN FloorMessageId BIGINT NULL"
             )
         except Exception:
             pass
@@ -6206,6 +6232,7 @@ def _ensure_seed_catchup(conn) -> None:
     # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column ALTER.
     _ensure_web_share_links_expiry_column(conn)
     _ensure_web_share_links_joinable_column(conn)  # feature-0009: 공유 링크 참여 허용 컬럼
+    _ensure_web_share_links_floor_column(conn)  # share-visibility-window: 하단 경계("여기부터 공유")
     # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
     # derived join + provider files lifecycle 4 신규 테이블 fast-path 보정.
     _ensure_web_conversation_attachments_schema(conn)
@@ -6438,6 +6465,7 @@ def _ensure_web_tables():
         # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column (slow path).
         _ensure_web_share_links_expiry_column(conn)
         _ensure_web_share_links_joinable_column(conn)  # feature-0009: 공유 링크 참여 허용 컬럼
+        _ensure_web_share_links_floor_column(conn)  # share-visibility-window: 하단 경계("여기부터 공유")
         # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 (slow path).
         _ensure_login_lockout_schema(conn)
         # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (slow path).
@@ -11778,10 +11806,16 @@ def _conv_load_product(conn, conversation_id: str) -> tuple[int | None, Any]:
     return (int(row[0]) if row[0] is not None else None, row[1])
 
 
-def _conv_load_messages_raw(conn, conversation_id: str, upto_id: int | None) -> list[tuple]:
+def _conv_load_messages_raw(
+    conn, conversation_id: str, upto_id: int | None, from_id: int | None = None
+) -> list[tuple]:
     """대화의 (id, role, content, created_at, meta_json) 행 목록 (id ASC).
 
-    upto_id 가 주어지면 id <= upto_id inclusive. meta_json 은 PG(jsonb)면 dict,
+    upto_id 가 주어지면 id <= upto_id inclusive ("여기까지 공유" 상단 경계).
+    from_id 가 주어지면 id >= from_id inclusive ("여기부터 공유" 하단 경계, share-visibility-window).
+    둘 다 DISPLAY id-space (agent_runtime.messages.id / AgentMemoryMessages.Id). 이 함수는 익명
+    공유 뷰(_share_load_messages)와 fork-source 로더 양쪽을 지탱하므로 여기에 하단 경계를 두면
+    가려진 pre-floor 구간이 두 표면 모두에서 배제된다. meta_json 은 PG(jsonb)면 dict,
     MySQL(longtext)이면 str 로 올 수 있어 호출자가 _meta_json_to_dict 로 정규화한다.
     """
     if _runtime_backend_is_pg():
@@ -11789,37 +11823,38 @@ def _conv_load_messages_raw(conn, conversation_id: str, upto_id: int | None) -> 
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
+                clauses = ["conversation_id = %s"]
+                params: list[Any] = [conversation_id]
+                if from_id is not None:
+                    clauses.append("id >= %s")
+                    params.append(int(from_id))
                 if upto_id is not None:
-                    pgcur.execute(
-                        "SELECT id, role, content, created_at, meta_json "
-                        "FROM agent_runtime.messages "
-                        "WHERE conversation_id = %s AND id <= %s ORDER BY id ASC",
-                        (conversation_id, int(upto_id)),
-                    )
-                else:
-                    pgcur.execute(
-                        "SELECT id, role, content, created_at, meta_json "
-                        "FROM agent_runtime.messages "
-                        "WHERE conversation_id = %s ORDER BY id ASC",
-                        (conversation_id,),
-                    )
+                    clauses.append("id <= %s")
+                    params.append(int(upto_id))
+                pgcur.execute(
+                    "SELECT id, role, content, created_at, meta_json "
+                    "FROM agent_runtime.messages "
+                    "WHERE " + " AND ".join(clauses) + " ORDER BY id ASC",
+                    tuple(params),
+                )
                 return list(pgcur.fetchall() or [])
         finally:
             pg.close()
     cur = conn.cursor()
     try:
+        clauses = ["ConversationId = %s"]
+        params = [conversation_id]
+        if from_id is not None:
+            clauses.append("Id >= %s")
+            params.append(int(from_id))
         if upto_id is not None:
-            cur.execute(
-                "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
-                "WHERE ConversationId = %s AND Id <= %s ORDER BY Id ASC",
-                (conversation_id, int(upto_id)),
-            )
-        else:
-            cur.execute(
-                "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
-                "WHERE ConversationId = %s ORDER BY Id ASC",
-                (conversation_id,),
-            )
+            clauses.append("Id <= %s")
+            params.append(int(upto_id))
+        cur.execute(
+            "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
+            "WHERE " + " AND ".join(clauses) + " ORDER BY Id ASC",
+            tuple(params),
+        )
         return list(cur.fetchall() or [])
     finally:
         cur.close()
@@ -11969,14 +12004,19 @@ VALUES (%s, %s, %s, %s, %s)
             pg.close()
 
 
-def _conv_load_core_messages_raw(conn, conversation_id: str, upto_created_at) -> list[tuple]:
+def _conv_load_core_messages_raw(
+    conn, conversation_id: str, upto_created_at, from_created_at=None
+) -> list[tuple]:
     """대화의 LLM 문맥 턴 (role, content, tool_calls, tool_call_id, name, created_at) 목록 (id ASC).
 
     TASK-0170 Phase 1 (ADR-WEB-0005 하이브리드): fork 가 LLM 문맥을 복원하도록 복사할
     소스. 어시스턴트는 `agent_runtime.core_messages` 에서 문맥을 읽으므로(agent_core.
     _load_conversation_messages) 이 테이블을 복사해야 fork 본이 이전 문맥을 인지한다.
-    upto_created_at 가 주어지면 created_at <= upto_created_at 만 (anchored fork cut).
-    tool_calls 는 PG(jsonb)면 dict/list 로 반환됨 — 호출자가 직렬화한다.
+    upto_created_at 가 주어지면 created_at <= upto_created_at 만 (anchored fork cut, 상단).
+    from_created_at 가 주어지면 created_at >= from_created_at 만 (share-visibility-window, 하단).
+    created_at 은 DISPLAY id-space 와 core id-space 를 잇는 유일한 bridge — 경계값은 호출자가
+    이미 window-clip 된 display src_rows 에서 유도하며(발명 금지), fork 가 가려진 pre-floor core
+    행을 복제하지 않도록 막는다. tool_calls 는 PG(jsonb)면 dict/list 로 반환됨 — 호출자가 직렬화한다.
 
     PG 런타임 전용: cutover 후 MySQL AgentCoreMessages 는 DROP 됐고 비-postgres 배포에는
     core_messages 개념이 없으므로 [] 반환(fork 는 표시 메시지만으로 진행).
@@ -11987,20 +12027,20 @@ def _conv_load_core_messages_raw(conn, conversation_id: str, upto_created_at) ->
     pg = _pg_connect()
     try:
         with pg.cursor() as pgcur:
+            clauses = ["conversation_id = %s"]
+            params: list[Any] = [conversation_id]
+            if from_created_at is not None:
+                clauses.append("created_at >= %s")
+                params.append(from_created_at)
             if upto_created_at is not None:
-                pgcur.execute(
-                    "SELECT role, content, tool_calls, tool_call_id, name, created_at "
-                    "FROM agent_runtime.core_messages "
-                    "WHERE conversation_id = %s AND created_at <= %s ORDER BY id ASC",
-                    (conversation_id, upto_created_at),
-                )
-            else:
-                pgcur.execute(
-                    "SELECT role, content, tool_calls, tool_call_id, name, created_at "
-                    "FROM agent_runtime.core_messages "
-                    "WHERE conversation_id = %s ORDER BY id ASC",
-                    (conversation_id,),
-                )
+                clauses.append("created_at <= %s")
+                params.append(upto_created_at)
+            pgcur.execute(
+                "SELECT role, content, tool_calls, tool_call_id, name, created_at "
+                "FROM agent_runtime.core_messages "
+                "WHERE " + " AND ".join(clauses) + " ORDER BY id ASC",
+                tuple(params),
+            )
             return list(pgcur.fetchall() or [])
     finally:
         pg.close()
@@ -12669,7 +12709,7 @@ def _share_load_active(conn, token: str) -> dict[str, Any] | None:
     try:
         cur.execute(
             """
-SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId,
+SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId, FloorMessageId,
        CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion, ExpiresAt,
        Joinable
 FROM WebConversationShares
