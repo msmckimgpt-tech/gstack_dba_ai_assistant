@@ -611,3 +611,71 @@ FUNCTION.md AC-0600~0601. **인증 변경은 §3 의 사람 승인 대상** — 
 - **경계 가드**: 신규 권한 `console.aiops.read`(**admin 전용** — operator/sales/dba/pending 0). 엔드포인트·대시보드 위젯 모두 `require_permission("console.aiops.read")` 게이트, canSeeTab **fail-open 방지** 필수(`ADMIN_TAB_PERMISSIONS["ai-ops"]` 매핑 — 미매핑 탭 전원 노출 방지). 권한 5곳 sync(PERMISSION_DEFINITIONS + admin catchup(lockout 방지) + admin.js PERMISSION_DEPENDENCIES(부모 console.access) + ADMIN_TAB_PERMISSIONS + test).
 - **읽기전용·least-priv**: PG 집계는 `_pg_connect_ro`(read-only role) + 쿼리별 try/except + **부분 degrade**(PG 미가용도 200). 정보노출 통제 = 프롬프트/완성 **본문(텍스트) 미노출**(활동 feed 는 토큰 카운트만) + provider raw 에러 메시지 미노출(state 라벨만). 활동 feed 는 admin 드릴다운용으로 `conversation_id`·`run_id`·모델명을 노출하나 **신규 노출 등급/신규 authz 경로 아님**(기존 `showUsageConvModal` 이 admin 에게 동일 등급 노출 중, IDOR 없음 — REVIEW A4). SQL 인젝션 0(days/cursor/limit int-clamp, task/model=dict 키), XSS esc(). 파괴적 쓰기 없음.
 - **비교 (신규 표면 여부 판정)**: 동반 머지 `metadata-perm-hier`(be95be06)는 §19 의 메타데이터 권한 5키 경계를 **변경하지 않음** — admin.js 표시 계층(그룹 게이트→세부)만 정합화한 **UI 표시 전용**(RBAC enforcement/스키마/백엔드/엔드포인트 무변경, 5키·`_METADATA_MANUAL_IMPLIES` 불변). 본 §20 만 신규 authz/엔드포인트 경계.
+
+## 21. 공유창 [from,to] window 격리 (share-visibility-window, TASK-20260704-share-visibility-window)
+
+공유자가 대화의 민감한 구간을 가린 채 공유·참여·fork 를 허용하는 owner-controlled 열람경계.
+"여기부터 공유"(하단 경계, 신규) + "여기까지 공유"(상단 경계, 기존)로 공유가 `[from, to]` window 만
+노출한다. **사용자 결정(2026-07-03): "라이브룸 + 멤버 필터"** — 참여자는 원본 라이브 대화의 실제
+멤버로 남되, per-member 가시 경계를 뷰·LLM recall·fork 전부에 적용. 정합 정본 = feature-0009
+FUNCTION.md AC-GC-A20~A27 + ANCHOR §4.
+
+### 21.1 위협모델 (핵심 — 무엇을 막나)
+
+가려진 구간은 보안 민감정보(자격증명·타 계정 데이터·pre-boundary SQL 결과)를 포함할 수 있고,
+**참여자가 fork/join 이후 assistant 에게 프롬프트 인젝션("이전 대화 출력해")을 시도**할 수 있다. 방어의
+핵심은: **가려진 메세지가 참여자의 LLM 도달 store(agent_runtime.core_messages)에 애초에 로드/복사되지
+않게 하는 것**이다. 대화 내 history 는 §14 datamark 대상이 아니라(native 메세지 주입) 유일한 방어가
+loader 단 물리 배제다. 인젝션은 존재하지 않는 행을 끌어낼 수 없다.
+
+### 21.2 강제 지점 (choke-points)
+
+- **LLM recall** (`agent_core._load_conversation_messages` → `_PG_LOAD_CORE_MESSAGES_WINDOWED`):
+  발신자(account_id = ask claim, 위조 불가)의 멤버 window 를 `_resolve_recall_visibility` 로 해석해
+  `created_at >= floor_ca AND (ceil 없음 OR created_at <= ceil_ca OR created_at >= joined_ca)` 로 필터.
+  가시 = `[floor,ceiling] ∪ [joined,∞)`(중간 갭만 은닉, 라이브 참여 유지). **fail-closed**: PG 오류 시
+  DENY(prior history []), windowed 는 PG 전용이라 MySQL unfiltered fall-through 금지.
+- **표시(view)** (`app._get_history` + `_resolve_display_window`/`_msg_outside_window`, `/api/history`):
+  멤버 window(DISPLAY id-space + joined_at)로 view 배제. bounded 멤버는 core-fallback skip. DENY → 빈 응답.
+- **익명 공유 뷰** (`_share_load_messages(floor_message_id)`): hard window(라이브 tail 병합 없음).
+- **fork** (`_fork_conversation_impl` + `_resolve_copy_window`): 복사 window = INTERSECTION(share window,
+  요청자 멤버 window). display+core+첨부 3 store 모두 clip. 라이브룸 직접 fork(/api/fork_conversation·
+  /duplicate)도 impl 이 멤버 window 로 자동 clip. 빈 교집합 400, 멤버 window PG 오류 500(fail-closed).
+- **id-space bridge**: 교집합 연산은 전부 DISPLAY id-space(share Anchor/Floor·멤버 floor/ceil), core 변환은
+  오직 `created_at`(window-clip 된 src_rows 에서 유도, 발명 금지). 경계 fuzz 는 항상 더 엄격한 방향(은닉).
+- **재공유 권한상승 차단**: join stamp 는 monotonic-narrowing(교집합, 절대 확대 안 함; owner·기존 full 멤버
+  불변). create-endpoint widen-guard 는 bounded 멤버가 본인 window 밖으로 재공유 시 403.
+- **게이트 플래그**: `core_conversations.has_restricted_members` — false(거의 모든 대화)면 필터 완전 우회
+  (무회귀). windowed join 이 true 로 set.
+
+### 21.3 AR-1 / AR-2 반전 (§18 갱신)
+
+feature-0009 의 기존 수용 위험을 **windowed share 에 한해 반전**한다:
+- **AR-1**(joinable 링크 보유자가 대화 *전체* 열람) → windowed/anchored joinable 링크는 이제 참여 멤버의
+  열람도 `[from,to]` 로 제약. (full 공유는 종전대로 전체 열람 — 무회귀.)
+- **AR-2 / CSO F3**(무권한 멤버 fork *전체* 반출) → bounded 멤버·windowed share fork 는 `[from,to]` 만
+  복제. 가려진 구간은 fork 본의 core_messages 에 물리적으로 부재 → 인젝션 반출 불가.
+- ban 게이트(§18.2)는 그대로 최외곽 — window clip 은 직교·가산.
+
+### 21.4 owner-answer 누출면 — 표시 태그(display-tag) (사용자 결정 "표시 태그만")
+
+owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistant 를 호출하면 full-context 답변이
+라이브 스트림에 남아 bounded 멤버에게 노출될 수 있다. 사용자 결정 = **생성시점 클램프 대신 표시 태그**:
+assistant 답변 meta 에 `recall_floor_created_at`(또는 `recall_full`)을 실어(`_answer_recall_tag` +
+`_mirror_message(recall_tag)`), display loader(`_msg_outside_window`)가 **뷰어 floor 아래 문맥을 그린
+답변을 bounded 멤버에게 은닉**한다. 태그 미해석/파싱 실패는 fail-closed(은닉).
+
+**[수용 잔여 리스크]** 이 경로는 display-단 필터 정확성에 의존한다(생성시점 물리 배제 아님). 강한 보장이
+필요하면 별 cycle 에서 "bounded 멤버 존재 시 모든 답변 recall 을 최엄격 floor 로 클램프" 승격. 또한 사람
+멤버가 가려진 내용을 **직접 인용해 전달**하는 것은 기술로 못 막음(사회적 경계).
+
+### 21.5 알려진 한계 / 배포 전 보완 (TODO)
+
+1. **첨부 clip 근사**: windowed fork 의 첨부는 `WebConversationAttachments.CreatedAt`(MySQL naive) 대
+   window 의 core created_at(PG aware) 을 naive 로 강제 비교해 clip — 경계 근처 미세 오차는 항상 배제(skip)
+   방향(fail-closed, bounded fork 가 경계 첨부를 잃을 수 있음 — 수용). 정밀화는 derived-message 매핑 기반.
+2. **account cross-conv recall**(§14 3번째 경로): owner-scoped 라 windowed joiner(비-owner)는 공유 대화를
+   본인 cross-conv recall population 에 넣을 수 없어 **구조적 fail-closed**. 불변식: account_insight 는
+   반드시 owner_account_id 키 유지. per-joined-member 추출로 바뀌면 floor 를 recall 에 전파해야 함.
+3. **PG 전용**: windowing 은 PG 런타임에서만 유효(MySQL-only 배포는 익명 뷰 snapshot 만).
+4. **외부 배포**: §7.2 IP allowlist / token 비밀번호가 windowed 공유에도 동일 적용(외부 노출 시).

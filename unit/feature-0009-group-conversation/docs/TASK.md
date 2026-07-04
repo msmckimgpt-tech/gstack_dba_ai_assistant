@@ -14,7 +14,15 @@ source_of_truth: true
 - Owner: AI (claude) / Human (sign-off 완료)
 - Priority: high
 - Risk: Critical (인가·cross-account·스키마 마이그레이션)
-- Last Updated: 2026-06-25 (gc-unread-badge — REQ-GC-R8 read-state 사이드바 안 읽은 메세지 배지)
+- Last Updated: 2026-07-04 (share-visibility-window — [from,to] 공유창 격리 + ☰ 통합)
+
+- **share-visibility-window (TASK-20260704, 2026-07-04, Critical)**: "여기부터 공유"(하단 경계) 신설 +
+  말풍선 액션 ☰ 통합(👍/👎 보존). 사용자 결정 "라이브룸 + 멤버 필터" — 공유 `[from,to]` 밖(민감 구간)을
+  참여자의 뷰·LLM recall·fork 전부에서 물리 배제(프롬프트 인젝션 방어). alembic 0036(conversation_members
+  visible_floor/ceiling + has_restricted_members 게이트), recall/display 양 loader 필터(fail-closed),
+  fork 3-store 교집합 clip, join stamp(never-widen)·widen-guard, owner-answer 표시태그. AR-1/AR-2 windowed
+  한정 반전 → SECURITY.md §21 + ANCHOR §4 갱신, AC-GC-A20~A27. 코드 거주 cross-cut: 0002(recall)·0003(share/
+  fork/view/FE). 잔여: 적대 보안리뷰 + PB-0008 시각검증.
 
 ## 2. Implementation Plan
 
