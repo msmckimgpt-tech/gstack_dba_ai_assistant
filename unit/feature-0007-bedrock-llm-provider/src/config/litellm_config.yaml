@@ -64,6 +64,28 @@ model_list:
         type: "enabled"
         budget_tokens: 5000
 
+  # ── interactive-llm(2026-07-04, llm-routing-interactive-split): 사람이 실시간 대기하는 호출 전용 ──
+  # assistant 대화(메인+보조 전 단계) + AI 능동 분석(node_analysis). insight 백그라운드 배치
+  # (claude-haiku-4)와 **별도 alias** 로 분리해, 대화/분석은 주말·야간에도 항상 claude-haiku 로
+  # 작동한다(사용자 결정 2026-07-04). 같은 OAuth 토큰(claude-corp/root)을 쓰되 fallback 은
+  # 2계정 → edge-fallback(로컬 gemma) 최후 안전망: 정상 시 항상 claude, 두 계정 완전 장애
+  # (401/429)일 때만 대화가 끊기지 않도록 gemma 로 우회. insight 의 "주말/야간 gemma 강등"은
+  # litellm 이 아니라 애플리케이션(insight 함수 시간 기반 모델 선택)이 담당하므로 여기서 분리.
+  - model_name: claude-haiku-4-interactive
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      thinking:
+        type: "enabled"
+        budget_tokens: 5000
+  - model_name: claude-haiku-4-interactive-root
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY_ROOT
+      thinking:
+        type: "enabled"
+        budget_tokens: 5000
+
   # ── insight-llm-fallback: 최종(3순위) 폴백 = 로컬 gemma(edge) via local-llm-gateway ──
   # claude-corp·root 두 계정 모두 429/실패 시 로컬 LLM 으로 우회(rate-limit 없음). local-llm-gateway 는
   # OpenAI 호환 chat(gemma4:e2b) — thinking 미지원이라 litellm drop_params 가 thinking 파라미터 제거.
@@ -136,7 +158,20 @@ litellm_settings:
   # RPM/TPM 을 넘겨 429 가 나도 다음 계정/로컬로 즉시 우회해 생성이 끊기지 않는다. num_retries=1 로
   # 동일 deployment 1회 재시도 후 폴백(빠른 전환). num_retries=0 이면 즉시 폴백도 가능.
   num_retries: 1
-  fallbacks: [{"claude-haiku-4": ["claude-haiku-4-root", "edge-fallback"]}]
+  # fallback 체인 (2026-07-04 llm-routing-interactive-split):
+  #  · claude-haiku-4(insight 배치)          → root → edge(gemma). 배치는 계정 장애 시 gemma 강등 허용.
+  #  · claude-haiku-4-root                   → edge. **이전 결함 수정**: root 가 실패하면 litellm 이
+  #    "No fallback model group found for claude-haiku-4-root" 로 edge 에 도달 못 하고 401 을 그대로
+  #    올려, 두 계정 만료 시(주말/야간) 일부 요청이 gemma 로도 못 넘어가 완전 실패했다. root 를 명시
+  #    fallback 키로 등록해 gemma 도달을 보장한다.
+  #  · claude-haiku-4-interactive(대화/분석) → interactive-root → edge. 정상 시 항상 claude, 두 계정
+  #    완전 장애 시에만 gemma(대화 무중단 안전망).
+  #  · claude-haiku-4-interactive-root       → edge. (동일 결함 예방 — 명시 등록)
+  fallbacks:
+    - {"claude-haiku-4": ["claude-haiku-4-root", "edge-fallback"]}
+    - {"claude-haiku-4-root": ["edge-fallback"]}
+    - {"claude-haiku-4-interactive": ["claude-haiku-4-interactive-root", "edge-fallback"]}
+    - {"claude-haiku-4-interactive-root": ["edge-fallback"]}
 
 # ── 모니터링 (옵션) ───────────────────────────────────────────────────
 # LiteLLM 의 success/failure callback hook 으로 audit 확장 가능. 본 cycle 에서는

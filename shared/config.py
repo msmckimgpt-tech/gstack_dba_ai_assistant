@@ -59,6 +59,10 @@ __all__ = [
     "AGENT_INLINE_INSIGHT_ON_ASK",
     "AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH",
     "AGENT_INSIGHT_MODEL",
+    "AGENT_INSIGHT_OFFHOURS_MODEL",
+    "AGENT_INSIGHT_BUSINESS_START_HOUR",
+    "AGENT_INSIGHT_BUSINESS_END_HOUR",
+    "AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS",
     "AGENT_INSIGHT_TABLE_GROUPING_ENABLED",
     "AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS",
     "AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX",
@@ -747,14 +751,33 @@ AGENT_STEP_GRADE_MODEL = (
 AGENT_INSIGHT_MODEL = (
     os.getenv("AGENT_INSIGHT_MODEL", "").strip() or OPENAI_MODEL
 )
-# feature-0016 node-analysis-haiku: 관리콘솔 그래프뷰 "AI 능동 분석"(각 관계 분석,
-# llm_node_analysis)의 전용 모델. schema/table/account insight 와 공유하던
-# AGENT_INSIGHT_MODEL(운영 .env=edge=로컬 gemma) 에서 분리해, 그래프 관계 분석만
-# 독립적으로 라우팅한다. **기본값 = claude-haiku-4** (사용자 결정 2026-07-02: gemma
-# 로 작동하던 것은 의도치 않은 구조 — 관계 분석은 claude-haiku 로 작동해야 한다).
-# 미설정 시에도 claude-haiku 로 동작하며, 다른 모델로 바꾸려면 .env 에서 override.
+# ── insight 백그라운드 배치 시간 기반 강등(2026-07-04 llm-routing-interactive-split) ──
+# insight 워커(schema/table/account)는 **평일 근무시간엔 claude, 야간·주말엔 gemma(edge)** 로
+# 작동한다(사용자 결정 2026-07-04: 사람 호출은 항상 claude, 백그라운드 배치는 비용 절감 위해
+# off-hours gemma). 사람 호출(대화·node_analysis)은 이 강등을 쓰지 않고 항상 interactive alias.
+# 강등은 litellm fallback 이 아니라 애플리케이션(llm._effective_insight_model)이 결정한다 —
+# 토큰이 24/7 유효해도 insight 만 off-hours 에 gemma 로 내려가도록. OFFHOURS_MODEL 을 빈 값 또는
+# AGENT_INSIGHT_MODEL 과 동일 값으로 두면 강등 비활성(항상 AGENT_INSIGHT_MODEL). 근무시간 경계는
+# [START, END) 시(로컬=KST 가정, TZ_OFFSET 로 UTC 보정), 주말(토·일)은 하루종일 off-hours.
+AGENT_INSIGHT_OFFHOURS_MODEL = (
+    os.getenv("AGENT_INSIGHT_OFFHOURS_MODEL", "edge").strip()
+)
+AGENT_INSIGHT_BUSINESS_START_HOUR = int(
+    os.getenv("AGENT_INSIGHT_BUSINESS_START_HOUR", "10").strip() or "10"
+)
+AGENT_INSIGHT_BUSINESS_END_HOUR = int(
+    os.getenv("AGENT_INSIGHT_BUSINESS_END_HOUR", "19").strip() or "19"
+)
+AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS = int(
+    os.getenv("AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS", "9").strip() or "9"
+)
+# feature-0016 node-analysis-haiku + llm-routing-interactive-split(2026-07-04): 관리콘솔 그래프뷰
+# "AI 능동 분석"(각 관계 분석, llm_node_analysis)의 전용 모델. schema/table/account insight 와
+# 공유하던 AGENT_INSIGHT_MODEL 에서 분리 + **사람 능동 호출**이므로 항상 claude 로 유지한다.
+# **기본값 = claude-haiku-4-interactive** (2026-07-04: 대화/분석은 주말·야간에도 claude — insight
+# 배치의 off-hours gemma 강등과 분리된 interactive alias 로 라우팅). 다른 모델은 .env override.
 AGENT_NODE_ANALYSIS_MODEL = (
-    os.getenv("AGENT_NODE_ANALYSIS_MODEL", "").strip() or "claude-haiku-4"
+    os.getenv("AGENT_NODE_ANALYSIS_MODEL", "").strip() or "claude-haiku-4-interactive"
 )
 # ── 용어사전 대화 자율등록(0021) ──────────────────────────────────────────────
 # 대화 답변 직후 도메인 용어 후보를 LLM 으로 추론해 용어사전(kb_glossary)에 자율 등록한다.
