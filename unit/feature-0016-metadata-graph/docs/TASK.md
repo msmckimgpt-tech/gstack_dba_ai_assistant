@@ -1369,7 +1369,14 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   MINOR 2: 드롭 동률-z 가라앉음+샌드위치[known trade-off 수용]/X: ctl 밴드 · NIT 1: 드래그 중 엣지
   비부스트[기존 동작 동등 — 수용]). frontend 리뷰어는 세션 한도 조기종료 → 잔여 포인트(맵 API·diff
   merge·레이스·복원 대칭·TDZ) 메인 세션 직접 검증. REVIEW.md REV entry 참조.
-- [ ] T52.7 배포 + POST-DEPLOY PB-0008 실 Windows 시각검증 — 드래그/펼침/접기/검색 후 계층 정합·pageerror 0.
+- [x] T52.7 **배포 + POST-DEPLOY PB-0008 — PASS** (Environment: Windows-browser, 2026-07-04). PR #589 병합
+  (3b20e77c) → `make deploy-web` 무중단 롤링(soak 통과) → 실 Windows Chrome/149(relay @172.26.144.1:9223,
+  real-mouse) 1차 실측 12/14 PASS + **rebuild z 평탄화 신규 적발**(→ §52.4 h2) → PR #590 병합(e76642e9) 재배포
+  후 **강화판 15/15 전 항목 PASS**: S1 bake 전수(카드4/XS6/GB1/GH5/GX6/Routine·Table4/combo0·edges 2.x 위반 0)
+  · S2 테이블 드래그 중 {칩1005·컬럼1003·ctl1004} 드롭 후 {4/3/4} canonical 복원 · S3 콤보 드래그 후 combo z0
+  ·내부 엣지 13개 위반 0·잔존부스트 0(BLOCKING 회귀 없음) · S4 GB 드래그 groupOffset 0→1(그룹 이동, GB z1)
+  · S5 재펼침·S5b 순수 update-rebuild 후 canonical 위반 0 · S6 pageerror 0. 증적
+  artifacts/feature-0016-metadata-graph/20260704-graph-zorder/zorder-01~06.png.
 
 ### 52.4 h2 hotfix — setData update 의 combo-hierarchy z 평탄화 재-assert (PB-0008 라이브 실측 결함)
 - 적발(1차 POST-DEPLOY PB-0008, 2026-07-04): 그룹 멤버 테이블 드래그 → dragend rebuild 직후 칩/컬럼/ctl
@@ -1381,7 +1388,7 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T52.8 `_metaGraphZAssert()` — `_metaG6Apply` 의 draw 직후, 현재 z ≠ canonical(_metaZFor/_metaEdgeZFor)
   인 요소만 골라 `setElementZIndex(맵)` 일괄 재-assert (이 경로는 datum 에 combo 키가 없어 재산정 우회,
   sticky). diff-필터라 정상 상태 no-op. cache-buster `v=20260704-graph-zorder-h2`.
-- [ ] T52.9 h2 배포 + PB-0008 강화판 재실측 — S2-after canonical(4/3/4) 포함 전 항목.
+- [x] T52.9 h2 배포(e76642e9) + PB-0008 강화판 재실측 — **15/15 PASS** (상세 T52.7 통합 기록).
 
 ### 52.3 Known trade-offs (패널 수용 항목)
 - 드롭 순간 동률-z(같은 밴드) 겹침은 삽입순 tie-break — 자유배치로 칩을 칩 위에 겹친 경우 놓는 순간
