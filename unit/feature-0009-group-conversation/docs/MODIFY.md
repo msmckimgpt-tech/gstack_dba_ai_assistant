@@ -506,7 +506,7 @@ source_of_truth: true
 - Reason: 공유자가 대화의 민감 구간을 가린 채 공유·참여·fork 를 허용해야 함("여기부터 공유" 신설). 가려진 구간은 참여자의 뷰·LLM recall·fork 전부에서 도달 불가여야 하고, fork/join 이후 프롬프트 인젝션으로도 추출 불가여야 함. 말풍선 액션 3종(샘플 등록/여기서 분기/여기까지·여기부터 공유)을 ☰ 로 통합(👍/👎 보존).
 - 사용자 결정(2026-07-03): **격리 아키텍처 = "라이브룸 + 멤버 필터"**(격리 분기 아님) + **owner-answer 누출면 = "표시 태그만"**(생성시점 클램프 아님).
 - 변경:
-  - (feature-0002 alembic 0036 + schema.sql) `conversation_members` 가시성 window 4컬럼(`visible_floor/ceiling_message_id`=DISPLAY id, `visible_floor/ceiling_created_at`=core bridge) + `core_conversations.has_restricted_members` 게이트 + `ix_core_messages_conv_created`. 전부 additive-nullable(무회귀), GRANT 0(0012 상속).
+  - (feature-0002 alembic 0037 + schema.sql) `conversation_members` 가시성 window 4컬럼(`visible_floor/ceiling_message_id`=DISPLAY id, `visible_floor/ceiling_created_at`=core bridge) + `core_conversations.has_restricted_members` 게이트 + `ix_core_messages_conv_created`. 전부 additive-nullable(무회귀), GRANT 0(0012 상속).
   - (feature-0002 `runtime_backend.py`) `_PG_LOAD_CORE_MESSAGES_WINDOWED`(created_at 범위, `[floor,ceil]∪[joined,∞)`) + `load_core_messages(floor_ca/ceil_ca/joined_ca)` + `load_member_visibility`(restricted+멤버 1쿼리, 42703=schema_missing).
   - (feature-0002 `agent_core.py`) `_resolve_recall_visibility`(fail-closed: PG오류=DENY, pre-mig/owner/full/비멤버=None) + `_load_conversation_messages(visibility)`(windowed=PG전용, PG실패 시 MySQL unfiltered fall-through 금지) + `_answer_recall_tag` + `_mirror_message(recall_tag)` 4 site(owner-answer 표시태그).
   - (feature-0002 `group_members.py`) `get_member_visibility` + `stamp_member_visibility`(never-widen: 신규=share window, 기존 full 불변, 기존 windowed=교집합, owner skip; has_restricted set).

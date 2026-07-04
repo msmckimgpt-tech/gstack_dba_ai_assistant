@@ -1,8 +1,11 @@
 """공유창 [from,to] window 격리 — 멤버별 가시 범위(visibility window) 컬럼 추가
 
-Revision ID: 0036_conversation_member_visibility_window
-Revises: 0035_rag_objects_semantic_cluster
+Revision ID: 0037_conversation_member_visibility_window
+Revises: 0036_relationship_cross_datasource
 Create Date: 2026-07-04
+
+(주: 최초 0036 으로 작성했으나 병렬 머지된 feature-0016 의 0036_relationship_cross_datasource 와
+ head 충돌 → 0037 로 re-parent. down_revision 을 그 0036 으로 잇는다. 컬럼/로직은 불변.)
 
 feature: share-visibility-window (feature-0009 멤버십=열람경계 모델 확장; cross-cut 0002/0003).
 
@@ -57,8 +60,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0036_conversation_member_visibility_window"
-down_revision: Union[str, None] = "0035_rag_objects_semantic_cluster"
+revision: str = "0037_conversation_member_visibility_window"
+down_revision: Union[str, None] = "0036_relationship_cross_datasource"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -103,7 +103,7 @@ ALTER TABLE agent_runtime.core_conversations
 -- feature-0009 gc-group-authz-flag: is_group 멱등 ALTER (alembic 0016 미적용 환경 self-heal).
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS is_group boolean NOT NULL DEFAULT false;
--- share-visibility-window (alembic 0036): windowed 멤버 존재 게이트 플래그.
+-- share-visibility-window (alembic 0037): windowed 멤버 존재 게이트 플래그.
 --   false(기본) → 가시성 필터 완전 우회(무회귀). true → loader 가 actor window 해석 + fail-closed.
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS has_restricted_members boolean NOT NULL DEFAULT false;
@@ -160,12 +160,12 @@ ALTER TABLE agent_runtime.core_messages
 CREATE INDEX IF NOT EXISTS ix_core_messages_thread
     ON agent_runtime.core_messages (conversation_id, thread_root_message_id);
 
--- share-visibility-window (alembic 0036): owner-answer display-tag recall-측 봉인(REVIEW M1).
+-- share-visibility-window (alembic 0037): owner-answer display-tag recall-측 봉인(REVIEW M1).
 --   assistant 답변이 그린 recall 하한. NULL=미태깅. recall_full 은 epoch sentinel 로 기록.
 ALTER TABLE agent_runtime.core_messages
     ADD COLUMN IF NOT EXISTS recall_floor_created_at timestamptz;
 
--- share-visibility-window (alembic 0036): LLM recall 의 created_at 범위 술어용 인덱스.
+-- share-visibility-window (alembic 0037): LLM recall 의 created_at 범위 술어용 인덱스.
 --   windowed 멤버의 가시 경계(floor/ceiling)는 core_messages 를 created_at 으로 필터한다.
 CREATE INDEX IF NOT EXISTS ix_core_messages_conv_created
     ON agent_runtime.core_messages (conversation_id, created_at);

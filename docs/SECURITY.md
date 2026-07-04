@@ -666,7 +666,7 @@ owner/full 멤버(무제한 recall)가 bounded 멤버 있는 방에서 @assistan
 양쪽에서 은닉:
 - assistant 답변 저장 시 recall 하한을 기록: display store meta `recall_floor_created_at`/`recall_full`
   (`_answer_recall_tag` + `_mirror_message`) **및** `agent_runtime.core_messages.recall_floor_created_at`
-  (`_answer_recall_floor_ca`, recall_full=epoch sentinel; alembic 0036).
+  (`_answer_recall_floor_ca`, recall_full=epoch sentinel; alembic 0037).
 - **display**: `_msg_outside_window` 가 뷰어 floor 아래 문맥을 그린 답변을 은닉(태그 미해석=fail-closed).
 - **recall**: `_PG_LOAD_CORE_MESSAGES_WINDOWED` 가 `NOT (recall_floor_created_at < 뷰어 floor_ca)` 로
   그런 답변을 bounded 멤버의 LLM 컨텍스트에서 배제 → 프롬프트 인젝션으로도 추출 불가.
