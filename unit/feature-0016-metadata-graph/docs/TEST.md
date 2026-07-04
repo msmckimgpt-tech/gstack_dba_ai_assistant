@@ -515,3 +515,20 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - pytest **67 PASS**(test_relationships 전체 — head-aware ON-CONFLICT==UNIQUE 불변식 포함 + metadata_graph 회귀). semantic_cluster._effective_schema import OK.
 - §18.8 2단계 적대검증(설계 워크플로우 + 구현 리뷰): **SHIP for inert deploy**(데몬 OFF). flip-전 블로커 MSSQL effective schema(MAJOR)·negative-decay 가드·reverse-dup·cap 반영. REV-20260704T043653.
 - **POST-DEPLOY**: alembic 0036 라이브 적용 + web/insight-worker 재배포 + PB-0008(그래프 렌더·관계 무회귀·pageerror 0; 크로스-ds 엣지는 AUTO=1 flip + 임베딩 populate 후 eventual — feature-0003 TEST.md §3 Windows-browser Run).
+
+## graphux7 — 그래프 뷰 UX 7건 (TASK §48, 2026-07-04)
+
+### 케이스
+- TC-48-1 (#1 이력): 노드 A→B→C 상세 조회 후 '뒤로'가 B→A, '앞으로'가 B→C. 새 노드 방문은 forward 분기 절단. 이력≤1 이면 nav 바 숨김, 끝단 버튼 disabled. datasource 전환 시 초기화. 뒤로/앞으로 네비 자체는 이력에 재기록 안 됨(_histNav).
+- TC-48-2 (#2 관계 클릭): 관계 행 단일 클릭 = 카메라 팬만(상세 패널 = 원 노드 유지)·더블클릭(≤260ms) = 대상 상세로 전환. 키보드 Enter = 전환. 대상이 접힌 스키마면 그 카드로 팬.
+- TC-48-3 (#3 범례 탭): 상단 flat 바 제거·상세 패널 하단 3탭(노드 종류/관계·AI 상태/테이블 역할) 렌더. 탭 클릭·←/→ 로 패널 전환(hidden 토글). pg_trgm 유사도 문구 부재. 역할 칩 hover 툴팁(_metaRoleLegendTips) 동작.
+- TC-48-4 (#4 중복 큐잉): 진행 중 노드에 재-분석 클릭 → 새 run 미생성(백엔드 reused) + "이미 진행 중(진행 N/M)" 메시지. 연타 시 in-flight 가드로 동시 POST 1건만. 진행 패널 상태 가시.
+- TC-48-5 (#5 라벨): sample-feedback 스코프칩·용어 관계 scope 태그가 해시(mssql-xxxx) 아닌 사용자 라벨 표시. common→'공용'. 미등록 scope→원문.
+- TC-48-6 (#7 접기): 스키마 펼침 후 상세 패널(항상 화면 내)에 "▦ 접기" 버튼 표시 → 클릭 시 카드로 축소. 접힌 스키마엔 버튼 미표시. body 클릭으로는 접히지 않음.
+- TC-48-7 (#6 무변경 근거): getElementPosition=world 좌표(viewport=world×zoom) 실측 — 클러스터 offset 누적 줌-정합, 앱 좌표 결함 없음. 코드 무변경.
+
+### Run (2026-07-04) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS** · `py_compile` node_analysis.py·admin_metadata.py **PASS**.
+- 최신 main(7facb804) rebase — 자동 병합 무결(제 상태 필드·#4 와 main Esc-fix·Phase B/C 공존), admin.html cache-buster 충돌만 해소. cache-buster `admin.js?v=20260704-graphux7`·`styles.css?v=20260704-graphux7`.
+- §18.8 적대 리뷰 REV-20260704T071838-graphux7. 라이브 관측(win-browser 실 Chrome): #5 라벨·#6 좌표계·#7 "−" off-screen 확인.
+- **POST-DEPLOY**: web 재배포(정적 자산 baked, 마이그 없음) + **PB-0008 실 Windows 브라우저** — #1 nav 바·#2 단/더블·#3 3탭 렌더·#4 reused 메시지·#5 라벨·#7 접기 버튼 시각검증, pageerror 0 (feature-0003 TEST.md §3 Windows-browser Run).

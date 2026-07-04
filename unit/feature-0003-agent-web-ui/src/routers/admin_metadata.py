@@ -1171,7 +1171,8 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
                                  "prompt_len": len(user_prompt or ""),
                                  "prompt_preview": (user_prompt or "")[:120] or None})
     return JSONResponse({"ok": True, "run_id": res.get("run_id"), "status": res.get("status"),
-                         "reused": res.get("reused", False)}, status_code=202)
+                         "reused": res.get("reused", False), "progress": res.get("progress")},
+                        status_code=202)
 
 @router.get("/api/admin/metadata/graph/analyze")
 def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:

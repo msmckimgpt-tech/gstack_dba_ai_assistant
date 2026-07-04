@@ -1274,3 +1274,38 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 ### 50.3 hotfix — GH 헤더 hit-test (PB-0008 라이브 실측 결함)
 - [x] T50.9 **GH 헤더 zIndex −1 → 5(양수)** + `cursor:move`: combo 배경 위로 렌더해 헤더가 그룹 드래그 핸들로 hit-test 되게(헤더 스트립엔 멤버 없어 시각 회귀 0). GB 배경은 z−2 유지(combo 에 가려 미-grab — 헤더가 유일 핸들, 범례 "헤더 칩 드래그로 그룹 이동"·박스 body 드래그는 클러스터 이동으로 폴백). admin.html cache-buster `?v=20260704-group-drag-hotfix`. 검증: node --check + headless **29/29 PASS**(T8: GH zIndex 양수·cursor move·GB 음수·GX 양수 잠금). 재배포 후 그룹 드래그 라이브 재검증(패치 없이).
 - [x] T50.10 **POST-DEPLOY 그룹 드래그 라이브 재검증 — PASS (Environment: Windows-browser, 2026-07-04, 배포 a9492afe)**: 재배포(admin.js `?v=20260704-group-drag-hotfix`, GH zIndex 5 서빙 확인) 후 **라이브 패치 없이** 실 Windows Chrome(Playwright real mouse)로 notice 그룹 헤더 드래그 (453,448)→(650,340) → **groupOffset={dx:141,dy:−77} 설정·accountdb clusterOffset=null**(그룹 드래그 발화, combo 드래그 아님)·notice 그룹만 이동(552,552→749,444)·**t_account(같은 클러스터) 불변**(866,882 유지)·pageerror 0. 증적 gi-06-groupdrag-fixed.png(notice 우상단 이동·t_account 제자리). → **세 요구(접기/펼치기·drag&drop 위치이동·내부노드 반응형 리사이즈) 전부 배포본 라이브 동작 확정**.
+## 51. graphux7 — 그래프 뷰 UX 7건 (2026-07-04, entry persona dispatch)
+
+> **§50 정합 메모**: 사용자 #6(카테고리 범위 드래그)·#7(전용 접기)의 "카테고리 범위"는 §50(group-interact,
+> ADR-020) 의 사용자 재보고로 **sim-group(유사 속성 그룹)** 임이 확정됐고, §50 이 그룹 드래그·접기(GX)·반응형
+> 리사이즈를 배포 완료했다. 본 §51 의 고유 산출물은 **#1~#5**; #6 은 §50 이 실질 해결(본 cycle 무변경),
+> #7 은 §50 의 그룹 접기와 별개인 **스키마 클러스터 전용 접기 버튼**(다른 granularity, 보너스)로 유지.
+
+- Related Requirement: 사용자 요청 7건 (관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰):
+  ① 상세 패널 뒤로/앞으로 ② 관계 클릭=카메라만·더블=상세 전환 ③ 범례 탭화(+pg_trgm 문구 제거)
+  ④ AI 능동 분석 중복 큐잉 방어 ⑤ 데이터소스 해시→사용자 식별자 라벨 ⑥ 카테고리 범위 드래그(→§50) ⑦ 접기 버튼(스키마 클러스터).
+- 등급: **Major** (다파일 프론트 UX 다건 + 백엔드 reused-progress passthrough, 비파괴·마이그 없음·인가 무변경). 코드 거주 cross-cut 0003(admin)·0002(node_analysis).
+- 절차: entry persona arg-given → 5개 병렬 매핑(Explore) → 구현 → main rebase(7facb804→a9492afe=§48~§50 흡수) → win-browser 라이브 관측(⑥⑦ root-cause) → 적대 리뷰 → PB-0008.
+
+### 51.1 구현
+- [x] T51.1 (#1) `_metaGraph.detailHist/detailHistIdx/_histNav` 방문 이력 스택 — `_metaGraphShowDetail` 기록(네비 중 no-op),
+  `_metaGraphHistoryGo/Record/Reset/UpdateUI`, 상세 패널 상단 nav 바(`#metadataGraphDetailNav`, 이력≤1 숨김[`[hidden]` 규칙], 끝단 disabled),
+  loadRoots/Products 에서 컨텍스트 전환 시 reset.
+- [x] T51.2 (#2) 관계 행 단일=카메라 팬만(`_metaGraphPanToRelation`, 상세 유지)·더블=상세 전환(`_metaGraphTraceRelation`) —
+  `_metaGraphBindRelRow`(260ms 타이머 단/더블 구분, 키보드 Enter=전환) → `_metaGraphBindTraceRows`·관계뷰 `.amgr-row` 공통 적용. 행 title 갱신.
+- [x] T51.3 (#3) 범례 3탭(노드 종류/관계·AI 상태/테이블 역할) — 상단 flat 바 + `<details>` 역할범례를 상세 패널 하단 탭 컴포넌트로 통합
+  (admin.html+styles.css), `_metaGraphBindLegendTabs()`(←/→ roving), `크기·라벨%=검색 유사도(pg_trgm)…` note 제거. 역할 `<li data-role>` 보존(_metaRoleLegendTips). 검색 매칭(앰버 글로우) 칩 + §50 그룹 드래그·접기 안내 parity.
+- [x] T51.4 (#4) 중복 큐잉 방어 — 프론트 in-flight 가드 `_metaGraph._analyzePending`(Set, 노드별 독립 연타 동시 POST 차단) + `res.reused` 분기 가시 메시지
+  ("이미 진행 중(진행 N/M)"). 백엔드 `enqueue_analysis` reused 분기 `progress:{enqueued,done,failed}` 반환 + 엔드포인트 passthrough.
+- [x] T51.5 (#5) `_metaDatasourceLabelOf(scope_key)` 역매핑 헬퍼(해시→라벨, common→공용, 미매칭 원문) — sample-feedback 스코프칩·용어 관계 태그 2곳 적용.
+- [x] T51.6 (#7) `_metaGraphRenderClusterDetail(...,comboId)` — 펼쳐진 스키마면 상세 패널(항상 화면 내 aside)에 전용 "▦ 접기" 버튼
+  (`_metaGraphCollapseSchema`). 캔버스 combo 우상단 "−" 컨트롤이 큰 스키마에서 뷰포트 밖으로 벗어나 접근 불가하던 문제 해소(§50 의 sim-group 접기와 별개 granularity). body 클릭 접힘 경로는 원래 없음(유지).
+- [x] T51.7 (#6) **라이브 관측 후 무변경 결정** — win-browser 실 Chrome 로 `getElementPosition`=world 좌표 검증(viewport=world×zoom).
+  클러스터 offset 누적은 줌-독립적 정합, combo/카드 드래그는 G6 v5.1.1 네이티브. 앱 좌표 결함 없음 → 근거 없는 `÷zoom` 회귀 위험이라 무변경.
+  사용자 #6 의 실대상(sim-group 드래그)은 §50 이 groupOffset 로 해결(본 cycle 중 landing).
+
+### 51.2 검증
+- [x] T51.8 node --check(admin.js) PASS · py_compile(node_analysis.py·admin_metadata.py) PASS · funcproc 테스트 19 PASS(신규 reused-progress).
+- [x] T51.9 §18.8 적대 리뷰 — REVIEW REV-20260704T071838-graphux7(BLOCKING 0, MAJOR 1[nav `[hidden]`]·MINOR 1[_analyzePending Set] 수정).
+- [ ] T51.10 **배포(deploy_scope: included): main 병합 → web 재배포(정적 자산 baked) → PB-0008 실 Windows 브라우저**
+  (#1 nav 바·#2 단/더블·#3 3탭 렌더·#4 reused 메시지·#5 라벨·#7 접기 버튼 시각검증; pageerror 0). 마이그 없음.

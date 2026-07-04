@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260704-group-drag-hotfix" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260704-graphux7" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -769,22 +769,9 @@
             <button type="button" class="btn-secondary" id="metadataGraphDetailToggle" aria-label="상세 패널 접기/펼치기" title="상세 패널 접기/펼치기">상세 ⇆</button>
             <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
           </div>
-          <!-- 범례: 노드 색=카테고리(라벨), 검색 매칭=앰버 글로우(§45 — 예전 '크기 증가' 대체), 점선 박스=스키마 클러스터.
+          <!-- graphux7(#3): 범례는 상단 flat 바를 제거하고 상세 패널 하단 탭(#metadataGraphLegendTabs)으로 이관 —
+               탭① 노드 종류 · 탭② 관계·AI 상태 · 탭③ 테이블 역할. flat 바 제거로 캔버스 세로 공간 확보.
                feature-0016: 실선=신뢰(FK·검증됨) 관계, 점선=추정(암묵 JOIN, 검증 전) 관계. -->
-          <div class="admin-meta-graph-legend" aria-hidden="true">
-            <span><i class="lg-dot" style="background:#0f7d8c"></i>테이블</span>
-            <span><i class="lg-dot" style="background:#5c6773"></i>컬럼</span>
-            <span><i class="lg-dot" style="background:#9c6515"></i>용어</span>
-            <span><i class="lg-dot" style="background:#7b5cd6"></i>ƒ/⚙ 함수·프로시저</span>
-            <span><i class="lg-schemacard"></i>스키마 카드(클릭=펼침)</span>
-            <span><i class="lg-box"></i>스키마 클러스터</span>
-            <span><i class="lg-line lg-line-solid"></i>신뢰 관계</span>
-            <span><i class="lg-line lg-line-dashed"></i>추정 관계</span>
-            <span><i class="lg-dot" style="background:#fff;border:2px dashed #e08a1e"></i>AI 분석 중</span>
-            <span><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</span>
-            <span><i class="lg-dot" style="background:#f4b400;box-shadow:0 0 5px 2px rgba(244,180,0,.85)"></i>검색 매칭</span>
-            <span class="admin-meta-graph-legend-note">앰버 글로우 = 검색 매칭(§48 — 예전 '크기 증가' 대체) · 상세 카드 유사도%(pg_trgm) · 실선=검증 관계 · 점선=암묵 추정(사용·프로브 강화/파단) · 보라 잔점선=함수·프로시저의 테이블 사용 · 주황 점선=AI 분석중 · 보라 테두리=AI 능동분석 완료 · 색 배경 박스=유사 속성 그룹(이름·관계·역할 자동 묶음 — 헤더 칩 드래그로 그룹 이동·헤더 우측 −/+ 로 접기/펼치기)</span>
-          </div>
           <div class="admin-meta-graph-body">
             <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
                  role="img" aria-label="메타데이터 관계 그래프"></div>
@@ -793,29 +780,65 @@
                  aria-orientation="vertical" aria-label="상세 패널 크기 조절" tabindex="0"
                  title="드래그하여 상세 패널 크기 조절 (←/→ 키로도 조절)"></div>
             <aside class="admin-meta-graph-detail" id="metadataGraphDetail">
+              <!-- graphux7(#1): 상세 패널 노드 방문 이력 뒤로/앞으로. body innerHTML 교체에도 살아남게 aside 직계로
+                   배치(_metaGraphHistory*). 이력 ≤1개면 숨김. -->
+              <div class="admin-meta-graph-detailnav" id="metadataGraphDetailNav" role="group" aria-label="상세 패널 방문 이력" hidden>
+                <button type="button" class="amg-detailnav-btn" id="metaGraphDetailBack" title="이전에 본 노드로 (뒤로)" aria-label="뒤로 가기" disabled>← 뒤로</button>
+                <button type="button" class="amg-detailnav-btn" id="metaGraphDetailFwd" title="다음에 본 노드로 (앞으로)" aria-label="앞으로 가기" disabled>앞으로 →</button>
+                <span class="amg-detailnav-label" id="metaGraphDetailNavLabel" aria-live="polite"></span>
+              </div>
               <div id="metadataGraphDetailBody" aria-live="polite">
                 <div class="admin-detail-empty">
                   <p>노드를 <strong>한 번 클릭</strong>하면 해당 테이블/컬럼/용어의 <strong>설명·컬럼·관계·연관 용어</strong>를 여기에서 봅니다.</p>
                   <p class="admin-meta-detail-note"><strong>더블클릭</strong>하면 그 노드 중심의 이웃 그래프로 펼쳐집니다. <strong>우클릭</strong>하면 상세 보기·관계 상세(방향·신뢰도·근거)·관계 확장(1~3-hop)·중심 보기 등 상호작용 메뉴가 열립니다. 그래프는 관계형 메타데이터를 Apache AGE 로 투영한 읽기 전용 뷰입니다(편집은 다른 서브탭).</p>
                 </div>
               </div>
-              <!-- role-legend-bottom(#565) + role-cluster-prefix(#569): 역할 분류 범례를 상세 패널 하단에 배치.
-                   aside=flex 컬럼 + 본 카드 margin-top:auto 로 바닥 고정 → 접힘/펼침 시 위의 노드 상세를 밀지 않는다.
-                   칩 색(Okabe-Ito)+아이콘 이중 인코딩. data-role → admin.js _metaRoleLegendTips() 가 _META_ROLE.desc 로
-                   hover title 주입(단일 소스). _META_ROLE(admin.js)·NODE_ROLES(node_analysis.py)와 1:1 정합. -->
-              <details class="admin-meta-graph-rolelegend" open>
-                <summary>테이블 역할 <span class="admin-meta-graph-rolelegend-sub">· AI 분석 완료 시 칩 색</span></summary>
-                <ul class="admin-meta-graph-rolelegend-list" aria-label="테이블 역할 범례">
-                  <li data-role="master"><i class="lg-dot" style="background:#0072B2"></i>📘 기준·정의</li>
-                  <li data-role="account"><i class="lg-dot" style="background:#56B4E9"></i>👤 계정·유저</li>
-                  <li data-role="transaction"><i class="lg-dot" style="background:#009E73"></i>💳 거래·행위</li>
-                  <li data-role="log"><i class="lg-dot" style="background:#E69F00"></i>📜 로그·이력</li>
-                  <li data-role="mapping"><i class="lg-dot" style="background:#CC79A7"></i>🔗 매핑·연결</li>
-                  <li data-role="config"><i class="lg-dot" style="background:#D55E00"></i>⚙️ 설정</li>
-                  <li data-role="stats"><i class="lg-dot" style="background:#F0E442"></i>📊 집계·통계</li>
-                  <li data-role="etc"><i class="lg-dot" style="background:#6e7681"></i>📦 기타</li>
-                </ul>
-              </details>
+              <!-- graphux7(#3): 그래프 범례 3-탭 — ①노드 종류 ②관계·AI 상태 ③테이블 역할.
+                   상단 flat 범례바 + 기존 '테이블 역할' details 를 상세 패널 하단으로 통합.
+                   aside=flex 컬럼 + 본 카드 margin-top:auto 로 바닥 고정(진행 패널 앞) → 노드 상세를 밀지 않는다.
+                   탭③ 역할 <li data-role> 는 admin.js _metaRoleLegendTips() 가 _META_ROLE.desc 로 hover title 주입(단일 소스).
+                   탭 전환은 _metaGraphBindLegendTabs(). -->
+              <div class="admin-meta-graph-legendtabs" id="metadataGraphLegendTabs">
+                <div class="amg-legend-tabbar" role="tablist" aria-label="그래프 범례">
+                  <button type="button" class="amg-legend-tab is-active" role="tab" aria-selected="true" id="amgLegendTabNodes" data-legend-tab="nodes">노드 종류</button>
+                  <button type="button" class="amg-legend-tab" role="tab" aria-selected="false" id="amgLegendTabEdges" data-legend-tab="edges">관계·AI 상태</button>
+                  <button type="button" class="amg-legend-tab" role="tab" aria-selected="false" id="amgLegendTabRoles" data-legend-tab="roles">테이블 역할</button>
+                </div>
+                <div class="amg-legend-panel is-active" role="tabpanel" data-legend-panel="nodes" aria-labelledby="amgLegendTabNodes">
+                  <ul class="amg-legend-list">
+                    <li><i class="lg-dot" style="background:#0f7d8c"></i>테이블</li>
+                    <li><i class="lg-dot" style="background:#5c6773"></i>컬럼</li>
+                    <li><i class="lg-dot" style="background:#9c6515"></i>용어</li>
+                    <li><i class="lg-dot" style="background:#7b5cd6"></i>ƒ/⚙ 함수·프로시저</li>
+                    <li><i class="lg-schemacard"></i>스키마 카드(클릭=펼침)</li>
+                    <li><i class="lg-box"></i>스키마 클러스터</li>
+                  </ul>
+                </div>
+                <div class="amg-legend-panel" role="tabpanel" data-legend-panel="edges" aria-labelledby="amgLegendTabEdges" hidden>
+                  <ul class="amg-legend-list">
+                    <li><i class="lg-line lg-line-solid"></i>신뢰 관계(FK·검증)</li>
+                    <li><i class="lg-line lg-line-dashed"></i>추정 관계(암묵 JOIN)</li>
+                    <li><i class="lg-line lg-line-routine"></i>함수·프로시저의 테이블 사용</li>
+                    <li><i class="lg-dot" style="background:#fff;border:2px dashed #e08a1e"></i>AI 분석 중</li>
+                    <li><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</li>
+                    <li><i class="lg-dot" style="background:#f4b400;box-shadow:0 0 5px 2px rgba(244,180,0,.85)"></i>검색 매칭(앰버 글로우)</li>
+                    <li><i class="lg-simgroup"></i>유사 속성 그룹(헤더 드래그=이동 · −/+=접기)</li>
+                  </ul>
+                </div>
+                <div class="amg-legend-panel" role="tabpanel" data-legend-panel="roles" aria-labelledby="amgLegendTabRoles" hidden>
+                  <ul class="admin-meta-graph-rolelegend-list" aria-label="테이블 역할 범례">
+                    <li data-role="master"><i class="lg-dot" style="background:#0072B2"></i>📘 기준·정의</li>
+                    <li data-role="account"><i class="lg-dot" style="background:#56B4E9"></i>👤 계정·유저</li>
+                    <li data-role="transaction"><i class="lg-dot" style="background:#009E73"></i>💳 거래·행위</li>
+                    <li data-role="log"><i class="lg-dot" style="background:#E69F00"></i>📜 로그·이력</li>
+                    <li data-role="mapping"><i class="lg-dot" style="background:#CC79A7"></i>🔗 매핑·연결</li>
+                    <li data-role="config"><i class="lg-dot" style="background:#D55E00"></i>⚙️ 설정</li>
+                    <li data-role="stats"><i class="lg-dot" style="background:#F0E442"></i>📊 집계·통계</li>
+                    <li data-role="etc"><i class="lg-dot" style="background:#6e7681"></i>📦 기타</li>
+                  </ul>
+                  <p class="amg-legend-note">AI 분석 완료 시 위 색으로 칩 표시</p>
+                </div>
+              </div>
               <!-- graphux6-panelbottom: AI 능동 분석 진행 패널을 상세 패널 **최하단**(마지막 자식)에 배치 — 이전 상단(노드
                    상세 위) 배치가 분석 시작 시 노드 상세를 아래로 밀어내던 이슈 해소. rolelegend(margin-top:auto)와 함께 바닥에
                    위치해 노드 상세를 밀지 않는다. 노드 선택과 무관하게 유지(_metaGraphRenderProgress), 노드 클릭 시엔 위
@@ -921,7 +944,7 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
-  <script src="/static/admin.js?v=20260704-group-drag-hotfix"></script>
+  <script src="/static/admin.js?v=20260704-graphux7"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260702-rn-0702"></script>

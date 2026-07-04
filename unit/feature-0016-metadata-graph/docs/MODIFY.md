@@ -950,3 +950,11 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
 - Rollback Notes: 해당 doc 라인 revert.
+
+## CHG-20260704T071838-ai-claude-feature-0016-graphux7
+- Date: 2026-07-04
+- Related Requirement: 사용자 요청 7건 (관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰). 정본: TASK §51, REPORT 2026-07-04 graphux7. (§50 group-interact 가 #6/#7 실대상 sim-group 을 별도 landing — 본 CHG 는 #1~#5 + 스키마 클러스터 접기 버튼 보너스.)
+- Summary: 그래프 뷰 UX 7건. #1 상세 패널 방문 이력 뒤로/앞으로(nav 바) · #2 관계 행 단일=카메라 팬만·더블=상세 전환 · #3 상단 flat 범례 + 역할범례를 상세 패널 하단 3탭(노드 종류/관계·AI 상태/테이블 역할)으로 통합 + "크기·라벨%=검색 유사도(pg_trgm)…" 문구 제거 · #4 AI 능동 분석 중복 큐잉 방어(프론트 in-flight Set 가드 + 백엔드 reused 검증 결과 가시 메시지·enqueue reused 분기 progress 반환) · #5 데이터소스 해시→사용자 라벨 역매핑(`_metaDatasourceLabelOf`, 노출 2곳) · #7 스키마 펼침 시 상세 패널 전용 "▦ 접기" 버튼(캔버스 "−" off-screen 해소) · #6 라이브 검증 후 무변경(getElementPosition=world 좌표 → offset 누적 줌-정합, 코드 결함 없음).
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}` · `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` · `unit/feature-0002-agent-core/src/modules/node_analysis.py` · `unit/feature-0002-agent-core/tests/test_graph_funcproc_uxfix.py` · `unit/feature-0016-metadata-graph/docs/{TASK,REPORT,TEST,REVIEW,MODIFY}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 UI 상호작용·표시 개선 + 백엔드 비파괴 reused-progress passthrough. **마이그 없음·인가 무변경·데이터 무영향**. 정적 자산 baked → web 재배포 필요(insight-worker 불요). cache-buster `admin.js/styles.css?v=20260704-graphux7`.
+- Rollback Notes: 5 코드 파일 + test revert (단일 커밋). 정적 자산이라 web 이미지 재배포로 즉시 복원. DB 변경 없음.

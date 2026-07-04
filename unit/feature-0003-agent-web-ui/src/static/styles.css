@@ -8065,44 +8065,54 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-search { flex: 1 1 240px; min-width: 180px; }
 .admin-meta-graph-depth-label { font-size: 12px; color: var(--text-muted); }
 .admin-meta-graph-status { font-size: 12px; color: var(--text-muted); margin-left: auto; }
-/* 범례 — 색=카테고리, 크기=관련도, 점선박스=스키마 클러스터 */
-.admin-meta-graph-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 11.5px; color: var(--text-muted); }
-.admin-meta-graph-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.admin-meta-graph-legend .lg-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
-.admin-meta-graph-legend .lg-box { width: 14px; height: 11px; border: 1px dashed #aab3c5; border-radius: 3px; background: rgba(63,75,140,.08); display: inline-block; }
-/* feature-0016: 관계 신뢰 범례 — 실선=신뢰(FK·검증됨), 점선=추정(암묵 JOIN, 검증 전). */
-.admin-meta-graph-legend .lg-line { width: 16px; height: 0; display: inline-block; }
-.admin-meta-graph-legend .lg-line-solid { border-top: 2.5px solid #7a4f10; }
-.admin-meta-graph-legend .lg-line-dashed { border-top: 2px dashed #b0872f; }
-/* graph-initview: 스키마 카드 범례(진입 뷰 기본 표현 — 클릭=그 스키마 테이블 펼침) */
-.admin-meta-graph-legend .lg-schemacard { width: 16px; height: 11px; border: 1.5px solid #3f4b8c; border-radius: 4px; background: #eef0f8; display: inline-block; }
-.admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
-/* node-role-viz(ADR-010) + role-legend-panel → role-legend-bottom: 역할 범례를 전폭 상단 바에서
-   우측 상세 패널의 세로·접힘(details) 카드로 이전. **위치는 role-legend-bottom 에서 패널 상단 → 하단으로 이동**
-   (상단+open 이면 확장 시 아래 노드 상세를 밀어 뒤틀림 → 마지막 자식으로 옮겨 해소). summary=토글 헤더(카펫 회전),
-   칩은 세로 스택. 밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
 /* role-legend-bottom: aside flex 컬럼의 자식은 압축 금지(overflow 시 컨테이너가 스크롤하도록) —
    기본 flex-shrink:1 이면 노드 상세(detailBody)가 눌려 내용이 잘리는 뒤틀림 발생. */
 .admin-meta-graph-detail > * { flex-shrink: 0; }
-.admin-meta-graph-rolelegend {
-  border: 1px solid var(--border); border-radius: 8px; background: var(--surface, #fff);
-  /* margin-top:auto = 패널 바닥 고정(내용 짧을 때). 마지막 자식이라 접힘/펼침이 위 내용을 밀지 않음. */
-  margin-top: auto; font-size: 12px; color: var(--text-muted);
+/* graphux7(#1): 상세 패널 방문 이력 뒤로/앞으로 바 — detail body 위, aside 상단. 이력 ≤1 이면 hidden. */
+.admin-meta-graph-detailnav { display: flex; align-items: center; gap: 6px; padding: 2px 2px 8px; }
+/* author display:flex 는 UA [hidden]{display:none} 를 덮으므로 명시 [hidden] 규칙 필요(권한 grid [hidden] 트랩 동형). */
+.admin-meta-graph-detailnav[hidden] { display: none; }
+.amg-detailnav-btn {
+  appearance: none; cursor: pointer; font-size: 11.5px; font-weight: 600; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface, #fff); color: var(--text-2, var(--text));
 }
-.admin-meta-graph-rolelegend > summary {
-  cursor: pointer; list-style: none; padding: 8px 10px; font-weight: 600;
-  color: var(--text-2, var(--text)); display: flex; align-items: center; gap: 6px; user-select: none;
+.amg-detailnav-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.amg-detailnav-btn:disabled { opacity: .4; cursor: default; }
+.amg-detailnav-label { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+/* graphux7(#3): 그래프 범례 3-탭 — 상단 flat 바 + 기존 '테이블 역할' details 를 상세 패널 하단 탭으로 통합.
+   ①노드 종류 ②관계·AI 상태 ③테이블 역할. margin-top:auto 로 패널 바닥 고정(진행 패널 앞), 노드 상세 미압박.
+   아이콘(lg-*)은 flat 바에서 이관 — 이제 .amg-legend-list 하위로 스코프. */
+.admin-meta-graph-legendtabs {
+  margin-top: auto; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface, #fff); font-size: 12px; color: var(--text-muted); overflow: hidden;
 }
-.admin-meta-graph-rolelegend > summary::-webkit-details-marker { display: none; }
-.admin-meta-graph-rolelegend > summary::before {
-  content: "▸"; font-size: 10px; color: var(--text-muted); transition: transform .15s ease;
+.amg-legend-tabbar { display: flex; border-bottom: 1px solid var(--border); }
+.amg-legend-tab {
+  flex: 1 1 0; appearance: none; background: transparent; border: 0; cursor: pointer;
+  padding: 7px 6px; font-size: 11.5px; font-weight: 600; color: var(--text-muted);
+  border-bottom: 2px solid transparent; white-space: nowrap;
 }
-.admin-meta-graph-rolelegend[open] > summary::before { transform: rotate(90deg); }
-.admin-meta-graph-rolelegend > summary:hover { color: var(--primary); }
-.admin-meta-graph-rolelegend-sub { font-weight: 400; font-size: 11px; color: var(--text-muted); }
+.amg-legend-tab:hover { color: var(--primary); }
+.amg-legend-tab.is-active { color: var(--text-2, var(--text)); border-bottom-color: var(--primary); }
+.amg-legend-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.amg-legend-panel { padding: 8px 10px 10px 12px; }
+.amg-legend-panel[hidden] { display: none; }
+.amg-legend-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.amg-legend-list li { display: flex; align-items: center; gap: 7px; line-height: 1.3; }
+.amg-legend-list .lg-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex: none; }
+.amg-legend-list .lg-box { width: 14px; height: 11px; border: 1px dashed #aab3c5; border-radius: 3px; background: rgba(63,75,140,.08); display: inline-block; flex: none; }
+/* 실선=신뢰(FK·검증), 점선=추정(암묵 JOIN), 보라 잔점선=함수·프로시저의 테이블 사용. */
+.amg-legend-list .lg-line { width: 16px; height: 0; display: inline-block; flex: none; }
+.amg-legend-list .lg-line-solid { border-top: 2.5px solid #7a4f10; }
+.amg-legend-list .lg-line-dashed { border-top: 2px dashed #b0872f; }
+.amg-legend-list .lg-line-routine { border-top: 2px dashed #7b5cd6; }
+.amg-legend-list .lg-schemacard { width: 16px; height: 11px; border: 1.5px solid #3f4b8c; border-radius: 4px; background: #eef0f8; display: inline-block; flex: none; }
+.amg-legend-list .lg-simgroup { width: 14px; height: 11px; border-radius: 3px; background: rgba(124,92,214,.14); border: 1px solid rgba(124,92,214,.4); display: inline-block; flex: none; }
+.amg-legend-note { margin: 8px 0 0; font-size: 10.5px; font-style: italic; color: var(--text-muted); }
+/* 테이블 역할 탭 리스트 — <li data-role> 은 _metaRoleLegendTips() 가 _META_ROLE.desc 로 hover 툴팁 주입(단일 소스).
+   밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
 .admin-meta-graph-rolelegend-list {
-  list-style: none; margin: 0; padding: 2px 10px 10px 12px;
-  display: flex; flex-direction: column; gap: 6px;
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
 }
 .admin-meta-graph-rolelegend-list li { display: flex; align-items: center; gap: 7px; line-height: 1.3; }
 .admin-meta-graph-rolelegend-list .lg-dot {
@@ -8373,7 +8383,6 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
   /* feature-0016 §45: 전용 pane 분리로 서브탭 바 오버헤드가 사라져 좁은 화면에서도 캔버스 높이를 더 확보한다. */
   .admin-meta-graph-canvas { height: clamp(320px, 60dvh, 640px); }
   .admin-meta-graph-detail { height: auto; max-height: 380px; }
-  .admin-meta-graph-legend-note { margin-left: 0; flex-basis: 100%; }
 }
 
 .admin-meta-list { margin-top: 0; }

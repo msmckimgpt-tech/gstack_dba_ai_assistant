@@ -27,6 +27,15 @@ source_of_truth: true
 - **clean 판정(각 렌즈)**: dangling ref 0(_metaHideGraph·subTab==="graph"·no-create 잔존 없음)·첫진입/재진입 가시성(pane display)·권한 가시성(graph 전용 역할↔빈 메타탭 방지, group-hide 정합)·landing null-safe·검색 mode 게이팅(neighbor/roots 전환 시 glow 소멸)·G6 shadow state 안전(animation:false 무 To() 크래시, circle 컬럼도 glow)·searchMatchNodes 완전성(백엔드 직접매칭만, false glow 0)·rel 상세배지 유지.
 - 리스크·비용: 없음(frontend-only, 비파괴, 인증/데이터/마이그레이션 무변경). 검색 glow 범위가 기존(테이블만)보다 넓어짐(컬럼·용어·스키마명 매칭도) — 개선으로 채택.
 - 미결: **PB-0008 실 Windows 시각검증(하드 게이트)** 무인 미수행 → 사용자 육안 후 배포(T45.12/13). ② 후속 cycle.
+## REV-20260704T071838-ai-claude-feature-0016-graphux7 [SUBAGENT: PASS-WITH-FIXES] — 그래프 뷰 UX 7건 적대 리뷰 (TASK §51)
+
+- 대상: `git diff 7facb804` 5파일(admin.js/admin.html/styles.css + node_analysis.py/admin_metadata.py) + 신규 test. 범위: 정확성·회귀·통합 결함(스타일 제외). general-purpose 적대 리뷰.
+- 결과: **BLOCKING 0** · MAJOR 1(수정) · MINOR 1(수정) · NIT 1(의도대로).
+- **MAJOR (수정됨)**: `#1` detail-nav 바가 항상 표시 — `.admin-meta-graph-detailnav{display:flex}` 가 UA `[hidden]{display:none}` 를 덮어 `nav.hidden=true` 가 무력화(이력≤1 숨김 위반). 같은 diff 의 `.amg-legend-panel[hidden]` 는 올바르게 처리했으나 detail-nav 만 누락. **fix**: `.admin-meta-graph-detailnav[hidden]{display:none}` 추가(styles.css:7972, 권한 grid [hidden] 트랩 동형).
+- **MINOR (수정됨)**: `#4` in-flight 가드가 스칼라(`_analyzePending`)라 두 노드 교차 분석 시 A 의 finally 가 B 가드를 조기 해제(백엔드 lease-dedup 이 authoritative 라 좁은 창). **fix**: `_analyzePending` 를 `Set` 으로 전환(노드별 독립 add/has/delete, admin.js:3178/6311/6315/6329).
+- **NIT (무변경)**: `_analyzePending` 를 poll 전 finally 에서 해제 — 폴링 중 재클릭은 백엔드 dedup(reused)로 "이미 진행 중" 표시. 의도된 프론트/백엔드 계층화.
+- 클린 검증(리뷰): #1 이력 타이밍(_histNav 동기 기록·bounds·off-by-one)·#2 단/더블 타이머(더블클릭 시 pan 미이중발화·리스너 미누적)·#3 범례(제거 클래스 dangling 없음·역할 툴팁 selector 유효)·#4 백엔드 progress shape 정합·#5 라벨 null/폴백·#7 comboId 8-arg 위치·undefined 가드·#6 Esc-fix·Phase B/C 필드 비충돌 — 전부 PASS. syntax(node --check·py_compile) PASS.
+- 후속: 수정 후 funcproc 테스트 19 PASS(신규 reused-progress 포함). POST-DEPLOY PB-0008 시각검증 잔여(TASK §51.10).
 
 ## REV-20260704T043653-ai-claude-feature-0016-crossds-rel [SUBAGENT: SHIP-FOR-INERT / NEEDS-FIXES-BEFORE-FLIP] — Phase B 크로스-데이터소스 관계(§47, ADR-019) 설계+구현 적대검증
 - 대상: CHG-20260704T043653-crossds-rel (alembic 0036 + relationships/metadata_graph/node_analysis/insight/frontend).

@@ -267,7 +267,7 @@ def test_enqueue_neighbors_parent_keeps_depth_within_budget():
 # ── ⑤ user_prompt ────────────────────────────────────────────────────────────
 def test_enqueue_analysis_stores_user_prompt():
     cur = FakeCur(rows_by_marker=[
-        ("SELECT run_id FROM node_analysis_runs", []),   # 재사용 run 없음
+        ("SELECT run_id, enqueued, done, failed FROM node_analysis_runs", []),   # 재사용 run 없음
     ])
     c = FakeConn(cur)
     res = na.enqueue_analysis("dk", "dk:dbo.Achievement", user_prompt="  결제 흐름 관점에서 분석  ",
@@ -276,6 +276,23 @@ def test_enqueue_analysis_stores_user_prompt():
     run_ins = [(s, p) for s, p in cur.executed if "INSERT INTO node_analysis_runs" in s]
     assert run_ins and "user_prompt" in run_ins[0][0]
     assert run_ins[0][1][-1] == "결제 흐름 관점에서 분석"   # strip + 마지막 파라미터
+
+
+# ── graphux7(#4): 중복 큐잉 방어 — 진행 중 run 재사용 시 진행 카운트(progress) 반환 ──────────
+def test_enqueue_analysis_reused_returns_progress():
+    """이미 running run 이 있으면 재큐잉하지 않고 reused=True + progress{enqueued,done,failed} 반환."""
+    cur = FakeCur(rows_by_marker=[
+        # 재사용 run 존재 — (run_id, enqueued, done, failed)
+        ("SELECT run_id, enqueued, done, failed FROM node_analysis_runs", [("run-existing", 8, 3, 1)]),
+    ])
+    c = FakeConn(cur)
+    res = na.enqueue_analysis("dk", "dk:dbo.Achievement", conn=c)
+    assert res.get("ok") is True
+    assert res.get("reused") is True
+    assert res.get("run_id") == "run-existing"
+    assert res.get("progress") == {"enqueued": 8, "done": 3, "failed": 1}
+    # 재사용 경로는 새 run 을 INSERT 하지 않는다(중복 큐잉 방어).
+    assert not [s for s, _ in cur.executed if "INSERT INTO node_analysis_runs" in s]
 
 
 def test_load_anchor_merges_prompt_tokens():
@@ -301,7 +318,7 @@ def test_enqueue_analysis_user_prompt_column_fallback():
                 raise RuntimeError("UndefinedColumn: user_prompt")
             return super().execute(sql, params)
 
-    cur = FallbackCur(rows_by_marker=[("SELECT run_id FROM node_analysis_runs", [])])
+    cur = FallbackCur(rows_by_marker=[("SELECT run_id, enqueued, done, failed FROM node_analysis_runs", [])])
     c = FakeConn(cur)
     na._UPROMPT_COL_WARNED["done"] = False
     res = na.enqueue_analysis("dk", "dk:dbo.Achievement", user_prompt="지침", conn=c)

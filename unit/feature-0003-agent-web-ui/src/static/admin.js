@@ -2552,7 +2552,7 @@ function renderSampleFeedbackList() {
       <div class="admin-sf-row" data-sf-row="${it.id}">
         <div class="admin-sf-row-head">
           ${voteBadge}
-          <span class="admin-sf-scope" title="데이터소스 스코프">${_sfEsc(it.scope_key || "common")}</span>
+          <span class="admin-sf-scope" title="데이터소스 스코프">${_sfEsc(_metaDatasourceLabelOf(it.scope_key))}</span>
           ${suggestedBadge}
           <span class="admin-sf-ts">${_sfEsc(_sfFmtDt(it.created_at))}</span>
         </div>
@@ -2955,6 +2955,24 @@ function _metaScopeDatasourceKey() {
   return "";
 }
 
+// scope_key → 사람이 지정한 datasource 라벨(key) 역매핑(표시 전용). scope_key 는 질의축 식별자로,
+// DB-등록 datasource 는 엔드포인트 해시(예: mssql-06656002eda6)라 UI 에 raw 노출되면 사람이 못 읽는다.
+// adminState.datasources(= GET /api/admin/datasources)의 {key=라벨, scope_key=해시} 로 해시→라벨을 되돌린다.
+//   - 빈 값/'common' → '공용'
+//   - 미매칭(구버전 백엔드·삭제된 ds·datasources 미로드) → 원문 유지(정보 손실보다 raw 표시가 안전).
+function _metaDatasourceLabelOf(scopeKey) {
+  const s = String(scopeKey == null ? "" : scopeKey).trim();
+  if (!s || s.toLowerCase() === "common") return "공용";
+  const low = s.toLowerCase();
+  for (const ds of (adminState.datasources || [])) {
+    const label = String((ds && ds.key) || "").trim();
+    if (!label) continue;
+    const sk = String((ds && ds.scope_key) || label).trim().toLowerCase();
+    if (sk === low || label.toLowerCase() === low) return label;
+  }
+  return s;
+}
+
 // AI 단건 자동완성 — 폼의 식별 필드를 백엔드로 보내 설명 필드를 생성하고, 대상 입력란에 채운다.
 // 생성물은 영속 안 함 — 사용자가 검토 후 '등록/수정 저장' 으로 저장. (XSS: 결과는 input.value 로만.)
 async function _metaSuggestFill(btn) {
@@ -3181,6 +3199,7 @@ const _metaGraph = {
   lastQuery: "",
   lastDetailKey: null,
   activeRunId: null,
+  _analyzePending: new Set(),  // graphux7(#4): AI 능동 분석 POST in-flight 중인 node key 집합 — 연타 동시 POST(중복 큐잉) 차단(노드별 독립).
   introspected: null,     // Set: information_schema 즉석조회한 테이블 key
   mode: "roots",          // "roots"|"search"|"neighbor" (현재는 전부 결정론 grid)
   nodes: new Map(),       // key -> {key,label,name,fqn,description,source,ordinal,score,rel,cardinality,edge_source}
@@ -3232,6 +3251,11 @@ const _metaGraph = {
   groupOrder: new Map(),      // feature-0016 §49(R1): schemaId -> 안정화된 simgroups 그룹 순서
   groupTableOrder: new Map(), // feature-0016 §49(R1): groupKey -> 안정화된 그룹내 테이블 key 순서
   _comboDragStart: null,      // combo:dragstart 시 {id, x, y}(중심) — dragend 델타 산출용
+  // graphux7(#1): 상세 패널 노드 방문 이력(뒤로/앞으로 — 이전에 본 노드 되짚기). datasource 컨텍스트
+  //   전환(loadRoots/Products) 시 _metaGraphHistoryReset 로 초기화. _histNav=네비 중(중복 push 억제).
+  detailHist: [],             // 방문한 노드 key 스택(오래된 앞 → 최근 뒤)
+  detailHistIdx: -1,          // 현재 위치 인덱스(-1=비어 있음)
+  _histNav: false,            // 뒤로/앞으로 네비게이션 진행 중 플래그
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3287,6 +3311,40 @@ function _metaRoleLegendTips() {
   document.querySelectorAll(".admin-meta-graph-rolelegend-list li[data-role]").forEach((li) => {
     const rd = _META_ROLE[li.getAttribute("data-role")];
     if (rd) li.title = `${rd.icon} ${rd.ko} — ${rd.desc}`;
+  });
+}
+// graphux7(#3): 그래프 범례 3-탭(노드 종류·관계·AI 상태·테이블 역할) 전환. 그래프 뷰 진입 시 1회 바인딩(멱등).
+//   탭 버튼 → is-active + 대응 패널 표시(hidden 토글). ←/→ 로 탭 이동(roving tabindex 접근).
+function _metaGraphBindLegendTabs() {
+  const wrap = document.getElementById("metadataGraphLegendTabs");
+  if (!wrap || wrap.dataset.bound === "1") return;
+  wrap.dataset.bound = "1";
+  const tabs = Array.prototype.slice.call(wrap.querySelectorAll(".amg-legend-tab"));
+  const panels = Array.prototype.slice.call(wrap.querySelectorAll(".amg-legend-panel"));
+  const activate = (name) => {
+    tabs.forEach((t) => {
+      const on = t.getAttribute("data-legend-tab") === name;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    panels.forEach((p) => {
+      const on = p.getAttribute("data-legend-panel") === name;
+      p.classList.toggle("is-active", on);
+      if (on) p.removeAttribute("hidden"); else p.setAttribute("hidden", "");
+    });
+  };
+  tabs.forEach((t) => {
+    t.addEventListener("click", () => activate(t.getAttribute("data-legend-tab")));
+    t.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+      ev.preventDefault();
+      const i = tabs.indexOf(t);
+      const n = ev.key === "ArrowRight" ? (i + 1) % tabs.length : (i - 1 + tabs.length) % tabs.length;
+      const nt = tabs[n];
+      if (!nt) return;
+      activate(nt.getAttribute("data-legend-tab"));
+      try { nt.focus(); } catch (_) {}
+    });
   });
 }
 function _metaRoleOf(key) {
@@ -4375,6 +4433,7 @@ function _metaShowGraph() {
   //   (pane display 가 가시성을 관장). 여기선 그래프 init + 진입 로드만 수행한다.
   _metaInitGraph();
   _metaRoleLegendTips();   // role-cluster-prefix: 역할 범례 hover 툴팁(desc) 주입(정적 <li data-role> → _META_ROLE 단일 소스).
+  _metaGraphBindLegendTabs();   // graphux7(#3): 범례 3-탭 전환 바인딩(멱등).
   // feature-0016: 그래프 뷰 진입 시 현재 선택 datasource 의 그래프(roots)를 즉시 로드 — 각 데이터소스별 그래프 출현.
   _metaGraphLoadRoots();
   const s = document.getElementById("metadataGraphSearch");
@@ -4430,6 +4489,7 @@ function _metaGraphResetModel() {
 async function _metaGraphLoadProducts(scope) {
   if (!_metaGraph.graph) _metaInitGraph();
   if (!_metaGraph.graph) return;
+  _metaGraphHistoryReset();   // graphux7(#1): datasource/제품 컨텍스트 전환 — 방문 이력 초기화.
   const si = document.getElementById("metadataGraphSearch");
   if (si) si.value = "";
   _metaGraph.lastQuery = "";
@@ -4465,6 +4525,7 @@ async function _metaGraphLoadProducts(scope) {
 async function _metaGraphLoadRoots() {
   if (!_metaGraph.graph) _metaInitGraph();
   if (!_metaGraph.graph) return;
+  _metaGraphHistoryReset();   // graphux7(#1): datasource 컨텍스트 전환 — 방문 이력 초기화.
   const scope = adminState.metadata.scopeKey || "common";
   _metaGraph.loadedScope = scope;   // feature-0016 §45 D1: 마지막 렌더 스코프 기록(탭 재진입 시 diverge 재로드 판정).
   // graph-product-cat(§43): 데이터소스 미선택(공용) 또는 제품 scope 는 제품 카테고리 개요를 랜딩으로 보여준다.
@@ -4888,6 +4949,11 @@ function _metaInitGraph() {
       if (key) { _metaGraphExpand(key); }
       else { _metaGraphStatus(`이웃 깊이 ${depthSel.value}-hop 적용 — 노드를 선택/더블클릭하면 이 깊이로 확장됩니다.`); }
     });
+    // graphux7(#1): 상세 패널 방문 이력 뒤로/앞으로.
+    const dnBack = document.getElementById("metaGraphDetailBack");
+    if (dnBack) dnBack.addEventListener("click", () => _metaGraphHistoryGo(-1));
+    const dnFwd = document.getElementById("metaGraphDetailFwd");
+    if (dnFwd) dnFwd.addEventListener("click", () => _metaGraphHistoryGo(1));
     _metaGraphInitResizer();
   }
 }
@@ -5407,9 +5473,51 @@ function _metaTableHasCols(key) {
 }
 
 // 단일 클릭: 그래프 구조는 그대로 두고 상세 카드만 갱신(1-hop 으로 컬럼·직접관계·용어).
+// graphux7(#1): 상세 패널 노드 방문 이력(뒤로/앞으로) — 이전에 본 노드를 되짚어 찾기 쉽게.
+const _META_HIST_CAP = 50;
+function _metaGraphHistoryRecord(key) {
+  if (!key || _metaGraph._histNav) return;              // 뒤로/앞으로 네비 중 재기록 금지
+  const h = _metaGraph.detailHist;
+  if (h[_metaGraph.detailHistIdx] === key) return;      // 같은 노드 연속 재선택 — 중복 억제
+  h.splice(_metaGraph.detailHistIdx + 1);               // 앞으로 분기 절단(새 방문이 forward 이력을 덮음)
+  h.push(key);
+  if (h.length > _META_HIST_CAP) h.shift();             // 상한 초과 시 오래된 앞부분 제거
+  _metaGraph.detailHistIdx = h.length - 1;
+  _metaGraphHistoryUpdateUI();
+}
+function _metaGraphHistoryGo(dir) {
+  const ni = _metaGraph.detailHistIdx + dir;
+  if (ni < 0 || ni >= _metaGraph.detailHist.length) return;
+  _metaGraph.detailHistIdx = ni;
+  const key = _metaGraph.detailHist[ni];
+  _metaGraph._histNav = true;                           // showDetail 이 이 방문을 재기록하지 않게(동기 구간)
+  try { _metaGraphShowDetail(key); } finally { _metaGraph._histNav = false; }
+  _metaGraphHistoryUpdateUI();
+}
+function _metaGraphHistoryReset() {
+  _metaGraph.detailHist = [];
+  _metaGraph.detailHistIdx = -1;
+  _metaGraph._histNav = false;
+  _metaGraphHistoryUpdateUI();
+}
+function _metaGraphHistoryUpdateUI() {
+  const nav = document.getElementById("metadataGraphDetailNav");
+  if (!nav) return;
+  const h = _metaGraph.detailHist, i = _metaGraph.detailHistIdx;
+  if (h.length <= 1) { nav.hidden = true; return; }     // 0~1개면 네비 의미 없음 — 숨김
+  nav.hidden = false;
+  const back = document.getElementById("metaGraphDetailBack");
+  const fwd = document.getElementById("metaGraphDetailFwd");
+  const label = document.getElementById("metaGraphDetailNavLabel");
+  if (back) back.disabled = i <= 0;
+  if (fwd) fwd.disabled = i >= h.length - 1;
+  if (label) label.textContent = `${i + 1}/${h.length}`;
+}
+
 async function _metaGraphShowDetail(key) {
   if (!_metaGraph.graph || !key) return;
   _metaGraph.lastDetailKey = key;
+  _metaGraphHistoryRecord(key);   // graphux7(#1): 방문 이력 기록(뒤로/앞으로 네비 중이면 no-op).
   _metaGraphStatus("상세 조회 중…");
   let data;
   try {
@@ -5456,15 +5564,43 @@ async function _metaGraphTraceRelation(targetKey) {
   _metaGraphStatus(`관계 추적 → ${nm} (대상 테이블·컬럼 강조).`);
 }
 
-// graph-reltrace ②③: 컨테이너 내 `.amgr-trace[data-trace]` 행에 추적 클릭/키보드 바인딩(공용).
+// graphux7(#2): 관계 행 단일 클릭 = 카메라 이동만(상세 패널 유지). 대상이 렌더돼 있으면 그 노드로,
+//   접힌 스키마면 그 스키마 카드로 카메라를 팬(+렌더된 경우 선택 강조). 상세 패널은 바꾸지 않는다 — 전환은 더블클릭.
+function _metaGraphPanToRelation(targetKey) {
+  if (!_metaGraph.graph || !targetKey) return;
+  const el = _metaRenderedIdFor(targetKey);   // 렌더 노드, 접힌 스키마면 카드(SC:)
+  if (!el) { _metaGraphStatus("대상 노드가 현재 화면에 없습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
+  if (_metaGraph.renderedIds && _metaGraph.renderedIds.has(targetKey)) _metaGraphSetSelected(targetKey);
+  const seq = _metaGraph._opSeq;
+  _metaGraphAnimateFocus(targetKey, seq);   // key→렌더 요소(노드/카드) 내부 해소 후 카메라 팬
+  const nm = (_metaGraph.nodes.get(targetKey) || {}).name || targetKey;
+  _metaGraphStatus(`→ ${nm} 로 카메라 이동 (더블클릭 = 상세 패널 전환).`);
+}
+// graphux7(#2): 관계 행 클릭 라우팅 — 단일=카메라 이동만, 더블=상세 전환(+대상을 화면에 가져오기).
+//   짧은 타이머(260ms)로 단일/더블 구분: 더블클릭이면 예약된 단일(카메라) 취소 후 전환만 실행.
+//   키보드(Enter/Space)=상세 전환(commit — 키보드는 '더블' 표현이 어려워 실질 네비게이션을 기본으로).
+function _metaGraphBindRelRow(r, key) {
+  if (!r || !key) return;
+  let timer = null;
+  r.addEventListener("click", (ev) => {
+    if (ev) ev.stopPropagation();
+    if (timer) { clearTimeout(timer); timer = null; }
+    timer = setTimeout(() => { timer = null; _metaGraphPanToRelation(key); }, 260);
+  });
+  r.addEventListener("dblclick", (ev) => {
+    if (ev) ev.stopPropagation();
+    if (timer) { clearTimeout(timer); timer = null; }
+    _metaGraphTraceRelation(key);
+  });
+  r.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); _metaGraphTraceRelation(key); }
+  });
+}
+// graph-reltrace ②③: 컨테이너 내 `.amgr-trace[data-trace]` 행에 클릭/키보드 바인딩(공용, graphux7#2 단일/더블 라우팅).
 function _metaGraphBindTraceRows(el) {
   if (!el) return;
   el.querySelectorAll(".amgr-trace[data-trace]").forEach((r) => {
-    const k = r.getAttribute("data-trace");
-    if (!k) return;
-    const go = (ev) => { if (ev) ev.stopPropagation(); _metaGraphTraceRelation(k); };
-    r.addEventListener("click", go);
-    r.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(ev); } });
+    _metaGraphBindRelRow(r, r.getAttribute("data-trace"));
   });
 }
 
@@ -5487,7 +5623,7 @@ function _metaGraphRelTraceRowsHTML(nodeKey, edges) {
     const arrow = sSelf ? "→" : "←";
     rows.push(
       `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
-      `title="클릭하면 대상 테이블·컬럼으로 그래프를 추적합니다">` +
+      `title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환(대상 테이블·컬럼 추적)">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(nmOf(other))}</code>` +
       `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`
     );
@@ -5646,7 +5782,7 @@ function _metaGraphShowClusterDetailLocal(comboId) {
   const total = (snode && typeof snode.table_count === "number" && snode.table_count > tables.length)
     ? snode.table_count : null;
   const truncated = _metaGraph.schemaTruncated.has(comboId);
-  _metaGraphRenderClusterDetail(nm, nm, tables, tables.length, childCols, total, truncated);
+  _metaGraphRenderClusterDetail(nm, nm, tables, tables.length, childCols, total, truncated, comboId);
 }
 
 // "−" 컨트롤 접기 — 이 테이블의 컬럼 노드(+containment 엣지) 모델에서 제거 + 재조회 재허용.
@@ -6267,7 +6403,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
     const main = arrow === "→"
       ? `${localName ? `<code>${esc(localName)}</code> <span class="amgr-arrow">→</span> ` : ""}${counter}`
       : `${counter}${localName ? ` <span class="amgr-arrow">→</span> <code>${esc(localName)}</code>` : ""}`;
-    return `<li class="amgr-row" data-key="${esc(otherKey)}" role="button" tabindex="0" title="클릭하면 이 노드의 상세를 봅니다">` +
+    return `<li class="amgr-row" data-key="${esc(otherKey)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span>${main}` +
       `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}</div>` +
       `<div class="amgr-sub admin-meta-graph-muted">${esc(typeKo)}${srcKo ? " · 근거: " + esc(srcKo) : ""}${on.description ? " — " + esc(on.description) : ""}</div></li>`;
@@ -6296,7 +6432,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   if (terms.length) {
     parts.push(`<div class="admin-meta-graph-sec"><h4>연관 용어 (${terms.length})</h4><ul class="amgr-list">`);
     terms.slice(0, 30).forEach(({ e, node }) => {
-      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" role="button" tabindex="0" title="클릭하면 이 용어의 상세를 봅니다">` +
+      parts.push(`<li class="amgr-row" data-key="${esc(node.key)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
         `<div class="amgr-main"><span class="amgr-arrow">◈</span><strong>${esc(node.name || node.key)}</strong></div>` +
         `<div class="amgr-sub admin-meta-graph-muted">${esc(_META_EDGE_TYPE_KO[e.type] || e.type)}${node.description ? " — " + esc(node.description) : ""}</div></li>`);
     });
@@ -6317,12 +6453,8 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
   el.querySelectorAll(".amgr-row[data-key]").forEach((r) => {
-    const k = r.getAttribute("data-key");
-    // graph-reltrace ②: 관계 상세 행 클릭도 **그래프 추적**(대상 테이블·컬럼 강조)으로 통일.
-    //   기존엔 상대 노드 상세만 교체해 "화면에서 연결을 따라간다" 느낌이 약했다.
-    const go = () => { _metaGraphTraceRelation(k); };
-    r.addEventListener("click", go);
-    r.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); } });
+    // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
+    _metaGraphBindRelRow(r, r.getAttribute("data-key"));
   });
   const eb = document.getElementById("amgrExpandBtn");
   if (eb) eb.addEventListener("click", () => _metaGraphExpand(key));
@@ -6387,7 +6519,14 @@ async function _metaGraphAnalyze(key, scope, prompt) {
   if (!key) return;
   const box = document.getElementById("metaGraphAiBox");
   const sc = scope || (key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
-  if (box) box.innerHTML = '<span class="admin-meta-graph-muted">AI 능동 분석 시작 중…</span>';
+  // graphux7(#4): 중복 큐잉 방어(프론트 1차) — 같은 노드 POST 가 이미 in-flight 면 재요청 안 함(연타 동시 POST
+  //   경합 차단; 백엔드 lease-dedup 이 방금 만든 run 을 아직 못 보는 창을 프론트에서 먼저 막는다). 상호작용은 유지.
+  if (_metaGraph._analyzePending.has(key)) {
+    if (box) box.innerHTML = '<span class="admin-meta-graph-muted">이미 요청을 처리 중입니다 — 중복 요청을 방지합니다. 잠시만 기다려 주세요.</span>';
+    return;
+  }
+  _metaGraph._analyzePending.add(key);
+  if (box) box.innerHTML = '<span class="admin-meta-graph-muted">AI 능동 분석 요청 중…</span>';
   const body = { node_key: key, scope_key: sc };
   const p = (typeof prompt === "string") ? prompt.trim().slice(0, 400) : "";
   if (p) body.prompt = p;
@@ -6399,12 +6538,29 @@ async function _metaGraphAnalyze(key, scope, prompt) {
   } catch (err) {
     if (box) box.innerHTML = `<span class="admin-meta-graph-muted">시작 실패: ${(err && err.message) || "오류"}</span>`;
     return;
+  } finally {
+    _metaGraph._analyzePending.delete(key);   // 이 노드 POST 완료(성공/실패) — in-flight 해제. 이후 중복 차단은 백엔드 lease-dedup(reused).
   }
   if (res && res.run_id) {
+    // graphux7(#4): 백엔드가 검증한 결과(reused) 로 사용자 메시지를 분기 — 새 큐잉 vs 이미 진행 중을 명확히 구분.
+    const reused = !!res.reused;
     // graphux5-progress: 진행 패널을 즉시 표시(닫힘 상태 해제) — 이후 폴링이 상세를 라이브 갱신.
     const panel = document.getElementById("metadataGraphProgress");
-    if (panel) { delete panel.dataset.dismissed; panel.style.display = ""; panel.innerHTML = '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">시작 중… 관련 노드를 재귀 탐색합니다.</span></div>'; }
-    if (box) box.innerHTML = '<span class="admin-meta-graph-muted">분석 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
+    if (panel) {
+      delete panel.dataset.dismissed; panel.style.display = "";
+      panel.innerHTML = reused
+        ? '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">이미 진행 중 — 새로 큐잉하지 않고 기존 분석 현황을 표시합니다.</span></div>'
+        : '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">시작 중… 관련 노드를 재귀 탐색합니다.</span></div>';
+    }
+    if (box) {
+      if (reused) {
+        const pr = res.progress || {};
+        const prTxt = (typeof pr.done === "number" && typeof pr.enqueued === "number") ? ` (진행 ${pr.done}/${pr.enqueued})` : "";
+        box.innerHTML = `<span class="admin-meta-graph-muted">이미 이 노드의 AI 능동 분석이 진행 중입니다${prTxt} — 중복 큐잉하지 않고 진행 현황을 위 패널에서 갱신합니다.</span>`;
+      } else {
+        box.innerHTML = '<span class="admin-meta-graph-muted">분석 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
+      }
+    }
     _metaGraphPollRun(res.run_id, key);
   }
 }
@@ -6606,12 +6762,12 @@ async function _metaGraphShowClusterDetailById(comboId) {
     else if (n.label === "Column" && _metaCatParent(n.key, n.fqn) === comboId) childCols += 1;
   });
   if (!tables.length) _metaGraph.nodes.forEach((n) => { if (n.label === "Table" && _metaCatParent(n.key, n.fqn) === comboId) tables.push(n); });
-  _metaGraphRenderClusterDetail(schemaName, schemaName, tables, childTables, childCols);
+  _metaGraphRenderClusterDetail(schemaName, schemaName, tables, childTables, childCols, null, false, comboId);
   _metaGraphStatus(`클러스터: ${schemaName} · 테이블 ${tables.length || childTables}개`);
 }
 
 // 항목2: 클러스터 상세 카드 렌더(우측 상세 패널 body). 노드 상세(_metaGraphRenderDetail)와 동일 컨테이너를 교체.
-function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols, totalOverride, truncated) {
+function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols, totalOverride, truncated, comboId) {
   const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
   if (!el) return;
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -6621,7 +6777,11 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
     ? ` (그래프에는 ${tables && tables.length ? tables.length : 0}개만 표시 — 상한)` : "";
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong></div>`);
+  // graphux7(#7): 펼쳐진 스키마면 상세 패널(항상 화면 내 aside)에 전용 '접기' 버튼 — 캔버스 combo 우상단
+  //   "−" 컨트롤은 큰 스키마에서 뷰포트 밖으로 벗어나 접근 불가하던 문제 해소. 패널 body 클릭으로 접히지 않게
+  //   접기는 이 버튼(및 기존 "−"/우클릭 메뉴)로만 트리거.
+  const _canCollapse = comboId && _metaGraph.schemaExpanded && _metaGraph.schemaExpanded.has(comboId);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}</div>`);
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {
@@ -6656,6 +6816,9 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   }
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
+  // graphux7(#7): 전용 접기 버튼 바인딩 — 이 스키마를 카드로 축소(항상 화면 내 상세 패널에서 접근).
+  const _collapseBtn = document.getElementById("metaGraphClusterCollapseBtn");
+  if (_collapseBtn && comboId) _collapseBtn.addEventListener("click", () => _metaGraphCollapseSchema(comboId));
   // role-cluster-prefix: 테이블 행 클릭 → 해당 노드 선택(_metaGraphShowDetail = 하이라이트 setSelected + 상세 렌더) + 렌더돼 있으면 카메라 focus.
   el.querySelectorAll(".amgr-ct-row[data-node-key]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -7252,7 +7415,7 @@ function renderGlossaryFeedback() {
     };
     const rk = String(it.role_key || "*");
     tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`, rk === "*" ? "" : "admin-meta-tag-role"));
-    if (it.scope_key) tags.appendChild(mkTag(`scope: ${it.scope_key}`));
+    if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`));
     if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`));
     const st = String(it.status || "");
     const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "승급됨", rejected: "거부됨" }[st] || st;

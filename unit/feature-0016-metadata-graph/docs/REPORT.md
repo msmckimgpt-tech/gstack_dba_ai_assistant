@@ -13,6 +13,45 @@
 ### 검증·미결
 - `node --check` PASS · §18.8 3-렌즈 적대 리뷰(레이아웃·IA·검색, REV-20260704T014646) 확정결함 3건 반영.
 - **미결(하드 게이트)**: PB-0008 실 Windows 시각검증(visual_verification_scope: always) 무인 미수행 → **사용자 육안 확인 후 main 병합·web 롤링 배포**(cache-buster `20260704-graph-ux3fix`). ② 후속 cycle.
+## 2026-07-04 · 그래프 뷰 UX 7건 (graphux7, TASK §51)
+
+### 배경 (사용자 요청 7건 — 관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰)
+① 상세 패널 '뒤로/앞으로' ② 관계 클릭 시 카메라 이동만·[더블]클릭 시 상세 전환 ③ 상세 패널 아래 범례를 탭으로
+(기존 '테이블 역할' + 테이블·컬럼·용어·스키마 카드 등; "크기·라벨%=검색 유사도(pg_trgm)…" 문구 제거) ④ AI 능동 분석
+중복 Queueing 방어(프론트 상호작용·상태 가시화 유지, 백엔드 검증 후 메시지) ⑤ 일부 데이터소스가 해시값 그대로 출력되는
+이슈를 사용자 지정 식별자로 ⑥ 카테고리 범위 드래그가 줌 스케일과 불일치(커서보다 더 이동) ⑦ 카테고리 범위 전용 축소 버튼
+(현재 패널 클릭만으로 접힘).
+
+### 구현 (프론트 admin.js/admin.html/styles.css + 백엔드 node_analysis.py/admin_metadata.py, cross-cut 0003/0002)
+- **#1** `_metaGraph` 방문 이력 스택(detailHist/idx/_histNav) — `_metaGraphShowDetail` 진입 시 기록(뒤로/앞으로 네비 중 no-op),
+  상세 패널 상단 지속 nav 바 `←뒤로/앞으로→`(이력≤1 숨김·끝단 disabled·이력 N/M), datasource 컨텍스트 전환 시 초기화.
+- **#2** 관계 행 단일 클릭 = `_metaGraphAnimateFocus` 카메라 팬만(상세 패널 유지)·더블클릭 = `_metaGraphTraceRelation` 상세 전환.
+  260ms 타이머로 단/더블 분리, 키보드 Enter=전환. `_metaGraphBindRelRow` 공통화(상세 패널·관계뷰 행 모두).
+- **#3** 상단 flat 범례바 + 하단 `<details>` 역할범례를 상세 패널 하단 **3탭**(노드 종류/관계·AI 상태/테이블 역할)으로 통합.
+  `_metaGraphBindLegendTabs()`(멱등·←/→ roving·hidden 토글), pg_trgm 유사도 note 제거. 역할 `<li data-role>` 보존(툴팁 소스 불변). 검색 매칭(앰버 글로우) 칩 parity 유지.
+- **#4** 프론트 in-flight 가드 `_metaGraph._analyzePending`(같은 노드 연타 동시 POST 차단) + 백엔드 `reused` 검증 결과로 분기 —
+  "이미 이 노드의 AI 능동 분석이 진행 중입니다(진행 N/M)" 가시 메시지(무음 재시작 대신). 백엔드 `enqueue_analysis` reused 분기가
+  진행 카운트(`progress:{enqueued,done,failed}`)를 반환하고 엔드포인트가 passthrough. 버튼 상호작용 유지.
+- **#5** `_metaDatasourceLabelOf(scope_key)` — `adminState.datasources` 의 {key=라벨, scope_key=해시} 로 해시→라벨 역매핑
+  (common→'공용', 미매칭→원문). raw 해시 노출 지점 2곳(샘플 검수 스코프칩·용어 관계 scope 태그) 교정. 스코프 select 는 이미 라벨 표시라 무변경.
+- **#7** `_metaGraphRenderClusterDetail(...,comboId)` — 펼쳐진 스키마면 **항상 화면 내인 상세 패널**에 전용 "▦ 접기" 버튼
+  (→`_metaGraphCollapseSchema`). 근거(라이브 실측): 큰 스키마 펼침 시 캔버스 combo 우상단 "−" 컨트롤이 뷰포트 밖(y≈-1713)으로
+  벗어나 접근 불가. body 클릭으로 접히는 코드 경로는 원래 없음(combo:click=상세, "−"/우클릭=접기) — 유지.
+- **#6** **라이브 관측 후 무변경**: win-browser 실 Chrome 로 `getElementPosition` 반환이 world 좌표임을 검증(viewport = world × zoom;
+  combo world폭 864.6 → viewport폭 475.6 = zoom 0.55). 따라서 클러스터 offset 누적(`_metaClusterOffsetAccumulate`)은 줌-독립적으로
+  정합하며, combo/카드 드래그는 G6 v5.1.1 네이티브 drag-element 가 처리(앱에 커스텀 좌표 계산 없음). **앱 코드에 좌표 결함 없음** —
+  최근 graph-drag/graph-freeplace 개편으로 해소된 것으로 판단. 근거 없는 `÷zoom` 추가는 정상 계산을 깨뜨리므로 코드 변경하지 않음.
+
+### 검증
+- node --check(admin.js) PASS · py_compile(node_analysis.py·admin_metadata.py) PASS. 최신 main(7facb804: funcproc+Phase B/C+Esc-fix)
+  rebase — admin.js/node_analysis.py 자동 병합(제 상태 필드·#4 변경과 main 의 Esc 핸들러·Phase B/C 필드 공존 확인), admin.html cache-buster 충돌만 해소.
+- §18.8 적대 리뷰: REVIEW REV-20260704T071838-graphux7.
+- 라이브 관측(win-browser): #5 스코프 select 라벨 표시 확인, #6 좌표계 검증(무결), #7 "−" off-screen 재현.
+
+### 잔여
+- 배포(deploy_scope: included): main 병합 → web 재배포(정적 자산 baked) → **PB-0008 실 Windows 브라우저 POST-DEPLOY**
+  (#1 nav·#2 단/더블·#3 3탭·#4 reused 메시지·#5 라벨·#7 접기 버튼 시각검증; pageerror 0). 마이그 없음.
+- #6 실드래그 재현(trusted 입력 — Playwright MCP)은 후속. 현 도구로는 합성 드래그가 G6 를 트리거 못 해 재현 불가. 사용자 #6 의 실대상(sim-group 드래그)은 §50(group-interact)이 해결.
 
 ## 2026-07-04 · 크로스-데이터소스 관계 (crossds-rel, Phase B, TASK §47, ADR-019)
 
