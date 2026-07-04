@@ -459,14 +459,17 @@ def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budg
         cur = c.cursor()
         # 진행 중 run 재사용 (중복 트리거 방지). fix(high): updated_at 이 lease 이내인 run 만 재사용 —
         #   워커 크래시로 갇힌(stale) run 을 영구 재사용해 재트리거 불가에 빠지지 않게 한다(reaper 와 함께).
-        cur.execute("SELECT run_id FROM node_analysis_runs "
+        cur.execute("SELECT run_id, enqueued, done, failed FROM node_analysis_runs "
                     "WHERE scope_key=%s AND root_key=%s AND status='running' "
                     "AND updated_at > now() - make_interval(secs => %s) "
                     "ORDER BY created_at DESC LIMIT 1", (sk, node_key, lease))
         row = cur.fetchone()
         if row:
             cur.close()
-            return {"ok": True, "run_id": row[0], "status": "running", "reused": True}
+            # graphux7(#4): 이미 진행 중 — 재큐잉하지 않고 기존 run 재사용(중복 큐잉 방어). 진행 카운트를
+            #   함께 반환해 프론트가 사용자에게 "이미 분석 중(진행률)" 을 즉시 안내한다.
+            return {"ok": True, "run_id": row[0], "status": "running", "reused": True,
+                    "progress": {"enqueued": row[1], "done": row[2], "failed": row[3]}}
         # 루트 노드 props 확보 (그래프에서)
         ctx = _fetch_context(node_key, c)
         root = ctx.get("root") or {"label": "", "name": node_key, "fqn": ""}
