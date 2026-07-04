@@ -151,6 +151,9 @@ __all__ = [
     "AGENT_RELATIONSHIP_PROBE_SAMPLE",
     "AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS",
     "AGENT_RELATIONSHIP_REINFER_SEC",
+    # graph-funcproc(ADR-016): insight.py(star-import) 가 bare 로 소비 — 등재 의무(rel-selfheal 계약).
+    "AGENT_ROUTINE_INTROSPECT_CAP",
+    "AGENT_ROUTINE_INTROSPECT_ENABLED",
     "AGENT_SCHEMA_BIAS_PENALTY",
     "AGENT_SCHEMA_BIAS_STEP_WINDOW",
     "AGENT_SCHEMA_BIAS_THRESHOLD",
@@ -259,6 +262,22 @@ __all__ = [
     "AGENT_KB_EMBEDDING_AUTO",
     "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS",
     "AGENT_KB_EMBEDDING_INTERVAL_SEC",
+    "AGENT_METADATA_CLUSTER_AUTO",
+    "AGENT_METADATA_CLUSTER_INTERVAL_SEC",
+    "AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS",
+    "AGENT_METADATA_CLUSTER_RECOMPUTE_SEC",
+    "AGENT_METADATA_CLUSTER_SIM_THRESHOLD",
+    "AGENT_METADATA_CLUSTER_KNN_K",
+    "AGENT_METADATA_CLUSTER_MIN_SIZE",
+    "AGENT_METADATA_CLUSTER_MAX_DEGREE",
+    "AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N",
+    "AGENT_XDS_RELATIONSHIP_INFER_AUTO",
+    "AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC",
+    "AGENT_XDS_RELATIONSHIP_MIN_SIM",
+    "AGENT_XDS_RELATIONSHIP_BATCH_MAX",
+    "AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE",
+    "AGENT_XDS_RELATIONSHIP_KNN_K",
+    "AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -610,6 +629,34 @@ AGENT_KB_HYBRID_TRIGRAM_FLOOR = float(os.getenv("AGENT_KB_HYBRID_TRIGRAM_FLOOR",
 AGENT_KB_EMBEDDING_AUTO = os.getenv("AGENT_KB_EMBEDDING_AUTO", "1").strip().lower() in ("1", "true", "yes")
 AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "100") or "100")
 AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC", "60") or "60")
+# feature-0016 Phase C (ADR-013 후속, semantic-embed): 메타데이터 객체(테이블) 시그니처 임베딩 → scope 별
+# 의미 클러스터링. embedding 자체는 기존 embedding 데몬(위 AGENT_KB_EMBEDDING_*)이 texts 를 임베딩하므로
+# 신규 embedding 노브 없음 — 아래는 시그니처 백필 + 클러스터링 전용 데몬 스레드(임베딩 데몬과 분리, tick 무블로킹).
+#   AUTO=0 → Phase C 전면 비활성(kill switch, 프론트는 affix 폴백). RECOMPUTE_SEC → scope 재클러스터 cadence(6h).
+#   SIM_THRESHOLD → 코사인 τ(단일연결 컷). FULLMATRIX_MAX_N → numpy N×N 코사인 행렬 메모리 가드: 이하만
+#   클러스터링, 초과 scope 는 skip(프론트 affix 폴백 — OOM 방지). MAX_DEGREE → 노드당 이웃 상한(단일연결
+#   chaining 억제 — verify MAJOR). KNN_K → 예약(향후 대형 scope pgvector kNN 폴백용, 현재 미사용).
+#   τ=0.82 는 라이브 임베딩 코사인 분포로 재보정 대상(초기 안전값).
+AGENT_METADATA_CLUSTER_AUTO = os.getenv("AGENT_METADATA_CLUSTER_AUTO", "1").strip().lower() in ("1", "true", "yes")
+AGENT_METADATA_CLUSTER_INTERVAL_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_INTERVAL_SEC", "900") or "900")
+AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "200") or "200")
+AGENT_METADATA_CLUSTER_RECOMPUTE_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_RECOMPUTE_SEC", "21600") or "21600")
+AGENT_METADATA_CLUSTER_SIM_THRESHOLD = float(os.getenv("AGENT_METADATA_CLUSTER_SIM_THRESHOLD", "0.82") or "0.82")
+AGENT_METADATA_CLUSTER_KNN_K = int(os.getenv("AGENT_METADATA_CLUSTER_KNN_K", "15") or "15")
+AGENT_METADATA_CLUSTER_MIN_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MIN_SIZE", "2") or "2")
+AGENT_METADATA_CLUSTER_MAX_DEGREE = int(os.getenv("AGENT_METADATA_CLUSTER_MAX_DEGREE", "8") or "8")
+AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N = int(os.getenv("AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N", "2000") or "2000")
+# feature-0016 Phase B (ADR-019, crossds-rel): 크로스-데이터소스 관계 추론(Phase C 시그니처 임베딩 구동).
+#   AUTO=0(기본 OFF) → 스키마·UI·scope 완화만 배포되고 추론 inert. Phase C 임베딩 populate 후 1 로 flip.
+#   MIN_SIM 높게(0.90) — 프로브 검증 불가라 보수적. 프로브 skip·manual/대화JOIN 승격은 relationships.py.
+AGENT_XDS_RELATIONSHIP_INFER_AUTO = os.getenv("AGENT_XDS_RELATIONSHIP_INFER_AUTO", "0").strip().lower() in ("1", "true", "yes")
+AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC = int(os.getenv("AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC", "21600") or "21600")
+AGENT_XDS_RELATIONSHIP_MIN_SIM = float(os.getenv("AGENT_XDS_RELATIONSHIP_MIN_SIM", "0.90") or "0.90")
+AGENT_XDS_RELATIONSHIP_BATCH_MAX = int(os.getenv("AGENT_XDS_RELATIONSHIP_BATCH_MAX", "200") or "200")
+AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE = int(os.getenv("AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE", "50") or "50")
+AGENT_XDS_RELATIONSHIP_KNN_K = int(os.getenv("AGENT_XDS_RELATIONSHIP_KNN_K", "10") or "10")
+# node_analysis: 의도적 교차DB REFERENCES 로 도달한 이웃의 cross-scope 감쇠 대체값(1.0=무감쇠). 우연 교차는 0.25 유지.
+AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR", "1.0") or "1.0")
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(
@@ -935,6 +982,12 @@ AGENT_RELATIONSHIP_PROBE_SAMPLE = int(os.getenv("AGENT_RELATIONSHIP_PROBE_SAMPLE
 # (보안 패널 MINOR — _fk_raw_execute 가 _apply_query_cap 을 우회). MySQL=MAX_EXECUTION_TIME 힌트,
 # MSSQL=SET LOCK_TIMEOUT(락 대기 상한). 0 이면 미적용.
 AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = int(os.getenv("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", "5000") or "5000")
+# feature-0016 graph-funcproc(ADR-016): 함수·프로시저(routine) introspection 토글·캡. 기본 ON.
+#  - insight worker 가 관계 유지보수 게이트(rel_maintenance_due)와 같은 cadence 로
+#    INFORMATION_SCHEMA.ROUTINES/PARAMETERS 를 조회해 routine_objects(SSOT)에 upsert →
+#    metadata_graph.sync_graph 가 AGE Routine 노드 + ROUTINE_USES(참조 테이블) 로 투영.
+AGENT_ROUTINE_INTROSPECT_ENABLED = os.getenv("AGENT_ROUTINE_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_ROUTINE_INTROSPECT_CAP = int(os.getenv("AGENT_ROUTINE_INTROSPECT_CAP", "300") or "300")
 # feature-0016 metadata-graph: 관계형 SSOT → Apache AGE `metadata_kb` 그래프 투영 토글.
 #  - 기본 OFF — AGE 확장 미설치(cutover 전) 상태에서 sync/projection 이 no-op 되도록.
 #  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.

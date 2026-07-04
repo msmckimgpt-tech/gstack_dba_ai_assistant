@@ -452,3 +452,66 @@ origin/main HEAD 만 배포, 그룹 시각 판별은 라이브 관계·이름 �
 - **§18.8 3-렌즈 적대 리뷰(general-purpose)**: (A) 레이아웃 clusterBase, (B) IA/탭/권한 배선, (C) 검색 highlight — 각 렌즈 diff+함수컨텍스트 제공, 실패 시나리오 요구. 확정결함 3건: (A-HIGH) 위치고정 겹침→②되돌림, (B-MED) 크로스탭 scope stale→loadedScope 수정, (C-LOW) 라벨 넘침→클램프. 나머지 축(dangling ref·권한 가시성·mode 게이팅·G6 shadow 안전·rel 상세배지·req②③④ trace) clean. REV-20260704T014646.
 - 격리 알고리즘 테스트(scratchpad): clusterBase sticky 불변식 15/15 PASS(원점 불변·신규 아래 배치·드리프트 0) — 단 적대리뷰가 카드→combo 겹침 회귀를 별도로 적발해 해당 접근을 되돌림(알고리즘 자체는 정합이나 부작용이 치명).
 - **PB-0008 실 Windows 시각검증(하드 게이트, visual_verification_scope: always)**: `Environment: Windows-browser` — **무인 세션 3중 라우팅 벽으로 미수행**(TrustedHostMiddleware·인증세션·Windows→WSL). 검증 항목: ① `지식베이스 > 그래프 뷰` 탭 분리·전체 높이·데이터소스 select 로 스키마 그래프 로드 ③ 검색어 입력 시 매칭 노드가 앰버 glow 로 강조(너비 불변)·비검색 복귀 시 glow 소멸. **사용자 육안 확인 후 배포** — 미수행 사유 명시(카고컬트 방지, FIRST_REQUEST.md 정책). 정본 Run: feature-0003 TEST.md §3.
+## graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프/능동분석 UX 4건 (2026-07-03, TASK §45 / ADR-016·017)
+
+### 단위 — tests/test_graph_funcproc_uxfix.py (Environment: unit/pytest, DB 불요) — Run 2026-07-03 **19 PASS** (§18.8 패널 수정 반영 후)
+- ① 정의 파싱: read/write kind 분류(FROM/JOIN vs INSERT/UPDATE/DELETE)·write 우선 dedupe·임시(#)/변수(@)/
+  미존재/자기자신 제외·3-part 인용 식별자 leaf 정규화·빈 입력. introspect_and_store: routine_objects
+  upsert 형태(ON CONFLICT 4키·store_schema 라벨·참조 fqn 라벨 접두·params/반환형 pos0).
+- ① sync_routine Cypher: `MERGE (n:Routine {key: '...usp_GiveReward()'})`(동명 테이블 충돌 방지 `()`
+  네임스페이스)·routine_type SET·HAS_ROUTINE·ROUTINE_USES relation_type·참조 Table 앵커링. 라벨/속성
+  화이트리스트(Routine·HAS_ROUTINE·ROUTINE_USES·routine_type/params) 등재 확인.
+- ③ parent 승격: _fetch_context 가 Column 의 부모 Table 을 parent 메타로 기록 → _score_candidates 승격
+  (rel≥0.5·same_depth=True·교차 제품 감쇠<0.5) → _enqueue_neighbors 가 depth_budget 마지막 층에서도
+  부모를 same-depth 로 삽입(일반 이웃은 예산 초과 미삽입 — 경계 검증).
+- ⑤ user_prompt: enqueue INSERT 저장(strip·마지막 파라미터)·마이그 창(UndefinedColumn) legacy 폴백·
+  _load_anchor 지침 토큰 합류(결제/환불 + 기존 앵커 토큰 보존)·ROUTINE_USES 이웃 content 인정.
+- 실행: `python3 -m pytest unit/feature-0002-agent-core/tests/test_graph_funcproc_uxfix.py -q`
+
+### 회귀 — pytest (Environment: unit/pytest) — Run 2026-07-03 **107 PASS · 실패 0** (합계 126 — §18.8 패널 BLOCKING 1·MAJOR 5 전량 수정 후 재실행; 패널 정본 REVIEW.md REV-20260703T113500-graph-funcproc-uxfix)
+`test_node_analysis_relevance.py`(28 — _score_candidates 3-tuple 반환 확장에 맞춰 unpack 갱신) ·
+`test_node_analysis_role.py`(10) · `test_config_star_export.py`(AST 가드 — 신규 AGENT_ROUTINE_* __all__
+등재 통과) · `test_relationships.py`(57) · `test_metadata_graph_units.py`(10). `node --check admin.js`
+· `python3 -m py_compile`(변경 py 전건) PASS.
+
+### PB-0008 실 Windows 브라우저 시각검증 (Environment: Windows-browser) — 배포 후 라이브 Run 을 본 섹션에 append (§15.4.1)
+본 cycle 은 deploy_scope: included 로 merge 직후 web+insight-worker 배포 + alembic 0034 적용 →
+라이브 그래프 뷰에서 ① ƒ/⚙ 함수·프로시저 칩 + 보라 잔점선(테이블 사용) ② 상세 패널 리사이즈 시
+미니맵 우하단 추종 ③ hover 지침 popover → 분석문 반영 ④ 분석 완료 box 재분석 버튼 부재 를 실
+Windows Chrome 으로 육안 확인 예정. (pre-commit 시점 미수행 사유: Routine 노드는 alembic 0034 +
+insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 — 배포 선행 필요.)
+
+## semantic-embed — 메타데이터 의미 임베딩·클러스터링 (Phase C, ADR-018, TASK §46, 2026-07-03)
+
+### 케이스
+- TC-46-1 (마이그): alembic 0035 가 rag_objects 에 3 nullable 컬럼+인덱스2 를 비파괴 적용(카탈로그 전용·<1s), head=0035, migrate-lint expand-safe, downgrade DROP.
+- TC-46-2 (시그니처): run_signature_backfill_pass 가 table 객체마다 결정론 시그니처를 texts 에 적재(strip-hash=join-key 정합) + signature_text_hash set. 변경 없으면 no-op(멱등).
+- TC-46-3 (임베딩): 기존 embedding 데몬이 시그니처 texts 를 bge-m3 1024d 임베딩(신규 경로 0).
+- TC-46-4 (클러스터): scope 별 kNN(τ)+union-find, degree-cap chaining 억제, N>FULLMATRIX_MAX_N skip, cluster_id 결정 배정, un-cluster=NULL.
+- TC-46-5 (투영·프론트): AGE Table 정점 cluster_id/label → scope_roots/schema_tables RETURN → _metaSimGroups be: 그룹(≥2), 없으면 affix 폴백. un-cluster=phantom 없음.
+- TC-46-6 (kill switch/회귀): AUTO=0 데몬 미기동. 기존 pgvector RAG·category_* 무영향.
+
+### Run (2026-07-03) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS** · py ast(semantic_cluster/insight/metadata_graph/config/0035) **PASS** · `migrate-lint` **PASS(expand-safe)**.
+- 순수함수 격리(컨테이너 numpy) **4/4 PASS**: 시그니처 결정론·commonAffix 라벨·kNN+union-find(degree-cap distinct 노드 분리)·MAJOR-1 strip-hash 정합.
+- metadata_graph 회귀(test_metadata_graph_units + test_sync_graph_from_relational) **10 PASS**(sync_table/scope_roots/schema_tables 변경 무회귀).
+- §18.8 2단계 적대검증(설계 워크플로우 + 구현 리뷰): MAJOR-1/MAJOR-2/MINOR-3 반영. REV-20260703T160303.
+- **POST-DEPLOY**: alembic 0035 라이브 적용 + web/insight-worker 재배포 + PB-0008(그래프 렌더·affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — feature-0003 TEST.md §3 Windows-browser Run).
+
+## crossds-rel — 크로스-데이터소스 관계 (Phase B, ADR-019, TASK §47, 2026-07-04)
+
+### 케이스
+- TC-47-1 (마이그 0036): table_relationships 에 source/target_datasource_key + 7-col UNIQUE + CHECK 'manual' + ds 인덱스 2 를 비파괴 적용(backfill src_ds=tgt_ds=datasource_key). head=0036, migrate-lint ACK.
+- TC-47-2 (ON-CONFLICT 불변식): upsert 7-col ON CONFLICT == 최신 마이그 UPGRADE 7-col UNIQUE (head-aware 테스트).
+- TC-47-3 (프로브 가드): fetch_probe_candidates 가 src_ds=tgt_ds 만 반환 → 크로스-ds candidate 영구 유지(파단 없음).
+- TC-47-4 (manual 승격): source='manual' upsert → status='trusted'(_TRUSTED_SOURCES + DO UPDATE). 크로스-ds 유일 승격 경로.
+- TC-47-5 (컨텍스트 제외): _fetch_relationships 가 크로스-ds candidate 제외(trusted만), [교차DB] 마커. 9-col caller 호환.
+- TC-47-6 (그래프 투영): 크로스-ds 엣지 각 끝점 자기 datasource scope 앵커(cross_ds), neighborhood 자동 노출. intra-ds/794 레거시 scope byte-보존.
+- TC-47-7 (추론, 데몬 OFF): infer_cross_datasource — effective schema(MSSQL DB명)·유사도≥MIN_SIM·공통 keyish 컬럼·reverse-dup 카논화·per-ds cap.
+- TC-47-8 (UI): 크로스-ds 엣지 마젠타 점선(same-ds candidate 골드와 구분).
+
+### Run (2026-07-04) — pre-deploy 격리 검증
+- `node --check admin.js` **PASS** · py ast(relationships/metadata_graph/node_analysis/insight/config/0036) **PASS** · `migrate-lint` **ACK**(서명 annotation, contract 2-phase 전제·fail-soft).
+- pytest **67 PASS**(test_relationships 전체 — head-aware ON-CONFLICT==UNIQUE 불변식 포함 + metadata_graph 회귀). semantic_cluster._effective_schema import OK.
+- §18.8 2단계 적대검증(설계 워크플로우 + 구현 리뷰): **SHIP for inert deploy**(데몬 OFF). flip-전 블로커 MSSQL effective schema(MAJOR)·negative-decay 가드·reverse-dup·cap 반영. REV-20260704T043653.
+- **POST-DEPLOY**: alembic 0036 라이브 적용 + web/insight-worker 재배포 + PB-0008(그래프 렌더·관계 무회귀·pageerror 0; 크로스-ds 엣지는 AUTO=1 flip + 임베딩 populate 후 eventual — feature-0003 TEST.md §3 Windows-browser Run).

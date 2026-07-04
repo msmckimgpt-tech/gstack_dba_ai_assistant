@@ -439,4 +439,139 @@ source_of_truth: true
   - **Cytoscape 로 롤백**: ADR-004 가 해소한 5개 관찰 결함(클릭접힘·위치점프·줌지연·클러스터뒤섞임·테두리왜곡) 재발 — 기각.
   - **force layout 재도입**: ④ 클러스터 뒤섞임 재유발(ADR-004 기각 사유) — 기각. offset 레이어가 결정론 유지하며 자유배치 제공.
 - Supersedes: (ADR-004 의 결정론 배치를 대체하지 않음 — 그 위에 opt-in offset 레이어 추가)
+## ADR-016 — 함수·프로시저 노드: routine_objects SSOT + AGE Routine 라벨 + INFORMATION_SCHEMA 공통 경로 + 정의 파싱 참조
+- Status: Accepted
+- Date: 2026-07-03
+- Context: 사용자 요청(REQ-20260703-graph-funcproc-uxfix ①) — 그래프 뷰에 **함수 & 프로시저 노드**를
+  구성하고 분석·관계도 구성. 기존 그래프는 Table/Column/GlossaryTerm 만 다뤄 DB 의 코드 객체(프로시저·
+  함수)가 완전히 비가시였다 — 게임 운영 DB 는 지급/정산 로직이 프로시저에 있는 경우가 많아 "이 테이블을
+  누가 읽고 쓰는가"의 큰 축이 빠져 있었다.
+- Decision:
+  1. **SSOT = 신규 관계형 `routine_objects`**(alembic 0034, 비파괴 추가) — AGE 는 투영(FUNCTION §4.3
+     원칙 불변). insight-worker 가 관계 유지보수 게이트(rel_maintenance_due, ADR-007 cadence)에서
+     `INFORMATION_SCHEMA.ROUTINES/PARAMETERS`(MySQL·MSSQL **공통 뷰**)를 조회해 upsert(`modules/
+     routines.py`). 반환형은 방언별 컬럼이 갈려(MySQL DTD_IDENTIFIER vs MSSQL DATA_TYPE) PARAMETERS
+     의 ORDINAL_POSITION=0(공통 규약)에서 얻는다. 스키마-slot 은 ADR-007 규약(MySQL=schema/MSSQL=DB명,
+     store/query 분리). 변경 없는 행은 updated_at 불변(IS DISTINCT FROM 가드 — 증분 sync 정합).
+  2. **참조 테이블 = 정의 텍스트 보수적 파싱**: FROM/JOIN(read)·INSERT INTO/UPDATE/DELETE FROM/
+     MERGE INTO(write) 뒤 식별자를 leaf 정규화해 **그 스키마에 실재하는 테이블만** 채택(임시 #·변수 @·
+     미존재·자기자신 제외, 테이블당 1 entry — write 우선). MSSQL 정의는 4000자 절단본이라 부분 커버
+     수용(정확도보다 안전 우선).
+  3. **그래프 모델**: vlabel `Routine`(props: routine_type function|procedure, params) + elabel
+     `HAS_ROUTINE`(Schema→Routine)·`ROUTINE_USES`(Routine→Table, relation_type read|write).
+     key/fqn = `schema.name()` — 뒤의 `()` 가 동명 테이블 키(`schema.name`)와의 전역 key 충돌을 막는
+     네임스페이스(GlossaryTerm `term:` prefix 와 동형 발상)이자 사람이 읽는 함수 표기. 참조 Table 은
+     최소 MERGE 앵커링(고아 엣지 방지 — _anchor_relationship_column 동형).
+  4. **노출**: schema_tables 가 Routine+ROUTINE_USES 를 함께 반환(클러스터 펼침 시 테이블과 나란히
+     ƒ/⚙ 보라 칩 #7b5cd6, 사용 엣지=보라 잔점선) · 검색(routine_type 포함) · 상세 패널(유형·파라미터·
+     사용 테이블/사용 루틴 상호 이동) · AI 능동 분석(ROUTINE_USES = content 신호 0.35, NODE_ANALYSIS_PROMPT
+     에 Routine 라벨 계약 추가).
+- Consequences: 프로시저/함수가 스키마 클러스터 안에 테이블과 나란히 출현하고, 어떤 테이블을 읽고
+  쓰는지가 그래프·상세·AI 분석에서 관측된다. introspection 은 read-only + 스키마당 cap
+  (`AGENT_ROUTINE_INTROSPECT_CAP` 300) + cadence 게이트라 부하 제한적. 알려진 한계: ① 정의 접근 권한
+  부재 시 ROUTINE_DEFINITION NULL — 노드는 생기고 참조만 빈다(graceful). ② 동적 SQL(EXEC(@s))·절단
+  정의의 참조는 누락 가능 — MSSQL sys.sql_expression_dependencies 승격은 후속. ③ routine→routine
+  호출(EXEC) 관계는 v1 범위 밖. ④ ROUTINE_USES 엣지는 양끝이 렌더된 경우만 표시(접힌 스키마 카드로의
+  승격은 후속).
+- Alternatives:
+  - rag_objects 에 object_type='routine' 편입: 기존 object_type='table' 가정 소비처(그래프 sync·검색·
+    insight)의 blast-radius 큼 + referenced_tables/params 필드 부재 → 전용 테이블(기각).
+  - 라벨 2개(Function/Procedure): 화이트리스트·색·범례 2배 — routine_type 속성 1개가 단순(기각).
+  - MSSQL sys.sql_expression_dependencies: 정확하나 방언 분기 확대 — v1 은 공통 뷰 단일 경로, 정확도
+    요구 확인 후 승격(보류).
+- Supersedes:
+- Superseded By:
+
+## ADR-017 — AI 능동 분석 정제: 참조 컬럼의 부모 테이블 same-depth 승격 + hover 지침(user_prompt) 주입 + '재분석' 제거
+- Status: Accepted
+- Date: 2026-07-03
+- Context: 사용자 관찰 3건(REQ-20260703 ③④⑤). ③ 앵커 게이팅(ADR-003) 이후, 재귀가 참조 **컬럼**까지는
+  분석하지만 그 컬럼의 **소속 테이블**은 이름·설명이 앵커와 무관하면 content=0 으로 탈락 — "컬럼은
+  분석됐는데 그 부모 테이블은 미분석"인 어색한 절단(예: Achievement.ItemID→ItemMaster.ItemID 컬럼은
+  분석, ItemMaster 테이블은 미분석). ④ 분석 완료 box 의 '↻ 재분석' 버튼은 헤더 '✨ 능동 분석' 재실행과
+  중복(UX). ⑤ 분석 의도를 전달할 입력이 없어 항상 같은 관점의 분석문만 생성.
+- Decision:
+  1. **부모 테이블 same-depth 승격**: 분석되는 노드가 Column 이면 그 HAS_COLUMN 부모 Table 을 임계와
+     무관하게 승격 enqueue — 관련도는 고정 0.5(교차 제품은 CROSS_SCOPE_FACTOR 감쇠, env
+     `AGENT_NODE_ANALYSIS_PARENT_TABLE_REL`), **depth 는 컬럼과 같은 층**("소속"은 추가 hop 이 아니다 —
+     depth_budget 마지막 층 컬럼의 테이블도 분석됨). 그 테이블의 *다음* 확장은 여전히 앵커 게이팅이
+     막아 재귀 심화를 억제(사용자 요구 "테이블까진 분석하되 너무 깊어지진 않게"의 구현). node_budget·
+     dedupe(UNIQUE run_id,node_key) 불변.
+  2. **'재분석' 제거**: box 의 '↻ 재분석' 버튼·ctxmenu 'AI 재분석' 라벨 삭제 — 능동 분석 재실행이 곧
+     재분석(단일 진입점).
+  3. **hover 지침**: '✨ 능동 분석' 버튼 hover 시 툴팁형 입력(≤400자, Esc 닫기·Ctrl+Enter 시작) →
+     `analyze POST prompt` → `node_analysis_runs.user_prompt`(alembic 0034) 저장 → (a) **앵커 토큰에
+     합류**(관련도 채점이 지침 어휘를 따라 재귀 방향에 반영) + (b) LLM payload `user_intent` 주입
+     (NODE_ANALYSIS_PROMPT 에 "분석 관점으로 자율 반영하되 출력 계약·데이터 불변" 가드 명문화 —
+     사용자 요구 "llm의 자율적인 판단 하에" 정합). 진행 중 run 재사용 시 새 지침은 무시(앞뒤 분석문
+     관점 혼합 방지). 마이그 창(컬럼 부재)은 role(B1) 동형 legacy 폴백 + 1회 경고.
+- Consequences: 참조 컬럼이 분석되면 소속 테이블도 같은 run 에서 분석돼 "테이블까지" 완결되고, 무관
+  fan-out 은 앵커 게이팅·예산이 그대로 차단. 지침 입력 시 재귀 방향·분석문이 사용자 의도를 따른다
+  (soft 신호 — 강제 아님). UI 는 버튼 1개로 단순화. 알려진 한계: 승격은 Column→Table 1단만(Schema
+  허브 차단 불변). audit 에는 prompt_len + 120자 preview 만 기록.
+- Alternatives:
+  - depth+1 로 부모 enqueue: depth_budget 마지막 층에서 여전히 탈락 — 사용자 관찰 그대로 재발(기각).
+  - 관련도 상속(컬럼 rel×계수): claim 쿼리에 rel 반환 추가 필요 + 깊을수록 0 수렴해 승격 실패 —
+    고정값 + 교차 제품 감쇠가 단순·예측 가능(기각).
+  - 지침을 노드 필터로 강제: LLM 자율성 상실 + 빈 결과 위험 — soft 신호(토큰 합류 + user_intent)로
+    절충(기각).
+- Supersedes: (ADR-003 게이팅에 승격 예외 1종 추가 — 대체 아님, 정제)
+- Superseded By:
+
+## ADR-018 — 메타데이터 객체 의미 임베딩·클러스터링 (Phase C, ADR-013 후속 initiative 이행)
+- Status: accepted (2026-07-03)
+- Context: ADR-013 이 "affix 휴리스틱은 시맨틱 임베딩이 아니다 — 컬럼 시그니처·설명 임베딩 기반 백엔드 클러스터링은
+  별도 initiative(서버 계산·저장 스키마 필요)"로 이연한 후속 과제. 사용자 3대 개선 中 C. 임베딩 인프라는 이미 완비
+  (texts 저장소·bge-m3 1024d·embedding 데몬·pgvector HNSW)이나 **메타데이터 객체(테이블/컬럼)는 미임베딩**.
+- Decision: 결정론 배치·affix 위에 **서버측 의미 클러스터 신호**를 additive 로 얹는다.
+  1. **시그니처 임베딩(재사용)**: 테이블별 시그니처 텍스트(이름+설명+정렬 컬럼명+역할/도메인, DB-distinct=object_key
+     effective schema 포함)를 기존 `texts` 저장소에 적재(dedup by sha256) → **기존 embedding 데몬이 자동 임베딩**
+     (신규 embedding 경로 0, ADR-0021 "one embedding per text_hash" 계약). rag_objects 에 `signature_text_hash`
+     (texts join 키·변경감지) 컬럼. **write-key=join-key 정합**: `_text_hash(sig.strip())`(리뷰 MAJOR-1 — 컬럼 없는
+     테이블 trailing space divergence 방지).
+  2. **저장(비파괴, alembic 0035)**: rag_objects 에 `signature_text_hash`·`semantic_cluster_id`·`semantic_cluster_label`
+     3 nullable 컬럼 + 인덱스 2개. category_* denormalization 과 대칭(신규 테이블 회피 — 0017/0028 GRANT trap 회피).
+  3. **클러스터링(insight-worker 데몬 스레드)**: scope(scope_key,datasource_key)별 kNN(코사인 τ)+union-find 단일연결.
+     노드당 이웃 상한(MAX_DEGREE)로 chaining 억제(리뷰 MAJOR). numpy N×N(FULLMATRIX_MAX_N 이하), 초과 scope 는
+     skip→affix 폴백(OOM 가드, 리뷰 MINOR). cluster_id=멤버 min(object_key) 순 결정 배정. 6h cadence(PG kv).
+  4. **투영·프론트**: sync_table/sync_graph 가 클러스터를 AGE Table 정점에 실어 scope_roots/schema_tables 가 RETURN
+     (`cluster_id`/`cluster_label`). 프론트 `_metaSimGroups` 가 backend 클러스터(`be:`) 우선, 없으면 affix 폴백
+     (namespace 1회, ≥2 게이팅). **un-cluster(→NULL)는 명시 clear**(_NULLABLE_PROP_KEYS → `= null`, phantom be: 그룹
+     방지, 리뷰 MAJOR-2).
+- Consequences: affix(클라 휴리스틱) → 의미 임베딩(서버) 상위 신호로 sim-group 정밀도 향상. **DB 스키마 비파괴
+  (nullable 추가)·기존 pgvector RAG 무영향·kill switch(AGENT_METADATA_CLUSTER_AUTO=0)·fail-soft·affix 폴백**.
+  임베딩·클러스터는 eventual(데몬 cadence — 배포 직후엔 affix, 몇 cycle 후 클러스터 채워짐). Phase B(크로스-데이터소스
+  관계)가 이 시그니처 임베딩을 재사용해 크로스-ds 후보를 유사도로 발굴한다.
+- Alternatives: 신규 테이블(중복 keying·GRANT·인덱스·sync 표면↑, 기각) / rag_objects 자체 vector 컬럼(texts dedup
+  이점 상실, 기각) / sklearn·scipy(신규 heavy dep, 기각 — numpy만) / LLM 라벨(비용, 후속 옵션 — 현재 commonAffix 서버포트).
+- Supersedes: (ADR-013 의 이연분 이행 — affix 계층은 폴백으로 계승, 대체 아님)
+- Superseded By:
+
+## ADR-019 — 크로스-데이터소스 관계 (Phase B, 의미 임베딩 구동 후보 + 신뢰 게이팅)
+- Status: accepted (2026-07-04)
+- Context: 사용자 3대 개선 中 B — "다른 DB 간 관계가 구성될 수 있으니 그 구조를 위한 연결 구축". 실측상 관계 엔진은 3중
+  경계(table_relationships 단일 scope_key/datasource_key·추론 per-schema·프로브 단일 커넥션)로 datasource 내부에만
+  갇혀 있었다(조사 확인). 크로스-데이터소스 조인은 FK·프로브가 불가능(다른 엔드포인트)하므로 **의미 유사도**로만
+  후보 발굴 가능 — Phase C(ADR-018) 시그니처 임베딩이 그 토대.
+- Decision: 사용자 결정(크로스-데이터소스까지)대로 데이터소스 경계를 넘는 관계를 additive 로 표현·발굴·표시.
+  1. **data model(alembic 0036, 비파괴)**: table_relationships 에 source/target_datasource_key(default '', 기존 행
+     backfill=datasource_key) + UNIQUE 7-col 진화(intra-ds refine) + CHECK 에 'manual' 추가. upsert ON CONFLICT 7-col.
+  2. **추론(insight-worker 데몬, 기본 OFF)**: Phase C 시그니처 임베딩 pgvector 코사인으로 서로 다른 datasource 의
+     의미-유사 테이블을 찾고, 양쪽 공통 join-key 컬럼(동명·식별자형)을 후보(source='inferred', status='candidate')로.
+     effective schema(MSSQL DB명) 사용(그래프 노드 정합). AGENT_XDS_RELATIONSHIP_INFER_AUTO=0 로 ship — 임베딩
+     populate 후 flip.
+  3. **신뢰 게이팅**: 크로스-ds 는 프로브 검증 불가 → fetch_probe_candidates 가 src_ds=tgt_ds 만 프로브(영구 candidate,
+     오분류 파단 방지) + apply_relationship_signal 도 intra-ds 전용(오염 감쇠 방지). **승격은 manual 큐레이션(source=
+     'manual'→trusted)만**(대화 JOIN 은 단일 커넥션이라 실질 불가). AI 컨텍스트는 크로스-ds 는 **trusted 만 주입**
+     (미검증 candidate 오염 차단, load_relationship_context). 주입 시 [교차DB] 마커.
+  4. **그래프 투영·완화**: sync_relationship 이 각 끝점을 **자기 datasource scope**(_vkey)로 앵커(cross_ds edge 속성).
+     neighborhood BFS 는 scope-무관이라 크로스 엣지 자동 노출. node_analysis 는 **의도적 cross_ds REFERENCES** 로 도달한
+     이웃의 cross-scope 감쇠를 완화(1.0, 우연 교차는 0.25 유지) + 이웃 job 을 자기 scope 로 기록.
+  5. **UI**: 크로스-ds 엣지 = 마젠타 점선(same-ds candidate 골드와 구분) + [교차DB] 데이터.
+- Consequences: 데이터소스 경계를 넘는 관계가 표현·발굴·표시된다. **비파괴·데몬 OFF ship(스키마·UI·완화만 즉시,
+  추론 inert)**. 마이그 mixed-version 창은 fail-soft(OLD 5-col ON CONFLICT 가 7-col DB 에서 실패해도 upsert try/except).
+  크로스-ds 는 검증 불가라 보수적(높은 MIN_SIM·trusted-only 주입·manual 승격). Phase C 임베딩 populate 후 AUTO=1 flip.
+- Alternatives: 데이터소스 내 카탈로그 크로스만(프로브 가능·안전하나 사용자 "다른 DB 간" 미충족, 기각) / cross-ds 를
+  probe(불가 — 다른 엔드포인트, 기각) / auto-promote to trusted(검증 없이 신뢰=오염 위험, 기각 — manual/대화만).
+- Supersedes:
 - Superseded By:

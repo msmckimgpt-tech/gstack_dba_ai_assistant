@@ -1421,12 +1421,36 @@ ORDER BY TABLE_NAME
                         logging.getLogger("insight").warning(
                             "relationship_infer_probe_failed schema=%s", schema, exc_info=True)
 
-                # rel-selfheal cadence 스탬프 — introspect/추론 어느 쪽이든 이번 사이클에 관계
-                # 유지보수를 수행했으면 기록(둘 다 off 면 미기록 → 활성화 시 즉시 발화).
+                # feature-0016 graph-funcproc(ADR-016): 함수·프로시저 introspect → routine_objects.
+                # 발화 게이트 = rel_maintenance_due(관계 유지보수와 동일 cadence). 정의 파싱으로
+                # 참조 테이블(read/write)을 추출해 그래프 ROUTINE_USES 투영 입력으로 쓴다.
+                # 전부 guarded — insight 스캔을 절대 차단하지 않는다(B-F7: 실패는 경고 1줄).
+                if AGENT_ROUTINE_INTROSPECT_ENABLED and rel_maintenance_due:
+                    try:
+                        from . import routines as _routines
+                        _rt_scope = get_active_datasource()
+                        _n_rt = _routines.introspect_and_store(
+                            db_conn, schema, all_table_names,
+                            kb_conn=None, scope_key=_rt_scope,
+                            datasource_key=str(_rt_scope or ""), source_run_id=run_id,
+                            store_schema=_rel_store_schema,
+                            cap=AGENT_ROUTINE_INTROSPECT_CAP)
+                        report["routines_introspected"] = int(
+                            report.get("routines_introspected", 0)) + int(_n_rt or 0)
+                    except Exception:
+                        logging.getLogger("insight").warning(
+                            "routine_introspect_failed schema=%s", schema, exc_info=True)
+
+                # rel-selfheal cadence 스탬프 — introspect/추론/routine 어느 쪽이든 이번 사이클에
+                # 유지보수를 수행했으면 기록(전부 off 면 미기록 → 활성화 시 즉시 발화).
+                # graph-funcproc(§18.8 패널 MINOR): routine 훅은 all_table_names 없이도(테이블 0·
+                # 프로시저만 있는 스키마) 발화하므로, 스탬프도 같은 조건으로 남겨야 매 cycle
+                # ROUTINES/PARAMETERS 재조회 spin 이 없다 — 게이트/스탬프 조건 정합.
                 if (rel_maintenance_due
-                        and (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
-                             or AGENT_RELATIONSHIP_INFERENCE_ENABLED)
-                        and all_table_names):
+                        and ((AGENT_RELATIONSHIP_INTROSPECT_ENABLED
+                              or AGENT_RELATIONSHIP_INFERENCE_ENABLED)
+                             and all_table_names
+                             or AGENT_ROUTINE_INTROSPECT_ENABLED)):
                     try:
                         _rel_now = utc_now_iso()
                         save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, rel_infer_key, _rel_now)
@@ -2802,6 +2826,80 @@ def _start_embedding_backfill_thread() -> None:
         logging.getLogger("insight").warning("embedding_backfill 스레드 기동 실패(무시): %s", exc)
 
 
+def _semantic_cluster_loop() -> None:
+    """feature-0016 Phase C: 메타데이터 시그니처 백필 + scope 별 의미 클러스터링 백그라운드 루프.
+
+    embedding 데몬(위)과 동형 — 별도 데몬 스레드에서 돌며 tick(8s)을 블로킹하지 않는다(임베딩·유사도 계산은
+    gateway/PG 지연 bound·batchy). pass 당 signature 백필 + cadence-due scope 클러스터링. fail-soft."""
+    interval = max(60, int(AGENT_METADATA_CLUSTER_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from modules import semantic_cluster
+            rep = semantic_cluster.run_cluster_maintenance()
+            sig = (rep or {}).get("signature") or {}
+            if int(sig.get("changed") or 0) > 0 or int((rep or {}).get("updated") or 0) > 0:
+                _log.info(
+                    "semantic_cluster sig_changed=%s scopes=%s clustered=%s updated=%s",
+                    sig.get("changed"), (rep or {}).get("scopes"),
+                    (rep or {}).get("clustered"), (rep or {}).get("updated"),
+                )
+        except Exception as exc:   # 스레드 보호 — 어떤 예외도 루프를 죽이지 않음
+            _log.warning("semantic_cluster pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_semantic_cluster_thread() -> None:
+    """AUTO 켜짐 시 Phase C 클러스터링 데몬 스레드 1회 기동(embedding 백필 스레드와 동형·분리)."""
+    if not AGENT_METADATA_CLUSTER_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_semantic_cluster_loop, name="meta-semantic-cluster", daemon=True)
+        t.start()
+        logging.getLogger("insight").info(
+            "semantic_cluster 스레드 기동(interval=%ss, recompute=%ss, sig_batch=%s)",
+            AGENT_METADATA_CLUSTER_INTERVAL_SEC, AGENT_METADATA_CLUSTER_RECOMPUTE_SEC,
+            AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS,
+        )
+    except Exception as exc:
+        logging.getLogger("insight").warning("semantic_cluster 스레드 기동 실패(무시): %s", exc)
+
+
+def _xds_relationship_infer_loop() -> None:
+    """feature-0016 Phase B(ADR-019): 크로스-데이터소스 관계 추론 백그라운드 루프(Phase C 임베딩 구동).
+
+    embedding/cluster 데몬과 동형·분리 — tick 무블로킹. pass 당 infer_cross_datasource_relationships +
+    store_xds_inferred_relationships. **기본 OFF**(AGENT_XDS_RELATIONSHIP_INFER_AUTO) — 임베딩 populate 후 flip. fail-soft."""
+    interval = max(300, int(AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from modules import relationships as _rel
+            n = _rel.store_xds_inferred_relationships()
+            if n:
+                _log.info("xds_relationship_infer upserted=%s", n)
+        except Exception as exc:   # 스레드 보호
+            _log.warning("xds_relationship_infer pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_xds_relationship_infer_thread() -> None:
+    """AUTO 켜짐 시 크로스-ds 관계 추론 데몬 스레드 1회 기동(기본 OFF — 임베딩 populate 후 flip)."""
+    if not AGENT_XDS_RELATIONSHIP_INFER_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_xds_relationship_infer_loop, name="xds-relationship-infer", daemon=True)
+        t.start()
+        logging.getLogger("insight").info(
+            "xds_relationship_infer 스레드 기동(interval=%ss, min_sim=%s)",
+            AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC, AGENT_XDS_RELATIONSHIP_MIN_SIM,
+        )
+    except Exception as exc:
+        logging.getLogger("insight").warning("xds_relationship_infer 스레드 기동 실패(무시): %s", exc)
+
+
 # feature-0015: SIGTERM/SIGINT → graceful. 현재 cycle 을 마저 끝내고(루프 경계에서) 종료.
 # insight 쓰기는 멱등(_upsert_fact autocommit 단일-fact + advisory lock + 다음 스캔 재유도)이라
 # SIGKILL 도 데이터 손상은 없으나, graceful 종료로 (a) 진행 cycle 의 불필요한 중단/LLM 비용 낭비,
@@ -2846,6 +2944,10 @@ def run_insight_worker_loop() -> None:
         logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)
     # TASK-0307: embedding 백필 데몬 스레드 기동(본 tick 루프와 분리 — 블로킹 방지).
     _start_embedding_backfill_thread()
+    # feature-0016 Phase C: 메타데이터 시그니처 임베딩 + 의미 클러스터링 데몬 스레드(embedding 스레드와 분리·동형).
+    _start_semantic_cluster_thread()
+    # feature-0016 Phase B: 크로스-데이터소스 관계 추론 데몬 스레드(기본 OFF — AGENT_XDS_RELATIONSHIP_INFER_AUTO).
+    _start_xds_relationship_infer_thread()
     while not _INSIGHT_SHUTDOWN.is_set():
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()

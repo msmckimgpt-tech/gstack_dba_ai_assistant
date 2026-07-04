@@ -3209,6 +3209,7 @@ const _metaGraph = {
   _busyKeys: new Map(),   // graph-perf-bg fix: key -> busy 를 세운 _opSeq(소유권). refreshStates 가 busy 를 보존·복원하고, 같은 key 재트리거 시 신 op busy 를 stale op 가 지우지 않게 한다.
   tableDeps: new Map(),   // graph-drag(REQ ②): Table key -> [종속 UI 노드 id](접기 "X:" ctl + 컬럼 노드). 매 _metaG6Build 재구성. 테이블 드래그 시 함께 이동.
   _drag: null,            // graph-drag(REQ ②): 진행 중 테이블 드래그 상태 {id, offs:[{id,ox,oy}]}(종속별 테이블 대비 월드 오프셋). null=비활성.
+  aiPrompt: "",           // graph-funcproc(ADR-017): AI 능동 분석 hover 지침 — 세션 내 보존(상세 재렌더 시 prefill).
   // graph-freeplace: 자유 배치 persistence(ADR-004 결정론 배치가 rebuild 마다 초기화하던 것을 복원 — 사용자 후속 회귀 보고).
   //   clusterOffset: 스키마 클러스터(combo) 단위 사용자 드래그 누적 이동(dx,dy) — build 가 L.x0/L.y0 에 가산해 클러스터
   //     전체(카드·테이블·컬럼·장식)를 coherent 하게 이동시키고 rebuild(펼침/접기) 후에도 유지. combo:dragend 가 누적.
@@ -3231,7 +3232,7 @@ const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 
 function _metaSchemaComboOf(n) {
   if (!n) return _META_TERMS_COMBO;
   if (n.label === "Schema") return n.key;
-  if (n.label === "Table" || n.label === "Column") {
+  if (n.label === "Table" || n.label === "Column" || n.label === "Routine") {
     const sc = _metaCatParent(n.key, n.fqn);
     if (sc) return sc;
   }
@@ -3301,6 +3302,12 @@ function _metaColStyle(x, y) {
   return { x, y, size: 11, fill: _META_GRAPH_COLOR.Column, stroke: "#ffffff", lineWidth: 1,
     labelPlacement: "right", labelFill: "#161b22", labelFontSize: 10, labelOffsetX: 5, labelMaxWidth: 168, cursor: "pointer" };
 }
+// graph-funcproc(ADR-016): 함수·프로시저 칩 — 테이블 칩과 같은 자리(클러스터 열)에 서되 보라 + 둥근 모서리로 구분.
+function _metaRoutineStyle(x, y, rel) {
+  const w = Math.min(190, _METLAY.TW + (typeof rel === "number" ? Math.round(rel * 40) : 0));
+  return { x, y, size: [w, 24], radius: 12, fill: _META_GRAPH_COLOR.Routine, stroke: "#ffffff", lineWidth: 1,
+    labelPlacement: "center", labelFill: "#ffffff", labelFontSize: 11, labelFontWeight: 700, labelMaxWidth: 176, cursor: "pointer" };
+}
 function _metaCtlStyle(x, y) {
   return { x, y, size: [18, 18], radius: 4, fill: "#ffffff", stroke: "#0a5b66", lineWidth: 1.5,
     labelText: "−", labelPlacement: "center", labelFill: "#0a5b66", labelFontSize: 15, labelFontWeight: 700, cursor: "pointer" };
@@ -3324,11 +3331,18 @@ function _metaComboStyleFor(isTerms) {
     fill: isTerms ? _META_GRAPH_COLOR.GlossaryTerm : _META_GRAPH_COLOR.Schema,
     fillOpacity: 0.045, stroke: isTerms ? "#d3b06a" : "#aab3c5", lineWidth: 1, lineDash: [6, 4], collapsedMarker: false };
 }
-function _metaEdgeStyleFor(status) {
+function _metaEdgeStyleFor(status, crossDs) {
+  // crossds-rel(ADR-019): 교차DB 관계는 상태 무관 별도 클래스 — 마젠타 점선(same-ds candidate 골드 점선과 구분).
+  //   프로브 검증 불가라 항상 추정성. trusted 승격돼도 교차DB 임을 시각 유지.
+  if (crossDs) return { stroke: "#a855c7", lineWidth: 1.8, lineDash: [2, 4], endArrow: true };
   const s = { stroke: status === "trusted" ? "#6b4410" : (status === "candidate" ? "#c9a24a" : "#cbd2db"),
     lineWidth: status === "trusted" ? 3 : (status === "candidate" ? 1.8 : 1.4), endArrow: true };
   if (status === "candidate") s.lineDash = [6, 4];   // 실선은 lineDash 키 생략(false 금지 — G6 크래시, BLUEPRINT §3)
   return s;
+}
+// graph-funcproc(ADR-016): 함수·프로시저 → 테이블 사용 엣지(ROUTINE_USES) — 보라 잔점선(추정 점선과 구분).
+function _metaRoutineEdgeStyle() {
+  return { stroke: _META_GRAPH_COLOR.Routine, lineWidth: 1.5, lineDash: [2, 3], endArrow: true };
 }
 function _metaNodeStates(key) {
   const st = [];
@@ -3603,11 +3617,22 @@ function _metaSimFamilies(tables) {
 function _metaSimGroups(schemaId, tables, adj) {
   const fam = _metaSimFamilies(tables);
   const roleFam = (t) => { const r = _metaRoleOf(t.key); return r ? "role:" + r : null; };
+  // Phase C(ADR-013 후속, semantic-embed): 백엔드 의미 클러스터(be:) 우선. namespace 는 정확히 1회('be:'+id)
+  //   부여 — 하류 nm: 재접두 대상에서 제외(verify MAJOR: 이중 namespace 방지). 이 스키마 내 be: 멤버 ≥2 일
+  //   때만 그룹화하고, 싱글턴이면 affix 폴백(be: 클러스터는 datasource 전역이라 한 스키마엔 1개만 있을 수 있음).
+  const beOf = new Map(), beCnt = new Map();
+  tables.forEach((t) => {
+    const be = (t.cluster_id != null && String(t.cluster_id) !== "") ? ("be:" + t.cluster_id) : null;
+    beOf.set(t.key, be);
+    if (be) beCnt.set(be, (beCnt.get(be) || 0) + 1);
+  });
   // 1차 배정 + 싱글턴 판정
   const byFam = new Map();
   tables.forEach((t) => { const f = fam.get(t.key); if (f) { if (!byFam.has(f)) byFam.set(f, []); byFam.get(f).push(t); } });
   const famOf = new Map();   // tKey -> famKey (확정)
   tables.forEach((t) => {
+    const be = beOf.get(t.key);
+    if (be && beCnt.get(be) >= 2) { famOf.set(t.key, be); return; }   // 백엔드 클러스터 우선(namespace 1회)
     const f = fam.get(t.key);
     if (f && byFam.get(f).length >= 2) { famOf.set(t.key, "nm:" + f); return; }
     famOf.set(t.key, null);   // 싱글턴/무family — 2차에서 attach
@@ -3631,7 +3656,7 @@ function _metaSimGroups(schemaId, tables, adj) {
   // 역할/기타 family 도 싱글턴이면 기타로 흡수 (nm: 은 2차 attach 로 커질 수 있어 유지)
   const cnt = new Map();
   famOf.forEach((f) => cnt.set(f, (cnt.get(f) || 0) + 1));
-  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("nm:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
+  tables.forEach((t) => { const f = famOf.get(t.key); if (f !== "misc" && !f.startsWith("nm:") && !f.startsWith("be:") && cnt.get(f) < 2) famOf.set(t.key, "misc"); });
   // 그룹 리스트 + 라벨
   const groupsBy = new Map();
   tables.forEach((t) => { const f = famOf.get(t.key); if (!groupsBy.has(f)) groupsBy.set(f, []); groupsBy.get(f).push(t); });
@@ -3652,6 +3677,12 @@ function _metaSimGroups(schemaId, tables, adj) {
   const labelOf = (f, members) => {
     if (f === "misc") return "기타";
     if (f.startsWith("role:")) { const r = f.slice(5); const R = _META_ROLE[r]; return R ? R.icon + " " + R.ko : r; }
+    if (f.startsWith("be:")) {   // Phase C: 백엔드 의미 클러스터 — 서버 라벨 우선, 없으면 affix/멤버 폴백
+      const m = (members || []).find((x) => x && x.cluster_label);
+      if (m && m.cluster_label) return String(m.cluster_label);
+      const ca = commonAffix(members || []);
+      return ca || ("의미군 " + f.slice(3));
+    }
     let tok = f.slice(3);   // nm:token
     if (members && members.length >= 2) { const ca = commonAffix(members); if (ca && ca.length > tok.length) tok = ca; }
     if (members && members.length) {   // 방향 말줄임 — "이 스템으로 시작/끝나는 테이블들" 범위 신호(정확 일치 멤버가 있으면 생략)
@@ -3715,6 +3746,12 @@ function _metaG6Build() {
   _metaGraph.nodes.forEach((n) => {
     if (n.label === "Schema") { ensureG(n.key); return; }
     if (n.label === "Table") { ensureG(_metaSchemaComboOf(n)).tables.push(n); return; }
+    if (n.label === "Routine") {
+      // graph-funcproc(ADR-016): 함수·프로시저는 테이블과 나란히 소속 스키마 클러스터 열에 선다.
+      const sc = _metaSchemaComboOf(n);
+      if (sc !== _META_TERMS_COMBO) { ensureG(sc).tables.push(n); return; }
+      ensureG(_META_TERMS_COMBO).terms.push(n); return;
+    }
     if (n.label === "Column") {
       const tk = _metaColParent(n.key, n.fqn);
       const g = ensureG(_metaSchemaComboOf(n));
@@ -3928,6 +3965,19 @@ function _metaG6Build() {
         const ddx = _fp[0] - tx, ddy = _fp[1] - ty;
         colLeftX += ddx; tx += ddx; ty += ddy;
       }
+      if (it.label === "Routine") {
+        // graph-funcproc(ADR-016): 함수(ƒ)/프로시저(⚙) 칩 — 검색 매칭 강조는 테이블과 동일 룰.
+        //   §18.8 패널(NIT): isTerms 분기보다 먼저 — 스키마 세그먼트 없는 flat-scope Routine 이
+        //   terms 클러스터로 강등돼도 용어 칩이 아닌 ƒ/⚙ 보라 칩으로 렌더된다.
+        //   freeplace(_fp)·simgroups 배치(lx/top)는 위 공통 시프트가 이미 반영 — Routine 도 자유 배치 유지.
+        const rrel = (_metaGraph.mode === "search" && _metaGraph.searchMatchTables && _metaGraph.searchMatchTables.has(it.key))
+          ? Math.max(typeof it.rel === "number" ? it.rel : 0, 0.9) : it.rel;
+        const rLabel = _metaRoutineIcon(it.routine_type) + " " + (it.name || it.key);
+        nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key),
+          data: { label: it.name || it.key, kind: "routine", fqn: it.fqn, routine_type: it.routine_type || "" },
+          style: Object.assign(_metaRoutineStyle(tx, ty, rrel), { labelText: rLabel }) });
+        return;
+      }
       if (g.isTerms) {
         nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
         return;
@@ -3968,11 +4018,12 @@ function _metaG6Build() {
   };
   const aggMap = new Map();   // "src::tgt" → 집계 엣지(테이블-레벨 승격분)
   _metaGraph.edges.forEach((e) => {
-    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN") return;
-    // 비-REFERENCES(DESCRIBES/RELATED_TERM 등)는 기존대로 양끝 직접 렌더 시에만.
+    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN" || e.type === "HAS_ROUTINE") return;
+    // 비-REFERENCES(DESCRIBES/RELATED_TERM/ROUTINE_USES 등)는 기존대로 양끝 직접 렌더 시에만.
     if (e.type !== "REFERENCES") {
       if (present.has(e.source) && present.has(e.target)) {
-        edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: _metaEdgeStyleFor(e.status) });
+        const st = (e.type === "ROUTINE_USES") ? _metaRoutineEdgeStyle() : _metaEdgeStyleFor(e.status);
+        edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: st });
       }
       return;
     }
@@ -3980,24 +4031,25 @@ function _metaG6Build() {
     if (!rs || !rt || rs === rt) return;   // 미렌더 끝점 or 동일 테이블 내부(intra-table) 제외
     const colLevel = (rs === e.source && rt === e.target);
     if (colLevel) {
-      // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지).
-      edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true }, style: _metaEdgeStyleFor(e.status) });
+      // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지). crossds-rel: cross_ds 면 마젠타 점선.
+      edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true, cross_ds: e.cross_ds || 0 }, style: _metaEdgeStyleFor(e.status, e.cross_ds) });
       return;
     }
     // 한쪽 이상이 테이블로 승격 — 집계 엣지에 병합(dedupe + 상태 승급 + pairs 누적).
     const ak = rs + "::" + rt;
     let agg = aggMap.get(ak);
-    if (!agg) { agg = { id: "agg:" + ak, source: rs, target: rt, status: e.status || "", count: 0, pairs: [] }; aggMap.set(ak, agg); }
+    if (!agg) { agg = { id: "agg:" + ak, source: rs, target: rt, status: e.status || "", count: 0, pairs: [], crossDs: false }; aggMap.set(ak, agg); }
     agg.count += 1;
+    agg.crossDs = agg.crossDs || !!e.cross_ds;   // crossds-rel: 집계 쌍 중 하나라도 교차DB 면 교차DB 로 표식
     if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.status });
     if (e.status === "trusted" || (e.status === "candidate" && agg.status !== "trusted")) agg.status = e.status;   // 최강 상태 채택
   });
   aggMap.forEach((agg) => {
     // 집계 엣지는 여러 컬럼-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
-    const st = _metaEdgeStyleFor(agg.status);
+    const st = _metaEdgeStyleFor(agg.status, agg.crossDs);
     if (agg.count > 1) st.lineWidth = (st.lineWidth || 1.4) + 0.8;
     edges.push({ id: agg.id, source: agg.source, target: agg.target,
-      data: { label: "REFERENCES", status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs },
+      data: { label: "REFERENCES", status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
       style: st });
   });
   // graph-initview: 렌더된 요소 id 집합(노드+combo) — setElementState/focus 가 미렌더 요소를 건드리지 않게.
@@ -4086,8 +4138,27 @@ async function _metaG6Apply(fit) {
     _metaGraph._stateCache.clear();
     _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaCacheSig(n.key)); });   // node-role-viz: 역할 suffix 포함 — rebuild 가 역할 칩 색을 이미 bake 했으므로 직후 refresh 는 no-op
     await g.draw();
+    _metaGraphMinimapAnchor();   // graph-minimap-fix: 플러그인 컨테이너 inline left/top → CSS 앵커 정규화(멱등)
     if (fit) { await _metaGraphFitClamped(true); }
   } catch (err) { _metaGraphStatus("그래프 렌더 오류: " + ((err && err.message) || err)); }
+}
+
+// graph-minimap-fix(REQ ②): G6 v5 minimap 플러그인은 컨테이너 생성 시점의 캔버스 크기로 inline
+//   left/top(px)을 **1회 계산해 고정**한다 — 상세 패널 드래그 리사이즈/접기/창 리사이즈로 캔버스가
+//   변해도 미니맵이 옛 좌표에 남는 원인(styles.css 의 right/bottom 앵커는 inline left/top 에 진다).
+//   inline 좌표를 auto 로 지워 CSS 앵커(right:10px; bottom:10px)로 전환하면 이후 모든 리사이즈를
+//   레이아웃이 자동 추종한다. 멱등(재호출 무해) — 플러그인 캔버스가 lazy 생성되므로 rebuild 마다 보정.
+//   §18.8 패널(MAJOR): 플러그인 컨테이너는 AFTER_DRAW 후 **128ms trailing debounce** 로 lazy 생성되므로
+//   post-draw 즉시 호출은 요소를 못 찾는다 — 미발견 시 200ms 간격 재시도(기본 4회)로 생성 창을 커버.
+function _metaGraphMinimapAnchor(retries) {
+  let el = null;
+  try { el = document.querySelector(".admin-meta-graph-canvas .g6-minimap"); } catch (_) { return; }
+  if (el) {
+    if (el.style.left !== "auto") { el.style.left = "auto"; el.style.top = "auto"; }
+    return;
+  }
+  const r = (retries == null) ? 4 : retries;
+  if (r > 0) setTimeout(() => _metaGraphMinimapAnchor(r - 1), 200);
 }
 
 // graph-initview(A1): 전체-fit 하되 판독 하한 밑으로는 줌아웃하지 않는다 — 콘텐츠가 크면 "판독 가능한
@@ -4171,12 +4242,16 @@ async function _metaGraphAnimateFocusRun(g, key, seq) {
 const _META_GRAPH_COLOR = {
   Table: "#0f7d8c", Column: "#5c6773", GlossaryTerm: "#9c6515",
   Schema: "#3f4b8c", Datasource: "#2e7d52", Product: "#2e7d52",
+  Routine: "#7b5cd6",   // graph-funcproc(ADR-016): 함수·프로시저 칩(보라 — 테이블 teal 과 구분)
 };
 // graphux5-progress: 라벨 한글 표기(AI 능동 분석 진행 상세 — 어떤 '항목'인지 사람이 읽게).
 const _META_LABEL_KO = {
   Table: "테이블", Column: "컬럼", GlossaryTerm: "용어", Schema: "스키마",
-  Datasource: "데이터소스", Product: "제품",
+  Datasource: "데이터소스", Product: "제품", Routine: "함수·프로시저",
 };
+// graph-funcproc: 함수(ƒ)/프로시저(⚙) 표기 접두 — 칩 라벨·상세 헤더 공용.
+function _metaRoutineIcon(rt) { return rt === "function" ? "ƒ" : "⚙"; }
+function _metaRoutineKo(rt) { return rt === "function" ? "함수" : "프로시저"; }
 
 function _metaGraphStatus(msg) {
   const el = document.getElementById("metadataGraphStatus");
@@ -4899,8 +4974,11 @@ function _metaGraphCtxForNode(key, x, y) {
   }
   items.push({ sep: true });
   items.push({
-    icon: "✨", label: _metaGraph.analyzed.has(key) ? "AI 재분석" : "AI 능동 분석", hint: "관련 노드 자동 분석",
+    // graph-funcproc(REQ ④): '재분석' 라벨 제거 — 능동 분석 재실행이 곧 재분석(UX 중복 정리).
+    icon: "✨", label: "AI 능동 분석", hint: "관련 노드 자동 분석 · 상세 패널 버튼 hover 로 지침 입력",
     // 상세 카드를 먼저 열어 AI box 에 진행이 보이게 한 뒤 트리거(ShowDetail 은 내부 catch 라 항상 resolve).
+    // §18.8 패널(MINOR): ctxmenu 경로는 지침 미전송 — 이전 노드의 stale 지침이 화면 표시 없이 암묵
+    // 적용되는 것을 차단. 지침은 popover(입력이 눈에 보이는 경로)로만 전송한다.
     onClick: () => { _metaGraphShowDetail(key).then(() => _metaGraphAnalyze(key, scope)); },
   });
   items.push({
@@ -5091,6 +5169,13 @@ async function _metaGraphSearch(q) {
       const tk = _metaColParent(nd.key, nd.fqn);
       const sc = tk ? _metaCatParent(tk, tk.slice(tk.indexOf(":") + 1)) : null;
       if (sc && sc !== _META_TERMS_COMBO) addMatch(sc, tk);
+      else terms.push(nd);
+    } else if (nd.label === "Routine") {
+      // graph-funcproc: 함수·프로시저 매칭 — 소속 스키마 카드는 표시하되 badge **카운트에는 미가산**
+      // (§18.8 패널 MINOR: badge 분모 table_count 는 테이블 총계라 Routine 가산 시 N>M 모순).
+      // 강조는 searchMatchTables 로 유지 — 카드 펼침 시 schema_tables 가 Routine 을 로드하고 ƒ/⚙ 칩이 커진다.
+      const sc = _metaCatParent(nd.key, nd.fqn);
+      if (sc && sc !== _META_TERMS_COMBO) { addMatch(sc, null); matchTables.add(nd.key); }
       else terms.push(nd);
     } else if (nd.label === "Schema") { addMatch(nd.key, null); }   // 스키마명 매칭 → 0 매칭이라도 카드 표시(0/전체)
     else terms.push(nd);
@@ -5339,19 +5424,21 @@ async function _metaGraphExpandSchema(key, opts) {
     freshResp = (data.mode === "schema_tables");
   }
   let cnt = 0;
-  _metaGraph.nodes.forEach((x) => { if (x.label === "Table" && _metaCatParent(x.key, x.fqn) === key) cnt += 1; });
+  // graph-funcproc(§18.8 패널 MAJOR): Routine 도 콘텐츠 — 함수·프로시저만 있는 스키마(테이블 0)가
+  // '빈 스키마' 로 오판돼 영구 펼침 불능(Routine 도달 불가)이 되지 않게 카운트에 포함.
+  _metaGraph.nodes.forEach((x) => { if ((x.label === "Table" || x.label === "Routine") && _metaCatParent(x.key, x.fqn) === key) cnt += 1; });
   // 2차 검증 fix(V-F): 테이블 확보 시에만 loaded 굳힘 — 빈 스키마는 re-sync 후 재클릭이 다시 조회.
   if (freshResp && cnt > 0) _metaGraph.schemaLoaded.add(key);
   if (cnt === 0) {
     _metaSetBusy(key, false, seq);
-    if (!silent && seq === _metaGraph._opSeq) _metaGraphStatus(`${nm}: 빈 스키마(표시할 테이블 없음)${note}`);
+    if (!silent && seq === _metaGraph._opSeq) _metaGraphStatus(`${nm}: 빈 스키마(표시할 테이블·함수 없음)${note}`);
     return "empty";
   }
   _metaGraph.schemaExpanded.add(key);
   if (silent) return "expanded";   // 호출측(LoadRoots)이 apply+fit — 이중 렌더 방지
   await _metaG6Apply(false);       // 제자리 원칙(ADR-004 ②) — 전체 fit 없이. busy 는 rebuild 로 소멸.
   try { await _metaGraph.graph.focusElement(key, false); } catch (_) {}   // shelf 재배치 대비 시야 고정(무애니)
-  _metaGraphStatus(`${nm}: 테이블 ${cnt}개 펼침 — "−" 로 접기, 테이블 클릭=컬럼${note}`);
+  _metaGraphStatus(`${nm}: 테이블·함수 ${cnt}개 펼침 — "−" 로 접기, 테이블 클릭=컬럼${note}`);
   return "expanded";
 }
 
@@ -5455,9 +5542,10 @@ async function _metaGraphExpand(key, depthOverride) {
   _metaGraph.lastQuery = "";
   _metaGraph.nodes.forEach((n) => { delete n.rel; });   // 이웃 탐색 진입 — 검색 유사도 크기 해제
   _metaGraphIngest(data.nodes || [], data.edges || []);
-  // graph-initview: 이웃 응답 테이블/컬럼의 스키마 자동 펼침(카드 게이팅에서 이웃이 숨지 않게) + 앵커 스키마.
+  // graph-initview: 이웃 응답 테이블/컬럼/함수의 스키마 자동 펼침(카드 게이팅에서 이웃이 숨지 않게) + 앵커 스키마.
+  //   graph-funcproc(§18.8 패널 MINOR): Routine 포함 — 접힌 타 스키마의 Routine 이웃·ROUTINE_USES 엣지 비가시 방지.
   (data.nodes || []).forEach((nd) => {
-    if (nd && (nd.label === "Table" || nd.label === "Column")) {
+    if (nd && (nd.label === "Table" || nd.label === "Column" || nd.label === "Routine")) {
       const sc = _metaCatParent(nd.key, nd.fqn);
       if (sc) _metaGraph.schemaExpanded.add(sc);
     }
@@ -5600,9 +5688,15 @@ function _metaGraphIngest(nodes, edges) {
     rec.source = n.source || rec.source || "";
     if (ord != null) rec.ordinal = ord;
     if (typeof n.score === "number") rec.score = n.score;
+    // graph-funcproc(ADR-016): 함수·프로시저 속성 보존(칩 접두 ƒ/⚙ + 상세 파라미터 표시).
+    if (n.routine_type) rec.routine_type = n.routine_type;
+    if (n.params != null && n.params !== "") rec.params = n.params;
     // graph-product-cat(§43): Product/Datasource 부가 필드 보존(제품 라벨 개수 · datasource scope drill).
     if (n.scope_key != null) rec.scope_key = n.scope_key;
     if (typeof n.datasource_count === "number") rec.datasource_count = n.datasource_count;
+    // Phase C(semantic-embed): 의미 클러스터 id/라벨 보존 → _metaSimGroups 가 be: 그룹으로 소비(affix 폴백).
+    if (n.cluster_id != null) rec.cluster_id = n.cluster_id;
+    if (n.cluster_label != null) rec.cluster_label = n.cluster_label;
     if (!existing) {
       _metaGraph.nodes.set(n.key, rec); added.push(n.key);
       // graph-perf-bg: 새 Column 노드면 소속 테이블의 colsByTable 카운트 증가(_metaTableHasCols O(1) 단일소스).
@@ -5614,12 +5708,14 @@ function _metaGraphIngest(nodes, edges) {
   });
   (edges || []).forEach((e) => {
     if (!e || !e.source || !e.target) return;
-    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN") return;   // containment
+    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN" || e.type === "HAS_ROUTINE") return;   // containment
     const id = `${e.source}|${e.type}|${e.target}`;
     if (_metaGraph.edges.has(id)) return;
     _metaGraph.edges.set(id, { id, source: e.source, target: e.target, type: e.type || "",
       status: e.status || "", edge_source: e.edge_source || "",
       cardinality: e.cardinality || "",   // reltrace-tabledetail(review): 모델-병합 관계행의 [cardinality] 배지 보존
+      relation_type: e.relation_type || "",   // graph-funcproc: ROUTINE_USES read/write(+유사어 관계형)
+      cross_ds: (e.cross_ds != null && e.cross_ds !== "") ? 1 : 0,   // crossds-rel: 교차DB 엣지 표식(빌드 스타일/배지)
       weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" });
   });
   return added;
@@ -5706,13 +5802,15 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   const nm = (k) => (byKey[k] && (byKey[k].fqn || byKey[k].name)) || ((_metaGraph.nodes.get(k) || {}).fqn) || ((_metaGraph.nodes.get(k) || {}).name) || _metaKeyDisplayNode(k).fqn || k;
   const selfKey = self.key;
   // 컬럼(HAS_COLUMN out), 관계(REFERENCES), 용어(GlossaryTerm), 부모 스키마(HAS_TABLE in)
-  const columns = [], refs = [], terms = [];
+  const columns = [], refs = [], terms = [], routineUses = [];
   const refSeen = new Set();
   (edges || []).forEach((e) => {
     if (!e) return;
     if (e.type === "HAS_COLUMN" && e.source === selfKey && byKey[e.target]) columns.push(byKey[e.target]);
     if (e.type === "REFERENCES") { refs.push(e); refSeen.add((e.source || "") + "|" + (e.target || "")); }
     if (e.type === "DESCRIBES" && byKey[e.source] && byKey[e.source].label === "GlossaryTerm") terms.push(byKey[e.source]);
+    // graph-funcproc(ADR-016): 함수·프로시저 ↔ 테이블 사용 관계 — Routine self=사용 테이블 / Table self=사용 루틴.
+    if (e.type === "ROUTINE_USES" && (e.source === selfKey || e.target === selfKey)) routineUses.push(e);
   });
   (nodes || []).forEach((n) => { if (n && n.label === "GlossaryTerm" && n.key !== selfKey && !terms.includes(n)) terms.push(n); });
   // graph-reltrace(tabledetail): 테이블 단일클릭 상세는 depth=1 이라 컬럼의 REFERENCES(테이블 기준
@@ -5739,6 +5837,15 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
+  // graph-funcproc(ADR-016): 함수·프로시저 상세 — 유형 + introspect 된 파라미터 시그니처.
+  if (self.label === "Routine") {
+    const mn = _metaGraph.nodes.get(selfKey) || {};
+    const rt = self.routine_type || mn.routine_type || "";
+    const rparams = self.params || mn.params || "";
+    parts.push(`<div class="admin-meta-graph-sec"><h4>${_metaRoutineIcon(rt)} ${esc(_metaRoutineKo(rt))}</h4>` +
+      (rparams ? `<p class="admin-meta-graph-desc">파라미터 — ${esc(rparams)}</p>`
+               : `<p class="admin-meta-graph-desc admin-meta-graph-muted">파라미터 없음</p>`) + `</div>`);
+  }
   // reldetail-colexpand ①②③: 관계를 **소속 컬럼별**로 그룹화하고, 각 컬럼 안에서 참조함(→)/참조받음(←)
   //   을 분리·개수 표기. 관계 있는 컬럼은 아코디언(클릭 시 펼침)으로 관계 행을 노출한다.
   //   self 측 끝점(테이블이면 자기 컬럼, 컬럼이면 자신)을 기준으로 방향을 정한다.
@@ -5833,18 +5940,42 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     terms.slice(0, 30).forEach((t) => parts.push(`<li><strong>${esc(t.name)}</strong>${t.description ? " — " + esc(t.description) : ""}</li>`));
     parts.push(`</ul></div>`);
   }
+  // graph-funcproc(ADR-016): ROUTINE_USES — Routine 상세엔 "사용 테이블", Table 상세엔 "사용하는 함수·프로시저".
+  if (routineUses.length) {
+    const isRoutineSelf = self.label === "Routine";
+    parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length})</h4><ul class="amgr-list">`);
+    routineUses.slice(0, 30).forEach((e) => {
+      const other = e.source === selfKey ? e.target : e.source;
+      const on = byKey[other] || _metaGraph.nodes.get(other) || {};
+      const disp = on.label === "Routine"
+        ? `${_metaRoutineIcon(on.routine_type)} ${on.name || nm(other)}` : nm(other);
+      const kindKo = (e.relation_type === "write") ? "쓰기" : "읽기";
+      parts.push(`<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button> <span class="admin-meta-graph-muted">${kindKo}</span></li>`);
+    });
+    parts.push(`</ul></div>`);
+  }
   // 항목2: AI 능동 분석 섹션 — 버튼으로 트리거(백그라운드 재귀), box 에 진행/결과 렌더.
-  parts.push(`<div class="admin-meta-graph-sec admin-meta-graph-ai">`);
-  parts.push(`<div class="admin-meta-graph-ai-head"><h4>AI 능동 분석</h4><button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn">✨ 능동 분석</button></div>`);
+  //   graph-funcproc(ADR-017, REQ ⑤): 버튼 hover 시 지침 입력 popover(툴팁형) — 입력하면 LLM 이
+  //   자율 판단해 분석에 반영. 입력 없이 클릭하면 기존과 동일(지침 없는 분석).
+  parts.push(`<div class="admin-meta-graph-sec admin-meta-graph-ai" id="metaGraphAiSec">`);
+  parts.push(`<div class="admin-meta-graph-ai-head"><h4>AI 능동 분석</h4><button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn" title="hover: 분석 지침 입력">✨ 능동 분석</button></div>`);
+  parts.push(`<div class="admin-meta-ai-pop" id="metaGraphAiPop" hidden>` +
+    `<label for="metaGraphAiPrompt">분석 지침 (선택, ≤400자)</label>` +
+    `<textarea id="metaGraphAiPrompt" rows="2" maxlength="400" placeholder="예: 결제 흐름 관점에서 연관 테이블 위주로 분석"></textarea>` +
+    `<div class="admin-meta-ai-pop-foot"><span class="admin-meta-graph-muted">지침은 AI가 자율 판단해 분석 내용·탐색 방향에 반영합니다.</span>` +
+    `<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiPopGo">✨ 분석 시작</button></div></div>`);
   parts.push(`<div class="admin-meta-graph-ai-box" id="metaGraphAiBox"><span class="admin-meta-graph-muted">이 노드에서 시작해 관련 노드를 AI가 재귀적으로 분석합니다(백그라운드).</span></div>`);
   parts.push(`</div>`);
   parts.push(`</div>`);
   el.innerHTML = parts.join("");
-  // 버튼 바인딩 + 기존 분석 결과가 있으면 즉시 로드.
-  const aiBtn = document.getElementById("metaGraphAiBtn");
-  if (aiBtn) aiBtn.addEventListener("click", () => _metaGraphAnalyze(self.key, selfScopeKey));
+  // 버튼 바인딩(+hover 지침 popover) + 기존 분석 결과가 있으면 즉시 로드.
+  _metaGraphBindAiPopover(self.key, selfScopeKey);
   const relBtn = document.getElementById("metaGraphRelBtn");
   if (relBtn) relBtn.addEventListener("click", () => _metaGraphShowRelations(self.key));
+  // graph-funcproc: 사용 테이블/사용 루틴 행 클릭 → 대상 상세로 이동.
+  el.querySelectorAll("[data-rtuse]").forEach((btn) => {
+    btn.addEventListener("click", () => { const k = btn.getAttribute("data-rtuse"); if (k) _metaGraphShowDetail(k); });
+  });
   _metaGraphBindTraceRows(el);   // graph-reltrace ②: 관계 행 클릭 → 대상 추적
   // reldetail-colexpand ①: 컬럼 아코디언 토글 — 클릭 시 그 컬럼의 관계 펼침/접힘.
   //   body 는 버튼의 형제(같은 li 내 .amgr-col-body)로 찾는다(키의 CSS 특수문자 셀렉터 이스케이프 회피).
@@ -5871,6 +6002,7 @@ const _META_EDGE_SOURCE_KO = {
 const _META_EDGE_TYPE_KO = {
   REFERENCES: "참조", DESCRIBES: "용어 설명", RELATED_TERM: "유사어",
   USES: "사용", HAS_SCHEMA: "소속", HAS_TABLE: "소속", HAS_COLUMN: "소속",
+  HAS_ROUTINE: "소속", ROUTINE_USES: "테이블 사용",   // graph-funcproc(ADR-016)
 };
 
 // graph-ctxmenu: 관계 상세 패널 — 선택 노드의 1-hop 관계를 **방향별**(참조함→/참조받음←/연관 용어/
@@ -5934,7 +6066,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   const termSeen = new Set();
   (edges || []).forEach((e) => {
     if (!e || !e.type) return;
-    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN" || e.type === "HAS_SCHEMA") return;   // containment 제외
+    if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN" || e.type === "HAS_SCHEMA" || e.type === "HAS_ROUTINE") return;   // containment 제외(graph-funcproc: 소속 스키마도)
     const sSelf = isSelf(e.source), tSelf = isSelf(e.target);
     if (!sSelf && !tSelf) { around.push(e); return; }   // review: self 무관(이웃-이웃)은 term 이라도 주변 관계
     const other = sSelf ? e.target : e.source;
@@ -6022,16 +6154,70 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   _metaGraphStatus(`관계 상세: ${self.name || key} — 참조함 ${out.length} · 참조받음 ${inn.length} · 용어 ${terms.length}`);
 }
 
+// graph-funcproc(ADR-017, REQ ⑤): 'AI 능동 분석' hover 지침 popover — 툴팁형 입력창.
+//   버튼/섹션 hover(or 버튼 focus) 시 표시, 섹션 이탈 250ms 후 숨김(입력 중이면 유지), Esc 로 닫기.
+//   '분석 시작'(또는 지침 입력 후 메인 버튼) → 지침과 함께 분석 트리거. 지침은 세션 내 보존(재열람 prefill).
+function _metaGraphBindAiPopover(key, scope) {
+  const sec = document.getElementById("metaGraphAiSec");
+  const btn = document.getElementById("metaGraphAiBtn");
+  const pop = document.getElementById("metaGraphAiPop");
+  const ta = document.getElementById("metaGraphAiPrompt");
+  const go = document.getElementById("metaGraphAiPopGo");
+  if (!btn) return;
+  const promptVal = () => (ta && typeof ta.value === "string" ? ta.value.trim().slice(0, 400) : "");
+  const start = () => {
+    const p = promptVal();
+    _metaGraph.aiPrompt = p;
+    if (pop) pop.hidden = true;
+    _metaGraphAnalyze(key, scope, p);
+  };
+  btn.addEventListener("click", start);
+  if (!pop || !ta || !go) return;   // popover 마크업 부재(비정상) — 버튼 단독 동작 보존
+  if (_metaGraph.aiPrompt) ta.value = _metaGraph.aiPrompt;
+  let hideT = null;
+  // funcproc-esc-hotfix(PB-0008 라이브 적발): Esc 가 pop 을 닫고 btn.focus() 로 포커스를 돌려주는데,
+  // btn 의 focus-show 가 즉시 재열고 show() 가 blur 경로의 hide 타이머까지 취소해 **popover 고착**.
+  // Esc 직후 짧은 창(300ms) 동안 show 를 억제해 닫힘을 확정한다(focus 복귀는 유지 — a11y).
+  let escClosing = false;
+  const show = () => {
+    if (escClosing) return;
+    if (hideT) { clearTimeout(hideT); hideT = null; }
+    pop.hidden = false;
+  };
+  const hideSoon = () => {
+    if (hideT) clearTimeout(hideT);
+    hideT = setTimeout(() => { if (document.activeElement !== ta) pop.hidden = true; }, 250);
+  };
+  btn.addEventListener("mouseenter", show);
+  btn.addEventListener("focus", show);
+  if (sec) { sec.addEventListener("mouseleave", hideSoon); sec.addEventListener("mouseenter", show); }
+  ta.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      escClosing = true;
+      pop.hidden = true;
+      try { btn.focus(); } catch (_) {}
+      setTimeout(() => { escClosing = false; }, 300);
+    }
+    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); start(); }
+  });
+  ta.addEventListener("blur", hideSoon);
+  go.addEventListener("click", start);
+}
+
 // 항목2: 선택 노드에 대한 AI 능동 분석 트리거(POST → run 생성) + 진행 폴링 시작.
-async function _metaGraphAnalyze(key, scope) {
+//   prompt(ADR-017): hover popover 로 입력한 사용자 지침(선택) — run 에 저장돼 LLM 이 자율 반영.
+async function _metaGraphAnalyze(key, scope, prompt) {
   if (!key) return;
   const box = document.getElementById("metaGraphAiBox");
   const sc = scope || (key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   if (box) box.innerHTML = '<span class="admin-meta-graph-muted">AI 능동 분석 시작 중…</span>';
+  const body = { node_key: key, scope_key: sc };
+  const p = (typeof prompt === "string") ? prompt.trim().slice(0, 400) : "";
+  if (p) body.prompt = p;
   let res;
   try {
     res = await apiFetch(`/api/admin/metadata/graph/analyze`, {
-      method: "POST", body: JSON.stringify({ node_key: key, scope_key: sc }),
+      method: "POST", body: JSON.stringify(body),
     });
   } catch (err) {
     if (box) box.innerHTML = `<span class="admin-meta-graph-muted">시작 실패: ${(err && err.message) || "오류"}</span>`;
@@ -6333,11 +6519,9 @@ async function _metaGraphLoadNodeAnalysis(key) {
       rows.push(`<div class="admin-meta-graph-ai-rels"><strong>연결 관계 추적 (${trace.count})</strong>` +
         `<ul class="amgr-list">${trace.html}</ul></div>`);
     }
-    rows.push(`<button type="button" class="btn-secondary admin-meta-ai-btn" id="metaGraphAiBtn2">↻ 재분석</button>`);
+    // graph-funcproc(REQ ④): '↻ 재분석' 버튼 제거 — 섹션 헤더의 '✨ 능동 분석' 재실행으로 충분(UX 중복).
     box.innerHTML = rows.join("") || '<span class="admin-meta-graph-muted">분석 결과 없음.</span>';
     _metaGraphBindTraceRows(box);   // graph-reltrace ③: AI 결과의 관계 행도 추적
-    const b2 = document.getElementById("metaGraphAiBtn2");
-    if (b2) b2.addEventListener("click", () => _metaGraphAnalyze(key));
   } else if (res.status === "pending" || res.status === "running") {
     box.innerHTML = '<span class="admin-meta-graph-muted">분석 진행 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
     // graphux5 fix(세션 독립): 이 노드가 (다른 탭/세션·새로고침으로) 활성 폴이 없는 진행 중 run 에 속하면

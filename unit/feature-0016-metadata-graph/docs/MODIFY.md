@@ -20,6 +20,98 @@ source_of_truth: true
 - cache-buster: `admin.js` / `styles.css` `?v=20260704-graph-ux3fix`.
 - 검증: `node --check` PASS · §18.8 3-렌즈 적대 리뷰(REV-20260704T014646) · **PB-0008 시각검증 미수행(무인)** — 사용자 육안 후 배포.
 
+## CHG-20260704T043653-ai-claude-feature-0016-crossds-rel
+- What: Phase B(ADR-019) — 크로스-데이터소스 관계. table_relationships 에 엔드포인트별 datasource + Phase C 시그니처
+  임베딩 구동 후보 추론(데몬 기본 OFF) + 프로브/컨텍스트/승격 신뢰 게이팅 + 그래프 scope 완화 + UI 마젠타 점선. TASK §47.
+- Files:
+  - `alembic/versions/20260704_0036_relationship_cross_datasource.py`(신규): source/target_datasource_key 2컬럼 +
+    7-col UNIQUE + CHECK 'manual' + ds 인덱스 2(비파괴·backfill·migrate-lint ACK Python 주석).
+  - `modules/relationships.py`: upsert 7-col ON CONFLICT(한 줄) + manual 승격(_TRUSTED_SOURCES+DO UPDATE) +
+    fetch_probe_candidates cross-ds skip 가드 + infer_cross_datasource_relationships/store_xds(신규, effective schema·
+    reverse-dup 카논화·per-ds cap) + _fetch_relationships 크로스-ds candidate 컨텍스트 제외 + [교차DB] digest 마커 +
+    apply_relationship_signal intra-ds 가드.
+  - `modules/metadata_graph.py`: sync_relationship/delete_relationship +tgt_scope +cross_ds edge 속성 + sync_graph
+    관계 투영 src/tgt ds→scope 매핑(intra-ds 완전 보존) + neighborhood cross_ds emit + _PROP_KEYS+cross_ds.
+  - `modules/node_analysis.py`: _relevance/parent-table cross_ds 완화 + _record cross_ds 캡처 + _enqueue 이웃 자기-scope.
+  - `modules/insight.py`: xds 추론 데몬(기본 OFF, AGENT_XDS_RELATIONSHIP_INFER_AUTO).
+  - `shared/config.py`: AGENT_XDS_* 7 노브(+__all__). `agent_kb_schema.sql`: 문서 정합(0036 반영).
+  - `static/admin.js`: _metaEdgeStyleFor(crossDs 마젠타 점선) + 엣지 ingest/build cross_ds. cache-buster `20260704-crossds-rel`.
+  - `tests/test_relationships.py`: ON-CONFLICT==UNIQUE 불변식 head-aware(최신 마이그 UPGRADE UNIQUE).
+- Impact: 백엔드+프론트 additive. **데몬 OFF ship**(스키마·UI·scope 완화만 즉시, 추론 inert). 마이그 mixed-version 창
+  fail-soft. 크로스-ds 는 프로브 불가라 보수적(높은 MIN_SIM·trusted-only 주입·manual 승격). Phase C 임베딩 후 AUTO=1 flip.
+- Related Requirement: 사용자 3대 개선 中 B(다른 DB 간 관계). 정본: TASK §47 / DECISIONS ADR-019.
+- 검증: node --check·py ast·migrate-lint ACK·pytest 67 PASS(head-aware ON-CONFLICT 불변식 포함). §18.8 2단계 적대검증
+  (설계 워크플로우 + 구현 리뷰 SHIP-for-inert). flip-전 블로커(MSSQL effective schema·negative-decay 가드·reverse-dup·
+  cap) 반영. 정본 REVIEW REV-20260704T043653. 배포+PB-0008 배포 후.
+
+## CHG-20260703T160303-ai-claude-feature-0016-semantic-embed
+- What: Phase C(ADR-013 후속, ADR-018) — 메타데이터 객체(테이블) 의미 임베딩·클러스터링. 시그니처 텍스트를
+  기존 texts 저장소에 적재→기존 embedding 데몬이 bge-m3 1024d 임베딩→scope 별 kNN+union-find 클러스터링→
+  rag_objects 역기록→AGE 정점 투영→프론트 sim-group(be:) 우선(affix 폴백). TASK §46.
+- Files:
+  - `alembic/versions/20260704_0035_rag_objects_semantic_cluster.py`(신규): rag_objects 에 signature_text_hash·
+    semantic_cluster_id·semantic_cluster_label 3 nullable 컬럼 + 인덱스 2개(비파괴·expand-safe·카탈로그 전용).
+  - `shared/config.py`: AGENT_METADATA_CLUSTER_* 9 노브(+__all__).
+  - `modules/semantic_cluster.py`(신규 425줄): build_table_signature_text(DB-distinct)·run_signature_backfill_pass
+    (`_text_hash(sig.strip())` write=join 정합)·_cluster_edges(numpy N×N+degree-cap)·_union_find·run_semantic_cluster_pass
+    (N>FULLMATRIX_MAX_N skip 가드)·_label_cluster(commonAffix 서버포트)·run_cluster_maintenance(단일 conn·PG kv cadence).
+  - `modules/insight.py`: `_semantic_cluster_loop`/`_start_semantic_cluster_thread`(embedding 데몬 동형·분리) 등록.
+  - `modules/metadata_graph.py`: sync_table(_UNSET 센티넬·None=clear)·sync_graph step-0(cluster 투영)·scope_roots/
+    schema_tables RETURN + node dict(cluster_id/label)·_PROP_KEYS/_INT_PROP_KEYS/_NULLABLE_PROP_KEYS/_props_set(=null).
+  - `static/admin.js`: _metaSimGroups(be: 우선·namespace 1회·≥2 게이팅)·labelOf(be: 라벨)·_metaGraphIngest(보존).
+    cache-buster admin.js `20260704-semantic-embed`.
+- Impact: 프론트+백엔드 additive. **기존 pgvector RAG(texts HNSW·kb_retrieval)·category_* 무영향**. kill switch
+  AGENT_METADATA_CLUSTER_AUTO=0·fail-soft·affix 폴백. 클러스터는 eventual(데몬 cadence). 라이브 마이그=비파괴 additive.
+- Related Requirement: 사용자 3대 개선 中 C(ADR-013 의미 임베딩 분류). 정본: TASK §46 / DECISIONS ADR-018.
+- 검증: node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS. 설계 워크플로우
+  적대검증(NEEDS-FIXES→renumber/MSSQL/namespace) + 구현 적대리뷰(MAJOR-1 sig strip·MAJOR-2 phantom clear·MINOR-3 OOM
+  가드 반영). 정본 REVIEW REV-20260703T160303. 배포+PB-0008 배포 후.
+
+## CHG-20260703-funcproc-esc-hotfix (ai/claude/feature-0016-funcproc-esc-hotfix)
+- Date: 2026-07-03
+- Related Requirement: TASK §45 T45.8 — graph-funcproc-uxfix 배포 후 PB-0008 라이브 실측이 적발한
+  hover 지침 popover **Esc 닫힘 고착** 수정(Minor·1파일 FE).
+- Summary: Esc 핸들러의 `btn.focus()` 가 focus-show 를 재발화하고 `show()` 가 blur 경로 hide 타이머를
+  취소해 Esc 후 popover 가 닫히지 않던 결함(라이브 620ms 실측) — Esc 직후 300ms `escClosing` 플래그로
+  show 를 억제해 닫힘 확정(포커스 복귀는 유지, a11y). cache-buster `admin.js?v=20260703-funcproc-esc`.
+  동반: feature-0003 TEST.md 에 graph-funcproc POST-DEPLOY PB-0008 라이브 Run(②④⑤ PASS + 본 결함) 기록.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}`,
+  `unit/feature-0003-agent-web-ui/docs/TEST.md`, `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md`.
+- Impact: FE 상호작용 전용(데이터 API·스키마·RBAC 불변). 회귀면 = popover show/hide 경로만.
+- Rollback Notes: 커밋 되돌림 + cache-buster 재bump.
+
+## CHG-20260703-graph-funcproc-uxfix (ai/claude/feature-0016-graph-funcproc-uxfix)
+- Date: 2026-07-03
+- Related Requirement: REQ-20260703-graph-funcproc-uxfix (TASK §45, ADR-016·017) — ① 함수·프로시저 노드
+  +분석·관계 ② 패널 리사이즈 시 미니맵 위치 고정 수정 ③ 재귀 분석의 참조 컬럼 부모 테이블 미분석 개선
+  ④ '재분석' 버튼 제거 ⑤ AI 능동 분석 hover 프롬프트 입력→LLM 자율 반영.
+- Summary:
+  - ① [alembic 0034] `routine_objects` SSOT + `node_analysis_runs.user_prompt` + AGE vlabel `Routine`
+    ·elabel `HAS_ROUTINE`/`ROUTINE_USES` + GRANT. [routines.py 신규] INFORMATION_SCHEMA.ROUTINES/
+    PARAMETERS(MySQL·MSSQL 공통) introspect + 정의 파싱 참조 테이블(read/write, 실재 테이블만) +
+    변경분만 upsert. [insight.py] rel_maintenance_due 게이트 훅(`AGENT_ROUTINE_INTROSPECT_ENABLED`).
+    [metadata_graph.py] 라벨/속성 화이트리스트 확장 + `sync_routine`(key=`schema.name()`) + sync_graph
+    3b 단계 + schema_tables Routine·ROUTINE_USES 반환 + neighborhood/검색 relation_type·routine_type
+    노출. [config] 토글·캡 + `__all__` 등재(ADR-007 계약). [admin.js/html/css] ƒ/⚙ 보라 칩·보라 잔점선
+    엣지·범례·상세(유형·파라미터·사용 테이블/사용 루틴)·검색 스키마 badge 합류. [llm.py] Routine 라벨 계약.
+  - ② [admin.js] `_metaGraphMinimapAnchor()` — G6 minimap 플러그인의 1회 고정 inline left/top 을 auto 로
+    지워 CSS right/bottom 앵커 전환(멱등, `_metaG6Apply` post-draw 호출).
+  - ③ [node_analysis.py] `_fetch_context` 가 Column 노드의 부모 테이블을 parent 메타로 기록 →
+    `_score_candidates` 승격(고정 rel 0.5·교차 제품 감쇠) → `_enqueue_neighbors` **same-depth** enqueue
+    (depth_budget 마지막 층 컬럼의 테이블도 분석). ROUTINE_USES 이웃 content 신호 0.35.
+  - ④ [admin.js] 분석 완료 box '↻ 재분석' 버튼·ctxmenu 'AI 재분석' 라벨 제거(능동 분석 단일 진입점).
+  - ⑤ [admin.js] '✨ 능동 분석' hover 지침 popover(≤400자, Esc/Ctrl+Enter) → [admin_metadata.py]
+    analyze POST `prompt` 수용(+audit prompt_len/preview) → [node_analysis.py] runs.user_prompt 저장
+    (마이그 창 legacy 폴백)·앵커 토큰 합류·payload `user_intent` → [llm.py] user_intent 자율 반영 가드.
+- Files: `unit/feature-0002-agent-core/alembic/versions/20260703_0034_routine_objects.py`(신규),
+  `unit/feature-0002-agent-core/src/modules/{routines.py(신규),metadata_graph.py,node_analysis.py,insight.py,llm.py}`,
+  `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`,
+  `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`, `shared/config.py`,
+  `unit/feature-0002-agent-core/tests/{test_graph_funcproc_uxfix.py(신규),test_node_analysis_relevance.py}`.
+- Impact: 마이그레이션은 비파괴 추가만(FUNCTION §12 사전승인 범위). 기존 그래프·분석 경로 무변경 시
+  회귀 0(단위 123 PASS — 신규 15 + 회귀 108). routine introspect 는 read-only + cap + cadence 게이트.
+- Rollback Notes: 코드 revert + (원하면) alembic downgrade 0034(=user_prompt/routine_objects DROP —
+  AGE Routine 라벨·노드는 보존되며 재-introspect 로 재생성 가능). FE 는 cache-buster 재bump.
 ## CHG-20260703T101622-ai-claude-feature-0016-graph-freeplace
 - What: 그래프 뷰 스키마 클러스터 **자유 배치 상호작용 복원**(사용자 회귀 보고, TASK §44, ADR-015). ADR-004
   Cytoscape→G6 결정론 배치가 rebuild(펼침/접기)마다 위치를 초기화하던 것을, 사용자 드래그 위치를 **persistence**

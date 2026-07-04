@@ -19,6 +19,69 @@ source_of_truth: true
 - 리스크·비용: 없음(frontend-only, 비파괴, 인증/데이터/마이그레이션 무변경). 검색 glow 범위가 기존(테이블만)보다 넓어짐(컬럼·용어·스키마명 매칭도) — 개선으로 채택.
 - 미결: **PB-0008 실 Windows 시각검증(하드 게이트)** 무인 미수행 → 사용자 육안 후 배포(T45.12/13). ② 후속 cycle.
 
+## REV-20260704T043653-ai-claude-feature-0016-crossds-rel [SUBAGENT: SHIP-FOR-INERT / NEEDS-FIXES-BEFORE-FLIP] — Phase B 크로스-데이터소스 관계(§47, ADR-019) 설계+구현 적대검증
+- 대상: CHG-20260704T043653-crossds-rel (alembic 0036 + relationships/metadata_graph/node_analysis/insight/frontend).
+- 방법(2단계): 설계 워크플로우(ultracode understand6+design2+적대4) + 구현 diff 적대리뷰(general-purpose) 7축(마이그
+  mixed-version·scope 매핑·프로브 가드·컨텍스트 제외·추론 정확성·node_analysis 스레딩·프론트).
+- 설계검증 확정·수정: CRITICAL revision 충돌(head=0035 → B=0036), migrate-lint 주석 SQL→Python, manual 승격 배선,
+  cross_ds 를 neighborhood 까지 스레딩, 컨텍스트 오염 제외 — 전부 구현에 반영.
+- 구현검증(SHIP for inert deploy — 데몬 OFF):
+  - **SAFE 확인**: 마이그 0036 mixed-version 창 fail-soft(OLD 5-col ON CONFLICT 실패해도 upsert try/except+autocommit,
+    caller wrapped, 워커 무크래시·자가치유), 7-col UNIQUE ADD 는 backfill 후 refine(위반 0), intra-ds/794 레거시 scope
+    동작 byte-보존, 프로브 가드 완전, 컨텍스트 제외 정확(digest 9→11col 호환), SQL(embedding::text→::vector·kNN) 정상,
+    node_analysis cross_ds 컬럼 경로 완전, _enqueue 자기-scope 는 개선(claim 무-scope-filter·anchor 보존), 프론트 G6 안전.
+  - **flip-전 수정(반영)**: [MAJOR] MSSQL raw schema_name('dbo')→effective schema(DB명) 미사용으로 크로스-ds 추론이
+    MSSQL 에서 컬럼 0건→무산/고아 → `_effective_schema` 로 column-fetch + FQN 정합. [MINOR] apply_relationship_signal
+    negative-decay 가 동명 크로스-ds 오염 → intra-ds 가드. [MINOR] reverse-dup(A→B·B→A) → dsk<dsk2 카논화. [MINOR]
+    cap 이 scope_key='common' 로 전역 → source datasource_key 기준.
+  - 잔여(무해·후속): parent-table cross_ds 완화 dead branch(보수적 under-expand), inferred→trusted 라벨 '[추정]'(보수적).
+- 판정: **SHIP(inert deploy)** — 데몬 OFF 라 스키마·UI·scope 완화만 라이브, 마이그 0036 안전. flip-전 블로커(MAJOR+
+  MINOR negative-decay) 반영 완료 → AUTO=1 안전. 크로스-ds 라이브 시각확인은 임베딩 populate + AUTO=1 후 이월.
+
+## REV-20260703T160303-ai-claude-feature-0016-semantic-embed [SUBAGENT: PASS-WITH-FIXES] — Phase C 의미 임베딩·클러스터링(§46, ADR-018) 설계+구현 적대검증
+- 대상: CHG-20260703T160303-semantic-embed (alembic 0035 + semantic_cluster.py + insight 데몬 + metadata_graph 투영 + 프론트).
+- 방법(2단계): (1) **설계 워크플로우**(ultracode: understand 6 + design 2 + 적대검증 4 에이전트) — 마이그 안전성·정확성·비용 6축.
+  (2) **구현 diff 적대리뷰**(general-purpose) — 런타임 crash·conn/txn·투영·프론트·MSSQL·워커 6축.
+- 설계검증 확정·수정(NEEDS-FIXES → 반영):
+  - [CRITICAL] alembic revision 충돌(실제 head=0034_routine_objects) → C=**0035**/B=0036 renumber.
+  - [MAJOR] MSSQL 다중 DB 시그니처 오염 → 시그니처에 object_key effective schema(DB명) 포함(DB-distinct).
+  - [MAJOR] 프론트 be: namespace 이중적용 → namespace 1회 + ≥2 게이팅 + affix 폴백.
+  - [MAJOR] 클러스터 chaining(단일연결 τ) → 노드당 MAX_DEGREE 이웃 상한.
+- 구현검증 확정·수정(NEEDS-FIXES → 반영):
+  - **[MAJOR-1]** 시그니처 write-key(`_text_hash(sig)`) ≠ texts join-key(`_text_store_insert` 내부 strip) — 컬럼 없는
+    테이블 trailing space 로 해시 divergence → 영구 미클러스터(기능 무력화). **fix**: `_text_hash(sig.strip())`.
+  - **[MAJOR-2]** un-cluster(→NULL) 시 sync_table None-skip → AGE 정점 stale cluster_id 잔존 → phantom be: 그룹.
+    **fix**: `_NULLABLE_PROP_KEYS` + `_props_set` `= null` + sync_table `_UNSET` 센티넬(미전달≠명시 None).
+  - **[MINOR-3]** FULLMATRIX_MAX_N/KNN_K dead config(항상 full N×N, 8K scope 256MB OOM 위험). **fix**: N>MAX_N skip→
+    affix 폴백 가드 + config 주석 정정(KNN_K=예약).
+- SAFE 확인(리뷰어 실측): cursor 재사용/double-close 안전(autocommit·client 버퍼), `_cypher` 10-col 정합·`_unwrap` NULL 처리,
+  `_props_set` injection-safe, argpartition k∈[1,n-1], union-find 결정론, 프론트 be: 1회·싱글턴 affix 폴백·labelOf 멤버 라벨,
+  MSSQL DB-distinct=_rag_effective 정합, 데몬 fail-soft·tick 무블로킹, 마이그 linear chain·비파괴·카탈로그 전용.
+- 판정: **PASS-WITH-FIXES** — MAJOR-1/2 + MINOR-3 반영 후. 라이브 마이그(0035) SAFE(expand-safe·additive). 코드 deploy 저위험
+  (kill switch·fail-soft·affix 폴백). 클러스터 값은 eventual(데몬 cadence). 라이브 canvas 는 PB-0008 배포 후 확인.
+
+## REV-20260703T140000-funcproc-esc-hotfix [SKIPPED:minor-1file-live-verified] — popover Esc 고착 hotfix (PB-0008 적발분)
+- Related Change: CHG-20260703-funcproc-esc-hotfix (TASK §45 T45.8).
+- Panel skip 사유(§18.8 — Minor + 1파일 + 정책 doc 무변경): 5줄 FE 상호작용 수정. 결함 자체가 PB-0008
+  라이브 실측으로 적발·재현(620ms 후에도 미닫힘)됐고, 수정 검증도 배포 후 동일 라이브 경로로 재실측한다.
+  본체 cycle(graph-funcproc-uxfix)은 직전 REV-20260703T113500 에서 3렌즈 적대 패널 완료.
+- Human Approval: deploy_scope: included(전역) — 자동 배포 범위.
+
+## REV-20260703T113500-graph-funcproc-uxfix [SUBAGENT: FIX-THEN-SHIP→PASS] — 함수·프로시저 노드 + 그래프/능동분석 UX 4건 적대 패널 (3렌즈 + MAJOR+ 교차검증, ULTRACODE workflow)
+- Related Change: CHG-20260703-graph-funcproc-uxfix (TASK §45, ADR-016·017). worktree feature-0016-graph-funcproc-uxfix.
+- 리뷰 방식: Workflow 병렬 3렌즈(backend 정확성 / security·injection / frontend 회귀·G6) 각 독립 발굴 + **BLOCKING/MAJOR 전건을 별도 refuter subagent 가 교차 재검증**(9 agents). staged diff 전체 + 주변 소스·vendored g6.min.js 실측.
+- **결과: BLOCKING 1 + MAJOR 5 + MINOR 6 + NIT 3 적발 — 교차검증 전건 real 판정 → 전량 수정 후 재검증 PASS**.
+  - **B1(BLOCKING→MAJOR 조정, 수정)**: 루트가 Column 인 run 에서 부모 테이블이 depth 0 으로 same-depth 승격 → depth-0 '하위 컬럼 무조건 통과(rel=1.0)' 규칙이 승격 테이블에 재발화해 전 sibling 컬럼 flood(예산 붕괴·LLM 비용 폭증). → 승격 same_depth 를 `cur_depth > 0` 로 한정(depth-0 자동통과는 실제 루트 전용 보존, 부모는 depth 1 로 분석 + 컬럼은 앵커 게이팅). 회귀 테스트 `test_score_candidates_parent_depth0_not_same_depth`.
+  - **M1(수정)**: neighborhood() UNION ALL raw SQL 이 신규 Routine 라벨 테이블을 하드 참조 — 0034 미적용 skew 창(stale 이미지 사례 실재)에서 UndefinedTable 로 **전체 이웃 조회 붕괴**. → `_existing_labels()`(to_regclass 실존 필터) 도입.
+  - **M2(수정)**: sync_graph 3b SELECT 실패(0034 미적용)가 owned 배치 트랜잭션을 poisoned 로 만들어 이후 glossary 단계 조용한 실패 + pending MERGE 롤백. → 3b 진입 전 `_tick(force=True)` 강제 커밋 + 실패 시 rollback 복구.
+  - **M3(수정)**: ROUTINE_USES 가산적 MERGE 만으로 정의 변경 시 stale 엣지 영구 잔존(REFERENCES broken 클래스 재도입). → sync_routine delete-then-merge(기존 ROUTINE_USES 회수 후 현재 참조 재-MERGE) + introspect 완전 스캔 시 SSOT prune(cap 절단 시 미수행 가드).
+  - **M4(수정, FE)**: G6 minimap 컨테이너가 AFTER_DRAW 후 128ms trailing debounce 로 lazy 생성 — post-draw 즉시 anchor 정규화가 요소를 못 찾아 첫 리사이즈에서 REQ ② 재발. → 미발견 시 200ms×4 재시도.
+  - **M5(수정, FE)**: 함수·프로시저만 있는 스키마(테이블 0)가 '빈 스키마' 오판 → 영구 펼침 불능(Routine 도달 불가). → 펼침 콘텐츠 카운트에 Routine 포함.
+  - **MINOR(전건 수정)**: ⓐ insight cadence 스탬프 조건이 routine 훅 게이트와 불일치(테이블 0 스키마·관계 off 구성에서 매 cycle 재-introspect spin) → 스탬프 조건에 ROUTINE 토글 합류 ⓑ 0034 §4 metadata_kb GRANT 무가드(스키마 부재 시 hard-fail — §3 graceful 과 모순) → pg_namespace 가드 ⓒ 정의 파싱 주석(--,/**/) 유령 참조 → 파싱 전 제거 ⓓ MSSQL alias-UPDATE write→read 오분류 → alias 역참조 write 승격 ⓔ _metaGraphExpand 이웃 자동 펼침에 Routine 미포함(접힌 타 스키마 Routine 비가시) → 포함 ⓕ ctxmenu AI 분석이 stale aiPrompt 암묵 전송 → ctx 경로 지침 미전송(popover 만) ⓖ 검색 badge 분자에 Routine 가산(분모=테이블 총계와 모순 N>M) → 카운트 미가산·강조만 유지 ⓗ LLM user_intent·이웃값 untrusted-data 규칙 명문화(§14 정합) ⓘ analyze docstring 권한 표기 정정.
+  - **NIT(수정)**: ROUTINES ORDER BY(cap 절단 결정성)·upsert 카운트 rowcount 기준(무변경 미집계)·관계 상세 containment 에 HAS_ROUTINE 제외·flat-scope Routine 이 term 칩으로 렌더(Routine 분기 우선).
+  - 견고 확인(반증 실패) 31건: %s 파라미터 방언 호환(mysql.connector·pymssql pyformat)·__all__ 계약·IS DISTINCT FROM 트리거 비발화·sync_routine 큐레이션 비파괴·jsonb 타입 분기·edge_hits tuple 소비처 정합·insight 훅 비차단·user_prompt autocommit 폴백 안전·Cypher dollar-tag/_cq 방어·XSS esc()/data-rtuse 인용 이스케이프·RBAC 게이트·audit len+preview·400자 서버 cap·run dedupe·클릭/드래그/ctxmenu generic 경로·_metaColParent 비유입 등.
+- 재검증: 수정 후 단위 **126 PASS**(신규 19 + 회귀 107) + `node --check`·`py_compile`·migrate-lint PASS.
+- Human Approval: Major(비파괴 마이그레이션·사전승인 범위 내) — §16.3 Step 4 조건표(BLOCKED 없음) 따라 자동 동기화 대상. 배포는 deploy_scope: included(전역 선언).
 ## REV-20260703T101622-ai-claude-feature-0016-graph-freeplace [SUBAGENT: PASS-WITH-FIXES] — 클러스터 자유배치 상호작용 복원(§44) 적대 리뷰
 - 대상: CHG-20260703T101622-graph-freeplace (admin.js clusterOffset/nodePos persistence + combo/카드 드래그 핸들러 +
   build 위치 적용, ADR-015, TASK §44).
