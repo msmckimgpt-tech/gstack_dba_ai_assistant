@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260704T151336-ai-claude-feature-0016-graph-dblclick-stable [SUBAGENT: PASS-WITH-FIXES] — 더블클릭 재배치 순서 안정화(§49) 적대 리뷰 2라운드
+- 대상: 그래프 더블클릭 전체 재배치 수정 — 배치 순서 안정화(`_metaStableSeq` + clusterOrder/tableOrder/groupOrder/groupTableOrder).
+- 방법: §18.8 적대 리뷰(general-purpose), 8개 결함 클래스 프로브(mutation·ordering·simgroups·leak·threshold·nodePos·fresh-load·재출현).
+- 판정: **핵심 로직 correct & safe** — `ids.length=0` mutation(비별칭, terms 항상 마지막)·schemaIdx/relOrder(안정화 후 계산, barycenter 는 신규 테이블에만)·leak 없음(collapse=컬럼만 제거·resetModel clear·_metaStableSeq self-prune)·nodePos 직교(order=base slot, nodePos=절대 델타)·fresh-load 동치(saved=[] → fresh passthrough)·클러스터 재출현 coherent — 전부 clean.
+- 확정 residual 2건:
+  - **R1(HIGH residual → 수정)**: simgroups(구조화 스키마) 경로가 relOrder 미사용·`_metaSimGroups` 가 그룹/테이블 순서를 매 rebuild 재-seriate → flat 경로만 안정화되고 구조화 스키마 내부 잔여 재배치. **수정**: `_metaSimGroups` 에 동일 `_metaStableSeq`(groupOrder[schemaId]·groupTableOrder[groupKey]) 적용.
+  - **R2(MODERATE residual → 문서화)**: `innerColsFor` 임계(7/15/28, 그룹 4/12) 교차 시 열 수 변경으로 해당 클러스터 전 열 재배치 — 반응형 레이아웃 고유. 비파괴·'공간 확보' 성격, 범위 외.
+- 미결: 더블클릭 canvas 상호작용 라이브 육안(win-browser CDP 좌표 마우스 미지원·synthetic 히트테스트 미도달 → 사용자 실 마우스 확인).
+
 ## REV-20260704T014646-ai-claude-feature-0016-graph-ux3fix [SUBAGENT: PASS-WITH-FIXES] — 3대 UX 개선(§45) 3-렌즈 적대 리뷰
 - 대상: CHG-20260704T014646-graph-ux3fix (admin.html/js/styles.css — ① 그래프 뷰 최상위 탭 분리+높이 ③ 검색 soft glow / ② 클러스터 원점 sticky 는 되돌림).
 - 방법: §18.8 3-렌즈 병렬 적대 리뷰(general-purpose, 통과 아닌 결함 적발 목적) — (A) 레이아웃 clusterBase, (B) IA/탭/권한 배선, (C) 검색 highlight. 각 렌즈에 diff + 전체 함수 컨텍스트 제공, 실패 시나리오 요구.

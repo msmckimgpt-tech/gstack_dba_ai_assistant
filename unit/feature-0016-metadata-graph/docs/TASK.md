@@ -1236,3 +1236,21 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T48.10 현재 main(§47, 069b8934) 병합·통합: admin.js/styles.css 자동병합(내 IA·검색 배선 무결 + funcproc/embed/crossds 요소 46 보존, 옛 서브탭 경로 접근 코드 0), admin.html 충돌 3건(캐시버스터×2·범례) 해소(범례에 funcproc 항목 병합 보존), 문서 append-only 충돌 keep-both, §45→§48 재번호.
 - [x] T48.11 **PB-0008 실 Windows 시각검증 PASS**(2026-07-04, 실 Windows Chrome/149 via bin/win-browser.py relay @172.26.144.1:9223, `https://localhost/admin` 로그인 세션, 배포 f3b60f1d 후): **①** 좌측 `지식베이스` 그룹에 `메타데이터`·`그래프 뷰` 별도 최상위 탭 렌더(그래프 뷰 클릭→전용 pane, canvas 476×617 전체높이, G6 5레이어, 데이터소스 select 20건, 스키마 카드 렌더). **③** 검색 `log`→'스키마 7개 매칭·매칭 테이블(앰버 글로우)' 상태 + 스키마 펼침 시 매칭 노드 **부드러운 앰버 글로우**(너비 불변, 미니맵에도 glow) 육안 확인. 메타 서브탭 graph 부재·범례 glow 칩·funcproc 병합 보존 확인. 증적 스크린샷 pb0008-graph-tab.png·pb0008-search-glow-expanded.png. Runner: AI(win-browser eval/screenshot, pageerror 0).
 - [x] T48.12 배포 완료(PR #581 → main f3b60f1d, gh 토큰 HTTPS push): `deploy-web.sh` 무중단 롤링(web-a/web-b f3b60f1d, one-at-a-time, soak 90s 통과, Caddy blip 0). 마이그 pending 0(0036==head, frontend-only). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz status:ok git_commit=f3b60f1d(양 replica), 캐시버스터 admin.js/styles.css?v=20260704-graph-ux3fix, 라이브 admin.js 심볼(switchTab graph·graphScopeSelect·searchMatchNodes·match glow·loadedScope, clusterBase/_metaHideGraph 제거 0), admin.html data-admin-pane/tab="graph"·graphScopeSelect 존재·메타 서브탭 graph 0. **실 Windows PB-0008 육안은 무인 3중벽으로 미수행 → 사용자 확인 대기(T48.11).**
+
+## 49. graph-dblclick-stable — 더블클릭 재배치 수정: 배치 순서 안정화 (2026-07-04, 사용자 요청 ② 후속 cycle)
+
+사용자 요청 ②(§48 에서 후속으로 미룬 것): 노드 더블클릭 시 전체 재배치 이슈 수정 — 이동해둔(드래그) 노드 위치 보존, 비조작 노드가 우선 밀림(밀린 노드는 조작 노드 아님).
+
+배경: §48 의 1차 접근(클러스터 원점 고정 clusterBase)은 적대리뷰에서 카드→combo 확장 겹침 회귀로 되돌림. 근본원인 재분석: 더블클릭(`_metaGraphExpand`)이 이웃을 ingest 후 `_metaG6Build` 재실행 → 클러스터 순서(`_metaRelSchemaOrder`)·클러스터내 테이블 순서(`_metaRelOrderAll`)를 매번 **re-seriate** → 기존 노드가 그리드를 점프. 위험도 Major(레이아웃 엔진). frontend-only(admin.js).
+
+### 49.1 구현 — 배치 순서 안정화 (admin.js)
+- [x] T49.1 `_metaStableSeq(fresh, savedKeys, keyOf)` 순수함수: 저장 순서 항목 먼저(현존만) + 신규는 fresh(seriated) 순서 append.
+- [x] T49.2 state `clusterOrder`(클러스터 순서)·`tableOrder`(flat masonry 테이블)·`groupOrder`/`groupTableOrder`(simgroups 그룹·그룹내 테이블), `_metaGraphResetModel` 에서 clear(fresh load = 순수 seriation).
+- [x] T49.3 `_metaG6Build`: ids(클러스터)·relOrder(flat 테이블) 안정화. `_metaSimGroups`: serIds(그룹)·ordered(그룹내 테이블) 안정화(적대리뷰 R1 반영).
+- [x] T49.4 효과: 기존 노드는 masonry 열/슬롯 유지(제자리), 신규만 append, 비조작 노드는 클러스터 폭 변화 시 밀림(요구③), 드래그(nodePos)는 직교 보존(요구②), packer 유지로 **겹침 없음**(clusterBase 위치고정 접근의 겹침 회귀 회피).
+
+### 49.2 검증
+- [x] T49.5 `node --check` PASS + `_metaStableSeq` 격리 단위테스트 **6/6 PASS**(순수 seriation·기존 순서 보존·신규 append·제거 drop·5회 반복 drift 0·객체 keyOf).
+- [x] T49.6 §18.8 적대 리뷰 2라운드: **핵심 로직 clean**(ids `length=0` mutation 비별칭·schemaIdx/relOrder 안정화후 계산·leak 없음(collapse 는 컬럼만·resetModel clear)·nodePos 직교(base slot 위 델타)·fresh-load 동치·클러스터 재출현 coherent). **R1**(simgroups 미커버) → `_metaSimGroups` 안정화 반영. **R2**(innerCols 임계 7/15/28 교차 시 클러스터 재열)는 반응형 레이아웃 고유 트레이드오프 — 비파괴·'공간 확보' 성격으로 문서화(범위 외). REV-20260704T151336-graph-dblclick-stable.
+- [x] T49.7 배포 완료(PR #583 → main 1df96431, gh 토큰 HTTPS push): `deploy-web.sh` 무중단 롤링(web-a/b 1df96431, one-at-a-time, soak 통과). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz git_commit=1df96431, 캐시버스터 `admin.js?v=20260704-graph-dblclick`, 라이브 심볼 `_metaStableSeq`·clusterOrder/tableOrder·groupOrder/groupTableOrder. 그래프 탭·스키마 카드 렌더·데이터소스 로드 라이브 확인, pageerror 0.
+- [~] T49.8 **더블클릭 canvas 상호작용 라이브 육안 = 사용자 확인 필요**: G6 canvas 노드 더블클릭은 win-browser 로 자동 구동 불가(CDP 좌표 마우스 미지원 + 합성 pointer 이벤트가 @antv/g 히트테스트 미도달 — graph-drag §41 등 직전 cycle 과 동일 canvas 한계). 코드-레벨(격리테스트·적대리뷰 6축)·배포·자산·렌더링은 검증됨. 사용자 실 마우스로 (a) 스키마 2개 펼침 → 한 테이블 더블클릭 → 기존 노드 제자리·신규 이웃만 추가·겹침 0, (b) 노드 드래그 후 더블클릭 → 드래그 위치 보존 확인 요망.

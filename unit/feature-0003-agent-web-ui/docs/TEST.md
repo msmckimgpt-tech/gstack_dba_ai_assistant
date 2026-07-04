@@ -1686,3 +1686,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **전 워커 Phase B 코드 정합**: insight-worker + ask-worker 재빌드(relationships.py 7-col ON CONFLICT·프로브 가드·infer_cross_datasource/store_xds 존재 확인). xds 추론 데몬 **기본 OFF**(AGENT_XDS_RELATIONSHIP_INFER_AUTO=0). 컨테이너 healthy.
 - **라이브 브라우저(win-browser, Chrome149)**: 새 프론트 라이브(admin.js `20260704-crossds-rel`, crossDs/cross_ds 매칭). 메타데이터 > 🕸 그래프 뷰 → datasource(`mssql-dk-dev`) 선택 → 스키마 카드 11개 + 스키마 점프 펼침 정상 렌더 + **pageerror 0**(신규 _metaEdgeStyleFor(crossDs)·엣지 ingest/build·sync_relationship tgt_scope·neighborhood cross_ds 런타임 오류 0). 관계 렌더 무회귀. 스크린샷 `scratchpad/phaseB-graph.png`.
 - **크로스-ds 엣지 시각확인 = eventual(후속)**: 데몬 OFF + 크로스-ds 행 0 → 현재 마젠타 점선 엣지 없음(무회귀). AGENT_XDS_RELATIONSHIP_INFER_AUTO=1 flip + Phase C 임베딩 populate 후 크로스-ds 후보 생성 → 마젠타 점선 + [교차DB] 육안 확인 이월.
+
+### Run (2026-07-04) — graph-dblclick-stable: 더블클릭 재배치 수정(배치 순서 안정화) (Major §12.3 — frontend 레이아웃, 코드 거주 feature-0003 admin.js / 문서 정본 feature-0016 TASK §49) — **Environment: Windows-browser**
+- 정적·§18.8 PASS: `node --check` + `_metaStableSeq` 격리테스트 6/6 + 적대리뷰 2라운드(핵심 clean, R1 simgroups 수정, R2 임계재열 문서화).
+- 배포 1df96431(web 무중단 롤링 soak 통과). **POST-DEPLOY 자산검증 PASS**: healthz git_commit=1df96431, `admin.js?v=20260704-graph-dblclick`, 라이브 심볼 `_metaStableSeq`·clusterOrder/tableOrder·groupOrder/groupTableOrder. 그래프 탭·스키마 카드·데이터소스 로드 라이브 렌더 확인, pageerror 0.
+- **더블클릭 canvas 상호작용 육안 = 사용자 확인 필요**: G6 canvas 노드 더블클릭은 win-browser 자동 구동 불가(CDP 좌표 마우스 미지원 + synthetic pointer 가 @antv/g 히트테스트 미도달 — graph-drag §41 동일 한계). 사용자 실 마우스로 더블클릭 시 **기존 노드 제자리·신규 이웃만 추가·겹침 0·드래그 노드 보존** 확인 요망(POST-DEPLOY 갱신).
