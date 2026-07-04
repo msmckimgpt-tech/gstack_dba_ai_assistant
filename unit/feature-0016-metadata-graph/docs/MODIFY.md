@@ -943,3 +943,10 @@ source_of_truth: true
   - `unit/feature-0016-metadata-graph/docs/{TASK(§50.3),MODIFY,REVIEW,TEST}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 프론트 표현·hit-test 전용 — 데이터·API·AGE·RBAC·마이그 불변. 배포=web 재빌드. 검증: node --check + headless **29/29 PASS**(T8 GH zIndex 양수·cursor move·GB 음수·GX 양수 잠금) + 재배포 후 그룹 드래그 PB-0008 라이브 재검증.
 - Rollback Notes: GH zIndex 5→−1·cursor 제거 + cache-buster·범례 문구 이전값 복원.
+## CHG-20260704T163510-ai-claude-feature-0016-group-drag-liveverify
+- Date: 2026-07-04
+- Related Requirement: CHG-…-group-drag-hotfix(T50.9) 재배포 후 그룹 드래그 라이브 재검증(패치 없이) 결과 기록. TASK §50 T50.10.
+- Summary: doc-only — 배포 a9492afe(admin.js `?v=20260704-group-drag-hotfix`·GH zIndex 5 서빙) 후 실 Windows Chrome(Playwright real mouse)로 **패치 없이** notice 그룹 헤더 드래그 → groupOffset 설정·accountdb clusterOffset=null·notice 만 이동·t_account 불변·pageerror 0. hotfix 실효 확정 — 세 요구(접기/펼치기·drag&drop 위치이동·내부노드 반응형) 전부 배포본 라이브 동작. TASK §50 T50.10 [x], TEST(group-drag-hotfix Run POST-DEPLOY) 갱신.
+- Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 문서 전용(코드·자산 무변경) — 배포 불요.
+- Rollback Notes: 해당 doc 라인 revert.
