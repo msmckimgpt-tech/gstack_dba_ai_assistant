@@ -926,3 +926,9 @@ source_of_truth: true
   로직·좌표수학·회귀 표면 무변경(GB 배경 z−2·GX z1 불변, 헤더 스트립 멤버 없어 시각 회귀 0). headless T8 로 잠금.
 - 재검증: node --check PASS + headless **29/29 PASS**(T8: GH zIndex 양수·cursor move·GB 음수·GX 양수). 재배포 후 그룹
   드래그 라이브 재검증(패치 없이 groupOffset 설정 확인).
+## REV-20260704T163510-ai-claude-feature-0016-group-drag-liveverify [SKIPPED:doc-only-postdeploy] — 그룹 드래그 hotfix 재배포 후 라이브 재검증 결과 기록 (코드 무변경)
+- 대상: hotfix(T50.9) 재배포(a9492afe) 후 그룹 드래그 라이브 재검증을 T50.10 [x]·MODIFY CHG-…-group-drag-liveverify·
+  TEST(group-drag-hotfix Run POST-DEPLOY)에 기록하는 doc-only 후속. **코드·자산 무변경** → §18.8 적대 패널 비적용(SKIPPED).
+- 근거: 배포본(admin.js `?v=20260704-group-drag-hotfix`·GH zIndex 5 서빙) 에서 **라이브 패치 없이** notice 그룹 헤더
+  드래그 → groupOffset={dx:141,dy:−77} 설정·accountdb clusterOffset=null(그룹 드래그·combo 아님)·notice 만 이동·
+  t_account 불변·pageerror 0(gi-06). 코드 품질은 REV-…-group-drag-hotfix·REV-…-group-interact 에서 완료.
