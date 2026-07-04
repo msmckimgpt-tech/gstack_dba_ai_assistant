@@ -933,3 +933,13 @@ source_of_truth: true
 - Impact: 프론트 상호작용·표현 전용 — 데이터 API·AGE 스키마·RBAC·마이그레이션 불변. ADR-004 결정론 배치·§49 순서 안정화는 불변(offset·방출여부만 개입). 배포=web 재빌드(자산 baked). 완료 게이트=PB-0008 실 Windows(T50.8).
 - §18.8 패널 반영(REV-20260704T154756): [MAJOR] 접힌 그룹 드래그 시 nodePos 멤버 분리 → groupMembers/groupOf 를 build 분기에서 **전체 멤버(접힘 포함)** 로 채움(headless T7). [NIT] GX 우클릭 스키마 메뉴 라우팅·범례 문구 정밀화. 수용: combo 드래그 hit-area 축소(헤더/여백 경로 유지)·그룹소속 테이블 드래그 rebuild(1회/드래그).
 - Rollback Notes: admin.js 신규 상태·build 그룹 분기·emission pre-pass/GB·GH·GX 방출·드래그/클릭 핸들러 분기 revert + admin.html cache-buster 이전값(20260704-graph-dblclick / 20260704-graph-ux3fix)·범례 문구 복원. 데이터·API 무손상.
+## CHG-20260704T162548-ai-claude-feature-0016-group-drag-hotfix
+- Date: 2026-07-04
+- Related Requirement: CHG-…-group-interact(§50) PB-0008 라이브 실측(T50.8)에서 발견된 그룹 드래그 결함 hotfix. TASK §50.3 T50.9.
+- Summary: **GH 헤더 zIndex −1 → 5(양수)** + `cursor:move`. §50 에서 GH 를 zIndex −1(배경)로 둬 combo 배경(z0) 뒤에 렌더 → @antv/g hit-test 에서 combo 가 헤더를 가려, 헤더 드래그가 node:dragstart(그룹 드래그) 대신 combo:dragstart(클러스터 이동)로 발화(라이브 실측 — groupOffset 미설정·clusterOffset 설정으로 확인). 헤더를 양수 zIndex 로 올려 combo 위에서 hit-test 되게 하니 그룹 드래그 정상(라이브 패치 실증: groupOffset 설정·타 그룹 불변). GB 배경은 z−2 유지(멤버 뒤 배경 — combo 에 가려 미-grab, 헤더가 유일 드래그 핸들). 헤더 스트립엔 멤버가 없어 시각 회귀 0. 헤드리스는 zIndex hit-test 를 모델하지 못해 §50 검증(25/25)이 못 잡은 결함 — PB-0008 라이브가 포착.
+- Files:
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js` (GH 방출 style zIndex −1→5 + cursor:move)
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html` (cache-buster `?v=20260704-group-drag-hotfix` + 범례 "헤더 칩 드래그로 그룹 이동")
+  - `unit/feature-0016-metadata-graph/docs/{TASK(§50.3),MODIFY,REVIEW,TEST}.md` + `unit/feature-0003-agent-web-ui/docs/TEST.md`
+- Impact: 프론트 표현·hit-test 전용 — 데이터·API·AGE·RBAC·마이그 불변. 배포=web 재빌드. 검증: node --check + headless **29/29 PASS**(T8 GH zIndex 양수·cursor move·GB 음수·GX 양수 잠금) + 재배포 후 그룹 드래그 PB-0008 라이브 재검증.
+- Rollback Notes: GH zIndex 5→−1·cursor 제거 + cache-buster·범례 문구 이전값 복원.
