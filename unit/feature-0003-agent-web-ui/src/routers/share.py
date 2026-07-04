@@ -123,6 +123,23 @@ def join_conversation_via_share(token: str, request: Request, account=Depends(ap
             request_ctx={"conversation_id": cid, "via": "share_link", "reason": "banned"},
         )
         return app._json_error("이 대화에서 차단되어 참여할 수 없습니다.", 403)
+    # share-visibility-window: 이 공유 링크의 [floor, ceiling] window (anchored 도 ceiling 제약 —
+    # AR-1 반전: joinable 공유가 익명 뷰뿐 아니라 참여 멤버의 열람 범위도 제약). 경계 메세지의
+    # created_at 을 스냅샷해 멤버 각인에 실어 core(LLM recall) id-space 로의 bridge 를 준비한다.
+    _share_floor = share.get("FloorMessageId")
+    _share_ceiling = share.get("AnchorMessageId")
+    _share_floor = int(_share_floor) if _share_floor is not None else None
+    _share_ceiling = int(_share_ceiling) if _share_ceiling is not None else None
+    _share_windowed = _share_floor is not None or _share_ceiling is not None
+    _floor_ca = app._conv_message_created_at(conn, cid, _share_floor) if _share_floor is not None else None
+    _ceiling_ca = app._conv_message_created_at(conn, cid, _share_ceiling) if _share_ceiling is not None else None
+    # windowed 공유인데 경계 메세지 created_at 해석 실패 → **join 거부**(무제한 멤버십 각인 방지, fail-closed).
+    if _share_windowed and (
+        (_share_floor is not None and _floor_ca is None)
+        or (_share_ceiling is not None and _ceiling_ca is None)
+    ):
+        return app._json_error("공유 범위를 확인할 수 없습니다.", 400)
+
     # 이미 소유자/멤버면 멱등 성공(중복 참여 무해).
     already = app._conversation_owned_by_account(conn, cid, actor_id) or app._account_is_conversation_member(cid, actor_id)
     if not already:
@@ -133,6 +150,13 @@ def join_conversation_via_share(token: str, request: Request, account=Depends(ap
             try:
                 inviter = int(share.get("CreatedBy")) if share.get("CreatedBy") is not None else None
                 group_members.add_member(pg, cid, actor_id, role="member", invited_by_account_id=inviter)
+                # 신규 멤버는 공유 window 를 그대로 각인(딱 [floor, ceiling] 만 열람).
+                if _share_windowed:
+                    group_members.stamp_member_visibility(
+                        pg, cid, actor_id, is_new_member=True,
+                        floor_id=_share_floor, ceiling_id=_share_ceiling,
+                        floor_created_at=_floor_ca, ceiling_created_at=_ceiling_ca,
+                    )
             finally:
                 pg.close()
         except Exception:
@@ -166,6 +190,26 @@ def join_conversation_via_share(token: str, request: Request, account=Depends(ap
         except Exception:
             logging.getLogger(__name__).warning(
                 "join: group join-notice event failed — conversation_id=%s actor_id=%s",
+                cid, actor_id, exc_info=True,
+            )
+    elif _share_windowed:
+        # share-visibility-window: 이미 멤버인데 windowed 링크로 재참여 → 교집합 각인(절대 넓히지
+        # 않음; 기존 full 멤버·owner 는 stamp_member_visibility 가 skip). 신규 노출 확대 0.
+        try:
+            from shared.db import _pg_connect
+            from modules import group_members
+            pg = _pg_connect()
+            try:
+                group_members.stamp_member_visibility(
+                    pg, cid, actor_id, is_new_member=False,
+                    floor_id=_share_floor, ceiling_id=_share_ceiling,
+                    floor_created_at=_floor_ca, ceiling_created_at=_ceiling_ca,
+                )
+            finally:
+                pg.close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "join: re-join visibility stamp failed — conversation_id=%s actor_id=%s",
                 cid, actor_id, exc_info=True,
             )
     return JSONResponse({"ok": True, "conversation_id": cid, "already_member": already})
@@ -216,6 +260,9 @@ WHERE Token = %s AND RevokedAt IS NULL
         conversation_id = str(share.get("ConversationId") or "")
         anchor_id = share.get("AnchorMessageId")
         anchor_id_int = int(anchor_id) if anchor_id is not None else None
+        # share-visibility-window: 하단 경계("여기부터 공유") — 익명 뷰에서도 pre-floor 배제.
+        floor_id_view = share.get("FloorMessageId")
+        floor_id_view_int = int(floor_id_view) if floor_id_view is not None else None
         # 대화 topic + product context 조회 (cutover: core_conversations 는 PG,
         # WebProducts/WebAccounts 는 MySQL → backend-aware merge helper).
         # TASK-0176 (F1, REV-20260609-0001): 데이터 로드(PG core_conversations/messages) 실패 시
@@ -235,6 +282,7 @@ WHERE Token = %s AND RevokedAt IS NULL
                 conn,
                 conversation_id,
                 anchor_id_int,
+                floor_message_id=floor_id_view_int,
                 share_token_policy_version=share_policy_version,
             )
         except Exception:
@@ -377,7 +425,13 @@ def public_share_fork(token: str, request: Request, account=Depends(app.require_
         return app._json_error("이 대화에서 차단되어 복제(fork)할 수 없습니다.", 403)
     anchor_id = share.get("AnchorMessageId")
     anchor_id_int = int(anchor_id) if anchor_id is not None else None
-    payload, err = app._fork_conversation_impl(conn, account, conversation_id, anchor_id_int)
+    # share-visibility-window: 하단 경계("여기부터 공유")도 fork 에 전달 → [floor, ceiling] 만 복제.
+    #   추가로 요청자가 bounded 멤버면 impl 이 본인 window 와 교집합(가려진 구간 반출 차단, AR-2 반전).
+    floor_id = share.get("FloorMessageId")
+    floor_id_int = int(floor_id) if floor_id is not None else None
+    payload, err = app._fork_conversation_impl(
+        conn, account, conversation_id, anchor_id_int, share_floor_id=floor_id_int
+    )
     if err:
         return err
     # TASK-0073 Phase A6: share fork audit (TASK-0058 fork 는 이미 logged-in 필수).

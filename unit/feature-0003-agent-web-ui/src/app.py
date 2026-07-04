@@ -12277,8 +12277,39 @@ def _conv_copy_core_messages(conn, new_cid: str, src_core_rows: list[tuple]) -> 
         pg.close()
 
 
+def _coerce_naive_dt(v):
+    """datetime|str|None → naive datetime|None. tz 정보 제거(교차 store 비교용, 근사)."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        from datetime import datetime as _dt
+        try:
+            v = _dt.fromisoformat(v)
+        except Exception:
+            return None
+    try:
+        return v.replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _attachment_outside_window(att_ca, lower_ca, upper_ca) -> bool:
+    """첨부(CreatedAt)가 fork window 밖인가. share-visibility-window. 불명확은 fail-closed(skip)."""
+    a = _coerce_naive_dt(att_ca)
+    lo = _coerce_naive_dt(lower_ca)
+    hi = _coerce_naive_dt(upper_ca)
+    if a is None:
+        return True  # 첨부 시각 불명 + window 활성 → 안전하게 skip.
+    if lo is not None and a < lo:
+        return True
+    if hi is not None and a > hi:
+        return True
+    return False
+
+
 def _copy_conversation_attachments(
-    conn, source_conversation_id: str, new_cid: str, fork_account_id: int
+    conn, source_conversation_id: str, new_cid: str, fork_account_id: int,
+    *, window_lower_ca=None, window_upper_ca=None,
 ) -> tuple[int, list[tuple[int, str, str]]]:
     """TASK-0171 Phase 2 (ADR-WEB-0005 하이브리드): 원본 대화의 활성 첨부를 fork 본으로 복사.
 
@@ -12305,7 +12336,7 @@ def _copy_conversation_attachments(
     try:
         cur.execute(
             "SELECT Id, ObjectKey, OriginalFilename, FilenameHmac, MimeType, SizeBytes, "
-            "SizeBucket, Sha256, Kind, UploadStatus, MetaJson "
+            "SizeBucket, Sha256, Kind, UploadStatus, MetaJson, CreatedAt "
             "FROM WebConversationAttachments "
             "WHERE ConversationId = %s AND DeletedAt IS NULL ORDER BY Id ASC",
             (source_conversation_id,),
@@ -12314,10 +12345,15 @@ def _copy_conversation_attachments(
     finally:
         cur.close()
 
+    _att_windowed = window_lower_ca is not None or window_upper_ca is not None
     copied = 0
     reingest: list[tuple[int, str, str]] = []
     for att in src_atts:
         old_att_id = att.get("Id")
+        # share-visibility-window: 가려진 구간(pre-floor/post-ceiling) 첨부는 fork 로 복사 안 함.
+        #   첨부는 fail-open 보조물이나, windowed fork 에서는 유출 방지를 위해 out-of-window skip(fail-closed).
+        if _att_windowed and _attachment_outside_window(att.get("CreatedAt"), window_lower_ca, window_upper_ca):
+            continue
         kind = str(att.get("Kind") or "other")
         old_key = str(att.get("ObjectKey") or "")
         filename = str(att.get("OriginalFilename") or "file")
@@ -12498,24 +12534,65 @@ LIMIT 1
         cur.close()
 
 
+def _resolve_copy_window(conn, source_id: str, account_id: int, *, share_floor_id=None, share_ceiling_id=None):
+    """fork 복사 window = INTERSECTION(share window, 요청자 멤버 window). share-visibility-window.
+
+    반환: ('ok', lower_id, upper_id) | ('deny', None, None) | ('empty', None, None). 전부 DISPLAY id-space.
+    교집합은 순수 정수 min/max (share Anchor/Floor 와 member floor/ceil 모두 DISPLAY id).
+      - 멤버 window 조회가 'DENY'(PG 오류) → ('deny') : 무제한 복사 대신 거부(fail-closed).
+      - lower > upper (빈 교집합) → ('empty').
+    bounded 멤버가 라이브룸을 직접 fork(/api/fork_conversation)해도 여기서 자동 clip 되어 가려진
+    구간이 fork 로 반출되지 않는다(REV AR-2 반전).
+    """
+    mw = _member_visibility_window(conn, source_id, int(account_id))
+    if mw == "DENY":
+        return ("deny", None, None)
+    m_floor, m_ceil = mw
+    # lower = 더 제약적(더 높은 id) — None=무제한.
+    lowers = [v for v in (share_floor_id, m_floor) if v is not None]
+    lower_id = max(int(v) for v in lowers) if lowers else None
+    uppers = [v for v in (share_ceiling_id, m_ceil) if v is not None]
+    upper_id = min(int(v) for v in uppers) if uppers else None
+    if lower_id is not None and upper_id is not None and lower_id > upper_id:
+        return ("empty", None, None)
+    return ("ok", lower_id, upper_id)
+
+
 def _fork_conversation_impl(
     conn,
     account: dict[str, Any],
     source_id: str,
     from_id: int | None,
+    share_floor_id: int | None = None,
 ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
     """REQ-20260514-0001: fork 본체 로직. 호출자가 source 접근 권한 + create 권한을 사전 검증한다.
 
+    from_id = 상단(ceiling, "여기까지"/anchor) inclusive 컷. share_floor_id = 하단("여기부터")
+    inclusive 컷(share-visibility-window). 실제 복사 window 는 요청자 멤버 window 와의 교집합.
+
     Returns: (success_dict, None) on success, (None, JSONResponse) on error.
     """
+    # share-visibility-window: 요청자 멤버 window ∩ share window 로 복사 범위 확정 (fail-closed).
+    _cw_status, lower_id, upper_id = _resolve_copy_window(
+        conn, source_id, int(account["id"]), share_floor_id=share_floor_id, share_ceiling_id=from_id
+    )
+    if _cw_status == "deny":
+        return None, _json_error("복제 처리 중 오류가 발생했습니다.", 500)
+    if _cw_status == "empty":
+        return None, _json_error("공유된 범위에 복제할 대화가 없습니다.", 400)
+
     # cutover 후 topic/메시지/product 는 PG(agent_runtime) 에서 읽는다 (backend-aware helper).
     source_topic = _conv_load_topic(conn, source_id)
 
-    # 복사 대상 메시지 조회 (내부/시스템 메시지는 _conv_copy_messages 가 제외).
+    # 복사 대상 메시지 조회 (내부/시스템 메시지는 _conv_copy_messages 가 제외). [lower_id, upper_id] clip.
     try:
-        src_rows = _conv_load_messages_raw(conn, source_id, from_id)
+        src_rows = _conv_load_messages_raw(conn, source_id, upto_id=upper_id, from_id=lower_id)
     except Exception:
         return None, _json_error("failed to load source messages", 500)
+    # share-visibility-window: window 의 core(created_at) 경계 — clip 된 src_rows 에서 유도(발명 금지).
+    # core_messages(LLM 문맥) 와 첨부(WebConversationAttachments.CreatedAt) clip 에 공유.
+    _win_lower_ca = src_rows[0][3] if (lower_id is not None and src_rows) else None
+    _win_upper_ca = src_rows[-1][3] if (upper_id is not None and src_rows) else None
 
     # 원본 대화의 product_id / product_mode 조회 (없으면 기본 Product).
     # TASK-0052 Phase 1C G5 (Codex Claim 4 fork product_mode 복사 fix): product_mode 도 함께 조회하여 'auto' 보존.
@@ -12551,7 +12628,7 @@ def _fork_conversation_impl(
         return None, _json_error("failed to create forked conversation", 500)
 
     try:
-        copied = _conv_copy_messages(conn, new_cid, src_rows, source_id, from_id)
+        copied = _conv_copy_messages(conn, new_cid, src_rows, source_id, upper_id)
     except Exception:
         # 중간 실패 시 새 대화 기록을 정리하고 error 반환.
         try:
@@ -12569,8 +12646,10 @@ def _fork_conversation_impl(
     # 가 정규화한다(DESIGN §15 F1).
     core_copied = 0
     try:
-        core_cutoff = src_rows[-1][3] if (from_id is not None and src_rows) else None
-        src_core_rows = _conv_load_core_messages_raw(conn, source_id, core_cutoff)
+        # share-visibility-window: core(LLM 문맥)도 [lower, upper] 로 clip (공유 created_at 경계).
+        src_core_rows = _conv_load_core_messages_raw(
+            conn, source_id, _win_upper_ca, from_created_at=_win_lower_ca
+        )
         core_copied = _conv_copy_core_messages(conn, new_cid, src_core_rows)
     except Exception:
         # core_messages 복사 실패 시 fork 를 통째로 정리하고 fail-loud — 문맥 없는 반쪽
@@ -12590,7 +12669,8 @@ def _fork_conversation_impl(
     reingest_specs: list[tuple[int, str, str]] = []
     try:
         att_copied, reingest_specs = _copy_conversation_attachments(
-            conn, source_id, new_cid, int(account["id"])
+            conn, source_id, new_cid, int(account["id"]),
+            window_lower_ca=_win_lower_ca, window_upper_ca=_win_upper_ca,
         )
     except Exception:
         logging.getLogger(__name__).warning(
@@ -13053,8 +13133,11 @@ def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, di
     return SHARE_POLICY_REDACT_TEXT, True, meta_clean
 
 
-def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
-    """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive).
+def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, floor_message_id: int | None = None, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
+    """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive, "여기까지 공유").
+
+    share-visibility-window: floor_message_id 가 주어지면 `Id >= floor` (inclusive, "여기부터 공유").
+    익명 공유 스냅샷은 hard window — 라이브 tail 병합 없음(익명 뷰어는 라이브 멤버 아님).
 
     fork 의 `_is_internal_message` 와 동일 필터를 적용해 내부/시스템 메시지를 숨긴다.
 
@@ -13064,7 +13147,7 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
     """
     # cutover 후 메시지는 PG(agent_runtime.messages) 에서 읽는다 (backend-aware helper).
     # 반환 행은 (id, role, content, created_at, meta_json) tuple. meta_json 은 PG 면 dict.
-    rows = _conv_load_messages_raw(conn, conversation_id, anchor_message_id)
+    rows = _conv_load_messages_raw(conn, conversation_id, anchor_message_id, from_id=floor_message_id)
     visible: list[dict[str, Any]] = []
     # R-F7: 정책 version 비교 — token 발급 시 version < 현재 면 자동 redact 대상.
     redact_active = (

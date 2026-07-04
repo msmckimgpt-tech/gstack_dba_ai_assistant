@@ -735,12 +735,14 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
     except Exception:
         data = {}
     scope_mode = str(data.get("scope_mode") or "full").strip().lower()
-    if scope_mode not in ("full", "anchored"):
+    if scope_mode not in ("full", "anchored", "windowed"):
         return app._json_error("invalid scope_mode", 400)
     # feature-0009: 공유 링크 참여(join) 허용 여부. 기본 ON(사용자 결정) — 명시 false 일 때만 OFF.
     joinable = 0 if (data.get("joinable") is False) else 1
-    raw_anchor = data.get("anchor_message_id")
+    raw_anchor = data.get("anchor_message_id")  # 상단 경계("여기까지 공유"), inclusive ceiling
+    raw_floor = data.get("floor_message_id")    # 하단 경계("여기부터 공유"), inclusive floor
     anchor_id: int | None = None
+    floor_id: int | None = None
     if scope_mode == "anchored":
         if raw_anchor is None or str(raw_anchor).strip() == "":
             return app._json_error("anchor_message_id required for scope_mode=anchored", 400)
@@ -748,6 +750,22 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
             anchor_id = int(raw_anchor)
         except Exception:
             return app._json_error("invalid anchor_message_id", 400)
+    elif scope_mode == "windowed":
+        # share-visibility-window: floor/ceiling 중 최소 1개 필요. anchor(ceiling) 없으면 라이브 끝까지.
+        if raw_anchor is not None and str(raw_anchor).strip() != "":
+            try:
+                anchor_id = int(raw_anchor)
+            except Exception:
+                return app._json_error("invalid anchor_message_id", 400)
+        if raw_floor is not None and str(raw_floor).strip() != "":
+            try:
+                floor_id = int(raw_floor)
+            except Exception:
+                return app._json_error("invalid floor_message_id", 400)
+        if anchor_id is None and floor_id is None:
+            return app._json_error("windowed 공유는 floor_message_id 또는 anchor_message_id 가 필요합니다.", 400)
+        if anchor_id is not None and floor_id is not None and floor_id > anchor_id:
+            return app._json_error("여기부터 지점은 여기까지 지점 이전이어야 합니다.", 400)
     # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 만료 옵션.
     # `expires_in_seconds` 누락 / null / 0 이하 = 무기한 (NULL, 기존 동작 무회귀).
     # 상한 365 일 — 초과 시 400 (절대시각 폭주 차단).
@@ -789,6 +807,19 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
             return app._json_error("참여 허용 링크는 대화 생성자만 만들 수 있습니다.", 403)
         if anchor_id is not None and not app._share_anchor_belongs_to_conversation(conn, cid, anchor_id):
             return app._json_error("anchor_message_id 가 대화에 속하지 않습니다.", 400)
+        if floor_id is not None and not app._share_anchor_belongs_to_conversation(conn, cid, floor_id):
+            return app._json_error("floor_message_id 가 대화에 속하지 않습니다.", 400)
+        # share-visibility-window widen-guard: bounded 멤버(제한된 열람 범위)는 자기 window 밖으로
+        # 재공유할 수 없다(전이적 재공유 권한상승 차단). 요청 window ⊄ 본인 window 면 403.
+        # owner/full 멤버/비멤버는 (None,None) → 무영향. PG 오류('DENY') → 안전하게 거부.
+        _mw = app._member_visibility_window(conn, cid, int(account["id"]))
+        if _mw == "DENY":
+            return app._json_error("공유 범위를 확인할 수 없습니다.", 500)
+        _m_floor, _m_ceil = _mw
+        if _m_floor is not None and (floor_id is None or int(floor_id) < int(_m_floor)):
+            return app._json_error("공유 범위가 본인 열람 범위를 벗어납니다.", 403)
+        if _m_ceil is not None and (anchor_id is None or int(anchor_id) > int(_m_ceil)):
+            return app._json_error("공유 범위가 본인 열람 범위를 벗어납니다.", 403)
         # Token UNIQUE 충돌 retry loop (확률은 극히 낮지만 cheap).
         # 만료: expires_in_seconds 가 있으면 ExpiresAt = DATE_ADD(NOW(), INTERVAL %s SECOND)
         # (DB 시계 도메인 — view/fork 의 NOW() 비교와 정합). 무기한이면 NULL.
@@ -808,14 +839,15 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
                 cur.execute(
                     f"""
 INSERT INTO WebConversationShares
-    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion, Joinable, ExpiresAt)
-VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
+    (ConversationId, Token, ScopeMode, AnchorMessageId, FloorMessageId, CreatedBy, PolicyVersion, Joinable, ExpiresAt)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, {expires_expr})
                     """,
                     (
                         cid,
                         token,
                         scope_mode,
                         int(anchor_id) if anchor_id is not None else None,
+                        int(floor_id) if floor_id is not None else None,
                         int(account["id"]),
                         app.SHARE_POLICY_VERSION_CURRENT,
                         int(joinable),
@@ -864,6 +896,7 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
                 "conversation_id": cid,
                 "scope_mode": scope_mode,
                 "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "floor_message_id": int(floor_id) if floor_id is not None else None,
                 "share_id": int(share_id),
                 "token_prefix": token[:8],
                 "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
@@ -876,6 +909,7 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
                 "conversation_id": cid,
                 "scope_mode": scope_mode,
                 "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "floor_message_id": int(floor_id) if floor_id is not None else None,
                 "url": f"/share/{token}",
                 "expires_at": expires_at_iso,
                 "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
@@ -1268,6 +1302,17 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
             conn, account, cid, "conversation.read.own", "conversation.read.any"
         ):
             return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # share-visibility-window: bounded 멤버는 가려진 pre-floor 메세지를 샘플/피드백 대상으로
+        # 지정할 수 없다(존재 probe 차단). display id-space 하단 경계만 게이트(상단은 post-join tail
+        # 모호성 때문에 표시 필터에 위임). core space 는 표시와 별공간이라 스킵.
+        if message_id is not None and message_id_space == "display":
+            _sf_win = app._resolve_display_window(conn, cid, (account or {}).get("id"))
+            if _sf_win == "DENY":
+                return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+            if isinstance(_sf_win, dict):
+                _sf_floor = _sf_win.get("floor_id")
+                if _sf_floor is not None and int(message_id) < int(_sf_floor):
+                    return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
         # REV-…-item03-security MAJOR-1: 적재 endpoint per-account rate-limit — 미적용 시
         # 열람자가 suggested 피드백을 spam 해 검수 큐를 채워 curator DoS. body-search 와 동형.
         if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=10):
