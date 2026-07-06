@@ -602,3 +602,31 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   방법 주석: `window.confirm` 은 자동화 스텁(문안 캡처 + true)으로 승인 — 그 외 전부 실 UI 핸들러
   (`_metaGraphAnalyzeSchema`)·실 API·실 worker 경로. 증적
   `artifacts/feature-0016-metadata-graph/20260706-routine-dbanalysis/rdba-01~03.png`.
+
+## graph-navfilter-routine — 그래프 뷰 개선 5건 (TASK §54, 2026-07-06)
+
+### 케이스
+- TC-54-1 (히스토리): 노드→클러스터→관계→노드 순회 후 뒤로/앞으로가 각 뷰 그대로 복원(+카메라),
+  새 선택 시 forward 절단, 접힘/모델리셋 후 복원은 API 재조회(ById), terms combo 비기록.
+- TC-54-2 (필터): ⚙/ƒ/🔗 토글 각각 빌드 제외+자리 회수 재배치, 엣지 토글은 테이블 위치 불변,
+  localStorage 영속·검색/scope 전환에도 유지, 재토글 복원(루틴 열 말미 append).
+- TC-54-3 (검색 보존): 검색→펼침·드래그·확장→재검색/클리어 시 구성·카메라 유지 + pristine 카드만
+  회수, rel 은 매칭 한정(비매칭 칩 폭/배지 오염 0), '초기화'만 풀리셋.
+- TC-54-4 (Routine 시드): 혼합 집계(total_tables/total_routines/missing), 루틴 잡 node_label='Routine'
+  ·키 `()` 접미 규약, cap 테이블 우선, [] 저하 시 테이블-only, payload routine_type/params, 재귀 0
+  (node_budget=planned 루틴 포함).
+- TC-54-5 (파라미터 수직): 파라미터 있는 루틴만 펼침, XR/RP 합성 노드(z bake 1:1·nodePos 비오염·
+  리지드 드래그·우클릭 귀속), realH 반영(아래 행 밀림·GB bbox), 상세 패널 세로 목록(esc 유지).
+
+### Run (2026-07-06) — pre-deploy 격리 검증
+- pytest `test_routine_dbanalysis.py` **21 PASS** (기존 16 + §54④ 5: 혼합 집계/루틴 라벨 시드/cap
+  테이블 우선/[] 저하/_build_payload routine 필드; 기존 시드 단언은 label 파라미터화로 갱신)
+  + 관련 회귀 `test_node_analysis_relevance`·`test_node_analysis_role`·`test_graph_funcproc_uxfix`
+  **57 PASS**.
+- `node --check admin.js` PASS · py_compile(metadata_graph/node_analysis/llm/admin_metadata/테스트) PASS.
+- §18.8 적대 패널(ux·frontend correctness·backend+security 3-렌즈 + BLOCKING/MAJOR 적대 재검증
+  Workflow) — REVIEW.md REV entry 참조.
+- **PB-0008(Windows-browser) pre-commit 미수행 사유**: 정적 자산(admin.js/admin.html/styles.css) baked
+  — merge+재배포(web+insight-worker) 선행 필요. POST-DEPLOY 에서 수행 후 본 섹션·feature-0003 TEST.md
+  §3 에 Run append 예정 — 검증 항목: AC-1(뒤로/앞으로 뷰 복원) · AC-2(토글 재배치·영속) · AC-3(검색
+  보존) · AC-4(DB 단위 분석 Routine 포함 confirm·마커) · AC-5(파라미터 수직·겹침 0) · pageerror 0.

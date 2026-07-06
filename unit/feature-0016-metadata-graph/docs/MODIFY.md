@@ -1020,3 +1020,21 @@ source_of_truth: true
 - Files: unit/feature-0016-metadata-graph/docs/{TASK,TEST,MODIFY,REVIEW,REPORT}.md ·
   unit/feature-0003-agent-web-ui/docs/TEST.md · wiki/hot.md.
 - Impact: 없음(문서만). Rollback Notes: revert.
+
+## CHG-20260706T135137-ai-claude-feature-0016-graph-navfilter-routine
+- Date: 2026-07-06
+- Related Requirement: REQ-20260706T113000-graph-navfilter-routine (TASK §54) — 그래프 뷰 개선 5건.
+- Summary: ① 상세 패널 뒤로/앞으로를 view-typed 히스토리로 확장(노드+클러스터+관계 상세 복원·카메라
+  재현) ② 노드 종류 필터(관계선·함수·프로시저 토글 — 빌드 입력 제외로 자리 회수 재배치, localStorage
+  영속) ③ 검색 변경/클리어 시 그래프 구성 보존(additive overlay + pristine 회수, 풀리셋은 '초기화'
+  전용) ④ DB(스키마) 단위 AI 능동 분석에 Routine 시드 포함(schema_routine_keys 신설·테이블 우선
+  cap·label 파라미터화·payload routine_type/params·total_routines 표기) ⑤ 루틴 파라미터 수직 배치
+  (그래프 XR:/RP: 서브노드 + 상세 패널 세로 목록).
+- Files: unit/feature-0002-agent-core/src/modules/{metadata_graph,node_analysis,llm}.py ·
+  unit/feature-0002-agent-core/tests/test_routine_dbanalysis.py ·
+  unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py ·
+  unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css} · feature docs.
+- Impact: 마이그 0. LLM 비용 — run 당 cap 200/hard 500·only_missing·confirm·audit **불변**(스키마
+  드레인 총량만 +routine 수, 테이블 우선 절단). web + insight-worker 재배포 필요(시드/payload 모듈
+  정합). cache-buster admin.js/styles.css `?v=20260706-graph-navfilter-routine`.
+- Rollback Notes: 코드 revert + 재배포. localStorage 키(metaGraphHiddenKinds)는 무해 잔존.

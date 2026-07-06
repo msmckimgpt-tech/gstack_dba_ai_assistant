@@ -1476,3 +1476,67 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   prune=False → drop 된 routine 이 SSOT·그래프에 잔존(ƒ/⚙ 고스트, 기능 영향은 표시 잔존뿐). 해소안:
   backfill 이 label 전체 스키마의 routine 이름 union 으로 label-단위 prune 1회 수행(cap-절단 시 skip).
   단일 스키마 label(현행 대부분)은 backfill prune=True 로 이미 회수.
+
+## 54. graph-navfilter-routine — 그래프 뷰 개선 5건: 상세 nav·kind 필터·검색 보존·Routine 분석·파라미터 수직 (2026-07-06, 사용자 요청)
+
+- Related Requirement: REQ-20260706T113000-graph-navfilter-routine — 사용자 요청 5건:
+  ① '상세 정보' 패널 뒤로/앞으로(이전 선택 노드 되짚기) ② 그래프 노드 종류 필터(테이블·컬럼 항상,
+  관계·함수·프로시저 토글 — 토글에 반응해 재배치) ③ 검색 변경/클리어 시 그래프 구성(노드 확장·배치)
+  보존 ④ DB 단위 AI 능동 분석에 함수/프로시저 노드 포함(pcbang_dkonline 실측 gap) ⑤ 프로시저 노드
+  파라미터 수직 배치(수평 나열 가시성 저하).
+- 설계 요지 (Workflow 5-렌즈 정찰 스펙 기반):
+  - ① 기존 노드-전용 히스토리(graphux7 #1)를 **view-typed 엔트리** {v:"node"|"cluster"|"rel", k} 로
+    확장 — Go 가 뷰별 함수(ShowDetail/ShowClusterDetailById/ShowRelations)로 디스패치 + 카메라 재현
+    (_metaGraphAnimateFocus, 미렌더 skip). 기록은 사용자-의도 진입 함수에서만(렌더 함수 금지), Go 가
+    부르는 함수는 첫 await 이전 동기 구간(=_histNav 창), Expand/Focus 는 seq 가드 뒤 성공-기반.
+  - ② hiddenKinds Set — **빌드 입력 제외**(스타일 숨김 금지: masonry/simgroups/shelf-pack 이 자리
+    자동 회수 = "적절히 배치"). Routine 은 그룹핑 편입 시점(분류식 _metaRoutineIcon 동일), 엣지는
+    방출 시점(모델 유지 — _metaRelAdjacency 가 모델을 읽어 배치 불변). 툴바 토글 3버튼 + localStorage
+    영속, resetModel 비-clear(scope-독립 preference — 검색이 resetModel 을 경유).
+  - ③ 검색/클리어를 resetModel 풀리셋 대신 **additive overlay** 로: preserve 판정(비-products &&
+    loadedScope 일치 && 모델 비어있지 않음) 시 searchAdded(pristine 추적)만 회수(_metaSearchPrunePristine
+    — 펼침·로드·드래그·엣지참조·컬럼보유는 보존)하고 매칭 카드/terms additive ingest + rel 은 매칭
+    한정 + _metaG6Apply(false)(카메라 유지). _opSeq 무-bump(in-flight 펼침 병존). 풀리셋 탈출구는
+    '초기화' 버튼 유지.
+  - ④ metadata_graph.schema_routine_keys 신설(HAS_ROUTINE, 실패/0034 미적용 [] 저하) → 스키마 시드에
+    Routine 혼합(테이블 우선, cap 절단 시 루틴 후순위, node_label 파라미터화). 워커 경로는 기존에
+    라벨 무가정(Routine-safe — process_pending/_fetch_context/역할 Table-only NULL/마커·done_keys
+    무가정)이라 시드만이 결손이었음. _build_payload 에 routine_type/params 투영(프롬프트 계약 충족),
+    응답/audit 에 total_routines, confirm 카피 갱신. 재귀 0 불변식 = node_budget=len(targets) 그대로.
+  - ⑤ routineExpanded Set + 컬럼(ERD ordinal)과 동형의 **파라미터 서브노드 수직 방출**(XR: ctl /
+    RP:key:i 행 — 합성 id, params 는 모델에 이미 로드라 fetch 없는 동기 토글). realH 만 확장(assignH
+    펼침-불변 계약 유지), zIndex bake↔_metaZFor 1:1(XR=NODE, RP=COLUMN), _metaComboOwnerOf 귀속,
+    dragend regex 제외(nodePos 오염 방지), tableDeps 리지드 드래그 재사용. 상세 패널 파라미터도
+    amgr-collist 수직 목록으로.
+- 위험도: **Major** (§12.3 — ④ 는 LLM 외부 비용 표면 확장이나 기존 cap 200/hard 500·only_missing·
+  confirm·audit 통제 불변(run 당 비용 증가 없음, 스키마 드레인 총량만 +routine 수). ①②③⑤ 는
+  frontend-only 비파괴). 마이그 0. cache-buster admin.js/styles.css `?v=20260706-graph-navfilter-routine`.
+- AC:
+  - AC-1: 노드A→클러스터S→관계R→노드B 순회 후 뒤로×3 이 R→S(클러스터 카드)→A 로 각 뷰 그대로 복원
+    (+카메라 팬), 앞으로×3 복귀. 새 선택 시 forward 분기 절단.
+  - AC-2: ⚙/ƒ/🔗 토글 각각이 해당 요소만 제외하고 빈자리를 회수해 재배치(엣지 토글은 테이블 위치
+    불변). 재토글 시 복원(루틴은 열 말미 append — §49 순서 안정화의 의도적 동작). 새로고침 후 유지.
+  - AC-3: 검색 → 스키마 펼침·노드 드래그·이웃 확장 → 검색어 변경/클리어 시 펼침·배치·확장·카메라
+    유지(하이라이트만 갱신/해제). '초기화' 버튼만 풀리셋.
+  - AC-4: DB 단위 분석 confirm 에 함수/프로시저 수 표기, 실행 시 Routine 잡 시드·분석문 생성·보라
+    마커, 재귀 0(예약=상한 고정) 불변.
+  - AC-5: 파라미터 있는 루틴 단일클릭(또는 우클릭 메뉴) → 파라미터가 칩 아래 세로 목록으로 펼쳐지고
+    아래 행이 밀려나며(겹침 0), XR ctl 로 접힘. 상세 패널 파라미터도 세로 목록.
+
+### 54.1 구현
+- [x] T54.1 ① 히스토리 view-typed 확장(Record view 인자·Go 디스패치·카메라·기록 지점 5곳).
+- [x] T54.2 ② hiddenKinds + 빌드 필터 2곳 + 툴바 토글 + 바인딩/영속 + CSS.
+- [x] T54.3 ③ searchAdded/_metaSearchPrunePristine + 검색/클리어 preserve 경로 + rel 매칭 한정.
+- [x] T54.4 ④ schema_routine_keys + 혼합 시드(label 파라미터화·total_routines) + _build_payload
+  routine 필드 + 라우터/audit/confirm 카피 + 프롬프트 Input JSON 병기.
+- [x] T54.5 ⑤ routineExpanded + realH + XR:/RP: 방출 + 클릭/우클릭/드래그 라우팅 + zIndex·combo 귀속
+  + 상세 패널 수직 목록.
+- [x] T54.6 테스트 — 기존 시드 단언 파라미터화 + §54④ 신규 5종(혼합 집계/루틴 라벨 시드/cap 테이블
+  우선/[]저하/payload 필드) = test_routine_dbanalysis 21 PASS + 관련 회귀 57 PASS.
+
+### 54.2 검증
+- [x] T54.7 §18.8 적대 패널(3-렌즈 find → MAJOR 적대 verify → 수정분 2차 재검증 Workflow) — 확정
+  MAJOR 3 근본원인(products 클리어 미복원/ingest added 미반환 dead-code/Focus 위장) + MINOR·NIT 12
+  반영, 수용 1(열 말미 append=AC-2 명세). 재검증 PASS(신규 BLOCKING/MAJOR 0). REVIEW.md REV entry.
+- [ ] T54.8 PR/머지 → web 재배포(insight-worker 재빌드 — _build_payload/시드 모듈 정합) → POST-DEPLOY
+  PB-0008: AC-1~AC-5 라이브 실측 + pageerror 0.

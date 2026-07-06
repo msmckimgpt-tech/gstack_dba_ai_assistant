@@ -1054,3 +1054,30 @@ source_of_truth: true
   e2e(done 2/2·예약 2 고정=재귀 0 라이브·보라 마커/역할 칩)·reused(confirm 생략+dismissed 복구 — §18.8
   MAJOR/MINOR 수정 라이브 실증)·noop parity·pageerror 0. 코드 품질은 REV-20260706T102814(4-렌즈)에서 완료.
 - deploy_scope: included(FIRST_REQUEST 2026-06-11) + 사용자 turn confirm("진행") — 자동 배포 승인 근거.
+
+## REV-20260706T143107-ai-claude-feature-0016-graph-navfilter-routine [SUBAGENT: PASS-WITH-FIXES] — 그래프 뷰 개선 5건 (§18.8 Workflow 패널: 3-렌즈 find → BLOCKING/MAJOR 적대 verify → 수정분 재검증)
+- Trigger: UI/화면/레이아웃/검색 + LLM 비용 표면(§54④) keyword matched → ux(+design)·frontend
+  correctness(G6 렌더·레이아웃·z-order)·backend+security 3-렌즈 dispatch + 확정 MAJOR 별 적대
+  재검증(Workflow parallel verify) + 수정분 2차 적대 재검증(단일 렌즈).
+- 대상: TASK §54 — ① 상세 nav view-typed ② kind 필터 ③ 검색 보존 ④ Routine 시드 ⑤ 파라미터 수직.
+- **1차 렌즈 판정**: ux PASS-WITH-FIXES · frontend correctness FAIL · backend+security PASS-WITH-FIXES.
+  확정 MAJOR 3 근본원인(중복 적발 4건, 적대 verify 전건 CONFIRMED — 반박 0):
+  - MAJOR-1(products 랜딩 검색→클리어 시 제품 개요 미복원·terms-only 매칭이면 빈 캔버스·허위 '유지'
+    문구): `_searchBase`(검색 최초 진입 시 {mode, focusName} 기록) + 클리어에서 base=products 면
+    loadRoots 폴백 + prune 후 빈 모델 loadRoots 폴백 **반영**.
+  - MAJOR-2(\_metaGraphIngest Schema 분기가 added 미반환 → searchAdded 상시 공집합 = pristine 회수
+    dead code·비매칭 카드 누적): 신규 카드 added.push **반영**(타 호출처 반환 미사용 — 무영향 확인).
+  - MAJOR-3(중심보기 부분 그래프 위에서 검색→클리어 시 focus 칩 소실 = '전체' 위장 — 기존 MAJOR-3
+    불변식 파괴): \_focusName 단일소스 미러 + 클리어 시 칩 복원·상태 문구 분기 **반영**.
+- **MINOR·NIT 처리**: 반영 12 — 클리어 vs in-flight 검색 레이스(lastQuery tail 가드)·prune 의
+  routineExpanded 접촉 인정+stale 정리·terms 클러스터 파라미터 겹침(방출·클릭·ctx 3곳 게이트)·
+  products 모드 kind 컨트롤 숨김(허위 status 차단)·숨김 kind 검색 매칭 안내(kind 별 대조 정밀화)·
+  ④ 진입점 카피 3곳(테이블·함수·프로시저)·nav title 화면 단위 카피·llm.py untrusted-data rule
+  top-level params/routine_type/description 확장·localStorage kind 화이트리스트 hasOwnProperty·
+  routine 열거 limit 5000 대칭·Column prune 제외(colsByTable 불변식 보호)·Focus 의 stale base 폐기.
+  수용 1 — kind 필터 재표시 시 루틴이 열 말미 append(§49 순서 안정화의 의도적 동작, AC-2 명세).
+- **수정분 2차 적대 재검증: PASS** — 수정 12건 전건을 라인 근거로 재추적(REFUTE 실패 = 수정 유효),
+  신규 결함 탐색에서 MINOR 2(Column prune·stale base)·NIT 1(hiddenNote 과잉 발화) 적발 → 즉시 반영
+  (직전 문단). BLOCKING/MAJOR 신규 0.
+- 재검증: 최종 반영 후 pytest 21(§54④ 신규 5 포함)+57 PASS · node --check · py_compile PASS.
+  라이브 검증은 T54.8 POST-DEPLOY PB-0008(AC-1~5).

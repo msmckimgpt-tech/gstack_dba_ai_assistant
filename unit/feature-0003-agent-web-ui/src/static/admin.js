@@ -3252,11 +3252,24 @@ const _metaGraph = {
   groupOrder: new Map(),      // feature-0016 §49(R1): schemaId -> 안정화된 simgroups 그룹 순서
   groupTableOrder: new Map(), // feature-0016 §49(R1): groupKey -> 안정화된 그룹내 테이블 key 순서
   _comboDragStart: null,      // combo:dragstart 시 {id, x, y}(중심) — dragend 델타 산출용
-  // graphux7(#1): 상세 패널 노드 방문 이력(뒤로/앞으로 — 이전에 본 노드 되짚기). datasource 컨텍스트
+  // graphux7(#1) + graph-navfilter(§54①): 상세 패널 방문 이력(뒤로/앞으로). datasource 컨텍스트
   //   전환(loadRoots/Products) 시 _metaGraphHistoryReset 로 초기화. _histNav=네비 중(중복 push 억제).
-  detailHist: [],             // 방문한 노드 key 스택(오래된 앞 → 최근 뒤)
+  detailHist: [],             // 방문 스택 — {v:"node"|"cluster"|"rel", k:key} (오래된 앞 → 최근 뒤)
   detailHistIdx: -1,          // 현재 위치 인덱스(-1=비어 있음)
   _histNav: false,            // 뒤로/앞으로 네비게이션 진행 중 플래그
+  // graph-navfilter(§54②): 노드 종류 표시 필터 — "edges"|"function"|"procedure" 를 빌드 입력에서
+  //   제외(스타일 숨김 아님 — masonry/simgroups/shelf-pack 이 자동 재배치). 테이블·컬럼은 항상 표시.
+  //   scope-독립 preference 라 resetModel 에서 clear 하지 않는다(localStorage 영속).
+  hiddenKinds: new Set(),
+  // graph-navfilter(§54③): 검색이 순수 추가한 노드 key(카드·terms) — 재검색/클리어 시 사용자
+  //   미접촉(pristine)만 회수해 펼침·배치·확장은 보존.
+  searchAdded: new Set(),
+  // §54③ 패널 MAJOR: 검색 진입 직전의 base 컨텍스트 {mode, focusName} — products/중심보기 위에서
+  //   검색→클리어 시 원 화면(제품 개요/중심 보기 칩)으로 정확히 복귀·복원하기 위함.
+  _searchBase: null,
+  _focusName: null,           // 중심 보기 대상 이름(FocusChip 단일소스 미러 — DOM 파싱 회피)
+  // graph-navfilter(§54⑤): 파라미터를 펼친 Routine key — 컬럼 펼침(expanded)의 루틴 판.
+  routineExpanded: new Set(),
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3372,6 +3385,8 @@ function _metaZFor(id) {
   if (s.startsWith("GB:")) return _METZ.GROUP_BG;
   if (s.startsWith("GH:")) return _METZ.GROUP_HD;
   if (s.startsWith("GX:") || s.startsWith("XS:")) return _METZ.CTL;
+  if (s.startsWith("XR:")) return _METZ.NODE;   // graph-navfilter(§54⑤): 루틴 파라미터 접기 ctl — X: 와 동일 밴드(bake 1:1)
+  if (s.startsWith("RP:")) return _METZ.COLUMN; // graph-navfilter(§54⑤): 루틴 파라미터 행 — 컬럼과 동일 밴드(bake 1:1)
   if (s.startsWith("X:")) return _METZ.NODE;   // 패널 ux MINOR: 흐름 내 per-table ctl 은 칩과 같은 밴드(bake 와 1:1)
   if (s.startsWith("SC:")) return _METZ.NODE;
   if (s === _META_TERMS_COMBO) return _METZ.COMBO;   // 용어·기타 클러스터 combo — 모델 노드 없음(합성 id)
@@ -3413,6 +3428,15 @@ function _metaComboOwnerOf(id) {
   if (s.startsWith("GB:") || s.startsWith("GH:") || s.startsWith("GX:")) {
     const gk = s.slice(3), sep = gk.indexOf("\u0001");
     return sep >= 0 ? gk.slice(0, sep) : null;
+  }
+  // graph-navfilter(§54⑤): 루틴 파라미터 합성 id — 소속 루틴의 스키마 combo 로 귀속(X: 관례와 동형).
+  if (s.startsWith("XR:")) {
+    const n = _metaGraph.nodes.get(s.slice(3));
+    return n ? _metaSchemaComboOf(n) : null;
+  }
+  if (s.startsWith("RP:")) {
+    const n = _metaGraph.nodes.get(s.slice(3).replace(/:\d+$/, ""));
+    return n ? _metaSchemaComboOf(n) : null;
   }
   if (s.startsWith("X:")) {
     const n = _metaGraph.nodes.get(s.slice(2));
@@ -3987,6 +4011,10 @@ function _metaG6Build() {
     if (n.label === "Schema") { ensureG(n.key); return; }
     if (n.label === "Table") { ensureG(_metaSchemaComboOf(n)).tables.push(n); return; }
     if (n.label === "Routine") {
+      // graph-navfilter(§54②): kind 필터 — 빌드 입력에서 제외(masonry/simgroups 가 자리 자동 회수).
+      //   분류식은 _metaRoutineIcon 과 동일(빈값·미상 = procedure/⚙).
+      const rk = (n.routine_type === "function") ? "function" : "procedure";
+      if (_metaGraph.hiddenKinds.has(rk)) return;
       // graph-funcproc(ADR-016): 함수·프로시저는 테이블과 나란히 소속 스키마 클러스터 열에 선다.
       const sc = _metaSchemaComboOf(n);
       if (sc !== _META_TERMS_COMBO) { ensureG(sc).tables.push(n); return; }
@@ -4045,7 +4073,14 @@ function _metaG6Build() {
   const assignH = (g) => g.isTerms ? _METLAY.TROW : (_METLAY.TROW + _METLAY.TGAP);   // 펼침-불변(=collapsed itemH)
   const realH = (g, t) => {         // 펼친 컬럼 포함 실제 높이(자기 열 push-down + 클러스터 h 전용)
     const cols = g.colsByTable.get(t.key);
-    return _METLAY.TROW + ((cols && cols.length) ? cols.length * _METLAY.CROW + CDROP : 0) + _METLAY.TGAP;
+    let sub = (cols && cols.length) ? cols.length * _METLAY.CROW + CDROP : 0;
+    // graph-navfilter(§54⑤): Routine 파라미터 펼침도 실높이에 반영(컬럼과 동형) — assignH(펼침-불변
+    //   Pass1)는 절대 건드리지 않는다. masonry Pass2·packGroup·GB bbox·shelf-pack 이 이 클로저를 소비.
+    if (!sub && t.label === "Routine" && _metaGraph.routineExpanded.has(t.key)) {
+      const pn = _metaRoutineParamList(t).length;
+      if (pn) sub = pn * _METLAY.CROW + CDROP;
+    }
+    return _METLAY.TROW + sub + _METLAY.TGAP;
   };
   // ── graph-simgroups: 그룹 블록 기하 상수 + 그룹 내부 2-pass masonry ──
   const GHH = 26;                   // 그룹 헤더 행 높이(헤더 칩 + 상단 여백)
@@ -4294,6 +4329,28 @@ function _metaG6Build() {
         nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key),
           data: { label: it.name || it.key, kind: "routine", fqn: it.fqn, routine_type: it.routine_type || "" },
           style: Object.assign(_metaRoutineStyle(tx, ty, rrel), { labelText: rLabel }) });
+        // graph-navfilter(§54⑤): 파라미터 수직 배치 — 컬럼(ERD ordinal)과 동형의 서브노드 방출.
+        //   params 는 이미 모델에 로드돼 있어(schema_tables/이웃확장 응답) fetch 없는 동기 토글.
+        //   순서는 백엔드 ORDINAL_POSITION 정렬 그대로. XR:/RP: 는 합성 id(모델 노드 아님).
+        //   패널 MINOR: terms 클러스터(flat-scope 루틴)는 레이아웃 높이 진행이 TROW 고정이라 파라미터
+        //   방출 시 아래 항목과 겹침 — terms 에서는 펼침 미지원(상세 패널 세로 목록으로 열람).
+        const plist = (!g.isTerms && _metaGraph.routineExpanded.has(it.key)) ? _metaRoutineParamList(it) : [];
+        if (plist.length) {
+          // routine 칩 폭은 rel-가변(_metaRoutineStyle 과 동일식) — ctl 을 TW/2 고정으로 두면 넓은 칩과 겹침.
+          const rw = Math.min(190, _METLAY.TW + (typeof rrel === "number" ? Math.round(rrel * 40) : 0));
+          const depIds = ["XR:" + it.key];
+          nodes.push({ id: "XR:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "rctl", routine: it.key },
+            style: Object.assign(_metaCtlStyle(tx + Math.round(rw / 2) + 14, ty), { zIndex: _METZ.NODE }) });
+          let cyP = ty + _METLAY.TROW / 2 + CDROP + _METLAY.CROW / 2;   // 첫 파라미터 중심 y(컬럼과 동형)
+          plist.forEach((ps, i) => {
+            const pid = "RP:" + it.key + ":" + i;
+            nodes.push({ id: pid, type: "circle", combo: id, states: [], data: { label: ps, kind: "routine-param", routine: it.key },
+              style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyP), { labelText: ps, fill: _META_GRAPH_COLOR.Routine }) });
+            depIds.push(pid);
+            cyP += _METLAY.CROW;
+          });
+          _metaGraph.tableDeps.set(it.key, depIds);   // 드래그 리지드 이동(테이블 종속과 동일 소비처)
+        }
         return;
       }
       if (g.isTerms) {
@@ -4340,6 +4397,9 @@ function _metaG6Build() {
   };
   const aggMap = new Map();   // "src::tgt" → 집계 엣지(테이블-레벨 승격분)
   _metaGraph.edges.forEach((e) => {
+    // graph-navfilter(§54②): 관계선 토글 — 방출만 차단(모델 유지: _metaRelAdjacency 가 모델을 읽어
+    //   배치 순서 불변 = 엣지 토글로 테이블이 점프하지 않음. 모델 삭제 금지 — 재토글 복원·접기 관례).
+    if (_metaGraph.hiddenKinds.has("edges")) return;
     if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN" || e.type === "HAS_ROUTINE") return;
     // 비-REFERENCES(DESCRIBES/RELATED_TERM/ROUTINE_USES 등)는 기존대로 양끝 직접 렌더 시에만.
     if (e.type !== "REFERENCES") {
@@ -4575,6 +4635,12 @@ const _META_LABEL_KO = {
 // graph-funcproc: 함수(ƒ)/프로시저(⚙) 표기 접두 — 칩 라벨·상세 헤더 공용.
 function _metaRoutineIcon(rt) { return rt === "function" ? "ƒ" : "⚙"; }
 function _metaRoutineKo(rt) { return rt === "function" ? "함수" : "프로시저"; }
+// graph-navfilter(§54⑤): routine params 문자열("IN a int, OUT b varchar" — routines.py 가 ", " join,
+//   piece 는 DATA_TYPE 이라 내부 콤마 없음) → 파라미터 목록. 그래프 수직 배치·상세 패널 공용.
+function _metaRoutineParamList(n) {
+  const s = (n && n.params) || "";
+  return s ? s.split(", ").map((x) => x.trim()).filter(Boolean) : [];
+}
 
 function _metaGraphStatus(msg) {
   const el = document.getElementById("metadataGraphStatus");
@@ -4615,6 +4681,10 @@ function _metaGraphResetModel() {
   _metaGraph.searchMatchTables = null;
   _metaGraph.searchMatchNodes = null;   // feature-0016 §45: 검색 매칭 glow 집합 초기화.
   _metaGraph.searchCapped = false;
+  _metaGraph.searchAdded.clear();       // graph-navfilter(§54③): 검색 pristine 추적도 스코프와 함께 리셋.
+  _metaGraph.routineExpanded.clear();   // graph-navfilter(§54⑤): 루틴 파라미터 펼침 리셋(컬럼 펼침과 동형).
+  // (주의) hiddenKinds 는 여기서 clear 하지 않는다 — scope-독립 표시 preference(§54②). 검색·중심보기가
+  //   resetModel 을 경유하므로 clear 하면 검색 한 번에 필터가 풀리는 회귀가 된다.
   // graph-initview: 스키마-우선 상태 초기화.
   _metaGraph.schemaExpanded.clear();
   _metaGraph.schemaLoaded.clear();
@@ -4643,6 +4713,11 @@ async function _metaGraphLoadProducts(scope) {
   if (!_metaGraph.graph) _metaInitGraph();
   if (!_metaGraph.graph) return;
   _metaGraphHistoryReset();   // graphux7(#1): datasource/제품 컨텍스트 전환 — 방문 이력 초기화.
+  _metaGraph._searchBase = null;   // §54③: fresh 컨텍스트 — 검색 base 폐기
+  // §54② 패널 MINOR: kind 필터는 스키마 그래프 전용 — 제품 개요(BuildProducts 는 hiddenKinds 미참조)
+  //   에서 버튼이 동작하는 척(허위 status)하지 않게 컨트롤 자체를 숨긴다.
+  const _kc0 = document.querySelector(".admin-meta-graph-kindctl");
+  if (_kc0) _kc0.style.display = "none";
   const si = document.getElementById("metadataGraphSearch");
   if (si) si.value = "";
   _metaGraph.lastQuery = "";
@@ -4685,6 +4760,9 @@ async function _metaGraphLoadRoots() {
   if (!scope || scope === "common" || scope === "__products__" || String(scope).startsWith("product:")) {
     return _metaGraphLoadProducts(scope);
   }
+  _metaGraph._searchBase = null;   // §54③: fresh 컨텍스트 — 검색 base 폐기
+  const _kc1 = document.querySelector(".admin-meta-graph-kindctl");
+  if (_kc1) _kc1.style.display = "";   // §54②: 스키마 그래프 — kind 필터 컨트롤 표시
   const si = document.getElementById("metadataGraphSearch");
   if (si) si.value = "";
   _metaGraph.lastQuery = "";   // 검색 컨텍스트 종료 — 상세 유사도 배지 게이트가 참조
@@ -4921,7 +4999,7 @@ function _metaNodeDragEnd(e) {
   if (id && String(id).startsWith("SC:")) { _metaClusterDragCommit(); _metaGraph._drag = null; return; }
   // 그 외 이동 가능 노드(테이블·컬럼·용어)의 최종 절대위치를 nodePos 에 기록 → rebuild 후에도 유지.
   //   컨트롤/장식(X:/XS:/GB:/GH:/GX:)은 제외. 테이블은 위치만 기록하고, 종속(컬럼·"X:")은 build 가 테이블 델타로 시프트.
-  if (g && id && !/^(X:|XS:|GB:|GH:|GX:)/.test(String(id))) {
+  if (g && id && !/^(X:|XS:|XR:|RP:|GB:|GH:|GX:)/.test(String(id))) {   // §54⑤: 루틴 ctl/파라미터도 장식 — nodePos 오염 방지
     // 컬럼은 소속 테이블에서 재파생(build)되므로 개별 위치를 기록하지 않는다(dead 엔트리·재빌드 snap-back 방지, 리뷰 NIT).
     const _n = _metaGraph.nodes.get(id);
     if (!_n || _n.label !== "Column") {
@@ -5040,7 +5118,9 @@ function _metaInitGraph() {
     }
     if (String(id).startsWith("SC:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
     if (String(id).startsWith("XS:")) { _metaGraphCtxForSchema(id.slice(3), p.x, p.y); return; }
-    if (String(id).startsWith("X:")) id = String(id).slice(2);   // 테이블 접기 ctl → 소속 테이블 메뉴
+    if (String(id).startsWith("XR:")) id = String(id).slice(3);   // §54⑤: 루틴 파라미터 ctl → 소속 루틴 메뉴
+    else if (String(id).startsWith("RP:")) id = String(id).slice(3).replace(/:\d+$/, "");   // §54⑤: 파라미터 행 → 소속 루틴
+    else if (String(id).startsWith("X:")) id = String(id).slice(2);   // 테이블 접기 ctl → 소속 테이블 메뉴
     _metaGraphCtxForNode(id, p.x, p.y);
   });
   graph.on("combo:contextmenu", (e) => {
@@ -5132,6 +5212,31 @@ function _metaInitGraph() {
     if (dnBack) dnBack.addEventListener("click", () => _metaGraphHistoryGo(-1));
     const dnFwd = document.getElementById("metaGraphDetailFwd");
     if (dnFwd) dnFwd.addEventListener("click", () => _metaGraphHistoryGo(1));
+    // graph-navfilter(§54②): 노드 종류 표시 필터 토글 — Set 갱신 → 버튼 시각 → 전체 rebuild(제자리).
+    //   localStorage 영속(metaGraphHiddenKinds, metaGraphDetailW 관례) — scope-독립 preference.
+    const _kindLabelKo = { edges: "관계선", function: "ƒ 함수", procedure: "⚙ 프로시저" };
+    const _kindBtns = ["metaGraphKindEdges", "metaGraphKindFn", "metaGraphKindProc"]
+      .map((bid) => document.getElementById(bid)).filter(Boolean);
+    try {
+      const saved = JSON.parse(localStorage.getItem("metaGraphHiddenKinds") || "[]");
+      if (Array.isArray(saved)) saved.forEach((k) => { if (Object.prototype.hasOwnProperty.call(_kindLabelKo, k)) _metaGraph.hiddenKinds.add(k); });
+    } catch (_) {}
+    _kindBtns.forEach((b) => {
+      const k = b.getAttribute("data-kind");
+      const shown = !_metaGraph.hiddenKinds.has(k);
+      b.classList.toggle("is-active", shown);
+      b.setAttribute("aria-pressed", String(shown));
+      b.addEventListener("click", () => {
+        const hide = !_metaGraph.hiddenKinds.has(k);
+        if (hide) _metaGraph.hiddenKinds.add(k); else _metaGraph.hiddenKinds.delete(k);
+        b.classList.toggle("is-active", !hide);
+        b.setAttribute("aria-pressed", String(!hide));
+        try { localStorage.setItem("metaGraphHiddenKinds", JSON.stringify(Array.from(_metaGraph.hiddenKinds))); } catch (_) {}
+        _metaG6Apply(false);   // 카메라 유지 rebuild — masonry/simgroups 가 자리 자동 회수(GX 토글 동형)
+        _metaGraphStatus(hide ? `${_kindLabelKo[k]} 숨김 — 그래프에서 제외하고 재배치했습니다.`
+                              : `${_kindLabelKo[k]} 표시 — 그래프에 복원했습니다.`);
+      });
+    });
     _metaGraphInitResizer();
   }
 }
@@ -5159,7 +5264,13 @@ function _metaGraphOnNodeClick(e) {
     return;
   }
   if (String(id).startsWith("XS:")) { _metaGraphCollapseSchema(id.slice(3)); return; }   // graph-initview: 스키마 접기
+  // graph-navfilter(§54⑤): 루틴 파라미터 접기 ctl — 모델 삭제 없이 Set 토글(합성 노드라 rebuild 로 소멸).
+  //   "XR:" 은 콜론 위치상 startsWith("X:") 에 안 걸리지만 XS: 관례대로 X: 보다 먼저 명시 판정.
+  if (String(id).startsWith("XR:")) { _metaGraph.routineExpanded.delete(id.slice(3)); _metaG6Apply(false); return; }
   if (String(id).startsWith("X:")) { _metaGraphCollapse(id.slice(2)); return; }
+  // graph-navfilter(§54⑤): 파라미터 행 클릭 → 소속 루틴 상세(RP: 는 합성 id — bogus API fetch 차단).
+  //   routine key 자체에 ':' 가 있으므로 꼬리 인덱스(:N)만 strip.
+  if (String(id).startsWith("RP:")) { _metaGraphShowDetail(String(id).slice(3).replace(/:\d+$/, "")); return; }
   if (String(id).startsWith("SC:")) {
     // graph-initview: 스키마 카드 클릭 = 그 스키마 테이블 lazy 펼침 + 클러스터 상세(더블클릭 구분 불필요 —
     // 스키마의 이웃확장은 곧 테이블 펼침). 상세는 펼침 성공 시에만 모델 로컬 렌더(실패/빈/stale 시 오도 패널 방지).
@@ -5201,6 +5312,19 @@ function _metaGraphOnNodeClick(e) {
       _metaGraph._clickTimer = null;
       if (!_metaTableHasCols(id)) _metaGraphToggleColumns(id);   // 접힌 테이블만 펼침(펼쳐졌으면 no-op) — hasCols 단일소스
     }, 340);   // 더블클릭 창(320ms) 초과로 설정 — 빠른 더블클릭이 컬럼펼침+이웃확장 동시발동하는 것 방지(review MINOR-1)
+  }
+  // graph-navfilter(§54⑤): 루틴 단일클릭 = 파라미터 수직 펼침(테이블 컬럼 펼침과 동형 340ms 타이머).
+  //   params 는 모델에 이미 있어 fetch 없는 동기 토글 — 더블클릭(이웃확장)은 기존 경로 그대로.
+  //   terms 클러스터(flat-scope)는 방출 게이트와 짝 맞춰 미지원(무효 토글 방지).
+  if (n && n.label === "Routine" && _metaSchemaComboOf(n) !== _META_TERMS_COMBO) {
+    if (_metaGraph._clickTimer) clearTimeout(_metaGraph._clickTimer);
+    _metaGraph._clickTimer = setTimeout(() => {
+      _metaGraph._clickTimer = null;
+      if (!_metaGraph.routineExpanded.has(id) && _metaRoutineParamList(n).length) {
+        _metaGraph.routineExpanded.add(id);
+        _metaG6Apply(false);
+      }
+    }, 340);
   }
 }
 
@@ -5389,6 +5513,13 @@ function _metaGraphCtxForNode(key, x, y) {
       ? { icon: "▦", label: "컬럼 접기", onClick: () => _metaGraphCollapse(key) }
       : { icon: "▦", label: "컬럼 펼치기", onClick: () => _metaGraphToggleColumns(key) });
   }
+  // graph-navfilter(§54⑤): 루틴 파라미터 접기/펼치기 — 테이블 컬럼 항목의 루틴 판(동기 Set 토글).
+  //   terms 클러스터는 방출 게이트와 짝 맞춰 항목 미노출.
+  if (n.label === "Routine" && _metaSchemaComboOf(n) !== _META_TERMS_COMBO && _metaRoutineParamList(n).length) {
+    const rOpen = _metaGraph.routineExpanded.has(key);
+    items.push({ icon: "▦", label: rOpen ? "파라미터 접기" : "파라미터 펼치기",
+      onClick: () => { if (rOpen) _metaGraph.routineExpanded.delete(key); else _metaGraph.routineExpanded.add(key); _metaG6Apply(false); } });
+  }
   if (n.label === "Column") {
     const pk = _metaColParent(key, n.fqn);
     if (pk) items.push({ icon: "📄", label: "소속 테이블 상세", onClick: () => _metaGraphShowDetail(pk) });
@@ -5430,7 +5561,7 @@ function _metaGraphCtxForSchema(schemaKey, x, y) {
   // 클러스터 상세는 그래프를 펼치지 않고 API 로 테이블 목록을 조회(접힌 카드에서 "펼치지 않고 훑어보기").
   items.push({ icon: "📋", label: "클러스터 상세", hint: "테이블 목록(펼치지 않음)", onClick: () => _metaGraphShowClusterDetailById(schemaKey) });
   // routine-dbanalysis(§53): DB(스키마) 단위 AI 능동 분석 — 미분석 테이블 일괄 시드(confirm 에 대상 수 표시).
-  items.push({ icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블", onClick: () => _metaGraphAnalyzeSchema(schemaKey) });
+  items.push({ icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블·함수·프로시저", onClick: () => _metaGraphAnalyzeSchema(schemaKey) });
   items.push({ icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) });
   _metaGraphCtxShow(items, x, y);
 }
@@ -5446,7 +5577,7 @@ function _metaGraphCtxForCombo(comboId, x, y) {
     (isTerms || !_metaGraph.schemaExpanded.has(comboId)) ? null
       : { icon: "▦", label: "접기 (카드로)", onClick: () => _metaGraphCollapseSchema(comboId) },
     // routine-dbanalysis(§53): DB 단위 능동 분석 — 용어 묶음(합성)은 제외.
-    isTerms ? null : { icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블", onClick: () => _metaGraphAnalyzeSchema(comboId) },
+    isTerms ? null : { icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블·함수·프로시저", onClick: () => _metaGraphAnalyzeSchema(comboId) },
     isTerms ? null : { icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) },
   ], x, y);
 }
@@ -5558,10 +5689,63 @@ function _metaRelevance(name, fqn, ql) {
   return 0.3;
 }
 
+// graph-navfilter(§54③): 검색이 순수 추가한 노드 중 사용자 미접촉(pristine)만 모델에서 회수 —
+//   펼침(schemaExpanded/Loaded)·드래그(clusterOffset/nodePos)·확장(엣지 참조·컬럼 보유)된 것은 보존.
+//   재검색 키스트로크마다 호출해 비매칭 카드의 누적을 막고, 클리어 시엔 검색 잔재만 걷어낸다.
+function _metaSearchPrunePristine() {
+  if (!_metaGraph.searchAdded.size) return;
+  const referenced = new Set();
+  _metaGraph.edges.forEach((e) => { referenced.add(e.source); referenced.add(e.target); });
+  _metaGraph.searchAdded.forEach((k) => {
+    const n = _metaGraph.nodes.get(k);
+    if (!n) return;
+    // 재검증 MINOR: Column 은 회수 제외 — colsByTable 불변식(Ingest 증가·Collapse 감소·Reset 초기화
+    //   3경로 전용)을 prune 이 4번째 삭제 경로로 우회하면 flat-scope 에서 hasCols 가 영구 true 로 고착.
+    if (n.label === "Column") return;
+    if (n.label === "Schema") {
+      // schemaLoaded 포함 — 펼쳤다 접은 카드는 모델 테이블이 남아(렌더 게이팅만) 카드 회수 시 고아가 된다.
+      if (_metaGraph.schemaExpanded.has(k) || _metaGraph.schemaLoaded.has(k) || _metaGraph.clusterOffset.has(k)) return;
+    } else {
+      if (_metaGraph.nodePos.has(k) || referenced.has(k) || _metaGraph.expanded.has(k)
+          || _metaGraph.routineExpanded.has(k) || _metaTableHasCols(k)) return;   // §54⑤ 패널: 파라미터 펼침도 사용자 접촉
+    }
+    _metaGraph.nodes.delete(k);
+    _metaGraph.routineExpanded.delete(k);   // stale 키 정리(회수된 노드의 펼침 상태 잔존 방지)
+  });
+  _metaGraph.searchAdded.clear();
+}
+
 async function _metaGraphSearch(q) {
   if (!_metaGraph.graph) return;
   _metaGraph.lastQuery = q;
-  if (!q) { _metaGraphLoadRoots(); return; }
+  if (!q) {
+    // graph-navfilter(§54③): 검색어 클리어는 그래프 구성(펼침·배치·확장)을 보존한다 — 검색 잔재
+    //   (pristine 카드·glow)만 걷어내고 제자리 rebuild. 초기 화면 복귀는 '그래프 초기화' 버튼 전용.
+    //   §54③ 패널 MAJOR: 검색이 products 개요를 리셋하고 들어온 경우(base.mode=products)는 보존할
+    //   사용자 구성이 없다 — 원 화면(제품 개요)으로 복귀. 중심 보기 base 는 칩 복원.
+    if (_metaGraph.mode !== "search" && !_metaGraph.searchMatchNodes) return;   // 지울 검색 상태 없음 — no-op(base 소비 전, 재검증 MINOR)
+    const base = _metaGraph._searchBase; _metaGraph._searchBase = null;
+    const scopeNow = adminState.metadata.scopeKey || "common";
+    const preserve = _metaGraph.mode !== "products" && !(base && base.mode === "products")
+      && (_metaGraph.loadedScope || "common") === scopeNow && _metaGraph.nodes.size > 0;
+    if (!preserve) { _metaGraphLoadRoots(); return; }
+    _metaSearchPrunePristine();
+    _metaGraph.searchMatch = null; _metaGraph.searchMatchTables = null;
+    _metaGraph.searchMatchNodes = null; _metaGraph.searchCapped = false;
+    if (_metaGraph.nodes.size === 0) { _metaGraphLoadRoots(); return; }   // 패널 MAJOR: 잔재 회수 후 빈 모델 — 허위 '유지' 방지
+    _metaGraph.mode = (base && base.mode && base.mode !== "search") ? base.mode : "roots";   // 원 모드(neighbor 등) 복원
+    _metaGraph.nodes.forEach((n) => { delete n.rel; });
+    const seq0 = _metaGraph._opSeq;            // bump 없음 — in-flight 펼침·확장은 여전히 유효(additive 병존)
+    await _metaG6Apply(false);                 // 카메라·배치 유지(fit 금지)
+    if (seq0 !== _metaGraph._opSeq) return;
+    if (base && base.focusName) {
+      _metaGraphFocusChip(base.focusName);     // 패널 MAJOR: 중심 보기 부분 그래프가 '전체'로 위장하지 않게 칩 복원
+      _metaGraphStatus("검색 해제 — 중심 보기 서브그래프 유지(전체는 칩의 '전체 보기' 또는 '초기화').");
+    } else {
+      _metaGraphStatus("검색 해제 — 그래프 구성(펼침·배치·확장)은 유지됩니다. 초기 화면은 '초기화' 버튼.");
+    }
+    return;
+  }
   _metaGraphStatus("검색 중…");
   const scope = adminState.metadata.scopeKey || "common";
   const scopeParam = (scope && scope !== "common") ? `&scope=${encodeURIComponent(scope)}` : "";
@@ -5573,10 +5757,20 @@ async function _metaGraphSearch(q) {
     return;
   }
   if (q !== _metaGraph.lastQuery) return;
+  // graph-navfilter(§54③): 같은 scope 의 기존 그래프가 있으면 리셋하지 않고 **additive overlay** —
+  //   사용자 구성(펼침·드래그·확장) 위에 검색 하이라이트만 얹는다. mode 대입 전에 판정(아래서 "search" 로 바뀜).
+  const preserve = _metaGraph.mode !== "products"
+    && (_metaGraph.loadedScope || "common") === scope && _metaGraph.nodes.size > 0;
+  // §54③ 패널 MAJOR: 검색 진입 직전 base 컨텍스트 기록(최초 키스트로크만) — 클리어 시 products 복귀·
+  //   중심 보기 칩 복원의 근거. mode 가 이미 "search" 면 이전 키스트로크의 base 를 유지.
+  if (_metaGraph.mode !== "search") {
+    _metaGraph._searchBase = { mode: _metaGraph.mode, focusName: _metaGraph._focusName || null };
+  }
   _metaGraph.mode = "search";
   if (typeof _metaGraphFocusChip === "function") _metaGraphFocusChip(null);   // 검색 컨텍스트로 전환 — 중심 보기 칩 해제
-  _metaGraphResetModel();
-  const seq = _metaGraph._opSeq;   // review LOW-CONF: resetModel 직후 세대 캡처 — await 사이 scope 전환 시 tail(status) 폐기.
+  if (preserve) _metaSearchPrunePristine();   // 직전 키스트로크의 pristine 추가분 회수(누적 방지)
+  else _metaGraphResetModel();
+  const seq = _metaGraph._opSeq;   // review LOW-CONF: 세대 캡처 — await 사이 scope 전환 시 tail(status) 폐기.
   // graph-initview 검색 = **스키마 카드 필터 뷰**(사용자 요청): 매칭 테이블을 스키마별로 집계해 카드를
   //   유지하고 badge 를 "매칭/전체" 로 표기(펼치지 않음). 카드 클릭 시 그 스키마를 펼쳐 매칭 테이블을 강조.
   //   (이전엔 매칭 스키마를 combo 로 auto-expand 해 카드·badge 가 사라졌음.)
@@ -5616,24 +5810,43 @@ async function _metaGraphSearch(q) {
   const nRaw = (data.nodes || []).length;
   _metaGraph.searchCapped = nRaw >= _META_SEARCH_CAP;
   // 매칭 스키마를 카드로 ingest(전체 총계는 roots 캐시 schemaTotals). auto-expand 하지 않음(카드 유지).
+  //   §54③: 신규 추가 key 를 searchAdded 로 추적 — 다음 검색/클리어 때 pristine 만 회수.
   matchBySchema.forEach((set, sc) => {
     const total = _metaGraph.schemaTotals ? _metaGraph.schemaTotals.get(sc) : null;
-    _metaGraphIngest([{ label: "Schema", key: sc, name: _metaComboName(sc), fqn: _metaComboName(sc), table_count: (typeof total === "number" ? total : null) }], []);
+    const added = _metaGraphIngest([{ label: "Schema", key: sc, name: _metaComboName(sc), fqn: _metaComboName(sc), table_count: (typeof total === "number" ? total : null) }], []);
+    (added || []).forEach((k) => _metaGraph.searchAdded.add(k));
   });
-  if (terms.length) _metaGraphIngest(terms, []);
+  if (terms.length) {
+    const added = _metaGraphIngest(terms, []);
+    (added || []).forEach((k) => _metaGraph.searchAdded.add(k));
+  }
   // 유사도(rel) → 용어 칩 크기 가산. 백엔드 pg_trgm score 우선, 없으면 클라 휴리스틱.
+  //   §54③: preserve 모델에는 기존 노드 수천 개가 있으므로 **매칭 노드에만** rel 부여(전역 부여 시
+  //   비매칭 칩 폭 왜곡·상세 유사도 배지 오표시). 비-preserve(리셋) 모델은 카드+terms 뿐이라 동치.
   const ql = q.toLowerCase();
   _metaGraph.nodes.forEach((n) => {
-    n.rel = (typeof n.score === "number") ? n.score : _metaRelevance(n.name, n.fqn, ql);
+    if (matchNodes.has(n.key)) n.rel = (typeof n.score === "number") ? n.score : _metaRelevance(n.name, n.fqn, ql);
+    else delete n.rel;
   });
-  await _metaG6Apply(true);
+  await _metaG6Apply(preserve ? false : true);   // §54③: preserve 시 카메라·배치 유지
   if (seq !== _metaGraph._opSeq) return;   // await 사이 scope/roots 전환 — 이 검색의 tail(status) 폐기
+  if (q !== _metaGraph.lastQuery) return;  // §54③ 패널 MINOR: 클리어는 _opSeq 무-bump — stale 검색 tail 은 lastQuery 로 폐기
   _metaGraphSyncAnalysisMarkers(scope);
+  // §54③: preserve 시 첫 매칭 렌더 노드로 부드러운 팬(fit 없이) — 하이라이트 가시화.
+  if (preserve && matchNodes.size) {
+    const first = Array.from(matchNodes).find((k) => _metaRenderedIdFor(k));
+    if (first) _metaGraphAnimateFocus(first, seq);
+  }
   const nSchemas = matchBySchema.size;
   const capNote = _metaGraph.searchCapped ? " · 결과 상한(부분 카운트, 검색어를 좁혀 정확도↑)" : "";
+  // §54② 패널 MINOR: 매칭에 Routine 이 있는데 ƒ/⚙ 표시 필터가 꺼져 있으면 비가시 원인 안내.
+  const anyHiddenRoutineMatch = (data.nodes || []).some((nd) => nd && nd.label === "Routine"
+    && _metaGraph.hiddenKinds.has((nd.routine_type === "function") ? "function" : "procedure"));   // 재검증 NIT: kind 별 대조(과잉 발화 방지)
+  const hiddenNote = anyHiddenRoutineMatch
+    ? " ※ 매칭된 함수/프로시저 일부는 표시 필터로 숨김 상태 — 툴바 ƒ/⚙ 토글을 켜세요." : "";
   if (!nRaw) _metaGraphStatus("검색 결과 없음.");
-  else if (nSchemas === 0) _metaGraphStatus(`'${q}' — 용어·기타 ${terms.length}개 매칭(해당 스키마 테이블 없음).${capNote}`);
-  else _metaGraphStatus(`'${q}' — 스키마 ${nSchemas}개 매칭. 카드 badge = 매칭/전체 테이블. 카드 클릭으로 펼쳐 매칭 테이블(앰버 글로우)을 확인.${capNote}`);
+  else if (nSchemas === 0) _metaGraphStatus(`'${q}' — 용어·기타 ${terms.length}개 매칭(해당 스키마 테이블 없음).${capNote}${hiddenNote}`);
+  else _metaGraphStatus(`'${q}' — 스키마 ${nSchemas}개 매칭. 카드 badge = 매칭/전체 테이블. 카드 클릭으로 펼쳐 매칭 테이블(앰버 글로우)을 확인.${capNote}${hiddenNote}`);
 }
 
 // 선택 강조: 모델 selected 갱신 + 이전/현재 노드 state 만 갱신(전체 rebuild 없이 가벼움).
@@ -5655,14 +5868,17 @@ function _metaTableHasCols(key) {
 }
 
 // 단일 클릭: 그래프 구조는 그대로 두고 상세 카드만 갱신(1-hop 으로 컬럼·직접관계·용어).
-// graphux7(#1): 상세 패널 노드 방문 이력(뒤로/앞으로) — 이전에 본 노드를 되짚어 찾기 쉽게.
+// graphux7(#1) + graph-navfilter(§54①): 상세 패널 방문 이력(뒤로/앞으로) — view-typed 엔트리
+//   {v:"node"|"cluster"|"rel", k:key} 로 노드 상세뿐 아니라 클러스터 상세·관계 상세도 되짚는다.
 const _META_HIST_CAP = 50;
-function _metaGraphHistoryRecord(key) {
+function _metaGraphHistoryRecord(key, view) {
   if (!key || _metaGraph._histNav) return;              // 뒤로/앞으로 네비 중 재기록 금지
+  const v = view || "node";
   const h = _metaGraph.detailHist;
-  if (h[_metaGraph.detailHistIdx] === key) return;      // 같은 노드 연속 재선택 — 중복 억제
+  const cur = h[_metaGraph.detailHistIdx];
+  if (cur && cur.k === key && cur.v === v) return;      // 같은 화면 연속 재선택 — 중복 억제
   h.splice(_metaGraph.detailHistIdx + 1);               // 앞으로 분기 절단(새 방문이 forward 이력을 덮음)
-  h.push(key);
+  h.push({ v, k: key });
   if (h.length > _META_HIST_CAP) h.shift();             // 상한 초과 시 오래된 앞부분 제거
   _metaGraph.detailHistIdx = h.length - 1;
   _metaGraphHistoryUpdateUI();
@@ -5671,9 +5887,19 @@ function _metaGraphHistoryGo(dir) {
   const ni = _metaGraph.detailHistIdx + dir;
   if (ni < 0 || ni >= _metaGraph.detailHist.length) return;
   _metaGraph.detailHistIdx = ni;
-  const key = _metaGraph.detailHist[ni];
-  _metaGraph._histNav = true;                           // showDetail 이 이 방문을 재기록하지 않게(동기 구간)
-  try { _metaGraphShowDetail(key); } finally { _metaGraph._histNav = false; }
+  const ent = _metaGraph.detailHist[ni];
+  _metaGraph._histNav = true;                           // 각 진입 함수의 Record(첫 await 이전 동기 구간)가 재기록하지 않게
+  try {
+    // 클러스터 복원은 반드시 ById — Local 은 모델-로컬이라 중심보기(resetModel) 후 빈 목록을 렌더.
+    if (ent.v === "cluster") _metaGraphShowClusterDetailById(ent.k);
+    else if (ent.v === "rel") _metaGraphShowRelations(ent.k);
+    else _metaGraphShowDetail(ent.k);
+  } finally { _metaGraph._histNav = false; }
+  // 카메라 재현(fire-and-forget) — 미렌더(접힘/모델 제거)면 skip, 패널은 API 재조회로 복원됨.
+  if (_metaRenderedIdFor(ent.k)) {
+    const seq = _metaGraph._opSeq;
+    _metaGraphAnimateFocus(ent.k, seq);
+  }
   _metaGraphHistoryUpdateUI();
 }
 function _metaGraphHistoryReset() {
@@ -5952,6 +6178,7 @@ function _metaGraphCollapseSchema(key) {
 function _metaGraphShowClusterDetailLocal(comboId) {
   if (!comboId) return;
   _metaGraph.lastDetailKey = comboId;
+  _metaGraphHistoryRecord(comboId, "cluster");   // §54①: 복원은 Go 가 ById(API+모델 폴백)로 수행.
   const nm = _metaComboName(comboId);
   const tables = [];
   let childCols = 0;
@@ -6067,6 +6294,7 @@ async function _metaGraphExpand(key, depthOverride) {
   _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   _metaGraphSetSelected(key);
   const self = selfNode || { key, name: key };
+  _metaGraphHistoryRecord(key, "node");   // §54①: seq 가드 뒤 성공-기반 기록(실패/스테일 확장 미기록).
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
   _metaGraphStatus(`노드 ${(data.nodes || []).length} · 관계 ${(data.edges || []).length}${introspectNote}`);
 }
@@ -6075,6 +6303,7 @@ async function _metaGraphExpand(key, depthOverride) {
 //   expand(기존 화면에 병합·누적)와 달리 화면을 앵커 중심 서브그래프로 정리해, 스키마를 모르는
 //   사용자가 관심 노드의 연관 관계만 집중해 보게 한다. 분석 마커는 서버 상태에서 재적용.
 async function _metaGraphFocus(key) {
+  _metaGraph._searchBase = null;   // §54③ 재검증 MINOR: 중심 보기 = 새 컨텍스트 — stale 검색 base 폐기
   if (!_metaGraph.graph || !key) return;
   const depthSel = document.getElementById("metadataGraphDepth");
   const depth = depthSel ? depthSel.value : "2";
@@ -6103,6 +6332,7 @@ async function _metaGraphFocus(key) {
   _metaGraphSyncAnalysisMarkers(key.indexOf(":") >= 0 ? key.slice(0, key.indexOf(":")) : (adminState.metadata.scopeKey || "common"));
   _metaGraphSetSelected(key);
   const self = (data.nodes || []).find((x) => x.key === key) || { key, name: key };
+  _metaGraphHistoryRecord(key, "node");   // §54①: seq 가드 뒤 성공-기반 기록(중심보기).
   _metaGraphRenderDetail(self, data.nodes || [], data.edges || []);
   const nm = (_metaGraph.nodes.get(key) || {}).name || key;
   _metaGraphFocusChip(nm);   // review MAJOR-3: 부분 그래프임을 지속 표시 + '전체 보기' 복귀
@@ -6112,6 +6342,7 @@ async function _metaGraphFocus(key) {
 // review MAJOR-3: 중심 보기 지속 표시 칩 — 캔버스 좌상단에 "🎯 중심 보기: <노드>" + "✕ 전체 보기"(roots 복귀).
 //   name=null 이면 제거. roots 로드·검색 진입 시 자동 해제(전체/검색 컨텍스트로 전환됨).
 function _metaGraphFocusChip(name) {
+  _metaGraph._focusName = name || null;   // §54③ 패널: 중심 보기 상태 미러(검색→클리어 시 칩 복원용)
   const canvas = document.getElementById("metadataGraphCanvas");
   if (!canvas) return;
   let chip = document.getElementById("metaGraphFocusChip");
@@ -6170,6 +6401,7 @@ function _metaGraphIngest(nodes, edges) {
       if (!ex) {
         _metaGraph.nodes.set(n.key, { key: n.key, label: "Schema", name: n.name || n.fqn || n.key, fqn: n.fqn || "",
           table_count: (typeof n.table_count === "number") ? n.table_count : null });
+        added.push(n.key);   // §54③ 패널 MAJOR: 카드 미반환 시 searchAdded 가 항상 비어 pristine 회수가 dead code
       } else if (typeof n.table_count === "number") { ex.table_count = n.table_count; }   // graph-initview: 카드 배지
       return;
     }
@@ -6333,13 +6565,16 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
   // graph-funcproc(ADR-016): 함수·프로시저 상세 — 유형 + introspect 된 파라미터 시그니처.
+  //   graph-navfilter(§54⑤): 파라미터를 수평 한 줄 대신 **수직 목록**으로(컬럼 리스트 amgr-collist 관례 재사용).
   if (self.label === "Routine") {
     const mn = _metaGraph.nodes.get(selfKey) || {};
     const rt = self.routine_type || mn.routine_type || "";
     const rparams = self.params || mn.params || "";
-    parts.push(`<div class="admin-meta-graph-sec"><h4>${_metaRoutineIcon(rt)} ${esc(_metaRoutineKo(rt))}</h4>` +
-      (rparams ? `<p class="admin-meta-graph-desc">파라미터 — ${esc(rparams)}</p>`
-               : `<p class="admin-meta-graph-desc admin-meta-graph-muted">파라미터 없음</p>`) + `</div>`);
+    const plist = _metaRoutineParamList({ params: rparams });
+    parts.push(`<div class="admin-meta-graph-sec"><h4>${_metaRoutineIcon(rt)} ${esc(_metaRoutineKo(rt))} · 파라미터 (${plist.length})</h4>` +
+      (plist.length
+        ? `<ul class="amgr-collist">${plist.map((p) => `<li class="amgr-col amgr-col-plain"><code>${esc(p)}</code></li>`).join("")}</ul>`
+        : `<p class="admin-meta-graph-desc admin-meta-graph-muted">파라미터 없음</p>`) + `</div>`);
   }
   // reldetail-colexpand ①②③: 관계를 **소속 컬럼별**로 그룹화하고, 각 컬럼 안에서 참조함(→)/참조받음(←)
   //   을 분리·개수 표기. 관계 있는 컬럼은 아코디언(클릭 시 펼침)으로 관계 행을 노출한다.
@@ -6507,6 +6742,7 @@ const _META_EDGE_TYPE_KO = {
 async function _metaGraphShowRelations(key) {
   if (!key) return;
   _metaGraph.lastDetailKey = key;
+  _metaGraphHistoryRecord(key, "rel");   // §54①: 첫 await 이전(동기 구간) — Go 재기록은 _histNav 가 차단.
   _metaGraphStatus("관계 상세 조회 중…");
   let data;
   try {
@@ -6769,7 +7005,7 @@ async function _metaGraphAnalyzeSchema(schemaKey) {
     delete panel.dataset.dismissed; panel.style.display = "";
     panel.innerHTML = reused
       ? '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">이미 진행 중 — 새로 큐잉하지 않고 기존 분석 현황을 표시합니다.</span></div>'
-      : '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">시작 중… 스키마 시드 테이블을 분석합니다(추가 확장 없음).</span></div>';
+      : '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">시작 중… 스키마 시드 항목(테이블·함수·프로시저)을 분석합니다(추가 확장 없음).</span></div>';
   };
   try {
     let dry;
@@ -6791,11 +7027,11 @@ async function _metaGraphAnalyzeSchema(schemaKey) {
       return;
     }
     if (!dry || !dry.planned) {
-      _metaGraphStatus(`${nm}: 분석 대상 없음 — 테이블 ${dry ? (dry.total_tables || 0) : 0}개 전부 분석 완료(또는 테이블 없음)`);
+      _metaGraphStatus(`${nm}: 분석 대상 없음 — 테이블 ${dry ? (dry.total_tables || 0) : 0}개 · 함수/프로시저 ${dry ? (dry.total_routines || 0) : 0}개 전부 분석 완료(또는 대상 없음)`);
       return;
     }
     const cappedTxt = dry.capped ? `\n※ 상한 적용: 미분석 ${dry.missing}개 중 이번 실행 ${dry.planned}개 — 완료 후 재실행하면 이어서 분석합니다.` : "";
-    if (!window.confirm(`'${nm}' DB 전체 AI 능동 분석을 시작합니다.\n\n테이블 ${dry.total_tables}개 · 미분석 ${dry.missing}개 · 이번 실행 ${dry.planned}개${cappedTxt}\n\n이번 실행 대상 ${dry.planned}개 테이블마다 LLM 분석이 수행됩니다(백그라운드). 진행할까요?`)) return;
+    if (!window.confirm(`'${nm}' DB 전체 AI 능동 분석을 시작합니다.\n\n테이블 ${dry.total_tables}개 · 함수/프로시저 ${dry.total_routines || 0}개 · 미분석 ${dry.missing}개 · 이번 실행 ${dry.planned}개${cappedTxt}\n\n이번 실행 대상 ${dry.planned}개 항목(테이블·함수·프로시저)마다 LLM 분석이 수행됩니다(백그라운드). 진행할까요?`)) return;
     let res;
     try {
       res = await apiFetch(`/api/admin/metadata/graph/analyze-schema`, {
@@ -6959,7 +7195,7 @@ function _metaGraphRenderProgress(st) {
   // routine-dbanalysis(§53 MINOR): 스키마 run 은 고정 시드·재귀 0 이 비용 계약 — "재귀 탐색 중" 카피가
   //   confirm("이번 실행 N개") 직후 무한 fan-out 오해를 부르므로 root_label 로 분기.
   //   (root_label=Schema 재귀 run 은 UI 비도달 — Schema 루트는 analyze-schema 경로만 생성한다.)
-  if (pending > 0) rows.push(`<li class="ampg-item admin-meta-graph-muted">⋯ 대기 ${pending}개 (${st.root_label === "Schema" ? "시드 테이블 대기 — 추가 확장 없음" : "관련 노드 재귀 탐색 중"})</li>`);
+  if (pending > 0) rows.push(`<li class="ampg-item admin-meta-graph-muted">⋯ 대기 ${pending}개 (${st.root_label === "Schema" ? "시드 항목 대기 — 추가 확장 없음" : "관련 노드 재귀 탐색 중"})</li>`);
   const parts = [];
   parts.push(`<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">${esc(st.root_name || st.root_key || "")}</span> <span class="ampg-status ${stCls}">${statusKo}</span><button type="button" class="ampg-close" id="metaGraphProgClose" title="닫기" aria-label="진행 패널 닫기">✕</button></div>`);
   parts.push(`<div class="ampg-bar" title="${done}/${enq}"><div class="ampg-bar-fill" style="width:${pct}%"></div></div>`);
@@ -7005,6 +7241,7 @@ async function _metaGraphShowClusterDetailById(comboId) {
   if (!_metaGraph.graph || !comboId) return;
   if (comboId === _META_TERMS_COMBO) { _metaGraphStatus("용어·기타 클러스터"); return; }
   _metaGraph.lastDetailKey = comboId;
+  _metaGraphHistoryRecord(comboId, "cluster");   // §54①: terms 가드 뒤·첫 await 이전(동기 구간).
   const schemaName = _metaComboName(comboId);
   _metaGraphStatus("클러스터 상세 조회 중…");
   let data = null;
@@ -7043,7 +7280,7 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   //   "−" 컨트롤은 큰 스키마에서 뷰포트 밖으로 벗어나 접근 불가하던 문제 해소. 패널 body 클릭으로 접히지 않게
   //   접기는 이 버튼(및 기존 "−"/우클릭 메뉴)로만 트리거.
   const _canCollapse = comboId && _metaGraph.schemaExpanded && _metaGraph.schemaExpanded.has(comboId);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}${comboId && comboId !== _META_TERMS_COMBO ? ` <button type="button" class="amgr-link" id="metaGraphClusterAnalyzeBtn" title="이 DB(스키마)의 미분석 테이블 전체를 AI 능동 분석합니다 — 실행 전 대상 수를 확인합니다">✨ DB 전체 AI 능동 분석</button>` : ""}</div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}${comboId && comboId !== _META_TERMS_COMBO ? ` <button type="button" class="amgr-link" id="metaGraphClusterAnalyzeBtn" title="이 DB(스키마)의 미분석 항목(테이블·함수·프로시저) 전체를 AI 능동 분석합니다 — 실행 전 대상 수를 확인합니다">✨ DB 전체 AI 능동 분석</button>` : ""}</div>`);
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {

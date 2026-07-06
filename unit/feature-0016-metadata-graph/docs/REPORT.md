@@ -1184,3 +1184,27 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
   전건, SSOT==AGE 정합; 미도달 14 ds loud — 게이트망, 도달 시 재실행/cadence) → **PB-0008 라이브 PASS**
   (accountdb ƒ/⚙ 198 전수 렌더 z=4 · DB 단위 분석 e2e done 2/2·예약 고정=재귀 0 · reused confirm 생략+
   dismissed 패널 복구(§18.8 수정 실증) · noop parity · pageerror 0). 증적 artifacts/…/20260706-routine-dbanalysis/.
+
+## 2026-07-06 · 그래프 뷰 개선 5건 — 상세 nav·kind 필터·검색 보존·Routine 분석·파라미터 수직 (graph-navfilter-routine, TASK §54)
+
+### 요청 (사용자)
+① 상세 패널 뒤로/앞으로 ② 노드 종류 필터(테이블·컬럼 항상, 관계·함수·프로시저 토글 — 재배치 반응)
+③ 검색 변경/클리어 시 그래프 구성(확장·배치) 보존 ④ DB 단위 AI 능동 분석에 함수/프로시저 포함
+(pcbang_dkonline 실측 gap) ⑤ 프로시저 파라미터 수직 배치.
+
+### 처리 결과
+- Workflow 5-렌즈 병렬 정찰로 스펙 확정 후 구현: ① 기존 노드-전용 히스토리를 view-typed(노드·클러스터·
+  관계 상세) 확장 + 카메라 재현 ② hiddenKinds 빌드 입력 제외(자리 자동 회수 재배치) + 툴바 토글 +
+  localStorage 영속(스키마 그래프 전용 — 제품 개요에선 숨김) ③ 검색을 additive overlay 로(리셋 회피,
+  pristine 만 회수, base 컨텍스트 복원 — products 복귀·중심보기 칩 복원, '초기화'만 풀리셋) ④
+  schema_routine_keys 신설 + 혼합 시드(테이블 우선 cap)·payload routine_type/params·confirm 카피 —
+  워커 경로는 기존에 라벨 무가정이라 시드만이 결손 ⑤ 파라미터 서브노드 수직 방출(XR:/RP:, 컬럼 관례
+  동형, z bake 1:1) + 상세 패널 세로 목록.
+- §18.8 적대 패널(3-렌즈 find → BLOCKING/MAJOR 적대 verify Workflow): 적발 MAJOR 3 근본원인
+  (products 랜딩 검색→클리어 미복원 / ingest Schema added 미반환 = pristine 회수 dead code / 중심보기
+  부분그래프 '전체' 위장) 전건 수정 + MINOR·NIT 10건 반영(수용 1: 필터 재표시 시 열 말미 append —
+  AC-2 명세) — 상세 REVIEW.md.
+
+### 검증
+- pytest test_routine_dbanalysis **21 PASS**(§54④ 신규 5 포함) + 관련 회귀 57 PASS · node --check ·
+  py_compile PASS. POST-DEPLOY: web+insight-worker 재배포 → PB-0008 AC-1~5 라이브 실측(T54.8).
