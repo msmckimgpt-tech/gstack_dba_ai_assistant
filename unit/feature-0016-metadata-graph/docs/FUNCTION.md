@@ -25,6 +25,10 @@ source_of_truth: true
   Graph DB 모델로 명시하며 (c) UI를 그래프 형태 + 검색 가능하게 하고 (d) AI가 그 메타데이터를
   통해 요청을 수행하는 부분을 정합한다. (e) KB 전용 PG 의 그래프 플러그인(Apache AGE)을
   내부 구조로 함께 도입한다.
+- REQ-20260704T210000-routine-dbanalysis: (a) 함수·프로시저 노드가 전 datasource 그래프 뷰에
+  나타나도록 한다 — insight cadence 전파를 기다리지 않는 **결정론 backfill** 수단 제공. (b) **DB(스키마)
+  단위 'AI 능동 분석'** — 스키마의 미분석 테이블 전체를 일괄 시드해 분석한다(비용 가드: only_missing +
+  `AGENT_NODE_ANALYSIS_SCHEMA_CAP` 기본 200 + UI confirm). (TASK §53)
 - REQ-20260703-graph-funcproc-uxfix: (a) **함수·프로시저 노드**를 그래프에 구성하고 분석·관계
   (참조 테이블)를 함께 구성한다. (b) 상세 패널 리사이즈 시 미니맵 위치 미갱신을 수정한다.
   (c) AI 능동 분석 재귀에서 참조 컬럼이 분석되면 그 **소속 테이블까지 분석**하되 앵커 연관성으로
@@ -191,3 +195,22 @@ etc 기타)으로 분류되어 `node_analysis_jobs.role`(alembic 0031, 비파괴
 그래프 뷰는 분석 완료 테이블 칩을 **역할색(Okabe-Ito 색약 안전 팔레트) + 라벨 앞 역할 아이콘 + 역할 범례
 행 + 상세/진행 패널 역할 칩**으로 표시한다(미분석=teal 유지, 보라 분석완료 테두리 유지). 조회 API
 (run status·scope bulk status·node analysis)가 roles 를 함께 반환한다.
+
+## 15. 전 datasource routine backfill + DB(스키마) 단위 AI 능동 분석 (2026-07-04, TASK §53)
+
+**routine backfill**: `bin/routine-backfill.sh` → 컨테이너 exec → `modules/routine_backfill.py` —
+등록된 전 datasource(또는 `--scope <key>`)를 순회해 MySQL(비시스템 ROUTINE_SCHEMA)·MSSQL(사용자 DB
+× ROUTINE_SCHEMA, store label=DB명)의 함수·프로시저를 `routines.introspect_and_store` 로 즉시 upsert
+하고 scope 별 `sync_graph` 로 AGE 투영한다. per-(ds,DB,schema) 카운트/에러 loud 리포트. 멀티 ds 플래그
+OFF 면 fail-loud(기본 DB 오라벨링 차단). 한 store-label 에 복수 ROUTINE_SCHEMA 공존 시 `prune=False`
+(§53 prune-safety — introspect_and_store 신설 파라미터, 기본 True=기존 동작). insight-worker cadence
+는 유지보수 경로로 계속.
+
+**DB(스키마) 단위 AI 능동 분석**: 그래프 뷰 스키마 카드/펼친 클러스터 우클릭 메뉴·클러스터 상세 패널의
+"✨ DB 전체 AI 능동 분석" → `POST /api/admin/metadata/graph/analyze-schema`(권한 metadata.graph.read —
+노드 분석과 동일 우산, audit `node_analysis.enqueue_schema`) → `node_analysis.enqueue_schema_analysis`:
+run(root=Schema, depth_budget=1) + 스키마 소속 Table(`metadata_graph.schema_table_keys`)을 depth=1
+시드로 pre-seed. **재귀 0 보장** — 시드 생성 시 enqueued=node_budget=planned 라 확장 게이트
+`remaining=node_budget-enqueued=0` 이 same-depth 승격(ADR-017) 포함 일체의 추가 enqueue 를 차단.
+only_missing(기본)·cap(기본 200/hard 500)·running run 재사용(reused)·dry_run(UI confirm 용 집계).
+진행은 기존 run 폴링/진행 패널 재사용.

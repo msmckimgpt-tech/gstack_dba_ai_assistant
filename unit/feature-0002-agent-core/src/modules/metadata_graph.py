@@ -1000,6 +1000,44 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
     return result
 
 
+def schema_table_keys(scope: str, schema_key: str, limit: int = 2000, conn=None) -> list:
+    """스키마 소속 Table 의 {key,name,fqn} 경량 열거 — DB(스키마) 단위 능동 분석 시드용(§53).
+
+    schema_tables() 와 달리 엣지/설명 없이 키만 뽑아 cap 을 크게 잡는다(전 테이블 집계·시드 상한은
+    caller 의 비용 가드가 결정). 실패 시 [] (비차단)."""
+    out = []
+    if not scope or not schema_key:
+        return out
+    try:
+        limit = max(1, min(int(limit or 2000), 5000))
+    except (TypeError, ValueError):
+        limit = 2000
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return out
+    try:
+        cur = c.cursor()
+        _set_age_path(cur)
+        rows = _cypher(cur,
+            f"MATCH (s:Schema)-[:HAS_TABLE]->(t:Table) "
+            f"WHERE s.scope_key = {_cq(scope)} AND s.key = {_cq(schema_key)} "
+            f"RETURN t.key, t.name, t.fqn LIMIT {limit}", 3)
+        for r in rows:
+            k = _unwrap(r[0])
+            if k:
+                out.append({"key": k, "name": _unwrap(r[1]) or k, "fqn": _unwrap(r[2]) or ""})
+        cur.close()
+    except Exception as exc:
+        _log.debug("schema_table_keys_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return out
+
+
 def _node_from_props(label: str, props: dict) -> dict:
     """라벨 테이블 properties(dict) → 노드 dict. _node_dict 와 동일 shape."""
     d = {"label": label, "key": props.get("key"), "name": props.get("name"),

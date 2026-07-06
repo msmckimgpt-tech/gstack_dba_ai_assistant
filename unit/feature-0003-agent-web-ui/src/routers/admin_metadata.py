@@ -1174,6 +1174,46 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
                          "reused": res.get("reused", False), "progress": res.get("progress")},
                         status_code=202)
 
+@router.post("/api/admin/metadata/graph/analyze-schema")
+async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
+    """DB(스키마) 단위 AI 능동 분석(§53). 권한 metadata.graph.read(노드 분석과 동일 우산).
+
+    body: {schema_key, scope_key?, prompt?, only_missing?=true, dry_run?}. 스키마 소속 Table 을
+    depth=1 시드로 일괄 enqueue(재귀 0 — depth_budget=1 + node_budget=planned 이중 캡). 비용 가드 =
+    only_missing 기본 + AGENT_NODE_ANALYSIS_SCHEMA_CAP(기본 200). dry_run=true 는 run 미생성 —
+    대상 집계만 반환(프론트 confirm 용). 진행 폴링은 기존 GET .../graph/analyze?run_id= 재사용."""
+    data = await app._metadata_read_json(request)
+    schema_key = str(data.get("schema_key") or data.get("schema") or "").strip()
+    if not schema_key or ":" not in schema_key:
+        return app._json_error("schema_key(스키마 노드 키)는 필수입니다.", 400)
+    scope_key = str(data.get("scope_key") or schema_key.split(":", 1)[0] or "common").strip().lower()
+    user_prompt = str(data.get("prompt") or "").strip()[:400] or None
+    only_missing = bool(data.get("only_missing", True))
+    dry_run = bool(data.get("dry_run", False))
+    from modules import node_analysis as _na
+    res = _na.enqueue_schema_analysis(scope_key, schema_key,
+                                      requested_by=str((account or {}).get("username") or "") or None,
+                                      user_prompt=user_prompt, only_missing=only_missing,
+                                      dry_run=dry_run)
+    if not res.get("ok"):
+        reason = res.get("reason") or "분석 시작 실패"
+        code = 400 if reason == "schema_key 필수" else 503
+        return app._json_error(f"DB 단위 AI 능동 분석 시작 실패: {reason}", code)
+    if not dry_run and res.get("status") in ("running",):
+        app._metadata_audit(request, account, action="node_analysis.enqueue_schema", resource_id=schema_key,
+                        change_json={"scope_key": scope_key, "run_id": res.get("run_id"),
+                                     "planned": res.get("planned"), "total_tables": res.get("total_tables"),
+                                     "missing": res.get("missing"), "capped": res.get("capped", False),
+                                     "only_missing": only_missing, "reused": res.get("reused", False),
+                                     "prompt_len": len(user_prompt or ""),
+                                     "prompt_preview": (user_prompt or "")[:120] or None})
+    return JSONResponse({"ok": True, "run_id": res.get("run_id"), "status": res.get("status"),
+                         "total_tables": res.get("total_tables"), "missing": res.get("missing"),
+                         "planned": res.get("planned"), "capped": res.get("capped", False),
+                         "reused": res.get("reused", False), "progress": res.get("progress"),
+                         "reason": res.get("reason")},
+                        status_code=200 if dry_run or res.get("status") == "noop" else 202)
+
 @router.get("/api/admin/metadata/graph/analyze")
 def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """분석 run 진행률 폴링(항목2). 권한 kb.ingest.manual. ?run_id=<hex>.

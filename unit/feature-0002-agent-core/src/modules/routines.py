@@ -178,7 +178,7 @@ def _rw_conn(conn):
 
 def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_key="common",
                          datasource_key="", source_run_id=None, store_schema=None,
-                         cap=None) -> int:
+                         cap=None, prune=True) -> int:
     """한 schema 의 함수·프로시저를 introspect 해 routine_objects 에 upsert. 반환: **변경 upsert 행 수**
     (무변경 skip 은 미집계 — cur.rowcount 기준, §18.8 NIT).
 
@@ -246,7 +246,10 @@ def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_ke
                            schema, r.get("name"), exc)
                 continue
         # prune — 완전 스캔(cap 미절단)일 때만: drop 된 routine 의 SSOT 행 회수(멱등).
-        if not truncated:
+        # routine-dbanalysis(§53): prune 은 (scope, store-label) 범위 삭제라, 한 label(MSSQL=DB명)에
+        #   복수 ROUTINE_SCHEMA 가 공존하면 뒤 스키마 introspect 가 앞 스키마 행을 지운다 — caller 가
+        #   label 당 복수 스키마를 아는 경우(backfill) prune=False 로 억제한다(기본 True=기존 동작).
+        if prune and not truncated:
             try:
                 names = [r["name"] for r in routines]
                 cur.execute(
