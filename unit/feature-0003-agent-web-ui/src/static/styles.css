@@ -8129,6 +8129,10 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 /* graph-initview(E2): 줌 컨트롤 버튼 묶음 — 컴팩트 정사각 버튼 */
 .admin-meta-graph-zoomctl { display: inline-flex; align-items: center; gap: 4px; }
 .admin-meta-graph-zoomctl .btn-secondary { min-width: 30px; padding: 4px 8px; font-weight: 700; }
+/* graph-navfilter(§54②): 노드 종류 표시 필터 — is-active=표시 중(기본), 비활성=숨김(흐림+취소선) */
+.admin-meta-graph-kindctl { display: inline-flex; align-items: center; gap: 4px; }
+.admin-meta-graph-kindctl .btn-secondary { padding: 4px 8px; }
+.admin-meta-graph-kindctl .btn-secondary:not(.is-active) { opacity: 0.45; text-decoration: line-through; }
 /* graph-initview(E1): G6 minimap 플러그인 컨테이너 — 캔버스 우하단 카드형 */
 .admin-meta-graph-canvas .g6-minimap {
   position: absolute; right: 10px; bottom: 10px; z-index: 5;

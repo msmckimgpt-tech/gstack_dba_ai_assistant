@@ -50,9 +50,15 @@ def _tables(n):
     return [{"key": f"ds1:app.T{i}", "name": f"T{i}", "fqn": f"app.T{i}"} for i in range(n)]
 
 
-def _patch_common(monkeypatch, tables, done_keys=(), cursor=None):
+def _routines(n):
+    return [{"key": f"ds1:app.spR{i}()", "name": f"spR{i}", "fqn": f"app.spR{i}()"} for i in range(n)]
+
+
+def _patch_common(monkeypatch, tables, done_keys=(), cursor=None, routines=None):
     from modules import metadata_graph as mg
     monkeypatch.setattr(mg, "schema_table_keys", lambda scope, schema, limit=2000, conn=None: tables)
+    # graph-navfilter(§54④): Routine 시드 열거 — 기본 [](테이블-only, 0034 미적용 저하와 동형).
+    monkeypatch.setattr(mg, "schema_routine_keys", lambda scope, schema, limit=2000, conn=None: (routines or []))
     monkeypatch.setattr(na, "get_scope_analysis_status", lambda scope: {"done_keys": list(done_keys)})
     cur = cursor or FakeCursor()
     monkeypatch.setattr(na, "_rw_conn", lambda conn: (FakeConn(cur), False))
@@ -95,8 +101,9 @@ def test_schema_analysis_seeds_depth1_budget_planned(monkeypatch):
     # (run_id, scope, root_key, 'Schema', name, depth_budget, node_budget, enqueued, requested_by, up)
     assert params[3] == "Schema" and params[5] == 1 and params[6] == 4 and params[7] == 4
     for sql, jp in job_sqls:
-        assert "'Table'" in sql and ",1,1.0,'pending'" in sql.replace(" ", "")
-        assert jp[2].startswith("ds1:app.T")
+        # §54④: node_label 은 리터럴 'Table' 이 아니라 파라미터(jp[3]) — Routine 혼합 시드 지원.
+        assert ",1,1.0,'pending'" in sql.replace(" ", "")
+        assert jp[2].startswith("ds1:app.T") and jp[3] == "Table"
 
 
 def test_schema_analysis_reused_running(monkeypatch):
@@ -110,6 +117,61 @@ def test_schema_analysis_reused_running(monkeypatch):
 def test_schema_analysis_rejects_bad_key(monkeypatch):
     res = na.enqueue_schema_analysis("ds1", "no-colon-key")
     assert not res["ok"]
+
+
+# ── §54④: 스키마 시드에 Routine 포함 ─────────────────────────────────────────
+def test_schema_analysis_mixed_dry_run_counts(monkeypatch):
+    """테이블 5+루틴 3, done=테이블2+루틴1 → total_tables=5, total_routines=3, missing=5."""
+    done = ["ds1:app.T0", "ds1:app.T1", "ds1:app.spR0()"]
+    _patch_common(monkeypatch, _tables(5), done_keys=done, routines=_routines(3))
+    res = na.enqueue_schema_analysis("ds1", "ds1:app", dry_run=True)
+    assert res["ok"] and res["total_tables"] == 5 and res["total_routines"] == 3
+    assert res["missing"] == 5 and res["planned"] == 5 and res["capped"] is False
+
+
+def test_schema_analysis_seeds_routine_label(monkeypatch):
+    """루틴 잡은 node_label='Routine' 파라미터로 시드, node_budget=planned(루틴 포함) — 재귀 0 불변식."""
+    cur = _patch_common(monkeypatch, _tables(2), routines=_routines(2))
+    res = na.enqueue_schema_analysis("ds1", "ds1:app")
+    assert res["ok"] and res["planned"] == 4
+    run_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_runs" in e[0]]
+    job_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_jobs" in e[0]]
+    assert run_sqls[0][1][6] == 4   # node_budget = 테이블2+루틴2
+    labels = [jp[3] for _, jp in job_sqls]
+    assert labels == ["Table", "Table", "Routine", "Routine"]   # 테이블 우선 순서(결정적)
+    rkeys = [jp[2] for _, jp in job_sqls if jp[3] == "Routine"]
+    assert all(k.endswith("()") for k in rkeys)   # sync_routine 키 규약(`()` 접미) 그대로 시드
+
+
+def test_schema_analysis_cap_prefers_tables(monkeypatch):
+    """cap 절단 시 테이블 우선 — cap=4 에 테이블3+루틴3 → 테이블 3 전부 + 루틴 1."""
+    cur = _patch_common(monkeypatch, _tables(3), routines=_routines(3))
+    monkeypatch.setattr(na._cfg, "AGENT_NODE_ANALYSIS_SCHEMA_CAP", 4, raising=False)
+    res = na.enqueue_schema_analysis("ds1", "ds1:app")
+    assert res["planned"] == 4 and res["capped"] is True and res["missing"] == 6
+    job_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_jobs" in e[0]]
+    labels = [jp[3] for _, jp in job_sqls]
+    assert labels == ["Table", "Table", "Table", "Routine"]
+
+
+def test_schema_analysis_degrades_to_tables_only(monkeypatch):
+    """schema_routine_keys 가 [](라벨 부재/실패) → 기존 테이블-only 동작과 동일(비차단 저하)."""
+    cur = _patch_common(monkeypatch, _tables(3), routines=[])
+    res = na.enqueue_schema_analysis("ds1", "ds1:app")
+    assert res["ok"] and res["planned"] == 3 and res["total_routines"] == 0
+    job_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_jobs" in e[0]]
+    assert all(jp[3] == "Table" for _, jp in job_sqls)
+
+
+def test_build_payload_routine_fields():
+    """Routine payload 에 routine_type/params 투영(프롬프트 계약) — 타 라벨은 미포함."""
+    node_r = {"label": "Routine", "key": "ds1:app.spX()", "name": "spX", "fqn": "app.spX()",
+              "routine_type": "procedure", "params": "IN a int, OUT b varchar"}
+    p = na._build_payload(node_r, {})
+    assert p["routine_type"] == "procedure" and p["params"] == "IN a int, OUT b varchar"
+    node_t = {"label": "Table", "key": "ds1:app.T", "name": "T", "fqn": "app.T"}
+    pt = na._build_payload(node_t, {})
+    assert "routine_type" not in pt and "params" not in pt
 
 
 def test_schema_analysis_dry_run_detects_running(monkeypatch):

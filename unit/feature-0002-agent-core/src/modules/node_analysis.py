@@ -415,7 +415,7 @@ def _build_payload(node: dict, ctx: dict) -> dict:
             desc = (it.get("description") or "").strip()
             out.append({"name": nm, "description": desc[:200]} if desc else {"name": nm})
         return out
-    return {
+    payload = {
         "label": node.get("label") or "",
         "name": node.get("name") or node.get("fqn") or node.get("key") or "",
         "fqn": node.get("fqn") or "",
@@ -428,6 +428,14 @@ def _build_payload(node: dict, ctx: dict) -> dict:
             "other": _names(ctx.get("other") or [], 20),
         },
     }
+    # graph-navfilter-routine(§54): Routine 은 프롬프트가 약속한 "name, parameters and the tables
+    # it touches" 계약 충족을 위해 유형·파라미터를 함께 투영(그간 name·이웃만으로 분석되던 gap).
+    if (node.get("label") or "") == "Routine":
+        if node.get("routine_type"):
+            payload["routine_type"] = str(node.get("routine_type"))[:32]
+        if node.get("params"):
+            payload["params"] = str(node.get("params"))[:500]
+    return payload
 
 
 # ── enqueue (웹 트리거) ──────────────────────────────────────────────────────
@@ -519,8 +527,9 @@ def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budg
 def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=None,
                             user_prompt=None, only_missing=True, table_cap=None,
                             dry_run=False, conn=None) -> dict:
-    """DB(스키마) 단위 능동 분석(§53) — run(root=Schema, depth_budget=1) + 소속 Table 을 depth=1
-    시드로 일괄 pre-seed. 반환 {ok, run_id?, status, total_tables, missing, planned, capped, reused?}.
+    """DB(스키마) 단위 능동 분석(§53·§54) — run(root=Schema, depth_budget=1) + 소속 Table 과
+    Routine(함수·프로시저, §54)을 depth=1 시드로 일괄 pre-seed(테이블 우선, cap 절단 시 루틴 후순위).
+    반환 {ok, run_id?, status, total_tables, total_routines, missing, planned, capped, reused?}.
 
     비용 가드: only_missing(기본 — 이미 분석 완료 노드 제외) + AGENT_NODE_ANALYSIS_SCHEMA_CAP
     (기본 200, hard max AGENT_NODE_ANALYSIS_SCHEMA_MAX). 재귀 0 보장 = **budget 캡 단독** —
@@ -543,19 +552,28 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
     # 과소보고된다(§18.8 NIT; 시드는 어차피 cap 으로 제한). 5000 초과 스키마는 여전히 절단(수용).
     tables = _mg.schema_table_keys(sk, schema_key, limit=5000) or []
     total = len(tables)
+    # graph-navfilter-routine(§54): 함수·프로시저(Routine)도 스키마 시드에 포함 — 열거 실패/
+    # HAS_ROUTINE 라벨 부재(0034 미적용)는 [] 저하(테이블-only 로 계속, schema_table_keys 관례).
+    routines = _mg.schema_routine_keys(sk, schema_key, limit=5000) or []   # 테이블과 대칭(confirm 과소보고 방지)
+    total_routines = len(routines)
     done = set()
-    if only_missing and tables:
+    if only_missing and (tables or routines):
         st = get_scope_analysis_status(sk)
         if st is None:
             # silent 저하 방지(§18.8 MINOR): 집계 실패를 done=∅ 로 계속하면 이미 분석 완료된
             # 테이블까지 cap 이내 전량 재시드(중복 LLM 비용) — fail-loud 로 중단.
             return {"ok": False, "reason": "분석 상태 집계 실패(PG) — 잠시 후 다시 시도해 주세요."}
         done = set(st.get("done_keys") or [])
-    targets = [t for t in tables if t.get("key") and (not only_missing or t["key"] not in done)]
+    # 순서 = 테이블 먼저, 루틴 뒤 — cap 절단 시 테이블 우선(기존 동작 보존, 결정적).
+    targets = ([dict(t, label="Table") for t in tables
+                if t.get("key") and (not only_missing or t["key"] not in done)]
+               + [dict(r, label="Routine") for r in routines
+                  if r.get("key") and (not only_missing or r["key"] not in done)])
     missing = len(targets)
     capped = missing > cap
     targets = targets[:cap]
-    base = {"total_tables": total, "missing": missing, "planned": len(targets), "capped": capped}
+    base = {"total_tables": total, "total_routines": total_routines,
+            "missing": missing, "planned": len(targets), "capped": capped}
     lease = max(60, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_LEASE_SEC", 900)))
     c, owned = _rw_conn(conn)
     if c is None:
@@ -606,12 +624,13 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
             cur.execute(
                 "INSERT INTO node_analysis_jobs "
                 "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
-                "VALUES (%s,%s,%s,'Table',%s,%s,1,1.0,'pending') "
+                "VALUES (%s,%s,%s,%s,%s,%s,1,1.0,'pending') "
                 "ON CONFLICT (run_id, node_key) DO NOTHING",
-                (run_id, sk, t["key"], (t.get("name") or t["key"])[:512], fqn))
+                (run_id, sk, t["key"], t.get("label") or "Table",
+                 (t.get("name") or t["key"])[:512], fqn))
         cur.close()
-        _log.info("node_analysis enqueue_schema run=%s schema=%s planned=%s/%s capped=%s",
-                  run_id, schema_key, len(targets), total, capped)
+        _log.info("node_analysis enqueue_schema run=%s schema=%s planned=%s/%s(+routines %s) capped=%s",
+                  run_id, schema_key, len(targets), total, total_routines, capped)
         return dict(base, ok=True, run_id=run_id, status="running")
     except Exception as exc:
         _log.warning("enqueue_schema_analysis_failed err=%r", exc)
