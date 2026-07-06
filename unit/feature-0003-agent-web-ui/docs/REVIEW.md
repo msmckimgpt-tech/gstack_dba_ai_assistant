@@ -4490,3 +4490,8 @@ source_of_truth: true
 - PASS(무결함): 제약1(budget<max_tokens=20000 전 override 만족)·제약2(claude alias temperature 미전달로 thinking temp=1 정합)·scope leak 0(메인 _call_llm 만, 보조 호출 무영향)·persistence(conv_id lazy-create 후 확정·save 별도 PG conn commit)·worker parity(app.py payload↔ask.py _payload_to_kwargs 키 일치)·validation(normalize 화이트리스트)·null/default(None→미주입).
 - Files reviewed: conversations.py·app.py·agent_core.py·ask.py·model_catalog.py·static/{index.html,app.js,styles.css}·test_reasoning_effort.py.
 - Cross-ref: CHG-20260706T013532-reasoning-effort · TASK/REPORT/TEST 동일 slug · feature-0002·shared MODIFY 대응 CHG.
+
+## REV-20260706T013532-reasoning-effort-postverify [SKIPPED:post-deploy-verification-record] (TASK-20260706T013532-reasoning-effort — POST-DEPLOY PB-0008 실측 기록, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 본 cycle 은 선행 reasoning-effort(REV-20260706T013532-reasoning-effort [SUBAGENT] SHIP)의 **배포 후 라이브 검증 결과를 문서에 기록**할 뿐 코드/자산 무변경(doc-only, TASK/MODIFY/TEST/REVIEW). 신규 로직 경로 0·백엔드/RBAC/스키마/엔드포인트 무변경 → 코드 적대검증 대상 아님(§18.8 표 `[SKIPPED:*]`). 검증 자체(실 Windows Chrome PB-0008 + B2 게이트웨이 프로브)가 이 기록의 정본 증적.
+- POST-DEPLOY 실측(배포 adad0a5e, 실 Windows Chrome via win-browser relay @172.26.144.1:9223, `https://localhost/` 인증 세션): 서빙 `app.js?v=20260706-reasoning-effort`·healthz git_commit=adad0a5e·워커 이미지 코드 baked 확인. '+' 메뉴 "추론 강도: 일반" 렌더 → 클릭 4단계 팝업(낮음/일반/높음/매우 높음·values low/normal/high/max·claude 활성) → 높음 선택 라벨 갱신·✓·localStorage=high → 새로고침 후 "높음" 복원 → pageerror 0. 증적 pb0008_reasoning.png. 전 계층(프론트→askBody→/api/ask enqueue→ask-worker _payload_to_kwargs→run_agent→_call_llm extra_body.thinking) 라이브 + B2 override 실증 결합 확인.
+- Cross-ref: REV-20260706T013532-reasoning-effort(선행 코드 cycle) / CHG-20260706T013532-reasoning-effort-postverify.
