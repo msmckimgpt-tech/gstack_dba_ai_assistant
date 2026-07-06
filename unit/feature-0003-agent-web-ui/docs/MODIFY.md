@@ -5408,3 +5408,9 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/routers/conversations.py`(파싱·KV저장·run_kwargs·history hydration), `unit/feature-0003-agent-web-ui/src/app.py`(save_memory_kv import·worker payload), `unit/feature-0003-agent-web-ui/src/static/{index.html,app.js,styles.css}`(선택기 UI·askBody·localStorage·hydration·CSS), `unit/feature-0002-agent-core/src/agent_core.py`(run_agent/_run_agent_core/_call_llm 배선·주입), `unit/feature-0002-agent-core/src/modules/ask.py`(worker payload 복원), `shared/model_catalog.py`(레벨 매핑·supports_thinking·normalize)
 - Cross-feature 편집: 코드 거주 feature-0003 이 primary(대화 UI 지배). 파일 소유 feature-0002(agent_core/ask)·shared(model_catalog) 는 각 MODIFY.md 에 대응 CHG 기록. cache-buster: `index.html` `app.js?v=…`→`?v=20260706-reasoning-effort`.
 - Cross-ref: REVIEW.md REV-20260706T013532-reasoning-effort [SUBAGENT:…] · unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260706T013532-reasoning-effort · shared/docs/MODIFY.md CHG-20260706T013532-reasoning-effort
+
+## CHG-20260706T013532-reasoning-effort-postverify (TASK-20260706T013532-reasoning-effort — reasoning-effort POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- 변경: 선행 cycle(CHG-20260706T013532-reasoning-effort, PR #594 머지 adad0a5e + web 무중단 롤링 재배포 + ask/insight-worker 재빌드)의 **배포 후 라이브 PB-0008 실측 결과**를 TASK.md(최종 체크박스 확정)·TEST.md §3(POST-DEPLOY PASS Run)에 기록. 코드/자산 무변경(doc-only).
+- 검증 결과 요지(실 Windows Chrome via win-browser relay @172.26.144.1:9223, `https://localhost/` 인증 세션): '+' 메뉴 "추론 강도: 일반" 렌더 → 클릭 4단계 팝업(낮음/일반/높음/매우 높음) → 높음 선택 라벨 갱신·✓·localStorage=high → 새로고침 후 "높음" 복원 → pageerror 0. 스크린샷 pb0008_reasoning.png. B2 게이트웨이 override 실증과 결합해 프론트→/api/ask→ask-worker→_call_llm 전 계층 라이브 확인.
+- Files: `docs/{TASK,MODIFY,TEST,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260706T013532-reasoning-effort-postverify [SKIPPED:post-deploy-verification-record] · 선행 CHG-20260706T013532-reasoning-effort
