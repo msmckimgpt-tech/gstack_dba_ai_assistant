@@ -7,12 +7,18 @@ __all__ = [
     "API_DEFAULT_MODEL",
     "API_MODEL_OPTIONS",
     "PUBLIC_API_MODEL_OPTIONS",
+    "REASONING_LEVELS",
+    "REASONING_LEVEL_OPTIONS",
+    "DEFAULT_REASONING_LEVEL",
     "get_api_model_meta",
     "is_allowed_api_model",
     "is_local_llm_model",
     "max_tokens_for_model",
     "model_supports_temperature",
+    "model_supports_thinking",
     "model_supports_vision",
+    "normalize_reasoning_level",
+    "thinking_budget_for_level",
 ]
 
 
@@ -190,6 +196,76 @@ def max_tokens_for_model(model: str | None, task: str = "agent") -> int | None:
     # TASK-0237: 구 주석 "OpenAI direct legacy" 정정 — 카탈로그에 GPT 모델 0개라 GPT 경로는 없으나,
     # 잘못된/미등록 model 문자열 입력에 대한 fallback 으로 None(무제한) 유지 (동작 무변경).
     return None
+
+
+# ── 사용자 지정 추론 강도 (extended thinking budget) ──────────────────────────
+# feature-0003 reasoning-effort-selector (REQ-20260704-reasoning-effort):
+# 대화 화면에서 사용자가 4단계(낮음/일반/높음/매우 높음)로 추론 강도를 직접 고른다.
+# 상용 서비스(Claude extended thinking · ChatGPT reasoning effort)와 동형.
+#
+# 명시 레벨(낮음/높음/매우 높음)은 요청 단위 thinking budget_tokens 로 매핑되어, backend
+# `_call_llm` 이 `extra_body={"thinking": {"type":"enabled","budget_tokens":N}}` 로 전달 →
+# LiteLLM 이 litellm_config.yaml 의 alias 별 고정 thinking 값을 **이 요청에 한해 override**.
+#
+# ── '일반' = override 없음(모델 config 기본 thinking 유지) — B1 회귀 방지(REV 적대검증) ──
+#   '일반' 은 의도적으로 budget map 에서 제외한다. 매핑에 고정값(예: 5000)을 두면, 선택기를
+#   한 번도 건드리지 않은 사용자·구 클라이언트의 모든 요청이 그 값으로 강등돼 **claude-sonnet-4
+#   의 config 기본 thinking(16000)이 조용히 5000 으로 떨어지는 회귀**가 발생한다. '일반'을
+#   no-override 로 두면 각 모델이 자기 config 기본값(haiku 5000 / sonnet 16000)을 그대로 쓰고
+#   (하위호환·무회귀), 사용자가 '낮음'으로 속도를, '높음'/'매우 높음'으로 심도를 명시 조정한다.
+#   '일반' = "normal" = 모델 기본 = 가장 자연스러운 중립 라벨.
+#
+# Anthropic 제약: budget_tokens ≥ 1024 且 budget < max_tokens. backend agent 경로의 claude
+#   max_tokens 는 20000(_CLAUDE_MAX_TOKENS["agent"])이므로 override 값 전부 그보다 작아야
+#   안전 → 최대 16000(= 현행 Sonnet effort=high 상한, 실측 검증됨)으로 캡.
+REASONING_LEVELS: tuple[str, ...] = ("low", "normal", "high", "max")
+
+DEFAULT_REASONING_LEVEL = "normal"
+
+# 명시 thinking budget override(요청 단위). "normal" 은 의도적 부재 → thinking_budget_for_level
+# 이 None 반환 → _call_llm 이 주입 안 함 → alias config 기본 thinking 유지(위 B1 주석 참조).
+_REASONING_BUDGETS: dict[str, int] = {
+    "low": 2000,     # 낮음 — 최소 추론(빠름), Anthropic 하한(1024) 여유 상회
+    "high": 10000,   # 높음 — 심층 추론
+    "max": 16000,    # 매우 높음 — 최대(현행 Sonnet effort=high 상한, agent max_tokens 20000 미만)
+}
+
+# 웹 UI 선택기 노출용 (value → 한국어 라벨). 표시 순서 = 낮음→매우 높음.
+REASONING_LEVEL_OPTIONS: tuple[dict[str, str], ...] = (
+    {"value": "low", "label": "낮음"},
+    {"value": "normal", "label": "일반"},
+    {"value": "high", "label": "높음"},
+    {"value": "max", "label": "매우 높음"},
+)
+
+
+def normalize_reasoning_level(value: str | None) -> str | None:
+    """입력 추론 강도 레벨을 유효 키로 정규화한다.
+
+    유효 레벨(low/normal/high/max)만 통과시키고, 그 외(빈 값·미상 문자열)는 None 반환
+    → 호출측이 override 없이 config 기본값을 쓰도록(안전한 무시). 값 검증 겸 정규화.
+    """
+    key = str(value or "").strip().lower()
+    return key if key in REASONING_LEVELS else None
+
+
+def thinking_budget_for_level(level: str | None) -> int | None:
+    """추론 강도 레벨 → thinking budget_tokens.
+
+    'normal'/미지정/미상 레벨은 None → config 의 alias 별 고정 thinking 을 override 하지 않는다
+    (B1 회귀 방지 — '일반'은 모델 기본값 유지). 명시 레벨(low/high/max)만 정수 budget 반환.
+    """
+    return _REASONING_BUDGETS.get(normalize_reasoning_level(level) or "")
+
+
+def model_supports_thinking(model: str | None) -> bool:
+    """extended thinking(요청 단위 budget override) 지원 모델인지 판별한다.
+
+    Claude alias(claude-*)만 지원. 로컬 LLM(gemma/edge-fallback 등)은 thinking 미지원이라
+    LiteLLM drop_params 가 thinking 파라미터를 제거하므로, 애초에 주입하지 않는다(무의미한
+    파라미터 방지 + 프론트 선택기 비활성화 판정에도 사용).
+    """
+    return str(model or "").strip().lower().startswith("claude-")
 
 
 # ── AI 활동 taxonomy (AI 운영 관제 패널 — 확장 레지스트리, TASK-AIOPS) ────────────

@@ -56,6 +56,7 @@ from modules.memory import (
     mark_cancel_requested,
     mark_delete_requested,
     mark_finalize_requested,
+    save_memory_kv,
     set_run_status,
 )
 from shared.model_catalog import (
@@ -11571,6 +11572,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         "new_attachment_ids": run_kwargs.get("new_attachment_ids") or [],
         "image_inline_path": run_kwargs.get("image_inline_path"),
         "text_inline_path": run_kwargs.get("text_inline_path"),
+        "reasoning_level": run_kwargs.get("reasoning_level"),  # feature-0003: 추론 강도(worker 경로 패리티)
     }
 
     _user_message = payload.get("user_message", "")

@@ -19,7 +19,7 @@ from fastapi import UploadFile
 import hashlib
 import secrets
 import asyncio
-from shared.model_catalog import API_DEFAULT_MODEL
+from shared.model_catalog import API_DEFAULT_MODEL, normalize_reasoning_level
 from pathlib import Path
 import json
 import threading
@@ -188,6 +188,9 @@ def history(
     last_status = ""
     last_run_id = ""
     last_run_started_at = ""
+    # feature-0003 reasoning-effort-selector: 이 대화에 마지막으로 저장된 추론 강도(KV) 를 함께
+    # 반환해, 대화 전환·새로고침 후 프론트 선택기가 저장값으로 복원되게 한다(hydration).
+    reasoning_level = ""
     if conv_id:
         try:
             last_status = str(app.load_memory_kv(conn, conv_id, "last_status") or "").strip()
@@ -199,6 +202,7 @@ def history(
                 # 시점까지 갱신하지 않으므로, processing 상태에서의 last_status_at 은 곧
                 # run 시작 시각이다(클라이언트가 elapsed 기준점으로 사용).
                 last_run_started_at = str(app.load_memory_kv(conn, conv_id, "last_status_at") or "").strip()
+            reasoning_level = str(app.load_memory_kv(conn, conv_id, "reasoning_level") or "").strip()
         except Exception:
             # best-effort: 상태 bubble 복원용 KV 조회 실패는 history 응답을 막지 않는다.
             logging.getLogger(__name__).warning(
@@ -211,6 +215,7 @@ def history(
         "last_status": last_status,
         "last_run_id": last_run_id,
         "last_run_started_at": last_run_started_at,
+        "reasoning_level": reasoning_level,
         "has_more": has_more,
         "next_before_id": oldest_id,
         "total_messages": total_count,
@@ -2308,6 +2313,11 @@ async def ask(request: Request) -> JSONResponse:
     # 가 단일 자격증명. 구 클라이언트가 cipher 를 보내도 silently 무시.
     model = str(data.get("model", "") or API_DEFAULT_MODEL).strip()
     request_conversation_id = str(data.get("conversation_id", "")).strip()
+    # feature-0003 reasoning-effort-selector: 사용자가 대화 화면에서 고른 추론 강도.
+    # 유효 레벨(low/normal/high/max)만 통과, 그 외(부재·미상)는 None → **override 안 함**(각 모델
+    # config 기본 thinking 유지). B1 회귀 방지(REV 적대검증): 부재 필드를 기본값으로 강제 대입하면
+    # 선택기 미상호작용·구 클라이언트의 sonnet 이 config 16000 → 강등되는 회귀 발생 → 강제 대입 금지.
+    reasoning_level = normalize_reasoning_level(data.get("reasoning_level"))
     # ── 기본 입력 검증 ──
     if not message:
         conn.close()
@@ -2814,6 +2824,20 @@ async def ask(request: Request) -> JSONResponse:
             if app._conversation_is_group(conv_id or "") else None
         )
 
+        # feature-0003 reasoning-effort-selector: 이 요청의 추론 강도를 대화별로 영구 저장(KV)해,
+        # 새로고침·재접속·대화 전환 후에도 마지막 선택이 복원되게 한다(/api/history 가 hydration).
+        # product 의 turn-단위 캡처 패턴과 정합 — 저장은 '다음 로드'용이고, 이번 run 은 run_kwargs
+        # 로 캡처한 값으로 끝까지 실행된다(in-flight 영향 0). best-effort: 저장 실패는 답변을 막지 않음.
+        # 명시 레벨(reasoning_level 이 진리값)일 때만 저장 — 부재(None)면 기존 저장값·모델 기본을 보존.
+        if conv_id and reasoning_level:
+            try:
+                app.save_memory_kv(conn, conv_id, "reasoning_level", reasoning_level)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "ask: reasoning_level KV save failed (conversation_id=%s)",
+                    conv_id, exc_info=True,
+                )
+
         # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
         # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
         agent_result = await app._dispatch_ask_run(
@@ -2840,6 +2864,7 @@ async def ask(request: Request) -> JSONResponse:
                 new_attachment_ids=new_attachment_ids_clean,
                 image_inline_path=vision_inline_path,
                 text_inline_path=text_inline_path,
+                reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
             ),
         )
         # worker mode 의 빠른 실패(readiness 503 / slot 429 / enqueue 500)는 표준 에러로 표면화.

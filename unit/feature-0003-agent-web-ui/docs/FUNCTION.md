@@ -1465,3 +1465,11 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **부하 0**: 관리 콘솔은 background 모니터가 미리 계산해 둔 `avg_elapsed_ms` 를 읽기만 함 — 상세 패널 진입·목록 로드 시 추가 probe/연결테스트 없음(기존 conn-health-monitor 사전계산 패턴 재사용).
 - **범위 봉인(무변경)**: status 3단계 분류(classify)·gating(should_fast_fail)·`last_elapsed_ms`·probe 스케줄·`_attach_product_conn_status`(제품 경로 conn_status 3키) 전부 불변. 스키마/마이그/RBAC/엔드포인트 신규 0(기존 `/api/admin/datasources` 응답 필드 additive만).
 - cache-buster: `admin.html` 의 `admin.js?v=20260703-graph-simgroups`→`?v=20260703-ds-avg-latency`. CHG/REV-20260703T085511-ds-avg-latency. PB-0008 Windows-browser= 배포 후 라이브(TEST.md §3).
+
+## (TASK-20260706T013532-reasoning-effort) 대화 화면 사용자 지정 추론 강도 선택기
+- **기능**: 사용자가 대화 화면 composer '+' 액션 메뉴에서 추론 강도(extended thinking budget)를 4단계(낮음/일반/높음/매우 높음)로 직접 선택. 상용 서비스(Claude extended thinking / ChatGPT reasoning effort)와 동형. 모델 선택자와 동일한 secondary 팝업 UX.
+- **입력→출력**: 선택값 → `askBody.reasoning_level`(low/normal/high/max) → `POST /api/ask`. backend `normalize_reasoning_level` 로 화이트리스트 검증(미상·부재=None → override 없음). thinking 지원 모델(claude-*) + 명시 레벨일 때만 `_call_llm` 이 요청 단위 `extra_body.thinking.budget_tokens`(**낮음2000/높음10000/매우높음16000**) 주입 → LiteLLM 이 alias 별 고정 thinking 을 이 요청에 한해 override(B2 라이브 실증). **'일반'=override 없음** — 각 모델 config 기본 thinking 유지(haiku 5000/sonnet 16000), 선택기 미상호작용 sonnet 강등 방지(B1 적대검증).
+- **영속·복원**: 대화별 KV(`reasoning_level`) 저장 — `/api/ask` 저장, `/api/history` hydration. 프론트는 localStorage 미러(신규 대화 기본값)+대화 전환 시 서버값 복원. in-flight run 은 run_kwargs 캡처값으로 실행(product turn-캡처 패턴 정합).
+- **비지원 처리**: 로컬 LLM(gemma/edge 등) 은 thinking 미지원 → 주입 안 함(LiteLLM drop_params 방지) + 프론트 선택기 비활성("미지원" 라벨). Anthropic 제약(1024≤budget<agent max_tokens 20000) 전 레벨 만족·thinking 활성 시 temperature 미전달(claude alias) 정합.
+- **범위 봉인(무변경)**: 보조 LLM 호출(summary/topic/validate/insight)은 추론 강도 미적용(메인 agent 경로만). 스키마/마이그레이션 0(KV 재사용)·RBAC/신규 엔드포인트 0(/api/ask·/api/history 필드 additive).
+- cache-buster: `index.html` 의 `app.js`·`styles.css` `?v=20260704-share-visibility-window`→`?v=20260706-reasoning-effort`. CHG/REV-20260706T013532-reasoning-effort. PB-0008 Windows-browser= 배포 후 라이브(TEST.md §3).
