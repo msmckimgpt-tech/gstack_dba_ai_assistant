@@ -516,6 +516,114 @@ def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budg
                 pass
 
 
+def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=None,
+                            user_prompt=None, only_missing=True, table_cap=None,
+                            dry_run=False, conn=None) -> dict:
+    """DB(스키마) 단위 능동 분석(§53) — run(root=Schema, depth_budget=1) + 소속 Table 을 depth=1
+    시드로 일괄 pre-seed. 반환 {ok, run_id?, status, total_tables, missing, planned, capped, reused?}.
+
+    비용 가드: only_missing(기본 — 이미 분석 완료 노드 제외) + AGENT_NODE_ANALYSIS_SCHEMA_CAP
+    (기본 200, hard max AGENT_NODE_ANALYSIS_SCHEMA_MAX). 재귀 0 보장 = **budget 캡 단독** —
+    node_budget == planned(=enqueued 초기값) 라 _enqueue_neighbors 의 remaining 이 항상 0
+    (ADR-017 same-depth 승격도 이 캡에 걸린다; depth 게이트 depth>depth_budget 는 +1 되는
+    일반 이웃에만 해당하는 보조 방벽 — §18.8 NIT 정확화).
+    dry_run: run 미생성 — 집계만 반환(UI confirm 용). 단 진행 중 run 이 있으면 dry_run 도
+    reused 를 반환해 프론트가 confirm(허위 승인)을 건너뛰게 한다(§18.8 MINOR).
+    진행 중 run(root=schema_key) 존재 시 재사용(reused) — 노드 분석과 동일 dedup 규약."""
+    if not _cfg_enabled():
+        return {"ok": False, "reason": "disabled"}
+    if not schema_key or ":" not in str(schema_key):
+        return {"ok": False, "reason": "schema_key 필수"}
+    sk = (scope_key or str(schema_key).split(":", 1)[0] or "common")[:96]
+    cap_def = int(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_CAP", 200) or 200)
+    cap_max = int(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_MAX", 500) or 500)
+    cap = _clamp(table_cap if table_cap is not None else cap_def, 1, cap_max, cap_def)
+    from modules import metadata_graph as _mg
+    # limit 5000(클램프 상한) — 기본 2000 이면 초과 스키마의 total/missing 이 절단돼 confirm 수치가
+    # 과소보고된다(§18.8 NIT; 시드는 어차피 cap 으로 제한). 5000 초과 스키마는 여전히 절단(수용).
+    tables = _mg.schema_table_keys(sk, schema_key, limit=5000) or []
+    total = len(tables)
+    done = set()
+    if only_missing and tables:
+        st = get_scope_analysis_status(sk)
+        if st is None:
+            # silent 저하 방지(§18.8 MINOR): 집계 실패를 done=∅ 로 계속하면 이미 분석 완료된
+            # 테이블까지 cap 이내 전량 재시드(중복 LLM 비용) — fail-loud 로 중단.
+            return {"ok": False, "reason": "분석 상태 집계 실패(PG) — 잠시 후 다시 시도해 주세요."}
+        done = set(st.get("done_keys") or [])
+    targets = [t for t in tables if t.get("key") and (not only_missing or t["key"] not in done)]
+    missing = len(targets)
+    capped = missing > cap
+    targets = targets[:cap]
+    base = {"total_tables": total, "missing": missing, "planned": len(targets), "capped": capped}
+    lease = max(60, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_LEASE_SEC", 900)))
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return {"ok": False, "reason": "PG 미가용"}
+    try:
+        cur = c.cursor()
+        # 진행 중 run 재사용 — enqueue_analysis 와 동일 규약(lease 이내 running 만).
+        # dry_run 보다 먼저(§18.8 MINOR): 진행 중인데 dry_run 이 집계만 돌려주면 confirm 이
+        # "이번 실행 N개" 를 약속하고 실제 POST 는 reused(신규 큐잉 0)가 되는 허위 승인 유도.
+        cur.execute("SELECT run_id, enqueued, done, failed FROM node_analysis_runs "
+                    "WHERE scope_key=%s AND root_key=%s AND status='running' "
+                    "AND updated_at > now() - make_interval(secs => %s) "
+                    "ORDER BY created_at DESC LIMIT 1", (sk, schema_key, lease))
+        row = cur.fetchone()
+        if row:
+            cur.close()
+            return dict(base, ok=True, run_id=row[0], status="running", reused=True,
+                        progress={"enqueued": row[1], "done": row[2], "failed": row[3]})
+        if dry_run:
+            cur.close()
+            return dict(base, ok=True, status="dry_run")
+        if not targets:
+            cur.close()
+            return dict(base, ok=True, status="noop",
+                        reason="분석 대상 없음(테이블 없음 또는 전부 분석 완료)")
+        run_id = _new_run_id()
+        up = (str(user_prompt).strip()[:400] or None) if user_prompt else None
+        schema_name = schema_key.split(":", 1)[1] if ":" in schema_key else schema_key
+        base_cols = (run_id, sk, schema_key, "Schema", schema_name[:512],
+                     1, len(targets), (requested_by or None))
+        try:
+            cur.execute(
+                "INSERT INTO node_analysis_runs "
+                "(run_id, scope_key, root_key, root_label, root_name, depth_budget, node_budget, "
+                " status, enqueued, done, failed, requested_by, user_prompt) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,'running',%s,0,0,%s,%s)",
+                base_cols[:7] + (len(targets),) + base_cols[7:] + (up,))
+        except Exception as up_exc:
+            _warn_uprompt_column_once("enqueue_schema_analysis", up_exc)
+            cur.execute(
+                "INSERT INTO node_analysis_runs "
+                "(run_id, scope_key, root_key, root_label, root_name, depth_budget, node_budget, "
+                " status, enqueued, done, failed, requested_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,'running',%s,0,0,%s)",
+                base_cols[:7] + (len(targets),) + base_cols[7:])
+        for t in targets:
+            fqn = t.get("fqn") or ""
+            cur.execute(
+                "INSERT INTO node_analysis_jobs "
+                "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
+                "VALUES (%s,%s,%s,'Table',%s,%s,1,1.0,'pending') "
+                "ON CONFLICT (run_id, node_key) DO NOTHING",
+                (run_id, sk, t["key"], (t.get("name") or t["key"])[:512], fqn))
+        cur.close()
+        _log.info("node_analysis enqueue_schema run=%s schema=%s planned=%s/%s capped=%s",
+                  run_id, schema_key, len(targets), total, capped)
+        return dict(base, ok=True, run_id=run_id, status="running")
+    except Exception as exc:
+        _log.warning("enqueue_schema_analysis_failed err=%r", exc)
+        return {"ok": False, "reason": "enqueue 실패"}
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+
 def _cfg_enabled() -> bool:
     return bool(getattr(_cfg, "AGENT_NODE_ANALYSIS_ENABLED", True))
 
@@ -861,7 +969,8 @@ def get_run_status(run_id: str, conn=None) -> dict | None:
     try:
         cur = c.cursor()
         cur.execute("SELECT run_id, scope_key, root_key, root_name, depth_budget, node_budget, "
-                    "status, enqueued, done, failed FROM node_analysis_runs WHERE run_id=%s", (run_id,))
+                    "status, enqueued, done, failed, root_label "
+                    "FROM node_analysis_runs WHERE run_id=%s", (run_id,))
         r = cur.fetchone()
         if not r:
             cur.close()
@@ -908,7 +1017,7 @@ def get_run_status(run_id: str, conn=None) -> dict | None:
         cur.close()
         return {"run_id": r[0], "scope_key": r[1], "root_key": r[2], "root_name": r[3],
                 "depth_budget": r[4], "node_budget": r[5], "status": r[6],
-                "enqueued": r[7], "done": r[8], "failed": r[9],
+                "enqueued": r[7], "done": r[8], "failed": r[9], "root_label": r[10] or "",
                 "done_keys": done_keys, "running_keys": running_keys, "roles": roles, "jobs": jobs}
     except Exception as exc:
         _log.debug("get_run_status_failed err=%r", exc)

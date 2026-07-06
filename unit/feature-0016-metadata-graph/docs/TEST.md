@@ -549,3 +549,30 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - vendored g6.min.js API 확인: `setElementZIndex(id→z 맵)`·`getElementZIndex(id)` 존재, 내장 drag-element 의 `frontElement(this.target)` onDragStart 호출 실측(minified 소스 grep) — 근본 원인·복원 경로의 번들 정합 확인.
 - §18.8 적대 패널(ux·design·frontend correctness 3-렌즈) — design PASS(MINOR 2 반영), ux FAIL→전건 해소(BLOCKING: 콤보 내부엣지 미복원 → _metaComboEdgesRestore · MAJOR: __terms__ 오판/GB 어포던스 · MINOR: X: ctl NODE 밴드), frontend 잔여 포인트 메인 세션 직접 검증. 상세 REVIEW.md REV entry. 반영 후 node --check 재PASS.
 - **PB-0008 실 Windows 시각검증(하드 게이트, visual_verification_scope: always)**: pre-commit 시점 미수행 사유 — 정적 자산이 web 이미지에 baked 되어 라이브 반영은 merge+재배포 선행 필요(§51 graphux7 와 동일 패턴). POST-DEPLOY 에서 수행 후 본 섹션·feature-0003 TEST.md §3 에 Run append 예정.
+
+## routine-dbanalysis — 전 ds routine 가시화 + DB 단위 능동 분석 (TASK §53, 2026-07-04)
+
+### 케이스
+- TC-53-1 (backfill 순회): MySQL 비시스템 ROUTINE_SCHEMA 만·MSSQL 사용자 DB 만 introspect, scope/datasource/store_schema 규약(MSSQL=DB명) 준수, per-ds 오류 loud + 계속 진행, --scope 필터·--dry-run 무저장.
+- TC-53-2 (prune-safety): 한 store-label 에 복수 ROUTINE_SCHEMA → prune=False (뒤 스키마가 앞 스키마 행을 지우지 않음).
+- TC-53-3 (시드): enqueue_schema_analysis 가 run(root=Schema, depth_budget=1, node_budget=planned=enqueued) + Table 잡 depth=1/rel 1.0 시드 — 확장 게이트 remaining=0 → 재귀 0 (same-depth 승격 포함).
+- TC-53-4 (비용 가드): only_missing 이 완료 노드 제외, cap 초과 시 planned=cap+capped=true, 전부 완료 시 noop(run 미생성), running run 재사용(reused+progress).
+- TC-53-5 (API): analyze-schema dry_run 집계 반환(비기록), 실행 시 audit(node_analysis.enqueue_schema — planned/capped/only_missing), noop=200/시작=202.
+- TC-53-6 (UI): 카드/콤보 메뉴·상세 버튼 → confirm(테이블/미분석/이번 실행·cap 안내) → 진행 패널 연동, reused/noop 메시지, __terms__ 제외.
+- TC-53-7 (가드): 멀티 ds 플래그 OFF 시 backfill fail-loud(기본 DB 오라벨링 차단).
+
+### Run (2026-07-04) — pre-deploy 격리 검증
+- pytest `test_routine_dbanalysis.py` **10 PASS** (시드/캡/noop/reused/dry_run·backfill 시스템 필터/prune-safety/오류 loud/scope·dry-run) + 관련 회귀 `test_node_analysis_relevance·role`·`test_graph_funcproc_uxfix` **57 PASS**.
+- `node --check admin.js` PASS · py ast(node_analysis/metadata_graph/routines/routine_backfill/config/admin_metadata) PASS.
+- 확장 게이트 코드 검증: `_enqueue_neighbors` 의 `remaining = node_budget - enqueued; if remaining <= 0: return 0` — 스키마 run 은 생성 시점에 remaining=0 → ADR-017 same-depth 승격 포함 추가 enqueue 불가(AC-4).
+- §18.8 적대 패널(backend+qa·security·ux 3-렌즈) — REVIEW.md REV entry 참조.
+
+### Run (2026-07-06) — §18.8 패널 적발 반영 후 재검증 (세션 이월 완결)
+- 패널 적발 반영: BLOCKING(backfill 레지스트리 MEMORY_DB)·MAJOR 2(worker prune 조건부·진행 패널
+  dismissed 해제)·MINOR 5·NIT 4 — 상세 MODIFY CHG-20260704T131948 / REVIEW.md REV entry.
+- pytest `test_routine_dbanalysis.py` **16 PASS** (기존 10 + §18.8 회귀 잠금 6: 레지스트리 MEMORY_DB·
+  disabled-ds skip/opt-in·dry-run running 감지(reused)·집계 실패 fail-loud·user_prompt 폴백 9-param INSERT·
+  워커 `_enqueue_neighbors` budget 소진 시 0 삽입(AC-4 실행 검증, same-depth 승격 포함)).
+- 관련 회귀 `test_node_analysis_relevance`·`test_node_analysis_role`·`test_graph_funcproc_uxfix` **57 PASS**.
+- `node --check admin.js` PASS · py_compile(routine_backfill/node_analysis/insight/routines/metadata_graph/admin_metadata/config) PASS · `bash -n bin/routine-backfill.sh` PASS.
+- **PB-0008(Windows-browser) pre-commit 미수행 사유**: 정적 자산 baked + backfill/분석은 라이브 datasource 필요 — merge+재배포(web+insight-worker)+라이브 backfill 선행. POST-DEPLOY 에서 수행 후 본 섹션·feature-0003 TEST.md §3 에 Run append 예정 — 검증 항목: ① 이전 0행 ds(예: mysql-gz-qa-kr) 스키마 펼침 시 ƒ/⚙ 렌더 ② DB 전체 분석 e2e(confirm→진행 패널→완료 마커) ③ reused/noop 메시지 ④ pageerror 0.

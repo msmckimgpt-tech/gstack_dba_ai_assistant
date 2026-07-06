@@ -67,6 +67,8 @@ __all__ = [
     "AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS",
     "AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX",
     "AGENT_NODE_ANALYSIS_MODEL",
+    "AGENT_NODE_ANALYSIS_SCHEMA_CAP",
+    "AGENT_NODE_ANALYSIS_SCHEMA_MAX",
     "AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT",
     "AGENT_INSIGHT_OBJECT_FASTPATH",
     "AGENT_INSIGHT_OBJECT_MAX_CANDIDATES",
@@ -1034,6 +1036,10 @@ AGENT_NODE_ANALYSIS_BATCH_PER_TICK = int(os.getenv("AGENT_NODE_ANALYSIS_BATCH_PE
 # stale 'running' 잡 lease(초). 워커 크래시/SIGTERM 로 running 에 갇힌 잡을 이 시간 초과 시 pending 으로
 # 되돌려 run 영구 미완료·재트리거 불가를 방지(reaper). LLM 타임아웃보다 넉넉히 크게(기본 15분).
 AGENT_NODE_ANALYSIS_LEASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_LEASE_SEC", "900"))
+# feature-0016 routine-dbanalysis: DB(스키마) 단위 능동 분석 1회 시드 상한(LLM 비용 가드).
+#   기본 200 — UI confirm 에 대상 수가 표시되고 only_missing 이 기본이라 재실행 비용은 잔여분만.
+AGENT_NODE_ANALYSIS_SCHEMA_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_CAP", "200"))
+AGENT_NODE_ANALYSIS_SCHEMA_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_MAX", "500"))
 # ── 앵커-상대 관련도 게이팅 (feature-0016 node-analysis-anchor, 사용자 결정 2026-07-01) ──
 #  문제: 기존 재귀는 방문한 모든 노드의 이웃 전부를 무차별 재큐 → 일반 허브 컬럼(예 UniqueID)이나 부모
 #  Schema 노드를 만나면 그 노드를 새 중심으로 삼아 무관한 테이블로 fan-out(원래 대상에 앵커되지 않음).

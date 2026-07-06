@@ -5429,6 +5429,8 @@ function _metaGraphCtxForSchema(schemaKey, x, y) {
       } });
   // 클러스터 상세는 그래프를 펼치지 않고 API 로 테이블 목록을 조회(접힌 카드에서 "펼치지 않고 훑어보기").
   items.push({ icon: "📋", label: "클러스터 상세", hint: "테이블 목록(펼치지 않음)", onClick: () => _metaGraphShowClusterDetailById(schemaKey) });
+  // routine-dbanalysis(§53): DB(스키마) 단위 AI 능동 분석 — 미분석 테이블 일괄 시드(confirm 에 대상 수 표시).
+  items.push({ icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블", onClick: () => _metaGraphAnalyzeSchema(schemaKey) });
   items.push({ icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) });
   _metaGraphCtxShow(items, x, y);
 }
@@ -5443,6 +5445,8 @@ function _metaGraphCtxForCombo(comboId, x, y) {
     // graph-initview 파리티: 펼친 스키마 combo 우클릭도 카드로 접기 도달(기존엔 "−" ctl 클릭만).
     (isTerms || !_metaGraph.schemaExpanded.has(comboId)) ? null
       : { icon: "▦", label: "접기 (카드로)", onClick: () => _metaGraphCollapseSchema(comboId) },
+    // routine-dbanalysis(§53): DB 단위 능동 분석 — 용어 묶음(합성)은 제외.
+    isTerms ? null : { icon: "✨", label: "DB 전체 AI 능동 분석", hint: "미분석 테이블", onClick: () => _metaGraphAnalyzeSchema(comboId) },
     isTerms ? null : { icon: "📑", label: "스키마명 복사", onClick: () => _metaGraphCopyText(name) },
   ], x, y);
 }
@@ -6743,6 +6747,83 @@ async function _metaGraphAnalyze(key, scope, prompt) {
   }
 }
 
+// routine-dbanalysis(§53): DB(스키마) 단위 AI 능동 분석 — dry_run 집계 → confirm(비용 가시화) →
+//   실행 → 기존 run 진행 패널(_metaGraphPollRun) 연동. 시드는 미분석 테이블만(only_missing, cap 은
+//   백엔드 AGENT_NODE_ANALYSIS_SCHEMA_CAP). reused/noop 은 노드 분석과 동일 parity 안내.
+async function _metaGraphAnalyzeSchema(schemaKey) {
+  if (!schemaKey) return;
+  const nm = _metaComboName(schemaKey);
+  if (_metaGraph._analyzePending.has(schemaKey)) {   // 연타 동시 POST 차단(노드 분석과 동일 가드)
+    // §18.8 MINOR: 대형 스키마 dry_run 지연 중 재클릭이 무반응이면 기능이 죽은 것처럼 보임 — 노드 경로 parity 피드백.
+    _metaGraphStatus(`${nm}: 이미 요청을 처리 중입니다 — 중복 요청을 방지합니다. 잠시만 기다려 주세요.`);
+    return;
+  }
+  _metaGraph._analyzePending.add(schemaKey);
+  // §18.8 MAJOR: 사용자가 진행 패널을 ✕ 로 닫은 뒤(dataset.dismissed) 같은 run 을 재트리거하면 안내는
+  //   "진행 패널에서 갱신" 을 약속하는데 _metaGraphRenderProgress 가 dismissed run 을 조기 반환해 패널이
+  //   영원히 안 뜸 — 노드 분석 경로(delete panel.dataset.dismissed) parity 로 폴 시작 직전 해제.
+  //   즉시 head 를 렌더해 첫 폴 tick 전까지 직전 run 의 stale 내용이 보이는 창도 봉인(노드 경로 parity).
+  const revealProgress = (reused) => {
+    const panel = document.getElementById("metadataGraphProgress");
+    if (!panel) return;
+    delete panel.dataset.dismissed; panel.style.display = "";
+    panel.innerHTML = reused
+      ? '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">이미 진행 중 — 새로 큐잉하지 않고 기존 분석 현황을 표시합니다.</span></div>'
+      : '<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">시작 중… 스키마 시드 테이블을 분석합니다(추가 확장 없음).</span></div>';
+  };
+  try {
+    let dry;
+    try {
+      dry = await apiFetch(`/api/admin/metadata/graph/analyze-schema`, {
+        method: "POST", body: JSON.stringify({ schema_key: schemaKey, dry_run: true }),
+      });
+    } catch (err) {
+      _metaGraphStatus(`${nm}: DB 단위 분석 대상 조회 실패 — ${(err && err.message) || "오류"}`);
+      return;
+    }
+    if (dry && dry.reused && dry.run_id) {
+      // §18.8 MINOR: 이미 진행 중이면 confirm 을 띄우지 않는다 — "이번 실행 N개" 승인 후 실제 POST 가
+      //   reused(신규 큐잉 0)로 끝나는 허위 승인 차단(백엔드 dry_run 이 running run 을 먼저 감지).
+      const pr = dry.progress || {};
+      _metaGraphStatus(`${nm}: 이미 DB 단위 분석 진행 중 (진행 ${pr.done || 0}/${pr.enqueued || 0}) — 중복 큐잉하지 않고 진행 패널에서 갱신합니다.`);
+      revealProgress(true);
+      _metaGraphPollRun(dry.run_id, null);
+      return;
+    }
+    if (!dry || !dry.planned) {
+      _metaGraphStatus(`${nm}: 분석 대상 없음 — 테이블 ${dry ? (dry.total_tables || 0) : 0}개 전부 분석 완료(또는 테이블 없음)`);
+      return;
+    }
+    const cappedTxt = dry.capped ? `\n※ 상한 적용: 미분석 ${dry.missing}개 중 이번 실행 ${dry.planned}개 — 완료 후 재실행하면 이어서 분석합니다.` : "";
+    if (!window.confirm(`'${nm}' DB 전체 AI 능동 분석을 시작합니다.\n\n테이블 ${dry.total_tables}개 · 미분석 ${dry.missing}개 · 이번 실행 ${dry.planned}개${cappedTxt}\n\n이번 실행 대상 ${dry.planned}개 테이블마다 LLM 분석이 수행됩니다(백그라운드). 진행할까요?`)) return;
+    let res;
+    try {
+      res = await apiFetch(`/api/admin/metadata/graph/analyze-schema`, {
+        method: "POST", body: JSON.stringify({ schema_key: schemaKey }),
+      });
+    } catch (err) {
+      _metaGraphStatus(`${nm}: DB 단위 분석 시작 실패 — ${(err && err.message) || "오류"}`);
+      return;
+    }
+    if (!res) return;
+    if (res.reused) {
+      const pr = res.progress || {};
+      _metaGraphStatus(`${nm}: 이미 DB 단위 분석 진행 중 (진행 ${pr.done || 0}/${pr.enqueued || 0}) — 중복 큐잉하지 않고 진행 패널에서 갱신합니다.`);
+      if (res.run_id) { revealProgress(true); _metaGraphPollRun(res.run_id, null); }
+      return;
+    }
+    if (res.status === "noop" || !res.run_id) {
+      _metaGraphStatus(`${nm}: 분석 대상 없음(이미 전부 분석 완료).`);
+      return;
+    }
+    _metaGraphStatus(`${nm}: DB 전체 AI 능동 분석 시작 — 테이블 ${res.planned}개 (백그라운드, 진행은 우측 패널)`);
+    revealProgress();
+    _metaGraphPollRun(res.run_id, null);
+  } finally {
+    _metaGraph._analyzePending.delete(schemaKey);
+  }
+}
+
 // run 진행률을 폴링하며 완료 노드에 그래프 마커 표시 + 초점 노드 분석 완료 시 결과 로드.
 function _metaGraphPollRun(runId, focusKey) {
   if (!runId) return;
@@ -6875,7 +6956,10 @@ function _metaGraphRenderProgress(st) {
   running.forEach((j) => rows.push(item(j, "ampg-running", "⏳")));
   jobs.filter((j) => j.status === "done").slice(0, 12).forEach((j) => rows.push(item(j, "ampg-done", "✅")));
   jobs.filter((j) => j.status === "failed").slice(0, 4).forEach((j) => rows.push(item(j, "ampg-fail", "⚠️")));
-  if (pending > 0) rows.push(`<li class="ampg-item admin-meta-graph-muted">⋯ 대기 ${pending}개 (관련 노드 재귀 탐색 중)</li>`);
+  // routine-dbanalysis(§53 MINOR): 스키마 run 은 고정 시드·재귀 0 이 비용 계약 — "재귀 탐색 중" 카피가
+  //   confirm("이번 실행 N개") 직후 무한 fan-out 오해를 부르므로 root_label 로 분기.
+  //   (root_label=Schema 재귀 run 은 UI 비도달 — Schema 루트는 analyze-schema 경로만 생성한다.)
+  if (pending > 0) rows.push(`<li class="ampg-item admin-meta-graph-muted">⋯ 대기 ${pending}개 (${st.root_label === "Schema" ? "시드 테이블 대기 — 추가 확장 없음" : "관련 노드 재귀 탐색 중"})</li>`);
   const parts = [];
   parts.push(`<div class="ampg-head"><strong>🔎 AI 능동 분석</strong> <span class="admin-meta-graph-muted">${esc(st.root_name || st.root_key || "")}</span> <span class="ampg-status ${stCls}">${statusKo}</span><button type="button" class="ampg-close" id="metaGraphProgClose" title="닫기" aria-label="진행 패널 닫기">✕</button></div>`);
   parts.push(`<div class="ampg-bar" title="${done}/${enq}"><div class="ampg-bar-fill" style="width:${pct}%"></div></div>`);
@@ -6959,7 +7043,7 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   //   "−" 컨트롤은 큰 스키마에서 뷰포트 밖으로 벗어나 접근 불가하던 문제 해소. 패널 body 클릭으로 접히지 않게
   //   접기는 이 버튼(및 기존 "−"/우클릭 메뉴)로만 트리거.
   const _canCollapse = comboId && _metaGraph.schemaExpanded && _metaGraph.schemaExpanded.has(comboId);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}</div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR.Schema}">스키마 클러스터</span><strong>${esc(name)}</strong>${_canCollapse ? ` <button type="button" class="amgr-link" id="metaGraphClusterCollapseBtn" title="이 스키마를 카드로 접습니다(그래프에서 축소)">▦ 접기</button>` : ""}${comboId && comboId !== _META_TERMS_COMBO ? ` <button type="button" class="amgr-link" id="metaGraphClusterAnalyzeBtn" title="이 DB(스키마)의 미분석 테이블 전체를 AI 능동 분석합니다 — 실행 전 대상 수를 확인합니다">✨ DB 전체 AI 능동 분석</button>` : ""}</div>`);
   if (fqn && fqn !== name) parts.push(`<div class="admin-meta-graph-fqn">${esc(fqn)}</div>`);
   parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">이 스키마 클러스터에 속한 테이블 ${nTables}개${truncNote}${childCols ? ` · 표시된 컬럼 ${childCols}개` : ""}. 테이블 노드를 클릭하면 컬럼·관계·용어 상세를 봅니다.</p>`);
   if (tables && tables.length) {
@@ -6997,6 +7081,9 @@ function _metaGraphRenderClusterDetail(name, fqn, tables, childTables, childCols
   // graphux7(#7): 전용 접기 버튼 바인딩 — 이 스키마를 카드로 축소(항상 화면 내 상세 패널에서 접근).
   const _collapseBtn = document.getElementById("metaGraphClusterCollapseBtn");
   if (_collapseBtn && comboId) _collapseBtn.addEventListener("click", () => _metaGraphCollapseSchema(comboId));
+  // routine-dbanalysis(§53): DB 단위 능동 분석 버튼 — 컨텍스트 메뉴와 동일 핸들러(확인창에 대상 수 표시).
+  const _schemaAiBtn = document.getElementById("metaGraphClusterAnalyzeBtn");
+  if (_schemaAiBtn && comboId) _schemaAiBtn.addEventListener("click", () => _metaGraphAnalyzeSchema(comboId));
   // role-cluster-prefix: 테이블 행 클릭 → 해당 노드 선택(_metaGraphShowDetail = 하이라이트 setSelected + 상세 렌더) + 렌더돼 있으면 카메라 focus.
   el.querySelectorAll(".amgr-ct-row[data-node-key]").forEach((btn) => {
     btn.addEventListener("click", () => {

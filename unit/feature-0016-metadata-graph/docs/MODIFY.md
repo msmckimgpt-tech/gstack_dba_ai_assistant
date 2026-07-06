@@ -990,3 +990,21 @@ source_of_truth: true
 - Files: `unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md` · `unit/feature-0003-agent-web-ui/docs/TEST.md`
 - Impact: 문서 전용 — 배포 불요.
 - Rollback Notes: 해당 doc 라인 revert.
+
+## CHG-20260704T131948-ai-claude-feature-0016-routine-dbanalysis
+- Date: 2026-07-04
+- Related Requirement: REQ-20260704T210000-routine-dbanalysis (TASK §53) — ① 함수/프로시저 노드 전 datasource 가시화 ② DB(스키마) 단위 AI 능동 분석.
+- Summary: ① 조사(라이브 재현): 백엔드·프론트 전 경로 정상, 원인은 **ds 커버리지**(routine_objects 20개 ds 중 4개 적재 — insight cadence 전파 중). `modules/routine_backfill.py`+`bin/routine-backfill.sh` 결정론 backfill(전 ds 순회 introspect + scope 별 sync_graph, per-(ds,DB,schema) loud 리포트, 멀티 ds 플래그 가드) + `routines.introspect_and_store(prune=)` prune-safety(label 공유 복수 스키마). ② `node_analysis.enqueue_schema_analysis`(run root=Schema·depth_budget=1·Table depth=1 pre-seed — 확장 게이트 remaining=0 으로 재귀 0 보장) + `metadata_graph.schema_table_keys` + `POST /api/admin/metadata/graph/analyze-schema`(dry_run·audit) + admin.js UI(카드/콤보 우클릭 메뉴·클러스터 상세 버튼·confirm 에 대상 수·기존 진행 패널 연동) + config `AGENT_NODE_ANALYSIS_SCHEMA_CAP`(200)/`_MAX`(500) __all__ 등재.
+- §18.8 패널 반영 (2026-07-06, 세션 이월 후 완결): BLOCKING — backfill 레지스트리 조회를
+  `connect(database=MEMORY_DB)` 로(미지정 connect 는 WebDatasources 조회가 조용히 {} → DB 등록 ds 전량
+  silent 누락). MAJOR — worker routine introspect `prune=(store label==schema)`(insight.py — MSSQL 복수
+  스키마에서 backfill 결과를 ≤6h cadence 가 되지우는 회귀 차단, MySQL 기존 동작 0 변경) · 스키마 run
+  진행 패널 dismissed 해제(admin.js revealProgress, 노드 경로 parity). MINOR — dry_run 이 running-run
+  을 먼저 감지해 confirm 허위 승인 차단(reused 반환) · only_missing 집계 실패 fail-loud(silent 전량
+  재시드 차단) · insight_enabled=False ds 순회 skip(`--include-disabled` opt-in) · 진행 패널 대기 카피
+  root_label 분기(get_run_status 에 root_label 추가) · 연타 시 피드백. NIT — 버튼 라벨 통일("✨ DB 전체
+  AI 능동 분석")·순서, confirm "이번 실행 대상 N개" 문안, 재귀0 docstring 정확화(budget 캡 단독 성립),
+  schema_table_keys limit 5000. 테스트 10→16(§18.8 회귀 잠금 6종 추가).
+- Files: `unit/feature-0002-agent-core/src/modules/{routines,node_analysis,metadata_graph,routine_backfill,insight}.py` · `unit/feature-0002-agent-core/tests/test_routine_dbanalysis.py` · `shared/config.py` · `bin/routine-backfill.sh` · `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` · `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}` · feature docs.
+- Impact: 마이그 0(기존 테이블 재사용). LLM 비용 = DB 단위 분석 실행 시 테이블당 1 run — cap/only_missing/confirm/audit 로 통제(Major §12.3 외부 비용, 사용자 명시 요청). web+insight-worker 재배포 필요(모듈 정합). cache-buster `admin.js?v=20260704-routine-dbanalysis`.
+- Rollback Notes: 코드 revert + 재배포. routine_objects upsert 는 SSOT 정합 데이터라 회수 불요(원하면 datasource_key 별 DELETE).
