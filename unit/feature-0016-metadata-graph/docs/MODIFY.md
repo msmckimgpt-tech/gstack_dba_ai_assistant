@@ -1038,3 +1038,14 @@ source_of_truth: true
   드레인 총량만 +routine 수, 테이블 우선 절단). web + insight-worker 재배포 필요(시드/payload 모듈
   정합). cache-buster admin.js/styles.css `?v=20260706-graph-navfilter-routine`.
 - Rollback Notes: 코드 revert + 재배포. localStorage 키(metaGraphHiddenKinds)는 무해 잔존.
+
+## CHG-20260706T145203-ai-claude-feature-0016-graph-navfilter-routine-postdeploy
+- Date: 2026-07-06
+- Related Requirement: REQ-20260706T113000-graph-navfilter-routine (TASK §54 T54.8) — POST-DEPLOY 기록.
+- Summary: doc-only — PR #597 배포(842b9ecf, deploy-web soak + insight/ask-worker 재빌드)·PB-0008
+  라이브 실측 **AC-1~AC-5 전 항목 PASS**(view-typed nav 복원 / kind 필터 재배치·영속·엣지 배치 불변 /
+  검색 보존+products 복귀 / Routine 잡 7 done·⚙ 마커·분석문·noop dedup / 파라미터 21px 수직·push-down)
+  ·pageerror 0 을 TASK T54.8·TEST.md(0016 §54 Run·0003 §3)에 기록. 코드·자산 무변경.
+- Files: unit/feature-0016-metadata-graph/docs/{TASK,TEST,MODIFY,REVIEW}.md ·
+  unit/feature-0003-agent-web-ui/docs/TEST.md · wiki/hot.md.
+- Impact: 없음(문서만). Rollback Notes: revert.

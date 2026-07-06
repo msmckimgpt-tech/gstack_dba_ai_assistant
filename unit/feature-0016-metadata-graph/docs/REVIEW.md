@@ -1081,3 +1081,12 @@ source_of_truth: true
   (직전 문단). BLOCKING/MAJOR 신규 0.
 - 재검증: 최종 반영 후 pytest 21(§54④ 신규 5 포함)+57 PASS · node --check · py_compile PASS.
   라이브 검증은 T54.8 POST-DEPLOY PB-0008(AC-1~5).
+
+## REV-20260706T145203-ai-claude-feature-0016-graph-navfilter-routine-postdeploy [SKIPPED:doc-only-postdeploy] — 배포·PB-0008 라이브 실측 기록 (코드 무변경)
+- 대상: PR #597 배포(842b9ecf) 후 PB-0008 실측(AC-1~5 전 항목 PASS·pageerror 0)을 TASK·TEST 에
+  기록하는 doc-only 후속. **코드·자산 무변경** → §18.8 적대 패널 비적용(SKIPPED).
+- 근거: §54 Run(2026-07-06 POST-DEPLOY) — view-typed nav rel→cluster→node 복원 / ⚙ 51→1·엣지 단독
+  토글 테이블 이동 0·복원·영속 / 검색 보존(줌·노드·펼침)+products 검색→클리어 개요 복귀(§18.8
+  MAJOR-1 수정 라이브 실증) / Routine 잡 7 done·⚙ 분석 마커 7·분석문 생성·noop dedup / 파라미터
+  4행 21px 수직·push-down·XR 접힘. 코드 품질은 REV-…-graph-navfilter-routine(3-렌즈+재검증)에서 완료.
+- deploy_scope: included + 사용자 turn confirm("진행") — 자동 배포 승인 근거.
