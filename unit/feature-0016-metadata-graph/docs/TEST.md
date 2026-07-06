@@ -576,3 +576,29 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - 관련 회귀 `test_node_analysis_relevance`·`test_node_analysis_role`·`test_graph_funcproc_uxfix` **57 PASS**.
 - `node --check admin.js` PASS · py_compile(routine_backfill/node_analysis/insight/routines/metadata_graph/admin_metadata/config) PASS · `bash -n bin/routine-backfill.sh` PASS.
 - **PB-0008(Windows-browser) pre-commit 미수행 사유**: 정적 자산 baked + backfill/분석은 라이브 datasource 필요 — merge+재배포(web+insight-worker)+라이브 backfill 선행. POST-DEPLOY 에서 수행 후 본 섹션·feature-0003 TEST.md §3 에 Run append 예정 — 검증 항목: ① 이전 0행 ds(예: mysql-gz-qa-kr) 스키마 펼침 시 ƒ/⚙ 렌더 ② DB 전체 분석 e2e(confirm→진행 패널→완료 마커) ③ reused/noop 메시지 ④ pageerror 0.
+
+### Run (2026-07-06) — POST-DEPLOY 라이브 검증 — PASS (Environment: Windows-browser)
+- 배포: PR #593 → main d1951b7e. `make deploy-web` 무중단 롤링(web-a/web-b 순차 recreate + 90s soak 통과)
+  + insight-worker·ask-worker 재빌드(GIT_COMMIT d1951b7e 정합). healthz git_commit=d1951b7e,
+  서빙 `admin.js?v=20260704-routine-dbanalysis`.
+- **라이브 backfill (T53.6)**: `sudo bash bin/routine-backfill.sh` — **2,201 routines / 도달가능 4 ds /
+  18 (DB,스키마) 슬롯 적재, 전 scope graph_synced=True**. mssql-dk-dev 1,449(AccountDB 198·
+  dk_data_release_Main 300·ReportServer 237 은 **07-06 최초 적재** — 07-04 worker cadence 가 못 채운
+  잔여 3 스키마를 결정론 회수) · mysql-gz-qa-global 313 · mysql-gz-dev 307 · mysql-mv-dev 132.
+  insight_enabled=0 ds 2곳 skip(§18.8 MINOR 반영 동작). **미도달 14 ds 는 errors 에 loud**(네트워크
+  timeout 110 — kr-an2 계열·mv-qa 계열 등 게이트망; AC-1 의 "실패 ds loud 리포트" 설계 그대로. 도달
+  가능 시 재실행 또는 worker cadence 로 수렴, 수단은 확보됨). SSOT↔AGE 정합: routine_objects 카운트 ==
+  cypher Routine 노드 카운트(1449/313/307/132 + twin 키).
+- **PB-0008 (T53.7, 실 Windows Chrome/149 via relay @172.26.144.1:9223, `https://localhost/admin` 인증
+  세션)**: ① **이전 0행 스키마 ƒ/⚙ 렌더** — accountdb(07-06 최초 적재 198행) 펼침 → routine 칩 198
+  전수 렌더(ƒ3·⚙195, canonical z=4 NODE 밴드) + dk_game_integrate ⚙51. ② **DB 단위 분석 e2e**
+  (pcbang_dkonline, 테이블 2): 우클릭 메뉴 핸들러 경로 → dry_run confirm("테이블 2개 · 미분석 2개 ·
+  이번 실행 2개" + "이번 실행 대상 2개 테이블마다") → 진행 패널 "⋯ 대기 2개 (시드 테이블 대기 — 추가
+  확장 없음)"(스키마 카피 분기 라이브) → **done 2/2 · 예약 2(상한 2) 고정 = 시드 외 enqueue 0(AC-4
+  라이브)** → 보라 마커 2 + 역할 칩(L_Error=📜 log, PCBangIP=📘 master). ③ **reused parity(AC-3)** —
+  run 진행 중 패널 ✕ 닫기 후 재트리거: confirm 미표시(허위 승인 차단)·dismissed 해제·패널 즉시 복구
+  (§18.8 MAJOR/MINOR 수정 라이브 실증). ④ **noop parity(AC-3)** — 완료 후 재트리거: confirm 0,
+  "분석 대상 없음 — 테이블 2개 전부 분석 완료". ⑤ pageerror 0 (window error 수집기, 전 구간).
+  방법 주석: `window.confirm` 은 자동화 스텁(문안 캡처 + true)으로 승인 — 그 외 전부 실 UI 핸들러
+  (`_metaGraphAnalyzeSchema`)·실 API·실 worker 경로. 증적
+  `artifacts/feature-0016-metadata-graph/20260706-routine-dbanalysis/rdba-01~03.png`.

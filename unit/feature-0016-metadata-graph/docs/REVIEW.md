@@ -1045,3 +1045,12 @@ source_of_truth: true
   **T53.9 기록**. NIT: revealProgress 즉시 head 렌더 **반영** · root_label 카피 주석 **반영**.
 - 재검증: 최종 반영 후 pytest 16+57=73 PASS · node --check · py_compile · bash -n PASS. 라이브 검증은
   T53.6(배포+backfill)·T53.7(PB-0008 Windows-browser) POST-DEPLOY.
+
+## REV-20260706T111307-ai-claude-feature-0016-routine-dbanalysis-postdeploy [SKIPPED:doc-only-postdeploy] — 배포·backfill·PB-0008 라이브 실측 기록 (코드 무변경)
+- 대상: PR #593 배포(d1951b7e) 후 라이브 backfill(T53.6)·PB-0008(T53.7) 실측 결과를 TASK·TEST·REPORT 에
+  기록하는 doc-only 후속. **코드·자산 무변경** → §18.8 적대 패널 비적용(SKIPPED).
+- 근거: backfill 2,201 routines/도달가능 4 ds 적재(graph_synced 전건·SSOT==AGE 카운트 정합·미도달 14 ds
+  loud) — accountdb 등 0행 스키마 3곳 최초 회수. PB-0008: accountdb ƒ/⚙ 198 전수 렌더(z=4)·DB 단위 분석
+  e2e(done 2/2·예약 2 고정=재귀 0 라이브·보라 마커/역할 칩)·reused(confirm 생략+dismissed 복구 — §18.8
+  MAJOR/MINOR 수정 라이브 실증)·noop parity·pageerror 0. 코드 품질은 REV-20260706T102814(4-렌즈)에서 완료.
+- deploy_scope: included(FIRST_REQUEST 2026-06-11) + 사용자 turn confirm("진행") — 자동 배포 승인 근거.

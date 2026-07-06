@@ -1008,3 +1008,15 @@ source_of_truth: true
 - Files: `unit/feature-0002-agent-core/src/modules/{routines,node_analysis,metadata_graph,routine_backfill,insight}.py` · `unit/feature-0002-agent-core/tests/test_routine_dbanalysis.py` · `shared/config.py` · `bin/routine-backfill.sh` · `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` · `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}` · feature docs.
 - Impact: 마이그 0(기존 테이블 재사용). LLM 비용 = DB 단위 분석 실행 시 테이블당 1 run — cap/only_missing/confirm/audit 로 통제(Major §12.3 외부 비용, 사용자 명시 요청). web+insight-worker 재배포 필요(모듈 정합). cache-buster `admin.js?v=20260704-routine-dbanalysis`.
 - Rollback Notes: 코드 revert + 재배포. routine_objects upsert 는 SSOT 정합 데이터라 회수 불요(원하면 datasource_key 별 DELETE).
+
+## CHG-20260706T111307-ai-claude-feature-0016-routine-dbanalysis-postdeploy
+- Date: 2026-07-06
+- Related Requirement: REQ-20260704T210000-routine-dbanalysis (TASK §53 T53.6/T53.7) — POST-DEPLOY 기록.
+- Summary: doc-only — PR #593 머지·배포(d1951b7e, deploy-web 롤링 soak + insight/ask-worker 재빌드)·
+  라이브 backfill(2,201 routines/4 ds, accountdb 등 3 스키마 최초 적재, SSOT==AGE 정합, 미도달 14 ds
+  loud)·PB-0008 라이브 PASS(이전 0행 스키마 ƒ/⚙ 198 렌더·DB 단위 분석 e2e done 2/2·재귀 0·reused/noop
+  parity·§18.8 MAJOR dismissed 복구 라이브 실증·pageerror 0) 를 TASK T53.6/T53.7·TEST.md(0016 §53 Run·
+  0003 §3)·REPORT 에 기록. 코드·자산 무변경.
+- Files: unit/feature-0016-metadata-graph/docs/{TASK,TEST,MODIFY,REVIEW,REPORT}.md ·
+  unit/feature-0003-agent-web-ui/docs/TEST.md · wiki/hot.md.
+- Impact: 없음(문서만). Rollback Notes: revert.

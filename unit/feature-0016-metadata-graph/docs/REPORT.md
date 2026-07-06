@@ -1179,4 +1179,8 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
 
 ### 검증
 - pytest 신규 16 PASS(§18.8 회귀 잠금 6종 포함) + 관련 회귀 57 PASS · node --check/py_compile/bash -n PASS.
-- POST-DEPLOY: web+insight-worker 재배포 → 라이브 backfill → 전 ds routine 카운트 → PB-0008(T53.6/T53.7).
+- POST-DEPLOY 완료(2026-07-06): PR #593→d1951b7e(deploy-web 롤링 soak+insight/ask-worker 재빌드) →
+  라이브 backfill **2,201 routines/도달가능 4 ds**(accountdb 등 0행 스키마 3곳 최초 적재, graph_synced
+  전건, SSOT==AGE 정합; 미도달 14 ds loud — 게이트망, 도달 시 재실행/cadence) → **PB-0008 라이브 PASS**
+  (accountdb ƒ/⚙ 198 전수 렌더 z=4 · DB 단위 분석 e2e done 2/2·예약 고정=재귀 0 · reused confirm 생략+
+  dismissed 패널 복구(§18.8 수정 실증) · noop parity · pageerror 0). 증적 artifacts/…/20260706-routine-dbanalysis/.
