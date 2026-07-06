@@ -113,6 +113,9 @@ const state = {
   // 사용자가 composer 의 `+` dropdown 에서 명시 선택한 모델 alias.
   // null = backend default (state.session.default_model) 사용.
   selectedModel: null,
+  // feature-0003 reasoning-effort-selector: 현재 대화에 적용할 추론 강도(low/normal/high/max).
+  // 초기값은 로컬 미러(직전 사용값) → 없으면 기본 "normal". 대화 전환 시 서버 KV 값으로 hydration.
+  reasoningLevel: null,
   progressPoller: null,
   progressPollInFlight: false,
   progressPollSeq: 0,
@@ -233,6 +236,10 @@ function _newPendingSentinel() {
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 const COLLAPSED_GROUPS_LS_KEY = "mad.collapsedGroups.v1";
 const SEND_MODE_LS_KEY = "mad.sendMode.v1";
+// feature-0003 reasoning-effort-selector: 사용자가 composer 에서 고른 추론 강도의 per-user
+// 로컬 미러(신규 대화의 기본 선택값). 대화별 값은 서버(KV)가 정본이고 /api/history 로 hydration,
+// 이 로컬 값은 "직전에 쓰던 강도"를 새 대화 첫 진입에 이어주는 편의 기본값이다(product pref 와 동형).
+const REASONING_PREF_LS_KEY = "mad.reasoningLevel.v1";
 // 대화목록 "타 계정 대화" 그룹의 접힘 키 + "처음 진입 시 접힘" 1회 seed 플래그.
 const OTHERS_GROUP_KEY = "__others__";
 const OTHERS_COLLAPSED_SEED_LS_KEY = "mad.othersCollapsedSeed.v1";
@@ -5583,6 +5590,9 @@ async function loadHistory({ append = false } = {}) {
   if (append && state.nextBeforeId) {
     params.set("before_id", String(state.nextBeforeId));
   }
+  // feature-0003 (N1 적대검증): 이 로드 시작 시각. 아래 hydration 이 fetch await 동안 사용자가
+  // 새로 고른 추론 강도를 덮어쓰지 않도록, 픽 시각(state._reasoningPickedAt)과 비교하는 seq 가드.
+  const _histLoadStartedAt = Date.now();
   const payload = await apiFetch(`/api/history?${params.toString()}`);
   state.messages = append
     ? [...payload.messages, ...state.messages]
@@ -5590,6 +5600,16 @@ async function loadHistory({ append = false } = {}) {
   state.hasMoreHistory = Boolean(payload.has_more);
   state.nextBeforeId = payload.next_before_id || null;
   loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
+  // feature-0003 reasoning-effort-selector: 대화 로드(비-pagination) 시 서버가 내려준 이 대화의
+  // 저장된 추론 강도로 선택기를 hydration. 저장값이 없는(신규/이력 없음) 대화면 로컬 미러/기본값을
+  // 유지하도록 state 만 비운다(다음 _composerCurrentReasoningLevel 이 로컬→기본으로 폴백).
+  // N1 가드: fetch await 동안 사용자가 명시로 강도를 바꿨다면(픽 시각 > 로드 시작) hydration 을
+  // 건너뛰어 사용자의 최신 선택을 보존한다(픽은 이미 localStorage 미러에도 기록됨).
+  if (!append && !(state._reasoningPickedAt && state._reasoningPickedAt > _histLoadStartedAt)) {
+    const _rl = payload.reasoning_level;
+    state.reasoningLevel = _isValidReasoningLevel(_rl) ? _rl : null;
+    _updateComposerReasoningLabel();
+  }
   renderMessages();
   if (payload.last_status === "processing") {
     // 새 대화 전송 후 clearPendingBubble 이 먼저 호출되는 경우, 또는 페이지 새로고침 후
@@ -8259,17 +8279,137 @@ function _composerCurrentModel() {
 function _updateComposerModelLabel() {
   const labelEl = document.getElementById("composerActionsModelLabel");
   if (labelEl) labelEl.textContent = _composerCurrentModel();
+  // 모델이 바뀌면 추론 강도 항목의 활성/라벨도 함께 최신화(thinking 미지원 모델이면 비활성).
+  _updateComposerReasoningLabel();
 }
 
 function _closeComposerActionsMenus() {
   const primary = document.getElementById("composerActionsMenu");
   const secondary = document.getElementById("composerModelMenu");
+  const reasoningMenu = document.getElementById("composerReasoningMenu");
   const trigger = document.getElementById("composerActionsBtn");
   const modelItem = document.getElementById("composerActionsModelItem");
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
   if (primary) primary.classList.add("hidden");
   if (secondary) secondary.classList.add("hidden");
+  if (reasoningMenu) reasoningMenu.classList.add("hidden");
   if (trigger) trigger.setAttribute("aria-expanded", "false");
   if (modelItem) modelItem.setAttribute("aria-expanded", "false");
+  if (reasoningItem) reasoningItem.setAttribute("aria-expanded", "false");
+}
+
+// ── feature-0003 reasoning-effort-selector ──────────────────────────────────
+// 추론 강도(extended thinking budget) 선택. 모델 선택자(_renderComposerModelMenu 등)와
+// 동형 구조. value 는 backend shared.model_catalog.REASONING_LEVELS 키와 정합해야 한다.
+const REASONING_LEVEL_OPTIONS = [
+  { value: "low", label: "낮음", desc: "가장 빠름 — 최소 추론" },
+  { value: "normal", label: "일반", desc: "균형 (기본값)" },
+  { value: "high", label: "높음", desc: "심층 추론" },
+  { value: "max", label: "매우 높음", desc: "최대 추론 (가장 느림)" },
+];
+const DEFAULT_REASONING_LEVEL = "normal";
+
+function _isValidReasoningLevel(v) {
+  return REASONING_LEVEL_OPTIONS.some((o) => o.value === v);
+}
+
+// 현재 모델이 extended thinking(요청 단위 budget)을 지원하는가 — backend model_supports_thinking
+// 과 동일 규칙(claude-* 만). 로컬 LLM 등은 미지원 → 선택기 비활성.
+function _composerModelSupportsThinking() {
+  return String(_composerCurrentModel() || "").toLowerCase().startsWith("claude-");
+}
+
+function _readReasoningPrefFromLocal() {
+  try {
+    const raw = localStorage.getItem(REASONING_PREF_LS_KEY);
+    return _isValidReasoningLevel(raw) ? raw : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function _writeReasoningPrefToLocal(value) {
+  try {
+    if (_isValidReasoningLevel(value)) localStorage.setItem(REASONING_PREF_LS_KEY, value);
+  } catch (_e) { /* localStorage 불가 환경 — 무시 */ }
+}
+
+// 현재 적용 추론 강도: state → 로컬 미러 → 기본값.
+function _composerCurrentReasoningLevel() {
+  return (
+    (_isValidReasoningLevel(state.reasoningLevel) && state.reasoningLevel)
+    || _readReasoningPrefFromLocal()
+    || DEFAULT_REASONING_LEVEL
+  );
+}
+
+function _reasoningLevelLabel(value) {
+  const opt = REASONING_LEVEL_OPTIONS.find((o) => o.value === value);
+  return opt ? opt.label : "일반";
+}
+
+function _updateComposerReasoningLabel() {
+  const labelEl = document.getElementById("composerActionsReasoningLabel");
+  const item = document.getElementById("composerActionsReasoningItem");
+  const supported = _composerModelSupportsThinking();
+  if (labelEl) {
+    labelEl.textContent = supported ? _reasoningLevelLabel(_composerCurrentReasoningLevel()) : "미지원";
+  }
+  if (item) {
+    // thinking 미지원 모델이면 선택기를 비활성(클릭·팝업 차단) — 파라미터는 어차피 무시된다.
+    item.classList.toggle("is-disabled", !supported);
+    item.setAttribute("aria-disabled", supported ? "false" : "true");
+  }
+}
+
+function _renderComposerReasoningMenu() {
+  const menu = document.getElementById("composerReasoningMenu");
+  if (!menu) return;
+  const current = _composerCurrentReasoningLevel();
+  menu.innerHTML = "";
+  REASONING_LEVEL_OPTIONS.forEach((opt) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "composer-model-item" + (opt.value === current ? " is-selected" : "");
+    item.setAttribute("role", "menuitem");
+    item.setAttribute("data-reasoning-value", opt.value);
+    item.innerHTML = `
+      <div class="composer-model-item-head">
+        <span class="composer-model-item-label">${escapeHtml(opt.label)}</span>
+        ${opt.value === current ? '<span class="composer-model-item-check" aria-label="현재 선택">✓</span>' : ""}
+      </div>
+      <div class="composer-model-item-desc">${escapeHtml(opt.desc)}</div>
+    `;
+    item.addEventListener("click", () => {
+      state.reasoningLevel = opt.value;
+      state._reasoningPickedAt = Date.now();  // N1: in-flight loadHistory hydration clobber 방지
+      _writeReasoningPrefToLocal(opt.value);
+      _updateComposerReasoningLabel();
+      _renderComposerReasoningMenu();
+      _closeComposerActionsMenus();
+    });
+    menu.appendChild(item);
+  });
+}
+
+function _openComposerReasoningMenu() {
+  const menu = document.getElementById("composerReasoningMenu");
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
+  const primary = document.getElementById("composerActionsMenu");
+  if (!menu || !reasoningItem) return;
+  // 다른 secondary(모델) 팝업은 닫는다(동시 표시 방지).
+  const modelMenu = document.getElementById("composerModelMenu");
+  const modelItem = document.getElementById("composerActionsModelItem");
+  if (modelMenu) modelMenu.classList.add("hidden");
+  if (modelItem) modelItem.setAttribute("aria-expanded", "false");
+  _renderComposerReasoningMenu();
+  if (primary) {
+    const pRect = primary.getBoundingClientRect();
+    menu.style.bottom = `${window.innerHeight - pRect.bottom}px`;
+    menu.style.left = `${pRect.right + 8}px`;
+  }
+  menu.classList.remove("hidden");
+  reasoningItem.setAttribute("aria-expanded", "true");
 }
 
 function _openComposerActionsMenu() {
@@ -8337,6 +8477,11 @@ function _openComposerModelMenu() {
   const modelItem = document.getElementById("composerActionsModelItem");
   const primary = document.getElementById("composerActionsMenu");
   if (!menu || !modelItem) return;
+  // 추론 강도 secondary 팝업은 닫는다(동시 표시 방지).
+  const reasoningMenu = document.getElementById("composerReasoningMenu");
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
+  if (reasoningMenu) reasoningMenu.classList.add("hidden");
+  if (reasoningItem) reasoningItem.setAttribute("aria-expanded", "false");
   _renderComposerModelMenu();
   // fixed 포지셔닝: primary popup 의 오른쪽에, bottom 정렬
   if (primary) {
@@ -8412,11 +8557,29 @@ function _bindComposerActionsEvents() {
       }
     });
   }
-  // outside click — primary/secondary 둘 다 닫기. menu 내부 click 은 stopPropagation.
+  // feature-0003: 추론 강도 항목 — 모델 항목과 동형. 미지원 모델이면 팝업 열지 않음.
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
+  const reasoningMenu = document.getElementById("composerReasoningMenu");
+  if (reasoningItem) {
+    reasoningItem.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (reasoningItem.getAttribute("aria-disabled") === "true") return;
+      const expanded = reasoningItem.getAttribute("aria-expanded") === "true";
+      if (expanded) {
+        reasoningMenu && reasoningMenu.classList.add("hidden");
+        reasoningItem.setAttribute("aria-expanded", "false");
+      } else {
+        _openComposerReasoningMenu();
+      }
+    });
+  }
+  // outside click — primary/secondary(모델·추론) 모두 닫기. menu 내부 click 은 stopPropagation.
   document.addEventListener("click", (ev) => {
     if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return;
     if (primary && primary.contains(ev.target)) return;
     if (secondary && secondary.contains(ev.target)) return;
+    if (reasoningMenu && reasoningMenu.contains(ev.target)) return;
     if (trigger.contains(ev.target)) return;
     _closeComposerActionsMenus();
   });
@@ -8649,6 +8812,9 @@ async function sendPrompt() {
       || state.modelCatalog?.default_model
       || state.apiVaultOptions?.default_model
       || "claude-sonnet-4",
+    // feature-0003 reasoning-effort-selector: 사용자가 고른 추론 강도. backend 가 정규화·검증하고
+    // thinking 지원 모델일 때만 요청 단위 budget 으로 주입(미지원 모델이면 무시).
+    reasoning_level: _composerCurrentReasoningLevel(),
   };
   if (isLazyCreate) {
     // TASK-0059: backend `/api/ask` 가 빈 conversation_id 를 "session 초기화 후 직전 대화 이어받기"

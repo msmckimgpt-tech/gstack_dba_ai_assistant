@@ -1980,6 +1980,14 @@ a { color: inherit; }
 .composer-actions-item:hover {
   background: rgba(37, 99, 235, 0.06);
 }
+/* feature-0003 reasoning-effort-selector: thinking 미지원 모델 선택 시 추론 강도 항목 비활성. */
+.composer-actions-item.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.composer-actions-item.is-disabled:hover {
+  background: transparent;
+}
 .composer-actions-icon {
   color: var(--muted, #6b7280);
   display: inline-flex;

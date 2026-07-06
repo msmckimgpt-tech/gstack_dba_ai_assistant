@@ -56,7 +56,7 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from shared.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
+from shared.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, thinking_budget_for_level
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary, read_csv_preview
@@ -2633,7 +2633,8 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
               tools: list[dict] | None = None,
               conversation_id: str | None = None,
               run_id: str | None = None,
-              step_gap_ms: int | None = None) -> Any:
+              step_gap_ms: int | None = None,
+              reasoning_level: str | None = None) -> Any:
     """OpenAI API를 호출한다.
 
     TASK-0094 Sprint 2 (D13): vision 가능 모델 + env ATTACHMENT_IMAGE_INLINE_PATH
@@ -2642,6 +2643,11 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
 
     LiteLLM proxy (feature-0007) 가 OpenAI image_url → Anthropic Vision spec 으로
     자동 normalize. backend 는 OpenAI Chat Completions spec 만 사용.
+
+    reasoning_level (feature-0003 reasoning-effort-selector): 사용자가 대화 화면에서 고른
+    추론 강도(low/normal/high/max). thinking 지원 모델(claude-*)일 때만 요청 단위
+    extra_body.thinking.budget_tokens 로 주입 → LiteLLM 이 alias 별 고정 thinking 값을
+    이 요청에 한해 override. 미지정/미지원 모델이면 주입 안 함(config 기본값 유지).
     """
     image_attachments = _load_attachment_inline_images()
     effective_messages: list[dict] = messages_for_provider(
@@ -2661,6 +2667,15 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     token_limit = max_tokens_for_model(model, "agent")
     if token_limit is not None:
         kwargs["max_tokens"] = token_limit
+    # feature-0003 reasoning-effort-selector: 사용자 지정 추론 강도를 요청 단위 thinking
+    # budget 으로 주입. thinking 지원 모델(claude-*)에만 적용 — 로컬 LLM 은 LiteLLM
+    # drop_params 가 제거하므로 애초에 넣지 않는다. budget 은 max_tokens(agent=20000)보다
+    # 작게 캡(≤16000)돼 있어 Anthropic 제약(budget < max_tokens) 을 항상 만족한다.
+    _think_budget = thinking_budget_for_level(reasoning_level)
+    if _think_budget is not None and model_supports_thinking(model):
+        kwargs["extra_body"] = {
+            "thinking": {"type": "enabled", "budget_tokens": int(_think_budget)},
+        }
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)
     # TASK-0163: 메인 agentic loop 의 LLM 호출을 토큰 회계에 기록(best-effort).
@@ -3047,6 +3062,7 @@ def run_agent(
     run_id: str | None = None,
     queued_ms_seed: float | None = None,
     eval_datasource: "dict | None" = None,
+    reasoning_level: str | None = None,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
 
@@ -3094,6 +3110,7 @@ def run_agent(
             run_id=run_id,
             queued_ms_seed=queued_ms_seed,
             eval_datasource=eval_datasource,
+            reasoning_level=reasoning_level,
         )
     finally:
         clear_active_schema_allowlist()
@@ -3210,6 +3227,7 @@ def _run_agent_core(
     run_id: str | None = None,
     queued_ms_seed: float | None = None,
     eval_datasource: "dict | None" = None,
+    reasoning_level: str | None = None,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -3728,6 +3746,7 @@ def _run_agent_core(
                 conversation_id=cid,  # TASK-0163: race-free 토큰 귀속 (in-process 동시 ask)
                 run_id=run_id,
                 step_gap_ms=_step_gap_ms,
+                reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
             )
             _prev_llm_end_ns = time.perf_counter_ns()  # 이 라운드 LLM 종료 시각 → 다음 라운드 gap 기산점
         except Exception as e:
