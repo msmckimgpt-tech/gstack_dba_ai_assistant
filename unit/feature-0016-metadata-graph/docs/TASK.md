@@ -1460,8 +1460,13 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T53.5 node --check + pytest(16+57 PASS) + §18.8 적대 패널 3-렌즈(backend+qa·security·ux) + 수정분
   적대 재검증(mutation 테스트 비공허성 실증) — REV-20260706T102814 (BLOCKING 1·MAJOR 2·MINOR·NIT 전건
   반영 또는 근거 수용, 후속 T53.8/T53.9).
-- [ ] T53.6 PR/머지 → web+insight-worker 배포 → **라이브 backfill 실행** → 전 ds routine 카운트 확인.
-- [ ] T53.7 POST-DEPLOY PB-0008 — 이전 0행 ds(예: mysql-gz-qa-kr) ƒ 렌더 + DB 단위 분석 e2e(진행 패널·마커)·pageerror 0.
+- [x] T53.6 PR #593 머지 → deploy-web 롤링(d1951b7e soak 통과)+insight/ask-worker 재빌드 → **라이브
+  backfill 2,201 routines/도달가능 4 ds/18 슬롯**(accountdb 등 3 스키마 07-06 최초 적재, graph_synced
+  전건, SSOT==AGE 카운트 정합). 미도달 14 ds 는 loud 리포트(게이트망 — 도달 시 재실행/cadence 수렴,
+  mysql-gz-qa-kr 포함; 결정론 수단 확보로 AC-1 충족).
+- [x] T53.7 POST-DEPLOY PB-0008 PASS — 이전 0행 스키마(accountdb 198행) ƒ/⚙ 전수 렌더(z=4) + DB 단위
+  분석 e2e(confirm→진행 패널 시드 카피→done 2/2·예약 고정=재귀 0→보라 마커·역할 칩) + reused(confirm
+  생략·dismissed 복구)/noop parity + pageerror 0. 증적 artifacts/...20260706-routine-dbanalysis/.
 - [ ] T53.8 [후속·비차단] 스키마 run 동시성 하드닝 — `node_analysis_runs (scope_key, root_key) WHERE
   status='running'` partial unique index + INSERT 충돌 시 reused 반환 (§18.8 security MINOR: reuse
   SELECT→INSERT TOCTOU 로 동시 confirm 시 run 2개·최대 2×cap 시드. 기존 enqueue_analysis 와 공유하는
