@@ -1153,3 +1153,30 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
   correctness 3-렌즈) — 결과는 REVIEW.md 참조.
 - **POST-DEPLOY**: web 재배포(정적 자산 baked, 마이그 없음) + PB-0008 실 Windows 시각검증 — 드래그
   전/중/후 계층, 펼침/접기/검색 rebuild 후 계층 불변, GB 그룹 드래그 회복, pageerror 0.
+
+## 2026-07-04~06 · 전 ds 함수·프로시저 가시화 + DB 단위 AI 능동 분석 (routine-dbanalysis, TASK §53)
+
+### 요청 (사용자)
+① 함수/프로시저 노드가 그래프 뷰에 나타나지 않는 문제 해소 ② DB 단위 'AI 능동 분석' 제공.
+
+### 조사 확정 (라이브 재현)
+- 백엔드(SSOT·AGE 투영·API)·프론트(ingest·build·렌더) 전 경로 정상 — mysql-gz-qa-global 의 gunzgame
+  에서 routine 300개 라이브 렌더 실측. 근본 원인 = **datasource 커버리지**: routine_objects 가 20개 ds 중
+  4개만 적재(funcproc 배포 07-03 후 insight-worker 6h cadence+rotation 전파 중, 결정론 수단 부재).
+
+### 처리 결과
+- ① `modules/routine_backfill.py` + `bin/routine-backfill.sh` — 등록 전 datasource 즉시 introspect
+  (WebDatasources 레지스트리 MEMORY_DB 연결, insight_enabled=False skip, 멀티 ds 플래그 fail-loud 가드)
+  + scope 별 sync_graph, per-(ds,DB,schema) loud 리포트. prune-safety: label 공유 복수 스키마 prune=False
+  (`routines.introspect_and_store(prune=)` 신설) + worker 경로 `prune=(store label==schema)` 동일 결함 봉인.
+- ② `node_analysis.enqueue_schema_analysis`(run root=Schema·depth=1 pre-seed·재귀 0=budget 캡) +
+  `POST /api/admin/metadata/graph/analyze-schema`(dry_run·audit·metadata.graph.read) + admin.js UI
+  (카드/콤보 우클릭 메뉴·클러스터 상세 버튼·confirm 비용 가시화·기존 진행 패널 연동·reused/noop parity).
+  비용 가드 = SCHEMA_CAP 200(hard 500)·only_missing·confirm·audit.
+- 원본 세션이 §18.8 패널 대기 중 세션 한도로 중단 → 07-06 재개(resume)로 패널 완결: 적발
+  BLOCKING 1(backfill 레지스트리 조회 DB 미지정 → DB 등록 ds silent 누락)·MAJOR 2(worker prune 회귀 /
+  진행 패널 dismissed)·MINOR 5·NIT 4 전건 반영 또는 근거 수용 — 상세 MODIFY CHG·REVIEW.md.
+
+### 검증
+- pytest 신규 16 PASS(§18.8 회귀 잠금 6종 포함) + 관련 회귀 57 PASS · node --check/py_compile/bash -n PASS.
+- POST-DEPLOY: web+insight-worker 재배포 → 라이브 backfill → 전 ds routine 카운트 → PB-0008(T53.6/T53.7).

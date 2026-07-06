@@ -1340,10 +1340,15 @@ ORDER BY TABLE_NAME
                 # 질의는 여전히 실 스키마(schema)로 수행한다(store/query 분리).
                 _rel_store_schema = schema
                 _rel_db_scope = None
+                # routine prune 허용 여부 — dialect 명시 플래그(§18.8 재검증 MINOR: `label==schema`
+                # 문자열 비교는 MSSQL DB명==스키마명(예: DB 'sales' 의 스키마 'sales') 충돌 시
+                # prune=True 로 오발동해 같은 label 의 타 스키마 행을 지운다).
+                _rt_prune_ok = True
                 try:
                     if _dialects.active().name == "mssql":
                         _rel_db_scope = get_active_database()
                         _rel_store_schema = _rel_db_scope or schema
+                        _rt_prune_ok = False
                 except Exception:
                     pass
                 if (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
@@ -1429,12 +1434,17 @@ ORDER BY TABLE_NAME
                     try:
                         from . import routines as _routines
                         _rt_scope = get_active_datasource()
+                        # routine-dbanalysis(§53 MAJOR): prune 은 (scope, store-label) 범위 삭제라
+                        # MSSQL(store label=DB명 ≠ 질의 schema)은 같은 label 의 **다른 스키마 행**을
+                        # 되지운다(backfill 결과가 ≤6h cadence 에 회귀) → dialect 플래그로 억제.
+                        # MSSQL stale routine 의 prune 책임은 스키마 전모를 아는 backfill 로 이관(T53.9).
                         _n_rt = _routines.introspect_and_store(
                             db_conn, schema, all_table_names,
                             kb_conn=None, scope_key=_rt_scope,
                             datasource_key=str(_rt_scope or ""), source_run_id=run_id,
                             store_schema=_rel_store_schema,
-                            cap=AGENT_ROUTINE_INTROSPECT_CAP)
+                            cap=AGENT_ROUTINE_INTROSPECT_CAP,
+                            prune=_rt_prune_ok)
                         report["routines_introspected"] = int(
                             report.get("routines_introspected", 0)) + int(_n_rt or 0)
                     except Exception:

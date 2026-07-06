@@ -1396,3 +1396,78 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   칩 위) 동일 — 사용자가 만든 겹침 상태 한정.
 - 드래그 중 연결 엣지는 비부스트(z2 유지) — 기존(내장 frontElement) 동작과 동등, 회귀 아님.
 - combo 라벨은 combo 요소(z0)와 일체라 엣지(2) 아래 — G6 구조 한계, 수정 전과 동일(회귀 아님).
+
+## 53. routine-dbanalysis — 함수·프로시저 전 datasource 가시화 + DB(스키마) 단위 AI 능동 분석 (2026-07-04, entry persona dispatch)
+
+- Related Requirement: REQ-20260704T210000-routine-dbanalysis — ① 함수/프로시저 노드가 그래프 뷰에
+  나타나지 않는 datasource 해소 ② DB 단위 'AI 능동 분석' 제공 (사용자 요청 2건).
+- ① 조사 확정 (라이브 재현 + 데이터 검증):
+  - 백엔드(SSOT·AGE 투영·schema_tables/search/neighborhood API)·프론트(ingest·build·렌더) 전 경로 정상 —
+    mysql-gz-qa-global 의 gunzgame 에서 **routine 300개 라이브 렌더 실측**.
+  - 근본 원인 = **datasource 커버리지**: routine_objects 는 20 개 ds 중 4개(+공용 twin '')만 적재.
+    예: mysql-gz-qa-kr 은 같은 gunzgame 테이블 121개는 있으나 routine 0행 → 그 ds 화면에서 ƒ/⚙ 전무.
+    insight-worker cadence(6h)+rotation 이 funcproc 배포(07-03) 후 아직 전파 중 — 결정론 수단 부재.
+  - 해소: **routine backfill 드라이버** (`modules/routine_backfill.py` + `bin/routine-backfill.sh`) —
+    등록된 전 datasource × (MSSQL: 사용자 DB × ROUTINE_SCHEMA / MySQL: 비시스템 ROUTINE_SCHEMA) 를
+    즉시 introspect(routines.introspect_and_store 재사용, 스키마-slot 규약 유지) + scope 별 sync_graph.
+    per-(ds,DB,schema) 카운트/에러 loud 리포트. 워커 cadence 는 유지보수로 계속.
+  - prune-safety: 한 store-label(MSSQL=DB명) 에 복수 ROUTINE_SCHEMA 가 공존하면 두 번째 introspect 의
+    prune 이 첫 스키마 행을 삭제 — `introspect_and_store(prune=)` 파라미터 신설(기본 True=기존 동작),
+    backfill 은 label 당 복수 스키마 시 prune=False (worker 경로 잠재 동일 결함은 REVIEW 기록).
+- ② DB(스키마) 단위 AI 능동 분석:
+  - `node_analysis.enqueue_schema_analysis(scope, schema_key, only_missing=True, table_cap, dry_run)` —
+    run(root=Schema, depth_budget=1) 생성 + 스키마 소속 Table 을 **depth=1 시드로 일괄 pre-seed**
+    (process_pending 확장 조건 `depth > depth_budget`·`node_budget-enqueued` 이중 캡으로 재귀 0 —
+    앵커-상대 게이팅과 직교). 이미 분석된 노드는 기본 제외(only_missing), LLM 비용 가드 =
+    `AGENT_NODE_ANALYSIS_SCHEMA_CAP`(기본 200)·hard max 500 + UI 사전 confirm(대상 수 표시).
+  - `metadata_graph.schema_table_keys(scope, schema_key)` 시드 열거 헬퍼 신설.
+  - 엔드포인트 `POST /api/admin/metadata/graph/analyze-schema` (권한 metadata.graph.read 우산 —
+    기존 노드 분석과 동일, audit `node_analysis.enqueue_schema`, dry_run 지원).
+  - 프론트: 스키마 카드/클러스터 컨텍스트 메뉴 + 클러스터 상세 패널 "✨ DB 전체 AI 능동 분석" —
+    dry_run 으로 대상 수 조회 → window.confirm(기존 패턴) → 실행 → 기존 진행 패널(run 폴링) 연동,
+    reused/noop 메시지 parity.
+- 영향 파일: `unit/feature-0002-agent-core/src/modules/{routines,node_analysis,metadata_graph,routine_backfill}.py` ·
+  `shared/config.py`(SCHEMA_CAP + __all__ — ADR-007 교훈) · `bin/routine-backfill.sh` ·
+  `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` · `src/static/{admin.js,admin.html}` ·
+  tests. 마이그 0(기존 테이블 재사용).
+- 위험도: **Major** (§12.3 외부 비용 — DB 단위 분석은 LLM 호출 대량 유발 가능. 사용자 명시 요청이 승인
+  근거이며, cap 기본 200 + only_missing + UI confirm + audit 로 통제. backfill 은 read-only introspect
+  + PG upsert 라 비파괴). 배포: web 재빌드 + **insight-worker 재빌드**(deploy-web WARN 권장 이행 —
+  node_analysis 모듈 정합·graceful SIGTERM 있음).
+- AC:
+  - AC-1: backfill 실행 후 routine 을 보유한 전 datasource 의 그래프 뷰에서 ƒ/⚙ 노드가 렌더된다
+    (이전 0행 ds 에서 라이브 확인). 실패 ds 는 리포트에 loud.
+  - AC-2: 스키마 카드/클러스터에서 'DB 전체 AI 능동 분석' 실행 시 미분석 테이블만 cap 이내로 시드되어
+    진행 패널에 진행률이 표시되고, 완료 후 노드들이 분석완료(보라/역할 칩) 마커를 얻는다.
+  - AC-3: 재실행 시 진행 중이면 reused(진행률 안내), 전부 분석됨이면 noop 안내 — 중복 run 0
+    (순차 재트리거 기준 — 동시 POST 경합은 T53.8 후속의 partial unique index 로 하드닝, §18.8 security MINOR).
+  - AC-4: 재귀 없음 — 시드 외 노드가 enqueue 되지 않는다(잡 수 == planned).
+
+### 53.1 구현
+- [x] T53.1 routines.introspect_and_store `prune=` 파라미터 + routine_backfill.py + bin/routine-backfill.sh.
+- [x] T53.2 metadata_graph.schema_table_keys + node_analysis.enqueue_schema_analysis + config SCHEMA_CAP.
+- [x] T53.3 analyze-schema 엔드포인트(audit·dry_run) + admin.js UI(메뉴·상세 버튼·confirm·진행 연동) + buster.
+- [x] T53.4 테스트 (enqueue_schema_analysis 시드/캡/reused/noop·backfill prune-safety·순수 로직)
+  + §18.8 회귀 잠금 6종(레지스트리 MEMORY_DB·disabled skip·dry-run reused·집계 fail-loud·uprompt 폴백·워커 재귀0).
+- [x] T53.4a §18.8 패널 적발 반영 (세션 이월 후 완결, 2026-07-06) — BLOCKING: backfill 레지스트리 조회
+  `connect(database=MEMORY_DB)`(DB 등록 ds silent 누락 해소) · MAJOR: worker routine introspect
+  `prune=(store label==schema)`(MSSQL 복수 스키마 backfill 결과를 cadence 가 되지우는 회귀 차단) ·
+  MAJOR(ux): 스키마 run 진행 패널 dismissed 해제(reveal parity) · MINOR: dry_run running-run 감지
+  (confirm 허위 승인 차단)·집계 실패 fail-loud·disabled ds skip·대기 카피 분기(root_label)·연타 피드백 ·
+  NIT: 라벨 통일·confirm 문안·docstring 정확화·schema_table_keys limit 5000.
+
+### 53.2 검증
+- [x] T53.5 node --check + pytest(16+57 PASS) + §18.8 적대 패널 3-렌즈(backend+qa·security·ux) + 수정분
+  적대 재검증(mutation 테스트 비공허성 실증) — REV-20260706T102814 (BLOCKING 1·MAJOR 2·MINOR·NIT 전건
+  반영 또는 근거 수용, 후속 T53.8/T53.9).
+- [ ] T53.6 PR/머지 → web+insight-worker 배포 → **라이브 backfill 실행** → 전 ds routine 카운트 확인.
+- [ ] T53.7 POST-DEPLOY PB-0008 — 이전 0행 ds(예: mysql-gz-qa-kr) ƒ 렌더 + DB 단위 분석 e2e(진행 패널·마커)·pageerror 0.
+- [ ] T53.8 [후속·비차단] 스키마 run 동시성 하드닝 — `node_analysis_runs (scope_key, root_key) WHERE
+  status='running'` partial unique index + INSERT 충돌 시 reused 반환 (§18.8 security MINOR: reuse
+  SELECT→INSERT TOCTOU 로 동시 confirm 시 run 2개·최대 2×cap 시드. 기존 enqueue_analysis 와 공유하는
+  파리티 패턴이라 함께 하드닝 — 별도 마이그레이션 cycle).
+- [ ] T53.9 [후속·비차단, known-limitation] MSSQL 복수 ROUTINE_SCHEMA label 의 stale routine prune 소유
+  공백 — worker 는 MSSQL prune=False(§53 MAJOR 봉인의 의도적 결과), backfill 도 복수 스키마 label 은
+  prune=False → drop 된 routine 이 SSOT·그래프에 잔존(ƒ/⚙ 고스트, 기능 영향은 표시 잔존뿐). 해소안:
+  backfill 이 label 전체 스키마의 routine 이름 union 으로 label-단위 prune 1회 수행(cap-절단 시 skip).
+  단일 스키마 label(현행 대부분)은 backfill prune=True 로 이미 회수.

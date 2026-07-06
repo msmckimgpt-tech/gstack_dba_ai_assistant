@@ -999,3 +999,49 @@ source_of_truth: true
   (h2 실효), S5b 순수 update-rebuild 프로브 canonical 위반 0(computeZIndex 평탄화 해소 실증),
   콤보 드래그 내부 엣지 비잔존(1차 cycle ux BLOCKING 회귀 없음). 코드 품질은
   REV-…-graph-zorder(3-렌즈)·REV-…-graph-zorder-h2(6-포인트)에서 완료.
+
+## REV-20260706T102814-ai-claude-feature-0016-routine-dbanalysis [SUBAGENT: PASS-WITH-FIXES] — 전 ds routine 가시화 + DB 단위 능동 분석 (§18.8 적대 패널 3-렌즈 + 수정분 재검증, 세션 이월 완결)
+- Trigger: API·비용 가드(LLM 외부비용 Major §12.3)·UI keyword matched → backend+qa, security, ux(+design)
+  3-렌즈 dispatch. 원본 세션(07-04)이 패널 대기 중 세션 한도로 중단 → resume(07-06)이 security 렌즈
+  재실행 + 수정분 적대 재검증(4th 렌즈)으로 완결.
+- 대상: TASK §53 — routine_backfill(전 ds 결정론 introspect)·enqueue_schema_analysis(스키마 단위
+  시드)·analyze-schema 엔드포인트·admin.js UI·prune-safety.
+- **backend+qa: FAIL → 전건 해소** —
+  - BLOCKING(backfill 레지스트리 조회 `connect()` DB 미지정 → `_all_db_datasources` 의 비정규화
+    `FROM WebDatasources` 가 "No database selected" 를 조용히 삼켜 `{}` 반환 → DB 등록 ds 전량 silent
+    누락·errors 없이 exit 0 — AC-1 무산): `connect(database=_cfg.MEMORY_DB)`(insight worker 정본 규약
+    parity) **반영** + 회귀 테스트(`test_backfill_registry_lookup_uses_memory_db`).
+  - MAJOR(worker cadence 가 backfill 결과를 ≤6h 에 되지움 — prune 이 (scope, store-label) 범위 삭제인데
+    MSSQL 은 label=DB명≠질의 schema): worker 호출부 dialect 명시 플래그 `prune=_rt_prune_ok`(MSSQL=False,
+    MySQL 기존 동작 0 변경) **반영**. 재검증 렌즈가 지적한 `label==schema` 문자열 비교의 DB명==스키마명
+    충돌 오발동도 dialect 플래그 전환으로 함께 봉인.
+  - MINOR 3 **반영**: insight_enabled=False ds 순회 skip(`--include-disabled` opt-in, worker parity) ·
+    only_missing 집계 실패 fail-loud(silent 전량 재시드 차단) · 테스트 공백(worker 재귀0 실행 검증 —
+    same-depth 승격 주입 상태에서 remaining=0 → 0 삽입, uprompt 폴백 9-param INSERT, MEMORY_DB 회귀 —
+    +6종, 10→16). NIT 2 **반영**: 재귀0 docstring(budget 캡 단독 성립) 정확화 · schema_table_keys
+    limit 5000(confirm 과소보고 완화; >5000 스키마 절단은 수용).
+- **ux(+design): PASS(MAJOR 1·MINOR 3·NIT 3) → 전건 반영/수용** —
+  - MAJOR(진행 패널 ✕ 후 재트리거 시 dismissed 게이트로 패널 영구 미표시 — 안내 문구와 모순):
+    `revealProgress()`(dismissed 해제 + 즉시 head 렌더 — stale 내용 창 봉인) 를 dry-reused/POST-reused/
+    신규 3경로 전부에 **반영**(노드 경로 parity).
+  - MINOR 3 **반영**: dry_run 이 running run 미감지 → confirm 허위 승인(백엔드 reuse 검사를 dry_run
+    앞으로 + 프론트 dry.reused 시 confirm 생략) · 진행 패널 대기 카피 "재귀 탐색 중" → 스키마 run
+    root_label 분기 "시드 테이블 대기 — 추가 확장 없음"(get_run_status 에 root_label 추가) · 연타
+    silent return → 상태줄 피드백. NIT 3: 라벨 통일("✨ DB 전체 AI 능동 분석")·버튼 순서(내비 앞) ·
+    confirm "이번 실행 대상 N개" **반영** · disabled(503) 이중 접두 메시지는 기존 노드 경로와 동일
+    패턴(회귀 아님) — **수용**.
+- **security: PASS-WITH-FIXES(MINOR 1·NIT 3)** — 인가(metadata.graph.read 우산, SECURITY §19 5분할
+  정합·runs/jobs 만 기록 불변식 유지·기존 analyze 보다 좁은 비용 표면), Cypher/SQL 주입(_cq+dollar-tag+
+  파라미터화), XSS(nm→textContent·패널 esc()·user_prompt 비재표시), 비용/DoS(dry_run 무생성·fail-loud·
+  폴링 bounded), backfill 무해성(information_schema SELECT 만·리포트에 자격증명 미출력), audit 정합 —
+  전부 REFUTE 실패 확인. MINOR(reuse SELECT→INSERT TOCTOU — 동시 confirm 시 run 2개·최대 2×cap 시드,
+  기존 enqueue_analysis 와 공유 파리티): partial unique index 후속 **T53.8 기록**(AC-3 문구 한정) — 수용.
+  NIT: audit prompt_preview parity **반영** · `docker ps | grep -q` pipefail SIGPIPE 오탐 → 변수 캡처
+  **반영** · 리포트 `{exc!r}` 상세 노출(운영자 CLI 한정·password 비포함) — **수용**.
+- **수정분 적대 재검증(4th 렌즈): PASS** — 8건 수정 전건을 실코드 라인 근거로 재검증 + 핵심 4건
+  mutation 테스트(수정 revert → 테스트 FAIL → 복원 → 16/16 재PASS)로 테스트 비공허성 실증. 잔여
+  MINOR 2 처리: MSSQL DB명==스키마명 prune 오발동 → dialect 플래그 **반영** · MSSQL 복수 스키마 label
+  stale prune 소유 공백(ƒ/⚙ 고스트 잔존 — 표시 잔존뿐, 데이터 손상 아님) → known-limitation
+  **T53.9 기록**. NIT: revealProgress 즉시 head 렌더 **반영** · root_label 카피 주석 **반영**.
+- 재검증: 최종 반영 후 pytest 16+57=73 PASS · node --check · py_compile · bash -n PASS. 라이브 검증은
+  T53.6(배포+backfill)·T53.7(PB-0008 Windows-browser) POST-DEPLOY.
