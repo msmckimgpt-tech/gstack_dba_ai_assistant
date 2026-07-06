@@ -1538,5 +1538,6 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T54.7 §18.8 적대 패널(3-렌즈 find → MAJOR 적대 verify → 수정분 2차 재검증 Workflow) — 확정
   MAJOR 3 근본원인(products 클리어 미복원/ingest added 미반환 dead-code/Focus 위장) + MINOR·NIT 12
   반영, 수용 1(열 말미 append=AC-2 명세). 재검증 PASS(신규 BLOCKING/MAJOR 0). REVIEW.md REV entry.
-- [ ] T54.8 PR/머지 → web 재배포(insight-worker 재빌드 — _build_payload/시드 모듈 정합) → POST-DEPLOY
-  PB-0008: AC-1~AC-5 라이브 실측 + pageerror 0.
+- [x] T54.8 PR #597 머지(842b9ecf) → deploy-web 롤링 soak + insight/ask-worker 재빌드 → POST-DEPLOY
+  PB-0008 **AC-1~AC-5 전 항목 라이브 PASS** + pageerror 0 (§54 Run 2026-07-06 POST-DEPLOY 참조 —
+  Routine 잡 7 done·⚙ 마커·분석문, products 검색→클리어 복귀, 엣지 토글 배치 불변 등 실측).

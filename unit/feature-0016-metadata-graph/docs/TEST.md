@@ -630,3 +630,29 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   — merge+재배포(web+insight-worker) 선행 필요. POST-DEPLOY 에서 수행 후 본 섹션·feature-0003 TEST.md
   §3 에 Run append 예정 — 검증 항목: AC-1(뒤로/앞으로 뷰 복원) · AC-2(토글 재배치·영속) · AC-3(검색
   보존) · AC-4(DB 단위 분석 Routine 포함 confirm·마커) · AC-5(파라미터 수직·겹침 0) · pageerror 0.
+
+### Run (2026-07-06) — POST-DEPLOY 라이브 실측 — PASS (Environment: Windows-browser)
+- 배포: PR #597 → main 842b9ecf. `make deploy-web` 무중단 롤링(soak 통과) + insight/ask-worker
+  재빌드(GIT_COMMIT 842b9ecf 정합). healthz 842b9ecf · 서빙 admin.js/styles.css
+  `?v=20260706-graph-navfilter-routine`. 실 Windows Chrome via relay @172.26.144.1:9223,
+  eval 게이트 통과, `window.confirm` 만 자동화 스텁 — 그 외 실 UI 핸들러·실 API·실 worker 경로.
+- **AC-1(뒤로/앞으로)**: 노드→클러스터→관계→노드 순회 후 뒤로×3 = rel(관계 상세 뷰)→cluster(스키마
+  클러스터 카드)→node(#metaGraphRelBtn/AiBox 로 DOM 정밀 판정) 각 뷰 정확 복원 + 앞으로×3 복귀(5/5
+  라벨) — view-typed 히스토리 라이브 성립.
+- **AC-2(kind 필터)**: dk_game_integrate 펼침(⚙51·ƒ1·테이블19·엣지59)에서 ⚙ 토글 → routine 51→1
+  (ƒ만 잔존)·테이블 19 유지·masonry 재배치, **엣지 단독 토글 시 테이블 이동 0**(배치 불변 계약),
+  재토글 완전 복원(51/59), localStorage `metaGraphHiddenKinds` 영속, 버튼 is-active/aria-pressed
+  동기. 제품 개요에서는 kindctl 숨김(§18.8 MINOR 수정 라이브).
+- **AC-3(검색 보존)**: 펼침 상태에서 실 input 검색('Consignment') → 줌·노드 114·펼침 유지 + match
+  glow 9 → 클리어 → 구성 그대로·glow 해제·mode 복원·정확한 상태 문구. **products 랜딩 검색→클리어 =
+  제품 개요(15+18) 완전 복귀**(§18.8 MAJOR-1 수정 라이브, _searchBase={mode:products} 기록 확인).
+- **AC-4(Routine 분석)**: pcbang_dkonline dry_run = 테이블 2(완료 제외)·함수/프로시저 7·이번 실행 7
+  — confirm 문안에 혼합 수치. 실행 → **Routine 잡 7 시드·done 7/7·실패 0** → ⚙ 7개 전부 분석완료
+  마커 + 분석문 생성(프로시저 의미 정확 기술 실측). 재실행 dry_run missing 0(noop — only_missing
+  dedup 이 Routine 키 포함 실증).
+- **AC-5(파라미터 수직)**: FN_GetKeyIDToInventoryType(파라미터 4) 단일클릭 → RP: 4행 **21px 스텝
+  수직 배치**(z=3 COLUMN 밴드)·XR ctl·아래 행 push-down(겹침 0) → XR 클릭 접힘(RP 0). 상세 패널
+  세로 목록 병행.
+- pageerror 0 (전 구간 window error 수집기). 증적
+  `artifacts/feature-0016-metadata-graph/20260706-graph-navfilter-routine/nfr-01~02.png`.
+
