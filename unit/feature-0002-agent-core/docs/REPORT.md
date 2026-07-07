@@ -380,6 +380,20 @@ app.py 조회실패 debug 로그) 반영.
 ---
 
 **cross-ref (conversation_audit, 2026-07-07)**: feature-0009 그룹대화/1:1 마찰 "맥락 미이해"(conv …9e0883bb) → 코드 거주 feature-0002 CHG-20260707T100640-no-edge-conversation-answer 로 수정(대화 답변 edge/gemma 폴백 완전 차단). 충족: 사용자 대면 대화 답변이 두 claude 계정 장애 시 gemma(ctx 4096) silent 강등돼 맥락 파괴하던 것을 edge-free alias 라우팅 + 깨끗한 실패로 봉인. 정본 원장 = docs/improvements/conversation-audit/FRICTION_LEDGER.md FR-edge-fallback-conversation-context-loss.
+
+---
+
+### bedrock-gateway `max_tokens must be greater than thinking.budget_tokens` 1회성 오류 조사 (2026-07-07, no-op investigation)
+
+**증상**: `unit/feature-0007-bedrock-llm-provider`의 `bedrock-gateway` 로그에 CHG-20260707T100640 배포 직후(2026-07-07 10:37:18 KST) `claude-haiku-4-chat`·`claude-haiku-4-chat-root` 양쪽에서 `AnthropicException: max_tokens must be greater than thinking.budget_tokens`(400) 발생.
+
+**진단 절차 및 결론 — 코드 결함 아님**:
+- 배포 타이밍 재구성: PR #600 머지(10:28:41) → `bedrock-gateway` 재생성(10:31:02) → `ask-worker`/`insight-worker` 이미지 재빌드(10:32:18, docker dangling image 확인) → 오류(10:37:18). 실패 시각의 실행 이미지(`634f9d6e7de7`)를 직접 열어 코드를 확인한 결과 이미 `conversation_answer_model`/`max_tokens_for_model` 수정이 반영돼 있었음 — **stale 이미지 가설 기각**.
+- 정적 추적: `_call_llm`(유일 caller, `agent_core.py:2665`)이 litellm 에 보내는 `model`/`max_tokens` 조합은 claude-* 모델에 대해 항상 `max_tokens=20000`(`_CLAUDE_MAX_TOKENS["agent"]`, `shared/model_catalog.py`)을 주입 — 게이트웨이 배포의 고정 `thinking.budget_tokens=5000`(`litellm_config.yaml`)과 충돌할 코드 경로가 존재하지 않음(저장소 전체에서 `conversation_answer_model` 호출부는 이 1곳뿐).
+- 라이브 재현: 게이트웨이에 직접 요청 — `max_tokens≥5000`(또는 미지정)은 200 정상, `max_tokens<5000`은 프로덕션 로그와 문자열까지 동일한 400 재현. 컨테이너 기동 이후 전체 로그에서 이 오류는 10:37:18 1회뿐, 재발 없음.
+- `docs/improvements/conversation-audit/FRICTION_LEDGER.md`의 FR-edge-fallback-conversation-context-loss 항목에 이미 "PR #600 merge → 재빌드 → **live probe**(claude-haiku-4-chat→claude, gemma 아님) 확인" 기록(10:40:58 커밋) — 시간상 이 live probe(앱 코드를 우회해 게이트웨이에 직접 보낸 배포 후 수동 확인 호출)가 `max_tokens` 를 충분히 싣지 않은 것으로 보이는 **1회성 프로브 아티팩트**로 결론.
+
+**조치**: 코드 수정 없음(안전 확인됨). `docs/improvements/conversation-audit/FRICTION_LEDGER.md` FR-edge-fallback-conversation-context-loss 항목에 조사 결과 addendum 기록. 실 사용자 대화 트래픽 영향 없음(해당 request 에 연계된 실 conversation_id 없음).
 ## 2026-07-07 — ENUM 코드사전 대화 자율수집(0039) — 용어사전(0021/0023) 대칭 [cross-unit, 정본 feature-0003 TASK-20260707-kb-candidate-adoption]
 - **배경**: 관리 콘솔 채택 인박스 요청의 백엔드 절반. 용어사전은 `_glossary_autopropose`+`glossary_feedback` 로 이미 대화 후보수집·검토큐가 있으나 ENUM 코드사전은 CRUD만 있어 후보수집/채택 파이프라인이 없었다. 그 대칭을 신설.
 - **마이그 `0039_enum_feedback`**(HEAD 0038 체인, 비파괴·멱등): `enum_feedback` 검토큐(status pending/auto_promoted/promoted/rejected, key=(scope,schema,table,column,code)) + `enum_dictionary.source` 컬럼(자동수집 되돌리기 구분·자동등록 배지) + 명시 GRANT(DEPLOY TRAP — superuser 적용이라 필수, 0013/0023 동형).

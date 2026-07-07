@@ -1196,3 +1196,8 @@ TASK-0015 (plan-review):
 - [x] **검증**: 신규 test 4 PASS + feature-0002 회귀 0 + py_compile·YAML OK. route-parity 실패=환경(clean main 동일) 확인.
 - [ ] **배포(승인 필요, Major override 불가)**: ask-worker+web 재빌드 + bedrock-gateway 재생성. 배포 후 healthz + corroboration(task='agent' gemma 분포 0) 라이브 재측정.
 - [ ] verify-completion → 적대 패널 → commit/push → (PR·머지·배포 confirm) → 마감.
+
+### bedrock-chat-alias-probe-artifact-investigation — post-deploy 게이트웨이 400 1회성 오류 조사 (no-op, 2026-07-07, CHG-20260707T100640 후속)
+- [x] **진단**: `bedrock-gateway` 로그의 `claude-haiku-4-chat`/`-root` `max_tokens must be greater than thinking.budget_tokens`(400, 10:37:18) 오류를 배포 타이밍 재구성·실행 이미지 직접 확인·정적 코드 추적·게이트웨이 라이브 재현으로 근본원인 규명.
+- [x] **결론**: 코드 결함 아님 — `_call_llm`(유일 caller)은 claude-* 모델에 항상 `max_tokens=20000` 주입해 이 오류 경로에 도달 불가. FRICTION_LEDGER 의 post-deploy "live probe" 절차가 만든 1회성 아티팩트(재발 0, 실 트래픽 영향 없음). 코드 수정 불필요.
+- [x] **기록**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md` FR-edge-fallback-conversation-context-loss addendum + `unit/feature-0002-agent-core/docs/REPORT.md` 신규 절 + MODIFY.md CHG-20260707T134500 항목.
