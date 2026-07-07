@@ -98,6 +98,10 @@ __all__ = [
     "AGENT_GLOSSARY_SUGGEST_MODEL",
     "AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD",
     "AGENT_GLOSSARY_SUGGEST_MAX",
+    "AGENT_ENUM_AUTOPROPOSE",
+    "AGENT_ENUM_SUGGEST_MODEL",
+    "AGENT_ENUM_AUTOPROMOTE_THRESHOLD",
+    "AGENT_ENUM_SUGGEST_MAX",
     "AGENT_ASK_EXECUTION_MODE",
     "AGENT_ASK_WORKER_ENABLED",
     "AGENT_ASK_WORKER_TICK_SEC",
@@ -833,6 +837,32 @@ try:
     )
 except ValueError:
     AGENT_GLOSSARY_SUGGEST_MAX = 5
+
+# ── ENUM 코드사전 대화 자율수집(0039) — 용어사전(0021) ENUM 대칭 ────────────────────
+# 대화 답변 직후 (table.column) 코드↔라벨 후보를 LLM 으로 추론해 ENUM 코드사전(enum_dictionary)에
+# 자율 수집한다. 하이브리드 자동승급 — confidence ≥ THRESHOLD 면 즉시 등록(source='auto', 되돌리기
+# 가능), 미만이면 검토 큐(enum_feedback.status='pending'). ENUM 은 (schema/table/column/code) 구조
+# 추론이 용어보다 오탐 위험이 커 THRESHOLD 를 용어(0.85)보다 보수적인 0.9 로 둔다(대부분 검토 큐 경유).
+AGENT_ENUM_AUTOPROPOSE = (
+    os.getenv("AGENT_ENUM_AUTOPROPOSE", "1").strip().lower() in ("1", "true", "yes")
+)
+AGENT_ENUM_SUGGEST_MODEL = (
+    os.getenv("AGENT_ENUM_SUGGEST_MODEL", AGENT_SUMMARY_MODEL).strip()
+    or AGENT_SUMMARY_MODEL
+)
+try:
+    AGENT_ENUM_AUTOPROMOTE_THRESHOLD = float(
+        os.getenv("AGENT_ENUM_AUTOPROMOTE_THRESHOLD", "0.9").strip() or "0.9"
+    )
+except ValueError:
+    AGENT_ENUM_AUTOPROMOTE_THRESHOLD = 0.9
+# 한 턴에서 큐/등록으로 받아들일 최대 ENUM 후보 수 (토큰/노이즈 cap).
+try:
+    AGENT_ENUM_SUGGEST_MAX = int(
+        os.getenv("AGENT_ENUM_SUGGEST_MAX", "5").strip() or "5"
+    )
+except ValueError:
+    AGENT_ENUM_SUGGEST_MAX = 5
 
 AGENT_LOG_DIR = os.getenv("AGENT_LOG_DIR", "/shared/logs")
 # 단일 앱 로그 파일 크기 상한(bytes). 초과 시 .1 로 1회 회전. 회전 없이 append 만

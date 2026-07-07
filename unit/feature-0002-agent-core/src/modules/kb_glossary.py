@@ -64,18 +64,20 @@ def upsert_glossary_term(conn, scope_key, term, definition, role_key=COMMON_ROLE
         cur.close()
 
 
-def upsert_enum_entry(conn, scope_key, table_name, column_name, code, label, schema_name="") -> None:
+def upsert_enum_entry(conn, scope_key, table_name, column_name, code, label, schema_name="",
+                      source="manual") -> None:
+    # source(0039) — kb_glossary.source 동형. 수동 등록/편집=manual, 자동수집분=auto(_insert_enum_auto).
     cur = conn.cursor()
     try:
         cur.execute(
             "INSERT INTO enum_dictionary "
-            "(scope_key, schema_name, table_name, column_name, code, label) "
-            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "(scope_key, schema_name, table_name, column_name, code, label, source) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (scope_key, schema_name, table_name, column_name, code) "
-            "DO UPDATE SET label = EXCLUDED.label, updated_at = now()",
+            "DO UPDATE SET label = EXCLUDED.label, source = EXCLUDED.source, updated_at = now()",
             (_normalize_scope_key(scope_key), str(schema_name or "").strip(),
              str(table_name).strip(), str(column_name).strip(),
-             str(code).strip(), str(label).strip()),
+             str(code).strip(), str(label).strip(), str(source or "manual").strip()),
         )
     finally:
         cur.close()
@@ -115,12 +117,12 @@ def list_glossary_admin(conn, scope_key, limit=_GLOSSARY_ADMIN_LIMIT, role_key=N
 
 
 def list_enum_admin(conn, scope_key, limit=_ENUM_ADMIN_LIMIT):
-    """admin 목록 — 단일 scope 의 ENUM 행(id 포함). table/column/code 순."""
+    """admin 목록 — 단일 scope 의 ENUM 행(id·source 포함). table/column/code 순."""
     cur = conn.cursor()
     try:
         cur.execute(
             "SELECT id, scope_key, schema_name, table_name, column_name, code, label, "
-            "created_at, updated_at FROM enum_dictionary WHERE scope_key = %s "
+            "source, created_at, updated_at FROM enum_dictionary WHERE scope_key = %s "
             "ORDER BY table_name, column_name, code, id LIMIT %s",
             (_normalize_scope_key(scope_key), int(limit)),
         )
@@ -167,7 +169,7 @@ def update_enum_entry(conn, entry_id, scope_key, table_name, column_name,
     try:
         cur.execute(
             "UPDATE enum_dictionary SET schema_name = %s, table_name = %s, "
-            "column_name = %s, code = %s, label = %s, updated_at = now() "
+            "column_name = %s, code = %s, label = %s, source = 'manual', updated_at = now() "
             "WHERE id = %s AND scope_key = %s",
             (str(schema_name or "").strip(), str(table_name).strip(),
              str(column_name).strip(), str(code).strip(), str(label).strip(),
@@ -636,6 +638,285 @@ def infer_terminology_suggestions(user_message, assistant_answer, *, max_terms=N
             continue
         out.append({"term": term, "definition": definition,
                     "confidence": it.get("confidence", 0.5)})
+        if len(out) >= int(max_terms):
+            break
+    return out
+
+
+# ── ENUM 코드사전 대화 자율수집 큐 + 하이브리드 자동승급 (0039) ────────────────────
+# 용어사전(glossary_feedback, 0023) 의 ENUM 대칭. 대화 답변 직후 LLM 이 추론한 (table.column) 코드↔라벨
+# 후보를, 사용자 결정(하이브리드)에 따라 처리한다:
+#   confidence ≥ THRESHOLD → enum_dictionary 자동 등록(source='auto') + enum_feedback(auto_promoted)
+#     감사 추적(되돌리기 가능 — reject 시 source='auto' 행 제거).
+#   미만 → enum_feedback(pending) 검토 큐 → 관리자가 promote/reject.
+# poisoning 방어: 거부(rejected)된 후보는 재제안해도 되살아나지 않는다(ON CONFLICT WHERE pending).
+# key = (scope, schema, table, column, code) — enum_dictionary UNIQUE 와 동일 컨벤션.
+
+def record_enum_suggestion(conn, scope_key, schema_name, table_name, column_name, code,
+                           suggested_label, *, confidence=0.5, status="pending",
+                           source_run_id=None, conversation_id=None, promoted_enum_id=None,
+                           approved_by=None) -> bool:
+    """enum_feedback 큐에 후보 적재/갱신(upsert by scope/schema/table/column/code).
+
+    같은 key 기존 행이 'rejected'/'promoted'/'auto_promoted' 면 갱신하지 않는다(curator 결정
+    존중·중복 방지) — ON CONFLICT DO UPDATE WHERE status='pending'. 신규 key 는 항상 INSERT.
+    반환: 적재/갱신됨 True, 무시(이미 처리됨) False.
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO enum_feedback "
+            "(scope_key, schema_name, table_name, column_name, code, suggested_label, "
+            " confidence, status, source_run_id, conversation_id, promoted_enum_id, approved_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (scope_key, schema_name, table_name, column_name, code) DO UPDATE SET "
+            "  suggested_label = EXCLUDED.suggested_label, "
+            "  confidence = EXCLUDED.confidence, "
+            "  status = EXCLUDED.status, "
+            "  source_run_id = EXCLUDED.source_run_id, "
+            "  conversation_id = EXCLUDED.conversation_id, "
+            "  promoted_enum_id = EXCLUDED.promoted_enum_id, "
+            "  approved_by = EXCLUDED.approved_by, "
+            "  updated_at = now() "
+            "WHERE enum_feedback.status = 'pending'",
+            (_normalize_scope_key(scope_key), str(schema_name or "").strip(),
+             str(table_name).strip(), str(column_name).strip(), str(code).strip(),
+             str(suggested_label).strip(), float(confidence), str(status),
+             source_run_id, conversation_id, promoted_enum_id, approved_by),
+        )
+        return int(cur.rowcount or 0) > 0
+    finally:
+        cur.close()
+
+
+def _enum_feedback_status(conn, scope_key, schema_name, table_name, column_name, code):
+    """현재 key 의 enum_feedback.status 반환(없으면 None). 자동승급 선검사용."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT status FROM enum_feedback WHERE scope_key = %s AND schema_name = %s "
+            "AND table_name = %s AND column_name = %s AND code = %s",
+            (scope_key, schema_name, table_name, column_name, code),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row and row[0] is not None else None
+    finally:
+        cur.close()
+
+
+def _insert_enum_auto(conn, scope_key, schema_name, table_name, column_name, code, label):
+    """자동승급 — enum_dictionary 에 INSERT(source='auto'). 이미 있으면 보존(수동 큐레이션 우선).
+    반환: enum id(신규 또는 기존) 또는 None."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO enum_dictionary "
+            "(scope_key, schema_name, table_name, column_name, code, label, source) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 'auto') "
+            "ON CONFLICT (scope_key, schema_name, table_name, column_name, code) "
+            "DO NOTHING RETURNING id",
+            (scope_key, schema_name, table_name, column_name, code, label),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row[0])
+        cur.execute(
+            "SELECT id FROM enum_dictionary WHERE scope_key=%s AND schema_name=%s "
+            "AND table_name=%s AND column_name=%s AND code=%s",
+            (scope_key, schema_name, table_name, column_name, code),
+        )
+        r2 = cur.fetchone()
+        return int(r2[0]) if r2 else None
+    finally:
+        cur.close()
+
+
+def auto_promote_or_queue_enum(conn, scope_key, schema_name, table_name, column_name, code,
+                               label, *, confidence, source_run_id=None,
+                               conversation_id=None, threshold=None) -> str:
+    """하이브리드 자동승급 라우터(단일 ENUM 후보). 반환: 'auto_promoted' | 'pending' | 'skipped'.
+
+    'skipped' = 빈 입력이거나 이미 거부/처리된 후보(재제안 무시).
+    """
+    sk = _normalize_scope_key(scope_key)
+    sn = str(schema_name or "").strip()
+    tb = str(table_name or "").strip()
+    col = str(column_name or "").strip()
+    cd = str(code or "").strip()
+    lb = str(label or "").strip()
+    if not tb or not col or not cd or not lb:
+        return "skipped"
+    if threshold is None:
+        from shared import config as _cfg
+        threshold = getattr(_cfg, "AGENT_ENUM_AUTOPROMOTE_THRESHOLD", 0.9)
+    try:
+        conf = float(confidence)
+    except (TypeError, ValueError):
+        conf = 0.0
+    # ⚠ 거부/처리 선검사 (glossary auto_promote_or_queue 동형 — REV-20260629 BLOCKER): enum_dictionary
+    # 자동 INSERT 는 거부 가드보다 반드시 먼저 차단돼야 한다(거부 후보 재유입·중복 자동 INSERT 방지).
+    existing = _enum_feedback_status(conn, sk, sn, tb, col, cd)
+    if existing in ("rejected", "promoted", "auto_promoted"):
+        return "skipped"
+    if conf >= float(threshold):
+        eid = _insert_enum_auto(conn, sk, sn, tb, col, cd, lb)
+        ok = record_enum_suggestion(
+            conn, sk, sn, tb, col, cd, lb, confidence=conf, status="auto_promoted",
+            source_run_id=source_run_id, conversation_id=conversation_id,
+            promoted_enum_id=eid, approved_by="auto",
+        )
+        return "auto_promoted" if ok else "skipped"
+    ok = record_enum_suggestion(
+        conn, sk, sn, tb, col, cd, lb, confidence=conf, status="pending",
+        source_run_id=source_run_id, conversation_id=conversation_id,
+    )
+    return "pending" if ok else "skipped"
+
+
+def list_enum_feedback(conn, status="pending", scope_key=None, limit=_FEEDBACK_ADMIN_LIMIT):
+    """검토 큐 목록(id 포함). status 필터(기본 pending, 빈값/None=전체), 선택적 scope. 최신 우선."""
+    clauses: list = []
+    params: list = []
+    if status:
+        clauses.append("status = %s")
+        params.append(str(status))
+    if scope_key:
+        clauses.append("scope_key = %s")
+        params.append(_normalize_scope_key(scope_key))
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, scope_key, schema_name, table_name, column_name, code, "
+            "suggested_label, confidence, status, source_run_id, conversation_id, "
+            "promoted_enum_id, approved_by, created_at, updated_at FROM enum_feedback" + where +
+            " ORDER BY created_at DESC, id DESC LIMIT %s",
+            tuple(params) + (int(limit),),
+        )
+        return cur.fetchall() or []
+    finally:
+        cur.close()
+
+
+def count_enum_feedback(conn, status="pending") -> int:
+    """검토 큐 건수(배지용). status 기본 pending."""
+    cur = conn.cursor()
+    try:
+        if status:
+            cur.execute("SELECT count(*) FROM enum_feedback WHERE status = %s", (str(status),))
+        else:
+            cur.execute("SELECT count(*) FROM enum_feedback")
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    finally:
+        cur.close()
+
+
+def promote_enum_feedback(conn, feedback_id, *, approved_by=None):
+    """검토 큐(pending) → ENUM 코드사전 승급(by id, FOR UPDATE 동시승인 차단).
+
+    반환: 승급된 enum id, 또는 None(없음/이미 처리됨). 승급분은 source='manual'(검수 완료).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT scope_key, schema_name, table_name, column_name, code, suggested_label "
+            "FROM enum_feedback WHERE id = %s AND status = 'pending' FOR UPDATE",
+            (int(feedback_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        sk, sn, tb, col, cd, label = row
+        cur.execute(
+            "INSERT INTO enum_dictionary "
+            "(scope_key, schema_name, table_name, column_name, code, label, source) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 'manual') "
+            "ON CONFLICT (scope_key, schema_name, table_name, column_name, code) "
+            "DO UPDATE SET label = EXCLUDED.label, source = 'manual', updated_at = now() "
+            "RETURNING id",
+            (sk, sn, tb, col, cd, label),
+        )
+        eid = int(cur.fetchone()[0])
+        cur.execute(
+            "UPDATE enum_feedback SET status='promoted', approved_by=%s, "
+            "promoted_enum_id=%s, updated_at=now() WHERE id=%s",
+            (approved_by, eid, int(feedback_id)),
+        )
+        return eid
+    finally:
+        cur.close()
+
+
+def reject_enum_feedback(conn, feedback_id) -> int:
+    """검토 큐 거부(by id). pending 거부 + auto_promoted 되돌리기(자동추가 source='auto' 행 제거).
+
+    수동 큐레이션(source='manual') 행은 보존한다(자동 추가분만 회수). 반환: 처리 행 수(0=대상 아님).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT status, promoted_enum_id FROM enum_feedback WHERE id = %s FOR UPDATE",
+            (int(feedback_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return 0
+        status, eid = row
+        if status not in ("pending", "auto_promoted"):
+            return 0
+        if status == "auto_promoted" and eid is not None:
+            cur.execute("DELETE FROM enum_dictionary WHERE id = %s AND source = 'auto'", (int(eid),))
+        cur.execute(
+            "UPDATE enum_feedback SET status='rejected', updated_at=now() WHERE id = %s",
+            (int(feedback_id),),
+        )
+        return int(cur.rowcount or 0)
+    finally:
+        cur.close()
+
+
+def infer_enum_suggestions(user_message, assistant_answer, *, max_terms=None) -> list:
+    """대화 한 턴(질문+답변)에서 ENUM 코드↔라벨 후보 추론(LLM 위임).
+
+    반환: [{schema_name, table_name, column_name, code, label, confidence}]. 미가용/실패/빈 입력 → [].
+    key 필드(table/column/code/label) 가 모두 있어야 채택. term 길이 cap·개수 cap 적용.
+    """
+    if not str(user_message or "").strip() or not str(assistant_answer or "").strip():
+        return []
+    # 비용 가드: 코드↔라벨을 설명할 만한 실질 답변이 아닌 짧은 턴은 LLM 추론 자체를 건너뛴다.
+    if len(str(assistant_answer).strip()) < 80:
+        return []
+    if max_terms is None:
+        from shared import config as _cfg
+        max_terms = getattr(_cfg, "AGENT_ENUM_SUGGEST_MAX", 5)
+    try:
+        from modules.llm import llm_enum_suggest
+        items = llm_enum_suggest({
+            "user_message": str(user_message)[:1200],
+            "assistant_answer": str(assistant_answer)[:2400],
+        })
+    except Exception as exc:
+        _log.debug("enum_infer_failed err=%r", exc)
+        return []
+    out: list = []
+    for it in (items or []):
+        if not isinstance(it, dict):
+            continue
+        table_name = str(it.get("table_name", "")).strip()
+        column_name = str(it.get("column_name", "")).strip()
+        code = str(it.get("code", "")).strip()
+        label = str(it.get("label", "")).strip()
+        if not table_name or not column_name or not code or not label:
+            continue
+        if len(table_name) > 128 or len(column_name) > 128 or len(code) > 128:
+            continue
+        out.append({
+            "schema_name": str(it.get("schema_name", "")).strip()[:128],
+            "table_name": table_name, "column_name": column_name,
+            "code": code, "label": label,
+            "confidence": it.get("confidence", 0.5),
+        })
         if len(out) >= int(max_terms):
             break
     return out
