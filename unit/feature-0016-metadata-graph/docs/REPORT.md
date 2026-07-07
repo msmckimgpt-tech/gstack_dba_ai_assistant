@@ -1,5 +1,40 @@
 # Report
 
+## 2026-07-07 · 제품 카테고리 + 크로스-DB 관계 + 재귀 분석 refine (graph-category-recursive-refine, TASK §55, ADR-021)
+
+### 요청 (사용자 4대 — REQ-20260706-graph-category-recursive-refine)
+① 데이터소스 선택 시 스키마 클러스터의 명칭순 평면 나열 → 제품(Products)·DB 매핑 기반 **카테고리 단위 구분·배치**
+(하위 '유사 속성 그룹' 같은 가시적 구분) ② 스키마 클러스터 내부에 갇힌 'AI 능동 분석'·관계 → **다른 DB 간** 분석/
+연결 구축 ③ DB 단위 분석 시 하위 전 노드(테이블·컬럼·함수·프로시저)+관련 노드 **재귀** 분석, 빈약 노드 **후속 보충**,
+모든 분석 **override 아닌 refine** ④ ADR-013 후속(Phase C) 정합 검토 + 잔여 후속.
+
+### 처리 결과 (정본 ADR-021 · 마이그 0038 비파괴)
+- **A 카테고리**: `WebProductDatabases`(제품별 접근 DB SSOT) 질의시점 합성(`schema_products`) + 그래프 뷰
+  **제품 카테고리 밴드**(CAT 배경/🗂 헤더/접기 — 밴드별 shelf-pack·헤더 드래그=밴드 이동·§49 순서 안정화·
+  검색 강제펼침·미분류 후미). 매핑 전무 datasource 는 기존 배치 그대로(회귀 0).
+- **B 크로스-DB**: 임베딩 추론을 **같은 DS 다른 DB(xschema, 기본 ON — 프로브 검증 가능)** + 크로스-DS 로 일반화,
+  MSSQL 3-part `[db].[dbo].[t]` 프로브(레거시 dbo 가드)·fetch 4-분기 필터, **관계 수동 큐레이션**(관계 상세 행
+  ✓신뢰/✕파단 → SSOT+AGE 동시 정합 — 크로스-DS 영구 candidate dead-end 해소), XDS 데몬 flip(ADR-019 이행).
+- **C 재귀·refine**: DB 단위 분석이 시드(테이블+루틴) depth0 + **per-seed 앵커**로 직계 컬럼·관련 노드 재귀 전개
+  (예산 planned×12, cap 2,500) · 모든 재분석에 이전 분석문 동봉+**융합(refine) 프롬프트 계약** · 빈약(thin) 선행
+  노드는 후속 발견(related_findings)으로 **back-refine**(run 당 30 캡) · LLM 확신 조인 후보(suggested_links)를
+  3중 환각 가드 통과 시 candidate 적재(기존 프로브·자기교정이 후속 판정). 0038 미적용 창 전 지점 legacy 폴백.
+- **D Phase C 정합**: 시그니처 백필 정체(3% = 497/16,023, `updated_at DESC LIMIT` 미처리-비우선) 근본수정 —
+  미처리 우선 정렬+remaining 로그+배치 500(~8h 소진). 클러스터 채워지면 sim-group `be:`·경계 추론이 실동작 전환.
+
+### 검증
+- 단위: 신규 §55 테스트 29 + curate 4 + 계약 갱신 2 + 헤드리스 카테고리 26/26(하네스 repo 영속화) —
+  **전체 스위트(0002+0003) 컨테이너 pytest EXIT=0·FAILED 0**. migrate-lint(0038) expand-safe.
+- §18.8 적대 패널(ultracode 4렌즈 + 2-refuter, 한도 중단분은 main 직접 재검증): **BLOCKING 2·MAJOR 4·MINOR 3
+  전건 수정**(fetch 4-분기·kNN recall 초과-fetch·zFor CAT·접힘 밴드 드래그 차단·curate 레거시 매칭·refine 실패
+  done 복원·transient probe 미캐시·모호 alias·scope 한정) + 수용 1. REV-20260707T100744.
+
+### 잔여
+- 배포(deploy_scope: included): PR → 머지 → `make migrate`(0038) → web 롤링 + insight/ask-worker 재빌드 →
+  **PB-0008 실 Windows POST-DEPLOY**(카테고리 밴드 렌더·접기/드래그·관계 큐레이션 버튼·DB 단위 분석 재귀 확장 확인).
+- eventual(수 시간~일): 시그니처 백필 소진 → 의미 클러스터·xschema/xds 후보 발굴 가동(로그 관측 항목).
+
+
 ## 2026-07-04 · 그래프 뷰 3대 UX 개선 (graph-ux3fix, TASK §45)
 
 ### 요청 (사용자)

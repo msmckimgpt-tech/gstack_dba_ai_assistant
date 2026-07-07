@@ -1050,9 +1050,28 @@ source_of_truth: true
   unit/feature-0003-agent-web-ui/docs/TEST.md · wiki/hot.md.
 - Impact: 없음(문서만). Rollback Notes: revert.
 
+## CHG-20260706T184558-ai-claude-corp-feature-0016-graph-category-recursive-refine — §55 제품 카테고리 + 크로스-DB 관계 + 재귀 분석 refine (2026-07-06)
+
+- REQ-20260706-graph-category-recursive-refine / 정본 DECISIONS ADR-021, TASK §55.
+- feature-0002 (엔진):
+  - `alembic/versions/20260706_0038_node_analysis_refine.py` 신규 — node_analysis_jobs ADD anchor_key·pass_no(비파괴, UNIQUE 불변).
+  - `src/modules/node_analysis.py` — 스키마런 재귀 전개(시드 depth0·per-seed anchor_key·확장 예산), refine-not-override(previous_analysis), back-refine(재-pending pass_no+1), suggested_links candidate 적재, _refine_cols_ok legacy 폴백, telemetry links/refined.
+  - `src/modules/llm.py` — NODE_ANALYSIS_PROMPT refine 계약 + suggested_links 계약 + untrusted-data 확장.
+  - `src/modules/relationships.py` — infer 일반화(intra-DS 크로스 스키마), fetch_probe_candidates 한끝 OR, probe qualifier 보존.
+  - `src/modules/dialects.py` — MSSQL 프로브 3-part(dbo 가드).
+  - `src/modules/insight.py` — 경계 추론 데몬 (XDS OR XSCHEMA) 가드·기동 로그.
+  - `src/modules/semantic_cluster.py` — 백필 미처리-우선 정렬 + remaining 로그.
+- feature-0003 (웹): `src/routers/admin_metadata.py`(schema_products 합성 + relationship/curate API + analyze-schema 문서),
+  `src/static/admin.js`(카테고리 밴드 CAT/CATH/CATX 전 계층 + 관계 큐레이션 UI + schemaProducts ingest),
+  `src/static/admin.html`(범례·cache-buster 20260706-graph-cat-refine), `src/static/styles.css`.
+- shared: `shared/config.py` — 신규 노브 11종(+기본값 SIG_BATCH 500·XSCHEMA ON) + __all__.
+- compose: `docker-compose.yml` insight-worker AGENT_XDS_RELATIONSHIP_INFER_AUTO=1 flip (ADR-019 이행).
+- tests: 신규 `test_graph_category_recursive_refine.py`(23)·`test_graph_relationship_curate.py`(4), 계약 갱신
+  `test_routine_dbanalysis.py`(2), route parity golden 재생성(197 — §53 analyze-schema 누락분 동반 치유).
+
 ## CHG-20260707T031149-ai-claude-feature-0016-graph-dataflow-tooltip
 - Date: 2026-07-07
-- Related Requirement: 사용자 요청(관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰) — 노드 관계 화살표 데이터흐름 정합 + AI 능동 분석 지침 툴팁 (TASK §55).
+- Related Requirement: 사용자 요청(관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰) — 노드 관계 화살표 데이터흐름 정합 + AI 능동 분석 지침 툴팁 (TASK §56).
 - Summary: frontend-only. ① ROUTINE_USES 엣지 화살표를 데이터 흐름과 정합(`_metaRoutineEdgeStyle(relation_type)`: write=endArrow 루틴→테이블, read·미상=startArrow 테이블→루틴 — 상세 라벨 kindKo 와 정합) + 범례 '관계·AI 상태' 방향 부연. ② '능동 분석' 지침 popover 트리거를 섹션 전체 hover→버튼/툴팁 hover 로 한정. ③ in-flow 카드→`position:fixed` 플로팅 툴팁(JS viewport 좌표 산정·하단 flip·스크롤/리사이즈 재배치·DOM 이탈 self-cleanup, 상세 패널 overflow-y 클리핑 회피, ADR-017 원래 의도 복원). §18.8 적대 리뷰 PASS-WITH-FIXES(F1 화살표/라벨 미상 정합·F2 Esc doHide 리스너 해제 반영).
 - Files: unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html} · unit/feature-0003-agent-web-ui/docs/TEST.md · unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md.
 - Impact: 그래프 뷰 UX(비파괴·프론트 전용). Rollback Notes: revert + `make deploy-web` 재배포. cache-buster `?v=20260707-graph-dataflow-tooltip`.

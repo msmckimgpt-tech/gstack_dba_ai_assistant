@@ -114,6 +114,37 @@ def _warn_role_column_once(where: str, exc) -> None:
 _UPROMPT_COL_WARNED = {"done": False}
 
 
+# anchor_key/pass_no(alembic 0038, §55 refine) 마이그레이션 창 방어 — 컬럼 가용성을 프로세스당 1회
+# probe 해 캐시한다. _enqueue_neighbors 는 명시 트랜잭션 안에서 INSERT 하므로(실패 statement 가
+# 트랜잭션을 오염) per-statement try/except 폴백이 불가 — 트랜잭션 진입 **전** probe 로 SQL 을 선택한다.
+_REFINE_COLS = {"ok": None, "warned": False}
+
+
+def _refine_cols_ok(cur) -> bool:
+    if _REFINE_COLS["ok"] is None:
+        try:
+            cur.execute("SELECT anchor_key, pass_no FROM node_analysis_jobs LIMIT 0")
+            cur.fetchall()
+            _REFINE_COLS["ok"] = True
+        except Exception as exc:
+            msg = f"{exc.__class__.__name__} {exc}".lower()
+            # §55 패널 fix: **컬럼 부재(0038 미적용 창)일 때만** False 를 캐시한다 — transient(연결 끊김·
+            # 타임아웃 등) 오류를 영구 캐시하면 프로세스 수명 내내 §55 기능이 silent 비활성으로 남는다.
+            # transient 는 캐시 없이 이번 호출만 legacy(다음 호출 재-probe).
+            permanent = ("undefinedcolumn" in msg) or ("column" in msg and (
+                "does not exist" in msg or "존재하지 않" in msg))
+            if not _REFINE_COLS["warned"]:
+                _REFINE_COLS["warned"] = True
+                _log.warning("node_analysis anchor_key/pass_no probe 실패(%s) — %s. err=%r",
+                             "영구: 0038 미적용 창" if permanent else "일시: 다음 tick 재시도",
+                             "legacy 동작(단일 앵커·refine 비활성) 폴백", exc)
+            if permanent:
+                _REFINE_COLS["ok"] = False
+            else:
+                return False   # 미캐시 — 다음 호출 재-probe
+    return bool(_REFINE_COLS["ok"])
+
+
 def _warn_uprompt_column_once(where: str, exc) -> None:
     if not _UPROMPT_COL_WARNED["done"]:
         _UPROMPT_COL_WARNED["done"] = True
@@ -527,15 +558,16 @@ def enqueue_analysis(scope_key: str, node_key: str, depth_budget=None, node_budg
 def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=None,
                             user_prompt=None, only_missing=True, table_cap=None,
                             dry_run=False, conn=None) -> dict:
-    """DB(스키마) 단위 능동 분석(§53·§54) — run(root=Schema, depth_budget=1) + 소속 Table 과
-    Routine(함수·프로시저, §54)을 depth=1 시드로 일괄 pre-seed(테이블 우선, cap 절단 시 루틴 후순위).
+    """DB(스키마) 단위 능동 분석(§53·§54·§55) — run(root=Schema) + 소속 Table 과 Routine(함수·프로시저,
+    §54)을 **depth=0 시드**로 일괄 pre-seed(테이블 우선, cap 절단 시 루틴 후순위).
     반환 {ok, run_id?, status, total_tables, total_routines, missing, planned, capped, reused?}.
 
-    비용 가드: only_missing(기본 — 이미 분석 완료 노드 제외) + AGENT_NODE_ANALYSIS_SCHEMA_CAP
-    (기본 200, hard max AGENT_NODE_ANALYSIS_SCHEMA_MAX). 재귀 0 보장 = **budget 캡 단독** —
-    node_budget == planned(=enqueued 초기값) 라 _enqueue_neighbors 의 remaining 이 항상 0
-    (ADR-017 same-depth 승격도 이 캡에 걸린다; depth 게이트 depth>depth_budget 는 +1 되는
-    일반 이웃에만 해당하는 보조 방벽 — §18.8 NIT 정확화).
+    §55(REQ-20260706 ③): 시드는 depth=0 + anchor_key=자기 자신(per-seed 앵커) — 각 시드의 직계 컬럼이
+    게이트 면제로 편입되고, 관련 노드는 그 시드(Schema 아님) 기준 앵커 게이팅으로 재귀 전개된다
+    ("DB 하위 전 노드 분석 + 관련 노드 재귀"). 비용 경계: only_missing(기본) + SCHEMA_CAP(시드 상한)
+    + depth_budget=AGENT_NODE_ANALYSIS_SCHEMA_DEPTH + node_budget=min(SCHEMA_RUN_BUDGET_MAX,
+    planned×SCHEMA_EXPAND_FACTOR). alembic 0038 미적용 창은 legacy(depth=1 시드·node_budget=planned=
+    재귀 0)로 자동 폴백.
     dry_run: run 미생성 — 집계만 반환(UI confirm 용). 단 진행 중 run 이 있으면 dry_run 도
     reused 를 반환해 프론트가 confirm(허위 승인)을 건너뛰게 한다(§18.8 MINOR).
     진행 중 run(root=schema_key) 존재 시 재사용(reused) — 노드 분석과 동일 dedup 규약."""
@@ -602,8 +634,19 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
         run_id = _new_run_id()
         up = (str(user_prompt).strip()[:400] or None) if user_prompt else None
         schema_name = schema_key.split(":", 1)[1] if ":" in schema_key else schema_key
+        # §55: 재귀 전개 예산 — 0038 적용 시 depth=SCHEMA_DEPTH·budget=planned×factor(cap), 미적용 창은
+        # legacy(depth 1·budget=planned=재귀 0). planned 보다 작아지지 않게 하한 고정(시드 전량 보장).
+        refine_ok = _refine_cols_ok(cur)
+        if refine_ok:
+            sdepth = _clamp(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_DEPTH", 2),
+                            1, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_MAX_DEPTH", 5)), 2)
+            factor = max(1.0, float(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR", 12) or 12))
+            run_max = max(1, int(getattr(_cfg, "AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX", 2500) or 2500))
+            node_budget = max(len(targets), min(run_max, int(len(targets) * factor)))
+        else:
+            sdepth, node_budget = 1, len(targets)
         base_cols = (run_id, sk, schema_key, "Schema", schema_name[:512],
-                     1, len(targets), (requested_by or None))
+                     sdepth, node_budget, (requested_by or None))
         try:
             cur.execute(
                 "INSERT INTO node_analysis_runs "
@@ -621,16 +664,28 @@ def enqueue_schema_analysis(scope_key: str, schema_key: str, *, requested_by=Non
                 base_cols[:7] + (len(targets),) + base_cols[7:])
         for t in targets:
             fqn = t.get("fqn") or ""
-            cur.execute(
-                "INSERT INTO node_analysis_jobs "
-                "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
-                "VALUES (%s,%s,%s,%s,%s,%s,1,1.0,'pending') "
-                "ON CONFLICT (run_id, node_key) DO NOTHING",
-                (run_id, sk, t["key"], t.get("label") or "Table",
-                 (t.get("name") or t["key"])[:512], fqn))
+            if refine_ok:
+                # §55: depth=0(직계 컬럼 게이트 면제 편입) + anchor_key=자기 자신(per-seed 앵커 게이팅).
+                cur.execute(
+                    "INSERT INTO node_analysis_jobs "
+                    "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status, anchor_key) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,0,1.0,'pending',%s) "
+                    "ON CONFLICT (run_id, node_key) DO NOTHING",
+                    (run_id, sk, t["key"], t.get("label") or "Table",
+                     (t.get("name") or t["key"])[:512], fqn, t["key"]))
+            else:
+                cur.execute(
+                    "INSERT INTO node_analysis_jobs "
+                    "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,1,1.0,'pending') "
+                    "ON CONFLICT (run_id, node_key) DO NOTHING",
+                    (run_id, sk, t["key"], t.get("label") or "Table",
+                     (t.get("name") or t["key"])[:512], fqn))
         cur.close()
-        _log.info("node_analysis enqueue_schema run=%s schema=%s planned=%s/%s(+routines %s) capped=%s",
-                  run_id, schema_key, len(targets), total, total_routines, capped)
+        _log.info("node_analysis enqueue_schema run=%s schema=%s planned=%s/%s(+routines %s) capped=%s "
+                  "depth=%s budget=%s refine_cols=%s",
+                  run_id, schema_key, len(targets), total, total_routines, capped,
+                  sdepth, node_budget, refine_ok)
         return dict(base, ok=True, run_id=run_id, status="running")
     except Exception as exc:
         _log.warning("enqueue_schema_analysis_failed err=%r", exc)
@@ -653,7 +708,7 @@ def process_pending(max_nodes=None, conn=None) -> dict:
 
     각 잡은 독립 try/except — 1개 실패가 배치를 중단하지 않는다. run 의 pending/running 이 모두
     소진되면 run.status 를 done(1개 이상 성공) 또는 failed(전부 실패) 로 마감."""
-    rep = {"claimed": 0, "done": 0, "failed": 0, "enqueued": 0}
+    rep = {"claimed": 0, "done": 0, "failed": 0, "enqueued": 0, "links": 0, "refined": 0}
     if not _cfg_enabled():
         return rep
     max_nodes = _clamp(max_nodes if max_nodes is not None else _cfg.AGENT_NODE_ANALYSIS_BATCH_PER_TICK,
@@ -685,27 +740,56 @@ def process_pending(max_nodes=None, conn=None) -> dict:
         #   starvation 무회귀**. 단 depth>=1 은 run 간에도 relevance 우선(FIFO 아님)이라, 관련도 높은 잡이
         #   많은 대형 run 이 신규 run 의 저관련 깊은 잡보다 먼저 소비될 수 있다(예산 캡·BATCH 로 지연만,
         #   영구 기아 아님. root 는 즉시 진행 표시). 엄격 per-run 공정성 필요 시 round-robin 후속.
-        cur.execute(
-            "UPDATE node_analysis_jobs SET status='running' WHERE id IN ("
-            "  SELECT id FROM node_analysis_jobs WHERE status='pending' "
-            "  ORDER BY depth ASC, relevance DESC, created_at ASC LIMIT %s FOR UPDATE SKIP LOCKED) "
-            "RETURNING id, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth",
-            (max_nodes,))
-        claimed = cur.fetchall()
+        refine_ok = _refine_cols_ok(cur)
+        if refine_ok:
+            # §55: anchor_key(per-seed 앵커)·pass_no(refine 세대)·analysis(재-pending 행의 직전 분석문 =
+            # refine payload 의 previous_analysis) 를 함께 claim.
+            cur.execute(
+                "UPDATE node_analysis_jobs SET status='running' WHERE id IN ("
+                "  SELECT id FROM node_analysis_jobs WHERE status='pending' "
+                "  ORDER BY depth ASC, relevance DESC, created_at ASC LIMIT %s FOR UPDATE SKIP LOCKED) "
+                "RETURNING id, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, "
+                "          anchor_key, pass_no, analysis",
+                (max_nodes,))
+            claimed = cur.fetchall()
+        else:
+            cur.execute(
+                "UPDATE node_analysis_jobs SET status='running' WHERE id IN ("
+                "  SELECT id FROM node_analysis_jobs WHERE status='pending' "
+                "  ORDER BY depth ASC, relevance DESC, created_at ASC LIMIT %s FOR UPDATE SKIP LOCKED) "
+                "RETURNING id, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth",
+                (max_nodes,))
+            claimed = [tuple(row) + ("", 0, None) for row in cur.fetchall()]
         rep["claimed"] = len(claimed)
         touched_runs = set()
-        anchors: dict = {}   # run_id -> anchor 서술자(틱 내 캐시, run 당 1회 그래프 조회)
-        for jid, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth in claimed:
+        anchors: dict = {}   # run_id[|anchor_key] -> anchor 서술자(틱 내 캐시, 앵커당 1회 그래프 조회)
+        for jid, run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, anchor_key, pass_no, prev_text in claimed:
             touched_runs.add(run_id)
-            anchor = _load_anchor(c, cur, run_id, anchors)
+            anchor = None
             try:
                 ctx = _fetch_context(node_key, c)
                 root = ctx.get("root") or {"label": node_label, "name": node_name,
                                            "fqn": node_fqn, "key": node_key}
+                # per-seed 앵커(§55): 시드 잡(anchor_key==node_key)은 방금 조회한 자기 노드를 재사용(중복 조회 0).
+                anchor = _load_anchor(c, cur, run_id, anchors, anchor_key,
+                                      self_node=(ctx.get("root") if (anchor_key and anchor_key == node_key) else None))
                 payload = _build_payload(root, ctx)
                 # ADR-017: hover 프롬프트 지침을 run 전 노드 분석에 주입 — LLM 이 자율 판단해 반영.
                 if anchor and anchor.get("prompt"):
                     payload["user_intent"] = anchor["prompt"]
+                # §55 refine-not-override: 이전 분석문을 payload 에 동봉 — LLM 이 비교·융합(override 금지 계약).
+                #   재-pending refine 행은 자기 행의 직전 분석문, 그 외는 최신 done 행(타 run 포함)에서.
+                prev_obj = _parse_analysis(prev_text)
+                if prev_obj is None:
+                    prev_obj = _latest_done_analysis(cur, scope_key, node_key, exclude_id=jid)
+                if prev_obj:
+                    payload["previous_analysis"] = prev_obj
+                # §55 back-refine: refine 세대 잡은 같은 run 에서 분석 완료된 인접 노드의 발견을 동봉 —
+                #   "후속 재귀 탐색 중 추가로 분석된 내용" 으로 빈약 분석을 보충한다.
+                if refine_ok and int(pass_no or 0) > 0:
+                    rf = _related_findings(cur, run_id, ctx, exclude_key=node_key)
+                    if rf:
+                        payload["related_findings"] = rf
                 obj = _llm.llm_node_analysis(payload)
                 if isinstance(obj, dict):
                     analysis_text = json.dumps({
@@ -735,21 +819,47 @@ def process_pending(max_nodes=None, conn=None) -> dict:
                                     (analysis_text, (str(model)[:128] if model else None), jid))
                     cur.execute("UPDATE node_analysis_runs SET done = done + 1 WHERE run_id=%s", (run_id,))
                     rep["done"] += 1
+                    # §55: LLM 이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소에
+                    # candidate 로 적재 — 끝점 실재 검증 통과분만. 이후 프로브·자기교정이 판정한다.
+                    try:
+                        rep["links"] += _ingest_suggested_links(c, scope_key, root, ctx, obj)
+                    except Exception as link_exc:
+                        _log.debug("suggested_links_ingest_failed job=%s err=%r", jid, link_exc)
+                    # §55 back-refine: 같은 run 의 선행 done 인접 노드 중 빈약(thin) 분석을 재-pending
+                    # (pass_no+1) — 지금 분석된 새 맥락(related_findings)으로 보충된다. run 당 REFINE_MAX 캡.
+                    if refine_ok:
+                        try:
+                            rep["refined"] += _backrefine_neighbors(c, cur, run_id, jid, ctx)
+                        except Exception as br_exc:
+                            _log.debug("backrefine_failed job=%s err=%r", jid, br_exc)
+                elif refine_ok and int(pass_no or 0) > 0:
+                    # §55 패널 fix: **refine 실패는 원 분석(done)을 강등하지 않는다** — 재-pending 전의
+                    # 분석문이 행에 그대로 있으므로 상태만 done 으로 복원(refine-not-override 계약 —
+                    # 보충 실패가 기존 유효 분석·마커·집계(done_keys)를 지우면 안 된다). 카운터: done 은
+                    # 최초 완료에 이미 1회 계상 — 재계상 없음(enqueued 만 재-pend 시 +1, 단조 유지).
+                    cur.execute("UPDATE node_analysis_jobs SET status='done', error=%s WHERE id=%s",
+                                ("refine 실패(빈 응답) — 원 분석 유지", jid))
                 else:
                     cur.execute("UPDATE node_analysis_jobs SET status='failed', error=%s WHERE id=%s",
                                 ("LLM 분석 실패(빈 응답/파싱)", jid))
                     cur.execute("UPDATE node_analysis_runs SET failed = failed + 1 WHERE run_id=%s", (run_id,))
                     rep["failed"] += 1
                 # 이웃 재큐 (예산 내) — 성공/실패 무관(그래프 구조는 분석 성공과 독립).
-                #   anchor(원래 루트) 관련도로 게이트·우선순위화 — 허브 fan-out 억제.
-                rep["enqueued"] += _enqueue_neighbors(c, cur, run_id, scope_key, ctx, depth, anchor)
+                #   anchor(잡의 앵커 — 단일 노드 run 은 루트, 스키마 run 은 시드) 관련도로 게이트·우선순위화.
+                rep["enqueued"] += _enqueue_neighbors(c, cur, run_id, scope_key, ctx, depth, anchor,
+                                                      anchor_key=(anchor_key or ""))
             except Exception as exc:
                 _log.warning("node_analysis job=%s 처리 실패 err=%r", jid, exc)
                 try:
-                    cur.execute("UPDATE node_analysis_jobs SET status='failed', error=%s WHERE id=%s",
-                                (str(exc)[:500], jid))
-                    cur.execute("UPDATE node_analysis_runs SET failed = failed + 1 WHERE run_id=%s", (run_id,))
-                    rep["failed"] += 1
+                    if refine_ok and int(pass_no or 0) > 0:
+                        # §55 패널 fix(위와 동형): refine 예외도 원 분석 보존 — done 복원.
+                        cur.execute("UPDATE node_analysis_jobs SET status='done', error=%s WHERE id=%s",
+                                    (("refine 실패: " + str(exc))[:500], jid))
+                    else:
+                        cur.execute("UPDATE node_analysis_jobs SET status='failed', error=%s WHERE id=%s",
+                                    (str(exc)[:500], jid))
+                        cur.execute("UPDATE node_analysis_runs SET failed = failed + 1 WHERE run_id=%s", (run_id,))
+                        rep["failed"] += 1
                 except Exception:
                     pass
         # run 마감 판정
@@ -820,7 +930,35 @@ def backfill_roles(limit=200, conn=None) -> int:
     return updated
 
 
-def _load_anchor(c, cur, run_id: str, cache: dict) -> dict:
+def _load_anchor(c, cur, run_id: str, cache: dict, anchor_key: str = "", self_node=None) -> dict:
+    """잡의 관련도 채점 기준(anchor) 서술자를 로드·캐시. 실패 시에도 최소 서술자 반환.
+
+    anchor_key(alembic 0038, §55)가 비면 run 의 root(기존 동작). 스키마(DB) 단위 run 은 시드마다
+    자기 자신이 앵커(per-seed) — Schema 명칭이 아니라 각 테이블/루틴 기준으로 재귀가 게이트된다.
+    user_prompt 는 run 전역 지침이라 per-seed 앵커에도 합류한다. self_node: 호출측이 이미 조회한
+    앵커 노드(시드 자신) — 중복 그래프 조회 회피."""
+    ak = str(anchor_key or "").strip()
+    base = _load_run_anchor(c, cur, run_id, cache)
+    if not ak or (base and ak == base.get("key")):
+        return base
+    ck = f"{run_id}|{ak}"
+    if ck in cache:
+        return cache[ck]
+    anchor = base
+    try:
+        node = self_node if isinstance(self_node, dict) else ((_fetch_context(ak, c).get("root")) or {})
+        anchor = _build_anchor(ak, node.get("label") or "", node.get("name")
+                               or (ak.split(":", 1)[-1].rsplit(".", 1)[-1]), node.get("description") or "")
+        if base and base.get("prompt"):
+            anchor["prompt"] = base["prompt"]
+            anchor["tokens"] = (anchor.get("tokens") or set()) | _meaningful_tokens(base["prompt"])
+    except Exception as exc:
+        _log.debug("load_seed_anchor_failed err=%r", exc)
+    cache[ck] = anchor
+    return anchor
+
+
+def _load_run_anchor(c, cur, run_id: str, cache: dict) -> dict:
     """run 의 원래 루트 서술자(anchor)를 로드·캐시. 관련도 채점 기준. 실패 시에도 최소 서술자 반환.
 
     루트 설명은 그래프에서 run 당 1회만 조회(틱 캐시)해 비용을 제한한다. 그래프 미발견 시 run 행 값만으로 구성."""
@@ -921,7 +1059,7 @@ def _score_candidates(ctx: dict, cur_depth: int, anchor: dict) -> list:
 
 
 def _enqueue_neighbors(c, cur, run_id: str, scope_key: str, ctx: dict, cur_depth: int,
-                       anchor: dict) -> int:
+                       anchor: dict, anchor_key: str = "") -> int:
     """cur_depth 노드의 이웃을 **앵커 관련도로 게이트·우선순위화**해 pending 재큐(dedupe + 예산 캡).
 
     반환: 실제 삽입 수. anchor(원래 루트 서술자) 기준으로 채점해, 방문 노드가 허브여도 무관 노드로
@@ -935,6 +1073,9 @@ def _enqueue_neighbors(c, cur, run_id: str, scope_key: str, ctx: dict, cur_depth
     candidates = _score_candidates(ctx, cur_depth, anchor)
     if not candidates:
         return 0
+    # §55: 이웃은 현재 잡의 anchor_key 를 **상속** — 시드에서 뻗은 재귀 전체가 같은 앵커로 게이트된다.
+    #   컬럼 probe 는 트랜잭션 진입 전(실패 statement 가 블록 트랜잭션을 오염시키지 않게).
+    refine_ok = _refine_cols_ok(cur)
     try:
         with c.transaction():
             cur.execute("SELECT depth_budget, node_budget, enqueued FROM node_analysis_runs "
@@ -958,14 +1099,24 @@ def _enqueue_neighbors(c, cur, run_id: str, scope_key: str, ctx: dict, cur_depth
                 # crossds-rel: 이웃 job 은 **이웃 자신의 scope**(_scope_of(k))로 기록 — 크로스-ds 엣지로 도달한
                 #   이웃을 run 의 단일 sk 로 넣으면 그 이웃의 재분석이 잘못된 scope 에서 이웃을 찾는다. prefix 없으면 sk 폴백.
                 nsk = (_scope_of(k) or sk)[:96]
-                cur.execute(
-                    "INSERT INTO node_analysis_jobs "
-                    "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending') "
-                    "ON CONFLICT (run_id, node_key) DO NOTHING RETURNING id",
-                    (run_id, nsk, k, (n.get("label") or "")[:32],
-                     (n.get("name") or k)[:512], (n.get("fqn") or ""), d,
-                     round(float(rel), 4)))
+                if refine_ok:
+                    cur.execute(
+                        "INSERT INTO node_analysis_jobs "
+                        "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status, anchor_key) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s) "
+                        "ON CONFLICT (run_id, node_key) DO NOTHING RETURNING id",
+                        (run_id, nsk, k, (n.get("label") or "")[:32],
+                         (n.get("name") or k)[:512], (n.get("fqn") or ""), d,
+                         round(float(rel), 4), (anchor_key or "")))
+                else:
+                    cur.execute(
+                        "INSERT INTO node_analysis_jobs "
+                        "(run_id, scope_key, node_key, node_label, node_name, node_fqn, depth, relevance, status) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending') "
+                        "ON CONFLICT (run_id, node_key) DO NOTHING RETURNING id",
+                        (run_id, nsk, k, (n.get("label") or "")[:32],
+                         (n.get("name") or k)[:512], (n.get("fqn") or ""), d,
+                         round(float(rel), 4)))
                 if cur.fetchone():
                     inserted += 1
                     remaining -= 1
@@ -976,6 +1127,214 @@ def _enqueue_neighbors(c, cur, run_id: str, scope_key: str, ctx: dict, cur_depth
         _log.debug("enqueue_neighbors_failed err=%r", exc)
         return 0
     return inserted
+
+
+# ── §55 refine-not-override + back-refine + suggested_links 헬퍼 ─────────────
+def _parse_analysis(text):
+    """jobs.analysis JSON → dict(필드 트림) 또는 None. refine payload 용."""
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return {k: str(obj.get(k) or "").strip()[:700]
+            for k in ("summary", "relationships", "usage", "caveats") if obj.get(k)}
+
+
+def _analysis_is_thin(text, thin_chars: int) -> bool:
+    """빈약(thin) 분석 판정 — summary 가 임계 미만이거나 relationships·usage 모두 공란.
+
+    파싱 불가 텍스트는 판단 불가 → thin 아님(보수 — 무한 재분석 방지). 빈 분석문은 thin."""
+    if not text:
+        return True
+    try:
+        obj = json.loads(text)
+    except Exception:
+        return False
+    if not isinstance(obj, dict):
+        return False
+    summary = str(obj.get("summary") or "").strip()
+    rel = str(obj.get("relationships") or "").strip()
+    usage = str(obj.get("usage") or "").strip()
+    return (len(summary) < max(1, thin_chars)) or (not rel and not usage)
+
+
+def _latest_done_analysis(cur, scope_key, node_key, exclude_id=None):
+    """노드의 최신 done 분석문(타 run 포함) — refine-not-override 의 previous_analysis 원천."""
+    try:
+        cur.execute("SELECT analysis FROM node_analysis_jobs "
+                    "WHERE scope_key=%s AND node_key=%s AND status='done' AND id <> COALESCE(%s, -1) "
+                    "ORDER BY id DESC LIMIT 1", ((scope_key or "common")[:96], node_key, exclude_id))
+        row = cur.fetchone()
+        return _parse_analysis(row[0]) if row else None
+    except Exception as exc:
+        _log.debug("latest_done_analysis_failed err=%r", exc)
+        return None
+
+
+def _related_findings(cur, run_id, ctx, exclude_key=None, limit=6):
+    """같은 run 에서 분석 완료된 인접 노드의 발견 요약 — refine 잡 payload 의 보충 맥락."""
+    keys = [k for k in (ctx.get("neighbor_meta") or {}).keys() if k and k != exclude_key][:60]
+    if not keys:
+        return []
+    out = []
+    try:
+        cur.execute("SELECT node_name, node_label, analysis FROM node_analysis_jobs "
+                    "WHERE run_id=%s AND status='done' AND node_key = ANY(%s) "
+                    "ORDER BY relevance DESC, id DESC LIMIT %s", (run_id, keys, max(1, int(limit))))
+        for name, label, atext in cur.fetchall():
+            obj = _parse_analysis(atext)
+            if not obj:
+                continue
+            item = {"name": str(name or ""), "label": str(label or ""),
+                    "summary": (obj.get("summary") or "")[:300]}
+            if obj.get("relationships"):
+                item["relationships"] = obj["relationships"][:200]
+            out.append(item)
+    except Exception as exc:
+        _log.debug("related_findings_failed err=%r", exc)
+    return out
+
+
+def _backrefine_neighbors(c, cur, run_id: str, cur_jid, ctx: dict) -> int:
+    """방금 분석된 노드의 인접 중, 같은 run 에서 먼저 분석됐지만 빈약(thin)한 done 잡을 재-pending
+    (pass_no+1) — 후속 재귀가 만든 새 맥락(related_findings)으로 보충(refine)된다.
+
+    UNIQUE(run_id,node_key) 불변 설계: 새 행이 아니라 기존 행의 상태 전이라 mixed-version 안전.
+    counters: enqueued += n (재작업 단위 — done 은 완료 시 재증가 → done ≤ enqueued 단조 유지).
+    run 당 pass_no>0 잡 수 ≤ AGENT_NODE_ANALYSIS_REFINE_MAX. 반환: 재-pending 수."""
+    refine_max = int(getattr(_cfg, "AGENT_NODE_ANALYSIS_REFINE_MAX", 30) or 0)
+    if refine_max <= 0:
+        return 0
+    keys = [k for k in (ctx.get("neighbor_meta") or {}).keys() if k][:60]
+    if not keys:
+        return 0
+    thin_chars = int(getattr(_cfg, "AGENT_NODE_ANALYSIS_THIN_CHARS", 120) or 120)
+    updated = 0
+    with c.transaction():
+        cur.execute("SELECT COUNT(*) FROM node_analysis_jobs WHERE run_id=%s AND pass_no > 0", (run_id,))
+        room = refine_max - int((cur.fetchone() or [0])[0])
+        if room <= 0:
+            return 0
+        cur.execute("SELECT id, analysis FROM node_analysis_jobs "
+                    "WHERE run_id=%s AND status='done' AND pass_no=0 AND id <> %s AND node_key = ANY(%s) "
+                    "ORDER BY id LIMIT 20", (run_id, cur_jid, keys))
+        rows = cur.fetchall()
+        for rid, atext in rows:
+            if updated >= room:
+                break
+            if not _analysis_is_thin(atext, thin_chars):
+                continue
+            cur.execute("UPDATE node_analysis_jobs SET status='pending', pass_no = pass_no + 1, error=NULL "
+                        "WHERE id=%s AND status='done' AND pass_no=0", (rid,))
+            if cur.rowcount:
+                updated += 1
+        if updated:
+            cur.execute("UPDATE node_analysis_runs SET enqueued = enqueued + %s WHERE run_id=%s",
+                        (updated, run_id))
+    return updated
+
+
+_IDENT_RE = re.compile(r"^[A-Za-z0-9_\-\. ]{1,128}$")
+
+
+def _ingest_suggested_links(c, scope_key, root, ctx, obj) -> int:
+    """LLM 분석의 suggested_links(컨텍스트 내 조인 후보)를 table_relationships 에 candidate 적재.
+
+    가드(환각 차단): (a) 양끝 테이블이 payload 컨텍스트의 **그래프 노드**와 매칭돼야 하고(임의 문자열
+    금지 — 노드 fqn/scope 를 신뢰), (b) 한쪽 끝은 반드시 현재 분석 노드(root)의 테이블이어야 하며,
+    (c) root 쪽 컬럼은 ctx.columns 실재 확인, 반대쪽 컬럼은 식별자 형식 검사(실데이터 검증은 기존
+    프로브 파이프라인 몫 — source='llm_insight' 는 fetch_probe_candidates 대상). 잡당 SUGGEST_LINKS_MAX."""
+    cap = int(getattr(_cfg, "AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX", 4) or 0)
+    if cap <= 0 or not isinstance(obj, dict):
+        return 0
+    links = obj.get("suggested_links")
+    if not isinstance(links, list) or not links:
+        return 0
+    root_label = (root.get("label") or "") if isinstance(root, dict) else ""
+    # 링크는 Table/Routine 분석에서만 의미 — Column/용어 잡은 skip(부모 테이블 잡이 담당).
+    if root_label not in ("Table",):
+        return 0
+
+    def _tbl_id(node):
+        key = str(node.get("key") or "")
+        scope = key.split(":", 1)[0] if ":" in key else (scope_key or "")
+        fqn = str(node.get("fqn") or (key.split(":", 1)[1] if ":" in key else ""))
+        schema = fqn.rsplit(".", 1)[0] if "." in fqn else ""
+        table = fqn.rsplit(".", 1)[-1]
+        return {"scope": scope, "schema": schema, "table": table}
+
+    allowed = {}
+
+    def _add_tbl(n):
+        if isinstance(n, dict) and (n.get("label") or "") == "Table":
+            info = _tbl_id(n)
+            for alias in (str(n.get("name") or ""), str(n.get("fqn") or ""), info["table"]):
+                a = alias.strip().lower()
+                if not a:
+                    continue
+                cur_info = allowed.get(a)
+                if a not in allowed:
+                    allowed[a] = info
+                elif cur_info is not None and (cur_info["scope"], cur_info["schema"], cur_info["table"]) \
+                        != (info["scope"], info["schema"], info["table"]):
+                    # §55 패널 fix: 동명 alias 가 서로 다른 테이블(타 DB/scope)을 가리키면 **모호 — 비활성**
+                    # (first-wins 오귀속으로 잘못된 쌍이 candidate 적재되는 것 방지. fqn 정확 표기는 계속 유효).
+                    allowed[a] = None
+
+    _add_tbl(root)
+    for n in (ctx.get("neighbors") or []):
+        _add_tbl(n)
+    root_info = _tbl_id(root)
+    root_cols = {str(col.get("name") or "").strip().lower()
+                 for col in (ctx.get("columns") or []) if col.get("name")}
+    ingested = 0
+    try:
+        from modules import relationships as _rel
+    except Exception:
+        return 0
+    for item in links[: cap * 3]:
+        if ingested >= cap:
+            break
+        if not isinstance(item, dict):
+            continue
+        ft = str(item.get("from_table") or "").strip().lower()
+        tt = str(item.get("to_table") or "").strip().lower()
+        fc = str(item.get("from_column") or "").strip()
+        tc = str(item.get("to_column") or "").strip()
+        if not (ft and tt and fc and tc) or ft == tt:
+            continue
+        if not (_IDENT_RE.match(fc) and _IDENT_RE.match(tc)):
+            continue
+        src, tgt = allowed.get(ft), allowed.get(tt)
+        if not src or not tgt:
+            continue   # 컨텍스트 밖 테이블(환각) 배제
+        # root 연루 강제 + root 쪽 컬럼 실재 확인.
+        if src["table"].lower() == root_info["table"].lower() and src["schema"] == root_info["schema"]:
+            if root_cols and fc.lower() not in root_cols:
+                continue
+        elif tgt["table"].lower() == root_info["table"].lower() and tgt["schema"] == root_info["schema"]:
+            if root_cols and tc.lower() not in root_cols:
+                continue
+        else:
+            continue
+        try:
+            ok = _rel.upsert_relationship(
+                c, src["scope"] or (scope_key or "common"),
+                src_schema=src["schema"], src_table=src["table"], src_column=fc,
+                tgt_schema=tgt["schema"], tgt_table=tgt["table"], tgt_column=tc,
+                source="llm_insight", datasource_key=src["scope"] or "",
+                source_datasource_key=src["scope"] or "", target_datasource_key=tgt["scope"] or "")
+            if ok:
+                ingested += 1
+        except Exception as exc:
+            _log.debug("suggested_link_upsert_failed err=%r", exc)
+    if ingested:
+        _log.info("node_analysis suggested_links: %d건 candidate 적재 (root=%s)", ingested, root.get("key"))
+    return ingested
 
 
 # ── 조회 API (웹 폴링/상세 패널) ─────────────────────────────────────────────

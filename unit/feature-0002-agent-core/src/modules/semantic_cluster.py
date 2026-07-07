@@ -115,8 +115,12 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
         limit = ""
         args = ["table"]
         if max_rows and int(max_rows) > 0:
-            # updated_at DESC 로 최근 변경분 우선(백로그 소진 순서 안정). signature 미설정 행도 자연 포함.
-            limit = " ORDER BY updated_at DESC NULLS LAST LIMIT %s"
+            # §55 D(REQ-20260706 ④) 정체 근본수정: 기존 `updated_at DESC LIMIT N` 은 **미처리
+            # (hash NULL) 행을 우선하지 않아**, 이미 처리된 최신 N 행을 매 pass 재스캔·no-op 하며
+            # 백로그가 영구 미소진됐다(라이브 실측 2026-07-06: 16,023 중 497=3% 에서 정체).
+            # 미처리 행 우선 + 그 다음 최근 변경분(설명 갱신 시 updated_at 전진 → 변경감지 재계산) 순.
+            limit = (" ORDER BY (signature_text_hash IS NULL OR signature_text_hash = '') DESC, "
+                     "updated_at DESC NULLS LAST LIMIT %s")
             args.append(int(max_rows))
         cur.execute(
             "SELECT id, scope_key, datasource_key, schema_name, table_name, object_key, "
@@ -143,6 +147,16 @@ def run_signature_backfill_pass(max_rows=None, conn=None) -> dict:
             except Exception as exc:
                 rep["failed"] += 1
                 rep["error"] = str(exc)[:200]
+        # §55 D 관측성: 잔여 미처리(hash 미설정) 카운트 — 진행이 로그에서 단조 감소로 보이게(정체 재발 감지).
+        try:
+            cur.execute("SELECT COUNT(*) FROM rag_objects WHERE object_type = %s AND table_name <> '' "
+                        "AND (signature_text_hash IS NULL OR signature_text_hash = '')", ("table",))
+            rep["remaining"] = int((cur.fetchone() or [0])[0])
+        except Exception:
+            pass
+        if rep["changed"] or rep["remaining"]:
+            _log.info("signature_backfill processed=%s changed=%s failed=%s remaining=%s",
+                      rep["processed"], rep["changed"], rep["failed"], rep["remaining"])
         cur.close()
     except Exception as exc:
         _log.warning("signature_backfill 실패: %r", exc)

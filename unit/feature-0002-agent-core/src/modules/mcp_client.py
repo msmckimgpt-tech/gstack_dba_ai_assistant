@@ -30,6 +30,7 @@ from shared.config import *
 import json, os, re, urllib.error, urllib.request
 from typing import Any
 from shared import config as cfg
+from shared import runtime_settings as _rts  # feature-0018: MCP 타임아웃 live 반영
 
 def _mcp_jsonrpc_request(method: str, params: dict[str, Any] | None = None, notify: bool = False):
 
@@ -49,7 +50,7 @@ def _mcp_jsonrpc_request(method: str, params: dict[str, Any] | None = None, noti
         headers["Mcp-Session-Id"] = cfg.MCP_SESSION_ID
 
     req = urllib.request.Request(MCP_URL, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=MCP_TIMEOUT_SEC) as resp:
+    with urllib.request.urlopen(req, timeout=_rts.get_int("MCP_TIMEOUT_SEC")) as resp:
         if not cfg.MCP_SESSION_ID:
             cfg.MCP_SESSION_ID = resp.headers.get("Mcp-Session-Id") or cfg.MCP_SESSION_ID
         if notify:

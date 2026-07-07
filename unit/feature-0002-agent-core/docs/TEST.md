@@ -100,3 +100,13 @@ source_of_truth: true
 - **Pass/Fail: PASS**. mv-qa 빨강(불안정, ~1750ms) + kr-an2 회색(끊김, 진짜 도달불가) + gz 초록. 콜드 스타트 down 오판 제거 실증.
 - 게이트: verify-completion 9/9 PASS, make test EXIT=0(회귀 0), ruff PASS.
 - Residual(PB-0008): 관리 콘솔 도트 색상은 백엔드 conn_status 가 결정 — unstable→admin.js `_paintDsConnDot` `is-unstable`(빨강) 매핑(코드 기검증). 백엔드 conn_status=unstable 확정으로 도트 빨강 보장. UI 코드 변경 0(config 만)이라 Windows-browser 시각검증은 informational(CHECK#13 WARN-only).
+
+## no-edge-conversation-answer (CHG-20260707T100640, conversation_audit FR-edge-fallback-conversation-context-loss)
+- 신규 `tests/test_conversation_answer_no_edge_alias.py` **4 PASS**:
+  - G1 `conversation_answer_model("claude-haiku-4") == "claude-haiku-4-chat"` (edge-free 치환).
+  - G2 identity — claude-sonnet-4(애초 fallbacks 無)·edge·""·None 무회귀.
+  - G3 `_call_llm` 이 litellm(create)에 보내는 `model` kwarg = `claude-haiku-4-chat`(gemma 폴백 원천 차단).
+  - G4 `_record_llm_usage` 로는 **원본** `claude-haiku-4` 기록(표시/집계 정합) + sonnet 은 litellm·기록 모두 원본.
+- 회귀: feature-0002 전체 스위트 회귀 0(재사용 `repo-ask-worker` 이미지 + worktree 마운트 + PYTHONPATH, DB 없이 monkeypatch). py_compile(agent_core·model_catalog)·litellm YAML lint OK.
+- ⚠ **정직 기록** — feature-0003 `test_route_parity_p5b::test_route_table_matches_golden_snapshot` 는 재사용 이미지의 Starlette/FastAPI 버전이 golden 스냅샷 생성 시점과 drift 해 실패한다. **clean main(repo/) 체크아웃에서 동일 명령·동일 이미지로도 동일 실패** 확인(A/B) → 본 변경과 무관한 **환경 artifact**(내 diff 에 웹 라우터·route_snapshot 무변경). 정본 `make test`(agent 이미지 핀 deps 재빌드)에선 통과하나, worktree 에는 런타임 `.env` 부재로 compose 파싱(`invalid proto:`)이 막혀 이번 cycle 은 재사용-이미지 경로로 검증(메모리 project-pytest-worktree-pycache-gotcha 지침).
+- 라이브 실측 필요분: 코드/테스트는 "대화 답변이 edge-free alias 로만 나가고 실패 시 정직 안내" 증명 → "실제 rate-limit 시 gemma 미개입" 은 배포 후 corroboration(task='agent' resolved_model gemma 분포 0 유지) 재측정.

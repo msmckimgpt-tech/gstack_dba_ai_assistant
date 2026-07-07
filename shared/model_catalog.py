@@ -13,6 +13,7 @@ __all__ = [
     "get_api_model_meta",
     "is_allowed_api_model",
     "is_local_llm_model",
+    "conversation_answer_model",
     "max_tokens_for_model",
     "model_supports_temperature",
     "model_supports_thinking",
@@ -129,6 +130,34 @@ def is_allowed_api_model(value: str | None) -> bool:
 def is_local_llm_model(value: str | None) -> bool:
     """로컬 LLM 게이트웨이를 경유해야 하는 모델인지 판별한다."""
     return str(value or "").strip().lower() in _LOCAL_LLM_VALUES
+
+
+# ── 대화 답변(task='agent') 전용 라우팅 alias (2026-07-07, FR-edge-fallback-conversation-context-loss) ──
+# 사용자 대면 assistant 답변은 edge(gemma) 폴백이 걸린 alias 로 litellm 에 보내지면 안 된다. 두 claude
+# 계정이 모두 401/429 면 litellm 이 edge-fallback(gemma4:e2b, ctx 4096)으로 강등하는데, 이 2B 모델은
+# ~30K 토큰 대화 히스토리를 잘라 맥락을 파괴하고 자신 있게 틀린 답을 silent 로 낸다(실측 conv …9e0883bb).
+# 사용자 결정(2026-07-07): 대화 답변에 edge 는 고려 대상이 아니며 fallback 도 구성돼선 안 된다 —
+# 두 계정 실패 시 gemma 강등 대신 429/401 을 raise 해 "명백한 실패처리"(agent_core LLM-error 핸들러가
+# "서비스 요청량 한도… 잠시 후 다시 시도"로 안내)가 되게 한다.
+#
+# _call_llm(정의상 task='agent' 경로)이 litellm 에 보내는 model 만 edge-free alias 로 치환한다. 저장/표시/
+# usage `model` 컬럼은 원본 alias(claude-haiku-4)를 유지하고, 실제 서빙 모델은 resolved_model(resp.model)
+# 로 추적한다. 매핑에 없는 model(예: claude-sonnet-4 — 애초에 litellm fallbacks 목록에 없어 edge 강등이
+# 없음)은 identity 로 그대로 반환한다(무회귀).
+_CONVERSATION_ANSWER_ALIAS: dict[str, str] = {
+    "claude-haiku-4": "claude-haiku-4-chat",
+}
+
+
+def conversation_answer_model(value: str | None) -> str:
+    """사용자 대면 assistant 답변(task='agent')을 litellm 에 보낼 때 쓸 edge-free alias 를 반환한다.
+
+    edge(gemma) 폴백이 걸린 대화 모델(claude-haiku-4)은 대화 전용 edge-free alias
+    (claude-haiku-4-chat)로 치환한다. 매핑에 없는 model 은 그대로 반환(identity).
+    반환값은 litellm 호출 kwarg('model')로만 쓰고, 표시/저장/usage 기록에는 원본
+    문자열을 유지한다(호출측 책임).
+    """
+    return _CONVERSATION_ANSWER_ALIAS.get(str(value or "").strip(), str(value or "").strip())
 
 
 def model_supports_temperature(value: str | None) -> bool:

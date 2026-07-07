@@ -5250,3 +5250,64 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `py_compile` 5파일 + `node --check app.js` PASS. 신규 `test_reasoning_effort.py` 12 PASS(B1 no-override 가드 포함). 전체 스위트 회귀 0(worktree 코드 대조 확인). §18.8 적대 패널 REV-20260706T013532-reasoning-effort — BLOCKING 2(B1 매핑 회귀·B2 override 미검증) 적발 → B1 수정(일반=no-override)·B2 라이브 게이트웨이 프로브로 override 실증·N1 hydration 가드 수정 후 재확정.
 - [x] PB-0008 Windows-browser 시각검증 **POST-DEPLOY PASS** (2026-07-06, 배포 adad0a5e, 실 Windows Chrome relay @172.26.144.1:9223): '+' 메뉴 "추론 강도: 일반" 렌더 → 클릭 4단계 팝업(낮음/일반/높음/매우 높음, values low/normal/high/max, claude 모델 활성) → 높음 선택 시 라벨 "추론 강도: 높음"·✓·팝업 닫힘·localStorage=high → 새로고침 후 "높음" 복원 → 레이아웃 무붕괴·pageerror 0. 증적 pb0008_reasoning.png. (TEST.md §3 POST-DEPLOY Run)
 - [x] verify-completion PASS → commit(21d842d4) → push → PR #594 → main merge(adad0a5e) → cycle-finalize → **web 무중단 롤링 재배포 + ask/insight-worker 재빌드**(deploy_scope: included, frontend+backend) → /healthz(git_commit=adad0a5e·mysql/pg ok) + B2 게이트웨이 override 라이브 smoke PASS(budget 1024 vs 16000 → reasoning 2073자 vs 6914자).
+
+### TASK-20260706T094937-runtime-settings — 관리 콘솔 `시스템 > 설정` 운영 값(실행 타임아웃·모델별 thinking budget) 조정·저장·사용 (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared, /_template:entry arg-given, 2026-07-06)
+- 요청: assistant 작동 참조 값을 `관리 콘솔 > 시스템 > 설정` 에 추가해 조정·저장·사용. ① TIME_OUT(쿼리 실행 외 서비스 전체 timeout) — 현재 구성된 값만, 억지 추가 금지 ② 실행 LLM 모델별 thinking budget_tokens(모델 추가 시 자연 확장) ③ 각 항목 우측 패널은 차후 확장용 전용 UI, 레거시 형태 정합. 반영 방식 결정=**하이브리드**(안전 live·저수준 restart, AskUserQuestion 확정).
+- [x] shared/runtime_settings.py 신규 — 레지스트리(현행 `*_TIMEOUT*` 22종 + 카탈로그 순회 모델 예산 자동생성) + resolver(live TTL 캐시 / restart frozen 스냅샷) + `/shared` 스냅샷 원자적 I/O + 스펙 [min,max] 검증. shared.config 미import(순환 없음), kill-switch·fail-open.
+- [x] shared/config.py — restart-mode 22 상수 `_startup_int()` 스냅샷 적용(방어적 import, override 없으면 env 기본값 **byte-동치**; CONN_PROBE `max()` 불변식 보존). 서브프로세스 테스트로 import-시 restart-apply 실증.
+- [x] live-mode getter 배선 — llm.py AGENT_TIMEOUT_SEC(LLM 요청 경로 헬퍼 2곳 + 호출부 5곳 인자 생략) + mcp_client.py MCP_TIMEOUT_SEC. 무override 시 동치.
+- [x] agent_core.py `_call_llm` — 명시 추론강도 미지정 시 모델별 budget override 주입(설정된 모델만; 미설정=미주입→모델 config 기본 thinking 유지, **B1 무회귀**) + `budget < max_tokens` 안전 clamp(기존 reasoning-effort 경로 no-op).
+- [x] app.py — WebRuntimeSettings in-code DDL(MySQL KV) + load/save/delete/reconcile helper + `system.runtime.read/write` 권한 2건(settings 그룹) + admin seed catchup + 기동 시 DB→`/shared` 스냅샷 reconcile.
+- [x] routers/admin_settings.py 신규 — GET registry / PUT value / DELETE reset (RBAC read+write 조회 종속, 동일-tx audit, 스펙 검증) + app.py include_router 등록.
+- [x] 프론트: admin.html 설정 pane **2행+2패널**(전용 UI — 실행 타임아웃=카테고리 그룹+즉시/재배포 배지, 모델 예산=카탈로그 자동확장 목록), admin.js **2 mounter**(direct-save + 초기화 + `apiFetch`/`showToast`/`can` 레거시 패턴). cache-buster admin.js/admin.html `?v=`.
+- [x] 검증(pre-commit): 신규 `test_runtime_settings.py` 22 PASS + `test_runtime_settings_api.py`(RBAC/검증) 12 PASS + config 서브프로세스 restart-apply PASS. `node --check admin.js` PASS. 전체 스위트 회귀 0.
+- [ ] §18.8 적대 패널(backend/security/qa 렌즈) → REVIEW.md REV 기록.
+- [ ] PB-0008 Windows-browser 시각검증: 정적 자산 baked → merge+재배포 선행. **POST-DEPLOY** 수행(설정 pane 2항목 렌더·타임아웃 저장/초기화·모델 예산 저장·즉시/재배포 배지·권한 게이트·pageerror 0). 사유는 TEST.md §3 Windows-browser Run 기록(CHECK#13).
+- [ ] verify-completion --pre-commit PASS → commit → push → PR → main merge → cycle-finalize → web 재빌드·재배포(deploy_scope: included, frontend+backend — config/runtime_settings 는 web·worker 공통) → /healthz.
+
+### TASK-20260707T110000-runtime-settings-auditfix — 런타임 설정 audit action 등록 (PB-0008 라이브 적발 hotfix, Minor §12.3, feature-0003 backend-only)
+- 발견: feature-0018 배포 후 PB-0008 실 Windows 브라우저 write-path 검증에서 "실행 타임아웃" 저장 시 toast "저장 실패: … unknown audit action". 근본: `build_audit_change_json`(ActionCode allowlist)이 `system.runtime.update`/`system.runtime.reset` 미등록 → autocommit=False write 경로가 audit 단계에서 fail-closed(rollback→500). autocommit 원자화(security#1 수정)가 미감사 변경을 정확히 차단(status "기본값 사용 중" 유지 — DB 무변경)했으나 기능 자체가 막힘.
+- [x] `app.py build_audit_change_json`: `system.runtime.update`(setting_key+value)·`system.runtime.reset`(setting_key) 2 action 등록(masked_fields 없음 — 운영 튜닝 파라미터 비민감). raise 前 삽입.
+- [x] 회귀 가드: `test_runtime_settings_api.py` +2(build_audit_change_json 2 action 반환 shape). 유닛 갭(TestClient PUT 이 conn=None 로 audit 도달 前 500) 보완. 14 PASS.
+- [ ] §18.8 security 렌즈 적대 리뷰 → REVIEW REV.
+- [ ] verify-completion → commit → PR → merge → cycle-finalize → web 재빌드·재배포(backend-only, admin 자산 무변경) → PB-0008 write-path 재검증(저장/초기화 toast·has_override·audit row).
+
+### TASK-20260707T111500-runtime-settings-postverify — feature-0018 + audit hotfix POST-DEPLOY PB-0008 기록 (doc-only, 2026-07-07)
+- [x] feature-0018(PR #602→a7dcc436) + audit hotfix(PR #604→8d0a4723) 배포 완료 — web-a/b 무중단 롤링 soak ×2, /healthz 8d0a4723 mysql/pg ok, WebRuntimeSettings 테이블·admin 권한·/shared 스냅샷 초기화, 워커 a7dcc436(내 워커 코드 포함, audit 핫픽스는 web-only).
+- [x] PB-0008 실 Windows 브라우저(Chrome/149 relay) POST-DEPLOY **PASS** — 설정 pane 3항목·타임아웃 22입력/6카테고리/22배지·env-fallback 300/600/180 실증·모델패널 2행 input 비움·write-path e2e(저장/초기화 toast·DB override roundtrip·audit)·pageerror 0. 증적 png. TEST.md §3 POST-DEPLOY Run 기록.
+- [x] doc-only 기록 cycle (TEST/TASK/MODIFY/REVIEW) — 코드·자산 무변경.
+
+### TASK-20260707T110534-doc-sync-rn-0707 — 07-02→07-07 머지분 릴리즈노트 정합(그래프 뷰 07-03~07 진화·추론 강도·데이터소스 지표·공유 참여/범위·런타임 설정·안정성) + cache-buster bump (doc_sync, 비-정책 콘텐츠 doc, 2026-07-07)
+- 트리거: `/_dqa:doc_sync`(수동·attended). 직전 landed 릴리즈노트 sync(5b1481bb @ 07-02 23:05, "07-02 블록 8항목") 이후 main 병합된 07-03~07-07 user-facing 변경이 릴리즈노트 미반영(drift — 07-03·07-06 두 doc_sync 가 미landed) → `release-notes-data.js` 에 신규 '2026-07-03'(8항목)·'2026-07-04'(12항목)·'2026-07-06'(4항목)·'2026-07-07'(5항목) 블록 prepend(07-02 블록 이하 보존). `generated` 2026-07-02→2026-07-07.
+- [x] 콘텐츠 데이터만 — 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC 무변경. 내부용어(feature-id/테이블명/G6/AGE/alembic/함수명/권한키/엔드포인트/모델명/ADR 번호/step_gap_ms/conn_health/xschema/WebRuntimeSettings) 누출 0. 사용자향 평이화. 역할 8종 중 매핑 포함(07-03 블록).
+- [x] aiops-ttft(지연 KPI 재정의)는 관리자 지표라 07-03 블록 사용자 문구에서 제외(기술 RELEASE_NOTES.md·STATUS 에만). insight/edge-fallback 순수 백엔드는 '속도·안정성 개선' common 항목으로 번들. share-visibility-window·reasoning-effort·runtime-settings·category-refine 는 각 원천 cycle 이 PB-0008 기록 — 본 cycle 은 콘텐츠 데이터만.
+- [x] 검증: `node --check release-notes-data.js` PASS. jsdom DOM 테스트(`verify_release_notes.mjs`)는 이 실행 env 미설치(컨테이너 전용) — 문법+스키마(type/area/title/detail)+블록 순서(07-07>06>04>03>02) + 07-02 이하 보존으로 갈음.
+- [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260702-rn-0702`→`?v=20260707-rn-0707` bump. verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·배포는 본 attended run 이 사용자 정책(2026-06-25) 하에 자동 수행. META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260707T110534-META-0020-doc-sync-0707).
+- [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트는 콘텐츠 데이터/캐시버스터 변경만(렌더 로직 불변) — 본 doc_sync cycle 은 새로 시각검증할 렌더 델타 없음. 원천 UI 변경(그래프 뷰·추론 강도·런타임 설정·공유 범위)은 각 feature cycle 이 07-03~07-07 PB-0008 기록. 사유는 TEST.md §3 Windows-browser Run 기록(CHECK#13).
+### TASK-20260707T120000-runtime-settings-ux — 런타임 설정 pane UI 재설계 (세련도 개선, web/UI CSS+JS-only, Major §12.3, feature-0003)
+- 트리거(사용자): "UI가 세련되지 못함 — 내부 디자인 리뷰 진행하며 사람이 만족할 UI로 재구성." 현재 `.admin-quota-editor` 재사용이 부적합(입력창 라벨과 미정렬·우상단 부유, 설명 잘림, 행마다 저장/초기화 버튼 난립, 세로 반복 과다).
+- [x] 디자인 시스템 매핑(subagent): 토큰(`:root`), 정돈된 패턴(admin-kv grid dl·admin-usage-table·admin-badge·admin-detail-section-title·admin-field focus-ring), commit-bar pending 6 touch point, 참조 pane(계정 권한 그리드) 라이브 캡처.
+- [x] CSS 신규 `.rs-*`: rs-panel/group/group-title/list + **rs-row(2×2 grid: 라벨+배지 / 설명 / 입력+단위 / 상태·기본값)** + rs-input(canonical focus-ring·mono·우정렬)·rs-unit·rs-status(override/pending/invalid)·rs-reset·rs-readonly-note. --border-subtle 구분선·--primary-soft dirty·8px 그리드·반응형(≤560px).
+- [x] JS 재작성: `buildRuntimeSettingRow`(행별 버튼 제거)·`setRuntimeSettingPending`(pending 예약)·`rerenderRuntimeSettingsPanels`·render* 를 rs-* 마크업으로. 설명 ellipsis+title(잘림 해소). 범위 밖 인라인 경고. 모델 no-override input 비움 유지.
+- [x] **commit-bar 통합**(계정·프롬프트 정합): `adminState.pending.runtimeSettings` + pendingChangeCount + refreshPendingUI(detail "설정 N" + 좌측 nav row `.has-pending`) + applyAllPending(PUT/RESET DELETE 루프 + 재렌더) + cancelAllPending(clear + 재렌더). 편집→pending→"모두 적용" 배치 저장.
+- [x] cache-buster admin.js/styles.css `?v=20260707-runtime-settings-ux`. node --check PASS, 잔여 dead-ref 0.
+- [ ] §18.8 적대 디자인/UX 렌즈 리뷰 → REVIEW REV.
+- [ ] verify-completion → commit → PR → merge → web 재배포 → **PB-0008 재설계 UI 시각검증(before/after)**.
+
+### TASK-20260707T121500-runtime-settings-ux-postverify — 런타임 설정 UI 재설계 POST-DEPLOY PB-0008 기록 (doc-only, 2026-07-07)
+- [x] UX 재설계(PR #607→da3f57db) 배포 후 실 Windows 브라우저 PB-0008 **PASS**: 정렬 grid 렌더(rs-row 22·6그룹·배지·구 quota-editor 0)·설명 잘림 해소·commit-bar 편집→pending→모두적용(DB override)→기본값복원(DB clean) e2e·모델 no-override input 비움·pageerror 0. before/after 증적.
+- [x] doc-only 기록(TEST/TASK/MODIFY/REVIEW) — 코드·자산 무변경.
+
+### TASK-20260707T130000-reasoning-budgets — 설정 > 모델별 추론 예산에 '추론 강도별 예산' 추가 + UI 교훈 기록 (Major §12.3 — feature-0003 web/UI + cross-unit feature-0002·shared, 2026-07-07)
+- 트리거(사용자): "① 가시성 개선 교훈 기록 ② `설정 > 모델별 추론 예산` 에서 각 추론 강도별 예산 토큰값도 설정 가능하게."
+- [x] 교훈: `docs/LEARNINGS.md` LRN-20260707-0001(pattern, verified) — quota-editor 재사용 안티패턴 → 정렬 grid+commit-bar, PB-0008 시각검증이 유닛/코드리뷰 놓친 결함(audit write-path·시각완성도) 포착.
+- [x] shared/runtime_settings.py: `reasoning_budget:{low,high,max}` 스펙(카탈로그 REASONING_LEVELS 순회, normal 제외=B1) + `reasoning_budget_override` resolver + serialize `reasoning_budgets` 버킷 + `__all__`. 기본값=`thinking_budget_for_level`(2000/10000/16000), min1024 max16000, live.
+- [x] agent_core.py `_call_llm`: precedence — 명시 레벨(low/high/max)이면 그 레벨 admin override(없으면 기본), '일반'이면 모델 override(B1: 레벨 예산 미적용). budget<max_tokens clamp 유지.
+- [x] admin.js: `renderModelThinkingBudgets` 가 2 섹션(모델별 + 추론 강도별) 렌더(rs-* 정렬 행, 추론은 pre-fill). nav-dirty 분류에 RS_REASONING_PREFIX. cache-buster admin.js `?v=20260707-reasoning-budgets`.
+- [x] 테스트: test_runtime_settings.py +4(스펙/override/clamp/validate) · test_reasoning_effort.py +3(_call_llm precedence: override>기본, no-override 기본, normal 무시+모델 override). 전체 로컬 회귀 0.
+- [ ] §18.8 적대 리뷰(backend/UX) → REVIEW REV.
+- [ ] verify-completion → commit → PR → merge → web 재배포 + **ask/insight-worker 재빌드**(_call_llm=워커 경로) → PB-0008 시각검증(추론 강도별 예산 섹션 렌더·편집/적용).
+
+### TASK-20260707T131500-reasoning-budgets-postverify — 추론 강도별 예산 POST-DEPLOY PB-0008 기록 (doc-only, 2026-07-07)
+- [x] 추론 강도별 예산(PR #609→767ca387) 배포(web + ask/insight-worker 재빌드) 후 PB-0008 **PASS**: 2 섹션 렌더(추론 강도별=낮음/높음/매우 높음 pre-fill·'일반' 없음 B1)·reasoning-key write-path e2e(적용 DB override→복원)·사용자 사전설정(MCP_TIMEOUT_SEC=60) 보존·pageerror 0.
+- [x] doc-only 기록(TEST/TASK/MODIFY/REVIEW) — 코드·자산 무변경.

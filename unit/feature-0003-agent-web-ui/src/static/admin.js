@@ -76,6 +76,7 @@ const adminState = {
     productDatabases: new Map(),  // productId -> draft array (user schemas only; metadata 4종 자동 bypass)
     productDatasources: new Map(),// TASK-0239: productId -> {baseline:[{key,is_primary}], desired:[{key,is_primary}]} (바인딩 추가/제거/기본지정 일괄 적용)
     systemPrompts: new Map(),     // key "scope:productId:roleId:accountId" -> {scope, productId, roleId, accountId, content}
+    runtimeSettings: new Map(),   // feature-0018 UX: key -> {key, value:정수|RS_RESET}. 편집·기본값복원 예약 → 모두 적용
     productDbRules: new Map(),    // TASK-20260619 (§10.7): "productId::dsKey" -> {creates:[{tempId,include_pattern,exclude_pattern,cap}], updates:{ruleId:{...}}, deletes:{ruleId:{strip}}, approves:{ruleId:[schema,...]}} (정규식 자동 규칙 편집 = pending → "모두 적용")
   },
   nextTempRoleId: 1,
@@ -1092,7 +1093,8 @@ function pendingChangeCount() {
     adminState.pending.productDatabases.size +
     datasourceDirtyProductCount() +
     productDbRuleDirtyCount() +
-    adminState.pending.systemPrompts.size
+    adminState.pending.systemPrompts.size +
+    (adminState.pending.runtimeSettings ? adminState.pending.runtimeSettings.size : 0)
   );
 }
 
@@ -3270,6 +3272,14 @@ const _metaGraph = {
   _focusName: null,           // 중심 보기 대상 이름(FocusChip 단일소스 미러 — DOM 파싱 회피)
   // graph-navfilter(§54⑤): 파라미터를 펼친 Routine key — 컬럼 펼침(expanded)의 루틴 판.
   routineExpanded: new Set(),
+  // graph-category(§55 A, REQ-20260706 ①): 스키마(DB)별 제품 매핑 — 스키마 클러스터를 제품 카테고리
+  //   밴드(CAT:/CATH:/CATX:)로 묶는 데이터 원천. key=스키마명 lowercase, val=[{id,name,sort}].
+  //   schemaTotals 와 같은 scope 캐시 — resetModel 보존, loadRoots 가 재구축(응답 schema_products).
+  schemaProducts: new Map(),
+  catOrder: [],               // §49 동형: 카테고리(catKey) 순서 안정화
+  catCollapsed: new Set(),    // 접힌 카테고리 catKey(멤버 클러스터 미방출·헤더 밴드만)
+  catMembers: new Map(),      // catKey -> [멤버 클러스터(comboId)] — 매 build 재구성(카테고리 드래그 소비)
+  catLabelOf: new Map(),      // catKey -> 표시 라벨 — 매 build 재구성(상세·헤더)
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3286,7 +3296,9 @@ const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 �
 //   흐름 내 per-table "X:" ctl 은 NODE 밴드(허위 소속 어포던스 방지, 패널 ux MINOR) — 자기 칩과 비겹침이라
 //   클릭성 손실 없음. 코너 앵커 컨트롤(GX/XS)만 CTL(항상 클릭 가능).
 //   EDGE 층 내부는 신뢰 강도 소수 오프셋(trusted+0.2 > candidate/교차DB+0.1)으로 tie 분해(_metaEdgeStyleFor).
-const _METZ = { COMBO: 0, GROUP_BG: 1, EDGE: 2, COLUMN: 3, NODE: 4, GROUP_HD: 5, CTL: 6, DRAG_BOOST: 1000 };
+// graph-category(§55 A): CAT_BG(-1) = 제품 카테고리 밴드 배경 — 클러스터 배경(COMBO 0) **아래**.
+//   combo 내부 hit-test 는 combo 가 갖고, 밴드 여백·헤더(CATH, GROUP_HD 밴드)가 카테고리 상호작용 표면.
+const _METZ = { CAT_BG: -1, COMBO: 0, GROUP_BG: 1, EDGE: 2, COLUMN: 3, NODE: 4, GROUP_HD: 5, CTL: 6, DRAG_BOOST: 1000 };
 const _META_SEARCH_CAP = 50;        // search-badge: 백엔드 search_nodes 기본 limit(50) 미러 — 도달 시 매칭 카운트 부분값(badge '+')
 const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 클러스터
 
@@ -3382,6 +3394,12 @@ function _metaRoleOf(key) {
 //   combo id == Schema 모델 key(펼침 시) — COMBO 층. 미상은 칩과 동급(NODE).
 function _metaZFor(id) {
   const s = String(id);
+  // graph-category(§55 A, 패널 BLOCKING fix): CAT 밴드 3종 — 누락 시 기본 NODE(4) 로 해석돼
+  //   _metaGraphZAssert(매 draw 후 canonical 재-assert)가 배경을 최상층으로 승격, 밴드가 내부
+  //   클러스터·노드를 반투명으로 덮고 hit-test 를 가로챈다. bake(-1/5/6)와 1:1 로 고정.
+  if (s.startsWith("CATX:")) return _METZ.CTL;
+  if (s.startsWith("CATH:")) return _METZ.GROUP_HD;
+  if (s.startsWith("CAT:")) return _METZ.CAT_BG;
   if (s.startsWith("GB:")) return _METZ.GROUP_BG;
   if (s.startsWith("GH:")) return _METZ.GROUP_HD;
   if (s.startsWith("GX:") || s.startsWith("XS:")) return _METZ.CTL;
@@ -4003,6 +4021,59 @@ function _metaStableSeq(fresh, savedKeys, keyOf) {
   return out;
 }
 
+// graph-category(§55 A, REQ-20260706 ①): 스키마 클러스터의 **제품 카테고리** 배정 + ids 재배열.
+//   WebProductDatabases(제품별 접근 DB SSOT)의 스키마→제품 매핑(schemaProducts)으로 각 클러스터를
+//   catKey("PC:<제품id>" | "PC:__none__" 미분류)에 배정한다 — 하위 '유사 속성 그룹'(sim-group)과 같은
+//   가시적 구분(배경 밴드+헤더 칩)의 데이터 계층. 매핑이 전무하면 enabled=false(기존 배치 그대로 — 회귀 0).
+//   다제품 스키마는 대표 제품(백엔드 정렬 1순위 = 제품 SortOrder)으로 배정하고 상세에서 전체 노출.
+function _metaCatAssign(ids) {
+  const res = { enabled: false, cats: [], inCat: new Set(), ids: null };
+  const sp = _metaGraph.schemaProducts;
+  const core = (ids || []).filter((k) => k !== _META_TERMS_COMBO);
+  if (!sp || !sp.size || !core.length) return res;
+  const byCat = new Map();
+  let mapped = 0;
+  // 패널 MINOR fix: 매핑은 schemaProducts 가 로드된 scope 의 클러스터에만 적용 — 크로스-DS 이웃확장으로
+  //   유입된 타 scope 클러스터가 동명 DB 로 현재 제품 밴드에 오배정되지 않게(타 scope = 미분류).
+  const spScope = String(_metaGraph.loadedScope || "");
+  core.forEach((id) => {
+    const inScope = !spScope || String(id).startsWith(spScope + ":");
+    const nm = String(_metaComboName(id) || "").toLowerCase();
+    const plist = inScope ? sp.get(nm) : null;
+    let key = "PC:__none__", label = "미분류", sort = Number.MAX_SAFE_INTEGER;
+    if (Array.isArray(plist) && plist.length) {
+      const p = plist[0];
+      key = "PC:" + p.id; label = p.name || ("제품#" + p.id);
+      sort = (typeof p.sort === "number" ? p.sort : 100) * 100000 + (p.id || 0);
+      mapped++;
+    }
+    let c = byCat.get(key);
+    if (!c) { c = { key, label, sort, members: [] }; byCat.set(key, c); }
+    c.members.push(id);
+  });
+  if (!mapped) return res;   // 전부 미분류 → 카테고리 계층 미방출(단일 흐름 유지)
+  const cats = [...byCat.values()].sort((a, b) =>
+    ((a.key === "PC:__none__") - (b.key === "PC:__none__")) || (a.sort - b.sort) || _metaNatSort(a.label, b.label));
+  // §49 동형: 카테고리 순서 안정화 — rebuild 시 밴드가 자리를 점프하지 않게.
+  const stable = _metaStableSeq(cats, _metaGraph.catOrder, (c) => c.key);
+  _metaGraph.catOrder = stable.map((c) => c.key);
+  _metaGraph.catMembers = new Map(); _metaGraph.catLabelOf = new Map();
+  const pos = new Map(core.map((k, i) => [k, i]));
+  const ordered = [];
+  stable.forEach((c) => {
+    c.memberSet = new Set(c.members);
+    // 접힘: 사용자 지속 의도. 단 검색 매칭/추가 스키마를 품은 카테고리는 강제 펼침(결과 가시 — 그룹 접힘 동형).
+    c.collapsed = _metaGraph.catCollapsed.has(c.key) && !c.members.some((sid) =>
+      (_metaGraph.searchMatch && _metaGraph.searchMatch.has(sid)) || _metaGraph.searchAdded.has(sid));
+    c.members.sort((a, b) => pos.get(a) - pos.get(b));   // 카테고리 내부는 기존(안정화된) 클러스터 순서 유지
+    c.members.forEach((m) => { res.inCat.add(m); ordered.push(m); });
+    _metaGraph.catMembers.set(c.key, c.members.slice());
+    _metaGraph.catLabelOf.set(c.key, c.label);
+  });
+  res.enabled = true; res.cats = stable; res.ids = ordered;
+  return res;
+}
+
 function _metaG6Build() {
   // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
   //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
@@ -4048,6 +4119,13 @@ function _metaG6Build() {
     const _core = _metaStableSeq(_hasTerms ? ids.slice(0, -1) : ids.slice(), _metaGraph.clusterOrder, (x) => x);
     _metaGraph.clusterOrder = _core.slice();
     ids.length = 0; _core.forEach((id) => ids.push(id)); if (_hasTerms) ids.push(_META_TERMS_COMBO);
+  }
+  // graph-category(§55 A): 제품 카테고리 배정 + ids 를 카테고리 순으로 재배열(카테고리 내부는 위
+  //   안정화 순서 유지, terms 는 항상 마지막). 매핑 전무(enabled=false)면 완전 무개입 — 기존 배치.
+  const catInfo = _metaCatAssign(ids);
+  if (catInfo.enabled) {
+    const _hasTerms2 = ids.length && ids[ids.length - 1] === _META_TERMS_COMBO;
+    ids.length = 0; catInfo.ids.forEach((id) => ids.push(id)); if (_hasTerms2) ids.push(_META_TERMS_COMBO);
   }
   const schemaIdx = new Map(ids.map((s, i) => [s, i]));   // 테이블 순서의 외부-관계 앵커(이웃 스키마 방향) 조회용
   const relOrder = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf);   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
@@ -4209,11 +4287,42 @@ function _metaG6Build() {
     return { id, g, place, w, h, x0: 0, y0: 0 };
   });
   // shelf-packing: 가변폭 클러스터를 좌→우로 채우고, 폭 초과 시 다음 행으로.
-  { let cx = 0, cyy = 0, shelfH = 0;
+  // graph-category(§55 A): 카테고리 활성 시 **카테고리 밴드별로** 분할 패킹 — 각 카테고리가 자기 행들을
+  //   좌→우로 채우고, 밴드는 세로로 스택된다(헤더 CATHH 확보). 접힌 카테고리는 멤버를 방출하지 않고
+  //   (catHidden) 헤더 밴드만 남긴다. 비활성(enabled=false)이면 기존 단일 흐름 그대로.
+  const CATHH = 36;   // 카테고리 헤더 밴드 높이(칩 + 상단 여백)
+  if (!catInfo.enabled) {
+    let cx = 0, cyy = 0, shelfH = 0;
     layouts.forEach((L) => {
       if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; cyy += shelfH + _METLAY.GAPY; shelfH = 0; }
       L.x0 = cx; L.y0 = cyy; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
-    }); }
+    });
+  } else {
+    const layById = new Map(layouts.map((L) => [L.id, L]));
+    let cyy = 0;
+    catInfo.cats.forEach((cat) => {
+      cat.bandY = cyy;
+      const catLays = cat.members.map((id) => layById.get(id)).filter(Boolean);
+      if (cat.collapsed) {
+        catLays.forEach((L) => { L.catHidden = true; });
+        cyy += CATHH + _METLAY.GAPY;   // 헤더 밴드만 차지
+        return;
+      }
+      let cx = 0, rowY = cyy + CATHH, shelfH = 0;
+      catLays.forEach((L) => {
+        if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; rowY += shelfH + _METLAY.GAPY; shelfH = 0; }
+        L.x0 = cx; L.y0 = rowY; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
+      });
+      cyy = rowY + shelfH + _METLAY.GAPY + 22;   // 밴드 간 여유(+22 — 밴드 하단 패딩 시각 분리)
+    });
+    // 카테고리 무소속(terms 클러스터 등)은 마지막 밴드 아래 단일 흐름으로.
+    { let cx = 0, rowY = cyy, shelfH = 0;
+      layouts.forEach((L) => {
+        if (catInfo.inCat.has(L.id)) return;
+        if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; rowY += shelfH + _METLAY.GAPY; shelfH = 0; }
+        L.x0 = cx; L.y0 = rowY; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
+      }); }
+  }
   // graph-freeplace: 사용자 드래그 클러스터 offset 을 packing 결과에 가산(렌더 위치만 — 폭 누적/행 배정엔 미개입).
   //   L.x0/L.y0 가 카드·테이블·컬럼·장식·combo 의 공통 기준이라, 여기서 가산하면 클러스터 전체가 coherent 하게
   //   이동하고 펼침/접기 rebuild 후에도 유지된다(자유 배치 persistence — ADR-004 결정론 배치 회귀 복원).
@@ -4223,8 +4332,49 @@ function _metaG6Build() {
   });
   const combos = [], nodes = [], edges = [];
   _metaGraph.firstElementId = null;
+  // graph-category(§55 A): 카테고리 밴드(CAT: 배경 + CATH: 헤더 칩 + CATX: 접기) 방출 — 박스 기하는
+  //   멤버 클러스터의 **최종 배치(clusterOffset 반영) bbox + 패딩** 파생(sim-group GB bbox 동형 —
+  //   클러스터 이동에 반응형). 접힌 카테고리는 헤더 밴드만. zIndex: 배경 CAT_BG(-1, combo 아래) /
+  //   헤더 GROUP_HD / 컨트롤 CTL. 헤더 드래그 = 카테고리 리지드 이동(멤버 clusterOffset 일괄 누적).
+  if (catInfo.enabled) {
+    const layById2 = new Map(layouts.map((L) => [L.id, L]));
+    catInfo.cats.forEach((cat, ci) => {
+      const vis = cat.members.map((id) => layById2.get(id)).filter((L) => L && !L.catHidden);
+      let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+      vis.forEach((L) => {
+        left = Math.min(left, L.x0); top = Math.min(top, L.y0);
+        right = Math.max(right, L.x0 + L.w); bottom = Math.max(bottom, L.y0 + L.h);
+      });
+      const PADX2 = 22, PADB2 = 18;
+      let bl, bt, bw, bh;
+      if (vis.length && isFinite(left)) {
+        bl = left - PADX2; bt = top - CATHH; bw = (right + PADX2) - bl; bh = (bottom + PADB2) - bt;
+      } else {   // 접힘(또는 전 멤버 미방출) — 헤더 밴드만
+        bl = -PADX2; bt = cat.bandY || 0; bw = 720; bh = CATHH;
+      }
+      const tint = _META_GROUP_TINTS[ci % _META_GROUP_TINTS.length];
+      nodes.push({ id: "CAT:" + cat.key, type: _METtype,
+        data: { kind: "cat-bg", cat: cat.key },
+        style: { x: bl + bw / 2, y: bt + bh / 2, size: [bw, bh], radius: 14,
+          fill: tint.bg, fillOpacity: 0.38, stroke: tint.bd, lineWidth: 1.6, lineDash: [7, 4],
+          zIndex: _METZ.CAT_BG, cursor: "move" } });
+      const hdText = `🗂 ${cat.label} · ${cat.members.length} DB`;
+      const hdW = Math.min(Math.max(80, Math.round(hdText.length * 8.2) + 22), Math.max(120, bw - 46));
+      nodes.push({ id: "CATH:" + cat.key, type: _METtype,
+        data: { kind: "cat-hd", cat: cat.key, label: cat.label },
+        style: { x: bl + 12 + hdW / 2, y: bt + 16, size: [hdW, 22], radius: 11,
+          fill: tint.hd, stroke: tint.bd, lineWidth: 1.2, zIndex: _METZ.GROUP_HD, cursor: "move",
+          labelText: hdText, labelFill: "#1d2635", labelFontSize: 12, labelFontWeight: 700,
+          labelPlacement: "center" } });
+      nodes.push({ id: "CATX:" + cat.key, type: _METtype,
+        data: { label: cat.collapsed ? "+" : "−", kind: "cat-ctl", cat: cat.key },
+        style: Object.assign(_metaCtlStyle(bl + bw - 16, bt + 16), { size: [18, 18],
+          labelText: cat.collapsed ? "+" : "−", labelFontSize: 15 }) });
+    });
+  }
   layouts.forEach((L) => {
     const { id, g } = L;
+    if (L.catHidden) return;   // graph-category(§55 A): 접힌 카테고리 멤버 — 클러스터 전체 미방출
     if (!_metaGraph.firstElementId) _metaGraph.firstElementId = (L.kind === "card") ? ("SC:" + id) : id;
     if (L.kind === "card") {
       // id 는 "SC:" 네임스페이스 — 같은 스키마 key 가 펼침 시 combo id 로 쓰이므로, 동일 id 의
@@ -4711,6 +4861,12 @@ function _metaGraphResetModel() {
   _metaGraph.tableOrder.clear();
   _metaGraph.groupOrder.clear();       // feature-0016 §49(R1): simgroups 순서 안정화도 fresh load 시 리셋.
   _metaGraph.groupTableOrder.clear();
+  // graph-category(§55 A): 카테고리 순서·접기·인덱스 리셋(다른 스코프 = 다른 카테고리).
+  //   schemaProducts 는 schemaTotals 동형의 scope 캐시라 보존 — loadRoots 가 재구축.
+  _metaGraph.catOrder = [];
+  _metaGraph.catCollapsed.clear();
+  _metaGraph.catMembers.clear();
+  _metaGraph.catLabelOf.clear();
   _metaGraph._comboDragStart = null;
 }
 
@@ -4796,6 +4952,15 @@ async function _metaGraphLoadRoots() {
   //   '전체 테이블 개수' 소스로 쓰이므로 여기서만 갱신하고 resetModel 에서는 보존한다.
   _metaGraph.schemaTotals = new Map();
   _metaGraph.nodes.forEach((sn) => { if (sn.label === "Schema" && typeof sn.table_count === "number") _metaGraph.schemaTotals.set(sn.key, sn.table_count); });
+  // graph-category(§55 A): 스키마(DB)명 → 제품 매핑 재구축(scope 캐시 — schemaTotals 동형).
+  //   key 는 lowercase(WebProductDatabases.SchemaName 과 그래프 스키마명의 대소문자 편차 방어).
+  _metaGraph.schemaProducts = new Map();
+  if (data.schema_products && typeof data.schema_products === "object") {
+    Object.keys(data.schema_products).forEach((sch) => {
+      const lst = data.schema_products[sch];
+      if (Array.isArray(lst) && lst.length) _metaGraph.schemaProducts.set(String(sch).toLowerCase(), lst);
+    });
+  }
   _metaGraphFillJump(schemaKeys);
   let truncNote = data.truncated ? " · 스키마 표시 상한 도달(나머지는 검색)" : "";
   // 스키마 1개짜리 데이터소스는 카드 한 장이 무의미 — 즉시 펼쳐 기존 즉시성 유지(silent, 부모 seq 상속).
@@ -4868,6 +5033,14 @@ function _metaElementDragEnable(e) {
   // group-interact(§50): 그룹 접기 컨트롤(GX)만 이동 불가(클릭 전용). GB(배경)/GH(헤더)는 그룹 리지드 드래그 허용
   //   (예전 graph-simgroups 의 GB/GH 이동 차단을 해제 — 카테고리 그룹 drag&drop 위치 이동 복원).
   if (id && String(id).startsWith("GX:")) return false;
+  if (id && String(id).startsWith("CATX:")) return false;   // graph-category(§55 A): 카테고리 접기 ctl = 클릭 전용
+  // graph-category(§55 A, 패널 MAJOR fix): **접힌** 카테고리 밴드는 드래그 불가 — 밴드 위치가 packing
+  //   (bandY) 파생이라 rebuild 로 스냅백하는데, 숨겨진 멤버 클러스터에는 clusterOffset 델타가 조용히
+  //   누적돼 펼쳤을 때 멤버만 이동해 있는 모순이 생긴다(클릭 전용 = 상세/펼침 유도).
+  if (id && (String(id).startsWith("CATH:") || String(id).startsWith("CAT:"))) {
+    const ck = String(id).slice(String(id).startsWith("CATH:") ? 5 : 4);
+    if (_metaGraph.catCollapsed.has(ck)) return false;
+  }
   return !_metaIsMiddleDrag(e);
 }
 
@@ -4908,6 +5081,33 @@ function _metaNodeDragStart(e) {
   if (String(id).startsWith("SC:")) {
     try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id.slice(3), curId: id, x: p[0], y: p[1] }; } catch (_) {}
     _metaDragZBoost([id]);   // graph-zorder(§52): 내장 frontElement(영구 max+1) 대신 결정론 부스트 — dragend 복원
+    return;
+  }
+  // graph-category(§55 A): 제품 카테고리 밴드(CAT: 배경 여백 / CATH: 헤더 칩) 드래그 = 카테고리 통째
+  //   리지드 이동 — 멤버 클러스터(펼친 combo 는 자식 전체, 접힌 카드는 SC:) + 밴드 장식을 고정 오프셋으로
+  //   묶는다(그룹 리지드 기전 재사용). dragend 에 멤버별 clusterOffset 일괄 누적(신규 offset 계층 불요).
+  if (String(id).startsWith("CATH:") || String(id).startsWith("CAT:")) {
+    const ck = String(id).slice(String(id).startsWith("CATH:") ? 5 : 4);
+    let ap; try { ap = g.getElementPosition(id); } catch (_) { return; }
+    if (!ap) return;
+    const rendered = _metaGraph.renderedIds;
+    const clusters = _metaGraph.catMembers.get(ck) || [];
+    const ids = ["CAT:" + ck, "CATH:" + ck, "CATX:" + ck];
+    clusters.forEach((cid) => {
+      ids.push(cid, "SC:" + cid);   // 펼친 combo / 접힌 카드 — rendered 필터가 실재만 남긴다
+      _metaComboMemberIds(cid).forEach((mid) => ids.push(mid));
+    });
+    const offs = [];
+    const seenOff = new Set();
+    ids.forEach((eid) => {
+      if (eid === id || seenOff.has(eid)) return;
+      seenOff.add(eid);
+      if (rendered && !rendered.has(eid)) return;
+      let dp; try { dp = g.getElementPosition(eid); } catch (_) { return; }
+      if (dp) offs.push({ id: eid, ox: dp[0] - ap[0], oy: dp[1] - ap[1] });
+    });
+    _metaGraph._drag = { id, offs, cat: ck, catClusters: clusters.slice(), startX: ap[0], startY: ap[1] };
+    _metaDragZBoost([id].concat(offs.map((o) => o.id)));
     return;
   }
   // group-interact(§50): sim-group(GB 배경/GH 헤더) 드래그 = 카테고리 그룹 통째 리지드 이동.
@@ -4988,6 +5188,29 @@ function _metaNodeDragEnd(e) {
   //   nodePos(절대좌표)도 같은 델타로 시프트(freeplace clusterOffset MAJOR fix 동형 — 개별 배치 노드가
   //   그룹 이동에서 분리되지 않게). 시각 위치는 이미 drag-element+리지드 핸들러가 최종화 — 즉시 rebuild 불요.
   const gd = _metaGraph._drag;
+  // graph-category(§55 A): 카테고리 밴드 리지드 드래그 종료 → 델타를 **멤버 클러스터별 clusterOffset 에
+  //   일괄 누적**(신규 offset 계층 없이 기존 ① 계층 재사용) + 소속 nodePos 동반 시프트(freeplace MAJOR
+  //   fix 동형) → rebuild 로 CAT 박스 재파생(반응형).
+  if (gd && gd.cat) {
+    _metaGraph._drag = null;
+    let p; try { p = g && g.getElementPosition(gd.id); } catch (_) { p = null; }
+    if (p && isFinite(p[0]) && isFinite(p[1])) {
+      const dx = p[0] - gd.startX, dy = p[1] - gd.startY;
+      if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
+        const cset = new Set(gd.catClusters || []);
+        cset.forEach((cid) => {
+          const prev = _metaGraph.clusterOffset.get(cid) || { dx: 0, dy: 0 };
+          _metaGraph.clusterOffset.set(cid, { dx: prev.dx + dx, dy: prev.dy + dy });
+        });
+        _metaGraph.nodePos.forEach((pos, nid) => {
+          const n = _metaGraph.nodes.get(nid);
+          if (n && cset.has(_metaSchemaComboOf(n))) { pos[0] += dx; pos[1] += dy; }
+        });
+        _metaG6Apply(false);
+      }
+    }
+    return;
+  }
   if (gd && gd.group) {
     _metaGraph._drag = null;
     let p; try { p = g && g.getElementPosition(gd.id); } catch (_) { p = null; }
@@ -5006,7 +5229,7 @@ function _metaNodeDragEnd(e) {
   if (id && String(id).startsWith("SC:")) { _metaClusterDragCommit(); _metaGraph._drag = null; return; }
   // 그 외 이동 가능 노드(테이블·컬럼·용어)의 최종 절대위치를 nodePos 에 기록 → rebuild 후에도 유지.
   //   컨트롤/장식(X:/XS:/GB:/GH:/GX:)은 제외. 테이블은 위치만 기록하고, 종속(컬럼·"X:")은 build 가 테이블 델타로 시프트.
-  if (g && id && !/^(X:|XS:|XR:|RP:|GB:|GH:|GX:)/.test(String(id))) {   // §54⑤: 루틴 ctl/파라미터도 장식 — nodePos 오염 방지
+  if (g && id && !/^(X:|XS:|XR:|RP:|GB:|GH:|GX:|CAT:|CATH:|CATX:)/.test(String(id))) {   // §54⑤·§55: 장식/밴드 — nodePos 오염 방지
     // 컬럼은 소속 테이블에서 재파생(build)되므로 개별 위치를 기록하지 않는다(dead 엔트리·재빌드 snap-back 방지, 리뷰 NIT).
     const _n = _metaGraph.nodes.get(id);
     if (!_n || _n.label !== "Column") {
@@ -5118,6 +5341,8 @@ function _metaInitGraph() {
     const p = _metaCtxPoint(e);
     // graph-initview: 스키마 카드("SC:")·펼친 스키마 접기 ctl("XS:") 우클릭 → 스키마 전용 메뉴로 귀속.
     //   이 prefix 를 안 벗기면 _metaGraphCtxForNode 가 모델(SC: 없는 순수 key)에서 노드를 못 찾아 무반응.
+    // graph-category(§55 A): 카테고리 밴드 요소 우클릭 — 노드 메뉴 부적합(합성 밴드) → 메뉴 숨김(무반응 방지 후속 여지).
+    if (/^CAT(H|X)?:/.test(String(id))) { _metaGraphCtxHide(); return; }
     if (String(id).startsWith("GB:") || String(id).startsWith("GH:") || String(id).startsWith("GX:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스/헤더/컨트롤(GX 포함, group-interact §50 REV) 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
       const gk = String(id).slice(3), sep = gk.indexOf("\u0001");
       if (sep >= 0) _metaGraphCtxForSchema(gk.slice(0, sep), p.x, p.y); else _metaGraphCtxHide();
@@ -5253,6 +5478,19 @@ function _metaInitGraph() {
 function _metaGraphOnNodeClick(e) {
   const id = e && e.target && e.target.id;
   if (!id) return;
+  // graph-category(§55 A): 카테고리 밴드 접기/펼치기(CATX) + 밴드/헤더 클릭 = 카테고리 상세.
+  if (String(id).startsWith("CATX:")) {
+    const ck = String(id).slice(5);
+    if (_metaGraph.catCollapsed.has(ck)) _metaGraph.catCollapsed.delete(ck);
+    else _metaGraph.catCollapsed.add(ck);
+    _metaG6Apply(false);
+    return;
+  }
+  if (String(id).startsWith("CATH:") || String(id).startsWith("CAT:")) {
+    const ck = String(id).slice(String(id).startsWith("CATH:") ? 5 : 4);
+    _metaGraphShowCategoryDetail(ck);
+    return;
+  }
   // group-interact(§50): 카테고리 그룹 접기/펼치기 토글(GX 컨트롤 — GB/GH 보다 먼저 판정). groupCollapsed 는
   //   사용자 지속 의도로 보존하고, 검색 시 매칭 그룹만 build 가 강제 펼침(결과 가시).
   if (String(id).startsWith("GX:")) {
@@ -6818,6 +7056,17 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   });
   // review MAJOR-1: 앵커 측 조인 컬럼 표기 — 컬럼 단위 FK 에서 "어느 컬럼으로 JOIN 되는가"를 행에 노출.
   //   out: `colname → 상대` · in: `상대 → colname`. 같은 대상으로 가는 FK 2개도 로컬 컬럼으로 구분된다.
+  // graph-category(§55 B): 관계 큐레이션 버튼 — REFERENCES 행에 신뢰 승격(✓)·파단(✕). 권한
+  //   metadata.table.manage(kb.ingest.manual 묶음 함의) 보유자만. 크로스-DS candidate 는 프로브 검증이
+  //   불가해 이 승격이 유일한 신뢰 경로(ADR-019) — trusted 는 승격 버튼 생략(파단만).
+  const canCurate = (typeof can === "function") && (can("metadata.table.manage") || can("kb.ingest.manual"));
+  const curateBtns = (e) => {
+    if (!canCurate || e.type !== "REFERENCES" || !e.source || !e.target) return "";
+    const b = [];
+    if (e.status !== "trusted") b.push(`<button type="button" class="amgr-cur amgr-cur-trust" data-cur="trust" data-src="${esc(e.source)}" data-tgt="${esc(e.target)}" title="이 관계를 신뢰(trusted)로 승격 — AI 답변 컨텍스트에 주입됩니다">✓ 신뢰</button>`);
+    b.push(`<button type="button" class="amgr-cur amgr-cur-break" data-cur="break" data-src="${esc(e.source)}" data-tgt="${esc(e.target)}" title="이 관계를 파단(broken) 처리 — 그래프·AI 컨텍스트에서 제거됩니다">✕ 파단</button>`);
+    return `<span class="amgr-curate">${b.join("")}</span>`;
+  };
   const row = (e, otherKey, selfEndKey, arrow) => {
     const on = byKey[otherKey] || {};
     const selfEnd = (selfEndKey && selfEndKey !== key) ? (byKey[selfEndKey] || null) : null;
@@ -6830,7 +7079,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
       : `${counter}${localName ? ` <span class="amgr-arrow">→</span> <code>${esc(localName)}</code>` : ""}`;
     return `<li class="amgr-row" data-key="${esc(otherKey)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span>${main}` +
-      `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}</div>` +
+      `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}${curateBtns(e)}</div>` +
       `<div class="amgr-sub admin-meta-graph-muted">${esc(typeKo)}${srcKo ? " · 근거: " + esc(srcKo) : ""}${on.description ? " — " + esc(on.description) : ""}</div></li>`;
   };
   // review: 60/30건 절단 시 "… 외 N건" 명시(헤더 카운트와 행 수의 침묵 불일치 방지).
@@ -6881,11 +7130,82 @@ function _metaGraphRenderRelations(key, nodes, edges) {
     // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
     _metaGraphBindRelRow(r, r.getAttribute("data-key"));
   });
+  // graph-category(§55 B): 큐레이션 버튼 — 행 클릭(카메라 이동)과 분리(stopPropagation).
+  el.querySelectorAll("button.amgr-cur").forEach((b) => {
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation(); ev.preventDefault();
+      _metaGraphCurateRelation(b.getAttribute("data-cur"), b.getAttribute("data-src"), b.getAttribute("data-tgt"), key);
+    });
+  });
   const eb = document.getElementById("amgrExpandBtn");
   if (eb) eb.addEventListener("click", () => _metaGraphExpand(key));
   const db = document.getElementById("amgrDetailBtn");
   if (db) db.addEventListener("click", () => _metaGraphShowDetail(key));
   _metaGraphStatus(`관계 상세: ${self.name || key} — 참조함 ${out.length} · 참조받음 ${inn.length} · 용어 ${terms.length}`);
+}
+
+// graph-category(§55 A): 카테고리(제품) 밴드 상세 — 제품 정보 + 멤버 스키마(DB) 목록. 행 클릭 = 그 스키마
+//   클러스터 상세로 이동. 다제품 스키마는 전 제품을 뱃지로 노출(배정은 대표 제품 — 헤더와 정합).
+function _metaGraphShowCategoryDetail(catKey) {
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
+  if (!el || !catKey) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const label = _metaGraph.catLabelOf.get(catKey) || (catKey === "PC:__none__" ? "미분류" : catKey);
+  const members = _metaGraph.catMembers.get(catKey) || [];
+  const parts = [];
+  parts.push(`<div class="admin-meta-graph-card">`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:#8a5a1f">카테고리</span><strong>🗂 ${esc(label)}</strong> <span class="admin-meta-graph-relbadge">제품 카테고리</span></div>`);
+  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">${catKey === "PC:__none__"
+    ? "어느 제품의 접근 DB 로도 등록되지 않은 스키마(DB) 묶음입니다. 관리 콘솔 > 제품 > 접근 DB 에 등록하면 해당 제품 카테고리로 배치됩니다."
+    : "이 제품의 접근 DB 로 등록된 스키마(DB) 묶음입니다. 헤더 칩 드래그로 밴드 전체 이동, − / + 로 접기/펼치기."}</p>`);
+  parts.push(`<div class="admin-meta-graph-sec"><h4>스키마(DB) ${members.length}개</h4><ul class="amgr-list">`);
+  members.forEach((cid) => {
+    const nm = _metaComboName(cid);
+    const plist = _metaGraph.schemaProducts.get(String(nm).toLowerCase()) || [];
+    const extras = plist.length > 1 ? ` <span class="admin-meta-graph-muted">(제품 ${plist.map((p) => esc(p.name)).join(", ")})</span>` : "";
+    const cnt = _metaGraph.schemaTotals.get(cid);
+    parts.push(`<li class="amgr-row" data-cid="${esc(cid)}" role="button" tabindex="0" title="클릭 = 이 스키마 클러스터 상세">` +
+      `<div class="amgr-main"><span class="amgr-arrow">▦</span><strong>${esc(nm)}</strong>${typeof cnt === "number" ? ` <span class="admin-meta-graph-muted">· 테이블 ${cnt}</span>` : ""}${extras}</div></li>`);
+  });
+  parts.push(`</ul></div></div>`);
+  el.innerHTML = parts.join("");
+  el.querySelectorAll(".amgr-row[data-cid]").forEach((r) => {
+    r.addEventListener("click", () => _metaGraphShowClusterDetailById(r.getAttribute("data-cid")));
+  });
+  _metaGraphStatus(`카테고리: ${label} — 스키마 ${members.length}개`);
+}
+
+// graph-category(§55 B): 관계 사람 큐레이션 — 신뢰 승격(trust) / 파단(break). 관계 상세 패널의 행 버튼이
+//   호출한다. 성공 시 모델 로컬 반영(trust=status 승급 · break=엣지 제거) + 재렌더. 크로스-DS 후보는
+//   프로브 검증 불가라 이 승격이 유일한 신뢰 경로(→ AI 컨텍스트 주입 대상 전환).
+async function _metaGraphCurateRelation(action, src, tgt, anchorKey) {
+  if (!src || !tgt || (action !== "trust" && action !== "break")) return;
+  const label = action === "trust" ? "신뢰 승격" : "파단";
+  const nmOf = (k) => { const n = _metaGraph.nodes.get(k); return (n && (n.fqn || n.name)) || k; };
+  if (!window.confirm(`이 관계를 ${label} 처리할까요?\n\n${nmOf(src)}\n→ ${nmOf(tgt)}\n\n${action === "trust"
+    ? "신뢰(trusted)로 승격되어 AI 답변 컨텍스트에 주입됩니다."
+    : "파단(broken) 처리되어 그래프와 AI 컨텍스트에서 제거됩니다."}`)) return;
+  _metaGraphStatus(`관계 ${label} 처리 중…`);
+  try {
+    await apiFetch(`/api/admin/metadata/graph/relationship/curate`, {
+      method: "POST", body: JSON.stringify({ action, src, tgt }) });
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || `관계 ${label} 실패`);
+    return;
+  }
+  // 모델 로컬 반영(다음 로드/이웃확장과도 멱등 — 서버 SSOT 가 정본).
+  const toDelete = [];
+  _metaGraph.edges.forEach((e, eid) => {
+    if (!e || e.type !== "REFERENCES") return;
+    const fwd = (e.source === src && e.target === tgt), rev = (e.source === tgt && e.target === src);
+    if (!fwd && !rev) return;
+    if (action === "trust") { e.status = "trusted"; e.weight = 1.0; }
+    else toDelete.push(eid);
+  });
+  toDelete.forEach((eid) => _metaGraph.edges.delete(eid));
+  await _metaG6Apply(false);
+  _metaGraphStatus(`관계 ${label} 완료`);
+  if (anchorKey) _metaGraphShowRelations(anchorKey);   // 패널 재렌더(뱃지/버튼 갱신)
 }
 
 // graph-funcproc(ADR-017, REQ ⑤): 'AI 능동 분석' hover 지침 popover — 툴팁형 입력창.
@@ -9666,6 +9986,9 @@ adminState.settings = {
 
 const SETTINGS_PANEL_MOUNTERS = {
   "global-prompt": mountGlobalPromptPanel,
+  // feature-0018: 실행 타임아웃 / 모델별 추론 예산 — 각자 전용 UI, 레거시 admin-settings-panel 정합.
+  "runtime-timeouts": mountRuntimeTimeoutsPanel,
+  "model-thinking-budgets": mountModelThinkingBudgetsPanel,
 };
 
 function mountSettingsSections() {
@@ -9773,6 +10096,326 @@ function mountGlobalPromptPanel() {
     if (ta) ta.disabled = true;
   }
   mount.appendChild(editor);
+}
+
+/* ── feature-0018: 런타임 설정 (실행 타임아웃 · 모델별 추론 예산) ────────────
+ * 백엔드: GET/PUT/DELETE /api/admin/settings/runtime (shared.runtime_settings 레지스트리).
+ * 값은 서버에서 스펙 [min,max] 범위로 검증되며, 저장 시 즉시(live)/재배포(restart) 반영된다.
+ * 두 패널 모두 read 게이트 system.runtime.read, write 게이트 system.runtime.write. */
+
+const RUNTIME_SETTINGS_ENDPOINT = "/api/admin/settings/runtime";
+const RS_RESET = "__reset__";  // pending sentinel — 기본값 복원(DELETE) 예약
+const RS_MODEL_PREFIX = "model_thinking_budget:";
+const RS_REASONING_PREFIX = "reasoning_budget:";  // 추론 강도별 예산도 '모델 추론 예산' 패널 소속
+
+function rsApplyBadge(applyMode) {
+  const span = document.createElement("span");
+  if (applyMode === "live") {
+    span.className = "admin-badge rs-badge";
+    span.textContent = "즉시 반영";
+    span.title = "저장 즉시 실행 경로에 반영됩니다(최대 수십 초 캐시).";
+  } else {
+    span.className = "admin-badge admin-badge--warn rs-badge";
+    span.textContent = "재배포 반영";
+    span.title = "저장은 즉시 되지만, 실제 적용은 다음 배포/재시작 시점입니다(저수준 값 안전).";
+  }
+  return span;
+}
+
+function rsUnitSuffix(unit) {
+  if (unit === "초") return "초";
+  if (unit === "밀리초") return "ms";
+  if (unit === "tokens") return "tokens";
+  return unit || "";
+}
+
+async function rsSaveValue(key, value) {
+  return apiFetch(RUNTIME_SETTINGS_ENDPOINT, {
+    method: "PUT",
+    body: JSON.stringify({ key, value }),
+  });
+}
+
+async function rsResetValue(key) {
+  return apiFetch(`${RUNTIME_SETTINGS_ENDPOINT}?key=${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+}
+
+// 값 편집·기본값복원을 commit-bar("모두 적용")로 예약한다 — 즉시 API 호출 없음(계정·시스템
+// 프롬프트와 동일한 콘솔 네이티브 패턴). value: 정수(PUT) | RS_RESET(DELETE) | null(예약 취소).
+function setRuntimeSettingPending(key, value) {
+  if (!adminState.pending.runtimeSettings) adminState.pending.runtimeSettings = new Map();
+  if (value === null) adminState.pending.runtimeSettings.delete(key);
+  else adminState.pending.runtimeSettings.set(key, { key, value });
+  refreshPendingUI();
+}
+
+// 현재 mount 된 런타임 설정 패널을 재렌더(모두 적용/취소 후 서버 상태 재반영).
+function rerenderRuntimeSettingsPanels() {
+  const t = $("runtimeTimeoutsMount");
+  if (t && adminState.settings.mountedPanels.has("runtime-timeouts")) renderRuntimeTimeouts(t);
+  const m = $("modelThinkingBudgetsMount");
+  if (m && adminState.settings.mountedPanels.has("model-thinking-budgets")) renderModelThinkingBudgets(m);
+}
+
+// 정렬 grid 행(라벨+배지 / 설명 / 입력+단위 / 상태·기본값). timeouts·models 공용.
+// 저장/초기화 버튼 없음 — 편집은 pending 예약, 적용은 하단 commit-bar.
+function buildRuntimeSettingRow(item, canWrite, opts) {
+  // emptyWhenNoOverride: 모델 예산 전용 — override 없으면 런타임이 값을 주입하지 않으므로(effective=
+  // 표시 기준일 뿐 실제 적용값 아님) input 을 비우고 placeholder 로 기본값 표시(무변경 예약 트랩 방지).
+  const emptyWhenNoOverride = !!(opts && opts.emptyWhenNoOverride);
+  const unknownBaseline = emptyWhenNoOverride && item.default_known === false;
+  const baseLabel = unknownBaseline ? "모델 기본값" : `${item.default}${rsUnitSuffix(item.unit)}`;
+  const noOverrideEmpty = emptyWhenNoOverride && !item.has_override;
+
+  const row = document.createElement("div");
+  row.className = "rs-row";
+  row.dataset.settingKey = item.key;
+
+  const label = document.createElement("div");
+  label.className = "rs-row-label";
+  const name = document.createElement("span");
+  name.textContent = item.label || item.model || item.key;
+  label.append(name, rsApplyBadge(item.apply_mode));
+
+  const desc = document.createElement("div");
+  desc.className = "rs-row-desc";
+  desc.textContent = (emptyWhenNoOverride && !item.default_known)
+    ? "미설정 시 모델 config 의 기본 thinking 을 그대로 사용합니다."
+    : (item.description || "");
+  desc.title = desc.textContent;
+
+  const control = document.createElement("div");
+  control.className = "rs-row-control";
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "rs-input";
+  input.min = String(item.minimum);
+  input.max = String(item.maximum);
+  input.step = "1";
+  input.setAttribute("aria-label", `${item.label || item.model || item.key} 값`);
+  if (noOverrideEmpty) { input.value = ""; input.placeholder = String(item.default); }
+  else input.value = String(item.effective);
+  if (!canWrite) input.disabled = true;
+  const unit = document.createElement("span");
+  unit.className = "rs-unit";
+  unit.textContent = rsUnitSuffix(item.unit);
+  control.append(input, unit);
+
+  const meta = document.createElement("div");
+  meta.className = "rs-row-meta";
+  const status = document.createElement("span");
+  status.className = "rs-status";
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "rs-reset";
+  resetBtn.textContent = "기본값";
+  resetBtn.title = `${baseLabel}(으)로 되돌립니다.`;
+  meta.append(status, resetBtn);
+
+  row.append(label, control, desc, meta);
+
+  function refresh() {
+    input.classList.remove("is-invalid");
+    const pend = adminState.pending.runtimeSettings.get(item.key);
+    row.classList.toggle("is-pending", !!pend);
+    if (pend && pend.value === RS_RESET) {
+      status.textContent = "미저장 · 기본값 복원"; status.className = "rs-status is-pending";
+      resetBtn.textContent = "되돌리기"; resetBtn.hidden = !canWrite;
+    } else if (pend) {
+      status.textContent = "미저장 변경"; status.className = "rs-status is-pending";
+      resetBtn.textContent = "되돌리기"; resetBtn.hidden = !canWrite;
+    } else if (item.has_override) {
+      status.textContent = `사용자 지정 · 기본 ${baseLabel}`; status.className = "rs-status is-override";
+      resetBtn.textContent = "기본값"; resetBtn.hidden = !canWrite;
+    } else {
+      status.textContent = `기본값 ${baseLabel}`; status.className = "rs-status";
+      resetBtn.hidden = true;
+    }
+  }
+  refresh();
+
+  if (canWrite) {
+    input.addEventListener("change", () => {
+      const raw = input.value.trim();
+      if (raw === "") {
+        // 빈 값 → 예약 취소(원상). 모델 no-override 는 빈 값이 정상 상태.
+        setRuntimeSettingPending(item.key, null);
+        input.value = noOverrideEmpty ? "" : String(item.effective);
+        refresh();
+        return;
+      }
+      const val = Math.trunc(Number(raw));
+      if (!Number.isFinite(val)) {
+        setRuntimeSettingPending(item.key, null);
+        input.value = noOverrideEmpty ? "" : String(item.effective);
+        refresh();
+        return;
+      }
+      if (val < item.minimum || val > item.maximum) {
+        // 범위 밖: 예약하지 않고 인라인 경고(서버 검증 실패 예방).
+        setRuntimeSettingPending(item.key, null);
+        input.classList.add("is-invalid");
+        status.textContent = `허용 범위 ${item.minimum}~${item.maximum}`;
+        status.className = "rs-status is-invalid";
+        row.classList.remove("is-pending");
+        // pending 이 해제됐으므로 reset 버튼 라벨을 no-pending 상태(기본값)로 되돌린다(라벨/동작 불일치 방지).
+        resetBtn.textContent = "기본값";
+        resetBtn.hidden = !(canWrite && item.has_override);
+        return;
+      }
+      // 입력값이 서버 현재상태(effective)와 같으면 예약 불필요 — has_override 무관.
+      // no-override 도 effective==기본값이므로 재-핀(override==default) 트랩을 함께 방지.
+      if (val === item.effective) {
+        setRuntimeSettingPending(item.key, null);
+      } else {
+        setRuntimeSettingPending(item.key, val);
+      }
+      refresh();
+    });
+    resetBtn.addEventListener("click", () => {
+      const pend = adminState.pending.runtimeSettings.get(item.key);
+      if (pend) {
+        // 되돌리기: 예약 취소 + 서버 상태 표시 복원.
+        setRuntimeSettingPending(item.key, null);
+        input.value = noOverrideEmpty ? "" : String(item.effective);
+        refresh();
+        return;
+      }
+      if (!item.has_override) return;  // 복원할 override 없음
+      // 기본값 복원(DELETE) 예약.
+      setRuntimeSettingPending(item.key, RS_RESET);
+      if (emptyWhenNoOverride) { input.value = ""; input.placeholder = String(item.default); }
+      else input.value = String(item.default);
+      refresh();
+    });
+  } else {
+    resetBtn.hidden = true;
+  }
+  return row;
+}
+
+function rsErrorPlaceholder(mount, msg) {
+  mount.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "admin-detail-empty";
+  div.textContent = msg;
+  mount.appendChild(div);
+}
+
+async function mountRuntimeTimeoutsPanel() {
+  const mount = $("runtimeTimeoutsMount");
+  if (!mount) return;
+  if (!can("system.runtime.read")) {
+    rsErrorPlaceholder(mount, "런타임 설정 조회 권한이 없습니다.");
+    return;
+  }
+  await renderRuntimeTimeouts(mount);
+}
+
+async function renderRuntimeTimeouts(mount) {
+  rsErrorPlaceholder(mount, "불러오는 중…");
+  let data;
+  try {
+    data = await apiFetch(RUNTIME_SETTINGS_ENDPOINT);
+  } catch (err) {
+    rsErrorPlaceholder(mount, `조회 실패: ${err.message || err}`);
+    return;
+  }
+  const canWrite = can("system.runtime.write");
+  const items = Array.isArray(data.timeouts) ? data.timeouts : [];
+  if (!items.length) { rsErrorPlaceholder(mount, "등록된 타임아웃 항목이 없습니다."); return; }
+  mount.innerHTML = "";
+  const panel = document.createElement("div");
+  panel.className = "rs-panel";
+  // category 순서 보존 그룹핑.
+  const order = [];
+  const byCat = new Map();
+  for (const it of items) {
+    const cat = it.category || "기타";
+    if (!byCat.has(cat)) { byCat.set(cat, []); order.push(cat); }
+    byCat.get(cat).push(it);
+  }
+  for (const cat of order) {
+    const group = document.createElement("div");
+    group.className = "rs-group";
+    const gtitle = document.createElement("div");
+    gtitle.className = "rs-group-title";
+    gtitle.textContent = cat;
+    const list = document.createElement("div");
+    list.className = "rs-list";
+    for (const it of byCat.get(cat)) list.appendChild(buildRuntimeSettingRow(it, canWrite));
+    group.append(gtitle, list);
+    panel.appendChild(group);
+  }
+  if (!canWrite) {
+    const note = document.createElement("div");
+    note.className = "rs-readonly-note";
+    note.textContent = "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
+    panel.appendChild(note);
+  }
+  mount.appendChild(panel);
+}
+
+async function mountModelThinkingBudgetsPanel() {
+  const mount = $("modelThinkingBudgetsMount");
+  if (!mount) return;
+  if (!can("system.runtime.read")) {
+    rsErrorPlaceholder(mount, "런타임 설정 조회 권한이 없습니다.");
+    return;
+  }
+  await renderModelThinkingBudgets(mount);
+}
+
+async function renderModelThinkingBudgets(mount) {
+  rsErrorPlaceholder(mount, "불러오는 중…");
+  let data;
+  try {
+    data = await apiFetch(RUNTIME_SETTINGS_ENDPOINT);
+  } catch (err) {
+    rsErrorPlaceholder(mount, `조회 실패: ${err.message || err}`);
+    return;
+  }
+  const canWrite = can("system.runtime.write");
+  const models = Array.isArray(data.model_thinking_budgets) ? data.model_thinking_budgets : [];
+  const levels = Array.isArray(data.reasoning_budgets) ? data.reasoning_budgets : [];
+  if (!models.length && !levels.length) {
+    rsErrorPlaceholder(mount, "extended thinking 을 지원하는 모델이 카탈로그에 없습니다.");
+    return;
+  }
+  mount.innerHTML = "";
+  const panel = document.createElement("div");
+  panel.className = "rs-panel";
+
+  // 헬퍼: (제목, 항목[], opts) → rs-group
+  const addGroup = (titleText, rows, opts) => {
+    if (!rows.length) return;
+    const group = document.createElement("div");
+    group.className = "rs-group";
+    const gtitle = document.createElement("div");
+    gtitle.className = "rs-group-title";
+    gtitle.textContent = titleText;
+    const list = document.createElement("div");
+    list.className = "rs-list";
+    for (const it of rows) list.appendChild(buildRuntimeSettingRow(it, canWrite, opts));
+    group.append(gtitle, list);
+    panel.appendChild(group);
+  };
+
+  // ① 모델별 예산: override 없으면 미주입(input 비움).
+  addGroup("모델별 thinking budget (tokens)", models, { emptyWhenNoOverride: true });
+  // ② 추론 강도별 예산: 대화에서 '낮음/높음/매우 높음' 선택 시 적용되는 요청 단위 budget.
+  //    기본값이 실제 적용값이라 pre-fill(타임아웃과 동일) — '일반'은 no-override 라 목록에 없음.
+  addGroup("추론 강도별 예산 (tokens)", levels, undefined);
+
+  const note = document.createElement("div");
+  note.className = "rs-readonly-note";
+  note.textContent = canWrite
+    ? "모델별 예산은 비워두면 서버 기본 thinking 을 사용합니다. 추론 강도별 예산은 대화 화면에서 사용자가 그 강도를 고른 요청에 적용됩니다('일반'은 모델 기본값 유지). 대화별 강도 선택이 모델별 예산보다 우선합니다."
+    : "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
+  panel.appendChild(note);
+  mount.appendChild(panel);
 }
 
 /* ── Audit pane (TASK-0073 Phase C) ─────────────────────────────────── */
@@ -12210,6 +12853,32 @@ function refreshPendingUI() {
   const ruleDirty = productDbRuleDirtyCount();
   if (ruleDirty) detail.push(`제품 규칙 ${ruleDirty}`);
   if (adminState.pending.systemPrompts.size) detail.push(`프롬프트 ${adminState.pending.systemPrompts.size}`);
+  // feature-0018 UX: 런타임 설정 pending 요약 + 설정 pane 좌측 nav row dirty 표시.
+  const rsPending = adminState.pending.runtimeSettings || new Map();
+  if (rsPending.size) detail.push(`설정 ${rsPending.size}`);
+  let rsTimeoutDirty = false, rsModelDirty = false;
+  rsPending.forEach((_v, k) => {
+    if (String(k).startsWith(RS_MODEL_PREFIX) || String(k).startsWith(RS_REASONING_PREFIX)) rsModelDirty = true;
+    else rsTimeoutDirty = true;
+  });
+  // 설정 nav row: `.has-pending` 테두리 + `.admin-pending-dot`(계정·역할 row 와 일관 — 색 외 신호).
+  const markSettingsNav = (tab, dirty) => {
+    const btn = document.querySelector(`#settingsList [data-settings-tab="${tab}"]`);
+    if (!btn) return;
+    btn.classList.toggle("has-pending", dirty);
+    const nameEl = btn.querySelector(".admin-list-row-name");
+    if (!nameEl) return;
+    let dot = nameEl.parentElement.querySelector(".admin-pending-dot");
+    if (!dot) {
+      dot = document.createElement("span");
+      dot.className = "admin-pending-dot";
+      dot.title = "미저장 변경 있음";
+      nameEl.after(dot);
+    }
+    dot.textContent = dirty ? "•" : "";
+  };
+  markSettingsNav("runtime-timeouts", rsTimeoutDirty);
+  markSettingsNav("model-thinking-budgets", rsModelDirty);
   $("commitBarDetail").textContent = detail.length ? `(${detail.join(" · ")})` : "";
 
   // Dashboard auto-refresh if visible
@@ -12225,6 +12894,7 @@ async function applyAllPending() {
   const productMetaEntries = Array.from(adminState.pending.productMeta.entries());
   const productDbEntries = Array.from(adminState.pending.productDatabases.entries());
   const systemPromptEntries = Array.from(adminState.pending.systemPrompts.entries());
+  const runtimeSettingEntries = Array.from((adminState.pending.runtimeSettings || new Map()).entries());
   // TASK-0239: datasource 바인딩 — desired≠baseline 인 제품만(실제 변경).
   const datasourceEntries = Array.from(adminState.pending.productDatasources.entries())
     .filter(([, e]) => e && !_dsBindEqual(e.baseline, e.desired));
@@ -12241,6 +12911,7 @@ async function applyAllPending() {
     && !datasourceEntries.length
     && !dbRuleEntries.length
     && !systemPromptEntries.length
+    && !runtimeSettingEntries.length
   ) return;
 
   const failures = [];
@@ -12504,6 +13175,18 @@ async function applyAllPending() {
     }
   }
 
+  // feature-0018 UX: 런타임 설정(실행 타임아웃·모델 추론 예산) — 값 PUT / 기본값복원 DELETE.
+  for (const [key, entry] of runtimeSettingEntries) {
+    try {
+      if (entry.value === RS_RESET) await rsResetValue(key);
+      else await rsSaveValue(key, entry.value);
+      adminState.pending.runtimeSettings.delete(key);
+      ok += 1;
+    } catch (error) {
+      failures.push({ kind: "runtime_setting", id: key, error });
+    }
+  }
+
   applyBtn.textContent = "모두 적용";
 
   if (failures.length) {
@@ -12518,6 +13201,11 @@ async function applyAllPending() {
   } catch (error) {
     showToast(error.message || "새로고침 실패", true);
   }
+  // feature-0018 UX: 설정 패널은 lazy-mount 라 loadAdminData 로 갱신되지 않는다 — 런타임 설정이
+  // 실제 적용됐을 때만 명시 재렌더(불필요한 재-fetch 방지).
+  if (runtimeSettingEntries.length && typeof rerenderRuntimeSettingsPanels === "function") {
+    rerenderRuntimeSettingsPanels();
+  }
 }
 
 function cancelAllPending() {
@@ -12531,6 +13219,8 @@ function cancelAllPending() {
   adminState.pending.productDatasources.clear();
   adminState.pending.productDbRules.clear();
   adminState.pending.systemPrompts.clear();
+  const hadRuntimePending = !!(adminState.pending.runtimeSettings && adminState.pending.runtimeSettings.size);
+  if (adminState.pending.runtimeSettings) adminState.pending.runtimeSettings.clear();
   adminState.productDbDraft.clear();
   if (adminState.selectedRoleId && String(adminState.selectedRoleId).startsWith("new:")) {
     adminState.selectedRoleId = null;
@@ -12541,6 +13231,8 @@ function cancelAllPending() {
   renderRoleList();
   renderRoleDetail();
   renderProductDetail();
+  // feature-0018 UX: 런타임 설정 예약이 있었을 때만 패널 원상 복원(불필요한 재-fetch 방지).
+  if (hadRuntimePending && typeof rerenderRuntimeSettingsPanels === "function") rerenderRuntimeSettingsPanels();
   showToast("변경사항 취소됨");
 }
 
