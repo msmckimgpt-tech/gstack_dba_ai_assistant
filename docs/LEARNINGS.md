@@ -290,6 +290,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - 진단 원칙: db_failed 가 크면 **먼저 사유 분포를 본다** — RC5 가 cycle summary 에 `db_failed_perm`/`db_failed_circuit`/`db_failed_other` 를 노출하고, `agent_runtime.datasource_health.last_scan_outcome`(+`last_error_tag`)에 datasource 별 분류가 영속된다. `perm_failed` 만 GRANT 대상, `circuit_open`/`timeout` 은 네트워크/인프라(터널·방화벽·원격 서버 상태)이며 코드·DB 권한으로 해결 불가. 사유 telemetry 가 없던 게 이 오진을 가능케 한 관측성 공백이었고(RC5 가 메움), 배포 즉시 진실이 드러났다.
 - Applies to: insight 커버리지/완료율 정체 진단 전반. "스캔 실패 = GRANT 문제" 로 점프하지 말고 perm vs network 를 먼저 가른다.
 
+### LRN-20260707-0001 — 라벨 달린 설정 목록 UI 는 단일용 위젯 재사용 말고 "정렬 grid + 콘솔 commit-bar" 를 쓴다; UI 완성도·완결성은 PB-0008 시각검증이 유일한 게이트다
+- Source: feature-0018 runtime-settings 관리 콘솔 설정 (2026-07-06~07, TASK-20260706T094937·audit-hotfix·UX 재설계). 사용자 확인: "가시성이 대폭 개선됨".
+- verified: true
+- Pattern (권장): N개의 라벨-값 설정 항목을 나열하는 pane 은 **정렬 grid 행 + 카테고리 섹션 + 콘솔 네이티브 commit-bar** 로 만든다. 구체적으로 (a) 각 행 = 2×2 grid (`[라벨+반영배지] / [설명] // [값입력+단위] / [상태·기본값]`) 로 열 정렬(admin-kv/usage-table 계열), (b) canonical `.admin-field` focus-ring 입력·`.admin-badge`·`.admin-detail-section-title` 재사용, (c) 저장은 **행별 버튼이 아니라** 편집→`adminState.pending.*` 예약→하단 "모두 적용" 배치(계정·시스템프롬프트와 동일). 색-only 신호 금지(pending 은 `.admin-pending-dot`+텍스트 병행), 설명은 1줄 ellipsis 대신 2줄 노출.
+- Anti-pattern (실수): 다른 맥락용 위젯(`.admin-quota-editor` — LLM 한도 편집기)을 라벨 목록에 재사용했더니 입력창이 라벨과 미정렬로 우상단 부유·설명 잘림(`고품ᯤ`)·행마다 저장/초기화 버튼 난립으로 "세련되지 못한" UI 가 됐다. 위젯은 만들어진 맥락 밖에서 재사용하면 정렬/밀도/상호작용이 깨진다 — 재사용 전 그 위젯의 grid/layout 가정을 확인한다.
+- Meta (process): 이 두 결함(그리고 별개의 "unknown audit action" write-path 버그)은 **단위 테스트·API 테스트·§18.8 3-렌즈 적대 코드리뷰가 모두 통과시킨 뒤 PB-0008 실 Windows 브라우저 검증에서야** 드러났다 — (1) audit action 미등록은 라이브 저장 시에만, (2) 시각 완성도는 코드로 판정 불가. **UI 는 "코드리뷰+단위테스트 통과" 로 완료 선언하지 않는다.** 렌더 결과·정렬·상호작용 e2e(편집→pending→적용→DB roundtrip) 는 §15.4.1 PB-0008 이 유일한 완료 게이트. 재설계 자체도 적대 디자인/UX 렌즈가 배포 전 2 MAJOR(반응형 붕괴·no-override 재-핀 트랩)를 잡았다.
+- Applies to: 관리 콘솔의 모든 설정/목록 pane 신규·개편. 디자인 착수 전 기존 디자인 토큰/정돈된 패턴을 매핑(subagent)하고, 완료 전 PB-0008 before/after + 상호작용 e2e 로 검증한다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존

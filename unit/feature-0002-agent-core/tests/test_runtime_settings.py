@@ -248,3 +248,36 @@ def test_config_applies_restart_override_at_import(tmp_path):
             pytest.skip(f"config deps unavailable: {out.stderr.strip().splitlines()[-1:]}" )
         raise AssertionError(f"config restart-apply failed:\nSTDOUT={out.stdout}\nSTDERR={out.stderr}")
     assert "OK" in out.stdout
+
+
+# ── feature-0018 reasoning-budgets: 추론 강도별 예산 ──────────────────────────
+def test_reasoning_budget_specs_low_high_max_normal_excluded(snap):
+    reg = rs.serialize_registry({})
+    rb = reg["reasoning_budgets"]
+    assert {r["level"] for r in rb} == {"low", "high", "max"}  # normal(no-override) 제외
+    by = {r["level"]: r for r in rb}
+    assert by["low"]["default"] == 2000 and by["high"]["default"] == 10000 and by["max"]["default"] == 16000
+    assert all(r["apply_mode"] == "live" and r["unit"] == "tokens" for r in rb)
+
+
+def test_reasoning_budget_override_none_without_setting(snap):
+    assert rs.reasoning_budget_override("high") is None
+    assert rs.reasoning_budget_override("normal") is None   # 미등록(B1)
+    assert rs.reasoning_budget_override("") is None
+
+
+def test_reasoning_budget_override_applies_and_clamps(snap):
+    snap({"reasoning_budget:high": 12000})
+    assert rs.reasoning_budget_override("high") == 12000
+    assert rs.reasoning_budget_override("HIGH") == 12000  # 대소문자 정규화
+    snap({"reasoning_budget:high": 10 ** 6})
+    assert rs.reasoning_budget_override("high") == 16000   # max cap
+    snap({"reasoning_budget:high": 10})
+    assert rs.reasoning_budget_override("high") == 1024     # min(Anthropic)
+
+
+def test_reasoning_budget_validate_and_reset_registered(snap):
+    ok, val, _ = rs.validate_value("reasoning_budget:low", "2500"); assert ok and val == 2500
+    ok, _, _ = rs.validate_value("reasoning_budget:low", "500"); assert not ok  # < min 1024
+    assert rs.spec_for("reasoning_budget:max") is not None
+    assert rs.spec_for("reasoning_budget:normal") is None    # normal 미등록

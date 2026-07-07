@@ -54,6 +54,7 @@ __all__ = [
     "startup_int",
     "effective_value",
     "model_thinking_budget_override",
+    "reasoning_budget_override",
     "validate_value",
     "serialize_registry",
     "snapshot_path",
@@ -61,8 +62,10 @@ __all__ = [
     "write_snapshot",
     "invalidate_cache",
     "MODEL_BUDGET_KEY_PREFIX",
+    "REASONING_BUDGET_KEY_PREFIX",
     "GROUP_TIMEOUT",
     "GROUP_MODEL_BUDGET",
+    "GROUP_REASONING_BUDGET",
 ]
 
 GROUP_TIMEOUT = "timeout"
@@ -353,6 +356,51 @@ _MODEL_BUDGET_FALLBACK_DEFAULT = 8000
 _MODEL_BUDGET_MIN = 1024
 _MODEL_BUDGET_MAX = 16000
 
+# ── 추론 강도별 예산 레지스트리 (feature-0018 reasoning-budgets) ─────────────
+# 대화 화면 '추론 강도' 선택(낮음/일반/높음/매우 높음) 중 명시 레벨(low/high/max)의 요청 단위
+# thinking budget 을 관리자가 조정. 표시 기본값 = model_catalog.thinking_budget_for_level(level)
+# (현행 low2000/high10000/max16000). '일반(normal)'은 의도적 no-override(B1)라 설정 대상이 아니다
+# (thinking_budget_for_level 이 None → specs 생성 시 제외). min/max 는 모델 예산과 동일 안전 범위.
+GROUP_REASONING_BUDGET = "reasoning_budget"
+REASONING_BUDGET_KEY_PREFIX = "reasoning_budget:"
+_REASONING_BUDGET_MIN = 1024
+_REASONING_BUDGET_MAX = 16000
+
+
+def _reasoning_budget_key(level: str) -> str:
+    return f"{REASONING_BUDGET_KEY_PREFIX}{level}"
+
+
+def _reasoning_budget_specs() -> tuple[dict[str, Any], ...]:
+    """추론 강도 레벨(normal 제외)마다 예산 스펙 1개. 카탈로그 REASONING_LEVELS 순회로 자동 확장."""
+    specs: list[dict[str, Any]] = []
+    labels = {
+        str(o.get("value")): str(o.get("label") or o.get("value"))
+        for o in model_catalog.REASONING_LEVEL_OPTIONS
+    }
+    for level in model_catalog.REASONING_LEVELS:
+        default = model_catalog.thinking_budget_for_level(level)
+        if default is None:
+            continue  # normal/미상 = no-override(B1) → 설정 대상 아님
+        label = labels.get(level, level)
+        specs.append(
+            {
+                "key": _reasoning_budget_key(level),
+                "group": GROUP_REASONING_BUDGET,
+                "category": "추론 강도별 예산",
+                "level": level,
+                "label": label,
+                "description": f"대화 화면에서 추론 강도 '{label}' 선택 시 적용되는 요청 단위 thinking budget.",
+                "unit": "tokens",
+                "default": int(default),
+                "minimum": _REASONING_BUDGET_MIN,
+                "maximum": _REASONING_BUDGET_MAX,
+                "apply_mode": "live",
+                "default_known": True,
+            }
+        )
+    return tuple(specs)
+
 
 def _model_budget_key(model: str) -> str:
     return f"{MODEL_BUDGET_KEY_PREFIX}{model}"
@@ -409,7 +457,7 @@ def list_specs() -> tuple[dict[str, Any], ...]:
     """전체 설정 스펙(타임아웃 + 모델 예산). 프로세스 1회 계산 후 메모이즈."""
     global _SPECS_CACHE
     if _SPECS_CACHE is None:
-        _SPECS_CACHE = _timeout_specs() + _model_budget_specs()
+        _SPECS_CACHE = _timeout_specs() + _model_budget_specs() + _reasoning_budget_specs()
     return _SPECS_CACHE
 
 
@@ -635,6 +683,28 @@ def model_thinking_budget_override(model: str | None) -> int | None:
     return _clamp(coerced, spec)
 
 
+def reasoning_budget_override(level: str | None) -> int | None:
+    """해당 추론 강도 레벨(low/high/max)에 관리자가 설정한 budget override(정수, clamp). 없으면 None.
+
+    None 이면 호출측(_call_llm)은 model_catalog 기본 budget(thinking_budget_for_level)을 그대로 쓴다.
+    'normal' 등 미등록 레벨은 spec 이 없어 항상 None(B1 — 일반은 no-override 유지).
+    """
+    name = str(level or "").strip().lower()
+    if not name:
+        return None
+    key = _reasoning_budget_key(name)
+    spec = spec_for(key)
+    if spec is None:
+        return None
+    overrides = _live_overrides()
+    if key not in overrides:
+        return None
+    coerced = _coerce_int(overrides.get(key))
+    if coerced is None:
+        return None
+    return _clamp(coerced, spec)
+
+
 def effective_value(key: str) -> int:
     """현재 유효값(override 있으면 그 값, 없으면 default) — API 표시용."""
     return _resolve_int(key, _live_overrides())
@@ -666,6 +736,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
     ov = _live_overrides() if overrides is None else {str(k): v for k, v in dict(overrides).items()}
     timeouts: list[dict[str, Any]] = []
     models: list[dict[str, Any]] = []
+    reasoning: list[dict[str, Any]] = []
     for spec in list_specs():
         key = str(spec["key"])
         has_override = key in ov
@@ -692,11 +763,16 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
             row["model"] = spec.get("model")
             row["default_known"] = bool(spec.get("default_known"))
             models.append(row)
+        elif spec.get("group") == GROUP_REASONING_BUDGET:
+            row["level"] = spec.get("level")
+            row["default_known"] = bool(spec.get("default_known"))
+            reasoning.append(row)
         else:
             timeouts.append(row)
     return {
         "timeouts": timeouts,
         "model_thinking_budgets": models,
+        "reasoning_budgets": reasoning,
         "meta": {
             "snapshot_path": snapshot_path(),
             "disabled": _disabled(),

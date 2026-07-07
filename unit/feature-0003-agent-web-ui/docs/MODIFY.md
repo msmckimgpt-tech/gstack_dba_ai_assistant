@@ -5457,3 +5457,11 @@ source_of_truth: true
 - Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 에 POST-DEPLOY PB-0008 PASS(before/after) append + TASK 완료 체크. 배포 PR #607→da3f57db.
 - 검증 요지: 두 패널 정렬 grid·설명 완전노출·commit-bar 편집/적용/복원 e2e(DB override roundtrip)·pageerror 0. 사용자 "세련도 부족" 피드백 해소 확인. 증적 artifacts/feature-0018-runtime-settings/{current,after}-{timeout,model}-panel.png.
 - Cross-ref: CHG-20260707T120000-runtime-settings-ux(재설계) · TEST/REVIEW 동일 slug.
+
+## CHG-20260707T130000-reasoning-budgets (TASK-20260707T130000-reasoning-budgets — 추론 강도별 예산 설정 + UI 교훈, Major §12.3 — feature-0003 web/UI + cross-unit feature-0002·shared)
+- Date: 2026-07-07. feature-0018 후속: 모델별 예산에 이어 추론 강도(낮음/높음/매우 높음)별 요청 단위 thinking budget 을 관리 콘솔에서 조정 가능하게. '일반'은 no-override(B1)라 설정 대상 제외.
+- `shared/runtime_settings.py`: reasoning_budget 레지스트리/resolver/serialize(상세 shared/docs/MODIFY 동일 slug). `unit/feature-0002-agent-core/src/agent_core.py`: `_call_llm` precedence 확장(레벨 override→기본→모델 override; 상세 feature-0002/docs/MODIFY 동일 slug).
+- `static/admin.js`: `모델별 추론 예산` 패널을 2 섹션(모델별 + 추론 강도별)으로 확장, 추론 행은 pre-fill(기본값=적용값). nav-dirty 분류 RS_REASONING_PREFIX 추가. `static/admin.html` cache-buster admin.js bump(styles.css 무변경).
+- `docs/LEARNINGS.md`: LRN-20260707-0001(UI 가시성 개선 교훈, verified).
+- 영향: 백엔드 엔드포인트/RBAC/스키마/audit 무변경(기존 PUT/DELETE·validate·audit 재사용, 신규 키만 등록). override 미설정 시 전 경로 기존 동작 동치(B1 유지).
+- Cross-ref: CHG-20260706T094937-runtime-settings·-ux / feature-0002·shared MODIFY 동일 slug.

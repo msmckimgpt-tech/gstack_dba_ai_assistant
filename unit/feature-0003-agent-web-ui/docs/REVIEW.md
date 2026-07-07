@@ -4542,3 +4542,16 @@ source_of_truth: true
 ## REV-20260707T121500-runtime-settings-ux-postverify [SKIPPED:doc-only-postverify] (런타임 설정 UI 재설계 POST-DEPLOY PB-0008 기록, 비-정책 doc-only)
 - Panel skip 사유(§18.8/§18.4): 선행 UX 재설계(REV-20260707T120000-runtime-settings-ux [SUBAGENT:design·ux] SHIP)의 배포 후 라이브 시각검증 결과를 TEST.md 에 기록할 뿐 코드/자산 무변경(doc-only). 검증 자체(실 Windows Chrome PB-0008 before/after + commit-bar e2e + DB override roundtrip)가 정본 증적.
 - Cross-ref: REV-20260707T120000-runtime-settings-ux · CHG-20260707T121500-runtime-settings-ux-postverify.
+
+## REV-20260707T130000-reasoning-budgets [SUBAGENT:backend·ux 1lens] (TASK-20260707T130000-reasoning-budgets — 추론 강도별 예산 설정 + UI 교훈, Major §12.3 — feature-0003 web/UI + cross-unit feature-0002·shared)
+- 요청(사용자): "① 가시성 개선 교훈 기록(LRN-20260707-0001 verified 반영) ② `설정 > 모델별 추론 예산`에 추론 강도별 예산 토큰값 설정 추가."
+- §18.8 dispatch(백엔드 precedence·API/RBAC·UI → backend·ux) **적대 렌즈 VERDICT SHIP** — 7개 벡터 정밀 검토, **BLOCKING/MAJOR/MINOR 0**:
+  - **B1 무회귀(확인)**: `thinking_budget_for_level('normal')→None` 이라 `_call_llm` 의 reasoning-override 분기(agent_core.py) 미진입 → 모델 override 분기로 낙하. `reasoning_budget:high` 는 'normal'/미지정 요청에 절대 주입 불가(test_reasoning_effort precedence 테스트로 고정).
+  - **precedence(확인)**: 명시 레벨이 reasoning 분기 선점 → `_think_budget` 비-None 이라 모델 override 분기 skip → 둘 다 설정 시 레벨이 모델보다 우선. override→12000, 미설정→기본 10000.
+  - **clamp 안전(확인)**: override 는 resolver+validate 로 [1024,16000], `_call_llm` 이 `min(budget, max_tokens-1024)` 재-clamp → 16000<agent 20000, 신규 max 노출 없음(기존 effort cap 과 동일).
+  - **serialize/endpoint(확인)**: `reasoning_budget:` vs `model_thinking_budget:` 키 startsWith 충돌 없음, 버킷 분리 정확. 기존 PUT/DELETE·validate_value·spec_for·audit 재사용(신규 로직 0). 프론트 `reasoning_budgets` 소비·빈 배열 graceful·pre-fill 정확(기본값이 실제 주입값).
+  - **워커 패리티(확인)**: `_payload_to_kwargs → run_agent → 동일 _call_llm` — 별도 extra_body 구성 경로 없음, 우회 없음.
+- **NIT 3(인지, 무해 — 미수정)**: ① reasoning row 의 `default_known` 은 프론트 미사용(모델 row 와 row shape 균일 유지 위해 보존) ② 테스트가 `_rs._cache['frozen']` 직접 리셋(기존 snap fixture 와 동일 패턴, 내부 테스트 한정) ③ 일부 테스트 `stmt; assert` one-liner. 모두 기능 무영향 — ship 후 정리 대상.
+- 양호점: 기본값을 `thinking_budget_for_level` 로 동적 read(하드코딩 drift 없음), `_reasoning_budget_specs` 가 REASONING_LEVELS 증감에 자동 확장·None 레벨 자동 제외, memoization 유효, 대소문자 정규화 정합.
+- 검증: 신규 테스트 +7(레지스트리 4 + _call_llm precedence 3) · **컨테이너 전체 스위트 RC=0** · 로컬 회귀 0. VISUAL 은 PB-0008 POST-DEPLOY(TEST.md §3).
+- Cross-ref: CHG/TASK/FUNCTION/TEST 동일 slug · LRN-20260707-0001 · 선행 REV-20260706T094937-runtime-settings·-ux.

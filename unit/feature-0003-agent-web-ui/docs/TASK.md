@@ -5297,3 +5297,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 ### TASK-20260707T121500-runtime-settings-ux-postverify — 런타임 설정 UI 재설계 POST-DEPLOY PB-0008 기록 (doc-only, 2026-07-07)
 - [x] UX 재설계(PR #607→da3f57db) 배포 후 실 Windows 브라우저 PB-0008 **PASS**: 정렬 grid 렌더(rs-row 22·6그룹·배지·구 quota-editor 0)·설명 잘림 해소·commit-bar 편집→pending→모두적용(DB override)→기본값복원(DB clean) e2e·모델 no-override input 비움·pageerror 0. before/after 증적.
 - [x] doc-only 기록(TEST/TASK/MODIFY/REVIEW) — 코드·자산 무변경.
+
+### TASK-20260707T130000-reasoning-budgets — 설정 > 모델별 추론 예산에 '추론 강도별 예산' 추가 + UI 교훈 기록 (Major §12.3 — feature-0003 web/UI + cross-unit feature-0002·shared, 2026-07-07)
+- 트리거(사용자): "① 가시성 개선 교훈 기록 ② `설정 > 모델별 추론 예산` 에서 각 추론 강도별 예산 토큰값도 설정 가능하게."
+- [x] 교훈: `docs/LEARNINGS.md` LRN-20260707-0001(pattern, verified) — quota-editor 재사용 안티패턴 → 정렬 grid+commit-bar, PB-0008 시각검증이 유닛/코드리뷰 놓친 결함(audit write-path·시각완성도) 포착.
+- [x] shared/runtime_settings.py: `reasoning_budget:{low,high,max}` 스펙(카탈로그 REASONING_LEVELS 순회, normal 제외=B1) + `reasoning_budget_override` resolver + serialize `reasoning_budgets` 버킷 + `__all__`. 기본값=`thinking_budget_for_level`(2000/10000/16000), min1024 max16000, live.
+- [x] agent_core.py `_call_llm`: precedence — 명시 레벨(low/high/max)이면 그 레벨 admin override(없으면 기본), '일반'이면 모델 override(B1: 레벨 예산 미적용). budget<max_tokens clamp 유지.
+- [x] admin.js: `renderModelThinkingBudgets` 가 2 섹션(모델별 + 추론 강도별) 렌더(rs-* 정렬 행, 추론은 pre-fill). nav-dirty 분류에 RS_REASONING_PREFIX. cache-buster admin.js `?v=20260707-reasoning-budgets`.
+- [x] 테스트: test_runtime_settings.py +4(스펙/override/clamp/validate) · test_reasoning_effort.py +3(_call_llm precedence: override>기본, no-override 기본, normal 무시+모델 override). 전체 로컬 회귀 0.
+- [ ] §18.8 적대 리뷰(backend/UX) → REVIEW REV.
+- [ ] verify-completion → commit → PR → merge → web 재배포 + **ask/insight-worker 재빌드**(_call_llm=워커 경로) → PB-0008 시각검증(추론 강도별 예산 섹션 렌더·편집/적용).

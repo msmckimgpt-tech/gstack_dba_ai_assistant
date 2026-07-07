@@ -2679,11 +2679,18 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # drop_params 가 제거하므로 애초에 넣지 않는다. budget 은 max_tokens(agent=20000)보다
     # 작게 캡(≤16000)돼 있어 Anthropic 제약(budget < max_tokens) 을 항상 만족한다.
     _think_budget = thinking_budget_for_level(reasoning_level)
+    if _think_budget is not None:
+        # feature-0018 reasoning-budgets: 명시 추론강도(low/high/max)일 때, 관리 콘솔
+        # (`시스템 > 설정 > 모델별 추론 예산 > 추론 강도별 예산`)에서 그 레벨에 설정한 budget override 를
+        # 적용(없으면 model_catalog 기본값 유지). '일반(normal)'은 thinking_budget_for_level 이 None →
+        # 이 분기 미진입 → 아래 model override 경로(B1 무회귀).
+        _lvl_override = _rts.reasoning_budget_override(reasoning_level)
+        if _lvl_override is not None:
+            _think_budget = _lvl_override
     if _think_budget is None:
-        # feature-0018: 사용자가 요청 단위 추론강도('일반'/미지정)를 안 골랐을 때, 관리 콘솔
-        # (`시스템 > 설정 > 모델별 추론 예산`)에서 이 모델에 설정한 thinking budget override 를
-        # 적용한다. override 미설정이면 None → 아래 조건 미충족 → 미주입 → 모델 config 기본
-        # thinking 유지(B1 무회귀). 명시 추론강도(low/high/max)는 위에서 이미 우선한다.
+        # 사용자가 요청 단위 추론강도('일반'/미지정)를 안 골랐을 때, 관리 콘솔에서 이 모델에 설정한
+        # thinking budget override 를 적용한다. override 미설정이면 None → 아래 조건 미충족 →
+        # 미주입 → 모델 config 기본 thinking 유지(B1 무회귀).
         _think_budget = _rts.model_thinking_budget_override(model)
     if _think_budget is not None and model_supports_thinking(model):
         # Anthropic 제약(budget_tokens < max_tokens) 안전 보장 — 주입 budget 을 이 요청의
