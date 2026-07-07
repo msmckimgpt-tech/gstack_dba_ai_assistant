@@ -5477,3 +5477,12 @@ source_of_truth: true
 - 검증: 신규 코어 14 + web 경계 9 테스트 PASS · 기존 enum-list 계약(source)·route 골든(197→200) 갱신 · 호스트 전체 1581 passed · 컨테이너 make test 유일 실패(routine_dbanalysis, postgres-replica 미해석)는 main 격리에서도 동일 = 사전존재 env(본 변경 무관) · ruff PASS. PB-0008 Windows-browser= POST-DEPLOY(정적 baked).
 - Files: `alembic/versions/20260707_0039_enum_feedback.py`(feature-0002), `modules/kb_glossary.py`·`modules/llm.py`·`agent_core.py`(feature-0002), `shared/config.py`, `app.py`·`routers/admin_metadata.py`·`static/{admin.html,admin.js,styles.css}`(feature-0003), 테스트 `test_kb_enum_feedback.py`·`test_metadata_enum_feedback.py`·`test_metadata_glossary_enum.py`·`route_snapshot_p5b.json`, docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
 - Cross-ref: REVIEW.md REV-20260707T051054-kb-candidate-adoption · TASK-20260707-kb-candidate-adoption · feature-0002 REPORT(2026-07-07)
+
+## CHG-20260707-metadata-console-redesign (TASK-20260707-metadata-console-redesign — 메타데이터 콘솔 IA 통합 + 5서브뷰 디자인 폴리시, Major §12.3 — feature-0003 web/UI 단독)
+- 변경 요지: 직전 채택 인박스 배포 후 실사용 피드백 반영 — 최상위 `채택 인박스`·`샘플 검수` 탭이 메타데이터 서브뷰와 겹쳐, **2차 보기를 서브탭 파라미터화**해 각 사전 하위로 통합하고 5서브뷰 디자인을 이전 교훈 기반으로 폴리시. **UI 단독**(admin.html/admin.js/styles.css) — 백엔드/라우터/스키마/RBAC 정의 무변경(enum-feedback·sample-feedback API·`kb.enum.curate`/`kb.sample.curate` 권한 유지).
+- **구조**: `_METADATA_REVIEW` config + `viewBySub` 상태 + `_metaSyncViews`(#metadataViews 동적 버튼) + `_metaIsReview` 로 glossary 하드코딩 2차 보기를 일반화. 채택 인박스 제거(탭/pane/JS블록/CSS/init/perm), ENUM 후보 → `ENUM 코드사전 > {목록|검토 큐}`, 샘플 검수 → `샘플쿼리 > {목록|검수 큐}`(`loadSampleReview`/`renderSampleReview` #metadataList 재타깃), 최상위 샘플검수 탭 제거. glossary+enum 큐 통합(`loadFeedbackQueue`/`renderFeedbackQueue(kind)`).
+- **디자인(감사 Top 10)**: `--surface-2` 토큰·rich empty+skeleton·enums/columns 카드 그룹핑·행 카드 기하·title↔body 위계·폼 grid+인라인검증·SQL 프리뷰·필터바·배지 semantic 토큰(자동등록=neutral)·이모지 제거+KPI. cache-buster `?v=20260707-metadata-console-redesign`.
+- **범위 봉인**: 5서브뷰 CRUD/AI 자동완성/부트스트랩 로직 보존. 그래프 뷰·대시보드 등 타 pane 무변경. 백엔드 0.
+- 검증: §18.8 3렌즈 패널(BLOCKING 1·MAJOR 1·HIGH 1·MED 3·LOW 5 FIXED, XSS clean, ACCEPT 1) · node --check OK · 제거 심볼 grep-0 · route 골든 불변 · 호스트 1637 passed(회귀 0) · CSS 균형. PB-0008 = POST-DEPLOY.
+- Files: `static/{admin.html,admin.js,styles.css}` + docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260707T064745-metadata-console-redesign · TASK-20260707-metadata-console-redesign

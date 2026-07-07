@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260707-graph-dataflow-tooltip" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260707-metadata-console-redesign" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -86,20 +86,11 @@
         <button type="button" class="admin-tab" data-admin-tab="metadata" id="adminTabMetadata" style="display:none">
           <span class="admin-tab-label">메타데이터</span>
         </button>
-        <!-- feature-0018-kb-candidate-adoption: 채택 인박스 — 대화에서 자동 수집된 용어/ENUM 후보를
-             신뢰도별로 한눈에 파악하고 채택/거부. 권한 kb.glossary.curate 또는 kb.enum.curate 중 하나면 노출. -->
-        <button type="button" class="admin-tab" data-admin-tab="adoption" id="adminTabAdoption" style="display:none">
-          <span class="admin-tab-label">채택 인박스</span>
-          <span class="admin-tab-count" id="adoptionTabCount" hidden></span>
-        </button>
         <!-- feature-0016 §45: 그래프 뷰 — 메타데이터에서 분리한 지식베이스 최상위 탭. metadata.graph.read(또는 kb.ingest.manual 함의) 게이트. -->
         <button type="button" class="admin-tab" data-admin-tab="graph" id="adminTabGraph" style="display:none">
           <span class="admin-tab-label">그래프 뷰</span>
         </button>
-        <!-- TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 샘플 검수 tab (kb.sample.curate 없으면 숨김) -->
-        <button type="button" class="admin-tab" data-admin-tab="sample-review" id="adminTabSampleReview" style="display:none">
-          <span class="admin-tab-label">샘플 검수</span>
-        </button>
+        <!-- 샘플 검수는 메타데이터 탭 > 샘플쿼리 > 샘플 검수 큐 2차 보기로 통합됨(독립 탭 제거). -->
 
         <!-- TASK-0095: 설정 tab — 전역 시스템 프롬프트 + 차후 운영 항목 확장 -->
         <div class="admin-tab-group-divider"></div>
@@ -599,20 +590,7 @@
            피드백 → 샘플쿼리 KB 환류 flywheel 검수 큐. 권한 kb.sample.curate. 사용자 답변
            피드백(👍/👎/"샘플 등록")으로 적재된 pending 항목을 검토해 KB(sample_queries)로
            승급(approve)하거나 거부(reject)한다. 승급은 명시 검수만(자동학습 금지). -->
-      <section class="admin-pane" data-admin-pane="sample-review">
-        <header class="admin-pane-head">
-          <div>
-            <div class="drawer-label">KB Curation</div>
-            <h2>샘플 검수</h2>
-          </div>
-          <div class="admin-pane-actions">
-            <span class="admin-list-count" id="sampleReviewCount" aria-live="polite"></span>
-            <button type="button" id="sampleReviewRefreshBtn" class="btn-secondary">새로고침</button>
-          </div>
-        </header>
-        <p class="admin-archive-detail-note">사용자가 답변에 남긴 피드백(👍/👎 · "샘플 등록")이 검수 대기 큐에 쌓입니다. 검토 후 <strong>승인(KB 등록)</strong>하면 해당 질문↔SQL 쌍이 샘플 쿼리(sample_queries)로 승급되어 향후 답변 정확도에 반영됩니다. <strong>거부</strong>하면 반영되지 않습니다. 생성 SQL 의 개인정보(PII)는 적재 시점에 자동 마스킹됩니다. 승급은 명시 검수만 가능합니다(자동학습 없음).</p>
-        <div class="admin-list" id="sampleReviewList" role="list" aria-label="샘플 검수 대기 목록"></div>
-      </section>
+      <!-- 샘플 검수 pane 은 메타데이터 탭 > 샘플쿼리 > 샘플 검수 큐 2차 보기로 통합됨(독립 pane 제거). -->
 
       <!-- TASK-20260624-item11-metadata-glossary-enum (ROADMAP dba-ai-nl2sql ITEM-11 MVP-1):
            메타데이터 거버넌스 — 용어사전(kb_glossary)/ENUM 코드사전(enum_dictionary) CRUD. 권한 kb.ingest.manual.
@@ -624,20 +602,15 @@
             <h2>메타데이터</h2>
           </div>
           <div class="admin-pane-actions">
-            <label class="admin-meta-scope-label" for="metadataScopeSelect">데이터소스</label>
-            <select id="metadataScopeSelect" class="admin-meta-scope-select" aria-label="메타데이터 스코프(데이터소스)"></select>
-            <!-- 용어사전 역할 컨텍스트(0021, role-single-ui) — glossary 서브뷰에서만 admin.js 가 노출.
-                 역할 선택 UI 는 이것 하나뿐: 목록을 역할별로 좁히는 동시에 신규 용어의 등록 대상 역할을 결정한다(폼 select 폐기). -->
-            <label class="admin-meta-scope-label" for="metadataRoleFilter" id="metadataRoleFilterLabel" style="display:none" title="목록 필터 + 신규 용어 등록 대상 역할">역할</label>
-            <select id="metadataRoleFilter" class="admin-meta-scope-select" aria-label="용어사전 역할 — 목록 필터 및 신규 용어 등록 대상" title="목록 필터 + 신규 용어 등록 대상 역할" style="display:none"></select>
             <!-- list-detail(metadata-list-detail): '+ 새 항목' = 우측 상세에 생성 폼. 생성 비활성(samples)·검토 큐에선 admin.js 가 숨긴다. 카운트는 목록 head 로 이동. -->
-            <button type="button" id="metadataNewBtn" class="btn-primary admin-meta-new-btn">+ 새 항목</button>
+            <button type="button" id="metadataNewBtn" class="btn-primary admin-meta-new-btn">＋ 새 항목</button>
             <button type="button" id="metadataRefreshBtn" class="btn-secondary">새로고침</button>
           </div>
         </header>
         <!-- 거버넌스 안내문은 우측 상세 empty-state(#metadataDetailEmpty)로 이동 — 상단 압축(metadata-list-detail). -->
         <!-- TASK-20260624-item11-metadata-phase2: 5 서브뷰 — 용어/ENUM(MVP-1) + 테이블/컬럼/샘플(Phase 2).
-             테이블/컬럼/부트스트랩 = kb.ingest.manual, 샘플 = kb.sample.curate. admin.js 가 권한별로 서브탭을 숨긴다. -->
+             테이블/컬럼/부트스트랩 = kb.ingest.manual, 샘플 = kb.sample.curate. admin.js 가 권한별로 서브탭을 숨긴다.
+             primary nav = 밑줄 서브탭. -->
         <div class="admin-meta-subtabs" role="tablist" aria-label="메타데이터 서브뷰">
           <button type="button" class="admin-meta-subtab is-active" data-meta-subtab="glossary" role="tab">용어사전</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="enums" role="tab">ENUM 코드사전</button>
@@ -645,11 +618,18 @@
           <button type="button" class="admin-meta-subtab" data-meta-subtab="columns" role="tab">컬럼 설명</button>
           <button type="button" class="admin-meta-subtab" data-meta-subtab="samples" role="tab">샘플쿼리</button>
         </div>
-        <!-- 용어사전 2차 보기 탭(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). admin.js 가
-             용어사전 서브탭일 때만 노출 + 권한별로 보기 버튼을 숨긴다(목록=kb.ingest.manual, 검토 큐=kb.glossary.curate). -->
-        <div class="admin-meta-glossary-views" id="metadataGlossaryViews" role="tablist" aria-label="용어사전 보기" style="display:none">
-          <button type="button" class="admin-meta-gview is-active" data-glossary-view="list" role="tab">용어 목록</button>
-          <button type="button" class="admin-meta-gview" data-glossary-view="review" role="tab">용어 검토 큐 <span class="admin-meta-subtab-badge" id="glossaryReviewBadge" hidden></span></button>
+        <!-- 2차 보기 strip(secondary nav, 필형) — admin.js(_metaSyncViews)가 review 서브탭(용어사전/ENUM/샘플쿼리)에서만
+             동적으로 [목록 | 검토·검수 큐] 버튼을 생성한다. 권한별 게이트 + review 버튼 pending 배지. -->
+        <div class="admin-meta-views" id="metadataViews" role="tablist" aria-label="보기 전환" style="display:none"></div>
+        <!-- B8: 필터 바(데이터소스 스코프 + 용어사전 역할) — 서브탭/보기 strip 과 시각적으로 분리된 목록 필터 행.
+             역할 필터는 glossary 목록 보기에서만 admin.js 가 노출. metadataScopeSelect 는 그래프 pane 과 옵션·선택 동기화. -->
+        <div class="admin-meta-filter-bar">
+          <label class="admin-meta-scope-label" for="metadataScopeSelect">데이터소스</label>
+          <select id="metadataScopeSelect" class="admin-meta-scope-select" aria-label="메타데이터 스코프(데이터소스)"></select>
+          <!-- 용어사전 역할 컨텍스트(0021, role-single-ui) — glossary 서브뷰에서만 admin.js 가 노출.
+               역할 선택 UI 는 이것 하나뿐: 목록을 역할별로 좁히는 동시에 신규 용어의 등록 대상 역할을 결정한다(폼 select 폐기). -->
+          <label class="admin-meta-scope-label" for="metadataRoleFilter" id="metadataRoleFilterLabel" style="display:none" title="목록 필터 + 신규 용어 등록 대상 역할">역할</label>
+          <select id="metadataRoleFilter" class="admin-meta-scope-select" aria-label="용어사전 역할 — 목록 필터 및 신규 용어 등록 대상" title="목록 필터 + 신규 용어 등록 대상 역할" style="display:none"></select>
         </div>
         <!-- metadata-list-detail: 계정/제품/데이터소스/감사 패널과 동일한 2단 list-detail.
              좌측 = 항목 목록(검색·카운트·'스키마 골격 가져오기' 진입). 우측 #metadataDetail = 선택/신규 편집 폼
@@ -663,13 +643,15 @@
             </div>
             <div class="admin-list-head">
               <span class="admin-list-count" id="metadataCount" aria-live="polite"></span>
+              <!-- B10: 서브뷰별 KPI 요약(총 N건 · 미기재 M 등) — admin.js 가 채운다. -->
+              <span class="admin-meta-kpi" id="metadataKpi" aria-live="polite"></span>
             </div>
             <div class="admin-list admin-meta-list" id="metadataList" role="list" aria-label="메타데이터 항목 목록"></div>
           </div>
           <div class="admin-detail-col" id="metadataDetail">
             <!-- 미선택 안내 — 다른 카테고리 list-detail empty-state(.admin-detail-empty) 컨벤션 + 거버넌스 안내문 통합. -->
             <div class="admin-detail-empty" id="metadataDetailEmpty">
-              <p>왼쪽 목록에서 항목을 선택해 수정하거나, 우측 상단 <strong>+ 새 항목</strong>으로 추가하세요.</p>
+              <p>왼쪽 목록에서 항목을 선택해 수정하거나, 우측 상단 <strong>＋ 새 항목</strong>으로 추가하세요.</p>
               <p class="admin-meta-detail-note">용어사전(도메인 용어↔정의)·ENUM 코드사전(컬럼 코드↔라벨)·테이블/컬럼 설명·샘플쿼리를 데이터소스별로 관리합니다. 등록 내용은 질문/스키마 매칭 시 답변 프롬프트에 주입되어 정확도에 직접 반영됩니다. <strong>공용(common)</strong> 스코프는 모든 데이터소스에 적용됩니다. 부정확한 등록은 답변 품질을 저해할 수 있으니 신중히 관리하세요.</p>
             </div>
         <!-- 부트스트랩 패널 — 우측 상세 모드(metadata-list-detail). '스키마 골격 가져오기' 버튼으로 진입.
@@ -710,7 +692,7 @@
             </div>
             <div class="admin-meta-bootstrap-actions" id="metadataBootstrapSaveActions" style="display:none">
               <!-- AI 일괄 자동완성 — 빈 설명 입력란을 AI 가 채움(검토 후 저장). source='bootstrap' 저장 흐름 그대로. -->
-              <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataBootstrapAiBtn">✨ AI 로 설명 일괄 생성</button>
+              <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataBootstrapAiBtn">AI 로 설명 일괄 생성</button>
               <button type="button" class="btn-primary" id="metadataBootstrapSaveBtn">설명 입력분 저장</button>
               <span class="admin-meta-bootstrap-saveinfo" id="metadataBootstrapSaveInfo"></span>
             </div>
@@ -722,7 +704,7 @@
           <div class="admin-meta-form-actions">
             <button type="submit" class="btn-primary" id="metadataSubmitBtn">등록</button>
             <!-- AI 단건 자동완성 — 식별 필드 입력 후 클릭하면 설명/정의/라벨/질문을 AI 가 채움(검토 후 등록). -->
-            <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataSuggestBtn">✨ AI 자동완성</button>
+            <button type="button" class="btn-secondary admin-meta-ai-btn" id="metadataSuggestBtn">AI 자동완성</button>
             <button type="button" class="btn-secondary" id="metadataCancelBtn" style="display:none">취소</button>
           </div>
         </form>
@@ -730,43 +712,6 @@
         </div><!-- /.admin-list-detail -->
       </section>
 
-      <!-- feature-0018-kb-candidate-adoption: 채택 인박스 pane — 대화 자율수집 후보(용어사전
-           glossary_feedback + ENUM 코드사전 enum_feedback)를 신뢰도/상태별 그룹 카드로 통합 표시하고,
-           개별/일괄 채택·거부한다. 권한: 용어 후보=kb.glossary.curate, ENUM 후보=kb.enum.curate
-           (보유한 종류만 노출·조작). 렌더 어휘는 검토 큐(.admin-meta-row)+대시보드 카드(.dashboard-widget) 재사용. -->
-      <section class="admin-pane" data-admin-pane="adoption">
-        <header class="admin-pane-head">
-          <div>
-            <div class="drawer-label">Adoption Inbox</div>
-            <h2>채택 인박스</h2>
-          </div>
-          <div class="admin-pane-actions">
-            <button type="button" id="adoptionRefreshBtn" class="btn-secondary">새로고침</button>
-          </div>
-        </header>
-        <p class="admin-archive-detail-note">
-          대화 중 assistant 가 자동 제안한 <strong>용어사전</strong>·<strong>ENUM 코드사전</strong> 후보입니다.
-          <strong>채택</strong>하면 해당 사전에 반영되어 이후 답변 정확도에 사용되고, <strong>거부</strong>하면 제외됩니다(자동 등록분은 회수).
-          신뢰도가 높을수록 상단 그룹에 모입니다. 부정확한 채택은 답변 품질을 저해할 수 있으니 신중히 검토하세요.
-        </p>
-        <!-- 필터 툴바: 종류(전체/용어/ENUM) · 상태(검토 대기/자동 등록/…/전체). -->
-        <div class="admin-meta-review-bar" id="adoptionFilterBar">
-          <select id="adoptionKindFilter" class="admin-meta-scope-select" aria-label="후보 종류 필터">
-            <option value="all">전체 종류</option>
-            <option value="glossary">용어사전</option>
-            <option value="enum">ENUM 코드사전</option>
-          </select>
-          <select id="adoptionStatusFilter" class="admin-meta-scope-select" aria-label="후보 상태 필터">
-            <option value="pending">검토 대기</option>
-            <option value="auto_promoted">자동 등록</option>
-            <option value="promoted">채택됨</option>
-            <option value="rejected">거부됨</option>
-            <option value="all">전체</option>
-          </select>
-          <span class="admin-list-count" id="adoptionCount" aria-live="polite"></span>
-        </div>
-        <div class="dashboard-widgets admin-adoption-groups" id="adoptionGroups" aria-label="채택 후보 그룹"></div>
-      </section>
 
       <!-- feature-0016 §45: 그래프 뷰를 지식베이스 최상위 pane 으로 승격(메타데이터에서 분리).
            자체 pane-head + 데이터소스 스코프 select 를 두고, 서브탭 바 없이 캔버스가 pane 전체 높이를 사용한다. -->
@@ -1051,7 +996,7 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
-  <script src="/static/admin.js?v=20260707-graph-dataflow-tooltip"></script>
+  <script src="/static/admin.js?v=20260707-metadata-console-redesign"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260707-rn-0707"></script>

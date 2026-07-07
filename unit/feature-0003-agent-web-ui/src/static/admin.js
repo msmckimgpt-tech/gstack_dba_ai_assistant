@@ -2013,8 +2013,7 @@ const ADMIN_TAB_PERMISSIONS = {
   //   버튼 노출. cosmetic 이 아니라 enforcement 배선. key 는 data-admin-tab 과 동일한 "ai-ops"(hyphen).
   "ai-ops": ["console.aiops.read"],
   archives: ["conversation.archive.read.any"],
-  // TASK-20260623T090440-sample-feedback-curation (ROADMAP ITEM-03): 피드백→샘플쿼리 KB 환류 검수 큐.
-  "sample-review": ["kb.sample.curate"],
+  // 샘플 검수(kb.sample.curate)는 메타데이터 탭 > 샘플쿼리 > 샘플 검수 큐 2차 보기로 통합(독립 탭 제거).
   // TASK-20260624-item11-metadata-glossary-enum (ROADMAP ITEM-11 MVP-1): 용어/ENUM 메타데이터 CRUD.
   // scope-key-unify: samples 서브뷰는 kb.sample.curate 권한이라, 부모 탭 게이트도 OR 로 넓혀
   // kb.sample.curate 단독 보유 큐레이터가 메타데이터 탭→samples 서브뷰에 도달 가능하게 한다
@@ -2025,14 +2024,12 @@ const ADMIN_TAB_PERMISSIONS = {
   //   메타데이터 서브탭에서 빠졌으므로, graph.read 만 가진 역할이 서브탭 없는 빈 메타데이터 탭을 보지 않게 한다.
   metadata: ["kb.ingest.manual", "metadata.glossary.manage", "metadata.enum.manage",
              "metadata.table.manage", "metadata.column.manage",
-             "kb.sample.curate", "kb.glossary.curate"],
+             // kb.enum.curate: ENUM 검토 큐(2차보기) 진입 — kb.glossary.curate/kb.sample.curate 와 동형으로,
+             //   curate-only 사용자도 메타데이터 탭 → ENUM 검토 큐에 도달하도록 OR-array 에 포함.
+             "kb.sample.curate", "kb.glossary.curate", "kb.enum.curate"],
   // feature-0016 §45: 그래프 뷰 최상위 탭 — metadata.graph.read 게이트(kb.ingest.manual 묶음이 함의).
   //   **필수(fail-open 방지)** — canSeeTab() 은 매핑 없는 탭을 fail-open 하므로 누락 = 권한 없는 사용자에게 탭 노출.
   graph: ["metadata.graph.read", "kb.ingest.manual"],
-  // feature-0018-kb-candidate-adoption: 채택 인박스 — 용어(kb.glossary.curate) 또는 ENUM(kb.enum.curate)
-  //   후보 검수 권한 중 하나라도 있으면 노출. **필수(fail-open 방지)** — canSeeTab() 은 매핑 없는 탭을
-  //   fail-open 하므로 누락 = 권한 없는 사용자에게 탭 노출. 보유한 종류만 admin.js 가 fetch·조작한다.
-  adoption: ["kb.glossary.curate", "kb.enum.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2336,16 +2333,7 @@ function switchTab(tabName) {
     adminState.archivesInitialized = true;
     loadArchivedConversations();
   }
-  // TASK-20260623T090440-sample-feedback-curation: 샘플 검수 tab 첫 진입 시 큐 로드.
-  if (tabName === "sample-review" && !adminState.sampleReviewInitialized) {
-    adminState.sampleReviewInitialized = true;
-    loadSampleFeedback();
-  }
-  // feature-0018-kb-candidate-adoption: 채택 인박스 tab 첫 진입 시 용어+ENUM 후보 로드.
-  if (tabName === "adoption" && !adminState.adoptionInitialized) {
-    adminState.adoptionInitialized = true;
-    loadAdoptionInbox();
-  }
+  // 샘플 검수는 메타데이터 > 샘플쿼리 > 샘플 검수 큐 2차 보기로 통합됨(독립 탭 제거) — 별도 진입 훅 없음.
   // TASK-20260624-item11-metadata-glossary-enum: 메타데이터 tab 첫 진입 시 scope 드롭다운+목록 초기화.
   if (tabName === "metadata") {
     if (!adminState.metadataInitialized) {
@@ -2357,7 +2345,7 @@ function switchTab(tabName) {
       // feature-0016 §45(적대리뷰 D1 대칭): 그래프 탭에서 데이터소스를 바꿨으면 메타데이터 목록도 그 스코프로 재로드(값↔목록 불일치 방지).
       if ((adminState.metadata.loadedScope || "common") !== (adminState.metadata.scopeKey || "common")) loadMetadata();
       _metaApplySubtabPermissions();
-      _metaSyncGlossaryViews();        // 재진입 시 용어사전 2차 보기 strip 가시성·active 재동기화(권한 변동 방어).
+      _metaSyncViews();        // 재진입 시 용어사전 2차 보기 strip 가시성·active 재동기화(권한 변동 방어).
       _metaRenderDetail();             // metadata-list-detail: 우측 상세(현재 모드)·목록 툴바·부트스트랩 가시성 재동기화.
       _metaPrimeReviewBadge();         // 검토 큐 pending 배지 best-effort 재반영(다른 화면에서 큐 변동 시 stale 방지).
     }
@@ -2506,6 +2494,8 @@ function renderArchiveDetail(id) {
  *   POST /api/admin/sample-feedback/{id}/reject  — 거부(reject)
  * 승급은 검색 정확도에 직접 영향 → 명시 검수만(자동학습 금지). generated_sql 은 적재 시점에
  * PII 마스킹돼 저장됨(표시 안전). */
+// 샘플 검수 큐는 메타데이터 > 샘플쿼리 > '샘플 검수 큐' 2차 보기로 통합됨(구 독립 '샘플 검수' 탭 제거).
+//   loadSampleReview()/renderSampleReview() 가 #metadataList/#metadataCount 를 타깃한다.
 adminState.sampleReview = { items: [], loading: false, truncated: false };
 
 function _sfEsc(s) {
@@ -2513,72 +2503,128 @@ function _sfEsc(s) {
 }
 function _sfFmtDt(s) {
   if (!s) return "—";
-  try { const d = new Date(s); return isNaN(d.getTime()) ? _sfEsc(s) : d.toLocaleString(); } catch (_) { return _sfEsc(s); }
+  try { const d = new Date(s); return isNaN(d.getTime()) ? String(s) : d.toLocaleString(); } catch (_) { return String(s); }
 }
 
-async function loadSampleFeedback() {
-  const listEl = document.getElementById("sampleReviewList");
+async function loadSampleReview() {
+  const listEl = document.getElementById("metadataList");
   if (!listEl) return;
   adminState.sampleReview.loading = true;
-  listEl.innerHTML = '<div class="admin-list-empty">로딩 중…</div>';
+  listEl.replaceChildren();
+  listEl.appendChild(_metaLoadingSkeleton());
   try {
     const data = await apiFetch("/api/admin/sample-feedback");
     adminState.sampleReview.items = (data && data.items) || [];
     adminState.sampleReview.truncated = Boolean(data && data.truncated);
   } catch (err) {
     adminState.sampleReview.items = [];
-    listEl.innerHTML = `<div class="admin-list-empty">${_sfEsc((err && err.message) || "샘플 피드백 조회 실패")}</div>`;
+    listEl.replaceChildren();
+    const e = document.createElement("div");
+    e.className = "admin-list-empty";
+    e.textContent = (err && err.message) || "샘플 피드백 조회 실패";
+    listEl.appendChild(e);
     return;
   } finally {
     adminState.sampleReview.loading = false;
   }
-  renderSampleFeedbackList();
+  renderSampleReview();
 }
 
-function renderSampleFeedbackList() {
-  const listEl = document.getElementById("sampleReviewList");
-  const countEl = document.getElementById("sampleReviewCount");
+// XSS: 모든 사용자/LLM 유래 텍스트는 createElement + textContent 로만(innerHTML 미사용). SQL 은 pre>code.textContent.
+function renderSampleReview() {
+  const listEl = document.getElementById("metadataList");
+  const countEl = document.getElementById("metadataCount");
   if (!listEl) return;
-  const items = adminState.sampleReview.items;
-  if (countEl) countEl.textContent = `${items.length}건${adminState.sampleReview.truncated ? "+" : ""} 검수 대기`;
+  const st = adminState.sampleReview;
+  const items = st.items || [];
+  if (countEl) countEl.textContent = `${items.length}건${st.truncated ? "+" : ""} 검수 대기`;
+  const kpiEl = document.getElementById("metadataKpi");
+  if (kpiEl) { kpiEl.textContent = ""; kpiEl.style.display = "none"; }   // L5: 검수 큐 보기엔 KPI 무의미 — 비우고 숨김(stale/빈 gap 방지).
   const canCurate = can("kb.sample.curate");
+  listEl.replaceChildren();
   if (!items.length) {
-    listEl.innerHTML = '<div class="admin-list-empty">검수 대기 중인 샘플 피드백이 없습니다.</div>';
+    const empty = document.createElement("div");
+    empty.className = "admin-list-empty";
+    empty.textContent = "검수 대기 중인 샘플 피드백이 없습니다.";
+    listEl.appendChild(empty);
+    // 배지 반영(0건).
+    adminState.metadata.reviewPending.samples = 0;
+    _metaRefreshReviewBadge("samples");
     return;
   }
-  listEl.innerHTML = items.map((it) => {
-    const voteBadge = it.vote === "down"
-      ? '<span class="sf-vote sf-vote-down" title="부정 피드백">👎</span>'
-      : '<span class="sf-vote sf-vote-up" title="긍정 피드백">👍</span>';
-    const suggestedBadge = it.suggested ? '<span class="sf-badge-suggested">샘플 등록 요청</span>' : "";
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "admin-sf-row";
+    row.dataset.sfRow = String(it.id);
+    const head = document.createElement("div");
+    head.className = "admin-sf-row-head";
+    const vote = document.createElement("span");
+    vote.className = "sf-vote " + (it.vote === "down" ? "sf-vote-down" : "sf-vote-up");
+    vote.title = it.vote === "down" ? "부정 피드백(비추천)" : "긍정 피드백(추천)";
+    // L8: 이모지(👍/👎) 제거 — 텍스트 태그(추천=승급 가능 / 비추천=승급 불가)로 의미 명시.
+    vote.textContent = it.vote === "down" ? "비추천" : "추천";
+    head.appendChild(vote);
+    const scope = document.createElement("span");
+    scope.className = "admin-sf-scope";
+    scope.title = "데이터소스 스코프";
+    scope.textContent = _metaDatasourceLabelOf(it.scope_key);
+    head.appendChild(scope);
+    if (it.suggested) {
+      const sug = document.createElement("span");
+      sug.className = "sf-badge-suggested";
+      sug.textContent = "샘플 등록 요청";
+      head.appendChild(sug);
+    }
+    const ts = document.createElement("span");
+    ts.className = "admin-sf-ts";
+    ts.textContent = _sfFmtDt(it.created_at);
+    head.appendChild(ts);
+    row.appendChild(head);
+    const q = document.createElement("div");
+    q.className = "admin-sf-q";
+    q.textContent = it.nl_question || "";
+    row.appendChild(q);
     const sql = (it.generated_sql || "").trim();
-    // 👎 는 승급 불가(코어 promote_feedback 이 down 을 거부) → 승인 버튼 미노출, 거부만.
-    const approveBtn = (canCurate && it.vote !== "down")
-      ? `<button type="button" class="btn-primary sf-approve" data-sf-id="${it.id}">승인(KB 등록)</button>`
-      : "";
-    const rejectBtn = canCurate
-      ? `<button type="button" class="btn-secondary sf-reject" data-sf-id="${it.id}">거부</button>`
-      : "";
-    return `
-      <div class="admin-sf-row" data-sf-row="${it.id}">
-        <div class="admin-sf-row-head">
-          ${voteBadge}
-          <span class="admin-sf-scope" title="데이터소스 스코프">${_sfEsc(_metaDatasourceLabelOf(it.scope_key))}</span>
-          ${suggestedBadge}
-          <span class="admin-sf-ts">${_sfEsc(_sfFmtDt(it.created_at))}</span>
-        </div>
-        <div class="admin-sf-q">${_sfEsc(it.nl_question || "")}</div>
-        ${sql ? `<pre class="admin-sf-sql"><code>${_sfEsc(sql)}</code></pre>` : '<div class="admin-sf-nosql muted">생성 SQL 없음</div>'}
-        <div class="admin-sf-actions">${approveBtn}${rejectBtn}</div>
-      </div>`;
-  }).join("");
-
-  listEl.querySelectorAll(".sf-approve").forEach((btn) => {
-    btn.addEventListener("click", () => _sampleFeedbackAction(btn, "approve"));
-  });
-  listEl.querySelectorAll(".sf-reject").forEach((btn) => {
-    btn.addEventListener("click", () => _sampleFeedbackAction(btn, "reject"));
-  });
+    if (sql) {
+      const pre = document.createElement("pre");
+      pre.className = "admin-sf-sql";
+      const code = document.createElement("code");
+      code.textContent = sql;   // SQL preview: textContent 로만.
+      pre.appendChild(code);
+      row.appendChild(pre);
+    } else {
+      const nos = document.createElement("div");
+      nos.className = "admin-sf-nosql muted";
+      nos.textContent = "생성 SQL 없음";
+      row.appendChild(nos);
+    }
+    if (canCurate) {
+      const actions = document.createElement("div");
+      actions.className = "admin-sf-actions";
+      // 👎 는 승급 불가(코어 promote_feedback 이 down 을 거부) → 승인 버튼 미노출, 거부만.
+      if (it.vote !== "down") {
+        const ap = document.createElement("button");
+        ap.type = "button";
+        ap.className = "btn-primary sf-approve";
+        ap.dataset.sfId = String(it.id);
+        ap.textContent = "승인(KB 등록)";
+        ap.addEventListener("click", () => _sampleFeedbackAction(ap, "approve"));
+        actions.appendChild(ap);
+      }
+      const rj = document.createElement("button");
+      rj.type = "button";
+      rj.className = "btn-secondary sf-reject";
+      rj.dataset.sfId = String(it.id);
+      rj.textContent = "거부";
+      rj.addEventListener("click", () => _sampleFeedbackAction(rj, "reject"));
+      actions.appendChild(rj);
+      row.appendChild(actions);
+    }
+    listEl.appendChild(row);
+  }
+  // 배지 반영.
+  adminState.metadata.reviewPending.samples = items.length;
+  _metaRefreshReviewBadge("samples");
 }
 
 async function _sampleFeedbackAction(btn, action) {
@@ -2589,9 +2635,9 @@ async function _sampleFeedbackAction(btn, action) {
   if (row) row.querySelectorAll("button").forEach((b) => { b.disabled = true; });
   try {
     await apiFetch(`/api/admin/sample-feedback/${encodeURIComponent(id)}/${action}`, { method: "POST", body: "{}" });
-    // 처리된 항목 제거 + 재렌더(낙관적 제거 후 목록 정합).
+    // 처리된 항목 제거 + 재렌더(낙관적 제거 후 목록·배지 정합).
     adminState.sampleReview.items = adminState.sampleReview.items.filter((it) => String(it.id) !== String(id));
-    renderSampleFeedbackList();
+    renderSampleReview();
     if (typeof showToast === "function") {
       showToast(action === "approve" ? "샘플 쿼리(KB)로 승급했습니다." : "피드백을 거부했습니다.");
     }
@@ -2614,7 +2660,9 @@ async function _sampleFeedbackAction(btn, action) {
  *         GET /api/admin/metadata/bootstrap/schemas?datasource=, POST /api/admin/metadata/bootstrap. */
 adminState.metadata = {
   subTab: "glossary",   // glossary | enums | tables | columns | samples
-  glossaryView: "list", // 용어사전 2차 보기(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}). list | review
+  // 2차 보기(IA: 메타데이터 > {용어사전|ENUM|샘플쿼리} > {목록 | 검토·검수 큐}) — 서브탭별 보기 상태(list | review).
+  viewBySub: { glossary: "list", enums: "list", samples: "list" },
+  reviewPending: { glossary: 0, enums: 0, samples: 0 },   // 검토 큐 pending 건수(보기 strip 배지 소스).
   scopeKey: "common",
   roleFilter: "",       // 용어사전 역할 필터(0021) — "" = 전체 역할, "*" = 공용만, "<role_key>" = 그 역할
   items: [],
@@ -2651,18 +2699,36 @@ const _METADATA_SUBTAB_PERM = {
   // feature-0016 §45: graph 서브탭 제거 — 그래프 뷰는 지식베이스 최상위 탭(ADMIN_TAB_PERMISSIONS.graph)으로 이관.
 };
 
-// 용어사전 2차 보기별 권한(IA: 메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}).
-const _GLOSSARY_VIEW_PERM = { list: "metadata.glossary.manage", review: "kb.glossary.curate" };
+// 2차 보기(목록 | 검토·검수 큐)를 갖는 서브탭 설정 — 서브탭 파라미터화(용어사전에 하드코딩됐던 것을 일반화).
+//   IA: 메타데이터 > {용어사전|ENUM|샘플쿼리} > {목록 보기 | 검토·검수 큐 보기}.
+//   listPerm=목록 CRUD 권한, reviewPerm=검토 큐 큐레이션 권한, kind=검토 큐 렌더/엔드포인트 분기 키,
+//   endpoint=검토 큐 REST 베이스. 이 객체의 key 인 서브탭만 "검토 보기"를 갖는다(_metaHasReview).
+const _METADATA_REVIEW = {
+  glossary: { listLabel: "용어 목록",    listPerm: "metadata.glossary.manage", reviewLabel: "용어 검토 큐", reviewPerm: "kb.glossary.curate", kind: "glossary", endpoint: "/api/admin/metadata/glossary-feedback" },
+  enums:    { listLabel: "ENUM 목록",    listPerm: "metadata.enum.manage",     reviewLabel: "ENUM 검토 큐", reviewPerm: "kb.enum.curate",     kind: "enum",     endpoint: "/api/admin/metadata/enum-feedback" },
+  samples:  { listLabel: "샘플쿼리 목록", listPerm: "kb.sample.curate",          reviewLabel: "샘플 검수 큐", reviewPerm: "kb.sample.curate",   kind: "sample",   endpoint: "/api/admin/sample-feedback" },
+};
 
-// 용어사전 검토 큐 보기 활성 여부.
-function _metaIsGlossaryReview() {
-  return adminState.metadata.subTab === "glossary" && adminState.metadata.glossaryView === "review";
+// 현재 서브탭의 2차 보기(없으면 list). viewBySub 는 review 서브탭만 key 를 가지므로 || "list" 로 폴백.
+function _metaCurrentView() {
+  return adminState.metadata.viewBySub[adminState.metadata.subTab] || "list";
+}
+// 서브탭이 2차 검토 보기를 갖는가(= _METADATA_REVIEW 의 key 인가).
+function _metaHasReview(sub) {
+  return Object.prototype.hasOwnProperty.call(_METADATA_REVIEW, sub);
+}
+// 검토·검수 큐 보기 활성 여부(모든 review 서브탭 공통 — 용어사전 전용 판정을 일반화).
+function _metaIsReview() {
+  return _metaHasReview(adminState.metadata.subTab) && _metaCurrentView() === "review";
 }
 
-// 서브탭 표시 게이트 — 용어사전은 목록(kb.ingest.manual) 또는 검토 큐(kb.glossary.curate) 권한 중
-// 하나라도 있으면 표시(검토 큐를 용어사전 하위로 중첩했으므로 curate-only 사용자의 접근 보존).
+// 서브탭 표시 게이트 — 검토 보기를 갖는 서브탭은 목록 권한 또는 검토 권한 중 하나라도 있으면 표시
+// (검토 큐를 서브탭 하위로 중첩했으므로 curate-only 사용자의 접근 보존). 나머지는 서브탭 권한 그대로.
 function _metaSubtabVisible(sub) {
-  if (sub === "glossary") return can("metadata.glossary.manage") || can("kb.glossary.curate");
+  if (_metaHasReview(sub)) {
+    const cfg = _METADATA_REVIEW[sub];
+    return can(cfg.listPerm) || can(cfg.reviewPerm);
+  }
   const perm = _METADATA_SUBTAB_PERM[sub];
   return !perm || can(perm);
 }
@@ -2709,7 +2775,7 @@ const _METADATA_FIELDS = {
   ],
 };
 
-// XSS — 사용자 데이터는 textContent 로만. (innerHTML 절대 미사용 경로.) sample-review _sfEsc 와 동일 규약.
+// XSS — 사용자 데이터는 textContent 로만. (innerHTML 절대 미사용 경로.) 샘플 검수 _sfEsc 와 동일 규약.
 function _metaEsc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
@@ -2717,6 +2783,78 @@ function _metaEsc(s) {
 function _metaFmtDt(v) {
   if (!v) return "";
   try { return formatDateTime(v); } catch (e) { return String(v); }
+}
+
+// B2: 로딩 스켈레톤(회색 3바) — 밋밋한 "로딩 중…" 대체. DOM 전용.
+function _metaLoadingSkeleton() {
+  const box = document.createElement("div");
+  box.className = "admin-meta-skeleton";
+  box.setAttribute("aria-label", "로딩 중");
+  for (let i = 0; i < 3; i++) {
+    const bar = document.createElement("div");
+    bar.className = "admin-meta-skel-bar";
+    box.appendChild(bar);
+  }
+  return box;
+}
+
+// B2: 리치 빈 상태 — 강한 안내(strong) + 옵션 힌트(muted). 모두 textContent(XSS 안전).
+function _metaEmptyState(strongMsg, hintMsg) {
+  const box = document.createElement("div");
+  box.className = "admin-list-empty admin-meta-empty";
+  const s = document.createElement("strong");
+  s.className = "admin-meta-empty-title";
+  s.textContent = strongMsg || "";
+  box.appendChild(s);
+  if (hintMsg) {
+    const h = document.createElement("span");
+    h.className = "admin-meta-empty-hint";
+    h.textContent = hintMsg;
+    box.appendChild(h);
+  }
+  return box;
+}
+
+// B5: table.column 경로 + code 를 별도 span + CSS 구분자(.admin-meta-sep)로 append(하드코딩 middot 제거).
+function _metaAppendPathCode(el, loc, code) {
+  const a = document.createElement("span");
+  a.className = "admin-meta-path";
+  a.textContent = loc || "";
+  el.appendChild(a);
+  if (code != null && String(code) !== "") {
+    const sep = document.createElement("span");
+    sep.className = "admin-meta-sep";
+    sep.setAttribute("aria-hidden", "true");
+    el.appendChild(sep);
+    const c = document.createElement("span");
+    c.className = "admin-meta-code";
+    c.textContent = String(code);
+    el.appendChild(c);
+  }
+}
+
+// B6: 인라인 필드 검증 — 필수 미입력 필드에 red border + 필드 하단 메시지. key 는 고정 필드키(사용자 데이터 아님).
+function _metaSetFieldError(key, msg) {
+  const wrap = document.getElementById("metadataFormFields");
+  if (!wrap) return;
+  const input = wrap.querySelector(`[name="${key}"]`);
+  if (!input) return;
+  const field = input.closest(".admin-meta-field");
+  if (!field) return;
+  field.classList.add("is-error");
+  let em = field.querySelector(".admin-meta-field-error");
+  if (!em) {
+    em = document.createElement("span");
+    em.className = "admin-meta-field-error";
+    field.appendChild(em);
+  }
+  em.textContent = msg;
+}
+function _metaClearFieldErrors() {
+  const wrap = document.getElementById("metadataFormFields");
+  if (!wrap) return;
+  wrap.querySelectorAll(".admin-meta-field.is-error").forEach((f) => f.classList.remove("is-error"));
+  wrap.querySelectorAll(".admin-meta-field-error").forEach((e) => e.remove());
 }
 
 // 탭 첫 진입 — scope 드롭다운 채우기 + 서브탭 권한 게이트 + 폼 바인딩 + 최초 목록 로드.
@@ -2730,13 +2868,30 @@ function initMetadataTab() {
   loadMetadata();
 }
 
-// 검토 큐 배지 선반영(0021) — 탭 진입 시 pending 건수만 best-effort 로 가져와 서브탭 배지 표시.
+// 검토 큐 배지 선반영 — 탭 진입/재진입 시 큐레이션 권한이 있는 모든 review 서브탭의 pending 건수를
+//   best-effort 로 가져와 reviewPending 에 저장하고, 그 서브탭이 현재면 보기 strip 배지를 갱신한다.
+//   glossary/enum 은 ?status=pending + data.pending_count, sample 은 GET 목록 응답의 count/items 길이.
 async function _metaPrimeReviewBadge() {
-  if (!can("kb.glossary.curate")) return;
-  try {
-    const data = await apiFetch("/api/admin/metadata/glossary-feedback?status=pending");
-    _updateGlossaryReviewBadge((data && data.pending_count) || 0);
-  } catch (_) { /* best-effort — 배지 없음 */ }
+  const md = adminState.metadata;
+  for (const sub of Object.keys(_METADATA_REVIEW)) {
+    const cfg = _METADATA_REVIEW[sub];
+    if (!can(cfg.reviewPerm)) continue;
+    try {
+      if (cfg.kind === "sample") {
+        const data = await apiFetch(cfg.endpoint);
+        md.reviewPending[sub] = (data && data.count != null) ? Number(data.count) : ((data && data.items) ? data.items.length : 0);
+      } else {
+        const data = await apiFetch(`${cfg.endpoint}?status=pending`);
+        md.reviewPending[sub] = (data && data.pending_count) || 0;
+      }
+      _metaRefreshReviewBadge(sub);
+    } catch (_) { /* best-effort — 배지 없음 */ }
+  }
+}
+
+// 검토 큐 pending 배지 갱신 — 대상 서브탭이 현재면 보기 strip 을 재동기화(배지 반영). 동적 strip 이라 재빌드.
+function _metaRefreshReviewBadge(sub) {
+  if (sub === adminState.metadata.subTab) _metaSyncViews();
 }
 
 // 서브탭 권한 게이트 — 미보유 서브탭 버튼 숨김. 현재 서브탭이 숨겨졌으면 첫 표시 서브탭으로 전환.
@@ -2758,30 +2913,69 @@ function _metaApplySubtabPermissions() {
   }
 }
 
-// 용어사전 2차 보기 탭 동기화 — 용어사전 서브탭일 때만 노출, 권한별 보기 버튼 게이트 + 현재 보기 유효성 보정.
-function _metaSyncGlossaryViews() {
-  const strip = document.getElementById("metadataGlossaryViews");
+// 2차 보기 strip 동기화(일반화) — review 서브탭에서만 노출. 보기 버튼(list/review)을 동적 생성하고
+//   권한별로 게이트, review 버튼엔 pending 배지, 현재 보기가 권한 없으면 첫 표시 보기로 폴백한다.
+//   버튼은 XSS 안전하게 createElement + textContent 로만 만든다(데이터 없음이지만 규약 일관).
+function _metaSyncViews() {
+  const strip = document.getElementById("metadataViews");
   if (!strip) return;
-  const inGlossary = adminState.metadata.subTab === "glossary";
-  strip.style.display = inGlossary ? "" : "none";
-  if (!inGlossary) return;
-  const btns = Array.from(strip.querySelectorAll(".admin-meta-gview"));
-  let curOk = false;
-  let firstOk = null;
-  for (const b of btns) {
-    const v = b.dataset.glossaryView;
-    const perm = _GLOSSARY_VIEW_PERM[v];
-    const vis = !perm || can(perm);
-    b.style.display = vis ? "" : "none";
-    if (vis && !firstOk) firstOk = v;
-    if (vis && v === adminState.metadata.glossaryView) curOk = true;
+  const md = adminState.metadata;
+  const sub = md.subTab;
+  if (!_metaHasReview(sub)) {
+    strip.style.display = "none";
+    strip.replaceChildren();
+    md.viewBySub[sub] = "list";   // 검토 보기 없는 서브탭은 항상 목록.
+    return;
   }
-  // 현재 보기 권한 없음 → 첫 표시 보기로 전환(curate-only=검토 큐, ingest-only=용어 목록).
-  if (!curOk && firstOk) adminState.metadata.glossaryView = firstOk;
-  for (const b of btns) {
-    const active = b.dataset.glossaryView === adminState.metadata.glossaryView;
-    b.classList.toggle("is-active", active);
-    b.setAttribute("aria-selected", active ? "true" : "false");
+  strip.style.display = "";
+  const cfg = _METADATA_REVIEW[sub];
+  const views = [
+    { v: "list", label: cfg.listLabel, perm: cfg.listPerm },
+    { v: "review", label: cfg.reviewLabel, perm: cfg.reviewPerm },
+  ];
+  const permitted = views.filter((x) => !x.perm || can(x.perm));
+  let cur = md.viewBySub[sub] || "list";
+  // 현재 보기 권한 없음 → 첫 표시 보기로 폴백(curate-only=검토 큐, list-only=목록).
+  if (!permitted.some((x) => x.v === cur)) {
+    cur = permitted.length ? permitted[0].v : "list";
+    md.viewBySub[sub] = cur;
+  }
+  strip.replaceChildren();
+  for (const x of views) {
+    if (x.perm && !can(x.perm)) continue;
+    const active = x.v === cur;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "admin-meta-view" + (active ? " is-active" : "");
+    btn.dataset.metaView = x.v;
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+    const lbl = document.createElement("span");
+    lbl.textContent = x.label;
+    btn.appendChild(lbl);
+    if (x.v === "review") {
+      const n = Number(md.reviewPending[sub]) || 0;
+      const badge = document.createElement("span");
+      badge.className = "admin-meta-view-badge";
+      if (n > 0) badge.textContent = String(n);
+      else badge.hidden = true;
+      btn.appendChild(badge);
+    }
+    btn.addEventListener("click", () => {
+      const v = btn.dataset.metaView;
+      if (!v || v === (md.viewBySub[sub] || "list")) return;
+      md.viewBySub[sub] = v;
+      md.editing = null;
+      md.selectedId = null;
+      md.relationsOpenId = null;
+      md.search = "";
+      const sEl = document.getElementById("metadataSearch");
+      if (sEl) sEl.value = "";
+      md.detailMode = "empty";
+      _metaRenderDetail();
+      loadMetadata();
+    });
+    strip.appendChild(btn);
   }
 }
 
@@ -2858,25 +3052,7 @@ function _metaBindControls() {
       loadMetadata();
     });
   });
-  // 용어사전 2차 보기 탭(용어 목록 / 용어 검토 큐) 전환.
-  document.querySelectorAll(".admin-meta-gview").forEach((btn) => {
-    if (btn.dataset.bound) return;
-    btn.dataset.bound = "1";
-    btn.addEventListener("click", () => {
-      const v = btn.dataset.glossaryView;
-      if (!v || v === adminState.metadata.glossaryView) return;
-      adminState.metadata.glossaryView = v;
-      adminState.metadata.editing = null;       // 보기 전환 시 폼 초기화
-      adminState.metadata.selectedId = null;
-      adminState.metadata.relationsOpenId = null;
-      adminState.metadata.search = "";          // 보기 전환 시 검색 초기화(검토 큐는 검색 미적용)
-      const sEl = document.getElementById("metadataSearch");
-      if (sEl) sEl.value = "";
-      adminState.metadata.detailMode = "empty";  // metadata-list-detail: 보기 전환 시 우측 상세 초기화
-      _metaRenderDetail();
-      loadMetadata();
-    });
-  });
+  // 2차 보기 버튼(목록 / 검토·검수 큐)은 _metaSyncViews 가 동적 생성하며 click 을 그 안에서 바인딩한다.
   const form = document.getElementById("metadataForm");
   if (form && !form.dataset.bound) {
     form.dataset.bound = "1";
@@ -2929,7 +3105,7 @@ function _metaBindControls() {
     searchEl.dataset.bound = "1";
     searchEl.addEventListener("input", () => {
       adminState.metadata.search = searchEl.value || "";
-      if (_metaIsGlossaryReview()) return;   // 검토 큐는 별도 렌더 경로(loadGlossaryFeedback) — 검색 미적용.
+      if (_metaIsReview()) return;   // 검토·검수 큐는 별도 렌더 경로(loadFeedbackQueue/loadSampleReview) — 검색 미적용.
       // 설계 결정(적대 패널 MAJOR-1): 검색은 좌측 목록만 필터한다. 편집 중인 항목이 필터로 가려져도 우측 폼은
       //   유지한다(검색 키 입력으로 진행 중 편집을 폐기하지 않음 — 검색 해제 시 해당 행이 다시 강조된다).
       renderMetadataList();
@@ -3059,9 +3235,9 @@ function _metaRenderForm() {
   const fields = _METADATA_FIELDS[sub] || [];
   const editing = adminState.metadata.editing;
   const noCreate = Boolean(_METADATA_NO_CREATE[sub]);
-  _metaSyncGlossaryViews();   // 용어사전 보기 유효성 먼저 보정(권한 없는 보기 → 첫 표시 보기)
+  _metaSyncViews();   // 용어사전 보기 유효성 먼저 보정(권한 없는 보기 → 첫 표시 보기)
   // 용어 검토 큐 보기는 CRUD 폼 없음. 생성 비활성 서브뷰 + 비편집 상태도 폼 숨김(목록 '수정'으로만 진입).
-  const isReview = _metaIsGlossaryReview();
+  const isReview = _metaIsReview();
   const hideForm = isReview || (noCreate && !editing);
   if (form) form.style.display = hideForm ? "none" : "";
   _metaSyncToolbarVisibility();
@@ -3072,7 +3248,7 @@ function _metaRenderForm() {
   //   id 부여 — 툴바 역할 변경 시 폼 전체 재렌더(입력 소실) 없이 배지만 동기화하기 위함(_metaUpdateGlossaryRoleBadge).
   if (sub === "glossary") {
     const field = document.createElement("div");
-    field.className = "admin-meta-field";
+    field.className = "admin-meta-field admin-meta-field-wide";   // B6: 역할 컨텍스트는 전폭.
     field.id = "metadataRoleContextField";
     const cap = document.createElement("span");
     cap.className = "admin-meta-field-label";
@@ -3107,7 +3283,8 @@ function _metaRenderForm() {
       continue;
     }
     const field = document.createElement("label");
-    field.className = "admin-meta-field";
+    // B6: 긴 필드(textarea: 정의/설명/질문/SQL)는 전폭, 짧은 식별 필드는 2열 grid 셀.
+    field.className = "admin-meta-field" + (f.type === "textarea" ? " admin-meta-field-wide" : "");
     const cap = document.createElement("span");
     cap.className = "admin-meta-field-label";
     cap.textContent = f.label + (f.required ? " *" : "");
@@ -3146,10 +3323,10 @@ function _metaCancelEdit() {
 //   용어 2차 보기·목록 툴바 버튼)는 모드와 무관하므로 항상 동기화한다.
 function _metaRenderDetail() {
   const md = adminState.metadata;
-  _metaSyncGlossaryViews();   // 용어사전 2차 보기 strip 가시성/active (모드 무관 top-nav).
+  _metaSyncViews();   // 용어사전 2차 보기 strip 가시성/active (모드 무관 top-nav).
   let mode = md.detailMode || "empty";
   if (mode === "form") {
-    if (_metaIsGlossaryReview()) mode = "empty";                                  // 검토 큐는 CRUD 폼 없음.
+    if (_metaIsReview()) mode = "empty";                                  // 검토 큐는 CRUD 폼 없음.
     else if (_METADATA_NO_CREATE[md.subTab] && !(md.editing && md.editing.id != null)) mode = "empty";  // samples 생성 비활성.
   }
   // graph-panel-perms(task4): 스키마 골격 부트스트랩은 테이블 골격 도구 → metadata.table.manage 게이트(백엔드 동치).
@@ -3180,7 +3357,7 @@ function _metaSyncListActive() {
 // 좌측 목록 툴바 버튼 가시성 — '+ 새 항목'(생성 가능 서브탭만)·'스키마 골격 가져오기'(테이블/컬럼+권한만).
 function _metaSyncListToolbar() {
   const md = adminState.metadata;
-  const review = _metaIsGlossaryReview();
+  const review = _metaIsReview();
   // 검토 큐는 별도 렌더(피드백 큐) — 클라이언트 검색 미적용이라 검색 입력 숨김.
   const searchEl = document.getElementById("metadataSearch");
   if (searchEl) searchEl.style.display = review ? "none" : "";
@@ -7761,19 +7938,18 @@ async function loadMetadata() {
   const listEl = document.getElementById("metadataList");
   if (!listEl) return;
   const sub = adminState.metadata.subTab;
-  // 용어 검토 큐 보기는 별도 적재/렌더 경로(폼/CRUD 아님).
-  if (_metaIsGlossaryReview()) {
-    await loadGlossaryFeedback();
+  // 검토·검수 큐 보기는 별도 적재/렌더 경로(폼/CRUD 아님) — kind 별 로더로 분기.
+  if (_metaIsReview()) {
+    if (sub === "glossary") await loadFeedbackQueue("glossary");
+    else if (sub === "enums") await loadFeedbackQueue("enum");
+    else if (sub === "samples") await loadSampleReview();
     return;
   }
   const scope = adminState.metadata.scopeKey || "common";
   adminState.metadata.loadedScope = scope;   // feature-0016 §45 D1: 메타데이터 목록이 로드된 스코프 기록(탭 재진입 diverge 재로드 판정).
   adminState.metadata.loading = true;
   listEl.replaceChildren();
-  const loading = document.createElement("div");
-  loading.className = "admin-list-empty";
-  loading.textContent = "로딩 중…";
-  listEl.appendChild(loading);
+  listEl.appendChild(_metaLoadingSkeleton());   // B2: 스켈레톤(회색 3바) 로딩 상태.
   try {
     let url = `/api/admin/metadata/${sub}?scope_key=${encodeURIComponent(scope)}`;
     // 용어사전 역할 필터(0021) — 선택된 역할이 있으면 그 역할 행만(공용 '*' 포함 안 함).
@@ -7824,6 +8000,189 @@ function _metaItemMatchesSearch(it, sub, q) {
   return hay.toLowerCase().includes(q);
 }
 
+// L5: KPI 는 distinctive signal 만 표기 — bare total("총 N건")은 #metadataCount 와 중복이므로 금지.
+//   tables/columns → 미기재 M(M>0 일 때만). enums(그룹 카드가 테이블별 개수 표기)·glossary·samples → 신호 없음 → 숨김.
+function _metaUpdateKpi(items, sub) {
+  const kpiEl = document.getElementById("metadataKpi");
+  if (!kpiEl) return;
+  let text = "";
+  if (sub === "tables" || sub === "columns") {
+    const missing = items.filter((it) => !String(it.description || "").trim()).length;
+    if (missing > 0) text = `미기재 ${missing}`;
+  }
+  kpiEl.textContent = text;
+  kpiEl.style.display = text ? "" : "none";   // 비어 있으면 요소 자체 숨김(빈 gap 방지).
+}
+
+// 한 항목 → .admin-meta-row 엘리먼트. grouped=true 면(enums/columns 그룹 카드 내부) 경로 반복 제거를 위해
+//   제목을 code/컬럼명만 축약 표시한다. 행 클릭→편집, 삭제/유사어 인라인 액션은 flat/grouped 공통.
+function _metaListRow(it, sub, canEdit, grouped) {
+  const md = adminState.metadata;
+  const row = document.createElement("div");
+  row.className = "admin-meta-row";
+  if (it.id != null) row.dataset.metaId = String(it.id);
+  if (md.selectedId != null && String(it.id) === String(md.selectedId)) row.classList.add("is-active");
+  if (canEdit) {
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    row.addEventListener("click", () => _metaStartEdit(it));
+    row.addEventListener("keydown", (e) => {
+      if (e.target !== e.currentTarget) return;   // 행 내부 버튼 키 입력 무시(이중 발화 방지).
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _metaStartEdit(it); }
+    });
+  }
+  const main = document.createElement("div");
+  main.className = "admin-meta-row-main";
+  const title = document.createElement("div");
+  title.className = "admin-meta-row-title";
+  const body = document.createElement("div");
+  body.className = "admin-meta-row-body";
+  if (sub === "glossary") {
+    title.textContent = it.term || "";
+    body.textContent = it.definition || "";
+  } else if (sub === "enums") {
+    if (grouped) {
+      title.textContent = it.code || "";   // 경로는 그룹 헤더에 있음 — 행은 code 만.
+    } else {
+      const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
+      _metaAppendPathCode(title, loc, it.code);   // B5: table.column · code(구분자 span).
+    }
+    body.textContent = it.label || "";
+  } else if (sub === "tables") {
+    const loc = [it.schema_name, it.table_name].filter(Boolean).join(".");
+    title.textContent = loc || (it.table_name || "");
+    body.textContent = it.description || "";
+  } else if (sub === "columns") {
+    if (grouped) {
+      title.textContent = it.column_name || "";   // 경로는 그룹 헤더에.
+    } else {
+      const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
+      title.textContent = loc || (it.column_name || "");
+    }
+    body.textContent = it.description || "";
+  } else if (sub === "samples") {
+    title.textContent = it.nl_question || "";
+    // B7: SQL 은 1~2줄 truncated preview 만(전체 SQL 은 우측 상세 폼). 행 내부 스크롤 박스 제거.
+    body.textContent = it.sql || "";
+    body.classList.add("admin-meta-sql-preview");
+  }
+  main.appendChild(title);
+  main.appendChild(body);
+  const mkTag = (text, cls) => {
+    const t = document.createElement("span");
+    t.className = "admin-meta-tag" + (cls ? " " + cls : "");
+    t.textContent = text;
+    return t;
+  };
+  // glossary 전용 — 역할/출처 배지. L7: 역할=blue(info 톤), provenance(자동등록/자동승급)=중립 회색
+  //   (role 파랑·attention warn/danger 와 시각적으로 구분 — 경고로 오인 금지).
+  if (sub === "glossary") {
+    const tags = document.createElement("div");
+    tags.className = "admin-meta-row-tags";
+    const rk = String(it.role_key || "*");
+    tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`,
+      rk === "*" ? "admin-meta-tag-neutral" : "admin-meta-tag-role"));
+    const src = String(it.source || "manual");
+    if (src === "auto") tags.appendChild(mkTag("자동등록", "admin-meta-tag-neutral"));
+    else if (src === "auto_promoted") tags.appendChild(mkTag("자동승급", "admin-meta-tag-neutral"));
+    main.appendChild(tags);
+  }
+  // samples 전용 — 가중치/도메인/승인/status 배지. B9: 미승인=warn(주의), stale=danger, status 기타=neutral.
+  if (sub === "samples") {
+    const tags = document.createElement("div");
+    tags.className = "admin-meta-row-tags";
+    if (it.domain) tags.appendChild(mkTag(`도메인: ${it.domain}`, "admin-meta-tag-neutral"));
+    if (it.weight != null) tags.appendChild(mkTag(`가중치 ${it.weight}`, "admin-meta-tag-neutral"));
+    tags.appendChild(mkTag(it.approved ? "승인됨" : "미승인", it.approved ? "admin-meta-tag-ok" : "admin-meta-tag-warn"));
+    if (String(it.status || "").toLowerCase() === "stale") {
+      tags.appendChild(mkTag("stale", "admin-meta-tag-stale"));
+    } else if (it.status) {
+      tags.appendChild(mkTag(String(it.status), "admin-meta-tag-neutral"));
+    }
+    main.appendChild(tags);
+  }
+  const meta = document.createElement("div");
+  meta.className = "admin-meta-row-meta";
+  meta.textContent = it.updated_at ? `수정 ${_metaFmtDt(it.updated_at)}` : "";
+  main.appendChild(meta);
+  row.appendChild(main);
+  if (canEdit) {
+    const actions = document.createElement("div");
+    actions.className = "admin-meta-row-actions";
+    if (sub === "glossary") {
+      const relBtn = document.createElement("button");
+      relBtn.type = "button";
+      relBtn.className = "btn-secondary admin-meta-rel";
+      relBtn.textContent = "유사어";
+      relBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaToggleRelations(it); });
+      actions.appendChild(relBtn);
+    }
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn-secondary admin-meta-del";
+    delBtn.textContent = "삭제";
+    delBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaDelete(it); });
+    actions.appendChild(delBtn);
+    row.appendChild(actions);
+  }
+  return row;
+}
+
+// enums/columns 를 그룹핑 — 각 그룹을 .dashboard-widget 카드(헤더 + 내부 행)로 렌더. 행 클릭→편집·삭제 보존.
+//   M1: enums 는 schema.table.column 로 그룹(컬럼별 코드 묶음) → 헤더에 table.column(컬럼 표시)으로 두 컬럼 동일 코드 모호성 제거.
+//        행 = code(제목)/label(본문). columns 는 schema.table 로(컬럼이 leaf, 손실 없음) → 행 = column_name/description.
+//   M4: 항목 1건 그룹은 카드 chrome(eyebrow+title+count"1") 없이 flat .admin-meta-row 로 — density 폭발·노이즈 "1" 제거.
+//        (flat 행은 grouped=false 로 렌더해 경로 컨텍스트를 행 제목에 그대로 보존.)
+function _metaRenderGroupedList(listEl, items, sub, canEdit) {
+  const byColumn = (sub === "enums");   // enums 만 컬럼까지 내려 그룹.
+  const order = [];
+  const groups = new Map();   // key -> { schema, table, column, headTitle, items }
+  for (const it of items) {
+    const schema = String(it.schema_name || "");
+    const table = String(it.table_name || "");
+    const column = String(it.column_name || "");
+    const key = byColumn
+      ? ([schema, table, column].filter(Boolean).join(".") || "(미지정)")
+      : ([schema, table].filter(Boolean).join(".") || table || "(미지정)");
+    // 카드 헤더 제목 — enums: table.column(컬럼 표시), columns: table.
+    const headTitle = byColumn
+      ? ([table, column].filter(Boolean).join(".") || key)
+      : (table || key);
+    if (!groups.has(key)) { groups.set(key, { schema, table, column, headTitle, items: [] }); order.push(key); }
+    groups.get(key).items.push(it);
+  }
+  for (const key of order) {
+    const g = groups.get(key);
+    // M4: 단일 항목 그룹 → 카드 없이 flat 행(경로 포함 grouped=false).
+    if (g.items.length < 2) {
+      listEl.appendChild(_metaListRow(g.items[0], sub, canEdit, false));
+      continue;
+    }
+    const card = document.createElement("div");
+    card.className = "dashboard-widget admin-meta-group";
+    const head = document.createElement("div");
+    head.className = "admin-meta-group-head";
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "drawer-label admin-meta-group-eyebrow";
+    eyebrow.textContent = g.schema || (sub === "enums" ? "ENUM 코드" : "컬럼");
+    const h = document.createElement("div");
+    h.className = "admin-meta-group-title";
+    h.textContent = g.headTitle || key;
+    const cnt = document.createElement("span");
+    cnt.className = "admin-meta-group-count";
+    cnt.textContent = `${g.items.length}`;   // M4: 개수 배지는 ≥2 그룹에서만 렌더.
+    head.appendChild(eyebrow);
+    head.appendChild(h);
+    head.appendChild(cnt);
+    card.appendChild(head);
+    const rows = document.createElement("div");
+    rows.className = "admin-meta-group-rows";
+    for (const it of g.items) rows.appendChild(_metaListRow(it, sub, canEdit, true));
+    card.appendChild(rows);
+    listEl.appendChild(card);
+  }
+}
+
 function renderMetadataList() {
   const listEl = document.getElementById("metadataList");
   const countEl = document.getElementById("metadataCount");
@@ -7836,123 +8195,25 @@ function renderMetadataList() {
   // 서브뷰별 편집 권한 — samples 는 kb.sample.curate, 나머지는 kb.ingest.manual.
   const canEdit = can(_METADATA_SUBTAB_PERM[sub] || "kb.ingest.manual");
   if (countEl) countEl.textContent = q ? `${items.length}/${allItems.length}건` : `${items.length}건`;
+  _metaUpdateKpi(allItems, sub);   // B10: KPI 는 전체 로드분 기준.
   listEl.replaceChildren();
   if (!items.length) {
-    const empty = document.createElement("div");
-    empty.className = "admin-list-empty";
-    empty.textContent = q ? "검색 결과가 없습니다." : (_METADATA_EMPTY_MSG[sub] || "등록된 항목이 없습니다.");
-    listEl.appendChild(empty);
+    if (q) {
+      listEl.appendChild(_metaEmptyState("검색 결과가 없습니다.", "다른 검색어를 시도하세요."));
+    } else {
+      const creatable = !_METADATA_NO_CREATE[sub] && can(_METADATA_SUBTAB_PERM[sub] || "kb.ingest.manual");
+      listEl.appendChild(_metaEmptyState(_METADATA_EMPTY_MSG[sub] || "등록된 항목이 없습니다.",
+        creatable ? "＋ 새 항목으로 시작하세요." : ""));
+    }
+    return;
+  }
+  // B3: enums/columns 는 그룹 카드로, 나머지(glossary/tables/samples)는 flat.
+  if (sub === "enums" || sub === "columns") {
+    _metaRenderGroupedList(listEl, items, sub, canEdit);
     return;
   }
   for (const it of items) {
-    const row = document.createElement("div");
-    row.className = "admin-meta-row";
-    if (it.id != null) row.dataset.metaId = String(it.id);
-    if (adminState.metadata.selectedId != null && String(it.id) === String(adminState.metadata.selectedId)) row.classList.add("is-active");
-    // metadata-list-detail: 행 클릭 = 선택 → 우측 상세 편집('수정' 버튼·폼 점프 스크롤 폐기). 키보드 접근(Enter/Space).
-    if (canEdit) {
-      row.setAttribute("role", "button");
-      row.setAttribute("tabindex", "0");
-      row.addEventListener("click", () => _metaStartEdit(it));
-      row.addEventListener("keydown", (e) => {
-        if (e.target !== e.currentTarget) return;   // 행 내부 버튼(삭제/유사어) 키 입력은 무시 — 이중 발화 방지(적대 패널 MAJOR-2).
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _metaStartEdit(it); }
-      });
-    }
-    const main = document.createElement("div");
-    main.className = "admin-meta-row-main";
-    const title = document.createElement("div");
-    title.className = "admin-meta-row-title";
-    const body = document.createElement("div");
-    body.className = "admin-meta-row-body";
-    if (sub === "glossary") {
-      title.textContent = it.term || "";
-      body.textContent = it.definition || "";
-    } else if (sub === "enums") {
-      const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
-      title.textContent = `${loc}  ·  ${it.code || ""}`;
-      body.textContent = it.label || "";
-    } else if (sub === "tables") {
-      const loc = [it.schema_name, it.table_name].filter(Boolean).join(".");
-      title.textContent = loc || (it.table_name || "");
-      body.textContent = it.description || "";
-    } else if (sub === "columns") {
-      const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
-      title.textContent = loc || (it.column_name || "");
-      body.textContent = it.description || "";
-    } else if (sub === "samples") {
-      title.textContent = it.nl_question || "";
-      body.textContent = it.sql || "";
-      // SQL 은 monospace 로 표시(가독성).
-      body.classList.add("admin-meta-row-code");
-    }
-    main.appendChild(title);
-    main.appendChild(body);
-    // glossary 전용 — 역할/출처 배지(0021). 역할별 비중복·자동등록 출처를 한눈에.
-    if (sub === "glossary") {
-      const tags = document.createElement("div");
-      tags.className = "admin-meta-row-tags";
-      const mkTag = (text, cls) => {
-        const t = document.createElement("span");
-        t.className = "admin-meta-tag" + (cls ? " " + cls : "");
-        t.textContent = text;
-        return t;
-      };
-      const rk = String(it.role_key || "*");
-      tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`,
-        rk === "*" ? "" : "admin-meta-tag-role"));
-      const src = String(it.source || "manual");
-      if (src === "auto") tags.appendChild(mkTag("자동등록", "admin-meta-tag-warn"));
-      else if (src === "auto_promoted") tags.appendChild(mkTag("자동승급", "admin-meta-tag-warn"));
-      main.appendChild(tags);
-    }
-    // samples 전용 — 가중치/도메인/승인/status 배지.
-    if (sub === "samples") {
-      const tags = document.createElement("div");
-      tags.className = "admin-meta-row-tags";
-      const mkTag = (text, cls) => {
-        const t = document.createElement("span");
-        t.className = "admin-meta-tag" + (cls ? " " + cls : "");
-        t.textContent = text;
-        return t;
-      };
-      if (it.domain) tags.appendChild(mkTag(`도메인: ${it.domain}`));
-      if (it.weight != null) tags.appendChild(mkTag(`가중치 ${it.weight}`));
-      tags.appendChild(mkTag(it.approved ? "승인됨" : "미승인", it.approved ? "admin-meta-tag-ok" : "admin-meta-tag-warn"));
-      if (String(it.status || "").toLowerCase() === "stale") {
-        tags.appendChild(mkTag("stale", "admin-meta-tag-stale"));
-      } else if (it.status) {
-        tags.appendChild(mkTag(String(it.status)));
-      }
-      main.appendChild(tags);
-    }
-    const meta = document.createElement("div");
-    meta.className = "admin-meta-row-meta";
-    meta.textContent = it.updated_at ? `수정 ${_metaFmtDt(it.updated_at)}` : "";
-    main.appendChild(meta);
-    row.appendChild(main);
-    if (canEdit) {
-      const actions = document.createElement("div");
-      actions.className = "admin-meta-row-actions";
-      // metadata-list-detail: '수정'은 행 클릭으로 대체. 유사어/삭제만 인라인 — 클릭 전파 차단(행 선택과 분리).
-      // glossary 전용 — 유사어/참조 패널 토글(0021).
-      if (sub === "glossary") {
-        const relBtn = document.createElement("button");
-        relBtn.type = "button";
-        relBtn.className = "btn-secondary admin-meta-rel";
-        relBtn.textContent = "유사어";
-        relBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaToggleRelations(it); });
-        actions.appendChild(relBtn);
-      }
-      const delBtn = document.createElement("button");
-      delBtn.type = "button";
-      delBtn.className = "btn-secondary admin-meta-del";
-      delBtn.textContent = "삭제";
-      delBtn.addEventListener("click", (e) => { e.stopPropagation(); _metaDelete(it); });
-      actions.appendChild(delBtn);
-      row.appendChild(actions);
-    }
-    listEl.appendChild(row);
+    listEl.appendChild(_metaListRow(it, sub, canEdit, false));
     // 유사어 패널 — 이 용어가 펼쳐진 상태면 행 아래에 패널 삽입(0021).
     if (sub === "glossary" && String(adminState.metadata.relationsOpenId) === String(it.id)) {
       listEl.appendChild(_metaBuildRelationsPanel(it));
@@ -7982,12 +8243,16 @@ async function _metaSubmitForm(e) {
     return;
   }
   // 클라 필수 검증(백엔드도 검증 — 이중 안전). checkbox 는 필수 검증 제외.
-  for (const f of fields) {
-    if (f.type === "checkbox") continue;
-    if (f.required && !vals[f.key]) {
-      if (typeof showToast === "function") showToast(`${f.label} 는 필수입니다.`, true);
-      return;
-    }
+  //   B6: 누락 필드에 인라인 오류(red border + 필드 메시지) + 토스트 병행. 첫 누락 필드로 포커스.
+  _metaClearFieldErrors();
+  const missing = fields.filter((f) => f.type !== "checkbox" && f.required && !vals[f.key]);
+  if (missing.length) {
+    for (const f of missing) _metaSetFieldError(f.key, `${f.label}은(는) 필수입니다.`);
+    const wrap = document.getElementById("metadataFormFields");
+    const firstInput = wrap ? wrap.querySelector(`[name="${missing[0].key}"]`) : null;
+    if (firstInput && firstInput.focus) { try { firstInput.focus(); } catch (_) {} }
+    if (typeof showToast === "function") showToast(`${missing.map((f) => f.label).join(", ")}은(는) 필수입니다.`, true);
+    return;
   }
   // 타입별 payload 조립 — number clamp, checkbox boolean, 빈 선택 필드는 생략.
   const payload = { scope_key: scope };
@@ -8053,6 +8318,7 @@ function _metaResetInputs() {
     if (el.type === "checkbox") el.checked = false;
     else el.value = "";
   });
+  _metaClearFieldErrors();   // B6: 폼 초기화 시 인라인 오류 제거.
 }
 
 // 서브뷰별 삭제 confirm 라벨.
@@ -8164,7 +8430,7 @@ function _metaPopulateRoleFilter() {
 
 // 툴바 가시성 — 역할 필터는 용어사전 '용어 목록' 보기에서만(검토 큐 보기엔 무의미). scope select 는 유지.
 function _metaSyncToolbarVisibility() {
-  const showRole = (adminState.metadata.subTab === "glossary" && adminState.metadata.glossaryView === "list");
+  const showRole = (adminState.metadata.subTab === "glossary" && _metaCurrentView() === "list");
   const label = document.getElementById("metadataRoleFilterLabel");
   const sel = document.getElementById("metadataRoleFilter");
   if (label) label.style.display = showRole ? "" : "none";
@@ -8174,23 +8440,29 @@ function _metaSyncToolbarVisibility() {
   }
 }
 
-// ── 검토 큐(용어사전 > 용어 검토 큐 보기) ─────────────────────────────────────
-async function loadGlossaryFeedback() {
+// ── 검토 큐(용어사전/ENUM 공용, 파라미터화) ─────────────────────────────────────
+//   glossary + enum 은 promote/reject + status 필터 흐름이 동일하고 필드/엔드포인트만 다르다.
+//   kind: "glossary" | "enum". 서브탭 매핑: glossary→glossary, enum→enums(_METADATA_REVIEW key).
+function _metaReviewCfgOf(kind) {
+  const sub = kind === "glossary" ? "glossary" : "enums";
+  return { sub, cfg: _METADATA_REVIEW[sub] };
+}
+
+async function loadFeedbackQueue(kind) {
+  const { sub, cfg } = _metaReviewCfgOf(kind);
   const listEl = document.getElementById("metadataList");
   if (!listEl) return;
   adminState.metadata.feedback.loading = true;
   listEl.replaceChildren();
-  const loading = document.createElement("div");
-  loading.className = "admin-list-empty";
-  loading.textContent = "로딩 중…";
-  listEl.appendChild(loading);
+  listEl.appendChild(_metaLoadingSkeleton());
   const status = adminState.metadata.feedback.status || "pending";
   try {
-    const url = `/api/admin/metadata/glossary-feedback?status=${encodeURIComponent(status)}`;
+    const url = `${cfg.endpoint}?status=${encodeURIComponent(status)}`;
     const data = await apiFetch(url);
     adminState.metadata.feedback.items = (data && data.items) || [];
     adminState.metadata.feedback.pendingCount = (data && data.pending_count) || 0;
-    _updateGlossaryReviewBadge(adminState.metadata.feedback.pendingCount);
+    adminState.metadata.reviewPending[sub] = adminState.metadata.feedback.pendingCount;
+    _metaRefreshReviewBadge(sub);
   } catch (err) {
     adminState.metadata.feedback.items = [];
     listEl.replaceChildren();
@@ -8202,27 +8474,22 @@ async function loadGlossaryFeedback() {
   } finally {
     adminState.metadata.feedback.loading = false;
   }
-  renderGlossaryFeedback();
+  renderFeedbackQueue(kind);
 }
 
-function _updateGlossaryReviewBadge(count) {
-  const badge = document.getElementById("glossaryReviewBadge");
-  if (!badge) return;
-  const n = Number(count) || 0;
-  if (n > 0) { badge.textContent = String(n); badge.hidden = false; }
-  else { badge.textContent = ""; badge.hidden = true; }
-}
-
-function renderGlossaryFeedback() {
+function renderFeedbackQueue(kind) {
+  const { cfg } = _metaReviewCfgOf(kind);
   const listEl = document.getElementById("metadataList");
   const countEl = document.getElementById("metadataCount");
   if (!listEl) return;
   const items = adminState.metadata.feedback.items || [];
-  const canCurate = can("kb.glossary.curate");
+  const canCurate = can(cfg.reviewPerm);
   if (countEl) countEl.textContent = `${items.length}건`;
+  const kpiEl = document.getElementById("metadataKpi");
+  if (kpiEl) { kpiEl.textContent = ""; kpiEl.style.display = "none"; }   // L5: 검토 큐 보기엔 KPI 무의미 — 비우고 숨김(stale/빈 gap 방지).
   listEl.replaceChildren();
 
-  // 상태 필터 툴바(pending / auto_promoted / rejected / 전체).
+  // 상태 필터 툴바(pending / auto_promoted / promoted / rejected / 전체).
   const bar = document.createElement("div");
   bar.className = "admin-meta-review-bar";
   const sel = document.createElement("select");
@@ -8242,19 +8509,21 @@ function renderGlossaryFeedback() {
   }
   sel.addEventListener("change", () => {
     adminState.metadata.feedback.status = sel.value || "pending";
-    loadGlossaryFeedback();
+    loadFeedbackQueue(kind);
   });
   bar.appendChild(sel);
   const note = document.createElement("span");
   note.className = "admin-archive-detail-note";
-  note.textContent = "대화에서 자동 제안된 용어 후보입니다. 승급하면 용어사전에 반영되고, 거부하면 제외(자동 등록분은 회수)됩니다.";
+  note.textContent = kind === "enum"
+    ? "대화에서 자동 수집된 ENUM 코드↔라벨 후보입니다. 승급하면 코드사전에 반영되고, 거부하면 제외(자동 등록분은 회수)됩니다."
+    : "대화에서 자동 제안된 용어 후보입니다. 승급하면 용어사전에 반영되고, 거부하면 제외(자동 등록분은 회수)됩니다.";
   bar.appendChild(note);
   listEl.appendChild(bar);
 
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "admin-list-empty";
-    empty.textContent = "검토할 용어 후보가 없습니다.";
+    empty.textContent = kind === "enum" ? "검토할 ENUM 후보가 없습니다." : "검토할 용어 후보가 없습니다.";
     listEl.appendChild(empty);
     return;
   }
@@ -8265,13 +8534,20 @@ function renderGlossaryFeedback() {
     main.className = "admin-meta-row-main";
     const title = document.createElement("div");
     title.className = "admin-meta-row-title";
-    title.textContent = it.term || "";
     const body = document.createElement("div");
     body.className = "admin-meta-row-body";
-    body.textContent = it.suggested_definition || "";
+    if (kind === "enum") {
+      // 제목 = table.column · code(CSS 구분자 span). 본문 = 제안 라벨.
+      const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
+      _metaAppendPathCode(title, loc, it.code);
+      body.textContent = it.suggested_label || "";
+    } else {
+      title.textContent = it.term || "";
+      body.textContent = it.suggested_definition || "";
+    }
     main.appendChild(title);
     main.appendChild(body);
-    // 배지: 역할 / scope / confidence / status.
+    // 배지: (glossary)역할 / scope / confidence / status.
     const tags = document.createElement("div");
     tags.className = "admin-meta-row-tags";
     const mkTag = (text, cls) => {
@@ -8280,13 +8556,19 @@ function renderGlossaryFeedback() {
       t.textContent = text;
       return t;
     };
-    const rk = String(it.role_key || "*");
-    tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`, rk === "*" ? "" : "admin-meta-tag-role"));
-    if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`));
-    if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`));
+    if (kind === "glossary") {
+      const rk = String(it.role_key || "*");
+      tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`, rk === "*" ? "admin-meta-tag-neutral" : "admin-meta-tag-role"));
+    }
+    if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`, "admin-meta-tag-neutral"));
+    if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`, "admin-meta-tag-neutral"));
     const st = String(it.status || "");
     const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "승급됨", rejected: "거부됨" }[st] || st;
-    tags.appendChild(mkTag(stLabel, st === "auto_promoted" ? "admin-meta-tag-warn" : (st === "promoted" ? "admin-meta-tag-ok" : "")));
+    // L7: 자동 등록(auto_promoted=provenance)=neutral 회색(경고 아님), 승급=ok, 거부=danger, 검토 대기=neutral.
+    const stCls = st === "promoted" ? "admin-meta-tag-ok"
+      : st === "rejected" ? "admin-meta-tag-danger"
+      : "admin-meta-tag-neutral";
+    tags.appendChild(mkTag(stLabel, stCls));
     main.appendChild(tags);
     row.appendChild(main);
 
@@ -8298,7 +8580,7 @@ function renderGlossaryFeedback() {
         promoteBtn.type = "button";
         promoteBtn.className = "btn-primary admin-meta-edit";
         promoteBtn.textContent = "승급";
-        promoteBtn.addEventListener("click", () => _glossaryFeedbackAction(it.id, "promote", promoteBtn));
+        promoteBtn.addEventListener("click", () => _feedbackQueueAction(kind, it.id, "promote", promoteBtn));
         actions.appendChild(promoteBtn);
       }
       if (st === "pending" || st === "auto_promoted") {
@@ -8306,7 +8588,7 @@ function renderGlossaryFeedback() {
         rejectBtn.type = "button";
         rejectBtn.className = "btn-secondary admin-meta-del";
         rejectBtn.textContent = (st === "auto_promoted") ? "되돌리기" : "거부";
-        rejectBtn.addEventListener("click", () => _glossaryFeedbackAction(it.id, "reject", rejectBtn));
+        rejectBtn.addEventListener("click", () => _feedbackQueueAction(kind, it.id, "reject", rejectBtn));
         actions.appendChild(rejectBtn);
       }
       if (actions.childNodes.length) row.appendChild(actions);
@@ -8315,308 +8597,23 @@ function renderGlossaryFeedback() {
   }
 }
 
-async function _glossaryFeedbackAction(feedbackId, action, btn) {
-  if (action === "reject" && !window.confirm("이 용어 후보를 거부하시겠습니까?\n자동 등록된 용어라면 용어사전에서 회수됩니다.")) return;
+async function _feedbackQueueAction(kind, feedbackId, action, btn) {
+  const { cfg } = _metaReviewCfgOf(kind);
+  const confirmMsg = kind === "enum"
+    ? "이 ENUM 후보를 거부하시겠습니까?\n자동 등록된 코드라면 코드사전에서 회수됩니다."
+    : "이 용어 후보를 거부하시겠습니까?\n자동 등록된 용어라면 용어사전에서 회수됩니다.";
+  if (action === "reject" && !window.confirm(confirmMsg)) return;
   if (btn) btn.disabled = true;
   try {
-    await apiFetch(`/api/admin/metadata/glossary-feedback/${encodeURIComponent(feedbackId)}/${action}`, { method: "POST" });
-    if (typeof showToast === "function") showToast(action === "promote" ? "용어사전에 승급했습니다." : "거부 처리했습니다.");
-    await loadGlossaryFeedback();
+    await apiFetch(`${cfg.endpoint}/${encodeURIComponent(feedbackId)}/${action}`, { method: "POST" });
+    if (typeof showToast === "function") {
+      const promoted = kind === "enum" ? "코드사전에 승급했습니다." : "용어사전에 승급했습니다.";
+      showToast(action === "promote" ? promoted : "거부 처리했습니다.");
+    }
+    await loadFeedbackQueue(kind);
   } catch (err) {
     if (typeof showToast === "function") showToast((err && err.message) || "처리 실패", true);
     if (btn) btn.disabled = false;
-  }
-}
-
-/* ── feature-0018-kb-candidate-adoption: 채택 인박스 ──────────────────────────────
- * 대화 자율수집 후보(용어사전 glossary_feedback + ENUM 코드사전 enum_feedback)를 한 화면에서
- * 신뢰도/상태별 그룹 카드로 통합 표시하고, 개별/일괄 채택·거부한다. 렌더 어휘는 검토 큐
- * (.admin-meta-row/.admin-meta-tag) + 대시보드 카드 그리드(.dashboard-widget) 재사용. 권한:
- * 용어=kb.glossary.curate, ENUM=kb.enum.curate — 보유한 종류만 fetch·조작한다. 승급/거부는
- * 기존 *-feedback 엔드포인트를 그대로 호출(백엔드 parity, 0039). XSS: 모든 사용자 데이터는
- * textContent 로만 주입(innerHTML 미사용). */
-const _ADOPTION_HICONF = 0.7;   // 검토 대기 후보의 '우선' vs '확인 필요' 신뢰도 경계.
-// 그룹(버킷) 정의 — 렌더 순서 = 배열 순서(상단일수록 우선 검토). status/신뢰도로 분류.
-const _ADOPTION_BUCKETS = [
-  { key: "pending_hi", title: "검토 대기 · 우선", note: "신뢰도가 높은 후보입니다. 우선 검토해 채택하세요." },
-  { key: "pending_lo", title: "검토 대기 · 확인 필요", note: "신뢰도가 낮은 후보입니다. 정확한지 신중히 확인하세요." },
-  { key: "auto", title: "자동 등록됨", note: "고신뢰도로 이미 사전에 반영된 후보입니다. 부적절하면 되돌리세요." },
-  { key: "promoted", title: "채택됨", note: "" },
-  { key: "rejected", title: "거부됨", note: "" },
-];
-
-function _adoptionState() {
-  if (!adminState.adoption) {
-    adminState.adoption = { items: [], loading: false, kind: "all", status: "pending" };
-  }
-  return adminState.adoption;
-}
-
-function _adoptionCanCurate(kind) {
-  return kind === "glossary" ? can("kb.glossary.curate") : can("kb.enum.curate");
-}
-
-function _adoptionEndpoint(kind) {
-  return kind === "glossary"
-    ? "/api/admin/metadata/glossary-feedback"
-    : "/api/admin/metadata/enum-feedback";
-}
-
-// feedback 항목(용어 or ENUM)을 인박스 공통 표시 형태로 정규화.
-function _adoptionNorm(it, kind) {
-  if (kind === "glossary") {
-    return {
-      kind: "glossary", id: it.id, status: it.status, confidence: it.confidence,
-      scope_key: it.scope_key, role_key: it.role_key || "*",
-      title: it.term || "", body: it.suggested_definition || "",
-    };
-  }
-  const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
-  return {
-    kind: "enum", id: it.id, status: it.status, confidence: it.confidence,
-    scope_key: it.scope_key, role_key: "*",
-    title: (loc ? loc + "  ·  " : "") + (it.code || ""), body: it.suggested_label || "",
-  };
-}
-
-function _adoptionBucket(it) {
-  const s = String(it.status || "");
-  if (s === "auto_promoted") return "auto";
-  if (s === "promoted") return "promoted";
-  if (s === "rejected") return "rejected";
-  return (Number(it.confidence) >= _ADOPTION_HICONF) ? "pending_hi" : "pending_lo";
-}
-
-async function loadAdoptionInbox() {
-  const st = _adoptionState();
-  const groupsEl = document.getElementById("adoptionGroups");
-  if (!groupsEl) return;
-  st.loading = true;
-  groupsEl.replaceChildren();
-  const loading = document.createElement("div");
-  loading.className = "admin-list-empty admin-adoption-empty";   // 빈 상태와 동일 스타일(패딩/색) + grid-span(§18.8 프런트 F2/F3)
-  loading.textContent = "로딩 중…";
-  groupsEl.appendChild(loading);
-  const status = st.status || "pending";
-  const kind = st.kind || "all";
-  const wantG = (kind === "all" || kind === "glossary") && can("kb.glossary.curate");
-  const wantE = (kind === "all" || kind === "enum") && can("kb.enum.curate");
-  const items = [];
-  let pendingTotal = 0;
-  try {
-    if (wantG) {
-      const d = await apiFetch(`/api/admin/metadata/glossary-feedback?status=${encodeURIComponent(status)}`);
-      for (const it of (d && d.items) || []) items.push(_adoptionNorm(it, "glossary"));
-      pendingTotal += (d && d.pending_count) || 0;
-    }
-    if (wantE) {
-      const d = await apiFetch(`/api/admin/metadata/enum-feedback?status=${encodeURIComponent(status)}`);
-      for (const it of (d && d.items) || []) items.push(_adoptionNorm(it, "enum"));
-      pendingTotal += (d && d.pending_count) || 0;
-    }
-  } catch (err) {
-    st.loading = false;
-    groupsEl.replaceChildren();
-    const e = document.createElement("div");
-    e.className = "admin-list-empty admin-adoption-empty";
-    e.textContent = (err && err.message) || "채택 후보 조회 실패";
-    groupsEl.appendChild(e);
-    return;
-  }
-  st.loading = false;
-  st.items = items;
-  // 배지는 전역 pending(용어+ENUM) 신호 — 종류 필터로 좁혀진 부분 합계로 덮어쓰지 않는다(§18.8 프런트 F1).
-  //   kind='all' 이면 이번 로드가 두 종류를 모두 받았으니 합계가 정확. 좁혀졌으면 전역 재조회로 정확도 보존.
-  if (kind === "all") _updateAdoptionBadge(pendingTotal);
-  else _primeAdoptionBadge();
-  renderAdoptionInbox();
-}
-
-function renderAdoptionInbox() {
-  const st = _adoptionState();
-  const groupsEl = document.getElementById("adoptionGroups");
-  const countEl = document.getElementById("adoptionCount");
-  if (!groupsEl) return;
-  const items = st.items || [];
-  if (countEl) countEl.textContent = `${items.length}건`;
-  groupsEl.replaceChildren();
-  if (!items.length) {
-    const empty = document.createElement("div");
-    empty.className = "admin-list-empty admin-adoption-empty";
-    empty.textContent = "표시할 채택 후보가 없습니다. 대화가 진행되면 assistant 가 용어·코드 후보를 자동 수집합니다.";
-    groupsEl.appendChild(empty);
-    return;
-  }
-  const byBucket = {};
-  for (const it of items) { const bk = _adoptionBucket(it); (byBucket[bk] || (byBucket[bk] = [])).push(it); }
-  for (const b of _ADOPTION_BUCKETS) {
-    const list = byBucket[b.key];
-    if (!list || !list.length) continue;
-    groupsEl.appendChild(_adoptionGroupCard(b, list));
-  }
-}
-
-function _adoptionGroupCard(bucket, list) {
-  const card = document.createElement("article");
-  card.className = "dashboard-widget admin-adoption-card";
-  const head = document.createElement("div");
-  head.className = "dashboard-widget-head";
-  const h = document.createElement("h3");
-  h.textContent = `${bucket.title} (${list.length})`;
-  head.appendChild(h);
-  // 일괄 채택 — pending 후보가 2건 이상이고 해당 종류 큐레이션 권한이 있을 때만.
-  const promotable = list.filter((it) => it.status === "pending" && _adoptionCanCurate(it.kind));
-  if (promotable.length > 1) {
-    const bulk = document.createElement("button");
-    bulk.type = "button";
-    bulk.className = "btn-secondary admin-adoption-bulk";
-    bulk.textContent = `이 그룹 모두 채택 (${promotable.length})`;
-    bulk.addEventListener("click", () => _adoptionBulk(promotable, bulk));
-    head.appendChild(bulk);
-  }
-  card.appendChild(head);
-  if (bucket.note) {
-    const note = document.createElement("p");
-    note.className = "admin-meta-detail-note admin-adoption-card-note";
-    note.textContent = bucket.note;
-    card.appendChild(note);
-  }
-  const body = document.createElement("div");
-  body.className = "dashboard-widget-body admin-adoption-rows";
-  for (const it of list) body.appendChild(_adoptionRow(it));
-  card.appendChild(body);
-  return card;
-}
-
-function _adoptionRow(it) {
-  const row = document.createElement("div");
-  row.className = "admin-meta-row admin-adoption-row";
-  const main = document.createElement("div");
-  main.className = "admin-meta-row-main";
-  const title = document.createElement("div");
-  title.className = "admin-meta-row-title";
-  title.textContent = it.title || "";
-  const bodyEl = document.createElement("div");
-  bodyEl.className = "admin-meta-row-body";
-  bodyEl.textContent = it.body || "";
-  main.appendChild(title);
-  main.appendChild(bodyEl);
-  const tags = document.createElement("div");
-  tags.className = "admin-meta-row-tags";
-  const mkTag = (text, cls) => {
-    const t = document.createElement("span");
-    t.className = "admin-meta-tag" + (cls ? " " + cls : "");
-    t.textContent = text;
-    return t;
-  };
-  // 종류(용어/ENUM) 배지 — 통합 인박스라 한눈에 사전 구분.
-  tags.appendChild(mkTag(it.kind === "glossary" ? "용어" : "ENUM", "admin-meta-tag-kind"));
-  if (it.kind === "glossary" && it.role_key && it.role_key !== "*") {
-    tags.appendChild(mkTag(`역할: ${_metaRoleLabel(it.role_key)}`, "admin-meta-tag-role"));
-  }
-  if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`));
-  if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`));
-  const st = String(it.status || "");
-  const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "채택됨", rejected: "거부됨" }[st] || st;
-  const stCls = st === "auto_promoted" ? "admin-meta-tag-warn"
-    : (st === "promoted" ? "admin-meta-tag-ok" : (st === "rejected" ? "admin-meta-tag-stale" : ""));
-  tags.appendChild(mkTag(stLabel, stCls));
-  main.appendChild(tags);
-  row.appendChild(main);
-  if (_adoptionCanCurate(it.kind)) {
-    const actions = document.createElement("div");
-    actions.className = "admin-meta-row-actions";
-    if (st === "pending") {
-      const adopt = document.createElement("button");
-      adopt.type = "button";
-      adopt.className = "btn-primary admin-meta-edit admin-adoption-adopt";
-      adopt.textContent = "채택";
-      adopt.addEventListener("click", () => _adoptionAction(it, "promote", adopt));
-      actions.appendChild(adopt);
-    }
-    if (st === "pending" || st === "auto_promoted") {
-      const rej = document.createElement("button");
-      rej.type = "button";
-      rej.className = "btn-secondary admin-meta-del";
-      rej.textContent = (st === "auto_promoted") ? "되돌리기" : "거부";
-      rej.addEventListener("click", () => _adoptionAction(it, "reject", rej));
-      actions.appendChild(rej);
-    }
-    if (actions.childNodes.length) row.appendChild(actions);
-  }
-  return row;
-}
-
-async function _adoptionAction(it, action, btn) {
-  if (action === "reject" && !window.confirm("이 후보를 거부하시겠습니까?\n자동 등록된 항목이라면 사전에서 회수됩니다.")) return;
-  if (btn) btn.disabled = true;
-  try {
-    await apiFetch(`${_adoptionEndpoint(it.kind)}/${encodeURIComponent(it.id)}/${action}`, { method: "POST" });
-    if (typeof showToast === "function") showToast(action === "promote" ? "채택했습니다." : "거부 처리했습니다.");
-    await loadAdoptionInbox();
-  } catch (err) {
-    if (typeof showToast === "function") showToast((err && err.message) || "처리 실패", true);
-    if (btn) btn.disabled = false;
-  }
-}
-
-async function _adoptionBulk(list, btn) {
-  if (!list || !list.length) return;
-  if (!window.confirm(`${list.length}건을 모두 채택하시겠습니까?`)) return;
-  if (btn) btn.disabled = true;
-  let ok = 0, fail = 0;
-  for (const it of list) {
-    try {
-      await apiFetch(`${_adoptionEndpoint(it.kind)}/${encodeURIComponent(it.id)}/promote`, { method: "POST" });
-      ok += 1;
-    } catch (_e) { fail += 1; }
-  }
-  if (typeof showToast === "function") showToast(`채택 ${ok}건 완료${fail ? `, ${fail}건 실패` : ""}`, fail > 0);
-  await loadAdoptionInbox();
-}
-
-function _updateAdoptionBadge(count) {
-  const badge = document.getElementById("adoptionTabCount");
-  if (!badge) return;
-  const n = Number(count) || 0;
-  if (n > 0) { badge.textContent = String(n); badge.hidden = false; }
-  else { badge.textContent = ""; badge.hidden = true; }
-}
-
-// 관리 콘솔 진입 시 채택 인박스 pending 배지(용어+ENUM 합계) best-effort 선반영.
-async function _primeAdoptionBadge() {
-  let total = 0;
-  if (can("kb.glossary.curate")) {
-    try {
-      const d = await apiFetch("/api/admin/metadata/glossary-feedback?status=pending");
-      total += (d && d.pending_count) || 0;
-    } catch (_e) { /* best-effort */ }
-  }
-  if (can("kb.enum.curate")) {
-    try {
-      const d = await apiFetch("/api/admin/metadata/enum-feedback?status=pending");
-      total += (d && d.pending_count) || 0;
-    } catch (_e) { /* best-effort */ }
-  }
-  _updateAdoptionBadge(total);
-}
-
-// 필터(종류/상태) select + 새로고침 버튼 배선. 관리 콘솔 init 에서 1회 호출(멱등).
-function _wireAdoptionControls() {
-  const refresh = document.getElementById("adoptionRefreshBtn");
-  if (refresh && !refresh.dataset.bound) {
-    refresh.dataset.bound = "1";
-    refresh.addEventListener("click", () => loadAdoptionInbox());
-  }
-  const kindSel = document.getElementById("adoptionKindFilter");
-  if (kindSel && !kindSel.dataset.bound) {
-    kindSel.dataset.bound = "1";
-    kindSel.addEventListener("change", () => { _adoptionState().kind = kindSel.value || "all"; loadAdoptionInbox(); });
-  }
-  const statusSel = document.getElementById("adoptionStatusFilter");
-  if (statusSel && !statusSel.dataset.bound) {
-    statusSel.dataset.bound = "1";
-    statusSel.addEventListener("change", () => { _adoptionState().status = statusSel.value || "pending"; loadAdoptionInbox(); });
   }
 }
 
@@ -16224,15 +16221,7 @@ async function initialize() {
     aiOpsRefreshBtn.dataset.bound = "1";
     aiOpsRefreshBtn.addEventListener("click", () => loadAiOps());
   }
-  // TASK-20260623T090440-sample-feedback-curation: 샘플 검수 새로고침.
-  const sampleReviewRefreshBtn = $("sampleReviewRefreshBtn");
-  if (sampleReviewRefreshBtn && !sampleReviewRefreshBtn.dataset.bound) {
-    sampleReviewRefreshBtn.dataset.bound = "1";
-    sampleReviewRefreshBtn.addEventListener("click", () => loadSampleFeedback());
-  }
-  // feature-0018-kb-candidate-adoption: 채택 인박스 컨트롤 배선 + pending 배지(용어+ENUM 합계) 선반영.
-  _wireAdoptionControls();
-  _primeAdoptionBadge();
+  // 샘플 검수는 메타데이터 > 샘플쿼리 > 샘플 검수 큐 2차 보기로 통합됨(독립 탭·새로고침 버튼 제거).
   const archiveSearch = $("archiveSearch");
   if (archiveSearch && !archiveSearch.dataset.bound) {
     archiveSearch.dataset.bound = "1";
