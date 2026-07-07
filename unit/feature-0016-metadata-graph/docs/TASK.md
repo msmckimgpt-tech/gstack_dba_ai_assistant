@@ -1541,3 +1541,98 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T54.8 PR #597 머지(842b9ecf) → deploy-web 롤링 soak + insight/ask-worker 재빌드 → POST-DEPLOY
   PB-0008 **AC-1~AC-5 전 항목 라이브 PASS** + pageerror 0 (§54 Run 2026-07-06 POST-DEPLOY 참조 —
   Routine 잡 7 done·⚙ 마커·분석문, products 검색→클리어 복귀, 엣지 토글 배치 불변 등 실측).
+
+## 55. graph-category-recursive-refine — 제품/DB 카테고리 + 크로스-DB 관계 + 재귀 분석 정합(refine) (2026-07-06, entry persona dispatch)
+
+- Related Requirement: REQ-20260706-graph-category-recursive-refine — 사용자 4대 요구:
+  ① 데이터소스 선택 시 스키마 클러스터가 명칭순 평면 나열 → **제품(Products)·DB 매핑 기반 카테고리 단위**로
+    구분·배치 (하위 '유사 속성 그룹'과 같은 가시적 구분).
+  ② 스키마 클러스터 내부에만 갇힌 'AI 능동 분석'·관계 → **다른 DB 간(intra-DS 크로스 스키마 + 크로스 DS)
+    관계 분석/구축** 개선.
+  ③ 큰 단위(DB) 'AI 능동 분석' 시: 하위 전 노드(테이블·컬럼·함수·프로시저) 분석 + 관련 노드 **재귀 분석**
+    + 빈약 노드의 **후속 back-refine** + 모든 분석의 **override 아닌 refine** 동작.
+  ④ ADR-013 후속(ADR-018 Phase C)의 실동작 정합 검토 + 잔여 후속 진행.
+- 등급: **Major** (라이브 agent_kb 마이그 0038 비파괴 additive + 분석 엔진 확장 + 관계 엔진 경계 확장 +
+  admin UI 카테고리 계층. 인증/인가·파괴적 변경 없음). §7.1 계획 본 절. deploy_scope: included(전역).
+- 실측 근거(2026-07-06 라이브): rag_objects 16,023 中 signature_text_hash 497(3%)·semantic_cluster_id 203(1.3%)
+  — 백필 정체(ORDER BY updated_at DESC LIMIT 200 이 미처리 행 비우선·no-op 재스캔, semantic_cluster.py:119).
+  table_relationships 11,056행 中 크로스-DS 0·같은 DS 크로스 스키마 0 — 추론 per-schema 고정(relationships.py:790-792),
+  MSSQL 3-part 프로브 미지원(dialects.py:350,637), 크로스-DS manual 승격 호출자 0(영구 candidate→AI 미주입).
+  enqueue_schema_analysis 재귀 0(node_budget==planned, node_analysis.py:536-538)·컬럼 미시드·분석 저장 override
+  (이전 분석 프롬프트 미참조)·back-refine 부재.
+
+### 55.0 계획 (영향 파일·심볼·AC)
+
+**C. 재귀 분석 정합 (engine — feature-0002)**
+- `alembic/versions/20260706_0038_node_analysis_refine.py`: node_analysis_jobs 에 `anchor_key TEXT NOT NULL DEFAULT ''`
+  + `pass_no INT NOT NULL DEFAULT 0` 추가, UNIQUE(run_id,node_key) → UNIQUE(run_id,node_key,pass_no) 진화(비파괴).
+- `modules/node_analysis.py`:
+  - `enqueue_schema_analysis`: 시드 depth 1→0(직계 컬럼 gate-exempt 편입), run depth_budget=AGENT_NODE_ANALYSIS_SCHEMA_DEPTH(2),
+    node_budget=min(SCHEMA_RUN_BUDGET_MAX, planned×SCHEMA_EXPAND_FACTOR) — 재귀 전개 활성. 시드별 anchor_key=자기 key
+    (per-seed 앵커 — ADR-003 게이팅이 시드 기준으로 동작).
+  - `_enqueue_neighbors`: anchor_key 상속. only_missing 스키마런: done+rich 노드 skip / done+thin 은 refine pass 로 승급.
+  - `_load_anchor`: (run, anchor_key) 단위 캐시로 확장.
+  - **back-refine**: 잡 완료 시 같은 run 의 선행 done 노드 중 현재 잡과 그래프 인접 + 분석 빈약(THIN_CHARS 미만 또는
+    relationships·usage 공란) → pass_no+1 refine 잡 enqueue(REFINE_MAX cap). refine 잡 payload 에 previous_analysis
+    + 같은 run 인접 done 분석 요약(≤6) 동봉.
+  - **refine-not-override(전역)**: process_pending 이 노드 최신 done 분석을 payload.previous_analysis 로 동봉 —
+    모든 재분석이 융합(refine) 계약으로 동작.
+  - **관계 보충**: LLM 출력 계약에 optional `suggested_links`(컨텍스트 내 테이블 한정, ≤SUGGEST_LINKS_MAX) 추가 →
+    끝점 rag_objects 실재 검증 후 upsert_relationship(source='llm_insight', candidate) — 기존 프로브/자기교정
+    파이프라인이 검증(fetch_probe_candidates 가 llm_insight 이미 포함).
+- `modules/llm.py`: NODE_ANALYSIS_PROMPT 에 refine 계약(기존과 비교·올바른 쪽 채택·다른-but-not-틀린 융합·유효 사실
+  폐기 금지) + suggested_links 계약.
+- config: AGENT_NODE_ANALYSIS_SCHEMA_DEPTH(2)·SCHEMA_EXPAND_FACTOR(12)·SCHEMA_RUN_BUDGET_MAX(2500)·THIN_CHARS(120)·
+  REFINE_MAX(30)·SUGGEST_LINKS_MAX(4).
+
+**B. 크로스-DB 관계 (engine — feature-0002)**
+- `modules/relationships.py`: `infer_cross_datasource_relationships` 일반화 — 후보 WHERE 를 "다른 datasource OR
+  (같은 ds AND 다른 effective schema)" 로 확장(intra-DS 크로스 스키마는 src_ds==tgt_ds 로 저장 → 기존 프로브·강화
+  경로 자연 편입). `fetch_probe_candidates` db_scope 필터를 양끝 OR-매칭으로 완화. `probe_and_reinforce` MSSQL
+  qualifier 유지(활성 DB 와 달라도 strip 안 함 — 3-part 위임).
+- `modules/dialects.py`: MSSQL probe 이름 3-part `[db].[dbo].[table]` 지원(스키마-slot=DB 규약), MySQL 은 기존 2-part 로 충분.
+- `modules/insight.py`: xds 데몬 가드 (XDS_AUTO or XSCHEMA_AUTO) — intra-DS 크로스 스키마 추론은
+  AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO(기본 1, 프로브 검증 가능해 안전) / 크로스 DS 는 기존 XDS_AUTO 유지.
+- **manual 승격 배선**: admin 라우터 `POST /api/admin/metadata/graph/relationship/curate`(trust|break, 권한
+  metadata.table.manage) → upsert_relationship(source='manual') + sync_relationship — 크로스-DS 영구 candidate
+  dead-end 해소. admin.js 관계 상세 패널에 승격/파단 버튼(cross-ds candidate 시).
+- compose: insight-worker `AGENT_XDS_RELATIONSHIP_INFER_AUTO=1` flip(ADR-019 의 "임베딩 populate 후 flip" — D 로 populate 가동).
+
+**A. 제품/DB 카테고리 (feature-0003)**
+- `routers/admin_metadata.py`: scope_roots/scope_schemas 응답에 `schema_products` 부착 — scope→datasource 해석
+  (read-axis, _products_for_scope 로직 재사용) → WebProductDatasources(+legacy) 제품 → WebProductDatabases
+  (DatasourceKey, SchemaName) → {schema: [{id,name,sort}]} 합성(AGE 미저장 — ADR-014 원칙 계승).
+- `static/admin.js`: `_metaGraph.schemaProducts` ingest → 빌드 [6] shelf-pack 을 카테고리(제품) 단위 분할 —
+  카테고리 순서(제품 SortOrder·미분류 후미)·§49 catOrder 안정화, CAT:(배경, z 신설 CAT_BG)·CATH:(헤더 칩, GROUP_HD)·
+  CATX:(접기, CTL) 방출(GB/GH/GX 패턴 재사용). CATH 드래그=멤버 클러스터 clusterOffset 일괄 시프트(리지드),
+  CATX 접기=멤버 클러스터 미방출+헤더 유지, catCollapsed/catOrder resetModel clear. 클릭/우클릭/드래그 라우팅 분기.
+  단일 카테고리(전부 미분류)면 카테고리 계층 미방출(회귀 0).
+- `admin.html`: cache-buster bump + 범례 카테고리 항목.
+
+**D. Phase C 정합 후속 (feature-0002)**
+- `modules/semantic_cluster.py` `run_signature_backfill_pass`: 미처리(hash NULL/'') 우선 정렬
+  `ORDER BY (signature_text_hash IS NULL OR ='') DESC, updated_at DESC` + remaining 카운트 + pass 결과 info 로그 1줄(관측성).
+- config: SIG_BATCH_MAX_ROWS 기본 200→500(16k 백로그 ~8h 소진).
+
+**AC**
+- AC-1(A): 다제품 매핑 datasource 진입 시 스키마 카드가 제품 카테고리 박스(배경+헤더 `제품명 · n`)로 묶여 배치,
+  미매핑 스키마는 '미분류' 후미. 헤더 드래그=카테고리 일괄 이동, CATX 접기/펼치기. 전부 미분류면 기존 배치 그대로.
+- AC-2(B): 같은 DS 다른 스키마(DB) 간 후보 관계가 임베딩 유사도로 발굴·저장되고(src_ds==tgt_ds, 스키마 상이)
+  MSSQL 3-part 프로브가 강화/파단 신호를 만든다. 크로스-DS 관계 승격 API·UI 로 trusted 화 시 AI 컨텍스트 주입.
+- AC-3(C): DB 단위 분석이 테이블·루틴 시드 + 직계 컬럼 + 앵커-게이팅 재귀(예산 내)로 전개. 이미 분석(rich)된
+  노드 skip, thin 노드는 refine. 잡 완료 시 선행 thin 인접 노드 back-refine 잡 생성(cap). 모든 재분석 payload 에
+  previous_analysis 동봉 + 프롬프트 refine 계약. suggested_links 가 검증 후 candidate 관계로 적재.
+- AC-4(D): 백필이 미처리 행부터 소진(remaining 단조 감소 로그), 클러스터 populate 진행. XDS 데몬 가동 로그.
+- AC-5: 기존 단위테스트 회귀 0 + 신규 테스트(스키마런 재귀·refine payload·back-refine·xschema 후보·3-part 프로브·
+  schema_products 합성·백필 우선순위) PASS. PB-0008 라이브 시각검증(카테고리 렌더·관계 UI).
+
+### 55.1 구현
+- [x] T55.1 alembic 0038(ADD anchor_key·pass_no — UNIQUE 불변 mixed-version 안전) + node_analysis.py 스키마런 재귀(시드 depth0·per-seed 앵커·예산 planned×12 cap 2500) + refine-not-override(previous_analysis 전역 동봉) + back-refine(_backrefine_neighbors, thin 재-pending pass_no+1, REFINE_MAX 30) + suggested_links 적재(_ingest_suggested_links, 3중 가드) + llm.py refine·suggested_links 계약 + config 노브 9종(+__all__). 전 지점 0038 미적용 legacy 폴백(_refine_cols_ok).
+- [x] T55.2 infer_cross_datasource_relationships 일반화(include_xds/include_xschema — intra-DS 크로스 스키마 후보 src_ds==tgt_ds 로 프로브 파이프라인 자연 편입, per-mode min_sim 0.90/0.86, 같은-DB 쌍 제외·reverse-dup 카논화) + MSSQL 3-part `[db].[dbo].[t]` 프로브(dbo slot 가드) + fetch_probe_candidates 한끝 OR-완화 + probe_and_reinforce qualifier 보존 + insight 데몬 (XDS OR XSCHEMA) 가드 + curate API(POST /graph/relationship/curate, trust=manual 승격·break=파단+AGE 즉시 정합, 권한 metadata.table.manage) + 관계 상세 패널 ✓신뢰/✕파단 버튼 + compose insight-worker AGENT_XDS_RELATIONSHIP_INFER_AUTO=1 flip.
+- [x] T55.3 _schema_products_for_scope(WebProductDatabases 질의시점 합성, ADR-014 계승) + scope_roots/schemas 응답 schema_products 부착 + admin.js _metaCatAssign(카테고리 배정·catOrder §49 안정화·검색 강제펼침) + 밴드별 shelf-pack 분할 + CAT:(z 신설 CAT_BG=-1)/CATH:/CATX: 방출(bbox 반응형 파생) + CATH 리지드 드래그(멤버 clusterOffset 일괄 누적) + 접기/클릭/우클릭 라우팅 + 카테고리 상세 패널 + resetModel/ingest 배선 + admin.html 범례·cache-buster 20260706-graph-cat-refine + styles.css.
+- [x] T55.4 run_signature_backfill_pass 미처리(hash NULL/'') 우선 정렬 + remaining 카운트·info 로그(관측성) + SIG_BATCH_MAX_ROWS 기본 200→500 (실측 정체 497/16,023 = 3% 해소 경로).
+
+### 55.2 검증
+- [x] T55.5 신규 테스트: test_graph_category_recursive_refine.py 23(thin/refine 헬퍼·back-refine 캡·anchor 상속·per-seed 앵커·suggested_links 가드·xschema 추론 5축·3-part/dbo 가드·fetch OR·백필 정렬) + test_routine_dbanalysis 계약 갱신(depth0/legacy 폴백 2건) + test_graph_relationship_curate.py 4 + 프론트 헤드리스 카테고리 17/17. 전체 스위트 컨테이너 pytest EXIT=0(전건 PASS — route parity golden 은 §53 누락분+curate 라우트 반영 재생성 197). node --check·py_compile PASS.
+- [x] T55.6 §18.8 적대 리뷰 패널 — ultracode Workflow 4렌즈(engine/relationships/frontend/crosscut) 발굴 + 2-refuter 적대 검증(세션 한도 중단분 9건은 main 세션 코드 직접 재검증·crosscut self-review 대체). 확정 BLOCKING 2·MAJOR 4·MINOR 3 전건 수정 + 수용 1(멀티워커 finalize 경합 cosmetic — 근거 기록). 회귀 잠금 6건+헤드리스 T7~T9 추가, 전체 스위트 EXIT=0 재확인. REVIEW REV-20260707T100744 정본.
+- [ ] T55.7 verify-completion → PR → 머지 → 배포(0038 마이그 + web 롤링 + insight/ask-worker 재빌드) → PB-0008 라이브 검증.

@@ -90,7 +90,10 @@ def test_schema_analysis_cap(monkeypatch):
     assert res["planned"] == 5 and res["capped"] is True and res["missing"] == 30
 
 
-def test_schema_analysis_seeds_depth1_budget_planned(monkeypatch):
+def test_schema_analysis_seeds_depth0_anchor_expanded_budget(monkeypatch):
+    """§55(REQ-20260706 ③): 시드 depth=0 + anchor_key=자기 자신 + 예산 planned×EXPAND_FACTOR —
+    스키마 단위 분석의 재귀 전개 활성(구 재귀 0 계약 대체; legacy 창은 아래 폴백 테스트)."""
+    monkeypatch.setitem(na._REFINE_COLS, "ok", True)
     cur = _patch_common(monkeypatch, _tables(4))
     res = na.enqueue_schema_analysis("ds1", "ds1:app", requested_by="tester")
     assert res["ok"] and res["status"] == "running" and res["planned"] == 4
@@ -99,11 +102,30 @@ def test_schema_analysis_seeds_depth1_budget_planned(monkeypatch):
     assert len(run_sqls) == 1 and len(job_sqls) == 4
     params = run_sqls[0][1]
     # (run_id, scope, root_key, 'Schema', name, depth_budget, node_budget, enqueued, requested_by, up)
-    assert params[3] == "Schema" and params[5] == 1 and params[6] == 4 and params[7] == 4
+    assert params[3] == "Schema" and params[5] == 2   # depth = AGENT_NODE_ANALYSIS_SCHEMA_DEPTH(2)
+    assert params[6] == 48 and params[7] == 4         # budget = 4×12(factor) / enqueued = planned
     for sql, jp in job_sqls:
         # §54④: node_label 은 리터럴 'Table' 이 아니라 파라미터(jp[3]) — Routine 혼합 시드 지원.
-        assert ",1,1.0,'pending'" in sql.replace(" ", "")
+        assert ",0,1.0,'pending'" in sql.replace(" ", "")   # §55: depth=0(직계 컬럼 게이트 면제 편입)
+        assert "anchor_key" in sql
         assert jp[2].startswith("ds1:app.T") and jp[3] == "Table"
+        assert jp[6] == jp[2]   # per-seed 앵커 — anchor_key == 자기 key
+
+
+def test_schema_analysis_legacy_window_seeds_depth1_budget_planned(monkeypatch):
+    """§55 마이그레이션 창(alembic 0038 미적용) 폴백 — 구 계약 그대로: depth=1 시드·node_budget=planned
+    (재귀 0)·anchor_key 미포함. 구 워커 ON CONFLICT (run_id,node_key) 와 mixed-version 안전."""
+    monkeypatch.setitem(na._REFINE_COLS, "ok", False)
+    cur = _patch_common(monkeypatch, _tables(4))
+    res = na.enqueue_schema_analysis("ds1", "ds1:app", requested_by="tester")
+    assert res["ok"] and res["status"] == "running" and res["planned"] == 4
+    run_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_runs" in e[0]]
+    job_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_jobs" in e[0]]
+    params = run_sqls[0][1]
+    assert params[5] == 1 and params[6] == 4 and params[7] == 4
+    for sql, jp in job_sqls:
+        assert ",1,1.0,'pending'" in sql.replace(" ", "")
+        assert "anchor_key" not in sql and len(jp) == 6
 
 
 def test_schema_analysis_reused_running(monkeypatch):
@@ -130,13 +152,14 @@ def test_schema_analysis_mixed_dry_run_counts(monkeypatch):
 
 
 def test_schema_analysis_seeds_routine_label(monkeypatch):
-    """루틴 잡은 node_label='Routine' 파라미터로 시드, node_budget=planned(루틴 포함) — 재귀 0 불변식."""
+    """루틴 잡은 node_label='Routine' 파라미터로 시드 — §55: 예산 planned×factor(재귀 전개), 시드 순서 불변."""
+    monkeypatch.setitem(na._REFINE_COLS, "ok", True)
     cur = _patch_common(monkeypatch, _tables(2), routines=_routines(2))
     res = na.enqueue_schema_analysis("ds1", "ds1:app")
     assert res["ok"] and res["planned"] == 4
     run_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_runs" in e[0]]
     job_sqls = [e for e in cur.executed if "INSERT INTO node_analysis_jobs" in e[0]]
-    assert run_sqls[0][1][6] == 4   # node_budget = 테이블2+루틴2
+    assert run_sqls[0][1][6] == 48   # §55: node_budget = (테이블2+루틴2)×EXPAND_FACTOR(12)
     labels = [jp[3] for _, jp in job_sqls]
     assert labels == ["Table", "Table", "Routine", "Routine"]   # 테이블 우선 순서(결정적)
     rkeys = [jp[2] for _, jp in job_sqls if jp[3] == "Routine"]

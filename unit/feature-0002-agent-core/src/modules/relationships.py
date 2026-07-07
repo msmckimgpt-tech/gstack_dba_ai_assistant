@@ -887,18 +887,33 @@ def _fetch_table_columns_map(cur, scope_key, schema_name, table_name):
         return set()
 
 
-def infer_cross_datasource_relationships(conn=None, *, min_sim=None, batch_max=None, max_per_scope=None) -> list:
-    """Phase C 시그니처 임베딩으로 크로스-ds 관계 후보 발굴. 반환: [{src_*, tgt_*, confidence, ...}] (미저장).
+def infer_cross_datasource_relationships(conn=None, *, min_sim=None, batch_max=None, max_per_scope=None,
+                                          include_xds=True, include_xschema=None) -> list:
+    """Phase C 시그니처 임베딩으로 **경계 넘는** 관계 후보 발굴. 반환: [{src_*, tgt_*, confidence, ...}] (미저장).
 
-    rag_objects.signature_text_hash → texts.embedding(bge-m3 1024d) 조인. 각 table 을 다른 datasource 의
-    table 과 pgvector 코사인 kNN 매칭(sim ≥ min_sim). 유사 테이블 쌍에서 양쪽 공통 join-key 컬럼을 후보 엣지로.
+    rag_objects.signature_text_hash → texts.embedding(bge-m3 1024d) 조인. 각 table 을 pgvector 코사인
+    kNN 매칭해 유사 테이블 쌍의 양쪽 공통 join-key 컬럼을 후보 엣지로.
+
+    §55(REQ-20260706 ②) 일반화 — 두 종류의 경계를 함께 다룬다:
+      - include_xds: **크로스-데이터소스**(다른 datasource) — ADR-019 원형. 프로브 불가라 min_sim 보수
+        (AGENT_XDS_RELATIONSHIP_MIN_SIM, 기본 0.90) + trusted 승격은 manual/대화만.
+      - include_xschema: **같은 datasource 안의 다른 effective schema(DB)** — 같은 서버라 3-part 프로브로
+        검증 가능(fetch_probe_candidates·dialect §55) → min_sim 완화(AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM,
+        기본 0.86). src_ds==tgt_ds 로 저장되어 기존 강화/파단 파이프라인에 자연 편입된다.
+        None 이면 config AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO(기본 ON)를 따른다.
+    같은 effective schema(같은 DB) 내부 쌍은 제외 — per-schema 명명 추론(기존)의 영역.
     """
     from shared import config as _cfg
     min_sim = float(min_sim if min_sim is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_MIN_SIM", 0.90))
+    xschema_min = float(getattr(_cfg, "AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM", 0.86) or 0.86)
+    if include_xschema is None:
+        include_xschema = bool(getattr(_cfg, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True))
     batch_max = int(batch_max if batch_max is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_BATCH_MAX", 200))
     max_per_scope = int(max_per_scope if max_per_scope is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE", 50))
     knn_k = int(getattr(_cfg, "AGENT_XDS_RELATIONSHIP_KNN_K", 10))
     out = []
+    if not (include_xds or include_xschema):
+        return out
     c, owned = _ro_conn(conn)
     if c is None:
         return out
@@ -922,26 +937,61 @@ def infer_cross_datasource_relationships(conn=None, *, min_sim=None, batch_max=N
                 # MAJOR fix: 그래프 Table 노드는 effective schema(_rag_effective — MSSQL DB명)로 투영되고,
                 #   column_descriptions 도 그 값으로 키됨. raw schema_name('dbo')로 조회하면 MSSQL 컬럼 0건→후보 0/고아.
                 eff_a = _effective_schema(dsk, okey, sch)
-                # 다른 datasource 의 의미-유사 table kNN (pgvector <=> 코사인 거리).
-                cur.execute(
-                    "SELECT o2.scope_key, o2.datasource_key, o2.schema_name, o2.table_name, o2.object_key, "
-                    "       1 - (t2.embedding <=> %s::vector) AS sim "
-                    "FROM rag_objects o2 JOIN texts t2 ON o2.signature_text_hash = t2.text_hash "
-                    "WHERE o2.object_type='table' AND o2.datasource_key <> %s "
-                    "AND t2.embedding IS NOT NULL "
-                    "ORDER BY t2.embedding <=> %s::vector LIMIT %s",
-                    (emb_txt, dsk, emb_txt, knn_k),
-                )
+                # 의미-유사 table kNN (pgvector <=> 코사인 거리).
+                # 패널 MAJOR fix(recall): xschema 미포함이면 종전 SQL(`datasource_key <>`)을 유지해
+                #   top-k 전 슬롯이 cross-ds 임을 보장. xschema 포함이면 같은 DB 시블링(백업/파티션/
+                #   시리즈 — 임베딩 최상 유사 부류)이 top-k 를 점유해 경계 후보 recall 이 0 으로
+                #   침몰하므로 **초과-fetch(knn_k×5, cap 60)** 후 클라이언트 필터 + 경계 pair 수를
+                #   knn_k 로 캡한다(같은-DB 쌍은 슬롯을 소모하지 않음).
+                if include_xschema:
+                    fetch_k = min(60, max(knn_k * 5, knn_k))
+                    cur.execute(
+                        "SELECT o2.scope_key, o2.datasource_key, o2.schema_name, o2.table_name, o2.object_key, "
+                        "       1 - (t2.embedding <=> %s::vector) AS sim "
+                        "FROM rag_objects o2 JOIN texts t2 ON o2.signature_text_hash = t2.text_hash "
+                        "WHERE o2.object_type='table' AND NOT (o2.datasource_key = %s AND o2.object_key = %s) "
+                        "AND t2.embedding IS NOT NULL "
+                        "ORDER BY t2.embedding <=> %s::vector LIMIT %s",
+                        (emb_txt, dsk, okey, emb_txt, fetch_k),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT o2.scope_key, o2.datasource_key, o2.schema_name, o2.table_name, o2.object_key, "
+                        "       1 - (t2.embedding <=> %s::vector) AS sim "
+                        "FROM rag_objects o2 JOIN texts t2 ON o2.signature_text_hash = t2.text_hash "
+                        "WHERE o2.object_type='table' AND o2.datasource_key <> %s "
+                        "AND t2.embedding IS NOT NULL "
+                        "ORDER BY t2.embedding <=> %s::vector LIMIT %s",
+                        (emb_txt, dsk, emb_txt, knn_k),
+                    )
                 cols_a = None
+                pairs_taken = 0   # 경계(수용된) 이웃 pair 수 — knn_k 캡(같은-DB skip 은 미소모)
                 for (sc2, dsk2, sch2, tbl2, okey2, sim) in cur.fetchall():
-                    if sim is None or float(sim) < min_sim:
+                    if sim is None:
                         continue
-                    # reverse-dup 카논화(리뷰 MINOR): A→B·B→A 양방향 중복 방지 — 사전순 작은 ds 에서만 발화.
-                    if str(dsk) >= str(dsk2):
-                        continue
-                    if per_ds.get(dsk, 0) >= max_per_scope:
+                    if pairs_taken >= knn_k:
                         break
                     eff_b = _effective_schema(dsk2, okey2, sch2)
+                    if str(dsk) == str(dsk2):
+                        # intra-DS 크로스 스키마(DB) 후보 — 같은 DB 내부는 제외(per-schema 명명 추론 영역).
+                        if not include_xschema or eff_a == eff_b:
+                            continue
+                        # reverse-dup 카논화 — 같은 ds 는 (schema, table) 사전순 작은 쪽에서만 발화.
+                        if (str(eff_a), str(tbl)) >= (str(eff_b), str(tbl2)):
+                            continue
+                        if float(sim) < xschema_min:
+                            continue
+                    else:
+                        if not include_xds:
+                            continue
+                        # reverse-dup 카논화(리뷰 MINOR): A→B·B→A 양방향 중복 방지 — 사전순 작은 ds 에서만 발화.
+                        if str(dsk) >= str(dsk2):
+                            continue
+                        if float(sim) < min_sim:
+                            continue
+                    if per_ds.get(dsk, 0) >= max_per_scope:
+                        break
+                    pairs_taken += 1
                     if cols_a is None:
                         cols_a = _fetch_table_columns_map(cur, sc, eff_a, tbl)
                     cols_b = _fetch_table_columns_map(cur, sc2, eff_b, tbl2)
@@ -1037,11 +1087,22 @@ def fetch_probe_candidates(conn, scope_key, limit, db_scope=None):
             db_filter = ""
             params = [scopes]
             if db_scope:
+                # §55(REQ-20260706 ②, 패널 BLOCKING fix): 크로스 DB 확장은 **양 slot 확정 행에만** 적용.
+                #   - 양끝 slot 확정: 한끝이 현재 DB(catalog)면 반대쪽은 다른 DB 여도 3-part qualifier
+                #     (dialects MSSQL `[db].[dbo].[table]`)로 같은 연결에서 프로브 가능 — 신규 경로.
+                #   - ''(레거시 미해석 slot) 포함 행: **종전 AND 의미론 그대로** — '' 끝은 연결 DB 로
+                #     해석되므로, 반대쪽 확정 slot 이 현재 DB 일 때만(=행이 이 catalog 에 앵커) fetch.
+                #     단순 OR 완화는 ('',DBX) 행을 모든 catalog 에 흘려 무관 DB 의 동명 테이블에서
+                #     "성공-프로브 matched=0" negative 를 먹여 실관계를 영구 오파단한다(성공 경로는
+                #     R-1 가드(missing-object 예외 한정) 밖 — 패널 BLOCKING).
                 db_filter = (
-                    "  AND (source_schema = '' OR lower(source_schema) = lower(%s)) "
-                    "  AND (target_schema = '' OR lower(target_schema) = lower(%s)) "
+                    "  AND ( (source_schema = '' AND target_schema = '') "
+                    "     OR (source_schema = '' AND lower(target_schema) = lower(%s)) "
+                    "     OR (target_schema = '' AND lower(source_schema) = lower(%s)) "
+                    "     OR (source_schema <> '' AND target_schema <> '' "
+                    "         AND (lower(source_schema) = lower(%s) OR lower(target_schema) = lower(%s))) ) "
                 )
-                params.extend([str(db_scope), str(db_scope)])
+                params.extend([str(db_scope), str(db_scope), str(db_scope), str(db_scope)])
             params.append(int(limit))
             cur.execute(
                 "SELECT id, source_schema, source_table, source_column, "
@@ -1158,9 +1219,10 @@ def probe_and_reinforce(ds_conn, dialect, scope_key, *, kb_conn=None, raw_execut
     각 edge: src 컬럼 표본 sample개 중 tgt 컬럼에 존재(EXISTS)하는 비율 = 겹침률(classify_probe).
     ds_conn 에서 프로브 SQL(read-only) 실행, 강화는 kb_conn(관계형 SSOT)에 기록. 전부 guarded(비차단).
     timeout_ms: 프로브 statement 시간 상한(운영 DB 폭주 차단 — MySQL MAX_EXECUTION_TIME / MSSQL LOCK_TIMEOUT).
-    db_scope(rel-selfheal): 현재 연결의 DB(catalog)명 — MSSQL 경로. 후보를 그 DB 소속(또는 미해석
-    레거시)으로 한정하고, 스키마-slot 이 DB명 규약이라 프로브 SQL 에서는 qualifier 를 벗겨
-    연결 DB 의 기본 스키마 해석에 맡긴다(`[db명].[table]` 은 MSSQL 에서 스키마 오해석). None=MySQL 불변.
+    db_scope(rel-selfheal·§55): 현재 연결의 DB(catalog)명 — MSSQL 경로. 후보는 **한쪽 끝이 이 DB 에
+    앵커**된 것(또는 미해석 레거시 '')으로 한정하고, qualifier 는 벗기지 않는다 — dialect 가 스키마-slot
+    (=DB명, ADR-007)을 3-part `[db].[dbo].[table]` 로 조립해 같은 서버의 다른 DB 끝점(크로스 DB 후보)도
+    같은 연결에서 프로브한다(REQ-20260706 ②). None=MySQL 불변(2-part `db`.`table` 로 동일 의미).
 
     강화/파단 write-back 은 후보 row 의 스키마-slot 으로 한정(apply_relationship_signal
     a_schema/b_schema — 교차-DB 동명 테이블 오염 차단, 적대 패널 B-F2). sample/cap/timeout 은
@@ -1187,10 +1249,12 @@ def probe_and_reinforce(ds_conn, dialect, scope_key, *, kb_conn=None, raw_execut
     try:
         for (rid, ssch, stbl, scol, tsch, ttbl, tcol) in cands:
             try:
-                s_sch = "" if (_db and str(ssch or "").strip().lower() == _db) else (ssch or "")
-                t_sch = "" if (_db and str(tsch or "").strip().lower() == _db) else (tsch or "")
+                # §55(REQ-20260706 ②): qualifier 를 벗기지 않고 그대로 전달 — MSSQL dialect 가 스키마-slot
+                # (=DB명, ADR-007)을 3-part `[db].[dbo].[table]` 로 조립해 같은 서버의 **다른 DB 끝점도
+                # 같은 연결에서** 프로브한다(크로스 DB 후보 검증). slot=='' 레거시는 종전대로 연결 DB
+                # 기본 해석. MySQL 은 2-part `db`.`table` 로 동일 의미(불변).
                 sql = dialect.probe_relationship_overlap(
-                    s_sch, stbl, scol, t_sch, ttbl, tcol, int(sample),
+                    ssch or "", stbl, scol, tsch or "", ttbl, tcol, int(sample),
                     timeout_ms=int(timeout_ms))
                 results, *_ = raw_execute(ds_conn, sql)
                 sampled, matched = _parse_probe_counts(results)

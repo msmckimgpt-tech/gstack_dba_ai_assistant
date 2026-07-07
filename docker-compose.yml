@@ -354,6 +354,11 @@ services:
       AGENT_CONVERSATION_ID: __insight_worker__
       # TASK-0130: environment override 시 anchor 의 PG_REQUIRED 가 상속 안 되므로 명시.
       AGENT_RUNTIME_PG_REQUIRED: "1"
+      # feature-0016 §55 (REQ-20260706 ②·④): Phase B 크로스-데이터소스 추론 flip — ADR-019 의
+      # "임베딩 populate 후 flip" 이행. §55 D(시그니처 백필 미처리-우선 fix)가 populate 를 가동하므로
+      # 데몬을 켠다(임베딩 없는 동안은 후보 0 = 자연 no-op, cadence 6h). intra-DS 크로스 스키마
+      # (AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO)는 config 기본 ON — 별도 지정 불요.
+      AGENT_XDS_RELATIONSHIP_INFER_AUTO: "1"
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
     networks: [dbnet, llm-shared, replica-net]
     restart: unless-stopped

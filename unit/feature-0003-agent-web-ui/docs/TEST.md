@@ -1731,3 +1731,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - pre-deploy 격리 검증: pytest 21(§54④ 신규 5 포함) + 관련 회귀 57 PASS · node --check/py_compile PASS · §18.8 3-렌즈+적대 재검증 패널(feature-0016 REVIEW.md).
 - **Environment: Windows-browser — pre-commit 시점 미수행 사유**: 정적 자산 baked — merge+재배포(web+insight-worker) 선행 필요. **POST-DEPLOY 에서 PB-0008 수행 후 본 섹션에 라이브 Run append 예정** — ① 상세 패널 뒤로/앞으로(노드·클러스터·관계 뷰 복원) ② 관계/함수/프로시저 토글 재배치+새로고침 영속 ③ 검색 변경/클리어 시 펼침·배치·확장 보존 ④ DB 단위 분석 confirm 에 함수/프로시저 수 + Routine 분석·마커 ⑤ 루틴 파라미터 수직 펼침(겹침 0) ⑥ pageerror 0.
 - **POST-DEPLOY PB-0008 라이브 실측 — PASS (Environment: Windows-browser, 2026-07-06, PR #597→842b9ecf, deploy-web 롤링 soak + insight/ask-worker 재빌드, 실 Windows Chrome via relay)**: 서빙 `admin.js/styles.css?v=20260706-graph-navfilter-routine`·healthz 842b9ecf. ① 뒤로/앞으로 view-typed 복원(rel→cluster→node, 5/5) ② kind 필터(⚙ 51→1·테이블 유지·엣지 단독 토글 테이블 이동 0·복원·영속·products 숨김) ③ 검색 보존(줌·노드114·펼침·glow 라이프사이클 + products 검색→클리어 개요 복귀 — §18.8 MAJOR 수정 실증) ④ Routine 분석(pcbang dry_run 2+7 → Routine 잡 7 done·⚙ 마커 7·분석문 생성·noop dedup) ⑤ 파라미터 4행 21px 수직·push-down·XR 접힘 ⑥ pageerror 0. 증적 artifacts/…/20260706-graph-navfilter-routine/. 상세 feature-0016 TEST.md §54 Run(POST-DEPLOY).
+### Run (2026-07-07) — graph-category-recursive-refine: 제품 카테고리 밴드 + 관계 큐레이션 UI (Major §12.3, 문서 정본 feature-0016 TASK §55/ADR-021) — **Environment: Windows-browser**
+- pre-deploy 격리 검증: 신규 pytest 33(§55 29 + curate 4) + 전체 스위트 EXIT=0 · 헤드리스 `_metaG6Build` 카테고리
+  26/26(tests/headless/test_g6build_category.js — repo 영속화) · node --check/py_compile · §18.8 적대 패널
+  BLOCKING 2·MAJOR 4·MINOR 3 수정(feature-0016 REVIEW REV-20260707T100744).
+- **Environment: Windows-browser — pre-commit 시점 미수행 사유**: 정적 자산(admin.js/admin.html/styles.css,
+  cache-buster 20260706-graph-cat-refine)이 web 이미지에 baked — merge + `make deploy-web` 재배포(+insight/
+  ask-worker 재빌드) 선행 필요(§51/§52/§54 와 동일 패턴). **POST-DEPLOY 에서 PB-0008 수행 후 본 섹션에 라이브
+  Run append 예정** — ① 다제품 datasource 진입 시 제품 카테고리 밴드(🗂 헤더·접기 −/+·미분류 후미) 렌더
+  ② CATX 접기/펼치기·CATH 드래그=밴드 이동(접힘 밴드는 드래그 불가) ③ 매핑 없는 datasource 기존 배치 그대로
+  ④ 관계 상세 행 ✓신뢰/✕파단 버튼(권한 보유자)·큐레이션 후 엣지 스타일/제거 반영 ⑤ DB 단위 분석 confirm →
+  실행 시 enqueued 가 시드 초과로 증가(재귀 전개)·컬럼 잡 생성 ⑥ pageerror 0.

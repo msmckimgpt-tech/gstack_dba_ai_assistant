@@ -656,3 +656,44 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - pageerror 0 (전 구간 window error 수집기). 증적
   `artifacts/feature-0016-metadata-graph/20260706-graph-navfilter-routine/nfr-01~02.png`.
 
+
+## graph-category-recursive-refine — 제품 카테고리 + 크로스-DB 관계 + 재귀 분석 refine (TASK §55, 2026-07-06)
+
+### 케이스
+- TEST-20260706T210000-graph-cat-refine-1 (A): 다제품 매핑 datasource 진입 시 스키마 카드가 제품 카테고리
+  밴드(CAT 배경+🗂 헤더 `제품 · n DB`+CATX)로 세로 스택 배치, 미매핑은 '미분류' 후미, 매핑 전무 시 기존 배치.
+  CATH 드래그=밴드 리지드 이동(멤버 clusterOffset 누적), CATX 접기=멤버 미방출·헤더 밴드 유지, 검색 매칭 강제 펼침.
+- TEST-20260706T210000-graph-cat-refine-2 (B): 같은 DS 다른 스키마(DB) 간 임베딩 유사 후보가 src_ds==tgt_ds
+  로 저장·MSSQL 3-part 프로브 SQL 생성(dbo slot 2-part 가드)·fetch 한끝 OR. 관계 상세 행 ✓신뢰/✕파단 →
+  curate API(trust=manual trusted·break=broken+역방향, AGE 즉시 정합, cross_ds 승격 시 AI 컨텍스트 주입 대상).
+- TEST-20260706T210000-graph-cat-refine-3 (C): DB 단위 분석 시드 depth0+anchor_key=자기 자신·예산 planned×12
+  (cap 2500)·직계 컬럼 게이트 면제 편입·이웃 anchor_key 상속. 모든 잡 previous_analysis 동봉(refine 계약).
+  잡 완료 시 인접 thin done 재-pending(pass_no+1, REFINE_MAX 캡, enqueued 단조). suggested_links 3중 가드 통과분만
+  llm_insight candidate. 0038 미적용 창 legacy 폴백(재귀 0).
+- TEST-20260706T210000-graph-cat-refine-4 (D): 시그니처 백필 미처리(hash NULL) 우선 소진 + remaining 로그 단조 감소.
+
+### Run (2026-07-06) — pre-deploy 격리 검증
+- Environment: repo-insight-worker 컨테이너(worktree 마운트) pytest + node 헤드리스. Runner: AI.
+- 신규 `test_graph_category_recursive_refine.py` **23 PASS**(thin/parse/latest/related 헬퍼 · back-refine
+  재-pending/캡/카운터 · anchor 상속(+legacy) · per-seed 앵커 prompt 상속 · suggested_links 유효/환각/root 연루/캡/
+  비-Table skip · xschema intra-DS 후보/같은-DB 제외/min_sim/xds off/reverse-dup · MSSQL 3-part/dbo 가드 ·
+  fetch OR-완화 · 백필 정렬) + `test_routine_dbanalysis.py` 계약 갱신 2(신 계약 depth0·legacy 폴백) 포함 **24 PASS**
+  + `test_graph_relationship_curate.py` **4 PASS**(Column key 파싱 3-part/2-part/scope lower/invalid).
+- 프론트 헤드리스 `_metaG6Build` 카테고리 격리 **17/17 PASS**(scratchpad/test_g6build_category.js — 매핑없음
+  무개입·밴드 3종 방출·zIndex CAT_BG(-1)·밴드 세로 분리·헤더 라벨·멤버 밴드 내 포함·접기/재펼침·검색 강제펼침·
+  catOrder 안정화(신규 append)·클러스터 offset 반응형 bbox).
+- **전체 스위트**(feature-0002 + feature-0003 tests) 컨테이너 pytest **EXIT=0 전건 PASS** — route parity golden 은
+  의도적 라우트 +2(analyze-schema §53 누락분 + curate §55) 반영 재생성(195→197, clean main 에서도 실패하던
+  §53 baseline drift 동반 치유). node --check(admin.js)·py_compile 전 파일·migrate-lint(0038 expand-safe) PASS.
+
+### Run (2026-07-07) — §18.8 패널 확정·재검증분 반영 후 재검증
+- Environment: repo-insight-worker 컨테이너 pytest + node 헤드리스. Runner: AI.
+- 패널 수정 9건(BLOCKING 2·MAJOR 4·MINOR 3 — REVIEW REV-20260707T100744 상세) 반영 후:
+  회귀 잠금 신규 6건(fetch 4-분기 필터·transient probe 미캐시·모호 alias 차단·xschema 초과-fetch recall·
+  xds SQL 경계 유지·curate 매칭) + 헤드리스 T7~T9(zFor CAT canonical·접힘 밴드 드래그 차단·scope 한정
+  오배정 방지) — 헤드리스 **26/26 PASS**(하네스 repo 영속화: tests/headless/test_g6build_category.js).
+- **전체 스위트(0002+0003) 컨테이너 pytest EXIT=0 · FAILED 0** (패널 수정 반영 최종).
+- PB-0008 실 Windows 시각검증: **POST-DEPLOY 예정** (Environment: Windows-browser — 웹 자산이 web 이미지에
+  baked 되어 머지·배포 후 라이브 실측이 유일한 유효 검증, §53/§54 관례와 동일). 미수행 사유: pre-commit 시점엔
+  변경 자산이 라이브에 미서빙. 배포 후 카테고리 밴드 렌더·접기/드래그·관계 큐레이션·DB 분석 재귀 확장을 실측해
+  본 절에 Run 을 append 한다.

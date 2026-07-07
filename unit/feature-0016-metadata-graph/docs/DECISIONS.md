@@ -607,3 +607,62 @@ source_of_truth: true
   - **접기 시 그룹 블록 폭도 축소**: 펼침/접힘 간 가로 reflow 요동 — 안정성 위해 폭 유지(헤더 높이만 축소), 기각.
 - Supersedes: (ADR-015 를 대체하지 않음 — 그 offset 레이어를 그룹 계층으로 확장)
 - Superseded By:
+
+## ADR-021 — §55 graph-category-recursive-refine: 제품 카테고리 밴드 + 크로스-DB 관계 일반화 + DB 단위 분석 재귀·refine (REQ-20260706)
+- Status: accepted (2026-07-06)
+- Context: 사용자 4대 요구 — ① 데이터소스 진입 시 스키마 클러스터가 명칭순 평면 나열(관계 희소 시 seriation 폴백)
+  → 제품(Products)·DB 매핑 기반 카테고리 구분 필요. ② 'AI 능동 분석'·관계가 스키마 내부에 갇힘(라이브 실측:
+  관계 11,056행 中 크로스-DS 0·같은 DS 크로스 스키마 0 — 추론 per-schema 고정(relationships.py _add 양끝 고정),
+  MSSQL 프로브 2-part 만, 크로스-DS manual 승격 호출자 0 = 영구 candidate·AI 미주입 dead-end). ③ DB(스키마) 단위
+  분석이 재귀 0(§53 설계 — node_budget==planned)·컬럼 미시드·분석 저장이 사실상 override(이전 분석 미참조)·빈약
+  분석 후속 보충 부재. ④ ADR-018(Phase C) 시그니처 백필이 3%(497/16,023)에서 정체 — `updated_at DESC LIMIT N`
+  이 미처리 행을 우선하지 않아 처리된 최신 N 행만 매 pass 재스캔(no-op).
+- Decision:
+  1. **A(카테고리)**: `WebProductDatabases`(ProductId, DatasourceKey, SchemaName — 제품별 접근 DB SSOT)를 투영 API
+     질의시점 합성(`_schema_products_for_scope`, ADR-014 원칙 계승 — AGE 미저장)으로 `schema_products` 응답 부착.
+     프론트 `_metaCatAssign` 이 클러스터를 catKey(`PC:<제품id>`|미분류)로 배정하고 shelf-pack 을 **카테고리 밴드별
+     분할**(세로 스택·헤더 CATHH), `CAT:`(배경, 신설 z 밴드 CAT_BG=-1 — combo 아래)+`CATH:`(헤더 칩, GROUP_HD)+
+     `CATX:`(접기, CTL) 방출 — sim-group GB/GH/GX 패턴 재사용. CATH 드래그=멤버 클러스터 clusterOffset 일괄 누적
+     (신규 offset 계층 없이 ① 계층 재사용 — ADR-015/020 정합), 접기=멤버 미방출+헤더 밴드, §49 catOrder 안정화,
+     검색 매칭 카테고리 강제 펼침. 다제품 스키마는 대표 제품(SortOrder 1순위) 배정 + 상세에 전 제품 노출.
+     매핑 전무 시 완전 무개입(기존 배치 — 회귀 0).
+  2. **B(크로스-DB)**: (a) `infer_cross_datasource_relationships` 일반화 — 후보를 "다른 datasource"(XDS, min_sim
+     0.90 보수) OR "같은 DS 다른 effective schema"(XSCHEMA 신설, 기본 ON, min_sim 0.86 — 프로브 검증 가능해 완화)
+     로 확장. intra-DS 크로스 스키마 후보는 src_ds==tgt_ds 로 저장돼 기존 프로브·강화/파단 파이프라인에 자연 편입.
+     (b) MSSQL 프로브 3-part `[db].[dbo].[table]`(스키마-slot=DB명 ADR-007) — 같은 서버 다른 DB 끝점을 한 연결에서
+     검증. slot='dbo'(레거시 대화학습)는 실 스키마로 보고 2-part 유지(오파단 방지). fetch_probe_candidates db_scope
+     필터 양끝 AND→한끝 OR 완화. (c) **manual 승격 배선**: `POST /api/admin/metadata/graph/relationship/curate`
+     (trust|break, 권한 metadata.table.manage) + 관계 상세 패널 행 버튼 — 관계형 SSOT(upsert source='manual'→
+     trusted / status='broken'+역방향)와 AGE(즉시 sync/delete) 동시 정합. (d) XDS 데몬 flip(compose
+     AGENT_XDS_RELATIONSHIP_INFER_AUTO=1 — ADR-019 의 "임베딩 populate 후 flip" 이행, D 가 populate 가동).
+  3. **C(재귀·refine)**: alembic **0038**(비파괴 ADD 2컬럼 — jobs.anchor_key TEXT DEFAULT ''·pass_no INT DEFAULT 0.
+     **UNIQUE(run_id,node_key) 불변** — 구 워커 ON CONFLICT 와 mixed-version 안전). (a) 스키마 단위 분석 재귀 전개:
+     시드 depth=0(직계 컬럼 게이트 면제 편입 — "테이블·컬럼·함수·프로시저 전부") + **per-seed 앵커**(anchor_key=
+     자기 자신 — ADR-003 게이팅이 Schema 명칭이 아닌 각 시드 기준으로 동작, 이웃은 anchor_key 상속) +
+     depth_budget=SCHEMA_DEPTH(2)·node_budget=min(SCHEMA_RUN_BUDGET_MAX 2500, planned×EXPAND_FACTOR 12).
+     (b) **refine-not-override(전역)**: 모든 잡이 노드의 최신 done 분석문을 payload.previous_analysis 로 동봉 —
+     LLM 프롬프트 refine 계약("비교 후 정확한 쪽 채택, 다른-but-not-틀린 융합, 유효 사실 폐기 금지") 명문화.
+     (c) **back-refine**: 잡 완료 시 같은 run 의 인접 선행 done 中 빈약(thin: summary<THIN_CHARS 120 또는
+     relationships·usage 공란) 노드를 재-pending(pass_no+1, run 당 REFINE_MAX 30 캡, enqueued+=n 로 카운터 단조) —
+     refine 잡은 related_findings(같은 run 인접 done 요약 ≤6)를 동봉받아 후속 발견으로 보충. (d) **관계 보충**:
+     LLM 출력 계약에 optional suggested_links(≤4) — 컨텍스트 실재 테이블 화이트리스트 + root 연루 강제 + root 측
+     컬럼 실재 검증 통과분만 source='llm_insight' candidate 적재(기존 프로브·자기교정이 후속 판정 — 환각 차단 3중 가드).
+     0038 미적용 창은 전 지점 legacy 폴백(재귀 0·단일 앵커·refine 비활성 — role/user_prompt 창 방어와 동형).
+  4. **D(백필 정체)**: `run_signature_backfill_pass` 를 미처리(hash NULL/'') 우선 정렬로 수정 + remaining 카운트
+     +info 로그 1줄(관측성 — 정체 재발 감지) + SIG_BATCH 200→500(16k 백로그 ~8h 소진). Phase C 클러스터가 채워지며
+     sim-group `be:` 신호·XDS/XSCHEMA 추론이 실동작으로 전환된다(ADR-013→018 계보 완결).
+- Consequences: 그래프 뷰가 "명칭순 평면 나열" → "제품 카테고리 밴드 > 스키마 클러스터 > 유사 속성 그룹 > 테이블"
+  4계층 시각 구조가 되고, 관계·분석이 DB/DS 경계를 넘는다. DB 스키마 변경은 0038 비파괴 2컬럼뿐. 비용 경계:
+  스키마 run 예산 상한(2500)·REFINE_MAX·SUGGEST_LINKS_MAX·XSCHEMA min_sim/캡. 알려진 한계: ① 카테고리 밴드
+  자체의 자유 위치 저장은 멤버 clusterOffset 로 표현(밴드 전용 offset 없음 — 멤버 재배치와 정합) ② 다제품
+  스키마는 대표 제품 밴드에만 배치 ③ suggested_links 는 root 연루 관계만(제3자 간 제안 배제 — 보수) ④ MSSQL
+  dbo 외 실스키마는 관계 파이프라인 전반 미추적(기존 플랫폼 가정 유지).
+- Alternatives:
+  - 카테고리를 AGE Product 정점으로 물리 저장: ADR-014 에서 기각한 이중 정합 부담 재유입 — 질의시점 합성 유지.
+  - 크로스 스키마를 명명규칙(per-schema heuristic)의 전 스키마 O(N²) 확장으로: 8k 테이블 조합 폭발 + 프로브 부하 —
+    임베딩 유사도 게이트(Phase C 재사용)가 후보를 소수로 압축(기각).
+  - refine 을 신규 행(UNIQUE 3-col 진화)으로: 구 워커 ON CONFLICT (run_id,node_key) 가 마이그 직후 크래시 —
+    mixed-version 롤링 창 안전을 위해 재-pending 방식 채택(기각).
+  - 빈약 판정을 LLM 재평가로: 판정 자체가 LLM 비용 — 길이·공란 휴리스틱으로 충분(기각, 후속 여지).
+- Supersedes: (§53/§54 의 "재귀 0" 계약을 대체 — 예산·게이팅 경계는 계승. ADR-017 승격, ADR-018/019 는 불변 토대)
+- Superseded By:

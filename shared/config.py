@@ -69,6 +69,13 @@ __all__ = [
     "AGENT_NODE_ANALYSIS_MODEL",
     "AGENT_NODE_ANALYSIS_SCHEMA_CAP",
     "AGENT_NODE_ANALYSIS_SCHEMA_MAX",
+    "AGENT_NODE_ANALYSIS_SCHEMA_DEPTH",
+    "AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR",
+    "AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX",
+    "AGENT_NODE_ANALYSIS_THIN_CHARS",
+    "AGENT_NODE_ANALYSIS_REFINE_MAX",
+    "AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX",
+    "AGENT_NODE_ANALYSIS_PARENT_TABLE_REL",
     "AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT",
     "AGENT_INSIGHT_OBJECT_FASTPATH",
     "AGENT_INSIGHT_OBJECT_MAX_CANDIDATES",
@@ -283,6 +290,8 @@ __all__ = [
     "AGENT_XDS_RELATIONSHIP_BATCH_MAX",
     "AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE",
     "AGENT_XDS_RELATIONSHIP_KNN_K",
+    "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO",
+    "AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM",
     "AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
@@ -645,7 +654,8 @@ AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC
 #   τ=0.82 는 라이브 임베딩 코사인 분포로 재보정 대상(초기 안전값).
 AGENT_METADATA_CLUSTER_AUTO = os.getenv("AGENT_METADATA_CLUSTER_AUTO", "1").strip().lower() in ("1", "true", "yes")
 AGENT_METADATA_CLUSTER_INTERVAL_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_INTERVAL_SEC", "900") or "900")
-AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "200") or "200")
+# §55 D: 200→500 상향 — 16k 백로그를 15분 pass 당 500 행이면 ~8h 에 소진(미처리-우선 정렬과 세트).
+AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "500") or "500")
 AGENT_METADATA_CLUSTER_RECOMPUTE_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_RECOMPUTE_SEC", "21600") or "21600")
 AGENT_METADATA_CLUSTER_SIM_THRESHOLD = float(os.getenv("AGENT_METADATA_CLUSTER_SIM_THRESHOLD", "0.82") or "0.82")
 AGENT_METADATA_CLUSTER_KNN_K = int(os.getenv("AGENT_METADATA_CLUSTER_KNN_K", "15") or "15")
@@ -661,6 +671,11 @@ AGENT_XDS_RELATIONSHIP_MIN_SIM = float(os.getenv("AGENT_XDS_RELATIONSHIP_MIN_SIM
 AGENT_XDS_RELATIONSHIP_BATCH_MAX = int(os.getenv("AGENT_XDS_RELATIONSHIP_BATCH_MAX", "200") or "200")
 AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE = int(os.getenv("AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE", "50") or "50")
 AGENT_XDS_RELATIONSHIP_KNN_K = int(os.getenv("AGENT_XDS_RELATIONSHIP_KNN_K", "10") or "10")
+# feature-0016 §55 (REQ-20260706 ②): **같은 datasource 안의 다른 스키마(DB) 간** 관계 추론.
+#   크로스-DS 와 같은 임베딩 유사도 경로를 쓰되, src_ds==tgt_ds 라 기존 프로브(EXISTS)·강화/파단
+#   파이프라인에 자연 편입된다(검증 가능) → 기본 ON. MIN_SIM 은 XDS 보다 완화(프로브가 검증하므로).
+AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO = os.getenv("AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", "1").strip().lower() in ("1", "true", "yes")
+AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM = float(os.getenv("AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM", "0.86") or "0.86")
 # node_analysis: 의도적 교차DB REFERENCES 로 도달한 이웃의 cross-scope 감쇠 대체값(1.0=무감쇠). 우연 교차는 0.25 유지.
 AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR", "1.0") or "1.0")
 BLOCKED_DEFAULT_SCHEMAS = {
@@ -1040,6 +1055,25 @@ AGENT_NODE_ANALYSIS_LEASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_LEASE_SEC", "
 #   기본 200 — UI confirm 에 대상 수가 표시되고 only_missing 이 기본이라 재실행 비용은 잔여분만.
 AGENT_NODE_ANALYSIS_SCHEMA_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_CAP", "200"))
 AGENT_NODE_ANALYSIS_SCHEMA_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_MAX", "500"))
+# ── DB(스키마) 단위 분석 재귀 전개 (feature-0016 §55, REQ-20260706 ③) ─────────
+#  스키마 단위 run 도 시드(테이블·루틴)별 재귀를 전개한다 — 시드마다 자기 자신이 앵커(per-seed 앵커,
+#  jobs.anchor_key)라 게이팅은 각 테이블 기준. 비용 경계: depth 는 SCHEMA_DEPTH, 총 노드는
+#  min(SCHEMA_RUN_BUDGET_MAX, planned×SCHEMA_EXPAND_FACTOR) — 시드 자체는 항상 예산에 포함된다.
+AGENT_NODE_ANALYSIS_SCHEMA_DEPTH = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_DEPTH", "2"))
+AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR", "12"))
+AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX", "2500"))
+# ── refine-not-override + back-refine (feature-0016 §55, REQ-20260706 ③) ────
+#  모든 재분석은 이전 분석문을 payload.previous_analysis 로 받아 비교·융합(refine)한다. 빈약(thin) 분석
+#  — summary 가 THIN_CHARS 미만이거나 relationships·usage 모두 공란 — 노드는 같은 run 의 후속 재귀가
+#  인접 노드를 분석 완료할 때 재-pending(pass_no+1)되어 새 맥락으로 보충된다. run 당 REFINE_MAX 캡.
+AGENT_NODE_ANALYSIS_THIN_CHARS = int(os.getenv("AGENT_NODE_ANALYSIS_THIN_CHARS", "120"))
+AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
+# LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
+# candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,
+# 이후 기존 프로브·자기교정 파이프라인이 강화/파단을 판정한다(ADR-002 계열).
+AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX", "4"))
+# ADR-017 부모 테이블 same-depth 승격 관련도(기존 getattr 폴백 0.5 의 명시 선언 — 동작 불변).
+AGENT_NODE_ANALYSIS_PARENT_TABLE_REL = float(os.getenv("AGENT_NODE_ANALYSIS_PARENT_TABLE_REL", "0.5"))
 # ── 앵커-상대 관련도 게이팅 (feature-0016 node-analysis-anchor, 사용자 결정 2026-07-01) ──
 #  문제: 기존 재귀는 방문한 모든 노드의 이웃 전부를 무차별 재큐 → 일반 허브 컬럼(예 UniqueID)이나 부모
 #  Schema 노드를 만나면 그 노드를 새 중심으로 삼아 무관한 테이블로 fan-out(원래 대상에 앵커되지 않음).

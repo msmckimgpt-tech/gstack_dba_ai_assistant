@@ -1090,3 +1090,40 @@ source_of_truth: true
   MAJOR-1 수정 라이브 실증) / Routine 잡 7 done·⚙ 분석 마커 7·분석문 생성·noop dedup / 파라미터
   4행 21px 수직·push-down·XR 접힘. 코드 품질은 REV-…-graph-navfilter-routine(3-렌즈+재검증)에서 완료.
 - deploy_scope: included + 사용자 turn confirm("진행") — 자동 배포 승인 근거.
+
+## REV-20260707T100744-ai-claude-corp-feature-0016-graph-category-recursive-refine [SUBAGENT: PASS] — §55 §18.8 적대 리뷰 패널
+
+- 대상: TASK §55 (graph-category-recursive-refine) 전 변경. 방식: ultracode Workflow — 4렌즈 발굴
+  (engine/relationships/frontend/crosscut, effort high) → 발견별 2-refuter 적대 검증(다수결).
+  세션 한도(23시 리셋)로 검증 단계 일부(9건)와 crosscut 렌즈가 중단 → **미검증분은 main 세션이 코드
+  직접 판정으로 전수 재검증**(자동 기각 아님), crosscut 축(0038 라이브 안전·mixed-version 매트릭스·
+  N+1·백필 부하·프롬프트 후방호환·XSCHEMA 무임베딩 안전)은 main 세션 self-review 로 대체.
+- **확정·수정 (BLOCKING 1 · MAJOR 4 · MINOR 3)**:
+  1. [BLOCKING/relationships] fetch_probe_candidates OR-완화가 ''-slot 레거시 후보(한끝만 qualified)를
+     무관 catalog 에 흘림 — 성공-프로브 matched=0 negative(R-1 가드는 예외 경로 한정) 로 실관계 영구
+     오파단 경로. → 4-분기 필터로 수정: ('','') wildcard / ''+현재DB 앵커 ×2(종전 AND 의미론 보존) /
+     **양 slot 확정 + 한끝 현재DB** (크로스 DB 신규 경로 한정).
+  2. [MAJOR/relationships] kNN WHERE 일반화(NOT self)로 같은-DB 시블링(백업/파티션 — 최상 유사 부류)이
+     top-k 슬롯 점유 → 경계 후보 recall 0 침몰. → xds 단독 모드는 종전 SQL 경계 유지 + xschema 모드는
+     초과-fetch(knn_k×5 cap 60) + 경계 pair 캡(같은-DB skip 은 미소모).
+  3. [BLOCKING/frontend] _metaZFor 에 CAT:/CATH:/CATX: 케이스 부재 — _metaGraphZAssert(매 draw 후
+     canonical 재-assert)가 밴드 배경을 NODE(4)로 승격, 반투명 배경이 내부 전체를 덮고 hit-test 가로챔.
+     → zFor 에 3종 추가(bake -1/5/6 과 1:1).
+  4. [MAJOR/frontend] 접힌 카테고리 밴드 드래그 — 밴드는 rebuild 스냅백하며 숨은 멤버에 clusterOffset
+     조용히 누적(펼치면 멤버만 이동한 모순). → 접힘 밴드 드래그 차단(_metaElementDragEnable).
+  5. [MAJOR/relationships] curate break/trust 매칭이 ds-키 정확 일치만 — 레거시(scope_key='common'+ds ''
+     797행 라이브 실측)에서 UPDATE 0건인데 AGE 엣지만 삭제/승격 → 다음 sync 부활(flap). trust upsert 는
+     UNIQUE 불일치 시 중복 행 생성. → ds-키 ''-허용 매칭 + trust 는 기존 행 UPDATE 우선(0건일 때만 upsert).
+  6. [MAJOR/engine] refine(pass_no>0) 실패 시 done→failed 강등 — 원 분석·마커·done_keys 소실(계약 위반).
+     → 실패 시 status='done' 복원(analysis 불변·error 기록).
+  7. [MINOR/engine] _refine_cols_ok transient 오류 영구 False 캐시 → 컬럼-부재 오류만 캐시, transient 는
+     미캐시(다음 tick 재-probe).
+  8. [MINOR/engine] suggested_links 동명 테이블 alias first-wins 오귀속 → 모호 alias 비활성(fqn 표기는 유효).
+  9. [MINOR/frontend] _metaCatAssign scope 미한정 — 크로스-DS 이웃확장 클러스터가 현재 제품 밴드 오배정
+     → loadedScope prefix 매칭 한정(타 scope=미분류).
+- **수용(수정 안 함, 근거 기록)**: [MINOR/engine] 다중 워커에서 back-refine 재-pending 과 run finalize 의
+  경합 — 'done' 확정 run 에 pending refine 잡이 잠시 잔류 가능. 잡은 계속 처리되고(claim 은 run status
+  무관) 카운터·표시만 일시 어긋나는 cosmetic. 창이 틱 경계 수 초로 극소·자기 치유 — 직렬화 비용 대비 수용.
+- 재검증: 수정분 회귀 잠금 테스트 6건 추가(test_graph_category_recursive_refine.py — fetch 4-분기·
+  transient 미캐시·모호 alias·초과-fetch recall·xds SQL 경계 + 헤드리스 T7~T9(zFor/접힘 드래그 차단/
+  scope 한정, 26/26 PASS)). 대상 3파일 pytest 107 PASS. [SUBAGENT+MAIN: PASS]
