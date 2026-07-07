@@ -480,3 +480,10 @@ source_of_truth: true
 - Rollback: litellm_config 의 root/edge deployment·fallbacks 제거 + refresh 단일-slot 복원 + (또는)
   `AGENT_INSIGHT_MODEL=edge`.
 - ANCHOR 정합: §1(운영자 자격 일원화 — 사용자별 키 아님, 운영자 두 계정 + 로컬)·§2(Alt-A LiteLLM gateway) 무충돌.
+
+## CHG-20260707T100640-no-edge-conversation-answer (litellm_config: 대화 답변 전용 edge-free alias 신설 — cross-feature, primary=feature-0002-agent-core)
+- Date: 2026-07-07. `/_dqa:conversation_audit`(FR-edge-fallback-conversation-context-loss). 사용자 대면 대화 답변(task='agent')이 두 claude 계정 429 시 `edge-fallback`(gemma4:e2b, ctx 4096)으로 silent 강등돼 히스토리 절단·맥락 파괴(실측 conv …9e0883bb). 사용자 결정(2026-07-07): 대화 답변에 gemma 완전 차단·명백한 실패처리.
+- 변경(litellm_config.yaml): deployment `claude-haiku-4-chat`(claude-corp)·`claude-haiku-4-chat-root`(root) 신설 + fallback `{"claude-haiku-4-chat": ["claude-haiku-4-chat-root"]}`(**edge 미포함**, chat-root fallback 미등록 → 429/401 raise). 기존 `claude-haiku-4`(insight 배치)·`claude-haiku-4-interactive`(분석)·`edge-fallback` 체인 **무변경** — insight/분석의 gemma 강등 유지(2026-07-03/07-04 결정 보존). 대화(_call_llm)만 agent_core 가 `claude-haiku-4-chat` 로 라우팅.
+- Verification: YAML lint OK(9 deployment·5 fallback). 배포=bedrock-gateway 재생성(config bind-mount 반영, 외부영향 confirm — Major override 불가).
+- ANCHOR 정합: §1(운영자 자격 일원화 — chat alias 도 동일 두 계정 OAuth, 신규 자격 없음)·§2(Alt-A LiteLLM gateway) 무충돌. 폴백 경로 **축소**(edge 제거)라 보안·자격 경계 확장 없음.
+- Cross-ref(정본): unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260707T100640-no-edge-conversation-answer · shared/docs/MODIFY.md 동일 · feature-0002 REVIEW.md REV-20260707T100640-no-edge-conversation-answer.
