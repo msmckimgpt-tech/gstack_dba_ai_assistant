@@ -8,6 +8,28 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260707T112800-oauth-cron-static-refresh [SKIPPED:config-ops-chore]
+- Related Change: CHG-20260707-oauth-cron-static-refresh
+- Trigger: 사용자 지시 — claude-corp 5시간 세션 윈도우가 24/7 cron 라이브 probe 로
+  오염되는 문제의 근본 원인 제거.
+- SKIP 근거 (§18.8 패널 면제): 변경 표면이 (1) `bin/refresh-claude-oauth-token.sh`
+  내부 판정 로직(라이브 HTTP probe 제거 → 파일 기반 정적 검사만) + 로그 전용
+  관측 함수 신설, (2) git 미추적 crontab 주석/설명 정리에 한정. auth/인가 ·
+  네트워크 요청 표면 · 데이터 · 스키마 변화 없음 — 오히려 외부 API 호출 경로를
+  제거해 표면이 줄었다. `.env.bedrock`/`ANTHROPIC_API_KEY*` 주입 대상·우선순위·
+  병행 주입 정책은 CHG-20260703-insight-llm-fallback 에서 이미 검증된 그대로
+  무변경.
+- 실증 검증 (자체): `bash -n` PASS. `--check` 로 claude-corp/root 두 계정 정적
+  검사 정상 선택 확인(라이브 호출 0건 — PATH 에서 `docker`/네트워크 도구를
+  제거한 상태로도 정상 완주해 외부 호출 의존이 없음을 간접 확인). `docker`
+  미가용 환경에서도 관측 함수가 script 를 abort 시키지 않음(fail-open) 확인.
+  litellm 실제 소스(`router.py`) 를 게이트웨이 컨테이너 내부에서 직접 읽어
+  401/429 fallback 경로가 예외 타입 무관하게 작동함을 코드 레벨로 확인(본
+  REV 대상 코드 변경은 아니지만 probe 제거의 안전성 전제이므로 근거로 첨부).
+- Human Approval Needed: no — 사용자 명시 지시(probe 제거 + 정적 검사 전환 +
+  crontab 정리)로 본 변경 위임. 개발용 임시 스크립트(헤더에 명시, 정식 배포
+  시 제거 예정) 범위 내 조정.
+
 ## REV-20260625T171844-llm-account-root [SKIPPED:config-ops-chore]
 - Related Change: CHG-20260625T171844
 - Trigger: 사용자 지시 운영 chore — LLM 호출 주체 계정 claude-corp → root 일시 전환.
