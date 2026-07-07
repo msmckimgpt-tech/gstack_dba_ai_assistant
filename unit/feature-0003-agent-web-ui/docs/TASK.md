@@ -5307,3 +5307,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 테스트: test_runtime_settings.py +4(스펙/override/clamp/validate) · test_reasoning_effort.py +3(_call_llm precedence: override>기본, no-override 기본, normal 무시+모델 override). 전체 로컬 회귀 0.
 - [ ] §18.8 적대 리뷰(backend/UX) → REVIEW REV.
 - [ ] verify-completion → commit → PR → merge → web 재배포 + **ask/insight-worker 재빌드**(_call_llm=워커 경로) → PB-0008 시각검증(추론 강도별 예산 섹션 렌더·편집/적용).
+
+### TASK-20260707T131500-reasoning-budgets-postverify — 추론 강도별 예산 POST-DEPLOY PB-0008 기록 (doc-only, 2026-07-07)
+- [x] 추론 강도별 예산(PR #609→767ca387) 배포(web + ask/insight-worker 재빌드) 후 PB-0008 **PASS**: 2 섹션 렌더(추론 강도별=낮음/높음/매우 높음 pre-fill·'일반' 없음 B1)·reasoning-key write-path e2e(적용 DB override→복원)·사용자 사전설정(MCP_TIMEOUT_SEC=60) 보존·pageerror 0.
+- [x] doc-only 기록(TEST/TASK/MODIFY/REVIEW) — 코드·자산 무변경.
