@@ -8211,6 +8211,8 @@ button.amgr-cur-trust:hover { background: rgba(10,107,61,.10); }
 button.amgr-cur-break { color: #9c2121; border-color: rgba(156,33,33,.4); }
 button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 .amg-legend-note { margin: 8px 0 0; font-size: 10.5px; font-style: italic; color: var(--text-muted); }
+/* graph-dataflow: 범례 항목의 방향 부연(읽기/쓰기 화살표 흐름) — 라벨 옆 소형 muted. */
+.amg-legend-list .amg-legend-sub { font-size: 10px; color: var(--text-muted); }
 /* 테이블 역할 탭 리스트 — <li data-role> 은 _metaRoleLegendTips() 가 _META_ROLE.desc 로 hover 툴팁 주입(단일 소스).
    밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
 .admin-meta-graph-rolelegend-list {
@@ -8417,11 +8419,19 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .admin-meta-graph-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .admin-meta-graph-ai-head h4 { margin: 0; }
 .admin-meta-ai-btn { font-size: 11.5px; padding: 3px 10px; white-space: nowrap; }
-/* graph-funcproc(ADR-014): AI 능동 분석 hover 지침 popover — 버튼 아래 툴팁형 입력 카드.
-   섹션(position:relative) 기준 절대 배치 대신 in-flow 카드(패널 폭이 좁아 오버레이가 내용을 가림). */
+/* graph-dataflow(ADR-017 원래 의도 복원, UX 재요청): AI 능동 분석 hover 지침 popover — **플로팅 툴팁**(오버레이).
+   ADR-017 은 "버튼 hover 시 **툴팁형** 입력"을 명시했으나, 이후 hotfix 에서 in-flow 카드(margin-top)로 드리프트해
+   열릴 때마다 아래 결과/노드 상세를 밀어냈다("아래 내용 확인 불편" 재요청). position:fixed 플로팅 툴팁으로 복원한다.
+   좌표는 JS(_metaGraphBindAiPopover 의 position())가 버튼 rect 기준 **viewport 좌표**로 설정(top/left inline·우측 정렬·
+   하단 넘침 시 위로 flip). 상세 패널(.admin-meta-graph-detail)의 overflow-y:auto 클리핑을 피하려 absolute 가 아닌
+   fixed 사용(조상 체인 transform 부재 전제 — POST-DEPLOY 시각검증 항목). 불투명 배경 + 강한 그림자로 아래 내용과
+   시각 분리. 버튼 hover 시에만 떠서 겹치고, 미hover 시엔 아래 내용이 밀리지 않고 그대로 유지된다.
+   (이전 in-flow 카드 주석의 'ADR-014' 참조는 오기 — ADR-014 는 제품 카테고리) */
 .admin-meta-ai-pop {
-  margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
-  background: #f7f8fb; box-shadow: 0 2px 8px rgba(15, 23, 42, .08);
+  position: fixed; z-index: 60;
+  width: min(300px, calc(100vw - 16px)); box-sizing: border-box;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: #ffffff; box-shadow: 0 8px 24px rgba(15, 23, 42, .20);
 }
 .admin-meta-ai-pop label { display: block; font-size: 11px; font-weight: 700; color: #3a4356; margin-bottom: 4px; }
 .admin-meta-ai-pop textarea {

@@ -1068,3 +1068,10 @@ source_of_truth: true
 - compose: `docker-compose.yml` insight-worker AGENT_XDS_RELATIONSHIP_INFER_AUTO=1 flip (ADR-019 이행).
 - tests: 신규 `test_graph_category_recursive_refine.py`(23)·`test_graph_relationship_curate.py`(4), 계약 갱신
   `test_routine_dbanalysis.py`(2), route parity golden 재생성(197 — §53 analyze-schema 누락분 동반 치유).
+
+## CHG-20260707T031149-ai-claude-feature-0016-graph-dataflow-tooltip
+- Date: 2026-07-07
+- Related Requirement: 사용자 요청(관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰) — 노드 관계 화살표 데이터흐름 정합 + AI 능동 분석 지침 툴팁 (TASK §56).
+- Summary: frontend-only. ① ROUTINE_USES 엣지 화살표를 데이터 흐름과 정합(`_metaRoutineEdgeStyle(relation_type)`: write=endArrow 루틴→테이블, read·미상=startArrow 테이블→루틴 — 상세 라벨 kindKo 와 정합) + 범례 '관계·AI 상태' 방향 부연. ② '능동 분석' 지침 popover 트리거를 섹션 전체 hover→버튼/툴팁 hover 로 한정. ③ in-flow 카드→`position:fixed` 플로팅 툴팁(JS viewport 좌표 산정·하단 flip·스크롤/리사이즈 재배치·DOM 이탈 self-cleanup, 상세 패널 overflow-y 클리핑 회피, ADR-017 원래 의도 복원). §18.8 적대 리뷰 PASS-WITH-FIXES(F1 화살표/라벨 미상 정합·F2 Esc doHide 리스너 해제 반영).
+- Files: unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html} · unit/feature-0003-agent-web-ui/docs/TEST.md · unit/feature-0016-metadata-graph/docs/{TASK,MODIFY,REVIEW}.md.
+- Impact: 그래프 뷰 UX(비파괴·프론트 전용). Rollback Notes: revert + `make deploy-web` 재배포. cache-buster `?v=20260707-graph-dataflow-tooltip`.
