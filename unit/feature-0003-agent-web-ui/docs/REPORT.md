@@ -1484,3 +1484,12 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **배포 마이그 근본수정(PR #530, feature-0014-migrate-fresh-image)**: `deploy-web.sh` 가 마이그를 이미지 빌드 전에 stale `docker compose run agent` 로 돌려 신규 마이그를 head 오판(silent-skip)하던 회귀 수정 — build→migrate reorder + `MIGRATE_ALEMBIC_IMAGE`(방금 빌드한 이미지로 alembic) + gen_sql fail-loud. feature-0017 의 race-retry 와 결합. §18.8 BLOCKING 0.
 - **워커 재빌드(15e0befc)**: insight/ask-worker 를 계측 포함 코드로 재빌드·recreate(healthy) — 워커 wrapper 경유 LLM 호출(insight/aux)이 latency 기록. (환경상 datasource circuit_open 이라 insight LLM 호출 라이브 미발생.)
 - **잔여(별도 검토)**: main `agent` task(`agent_core._call_llm`)는 중앙 래퍼 미경유라 latency 미기록 — LLM 볼륨 최대 경로. latency KPI 완결하려면 이 경로 계측 필요(승인 범위 밖, 확장 제안).
+
+## 2026-07-07 — 지식베이스 메타데이터 채택 인박스 + ENUM 대화 자율수집 (kb-candidate-adoption)
+- **요청/범위**: 대화에서 용어사전·ENUM 코드사전 후보를 수집하고 관리 콘솔에서 채택하도록 UI 재구성(단순 목록 → 채택 구조). 사용자 결정: 전체 한 사이클 + 통합 채택 인박스(웹서비스 내 유사구조 리서치 후 적용). Major §12.3 (cross-unit feature-0002·shared).
+- **핵심 발견(절반 gap)**: 용어사전은 `_glossary_autopropose`+`glossary_feedback`(0021/0023)로 대화 후보수집·검토큐·승급/거부가 **이미 구현**(기본 ON). ENUM 코드사전은 CRUD만·후보수집/채택 파이프라인 **전무**. → ENUM 을 용어사전 대칭으로 신설 + 두 사전 후보를 한 화면에 통합.
+- **백엔드(ENUM parity)**: 마이그 `0039_enum_feedback`(검토큐 테이블 + `enum_dictionary.source` + GRANT, 비파괴·멱등) · `kb_glossary.py`(enum feedback 함수군 + `infer_enum_suggestions` + enum CRUD source) · `llm.py`(`ENUM_SUGGEST_PROMPT`/`llm_enum_suggest`) · `config.py`(`AGENT_ENUM_*`, threshold 0.9 보수적) · `agent_core.py`(`_enum_autopropose`, best-effort) · `app.py`(권한 `kb.enum.curate`) · `admin_metadata.py`(enum-feedback list/promote/reject + admin_list_enums source).
+- **UI(통합 채택 인박스)**: 지식베이스 하위 별도 탭 `adoption`(리서치 IA 권고 — ENUM 후보는 용어사전 하위 부적합). 대시보드 카드 그리드 + 검토 큐 행 어휘 재사용 — 신뢰도/상태별 그룹 카드, 종류(용어/ENUM) 배지, 개별 채택·거부·되돌리기 + 그룹 일괄 채택, 사이드바 pending 배지(용어+ENUM 합계). 보유 권한 종류만 fetch·조작. XSS textContent-only.
+- **검증**: 신규 코어 14 + web 경계 9 테스트 PASS. 기존 enum-list 계약(source) + route 골든(197→200) 갱신. 호스트 전체 1581 passed. 컨테이너 make test 유일 실패(routine_dbanalysis, `postgres-replica` 미해석)는 main 격리 실행에서도 동일 재현 → 사전존재 --no-deps env 실패로 확정(본 변경 무관). ruff PASS.
+- **잔여**: PB-0008 Windows-browser 시각검증 = 정적 자산 baked·브리지 실 Chrome 필요 → **POST-DEPLOY** 수행(TEST.md §3 CHECK#13 사유 기록). 배포 시 `0039` 자동 마이그 적용 후 `alembic_version` 직접 검증(stale agent 이미지 마이그 누락 방어).
+- **후속 제안(§8.1, 기록만)**: ① 개별 "편집 후 채택"(승급 전 정의/라벨 수정) — 현재는 as-is 채택(용어사전 기존 동작과 동일), 필요 시 promote override 파라미터로 확장 · ② ENUM 후보 수집을 쿼리 결과/스키마 introspection 기반으로 보강(현재 LLM 대화 추론만) · ③ 샘플 검수 큐도 채택 인박스로 흡수 통합 검토.

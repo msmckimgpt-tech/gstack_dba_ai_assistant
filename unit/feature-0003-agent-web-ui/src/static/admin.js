@@ -2027,6 +2027,10 @@ const ADMIN_TAB_PERMISSIONS = {
   // feature-0016 §45: 그래프 뷰 최상위 탭 — metadata.graph.read 게이트(kb.ingest.manual 묶음이 함의).
   //   **필수(fail-open 방지)** — canSeeTab() 은 매핑 없는 탭을 fail-open 하므로 누락 = 권한 없는 사용자에게 탭 노출.
   graph: ["metadata.graph.read", "kb.ingest.manual"],
+  // feature-0018-kb-candidate-adoption: 채택 인박스 — 용어(kb.glossary.curate) 또는 ENUM(kb.enum.curate)
+  //   후보 검수 권한 중 하나라도 있으면 노출. **필수(fail-open 방지)** — canSeeTab() 은 매핑 없는 탭을
+  //   fail-open 하므로 누락 = 권한 없는 사용자에게 탭 노출. 보유한 종류만 admin.js 가 fetch·조작한다.
+  adoption: ["kb.glossary.curate", "kb.enum.curate"],
   settings: ["system_prompt.global.read", "system_prompt.global.write"],
 };
 
@@ -2334,6 +2338,11 @@ function switchTab(tabName) {
   if (tabName === "sample-review" && !adminState.sampleReviewInitialized) {
     adminState.sampleReviewInitialized = true;
     loadSampleFeedback();
+  }
+  // feature-0018-kb-candidate-adoption: 채택 인박스 tab 첫 진입 시 용어+ENUM 후보 로드.
+  if (tabName === "adoption" && !adminState.adoptionInitialized) {
+    adminState.adoptionInitialized = true;
+    loadAdoptionInbox();
   }
   // TASK-20260624-item11-metadata-glossary-enum: 메타데이터 tab 첫 진입 시 scope 드롭다운+목록 초기화.
   if (tabName === "metadata") {
@@ -8278,6 +8287,298 @@ async function _glossaryFeedbackAction(feedbackId, action, btn) {
   } catch (err) {
     if (typeof showToast === "function") showToast((err && err.message) || "처리 실패", true);
     if (btn) btn.disabled = false;
+  }
+}
+
+/* ── feature-0018-kb-candidate-adoption: 채택 인박스 ──────────────────────────────
+ * 대화 자율수집 후보(용어사전 glossary_feedback + ENUM 코드사전 enum_feedback)를 한 화면에서
+ * 신뢰도/상태별 그룹 카드로 통합 표시하고, 개별/일괄 채택·거부한다. 렌더 어휘는 검토 큐
+ * (.admin-meta-row/.admin-meta-tag) + 대시보드 카드 그리드(.dashboard-widget) 재사용. 권한:
+ * 용어=kb.glossary.curate, ENUM=kb.enum.curate — 보유한 종류만 fetch·조작한다. 승급/거부는
+ * 기존 *-feedback 엔드포인트를 그대로 호출(백엔드 parity, 0039). XSS: 모든 사용자 데이터는
+ * textContent 로만 주입(innerHTML 미사용). */
+const _ADOPTION_HICONF = 0.7;   // 검토 대기 후보의 '우선' vs '확인 필요' 신뢰도 경계.
+// 그룹(버킷) 정의 — 렌더 순서 = 배열 순서(상단일수록 우선 검토). status/신뢰도로 분류.
+const _ADOPTION_BUCKETS = [
+  { key: "pending_hi", title: "검토 대기 · 우선", note: "신뢰도가 높은 후보입니다. 우선 검토해 채택하세요." },
+  { key: "pending_lo", title: "검토 대기 · 확인 필요", note: "신뢰도가 낮은 후보입니다. 정확한지 신중히 확인하세요." },
+  { key: "auto", title: "자동 등록됨", note: "고신뢰도로 이미 사전에 반영된 후보입니다. 부적절하면 되돌리세요." },
+  { key: "promoted", title: "채택됨", note: "" },
+  { key: "rejected", title: "거부됨", note: "" },
+];
+
+function _adoptionState() {
+  if (!adminState.adoption) {
+    adminState.adoption = { items: [], loading: false, kind: "all", status: "pending" };
+  }
+  return adminState.adoption;
+}
+
+function _adoptionCanCurate(kind) {
+  return kind === "glossary" ? can("kb.glossary.curate") : can("kb.enum.curate");
+}
+
+function _adoptionEndpoint(kind) {
+  return kind === "glossary"
+    ? "/api/admin/metadata/glossary-feedback"
+    : "/api/admin/metadata/enum-feedback";
+}
+
+// feedback 항목(용어 or ENUM)을 인박스 공통 표시 형태로 정규화.
+function _adoptionNorm(it, kind) {
+  if (kind === "glossary") {
+    return {
+      kind: "glossary", id: it.id, status: it.status, confidence: it.confidence,
+      scope_key: it.scope_key, role_key: it.role_key || "*",
+      title: it.term || "", body: it.suggested_definition || "",
+    };
+  }
+  const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
+  return {
+    kind: "enum", id: it.id, status: it.status, confidence: it.confidence,
+    scope_key: it.scope_key, role_key: "*",
+    title: (loc ? loc + "  ·  " : "") + (it.code || ""), body: it.suggested_label || "",
+  };
+}
+
+function _adoptionBucket(it) {
+  const s = String(it.status || "");
+  if (s === "auto_promoted") return "auto";
+  if (s === "promoted") return "promoted";
+  if (s === "rejected") return "rejected";
+  return (Number(it.confidence) >= _ADOPTION_HICONF) ? "pending_hi" : "pending_lo";
+}
+
+async function loadAdoptionInbox() {
+  const st = _adoptionState();
+  const groupsEl = document.getElementById("adoptionGroups");
+  if (!groupsEl) return;
+  st.loading = true;
+  groupsEl.replaceChildren();
+  const loading = document.createElement("div");
+  loading.className = "admin-list-empty admin-adoption-empty";   // 빈 상태와 동일 스타일(패딩/색) + grid-span(§18.8 프런트 F2/F3)
+  loading.textContent = "로딩 중…";
+  groupsEl.appendChild(loading);
+  const status = st.status || "pending";
+  const kind = st.kind || "all";
+  const wantG = (kind === "all" || kind === "glossary") && can("kb.glossary.curate");
+  const wantE = (kind === "all" || kind === "enum") && can("kb.enum.curate");
+  const items = [];
+  let pendingTotal = 0;
+  try {
+    if (wantG) {
+      const d = await apiFetch(`/api/admin/metadata/glossary-feedback?status=${encodeURIComponent(status)}`);
+      for (const it of (d && d.items) || []) items.push(_adoptionNorm(it, "glossary"));
+      pendingTotal += (d && d.pending_count) || 0;
+    }
+    if (wantE) {
+      const d = await apiFetch(`/api/admin/metadata/enum-feedback?status=${encodeURIComponent(status)}`);
+      for (const it of (d && d.items) || []) items.push(_adoptionNorm(it, "enum"));
+      pendingTotal += (d && d.pending_count) || 0;
+    }
+  } catch (err) {
+    st.loading = false;
+    groupsEl.replaceChildren();
+    const e = document.createElement("div");
+    e.className = "admin-list-empty admin-adoption-empty";
+    e.textContent = (err && err.message) || "채택 후보 조회 실패";
+    groupsEl.appendChild(e);
+    return;
+  }
+  st.loading = false;
+  st.items = items;
+  // 배지는 전역 pending(용어+ENUM) 신호 — 종류 필터로 좁혀진 부분 합계로 덮어쓰지 않는다(§18.8 프런트 F1).
+  //   kind='all' 이면 이번 로드가 두 종류를 모두 받았으니 합계가 정확. 좁혀졌으면 전역 재조회로 정확도 보존.
+  if (kind === "all") _updateAdoptionBadge(pendingTotal);
+  else _primeAdoptionBadge();
+  renderAdoptionInbox();
+}
+
+function renderAdoptionInbox() {
+  const st = _adoptionState();
+  const groupsEl = document.getElementById("adoptionGroups");
+  const countEl = document.getElementById("adoptionCount");
+  if (!groupsEl) return;
+  const items = st.items || [];
+  if (countEl) countEl.textContent = `${items.length}건`;
+  groupsEl.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "admin-list-empty admin-adoption-empty";
+    empty.textContent = "표시할 채택 후보가 없습니다. 대화가 진행되면 assistant 가 용어·코드 후보를 자동 수집합니다.";
+    groupsEl.appendChild(empty);
+    return;
+  }
+  const byBucket = {};
+  for (const it of items) { const bk = _adoptionBucket(it); (byBucket[bk] || (byBucket[bk] = [])).push(it); }
+  for (const b of _ADOPTION_BUCKETS) {
+    const list = byBucket[b.key];
+    if (!list || !list.length) continue;
+    groupsEl.appendChild(_adoptionGroupCard(b, list));
+  }
+}
+
+function _adoptionGroupCard(bucket, list) {
+  const card = document.createElement("article");
+  card.className = "dashboard-widget admin-adoption-card";
+  const head = document.createElement("div");
+  head.className = "dashboard-widget-head";
+  const h = document.createElement("h3");
+  h.textContent = `${bucket.title} (${list.length})`;
+  head.appendChild(h);
+  // 일괄 채택 — pending 후보가 2건 이상이고 해당 종류 큐레이션 권한이 있을 때만.
+  const promotable = list.filter((it) => it.status === "pending" && _adoptionCanCurate(it.kind));
+  if (promotable.length > 1) {
+    const bulk = document.createElement("button");
+    bulk.type = "button";
+    bulk.className = "btn-secondary admin-adoption-bulk";
+    bulk.textContent = `이 그룹 모두 채택 (${promotable.length})`;
+    bulk.addEventListener("click", () => _adoptionBulk(promotable, bulk));
+    head.appendChild(bulk);
+  }
+  card.appendChild(head);
+  if (bucket.note) {
+    const note = document.createElement("p");
+    note.className = "admin-meta-detail-note admin-adoption-card-note";
+    note.textContent = bucket.note;
+    card.appendChild(note);
+  }
+  const body = document.createElement("div");
+  body.className = "dashboard-widget-body admin-adoption-rows";
+  for (const it of list) body.appendChild(_adoptionRow(it));
+  card.appendChild(body);
+  return card;
+}
+
+function _adoptionRow(it) {
+  const row = document.createElement("div");
+  row.className = "admin-meta-row admin-adoption-row";
+  const main = document.createElement("div");
+  main.className = "admin-meta-row-main";
+  const title = document.createElement("div");
+  title.className = "admin-meta-row-title";
+  title.textContent = it.title || "";
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "admin-meta-row-body";
+  bodyEl.textContent = it.body || "";
+  main.appendChild(title);
+  main.appendChild(bodyEl);
+  const tags = document.createElement("div");
+  tags.className = "admin-meta-row-tags";
+  const mkTag = (text, cls) => {
+    const t = document.createElement("span");
+    t.className = "admin-meta-tag" + (cls ? " " + cls : "");
+    t.textContent = text;
+    return t;
+  };
+  // 종류(용어/ENUM) 배지 — 통합 인박스라 한눈에 사전 구분.
+  tags.appendChild(mkTag(it.kind === "glossary" ? "용어" : "ENUM", "admin-meta-tag-kind"));
+  if (it.kind === "glossary" && it.role_key && it.role_key !== "*") {
+    tags.appendChild(mkTag(`역할: ${_metaRoleLabel(it.role_key)}`, "admin-meta-tag-role"));
+  }
+  if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`));
+  if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`));
+  const st = String(it.status || "");
+  const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "채택됨", rejected: "거부됨" }[st] || st;
+  const stCls = st === "auto_promoted" ? "admin-meta-tag-warn"
+    : (st === "promoted" ? "admin-meta-tag-ok" : (st === "rejected" ? "admin-meta-tag-stale" : ""));
+  tags.appendChild(mkTag(stLabel, stCls));
+  main.appendChild(tags);
+  row.appendChild(main);
+  if (_adoptionCanCurate(it.kind)) {
+    const actions = document.createElement("div");
+    actions.className = "admin-meta-row-actions";
+    if (st === "pending") {
+      const adopt = document.createElement("button");
+      adopt.type = "button";
+      adopt.className = "btn-primary admin-meta-edit admin-adoption-adopt";
+      adopt.textContent = "채택";
+      adopt.addEventListener("click", () => _adoptionAction(it, "promote", adopt));
+      actions.appendChild(adopt);
+    }
+    if (st === "pending" || st === "auto_promoted") {
+      const rej = document.createElement("button");
+      rej.type = "button";
+      rej.className = "btn-secondary admin-meta-del";
+      rej.textContent = (st === "auto_promoted") ? "되돌리기" : "거부";
+      rej.addEventListener("click", () => _adoptionAction(it, "reject", rej));
+      actions.appendChild(rej);
+    }
+    if (actions.childNodes.length) row.appendChild(actions);
+  }
+  return row;
+}
+
+async function _adoptionAction(it, action, btn) {
+  if (action === "reject" && !window.confirm("이 후보를 거부하시겠습니까?\n자동 등록된 항목이라면 사전에서 회수됩니다.")) return;
+  if (btn) btn.disabled = true;
+  try {
+    await apiFetch(`${_adoptionEndpoint(it.kind)}/${encodeURIComponent(it.id)}/${action}`, { method: "POST" });
+    if (typeof showToast === "function") showToast(action === "promote" ? "채택했습니다." : "거부 처리했습니다.");
+    await loadAdoptionInbox();
+  } catch (err) {
+    if (typeof showToast === "function") showToast((err && err.message) || "처리 실패", true);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function _adoptionBulk(list, btn) {
+  if (!list || !list.length) return;
+  if (!window.confirm(`${list.length}건을 모두 채택하시겠습니까?`)) return;
+  if (btn) btn.disabled = true;
+  let ok = 0, fail = 0;
+  for (const it of list) {
+    try {
+      await apiFetch(`${_adoptionEndpoint(it.kind)}/${encodeURIComponent(it.id)}/promote`, { method: "POST" });
+      ok += 1;
+    } catch (_e) { fail += 1; }
+  }
+  if (typeof showToast === "function") showToast(`채택 ${ok}건 완료${fail ? `, ${fail}건 실패` : ""}`, fail > 0);
+  await loadAdoptionInbox();
+}
+
+function _updateAdoptionBadge(count) {
+  const badge = document.getElementById("adoptionTabCount");
+  if (!badge) return;
+  const n = Number(count) || 0;
+  if (n > 0) { badge.textContent = String(n); badge.hidden = false; }
+  else { badge.textContent = ""; badge.hidden = true; }
+}
+
+// 관리 콘솔 진입 시 채택 인박스 pending 배지(용어+ENUM 합계) best-effort 선반영.
+async function _primeAdoptionBadge() {
+  let total = 0;
+  if (can("kb.glossary.curate")) {
+    try {
+      const d = await apiFetch("/api/admin/metadata/glossary-feedback?status=pending");
+      total += (d && d.pending_count) || 0;
+    } catch (_e) { /* best-effort */ }
+  }
+  if (can("kb.enum.curate")) {
+    try {
+      const d = await apiFetch("/api/admin/metadata/enum-feedback?status=pending");
+      total += (d && d.pending_count) || 0;
+    } catch (_e) { /* best-effort */ }
+  }
+  _updateAdoptionBadge(total);
+}
+
+// 필터(종류/상태) select + 새로고침 버튼 배선. 관리 콘솔 init 에서 1회 호출(멱등).
+function _wireAdoptionControls() {
+  const refresh = document.getElementById("adoptionRefreshBtn");
+  if (refresh && !refresh.dataset.bound) {
+    refresh.dataset.bound = "1";
+    refresh.addEventListener("click", () => loadAdoptionInbox());
+  }
+  const kindSel = document.getElementById("adoptionKindFilter");
+  if (kindSel && !kindSel.dataset.bound) {
+    kindSel.dataset.bound = "1";
+    kindSel.addEventListener("change", () => { _adoptionState().kind = kindSel.value || "all"; loadAdoptionInbox(); });
+  }
+  const statusSel = document.getElementById("adoptionStatusFilter");
+  if (statusSel && !statusSel.dataset.bound) {
+    statusSel.dataset.bound = "1";
+    statusSel.addEventListener("change", () => { _adoptionState().status = statusSel.value || "pending"; loadAdoptionInbox(); });
   }
 }
 
@@ -15519,6 +15820,9 @@ async function initialize() {
     sampleReviewRefreshBtn.dataset.bound = "1";
     sampleReviewRefreshBtn.addEventListener("click", () => loadSampleFeedback());
   }
+  // feature-0018-kb-candidate-adoption: 채택 인박스 컨트롤 배선 + pending 배지(용어+ENUM 합계) 선반영.
+  _wireAdoptionControls();
+  _primeAdoptionBadge();
   const archiveSearch = $("archiveSearch");
   if (archiveSearch && !archiveSearch.dataset.bound) {
     archiveSearch.dataset.bound = "1";

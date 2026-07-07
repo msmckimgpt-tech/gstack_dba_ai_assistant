@@ -86,6 +86,12 @@
         <button type="button" class="admin-tab" data-admin-tab="metadata" id="adminTabMetadata" style="display:none">
           <span class="admin-tab-label">메타데이터</span>
         </button>
+        <!-- feature-0018-kb-candidate-adoption: 채택 인박스 — 대화에서 자동 수집된 용어/ENUM 후보를
+             신뢰도별로 한눈에 파악하고 채택/거부. 권한 kb.glossary.curate 또는 kb.enum.curate 중 하나면 노출. -->
+        <button type="button" class="admin-tab" data-admin-tab="adoption" id="adminTabAdoption" style="display:none">
+          <span class="admin-tab-label">채택 인박스</span>
+          <span class="admin-tab-count" id="adoptionTabCount" hidden></span>
+        </button>
         <!-- feature-0016 §45: 그래프 뷰 — 메타데이터에서 분리한 지식베이스 최상위 탭. metadata.graph.read(또는 kb.ingest.manual 함의) 게이트. -->
         <button type="button" class="admin-tab" data-admin-tab="graph" id="adminTabGraph" style="display:none">
           <span class="admin-tab-label">그래프 뷰</span>
@@ -722,6 +728,44 @@
         </form>
           </div><!-- /.admin-detail-col #metadataDetail -->
         </div><!-- /.admin-list-detail -->
+      </section>
+
+      <!-- feature-0018-kb-candidate-adoption: 채택 인박스 pane — 대화 자율수집 후보(용어사전
+           glossary_feedback + ENUM 코드사전 enum_feedback)를 신뢰도/상태별 그룹 카드로 통합 표시하고,
+           개별/일괄 채택·거부한다. 권한: 용어 후보=kb.glossary.curate, ENUM 후보=kb.enum.curate
+           (보유한 종류만 노출·조작). 렌더 어휘는 검토 큐(.admin-meta-row)+대시보드 카드(.dashboard-widget) 재사용. -->
+      <section class="admin-pane" data-admin-pane="adoption">
+        <header class="admin-pane-head">
+          <div>
+            <div class="drawer-label">Adoption Inbox</div>
+            <h2>채택 인박스</h2>
+          </div>
+          <div class="admin-pane-actions">
+            <button type="button" id="adoptionRefreshBtn" class="btn-secondary">새로고침</button>
+          </div>
+        </header>
+        <p class="admin-archive-detail-note">
+          대화 중 assistant 가 자동 제안한 <strong>용어사전</strong>·<strong>ENUM 코드사전</strong> 후보입니다.
+          <strong>채택</strong>하면 해당 사전에 반영되어 이후 답변 정확도에 사용되고, <strong>거부</strong>하면 제외됩니다(자동 등록분은 회수).
+          신뢰도가 높을수록 상단 그룹에 모입니다. 부정확한 채택은 답변 품질을 저해할 수 있으니 신중히 검토하세요.
+        </p>
+        <!-- 필터 툴바: 종류(전체/용어/ENUM) · 상태(검토 대기/자동 등록/…/전체). -->
+        <div class="admin-meta-review-bar" id="adoptionFilterBar">
+          <select id="adoptionKindFilter" class="admin-meta-scope-select" aria-label="후보 종류 필터">
+            <option value="all">전체 종류</option>
+            <option value="glossary">용어사전</option>
+            <option value="enum">ENUM 코드사전</option>
+          </select>
+          <select id="adoptionStatusFilter" class="admin-meta-scope-select" aria-label="후보 상태 필터">
+            <option value="pending">검토 대기</option>
+            <option value="auto_promoted">자동 등록</option>
+            <option value="promoted">채택됨</option>
+            <option value="rejected">거부됨</option>
+            <option value="all">전체</option>
+          </select>
+          <span class="admin-list-count" id="adoptionCount" aria-live="polite"></span>
+        </div>
+        <div class="dashboard-widgets admin-adoption-groups" id="adoptionGroups" aria-label="채택 후보 그룹"></div>
       </section>
 
       <!-- feature-0016 §45: 그래프 뷰를 지식베이스 최상위 pane 으로 승격(메타데이터에서 분리).

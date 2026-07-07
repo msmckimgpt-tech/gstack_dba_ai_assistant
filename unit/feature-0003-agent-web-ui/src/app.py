@@ -348,6 +348,19 @@ PERMISSION_DEFINITIONS = (
         "group": "kb",
     },
     {
+        # ENUM 코드사전 대화 자율수집(0039): 대화 답변에서 LLM 이 추론한 (table.column) 코드↔라벨 후보의
+        # 검토/큐레이션 권한. 하이브리드 자동승급 — 고신뢰도는 자동 등록(source='auto', 되돌리기 가능),
+        # 저신뢰도는 검토 큐(enum_feedback.status='pending')에 적재된다. 이 권한 보유자는 큐를 검토해
+        # ENUM 코드사전(enum_dictionary)으로 승급(promote)하거나 거부(reject·되돌리기)할 수 있다. 승급/
+        # 자동등록은 검색·답변 정확도에 직접 영향(poisoning 면) → 검수자 한정. kb.glossary.curate(용어
+        # 검수)와 동급 큐레이션 권한. admin seed(=set(PERMISSION_CODES)) 자동 보유 + 기존 admin row 는
+        # _ensure_seed_roles catchup 으로 retroactive 부여. operator/sales/pending 미부여(least-privilege).
+        "code": "kb.enum.curate",
+        "label": "ENUM 코드사전 검수/승급",
+        "description": "대화에서 자동 제안된 ENUM 코드↔라벨 후보(검토 큐)를 검토해 ENUM 코드사전으로 승급하거나 거부(자동 등록분 되돌리기)할 수 있다. 승급·자동 등록은 답변 정확도에 직접 영향하므로 명시 검수만 허용된다 (도메인 전문가/검수자 전용).",
+        "group": "kb",
+    },
+    {
         "code": "conversation.create",
         "label": "대화 생성",
         "description": "새 대화를 생성할 수 있다.",
@@ -2756,6 +2769,15 @@ def _ensure_seed_roles(conn) -> None:
             # seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row 에는 retroactive 미적용.
             # 미보정 시 기존 admin 이 AI 운영 현황 탭을 못 본다(lockout, PB-0008 적발). operator/sales/dba 미부여.
             "console.aiops.read",
+            # TASK-20260707-kb-candidate-adoption (§18.8 보안 렌즈 MEDIUM 적발): 대화 자율수집 검수 권한
+            # catchup. **필수** — 이 3건은 role 생성 seed(=set(PERMISSION_CODES))로만 부여되고 기존
+            # 배포 admin row 에는 retroactive 미적용이라, catchup 없이는 기존 admin 이 "채택 인박스"
+            # (kb.glossary.curate ∪ kb.enum.curate 게이트)·"샘플 검수"(kb.sample.curate) 탭·API 를 403 으로
+            # 잃는다(fail-closed lockout). kb.glossary.curate/kb.sample.curate 는 도입 cycle 에서 본 목록
+            # 보정이 누락됐던 잠재 gap 을 함께 해소(INSERT IGNORE 멱등이라 이미 보유 시 무해).
+            "kb.glossary.curate",
+            "kb.sample.curate",
+            "kb.enum.curate",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:

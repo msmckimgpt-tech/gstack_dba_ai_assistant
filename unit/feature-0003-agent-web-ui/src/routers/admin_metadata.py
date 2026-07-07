@@ -472,11 +472,12 @@ def admin_list_enums(request: Request, account=Depends(app.require_permission('m
             pg.close()
         except Exception:
             pass
+    # row: (id, scope_key, schema_name, table_name, column_name, code, label, source, created_at, updated_at)
     items = [{
         "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
         "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
-        "code": str(r[5] or ""), "label": str(r[6] or ""),
-        "created_at": app._metadata_iso(r[7]), "updated_at": app._metadata_iso(r[8]),
+        "code": str(r[5] or ""), "label": str(r[6] or ""), "source": str(r[7] or "manual"),
+        "created_at": app._metadata_iso(r[8]), "updated_at": app._metadata_iso(r[9]),
     } for r in rows]
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
@@ -594,6 +595,118 @@ def admin_delete_enum(entry_id: int, request: Request, account=Depends(app.requi
         app._metadata_audit(request, account, action="enum.entry.delete",
                         resource_id=int(entry_id), change_json={"scope_key": scope_key})
     return JSONResponse({"ok": True, "id": int(entry_id), "deleted": int(affected)})
+
+# ── ENUM 코드사전 대화 자율수집 검토 큐(0039) — 용어사전 glossary-feedback 대칭 ────────────
+@router.get("/api/admin/metadata/enum-feedback")
+def admin_list_enum_feedback(request: Request, account=Depends(app.require_permission('kb.enum.curate'))) -> JSONResponse:
+    """검토 큐 목록. 권한 kb.enum.curate. ?status=(기본 pending, 'all'=전체) &scope_key=."""
+    status = str(request.query_params.get("status") or "pending").strip().lower()
+    if status in ("all", ""):
+        status = None
+    elif status not in ("pending", "auto_promoted", "promoted", "rejected"):
+        return app._json_error("허용되지 않은 status 입니다.", 400)
+    scope_filter = None
+    sk_param = request.query_params.get("scope_key")
+    if sk_param is not None and str(sk_param).strip() != "":
+        scope_filter, serr = app._metadata_check_scope(sk_param)
+        if serr:
+            return serr
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _kg.list_enum_feedback(pg, status=status, scope_key=scope_filter)
+        pending_count = _kg.count_enum_feedback(pg, status="pending")
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_enum_feedback 조회 실패", exc_info=True)
+        return app._json_error("검토 큐 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # row: (id, scope_key, schema_name, table_name, column_name, code, suggested_label,
+    #       confidence, status, source_run_id, conversation_id, promoted_enum_id, approved_by,
+    #       created_at, updated_at)
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+        "table_name": str(r[3] or ""), "column_name": str(r[4] or ""), "code": str(r[5] or ""),
+        "suggested_label": str(r[6] or ""),
+        "confidence": float(r[7]) if r[7] is not None else None, "status": str(r[8] or ""),
+        "source_run_id": (str(r[9]) if r[9] is not None else None),
+        "conversation_id": (str(r[10]) if r[10] is not None else None),
+        "promoted_enum_id": (int(r[11]) if r[11] is not None else None),
+        "approved_by": (str(r[12]) if r[12] is not None else None),
+        "created_at": app._metadata_iso(r[13]), "updated_at": app._metadata_iso(r[14]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items),
+                         "pending_count": int(pending_count), "status": status})
+
+@router.post("/api/admin/metadata/enum-feedback/{feedback_id}/promote")
+def admin_promote_enum_feedback(feedback_id: int, request: Request, account=Depends(app.require_permission('kb.enum.curate'))) -> JSONResponse:
+    """검토 큐(pending) → ENUM 코드사전 승급. 권한 kb.enum.curate."""
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        eid = _kg.promote_enum_feedback(
+            pg, int(feedback_id), approved_by=str((account or {}).get("username") or "") or None)
+        if eid is None:
+            pg.rollback()
+            return app._json_error("해당 후보를 찾을 수 없거나 이미 처리되었습니다.", 404)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_promote_enum_feedback 실패 id=%s", feedback_id, exc_info=True)
+        return app._json_error("ENUM 승급 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    app._metadata_audit(request, account, action="enum.feedback.promote",
+                    resource_id=int(feedback_id),
+                    change_json={"feedback_id": int(feedback_id), "enum_id": int(eid)})
+    return JSONResponse({"ok": True, "id": int(feedback_id), "enum_id": int(eid)})
+
+@router.post("/api/admin/metadata/enum-feedback/{feedback_id}/reject")
+def admin_reject_enum_feedback(feedback_id: int, request: Request, account=Depends(app.require_permission('kb.enum.curate'))) -> JSONResponse:
+    """검토 큐 거부(pending) 또는 자동등록 되돌리기(auto_promoted → source='auto' 행 회수).
+    권한 kb.enum.curate. 멱등."""
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.reject_enum_feedback(pg, int(feedback_id))
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_reject_enum_feedback 실패 id=%s", feedback_id, exc_info=True)
+        return app._json_error("ENUM 후보 거부 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        app._metadata_audit(request, account, action="enum.feedback.reject",
+                        resource_id=int(feedback_id), change_json={"feedback_id": int(feedback_id)})
+    return JSONResponse({"ok": True, "id": int(feedback_id), "rejected": int(affected)})
 
 @router.get("/api/admin/metadata/tables")
 def admin_list_table_desc(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:

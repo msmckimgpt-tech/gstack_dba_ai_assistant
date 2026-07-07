@@ -2035,6 +2035,53 @@ def _glossary_autopropose(conversation_id: str, user_message: str, answer: str, 
             pass
 
 
+def _enum_autopropose(conversation_id: str, user_message: str, answer: str, run_id: str) -> None:
+    """대화 답변 직후 ENUM 코드사전 자율수집(0039) — best-effort, ask 경로 차단 금지.
+
+    LLM 으로 (table.column) 코드↔라벨 후보를 추론하고, 사용자 결정(하이브리드)에 따라 confidence ≥
+    THRESHOLD 면 ENUM 코드사전(enum_dictionary)에 자동 등록(source='auto', 되돌리기 가능), 미만이면
+    검토 큐(enum_feedback pending) 에 적재한다. 저장소는 agent_kb(PG, mem_conn 아님).
+    AGENT_ENUM_AUTOPROPOSE=0 이면 비활성. 어떤 예외도 호출측(run_agent)으로 전파하지 않는다.
+    """
+    try:
+        from shared import config as _cfg
+        if not getattr(_cfg, "AGENT_ENUM_AUTOPROPOSE", False):
+            return
+        from modules import kb_glossary as _kg
+        suggestions = _kg.infer_enum_suggestions(user_message, answer)
+        if not suggestions:
+            return
+        from shared.db import _pg_available, _pg_connect
+        if not _pg_available():
+            return
+        scope_key = _cfg.get_active_datasource() or "common"
+        pg = _pg_connect(autocommit=False)
+        try:
+            for s in suggestions:
+                _kg.auto_promote_or_queue_enum(
+                    pg, scope_key, s.get("schema_name"), s.get("table_name"),
+                    s.get("column_name"), s.get("code"), s.get("label"),
+                    confidence=s.get("confidence", 0.5),
+                    source_run_id=run_id, conversation_id=conversation_id,
+                )
+            pg.commit()
+        except Exception:
+            try:
+                pg.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            _log("enum_autopropose_failed", {"err": repr(exc)})
+        except Exception:
+            pass
+
+
 def _new_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:8]
 
@@ -3840,6 +3887,8 @@ def _run_agent_core(
                 # 용어사전 자율등록(0021) — 답변 직후 용어 후보 추론 → 하이브리드 자동승급/검토 큐.
                 # best-effort: 어떤 실패도 ask 경로를 막지 않는다(내부 try/except 흡수).
                 _glossary_autopropose(cid, user_message, answer, run_id)
+                # ENUM 코드사전 자율수집(0039) — 답변 직후 코드↔라벨 후보 추론 → 하이브리드 자동승급/검토 큐.
+                _enum_autopropose(cid, user_message, answer, run_id)
 
             if output_mode == "console":
                 console.print()

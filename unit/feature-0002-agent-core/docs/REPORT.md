@@ -376,3 +376,10 @@ app.py 조회실패 debug 로그) 반영.
 **리뷰**: 경량 cycle(§18.4) — heartbeat throttle 단순 로직 + 테스트 커버 + healthcheck 판정식 미변경(갱신 지점만 추가) → 적대 패널 SKIPPED(REV [SKIPPED:heartbeat-throttle-liveness]).
 
 **배포**: agent 이미지 재빌드(insight-worker baked) + insight-worker 재기동 → `docker inspect ... Health.Status` healthy 확인.
+
+## 2026-07-07 — ENUM 코드사전 대화 자율수집(0039) — 용어사전(0021/0023) 대칭 [cross-unit, 정본 feature-0003 TASK-20260707-kb-candidate-adoption]
+- **배경**: 관리 콘솔 채택 인박스 요청의 백엔드 절반. 용어사전은 `_glossary_autopropose`+`glossary_feedback` 로 이미 대화 후보수집·검토큐가 있으나 ENUM 코드사전은 CRUD만 있어 후보수집/채택 파이프라인이 없었다. 그 대칭을 신설.
+- **마이그 `0039_enum_feedback`**(HEAD 0038 체인, 비파괴·멱등): `enum_feedback` 검토큐(status pending/auto_promoted/promoted/rejected, key=(scope,schema,table,column,code)) + `enum_dictionary.source` 컬럼(자동수집 되돌리기 구분·자동등록 배지) + 명시 GRANT(DEPLOY TRAP — superuser 적용이라 필수, 0013/0023 동형).
+- **`kb_glossary.py`**: `record_enum_suggestion`(ON CONFLICT WHERE pending, poisoning 방어) · `auto_promote_or_queue_enum`(하이브리드 — conf≥threshold 자동등록 source='auto' + 감사, 미만 pending; rejected/promoted 선검사로 재유입 차단) · `_enum_feedback_status`/`_insert_enum_auto` · `list/count/promote/reject_enum_feedback`(auto_promoted reject=source='auto' 행 회수) · `infer_enum_suggestions`(LLM 위임, table/column/code/label 필수 필터) · enum CRUD `source` 반영.
+- **`llm.py`**: `ENUM_SUGGEST_PROMPT`(코드→라벨 매핑 추출, {"enums":[…]}) + `llm_enum_suggest`(soft-fail []). **`config.py`**: `AGENT_ENUM_AUTOPROPOSE`(기본 1)·`AGENT_ENUM_AUTOPROMOTE_THRESHOLD`(0.9 — 용어 0.85보다 보수적, 구조 추론 오탐 방어)·`AGENT_ENUM_SUGGEST_MODEL/MAX` + `__all__`. **`agent_core.py`**: `_enum_autopropose`(답변 직후 `_glossary_autopropose` 옆, best-effort soft-fail, `AGENT_ENUM_AUTOPROPOSE=0` 비활성).
+- **검증**: `test_kb_enum_feedback.py` 14 PASS(record SQL·자동승급 high/low·poisoning skip·불완전 key skip·되돌리기·promote·infer 필터). 기존 `test_upsert_enum_entry_sql` 은 source 를 컬럼 순서 끝에 append 해 무회귀. 상세·web 경계·UI·배포는 feature-0003 REPORT/TEST(2026-07-07).
