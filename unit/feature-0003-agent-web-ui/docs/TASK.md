@@ -5250,3 +5250,17 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `py_compile` 5파일 + `node --check app.js` PASS. 신규 `test_reasoning_effort.py` 12 PASS(B1 no-override 가드 포함). 전체 스위트 회귀 0(worktree 코드 대조 확인). §18.8 적대 패널 REV-20260706T013532-reasoning-effort — BLOCKING 2(B1 매핑 회귀·B2 override 미검증) 적발 → B1 수정(일반=no-override)·B2 라이브 게이트웨이 프로브로 override 실증·N1 hydration 가드 수정 후 재확정.
 - [x] PB-0008 Windows-browser 시각검증 **POST-DEPLOY PASS** (2026-07-06, 배포 adad0a5e, 실 Windows Chrome relay @172.26.144.1:9223): '+' 메뉴 "추론 강도: 일반" 렌더 → 클릭 4단계 팝업(낮음/일반/높음/매우 높음, values low/normal/high/max, claude 모델 활성) → 높음 선택 시 라벨 "추론 강도: 높음"·✓·팝업 닫힘·localStorage=high → 새로고침 후 "높음" 복원 → 레이아웃 무붕괴·pageerror 0. 증적 pb0008_reasoning.png. (TEST.md §3 POST-DEPLOY Run)
 - [x] verify-completion PASS → commit(21d842d4) → push → PR #594 → main merge(adad0a5e) → cycle-finalize → **web 무중단 롤링 재배포 + ask/insight-worker 재빌드**(deploy_scope: included, frontend+backend) → /healthz(git_commit=adad0a5e·mysql/pg ok) + B2 게이트웨이 override 라이브 smoke PASS(budget 1024 vs 16000 → reasoning 2073자 vs 6914자).
+
+### TASK-20260706T094937-runtime-settings — 관리 콘솔 `시스템 > 설정` 운영 값(실행 타임아웃·모델별 thinking budget) 조정·저장·사용 (Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared, /_template:entry arg-given, 2026-07-06)
+- 요청: assistant 작동 참조 값을 `관리 콘솔 > 시스템 > 설정` 에 추가해 조정·저장·사용. ① TIME_OUT(쿼리 실행 외 서비스 전체 timeout) — 현재 구성된 값만, 억지 추가 금지 ② 실행 LLM 모델별 thinking budget_tokens(모델 추가 시 자연 확장) ③ 각 항목 우측 패널은 차후 확장용 전용 UI, 레거시 형태 정합. 반영 방식 결정=**하이브리드**(안전 live·저수준 restart, AskUserQuestion 확정).
+- [x] shared/runtime_settings.py 신규 — 레지스트리(현행 `*_TIMEOUT*` 22종 + 카탈로그 순회 모델 예산 자동생성) + resolver(live TTL 캐시 / restart frozen 스냅샷) + `/shared` 스냅샷 원자적 I/O + 스펙 [min,max] 검증. shared.config 미import(순환 없음), kill-switch·fail-open.
+- [x] shared/config.py — restart-mode 22 상수 `_startup_int()` 스냅샷 적용(방어적 import, override 없으면 env 기본값 **byte-동치**; CONN_PROBE `max()` 불변식 보존). 서브프로세스 테스트로 import-시 restart-apply 실증.
+- [x] live-mode getter 배선 — llm.py AGENT_TIMEOUT_SEC(LLM 요청 경로 헬퍼 2곳 + 호출부 5곳 인자 생략) + mcp_client.py MCP_TIMEOUT_SEC. 무override 시 동치.
+- [x] agent_core.py `_call_llm` — 명시 추론강도 미지정 시 모델별 budget override 주입(설정된 모델만; 미설정=미주입→모델 config 기본 thinking 유지, **B1 무회귀**) + `budget < max_tokens` 안전 clamp(기존 reasoning-effort 경로 no-op).
+- [x] app.py — WebRuntimeSettings in-code DDL(MySQL KV) + load/save/delete/reconcile helper + `system.runtime.read/write` 권한 2건(settings 그룹) + admin seed catchup + 기동 시 DB→`/shared` 스냅샷 reconcile.
+- [x] routers/admin_settings.py 신규 — GET registry / PUT value / DELETE reset (RBAC read+write 조회 종속, 동일-tx audit, 스펙 검증) + app.py include_router 등록.
+- [x] 프론트: admin.html 설정 pane **2행+2패널**(전용 UI — 실행 타임아웃=카테고리 그룹+즉시/재배포 배지, 모델 예산=카탈로그 자동확장 목록), admin.js **2 mounter**(direct-save + 초기화 + `apiFetch`/`showToast`/`can` 레거시 패턴). cache-buster admin.js/admin.html `?v=`.
+- [x] 검증(pre-commit): 신규 `test_runtime_settings.py` 22 PASS + `test_runtime_settings_api.py`(RBAC/검증) 12 PASS + config 서브프로세스 restart-apply PASS. `node --check admin.js` PASS. 전체 스위트 회귀 0.
+- [ ] §18.8 적대 패널(backend/security/qa 렌즈) → REVIEW.md REV 기록.
+- [ ] PB-0008 Windows-browser 시각검증: 정적 자산 baked → merge+재배포 선행. **POST-DEPLOY** 수행(설정 pane 2항목 렌더·타임아웃 저장/초기화·모델 예산 저장·즉시/재배포 배지·권한 게이트·pageerror 0). 사유는 TEST.md §3 Windows-browser Run 기록(CHECK#13).
+- [ ] verify-completion --pre-commit PASS → commit → push → PR → main merge → cycle-finalize → web 재빌드·재배포(deploy_scope: included, frontend+backend — config/runtime_settings 는 web·worker 공통) → /healthz.
