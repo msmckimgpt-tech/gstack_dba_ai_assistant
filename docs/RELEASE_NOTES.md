@@ -128,3 +128,81 @@ edit_policy: append-only
 
 ### 잔여
 - web 재배포(deploy_scope: included) 후 PB-0008 Windows-browser 라이브 실측. 정본: `unit/feature-0003-agent-web-ui/docs/{REPORT,TASK,TEST}.md`.
+
+## 2026-07-03 — feature-0016-metadata-graph: 그래프 뷰 진화 2차 (관계 기반 배치 · 유사 속성 영역화 · 제품 카테고리 · 자유 배치 · 역할 표식)
+
+### 변경 (관리자 영향 — 관리 콘솔 관계도(그래프) 뷰)
+- **관계 기반 배치 + 유사 속성 그룹 영역화** — 스키마를 관계 가중(seriation·컴포넌트 군집·barycenter 4-sweep)으로 재배치해 엣지 교차를 줄이고(ADR-012, force 재도입 기각), 이름·관계·역할이 유사한 테이블을 배경 박스+헤더로 영역화(ADR-013, 백엔드 시맨틱 클러스터링은 후속 이연).
+- **제품(Products) 단위 카테고리 개요 (ADR-014)** — 진입 시 제품→데이터소스 계층 개요를 먼저 보여주고 항목 클릭으로 상세 관계도 진입. 투영 API 질의 시점에 MySQL SSOT(`WebProducts`/`WebProductDatasources`)로부터 합성(AGE 물리 저장·마이그레이션 0).
+- **자유 배치 상호작용 복원 (ADR-015)** — 결정론 배치 위에 사용자 드래그 offset 레이어(클러스터/카드 통째 이동·개별 노드 절대 위치·combo auto-fit 리사이즈)로 접기/펼치기·드래그·반응형 유지.
+- **역할 시각 표식 (node-role-viz, ADR-010)** — AI 능동 분석이 끝난 테이블을 8종 역할(기준정보/계정/거래/로그/매핑/설정/통계 등)로 분류해 색(Okabe-Ito)·아이콘·범례로 표시(alembic 0031, `node_analysis_jobs.role` 비파괴 ADD).
+- **관계 탐색·상호작용** — 접힌 상태 테이블 간 관계 표시, 상세 패널 관계 컬럼 아코디언(참조함/받음 방향·개수·의미 툴팁), 단일클릭 관계 표시, 클러스터 상세 역할 접두사+행 클릭 노드 선택, 중간버튼 카메라 팬 + 테이블 종속 UI 동반 드래그, 더블클릭 카메라 팬 반응 지연(~350ms) 제거(ADR-011).
+- **운영 관측** — 'AI 운영 현황' 최근 활동에 LLM 사용 대상(target) 표시(alembic 0032, `llm_usage.target` 비파괴 ADD). AI 능동 분석 진행 패널이 상세 패널 하단으로 이동 + 그래프 영역 반응형 높이.
+
+### 정본
+- `unit/feature-0016-metadata-graph/docs/{REPORT,TASK,DECISIONS}.md` — ADR-010~015 (feature-local). alembic 0031(role)·0032(target).
+
+## 2026-07-03 — feature-0003-agent-web-ui: 데이터소스 평균 연결 응답 시간 + AI 운영 현황 지연 지표 재정의
+
+### 변경 (관리자 영향)
+- **데이터소스 상세 패널 평균 연결 응답 시간 표시 (ds-avg-latency)** — 관리 콘솔 > 데이터소스 상세 '연결 상태'에 최근 N회 평균 연결 응답 시간 표시. `shared/conn_health` 성공 probe 이동평균(`AGENT_CONN_AVG_WINDOW`, 기본 20)을 재사용(추가 probe/DB 부하 0·in-memory·마이그레이션 0). 성공 표본이 없으면 '측정 중'. **배포 + PB-0008 PASS(2026-07-03)**.
+- **AI 운영 현황 지연(p50/p95) 지표를 '단계 간 간격'으로 재정의 (aiops-ttft)** — KPI가 답변 전체 왕복 시간(`latency_ms`, 답변 길이 비례) 대신 에이전트 라운드 사이 간격(도구 실행·오케스트레이션 = 신규 `step_gap_ms`)을 반영. `routers/ai_ops.py` KPI 질의 전환 + 다단계 요청 분모(M/R) 노출. alembic **0033**(`llm_usage.step_gap_ms` 비파괴 ADD), cross-cut feature-0002 계측. RBAC/엔드포인트/권한키 무변경.
+
+## 2026-07-03 — feature-0009-group-conversation: 공유 링크 참여 알림
+
+### 변경 (사용자 영향 — 작업 화면 그룹/공유 대화)
+- **공유 링크 참여 시 대화 내 '참여 알림' pill + 기존 멤버 unread +1** — 공유 링크로 새 멤버가 처음 참여하면 대화 흐름 가운데에 시스템 알림이 표시되고, 기존 참여자에게는 안 읽은 메시지(unread) 배지로도 잡힙니다(가입자 본인 제외). `core_messages` 이벤트 행 + 표시 store system pill 이중 기록, `__event__` sentinel 로 LLM 히스토리에서 배제, 익명 공유뷰에서는 참여 이벤트/username 비노출. 마이그레이션 0·인가 경계 불변.
+
+## 2026-07-03 — feature-0002 / feature-0007: insight 워커 부하 분산 · 상태표시 정정 · LLM 요청-레벨 fallback (안정성)
+
+### 변경 (운영자 영향 — 대화 답변 품질·화면 동작 변화 없음)
+- **insight-worker 동일구조 샤드 그룹화 (feature-0002)** — 날짜/번호 suffix 만 다른 동일구조 테이블(샤드)을 `(base_stem, 컬럼 지문)` 그룹으로 묶어 대표 1건만 LLM 분석하고 형제는 LLM 없이 전파(`table_group_insight` KV 상속). per-table 인사이트·NL→SQL grounding 무회귀, flag(`AGENT_INSIGHT_TABLE_GROUPING_ENABLED`) rollback 가능.
+- **긴 분석 주기 중 healthcheck false-negative 해소 (feature-0002)** — 스키마·테이블 순회 중 진행-중 heartbeat(30s throttle)로 liveness 전진 → 'AI 운영 현황'에서 insight-worker 가 잘못 '중단'으로 표시되던 문제 해소(hang 탐지 의도 보존).
+- **insight/graph 부하 분산 (feature-0002, TASK-0308)** — probe 격리(없는 DB→파단·transient backoff), circuit-open(DOWN) 데이터소스 scan skip(복구 시 자동 재개), batched graph sync(WAL fsync 대폭 감소) + incremental watermark + cron 이중 스케줄. 마이그레이션 0.
+- **insight LLM 요청-레벨 fallback (feature-0007)** — `litellm_config.yaml` 3-deployment(claude-corp → root Max → 로컬 edge gemma) + `fallbacks`/`num_retries`. insight 생성 burst 로 계정 RPM/TPM 초과(429) 시 다음 계정/로컬로 즉시 우회해 생성 무중단. config-only·인가 경계 불변.
+
+### 운영자 조치
+- 배포 시 메타데이터 그래프 sync cron 재설치: `sudo bin/install-metadata-graph-sync-cron.sh`. 정본: `unit/feature-0002-agent-core/docs/{REPORT,TASK}.md` · `unit/feature-0007-bedrock-llm-provider/docs/{REPORT,TASK}.md`.
+
+## 2026-07-04 — feature-0016 / feature-0009 / feature-0007: 그래프 뷰 대폭 확장 · 멤버 가시성 window 공유 · 용도별 LLM 라우팅
+
+### 변경 (관리자 영향 — 관리 콘솔 관계도(그래프) 뷰)
+- **의미 임베딩 클러스터링 (Phase C, ADR-018)** — 메타데이터 객체 시그니처를 bge-m3 로 임베딩해 kNN+union-find 로 의미 유사 클러스터를 구성(alembic 0035). 이름 휴리스틱만으로 잡히지 않던 유사군을 값 기반으로 보강.
+- **크로스-데이터소스 관계 (Phase B, ADR-019)** — 시그니처 임베딩 구동 후보 + 신뢰 게이팅으로 서로 다른 데이터소스 간 관계를 추론·표시(alembic 0036, UI 마젠타 점선).
+- **카테고리 그룹(sim-group) 상호작용 (ADR-020)** — 배경 영역(묶음)을 드래그·접기·반응형 리사이즈. 그룹 드래그 헤더 hit-test hotfix.
+- **그래프 UX 7건 + z-order 정합 (graphux7, graph-zorder)** — 상세 패널 뒤로/앞으로·관계 단/더블 클릭 구분·범례 3탭 정리·중복 분석 방어·데이터소스 라벨 정합 + 겹침 순서(`_METZ` 단일 스케일 bake+드래그 부스트/복원, FUNCTION §13)·관계도 최상위 탭 분리+검색 부드러운 하이라이트·더블클릭 재배치 순서 안정화·AI 능동 분석 팝오버 Esc 닫힘 hotfix.
+
+### 변경 (사용자 영향 — 작업 화면)
+- **멤버 가시성 window 공유 (share-visibility-window, Critical — SECURITY §21/§21.4)** — '여기부터/여기까지'로 공유가 `[from,to]` window 만 노출하고, 가려진 구간을 참여자의 라이브 뷰·LLM recall·fork 전부에서 물리 배제(프롬프트 인젝션으로도 추출 불가). `conversation_members` window 컬럼 + `has_restricted_members` 게이트(alembic 0037, additive) + recall/display 양 loader 필터(fail-closed) + fork clip + join stamp never-widen. `has_restricted_members=false` 대화는 필터 완전 우회(무회귀).
+- **말풍선 ☰ 메뉴 통합** — 말풍선 액션(샘플 등록·여기서 분기·여기까지/여기부터 공유·'AI 로 고치기')을 kebab ☰ 메뉴로 통합, 피드백 👍/👎만 메뉴 밖 유지.
+
+### 변경 (운영자 영향 — 화면 변화 없음)
+- **용도별 LLM 라우팅 분리 (llm-routing-interactive-split, feature-0007, ADR-002 feature-local)** — insight-worker 가 주말/야간 gemma 로 고착(refresh-oauth cron 평일한정 → 토큰 만료 → edge 강등)하던 현상 해소. 사람 실시간(대화·AI 능동 분석)=항상 claude / 백그라운드 insight 배치=시각 기반 분리 + fallback 체인 결함 수정 + refresh/keepalive cron 24/7 확장.
+
+### 정본
+- `unit/feature-0016-metadata-graph/docs/{REPORT,TASK,DECISIONS}.md`(ADR-016~020, alembic 0034~0036) · `unit/feature-0009-group-conversation/docs/*` + `docs/SECURITY.md` §21/§21.4 · `unit/feature-0007-bedrock-llm-provider/docs/*`.
+
+## 2026-07-06 — feature-0003 / feature-0016: 대화 화면 추론 강도 선택 · 함수/프로시저 노드 + DB 단위 AI 능동 분석
+
+### 변경 (사용자 영향 — 대화 화면)
+- **사용자 지정 추론 강도 (reasoning-effort, Major)** — 대화 composer '+' 메뉴에 "추론 강도" 4단계(낮음/일반/높음/매우 높음)를 추가, 대화별 영구 저장(KV). `/api/ask` 가 명시 레벨을 요청 단위 `extra_body.thinking.budget_tokens` 로 override('일반'=no-override=alias 기본), `litellm_config` 무변경. 비-thinking 모델에선 비활성. cross-unit feature-0002 `_call_llm`·`shared/model_catalog`. **PB-0008 PASS**.
+
+### 변경 (관리자 영향 — 관계도 뷰)
+- **전 datasource 함수·프로시저 가시화 (routine backfill)** — `routine_objects` SSOT + AGE `Routine` 노드 + 정의 파싱으로 참조 테이블 엣지(alembic 0034). `bin/routine-backfill.sh`·`routine_backfill.py` 로 insight cadence 대기 없이 결정론 적재(도달 4 ds·2,201 routines 라이브 backfill).
+- **DB(스키마) 단위 'AI 능동 분석'** — `analyze-schema` 엔드포인트로 데이터베이스 단위 일괄 분석(재귀 0 보장·비용 가드 only_missing+cap 200/hard 500+confirm, FUNCTION §15).
+- **그래프 뷰 개선 5건 (graph-navfilter-routine)** — 상세 패널 뒤로/앞으로(view-typed 이력)·노드 종류 필터(관계/함수/프로시저 토글, localStorage)·검색 구성 보존(additive overlay)·DB 단위 분석의 Routine 포함(테이블 우선 cap)·프로시저 파라미터 수직 배치(FUNCTION §16). **PB-0008 PASS**.
+
+### 정본
+- `unit/feature-0003-agent-web-ui/docs/*`(reasoning-effort, TASK-20260706T013532) · `unit/feature-0016-metadata-graph/docs/*`(§53~54, alembic 0034).
+
+## 2026-07-07 — feature-0018 / feature-0016 / feature-0002: 런타임 설정 콘솔 · 제품 카테고리 밴드 + 크로스-DB 관계 일반화 · 대화 답변 안정성
+
+### 변경 (관리자 영향)
+- **런타임 설정 콘솔 (runtime-settings, feature-0018, Major)** — 관리 콘솔 '시스템 > 설정'에 assistant 운영 값(실행 타임아웃·MCP 타임아웃·모델별 추론 예산)을 조정·저장·런타임 반영. `WebRuntimeSettings` 테이블 + `routers/admin_settings.py`(GET/PUT/DELETE, `system.runtime.read/write` RBAC+audit, autocommit=False 원자화) + `shared/runtime_settings.py` 레지스트리/resolver(live TTL / restart frozen). env-fallback 으로 배포 `.env` 존중(override 없으면 byte-동치). live(즉시)·restart(재배포) 하이브리드 반영. **PB-0008 PASS**.
+- **제품 카테고리 밴드 + 크로스-DB 관계 일반화 + DB 분석 재귀·refine (§55, ADR-021, alembic 0038)** — 관계도에 제품 카테고리 '띠(밴드)'(CAT/CATH/CATX, `WebProductDatabases` 질의시점 합성·밴드별 shelf-pack·헤더 드래그·접기·미분류 후미) + 크로스-DB 관계 일반화(xschema — 같은 DS 다른 DB, MSSQL 3-part 프로브 dbo 가드) + 관계 수동 큐레이션 API/UI(trust/break) + DB 단위 분석 재귀 전개(per-seed anchor·예산 cap)·refine-not-override·back-refine. **PB-0008 PASS**.
+
+### 변경 (운영자 영향 — 대화 답변 품질·화면 변화 없음)
+- **대화 답변 경로 edge(gemma) 폴백 완전 차단 (feature-0002)** — 특정 상황에서 대화 답변이 성능이 낮은 로컬 임시 모델(edge/gemma)로 처리되며 이전 맥락을 놓치던 문제를 근본 차단(conversation_audit FR-edge-fallback-conversation-context-loss, CHG-20260707T100640). 대화 답변은 항상 정규 모델 경로로 처리.
+
+### 정본
+- `unit/feature-0003-agent-web-ui/docs/*`(runtime-settings, TASK-20260706T094937 — feature-0018 코드 거주) · `unit/feature-0016-metadata-graph/docs/*`(§55, ADR-021, alembic 0038) · `unit/feature-0002-agent-core/docs/*`(edge-fallback) · `docs/improvements/conversation-audit/FRICTION_LEDGER.md`.
