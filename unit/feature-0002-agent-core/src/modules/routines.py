@@ -45,23 +45,42 @@ def _unquote(ident: str) -> str:
     return str(ident or "").strip().strip("`\"[]").strip()
 
 
-def parse_referenced_tables(definition, table_names, self_name="") -> list:
-    """routine 정의 텍스트 → [{fqn(테이블명 leaf), kind(read|write)}] (스키마 실재 테이블만).
+def parse_referenced_tables(definition, table_names, self_name="", *,
+                            external_tables=None, local_label="") -> list:
+    """routine 정의 텍스트 → 참조 테이블 목록 (실재 검증 통과분만).
+
+    반환 entry:
+      - 로컬:      {fqn: '<Table>', kind: 'read|write'}
+      - 크로스-DB: {fqn: '<Table>', kind, schema: '<타 effective 스키마(DB)>'} (§56 RC2)
 
     table_names 는 그 스키마의 실 테이블명 목록(대소문자 무관 매칭). 임시테이블(#)·변수(@)·
     서브쿼리·자기 자신·주석 안 참조는 제외. 테이블당 1 entry — write 가 read 보다 우선.
+
+    §56 qualifier 해석(RC2 — 프로시저 중심 환경의 크로스-DB 가시화 + 동명 오귀속 차단):
+      external_tables: {(schema_lower, table_lower): (schema, table)} — 같은 datasource 의
+      **다른** effective 스키마(DB) 테이블 집합(rag_objects 실재 검증). local_label: 저장
+      스키마-slot(MSSQL=DB명). qualified 참조([db].[dbo].[T] · db..T · db.T)는:
+        ① qualifier == local_label 또는 'dbo'(기본 스키마) → 로컬 귀속(기존 동작).
+        ② (qualifier, leaf) ∈ external_tables → **크로스-DB 참조** 채택(schema 필드 동반).
+        ③ qualifier 가 알려진 타 스키마인데 그 테이블 미실재 → **폐기** — 기존 leaf-정규화가
+           동명 로컬 테이블로 오귀속하던 결함 차단.
+        ④ qualifier 미상(추적 밖 스키마 등) → 레거시 폴백: leaf 로컬 실재 시 로컬(recall 보존).
     알려진 한계(ADR-016): 동적 SQL(EXEC(@s))·MSSQL 4000자 절단 정의는 부분 커버.
     """
-    if not definition or not table_names:
+    if not definition or not (table_names or external_tables):
         return []
     text = _COMMENT_RE.sub(" ", str(definition))
     canon = {}   # lower -> 실 테이블명(원 케이스 보존)
-    for t in table_names:
+    for t in (table_names or []):
         s = str(t or "").strip()
         if s:
             canon.setdefault(s.lower(), s)
+    ext = external_tables if isinstance(external_tables, dict) else {}
+    ext_schemas = {k[0] for k in ext}          # 알려진 타 스키마(lower)
+    local_low = _unquote(local_label).lower()
     self_low = _unquote(self_name).lower()
-    found = {}   # lower table -> kind
+    found = {}     # lower table -> kind (로컬)
+    found_x = {}   # (schema_lower, table_lower) -> kind (크로스-DB)
 
     def _mark(leaf, kind):
         low = leaf.lower()
@@ -71,26 +90,44 @@ def parse_referenced_tables(definition, table_names, self_name="") -> list:
         if prev != "write":
             found[low] = kind if prev is None or kind == "write" else prev
 
+    def _route(raw, kind):
+        # qualifier 판정 — 빈 세그먼트 보존('db..T' → ['db','','T']) 후 leaf/첫 세그먼트 추출.
+        segs = str(raw).rstrip(";,)(").split(".")
+        leaf = _unquote(segs[-1]) if segs else ""
+        if not leaf or leaf.startswith("#") or leaf.startswith("@"):
+            return
+        qual_low = _unquote(segs[0]).lower() if len(segs) >= 2 else ""
+        if not qual_low or qual_low == "dbo" or qual_low == local_low:
+            _mark(leaf, kind)                            # ① 무자격/기본 스키마/자기 라벨 → 로컬
+            return
+        leaf_low = leaf.lower()
+        if (qual_low, leaf_low) in ext:
+            prev = found_x.get((qual_low, leaf_low))     # ② 실재 크로스-DB 참조
+            if prev != "write":
+                found_x[(qual_low, leaf_low)] = kind if prev is None or kind == "write" else prev
+            return
+        if qual_low in ext_schemas:
+            return                                       # ③ 타 스키마 지정·미실재 — 오귀속 차단(폐기)
+        _mark(leaf, kind)                                # ④ 미상 qualifier — 레거시 로컬 폴백
+
     for m in _REF_RE.finditer(text):
-        if len(found) >= _REFS_CAP:
+        if len(found) + len(found_x) >= _REFS_CAP:
             break
         kw = (m.group(1) or "").upper()
         raw = m.group(2) or ""
         if raw.startswith("(") or raw.startswith("@") or raw.startswith("#"):
             continue
-        # 마지막 세그먼트(테이블명)만 — [db].[dbo].[T] / db.T / `T` 모두 leaf 로 정규화.
-        leaf = _unquote(raw.split(".")[-1].rstrip(";,)("))
-        if not leaf or leaf.startswith("#") or leaf.startswith("@"):
-            continue
-        kind = "write" if any(kw.startswith(w) for w in _WRITE_KW) else "read"
-        _mark(leaf, kind)
+        _route(raw, "write" if any(kw.startswith(w) for w in _WRITE_KW) else "read")
     # alias-UPDATE write 승격(위 스캔이 read 로 남긴 실제 write 대상 보정)
     for m in _ALIAS_UPDATE_RE.finditer(text):
         alias, raw = m.group(1) or "", m.group(2) or ""
         if alias.lower() in canon:
             continue   # alias 가 실 테이블명이면 위 스캔이 이미 write 처리
-        _mark(_unquote(raw.split(".")[-1].rstrip(";,)(")), "write")
-    return [{"fqn": canon[low], "kind": kind} for low, kind in sorted(found.items())]
+        _route(raw, "write")
+    out = [{"fqn": canon[low], "kind": kind} for low, kind in sorted(found.items())]
+    out += [{"fqn": ext[k][1], "kind": kind, "schema": ext[k][0]}
+            for k, kind in sorted(found_x.items())]
+    return out
 
 
 def _fetch_routines(db_conn, schema) -> list:
@@ -176,6 +213,45 @@ def _rw_conn(conn):
     return _pg_connect(autocommit=True), True
 
 
+# §56 RC2: 크로스-DB 참조 실재 검증용 — datasource 의 effective 스키마(DB) 테이블 집합 TTL 캐시.
+#   backfill/cadence 가 같은 ds 의 스키마 수십 개를 연쇄 introspect 하므로 rag_objects 1회 조회를 재사용.
+_EXT_TTL_SEC = 600
+_EXT_CACHE: dict = {}   # dsk -> (monotonic_ts, {(schema_lower, table_lower): (schema, table)})
+
+
+def _external_tables_for(kc, dsk) -> dict:
+    """같은 datasource 의 effective 스키마(DB) 테이블 집합(rag_objects) — parse 의 external_tables 원천.
+
+    실패 시 {} (비차단 — 크로스-DB 검증만 비활성, 로컬 파싱 불변). 캐시는 프로세스 로컬(TTL 600s)."""
+    import time
+    key = str(dsk or "").strip()
+    if not key:
+        return {}
+    hit = _EXT_CACHE.get(key)
+    if hit and (time.monotonic() - hit[0]) < _EXT_TTL_SEC:
+        return hit[1]
+    ext: dict = {}
+    try:
+        from .semantic_cluster import _effective_schema
+        cur = kc.cursor()
+        try:
+            cur.execute("SELECT schema_name, table_name, object_key FROM rag_objects "
+                        "WHERE object_type='table' AND datasource_key=%s AND table_name<>''", (key,))
+            for sch, tbl, okey in cur.fetchall():
+                eff = _effective_schema(key, okey, sch)
+                if eff and tbl:
+                    ext[(str(eff).lower(), str(tbl).lower())] = (str(eff), str(tbl))
+        finally:
+            cur.close()
+    except Exception as exc:
+        # §18.8 패널(§56): 실패 결과({})는 **캐시하지 않는다** — TTL 600s 동안 크로스-DB 검증이
+        # 침묵 비활성(레거시 오귀속 재발 창)으로 남는 것을 방지. 다음 호출이 재시도한다.
+        _log.debug("external_tables_load_failed ds=%s err=%r", key, exc)
+        return {}
+    _EXT_CACHE[key] = (time.monotonic(), ext)
+    return ext
+
+
 def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_key="common",
                          datasource_key="", source_run_id=None, store_schema=None,
                          cap=None, prune=True) -> int:
@@ -208,12 +284,18 @@ def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_ke
         return 0
     n = 0
     try:
+        # §56 RC2: 크로스-DB 참조 실재 검증 집합(같은 ds 의 타 effective 스키마 테이블) — 실패 시 {}(로컬 파싱 불변).
+        ext_tables = _external_tables_for(kc, (datasource_key or "").strip() or (scope_key or ""))
         cur = kc.cursor()
         for r in routines:
             try:
-                refs = parse_referenced_tables(r["definition"], table_names, self_name=r["name"])
-                # 참조 fqn 은 저장 slot 기준 `label.table` — 그래프 Table 키와 정합.
-                refs_fqn = [{"fqn": f"{label}.{x['fqn']}" if label else x["fqn"], "kind": x["kind"]}
+                refs = parse_referenced_tables(r["definition"], table_names, self_name=r["name"],
+                                               external_tables=ext_tables, local_label=label)
+                # 참조 fqn 은 저장 slot 기준 `label.table`(로컬) / `타스키마.table`(크로스-DB, §56 RC2 —
+                # sync_routine 이 fqn 그대로 <scope>:<fqn> 으로 앵커해 크로스 클러스터 ROUTINE_USES 성립).
+                refs_fqn = [{"fqn": (f"{x['schema']}.{x['fqn']}" if x.get("schema")
+                                     else (f"{label}.{x['fqn']}" if label else x["fqn"])),
+                             "kind": x["kind"], **({"cross": 1} if x.get("schema") else {})}
                             for x in refs]
                 dhash = hashlib.sha256((r["definition"] or "").encode("utf-8", "replace")).hexdigest() \
                     if r["definition"] else ""

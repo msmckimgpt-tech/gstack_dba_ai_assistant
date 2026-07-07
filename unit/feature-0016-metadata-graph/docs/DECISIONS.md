@@ -666,3 +666,38 @@ source_of_truth: true
   - 빈약 판정을 LLM 재평가로: 판정 자체가 LLM 비용 — 길이·공란 휴리스틱으로 충분(기각, 후속 여지).
 - Supersedes: (§53/§54 의 "재귀 0" 계약을 대체 — 예산·게이팅 경계는 계승. ADR-017 승격, ADR-018/019 는 불변 토대)
 - Superseded By:
+
+## ADR-022 — §56 routine-sync-crossdb: sync_graph 행 격리(SAVEPOINT) + 프로시저 크로스-DB 참조 해석 (fhgame1 실측 이슈)
+- Status: accepted (2026-07-07)
+- Context: 사용자 실측(mssql-qa-idc/fhgame1) — DB 능동 분석에서 ① 함수·프로시저 노드 부재 ② 크로스-DB 관계
+  부재 ③ '보충설명 필요' 다수(재귀 부실). 라이브 진단: routine_objects SSOT 는 완비(11,973행)이나 AGE 9행 —
+  sync_graph batched 트랜잭션에서 한 행 실패 → 오염 연쇄(InFailedSqlTransaction) + 배치 롤백 소실(full sync
+  errors 18,698, 단건 전행 성공=불량행 0). errors>0 이 워터마크를 고착시켜 증분 sync 무한 전량 재스캔.
+  또한 parse_referenced_tables 가 qualified 참조를 leaf 정규화해 크로스-DB 참조 폐기 + 동명 로컬 오귀속 —
+  프로시저 중심 환경의 관계 substrate 소실이 분석 빈약(caveats)의 근인.
+- Decision:
+  1. **행 격리**: sync_graph 전 단계 per-row 를 `_sync_row_guard`(SAVEPOINT→성공 RELEASE/실패 ROLLBACK TO)로
+     격리 — 실패는 그 행에 국한, 성공분 소실 0. 실패 첫 5건 샘플을 warning 으로 노출(최초 오염원 식별).
+     step-레벨 실패는 신설 step_failures 로 분리 집계.
+  2. **워터마크 게이트 교체**: per-row errors(결정적 데이터 오류 — 재스캔 무익)는 전진을 막지 않고,
+     step_failures(SELECT 불가·트랜잭션 붕괴 = 커버리지 구멍)만 차단. ok=errors==0 AND step_failures==0(가시성 불변).
+  3. **크로스-DB 참조 해석(4규칙)**: qualifier ①'dbo'/자기 라벨→로컬 ②(qualifier,leaf)∈external_tables
+     (rag_objects 의 같은 ds 타 effective 스키마 테이블 집합, TTL 600s 캐시)→**크로스-DB 참조**(entry 에
+     schema 필드, 저장 fqn=`타스키마.T`+cross 플래그) ③알려진 타 스키마인데 미실재→폐기(동명 로컬 오귀속
+     차단) ④미상→레거시 로컬 폴백(recall 보존). sync_routine 은 fqn 그대로 `<scope>:<fqn>` 앵커라 크로스
+     클러스터 ROUTINE_USES 가 코드 불변으로 성립 — 그래프 가시화 + node_analysis routine_use(0.35) 전파.
+  4. **thin 동치**: "연결 정보 없음" 문구=공란 — substrate 가 뒤늦게 채워지는 스키마에서 back-refine 이 발화.
+  5. **backfill read-axis 정규화(RC4)**: routine_backfill 의 SSOT/그래프 키를 registry 라벨에서 read-axis
+     scope(`ds.scope_key or 라벨lower`)로 교체 — 라벨/해시 이중 적재(실측 4쌍)·label 고아 그래프·RC2 rag
+     불일치 해소. 기존 라벨-키 중복 행은 운영 정리(해시 twin 존재 시 삭제)로 회수.
+- Consequences: 프로시저 중심 DB(fhgame1 류)의 함수·프로시저와 그 크로스-DB 사용 관계가 그래프·능동 분석에
+  진입한다. sync 는 부분 실패에 견고(연쇄 0)·관측 가능(샘플 로그)·증분 정상화(워터마크). 마이그 0·비파괴.
+  한계: SAVEPOINT per-row 오버헤드(로컬 PG, fsync 없음 — 수 μs/행, batched commit 불변) · qualified 2-part
+  의 MSSQL 실스키마 vs MySQL db 모호성은 실재 검증으로 해소(미실재 시 ④/③ 규칙) · 재파싱은 정의 재-introspect
+  경유(routine-backfill/cadence — definition 미저장, IS DISTINCT FROM 이 refs 변화를 감지해 upsert).
+- Alternatives: (a) 오염 시 배치 전체 재시도(autocommit 강등) — 성공분 보존 못 하고 부하 2배(기각, SAVEPOINT 가
+  정밀) (b) 크로스 참조를 table_relationships 로도 적재 — 컬럼 정보 없는 read/write 는 REFERENCES 의미와 불일치
+  (기각 — ROUTINE_USES 가 정위치, 조인 후보는 Phase B 임베딩 경로) (c) 정의 원문 저장 후 재파싱 — SSOT 비대·
+  민감 코드 저장(기각, definition_hash 만 유지).
+- Supersedes: (ADR-016 의 "그 스키마 실재 테이블만" 참조 규칙을 4규칙으로 대체 — 보수성은 실재 검증으로 계승)
+- Superseded By:

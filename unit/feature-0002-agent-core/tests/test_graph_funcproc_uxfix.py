@@ -108,7 +108,9 @@ def test_parse_refs_excludes_temp_vars_self_and_unknown():
     body = ("SELECT * FROM #tmp; SELECT * FROM @tv; SELECT * FROM UnknownTable; "
             "SELECT * FROM usp_Self; SELECT * FROM [dk_game].[dbo].[Achievement];")
     refs = rt.parse_referenced_tables(body, TABLES, self_name="usp_Self")
-    # 임시(#)·변수(@)·미존재·자기자신 제외, 3-part 인용 식별자는 leaf 로 정규화.
+    # 임시(#)·변수(@)·미존재·자기자신 제외. §56 계약 변경: 3-part qualified 식별자는 미상 qualifier
+    # 레거시 폴백(④)으로 leaf-로컬 귀속 — external_tables 를 주면 실재검증 크로스/오귀속차단이 적용된다
+    # (test_routine_sync_crossdb.py 에서 잠금).
     assert refs == [{"fqn": "Achievement", "kind": "read"}]
 
 

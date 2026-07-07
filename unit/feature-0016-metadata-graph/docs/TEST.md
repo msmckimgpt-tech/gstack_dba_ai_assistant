@@ -722,3 +722,22 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   우선 정렬 실증), 이후 15분 주기 소진 지속(~8h 완주 전망). 워커 Traceback/CRITICAL 0.
 - pageerror 0(전 구간). 증적 `artifacts/feature-0016-metadata-graph/20260707-graph-cat-refine/`
   (cat-01-bands.png·cat-02-collapsed-curate.png).
+
+## routine-sync-crossdb — fhgame1 루틴 투영·크로스-DB 참조·재귀 보충 (TASK §56, 2026-07-07)
+
+### 케이스
+- TEST-20260707T210000-routine-sync-crossdb-1 (RC1): batched sync 에서 한 행 실패가 뒤 행·타 step 에
+  전파되지 않고(SAVEPOINT 격리+step 가드), 커밋/스텝/치명 실패는 step_failures 로 워터마크를 차단.
+- TEST-20260707T210000-routine-sync-crossdb-2 (RC2): 프로시저 정의의 [db].[dbo].[T]·db..T·db.T 참조가
+  실재 검증 통과 시 크로스-DB ROUTINE_USES 로 저장·투영, 동명 로컬 오귀속 차단, 미상 qualifier 레거시 폴백.
+- TEST-20260707T210000-routine-sync-crossdb-3 (RC3/RC4): thin='연결 정보 없음' 동치(back-refine 발화),
+  routine_backfill read-axis scope(label 이중 적재·고아 투영 차단).
+
+### Run (2026-07-07) — pre-deploy 격리 검증
+- Environment: repo-insight-worker 컨테이너 pytest. Runner: AI.
+- 신규 `test_routine_sync_crossdb.py` **20 PASS**(qualifier 4규칙 7종·introspect 배선/TTL·실패 미캐시·
+  row-guard 5종(RELEASE·SAVEPOINT 실패 step 계상 포함)·thin·RC4 read-axis 3종) + 기존 계약 갱신
+  (`test_graph_funcproc_uxfix.py` 주석) — 영향 스위트 및 **전체 스위트(0002+0003) EXIT=0·FAILED 0**.
+- §18.8 적대 패널(ultracode, 27 에이전트): 확정 8건 전건 수정 — REVIEW REV 참조. 마이그 0.
+- 웹/UI 자산 변경 없음(백엔드 전용) — PB-0008 은 배포 후 그래프 뷰에서 fhgame1 ƒ/⚙·크로스-DB 엣지
+  육안 확인으로 수행(Environment: Windows-browser Run 을 POST-DEPLOY 에 append 예정).
