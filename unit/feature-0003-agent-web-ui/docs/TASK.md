@@ -5264,3 +5264,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [ ] §18.8 적대 패널(backend/security/qa 렌즈) → REVIEW.md REV 기록.
 - [ ] PB-0008 Windows-browser 시각검증: 정적 자산 baked → merge+재배포 선행. **POST-DEPLOY** 수행(설정 pane 2항목 렌더·타임아웃 저장/초기화·모델 예산 저장·즉시/재배포 배지·권한 게이트·pageerror 0). 사유는 TEST.md §3 Windows-browser Run 기록(CHECK#13).
 - [ ] verify-completion --pre-commit PASS → commit → push → PR → main merge → cycle-finalize → web 재빌드·재배포(deploy_scope: included, frontend+backend — config/runtime_settings 는 web·worker 공통) → /healthz.
+
+### TASK-20260707T110000-runtime-settings-auditfix — 런타임 설정 audit action 등록 (PB-0008 라이브 적발 hotfix, Minor §12.3, feature-0003 backend-only)
+- 발견: feature-0018 배포 후 PB-0008 실 Windows 브라우저 write-path 검증에서 "실행 타임아웃" 저장 시 toast "저장 실패: … unknown audit action". 근본: `build_audit_change_json`(ActionCode allowlist)이 `system.runtime.update`/`system.runtime.reset` 미등록 → autocommit=False write 경로가 audit 단계에서 fail-closed(rollback→500). autocommit 원자화(security#1 수정)가 미감사 변경을 정확히 차단(status "기본값 사용 중" 유지 — DB 무변경)했으나 기능 자체가 막힘.
+- [x] `app.py build_audit_change_json`: `system.runtime.update`(setting_key+value)·`system.runtime.reset`(setting_key) 2 action 등록(masked_fields 없음 — 운영 튜닝 파라미터 비민감). raise 前 삽입.
+- [x] 회귀 가드: `test_runtime_settings_api.py` +2(build_audit_change_json 2 action 반환 shape). 유닛 갭(TestClient PUT 이 conn=None 로 audit 도달 前 500) 보완. 14 PASS.
+- [ ] §18.8 security 렌즈 적대 리뷰 → REVIEW REV.
+- [ ] verify-completion → commit → PR → merge → cycle-finalize → web 재빌드·재배포(backend-only, admin 자산 무변경) → PB-0008 write-path 재검증(저장/초기화 toast·has_override·audit row).

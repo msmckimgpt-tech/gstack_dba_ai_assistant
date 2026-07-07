@@ -1482,3 +1482,6 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **저장·반영 모델**(하이브리드): source-of-truth=MySQL `WebRuntimeSettings`(KV). 유효값은 `/shared/runtime_settings.json` 스냅샷으로 전 프로세스 전파(shared.runtime_settings). `apply_mode=live`(AGENT_TIMEOUT_SEC·MCP_TIMEOUT_SEC·모델 예산)는 소비처 `get_int()`/주입으로 **즉시 반영**(≤캐시 TTL); `apply_mode=restart`(그 외 저수준 timeout)는 config.py 가 기동 시 스냅샷을 읽어 **다음 재배포 시 반영**.
 - **권한**: `system.runtime.read`/`system.runtime.write`(settings 그룹, admin auto-grant + 기존 admin catchup). 조회 전용 계정은 입력·버튼 비활성.
 - 상세 backend(shared/runtime_settings.py, config.py, agent_core `_call_llm` 주입, model_catalog)은 feature-0002/docs/FUNCTION.md 및 shared/docs 참조.
+
+## (TASK-20260707T110000-runtime-settings-auditfix, 2026-07-07) 런타임 설정 audit action 등록 (backend-only, Minor §12.3)
+- `build_audit_change_json` 이 `system.runtime.update`(→{setting_key, value})·`system.runtime.reset`(→{setting_key}) 를 인식한다. feature-0018 의 `PUT/DELETE /api/admin/settings/runtime` 이 동일-tx audit(autocommit=False) 를 완료할 수 있어 설정 저장/초기화 write 경로가 동작한다. (미등록 시 fail-closed rollback → 저장 500 — PB-0008 적발.)

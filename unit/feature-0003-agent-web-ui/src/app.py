@@ -17502,6 +17502,29 @@ def build_audit_change_json(
             },
             [],
         )
+    # feature-0018 runtime-settings: 실행 타임아웃·모델별 추론 예산 설정 변경/초기화 audit.
+    # 값은 운영 튜닝 파라미터(비민감) — masked_fields 없음. before/after(value)는 caller 가 전달하나
+    # 본 builder 는 request_ctx 기반으로 요약(선례 정합). PB-0008 라이브 검증에서 미등록 raise 로
+    # write 경로가 fail-closed(audit 실패→rollback) 된 것을 적발해 등록(Codex C6 allowlist 준수).
+    if action == "system.runtime.update":
+        # previous_value: caller 가 캡처한 직전 override 값(before)을 감사에 보존한다(포렌식 —
+        # "무엇에서 무엇으로 바뀌었나"). override 없던 상태면 None.
+        return (
+            {
+                "setting_key": request_ctx.get("key"),
+                "value": request_ctx.get("value"),
+                "previous_value": (before or {}).get("value"),
+            },
+            [],
+        )
+    if action == "system.runtime.reset":
+        return (
+            {
+                "setting_key": request_ctx.get("key"),
+                "previous_value": (before or {}).get("value"),
+            },
+            [],
+        )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
 

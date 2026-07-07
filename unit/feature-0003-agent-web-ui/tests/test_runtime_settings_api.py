@@ -104,3 +104,27 @@ def test_delete_unregistered_key_400(client, as_account):
     as_account(perms=WRITE_PERMS)
     resp = client.delete(ENDPOINT, params={"key": "BOGUS_KEY"})
     assert resp.status_code == 400
+
+
+# ── audit action 등록 회귀 가드 (PB-0008 라이브 적발) ────────────────────────
+# TestClient PUT/DELETE 는 make test 환경에서 conn=None 로 audit 도달 前 500 → 이 경로가
+# 유닛에서 미검증이었다. build_audit_change_json 이 런타임 설정 action 을 모르면 PUT/DELETE 가
+# audit 단계에서 fail-closed(rollback→500)로 깨진다(라이브에서 "unknown audit action" 실측).
+def test_audit_action_system_runtime_update_registered():
+    import app
+    change, masked = app.build_audit_change_json(
+        action="system.runtime.update", before={"value": 90}, after={"value": 120},
+        request_ctx={"key": "AGENT_TIMEOUT_SEC", "value": 120},
+    )
+    assert change["setting_key"] == "AGENT_TIMEOUT_SEC" and change["value"] == 120 and masked == []
+    assert change["previous_value"] == 90  # 감사에 직전 값 보존
+
+
+def test_audit_action_system_runtime_reset_registered():
+    import app
+    change, masked = app.build_audit_change_json(
+        action="system.runtime.reset", before={"value": 120}, after={"value": None},
+        request_ctx={"key": "AGENT_TIMEOUT_SEC"},
+    )
+    assert change["setting_key"] == "AGENT_TIMEOUT_SEC" and masked == []
+    assert change["previous_value"] == 120  # reset 이 되돌린 직전 값 보존
