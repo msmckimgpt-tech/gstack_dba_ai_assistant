@@ -49,6 +49,7 @@ __all__ = [
 """OpenAI client, prompt templates, LLM call functions."""
 from shared.config import *
 from shared import config as cfg
+from shared import runtime_settings as _rts  # feature-0018: live-mode 실행 타임아웃(관리 콘솔 조정) 즉시 반영
 from shared.model_catalog import max_tokens_for_model, model_supports_temperature, model_supports_vision, is_local_llm_model
 from .utils import append_log_line
 import json, os, time
@@ -641,7 +642,7 @@ def _get_llm_client(timeout_sec: int | None = None, model: str | None = None) ->
     base_url, api_key = _resolve_tier_endpoint(model)
     if not api_key:
         return None
-    timeout_val = max(5, int(timeout_sec) if timeout_sec is not None else int(AGENT_TIMEOUT_SEC))
+    timeout_val = max(5, int(timeout_sec) if timeout_sec is not None else int(_rts.get_int("AGENT_TIMEOUT_SEC")))
     cache_key = (base_url, api_key, timeout_val)
     cached = _TIER_CLIENT_CACHE.get(cache_key)
     if cached is not None:
@@ -770,9 +771,9 @@ def _record_llm_usage(
 
 def _openai_request_timeout(timeout_sec: int | None = None) -> int:
     try:
-        val = int(timeout_sec) if timeout_sec is not None else int(AGENT_TIMEOUT_SEC)
+        val = int(timeout_sec) if timeout_sec is not None else int(_rts.get_int("AGENT_TIMEOUT_SEC"))
     except Exception:
-        val = int(AGENT_TIMEOUT_SEC)
+        val = int(_rts.get_int("AGENT_TIMEOUT_SEC"))
     return max(5, val)
 
 
@@ -1198,7 +1199,7 @@ def llm_validate_step(payload: dict[str, Any]) -> dict[str, Any] | None:
             ],
             **_max_tokens_kwargs(_validation_model, "validate"),
             **_temperature_kwargs(_validation_model),
-            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+            timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
         _record_llm_usage(_validation_model, "validate", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
@@ -1224,7 +1225,7 @@ def llm_update_summary(payload: dict[str, Any]) -> str | None:
             ],
             **_max_tokens_kwargs(_summary_model, "summary"),
             **_temperature_kwargs(_summary_model),
-            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+            timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
         _record_llm_usage(_summary_model, "summary", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
@@ -1349,7 +1350,7 @@ def llm_generate_topic(payload: dict[str, Any]) -> str | None:
             ],
             **_max_tokens_kwargs(_topic_model, "summary"),
             **_temperature_kwargs(_topic_model),
-            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+            timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
         _record_llm_usage(_topic_model, "topic", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()
@@ -1385,7 +1386,7 @@ def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
             ],
             **_max_tokens_kwargs(_model, "summary"),
             **_temperature_kwargs(_model),
-            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+            timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
         _record_llm_usage(_model, "glossary_suggest", resp)
         text = (resp.choices[0].message.content or "").strip()
@@ -1484,7 +1485,7 @@ def llm_fix_sql(payload: dict[str, Any]) -> str | None:
             ],
             **_max_tokens_kwargs(_fix_model, "sql_fix"),
             **_temperature_kwargs(_fix_model),
-            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+            timeout=_openai_request_timeout(),  # feature-0018: 인자 생략 → live fallback(관리 콘솔 조정 즉시 반영, 무override 시 동치)
         )
         _record_llm_usage(_fix_model, "sql_fix", resp)  # TASK-0136 (#11)
         text = (resp.choices[0].message.content or "").strip()

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260706-graph-cat-refine" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260707-graph-dataflow-tooltip" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -869,7 +869,7 @@
                   <ul class="amg-legend-list">
                     <li><i class="lg-line lg-line-solid"></i>신뢰 관계(FK·검증)</li>
                     <li><i class="lg-line lg-line-dashed"></i>추정 관계(암묵 JOIN)</li>
-                    <li><i class="lg-line lg-line-routine"></i>함수·프로시저의 테이블 사용</li>
+                    <li><i class="lg-line lg-line-routine"></i>함수·프로시저의 테이블 사용 <span class="amg-legend-sub">(화살표=데이터 흐름 · 쓰기 →테이블 · 읽기 테이블→)</span></li>
                     <li><i class="lg-dot" style="background:#fff;border:2px dashed #e08a1e"></i>AI 분석 중</li>
                     <li><i class="lg-dot" style="background:#fff;border:2px double #7b2fbe"></i>AI 분석됨</li>
                     <li><i class="lg-dot" style="background:#f4b400;box-shadow:0 0 5px 2px rgba(244,180,0,.85)"></i>검색 매칭(앰버 글로우)</li>
@@ -923,7 +923,7 @@
               />
             </div>
             <div class="admin-list-head">
-              <span class="admin-list-section-label">시스템 프롬프트</span>
+              <span class="admin-list-section-label">설정 항목</span>
               <span class="admin-list-count" id="settingsListCount" aria-live="polite"></span>
             </div>
             <div class="admin-list" id="settingsList" role="listbox" aria-label="설정 항목 목록">
@@ -945,6 +945,42 @@
                   <span class="admin-list-row-meta">모든 대화 기본값</span>
                 </span>
               </button>
+              <!-- feature-0018: 실행 타임아웃 -->
+              <button
+                type="button"
+                class="admin-list-row admin-list-row--nav"
+                role="option"
+                aria-selected="false"
+                data-settings-tab="runtime-timeouts"
+                data-settings-group="운영 값"
+                data-settings-keywords="타임아웃 timeout 실행 쿼리 연결 프로브 mcp 인사이트 플랜 지식베이스 db"
+              >
+                <span class="admin-list-row-cb" aria-hidden="true"></span>
+                <span class="admin-list-row-main">
+                  <span class="admin-list-row-title">
+                    <span class="admin-list-row-name">실행 타임아웃</span>
+                  </span>
+                  <span class="admin-list-row-meta">assistant 실행·연결 상한값</span>
+                </span>
+              </button>
+              <!-- feature-0018: 모델별 추론 예산 (thinking budget) -->
+              <button
+                type="button"
+                class="admin-list-row admin-list-row--nav"
+                role="option"
+                aria-selected="false"
+                data-settings-tab="model-thinking-budgets"
+                data-settings-group="운영 값"
+                data-settings-keywords="모델 thinking budget 추론 예산 reasoning claude sonnet haiku"
+              >
+                <span class="admin-list-row-cb" aria-hidden="true"></span>
+                <span class="admin-list-row-main">
+                  <span class="admin-list-row-title">
+                    <span class="admin-list-row-name">모델별 추론 예산</span>
+                  </span>
+                  <span class="admin-list-row-meta">LLM 모델별 thinking budget</span>
+                </span>
+              </button>
             </div>
           </div>
           <div class="admin-detail-col" id="settingsDetail">
@@ -955,6 +991,26 @@
               </header>
               <div class="admin-settings-panel-body" id="globalPromptEditorMount">
                 <!-- buildSystemPromptEditor({scope:'global'}) 가 마운트 -->
+              </div>
+            </article>
+            <!-- feature-0018: 실행 타임아웃 패널 (전용 UI — 카테고리별 그룹 + 즉시/재배포 반영 배지) -->
+            <article class="admin-settings-panel" data-settings-panel="runtime-timeouts">
+              <header class="admin-settings-panel-head">
+                <h3>실행 타임아웃</h3>
+                <p class="admin-settings-panel-hint">assistant 가 참조하는 실행·연결 타임아웃입니다. <strong>즉시 반영</strong> 항목은 저장 즉시, <strong>재배포 반영</strong> 항목은 다음 배포/재시작 시 적용됩니다.</p>
+              </header>
+              <div class="admin-settings-panel-body" id="runtimeTimeoutsMount">
+                <!-- mountRuntimeTimeoutsPanel() 가 마운트 -->
+              </div>
+            </article>
+            <!-- feature-0018: 모델별 추론 예산 패널 (전용 UI — 카탈로그 순회 자동 확장 테이블) -->
+            <article class="admin-settings-panel" data-settings-panel="model-thinking-budgets">
+              <header class="admin-settings-panel-head">
+                <h3>모델별 추론 예산</h3>
+                <p class="admin-settings-panel-hint">LLM 모델별 extended thinking budget(tokens)입니다. 대화에서 추론 강도를 직접 고르지 않은 요청에 이 값이 기본으로 적용됩니다. 저장 즉시 반영되며, 카탈로그에 모델이 추가되면 자동으로 목록에 나타납니다.</p>
+              </header>
+              <div class="admin-settings-panel-body" id="modelThinkingBudgetsMount">
+                <!-- mountModelThinkingBudgetsPanel() 가 마운트 -->
               </div>
             </article>
           </div>
@@ -995,10 +1051,10 @@
        설계·검증: unit/feature-0016-metadata-graph/g6-migration/BLUEPRINT.md.
        (병합: admin.js 는 metadata-perm-hier + graph-g6 통합본 — cache-buster graph-g6 가 최신.) -->
   <script src="/static/vendor/g6.min.js?v=5.1.1"></script>
-  <script src="/static/admin.js?v=20260706-graph-cat-refine"></script>
+  <script src="/static/admin.js?v=20260707-graph-dataflow-tooltip"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
-  <script src="/static/release-notes-data.js?v=20260702-rn-0702"></script>
+  <script src="/static/release-notes-data.js?v=20260707-rn-0707"></script>
   <script src="/static/release-notes.js?v=20260618-rn-scope-scroll"></script>
 </body>
 </html>

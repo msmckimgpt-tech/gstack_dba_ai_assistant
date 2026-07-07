@@ -48,6 +48,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: pattern
 
+### LRN-20260707-0001 — "무중단 안전망" 폴백 모델이 정본보다 컨텍스트가 작으면 대화를 유지가 아니라 *조용히 파괴*한다 — 라우팅 폴백은 능력 등가여야 하거나 깨끗이 실패해야
+- Source: conversation_audit FR-edge-fallback-conversation-context-loss (conv …9e0883bb, 2026-07-07)
+- Pattern: 가용성을 위해 붙인 LLM 폴백(2026-07-04 interactive-split 의 "두 계정 완전 장애 시 gemma 로 대화 무중단")이 **정본 모델과 컨텍스트 창이 크게 다르면** 오히려 최악의 UX 를 만든다. 실측: 대화가 두 claude 계정 429(rate-limit 버스트) 시 로컬 `gemma4:e2b`(ctx **4096**)로 silent 강등됐고, ~30K 토큰 대화 히스토리가 프롬프트에서 통째로 잘려(llm_usage.prompt_tokens 가 정본 29K → 폴백 3턴 모두 정확히 4096) assistant 가 **직전 자기 답변조차 모른 채** 무관한 일반론을 자신 있게 답하고 "기억한다"고 부인했다. 사용자는 이를 제품 버그로 오인하고 명시 불만("맥락을 잃어버렸나요?") + 신뢰 상실. "무중단"이 아니라 "조용한 파탄"이었다.
+- 교훈: (1) **라우팅 폴백은 능력(특히 컨텍스트 창)이 정본과 등가일 때만 사용자 대면 경로에 둔다.** 컨텍스트가 훨씬 작은 모델로의 폴백은 "가용성 유지"가 아니라 "정답처럼 보이는 오답 양산"이다. (2) 등가 폴백이 없으면 **깨끗이 실패**(정직한 재시도 안내)가 silent 강등보다 낫다 — 사용자는 "일시적 한도"는 이해하지만 "AI 가 갑자기 바보가 됨"은 제품 결함으로 귀인한다. (3) 강등이 불가피하면 **반드시 사용자에게 표면화**(어느 경우든 silent 금지). (4) 진단 신호: `llm_usage.resolved_model != 요청 model` + `prompt_tokens` 가 특정 라운드에서 급락(폴백 모델의 고정 ctx) = 컨텍스트 절단 강등의 결정적 지문. 요청 model 만 보면 안 되고 **resolved_model** 을 봐야 한다.
+- 봉인 방식: 사용자 대면 대화 답변(task='agent') 전용 edge-free alias 로 라우팅(litellm 체인에서 로컬 모델 도달 불가) + 회귀 가드 테스트로 "대화 기본 모델의 폴백 체인이 anthropic-only" 를 고정(기본 모델·체인 변경 시 자동 적발). 배치/분석 등 비-대화 경로의 gemma 강등은 무영향(alias 분리).
+- Applies to: 다중 provider/모델 폴백을 가진 모든 LLM 라우팅. "availability vs quality" 폴백 결정 시 폴백 모델의 컨텍스트/능력이 정본과 등가인지 먼저 확인하고, 아니면 깨끗한 실패 또는 명시 표면화를 기본값으로 한다.
+- Verified: true (적대 2렌즈 패널 CONFIRMED + 배포 후 live probe: claude-haiku-4-chat→claude 라우팅 확인, gemma 도달 불가).
+
 ### LRN-20260605-0001 — DB cutover 의 read-back 누락은 워커뿐 아니라 "사용자 대면 grounding 경로"까지 조용히 무력화한다
 - Source: feature-0002 DB 조회 UX 개선 (TASK-0151, 2026-06-05)
 - Pattern: 05-27 MySQL→PG cutover 가 쓰기는 PG 로 옮기고 DROP 까지 했지만, **여러 read 경로가 DROP 된 MySQL 테이블을 `try/except: pass` 로 조회**해 빈 결과를 반환하고 있었다. TASK-0145 는 insight worker 면(livelock)을 고쳤고, TASK-0151 은 **사용자 질의의 스키마 grounding(`_load_schema_list`/`_load_relevant_table_insights` → "KNOWN SCHEMAS" 주입)** 면을 고쳤다. 둘 다 같은 원인의 다른 얼굴이다.
@@ -282,6 +290,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - 진단 원칙: db_failed 가 크면 **먼저 사유 분포를 본다** — RC5 가 cycle summary 에 `db_failed_perm`/`db_failed_circuit`/`db_failed_other` 를 노출하고, `agent_runtime.datasource_health.last_scan_outcome`(+`last_error_tag`)에 datasource 별 분류가 영속된다. `perm_failed` 만 GRANT 대상, `circuit_open`/`timeout` 은 네트워크/인프라(터널·방화벽·원격 서버 상태)이며 코드·DB 권한으로 해결 불가. 사유 telemetry 가 없던 게 이 오진을 가능케 한 관측성 공백이었고(RC5 가 메움), 배포 즉시 진실이 드러났다.
 - Applies to: insight 커버리지/완료율 정체 진단 전반. "스캔 실패 = GRANT 문제" 로 점프하지 말고 perm vs network 를 먼저 가른다.
 
+### LRN-20260707-0001 — 라벨 달린 설정 목록 UI 는 단일용 위젯 재사용 말고 "정렬 grid + 콘솔 commit-bar" 를 쓴다; UI 완성도·완결성은 PB-0008 시각검증이 유일한 게이트다
+- Source: feature-0018 runtime-settings 관리 콘솔 설정 (2026-07-06~07, TASK-20260706T094937·audit-hotfix·UX 재설계). 사용자 확인: "가시성이 대폭 개선됨".
+- verified: true
+- Pattern (권장): N개의 라벨-값 설정 항목을 나열하는 pane 은 **정렬 grid 행 + 카테고리 섹션 + 콘솔 네이티브 commit-bar** 로 만든다. 구체적으로 (a) 각 행 = 2×2 grid (`[라벨+반영배지] / [설명] // [값입력+단위] / [상태·기본값]`) 로 열 정렬(admin-kv/usage-table 계열), (b) canonical `.admin-field` focus-ring 입력·`.admin-badge`·`.admin-detail-section-title` 재사용, (c) 저장은 **행별 버튼이 아니라** 편집→`adminState.pending.*` 예약→하단 "모두 적용" 배치(계정·시스템프롬프트와 동일). 색-only 신호 금지(pending 은 `.admin-pending-dot`+텍스트 병행), 설명은 1줄 ellipsis 대신 2줄 노출.
+- Anti-pattern (실수): 다른 맥락용 위젯(`.admin-quota-editor` — LLM 한도 편집기)을 라벨 목록에 재사용했더니 입력창이 라벨과 미정렬로 우상단 부유·설명 잘림(`고품ᯤ`)·행마다 저장/초기화 버튼 난립으로 "세련되지 못한" UI 가 됐다. 위젯은 만들어진 맥락 밖에서 재사용하면 정렬/밀도/상호작용이 깨진다 — 재사용 전 그 위젯의 grid/layout 가정을 확인한다.
+- Meta (process): 이 두 결함(그리고 별개의 "unknown audit action" write-path 버그)은 **단위 테스트·API 테스트·§18.8 3-렌즈 적대 코드리뷰가 모두 통과시킨 뒤 PB-0008 실 Windows 브라우저 검증에서야** 드러났다 — (1) audit action 미등록은 라이브 저장 시에만, (2) 시각 완성도는 코드로 판정 불가. **UI 는 "코드리뷰+단위테스트 통과" 로 완료 선언하지 않는다.** 렌더 결과·정렬·상호작용 e2e(편집→pending→적용→DB roundtrip) 는 §15.4.1 PB-0008 이 유일한 완료 게이트. 재설계 자체도 적대 디자인/UX 렌즈가 배포 전 2 MAJOR(반응형 붕괴·no-override 재-핀 트랩)를 잡았다.
+- Applies to: 관리 콘솔의 모든 설정/목록 pane 신규·개편. 디자인 착수 전 기존 디자인 토큰/정돈된 패턴을 매핑(subagent)하고, 완료 전 PB-0008 before/after + 상호작용 e2e 로 검증한다.
+
 ## Category: quirk
 
 ### LRN-20260326-0001 — `repo/.env`의 운영 의미는 원본 `mysql_ai/.env` 기준으로 보존
@@ -308,6 +324,27 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Quirk: WSL 에서 Windows Chrome 을 `--remote-debugging-port=9222 --remote-debugging-address=0.0.0.0` 로 띄워도, 최신 Chrome 은 보안상 `--remote-debugging-address` 를 무시하고 **127.0.0.1 에만 CDP 를 바인딩**한다 (`netsh netstat` 으로 `TCP 127.0.0.1:9222 LISTENING` 확인). NAT 모드 WSL2 는 Windows loopback 에 직접 도달할 수 없어, 단순히 게이트웨이 IP(`172.x.x.1:9222`)로 접속하면 실패한다. 또한 WSL 경로(UNC) cwd 에서 `cmd.exe` 를 호출하면 "UNC 경로는 지원되지 않습니다" 경고를 **stderr** 로 내보내며 cwd 를 C:\Windows 로 바꾼다 — stdout 파싱 시 마지막 유효 라인만 취하고 cwd 를 `/mnt/c` 로 고정해야 안전하다.
 - Mitigation: (1) Chrome 은 127.0.0.1 바인딩 그대로 두고, Windows 측 `netsh portproxy` relay 를 **vEthernet(WSL) IP 한정** 으로 세워 `<wsl-host>:9223 → 127.0.0.1:9222` forward (0.0.0.0 금지 — CDP 는 무인증이라 LAN 노출 시 브라우저 탈취). 또는 mirrored networking(`.wslconfig`)으로 loopback 공유 — 인바운드 hole 불요. (2) Playwright `connect_over_cdp(http_endpoint)` 는 endpoint host 로 ws host 를 정규화하므로 relay 경유 가능. `--remote-allow-origins` 는 `*` 대신 loopback+relay 의 구체 origin 으로 scope (DNS rebinding 방어 유지).
 - Applies to: WSL2 에서 실제 Windows 브라우저를 CDP 로 구동하는 모든 작업. `bin/win-browser.py` + `bin/WIN-BROWSER-SETUP.md` 참조.
+
+### LRN-20260707-0002 — 24/7 cron 이 "진단용" 라이브 API 호출을 하면, 그 계정을 쓰는 무관한 다른 시스템(세션 윈도우)까지 오염시킬 수 있다
+- Source: CHG-20260707-oauth-cron-static-refresh (unit/feature-0007-bedrock-llm-provider)
+- Quirk: `refresh-claude-oauth-token.sh` 가 30분마다 Anthropic `/v1/messages` 에
+  `max_tokens=1` ping(계정 사용량 소진을 정적 파일 검사로는 못 잡아 도입된 "라이브
+  probe")을 보내자, 이 실 API 호출 자체가 claude-corp 계정의 **5시간 rolling 세션
+  윈도우**를 `:00`/`:30` 격자에 계속 재고정시켰다. 그 결과 `session-keepalive-cron.sh`
+  (07:35/12:35 에 그 날의 첫 앵커 핑을 보내 업무시간과 윈도우를 정렬하려던 스크립트)가
+  이미 30분 전에 리셋된 윈도우를 만나 무력화되고, 리셋 시각이 예측 불가하게 드리프트했다.
+  두 스크립트는 서로를 모르고 각자 "합리적인" 일을 했을 뿐인데, **같은 계정의 공유
+  자원(rate-limit 윈도우)을 통해 간접 결합**돼 있었다.
+- Mitigation: "진단/폴백 판단"을 위한 라이브 API 호출을 cron 에 넣기 전에, (1) 이미
+  요청 경로에 반응형 fallback(예: litellm `fallbacks:` 체인)이 있는지 먼저 확인한다
+  — 있다면 사전 probe 는 대개 **구조적으로 중복**이다(반응형이 진짜 트래픽 기준으로
+  더 정확하다). (2) 정 필요하다면 그 API 호출이 계정의 다른 시간 기반 자원(rate-limit
+  윈도우, 세션, quota reset 등)에 부수효과를 주지 않는지 점검한다. (3) 관측이 필요하면
+  라이브 호출 대신 이미 발생한 트래픽의 로그(`docker compose logs` 등, 로컬 읽기)를
+  집계하는 쪽을 우선한다 — 과금·부수효과 없이 같은 가시성을 얻을 수 있는 경우가 많다.
+- Applies to: OAuth/API-key 로테이션, health-check, quota-probe 등 "매 N 분 실제
+  외부 호출"을 거는 모든 운영 cron — 특히 같은 자격증명을 대화형 세션(Claude Code
+  등)과 공유하는 계정.
 
 ## Category: preference
 

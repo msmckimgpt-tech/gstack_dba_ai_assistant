@@ -5415,6 +5415,60 @@ source_of_truth: true
 - Files: `docs/{TASK,MODIFY,TEST,REVIEW}.md`
 - Cross-ref: REVIEW.md REV-20260706T013532-reasoning-effort-postverify [SKIPPED:post-deploy-verification-record] · 선행 CHG-20260706T013532-reasoning-effort
 
+## CHG-20260706T094937-runtime-settings (TASK-20260706T094937-runtime-settings — 관리 콘솔 `시스템 > 설정` 운영 값(실행 타임아웃·모델별 thinking budget) 조정·저장·사용, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared/{config,runtime_settings,model_catalog})
+- Date: 2026-07-06 (worktree ai/claude-corp/feature-0018-runtime-settings, base 2ec0188e). /_template:entry arg-given, 반영 방식=하이브리드(AskUserQuestion 확정).
+- 트리거(사용자): "assistant 가 작동할 때 참조하는 값들을 관리 콘솔 > 시스템 > 설정 에 추가해 조정·저장·사용. TIME_OUT(현재 구성된 값만), 모델별 thinking budget(모델 추가 시 자연 확장), 각 우측 패널은 전용 UI(레거시 정합)."
+- 신규 `shared/runtime_settings.py`: 설정 레지스트리(timeout 22 + 모델 예산 자동생성) + resolver(get_int live TTL / startup_int restart frozen) + `/shared/runtime_settings.json` 스냅샷 원자적 write + validate_value/serialize_registry. source-of-truth=MySQL `WebRuntimeSettings`, 스냅샷=런타임 소비 캐시(전 프로세스 전파). fail-open + kill-switch(RUNTIME_SETTINGS_DISABLED).
+- `shared/config.py`: restart-mode 22 timeout 상수를 `_startup_int(key, env_default)` 로 감싸 import 시 스냅샷 override 반영(다음 재배포 시 적용). override 부재/파일부재/kill-switch → env 기본값 그대로(byte-동치). CONN_PROBE BASE/MAX/TCP 는 `max()` 불변식 유지. 방어적 import(runtime_settings 실패해도 config 무손상).
+- `unit/feature-0002-agent-core/src/modules/llm.py`·`mcp_client.py`: live-mode getter 배선(AGENT_TIMEOUT_SEC·MCP_TIMEOUT_SEC → `runtime_settings.get_int`). `agent_core.py _call_llm`: 모델별 thinking budget override 주입(명시 추론강도 미지정 시, 설정된 모델만; B1 무회귀 유지) + budget<max_tokens clamp. — 상세는 feature-0002/docs/MODIFY.md CHG 동일 slug.
+- `app.py`: `WebRuntimeSettings` DDL + `_load/_save/_delete_runtime_setting_overrides`·`_reconcile_runtime_settings_snapshot` + `system.runtime.read/write` PERMISSION_DEFINITIONS(settings 그룹) + `_ensure_seed_roles` admin catchup 2건 + ensure_memory_schema 기동 reconcile.
+- 신규 `routers/admin_settings.py`: `GET/PUT/DELETE /api/admin/settings/runtime` (RBAC console.access+system.runtime.read[+write], 동일-tx audit action `system.runtime.update`/`system.runtime.reset`, 스펙 [min,max] 검증). app.py include_router 등록.
+- `static/admin.html`·`admin.js`: 설정 pane 에 "실행 타임아웃"·"모델별 추론 예산" 2행+2전용패널 + `SETTINGS_PANEL_MOUNTERS` 2 mounter(카테고리 그룹 number-input + 즉시/재배포 배지 / 카탈로그 자동확장 목록, direct-save + 초기화). cache-buster `?v=20260706-runtime-settings`.
+- 영향: RBAC 신규 권한 2(admin auto-grant + catchup). 스키마 additive(신규 테이블, 기존 무변경). override 미설정 시 전 경로 기존 동작 동치(회귀 0). 파괴적 변경 0.
+
+## CHG-20260707T110000-runtime-settings-auditfix (TASK-20260707T110000-runtime-settings-auditfix — 런타임 설정 audit action 등록, PB-0008 라이브 적발 hotfix, Minor §12.3, feature-0003 backend-only)
+- Date: 2026-07-07 (worktree ai/claude-corp/feature-0018-runtime-settings-auditfix, base main). feature-0018(CHG-20260706T094937-runtime-settings) 후속 핫픽스.
+- 근본: `build_audit_change_json`(app.py, ActionCode allowlist)이 endpoint 의 audit action `system.runtime.update`/`system.runtime.reset` 을 몰라 `raise ValueError("unknown audit action")` → 라우터의 autocommit=False save+audit+commit 이 audit 실패로 rollback → PUT/DELETE 500. 원자화(fail-closed)는 정상 작동(미감사 변경 0)했으나 write 기능이 막힘. 유닛에서 미검출(TestClient conn=None → audit 도달 前 500), **PB-0008 라이브 write-path 검증이 적발**.
+- 변경: `app.py build_audit_change_json` 에 두 action builder 추가(update=setting_key+value, reset=setting_key; masked_fields=[]). 순수 additive(기존 action·동작 불변). `test_runtime_settings_api.py` 에 회귀 가드 2건(builder 반환 shape·action 문자열 = 라우터와 일치).
+- 영향: feature-0018 write 경로(설정 저장/초기화) 복구. 읽기 경로(GET registry)는 애초 정상(PB-0008 확인). 파괴적 변경 0.
+- Cross-ref: feature-0003 TASK/REVIEW/TEST 동일 slug · 선행 CHG-20260706T094937-runtime-settings.
+
+## CHG-20260707T111500-runtime-settings-postverify (feature-0018 + audit hotfix POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 에 POST-DEPLOY PB-0008 PASS Run append + TASK 완료 체크. 배포: PR #602→a7dcc436(feature) + PR #604→8d0a4723(audit hotfix), web 무중단 롤링 ×2.
+- 검증 요지: 설정 pane 3항목 렌더, 실행 타임아웃 22입력/6카테고리/즉시·재배포 배지, **env-fallback 실증**(300/600/180=.env 값), 모델 예산 2행 no-override input 비움, write-path e2e(저장→DB override→audit→초기화→DB 정리), pageerror 0. 증적 artifacts/feature-0018-runtime-settings/pb0008-runtime-settings-timeouts.png.
+- Cross-ref: CHG-20260706T094937-runtime-settings(feature) · CHG-20260707T110000-runtime-settings-auditfix(hotfix) · TEST.md §3 Run.
+
+## CHG-20260707T110534-doc-sync-rn-0707 (TASK-20260707T110534-doc-sync-rn-0707 — 07-02→07-07 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 신규 '2026-07-03'(8항목)·'2026-07-04'(12항목)·'2026-07-06'(4항목)·'2026-07-07'(5항목) 블록 prepend(07-02 이하 블록 보존, 총 4블록 29+ 신규 항목). `generated` 2026-07-02→2026-07-07. 블록 요지: 07-03 제품 카테고리 개요·유사 테이블 영역화·역할 색/아이콘·관계 탐색·화면 조작·데이터소스 평균 연결시간·공유 참여 알림·대량분석 안정성 / 07-04 유사 항목 자동묶음·크로스-DB 연결·묶음 드래그/접기·상세 뒤로앞으로·범례 탭·ds 이름표시·분석중 안내·겹침순서·상단탭+검색·Esc fix·여기부터~여기까지 공유·☰ 메뉴·응답 안정성 / 07-06 추론 강도 선택·함수/프로시저 노드·DB 단위 분석·상세 nav·필터·검색 / 07-07 런타임 설정·카테고리 밴드+크로스-DB·관계 큐레이션·DB 분석 심화·응답 안정성.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260702-rn-0702`→`?v=20260707-rn-0707`.
+- Verification: `node --check release-notes-data.js` PASS. 블록 순서 07-07>06>04>03>02·스키마 정합·07-02 이하 보존 확인. 사용자향 평이화(내부용어 누출 0). jsdom 테스트는 이 env 미설치(컨테이너 전용).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·렌더러/마이그/엔드포인트/cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260707T110534-META-0020-doc-sync-0707).
+## CHG-20260707T120000-runtime-settings-ux (TASK-20260707T120000-runtime-settings-ux — 런타임 설정 pane UI 재설계, web/UI CSS+JS-only, Major §12.3, feature-0003)
+- Date: 2026-07-07 (worktree ai/claude-corp/feature-0018-runtime-settings-ux). 사용자 피드백("UI 세련도 부족") 대응. feature-0018 기능/동작 불변 — **표현(presentation) 계층만** 재구성.
+- `static/styles.css`: `.rs-*` 컴포넌트 세트 신규(정렬 grid 행·카테고리 섹션·focus-ring 입력·배지·dirty/override/invalid 상태·반응형). 콘솔 디자인 토큰/패턴 정합.
+- `static/admin.js`: 런타임 설정 렌더러 재작성 — `.admin-quota-editor`(미정렬·행별 버튼) 폐기 → `buildRuntimeSettingRow`(2×2 grid, 저장/초기화 버튼 제거). 편집·기본값복원을 `adminState.pending.runtimeSettings` 로 예약, 하단 commit-bar("모두 적용")로 배치 적용(`setRuntimeSettingPending`·applyAllPending 루프·cancelAllPending·refreshPendingUI 연동, nav row `.has-pending` dirty 표시). 설명 잘림 해소(ellipsis+title), 범위 인라인 경고. rsSaveValue/rsResetValue(엔드포인트) 재사용.
+- `static/admin.html`: cache-buster `?v=20260707-runtime-settings-ux`(admin.js·styles.css).
+- 영향: 백엔드/엔드포인트/RBAC/스키마 무변경. 저장 UX 가 즉시 PUT → pending+배치적용(콘솔 네이티브)로 변경. 회귀 표면=공유 commit-bar 로직(계정/역할/프롬프트) — additive 배선, 적대 리뷰로 검증.
+- Cross-ref: CHG-20260706T094937-runtime-settings(기능) · TEST/REVIEW 동일 slug.
+
+## CHG-20260707T121500-runtime-settings-ux-postverify (런타임 설정 UI 재설계 POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 에 POST-DEPLOY PB-0008 PASS(before/after) append + TASK 완료 체크. 배포 PR #607→da3f57db.
+- 검증 요지: 두 패널 정렬 grid·설명 완전노출·commit-bar 편집/적용/복원 e2e(DB override roundtrip)·pageerror 0. 사용자 "세련도 부족" 피드백 해소 확인. 증적 artifacts/feature-0018-runtime-settings/{current,after}-{timeout,model}-panel.png.
+- Cross-ref: CHG-20260707T120000-runtime-settings-ux(재설계) · TEST/REVIEW 동일 slug.
+
+## CHG-20260707T130000-reasoning-budgets (TASK-20260707T130000-reasoning-budgets — 추론 강도별 예산 설정 + UI 교훈, Major §12.3 — feature-0003 web/UI + cross-unit feature-0002·shared)
+- Date: 2026-07-07. feature-0018 후속: 모델별 예산에 이어 추론 강도(낮음/높음/매우 높음)별 요청 단위 thinking budget 을 관리 콘솔에서 조정 가능하게. '일반'은 no-override(B1)라 설정 대상 제외.
+- `shared/runtime_settings.py`: reasoning_budget 레지스트리/resolver/serialize(상세 shared/docs/MODIFY 동일 slug). `unit/feature-0002-agent-core/src/agent_core.py`: `_call_llm` precedence 확장(레벨 override→기본→모델 override; 상세 feature-0002/docs/MODIFY 동일 slug).
+- `static/admin.js`: `모델별 추론 예산` 패널을 2 섹션(모델별 + 추론 강도별)으로 확장, 추론 행은 pre-fill(기본값=적용값). nav-dirty 분류 RS_REASONING_PREFIX 추가. `static/admin.html` cache-buster admin.js bump(styles.css 무변경).
+- `docs/LEARNINGS.md`: LRN-20260707-0001(UI 가시성 개선 교훈, verified).
+- 영향: 백엔드 엔드포인트/RBAC/스키마/audit 무변경(기존 PUT/DELETE·validate·audit 재사용, 신규 키만 등록). override 미설정 시 전 경로 기존 동작 동치(B1 유지).
+- Cross-ref: CHG-20260706T094937-runtime-settings·-ux / feature-0002·shared MODIFY 동일 slug.
+
+## CHG-20260707T131500-reasoning-budgets-postverify (추론 강도별 예산 POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 POST-DEPLOY PB-0008 PASS append. 배포 PR #609→767ca387(web + 워커 재빌드). 검증: 추론 강도별 예산 섹션 렌더·reasoning-key write-path e2e·사용자 MCP_TIMEOUT_SEC=60 override 보존·pageerror 0. 증적 after-model-panel-reasoning.png.
+- Cross-ref: CHG-20260707T130000-reasoning-budgets · TEST/REVIEW 동일 slug.
 ## CHG-20260707-kb-candidate-adoption (TASK-20260707-kb-candidate-adoption — 지식베이스 메타데이터 채택 인박스 + ENUM 대화 자율수집, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared/config)
 - 변경 요지: 대화에서 용어사전·ENUM 코드사전 후보를 수집하고 관리 콘솔에서 채택(승급/거부)하도록 재구성. 용어사전은 이미 구현(0021/0023)돼 있어 **ENUM 을 그 대칭으로 신설** + 두 사전 후보를 **통합 채택 인박스**(지식베이스 하위 신규 탭)로 한눈에.
 - **ENUM 백엔드(parity)**: 마이그 `0039_enum_feedback`(`enum_feedback` 검토큐 + `enum_dictionary.source` + GRANT, 비파괴·멱등, down_revision 0038_node_analysis_refine). `kb_glossary.py`: enum feedback 함수군(record/auto_promote_or_queue/list/count/promote/reject/_status/_insert_auto/infer) + enum CRUD source. `llm.py`: ENUM_SUGGEST_PROMPT+llm_enum_suggest. `config.py`: AGENT_ENUM_*(threshold 0.9). `agent_core.py`: _enum_autopropose(best-effort). `app.py`: 권한 kb.enum.curate(카탈로그, 마이그 불필요). `admin_metadata.py`: enum-feedback list/promote/reject + admin_list_enums source.

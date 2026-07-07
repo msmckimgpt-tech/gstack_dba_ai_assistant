@@ -1,6 +1,6 @@
 {
-  "total_routes": 200,
-  "api_routes": 199,
+  "total_routes": 203,
+  "api_routes": 202,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -1397,6 +1397,27 @@
       "path": "/api/admin/ai-ops",
       "methods": [
         "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/settings/runtime",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/settings/runtime",
+      "methods": [
+        "PUT"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/settings/runtime",
+      "methods": [
+        "DELETE"
       ],
       "type": "APIRoute"
     }

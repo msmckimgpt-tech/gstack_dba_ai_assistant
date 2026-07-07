@@ -300,6 +300,15 @@ source_of_truth: true
   `created_at`. account/role 귀속은 admin 조회(`GET /api/admin/usage`) 시 conversation_id →
   `core_conversations.owner_account_id` → MySQL `WebAccounts⋈WebRoles` join 으로 도출(owner
   없는 insight worker = "(시스템)" 버킷).
+- 대화 답변 edge-free 라우팅 (CHG-20260707T100640-no-edge-conversation-answer): `_call_llm`(task='agent'
+  답변 경로)은 litellm 에 보내는 model 을 `shared.model_catalog.conversation_answer_model()` 로 치환한다 —
+  `claude-haiku-4` → **edge-free 대화 전용 alias `claude-haiku-4-chat`**. litellm_config 에서 `-chat` 체인은
+  `edge-fallback`(gemma4:e2b, ctx 4096)을 포함하지 않으므로, 두 claude 계정(claude-corp/root) 완전 장애 시
+  gemma 로 silent 강등되지 않고 429/401 이 raise → 위 provider-health 핸들러가 "요청량 한도… 잠시 후 재시도"
+  로 정직하게 실패한다(FR-edge-fallback-conversation-context-loss: gemma 가 히스토리를 잘라 맥락을 파괴한 채
+  자신 있게 틀린 답을 내는 것을 원천 차단). 표시·저장·usage `model` 컬럼·max_tokens·thinking·vision 판정은
+  **원본** model(claude-haiku-4)을 유지하고 실제 서빙은 `resolved_model` 로 추적. insight 배치(`claude-haiku-4`)·
+  분석(`claude-haiku-4-interactive`)의 gemma 강등은 무영향(alias 분리).
 - 로그: `../../../../artifacts/shared/logs`
   - `insight_worker.log` — 백그라운드 Insight 워커 사이클 결과 (JSON lines: `run_id`, `status`, `duration_ms`, `skipped_schemas/tables`, `event=fingerprint_skip` 등). 해석 가이드는 [INSIGHTS.md §9](./INSIGHTS.md#9-로그--신호--사용자-해석-가이드).
   - `llm_warn.log` — LLM 호출 실패/빈 응답/JSON 파싱 실패 (`_log_llm_warn()`).

@@ -377,6 +377,9 @@ app.py 조회실패 debug 로그) 반영.
 
 **배포**: agent 이미지 재빌드(insight-worker baked) + insight-worker 재기동 → `docker inspect ... Health.Status` healthy 확인.
 
+---
+
+**cross-ref (conversation_audit, 2026-07-07)**: feature-0009 그룹대화/1:1 마찰 "맥락 미이해"(conv …9e0883bb) → 코드 거주 feature-0002 CHG-20260707T100640-no-edge-conversation-answer 로 수정(대화 답변 edge/gemma 폴백 완전 차단). 충족: 사용자 대면 대화 답변이 두 claude 계정 장애 시 gemma(ctx 4096) silent 강등돼 맥락 파괴하던 것을 edge-free alias 라우팅 + 깨끗한 실패로 봉인. 정본 원장 = docs/improvements/conversation-audit/FRICTION_LEDGER.md FR-edge-fallback-conversation-context-loss.
 ## 2026-07-07 — ENUM 코드사전 대화 자율수집(0039) — 용어사전(0021/0023) 대칭 [cross-unit, 정본 feature-0003 TASK-20260707-kb-candidate-adoption]
 - **배경**: 관리 콘솔 채택 인박스 요청의 백엔드 절반. 용어사전은 `_glossary_autopropose`+`glossary_feedback` 로 이미 대화 후보수집·검토큐가 있으나 ENUM 코드사전은 CRUD만 있어 후보수집/채택 파이프라인이 없었다. 그 대칭을 신설.
 - **마이그 `0039_enum_feedback`**(HEAD 0038 체인, 비파괴·멱등): `enum_feedback` 검토큐(status pending/auto_promoted/promoted/rejected, key=(scope,schema,table,column,code)) + `enum_dictionary.source` 컬럼(자동수집 되돌리기 구분·자동등록 배지) + 명시 GRANT(DEPLOY TRAP — superuser 적용이라 필수, 0013/0023 동형).

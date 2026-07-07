@@ -1474,6 +1474,30 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **범위 봉인(무변경)**: 보조 LLM 호출(summary/topic/validate/insight)은 추론 강도 미적용(메인 agent 경로만). 스키마/마이그레이션 0(KV 재사용)·RBAC/신규 엔드포인트 0(/api/ask·/api/history 필드 additive).
 - cache-buster: `index.html` 의 `app.js`·`styles.css` `?v=20260704-share-visibility-window`→`?v=20260706-reasoning-effort`. CHG/REV-20260706T013532-reasoning-effort. PB-0008 Windows-browser= 배포 후 라이브(TEST.md §3).
 
+## (TASK-20260706T094937-runtime-settings, 2026-07-06) 관리 콘솔 `시스템 > 설정` 런타임 설정 — 실행 타임아웃 · 모델별 추론 예산 (web/UI·API + cross-unit feature-0002/shared, Major §12.3)
+- **UI**: `관리 콘솔 > 시스템 > 설정` pane(list-detail 5단)에 항목 2개 추가 — "실행 타임아웃"(`data-settings-tab=runtime-timeouts`), "모델별 추론 예산"(`data-settings-tab=model-thinking-budgets`). 각 우측 detail 패널은 전용 UI:
+  - 실행 타임아웃: 카테고리별 그룹(쿼리·에이전트 실행/인사이트·플랜/지식베이스/DB 연결/커넥션 상태 프로브/MCP)로 number-input + 단위 + **즉시 반영/재배포 반영 배지** + 저장 + 초기화(기본값 복원). 현재 유효값·기본값·override 여부 표시.
+  - 모델별 추론 예산: extended thinking 지원 모델(claude-*)마다 1행(카탈로그 순회 자동생성 — 모델 추가 시 자동 노출), thinking budget(tokens) number-input + 저장 + 초기화. 미설정 모델은 서버 기본 thinking 유지.
+- **API**(`routers/admin_settings.py`): `GET /api/admin/settings/runtime`(레지스트리 + DB override 반영 유효값), `PUT`(단일 값 저장 — 스펙 [min,max] 검증), `DELETE ?key=`(초기화). RBAC: read=`console.access`+`system.runtime.read`, write=추가로 `system.runtime.write`(조회 종속). 저장/초기화는 동일-tx audit(`system.runtime.update`/`.reset`) 기록 후 `/shared` 스냅샷 reconcile.
+- **저장·반영 모델**(하이브리드): source-of-truth=MySQL `WebRuntimeSettings`(KV). 유효값은 `/shared/runtime_settings.json` 스냅샷으로 전 프로세스 전파(shared.runtime_settings). `apply_mode=live`(AGENT_TIMEOUT_SEC·MCP_TIMEOUT_SEC·모델 예산)는 소비처 `get_int()`/주입으로 **즉시 반영**(≤캐시 TTL); `apply_mode=restart`(그 외 저수준 timeout)는 config.py 가 기동 시 스냅샷을 읽어 **다음 재배포 시 반영**.
+- **권한**: `system.runtime.read`/`system.runtime.write`(settings 그룹, admin auto-grant + 기존 admin catchup). 조회 전용 계정은 입력·버튼 비활성.
+- 상세 backend(shared/runtime_settings.py, config.py, agent_core `_call_llm` 주입, model_catalog)은 feature-0002/docs/FUNCTION.md 및 shared/docs 참조.
+
+## (TASK-20260707T110000-runtime-settings-auditfix, 2026-07-07) 런타임 설정 audit action 등록 (backend-only, Minor §12.3)
+- `build_audit_change_json` 이 `system.runtime.update`(→{setting_key, value})·`system.runtime.reset`(→{setting_key}) 를 인식한다. feature-0018 의 `PUT/DELETE /api/admin/settings/runtime` 이 동일-tx audit(autocommit=False) 를 완료할 수 있어 설정 저장/초기화 write 경로가 동작한다. (미등록 시 fail-closed rollback → 저장 500 — PB-0008 적발.)
+
+## (doc-sync-rn-0707, 2026-07-07) 릴리즈노트 콘텐츠 — 07-03/04/06/07 블록 신규(그래프 뷰 07-03~07 진화·추론 강도·데이터소스 지표·공유 참여/범위·런타임 설정·안정성)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 신규 '2026-07-03'(8)·'2026-07-04'(12)·'2026-07-06'(4)·'2026-07-07'(5) 블록 prepend(07-02 이하 보존). 마지막 landed 릴리즈노트 5b1481bb(07-02) 이후 07-03·07-06 두 doc_sync 가 미landed 로 정체된 delta 를 fresh 재구성으로 일괄 반영. 원천: feature-0016 그래프 뷰 07-03~07 UX 진화(역할 표식/관계 탐색/제품 카테고리/유사속성/자유배치/함수·프로시저/의미 임베딩/크로스-ds/z-order/§55 밴드·큐레이션·재귀 분석)·feature-0003 ds-avg-latency·reasoning-effort·runtime-settings(feature-0018)·feature-0009 gc-join-notice·share-visibility-window·feature-0002/0007 insight 안정성/fallback/라우팅·edge-fallback 차단의 사용자 표면 announcement. `generated` 2026-07-07.
+- 내부 구현·feature-id·테이블/함수명·G6/AGE·alembic·엔드포인트·권한키·모델명·ADR 번호·step_gap_ms/conn_health/xschema/WebRuntimeSettings·cache-buster 내부 슬러그 비노출(사용자 언어). aiops-ttft(지연 KPI 재정의)는 관리자 지표라 사용자 문구 제외(기술 RELEASE_NOTES.md·STATUS 에만). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260702-rn-0702`→`?v=20260707-rn-0707` bump. CHG/REV-20260707T110534-doc-sync-rn-0707. landing/배포는 본 attended doc_sync run 소관.
+## (TASK-20260707T120000-runtime-settings-ux, 2026-07-07) 런타임 설정 pane UI — 재설계(정렬 grid + commit-bar 배치 저장) (web/UI, Major §12.3)
+- `시스템 > 설정 > 실행 타임아웃 / 모델별 추론 예산` 두 패널이 `.rs-*` 정렬 grid 로 렌더된다: 카테고리 섹션(rs-group-title) → 카드형 rs-list → 각 행(rs-row)이 [라벨+반영배지 / 설명(ellipsis+tooltip)](좌) + [값 입력·단위 / 상태·기본값](우)로 열 정렬.
+- **저장 방식(변경)**: 행별 저장/초기화 버튼 제거. 값을 편집하면 `adminState.pending.runtimeSettings` 에 예약(행·좌측 nav `.has-pending` 하이라이트, "미저장 변경"), 하단 commit-bar "모두 적용"이 일괄 PUT(값)/DELETE(기본값 복원). "취소"는 예약 해제. 계정·시스템프롬프트와 동일한 콘솔 네이티브 패턴. 범위 밖 값은 인라인 경고(예약 안 됨). 모델 예산은 override 없으면 input 비움+placeholder(무변경 예약 트랩 방지) 유지.
+- 백엔드 계약(GET/PUT/DELETE·검증·audit)·live/restart 반영 semantics 불변 — feature-0018 기능 그대로.
+
+## (TASK-20260707T130000-reasoning-budgets, 2026-07-07) 설정 > 모델별 추론 예산 — '추론 강도별 예산' 섹션 추가 (web/UI + cross-unit, Major §12.3)
+- `시스템 > 설정 > 모델별 추론 예산` 패널이 두 섹션으로 구성된다: ① **모델별 thinking budget**(모델마다, override 없으면 미주입) ② **추론 강도별 예산**(낮음/높음/매우 높음 — 대화 화면에서 사용자가 그 강도 선택 시 적용되는 요청 단위 budget; 기본값 2000/10000/16000, 값이 항상 적용되므로 pre-fill). '일반'은 모델 config 기본 thinking 유지(설정 대상 아님, B1).
+- 적용(agent_core `_call_llm`): 사용자가 명시 강도(low/high/max) 선택 → 그 레벨의 관리자 설정 budget(없으면 기본) 주입 / '일반'·미지정 → 모델별 override(없으면 미주입). budget 은 요청 max_tokens 미만으로 clamp. 저장은 commit-bar 배치(모델별 예산과 동일 pane·pending).
 ## (TASK-20260707-kb-candidate-adoption) 지식베이스 메타데이터 채택 인박스 + ENUM 대화 자율수집
 - **기능**: 관리 콘솔 「지식베이스」 그룹에 신규 최상위 탭 **"채택 인박스"**(`data-admin-pane="adoption"`). 대화 중 assistant 가 자동 제안한 **용어사전(glossary_feedback)·ENUM 코드사전(enum_feedback)** 후보를 한 화면에 신뢰도/상태별 **그룹 카드**(검토 대기·우선 / 확인 필요 / 자동 등록됨 / 채택됨 / 거부됨)로 통합 표시하고, 개별 **채택/거부/되돌리기** + 카드별 **일괄 채택**. 사이드바 탭에 pending 배지(용어+ENUM 합계). 기존 「메타데이터 > 용어사전 > 용어 검토 큐」·「ENUM 코드사전」 서브뷰는 유지(피더). 요청: 단순 목록 → 채택 구조 재구성(한눈 파악).
 - **입력→출력**: `loadAdoptionInbox` 가 보유 권한 종류만 fetch — `GET /api/admin/metadata/glossary-feedback?status=`(kb.glossary.curate) + `GET /api/admin/metadata/enum-feedback?status=`(kb.enum.curate) → 정규화·버킷 분류 → 카드 렌더. 액션: `POST .../{glossary|enum}-feedback/{id}/{promote|reject}`. XSS: 모든 후보 데이터 textContent-only.

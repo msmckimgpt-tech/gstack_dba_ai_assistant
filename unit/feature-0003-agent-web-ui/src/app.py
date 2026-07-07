@@ -68,6 +68,7 @@ from shared.model_catalog import (
     model_supports_temperature,
     model_supports_vision,
 )
+from shared import runtime_settings as _runtime_settings  # feature-0018: 런타임 설정 레지스트리·스냅샷
 from modules.render import normalize_step_result_summary
 
 # feature-0012 P5b Final: web_context 로 추출한 leaf helper 를 모듈 전역에 rebind
@@ -616,6 +617,21 @@ PERMISSION_DEFINITIONS = (
         "code": "system_prompt.global.write",
         "label": "전역 시스템 프롬프트 수정",
         "description": "전역 시스템 프롬프트를 수정/삭제할 수 있다. 모든 LLM 응답에 영향이 가는 권한이므로 운영자 한정.",
+        "group": "settings",
+    },
+    # feature-0018 (REQ runtime-settings): 관리 콘솔 `시스템 > 설정` 의 운영 값(실행 타임아웃,
+    # 모델별 thinking budget) 조회/수정 권한. settings 그룹 정합 — admin only auto-grant,
+    # 다른 role 은 콘솔에서 explicit override. write 는 서비스 응답 지연·비용에 직접 영향.
+    {
+        "code": "system.runtime.read",
+        "label": "런타임 설정 조회",
+        "description": "실행 타임아웃·모델별 추론 예산 등 assistant 운영 값을 조회할 수 있다.",
+        "group": "settings",
+    },
+    {
+        "code": "system.runtime.write",
+        "label": "런타임 설정 수정",
+        "description": "실행 타임아웃·모델별 추론 예산을 수정/초기화할 수 있다. 서비스 응답 지연·비용에 직접 영향이 가므로 운영자 한정.",
         "group": "settings",
     },
 )
@@ -2778,6 +2794,12 @@ def _ensure_seed_roles(conn) -> None:
             "kb.glossary.curate",
             "kb.sample.curate",
             "kb.enum.curate",
+            # feature-0018(런타임 설정, main 병합분): admin 의 런타임 설정(실행 타임아웃·모델 추론 예산)
+            # read/write 2건 catchup. **필수** — 신규 권한은 role 생성 시 seed=set(PERMISSION_CODES)로만
+            # 부여되어 기존 배포 admin row 에는 retroactive 미적용. 미보정 시 기존 admin 이 `시스템 > 설정`
+            # 의 신규 항목을 못 본다(lockout). operator/sales/dba 미부여(least-privilege).
+            "system.runtime.read",
+            "system.runtime.write",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -6764,6 +6786,22 @@ def _ensure_web_tables():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
+        # feature-0018 (REQ runtime-settings): assistant 운영 값(실행 타임아웃·모델별 thinking
+        # budget) 관리 콘솔 override 를 KV(SettingKey 1행/키)로 영속. shared.runtime_settings 의
+        # 스펙 [min,max] 범위에서만 저장되며, 유효값은 스냅샷 파일(/shared)로 전 프로세스에 전파된다
+        # (본 테이블 = source of truth + audit, 스냅샷 = 런타임 소비 캐시). SettingValue 는 정수의
+        # 문자열 표현. WebDashboardPreferences 와 동일하게 in-code DDL(부트스트랩 MySQL 버전 무관).
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebRuntimeSettings (
+                SettingKey VARCHAR(128) NOT NULL PRIMARY KEY,
+                SettingValue VARCHAR(64) NOT NULL,
+                UpdatedByAccountId BIGINT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
         cur.close()
         _ensure_permission_catalog(conn)
         _ensure_seed_roles(conn)
@@ -6788,6 +6826,10 @@ def _ensure_web_tables():
         _migrate_legacy_accounts_to_rbac(conn)
         bootstrap_admin_id = _ensure_bootstrap_admin(conn)
         _seed_legacy_conversations(conn, bootstrap_admin_id)
+        # feature-0018: DB 의 런타임 설정 override 를 공유 볼륨 스냅샷으로 reconcile — 스냅샷이
+        # 유실/부재(예: /shared 재생성)여도 web 기동 시 DB 진실원본으로 복구한다. 실패는 비치명적
+        # (best-effort) — 스냅샷 부재 시 각 소비처는 기본값으로 fail-open 한다.
+        _reconcile_runtime_settings_snapshot(conn)
         _mark_memory_runtime_ready()
     finally:
         conn.close()
@@ -17482,6 +17524,29 @@ def build_audit_change_json(
             },
             [],
         )
+    # feature-0018 runtime-settings: 실행 타임아웃·모델별 추론 예산 설정 변경/초기화 audit.
+    # 값은 운영 튜닝 파라미터(비민감) — masked_fields 없음. before/after(value)는 caller 가 전달하나
+    # 본 builder 는 request_ctx 기반으로 요약(선례 정합). PB-0008 라이브 검증에서 미등록 raise 로
+    # write 경로가 fail-closed(audit 실패→rollback) 된 것을 적발해 등록(Codex C6 allowlist 준수).
+    if action == "system.runtime.update":
+        # previous_value: caller 가 캡처한 직전 override 값(before)을 감사에 보존한다(포렌식 —
+        # "무엇에서 무엇으로 바뀌었나"). override 없던 상태면 None.
+        return (
+            {
+                "setting_key": request_ctx.get("key"),
+                "value": request_ctx.get("value"),
+                "previous_value": (before or {}).get("value"),
+            },
+            [],
+        )
+    if action == "system.runtime.reset":
+        return (
+            {
+                "setting_key": request_ctx.get("key"),
+                "previous_value": (before or {}).get("value"),
+            },
+            [],
+        )
     # Unknown ActionCode — explicit raise (Codex C6 builder allowlist policy).
     raise ValueError(f"unknown audit action: {action}")
 
@@ -19093,6 +19158,75 @@ def _save_dashboard_pref_row(conn, account_id: int, content: dict) -> None:
             pass
 
 
+# ── feature-0018: 런타임 설정(WebRuntimeSettings KV) 접근 + 스냅샷 전파 ─────────
+def _load_runtime_setting_overrides(conn) -> dict[str, int]:
+    """WebRuntimeSettings 의 모든 override 를 {key: int} 로 로드. 실패/부재는 {} (fail-open).
+
+    등록 스펙에 없는 키·정수 아님·범위 밖 값은 조용히 제외한다(방어적 — 스냅샷 오염 방지)."""
+    result: dict[str, int] = {}
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT SettingKey, SettingValue FROM WebRuntimeSettings")
+        rows = cur.fetchall()
+    except Exception:
+        return {}
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    for key, raw in rows or []:
+        ok, val, _err = _runtime_settings.validate_value(str(key), raw)
+        if ok and val is not None:
+            result[str(key)] = int(val)
+    return result
+
+
+def _save_runtime_setting(conn, key: str, value: int, account_id: int | None) -> None:
+    """단일 override upsert. 값은 반드시 호출측에서 validate_value 로 검증한 정수여야 한다."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO WebRuntimeSettings (SettingKey, SettingValue, UpdatedByAccountId) "
+            "VALUES (%s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE SettingValue = VALUES(SettingValue), "
+            "UpdatedByAccountId = VALUES(UpdatedByAccountId)",
+            (str(key), str(int(value)), int(account_id) if account_id else None),
+        )
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+
+def _delete_runtime_setting(conn, key: str) -> None:
+    """override 삭제(기본값으로 초기화)."""
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM WebRuntimeSettings WHERE SettingKey = %s", (str(key),))
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+
+def _reconcile_runtime_settings_snapshot(conn) -> None:
+    """DB override 를 공유 볼륨 스냅샷으로 재작성(best-effort). endpoint PUT 후 + web 기동 시 호출.
+
+    스냅샷 쓰기 실패(공유 볼륨 부재 등)는 로깅만 하고 삼킨다 — DB 가 진실원본이며, 소비처는
+    스냅샷 부재 시 기본값으로 fail-open 한다.
+    """
+    try:
+        overrides = _load_runtime_setting_overrides(conn)
+        _runtime_settings.write_snapshot(overrides)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "runtime-settings snapshot reconcile failed", exc_info=True
+        )
+
+
 # ── 위젯별 집계 (각 함수는 예외를 던질 수 있으며 overview 호출부가 격리) ──────
 
 # ── CloudWatch 스타일 보조 (TASK-0218): 전기간 대비 델타 + 일별 sparkline 시계열 ──
@@ -19564,3 +19698,7 @@ app.include_router(_admin_products_router)
 # TASK-AIOPS: AI 운영 관제 패널 API (GET /api/admin/ai-ops, 권한 console.aiops.read).
 from routers.ai_ops import router as _ai_ops_router  # noqa: E402
 app.include_router(_ai_ops_router)
+
+# feature-0018: 런타임 설정 API (실행 타임아웃·모델 추론 예산, 권한 system.runtime.read/write).
+from routers.admin_settings import router as _admin_settings_router  # noqa: E402
+app.include_router(_admin_settings_router)

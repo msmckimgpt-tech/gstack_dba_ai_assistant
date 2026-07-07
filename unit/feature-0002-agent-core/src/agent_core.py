@@ -56,7 +56,8 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from shared.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, thinking_budget_for_level
+from shared.model_catalog import conversation_answer_model, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, thinking_budget_for_level
+from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary, read_csv_preview
@@ -2702,8 +2703,14 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         image_attachments=image_attachments or None,
         vision_model=model_supports_vision(model),
     )
+    # FR-edge-fallback-conversation-context-loss (2026-07-07): 이 함수는 정의상 사용자 대면 assistant
+    # 답변(task='agent') 경로다. edge(gemma) 폴백이 걸린 alias(claude-haiku-4)는 litellm 호출 시 edge-free
+    # 대화 전용 alias(claude-haiku-4-chat)로 치환해, 두 claude 계정 완전 장애 시 gemma 로 강등되지 않고
+    # 429/401 을 raise → 아래 caller(_run_agent_core)의 LLM-error 핸들러가 "명백한 실패처리"로 안내한다.
+    # 표시/저장/usage 기록·max_tokens·thinking·vision 판정은 모두 원본 `model`(claude-haiku-4)을 유지하고,
+    # 실제 서빙 모델은 resolved_model(resp.model)로 추적한다. 매핑 없는 model(claude-sonnet-4 등)은 identity.
     kwargs: dict[str, Any] = {
-        "model": model,
+        "model": conversation_answer_model(model),
         "messages": effective_messages,
     }
     if temperature is not None:
@@ -2719,9 +2726,29 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
     # drop_params 가 제거하므로 애초에 넣지 않는다. budget 은 max_tokens(agent=20000)보다
     # 작게 캡(≤16000)돼 있어 Anthropic 제약(budget < max_tokens) 을 항상 만족한다.
     _think_budget = thinking_budget_for_level(reasoning_level)
+    if _think_budget is not None:
+        # feature-0018 reasoning-budgets: 명시 추론강도(low/high/max)일 때, 관리 콘솔
+        # (`시스템 > 설정 > 모델별 추론 예산 > 추론 강도별 예산`)에서 그 레벨에 설정한 budget override 를
+        # 적용(없으면 model_catalog 기본값 유지). '일반(normal)'은 thinking_budget_for_level 이 None →
+        # 이 분기 미진입 → 아래 model override 경로(B1 무회귀).
+        _lvl_override = _rts.reasoning_budget_override(reasoning_level)
+        if _lvl_override is not None:
+            _think_budget = _lvl_override
+    if _think_budget is None:
+        # 사용자가 요청 단위 추론강도('일반'/미지정)를 안 골랐을 때, 관리 콘솔에서 이 모델에 설정한
+        # thinking budget override 를 적용한다. override 미설정이면 None → 아래 조건 미충족 →
+        # 미주입 → 모델 config 기본 thinking 유지(B1 무회귀).
+        _think_budget = _rts.model_thinking_budget_override(model)
     if _think_budget is not None and model_supports_thinking(model):
+        # Anthropic 제약(budget_tokens < max_tokens) 안전 보장 — 주입 budget 을 이 요청의
+        # max_tokens 미만으로 clamp(여유 1024). 기존 reasoning-effort budget(≤16000)은
+        # agent max_tokens(20000)보다 작아 이 clamp 가 no-op → 기존 동작 불변.
+        _safe_budget = int(_think_budget)
+        _mt = kwargs.get("max_tokens")
+        if isinstance(_mt, int) and _mt > 0:
+            _safe_budget = min(_safe_budget, max(1024, _mt - 1024))
         kwargs["extra_body"] = {
-            "thinking": {"type": "enabled", "budget_tokens": int(_think_budget)},
+            "thinking": {"type": "enabled", "budget_tokens": _safe_budget},
         }
     _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)

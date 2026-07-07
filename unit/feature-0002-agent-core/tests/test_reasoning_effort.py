@@ -11,7 +11,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 import agent_core
+from shared import runtime_settings as _rs
 from shared.model_catalog import (
     DEFAULT_REASONING_LEVEL,
     REASONING_LEVELS,
@@ -155,6 +158,48 @@ def test_reasoning_level_ignored_for_non_thinking_model(monkeypatch):
 def test_invalid_reasoning_level_not_injected(monkeypatch):
     kwargs = _call(monkeypatch, "claude-haiku-4", "ultra")
     assert "extra_body" not in kwargs
+
+
+# ── 2b. feature-0018 reasoning-budgets: 관리 콘솔 override precedence ─────────
+@pytest.fixture(autouse=True)
+def _reset_runtime_settings(monkeypatch, tmp_path):
+    """각 테스트를 override 없는 상태로 격리(스냅샷 부재 + 캐시 리셋). override 테스트는
+    _rs.write_snapshot 으로 명시 설정."""
+    monkeypatch.setenv("RUNTIME_SETTINGS_SNAPSHOT_PATH", str(tmp_path / "none.json"))
+    monkeypatch.delenv("RUNTIME_SETTINGS_DISABLED", raising=False)
+    _rs.invalidate_cache(); _rs._cache["frozen"] = None
+    yield
+    _rs.invalidate_cache(); _rs._cache["frozen"] = None
+
+
+def _stage_snapshot(tmp_path, monkeypatch, overrides):
+    p = tmp_path / "rs.json"
+    monkeypatch.setenv("RUNTIME_SETTINGS_SNAPSHOT_PATH", str(p))
+    _rs.invalidate_cache(); _rs._cache["frozen"] = None
+    _rs.write_snapshot(overrides)
+
+
+def test_reasoning_level_admin_override_beats_default(monkeypatch, tmp_path):
+    # 관리 콘솔에서 'high' 레벨 budget 을 12000 으로 설정 → 기본 10000 대신 주입.
+    _stage_snapshot(tmp_path, monkeypatch, {"reasoning_budget:high": 12000})
+    kwargs = _call(monkeypatch, "claude-haiku-4", "high")
+    assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 12000}}
+
+
+def test_reasoning_level_default_when_no_override(monkeypatch, tmp_path):
+    # override 없으면 model_catalog 기본(high=10000) 유지.
+    kwargs = _call(monkeypatch, "claude-haiku-4", "high")
+    assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 10000}}
+
+
+def test_normal_ignores_reasoning_override_but_model_override_applies(monkeypatch, tmp_path):
+    # '일반'은 레벨 예산 대상 아님(B1) → reasoning override 무시. 대신 모델 override 가 적용된다.
+    _stage_snapshot(tmp_path, monkeypatch, {
+        "reasoning_budget:high": 12000,
+        "model_thinking_budget:claude-sonnet-4": 9000,
+    })
+    kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
+    assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 9000}}
 
 
 # ── 3. worker 경로 패리티 (_payload_to_kwargs) ───────────────────────────────

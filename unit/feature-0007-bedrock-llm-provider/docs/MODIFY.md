@@ -8,6 +8,44 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260707-oauth-cron-static-refresh
+- Date: 2026-07-07
+- Related Requirement: (운영 chore — 사용자 지시) claude-corp 세션 윈도우 오염 원인 제거
+- Summary: `refresh-claude-oauth-token.sh` 의 24/7 30분 주기 cron 이 매 실행마다
+  Anthropic `/v1/messages` 라이브 probe(2026-06-29 도입)를 호출해, claude-corp
+  계정의 5시간 rolling 세션 윈도우 경계가 `:00`/`:30` 격자에 계속 재고정되고
+  `session-keepalive-cron.sh`(07:35/12:35 앵커 핑)가 그 날의 첫 실호출이 되지
+  못해 리셋 시각이 드리프트하는 문제를 근본 제거. 2026-07-03 insight-llm-fallback
+  이후 이 probe 는 litellm 요청-레벨 fallback(`fallbacks:` 체인)과 구조적으로
+  중복이었음을 확인 — probe 를 전면 제거하고 파일 만료 여부만 검사하는
+  static_check() 단독 판정으로 재설계했다.
+- Files:
+  - 수정: `bin/refresh-claude-oauth-token.sh` — `live_probe()` 함수 + `CLAUDE_OAUTH_PROBE`
+    / `CLAUDE_OAUTH_PROBE_MODEL` / `CLAUDE_OAUTH_PROBE_TIMEOUT` env var 전면 제거.
+    `select_account()` 가 static_check() 만으로 판정(네트워크 호출 0). 헤더 주석을
+    새 설계 + 제거 배경으로 재작성. 로그 기반 관측 함수 `log_fallback_observability()`
+    신설 — 매 실행 시 `docker compose logs --since $CLAUDE_OAUTH_OBS_WINDOW(기본 35m)
+    bedrock-gateway` 를 읽어(실 API 호출 아님, 로컬 컨테이너 stdout) RateLimitError/
+    AuthenticationError 발생 건수를 집계, 0건이면 무음(로그 비대화 방지).
+  - (git 미추적) host `root` crontab — `refresh-claude-oauth-token.sh` 항목 위에 남아있던
+    2026-07-02 stale 주석 블록("평일 10:00~19:00" 스케줄 설명, 실제로는 2026-07-04 에 이미
+    24/7 로 대체돼 무관한 backup/metadata-graph-sync cron 항목들 사이에 낀 채 방치돼
+    있었음) 제거 + 2026-07-04/2026-07-07 변경 이력을 실제 스케줄(24/7 `*/30`)과
+    일치하도록 재작성. 백업 `/tmp/crontab-root-backup-20260707112835.txt`.
+- Verification: `bash -n` PASS. `--check` 모드로 정적 검사만으로 claude-corp/root
+  두 계정 정상 선택 확인(라이브 API 호출 없음). `docker` 미가용 PATH 에서도
+  스크립트가 abort 없이 정상 완주(관측 함수 fail-open 확인). litellm 소스
+  (`router.py` `should_retry_this_error` / `async_function_with_fallbacks_common_utils`)
+  직접 확인 — AuthenticationError(401)·RateLimitError(429) 모두 예외 타입과
+  무관하게 fallback 경로를 탐(ContextWindowExceededError/ContentPolicyViolationError
+  만 별도 특별 처리). 실 계정 회복(claude-corp 자동 복귀) 동작은 무변경 — 자격증명
+  파일이 유효한 한 매 실행마다 계속 1순위로 주입되므로 별도 로직 불필요.
+- Rollback: 이전 커밋의 `bin/refresh-claude-oauth-token.sh` 로 되돌리고 crontab 에
+  `CLAUDE_OAUTH_PROBE=1` (또는 무지정, 구버전 기본값) 을 명시.
+- Risk: Minor (§12.3) — 개발 단계 전용 임시 스크립트(헤더에 명시)의 내부 판정
+  로직 단순화. auth/네트워크/보안 표면 변화 없음(오히려 외부 API 호출 제거로
+  표면 축소). 실 429/401 대응은 이미 검증된 litellm 요청-레벨 fallback 이 전담.
+
 ## CHG-20260625T171844
 - Date: 2026-06-25
 - Related Requirement: (운영 chore — 사용자 지시) DQA LLM 게이트 호출 주체 일시 우회
@@ -480,3 +518,10 @@ source_of_truth: true
 - Rollback: litellm_config 의 root/edge deployment·fallbacks 제거 + refresh 단일-slot 복원 + (또는)
   `AGENT_INSIGHT_MODEL=edge`.
 - ANCHOR 정합: §1(운영자 자격 일원화 — 사용자별 키 아님, 운영자 두 계정 + 로컬)·§2(Alt-A LiteLLM gateway) 무충돌.
+
+## CHG-20260707T100640-no-edge-conversation-answer (litellm_config: 대화 답변 전용 edge-free alias 신설 — cross-feature, primary=feature-0002-agent-core)
+- Date: 2026-07-07. `/_dqa:conversation_audit`(FR-edge-fallback-conversation-context-loss). 사용자 대면 대화 답변(task='agent')이 두 claude 계정 429 시 `edge-fallback`(gemma4:e2b, ctx 4096)으로 silent 강등돼 히스토리 절단·맥락 파괴(실측 conv …9e0883bb). 사용자 결정(2026-07-07): 대화 답변에 gemma 완전 차단·명백한 실패처리.
+- 변경(litellm_config.yaml): deployment `claude-haiku-4-chat`(claude-corp)·`claude-haiku-4-chat-root`(root) 신설 + fallback `{"claude-haiku-4-chat": ["claude-haiku-4-chat-root"]}`(**edge 미포함**, chat-root fallback 미등록 → 429/401 raise). 기존 `claude-haiku-4`(insight 배치)·`claude-haiku-4-interactive`(분석)·`edge-fallback` 체인 **무변경** — insight/분석의 gemma 강등 유지(2026-07-03/07-04 결정 보존). 대화(_call_llm)만 agent_core 가 `claude-haiku-4-chat` 로 라우팅.
+- Verification: YAML lint OK(9 deployment·5 fallback). 배포=bedrock-gateway 재생성(config bind-mount 반영, 외부영향 confirm — Major override 불가).
+- ANCHOR 정합: §1(운영자 자격 일원화 — chat alias 도 동일 두 계정 OAuth, 신규 자격 없음)·§2(Alt-A LiteLLM gateway) 무충돌. 폴백 경로 **축소**(edge 제거)라 보안·자격 경계 확장 없음.
+- Cross-ref(정본): unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260707T100640-no-edge-conversation-answer · shared/docs/MODIFY.md 동일 · feature-0002 REVIEW.md REV-20260707T100640-no-edge-conversation-answer.
