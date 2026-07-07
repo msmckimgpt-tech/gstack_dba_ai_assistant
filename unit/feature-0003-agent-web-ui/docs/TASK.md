@@ -5284,3 +5284,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS. jsdom DOM 테스트(`verify_release_notes.mjs`)는 이 실행 env 미설치(컨테이너 전용) — 문법+스키마(type/area/title/detail)+블록 순서(07-07>06>04>03>02) + 07-02 이하 보존으로 갈음.
 - [x] 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260702-rn-0702`→`?v=20260707-rn-0707` bump. verify-completion(operational, feature-0003) → 로컬 commit. landing(push/PR/merge)·배포는 본 attended run 이 사용자 정책(2026-06-25) 하에 자동 수행. META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260707T110534-META-0020-doc-sync-0707).
 - [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트는 콘텐츠 데이터/캐시버스터 변경만(렌더 로직 불변) — 본 doc_sync cycle 은 새로 시각검증할 렌더 델타 없음. 원천 UI 변경(그래프 뷰·추론 강도·런타임 설정·공유 범위)은 각 feature cycle 이 07-03~07-07 PB-0008 기록. 사유는 TEST.md §3 Windows-browser Run 기록(CHECK#13).
+### TASK-20260707T120000-runtime-settings-ux — 런타임 설정 pane UI 재설계 (세련도 개선, web/UI CSS+JS-only, Major §12.3, feature-0003)
+- 트리거(사용자): "UI가 세련되지 못함 — 내부 디자인 리뷰 진행하며 사람이 만족할 UI로 재구성." 현재 `.admin-quota-editor` 재사용이 부적합(입력창 라벨과 미정렬·우상단 부유, 설명 잘림, 행마다 저장/초기화 버튼 난립, 세로 반복 과다).
+- [x] 디자인 시스템 매핑(subagent): 토큰(`:root`), 정돈된 패턴(admin-kv grid dl·admin-usage-table·admin-badge·admin-detail-section-title·admin-field focus-ring), commit-bar pending 6 touch point, 참조 pane(계정 권한 그리드) 라이브 캡처.
+- [x] CSS 신규 `.rs-*`: rs-panel/group/group-title/list + **rs-row(2×2 grid: 라벨+배지 / 설명 / 입력+단위 / 상태·기본값)** + rs-input(canonical focus-ring·mono·우정렬)·rs-unit·rs-status(override/pending/invalid)·rs-reset·rs-readonly-note. --border-subtle 구분선·--primary-soft dirty·8px 그리드·반응형(≤560px).
+- [x] JS 재작성: `buildRuntimeSettingRow`(행별 버튼 제거)·`setRuntimeSettingPending`(pending 예약)·`rerenderRuntimeSettingsPanels`·render* 를 rs-* 마크업으로. 설명 ellipsis+title(잘림 해소). 범위 밖 인라인 경고. 모델 no-override input 비움 유지.
+- [x] **commit-bar 통합**(계정·프롬프트 정합): `adminState.pending.runtimeSettings` + pendingChangeCount + refreshPendingUI(detail "설정 N" + 좌측 nav row `.has-pending`) + applyAllPending(PUT/RESET DELETE 루프 + 재렌더) + cancelAllPending(clear + 재렌더). 편집→pending→"모두 적용" 배치 저장.
+- [x] cache-buster admin.js/styles.css `?v=20260707-runtime-settings-ux`. node --check PASS, 잔여 dead-ref 0.
+- [ ] §18.8 적대 디자인/UX 렌즈 리뷰 → REVIEW REV.
+- [ ] verify-completion → commit → PR → merge → web 재배포 → **PB-0008 재설계 UI 시각검증(before/after)**.
