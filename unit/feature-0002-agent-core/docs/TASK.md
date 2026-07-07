@@ -1187,3 +1187,12 @@ TASK-0015 (plan-review):
 - [x] **수정**(insight.py): `_touch_worker_heartbeat_progress`(30s throttle) 신규 + 스키마·테이블 순회에 삽입 → 진행 중 heartbeat 갱신. status 미변경, hang 탐지 보존.
 - [x] **검증**: 신규 test 2 + insight 회귀 0(12 PASS) + AST OK. 경량 cycle SKIPPED 리뷰.
 - [ ] **배포**: agent 이미지 재빌드 + insight-worker 재기동 → docker inspect healthy 확인.
+
+### no-edge-conversation-answer — 대화 답변 edge(gemma) 폴백 완전 차단 (Major §12.3, 2026-07-07, conversation_audit FR-edge-fallback-conversation-context-loss)
+- 진단 대상 대화: conv …9e0883bb "DB 설계 및 JSON 데이터 구성 검토"(owner admin, 1:1). content/PII 비전재.
+- [x] **진단**: turn2~4 resolved_model=`gemma4:e2b`(edge-fallback, ctx 4096)로 silent 강등 → prompt_tokens 4096 고정, ~30K 히스토리 절단 → 맥락 완전 소실("? 맥락을 잃어버렸나요?" 명시 불만 + 자기 리뷰 부재 환각 + 거짓 부인). 코드+DB(llm_usage)+전사 삼각측량 high.
+- [x] **사용자 결정**: 대화 답변에 gemma 개입 완전 차단·fallback 미구성·명백한 실패처리(2026-07-07 override).
+- [x] **수정**: `_call_llm` → `conversation_answer_model()` 로 claude-haiku-4→claude-haiku-4-chat(edge-free) 라우팅 + shared 헬퍼 + litellm_config -chat/-chat-root deployment·fallback(edge 없음). 실패 시 기존 LLM-error 핸들러가 정직 안내.
+- [x] **검증**: 신규 test 4 PASS + feature-0002 회귀 0 + py_compile·YAML OK. route-parity 실패=환경(clean main 동일) 확인.
+- [ ] **배포(승인 필요, Major override 불가)**: ask-worker+web 재빌드 + bedrock-gateway 재생성. 배포 후 healthz + corroboration(task='agent' gemma 분포 0) 라이브 재측정.
+- [ ] verify-completion → 적대 패널 → commit/push → (PR·머지·배포 confirm) → 마감.

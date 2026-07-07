@@ -56,7 +56,7 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from shared.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, thinking_budget_for_level
+from shared.model_catalog import conversation_answer_model, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, thinking_budget_for_level
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary, read_csv_preview
@@ -2655,8 +2655,14 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         image_attachments=image_attachments or None,
         vision_model=model_supports_vision(model),
     )
+    # FR-edge-fallback-conversation-context-loss (2026-07-07): 이 함수는 정의상 사용자 대면 assistant
+    # 답변(task='agent') 경로다. edge(gemma) 폴백이 걸린 alias(claude-haiku-4)는 litellm 호출 시 edge-free
+    # 대화 전용 alias(claude-haiku-4-chat)로 치환해, 두 claude 계정 완전 장애 시 gemma 로 강등되지 않고
+    # 429/401 을 raise → 아래 caller(_run_agent_core)의 LLM-error 핸들러가 "명백한 실패처리"로 안내한다.
+    # 표시/저장/usage 기록·max_tokens·thinking·vision 판정은 모두 원본 `model`(claude-haiku-4)을 유지하고,
+    # 실제 서빙 모델은 resolved_model(resp.model)로 추적한다. 매핑 없는 model(claude-sonnet-4 등)은 identity.
     kwargs: dict[str, Any] = {
-        "model": model,
+        "model": conversation_answer_model(model),
         "messages": effective_messages,
     }
     if temperature is not None:

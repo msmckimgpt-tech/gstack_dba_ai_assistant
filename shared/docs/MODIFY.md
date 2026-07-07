@@ -38,3 +38,11 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - Files: `shared/model_catalog.py`
 - Affected Features: feature-0002-agent-core(_call_llm 요청 단위 thinking 주입 — 신규 소비), feature-0003-agent-web-ui(/api/ask normalize·프론트 선택기 — 신규 소비)
 - Cross-ref: unit/feature-0003-agent-web-ui/docs/MODIFY.md CHG-20260706T013532-reasoning-effort(정본) · unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260706T013532-reasoning-effort · feature-0003 REVIEW.md REV-20260706T013532-reasoning-effort
+
+## CHG-20260707T100640-no-edge-conversation-answer
+- Date: 2026-07-07
+- Changed By: feature-0002-agent-core (AI) — 단일 mutator(§13.2.2 F2), worktree `ai/claude/feature-0002-agent-core`, conversation_audit(FR-edge-fallback-conversation-context-loss)
+- Summary: `model_catalog.py` 에 대화 답변(task='agent') 전용 edge-free 라우팅 헬퍼 `conversation_answer_model()` + `_CONVERSATION_ANSWER_ALIAS`(claude-haiku-4→claude-haiku-4-chat) + `__all__` 등록. 순수 additive(기존 max_tokens/temperature/vision/thinking 로직 무변경). 매핑 밖 model(claude-sonnet-4 등 — litellm fallbacks 목록에 없어 edge 강등 無)은 identity 반환(무회귀). 목적: 두 claude 계정 429/401 완전 장애 시 대화 답변이 edge-fallback(gemma4:e2b, ctx 4096)으로 silent 강등돼 히스토리를 잘라 맥락을 파괴하는 것을 원천 차단(사용자 결정 2026-07-07: 명백한 실패처리).
+- Files: `shared/model_catalog.py`
+- Affected Features: feature-0002-agent-core(_call_llm 이 litellm 호출 model 을 이 헬퍼로 치환 — 신규 소비), feature-0007-bedrock-llm-provider(litellm_config -chat/-chat-root alias·fallback 신설)
+- Cross-ref: unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260707T100640-no-edge-conversation-answer(정본) · unit/feature-0007-bedrock-llm-provider/docs/MODIFY.md 동일 · feature-0002 REVIEW.md REV-20260707T100640-no-edge-conversation-answer
