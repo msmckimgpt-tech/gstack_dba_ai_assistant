@@ -376,3 +376,7 @@ app.py 조회실패 debug 로그) 반영.
 **리뷰**: 경량 cycle(§18.4) — heartbeat throttle 단순 로직 + 테스트 커버 + healthcheck 판정식 미변경(갱신 지점만 추가) → 적대 패널 SKIPPED(REV [SKIPPED:heartbeat-throttle-liveness]).
 
 **배포**: agent 이미지 재빌드(insight-worker baked) + insight-worker 재기동 → `docker inspect ... Health.Status` healthy 확인.
+
+---
+
+**cross-ref (conversation_audit, 2026-07-07)**: feature-0009 그룹대화/1:1 마찰 "맥락 미이해"(conv …9e0883bb) → 코드 거주 feature-0002 CHG-20260707T100640-no-edge-conversation-answer 로 수정(대화 답변 edge/gemma 폴백 완전 차단). 충족: 사용자 대면 대화 답변이 두 claude 계정 장애 시 gemma(ctx 4096) silent 강등돼 맥락 파괴하던 것을 edge-free alias 라우팅 + 깨끗한 실패로 봉인. 정본 원장 = docs/improvements/conversation-audit/FRICTION_LEDGER.md FR-edge-fallback-conversation-context-loss.

@@ -48,6 +48,14 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 
 ## Category: pattern
 
+### LRN-20260707-0001 — "무중단 안전망" 폴백 모델이 정본보다 컨텍스트가 작으면 대화를 유지가 아니라 *조용히 파괴*한다 — 라우팅 폴백은 능력 등가여야 하거나 깨끗이 실패해야
+- Source: conversation_audit FR-edge-fallback-conversation-context-loss (conv …9e0883bb, 2026-07-07)
+- Pattern: 가용성을 위해 붙인 LLM 폴백(2026-07-04 interactive-split 의 "두 계정 완전 장애 시 gemma 로 대화 무중단")이 **정본 모델과 컨텍스트 창이 크게 다르면** 오히려 최악의 UX 를 만든다. 실측: 대화가 두 claude 계정 429(rate-limit 버스트) 시 로컬 `gemma4:e2b`(ctx **4096**)로 silent 강등됐고, ~30K 토큰 대화 히스토리가 프롬프트에서 통째로 잘려(llm_usage.prompt_tokens 가 정본 29K → 폴백 3턴 모두 정확히 4096) assistant 가 **직전 자기 답변조차 모른 채** 무관한 일반론을 자신 있게 답하고 "기억한다"고 부인했다. 사용자는 이를 제품 버그로 오인하고 명시 불만("맥락을 잃어버렸나요?") + 신뢰 상실. "무중단"이 아니라 "조용한 파탄"이었다.
+- 교훈: (1) **라우팅 폴백은 능력(특히 컨텍스트 창)이 정본과 등가일 때만 사용자 대면 경로에 둔다.** 컨텍스트가 훨씬 작은 모델로의 폴백은 "가용성 유지"가 아니라 "정답처럼 보이는 오답 양산"이다. (2) 등가 폴백이 없으면 **깨끗이 실패**(정직한 재시도 안내)가 silent 강등보다 낫다 — 사용자는 "일시적 한도"는 이해하지만 "AI 가 갑자기 바보가 됨"은 제품 결함으로 귀인한다. (3) 강등이 불가피하면 **반드시 사용자에게 표면화**(어느 경우든 silent 금지). (4) 진단 신호: `llm_usage.resolved_model != 요청 model` + `prompt_tokens` 가 특정 라운드에서 급락(폴백 모델의 고정 ctx) = 컨텍스트 절단 강등의 결정적 지문. 요청 model 만 보면 안 되고 **resolved_model** 을 봐야 한다.
+- 봉인 방식: 사용자 대면 대화 답변(task='agent') 전용 edge-free alias 로 라우팅(litellm 체인에서 로컬 모델 도달 불가) + 회귀 가드 테스트로 "대화 기본 모델의 폴백 체인이 anthropic-only" 를 고정(기본 모델·체인 변경 시 자동 적발). 배치/분석 등 비-대화 경로의 gemma 강등은 무영향(alias 분리).
+- Applies to: 다중 provider/모델 폴백을 가진 모든 LLM 라우팅. "availability vs quality" 폴백 결정 시 폴백 모델의 컨텍스트/능력이 정본과 등가인지 먼저 확인하고, 아니면 깨끗한 실패 또는 명시 표면화를 기본값으로 한다.
+- Verified: true (적대 2렌즈 패널 CONFIRMED + 배포 후 live probe: claude-haiku-4-chat→claude 라우팅 확인, gemma 도달 불가).
+
 ### LRN-20260605-0001 — DB cutover 의 read-back 누락은 워커뿐 아니라 "사용자 대면 grounding 경로"까지 조용히 무력화한다
 - Source: feature-0002 DB 조회 UX 개선 (TASK-0151, 2026-06-05)
 - Pattern: 05-27 MySQL→PG cutover 가 쓰기는 PG 로 옮기고 DROP 까지 했지만, **여러 read 경로가 DROP 된 MySQL 테이블을 `try/except: pass` 로 조회**해 빈 결과를 반환하고 있었다. TASK-0145 는 insight worker 면(livelock)을 고쳤고, TASK-0151 은 **사용자 질의의 스키마 grounding(`_load_schema_list`/`_load_relevant_table_insights` → "KNOWN SCHEMAS" 주입)** 면을 고쳤다. 둘 다 같은 원인의 다른 얼굴이다.
