@@ -1,6 +1,6 @@
 {
-  "total_routes": 200,
-  "api_routes": 199,
+  "total_routes": 203,
+  "api_routes": 202,
   "ordered": [
     {
       "path": "/openapi.json",
@@ -634,6 +634,27 @@
       "path": "/api/admin/metadata/enums/{entry_id}",
       "methods": [
         "DELETE"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/metadata/enum-feedback",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/metadata/enum-feedback/{feedback_id}/promote",
+      "methods": [
+        "POST"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/admin/metadata/enum-feedback/{feedback_id}/reject",
+      "methods": [
+        "POST"
       ],
       "type": "APIRoute"
     },

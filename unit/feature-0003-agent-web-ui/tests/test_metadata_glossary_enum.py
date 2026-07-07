@@ -357,8 +357,9 @@ def test_enum_list_serializes(monkeypatch):
     acct = _admin(monkeypatch)
     monkeypatch.setattr(_dbmod, "_pg_connect_ro", lambda: _PgConn())
     ts = datetime.datetime(2026, 6, 24, 10, 0, 0)
-    # row: (id, scope_key, schema_name, table_name, column_name, code, label, created_at, updated_at)
-    rows = [(10, "default", "", "orders", "status", "1", "결제완료", ts, ts)]
+    # row: (id, scope_key, schema_name, table_name, column_name, code, label, source, created_at, updated_at)
+    #   0039: source 컬럼 추가(자동수집 되돌리기 구분·자동등록 배지). list_enum_admin 행이 10-tuple 로 확장.
+    rows = [(10, "default", "", "orders", "status", "1", "결제완료", "manual", ts, ts)]
     monkeypatch.setattr(_kg, "list_enum_admin", lambda conn, scope_key, **k: rows)
 
     resp = admin_metadata.admin_list_enums(_FakeRequest(query={"scope_key": "default"}), account=acct)
@@ -367,3 +368,4 @@ def test_enum_list_serializes(monkeypatch):
     assert out["count"] == 1
     it = out["items"][0]
     assert it["id"] == 10 and it["table_name"] == "orders" and it["code"] == "1" and it["label"] == "결제완료"
+    assert it["source"] == "manual"

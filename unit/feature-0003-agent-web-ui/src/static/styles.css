@@ -8562,6 +8562,16 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
   border-radius: 999px; background: var(--primary, #2563eb); color: #fff; vertical-align: middle;
 }
 .admin-meta-review-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* ── feature-0018-kb-candidate-adoption: 채택 인박스 ─────────────────────────────
+   용어+ENUM 후보를 신뢰도/상태별 그룹 카드로 통합. 대시보드 카드 그리드(.dashboard-widgets/
+   .dashboard-widget) + 검토 큐 행(.admin-meta-row) + 태그(.admin-meta-tag) 어휘 재사용. */
+.admin-meta-tag-kind { background: rgba(124, 58, 237, 0.12); border-color: rgba(124, 58, 237, 0.4); color: #6d28d9; }
+.admin-adoption-groups { margin-top: 12px; grid-template-columns: repeat(auto-fill, minmax(min(440px, 100%), 1fr)); }
+.admin-adoption-bulk { flex: 0 0 auto; white-space: nowrap; }
+.admin-adoption-card-note { margin: 0 0 2px; }
+.admin-adoption-rows { gap: 0; }
+.admin-adoption-row:last-child { border-bottom: none; }
+.admin-adoption-empty { grid-column: 1 / -1; padding: 24px 8px; color: var(--text-2, var(--text-muted)); }
 .admin-meta-rel-panel {
   border: 1px dashed var(--border); border-radius: var(--r-md, 10px);
   padding: 10px 12px; margin: 2px 0 8px; background: var(--surface-2, var(--bg));

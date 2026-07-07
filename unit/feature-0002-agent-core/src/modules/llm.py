@@ -580,6 +580,35 @@ Rules:
 """.strip()
 
 
+ENUM_SUGGEST_PROMPT = """
+You are an ENUM code-dictionary extractor for a Korean MySQL/MSSQL DBA assistant.
+From one Q&A turn (user question + assistant answer), extract COLUMN ENUM code→label
+mappings that the answer explained — status/type/flag columns whose coded values the
+answer mapped to a human meaning (e.g. status 1=대기, 2=승인; is_deleted 0=정상, 1=삭제됨).
+Return JSON only. No markdown, no reasoning text.
+
+Output schema:
+{
+  "enums": [
+    {"schema_name": "", "table_name": "테이블", "column_name": "컬럼",
+     "code": "코드값", "label": "1~2단어 한국어 의미", "confidence": 0.0~1.0}
+  ]
+}
+
+Rules:
+- Only include a mapping if the turn actually states what a specific column code means.
+  If nothing qualifies, return {"enums": []}.
+- table_name, column_name, code, label are ALL required per item; omit items missing any.
+- schema_name is optional ("" if unknown). label must be a short Korean meaning, not a sentence.
+- One item per (table, column, code). Split multi-value explanations into separate items.
+- confidence reflects how explicitly the code→label pair is stated AND how reliably the
+  column is identified (0.9+ = column and code both explicit, 0.5 = plausible but uncertain).
+- Do NOT invent codes/columns not grounded in the text. Do NOT include free-text columns,
+  booleans without a stated column, PII, or the assistant's process steps.
+- At most 5 items. Prefer the most explicit ones.
+""".strip()
+
+
 # TASK-0129 (#3): tier-aware LLM client. 이전엔 단일 LLM_BASE_URL(Bedrock 우선) 로 모든
 # 호출이 가서 edge-tier 모델명('edge'/'core'/'auto'/'code')이 Bedrock gateway 에 전달돼
 # HTTP 400 ("Invalid model name passed in model=edge") — 하루 ~47만건 silent 실패 + 전체
@@ -1383,6 +1412,60 @@ def llm_glossary_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             conf = 0.5
         out.append({"term": term, "definition": definition,
+                    "confidence": max(0.0, min(1.0, conf))})
+    return out
+
+
+def llm_enum_suggest(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """대화 한 턴(질문+답변)에서 ENUM 코드↔라벨 후보를 추론(ENUM 코드사전 자율수집, 0039).
+
+    payload: {"user_message": str, "assistant_answer": str}
+    반환: [{"schema_name","table_name","column_name","code","label","confidence"}, ...] (없으면 []).
+    실패(클라이언트 없음/예외/JSON 파싱 실패)는 [] — 호출측(ask 경로) 차단 금지(soft-fail).
+    """
+    _model = AGENT_ENUM_SUGGEST_MODEL or AGENT_SUMMARY_MODEL or OPENAI_MODEL
+    client = _get_llm_client(model=_model)  # 티어 라우팅
+    if client is None:
+        return []
+    try:
+        resp = client.chat.completions.create(
+            model=_model,
+            messages=[
+                {"role": "system", "content": ENUM_SUGGEST_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            **_max_tokens_kwargs(_model, "summary"),
+            **_temperature_kwargs(_model),
+            timeout=_openai_request_timeout(AGENT_TIMEOUT_SEC),
+        )
+        _record_llm_usage(_model, "enum_suggest", resp)
+        text = (resp.choices[0].message.content or "").strip()
+    except Exception as exc:
+        _log_llm_warn("llm_enum_suggest", "exception", str(exc))
+        return []
+    obj = _extract_json_object(text)
+    if not isinstance(obj, dict):
+        return []
+    raw = obj.get("enums")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        table_name = str(item.get("table_name", "")).strip()
+        column_name = str(item.get("column_name", "")).strip()
+        code = str(item.get("code", "")).strip()
+        label = str(item.get("label", "")).strip()
+        if not table_name or not column_name or not code or not label:
+            continue
+        try:
+            conf = float(item.get("confidence", 0.5))
+        except (TypeError, ValueError):
+            conf = 0.5
+        out.append({"schema_name": str(item.get("schema_name", "")).strip(),
+                    "table_name": table_name, "column_name": column_name,
+                    "code": code, "label": label,
                     "confidence": max(0.0, min(1.0, conf))})
     return out
 
