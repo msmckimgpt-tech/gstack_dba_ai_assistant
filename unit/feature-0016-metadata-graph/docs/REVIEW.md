@@ -1170,3 +1170,5 @@ source_of_truth: true
 - MINOR/NIT 수정 반영: ① 공유 `normalize_db_label()`(shared/config.py) — set_active_database·backfill 정규화 계약 단일화 + parity 잠금 테스트 ② CS-collation 케이스-쌍둥이 DB 병합 시 prune 강등(교차-삭제 진동 차단) + 테스트 ③ dry-run slot 원본 케이스·store_labels 매핑 잠금 테스트 ④ 리포트 store_labels 노출.
 - 수용(후속 인지, 코드 무변경): ⑤ routine_name·refs 테이블명 축의 information_schema 케이스 플래핑(pre-existing, TASK-0305 RC2 계열 — RC5 와 동일 결함 클래스의 직교 축) ⑥ backfill(DB 전체)·cadence(스키마 단위) refs 입력 발산으로 multi-schema DB 에서 동일 행 교대 upsert churn(pre-existing 표면화, backfill 은 운영자 호출이라 빈도 낮음). 둘 다 §56 후속 항목으로 TASK 에 기록.
 - 재검증: 컨테이너 pytest 66 PASS(EXIT=0)·ruff PASS. 잔여 BLOCKING 0.
+
+## REV-20260707T193500-ai-root-feature-0016-routine-sync-postdeploy [SKIPPED: docs-only POST-DEPLOY 기록 — 코드 변경 0, §56 라이브 e2e 증적의 TASK/TEST/MODIFY 반영. 코드 리뷰는 직전 REV-20260707T173500(RC5 패널) 정본] — §56 T56.8 완수 기록

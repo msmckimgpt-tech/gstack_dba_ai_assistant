@@ -1100,3 +1100,9 @@ source_of_truth: true
   purge 캡처 확장(additive).
 - 운영 조치(코드 외): AGE mixed-key 고아 DETACH DELETE(SSOT mixed 행은 재-backfill 의 purge 가 자동
   회수) 후 full sync 재투영.
+
+## CHG-20260707T192500-ai-root-feature-0016-routine-sync-postdeploy — §56 POST-DEPLOY e2e 기록 (2026-07-07)
+
+- docs-only: TASK §56 T56.8 완수 체크 + TEST POST-DEPLOY Run. 코드 변경 없음.
+- 라이브 증적: case_purged 6,320·mixed 잔여 0·full sync errors/step_failures 0·워터마크 전진·
+  크로스 ROUTINE_USES 1,041·분석 run 6c33317d. PB-0008 육안만 사용자 대기.
