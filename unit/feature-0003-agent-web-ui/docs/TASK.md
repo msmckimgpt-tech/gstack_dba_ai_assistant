@@ -5271,3 +5271,8 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 회귀 가드: `test_runtime_settings_api.py` +2(build_audit_change_json 2 action 반환 shape). 유닛 갭(TestClient PUT 이 conn=None 로 audit 도달 前 500) 보완. 14 PASS.
 - [ ] §18.8 security 렌즈 적대 리뷰 → REVIEW REV.
 - [ ] verify-completion → commit → PR → merge → cycle-finalize → web 재빌드·재배포(backend-only, admin 자산 무변경) → PB-0008 write-path 재검증(저장/초기화 toast·has_override·audit row).
+
+### TASK-20260707T111500-runtime-settings-postverify — feature-0018 + audit hotfix POST-DEPLOY PB-0008 기록 (doc-only, 2026-07-07)
+- [x] feature-0018(PR #602→a7dcc436) + audit hotfix(PR #604→8d0a4723) 배포 완료 — web-a/b 무중단 롤링 soak ×2, /healthz 8d0a4723 mysql/pg ok, WebRuntimeSettings 테이블·admin 권한·/shared 스냅샷 초기화, 워커 a7dcc436(내 워커 코드 포함, audit 핫픽스는 web-only).
+- [x] PB-0008 실 Windows 브라우저(Chrome/149 relay) POST-DEPLOY **PASS** — 설정 pane 3항목·타임아웃 22입력/6카테고리/22배지·env-fallback 300/600/180 실증·모델패널 2행 input 비움·write-path e2e(저장/초기화 toast·DB override roundtrip·audit)·pageerror 0. 증적 png. TEST.md §3 POST-DEPLOY Run 기록.
+- [x] doc-only 기록 cycle (TEST/TASK/MODIFY/REVIEW) — 코드·자산 무변경.

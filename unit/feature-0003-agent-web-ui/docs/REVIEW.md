@@ -4519,3 +4519,7 @@ source_of_truth: true
 - §18.8 dispatch(audit/RBAC → security) **적대 security 렌즈 → VERDICT SHIP**: ① 반환 tuple shape 계약 정합(quota 선례 동일) ② 미등록키·비정수는 endpoint validate_value 가 audit 前 차단 → injection/누출 0 ③ 배치·shadow 없음 ④ 회귀 테스트가 원 버그 정확히 포착(라우터 action 문자열과 일치) ⑤ 라우터 잔여 미등록 action 0. **추가 지적(Low/Med, 반영)**: 이미 캡처한 `before_value` 를 builder 가 버려 감사에 직전 값 미기록(포렌식 갭) → `previous_value` 로 before 값 보존하도록 반영 + 회귀 assert 추가.
 - 검증: `test_runtime_settings_api.py` 14 PASS(+audit 2, previous_value assert 포함). feature-0003 로컬 스위트 회귀 0. 컨테이너 스위트·PB-0008 write-path 재검증은 배포 후.
 - Cross-ref: TASK/MODIFY/FUNCTION 동일 slug · 선행 REV-20260706T094937-runtime-settings.
+
+## REV-20260707T111500-runtime-settings-postverify [SKIPPED:doc-only-postverify] (feature-0018 + audit hotfix POST-DEPLOY PB-0008 기록, 비-정책 doc-only)
+- Panel skip 사유(§18.8/§18.4): 본 cycle 은 선행 feature-0018(REV-20260706T094937-runtime-settings [SUBAGENT] SHIP) + audit hotfix(REV-20260707T110000-runtime-settings-auditfix [SUBAGENT] SHIP)의 **배포 후 라이브 검증 결과를 TEST.md 에 기록**할 뿐 코드/자산 무변경(doc-only). 신규 로직 경로 0·백엔드/RBAC/스키마/엔드포인트/프론트 무변경 → 코드 적대검증 대상 아님. 검증 자체(실 Windows Chrome PB-0008 write-path e2e + DB override roundtrip + audit)가 이 기록의 정본 증적.
+- Cross-ref: REV-20260706T094937-runtime-settings · REV-20260707T110000-runtime-settings-auditfix · CHG-20260707T111500-runtime-settings-postverify.

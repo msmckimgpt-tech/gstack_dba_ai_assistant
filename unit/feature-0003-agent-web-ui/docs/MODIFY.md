@@ -5432,3 +5432,8 @@ source_of_truth: true
 - 변경: `app.py build_audit_change_json` 에 두 action builder 추가(update=setting_key+value, reset=setting_key; masked_fields=[]). 순수 additive(기존 action·동작 불변). `test_runtime_settings_api.py` 에 회귀 가드 2건(builder 반환 shape·action 문자열 = 라우터와 일치).
 - 영향: feature-0018 write 경로(설정 저장/초기화) 복구. 읽기 경로(GET registry)는 애초 정상(PB-0008 확인). 파괴적 변경 0.
 - Cross-ref: feature-0003 TASK/REVIEW/TEST 동일 slug · 선행 CHG-20260706T094937-runtime-settings.
+
+## CHG-20260707T111500-runtime-settings-postverify (feature-0018 + audit hotfix POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 에 POST-DEPLOY PB-0008 PASS Run append + TASK 완료 체크. 배포: PR #602→a7dcc436(feature) + PR #604→8d0a4723(audit hotfix), web 무중단 롤링 ×2.
+- 검증 요지: 설정 pane 3항목 렌더, 실행 타임아웃 22입력/6카테고리/즉시·재배포 배지, **env-fallback 실증**(300/600/180=.env 값), 모델 예산 2행 no-override input 비움, write-path e2e(저장→DB override→audit→초기화→DB 정리), pageerror 0. 증적 artifacts/feature-0018-runtime-settings/pb0008-runtime-settings-timeouts.png.
+- Cross-ref: CHG-20260706T094937-runtime-settings(feature) · CHG-20260707T110000-runtime-settings-auditfix(hotfix) · TEST.md §3 Run.
