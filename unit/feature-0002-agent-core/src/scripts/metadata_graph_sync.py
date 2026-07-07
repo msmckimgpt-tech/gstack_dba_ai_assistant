@@ -52,9 +52,13 @@ def main() -> int:
     since = mg.get_sync_watermark(args.scope) if incremental else None
 
     rep = mg.sync_graph(scope_key=args.scope, since=since)
-    rep["ok"] = int(rep.get("errors", 0)) == 0
-    # 성공 시 워터마크 전진(다음 --incremental 의 since). full·incremental 모두 저장 — full 후 증분 전환 대비.
-    if rep["ok"] and rep.get("synced_at"):
+    rep["ok"] = int(rep.get("errors", 0)) == 0 and int(rep.get("step_failures", 0) or 0) == 0
+    # 워터마크 전진(다음 --incremental 의 since). full·incremental 모두 저장 — full 후 증분 전환 대비.
+    # §56 RC1: per-row 데이터 오류(errors)는 결정적이라 재스캔해도 낫지 않는다 — errors 로 워터마크를
+    # 막으면 영구 고착돼 증분 sync 가 매 30분 전량 재스캔한다(라이브 실측: 07-06 07:30 고착 + 백필의
+    # updated_at 전진과 결합해 증분 창이 계속 팽창). **step 실패(step_failures — SELECT 불가·트랜잭션
+    # 붕괴 = 커버리지 구멍)만** 전진을 차단한다. per-row 오류는 sync_graph 가 warning 샘플로 노출.
+    if rep.get("synced_at") and int(rep.get("step_failures", 0) or 0) == 0:
         mg.set_sync_watermark(rep["synced_at"], scope_key=args.scope)
     if not args.quiet:
         print(json.dumps(rep, ensure_ascii=False))

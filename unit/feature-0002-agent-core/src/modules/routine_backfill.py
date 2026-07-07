@@ -100,16 +100,23 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
         _close(mem_conn)
 
     for key in sorted(ds_map.keys()):
-        if scope_filter and key != scope_filter:
-            continue
         ds = ds_map[key]
+        # §56 RC4(read-axis 정규화, ADR-014 규약): SSOT/그래프 키는 **read 축 scope**(DB-등록=
+        # 엔드포인트 해시 ds.scope_key, .env 레거시=라벨 lower)여야 한다. 종전엔 registry 라벨
+        # key('mssql-dk-dev')를 그대로 scope_key/datasource_key/sync_graph 에 써서 (a) insight
+        # cadence(해시 scope)와 **이중 적재**(라이브 실측: dk-dev 1,449행 × 2키) (b) 존재하지 않는
+        # label 스코프에 그래프 고아 투영 (c) RC2 external_tables 의 rag 조회(해시 키) 불일치로
+        # 크로스-DB 검증 무력화가 발생했다.
+        scope = str(ds.get("scope_key") or key).strip().lower()
+        if scope_filter and scope_filter not in (key, scope):
+            continue
         # TASK-0215 parity: 운영자가 insight 탐색을 끈 datasource 는 worker 와 동일하게 순회 제외
         # (비활성 사유가 부하/민감성일 수 있음) — 명시 --include-disabled 시에만 포함.
         if not include_disabled and ds and ds.get("insight_enabled") is False:
             report["datasources"][key] = {"skipped": "insight_enabled=0 (--include-disabled 로 강제 가능)"}
             continue
         engine = str(ds.get("engine") or "").strip().lower()
-        entry = {"engine": engine, "schemas": {}, "stored": 0}
+        entry = {"engine": engine, "scope": scope, "schemas": {}, "stored": 0}
         report["datasources"][key] = entry
         try:
             if engine.startswith("mssql"):
@@ -134,7 +141,7 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                                 entry["schemas"][slot] = "(dry-run)"
                                 continue
                             n = _routines.introspect_and_store(
-                                conn, sch, tables, scope_key=key, datasource_key=key,
+                                conn, sch, tables, scope_key=scope, datasource_key=scope,
                                 store_schema=dbname, cap=cap, prune=not multi)
                             entry["schemas"][slot] = int(n or 0)
                             entry["stored"] += int(n or 0)
@@ -154,7 +161,7 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                             continue
                         tables = _base_tables(conn, schema=sch)
                         n = _routines.introspect_and_store(
-                            conn, sch, tables, scope_key=key, datasource_key=key,
+                            conn, sch, tables, scope_key=scope, datasource_key=scope,
                             store_schema=sch, cap=cap, prune=True)
                         entry["schemas"][sch] = int(n or 0)
                         entry["stored"] += int(n or 0)
@@ -166,7 +173,7 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
             # scope 별 그래프 투영 — 변경분 upsert(멱등). dry-run 은 skip.
             if not dry_run and entry["stored"] > 0:
                 try:
-                    _mg.sync_graph(scope_key=key)
+                    _mg.sync_graph(scope_key=scope)   # §56 RC4: read-axis scope 로 투영(label 고아 방지)
                     entry["graph_synced"] = True
                 except Exception as exc:
                     report["errors"].append(f"{key}: sync_graph 실패: {exc!r}")
