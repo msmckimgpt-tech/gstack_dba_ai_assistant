@@ -1493,3 +1493,12 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **검증**: 신규 코어 14 + web 경계 9 테스트 PASS. 기존 enum-list 계약(source) + route 골든(197→200) 갱신. 호스트 전체 1581 passed. 컨테이너 make test 유일 실패(routine_dbanalysis, `postgres-replica` 미해석)는 main 격리 실행에서도 동일 재현 → 사전존재 --no-deps env 실패로 확정(본 변경 무관). ruff PASS.
 - **잔여**: PB-0008 Windows-browser 시각검증 = 정적 자산 baked·브리지 실 Chrome 필요 → **POST-DEPLOY** 수행(TEST.md §3 CHECK#13 사유 기록). 배포 시 `0039` 자동 마이그 적용 후 `alembic_version` 직접 검증(stale agent 이미지 마이그 누락 방어).
 - **후속 제안(§8.1, 기록만)**: ① 개별 "편집 후 채택"(승급 전 정의/라벨 수정) — 현재는 as-is 채택(용어사전 기존 동작과 동일), 필요 시 promote override 파라미터로 확장 · ② ENUM 후보 수집을 쿼리 결과/스키마 introspection 기반으로 보강(현재 LLM 대화 추론만) · ③ 샘플 검수 큐도 채택 인박스로 흡수 통합 검토.
+
+## 2026-07-07 — 메타데이터 콘솔 IA 통합(2차 보기 일반화) + 5서브뷰 디자인 폴리시 (metadata-console-redesign)
+- **트리거**: 직전 채택 인박스(REV-…-kb-candidate-adoption) 배포 후 사용자 실사용 피드백 — 최상위 `채택 인박스` 탭이 `용어사전 > 용어 검토 큐`와 겹치고 실질 종속(위 후속제안 ③의 역방향 결론: 흡수 대신 **분산 편입**이 정답). `샘플 검수` 탭도 동형. + 5서브뷰 디자인 저급. 사용자 결정: 구조 통합 + **전체 디자인 폴리시(감사 Top 10)**.
+- **접근(ultracode)**: Workflow #1(이해 5리더: 2차보기 템플릿·샘플/채택 제거면·디자인 감사·이전 교훈) → 설계 확정 → 채택인박스 제거(직접) → Step2-5 구현 위임(고강도 에이전트, 정밀 스펙) → §18.8 3렌즈 적대 패널 → findings 수정 위임 → 재검증.
+- **구조**: glossary 하드코딩 2차 보기(`subTab==="glossary"`)를 서브탭 파라미터화(`_METADATA_REVIEW`·`viewBySub`·`_metaSyncViews` 동적 버튼·`_metaIsReview`·`loadFeedbackQueue(kind)`). 채택 인박스 전량 제거(백엔드·enum-feedback API·`kb.enum.curate` 유지). ENUM→`ENUM 코드사전 > {목록|검토 큐}`, 샘플검수→`샘플쿼리 > {목록|검수 큐}`(#metadataList 재타깃), 최상위 탭 2개 제거.
+- **디자인(감사 Top 10 전부)**: `--surface-2` 토큰·rich empty+skeleton·enums/columns 테이블 카드 그룹핑(싱글턴 flat)·행 카드 기하·위계·폼 grid+인라인검증·SQL 프리뷰·필터바·배지 semantic 토큰(provenance=neutral)·이모지 제거+KPI. 기존 세련된 어휘 이식(신규 디자인 언어 0), light-only 준수.
+- **적대 검증의 값**: §18.8 패널이 위임 구현의 **실 blocking 회귀**(kb.enum.curate 게이트 누락 → enum-curate 단독 사용자 ENUM 검토 큐 접근 완전 상실) + MAJOR(ENUM 그룹 column 드롭) + HIGH(다크 토큰 회귀) 등 10건 적발 → 전부 수정. 위임+적대검증 파이프라인이 단독 구현보다 결함을 더 잡음을 실증.
+- **검증**: node --check OK · 제거 심볼 grep-0 · route 골든 불변 · 호스트 전체 **1637 passed**(회귀 0) · CSS 균형. XSS clean(순수 DOM 전환).
+- **잔여**: PB-0008 Windows-browser 시각검증 = POST-DEPLOY(정적 baked). UI-only 라 배포 = web 재빌드만(worker/마이그 불필요). m2(샘플 배지 백엔드 limit 캡)는 accept — 필요 시 백엔드에 uncapped pending count 추가 검토.
