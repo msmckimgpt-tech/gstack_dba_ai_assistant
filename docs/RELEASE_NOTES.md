@@ -206,3 +206,17 @@ edit_policy: append-only
 
 ### 정본
 - `unit/feature-0003-agent-web-ui/docs/*`(runtime-settings, TASK-20260706T094937 — feature-0018 코드 거주) · `unit/feature-0016-metadata-graph/docs/*`(§55, ADR-021, alembic 0038) · `unit/feature-0002-agent-core/docs/*`(edge-fallback) · `docs/improvements/conversation-audit/FRICTION_LEDGER.md`.
+
+## 2026-07-07 — feature-0002 / feature-0003 / feature-0016: 지식베이스 채택 인박스 + ENUM 대화 자율수집 · 메타데이터 콘솔 IA 통합 · 그래프 sync 견고화(§56) (07-07 후속 — 11:34 이후 머지분)
+
+### 변경 (관리자 영향 — 지식베이스)
+- **지식베이스 채택 인박스 + ENUM 코드사전 대화 자율수집 (0beb02e3)** — 대화 후보수집(용어사전+ENUM)을 통합 "채택 인박스"로 재구성. ENUM 코드사전을 용어사전(0021/0023)과 대칭으로 신설: 대화 답변 직후 `(table.column)` 코드↔라벨 후보를 LLM 으로 추론(threshold ≥0.9 자동승급, 미만 검토 큐) — `enum_dictionary.source`(manual|auto) 컬럼 + `enum_feedback` 검토 큐(alembic **0039**, 비파괴·멱등), 신규 권한 **`kb.enum.curate`**(admin seed·검토큐 promote/reject 게이트·catchup fail-closed lockout), enum-feedback API. UI: 신뢰도/상태별 그룹 카드 + 개별/일괄 채택·거부·되돌리기 + 사이드바 pending 배지. env: `AGENT_ENUM_AUTOPROPOSE`(기본 on)·`AGENT_ENUM_SUGGEST_MODEL`·`AGENT_ENUM_AUTOPROMOTE_THRESHOLD`(0.9)·`AGENT_ENUM_SUGGEST_MAX`(5).
+- **메타데이터 콘솔 IA 통합 + 5서브뷰 디자인 폴리시 (47a63b1a, UI 단독)** — 채택 인박스·샘플 검수 최상위 탭을 각 사전 하위 `{목록 | 검토/검수 큐}` 2차 보기로 통합(2차 보기 파라미터화). ENUM 후보=ENUM 코드사전 하위, 샘플 검수=샘플쿼리 하위. 5서브뷰 폴리시(`--surface-2` 토큰·rich empty+skeleton·테이블 카드 그룹핑·폼 grid+인라인검증·SQL 프리뷰·배지 semantic 토큰·이모지 제거+KPI). 백엔드/스키마/RBAC 정의 0.
+- **추론 강도별 예산 설정 (d9516aee)** — 런타임 설정(feature-0018)에 모델별 예산과 별개로 추론 강도(낮음/높음/매우 높음)별 `reasoning_budget` 축 추가(`shared/runtime_settings.py`·`_call_llm` 명시레벨 override·'일반'=no-override 무회귀). pane UI 정렬 grid + commit-bar 재설계(a2fe4103, 기능 불변).
+
+### 변경 (내부 — 관계도 데이터 정합, 화면 변화 없음)
+- **그래프 sync 견고화 §56 (fe05d6f8·94e2e411, feature-local ADR-022~023, 마이그 0)** — 루틴(함수/프로시저) sync 정합 RC1~5: `_sync_row_guard` SAVEPOINT 행 격리(실패 행만 롤백·연쇄/배치 소실 차단)·워터마크 전진 게이트(errors→step_failures)·크로스-DB ROUTINE_USES 참조 채택(parser qualifier 4규칙 + external_tables 실재검증 TTL 600s)·thin "연결 정보 없음" 공란 동치·backfill read-axis scope 정규화·MSSQL store label lower 정규화(`normalize_db_label`)+케이스-변형 행 멱등 자동 회수. POST-DEPLOY e2e 완수: errors 0·step_failures 0·크로스 ROUTINE_USES 1,041·case_purged 6,320(잔여 0)·워터마크 전진. + §55 그래프 화살표 데이터흐름 정합(쓰기=루틴→테이블 / 읽기·미상=테이블→루틴)+AI 능동 분석 지침 플로팅 툴팁(b0d9deb6).
+- **OAuth 토큰 갱신 cron 정적 검사 전환 (feature-0007, 058fec05)** — 라이브 probe 제거 → 정적 검사(CHG-20260707-oauth-cron-static-refresh).
+
+### 정본
+- `unit/feature-0002-agent-core/docs/*`(ENUM 자율수집·추론 강도별 예산) · `unit/feature-0003-agent-web-ui/docs/*`(채택 인박스 UI·콘솔 IA 통합) · `unit/feature-0016-metadata-graph/docs/*`(§56, feature-local ADR-022~023) · `unit/feature-0007-bedrock-llm-provider/docs/*`(oauth-cron-static).

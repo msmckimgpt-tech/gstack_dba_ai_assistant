@@ -122,6 +122,9 @@ sources:
 | **AI 운영 지연 KPI 재정의** | AI 운영 현황 "지연 p95" 를 호출 전체 왕복(생성 포함, 답변 길이 비례) → **추론 단계 간 간격** p50/p95 로 재정의(사용자 기준 정합). activity 상세 latency_ms="왕복" 병기. cross-unit(feature-0002 `agent_core._call_llm` 계측) | aiops-stepgap (TASK-20260703-aiops-ttft-latency, Major) |
 | **말풍선 ☰ 메뉴 통합** | 말풍선 액션(샘플 등록·여기서 분기·여기까지/여기부터 공유·'AI 로 고치기')을 kebab ☰ 메뉴로 통합, 피드백 👍/👎만 메뉴 밖 유지. share-visibility-window 공유 범위(여기부터) UI 동반 | [[feature-0009-group-conversation]] (정본, TASK-20260704-share-visibility-window) |
 | **런타임 설정 콘솔 (2026-07-07)** | 관리 콘솔 시스템>설정 pane 2 에 assistant 운영 값(실행 타임아웃·MCP 타임아웃·모델별 추론 예산) 조정·저장·live/restart 하이브리드 반영. `WebRuntimeSettings` 테이블 + `routers/admin_settings.py`(GET/PUT/DELETE, `system.runtime.read/write` RBAC+audit, autocommit=False 원자화). resolver 는 env-fallback 으로 배포 `.env` 존중(override 없으면 byte-동치). cross-unit(feature-0018 코드 거주 — `shared/runtime_settings.py`·feature-0002 live 배선) | TASK-20260706T094937-runtime-settings (feature-0018, Major, PB-0008 PASS) |
+| **지식베이스 채택 인박스 + ENUM 대화 자율수집 (2026-07-07)** | 대화 후보수집(용어사전+ENUM)을 통합 '채택 인박스'로 재구성 — 용어사전(0021/0023) 대칭 ENUM 코드사전 신설(신뢰도/상태별 그룹 카드·개별/일괄 채택·거부·되돌리기·사이드바 pending 배지), 권한 `kb.enum.curate`. cross-unit(feature-0002 `kb_glossary`·`_enum_autopropose`·`llm_enum_suggest`·alembic 0039 비파괴) | TASK-20260707-kb-candidate-adoption |
+| **메타데이터 콘솔 IA 통합 (2026-07-07)** | 채택 인박스·샘플 검수 최상위 탭을 각 사전 하위 {목록\|검토/검수 큐} 2차 보기로 통합(2차 보기 파라미터화 `_METADATA_REVIEW`/`viewBySub`/`_metaSyncViews`) + 5서브뷰 디자인 폴리시(`--surface-2` 토큰·rich empty/skeleton·테이블 카드 그룹핑·폼 grid+인라인검증·SQL 프리뷰·배지 semantic 토큰·이모지 제거+KPI). UI 단독·백엔드/RBAC 정의 0 | TASK-20260707-metadata-console-redesign |
+| **추론 강도별 예산 + 런타임 pane 재설계 (2026-07-07)** | 런타임 설정에 모델별 예산과 별개로 추론 강도(낮음/높음/매우 높음)별 `reasoning_budget` 축 추가(cross-unit feature-0002 `_call_llm` 명시레벨 override·'일반'=no-override) + pane UI 정렬 grid + commit-bar 배치 저장(기능 불변) | feature-0018 (d9516aee·a2fe4103) |
 
 ## 3. 특징
 
