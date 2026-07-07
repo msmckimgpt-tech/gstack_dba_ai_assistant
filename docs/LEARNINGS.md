@@ -325,6 +325,27 @@ AI 작업 중 발견된 교훈, 패턴, 주의사항을 누적 기록한다.
 - Mitigation: (1) Chrome 은 127.0.0.1 바인딩 그대로 두고, Windows 측 `netsh portproxy` relay 를 **vEthernet(WSL) IP 한정** 으로 세워 `<wsl-host>:9223 → 127.0.0.1:9222` forward (0.0.0.0 금지 — CDP 는 무인증이라 LAN 노출 시 브라우저 탈취). 또는 mirrored networking(`.wslconfig`)으로 loopback 공유 — 인바운드 hole 불요. (2) Playwright `connect_over_cdp(http_endpoint)` 는 endpoint host 로 ws host 를 정규화하므로 relay 경유 가능. `--remote-allow-origins` 는 `*` 대신 loopback+relay 의 구체 origin 으로 scope (DNS rebinding 방어 유지).
 - Applies to: WSL2 에서 실제 Windows 브라우저를 CDP 로 구동하는 모든 작업. `bin/win-browser.py` + `bin/WIN-BROWSER-SETUP.md` 참조.
 
+### LRN-20260707-0002 — 24/7 cron 이 "진단용" 라이브 API 호출을 하면, 그 계정을 쓰는 무관한 다른 시스템(세션 윈도우)까지 오염시킬 수 있다
+- Source: CHG-20260707-oauth-cron-static-refresh (unit/feature-0007-bedrock-llm-provider)
+- Quirk: `refresh-claude-oauth-token.sh` 가 30분마다 Anthropic `/v1/messages` 에
+  `max_tokens=1` ping(계정 사용량 소진을 정적 파일 검사로는 못 잡아 도입된 "라이브
+  probe")을 보내자, 이 실 API 호출 자체가 claude-corp 계정의 **5시간 rolling 세션
+  윈도우**를 `:00`/`:30` 격자에 계속 재고정시켰다. 그 결과 `session-keepalive-cron.sh`
+  (07:35/12:35 에 그 날의 첫 앵커 핑을 보내 업무시간과 윈도우를 정렬하려던 스크립트)가
+  이미 30분 전에 리셋된 윈도우를 만나 무력화되고, 리셋 시각이 예측 불가하게 드리프트했다.
+  두 스크립트는 서로를 모르고 각자 "합리적인" 일을 했을 뿐인데, **같은 계정의 공유
+  자원(rate-limit 윈도우)을 통해 간접 결합**돼 있었다.
+- Mitigation: "진단/폴백 판단"을 위한 라이브 API 호출을 cron 에 넣기 전에, (1) 이미
+  요청 경로에 반응형 fallback(예: litellm `fallbacks:` 체인)이 있는지 먼저 확인한다
+  — 있다면 사전 probe 는 대개 **구조적으로 중복**이다(반응형이 진짜 트래픽 기준으로
+  더 정확하다). (2) 정 필요하다면 그 API 호출이 계정의 다른 시간 기반 자원(rate-limit
+  윈도우, 세션, quota reset 등)에 부수효과를 주지 않는지 점검한다. (3) 관측이 필요하면
+  라이브 호출 대신 이미 발생한 트래픽의 로그(`docker compose logs` 등, 로컬 읽기)를
+  집계하는 쪽을 우선한다 — 과금·부수효과 없이 같은 가시성을 얻을 수 있는 경우가 많다.
+- Applies to: OAuth/API-key 로테이션, health-check, quota-probe 등 "매 N 분 실제
+  외부 호출"을 거는 모든 운영 cron — 특히 같은 자격증명을 대화형 세션(Claude Code
+  등)과 공유하는 계정.
+
 ## Category: preference
 
 ### LRN-20260326-0001 — `AGENTS.md`가 정책 정본, `CLAUDE.md`는 참조 shim

@@ -127,6 +127,39 @@ source_of_truth: true
 - Notes: `app.js` 의 `LEGACY_VAULT_KEYS.forEach(k => localStorage.removeItem(k))`
   + sessionStorage 동일 처리.
 
+### TEST-0007: refresh-claude-oauth-token.sh 정적 검사 단독 판정 (라이브 API 호출 없음)
+- Purpose: 라이브 probe 제거 후 `--check` 모드가 실 자격증명 파일만으로
+  claude-corp/root 두 slot 을 올바르게 판정하는지, docker 미가용 환경에서도
+  script 가 abort 없이 완주하는지 확인.
+- Steps:
+  1. `bash -n bin/refresh-claude-oauth-token.sh` (syntax).
+  2. `bash bin/refresh-claude-oauth-token.sh --check` (실 `.env.bedrock` 대상,
+     변경 없음).
+  3. `PATH=<python3/coreutils 만> bash bin/refresh-claude-oauth-token.sh --check`
+     (docker 없는 환경 시뮬레이션).
+- Expected Result: 1) syntax OK. 2) 두 slot 모두 "동일"(현재 주입된 토큰과
+  일치) 또는 "변경" 판정, 라이브 HTTP 호출 없음. 3) exit 0, 관측 함수만
+  조용히 스킵.
+- Notes: `docker compose logs` 호출은 로컬 컨테이너 stdout 읽기이며 Anthropic
+  API 호출이 아니다 — 이 테스트는 "정적 검사만으로 완주"를 확인하는 것이지
+  "docker 명령 자체가 없다"를 의미하지 않는다.
+
+### TEST-0008: litellm fallback 이 401/429 모두에서 작동함 (코드 검증)
+- Purpose: cron probe 제거의 안전성 전제 — litellm 요청-레벨 fallback 이
+  AuthenticationError(401) 뿐 아니라 RateLimitError(429) 에도 실제로 작동하는지
+  확인.
+- Steps: 게이트웨이 컨테이너(`repo-bedrock-gateway-1`) 내부 `/app/litellm/router.py`
+  를 직접 읽어 `should_retry_this_error` / `async_function_with_fallbacks_common_utils`
+  의 예외 타입 분기 로직 확인.
+- Expected Result: ContextWindowExceededError/ContentPolicyViolationError 만
+  특별 처리(각 fallback 리스트 유무로 분기)되고, AuthenticationError·
+  RateLimitError 를 포함한 그 외 예외는 모두 동일하게
+  `async_function_with_fallbacks_common_utils` → 정규 `fallbacks:` 체인을 탄다.
+- Notes: 라이브 429/401 유발 실험은 실제 계정 rate-limit/토큰 무효화를 필요로
+  해 재현 비용이 크고 프로덕션 계정에 부담을 주므로, 코드 레벨 검증으로 대체.
+  실제 fallback 동작 사례는 최근 로그에서 `claude-haiku-4-root` 로의 우회 1건
+  관측(정상 발생).
+
 ## 3. Test Run History
 
 <!-- append-only — 본 cycle 의 실제 실행 결과는 Phase E 진입 시 추가 -->
@@ -194,6 +227,29 @@ source_of_truth: true
     `claude-sonnet-4` 그대로 반환 — backend / audit 의 model 식별 정합 유지.
   - 운영 cleanup: gateway 컨테이너 + 격리 network 는 본 cycle 종료 시점에
     `docker compose -p feature-0007-e down` 으로 정리.
+
+### Run 2026-07-07-001 (cron-static-refresh 검증)
+- Date: 2026-07-07
+- Environment: 운영 호스트(WSL2 Linux), 실 `.env.bedrock` + `/root/.claude`,
+  `/home/claude-corp/.claude` credentials, 운영 중인 `repo-bedrock-gateway-1`
+  컨테이너(main-stable litellm).
+- Runner: AI (Claude)
+- Result Summary: TEST-0007 PASS, TEST-0008 PASS(코드 검증).
+- Pass/Fail:
+  - TEST-0007: **PASS**. `bash -n` OK. `--check` 2 회(기본 35m 창 / 72h 창)
+    모두 claude-corp/root "동일" 정상 판정, RateLimitError/AuthenticationError
+    0건(무음, 정상). `docker` 제거 PATH 에서도 exit 0 완주.
+  - TEST-0008: **PASS**. `router.py` 5867~6320 라인 확인 — 401/429 모두
+    fallback 경로 진입 확인. 최근 72h 로그에는 실제 RateLimitError/
+    AuthenticationError 발생 0건(계정이 실제로 rate-limit 에 걸리지 않은
+    기간이라 반응형 fallback 발동 사례 자체가 없었음 — 정상. 과거 로그에서
+    `claude-haiku-4-root` 로의 우회 1건은 관측됨).
+- Notes:
+  - 발견 (본 cycle 범위 밖 버그): `claude-haiku-4-chat-root` alias 가
+    `max_tokens must be greater than thinking.budget_tokens` BadRequestError 로
+    반복 실패 — §7 Human Attention Needed 에 별도 기록, 본 cycle 미수정.
+  - crontab 변경은 git 미추적 runtime 상태 — 백업 `/tmp/crontab-root-backup-
+    20260707112835.txt`, 설치 확인 `crontab -l` diff 로 일치 확인.
 
 ## 4. Untested Areas
 
