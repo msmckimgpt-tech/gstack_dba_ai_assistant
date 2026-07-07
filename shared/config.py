@@ -336,6 +336,18 @@ except Exception:  # pragma: no cover
 
 console = Console()
 
+# feature-0018 runtime-settings: 관리 콘솔(`시스템 > 설정`)에서 저장한 restart-mode override 를
+# import 시 1회 반영한다(공유 볼륨 스냅샷 → 다음 재배포/재시작 시 적용). 방어적 import —
+# runtime_settings 가 어떤 이유로든 실패해도 config 는 절대 깨지지 않고 env 기본값을 그대로 쓴다.
+# runtime_settings 는 shared.config 를 import 하지 않으므로 순환이 없고, DB 를 만지지 않으므로
+# import-time 안전하다. override 미설정/파일부재/kill-switch 면 env_default 를 그대로 반환해
+# 기존 동작과 byte-동치가 유지된다.
+try:
+    from shared.runtime_settings import startup_int as _startup_int
+except Exception:  # pragma: no cover
+    def _startup_int(key, env_default):  # type: ignore[misc]
+        return env_default
+
 DB_HOST = os.getenv("DB_HOST", "mysql")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
@@ -602,7 +614,7 @@ AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1024") or "102
 # QUERIES 섹션을 주입 안 함 — ITEM-01 harness A/B(샘플 off/on) 측정 + 안전 롤백 스위치.
 AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
-AGENT_KB_EMBEDDING_TIMEOUT_SEC = int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60")
+AGENT_KB_EMBEDDING_TIMEOUT_SEC = _startup_int("AGENT_KB_EMBEDDING_TIMEOUT_SEC", int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60"))
 AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
 # CHG-20260625: 상호작용(준비 단계) 질의 임베딩 전용 fast-fail timeout. 위
 # AGENT_KB_EMBEDDING_TIMEOUT_SEC(60s)/AGENT_TIMEOUT_SEC(300s) 는 오프라인 배치
@@ -610,7 +622,7 @@ AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS
 # 백엔드 지연 시 그 길이만큼 init 을 블로킹하던 회귀(준비 50s)의 한 축이었다.
 # grounding 임베딩은 실패해도 trigram 으로 graceful degrade 되므로 짧게 끊어 빠르게
 # 폴백한다(전용 embed-ollama warm 실측 0.33s — 20s 면 cold·일시지연도 충분히 흡수).
-AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "20") or "20")
+AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = _startup_int("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "20") or "20"))
 # ITEM-05 (하이브리드 검색 — 벡터+키워드 score fusion). gate ON 시 PG read path
 # (_load_rag_documents_for_request_pg) 가 벡터(cosine)+trigram(pg_trgm) 검색을 둘 다 수행해
 # (conversation_id, fact_key, content) union 병합 후 score = ALPHA·vec_sim + BETA·trigram_sim 으로
@@ -831,7 +843,7 @@ AGENT_TOP_N = int(os.getenv("AGENT_TOP_N", "200"))
 AGENT_MAX_SHOW = int(os.getenv("AGENT_MAX_SHOW", "10"))
 AGENT_TABLE_MAX_COLS = int(os.getenv("AGENT_TABLE_MAX_COLS", "12"))
 AGENT_TABLE_MAX_COL_WIDTH = int(os.getenv("AGENT_TABLE_MAX_COL_WIDTH", "24"))
-AGENT_TIMEOUT_SEC = int(os.getenv("AGENT_TIMEOUT_SEC", "60"))
+AGENT_TIMEOUT_SEC = _startup_int("AGENT_TIMEOUT_SEC", int(os.getenv("AGENT_TIMEOUT_SEC", "60")))
 
 # ── 무거운 쿼리 자가규제 (TASK-0172, DESIGN-self-interrupt §11) ──
 # execute_sql(LLM freeform 분석 SELECT) 의 사전 EXPLAIN 게이팅 + per-query 시간 cap.
@@ -874,7 +886,7 @@ AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "128"))
 AGENT_COLUMN_SCAN_LIMIT = int(os.getenv("AGENT_COLUMN_SCAN_LIMIT", "2000"))
 AGENT_GLOBAL_KB_MIN_WEIGHT = int(os.getenv("AGENT_GLOBAL_KB_MIN_WEIGHT", "4"))
 AGENT_GLOBAL_KB_MAX_ENTRIES = int(os.getenv("AGENT_GLOBAL_KB_MAX_ENTRIES", "80"))
-AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC = int(os.getenv("AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC", "3"))
+AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC = _startup_int("AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC", int(os.getenv("AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC", "3")))
 AGENT_GLOBAL_KB_FACTS = os.getenv("AGENT_GLOBAL_KB_FACTS", "1").strip().lower() in ("1", "true", "yes")
 AGENT_GLOBAL_KB_SHARE_ACROSS_SESSIONS = (
     os.getenv("AGENT_GLOBAL_KB_SHARE_ACROSS_SESSIONS", "1").strip().lower() in ("1", "true", "yes")
@@ -1021,7 +1033,7 @@ AGENT_RELATIONSHIP_PROBE_SAMPLE = int(os.getenv("AGENT_RELATIONSHIP_PROBE_SAMPLE
 # 프로브 statement 시간 상한(ms). 운영 DB 상 unindexed 키 컬럼 대상 correlated EXISTS 폭주 차단
 # (보안 패널 MINOR — _fk_raw_execute 가 _apply_query_cap 을 우회). MySQL=MAX_EXECUTION_TIME 힌트,
 # MSSQL=SET LOCK_TIMEOUT(락 대기 상한). 0 이면 미적용.
-AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = int(os.getenv("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", "5000") or "5000")
+AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = _startup_int("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", int(os.getenv("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", "5000") or "5000"))
 # feature-0016 graph-funcproc(ADR-016): 함수·프로시저(routine) introspection 토글·캡. 기본 ON.
 #  - insight worker 가 관계 유지보수 게이트(rel_maintenance_due)와 같은 cadence 로
 #    INFORMATION_SCHEMA.ROUTINES/PARAMETERS 를 조회해 routine_objects(SSOT)에 upsert →
@@ -1101,7 +1113,7 @@ AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "
 #   data-plane(원격 customer datasource) connect 에만 적용 — 로컬 control-plane(memory
 #   DB, datasource=None)은 AGENT_TIMEOUT_SEC 유지(동작 0 변경). 0/미설정이면 비활성
 #   (= AGENT_TIMEOUT_SEC 폴백, 기존 동작).
-AGENT_DB_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10"))
+AGENT_DB_CONNECT_TIMEOUT_SEC = _startup_int("AGENT_DB_CONNECT_TIMEOUT_SEC", int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10")))
 # ── control-plane 연결 격리 (TASK-0255) ───────────────────────────────────────
 # 문제: control-plane(datasource=None: MEMORY_DB/DB_CONNECT_DB/replica/data-RO) MySQL 연결은
 # connection_timeout=AGENT_TIMEOUT_SEC(운영 300s)를 그대로 써, control-plane 이 불안정하면 insight
@@ -1110,7 +1122,7 @@ AGENT_DB_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10
 # 해결: 연결 *수립* 상한을 쿼리 예산과 분리(기본 10s). control-plane 은 로컬·신뢰 호스트라 안전.
 #   **breaker 는 적용하지 않는다**(MEMORY_DB fast-fail=전체 마비) — timeout 만 bounded.
 #   0/미설정이면 코드 폴백 10s(AGENT_TIMEOUT_SEC 300s 회귀 방지 — data-plane 폴백과 다름).
-AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC", "10"))
+AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC = _startup_int("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC", int(os.getenv("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC", "10")))
 # ── 연결 health 모니터 (conn-health-monitor) — modules/conn_health.py ──────────
 # 백그라운드 probe(TCP 선검사 + 실제 DB connect+SELECT 1)로 per-datasource 연결 상태를
 # 미리 유지. agent/admin 은 미리 계산된 상태를 즉시 읽어, 한 datasource 불안정이 다른
@@ -1118,9 +1130,16 @@ AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONTROLPLANE
 # 실제 DB probe timeout=적응형 1s→×2→MAX(10s). ENABLED=0 이면 모니터 미시작 + gate
 # 비활성(기존 동작 0 변경). (구 TASK-0247 in-process breaker 는 본 모니터로 흡수·대체됨.)
 AGENT_CONN_HEALTH_ENABLED = os.getenv("AGENT_CONN_HEALTH_ENABLED", "1").strip().lower() in ("1", "true", "yes")
-AGENT_CONN_PROBE_TIMEOUT_MS_BASE = max(10, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_BASE", "100") or "100"))
+AGENT_CONN_PROBE_TIMEOUT_MS_BASE = _startup_int(
+    "AGENT_CONN_PROBE_TIMEOUT_MS_BASE",
+    max(10, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_BASE", "100") or "100")),
+)
 AGENT_CONN_PROBE_TIMEOUT_MS_MAX = max(
-    AGENT_CONN_PROBE_TIMEOUT_MS_BASE, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_MAX", "10000") or "10000")
+    AGENT_CONN_PROBE_TIMEOUT_MS_BASE,
+    _startup_int(
+        "AGENT_CONN_PROBE_TIMEOUT_MS_MAX",
+        int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_MAX", "10000") or "10000"),
+    ),
 )
 # healthy 재확인 주기(초) / unstable 재probe 간격(초, base→×2→MAX backoff).
 AGENT_CONN_HEALTHY_RECHECK_SEC = max(1, int(os.getenv("AGENT_CONN_HEALTHY_RECHECK_SEC", "30") or "30"))
@@ -1147,7 +1166,10 @@ AGENT_CONN_STALE_GRACE_SEC = max(5, int(os.getenv("AGENT_CONN_STALE_GRACE_SEC", 
 # 미설정 시 구 BASE 와 5000 중 큰 값으로 폴백(하위호환 안전).
 AGENT_CONN_TCP_TIMEOUT_MS = max(
     AGENT_CONN_PROBE_TIMEOUT_MS_BASE,
-    int(os.getenv("AGENT_CONN_TCP_TIMEOUT_MS", "5000") or "5000"),
+    _startup_int(
+        "AGENT_CONN_TCP_TIMEOUT_MS",
+        int(os.getenv("AGENT_CONN_TCP_TIMEOUT_MS", "5000") or "5000"),
+    ),
 )
 # 느림 임계(ms) — 연결은 성공했지만 elapsed_ms 가 이 값 이상이면 healthy 가 아니라 unstable(빨강,
 # "연결 불안정")로 분류. 다른 리전 등 느린(하지만 살아있는) datasource 를 정상(초록)과 구분한다.
@@ -1196,9 +1218,9 @@ AGENT_INSIGHT_OBJECT_MAX_CANDIDATES = int(os.getenv("AGENT_INSIGHT_OBJECT_MAX_CA
 AGENT_INSIGHT_OBJECT_VERIFY_ONCE = (
     os.getenv("AGENT_INSIGHT_OBJECT_VERIFY_ONCE", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS = int(
+AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS = _startup_int("AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS", int(
     os.getenv("AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS", "1500")
-)
+))
 AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH = (
     os.getenv("AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH", "1").strip().lower()
     in ("1", "true", "yes")
@@ -1210,15 +1232,15 @@ AGENT_RAG_PRIORITY_SHORT_CIRCUIT_ALLOW_WITH_PASSTHROUGH = (
     os.getenv("AGENT_RAG_PRIORITY_SHORT_CIRCUIT_ALLOW_WITH_PASSTHROUGH", "0").strip().lower()
     in ("1", "true", "yes")
 )
-AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC = int(
+AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC = _startup_int("AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC", int(
     os.getenv("AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC", "20")
-)
+))
 AGENT_SQL_GROUNDED_REVIEW = (
     os.getenv("AGENT_SQL_GROUNDED_REVIEW", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC = int(
+AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC = _startup_int("AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC", int(
     os.getenv("AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC", "12")
-)
+))
 AGENT_SQL_GROUNDED_REWRITE_ON_FAIL = (
     os.getenv("AGENT_SQL_GROUNDED_REWRITE_ON_FAIL", "1").strip().lower() in ("1", "true", "yes")
 )
@@ -1228,9 +1250,9 @@ AGENT_SQL_GROUNDED_BLOCK_ON_FAIL = (
 AGENT_KNOWLEDGE_SQL_FALLBACK = (
     os.getenv("AGENT_KNOWLEDGE_SQL_FALLBACK", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC = int(
+AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC = _startup_int("AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC", int(
     os.getenv("AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC", "20")
-)
+))
 AGENT_KNOWLEDGE_SQL_FALLBACK_MAX_OBJECT_TRIES = int(
     os.getenv("AGENT_KNOWLEDGE_SQL_FALLBACK_MAX_OBJECT_TRIES", "2")
 )
@@ -1272,22 +1294,22 @@ AGENT_FACT_SINGLE_KEY_PREFIXES = tuple(
 AGENT_SCHEMA_BIAS_STEP_WINDOW = int(os.getenv("AGENT_SCHEMA_BIAS_STEP_WINDOW", "10"))
 AGENT_SCHEMA_BIAS_THRESHOLD = float(os.getenv("AGENT_SCHEMA_BIAS_THRESHOLD", "0.45"))
 AGENT_SCHEMA_BIAS_PENALTY = int(os.getenv("AGENT_SCHEMA_BIAS_PENALTY", "4"))
-AGENT_INSIGHT_TIMEOUT_SEC = int(os.getenv("AGENT_INSIGHT_TIMEOUT_SEC", "30"))
-AGENT_PLAN_TIMEOUT_SEC = int(os.getenv("AGENT_PLAN_TIMEOUT_SEC", "35"))
-AGENT_PLAN_TIMEOUT_RECOVERY_SEC = int(os.getenv("AGENT_PLAN_TIMEOUT_RECOVERY_SEC", "20"))
-AGENT_PLAN_TIMEOUT_MIN_SEC = int(os.getenv("AGENT_PLAN_TIMEOUT_MIN_SEC", "8"))
+AGENT_INSIGHT_TIMEOUT_SEC = _startup_int("AGENT_INSIGHT_TIMEOUT_SEC", int(os.getenv("AGENT_INSIGHT_TIMEOUT_SEC", "30")))
+AGENT_PLAN_TIMEOUT_SEC = _startup_int("AGENT_PLAN_TIMEOUT_SEC", int(os.getenv("AGENT_PLAN_TIMEOUT_SEC", "35")))
+AGENT_PLAN_TIMEOUT_RECOVERY_SEC = _startup_int("AGENT_PLAN_TIMEOUT_RECOVERY_SEC", int(os.getenv("AGENT_PLAN_TIMEOUT_RECOVERY_SEC", "20")))
+AGENT_PLAN_TIMEOUT_MIN_SEC = _startup_int("AGENT_PLAN_TIMEOUT_MIN_SEC", int(os.getenv("AGENT_PLAN_TIMEOUT_MIN_SEC", "8")))
 AGENT_AUX_SKIP_NEAR_DEADLINE_MS = int(
     os.getenv("AGENT_AUX_SKIP_NEAR_DEADLINE_MS", "15000")
 )
-AGENT_RAG_PRIORITY_TIMEOUT_SEC = int(
+AGENT_RAG_PRIORITY_TIMEOUT_SEC = _startup_int("AGENT_RAG_PRIORITY_TIMEOUT_SEC", int(
     os.getenv("AGENT_RAG_PRIORITY_TIMEOUT_SEC", "12")
-)
+))
 AGENT_RAG_PRIORITY_FIRST = (
     os.getenv("AGENT_RAG_PRIORITY_FIRST", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_OBJECT_RESOLVE_TIMEOUT_SEC = int(
+AGENT_OBJECT_RESOLVE_TIMEOUT_SEC = _startup_int("AGENT_OBJECT_RESOLVE_TIMEOUT_SEC", int(
     os.getenv("AGENT_OBJECT_RESOLVE_TIMEOUT_SEC", "8")
-)
+))
 AGENT_OBJECT_RESOLVE_BATCH_SIZE = int(
     os.getenv("AGENT_OBJECT_RESOLVE_BATCH_SIZE", "40")
 )
@@ -1318,9 +1340,9 @@ AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC = int(
 AGENT_INSIGHT_WORKER_JITTER_SEC = int(
     (os.getenv("AGENT_INSIGHT_WORKER_JITTER_SEC", "0") or "0").strip()
 )
-AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC = int(
+AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC = _startup_int("AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC", int(
     (os.getenv("AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC", "1") or "1").strip()
-)
+))
 AGENT_INSIGHT_WORKER_STALE_SEC = int(
     (os.getenv("AGENT_INSIGHT_WORKER_STALE_SEC", "15") or "15").strip()
 )
@@ -1382,7 +1404,7 @@ AGENT_ASK_WORKER_CONVERSATION_ID = "__ask_worker__"
 AGENT_ASK_WORKER_HEARTBEAT_KEY = "ask_worker_last_cycle_at"
 
 MCP_URL = os.getenv("MCP_URL", "http://mcp:5000/mcp")
-MCP_TIMEOUT_SEC = int(os.getenv("MCP_TIMEOUT_SEC", "20"))
+MCP_TIMEOUT_SEC = _startup_int("MCP_TIMEOUT_SEC", int(os.getenv("MCP_TIMEOUT_SEC", "20")))
 MCP_PROTOCOL = os.getenv("MCP_PROTOCOL", "jsonrpc").lower()
 MCP_SESSION_ID = None
 MCP_REQUEST_ID = 1

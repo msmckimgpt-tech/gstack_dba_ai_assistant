@@ -1,0 +1,250 @@
+"""feature-0018 runtime-settings — 레지스트리·resolver·스냅샷·검증 단위 테스트.
+
+DB 불요(순수). 스냅샷 파일 I/O 는 tmp_path 로 격리한다. config.py 의 restart-mode 반영은
+서브프로세스로 검증(모듈 전역 오염·재로딩 부작용 회피).
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+from shared import runtime_settings as rs
+
+
+@pytest.fixture
+def snap(tmp_path, monkeypatch):
+    """격리된 스냅샷 경로 + 캐시 리셋 픽스처. write(dict) 로 override 를 쓴다."""
+    path = tmp_path / "runtime_settings.json"
+    monkeypatch.setenv("RUNTIME_SETTINGS_SNAPSHOT_PATH", str(path))
+    monkeypatch.delenv("RUNTIME_SETTINGS_DISABLED", raising=False)
+    # 리터럴-기본값 경로를 결정적으로 하려면 배포 env 변수를 비운다(운영 .env=300 오염 방지).
+    for _k in ("AGENT_TIMEOUT_SEC", "MCP_TIMEOUT_SEC", "AGENT_DB_CONNECT_TIMEOUT_SEC"):
+        monkeypatch.delenv(_k, raising=False)
+    # 캐시 초기화(다른 테스트가 남긴 상태 격리).
+    rs._cache["overrides"] = None
+    rs._cache["loaded_at"] = 0.0
+    rs._cache["frozen"] = None
+
+    def _write(overrides):
+        rs.write_snapshot(overrides)
+
+    return _write
+
+
+# ── 레지스트리 ──────────────────────────────────────────────────────────────
+def test_registry_has_timeouts_and_model_budgets():
+    reg = rs.serialize_registry({})
+    assert len(reg["timeouts"]) >= 20, "현재 구성된 timeout 을 모두 등록해야 한다"
+    # 카탈로그의 thinking 지원 모델(claude-*)마다 예산 항목이 자동 생성된다.
+    keys = {m["key"] for m in reg["model_thinking_budgets"]}
+    assert "model_thinking_budget:claude-sonnet-4" in keys
+    assert "model_thinking_budget:claude-haiku-4" in keys
+
+
+def test_flagship_timeout_is_live_mode():
+    spec = rs.spec_for("AGENT_TIMEOUT_SEC")
+    assert spec is not None and spec["apply_mode"] == "live"
+    assert rs.spec_for("MCP_TIMEOUT_SEC")["apply_mode"] == "live"
+    # 저수준 커넥션 timeout 은 restart 여야 한다(라이브 변경 위험 회피).
+    assert rs.spec_for("AGENT_DB_CONNECT_TIMEOUT_SEC")["apply_mode"] == "restart"
+
+
+def test_defaults_match_known_config_values():
+    # config.py env 기본값과 동일해야 byte-동치가 보장된다(대표값 점검).
+    assert rs.spec_for("AGENT_TIMEOUT_SEC")["default"] == 60
+    assert rs.spec_for("MCP_TIMEOUT_SEC")["default"] == 20
+    assert rs.spec_for("AGENT_DB_CONNECT_TIMEOUT_SEC")["default"] == 10
+
+
+# ── resolver: get_int / clamp / override ────────────────────────────────────
+def test_get_int_returns_default_without_snapshot(snap):
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == 60
+
+
+def test_get_int_applies_override(snap):
+    snap({"AGENT_TIMEOUT_SEC": 120})
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == 120
+
+
+def test_get_int_env_fallback_when_no_override(snap, monkeypatch):
+    # 회귀 가드(BLOCKING): 운영 .env(AGENT_TIMEOUT_SEC=300) 를 존중해야 한다. override 없으면
+    # 스펙 리터럴(60) 이 아니라 env(300) 를 반환 — 그렇지 않으면 라이브 실행 timeout 이 300→60 회귀.
+    monkeypatch.setenv("AGENT_TIMEOUT_SEC", "300")
+    snap({})  # override 없음
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == 300
+
+
+def test_get_int_override_beats_env(snap, monkeypatch):
+    monkeypatch.setenv("AGENT_TIMEOUT_SEC", "300")
+    snap({"AGENT_TIMEOUT_SEC": 90})
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == 90  # console override 가 env 를 이긴다
+
+
+def test_serialize_default_reflects_env_baseline(snap, monkeypatch):
+    monkeypatch.setenv("AGENT_TIMEOUT_SEC", "300")
+    reg = rs.serialize_registry({})
+    row = next(r for r in reg["timeouts"] if r["key"] == "AGENT_TIMEOUT_SEC")
+    # default(초기화 기준) = env 배포값, code_default = 스펙 리터럴.
+    assert row["default"] == 300 and row["code_default"] == 60 and row["effective"] == 300
+
+
+def test_get_int_clamps_out_of_range(snap):
+    snap({"AGENT_TIMEOUT_SEC": 10**9})
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == rs.spec_for("AGENT_TIMEOUT_SEC")["maximum"]
+    snap({"AGENT_TIMEOUT_SEC": 1})  # below min 5
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == rs.spec_for("AGENT_TIMEOUT_SEC")["minimum"]
+
+
+def test_disabled_killswitch_ignores_override(snap, monkeypatch):
+    snap({"AGENT_TIMEOUT_SEC": 120})
+    monkeypatch.setenv("RUNTIME_SETTINGS_DISABLED", "1")
+    rs.invalidate_cache()
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == 60
+
+
+# ── startup_int (config.py restart 경로 mechanism) ──────────────────────────
+def test_startup_int_frozen_reads_snapshot(snap):
+    snap({"AGENT_DB_CONNECT_TIMEOUT_SEC": 25})
+    assert rs.startup_int("AGENT_DB_CONNECT_TIMEOUT_SEC", 10) == 25
+
+
+def test_startup_int_falls_back_to_env_default(snap):
+    # override 미설정 → env_default 그대로(byte-동치 보장).
+    assert rs.startup_int("AGENT_DB_CONNECT_TIMEOUT_SEC", 10) == 10
+
+
+def test_startup_int_unregistered_key_returns_env_default(snap):
+    snap({"NOT_A_REAL_KEY": 5})
+    assert rs.startup_int("NOT_A_REAL_KEY", 99) == 99
+
+
+# ── model thinking budget override (B1 무회귀) ──────────────────────────────
+def test_model_budget_override_none_without_setting(snap):
+    # 미설정 → None → _call_llm 이 주입 안 함 → 모델 config 기본값 유지(B1).
+    assert rs.model_thinking_budget_override("claude-sonnet-4") is None
+
+
+def test_model_budget_override_applies_and_clamps(snap):
+    snap({"model_thinking_budget:claude-sonnet-4": 9000})
+    assert rs.model_thinking_budget_override("claude-sonnet-4") == 9000
+    snap({"model_thinking_budget:claude-sonnet-4": 10**6})
+    assert rs.model_thinking_budget_override("claude-sonnet-4") == 16000  # max cap
+    snap({"model_thinking_budget:claude-sonnet-4": 10})
+    assert rs.model_thinking_budget_override("claude-sonnet-4") == 1024  # min (Anthropic)
+
+
+def test_model_budget_override_unknown_model_none(snap):
+    snap({"model_thinking_budget:gpt-hypothetical": 5000})
+    assert rs.model_thinking_budget_override("gpt-hypothetical") is None
+
+
+# ── validate_value (endpoint PUT) ───────────────────────────────────────────
+def test_validate_accepts_in_range():
+    ok, val, err = rs.validate_value("AGENT_TIMEOUT_SEC", "90")
+    assert ok and val == 90 and err is None
+
+
+def test_validate_rejects_out_of_range():
+    ok, val, err = rs.validate_value("AGENT_TIMEOUT_SEC", 2)
+    assert not ok and val is None and "범위" in err
+
+
+def test_validate_rejects_non_integer():
+    ok, val, err = rs.validate_value("AGENT_TIMEOUT_SEC", "abc")
+    assert not ok and "정수" in err
+
+
+def test_validate_rejects_unregistered_key():
+    ok, val, err = rs.validate_value("BOGUS_KEY", 5)
+    assert not ok
+
+
+def test_validate_rejects_bool():
+    # bool 은 int 서브클래스지만 명시적으로 거부(오입력 방지).
+    ok, val, err = rs.validate_value("AGENT_TIMEOUT_SEC", True)
+    assert not ok
+
+
+# ── 스냅샷 I/O ──────────────────────────────────────────────────────────────
+def test_write_snapshot_roundtrip(snap, tmp_path):
+    snap({"AGENT_TIMEOUT_SEC": 77})
+    path = os.environ["RUNTIME_SETTINGS_SNAPSHOT_PATH"]
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    assert data["overrides"]["AGENT_TIMEOUT_SEC"] == 77
+
+
+def test_missing_snapshot_is_fail_open(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNTIME_SETTINGS_SNAPSHOT_PATH", str(tmp_path / "nope.json"))
+    rs.invalidate_cache()
+    rs._cache["frozen"] = None
+    assert rs.get_int("AGENT_TIMEOUT_SEC") == 60  # 부재 → 기본값
+
+
+def test_serialize_timeout_row_shape(snap):
+    # 렌더-임계 계약(적대 QA MEDIUM): timeout 행이 프론트가 읽는 필드를 모두 담아야 한다.
+    reg = rs.serialize_registry({})
+    row = next(r for r in reg["timeouts"] if r["key"] == "AGENT_TIMEOUT_SEC")
+    for f in ("key", "category", "label", "description", "unit", "default", "code_default",
+              "minimum", "maximum", "apply_mode", "effective", "has_override"):
+        assert f in row, f"timeout row missing render field: {f}"
+
+
+def test_serialize_model_row_shape(snap):
+    reg = rs.serialize_registry({})
+    row = next(r for r in reg["model_thinking_budgets"] if r["model"] == "claude-sonnet-4")
+    for f in ("key", "model", "label", "default", "code_default", "minimum", "maximum",
+              "apply_mode", "effective", "has_override", "default_known"):
+        assert f in row, f"model row missing render field: {f}"
+    assert row["default_known"] is True and row["default"] == 16000
+
+
+def test_get_int_unregistered_ignores_snapshot_override(snap):
+    # 방어(적대 security LOW): 미등록 키의 스냅샷 값은 신뢰하지 않는다.
+    snap({"TOTALLY_UNREGISTERED_KEY": 12345})
+    assert rs.get_int("TOTALLY_UNREGISTERED_KEY") == 0
+
+
+def test_controlplane_connect_min_floor():
+    # 가용성 foot-gun 방지(적대 security LOW): 컨트롤플레인 연결 timeout 최소 3초.
+    assert rs.spec_for("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC")["minimum"] == 3
+
+
+def test_serialize_registry_marks_override(snap):
+    reg = rs.serialize_registry({"AGENT_TIMEOUT_SEC": 111})
+    row = next(r for r in reg["timeouts"] if r["key"] == "AGENT_TIMEOUT_SEC")
+    assert row["has_override"] is True and row["effective"] == 111 and row["override_value"] == 111
+    other = next(r for r in reg["timeouts"] if r["key"] == "MCP_TIMEOUT_SEC")
+    assert other["has_override"] is False and other["effective"] == other["default"]
+
+
+# ── config.py restart-mode 반영 (서브프로세스 — 모듈 재로딩 부작용 격리) ──────
+def test_config_applies_restart_override_at_import(tmp_path):
+    """config.py 가 import 시 스냅샷의 restart-mode override 를 상수에 반영하는지 검증."""
+    snap_path = tmp_path / "rs.json"
+    snap_path.write_text(json.dumps({"overrides": {"AGENT_DB_CONNECT_TIMEOUT_SEC": 27}}), encoding="utf-8")
+    env = dict(os.environ)
+    env["RUNTIME_SETTINGS_SNAPSHOT_PATH"] = str(snap_path)
+    # 오버라이드 우선순위가 env 위임보다 위임 결과를 이겨야 하므로 env 는 미설정으로 둔다.
+    env.pop("AGENT_DB_CONNECT_TIMEOUT_SEC", None)
+    code = (
+        "import shared.config as c; "
+        "assert c.AGENT_DB_CONNECT_TIMEOUT_SEC == 27, c.AGENT_DB_CONNECT_TIMEOUT_SEC; "
+        "print('OK')"
+    )
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60,
+        )
+    except Exception as exc:  # pragma: no cover
+        pytest.skip(f"config import subprocess unavailable: {exc}")
+    if out.returncode != 0:
+        # 런타임 의존(mysql.connector/rich/openai) 부재 환경이면 skip, 그 외는 실패.
+        if "ModuleNotFoundError" in out.stderr or "ImportError" in out.stderr:
+            pytest.skip(f"config deps unavailable: {out.stderr.strip().splitlines()[-1:]}" )
+        raise AssertionError(f"config restart-apply failed:\nSTDOUT={out.stdout}\nSTDERR={out.stderr}")
+    assert "OK" in out.stdout

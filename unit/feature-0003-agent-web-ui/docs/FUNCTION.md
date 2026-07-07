@@ -1473,3 +1473,12 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **비지원 처리**: 로컬 LLM(gemma/edge 등) 은 thinking 미지원 → 주입 안 함(LiteLLM drop_params 방지) + 프론트 선택기 비활성("미지원" 라벨). Anthropic 제약(1024≤budget<agent max_tokens 20000) 전 레벨 만족·thinking 활성 시 temperature 미전달(claude alias) 정합.
 - **범위 봉인(무변경)**: 보조 LLM 호출(summary/topic/validate/insight)은 추론 강도 미적용(메인 agent 경로만). 스키마/마이그레이션 0(KV 재사용)·RBAC/신규 엔드포인트 0(/api/ask·/api/history 필드 additive).
 - cache-buster: `index.html` 의 `app.js`·`styles.css` `?v=20260704-share-visibility-window`→`?v=20260706-reasoning-effort`. CHG/REV-20260706T013532-reasoning-effort. PB-0008 Windows-browser= 배포 후 라이브(TEST.md §3).
+
+## (TASK-20260706T094937-runtime-settings, 2026-07-06) 관리 콘솔 `시스템 > 설정` 런타임 설정 — 실행 타임아웃 · 모델별 추론 예산 (web/UI·API + cross-unit feature-0002/shared, Major §12.3)
+- **UI**: `관리 콘솔 > 시스템 > 설정` pane(list-detail 5단)에 항목 2개 추가 — "실행 타임아웃"(`data-settings-tab=runtime-timeouts`), "모델별 추론 예산"(`data-settings-tab=model-thinking-budgets`). 각 우측 detail 패널은 전용 UI:
+  - 실행 타임아웃: 카테고리별 그룹(쿼리·에이전트 실행/인사이트·플랜/지식베이스/DB 연결/커넥션 상태 프로브/MCP)로 number-input + 단위 + **즉시 반영/재배포 반영 배지** + 저장 + 초기화(기본값 복원). 현재 유효값·기본값·override 여부 표시.
+  - 모델별 추론 예산: extended thinking 지원 모델(claude-*)마다 1행(카탈로그 순회 자동생성 — 모델 추가 시 자동 노출), thinking budget(tokens) number-input + 저장 + 초기화. 미설정 모델은 서버 기본 thinking 유지.
+- **API**(`routers/admin_settings.py`): `GET /api/admin/settings/runtime`(레지스트리 + DB override 반영 유효값), `PUT`(단일 값 저장 — 스펙 [min,max] 검증), `DELETE ?key=`(초기화). RBAC: read=`console.access`+`system.runtime.read`, write=추가로 `system.runtime.write`(조회 종속). 저장/초기화는 동일-tx audit(`system.runtime.update`/`.reset`) 기록 후 `/shared` 스냅샷 reconcile.
+- **저장·반영 모델**(하이브리드): source-of-truth=MySQL `WebRuntimeSettings`(KV). 유효값은 `/shared/runtime_settings.json` 스냅샷으로 전 프로세스 전파(shared.runtime_settings). `apply_mode=live`(AGENT_TIMEOUT_SEC·MCP_TIMEOUT_SEC·모델 예산)는 소비처 `get_int()`/주입으로 **즉시 반영**(≤캐시 TTL); `apply_mode=restart`(그 외 저수준 timeout)는 config.py 가 기동 시 스냅샷을 읽어 **다음 재배포 시 반영**.
+- **권한**: `system.runtime.read`/`system.runtime.write`(settings 그룹, admin auto-grant + 기존 admin catchup). 조회 전용 계정은 입력·버튼 비활성.
+- 상세 backend(shared/runtime_settings.py, config.py, agent_core `_call_llm` 주입, model_catalog)은 feature-0002/docs/FUNCTION.md 및 shared/docs 참조.

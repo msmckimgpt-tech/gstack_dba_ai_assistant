@@ -5414,3 +5414,14 @@ source_of_truth: true
 - 검증 결과 요지(실 Windows Chrome via win-browser relay @172.26.144.1:9223, `https://localhost/` 인증 세션): '+' 메뉴 "추론 강도: 일반" 렌더 → 클릭 4단계 팝업(낮음/일반/높음/매우 높음) → 높음 선택 라벨 갱신·✓·localStorage=high → 새로고침 후 "높음" 복원 → pageerror 0. 스크린샷 pb0008_reasoning.png. B2 게이트웨이 override 실증과 결합해 프론트→/api/ask→ask-worker→_call_llm 전 계층 라이브 확인.
 - Files: `docs/{TASK,MODIFY,TEST,REVIEW}.md`
 - Cross-ref: REVIEW.md REV-20260706T013532-reasoning-effort-postverify [SKIPPED:post-deploy-verification-record] · 선행 CHG-20260706T013532-reasoning-effort
+
+## CHG-20260706T094937-runtime-settings (TASK-20260706T094937-runtime-settings — 관리 콘솔 `시스템 > 설정` 운영 값(실행 타임아웃·모델별 thinking budget) 조정·저장·사용, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared/{config,runtime_settings,model_catalog})
+- Date: 2026-07-06 (worktree ai/claude-corp/feature-0018-runtime-settings, base 2ec0188e). /_template:entry arg-given, 반영 방식=하이브리드(AskUserQuestion 확정).
+- 트리거(사용자): "assistant 가 작동할 때 참조하는 값들을 관리 콘솔 > 시스템 > 설정 에 추가해 조정·저장·사용. TIME_OUT(현재 구성된 값만), 모델별 thinking budget(모델 추가 시 자연 확장), 각 우측 패널은 전용 UI(레거시 정합)."
+- 신규 `shared/runtime_settings.py`: 설정 레지스트리(timeout 22 + 모델 예산 자동생성) + resolver(get_int live TTL / startup_int restart frozen) + `/shared/runtime_settings.json` 스냅샷 원자적 write + validate_value/serialize_registry. source-of-truth=MySQL `WebRuntimeSettings`, 스냅샷=런타임 소비 캐시(전 프로세스 전파). fail-open + kill-switch(RUNTIME_SETTINGS_DISABLED).
+- `shared/config.py`: restart-mode 22 timeout 상수를 `_startup_int(key, env_default)` 로 감싸 import 시 스냅샷 override 반영(다음 재배포 시 적용). override 부재/파일부재/kill-switch → env 기본값 그대로(byte-동치). CONN_PROBE BASE/MAX/TCP 는 `max()` 불변식 유지. 방어적 import(runtime_settings 실패해도 config 무손상).
+- `unit/feature-0002-agent-core/src/modules/llm.py`·`mcp_client.py`: live-mode getter 배선(AGENT_TIMEOUT_SEC·MCP_TIMEOUT_SEC → `runtime_settings.get_int`). `agent_core.py _call_llm`: 모델별 thinking budget override 주입(명시 추론강도 미지정 시, 설정된 모델만; B1 무회귀 유지) + budget<max_tokens clamp. — 상세는 feature-0002/docs/MODIFY.md CHG 동일 slug.
+- `app.py`: `WebRuntimeSettings` DDL + `_load/_save/_delete_runtime_setting_overrides`·`_reconcile_runtime_settings_snapshot` + `system.runtime.read/write` PERMISSION_DEFINITIONS(settings 그룹) + `_ensure_seed_roles` admin catchup 2건 + ensure_memory_schema 기동 reconcile.
+- 신규 `routers/admin_settings.py`: `GET/PUT/DELETE /api/admin/settings/runtime` (RBAC console.access+system.runtime.read[+write], 동일-tx audit action `system.runtime.update`/`system.runtime.reset`, 스펙 [min,max] 검증). app.py include_router 등록.
+- `static/admin.html`·`admin.js`: 설정 pane 에 "실행 타임아웃"·"모델별 추론 예산" 2행+2전용패널 + `SETTINGS_PANEL_MOUNTERS` 2 mounter(카테고리 그룹 number-input + 즉시/재배포 배지 / 카탈로그 자동확장 목록, direct-save + 초기화). cache-buster `?v=20260706-runtime-settings`.
+- 영향: RBAC 신규 권한 2(admin auto-grant + catchup). 스키마 additive(신규 테이블, 기존 무변경). override 미설정 시 전 경로 기존 동작 동치(회귀 0). 파괴적 변경 0.

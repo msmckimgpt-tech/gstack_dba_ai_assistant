@@ -46,3 +46,8 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - Files: `shared/model_catalog.py`
 - Affected Features: feature-0002-agent-core(_call_llm 이 litellm 호출 model 을 이 헬퍼로 치환 — 신규 소비), feature-0007-bedrock-llm-provider(litellm_config -chat/-chat-root alias·fallback 신설)
 - Cross-ref: unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260707T100640-no-edge-conversation-answer(정본) · unit/feature-0007-bedrock-llm-provider/docs/MODIFY.md 동일 · feature-0002 REVIEW.md REV-20260707T100640-no-edge-conversation-answer
+## CHG-20260706T094937-runtime-settings (TASK-20260706T094937-runtime-settings — 런타임 설정 레지스트리·resolver + config restart 적용, cross-unit: 정본 feature-0003, Major §12.3)
+- Date: 2026-07-06. 문서 정본/전체 맥락은 feature-0003/docs (관리 콘솔 `시스템 > 설정`).
+- 신규 `shared/runtime_settings.py`: 관리 콘솔에서 조정하는 운영 값(실행 타임아웃 22 + 모델별 thinking budget 카탈로그 자동생성) 레지스트리 + resolver(`get_int` live TTL / `startup_int` restart frozen) + `/shared/runtime_settings.json` 스냅샷 원자적 I/O + `validate_value`/`serialize_registry`. 의존성 경량(os·json·time·threading·model_catalog) — shared.config 미import(순환 없음). fail-open + kill-switch(RUNTIME_SETTINGS_DISABLED).
+- `shared/config.py`: restart-mode 22 timeout 상수를 `_startup_int(key, env_default)` 로 감싸 import 시 스냅샷 override 반영. 방어적 import(runtime_settings 실패해도 무손상), override 부재 시 env 기본값 byte-동치, CONN_PROBE max() 불변식 보존.
+- `shared/model_catalog.py`: 변경 없음(runtime_settings 가 `API_MODEL_OPTIONS`·`model_supports_thinking` 를 순회해 모델 예산 항목을 자동 생성 — 참조만).
