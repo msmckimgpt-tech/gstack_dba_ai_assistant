@@ -1300,3 +1300,9 @@ source_of_truth: true
 - Verification: 신규 test **5 PASS**(G1~G4 헬퍼·_call_llm 라우팅·기록 + G5 체인 가드) + feature-0002 회귀 0. route-parity 실패=환경(clean main 동일, A/B 확인).
 - Human Approval: 방향=사용자 결정(2026-07-07 AskUserQuestion). 구현+검증+배포=PLAN-APPROVED. 배포(ask-worker+web 재빌드 + bedrock-gateway 재생성)는 외부영향 confirm(Major override 불가).
 - Cross-ref: CHG-20260707T100640-no-edge-conversation-answer(feature-0002/0007/shared MODIFY) · FRICTION_LEDGER FR-edge-fallback-conversation-context-loss · ANCHOR 0002 §1~§3 / 0007 §1~§2 무충돌(폴백 축소만).
+
+## REV-20260707T134500-bedrock-chat-alias-probe-artifact [SKIPPED:docs-only-investigation] — bedrock-gateway 400 1회성 오류 조사 (no-op, CHG-20260707T100640 후속)
+- Date: 2026-07-07. 코드/설정 변경 0(순수 조사 + 문서화) — §18.4 경량 cycle, 적대 패널 SKIPPED.
+- 근거: 배포 타이밍 재구성(PR #600 머지 10:28:41 → gateway 재생성 10:31:02 → ask/insight 이미지 재빌드 10:32:18) + 실패 시각(10:37:18)의 실행 이미지(`634f9d6e7de7`)를 직접 열어 이미 수정 코드 보유 확인(stale-image 가설 기각) + 정적 코드 추적(`_call_llm` 유일 caller, claude-* 모델에 항상 `max_tokens=20000` 주입 — 충돌 경로 없음, 저장소 전체에서 `conversation_answer_model` 호출부 1곳뿐) + 게이트웨이 라이브 재현(`max_tokens<5000` 만 재현, `≥5000`/미지정은 정상) + 컨테이너 기동 이후 전체 로그 재발 0 확인.
+- 결론: 코드 결함 아님. FRICTION_LEDGER 의 post-deploy "live probe" 절차가 만든 1회성 프로브 아티팩트 — 실 사용자 대화 트래픽 영향 없음(연계 conversation_id 없음).
+- Cross-ref: CHG-20260707T134500-bedrock-chat-alias-probe-artifact(feature-0002 MODIFY) · FRICTION_LEDGER FR-edge-fallback-conversation-context-loss addendum.
