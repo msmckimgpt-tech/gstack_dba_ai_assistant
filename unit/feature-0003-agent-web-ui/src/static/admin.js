@@ -76,6 +76,7 @@ const adminState = {
     productDatabases: new Map(),  // productId -> draft array (user schemas only; metadata 4종 자동 bypass)
     productDatasources: new Map(),// TASK-0239: productId -> {baseline:[{key,is_primary}], desired:[{key,is_primary}]} (바인딩 추가/제거/기본지정 일괄 적용)
     systemPrompts: new Map(),     // key "scope:productId:roleId:accountId" -> {scope, productId, roleId, accountId, content}
+    runtimeSettings: new Map(),   // feature-0018 UX: key -> {key, value:정수|RS_RESET}. 편집·기본값복원 예약 → 모두 적용
     productDbRules: new Map(),    // TASK-20260619 (§10.7): "productId::dsKey" -> {creates:[{tempId,include_pattern,exclude_pattern,cap}], updates:{ruleId:{...}}, deletes:{ruleId:{strip}}, approves:{ruleId:[schema,...]}} (정규식 자동 규칙 편집 = pending → "모두 적용")
   },
   nextTempRoleId: 1,
@@ -1092,7 +1093,8 @@ function pendingChangeCount() {
     adminState.pending.productDatabases.size +
     datasourceDirtyProductCount() +
     productDbRuleDirtyCount() +
-    adminState.pending.systemPrompts.size
+    adminState.pending.systemPrompts.size +
+    (adminState.pending.runtimeSettings ? adminState.pending.runtimeSettings.size : 0)
   );
 }
 
@@ -10066,15 +10068,17 @@ function mountGlobalPromptPanel() {
  * 두 패널 모두 read 게이트 system.runtime.read, write 게이트 system.runtime.write. */
 
 const RUNTIME_SETTINGS_ENDPOINT = "/api/admin/settings/runtime";
+const RS_RESET = "__reset__";  // pending sentinel — 기본값 복원(DELETE) 예약
+const RS_MODEL_PREFIX = "model_thinking_budget:";
 
 function rsApplyBadge(applyMode) {
   const span = document.createElement("span");
   if (applyMode === "live") {
-    span.className = "admin-badge";
+    span.className = "admin-badge rs-badge";
     span.textContent = "즉시 반영";
     span.title = "저장 즉시 실행 경로에 반영됩니다(최대 수십 초 캐시).";
   } else {
-    span.className = "admin-badge admin-badge--warn";
+    span.className = "admin-badge admin-badge--warn rs-badge";
     span.textContent = "재배포 반영";
     span.title = "저장은 즉시 되지만, 실제 적용은 다음 배포/재시작 시점입니다(저수준 값 안전).";
   }
@@ -10101,264 +10105,264 @@ async function rsResetValue(key) {
   });
 }
 
-// 단일 설정 항목의 편집 컨트롤(number input + 저장 + 초기화 + 상태). timeouts·models 공용.
-function buildRuntimeSettingControl(item, canWrite, onChanged, opts) {
-  // opts.emptyWhenNoOverride: override 미설정 시 input 을 비우고 placeholder 로 기본값 표시.
-  // 모델 추론 예산 전용 — override 없으면 런타임은 값을 '주입하지 않는다'(effective=표시 기준일 뿐
-  // 실제 적용값 아님). effective 를 pre-fill 하면 무변경 '저장'이 그 값을 명시 override 로 고정하는
-  // 트랩(적대 QA MEDIUM). 타임아웃은 effective 가 실제 적용값이라 pre-fill 이 정확하다.
+// 값 편집·기본값복원을 commit-bar("모두 적용")로 예약한다 — 즉시 API 호출 없음(계정·시스템
+// 프롬프트와 동일한 콘솔 네이티브 패턴). value: 정수(PUT) | RS_RESET(DELETE) | null(예약 취소).
+function setRuntimeSettingPending(key, value) {
+  if (!adminState.pending.runtimeSettings) adminState.pending.runtimeSettings = new Map();
+  if (value === null) adminState.pending.runtimeSettings.delete(key);
+  else adminState.pending.runtimeSettings.set(key, { key, value });
+  refreshPendingUI();
+}
+
+// 현재 mount 된 런타임 설정 패널을 재렌더(모두 적용/취소 후 서버 상태 재반영).
+function rerenderRuntimeSettingsPanels() {
+  const t = $("runtimeTimeoutsMount");
+  if (t && adminState.settings.mountedPanels.has("runtime-timeouts")) renderRuntimeTimeouts(t);
+  const m = $("modelThinkingBudgetsMount");
+  if (m && adminState.settings.mountedPanels.has("model-thinking-budgets")) renderModelThinkingBudgets(m);
+}
+
+// 정렬 grid 행(라벨+배지 / 설명 / 입력+단위 / 상태·기본값). timeouts·models 공용.
+// 저장/초기화 버튼 없음 — 편집은 pending 예약, 적용은 하단 commit-bar.
+function buildRuntimeSettingRow(item, canWrite, opts) {
+  // emptyWhenNoOverride: 모델 예산 전용 — override 없으면 런타임이 값을 주입하지 않으므로(effective=
+  // 표시 기준일 뿐 실제 적용값 아님) input 을 비우고 placeholder 로 기본값 표시(무변경 예약 트랩 방지).
   const emptyWhenNoOverride = !!(opts && opts.emptyWhenNoOverride);
-  const wrap = document.createElement("div");
-  wrap.className = "admin-quota-editor";
+  const unknownBaseline = emptyWhenNoOverride && item.default_known === false;
+  const baseLabel = unknownBaseline ? "모델 기본값" : `${item.default}${rsUnitSuffix(item.unit)}`;
+  const noOverrideEmpty = emptyWhenNoOverride && !item.has_override;
 
-  const fields = document.createElement("div");
-  fields.className = "admin-quota-fields";
+  const row = document.createElement("div");
+  row.className = "rs-row";
+  row.dataset.settingKey = item.key;
 
-  const field = document.createElement("div");
-  field.className = "admin-quota-field";
+  const label = document.createElement("div");
+  label.className = "rs-row-label";
+  const name = document.createElement("span");
+  name.textContent = item.label || item.model || item.key;
+  label.append(name, rsApplyBadge(item.apply_mode));
 
+  const desc = document.createElement("div");
+  desc.className = "rs-row-desc";
+  desc.textContent = (emptyWhenNoOverride && !item.default_known)
+    ? "미설정 시 모델 config 의 기본 thinking 을 그대로 사용합니다."
+    : (item.description || "");
+  desc.title = desc.textContent;
+
+  const control = document.createElement("div");
+  control.className = "rs-row-control";
   const input = document.createElement("input");
   input.type = "number";
-  input.className = "admin-search";
+  input.className = "rs-input";
   input.min = String(item.minimum);
   input.max = String(item.maximum);
   input.step = "1";
-  if (emptyWhenNoOverride && !item.has_override) {
-    input.value = "";
-    input.placeholder = `${item.default} (기본값 — 미설정)`;
-  } else {
-    input.value = String(item.effective);
-  }
-  input.setAttribute("aria-label", `${item.label} 값`);
+  input.setAttribute("aria-label", `${item.label || item.model || item.key} 값`);
+  if (noOverrideEmpty) { input.value = ""; input.placeholder = String(item.default); }
+  else input.value = String(item.effective);
   if (!canWrite) input.disabled = true;
-
   const unit = document.createElement("span");
-  unit.className = "admin-quota-hint";
+  unit.className = "rs-unit";
   unit.textContent = rsUnitSuffix(item.unit);
+  control.append(input, unit);
 
-  field.appendChild(input);
-  field.appendChild(unit);
-  fields.appendChild(field);
-
-  const actions = document.createElement("div");
-  actions.className = "admin-detail-actions";
-
-  const saveBtn = document.createElement("button");
-  saveBtn.type = "button";
-  saveBtn.className = "btn-secondary";
-  saveBtn.textContent = "저장";
-
-  // 모델 예산에서 default_known=false 면 초기화가 특정 숫자가 아니라 '모델 config 기본 thinking'
-  // 으로 되돌아간다(미주입) — 숫자를 단정하지 않는다(적대 QA LOW).
-  const unknownBaseline = emptyWhenNoOverride && item.default_known === false;
-  const baselineLabel = unknownBaseline
-    ? "모델 기본값"
-    : `${item.default}${rsUnitSuffix(item.unit)}`;
-
+  const meta = document.createElement("div");
+  meta.className = "rs-row-meta";
+  const status = document.createElement("span");
+  status.className = "rs-status";
   const resetBtn = document.createElement("button");
   resetBtn.type = "button";
-  resetBtn.className = "btn-secondary danger";
-  resetBtn.textContent = "초기화";
-  resetBtn.title = `${baselineLabel}(으)로 되돌립니다.`;
+  resetBtn.className = "rs-reset";
+  resetBtn.textContent = "기본값";
+  resetBtn.title = `${baseLabel}(으)로 되돌립니다.`;
+  meta.append(status, resetBtn);
 
-  const status = document.createElement("span");
-  status.className = "admin-meta";
-  const refreshStatus = () => {
-    if (item.has_override) {
-      status.textContent = `사용자 지정 (기본 ${baselineLabel})`;
-      resetBtn.disabled = !canWrite;
+  row.append(label, control, desc, meta);
+
+  function refresh() {
+    input.classList.remove("is-invalid");
+    const pend = adminState.pending.runtimeSettings.get(item.key);
+    row.classList.toggle("is-pending", !!pend);
+    if (pend && pend.value === RS_RESET) {
+      status.textContent = "미저장 · 기본값 복원"; status.className = "rs-status is-pending";
+      resetBtn.textContent = "되돌리기"; resetBtn.hidden = !canWrite;
+    } else if (pend) {
+      status.textContent = "미저장 변경"; status.className = "rs-status is-pending";
+      resetBtn.textContent = "되돌리기"; resetBtn.hidden = !canWrite;
+    } else if (item.has_override) {
+      status.textContent = `사용자 지정 · 기본 ${baseLabel}`; status.className = "rs-status is-override";
+      resetBtn.textContent = "기본값"; resetBtn.hidden = !canWrite;
     } else {
-      status.textContent = `기본값 사용 중 (${baselineLabel})`;
-      resetBtn.disabled = true;
+      status.textContent = `기본값 ${baseLabel}`; status.className = "rs-status";
+      resetBtn.hidden = true;
     }
-  };
-  refreshStatus();
+  }
+  refresh();
 
   if (canWrite) {
-    saveBtn.addEventListener("click", async () => {
+    input.addEventListener("change", () => {
       const raw = input.value.trim();
-      if (raw === "" || !Number.isFinite(Number(raw))) {
-        showToast("정수 값을 입력하세요.", true);
+      if (raw === "") {
+        // 빈 값 → 예약 취소(원상). 모델 no-override 는 빈 값이 정상 상태.
+        setRuntimeSettingPending(item.key, null);
+        input.value = noOverrideEmpty ? "" : String(item.effective);
+        refresh();
         return;
       }
       const val = Math.trunc(Number(raw));
-      if (val < item.minimum || val > item.maximum) {
-        showToast(`허용 범위(${item.minimum} ~ ${item.maximum})를 벗어났습니다.`, true);
+      if (!Number.isFinite(val)) {
+        setRuntimeSettingPending(item.key, null);
+        input.value = noOverrideEmpty ? "" : String(item.effective);
+        refresh();
         return;
       }
-      saveBtn.disabled = true;
-      try {
-        await rsSaveValue(item.key, val);
-        showToast(`${item.label}을(를) 저장했습니다.`);
-        if (typeof onChanged === "function") await onChanged();
-      } catch (err) {
-        saveBtn.disabled = false;
-        showToast(`저장 실패: ${err.message || err}`, true);
+      if (val < item.minimum || val > item.maximum) {
+        // 범위 밖: 예약하지 않고 인라인 경고(서버 검증 실패 예방).
+        setRuntimeSettingPending(item.key, null);
+        input.classList.add("is-invalid");
+        status.textContent = `허용 범위 ${item.minimum}~${item.maximum}`;
+        status.className = "rs-status is-invalid";
+        row.classList.remove("is-pending");
+        // pending 이 해제됐으므로 reset 버튼 라벨을 no-pending 상태(기본값)로 되돌린다(라벨/동작 불일치 방지).
+        resetBtn.textContent = "기본값";
+        resetBtn.hidden = !(canWrite && item.has_override);
+        return;
       }
+      // 입력값이 서버 현재상태(effective)와 같으면 예약 불필요 — has_override 무관.
+      // no-override 도 effective==기본값이므로 재-핀(override==default) 트랩을 함께 방지.
+      if (val === item.effective) {
+        setRuntimeSettingPending(item.key, null);
+      } else {
+        setRuntimeSettingPending(item.key, val);
+      }
+      refresh();
     });
-    resetBtn.addEventListener("click", async () => {
-      if (!item.has_override) return;
-      resetBtn.disabled = true;
-      try {
-        await rsResetValue(item.key);
-        showToast(`${item.label}을(를) 기본값으로 초기화했습니다.`);
-        if (typeof onChanged === "function") await onChanged();
-      } catch (err) {
-        resetBtn.disabled = false;
-        showToast(`초기화 실패: ${err.message || err}`, true);
+    resetBtn.addEventListener("click", () => {
+      const pend = adminState.pending.runtimeSettings.get(item.key);
+      if (pend) {
+        // 되돌리기: 예약 취소 + 서버 상태 표시 복원.
+        setRuntimeSettingPending(item.key, null);
+        input.value = noOverrideEmpty ? "" : String(item.effective);
+        refresh();
+        return;
       }
+      if (!item.has_override) return;  // 복원할 override 없음
+      // 기본값 복원(DELETE) 예약.
+      setRuntimeSettingPending(item.key, RS_RESET);
+      if (emptyWhenNoOverride) { input.value = ""; input.placeholder = String(item.default); }
+      else input.value = String(item.default);
+      refresh();
     });
   } else {
-    saveBtn.disabled = true;
-    resetBtn.disabled = true;
+    resetBtn.hidden = true;
   }
+  return row;
+}
 
-  actions.appendChild(saveBtn);
-  actions.appendChild(resetBtn);
-
-  wrap.appendChild(fields);
-  wrap.appendChild(actions);
-  wrap.appendChild(status);
-  return wrap;
+function rsErrorPlaceholder(mount, msg) {
+  mount.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "admin-detail-empty";
+  div.textContent = msg;
+  mount.appendChild(div);
 }
 
 async function mountRuntimeTimeoutsPanel() {
   const mount = $("runtimeTimeoutsMount");
   if (!mount) return;
   if (!can("system.runtime.read")) {
-    mount.innerHTML = '<div class="admin-detail-empty">런타임 설정 조회 권한이 없습니다.</div>';
+    rsErrorPlaceholder(mount, "런타임 설정 조회 권한이 없습니다.");
     return;
   }
   await renderRuntimeTimeouts(mount);
 }
 
 async function renderRuntimeTimeouts(mount) {
-  mount.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
+  rsErrorPlaceholder(mount, "불러오는 중…");
   let data;
   try {
     data = await apiFetch(RUNTIME_SETTINGS_ENDPOINT);
   } catch (err) {
-    mount.innerHTML = `<div class="admin-detail-empty">조회 실패: ${err.message || err}</div>`;
+    rsErrorPlaceholder(mount, `조회 실패: ${err.message || err}`);
     return;
   }
   const canWrite = can("system.runtime.write");
   const items = Array.isArray(data.timeouts) ? data.timeouts : [];
+  if (!items.length) { rsErrorPlaceholder(mount, "등록된 타임아웃 항목이 없습니다."); return; }
   mount.innerHTML = "";
-  if (!items.length) {
-    mount.innerHTML = '<div class="admin-detail-empty">등록된 타임아웃 항목이 없습니다.</div>';
-    return;
-  }
-  const onChanged = () => renderRuntimeTimeouts(mount);
-  // category 순서를 보존하며 그룹핑.
-  const groups = [];
+  const panel = document.createElement("div");
+  panel.className = "rs-panel";
+  // category 순서 보존 그룹핑.
+  const order = [];
   const byCat = new Map();
   for (const it of items) {
     const cat = it.category || "기타";
-    if (!byCat.has(cat)) {
-      byCat.set(cat, []);
-      groups.push(cat);
-    }
+    if (!byCat.has(cat)) { byCat.set(cat, []); order.push(cat); }
     byCat.get(cat).push(it);
   }
-  for (const cat of groups) {
-    const section = document.createElement("div");
-    section.className = "admin-detail-section";
-    const title = document.createElement("div");
-    title.className = "admin-detail-section-title";
-    title.textContent = cat;
-    section.appendChild(title);
-    for (const it of byCat.get(cat)) {
-      const row = document.createElement("div");
-      row.className = "admin-inline-row";
-      const head = document.createElement("div");
-      head.className = "field-label";
-      const nameLine = document.createElement("div");
-      const strong = document.createElement("strong");
-      strong.textContent = it.label;
-      nameLine.appendChild(strong);
-      nameLine.appendChild(document.createTextNode(" "));
-      nameLine.appendChild(rsApplyBadge(it.apply_mode));
-      head.appendChild(nameLine);
-      const desc = document.createElement("div");
-      desc.className = "admin-detail-hint";
-      desc.textContent = it.description || "";
-      head.appendChild(desc);
-      row.appendChild(head);
-      row.appendChild(buildRuntimeSettingControl(it, canWrite, onChanged));
-      section.appendChild(row);
-    }
-    mount.appendChild(section);
+  for (const cat of order) {
+    const group = document.createElement("div");
+    group.className = "rs-group";
+    const gtitle = document.createElement("div");
+    gtitle.className = "rs-group-title";
+    gtitle.textContent = cat;
+    const list = document.createElement("div");
+    list.className = "rs-list";
+    for (const it of byCat.get(cat)) list.appendChild(buildRuntimeSettingRow(it, canWrite));
+    group.append(gtitle, list);
+    panel.appendChild(group);
   }
   if (!canWrite) {
     const note = document.createElement("div");
-    note.className = "admin-detail-note";
+    note.className = "rs-readonly-note";
     note.textContent = "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
-    mount.appendChild(note);
+    panel.appendChild(note);
   }
+  mount.appendChild(panel);
 }
 
 async function mountModelThinkingBudgetsPanel() {
   const mount = $("modelThinkingBudgetsMount");
   if (!mount) return;
   if (!can("system.runtime.read")) {
-    mount.innerHTML = '<div class="admin-detail-empty">런타임 설정 조회 권한이 없습니다.</div>';
+    rsErrorPlaceholder(mount, "런타임 설정 조회 권한이 없습니다.");
     return;
   }
   await renderModelThinkingBudgets(mount);
 }
 
 async function renderModelThinkingBudgets(mount) {
-  mount.innerHTML = '<div class="admin-detail-empty">불러오는 중…</div>';
+  rsErrorPlaceholder(mount, "불러오는 중…");
   let data;
   try {
     data = await apiFetch(RUNTIME_SETTINGS_ENDPOINT);
   } catch (err) {
-    mount.innerHTML = `<div class="admin-detail-empty">조회 실패: ${err.message || err}</div>`;
+    rsErrorPlaceholder(mount, `조회 실패: ${err.message || err}`);
     return;
   }
   const canWrite = can("system.runtime.write");
   const items = Array.isArray(data.model_thinking_budgets) ? data.model_thinking_budgets : [];
+  if (!items.length) { rsErrorPlaceholder(mount, "extended thinking 을 지원하는 모델이 카탈로그에 없습니다."); return; }
   mount.innerHTML = "";
-  if (!items.length) {
-    mount.innerHTML = '<div class="admin-detail-empty">extended thinking 을 지원하는 모델이 카탈로그에 없습니다.</div>';
-    return;
-  }
-  const onChanged = () => renderModelThinkingBudgets(mount);
-  const section = document.createElement("div");
-  section.className = "admin-detail-section";
-  const title = document.createElement("div");
-  title.className = "admin-detail-section-title";
-  title.textContent = "모델별 thinking budget (tokens)";
-  section.appendChild(title);
-  for (const it of items) {
-    const row = document.createElement("div");
-    row.className = "admin-inline-row";
-    const head = document.createElement("div");
-    head.className = "field-label";
-    const nameLine = document.createElement("div");
-    const strong = document.createElement("strong");
-    strong.textContent = it.label || it.model || it.key;
-    nameLine.appendChild(strong);
-    head.appendChild(nameLine);
-    const desc = document.createElement("div");
-    desc.className = "admin-detail-hint";
-    // default_known=false 면 표시 기본값이 모델 config 실측이 아님을 안내.
-    desc.textContent = it.default_known
-      ? (it.description || `모델 config 기본값 ${it.default} tokens`)
-      : `표시 기본값(${it.default})은 참고치입니다. 미설정 시 모델 config 의 thinking 기본값이 유지됩니다.`;
-    head.appendChild(desc);
-    row.appendChild(head);
-    // 모델 예산: override 없으면 input 비움(무변경 저장이 값을 고정하는 트랩 방지, 적대 QA MEDIUM).
-    row.appendChild(buildRuntimeSettingControl(it, canWrite, onChanged, { emptyWhenNoOverride: true }));
-    section.appendChild(row);
-  }
-  mount.appendChild(section);
+  const panel = document.createElement("div");
+  panel.className = "rs-panel";
+  const group = document.createElement("div");
+  group.className = "rs-group";
+  const gtitle = document.createElement("div");
+  gtitle.className = "rs-group-title";
+  gtitle.textContent = "모델별 thinking budget (tokens)";
+  const list = document.createElement("div");
+  list.className = "rs-list";
+  for (const it of items) list.appendChild(buildRuntimeSettingRow(it, canWrite, { emptyWhenNoOverride: true }));
+  group.append(gtitle, list);
+  panel.appendChild(group);
   const note = document.createElement("div");
-  note.className = "admin-detail-note";
+  note.className = "rs-readonly-note";
   note.textContent = canWrite
-    ? "미설정(초기화) 시 해당 모델은 서버 기본 thinking 설정을 그대로 사용합니다(대화별 추론 강도 선택이 우선)."
+    ? "비워두거나 '기본값'으로 두면 해당 모델은 서버 기본 thinking 을 사용합니다(대화별 추론 강도 선택이 우선)."
     : "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
-  mount.appendChild(note);
+  panel.appendChild(note);
+  mount.appendChild(panel);
 }
 
 /* ── Audit pane (TASK-0073 Phase C) ─────────────────────────────────── */
@@ -12796,6 +12800,31 @@ function refreshPendingUI() {
   const ruleDirty = productDbRuleDirtyCount();
   if (ruleDirty) detail.push(`제품 규칙 ${ruleDirty}`);
   if (adminState.pending.systemPrompts.size) detail.push(`프롬프트 ${adminState.pending.systemPrompts.size}`);
+  // feature-0018 UX: 런타임 설정 pending 요약 + 설정 pane 좌측 nav row dirty 표시.
+  const rsPending = adminState.pending.runtimeSettings || new Map();
+  if (rsPending.size) detail.push(`설정 ${rsPending.size}`);
+  let rsTimeoutDirty = false, rsModelDirty = false;
+  rsPending.forEach((_v, k) => {
+    if (String(k).startsWith(RS_MODEL_PREFIX)) rsModelDirty = true; else rsTimeoutDirty = true;
+  });
+  // 설정 nav row: `.has-pending` 테두리 + `.admin-pending-dot`(계정·역할 row 와 일관 — 색 외 신호).
+  const markSettingsNav = (tab, dirty) => {
+    const btn = document.querySelector(`#settingsList [data-settings-tab="${tab}"]`);
+    if (!btn) return;
+    btn.classList.toggle("has-pending", dirty);
+    const nameEl = btn.querySelector(".admin-list-row-name");
+    if (!nameEl) return;
+    let dot = nameEl.parentElement.querySelector(".admin-pending-dot");
+    if (!dot) {
+      dot = document.createElement("span");
+      dot.className = "admin-pending-dot";
+      dot.title = "미저장 변경 있음";
+      nameEl.after(dot);
+    }
+    dot.textContent = dirty ? "•" : "";
+  };
+  markSettingsNav("runtime-timeouts", rsTimeoutDirty);
+  markSettingsNav("model-thinking-budgets", rsModelDirty);
   $("commitBarDetail").textContent = detail.length ? `(${detail.join(" · ")})` : "";
 
   // Dashboard auto-refresh if visible
@@ -12811,6 +12840,7 @@ async function applyAllPending() {
   const productMetaEntries = Array.from(adminState.pending.productMeta.entries());
   const productDbEntries = Array.from(adminState.pending.productDatabases.entries());
   const systemPromptEntries = Array.from(adminState.pending.systemPrompts.entries());
+  const runtimeSettingEntries = Array.from((adminState.pending.runtimeSettings || new Map()).entries());
   // TASK-0239: datasource 바인딩 — desired≠baseline 인 제품만(실제 변경).
   const datasourceEntries = Array.from(adminState.pending.productDatasources.entries())
     .filter(([, e]) => e && !_dsBindEqual(e.baseline, e.desired));
@@ -12827,6 +12857,7 @@ async function applyAllPending() {
     && !datasourceEntries.length
     && !dbRuleEntries.length
     && !systemPromptEntries.length
+    && !runtimeSettingEntries.length
   ) return;
 
   const failures = [];
@@ -13090,6 +13121,18 @@ async function applyAllPending() {
     }
   }
 
+  // feature-0018 UX: 런타임 설정(실행 타임아웃·모델 추론 예산) — 값 PUT / 기본값복원 DELETE.
+  for (const [key, entry] of runtimeSettingEntries) {
+    try {
+      if (entry.value === RS_RESET) await rsResetValue(key);
+      else await rsSaveValue(key, entry.value);
+      adminState.pending.runtimeSettings.delete(key);
+      ok += 1;
+    } catch (error) {
+      failures.push({ kind: "runtime_setting", id: key, error });
+    }
+  }
+
   applyBtn.textContent = "모두 적용";
 
   if (failures.length) {
@@ -13104,6 +13147,11 @@ async function applyAllPending() {
   } catch (error) {
     showToast(error.message || "새로고침 실패", true);
   }
+  // feature-0018 UX: 설정 패널은 lazy-mount 라 loadAdminData 로 갱신되지 않는다 — 런타임 설정이
+  // 실제 적용됐을 때만 명시 재렌더(불필요한 재-fetch 방지).
+  if (runtimeSettingEntries.length && typeof rerenderRuntimeSettingsPanels === "function") {
+    rerenderRuntimeSettingsPanels();
+  }
 }
 
 function cancelAllPending() {
@@ -13117,6 +13165,8 @@ function cancelAllPending() {
   adminState.pending.productDatasources.clear();
   adminState.pending.productDbRules.clear();
   adminState.pending.systemPrompts.clear();
+  const hadRuntimePending = !!(adminState.pending.runtimeSettings && adminState.pending.runtimeSettings.size);
+  if (adminState.pending.runtimeSettings) adminState.pending.runtimeSettings.clear();
   adminState.productDbDraft.clear();
   if (adminState.selectedRoleId && String(adminState.selectedRoleId).startsWith("new:")) {
     adminState.selectedRoleId = null;
@@ -13127,6 +13177,8 @@ function cancelAllPending() {
   renderRoleList();
   renderRoleDetail();
   renderProductDetail();
+  // feature-0018 UX: 런타임 설정 예약이 있었을 때만 패널 원상 복원(불필요한 재-fetch 방지).
+  if (hadRuntimePending && typeof rerenderRuntimeSettingsPanels === "function") rerenderRuntimeSettingsPanels();
   showToast("변경사항 취소됨");
 }
 
