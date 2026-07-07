@@ -400,6 +400,52 @@ def sync_glossary_relation(cur, scope, from_term, to_term, relation_type="simila
 
 
 # ── 전체 동기화 (관계형 테이블 → 그래프) ──────────────────────────────────
+def _sync_row_guard(cur, owned, samples, label, fn, rep=None) -> bool:
+    """sync_graph per-row 실행 가드 (§56 RC1 근본수정 — batched tx 오염 연쇄 차단).
+
+    owned(batched 트랜잭션) 모드에서 각 행을 SAVEPOINT 로 격리한다. 종전에는 한 행의 실패가
+    트랜잭션을 aborted 로 만들어 **이후 전 행이 InFailedSqlTransaction 으로 연쇄 실패**하고,
+    그 배치의 커밋이 롤백으로 수렴해 **성공분까지 소실**됐다 (라이브 실측: routine 백필 직후
+    full sync errors 18,698 — 단건 재현은 전행 성공 = 불량 행 0, 전부 연쇄). 실패 행은 첫
+    5건을 samples 에 채집(관측성 — 어떤 행이 최초 오염원인지 프로덕션 로그로 식별).
+
+    §18.8 패널(§56) 보강 2건:
+      - **SAVEPOINT 확립 실패 = 트랜잭션 무결성 실패** — per-row 데이터 오류(errors, 워터마크
+        비차단)로 오분류하지 않고 rep.step_failures 로 계상 + fn 미실행 후 False. tx 소생은
+        다음 step 가드(_run_step 의 force-tick→rollback)가 담당(가드 내 rollback 은 호출측
+        _pending 과 어긋나 배치 정합을 깨므로 하지 않는다).
+      - **실패 행 ROLLBACK TO 후 RELEASE** — 실패 서브트랜잭션이 열린 채 누적되면 배치(≤500행)
+        내 subtransaction >64 에서 PG suboverflow 성능 절벽(특히 replica). 해제로 상수 유지.
+    반환: 성공 여부. autocommit(비-owned) 모드는 SAVEPOINT 불요(기존 동작)."""
+    if owned:
+        try:
+            cur.execute("SAVEPOINT sg_row")
+        except Exception as sp_exc:
+            if isinstance(rep, dict):
+                rep["step_failures"] = int(rep.get("step_failures", 0)) + 1
+            if len(samples) < 5:
+                samples.append(f"{label}:savepoint: {type(sp_exc).__name__} {str(sp_exc)[:160]}")
+            return False
+    try:
+        fn()
+        if owned:
+            try:
+                cur.execute("RELEASE SAVEPOINT sg_row")
+            except Exception:
+                pass
+        return True
+    except Exception as exc:
+        if owned:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sg_row")
+                cur.execute("RELEASE SAVEPOINT sg_row")
+            except Exception:
+                pass
+        if len(samples) < 5:
+            samples.append(f"{label}: {type(exc).__name__} {str(exc)[:160]}")
+        return False
+
+
 def sync_graph(conn=None, scope_key=None, since=None) -> dict:
     """관계형 SSOT 를 읽어 metadata_kb 그래프로 투영. 반환: 카운트 telemetry.
 
@@ -419,11 +465,12 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
     """
     rep = {"rag_tables": 0, "tables": 0, "columns": 0, "relationships": 0,
            "relationships_deleted": 0, "glossary": 0, "glossary_relations": 0, "routines": 0,
-           "errors": 0, "since": since, "synced_at": None, "commits": 0}
+           "errors": 0, "step_failures": 0, "since": since, "synced_at": None, "commits": 0}
     c, owned = _rw_conn(conn)
     if c is None:
         return rep
     _pending = [0]
+    _err_samples: list = []   # §56 RC1 관측성: per-row 실패 첫 5건(단계: 예외) — 종료 시 warning 1줄
 
     def _tick(force=False):
         # batched commit — owned(자체 생성) 연결일 때만 트랜잭션 경계를 관리한다.
@@ -434,8 +481,18 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
                 c.commit()
                 if _pending[0]:
                     rep["commits"] += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                # §18.8 패널(§56): 커밋 실패 = 배치(≤500행) 소실 — per-row errors 가 아닌
+                # **step_failures(트랜잭션 무결성)** 로 계상해 워터마크 전진을 차단하고,
+                # rollback 으로 tx 를 소생시켜 다음 배치를 살린다(카운터는 이미 가산된 소실
+                # 배치만큼 과대일 수 있음 — bounded, 샘플 로그로 식별 가능).
+                rep["step_failures"] += 1
+                if len(_err_samples) < 5:
+                    _err_samples.append(f"commit: {type(exc).__name__} {str(exc)[:160]}")
+                try:
+                    c.rollback()
+                except Exception:
+                    pass
             _pending[0] = 0
 
     def _scope_since_where():
@@ -447,6 +504,26 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
             conds.append("updated_at > %s"); args.append(since)
         w = (" WHERE " + " AND ".join(conds)) if conds else ""
         return w, tuple(args)
+
+    def _run_step(label, fn):
+        """step 실행 가드(§18.8 패널 — §56): 종전엔 step-level 실패가 (a) rollback 없이 tx 를
+        aborted 로 남겨 **후속 step 전부 연쇄 사망**(3b 만 복구 보유), (b) 최종 커밋이 aborted tx
+        에서 조용히 ROLLBACK 으로 수렴해 직전 커밋 이후 **성공 행이 카운터만 남기고 소실**됐다.
+        진입 전 선행 성공분 강제 커밋(소급 소실 차단) → 실행 → 실패 시 step_failures(워터마크
+        차단 축) + rollback(오염 전파 차단) + pending 리셋 + 샘플. per-row 실패는 _sync_row_guard 소관."""
+        _tick(force=True)
+        try:
+            fn()
+        except Exception as exc:
+            rep["step_failures"] += 1
+            if len(_err_samples) < 5:
+                _err_samples.append(f"step:{label}: {type(exc).__name__} {str(exc)[:160]}")
+            if owned:
+                try:
+                    c.rollback()
+                except Exception:
+                    pass
+            _pending[0] = 0
 
     try:
         cur = c.cursor()
@@ -466,7 +543,7 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
         #    **MSSQL 'dbo' 보정**: rag_objects.schema_name 은 MSSQL 에서 리터럴 'dbo'(기본 스키마)라
         #    DB 차원이 소실되고 다중 DB 동명 테이블(예: 23개 DB 의 dbo.T_ErrorLog)이 한 노드로 충돌한다.
         #    DB명은 object_key(`<ds>:db.dbo.table`)에 있으므로 그걸 파싱해 DB명을 스키마(클러스터)로 사용.
-        try:
+        def _step_rag():
             rag_conds = ["object_type = 'table'", "datasource_key <> ''", "table_name <> ''"]
             rag_args = []
             if scope_key is not None:
@@ -474,139 +551,156 @@ def sync_graph(conn=None, scope_key=None, since=None) -> dict:
             if since:
                 rag_conds.append("updated_at > %s"); rag_args.append(since)
             # Phase C: 의미 클러스터(semantic_cluster_id/label)도 투영 — Table 정점에 실어 scope_roots/schema_tables 가 RETURN.
-            #   컬럼 부재(마이그 0035 미적용 구 DB)면 SELECT 실패 → 아래 except 로 graceful(클러스터 없이 rag 투영은 다음 tick).
+            #   컬럼 부재(마이그 0035 미적용 구 DB)면 SELECT 실패 → _run_step 이 step_failures+rollback 으로 격리.
             cur.execute("SELECT datasource_key, schema_name, table_name, object_key, "
                         "semantic_cluster_id, semantic_cluster_label "
                         "FROM rag_objects WHERE " + " AND ".join(rag_conds), tuple(rag_args))
             for ds, sch, tbl, okey, ccid, clab in cur.fetchall():
-                try:
+                def _row(ds=ds, sch=sch, tbl=tbl, okey=okey, ccid=ccid, clab=clab):
                     eff_sch, eff_tbl = _rag_effective(ds, okey, sch, tbl)
                     sync_table(cur, ds, eff_sch, eff_tbl, description=None, source="insight",
                                cluster_id=(int(ccid) if ccid is not None else None),
                                cluster_label=(clab if clab else None))
+                if _sync_row_guard(cur, owned, _err_samples, "rag_table", _row, rep):
                     rep["rag_tables"] += 1; _pending[0] += 1; _tick()
-                except Exception:
+                else:
                     rep["errors"] += 1
-        except Exception:
-            pass  # rag_objects 부재(구버전)·semantic_cluster_* 컬럼 부재(0035 미적용)·조회 실패 — graceful(다른 단계 계속)
+        _run_step("rag_objects", _step_rag)
 
-        # 1) table_descriptions
-        _w, _a = _scope_since_where()
-        cur.execute("SELECT scope_key, schema_name, table_name, description, source "
-                    "FROM table_descriptions" + _w, _a)
-        for sc, sch, tbl, desc, src in cur.fetchall():
-            try:
-                sync_table(cur, sc, sch or "", tbl, desc or "", src or "manual")
-                rep["tables"] += 1; _pending[0] += 1; _tick()
-            except Exception:
-                rep["errors"] += 1
+        # 1) table_descriptions — §18.8 패널(§56): 종전 무가드(step 실패가 바깥 except 로 직행해
+        # sync 전체 무산 + step_failures 미집계) → _run_step 격리.
+        def _step_tables():
+            _w, _a = _scope_since_where()
+            cur.execute("SELECT scope_key, schema_name, table_name, description, source "
+                        "FROM table_descriptions" + _w, _a)
+            for sc, sch, tbl, desc, src in cur.fetchall():
+                def _row(sc=sc, sch=sch, tbl=tbl, desc=desc, src=src):
+                    sync_table(cur, sc, sch or "", tbl, desc or "", src or "manual")
+                if _sync_row_guard(cur, owned, _err_samples, "table_desc", _row, rep):
+                    rep["tables"] += 1; _pending[0] += 1; _tick()
+                else:
+                    rep["errors"] += 1
+        _run_step("table_descriptions", _step_tables)
         # 2) column_descriptions (feature-0016 graphux5: ordinal 투영 — 그래프 컬럼 세로 정렬용)
         #    ordinal 컬럼 부재(마이그 미적용 구 DB) 등 SELECT 실패는 graceful — 다른 단계(관계/용어) 계속.
-        try:
+        def _step_columns():
             _w, _a = _scope_since_where()
             cur.execute("SELECT scope_key, schema_name, table_name, column_name, description, source, ordinal "
                         "FROM column_descriptions" + _w, _a)
             for sc, sch, tbl, col, desc, src, ordn in cur.fetchall():
-                try:
+                def _row(sc=sc, sch=sch, tbl=tbl, col=col, desc=desc, src=src, ordn=ordn):
                     sync_column(cur, sc, sch or "", tbl, col, desc or "", src or "manual", ordinal=ordn)
+                if _sync_row_guard(cur, owned, _err_samples, "column_desc", _row, rep):
                     rep["columns"] += 1; _pending[0] += 1; _tick()
-                except Exception:
+                else:
                     rep["errors"] += 1
-        except Exception:
-            pass  # column_descriptions 조회 실패(구 DB·권한) — 비차단(다음 단계 계속)
+        _run_step("column_descriptions", _step_columns)
         # 3) table_relationships — broken(파단)은 그래프에서 **삭제**(가산적 MERGE 라 stale 방지,
         #    학습된 '비관계'), 그 외는 weight/status 와 함께 투영. (전량 스캔 후 status 로 분기.)
         # crossds-rel(ADR-019): source/target_datasource_key 도 읽어 크로스-ds 엣지는 각 끝점을 자기 datasource
         #   scope 로 앵커(tgt_scope). 컬럼 부재(마이그 0036 미적용)면 SELECT 실패 → except graceful. intra-ds 는
         #   sds==tds → tgt_scope=sc(기존 동작 완전 보존, 스코프!=ds 인 794 레거시 행도 불변).
-        _w, _a = _scope_since_where()
-        try:
-            cur.execute("SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
-                        "target_column, cardinality, source, confidence, weight, status, "
-                        "source_datasource_key, target_datasource_key "
-                        "FROM table_relationships" + _w, _a)
-            rel_rows = cur.fetchall()
-        except Exception:
-            # 0036 미적용 구 DB — ds 컬럼 없이 재조회(하위호환, 전부 intra-ds 취급).
-            cur.execute("SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
-                        "target_column, cardinality, source, confidence, weight, status "
-                        "FROM table_relationships" + _w, _a)
-            rel_rows = [tuple(r) + ("", "") for r in cur.fetchall()]
-        for sc, sfqn, scol, tfqn, tcol, card, src, conf, wgt, st, sds, tds in rel_rows:
+        def _step_relationships():
+            _w, _a = _scope_since_where()
             try:
-                tgt_scope = tds if (sds and tds and sds != tds) else sc
-                if st == "broken":
-                    delete_relationship(cur, sc, sfqn, scol, tfqn, tcol, tgt_scope=tgt_scope)
-                    rep["relationships_deleted"] += 1
-                else:
-                    sync_relationship(cur, sc, sfqn, scol, tfqn, tcol, card or "",
-                                      src or "fk_introspect", conf if conf is not None else 1.0,
-                                      weight=wgt, status=st or "", tgt_scope=tgt_scope)
-                    rep["relationships"] += 1
-                _pending[0] += 1; _tick()
+                cur.execute("SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
+                            "target_column, cardinality, source, confidence, weight, status, "
+                            "source_datasource_key, target_datasource_key "
+                            "FROM table_relationships" + _w, _a)
+                rel_rows = cur.fetchall()
             except Exception:
-                rep["errors"] += 1
+                # 0036 미적용 구 DB — ds 컬럼 없이 재조회(하위호환, 전부 intra-ds 취급).
+                # §18.8 패널(§56, 잠복결함 동반수정): owned 모드에선 첫 SELECT 실패가 tx 를 abort
+                # 시켜 재조회도 InFailedSqlTransaction 으로 죽던 것 — rollback 으로 소생 후 재조회.
+                if owned:
+                    try:
+                        c.rollback()
+                    except Exception:
+                        pass
+                    _pending[0] = 0
+                cur.execute("SELECT scope_key, source_table_fqn, source_column, target_table_fqn, "
+                            "target_column, cardinality, source, confidence, weight, status "
+                            "FROM table_relationships" + _w, _a)
+                rel_rows = [tuple(r) + ("", "") for r in cur.fetchall()]
+            for sc, sfqn, scol, tfqn, tcol, card, src, conf, wgt, st, sds, tds in rel_rows:
+                _is_del = (st == "broken")
+
+                def _row(sc=sc, sfqn=sfqn, scol=scol, tfqn=tfqn, tcol=tcol, card=card,
+                         src=src, conf=conf, wgt=wgt, st=st, sds=sds, tds=tds):
+                    tgt_scope = tds if (sds and tds and sds != tds) else sc
+                    if st == "broken":
+                        delete_relationship(cur, sc, sfqn, scol, tfqn, tcol, tgt_scope=tgt_scope)
+                    else:
+                        sync_relationship(cur, sc, sfqn, scol, tfqn, tcol, card or "",
+                                          src or "fk_introspect", conf if conf is not None else 1.0,
+                                          weight=wgt, status=st or "", tgt_scope=tgt_scope)
+                if _sync_row_guard(cur, owned, _err_samples, "relationship", _row, rep):
+                    rep["relationships_deleted" if _is_del else "relationships"] += 1
+                    _pending[0] += 1; _tick()
+                else:
+                    rep["errors"] += 1
+        _run_step("table_relationships", _step_relationships)
         # 3b) routine_objects (함수·프로시저, graph-funcproc ADR-016) — Routine 노드 +
-        #     HAS_ROUTINE + 참조 테이블 ROUTINE_USES. 테이블 부재(구 DB·0034 미적용)는 graceful.
-        #     §18.8 패널(MAJOR): owned 배치 트랜잭션에서 SELECT 실패(UndefinedTable)는 트랜잭션을
-        #     aborted 로 만들어 이후 4)·5) 단계까지 조용히 실패시킨다 — 진입 전 pending 을 강제
-        #     커밋하고, 실패 시 rollback 으로 트랜잭션을 복구해 다음 단계를 살린다.
-        _tick(force=True)
-        try:
+        #     HAS_ROUTINE + 참조 테이블 ROUTINE_USES. 테이블 부재(구 DB·0034 미적용)는 _run_step 이 격리.
+        def _step_routines():
             _w, _a = _scope_since_where()
             cur.execute("SELECT scope_key, schema_name, routine_name, routine_type, params, "
                         "referenced_tables FROM routine_objects" + _w, _a)
             for sc, sch, name, rtype, params, refs in cur.fetchall():
-                try:
+                def _row(sc=sc, sch=sch, name=name, rtype=rtype, params=params, refs=refs):
                     if isinstance(refs, str):
                         refs = json.loads(refs or "[]")
                     sync_routine(cur, sc, sch or "", name, rtype or "procedure",
                                  params or "", refs if isinstance(refs, list) else [])
+                if _sync_row_guard(cur, owned, _err_samples, "routine", _row, rep):
                     rep["routines"] += 1; _pending[0] += 1; _tick()
-                except Exception:
+                else:
                     rep["errors"] += 1
-        except Exception:
-            # routine_objects 부재(0034 미적용) — poisoned 트랜잭션 복구 후 비차단(다음 단계 계속)
-            if owned:
-                try:
-                    c.rollback()
-                except Exception:
-                    pass
-            _pending[0] = 0
+        _run_step("routine_objects", _step_routines)
+
         # 4) kb_glossary
-        try:
+        def _step_glossary():
             _w, _a = _scope_since_where()
             cur.execute("SELECT scope_key, term, definition, source "
                         "FROM kb_glossary" + _w, _a)
             for sc, term, defn, src in cur.fetchall():
-                try:
+                def _row(sc=sc, term=term, defn=defn, src=src):
                     sync_glossary_term(cur, sc, term, defn or "", src or "manual")
+                if _sync_row_guard(cur, owned, _err_samples, "glossary", _row, rep):
                     rep["glossary"] += 1; _pending[0] += 1; _tick()
-                except Exception:
+                else:
                     rep["errors"] += 1
-        except Exception:
-            pass  # kb_glossary 없을 수 있음
+        _run_step("kb_glossary", _step_glossary)
+
         # 5) glossary_relations (term id → term 매핑) — updated_at 부재(created_at only) + 소규모라
         #    증분 대상에서 제외하고 항상 full 투영(작아서 batching 만으로 충분).
-        try:
+        def _step_glossary_rel():
             cur.execute(
                 "SELECT g1.scope_key, g1.term, g2.term, gr.relation_type "
                 "FROM glossary_relations gr "
                 "JOIN kb_glossary g1 ON g1.id = gr.from_id "
                 "JOIN kb_glossary g2 ON g2.id = gr.to_id")
             for sc, ft, tt, rt in cur.fetchall():
-                try:
+                def _row(sc=sc, ft=ft, tt=tt, rt=rt):
                     sync_glossary_relation(cur, sc, ft, tt, rt or "similar")
+                if _sync_row_guard(cur, owned, _err_samples, "glossary_rel", _row, rep):
                     rep["glossary_relations"] += 1; _pending[0] += 1; _tick()
-                except Exception:
+                else:
                     rep["errors"] += 1
-        except Exception:
-            pass
+        _run_step("glossary_relations", _step_glossary_rel)
         _tick(force=True)   # 잔여분 최종 커밋
+        if rep["errors"] or rep["step_failures"]:
+            # §56 RC1 관측성: 침묵 누적되던 per-row 오류의 정체를 프로덕션 로그로 노출(첫 5건 샘플).
+            _log.warning("sync_graph partial: errors=%s step_failures=%s samples=%s",
+                         rep["errors"], rep["step_failures"], _err_samples)
         cur.close()
     except Exception as exc:
         _log.warning("sync_graph_failed err=%r", exc)
         rep["errors"] += 1
+        # §18.8 패널(§56): 치명 실패(스캔 전면 중단)는 **step_failures 로도 계상** — 워터마크 게이트가
+        # step_failures 만 보므로, 여기 미집계면 죽은 sync 뒤에도 워터마크가 전진해 그 창의 변경분이
+        # 증분 경로에서 영구 누락된다(다음 --full 까지). errors 는 가시성용으로 병행 유지.
+        rep["step_failures"] += 1
         if owned:
             try:
                 c.rollback()

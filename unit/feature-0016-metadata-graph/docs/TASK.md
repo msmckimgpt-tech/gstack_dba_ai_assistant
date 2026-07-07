@@ -1646,3 +1646,47 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T56.4 정적·격리 검증: `node --check admin.js` PASS · CSS↔JS 정합(fixed↔viewport 좌표, absolute 잔존 0) · 중복 로직 0 · cache-buster `?v=20260707-graph-dataflow-tooltip` bump. 세션 컨텍스트 압축으로 issue-2B 를 이중 접근(초기 fixed JS 편집이 활성 컨텍스트에서 유실 후 absolute CSS 재접근)했던 것을 fixed 로 정합화(REPORT/RETRO 참조).
 - [ ] T56.5 배포 + POST-DEPLOY PB-0008 — 정적 자산 baked → merge + `make deploy-web` 재배포 후 실 Windows 브라우저 시각검증(TEST.md §3 Run 2026-07-07 검증항목 ①~⑥). deploy_scope: included.
 - [x] T56.6 배포 완료 — PR #611 main 병합(15e4e23a) → `make deploy-web` 무중단 롤링(web-a/b recreate, Caddyfile 무변경). **자산·health 검증 PASS**(엣지 readyz git_commit=15e4e23a·RestartCount 0·서빙 3 시그니처 라이브). soak 은 세션 경계로 조기 종료됐으나 RestartCount 0+안정 프로브로 확증. §55 collision→§56 재번호(merge e79688f6). **실 Windows 브라우저 PB-0008 시각검증(①~⑥)만 사용자 육안 대기.**
+
+## 56. routine-sync-crossdb — fhgame1 실측 이슈: 루틴 투영 붕괴·크로스-DB 참조 폐기·재귀 보충 부실 (2026-07-07, 사용자 보고)
+
+- Related Requirement: REQ-20260707-routine-sync-crossdb — 사용자 실측(mssql-qa-idc/fhgame1 DB 능동 분석):
+  ① 함수·프로시저 노드가 그래프에 없음 ② 크로스-DB 관계 미확인 ③ 대부분 테이블에 '보충설명 필요' —
+  재귀 분석 부실 추정. 프로시저 중심 DB 라 능동 분석 효과가 현저히 저하.
+- 등급: **Major**(그래프 투영 엔진·파싱 계약 변경, 마이그 0·비파괴). 정본 ADR-022.
+- 근본원인(라이브 진단 확정):
+  - **RC1 (routine 노드 부재)**: routine_objects SSOT 는 완비(qa-idc 11,973·fhgame1 300, 07-06 적재)이나
+    AGE 투영이 9행 뿐. sync_graph 의 batched 트랜잭션에서 **한 행 실패가 트랜잭션을 오염시켜 이후 전 행이
+    InFailedSqlTransaction 연쇄 실패 + 배치 커밋이 롤백으로 성공분까지 소실**(라이브 full sync errors
+    18,698 — 단건 재현 전행 성공 = 불량 행 0, 전부 연쇄). 부작용: errors>0 이 워터마크를 07-06 07:30 에
+    영구 고착 → 증분 sync 가 매 30분 전량 재스캔(+백필의 updated_at 전진으로 창 팽창).
+  - **RC2 (크로스-DB 관계 부재·오귀속)**: parse_referenced_tables 가 qualified 참조([db].[dbo].[T])를
+    leaf 정규화 후 **같은 스키마 실재 테이블만** 채택 — 크로스-DB 참조 전부 폐기 + 동명 로컬 테이블 존재
+    시 **오귀속**. 프로시저가 DB 동작을 제어하는 환경에서 관계 substrate 의 대부분이 소실.
+  - **RC3 (보충설명 필요·재귀 부실)**: substrate 부재(루틴·관계 없음)로 1-hop 컨텍스트가 빈약 →
+    thin 판정이 "연결 정보 없음" 문구를 공란으로 안 봐 back-refine 미발화.
+- 조치:
+  - 데이터 회수(즉시, 라이브): qa-idc 루틴 11,973행 전수 autocommit 투영 완료(fhgame1 300/300 AGE 확인).
+  - RC1: `_sync_row_guard`(SAVEPOINT 행 격리 — 실패 행만 롤백, 연쇄·소실 차단) + step_failures(커버리지
+    구멍) 분리 + 실패 첫 5건 샘플 warning(관측성) + 워터마크 전진 게이트를 errors→step_failures 로 교체.
+  - RC2: qualifier 해석 4규칙(①dbo/자기라벨=로컬 ②(qual,leaf)∈external=크로스-DB 채택 ③알려진 타 스키마
+    미실재=폐기(오귀속 차단) ④미상=레거시 로컬 폴백) + external_tables(rag_objects effective 스키마 집합,
+    TTL 600s 캐시) + refs_fqn `타스키마.T`(+cross 플래그) — sync_routine 이 그대로 크로스 클러스터
+    ROUTINE_USES 앵커(코드 불변).
+  - RC3: thin 판정에 "연결 정보 없음"=공란 동치(usage 있으면 비-thin — 과잉 재분석 방지).
+  - **RC4 (추가 발견 — backfill 키 불일치)**: routine_backfill 이 registry **라벨 키**('mssql-dk-dev')를
+    scope_key/datasource_key/sync_graph 에 사용 — insight cadence(해시 scope)와 SSOT **이중 적재**(라이브
+    실측 dk-dev 1,449행×2키 등 4쌍), label 스코프 그래프 고아 투영, RC2 external 검증(rag 해시 키) 무력화.
+    → read-axis 정규화(`ds.scope_key or 라벨lower`, ADR-014 규약) + --scope 필터 양키 매칭.
+
+### 56.1 구현
+- [x] T56.1 metadata_graph.py `_sync_row_guard`+step_failures+샘플 로그, scripts/metadata_graph_sync.py 워터마크 게이트.
+- [x] T56.2 routines.py parse_referenced_tables qualifier 4규칙+external_tables+`_external_tables_for` TTL 캐시+refs_fqn cross.
+- [x] T56.3 node_analysis.py `_analysis_is_thin` 무관계 문구 동치.
+- [x] T56.3b routine_backfill.py read-axis scope 정규화(RC4) + report 에 scope 표기.
+
+### 56.2 검증
+- [x] T56.4 신규 test_routine_sync_crossdb.py 19(RC4 read-axis/레거시 폴백/양키 필터 3건 포함, 크로스 채택/오귀속 차단/미실재 폐기/dbo·라벨 로컬/db..T·2-part/
+  write 우선/introspect 배선·TTL 캐시·soft 실패/row_guard 4종/thin) + 기존 계약 주석 갱신 — 영향 4파일 84 PASS.
+- [x] T56.5 §18.8 적대 리뷰(ultracode workflow, 3렌즈·2-refuter·27 에이전트) — 확정 8건(4계열: step 오염/소실·워터마크 catastrophic 구멍·row-guard 무결성/서브트랜잭션·ext 실패 캐시) 전건 수정 + 기각 4건(만장). _run_step 통일 가드 도입, 0036-폴백 잠복결함 동반수정. REVIEW REV 정본.
+- [ ] T56.6 verify → PR → 머지 → 배포(web+insight/ask-worker) → fhgame1 e2e(재-introspect→full sync→DB 분석
+  재실행: ƒ/⚙ 노드·크로스-DB ROUTINE_USES·back-refine 보충) → PB-0008.

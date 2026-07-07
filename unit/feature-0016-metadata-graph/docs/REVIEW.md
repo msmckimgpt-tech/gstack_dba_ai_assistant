@@ -1137,3 +1137,28 @@ source_of_truth: true
   - **F2(MINOR→부분 수정)**: start()/Esc 가 stopTrack() 우회 → scroll/resize 리스너 self-healing 누수. Esc→doHide() 로 즉시 해제. start()(go-button 무-focus) 잔여는 bounded+self-healing(reflow 가 pop DOM 이탈 시 자기 리스너 제거)+addEventListener de-dup → 수용(residual).
   - **F3/F4(NIT→수용)**: reflow rAF 스로틀 부재·초소형 뷰포트 flip 클램프 잔여 — 비현실적 조건, 범위 외.
 - POST-DEPLOY PB-0008(TEST.md §3 Run 2026-07-07 ①~⑥)에서 라이브 시각 확정 예정.
+
+## REV-20260707T145306-ai-claude-corp-feature-0016-routine-sync-crossdb [SUBAGENT: PASS] — §56 §18.8 적대 리뷰 패널
+
+- 대상: TASK §56 (routine-sync-crossdb) 전 변경. 방식: ultracode Workflow — 3렌즈 발굴(synctx/parse/ops,
+  effort high, 27 에이전트 전건 완주) → 발견 12건 각각 2-refuter 적대 검증(다수결).
+- **확정·수정 (MAJOR 4 · MINOR 4 — 4계열)**:
+  1. [MAJOR×2/synctx·parse] step-level 실패의 오염 잔존 — 0/2/4/5 단계 except 가 rollback 없이 tx 를
+     aborted 로 방치(후속 step 연쇄 사망), 1/3 단계는 try 자체가 없어 바깥 except 로 전면 무산, 최종
+     커밋이 aborted tx 에서 조용히 롤백(카운터는 이미 가산 = 거짓 telemetry). → **_run_step 통일 가드**
+     (진입 전 선행 성공분 강제 커밋 + 실패 시 step_failures·rollback·pending 리셋·샘플)로 전 단계 격리.
+  2. [MAJOR×2/synctx·parse·ops 동일 클래스] catastrophic 실패(바깥 except)·배치 커밋 실패가 step_failures
+     미집계 → 죽은 sync 뒤에도 워터마크 전진(증분 영구 누락 창). → 바깥 except 와 _tick 커밋 실패에
+     step_failures 계상(+커밋 실패 시 rollback 으로 다음 배치 소생).
+  3. [MINOR×2/synctx·parse] _sync_row_guard 무결성 — SAVEPOINT 확립 실패를 per-row errors 로 오분류
+     (18,698-연쇄가 카운터 이름만 바꿔 재현) → step_failures 계상+fn 미실행. 실패 행 ROLLBACK TO 후
+     RELEASE 미수행 → 서브트랜잭션 누적(배치 500 > 64 suboverflow 성능 절벽) → RELEASE 추가.
+  4. [MINOR/ops] _external_tables_for 실패 {} 를 600s 캐시 — 크로스-DB 검증 침묵 비활성 창 → 실패 미캐시.
+  또한 [잠복결함 동반수정] 3단계 0036-폴백 재조회가 owned 모드에서 aborted tx 위라 항상 죽던 것 —
+  rollback 소생 후 재조회.
+- **기각 (2-refuter 만장, 4건)**: 옵션 테이블 부재 설치의 워터마크 고착(이 repo 마이그 순서상 kb_glossary
+  0013 < routine 0034 — 재현 불가) · MSSQL 2-part schema.table 오해석(실재검증 ④/③ 규칙이 방어) ·
+  thin 완전일치 한정(계약 문구 고정 — 과잉 재분석 방지 의도) · 결정적 step 실패의 워터마크 차단(=수리
+  대상 신호가 맞고 daily --full 이 복구 경로).
+- 재검증: 회귀 잠금 갱신·신규(가드 RELEASE·SAVEPOINT 실패 step 계상·ext 실패 미캐시) 포함
+  test_routine_sync_crossdb.py **20 PASS** + 전체 스위트 **EXIT=0·FAILED 0**. [SUBAGENT+MAIN: PASS]

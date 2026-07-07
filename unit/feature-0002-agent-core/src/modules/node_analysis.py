@@ -1159,6 +1159,10 @@ def _analysis_is_thin(text, thin_chars: int) -> bool:
     summary = str(obj.get("summary") or "").strip()
     rel = str(obj.get("relationships") or "").strip()
     usage = str(obj.get("usage") or "").strip()
+    # §56 RC3: LLM 계약의 무관계 문구("연결 정보 없음")는 공란과 동치 — 관계 substrate(루틴/크로스-DB)가
+    # 뒤늦게 채워지는 환경(fhgame1 류)에서 이런 노드가 back-refine 대상으로 잡혀 보충되게 한다.
+    if rel in ("연결 정보 없음", "-"):
+        rel = ""
     return (len(summary) < max(1, thin_chars)) or (not rel and not usage)
 
 
