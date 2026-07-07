@@ -701,3 +701,29 @@ source_of_truth: true
   민감 코드 저장(기각, definition_hash 만 유지).
 - Supersedes: (ADR-016 의 "그 스키마 실재 테이블만" 참조 규칙을 4규칙으로 대체 — 보수성은 실재 검증으로 계승)
 - Superseded By:
+
+## ADR-023 — §56 RC5: routine store label(MSSQL DB명) lowercase 정규화 — set_active_database 계약 준수
+- Status: accepted (2026-07-07)
+- Context: fhgame1 e2e(ADR-022 후속) 재-introspect 에서 fhgame1 300→600행 — cadence 는
+  `set_active_database`(TASK-0220, `str(db).strip().lower()`)를 경유해 routine·relationship·table
+  전 경로가 lowercase store label 을 쓰는데, routine_backfill 은 `list_server_databases()`(sys.databases
+  원본 케이스)를 무가공 store. RC4(ADR-022 D5)의 scope 통일 전엔 서로 다른 scope 라 충돌이 잠복,
+  통일 후 같은 scope 에 케이스-변형 이중행(라이브 qa-idc 1,912쌍·mixed 6,320행)·그래프 중복
+  Schema/Routine 클러스터로 표면화.
+- Decision: backfill mssql 분기에서 `store_label = str(dbname).strip().lower()` 로 정규화해
+  introspect_and_store(store_schema=…)에 전달. 질의 연결(connect(database=dbname))은 원본 유지
+  (store/query 분리 — ADR-007 스키마-slot 규약과 동일 구도). MySQL 은 스키마 케이스 구분
+  (lower_case_table_names=0)이 유효해 비적용. insight/cadence 는 이미 계약 준수 — 무수정.
+- Consequences: 두 writer 의 store label 이 단일 계약(`normalize_db_label`, shared/config — §18.8
+  패널 반영으로 set_active_database 와 공유·parity 테스트 잠금)으로 수렴 — 케이스-변형 이중 적재
+  재발 차단. 기존 mixed-case 행은 backfill 이 introspect 성공 직후 `purge_case_variant_labels` 로
+  **멱등 자동 회수**(패널 MAJOR 반영 — 수동 runbook 코드화·stale pre-RC5 writer 재발 자기치유),
+  그래프 mixed-key 고아는 AGE DETACH DELETE 운영 정리 후 full sync 재투영. 한계: ① CS collation
+  MSSQL 서버에서 케이스만 다른 두 DB 는 한 label 로 병합(실환경 미관측) — prune 강등으로 교차-삭제
+  진동은 차단, 진단은 리포트 slot(원본 케이스)+store_labels 매핑 ② routine_name·refs 테이블명 축의
+  information_schema 케이스 플래핑(pre-existing, TASK-0305 RC2 계열)과 backfill(DB 전체)·cadence
+  (스키마 단위) refs 입력 발산 churn 은 본 ADR 범위 외 — §56 후속.
+- Alternatives: (a) 설정 라벨 역매핑(config casing 추종) — 서버 전수 DB 는 설정에 없어 미상 라벨엔
+  규칙 부재(기각) (b) introspect_and_store 내부 무조건 lower — MySQL 케이스 구분 파괴(기각)
+  (c) 케이스-무시 unique 인덱스 마이그 — 쓰기 계약 정리 없인 첫 writer 케이스에 종속(기각, D 가 선행).
+- Supersedes: — / Superseded By: —

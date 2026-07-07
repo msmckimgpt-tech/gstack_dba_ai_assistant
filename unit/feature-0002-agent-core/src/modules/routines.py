@@ -354,3 +354,38 @@ def introspect_and_store(db_conn, schema, table_names, *, kb_conn=None, scope_ke
             except Exception:
                 pass
     return n
+
+
+def purge_case_variant_labels(scope_key, store_label, kb_conn=None) -> int:
+    """§56 RC5 보완(적대 패널 MAJOR): 방금 lower store label 로 재적재된 DB 의 **케이스-변형 label
+    행**을 멱등 회수. introspect 성공 직후 그 label 의 fresh truth 가 SSOT 에 있으므로 같은
+    (scope, lower(label)) 에서 label 케이스만 다른 행은 정의상 stale 이중 키다 — 수동 정리
+    runbook 의 코드화(행 단위 twin-검증 불요·introspect 실패 DB 는 호출 자체가 없어 안전).
+    stale pre-RC5 writer 가 mixed 행을 재생성해도 다음 backfill 이 자동 치유한다. 케이스-변형
+    label 행이 없으면 no-op. 예외는 삼켜 0 반환(루프 비차단 — introspect_and_store 관례)."""
+    if not store_label:
+        return 0
+    kc, kowned = (None, False)
+    try:
+        kc, kowned = _rw_conn(kb_conn)
+        if kc is None:
+            return 0
+        cur = kc.cursor()
+        cur.execute(
+            "DELETE FROM routine_objects "
+            "WHERE scope_key = %s AND schema_name <> %s AND lower(schema_name) = %s",
+            ((scope_key or "common")[:96], store_label[:256], store_label[:256]))
+        rc = getattr(cur, "rowcount", None)
+        n = rc if isinstance(rc, int) and rc > 0 else 0
+        if n:
+            _log.info("routine_case_variants_purged label=%s count=%s", store_label, n)
+        return n
+    except Exception as exc:
+        _log.warning("purge_case_variant_labels_failed label=%s err=%r", store_label, exc)
+        return 0
+    finally:
+        if kowned and kc is not None:
+            try:
+                kc.close()
+            except Exception:
+                pass

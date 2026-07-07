@@ -491,12 +491,19 @@ def set_active_datasource(key, engine: str | None = None, default_db: str | None
     _ACTIVE_DATABASE.set(None)
 
 
+def normalize_db_label(database):
+    """MSSQL DB(catalog) store label 정규화 — **단일 계약**(§56 RC5). set_active_database 와
+    routine_backfill 등 모든 store-label writer 가 이 함수를 공유한다 — 정규화 식이 한쪽만
+    바뀌어 writer 간 케이스-변형 이중 적재가 재발하는 drift 를 차단. None=미설정."""
+    return (str(database).strip().lower() or None) if database else None
+
+
 def set_active_database(database: str | None) -> None:
     """TASK-0220: 현재 컨텍스트의 active database(catalog) 설정. MSSQL DB 별 inner-loop 가 호출.
 
     None=미설정(MySQL 또는 단일 DB) → `ds_object_suffix` 가 2계층 suffix 반환.
     """
-    _ACTIVE_DATABASE.set((str(database).strip().lower() or None) if database else None)
+    _ACTIVE_DATABASE.set(normalize_db_label(database))
 
 
 def get_active_database():

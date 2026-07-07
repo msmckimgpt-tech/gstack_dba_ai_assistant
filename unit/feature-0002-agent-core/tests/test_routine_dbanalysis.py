@@ -294,7 +294,8 @@ class _BFConn:
         pass
 
 
-def _patch_backfill(monkeypatch, ds_map, conns, dbs=None, store_calls=None, connect_calls=None):
+def _patch_backfill(monkeypatch, ds_map, conns, dbs=None, store_calls=None, connect_calls=None,
+                    purge_calls=None):
     import shared.db as sdb
     import shared.config as scfg
     from shared import datasources as dsm
@@ -303,6 +304,11 @@ def _patch_backfill(monkeypatch, ds_map, conns, dbs=None, store_calls=None, conn
     calls = store_calls if store_calls is not None else []
     # 안전 가드(멀티 ds 플래그) 통과 — 테스트는 fake connect 라 실 연결 없음.
     monkeypatch.setattr(scfg, "AGENT_MULTI_DATASOURCE_ENABLED", True, raising=False)
+    # §56 RC5: 케이스-변형 label purge 는 KB 연결을 여는 실함수라 hermetic 하게 차단 + 호출 캡처.
+    monkeypatch.setattr(rt, "purge_case_variant_labels",
+                        lambda scope_key, store_label, kb_conn=None:
+                        (purge_calls.append((scope_key, store_label))
+                         if purge_calls is not None else None) or 0)
 
     def fake_connect(database=None, autocommit=True, datasource=None):
         if connect_calls is not None:

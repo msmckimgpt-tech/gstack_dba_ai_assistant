@@ -1162,3 +1162,11 @@ source_of_truth: true
   대상 신호가 맞고 daily --full 이 복구 경로).
 - 재검증: 회귀 잠금 갱신·신규(가드 RELEASE·SAVEPOINT 실패 step 계상·ext 실패 미캐시) 포함
   test_routine_sync_crossdb.py **20 PASS** + 전체 스위트 **EXIT=0·FAILED 0**. [SUBAGENT+MAIN: PASS]
+
+## REV-20260707T173500-ai-root-feature-0016-routine-schema-case [SUBAGENT: PASS-WITH-FIXES] — §56 RC5 §18.8 적대 리뷰 패널
+
+- 실행: ultracode workflow(3렌즈 contract/completeness/regression + MAJOR/BLOCKING 별 2-refuter, 9 에이전트·174 tool-use). 대상: backfill MSSQL store label lower 정규화 diff.
+- 렌즈별 발견 4/4/5 → refuter 교차 후 **확정(MAJOR) 1건**: 수동 정리 runbook 구멍 — lower-twin 조건부 삭제는 introspect 실패 DB·drop 된 루틴의 mixed 행을 영구 잔존시키고(모든 자동 pruner 의 사각), scope-full sync 가 잔존 행의 그래프 클러스터를 부활시킴. → **수정**: `purge_case_variant_labels()`(routines.py) — introspect 성공 직후 케이스-변형 label 행 멱등 자동 회수(runbook 코드화, stale pre-RC5 writer 재발 자기치유). backfill 호출 배선 + 리포트 `case_purged`.
+- MINOR/NIT 수정 반영: ① 공유 `normalize_db_label()`(shared/config.py) — set_active_database·backfill 정규화 계약 단일화 + parity 잠금 테스트 ② CS-collation 케이스-쌍둥이 DB 병합 시 prune 강등(교차-삭제 진동 차단) + 테스트 ③ dry-run slot 원본 케이스·store_labels 매핑 잠금 테스트 ④ 리포트 store_labels 노출.
+- 수용(후속 인지, 코드 무변경): ⑤ routine_name·refs 테이블명 축의 information_schema 케이스 플래핑(pre-existing, TASK-0305 RC2 계열 — RC5 와 동일 결함 클래스의 직교 축) ⑥ backfill(DB 전체)·cadence(스키마 단위) refs 입력 발산으로 multi-schema DB 에서 동일 행 교대 upsert churn(pre-existing 표면화, backfill 은 운영자 호출이라 빈도 낮음). 둘 다 §56 후속 항목으로 TASK 에 기록.
+- 재검증: 컨테이너 pytest 66 PASS(EXIT=0)·ruff PASS. 잔여 BLOCKING 0.

@@ -1688,5 +1688,30 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T56.4 신규 test_routine_sync_crossdb.py 19(RC4 read-axis/레거시 폴백/양키 필터 3건 포함, 크로스 채택/오귀속 차단/미실재 폐기/dbo·라벨 로컬/db..T·2-part/
   write 우선/introspect 배선·TTL 캐시·soft 실패/row_guard 4종/thin) + 기존 계약 주석 갱신 — 영향 4파일 84 PASS.
 - [x] T56.5 §18.8 적대 리뷰(ultracode workflow, 3렌즈·2-refuter·27 에이전트) — 확정 8건(4계열: step 오염/소실·워터마크 catastrophic 구멍·row-guard 무결성/서브트랜잭션·ext 실패 캐시) 전건 수정 + 기각 4건(만장). _run_step 통일 가드 도입, 0036-폴백 잠복결함 동반수정. REVIEW REV 정본.
-- [ ] T56.6 verify → PR → 머지 → 배포(web+insight/ask-worker) → fhgame1 e2e(재-introspect→full sync→DB 분석
-  재실행: ƒ/⚙ 노드·크로스-DB ROUTINE_USES·back-refine 보충) → PB-0008.
+- [x] T56.6 verify(재개 세션 재확인 포함 2회 PASS) → commit fe05d6f8 → base 병합(#613 등 6건, 충돌 0,
+  영향 6파일 127 PASS) → **PR #615 머지(6c59927d)** → cycle-finalize → 배포(web 롤링 soak PASS +
+  insight/ask-worker 재빌드·RC1 가드 라이브 실증 + alembic 0039 ✓ + healthz/smoke 전건 PASS) →
+  **RC4 라이브 정리**(SSOT 라벨 이중행 2,201 전건 twin-검증 삭제 — dk-dev 651 비대칭은 schema 케이스였고
+  lower 매칭 시 1,449/1,449 · AGE 라벨 고아 2,814v/4,955e DETACH DELETE · 워터마크 잔여 0) →
+  재-introspect(stored 6,910, 오류 2건=소스 DB 환경) → **RC2 라이브 실증**: refs `"cross":1` 채택
+  (fhgame 86·qa-idc 758 루틴).
+
+### 56.3 RC5 — backfill MSSQL store label 케이스 정규화 (2026-07-07, e2e 중 적발)
+- 증상: 재-introspect 후 fhgame1 300→600행 — `fhgame1`(07-06 cadence, lower) vs `FHGame1`(backfill,
+  sys.databases 원본 케이스) 케이스-변형 이중행. qa-idc 전체 1,912쌍·mixed 6,320행, 그래프 중복
+  Schema/Routine 클러스터. RC4 의 scope 통일이 잠복 불일치를 표면화(회귀 아님 — 구 backfill 도 무가공).
+- 근본원인: store label 의 시스템 계약은 `set_active_database`(TASK-0220, shared/config.py)가 **lower 로
+  고정** — cadence(routine·relationship·table 전 경로)는 준수, backfill 만 원본 케이스 무가공 store.
+- [x] T56.7 routine_backfill.py mssql 분기 store label lower 정규화 — 공유 계약 `normalize_db_label`
+  (shared/config, set_active_database 와 단일화 + parity 잠금). store/query 분리(connect 는 원본
+  dbname). MySQL 분기 케이스 보존 불변. insight.py 는 계약 준수 확인으로 무수정.
+- [x] T56.7b §18.8 패널(3렌즈+2-refuter, 9 에이전트) 확정 MAJOR 1 반영: `purge_case_variant_labels`
+  — introspect 성공 직후 케이스-변형 label 행 멱등 자동 회수(수동 runbook 코드화·재발 자기치유,
+  리포트 case_purged). MINOR 반영: CS-collation label 충돌 시 prune 강등(교차-삭제 진동 차단)·
+  store_labels 리포트·dry-run slot 잠금. 테스트 6건(RC5 계열) — 컨테이너 66 PASS·ruff PASS.
+  REVIEW REV-20260707T173500 정본.
+- [ ] T56.7c (후속, 패널 수용 2건) routine_name·refs 테이블명 축 케이스 플래핑(pre-existing,
+  TASK-0305 RC2 계열) + backfill(DB 전체)·cadence(스키마 단위) refs 입력 발산 churn — 별도 cycle.
+- [ ] T56.8 §18.8 패널 → verify → PR → 머지 → 워커 재배포 → 라이브 정리(mixed-case 이중행·AGE mixed-key
+  고아) → fhgame1 e2e 재수행(재-backfill→full sync(RC1 워터마크 증적)→DB 분석 재실행(RC3 back-refine)) →
+  PB-0008 대체검증(WSL curl 자산 + 사용자 육안 안내).

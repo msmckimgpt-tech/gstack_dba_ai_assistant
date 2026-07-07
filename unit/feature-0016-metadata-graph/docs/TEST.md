@@ -741,3 +741,14 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - §18.8 적대 패널(ultracode, 27 에이전트): 확정 8건 전건 수정 — REVIEW REV 참조. 마이그 0.
 - 웹/UI 자산 변경 없음(백엔드 전용) — PB-0008 은 배포 후 그래프 뷰에서 fhgame1 ƒ/⚙·크로스-DB 엣지
   육안 확인으로 수행(Environment: Windows-browser Run 을 POST-DEPLOY 에 append 예정).
+
+### Run (2026-07-07, 재개 세션) — §56 T56.6 완수 + RC5 적발·수정
+- Environment: 재개 세션(Fable) — PR #615 머지·배포(web soak PASS·워커 재빌드·alembic 0039)·healthz 전건 PASS.
+- RC4 라이브 정리: SSOT 라벨 이중행 2,201 전건 twin-검증 삭제(dk-dev 케이스 비대칭은 lower 매칭으로 1,449/1,449
+  해소) + AGE 라벨 고아 2,814v/4,955e DETACH DELETE — 잔여 0 확인.
+- RC2 라이브 실증: 재-introspect(stored 6,910) 후 refs `"cross":1` — fhgame 86·qa-idc 758 루틴.
+- **RC5 적발**(e2e 게이트가 목적대로 작동): fhgame1 300→600 케이스-변형 이중행(qa-idc 1,912쌍) →
+  TEST-20260707T170500-routine-schema-case-1: backfill mssql store label lower(store/query 분리) ·
+  -2: mysql 케이스 보존. 컨테이너 pytest 44 PASS(EXIT=0). e2e 재수행은 T56.8 에서 완결.
+- **RC5 패널 반영 후 확장**: normalize_db_label parity·purge SQL 계약·CS-collation prune 강등·
+  dry-run slot 원본 케이스 — RC5 계열 6건, 영향 3파일 66 PASS(EXIT=0)·ruff PASS.
