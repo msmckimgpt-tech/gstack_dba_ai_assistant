@@ -5486,3 +5486,12 @@ source_of_truth: true
 - 검증: §18.8 3렌즈 패널(BLOCKING 1·MAJOR 1·HIGH 1·MED 3·LOW 5 FIXED, XSS clean, ACCEPT 1) · node --check OK · 제거 심볼 grep-0 · route 골든 불변 · 호스트 1637 passed(회귀 0) · CSS 균형. PB-0008 = POST-DEPLOY.
 - Files: `static/{admin.html,admin.js,styles.css}` + docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
 - Cross-ref: REVIEW.md REV-20260707T064745-metadata-console-redesign · TASK-20260707-metadata-console-redesign
+
+## CHG-20260707T230501-doc-sync-rn-2305 (TASK-20260707T230501-doc-sync-rn-2305 — 07-07 후속 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 기존 '2026-07-07' 블록 `items` 에 2항목 append(같은 날 → 새 일자 블록 미생성, `generated` 2026-07-07 유지) — ① new/admin "대화에서 모은 코드값(상태 코드 등) 뜻풀이 후보를 검토해 채택"(0beb02e3) ② improved/admin "AI 추론 예산을 강도(낮음·높음·매우 높음)별로도 설정"(d9516aee). 블록 `summary` 에 '코드값 후보 검토·채택 · 추론 강도별 예산 설정' 구 추가.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260707-rn-0707`→`?v=20260707b-rn-0707`.
+- 중복 회피: 업무 용어(glossary) 대화 자율수집은 2026-06-29 블록에 이미 있어(라인 408·414) 재announce 금지 — 신규 코드값(ENUM) 측만 반영(적대 검증 rescope). 콘솔 IA 통합(47a63b1a)·그래프 화살표·pane 재설계·OAuth cron·§56 sync 는 비-사용자/이미-커버 → 릴리즈노트 미포함.
+- Verification: `node --check release-notes-data.js` PASS · 블록 순서 07-07>06>04>03>02 · 07-06 이하 보존 · 스키마 정합. 사용자향 평이화(내부용어 누출 0). jsdom 테스트는 이 env 미설치(컨테이너 전용).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·렌더러/마이그/엔드포인트/권한키/cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. landing/배포는 cron wrapper 소관. META(STATUS·wiki·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260707T230501-META-0021-doc-sync-0707-2305).
