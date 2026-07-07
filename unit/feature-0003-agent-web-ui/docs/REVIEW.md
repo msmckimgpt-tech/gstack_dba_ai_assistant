@@ -4538,3 +4538,7 @@ source_of_truth: true
 - 리뷰가 확인한 양호점: buildRuntimeSettingControl 깨끗 제거(dead-ref 0, 잔여 admin-quota-*는 별개 LLM-quota 편집기)·토큰 전부 실재·RS_MODEL_PREFIX 키 분류 정확·mountedPanels 미클리어라 rerender-gate 안전·commit-bar 추가 additive+null-guard(계정/역할/프롬프트 무위험)·상태 text-backed(색-only 아님)·aria-label·focus-ring.
 - 검증: node --check PASS · CSS 중괄호 균형 · 기능/백엔드/엔드포인트 불변(표현 계층만). 최종 VISUAL 검증은 PB-0008 POST-DEPLOY before/after.
 - Cross-ref: CHG/TASK/TEST 동일 slug · 선행 REV-20260706T094937-runtime-settings.
+
+## REV-20260707T121500-runtime-settings-ux-postverify [SKIPPED:doc-only-postverify] (런타임 설정 UI 재설계 POST-DEPLOY PB-0008 기록, 비-정책 doc-only)
+- Panel skip 사유(§18.8/§18.4): 선행 UX 재설계(REV-20260707T120000-runtime-settings-ux [SUBAGENT:design·ux] SHIP)의 배포 후 라이브 시각검증 결과를 TEST.md 에 기록할 뿐 코드/자산 무변경(doc-only). 검증 자체(실 Windows Chrome PB-0008 before/after + commit-bar e2e + DB override roundtrip)가 정본 증적.
+- Cross-ref: REV-20260707T120000-runtime-settings-ux · CHG-20260707T121500-runtime-settings-ux-postverify.
