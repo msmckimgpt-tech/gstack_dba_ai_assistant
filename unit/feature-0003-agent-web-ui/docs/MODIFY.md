@@ -5425,3 +5425,10 @@ source_of_truth: true
 - 신규 `routers/admin_settings.py`: `GET/PUT/DELETE /api/admin/settings/runtime` (RBAC console.access+system.runtime.read[+write], 동일-tx audit action `system.runtime.update`/`system.runtime.reset`, 스펙 [min,max] 검증). app.py include_router 등록.
 - `static/admin.html`·`admin.js`: 설정 pane 에 "실행 타임아웃"·"모델별 추론 예산" 2행+2전용패널 + `SETTINGS_PANEL_MOUNTERS` 2 mounter(카테고리 그룹 number-input + 즉시/재배포 배지 / 카탈로그 자동확장 목록, direct-save + 초기화). cache-buster `?v=20260706-runtime-settings`.
 - 영향: RBAC 신규 권한 2(admin auto-grant + catchup). 스키마 additive(신규 테이블, 기존 무변경). override 미설정 시 전 경로 기존 동작 동치(회귀 0). 파괴적 변경 0.
+
+## CHG-20260707T110000-runtime-settings-auditfix (TASK-20260707T110000-runtime-settings-auditfix — 런타임 설정 audit action 등록, PB-0008 라이브 적발 hotfix, Minor §12.3, feature-0003 backend-only)
+- Date: 2026-07-07 (worktree ai/claude-corp/feature-0018-runtime-settings-auditfix, base main). feature-0018(CHG-20260706T094937-runtime-settings) 후속 핫픽스.
+- 근본: `build_audit_change_json`(app.py, ActionCode allowlist)이 endpoint 의 audit action `system.runtime.update`/`system.runtime.reset` 을 몰라 `raise ValueError("unknown audit action")` → 라우터의 autocommit=False save+audit+commit 이 audit 실패로 rollback → PUT/DELETE 500. 원자화(fail-closed)는 정상 작동(미감사 변경 0)했으나 write 기능이 막힘. 유닛에서 미검출(TestClient conn=None → audit 도달 前 500), **PB-0008 라이브 write-path 검증이 적발**.
+- 변경: `app.py build_audit_change_json` 에 두 action builder 추가(update=setting_key+value, reset=setting_key; masked_fields=[]). 순수 additive(기존 action·동작 불변). `test_runtime_settings_api.py` 에 회귀 가드 2건(builder 반환 shape·action 문자열 = 라우터와 일치).
+- 영향: feature-0018 write 경로(설정 저장/초기화) 복구. 읽기 경로(GET registry)는 애초 정상(PB-0008 확인). 파괴적 변경 0.
+- Cross-ref: feature-0003 TASK/REVIEW/TEST 동일 slug · 선행 CHG-20260706T094937-runtime-settings.
