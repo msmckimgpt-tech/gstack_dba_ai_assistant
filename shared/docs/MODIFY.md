@@ -51,3 +51,7 @@ shared 코드 변경 시 아래 형식으로 기록한다.
 - 신규 `shared/runtime_settings.py`: 관리 콘솔에서 조정하는 운영 값(실행 타임아웃 22 + 모델별 thinking budget 카탈로그 자동생성) 레지스트리 + resolver(`get_int` live TTL / `startup_int` restart frozen) + `/shared/runtime_settings.json` 스냅샷 원자적 I/O + `validate_value`/`serialize_registry`. 의존성 경량(os·json·time·threading·model_catalog) — shared.config 미import(순환 없음). fail-open + kill-switch(RUNTIME_SETTINGS_DISABLED).
 - `shared/config.py`: restart-mode 22 timeout 상수를 `_startup_int(key, env_default)` 로 감싸 import 시 스냅샷 override 반영. 방어적 import(runtime_settings 실패해도 무손상), override 부재 시 env 기본값 byte-동치, CONN_PROBE max() 불변식 보존.
 - `shared/model_catalog.py`: 변경 없음(runtime_settings 가 `API_MODEL_OPTIONS`·`model_supports_thinking` 를 순회해 모델 예산 항목을 자동 생성 — 참조만).
+
+## CHG-20260707T130000-reasoning-budgets (TASK-20260707T130000-reasoning-budgets — runtime_settings 추론 강도별 예산 레지스트리, cross-unit: 정본 feature-0003, Major §12.3)
+- Date: 2026-07-07. `shared/runtime_settings.py`: `reasoning_budget:{low,high,max}` 스펙(`_reasoning_budget_specs` — model_catalog.REASONING_LEVELS 순회, thinking_budget_for_level None(=normal) 제외, 기본값=그 함수값 2000/10000/16000, min1024 max16000, group=reasoning_budget, apply_mode live) + `reasoning_budget_override(level)` resolver(clamp, 미등록/normal→None) + serialize `reasoning_budgets` 버킷 + `__all__`(reasoning_budget_override·REASONING_BUDGET_KEY_PREFIX·GROUP_REASONING_BUDGET). model_catalog(os/typing 만 import) 순회라 순환 없음. 검증·validate·스냅샷·audit 는 기존 경로 재사용(신규 키만).
+- Cross-ref: feature-0003·feature-0002 MODIFY 동일 slug.

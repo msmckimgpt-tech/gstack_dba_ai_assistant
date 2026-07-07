@@ -1494,3 +1494,7 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - `시스템 > 설정 > 실행 타임아웃 / 모델별 추론 예산` 두 패널이 `.rs-*` 정렬 grid 로 렌더된다: 카테고리 섹션(rs-group-title) → 카드형 rs-list → 각 행(rs-row)이 [라벨+반영배지 / 설명(ellipsis+tooltip)](좌) + [값 입력·단위 / 상태·기본값](우)로 열 정렬.
 - **저장 방식(변경)**: 행별 저장/초기화 버튼 제거. 값을 편집하면 `adminState.pending.runtimeSettings` 에 예약(행·좌측 nav `.has-pending` 하이라이트, "미저장 변경"), 하단 commit-bar "모두 적용"이 일괄 PUT(값)/DELETE(기본값 복원). "취소"는 예약 해제. 계정·시스템프롬프트와 동일한 콘솔 네이티브 패턴. 범위 밖 값은 인라인 경고(예약 안 됨). 모델 예산은 override 없으면 input 비움+placeholder(무변경 예약 트랩 방지) 유지.
 - 백엔드 계약(GET/PUT/DELETE·검증·audit)·live/restart 반영 semantics 불변 — feature-0018 기능 그대로.
+
+## (TASK-20260707T130000-reasoning-budgets, 2026-07-07) 설정 > 모델별 추론 예산 — '추론 강도별 예산' 섹션 추가 (web/UI + cross-unit, Major §12.3)
+- `시스템 > 설정 > 모델별 추론 예산` 패널이 두 섹션으로 구성된다: ① **모델별 thinking budget**(모델마다, override 없으면 미주입) ② **추론 강도별 예산**(낮음/높음/매우 높음 — 대화 화면에서 사용자가 그 강도 선택 시 적용되는 요청 단위 budget; 기본값 2000/10000/16000, 값이 항상 적용되므로 pre-fill). '일반'은 모델 config 기본 thinking 유지(설정 대상 아님, B1).
+- 적용(agent_core `_call_llm`): 사용자가 명시 강도(low/high/max) 선택 → 그 레벨의 관리자 설정 budget(없으면 기본) 주입 / '일반'·미지정 → 모델별 override(없으면 미주입). budget 은 요청 max_tokens 미만으로 clamp. 저장은 commit-bar 배치(모델별 예산과 동일 pane·pending).

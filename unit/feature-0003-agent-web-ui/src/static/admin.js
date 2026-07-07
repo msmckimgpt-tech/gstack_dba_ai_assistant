@@ -10070,6 +10070,7 @@ function mountGlobalPromptPanel() {
 const RUNTIME_SETTINGS_ENDPOINT = "/api/admin/settings/runtime";
 const RS_RESET = "__reset__";  // pending sentinel — 기본값 복원(DELETE) 예약
 const RS_MODEL_PREFIX = "model_thinking_budget:";
+const RS_REASONING_PREFIX = "reasoning_budget:";  // 추론 강도별 예산도 '모델 추론 예산' 패널 소속
 
 function rsApplyBadge(applyMode) {
   const span = document.createElement("span");
@@ -10341,25 +10342,41 @@ async function renderModelThinkingBudgets(mount) {
     return;
   }
   const canWrite = can("system.runtime.write");
-  const items = Array.isArray(data.model_thinking_budgets) ? data.model_thinking_budgets : [];
-  if (!items.length) { rsErrorPlaceholder(mount, "extended thinking 을 지원하는 모델이 카탈로그에 없습니다."); return; }
+  const models = Array.isArray(data.model_thinking_budgets) ? data.model_thinking_budgets : [];
+  const levels = Array.isArray(data.reasoning_budgets) ? data.reasoning_budgets : [];
+  if (!models.length && !levels.length) {
+    rsErrorPlaceholder(mount, "extended thinking 을 지원하는 모델이 카탈로그에 없습니다.");
+    return;
+  }
   mount.innerHTML = "";
   const panel = document.createElement("div");
   panel.className = "rs-panel";
-  const group = document.createElement("div");
-  group.className = "rs-group";
-  const gtitle = document.createElement("div");
-  gtitle.className = "rs-group-title";
-  gtitle.textContent = "모델별 thinking budget (tokens)";
-  const list = document.createElement("div");
-  list.className = "rs-list";
-  for (const it of items) list.appendChild(buildRuntimeSettingRow(it, canWrite, { emptyWhenNoOverride: true }));
-  group.append(gtitle, list);
-  panel.appendChild(group);
+
+  // 헬퍼: (제목, 항목[], opts) → rs-group
+  const addGroup = (titleText, rows, opts) => {
+    if (!rows.length) return;
+    const group = document.createElement("div");
+    group.className = "rs-group";
+    const gtitle = document.createElement("div");
+    gtitle.className = "rs-group-title";
+    gtitle.textContent = titleText;
+    const list = document.createElement("div");
+    list.className = "rs-list";
+    for (const it of rows) list.appendChild(buildRuntimeSettingRow(it, canWrite, opts));
+    group.append(gtitle, list);
+    panel.appendChild(group);
+  };
+
+  // ① 모델별 예산: override 없으면 미주입(input 비움).
+  addGroup("모델별 thinking budget (tokens)", models, { emptyWhenNoOverride: true });
+  // ② 추론 강도별 예산: 대화에서 '낮음/높음/매우 높음' 선택 시 적용되는 요청 단위 budget.
+  //    기본값이 실제 적용값이라 pre-fill(타임아웃과 동일) — '일반'은 no-override 라 목록에 없음.
+  addGroup("추론 강도별 예산 (tokens)", levels, undefined);
+
   const note = document.createElement("div");
   note.className = "rs-readonly-note";
   note.textContent = canWrite
-    ? "비워두거나 '기본값'으로 두면 해당 모델은 서버 기본 thinking 을 사용합니다(대화별 추론 강도 선택이 우선)."
+    ? "모델별 예산은 비워두면 서버 기본 thinking 을 사용합니다. 추론 강도별 예산은 대화 화면에서 사용자가 그 강도를 고른 요청에 적용됩니다('일반'은 모델 기본값 유지). 대화별 강도 선택이 모델별 예산보다 우선합니다."
     : "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
   panel.appendChild(note);
   mount.appendChild(panel);
@@ -12805,7 +12822,8 @@ function refreshPendingUI() {
   if (rsPending.size) detail.push(`설정 ${rsPending.size}`);
   let rsTimeoutDirty = false, rsModelDirty = false;
   rsPending.forEach((_v, k) => {
-    if (String(k).startsWith(RS_MODEL_PREFIX)) rsModelDirty = true; else rsTimeoutDirty = true;
+    if (String(k).startsWith(RS_MODEL_PREFIX) || String(k).startsWith(RS_REASONING_PREFIX)) rsModelDirty = true;
+    else rsTimeoutDirty = true;
   });
   // 설정 nav row: `.has-pending` 테두리 + `.admin-pending-dot`(계정·역할 row 와 일관 — 색 외 신호).
   const markSettingsNav = (tab, dirty) => {
