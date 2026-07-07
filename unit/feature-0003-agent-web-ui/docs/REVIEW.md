@@ -4555,3 +4555,7 @@ source_of_truth: true
 - 양호점: 기본값을 `thinking_budget_for_level` 로 동적 read(하드코딩 drift 없음), `_reasoning_budget_specs` 가 REASONING_LEVELS 증감에 자동 확장·None 레벨 자동 제외, memoization 유효, 대소문자 정규화 정합.
 - 검증: 신규 테스트 +7(레지스트리 4 + _call_llm precedence 3) · **컨테이너 전체 스위트 RC=0** · 로컬 회귀 0. VISUAL 은 PB-0008 POST-DEPLOY(TEST.md §3).
 - Cross-ref: CHG/TASK/FUNCTION/TEST 동일 slug · LRN-20260707-0001 · 선행 REV-20260706T094937-runtime-settings·-ux.
+
+## REV-20260707T131500-reasoning-budgets-postverify [SKIPPED:doc-only-postverify] (추론 강도별 예산 POST-DEPLOY PB-0008 기록, 비-정책 doc-only)
+- Panel skip 사유(§18.8/§18.4): 선행 REV-20260707T130000-reasoning-budgets [SUBAGENT:backend·ux] SHIP 의 배포 후 라이브 검증 결과를 TEST.md 에 기록할 뿐 코드/자산 무변경(doc-only). 검증 자체(실 Windows Chrome PB-0008 + reasoning-key write-path e2e + 사용자 override 보존)가 정본 증적.
+- Cross-ref: REV-20260707T130000-reasoning-budgets · CHG-20260707T131500-reasoning-budgets-postverify.
