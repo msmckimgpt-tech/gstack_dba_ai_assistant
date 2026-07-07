@@ -1712,6 +1712,15 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   REVIEW REV-20260707T173500 정본.
 - [ ] T56.7c (후속, 패널 수용 2건) routine_name·refs 테이블명 축 케이스 플래핑(pre-existing,
   TASK-0305 RC2 계열) + backfill(DB 전체)·cadence(스키마 단위) refs 입력 발산 churn — 별도 cycle.
-- [ ] T56.8 §18.8 패널 → verify → PR → 머지 → 워커 재배포 → 라이브 정리(mixed-case 이중행·AGE mixed-key
-  고아) → fhgame1 e2e 재수행(재-backfill→full sync(RC1 워터마크 증적)→DB 분석 재실행(RC3 back-refine)) →
-  PB-0008 대체검증(WSL curl 자산 + 사용자 육안 안내).
+- [x] T56.8 POST-DEPLOY 완수 — PR #617 머지(fbae6f56)·워커 재빌드(purge/normalize 라이브 grep 실증)·
+  web 롤링 soak PASS. 라이브 정리: 재-backfill 이 **case_purged 6,320 전량 자동 회수**(패널 MAJOR
+  수정의 라이브 실증, SSOT mixed 잔여 0·fhgame1 600→300) + AGE mixed-key 고아 DETACH DELETE(잔여 0).
+  **e2e 전건 PASS**: ① RC1 — full sync routines 16,410 전량 투영·errors 0·step_failures 0·ok true,
+  워터마크 mssql-06656002eda6 → 07-07 19:01 전진(07-06 07:30 고착 해소, cadence __all__ 19:30 도 전진)
+  ② RC2 — 크로스-클러스터 ROUTINE_USES 1,041/26,535(fhgame1→fhdef 실측: FHSP_BuyItem_V4→FH_ITEM 등;
+  cross 플래그는 SSOT refs 전용, 엣지는 fqn 앵커로 성립 — ADR-022 설계 그대로) ③ 케이스 중복 0
+  (fhgame1 Routine 정확히 300) ④ RC3 — 스키마 능동 분석 run 6c33317d 기동(시드 361·missing 300·
+  cap 200, insight-worker 소화 중). PB-0008: 백엔드 전용 변경(웹 자산 불변)이라 실측 축은 DB/API
+  레벨로 대체 완료 — **그래프 뷰 육안 확인(fhgame1 ƒ/⚙ 노드·fhdef 크로스 엣지·분석 보충)만 사용자
+  대기**. 잔여 한계(비차단): 그래프 Routine 정점 21,992 > SSOT 21,160 — drop 된 루틴의 정점 잔존은
+  ADR-016 알려진 한계(vertex prune 투영 범위 외).

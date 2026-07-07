@@ -752,3 +752,16 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   -2: mysql 케이스 보존. 컨테이너 pytest 44 PASS(EXIT=0). e2e 재수행은 T56.8 에서 완결.
 - **RC5 패널 반영 후 확장**: normalize_db_label parity·purge SQL 계약·CS-collation prune 강등·
   dry-run slot 원본 케이스 — RC5 계열 6건, 영향 3파일 66 PASS(EXIT=0)·ruff PASS.
+
+### Run (2026-07-07, POST-DEPLOY) — §56 RC1~RC5 라이브 e2e (Environment: live qa-idc/fhgame1)
+- 배포: PR #615(fe05d6f8)·#617(94e2e411) → web fbae6f56 롤링 soak PASS·워커 재빌드(코드 grep 실증)·
+  alembic 0039·healthz/smoke 전건 PASS.
+- RC4/RC5 라이브 정리: RC4 라벨 이중행 2,201 twin-검증 삭제 + AGE 라벨 고아 2,814v/4,955e 회수 →
+  RC5 재-backfill case_purged **6,320 전량 자동 회수**(SSOT mixed 0·fhgame1 600→300) + AGE mixed-key
+  8,230v 회수(잔여 0).
+- RC1: full sync {routines 16,410, errors 0, step_failures 0, ok true, commits 67} — 워터마크
+  scope 07-07 19:01·__all__ 19:30 전진(07-06 07:30 고착 해소). RC2: 크로스-클러스터 ROUTINE_USES
+  1,041(실측 fhgame1.FHSP_BuyItem_V4→fhdef.FH_ITEM read 등). RC3: 능동 분석 run 6c33317d
+  (시드 361·missing 300) 기동 — back-refine 은 run 소화 중 substrate 기반 발화.
+- PB-0008(Windows-browser): 백엔드 전용 변경 — 그래프 뷰 육안(fhgame1 ƒ/⚙·크로스 엣지·보충 해소)은
+  **사용자 확인 대기**(Environment: Windows-browser Run 은 사용자 확인 후 append).
