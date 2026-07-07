@@ -316,3 +316,99 @@ def test_backfill_scope_filter_matches_label_or_scope(monkeypatch):
     calls = _patch_backfill(monkeypatch, ds, conns, dbs=["gamedb"])
     rb.run(scope_filter="mssql-ba175631e9fc")                   # scope 해시로도 필터 가능
     assert calls
+
+
+# ── RC5: MSSQL store label 케이스 정규화 (§56, 2026-07-07) ────────────────────
+def test_backfill_mssql_store_label_lowercased(monkeypatch):
+    """MSSQL store label(DB명)은 set_active_database(TASK-0220)가 lower 로 고정한 시스템 계약 —
+    sys.databases 원본 케이스(FHGame1)를 무가공 store 하면 cadence(lower)와 같은 scope 에
+    케이스-변형 이중 적재(라이브 실측 qa-idc 1,912쌍)·그래프 중복 클러스터가 생긴다(§56 RC5).
+    질의 연결은 원본 dbname 유지(store/query 분리)."""
+    from test_routine_dbanalysis import _patch_backfill, _BFConn, _BFCursor
+    from modules import routine_backfill as rb
+    import shared.config as scfg
+    ds = {"mssql-qa": {"key": "mssql-qa", "engine": "mssql", "scope_key": "mssql-abc123"}}
+    conns = {("mssql-qa", "FHGame1"): _BFConn(_BFCursor(["dbo"], ["t1"]))}
+    connect_calls, purge_calls = [], []
+    calls = _patch_backfill(monkeypatch, ds, conns, dbs=["FHGame1"],
+                            connect_calls=connect_calls, purge_calls=purge_calls)
+    rep = rb.run()
+    assert calls and calls[0][1]["store_schema"] == "fhgame1"   # store 는 lower
+    assert any(c["database"] == "FHGame1" for c in connect_calls)  # 질의 연결은 원본 케이스
+    # parity 잠금(패널 NIT): backfill 라벨 == 단일 계약 normalize_db_label == set_active_database 결과
+    assert calls[0][1]["store_schema"] == scfg.normalize_db_label("FHGame1")
+    scfg.set_active_database("FHGame1")
+    assert scfg.get_active_database() == calls[0][1]["store_schema"]
+    scfg.set_active_database(None)
+    # 패널 MAJOR 보완: introspect 성공 직후 케이스-변형 label 행 멱등 회수 호출
+    assert purge_calls == [("mssql-abc123", "fhgame1")]
+    assert rep["datasources"]["mssql-qa"]["store_labels"] == {"FHGame1": "fhgame1"}
+
+
+def test_backfill_mssql_case_twin_dbs_demote_prune(monkeypatch):
+    """CS-collation 서버에서 케이스만 다른 DB('Sales'/'SALES')가 한 lower label 로 병합되면
+    뒤 DB 의 prune 이 앞 DB 전용 행을 교차-삭제(진동)한다 — label 충돌 시 prune 강등(§56 RC5 보완)."""
+    from test_routine_dbanalysis import _patch_backfill, _BFConn, _BFCursor
+    from modules import routine_backfill as rb
+    ds = {"mssql-qa": {"key": "mssql-qa", "engine": "mssql", "scope_key": "mssql-abc123"}}
+    conns = {("mssql-qa", "Sales"): _BFConn(_BFCursor(["dbo"], ["t1"])),
+             ("mssql-qa", "SALES"): _BFConn(_BFCursor(["dbo"], ["t2"]))}
+    calls = _patch_backfill(monkeypatch, ds, conns, dbs=["Sales", "SALES"])
+    rb.run()
+    assert len(calls) == 2 and all(c[1]["prune"] is False for c in calls)
+
+
+def test_backfill_mssql_dry_run_slot_keeps_original_case(monkeypatch):
+    """ADR-023 이 CS-collation 병합 진단 수단으로 의존하는 리포트 slot 은 **원본 케이스**를
+    유지하고(store_labels 매핑으로 lower 라벨 대응 표기), dry-run 은 store·purge 를 안 한다."""
+    from test_routine_dbanalysis import _patch_backfill, _BFConn, _BFCursor
+    from modules import routine_backfill as rb
+    ds = {"mssql-qa": {"key": "mssql-qa", "engine": "mssql", "scope_key": "mssql-abc123"}}
+    conns = {("mssql-qa", "FHGame1"): _BFConn(_BFCursor(["dbo"], ["t1"]))}
+    purge_calls = []
+    calls = _patch_backfill(monkeypatch, ds, conns, dbs=["FHGame1"], purge_calls=purge_calls)
+    rep = rb.run(dry_run=True)
+    entry = rep["datasources"]["mssql-qa"]
+    assert entry["schemas"] == {"FHGame1//dbo": "(dry-run)"}
+    assert entry["store_labels"] == {"FHGame1": "fhgame1"}
+    assert not calls and not purge_calls
+
+
+def test_purge_case_variant_labels_sql_contract():
+    """purge 는 (scope, lower(label)) 에서 케이스만 다른 행을 삭제 — fresh lower 재적재가 선행하므로
+    행 단위 twin-검증 불요. 예외는 삼켜 0(루프 비차단)."""
+    from modules import routines as rt
+
+    class _Cur:
+        rowcount = 7
+        def __init__(self): self.executed = []
+        def execute(self, sql, params): self.executed.append((sql, params))
+
+    class _Conn:
+        def __init__(self): self.cur = _Cur()
+        def cursor(self): return self.cur
+
+    conn = _Conn()
+    n = rt.purge_case_variant_labels("mssql-abc123", "fhgame1", kb_conn=conn)
+    assert n == 7
+    sql, params = conn.cur.executed[0]
+    assert "DELETE FROM routine_objects" in sql
+    assert "schema_name <> %s" in sql and "lower(schema_name) = %s" in sql
+    assert params == ("mssql-abc123", "fhgame1", "fhgame1")
+    assert rt.purge_case_variant_labels("mssql-abc123", "", kb_conn=conn) == 0  # 빈 label no-op
+
+    class _Boom:
+        def cursor(self): raise RuntimeError("kb down")
+    assert rt.purge_case_variant_labels("s", "l", kb_conn=_Boom()) == 0  # 예외 삼킴
+
+
+def test_backfill_mysql_schema_case_preserved(monkeypatch):
+    """MySQL 스키마는 파일시스템 기반 케이스 구분(lower_case_table_names=0)이 유효 — RC5 lower
+    정규화는 MSSQL 전용이고 MySQL store_schema 는 원본 케이스를 보존한다."""
+    from test_routine_dbanalysis import _patch_backfill, _BFConn, _BFCursor
+    from modules import routine_backfill as rb
+    ds = {"M1": {"key": "M1", "engine": "mysql"}}
+    conns = {("M1", None): _BFConn(_BFCursor(["AppDB"], ["t1"]))}
+    calls = _patch_backfill(monkeypatch, ds, conns)
+    rb.run()
+    assert calls and calls[0][1]["store_schema"] == "AppDB"

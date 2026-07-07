@@ -8,8 +8,12 @@ insight-worker 의 cadence(6h)+rotation 은 funcproc 배포 후 커버리지가 
 규약 (insight 훅과 동일):
   - MySQL: 비시스템 ROUTINE_SCHEMA 별 introspect, store_schema=schema.
   - MSSQL: 사용자 DB 별 연결(list_server_databases) 후 ROUTINE_SCHEMA 별 introspect,
-    store_schema=DB명 (스키마-slot 규약 ADR-007). 한 DB(=store label)에 복수 ROUTINE_SCHEMA 가
+    store_schema=DB명 lower (스키마-slot 규약 ADR-007 + TASK-0220 set_active_database 계약,
+    §56 RC5). 한 DB(=store label)에 복수 ROUTINE_SCHEMA 가
     공존하면 prune=False (뒤 스키마의 prune 이 앞 스키마 행을 지우는 결함 차단 — §53).
+    CS-collation 서버에서 케이스만 다른 DB 가 한 lower label 로 병합되면 prune 강등으로
+    교차-삭제를 차단하고, 리포트 slot(원본 케이스)·store_labels 매핑으로 진단한다(ADR-023 한계).
+    introspect 성공 직후 케이스-변형 label 행은 purge_case_variant_labels 로 멱등 자동 회수.
   - 운영 DB 는 read-only 조회만(information_schema). 쓰기는 agent_kb PG upsert 뿐.
   - 개별 (ds, DB, schema) 실패는 리포트에 남기고 계속(비차단).
 
@@ -71,6 +75,7 @@ def _close(conn) -> None:
 def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> dict:
     """전 datasource routine backfill. 반환 리포트(dict) — 실패는 errors 에 loud."""
     from shared.db import connect, list_server_databases
+    from shared.config import normalize_db_label
     from shared import datasources as _dsm
     from modules import routines as _routines
     from modules import metadata_graph as _mg
@@ -126,6 +131,13 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                 except Exception as exc:
                     report["errors"].append(f"{key}: DB 목록 조회 실패: {exc!r}")
                     continue
+                # §56 RC5 보완(CS collation): 서버 collation 이 case-sensitive 면 케이스만 다른 DB
+                # ('Sales'/'SALES')가 병존해 한 lower label 로 병합될 수 있다 — 이때 뒤 DB 의 prune 이
+                # 앞 DB 전용 행을 교차-삭제(매 run 진동)하므로 label 충돌 시 prune 을 강등한다.
+                label_counts = {}
+                for _d in dbs:
+                    _l = normalize_db_label(_d) or ""
+                    label_counts[_l] = label_counts.get(_l, 0) + 1
                 for dbname in dbs:
                     conn = None
                     try:
@@ -135,6 +147,15 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                             continue
                         tables = _base_tables(conn)   # 참조 파싱 입력 — DB 전체(스키마 무관 leaf 매칭)
                         multi = len(schemas) > 1      # §53 prune-safety: label(DB명) 공유 시 prune 억제
+                        # §56 RC5: MSSQL store label(DB명)은 set_active_database(TASK-0220)가 lower 로
+                        # 고정한 시스템 계약 — cadence(routine·relationship·table)는 전부 lowercase 로
+                        # store 한다. sys.databases 원본 케이스(dbname)를 무가공 store 하면 RC4 scope
+                        # 통일 후 같은 scope 에 케이스-변형 이중 적재(라이브 실측 qa-idc 1,912쌍)와
+                        # 그래프 중복 Schema/Routine 클러스터가 생긴다. 질의 연결(connect)은 원본
+                        # dbname 유지(store/query 분리 — introspect_and_store 의 schema 인자 규약 동일).
+                        store_label = normalize_db_label(dbname) or ""
+                        entry.setdefault("store_labels", {})[dbname] = store_label
+                        prune_ok = (not multi) and label_counts.get(store_label, 0) <= 1
                         for sch in schemas:
                             slot = f"{dbname}//{sch}"
                             if dry_run:
@@ -142,9 +163,14 @@ def run(scope_filter=None, dry_run=False, cap=None, include_disabled=False) -> d
                                 continue
                             n = _routines.introspect_and_store(
                                 conn, sch, tables, scope_key=scope, datasource_key=scope,
-                                store_schema=dbname, cap=cap, prune=not multi)
+                                store_schema=store_label, cap=cap, prune=prune_ok)
                             entry["schemas"][slot] = int(n or 0)
                             entry["stored"] += int(n or 0)
+                        # §56 RC5 보완(패널 MAJOR): introspect 성공 직후 케이스-변형 label 행 멱등 회수 —
+                        # 수동 정리 runbook 의 코드화 + stale pre-RC5 writer 재발 자기치유.
+                        if not dry_run:
+                            entry["case_purged"] = entry.get("case_purged", 0) + int(
+                                _routines.purge_case_variant_labels(scope, store_label) or 0)
                     except Exception as exc:
                         report["errors"].append(f"{key}/{dbname}: {exc!r}")
                     finally:

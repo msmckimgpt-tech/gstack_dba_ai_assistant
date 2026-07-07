@@ -1084,3 +1084,19 @@ source_of_truth: true
   4규칙·external_tables 실재검증·TTL 캐시·크로스 refs_fqn), `modules/node_analysis.py`(thin 무관계 문구 동치).
 - tests: 신규 `test_routine_sync_crossdb.py`(16) + `test_graph_funcproc_uxfix.py` 계약 주석 갱신.
 - 운영 조치(코드 외): qa-idc 루틴 11,973행 AGE 전수 회수(autocommit 투영 — fhgame1 300/300 확인).
+
+## CHG-20260707T170500-ai-root-feature-0016-routine-schema-case — §56 RC5 backfill MSSQL store label lower 정규화 (2026-07-07)
+
+- TASK §56.3 / ADR-023. fhgame1 e2e 중 적발: backfill 이 sys.databases 원본 케이스를 store_schema 로
+  무가공 저장 → cadence(lower, set_active_database TASK-0220 계약)와 케이스-변형 이중 적재(qa-idc
+  1,912쌍·mixed 6,320행)·그래프 중복 클러스터. RC4 scope 통일이 표면화한 잠복 불일치.
+- shared: `config.py` `normalize_db_label()` 신설 — set_active_database 와 backfill 의 정규화 계약
+  단일화(§18.8 패널 NIT 반영).
+- feature-0002: `modules/routine_backfill.py` mssql 분기 store_label=normalize_db_label(dbname)
+  (질의 connect 는 원본 유지 — store/query 분리) + CS-collation label 충돌 시 prune 강등 +
+  store_labels/case_purged 리포트; `modules/routines.py` `purge_case_variant_labels()` 신설 —
+  introspect 성공 직후 케이스-변형 label 행 멱등 자동 회수(패널 MAJOR 반영). MySQL 분기 불변.
+- tests: `test_routine_sync_crossdb.py` RC5 계열 6건 + `test_routine_dbanalysis.py` `_patch_backfill`
+  purge 캡처 확장(additive).
+- 운영 조치(코드 외): AGE mixed-key 고아 DETACH DELETE(SSOT mixed 행은 재-backfill 의 purge 가 자동
+  회수) 후 full sync 재투영.
