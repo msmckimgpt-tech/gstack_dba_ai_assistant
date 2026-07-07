@@ -697,3 +697,28 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   baked 되어 머지·배포 후 라이브 실측이 유일한 유효 검증, §53/§54 관례와 동일). 미수행 사유: pre-commit 시점엔
   변경 자산이 라이브에 미서빙. 배포 후 카테고리 밴드 렌더·접기/드래그·관계 큐레이션·DB 분석 재귀 확장을 실측해
   본 절에 Run 을 append 한다.
+
+### Run (2026-07-07) — POST-DEPLOY 라이브 실측 — PASS (Environment: Windows-browser)
+- 배포: PR #599 머지(main 0bd73169) → `make migrate`(**alembic 0038 라이브 head 도달**, anchor_key·pass_no
+  컬럼 확인) → `make deploy-web` 무중단 롤링(web-a/b 0bd73169, soak 90s 통과, Caddy blip 0) →
+  insight/ask-worker 재빌드·recreate(신 코드 baked 실증: `_backrefine_neighbors`·XSCHEMA 노브 — ask-worker
+  GIT_COMMIT 라벨은 snap-docker metadata race 로 unknown, 코드 grep 으로 대체 검증. XDS flip env 활성).
+- 실 Windows Chrome/149(win-browser relay @172.26.144.1:9223, bootstrap_admin 로그인). 서빙
+  `admin.js/styles.css?v=20260706-graph-cat-refine`·healthz git_commit=0bd73169(edge).
+- **AC-1(A 카테고리) PASS**: `mssql-qa-idc`(scope mssql-06656002eda6, 스키마 72·매핑 71) 진입 →
+  **제품 카테고리 밴드 6종**(출조낚시왕8·콜오브카오스16·DK온라인31·스키드러쉬1·에이스온라인7·DK집계9 =
+  72 전부 배정) CAT/CATH/CATX 각 6 렌더·세로 스택·헤더 라벨(`🗂 제품 · n DB`)·범례 항목 — 스크린샷 육안
+  확정(cat-01-bands.png). CATX 접기 → 멤버 클러스터 미방출·헤더 유지 → 재펼침 복원. **z canonical 라이브
+  = CAT -1 / CATH 5 / CATX 6**(패널 BLOCKING fix 실증 — ZAssert 승격 없음). 카테고리 상세(DK온라인 31행).
+  schema_products 백엔드: 8개 datasource 에서 매핑 반환(다제품 4종 케이스 포함) 확인.
+- **AC-2(B 큐레이션) PASS**: 관계 상세 패널에 ✓신뢰/✕파단 버튼 렌더(L_CouponInputFail 7관계 ×2).
+  candidate 1건 API 왕복 — **trust: updated=1(기존 행 UPDATE — 중복 행 미생성, 패널 MAJOR fix 실증)** →
+  break: updated=1(양방향). 검증 후 원상 복원(SSOT candidate/inferred, AGE 엣지는 다음 sync 재투영).
+- **AC-3(C 재귀·refine) PASS**: `confirm_db`(테이블 2) DB 단위 분석 run 833b8d31… → **done 8/8·failed 0**:
+  시드 Table 2(depth0·**anchor_key=자기 자신**) → Column 2(depth1·**anchor 상속**=소속 시드) 재귀 편입
+  (enqueued 2→8, §53 재귀 0 대비 명확) → **전원 pass_no=1 back-refine 재보충 발화**(초기 thin →
+  최종 분석문 423~467자). 카운터 단조(enqueued=8=4신규+4재보충=done).
+- **AC-4(D 백필) PASS**: 워커 재기동 직후 signature_text_hash 497→**1,175행**(첫 pass 500 소진 — 미처리
+  우선 정렬 실증), 이후 15분 주기 소진 지속(~8h 완주 전망). 워커 Traceback/CRITICAL 0.
+- pageerror 0(전 구간). 증적 `artifacts/feature-0016-metadata-graph/20260707-graph-cat-refine/`
+  (cat-01-bands.png·cat-02-collapsed-curate.png).

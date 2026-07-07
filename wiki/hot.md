@@ -1,14 +1,15 @@
 ---
 doc_type: WIKI_HOT_CACHE
-last_updated: 2026-07-06
+last_updated: 2026-07-07
 ---
 
 # Hot Cache
 
 ## Last Updated
-2026-07-06
+2026-07-07
 
 ## Key Recent Facts
+- feature-0016 graph-category-recursive-refine(07-07, §55/ADR-021/alembic 0038): ① 그래프 뷰 **제품 카테고리 밴드**(WebProductDatabases 질의시점 합성 schema_products → CAT/CATH/CATX 계층, 밴드별 shelf-pack·헤더 드래그·접기·미분류 후미) ② 관계 추론 **xschema**(같은 DS 다른 DB, 기본 ON)+MSSQL 3-part 프로브(dbo 가드)+관계 수동 큐레이션 API/UI(trust/break)+XDS flip ③ DB 단위 분석 **재귀 전개**(시드 depth0·per-seed anchor_key·예산×12)+refine-not-override(previous_analysis 전역)+**back-refine**(thin 재-pending pass_no+1, cap30)+suggested_links candidate ④ 시그니처 백필 정체(3% 고착) 근본수정(미처리 우선). §18.8 패널 BLOCKING2·MAJOR4·MINOR3 수정(REV-20260707T100744). **배포·PB-0008 완료**(0bd73169: 밴드 6종 라이브·큐레이션 왕복·재귀+back-refine 8/8 실증·백필 497→1,175 가동). 코드 거주 0002·0003.
 - feature-0016 graph-navfilter-routine(07-06): 그래프 뷰 개선 5건 — 상세 패널 뒤로/앞으로(view-typed: 노드·클러스터·관계), 노드 종류 필터(🔗/ƒ/⚙ 토글=빌드 제외 재배치·영속·스키마 그래프 전용), 검색 변경/클리어 시 구성 보존(additive overlay·pristine 회수·base 복원), DB 단위 분석에 Routine 시드 포함(schema_routine_keys·테이블 우선 cap·payload params), 루틴 파라미터 수직 배치(XR:/RP: 서브노드+상세 패널). §18.8 패널 MAJOR 3 수정. **배포·PB-0008 완료**(07-06: 842b9ecf, AC-1~5 전 항목 라이브 PASS — Routine 잡 7 done·⚙ 마커·분석문, products 검색→클리어 복귀, 엣지 토글 배치 불변, pageerror 0). 코드 거주 0002·0003.
 - feature-0016 routine-dbanalysis(07-06, resume 완결): ① 함수·프로시저 노드 **전 datasource 가시화** — 원인=ds 커버리지(20중 4 적재, cadence 전파 중) → `bin/routine-backfill.sh` 결정론 backfill(레지스트리 MEMORY_DB·prune-safety: backfill 복수 스키마 prune=False + worker `prune=(label==schema)`) ② **DB(스키마) 단위 AI 능동 분석** — enqueue_schema_analysis(root=Schema·depth1 시드·재귀0=budget 캡·only_missing·cap 200/500·dry_run→confirm→진행 패널). §18.8 패널 BLOCKING 1·MAJOR 2 등 반영, 테스트 16+57 PASS. **배포·검증 완료**(07-06: d1951b7e 롤링+worker 재빌드, 라이브 backfill 2,201/4 ds — 0행 스키마 3곳 회수, PB-0008 PASS — ƒ/⚙ 198 렌더·e2e done 2/2·재귀 0·reused/noop·pageerror 0). 코드 거주 0002·0003.
 - feature-0016 graph-funcproc-uxfix(07-03): **함수·프로시저 노드**(routine_objects SSOT — INFORMATION_SCHEMA introspect + 정의 파싱 참조 read/write, AGE `Routine`/`HAS_ROUTINE`/`ROUTINE_USES`, alembic 0034, ƒ/⚙ 보라 칩·보라 잔점선) + 미니맵 패널 리사이즈 추종 수정(G6 inline left/top→CSS 앵커) + AI 능동 분석 **참조 컬럼의 부모 테이블 same-depth 승격**(ADR-017 — "테이블까진 분석", 앵커 게이팅으로 심화 억제)·'재분석' 버튼 제거·**hover 지침 popover**(runs.user_prompt → 앵커 토큰 + LLM user_intent 자율 반영). 코드 거주 feature-0002·0003. ADR-016·017.
