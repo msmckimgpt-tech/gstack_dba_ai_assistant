@@ -94,6 +94,7 @@ sources:
 - **cross-DB audit (best-effort)**: KB mirror write 가 MySQL `WebAuditEvents` 에 `kb.write.mirror` row append.
 - **`pg_branch` tag**: `RETURNING id, (xmax = 0)` 패턴으로 INSERT vs UPDATE 구분 — `_pg_op_local` threadlocal capture.
 - **insight worker fail-safe**: heartbeat stale 시 `_should_run_inline_insight_scan()` 가 인라인 scan 트리거.
+- **insight 효율·안정성 (2026-07-03, 정본 REPORT — 비사용자향)**: ① 동일구조 테이블 그룹화(insight-table-grouping) — 날짜/번호 suffix 만 다른 샤드를 (base_stem, fingerprint)로 묶어 **대표 1회 LLM 분석 + 형제 LLM-free fan-out**(신규 일자 샤드는 KV 상속으로 LLM 0), per-table `table_insight` fact 유지로 NL→SQL 무회귀. ② 부하 분산(insight-load-spread, cross-feature 0016) — 실패 대상 격리·재시도 backoff + graph sync batched commit/incremental(57,000+ 요소 개별 MERGE WAL fsync ~5.7만 → ~114). ③ healthcheck false-negative 해소(insight-heartbeat-liveness) — 긴 cycle 중 진행-중 heartbeat throttle 갱신. ④ 요청레벨 LLM fallback(claude-corp→root→edge gemma, 정본 feature-0007).
 
 ## 4. 사용법
 

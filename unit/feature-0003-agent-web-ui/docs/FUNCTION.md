@@ -1485,3 +1485,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 
 ## (TASK-20260707T110000-runtime-settings-auditfix, 2026-07-07) 런타임 설정 audit action 등록 (backend-only, Minor §12.3)
 - `build_audit_change_json` 이 `system.runtime.update`(→{setting_key, value})·`system.runtime.reset`(→{setting_key}) 를 인식한다. feature-0018 의 `PUT/DELETE /api/admin/settings/runtime` 이 동일-tx audit(autocommit=False) 를 완료할 수 있어 설정 저장/초기화 write 경로가 동작한다. (미등록 시 fail-closed rollback → 저장 500 — PB-0008 적발.)
+
+## (doc-sync-rn-0707, 2026-07-07) 릴리즈노트 콘텐츠 — 07-03/04/06/07 블록 신규(그래프 뷰 07-03~07 진화·추론 강도·데이터소스 지표·공유 참여/범위·런타임 설정·안정성)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 신규 '2026-07-03'(8)·'2026-07-04'(12)·'2026-07-06'(4)·'2026-07-07'(5) 블록 prepend(07-02 이하 보존). 마지막 landed 릴리즈노트 5b1481bb(07-02) 이후 07-03·07-06 두 doc_sync 가 미landed 로 정체된 delta 를 fresh 재구성으로 일괄 반영. 원천: feature-0016 그래프 뷰 07-03~07 UX 진화(역할 표식/관계 탐색/제품 카테고리/유사속성/자유배치/함수·프로시저/의미 임베딩/크로스-ds/z-order/§55 밴드·큐레이션·재귀 분석)·feature-0003 ds-avg-latency·reasoning-effort·runtime-settings(feature-0018)·feature-0009 gc-join-notice·share-visibility-window·feature-0002/0007 insight 안정성/fallback/라우팅·edge-fallback 차단의 사용자 표면 announcement. `generated` 2026-07-07.
+- 내부 구현·feature-id·테이블/함수명·G6/AGE·alembic·엔드포인트·권한키·모델명·ADR 번호·step_gap_ms/conn_health/xschema/WebRuntimeSettings·cache-buster 내부 슬러그 비노출(사용자 언어). aiops-ttft(지연 KPI 재정의)는 관리자 지표라 사용자 문구 제외(기술 RELEASE_NOTES.md·STATUS 에만). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260702-rn-0702`→`?v=20260707-rn-0707` bump. CHG/REV-20260707T110534-doc-sync-rn-0707. landing/배포는 본 attended doc_sync run 소관.
