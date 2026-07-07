@@ -5293,3 +5293,7 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] cache-buster admin.js/styles.css `?v=20260707-runtime-settings-ux`. node --check PASS, 잔여 dead-ref 0.
 - [ ] §18.8 적대 디자인/UX 렌즈 리뷰 → REVIEW REV.
 - [ ] verify-completion → commit → PR → merge → web 재배포 → **PB-0008 재설계 UI 시각검증(before/after)**.
+
+### TASK-20260707T121500-runtime-settings-ux-postverify — 런타임 설정 UI 재설계 POST-DEPLOY PB-0008 기록 (doc-only, 2026-07-07)
+- [x] UX 재설계(PR #607→da3f57db) 배포 후 실 Windows 브라우저 PB-0008 **PASS**: 정렬 grid 렌더(rs-row 22·6그룹·배지·구 quota-editor 0)·설명 잘림 해소·commit-bar 편집→pending→모두적용(DB override)→기본값복원(DB clean) e2e·모델 no-override input 비움·pageerror 0. before/after 증적.
+- [x] doc-only 기록(TEST/TASK/MODIFY/REVIEW) — 코드·자산 무변경.
