@@ -3580,8 +3580,15 @@ function _metaEdgeStyleFor(status, crossDs) {
   return s;
 }
 // graph-funcproc(ADR-016): 함수·프로시저 → 테이블 사용 엣지(ROUTINE_USES) — 보라 잔점선(추정 점선과 구분).
-function _metaRoutineEdgeStyle() {
-  return { stroke: _META_GRAPH_COLOR.Routine, lineWidth: 1.5, lineDash: [2, 3], endArrow: true, zIndex: _METZ.EDGE };
+//   graph-dataflow: AGE 모델은 항상 Routine(source)→Table(target) 방향이지만, 화살표는 **데이터 흐름**을
+//   따른다 — 쓰기(write)=루틴이 테이블로 데이터를 보냄=루틴→테이블(endArrow), 읽기(read)=테이블에서
+//   데이터를 읽어옴=테이블→루틴(startArrow, 출발점=루틴 쪽에 화살촉). read·relation_type 미상은 startArrow
+//   (테이블→루틴) — 상세 패널 텍스트 라벨 kindKo 기본값 '읽기'와 정합(모순 방지). false 키 미설정(G6 arrow 안전).
+function _metaRoutineEdgeStyle(relationType) {
+  const s = { stroke: _META_GRAPH_COLOR.Routine, lineWidth: 1.5, lineDash: [2, 3], zIndex: _METZ.EDGE };
+  if (relationType === "write") s.endArrow = true;    // 데이터: 루틴 → 테이블(쓰기)
+  else s.startArrow = true;                            // read·미상: 테이블 → 루틴(상세 패널 kindKo 기본 '읽기'와 정합)
+  return s;
 }
 function _metaNodeStates(key) {
   const st = [];
@@ -4404,7 +4411,7 @@ function _metaG6Build() {
     // 비-REFERENCES(DESCRIBES/RELATED_TERM/ROUTINE_USES 등)는 기존대로 양끝 직접 렌더 시에만.
     if (e.type !== "REFERENCES") {
       if (present.has(e.source) && present.has(e.target)) {
-        const st = (e.type === "ROUTINE_USES") ? _metaRoutineEdgeStyle() : _metaEdgeStyleFor(e.status);
+        const st = (e.type === "ROUTINE_USES") ? _metaRoutineEdgeStyle(e.relation_type) : _metaEdgeStyleFor(e.status);
         edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: st });
       }
       return;
@@ -6882,10 +6889,11 @@ function _metaGraphRenderRelations(key, nodes, edges) {
 }
 
 // graph-funcproc(ADR-017, REQ ⑤): 'AI 능동 분석' hover 지침 popover — 툴팁형 입력창.
-//   버튼/섹션 hover(or 버튼 focus) 시 표시, 섹션 이탈 250ms 후 숨김(입력 중이면 유지), Esc 로 닫기.
+//   graph-dataflow(UX 재요청): **버튼(또는 popover 자체) hover / 버튼 focus 시에만** 표시한다.
+//   이전엔 섹션(제목·결과 box 포함) 전체 hover 로 열려 "버튼 외 UI hover 에도 지침 UI 가 뜨는" 이슈가 있었음 —
+//   버튼+popover 로만 트리거를 좁혔다. 버튼→툴팁 이동 중 닫힘은 250ms 지연 hide 로 흡수. Esc 로 닫기.
 //   '분석 시작'(또는 지침 입력 후 메인 버튼) → 지침과 함께 분석 트리거. 지침은 세션 내 보존(재열람 prefill).
 function _metaGraphBindAiPopover(key, scope) {
-  const sec = document.getElementById("metaGraphAiSec");
   const btn = document.getElementById("metaGraphAiBtn");
   const pop = document.getElementById("metaGraphAiPop");
   const ta = document.getElementById("metaGraphAiPrompt");
@@ -6906,22 +6914,50 @@ function _metaGraphBindAiPopover(key, scope) {
   // btn 의 focus-show 가 즉시 재열고 show() 가 blur 경로의 hide 타이머까지 취소해 **popover 고착**.
   // Esc 직후 짧은 창(300ms) 동안 show 를 억제해 닫힘을 확정한다(focus 복귀는 유지 — a11y).
   let escClosing = false;
+  // graph-dataflow: 툴팁을 viewport 기준 position:fixed 로 띄운다 — 상세 패널(.admin-meta-graph-detail)이
+  //   overflow-y:auto 라 in-container absolute 는 하단에서 잘린다(조상 체인 transform 없음 확인 → fixed 유효).
+  //   버튼 rect 기준으로 아래(뷰포트 하단 넘치면 위로 flip)·우측 정렬하고, 스크롤/리사이즈 시 재배치한다.
+  //   reflow 는 pop 이 DOM 에서 사라지면(상세 재렌더) 자기 리스너를 제거해 누수 방지(self-heal).
+  const position = () => {
+    const r = btn.getBoundingClientRect();
+    const gap = 6;
+    const ph = pop.offsetHeight || 120, pw = pop.offsetWidth || 300;
+    let top = r.bottom + gap;
+    if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - gap - ph);   // 아래 넘침 → 위로 flip
+    let left = r.right - pw;                                                       // 버튼 오른쪽 끝에 정렬
+    if (left < 8) left = 8;
+    if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - pw);
+    pop.style.top = top + "px"; pop.style.left = left + "px"; pop.style.right = "auto";
+  };
+  const reflow = () => {
+    if (!document.body.contains(pop)) { stopTrack(); return; }   // 상세 재렌더로 stale — self-cleanup
+    if (!pop.hidden) position();
+  };
+  const startTrack = () => { window.addEventListener("scroll", reflow, true); window.addEventListener("resize", reflow); };
+  function stopTrack() { window.removeEventListener("scroll", reflow, true); window.removeEventListener("resize", reflow); }
+  const doHide = () => { pop.hidden = true; stopTrack(); };
   const show = () => {
     if (escClosing) return;
     if (hideT) { clearTimeout(hideT); hideT = null; }
     pop.hidden = false;
+    position();       // 표시 직후 버튼 기준 좌표 산정(offsetHeight 확정 위해 un-hide 후)
+    startTrack();
   };
   const hideSoon = () => {
     if (hideT) clearTimeout(hideT);
-    hideT = setTimeout(() => { if (document.activeElement !== ta) pop.hidden = true; }, 250);
+    hideT = setTimeout(() => { if (document.activeElement !== ta) doHide(); }, 250);
   };
   btn.addEventListener("mouseenter", show);
   btn.addEventListener("focus", show);
-  if (sec) { sec.addEventListener("mouseleave", hideSoon); sec.addEventListener("mouseenter", show); }
+  btn.addEventListener("mouseleave", hideSoon);
+  // 버튼→툴팁 이동 시 유지: popover 자체 hover 는 show, 이탈은 hideSoon(250ms). 섹션(제목·결과 box)
+  //   hover 는 더 이상 트리거하지 않는다 — 버튼 외 UI hover 시 지침 UI 가 뜨던 이슈 해소.
+  pop.addEventListener("mouseenter", show);
+  pop.addEventListener("mouseleave", hideSoon);
   ta.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") {
       escClosing = true;
-      pop.hidden = true;
+      doHide();   // graph-dataflow F2: 숨김+scroll/resize 리스너 해제(누수 방지) — pop.hidden=true 단독 대체
       try { btn.focus(); } catch (_) {}
       setTimeout(() => { escClosing = false; }, 300);
     }

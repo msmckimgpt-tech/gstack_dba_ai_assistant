@@ -1090,3 +1090,13 @@ source_of_truth: true
   MAJOR-1 수정 라이브 실증) / Routine 잡 7 done·⚙ 분석 마커 7·분석문 생성·noop dedup / 파라미터
   4행 21px 수직·push-down·XR 접힘. 코드 품질은 REV-…-graph-navfilter-routine(3-렌즈+재검증)에서 완료.
 - deploy_scope: included + 사용자 turn confirm("진행") — 자동 배포 승인 근거.
+
+## REV-20260707T031149-ai-claude-feature-0016-graph-dataflow-tooltip [SUBAGENT: PASS-WITH-FIXES] — 그래프 뷰 화살표 데이터흐름 + AI 능동 분석 툴팁 (§18.8 적대 리뷰: 정확성+UX 렌즈)
+- 대상: 화살표 read/write 방향(`_metaRoutineEdgeStyle`), 능동 분석 지침 popover hover 상태머신, position:fixed 플로팅 툴팁 좌표 산정.
+- 방법: general-purpose 적대 리뷰 — 화살표 의미 매핑/G6 single-arrow/z-order strip/누락 경로, 리스너 누수 생명주기, fixed 포지셔닝 조상 체인(transform/filter/contain), z-index/dark-mode.
+- 판정: **PASS-WITH-FIXES** (0 BLOCKING·0 MAJOR·2 MINOR·2 NIT). 우선순위 우려 2건 추적 결과 안전: #3a 조상 체인에 transform/filter/perspective/will-change:transform/contain 부재 → position:fixed 뷰포트 앵커 유효; #1 각 분기 정확히 1개 화살표(false 키 미설정)·z-order 는 zIndex 만 갱신(화살표 불변)·ROUTINE_USES 렌더 경로 단일.
+- 수정 반영:
+  - **F1(MINOR→수정)**: relation_type 미상 시 화살표(endArrow=쓰기)와 상세 라벨 kindKo('읽기') 모순 → 화살표 기본을 startArrow(읽기)로 정합(write 만 endArrow).
+  - **F2(MINOR→부분 수정)**: start()/Esc 가 stopTrack() 우회 → scroll/resize 리스너 self-healing 누수. Esc→doHide() 로 즉시 해제. start()(go-button 무-focus) 잔여는 bounded+self-healing(reflow 가 pop DOM 이탈 시 자기 리스너 제거)+addEventListener de-dup → 수용(residual).
+  - **F3/F4(NIT→수용)**: reflow rAF 스로틀 부재·초소형 뷰포트 flip 클램프 잔여 — 비현실적 조건, 범위 외.
+- POST-DEPLOY PB-0008(TEST.md §3 Run 2026-07-07 ①~⑥)에서 라이브 시각 확정 예정.

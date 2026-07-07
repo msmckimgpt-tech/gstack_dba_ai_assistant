@@ -1541,3 +1541,12 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T54.8 PR #597 머지(842b9ecf) → deploy-web 롤링 soak + insight/ask-worker 재빌드 → POST-DEPLOY
   PB-0008 **AC-1~AC-5 전 항목 라이브 PASS** + pageerror 0 (§54 Run 2026-07-06 POST-DEPLOY 참조 —
   Routine 잡 7 done·⚙ 마커·분석문, products 검색→클리어 복귀, 엣지 토글 배치 불변 등 실측).
+
+## 55. graph-dataflow-tooltip — 노드 관계 화살표 데이터흐름 정합 + AI 능동 분석 지침 툴팁 (2026-07-07, 사용자 요청 · entry persona dispatch)
+
+- 사용자 요청(관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰): ① 노드 간 관계 방향을 데이터 흐름(읽기/쓰기)과 정합하도록 화살표 구성 ② 'AI 능동 분석' 지침 UI 가 버튼 외 UI hover 에도 뜨는 이슈 + 패널 내부 확장으로 아래 UI 를 밀어내는 이슈(툴팁 의도) 개선.
+- [x] T55.1 **이슈1 — ROUTINE_USES 데이터흐름 화살표**: AGE 모델은 항상 Routine(source)→Table(target) 이고 relation_type 만 read/write. 프론트 `_metaRoutineEdgeStyle(relationType)` 를 방향-인식화 — write=`endArrow`(루틴→테이블, 데이터 씀), read=`startArrow`(테이블→루틴, 데이터 읽음). 호출부(`_metaG6Build` ROUTINE_USES 분기)에 `e.relation_type` 전달. relation_type 미상 시 endArrow 안전 폴백. G6 arrow false 키 미설정(크래시 회피). 범례 '관계·AI 상태' 탭에 방향 부연(`.amg-legend-sub`). REFERENCES(FK)는 표준 ER 규약이라 불변.
+- [x] T55.2 **이슈2A — 지침 툴팁 트리거 버튼 한정**: `_metaGraphBindAiPopover` 에서 섹션 전체 hover(`sec.mouseenter→show`) 제거 → 버튼(+툴팁 자체) hover/버튼 focus 로만 트리거. 버튼→툴팁 이동은 250ms 지연 hide 로 흡수.
+- [x] T55.3 **이슈2B — in-flow 카드→플로팅 툴팁**: ADR-017 원래 의도("버튼 hover 시 툴팁형 입력")로 복원. 이후 hotfix 에서 in-flow 카드(margin-top)로 드리프트해 열릴 때마다 아래 결과/노드 상세를 밀어내던 것을 `position:fixed` 뷰포트 앵커 툴팁으로 전환. JS `position()` 가 버튼 rect 기준 viewport 좌표 산정(우측 정렬·하단 넘침 시 위로 flip·스크롤/리사이즈 재배치·pop DOM 이탈 시 self-cleanup). 상세 패널 `.admin-meta-graph-detail` 의 overflow-y:auto 클리핑을 피하려 absolute 아닌 fixed. 미hover 시 아래 내용 밀림 0. (CSS 주석의 'ADR-014' 참조는 오기였음 — ADR-014 는 제품 카테고리 — 교정.)
+- [x] T55.4 정적·격리 검증: `node --check admin.js` PASS · CSS↔JS 정합(fixed↔viewport 좌표, absolute 잔존 0) · 중복 로직 0 · cache-buster `?v=20260707-graph-dataflow-tooltip` bump. 세션 컨텍스트 압축으로 issue-2B 를 이중 접근(초기 fixed JS 편집이 활성 컨텍스트에서 유실 후 absolute CSS 재접근)했던 것을 fixed 로 정합화(REPORT/RETRO 참조).
+- [ ] T55.5 배포 + POST-DEPLOY PB-0008 — 정적 자산 baked → merge + `make deploy-web` 재배포 후 실 Windows 브라우저 시각검증(TEST.md §3 Run 2026-07-07 검증항목 ①~⑥). deploy_scope: included.
