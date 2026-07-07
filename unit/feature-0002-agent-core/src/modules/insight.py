@@ -2877,34 +2877,45 @@ def _start_semantic_cluster_thread() -> None:
 
 
 def _xds_relationship_infer_loop() -> None:
-    """feature-0016 Phase B(ADR-019): 크로스-데이터소스 관계 추론 백그라운드 루프(Phase C 임베딩 구동).
+    """feature-0016 Phase B(ADR-019)·§55: 경계 넘는 관계 추론 백그라운드 루프(Phase C 임베딩 구동).
 
     embedding/cluster 데몬과 동형·분리 — tick 무블로킹. pass 당 infer_cross_datasource_relationships +
-    store_xds_inferred_relationships. **기본 OFF**(AGENT_XDS_RELATIONSHIP_INFER_AUTO) — 임베딩 populate 후 flip. fail-soft."""
+    store_xds_inferred_relationships. §55: **크로스-ds**(AGENT_XDS_RELATIONSHIP_INFER_AUTO)와 **intra-DS
+    크로스 스키마(DB)**(AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO, 기본 ON — 프로브 검증 가능) 두 모드를
+    한 루프가 나른다. 둘 중 하나라도 켜지면 기동, 각 pass 는 켜진 모드의 후보만 발굴한다. fail-soft."""
     interval = max(300, int(AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC))
     _log = logging.getLogger("insight")
+    from shared import config as _cfg2
     while True:
         try:
             from modules import relationships as _rel
-            n = _rel.store_xds_inferred_relationships()
+            cands = _rel.infer_cross_datasource_relationships(
+                include_xds=bool(getattr(_cfg2, "AGENT_XDS_RELATIONSHIP_INFER_AUTO", False)),
+                include_xschema=bool(getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True)))
+            n = _rel.store_xds_inferred_relationships(candidates=cands) if cands else 0
             if n:
-                _log.info("xds_relationship_infer upserted=%s", n)
+                _log.info("xds_relationship_infer upserted=%s (xds+xschema)", n)
         except Exception as exc:   # 스레드 보호
             _log.warning("xds_relationship_infer pass 실패(무시): %s", exc)
         time.sleep(interval)
 
 
 def _start_xds_relationship_infer_thread() -> None:
-    """AUTO 켜짐 시 크로스-ds 관계 추론 데몬 스레드 1회 기동(기본 OFF — 임베딩 populate 후 flip)."""
-    if not AGENT_XDS_RELATIONSHIP_INFER_AUTO:
+    """XDS 또는 XSCHEMA AUTO 켜짐 시 경계 관계 추론 데몬 스레드 1회 기동(§55 — xschema 는 기본 ON)."""
+    from shared import config as _cfg2
+    if not (AGENT_XDS_RELATIONSHIP_INFER_AUTO
+            or bool(getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True))):
         return
     try:
         import threading
         t = threading.Thread(target=_xds_relationship_infer_loop, name="xds-relationship-infer", daemon=True)
         t.start()
         logging.getLogger("insight").info(
-            "xds_relationship_infer 스레드 기동(interval=%ss, min_sim=%s)",
-            AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC, AGENT_XDS_RELATIONSHIP_MIN_SIM,
+            "xds_relationship_infer 스레드 기동(interval=%ss, xds=%s min_sim=%s, xschema=%s min_sim=%s)",
+            AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC,
+            AGENT_XDS_RELATIONSHIP_INFER_AUTO, AGENT_XDS_RELATIONSHIP_MIN_SIM,
+            bool(getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True)),
+            getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM", 0.86),
         )
     except Exception as exc:
         logging.getLogger("insight").warning("xds_relationship_infer 스레드 기동 실패(무시): %s", exc)

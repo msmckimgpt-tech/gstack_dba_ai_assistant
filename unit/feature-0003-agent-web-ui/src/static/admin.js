@@ -3270,6 +3270,14 @@ const _metaGraph = {
   _focusName: null,           // 중심 보기 대상 이름(FocusChip 단일소스 미러 — DOM 파싱 회피)
   // graph-navfilter(§54⑤): 파라미터를 펼친 Routine key — 컬럼 펼침(expanded)의 루틴 판.
   routineExpanded: new Set(),
+  // graph-category(§55 A, REQ-20260706 ①): 스키마(DB)별 제품 매핑 — 스키마 클러스터를 제품 카테고리
+  //   밴드(CAT:/CATH:/CATX:)로 묶는 데이터 원천. key=스키마명 lowercase, val=[{id,name,sort}].
+  //   schemaTotals 와 같은 scope 캐시 — resetModel 보존, loadRoots 가 재구축(응답 schema_products).
+  schemaProducts: new Map(),
+  catOrder: [],               // §49 동형: 카테고리(catKey) 순서 안정화
+  catCollapsed: new Set(),    // 접힌 카테고리 catKey(멤버 클러스터 미방출·헤더 밴드만)
+  catMembers: new Map(),      // catKey -> [멤버 클러스터(comboId)] — 매 build 재구성(카테고리 드래그 소비)
+  catLabelOf: new Map(),      // catKey -> 표시 라벨 — 매 build 재구성(상세·헤더)
 };
 
 // ── 결정론적 배치 상수(스키마 클러스터 grid·테이블 스택·컬럼 세로열) ──
@@ -3286,7 +3294,9 @@ const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 �
 //   흐름 내 per-table "X:" ctl 은 NODE 밴드(허위 소속 어포던스 방지, 패널 ux MINOR) — 자기 칩과 비겹침이라
 //   클릭성 손실 없음. 코너 앵커 컨트롤(GX/XS)만 CTL(항상 클릭 가능).
 //   EDGE 층 내부는 신뢰 강도 소수 오프셋(trusted+0.2 > candidate/교차DB+0.1)으로 tie 분해(_metaEdgeStyleFor).
-const _METZ = { COMBO: 0, GROUP_BG: 1, EDGE: 2, COLUMN: 3, NODE: 4, GROUP_HD: 5, CTL: 6, DRAG_BOOST: 1000 };
+// graph-category(§55 A): CAT_BG(-1) = 제품 카테고리 밴드 배경 — 클러스터 배경(COMBO 0) **아래**.
+//   combo 내부 hit-test 는 combo 가 갖고, 밴드 여백·헤더(CATH, GROUP_HD 밴드)가 카테고리 상호작용 표면.
+const _METZ = { CAT_BG: -1, COMBO: 0, GROUP_BG: 1, EDGE: 2, COLUMN: 3, NODE: 4, GROUP_HD: 5, CTL: 6, DRAG_BOOST: 1000 };
 const _META_SEARCH_CAP = 50;        // search-badge: 백엔드 search_nodes 기본 limit(50) 미러 — 도달 시 매칭 카운트 부분값(badge '+')
 const _META_TERMS_COMBO = "__terms__";   // GlossaryTerm/misc 를 담는 합성 클러스터
 
@@ -3382,6 +3392,12 @@ function _metaRoleOf(key) {
 //   combo id == Schema 모델 key(펼침 시) — COMBO 층. 미상은 칩과 동급(NODE).
 function _metaZFor(id) {
   const s = String(id);
+  // graph-category(§55 A, 패널 BLOCKING fix): CAT 밴드 3종 — 누락 시 기본 NODE(4) 로 해석돼
+  //   _metaGraphZAssert(매 draw 후 canonical 재-assert)가 배경을 최상층으로 승격, 밴드가 내부
+  //   클러스터·노드를 반투명으로 덮고 hit-test 를 가로챈다. bake(-1/5/6)와 1:1 로 고정.
+  if (s.startsWith("CATX:")) return _METZ.CTL;
+  if (s.startsWith("CATH:")) return _METZ.GROUP_HD;
+  if (s.startsWith("CAT:")) return _METZ.CAT_BG;
   if (s.startsWith("GB:")) return _METZ.GROUP_BG;
   if (s.startsWith("GH:")) return _METZ.GROUP_HD;
   if (s.startsWith("GX:") || s.startsWith("XS:")) return _METZ.CTL;
@@ -3996,6 +4012,59 @@ function _metaStableSeq(fresh, savedKeys, keyOf) {
   return out;
 }
 
+// graph-category(§55 A, REQ-20260706 ①): 스키마 클러스터의 **제품 카테고리** 배정 + ids 재배열.
+//   WebProductDatabases(제품별 접근 DB SSOT)의 스키마→제품 매핑(schemaProducts)으로 각 클러스터를
+//   catKey("PC:<제품id>" | "PC:__none__" 미분류)에 배정한다 — 하위 '유사 속성 그룹'(sim-group)과 같은
+//   가시적 구분(배경 밴드+헤더 칩)의 데이터 계층. 매핑이 전무하면 enabled=false(기존 배치 그대로 — 회귀 0).
+//   다제품 스키마는 대표 제품(백엔드 정렬 1순위 = 제품 SortOrder)으로 배정하고 상세에서 전체 노출.
+function _metaCatAssign(ids) {
+  const res = { enabled: false, cats: [], inCat: new Set(), ids: null };
+  const sp = _metaGraph.schemaProducts;
+  const core = (ids || []).filter((k) => k !== _META_TERMS_COMBO);
+  if (!sp || !sp.size || !core.length) return res;
+  const byCat = new Map();
+  let mapped = 0;
+  // 패널 MINOR fix: 매핑은 schemaProducts 가 로드된 scope 의 클러스터에만 적용 — 크로스-DS 이웃확장으로
+  //   유입된 타 scope 클러스터가 동명 DB 로 현재 제품 밴드에 오배정되지 않게(타 scope = 미분류).
+  const spScope = String(_metaGraph.loadedScope || "");
+  core.forEach((id) => {
+    const inScope = !spScope || String(id).startsWith(spScope + ":");
+    const nm = String(_metaComboName(id) || "").toLowerCase();
+    const plist = inScope ? sp.get(nm) : null;
+    let key = "PC:__none__", label = "미분류", sort = Number.MAX_SAFE_INTEGER;
+    if (Array.isArray(plist) && plist.length) {
+      const p = plist[0];
+      key = "PC:" + p.id; label = p.name || ("제품#" + p.id);
+      sort = (typeof p.sort === "number" ? p.sort : 100) * 100000 + (p.id || 0);
+      mapped++;
+    }
+    let c = byCat.get(key);
+    if (!c) { c = { key, label, sort, members: [] }; byCat.set(key, c); }
+    c.members.push(id);
+  });
+  if (!mapped) return res;   // 전부 미분류 → 카테고리 계층 미방출(단일 흐름 유지)
+  const cats = [...byCat.values()].sort((a, b) =>
+    ((a.key === "PC:__none__") - (b.key === "PC:__none__")) || (a.sort - b.sort) || _metaNatSort(a.label, b.label));
+  // §49 동형: 카테고리 순서 안정화 — rebuild 시 밴드가 자리를 점프하지 않게.
+  const stable = _metaStableSeq(cats, _metaGraph.catOrder, (c) => c.key);
+  _metaGraph.catOrder = stable.map((c) => c.key);
+  _metaGraph.catMembers = new Map(); _metaGraph.catLabelOf = new Map();
+  const pos = new Map(core.map((k, i) => [k, i]));
+  const ordered = [];
+  stable.forEach((c) => {
+    c.memberSet = new Set(c.members);
+    // 접힘: 사용자 지속 의도. 단 검색 매칭/추가 스키마를 품은 카테고리는 강제 펼침(결과 가시 — 그룹 접힘 동형).
+    c.collapsed = _metaGraph.catCollapsed.has(c.key) && !c.members.some((sid) =>
+      (_metaGraph.searchMatch && _metaGraph.searchMatch.has(sid)) || _metaGraph.searchAdded.has(sid));
+    c.members.sort((a, b) => pos.get(a) - pos.get(b));   // 카테고리 내부는 기존(안정화된) 클러스터 순서 유지
+    c.members.forEach((m) => { res.inCat.add(m); ordered.push(m); });
+    _metaGraph.catMembers.set(c.key, c.members.slice());
+    _metaGraph.catLabelOf.set(c.key, c.label);
+  });
+  res.enabled = true; res.cats = stable; res.ids = ordered;
+  return res;
+}
+
 function _metaG6Build() {
   // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
   //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
@@ -4041,6 +4110,13 @@ function _metaG6Build() {
     const _core = _metaStableSeq(_hasTerms ? ids.slice(0, -1) : ids.slice(), _metaGraph.clusterOrder, (x) => x);
     _metaGraph.clusterOrder = _core.slice();
     ids.length = 0; _core.forEach((id) => ids.push(id)); if (_hasTerms) ids.push(_META_TERMS_COMBO);
+  }
+  // graph-category(§55 A): 제품 카테고리 배정 + ids 를 카테고리 순으로 재배열(카테고리 내부는 위
+  //   안정화 순서 유지, terms 는 항상 마지막). 매핑 전무(enabled=false)면 완전 무개입 — 기존 배치.
+  const catInfo = _metaCatAssign(ids);
+  if (catInfo.enabled) {
+    const _hasTerms2 = ids.length && ids[ids.length - 1] === _META_TERMS_COMBO;
+    ids.length = 0; catInfo.ids.forEach((id) => ids.push(id)); if (_hasTerms2) ids.push(_META_TERMS_COMBO);
   }
   const schemaIdx = new Map(ids.map((s, i) => [s, i]));   // 테이블 순서의 외부-관계 앵커(이웃 스키마 방향) 조회용
   const relOrder = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf);   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
@@ -4202,11 +4278,42 @@ function _metaG6Build() {
     return { id, g, place, w, h, x0: 0, y0: 0 };
   });
   // shelf-packing: 가변폭 클러스터를 좌→우로 채우고, 폭 초과 시 다음 행으로.
-  { let cx = 0, cyy = 0, shelfH = 0;
+  // graph-category(§55 A): 카테고리 활성 시 **카테고리 밴드별로** 분할 패킹 — 각 카테고리가 자기 행들을
+  //   좌→우로 채우고, 밴드는 세로로 스택된다(헤더 CATHH 확보). 접힌 카테고리는 멤버를 방출하지 않고
+  //   (catHidden) 헤더 밴드만 남긴다. 비활성(enabled=false)이면 기존 단일 흐름 그대로.
+  const CATHH = 36;   // 카테고리 헤더 밴드 높이(칩 + 상단 여백)
+  if (!catInfo.enabled) {
+    let cx = 0, cyy = 0, shelfH = 0;
     layouts.forEach((L) => {
       if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; cyy += shelfH + _METLAY.GAPY; shelfH = 0; }
       L.x0 = cx; L.y0 = cyy; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
-    }); }
+    });
+  } else {
+    const layById = new Map(layouts.map((L) => [L.id, L]));
+    let cyy = 0;
+    catInfo.cats.forEach((cat) => {
+      cat.bandY = cyy;
+      const catLays = cat.members.map((id) => layById.get(id)).filter(Boolean);
+      if (cat.collapsed) {
+        catLays.forEach((L) => { L.catHidden = true; });
+        cyy += CATHH + _METLAY.GAPY;   // 헤더 밴드만 차지
+        return;
+      }
+      let cx = 0, rowY = cyy + CATHH, shelfH = 0;
+      catLays.forEach((L) => {
+        if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; rowY += shelfH + _METLAY.GAPY; shelfH = 0; }
+        L.x0 = cx; L.y0 = rowY; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
+      });
+      cyy = rowY + shelfH + _METLAY.GAPY + 22;   // 밴드 간 여유(+22 — 밴드 하단 패딩 시각 분리)
+    });
+    // 카테고리 무소속(terms 클러스터 등)은 마지막 밴드 아래 단일 흐름으로.
+    { let cx = 0, rowY = cyy, shelfH = 0;
+      layouts.forEach((L) => {
+        if (catInfo.inCat.has(L.id)) return;
+        if (cx > 0 && cx + L.w > MAXROWW) { cx = 0; rowY += shelfH + _METLAY.GAPY; shelfH = 0; }
+        L.x0 = cx; L.y0 = rowY; cx += L.w + _METLAY.GAPX; shelfH = Math.max(shelfH, L.h);
+      }); }
+  }
   // graph-freeplace: 사용자 드래그 클러스터 offset 을 packing 결과에 가산(렌더 위치만 — 폭 누적/행 배정엔 미개입).
   //   L.x0/L.y0 가 카드·테이블·컬럼·장식·combo 의 공통 기준이라, 여기서 가산하면 클러스터 전체가 coherent 하게
   //   이동하고 펼침/접기 rebuild 후에도 유지된다(자유 배치 persistence — ADR-004 결정론 배치 회귀 복원).
@@ -4216,8 +4323,49 @@ function _metaG6Build() {
   });
   const combos = [], nodes = [], edges = [];
   _metaGraph.firstElementId = null;
+  // graph-category(§55 A): 카테고리 밴드(CAT: 배경 + CATH: 헤더 칩 + CATX: 접기) 방출 — 박스 기하는
+  //   멤버 클러스터의 **최종 배치(clusterOffset 반영) bbox + 패딩** 파생(sim-group GB bbox 동형 —
+  //   클러스터 이동에 반응형). 접힌 카테고리는 헤더 밴드만. zIndex: 배경 CAT_BG(-1, combo 아래) /
+  //   헤더 GROUP_HD / 컨트롤 CTL. 헤더 드래그 = 카테고리 리지드 이동(멤버 clusterOffset 일괄 누적).
+  if (catInfo.enabled) {
+    const layById2 = new Map(layouts.map((L) => [L.id, L]));
+    catInfo.cats.forEach((cat, ci) => {
+      const vis = cat.members.map((id) => layById2.get(id)).filter((L) => L && !L.catHidden);
+      let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+      vis.forEach((L) => {
+        left = Math.min(left, L.x0); top = Math.min(top, L.y0);
+        right = Math.max(right, L.x0 + L.w); bottom = Math.max(bottom, L.y0 + L.h);
+      });
+      const PADX2 = 22, PADB2 = 18;
+      let bl, bt, bw, bh;
+      if (vis.length && isFinite(left)) {
+        bl = left - PADX2; bt = top - CATHH; bw = (right + PADX2) - bl; bh = (bottom + PADB2) - bt;
+      } else {   // 접힘(또는 전 멤버 미방출) — 헤더 밴드만
+        bl = -PADX2; bt = cat.bandY || 0; bw = 720; bh = CATHH;
+      }
+      const tint = _META_GROUP_TINTS[ci % _META_GROUP_TINTS.length];
+      nodes.push({ id: "CAT:" + cat.key, type: _METtype,
+        data: { kind: "cat-bg", cat: cat.key },
+        style: { x: bl + bw / 2, y: bt + bh / 2, size: [bw, bh], radius: 14,
+          fill: tint.bg, fillOpacity: 0.38, stroke: tint.bd, lineWidth: 1.6, lineDash: [7, 4],
+          zIndex: _METZ.CAT_BG, cursor: "move" } });
+      const hdText = `🗂 ${cat.label} · ${cat.members.length} DB`;
+      const hdW = Math.min(Math.max(80, Math.round(hdText.length * 8.2) + 22), Math.max(120, bw - 46));
+      nodes.push({ id: "CATH:" + cat.key, type: _METtype,
+        data: { kind: "cat-hd", cat: cat.key, label: cat.label },
+        style: { x: bl + 12 + hdW / 2, y: bt + 16, size: [hdW, 22], radius: 11,
+          fill: tint.hd, stroke: tint.bd, lineWidth: 1.2, zIndex: _METZ.GROUP_HD, cursor: "move",
+          labelText: hdText, labelFill: "#1d2635", labelFontSize: 12, labelFontWeight: 700,
+          labelPlacement: "center" } });
+      nodes.push({ id: "CATX:" + cat.key, type: _METtype,
+        data: { label: cat.collapsed ? "+" : "−", kind: "cat-ctl", cat: cat.key },
+        style: Object.assign(_metaCtlStyle(bl + bw - 16, bt + 16), { size: [18, 18],
+          labelText: cat.collapsed ? "+" : "−", labelFontSize: 15 }) });
+    });
+  }
   layouts.forEach((L) => {
     const { id, g } = L;
+    if (L.catHidden) return;   // graph-category(§55 A): 접힌 카테고리 멤버 — 클러스터 전체 미방출
     if (!_metaGraph.firstElementId) _metaGraph.firstElementId = (L.kind === "card") ? ("SC:" + id) : id;
     if (L.kind === "card") {
       // id 는 "SC:" 네임스페이스 — 같은 스키마 key 가 펼침 시 combo id 로 쓰이므로, 동일 id 의
@@ -4704,6 +4852,12 @@ function _metaGraphResetModel() {
   _metaGraph.tableOrder.clear();
   _metaGraph.groupOrder.clear();       // feature-0016 §49(R1): simgroups 순서 안정화도 fresh load 시 리셋.
   _metaGraph.groupTableOrder.clear();
+  // graph-category(§55 A): 카테고리 순서·접기·인덱스 리셋(다른 스코프 = 다른 카테고리).
+  //   schemaProducts 는 schemaTotals 동형의 scope 캐시라 보존 — loadRoots 가 재구축.
+  _metaGraph.catOrder = [];
+  _metaGraph.catCollapsed.clear();
+  _metaGraph.catMembers.clear();
+  _metaGraph.catLabelOf.clear();
   _metaGraph._comboDragStart = null;
 }
 
@@ -4789,6 +4943,15 @@ async function _metaGraphLoadRoots() {
   //   '전체 테이블 개수' 소스로 쓰이므로 여기서만 갱신하고 resetModel 에서는 보존한다.
   _metaGraph.schemaTotals = new Map();
   _metaGraph.nodes.forEach((sn) => { if (sn.label === "Schema" && typeof sn.table_count === "number") _metaGraph.schemaTotals.set(sn.key, sn.table_count); });
+  // graph-category(§55 A): 스키마(DB)명 → 제품 매핑 재구축(scope 캐시 — schemaTotals 동형).
+  //   key 는 lowercase(WebProductDatabases.SchemaName 과 그래프 스키마명의 대소문자 편차 방어).
+  _metaGraph.schemaProducts = new Map();
+  if (data.schema_products && typeof data.schema_products === "object") {
+    Object.keys(data.schema_products).forEach((sch) => {
+      const lst = data.schema_products[sch];
+      if (Array.isArray(lst) && lst.length) _metaGraph.schemaProducts.set(String(sch).toLowerCase(), lst);
+    });
+  }
   _metaGraphFillJump(schemaKeys);
   let truncNote = data.truncated ? " · 스키마 표시 상한 도달(나머지는 검색)" : "";
   // 스키마 1개짜리 데이터소스는 카드 한 장이 무의미 — 즉시 펼쳐 기존 즉시성 유지(silent, 부모 seq 상속).
@@ -4861,6 +5024,14 @@ function _metaElementDragEnable(e) {
   // group-interact(§50): 그룹 접기 컨트롤(GX)만 이동 불가(클릭 전용). GB(배경)/GH(헤더)는 그룹 리지드 드래그 허용
   //   (예전 graph-simgroups 의 GB/GH 이동 차단을 해제 — 카테고리 그룹 drag&drop 위치 이동 복원).
   if (id && String(id).startsWith("GX:")) return false;
+  if (id && String(id).startsWith("CATX:")) return false;   // graph-category(§55 A): 카테고리 접기 ctl = 클릭 전용
+  // graph-category(§55 A, 패널 MAJOR fix): **접힌** 카테고리 밴드는 드래그 불가 — 밴드 위치가 packing
+  //   (bandY) 파생이라 rebuild 로 스냅백하는데, 숨겨진 멤버 클러스터에는 clusterOffset 델타가 조용히
+  //   누적돼 펼쳤을 때 멤버만 이동해 있는 모순이 생긴다(클릭 전용 = 상세/펼침 유도).
+  if (id && (String(id).startsWith("CATH:") || String(id).startsWith("CAT:"))) {
+    const ck = String(id).slice(String(id).startsWith("CATH:") ? 5 : 4);
+    if (_metaGraph.catCollapsed.has(ck)) return false;
+  }
   return !_metaIsMiddleDrag(e);
 }
 
@@ -4901,6 +5072,33 @@ function _metaNodeDragStart(e) {
   if (String(id).startsWith("SC:")) {
     try { const p = g.getElementPosition(id); if (p) _metaGraph._comboDragStart = { comboId: id.slice(3), curId: id, x: p[0], y: p[1] }; } catch (_) {}
     _metaDragZBoost([id]);   // graph-zorder(§52): 내장 frontElement(영구 max+1) 대신 결정론 부스트 — dragend 복원
+    return;
+  }
+  // graph-category(§55 A): 제품 카테고리 밴드(CAT: 배경 여백 / CATH: 헤더 칩) 드래그 = 카테고리 통째
+  //   리지드 이동 — 멤버 클러스터(펼친 combo 는 자식 전체, 접힌 카드는 SC:) + 밴드 장식을 고정 오프셋으로
+  //   묶는다(그룹 리지드 기전 재사용). dragend 에 멤버별 clusterOffset 일괄 누적(신규 offset 계층 불요).
+  if (String(id).startsWith("CATH:") || String(id).startsWith("CAT:")) {
+    const ck = String(id).slice(String(id).startsWith("CATH:") ? 5 : 4);
+    let ap; try { ap = g.getElementPosition(id); } catch (_) { return; }
+    if (!ap) return;
+    const rendered = _metaGraph.renderedIds;
+    const clusters = _metaGraph.catMembers.get(ck) || [];
+    const ids = ["CAT:" + ck, "CATH:" + ck, "CATX:" + ck];
+    clusters.forEach((cid) => {
+      ids.push(cid, "SC:" + cid);   // 펼친 combo / 접힌 카드 — rendered 필터가 실재만 남긴다
+      _metaComboMemberIds(cid).forEach((mid) => ids.push(mid));
+    });
+    const offs = [];
+    const seenOff = new Set();
+    ids.forEach((eid) => {
+      if (eid === id || seenOff.has(eid)) return;
+      seenOff.add(eid);
+      if (rendered && !rendered.has(eid)) return;
+      let dp; try { dp = g.getElementPosition(eid); } catch (_) { return; }
+      if (dp) offs.push({ id: eid, ox: dp[0] - ap[0], oy: dp[1] - ap[1] });
+    });
+    _metaGraph._drag = { id, offs, cat: ck, catClusters: clusters.slice(), startX: ap[0], startY: ap[1] };
+    _metaDragZBoost([id].concat(offs.map((o) => o.id)));
     return;
   }
   // group-interact(§50): sim-group(GB 배경/GH 헤더) 드래그 = 카테고리 그룹 통째 리지드 이동.
@@ -4981,6 +5179,29 @@ function _metaNodeDragEnd(e) {
   //   nodePos(절대좌표)도 같은 델타로 시프트(freeplace clusterOffset MAJOR fix 동형 — 개별 배치 노드가
   //   그룹 이동에서 분리되지 않게). 시각 위치는 이미 drag-element+리지드 핸들러가 최종화 — 즉시 rebuild 불요.
   const gd = _metaGraph._drag;
+  // graph-category(§55 A): 카테고리 밴드 리지드 드래그 종료 → 델타를 **멤버 클러스터별 clusterOffset 에
+  //   일괄 누적**(신규 offset 계층 없이 기존 ① 계층 재사용) + 소속 nodePos 동반 시프트(freeplace MAJOR
+  //   fix 동형) → rebuild 로 CAT 박스 재파생(반응형).
+  if (gd && gd.cat) {
+    _metaGraph._drag = null;
+    let p; try { p = g && g.getElementPosition(gd.id); } catch (_) { p = null; }
+    if (p && isFinite(p[0]) && isFinite(p[1])) {
+      const dx = p[0] - gd.startX, dy = p[1] - gd.startY;
+      if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) {
+        const cset = new Set(gd.catClusters || []);
+        cset.forEach((cid) => {
+          const prev = _metaGraph.clusterOffset.get(cid) || { dx: 0, dy: 0 };
+          _metaGraph.clusterOffset.set(cid, { dx: prev.dx + dx, dy: prev.dy + dy });
+        });
+        _metaGraph.nodePos.forEach((pos, nid) => {
+          const n = _metaGraph.nodes.get(nid);
+          if (n && cset.has(_metaSchemaComboOf(n))) { pos[0] += dx; pos[1] += dy; }
+        });
+        _metaG6Apply(false);
+      }
+    }
+    return;
+  }
   if (gd && gd.group) {
     _metaGraph._drag = null;
     let p; try { p = g && g.getElementPosition(gd.id); } catch (_) { p = null; }
@@ -4999,7 +5220,7 @@ function _metaNodeDragEnd(e) {
   if (id && String(id).startsWith("SC:")) { _metaClusterDragCommit(); _metaGraph._drag = null; return; }
   // 그 외 이동 가능 노드(테이블·컬럼·용어)의 최종 절대위치를 nodePos 에 기록 → rebuild 후에도 유지.
   //   컨트롤/장식(X:/XS:/GB:/GH:/GX:)은 제외. 테이블은 위치만 기록하고, 종속(컬럼·"X:")은 build 가 테이블 델타로 시프트.
-  if (g && id && !/^(X:|XS:|XR:|RP:|GB:|GH:|GX:)/.test(String(id))) {   // §54⑤: 루틴 ctl/파라미터도 장식 — nodePos 오염 방지
+  if (g && id && !/^(X:|XS:|XR:|RP:|GB:|GH:|GX:|CAT:|CATH:|CATX:)/.test(String(id))) {   // §54⑤·§55: 장식/밴드 — nodePos 오염 방지
     // 컬럼은 소속 테이블에서 재파생(build)되므로 개별 위치를 기록하지 않는다(dead 엔트리·재빌드 snap-back 방지, 리뷰 NIT).
     const _n = _metaGraph.nodes.get(id);
     if (!_n || _n.label !== "Column") {
@@ -5111,6 +5332,8 @@ function _metaInitGraph() {
     const p = _metaCtxPoint(e);
     // graph-initview: 스키마 카드("SC:")·펼친 스키마 접기 ctl("XS:") 우클릭 → 스키마 전용 메뉴로 귀속.
     //   이 prefix 를 안 벗기면 _metaGraphCtxForNode 가 모델(SC: 없는 순수 key)에서 노드를 못 찾아 무반응.
+    // graph-category(§55 A): 카테고리 밴드 요소 우클릭 — 노드 메뉴 부적합(합성 밴드) → 메뉴 숨김(무반응 방지 후속 여지).
+    if (/^CAT(H|X)?:/.test(String(id))) { _metaGraphCtxHide(); return; }
     if (String(id).startsWith("GB:") || String(id).startsWith("GH:") || String(id).startsWith("GX:")) {   // graph-simgroups(§18.8 MAJOR): 그룹 박스/헤더/컨트롤(GX 포함, group-interact §50 REV) 우클릭 = 소속 스키마 메뉴(combo 배경 대체 — 데드존 방지)
       const gk = String(id).slice(3), sep = gk.indexOf("\u0001");
       if (sep >= 0) _metaGraphCtxForSchema(gk.slice(0, sep), p.x, p.y); else _metaGraphCtxHide();
@@ -5246,6 +5469,19 @@ function _metaInitGraph() {
 function _metaGraphOnNodeClick(e) {
   const id = e && e.target && e.target.id;
   if (!id) return;
+  // graph-category(§55 A): 카테고리 밴드 접기/펼치기(CATX) + 밴드/헤더 클릭 = 카테고리 상세.
+  if (String(id).startsWith("CATX:")) {
+    const ck = String(id).slice(5);
+    if (_metaGraph.catCollapsed.has(ck)) _metaGraph.catCollapsed.delete(ck);
+    else _metaGraph.catCollapsed.add(ck);
+    _metaG6Apply(false);
+    return;
+  }
+  if (String(id).startsWith("CATH:") || String(id).startsWith("CAT:")) {
+    const ck = String(id).slice(String(id).startsWith("CATH:") ? 5 : 4);
+    _metaGraphShowCategoryDetail(ck);
+    return;
+  }
   // group-interact(§50): 카테고리 그룹 접기/펼치기 토글(GX 컨트롤 — GB/GH 보다 먼저 판정). groupCollapsed 는
   //   사용자 지속 의도로 보존하고, 검색 시 매칭 그룹만 build 가 강제 펼침(결과 가시).
   if (String(id).startsWith("GX:")) {
@@ -6811,6 +7047,17 @@ function _metaGraphRenderRelations(key, nodes, edges) {
   });
   // review MAJOR-1: 앵커 측 조인 컬럼 표기 — 컬럼 단위 FK 에서 "어느 컬럼으로 JOIN 되는가"를 행에 노출.
   //   out: `colname → 상대` · in: `상대 → colname`. 같은 대상으로 가는 FK 2개도 로컬 컬럼으로 구분된다.
+  // graph-category(§55 B): 관계 큐레이션 버튼 — REFERENCES 행에 신뢰 승격(✓)·파단(✕). 권한
+  //   metadata.table.manage(kb.ingest.manual 묶음 함의) 보유자만. 크로스-DS candidate 는 프로브 검증이
+  //   불가해 이 승격이 유일한 신뢰 경로(ADR-019) — trusted 는 승격 버튼 생략(파단만).
+  const canCurate = (typeof can === "function") && (can("metadata.table.manage") || can("kb.ingest.manual"));
+  const curateBtns = (e) => {
+    if (!canCurate || e.type !== "REFERENCES" || !e.source || !e.target) return "";
+    const b = [];
+    if (e.status !== "trusted") b.push(`<button type="button" class="amgr-cur amgr-cur-trust" data-cur="trust" data-src="${esc(e.source)}" data-tgt="${esc(e.target)}" title="이 관계를 신뢰(trusted)로 승격 — AI 답변 컨텍스트에 주입됩니다">✓ 신뢰</button>`);
+    b.push(`<button type="button" class="amgr-cur amgr-cur-break" data-cur="break" data-src="${esc(e.source)}" data-tgt="${esc(e.target)}" title="이 관계를 파단(broken) 처리 — 그래프·AI 컨텍스트에서 제거됩니다">✕ 파단</button>`);
+    return `<span class="amgr-curate">${b.join("")}</span>`;
+  };
   const row = (e, otherKey, selfEndKey, arrow) => {
     const on = byKey[otherKey] || {};
     const selfEnd = (selfEndKey && selfEndKey !== key) ? (byKey[selfEndKey] || null) : null;
@@ -6823,7 +7070,7 @@ function _metaGraphRenderRelations(key, nodes, edges) {
       : `${counter}${localName ? ` <span class="amgr-arrow">→</span> <code>${esc(localName)}</code>` : ""}`;
     return `<li class="amgr-row" data-key="${esc(otherKey)}" role="button" tabindex="0" title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환">` +
       `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span>${main}` +
-      `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}</div>` +
+      `${e.cardinality ? ` <span class="admin-meta-graph-muted">[${esc(e.cardinality)}]</span>` : ""}${_metaEdgeTrustBadge(e)}${curateBtns(e)}</div>` +
       `<div class="amgr-sub admin-meta-graph-muted">${esc(typeKo)}${srcKo ? " · 근거: " + esc(srcKo) : ""}${on.description ? " — " + esc(on.description) : ""}</div></li>`;
   };
   // review: 60/30건 절단 시 "… 외 N건" 명시(헤더 카운트와 행 수의 침묵 불일치 방지).
@@ -6874,11 +7121,82 @@ function _metaGraphRenderRelations(key, nodes, edges) {
     // graphux7(#2): 단일=카메라 이동만(상세 유지), 더블=상세 전환(+대상 테이블·컬럼 강조).
     _metaGraphBindRelRow(r, r.getAttribute("data-key"));
   });
+  // graph-category(§55 B): 큐레이션 버튼 — 행 클릭(카메라 이동)과 분리(stopPropagation).
+  el.querySelectorAll("button.amgr-cur").forEach((b) => {
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation(); ev.preventDefault();
+      _metaGraphCurateRelation(b.getAttribute("data-cur"), b.getAttribute("data-src"), b.getAttribute("data-tgt"), key);
+    });
+  });
   const eb = document.getElementById("amgrExpandBtn");
   if (eb) eb.addEventListener("click", () => _metaGraphExpand(key));
   const db = document.getElementById("amgrDetailBtn");
   if (db) db.addEventListener("click", () => _metaGraphShowDetail(key));
   _metaGraphStatus(`관계 상세: ${self.name || key} — 참조함 ${out.length} · 참조받음 ${inn.length} · 용어 ${terms.length}`);
+}
+
+// graph-category(§55 A): 카테고리(제품) 밴드 상세 — 제품 정보 + 멤버 스키마(DB) 목록. 행 클릭 = 그 스키마
+//   클러스터 상세로 이동. 다제품 스키마는 전 제품을 뱃지로 노출(배정은 대표 제품 — 헤더와 정합).
+function _metaGraphShowCategoryDetail(catKey) {
+  const el = document.getElementById("metadataGraphDetailBody") || document.getElementById("metadataGraphDetail");
+  if (!el || !catKey) return;
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const label = _metaGraph.catLabelOf.get(catKey) || (catKey === "PC:__none__" ? "미분류" : catKey);
+  const members = _metaGraph.catMembers.get(catKey) || [];
+  const parts = [];
+  parts.push(`<div class="admin-meta-graph-card">`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:#8a5a1f">카테고리</span><strong>🗂 ${esc(label)}</strong> <span class="admin-meta-graph-relbadge">제품 카테고리</span></div>`);
+  parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">${catKey === "PC:__none__"
+    ? "어느 제품의 접근 DB 로도 등록되지 않은 스키마(DB) 묶음입니다. 관리 콘솔 > 제품 > 접근 DB 에 등록하면 해당 제품 카테고리로 배치됩니다."
+    : "이 제품의 접근 DB 로 등록된 스키마(DB) 묶음입니다. 헤더 칩 드래그로 밴드 전체 이동, − / + 로 접기/펼치기."}</p>`);
+  parts.push(`<div class="admin-meta-graph-sec"><h4>스키마(DB) ${members.length}개</h4><ul class="amgr-list">`);
+  members.forEach((cid) => {
+    const nm = _metaComboName(cid);
+    const plist = _metaGraph.schemaProducts.get(String(nm).toLowerCase()) || [];
+    const extras = plist.length > 1 ? ` <span class="admin-meta-graph-muted">(제품 ${plist.map((p) => esc(p.name)).join(", ")})</span>` : "";
+    const cnt = _metaGraph.schemaTotals.get(cid);
+    parts.push(`<li class="amgr-row" data-cid="${esc(cid)}" role="button" tabindex="0" title="클릭 = 이 스키마 클러스터 상세">` +
+      `<div class="amgr-main"><span class="amgr-arrow">▦</span><strong>${esc(nm)}</strong>${typeof cnt === "number" ? ` <span class="admin-meta-graph-muted">· 테이블 ${cnt}</span>` : ""}${extras}</div></li>`);
+  });
+  parts.push(`</ul></div></div>`);
+  el.innerHTML = parts.join("");
+  el.querySelectorAll(".amgr-row[data-cid]").forEach((r) => {
+    r.addEventListener("click", () => _metaGraphShowClusterDetailById(r.getAttribute("data-cid")));
+  });
+  _metaGraphStatus(`카테고리: ${label} — 스키마 ${members.length}개`);
+}
+
+// graph-category(§55 B): 관계 사람 큐레이션 — 신뢰 승격(trust) / 파단(break). 관계 상세 패널의 행 버튼이
+//   호출한다. 성공 시 모델 로컬 반영(trust=status 승급 · break=엣지 제거) + 재렌더. 크로스-DS 후보는
+//   프로브 검증 불가라 이 승격이 유일한 신뢰 경로(→ AI 컨텍스트 주입 대상 전환).
+async function _metaGraphCurateRelation(action, src, tgt, anchorKey) {
+  if (!src || !tgt || (action !== "trust" && action !== "break")) return;
+  const label = action === "trust" ? "신뢰 승격" : "파단";
+  const nmOf = (k) => { const n = _metaGraph.nodes.get(k); return (n && (n.fqn || n.name)) || k; };
+  if (!window.confirm(`이 관계를 ${label} 처리할까요?\n\n${nmOf(src)}\n→ ${nmOf(tgt)}\n\n${action === "trust"
+    ? "신뢰(trusted)로 승격되어 AI 답변 컨텍스트에 주입됩니다."
+    : "파단(broken) 처리되어 그래프와 AI 컨텍스트에서 제거됩니다."}`)) return;
+  _metaGraphStatus(`관계 ${label} 처리 중…`);
+  try {
+    await apiFetch(`/api/admin/metadata/graph/relationship/curate`, {
+      method: "POST", body: JSON.stringify({ action, src, tgt }) });
+  } catch (err) {
+    _metaGraphStatus((err && err.message) || `관계 ${label} 실패`);
+    return;
+  }
+  // 모델 로컬 반영(다음 로드/이웃확장과도 멱등 — 서버 SSOT 가 정본).
+  const toDelete = [];
+  _metaGraph.edges.forEach((e, eid) => {
+    if (!e || e.type !== "REFERENCES") return;
+    const fwd = (e.source === src && e.target === tgt), rev = (e.source === tgt && e.target === src);
+    if (!fwd && !rev) return;
+    if (action === "trust") { e.status = "trusted"; e.weight = 1.0; }
+    else toDelete.push(eid);
+  });
+  toDelete.forEach((eid) => _metaGraph.edges.delete(eid));
+  await _metaG6Apply(false);
+  _metaGraphStatus(`관계 ${label} 완료`);
+  if (anchorKey) _metaGraphShowRelations(anchorKey);   // 패널 재렌더(뱃지/버튼 갱신)
 }
 
 // graph-funcproc(ADR-017, REQ ⑤): 'AI 능동 분석' hover 지침 popover — 툴팁형 입력창.

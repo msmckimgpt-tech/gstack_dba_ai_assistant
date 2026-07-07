@@ -1039,6 +1039,67 @@ def _products_for_scope(conn, scope_key) -> list[dict]:
     return out
 
 
+def _schema_products_for_scope(conn, scope_key) -> dict:
+    """§55 A(REQ-20260706 ①): scope 의 스키마(DB)명 → 그 DB 를 접근DB 로 선언한 제품 목록 매핑.
+
+    그래프 뷰 스키마 클러스터의 **제품 카테고리** 데이터 원천. 브리지: scope → (read-axis 규약,
+    _products_for_scope 동형) 그 scope 를 쓰는 (product, datasource_key) 쌍 → `WebProductDatabases`
+    (ProductId, DatasourceKey, SchemaName — 제품별 접근DB SSOT) → {SchemaName: [{id,name,sort}]}.
+    SchemaName 은 effective schema(=MSSQL/MySQL DB명) 규약이라 그래프 Schema 노드 name 과 조인 가능.
+    AGE 미저장 — 질의시점 합성(ADR-014 원칙 계승). 실패·미매핑은 {}(프론트 '미분류' 폴백)."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk or sk == "common":
+        return {}
+    from shared import datasources as _dsr
+    try:
+        products = app._list_products(conn)
+    except Exception:
+        return {}
+    prod_ds: list[tuple[dict, str]] = []
+    for p in products:
+        for d in (p.get("datasources") or []):
+            dsk = d.get("datasource_key")
+            if not dsk:
+                continue
+            try:
+                ds = _dsr.resolve(conn, dsk)
+            except Exception:
+                ds = None
+            rk = ((ds.get("scope_key") if ds else None) or str(dsk).strip().lower())
+            if rk == sk:
+                prod_ds.append((p, str(dsk)))
+    if not prod_ds:
+        return {}
+    out: dict[str, list[dict]] = {}
+    try:
+        cur = conn.cursor()
+        try:
+            for p, dsk in prod_ds:
+                pid = int(p.get("id") or 0)
+                if pid <= 0:
+                    continue
+                cur.execute(
+                    "SELECT SchemaName FROM WebProductDatabases "
+                    "WHERE ProductId=%s AND DatasourceKey=%s ORDER BY SortOrder, SchemaName",
+                    (pid, dsk))
+                psort = p.get("sort_order")
+                ent = {"id": pid, "name": p.get("name") or p.get("product_key") or ("제품#%d" % pid),
+                       "sort": int(psort) if isinstance(psort, (int, float)) else 100}
+                for row in cur.fetchall():
+                    sch = str(row[0] or "").strip()
+                    if not sch:
+                        continue
+                    lst = out.setdefault(sch, [])
+                    if not any(e.get("id") == pid for e in lst):
+                        lst.append(dict(ent))
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning("_schema_products_for_scope 실패", exc_info=True)
+        return {}
+    return out
+
+
 @router.get("/api/admin/metadata/graph")
 def admin_metadata_graph(request: Request, account=Depends(app.require_permission('metadata.graph.read')), conn=Depends(app.get_conn)) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
@@ -1121,11 +1182,17 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
     # graph-product-cat (§43): 진입 모드(scope_roots/schemas)에서만 이 datasource 를 쓰는 제품 목록 첨부(배너용).
     #   neighborhood/search/schema_tables 등 임계경로 모드는 skip(MySQL 왕복 절감).
     scope_products = []
+    schema_products = {}
     if scope and mode in ("scope_roots", "scope_schemas"):
         try:
             scope_products = _products_for_scope(conn, scope)
         except Exception:
             scope_products = []
+        # §55 A: 스키마(DB)별 제품 매핑 — 프론트 카테고리 그룹(CAT 계층)의 데이터 원천. 실패는 {}(미분류 폴백).
+        try:
+            schema_products = _schema_products_for_scope(conn, scope)
+        except Exception:
+            schema_products = {}
     return JSONResponse({
         "nodes": data.get("nodes", []),
         "edges": data.get("edges", []),
@@ -1133,6 +1200,7 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         "q": q, "node": node, "scope": scope or "", "depth": depth,
         "truncated": bool(data.get("truncated", False)),
         "products": scope_products,
+        "schema_products": schema_products,
         "node_count": len(data.get("nodes", [])), "edge_count": len(data.get("edges", [])),
     })
 
@@ -1176,12 +1244,14 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
 
 @router.post("/api/admin/metadata/graph/analyze-schema")
 async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
-    """DB(스키마) 단위 AI 능동 분석(§53). 권한 metadata.graph.read(노드 분석과 동일 우산).
+    """DB(스키마) 단위 AI 능동 분석(§53·§55). 권한 metadata.graph.read(노드 분석과 동일 우산).
 
-    body: {schema_key, scope_key?, prompt?, only_missing?=true, dry_run?}. 스키마 소속 Table 을
-    depth=1 시드로 일괄 enqueue(재귀 0 — depth_budget=1 + node_budget=planned 이중 캡). 비용 가드 =
-    only_missing 기본 + AGENT_NODE_ANALYSIS_SCHEMA_CAP(기본 200). dry_run=true 는 run 미생성 —
-    대상 집계만 반환(프론트 confirm 용). 진행 폴링은 기존 GET .../graph/analyze?run_id= 재사용."""
+    body: {schema_key, scope_key?, prompt?, only_missing?=true, dry_run?}. 스키마 소속 Table·Routine 을
+    depth=0 시드로 일괄 enqueue — §55(REQ-20260706 ③): 시드별 직계 컬럼 + per-seed 앵커 게이팅 재귀
+    전개(depth=AGENT_NODE_ANALYSIS_SCHEMA_DEPTH, 총예산 min(SCHEMA_RUN_BUDGET_MAX, planned×EXPAND_FACTOR)).
+    비용 가드 = only_missing 기본 + AGENT_NODE_ANALYSIS_SCHEMA_CAP(기본 200) + 예산 캡 + 빈약 노드만
+    back-refine(REFINE_MAX). dry_run=true 는 run 미생성 — 대상 집계만 반환(프론트 confirm 용).
+    진행 폴링은 기존 GET .../graph/analyze?run_id= 재사용(enqueued 는 재귀 전개로 실행 중 증가)."""
     data = await app._metadata_read_json(request)
     schema_key = str(data.get("schema_key") or data.get("schema") or "").strip()
     if not schema_key or ":" not in schema_key:
@@ -1215,6 +1285,124 @@ async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(
                          "reused": res.get("reused", False), "progress": res.get("progress"),
                          "reason": res.get("reason")},
                         status_code=200 if dry_run or res.get("status") == "noop" else 202)
+
+
+def _parse_graph_column_key(raw) -> dict | None:
+    """그래프 Column 노드 key `<scope>:<schema>.<table>.<column>` 파싱(§55 B curate). 실패 None."""
+    k = str(raw or "").strip()
+    if ":" not in k:
+        return None
+    scope, fqn = k.split(":", 1)
+    parts = [p for p in fqn.split(".") if p != ""]
+    if len(parts) < 2 or not scope:
+        return None
+    column, table = parts[-1], parts[-2]
+    schema = ".".join(parts[:-2])
+    return {"scope": scope.strip().lower(), "schema": schema, "table": table, "column": column,
+            "table_fqn": (f"{schema}.{table}" if schema else table)}
+
+
+@router.post("/api/admin/metadata/graph/relationship/curate")
+async def admin_metadata_graph_relationship_curate(request: Request,
+                                                   account=Depends(app.require_permission('metadata.table.manage')),
+                                                   conn=Depends(app.get_conn)) -> JSONResponse:
+    """§55 B(REQ-20260706 ②): 관계 사람 큐레이션 — trust(신뢰 승격) / break(파단).
+
+    크로스-데이터소스 후보는 프로브 검증이 불가해 source='manual' 승격이 **유일한 신뢰 경로**인데
+    (ADR-019), 그 호출자가 미배선이라 영구 candidate(AI 컨텍스트 미주입)로 남던 dead-end 를 해소한다.
+    intra-DS 관계에도 동작(운영자 확정/오탐 즉시 파단). 권한 metadata.table.manage(메타데이터 큐레이션 축).
+
+    body: {action: 'trust'|'break', src: <Column key>, tgt: <Column key>} — key 는 그래프 Column 노드
+    key(`<scope>:<schema>.<table>.<column>`). trust=upsert(source='manual'→trusted, weight 1.0) + 그래프
+    엣지 즉시 투영. break=status 'broken'·weight 0 + 그래프 엣지 즉시 회수. 관계형 SSOT(PG)와 그래프
+    (AGE) 동시 정합 — 다음 sync_graph 주기와도 멱등."""
+    data = await app._metadata_read_json(request)
+    action = str(data.get("action") or "").strip().lower()
+    if action not in ("trust", "break"):
+        return app._json_error("action 은 'trust' 또는 'break' 여야 합니다.", 400)
+    src = _parse_graph_column_key(data.get("src"))
+    tgt = _parse_graph_column_key(data.get("tgt"))
+    if not src or not tgt:
+        return app._json_error("src/tgt(그래프 Column 노드 키)는 필수입니다.", 400)
+    from modules import metadata_graph as _mg
+    from modules import relationships as _rel
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=True)
+    except Exception:
+        return app._json_error("그래프 저장소(PG) 연결 실패", 503)
+    updated = 0
+    try:
+        cur = pg.cursor()
+        try:
+            # §55 패널 fix: ds-키 매칭에 ''(레거시 — scope 배선 이전 행, 라이브 실측 scope_key='common'
+            # +ds '' 797행) 허용. 정확 매칭만 쓰면 레거시 행에서 UPDATE 0건인데 AGE 엣지만 삭제/승격돼
+            # 다음 sync_graph 가 원상복구(부활/강등 flap)한다 — SSOT·그래프 동시 정합이 목적.
+            if action == "trust":
+                # 기존 행 우선 UPDATE(방향 그대로) — upsert 를 먼저 쓰면 기존 행의 UNIQUE 키(레거시 ''-ds)와
+                # 어긋날 때 **중복 행**이 생기고, 원 candidate 가 계속 프로브·파단되며 같은 그래프 엣지를
+                # 삭제/신뢰로 뒤집는 flap 이 남는다(패널 MAJOR). 매칭 0건일 때만 신규 manual 행 upsert.
+                cur.execute(
+                    "UPDATE table_relationships SET status='trusted', weight=1.0, source='manual', "
+                    "       confidence=1.0, negative_signals=0, updated_at=now() "
+                    "WHERE source_table_fqn=%s AND source_column=%s "
+                    "  AND target_table_fqn=%s AND target_column=%s "
+                    "  AND (source_datasource_key=%s OR source_datasource_key='') "
+                    "  AND (target_datasource_key=%s OR target_datasource_key='')",
+                    (src["table_fqn"], src["column"], tgt["table_fqn"], tgt["column"],
+                     src["scope"], tgt["scope"]))
+                updated = int(cur.rowcount or 0)
+                if not updated:
+                    ok = _rel.upsert_relationship(
+                        pg, src["scope"],
+                        src_schema=src["schema"], src_table=src["table"], src_column=src["column"],
+                        tgt_schema=tgt["schema"], tgt_table=tgt["table"], tgt_column=tgt["column"],
+                        source="manual", datasource_key=src["scope"],
+                        source_datasource_key=src["scope"], target_datasource_key=tgt["scope"])
+                    if not ok:
+                        return app._json_error("관계 승격 실패(관계 저장소)", 503)
+                    updated = 1
+                _mg.sync_relationship(cur, src["scope"], src["table_fqn"], src["column"],
+                                      tgt["table_fqn"], tgt["column"], source="manual",
+                                      confidence=1.0, weight=1.0, status="trusted",
+                                      tgt_scope=tgt["scope"])
+            else:
+                # break: 방향 그대로 + 역방향 행 모두 파단(추론기가 어느 방향으로 저장했든 오탐 회수).
+                cur.execute(
+                    "UPDATE table_relationships SET status='broken', weight=0.0, updated_at=now() "
+                    "WHERE (source_table_fqn=%s AND source_column=%s "
+                    "       AND target_table_fqn=%s AND target_column=%s "
+                    "       AND (source_datasource_key=%s OR source_datasource_key='') "
+                    "       AND (target_datasource_key=%s OR target_datasource_key='')) "
+                    "   OR (source_table_fqn=%s AND source_column=%s "
+                    "       AND target_table_fqn=%s AND target_column=%s "
+                    "       AND (source_datasource_key=%s OR source_datasource_key='') "
+                    "       AND (target_datasource_key=%s OR target_datasource_key=''))",
+                    (src["table_fqn"], src["column"], tgt["table_fqn"], tgt["column"],
+                     src["scope"], tgt["scope"],
+                     tgt["table_fqn"], tgt["column"], src["table_fqn"], src["column"],
+                     tgt["scope"], src["scope"]))
+                updated = int(cur.rowcount or 0)
+                _mg.delete_relationship(cur, src["scope"], src["table_fqn"], src["column"],
+                                        tgt["table_fqn"], tgt["column"], tgt_scope=tgt["scope"])
+                _mg.delete_relationship(cur, tgt["scope"], tgt["table_fqn"], tgt["column"],
+                                        src["table_fqn"], src["column"], tgt_scope=src["scope"])
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning("relationship_curate 실패", exc_info=True)
+        return app._json_error("관계 큐레이션 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    app._metadata_audit(request, account, action="graph.relationship.curate",
+                    resource_id=f"{data.get('src')}->{data.get('tgt')}",
+                    change_json={"action": action, "updated": updated,
+                                 "cross_ds": src["scope"] != tgt["scope"]})
+    return JSONResponse({"ok": True, "action": action, "updated": updated,
+                         "cross_ds": src["scope"] != tgt["scope"]})
 
 @router.get("/api/admin/metadata/graph/analyze")
 def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
