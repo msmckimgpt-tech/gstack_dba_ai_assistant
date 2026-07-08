@@ -1208,3 +1208,5 @@ source_of_truth: true
   매칭·그래프 sync 정합(테이블명 케이스 보존이 정확)·MySQL 무영향. semantic_cluster exact-case 조회는
   pre-existing gap(별도 후속).
 - 재검증: 컨테이너 phase2 전체 31 PASS(EXIT=0).
+
+## REV-20260708T190500-ai-root-feature-0016-postdeploy-gwmem [SKIPPED: docs-only POST-DEPLOY 기록 + infra 1행(mem_limit 2g — 라이브 3g 단독 기동 실증·docker update 2g 검증 완료로 별도 패널 불요)] — §57/§58 완수 기록

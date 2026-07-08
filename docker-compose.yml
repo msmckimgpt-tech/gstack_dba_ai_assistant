@@ -533,6 +533,10 @@ services:
   # 만 인지한다 (사용자 결정 5 항목 정합). 외부 expose 안 함 — dbnet 내부에서만
   # 접근 가능.
   bedrock-gateway:
+    # §58 후속(2026-07-08 장애): litellm 이 07-07 라우팅 config 확장 후 기동 풋프린트가
+    # x-default 1g 를 초과 — 재생성 시 무로그 SIGKILL(137) 재시작 루프(실측 111회, 3g 단독
+    # 기동 정상으로 OOM 확정). 라이브는 docker update 2g 로 응급 복구 — 여기 영속화.
+    mem_limit: 2g
     image: ghcr.io/berriai/litellm:main-stable
     restart: unless-stopped
     logging: *default-logging

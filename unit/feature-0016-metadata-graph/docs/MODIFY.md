@@ -1129,3 +1129,10 @@ source_of_truth: true
   저장 schema_name lower 정규화 + _metadata_introspect_table grounding allowlist case-insensitive
   (적대 리뷰 MAJOR — 연결은 원본 케이스). tests: test_metadata_phase2.py +2.
 - 운영 조치(코드 외, 배포 후): AccountDB 33행 rekey + AGE 잔재 정점 회수 + full sync (T58.2).
+
+## CHG-20260708T190000-ai-root-feature-0016-postdeploy-gwmem — §57/§58 POST-DEPLOY + gateway mem_limit (2026-07-08)
+
+- docs: TASK §57/§58 POST-DEPLOY 완수 기록(PB-0008 4종 + rekey + 장애 복구).
+- infra(cross-feature, feature-0007 관할): docker-compose.yml bedrock-gateway `mem_limit: 2g` —
+  litellm 07-07 config 확장 후 1g 기동 OOM(무로그 137 루프) 영속 해소. 라이브는 docker update 로
+  선복구·healthy.
