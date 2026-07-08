@@ -1143,3 +1143,9 @@ source_of_truth: true
   PRODUCT_CLASSIFY_PROMPT·insight.py 데몬(기본 OFF)·shared/config.py env 4종. feature-0003:
   routers/admin_products.py ai-suggestions approve/reject·static/admin.js AI 제안 블록·admin.html
   캐시버스터. tests: test_product_classify.py 4건.
+
+## CHG-20260708T231500-ai-root-feature-0016-gwmem-dupkey — compose mem_limit 중복 키 정정 (2026-07-08)
+
+- 긴급(배포 차단): #625 가 bedrock-gateway 서비스 **자체 mem_limit:1g 정의**를 x-default 상속으로
+  오판해 2g 를 앞에 추가 → YAML 중복 키로 전 compose parse 실패(deploy-web preflight·worker up 차단).
+  단일 정의(mem_limit: 2g)로 정정 + 원위치 주석 이동. python yaml.safe_load 검증.

@@ -1792,6 +1792,9 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   node_analysis 1run/1job key 치환 + AGE AccountDB 축 34정점 DETACH DELETE + full sync(errors 0·
   step_failures 0·ok) → 점프 목록 accountdb 단일(육안). 잔여: 'account' 동일-키 Schema vertex 중복
   2개(동시 sync MERGE race 흔적 — UI 는 key-Map dedupe 로 무해, 후속: sync advisory lock).
+- [x] T58.3b (후속 정정) #625 compose 수정이 서비스 자체 mem_limit:1g 와 중복 키를 만들어 전
+  compose parse 실패(배포 차단) — 단일 2g 정의로 정정(gwmem-dupkey cycle). 교훈: compose 서비스
+  블록의 기존 키 존재를 grep 으로 확인 후 추가할 것(x-default 상속 가정 금지).
 - [x] T58.3 (동반 장애 복구) bedrock-gateway OOM 재시작 루프 — 07-07 라우팅 config 확장으로 litellm
   기동 풋프린트 >1g(x-default), 워커 up 의 재생성이 표면화(무로그 137×111회). docker update 2g 응급
   복구(healthy) + docker-compose.yml bedrock-gateway mem_limit 2g 영속화(본 cycle).

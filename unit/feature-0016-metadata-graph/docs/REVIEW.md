@@ -1226,3 +1226,5 @@ source_of_truth: true
 - 수용(후속 기록): 거부 행 재제안 가능(거부 이력 테이블 후속)·rule 스테이징과 Pending UNIQUE 공유
   간섭(관측 시 후속)·AI 승인 직후 메인 접근DB 목록 갱신은 재로드 의존.
 - 재검증: 분류 테스트 6 PASS(+NaN/범위·시스템/주입 제외 회귀) + route parity PASS·ruff·compile.
+
+## REV-20260708T231800-ai-root-feature-0016-gwmem-dupkey [SKIPPED: 1-line YAML 중복 키 제거(배포 차단 해소) — yaml.safe_load + compose parse 로 기계 검증, 코드 로직 무변경] — compose 정정
