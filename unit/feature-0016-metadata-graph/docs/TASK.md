@@ -1795,3 +1795,33 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T58.3 (동반 장애 복구) bedrock-gateway OOM 재시작 루프 — 07-07 라우팅 config 확장으로 litellm
   기동 풋프린트 >1g(x-default), 워커 up 의 재생성이 표면화(무로그 137×111회). docker update 2g 응급
   복구(healthy) + docker-compose.yml bedrock-gateway mem_limit 2g 영속화(본 cycle).
+
+## 59. product-classify-suggest — 제품 카테고리 밴드: 이름 기반 → 분석 기반 분류 '제안' 파이프라인 (2026-07-08, 사용자 요청)
+
+- Related Requirement: REQ-20260708-graph-edge-visibility 동반 요청 ③ — "제품 카테고리 밴드가 실제
+  파악된 기능이 아니라 이름으로 분류됨". 사실 확인: 매핑 원천(WebProductDatabases)이 정규식 이름
+  규칙(WebProductDatasourceDbRules reconcile) + 수동 입력뿐 — 기능/분석 신호 미개입.
+- 등급: **Major**(LLM 신규 파이프라인·admin 엔드포인트 2종, 마이그 0 — Pending 테이블 기존 스키마
+  재사용). 정본 ADR-025.
+- **보안 설계 결정**: WebProductDatabases 는 카테고리 밴드 소스이자 **에이전트 데이터 접근
+  allowlist** — LLM 산출의 직접 기록은 접근 권한 자동 부여와 동일하므로 금지. 제안은
+  WebProductDatabasePending(RuleId NULL, Reason 'ai_suggest:<conf>')에만 적재하고 사람이 제품
+  관리 화면에서 승인(Source='ai')/거부한다.
+- [x] T59.1 modules/product_classify.py — 미분류 스키마 산출(scope_schemas − 매핑 − 대기) →
+  근거 수집(테이블명 표본 ≤12·node_analysis 요약 ≤400자) → llm_product_classify(JSON-only·
+  untrusted-data 가드) → **환각 차단 3중 게이트**(입력 스키마 실재·datasource 연결 제품
+  화이트리스트·MIN_CONF 0.6) → Pending INSERT IGNORE(멱등). CLI `python -m modules.product_classify
+  [--dry-run]`.
+- [x] T59.2 데몬: insight-worker XDS 동형(AGENT_PRODUCT_CLASSIFY_AUTO **기본 OFF**·INTERVAL 21600·
+  BATCH_MAX 20) — 접근면 인접이라 명시 opt-in.
+- [x] T59.3 승인 경로: admin_products ai-suggestions/approve(Source='ai'·RuleId NULL, 기존
+  approve-pending 의 제외 DB·이름 검증 미러 + 감사)·/reject(멱등 삭제 + 감사). 기존 rule 승인
+  엔드포인트는 RuleId NULL 행을 조용히 no-op 하던 갭(orphan_pending 미소비)을 해소.
+- [x] T59.4 UI: 제품 관리 접근DB 규칙 화면에 "✨ AI 분류 제안" 블록(orphan_pending·신뢰도 표기·
+  승인/거부 즉시 실행). 캐시버스터 20260708-product-classify-suggest.
+- [x] T59.5 테스트 4건(Pending-only 계약·환각 게이트·dry-run 무쓰기·LLM 실패 soft) — 컨테이너 PASS.
+- [x] T59.6a §18.8 패널 완료 — BLOCKING 1(라우트 골든)·MAJOR 4(NaN 게이트 우회·감사 원자화·batch
+  기아·Source='ai' 수동저장 충돌) 전건 수정 + MINOR/NIT 반영. REVIEW REV-20260708T220000 정본.
+  분류 테스트 6 + route parity PASS.
+- [ ] T59.6b verify → PR → 배포(worker+web) → 라이브 dry-run 실증 → PB-0008(제안 블록 렌더).
+  운영 활성화는 AGENT_PRODUCT_CLASSIFY_AUTO=1 flip(별도 결정).

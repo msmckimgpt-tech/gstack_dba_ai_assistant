@@ -13932,8 +13932,8 @@ async function applyAllPending() {
       // TASK-20260618T044318 (B4): 수동 저장 body 는 manual 행만 — 규칙(rule) 자동 동기화 행은 제외해
       //   백엔드가 보존하도록 한다(manual PUT 이 rule 행을 manual 로 승격/덮어쓰지 않게).
       const body = { databases: Array.isArray(draft)
-        ? draft.filter((d) => String((d && d.source) || "manual") !== "rule").map((d) => ({ ...d }))
-        : [] };
+        ? draft.filter((d) => !["rule", "ai"].includes(String((d && d.source) || "manual"))).map((d) => ({ ...d }))
+        : [] };   // §59: 'ai'(승인된 AI 제안)도 rule 처럼 수동 body 에서 제외 — 백엔드가 보존/정리
       // datasource 차원이 지정됐으면 함께 전송(백엔드가 그 datasource 행만 교체). 빈 문자열은 레거시 단일.
       if (dsKey) body.datasource_key = dsKey;
       await apiFetch(`/api/admin/products/${productId}/databases`, {
@@ -15283,9 +15283,11 @@ function renderProductDetail() {
       cb.checked = !!_draftEntry;
       // TASK-20260618T044318: 규칙(rule) 자동 행은 체크박스 비활성 — 수동 uncheck 가 무효(reconcile 재추가)
       //   라 혼란 방지. 제거하려면 규칙 편집/삭제로 관리.
-      const _isRuleEntry = _draftEntry && String(_draftEntry.source || "manual") === "rule";
+      const _srcVal = _draftEntry && String(_draftEntry.source || "manual");
+      const _isRuleEntry = _srcVal === "rule" || _srcVal === "ai";   // §59: ai 승인 행도 자동 관리 특례
       cb.disabled = !canManage || !!_isRuleEntry;
-      if (_isRuleEntry) item.title = "정규식 자동 규칙으로 추가됨 — 규칙 편집/삭제로 관리합니다.";
+      if (_srcVal === "rule") item.title = "정규식 자동 규칙으로 추가됨 — 규칙 편집/삭제로 관리합니다.";
+      else if (_srcVal === "ai") item.title = "AI 분류 제안 승인으로 추가됨 — 접근DB 목록에서 삭제로 관리합니다.";
       cb.addEventListener("change", () => {
         if (cb.checked) {
           const raw = name;
@@ -15732,6 +15734,37 @@ function renderProductDetail() {
       } else {
         rules.forEach((rule, i) => cardsWrap.appendChild(_buildRuleCard(rule, i)));
         creates.forEach((c, i) => cardsWrap.appendChild(_buildStagedCreateCard(c, i + 1)));
+      }
+      // §59(ADR-025): AI 분류 제안 — 규칙 미귀속 pending(RuleId NULL·reason 'ai_suggest:<conf>').
+      //   즉시 승인/거부(스테이징 아님 — 서버 product.manage 게이트 + 감사 기록). 승인 시 Source='ai'.
+      const aiPend = ((data && data.orphan_pending) || []).filter((p) => String(p.reason || "").startsWith("ai_suggest"));
+      if (aiPend.length) {
+        const aiWrap = document.createElement("div"); aiWrap.className = "cov-db-rule-card cov-ai-suggest";
+        const aiHead = document.createElement("div"); aiHead.className = "cov-db-rule-summary";
+        aiHead.textContent = `✨ AI 분류 제안 · ${aiPend.length}건 (분석 기반 — 승인 시 접근DB 반영)`;
+        aiWrap.appendChild(aiHead);
+        const aiBase = `/api/admin/products/${product.id}/datasources/${encodeURIComponent(String(_editDsKey || "").trim().toLowerCase())}/ai-suggestions`;
+        aiPend.forEach((p) => {
+          const row = document.createElement("div"); row.className = "cov-db-rule-pending-row";
+          const nm = document.createElement("span"); nm.className = "cov-db-rule-pending-name";
+          const m = /^ai_suggest:([0-9.]+)(?:\|(.*))?$/.exec(String(p.reason || ""));
+          const conf = m ? Number(m[1]) : NaN;
+          nm.textContent = p.schema_name + (Number.isFinite(conf) ? ` (신뢰도 ${Math.round(conf * 100)}%)` : "");
+          if (m && m[2]) nm.title = `분류 근거: ${m[2]}`;   // 패널 NIT: LLM 근거를 승인자에게 노출
+          const ap = document.createElement("button"); ap.type = "button"; ap.className = "cov-db-rule-save"; ap.textContent = "승인";
+          const rj = document.createElement("button"); rj.type = "button"; rj.className = "cov-db-rule-del"; rj.textContent = "거부";
+          const act = async (path) => {
+            ap.disabled = rj.disabled = true;
+            try { await apiFetch(`${aiBase}/${path}`, { method: "POST", body: JSON.stringify({ schemas: [p.schema_name] }) }); }
+            catch (e) { try { showToast(`AI 제안 ${path === "approve" ? "승인" : "거부"} 실패: ` + (e.message || "오류"), "error"); } catch (_) {} }
+            _renderRuleEditor();
+          };
+          ap.addEventListener("click", () => act("approve"));
+          rj.addEventListener("click", () => act("reject"));
+          row.append(nm, ap, rj);
+          aiWrap.appendChild(row);
+        });
+        cardsWrap.appendChild(aiWrap);
       }
     };
     _renderRuleEditor();
