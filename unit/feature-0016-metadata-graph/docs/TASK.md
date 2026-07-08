@@ -1764,3 +1764,20 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   렌더 억제)·MINOR 7 수정, 수용 2 기록. REVIEW REV-20260708T150000 정본.
 - [ ] T57.7 §18.8 패널 → verify → PR → 머지 → 배포(web) → PB-0008 육안(카드 연결선·하이라이트·
   마젠타 크로스·LOD).
+
+## 58. tableaxis-case — 스키마 골격 가져오기 MSSQL 라벨 케이스 정합 + AccountDB 잔재 회수 (2026-07-08)
+
+- Related Requirement: REQ-20260708-graph-edge-visibility 후속 — PB-0008 검토 발견 ③(AccountDB/accountdb
+  중복 카드). 근원: '스키마 골격 가져오기' MSSQL 분기(app.py _bootstrap_collect_skeleton_mssql)가
+  sys.databases 원본 케이스를 table_descriptions.schema_name 으로 저장 — §56 RC5(루틴 축)와 동일
+  결함 클래스의 **테이블 축**. 라이브 잔재: 'AccountDB' 33행(06-30 일회성, lower twin 0 → rekey 대상).
+- 등급: **Minor**(1점 정규화 + 운영 rekey, 비파괴). §56 RC5·ADR-023 계약의 테이블 축 확장.
+- [x] T58.1 app.py 골격 수집 MSSQL 분기 schema_name=normalize_db_label(db_name) (단일 계약 —
+  테이블명 케이스 보존·MySQL 분기 무변경) + **적대 리뷰 MAJOR 동반수정**: 단건 자동완성 grounding
+  allowlist 를 lower→원본 매핑 case-insensitive 로(연결은 원본 케이스 — 무음 ungrounded 회귀 차단).
+  테스트 2건(혼합 케이스 질의 잠금·grounding 회귀). REVIEW REV-20260708T153000 정본.
+- [ ] T58.2 운영 rekey(배포 후): table_descriptions 'AccountDB' 33행 → 'accountdb'(twin-가드 tx) +
+  node_analysis 1run/1job key 치환 + AGE 'AccountDB' 축 34정점 DETACH DELETE(정점-필터 한정 —
+  비앵커 edge 스캔 금지, 라이브 6분+ 실측) + full sync 재투영 + 잔재 0 검증.
+- 후속 위임(별도 cycle): mysql-42371f8d92bc routine 케이스 변형 5쌍(120행) — MySQL 은 케이스 유의미,
+  실서버 SHOW DATABASES 실존 확인 전 rekey 금지(T56.7c 계열).

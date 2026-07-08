@@ -1193,3 +1193,18 @@ source_of_truth: true
 - 수용(후속 기록): 레거시 스키마-무 2-세그먼트 키의 동명 카드 오승격(키 규약 고유 모호성,
   pre-existing) · SCHEMA_REF/agg 엣지 우클릭 raw 폴백(기존 agg: 갭과 동일).
 - 재검증: headless 22 PASS(+T6/T7/T8) + category 26 PASS·백엔드 21 PASS·node --check/py_compile.
+
+## REV-20260708T153000-ai-root-feature-0016-tableaxis-case [SUBAGENT: PASS-WITH-FIXES] — §58 적대 리뷰(단일 에이전트, 하류 전 경로 추적)
+
+- 발견 MAJOR 1·MINOR 2·NIT 2 — **MAJOR 확정·수정**: 골격 라벨 lower 화로 MSSQL 단건 자동완성
+  grounding 의 케이스-정확 allowlist(sys.databases 원본 케이스 set) membership 이 항상 실패 → 무음
+  ungrounded 회귀. → allowlist 를 lower→원본 매핑으로 case-insensitive 매치 + **연결은 원본 케이스**
+  (kb_metadata LOWER 계약과 동형). 회귀 테스트 grounding_case_insensitive.
+- MINOR 반영: ① rekey(T58.2) 전 창구간 twin 생성 경로 → rekey 를 배포 직후 즉시 실행 + twin 병합
+  (신규 우선) 절차 명시 ② 테스트 갭 → 혼합 케이스 SQL 스키마('Sales')로 질의 원본 케이스 잠금.
+  NIT: 주석 과장 정정(질의 식별자는 sql_schema/tname). 미리보기 라벨 lower 표기는 그래프 축 정합
+  코스메틱으로 수용.
+- 검증 완료 경로: 저장 왕복 dedupe(prefill lower 자기일관)·bulk describe(프롬프트 전용)·읽기 LOWER
+  매칭·그래프 sync 정합(테이블명 케이스 보존이 정확)·MySQL 무영향. semantic_cluster exact-case 조회는
+  pre-existing gap(별도 후속).
+- 재검증: 컨테이너 phase2 전체 31 PASS(EXIT=0).

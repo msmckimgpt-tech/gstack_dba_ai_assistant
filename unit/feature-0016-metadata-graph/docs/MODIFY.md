@@ -1122,3 +1122,10 @@ source_of_truth: true
   (속성+세그먼트 폴백)·상대 하이라이트(dimmed state+엣지 opacity bake+canvas:click 해제)·중간 줌 LOD
   (밴드 전이 디바운스)·ingest count 계열 보존. admin.html 캐시버스터.
 - tests: headless test_g6build_edge_visibility.js 신규 18 + test_graph_funcproc_uxfix.py +2.
+
+## CHG-20260708T123000-ai-root-feature-0016-tableaxis-case — §58 골격 가져오기 MSSQL 라벨 lower (2026-07-08)
+
+- TASK §58 / ADR-023 계약의 테이블 축 확장. feature-0003: src/app.py _bootstrap_collect_skeleton_mssql
+  저장 schema_name lower 정규화 + _metadata_introspect_table grounding allowlist case-insensitive
+  (적대 리뷰 MAJOR — 연결은 원본 케이스). tests: test_metadata_phase2.py +2.
+- 운영 조치(코드 외, 배포 후): AccountDB 33행 rekey + AGE 잔재 정점 회수 + full sync (T58.2).

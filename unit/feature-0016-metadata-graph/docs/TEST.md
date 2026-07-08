@@ -805,3 +805,7 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - PB-0008 은 배포 후 실 Windows 육안(카드 연결선·하이라이트·마젠타·LOD)으로 수행 예정.
 - **§18.8 패널 반영 후**: BLOCKING(aftertransform 교체)·MAJOR(이중 렌더 억제)·MINOR 7 수정 —
   headless 22 PASS(+T6/T7/T8)·category 26·백엔드 21 (EXIT=0).
+
+### Run (2026-07-08) — §58 골격 가져오기 라벨 케이스 (Environment: 컨테이너 pytest)
+- test_bootstrap_skeleton_mssql_schema_label_lowercased PASS — db_name 'FHGame1' → schema_name 'fhgame1'
+  저장, 테이블명 케이스 보존, MySQL 분기 무변경. EXIT=0.
