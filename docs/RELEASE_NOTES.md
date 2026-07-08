@@ -220,3 +220,20 @@ edit_policy: append-only
 
 ### 정본
 - `unit/feature-0002-agent-core/docs/*`(ENUM 자율수집·추론 강도별 예산) · `unit/feature-0003-agent-web-ui/docs/*`(채택 인박스 UI·콘솔 IA 통합) · `unit/feature-0016-metadata-graph/docs/*`(§56, feature-local ADR-022~023) · `unit/feature-0007-bedrock-llm-provider/docs/*`(oauth-cron-static).
+
+## 2026-07-08 — feature-0016 / feature-0003: 관계도 접힘 카드 연결선·상대 하이라이트·중간 줌 LOD · 분석 기반 제품 분류 'AI 제안→사람 승인' · 메타데이터 콘솔 검토 화면 UX
+
+### 변경 (관리자 영향 — 관계도 뷰)
+- **접힘 카드 연결선·상대 하이라이트·크로스 색 구분·중간 줌 LOD (§57, feature-local ADR-024, 마이그 0)** — 관계도에서 데이터베이스(스키마) 카드를 펼치지 않아도 카드 간 연결선과 연결 개수를 표시(`SCHEMA_REF` 질의시점 1-hop 스키마-쌍 무향 집계·cap 400·렌더 3단 승격 컬럼→테이블→스키마 카드, 양쪽 접힘일 때만) + 선택 노드 1-hop 상대 하이라이트(비인접 dim, rebuild-bake) + 크로스-DB `ROUTINE_USES` 마젠타 색 구분(직교 인코딩) + 중간 줌 LOD(줌<0.35 ∧ 모델 엣지>120 무상태 FK·비크로스 단건 축약). POST-DEPLOY PB-0008 라이브 PASS(상대 dim 358/361·마젠타 51·LOD dropped 520, PR #623).
+
+### 변경 (관리자 영향 — 제품 분류)
+- **분석 기반 제품 분류 'AI 제안→사람 승인' 파이프라인 (§59, feature-local ADR-025, 마이그 0)** — 데이터베이스→제품(카테고리) 매핑을 이름 규칙에서 분석 신호(테이블 구성·`node_analysis` 요약)로 개선. 매핑 테이블(`WebProductDatabases`)이 에이전트 접근 allowlist 를 겸하므로 LLM 산출은 **Pending(`RuleId` NULL·`Reason='ai_suggest:<conf>'`) 적재까지만** — 사람이 제품 관리의 "✨ AI 분류 제안"에서 승인(`Source='ai'`)/거부. 환각 차단 3중 게이트(스키마 실재·datasource 연결 제품 화이트리스트·`MIN_CONF` 0.6)·데몬 기본 OFF(`AGENT_PRODUCT_CLASSIFY_AUTO`). 접근 allowlist 무변경(보안 경계 신설 아님·기존 `product.manage` 승인). POST-DEPLOY 라이브 실증(dry-run 11→10건 Pending 적재, PR #626).
+
+### 변경 (관리자 영향 — 메타데이터 콘솔)
+- **메타데이터 콘솔 검토 화면 UX 4건 + 디자인 폴리시 5건 (metadata-console-ux2 / -polish, UI 단독)** — 검토·검수 큐 후보 행 클릭 시 우측 read-only 상세 패널(전체 정의·질문/SQL/다이어그램·신뢰도, '선택 불가' 해소) + ENUM 코드사전 그룹 "+ 코드 추가" pre-fill + 샘플 검수 큐 mermaid 다이어그램 렌더(공용 `mermaid-render.js` strict) + 목록 가독성. 디자인 폴리시 5건(2차 보기 필 위계·list-detail 균형·그룹 nesting·timestamp 경량·신뢰도 배지 accent). 백엔드/RBAC/스키마 0.
+
+### 변경 (내부 — 화면 변화 없음)
+- **스키마 골격 가져오기 MSSQL 라벨 케이스 정합 + gateway 안정화 (§58, feature-0003 + infra)** — '스키마 골격 가져오기' MSSQL 분기 라벨 케이스 정규화(`normalize_db_label`, §56 RC5 계약의 테이블 축 확장)로 특정 MSSQL 데이터소스 중복 카드 해소 + AccountDB 33행 rekey(AGE 34정점 회수). bedrock-gateway OOM 재시작 루프 → `mem_limit` 2g 영속화(compose 중복 키 배포 차단 정정, #625→#627).
+
+### 정본
+- `unit/feature-0016-metadata-graph/docs/*`(§57~59, feature-local ADR-024~025) · `unit/feature-0003-agent-web-ui/docs/*`(metadata-console-ux2/-polish·product-classify-suggest UI) · `unit/feature-0002-agent-core/docs/*`(§59 분류 엔진 코드 거주 product_classify/llm/insight).

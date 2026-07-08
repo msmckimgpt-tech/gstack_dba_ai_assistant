@@ -41,6 +41,8 @@ sources:
 
 > **2026-07-03~07 확장 (§2.7)**: **대화 화면 사용자 지정 추론 강도**(낮음/일반/높음/매우 높음, composer '+' 메뉴·대화별 영구 저장) · **데이터소스 상세 평균 연결 응답 시간** · **AI 운영 현황 지연 KPI 재정의**(호출 전체 왕복 → 단계 간 간격) · **말풍선 ☰ 메뉴 통합**(액션 3종+'AI 로 고치기', 피드백 👍/👎만 외부) + share-visibility-window 공유 범위 UI(정본 feature-0009) · **(07-07)** 관리 콘솔 시스템>설정 **런타임 설정**(실행 타임아웃·모델별 추론 예산 조정·저장·live/restart 반영, feature-0018 코드 거주).
 
+> **2026-07-08 확장 (§2.8)**: **메타데이터 콘솔 UX·폴리시** — 검토/검수 큐 행 클릭→우측 read-only 상세 패널(선택 불가 해소)·ENUM 그룹 "+코드 추가" pre-fill·샘플 검수 큐 mermaid 렌더·좌측 목록 가독성 + 디자인 폴리시 5건(필 위계·nesting·배지 accent). **제품 분류 AI 제안 승인 UI**(제품 관리 "✨ AI 분류 제안" 블록·승인/거부, 정본 feature-0016 §59).
+
 ## 2. 상세
 
 ### 2.1 책임 경계
@@ -125,6 +127,14 @@ sources:
 | **지식베이스 채택 인박스 + ENUM 대화 자율수집 (2026-07-07)** | 대화 후보수집(용어사전+ENUM)을 통합 '채택 인박스'로 재구성 — 용어사전(0021/0023) 대칭 ENUM 코드사전 신설(신뢰도/상태별 그룹 카드·개별/일괄 채택·거부·되돌리기·사이드바 pending 배지), 권한 `kb.enum.curate`. cross-unit(feature-0002 `kb_glossary`·`_enum_autopropose`·`llm_enum_suggest`·alembic 0039 비파괴) | TASK-20260707-kb-candidate-adoption |
 | **메타데이터 콘솔 IA 통합 (2026-07-07)** | 채택 인박스·샘플 검수 최상위 탭을 각 사전 하위 {목록\|검토/검수 큐} 2차 보기로 통합(2차 보기 파라미터화 `_METADATA_REVIEW`/`viewBySub`/`_metaSyncViews`) + 5서브뷰 디자인 폴리시(`--surface-2` 토큰·rich empty/skeleton·테이블 카드 그룹핑·폼 grid+인라인검증·SQL 프리뷰·배지 semantic 토큰·이모지 제거+KPI). UI 단독·백엔드/RBAC 정의 0 | TASK-20260707-metadata-console-redesign |
 | **추론 강도별 예산 + 런타임 pane 재설계 (2026-07-07)** | 런타임 설정에 모델별 예산과 별개로 추론 강도(낮음/높음/매우 높음)별 `reasoning_budget` 축 추가(cross-unit feature-0002 `_call_llm` 명시레벨 override·'일반'=no-override) + pane UI 정렬 grid + commit-bar 배치 저장(기능 불변) | feature-0018 (d9516aee·a2fe4103) |
+
+### 2.8 메타데이터 콘솔 UX·폴리시 + 제품 분류 승인 UI (2026-07-08)
+
+| 영역 | 내용 | 관련 |
+|---|---|---|
+| **메타데이터 콘솔 UX 4건** | ① list 컬럼 폭 확대+행 가독성(line-height/padding) ② 검토/검수 큐 후보 행(용어·ENUM feedback·샘플)을 `role=button` 클릭→우측 `#metadataReviewDetail` **read-only 상세**(전체 정의/질문·SQL/다이어그램·신뢰도/scope/status + 승급/거부·승인/거부) — '선택 불가' 근본 해소 ③ ENUM 그룹 카드 "+코드 추가" pre-fill 생성 폼 ④ 샘플 검수 큐 `generated_sql` mermaid 를 공용 `mermaid-render.js`(strict) 다이어그램 렌더. UI 단독·백엔드 0 | TASK-20260708-metadata-console-ux2 (Major) |
+| **메타데이터 콘솔 디자인 폴리시 5건** | PB-0008 적대 미적 검증에서 도출 — 2차 보기 필 위계 역전(borderless chip)·list-detail 균형(목록 300~400px)·그룹 카드 nesting divider 평탄화·반복 timestamp 경량+그룹 내 숨김·신뢰도 배지 accent 분리. 순수 CSS+배지 클래스 1개(로직/구조 0) | TASK-20260708-metadata-console-polish (Minor) |
+| **제품 분류 AI 제안 승인 UI** | 제품 관리 접근DB 규칙 화면 "✨ AI 분류 제안" 블록 — orphan_pending(RuleId NULL·`ai_suggest:<conf>`) 신뢰도 표기 + 승인(Source='ai')/거부 즉시 실행. 승인 경로 `admin_products` ai-suggestions/approve·/reject(감사·이름/제외DB 검증 미러). 정본=feature-0016 §59/ADR-025 (분류 엔진 코드 거주 feature-0002) | TASK §59 (product-classify-suggest) |
 
 ## 3. 특징
 
