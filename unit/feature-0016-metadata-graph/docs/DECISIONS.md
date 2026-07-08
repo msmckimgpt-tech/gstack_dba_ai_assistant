@@ -727,3 +727,26 @@ source_of_truth: true
   규칙 부재(기각) (b) introspect_and_store 내부 무조건 lower — MySQL 케이스 구분 파괴(기각)
   (c) 케이스-무시 unique 인덱스 마이그 — 쓰기 계약 정리 없인 첫 writer 케이스에 종속(기각, D 가 선행).
 - Supersedes: — / Superseded By: —
+
+## ADR-024 — §57 graph-edge-visibility: 접힘 카드 집계 연결선 + 상대 하이라이트 + 크로스 시각 구분 + LOD
+- Status: accepted (2026-07-08)
+- Context: PB-0008 시각검증(§56) 후 사용자 요청 — 접힘 카드 상태에서 연결 구조 불가시, 선택 시 전역
+  동일 강조로 관계 추적 곤란, 크로스-DB 사용선 미구분, 중간 줌 엣지 스파게티. 진단: scope_schemas 가
+  edges 미반환 + renderEndpoint 의 카드 승격 부재(2중 근본원인).
+- Decision: ① 카드간 연결 구조는 **질의시점 1-hop 전량 스캔 + Python 스키마-쌍 무향 집계**(SCHEMA_REF,
+  cap 400)로 동봉 — 멀티-hop cypher(82s 실측)·sync 시 materialize(스테일·복잡도) 기각, 1-hop 0.2s 실측.
+  ② 렌더는 3단 승격(컬럼→테이블→SC: 카드)으로 혼합 상태(펼침↔접힘)까지 연속 — SCHEMA_REF 는 양쪽
+  접힘일 때만(이중 표현 방지). ③ 크로스 구분은 색 단일 축(마젠타, REFERENCES cross 와 어휘 공유) —
+  관계 종류는 dash·화살표, 교차 여부는 색(직교 인코딩). zIndex 불변(_metaEdgeZFor 1:1 계약 보존).
+  ④ 상대 하이라이트는 rebuild-bake(dimmed state + 엣지 opacity) — setElementState 전역 루프 금지(§33).
+  ⑤ LOD 는 의미 신호 보존 축약 + 밴드 전이 디바운스(경계 왕복 rebuild 방지).
+- Consequences: 초기 카드 뷰에서 DB 간 연결 구조가 즉시 보이고(요청 ①), 선택 시 1-hop 만 선명(요청 ②),
+  크로스-DB 선이 클릭 없이 식별되며(검토 ②), 대형 스코프 중간 줌 노이즈 감소(검토 ①). 한계:
+  (a) 한쪽만 펼친 스키마의 **미로드 incoming 방향**(상대 스키마를 펼친 적 없으면 모델에 관계 자체가
+  없음)은 여전히 비표시 — schema_tables outgoing-only 는 본 ADR 범위 외 (b) SCHEMA_REF 집계 엣지의
+  우클릭 상세는 canvas 메뉴 폴백(기존 agg: 갭과 동일 — 후속) (c) LOD 축약 규모의 상태줄 안내 미표출
+  (_lodDropped 만 집계 — 후속).
+- Alternatives: (a) sync 시 SCHEMA_REF materialize — 30분 스테일+증분 복잡도, 질의시점 0.2s 로 불필요
+  (b) 상대 하이라이트를 G6 setElementState 루프로 — 건당 ~50ms 실측 프리즈(기각, §33) (c) 크로스 구분을
+  별도 dash 패턴으로 — 관계 종류 인코딩과 충돌(기각).
+- Supersedes: — (ADR-019 색 어휘·§32 테이블-레벨 승격을 확장) / Superseded By: —

@@ -1793,3 +1793,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - pre-deploy 격리 검증: `node --check admin.js` OK · CSS 균형(1905/1905) · `.admin-meta-tag-conf` 정의+사용 · route 골든 불변(UI-only) · 호스트 전체 **1662 passed**(회귀 0).
 - **Environment: Windows-browser — pre-commit 미수행 사유**: 정적 자산 web 이미지 baked — merge+deploy-web 선행 필요. **POST-DEPLOY PB-0008 라이브 재확인** — ① 2차 보기 필이 1차 밑줄 탭보다 낮은 강조(borderless light chip) ② 미선택 상세 empty 중앙·비-sprawl ③ enums/columns 그룹 카드 내부 행이 divider(카드-in-카드 아님)·그룹 내 timestamp 부재 ④ 검토 큐 신뢰도 배지 accent 로 구분 ⑤ pageerror 0.
 - **Pass/Fail: 정적·호스트 스위트 PASS · 선행 PB-0008 적대 검증 완료 · 라이브 재확인 = POST-DEPLOY**. CHECK#13 충족.
+
+### Run (2026-07-08) — graph-edge-visibility: 접힘 카드 연결선·상대 하이라이트·크로스 구분·LOD (§57, 문서 정본 feature-0016 TASK §57/ADR-024) — **Environment: Windows-browser — POST-DEPLOY 예정**
+- 웹 자산(admin.js/html)이 web 이미지에 baked 되어 머지·배포 후 라이브 실측이 유일한 유효 검증(§53~§56
+  관례). 배포 후 실 Windows Chrome 에서 ① 접힘 카드 간 SCHEMA_REF 연결선(count 라벨) ② 노드 선택 시
+  비인접 흐림·빈 캔버스 클릭 해제 ③ 크로스-DB 사용선 마젠타 ④ 줌아웃 LOD 축약·상태줄 안내를 육안
+  확인 후 본 절에 Run 을 append 한다. pre-deploy 격리 검증은 headless 22+26 PASS(§57 TEST.md).
