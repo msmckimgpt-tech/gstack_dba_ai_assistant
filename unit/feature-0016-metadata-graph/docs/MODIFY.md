@@ -1149,3 +1149,7 @@ source_of_truth: true
 - 긴급(배포 차단): #625 가 bedrock-gateway 서비스 **자체 mem_limit:1g 정의**를 x-default 상속으로
   오판해 2g 를 앞에 추가 → YAML 중복 키로 전 compose parse 실패(deploy-web preflight·worker up 차단).
   단일 정의(mem_limit: 2g)로 정정 + 원위치 주석 이동. python yaml.safe_load 검증.
+
+## CHG-20260708T235500-ai-root-feature-0016-classify-postdeploy — §59 POST-DEPLOY 기록 (2026-07-08)
+
+- docs-only: T59.6b 완수(배포·dry-run 11·실 pass 10건 Pending 적재·allowlist 무변경) + TEST Run.
