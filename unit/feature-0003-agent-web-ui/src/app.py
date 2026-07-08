@@ -18631,6 +18631,7 @@ def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
     """
     from modules.tools import _safe_ident as _safe_ident_fn
     from modules import schema as _schema
+    from shared.config import normalize_db_label as _norm_db_label   # §58: store label lower 계약
     dialect = _dialects.active()
     sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
     real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
@@ -18673,7 +18674,13 @@ def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
                 cols = []  # 단일 테이블 introspection 실패는 건너뜀(부분 골격 허용)
             finally:
                 ccur.close()
-            out.append({"schema_name": db_name, "table_name": tname, "columns": cols})
+            # §58(테이블축 케이스 정합): MSSQL 저장 schema_name(=DB명 라벨)은 set_active_database
+            #   (TASK-0220)·routine backfill(§56 RC5)과 동일한 lower 계약 — sys.databases 원본 케이스를
+            #   무가공 저장하면 cadence(lower) 축과 케이스-변형 이중 적재(라이브 실측 'AccountDB' 33행
+            #   + AGE 중복 스키마 카드)가 생긴다. MSSQL 전용 함수라 MySQL 케이스 보존은 자동 충족.
+            #   (질의 식별자는 sql_schema/tname — db_name 은 연결 바인딩 후 질의에 미사용.)
+            out.append({"schema_name": _norm_db_label(db_name) or db_name,
+                        "table_name": tname, "columns": cols})
     return out
 
 
@@ -18772,12 +18779,17 @@ def _metadata_introspect_table(datasource_key: str, schema_name: str, table_name
             # 시스템 DB 제외 allowlist 로 검증 → 해당 DB 로 연결 → 비시스템 SQL 스키마에서 테이블 컬럼 탐색.
             dialect0 = _dialects.active()
             sys_db = {str(n).strip().lower() for n in dialect0.system_databases()}
-            db_units = {str(n) for n in (_db.list_server_databases(ds) or [])
-                        if str(n).strip().lower() not in sys_db}
+            # §58(적대 리뷰 MAJOR): 저장 라벨이 lower 계약(normalize_db_label)으로 바뀌었으므로
+            #   allowlist 를 lower→원본 매핑으로 case-insensitive 매치하고 **연결은 원본 케이스**로
+            #   한다(kb_metadata 의 LOWER 매칭 계약과 동형). 케이스-정확 set 이면 lower 라벨의
+            #   membership 이 항상 실패해 grounding 이 무음 파괴된다(CS collation 서버 안전 겸비).
+            db_map = {str(n).strip().lower(): str(n) for n in (_db.list_server_databases(ds) or [])
+                      if str(n).strip().lower() not in sys_db}
             safe_db = _safe_ident_fn(schema_name)
-            if safe_db not in db_units:
+            real_db = db_map.get(str(safe_db).strip().lower())
+            if not real_db:
                 return None
-            conn = _db.connect(datasource=ds, database=safe_db, autocommit=True)
+            conn = _db.connect(datasource=ds, database=real_db, autocommit=True)
             dialect = _dialects.active()
             sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
             real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])

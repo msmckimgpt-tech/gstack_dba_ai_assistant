@@ -787,3 +787,7 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   SSOT cross 플래그의 엣지 속성/색상 반영 후보 ③ 스키마 점프 목록에 AccountDB/accountdb 케이스 중복
   노출 — **테이블 축 케이스 변형**(table_descriptions 'AccountDB' 33행, 06-30 일회성 적재·라이브 writer
   없음·lower twin 없음 → 삭제 아닌 rekey 대상, §56 후속 T56.7c 계열에 위임).
+
+### Run (2026-07-08) — §58 골격 가져오기 라벨 케이스 (Environment: 컨테이너 pytest)
+- test_bootstrap_skeleton_mssql_schema_label_lowercased PASS — db_name 'FHGame1' → schema_name 'fhgame1'
+  저장, 테이블명 케이스 보존, MySQL 분기 무변경. EXIT=0.
