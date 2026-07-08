@@ -817,3 +817,9 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   reason 'ai_suggest:<conf>')·환각 3중 게이트(미입력 스키마/비화이트리스트 pid/임계 미만 폐기·
   최고 신뢰도 1건)·dry-run 무쓰기·LLM 실패 soft. ruff PASS.
 - 라이브 실증·PB-0008(제안 블록)은 POST-DEPLOY(데몬 기본 OFF — dry-run CLI 로 확인).
+
+### Run (2026-07-08, POST-DEPLOY) — §59 라이브 실증 (Environment: live insight-worker)
+- 배포: PR #626(+#627 compose 정정) → web c2d5796d·워커 재빌드·전 컨테이너 healthy(gateway 2g).
+- dry-run: suggested_total 11·errors 0(무쓰기 확인). 실 pass: **10건 Pending 적재** — 전건
+  'ai_suggest:<conf>|<근거>' 포맷, 신뢰도 0.70~0.98, 테이블 기능 증거 인용. allowlist
+  (WebProductDatabases) 무변경 확인(승인 대기만). 데몬 OFF 유지 — 수동/CLI 트리거만.

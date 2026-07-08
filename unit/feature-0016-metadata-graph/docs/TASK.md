@@ -1826,5 +1826,9 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T59.6a §18.8 패널 완료 — BLOCKING 1(라우트 골든)·MAJOR 4(NaN 게이트 우회·감사 원자화·batch
   기아·Source='ai' 수동저장 충돌) 전건 수정 + MINOR/NIT 반영. REVIEW REV-20260708T220000 정본.
   분류 테스트 6 + route parity PASS.
-- [ ] T59.6b verify → PR → 배포(worker+web) → 라이브 dry-run 실증 → PB-0008(제안 블록 렌더).
-  운영 활성화는 AGENT_PRODUCT_CLASSIFY_AUTO=1 flip(별도 결정).
+- [x] T59.6b POST-DEPLOY 완수 — PR #626 머지 → 배포(web c2d5796d 롤링 soak PASS + 워커 재빌드,
+  #627 compose 중복 키 긴급 정정 포함) → **라이브 실증**: dry-run 제안 후보 11(오류 0, 보수 게이트
+  정상) → 실 pass 10건 Pending 적재 — 근거 기반 분류 확인(예: account/characteritem→건즈 QA 0.98·
+  PayShopPurchase/InAppBilling→로그 DB 0.95·근거 문자열 Reason 동봉). 제품 관리 화면 "AI 분류 제안"
+  블록에 승인 대기 노출(사람 승인/거부가 다음 단계 — PB-0008 육안은 사용자 검토 흐름과 병행).
+  데몬은 기본 OFF 유지 — 운영 활성화는 AGENT_PRODUCT_CLASSIFY_AUTO=1 flip(별도 결정).

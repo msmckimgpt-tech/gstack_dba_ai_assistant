@@ -1228,3 +1228,5 @@ source_of_truth: true
 - 재검증: 분류 테스트 6 PASS(+NaN/범위·시스템/주입 제외 회귀) + route parity PASS·ruff·compile.
 
 ## REV-20260708T231800-ai-root-feature-0016-gwmem-dupkey [SKIPPED: 1-line YAML 중복 키 제거(배포 차단 해소) — yaml.safe_load + compose parse 로 기계 검증, 코드 로직 무변경] — compose 정정
+
+## REV-20260708T235800-ai-root-feature-0016-classify-postdeploy [SKIPPED: docs-only POST-DEPLOY 기록 — 코드 변경 0] — §59 완수 기록
