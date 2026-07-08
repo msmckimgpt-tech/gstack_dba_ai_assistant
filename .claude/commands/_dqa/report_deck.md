@@ -16,7 +16,7 @@ persona_kind: maintenance/reporting (파이프라인 단계 아님 — 사람 �
 
 > **호출 형태**: 사람이 명시적으로 `/_dqa:report_deck "YYYY-MM-DD ~ YYYY-MM-DD"` 로 호출하거나, 정기 스케줄(월간·분기 발표 등)로 예약. AI 자율 후속 chain 대상 아님(다른 persona 를 자동 호출하지 않는다).
 
-> **본 스킬이 만드는 것 vs 아닌 것**: 본 스킬은 발표자료(HTML 덱 + 스크립트 + 근거 원장)를 **생성**한다. 코드·정책 정본을 수정하지 않는다. 배포·PR·외부 발송은 하지 않는다(외부영향 행동은 §종료 참조).
+> **본 스킬이 만드는 것 vs 아닌 것**: 본 스킬은 발표자료(HTML 덱 + 스크립트 + 근거 원장)를 **생성**하고, 자기검증(Phase 6) 통과 시 **commit → push → PR 병합으로 반드시 landing** 한다(산출물이 worktree/로컬에 갇히지 않게 — Phase 7 필수 autoland). 코드·정책 정본은 수정하지 않는다. **배포(deploy)·외부 발송(메일·슬랙 등 알림)은 하지 않는다**(그 밖 외부영향은 §종료 참조).
 
 ---
 
@@ -39,6 +39,8 @@ persona_kind: maintenance/reporting (파이프라인 단계 아님 — 사람 �
 
 > **하드닝 이력(2026-07-02)**: 첫 실행(범위 2026-06-01~07-02 v1)을 사용자·codex·red team 이 검증한 결과를 스킬 규율로 승격했다 — (1) **성장 지향 톤 ↔ 정직성 경계**(미검증을 "완료/검증"으로 단정 금지), (2) **발표자 전용/청중 분리 + 청중 덱 식별자 스크럽**, (3) **대표 수치(KPI) 검증 축 규율**(파생·집계는 "검증됨" 금지·산식 명시), (4) **전후 폴백은 인라인 SVG 도식 강제**(텍스트-only 금지), (5) **EVIDENCE 측정조건·산식·배포근거·stale 엄밀성**, (6) **모든 배지 색+라벨+형태**. 불변 제약·§5.2·§5.3·Phase 4·Phase 6 에 반영.
 
+> **하드닝 이력(2026-07-08)**: 두 번째 실행(범위 2026-06-17~07-08 v1)에서 산출물이 worktree 에 **커밋되지 않은 채 갇혀** `repo/docs/presentation` 에서 보이지 않던 이슈를 사용자가 보고 → 규율로 승격. Phase 7 을 **필수 autoland** 로 전환한다 — 자기검증 통과 시 `commit → push → PR 생성 → PR 병합 → 로컬 main 동기화 → worktree 정리`까지 **confirm 없이 완수**(산출물 stranding 금지). **자기검증·민감정보 게이트 통과가 하드 전제**(하나라도 실패 시 push 금지 — 특히 민감정보 스캔 실패 시 절대 push 안 함). 배포·외부 발송은 여전히 안 함(정적 doc — 배포 대상 없음). 불변 제약(§본 스킬이 만드는 것·§read-only governance)·Phase 7·종료 조건에 반영.
+
 ---
 
 ## 불변 제약 (invariants)
@@ -60,7 +62,7 @@ persona_kind: maintenance/reporting (파이프라인 단계 아님 — 사람 �
 - **발표자 전용 내용 분리 + 청중 덱 식별자 스크럽 (필수)**: 청중 슬라이드에는 **확인필요 색인·발표자 메모·내부 식별자**(E-/U- 근거코드, `EVIDENCE.md`/`SCRIPT.md` 파일명, `feature-NNNN`, PR#·커밋 해시, PB-0008 등)를 노출하지 않는다. 발표자 Q&A 대비·근거 코드는 `SCRIPT.md`(발표자 전용 섹션)·`EVIDENCE.md` 로만 관리(기존 발표자료가 공격질문 대응을 별도 문서로 뺀 원칙과 동일). 발표 슬라이드는 "마무리"로 끝낸다.
 - **대표 수치(KPI) 검증 축 규율 (필수)**: 요약/표지의 KPI·대표 수치는 **검증 가능한 축만 "검증됨" 배지**. 파생·집계 수치(예: 논리 작업 단위 수)는 "개발 이력 집계" 등으로 낮추고 EVIDENCE 에 **산식**을 명시한다(질문 시 방어 가능해야 함). 첫 화면에서 "완료"의 의미(개발/배포)를 모호하게 두지 않는다.
 - **민감정보 금지 (redaction)**: 계정 정보·비밀번호·토큰·접속 좌표(host/port/DSN)·개인정보·외부 비공개 운영정보를 **발표자료 본문·스크립트·근거 원장 어디에도 포함하지 않는다**. 근거로 인용할 때도 민감값은 마스킹하고 "해당 파일/커밋에 근거 있음(값은 비노출)" 수준으로만 남긴다. (개발 대화기록 인용 시 특히 주의 — 원문 붙여넣기 금지.)
-- **read-only 코드·정본 + governance 우선**: 코드베이스·정책문서는 읽기만 한다. `<policy_root>/AGENTS.md` §3.1·§10 정본 우선순위, **worktree-first**(§13.2 — 산출물도 worktree 에서 작성, main checkout 직접 mutation 금지), 외부영향 행동 confirm 정책을 그대로 따른다. 본 스킬은 정본을 대체하지 않는다.
+- **read-only 코드·정본 + governance 우선**: 코드베이스·정책문서는 읽기만 한다. `<policy_root>/AGENTS.md` §3.1·§10 정본 우선순위, **worktree-first**(§13.2 — 산출물도 worktree 에서 작성, main checkout 직접 mutation 금지), 외부영향 행동 confirm 정책을 그대로 따른다 — **단 자기 산출물(`docs/presentation/<범위>/<버전>/`)의 `commit → push → PR 병합` landing 은 예외로 자동 수행**한다(Phase 7 필수 autoland — `doc_sync` autoland 와 동형; 배포·외부 발송은 여전히 confirm/미수행). 본 스킬은 정본을 대체하지 않는다.
 - **웹 브라우징 규약**: 형식·업계 사례·디자인 트렌드 리서치는 `WebSearch`/`WebFetch`. 라이브 화면 dogfooding(현행 UI 캡처)이 필요하면 gstack `/browse`(WSL headless). 실제 Windows 화면 검증은 `bin/win-browser.py`+PB-0008. `mcp__claude-in-chrome__*` 금지.
 - **디자인·시각효과 = 구조 불변 + 정합 최신화**: 발표자료의 구조·서사(하이브리드 골격·기능 고정 5블록·변경 전후·flow 슬롯)는 **불변**하되, **디자인/시각효과는 매 호출 최신 웹 트렌드를 리서치해 반영**한다. 단 (1) 프로젝트 정합성 봉투(기존 서비스/덱 디자인 토큰), (2) 자기완결 offline, (3) 상부보고 절제 톤 **3중 필터**를 통과한 것만. 트렌드가 구조 변경을 요구하면 트렌드를 버린다. 상세 절차·지침은 Phase 5 §5.0.
 - **경로 표기**: 산출물·근거의 코드/정본 경로는 **repo-상대**(`unit/...`·`docs/...`·`wiki/...`). `repo/` prefix 는 wrapper checkout 전용이라 worktree 안에서 쓰지 않는다.
@@ -309,11 +311,18 @@ kinetic 타이포 · parallax/3D depth · spring/bounce easing · scroll-driven/
 
 ---
 
-## Phase 7 — 종료
+## Phase 7 — 종료 (필수 autoland — 산출물이 worktree/로컬에 갇히지 않게)
 
-- 산출물 3종 경로 + 슬라이드 수 + 기능 단위 수 + (확인 N건 / 확인필요 M건)을 1줄 보고.
-- **커밋 권유(자동 commit 금지)**: 산출물은 `docs/presentation/` 이므로 doc 성격. 커밋 메시지 관례 `docs(presentation): <범위> 개발 진척 발표자료 <vN>`. 사용자 명시 confirm 없이 commit 하지 않는다(단 사용자·프로젝트 auto-sync 정책이 명시돼 있으면 그 정책을 따른다).
-- **외부영향 행동은 별도 confirm**: PR 생성·배포·외부 발송은 하지 않는다(발표자료는 사내 저장소 내부 관리물 — 필요 시 사용자가 별도 결정).
+- 산출물 3종 경로 + 슬라이드 수 + 기능 단위 수 + (확인 N건 / 확인필요 M건) + landing 결과(PR·병합 커밋)를 1줄 보고.
+- **필수 landing (자동, confirm 없음)**: Phase 6 자기검증이 **전부 통과**하면 산출물을 반드시 원격 `main` 까지 landing 한다 — worktree 에 갇히거나 로컬에만 머무는 것을 **금지**한다(2026-07-08 하드닝). 순서:
+  1. **commit** — worktree 에서 `git add docs/presentation/<slug>/<vN>/ && git commit`. 메시지 관례 `docs(presentation): <범위> 개발 진척 발표자료 <vN>` (+ 커밋 규약상 `Co-Authored-By` trailer). 정본(코드·정책)은 스테이징하지 않는다 — `docs/presentation/` 산출물만.
+  2. **push** — `git push -u origin <report-deck 브랜치>`.
+  3. **PR 생성** — `gh pr create`. title = 커밋 관례, body = 범위·슬라이드 수·기능 단위 수·(확인/확인필요 카운트)·자기검증 통과 요약. **PR body/브랜치명은 내부 관리용이라 근거코드·식별자 노출 허용**(청중 덱 식별자 스크럽 규율은 슬라이드 전용 — PR·EVIDENCE·SCRIPT 에는 적용 안 함).
+  4. **PR 병합** — `gh pr merge`(프로젝트 관례 squash/merge, 브랜치 보호·CI 정책 준수, 필요 시 `--auto`). **병합까지 완수**한다.
+  5. **동기화·정리** — 병합 후 `<policy_root>` 로컬 `main` 을 `origin/main` 에 동기화(fetch + ff), `git worktree remove <worktree>` + 병합 브랜치 삭제 + `git worktree prune`.
+- **하드 전제(게이트) — 실패 시 push 금지**: 위 landing 은 Phase 6 게이트(anti-pattern·근거정합·**민감정보 스캔**·정직성 경계·청중 식별자 스크럽·전후 시각·doc_type·디자인/접근성)가 **전부 통과**해야만 진행한다. 하나라도 실패하면 **push/PR 를 중단**하고 로컬 커밋까지만 둔 뒤 실패 사유를 보고한다. 특히 **민감정보 스캔 실패 시 절대 push 하지 않는다**(발표자료는 origin 에 올라가면 회수·rotation 부담이 크다).
+- **환경 폴백(loud, 조용한 skip 금지)**: git 저장소 아님 / `origin` 부재 / `gh` 미가용 / 브랜치 보호로 자동 병합 불가 → **가능한 단계까지 수행**(최소 로컬 커밋, 가능하면 push+PR 생성)하고 **못 한 단계를 명시 보고**. worktree-first 게이트·governance 로 BLOCKED 면 landing 보류하고 사유 보고(무한 재시도 금지).
+- **여전히 안 하는 것(외부영향 confirm 유지)**: **배포(deploy)·외부 발송(메일·슬랙 등 알림)** 은 하지 않는다 — report_deck 산출물은 정적 doc 이라 배포 대상이 없고, push/PR 병합은 사내 저장소 내부 landing 이라 수행하지만 그 밖의 외부영향은 사용자 confirm 을 유지한다.
 - **다음 단계 안내(자동 chain 금지)**: 확인필요 항목이 있으면 "발표 전 EVIDENCE.md §2 를 담당자와 확인 요망"을 안내. 발표자료 품질·시각 검증이 더 필요하면 `/browse` 또는 Windows-browser 검증 제안(자동 실행 안 함).
 
 ---
@@ -342,4 +351,4 @@ kinetic 타이포 · parallax/3D depth · spring/bounce easing · scroll-driven/
 - [ ] deck.html 자기완결·렌더 OK(외부 URL/CDN/webfont 0), SCRIPT.md 동반.
 - [ ] 디자인/시각효과는 §5.0 절차로 최신 트렌드를 3중 필터(봉투·offline·절제) 통과분만 반영, **구조·서사 불변**; 대비·색+라벨+형태·reduced-motion·focus-visible 게이트 통과.
 - [ ] Anti-pattern 8종 스캔 통과, 민감정보 미포함.
-- [ ] 코드·정책 정본 무수정. commit 은 사용자 confirm/auto-sync 정책에 따름. PR·배포·외부발송 안 함.
+- [ ] 코드·정책 정본 무수정. **자기검증 통과 시 산출물 필수 autoland** = commit → push → PR 병합 → 로컬 main 동기화 → worktree 정리(게이트 실패 시 push 금지; 환경 제약 시 가능 단계까지+미수행 명시 보고). **배포·외부 발송(메일·슬랙 등)은 안 함**(정적 doc — 배포 대상 없음).
