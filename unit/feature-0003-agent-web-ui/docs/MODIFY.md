@@ -5502,3 +5502,9 @@ source_of_truth: true
 - 검증: node --check OK · CSS 균형(1905/1905) · route 골든 불변 · 호스트 1662 passed(회귀 0). cache-buster `?v=20260707-metadata-console-polish`.
 - Files: `static/{admin.js,styles.css,admin.html}` + docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
 - Cross-ref: REVIEW.md REV-20260708T012922-metadata-console-polish · TASK-20260708-metadata-console-polish · 선행 REV-20260707T064745-metadata-console-redesign
+
+## CHG-20260708-metadata-console-ux2 (TASK-20260708-metadata-console-ux2 — 메타데이터 콘솔 UX 4건, Major §12.3 — feature-0003 web/UI 단독)
+- 변경: #1 list 컬럼 폭 확대+행 가독성 · #2 검토/검수 큐 행 클릭→우측 read-only 상세(`_metaRenderReviewDetail`/`reviewSelected`) · #3 ENUM 그룹 "+코드 추가"(`_metaStartCreatePrefilled` pre-fill) · #4 샘플 mermaid 다이어그램 렌더(공용 `mermaid-render.js` 재사용, admin.html vendor 로드). **UI 단독**(백엔드/RBAC/스키마 0).
+- 검증: node --check OK · CSS 균형 · route 불변 · 호스트 1662 passed(회귀 0). cache-buster `?v=20260708-metadata-console-ux2`.
+- Files: `static/{admin.html,admin.js,styles.css}` + docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260708T033320-metadata-console-ux2 · TASK-20260708-metadata-console-ux2 · 선행 REV-20260708T012922-metadata-console-polish

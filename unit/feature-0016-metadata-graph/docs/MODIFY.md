@@ -1113,6 +1113,16 @@ source_of_truth: true
 - 발견(후속 위임): 테이블 축 케이스 변형 — table_descriptions 'AccountDB' 33행(06-30 잔재) rekey +
   크로스-DB 엣지 시각 구분 스타일 + 중간 줌 엣지 declutter (§56 T56.7c 계열).
 
+## CHG-20260708T120000-ai-root-feature-0016-graph-edge-visibility — §57 그래프 엣지 가시성 4종 (2026-07-08)
+
+- REQ-20260708-graph-edge-visibility / 정본 ADR-024, TASK §57. PB-0008 후 사용자 개선 요청 반영.
+- feature-0002: modules/metadata_graph.py — sync_routine cross_ds 투영·schema_tables cross_ds 노출·
+  scope_schemas SCHEMA_REF 스키마-쌍 집계(1-hop+Python, cap 400).
+- feature-0003: static/admin.js — renderEndpoint SC: 승격 폴백·SCHEMA_REF 렌더·크로스 RU 마젠타
+  (속성+세그먼트 폴백)·상대 하이라이트(dimmed state+엣지 opacity bake+canvas:click 해제)·중간 줌 LOD
+  (밴드 전이 디바운스)·ingest count 계열 보존. admin.html 캐시버스터.
+- tests: headless test_g6build_edge_visibility.js 신규 18 + test_graph_funcproc_uxfix.py +2.
+
 ## CHG-20260708T123000-ai-root-feature-0016-tableaxis-case — §58 골격 가져오기 MSSQL 라벨 lower (2026-07-08)
 
 - TASK §58 / ADR-023 계약의 테이블 축 확장. feature-0003: src/app.py _bootstrap_collect_skeleton_mssql

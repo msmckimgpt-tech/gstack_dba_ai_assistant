@@ -2535,6 +2535,7 @@ function renderSampleReview() {
   const listEl = document.getElementById("metadataList");
   const countEl = document.getElementById("metadataCount");
   if (!listEl) return;
+  _metaClearReviewDetail();   // ux2 #2: 큐 (재)렌더 시 우측 상세를 empty 로 초기화(stale 선택 방지).
   const st = adminState.sampleReview;
   const items = st.items || [];
   if (countEl) countEl.textContent = `${items.length}건${st.truncated ? "+" : ""} 검수 대기`;
@@ -2556,6 +2557,19 @@ function renderSampleReview() {
     const row = document.createElement("div");
     row.className = "admin-sf-row";
     row.dataset.sfRow = String(it.id);
+    // ux2 #2: 행 클릭 → 우측 read-only 상세(승인/거부 버튼은 stopPropagation 로 행-선택 미발화).
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    const _openSf = () => {
+      adminState.metadata.reviewSelected = { kind: "sample", item: it };
+      _metaRenderReviewDetail("sample", it);
+      _metaMarkReviewActive(listEl, row);
+    };
+    row.addEventListener("click", _openSf);
+    row.addEventListener("keydown", (e) => {
+      if (e.target !== e.currentTarget) return;   // 내부 버튼 키 입력 무시(이중 발화 방지).
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _openSf(); }
+    });
     const head = document.createElement("div");
     head.className = "admin-sf-row-head";
     const vote = document.createElement("span");
@@ -2585,7 +2599,13 @@ function renderSampleReview() {
     q.textContent = it.nl_question || "";
     row.appendChild(q);
     const sql = (it.generated_sql || "").trim();
-    if (sql) {
+    if (sql && _metaIsMermaid(sql)) {
+      // ux2 #4: 다이어그램은 행에 원문 덤프 대신 안내(상세에서 렌더). 밀집한 mermaid 텍스트 노출 금지.
+      const note = document.createElement("div");
+      note.className = "admin-sf-diagram-note muted";
+      note.textContent = "다이어그램 (클릭해 상세 보기)";
+      row.appendChild(note);
+    } else if (sql) {
       const pre = document.createElement("pre");
       pre.className = "admin-sf-sql";
       const code = document.createElement("code");
@@ -2608,7 +2628,7 @@ function renderSampleReview() {
         ap.className = "btn-primary sf-approve";
         ap.dataset.sfId = String(it.id);
         ap.textContent = "승인(KB 등록)";
-        ap.addEventListener("click", () => _sampleFeedbackAction(ap, "approve"));
+        ap.addEventListener("click", (e) => { e.stopPropagation(); _sampleFeedbackAction(ap, "approve"); });
         actions.appendChild(ap);
       }
       const rj = document.createElement("button");
@@ -2616,7 +2636,7 @@ function renderSampleReview() {
       rj.className = "btn-secondary sf-reject";
       rj.dataset.sfId = String(it.id);
       rj.textContent = "거부";
-      rj.addEventListener("click", () => _sampleFeedbackAction(rj, "reject"));
+      rj.addEventListener("click", (e) => { e.stopPropagation(); _sampleFeedbackAction(rj, "reject"); });
       actions.appendChild(rj);
       row.appendChild(actions);
     }
@@ -2674,6 +2694,8 @@ adminState.metadata = {
   search: "",           // 좌측 목록 검색어(클라이언트 필터 — title/body 부분일치).
   // 대화 자율등록 검토 큐(0021) — 용어사전 하위 '용어 검토 큐' 보기 상태.
   feedback: { items: [], pendingCount: 0, status: "pending", loading: false },
+  // ux2 #2: 검토·검수 큐에서 선택된 후보(우측 read-only 상세). { kind:"glossary"|"enum"|"sample", item } 또는 null.
+  reviewSelected: null,
   relationsOpenId: null,   // 유사어 패널이 펼쳐진 용어 id(목록에서 1개만)
   // Phase 2 부트스트랩 상태(테이블/컬럼 서브뷰 전용).
   bootstrap: {
@@ -2833,6 +2855,212 @@ function _metaAppendPathCode(el, loc, code) {
   }
 }
 
+// ── ux2 #4: 샘플 검수 generated_sql — mermaid 다이어그램 vs SQL 분기 렌더 ─────────────
+// mermaid 판정: 선두 키워드 매치 OR 첫 비어있지 않은 라인이 ```mermaid 펜스.
+function _metaIsMermaid(text) {
+  const t = String(text == null ? "" : text).trim();
+  if (!t) return false;
+  const firstLine = (t.split(/\r?\n/).find((l) => l.trim() !== "") || "").trim();
+  if (/^```mermaid/i.test(firstLine)) return true;
+  return /^\s*(mermaid\b|erDiagram|graph\s|flowchart\s|sequenceDiagram|classDiagram|stateDiagram|gantt|pie\b|journey)/i.test(t);
+}
+
+// container 에 generated_sql 을 렌더한다. mermaid 면 다이어그램(공용 sanitized 헬퍼 mermaid-render.js),
+// 아니면 SQL 코드블록. 빈 값이면 "생성 SQL 없음". 모든 소스 텍스트는 textContent 로만 주입(XSS 안전) —
+// mermaid SVG 는 헬퍼가 securityLevel:'strict' 로 자체 sanitize 한다(exception #4).
+function _metaRenderSqlOrDiagram(container, text) {
+  if (!container) return;
+  const trimmed = String(text == null ? "" : text).trim();
+  if (!trimmed) {
+    const nos = document.createElement("div");
+    nos.className = "admin-sf-nosql muted";
+    nos.textContent = "생성 SQL 없음";
+    container.appendChild(nos);
+    return;
+  }
+  if (_metaIsMermaid(trimmed)) {
+    // 다이어그램 소스 추출: 선두 ```mermaid 펜스 및/또는 bare 'mermaid' 라인 제거.
+    let src = trimmed;
+    if (/^```mermaid/i.test(src)) {
+      src = src.replace(/^```mermaid[^\n]*\n?/i, "").replace(/\n?```\s*$/i, "");
+    } else if (/^\s*mermaid\b/i.test(src)) {
+      // bare leading 'mermaid' 라인만 제거(erDiagram/graph 등 실 키워드는 보존).
+      src = src.replace(/^\s*mermaid[^\S\r\n]*\r?\n?/i, "");
+    }
+    src = src.trim();
+    // 공용 렌더 헬퍼가 소비하는 형식(.mermaid-pending) 으로 삽입 — 헬퍼는 render 실패/미로딩 시에도
+    // 자체 graceful fallback(원본 코드블록) 을 수행한다. 헬퍼 함수 자체가 없으면 라벨 붙인 코드블록으로 폴백.
+    if (typeof renderMermaidDiagrams === "function") {
+      const div = document.createElement("div");
+      div.className = "mermaid-block mermaid-pending";
+      div.textContent = src;   // 소스 텍스트만(SVG 아님).
+      container.appendChild(div);
+      if (typeof ensureMermaidInit === "function") { try { ensureMermaidInit(); } catch (_) {} }
+      try { renderMermaidDiagrams(container); } catch (_) {}
+    } else {
+      const lbl = document.createElement("div");
+      lbl.className = "drawer-label";
+      lbl.textContent = "다이어그램";
+      const pre = document.createElement("pre");
+      pre.className = "admin-sf-sql";
+      const code = document.createElement("code");
+      code.className = "language-mermaid";
+      code.textContent = src;
+      pre.appendChild(code);
+      container.appendChild(lbl);
+      container.appendChild(pre);
+    }
+    return;
+  }
+  // SQL 코드블록.
+  const pre = document.createElement("pre");
+  pre.className = "admin-sf-sql";
+  const code = document.createElement("code");
+  code.textContent = trimmed;   // SQL: textContent 로만.
+  pre.appendChild(code);
+  container.appendChild(pre);
+}
+
+// ── ux2 #2: 검토·검수 큐 후보 read-only 상세(우측 #metadataDetail) ───────────────────
+// kind: "glossary" | "enum" | "sample". 폼/부트스트랩/empty 안내를 숨기고 #metadataReviewDetail 만 노출.
+// 액션(승급/거부/승인)은 목록 행 액션과 동일 핸들러를 호출 → 처리 후 큐 리로드가 상세를 empty 로 되돌린다.
+// 모든 사용자/LLM 데이터는 textContent / 렌더 헬퍼로만 주입(XSS 안전).
+function _metaRenderReviewDetail(kind, it) {
+  const box = document.getElementById("metadataReviewDetail");
+  if (!box || !it) return;
+  const empty = document.getElementById("metadataDetailEmpty");
+  const form = document.getElementById("metadataForm");
+  const boot = document.getElementById("metadataBootstrap");
+  if (empty) empty.style.display = "none";
+  if (form) form.style.display = "none";
+  if (boot) boot.style.display = "none";
+  box.style.display = "";
+  box.replaceChildren();
+
+  const mkTag = (t, cls) => {
+    const s = document.createElement("span");
+    s.className = "admin-meta-tag" + (cls ? " " + cls : "");
+    s.textContent = t;
+    return s;
+  };
+
+  // 제목.
+  const title = document.createElement("h3");
+  title.className = "admin-meta-review-title";
+  if (kind === "enum") {
+    const loc = [it.schema_name, it.table_name, it.column_name].filter(Boolean).join(".");
+    _metaAppendPathCode(title, loc, it.code);
+  } else if (kind === "sample") {
+    title.textContent = it.nl_question || "(질문 없음)";
+  } else {
+    title.textContent = it.term || "(용어 없음)";
+  }
+  box.appendChild(title);
+
+  // 배지 행.
+  const tags = document.createElement("div");
+  tags.className = "admin-meta-review-tags";
+  if (kind === "sample") {
+    const vote = document.createElement("span");
+    vote.className = "sf-vote " + (it.vote === "down" ? "sf-vote-down" : "sf-vote-up");
+    vote.textContent = it.vote === "down" ? "비추천" : "추천";
+    tags.appendChild(vote);
+    if (it.scope_key != null) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`, "admin-meta-tag-neutral"));
+    if (it.suggested) tags.appendChild(mkTag("샘플 등록 요청", "admin-meta-tag-info"));
+    if (it.created_at) tags.appendChild(mkTag(_sfFmtDt(it.created_at), "admin-meta-tag-neutral"));
+  } else {
+    if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`, "admin-meta-tag-conf"));
+    if (kind === "glossary") {
+      const rk = String(it.role_key || "*");
+      tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`, rk === "*" ? "admin-meta-tag-neutral" : "admin-meta-tag-role"));
+    }
+    if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`, "admin-meta-tag-neutral"));
+    const st = String(it.status || "");
+    const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "승급됨", rejected: "거부됨" }[st] || st;
+    if (stLabel) {
+      const stCls = st === "promoted" ? "admin-meta-tag-ok" : st === "rejected" ? "admin-meta-tag-danger" : "admin-meta-tag-neutral";
+      tags.appendChild(mkTag(stLabel, stCls));
+    }
+  }
+  if (tags.childNodes.length) box.appendChild(tags);
+
+  // 본문 섹션.
+  const section = document.createElement("div");
+  section.className = "admin-meta-review-section";
+  const lbl = document.createElement("div");
+  lbl.className = "drawer-label";
+  lbl.textContent = kind === "enum" ? "라벨" : kind === "sample" ? "생성 SQL / 다이어그램" : "정의";
+  section.appendChild(lbl);
+  if (kind === "sample") {
+    const body = document.createElement("div");
+    body.className = "admin-meta-review-body admin-meta-review-sql";
+    _metaRenderSqlOrDiagram(body, it.generated_sql);
+    section.appendChild(body);
+  } else {
+    const body = document.createElement("div");
+    body.className = "admin-meta-review-body";
+    body.textContent = (kind === "enum" ? it.suggested_label : it.suggested_definition) || "";
+    section.appendChild(body);
+  }
+  box.appendChild(section);
+
+  // 액션 행 — 목록 행 액션 미러(같은 핸들러 → 성공 시 큐 리로드가 상세 초기화).
+  const actions = document.createElement("div");
+  actions.className = "admin-meta-review-actions";
+  if (kind === "sample") {
+    if (can("kb.sample.curate")) {
+      if (it.vote !== "down") {
+        const ap = document.createElement("button");
+        ap.type = "button"; ap.className = "btn-primary"; ap.dataset.sfId = String(it.id);
+        ap.textContent = "승인(KB 등록)";
+        ap.addEventListener("click", (e) => { e.stopPropagation(); _sampleFeedbackAction(ap, "approve"); });
+        actions.appendChild(ap);
+      }
+      const rj = document.createElement("button");
+      rj.type = "button"; rj.className = "btn-secondary"; rj.dataset.sfId = String(it.id);
+      rj.textContent = "거부";
+      rj.addEventListener("click", (e) => { e.stopPropagation(); _sampleFeedbackAction(rj, "reject"); });
+      actions.appendChild(rj);
+    }
+  } else {
+    const reviewPerm = kind === "enum" ? "kb.enum.curate" : "kb.glossary.curate";
+    const st = String(it.status || "");
+    if (can(reviewPerm)) {
+      if (st === "pending") {
+        const pb = document.createElement("button");
+        pb.type = "button"; pb.className = "btn-primary";
+        pb.textContent = "승급";
+        pb.addEventListener("click", () => _feedbackQueueAction(kind, it.id, "promote", pb));
+        actions.appendChild(pb);
+      }
+      if (st === "pending" || st === "auto_promoted") {
+        const rb = document.createElement("button");
+        rb.type = "button"; rb.className = "btn-secondary";
+        rb.textContent = st === "auto_promoted" ? "되돌리기" : "거부";
+        rb.addEventListener("click", () => _feedbackQueueAction(kind, it.id, "reject", rb));
+        actions.appendChild(rb);
+      }
+    }
+  }
+  if (actions.childNodes.length) box.appendChild(actions);
+}
+
+// 검토·검수 큐 우측 상세 초기화 — 선택 해제 + 상세 숨김 + (검토 보기면) empty 안내 복원. 큐 리로드/재렌더 시 호출.
+function _metaClearReviewDetail() {
+  adminState.metadata.reviewSelected = null;
+  const box = document.getElementById("metadataReviewDetail");
+  if (box) { box.style.display = "none"; box.replaceChildren(); }
+  const empty = document.getElementById("metadataDetailEmpty");
+  if (empty && _metaIsReview()) empty.style.display = "";
+}
+
+// 좌측 검토·검수 큐 행 선택 상태 표시 — 한 행만 .is-active(다른 행 해제).
+function _metaMarkReviewActive(listEl, row) {
+  if (!listEl) return;
+  listEl.querySelectorAll(".admin-meta-row.is-active, .admin-sf-row.is-active").forEach((r) => r.classList.remove("is-active"));
+  if (row) row.classList.add("is-active");
+}
+
 // B6: 인라인 필드 검증 — 필수 미입력 필드에 red border + 필드 하단 메시지. key 는 고정 필드키(사용자 데이터 아님).
 function _metaSetFieldError(key, msg) {
   const wrap = document.getElementById("metadataFormFields");
@@ -2967,6 +3195,7 @@ function _metaSyncViews() {
       md.viewBySub[sub] = v;
       md.editing = null;
       md.selectedId = null;
+      md.reviewSelected = null;   // ux2 #2: 보기 전환 시 검토 상세 선택 해제.
       md.relationsOpenId = null;
       md.search = "";
       const sEl = document.getElementById("metadataSearch");
@@ -3022,6 +3251,7 @@ function _metaBindControls() {
       adminState.metadata.scopeKey = sel.value || "common";
       adminState.metadata.editing = null;
       adminState.metadata.selectedId = null;
+      adminState.metadata.reviewSelected = null;   // ux2 #2: 스코프 변경(큐 재조회) 시 검토 상세 선택 해제.
       // scope-single-ds-ui + metadata-list-detail: 스코프가 부트스트랩 DS 를 결정하므로 bootstrap 모드면
       // 유지하며 재동기화(공용=empty-state, 구체 DS=골격 컨트롤·상속 DS·스키마 재로드). form/empty 는 선택 무효 → empty.
       if (adminState.metadata.detailMode !== "bootstrap") adminState.metadata.detailMode = "empty";
@@ -3041,6 +3271,7 @@ function _metaBindControls() {
       });
       adminState.metadata.editing = null;
       adminState.metadata.selectedId = null;
+      adminState.metadata.reviewSelected = null;   // ux2 #2: 서브탭 전환 시 검토 상세 선택 해제.
       adminState.metadata.search = "";
       const searchEl = document.getElementById("metadataSearch");
       if (searchEl) searchEl.value = "";
@@ -3342,6 +3573,16 @@ function _metaRenderDetail() {
   else if (mode === "bootstrap") _metaSyncBootstrapVisibility();  // 공용=empty-state, 구체 DS=골격 컨트롤.
   _metaSyncToolbarVisibility();   // 역할 필터 가시성(glossary 목록 보기만).
   _metaSyncListToolbar();         // '+ 새 항목' / '스키마 골격 가져오기' 버튼 가시성.
+  // ux2 #2: 검토·검수 큐 보기 — 선택된 후보가 있으면 우측 read-only 상세(empty/폼 위로 override), 없으면 상세 숨김.
+  const reviewBox = document.getElementById("metadataReviewDetail");
+  if (reviewBox) {
+    if (_metaIsReview() && md.reviewSelected && md.reviewSelected.item) {
+      _metaRenderReviewDetail(md.reviewSelected.kind, md.reviewSelected.item);
+    } else {
+      reviewBox.style.display = "none";
+      reviewBox.replaceChildren();
+    }
+  }
 }
 
 // 좌측 목록의 선택 행(.is-active) 동기화 — selectedId 와 매칭되는 행만 강조(다른 패널 list-detail 동형).
@@ -3473,6 +3714,10 @@ const _METtype = "rect";
 const _METLAY = { COLS: 3, SW: 300, GAPX: 48, GAPY: 52, PADT: 34, PADX: 16, TROW: 34, CROW: 21, CIND: 26, TGAP: 12, TW: 150,
   CARDW: 210, CARDH: 44 };   // graph-initview: 접힌 스키마 카드 치수
 const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 배율 밑이면 판독 불가 — 클램프
+// §57(declutter): 중간 줌 LOD — 줌이 이 임계 밑이고 모델 엣지가 _MIN 개를 넘으면 무상태(FK)·비크로스
+//   단건 선을 축약(의미 신호만 유지). 임계 1점 왕복 rebuild 방지는 밴드 전이+디바운스(_lodBand).
+const _META_EDGE_LOD_ZOOM = 0.35;
+const _META_EDGE_LOD_MIN = 120;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
 //   페인팅·hit-test 하므로, 전 요소에 zIndex 를 명시해 setData diff 의 생성 순서·드래그 이력(내장
 //   drag-element 의 frontElement 영구 승격)이 페인팅 순서를 결정하지 못하게 한다. 의미 계층:
@@ -3788,11 +4033,27 @@ function _metaEdgeStyleFor(status, crossDs) {
 //   따른다 — 쓰기(write)=루틴이 테이블로 데이터를 보냄=루틴→테이블(endArrow), 읽기(read)=테이블에서
 //   데이터를 읽어옴=테이블→루틴(startArrow, 출발점=루틴 쪽에 화살촉). read·relation_type 미상은 startArrow
 //   (테이블→루틴) — 상세 패널 텍스트 라벨 kindKo 기본값 '읽기'와 정합(모순 방지). false 키 미설정(G6 arrow 안전).
-function _metaRoutineEdgeStyle(relationType) {
-  const s = { stroke: _META_GRAPH_COLOR.Routine, lineWidth: 1.5, lineDash: [2, 3], zIndex: _METZ.EDGE };
+function _metaRoutineEdgeStyle(relationType, crossDs) {
+  // §57(사용자 검증 지적 ②): 크로스-DB 루틴 참조는 로컬 사용선과 색으로 구분 — REFERENCES 의
+  //   교차DB 마젠타(ADR-019)와 동일 색상 어휘를 쓰되 ROUTINE_USES 고유 잔점선([2,3])·화살표 방향은
+  //   유지(관계 종류는 dash·방향, 교차 여부는 색 — 직교 인코딩). zIndex 는 _metaEdgeZFor 의
+  //   ROUTINE_USES 분기(_METZ.EDGE 고정)와 1:1 이어야 하므로 변경하지 않는다.
+  const s = { stroke: crossDs ? "#a855c7" : _META_GRAPH_COLOR.Routine,
+    lineWidth: crossDs ? 1.8 : 1.5, lineDash: [2, 3], zIndex: _METZ.EDGE };
   if (relationType === "write") s.endArrow = true;    // 데이터: 루틴 → 테이블(쓰기)
   else s.startArrow = true;                            // read·미상: 테이블 → 루틴(상세 패널 kindKo 기본 '읽기'와 정합)
   return s;
+}
+// §57(사용자 요구 ①): 접힌 스키마 카드 간 집계 연결선(SCHEMA_REF) — 관계 의미(신뢰/추정/루틴)와
+//   구분되는 중립 슬레이트 실선. 굵기는 관계 수 로그 스케일, count 라벨로 규모 노출. 무향 집계라
+//   화살표 없음(양 키 생략 — false 금지, BLUEPRINT §3).
+function _metaSchemaRefEdgeStyle(count) {
+  const n = Math.max(1, Number(count) || 1);
+  return { stroke: "#8fa3bf", lineWidth: 1 + Math.min(2.4, Math.log2(n + 1) * 0.55),
+    strokeOpacity: 0.75, zIndex: _METZ.EDGE,
+    labelText: n > 1 ? String(n) : "", labelFontSize: 9, labelFill: "#64748b",
+    labelBackground: true, labelBackgroundFill: "#f6f8fb", labelBackgroundOpacity: 0.85,
+    labelPlacement: "center" };
 }
 function _metaNodeStates(key) {
   const st = [];
@@ -3802,7 +4063,56 @@ function _metaNodeStates(key) {
   if (_metaGraph.analyzed.has(key)) st.push("analyzed");
   if (_metaGraph.running.has(key)) st.push("running");
   if (_metaGraph.selected === key) st.push("selected");
+  // §57(사용자 요구 ②): 상대 하이라이트 — 선택 노드의 1-hop 인접 밖 **모델 데이터 노드**만 흐리게.
+  //   _metaNodeStates 경유라 _metaStateSig/_metaCacheSig 에 자동 포함 — 2.5s 상태 폴과 정합(§33 교훈).
+  //   합성 chrome(CAT:/GX:/GB: 등)은 모델 밖 키라 자동 비대상.
+  const fa = _metaGraph.focusAdj;
+  if (fa && _metaGraph.nodes.has(key) && !fa.self.has(key) && !fa.nodes.has(key)) st.push("dimmed");
   return st;
+}
+
+// §57: 선택 노드의 1-hop 인접 집합 — self(자신+자기 컬럼) / nodes(인접 노드+컬럼의 소속 테이블+상대
+//   스키마). 모델(_metaGraph.nodes/edges) 1회 순회 — 선택 변화 시에만 호출(빌드 hot-path 아님).
+function _metaFocusAdjacency(selKey) {
+  const self = new Set([selKey]);
+  const nodes = new Set();
+  const selNode = _metaGraph.nodes.get(selKey);
+  if (selNode && selNode.label === "Table") {
+    _metaGraph.nodes.forEach((n, k) => {
+      if (n.label === "Column" && _metaColParent(k, n.fqn) === selKey) self.add(k);
+    });
+  }
+  // 패널 MINOR: 컬럼 선택 시 소속 테이블 칩이 dim 되지 않게(선택 컬럼이 유령 컨테이너 위에 뜨는 오독 방지).
+  if (selNode && selNode.label === "Column") {
+    const ptk = _metaColParent(selKey, selNode.fqn);
+    if (ptk) nodes.add(ptk);
+  }
+  const touch = (k) => {
+    if (self.has(k)) return true;
+    // REFERENCES 끝점은 모델 밖 컬럼 키일 수 있다(접힌 스키마 = 컬럼 미적재) — 키 문자열 파싱으로
+    //   소속 테이블을 접어 판정(_metaColParent 는 fqn 없으면 key 로 파싱). 모델에 있는 비-Column
+    //   노드(Table/Routine/Schema)는 자기 키가 곧 판정 단위라 부모 접기 비적용.
+    const gn = _metaGraph.nodes.get(k);
+    if (gn && gn.label !== "Column") return false;
+    const pk = _metaColParent(k, gn && gn.fqn);
+    return !!(pk && self.has(pk));
+  };
+  _metaGraph.edges.forEach((e) => {
+    const sTouch = touch(e.source), tTouch = touch(e.target);
+    if (!sTouch && !tTouch) return;
+    const other = sTouch ? e.target : e.source;
+    nodes.add(other);
+    const on = _metaGraph.nodes.get(other);
+    const opk = (!on || on.label === "Column") ? _metaColParent(other, on && on.fqn) : null;
+    if (opk) nodes.add(opk);
+    // 승격 렌더 대비: 상대의 소속 스키마 키도 포함(접힌 카드로 승격돼도 카드가 흐려지지 않게).
+    const osk = _metaCatParent(other, on && on.fqn);
+    if (osk) nodes.add(osk);
+  });
+  // 자신의 소속 스키마도 유지(자기 클러스터 카드/컨텍스트 보존).
+  const ssk = _metaCatParent(selKey, selNode && selNode.fqn);
+  if (ssk) nodes.add(ssk);
+  return { self, nodes };
 }
 
 // ── graph-perf-bg: 논블로킹 유틸(펼침/확장이 메인스레드를 얼리지 않도록) ──
@@ -4730,53 +5040,148 @@ function _metaG6Build() {
   //   렌더 끝점으로 승격된 다수 컬럼-쌍은 하나의 집계 엣지로 dedupe 하고, 상태는 최강(trusted>
   //   candidate)을 채택하며 하위 컬럼-쌍을 pairs 로 실어 추적/툴팁에 쓴다.
   const present = new Set(nodes.map((n) => n.id));
-  const renderEndpoint = (nodeKey) => {   // 컬럼 미렌더 시 소속 테이블로 승격
+  const renderEndpoint = (nodeKey) => {   // 컬럼 미렌더 시 소속 테이블 → 접힌 스키마 카드(SC:) 순 승격
     if (present.has(nodeKey)) return nodeKey;
     // 컬럼 노드가 모델에 없어도(접힌 스키마 = 테이블만 로드) REFERENCES 끝점은 항상 컬럼 키이므로
     // 키 문자열에서 소속 테이블 키를 직접 도출한다(_metaColParent 는 fqn 없으면 key 로 파싱).
     const gn = _metaGraph.nodes.get(nodeKey);
     const pk = _metaColParent(nodeKey, gn && gn.fqn);
-    return (pk && present.has(pk)) ? pk : null;
+    if (pk && present.has(pk)) return pk;
+    // §57(사용자 요구 ①): 테이블도 미렌더(소속 스키마 접힘) → 스키마 카드로 승격 — 혼합 상태
+    //   (한쪽 펼침·한쪽 카드)에서도 관계선이 카드까지 이어진다. 카드 자체 미렌더면 기존대로 드롭.
+    //   스키마 세그먼트는 **원본 키**에서 도출(2-세그먼트 테이블 키는 colParent 가 dot 를 잃음).
+    const sk = _metaCatParent(nodeKey, gn && gn.fqn);
+    return (sk && present.has("SC:" + sk)) ? ("SC:" + sk) : null;
   };
-  const aggMap = new Map();   // "src::tgt" → 집계 엣지(테이블-레벨 승격분)
+  // §57(사용자 요구 ②·엣지 축): 상대 하이라이트 — 선택의 1-hop 에 직접 닿는 엣지만 선명 유지.
+  //   selTouch(하이라이트 인접 여부)는 dim 과 LOD-keep 양쪽에 쓰이며, 무선택(fa=null)이면 false —
+  //   dim 은 fa 존재 시에만 발동하고 LOD keep 은 선택이 있어야 성립(의미 분리 — 혼용 금지).
+  const fa = _metaGraph.focusAdj;
+  const selTouch = (rid) => {
+    if (!fa) return false;
+    const r = String(rid || "");
+    const mk = r.startsWith("SC:") ? r.slice(3) : r;
+    if (fa.self.has(mk) || fa.self.has(r)) return true;
+    // 컬럼-레벨 끝점(모델 밖 키 포함)은 소속 테이블로 접어 판정.
+    const gn = _metaGraph.nodes.get(mk);
+    if (!gn || gn.label === "Column") {
+      const pk = _metaColParent(mk, gn && gn.fqn);
+      if (pk && fa.self.has(pk)) return true;
+    }
+    return false;
+  };
+  const dimIf = (st, hl) => {
+    if (fa && !hl) {
+      st.strokeOpacity = Math.min(st.strokeOpacity || 1, 0.12);
+      // 패널 MINOR: count 라벨/배경은 strokeOpacity 와 무관하게 원색 잔존 — dim 시 라벨 키 자체 제거.
+      if (st.labelText !== undefined) { delete st.labelText; delete st.labelBackground; delete st.labelBackgroundFill; delete st.labelBackgroundOpacity; }
+    }
+    return st;
+  };
+  // §57(사용자 검토 ①·declutter): 중간 줌 LOD — 임계 미만 줌 + 대형 모델에서 무상태(FK)·비크로스
+  //   단건 선을 축약하고 의미 신호(trusted/candidate/교차DB/집계/SCHEMA_REF/하이라이트 인접)만 남긴다.
+  //   우선순위: 사용자 명시 숨김(hiddenKinds) > 하이라이트 인접 보존 > LOD 축약.
+  let zoomNow = 1;
+  try { if (_metaGraph.graph) zoomNow = _metaGraph.graph.getZoom() || 1; } catch (_) {}
+  const lodActive = zoomNow < _META_EDGE_LOD_ZOOM && _metaGraph.edges.size > _META_EDGE_LOD_MIN;
+  let lodDropped = 0;
+  const aggMap = new Map();   // "src::tgt[::RU]" → 집계 엣지(승격분 — REFERENCES/ROUTINE_USES 분리 집계)
   _metaGraph.edges.forEach((e) => {
     // graph-navfilter(§54②): 관계선 토글 — 방출만 차단(모델 유지: _metaRelAdjacency 가 모델을 읽어
     //   배치 순서 불변 = 엣지 토글로 테이블이 점프하지 않음. 모델 삭제 금지 — 재토글 복원·접기 관례).
     if (_metaGraph.hiddenKinds.has("edges")) return;
     if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN" || e.type === "HAS_ROUTINE") return;
-    // 비-REFERENCES(DESCRIBES/RELATED_TERM/ROUTINE_USES 등)는 기존대로 양끝 직접 렌더 시에만.
+    // §57: 스키마-쌍 집계 엣지(백엔드 scope_schemas 동봉) — 양쪽 모두 접힌 카드일 때만 카드간 렌더
+    //   (한쪽이라도 펼침이면 상세/승격 엣지가 대체 — 이중 표현 방지).
+    if (e.type === "SCHEMA_REF") {
+      const a = present.has("SC:" + e.source) ? ("SC:" + e.source) : null;
+      const b = present.has("SC:" + e.target) ? ("SC:" + e.target) : null;
+      if (!a || !b) return;
+      const keep = selTouch(a) || selTouch(b);
+      edges.push({ id: e.id, source: a, target: b,
+        data: { label: "SCHEMA_REF", count: e.count || 1, ref_count: e.ref_count, use_count: e.use_count },
+        style: dimIf(_metaSchemaRefEdgeStyle(e.count), keep) });
+      return;
+    }
     if (e.type !== "REFERENCES") {
+      // §57: ROUTINE_USES 도 승격 경로 참여(접힌 카드로의 사용선) — 그 외(DESCRIBES/RELATED_TERM 등)는
+      //   기존대로 양끝 직접 렌더 시에만.
+      if (e.type === "ROUTINE_USES") {
+        const srcN = _metaGraph.nodes.get(e.source), tgtN = _metaGraph.nodes.get(e.target);
+        // §18.8 패널 MINOR: kind 필터로 숨긴 루틴의 사용선이 카드 승격으로 누출되지 않게 —
+        //   빌드 입력 제외(§54②)와 동일 분류식(빈값·미상 = procedure).
+        if (srcN && srcN.label === "Routine") {
+          const rk0 = (srcN.routine_type === "function") ? "function" : "procedure";
+          if (_metaGraph.hiddenKinds.has(rk0)) return;
+        }
+        const rs = renderEndpoint(e.source), rt = renderEndpoint(e.target);
+        if (!rs || !rt || rs === rt) return;
+        if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;   // 패널 MAJOR: SCHEMA_REF 소유
+        // §57(요구 ②): 교차DB 판별 — AGE 속성(cross_ds, §57 투영) 우선 + 키 스키마-세그먼트 비교 폴백
+        //   (배포 직후 기존 엣지 속성 부재 창 커버). 세그먼트 null(스키마 미상)은 교차로 오판하지 않음.
+        const ss = _metaCatParent(e.source, srcN && srcN.fqn), ts = _metaCatParent(e.target, tgtN && tgtN.fqn);
+        const xr = !!e.cross_ds || (!!ss && !!ts && ss !== ts);
+        const keep = selTouch(rs) || selTouch(rt) || selTouch(e.source) || selTouch(e.target);
+        if (rs === e.source && rt === e.target) {
+          if (lodActive && !keep && !xr) { lodDropped += 1; return; }
+          edges.push({ id: e.id, source: rs, target: rt,
+            data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: e.relation_type },
+            style: dimIf(_metaRoutineEdgeStyle(e.relation_type, xr), keep) });
+          return;
+        }
+        const ak = rs + "::" + rt + "::RU";
+        let agg = aggMap.get(ak);
+        if (!agg) { agg = { id: "agg:" + ak, kind: "ROUTINE_USES", source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false }; aggMap.set(ak, agg); }
+        agg.count += 1;
+        agg.crossDs = agg.crossDs || xr;
+        agg.keep = agg.keep || keep;
+        if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.relation_type || "read" });
+        return;
+      }
       if (present.has(e.source) && present.has(e.target)) {
-        const st = (e.type === "ROUTINE_USES") ? _metaRoutineEdgeStyle(e.relation_type) : _metaEdgeStyleFor(e.status);
-        edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: st });
+        const keep = selTouch(e.source) || selTouch(e.target);
+        if (lodActive && !keep) { lodDropped += 1; return; }
+        edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status },
+          style: dimIf(_metaEdgeStyleFor(e.status), keep) });
       }
       return;
     }
     const rs = renderEndpoint(e.source), rt = renderEndpoint(e.target);
     if (!rs || !rt || rs === rt) return;   // 미렌더 끝점 or 동일 테이블 내부(intra-table) 제외
+    // §18.8 패널 MAJOR: 양끝 모두 카드로 승격되면 SCHEMA_REF(백엔드 스키마-쌍 집계)가 카드간
+    //   표현을 소유 — 펼쳤다 접은 스키마의 모델 잔존 엣지가 이중(SC:↔SC: 승격 + SCHEMA_REF)으로
+    //   그려지는 것을 차단한다.
+    if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;
+    const keep = selTouch(rs) || selTouch(rt) || selTouch(e.source) || selTouch(e.target);
     const colLevel = (rs === e.source && rt === e.target);
     if (colLevel) {
       // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지). crossds-rel: cross_ds 면 마젠타 점선.
-      edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true, cross_ds: e.cross_ds || 0 }, style: _metaEdgeStyleFor(e.status, e.cross_ds) });
+      if (lodActive && !keep && !e.cross_ds && e.status !== "trusted" && e.status !== "candidate") { lodDropped += 1; return; }
+      edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true, cross_ds: e.cross_ds || 0 }, style: dimIf(_metaEdgeStyleFor(e.status, e.cross_ds), keep) });
       return;
     }
-    // 한쪽 이상이 테이블로 승격 — 집계 엣지에 병합(dedupe + 상태 승급 + pairs 누적).
+    // 한쪽 이상이 테이블/카드로 승격 — 집계 엣지에 병합(dedupe + 상태 승급 + pairs 누적).
     const ak = rs + "::" + rt;
     let agg = aggMap.get(ak);
-    if (!agg) { agg = { id: "agg:" + ak, source: rs, target: rt, status: e.status || "", count: 0, pairs: [], crossDs: false }; aggMap.set(ak, agg); }
+    if (!agg) { agg = { id: "agg:" + ak, kind: "REFERENCES", source: rs, target: rt, status: e.status || "", count: 0, pairs: [], crossDs: false, keep: false }; aggMap.set(ak, agg); }
     agg.count += 1;
     agg.crossDs = agg.crossDs || !!e.cross_ds;   // crossds-rel: 집계 쌍 중 하나라도 교차DB 면 교차DB 로 표식
+    agg.keep = agg.keep || keep;
     if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.status });
     if (e.status === "trusted" || (e.status === "candidate" && agg.status !== "trusted")) agg.status = e.status;   // 최강 상태 채택
   });
   aggMap.forEach((agg) => {
-    // 집계 엣지는 여러 컬럼-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
-    const st = _metaEdgeStyleFor(agg.status, agg.crossDs);
+    if (lodActive && !agg.keep && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
+    // 집계 엣지는 여러 컬럼/루틴-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
+    const st = (agg.kind === "ROUTINE_USES")
+      ? (() => { const s = _metaRoutineEdgeStyle("", agg.crossDs); delete s.startArrow; return s; })()
+      : _metaEdgeStyleFor(agg.status, agg.crossDs);
     if (agg.count > 1) st.lineWidth = (st.lineWidth || 1.4) + 0.8;
     edges.push({ id: agg.id, source: agg.source, target: agg.target,
-      data: { label: "REFERENCES", status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
-      style: st });
+      data: { label: agg.kind, status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
+      style: dimIf(st, agg.keep) });
   });
+  _metaGraph._lodDropped = lodDropped;   // §57: 상태줄 안내용(축약 규모)
   // graph-initview: 렌더된 요소 id 집합(노드+combo) — setElementState/focus 가 미렌더 요소를 건드리지 않게.
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id).concat(combos.map((c) => c.id)));
   return { combos, nodes, edges };
@@ -5011,6 +5416,8 @@ function _metaGraphResetModel() {
   _metaGraph.running.clear();
   _metaGraph.roles.clear();   // node-role-viz: 역할 표식도 모델과 함께 초기화(sync 가 재적재)
   _metaGraph.selected = null;
+  _metaGraph.focusAdj = null;   // §57: 상대 하이라이트 집합도 모델과 함께 초기화.
+  _metaGraph._lodBand = null;   // §57 패널 NIT: LOD 밴드 기준선도 초기화(스코프 전환 스퓨리어스 rebuild 방지).
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
@@ -5484,6 +5891,8 @@ function _metaInitGraph() {
       //   전 역할색·teal 위에서 성립하는 어두운 무채색으로 교체(흰 캔버스 경계 대비 확보).
       selected: { stroke: "#161b22", lineWidth: 3 },
       busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] },   // graph-perf-bg: 펼침/확장 조회 중 임시 표시(teal 점선)
+      // §57(사용자 요구 ②): 상대 하이라이트 — 선택 1-hop 밖 데이터 노드 흐리게(_metaNodeStates 'dimmed').
+      dimmed: { opacity: 0.15 },
     } },
     // graph-drag: 중간 버튼 드래그 = 카메라 팬(어디서든), 좌클릭 = 기존대로(빈 캔버스 팬 / 노드 이동).
     behaviors: [
@@ -5518,6 +5927,46 @@ function _metaInitGraph() {
   }
   graph.on("node:click", (e) => _metaGraphOnNodeClick(e));
   graph.on("combo:click", (e) => { const id = e && e.target && e.target.id; if (id) _metaGraphShowClusterDetailById(id); });
+  // §57(사용자 요구 ②): 빈 캔버스 클릭 = 선택/상대 하이라이트 해제. §18.8 패널 MINOR: 좌클릭 팬
+  //   직후 click 오발화 가드 — pointerdown 대비 이동 5px 초과면 팬으로 간주(선택 보존).
+  let _cvDown = null;
+  try { container.addEventListener("pointerdown", (ev) => { _cvDown = { x: ev.clientX, y: ev.clientY }; }, true); } catch (_) {}
+  graph.on("canvas:click", (e) => {
+    if (!_metaGraph.selected) return;
+    const cx = e && e.client ? e.client.x : null, cy = e && e.client ? e.client.y : null;
+    if (_cvDown && cx != null && cy != null
+        && (Math.abs(cx - _cvDown.x) > 5 || Math.abs(cy - _cvDown.y) > 5)) return;
+    _metaGraphSetSelected(null);
+  });
+  // §57(declutter): 줌 밴드(LOD 임계) 전이 시에만 디바운스 rebuild — 경계 부근 휠 미세조작 왕복 방지.
+  //   §18.8 패널 BLOCKING: G6 v5 번들에 'viewportchange' 이벤트 없음(grep 실증) — 줌/팬은
+  //   GraphEvent.AFTER_TRANSFORM('aftertransform')으로 발화한다. 밴드 미전이는 즉시 return 이라
+  //   transform 다발 발화 비용은 비교 1회뿐.
+  if (_metaGraph._lodBand === undefined) _metaGraph._lodBand = null;
+  graph.on("aftertransform", () => {
+    let z = 1;
+    try { z = graph.getZoom() || 1; } catch (_) { return; }
+    const band = z < _META_EDGE_LOD_ZOOM ? "lod" : "full";
+    if (band === _metaGraph._lodBand) return;
+    const prev = _metaGraph._lodBand;
+    _metaGraph._lodBand = band;
+    if (prev === null) return;   // 최초 관측(로드/스코프 전환 직후)은 기준선만 세움 — 스퓨리어스 rebuild 방지
+    if (_metaGraph._lodTimer) clearTimeout(_metaGraph._lodTimer);
+    _metaGraph._lodTimer = setTimeout(() => {
+      _metaGraph._lodTimer = null;
+      if (_metaGraph._busyKeys.size) { _metaGraph._lodBand = null; return; }   // busy 유예 — 기준선 리셋으로 다음 transform 재시도(§33 관례)
+      try { _metaG6Apply(false); } catch (_) {}
+      // §57 패널 MINOR: LOD 축약 안내 — 사용자가 '관계 없음'으로 오독하지 않게 상태줄에 1줄.
+      try {
+        const st = document.getElementById("metadataGraphStatus");
+        if (st) {
+          const marker = " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)";
+          const base = String(st.innerText || "").replace(marker, "");
+          st.innerText = (band === "lod" && (_metaGraph._lodDropped || 0) > 0) ? (base + marker) : base;
+        }
+      } catch (_) {}
+    }, 300);
+  });
   // graph-ctxmenu: 우클릭 상호작용 메뉴(REQ-20260702T113000). 좌표는 container capture 리스너가
   //   선캡처(_metaCtx.x/y — capture 단계가 G6 캔버스 target 핸들러보다 먼저 실행됨). G6 이벤트에
   //   client 좌표가 실리면 그것을 우선 사용. "X:" 접기 컨트롤 우클릭은 소속 테이블 메뉴로 귀속.
@@ -6289,6 +6738,24 @@ function _metaGraphSetSelected(key) {
   // graph-perf-bg fix: _metaApplyState 경유 — busy 보존 + _stateCache signature 동기화(명령형 writer 가 캐시를 stale 로 남기지 않음).
   if (prev && prev !== key && _metaGraph.nodes.has(prev)) _metaApplyState(prev);
   if (key && _metaGraph.nodes.has(key)) _metaApplyState(key);
+  // §57(사용자 요구 ②): 상대 하이라이트 — 인접 집합 재계산 후 rebuild bake. 전역 흐리게는
+  //   setElementState(건당 ~50ms) 부적합(§33) — _metaG6Apply(false) 경로(~80-200ms)가 규범.
+  //   펼침 fetch 창(busy) 중엔 유예(rebuild 가 _busyKeys 를 소멸시키는 부작용 방지, 7687 동형).
+  const had = !!_metaGraph.focusAdj;
+  _metaGraph.focusAdj = _metaGraph.selected ? _metaFocusAdjacency(_metaGraph.selected) : null;
+  if (had || _metaGraph.focusAdj) _metaFocusApplyOrRetry(0);
+}
+
+// §57 패널 MINOR: busy 창에서 유예된 하이라이트 rebuild 를 재시도 — 엣지 dim 은 build-bake 라
+//   상태 폴(setElementState)로는 회복 불가. busy 종단이 rebuild 없이 끝나는 경로(빈 스키마/오류)
+//   에서도 최대 4×500ms 안에 flush 된다.
+function _metaFocusApplyOrRetry(attempt) {
+  if (!_metaGraph.graph) return;
+  if (_metaGraph._busyKeys.size) {
+    if (attempt < 4) setTimeout(() => _metaFocusApplyOrRetry(attempt + 1), 500);
+    return;
+  }
+  try { _metaG6Apply(false); } catch (_) {}
 }
 
 // 테이블 key 에 (모델상) 컬럼 노드가 있으면 true — 펼침 상태의 단일 소스.
@@ -6874,6 +7341,10 @@ function _metaGraphIngest(nodes, edges) {
       cardinality: e.cardinality || "",   // reltrace-tabledetail(review): 모델-병합 관계행의 [cardinality] 배지 보존
       relation_type: e.relation_type || "",   // graph-funcproc: ROUTINE_USES read/write(+유사어 관계형)
       cross_ds: (e.cross_ds != null && e.cross_ds !== "") ? 1 : 0,   // crossds-rel: 교차DB 엣지 표식(빌드 스타일/배지)
+      // §57: SCHEMA_REF(스키마-쌍 집계) count 계열 보존 — 카드간 연결선 굵기/라벨의 데이터 소스.
+      count: (e.count != null && e.count !== "") ? Number(e.count) : "",
+      ref_count: (e.ref_count != null && e.ref_count !== "") ? Number(e.ref_count) : "",
+      use_count: (e.use_count != null && e.use_count !== "") ? Number(e.use_count) : "",
       weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" });
   });
   return added;
@@ -8155,7 +8626,17 @@ function _metaRenderGroupedList(listEl, items, sub, canEdit) {
     const g = groups.get(key);
     // M4: 단일 항목 그룹 → 카드 없이 flat 행(경로 포함 grouped=false).
     if (g.items.length < 2) {
-      listEl.appendChild(_metaListRow(g.items[0], sub, canEdit, false));
+      const flat = _metaListRow(g.items[0], sub, canEdit, false);
+      // ux2 #3: enums 단일 코드 그룹도 같은 컬럼에 '코드 추가' 진입점(행 아래 footer 버튼).
+      if (sub === "enums" && canEdit) {
+        const wrap = document.createElement("div");
+        wrap.className = "admin-meta-enum-singleton";
+        wrap.appendChild(flat);
+        wrap.appendChild(_metaMakeEnumAddCodeBtn(g.items[0]));
+        listEl.appendChild(wrap);
+      } else {
+        listEl.appendChild(flat);
+      }
       continue;
     }
     const card = document.createElement("div");
@@ -8174,6 +8655,8 @@ function _metaRenderGroupedList(listEl, items, sub, canEdit) {
     head.appendChild(eyebrow);
     head.appendChild(h);
     head.appendChild(cnt);
+    // ux2 #3: enums 그룹 head 에 '코드 추가' — 이 컬럼(schema.table.column)으로 prefill 된 생성 폼.
+    if (sub === "enums" && canEdit) head.appendChild(_metaMakeEnumAddCodeBtn(g));
     card.appendChild(head);
     const rows = document.createElement("div");
     rows.className = "admin-meta-group-rows";
@@ -8228,6 +8711,45 @@ function _metaStartEdit(it) {
   adminState.metadata.detailMode = "form";
   _metaRenderDetail();
   _metaSyncListActive();
+}
+
+// ux2 #3: ENUM 컬럼 그룹의 '＋ 코드 추가' 버튼. source 는 그룹({schema,table,column}) 또는 항목({schema_name,…}).
+function _metaMakeEnumAddCodeBtn(source) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-secondary admin-meta-enum-add";
+  btn.textContent = "＋ 코드 추가";
+  btn.title = "이 컬럼에 새 코드↔라벨 추가";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();   // 그룹 head/행 클릭 전파 차단.
+    _metaStartCreatePrefilled({
+      schema_name: (source && (source.schema_name != null ? source.schema_name : source.schema)) || "",
+      table_name: (source && (source.table_name != null ? source.table_name : source.table)) || "",
+      column_name: (source && (source.column_name != null ? source.column_name : source.column)) || "",
+    });
+  });
+  return btn;
+}
+
+// ux2 #3: 지정된 식별 필드(schema/table/column)로 prefill 된 생성 폼 진입 — 기존 create 흐름 재사용(검증/pending 그대로).
+//   code/label 은 비워두고 code 에 포커스. 값은 input.value 로만 주입(XSS 안전).
+function _metaStartCreatePrefilled(prefill) {
+  const md = adminState.metadata;
+  md.editing = null;        // 생성 모드.
+  md.selectedId = null;
+  md.detailMode = "form";
+  _metaRenderDetail();       // 빈 생성 폼 렌더.
+  _metaSyncListActive();
+  const wrap = document.getElementById("metadataFormFields");
+  if (wrap && prefill) {
+    for (const key of ["schema_name", "table_name", "column_name"]) {
+      if (prefill[key] == null) continue;
+      const input = wrap.querySelector(`[name="${key}"]`);
+      if (input) input.value = String(prefill[key]);
+    }
+  }
+  const codeInput = wrap ? wrap.querySelector('[name="code"]') : null;
+  if (codeInput && codeInput.focus) { try { codeInput.focus(); } catch (_) {} }
 }
 
 async function _metaSubmitForm(e) {
@@ -8482,6 +9004,7 @@ function renderFeedbackQueue(kind) {
   const listEl = document.getElementById("metadataList");
   const countEl = document.getElementById("metadataCount");
   if (!listEl) return;
+  _metaClearReviewDetail();   // ux2 #2: 큐 (재)렌더 시 우측 상세 초기화(stale 선택 방지).
   const items = adminState.metadata.feedback.items || [];
   const canCurate = can(cfg.reviewPerm);
   if (countEl) countEl.textContent = `${items.length}건`;
@@ -8530,6 +9053,19 @@ function renderFeedbackQueue(kind) {
   for (const it of items) {
     const row = document.createElement("div");
     row.className = "admin-meta-row";
+    // ux2 #2: 후보 행 클릭 → 우측 read-only 상세(승급/거부 버튼은 stopPropagation 로 행-선택 미발화).
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    const _openFb = () => {
+      adminState.metadata.reviewSelected = { kind, item: it };
+      _metaRenderReviewDetail(kind, it);
+      _metaMarkReviewActive(listEl, row);
+    };
+    row.addEventListener("click", _openFb);
+    row.addEventListener("keydown", (e) => {
+      if (e.target !== e.currentTarget) return;   // 내부 버튼 키 입력 무시(이중 발화 방지).
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); _openFb(); }
+    });
     const main = document.createElement("div");
     main.className = "admin-meta-row-main";
     const title = document.createElement("div");
@@ -8580,7 +9116,7 @@ function renderFeedbackQueue(kind) {
         promoteBtn.type = "button";
         promoteBtn.className = "btn-primary admin-meta-edit";
         promoteBtn.textContent = "승급";
-        promoteBtn.addEventListener("click", () => _feedbackQueueAction(kind, it.id, "promote", promoteBtn));
+        promoteBtn.addEventListener("click", (e) => { e.stopPropagation(); _feedbackQueueAction(kind, it.id, "promote", promoteBtn); });
         actions.appendChild(promoteBtn);
       }
       if (st === "pending" || st === "auto_promoted") {
@@ -8588,7 +9124,7 @@ function renderFeedbackQueue(kind) {
         rejectBtn.type = "button";
         rejectBtn.className = "btn-secondary admin-meta-del";
         rejectBtn.textContent = (st === "auto_promoted") ? "되돌리기" : "거부";
-        rejectBtn.addEventListener("click", () => _feedbackQueueAction(kind, it.id, "reject", rejectBtn));
+        rejectBtn.addEventListener("click", (e) => { e.stopPropagation(); _feedbackQueueAction(kind, it.id, "reject", rejectBtn); });
         actions.appendChild(rejectBtn);
       }
       if (actions.childNodes.length) row.appendChild(actions);
