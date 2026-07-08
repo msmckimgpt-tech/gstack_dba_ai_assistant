@@ -5349,3 +5349,12 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] **#5 신뢰도 배지**: 검토 큐 배지 4개 전부 회색이라 핵심 신호(신뢰도)가 안 튐 → `.admin-meta-tag-conf`(은은한 primary accent)로 분리(JS `-neutral`→`-conf`).
 - [x] 검증: `node --check` OK · CSS 균형(1905/1905) · route 골든 불변 · 호스트 전체 1662 passed(회귀 0). cache-buster `?v=20260707-metadata-console-redesign`→`?v=20260707-metadata-console-polish`.
 - [ ] PB-0008 POST-DEPLOY 라이브 재확인(2차 보기 필 경량·그룹 행 divider·신뢰도 accent) → verify-completion → commit → PR → 병합 → web 무중단 배포 → /healthz.
+
+### TASK-20260708-metadata-console-ux2 — 메타데이터 콘솔 UX 이슈 4건 (Major §12.3 — feature-0003 web/UI 단독, worktree ai/claude/metadata-console-ux2, 2026-07-08)
+- 트리거: metadata-console-polish 배포 후 사용자 실사용 피드백 4건.
+- [x] **#1 밀집/가시성**: 메타 list 컬럼 max 400px 캡 → `minmax(360px,1fr) minmax(0,1.05fr)` 확대 + 행 line-height(제목1.35/본문1.5)·padding 개선.
+- [x] **#2 선택 불가**: 검토/검수 큐 후보 행(용어·ENUM feedback + 샘플)을 `role=button`+클릭 → 우측 `#metadataReviewDetail` read-only 상세(전체 정의/라벨·질문·SQL/다이어그램·신뢰도/scope/status + 승급/거부·승인/거부). `_metaRenderReviewDetail`·`reviewSelected` 상태·`_metaRenderDetail` coordination(review view+선택 시 상세, 아니면 empty/폼)·서브탭/보기/스코프 전환·큐 리로드 시 초기화.
+- [x] **#3 ENUM 열거값 추가**: ENUM 그룹 카드에 "+ 코드 추가" → `_metaStartCreatePrefilled` 로 생성 폼을 그 schema/table/column pre-fill(code+label 만 입력). 단일/다항목 그룹 양쪽.
+- [x] **#4 샘플 mermaid**: `generated_sql` 이 mermaid 면 공용 `mermaid-render.js`(strict)로 다이어그램 렌더, SQL 이면 코드블록. admin.html 에 vendor/mermaid + mermaid-render.js 로드(admin.js 이전). 행 프리뷰는 "다이어그램(클릭해 상세)" 표기.
+- [x] 검증: `node --check` OK · CSS 균형(1924/1924) · route 골든 불변 · 호스트 1662 passed(회귀 0). cache-buster `?v=20260708-metadata-console-ux2`.
+- [ ] §18.8 패널(서브에이전트) 사용량 한도로 미실행 → **메인 루프 적대 자기검증**(coordination·XSS·mermaid API·액션 정합 확인, 블로킹 0)로 대체 + **PB-0008 라이브가 1차 행동 실증**. verify-completion → 배포 → PB-0008.
