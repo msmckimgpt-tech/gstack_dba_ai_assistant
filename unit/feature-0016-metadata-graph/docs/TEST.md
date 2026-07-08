@@ -787,3 +787,25 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   SSOT cross 플래그의 엣지 속성/색상 반영 후보 ③ 스키마 점프 목록에 AccountDB/accountdb 케이스 중복
   노출 — **테이블 축 케이스 변형**(table_descriptions 'AccountDB' 33행, 06-30 일회성 적재·라이브 writer
   없음·lower twin 없음 → 삭제 아닌 rekey 대상, §56 후속 T56.7c 계열에 위임).
+
+## graph-edge-visibility — 접힘 연결선·하이라이트·크로스·LOD (TASK §57, 2026-07-08)
+
+### 케이스
+- TEST-20260708T120000-edge-visibility-1: 양쪽 접힘 카드 사이 SCHEMA_REF 집계 엣지(count 라벨·로그
+  굵기), 한쪽 펼침 시 미방출(상세/승격 엣지 대체). 혼합 상태는 3단 승격(컬럼→테이블→SC:)로 연속.
+- TEST-20260708T120000-edge-visibility-2: 크로스-DB ROUTINE_USES 마젠타(AGE cross_ds 속성 + 키
+  세그먼트 폴백), 로컬 사용선 보라 유지. sync_routine 이 SSOT cross → cross_ds='1' 투영.
+- TEST-20260708T120000-edge-visibility-3: 선택 시 1-hop 인접 밖 노드 dimmed·비인접 엣지 흐림,
+  빈 캔버스 클릭 해제. LOD(줌<0.35·엣지>120)에서 무상태 FK 축약·의미 신호 보존.
+
+### Run (2026-07-08) — pre-deploy 격리 검증
+- Environment: headless node vm(실 admin.js) + repo-insight-worker 컨테이너 pytest. Runner: AI.
+- headless 신규 18 PASS + 기존 category 26 PASS(회귀 0). 백엔드 21 PASS(EXIT=0) — cross_ds 투영·
+  SCHEMA_REF 집계(intra-schema·무세그먼트 키 제외) 잠금. 집계 성능: 멀티-hop 82s → 1-hop 0.2s 실측.
+- PB-0008 은 배포 후 실 Windows 육안(카드 연결선·하이라이트·마젠타·LOD)으로 수행 예정.
+- **§18.8 패널 반영 후**: BLOCKING(aftertransform 교체)·MAJOR(이중 렌더 억제)·MINOR 7 수정 —
+  headless 22 PASS(+T6/T7/T8)·category 26·백엔드 21 (EXIT=0).
+
+### Run (2026-07-08) — §58 골격 가져오기 라벨 케이스 (Environment: 컨테이너 pytest)
+- test_bootstrap_skeleton_mssql_schema_label_lowercased PASS — db_name 'FHGame1' → schema_name 'fhgame1'
+  저장, 테이블명 케이스 보존, MySQL 분기 무변경. EXIT=0.

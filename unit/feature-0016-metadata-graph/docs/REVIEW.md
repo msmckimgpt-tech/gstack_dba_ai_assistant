@@ -1174,3 +1174,37 @@ source_of_truth: true
 ## REV-20260707T193500-ai-root-feature-0016-routine-sync-postdeploy [SKIPPED: docs-only POST-DEPLOY 기록 — 코드 변경 0, §56 라이브 e2e 증적의 TASK/TEST/MODIFY 반영. 코드 리뷰는 직전 REV-20260707T173500(RC5 패널) 정본] — §56 T56.8 완수 기록
 
 ## REV-20260708T103000-ai-root-feature-0016-routine-sync-pb0008 [SKIPPED: docs-only PB-0008 Run 기록 — 코드 변경 0, 시각검증 결과의 TEST/TASK 반영] — §56 PB-0008 완수 기록
+
+## REV-20260708T150000-ai-root-feature-0016-graph-edge-visibility [SUBAGENT: PASS-WITH-FIXES] — §57 §18.8 적대 리뷰 패널
+
+- 실행: ultracode workflow 4렌즈(correctness/state-perf/regression/ux) finder 완주. refuter 24개는
+  사용량 한도(reset 17:30)로 전멸 — **finder 원본 발견을 journal 에서 회수해 main-loop 직접 검증**
+  (BLOCKING 은 번들 grep 실증, MAJOR 는 코드 정독 + 회귀 테스트로 확정). 판정 공백 없음.
+- **BLOCKING 1 확정·수정**: G6 v5 번들에 'viewportchange' 이벤트 부재(grep 0건 실증) → LOD 밴드
+  트리거 사망 → GraphEvent.AFTER_TRANSFORM('aftertransform', 번들 실증)으로 교체 + 최초 관측 기준선
+  (스퓨리어스 rebuild 방지)·busy 유예 시 기준선 리셋(재시도 보장).
+- **MAJOR 1 확정·수정**: 펼쳤다 접은 스키마의 모델 잔존 REFERENCES/RU 가 SC:↔SC: 승격돼 SCHEMA_REF
+  와 이중 렌더 → 양끝 카드 승격이면 방출 억제(SCHEMA_REF 가 카드간 표현 소유). 회귀 T6.
+- MINOR 수정 7: ① 좌클릭 팬 직후 canvas:click 오발화 가드(pointerdown 5px) ② kind 숨김 루틴의
+  사용선 승격 누출 차단(T7) ③ 컬럼 선택 시 소속 테이블 dim(T8) ④ scope_schemas truncated 오염 →
+  edges_truncated 분리 + 노드필터를 cap 앞으로 + 1-hop 스캔 LIMIT 100k 방어 ⑤ dim 시 SCHEMA_REF
+  count 라벨 잔존 → 라벨 키 제거 ⑥ _lodDropped 소비자 부재 → LOD 밴드 rebuild 후 상태줄 축약 안내
+  ⑦ 선택 변화 busy 유예 시 재시도(4×500ms — 엣지 dim bake 는 폴로 회복 불가).
+- 수용(후속 기록): 레거시 스키마-무 2-세그먼트 키의 동명 카드 오승격(키 규약 고유 모호성,
+  pre-existing) · SCHEMA_REF/agg 엣지 우클릭 raw 폴백(기존 agg: 갭과 동일).
+- 재검증: headless 22 PASS(+T6/T7/T8) + category 26 PASS·백엔드 21 PASS·node --check/py_compile.
+
+## REV-20260708T153000-ai-root-feature-0016-tableaxis-case [SUBAGENT: PASS-WITH-FIXES] — §58 적대 리뷰(단일 에이전트, 하류 전 경로 추적)
+
+- 발견 MAJOR 1·MINOR 2·NIT 2 — **MAJOR 확정·수정**: 골격 라벨 lower 화로 MSSQL 단건 자동완성
+  grounding 의 케이스-정확 allowlist(sys.databases 원본 케이스 set) membership 이 항상 실패 → 무음
+  ungrounded 회귀. → allowlist 를 lower→원본 매핑으로 case-insensitive 매치 + **연결은 원본 케이스**
+  (kb_metadata LOWER 계약과 동형). 회귀 테스트 grounding_case_insensitive.
+- MINOR 반영: ① rekey(T58.2) 전 창구간 twin 생성 경로 → rekey 를 배포 직후 즉시 실행 + twin 병합
+  (신규 우선) 절차 명시 ② 테스트 갭 → 혼합 케이스 SQL 스키마('Sales')로 질의 원본 케이스 잠금.
+  NIT: 주석 과장 정정(질의 식별자는 sql_schema/tname). 미리보기 라벨 lower 표기는 그래프 축 정합
+  코스메틱으로 수용.
+- 검증 완료 경로: 저장 왕복 dedupe(prefill lower 자기일관)·bulk describe(프롬프트 전용)·읽기 LOWER
+  매칭·그래프 sync 정합(테이블명 케이스 보존이 정확)·MySQL 무영향. semantic_cluster exact-case 조회는
+  pre-existing gap(별도 후속).
+- 재검증: 컨테이너 phase2 전체 31 PASS(EXIT=0).

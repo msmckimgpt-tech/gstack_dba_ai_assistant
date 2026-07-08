@@ -1729,3 +1729,55 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   AC-② fhdef 크로스 연결선(양방향 상세 포함) · AC-③ 능동 분석 보충(run 538/538) 전건 PASS +
   디자인 수용성 검토(개선 후보 3건 후속 위임). 잔여 한계(비차단): 그래프 Routine 정점 21,992 > SSOT 21,160 — drop 된 루틴의 정점 잔존은
   ADR-016 알려진 한계(vertex prune 투영 범위 외).
+
+## 57. graph-edge-visibility — 접힘 카드 연결선·상대 하이라이트·크로스 시각 구분·중간 줌 LOD (2026-07-08, 사용자 요청)
+
+- Related Requirement: REQ-20260708-graph-edge-visibility — PB-0008 시각검증(§56 T56.9) 후 사용자 개선 요청:
+  ① DB(스키마 카드) 접힘 상태에서 연결선 부재 → 연결 구조 파악 불가 ② 선택 노드 관련 선 외 나머지
+  흐리게(상대 하이라이트) ③ (검토 발견) 크로스-DB ROUTINE_USES 시각 미구분 ④ 중간 줌 엣지 스파게티.
+- 등급: **Major**(그래프 렌더 엔진·백엔드 집계 API, 마이그 0·비파괴). 정본 ADR-024.
+- 진단(정찰 4-agent workflow): 접힘 연결선 부재는 2중 근본원인 — (a) 데이터: scope_schemas(초기 카드
+  뷰)가 edges 를 아예 반환하지 않음 (b) 빌드: renderEndpoint 에 스키마 카드(SC:) 승격 폴백 부재로
+  접힘 스키마행 엣지 전부 드롭. §32 의 '접힌 상태 관계'는 테이블-레벨 한정이었음.
+
+### 57.1 구현
+- [x] T57.1 백엔드: sync_routine cross_ds='1' 투영(SSOT refs.cross → AGE, ADR-019 키 관례) +
+  schema_tables RETURN u.cross_ds + scope_schemas **SCHEMA_REF 스키마-쌍 집계**(1-hop 전량 스캔
+  0.2s 실측 — 멀티-hop cypher 82s 기각 — 후 키 세그먼트 Python 무향 집계, cap 400·truncated).
+- [x] T57.2 프론트: renderEndpoint 컬럼→테이블→SC: 카드 3단 승격(원본 키 세그먼트 기준) + SCHEMA_REF
+  카드간 렌더(양쪽 접힘일 때만, count 라벨·로그 굵기) + ROUTINE_USES 승격 집계(::RU 분리 키).
+- [x] T57.3 크로스 ROUTINE_USES 마젠타(#a855c7 — REFERENCES cross 색 어휘 공유, 잔점선·화살표 방향
+  유지): AGE cross_ds 속성 우선 + 키 세그먼트 비교 폴백(배포 직후 기존 엣지 속성 부재 창 커버).
+- [x] T57.4 상대 하이라이트: _metaFocusAdjacency(1-hop, 모델 밖 컬럼 키 파싱) + node.state 'dimmed'
+  (opacity .15, _metaNodeStates 경유 — §33 상태 폴 정합) + 비인접 엣지 strokeOpacity .12 bake +
+  canvas:click 해제 + 선택 변화 시 busy 가드 하 rebuild(_metaG6Apply — setElementState 전역 금지 §33).
+- [x] T57.5 중간 줌 LOD: 줌<0.35 ∧ 모델 엣지>120 시 무상태 FK·비크로스 단건 축약(trusted/candidate/
+  크로스/집계/SCHEMA_REF/하이라이트 인접 보존 — 우선순위: 사용자 숨김 > 하이라이트 > LOD),
+  viewportchange 밴드 전이+300ms 디바운스 rebuild, _lodDropped 집계. 캐시버스터 20260708-graph-edge-visibility.
+
+### 57.2 검증
+- [x] T57.6 headless 신규 test_g6build_edge_visibility.js **22 PASS**(SCHEMA_REF 방출/한쪽 펼침 미방출·
+  SC: 승격 집계·크로스 마젠타/로컬 보존·dimmed 인접 판정·LOD 축약/보존/정상줌 + 패널 회귀 T6 이중렌더
+  억제/T7 kind 누출/T8 컬럼 부모) + 기존 category 26 PASS. 백엔드 test_graph_funcproc_uxfix.py
+  +2(cross_ds 투영·SCHEMA_REF 집계) 21 PASS.
+- [x] T57.6b §18.8 패널 반영 — BLOCKING 1(viewportchange 부재→aftertransform)·MAJOR 1(SC:↔SC: 이중
+  렌더 억제)·MINOR 7 수정, 수용 2 기록. REVIEW REV-20260708T150000 정본.
+- [ ] T57.7 §18.8 패널 → verify → PR → 머지 → 배포(web) → PB-0008 육안(카드 연결선·하이라이트·
+  마젠타 크로스·LOD).
+
+## 58. tableaxis-case — 스키마 골격 가져오기 MSSQL 라벨 케이스 정합 + AccountDB 잔재 회수 (2026-07-08)
+
+- Related Requirement: REQ-20260708-graph-edge-visibility 후속 — PB-0008 검토 발견 ③(AccountDB/accountdb
+  중복 카드). 근원: '스키마 골격 가져오기' MSSQL 분기(app.py _bootstrap_collect_skeleton_mssql)가
+  sys.databases 원본 케이스를 table_descriptions.schema_name 으로 저장 — §56 RC5(루틴 축)와 동일
+  결함 클래스의 **테이블 축**. 라이브 잔재: 'AccountDB' 33행(06-30 일회성, lower twin 0 → rekey 대상).
+- 등급: **Minor**(1점 정규화 + 운영 rekey, 비파괴). §56 RC5·ADR-023 계약의 테이블 축 확장.
+- [x] T58.1 app.py 골격 수집 MSSQL 분기 schema_name=normalize_db_label(db_name) (단일 계약 —
+  테이블명 케이스 보존·MySQL 분기 무변경) + **적대 리뷰 MAJOR 동반수정**: 단건 자동완성 grounding
+  allowlist 를 lower→원본 매핑 case-insensitive 로(연결은 원본 케이스 — 무음 ungrounded 회귀 차단).
+  테스트 2건(혼합 케이스 질의 잠금·grounding 회귀). REVIEW REV-20260708T153000 정본.
+- [ ] T58.2 운영 rekey(배포 후): table_descriptions 'AccountDB' 33행 → 'accountdb'(twin-가드 tx) +
+  node_analysis 1run/1job key 치환 + AGE 'AccountDB' 축 34정점 DETACH DELETE(정점-필터 한정 —
+  비앵커 edge 스캔 금지, 라이브 6분+ 실측) + full sync 재투영 + 잔재 0 검증.
+- 후속 위임(별도 cycle): mysql-42371f8d92bc routine 케이스 변형 5쌍(120행) — MySQL 은 케이스 유의미,
+  실서버 SHOW DATABASES 실존 확인 전 rekey 금지(T56.7c 계열).

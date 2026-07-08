@@ -641,3 +641,125 @@ def test_valid_scope_keys_env_legacy_uses_label_not_hash(monkeypatch):
     # read 동치 확인: write 허용 라벨 == read 가 잡는 활성 scope(scope_key or key).
     _ds = ds_map["reporting"]
     assert (_ds.get("scope_key") or _ds.get("key")) == "reporting"
+
+
+# ── §58: 스키마 골격 가져오기 — MSSQL 저장 라벨 lower 계약 ─────────────────────
+def test_bootstrap_skeleton_mssql_schema_label_lowercased(monkeypatch):
+    """§58: MSSQL 골격 저장 schema_name(=DB명 라벨)은 normalize_db_label lower 계약(TASK-0220·
+    §56 RC5 와 단일 계약) — 원본 케이스 저장 시 cadence(lower) 축과 케이스-변형 이중 적재(라이브
+    실측 'AccountDB' 33행·AGE 중복 스키마 카드). 테이블명 케이스·질의용 원본 db_name 은 보존."""
+    from modules import schema as schema_mod
+
+    class _Dialect:
+        def system_schemas(self):
+            return ["sys", "information_schema"]
+
+        def describe_schema_tables(self, s):
+            return f"TABLES::{s}"
+
+        def describe_columns(self, s, t):
+            return f"COLS::{s}::{t}"
+
+    class _Dialects:
+        def active(self):
+            return _Dialect()
+
+    class _Cur:
+        def __init__(self):
+            self.sql = ""
+
+        def execute(self, sql, *a):
+            self.sql = str(sql)
+
+        def fetchall(self):
+            if self.sql.startswith("TABLES::"):
+                return [("FH_CHAR",)]
+            if self.sql.startswith("COLS::"):
+                return [("Id", "int")]
+            return []
+
+        def close(self):
+            pass
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+    executed = []
+
+    class _RecCur(_Cur):
+        def execute(self, sql, *a):
+            super().execute(sql, *a)
+            executed.append(self.sql)
+
+    class _RecConn:
+        def cursor(self):
+            return _RecCur()
+
+    # 혼합 케이스 SQL 스키마로 질의 원본 케이스 유지까지 잠금(적대 리뷰 MINOR — lower 확대 적용 회귀 방지).
+    monkeypatch.setattr(schema_mod, "load_known_schemas", lambda conn: ["Sales"])
+    out = app._bootstrap_collect_skeleton_mssql(_RecConn(), _Dialects(), "FHGame1")
+    assert out and all(r["schema_name"] == "fhgame1" for r in out)
+    assert out[0]["table_name"] == "FH_CHAR"   # 테이블명 케이스는 보존(라벨 축만 정규화)
+    assert any(s == "TABLES::Sales" for s in executed)          # 질의 스키마 식별자 원본 케이스
+    assert any(s.startswith("COLS::Sales::") for s in executed)
+
+
+def test_metadata_introspect_table_grounding_case_insensitive(monkeypatch):
+    """§58 적대 리뷰 MAJOR 회귀 잠금: 저장 라벨이 lower 가 된 뒤에도 MSSQL grounding allowlist 가
+    case-insensitive 로 매치되고 **연결은 서버 원본 케이스**로 수행된다(무음 grounding 파괴 방지)."""
+    from modules import schema as schema_mod
+    import shared.db as sdb
+
+    class _Dialect:
+        def system_databases(self):
+            return ["master", "tempdb", "model", "msdb"]
+
+        def system_schemas(self):
+            return ["sys", "information_schema"]
+
+        def describe_columns(self, s, t):
+            return f"COLS::{s}::{t}"
+
+    class _Dialects:
+        def active(self):
+            return _Dialect()
+
+    class _Cur:
+        def __init__(self):
+            self.sql = ""
+
+        def execute(self, sql, *a):
+            self.sql = str(sql)
+
+        def fetchall(self):
+            return [("Id", "int")] if self.sql.startswith("COLS::") else []
+
+        def close(self):
+            pass
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+        def close(self):
+            pass
+
+    connected = {}
+
+    from modules import dialects as dialects_mod
+    monkeypatch.setattr(app, "_bootstrap_resolve_datasource",
+                        lambda key: ({"key": key, "engine": "mssql"}, "mssql-abc", None))
+    monkeypatch.setattr(app, "_bootstrap_activate_dialect", lambda ds, sk: "mssql")
+    monkeypatch.setattr(dialects_mod, "active", lambda: _Dialect())
+    monkeypatch.setattr(sdb, "list_server_databases", lambda ds, timeout=None: ["FHGame1"])
+
+    def _fake_connect(datasource=None, database=None, autocommit=True):
+        connected["database"] = database
+        return _Conn()
+
+    monkeypatch.setattr(sdb, "connect", _fake_connect)
+    monkeypatch.setattr(schema_mod, "load_known_schemas", lambda conn: ["dbo"])
+    got = app._metadata_introspect_table("mssql-qa", "fhgame1", "FH_CHAR")   # lower 라벨 입력
+    assert got and got["columns"] and got["columns"][0]["column_name"] == "Id"
+    assert connected["database"] == "FHGame1"   # 연결은 서버 원본 케이스
