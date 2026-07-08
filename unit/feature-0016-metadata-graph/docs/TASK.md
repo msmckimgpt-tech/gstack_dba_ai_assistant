@@ -1781,3 +1781,17 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   비앵커 edge 스캔 금지, 라이브 6분+ 실측) + full sync 재투영 + 잔재 0 검증.
 - 후속 위임(별도 cycle): mysql-42371f8d92bc routine 케이스 변형 5쌍(120행) — MySQL 은 케이스 유의미,
   실서버 SHOW DATABASES 실존 확인 전 rekey 금지(T56.7c 계열).
+
+### 57.3/58.2 POST-DEPLOY 완수 (2026-07-08, 재개 세션)
+- [x] T57.7 §57 배포·PB-0008 완수 — PR #623 머지 → main 화해(외부 세션 report_deck 커밋 2건 보존
+  merge·push) → deploy-web(c1d7cac8, soak PASS) + 워커 재빌드(cross_ds 라이브 grep 11). 실 Windows
+  Chrome 검증: ① 접힘 카드 간 SCHEMA_REF 연결선 + count 라벨(fh_ods—5—fhdef—44—fhetl 육안,
+  모델 73엣지) ② 상대 하이라이트(선택 시 358/361 비인접 dim — 유령화 육안) ③ 크로스 마젠타 51엣지
+  ④ LOD(band=lod·dropped 520·상태줄 "줌아웃 — 관계선 일부 축약" — aftertransform 실동작). 전건 PASS.
+- [x] T58.2 rekey 완수 — SSOT 'AccountDB' 33행 → 'accountdb'(twin-가드 tx, 설명 33/33 보존) +
+  node_analysis 1run/1job key 치환 + AGE AccountDB 축 34정점 DETACH DELETE + full sync(errors 0·
+  step_failures 0·ok) → 점프 목록 accountdb 단일(육안). 잔여: 'account' 동일-키 Schema vertex 중복
+  2개(동시 sync MERGE race 흔적 — UI 는 key-Map dedupe 로 무해, 후속: sync advisory lock).
+- [x] T58.3 (동반 장애 복구) bedrock-gateway OOM 재시작 루프 — 07-07 라우팅 config 확장으로 litellm
+  기동 풋프린트 >1g(x-default), 워커 up 의 재생성이 표면화(무로그 137×111회). docker update 2g 응급
+  복구(healthy) + docker-compose.yml bedrock-gateway mem_limit 2g 영속화(본 cycle).
