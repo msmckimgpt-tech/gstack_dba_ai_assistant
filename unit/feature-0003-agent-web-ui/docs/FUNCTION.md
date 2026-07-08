@@ -1532,3 +1532,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **가독성**: 메타 list 컬럼을 넓은 화면에서 확대(min 360px→fraction), 행 line-height 개선.
 - **범위 봉인**: 백엔드/API/RBAC/스키마·2차 보기 일반화 로직·타 pane 불변. XSS textContent-only(mermaid 는 strict 헬퍼 exception).
 - cache-buster: `?v=20260707-metadata-console-polish`→`?v=20260708-metadata-console-ux2`. CHG/REV-20260708T033320-metadata-console-ux2. PB-0008=배포 후 라이브.
+
+## (doc-sync-rn-0708, 2026-07-08) 릴리즈노트 콘텐츠 — 07-08 블록 3항목(제품 분류 AI 제안·그래프 접힘 카드 시각화·콘솔 검토 화면 개선)
+- 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 `date:"2026-07-08"` 블록 prepend(3항목 admin·`generated` 2026-07-08). 07-07 23:52 직전 doc_sync 이후 07-08 머지 델타 중 사용자 화면 신규분만 반영: §59 분석 기반 제품 분류 'AI 제안→사람 승인', §57 관계도 접힘 카드 연결선·상대 하이라이트·크로스 색 구분·줌 LOD, 메타데이터 콘솔 검토 화면 UX(ux2 4건+폴리시 5건).
+- 평이화/비노출: feature-id·§번호·테이블/함수명·권한키·ADR·마이그레이션·엔드포인트 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
+- 배포 전파: `index.html`·`admin.html` cache-buster `20260707b-rn-0707`→`20260708-rn-0708`. CHG/REV-20260708T230501-doc-sync-rn-0708. landing/배포는 cron wrapper 소관(본 run 은 로컬 commit).

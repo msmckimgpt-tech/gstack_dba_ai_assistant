@@ -1812,3 +1812,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   (신뢰도·근거 툴팁·승인/거부 즉시 실행·실패 토스트)을 육안 확인 후 본 절에 Run 을 append 한다.
   데몬 기본 OFF 라 제안 행은 dry-run CLI/수동 pass 로 생성해 확인. pre-deploy 격리 검증은 분류
   테스트 6 + route parity PASS(§59 TEST.md).
+
+### Run (2026-07-08) — doc-sync-rn-0708: 릴리즈노트 07-08 블록 3항목 prepend(제품 분류 AI 제안·그래프 접힘 카드 시각화·콘솔 검토 화면 개선) + 캐시버스터 bump (doc_sync, 비-정책 콘텐츠 doc-only, TASK-20260708T230501-doc-sync-rn-0708) — **Environment: Windows-browser (PB-0008)**
+- **미수행(사유 명시, 카고컬트 방지)**: 본 변경은 사용자 노출 릴리즈노트 **콘텐츠 데이터**(`static/release-notes-data.js`, 07-08 블록 3항목) + `index/admin.html` 캐시버스터 토큰 bump 뿐 — 릴리즈노트 **렌더 로직(`release-notes.js`) 무변경**이라 새로 시각검증할 UI 동작/상호작용 델타 없음. 배포는 cron wrapper 가 merge 후 수행하므로 pre-commit 시점엔 신 콘텐츠 미서빙.
+- **정적 검증**: `node --check release-notes-data.js` PASS. jsdom `verify_release_notes.mjs` 33/34 PASS(유일 FAIL 은 styles.css:4300 pre-existing 정규식 취약성·HEAD 동일·본 변경 무관) — 스키마(type/area/title/detail)·`generated`=2026-07-08·블록 순서(07-08>07>06>04>03>02)·07-07 이하 보존·07-08 블록 3항목 doc_sync 재구성 직접 확인.
+- **원천 UI 변경 PB-0008(provenance)**: 본 3항목이 announce 하는 화면 변화는 원천 cycle 이 검증 — §57 그래프 접힘 카드 시각화(feature-0016 §57 POST-DEPLOY PB-0008 라이브 PASS)·§59 제품 분류 승인 UI(feature-0016 §59 POST-DEPLOY 라이브 실증)·콘솔 ux2/polish(feature-0003 배포 후 PB-0008 계열).
+- **Pass/Fail: PASS(콘텐츠 doc-only 정적 검증)**. CHECK#13(PB-0008 Windows-browser) 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·원천 PB-0008 provenance 기록).

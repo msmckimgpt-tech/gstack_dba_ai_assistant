@@ -4593,3 +4593,9 @@ source_of_truth: true
 - **#4 mermaid API 정합**: `mermaid-render.js` 가 소비하는 노드(`.mermaid-pending`, renderMermaidDiagrams:65)와 신규 삽입 노드 일치. lib/헬퍼 부재 시 라벨 코드블록 폴백. `_metaIsMermaid` 정규식은 선두 mermaid 키워드만 — 일반 SQL 오탐면 무시가능(SQL 은 SELECT/WITH 로 시작).
 - **MINOR(noted, 무영향)**: ① glossary/enum 상세 액션 버튼은 stopPropagation 미부여(상세 패널은 클릭행 아님 → 무해) ② `_metaIsMermaid` 가 'graph ' 로 시작하는 극단 SQL 을 오탐 가능(실무 무발생).
 - Cross-ref: TASK/MODIFY/FUNCTION/TEST-20260708-metadata-console-ux2 · 선행 REV-20260708T012922-metadata-console-polish.
+
+## REV-20260708T230501-doc-sync-rn-0708 [SKIPPED:non-policy-doc] — 릴리즈노트 07-08 블록 3항목 prepend(제품 분류 AI 제안·그래프 접힘 카드 시각화·콘솔 검토 화면 개선) + 캐시버스터 bump (TASK-20260708T230501-doc-sync-rn-0708, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 변경은 사용자 노출 릴리즈노트 콘텐츠 데이터(`static/release-notes-data.js`) + cache-buster(`index/admin.html`) 뿐 — 비-정책 doc-only. 렌더 로직(`release-notes.js`)·백엔드·스키마·RBAC·엔드포인트 0 → 코드 적대 검증 대상 아님(§18.8 표 첫 행 `[SKIPPED:non-policy-doc]`). 콘텐츠 정합·평이화·과대표현·중복회피·operational gate 는 doc_sync(ULTRACODE 6-agent write+adversarial-verify 워크플로 wf_3891a205)가 정본(feature-0016 TASK §57/§59·REPORT + feature-0003 TASK/REPORT + git log) 대비 직접 검증.
+- **적대 검증(정본 대조)**: 워크플로 verify:release-notes 가 3항목 전부 정본 실재 작업으로 확증(§59 Pending-only·§57 4시각 요소·콘솔 ux2+polish), feature-id/§/테이블/함수/ADR/마이그 누출 0(노출 'ENUM'·'AI 분류 제안'·'+코드 추가'는 실제 온스크린 라벨), 07-07 블록 대비 중복 0, cache-buster 양 파일 동시 bump, node --check PASS. §58(내부/infra)·§56 T56.9(기출시)·META 도구 제외 판정 타당성 확인.
+- 타깃별 실질 검증(doc_sync Phase 4): `node --check release-notes-data.js` PASS · jsdom `verify_release_notes.mjs` 33/34 PASS(유일 FAIL=styles.css pre-existing·본 변경 무관·회귀 아님).
+- Cross-ref: CHG/TASK/FUNCTION/TEST-20260708T230501-doc-sync-rn-0708 / 원천 머지 e035de8b(§59 제품 분류)·bd900515(§57 그래프)·7509fa71(콘솔 ux2)·afd3cfe6(폴리시). META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit/META mode(REV-20260708T230501-META-0022-doc-sync-0708).
