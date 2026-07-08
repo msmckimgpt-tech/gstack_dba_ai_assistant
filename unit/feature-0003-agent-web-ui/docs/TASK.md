@@ -5339,3 +5339,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS · 블록 순서(07-07>06>04>03>02) + 07-06 이하 보존 · 스키마(type/area/title/detail) 정합. jsdom DOM 테스트(`verify_release_notes.mjs`)는 이 실행 env 미설치(컨테이너 전용) — 문법+스키마+블록 순서로 갈음.
 - [x] 배포 전파: `index.html`·`admin.html` `release-notes-data.js?v=20260707-rn-0707`→`?v=20260707b-rn-0707` bump. verify-completion(operational, feature-0003) → 로컬 commit. **landing(push/PR/merge)·배포는 cron wrapper 소관**(본 run 은 로컬 commit 까지). META(STATUS·wiki·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260707T230501-META-0021-doc-sync-0707-2305).
 - [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트 콘텐츠 데이터/캐시버스터만(렌더 로직 불변) — 새로 시각검증할 렌더 델타 없음. 원천 UI(코드값 채택 큐·추론 강도별 예산)는 원천 cycle(0beb02e3·d9516aee)이 검증. 사유는 TEST.md §3(CHECK#13).
+
+### TASK-20260708-metadata-console-polish — 메타데이터 콘솔 잔여 디자인 폴리시 5건 (Minor §12.3 — feature-0003 web/UI 단독, worktree ai/claude/metadata-console-polish, 2026-07-08)
+- 트리거: metadata-console-redesign(35e8cb14) 배포 후 **실 Windows 브라우저(PB-0008) 적대적 미적 검증**에서 잡은 잔여 미세 폴리시 5건. 사용자 결정(2026-07-08): 전부 적용 + 재배포.
+- [x] **#1 nav 위계**: 2차 보기 필(`.admin-meta-view`)이 border+틴트라 밑줄 1차 서브탭보다 무거워 위계 역전 → border 제거·비활성 투명·활성만 borderless light chip 으로 종속.
+- [x] **#2 list-detail 균형**: 넓은 우측 미선택 상세가 좁은 목록을 지배 → 메타 전용 스코프(`.admin-list-detail.admin-meta-list-detail`)로 목록 컬럼 300~400px + `#metadataDetailEmpty` 중앙·max-width 560px(타 pane 무영향).
+- [x] **#3 그룹 카드 nesting**: 그룹 내부 행이 자체 카드 테두리를 또 가짐 → `.admin-meta-group .admin-meta-row` divider 평탄화(border-bottom subtle·radius 0·gap 0·hover/active 만 강조).
+- [x] **#4 timestamp 노이즈**: 반복 수정 timestamp → `.admin-meta-row-meta` 경량화(10.5px·opacity .72) + 그룹 카드 내부는 숨김(컬럼 1030행 반복 제거).
+- [x] **#5 신뢰도 배지**: 검토 큐 배지 4개 전부 회색이라 핵심 신호(신뢰도)가 안 튐 → `.admin-meta-tag-conf`(은은한 primary accent)로 분리(JS `-neutral`→`-conf`).
+- [x] 검증: `node --check` OK · CSS 균형(1905/1905) · route 골든 불변 · 호스트 전체 1662 passed(회귀 0). cache-buster `?v=20260707-metadata-console-redesign`→`?v=20260707-metadata-console-polish`.
+- [ ] PB-0008 POST-DEPLOY 라이브 재확인(2차 보기 필 경량·그룹 행 divider·신뢰도 accent) → verify-completion → commit → PR → 병합 → web 무중단 배포 → /healthz.

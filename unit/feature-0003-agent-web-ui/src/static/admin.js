@@ -8561,7 +8561,7 @@ function renderFeedbackQueue(kind) {
       tags.appendChild(mkTag(rk === "*" ? "공용" : `역할: ${_metaRoleLabel(rk)}`, rk === "*" ? "admin-meta-tag-neutral" : "admin-meta-tag-role"));
     }
     if (it.scope_key) tags.appendChild(mkTag(`scope: ${_metaDatasourceLabelOf(it.scope_key)}`, "admin-meta-tag-neutral"));
-    if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`, "admin-meta-tag-neutral"));
+    if (it.confidence != null) tags.appendChild(mkTag(`신뢰도 ${Number(it.confidence).toFixed(2)}`, "admin-meta-tag-conf"));  /* 폴리시 #5: 신뢰도 accent. */
     const st = String(it.status || "");
     const stLabel = { pending: "검토 대기", auto_promoted: "자동 등록됨", promoted: "승급됨", rejected: "거부됨" }[st] || st;
     // L7: 자동 등록(auto_promoted=provenance)=neutral 회색(경고 아님), 승급=ok, 거부=danger, 검토 대기=neutral.

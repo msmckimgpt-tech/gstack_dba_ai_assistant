@@ -1502,3 +1502,9 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **적대 검증의 값**: §18.8 패널이 위임 구현의 **실 blocking 회귀**(kb.enum.curate 게이트 누락 → enum-curate 단독 사용자 ENUM 검토 큐 접근 완전 상실) + MAJOR(ENUM 그룹 column 드롭) + HIGH(다크 토큰 회귀) 등 10건 적발 → 전부 수정. 위임+적대검증 파이프라인이 단독 구현보다 결함을 더 잡음을 실증.
 - **검증**: node --check OK · 제거 심볼 grep-0 · route 골든 불변 · 호스트 전체 **1637 passed**(회귀 0) · CSS 균형. XSS clean(순수 DOM 전환).
 - **잔여**: PB-0008 Windows-browser 시각검증 = POST-DEPLOY(정적 baked). UI-only 라 배포 = web 재빌드만(worker/마이그 불필요). m2(샘플 배지 백엔드 limit 캡)는 accept — 필요 시 백엔드에 uncapped pending count 추가 검토.
+
+## 2026-07-08 — 메타데이터 콘솔 잔여 디자인 폴리시 5건 (metadata-console-polish)
+- **트리거**: metadata-console-redesign(35e8cb14) 배포 후 사용자 요청으로 **실 Windows 브라우저(PB-0008) 적대적 미적 검증** 수행 — win-browser relay 로 로그인→전 5서브뷰·2차 보기·컬럼 카드 그룹핑(108그룹)·편집 폼 라이브 캡처·판정. 구조 통합·rich empty·이모지 제거·선택 상태 복구 전부 라이브 확인, 잔여 미세 폴리시 5건 도출. 사용자 결정: 전부 적용+재배포.
+- **폴리시**: #1 2차 보기 필 위계 역전(borderless 경량 chip) · #2 list-detail sprawl(메타 전용 스코프 균형) · #3 그룹 cards-in-card nesting(divider 평탄화) · #4 반복 timestamp(경량+그룹 내 숨김) · #5 신뢰도 배지 매몰(accent 분리). 순수 시각 CSS + confidence 배지 클래스 1개 — 로직/백엔드/구조 0.
+- **검증**: node --check OK · CSS 균형 · route 골든 불변 · 호스트 1662 passed(회귀 0). REVIEW [SKIPPED:minor-css-polish-post-visual-review](적대 미적 검증이 이미 선행). POST-DEPLOY PB-0008 라이브 재확인이 정본 증적.
+- **의의**: "구현→적대 검증→라이브 시각 검증→잔여 폴리시" 루프로, 코드 리뷰·단위 테스트로는 못 잡는 미적 위계/밀도 결함(nav 역전·nesting·sprawl·배지 매몰)을 실화면 근거로 교정.
