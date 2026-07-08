@@ -8124,23 +8124,25 @@ a { color: inherit; }
   margin: -6px 0 12px;
 }
 .admin-meta-view {
+  /* 폴리시 #1: 2차 보기 strip 은 1차 서브탭(밑줄)에 종속되는 경량 텍스트 토글.
+     이전엔 border+틴트 필이라 얇은 밑줄 탭보다 시각적으로 무거워 위계가 역전됐다 →
+     border 제거 + 비활성 투명, 활성만 은은한 primary chip 으로 낮춘다. */
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  padding: 4px 11px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--surface-2, var(--bg));
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
-  transition: color .13s, border-color .13s, background .13s;
+  transition: color .13s, background .13s;
 }
-.admin-meta-view:hover { color: var(--text); }
+.admin-meta-view:hover { color: var(--text); background: var(--surface-2, var(--bg)); }
 .admin-meta-view.is-active {
   color: var(--primary);
-  border-color: var(--primary);
-  background: rgba(37, 99, 235, .10);   /* L9: color-mix 대신 파일 관례의 rgba(primary 10%)로 통일. */
+  background: rgba(37, 99, 235, .10);   /* borderless light chip — 밑줄 1차 탭보다 낮은 강조. */
 }
 /* review 보기 pending 배지 — 구 .admin-meta-subtab-badge 를 보기 strip 용으로 계승. */
 .admin-meta-view-badge {
@@ -8585,7 +8587,7 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; white-space: normal;
 }
-.admin-meta-row-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.admin-meta-row-meta { font-size: 10.5px; color: var(--text-muted); opacity: .72; font-variant-numeric: tabular-nums; }  /* 폴리시 #4: 반복 수정 timestamp 시각 무게 경감. */
 .admin-meta-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .admin-meta-del:hover { border-color: var(--danger, #dc2626); color: var(--danger, #dc2626); }
 
@@ -8615,6 +8617,15 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 /* 용어사전 역할 배지 — info 계열 파란 톤(role 구분). */
 .admin-meta-tag-role    { background: var(--tag-info-bg);    border-color: var(--tag-info-bd);    color: var(--tag-info-fg); }
 .admin-meta-review-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* 폴리시 #2: 메타데이터 list-detail 균형 — 목록 컬럼을 약간 넓히고 미선택 상세 empty 를 중앙·폭
+   제한해 넓은 우측 패널의 sprawl 을 줄인다. 공유 .admin-list-detail 대신 메타 전용 스코프(타 pane 무영향). */
+.admin-list-detail.admin-meta-list-detail { grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); }
+#metadataDetailEmpty { max-width: 560px; margin: 0 auto; padding: 52px 24px; }
+/* 폴리시 #5: 검토 큐 신뢰도 배지 — 중립 회색 배지 무리에서 핵심 신호(신뢰도)가 튀도록 은은한 accent. */
+.admin-meta-tag-conf {
+  background: rgba(37, 99, 235, .10); border-color: rgba(37, 99, 235, .35);
+  color: var(--primary, #1d4ed8); font-variant-numeric: tabular-nums;
+}
 /* B3: enums/columns 그룹 카드(.dashboard-widget 재사용) — schema.table 헤더 + 내부 행. */
 .admin-meta-group { background: var(--surface-2, var(--bg)); padding: 12px 12px 12px; gap: 10px; }
 .admin-meta-group-head { display: flex; align-items: baseline; gap: 8px; }
@@ -8625,7 +8636,17 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
   background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
   font-variant-numeric: tabular-nums;
 }
-.admin-meta-group-rows { display: flex; flex-direction: column; gap: 6px; }
+.admin-meta-group-rows { display: flex; flex-direction: column; gap: 0; }
+/* 폴리시 #3: 그룹 카드 내부 행은 자체 카드 테두리 대신 divider — cards-in-card nesting 경감. */
+.admin-meta-group .admin-meta-row {
+  border: none; border-bottom: 1px solid var(--border-subtle, var(--border));
+  border-radius: 0; background: transparent; padding: 8px 4px;
+}
+.admin-meta-group-rows > .admin-meta-row:last-child { border-bottom: none; }
+.admin-meta-group .admin-meta-row[role="button"]:hover { background: var(--surface, #fff); border-radius: var(--r-sm, 6px); }
+.admin-meta-group .admin-meta-row.is-active { background: var(--primary-soft, rgba(37, 99, 235, .10)); border-radius: var(--r-sm, 6px); }
+/* 폴리시 #4: 그룹 카드 내 timestamp 는 순수 노이즈(테이블당 다수 행 반복) → 숨김. */
+.admin-meta-group .admin-meta-row-meta { display: none; }
 /* B2: 리치 빈 상태 + 로딩 스켈레톤. .admin-list-empty 자체는 CSS 룰이 없던 것을 정의. */
 .admin-list-empty { padding: 32px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
 .admin-meta-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; }

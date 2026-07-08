@@ -1519,3 +1519,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`)의 기존 '2026-07-07' 블록에 신규 2항목 append(같은 날 → 새 일자 블록 미생성). 직전 릴리즈노트 sync(dfc64728 @ 07-07 11:34)가 오전까지 커버 → 이후(11:37~19:33) 머지 델타 중 사용자 화면 신규분만 반영: ① 코드값(ENUM) 대화 자율수집 후보의 검토·채택 큐(0beb02e3 사용자 표면 announcement) ② AI 추론 강도별(낮음/높음/매우 높음) 예산 설정(d9516aee). `generated` 2026-07-07 유지.
 - 중복 회피: 업무 용어(glossary) 대화 자율수집·검토 큐는 2026-06-29 블록에 이미 announce(라인 408·414)라 재서술 금지 — 코드값 측만 신규. 내부 구현·feature-id·테이블/함수명·권한키(kb.enum.curate)·alembic 0039·reasoning_budget·엔드포인트·모델명·ADR·cache-buster 내부 슬러그 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 배포 전파: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260707-rn-0707`→`?v=20260707b-rn-0707` bump. CHG/REV-20260707T230501-doc-sync-rn-2305. landing/배포는 cron wrapper 소관(본 run 은 로컬 commit).
+
+## (TASK-20260708-metadata-console-polish) 메타데이터 콘솔 잔여 디자인 폴리시
+- **기능**: metadata-console-redesign 의 PB-0008 실 Windows 브라우저 적대 미적 검증 잔여 5건 반영(시각 세부 조정, 동작 무변경). ① 2차 보기 strip(`.admin-meta-view`)은 1차 서브탭(밑줄)에 종속되는 경량 텍스트 토글(borderless, 활성만 light chip) ② 메타 전용 list-detail 균형(목록 300~400px + 미선택 상세 empty 중앙·max-width 560px, 공유 클래스 무영향) ③ 그룹 카드 내부 행은 divider 평탄화(cards-in-card nesting 경감) ④ 반복 수정 timestamp 경량화 + 그룹 카드 내 숨김 ⑤ 검토 큐 신뢰도 배지(`.admin-meta-tag-conf`)를 중립 배지 무리에서 은은한 primary accent 로 분리.
+- **범위 봉인(무변경)**: 2차 보기 일반화 로직·CRUD·검토 큐 동작·백엔드·RBAC·타 pane 전부 불변. 순수 시각 CSS + confidence 배지 클래스 1개 교체.
+- cache-buster: admin.html 의 styles.css·admin.js `?v=20260707-metadata-console-redesign`→`?v=20260707-metadata-console-polish`. CHG/REV-20260708-metadata-console-polish. PB-0008= 배포 후 라이브(TEST.md §3).
