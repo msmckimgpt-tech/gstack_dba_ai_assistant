@@ -1174,3 +1174,22 @@ source_of_truth: true
 ## REV-20260707T193500-ai-root-feature-0016-routine-sync-postdeploy [SKIPPED: docs-only POST-DEPLOY 기록 — 코드 변경 0, §56 라이브 e2e 증적의 TASK/TEST/MODIFY 반영. 코드 리뷰는 직전 REV-20260707T173500(RC5 패널) 정본] — §56 T56.8 완수 기록
 
 ## REV-20260708T103000-ai-root-feature-0016-routine-sync-pb0008 [SKIPPED: docs-only PB-0008 Run 기록 — 코드 변경 0, 시각검증 결과의 TEST/TASK 반영] — §56 PB-0008 완수 기록
+
+## REV-20260708T150000-ai-root-feature-0016-graph-edge-visibility [SUBAGENT: PASS-WITH-FIXES] — §57 §18.8 적대 리뷰 패널
+
+- 실행: ultracode workflow 4렌즈(correctness/state-perf/regression/ux) finder 완주. refuter 24개는
+  사용량 한도(reset 17:30)로 전멸 — **finder 원본 발견을 journal 에서 회수해 main-loop 직접 검증**
+  (BLOCKING 은 번들 grep 실증, MAJOR 는 코드 정독 + 회귀 테스트로 확정). 판정 공백 없음.
+- **BLOCKING 1 확정·수정**: G6 v5 번들에 'viewportchange' 이벤트 부재(grep 0건 실증) → LOD 밴드
+  트리거 사망 → GraphEvent.AFTER_TRANSFORM('aftertransform', 번들 실증)으로 교체 + 최초 관측 기준선
+  (스퓨리어스 rebuild 방지)·busy 유예 시 기준선 리셋(재시도 보장).
+- **MAJOR 1 확정·수정**: 펼쳤다 접은 스키마의 모델 잔존 REFERENCES/RU 가 SC:↔SC: 승격돼 SCHEMA_REF
+  와 이중 렌더 → 양끝 카드 승격이면 방출 억제(SCHEMA_REF 가 카드간 표현 소유). 회귀 T6.
+- MINOR 수정 7: ① 좌클릭 팬 직후 canvas:click 오발화 가드(pointerdown 5px) ② kind 숨김 루틴의
+  사용선 승격 누출 차단(T7) ③ 컬럼 선택 시 소속 테이블 dim(T8) ④ scope_schemas truncated 오염 →
+  edges_truncated 분리 + 노드필터를 cap 앞으로 + 1-hop 스캔 LIMIT 100k 방어 ⑤ dim 시 SCHEMA_REF
+  count 라벨 잔존 → 라벨 키 제거 ⑥ _lodDropped 소비자 부재 → LOD 밴드 rebuild 후 상태줄 축약 안내
+  ⑦ 선택 변화 busy 유예 시 재시도(4×500ms — 엣지 dim bake 는 폴로 회복 불가).
+- 수용(후속 기록): 레거시 스키마-무 2-세그먼트 키의 동명 카드 오승격(키 규약 고유 모호성,
+  pre-existing) · SCHEMA_REF/agg 엣지 우클릭 raw 폴백(기존 agg: 갭과 동일).
+- 재검증: headless 22 PASS(+T6/T7/T8) + category 26 PASS·백엔드 21 PASS·node --check/py_compile.

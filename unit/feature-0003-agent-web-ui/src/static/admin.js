@@ -3714,6 +3714,10 @@ const _METtype = "rect";
 const _METLAY = { COLS: 3, SW: 300, GAPX: 48, GAPY: 52, PADT: 34, PADX: 16, TROW: 34, CROW: 21, CIND: 26, TGAP: 12, TW: 150,
   CARDW: 210, CARDH: 44 };   // graph-initview: 접힌 스키마 카드 치수
 const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 배율 밑이면 판독 불가 — 클램프
+// §57(declutter): 중간 줌 LOD — 줌이 이 임계 밑이고 모델 엣지가 _MIN 개를 넘으면 무상태(FK)·비크로스
+//   단건 선을 축약(의미 신호만 유지). 임계 1점 왕복 rebuild 방지는 밴드 전이+디바운스(_lodBand).
+const _META_EDGE_LOD_ZOOM = 0.35;
+const _META_EDGE_LOD_MIN = 120;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
 //   페인팅·hit-test 하므로, 전 요소에 zIndex 를 명시해 setData diff 의 생성 순서·드래그 이력(내장
 //   drag-element 의 frontElement 영구 승격)이 페인팅 순서를 결정하지 못하게 한다. 의미 계층:
@@ -4029,11 +4033,27 @@ function _metaEdgeStyleFor(status, crossDs) {
 //   따른다 — 쓰기(write)=루틴이 테이블로 데이터를 보냄=루틴→테이블(endArrow), 읽기(read)=테이블에서
 //   데이터를 읽어옴=테이블→루틴(startArrow, 출발점=루틴 쪽에 화살촉). read·relation_type 미상은 startArrow
 //   (테이블→루틴) — 상세 패널 텍스트 라벨 kindKo 기본값 '읽기'와 정합(모순 방지). false 키 미설정(G6 arrow 안전).
-function _metaRoutineEdgeStyle(relationType) {
-  const s = { stroke: _META_GRAPH_COLOR.Routine, lineWidth: 1.5, lineDash: [2, 3], zIndex: _METZ.EDGE };
+function _metaRoutineEdgeStyle(relationType, crossDs) {
+  // §57(사용자 검증 지적 ②): 크로스-DB 루틴 참조는 로컬 사용선과 색으로 구분 — REFERENCES 의
+  //   교차DB 마젠타(ADR-019)와 동일 색상 어휘를 쓰되 ROUTINE_USES 고유 잔점선([2,3])·화살표 방향은
+  //   유지(관계 종류는 dash·방향, 교차 여부는 색 — 직교 인코딩). zIndex 는 _metaEdgeZFor 의
+  //   ROUTINE_USES 분기(_METZ.EDGE 고정)와 1:1 이어야 하므로 변경하지 않는다.
+  const s = { stroke: crossDs ? "#a855c7" : _META_GRAPH_COLOR.Routine,
+    lineWidth: crossDs ? 1.8 : 1.5, lineDash: [2, 3], zIndex: _METZ.EDGE };
   if (relationType === "write") s.endArrow = true;    // 데이터: 루틴 → 테이블(쓰기)
   else s.startArrow = true;                            // read·미상: 테이블 → 루틴(상세 패널 kindKo 기본 '읽기'와 정합)
   return s;
+}
+// §57(사용자 요구 ①): 접힌 스키마 카드 간 집계 연결선(SCHEMA_REF) — 관계 의미(신뢰/추정/루틴)와
+//   구분되는 중립 슬레이트 실선. 굵기는 관계 수 로그 스케일, count 라벨로 규모 노출. 무향 집계라
+//   화살표 없음(양 키 생략 — false 금지, BLUEPRINT §3).
+function _metaSchemaRefEdgeStyle(count) {
+  const n = Math.max(1, Number(count) || 1);
+  return { stroke: "#8fa3bf", lineWidth: 1 + Math.min(2.4, Math.log2(n + 1) * 0.55),
+    strokeOpacity: 0.75, zIndex: _METZ.EDGE,
+    labelText: n > 1 ? String(n) : "", labelFontSize: 9, labelFill: "#64748b",
+    labelBackground: true, labelBackgroundFill: "#f6f8fb", labelBackgroundOpacity: 0.85,
+    labelPlacement: "center" };
 }
 function _metaNodeStates(key) {
   const st = [];
@@ -4043,7 +4063,56 @@ function _metaNodeStates(key) {
   if (_metaGraph.analyzed.has(key)) st.push("analyzed");
   if (_metaGraph.running.has(key)) st.push("running");
   if (_metaGraph.selected === key) st.push("selected");
+  // §57(사용자 요구 ②): 상대 하이라이트 — 선택 노드의 1-hop 인접 밖 **모델 데이터 노드**만 흐리게.
+  //   _metaNodeStates 경유라 _metaStateSig/_metaCacheSig 에 자동 포함 — 2.5s 상태 폴과 정합(§33 교훈).
+  //   합성 chrome(CAT:/GX:/GB: 등)은 모델 밖 키라 자동 비대상.
+  const fa = _metaGraph.focusAdj;
+  if (fa && _metaGraph.nodes.has(key) && !fa.self.has(key) && !fa.nodes.has(key)) st.push("dimmed");
   return st;
+}
+
+// §57: 선택 노드의 1-hop 인접 집합 — self(자신+자기 컬럼) / nodes(인접 노드+컬럼의 소속 테이블+상대
+//   스키마). 모델(_metaGraph.nodes/edges) 1회 순회 — 선택 변화 시에만 호출(빌드 hot-path 아님).
+function _metaFocusAdjacency(selKey) {
+  const self = new Set([selKey]);
+  const nodes = new Set();
+  const selNode = _metaGraph.nodes.get(selKey);
+  if (selNode && selNode.label === "Table") {
+    _metaGraph.nodes.forEach((n, k) => {
+      if (n.label === "Column" && _metaColParent(k, n.fqn) === selKey) self.add(k);
+    });
+  }
+  // 패널 MINOR: 컬럼 선택 시 소속 테이블 칩이 dim 되지 않게(선택 컬럼이 유령 컨테이너 위에 뜨는 오독 방지).
+  if (selNode && selNode.label === "Column") {
+    const ptk = _metaColParent(selKey, selNode.fqn);
+    if (ptk) nodes.add(ptk);
+  }
+  const touch = (k) => {
+    if (self.has(k)) return true;
+    // REFERENCES 끝점은 모델 밖 컬럼 키일 수 있다(접힌 스키마 = 컬럼 미적재) — 키 문자열 파싱으로
+    //   소속 테이블을 접어 판정(_metaColParent 는 fqn 없으면 key 로 파싱). 모델에 있는 비-Column
+    //   노드(Table/Routine/Schema)는 자기 키가 곧 판정 단위라 부모 접기 비적용.
+    const gn = _metaGraph.nodes.get(k);
+    if (gn && gn.label !== "Column") return false;
+    const pk = _metaColParent(k, gn && gn.fqn);
+    return !!(pk && self.has(pk));
+  };
+  _metaGraph.edges.forEach((e) => {
+    const sTouch = touch(e.source), tTouch = touch(e.target);
+    if (!sTouch && !tTouch) return;
+    const other = sTouch ? e.target : e.source;
+    nodes.add(other);
+    const on = _metaGraph.nodes.get(other);
+    const opk = (!on || on.label === "Column") ? _metaColParent(other, on && on.fqn) : null;
+    if (opk) nodes.add(opk);
+    // 승격 렌더 대비: 상대의 소속 스키마 키도 포함(접힌 카드로 승격돼도 카드가 흐려지지 않게).
+    const osk = _metaCatParent(other, on && on.fqn);
+    if (osk) nodes.add(osk);
+  });
+  // 자신의 소속 스키마도 유지(자기 클러스터 카드/컨텍스트 보존).
+  const ssk = _metaCatParent(selKey, selNode && selNode.fqn);
+  if (ssk) nodes.add(ssk);
+  return { self, nodes };
 }
 
 // ── graph-perf-bg: 논블로킹 유틸(펼침/확장이 메인스레드를 얼리지 않도록) ──
@@ -4971,53 +5040,148 @@ function _metaG6Build() {
   //   렌더 끝점으로 승격된 다수 컬럼-쌍은 하나의 집계 엣지로 dedupe 하고, 상태는 최강(trusted>
   //   candidate)을 채택하며 하위 컬럼-쌍을 pairs 로 실어 추적/툴팁에 쓴다.
   const present = new Set(nodes.map((n) => n.id));
-  const renderEndpoint = (nodeKey) => {   // 컬럼 미렌더 시 소속 테이블로 승격
+  const renderEndpoint = (nodeKey) => {   // 컬럼 미렌더 시 소속 테이블 → 접힌 스키마 카드(SC:) 순 승격
     if (present.has(nodeKey)) return nodeKey;
     // 컬럼 노드가 모델에 없어도(접힌 스키마 = 테이블만 로드) REFERENCES 끝점은 항상 컬럼 키이므로
     // 키 문자열에서 소속 테이블 키를 직접 도출한다(_metaColParent 는 fqn 없으면 key 로 파싱).
     const gn = _metaGraph.nodes.get(nodeKey);
     const pk = _metaColParent(nodeKey, gn && gn.fqn);
-    return (pk && present.has(pk)) ? pk : null;
+    if (pk && present.has(pk)) return pk;
+    // §57(사용자 요구 ①): 테이블도 미렌더(소속 스키마 접힘) → 스키마 카드로 승격 — 혼합 상태
+    //   (한쪽 펼침·한쪽 카드)에서도 관계선이 카드까지 이어진다. 카드 자체 미렌더면 기존대로 드롭.
+    //   스키마 세그먼트는 **원본 키**에서 도출(2-세그먼트 테이블 키는 colParent 가 dot 를 잃음).
+    const sk = _metaCatParent(nodeKey, gn && gn.fqn);
+    return (sk && present.has("SC:" + sk)) ? ("SC:" + sk) : null;
   };
-  const aggMap = new Map();   // "src::tgt" → 집계 엣지(테이블-레벨 승격분)
+  // §57(사용자 요구 ②·엣지 축): 상대 하이라이트 — 선택의 1-hop 에 직접 닿는 엣지만 선명 유지.
+  //   selTouch(하이라이트 인접 여부)는 dim 과 LOD-keep 양쪽에 쓰이며, 무선택(fa=null)이면 false —
+  //   dim 은 fa 존재 시에만 발동하고 LOD keep 은 선택이 있어야 성립(의미 분리 — 혼용 금지).
+  const fa = _metaGraph.focusAdj;
+  const selTouch = (rid) => {
+    if (!fa) return false;
+    const r = String(rid || "");
+    const mk = r.startsWith("SC:") ? r.slice(3) : r;
+    if (fa.self.has(mk) || fa.self.has(r)) return true;
+    // 컬럼-레벨 끝점(모델 밖 키 포함)은 소속 테이블로 접어 판정.
+    const gn = _metaGraph.nodes.get(mk);
+    if (!gn || gn.label === "Column") {
+      const pk = _metaColParent(mk, gn && gn.fqn);
+      if (pk && fa.self.has(pk)) return true;
+    }
+    return false;
+  };
+  const dimIf = (st, hl) => {
+    if (fa && !hl) {
+      st.strokeOpacity = Math.min(st.strokeOpacity || 1, 0.12);
+      // 패널 MINOR: count 라벨/배경은 strokeOpacity 와 무관하게 원색 잔존 — dim 시 라벨 키 자체 제거.
+      if (st.labelText !== undefined) { delete st.labelText; delete st.labelBackground; delete st.labelBackgroundFill; delete st.labelBackgroundOpacity; }
+    }
+    return st;
+  };
+  // §57(사용자 검토 ①·declutter): 중간 줌 LOD — 임계 미만 줌 + 대형 모델에서 무상태(FK)·비크로스
+  //   단건 선을 축약하고 의미 신호(trusted/candidate/교차DB/집계/SCHEMA_REF/하이라이트 인접)만 남긴다.
+  //   우선순위: 사용자 명시 숨김(hiddenKinds) > 하이라이트 인접 보존 > LOD 축약.
+  let zoomNow = 1;
+  try { if (_metaGraph.graph) zoomNow = _metaGraph.graph.getZoom() || 1; } catch (_) {}
+  const lodActive = zoomNow < _META_EDGE_LOD_ZOOM && _metaGraph.edges.size > _META_EDGE_LOD_MIN;
+  let lodDropped = 0;
+  const aggMap = new Map();   // "src::tgt[::RU]" → 집계 엣지(승격분 — REFERENCES/ROUTINE_USES 분리 집계)
   _metaGraph.edges.forEach((e) => {
     // graph-navfilter(§54②): 관계선 토글 — 방출만 차단(모델 유지: _metaRelAdjacency 가 모델을 읽어
     //   배치 순서 불변 = 엣지 토글로 테이블이 점프하지 않음. 모델 삭제 금지 — 재토글 복원·접기 관례).
     if (_metaGraph.hiddenKinds.has("edges")) return;
     if (e.type === "HAS_TABLE" || e.type === "HAS_COLUMN" || e.type === "HAS_ROUTINE") return;
-    // 비-REFERENCES(DESCRIBES/RELATED_TERM/ROUTINE_USES 등)는 기존대로 양끝 직접 렌더 시에만.
+    // §57: 스키마-쌍 집계 엣지(백엔드 scope_schemas 동봉) — 양쪽 모두 접힌 카드일 때만 카드간 렌더
+    //   (한쪽이라도 펼침이면 상세/승격 엣지가 대체 — 이중 표현 방지).
+    if (e.type === "SCHEMA_REF") {
+      const a = present.has("SC:" + e.source) ? ("SC:" + e.source) : null;
+      const b = present.has("SC:" + e.target) ? ("SC:" + e.target) : null;
+      if (!a || !b) return;
+      const keep = selTouch(a) || selTouch(b);
+      edges.push({ id: e.id, source: a, target: b,
+        data: { label: "SCHEMA_REF", count: e.count || 1, ref_count: e.ref_count, use_count: e.use_count },
+        style: dimIf(_metaSchemaRefEdgeStyle(e.count), keep) });
+      return;
+    }
     if (e.type !== "REFERENCES") {
+      // §57: ROUTINE_USES 도 승격 경로 참여(접힌 카드로의 사용선) — 그 외(DESCRIBES/RELATED_TERM 등)는
+      //   기존대로 양끝 직접 렌더 시에만.
+      if (e.type === "ROUTINE_USES") {
+        const srcN = _metaGraph.nodes.get(e.source), tgtN = _metaGraph.nodes.get(e.target);
+        // §18.8 패널 MINOR: kind 필터로 숨긴 루틴의 사용선이 카드 승격으로 누출되지 않게 —
+        //   빌드 입력 제외(§54②)와 동일 분류식(빈값·미상 = procedure).
+        if (srcN && srcN.label === "Routine") {
+          const rk0 = (srcN.routine_type === "function") ? "function" : "procedure";
+          if (_metaGraph.hiddenKinds.has(rk0)) return;
+        }
+        const rs = renderEndpoint(e.source), rt = renderEndpoint(e.target);
+        if (!rs || !rt || rs === rt) return;
+        if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;   // 패널 MAJOR: SCHEMA_REF 소유
+        // §57(요구 ②): 교차DB 판별 — AGE 속성(cross_ds, §57 투영) 우선 + 키 스키마-세그먼트 비교 폴백
+        //   (배포 직후 기존 엣지 속성 부재 창 커버). 세그먼트 null(스키마 미상)은 교차로 오판하지 않음.
+        const ss = _metaCatParent(e.source, srcN && srcN.fqn), ts = _metaCatParent(e.target, tgtN && tgtN.fqn);
+        const xr = !!e.cross_ds || (!!ss && !!ts && ss !== ts);
+        const keep = selTouch(rs) || selTouch(rt) || selTouch(e.source) || selTouch(e.target);
+        if (rs === e.source && rt === e.target) {
+          if (lodActive && !keep && !xr) { lodDropped += 1; return; }
+          edges.push({ id: e.id, source: rs, target: rt,
+            data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: e.relation_type },
+            style: dimIf(_metaRoutineEdgeStyle(e.relation_type, xr), keep) });
+          return;
+        }
+        const ak = rs + "::" + rt + "::RU";
+        let agg = aggMap.get(ak);
+        if (!agg) { agg = { id: "agg:" + ak, kind: "ROUTINE_USES", source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false }; aggMap.set(ak, agg); }
+        agg.count += 1;
+        agg.crossDs = agg.crossDs || xr;
+        agg.keep = agg.keep || keep;
+        if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.relation_type || "read" });
+        return;
+      }
       if (present.has(e.source) && present.has(e.target)) {
-        const st = (e.type === "ROUTINE_USES") ? _metaRoutineEdgeStyle(e.relation_type) : _metaEdgeStyleFor(e.status);
-        edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status }, style: st });
+        const keep = selTouch(e.source) || selTouch(e.target);
+        if (lodActive && !keep) { lodDropped += 1; return; }
+        edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status },
+          style: dimIf(_metaEdgeStyleFor(e.status), keep) });
       }
       return;
     }
     const rs = renderEndpoint(e.source), rt = renderEndpoint(e.target);
     if (!rs || !rt || rs === rt) return;   // 미렌더 끝점 or 동일 테이블 내부(intra-table) 제외
+    // §18.8 패널 MAJOR: 양끝 모두 카드로 승격되면 SCHEMA_REF(백엔드 스키마-쌍 집계)가 카드간
+    //   표현을 소유 — 펼쳤다 접은 스키마의 모델 잔존 엣지가 이중(SC:↔SC: 승격 + SCHEMA_REF)으로
+    //   그려지는 것을 차단한다.
+    if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;
+    const keep = selTouch(rs) || selTouch(rt) || selTouch(e.source) || selTouch(e.target);
     const colLevel = (rs === e.source && rt === e.target);
     if (colLevel) {
       // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지). crossds-rel: cross_ds 면 마젠타 점선.
-      edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true, cross_ds: e.cross_ds || 0 }, style: _metaEdgeStyleFor(e.status, e.cross_ds) });
+      if (lodActive && !keep && !e.cross_ds && e.status !== "trusted" && e.status !== "candidate") { lodDropped += 1; return; }
+      edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true, cross_ds: e.cross_ds || 0 }, style: dimIf(_metaEdgeStyleFor(e.status, e.cross_ds), keep) });
       return;
     }
-    // 한쪽 이상이 테이블로 승격 — 집계 엣지에 병합(dedupe + 상태 승급 + pairs 누적).
+    // 한쪽 이상이 테이블/카드로 승격 — 집계 엣지에 병합(dedupe + 상태 승급 + pairs 누적).
     const ak = rs + "::" + rt;
     let agg = aggMap.get(ak);
-    if (!agg) { agg = { id: "agg:" + ak, source: rs, target: rt, status: e.status || "", count: 0, pairs: [], crossDs: false }; aggMap.set(ak, agg); }
+    if (!agg) { agg = { id: "agg:" + ak, kind: "REFERENCES", source: rs, target: rt, status: e.status || "", count: 0, pairs: [], crossDs: false, keep: false }; aggMap.set(ak, agg); }
     agg.count += 1;
     agg.crossDs = agg.crossDs || !!e.cross_ds;   // crossds-rel: 집계 쌍 중 하나라도 교차DB 면 교차DB 로 표식
+    agg.keep = agg.keep || keep;
     if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.status });
     if (e.status === "trusted" || (e.status === "candidate" && agg.status !== "trusted")) agg.status = e.status;   // 최강 상태 채택
   });
   aggMap.forEach((agg) => {
-    // 집계 엣지는 여러 컬럼-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
-    const st = _metaEdgeStyleFor(agg.status, agg.crossDs);
+    if (lodActive && !agg.keep && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
+    // 집계 엣지는 여러 컬럼/루틴-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
+    const st = (agg.kind === "ROUTINE_USES")
+      ? (() => { const s = _metaRoutineEdgeStyle("", agg.crossDs); delete s.startArrow; return s; })()
+      : _metaEdgeStyleFor(agg.status, agg.crossDs);
     if (agg.count > 1) st.lineWidth = (st.lineWidth || 1.4) + 0.8;
     edges.push({ id: agg.id, source: agg.source, target: agg.target,
-      data: { label: "REFERENCES", status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
-      style: st });
+      data: { label: agg.kind, status: agg.status, aggregated: true, count: agg.count, pairs: agg.pairs, cross_ds: agg.crossDs ? 1 : 0 },
+      style: dimIf(st, agg.keep) });
   });
+  _metaGraph._lodDropped = lodDropped;   // §57: 상태줄 안내용(축약 규모)
   // graph-initview: 렌더된 요소 id 집합(노드+combo) — setElementState/focus 가 미렌더 요소를 건드리지 않게.
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id).concat(combos.map((c) => c.id)));
   return { combos, nodes, edges };
@@ -5252,6 +5416,8 @@ function _metaGraphResetModel() {
   _metaGraph.running.clear();
   _metaGraph.roles.clear();   // node-role-viz: 역할 표식도 모델과 함께 초기화(sync 가 재적재)
   _metaGraph.selected = null;
+  _metaGraph.focusAdj = null;   // §57: 상대 하이라이트 집합도 모델과 함께 초기화.
+  _metaGraph._lodBand = null;   // §57 패널 NIT: LOD 밴드 기준선도 초기화(스코프 전환 스퓨리어스 rebuild 방지).
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
@@ -5725,6 +5891,8 @@ function _metaInitGraph() {
       //   전 역할색·teal 위에서 성립하는 어두운 무채색으로 교체(흰 캔버스 경계 대비 확보).
       selected: { stroke: "#161b22", lineWidth: 3 },
       busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] },   // graph-perf-bg: 펼침/확장 조회 중 임시 표시(teal 점선)
+      // §57(사용자 요구 ②): 상대 하이라이트 — 선택 1-hop 밖 데이터 노드 흐리게(_metaNodeStates 'dimmed').
+      dimmed: { opacity: 0.15 },
     } },
     // graph-drag: 중간 버튼 드래그 = 카메라 팬(어디서든), 좌클릭 = 기존대로(빈 캔버스 팬 / 노드 이동).
     behaviors: [
@@ -5759,6 +5927,46 @@ function _metaInitGraph() {
   }
   graph.on("node:click", (e) => _metaGraphOnNodeClick(e));
   graph.on("combo:click", (e) => { const id = e && e.target && e.target.id; if (id) _metaGraphShowClusterDetailById(id); });
+  // §57(사용자 요구 ②): 빈 캔버스 클릭 = 선택/상대 하이라이트 해제. §18.8 패널 MINOR: 좌클릭 팬
+  //   직후 click 오발화 가드 — pointerdown 대비 이동 5px 초과면 팬으로 간주(선택 보존).
+  let _cvDown = null;
+  try { container.addEventListener("pointerdown", (ev) => { _cvDown = { x: ev.clientX, y: ev.clientY }; }, true); } catch (_) {}
+  graph.on("canvas:click", (e) => {
+    if (!_metaGraph.selected) return;
+    const cx = e && e.client ? e.client.x : null, cy = e && e.client ? e.client.y : null;
+    if (_cvDown && cx != null && cy != null
+        && (Math.abs(cx - _cvDown.x) > 5 || Math.abs(cy - _cvDown.y) > 5)) return;
+    _metaGraphSetSelected(null);
+  });
+  // §57(declutter): 줌 밴드(LOD 임계) 전이 시에만 디바운스 rebuild — 경계 부근 휠 미세조작 왕복 방지.
+  //   §18.8 패널 BLOCKING: G6 v5 번들에 'viewportchange' 이벤트 없음(grep 실증) — 줌/팬은
+  //   GraphEvent.AFTER_TRANSFORM('aftertransform')으로 발화한다. 밴드 미전이는 즉시 return 이라
+  //   transform 다발 발화 비용은 비교 1회뿐.
+  if (_metaGraph._lodBand === undefined) _metaGraph._lodBand = null;
+  graph.on("aftertransform", () => {
+    let z = 1;
+    try { z = graph.getZoom() || 1; } catch (_) { return; }
+    const band = z < _META_EDGE_LOD_ZOOM ? "lod" : "full";
+    if (band === _metaGraph._lodBand) return;
+    const prev = _metaGraph._lodBand;
+    _metaGraph._lodBand = band;
+    if (prev === null) return;   // 최초 관측(로드/스코프 전환 직후)은 기준선만 세움 — 스퓨리어스 rebuild 방지
+    if (_metaGraph._lodTimer) clearTimeout(_metaGraph._lodTimer);
+    _metaGraph._lodTimer = setTimeout(() => {
+      _metaGraph._lodTimer = null;
+      if (_metaGraph._busyKeys.size) { _metaGraph._lodBand = null; return; }   // busy 유예 — 기준선 리셋으로 다음 transform 재시도(§33 관례)
+      try { _metaG6Apply(false); } catch (_) {}
+      // §57 패널 MINOR: LOD 축약 안내 — 사용자가 '관계 없음'으로 오독하지 않게 상태줄에 1줄.
+      try {
+        const st = document.getElementById("metadataGraphStatus");
+        if (st) {
+          const marker = " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)";
+          const base = String(st.innerText || "").replace(marker, "");
+          st.innerText = (band === "lod" && (_metaGraph._lodDropped || 0) > 0) ? (base + marker) : base;
+        }
+      } catch (_) {}
+    }, 300);
+  });
   // graph-ctxmenu: 우클릭 상호작용 메뉴(REQ-20260702T113000). 좌표는 container capture 리스너가
   //   선캡처(_metaCtx.x/y — capture 단계가 G6 캔버스 target 핸들러보다 먼저 실행됨). G6 이벤트에
   //   client 좌표가 실리면 그것을 우선 사용. "X:" 접기 컨트롤 우클릭은 소속 테이블 메뉴로 귀속.
@@ -6530,6 +6738,24 @@ function _metaGraphSetSelected(key) {
   // graph-perf-bg fix: _metaApplyState 경유 — busy 보존 + _stateCache signature 동기화(명령형 writer 가 캐시를 stale 로 남기지 않음).
   if (prev && prev !== key && _metaGraph.nodes.has(prev)) _metaApplyState(prev);
   if (key && _metaGraph.nodes.has(key)) _metaApplyState(key);
+  // §57(사용자 요구 ②): 상대 하이라이트 — 인접 집합 재계산 후 rebuild bake. 전역 흐리게는
+  //   setElementState(건당 ~50ms) 부적합(§33) — _metaG6Apply(false) 경로(~80-200ms)가 규범.
+  //   펼침 fetch 창(busy) 중엔 유예(rebuild 가 _busyKeys 를 소멸시키는 부작용 방지, 7687 동형).
+  const had = !!_metaGraph.focusAdj;
+  _metaGraph.focusAdj = _metaGraph.selected ? _metaFocusAdjacency(_metaGraph.selected) : null;
+  if (had || _metaGraph.focusAdj) _metaFocusApplyOrRetry(0);
+}
+
+// §57 패널 MINOR: busy 창에서 유예된 하이라이트 rebuild 를 재시도 — 엣지 dim 은 build-bake 라
+//   상태 폴(setElementState)로는 회복 불가. busy 종단이 rebuild 없이 끝나는 경로(빈 스키마/오류)
+//   에서도 최대 4×500ms 안에 flush 된다.
+function _metaFocusApplyOrRetry(attempt) {
+  if (!_metaGraph.graph) return;
+  if (_metaGraph._busyKeys.size) {
+    if (attempt < 4) setTimeout(() => _metaFocusApplyOrRetry(attempt + 1), 500);
+    return;
+  }
+  try { _metaG6Apply(false); } catch (_) {}
 }
 
 // 테이블 key 에 (모델상) 컬럼 노드가 있으면 true — 펼침 상태의 단일 소스.
@@ -7115,6 +7341,10 @@ function _metaGraphIngest(nodes, edges) {
       cardinality: e.cardinality || "",   // reltrace-tabledetail(review): 모델-병합 관계행의 [cardinality] 배지 보존
       relation_type: e.relation_type || "",   // graph-funcproc: ROUTINE_USES read/write(+유사어 관계형)
       cross_ds: (e.cross_ds != null && e.cross_ds !== "") ? 1 : 0,   // crossds-rel: 교차DB 엣지 표식(빌드 스타일/배지)
+      // §57: SCHEMA_REF(스키마-쌍 집계) count 계열 보존 — 카드간 연결선 굵기/라벨의 데이터 소스.
+      count: (e.count != null && e.count !== "") ? Number(e.count) : "",
+      ref_count: (e.ref_count != null && e.ref_count !== "") ? Number(e.ref_count) : "",
+      use_count: (e.use_count != null && e.use_count !== "") ? Number(e.use_count) : "",
       weight: (e.weight != null && e.weight !== "") ? Number(e.weight) : "" });
   });
   return added;

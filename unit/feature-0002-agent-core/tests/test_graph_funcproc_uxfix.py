@@ -337,3 +337,39 @@ def test_relevance_routine_use_counts_as_content():
          "fqn": "dbo.usp_NoNameOverlap()"}
     rel = na._relevance(n, {"kind": "routine_use"}, a)
     assert rel >= na._cfg.AGENT_NODE_ANALYSIS_RELEVANCE_MIN
+
+
+# ── §57: 크로스-DB 시각 구분 + 접힘 카드 집계 엣지 ──────────────────────────────
+def test_sync_routine_projects_cross_ds_flag():
+    """SSOT refs 의 cross 플래그가 AGE ROUTINE_USES 엣지 속성(cross_ds='1', ADR-019 관례)으로
+    투영되고, 로컬 참조 엣지에는 설정되지 않는다(§57 — 프론트 색 구분의 데이터 소스)."""
+    cur = FakeCur()
+    mg.sync_routine(cur, "mssql-x", "fhgame1", "FHSP_BuyItem_V4", "procedure",
+                    refs=[{"fqn": "fhdef.FH_ITEM", "kind": "read", "cross": 1},
+                          {"fqn": "fhgame1.FH_CHAR", "kind": "write"}])
+    ru = [s for s, _ in cur.executed if ":ROUTINE_USES" in str(s) and "MERGE" in str(s)]
+    cross_stmts = [s for s in ru if "FH_ITEM" in s]
+    local_stmts = [s for s in ru if "FH_CHAR" in s]
+    assert cross_stmts and all("cross_ds = '1'" in s for s in cross_stmts)
+    assert local_stmts and all("cross_ds" not in s for s in local_stmts)
+
+
+def test_scope_schemas_emits_schema_pair_aggregate_edges():
+    """scope_schemas 가 REFERENCES+ROUTINE_USES 를 스키마-쌍(무향)으로 집계한 SCHEMA_REF 엣지를
+    동봉한다(§57 — 접힘 카드 초기 뷰의 연결 구조). intra-schema 쌍·스키마 세그먼트 없는 키는 제외."""
+    cur = FakeCur(rows_by_marker=[
+        ("RETURN s.key, s.name, s.fqn", [("mssql-x:a", "a", "a"), ("mssql-x:b", "b", "b")]),
+        ("HAS_TABLE", [("mssql-x:a", 3), ("mssql-x:b", 2)]),
+        ("REFERENCES", [("mssql-x:a.t1.c1", "mssql-x:b.t2.c2"),
+                        ("mssql-x:b.t2.c3", "mssql-x:a.t1.c9")]),
+        ("ROUTINE_USES", [("mssql-x:a.r1()", "mssql-x:b.t2"),
+                          ("mssql-x:a.r1()", "mssql-x:a.t1"),      # intra-schema — 제외
+                          ("mssql-x:a", "mssql-x:b.t2")]),         # 세그먼트 없는 키 — 제외
+    ])
+    out = mg.scope_schemas("mssql-x", conn=FakeConn(cur))
+    assert [n["key"] for n in out["nodes"]] == ["mssql-x:a", "mssql-x:b"]
+    refs = [e for e in out["edges"] if e["type"] == "SCHEMA_REF"]
+    assert len(refs) == 1
+    e = refs[0]
+    assert {e["source"], e["target"]} == {"mssql-x:a", "mssql-x:b"}
+    assert e["ref_count"] == 2 and e["use_count"] == 1 and e["count"] == 3

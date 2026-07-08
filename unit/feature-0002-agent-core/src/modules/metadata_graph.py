@@ -382,8 +382,11 @@ def sync_routine(cur, scope, schema, name, routine_type="procedure", params="", 
         _merge_vertex(cur, "Table", tkey,
                       {"name": table, "fqn": tfqn, "scope_key": scope,
                        "schema_name": ".".join(parts[:-1]), "table_name": table})
+        # §57: SSOT refs 의 cross 플래그(크로스-DB 참조, §56 RC2)를 AGE 엣지 속성으로 투영 —
+        #   프론트 크로스 시각 구분(REFERENCES 의 cross_ds='1' 관례와 동일 키, ADR-019 정합).
         _merge_edge(cur, "Routine", rkey, "ROUTINE_USES", "Table", tkey,
-                    {"relation_type": (r or {}).get("kind") or "read"})
+                    {"relation_type": (r or {}).get("kind") or "read",
+                     **({"cross_ds": "1"} if (r or {}).get("cross") else {})})
 
 
 def sync_glossary_term(cur, scope, term, definition="", source="manual") -> None:
@@ -960,6 +963,63 @@ def scope_schemas(scope: str, limit: int = 500, conn=None) -> dict:
                 for v in nodes.values():
                     v["table_count"] = None
                 _log.debug("scope_schemas_count_failed err=%r", exc)
+        # §57(사용자 요구 ①): 접힌 카드 초기 뷰에도 연결 구조가 보이도록 **스키마-쌍 집계 엣지**
+        #   (SCHEMA_REF — HAS_* 가 아니라 프론트 ingest 통과)를 동봉한다. 구현 노트: Schema↔Schema
+        #   멀티-hop cypher 집계는 AGE 플래너가 최악 82s(라이브 실측)라 기각 — **1-hop 전량 스캔
+        #   (실측 0.2s) 후 키 스키마-세그먼트 Python 집계**로 대체(키 규약 `scope:schema.rest`,
+        #   _vkey/_anchor 가 보장). REFERENCES(broken 제외)+ROUTINE_USES 무향 합산, count DESC
+        #   cap 400(카드 n² 폭주 차단). 실패는 엣지 없는 기존 응답으로 강등(카드 목록 유지).
+        if nodes:
+            try:
+                pfx = f"{scope}:"
+
+                def _seg(key):
+                    # 'scope:schema.rest…' → 스키마 세그먼트. 타 scope/세그먼트 없음(스키마-레벨 키)은 None.
+                    k = str(key or "")
+                    if not k.startswith(pfx):
+                        return None
+                    rest = k[len(pfx):]
+                    dot = rest.find(".")
+                    return rest[:dot] if dot > 0 else None
+
+                pair = {}   # (a_key,b_key) 정렬쌍 -> {"ref": n, "use": n}
+
+                def _acc(rows, kind):
+                    for r in rows:
+                        sa = _seg(_unwrap(r[0])); sb = _seg(_unwrap(r[1]))
+                        if not sa or not sb or sa == sb:
+                            continue
+                        a, b = f"{scope}:{sa}", f"{scope}:{sb}"
+                        k = (a, b) if a <= b else (b, a)
+                        d = pair.setdefault(k, {"ref": 0, "use": 0})
+                        d[kind] += 1
+                try:
+                    _acc(_cypher(cur,
+                        f"MATCH (c1:Column)-[r:REFERENCES]->(c2:Column) "
+                        f"WHERE c1.scope_key = {sc} AND (r.status IS NULL OR r.status <> 'broken') "
+                        f"RETURN c1.key, c2.key", 2), "ref")
+                except Exception as exc:
+                    _log.debug("scope_schemas_ref_agg_failed err=%r", exc)
+                try:
+                    _acc(_cypher(cur,
+                        f"MATCH (r0:Routine)-[u:ROUTINE_USES]->(t:Table) "
+                        f"WHERE r0.scope_key = {sc} "
+                        f"RETURN r0.key, t.key", 2), "use")
+                except Exception as exc:
+                    _log.debug("scope_schemas_use_agg_failed err=%r", exc)
+                ranked = sorted(pair.items(), key=lambda kv: -(kv[1]["ref"] + kv[1]["use"]))
+                cap = 400
+                if len(ranked) > cap:
+                    result["truncated"] = True
+                    ranked = ranked[:cap]
+                for (a, b), d in ranked:
+                    if a in nodes and b in nodes:
+                        result["edges"].append({
+                            "source": a, "target": b, "type": "SCHEMA_REF",
+                            "count": d["ref"] + d["use"],
+                            "ref_count": d["ref"], "use_count": d["use"]})
+            except Exception as exc:
+                _log.debug("scope_schemas_pair_agg_failed err=%r", exc)
         result["nodes"] = list(nodes.values())
         cur.close()
     except Exception as exc:
@@ -1069,16 +1129,19 @@ def schema_tables(scope: str, schema_key: str, limit: int = 300, conn=None) -> d
                 urows = _cypher(cur,
                     f"MATCH (s:Schema)-[:HAS_ROUTINE]->(r:Routine)-[u:ROUTINE_USES]->(t:Table) "
                     f"WHERE s.scope_key = {sc} AND s.key = {sk} "
-                    f"RETURN r.key, t.key, u.relation_type LIMIT {limit * 4}", 3)
+                    f"RETURN r.key, t.key, u.relation_type, u.cross_ds LIMIT {limit * 4}", 4)
                 useen = set()
                 for ur in urows:
                     rk = _unwrap(ur[0]); tk = _unwrap(ur[1])
                     if not rk or not tk or (rk, tk) in useen:
                         continue
                     useen.add((rk, tk))
+                    # §57: cross_ds 를 클러스터 펼침 경로에도 노출 — 크로스 루틴 참조는 same-scope 라
+                    #   neighborhood 가 아닌 이 경로로 흐른다(미노출 시 펼침 경로에서 플래그 소실).
                     result["edges"].append({"source": rk, "target": tk, "type": "ROUTINE_USES",
                                             "cardinality": None, "edge_source": None,
-                                            "relation_type": _unwrap(ur[2]) or "read"})
+                                            "relation_type": _unwrap(ur[2]) or "read",
+                                            "cross_ds": _unwrap(ur[3])})
         except Exception as exc:
             _log.debug("schema_tables_routines_failed err=%r", exc)
         result["nodes"] = list(nodes.values())

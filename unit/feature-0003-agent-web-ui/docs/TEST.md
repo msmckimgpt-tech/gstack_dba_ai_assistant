@@ -1799,3 +1799,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **§18.8 검증**: 병렬 서브에이전트 패널이 세션 사용량 한도로 실행 실패 → **메인 루프 적대 자기검증**으로 대체(coordination: reset 3지점·detail render/clear·목록편집↔검토상세 무충돌 / XSS: textContent 전반, mermaid strict 헬퍼 / 액션 미러 / mermaid 정규식 오탐면). **블로킹 0**. minor(상세버튼 stopPropagation 불필요 누락·정규식 이론적 오탐)는 무영향.
 - **Environment: Windows-browser — POST-DEPLOY 라이브가 1차 행동 실증**: 배포 후 실 Windows Chrome 으로 ① list 폭 확대·행 가독성 ② 검토/검수 큐 행 클릭→우측 상세(전체 내용·승급/거부·승인/거부) ③ ENUM "+코드 추가"→pre-fill 생성 ④ 샘플 mermaid 다이어그램 렌더 ⑤ 목록/폼 보기 무회귀 ⑥ pageerror 0. 사용량 한도로 서브에이전트 패널 미실행분은 이 라이브 검증이 보완.
 - **Pass/Fail: 정적·호스트 스위트·메인루프 적대검증 PASS · 라이브 PB-0008 = POST-DEPLOY**. CHECK#13 충족.
+
+### Run (2026-07-08) — graph-edge-visibility: 접힘 카드 연결선·상대 하이라이트·크로스 구분·LOD (§57, 문서 정본 feature-0016 TASK §57/ADR-024) — **Environment: Windows-browser — POST-DEPLOY 예정**
+- 웹 자산(admin.js/html)이 web 이미지에 baked 되어 머지·배포 후 라이브 실측이 유일한 유효 검증(§53~§56
+  관례). 배포 후 실 Windows Chrome 에서 ① 접힘 카드 간 SCHEMA_REF 연결선(count 라벨) ② 노드 선택 시
+  비인접 흐림·빈 캔버스 클릭 해제 ③ 크로스-DB 사용선 마젠타 ④ 줌아웃 LOD 축약·상태줄 안내를 육안
+  확인 후 본 절에 Run 을 append 한다. pre-deploy 격리 검증은 headless 22+26 PASS(§57 TEST.md).
