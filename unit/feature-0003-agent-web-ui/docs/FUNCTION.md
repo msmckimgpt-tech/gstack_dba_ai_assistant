@@ -1524,3 +1524,11 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **기능**: metadata-console-redesign 의 PB-0008 실 Windows 브라우저 적대 미적 검증 잔여 5건 반영(시각 세부 조정, 동작 무변경). ① 2차 보기 strip(`.admin-meta-view`)은 1차 서브탭(밑줄)에 종속되는 경량 텍스트 토글(borderless, 활성만 light chip) ② 메타 전용 list-detail 균형(목록 300~400px + 미선택 상세 empty 중앙·max-width 560px, 공유 클래스 무영향) ③ 그룹 카드 내부 행은 divider 평탄화(cards-in-card nesting 경감) ④ 반복 수정 timestamp 경량화 + 그룹 카드 내 숨김 ⑤ 검토 큐 신뢰도 배지(`.admin-meta-tag-conf`)를 중립 배지 무리에서 은은한 primary accent 로 분리.
 - **범위 봉인(무변경)**: 2차 보기 일반화 로직·CRUD·검토 큐 동작·백엔드·RBAC·타 pane 전부 불변. 순수 시각 CSS + confidence 배지 클래스 1개 교체.
 - cache-buster: admin.html 의 styles.css·admin.js `?v=20260707-metadata-console-redesign`→`?v=20260707-metadata-console-polish`. CHG/REV-20260708-metadata-console-polish. PB-0008= 배포 후 라이브(TEST.md §3).
+
+## (TASK-20260708-metadata-console-ux2) 메타데이터 콘솔 UX — 우측 상세 검토·ENUM 코드추가·mermaid
+- **검토/검수 큐 상세**: 검토(용어/ENUM)·검수(샘플) 큐의 후보 행을 클릭하면 우측 `#metadataReviewDetail` 에 read-only 상세(전체 내용 + 신뢰도/scope/status 배지 + 승급/거부·승인/거부). 좁은 좌측 프리뷰의 밀집을 넓은 우측 패널에서 해소. `reviewSelected` 상태가 보기/서브탭/스코프 전환·큐 리로드 시 초기화되어 목록 편집 폼과 오염 없이 공존.
+- **ENUM 코드 추가**: ENUM 코드사전 그룹 카드(table.column)에 "+ 코드 추가" — 생성 폼을 그 schema/table/column 으로 pre-fill 해 코드↔라벨만 입력(기존 "+ 새 항목"은 fresh 유지).
+- **샘플 SQL/다이어그램**: 샘플 `generated_sql` 이 mermaid(erDiagram 등)면 공용 렌더 헬퍼(securityLevel:strict)로 다이어그램 렌더, SQL 이면 코드블록. admin.html 이 vendor/mermaid.min.js + mermaid-render.js 를 admin.js 이전 로드.
+- **가독성**: 메타 list 컬럼을 넓은 화면에서 확대(min 360px→fraction), 행 line-height 개선.
+- **범위 봉인**: 백엔드/API/RBAC/스키마·2차 보기 일반화 로직·타 pane 불변. XSS textContent-only(mermaid 는 strict 헬퍼 exception).
+- cache-buster: `?v=20260707-metadata-console-polish`→`?v=20260708-metadata-console-ux2`. CHG/REV-20260708T033320-metadata-console-ux2. PB-0008=배포 후 라이브.
