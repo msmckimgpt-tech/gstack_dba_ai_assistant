@@ -8090,6 +8090,13 @@ a { color: inherit; }
 }
 .admin-sf-nosql { font-size: 12px; font-style: italic; }
 .admin-sf-actions { display: flex; gap: 8px; }
+/* ux2 #2: 샘플 검수 행도 클릭 → 우측 read-only 상세(용어/ENUM 검토 행과 동일 affordance). */
+.admin-sf-row[role="button"] { cursor: pointer; transition: background .12s, border-color .12s; }
+.admin-sf-row[role="button"]:hover { background: var(--surface-2, var(--bg)); border-color: #d8d7d1; }
+.admin-sf-row[role="button"]:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+.admin-sf-row.is-active { background: var(--primary-soft, #eff6ff); border-color: var(--primary); }
+/* ux2 #4: 샘플 행 미리보기에서 mermaid 원문 대신 안내(상세에서 다이어그램 렌더). */
+.admin-sf-diagram-note { font-size: 12.5px; font-style: italic; }
 
 /* TASK-20260624-item11-metadata-glossary-enum (ITEM-11 MVP-1): 메타데이터 거버넌스 탭 */
 .admin-meta-scope-label { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
@@ -8561,7 +8568,7 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 11px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm, 6px);
   background: var(--surface);
@@ -8572,10 +8579,10 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 /* L6: 클릭 가능한 카드 행의 키보드 포커스 가시화(role=button + tabindex=0). */
 .admin-meta-row[role="button"]:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
 .admin-meta-row.is-active { background: var(--primary-soft, #eff6ff); border-color: var(--primary); }
-.admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-/* B5: 제목↔본문 계층 강화 — 제목 15/700, 본문 13/muted. */
-.admin-meta-row-title { font-size: 15px; font-weight: 700; color: var(--text); word-break: break-word; }
-.admin-meta-row-body { font-size: 13px; color: var(--text-muted); word-break: break-word; white-space: pre-wrap; }
+.admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+/* B5: 제목↔본문 계층 강화 — 제목 15/700, 본문 13/muted. ux2 #1: 밀집 완화 — line-height 로 가독성. */
+.admin-meta-row-title { font-size: 15px; font-weight: 700; color: var(--text); word-break: break-word; line-height: 1.35; }
+.admin-meta-row-body { font-size: 13px; color: var(--text-muted); word-break: break-word; white-space: pre-wrap; line-height: 1.5; }
 /* B5: enum 제목의 경로(table.column)↔코드 구분 — 하드코딩 middot 대신 CSS 구분자 span. */
 .admin-meta-path { color: var(--text-2, var(--text-muted)); }
 .admin-meta-sep::before { content: "·"; color: var(--text-muted); margin: 0 6px; }
@@ -8619,8 +8626,26 @@ ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .admin-meta-review-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
 /* 폴리시 #2: 메타데이터 list-detail 균형 — 목록 컬럼을 약간 넓히고 미선택 상세 empty 를 중앙·폭
    제한해 넓은 우측 패널의 sprawl 을 줄인다. 공유 .admin-list-detail 대신 메타 전용 스코프(타 pane 무영향). */
-.admin-list-detail.admin-meta-list-detail { grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); }
+.admin-list-detail.admin-meta-list-detail { grid-template-columns: minmax(360px, 1fr) minmax(0, 1.05fr); }
 #metadataDetailEmpty { max-width: 560px; margin: 0 auto; padding: 52px 24px; }
+/* ux2 #2: 검토·검수 큐 후보 read-only 상세(우측 #metadataDetail 내부) — 폼과 배타적으로 노출. */
+.admin-meta-review-detail { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
+.admin-meta-review-title { margin: 0; font-size: 17px; font-weight: 700; color: var(--text); line-height: 1.35; word-break: break-word; }
+.admin-meta-review-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.admin-meta-review-tags .sf-vote {
+  font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--tag-neutral-bd);
+}
+.admin-meta-review-tags .sf-vote-up   { color: var(--tag-ok-fg);     background: var(--tag-ok-bg);     border-color: var(--tag-ok-bd); }
+.admin-meta-review-tags .sf-vote-down { color: var(--tag-danger-fg); background: var(--tag-danger-bg); border-color: var(--tag-danger-bd); }
+.admin-meta-review-section { display: flex; flex-direction: column; gap: 6px; }
+.admin-meta-review-body { font-size: 14px; line-height: 1.6; color: var(--text); word-break: break-word; white-space: pre-wrap; }
+.admin-meta-review-sql { white-space: normal; }
+.admin-meta-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+/* ux2 #3: ENUM 컬럼 그룹에 '코드 추가' 진입점(그룹 head 우측 / 단일 코드 그룹 footer). */
+.admin-meta-enum-add { padding: 3px 10px; font-size: 11.5px; line-height: 1.5; flex-shrink: 0; }
+.admin-meta-group-head .admin-meta-enum-add { margin-left: 8px; }
+.admin-meta-enum-singleton { display: flex; flex-direction: column; gap: 4px; }
+.admin-meta-enum-singleton .admin-meta-enum-add { align-self: flex-start; }
 /* 폴리시 #5: 검토 큐 신뢰도 배지 — 중립 회색 배지 무리에서 핵심 신호(신뢰도)가 튀도록 은은한 accent. */
 .admin-meta-tag-conf {
   background: rgba(37, 99, 235, .10); border-color: rgba(37, 99, 235, .35);

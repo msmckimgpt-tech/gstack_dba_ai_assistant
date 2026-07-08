@@ -1508,3 +1508,8 @@ Google Cloud Console OAuth Client 등록(외부 선행) → credential 주입 + 
 - **폴리시**: #1 2차 보기 필 위계 역전(borderless 경량 chip) · #2 list-detail sprawl(메타 전용 스코프 균형) · #3 그룹 cards-in-card nesting(divider 평탄화) · #4 반복 timestamp(경량+그룹 내 숨김) · #5 신뢰도 배지 매몰(accent 분리). 순수 시각 CSS + confidence 배지 클래스 1개 — 로직/백엔드/구조 0.
 - **검증**: node --check OK · CSS 균형 · route 골든 불변 · 호스트 1662 passed(회귀 0). REVIEW [SKIPPED:minor-css-polish-post-visual-review](적대 미적 검증이 이미 선행). POST-DEPLOY PB-0008 라이브 재확인이 정본 증적.
 - **의의**: "구현→적대 검증→라이브 시각 검증→잔여 폴리시" 루프로, 코드 리뷰·단위 테스트로는 못 잡는 미적 위계/밀도 결함(nav 역전·nesting·sprawl·배지 매몰)을 실화면 근거로 교정.
+
+## 2026-07-08 — 메타데이터 콘솔 UX 이슈 4건 (metadata-console-ux2)
+- **트리거**: metadata-console-polish 배포 후 사용자 실사용 피드백 — ① 텍스트 밀집(좁은 좌측 목록) ② 검토/검수 큐 항목이 클릭해도 우측으로 안 펼쳐짐(선택 불가) ③ ENUM 기존 컬럼에 코드 추가 진입점 부재 ④ 샘플 검수 큐에 mermaid 원문 노출.
+- **수정**: #1 list 폭 확대+행 가독성 · #2 검토/검수 큐 행 클릭→우측 read-only 상세(넓은 패널에서 전체 확인, #1·#2·#4 통합 해소) · #3 ENUM 그룹 "+코드 추가" pre-fill · #4 공용 mermaid 헬퍼 재사용(다이어그램 렌더). UI 단독, 백엔드 0.
+- **검증**: node --check·CSS 균형·route 불변·호스트 1662 passed(회귀 0). §18.8 병렬 패널이 세션 사용량 한도로 미실행 → 메인 루프 적대 자기검증(블로킹 0)+PB-0008 라이브로 대체. 한도 리셋 후 서브에이전트 패널 재실행 가능.
