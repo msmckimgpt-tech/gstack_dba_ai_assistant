@@ -1136,3 +1136,10 @@ source_of_truth: true
 - infra(cross-feature, feature-0007 관할): docker-compose.yml bedrock-gateway `mem_limit: 2g` —
   litellm 07-07 config 확장 후 1g 기동 OOM(무로그 137 루프) 영속 해소. 라이브는 docker update 로
   선복구·healthy.
+
+## CHG-20260708T210000-ai-root-feature-0016-product-classify-suggest — §59 분석 기반 분류 제안 (2026-07-08)
+
+- TASK §59 / ADR-025. feature-0002: modules/product_classify.py 신설·llm.py llm_product_classify+
+  PRODUCT_CLASSIFY_PROMPT·insight.py 데몬(기본 OFF)·shared/config.py env 4종. feature-0003:
+  routers/admin_products.py ai-suggestions approve/reject·static/admin.js AI 제안 블록·admin.html
+  캐시버스터. tests: test_product_classify.py 4건.

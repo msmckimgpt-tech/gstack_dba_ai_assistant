@@ -1210,3 +1210,19 @@ source_of_truth: true
 - 재검증: 컨테이너 phase2 전체 31 PASS(EXIT=0).
 
 ## REV-20260708T190500-ai-root-feature-0016-postdeploy-gwmem [SKIPPED: docs-only POST-DEPLOY 기록 + infra 1행(mem_limit 2g — 라이브 3g 단독 기동 실증·docker update 2g 검증 완료로 별도 패널 불요)] — §57/§58 완수 기록
+
+## REV-20260708T220000-ai-root-feature-0016-product-classify-suggest [SUBAGENT: PASS-WITH-FIXES] — §59 §18.8 적대 패널(보안 중심 3렌즈 + refuter)
+
+- 실행: ultracode workflow(security/correctness/integration + MAJOR/BLOCKING refuter, 8 에이전트·194 tool-use).
+- **BLOCKING 1 수정**: route_snapshot_p5b 골든 미갱신(신규 라우트 2건, 203→205 drift 실측) → _build_table() 재생성.
+- **MAJOR 4 수정**: ① MIN_CONF 가 NaN/Infinity(json.loads 수용)로 우회 → isfinite + (0,1] 범위 게이트
+  ② 승인/거부 감사 실패 rollback 이 autocommit 커넥션에서 무효(감사 없는 allowlist 확장 확정) →
+  autocommit=False 원자화(+finally 복원, admin_settings/admin_datasources 정본 패턴) ③ batch 예산의
+  datasource 기아(앞순위 잔류물 독식) → per-ds 공정 배분 ④ Source='ai' 행이 수동저장 PUT 평문
+  INSERT 와 PK 충돌(500)·픽커 특례 미적용 → flush 필터/백엔드 정리 IN('rule','ai')/픽커 특례 확장.
+- MINOR/NIT 반영: 시스템 스키마·주입 이름 제안단계 원천 제외(+MEMORY_DB)·excluded resolve 실패 시
+  mysql∪mssql 합집합·approve/reject 명시 schemas 필수(default-all 금지)·reject 조기반환(no-op 감사
+  제거)·LLM 근거 Reason 동봉+UI 툴팁·실패 토스트.
+- 수용(후속 기록): 거부 행 재제안 가능(거부 이력 테이블 후속)·rule 스테이징과 Pending UNIQUE 공유
+  간섭(관측 시 후속)·AI 승인 직후 메인 접근DB 목록 갱신은 재로드 의존.
+- 재검증: 분류 테스트 6 PASS(+NaN/범위·시스템/주입 제외 회귀) + route parity PASS·ruff·compile.

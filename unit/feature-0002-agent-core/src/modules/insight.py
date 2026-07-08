@@ -2921,6 +2921,39 @@ def _start_xds_relationship_infer_thread() -> None:
         logging.getLogger("insight").warning("xds_relationship_infer 스레드 기동 실패(무시): %s", exc)
 
 
+
+def _product_classify_loop() -> None:
+    """feature-0016 §59: 미분류 스키마 → 제품 분류 AI 제안 백그라운드 루프(XDS 데몬과 동형·분리).
+    pass 당 BATCH_MAX 스키마 상한, 제안은 Pending(승인 대기)에만 적재. fail-soft."""
+    from shared.config import AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC
+    interval = max(600, int(AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from modules import product_classify
+            rep = product_classify.run_classify_pass()
+            if int(rep.get("suggested_total") or 0) > 0 or rep.get("errors"):
+                _log.info("product_classify suggested=%s errors=%s",
+                          rep.get("suggested_total"), (rep.get("errors") or [])[:3])
+        except Exception as exc:   # 스레드 보호 — 어떤 예외도 루프를 죽이지 않음
+            _log.warning("product_classify pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_product_classify_thread() -> None:
+    """AUTO 켜짐 시 제품 분류 제안 데몬 1회 기동(기본 OFF — 접근면 인접이라 명시 opt-in)."""
+    from shared.config import AGENT_PRODUCT_CLASSIFY_AUTO
+    if not AGENT_PRODUCT_CLASSIFY_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_product_classify_loop, name="product-classify-suggest", daemon=True)
+        t.start()
+        logging.getLogger("insight").info("product_classify 제안 데몬 기동")
+    except Exception as exc:
+        logging.getLogger("insight").warning("product_classify 데몬 기동 실패(무시): %s", exc)
+
+
 # feature-0015: SIGTERM/SIGINT → graceful. 현재 cycle 을 마저 끝내고(루프 경계에서) 종료.
 # insight 쓰기는 멱등(_upsert_fact autocommit 단일-fact + advisory lock + 다음 스캔 재유도)이라
 # SIGKILL 도 데이터 손상은 없으나, graceful 종료로 (a) 진행 cycle 의 불필요한 중단/LLM 비용 낭비,
@@ -2969,6 +3002,8 @@ def run_insight_worker_loop() -> None:
     _start_semantic_cluster_thread()
     # feature-0016 Phase B: 크로스-데이터소스 관계 추론 데몬 스레드(기본 OFF — AGENT_XDS_RELATIONSHIP_INFER_AUTO).
     _start_xds_relationship_infer_thread()
+    # feature-0016 §59: 제품 분류 AI 제안 데몬(기본 OFF — AGENT_PRODUCT_CLASSIFY_AUTO).
+    _start_product_classify_thread()
     while not _INSIGHT_SHUTDOWN.is_set():
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()

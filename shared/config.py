@@ -693,6 +693,14 @@ AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC = int(os.getenv("AGENT_XDS_RELATIONSHI
 AGENT_XDS_RELATIONSHIP_MIN_SIM = float(os.getenv("AGENT_XDS_RELATIONSHIP_MIN_SIM", "0.90") or "0.90")
 AGENT_XDS_RELATIONSHIP_BATCH_MAX = int(os.getenv("AGENT_XDS_RELATIONSHIP_BATCH_MAX", "200") or "200")
 AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE = int(os.getenv("AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE", "50") or "50")
+
+# feature-0016 §59(ADR-025): 미분류 스키마 → 제품 분류 AI 제안(승인 대기 적재 — allowlist 비접촉).
+#   AUTO=0(기본 OFF, XDS 선례) → 모듈·승인 UI 만 배포되고 데몬 inert. 운영 확인 후 1 로 flip.
+#   MIN_CONF 미만 제안은 폐기(보수적 — 접근면 인접 파이프라인). BATCH_MAX = pass 당 스키마 상한.
+AGENT_PRODUCT_CLASSIFY_AUTO = os.getenv("AGENT_PRODUCT_CLASSIFY_AUTO", "0").strip().lower() in ("1", "true", "yes")
+AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC = int(os.getenv("AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC", "21600") or "21600")
+AGENT_PRODUCT_CLASSIFY_MIN_CONF = float(os.getenv("AGENT_PRODUCT_CLASSIFY_MIN_CONF", "0.6") or "0.6")
+AGENT_PRODUCT_CLASSIFY_BATCH_MAX = int(os.getenv("AGENT_PRODUCT_CLASSIFY_BATCH_MAX", "20") or "20")
 AGENT_XDS_RELATIONSHIP_KNN_K = int(os.getenv("AGENT_XDS_RELATIONSHIP_KNN_K", "10") or "10")
 # feature-0016 §55 (REQ-20260706 ②): **같은 datasource 안의 다른 스키마(DB) 간** 관계 추론.
 #   크로스-DS 와 같은 임베딩 유사도 경로를 쓰되, src_ds==tgt_ds 라 기존 프로브(EXISTS)·강화/파단

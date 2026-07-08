@@ -1,1425 +1,1439 @@
 {
-  "total_routes": 203,
-  "api_routes": 202,
-  "ordered": [
-    {
-      "path": "/openapi.json",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
-    {
-      "path": "/docs",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
-    {
-      "path": "/docs/oauth2-redirect",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
-    {
-      "path": "/redoc",
-      "methods": [
-        "GET"
-      ],
-      "type": "Route"
-    },
-    {
-      "path": "/static",
-      "methods": [],
-      "type": "Mount"
-    },
-    {
-      "path": "/",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/admin",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/share/{token}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/healthz",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/conversations/archived",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/usage",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/usage/conversations",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/me",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/permissions",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/databases/available",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/overview",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/health/attachment-grants",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/system-prompts",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/system-prompts",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/dashboard/preferences",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/dashboard/preferences",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/share/{share_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/share/{token}/join",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/public/share/{token}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/public/share/{token}/fork",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/llm/health",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/file",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/livez",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/readyz",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/session",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/api-vault/options",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/quotas",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/quotas/role/{role_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/quotas/account/{account_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/sample-feedback",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/sample-feedback/{feedback_id}/approve",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/sample-feedback/{feedback_id}/reject",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/new_conversation",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/use_conversation",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/history",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/history_anchor",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/history_dates",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/delete_conversation",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/delete_conversations",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/cancel",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/finalize",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/ask_status",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/product",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/duplicate",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/share",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/members",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/members/{account_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/members/{account_id}/ban",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/members/{account_id}/ban",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/bans",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/messages",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/read",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/sample-feedback",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/fix-with-ai",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/shares",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/attachments",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{cid}/attachments",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/conversations/{conversation_id}/title",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/fork_conversation",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/clear_memory",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/progress",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/ask_result",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/suggestions",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/ask",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/avatars/{account_id}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/products/{product_id}/icon",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/roles/{role_id}/icon",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/keywords",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/keywords",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/keywords/{keyword_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/keywords/categories",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary/{term_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary/{term_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary-feedback",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary-feedback/{feedback_id}/promote",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary-feedback/{feedback_id}/reject",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary/{term_id}/relations",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary/{term_id}/relations",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/glossary/relations/{relation_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/enums",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/enums",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/enums/{entry_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/enums/{entry_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/enum-feedback",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/enum-feedback/{feedback_id}/promote",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/enum-feedback/{feedback_id}/reject",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/tables",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/tables",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/tables/{desc_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/tables/{desc_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/columns",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/columns",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/columns/{desc_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/columns/{desc_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph/analyze",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph/analyze-schema",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph/relationship/curate",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph/analyze",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph/analyze/node",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph/analyze/status",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/graph/columns",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/samples",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/samples/{sample_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/samples/{sample_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/bootstrap/schemas",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/bootstrap",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/{sub}/suggest",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/metadata/bootstrap/describe",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/profile/usage/conversations",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/profile/usage",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/profile/audits",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/profile/audits/{event_id}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/integrations/google-drive/status",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/integrations/google-drive/connect",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/integrations/google-drive/callback",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/integrations/google-drive/disconnect",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}/download",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}/versions",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/attachments/{attachment_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/export.csv",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/actors",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/resources",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/verify",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/purge",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/audits/{event_id}",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/avatar",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/avatar",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/password-reset",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/unlock",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}/totp/disable",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/accounts/{account_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}/icon",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}/icon",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}/prompt/generate",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/roles/{role_id}/prompt/generate/stream",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}/test",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/datasources/{key}/databases",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/avatar",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/avatar",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/signup",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/login",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/login/totp",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/totp/setup",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/totp/confirm",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/totp/disable",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/logout",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/oauth/config",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/oauth/google/start",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/oauth/google/callback",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/system-prompt/generate",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/system-prompt/generate/stream",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/system-prompt",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/auth/me/system-prompt",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasource",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources/{key}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/icon",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/icon",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/insight-coverage",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/db-insights",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{pid:int}/insight-reset",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}",
-      "methods": [
-        "PATCH"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/databases",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/preview",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}/approve-pending",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/prompt/generate",
-      "methods": [
-        "POST"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/products/{product_id}/prompt/generate/stream",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/ai-ops/activity",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/ai-ops",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/settings/runtime",
-      "methods": [
-        "GET"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/settings/runtime",
-      "methods": [
-        "PUT"
-      ],
-      "type": "APIRoute"
-    },
-    {
-      "path": "/api/admin/settings/runtime",
-      "methods": [
-        "DELETE"
-      ],
-      "type": "APIRoute"
-    }
-  ]
+ "total_routes": 205,
+ "api_routes": 204,
+ "ordered": [
+  {
+   "path": "/openapi.json",
+   "methods": [
+    "GET"
+   ],
+   "type": "Route"
+  },
+  {
+   "path": "/docs",
+   "methods": [
+    "GET"
+   ],
+   "type": "Route"
+  },
+  {
+   "path": "/docs/oauth2-redirect",
+   "methods": [
+    "GET"
+   ],
+   "type": "Route"
+  },
+  {
+   "path": "/redoc",
+   "methods": [
+    "GET"
+   ],
+   "type": "Route"
+  },
+  {
+   "path": "/static",
+   "methods": [],
+   "type": "Mount"
+  },
+  {
+   "path": "/",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/admin",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/share/{token}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/healthz",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/conversations/archived",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/usage",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/usage/conversations",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/me",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/permissions",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/databases/available",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/overview",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/health/attachment-grants",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/system-prompts",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/system-prompts",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/dashboard/preferences",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/dashboard/preferences",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/share/{share_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/share/{token}/join",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/public/share/{token}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/public/share/{token}/fork",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/llm/health",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/file",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/livez",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/readyz",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/session",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/api-vault/options",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/quotas",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/quotas/role/{role_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/quotas/account/{account_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/sample-feedback",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/sample-feedback/{feedback_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/sample-feedback/{feedback_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/new_conversation",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/use_conversation",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/history",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/history_anchor",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/history_dates",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/delete_conversation",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/delete_conversations",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/cancel",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/finalize",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/ask_status",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/product",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/duplicate",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/share",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/members",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/members/{account_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/members/{account_id}/ban",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/members/{account_id}/ban",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/bans",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/messages",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/read",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/sample-feedback",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/fix-with-ai",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/shares",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/attachments",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{cid}/attachments",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/conversations/{conversation_id}/title",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/fork_conversation",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/clear_memory",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/progress",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/ask_result",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/suggestions",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/ask",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/avatars/{account_id}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/products/{product_id}/icon",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/roles/{role_id}/icon",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/keywords",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/keywords",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/keywords/{keyword_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/keywords/categories",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/{term_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/{term_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary-feedback",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary-feedback/{feedback_id}/promote",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary-feedback/{feedback_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/{term_id}/relations",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/{term_id}/relations",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/glossary/relations/{relation_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/enums",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/enums",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/enums/{entry_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/enums/{entry_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/enum-feedback",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/enum-feedback/{feedback_id}/promote",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/enum-feedback/{feedback_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/tables",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/tables",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/tables/{desc_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/tables/{desc_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/columns",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/columns",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/columns/{desc_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/columns/{desc_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze-schema",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/relationship/curate",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze/node",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/analyze/status",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/graph/columns",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/samples",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/samples/{sample_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/samples/{sample_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/bootstrap/schemas",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/bootstrap",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/{sub}/suggest",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/metadata/bootstrap/describe",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/profile/usage/conversations",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/profile/usage",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/profile/audits",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/profile/audits/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/integrations/google-drive/status",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/integrations/google-drive/connect",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/integrations/google-drive/callback",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/integrations/google-drive/disconnect",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/attachments/{attachment_id}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/attachments/{attachment_id}/download",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/attachments/{attachment_id}/versions",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/attachments/{attachment_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/audits",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/audits/export.csv",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/audits/actors",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/audits/resources",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/audits/verify",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/audits/purge",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/audits/{event_id}",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts/{account_id}/avatar",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts/{account_id}/avatar",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts/{account_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts/{account_id}/password-reset",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts/{account_id}/unlock",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts/{account_id}/totp/disable",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/accounts/{account_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles/{role_id}/icon",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles/{role_id}/icon",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles/{role_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles/{role_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles/{role_id}/prompt/generate",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/roles/{role_id}/prompt/generate/stream",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/datasources",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/datasources/{key}/test",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/datasources",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/datasources/{key}",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/datasources/{key}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/datasources/{key}/databases",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me/avatar",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me/avatar",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/signup",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/login",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/login/totp",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/totp/setup",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/totp/confirm",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/totp/disable",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/logout",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/oauth/config",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/oauth/google/start",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/oauth/google/callback",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me/system-prompt/generate",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me/system-prompt/generate/stream",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me/system-prompt",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/auth/me/system-prompt",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasource",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/icon",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/icon",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/insight-coverage",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/db-insights",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{pid:int}/insight-reset",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/databases",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/preview",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/db-rules/{rule_id}/approve-pending",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/ai-suggestions/approve",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/datasources/{key}/ai-suggestions/reject",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/prompt/generate",
+   "methods": [
+    "POST"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/products/{product_id}/prompt/generate/stream",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/ai-ops/activity",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/ai-ops",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/settings/runtime",
+   "methods": [
+    "GET"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/settings/runtime",
+   "methods": [
+    "PUT"
+   ],
+   "type": "APIRoute"
+  },
+  {
+   "path": "/api/admin/settings/runtime",
+   "methods": [
+    "DELETE"
+   ],
+   "type": "APIRoute"
+  }
+ ]
 }

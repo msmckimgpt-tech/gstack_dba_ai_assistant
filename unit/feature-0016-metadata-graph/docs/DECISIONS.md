@@ -750,3 +750,23 @@ source_of_truth: true
   (b) 상대 하이라이트를 G6 setElementState 루프로 — 건당 ~50ms 실측 프리즈(기각, §33) (c) 크로스 구분을
   별도 dash 패턴으로 — 관계 종류 인코딩과 충돌(기각).
 - Supersedes: — (ADR-019 색 어휘·§32 테이블-레벨 승격을 확장) / Superseded By: —
+
+## ADR-025 — §59 product-classify-suggest: 분석 기반 제품 분류는 '제안→사람 승인' 스테이징으로
+- Status: accepted (2026-07-08)
+- Context: 카테고리 밴드의 스키마→제품 매핑이 이름 기반(정규식 규칙+수동)이라는 사용자 지적 —
+  분석(테이블 구성·node_analysis 요약) 신호로 개선 요구. 단 매핑 테이블(WebProductDatabases)은
+  에이전트 접근 allowlist 겸용(admin_products 게이트)이라 자동 기록 = 접근 권한 자동 부여.
+- Decision: ① LLM 분류는 **Pending(RuleId NULL·Reason 'ai_suggest:<conf>') 적재까지만** — 승격은
+  product.manage 보유자의 명시 승인(Source='ai') ② 후보 화이트리스트 = 그 datasource 에 이미
+  연결된 제품만(미연결 제품 제안 = 접근면 확장이라 원천 배제) ③ 환각 차단: 입력 스키마 실재 +
+  제품 id 화이트리스트 + 신뢰도 임계(0.6) 3중 게이트 ④ 데몬 기본 OFF(XDS 선례) — 운영 확인 후
+  flip ⑤ 기존 rule pending 파이프라인·검증(제외 DB·이름 주입) 재사용.
+- Consequences: 미분류 스키마가 분석 근거와 신뢰도를 달고 승인 큐에 오른다 — 밴드 분류가 이름
+  의존에서 벗어나되 사람 통제 유지. 한계: (a) 거부 행은 pending 에서 삭제되므로 다음 pass 재제안
+  가능(반복 소음 시 수동/규칙 확정이 정본 — 거부 이력 테이블은 후속) (b) 다제품 스키마는 최고
+  신뢰도 1건만 제안(밴드 대표 배치 규약과 정합) (c) 분석 미보유 스키마는 테이블명 표본만으로
+  판단(신뢰도 자연 하락 기대).
+- Alternatives: (a) 규칙-우회 자동 기록(Source='ai' 즉시) — allowlist 자동 확장(기각, 보안)
+  (b) 시각화 전용 매핑 테이블 분리(안3) — 접근·표시 이원화 관리 부담, 승인 파이프라인 재사용이
+  더 단순(대안으로 보류) (c) 임베딩 군집 기반(Phase C) — 분석 요약 축적 후 후속 후보.
+- Supersedes: — (ADR-021 카테고리 밴드의 매핑 원천을 확장) / Superseded By: —

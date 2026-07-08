@@ -809,3 +809,11 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 ### Run (2026-07-08) — §58 골격 가져오기 라벨 케이스 (Environment: 컨테이너 pytest)
 - test_bootstrap_skeleton_mssql_schema_label_lowercased PASS — db_name 'FHGame1' → schema_name 'fhgame1'
   저장, 테이블명 케이스 보존, MySQL 분기 무변경. EXIT=0.
+
+## product-classify-suggest — 분석 기반 분류 제안 (TASK §59, 2026-07-08)
+
+### Run (2026-07-08) — pre-deploy 격리 검증
+- 컨테이너 pytest test_product_classify.py 4 PASS: Pending-only 계약(allowlist 무기록·RuleId NULL·
+  reason 'ai_suggest:<conf>')·환각 3중 게이트(미입력 스키마/비화이트리스트 pid/임계 미만 폐기·
+  최고 신뢰도 1건)·dry-run 무쓰기·LLM 실패 soft. ruff PASS.
+- 라이브 실증·PB-0008(제안 블록)은 POST-DEPLOY(데몬 기본 OFF — dry-run CLI 로 확인).

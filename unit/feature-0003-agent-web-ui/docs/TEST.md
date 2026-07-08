@@ -1805,3 +1805,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   관례). 배포 후 실 Windows Chrome 에서 ① 접힘 카드 간 SCHEMA_REF 연결선(count 라벨) ② 노드 선택 시
   비인접 흐림·빈 캔버스 클릭 해제 ③ 크로스-DB 사용선 마젠타 ④ 줌아웃 LOD 축약·상태줄 안내를 육안
   확인 후 본 절에 Run 을 append 한다. pre-deploy 격리 검증은 headless 22+26 PASS(§57 TEST.md).
+
+### Run (2026-07-08) — product-classify-suggest: AI 분류 제안 승인/거부 UI (§59, 문서 정본 feature-0016 TASK §59/ADR-025) — **Environment: Windows-browser — POST-DEPLOY 예정**
+- 웹 자산(admin.js/html)이 web 이미지에 baked — 머지·배포 후 라이브 실측이 유일한 유효 검증(§53~§57
+  관례). 배포 후 실 Windows Chrome 에서 제품 관리 > 접근DB 규칙 화면의 "✨ AI 분류 제안" 블록
+  (신뢰도·근거 툴팁·승인/거부 즉시 실행·실패 토스트)을 육안 확인 후 본 절에 Run 을 append 한다.
+  데몬 기본 OFF 라 제안 행은 dry-run CLI/수동 pass 로 생성해 확인. pre-deploy 격리 검증은 분류
+  테스트 6 + route parity PASS(§59 TEST.md).
