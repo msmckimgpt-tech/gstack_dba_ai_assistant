@@ -1106,3 +1106,9 @@ source_of_truth: true
 - docs-only: TASK §56 T56.8 완수 체크 + TEST POST-DEPLOY Run. 코드 변경 없음.
 - 라이브 증적: case_purged 6,320·mixed 잔여 0·full sync errors/step_failures 0·워터마크 전진·
   크로스 ROUTINE_USES 1,041·분석 run 6c33317d. PB-0008 육안만 사용자 대기.
+
+## CHG-20260708T103500-ai-root-feature-0016-routine-sync-pb0008 — §56 PB-0008 시각검증 Run 기록 (2026-07-08)
+
+- docs-only: TEST.md PB-0008 Run(AI 직접, 실 Windows Chrome) + TASK T56.8 시각검증 완수 반영.
+- 발견(후속 위임): 테이블 축 케이스 변형 — table_descriptions 'AccountDB' 33행(06-30 잔재) rekey +
+  크로스-DB 엣지 시각 구분 스타일 + 중간 줌 엣지 declutter (§56 T56.7c 계열).

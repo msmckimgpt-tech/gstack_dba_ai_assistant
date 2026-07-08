@@ -1172,3 +1172,5 @@ source_of_truth: true
 - 재검증: 컨테이너 pytest 66 PASS(EXIT=0)·ruff PASS. 잔여 BLOCKING 0.
 
 ## REV-20260707T193500-ai-root-feature-0016-routine-sync-postdeploy [SKIPPED: docs-only POST-DEPLOY 기록 — 코드 변경 0, §56 라이브 e2e 증적의 TASK/TEST/MODIFY 반영. 코드 리뷰는 직전 REV-20260707T173500(RC5 패널) 정본] — §56 T56.8 완수 기록
+
+## REV-20260708T103000-ai-root-feature-0016-routine-sync-pb0008 [SKIPPED: docs-only PB-0008 Run 기록 — 코드 변경 0, 시각검증 결과의 TEST/TASK 반영] — §56 PB-0008 완수 기록
