@@ -1721,6 +1721,11 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   cross 플래그는 SSOT refs 전용, 엣지는 fqn 앵커로 성립 — ADR-022 설계 그대로) ③ 케이스 중복 0
   (fhgame1 Routine 정확히 300) ④ RC3 — 스키마 능동 분석 run 6c33317d 기동(시드 361·missing 300·
   cap 200, insight-worker 소화 중). PB-0008: 백엔드 전용 변경(웹 자산 불변)이라 실측 축은 DB/API
-  레벨로 대체 완료 — **그래프 뷰 육안 확인(fhgame1 ƒ/⚙ 노드·fhdef 크로스 엣지·분석 보충)만 사용자
-  대기**. 잔여 한계(비차단): 그래프 Routine 정점 21,992 > SSOT 21,160 — drop 된 루틴의 정점 잔존은
+  레벨로 대체 완료 → **PB-0008 시각검증 AI 직접 수행 완료(2026-07-08, 실 Windows Chrome)**: fhgame1
+  ƒ/⚙ 렌더·fhdef 크로스 연결선(FH_ITEM 유입 49)·능동 분석 보충 전건 PASS + 디자인 수용성 검토
+  (개선 후보 3건 — 엣지 스파게티·크로스 엣지 스타일 미구분·AccountDB 테이블축 케이스 중복 rekey).
+  TEST.md Run(2026-07-08) 정본.
+- [x] T56.9 PB-0008 시각검증 완수(AI 직접, 실 Windows Chrome/149) — AC-① fhgame1 ƒ/⚙ 렌더·중복 0 ·
+  AC-② fhdef 크로스 연결선(양방향 상세 포함) · AC-③ 능동 분석 보충(run 538/538) 전건 PASS +
+  디자인 수용성 검토(개선 후보 3건 후속 위임). 잔여 한계(비차단): 그래프 Routine 정점 21,992 > SSOT 21,160 — drop 된 루틴의 정점 잔존은
   ADR-016 알려진 한계(vertex prune 투영 범위 외).

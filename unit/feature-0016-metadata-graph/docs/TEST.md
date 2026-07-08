@@ -765,3 +765,25 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   (시드 361·missing 300) 기동 — back-refine 은 run 소화 중 substrate 기반 발화.
 - PB-0008(Windows-browser): 백엔드 전용 변경 — 그래프 뷰 육안(fhgame1 ƒ/⚙·크로스 엣지·보충 해소)은
   **사용자 확인 대기**(Environment: Windows-browser Run 은 사용자 확인 후 append).
+
+### Run (2026-07-08) — §56 PB-0008 시각검증 — PASS (Environment: Windows-browser)
+- 실 Windows Chrome/149(win-browser relay @172.26.144.1:9223, bootstrap_admin 세션) — AI 직접 수행
+  (playwright CDP attach + 앱 정식 경로 `_metaGraphExpandSchema`/`_metaGraphExpand`/`_metaGraphShowDetail`).
+- **AC-① fhgame1 ƒ/⚙ PASS**: mssql-qa-idc 진입(카테고리 밴드 6종·스키마 135 카드) → fhgame1 점프(앰버
+  글로우) → 펼침: ⚙/ƒ 보라 pill 루틴 노드 대량 렌더(뷰 모델 노드 300·관계 494), 케이스 중복 0
+  (fhgame1 단일 클러스터 — fh 계열 fhdef/fhetl/fhlog0·1/fhlogin/fh_ods/fhweb 전부 단일).
+- **AC-② 크로스-DB 연결선 PASS**: fhdef 병행 펼침 → 줌아웃에서 fhgame1 루틴 밴드 ↔ fhdef 클러스터 간
+  연결선 렌더. FHSP_BuyItem_V4 상세 = 사용 테이블 5(fhgame1.FH_CHAR·FH_CHAR_ITEM 쓰기 + **fhdef.FH_ITEM·
+  FH_ITEM_BOAT_OPT·FH_SHOPLIST 읽기**). 역방향 fhdef.FH_ITEM 상세 = **사용하는 함수·프로시저 49**(읽기
+  칩 전부) + focus 뷰에서 유입 잔점선 엣지 육안 확정 (증적: pb-20/23/25/26 스크린샷).
+- **AC-③ 능동 분석 보충 PASS**: 분석 run 6c33317d done 538/538·failed 0. FHSP_BuyItem_V4 능동 분석 =
+  구매 트랜잭션 흐름·관계(5테이블 조합 동작)·활용(운영 추적/디버깅/이상감지)·주의 — '보충설명 필요'
+  플레이스홀더가 실질 분석으로 대체.
+- **디자인 가시성 검토(사람 수용성)**: 수용 가능 판정 — 노드 타입 구분(teal 테이블/보라 ƒ⚙/파스텔
+  그룹밴드/선택 테두리) 명확, 상세 패널 구조(배지·mono 파라미터·읽기/쓰기 칩·분석 prose) 양호,
+  탐색 보조(검색·점프·이웃깊이·미니맵·범례·status 안내) 충실. **개선 여지(비차단, 후속 후보)**:
+  ① 중간 줌에서 루틴 그리드 관통 엣지 스파게티(300노드·494엣지 밀집 — focus/상세로 완화되나 기본
+  펼침 뷰 소음) ② 크로스-DB 엣지가 로컬 사용 엣지와 동일 스타일(보라 잔점선)이라 시각 구분 불가 —
+  SSOT cross 플래그의 엣지 속성/색상 반영 후보 ③ 스키마 점프 목록에 AccountDB/accountdb 케이스 중복
+  노출 — **테이블 축 케이스 변형**(table_descriptions 'AccountDB' 33행, 06-30 일회성 적재·라이브 writer
+  없음·lower twin 없음 → 삭제 아닌 rekey 대상, §56 후속 T56.7c 계열에 위임).
