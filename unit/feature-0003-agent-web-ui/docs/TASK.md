@@ -20,6 +20,19 @@ source_of_truth: true
   - [x] §18.8 적대 서브에이전트 패널(2라운드) → R1 MAJOR(H1: earlyCid 흐름 인라인 취소 무동작, 모달이 가려온 `myAskInFlight` 키 비대칭) 적발 → 동반수정(sentinel→earlyCid 키 이관 + finally dual-delete + renderComposer) → R2 재검 SHIP. REV-20260709T130000-ask-timeout-nonblocking. node --check PASS(2회).
   - [x] verify-completion --pre-commit PASS → commit d87d582e → PR #638 머지(main 4b6919ec) → web 무중단 재배포(deploy-web, 4b6919ec, soak PASS). **POST-DEPLOY PB-0008 런타임 실측 PASS**(win-browser Chrome/149): 서빙 app.js 에서 `typeof showTimeoutRecoveryDialog==="undefined"`(모달 런타임 완전 제거 → 경고창 노출 불가)·attachAndWaitForResult 보존·composerFinalizeBtn/sendBtn DOM 존재·z-9999 backdrop 부재·pageerror 0. (TEST.md §3 POST-DEPLOY 갱신 참조.)
 
+## TASK-20260709-reasoning-budget-per-model — 모델별 추론 예산 상한 확대(native) + 모델→추론강도 accordion + [추론↔본문] 비율 슬라이더 (Major §12.3 — shared + feature-0002 core + feature-0003 web/UI. /_template:entry arg-given dispatch)
+<!-- PLAN-APPROVED by mckim on 2026-07-09 (ExitPlanMode 승인 — 동반 상향·모델별 native·종속 accordion·비율 슬라이더) -->
+- 트리거(사용자): "`관리 콘솔 > 시스템 > 설정 > 모델별 추론 예산` 최대값 16000 상향 검토 — '매우 높음' default=max=16000 이라 조정 의미 없음." 후속 결정: 동반 상향 + 실제 Sonnet 128K/Haiku 64K 활용 + 모델별 추론 수준 분리 + 종속 accordion·dropdown + [추론↔본문] 비율 슬라이더.
+- 근본원인: 16000 은 모델/API 한계가 아니라 정책 캡(`_MODEL_BUDGET_MAX`/`_REASONING_BUDGET_MAX`). 실제 병목은 `_CLAUDE_MAX_TOKENS["agent"]=20000` + `budget<max_tokens` 제약. '매우 높음' spec default=maximum=16000 이라 상향 여지 0.
+- Completion Checklist:
+  - [x] `shared/model_catalog.py`: `_CLAUDE_MODEL_MAX_OUTPUT`(sonnet 128000/haiku 64000) + `model_native_max_output`. `max_tokens_for_model` task cap **무변경**(plan 등 "agent" task 공유 소비자 무회귀). py_compile PASS.
+  - [x] `shared/runtime_settings.py`: 신규 group `agent_max_output`(모델별 총 출력, default 40000/24000·max native) + per-model `reasoning_budget:{model}:{level}` 스킴 + `agent_max_output`/`reasoning_budget_override(model,level)` reader + `serialize_registry` `agent_max_outputs`. thinking budget 상한 = native−1024.
+  - [x] `unit/feature-0002-agent-core/src/agent_core.py` `_call_llm`: token_limit = `_rts.agent_max_output(model)`(thinking 모델), reasoning override 에 model 인자. `min(budget, max_tokens−1024)` clamp 유지.
+  - [x] `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css,release-notes-data.js}`: 모델별 `permission-group` accordion + 총 출력 입력 + 추론강도별 [추론↔본문] 비율 슬라이더(신규 `.rs-slider`/`.rs-split-bar`) + 커밋바 dirty(RS_AGENT_MAX_PREFIX). node --check PASS.
+  - [x] 테스트: `test_runtime_settings.py`(agent_max_output 등록·override·native clamp·per-model 격리·backward-compat) + `test_reasoning_effort.py`(per-model 주입·총×예산 분리·clamp) 마이그레이션+신규, `test_prompt_gen_max_tokens.py` 무회귀. 컨테이너 `make test` feature 관련 전건 PASS(잔여 3건=env `AGENT_TIMEOUT_SEC=300`·`--no-deps` DB 아티팩트, unset 시 PASS 확인).
+  - [x] §18.8 적대 패널(general 5축) → BLOCKING 0. Finding1(plan 경로 결합) fixed(대화 default 를 runtime_settings 로 분리) · Finding2(슬라이더 동적 상한 검증) fixed · Finding3(display staleness) 수용-NIT. REV-20260709T051642-reasoning-budget-per-model.
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge(사용자 confirm) → 배포(정적 자산 web 재빌드, deploy_scope 확인) → **라이브 PB-0008: 모델 카드 접기/펼치기·총 출력 상향·비율 슬라이더 드래그·'매우 높음' 16000 초과 저장 검증**.
+
 ## TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격 (Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI. /_template:entry arg-given dispatch)
 <!-- PLAN-APPROVED by mckim on 2026-07-03 (AskUserQuestion 정의 재확정=A 단계 간 간격) -->
 - 트리거(사용자): "`관리 콘솔 > AI 운영 현황` 에서 에이전트 추론 p95 측정 단위를 검토 — 지연 기준은 답변 받는 총 시간이 아니라 각 추론이 진행되는 단계 간 나타나는 간격으로 구성되어야."

@@ -11068,7 +11068,8 @@ function mountGlobalPromptPanel() {
 const RUNTIME_SETTINGS_ENDPOINT = "/api/admin/settings/runtime";
 const RS_RESET = "__reset__";  // pending sentinel — 기본값 복원(DELETE) 예약
 const RS_MODEL_PREFIX = "model_thinking_budget:";
-const RS_REASONING_PREFIX = "reasoning_budget:";  // 추론 강도별 예산도 '모델 추론 예산' 패널 소속
+const RS_REASONING_PREFIX = "reasoning_budget:";  // reasoning_budget:{model}:{level}
+const RS_AGENT_MAX_PREFIX = "agent_max_output:";  // 모델별 대화 총 출력(max_tokens)
 
 function rsApplyBadge(applyMode) {
   const span = document.createElement("span");
@@ -11235,6 +11236,7 @@ function buildRuntimeSettingRow(item, canWrite, opts) {
         setRuntimeSettingPending(item.key, val);
       }
       refresh();
+      if (opts && typeof opts.onChange === "function") opts.onChange();
     });
     resetBtn.addEventListener("click", () => {
       const pend = adminState.pending.runtimeSettings.get(item.key);
@@ -11243,6 +11245,7 @@ function buildRuntimeSettingRow(item, canWrite, opts) {
         setRuntimeSettingPending(item.key, null);
         input.value = noOverrideEmpty ? "" : String(item.effective);
         refresh();
+        if (opts && typeof opts.onChange === "function") opts.onChange();
         return;
       }
       if (!item.has_override) return;  // 복원할 override 없음
@@ -11251,6 +11254,7 @@ function buildRuntimeSettingRow(item, canWrite, opts) {
       if (emptyWhenNoOverride) { input.value = ""; input.placeholder = String(item.default); }
       else input.value = String(item.default);
       refresh();
+      if (opts && typeof opts.onChange === "function") opts.onChange();
     });
   } else {
     resetBtn.hidden = true;
@@ -11320,6 +11324,164 @@ async function renderRuntimeTimeouts(mount) {
   mount.appendChild(panel);
 }
 
+// (모델, 레벨) thinking 예산을 모델 총 출력 대비 [추론 ↔ 본문] 슬라이더로 배분한다.
+// 저장값은 절대 thinking budget(reasoning_budget:{model}:{level}) 하나뿐이며, 본문(content)은
+// (총 − thinking) 파생 표시라 별도 저장 필드가 없다. getTotal(): 이 모델의 현재 총 출력(pending 반영).
+function buildBudgetSliderRow(item, canWrite, getTotal) {
+  const CONTENT_FLOOR = 1024;  // 본문 최소 확보(agent_core clamp 여유와 정합)
+  const row = document.createElement("div");
+  row.className = "rs-row rs-row--slider";
+  row.dataset.settingKey = item.key;
+
+  const label = document.createElement("div");
+  label.className = "rs-row-label";
+  const name = document.createElement("span");
+  name.textContent = item.label || item.key;
+  label.append(name, rsApplyBadge(item.apply_mode));
+
+  const desc = document.createElement("div");
+  desc.className = "rs-row-desc";
+  desc.textContent = item.description || "";
+  desc.title = desc.textContent;
+
+  const control = document.createElement("div");
+  control.className = "rs-row-control rs-slider-control";
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "rs-slider";
+  slider.min = String(item.minimum);
+  slider.step = "256";
+  slider.setAttribute("aria-label", `${item.label || item.key} 추론 예산`);
+  const num = document.createElement("input");
+  num.type = "number";
+  num.className = "rs-input rs-input--compact";
+  num.min = String(item.minimum);
+  num.max = String(item.maximum);
+  num.step = "1";
+  const unit = document.createElement("span");
+  unit.className = "rs-unit";
+  unit.textContent = "tokens";
+  if (!canWrite) { slider.disabled = true; num.disabled = true; }
+  control.append(slider, num, unit);
+
+  const split = document.createElement("div");
+  split.className = "rs-split-bar";
+  const segThink = document.createElement("div");
+  segThink.className = "rs-split-seg rs-split-think";
+  segThink.textContent = "추론";
+  const segContent = document.createElement("div");
+  segContent.className = "rs-split-seg rs-split-content";
+  segContent.textContent = "본문";
+  split.append(segThink, segContent);
+
+  const meta = document.createElement("div");
+  meta.className = "rs-row-meta";
+  const status = document.createElement("span");
+  status.className = "rs-status";
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "rs-reset";
+  resetBtn.textContent = "기본값";
+  resetBtn.title = `기본값(${item.default} tokens)으로 되돌립니다.`;
+  meta.append(status, resetBtn);
+
+  row.append(label, control, split, desc, meta);
+
+  const pendVal = () => {
+    const p = adminState.pending.runtimeSettings.get(item.key);
+    return p ? p.value : null;  // number | RS_RESET | null
+  };
+  const sliderMax = () => Math.max(item.minimum, Math.min(item.maximum, getTotal() - CONTENT_FLOOR));
+  const currentThinking = () => {
+    const p = pendVal();
+    if (p === RS_RESET) return item.default;
+    if (typeof p === "number") return p;
+    return item.effective;
+  };
+
+  function renderSplit(previewThink) {
+    const total = getTotal();
+    const think = Math.max(item.minimum, Math.min(previewThink == null ? currentThinking() : previewThink, sliderMax()));
+    const content = Math.max(0, total - think);
+    const thinkPct = total > 0 ? Math.round((think / total) * 100) : 0;
+    segThink.style.flexGrow = String(Math.max(1, think));
+    segContent.style.flexGrow = String(Math.max(1, content));
+    segThink.title = `추론 ${think.toLocaleString()} tokens (${thinkPct}%)`;
+    segContent.title = `본문 ${content.toLocaleString()} tokens (${100 - thinkPct}%)`;
+  }
+
+  function refresh() {
+    num.classList.remove("is-invalid");
+    const p = pendVal();
+    row.classList.toggle("is-pending", p != null);
+    const v = currentThinking();
+    slider.max = String(sliderMax());
+    slider.value = String(Math.max(item.minimum, Math.min(v, sliderMax())));
+    num.value = String(v);
+    renderSplit();
+    if (p === RS_RESET) {
+      status.textContent = "미저장 · 기본값 복원"; status.className = "rs-status is-pending";
+      resetBtn.textContent = "되돌리기"; resetBtn.hidden = !canWrite;
+    } else if (p != null) {
+      status.textContent = "미저장 변경"; status.className = "rs-status is-pending";
+      resetBtn.textContent = "되돌리기"; resetBtn.hidden = !canWrite;
+    } else if (item.has_override) {
+      status.textContent = `사용자 지정 · 기본 ${item.default} tokens`; status.className = "rs-status is-override";
+      resetBtn.textContent = "기본값"; resetBtn.hidden = !canWrite;
+    } else {
+      status.textContent = `기본값 ${item.default} tokens`; status.className = "rs-status";
+      resetBtn.hidden = true;
+    }
+  }
+
+  function commit(v) {
+    const clamped = Math.max(item.minimum, Math.min(Math.trunc(v), sliderMax()));
+    if (clamped === item.effective) setRuntimeSettingPending(item.key, null);
+    else setRuntimeSettingPending(item.key, clamped);
+    refresh();
+  }
+
+  refresh();
+
+  if (canWrite) {
+    slider.addEventListener("input", () => {
+      const v = Math.max(item.minimum, Math.min(Number(slider.value), sliderMax()));
+      num.value = String(v);
+      renderSplit(v);
+    });
+    slider.addEventListener("change", () => commit(Number(slider.value)));
+    num.addEventListener("change", () => {
+      const raw = num.value.trim();
+      if (raw === "") { setRuntimeSettingPending(item.key, null); refresh(); return; }
+      const val = Math.trunc(Number(raw));
+      if (!Number.isFinite(val)) { refresh(); return; }
+      // 실효 상한은 현재 총 출력 대비 sliderMax(= min(native-1024, 총-1024)) — 정적 native 상한이
+      // 아니라 이 동적 상한으로 검증해 "저장 후 조용히 clamp" 되는 혼란(리뷰 NIT)을 방지.
+      const hi = sliderMax();
+      if (val < item.minimum || val > hi) {
+        num.classList.add("is-invalid");
+        status.textContent = `허용 범위 ${item.minimum}~${hi} (총 출력 ${getTotal().toLocaleString()} 대비)`;
+        status.className = "rs-status is-invalid";
+        return;
+      }
+      commit(val);
+    });
+    resetBtn.addEventListener("click", () => {
+      const p = pendVal();
+      if (p != null) { setRuntimeSettingPending(item.key, null); refresh(); return; }
+      if (!item.has_override) return;
+      setRuntimeSettingPending(item.key, RS_RESET);
+      refresh();
+    });
+  } else {
+    resetBtn.hidden = true;
+  }
+
+  // 총 출력이 바뀌면 슬라이더 상한/본문 파생을 다시 그린다(카드가 호출).
+  row._rsRecompute = refresh;
+  return row;
+}
+
 async function mountModelThinkingBudgetsPanel() {
   const mount = $("modelThinkingBudgetsMount");
   if (!mount) return;
@@ -11340,41 +11502,114 @@ async function renderModelThinkingBudgets(mount) {
     return;
   }
   const canWrite = can("system.runtime.write");
+  const totals = Array.isArray(data.agent_max_outputs) ? data.agent_max_outputs : [];
   const models = Array.isArray(data.model_thinking_budgets) ? data.model_thinking_budgets : [];
   const levels = Array.isArray(data.reasoning_budgets) ? data.reasoning_budgets : [];
-  if (!models.length && !levels.length) {
+  if (!totals.length && !models.length && !levels.length) {
     rsErrorPlaceholder(mount, "extended thinking 을 지원하는 모델이 카탈로그에 없습니다.");
     return;
   }
   mount.innerHTML = "";
   const panel = document.createElement("div");
-  panel.className = "rs-panel";
+  panel.className = "rs-panel rs-budget-panel";
 
-  // 헬퍼: (제목, 항목[], opts) → rs-group
-  const addGroup = (titleText, rows, opts) => {
-    if (!rows.length) return;
-    const group = document.createElement("div");
-    group.className = "rs-group";
-    const gtitle = document.createElement("div");
-    gtitle.className = "rs-group-title";
-    gtitle.textContent = titleText;
-    const list = document.createElement("div");
-    list.className = "rs-list";
-    for (const it of rows) list.appendChild(buildRuntimeSettingRow(it, canWrite, opts));
-    group.append(gtitle, list);
-    panel.appendChild(group);
+  // 모델 순서 = agent_max_outputs(카탈로그 순). 각 모델의 rows 를 모은다.
+  const order = [];
+  const byModel = new Map();
+  const ensure = (m) => {
+    if (!byModel.has(m)) { byModel.set(m, { total: null, model: [], levels: [] }); order.push(m); }
+    return byModel.get(m);
+  };
+  for (const it of totals) ensure(it.model).total = it;
+  for (const it of models) ensure(it.model).model.push(it);
+  for (const it of levels) ensure(it.model).levels.push(it);
+
+  // 이 모델의 현재 총 출력(agent_max_output; pending 반영) — 슬라이더가 참조.
+  const totalRow = new Map();
+  for (const it of totals) totalRow.set(it.model, it);
+  const currentTotal = (m) => {
+    const t = totalRow.get(m);
+    if (!t) return 20000;
+    const p = adminState.pending.runtimeSettings.get(RS_AGENT_MAX_PREFIX + m);
+    if (p && p.value === RS_RESET) return t.default;
+    if (p && typeof p.value === "number") return p.value;
+    return t.effective;
   };
 
-  // ① 모델별 예산: override 없으면 미주입(input 비움).
-  addGroup("모델별 thinking budget (tokens)", models, { emptyWhenNoOverride: true });
-  // ② 추론 강도별 예산: 대화에서 '낮음/높음/매우 높음' 선택 시 적용되는 요청 단위 budget.
-  //    기본값이 실제 적용값이라 pre-fill(타임아웃과 동일) — '일반'은 no-override 라 목록에 없음.
-  addGroup("추론 강도별 예산 (tokens)", levels, undefined);
+  const levelRank = { low: 0, high: 1, max: 2 };
+
+  for (const m of order) {
+    const bucket = byModel.get(m);
+    const modelLabel = (bucket.total && bucket.total.label) || (bucket.model[0] && bucket.model[0].label) || m;
+
+    const card = document.createElement("details");
+    card.className = "permission-group rs-budget-card";
+    card.open = true;
+    const head = document.createElement("summary");
+    head.className = "permission-group-head";
+    const htitle = document.createElement("span");
+    htitle.className = "permission-group-title";
+    htitle.textContent = modelLabel;
+    const hcount = document.createElement("span");
+    hcount.className = "permission-group-counts rs-card-total";
+    head.append(htitle, hcount);
+    card.appendChild(head);
+
+    const body = document.createElement("div");
+    body.className = "rs-budget-card-body";
+
+    const sliderRows = [];
+    const updateHead = () => { hcount.textContent = `총 출력 ${currentTotal(m).toLocaleString()} tokens`; };
+
+    // ① 총 출력(max_tokens) — 변경 시 하위 슬라이더 상한/본문 파생 재계산.
+    if (bucket.total) {
+      const sub = document.createElement("div");
+      sub.className = "rs-subgroup-title";
+      sub.textContent = "총 출력 (max_tokens · 추론+본문 합)";
+      const list = document.createElement("div");
+      list.className = "rs-list";
+      list.appendChild(buildRuntimeSettingRow(bucket.total, canWrite, {
+        onChange: () => { updateHead(); sliderRows.forEach((r) => r._rsRecompute && r._rsRecompute()); },
+      }));
+      body.append(sub, list);
+    }
+
+    // ② 추론 강도별 (추론 ↔ 본문 배분 슬라이더)
+    const explicit = bucket.levels.slice().sort((a, b) => (levelRank[a.level] ?? 9) - (levelRank[b.level] ?? 9));
+    if (explicit.length) {
+      const sub = document.createElement("div");
+      sub.className = "rs-subgroup-title";
+      sub.textContent = "추론 강도별 예산 (추론 ↔ 본문 배분)";
+      const list = document.createElement("div");
+      list.className = "rs-list";
+      for (const it of explicit) {
+        const r = buildBudgetSliderRow(it, canWrite, () => currentTotal(m));
+        sliderRows.push(r);
+        list.appendChild(r);
+      }
+      body.append(sub, list);
+    }
+
+    // ③ '일반'(모델 기본) — 선택적 override(비우면 모델 기본 thinking 유지).
+    if (bucket.model.length) {
+      const sub = document.createElement("div");
+      sub.className = "rs-subgroup-title";
+      sub.textContent = "일반(모델 기본) thinking budget — 비우면 모델 기본값 유지";
+      const list = document.createElement("div");
+      list.className = "rs-list";
+      for (const it of bucket.model) list.appendChild(buildRuntimeSettingRow(it, canWrite, { emptyWhenNoOverride: true }));
+      body.append(sub, list);
+    }
+
+    updateHead();
+    card.appendChild(body);
+    panel.appendChild(card);
+  }
 
   const note = document.createElement("div");
   note.className = "rs-readonly-note";
   note.textContent = canWrite
-    ? "모델별 예산은 비워두면 서버 기본 thinking 을 사용합니다. 추론 강도별 예산은 대화 화면에서 사용자가 그 강도를 고른 요청에 적용됩니다('일반'은 모델 기본값 유지). 대화별 강도 선택이 모델별 예산보다 우선합니다."
+    ? "모델별 총 출력(max_tokens) 안에서 추론(thinking)과 본문(content)이 나뉩니다. 슬라이더로 추론 비중을 조절하면 본문 여유가 함께 표시됩니다. 총 출력을 크게 잡을수록 응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'도 함께 올려야 할 수 있습니다. 대화 화면의 강도 선택(낮음/높음/매우 높음)이 이 예산을 요청 단위로 적용하며, '일반'은 모델 기본값을 유지합니다."
     : "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
   panel.appendChild(note);
   mount.appendChild(panel);
@@ -13820,7 +14055,8 @@ function refreshPendingUI() {
   if (rsPending.size) detail.push(`설정 ${rsPending.size}`);
   let rsTimeoutDirty = false, rsModelDirty = false;
   rsPending.forEach((_v, k) => {
-    if (String(k).startsWith(RS_MODEL_PREFIX) || String(k).startsWith(RS_REASONING_PREFIX)) rsModelDirty = true;
+    const key = String(k);
+    if (key.startsWith(RS_MODEL_PREFIX) || key.startsWith(RS_REASONING_PREFIX) || key.startsWith(RS_AGENT_MAX_PREFIX)) rsModelDirty = true;
     else rsTimeoutDirty = true;
   });
   // 설정 nav row: `.has-pending` 테두리 + `.admin-pending-dot`(계정·역할 row 와 일관 — 색 외 신호).

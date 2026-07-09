@@ -7518,12 +7518,51 @@ a { color: inherit; }
 }
 /* 좁은 화면: 단일 열 세로 스택(라벨→설명→컨트롤→상태). 각 child 의 grid-row 를 명시 재배치. */
 @media (max-width: 560px) {
-  .rs-row { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; row-gap: 6px; }
-  .rs-row-label  { grid-column: 1; grid-row: 1; }
-  .rs-row-desc   { grid-column: 1; grid-row: 2; }
-  .rs-row-control{ grid-column: 1; grid-row: 3; justify-self: start; }
-  .rs-row-meta   { grid-column: 1; grid-row: 4; justify-self: start; }
+  .rs-row:not(.rs-row--slider) { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; row-gap: 6px; }
+  .rs-row:not(.rs-row--slider) .rs-row-label  { grid-column: 1; grid-row: 1; }
+  .rs-row:not(.rs-row--slider) .rs-row-desc   { grid-column: 1; grid-row: 2; }
+  .rs-row:not(.rs-row--slider) .rs-row-control{ grid-column: 1; grid-row: 3; justify-self: start; }
+  .rs-row:not(.rs-row--slider) .rs-row-meta   { grid-column: 1; grid-row: 4; justify-self: start; }
 }
+
+/* ─── reasoning-budget-per-model: 모델별 accordion 카드 + [추론↔본문] 비율 슬라이더 ─── */
+.rs-budget-panel { gap: 16px; }
+.rs-budget-card { margin: 0; }
+.rs-budget-card-body { display: flex; flex-direction: column; gap: 16px; padding: 12px 14px 14px; }
+.rs-subgroup-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); margin: 2px 2px 0;
+}
+.rs-card-total {
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
+  font-size: 12px; color: var(--text-2);
+}
+/* 슬라이더 행: 라벨/상태(1행) · 설명(2행) · 슬라이더+숫자(3행 full) · 분할바(4행 full) */
+.rs-row--slider { grid-template-rows: auto auto auto auto; row-gap: 8px; }
+.rs-row--slider .rs-row-label   { grid-column: 1; grid-row: 1; }
+.rs-row--slider .rs-row-meta    { grid-column: 2; grid-row: 1; justify-self: end; }
+.rs-row--slider .rs-row-desc    { grid-column: 1 / -1; grid-row: 2; }
+.rs-row--slider .rs-slider-control { grid-column: 1 / -1; grid-row: 3; justify-self: stretch; }
+.rs-row--slider .rs-split-bar   { grid-column: 1 / -1; grid-row: 4; }
+.rs-slider-control { display: flex; align-items: center; gap: 12px; width: 100%; }
+.rs-slider {
+  flex: 1 1 auto; min-width: 0; height: 4px; cursor: pointer;
+  accent-color: var(--primary);
+}
+.rs-slider:disabled { opacity: .6; cursor: not-allowed; }
+.rs-input--compact { width: 96px; }
+.rs-split-bar {
+  display: flex; height: 22px; border-radius: var(--r-sm); overflow: hidden;
+  border: 1px solid var(--border-subtle); font-size: 10px;
+}
+.rs-split-seg {
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; letter-spacing: .04em;
+  min-width: 0; overflow: hidden; white-space: nowrap;
+  transition: flex-grow .12s ease;
+}
+.rs-split-think { background: var(--primary); }
+.rs-split-content { background: var(--text-muted); }
 
 /* ─── TASK-0262: LLM 사용량 차트 클릭 → 대화목록 모달 ─────────────────────── */
 /* 차트 요소 클릭 가능 표시(커서·hover 강조). admin·profile 공통. */

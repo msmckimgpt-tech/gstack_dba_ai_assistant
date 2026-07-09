@@ -132,7 +132,9 @@ def test_model_budget_override_applies_and_clamps(snap):
     snap({"model_thinking_budget:claude-sonnet-4": 9000})
     assert rs.model_thinking_budget_override("claude-sonnet-4") == 9000
     snap({"model_thinking_budget:claude-sonnet-4": 10**6})
-    assert rs.model_thinking_budget_override("claude-sonnet-4") == 16000  # max cap
+    _max = rs.spec_for("model_thinking_budget:claude-sonnet-4")["maximum"]
+    assert _max == 126976  # sonnet native(128000) - 1024
+    assert rs.model_thinking_budget_override("claude-sonnet-4") == _max  # native cap
     snap({"model_thinking_budget:claude-sonnet-4": 10})
     assert rs.model_thinking_budget_override("claude-sonnet-4") == 1024  # min (Anthropic)
 
@@ -254,30 +256,83 @@ def test_config_applies_restart_override_at_import(tmp_path):
 def test_reasoning_budget_specs_low_high_max_normal_excluded(snap):
     reg = rs.serialize_registry({})
     rb = reg["reasoning_budgets"]
-    assert {r["level"] for r in rb} == {"low", "high", "max"}  # normal(no-override) 제외
+    # 모델 × 레벨(normal 제외). 레벨 집합은 {low,high,max}, 모델별로 6행(sonnet/haiku × 3).
+    assert {r["level"] for r in rb} == {"low", "high", "max"}
+    assert {r["model"] for r in rb} == {"claude-sonnet-4", "claude-haiku-4"}
+    assert len(rb) == 6
+    # base default 는 모델 무관(low2000/high10000/max16000).
     by = {r["level"]: r for r in rb}
     assert by["low"]["default"] == 2000 and by["high"]["default"] == 10000 and by["max"]["default"] == 16000
     assert all(r["apply_mode"] == "live" and r["unit"] == "tokens" for r in rb)
 
 
 def test_reasoning_budget_override_none_without_setting(snap):
-    assert rs.reasoning_budget_override("high") is None
-    assert rs.reasoning_budget_override("normal") is None   # 미등록(B1)
-    assert rs.reasoning_budget_override("") is None
+    assert rs.reasoning_budget_override("claude-haiku-4", "high") is None
+    assert rs.reasoning_budget_override("claude-haiku-4", "normal") is None   # 미등록(B1)
+    assert rs.reasoning_budget_override("claude-haiku-4", "") is None
+    assert rs.reasoning_budget_override("", "high") is None
 
 
 def test_reasoning_budget_override_applies_and_clamps(snap):
-    snap({"reasoning_budget:high": 12000})
-    assert rs.reasoning_budget_override("high") == 12000
-    assert rs.reasoning_budget_override("HIGH") == 12000  # 대소문자 정규화
-    snap({"reasoning_budget:high": 10 ** 6})
-    assert rs.reasoning_budget_override("high") == 16000   # max cap
-    snap({"reasoning_budget:high": 10})
-    assert rs.reasoning_budget_override("high") == 1024     # min(Anthropic)
+    snap({"reasoning_budget:claude-haiku-4:high": 12000})
+    assert rs.reasoning_budget_override("claude-haiku-4", "high") == 12000
+    assert rs.reasoning_budget_override("claude-haiku-4", "HIGH") == 12000  # 대소문자 정규화
+    snap({"reasoning_budget:claude-haiku-4:high": 10 ** 6})
+    _max = rs.spec_for("reasoning_budget:claude-haiku-4:high")["maximum"]
+    assert _max == 62976  # haiku native(64000) - 1024
+    assert rs.reasoning_budget_override("claude-haiku-4", "high") == _max   # native cap
+    snap({"reasoning_budget:claude-haiku-4:high": 10})
+    assert rs.reasoning_budget_override("claude-haiku-4", "high") == 1024   # min(Anthropic)
+
+
+def test_reasoning_budget_per_model_isolated(snap):
+    # 모델별 분리: sonnet override 는 haiku 조회에 영향 없음.
+    snap({"reasoning_budget:claude-sonnet-4:max": 60000})
+    assert rs.reasoning_budget_override("claude-sonnet-4", "max") == 60000
+    assert rs.reasoning_budget_override("claude-haiku-4", "max") is None
 
 
 def test_reasoning_budget_validate_and_reset_registered(snap):
-    ok, val, _ = rs.validate_value("reasoning_budget:low", "2500"); assert ok and val == 2500
-    ok, _, _ = rs.validate_value("reasoning_budget:low", "500"); assert not ok  # < min 1024
-    assert rs.spec_for("reasoning_budget:max") is not None
-    assert rs.spec_for("reasoning_budget:normal") is None    # normal 미등록
+    ok, val, _ = rs.validate_value("reasoning_budget:claude-haiku-4:low", "2500"); assert ok and val == 2500
+    ok, _, _ = rs.validate_value("reasoning_budget:claude-haiku-4:low", "500"); assert not ok  # < min 1024
+    assert rs.spec_for("reasoning_budget:claude-sonnet-4:max") is not None
+    assert rs.spec_for("reasoning_budget:claude-sonnet-4:normal") is None    # normal 미등록
+    assert rs.spec_for("reasoning_budget:high") is None    # 구 스킴(모델 없음) 미등록
+
+
+# ── reasoning-budget-per-model: 모델별 총 출력(agent_max_output) ──────────────
+def test_agent_max_output_registry_and_natives(snap):
+    reg = rs.serialize_registry({})
+    keys = {r["key"]: r for r in reg["agent_max_outputs"]}
+    assert "agent_max_output:claude-sonnet-4" in keys
+    assert "agent_max_output:claude-haiku-4" in keys
+    assert keys["agent_max_output:claude-sonnet-4"]["maximum"] == 128000  # native
+    assert keys["agent_max_output:claude-haiku-4"]["maximum"] == 64000
+    assert keys["agent_max_output:claude-sonnet-4"]["default"] == 40000
+    assert keys["agent_max_output:claude-haiku-4"]["default"] == 24000
+
+
+def test_agent_max_output_override_and_clamp(snap):
+    assert rs.agent_max_output("claude-sonnet-4") == 40000  # default(override 없음)
+    snap({"agent_max_output:claude-sonnet-4": 100000})
+    assert rs.agent_max_output("claude-sonnet-4") == 100000
+    snap({"agent_max_output:claude-sonnet-4": 10 ** 7})
+    assert rs.agent_max_output("claude-sonnet-4") == 128000  # native clamp
+    snap({"agent_max_output:claude-sonnet-4": 100})
+    assert rs.agent_max_output("claude-sonnet-4") == 4096     # min clamp
+
+
+def test_serialize_reasoning_row_has_model_and_level(snap):
+    reg = rs.serialize_registry({})
+    row = next(r for r in reg["reasoning_budgets"] if r["key"] == "reasoning_budget:claude-sonnet-4:max")
+    for f in ("key", "model", "level", "label", "default", "minimum", "maximum",
+              "apply_mode", "effective", "has_override", "default_known"):
+        assert f in row, f"reasoning row missing render field: {f}"
+    assert row["model"] == "claude-sonnet-4" and row["level"] == "max"
+
+
+def test_old_reasoning_key_ignored_backward_compat(snap):
+    # 구 스킴 override(reasoning_budget:{level})는 신 스킴에서 무시(fail-safe).
+    snap({"reasoning_budget:max": 12000})
+    assert rs.reasoning_budget_override("claude-sonnet-4", "max") is None
+    assert rs.reasoning_budget_override("claude-haiku-4", "max") is None

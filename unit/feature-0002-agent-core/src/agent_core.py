@@ -2717,21 +2717,22 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         kwargs["temperature"] = temperature
     if tools:
         kwargs["tools"] = tools
-    # 로컬 LLM만 max_tokens 제한 (reasoning 토큰 포함 보호)
-    token_limit = max_tokens_for_model(model, "agent")
+    # 대화(agent) 총 출력 상한 — reasoning-budget-per-model: thinking 모델은 모델별 값(관리 콘솔
+    # override 반영), 그 외(로컬 LLM 등)는 기존 task cap. token_limit 이 thinking+content 총량 규정.
+    token_limit = _rts.agent_max_output(model) if model_supports_thinking(model) else max_tokens_for_model(model, "agent")
     if token_limit is not None:
         kwargs["max_tokens"] = token_limit
     # feature-0003 reasoning-effort-selector: 사용자 지정 추론 강도를 요청 단위 thinking
     # budget 으로 주입. thinking 지원 모델(claude-*)에만 적용 — 로컬 LLM 은 LiteLLM
-    # drop_params 가 제거하므로 애초에 넣지 않는다. budget 은 max_tokens(agent=20000)보다
-    # 작게 캡(≤16000)돼 있어 Anthropic 제약(budget < max_tokens) 을 항상 만족한다.
+    # drop_params 가 제거하므로 애초에 넣지 않는다. budget 은 아래에서 min(budget, max_tokens-1024)
+    # 로 clamp 되므로 Anthropic 제약(budget < max_tokens) 을 항상 만족한다.
     _think_budget = thinking_budget_for_level(reasoning_level)
     if _think_budget is not None:
-        # feature-0018 reasoning-budgets: 명시 추론강도(low/high/max)일 때, 관리 콘솔
-        # (`시스템 > 설정 > 모델별 추론 예산 > 추론 강도별 예산`)에서 그 레벨에 설정한 budget override 를
-        # 적용(없으면 model_catalog 기본값 유지). '일반(normal)'은 thinking_budget_for_level 이 None →
+        # reasoning-budget-per-model: 명시 추론강도(low/high/max)일 때, 관리 콘솔
+        # (`시스템 > 설정 > 모델별 추론 예산`)에서 이 (모델, 레벨)에 설정한 budget override 를 적용
+        # (없으면 model_catalog base 기본값 유지). '일반(normal)'은 thinking_budget_for_level 이 None →
         # 이 분기 미진입 → 아래 model override 경로(B1 무회귀).
-        _lvl_override = _rts.reasoning_budget_override(reasoning_level)
+        _lvl_override = _rts.reasoning_budget_override(model, reasoning_level)
         if _lvl_override is not None:
             _think_budget = _lvl_override
     if _think_budget is None:
@@ -2741,8 +2742,8 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         _think_budget = _rts.model_thinking_budget_override(model)
     if _think_budget is not None and model_supports_thinking(model):
         # Anthropic 제약(budget_tokens < max_tokens) 안전 보장 — 주입 budget 을 이 요청의
-        # max_tokens 미만으로 clamp(여유 1024). 기존 reasoning-effort budget(≤16000)은
-        # agent max_tokens(20000)보다 작아 이 clamp 가 no-op → 기존 동작 불변.
+        # max_tokens 미만으로 clamp(content 최소 1024 확보). reasoning-budget-per-model 이후
+        # budget 이 총 출력 근처까지 커질 수 있어 이 clamp 가 실질 안전판(본문 여유 보장).
         _safe_budget = int(_think_budget)
         _mt = kwargs.get("max_tokens")
         if isinstance(_mt, int) and _mt > 0:

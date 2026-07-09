@@ -1543,3 +1543,11 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 그래프 뷰(`관리 콘솔 > 지식베이스 > 그래프 뷰`) 상단 툴바를 검색 · `보기 옵션 ▾` 팝오버 · 초기화 · 상세 ⇆ **4존**으로 압축. 보기 옵션 팝오버에 이웃 깊이·노드 종류 필터(관계/함수/프로시저)·스키마 이동·제품 카테고리 수용(숨긴 종류 배지). 줌(−/+/전체/1:1)은 캔버스 좌하단 플로팅 오버레이, 상태 텍스트는 좌상단 오버레이 pill 로 이동.
 - 상태 pill 은 `position:absolute` 라 내용 길이와 무관하게 레이아웃(툴바·캔버스 높이)을 바꾸지 않는다(2줄 클램프+ellipsis, 6s auto-fade, pointer-events:none). 이전엔 flex-wrap 툴바 인라인 상태라 장문 상태가 툴바 wrap→캔버스 밀림(reflow)을 유발했다 — 사용자 불만의 근본 해소.
 - 컨트롤 id·핸들러 전량 보존(behavior-neutral 재배치). 오버레이는 `role=img` 캔버스 밖 형제(`.admin-meta-graph-canvas-wrap`, a11y). cache-buster `20260709-graph-toolbar`.
+
+## (TASK-20260709-reasoning-budget-per-model, 2026-07-09) '모델별 추론 예산' 설정 패널 — 모델별 총 출력 native 확대 + 종속 accordion + [추론↔본문] 비율 슬라이더 (web/UI + shared + feature-0002 core, Major §12.3)
+- `관리 콘솔 > 시스템 > 설정 > 모델별 추론 예산`(`data-settings-panel="model-thinking-budgets"`) 을 **모델별 카드(접기/펼치기, `permission-group` `<details>`)** 로 재구성. 카드마다 ① 총 출력(max_tokens) 입력 ② 추론 강도별(낮음/높음/매우 높음) [추론↔본문] 비율 슬라이더 ③ '일반(모델 기본)' 선택적 override.
+- **총 출력**: 대화 답변의 max_tokens(추론+본문 합) 상한을 모델별 native(Claude Sonnet 4.6=128,000 · Haiku 4.5=64,000 토큰)까지 조정 가능. default 는 보수(sonnet 40000/haiku 24000) — '매우 높음' default==max==16000 이라 조정 불가하던 제약을 상한 native 로 열어 해소. 백엔드 레지스트리 key `agent_max_output:{model}`(runtime_settings), 적용은 `agent_core._call_llm` 의 `_rts.agent_max_output(model)`.
+- **비율 슬라이더**: 모델 총 출력 안에서 thinking(추론) 비중을 range 슬라이더로 배분, 본문(content)=총−thinking 을 분할바로 파생 표시. 저장값은 절대 thinking budget(`reasoning_budget:{model}:{level}`) 하나뿐(본문은 별도 저장 없음). 슬라이더 실효 상한 = min(native−1024, 총−1024)로 본문 최소 1024 확보(백엔드 `min(budget, max_tokens−1024)` clamp 와 정합).
+- **모델별 추론 수준 분리**: 추론 강도별 예산이 `reasoning_budget:{model}:{level}` 로 모델마다 독립. 대화 화면의 강도 선택(낮음/일반/높음/매우 높음)은 전역 유지, 예산만 모델별. '일반'은 no-override(모델 기본 thinking 유지, B1).
+- 저장은 즉시 PUT 아님 — 기존 `setRuntimeSettingPending`→commit-bar '모두 적용' 예약 패턴 준수(신규 `agent_max_output:` 키 포함). 총 출력 상향 시 응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'(AGENT_TIMEOUT_SEC)도 함께 상향 필요 — 패널 hint 로 안내(비-streaming 대화 경로).
+- backward-compat: 구 스킴 `reasoning_budget:{level}` override 는 무시(기본 복귀). cache 없음(신규 자산은 admin.js/styles.css 편집 — index/admin cache-buster 는 배포 doc-sync 소관).
