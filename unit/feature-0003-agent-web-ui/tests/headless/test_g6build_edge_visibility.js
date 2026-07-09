@@ -58,7 +58,7 @@ function seedModel(schemas, expanded) {
   M.catOrder = []; M.catCollapsed = new Set(); M.catMembers = new Map(); M.catLabelOf = new Map();
   M.hiddenKinds = new Set(); M.analyzed = new Set(); M.running = new Set(); M.roles = new Map();
   M.selected = null; M.focusAdj = null; M.tableDeps = new Map(); M.renderedIds = new Set();
-  M._stateCache = new Map(); M._busyKeys = new Set(); M.colsByTable = new Map();
+  M._stateCache = new Map(); M._busyKeys = new Map(); M._busyTs = new Map(); M.colsByTable = new Map();   // §57.8: 실제 코드와 동일 자료형(Map)
   M.schemaProducts = new Map();
   M.graph = null;
   schemas.forEach((s) => {
@@ -299,5 +299,112 @@ function check(name, cond, extra) {
   check("T14 self-FK 단독은 고립 판정", !M.focusAdj && !g.__nodeStates(nk("a.t2")).includes("dimmed"));
 }
 
-console.log(`\n${pass} PASS / ${fail} FAIL`);
-process.exit(fail ? 1 : 0);
+// ── §57.8 하이라이트 신뢰성 재설계 ──
+
+// T15: busy 는 build states 로 bake — rebuild 가 진행 표시를 지우지 않는다(테이블 + 접힘 SC: 카드).
+{
+  const M = seedModel(["a", "b"], [nk("a")]);   // b 는 접힘(SC: 카드)
+  addTable(M, "a.t1");
+  M._busyKeys.set(nk("a.t1"), -1);
+  M._busyKeys.set(nk("b"), -1);
+  const out = build();
+  const tn = out.nodes.find((x) => x.id === nk("a.t1"));
+  const sc = out.nodes.find((x) => x.id === "SC:" + nk("b"));
+  check("T15 테이블 busy bake", !!tn && tn.states.includes("busy"), tn && tn.states);
+  check("T15 SC: 카드 busy bake", !!sc && sc.states.includes("busy"), sc && sc.states);
+  M._busyKeys.clear();
+}
+
+// T16: 폴 승격은 busy 존재와 무관하게 수행(stale busy fail-closed 제거) — _metaG6Apply 호출 검증.
+{
+  const M = seedModel(["a"], [nk("a")]);
+  for (let i = 0; i < 8; i++) addTable(M, "a.p" + i);
+  M.graph = {};   // RefreshStatesNow 진입 조건(setElementState 류는 없어도 rebuild 분기로 감)
+  vm.runInContext("globalThis.__applyCalls = 0; _metaG6Apply = async () => { globalThis.__applyCalls++; };", sandbox);
+  M._busyKeys.set(nk("a.p0"), -1);                       // busy 존재 — 과거엔 이 한 줄이 폴 승격을 봉쇄
+  // _stateCache 가 비어 있어(seedModel 초기화) 전 노드가 '변화'로 잡힌다(>REBUILD_THRESHOLD=4) → rebuild 분기.
+  //   핵심 검증점: 그 rebuild 승격이 busy 존재에도 수행되는가(§57.8 게이트 제거). build() 는 _stateCache 를
+  //   채우지 않으므로(그 일은 _metaG6ApplyOnce 담당) 여기서 호출하지 않는다.
+  vm.runInContext("_metaGraphRefreshStatesNow()", sandbox);
+  check("T16 busy 중에도 폴 rebuild 승격", vm.runInContext("globalThis.__applyCalls", sandbox) >= 1);
+  M._busyKeys.clear(); M.graph = null; M.selected = null; M.focusAdj = null;
+}
+
+// T17: 선택 전환은 항상 bake — 고립→고립(구 게이트라면 skip) 포함.
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2");
+  M.graph = {};   // SetSelected 진입 조건(setElementState 류는 try/catch 흡수)
+  vm.runInContext("globalThis.__applyCalls = 0; _metaG6Apply = async () => { globalThis.__applyCalls++; };", sandbox);
+  vm.runInContext(`_metaGraphSetSelected(${JSON.stringify(nk("a.t1"))})`, sandbox);   // 고립 선택(fa null)
+  vm.runInContext(`_metaGraphSetSelected(${JSON.stringify(nk("a.t2"))})`, sandbox);   // 고립→고립 전환
+  check("T17 선택 전환마다 무조건 bake", vm.runInContext("globalThis.__applyCalls", sandbox) === 2,
+    vm.runInContext("globalThis.__applyCalls", sandbox));
+  check("T17 고립 선택 focusAdj null 유지", !M.focusAdj && M.selected === nk("a.t2"));
+  M.graph = null; M.selected = null;
+}
+
+// T19(§57.8 계약): busy 는 소유 op(seq) 가 직접 해제 — rebuild 자동 회수 제거분의 회귀 방어.
+//   ToggleColumns/ExpandSchema/Expand 의 `_metaSetBusy(key,false,seq)` 경로가 _busyKeys·_busyTs 를
+//   함께 비우고, bake(_metaStateSig)에 busy 가 사라지는지 검증. stale op 해제는 무시(소유권 가드).
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1");
+  M.graph = { setElementState: () => {}, getElementState: () => [] };   // _metaApplyState 통과용 최소 스텁
+  const K = nk("a.t1");
+  vm.runInContext(`_metaSetBusy(${JSON.stringify(K)}, true, 5)`, sandbox);
+  check("T19 busy 설정 — 두 맵 기록", M._busyKeys.get(K) === 5 && M._busyTs.has(K));
+  check("T19 busy bake 반영", build().nodes.find((x) => x.id === K).states.includes("busy"));
+  vm.runInContext(`_metaSetBusy(${JSON.stringify(K)}, false, 9)`, sandbox);   // stale op(9!=5) — 무시
+  check("T19 stale op 해제 무시", M._busyKeys.get(K) === 5 && M._busyTs.has(K));
+  vm.runInContext(`_metaSetBusy(${JSON.stringify(K)}, false, 5)`, sandbox);   // 소유 op — 해제
+  check("T19 소유 op 해제 — 두 맵 비움", !M._busyKeys.has(K) && !M._busyTs.has(K));
+  check("T19 해제 후 busy bake 소거", !build().nodes.find((x) => x.id === K).states.includes("busy"));
+  M.graph = null;
+}
+
+// T20(§57.8 안전망): stale busy 는 _metaG6ApplyOnce 진입 시 TTL(30s) 로 소거 — 소유 op 가 죽어도
+//   busy 가 영구 잔존하지 않는 유일 회수 경로. 실시간 대기 없이 과거 타임스탬프를 심어 sweep 을 구동.
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2");
+  const FRESH = nk("a.t1"), STALE = nk("a.t2");
+  // _metaG6ApplyOnce 본문이 스텁 없이 완주하도록 최소 그래프 + 무거운 하위호출 스텁.
+  M.graph = { setData: () => {}, draw: async () => {}, getZoom: () => 1, getSize: () => [800, 600],
+              setElementState: () => {}, getElementState: () => [] };
+  vm.runInContext("_metaGraphZAssert = () => {}; _metaGraphMinimapAnchor = () => {};", sandbox);
+  const now = vm.runInContext("Date.now()", sandbox);
+  M._busyKeys.set(FRESH, -1); M._busyTs.set(FRESH, now);            // 방금 — 보존
+  M._busyKeys.set(STALE, -1); M._busyTs.set(STALE, now - 31000);    // 31s 전 — 소거
+  vm.runInContext("(async () => { await _metaG6ApplyOnce(false); })()", sandbox);
+  // 마이크로태스크 드레인 후 확인
+  Promise.resolve().then(() => {});
+  check("T20 fresh busy 보존", M._busyKeys.has(FRESH));
+  check("T20 stale busy TTL 소거", !M._busyKeys.has(STALE) && !M._busyTs.has(STALE));
+  M._busyKeys.clear(); M._busyTs.clear(); M.graph = null;
+}
+
+// T18(비동기): _metaG6Apply 직렬화 — 겹침 호출은 재실행 1회로 병합(setData 경합 제거).
+(async () => {
+  vm.runInContext(src.match(/async function _metaG6Apply[\s\S]*/) ? "" : "", sandbox);   // no-op(원본 복원 불가 주석)
+  // 원본 _metaG6Apply 를 다시 로드할 수 없으므로 직렬화 루프를 소스에서 재평가해 검증
+  vm.runInContext(`
+    globalThis.__seq = [];
+    _metaG6ApplyOnce = async (fit) => { globalThis.__seq.push("s" + (fit?1:0)); await new Promise(r => setTimeout(r, 10)); globalThis.__seq.push("e"); };
+  ` + src.slice(src.indexOf("async function _metaG6Apply"), src.indexOf("async function _metaG6ApplyOnce")), sandbox);
+  const M = g.__metaGraphRef;
+  const p1 = vm.runInContext("_metaG6Apply(false)", sandbox);
+  const p2 = vm.runInContext("_metaG6Apply(true)", sandbox);
+  const p3 = vm.runInContext("_metaG6Apply(false)", sandbox);
+  await Promise.all([p1, p2, p3]);
+  const seq = vm.runInContext("globalThis.__seq", sandbox);
+  // 겹침 없음: s…e 가 엄격히 교대. 3회 호출 → 실행 2회(첫 run + 병합 re-run 1회), re-run 이 fit 승계.
+  let overlap = false, open = 0;
+  seq.forEach((x) => { if (x[0] === "s") { open++; if (open > 1) overlap = true; } else open--; });
+  check("T18 bake 직렬화(겹침 0)", !overlap, seq);
+  check("T18 겹침 호출 재실행 1회 병합", seq.filter((x) => x[0] === "s").length === 2, seq);
+  check("T18 병합 re-run 이 fit OR 승계", seq.some((x) => x === "s1"), seq);
+
+  console.log(`\n${pass} PASS / ${fail} FAIL`);
+  process.exit(fail ? 1 : 0);
+})();

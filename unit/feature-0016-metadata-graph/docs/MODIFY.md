@@ -1189,3 +1189,25 @@ source_of_truth: true
 ## CHG-20260709T103000-ai-root-feature-0016-hl-isolated-postdeploy — §57.7 POST-DEPLOY 실측 기록 (2026-07-09)
 - 배포 eb631372(무중단 롤링 + soak 통과), 자산 `admin.js?v=20260709-hl-isolated` 라이브 확인.
 - T57.15 사용자 레시피 5연속 실클릭 PASS — 고립 노드 클릭 시 전역 침강 미발동(dim 0)·복귀 클릭 시 복원(dim 71/lit 5). 상세는 TASK §57.7.
+
+## CHG-20260709T113000-ai-root-feature-0016-hl-bake — §57.8 하이라이트 신뢰성 재설계 (2026-07-09)
+- 사용자 4차 리포트(고립 클릭 밝기 미복원 + 신규 연결 노드 클릭 시 선택 노드 흐림 유지)의 근본 수술:
+  시각 상태의 단일 진실 = 직렬화된 bake. 상세 TASK §57.8 / ADR-027.
+- admin.js: _metaG6Apply 직렬화(+_metaG6ApplyOnce 분리), busy bake(_metaStateSig ×4 사이트),
+  _metaSetBusy TTL(_busyTs), ToggleColumns/ExpandSchema/Expand 명시 busy 해제, SetSelected 무조건
+  bake(_metaFocusApplyOrRetry 폐지), 폴 승격 busy 게이트 제거, resetModel _busyTs 정리.
+- 캐시버스터: admin.js?v=20260709-hl-bake. headless 하니스 _busyKeys 자료형 Set→Map 정합.
+- §18.8 적대 패널(4렌즈+교차검증) 반영: ① bake 사이트 누락 3곳(컬럼·제품·데이터소스)도 _metaStateSig 로
+  통일(폴 _metaCacheSig 와 서명 발산 제거) ② LOD 밴드 busy 게이트 제거(직렬화가 조율 — busy 창이
+  길어진 §57.8 에서 _lodBand=null 리셋의 "최초 관측 skip" 으로 줌아웃 축약 누락되던 버그 해소)
+  ③ 커버리지 공백 보강 T19(소유 op busy 해제·stale op 무시)·T20(TTL 30s sweep 실구동). headless 54+26 PASS.
+- **배포 근본원인(중요)**: 병렬 세션이 §57.7(hl-isolated) 위에 `graph-toolbar-consolidate`(70e0f41a)를
+  랜드하며 캐시버스터를 `20260709-graph-toolbar`로 되돌림. 본 워크트리 base 가 이미 graph-toolbar 라
+  최초 `sed hl-isolated→hl-bake` 가 **매치 실패** → §57.8 admin.js 변경에 캐시버스터 bump 누락(브라우저
+  가 캐시된 옛 admin.js 계속 사용). graph-toolbar → hl-bake 로 재-bump. origin/main(#638/#639 ask-timeout)
+  리베이스 반영.
+- **캐싱 인프라 검증**: `/admin` HTML 쉘은 `Cache-Control: no-cache` + etag + last-modified 로 정상
+  재검증(정상 재로드 시 새 `?v=` 수신) — 인프라 결함 아님. 라이브 graph-toolbar 자산은 §57.7 포함,
+  렌더 감사(getElementState vs _metaNodeStates)에서 불변식 유지(mismatch 0). 사용자 잔존 리포트는 열린
+  SPA 탭이 index.html 재검증을 트리거하지 않아 옛 코드 유지된 것으로 추정 — §57.8 은 그 타이밍 의존성
+  자체를 직렬화 bake 로 제거해 구조적으로 해소.

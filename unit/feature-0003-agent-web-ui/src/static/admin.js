@@ -4186,11 +4186,14 @@ function _metaApplyState(key) {
 //   재트리거한 신 op 의 busy 를 뒤늦게 resolve 된 stale op 가 지우지 못하게 한다(seq 미지정이면 무조건 해제).
 function _metaSetBusy(key, on, seq) {
   if (!key) return;
+  if (!_metaGraph._busyTs) _metaGraph._busyTs = new Map();   // §57.8: stale busy TTL 소거용
   if (on) {
     _metaGraph._busyKeys.set(key, seq == null ? -1 : seq);
+    _metaGraph._busyTs.set(key, Date.now());
   } else {
     if (seq != null && _metaGraph._busyKeys.get(key) !== seq) return;   // 신 op 가 이미 같은 key busy 소유 — stale op 는 건드리지 않음
     _metaGraph._busyKeys.delete(key);
+    _metaGraph._busyTs.delete(key);
   }
   _metaApplyState(key);
 }
@@ -4928,7 +4931,7 @@ function _metaG6Build() {
         badges: badgeText != null ? [{ text: badgeText, placement: "right-top", offsetX: -2, offsetY: 2 }] : [],
         badgeFontSize: 10, badgeFill: "#ffffff", badgeBackgroundFill: badgeBg, badgePadding: [1, 5],
       });
-      nodes.push({ id: "SC:" + id, type: _METtype, states: _metaNodeStates(id),
+      nodes.push({ id: "SC:" + id, type: _METtype, states: _metaStateSig(id),
         data: { label: nmc, kind: "schema-card", schema: id, fqn: (cn && cn.fqn) || nmc, table_count: cnt },
         style: cardStyle });
       return;
@@ -5012,7 +5015,7 @@ function _metaG6Build() {
         const rrel = (_metaGraph.mode === "search" && _metaGraph.searchMatchTables && _metaGraph.searchMatchTables.has(it.key))
           ? Math.max(typeof it.rel === "number" ? it.rel : 0, 0.9) : it.rel;
         const rLabel = _metaRoutineIcon(it.routine_type) + " " + (it.name || it.key);
-        nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key),
+        nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key),
           data: { label: it.name || it.key, kind: "routine", fqn: it.fqn, routine_type: it.routine_type || "" },
           style: Object.assign(_metaRoutineStyle(tx, ty, rrel), { labelText: rLabel }) });
         // graph-navfilter(§54⑤): 파라미터 수직 배치 — 컬럼(ERD ordinal)과 동형의 서브노드 방출.
@@ -5040,14 +5043,14 @@ function _metaG6Build() {
         return;
       }
       if (g.isTerms) {
-        nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
+        nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "term", fqn: it.fqn }, style: Object.assign(_metaTermStyle(tx, ty, it.rel), { labelText: it.name || it.key }) });
         return;
       }
       // feature-0016 §45: 검색 매칭 강조는 노드 'match' 상태 soft glow(_metaNodeStates)로 이관 — 폭 부스트(trel) 제거.
       // node-role-viz: 분석 완료 테이블 역할 표식 — 칩 색 = 역할색(Okabe-Ito) + 라벨 앞 역할 아이콘(색약·흑백 중복 인코딩).
       const role = _metaRoleOf(it.key);
       const tLabel = (role ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
-      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaNodeStates(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role), { labelText: tLabel }) });
+      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role), { labelText: tLabel }) });
       const cols = g.colsByTable.get(it.key);
       if (cols && cols.length) {
         const depIds = ["X:" + it.key];   // graph-drag(REQ ②): 종속 UI = 접기 ctl + 컬럼 노드들
@@ -5058,7 +5061,7 @@ function _metaG6Build() {
           style: Object.assign(_metaCtlStyle(tx + Math.round(_METLAY.TW / 2) + 14, ty), { zIndex: _METZ.NODE }) });
         let cyCol = ty + _METLAY.TROW / 2 + CDROP + _METLAY.CROW / 2;   // 첫 컬럼 중심 y
         cols.slice().sort(_metaGraphColCmp).forEach((c) => {
-          nodes.push({ id: c.key, type: "circle", combo: id, states: _metaNodeStates(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyCol), { labelText: c.name || c.key }) });
+          nodes.push({ id: c.key, type: "circle", combo: id, states: _metaStateSig(c.key), data: { label: c.name || c.key, kind: "column", fqn: c.fqn }, style: Object.assign(_metaColStyle(colLeftX + _METLAY.PADX + _METLAY.CIND, cyCol), { labelText: c.name || c.key }) });
           depIds.push(c.key);
           cyCol += _METLAY.CROW;
         });
@@ -5246,7 +5249,7 @@ function _metaG6BuildProducts() {
     if (!_metaGraph.firstElementId) _metaGraph.firstElementId = p.key;
     const cy = TOP + i * ROWH + RH / 2;
     const cnt = (typeof p.datasource_count === "number") ? p.datasource_count : null;
-    nodes.push({ id: p.key, type: _METtype, states: _metaNodeStates(p.key),
+    nodes.push({ id: p.key, type: _METtype, states: _metaStateSig(p.key),
       data: { label: p.name || p.key, kind: "product" },
       style: { x: PX + PW / 2, y: cy, size: [PW, RH], radius: 10, zIndex: _METZ.NODE,
         fill: "#e7f4ec", stroke: _META_GRAPH_COLOR.Product, lineWidth: 1.6,
@@ -5257,7 +5260,7 @@ function _metaG6BuildProducts() {
   dss.forEach((d, i) => {
     if (!_metaGraph.firstElementId) _metaGraph.firstElementId = d.key;
     const cy = TOP + i * ROWH + RH / 2;
-    nodes.push({ id: d.key, type: _METtype, states: _metaNodeStates(d.key),
+    nodes.push({ id: d.key, type: _METtype, states: _metaStateSig(d.key),
       data: { label: d.name || d.key, kind: "datasource", scope: d.scope_key || "" },
       style: { x: DX + DW / 2, y: cy, size: [DW, RH], radius: 10, zIndex: _METZ.NODE,
         fill: "#eef6f1", stroke: _META_GRAPH_COLOR.Datasource, lineWidth: 1.4,
@@ -5290,19 +5293,50 @@ function _metaRenderedIdFor(key) {
 //   blueprint 초안의 search/neighbor=render()+d3-force 는 채택 안 함 — force 는 ④(클러스터 뒤섞임)를 재유발하고
 //   POC 가 검증한 무-shuffle 보장을 깬다. 교차 스키마 이웃도 자기 스키마 combo 의 grid 셀에 배치(force 아님).
 //   이 주석은 후속 리뷰어가 render()+force 로 "되돌리는" 회귀를 막기 위함(review MINOR-2).
+// §57.8(하이라이트 신뢰성 재설계): 모든 bake 는 이 직렬화 게이트를 지난다 — setData/draw 가 겹치면
+//   늦게 끝난 쪽이 먼저 끝난 쪽의 화면(선택 점등·dim 재구성)을 되돌리고, 그 사이 명령형
+//   setElementState 는 유실되는데 _stateCache 는 "적용됨"으로 남아 2.5s 폴도 영구 no-op — 사용자
+//   실측 "무너진 상태 유지"의 기전. 진행 중이면 재실행 1회로 병합(re-run 은 최신 모델을 읽으므로
+//   마지막 상태로 수렴), fit 은 OR 병합. 반환 promise 는 병합분 포함 전체 드레인 완료를 뜻한다.
 async function _metaG6Apply(fit) {
+  _metaGraph._applyWantFit = !!(_metaGraph._applyWantFit || fit);
+  if (_metaGraph._applyLoop) { _metaGraph._applyAgain = true; return _metaGraph._applyLoop; }
+  _metaGraph._applyLoop = (async () => {
+    try {
+      do {
+        _metaGraph._applyAgain = false;
+        const fitNow = _metaGraph._applyWantFit;
+        _metaGraph._applyWantFit = false;
+        await _metaG6ApplyOnce(fitNow);
+      } while (_metaGraph._applyAgain);
+    } finally { _metaGraph._applyLoop = null; }
+  })();
+  return _metaGraph._applyLoop;
+}
+async function _metaG6ApplyOnce(fit) {
   const g = _metaGraph.graph;
   if (!g) return;
   // graph-ctxmenu(review): 재구성으로 노드가 이동하면 열린 메뉴 좌표가 스테일 — 재적용 시 메뉴 닫기.
   if (typeof _metaGraphCtxHide === "function") _metaGraphCtxHide();
+  // §57.8: busy 는 build states 로 bake 되므로 rebuild 가 시각을 지우지 않는다 — 맵도 유지(소유 op 가
+  //   해제). 안전망: 소유 op 가 죽어 남은 stale busy 는 TTL(30s)로 소거 — 과거 busy 게이트들이
+  //   fail-closed 로 하이라이트 bake·폴 승격을 영구히 막던 원인을 구조적으로 제거.
+  if (!_metaGraph._busyTs) _metaGraph._busyTs = new Map();
+  {
+    const now = Date.now();
+    _metaGraph._busyKeys.forEach((v, k) => {
+      const ts = _metaGraph._busyTs.get(k);
+      if (ts == null) _metaGraph._busyTs.set(k, now);
+      else if (now - ts > 30000) { _metaGraph._busyKeys.delete(k); _metaGraph._busyTs.delete(k); }
+    });
+  }
   try {
     g.setData(_metaG6Build());
-    _metaGraph._busyKeys.clear();     // graph-perf-bg fix: rebuild 는 요소를 재생성 → 명령형 busy 시각 소멸, 소유권 맵도 정리(stale busy 재적용·유령 소유 방지).
     // graph-expand-perf fix(프리즈): setData 가 data.states(_metaG6Build 의 states:)로 모든 노드 상태를 이미 bake 한다.
     //   예전엔 _stateCache 를 clear 만 해서, 직후 _metaGraphRefreshStates(syncMarkers·2.5s 폴)가 cold 로 **전 노드
     //   setElementState** 를 돌렸다 — G6 v5 setElementState 는 건당 ~50ms 라 수백 노드면 수 초 메인스레드 프리즈
     //   (실측: 200노드 재적용 = 10초). 대신 캐시를 방금 bake 된 signature 로 채워 rebuild 직후 refresh 를 no-op 로
-    //   만든다(진짜 변한 마커만 이후 소량 setElementState). _busyKeys clear 후라 sig=_metaNodeStates 와 일치.
+    //   만든다(진짜 변한 마커만 이후 소량 setElementState). §57.8: bake states=_metaStateSig(busy 포함)라 캐시 sig 와 일치.
     _metaGraph._stateCache.clear();
     _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaCacheSig(n.key)); });   // node-role-viz: 역할 suffix 포함 — rebuild 가 역할 칩 색을 이미 bake 했으므로 직후 refresh 는 no-op
     await g.draw();
@@ -5482,6 +5516,7 @@ function _metaGraphResetModel() {
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
+  if (_metaGraph._busyTs) _metaGraph._busyTs.clear();   // §57.8: TTL 타임스탬프도 동반 정리
   // graph-perf-bg fix(BLOCKING): 모델 교체(search/roots/scope/reset)는 in-flight 펼침·확장을 무효화한다. _opSeq 를 여기서
   //   올리지 않으면 heavy op 만 토큰을 올려, reset 후 뒤늦게 resolve 된 stale expand 가 (a) 새 모델을 덮어써 사용자가
   //   방금 요청한 검색/스코프 화면을 되돌리고(stale 렌더), (b) reset 으로 비워진 모델에 컬럼을 ingest 해 colsByTable 를
@@ -6017,7 +6052,9 @@ function _metaInitGraph() {
     if (_metaGraph._lodTimer) clearTimeout(_metaGraph._lodTimer);
     _metaGraph._lodTimer = setTimeout(() => {
       _metaGraph._lodTimer = null;
-      if (_metaGraph._busyKeys.size) { _metaGraph._lodBand = null; return; }   // busy 유예 — 기준선 리셋으로 다음 transform 재시도(§33 관례)
+      // §57.8: busy 게이트 제거 — _metaG6Apply 는 직렬화(진행 중이면 재실행 1회 병합)라 fetch apply 와
+      //   안전히 조율된다. 과거 busy 유예는 _lodBand=null 리셋으로 밴드 기준선을 잃어, busy 창이
+      //   길어진 §57.8 에서 줌아웃 LOD 축약이 통째로 누락되는 "최초 관측 skip" 을 유발했다.
       try { _metaG6Apply(false); } catch (_) {}
       // §57 패널 MINOR: LOD 축약 안내 — 사용자가 '관계 없음'으로 오독하지 않게 상태줄에 1줄.
       try {
@@ -6834,29 +6871,16 @@ function _metaGraphSetSelected(key) {
   // §57.6: 인접 집합을 **setElementState 이전에** 갱신 — 새 선택 노드의 즉시 상태(sig)가 구 fa 로
   //   계산돼 'dimmed+selected' 로 밝혀지지 않는 창(사용자 실측: 선택했는데 흐림)을 제거. rebuild 가
   //   busy 로 밀려도 클릭한 노드와 이전 노드의 상태 전환은 setElementState 로 즉시 반영된다.
-  const had = !!_metaGraph.focusAdj;
   _metaGraph.focusAdj = (_metaGraph.selected && _metaGraph.nodes.has(_metaGraph.selected))
     ? _metaFocusAdjacency(_metaGraph.selected) : null;
   // graph-perf-bg fix: _metaApplyState 경유 — busy 보존 + _stateCache signature 동기화(명령형 writer 가 캐시를 stale 로 남기지 않음).
   if (prev && prev !== key && _metaGraph.nodes.has(prev)) _metaApplyState(prev);
   if (key && _metaGraph.nodes.has(key)) _metaApplyState(key);
-  // §57(사용자 요구 ②): 전역 흐리게는 rebuild bake(§33 — setElementState 전역 루프 금지).
-  //   펼침 fetch 창(busy) 중엔 유예 + 재시도(§57.6: 2s→6s, 선택 변경 시 구 체인 무효화).
-  if (had || _metaGraph.focusAdj) _metaFocusApplyOrRetry(0, _metaGraph.selected);
-}
-
-// §57 패널 MINOR: busy 창에서 유예된 하이라이트 rebuild 를 재시도 — 엣지 dim 은 build-bake 라
-//   상태 폴(setElementState)로는 회복 불가. busy 종단이 rebuild 없이 끝나는 경로(빈 스키마/오류)
-//   에서도 최대 4×500ms 안에 flush 된다.
-function _metaFocusApplyOrRetry(attempt, forSel) {
-  if (!_metaGraph.graph) return;
-  if (forSel !== undefined && forSel !== _metaGraph.selected) return;   // §57.6: 선택이 바뀌면 구 체인 폐기(새 체인이 존재)
-  if (_metaGraph._busyKeys.size) {
-    // §57.6: 히스토리 연속 이동 등 busy 가 2s 를 넘는 흐름에서 하이라이트가 미적용으로 남지 않게
-    //   재시도 창 확대(12×500ms=6s). 그 밖은 2.5s 상태 폴의 rebuild 승격이 최종 회수.
-    if (attempt < 12) setTimeout(() => _metaFocusApplyOrRetry(attempt + 1, forSel), 500);
-    return;
-  }
+  // §57.8(의도 우선 재설계): 선택 전환은 **무조건 1회 전체 bake** — 사용자가 "무엇을 선택했는지"를
+  //   보는 것이 최우선이므로, 전역 시각 상태(dim·엣지·라벨)는 이 bake 가 원자적으로 재구성한다.
+  //   과거 (had||fa) 게이트 + busy 재시도 체인(12×500ms 포기)은 stale busy 하나로 전 경로가
+  //   fail-closed 돼 dim 이 영구 고착됐다(사용자 실측 "무너진 상태 유지"). bake 는 직렬화·busy
+  //   보존(§57.8 _metaG6Apply)이라 유예할 이유가 없다. 위 setElementState 는 즉시 피드백용.
   try { _metaG6Apply(false); } catch (_) {}
 }
 
@@ -7080,7 +7104,8 @@ async function _metaGraphToggleColumns(key) {
     _metaGraphIngest(colNodes, []);
     if (colNodes.length > 0) {
       _metaGraph.expanded.add(key);
-      await _metaG6Apply(false);   // fit=false — 제자리 펼침(버그② — 카메라 점프·재확산 없음). busy 는 rebuild 로 소멸.
+      await _metaG6Apply(false);   // fit=false — 제자리 펼침(버그② — 카메라 점프·재확산 없음).
+      _metaSetBusy(key, false, seq);   // §57.8: busy 는 bake 로 보존 — 소유 op 가 직접 해제
       _metaGraphStatus(`${nm} 컬럼 ${colNodes.length}개 펼침 — "−" 버튼으로 접기`);
     } else {
       _metaSetBusy(key, false, seq);   // rebuild 없는 경로 — busy 직접 해제(소유 op)
@@ -7157,7 +7182,8 @@ async function _metaGraphExpandSchema(key, opts) {
   }
   _metaGraph.schemaExpanded.add(key);
   if (silent) return "expanded";   // 호출측(LoadRoots)이 apply+fit — 이중 렌더 방지
-  await _metaG6Apply(false);       // 제자리 원칙(ADR-004 ②) — 전체 fit 없이. busy 는 rebuild 로 소멸.
+  await _metaG6Apply(false);       // 제자리 원칙(ADR-004 ②) — 전체 fit 없이.
+  _metaSetBusy(key, false, seq);   // §57.8: busy 는 bake 로 보존 — 소유 op 가 직접 해제
   try { await _metaGraph.graph.focusElement(key, false); } catch (_) {}   // shelf 재배치 대비 시야 고정(무애니)
   _metaGraphStatus(`${nm}: 테이블·함수 ${cnt}개 펼침 — "−" 로 접기, 테이블 클릭=컬럼${note}`);
   return "expanded";
@@ -7284,7 +7310,8 @@ async function _metaGraphExpand(key, depthOverride) {
   // graph-initview(A3): 이웃 확장은 전체-fit 대신 앵커 중심 focus. graph-dblclick-cam2: manual rAF tween 으로 부드럽게.
   //   graph-dblclick-latency: 그 tween 을 위(busy 직후)에서 이미 fire-and-forget 으로 시작함 — 적응형 follow 라 이 rebuild 로
   //   앵커가 이동해도 자동 수렴. 여기서 재호출 불필요(중복 tween 방지).
-  await _metaG6Apply(false);   // busy 는 rebuild 로 소멸 (진행 중인 follow tween 이 새 위치로 이어서 수렴)
+  await _metaG6Apply(false);   // (진행 중인 follow tween 이 새 위치로 이어서 수렴)
+  _metaSetBusy(key, false, seq);   // §57.8: busy 는 bake 로 보존 — 소유 op 가 직접 해제
   // graph-rel-layout(§18.8 패널 MINOR): fetch(이웃+introspect) 합계가 tween MAXMS(1.2s)를 넘으면 follow tween 이
   //   앵커 '구 위치'에 수렴·종료한 뒤 rebuild 가 일어난다 — 관계 재배치로 앵커가 다른 shelf 행으로 원거리 이동
   //   가능하므로, tween 이 이미 죽었으면 무애니 focusElement 1회로 시야 보정(살아 있으면 adaptive follow 가 수렴).
@@ -8255,9 +8282,8 @@ function _metaGraphRefreshStatesNow() {
   if (!changed.length) return;   // 변화 없음 — 즉시 반환(폴 tick 의 대다수, rebuild 직후 no-op)
   const REBUILD_THRESHOLD = 4;   // per-node ~50ms/개 → 4개 초과면 rebuild(~200ms)가 저렴 + 프리즈 상한
   if (roleChanged || changed.length > REBUILD_THRESHOLD) {
-    // node-role-viz(적대 패널 F2): 펼침/확장 fetch 창(busy) 중엔 rebuild 를 유예 — rebuild 는 _busyKeys 를
-    //   소멸시켜 진행 피드백을 지운다. 캐시를 갱신하지 않고 반환하므로 다음 tick(≤2.5s)이 재감지해 수행.
-    if (_metaGraph._busyKeys.size) return;
+    // §57.8: busy 는 bake states 로 보존되므로 rebuild 유예 불필요 — 폴 승격은 항상 수행(마지막
+    //   회수 경로; 과거 busy 게이트는 stale busy 시 영구 미회수 = dim 고착의 한 축이었다).
     _metaG6Apply(false);   // setData 가 전 노드 상태 bake + _stateCache populate(카메라 유지, fit=false). fire-and-forget.
     return;
   }
