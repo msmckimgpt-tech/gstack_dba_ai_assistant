@@ -1229,3 +1229,8 @@ source_of_truth: true
   ② packGroup 열 상한 4→6. 캐시버스터 20260709-graph-vpack2.
 - 검증: headless T9(simGroups landscape) 추가 → §60 19 PASS + 회귀 54+26. 실측 557T/20그룹 822×7406(0.11)→
   2690×2544(1.06, 66%↓)·557T/4그룹 0.13→1.18. 상세 TASK §60(T60.7) / ADR-028 §60.2 addendum.
+
+## CHG-20260709T172000-ai-claude-feature-0016-graph-vpack-pd — §60 POST-DEPLOY 2차 PB-0008 실측 기록 (docs-only, 2026-07-09)
+- 코드 변경 0(문서만). 배포 ec74a16b·서빙 graph-vpack2 대상 라이브 PB-0008 2차 PASS 기록.
+- cc_bonedragon 557T 822×10272(0.08)→3590×3320(1.08, 68%↓)·전역 aspect 0.57→0.99·겹침 0·pageerror 0.
+  사용자 리포트(스키마 펼침 세로폭주·다중 펼침 판독불가) 라이브 해소 확인. Run·스크린샷 feature-0003 TEST.md.

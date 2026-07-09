@@ -1275,3 +1275,6 @@ source_of_truth: true
 - §60.2 변경(2줄): ① TRW 를 총 블록 면적 기반 적응 ② packGroup 열 상한 4→6. **겹침 안전 자체분석**: TRW 는 블록 "행 래핑 폭"만 바꾼다 — 블록은 여전히 bxRel=PADX+cur.w(행 내 누적, 비겹침)·행은 rowH 만큼 전진(byy += rowH+GGY)·클러스터 w=PADX*2+contentW(실 bbox). shelf-pack 구조 불변이라 TRW 값과 무관하게 블록 비겹침. packGroup 6열도 COLW 간격·realH push-down 유지 → 겹침 불변식 그대로.
 - **패킹 경로 완전성 grep**: 스키마-클러스터 패킹 폭 제어는 이제 전부 적응형 — 전역 shelf(MAXROWW ①)·flat masonry(colsForHeights ②)·simGroups 블록 행(TRW §60.2)·group 내부(packGroup). 고정-폭 잔여 없음(products 모드는 별개 2-열 뷰, 본 버그 무관).
 - 검증: headless T9(simGroups landscape·겹침0) → 19 PASS + 회귀 54+26 · 실측 557T/20그룹 0.11→1.06·4그룹 0.13→1.18. **최종 게이트 = vpack2 재배포 후 PB-0008 2차 라이브 재측정(T60.8)**.
+
+## REV-20260709T172000-ai-claude-feature-0016-graph-vpack-pd [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §60 POST-DEPLOY 2차 완수 기록
+- T60.8 PB-0008 2차 라이브(배포 ec74a16b) PASS 기록: simGroups 스키마 세로폭주 해소(557T 0.08→1.08)·전역 0.99·겹침 0. 코드 변경 없어 적대 리뷰 비대상.
