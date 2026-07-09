@@ -1244,3 +1244,7 @@ source_of_truth: true
   선택 노드 keyShape opacity 0.38 stale(getElementState=selected). 상세 TASK §57.9 / ADR-028.
 - admin.js: _metaBakeBaseOpacity(매 build 노드 base opacity=dim?0.38:1 직접 bake) 양 반환부 배선,
   dimmed G6 상태 config 제거, _META_DIM_OPACITY 상수화. headless T21. 캐시버스터 sel-prominence.
+
+## CHG-20260709T170000-ai-root-feature-0016-sel-prom-postdeploy — §57.9 POST-DEPLOY 실측 (2026-07-09)
+- 배포 2c8fb7d2(무중단 롤링 + soak 통과), 라이브 sel-prominence(_metaBakeBaseOpacity 포함).
+- T57.19 실측: 재선택 UnionCAInfo keyShape opacity 0.38→1 복원 확인, dimmed 이웃 0.38 유지. 상세 TASK §57.9.
