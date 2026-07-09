@@ -4679,20 +4679,34 @@ function _metaG6Build() {
   const COLW = 224;                 // 클러스터 내부 열 폭(테이블 칩 190 + 펼친 컬럼 라벨 168 여유; review MINOR: 214→224 로 최대길이 컬럼명이 인접열 칩에 겹치지 않게)
   const TXOFF = 95;                 // 열 좌측 기준 테이블 중심 x
   const CDROP = 6;                  // 테이블↔첫 컬럼 간격
-  const MAXROWW = 2400;             // shelf(행) 목표 최대 폭(모델 px) — 초과 시 다음 행으로 래핑
-  const innerColsFor = (n) => (n <= 6 ? 1 : n <= 14 ? 2 : n <= 27 ? 3 : 4);
-  // ── churn 분리(graph-perf-bg 성능 + 사용자 체리픽): 열 "배정"과 기준 top 은 **펼침-불변** 높이로 고정하고,
-  //   펼친 테이블의 실제 높이는 **자기 열 안에서만** 아래로 밀어낸다. graph-g6b 는 최단 열을 *실제* colCur(펼친
-  //   컬럼 포함)로 골라, T 펼침 시 형제 테이블이 열을 옮겨다니며 x/y 동시 점프 → setData update 집합 팽창 +
-  //   in-place 불안정(ADR-004 ②). 배정을 collapsed 높이로 고정하면 형제 col 이 {순서·개수·ic} 의 순수함수라
-  //   펼침에 불변 → 형제 열-점프 제거. **shelf-packer 는 여전히 실제 높이 h 를 소비한다**(아래 유지). h 를
-  //   collapsed 로 얼리면 콤보 카드·컬럼원이 auto-grow 로 아래 shelf 에 넘쳐 겹침(ADR-004 ②/⑤) — 절대 얼리지 말 것.
-  const assignH = (g) => g.isTerms ? _METLAY.TROW : (_METLAY.TROW + _METLAY.TGAP);   // 펼침-불변(=collapsed itemH)
-  const realH = (g, t) => {         // 펼친 컬럼 포함 실제 높이(자기 열 push-down + 클러스터 h 전용)
+  // graph-vpack(§60): 클러스터 내부 열 수·전역 shelf 폭을 **콘텐츠 실높이 기반**으로 산정해 landscape
+  //   종횡비(≈1.6)를 겨냥한다 — 고정 캡(구 innerColsFor 최대 4열 + 고정 MAXROWW 2400)이 스키마 펼침 시
+  //   세로로만 자라 얇은 세로 띠가 되던 근본원인 해소(사용자 리포트). 겹침 불변식은 유지: 열은 COLW 간격,
+  //   항목은 realH push-down, 클러스터 (w,h)=실 bbox → shelf-pack 이 클러스터를 분리한다.
+  const MAXICOL = 10;               // 클러스터 내부 열 상한(단일 스키마가 과도히 넓어지지 않게)
+  const ASPECT_K = 100;             // 열 수 종횡비 상수(클러스터 aspect≈COLW/K≈2.2 → 넓고 낮은 landscape;
+                                    //   작을수록 열↑·낮아짐. n≤4 는 1열 유지, 대형·펼친 스키마는 열이 늘어 낮아짐)
+  //   실높이 총합 기반 열 수: 펼친 컬럼을 반영해 큰/펼친 스키마는 넓고 낮게, 작은 스키마는 기존과 동일 열 수.
+  //   arr.length 캡: 항목보다 많은 열은 오른쪽에 빈 열만 만들어 클러스터 폭만 부풀림(shelf-pack 이 이웃을
+  //   불필요하게 밀어 공백 — 겹침은 아님, 코스메틱). 항목 1개(예: 컬럼만 펼친 단일 테이블)는 항상 1열.
+  const colsForHeights = (arr, hOf, cap) => {
+    let tot = 0; for (const t of arr) tot += hOf(t);
+    return Math.max(1, Math.min(cap || MAXICOL, arr.length, Math.round(Math.sqrt(tot / ASPECT_K))));
+  };
+  // ── graph-vpack(§60, ADR-004 ② 재선회): 열 "배정"을 **실높이(realH) 최단 열**로 balance 한다 — 펼친
+  //   테이블이 있는 열은 자연히 형제를 덜 받아 클러스터가 넓고 낮아진다(구: 배정을 collapsed 로 고정 →
+  //   형제 열-점프 0 이지만 펼친 열만 홀로 세로 폭주). **주의(churn 실측)**: 이 재선회는 base 의 펼침-불변
+  //   최적화(setData diff·in-place 안정)를 되돌린다 — 단일 테이블 펼침이 형제의 상당수(80T 스키마에서 ~43%,
+  //   ic 전이 경계 n=5/14/27/45/66/… 에서는 전량)를 re-column 시킨다. 사용자 명시 요청("컬럼 재분배 포함 +
+  //   세로 폭주 해소")으로 compactness 를 택하고 이 reflow 를 수용한다(대형 스키마 펼침 perf 는 PB-0008
+  //   라이브 실측 — T60.5). 겹침 불변식은 그대로:
+  //   shelf-packer·클러스터 h 는 **실제 높이 h 를 소비**(절대 collapsed 로 얼리지 말 것 — 얼리면 콤보 카드·
+  //   컬럼원 auto-grow 가 아래 shelf 로 넘쳐 겹침, ADR-004 ②/⑤).
+  const realH = (g, t) => {         // 펼친 컬럼 포함 실제 높이(자기 열 push-down + 클러스터 h + 열 배정 공통)
     const cols = g.colsByTable.get(t.key);
     let sub = (cols && cols.length) ? cols.length * _METLAY.CROW + CDROP : 0;
-    // graph-navfilter(§54⑤): Routine 파라미터 펼침도 실높이에 반영(컬럼과 동형) — assignH(펼침-불변
-    //   Pass1)는 절대 건드리지 않는다. masonry Pass2·packGroup·GB bbox·shelf-pack 이 이 클로저를 소비.
+    // graph-navfilter(§54⑤): Routine 파라미터 펼침도 실높이에 반영(컬럼과 동형).
+    //   masonry(열 수·배정·top)·packGroup·GB bbox·shelf-pack 이 모두 이 단일 실높이 클로저를 소비.
     if (!sub && t.label === "Routine" && _metaGraph.routineExpanded.has(t.key)) {
       const pn = _metaRoutineParamList(t).length;
       if (pn) sub = pn * _METLAY.CROW + CDROP;
@@ -4705,21 +4719,15 @@ function _metaG6Build() {
   const GPB = 10;                   // 그룹 블록 하단 pad
   const GGX = 14, GGY = 16;         // 그룹 블록 간 가로/세로 간격
   const TRW = 4 * COLW + 3 * GGX;   // 클러스터 내부 그룹 행 목표 폭(≈기존 4열 masonry 폭 유지)
-  const gInnerColsFor = (n) => (n <= 4 ? 1 : n <= 12 ? 2 : 3);
-  // 그룹 내부 masonry(기존 철학 동일): Pass1 배정=collapsed(펼침-불변), Pass2 top=실 높이 push-down.
+  // graph-vpack(§60): 그룹 내부 masonry 도 실높이 balance(플랫 경로와 동형). 그룹 블록은 좁으니 상한 4열.
   const packGroup = (g, arr) => {
-    const gic = gInnerColsFor(arr.length);
-    const colBase = new Array(gic).fill(0);
-    const assigned = arr.map((it) => {
-      let c = 0; for (let k = 1; k < gic; k++) if (colBase[k] < colBase[c]) c = k;
-      colBase[c] += assignH(g);
-      return { it, col: c };
-    });
+    const gic = colsForHeights(arr, (t) => realH(g, t), 4);
     const colTop = new Array(gic).fill(0);
-    const inner = assigned.map(({ it, col }) => {
-      const top = colTop[col];
-      colTop[col] += realH(g, it);
-      return { it, col, top };
+    const inner = arr.map((it) => {
+      let c = 0; for (let k = 1; k < gic; k++) if (colTop[k] < colTop[c]) c = k;   // 실높이 최단 열(균형)
+      const top = colTop[c];
+      colTop[c] += realH(g, it);
+      return { it, col: c, top };
     });
     return { gic, inner,
       w: GPX * 2 + gic * COLW,
@@ -4799,25 +4807,32 @@ function _metaG6Build() {
     const items = g.isTerms
       ? g.terms.slice().sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key))
       : (relOrder.get(id) || gatedTables.slice().sort((a, b) => _metaNatSort(a.name || a.key, b.name || b.key)));
-    const ic = innerColsFor(items.length);
-    // Pass 1(배정): collapsed 균등 높이로 최단 열 선택 → col 은 펼침-불변(형제 열-점프 제거).
-    const colBase = new Array(ic).fill(_METLAY.PADT);
-    const assigned = items.map((it) => {
-      let c = 0; for (let k = 1; k < ic; k++) if (colBase[k] < colBase[c]) c = k;   // 최단 열(collapsed 기준)
-      colBase[c] += assignH(g);
-      return { it, col: c };
-    });
-    // Pass 2(밀어내기): 열별 실제 누적 오프셋으로 top 확정 → 펼친 테이블은 "자기 열 아래"만 민다.
+    // graph-vpack(§60): 실높이 balance 단일 패스 — 열 수는 실높이 총합 기반(펼침 반영: 큰/펼친 스키마는
+    //   넓고 낮게), 배정은 실높이 최단 열(펼친 테이블 열은 형제를 덜 받아 클러스터 세로 폭주 억제). 겹침
+    //   방지: COLW 열 간격 + realH push-down + w/h=실 bbox(shelf-packer 소비). terms 는 realH 무의미 →
+    //   TROW 고정 높이로 계산.
+    const hOf = (it) => g.isTerms ? _METLAY.TROW : realH(g, it);
+    const ic = colsForHeights(items, hOf, MAXICOL);
     const colTop = new Array(ic).fill(_METLAY.PADT);
-    const place = assigned.map(({ it, col }) => {
-      const top = colTop[col];
-      colTop[col] += g.isTerms ? _METLAY.TROW : realH(g, it);
-      return { it, lx: _METLAY.PADX + col * COLW, top };
+    const place = items.map((it) => {
+      let c = 0; for (let k = 1; k < ic; k++) if (colTop[k] < colTop[c]) c = k;   // 실높이 최단 열(균형 재분배)
+      const top = colTop[c];
+      colTop[c] += hOf(it);
+      return { it, lx: _METLAY.PADX + c * COLW, top };
     });
     const w = _METLAY.PADX * 2 + ic * COLW;
     const h = Math.max(_METLAY.PADT, ...colTop) + 16;   // 실제 높이 — shelf-packer 가 소비(겹침 방지, 절대 collapsed 로 얼리지 말 것)
     return { id, g, place, w, h, x0: 0, y0: 0 };
   });
+  // graph-vpack(§60): 전역 shelf 목표 폭을 **총 콘텐츠 면적 기반**으로 산정 → 패킹이 landscape 종횡비를
+  //   겨냥(많이 펼칠수록 가로로 퍼져 높이 억제). 구 고정 2400 은 스키마 여러 개 펼침 시 폭이 고정된 채
+  //   행만 세로로 쌓여 세로 폭주(얇은 세로 띠)의 지배적 원인이었다. floor: 2400(현행 소량 펼침 배치 보존)
+  //   및 _vpMaxW(가장 넓은 클러스터는 항상 자기 행에 놓이게 — 클러스터 간 겹침·꺾임 방지).
+  //   계수 2.0: 넓은 클러스터가 행당 더 많이 담기도록(1.6 은 낮은 이산 패킹으로 세로형 잔존 — 12스키마
+  //   케이스 aspect 0.69). 2.0 은 세로형 케이스를 landscape(≈1.6)로 교정하면서 과도한 가로 확장은 피한다.
+  let _vpTotArea = 0, _vpMaxW = 0;
+  layouts.forEach((L) => { _vpTotArea += Math.max(1, L.w) * Math.max(1, L.h); if (L.w > _vpMaxW) _vpMaxW = L.w; });
+  const MAXROWW = Math.max(2400, _vpMaxW, Math.round(Math.sqrt(_vpTotArea * 2.0)));
   // shelf-packing: 가변폭 클러스터를 좌→우로 채우고, 폭 초과 시 다음 행으로.
   // graph-category(§55 A): 카테고리 활성 시 **카테고리 밴드별로** 분할 패킹 — 각 카테고리가 자기 행들을
   //   좌→우로 채우고, 밴드는 세로로 스택된다(헤더 CATHH 확보). 접힌 카테고리는 멤버를 방출하지 않고

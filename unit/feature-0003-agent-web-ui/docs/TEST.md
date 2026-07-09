@@ -1885,3 +1885,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - 사용자 레시피 Chk_Person_Ranking→Peerage→Chk_Ranking→**Person_Ranking(고립: dimRender 0/litRender 76 — 전역 침강 없음)**→Chk_Ranking 복귀(dimRender 71/lit 5): **매 단계 mismatch 0, 선택 노드 selLit=true(절대 dim 안 됨)**.
   - 연타 4클릭(150ms 간격) 최종 상태 정상(mismatch 0) · 타 그룹 ConsignmentHistory 점등 정상 · fetch 중(400ms) 전환 정상 · pageerror 0.
 - 결론: 라이브 자산은 이미 불변식 유지(§57.7 반영). §57.8 은 타이밍 의존성을 직렬화 bake 로 제거해 구조적 보장 + **누락됐던 캐시버스터 bump(graph-toolbar→hl-bake) 복구**로 신규 코드 전달 보장. POST-DEPLOY Run 은 배포 후 hl-bake 자산 대상으로 추가.
+
+### Run (2026-07-09) — graph-vpack: 스키마 펼침 세로 폭주 해소 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §60/ADR-028) — **Environment: Windows-browser**
+- 변경: `_metaG6Build` 레이아웃 — 적응형 shelf 폭 + 실높이 기반 열 수 + realH balance 재분배. 캐시버스터 `admin.js?v=20260709-graph-vpack`.
+- pre-deploy 격리 검증(headless node vm, 실 admin.js): 신규 `test_g6build_vpack.js` **16 PASS**(열 스케일업>4·1열 보존·컬럼펼침 재분배·적응형 폭 W>2400·노드 겹침0·클러스터 겹침0·극단 1T×100컬럼·카테고리 밴드 세로분리+겹침0·routine 펼침 겹침0) + 기존 edge-visibility 54·category 26 회귀 0 · node --check PASS. 실 _metaG6Build before/after: 24스키마×60T 높이 9380→3800(59%↓, aspect 0.19→1.22).
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 재배포 선행 필요(§51·§57 등 동일 패턴). 배포는 외부영향 행동으로 사용자 confirm 대기. **POST-DEPLOY PB-0008 라이브 append 예정** — 검증 항목: ① 스키마 노드 1개 펼침 시 클러스터가 세로로 폭주하지 않고 넓고 낮은 landscape 로 표시(사용자 불만 해소 실증) ② 여러 스키마 펼침 시 전체 그래프가 얇은 세로 띠가 아닌 판독 가능한 landscape(적응형 폭 실동작) ③ **성질이 다른 노드·클러스터 비겹침 육안 확인**(테이블·컬럼·routine 파라미터·그룹박스·카테고리 밴드) ④ 컬럼 펼친 테이블이 있는 클러스터도 넓고 낮게(재분배) ⑤ 펼침/접기 후 fitView 정상·미니맵 무충돌 ⑥ pageerror 0.
