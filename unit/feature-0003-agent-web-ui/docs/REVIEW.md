@@ -4608,3 +4608,7 @@ source_of_truth: true
 - **ACCEPT-RESIDUAL(NIT 3)**: 배지 표시/숨김 시 버튼 폭 변화로 초기화·상세 수평 이동(수직 reflow 아님 — 사용자 불만 재유발 안 함) · '스키마 이동' 가용성이 배지에 미반영(의도된 통합 tradeoff — 배지는 숨긴 종류만) · <~340px 초협폭 줌·미니맵 근접(현실 admin 폭 이하). 전부 비-차단.
 - 검증: `node --check admin.js` PASS · 실 Windows Chrome 149(win-browser relay) 격리 harness 렌더 실측 — toolbar 자식 4·zoom/status `position:absolute`·status `-webkit-line-clamp:2`·494px 캡·팝오버 4행·종류 3버튼 단일행(h29)·배지·`right:0` clip 0. 스크린샷 harness-closed/open2/fixed.
 - POST-DEPLOY PB-0008 라이브 확인 항목(TEST.md §3): 상단 4컨트롤·팝오버 개폐(바깥클릭/Esc·라벨클릭 무닫힘)·줌 오버레이·**상태 pill reflow 0(장문 상태에도 캔버스 높이 불변)**·LOD 마커/auto-fade·pageerror 0.
+
+## REV-20260709T120000-graph-toolbar-consolidate-postverify [SKIPPED:doc-only-postverify] (graph-toolbar 배포 ee54b1ff POST-DEPLOY PB-0008 라이브 PASS 기록, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 본 commit 은 TEST.md §3 POST-DEPLOY 실측 결과 append + TASK.md 체크박스 갱신뿐 — 코드·자산·정책 변경 0(doc-only). 코드 적대 검증은 원천 REV-20260709T113000-graph-toolbar-consolidate(SUBAGENT 3lens, SHIP-WITH-FIXES) 가 정본. 라이브 실측 provenance 는 TEST.md §3 POST-DEPLOY 갱신 항목.
+- 실측 요지(win-browser Chrome/149, `https://localhost/` bootstrap_admin → /admin → 그래프 뷰): toolbarKids=4·zoom/status `position:absolute`·팝오버 open no-clip(menuRight 629<1249)·**reflow0=true(장문 상태 주입 전후 toolbarH 37→37·canvasTop 179→179·canvasH 572→572 불변)**·kindctl 제품개요 scope 맥락 display:none(기존 동작 보존)·pageerror 0. 사용자 리포트 2건(툴바 지저분·상태 reflow) 라이브 해소.
