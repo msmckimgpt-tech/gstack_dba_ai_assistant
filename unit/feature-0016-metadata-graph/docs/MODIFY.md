@@ -1163,3 +1163,7 @@ source_of_truth: true
 - 사용자 리포트 3건. feature-0003: static/admin.js — focusAdj 빌드 시점 재산출(+소실 정리)·엣지
   양끝-밝음 규칙(lit)·컬럼 밝기 승계·dimmed 0.38·주석 정정. admin.html 캐시버스터.
   tests: headless T9~T11 추가(음성 대조군 포함).
+
+## CHG-20260709T023000-ai-root-feature-0016-hlux-postdeploy — §57.5 POST-DEPLOY 실클릭 실측 기록 (2026-07-09)
+
+- docs-only: T57.11 완수(전환·규칙 정합·라벨 판독 전건 PASS — 실클릭·육안).
