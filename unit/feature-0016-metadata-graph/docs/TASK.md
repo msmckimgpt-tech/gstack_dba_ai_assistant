@@ -1908,3 +1908,27 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [ ] T57.17 POST-DEPLOY 렌더 수준 실검증 — 모델 규칙이 아닌 **실제 G6 요소 상태 전수 대조**
   (getElementState vs _metaNodeStates): 사용자 레시피 + 연타 스트레스 + 타 그룹 + fetch 중 전환 +
   선택 해제 복원.
+
+## §60 graph-vpack — 스키마 펼침 세로 폭주 해소 (2026-07-09, 사용자 리포트)
+- 리포트: 관리콘솔 > 지식베이스 > 그래프 뷰에서 스키마 노드를 펼치면 "스키마 클러스터가 너무 세로로
+  펼쳐지고", 여러 개 펼치면 알아보기 힘든 극단적 세로 띠(실측 aspect 0.19)가 된다. 지시: 원인 상세 파악 +
+  높은 가시성 확보. 추가 제약: **성질이 다른 노드·클러스터가 겹치지 않아야 한다.** 사용자 선택 범위:
+  전체(적응형 폭 + 열 스케일업 + 컬럼 재분배).
+- 근본 진단(코드 전수): 레이아웃이 "폭=고정 상한, 높이=무한 증가". ① 전역 shelf 폭 `MAXROWW=2400` 고정
+  ② 클러스터 내부 열 `innerColsFor` 최대 4열 캡 ③ 열 배정을 collapsed 높이로 고정 → 펼친 테이블 열만
+  홀로 세로 폭주. `fitView` 는 콘텐츠 종횡비를 그대로 두고 축소만 해 세로 콘텐츠는 얇은 슬라이버가 됨.
+- [x] T60.1 적응형 shelf 폭(ADR-028 ①): `MAXROWW=max(2400, maxClusterW, round(sqrt(총면적×2.0)))` —
+      3개 shelf-pack 경로(비카테고리·카테고리 밴드·미분류) 공통. floor 2400 으로 소량 펼침 배치 보존.
+- [x] T60.2 실높이 기반 열 수(ADR-028 ②): `colsForHeights(arr, realH, cap)=clamp(round(sqrt(ΣrealH/100)),1,cap)` —
+      flat masonry(cap 10)·packGroup(cap 4) 공통. 구 innerColsFor/gInnerColsFor/assignH 폐지.
+- [x] T60.3 실높이 balance 재분배(ADR-028 ③, ADR-004 ② 재선회): 열 배정을 realH 최단 열 단일 패스로 —
+      펼친 테이블 열이 형제를 덜 받아 넓고 낮게. 겹침 불변식(COLW 간격·realH push-down·(w,h)=실bbox) 보존.
+- [x] T60.4 검증: §60 headless `test_g6build_vpack.js` **16 PASS**(열 스케일업>4·작은스키마 1열 보존·컬럼펼침
+      재분배·적응형 폭 W>2400·노드 겹침0·클러스터 겹침0·극단 1T×100컬럼 겹침0·카테고리 밴드 세로분리+겹침0·
+      routine 파라미터 펼침 겹침0) + 기존 headless 54+26 회귀 0. 실 _metaG6Build before/after: 24스키마×60T
+      높이 9380→3800(59%↓, aspect 0.19→1.22).
+- [x] T60.6 §18.8 적대 리뷰 패널(ux/layout 렌즈, SUBAGENT): PASS-WITH-FIXES — R1·R2 구조적 충족·BLOCKING 0.
+      반영: MINOR(colsForHeights 에 arr.length 캡 — 빈 열 폭 방지)·MAJOR 주석 정직화(churn 실측 43~100%)·
+      NIT(T7 카테고리 밴드·T8 routine 경로 테스트 흡수). 상세 REVIEW.md.
+- [ ] T60.5 POST-DEPLOY 실브라우저(PB-0008) 라이브 검증 — web 재배포 후 스키마 다중 펼침 실측(Run 은
+      feature-0003 TEST.md). **외부영향(배포) — 사용자 confirm 후 진행.**

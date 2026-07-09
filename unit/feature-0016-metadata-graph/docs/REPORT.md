@@ -1,5 +1,41 @@
 # Report
 
+## 2026-07-09 · 스키마 펼침 세로 폭주 해소 (graph-vpack, TASK §60, ADR-028)
+
+### 요청 (사용자 리포트)
+관리 콘솔 > 지식베이스 > 그래프 뷰에서 스키마 노드를 펼치면 '스키마 클러스터'가 너무 세로로 펼쳐지고,
+여러 스키마 노드를 펼치면 알아보기 힘든 화면이 된다. 원인 상세 파악 + 높은 가시성 확보.
+추가 제약: 성질이 다른 노드·클러스터가 겹치지 않아야 한다. 사용자 선택 범위: 전체(컬럼 재분배 포함).
+
+### 근본 원인 (코드 전수 추적 — _metaG6Build 레이아웃)
+레이아웃이 "폭=고정 상한, 높이=무한 증가" 철학. ① 전역 shelf 폭 `MAXROWW=2400` 고정 → 여러 클러스터가
+높아져도 폭은 고정된 채 shelf 행만 세로로 쌓임(전체 높이 = Σ 행 높이, 무한 증가) ② 클러스터 내부 열
+`innerColsFor` 최대 4열 캡 → 테이블 많은 스키마(~8,122 T/21 DS)가 세로로 길어짐 ③ 열 배정을 collapsed
+높이로 고정(펼침-불변, ADR-004 ②)해 펼친 테이블 열만 홀로 세로 폭주 ④ 제품 카테고리 밴드 세로 스택이
+가중. `fitView` 는 종횡비를 그대로 두고 축소만 해 세로 콘텐츠는 얇은 세로 슬라이버(리포트의 증상).
+
+### 처리 결과 (정본 ADR-028 · admin.js frontend-only)
+- **① 적응형 shelf 폭**: `MAXROWW=max(2400, maxClusterW, round(sqrt(총콘텐츠면적×2.0)))` — 많이 펼칠수록
+  가로로 퍼져 높이 억제. floor 2400(소량 펼침 현행 보존)·maxClusterW(가장 넓은 클러스터는 자기 행에 —
+  클러스터 간 겹침 방지). 3개 shelf-pack 경로(비카테고리·카테고리 밴드·미분류) 공통 적용.
+- **② 실높이 기반 열 수**: `colsForHeights=clamp(round(sqrt(ΣrealH/100)),1,cap)`(cap flat 10·group 4).
+  펼친 컬럼 반영 → 큰/펼친 스키마는 넓고 낮게, ≤4T 는 1열 유지. 구 innerColsFor/gInnerColsFor/assignH 폐지.
+- **③ 실높이 balance 재분배**: 열 배정을 realH 최단 열 단일 패스로(ADR-004 ② 재선회). 펼친 테이블 열이
+  형제를 덜 받아 넓고 낮게. 대가로 펼침 시 형제 재배치(약간의 churn) 수용 — 사용자 우선순위 정합.
+- **비겹침 불변식 보존**: 열 COLW(224) 간격 + realH push-down + 클러스터 (w,h)=실 bbox → shelf-packer 소비.
+  세 규칙 유지로 노드·클러스터 pairwise 비겹침 성립.
+
+### 검증
+- §60 headless `test_g6build_vpack.js` **16 PASS**(열>4·1열 보존·컬럼펼침 재분배·적응형 폭 W>2400·노드
+  겹침0·클러스터 겹침0·극단 1T×100컬럼 겹침0·카테고리 밴드 세로분리+겹침0·routine 파라미터 펼침 겹침0)
+  + 기존 headless(edge-visibility 54 / category 26) 회귀 0 · node --check PASS · 순수-수학 sim 겹침 0(pairwise)
+  + before/after 종횡비.
+- §18.8 적대 리뷰 패널(SUBAGENT, ux/layout): PASS-WITH-FIXES — R1·R2 구조적 충족·correctness/겹침 BLOCKING 0.
+  MINOR(빈 열 폭)·MAJOR 주석 정직화(churn 43~100% 실측)·NIT(테스트 흡수) 반영. 상세 REVIEW.md.
+- 실 _metaG6Build before/after: 단일 12T×15컬럼 896→391 높이(56%↓, aspect 0.42→2.10) · 16스키마×40T
+  4372→2124(51%↓, 0.41→1.77) · 24스키마×60T 9380→3800(59%↓, aspect 0.19→**1.22**, 세로 띠→landscape).
+- POST-DEPLOY 실브라우저(PB-0008) 라이브 검증은 web 재배포 후(외부영향 — 사용자 confirm). T60.5.
+
 ## 2026-07-07 · 제품 카테고리 + 크로스-DB 관계 + 재귀 분석 refine (graph-category-recursive-refine, TASK §55, ADR-021)
 
 ### 요청 (사용자 4대 — REQ-20260706-graph-category-recursive-refine)

@@ -1200,6 +1200,20 @@ source_of_truth: true
 - §18.8 적대 패널(4렌즈+교차검증) 반영: ① bake 사이트 누락 3곳(컬럼·제품·데이터소스)도 _metaStateSig 로
   통일(폴 _metaCacheSig 와 서명 발산 제거) ② LOD 밴드 busy 게이트 제거(직렬화가 조율 — busy 창이
   길어진 §57.8 에서 _lodBand=null 리셋의 "최초 관측 skip" 으로 줌아웃 축약 누락되던 버그 해소)
+  ③ 커버리지 공백 보강 T19(소유 op busy 해제)·T20(TTL 30s sweep). headless 54+26 PASS.
+
+## CHG-20260709T150000-ai-claude-feature-0016-graph-vpack — §60 스키마 펼침 세로 폭주 해소 (2026-07-09)
+- 사용자 리포트(그래프 뷰 스키마 펼침 시 클러스터 세로 폭주, 여러 개 펼치면 얇은 세로 띠로 판독 불가)의
+  근본 수정. 추가 제약: 성질이 다른 노드·클러스터 비겹침. 상세 TASK §60 / ADR-028.
+- admin.js `_metaG6Build` 레이아웃(frontend-only): ① 적응형 shelf 폭 `MAXROWW=max(2400, maxClusterW,
+  round(sqrt(총면적×2.0)))`(3개 shelf-pack 경로) ② 실높이 기반 열 수 `colsForHeights`(구 innerColsFor/
+  gInnerColsFor/assignH 폐지, flat cap 10·group cap 4·arr.length 캡) ③ 열 배정을 realH 최단 열 단일 패스로
+  balance(ADR-004 ② 재선회).
+- 캐시버스터 필요: admin.html 의 `admin.js?v=` 를 `20260709-graph-vpack` 로 bump(배포 시).
+- 비겹침 불변식 보존(COLW 간격·realH push-down·(w,h)=실 bbox). §60 headless 16 PASS(신규 test_g6build_vpack.js)
+  + 기존 54+26 회귀 0. 실 before/after: 24스키마×60T 높이 9380→3800(59%↓, aspect 0.19→1.22).
+- §18.8 적대 리뷰(SUBAGENT, ux/layout): PASS-WITH-FIXES(BLOCKING 0). MINOR(빈 열 폭 — arr.length 캡)·
+  MAJOR 주석 정직화(churn 실측 43~100%)·NIT(T7 밴드·T8 routine 테스트 흡수) 반영. 상세 REVIEW.md.
   ③ 커버리지 공백 보강 T19(소유 op busy 해제·stale op 무시)·T20(TTL 30s sweep 실구동). headless 54+26 PASS.
 - **배포 근본원인(중요)**: 병렬 세션이 §57.7(hl-isolated) 위에 `graph-toolbar-consolidate`(70e0f41a)를
   랜드하며 캐시버스터를 `20260709-graph-toolbar`로 되돌림. 본 워크트리 base 가 이미 graph-toolbar 라

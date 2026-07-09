@@ -831,3 +831,21 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 ## T57.8 — 하이라이트 신뢰성 재설계 (2026-07-09)
 - headless: T15(busy bake — 테이블·SC: 카드), T16(폴 승격 busy 게이트 제거), T17(선택 전환 무조건 bake — 고립→고립 포함), T18(bake 직렬화 — 겹침 0·재실행 1회 병합·fit OR 승계) + 기존 전건 — 47+26 PASS.
 - 실브라우저 렌더 수준 검증(T57.17)은 배포 후 별도 Run(feature-0003 TEST.md).
+
+## graph-vpack — 스키마 펼침 세로 폭주 해소 (TASK §60, ADR-028, 2026-07-09)
+- 목표: 스키마 펼침 시 클러스터·전체 그래프가 세로로 폭주하지 않고 landscape 종횡비 유지 + 성질이 다른
+  노드·클러스터 비겹침.
+- Environment: headless node vm(실 admin.js `_metaG6Build`). Runner: AI.
+### Run (2026-07-09) — pre-deploy 격리 검증
+- 신규 `test_g6build_vpack.js` **16 PASS**:
+  - T1 60T 열 스케일업(>4)·클러스터 landscape(aspect≥1)  · T2 4T 단일 열 보존(==1)
+  - T3 컬럼펼침(12T 중 3×15컬럼) 재분배 다열·세로폭주 억제(aspect≥1)·노드 겹침 0
+  - T4 16스키마×40T 적응형 폭 가로확장(W>2400)·세로 띠 아님(aspect≥1)·노드 겹침 0(전량)
+  - T5 클러스터 간 겹침 0(16스키마 combo bbox pairwise)  · T6 극단 1T×100컬럼 겹침 0
+  - T7 카테고리 밴드(schemaProducts) 2밴드 방출·세로 분리·노드 겹침 0  · T8 routine 파라미터 펼침 겹침 0
+- 회귀 0: 기존 `test_g6build_edge_visibility.js` 54 PASS · `test_g6build_category.js` 26 PASS · node --check PASS.
+- §18.8 적대 리뷰(SUBAGENT, ux/layout): PASS-WITH-FIXES(BLOCKING 0) — MINOR/MAJOR-주석/NIT 반영. REVIEW.md.
+- 실 _metaG6Build before(main)/after(worktree) 실측: 단일 12T×15컬럼 896→391(56%↓, aspect 0.42→2.10) ·
+  16스키마×40T 4372→2124(51%↓, 0.41→1.77) · 24스키마×60T 9380→3800(59%↓, 0.19→1.22).
+### Run (예정) — POST-DEPLOY 실브라우저 (Environment: Windows-browser, PB-0008)
+- web 재배포 후 스키마 다중 펼침 실측(가시성·비겹침 육안) — 외부영향(배포) 사용자 confirm 후. T60.5.

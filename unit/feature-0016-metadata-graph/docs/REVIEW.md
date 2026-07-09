@@ -1263,3 +1263,9 @@ source_of_truth: true
 - CONFIRMED→반영: ① T19 미커버(소유 op busy 해제 계약 — rebuild 자동회수 제거분 회귀방어) ② T20 미커버(TTL 30s sweep 무검증). 둘 다 신규 테스트로 봉합.
 - 수동 재판정 실재→반영: ③ bake 사이트 3곳(컬럼·제품·데이터소스) _metaNodeStates 잔존 → _metaStateSig 통일(서명 발산) ④ LOD 밴드 busy 게이트 → 제거(직렬화 조율, "최초 관측 skip" 버그).
 - 수동 재판정 기각: "in-flight draw 영구 잔존"(직렬화·await 로 해제가 안정 scene 에 착지 — 무해화), "더블클릭 중복 bake"(SetSelected 재-bake 는 최종 상태 수렴상 의도된 것). 최종 headless 54+26 PASS.
+
+## REV-20260709T150000-ai-claude-feature-0016-graph-vpack [SUBAGENT: PASS-WITH-FIXES] — §60 스키마 펼침 세로 폭주 해소 적대 리뷰
+- ux/layout 적대 렌즈(겹침 R2·경계값/0-division·회귀·성능·적응형 폭 과도) — 소스 정독 + 헤드리스 재현(기존 16/16 + 리뷰어 신규 프로브 10/10).
+- 판정: R1(세로폭주 해소)·R2(비겹침) 모두 **구조적 충족**. correctness/겹침 BLOCKING 0. 비겹침은 MAXROWW 값과 무관하게 shelf-pack 구조(cx 누적 + shelfH 행 전진) + 클러스터 내부 x 이산화(PADX+c*COLW, COLW 224>칩 190) + realH push-down 으로 보장 — 재분배/열수 변화가 칩을 열 경계 밖으로 밀 수 없음.
+- CONFIRMED→반영: ① [MINOR] colsForHeights 가 항목 수 미캡 → 빈 열/공백(코스메틱, 겹침 아님): `arr.length` 캡 추가 ② [MAJOR·문서화된 승인 tradeoff] "약간의 churn" 실측 43~100%(80T 단일펼침 ~43%, ic 전이경계 전량): 주석 정직화 + 대형 스키마 perf 는 PB-0008 실측(T60.5) ③ [NIT] packGroup/카테고리 밴드/routine 경로 미커버 → T7(밴드)·T8(routine) 흡수(16 PASS).
+- 기각/NON-이슈: MAXROWW 를 layouts.map 이후로 이동해도 참조 위치 전부 정의 이후(grep) — TDZ/회귀 없음 · 빈 배열/전-card/0-division 모두 가드 · realH 4경로(flat·packGroup·GB bbox·shelf-pack) 일관 소비로 (w,h)=실 emission bbox 정합 · 적응형 폭 과도는 shelf-pack 이 겹침 불가라 R2 위협 아님.
