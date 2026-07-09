@@ -1177,3 +1177,11 @@ source_of_truth: true
 ## CHG-20260709T053000-ai-root-feature-0016-hlinv-postdeploy — §57.6 POST-DEPLOY 실측 기록 (2026-07-09)
 
 - docs-only: T57.13 완수(연속 3회 전환 전 지표 클린 — 실클릭·육안).
+
+## CHG-20260709T090000-ai-root-feature-0016-hl-isolated — §57.7 고립 노드 하이라이트 미발동 (2026-07-09)
+- 사용자 실측 3차 리포트: 연관 노드(Chk_Person_Ranking→Peerage→Chk_Ranking) 클릭은 정상이나 **비연관 노드(Person_Ranking) 클릭 즉시 "UI 구성이 무너짐"** + 복원 불가.
+- qa-idc(mssql-06656002eda6) 동일 레시피 실좌표 클릭 재현(pageerror 0): 현 자산에서 전환·복원은 전부 정상. "무너짐"의 실체 = **관계 0 고립 노드 선택 시 화면 전체 침강(lit=1)** — 설계상 동작이지만 사람 눈에 파괴로 읽힘. "복원 불가"는 배포 전 SPA 잔존 자산(§57.6 미적용)으로 판정 — 탭 새로고침 필요.
+- 수정: `_metaFocusAdjacency` 에 touched 카운터 — 1-hop 관계가 0 이면 `null` 반환(하이라이트 모드 미발동, 선택 테두리·상세만). 늦은 ingest 도착 시 다음 build 재산출이 자동 점화(§57.5 합성).
+- 적대 리뷰 반영: touched 는 **바깥에 닿는** 관계만 집계(self-FK 단독 테이블 = 렌더러 rs===rt 드롭으로 보이는 선 0 → 고립 동일 취급). T9/T8 은 비-null stale 스냅샷 전제로 복원(공허화 방지).
+- 테스트: T14 신설(고립 focusAdj null·dim 미발동·자동 점화·self-FK 고립 판정), T9/T13/T8 갱신. 39+26 PASS.
+- 캐시버스터: `admin.js?v=20260709-hl-isolated`.

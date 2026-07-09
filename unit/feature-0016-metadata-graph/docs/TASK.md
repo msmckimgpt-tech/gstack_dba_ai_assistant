@@ -1871,3 +1871,17 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   (ConnectInfo→ConsignmentHistory→Peerage): 매 클릭 선택 즉시 전환·점등(selDim=false),
   이전 하이라이트 잔존 엣지 0, 화살촉 잔존 0(전체 opacity 침강). 육안: 선택+이웃 부분그래프
   선명·나머지 0.38 침강에 명칭 판독(pbi-final). 사용자 재리포트 2건 해소 확인.
+
+### 57.7 고립 노드 하이라이트 미발동 (2026-07-09, 사용자 3차 리포트 — "비연관 노드 클릭 시 UI 무너짐")
+- 3차 리포트: 연관 노드(Chk_Person_Ranking→Peerage→Chk_Ranking) 클릭은 정상이나 비연관 노드
+  (Person_Ranking) 클릭 즉시 UI 구성이 무너지고, 이후 기존 노드 클릭에도 복원되지 않음.
+- 진단(qa-idc mssql-06656002eda6 동일 레시피 실좌표 클릭 재현, pageerror 0): 현 자산에서 전환·복원
+  전부 정상 — "복원 불가"는 **배포 전 SPA 잔존 자산**(§57.6 미적용, 탭 새로고침 필요). "무너짐"의
+  실체 = 관계 0 **고립 노드** 선택 시 전체 침강(lit=1) — 규칙상 정확하나 정보 이득 0 + 파괴로 인지.
+- [x] T57.14 수정(ADR-026): `_metaFocusAdjacency` 가 **바깥에 닿는 관계 0** 이면 null 반환 —
+  하이라이트 모드 미발동(선택 테두리·상세만), 관계 늦은 ingest 시 build 재산출이 자동 점화.
+  적대 리뷰 적발 반영: self-FK 단독 테이블(렌더러 rs===rt 드롭 → 보이는 선 0)도 고립 동일 취급,
+  T9/T8 비-null stale 스냅샷 전제 복원(공허화 방지). headless 39+26 PASS. 캐시버스터 20260709-hl-isolated.
+- [ ] T57.15 POST-DEPLOY 실검증 — 사용자 레시피 그대로(qa-idc·검색 'ranking'·dk_game_integrate 펼침)
+  Chk_Person_Ranking→Peerage→Chk_Ranking→Person_Ranking→Chk_Ranking 실클릭: 고립 노드 클릭 시
+  전역 침강 미발동 + 복귀 클릭 시 하이라이트 정상 복원.

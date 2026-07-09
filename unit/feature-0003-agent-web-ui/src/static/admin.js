@@ -4110,10 +4110,14 @@ function _metaFocusAdjacency(selKey) {
     const pk = _metaColParent(k, gn && gn.fqn);
     return !!(pk && self.has(pk));
   };
+  let touched = 0;   // §57.7: 바깥에 닿는 관계 수 — 0 이면 고립 노드(하이라이트 미발동)
   _metaGraph.edges.forEach((e) => {
     const sTouch = touch(e.source), tTouch = touch(e.target);
     if (!sTouch && !tTouch) return;
     const other = sTouch ? e.target : e.source;
+    // §57.7 정련(리뷰 적발): self-FK 처럼 양끝이 모두 자기(자기 컬럼 포함)로 접히는 엣지는
+    //   렌더러가 드롭(rs===rt)해 보이는 관계선이 없다 — 강조할 외부 부분그래프가 아니므로 미집계.
+    if (!touch(other)) touched += 1;
     nodes.add(other);
     const on = _metaGraph.nodes.get(other);
     const opk = (!on || on.label === "Column") ? _metaColParent(other, on && on.fqn) : null;
@@ -4125,6 +4129,11 @@ function _metaFocusAdjacency(selKey) {
   // 자신의 소속 스키마도 유지(자기 클러스터 카드/컨텍스트 보존).
   const ssk = _metaCatParent(selKey, selNode && selNode.fqn);
   if (ssk) nodes.add(ssk);
+  // §57.7(사용자 실측 "비연관 노드 클릭 시 UI 무너짐"): 모델에 1-hop 관계가 하나도 없는 **고립
+  //   노드**는 강조할 부분그래프가 없다 — 화면 전체가 침강해 파괴처럼 읽힌다. 하이라이트 모드를
+  //   발동하지 않고(null) 선택 테두리·상세만 제공한다(관계가 늦게 ingest 되면 다음 build 재산출이
+  //   자동으로 하이라이트를 켠다 — §57.5 빌드 시점 재산출과 합성).
+  if (touched === 0) return null;
   return { self, nodes };
 }
 
