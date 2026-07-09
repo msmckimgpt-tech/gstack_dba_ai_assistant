@@ -1963,3 +1963,23 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   포함) 후 Castle→Ally→UnionCAInfo 선택: **UnionCAInfo keyShape/attr opacity=1(이전 0.38에서 복원)**,
   states=["analyzed","selected"]. dimmed 이웃 Ally/Castle opacity 0.38 유지(침강 정상). 육안: 선택 노드
   파란 fill+전체 밝기로 도드라지고 이웃 침강(pbom-final). 사용자 5차 리포트("재선택 노드 흐림 유지") 해소.
+
+## §61 col-lod — 노드-레벨 LOD 로 대규모 노드 성능 개선 (2026-07-09, 사용자 리포트)
+사용자 리포트: "그래프 뷰에서 노드 개수가 많아질수록 부하가 늘고 지연이 발생. 많은 오브젝트를 2D 화면에서
+처리하기 위한 최적화 + 유사 서비스 방식 웹 리서치하며 진행." (ADR-029)
+- [x] T61.0 진단(read-only) + 웹 리서치 + 19개 후보 적대적 검증: 병목 top3(전체 rebuild draw / 노드 LOD 부재
+  / 레이아웃 재계산) 확정. WebGL·optimize-viewport-transform drop-in·뷰포트 컬링·topology-diff 증분(ADR-004
+  재검토)은 번들·코드 실측으로 반증(ADR-029 기각 대안) → **노드-레벨 컬럼 LOD** 로 수렴(사용자 결정).
+- [x] T61.1 상수(ADR-029): `_META_COL_LOD_ZOOM=0.5`, `_META_COL_LOD_MIN=200`(엣지 LOD 옆 병치).
+- [x] T61.2 emission 억제: `_metaG6Build` 에서 `colLodActive` 산정(getZoom + 전체 펼친 컬럼 수 O(1) 합) →
+  Column circle(admin.js 컬럼 push)·Routine 파라미터 circle(param push)·per-table "X:" 접기 ctl 방출 억제.
+  `realH`(공간 예약)는 **불변** → 테이블 좌표 band-invariant(reflow 0). 억제 테이블 라벨에 `▤N` 컬럼수 배지.
+- [x] T61.3 tiered 밴드: `_lodBand` 2단→3단(full/collod/lod), 임계(0.5·0.35) 교차 시 300ms 디바운스 rebuild +
+  상태줄 밴드별 축약 안내(컬럼/관계선).
+- [x] T61.4 검증: headless `test_g6build_collod.js` **신설 18 PASS** — 억제 0방출(컬럼·param·X:ctl)·**좌표
+  band-invariant(이동 0)**·▤N 배지(수치=컬럼수)·엣지 re-anchor(dangling 0·테이블 승격)·줌 게이트(≥0.5 유지)·
+  컬럼 게이트(≤200 유지)·루틴 파라미터 억제+좌표 불변. 기존 `test_g6build_vpack/category/edge_visibility`
+  **105 PASS 회귀 0**. `node --check` PASS. 캐시버스터 `admin.js?v=20260709-col-lod`.
+- [ ] T61.5 POST-DEPLOY 실 Windows 브라우저(PB-0008) — 대형 그래프(예: cc_* 557T 또는 다스키마 펼침) 줌아웃
+  before/after: 억제 밴드에서 컬럼 circle 미표시·테이블 위치 불변(reflow 0)·▤N 배지 가독·확대 시 컬럼 복원.
+  (그래프뷰 무인 도달은 인증/라우팅 3중벽으로 차단 — 자산 curl 검증 + 사용자 육안 게이트, TEST.md §61.)

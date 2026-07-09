@@ -806,3 +806,20 @@ source_of_truth: true
 - 결정: 침강 opacity 를 매 build 각 노드 base style 에 직접 bake(dim=0.38/lit=1). setData 가 keyShape 에 값을 직접 기입하므로 상태 apply/revert 동작에 의존하지 않아 dim↔lit 양방향 결정적. dimmed G6 상태 config 는 제거(base 와 이중 적용 시 곱셈 과침강 위험). 'dimmed' 문자열은 상태 서명(rebuild 감지)·base bake 입력으로만 유지.
 - 기각 대안: base opacity:1 만 명시하고 dimmed 상태 유지(revert 의존 — G6 동작 불확실 + 곱셈 위험); 상태 제거 시 setElementState 로 opacity 강제 리셋(전역 루프 = §33 프리즈 금지 위반).
 - Supersedes: §57.5 의 dimmed 상태 기반 침강 / Superseded By: —
+
+## ADR-029 — §61 col-lod: 노드-레벨 LOD 로 개요 줌에서 컬럼 circle 방출 억제 (draw 지배항 절감)
+- 상태: 채택 (2026-07-09)
+- 맥락: 사용자 리포트 — "관리 콘솔 > 지식베이스 > 그래프 뷰에서 노드 개수가 많아질수록 부하가 늘고 지연이 발생한다." 병목 진단(read-only) + 웹 리서치(Sigma.js/Cosmograph/KeyLines/G6 native — 뷰포트 컬링·LOD·shape 감축) + 19개 후보 최적화의 적대적 검증(코드·번들 실측) 결과, **살아남은 유일한 안전·유효한 최적화 = 노드-레벨 컬럼 LOD** 로 수렴. 확정 병목: (INV-COLUMN-CAP-DRAW) draw 지배항은 테이블당 최대 500 Column circle 이고, 현행 LOD 는 **엣지만** 축약(§57, `_META_EDGE_LOD_ZOOM 0.35`)해 노드 축은 줌 무관하게 전량 draw. 라이브 실측 5스키마=2,618노드·단일 `cc_*`=557테이블.
+- 기각된 대안(적대적 검증이 반증):
+  - **WebGL/GPU 인스턴싱** — 번들 Canvas 전용(@antv/g-canvas, webgl 심볼 0). WebGL 이탈은 점선·테두리 품질 회귀(ADR-004)라 재-vendoring+품질 재검증 비용 → drop-in 아님.
+  - **`optimize-viewport-transform` drop-in** — 번들에 behavior 로 존재하나, 지배 병목은 pan/zoom 프레임이 아니라 펼침/선택/마커의 full-rebuild 라 top-3 미해결.
+  - **뷰포트 컬링/가상화** — `_metaG6Build` 가 방출 전 전 노드 좌표를 계산(seriation O(S²)·masonry)하므로 컬링해도 레이아웃 비용 잔존 + pan 재방출 churn + combo 자식 auto-fit 축소로 좌표 비동일 → net negative.
+  - **topology-diff 증분 갱신(ADR-004 재검토)** — G6 증분 데이터 API(addData/updateData/draw)는 번들에 실재하고 `draw()`는 layout-free(BLUEPRINT §3 크래시는 `+render()` 였음)이나: ① G6 `setData` 는 이미 draw 단계에서 diff(변경 요소만 재렌더 — 스칼라 스타일 Column circle 포함)라 증분이 지배 draw 를 못 줄임 ② ADR-028 §60 vpack 이 펼침을 형제 ~43% re-column(O(N))으로 만들어 "bounded-delta" 무효 ③ combo 는 자식 auto-fit(`getComboPosition=getContentBBox(children).center`)이라 명시 bbox push 무효 → coordinate-identity 불가. 실이득 marginal·결정론/soak 위험 → 사용자 결정으로 A(본 ADR)로 전환.
+- 결정: **개요 줌 밴드에서 Column circle·Routine 파라미터 circle·per-table "X:" 접기 ctl 의 방출(emission)을 억제**한다. `colLodActive = getZoom() < _META_COL_LOD_ZOOM(0.5) && 전체 펼친 컬럼 수 > _META_COL_LOD_MIN(200)`. 테이블·스키마 칩·관계선은 유지.
+  - **결정론 보존(핵심)**: `realH`(펼친 컬럼 높이 포함 공간 예약)는 **불변** — 억제는 `nodes.push` 단계에서만 일어나고 masonry/shelf-pack/좌표 계산은 억제 여부와 무관. 따라서 테이블 tx/ty 가 **band-invariant**(reflow 0, headless T2 이동 0 단언). combo 는 자식 auto-fit 이나 테이블 위치가 combo 범위를 정의하므로 카드 배치 안정(억제 시 하단 여백만 tighter — content 이동 아님).
+  - **정보 손실 방지**: 억제 테이블 라벨에 `▤N` 컬럼수 배지(`labelMaxWidth` 클램프가 overflow 차단). realH 예약 gap 도 '펼침' 시각 신호.
+  - **엣지 무결성**: 컬럼 끝점 REFERENCES/ROUTINE_USES 는 기존 `renderEndpoint` 가 소속 테이블로 승격(접힌 스키마와 동일 경로) → dangling 0(headless T4).
+  - **밴드 churn 억제**: `_lodBand` 를 2단→3단(full ≥0.5 / collod 0.35~0.5 / lod <0.35)으로 확장, 어느 임계 교차든 기존 300ms 디바운스 rebuild(INV-EDGE-LOD-DEBOUNCE 계승). 상태줄에 밴드별 축약 안내.
+- 게이트 근거: 줌 ≥ 0.5(판독 가능 배율)에서는 억제 안 함(정보 유지) — `_META_MIN_READ_ZOOM 0.55` 클램프 하에서 초기 fit 은 억제 밴드 밖. 컬럼 ≤ 200 이면 draw 저렴 → 억제 안 함(불필요 정보손실 방지, headless T5/T6).
+- 검증: headless `test_g6build_collod.js` **18 PASS**(억제 0방출·좌표 band-invariant·▤N 배지·엣지 re-anchor·줌/컬럼 게이트·루틴 파라미터) + 기존 `test_g6build_vpack/category/edge_visibility` **105 PASS 회귀 0**. 실 Windows 브라우저(PB-0008) 대형 그래프 줌아웃 before/after 는 TEST.md §61.
+- Supersedes: — (§57 엣지 LOD 를 노드 축으로 확장·병존) / Superseded By: —

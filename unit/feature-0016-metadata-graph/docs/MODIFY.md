@@ -1248,3 +1248,16 @@ source_of_truth: true
 ## CHG-20260709T170000-ai-root-feature-0016-sel-prom-postdeploy — §57.9 POST-DEPLOY 실측 (2026-07-09)
 - 배포 2c8fb7d2(무중단 롤링 + soak 통과), 라이브 sel-prominence(_metaBakeBaseOpacity 포함).
 - T57.19 실측: 재선택 UnionCAInfo keyShape opacity 0.38→1 복원 확인, dimmed 이웃 0.38 유지. 상세 TASK §57.9.
+
+## CHG-20260709T180000-ai-claude-feature-0016-col-lod — §61 노드-레벨 컬럼 LOD (대규모 노드 성능, 2026-07-09)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaG6Build·_metaInitGraph aftertransform·
+  _metaG6BuildProducts·_metaGraphResetModel) + `admin.html` cache-buster + headless `test_g6build_collod.js`(신설).
+- 변경: 개요 줌(`_META_COL_LOD_ZOOM=0.5`) + 렌더될 펼친 컬럼 > `_META_COL_LOD_MIN=200` 이면 Column/Routine
+  파라미터 circle·per-table "X:" 접기 ctl 방출 억제(테이블·관계선 유지). `realH` 불변 → 테이블 좌표
+  band-invariant(reflow 0). 억제 테이블 라벨 앞에 `▤N` 컬럼수 배지. `_lodBand` 3단(full/collod/lod) 300ms
+  디바운스. 컬럼 끝점 엣지는 renderEndpoint 로 테이블 승격. 게이트는 schemaExpanded(렌더될) 컬럼만 카운트.
+- 근거: 사용자 리포트(그래프 뷰 대규모 노드 부하·지연) → 진단+웹리서치+적대검증(19후보→C 반증→A 수렴, ADR-029)
+  → diff 3렌즈 적대 리뷰 PASS-WITH-FIXES(MINOR 3 수정). frontend-only·마이그레이션 0.
+- 검증: headless 20(collod, band-invariant·엣지 re-anchor 증명)+회귀 105 = **125 PASS** · `node --check` PASS.
+  POST-DEPLOY PB-0008(대형 그래프 줌아웃 before/after)는 자산 curl + 사용자 육안 게이트(TEST §61·T61.5).
+- 캐시버스터: `admin.js?v=20260709-col-lod`.

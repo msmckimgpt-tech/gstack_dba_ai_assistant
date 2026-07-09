@@ -3718,6 +3718,15 @@ const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 �
 //   단건 선을 축약(의미 신호만 유지). 임계 1점 왕복 rebuild 방지는 밴드 전이+디바운스(_lodBand).
 const _META_EDGE_LOD_ZOOM = 0.35;
 const _META_EDGE_LOD_MIN = 120;
+// col-lod(§61): 노드-레벨 LOD — 개요 줌(판독 불가 배율) + 대형 모델(펼친 컬럼 多)에서 컬럼 circle·루틴
+//   파라미터·per-table 접기 ctl 의 **방출을 억제**한다(테이블/스키마 칩·관계선은 유지). draw 지배항은
+//   테이블당 최대 500 Column circle 이라(INV-COLUMN-CAP-DRAW), 개요에서 이들을 방출하지 않으면 setData
+//   diff·draw 요소 수가 급감한다. 결정론 보존: realH(공간 예약)는 **불변** → 테이블 좌표·combo extent 가
+//   band-invariant(reflow 0). combo 는 자식 auto-fit 이므로, 억제해도 테이블(realH 반영 위치)이 combo
+//   범위를 정의해 카드 크기 불변. 억제 시 테이블 라벨에 '▤N' 컬럼수 배지로 정보 손실 방지. 컬럼 끝점 엣지는
+//   renderEndpoint 가 소속 테이블로 자동 승격(접힌 스키마와 동일 경로). 밴드 전이는 _lodBand 300ms 디바운스.
+const _META_COL_LOD_ZOOM = 0.5;   // 이 배율 밑 + 아래 임계 초과 컬럼이면 억제(엣지 LOD 0.35 보다 넓은 밴드)
+const _META_COL_LOD_MIN = 200;    // 전체 펼친 컬럼 수가 이 미만이면 draw 저렴 — 억제 안 함(정보 손실만 유발 방지)
 // §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
 const _META_DIM_OPACITY = 0.38;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
@@ -4736,6 +4745,22 @@ function _metaG6Build() {
       w: GPX * 2 + gic * COLW,
       h: GHH + Math.max(0, ...colTop) + GPB };   // 실 높이(펼친 컬럼 포함) — 행 y push-down 이 소비
   };
+  // col-lod(§61): 노드-레벨 LOD 게이트 — 개요 줌 + 대형(펼친 컬럼 多) 모델에서만 발동. 순수 함수
+  //   (getZoom + 전체 펼친 컬럼 수)라 emission 전에 1회 산정한다. realH 등 geometry 는 이 플래그와
+  //   무관하게 불변(공간 예약 유지 = band-invariant 좌표). 억제는 방출 단계에서만 일어난다.
+  let _colLodZoom = 1;
+  try { if (_metaGraph.graph) _colLodZoom = _metaGraph.graph.getZoom() || 1; } catch (_) {}
+  // **렌더될** 컬럼만 카운트 — 접힌 스키마(schemaExpanded 아님)의 로드된 컬럼은 방출 안 되므로 게이트에서
+  //   제외한다. 전역 합이면 접힌 스키마 컬럼이 임계(_META_COL_LOD_MIN)를 부풀려, 화면의 소량 컬럼을 불필요
+  //   억제할 수 있다(리뷰 MINOR). colsByTable 은 펼친 테이블만 담아 순회는 저렴.
+  let _expandedColTotal = 0;
+  _metaGraph.colsByTable.forEach((c, tkey) => {
+    const tn = _metaGraph.nodes.get(tkey);
+    const combo = tn ? _metaSchemaComboOf(tn) : null;
+    if (combo && _metaGraph.schemaExpanded.has(combo)) _expandedColTotal += (c || 0);
+  });
+  const colLodActive = _colLodZoom < _META_COL_LOD_ZOOM && _expandedColTotal > _META_COL_LOD_MIN;
+  _metaGraph._colLodActive = colLodActive;   // 상태줄 마커(밴드 훅)가 참조
   // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 절대 오프셋 배치).
   //   place 항목은 {it, lx(열 좌측 x — 클러스터 상대), top(항목 상단 y — 클러스터 상대)} 로 정규화 —
   //   평면/그룹 두 경로가 같은 렌더 루프를 공유한다.
@@ -5048,7 +5073,7 @@ function _metaG6Build() {
         //   패널 MINOR: terms 클러스터(flat-scope 루틴)는 레이아웃 높이 진행이 TROW 고정이라 파라미터
         //   방출 시 아래 항목과 겹침 — terms 에서는 펼침 미지원(상세 패널 세로 목록으로 열람).
         const plist = (!g.isTerms && _metaGraph.routineExpanded.has(it.key)) ? _metaRoutineParamList(it) : [];
-        if (plist.length) {
+        if (plist.length && !colLodActive) {   // col-lod: 개요 줌에서 파라미터 circle·XR ctl 방출 억제(realH 로 높이는 예약됨)
           // routine 칩 폭은 rel-가변(_metaRoutineStyle 과 동일식) — ctl 을 TW/2 고정으로 두면 넓은 칩과 겹침.
           const rw = Math.min(190, _METLAY.TW + (typeof rrel === "number" ? Math.round(rrel * 40) : 0));
           const depIds = ["XR:" + it.key];
@@ -5073,10 +5098,15 @@ function _metaG6Build() {
       // feature-0016 §45: 검색 매칭 강조는 노드 'match' 상태 soft glow(_metaNodeStates)로 이관 — 폭 부스트(trel) 제거.
       // node-role-viz: 분석 완료 테이블 역할 표식 — 칩 색 = 역할색(Okabe-Ito) + 라벨 앞 역할 아이콘(색약·흑백 중복 인코딩).
       const role = _metaRoleOf(it.key);
-      const tLabel = (role ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
-      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role), { labelText: tLabel }) });
       const cols = g.colsByTable.get(it.key);
-      if (cols && cols.length) {
+      const _colSuppressed = colLodActive && cols && cols.length;   // col-lod: 개요 줌에서 컬럼 방출 억제
+      // col-lod: 억제 시 '▤N' 컬럼수 배지를 라벨 **앞**에 둔다 — _metaTableStyle labelMaxWidth(140) 후미
+      //   ellipsis 로 긴 테이블명(예: cc_user_subscription)이 잘려도 배지가 살아남아 '컬럼 억제됨'
+      //   affordance 를 보존(리뷰 MINOR — 후미 append 는 배지가 먼저 잘림). realH 예약 gap 도 '펼침' 신호.
+      const tLabel = (_colSuppressed ? "▤" + cols.length + " " : "")
+        + (role ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
+      nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role), { labelText: tLabel }) });
+      if (cols && cols.length && !colLodActive) {
         const depIds = ["X:" + it.key];   // graph-drag(REQ ②): 종속 UI = 접기 ctl + 컬럼 노드들
         nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key },
           // graph-zorder(§52, 패널 ux MINOR): 흐름 내 per-table ctl 은 NODE 밴드 — CTL(6) 전역 최상층이면
@@ -5279,6 +5309,7 @@ function _metaBakeBaseOpacity(nodes) {
 function _metaG6BuildProducts() {
   _metaGraph.tableDeps = new Map();
   _metaGraph.firstElementId = null;
+  _metaGraph._colLodActive = false;   // col-lod(§61): products 뷰는 컬럼/LOD 없음 — 스키마 빌드가 남긴 stale 플래그 소거(상태줄 거짓 마커 방지). _metaG6Build 는 products 모드에서 여기로 조기 return 하므로 스키마 빌드의 산정을 못 거친다.
   const prods = [], dss = [];
   _metaGraph.nodes.forEach((n) => {
     if (n.label === "Product") prods.push(n);
@@ -5558,6 +5589,7 @@ function _metaGraphResetModel() {
   _metaGraph.selected = null;
   _metaGraph.focusAdj = null;   // §57: 상대 하이라이트 집합도 모델과 함께 초기화.
   _metaGraph._lodBand = null;   // §57 패널 NIT: LOD 밴드 기준선도 초기화(스코프 전환 스퓨리어스 rebuild 방지).
+  _metaGraph._colLodActive = false;   // col-lod(§61): 스코프/뷰 전환 시 억제 플래그 초기화(상태줄 stale 마커 방지).
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
@@ -6090,7 +6122,9 @@ function _metaInitGraph() {
   graph.on("aftertransform", () => {
     let z = 1;
     try { z = graph.getZoom() || 1; } catch (_) { return; }
-    const band = z < _META_EDGE_LOD_ZOOM ? "lod" : "full";
+    // col-lod(§61): 3단 밴드 — full(≥0.5) / collod(0.35~0.5: 컬럼만 억제) / lod(<0.35: 컬럼+엣지 억제).
+    //   어느 임계(0.5·0.35)를 교차해도 밴드가 바뀌어 디바운스 rebuild 로 억제 상태를 반영한다.
+    const band = z < _META_EDGE_LOD_ZOOM ? "lod" : (z < _META_COL_LOD_ZOOM ? "collod" : "full");
     if (band === _metaGraph._lodBand) return;
     const prev = _metaGraph._lodBand;
     _metaGraph._lodBand = band;
@@ -6106,9 +6140,14 @@ function _metaInitGraph() {
       try {
         const st = document.getElementById("metadataGraphStatus");
         if (st) {
-          const marker = " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)";
-          const base = String(st.innerText || "").replace(marker, "");
-          const showMarker = (band === "lod" && (_metaGraph._lodDropped || 0) > 0);
+          // col-lod(§61): 밴드별 정확한 축약 안내(컬럼/관계선). 과거 변형 마커도 정규식으로 회수 후 재부착.
+          const base = String(st.innerText || "").replace(/ · 줌아웃 —[^\n]*?\(확대 시 전체 표시\)/g, "");
+          const edgeCut = (band === "lod") && ((_metaGraph._lodDropped || 0) > 0);
+          const colCut = (band === "lod" || band === "collod") && _metaGraph._colLodActive;
+          const marker = (edgeCut && colCut) ? " · 줌아웃 — 컬럼·관계선 일부 축약(확대 시 전체 표시)"
+            : colCut ? " · 줌아웃 — 컬럼 표시 축약(확대 시 전체 표시)"
+            : edgeCut ? " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)" : "";
+          const showMarker = !!marker;
           st.innerText = showMarker ? (base + marker) : base;
           // graph-toolbar-consolidate: 이 마커는 _metaGraphStatus 를 거치지 않고 innerText 를 직접 조작하므로,
           //   줌아웃 상태 안내가 auto-fade(is-idle)로 흐려지지 않게 표시 중엔 유휴 클래스를 해제하고 fade 타이머도 취소한다
