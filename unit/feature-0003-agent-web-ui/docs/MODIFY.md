@@ -5517,3 +5517,10 @@ source_of_truth: true
 - Verification: `node --check release-notes-data.js` PASS · 블록 순서 07-08>07>06>04>03>02 · 스키마 정합 · jsdom verify_release_notes.mjs 33/34 PASS(1 FAIL=styles.css pre-existing·본 변경 무관). 사용자향 평이화(내부용어 누출 0).
 - Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - landing/배포는 cron wrapper 소관. META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260708T230501-META-0022-doc-sync-0708).
+
+## CHG-20260709-graph-toolbar-consolidate (TASK-20260709-graph-toolbar-consolidate — 그래프 뷰 상단 툴바 통합 + 우측 상태 텍스트 reflow 제거, Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016)
+- 문제: 그래프 뷰 툴바에 성격이 다른 컨트롤 13개(검색·깊이·스키마이동·종류필터3·초기화·제품·줌4·상세·상태)가 한 줄 flat 나열 → '지저분'. 상태 텍스트가 flex-wrap 툴바에 인라인(`margin-left:auto`)이라 내용 길이↑ → 툴바 wrap → 높이↑ → body(`flex:1`) 가 남은 높이 채워 캔버스가 위아래로 밀림(사용자 '아래 UI 지속 변형' 불만의 정확한 메커니즘).
+- 변경: ① 툴바 4존 압축 + 보기옵션 팝오버(`.amg-viewopts*`) ② 줌 → 캔버스 좌하단 오버레이(`.admin-meta-graph-zoomctl` absolute) ③ 상태 → 캔버스 좌상단 오버레이 pill(`.admin-meta-graph-status` absolute·2줄 클램프·auto-fade) — 레이아웃 흐름 밖이라 reflow 0 ④ 캔버스 `.admin-meta-graph-canvas-wrap` 위치 컨텍스트(role=img 밖 형제 오버레이) ⑤ admin.js: `_metaGraphStatus` auto-fade·`_metaGraphSyncViewOptsBadge`·팝오버 토글·LOD `is-idle` 해제.
+- behavior-neutral: 컨트롤 id 전량 보존(`getElementById` 바인딩 불변). 캐시버스터 styles.css/admin.js `20260709-graph-toolbar`.
+- Files: `static/{admin.html,admin.js,styles.css}`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- Verification: `node --check` OK · 실 Windows Chrome 149 harness 렌더 실측 PASS · 디자인·correctness 적대 패널(REVIEW). POST-DEPLOY PB-0008 라이브(deploy_scope:included).

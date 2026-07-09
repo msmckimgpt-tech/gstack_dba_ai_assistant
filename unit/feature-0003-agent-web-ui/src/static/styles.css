@@ -8216,7 +8216,60 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .admin-meta-graph-search { flex: 1 1 240px; min-width: 180px; }
 .admin-meta-graph-depth-label { font-size: 12px; color: var(--text-muted); }
-.admin-meta-graph-status { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+
+/* graph-toolbar-consolidate: 보기 옵션 팝오버 — 이웃 깊이·노드 종류 필터·스키마 이동·제품 카테고리를 한 곳으로 묶음.
+   상단 바 컨트롤 수를 13→4 로 줄여 '지저분함' 해소. 버튼은 다른 btn-secondary 와 동형 크기. */
+.amg-viewopts { position: relative; flex: none; }
+.amg-viewopts-btn { display: inline-flex; align-items: center; gap: 6px; }
+.amg-viewopts-caret { font-size: 11px; line-height: 1; opacity: .7; }
+/* 활성 필터 배지 — 팝오버로 숨겨진 필터 상태(예: 관계 숨김)를 상단에서 인지할 수 있게 개수 표시. */
+.amg-viewopts-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px;
+  font-size: 10.5px; font-weight: 700; line-height: 1;
+  background: var(--primary, #3f4b8c); color: #fff;
+}
+.amg-viewopts-badge[hidden] { display: none; }
+/* 팝오버 메뉴 — 버튼 아래 카드. flex 세로 스택 + gap(숨겨진 select 는 flex 항목에서 빠져 빈 행 없음). */
+.amg-viewopts-menu {
+  /* right:0 앵커 — 버튼이 검색창 뒤(좌측 근처)라 좁은 pane(≲590px)에서 left:0 는 우측이 admin-workspace
+     overflow:hidden 에 잘림(review MINOR). 우측 정렬로 메뉴가 좌측(여유 공간)으로 펼쳐져 클리핑 회피. */
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 300px; padding: 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface, #fff); box-shadow: 0 6px 24px rgba(15, 23, 42, .16);
+}
+.amg-viewopts-menu[hidden] { display: none; }
+.amg-viewopts-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.amg-viewopts-rowlabel { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text)); white-space: nowrap; }
+.amg-viewopts-row .admin-meta-scope-select { flex: 1 1 auto; min-width: 0; }
+.amg-viewopts-wide { width: 100%; }
+
+/* graph-toolbar-consolidate: 캔버스 오버레이 위치 컨텍스트. 캔버스가 이 wrapper 를 꽉 채우고,
+   줌·상태 오버레이는 wrapper 기준 절대배치되어 레이아웃 흐름에 영향을 주지 않는다(reflow 원천 차단). */
+.admin-meta-graph-canvas-wrap { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.admin-meta-graph-canvas-wrap > .admin-meta-graph-canvas { flex: 1 1 auto; }
+
+/* graph-toolbar-consolidate: 상태 텍스트를 캔버스 좌상단 오버레이 pill 로 재배치.
+   position:absolute → 텍스트 길이와 무관하게 레이아웃(툴바 높이·캔버스 높이)을 절대 바꾸지 않는다
+   (사용자 불만이던 '내용에 따라 아래 UI가 계속 변형' 문제의 근본 해소).
+   2줄 클램프+ellipsis 로 아주 긴 안내도 캔버스 밖으로 넘치지 않고, pointer-events:none 으로 그래프 조작을 가리지 않는다. */
+.admin-meta-graph-status {
+  position: absolute; top: 10px; left: 10px; z-index: 6;
+  max-width: min(60%, 560px);
+  margin: 0; padding: 5px 10px;
+  font-size: 12px; line-height: 1.35; color: var(--text-2, var(--text));
+  background: var(--surface, #fff);   /* color-mix 미지원 폴백 */
+  background: color-mix(in srgb, var(--surface, #fff) 92%, transparent);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .10);
+  pointer-events: none;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  transition: opacity .25s ease;
+}
+/* 내용 없거나 유휴(auto-fade, admin.js _metaGraphStatus 6s 타이머)면 투명 — 절대배치라 사라져도 레이아웃 불변. */
+.admin-meta-graph-status:empty,
+.admin-meta-graph-status.is-idle { opacity: 0; }
 /* role-legend-bottom: aside flex 컬럼의 자식은 압축 금지(overflow 시 컨테이너가 스크롤하도록) —
    기본 flex-shrink:1 이면 노드 상세(detailBody)가 눌려 내용이 잘리는 뒤틀림 발생. */
 .admin-meta-graph-detail > * { flex-shrink: 0; }
@@ -8281,12 +8334,23 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 .admin-meta-graph-rolelegend-list .lg-dot {
   width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex: none; border: 1px solid #c4cad3;
 }
-/* graph-initview(E2): 줌 컨트롤 버튼 묶음 — 컴팩트 정사각 버튼 */
-.admin-meta-graph-zoomctl { display: inline-flex; align-items: center; gap: 4px; }
-.admin-meta-graph-zoomctl .btn-secondary { min-width: 30px; padding: 4px 8px; font-weight: 700; }
+/* graph-initview(E2)+graph-toolbar-consolidate: 줌 컨트롤 — 상단 바에서 캔버스 좌하단 플로팅 카드로 이동.
+   그래프·지도 UI 관습(Figma·Miro·Maps)대로 캔버스 위에 얹고, 미니맵(우하단)과 겹치지 않는다. */
+.admin-meta-graph-zoomctl {
+  position: absolute; left: 10px; bottom: 10px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface, #fff);   /* color-mix 미지원 폴백 */
+  background: color-mix(in srgb, var(--surface, #fff) 94%, transparent);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .14);
+}
+.admin-meta-graph-zoomctl .btn-secondary {
+  min-width: 30px; padding: 4px 8px; font-weight: 700; border-color: transparent; background: transparent;
+}
+.admin-meta-graph-zoomctl .btn-secondary:hover { background: color-mix(in srgb, var(--primary, #3f4b8c) 12%, transparent); border-color: transparent; }
 /* graph-navfilter(§54②): 노드 종류 표시 필터 — is-active=표시 중(기본), 비활성=숨김(흐림+취소선) */
 .admin-meta-graph-kindctl { display: inline-flex; align-items: center; gap: 4px; }
-.admin-meta-graph-kindctl .btn-secondary { padding: 4px 8px; }
+.admin-meta-graph-kindctl .btn-secondary { padding: 4px 8px; white-space: nowrap; }
 .admin-meta-graph-kindctl .btn-secondary:not(.is-active) { opacity: 0.45; text-decoration: line-through; }
 /* graph-initview(E1): G6 minimap 플러그인 컨테이너 — 캔버스 우하단 카드형 */
 .admin-meta-graph-canvas .g6-minimap {

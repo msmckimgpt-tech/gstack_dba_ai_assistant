@@ -1537,3 +1537,8 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - 사용자 노출 릴리즈노트(`static/release-notes-data.js`)에 `date:"2026-07-08"` 블록 prepend(3항목 admin·`generated` 2026-07-08). 07-07 23:52 직전 doc_sync 이후 07-08 머지 델타 중 사용자 화면 신규분만 반영: §59 분석 기반 제품 분류 'AI 제안→사람 승인', §57 관계도 접힘 카드 연결선·상대 하이라이트·크로스 색 구분·줌 LOD, 메타데이터 콘솔 검토 화면 UX(ux2 4건+폴리시 5건).
 - 평이화/비노출: feature-id·§번호·테이블/함수명·권한키·ADR·마이그레이션·엔드포인트 비노출(사용자 언어). 렌더/접기/탐색 로직(`release-notes.js`) 무변경 — 데이터만.
 - 배포 전파: `index.html`·`admin.html` cache-buster `20260707b-rn-0707`→`20260708-rn-0708`. CHG/REV-20260708T230501-doc-sync-rn-0708. landing/배포는 cron wrapper 소관(본 run 은 로컬 commit).
+
+## (TASK-20260709-graph-toolbar-consolidate, 2026-07-09) 그래프 뷰 상단 툴바 통합 + 상태 오버레이 (web/UI, Major §12.3 — 정본 feature-0016)
+- 그래프 뷰(`관리 콘솔 > 지식베이스 > 그래프 뷰`) 상단 툴바를 검색 · `보기 옵션 ▾` 팝오버 · 초기화 · 상세 ⇆ **4존**으로 압축. 보기 옵션 팝오버에 이웃 깊이·노드 종류 필터(관계/함수/프로시저)·스키마 이동·제품 카테고리 수용(숨긴 종류 배지). 줌(−/+/전체/1:1)은 캔버스 좌하단 플로팅 오버레이, 상태 텍스트는 좌상단 오버레이 pill 로 이동.
+- 상태 pill 은 `position:absolute` 라 내용 길이와 무관하게 레이아웃(툴바·캔버스 높이)을 바꾸지 않는다(2줄 클램프+ellipsis, 6s auto-fade, pointer-events:none). 이전엔 flex-wrap 툴바 인라인 상태라 장문 상태가 툴바 wrap→캔버스 밀림(reflow)을 유발했다 — 사용자 불만의 근본 해소.
+- 컨트롤 id·핸들러 전량 보존(behavior-neutral 재배치). 오버레이는 `role=img` 캔버스 밖 형제(`.admin-meta-graph-canvas-wrap`, a11y). cache-buster `20260709-graph-toolbar`.
