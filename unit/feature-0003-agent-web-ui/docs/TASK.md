@@ -5367,3 +5367,13 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 검증: `node --check release-notes-data.js` PASS · 블록 순서(07-08>07>06>04>03>02) + 07-07 이하 보존 · 스키마(type/area/title/detail) 정합. jsdom `verify_release_notes.mjs` 33/34 PASS(유일 FAIL 은 styles.css pre-existing 취약성·HEAD 동일·본 변경 무관).
 - [x] 배포 전파: `index.html`·`admin.html` `release-notes-data.js?v=20260707b-rn-0707`→`?v=20260708-rn-0708` bump. verify-completion(operational, feature-0003) → 로컬 commit. **landing(push/PR/merge)·배포는 cron wrapper 소관**(본 run 은 로컬 commit 까지). META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260708T230501-META-0022-doc-sync-0708).
 - [ ] PB-0008 Windows-browser 시각검증: 릴리즈노트 콘텐츠 데이터/캐시버스터만(렌더 로직 불변) — 새로 시각검증할 렌더 델타 없음. 원천 UI(§57 그래프·§59 승인 UI·콘솔 ux2)는 각 원천 cycle 이 검증(§57 PB-0008 PASS·§59 POST-DEPLOY 실증). 사유는 TEST.md §3(CHECK#13).
+
+### TASK-20260709-graph-toolbar-consolidate — 그래프 뷰 상단 툴바 통합 + 우측 상태 텍스트 reflow 제거 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016)
+- 트리거: 사용자 요청(`/_template:entry`) — `관리 콘솔 > 지식베이스 > 그래프 뷰` 상단 버튼 지저분 → 모범 디자인 통합 · 우측 상태 텍스트가 길이에 따라 아래 UI 를 계속 변형(불쾌) → 제거/변형 방지. AskUserQuestion 확정: **팝오버 + 줌 오버레이 · 캔버스 오버레이 알림**.
+- [x] 툴바 13컨트롤 → **4존**(검색 · `보기 옵션 ▾` 팝오버 · 초기화 · 상세 ⇆). 팝오버 = 이웃 깊이·노드 종류 필터·스키마 이동·제품 카테고리. 숨긴 종류 수 배지(`_metaGraphSyncViewOptsBadge`) 로 팝오버 내부 필터 상태를 상단에서 인지.
+- [x] 줌 4버튼 → 캔버스 좌하단 플로팅 오버레이(`.admin-meta-graph-canvas-wrap` 안, `position:absolute`). 미니맵(우하단 168×112) 무충돌.
+- [x] 상태 텍스트 → 캔버스 좌상단 오버레이 pill(`position:absolute` → 레이아웃 흐름 밖, 2줄 클램프+ellipsis, 6s auto-fade `is-idle`, `pointer-events:none`). 내용 길이 무관 툴바·캔버스 높이 불변 = **reflow 원천 제거**. LOD 마커(innerText 직접조작)는 `is-idle` 해제로 표시 유지.
+- [x] 컨트롤 id 전량 보존(behavior-neutral) — admin.js `getElementById` 바인딩 불변. 접근성: 오버레이는 `role="img"` 캔버스 밖 형제(팝오버 `role=group`·`aria-expanded`·Esc·바깥클릭 닫힘).
+- [x] 캐시버스터 bump: styles.css `20260708-metadata-console-ux2`→`20260709-graph-toolbar`, admin.js `20260709-highlight-ux`→`20260709-graph-toolbar`.
+- [x] 검증: `node --check admin.js` OK · 실 Windows Chrome 149(win-browser relay) 격리 harness 렌더 실측(toolbar 자식 4·zoom/status `position:absolute`·status 2줄클램프 494px·팝오버 4행·종류 3버튼 단일행·배지). 스크린샷 harness-closed/open2.
+- [ ] §18.8 디자인·correctness 적대 패널 → REVIEW.md · verify-completion → commit → PR → 병합 → web 무중단 배포(deploy_scope:included) → POST-DEPLOY PB-0008 라이브(상단 4컨트롤·팝오버·줌 오버레이·상태 pill reflow 0·pageerror 0).

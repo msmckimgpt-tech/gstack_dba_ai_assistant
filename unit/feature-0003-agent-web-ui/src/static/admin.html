@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DQA — Database Query Assistant Admin</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260708-metadata-console-ux2" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260709-graph-toolbar" />
 </head>
 <!-- REQ-20260518-0006: 작업 화면과 동일한 ChatGPT 패턴 layout — sidebar 전체 height (brand 포함),
      topbar 가 admin-column 너비만. 새로고침 / 로그아웃 버튼 제거. -->
@@ -734,44 +734,81 @@
              더블클릭→이웃(?node=&depth=) 그래프 확장 + 우측 통합 엔티티 카드(설명+컬럼+관계+용어).
              8K 규모라 검색·이웃 스코프만(전체 렌더 안 함). -->
         <div class="admin-meta-graph" id="metadataGraphView">
+          <!-- graph-toolbar-consolidate: 상단 바를 3존(검색 · 보기 옵션 팝오버 · 초기화·상세)으로 압축.
+               이전엔 검색+깊이+스키마이동+종류필터3+초기화+제품+줌4+상세+상태 = 13개 컨트롤이 한 줄에 평면 나열돼
+               '지저분함'을 유발했다(성격이 다른 컨트롤 혼재). 보기 옵션(깊이·종류필터·스키마이동·제품카테고리)은
+               팝오버로 묶고, 줌 컨트롤·상태 텍스트는 캔버스 오버레이로 이동한다(아래 canvas-wrap). 모든 컨트롤 id 는
+               보존해 admin.js 의 getElementById 바인딩을 건드리지 않는다(동작 불변, 배치만 재구성). -->
           <div class="admin-meta-graph-toolbar">
             <input type="search" id="metadataGraphSearch" class="admin-search admin-meta-graph-search"
                    placeholder="테이블·컬럼·용어 검색…" autocomplete="off" aria-label="그래프 노드 검색" />
-            <label class="admin-meta-graph-depth-label" for="metadataGraphDepth">이웃 깊이</label>
-            <select id="metadataGraphDepth" class="admin-meta-scope-select" aria-label="이웃 확장 깊이">
-              <option value="1">1-hop</option>
-              <option value="2" selected>2-hop</option>
-              <option value="3">3-hop</option>
-            </select>
-            <!-- graph-initview(E3): 스키마 점프 — 대규모 데이터소스에서 클러스터로 바로 이동(스키마 2개 이상 시 표시) -->
-            <select id="metadataGraphJump" class="admin-meta-scope-select" aria-label="스키마 클러스터로 이동" style="display:none">
-              <option value="">스키마 이동…</option>
-            </select>
-            <!-- graph-navfilter(§54②): 노드 종류 표시 필터 — 테이블·컬럼은 항상 표시, 관계선·함수·프로시저만 토글(스키마 그래프 전용) -->
-            <span class="admin-meta-graph-kindctl" role="group" aria-label="노드 종류 표시 필터">
-              <button type="button" class="btn-secondary is-active" id="metaGraphKindEdges" data-kind="edges" aria-pressed="true" title="관계선(참조·용어·사용) 표시/숨김 — 숨겨도 테이블 배치는 유지됩니다">🔗 관계</button>
-              <button type="button" class="btn-secondary is-active" id="metaGraphKindFn" data-kind="function" aria-pressed="true" title="함수(ƒ) 노드 표시/숨김 — 숨기면 자리를 회수해 재배치됩니다">ƒ 함수</button>
-              <button type="button" class="btn-secondary is-active" id="metaGraphKindProc" data-kind="procedure" aria-pressed="true" title="프로시저(⚙) 노드 표시/숨김 — 숨기면 자리를 회수해 재배치됩니다">⚙ 프로시저</button>
-            </span>
+
+            <!-- 보기 옵션 팝오버: 이웃 깊이 · 노드 종류 필터 · 스키마 이동 · 제품 카테고리.
+                 종류 필터를 팝오버로 숨기면 '무엇을 숨겼는지' 안 보이는 문제를 방지하려 버튼에 활성 필터 배지를 표시한다
+                 (admin.js _metaGraphSyncViewOptsBadge). -->
+            <div class="amg-viewopts" id="metaGraphViewOpts">
+              <button type="button" class="btn-secondary amg-viewopts-btn" id="metaGraphViewOptsBtn"
+                      aria-expanded="false" aria-controls="metaGraphViewOptsMenu"
+                      title="보기 옵션 — 이웃 깊이 · 노드 종류 필터 · 스키마 이동 · 제품 카테고리">
+                보기 옵션
+                <span class="amg-viewopts-badge" id="metaGraphViewOptsBadge" hidden></span>
+                <span class="amg-viewopts-caret" aria-hidden="true">▾</span>
+              </button>
+              <div class="amg-viewopts-menu" id="metaGraphViewOptsMenu" role="group" aria-label="보기 옵션" hidden>
+                <div class="amg-viewopts-row">
+                  <label class="amg-viewopts-rowlabel admin-meta-graph-depth-label" for="metadataGraphDepth">이웃 깊이</label>
+                  <select id="metadataGraphDepth" class="admin-meta-scope-select" aria-label="이웃 확장 깊이">
+                    <option value="1">1-hop</option>
+                    <option value="2" selected>2-hop</option>
+                    <option value="3">3-hop</option>
+                  </select>
+                </div>
+                <!-- graph-navfilter(§54②): 노드 종류 표시 필터 — 테이블·컬럼은 항상 표시, 관계선·함수·프로시저만 토글(스키마 그래프 전용) -->
+                <div class="amg-viewopts-row">
+                  <span class="amg-viewopts-rowlabel" id="amgViewOptsKindLabel">노드 종류</span>
+                  <span class="admin-meta-graph-kindctl" role="group" aria-labelledby="amgViewOptsKindLabel">
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindEdges" data-kind="edges" aria-pressed="true" title="관계선(참조·용어·사용) 표시/숨김 — 숨겨도 테이블 배치는 유지됩니다">🔗 관계</button>
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindFn" data-kind="function" aria-pressed="true" title="함수(ƒ) 노드 표시/숨김 — 숨기면 자리를 회수해 재배치됩니다">ƒ 함수</button>
+                    <button type="button" class="btn-secondary is-active" id="metaGraphKindProc" data-kind="procedure" aria-pressed="true" title="프로시저(⚙) 노드 표시/숨김 — 숨기면 자리를 회수해 재배치됩니다">⚙ 프로시저</button>
+                  </span>
+                </div>
+                <!-- graph-initview(E3): 스키마 점프 — 대규모 데이터소스에서 클러스터로 바로 이동(스키마 2개 이상 시 표시).
+                     admin.js _metaGraphFillJump 가 style.display 로 자기 토글하므로 별도 행 래퍼 없이 직접 배치(숨김 시 flex 항목 제외 → 빈 행 잔여 없음). -->
+                <select id="metadataGraphJump" class="admin-meta-scope-select amg-viewopts-wide" aria-label="스키마 클러스터로 이동" style="display:none">
+                  <option value="">스키마 이동…</option>
+                </select>
+                <!-- graph-product-cat(§43): 제품(Products) 단위 카테고리 개요 — 제품→데이터소스 계층을 보여주고 데이터소스 클릭으로 drill -->
+                <button type="button" class="btn-secondary amg-viewopts-wide" id="metadataGraphProductsBtn" title="제품(Products) 단위로 데이터소스를 묶어 봅니다" aria-label="제품 카테고리 개요">🗂 제품 카테고리</button>
+              </div>
+            </div>
+
             <button type="button" class="btn-secondary" id="metadataGraphResetBtn">초기화</button>
-            <!-- graph-product-cat(§43): 제품(Products) 단위 카테고리 개요 — 제품→데이터소스 계층을 보여주고 데이터소스 클릭으로 drill -->
-            <button type="button" class="btn-secondary" id="metadataGraphProductsBtn" title="제품(Products) 단위로 데이터소스를 묶어 봅니다" aria-label="제품 카테고리 개요">🗂 제품 카테고리</button>
-            <!-- graph-initview(E2): 줌 컨트롤 — 초기 화면이 판독 줌 클램프로 '부분'일 수 있어 조망/복귀 버튼 제공 -->
-            <span class="admin-meta-graph-zoomctl" role="group" aria-label="그래프 줌 컨트롤">
-              <button type="button" class="btn-secondary" id="metaGraphZoomOut" title="축소" aria-label="축소">−</button>
-              <button type="button" class="btn-secondary" id="metaGraphZoomIn" title="확대" aria-label="확대">+</button>
-              <button type="button" class="btn-secondary" id="metaGraphZoomFit" title="전체 조망(판독 크기 제한 없이 전체 맞춤)" aria-label="전체 조망">전체</button>
-              <button type="button" class="btn-secondary" id="metaGraphZoom100" title="100% 배율" aria-label="100% 배율">1:1</button>
-            </span>
             <button type="button" class="btn-secondary" id="metadataGraphDetailToggle" aria-label="상세 패널 접기/펼치기" title="상세 패널 접기/펼치기">상세 ⇆</button>
-            <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
           </div>
           <!-- graphux7(#3): 범례는 상단 flat 바를 제거하고 상세 패널 하단 탭(#metadataGraphLegendTabs)으로 이관 —
                탭① 노드 종류 · 탭② 관계·AI 상태 · 탭③ 테이블 역할. flat 바 제거로 캔버스 세로 공간 확보.
                feature-0016: 실선=신뢰(FK·검증됨) 관계, 점선=추정(암묵 JOIN, 검증 전) 관계. -->
           <div class="admin-meta-graph-body">
-            <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
-                 role="img" aria-label="메타데이터 관계 그래프"></div>
+            <!-- graph-toolbar-consolidate: 캔버스 오버레이(줌·상태)를 위한 위치 컨텍스트 wrapper.
+                 G6 캔버스(role=img)는 오버레이 밖 형제로 두어 접근성(img 역할 하위에 인터랙티브 요소 금지)을 보존한다.
+                 오버레이는 wrapper 기준 절대배치 → 캔버스를 덮되 레이아웃 흐름에 영향 없음. -->
+            <div class="admin-meta-graph-canvas-wrap">
+              <div class="admin-meta-graph-canvas" id="metadataGraphCanvas"
+                   role="img" aria-label="메타데이터 관계 그래프"></div>
+              <!-- graph-toolbar-consolidate: 줌 컨트롤을 캔버스 좌하단 플로팅 오버레이로 이동(그래프·지도 UI 관습).
+                   미니맵(우하단)과 충돌 없음. id/aria 보존 → admin.js 줌 핸들러 불변. -->
+              <span class="admin-meta-graph-zoomctl" role="group" aria-label="그래프 줌 컨트롤">
+                <button type="button" class="btn-secondary" id="metaGraphZoomOut" title="축소" aria-label="축소">−</button>
+                <button type="button" class="btn-secondary" id="metaGraphZoomIn" title="확대" aria-label="확대">+</button>
+                <button type="button" class="btn-secondary" id="metaGraphZoomFit" title="전체 조망(판독 크기 제한 없이 전체 맞춤)" aria-label="전체 조망">전체</button>
+                <button type="button" class="btn-secondary" id="metaGraphZoom100" title="100% 배율" aria-label="100% 배율">1:1</button>
+              </span>
+              <!-- graph-toolbar-consolidate: 상태 텍스트를 캔버스 좌상단 오버레이 pill 로 이동 — 레이아웃 흐름에서 분리해
+                   내용 길이에 따른 툴바 wrap→캔버스 밀림(reflow)을 원천 제거. 2줄 클램프+ellipsis 로 아무리 긴 안내도
+                   캔버스 밖으로 넘치지 않는다. id/aria-live 보존(admin.js LOD 마커 직접 조작 호환). pointer-events:none 로
+                   그래프 상호작용을 가리지 않음. -->
+              <span class="admin-meta-graph-status" id="metadataGraphStatus" aria-live="polite"></span>
+            </div>
             <!-- graph-panel-resize: 캔버스↔상세 패널 사이 드래그 분리 바. --meta-graph-detail-w 를 갱신해 패널 폭 조절(←/→ 키보드 접근). -->
             <div class="admin-meta-graph-resizer" id="metadataGraphResizer" role="separator"
                  aria-orientation="vertical" aria-label="상세 패널 크기 조절" tabindex="0"
@@ -1002,8 +1039,8 @@
        ux2 #4: 샘플 검수 상세에서 generated_sql 이 다이어그램일 때 sanitized(securityLevel:'strict') 렌더. admin.js 이전 로드. -->
   <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>
   <script src="/static/mermaid-render.js?v=20260629-mermaid-orphan-fix"></script>
-  <!-- 병합: admin.js 는 metadata-console-ux2 + graph-edge-visibility(§57) 통합본 — cache-buster 는 §57 이 최신. -->
-  <script src="/static/admin.js?v=20260709-hl-isolated"></script>
+  <!-- 병합: admin.js 는 §57(하이라이트 hl-isolated) + graph-toolbar(툴바 통합·상태 오버레이) 통합본 — cache-buster 는 graph-toolbar 가 최신. -->
+  <script src="/static/admin.js?v=20260709-graph-toolbar"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260708-rn-0708"></script>

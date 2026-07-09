@@ -1853,3 +1853,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 
 ### Run (2026-07-09) — hl-isolated: 고립 노드 미침강 + 복원 (§57.7 T57.15, 정본 feature-0016 TASK §57.7) — **Environment: Windows-browser — POST-DEPLOY PASS**
 - 배포(eb631372) 후 qa-idc·검색 'ranking'·dk_game_integrate 펼침에서 사용자 레시피 5연속 실좌표 클릭: 연관 3회 정상 하이라이트(fa10~13/lit5~9/dim67~71) → **고립 Person_Ranking 클릭: focusAdj null·dim 0 — 화면 전체 정상 밝기 유지(육안 pbc-4), 선택 테두리·상세 패널 정상** → Chk_Ranking 복귀: 하이라이트 정상 복원(육안 pbc-5). pageerror 0.
+
+### Run (2026-07-09) — graph-toolbar-consolidate: 그래프 뷰 상단 툴바 통합 + 우측 상태 텍스트 reflow 제거 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016) — **Environment: Windows-browser**
+- 사용자 요청: `관리 콘솔 > 지식베이스 > 그래프 뷰` 상단 버튼이 지저분 → 모범 디자인으로 통합 · 우측 상태 텍스트가 길이에 따라 아래 UI 를 계속 변형(불쾌) → 제거하거나 변형 안 나게.
+- 변경(behavior-neutral, 컨트롤 id 전량 보존): ① 툴바 13컨트롤 → **4존**(검색 · 보기 옵션 팝오버 · 초기화 · 상세 ⇆) — 이웃 깊이·노드 종류 필터·스키마 이동·제품 카테고리를 `보기 옵션 ▾` 팝오버로 묶음(숨긴 필터 수 배지). ② 줌 4버튼 → 캔버스 좌하단 **플로팅 오버레이**(그래프/지도 관습, 미니맵 우하단과 무충돌). ③ 상태 텍스트 → 캔버스 좌상단 **오버레이 pill**(`position:absolute` → 레이아웃 흐름 밖, 2줄 클램프+ellipsis, auto-fade) — 내용 길이와 무관하게 툴바·캔버스 높이 불변(**reflow 원천 제거**). 캐시버스터 `20260709-graph-toolbar` bump.
+- **pre-commit(격리 harness, 실 Windows Chrome 149, AI 직접)**: 정적 자산 web 이미지 baked 라 전체 콘솔은 POST-DEPLOY. 컴포넌트 격리 harness 를 실 Windows Chrome(win-browser.py relay, Chrome/149)으로 렌더 실측 — toolbar 자식 `4`(13→4), zoomctl `position:absolute` 좌하단, status `position:absolute`·width 494px 캡·`-webkit-line-clamp:2`, 팝오버 4행·노드 종류 3버튼 단일행(h=29·무줄바꿈), 배지 표시. 스크린샷 harness-closed/harness-open2. 정적·문법(node --check) PASS.
+- **Environment: Windows-browser — pre-commit 전체-콘솔 미수행 사유**: 정적 자산 baked — merge + `deploy-web` 재배포 선행 필요(§51·§57 등 동일 패턴). **POST-DEPLOY PB-0008 라이브 append 예정** — 검증 항목: ① 상단 툴바 4컨트롤(지저분함 해소) ② `보기 옵션` 팝오버 열림/바깥클릭·Esc 닫힘·깊이/종류/스키마이동/제품 동작·종류 숨김 시 배지 ③ 줌 오버레이(−/+/전체/1:1) 동작·미니맵 무충돌 ④ **상태 pill reflow 0**: 긴 검색결과(스키마 매칭 장문) 상태에도 캔버스·툴바 높이 불변(사용자 불만 재현→해소 실증) ⑤ 상세 ⇆ 접기/펼치기·리사이저 정상 ⑥ pageerror 0.
+- **Pass/Fail: pre-commit 격리 harness 실브라우저 PASS · 정적·문법 PASS · 라이브 전체-콘솔 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·POST-DEPLOY 계획·harness 실브라우저 provenance 기록).

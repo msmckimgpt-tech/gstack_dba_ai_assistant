@@ -5430,7 +5430,30 @@ function _metaRoutineParamList(n) {
 
 function _metaGraphStatus(msg) {
   const el = document.getElementById("metadataGraphStatus");
-  if (el) el.textContent = msg || "";
+  if (!el) return;
+  el.textContent = msg || "";
+  // graph-toolbar-consolidate: 상태가 캔버스 좌상단 오버레이 pill 로 이동(레이아웃 흐름 밖 → reflow 0).
+  //   새 메시지는 즉시 표시하고 6s 뒤 유휴(is-idle=투명)로 흐려 캔버스 가림을 최소화한다.
+  //   표시/유휴 어느 상태든 position:absolute 라 캔버스·툴바 높이는 절대 변하지 않는다.
+  el.classList.remove("is-idle");
+  if (_metaGraph._statusTimer) { clearTimeout(_metaGraph._statusTimer); _metaGraph._statusTimer = null; }
+  if (msg) {
+    _metaGraph._statusTimer = setTimeout(() => {
+      _metaGraph._statusTimer = null;
+      const e2 = document.getElementById("metadataGraphStatus");
+      if (e2) e2.classList.add("is-idle");
+    }, 6000);
+  }
+}
+
+// graph-toolbar-consolidate: '보기 옵션' 버튼 배지 동기화 — 팝오버로 숨겨진 종류 필터 상태(예: 관계·함수 숨김)를
+//   상단에서 인지할 수 있게 숨긴 종류 개수를 배지로 표시(0 이면 숨김). 필터가 안 보여도 '무엇을 숨겼는지' 드러남.
+function _metaGraphSyncViewOptsBadge() {
+  const badge = document.getElementById("metaGraphViewOptsBadge");
+  if (!badge) return;
+  const n = (_metaGraph.hiddenKinds && _metaGraph.hiddenKinds.size) || 0;
+  if (n > 0) { badge.textContent = String(n); badge.hidden = false; }
+  else { badge.textContent = ""; badge.hidden = true; }
 }
 
 function _metaShowGraph() {
@@ -6002,7 +6025,15 @@ function _metaInitGraph() {
         if (st) {
           const marker = " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)";
           const base = String(st.innerText || "").replace(marker, "");
-          st.innerText = (band === "lod" && (_metaGraph._lodDropped || 0) > 0) ? (base + marker) : base;
+          const showMarker = (band === "lod" && (_metaGraph._lodDropped || 0) > 0);
+          st.innerText = showMarker ? (base + marker) : base;
+          // graph-toolbar-consolidate: 이 마커는 _metaGraphStatus 를 거치지 않고 innerText 를 직접 조작하므로,
+          //   줌아웃 상태 안내가 auto-fade(is-idle)로 흐려지지 않게 표시 중엔 유휴 클래스를 해제하고 fade 타이머도 취소한다
+          //   (마커는 줌아웃이 유지되는 동안 지속되는 상태 표시 — review MINOR: 6s 뒤 사라지던 것 방지).
+          if (showMarker) {
+            st.classList.remove("is-idle");
+            if (_metaGraph._statusTimer) { clearTimeout(_metaGraph._statusTimer); _metaGraph._statusTimer = null; }
+          }
         }
       } catch (_) {}
     }, 300);
@@ -6142,8 +6173,33 @@ function _metaInitGraph() {
         _metaG6Apply(false);   // 카메라 유지 rebuild — masonry/simgroups 가 자리 자동 회수(GX 토글 동형)
         _metaGraphStatus(hide ? `${_kindLabelKo[k]} 숨김 — 그래프에서 제외하고 재배치했습니다.`
                               : `${_kindLabelKo[k]} 표시 — 그래프에 복원했습니다.`);
+        _metaGraphSyncViewOptsBadge();   // graph-toolbar-consolidate: 팝오버 버튼 배지(숨긴 종류 수) 갱신
       });
     });
+    _metaGraphSyncViewOptsBadge();   // graph-toolbar-consolidate: 복원된 hiddenKinds 반영한 초기 배지
+    // graph-toolbar-consolidate: '보기 옵션' 팝오버 토글 — 버튼 클릭 open/close, 바깥 클릭·Esc 로 닫기.
+    //   종류 필터 토글·깊이/스키마 select 조작 중엔 열어두고(연속 조작), 제품 카테고리 등 네비게이션 클릭이나
+    //   바깥 클릭이면 닫는다.
+    const voBtn = document.getElementById("metaGraphViewOptsBtn");
+    const voMenu = document.getElementById("metaGraphViewOptsMenu");
+    if (voBtn && voMenu && !voBtn._bound) {
+      voBtn._bound = true;
+      const setVO = (open) => { voMenu.hidden = !open; voBtn.setAttribute("aria-expanded", String(open)); };
+      voBtn.addEventListener("click", (ev) => { ev.stopPropagation(); setVO(voMenu.hidden); });
+      document.addEventListener("click", (ev) => {
+        if (voMenu.hidden) return;
+        const t = ev.target;
+        if (t === voBtn || voBtn.contains(t)) return;   // 버튼은 위 토글 핸들러가 처리
+        if (voMenu.contains(t)) {
+          // 팝오버 자체(라벨·여백·필터·select)를 클릭해도 닫지 않는다 — 라벨/여백 클릭에 조기 닫힘 방지(review MINOR).
+          //   네비게이션 커밋인 '제품 카테고리'(뷰 전환)만 닫는다.
+          if (t.closest("#metadataGraphProductsBtn")) setVO(false);
+          return;
+        }
+        setVO(false);   // 바깥 클릭 → 닫기
+      });
+      document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !voMenu.hidden) { setVO(false); try { voBtn.focus(); } catch (_) {} } });
+    }
     _metaGraphInitResizer();
   }
 }
