@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260709-ask-timeout-nonblocking — 응답 지연 시 화면 전체를 덮던 타임아웃 복구 모달 제거(조용한 자동 재연결로 대체) (Minor §12.3 — feature-0003 프론트 단독. /_template:entry arg-given dispatch)
+- 트리거(사용자): "작업 화면에서 서비스 assistant 에 요청 후 상대적으로 오래 걸리면 화면 전체를 가리는 답변-지연 경고창이 떠 불편 — 해당 화면을 삭제하거나 기존 작업을 방해하지 않는 UI로 구성." 후속 지시: "자동 재연결은 필수 동작이며 사용자는 그 작동을 알 필요 없음."
+- 진단: `static/app.js sendPrompt()` 의 `/api/ask` 실패 + `/api/ask_status` `is_processing=true` 경로가 `showTimeoutRecoveryDialog`(fixed inset0·z-index 9999 backdrop + 3버튼 모달)를 `await` 로 띄워 화면 전체를 가리고 진행 강제 중단(TASK-0041 도입). 3액션(취소/즉시답변/계속대기)은 이미 컴포저 인라인 어포던스(전송→"중단" TASK-0157 / "즉시 답변" TASK-0158 / attach 기본동작)로 상시 존재 → 모달 중복. 재연결만 필수.
+- 설계(모달 삭제 + 조용한 재연결): `is_processing` 분기를 모달·토스트 없이 `attachAndWaitForResult(askCid,{runId})` 직접 호출로 교체(답변 유실 방지·화면 미가림·재연결 미표면화). dead code `showTimeoutRecoveryDialog` 제거. DESIGN-entry-points.md 모달 예시 참조를 `.share-mgr-backdrop`/`.share-mgr-panel` 로 갱신. index.html app.js 캐시버스터 bump.
+- Risk: **Minor** — frontend 표현계층 단일파일 동작 변경, 비파괴, 서버 계약(ask_status/ask_result/attach 루프)·RBAC·스키마 무변경. 되돌리기 쉬움.
+- Completion Checklist:
+  - [x] `is_processing` 분기 → 조용한 `attachAndWaitForResult` 직접 호출로 교체. `showTimeoutRecoveryDialog` 함수 제거(tombstone 주석). node --check app.js PASS.
+  - [x] index.html app.js 캐시버스터 `?v=20260709-ask-timeout-nonblocking`.
+  - [x] DESIGN-entry-points.md 모달 패턴 참조 2곳 갱신(제거 함수 stale 방지).
+  - [x] §18.8 적대 서브에이전트 패널(2라운드) → R1 MAJOR(H1: earlyCid 흐름 인라인 취소 무동작, 모달이 가려온 `myAskInFlight` 키 비대칭) 적발 → 동반수정(sentinel→earlyCid 키 이관 + finally dual-delete + renderComposer) → R2 재검 SHIP. REV-20260709T130000-ask-timeout-nonblocking. node --check PASS(2회).
+  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included, frontend-only→web 이미지) → **PB-0008 Windows-browser 라이브 실측**: 타임아웃 유발 시 화면 미가림·답변 자동 수신·기존/신규 대화 양 흐름 인라인 취소/즉시답변 동작.
+
 ## TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격 (Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI. /_template:entry arg-given dispatch)
 <!-- PLAN-APPROVED by mckim on 2026-07-03 (AskUserQuestion 정의 재확정=A 단계 간 간격) -->
 - 트리거(사용자): "`관리 콘솔 > AI 운영 현황` 에서 에이전트 추론 p95 측정 단위를 검토 — 지연 기준은 답변 받는 총 시간이 아니라 각 추론이 진행되는 단계 간 나타나는 간격으로 구성되어야."
