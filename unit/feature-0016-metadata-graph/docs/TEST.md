@@ -827,3 +827,7 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 ## T57.7 — 고립 노드 하이라이트 미발동 (2026-07-09)
 - headless: T14 3건(고립 focusAdj null / 전역 dim 미발동 / 관계 도착 시 자동 점화) + T9·T13 새 의미론 갱신 — 37/37 PASS.
 - 실브라우저(win-browser, qa-idc dk_game_integrate): 사용자 레시피 Chk_Person_Ranking→Peerage→Chk_Ranking→Person_Ranking→Chk_Ranking 실좌표 클릭 — 배포 후 재검증 예정(Run 기록은 feature-0003 TEST.md).
+
+## T57.8 — 하이라이트 신뢰성 재설계 (2026-07-09)
+- headless: T15(busy bake — 테이블·SC: 카드), T16(폴 승격 busy 게이트 제거), T17(선택 전환 무조건 bake — 고립→고립 포함), T18(bake 직렬화 — 겹침 0·재실행 1회 병합·fit OR 승계) + 기존 전건 — 47+26 PASS.
+- 실브라우저 렌더 수준 검증(T57.17)은 배포 후 별도 Run(feature-0003 TEST.md).

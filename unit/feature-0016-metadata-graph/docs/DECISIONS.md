@@ -777,3 +777,10 @@ source_of_truth: true
 - 결정: 1-hop 관계가 하나도 없는 선택은 `focusAdj = null`(하이라이트 모드 자체 미발동) — 선택 테두리·상세 패널만 제공. 관계가 늦게 적재되면 build 시점 재산출(§57.5)이 자동으로 하이라이트를 켠다.
 - 기각 대안: 고립 시 dim 강도 완화(0.38→0.7) — 모드가 늘어나 예측 불가; 같은 스키마만 점등 — 관계 없음을 관계 있음처럼 오독시킴.
 - Supersedes: ADR-024 의 상대 하이라이트 규칙을 정련 / Superseded By: —
+
+## ADR-027 — §57.8 그래프 시각 상태의 단일 진실은 직렬화된 bake
+- 상태: 채택 (2026-07-09)
+- 맥락: 상대 하이라이트 시각 적용이 즉시 setElementState + 조건부 rebuild + 2.5s 폴의 3계층 패치워크로 진화하며, busy fail-closed 게이트 3곳과 setData/draw 경합·_stateCache 오기록이 겹치면 dim 이 영구 고착(사용자 실측 4차 리포트 "선택한 노드도 흐림 유지"). 사용자 의도의 최상위는 "무엇을 선택했는지 시각적으로 편안하게 확인".
+- 결정: ① 전역 시각 상태(dim·엣지·라벨)의 단일 진실은 _metaG6Apply bake — 선택 전환마다 무조건 1회, 직렬화(겹침은 재실행 1회 병합, fit OR)로 경합 자체를 제거. ② busy 는 build states 로 bake 되어 rebuild 를 넘어 보존(소유 op 가 해제, stale 은 TTL 30s) — busy 를 이유로 bake 를 미루는 게이트를 전부 폐지. ③ 즉시 setElementState 는 순수 피드백 가속용(정확성은 bake 가 보장).
+- 기각 대안: 재시도 체인 파라미터 튜닝(12→N) — fail-closed 구조 자체가 원인; dim 을 엣지도 state 화 — G6 v5 엣지 state 로 화살촉·라벨까지 일관 제어 불가(§57.6 화살촉 사건) + 전역 setElementState 루프 금지(§33)와 충돌.
+- Supersedes: ADR-024 상대 하이라이트 적용 경로(§57.5 재시도 체인) / Superseded By: —

@@ -1888,3 +1888,23 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   ④**Person_Ranking(고립): focusAdj null·dim 0 — 전역 침강 미발동, 선택·상세 정상**(pbc-4 육안:
   화면 전체 정상 밝기 유지) ⑤Chk_Ranking 복귀: fa10/lit5/dim71 — 하이라이트 정상 복원(pbc-5 육안).
   pageerror 0. 사용자 3차 리포트 해소 — 단 "복원 불가" 재발 방지엔 **탭 새로고침** 필요(SPA 잔존 자산).
+
+### 57.8 하이라이트 신뢰성 재설계 — bake 단일 진실 (2026-07-09, 사용자 4차 리포트)
+- 4차 리포트: ① 고립 노드(Person_Ranking) 클릭 시 화면 밝기 미복원 ② 기존 1~3 외 연결 있는 노드
+  클릭 시 **선택한 노드도 흐린 채 유지**. 지시: "규칙에 매몰되지 말고 의도를 파악 — 사용자가 자신이
+  무엇을 선택하고 있는지 시각적으로 편안하게 확인하는 방향이 최우선."
+- 근본 진단(코드 경로 전수 추적): 시각 상태 적용이 3계층 패치워크(즉시 setElementState + 조건부
+  bake + 2.5s 폴)였고, **세 겹의 busy fail-closed 게이트**(SetSelected 재시도 체인 12×500ms 포기 ·
+  폴 승격 busy 유예 · (had||fa) 게이트)가 stale busy 하나로 전부 막힘 → 엣지 dim 은 bake 전용이라
+  영구 고착. 추가로 setData/draw 겹침 경합 시 명령형 setElementState 유실 + _stateCache 는 "적용됨"
+  으로 남아 폴도 영구 no-op — "무너진 상태 유지"의 기전.
+- [x] T57.16 재설계(ADR-027): ① _metaG6Apply **직렬화**(진행 중이면 재실행 1회 병합, fit OR) —
+  경합 원천 제거 ② busy 를 build states 로 **bake**(_metaStateSig) + _busyKeys.clear() 제거(소유
+  op 해제) + stale busy TTL 30s ③ rebuild-의존 busy 해제 3개 op 명시 해제 ④ 선택 전환 = **무조건
+  1회 bake**(게이트·재시도 체인 폐지) ⑤ 폴 승격 busy 게이트 제거. headless 47+26 PASS(T15 busy
+  bake·T16 폴 승격·T17 무조건 bake·T18 직렬화). 캐시버스터 20260709-hl-bake.
+  §18.8 패널 반영: bake 누락 3곳(컬럼·제품·데이터소스) _metaStateSig 통일 + LOD busy 게이트 제거
+  + T19(소유 op 해제)·T20(TTL sweep) 보강 — headless 54+26 PASS.
+- [ ] T57.17 POST-DEPLOY 렌더 수준 실검증 — 모델 규칙이 아닌 **실제 G6 요소 상태 전수 대조**
+  (getElementState vs _metaNodeStates): 사용자 레시피 + 연타 스트레스 + 타 그룹 + fetch 중 전환 +
+  선택 해제 복원.

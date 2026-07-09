@@ -1256,3 +1256,10 @@ source_of_truth: true
 
 ## REV-20260709T103200-ai-root-feature-0016-hl-isolated-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §57.7 완수 기록
 - T57.15 실측 PASS 기록만 추가(TASK/MODIFY/feature-0003 TEST). 코드 diff 없음 — 패널 생략.
+
+
+## REV-20260709T120000-ai-root-feature-0016-hl-bake [SUBAGENT: PASS-WITH-FIXES] — §57.8 하이라이트 신뢰성 재설계 적대 패널
+- 4렌즈(직렬화 정확성·busy 생명주기·성능/UX·테스트 적정성) 병렬 반박 + 교차검증(3렌즈 2/3 다수결). 일부 검증 에이전트가 크레딧 소진으로 죽어, busy-lifecycle·perf-ux 렌즈 발견은 소스 직독으로 수동 재판정.
+- CONFIRMED→반영: ① T19 미커버(소유 op busy 해제 계약 — rebuild 자동회수 제거분 회귀방어) ② T20 미커버(TTL 30s sweep 무검증). 둘 다 신규 테스트로 봉합.
+- 수동 재판정 실재→반영: ③ bake 사이트 3곳(컬럼·제품·데이터소스) _metaNodeStates 잔존 → _metaStateSig 통일(서명 발산) ④ LOD 밴드 busy 게이트 → 제거(직렬화 조율, "최초 관측 skip" 버그).
+- 수동 재판정 기각: "in-flight draw 영구 잔존"(직렬화·await 로 해제가 안정 scene 에 착지 — 무해화), "더블클릭 중복 bake"(SetSelected 재-bake 는 최종 상태 수렴상 의도된 것). 최종 headless 54+26 PASS.
