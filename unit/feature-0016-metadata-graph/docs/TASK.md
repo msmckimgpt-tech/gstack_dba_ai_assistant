@@ -1855,3 +1855,15 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   **하이라이트 즉시 재구성**(selected·focusAdj·상세 패널·AI 분석 전환 일관) ② 양끝-밝음 규칙 라이브
   정합 — 밝은쌍 엣지 흐림 0/3·혼합쌍 선명 0(위반 제로) ③ dim 0.38 — 프로시저 명칭 판독 가능하며
   선택 경로와 명확 구분(육안, pbf-01/02). 사용자 리포트 3건 전건 해소 확인.
+
+### 57.6 하이라이트 불변식 강화 (2026-07-09, 사용자 재리포트 — 스크린샷 실측)
+- 재리포트: Person_Ranking 선택 상태에서 ① 이전 선택의 하이라이트 잔존(화살촉만 밝음) ② 선택
+  노드가 dim 유지·비점등.
+- 진단: ① '화살촉 잔존' = 엣지 dim 이 strokeOpacity 만 낮춰 **화살촉(마커 fill)이 원색 유지** —
+  렌더 결함 확정 ② '선택 노드 dim' = SetSelected 가 즉시 setElementState 를 **구 fa 로** 계산
+  (dimmed+selected 동시 적용) + busy 지속 시 재시도 2s 포기로 rebuild 미도달 창.
+- [x] T57.12 수정(불변식화): ① 선택 노드는 fa stale 여부와 무관하게 **절대 dim 금지**(_metaNodeStates
+  최종 방어선) ② fa 를 setElementState **이전** 갱신 — 클릭 노드 즉시 점등(rebuild 대기 무관)
+  ③ busy 재시도 2s→6s + 선택 변경 시 구 체인 폐기 ④ 엣지 dim 전체 opacity(화살촉·라벨 포함).
+  캐시버스터 20260709-hl-invariant. headless T12(불변식)/T13(화살촉) 추가 — 34+26 PASS.
+- [ ] T57.13 배포 → 사용자 조건(검색+dk_game_integrate) 실검증 → PB-0008 갱신.

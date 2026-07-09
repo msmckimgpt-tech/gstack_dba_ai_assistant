@@ -251,5 +251,27 @@ function check(name, cond, extra) {
   check("T11 선택 소실 시 focusAdj 정리", !M.focusAdj);
 }
 
+// T12(§57.6 불변식): stale fa 가 selected 를 포함하지 않아도 selected 는 절대 dim 되지 않는다.
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2");
+  M.selected = nk("a.t2");
+  M.focusAdj = { self: new Set([nk("a.t1")]), nodes: new Set() };   // 인위적 stale fa(이전 선택 t1)
+  check("T12 stale fa 에서도 selected 비dim", !g.__nodeStates(nk("a.t2")).includes("dimmed"));
+  check("T12 비선택·비인접은 dim 유지", g.__nodeStates(nk("a.t2")).includes("dimmed") === false && !!M.focusAdj);
+}
+
+// T13(§57.6 화살촉): dim 엣지는 전체 opacity 침강(strokeOpacity 단독 아님 — 화살촉 잔존 방지).
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3");
+  addEdge(M, nk("a.t2.c1"), nk("a.t3.c1"), "REFERENCES", { status: "trusted" });
+  M.selected = nk("a.t1");
+  const out = build();
+  const far = out.edges.find((x) => x.data && x.data.label === "REFERENCES");
+  check("T13 dim 엣지 opacity 전체 침강", !!far && far.style.opacity <= 0.12 && far.style.strokeOpacity <= 0.12,
+    far && { o: far.style.opacity, so: far.style.strokeOpacity });
+}
+
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

@@ -1167,3 +1167,9 @@ source_of_truth: true
 ## CHG-20260709T023000-ai-root-feature-0016-hlux-postdeploy — §57.5 POST-DEPLOY 실클릭 실측 기록 (2026-07-09)
 
 - docs-only: T57.11 완수(전환·규칙 정합·라벨 판독 전건 PASS — 실클릭·육안).
+
+## CHG-20260709T040000-ai-root-feature-0016-hl-invariant — §57.6 하이라이트 불변식 (2026-07-09)
+
+- 사용자 재리포트(스크린샷) 2건. feature-0003: static/admin.js — 선택 노드 절대 비-dim 불변식·
+  fa 선갱신 즉시 점등·busy 재시도 6s+체인 무효화·엣지 dim 전체 opacity(화살촉). admin.html 캐시버스터.
+  tests: headless T12/T13.

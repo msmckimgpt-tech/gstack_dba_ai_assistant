@@ -1838,3 +1838,7 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   `admin.js?v=20260709-highlight-ux`. ① dim 노드 실클릭 전환 — selected/focusAdj/상세/AI 분석 일관
   재구성 ② 규칙 정합 실측 — 밝은쌍 엣지 흐림 0·혼합쌍 선명 0 ③ dim 0.38 프로시저 명칭 육안 판독
   (스크린샷 pbf-01/02). 사용자 리포트 3건 해소.
+
+### Run (2026-07-09) — hl-invariant: 하이라이트 불변식 4점 (§57.6, 정본 feature-0016 TASK §57.6) — **Environment: Windows-browser — POST-DEPLOY 예정**
+- 배포 후 사용자 조건(검색 활성 + dk_game_integrate + 연속 탐색)에서 ① 선택 노드 즉시 점등
+  ② 이전 하이라이트 완전 소거(화살촉 포함) 실측 후 append. pre-deploy headless 34+26 PASS.

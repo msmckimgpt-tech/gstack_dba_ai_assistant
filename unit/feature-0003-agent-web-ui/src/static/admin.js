@@ -4069,7 +4069,9 @@ function _metaNodeStates(key) {
   //   §57.5(리뷰 F1): 컬럼은 **소속 테이블의 밝기를 따른다** — 엣지 lit() 의 컬럼 폴딩과 규칙을
   //   일치시켜 "밝은 선이 흐린 컬럼에 꽂히는" 불일치(체감 무작위의 재생산)를 제거.
   const fa = _metaGraph.focusAdj;
-  if (fa && _metaGraph.nodes.has(key)) {
+  // §57.6(불변식): 선택 노드 자신은 fa 가 어떤 이유로든 stale 이어도 **절대 dim 되지 않는다** —
+  //   사용자 실측(선택 노드가 흐린 채 잔존) 재발 방지의 최종 방어선.
+  if (fa && key !== _metaGraph.selected && _metaGraph.nodes.has(key)) {
     let k2 = key;
     const nd = _metaGraph.nodes.get(key);
     if (nd && nd.label === "Column") {
@@ -5096,8 +5098,11 @@ function _metaG6Build() {
   const selTouch = lit;   // 호출부 명칭 호환(의미: 밝은 부분그래프 소속 여부)
   const dimIf = (st, hl) => {
     if (fa && !hl) {
+      // §57.6(사용자 실측 "화살표 첨단만 밝음"): strokeOpacity 는 path 선만 흐리고 화살촉(마커
+      //   fill)은 원색 잔존 — 전체 opacity 로 화살촉·라벨까지 일괄 침강.
+      st.opacity = Math.min(st.opacity || 1, 0.12);
       st.strokeOpacity = Math.min(st.strokeOpacity || 1, 0.12);
-      // 패널 MINOR: count 라벨/배경은 strokeOpacity 와 무관하게 원색 잔존 — dim 시 라벨 키 자체 제거.
+      // 패널 MINOR: count 라벨/배경은 dim 시 라벨 키 자체 제거.
       if (st.labelText !== undefined) { delete st.labelText; delete st.labelBackground; delete st.labelBackgroundFill; delete st.labelBackgroundOpacity; }
     }
     return st;
@@ -6761,24 +6766,30 @@ function _metaGraphSetSelected(key) {
   const prev = _metaGraph.selected;
   _metaGraph.selected = key || null;
   if (!g) return;
+  // §57.6: 인접 집합을 **setElementState 이전에** 갱신 — 새 선택 노드의 즉시 상태(sig)가 구 fa 로
+  //   계산돼 'dimmed+selected' 로 밝혀지지 않는 창(사용자 실측: 선택했는데 흐림)을 제거. rebuild 가
+  //   busy 로 밀려도 클릭한 노드와 이전 노드의 상태 전환은 setElementState 로 즉시 반영된다.
+  const had = !!_metaGraph.focusAdj;
+  _metaGraph.focusAdj = (_metaGraph.selected && _metaGraph.nodes.has(_metaGraph.selected))
+    ? _metaFocusAdjacency(_metaGraph.selected) : null;
   // graph-perf-bg fix: _metaApplyState 경유 — busy 보존 + _stateCache signature 동기화(명령형 writer 가 캐시를 stale 로 남기지 않음).
   if (prev && prev !== key && _metaGraph.nodes.has(prev)) _metaApplyState(prev);
   if (key && _metaGraph.nodes.has(key)) _metaApplyState(key);
-  // §57(사용자 요구 ②): 상대 하이라이트 — 인접 집합 재계산 후 rebuild bake. 전역 흐리게는
-  //   setElementState(건당 ~50ms) 부적합(§33) — _metaG6Apply(false) 경로(~80-200ms)가 규범.
-  //   펼침 fetch 창(busy) 중엔 유예(rebuild 가 _busyKeys 를 소멸시키는 부작용 방지, 7687 동형).
-  const had = !!_metaGraph.focusAdj;
-  _metaGraph.focusAdj = _metaGraph.selected ? _metaFocusAdjacency(_metaGraph.selected) : null;
-  if (had || _metaGraph.focusAdj) _metaFocusApplyOrRetry(0);
+  // §57(사용자 요구 ②): 전역 흐리게는 rebuild bake(§33 — setElementState 전역 루프 금지).
+  //   펼침 fetch 창(busy) 중엔 유예 + 재시도(§57.6: 2s→6s, 선택 변경 시 구 체인 무효화).
+  if (had || _metaGraph.focusAdj) _metaFocusApplyOrRetry(0, _metaGraph.selected);
 }
 
 // §57 패널 MINOR: busy 창에서 유예된 하이라이트 rebuild 를 재시도 — 엣지 dim 은 build-bake 라
 //   상태 폴(setElementState)로는 회복 불가. busy 종단이 rebuild 없이 끝나는 경로(빈 스키마/오류)
 //   에서도 최대 4×500ms 안에 flush 된다.
-function _metaFocusApplyOrRetry(attempt) {
+function _metaFocusApplyOrRetry(attempt, forSel) {
   if (!_metaGraph.graph) return;
+  if (forSel !== undefined && forSel !== _metaGraph.selected) return;   // §57.6: 선택이 바뀌면 구 체인 폐기(새 체인이 존재)
   if (_metaGraph._busyKeys.size) {
-    if (attempt < 4) setTimeout(() => _metaFocusApplyOrRetry(attempt + 1), 500);
+    // §57.6: 히스토리 연속 이동 등 busy 가 2s 를 넘는 흐름에서 하이라이트가 미적용으로 남지 않게
+    //   재시도 창 확대(12×500ms=6s). 그 밖은 2.5s 상태 폴의 rebuild 승격이 최종 회수.
+    if (attempt < 12) setTimeout(() => _metaFocusApplyOrRetry(attempt + 1, forSel), 500);
     return;
   }
   try { _metaG6Apply(false); } catch (_) {}
