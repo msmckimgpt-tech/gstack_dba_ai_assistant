@@ -1866,4 +1866,8 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   최종 방어선) ② fa 를 setElementState **이전** 갱신 — 클릭 노드 즉시 점등(rebuild 대기 무관)
   ③ busy 재시도 2s→6s + 선택 변경 시 구 체인 폐기 ④ 엣지 dim 전체 opacity(화살촉·라벨 포함).
   캐시버스터 20260709-hl-invariant. headless T12(불변식)/T13(화살촉) 추가 — 34+26 PASS.
-- [ ] T57.13 배포 → 사용자 조건(검색+dk_game_integrate) 실검증 → PB-0008 갱신.
+- [x] T57.13 POST-DEPLOY 실검증 PASS — 배포(4564dc8e·soak PASS·자산 20260709-hl-invariant) 후
+  사용자 조건 그대로(dk-dev·검색 'ranking' 활성·dk_game_integrate 펼침) **연속 3회 실클릭 전환**
+  (ConnectInfo→ConsignmentHistory→Peerage): 매 클릭 선택 즉시 전환·점등(selDim=false),
+  이전 하이라이트 잔존 엣지 0, 화살촉 잔존 0(전체 opacity 침강). 육안: 선택+이웃 부분그래프
+  선명·나머지 0.38 침강에 명칭 판독(pbi-final). 사용자 재리포트 2건 해소 확인.
