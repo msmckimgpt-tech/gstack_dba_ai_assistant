@@ -1903,3 +1903,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - 사용자 레시피 Chk_Person_Ranking→Peerage→Chk_Ranking→**Person_Ranking(고립: dimRender 0·litRender 76 — 전역 침강 없음, 육안 pbk-A4 정상 밝기)**→Chk_Ranking 복귀(dimRender 71 복원, 육안 pbk-A5): **매 단계 mismatch 0·선택 노드 selLit=true**.
   - 연타 4클릭(150ms) 최종 정상 · 타 그룹 ConsignmentHistory 점등 · fetch 중(400ms) 전환 정상 · pageerror 0 · applyLoop 잔류 0.
 - 사용자 4차 리포트(고립 밝기 미복원·신규 연결 노드 선택 시 흐림 유지) 렌더 수준 해소 확인.
+
+### Run (2026-07-09) — sel-prominence: 재선택 노드 opacity stale 실측 (§57.9 T57.18, 정본 feature-0016 TASK §57.9) — **Environment: Windows-browser — PRE-FIX 실측 확인**
+- 라이브 graph-vpack2 에서 `계정·유저` simGroup 내 Castle→Ally→UnionCAInfo(ShowDetail) 선택 후 실 G6 keyShape opacity 측정:
+  - **UnionCAInfo(선택): getElementState=["analyzed","selected"](dimmed 없음)인데 실제 opacity/keyShapeOpacity/attrOpacity=0.38** — 사용자 리포트("재선택 노드 흐림 유지") 렌더 수준 재현(dimmed 상태 제거 후 G6 base 미복원).
+  - Ally/Castle(dimmed): opacity 0.38(정상). 캡처 pbom-final.
+- 수정(§57.9): 침강 opacity 를 base style 에 직접 bake — dimmed 상태 제거 시 stale 원천 차단. POST-DEPLOY 실측(opacity==1)은 배포 후 별도 Run.

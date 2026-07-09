@@ -3718,6 +3718,8 @@ const _META_MIN_READ_ZOOM = 0.55;   // graph-initview(A1): 초기 fit 이 이 �
 //   단건 선을 축약(의미 신호만 유지). 임계 1점 왕복 rebuild 방지는 밴드 전이+디바운스(_lodBand).
 const _META_EDGE_LOD_ZOOM = 0.35;
 const _META_EDGE_LOD_MIN = 120;
+// §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
+const _META_DIM_OPACITY = 0.38;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
 //   페인팅·hit-test 하므로, 전 요소에 zIndex 를 명시해 setData diff 의 생성 순서·드래그 이력(내장
 //   drag-element 의 frontElement 영구 승격)이 페인팅 순서를 결정하지 못하게 한다. 의미 계층:
@@ -5245,9 +5247,29 @@ function _metaG6Build() {
       style: dimIf(st, agg.keep) });
   });
   _metaGraph._lodDropped = lodDropped;   // §57: 상태줄 안내용(축약 규모)
+  _metaBakeBaseOpacity(nodes);           // §57.9: dimmed 해제 시 opacity 복원(아래 함수 주석 참조)
   // graph-initview: 렌더된 요소 id 집합(노드+combo) — setElementState/focus 가 미렌더 요소를 건드리지 않게.
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id).concat(combos.map((c) => c.id)));
   return { combos, nodes, edges };
+}
+
+// §57.9(사용자 4차 실측 — "재선택 노드가 흐린 상태로 남음"): 모든 노드 base style 에 opacity 를
+//   **명시**한다. dimmed 상태는 opacity 0.38 을 얹지만, selected/analyzed 등 다른 상태는 opacity 를
+//   지정하지 않는다. G6 v5 는 어떤 상태가 제거될 때 그 상태가 세팅한 속성을 base 에 값이 없으면
+//   되돌리지 못한다 — 그래서 dimmed→selected 전환 후에도 keyShape opacity 가 0.38 로 stale 하게
+//   남았다(getElementState 는 ["analyzed","selected"] 인데 실제 렌더 opacity=0.38, 실측 확인). base 에
+//   dimmed 여부를 **base opacity 에 직접 굽는다**(dim=0.38 / lit=1) — 상태 레이어의 apply/revert 동작에
+//   전혀 의존하지 않아 dim↔lit 양방향 전환이 결정적이다. setData 가 매 build 이 값을 keyShape 에 직접
+//   기입하므로, 과거 stale 하게 남던 0.38(선택인데 흐림) 도, 반대로 dimmed 미적용도 원천 차단.
+//   dimmed G6 상태 config 는 제거했다(base 와 이중 적용 시 곱셈 과침강 위험) — setElementState 침강
+//   경로는 없고(dim↔lit 은 항상 rebuild 동반), 침강은 이 base bake 가 전담한다.
+function _metaBakeBaseOpacity(nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (!n || !n.style) continue;
+    const dim = Array.isArray(n.states) && n.states.indexOf("dimmed") >= 0;
+    n.style.opacity = dim ? _META_DIM_OPACITY : 1;
+  }
 }
 
 // graph-product-cat(§43): 제품 카테고리 개요 전용 빌드 — Product(좌열)·Datasource(우열) rect 노드 +
@@ -5297,6 +5319,7 @@ function _metaG6BuildProducts() {
     edges.push({ id: e.id, source: e.source, target: e.target, data: { label: "USES" },
       style: { stroke: "#8fbfa3", lineWidth: 1.5, endArrow: true, zIndex: _METZ.EDGE } });   // 실선(lineDash 생략 — G6 크래시 방지)
   });
+  _metaBakeBaseOpacity(nodes);   // §57.9: 제품/데이터소스 뷰도 동일 base opacity 명시(일관성)
   _metaGraph.renderedIds = new Set(nodes.map((n) => n.id));
   return { combos: [], nodes, edges };
 }
@@ -6009,10 +6032,11 @@ function _metaInitGraph() {
       //   전 역할색·teal 위에서 성립하는 어두운 무채색으로 교체(흰 캔버스 경계 대비 확보).
       selected: { stroke: "#161b22", lineWidth: 3 },
       busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] },   // graph-perf-bg: 펼침/확장 조회 중 임시 표시(teal 점선)
-      // §57(사용자 요구 ②): 상대 하이라이트 — 선택 1-hop 밖 데이터 노드 흐리게(_metaNodeStates 'dimmed').
-      //   §57.5(사용자 피드백): 0.15 는 프로시저 명칭이 판독 불가 — 0.38 로 상향(침강은 유지하되
-      //   라벨은 읽히는 수준. 선명/침강 대비는 엣지 0.12 와 노드 테두리·색으로 충분).
-      dimmed: { opacity: 0.38 },
+      // §57(사용자 요구 ②): 상대 하이라이트 — 선택 1-hop 밖 데이터 노드 흐리게.
+      //   §57.5: 0.15→0.38(라벨 판독 유지). §57.9(사용자 4차 실측): 침강 opacity 는 이제 **G6 상태가
+      //   아니라 base style 에 직접 굽는다**(_metaBakeBaseOpacity, dim=_META_DIM_OPACITY/lit=1). 상태로
+      //   두면 dimmed 제거 시 G6 가 base 로 복원하지 못해 선택 노드가 0.38 로 stale 하게 남았다(실측).
+      //   'dimmed' 문자열은 상태 배열에 계속 실려 서명 비교(rebuild 감지)·base bake 입력으로 쓰인다.
     } },
     // graph-drag: 중간 버튼 드래그 = 카메라 팬(어디서든), 좌클릭 = 기존대로(빈 캔버스 팬 / 노드 이동).
     behaviors: [
