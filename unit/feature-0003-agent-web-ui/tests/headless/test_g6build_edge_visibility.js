@@ -195,10 +195,12 @@ function check(name, cond, extra) {
 // T8(패널 MINOR): 컬럼 선택 시 소속 테이블은 dim 되지 않음
 {
   const M = seedModel(["a"], [nk("a")]);
-  addTable(M, "a.t1");
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3");
   M.nodes.set(nk("a.t1.c1"), { key: nk("a.t1.c1"), label: "Column", name: "c1", fqn: "a.t1.c1" });
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });   // §57.7: fa 비-null 보장
   M.selected = nk("a.t1.c1");
   M.focusAdj = g.__focusAdj(nk("a.t1.c1"));
+  check("T8 사전: 하이라이트 발동(비-null)", !!M.focusAdj && g.__nodeStates(nk("a.t3")).includes("dimmed"));
   check("T8 부모 테이블 비dimmed", !g.__nodeStates(nk("a.t1")).includes("dimmed"));
 }
 
@@ -206,10 +208,11 @@ function check(name, cond, extra) {
 //   자동으로 밝아진다(선택-시점 스냅샷이면 dim 으로 굳음 = 사용자 리포트 버그).
 {
   const M = seedModel(["a"], [nk("a")]);
-  addTable(M, "a.t1"); addTable(M, "a.t2");
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3");
+  addEdge(M, nk("a.t1.c9"), nk("a.t3.c1"), "REFERENCES", { status: "trusted" });   // 선택 시점 인접(t3)
   M.selected = nk("a.t1");
-  M.focusAdj = g.__focusAdj(nk("a.t1"));   // 이 시점 인접: 없음(엣지 미적재)
-  check("T9 사전: t2 dim", g.__nodeStates(nk("a.t2")).includes("dimmed"));
+  M.focusAdj = g.__focusAdj(nk("a.t1"));   // 비-null stale 스냅샷(t2 미적재 → dim)
+  check("T9 사전: stale 스냅샷에서 t2 dim", !!M.focusAdj && g.__nodeStates(nk("a.t2")).includes("dimmed"));
   addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });   // 늦은 ingest
   build();   // 빌드가 focusAdj 재산출
   check("T9 늦은 ingest 후 t2 자동 점등", !g.__nodeStates(nk("a.t2")).includes("dimmed"));
@@ -264,13 +267,36 @@ function check(name, cond, extra) {
 // T13(§57.6 화살촉): dim 엣지는 전체 opacity 침강(strokeOpacity 단독 아님 — 화살촉 잔존 방지).
 {
   const M = seedModel(["a"], [nk("a")]);
-  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3");
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3"); addTable(M, "a.t4");
+  addEdge(M, nk("a.t1.c1"), nk("a.t4.c1"), "REFERENCES", { status: "trusted" });   // §57.7: 하이라이트 발동용 자체 인접
   addEdge(M, nk("a.t2.c1"), nk("a.t3.c1"), "REFERENCES", { status: "trusted" });
   M.selected = nk("a.t1");
   const out = build();
-  const far = out.edges.find((x) => x.data && x.data.label === "REFERENCES");
+  const far = out.edges.find((x) => x.source === nk("a.t2.c1") || x.source === nk("a.t2"));
   check("T13 dim 엣지 opacity 전체 침강", !!far && far.style.opacity <= 0.12 && far.style.strokeOpacity <= 0.12,
     far && { o: far.style.opacity, so: far.style.strokeOpacity });
+}
+
+// T14(§57.7 고립 노드): 1-hop 관계가 없는 노드 선택은 하이라이트 모드 미발동(전역 침강 없음).
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2");
+  addEdge(M, nk("a.t2.c1"), nk("a.t2b.c1"), "REFERENCES", { status: "trusted" });   // t1 과 무관한 엣지
+  addTable(M, "a.t2b");
+  M.selected = nk("a.t1");   // t1 = 고립(닿는 엣지 0)
+  build();
+  check("T14 고립 선택 시 focusAdj null", !M.focusAdj);
+  check("T14 전역 dim 미발동", !g.__nodeStates(nk("a.t2")).includes("dimmed"));
+  // 관계가 늦게 적재되면 다음 build 가 하이라이트 자동 점화
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });
+  build();
+  check("T14 관계 도착 시 하이라이트 자동 점화", !!M.focusAdj && g.__nodeStates(nk("a.t2b")).includes("dimmed"));
+  // self-FK 만 있는 테이블(리뷰 적발): 렌더러가 intra-table 엣지를 드롭하므로 고립과 동일 취급
+  addTable(M, "a.t5");
+  addEdge(M, nk("a.t5.c1"), nk("a.t5.c2"), "REFERENCES", { status: "trusted" });
+  M.selected = nk("a.t5");
+  build();
+  check("T14 self-FK 단독은 고립 판정", !M.focusAdj && !g.__nodeStates(nk("a.t2")).includes("dimmed"));
 }
 
 console.log(`\n${pass} PASS / ${fail} FAIL`);

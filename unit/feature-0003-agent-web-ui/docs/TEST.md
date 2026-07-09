@@ -1845,3 +1845,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **[POST-DEPLOY 갱신 2026-07-09] 실클릭 실측 PASS (AI 직접)**: 배포 4564dc8e·서빙
   `admin.js?v=20260709-hl-invariant`. 연속 3회 전환 감사 — selIs true·selDim false·
   staleVividEdges 0·arrowResidue 0 (매 클릭). 육안: 선택 부분그래프 선명·침강 라벨 판독(pbi-final).
+
+### Run (2026-07-09) — hl-isolated: 고립 노드 사용자 레시피 재현 (§57.7, 정본 feature-0016 TASK §57.7) — **Environment: Windows-browser — PRE-FIX 재현 PASS**
+- 사용자 3차 리포트 레시피 그대로(qa-idc mssql-06656002eda6·검색 'ranking'·dk_game_integrate 펼침) 실좌표 클릭 5연속: Chk_Person_Ranking(fa10/lit5)→Peerage(fa13/lit9)→Chk_Ranking(fa10/lit5)→**Person_Ranking(fa1/lit1 — 관계 0 고립: 전체 침강 = "무너짐"의 실체)**→Chk_Ranking(fa10/lit5 복원 정상). pageerror 0. 캡처 pbc-1~5. "복원 불가"는 SPA 잔존 구자산 판정(현 자산 복원 실증).
+- 브라우저 공유 주의: 타 세션이 동일 Chrome 사용 중 — 전용 새 탭(ctx.new_page)으로 불간섭 실행.
+- POST-DEPLOY 재검증(T57.15)은 배포 후 별도 Run 추가 예정.

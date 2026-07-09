@@ -823,3 +823,7 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - dry-run: suggested_total 11·errors 0(무쓰기 확인). 실 pass: **10건 Pending 적재** — 전건
   'ai_suggest:<conf>|<근거>' 포맷, 신뢰도 0.70~0.98, 테이블 기능 증거 인용. allowlist
   (WebProductDatabases) 무변경 확인(승인 대기만). 데몬 OFF 유지 — 수동/CLI 트리거만.
+
+## T57.7 — 고립 노드 하이라이트 미발동 (2026-07-09)
+- headless: T14 3건(고립 focusAdj null / 전역 dim 미발동 / 관계 도착 시 자동 점화) + T9·T13 새 의미론 갱신 — 37/37 PASS.
+- 실브라우저(win-browser, qa-idc dk_game_integrate): 사용자 레시피 Chk_Person_Ranking→Peerage→Chk_Ranking→Person_Ranking→Chk_Ranking 실좌표 클릭 — 배포 후 재검증 예정(Run 기록은 feature-0003 TEST.md).
