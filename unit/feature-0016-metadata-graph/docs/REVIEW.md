@@ -1230,3 +1230,5 @@ source_of_truth: true
 ## REV-20260708T231800-ai-root-feature-0016-gwmem-dupkey [SKIPPED: 1-line YAML 중복 키 제거(배포 차단 해소) — yaml.safe_load + compose parse 로 기계 검증, 코드 로직 무변경] — compose 정정
 
 ## REV-20260708T235800-ai-root-feature-0016-classify-postdeploy [SKIPPED: docs-only POST-DEPLOY 기록 — 코드 변경 0] — §59 완수 기록
+
+## REV-20260709T003200-ai-root-feature-0016-zorder-hl-pb0008 [SKIPPED: docs-only PB-0008 실측 기록 — 코드 변경 0] — §57.4 기록

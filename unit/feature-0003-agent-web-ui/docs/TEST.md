@@ -1818,3 +1818,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **정적 검증**: `node --check release-notes-data.js` PASS. jsdom `verify_release_notes.mjs` 33/34 PASS(유일 FAIL 은 styles.css:4300 pre-existing 정규식 취약성·HEAD 동일·본 변경 무관) — 스키마(type/area/title/detail)·`generated`=2026-07-08·블록 순서(07-08>07>06>04>03>02)·07-07 이하 보존·07-08 블록 3항목 doc_sync 재구성 직접 확인.
 - **원천 UI 변경 PB-0008(provenance)**: 본 3항목이 announce 하는 화면 변화는 원천 cycle 이 검증 — §57 그래프 접힘 카드 시각화(feature-0016 §57 POST-DEPLOY PB-0008 라이브 PASS)·§59 제품 분류 승인 UI(feature-0016 §59 POST-DEPLOY 라이브 실증)·콘솔 ux2/polish(feature-0003 배포 후 PB-0008 계열).
 - **Pass/Fail: PASS(콘텐츠 doc-only 정적 검증)**. CHECK#13(PB-0008 Windows-browser) 충족(웹 자산 변경에 이번 cycle Windows-browser Run·미수행 사유·원천 PB-0008 provenance 기록).
+
+- **[POST-DEPLOY 갱신 2026-07-09] §57 PB-0008 z-order·상대 하이라이트 상호작용 실측 — PASS (Environment: Windows-browser, AI 직접)**:
+  실 Windows Chrome(win-browser relay)에서 신뢰 마우스 입력으로 검증. **z-order**: 빌드 산출 감사
+  — 카테고리 밴드 -1 < 관계선 2 < 카드/칩 4 < 헤더·컨트롤 5·6(밴드 위반 0), 스타일↔_metaEdgeZFor
+  미러 위반 0/300 표본, fhdef 카드 실드래그(120,60px) 후 z 잔존 없음(연결선이 카드 아래 유지,
+  count 라벨 선 위 — 스크린샷 pbz-01~03). **상대 하이라이트**: FHSP_BuyItem_V4 선택 → 358/361
+  비인접 dim(육안 유령화)·dim SCHEMA_REF 라벨 잔존 0/66·**팬(90,50px 드래그) 후 선택 보존**(5px
+  가드)·**빈 캔버스 클릭 해제 프로브 실증**(canvas:click 1회 발화 → selected null·focusAdj null,
+  스크린샷 pbz-04~07). 부수 실증: LOD 상태줄 "줌아웃 — 관계선 일부 축약" 실화면 노출. 주의 기록:
+  캔버스 상단 상태줄 DOM 위 클릭은 캔버스 미도달(이벤트 0 발화) — 해제는 실 캔버스 영역에서만
+  성립(정상 동작·테스트 방법론 주의).
