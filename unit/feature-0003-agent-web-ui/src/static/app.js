@@ -7233,94 +7233,11 @@ async function fetchAskStatus(conversationId) {
   }
 }
 
-// TASK-0041: 장시간 작업이 여전히 진행 중일 때 사용자에게 선택지를 제공하는 모달.
-// 반환값: "wait" | "finalize" | "cancel" | "dismiss"
-function showTimeoutRecoveryDialog({ statusText = "" } = {}) {
-  return new Promise((resolve) => {
-    const backdrop = document.createElement("div");
-    backdrop.setAttribute("role", "dialog");
-    backdrop.setAttribute("aria-modal", "true");
-    backdrop.style.cssText = [
-      "position:fixed", "inset:0",
-      "background:rgba(4,10,20,0.62)",
-      "z-index:9999",
-      "display:flex", "align-items:center", "justify-content:center",
-      "padding:24px",
-    ].join(";");
-
-    const panel = document.createElement("div");
-    panel.style.cssText = [
-      "background:#0f1b2c", "color:#e5eef7",
-      "padding:24px 28px", "border-radius:14px",
-      "max-width:480px", "width:100%",
-      "box-shadow:0 24px 60px rgba(0,0,0,0.5)",
-      "font-family:inherit",
-      "border:1px solid rgba(255,255,255,0.08)",
-    ].join(";");
-
-    const title = document.createElement("h3");
-    title.textContent = "응답 대기 중입니다";
-    title.style.cssText = "margin:0 0 8px 0;font-size:1.05rem;";
-
-    const desc = document.createElement("p");
-    desc.style.cssText = "margin:0 0 18px 0;line-height:1.55;color:#9bb6d2;font-size:0.92rem;white-space:pre-line;";
-    desc.textContent = [
-      "서버는 여전히 이 대화를 처리 중입니다.",
-      "어떻게 진행할까요?",
-      statusText ? `\n현재 상태: ${statusText}` : "",
-    ].filter(Boolean).join("\n");
-
-    const btnRow = document.createElement("div");
-    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;";
-
-    const makeBtn = (label, choice, variant) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = label;
-      const base = [
-        "padding:8px 14px",
-        "border-radius:8px",
-        "border:1px solid rgba(255,255,255,0.14)",
-        "background:#1a2740",
-        "color:#e5eef7",
-        "cursor:pointer",
-        "font-size:0.88rem",
-      ];
-      if (variant === "primary") {
-        base.push("background:#2457d9", "border-color:#2457d9");
-      } else if (variant === "danger") {
-        base.push("background:#7a2121", "border-color:#7a2121");
-      }
-      btn.style.cssText = base.join(";");
-      btn.addEventListener("click", () => {
-        document.body.removeChild(backdrop);
-        document.removeEventListener("keydown", onKey);
-        resolve(choice);
-      });
-      return btn;
-    };
-
-    btnRow.appendChild(makeBtn("요청 취소", "cancel", "danger"));
-    btnRow.appendChild(makeBtn("즉시 답변", "finalize"));
-    btnRow.appendChild(makeBtn("계속 기다리기", "wait", "primary"));
-
-    panel.appendChild(title);
-    panel.appendChild(desc);
-    panel.appendChild(btnRow);
-    backdrop.appendChild(panel);
-
-    const onKey = (event) => {
-      if (event.key === "Escape") {
-        document.body.removeChild(backdrop);
-        document.removeEventListener("keydown", onKey);
-        resolve("dismiss");
-      }
-    };
-    document.addEventListener("keydown", onKey);
-
-    document.body.appendChild(backdrop);
-  });
-}
+// TASK-0041 / ask-timeout-nonblocking (2026-07-09): 구 showTimeoutRecoveryDialog 제거.
+// 클라이언트 타임아웃 시 "요청 취소/즉시 답변/계속 기다리기" 선택을 강요하던 화면 전체
+// 모달(fixed inset0, z-index 9999)이 기존 작업을 가로막는다는 불편 신고로 삭제됐다.
+// 대체 동작은 sendPrompt() 의 is_processing 분기에 인라인화 — 모달·토스트 없이 조용히
+// attachAndWaitForResult 로 재연결하고, 취소/즉시 답변은 컴포저 인라인 버튼으로 상시 노출한다.
 
 // ============================================================================
 // TASK-20260619T014034 — LLM provider 외부요인 제한(자격증명 만료 등) 명시 표면화.
@@ -8902,6 +8819,15 @@ async function sendPrompt() {
           state.pendingNewConversation = false;
           state.activeConversationId = earlyCid;
           state.pendingSentinel = null;
+          // composer-nonblock-interrupt (ask-timeout-nonblocking §18.8 H1): in-flight 추적 키
+          // (myAskInFlight/busyConversations)도 sentinel→earlyCid 로 이관한다 — 아래 askKey 의
+          // askAbortControllers 이관(8864)과 대칭. 이를 빠뜨리면 _myAskInFlightHere() 가 false 로
+          // 떨어져(pendingNewConversation=false + activeConversationId=earlyCid 인데 집합엔 sentinel
+          // 만 존재) 전송버튼 "중단" 모드·즉시답변 버튼 라우팅이 죽는다 → 신규 대화 첫 메시지 타임아웃
+          // 시 인라인 취소 불능. (구 타임아웃 모달이 /api/cancel 직접 호출로 가려온 잠복 버그.)
+          state.busyConversations.add(earlyCid);
+          state.myAskInFlight.add(earlyCid);
+          renderComposer();
           // new-conv-dedup: in-flight placeholder(pendingConversationEntries[busyKey]) 를 실 cid
           // entry 로 *원자적* 교체한다. 이 정리를 /api/ask 응답(아래 8421)까지 미루면 — early-cid 발급
           // 직후부터 /api/ask 응답 도착까지(실 LLM 응답 시간) — placeholder(메시지 제목)와 아래 optimistic
@@ -9132,36 +9058,17 @@ async function sendPrompt() {
         }
       }
       if (status && status.is_processing) {
-        const statusText = status.status || "processing";
-        const choice = await showTimeoutRecoveryDialog({ statusText });
-        if (choice === "cancel") {
-          try {
-            await apiFetch("/api/cancel", {
-              method: "POST",
-              body: JSON.stringify({ conversation_id: askCid }),
-            });
-            showToast("취소 요청을 전달했습니다.");
-          } catch (cancelError) {
-            showToast(`취소 요청 실패: ${cancelError.message || cancelError}`, true);
-          }
-          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-        } else if (choice === "finalize") {
-          try {
-            await apiFetch("/api/finalize", {
-              method: "POST",
-              body: JSON.stringify({ conversation_id: askCid }),
-            });
-            showToast("즉시 답변 요청을 전달했습니다.");
-          } catch (finError) {
-            showToast(`즉시 답변 요청 실패: ${finError.message || finError}`, true);
-          }
-          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-        } else if (choice === "wait") {
-          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-        } else {
-          // dismiss — 진행 상태만 유지. progress polling 이 결과를 갱신할 것
-          showToast("계속 서버에서 처리 중입니다. 상태는 상단에 표시됩니다.");
-        }
+        // ask-timeout-nonblocking (2026-07-09): 클라이언트(브라우저/프록시) 읽기 타임아웃으로
+        // /api/ask 연결이 끊겼지만 서버는 여전히 이 대화를 처리 중인 상황. 예전에는 화면 전체를
+        // 덮는 모달(showTimeoutRecoveryDialog: 요청 취소/즉시 답변/계속 기다리기)로 진행을 강제
+        // 중단시켰다 — "공격적 화면 배치" 불편 신고(사용자 요청 2026-07-09)로 제거.
+        //
+        // 재연결은 필수 동작이고(끊긴 채 두면 답변이 유실됨) 사용자가 그 사실을 인지할 필요는
+        // 없다 → 모달·토스트 없이 조용히 long-poll 재연결(attachAndWaitForResult)만 이어받아
+        // 답변이 준비되면 자연히 표시되게 한다. 취소·즉시 답변은 처리 중 내내 컴포저에 상시
+        // 노출되는 인라인 버튼(전송→"중단" 모핑 TASK-0157 / "즉시 답변" TASK-0158)으로 사용자가
+        // 언제든 직접 수행할 수 있어, 화면을 가리는 별도 모달이 불필요하다.
+        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
         // composer-clear-input-on-send: 입력창은 낙관적 시점에 이미 비워짐(재클리어 안 함).
       } else {
         showToast(`요청에 실패했습니다: ${error.message || error}`, true);
@@ -9177,9 +9084,12 @@ async function sendPrompt() {
     }
   } finally {
     state.busyConversations.delete(busyKey);
+    state.busyConversations.delete(askKey);   // ask-timeout-nonblocking §18.8 H1: early-cid 이관분(askKey=earlyCid) 정리.
     // composer-nonblock-interrupt: 내 @assistant run 수명 종료 → in-flight 표시 해제(전송/중단 버튼·R2/R3).
-    // busyConversations 와 동일 키(busyKey)로만 관리 → 일관성 유지.
+    // early-cid 전환 시 myAskInFlight/busyConversations 도 sentinel→earlyCid 이관되므로(위 8821 부근)
+    // abort controller·취소 flag 와 동일하게 두 키(sentinel/earlyCid) 모두 정리해 leak 을 막는다.
     state.myAskInFlight.delete(busyKey);
+    state.myAskInFlight.delete(askKey);        // ask-timeout-nonblocking §18.8 H1: early-cid 이관분 정리.
     // TASK-0241: 이 send 의 abort controller + 취소 flag 정리(수명 종료). early-cid 전환으로 키가
     // 두 값(sentinel/earlyCid)일 수 있으므로 양쪽 모두 정리한다.
     state.askAbortControllers.delete(askKey);

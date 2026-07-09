@@ -9,6 +9,20 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260709T000000-ask-timeout-nonblocking (TASK-20260709-ask-timeout-nonblocking — 응답 지연 시 화면 전체를 덮던 타임아웃 복구 모달 제거, Minor §12.3 — feature-0003 프론트 단독)
+- Date: 2026-07-09 (worktree ai/claude/ask-timeout-nonblocking, base aa9f7a57).
+- 트리거(사용자, /_template:entry arg-given): "작업 화면에서 assistant 에 요청 후 오래 걸리면 화면 전체를 가리는 답변-지연 경고창이 떠 불편 — 삭제하거나 기존 작업을 방해하지 않는 UI로." 후속 지시: "자동 재연결은 필수 동작이며 사용자는 그 작동을 인지할 필요 없음."
+- 근본원인: `src/static/app.js sendPrompt()` 의 `/api/ask` 실패(브라우저/프록시 read-timeout·502/EOF) + `/api/ask_status` `is_processing=true` 경로가 `showTimeoutRecoveryDialog`(fixed inset0·z-index 9999 backdrop + "요청 취소/즉시 답변/계속 기다리기" 3버튼 모달)를 `await` 로 띄워 화면 전체를 가리고 사용자 진행을 강제 중단(TASK-0041 도입). 실 운영의 장시간 쿼리에서 발동.
+- 판단: 모달 3액션은 이미 컴포저 인라인 어포던스로 처리 중 상시 노출 — 취소=전송버튼 "중단" 모핑(TASK-0157, `cancelCurrentRun`→`/api/cancel`), 즉시 답변=`composerFinalizeBtn`(TASK-0158, `finalizeCurrentRun`→`/api/finalize`), 계속 대기=`attachAndWaitForResult` 기본 동작 → 모달은 중복이며 재연결만 필수.
+- 변경(`src/static/app.js`, frontend only):
+  - `is_processing` 분기(구 9134~9164)에서 모달 `await` + choice 분기(cancel/finalize/wait/dismiss) 전부 삭제 → `attachAndWaitForResult(askCid, {runId: status.run_id || ""})` 직접 호출로 교체. 모달·토스트 없이 조용히 long-poll 재연결 → 답변 유실 방지 + 화면 미가림 + 재연결 미표면화(사용자 지시 반영).
+  - dead code 된 `showTimeoutRecoveryDialog({statusText})` 함수(구 7238~7323) 제거 → tombstone 주석으로 대체(제거 사유·대체 경로 명시).
+- 변경(`src/static/index.html`): app.js 캐시버스터 `?v=20260706-reasoning-effort` → `?v=20260709-ask-timeout-nonblocking`(stale 클라이언트에 새 코드 강제).
+- 변경(`docs/DESIGN-entry-points.md`): §4.2·§9 의 "모달 패턴 예시=`showTimeoutRecoveryDialog`" 참조 2곳을 잔존 `.share-mgr-backdrop`/`.share-mgr-panel` CSS-클래스 패턴(`showTotpLoginPrompt` 예시)으로 갱신 — 제거된 함수 참조 stale 방지 + 문서 자체 "인라인 style 금지" 지침과 정합.
+- 변경(`src/static/app.js`, §18.8 R1 적발 MAJOR H1 동반수정): 모달 제거가 노출한 pre-existing 잠복 버그 — 신규 대화 첫 메시지 타임아웃(`earlyCidActivated`) 흐름에서 인라인 "중단"(취소) 버튼이 무동작(모달이 `/api/cancel` 직접 호출로 가려옴). 근본원인 = `myAskInFlight`/`busyConversations` 키가 `busyKey`(pendingSentinel)로 등록됐다가 earlyCid 활성 시 미이관(`askAbortControllers` 는 8864 에서 earlyCid 이관 — 비대칭) → `_myAskInFlightHere()` false → 전송버튼 취소 라우팅 skip. **수정**: early-cid 활성 블록(pendingSentinel=null 직후)에 `busyConversations.add(earlyCid)`/`myAskInFlight.add(earlyCid)`/`renderComposer()` 추가(abort controller 이관과 대칭) + `sendPrompt` finally 에 `busyConversations.delete(askKey)`/`myAskInFlight.delete(askKey)` 추가(기존 abort/취소flag dual-delete 패턴 동형, leak 방지).
+- 비변경: 서버 `/api/ask_status`·`/api/ask_result`(long-poll)·`attachAndWaitForResult` 루프·boot-time auto-attach·resume 경로(9410~ 이미 모달 없이 attach 직접 호출)·`ASK_ATTACH_MAX_TOTAL_SEC=1800` 상한 종료 토스트·`cancelCurrentRun`/`finalizeCurrentRun` 본체 전부 보존. RBAC/스키마/마이그/엔드포인트 0.
+- 검증: `node --check app.js` PASS(2회) · 코드 내 `showTimeoutRecoveryDialog` 실참조 0(설명 주석만 잔존) · §18.8 적대 서브에이전트 패널 2라운드(H1 적발→수정→재검 전항목 REFUTED) **VERDICT: SHIP**(REV-20260709T130000-ask-timeout-nonblocking) · PB-0008 Windows-browser 라이브 실측 = 배포 후.
+
 ## CHG-20260703T094539-aiops-stepgap (TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격, Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI)
 - Date: 2026-07-03 (worktree ai/claude-corp/feature-0003-aiops-ttft, base 9665430c).
 - 트리거(사용자): "에이전트 추론 p95 측정 단위 검토 — 지연은 답변 받는 총 시간이 아니라 각 추론 단계 간 나타나는 간격으로." 정의 확정 = A(단계 간 간격).
