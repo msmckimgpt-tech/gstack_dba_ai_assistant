@@ -1882,6 +1882,9 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   하이라이트 모드 미발동(선택 테두리·상세만), 관계 늦은 ingest 시 build 재산출이 자동 점화.
   적대 리뷰 적발 반영: self-FK 단독 테이블(렌더러 rs===rt 드롭 → 보이는 선 0)도 고립 동일 취급,
   T9/T8 비-null stale 스냅샷 전제 복원(공허화 방지). headless 39+26 PASS. 캐시버스터 20260709-hl-isolated.
-- [ ] T57.15 POST-DEPLOY 실검증 — 사용자 레시피 그대로(qa-idc·검색 'ranking'·dk_game_integrate 펼침)
-  Chk_Person_Ranking→Peerage→Chk_Ranking→Person_Ranking→Chk_Ranking 실클릭: 고립 노드 클릭 시
-  전역 침강 미발동 + 복귀 클릭 시 하이라이트 정상 복원.
+- [x] T57.15 POST-DEPLOY 실검증 PASS — 배포(eb631372·soak 통과·자산 20260709-hl-isolated) 후
+  사용자 레시피 그대로(qa-idc·검색 'ranking'·dk_game_integrate 펼침) 5연속 실클릭:
+  ①Chk_Person_Ranking(fa10/lit5/dim71) ②Peerage(fa13/lit9) ③Chk_Ranking(fa10/lit5)
+  ④**Person_Ranking(고립): focusAdj null·dim 0 — 전역 침강 미발동, 선택·상세 정상**(pbc-4 육안:
+  화면 전체 정상 밝기 유지) ⑤Chk_Ranking 복귀: fa10/lit5/dim71 — 하이라이트 정상 복원(pbc-5 육안).
+  pageerror 0. 사용자 3차 리포트 해소 — 단 "복원 불가" 재발 방지엔 **탭 새로고침** 필요(SPA 잔존 자산).

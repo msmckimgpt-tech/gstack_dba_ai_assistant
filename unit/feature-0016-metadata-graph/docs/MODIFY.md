@@ -1185,3 +1185,7 @@ source_of_truth: true
 - 적대 리뷰 반영: touched 는 **바깥에 닿는** 관계만 집계(self-FK 단독 테이블 = 렌더러 rs===rt 드롭으로 보이는 선 0 → 고립 동일 취급). T9/T8 은 비-null stale 스냅샷 전제로 복원(공허화 방지).
 - 테스트: T14 신설(고립 focusAdj null·dim 미발동·자동 점화·self-FK 고립 판정), T9/T13/T8 갱신. 39+26 PASS.
 - 캐시버스터: `admin.js?v=20260709-hl-isolated`.
+
+## CHG-20260709T103000-ai-root-feature-0016-hl-isolated-postdeploy — §57.7 POST-DEPLOY 실측 기록 (2026-07-09)
+- 배포 eb631372(무중단 롤링 + soak 통과), 자산 `admin.js?v=20260709-hl-isolated` 라이브 확인.
+- T57.15 사용자 레시피 5연속 실클릭 PASS — 고립 노드 클릭 시 전역 침강 미발동(dim 0)·복귀 클릭 시 복원(dim 71/lit 5). 상세는 TASK §57.7.

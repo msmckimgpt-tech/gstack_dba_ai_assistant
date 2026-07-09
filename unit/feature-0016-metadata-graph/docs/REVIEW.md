@@ -1253,3 +1253,6 @@ source_of_truth: true
 - 단일 적대 에이전트(반박 우선), 4축: null 역참조 신경로/재시도 체인 오인/touched 오판/테스트 약화.
 - REFUTED: null 역참조(전 호출부 기존 guard — focusAdj null 은 변경 전부터 1급 상태), 무한 재시도(_metaFocusApplyOrRetry 는 focusAdj 미검사·attempt<12 상한), SCHEMA_REF·SC:·컬럼 폴딩 오판.
 - CONFIRMED→수정 반영: ① self-FK 단독 테이블 잔존(touched=1 인데 렌더러 rs===rt 드롭 → "보이는 선 0 + 전역 침강" 재현) → touched 를 바깥에 닿는 관계만 집계 ② T9 공허화(비-null stale 스냅샷 클래스 무방비) → 선택 시점 인접 부여로 복원 ③ T8 공허화(무엣지 컬럼 → null) → 외부 엣지 부여로 ptk 보호 규칙 재검증. 최종 39+26 PASS.
+
+## REV-20260709T103200-ai-root-feature-0016-hl-isolated-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §57.7 완수 기록
+- T57.15 실측 PASS 기록만 추가(TASK/MODIFY/feature-0003 TEST). 코드 diff 없음 — 패널 생략.
