@@ -1238,3 +1238,9 @@ source_of_truth: true
 ## CHG-20260709T140000-ai-root-feature-0016-hl-bake-postdeploy — §57.8 POST-DEPLOY 렌더 실측 기록 (2026-07-09)
 - 배포 23322c0e(무중단 롤링 + soak 통과), 라이브 `admin.js?v=20260709-graph-vpack2`(§57.8 포함 — 병렬 §60 vpack 레이아웃 커밋이 캐시버스터 재-bump, 하이라이트 로직 직교·마커 온전).
 - T57.17 렌더 수준(getElementState 전수) 5시나리오 PASS — mismatch 0·selLit 항상 true·고립 dimRender 0·복귀 복원. 상세 TASK §57.8.
+
+## CHG-20260709T160000-ai-root-feature-0016-sel-prominence — §57.9 재선택 침강 잔존 opacity bake (2026-07-09)
+- 사용자 5차 실측(재선택 노드 흐림 유지)의 근본: dimmed(G6 상태 opacity 0.38) 제거 시 base 미복원 →
+  선택 노드 keyShape opacity 0.38 stale(getElementState=selected). 상세 TASK §57.9 / ADR-028.
+- admin.js: _metaBakeBaseOpacity(매 build 노드 base opacity=dim?0.38:1 직접 bake) 양 반환부 배선,
+  dimmed G6 상태 config 제거, _META_DIM_OPACITY 상수화. headless T21. 캐시버스터 sel-prominence.

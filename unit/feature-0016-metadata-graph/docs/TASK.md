@@ -1947,3 +1947,16 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
       펼침 실측: cc_bonedragon 557T **822×10272(0.08)→3590×3320(1.08)**(높이 68%↓)·전 클러스터 landscape·
       전역 aspect 0.57→**0.99**·노드/클러스터 겹침 0·pageerror 0. **사용자 리포트 라이브 해소 확인**
       (Run·스크린샷 feature-0003 TEST.md).
+
+### 57.9 재선택 노드 침강 잔존 — opacity base bake (2026-07-09, 사용자 5차 실측)
+- 5차 리포트: `계정·유저` simGroup 내 Castle→Ally→UnionCAInfo 선택 시 **마지막 선택 UnionCAInfo 가
+  흐린 채 유지**. "선택표시(테두리)는 정상이나 노드가 상대 하이라이트 외 대상처럼 침강 — 재선택 대상의
+  비선택(dimmed) 상태 해제가 핵심."
+- 근본 진단(실 렌더 opacity 측정): 선택 노드 getElementState=["analyzed","selected"](dimmed 없음)인데
+  **실제 keyShape opacity=0.38 로 stale**. G6 v5 는 어떤 상태(dimmed)가 제거될 때 그 상태가 세팅한
+  속성(opacity)을 base 에 값이 없으면 되돌리지 못한다 — dimmed→selected 전환 후 0.38 잔존.
+- [x] T57.18 수정: 침강 opacity 를 G6 상태가 아니라 **base style 에 직접 bake**(_metaBakeBaseOpacity,
+  매 build; dim=_META_DIM_OPACITY 0.38 / lit=1). setData 가 매번 keyShape 에 직접 기입해 dim↔lit
+  양방향 결정적. dimmed G6 상태 config 제거(이중 적용·곱셈 침강 위험 차단), 'dimmed' 문자열은 서명·bake
+  입력으로 유지. headless T21 신설(전 노드 opacity 명시·dim=0.38·lit=1) — 60+26 PASS. 캐시버스터 sel-prominence.
+- [ ] T57.19 POST-DEPLOY 실측 — Castle→Ally→UnionCAInfo 선택 후 UnionCAInfo keyShape opacity==1 확인.

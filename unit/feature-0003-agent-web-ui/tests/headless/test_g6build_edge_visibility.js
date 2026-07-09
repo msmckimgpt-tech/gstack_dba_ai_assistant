@@ -384,6 +384,29 @@ function check(name, cond, extra) {
   M._busyKeys.clear(); M._busyTs.clear(); M.graph = null;
 }
 
+// T21(§57.9 opacity 복원): 모든 노드 base style 에 opacity 가 **명시**된다 — dimmed 상태(0.38)가
+//   제거될 때 G6 가 되돌릴 base(1)가 있어야 재선택 노드가 흐린 채 stale 하지 않는다(사용자 4차 실측).
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3");
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });   // t1↔t2 인접(하이라이트 발동)
+  M.selected = nk("a.t1");
+  const out = build();
+  const sel = out.nodes.find((x) => x.id === nk("a.t1"));
+  const adj = out.nodes.find((x) => x.id === nk("a.t2"));
+  const far = out.nodes.find((x) => x.id === nk("a.t3"));   // 비인접 → dimmed
+  // 선택/인접 노드: base opacity 명시(1) + dimmed 상태 없음 → 렌더 opacity 1
+  check("T21 선택 노드 base opacity 명시(1)", !!sel && sel.style.opacity === 1, sel && sel.style.opacity);
+  check("T21 선택 노드 dimmed 아님", !!sel && !sel.states.includes("dimmed"));
+  check("T21 인접 노드 base opacity 명시(1)", !!adj && adj.style.opacity === 1);
+  // 비인접(dimmed) 노드: base opacity 도 1(명시) + dimmed 상태가 0.38 을 얹음(state 는 config)
+  check("T21 dimmed 노드 base opacity 직접 bake(0.38)", !!far && far.style.opacity === 0.38, far && far.style.opacity);
+  check("T21 dimmed 노드 dimmed 상태 보유", !!far && far.states.includes("dimmed"));
+  // 전 노드 opacity 명시 불변식(하나도 undefined 아님)
+  check("T21 전 노드 opacity 명시", out.nodes.every((n) => n.style && n.style.opacity != null),
+    out.nodes.filter((n) => !n.style || n.style.opacity == null).map((n) => n.id));
+}
+
 // T18(비동기): _metaG6Apply 직렬화 — 겹침 호출은 재실행 1회로 병합(setData 경합 제거).
 (async () => {
   vm.runInContext(src.match(/async function _metaG6Apply[\s\S]*/) ? "" : "", sandbox);   // no-op(원본 복원 불가 주석)

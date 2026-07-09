@@ -799,3 +799,10 @@ source_of_truth: true
   블록 면적 기반 적응**(`max(TRW, round(sqrt(ΣblockArea×2.0)))`, 클러스터-내부판 ①) + packGroup 열 상한 4→6.
   겹침 불변식 동일(블록 shelf-pack 구조·COLW·realH). 실측 557T/20그룹 0.11→1.06·4그룹 0.13→1.18. 교훈:
   적응형-폭 철학을 **모든 패킹 경로**(전역 shelf·flat masonry·simGroups 블록·group 내부)에 일관 적용해야 함.
+
+## ADR-028 — §57.9 상대 하이라이트 침강은 G6 상태가 아니라 base style opacity 로 bake
+- 상태: 채택 (2026-07-09)
+- 맥락: 침강을 G6 node 상태(dimmed:{opacity:0.38})로 구현했더니, 상태 제거 시 G6 v5 가 base 에 opacity 값이 없어 되돌리지 못해 재선택 노드가 0.38 로 stale(사용자 5차 실측 — getElementState=selected 인데 실제 keyShape opacity=0.38). 사용자 지시: "재선택 대상의 비선택 상태 해제가 핵심".
+- 결정: 침강 opacity 를 매 build 각 노드 base style 에 직접 bake(dim=0.38/lit=1). setData 가 keyShape 에 값을 직접 기입하므로 상태 apply/revert 동작에 의존하지 않아 dim↔lit 양방향 결정적. dimmed G6 상태 config 는 제거(base 와 이중 적용 시 곱셈 과침강 위험). 'dimmed' 문자열은 상태 서명(rebuild 감지)·base bake 입력으로만 유지.
+- 기각 대안: base opacity:1 만 명시하고 dimmed 상태 유지(revert 의존 — G6 동작 불확실 + 곱셈 위험); 상태 제거 시 setElementState 로 opacity 강제 리셋(전역 루프 = §33 프리즈 금지 위반).
+- Supersedes: §57.5 의 dimmed 상태 기반 침강 / Superseded By: —
