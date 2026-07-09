@@ -1278,3 +1278,6 @@ source_of_truth: true
 
 ## REV-20260709T172000-ai-claude-feature-0016-graph-vpack-pd [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §60 POST-DEPLOY 2차 완수 기록
 - T60.8 PB-0008 2차 라이브(배포 ec74a16b) PASS 기록: simGroups 스키마 세로폭주 해소(557T 0.08→1.08)·전역 0.99·겹침 0. 코드 변경 없어 적대 리뷰 비대상.
+
+## REV-20260709T140200-ai-root-feature-0016-hl-bake-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §57.8 완수 기록
+- T57.17 렌더 수준 실측 PASS 기록만 추가(TASK/MODIFY/feature-0003 TEST). 코드 diff 없음 — 패널 생략.

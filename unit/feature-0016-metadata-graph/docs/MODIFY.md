@@ -1234,3 +1234,7 @@ source_of_truth: true
 - 코드 변경 0(문서만). 배포 ec74a16b·서빙 graph-vpack2 대상 라이브 PB-0008 2차 PASS 기록.
 - cc_bonedragon 557T 822×10272(0.08)→3590×3320(1.08, 68%↓)·전역 aspect 0.57→0.99·겹침 0·pageerror 0.
   사용자 리포트(스키마 펼침 세로폭주·다중 펼침 판독불가) 라이브 해소 확인. Run·스크린샷 feature-0003 TEST.md.
+
+## CHG-20260709T140000-ai-root-feature-0016-hl-bake-postdeploy — §57.8 POST-DEPLOY 렌더 실측 기록 (2026-07-09)
+- 배포 23322c0e(무중단 롤링 + soak 통과), 라이브 `admin.js?v=20260709-graph-vpack2`(§57.8 포함 — 병렬 §60 vpack 레이아웃 커밋이 캐시버스터 재-bump, 하이라이트 로직 직교·마커 온전).
+- T57.17 렌더 수준(getElementState 전수) 5시나리오 PASS — mismatch 0·selLit 항상 true·고립 dimRender 0·복귀 복원. 상세 TASK §57.8.
