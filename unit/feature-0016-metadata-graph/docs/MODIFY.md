@@ -1153,3 +1153,7 @@ source_of_truth: true
 ## CHG-20260708T235500-ai-root-feature-0016-classify-postdeploy — §59 POST-DEPLOY 기록 (2026-07-08)
 
 - docs-only: T59.6b 완수(배포·dry-run 11·실 pass 10건 Pending 적재·allowlist 무변경) + TEST Run.
+
+## CHG-20260709T003000-ai-root-feature-0016-zorder-hl-pb0008 — §57 PB-0008 상호작용 실측 기록 (2026-07-09)
+
+- docs-only: z-order·상대 하이라이트·해제 가드 실 상호작용 검증 결과(TASK §57.4 + feature-0003 TEST.md).

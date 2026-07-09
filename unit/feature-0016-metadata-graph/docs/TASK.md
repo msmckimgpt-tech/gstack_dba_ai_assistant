@@ -1832,3 +1832,8 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   PayShopPurchase/InAppBilling→로그 DB 0.95·근거 문자열 Reason 동봉). 제품 관리 화면 "AI 분류 제안"
   블록에 승인 대기 노출(사람 승인/거부가 다음 단계 — PB-0008 육안은 사용자 검토 흐름과 병행).
   데몬은 기본 OFF 유지 — 운영 활성화는 AGENT_PRODUCT_CLASSIFY_AUTO=1 flip(별도 결정).
+
+### 57.4 PB-0008 상호작용 실측 확정 (2026-07-09, 사용자 요청 — AI 직접)
+- [x] T57.8 z-order(밴드<선<카드<컨트롤·미러 0 위반·실드래그 후 복원) + 상대 하이라이트(dim 358/361·
+  팬 보존·빈 캔버스 클릭 해제 프로브 1회 발화 실증·dim 라벨 잔존 0) + LOD 상태줄 안내 실화면 —
+  전건 PASS. feature-0003 TEST.md POST-DEPLOY 갱신 정본.
