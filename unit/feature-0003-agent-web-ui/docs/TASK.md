@@ -18,7 +18,7 @@ source_of_truth: true
   - [x] index.html app.js 캐시버스터 `?v=20260709-ask-timeout-nonblocking`.
   - [x] DESIGN-entry-points.md 모달 패턴 참조 2곳 갱신(제거 함수 stale 방지).
   - [x] §18.8 적대 서브에이전트 패널(2라운드) → R1 MAJOR(H1: earlyCid 흐름 인라인 취소 무동작, 모달이 가려온 `myAskInFlight` 키 비대칭) 적발 → 동반수정(sentinel→earlyCid 키 이관 + finally dual-delete + renderComposer) → R2 재검 SHIP. REV-20260709T130000-ask-timeout-nonblocking. node --check PASS(2회).
-  - [ ] verify-completion --pre-commit PASS → commit → PR/merge → web 재배포(deploy_scope: included, frontend-only→web 이미지) → **PB-0008 Windows-browser 라이브 실측**: 타임아웃 유발 시 화면 미가림·답변 자동 수신·기존/신규 대화 양 흐름 인라인 취소/즉시답변 동작.
+  - [x] verify-completion --pre-commit PASS → commit d87d582e → PR #638 머지(main 4b6919ec) → web 무중단 재배포(deploy-web, 4b6919ec, soak PASS). **POST-DEPLOY PB-0008 런타임 실측 PASS**(win-browser Chrome/149): 서빙 app.js 에서 `typeof showTimeoutRecoveryDialog==="undefined"`(모달 런타임 완전 제거 → 경고창 노출 불가)·attachAndWaitForResult 보존·composerFinalizeBtn/sendBtn DOM 존재·z-9999 backdrop 부재·pageerror 0. (TEST.md §3 POST-DEPLOY 갱신 참조.)
 
 ## TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격 (Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI. /_template:entry arg-given dispatch)
 <!-- PLAN-APPROVED by mckim on 2026-07-03 (AskUserQuestion 정의 재확정=A 단계 간 간격) -->
