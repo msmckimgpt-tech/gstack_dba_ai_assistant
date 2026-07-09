@@ -1829,3 +1829,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   스크린샷 pbz-04~07). 부수 실증: LOD 상태줄 "줌아웃 — 관계선 일부 축약" 실화면 노출. 주의 기록:
   캔버스 상단 상태줄 DOM 위 클릭은 캔버스 미도달(이벤트 0 발화) — 해제는 실 캔버스 영역에서만
   성립(정상 동작·테스트 방법론 주의).
+
+### Run (2026-07-09) — highlight-ux: 상대 하이라이트 UX 재구성 (§57.5, 정본 feature-0016 TASK §57.5) — **Environment: Windows-browser — POST-DEPLOY 예정**
+- 웹 자산 baked — 배포 후 실 Windows Chrome 실클릭으로 ① A→B 노드 전환 시 하이라이트 즉시 재구성
+  ② 밝은 노드 사이 관계선 선명(양끝-밝음 규칙) ③ dim 프로시저 라벨 판독성(0.38) 실측 후 append.
+  pre-deploy 격리 검증 headless 31+26 PASS.

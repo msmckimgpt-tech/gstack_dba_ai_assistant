@@ -1157,3 +1157,9 @@ source_of_truth: true
 ## CHG-20260709T003000-ai-root-feature-0016-zorder-hl-pb0008 — §57 PB-0008 상호작용 실측 기록 (2026-07-09)
 
 - docs-only: z-order·상대 하이라이트·해제 가드 실 상호작용 검증 결과(TASK §57.4 + feature-0003 TEST.md).
+
+## CHG-20260709T013000-ai-root-feature-0016-highlight-ux — §57.5 상대 하이라이트 UX 재구성 (2026-07-09)
+
+- 사용자 리포트 3건. feature-0003: static/admin.js — focusAdj 빌드 시점 재산출(+소실 정리)·엣지
+  양끝-밝음 규칙(lit)·컬럼 밝기 승계·dimmed 0.38·주석 정정. admin.html 캐시버스터.
+  tests: headless T9~T11 추가(음성 대조군 포함).

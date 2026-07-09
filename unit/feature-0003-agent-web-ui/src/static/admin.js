@@ -4066,13 +4066,24 @@ function _metaNodeStates(key) {
   // §57(사용자 요구 ②): 상대 하이라이트 — 선택 노드의 1-hop 인접 밖 **모델 데이터 노드**만 흐리게.
   //   _metaNodeStates 경유라 _metaStateSig/_metaCacheSig 에 자동 포함 — 2.5s 상태 폴과 정합(§33 교훈).
   //   합성 chrome(CAT:/GX:/GB: 등)은 모델 밖 키라 자동 비대상.
+  //   §57.5(리뷰 F1): 컬럼은 **소속 테이블의 밝기를 따른다** — 엣지 lit() 의 컬럼 폴딩과 규칙을
+  //   일치시켜 "밝은 선이 흐린 컬럼에 꽂히는" 불일치(체감 무작위의 재생산)를 제거.
   const fa = _metaGraph.focusAdj;
-  if (fa && _metaGraph.nodes.has(key) && !fa.self.has(key) && !fa.nodes.has(key)) st.push("dimmed");
+  if (fa && _metaGraph.nodes.has(key)) {
+    let k2 = key;
+    const nd = _metaGraph.nodes.get(key);
+    if (nd && nd.label === "Column") {
+      const pk = _metaColParent(key, nd.fqn);
+      if (pk) k2 = pk;
+    }
+    if (!fa.self.has(key) && !fa.self.has(k2) && !fa.nodes.has(key) && !fa.nodes.has(k2)) st.push("dimmed");
+  }
   return st;
 }
 
 // §57: 선택 노드의 1-hop 인접 집합 — self(자신+자기 컬럼) / nodes(인접 노드+컬럼의 소속 테이블+상대
-//   스키마). 모델(_metaGraph.nodes/edges) 1회 순회 — 선택 변화 시에만 호출(빌드 hot-path 아님).
+//   스키마). 모델 1회 순회 — §57.5부터 **매 빌드 재산출**(선택 존재 시, 6k 모델 실측 ~10ms ≈ 빌드의
+//   3% — stale 스냅샷 제거 비용으로 수용).
 function _metaFocusAdjacency(selKey) {
   const self = new Set([selKey]);
   const nodes = new Set();
@@ -4574,6 +4585,17 @@ function _metaG6Build() {
   // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
   //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
   if (_metaGraph.mode === "products") return _metaG6BuildProducts();
+  // §57.5(사용자 버그 리포트): 상대 하이라이트 인접 집합은 **빌드 시점 재산출** — 선택 시점 스냅샷은
+  //   클릭 직후 ShowDetail/컬럼 펼침의 늦은 ingest(이웃 적재)를 반영 못 해 빈/구식 인접으로 굳고,
+  //   이후 모든 rebuild 가 그 스냅샷을 bake 해 "다른 노드를 클릭해도 하이라이트가 안 바뀌는" 증상이
+  //   된다. 여기서 재산출하면 어떤 경로의 rebuild 든 현재 selected 기준으로 자가 치유된다.
+  if (_metaGraph.selected && _metaGraph.nodes.has(_metaGraph.selected)) {
+    _metaGraph.focusAdj = _metaFocusAdjacency(_metaGraph.selected);
+  } else {
+    // §57.5(리뷰 F2): 선택 노드가 모델에서 사라진 경우(테이블 접기·검색 prune)도 정리 —
+    //   앵커 없는 전역 흐림 잔존 방지(모델 교체 경로는 resetModel 이 별도 정리).
+    _metaGraph.focusAdj = null;
+  }
   _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
   _metaGraph.groupMembers = new Map();   // group-interact(§50): 매 build 그룹→멤버 인덱스 재구성(펼친 그룹만 emission 에서 채움).
   _metaGraph.groupOf = new Map();        // group-interact(§50): 매 build 테이블→groupKey 역인덱스 재구성.
@@ -5053,23 +5075,25 @@ function _metaG6Build() {
     const sk = _metaCatParent(nodeKey, gn && gn.fqn);
     return (sk && present.has("SC:" + sk)) ? ("SC:" + sk) : null;
   };
-  // §57(사용자 요구 ②·엣지 축): 상대 하이라이트 — 선택의 1-hop 에 직접 닿는 엣지만 선명 유지.
-  //   selTouch(하이라이트 인접 여부)는 dim 과 LOD-keep 양쪽에 쓰이며, 무선택(fa=null)이면 false —
-  //   dim 은 fa 존재 시에만 발동하고 LOD keep 은 선택이 있어야 성립(의미 분리 — 혼용 금지).
+  // §57.5(사용자 피드백 "흐림 기준 체감 무작위"): 엣지 흐림은 단일 규칙 — **양끝이 모두 밝으면
+  //   선도 밝다**(밝은 부분그래프 = 선택+1-hop 인접의 폐포). 예전 '선택에 직접 닿는 선만 선명'은
+  //   밝은 이웃 노드 사이의 선이 흐려져 사람 눈에 무작위로 읽혔다. lit() 은 dim 과 LOD-keep 양쪽에
+  //   쓰이며 무선택(fa=null)이면 false — dim 은 fa 존재 시에만 발동(의미 분리).
   const fa = _metaGraph.focusAdj;
-  const selTouch = (rid) => {
+  const lit = (rid) => {
     if (!fa) return false;
     const r = String(rid || "");
     const mk = r.startsWith("SC:") ? r.slice(3) : r;
-    if (fa.self.has(mk) || fa.self.has(r)) return true;
+    if (fa.self.has(mk) || fa.nodes.has(mk)) return true;
     // 컬럼-레벨 끝점(모델 밖 키 포함)은 소속 테이블로 접어 판정.
     const gn = _metaGraph.nodes.get(mk);
     if (!gn || gn.label === "Column") {
       const pk = _metaColParent(mk, gn && gn.fqn);
-      if (pk && fa.self.has(pk)) return true;
+      if (pk && (fa.self.has(pk) || fa.nodes.has(pk))) return true;
     }
     return false;
   };
+  const selTouch = lit;   // 호출부 명칭 호환(의미: 밝은 부분그래프 소속 여부)
   const dimIf = (st, hl) => {
     if (fa && !hl) {
       st.strokeOpacity = Math.min(st.strokeOpacity || 1, 0.12);
@@ -5097,7 +5121,7 @@ function _metaG6Build() {
       const a = present.has("SC:" + e.source) ? ("SC:" + e.source) : null;
       const b = present.has("SC:" + e.target) ? ("SC:" + e.target) : null;
       if (!a || !b) return;
-      const keep = selTouch(a) || selTouch(b);
+      const keep = selTouch(a) && selTouch(b);
       edges.push({ id: e.id, source: a, target: b,
         data: { label: "SCHEMA_REF", count: e.count || 1, ref_count: e.ref_count, use_count: e.use_count },
         style: dimIf(_metaSchemaRefEdgeStyle(e.count), keep) });
@@ -5121,7 +5145,7 @@ function _metaG6Build() {
         //   (배포 직후 기존 엣지 속성 부재 창 커버). 세그먼트 null(스키마 미상)은 교차로 오판하지 않음.
         const ss = _metaCatParent(e.source, srcN && srcN.fqn), ts = _metaCatParent(e.target, tgtN && tgtN.fqn);
         const xr = !!e.cross_ds || (!!ss && !!ts && ss !== ts);
-        const keep = selTouch(rs) || selTouch(rt) || selTouch(e.source) || selTouch(e.target);
+        const keep = selTouch(rs) && selTouch(rt);
         if (rs === e.source && rt === e.target) {
           if (lodActive && !keep && !xr) { lodDropped += 1; return; }
           edges.push({ id: e.id, source: rs, target: rt,
@@ -5139,7 +5163,7 @@ function _metaG6Build() {
         return;
       }
       if (present.has(e.source) && present.has(e.target)) {
-        const keep = selTouch(e.source) || selTouch(e.target);
+        const keep = selTouch(e.source) && selTouch(e.target);
         if (lodActive && !keep) { lodDropped += 1; return; }
         edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status },
           style: dimIf(_metaEdgeStyleFor(e.status), keep) });
@@ -5152,7 +5176,7 @@ function _metaG6Build() {
     //   표현을 소유 — 펼쳤다 접은 스키마의 모델 잔존 엣지가 이중(SC:↔SC: 승격 + SCHEMA_REF)으로
     //   그려지는 것을 차단한다.
     if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;
-    const keep = selTouch(rs) || selTouch(rt) || selTouch(e.source) || selTouch(e.target);
+    const keep = selTouch(rs) && selTouch(rt);
     const colLevel = (rs === e.source && rt === e.target);
     if (colLevel) {
       // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지). crossds-rel: cross_ds 면 마젠타 점선.
@@ -5892,7 +5916,9 @@ function _metaInitGraph() {
       selected: { stroke: "#161b22", lineWidth: 3 },
       busy: { stroke: "#0a5b66", lineWidth: 3, lineDash: [2, 2] },   // graph-perf-bg: 펼침/확장 조회 중 임시 표시(teal 점선)
       // §57(사용자 요구 ②): 상대 하이라이트 — 선택 1-hop 밖 데이터 노드 흐리게(_metaNodeStates 'dimmed').
-      dimmed: { opacity: 0.15 },
+      //   §57.5(사용자 피드백): 0.15 는 프로시저 명칭이 판독 불가 — 0.38 로 상향(침강은 유지하되
+      //   라벨은 읽히는 수준. 선명/침강 대비는 엣지 0.12 와 노드 테두리·색으로 충분).
+      dimmed: { opacity: 0.38 },
     } },
     // graph-drag: 중간 버튼 드래그 = 카메라 팬(어디서든), 좌클릭 = 기존대로(빈 캔버스 팬 / 노드 이동).
     behaviors: [

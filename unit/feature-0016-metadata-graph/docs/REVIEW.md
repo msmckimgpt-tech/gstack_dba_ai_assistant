@@ -1232,3 +1232,13 @@ source_of_truth: true
 ## REV-20260708T235800-ai-root-feature-0016-classify-postdeploy [SKIPPED: docs-only POST-DEPLOY 기록 — 코드 변경 0] — §59 완수 기록
 
 ## REV-20260709T003200-ai-root-feature-0016-zorder-hl-pb0008 [SKIPPED: docs-only PB-0008 실측 기록 — 코드 변경 0] — §57.4 기록
+
+## REV-20260709T013500-ai-root-feature-0016-highlight-ux [SUBAGENT: PASS-WITH-FIXES] — §57.5 적대 리뷰(단일 에이전트·프로브 실증)
+
+- 발견 MAJOR 1·MINOR 2·NIT 2 — 전건 반영: F1(엣지 lit 컬럼 폴딩 vs 노드 dim 불일치 — 밝은 선이
+  흐린 컬럼에 꽂힘, 프로브 실증) → 컬럼 밝기 승계로 규칙 단일화. F2(selected 소실 시 focusAdj
+  잔존 — 접기/prune 경로) → else 정리. F3(T9 변이 맹점) → 음성 대조군·colLevel·소실 테스트 추가.
+  F4(주석 stale) 정정. F5(선택 클릭당 이중 재산출 ~10ms) 수용.
+- 성능 실측: 재산출 10.5ms/호출 vs 빌드 399ms(6k 모델) — 3% 오버헤드 수용. 루프 없음(고정점 1회
+  수렴), LOD·SCHEMA_REF·agg 상호작용 무모순 검증 완료.
+- 재검증: headless 31+26 PASS.

@@ -202,5 +202,54 @@ function check(name, cond, extra) {
   check("T8 부모 테이블 비dimmed", !g.__nodeStates(nk("a.t1")).includes("dimmed"));
 }
 
+// T9(§57.5 버그 수정): 인접 집합은 빌드 시점 재산출 — 선택 후 늦게 ingest 된 이웃이 다음 build 에서
+//   자동으로 밝아진다(선택-시점 스냅샷이면 dim 으로 굳음 = 사용자 리포트 버그).
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2");
+  M.selected = nk("a.t1");
+  M.focusAdj = g.__focusAdj(nk("a.t1"));   // 이 시점 인접: 없음(엣지 미적재)
+  check("T9 사전: t2 dim", g.__nodeStates(nk("a.t2")).includes("dimmed"));
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });   // 늦은 ingest
+  build();   // 빌드가 focusAdj 재산출
+  check("T9 늦은 ingest 후 t2 자동 점등", !g.__nodeStates(nk("a.t2")).includes("dimmed"));
+  check("T9 선택 해제 시 focusAdj 자동 정리", (() => { M.selected = null; build(); return !M.focusAdj; })());
+}
+
+// T10(§57.5 규칙 단일화): 엣지는 '양끝 밝음'일 때만 선명 — 이웃↔이웃 선명, 이웃↔비인접 흐림.
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3"); addTable(M, "a.t4");
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });   // sel↔이웃
+  addEdge(M, nk("a.t1.c2"), nk("a.t3.c1"), "REFERENCES", { status: "trusted" });   // sel↔이웃
+  addEdge(M, nk("a.t2.c2"), nk("a.t3.c2"), "REFERENCES", { status: "trusted" });   // 이웃↔이웃 → 선명
+  addEdge(M, nk("a.t3.c3"), nk("a.t4.c1"), "REFERENCES", { status: "trusted" });   // 이웃↔비인접 → 흐림
+  M.selected = nk("a.t1");
+  const out = build();
+  const f = (s, t2) => out.edges.find((x) => x.source === nk(s) && x.target === nk(t2));
+  const nn = f("a.t2", "a.t3"), nf = f("a.t3", "a.t4");
+  check("T10 이웃↔이웃 선명", !!nn && (nn.style.strokeOpacity === undefined || nn.style.strokeOpacity > 0.5), nn && nn.style.strokeOpacity);
+  check("T10 이웃↔비인접 흐림", !!nf && nf.style.strokeOpacity <= 0.12, nf && nf.style.strokeOpacity);
+}
+
+// T11(리뷰 F1): 밝은 테이블의 '컬럼 노드'도 점등(엣지 lit 폴딩과 규칙 일치) — 밝은 선이 흐린 컬럼에
+//   꽂히는 불일치 제거. + T9 음성 대조군(리뷰 F3)·selected 소실 시 focusAdj 정리(리뷰 F2).
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t9");
+  M.nodes.set(nk("a.t2.c2"), { key: nk("a.t2.c2"), label: "Column", name: "c2", fqn: "a.t2.c2" });
+  M.nodes.set(nk("a.t9.c1"), { key: nk("a.t9.c1"), label: "Column", name: "c1", fqn: "a.t9.c1" });
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });
+  M.selected = nk("a.t1");
+  build();
+  check("T11 이웃 테이블 컬럼 점등", !g.__nodeStates(nk("a.t2.c2")).includes("dimmed"));
+  check("T11 비인접 테이블 컬럼 dim", g.__nodeStates(nk("a.t9.c1")).includes("dimmed"));
+  check("T11 음성 대조군: 비인접 테이블 dim 유지", g.__nodeStates(nk("a.t9")).includes("dimmed"));
+  // F2: 선택 노드가 모델에서 사라지면(접기/prune) 다음 build 가 focusAdj 정리
+  M.nodes.delete(nk("a.t1"));
+  build();
+  check("T11 선택 소실 시 focusAdj 정리", !M.focusAdj);
+}
+
 console.log(`\n${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);
