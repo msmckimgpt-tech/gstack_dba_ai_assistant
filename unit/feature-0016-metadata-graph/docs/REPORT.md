@@ -1291,3 +1291,34 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
 ### 검증
 - pytest test_routine_dbanalysis **21 PASS**(§54④ 신규 5 포함) + 관련 회귀 57 PASS · node --check ·
   py_compile PASS. POST-DEPLOY: web+insight-worker 재배포 → PB-0008 AC-1~5 라이브 실측(T54.8).
+
+## 2026-07-09 · 노드-레벨 컬럼 LOD — 대규모 노드 성능 (col-lod, TASK §61, ADR-029)
+사용자 리포트: "관리 콘솔 > 지식베이스 > 그래프 뷰에서 노드가 많아질수록 부하·지연. 2D 화면 다수 오브젝트
+최적화 + 유사 서비스 방식 웹 리서치하며 진행."
+
+### 접근 도출 (진단 → 리서치 → 적대적 검증)
+- **진단(read-only)**: 병목 top3 확정 — ① 전체 rebuild `setData(_metaG6Build())`+draw 가 모든 인터랙션
+  공통 경로(뷰포트 컬링 전무, draw 지배항=테이블당 최대 500 Column circle) ② 노드-레벨 LOD 부재(엣지만 축약)
+  ③ 레이아웃 매 rebuild 비-memoize. 라이브 5스키마=2,618노드·cc_*=557T.
+- **웹 리서치**: 대규모 2D 그래프(Sigma.js WebGL 인스턴싱·Cosmograph GPU·KeyLines·G6 native) 공통 플레이북 —
+  뷰포트 컬링·LOD·shape 감축·optimize-viewport-transform·증분/배치·Worker 오프로드.
+- **적대적 검증(코드·번들 실측)**: 19개 후보 중 16개 반증/보류. WebGL(번들 Canvas 전용·품질회귀)·
+  optimize-viewport-transform drop-in(behavior 오분류·지배병목 아님)·뷰포트 컬링(layout 잔존·combo 축소·
+  pan churn)·**topology-diff 증분(ADR-004 재검토)** 모두 기각 — 특히 G6 `setData` 는 **이미 draw 단계 diff**
+  (변경 요소만 재렌더)라 증분이 지배 draw 를 못 줄이고, ADR-028 vpack 이 펼침을 형제 ~43% re-column 으로 만들어
+  bounded-delta 무효, combo 자식 auto-fit 이라 coordinate-identity 불가 → **노드-레벨 컬럼 LOD** 로 수렴
+  (사용자 C→A 전환 결정). 상세 근거 ADR-029.
+
+### 구현 (admin.js, frontend-only, 마이그레이션 0)
+- 상수 `_META_COL_LOD_ZOOM=0.5`·`_META_COL_LOD_MIN=200`. `_metaG6Build` 초입에 `colLodActive`
+  (getZoom + 전체 펼친 컬럼 수 O(1) 합) 산정.
+- 개요 밴드에서 Column circle·Routine 파라미터·per-table "X:" 접기 ctl **emission 억제**. `realH`(공간 예약)
+  불변 → **테이블 좌표 band-invariant(reflow 0)**, combo 는 테이블이 범위 정의(하단 여백만 tighter).
+- 억제 테이블 라벨 `▤N` 컬럼수 배지(labelMaxWidth overflow 차단). 컬럼 끝점 엣지는 `renderEndpoint` 로
+  테이블 승격(dangling 0). `_lodBand` 3단(full/collod/lod)·300ms 디바운스·상태줄 밴드별 안내.
+
+### 검증
+- headless `test_g6build_collod.js` **신설 18 PASS** — 억제 0방출·**좌표 이동 0(band-invariant)**·▤N 배지·
+  엣지 re-anchor·줌/컬럼 게이트·루틴 파라미터. 기존 headless **105 PASS 회귀 0**·`node --check` PASS.
+- 캐시버스터 `admin.js?v=20260709-col-lod`. POST-DEPLOY PB-0008(대형 그래프 줌아웃 before/after)는 TEST §61
+  (그래프뷰 무인 도달 차단 — 자산 curl + 사용자 육안 게이트).

@@ -1915,3 +1915,18 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **UnionCAInfo(선택): opacity/keyShapeOpacity/attrOpacity=1(이전 0.38에서 복원), states=["analyzed","selected"]** — 재선택 노드 침강 잔존 해소.
   - Ally/Castle(dimmed): opacity 0.38 유지(침강 정상 동작). 육안 pbom-final: 선택 노드 파란 fill+전체 밝기 도드라짐, 이웃 침강.
 - 사용자 5차 리포트("재선택 노드가 상대 하이라이트 외 대상처럼 흐림 유지") 렌더+육안 해소 확인.
+
+### Run (2026-07-09) — col-lod: 노드-레벨 컬럼 LOD (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §61/ADR-029) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_collod.js` **20 PASS** — 특히 **T2 좌표 band-invariant**
+  (억제 vs full 빌드 테이블 tx/ty **이동 0 = reflow 0**)로 "억제해도 노드 위치·combo 배치 불변"을 코드 수준
+  증명. T4 엣지 re-anchor(dangling 0). 회귀 105 PASS·`node --check` PASS.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 web 이미지 baked → merge +
+  `deploy-web` 재배포 선행 필요(§51·§57·§60 동일 패턴). ② col-lod 발동 조건이 **대형 라이브 그래프(펼친 컬럼
+  >200) + 개요 줌(<0.5)** 이라 무인 재현이 복잡하고, **그래프뷰 무인 도달은 TrustedHostMiddleware·인증세션·
+  Windows→WSL 라우팅 3중벽으로 차단**(기록된 blocker). → **자산 검증(WSL localhost curl: 서빙 admin.js 가
+  `?v=20260709-col-lod` + `_META_COL_LOD_ZOOM`·`colLodActive` 코드 포함) + 사용자 육안 게이트**로 대체
+  (visual_verification_scope=always, 브리지 불가 시 사유 명시 통과 — FIRST_REQUEST·AGENTS §15.4.1).
+- **POST-DEPLOY 사용자 육안 검증 항목(T61.5)**: 대형 스키마(예 cc_* 557T 또는 다스키마) 로그인 → 여러 테이블
+  컬럼 펼침 → 줌아웃(<0.5): ① Column circle 미표시(테이블 칩·관계선 유지) ② **테이블 위치 불변(reflow 0)**
+  ③ `▤N` 배지 라벨 앞 가독(긴 이름에서도) ④ 확대(≥0.5) 시 컬럼 전량 복원 ⑤ 상태줄 "컬럼 표시 축약" 안내
+  ⑥ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.

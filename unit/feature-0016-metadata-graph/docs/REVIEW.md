@@ -1289,3 +1289,16 @@ source_of_truth: true
 
 ## REV-20260709T170200-ai-root-feature-0016-sel-prom-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §57.9 완수 기록
 - T57.19 실측 PASS 기록만 추가(TASK/MODIFY/feature-0003 TEST). 코드 diff 없음 — 패널 생략.
+
+## REV-20260709T183000-ai-claude-feature-0016-col-lod [SUBAGENT: PASS-WITH-FIXES] — §61 노드-레벨 컬럼 LOD 구현 diff 적대 리뷰
+- 3렌즈 적대 패널(결정론/정확성 · 시각회귀/PB-0008 · 상호작용 엣지케이스), 각 렌즈가 코드 실측으로 반증 시도.
+- **BLOCKING/MAJOR 0** — 핵심 주장 전부 성립(코드+테스트 일치): coordinate-identity(억제 vs full 테이블 좌표 이동 0, 모든 경로 flat/simGroups/카테고리/terms)·엣지 re-anchor(renderEndpoint 승격, dangling 0)·▤N 배지가 고정폭 테이블 bbox/combo fit 무섭동·상태줄 마커 정합·카메라 무점프.
+- CONFIRMED(MINOR 3, **전건 수정**):
+  1. Products 뷰 stale `_colLodActive` — `_metaG6Build` 가 products 모드에서 `_metaG6BuildProducts()` 로 조기 return(admin.js:4612)해 플래그 미갱신 → products 뷰 거짓 "컬럼 축약" 마커. **수정**: `_metaG6BuildProducts` 초입 + `_metaGraphResetModel` 에서 `_colLodActive=false` 소거.
+  2. 게이트가 접힌 스키마 컬럼까지 카운트 — `_expandedColTotal` 전역 합이라 접힌 스키마(collapseSchema 는 모델 컬럼 유지)의 컬럼이 임계 부풀림 → 보이는 소량 컬럼 불필요 억제. **수정**: colsByTable 순회 시 `_metaSchemaComboOf` 로 소속 스키마가 `schemaExpanded` 인 테이블(=렌더될 컬럼)만 합산. headless T8 신설(접힌 스키마 제외 검증).
+  3. ▤N 배지 후미 truncation — `labelMaxWidth=140` ellipsis 로 긴 테이블명(cc_user_subscription 등)에서 배지가 먼저 잘려 affordance 소실. **수정**: 배지를 라벨 **앞**(prefix)으로 이동해 후미 truncation 생존. headless T3 갱신(prefix 검증).
+- 수용/후속(반영 안 함, 근거):
+  - 상태줄 마커가 밴드 전이에서만 갱신(같은 밴드 내 컬럼 펼침/접기로 임계 교차 시 stale) — 기존 엣지-LOD `_lodDropped` 마커와 **동일 패턴**(일관), 마커는 nicety. 필요 시 후속.
+  - preserve 검색이 개요 줌(억제)에서 매칭 **컬럼** glow/pan 상실 — 개요 줌 한정 graceful degradation(테이블은 보임, 확대 시 복원). §54③ invariant 는 판독 배율에서 유효. 억제 예외처리는 emission 분기 복잡도↑ → 후속 항목.
+  - 루틴 파라미터 억제 시 ▤N 배지 비대칭(NIT) — 파라미터 억제는 드문 경로, realH gap 이 '펼침' 신호. 후속.
+- 검증: 수정 후 headless `test_g6build_collod.js` **20 PASS**(+T8) + 회귀 vpack 19·category 26·edge 60 = **125 PASS 회귀 0**. `node --check` PASS.

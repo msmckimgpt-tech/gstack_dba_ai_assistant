@@ -860,3 +860,28 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 
 ### Run (예정) — POST-DEPLOY 2차 (Environment: Windows-browser, PB-0008)
 - vpack2 재배포 후 simGroups 스키마 펼침 landscape 재확인. T60.8.
+
+## §61 col-lod — 노드-레벨 컬럼 LOD (2026-07-09, ADR-029)
+
+### 단위 (headless, AGE/라이브 불요) — Environment: unit/node
+- **`test_g6build_collod.js` 신설: 20 PASS / 0 FAIL** (`node test_g6build_collod.js ../../src/static/admin.js`).
+  - T1 억제 밴드(zoom 0.3·480컬럼) 컬럼·X:ctl 방출 0 / full(zoom 1) 방출>0 / 테이블 칩 20 동수 유지.
+  - **T2 좌표 band-invariant — 억제 vs full 테이블 tx/ty 이동 0(reflow 0)·누락 0** (결정론·PB-0008 근거).
+  - T3 억제 테이블 ▤N 배지(펼친 16개, 수치=컬럼수 30, **라벨 prefix** = 후미 truncation 생존) / 미펼침 4개 배지 없음.
+  - T4 컬럼→컬럼 REFERENCES 가 억제 시 테이블→테이블 승격(dangling 0, renderEndpoint).
+  - T5 줌 0.6(≥0.5) 억제 안 함 / T6 컬럼 90(≤200) 억제 안 함(게이트).
+  - T7 루틴 파라미터 억제 + 루틴 칩 좌표 불변.
+  - **T8 접힌 스키마 컬럼 게이트 제외** — schemaExpanded 인 테이블(렌더될) 컬럼만 카운트(리뷰 MINOR 수정).
+- 회귀: `test_g6build_vpack.js` 19 · `test_g6build_category.js` 26 · `test_g6build_edge_visibility.js` 60
+  = **105 PASS 회귀 0**. `node --check admin.js` PASS.
+- 적대 리뷰(REV-...-col-lod, SUBAGENT PASS-WITH-FIXES): BLOCKING/MAJOR 0, MINOR 3 전건 수정
+  (products stale 마커·게이트 접힌스키마 카운트·배지 truncation). 상세 REVIEW.md.
+
+### Run (예정) — POST-DEPLOY (Environment: Windows-browser, PB-0008) — T61.5
+- 대상: 대형 그래프(cc_* 557T 또는 다스키마 펼침) 로그인 → 컬럼 여러 개 펼침 → 줌아웃(<0.5) before/after.
+- 확인 항목: ① 억제 밴드에서 Column circle 미표시(테이블 칩·관계선 유지) ② **테이블 위치 불변(reflow 0)**
+  ③ ▤N 배지 가독(overflow/clip 여부) ④ 확대(≥0.5) 시 컬럼 전량 복원 ⑤ 상태줄 "컬럼 표시 축약" 안내.
+- **무인 도달 제약**: 그래프뷰는 TrustedHostMiddleware·인증세션·Windows→WSL 라우팅 3중벽으로 무인 win-browser
+  도달 불가(기록된 blocker). → **자산 검증(WSL localhost curl 로 admin.js?v=20260709-col-lod 서빙·col-lod
+  코드 포함 확인) + 사용자 육안 게이트**로 대체(FIRST_REQUEST visual_verification_scope: 브리지 불가 시 사유
+  명시 통과). 사용자 확인 후 PASS append.
