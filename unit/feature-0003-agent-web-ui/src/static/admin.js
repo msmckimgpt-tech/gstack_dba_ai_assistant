@@ -4719,9 +4719,10 @@ function _metaG6Build() {
   const GPB = 10;                   // 그룹 블록 하단 pad
   const GGX = 14, GGY = 16;         // 그룹 블록 간 가로/세로 간격
   const TRW = 4 * COLW + 3 * GGX;   // 클러스터 내부 그룹 행 목표 폭(≈기존 4열 masonry 폭 유지)
-  // graph-vpack(§60): 그룹 내부 masonry 도 실높이 balance(플랫 경로와 동형). 그룹 블록은 좁으니 상한 4열.
+  // graph-vpack(§60): 그룹 내부 masonry 도 실높이 balance(플랫 경로와 동형). 그룹 블록 상한 6열
+  //   (§60.2: 4→6 — 멤버 많은 그룹이 세로로 길어지는 것 완화; 작은 그룹은 sqrt 규칙상 열 수 불변).
   const packGroup = (g, arr) => {
-    const gic = colsForHeights(arr, (t) => realH(g, t), 4);
+    const gic = colsForHeights(arr, (t) => realH(g, t), 6);
     const colTop = new Array(gic).fill(0);
     const inner = arr.map((it) => {
       let c = 0; for (let k = 1; k < gic; k++) if (colTop[k] < colTop[c]) c = k;   // 실높이 최단 열(균형)
@@ -4760,10 +4761,16 @@ function _metaG6Build() {
         const collapsed = isCollapsed(sg);
         return Object.assign({ sg, gi, collapsed, hEff: collapsed ? HDONLY : p.h }, p);
       });
+      // graph-vpack(§60.2, PB-0008 라이브 실측): 그룹 블록 행 목표 폭도 **총 블록 면적 기반**으로 적응한다.
+      //   고정 TRW(4열 상당 ≈938)는 그룹이 많은 스키마(관계 있는 제품 스키마 다수)에서 그룹 행이 세로로
+      //   쌓여 클러스터가 세로 폭주(라이브 cc_* 557T = 822×10272, aspect 0.08). floor=TRW(소수 그룹 현행
+      //   배치 보존), landscape(×2.0) 타깃 — flat 경로 MAXROWW 와 동일 철학의 클러스터-내부판.
+      let _gTotArea = 0; blocks.forEach((b) => { _gTotArea += Math.max(1, b.w) * Math.max(1, b.hEff); });
+      const TRW_ADAPT = Math.max(TRW, Math.round(Math.sqrt(_gTotArea * 2.0)));
       const rows = [];
       { let cur = { blocks: [], w: 0 };
         blocks.forEach((b) => {
-          if (cur.blocks.length && cur.w + b.w > TRW) { rows.push(cur); cur = { blocks: [], w: 0 }; }
+          if (cur.blocks.length && cur.w + b.w > TRW_ADAPT) { rows.push(cur); cur = { blocks: [], w: 0 }; }
           b.bxRel = _METLAY.PADX + cur.w; cur.blocks.push(b); cur.w += b.w + GGX;
         });
         if (cur.blocks.length) rows.push(cur); }

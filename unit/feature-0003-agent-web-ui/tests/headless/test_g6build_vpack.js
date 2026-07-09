@@ -195,5 +195,19 @@ const check = (name, cond, extra) => { if (cond) { pass++; console.log("PASS", n
   check("T8 routine 펼침 겹침 0", countNodeOverlaps(out).count === 0, countNodeOverlaps(out).example);
 }
 
+// T9: simGroups 경로(§60.2, PB-0008 라이브 회귀) — cluster_id 로 유사속성 그룹 ≥2 강제.
+//   고정 TRW(4열 상당)면 그룹 행이 세로 스택(라이브 cc_* aspect 0.08) → 적응형 TRW 로 landscape.
+{
+  const M = seedModel([{ name: "grpdb", nTables: 120 }]);
+  let i = 0;
+  M.nodes.forEach((n) => { if (n.label === "Table") { n.cluster_id = "g" + Math.floor(i / 20); i++; } });   // 6 be: 그룹 × 20
+  const out = build();
+  check("T9 simGroups 경로 진입(그룹박스 방출)", out.nodes.some((n) => n.data && n.data.kind === "group-bg"));
+  const bb = comboBBox(out).get(`${SCOPE}:grpdb`);
+  const asp = bb ? (bb.r - bb.l) / (bb.bo - bb.t) : 0;
+  check("T9 그룹 많은 스키마 landscape(aspect≥1)", asp >= 1.0, asp.toFixed(2));
+  check("T9 simGroups 노드 겹침 0", countNodeOverlaps(out).count === 0, countNodeOverlaps(out).example);
+}
+
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail ? 1 : 0);

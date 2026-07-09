@@ -34,7 +34,16 @@
   MINOR(빈 열 폭)·MAJOR 주석 정직화(churn 43~100% 실측)·NIT(테스트 흡수) 반영. 상세 REVIEW.md.
 - 실 _metaG6Build before/after: 단일 12T×15컬럼 896→391 높이(56%↓, aspect 0.42→2.10) · 16스키마×40T
   4372→2124(51%↓, 0.41→1.77) · 24스키마×60T 9380→3800(59%↓, aspect 0.19→**1.22**, 세로 띠→landscape).
-- POST-DEPLOY 실브라우저(PB-0008) 라이브 검증은 web 재배포 후(외부영향 — 사용자 confirm). T60.5.
+- POST-DEPLOY 실브라우저(PB-0008) 1차(배포 d5cf0fec): 라이브 5스키마 펼침 — 노드 겹침0·클러스터 겹침0(2618
+  노드) 확인. 단 per-cluster 실측이 **simGroups 경로 스키마(cc_* 557T) 822×10272 aspect 0.08 세로폭주 잔존**을
+  포착 → 아래 §60.2 로 근본 수정(라이브 검증이 초기 수정의 gap 을 잡아낸 사례).
+
+### §60.2 follow-up — simGroups 경로 세로폭주 해소 (PB-0008 회귀, T60.7)
+- 원인: 초기 수정은 flat masonry + 전역 shelf 폭만 적응화 — 그룹 블록 행 폭 `TRW`(고정 4열 상당 ≈938)는
+  그대로라 그룹 많은 스키마에서 그룹 행이 세로 스택.
+- 수정: ① `TRW` 를 총 블록 면적 기반 적응(`max(TRW, round(sqrt(ΣblockArea×2.0)))`) ② packGroup 열 상한 4→6.
+- 검증: headless T9(simGroups landscape) 추가 → §60 **19 PASS** + 회귀 54+26 · 실측 557T/20그룹
+  822×7406(0.11)→2690×2544(**1.06**, 66%↓)·557T/4그룹 0.13→1.18. 캐시버스터 20260709-graph-vpack2.
 
 ## 2026-07-07 · 제품 카테고리 + 크로스-DB 관계 + 재귀 분석 refine (graph-category-recursive-refine, TASK §55, ADR-021)
 

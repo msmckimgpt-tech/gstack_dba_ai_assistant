@@ -1269,3 +1269,9 @@ source_of_truth: true
 - 판정: R1(세로폭주 해소)·R2(비겹침) 모두 **구조적 충족**. correctness/겹침 BLOCKING 0. 비겹침은 MAXROWW 값과 무관하게 shelf-pack 구조(cx 누적 + shelfH 행 전진) + 클러스터 내부 x 이산화(PADX+c*COLW, COLW 224>칩 190) + realH push-down 으로 보장 — 재분배/열수 변화가 칩을 열 경계 밖으로 밀 수 없음.
 - CONFIRMED→반영: ① [MINOR] colsForHeights 가 항목 수 미캡 → 빈 열/공백(코스메틱, 겹침 아님): `arr.length` 캡 추가 ② [MAJOR·문서화된 승인 tradeoff] "약간의 churn" 실측 43~100%(80T 단일펼침 ~43%, ic 전이경계 전량): 주석 정직화 + 대형 스키마 perf 는 PB-0008 실측(T60.5) ③ [NIT] packGroup/카테고리 밴드/routine 경로 미커버 → T7(밴드)·T8(routine) 흡수(16 PASS).
 - 기각/NON-이슈: MAXROWW 를 layouts.map 이후로 이동해도 참조 위치 전부 정의 이후(grep) — TDZ/회귀 없음 · 빈 배열/전-card/0-division 모두 가드 · realH 4경로(flat·packGroup·GB bbox·shelf-pack) 일관 소비로 (w,h)=실 emission bbox 정합 · 적응형 폭 과도는 shelf-pack 이 겹침 불가라 R2 위협 아님.
+
+## REV-20260709T163000-ai-claude-feature-0016-graph-vpack2 [SKIPPED: 자체검증 — 적대검증된 ADR-028 적응형-폭 메커니즘의 simGroups 경로 확장(동일 불변식) + 라이브 재측정이 최종 게이트] — §60.2 simGroups 세로폭주
+- 맥락: §60 적대 리뷰(REV 위)는 packGroup/simGroups 를 "커버됨"으로 판단했으나 **flat 경로에 집중해 그룹 블록 행 폭(TRW 고정)이 세로 스택하는 gap 을 놓쳤다** — PB-0008 1차 라이브 실측(cc_* 557T = 822×10272, aspect 0.08)이 포착. 리뷰의 한계를 라이브가 보완한 사례(교훈은 ADR-028 §60.2 addendum).
+- §60.2 변경(2줄): ① TRW 를 총 블록 면적 기반 적응 ② packGroup 열 상한 4→6. **겹침 안전 자체분석**: TRW 는 블록 "행 래핑 폭"만 바꾼다 — 블록은 여전히 bxRel=PADX+cur.w(행 내 누적, 비겹침)·행은 rowH 만큼 전진(byy += rowH+GGY)·클러스터 w=PADX*2+contentW(실 bbox). shelf-pack 구조 불변이라 TRW 값과 무관하게 블록 비겹침. packGroup 6열도 COLW 간격·realH push-down 유지 → 겹침 불변식 그대로.
+- **패킹 경로 완전성 grep**: 스키마-클러스터 패킹 폭 제어는 이제 전부 적응형 — 전역 shelf(MAXROWW ①)·flat masonry(colsForHeights ②)·simGroups 블록 행(TRW §60.2)·group 내부(packGroup). 고정-폭 잔여 없음(products 모드는 별개 2-열 뷰, 본 버그 무관).
+- 검증: headless T9(simGroups landscape·겹침0) → 19 PASS + 회귀 54+26 · 실측 557T/20그룹 0.11→1.06·4그룹 0.13→1.18. **최종 게이트 = vpack2 재배포 후 PB-0008 2차 라이브 재측정(T60.8)**.

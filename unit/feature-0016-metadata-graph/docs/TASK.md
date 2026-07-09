@@ -1930,5 +1930,14 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T60.6 §18.8 적대 리뷰 패널(ux/layout 렌즈, SUBAGENT): PASS-WITH-FIXES — R1·R2 구조적 충족·BLOCKING 0.
       반영: MINOR(colsForHeights 에 arr.length 캡 — 빈 열 폭 방지)·MAJOR 주석 정직화(churn 실측 43~100%)·
       NIT(T7 카테고리 밴드·T8 routine 경로 테스트 흡수). 상세 REVIEW.md.
-- [ ] T60.5 POST-DEPLOY 실브라우저(PB-0008) 라이브 검증 — web 재배포 후 스키마 다중 펼침 실측(Run 은
-      feature-0003 TEST.md). **외부영향(배포) — 사용자 confirm 후 진행.**
+- [x] T60.5 POST-DEPLOY 실브라우저(PB-0008) 1차 — 배포 d5cf0fec 후 라이브 실측(win-browser, mssql-qa-idc,
+      스키마 5개 펼침). **노드 겹침0·클러스터 겹침0(2618 노드)** 확인. 단 per-cluster 실측에서 **simGroups 경로
+      스키마(cc_*, 557T)가 여전히 822×10272 aspect 0.08 세로폭주** 포착 → T60.7 로 근본 수정(라이브 검증이
+      flat 만 고친 gap 을 잡아냄).
+- [x] T60.7 §60.2 simGroups 경로 세로폭주 해소(PB-0008 회귀): ① 그룹 블록 행 목표 폭 `TRW` 를 **총 블록
+      면적 기반 적응**(`max(TRW, round(sqrt(ΣblockArea×2.0)))`) — 고정 4열-상당 폭이 그룹 행을 세로 스택하던
+      근본원인 ② packGroup 열 상한 4→6(멤버 많은 그룹 완화). headless T9(simGroups landscape) 추가 — §60
+      **19 PASS** + 회귀 54+26. 실측 대조: 557T/20그룹 822×7406(0.11)→2690×2544(**1.06**, 66%↓)·557T/4그룹
+      0.13→1.18. 캐시버스터 20260709-graph-vpack2.
+- [ ] T60.8 POST-DEPLOY 실브라우저(PB-0008) 2차 — vpack2 재배포 후 simGroups 스키마 펼침 landscape 재확인
+      (Run 은 feature-0003 TEST.md).
