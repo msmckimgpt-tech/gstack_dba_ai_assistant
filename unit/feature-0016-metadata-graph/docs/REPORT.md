@@ -44,6 +44,9 @@
 - 수정: ① `TRW` 를 총 블록 면적 기반 적응(`max(TRW, round(sqrt(ΣblockArea×2.0)))`) ② packGroup 열 상한 4→6.
 - 검증: headless T9(simGroups landscape) 추가 → §60 **19 PASS** + 회귀 54+26 · 실측 557T/20그룹
   822×7406(0.11)→2690×2544(**1.06**, 66%↓)·557T/4그룹 0.13→1.18. 캐시버스터 20260709-graph-vpack2.
+- **POST-DEPLOY 2차 PB-0008 라이브 PASS(배포 ec74a16b)**: mssql-qa-idc 5스키마 펼침 실측 — cc_bonedragon
+  557T 822×10272(0.08)→**3590×3320(1.08)**(높이 68%↓)·전 클러스터 landscape·전역 aspect 0.57→**0.99**·노드/
+  클러스터 겹침 0·pageerror 0. 미니맵이 얇은 세로 띠 → 2D landscape 블록. **사용자 리포트 라이브 해소 확인.**
 
 ## 2026-07-07 · 제품 카테고리 + 크로스-DB 관계 + 재귀 분석 refine (graph-category-recursive-refine, TASK §55, ADR-021)
 

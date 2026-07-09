@@ -1939,5 +1939,7 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
       근본원인 ② packGroup 열 상한 4→6(멤버 많은 그룹 완화). headless T9(simGroups landscape) 추가 — §60
       **19 PASS** + 회귀 54+26. 실측 대조: 557T/20그룹 822×7406(0.11)→2690×2544(**1.06**, 66%↓)·557T/4그룹
       0.13→1.18. 캐시버스터 20260709-graph-vpack2.
-- [ ] T60.8 POST-DEPLOY 실브라우저(PB-0008) 2차 — vpack2 재배포 후 simGroups 스키마 펼침 landscape 재확인
-      (Run 은 feature-0003 TEST.md).
+- [x] T60.8 POST-DEPLOY 실브라우저(PB-0008) 2차 — 배포 ec74a16b·서빙 graph-vpack2. mssql-qa-idc 5스키마
+      펼침 실측: cc_bonedragon 557T **822×10272(0.08)→3590×3320(1.08)**(높이 68%↓)·전 클러스터 landscape·
+      전역 aspect 0.57→**0.99**·노드/클러스터 겹침 0·pageerror 0. **사용자 리포트 라이브 해소 확인**
+      (Run·스크린샷 feature-0003 TEST.md).
