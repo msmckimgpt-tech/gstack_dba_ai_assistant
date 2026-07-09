@@ -4622,3 +4622,7 @@ source_of_truth: true
 - **NIT(ACCEPT)**: early-cid 활성 시점 `renderComposer()`는 시각상 `8707` 렌더와 동일(실효 fix 는 state-set) — 방어적 재동기화로 정당, 무해.
 - 검증: `node --check app.js` PASS(2회) · 코드 내 `showTimeoutRecoveryDialog` 실참조 0.
 - Cross-ref: TASK/MODIFY/REPORT-20260709-ask-timeout-nonblocking · DESIGN-entry-points.md 모달 패턴 참조 갱신. **잔여**: verify-completion → 머지·push → web 재배포(deploy_scope: included) → PB-0008 Windows-browser 라이브 실측(타임아웃 유발 시 화면 미가림·답변 자동 수신·기존/신규대화 양 흐름 인라인 취소/즉시답변 동작).
+
+## REV-20260709T140000-ask-timeout-nonblocking-postverify [SKIPPED:doc-only-postverify] (ask-timeout-nonblocking 배포 4b6919ec POST-DEPLOY PB-0008 런타임 PASS 기록, 비-정책 doc-only)
+- Panel skip 사유(§18.8): 본 commit 은 TEST.md §3 POST-DEPLOY 실측 결과 append + TASK.md 체크박스 flip + MODIFY 기록뿐 — 코드·자산·정책 변경 0(doc-only). 코드 적대 검증은 원천 REV-20260709T130000-ask-timeout-nonblocking(SUBAGENT 2R, SHIP) 가 정본. 라이브 실측 provenance 는 TEST.md §3 POST-DEPLOY 갱신 항목.
+- 실측 요지(win-browser Chrome/149, `https://localhost/`): 무중단 배포 4b6919ec(soak PASS)·`/healthz` git_commit 일치. 서빙 app.js `typeof showTimeoutRecoveryDialog==="undefined"`(모달 런타임 완전 제거 — 사용자 신고 화면 전체 경고창 구조적 노출 불가)·attachAndWaitForResult 보존·composerFinalizeBtn/sendBtn DOM 존재·z-9999 backdrop 부재·pageerror 0. 사용자 리포트(응답 지연 시 화면 전체를 덮는 경고창) 라이브 해소.

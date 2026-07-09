@@ -9,6 +9,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260709T140000-ask-timeout-nonblocking-postverify (배포 4b6919ec POST-DEPLOY PB-0008 런타임 실측 PASS 기록, 비-정책 doc-only)
+- Date: 2026-07-09 (worktree ai/claude/ask-timeout-nonblocking-postverify).
+- 대상: CHG-20260709T000000-ask-timeout-nonblocking(PR #638, main 4b6919ec) 의 배포 후 라이브 검증 결과 기록. 코드/자산 변경 0 — TEST.md §3 POST-DEPLOY 갱신 + TASK.md 체크박스 flip 뿐.
+- 실측(win-browser Chrome/149, `https://localhost/`): 무중단 롤링 배포 4b6919ec(web-a/web-b soak PASS)·`/healthz` git_commit=4b6919ec·mysql_ok·pg_ok. 서빙 `app.js?v=20260709-ask-timeout-nonblocking`, 서빙 app.js `showTimeoutRecoveryDialog` 실참조 0. 런타임 eval: `typeof showTimeoutRecoveryDialog==="undefined"`(모달 런타임 완전 제거 → 타임아웃 경로 무관 경고창 노출 불가)·attachAndWaitForResult=function·composerFinalizeBtn/sendBtn DOM 존재·z-9999 inset0 backdrop 부재·pageerror 0.
+- 검증: 라이브 서빙 자산 grep + win-browser 런타임 assertion. 코드 적대 검증 정본 = REV-20260709T130000-ask-timeout-nonblocking(SHIP).
+
 ## CHG-20260709T000000-ask-timeout-nonblocking (TASK-20260709-ask-timeout-nonblocking — 응답 지연 시 화면 전체를 덮던 타임아웃 복구 모달 제거, Minor §12.3 — feature-0003 프론트 단독)
 - Date: 2026-07-09 (worktree ai/claude/ask-timeout-nonblocking, base aa9f7a57).
 - 트리거(사용자, /_template:entry arg-given): "작업 화면에서 assistant 에 요청 후 오래 걸리면 화면 전체를 가리는 답변-지연 경고창이 떠 불편 — 삭제하거나 기존 작업을 방해하지 않는 UI로." 후속 지시: "자동 재연결은 필수 동작이며 사용자는 그 작동을 인지할 필요 없음."
