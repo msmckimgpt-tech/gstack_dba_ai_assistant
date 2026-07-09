@@ -1550,4 +1550,4 @@ diff 코드 블록은 각 줄에 GitHub 식 양쪽 줄번호(old|new)와 `+`/`-`
 - **비율 슬라이더**: 모델 총 출력 안에서 thinking(추론) 비중을 range 슬라이더로 배분, 본문(content)=총−thinking 을 분할바로 파생 표시. 저장값은 절대 thinking budget(`reasoning_budget:{model}:{level}`) 하나뿐(본문은 별도 저장 없음). 슬라이더 실효 상한 = min(native−1024, 총−1024)로 본문 최소 1024 확보(백엔드 `min(budget, max_tokens−1024)` clamp 와 정합).
 - **모델별 추론 수준 분리**: 추론 강도별 예산이 `reasoning_budget:{model}:{level}` 로 모델마다 독립. 대화 화면의 강도 선택(낮음/일반/높음/매우 높음)은 전역 유지, 예산만 모델별. '일반'은 no-override(모델 기본 thinking 유지, B1).
 - 저장은 즉시 PUT 아님 — 기존 `setRuntimeSettingPending`→commit-bar '모두 적용' 예약 패턴 준수(신규 `agent_max_output:` 키 포함). 총 출력 상향 시 응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'(AGENT_TIMEOUT_SEC)도 함께 상향 필요 — 패널 hint 로 안내(비-streaming 대화 경로).
-- backward-compat: 구 스킴 `reasoning_budget:{level}` override 는 무시(기본 복귀). cache 없음(신규 자산은 admin.js/styles.css 편집 — index/admin cache-buster 는 배포 doc-sync 소관).
+- backward-compat: 구 스킴 `reasoning_budget:{level}` override 는 무시(기본 복귀). 정적 자산(admin.js/styles.css) 캐시버스터는 `admin.html` 의 `?v=20260709-reasoning-budget` 로 bump(후속 CHG-20260709T055431 — stale 클라이언트 강제 로드).

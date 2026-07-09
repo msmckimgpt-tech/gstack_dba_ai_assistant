@@ -9,6 +9,12 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260709T055431-reasoning-budget-cachebuster (TASK-20260709-reasoning-budget-per-model 후속 — admin 정적 자산 캐시버스터 bump, 비-정책 doc/asset-only)
+- Date: 2026-07-09 (worktree ai/claude/reasoning-budget-cachebuster, base fbf3b606).
+- 사유: CHG-20260709T051642-reasoning-budget-per-model 가 `static/admin.js`·`static/styles.css` 를 변경했으나 `admin.html` 의 캐시버스터를 bump 하지 않아, 기존에 관리 콘솔을 연 브라우저가 캐시된 구 자산을 써 신규 '모델별 추론 예산' 패널(accordion·비율 슬라이더)이 표시되지 않는 완결 누락. 배포 후 실측(WARN)으로 발견.
+- 변경: `static/admin.html` — `styles.css?v=20260709-graph-toolbar`→`?v=20260709-reasoning-budget`, `admin.js?v=20260709-hl-bake`→`?v=20260709-reasoning-budget`. 시각/동작 로직 0 — 이미 리뷰된 신규 자산을 stale 클라이언트에 강제 로드하는 캐시버스터만.
+- 검증: cache-buster only, 신규 JS/CSS 는 부모 PR(#641)에서 검증됨. REV-20260709T055431 [SKIPPED:cache-buster-only]. 배포 후 라이브에서 서빙 자산 `?v=20260709-reasoning-budget` grep + 패널 렌더 확인.
+
 ## CHG-20260709T140000-ask-timeout-nonblocking-postverify (배포 4b6919ec POST-DEPLOY PB-0008 런타임 실측 PASS 기록, 비-정책 doc-only)
 - Date: 2026-07-09 (worktree ai/claude/ask-timeout-nonblocking-postverify).
 - 대상: CHG-20260709T000000-ask-timeout-nonblocking(PR #638, main 4b6919ec) 의 배포 후 라이브 검증 결과 기록. 코드/자산 변경 0 — TEST.md §3 POST-DEPLOY 갱신 + TASK.md 체크박스 flip 뿐.

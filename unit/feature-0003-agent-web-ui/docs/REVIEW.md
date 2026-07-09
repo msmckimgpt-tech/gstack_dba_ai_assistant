@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260709T055431-reasoning-budget-cachebuster [SKIPPED:cache-buster-only] (TASK-20260709-reasoning-budget-per-model 후속 — admin 정적 자산 캐시버스터 bump)
+- Panel skip 사유(§18.8): 변경은 `admin.html` 의 `admin.js`/`styles.css` 캐시버스터 값 2개 뿐(`?v=…graph-toolbar`/`…hl-bake` → `…reasoning-budget`). 신규 로직·상태·API·RBAC·스키마·시각거동 0 — 이미 리뷰된(REV-20260709T051642) 신규 자산을 stale 클라이언트에 강제 로드하는 캐시버스터만. 코드 적대 검증 신규 표면 없음.
+- 검증: 배포 후 라이브 서빙 자산 `?v=20260709-reasoning-budget` grep + '모델별 추론 예산' 패널 렌더(모델 카드·비율 슬라이더).
+- Cross-ref: CHG-20260709T055431-reasoning-budget-cachebuster / 부모 REV-20260709T051642-reasoning-budget-per-model.
+
 ## REV-20260709T051642-reasoning-budget-per-model [SUBAGENT:adversarial-general-5axis] (TASK-20260709-reasoning-budget-per-model — 모델별 추론 예산 상한 확대(native) + 모델→추론강도 accordion + [추론↔본문] 비율 슬라이더, Major §12.3 — shared + feature-0002 core + feature-0003 web/UI)
 - 요청: `관리 콘솔 > 시스템 > 설정 > 모델별 추론 예산` 16000 상한 상향(동반) + 모델별 native(Sonnet 128K/Haiku 64K) + 모델별 추론 수준 분리 + 종속 accordion + [추론↔본문] 비율 슬라이더.
 - 대상: `shared/model_catalog.py`(native ceiling·`model_native_max_output`), `shared/runtime_settings.py`(`agent_max_output` group·per-model `reasoning_budget:{model}:{level}`·override reader·serialize), `agent_core.py`(`_call_llm` 모델별 token_limit·reasoning override(model)), `static/{admin.js,admin.html,styles.css,release-notes-data.js}`(accordion·비율 슬라이더). 파괴적 변경·마이그·RBAC 0(순수 레지스트리 스펙 확장 + additive 그룹).
