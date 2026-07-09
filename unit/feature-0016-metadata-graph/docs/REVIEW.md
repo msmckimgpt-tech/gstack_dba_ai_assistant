@@ -1244,3 +1244,5 @@ source_of_truth: true
 - 재검증: headless 31+26 PASS.
 
 ## REV-20260709T023200-ai-root-feature-0016-hlux-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §57.5 완수 기록
+
+## REV-20260709T040500-ai-root-feature-0016-hl-invariant [SUBAGENT: PASS] — §57.6 (직전 §57.5 적대 리뷰 프로브 계약 하 불변식 4점 — 회귀 스위트 34+26 전건 PASS·화살촉은 사용자 실측이 곧 결함 증적)
