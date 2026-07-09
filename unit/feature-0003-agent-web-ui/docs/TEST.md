@@ -1850,3 +1850,6 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - 사용자 3차 리포트 레시피 그대로(qa-idc mssql-06656002eda6·검색 'ranking'·dk_game_integrate 펼침) 실좌표 클릭 5연속: Chk_Person_Ranking(fa10/lit5)→Peerage(fa13/lit9)→Chk_Ranking(fa10/lit5)→**Person_Ranking(fa1/lit1 — 관계 0 고립: 전체 침강 = "무너짐"의 실체)**→Chk_Ranking(fa10/lit5 복원 정상). pageerror 0. 캡처 pbc-1~5. "복원 불가"는 SPA 잔존 구자산 판정(현 자산 복원 실증).
 - 브라우저 공유 주의: 타 세션이 동일 Chrome 사용 중 — 전용 새 탭(ctx.new_page)으로 불간섭 실행.
 - POST-DEPLOY 재검증(T57.15)은 배포 후 별도 Run 추가 예정.
+
+### Run (2026-07-09) — hl-isolated: 고립 노드 미침강 + 복원 (§57.7 T57.15, 정본 feature-0016 TASK §57.7) — **Environment: Windows-browser — POST-DEPLOY PASS**
+- 배포(eb631372) 후 qa-idc·검색 'ranking'·dk_game_integrate 펼침에서 사용자 레시피 5연속 실좌표 클릭: 연관 3회 정상 하이라이트(fa10~13/lit5~9/dim67~71) → **고립 Person_Ranking 클릭: focusAdj null·dim 0 — 화면 전체 정상 밝기 유지(육안 pbc-4), 선택 테두리·상세 패널 정상** → Chk_Ranking 복귀: 하이라이트 정상 복원(육안 pbc-5). pageerror 0.
