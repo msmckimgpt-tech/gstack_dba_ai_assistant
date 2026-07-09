@@ -1905,9 +1905,13 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   bake·T16 폴 승격·T17 무조건 bake·T18 직렬화). 캐시버스터 20260709-hl-bake.
   §18.8 패널 반영: bake 누락 3곳(컬럼·제품·데이터소스) _metaStateSig 통일 + LOD busy 게이트 제거
   + T19(소유 op 해제)·T20(TTL sweep) 보강 — headless 54+26 PASS.
-- [ ] T57.17 POST-DEPLOY 렌더 수준 실검증 — 모델 규칙이 아닌 **실제 G6 요소 상태 전수 대조**
-  (getElementState vs _metaNodeStates): 사용자 레시피 + 연타 스트레스 + 타 그룹 + fetch 중 전환 +
-  선택 해제 복원.
+- [x] T57.17 POST-DEPLOY 렌더 수준 실검증 PASS — 배포(23322c0e·soak 통과·라이브 자산 graph-vpack2 =
+  §57.8 포함, 병렬 §60 레이아웃 커밋이 캐시버스터 재-bump). 실 G6 getElementState vs _metaNodeStates
+  76노드 전수 대조: ①사용자 레시피 5연속(연관3→고립 Person_Ranking→복귀) **매 단계 mismatch 0·선택
+  노드 selLit=true**, 고립 클릭 시 dimRender 0(전역 침강 없음, 육안 pbk-A4 화면 전체 정상 밝기)·복귀
+  시 dimRender 71 복원(육안 pbk-A5 상대 하이라이트 정상) ②연타 4클릭(150ms) 최종 정상 ③타 그룹
+  ConsignmentHistory 점등 정상 ④fetch 중(400ms) 전환 정상. pageerror 0·applyLoop 잔류 0. 사용자 4차
+  리포트 2건(고립 밝기 미복원·선택 노드 흐림 유지) 렌더 수준 해소 확인.
 
 ## §60 graph-vpack — 스키마 펼침 세로 폭주 해소 (2026-07-09, 사용자 리포트)
 - 리포트: 관리콘솔 > 지식베이스 > 그래프 뷰에서 스키마 노드를 펼치면 "스키마 클러스터가 너무 세로로

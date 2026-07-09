@@ -1897,3 +1897,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **[POST-DEPLOY 2차 PB-0008 실측 PASS — 배포 ec74a16b, 2026-07-09, AI 직접]**: 배포 ec74a16b(무중단 롤링·soak PASS·web-a/web-b git_commit=ec74a16b)·서빙 `admin.js?v=20260709-graph-vpack2`(curl+eval 확증). `https://localhost/admin`(bootstrap_admin 세션) → 그래프 뷰 → 데이터소스 mssql-qa-idc → 스키마 5개(accountdb·cc_bonedragon·cc_chartreux·cc_data_main·cc_pyron) 펼침(`_metaGraphExpandSchema`) 후 `_metaG6Build()` 실측(win-browser eval, Chrome/149):
   - ① **simGroups 스키마 세로폭주 해소**: cc_bonedragon 557T **822×10272(aspect 0.08, 배포전) → 3590×3320(aspect 1.08)** — 높이 68%↓. 전 클러스터 landscape(cc_chartreux 1.11·cc_data_main 1.06·cc_pyron 0.89·accountdb 1.16). ② **전체 그래프 판독 가능**: 전역 콘텐츠 aspect **0.99**(near-square, 배포전 0.57·원본 리포트 0.19 세로 띠) — 미니맵이 얇은 세로 선이 아닌 2D landscape 블록. ③ **비겹침**: 2618 콘텐츠 노드 **노드 겹침 0·클러스터 겹침 0**(measured) + 육안(테이블·프로시저 다열 정렬, 클러스터 분리). ④ fitView·미니맵 정상. ⑤ pageerror 0. 스크린샷: 다열 landscape 클러스터 + 2D 미니맵.
   - 결론: 사용자 리포트(스키마 펼침 세로폭주 + 여러 개 펼침 시 판독 불가) **라이브 해소 확인**.
+
+### Run (2026-07-09) — hl-bake: 렌더 수준 하이라이트 불변식 (§57.8 T57.17, 정본 feature-0016 TASK §57.8) — **Environment: Windows-browser — POST-DEPLOY PASS**
+- 배포 23322c0e·라이브 graph-vpack2(§57.8 포함). 실 G6 getElementState vs _metaNodeStates 76노드 전수 대조:
+  - 사용자 레시피 Chk_Person_Ranking→Peerage→Chk_Ranking→**Person_Ranking(고립: dimRender 0·litRender 76 — 전역 침강 없음, 육안 pbk-A4 정상 밝기)**→Chk_Ranking 복귀(dimRender 71 복원, 육안 pbk-A5): **매 단계 mismatch 0·선택 노드 selLit=true**.
+  - 연타 4클릭(150ms) 최종 정상 · 타 그룹 ConsignmentHistory 점등 · fetch 중(400ms) 전환 정상 · pageerror 0 · applyLoop 잔류 0.
+- 사용자 4차 리포트(고립 밝기 미복원·신규 연결 노드 선택 시 흐림 유지) 렌더 수준 해소 확인.
