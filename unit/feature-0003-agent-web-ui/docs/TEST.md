@@ -1830,7 +1830,11 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   캔버스 상단 상태줄 DOM 위 클릭은 캔버스 미도달(이벤트 0 발화) — 해제는 실 캔버스 영역에서만
   성립(정상 동작·테스트 방법론 주의).
 
-### Run (2026-07-09) — highlight-ux: 상대 하이라이트 UX 재구성 (§57.5, 정본 feature-0016 TASK §57.5) — **Environment: Windows-browser — POST-DEPLOY 예정**
+### Run (2026-07-09) — highlight-ux: 상대 하이라이트 UX 재구성 (§57.5, 정본 feature-0016 TASK §57.5) — **Environment: Windows-browser — POST-DEPLOY PASS**
 - 웹 자산 baked — 배포 후 실 Windows Chrome 실클릭으로 ① A→B 노드 전환 시 하이라이트 즉시 재구성
   ② 밝은 노드 사이 관계선 선명(양끝-밝음 규칙) ③ dim 프로시저 라벨 판독성(0.38) 실측 후 append.
   pre-deploy 격리 검증 headless 31+26 PASS.
+- **[POST-DEPLOY 갱신 2026-07-09] 실클릭 실측 PASS (AI 직접)**: 배포 44f55229(soak PASS)·서빙
+  `admin.js?v=20260709-highlight-ux`. ① dim 노드 실클릭 전환 — selected/focusAdj/상세/AI 분석 일관
+  재구성 ② 규칙 정합 실측 — 밝은쌍 엣지 흐림 0·혼합쌍 선명 0 ③ dim 0.38 프로시저 명칭 육안 판독
+  (스크린샷 pbf-01/02). 사용자 리포트 3건 해소.

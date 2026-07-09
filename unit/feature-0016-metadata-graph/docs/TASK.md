@@ -1850,4 +1850,8 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   opacity 0.38(침강 유지·라벨 판독). 캐시버스터 20260709-highlight-ux.
 - [x] T57.10 검증: 적대 리뷰(프로브 실증 — MAJOR 1 colLevel 불일치·MINOR 2·NIT 2) 전건 반영,
   headless 31+26 PASS(T9 재산출/음성대조·T10 양끝규칙·T11 컬럼승계/소실정리). REVIEW REV 정본.
-- [ ] T57.11 배포 → 실클릭 재검증(A→B 전환·이웃간 선 선명·dim 라벨 판독) → PB-0008 갱신.
+- [x] T57.11 POST-DEPLOY 실클릭 재검증 PASS — 배포(44f55229·soak PASS·신 자산 20260709-highlight-ux)
+  후 실 Windows Chrome 실클릭: ① A(BuyItem_V4) 선택 → dim 노드 B(Char_DIffLV_Open) 실클릭 →
+  **하이라이트 즉시 재구성**(selected·focusAdj·상세 패널·AI 분석 전환 일관) ② 양끝-밝음 규칙 라이브
+  정합 — 밝은쌍 엣지 흐림 0/3·혼합쌍 선명 0(위반 제로) ③ dim 0.38 — 프로시저 명칭 판독 가능하며
+  선택 경로와 명확 구분(육안, pbf-01/02). 사용자 리포트 3건 전건 해소 확인.
