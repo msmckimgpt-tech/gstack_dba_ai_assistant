@@ -1286,3 +1286,6 @@ source_of_truth: true
 - 단일 적대 에이전트 5렌즈(base opacity 실효·config 제거 부작용·서명/폴 정합·곱셈 이중침강·회귀).
 - 전 렌즈 REFUTED(기능/정합성 결함 0): base bake 는 모든 push 이후 return 직전 실행+헬퍼가 fresh object 반환이라 안전; 기전은 이미 배포된 엣지 dim(st.opacity→setData→keyShape, T13)과 동일 경로로 검증됨; dim↔lit 은 항상 rebuild 동반이라 setElementState-only 침강 경로 없음; 'dimmed' 문자열이 states 서명에 남아 폴 감지 정합; 어떤 상태도 opacity 미설정이라 곱셈 과침강 없음.
 - CONFIRMED(저위험 1, 반영): _metaBakeBaseOpacity docblock 의 stale 주석("dimmed config 유지")이 config 제거 사실·ADR-028 과 모순 → 주석 수정(죽은 경로 오도 방지). headless 60+26 PASS.
+
+## REV-20260709T170200-ai-root-feature-0016-sel-prom-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §57.9 완수 기록
+- T57.19 실측 PASS 기록만 추가(TASK/MODIFY/feature-0003 TEST). 코드 diff 없음 — 패널 생략.

@@ -1909,3 +1909,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   - **UnionCAInfo(선택): getElementState=["analyzed","selected"](dimmed 없음)인데 실제 opacity/keyShapeOpacity/attrOpacity=0.38** — 사용자 리포트("재선택 노드 흐림 유지") 렌더 수준 재현(dimmed 상태 제거 후 G6 base 미복원).
   - Ally/Castle(dimmed): opacity 0.38(정상). 캡처 pbom-final.
 - 수정(§57.9): 침강 opacity 를 base style 에 직접 bake — dimmed 상태 제거 시 stale 원천 차단. POST-DEPLOY 실측(opacity==1)은 배포 후 별도 Run.
+
+### Run (2026-07-09) — sel-prominence: 재선택 노드 opacity 복원 (§57.9 T57.19, 정본 feature-0016 TASK §57.9) — **Environment: Windows-browser — POST-DEPLOY PASS**
+- 배포 2c8fb7d2·라이브 sel-prominence. `계정·유저` simGroup 내 Castle→Ally→UnionCAInfo 선택 후 실 G6 keyShape opacity 측정:
+  - **UnionCAInfo(선택): opacity/keyShapeOpacity/attrOpacity=1(이전 0.38에서 복원), states=["analyzed","selected"]** — 재선택 노드 침강 잔존 해소.
+  - Ally/Castle(dimmed): opacity 0.38 유지(침강 정상 동작). 육안 pbom-final: 선택 노드 파란 fill+전체 밝기 도드라짐, 이웃 침강.
+- 사용자 5차 리포트("재선택 노드가 상대 하이라이트 외 대상처럼 흐림 유지") 렌더+육안 해소 확인.

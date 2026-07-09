@@ -1959,4 +1959,7 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
   매 build; dim=_META_DIM_OPACITY 0.38 / lit=1). setData 가 매번 keyShape 에 직접 기입해 dim↔lit
   양방향 결정적. dimmed G6 상태 config 제거(이중 적용·곱셈 침강 위험 차단), 'dimmed' 문자열은 서명·bake
   입력으로 유지. headless T21 신설(전 노드 opacity 명시·dim=0.38·lit=1) — 60+26 PASS. 캐시버스터 sel-prominence.
-- [ ] T57.19 POST-DEPLOY 실측 — Castle→Ally→UnionCAInfo 선택 후 UnionCAInfo keyShape opacity==1 확인.
+- [x] T57.19 POST-DEPLOY 실측 PASS — 배포(2c8fb7d2·soak 통과·라이브 자산 sel-prominence, _metaBakeBaseOpacity
+  포함) 후 Castle→Ally→UnionCAInfo 선택: **UnionCAInfo keyShape/attr opacity=1(이전 0.38에서 복원)**,
+  states=["analyzed","selected"]. dimmed 이웃 Ally/Castle opacity 0.38 유지(침강 정상). 육안: 선택 노드
+  파란 fill+전체 밝기로 도드라지고 이웃 침강(pbom-final). 사용자 5차 리포트("재선택 노드 흐림 유지") 해소.
