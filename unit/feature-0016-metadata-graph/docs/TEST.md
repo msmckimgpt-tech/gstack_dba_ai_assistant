@@ -847,5 +847,16 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - §18.8 적대 리뷰(SUBAGENT, ux/layout): PASS-WITH-FIXES(BLOCKING 0) — MINOR/MAJOR-주석/NIT 반영. REVIEW.md.
 - 실 _metaG6Build before(main)/after(worktree) 실측: 단일 12T×15컬럼 896→391(56%↓, aspect 0.42→2.10) ·
   16스키마×40T 4372→2124(51%↓, 0.41→1.77) · 24스키마×60T 9380→3800(59%↓, 0.19→1.22).
-### Run (예정) — POST-DEPLOY 실브라우저 (Environment: Windows-browser, PB-0008)
-- web 재배포 후 스키마 다중 펼침 실측(가시성·비겹침 육안) — 외부영향(배포) 사용자 confirm 후. T60.5.
+### Run (2026-07-09, POST-DEPLOY 1차 — 배포 d5cf0fec) — Environment: Windows-browser (PB-0008, AI 직접)
+- 라이브 mssql-qa-idc, 스키마 5개(accountdb·cc_bonedragon·cc_chartreux·cc_data_main·cc_pyron) 펼침
+  (`_metaGraphExpandSchema`) 후 `_metaG6Build()` 실측: 2618 콘텐츠 노드 **노드 겹침 0·클러스터 겹침 0**.
+- **회귀 포착**: per-cluster 실측에서 simGroups 경로 스키마(cc_* 557T)가 822×10272 aspect 0.08 세로폭주 잔존
+  → 초기 수정이 flat 만 고치고 그룹 블록 폭(TRW 고정)을 놓친 gap. §60.2(T60.7)로 근본 수정.
+
+### Run (2026-07-09) — §60.2 pre-deploy 격리 검증 (simGroups adaptive TRW)
+- headless T9(cluster_id 6그룹×20 → simGroups 진입·landscape aspect≥1·겹침0) 추가 → §60 **19 PASS** + 회귀
+  edge-visibility 54 · category 26 · node --check PASS. 실측 대조(실 _metaG6Build): 557T/20그룹
+  822×7406(0.11)→2690×2544(1.06)·557T/4그룹 0.13→1.18. 캐시버스터 20260709-graph-vpack2.
+
+### Run (예정) — POST-DEPLOY 2차 (Environment: Windows-browser, PB-0008)
+- vpack2 재배포 후 simGroups 스키마 펼침 landscape 재확인. T60.8.
