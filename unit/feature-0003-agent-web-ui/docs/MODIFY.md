@@ -5524,3 +5524,7 @@ source_of_truth: true
 - behavior-neutral: 컨트롤 id 전량 보존(`getElementById` 바인딩 불변). 캐시버스터 styles.css/admin.js `20260709-graph-toolbar`.
 - Files: `static/{admin.html,admin.js,styles.css}`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
 - Verification: `node --check` OK · 실 Windows Chrome 149 harness 렌더 실측 PASS · 디자인·correctness 적대 패널(REVIEW). POST-DEPLOY PB-0008 라이브(deploy_scope:included).
+
+## CHG-20260709T120000-graph-toolbar-postverify (graph-toolbar POST-DEPLOY PB-0008 라이브 PASS 기록 — 비-정책 doc-only)
+- 배포 ee54b1ff(soak PASS) 후 라이브 콘솔(`https://localhost/` → /admin → 그래프 뷰) PB-0008 실측 결과를 TEST.md §3 Run 에 POST-DEPLOY 갱신으로 append + TASK.md POST-DEPLOY 체크박스 [x]. 실측: toolbarKids=4·**reflow0=true**·팝오버 no-clip·pageerror 0(상세 TEST.md §3). 코드·자산 변경 0.
+- Files: `docs/{TEST,TASK,MODIFY,REVIEW}.md` (doc-only). 원천 cycle: CHG-20260709-graph-toolbar-consolidate(코드) / 배포 ee54b1ff.

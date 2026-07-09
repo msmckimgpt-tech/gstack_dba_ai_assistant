@@ -5376,4 +5376,4 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 컨트롤 id 전량 보존(behavior-neutral) — admin.js `getElementById` 바인딩 불변. 접근성: 오버레이는 `role="img"` 캔버스 밖 형제(팝오버 `role=group`·`aria-expanded`·Esc·바깥클릭 닫힘).
 - [x] 캐시버스터 bump: styles.css `20260708-metadata-console-ux2`→`20260709-graph-toolbar`, admin.js `20260709-highlight-ux`→`20260709-graph-toolbar`.
 - [x] 검증: `node --check admin.js` OK · 실 Windows Chrome 149(win-browser relay) 격리 harness 렌더 실측(toolbar 자식 4·zoom/status `position:absolute`·status 2줄클램프 494px·팝오버 4행·종류 3버튼 단일행·배지). 스크린샷 harness-closed/open2.
-- [ ] §18.8 디자인·correctness 적대 패널 → REVIEW.md · verify-completion → commit → PR → 병합 → web 무중단 배포(deploy_scope:included) → POST-DEPLOY PB-0008 라이브(상단 4컨트롤·팝오버·줌 오버레이·상태 pill reflow 0·pageerror 0).
+- [x] §18.8 디자인·correctness 적대 패널(SHIP-WITH-FIXES, MINOR 2+NIT 1 FIXED) → REVIEW.md · verify-completion PASS → commit faf1fb2f → PR#635(rebase 로 병렬 §57.6/§57.7 충돌 해소) → 병합 → web 무중단 롤링 배포 ee54b1ff(soak PASS) → **POST-DEPLOY PB-0008 라이브 PASS**(상단 4컨트롤·팝오버 no-clip·줌 오버레이·**상태 pill reflow0=true**·pageerror 0 — TEST.md §3 POST-DEPLOY 갱신).
