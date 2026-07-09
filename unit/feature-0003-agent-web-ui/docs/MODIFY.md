@@ -9,6 +9,16 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260709T090722-reasoning-budget-labels (TASK-20260709-reasoning-budget-per-model 후속 — '총 출력' 표시 문구를 '라운드(단계)당'으로 정밀화, 비-정책 label/doc-only, 로직 무변경)
+- Date: 2026-07-09 (worktree ai/claude/reasoning-budget-labels, base cdd194d8).
+- 사유(사용자 검토): 어시스턴트가 한 요청을 다회차 루프(`_run_agent_core` while step_count<max_steps, 라운드마다 `_call_llm`)로 처리하는데, `max_tokens`(=agent_max_output)·thinking budget 은 **응답=라운드당** 상한이다. 기존 UI/문서가 "대화 답변의 총 출력"으로 표기해 요청-전체처럼 오독될 수 있고, native 근처로 크게 잡으면 라운드마다 느려져 per-call 타임아웃 초과/wall-clock 예산 소진으로 **오히려 처리 회차가 줄 수 있는** 역설을 안내하지 않았다. 기능 정합성 자체는 이상 없음(적대 검증 REV-20260709T051642 + 사용자 검토 확인) — 표시 정밀화만.
+- 변경(로직 0, 문구만):
+  - `static/admin.html`: 패널 hint 를 '라운드(단계)당 · 총량≈×회차 · native 근처=회차 축소 주의'로 갱신. admin.js 캐시버스터 `?v=20260709-graph-vpack2`→`?v=20260709-reasoning-budget-labels`(styles.css 미변경 유지).
+  - `static/admin.js`: 카드 summary "총 출력 N"→"라운드당 N", 서브그룹 제목 "총 출력…"→"라운드(단계)당 출력 (…다회차면 회차마다 적용)", 패널 note 에 라운드당·×회차·native 역설·타임아웃 동반 조정 안내 추가.
+  - `shared/runtime_settings.py`: `_agent_max_output_specs` description 문자열을 라운드당·×회차·회차 축소 주의로 정밀화(값·min/max·default 무변경).
+  - `docs/FUNCTION.md`: '총 출력' 서술을 '=추론 라운드당 max_tokens'로 정정 + 다회차/타임아웃/회차 축소/`task_budget` 미사용 명시.
+- 검증: node --check(admin.js) · py_compile(runtime_settings) · serialize 스모크(default 40000/max 128000 무변경) PASS. REV-20260709T090722 [SKIPPED:text-only-label-precision].
+
 ## CHG-20260709T055431-reasoning-budget-cachebuster (TASK-20260709-reasoning-budget-per-model 후속 — admin 정적 자산 캐시버스터 bump, 비-정책 doc/asset-only)
 - Date: 2026-07-09 (worktree ai/claude/reasoning-budget-cachebuster, base fbf3b606).
 - 사유: CHG-20260709T051642-reasoning-budget-per-model 가 `static/admin.js`·`static/styles.css` 를 변경했으나 `admin.html` 의 캐시버스터를 bump 하지 않아, 기존에 관리 콘솔을 연 브라우저가 캐시된 구 자산을 써 신규 '모델별 추론 예산' 패널(accordion·비율 슬라이더)이 표시되지 않는 완결 누락. 배포 후 실측(WARN)으로 발견.

@@ -32,7 +32,8 @@ source_of_truth: true
   - [x] 테스트: `test_runtime_settings.py`(agent_max_output 등록·override·native clamp·per-model 격리·backward-compat) + `test_reasoning_effort.py`(per-model 주입·총×예산 분리·clamp) 마이그레이션+신규, `test_prompt_gen_max_tokens.py` 무회귀. 컨테이너 `make test` feature 관련 전건 PASS(잔여 3건=env `AGENT_TIMEOUT_SEC=300`·`--no-deps` DB 아티팩트, unset 시 PASS 확인).
   - [x] §18.8 적대 패널(general 5축) → BLOCKING 0. Finding1(plan 경로 결합) fixed(대화 default 를 runtime_settings 로 분리) · Finding2(슬라이더 동적 상한 검증) fixed · Finding3(display staleness) 수용-NIT. REV-20260709T051642-reasoning-budget-per-model.
   - [x] verify-completion --pre-commit PASS → commit 0aabceb4 → PR #641(rebase 충돌 MODIFY/TASK 해소·force-push) → 머지(main fbf3b606) → `make deploy-web` 무중단 롤링(web-a/web-b fbf3b606, soak 90s PASS, `/healthz` git_commit=fbf3b606). **캐시버스터 누락 발견**(admin.js/styles.css 변경했으나 admin.html `?v=` 미bump) → 후속 CHG-20260709T055431-reasoning-budget-cachebuster 로 `?v=20260709-reasoning-budget` bump + 재배포.
-  - [ ] **라이브 PB-0008(배포 후 잔여)**: 모델 카드 접기/펼치기·총 출력 상향(128000)·비율 슬라이더 드래그→추론/본문 갱신·'매우 높음' 16000 초과 저장. (앱 미기동 unattended 환경이라 사용자 육안/win-browser 필요.)
+  - [x] (후속, 사용자 검토) 다회차 정합성 확인 — max_tokens/budget 은 라운드당임을 확인(기능 충돌 없음). '총 출력' 표시를 '라운드(단계)당 · 총량≈×회차 · native 근처=회차 축소 주의'로 정밀화(로직 무변경). CHG/REV-20260709T090722-reasoning-budget-labels, PR/배포 진행.
+  - [ ] **라이브 PB-0008(배포 후 잔여)**: 모델 카드 접기/펼치기·총 출력(라운드당) 상향(128000)·비율 슬라이더 드래그→추론/본문 갱신·'매우 높음' 16000 초과 저장. (앱 미기동 unattended 환경이라 사용자 육안/win-browser 필요.)
 
 ## TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격 (Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI. /_template:entry arg-given dispatch)
 <!-- PLAN-APPROVED by mckim on 2026-07-03 (AskUserQuestion 정의 재확정=A 단계 간 간격) -->

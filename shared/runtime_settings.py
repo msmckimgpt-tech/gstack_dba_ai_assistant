@@ -428,8 +428,10 @@ def _agent_max_output_specs() -> tuple[dict[str, Any], ...]:
                 "model": model,
                 "label": str(meta.get("label") or model),
                 "description": (
-                    "대화 답변의 총 출력 상한(max_tokens) — 추론(thinking)+본문의 합. 크게 잡을수록 "
-                    "응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'도 함께 올려야 할 수 있습니다."
+                    "추론 라운드(단계)당 출력 상한(max_tokens) — 추론(thinking)+본문의 합. "
+                    "어시스턴트는 한 요청을 다회차로 처리하므로 실제 총량 ≈ 이 값 × 회차. native 근처로 "
+                    "크게 잡으면 라운드마다 느려져 '에이전트/쿼리 실행 타임아웃'을 넘거나 오히려 회차 수가 "
+                    "줄 수 있으니 보수적으로 시작하고 필요 시 타임아웃도 함께 올리세요."
                 ),
                 "unit": "tokens",
                 "default": default,
