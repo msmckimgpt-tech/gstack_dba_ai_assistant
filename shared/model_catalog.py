@@ -15,6 +15,7 @@ __all__ = [
     "is_local_llm_model",
     "conversation_answer_model",
     "max_tokens_for_model",
+    "model_native_max_output",
     "model_supports_temperature",
     "model_supports_thinking",
     "model_supports_vision",
@@ -187,8 +188,8 @@ def model_supports_vision(value: str | None) -> bool:
 # ── 모델별 max_tokens 관리 ──
 # 로컬 LLM: 4K 컨텍스트 내에서 reasoning + content 수용
 # Claude (Bedrock): default cap 미명시 시 비용 폭주 worst-case (codex blindspot
-# #4, CHG-0004) — task 별 명시 cap 추가. Bedrock Sonnet 4.6 의 native max output
-# 은 64K 이지만 본 backend 의 agent loop turn 단위에서는 그보다 훨씬 작아도 충분.
+# #4, CHG-0004) — task 별 명시 cap 추가. Claude native max output 은 Sonnet 4.6=128K /
+# Haiku 4.5=64K 이며, 대화(agent) 경로는 아래 _CLAUDE_MODEL_MAX_OUTPUT 로 모델별 관리한다.
 _LOCAL_LLM_MAX_TOKENS: dict[str, int] = {
     "insight": 1024,   # 인사이트: JSON 출력, reasoning ~700 + content ~200
     "agent": 2048,     # 에이전트 루프: tool calls + 복잡한 응답
@@ -213,9 +214,34 @@ _CLAUDE_MAX_TOKENS: dict[str, int] = {
     "validate": 7000,  # thinking + step validation
 }
 
+# ── 모델별 native max output (대화 총 출력 상한의 ceiling) ────────────────────
+# reasoning-budget-per-model: 관리 콘솔 '모델 총 출력' 슬라이더/입력의 상한(maximum)으로 쓴다.
+# 실제 대화 총 출력 default·override 는 runtime_settings(agent_max_output) 계층이 관리한다 —
+# 순환 import(config→runtime_settings→model_catalog) 방지를 위해 여기서는 native ceiling 만 노출하고,
+# max_tokens_for_model 의 task 별 cap 은 건드리지 않는다(plan/insight 등 "agent" task 공유 소비자 무회귀).
+_CLAUDE_MODEL_MAX_OUTPUT: dict[str, int] = {
+    "claude-sonnet-4": 128000,  # Sonnet 4.6 native max output
+    "claude-haiku-4": 64000,    # Haiku 4.5 native max output
+}
+_CLAUDE_MODEL_MAX_OUTPUT_FALLBACK = 20000  # 미등록 claude 모델 — 보수 fallback
+
+
+def model_native_max_output(model: str | None) -> int:
+    """모델의 native max output token(대화 총 출력 상한의 ceiling). 미등록 claude 는 보수 fallback.
+
+    관리 콘솔의 '모델 총 출력' 슬라이더/입력 상한(maximum)으로 사용된다.
+    """
+    name = str(model or "").strip()
+    return _CLAUDE_MODEL_MAX_OUTPUT.get(name, _CLAUDE_MODEL_MAX_OUTPUT_FALLBACK)
+
 
 def max_tokens_for_model(model: str | None, task: str = "agent") -> int | None:
-    """모델별 max_tokens 반환. Bedrock Claude 도 명시 cap (비용 폭주 차단)."""
+    """모델별 max_tokens 반환. Bedrock Claude 도 명시 cap (비용 폭주 차단).
+
+    task 별 cap(_CLAUDE_MAX_TOKENS)은 무변경 — 대화 총 출력의 모델별 상향은 runtime_settings 의
+    agent_max_output(model) 계층이 담당하므로 이 함수는 plan/insight 등 "agent" task 공유 소비자에
+    회귀를 주지 않는다.
+    """
     if is_local_llm_model(model):
         return _LOCAL_LLM_MAX_TOKENS.get(task, 1024)
     # Claude alias (Bedrock) 인 경우 명시 cap (CHG-0004)
@@ -244,9 +270,10 @@ def max_tokens_for_model(model: str | None, task: str = "agent") -> int | None:
 #   (하위호환·무회귀), 사용자가 '낮음'으로 속도를, '높음'/'매우 높음'으로 심도를 명시 조정한다.
 #   '일반' = "normal" = 모델 기본 = 가장 자연스러운 중립 라벨.
 #
-# Anthropic 제약: budget_tokens ≥ 1024 且 budget < max_tokens. backend agent 경로의 claude
-#   max_tokens 는 20000(_CLAUDE_MAX_TOKENS["agent"])이므로 override 값 전부 그보다 작아야
-#   안전 → 최대 16000(= 현행 Sonnet effort=high 상한, 실측 검증됨)으로 캡.
+# Anthropic 제약: budget_tokens ≥ 1024 且 budget < max_tokens. 아래 값은 요청 단위 override 의
+#   **base default** 이며(모델 무관), reasoning-budget-per-model 이후 관리 콘솔에서 모델별로
+#   상향할 수 있다(상한 = 모델 native max output − 1024). backend agent 경로는 주입 직전
+#   min(budget, max_tokens − 1024) 로 clamp 하므로 budget < max_tokens 는 항상 보장된다.
 REASONING_LEVELS: tuple[str, ...] = ("low", "normal", "high", "max")
 
 DEFAULT_REASONING_LEVEL = "normal"
@@ -256,7 +283,7 @@ DEFAULT_REASONING_LEVEL = "normal"
 _REASONING_BUDGETS: dict[str, int] = {
     "low": 2000,     # 낮음 — 최소 추론(빠름), Anthropic 하한(1024) 여유 상회
     "high": 10000,   # 높음 — 심층 추론
-    "max": 16000,    # 매우 높음 — 최대(현행 Sonnet effort=high 상한, agent max_tokens 20000 미만)
+    "max": 16000,    # 매우 높음 — base default(모델별 상한까지 관리 콘솔에서 상향 가능)
 }
 
 # 웹 UI 선택기 노출용 (value → 한국어 라벨). 표시 순서 = 낮음→매우 높음.

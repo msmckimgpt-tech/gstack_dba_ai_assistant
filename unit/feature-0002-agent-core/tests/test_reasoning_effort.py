@@ -180,8 +180,8 @@ def _stage_snapshot(tmp_path, monkeypatch, overrides):
 
 
 def test_reasoning_level_admin_override_beats_default(monkeypatch, tmp_path):
-    # 관리 콘솔에서 'high' 레벨 budget 을 12000 으로 설정 → 기본 10000 대신 주입.
-    _stage_snapshot(tmp_path, monkeypatch, {"reasoning_budget:high": 12000})
+    # 관리 콘솔에서 (haiku,high) 레벨 budget 을 12000 으로 설정 → 기본 10000 대신 주입.
+    _stage_snapshot(tmp_path, monkeypatch, {"reasoning_budget:claude-haiku-4:high": 12000})
     kwargs = _call(monkeypatch, "claude-haiku-4", "high")
     assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 12000}}
 
@@ -195,11 +195,37 @@ def test_reasoning_level_default_when_no_override(monkeypatch, tmp_path):
 def test_normal_ignores_reasoning_override_but_model_override_applies(monkeypatch, tmp_path):
     # '일반'은 레벨 예산 대상 아님(B1) → reasoning override 무시. 대신 모델 override 가 적용된다.
     _stage_snapshot(tmp_path, monkeypatch, {
-        "reasoning_budget:high": 12000,
+        "reasoning_budget:claude-sonnet-4:high": 12000,
         "model_thinking_budget:claude-sonnet-4": 9000,
     })
     kwargs = _call(monkeypatch, "claude-sonnet-4", "normal")
     assert kwargs.get("extra_body") == {"thinking": {"type": "enabled", "budget_tokens": 9000}}
+
+
+def test_reasoning_and_total_are_per_model(monkeypatch, tmp_path):
+    # reasoning-budget-per-model: (모델,레벨) 예산과 총 출력이 모델별로 분리된다.
+    # sonnet 의 총 출력·max 예산을 크게 올려도 haiku 요청은 자기 기본값을 그대로 쓴다.
+    _stage_snapshot(tmp_path, monkeypatch, {
+        "agent_max_output:claude-sonnet-4": 100000,
+        "reasoning_budget:claude-sonnet-4:max": 60000,
+    })
+    ks = _call(monkeypatch, "claude-sonnet-4", "max")
+    assert ks["max_tokens"] == 100000
+    assert ks["extra_body"]["thinking"]["budget_tokens"] == 60000  # < 100000-1024
+    kh = _call(monkeypatch, "claude-haiku-4", "max")
+    assert kh["max_tokens"] == 24000  # haiku 기본 총 출력(override 무관)
+    assert kh["extra_body"]["thinking"]["budget_tokens"] == 16000  # haiku 기본 max 예산
+
+
+def test_budget_clamped_to_total_minus_headroom(monkeypatch, tmp_path):
+    # 총 출력을 낮추면 thinking budget 이 총−1024 로 clamp 되어 본문 여유(≥1024)가 보장된다.
+    _stage_snapshot(tmp_path, monkeypatch, {
+        "agent_max_output:claude-haiku-4": 8000,
+        "reasoning_budget:claude-haiku-4:max": 16000,  # 총(8000)보다 큼
+    })
+    k = _call(monkeypatch, "claude-haiku-4", "max")
+    assert k["max_tokens"] == 8000
+    assert k["extra_body"]["thinking"]["budget_tokens"] == 8000 - 1024  # clamp
 
 
 # ── 3. worker 경로 패리티 (_payload_to_kwargs) ───────────────────────────────

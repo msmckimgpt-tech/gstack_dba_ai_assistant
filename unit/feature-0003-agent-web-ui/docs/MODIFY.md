@@ -29,6 +29,23 @@ source_of_truth: true
 - 비변경: 서버 `/api/ask_status`·`/api/ask_result`(long-poll)·`attachAndWaitForResult` 루프·boot-time auto-attach·resume 경로(9410~ 이미 모달 없이 attach 직접 호출)·`ASK_ATTACH_MAX_TOTAL_SEC=1800` 상한 종료 토스트·`cancelCurrentRun`/`finalizeCurrentRun` 본체 전부 보존. RBAC/스키마/마이그/엔드포인트 0.
 - 검증: `node --check app.js` PASS(2회) · 코드 내 `showTimeoutRecoveryDialog` 실참조 0(설명 주석만 잔존) · §18.8 적대 서브에이전트 패널 2라운드(H1 적발→수정→재검 전항목 REFUTED) **VERDICT: SHIP**(REV-20260709T130000-ask-timeout-nonblocking) · PB-0008 Windows-browser 라이브 실측 = 배포 후.
 
+## CHG-20260709T051642-reasoning-budget-per-model (TASK-20260709-reasoning-budget-per-model — 모델별 추론 예산 상한 확대(native) + 모델→추론강도 accordion + [추론↔본문] 비율 슬라이더, Major §12.3 — shared + feature-0002 core + feature-0003 web/UI)
+- Date: 2026-07-09 (worktree ai/claude/reasoning-budget-per-model, base aa9f7a57).
+- 트리거(사용자): `관리 콘솔 > 시스템 > 설정 > 모델별 추론 예산` 최대값 16000 상향 검토 — '매우 높음' default=max=16000 이라 조정 의미 없음. 결정: 동반 상향 + 모델별 native(Sonnet 128K/Haiku 64K) + 모델별 추론 수준 분리 + 종속 accordion + [추론↔본문] 비율 슬라이더.
+- 근본원인: 16000 은 모델/API 한계가 아니라 제품 정책 캡. 실제 제약은 Anthropic `budget_tokens < max_tokens` + 대화 max_tokens=20000. '매우 높음' spec 의 default==maximum==16000 이라 위로 조정 불가.
+- 변경:
+  - `shared/model_catalog.py`: `_CLAUDE_MODEL_MAX_OUTPUT`(claude-sonnet-4=128000/claude-haiku-4=64000) + `model_native_max_output(model)`(총 출력 슬라이더 상한). `max_tokens_for_model` 의 task cap 은 **무변경** — 대화 총 출력의 모델별 상향은 runtime_settings 계층이 담당해 plan/insight 등 "agent" task 공유 소비자에 회귀를 주지 않음(적대 패널 Finding1 반영).
+  - `shared/runtime_settings.py`: 신규 group `agent_max_output`(key `agent_max_output:{model}`, default `_AGENT_MAX_OUTPUT_DEFAULT` sonnet 40000/haiku 24000, min 4096, max native) + `agent_max_output(model)` reader. 추론 강도별 예산 스킴 `reasoning_budget:{level}` → **`reasoning_budget:{model}:{level}`**(모델×레벨 자동생성, 상한 native−1024), `reasoning_budget_override(model,level)`. `model_thinking_budget` 상한도 native−1024 로 확대. `serialize_registry` 에 `agent_max_outputs` 리스트 + reasoning row 에 `model` 필드 추가. `__all__`+GROUP 상수 추가.
+  - `unit/feature-0002-agent-core/src/agent_core.py`: `_call_llm` token_limit = `_rts.agent_max_output(model)`(thinking 모델, 관리 콘솔 override 반영) / else `max_tokens_for_model`. 명시 레벨 override 를 `_rts.reasoning_budget_override(model, reasoning_level)` 로(model 인자 추가). `min(budget, max_tokens−1024)` clamp 유지(본문 최소 1024 확보).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `renderModelThinkingBudgets` 를 모델별 `permission-group` `<details>` accordion 으로 재작성(모델 그룹핑 + 총 출력 입력 + 추론강도별 슬라이더 + '일반' 선택적 override). 신규 `buildBudgetSliderRow`([추론↔본문] range 슬라이더 → 절대 thinking budget PUT, 본문=총−thinking 파생, 동적 상한 검증). `buildRuntimeSettingRow` onChange 훅(총 출력 변경 시 슬라이더 재계산). 커밋바 dirty 에 `RS_AGENT_MAX_PREFIX`.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.rs-slider`/`.rs-split-bar`/`.rs-budget-card`/`.rs-subgroup-title` 신규(accordion 은 `permission-group` 재사용).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 패널 hint 갱신(native 상한·타임아웃 경고).
+  - `unit/feature-0003-agent-web-ui/src/static/release-notes-data.js`: 07-09 블록(모델별 예산·비율 슬라이더·구 override 재설정 안내).
+- backward-compat: 구 스킴 `reasoning_budget:{level}`(모델 없음) 스냅샷 override 는 신 스킴에서 `spec_for=None` → 안전 무시(기본값 복귀). 운영자는 새 UI 에서 재설정(릴리즈노트 명시).
+- 테스트: `test_runtime_settings.py`·`test_reasoning_effort.py` 마이그레이션+신규(per-model 격리·native clamp·backward-compat·총×예산 분리), `test_runtime_settings_api.py`(agent_max_outputs 노출·native 초과 400·구 16000 초과값 통과). `test_prompt_gen_max_tokens.py` 무회귀. 컨테이너 `make test` feature 관련 전건 PASS + ruff clean. 잔여 3건은 env `AGENT_TIMEOUT_SEC=300`(복사 .env)·`--no-deps` DB(`postgres-replica`) 아티팩트로 본 변경과 무관(env unset 시 PASS 확인).
+- 적대 패널: general 5축 → BLOCKING 0. Finding1(plan 경로 결합) fixed, Finding2(슬라이더 동적 상한 검증) fixed, Finding3(display staleness) 수용-NIT. REV-20260709T051642.
+- 시각검증: 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여(TEST.md §3 기록).
+
 ## CHG-20260703T094539-aiops-stepgap (TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격, Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI)
 - Date: 2026-07-03 (worktree ai/claude-corp/feature-0003-aiops-ttft, base 9665430c).
 - 트리거(사용자): "에이전트 추론 p95 측정 단위 검토 — 지연은 답변 받는 총 시간이 아니라 각 추론 단계 간 나타나는 간격으로." 정의 확정 = A(단계 간 간격).

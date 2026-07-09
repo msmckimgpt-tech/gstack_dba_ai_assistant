@@ -991,7 +991,7 @@
             <article class="admin-settings-panel" data-settings-panel="model-thinking-budgets">
               <header class="admin-settings-panel-head">
                 <h3>모델별 추론 예산</h3>
-                <p class="admin-settings-panel-hint">LLM 모델별 extended thinking budget(tokens)입니다. 대화에서 추론 강도를 직접 고르지 않은 요청에 이 값이 기본으로 적용됩니다. 저장 즉시 반영되며, 카탈로그에 모델이 추가되면 자동으로 목록에 나타납니다.</p>
+                <p class="admin-settings-panel-hint">모델별로 대화 총 출력(max_tokens, Sonnet 128K / Haiku 64K 까지)과 추론 강도별 예산을 구성합니다. 총 출력 안에서 추론(thinking)과 본문(content)이 나뉘며, 슬라이더로 비중을 조절합니다. 총 출력을 크게 잡을수록 응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'도 함께 올려야 할 수 있습니다. 저장 즉시 반영되며, 카탈로그에 모델이 추가되면 자동으로 목록에 나타납니다.</p>
               </header>
               <div class="admin-settings-panel-body" id="modelThinkingBudgetsMount">
                 <!-- mountModelThinkingBudgetsPanel() 가 마운트 -->

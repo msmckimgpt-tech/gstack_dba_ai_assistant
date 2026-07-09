@@ -55,6 +55,7 @@ __all__ = [
     "effective_value",
     "model_thinking_budget_override",
     "reasoning_budget_override",
+    "agent_max_output",
     "validate_value",
     "serialize_registry",
     "snapshot_path",
@@ -63,9 +64,11 @@ __all__ = [
     "invalidate_cache",
     "MODEL_BUDGET_KEY_PREFIX",
     "REASONING_BUDGET_KEY_PREFIX",
+    "AGENT_MAX_OUTPUT_KEY_PREFIX",
     "GROUP_TIMEOUT",
     "GROUP_MODEL_BUDGET",
     "GROUP_REASONING_BUDGET",
+    "GROUP_AGENT_MAX_OUTPUT",
 ]
 
 GROUP_TIMEOUT = "timeout"
@@ -350,60 +353,54 @@ _MODEL_BUDGET_DEFAULTS: dict[str, int] = {
     "claude-haiku-4": 5000,
 }
 _MODEL_BUDGET_FALLBACK_DEFAULT = 8000
-# Anthropic 제약(budget_tokens ≥ 1024) + backend agent 경로 max_tokens(20000) 대비 안전 상한.
-# 기존 reasoning-effort 상한(16000)과 정합 — 이보다 크면 특정 task 의 max_tokens 를 넘겨
-# budget < max_tokens 제약을 위반할 수 있으므로 상한으로 캡한다.
+# Anthropic 제약(budget_tokens ≥ 1024) 하한. 상한(maximum)은 reasoning-budget-per-model 이후
+# 모델별 native max output − 1024 로 산출한다(_thinking_budget_max). backend agent 경로가 주입
+# 직전 min(budget, max_tokens − 1024) 로 clamp 하므로 budget < max_tokens 는 항상 보장된다.
 _MODEL_BUDGET_MIN = 1024
-_MODEL_BUDGET_MAX = 16000
 
-# ── 추론 강도별 예산 레지스트리 (feature-0018 reasoning-budgets) ─────────────
+# ── 대화(agent) 모델별 총 출력 레지스트리 (reasoning-budget-per-model) ────────
+# 대화 답변 경로(task='agent')의 max_tokens 를 모델별로 관리. default = model_catalog 의 보수적
+# 모델별 default, maximum = 모델 native max output(Sonnet 128K / Haiku 64K). 이 총 출력 안에서
+# thinking(추론)과 content(본문)가 나뉜다 — thinking 은 아래 예산, content 는 총 − thinking(파생).
+GROUP_AGENT_MAX_OUTPUT = "agent_max_output"
+AGENT_MAX_OUTPUT_KEY_PREFIX = "agent_max_output:"
+_AGENT_MAX_OUTPUT_MIN = 4096
+# 대화 총 출력의 모델별 보수적 default(기존 20000 상회 + 상향 여지 + 비-streaming 타임아웃 안전).
+# maximum(ceiling)은 model_catalog.model_native_max_output(모델 native). 미등록 모델은 task cap fallback.
+# (plan/insight 등 "agent" task 공유 소비자와 분리 — model_catalog.max_tokens_for_model 은 무변경.)
+_AGENT_MAX_OUTPUT_DEFAULT: dict[str, int] = {
+    "claude-sonnet-4": 40000,
+    "claude-haiku-4": 24000,
+}
+
+
+def _agent_max_output_default(model: str) -> int:
+    return _AGENT_MAX_OUTPUT_DEFAULT.get(
+        model, int(model_catalog.max_tokens_for_model(model, "agent") or 20000)
+    )
+
+# ── 추론 강도별 예산 레지스트리 (reasoning-budgets → 모델별 분리) ─────────────
 # 대화 화면 '추론 강도' 선택(낮음/일반/높음/매우 높음) 중 명시 레벨(low/high/max)의 요청 단위
-# thinking budget 을 관리자가 조정. 표시 기본값 = model_catalog.thinking_budget_for_level(level)
-# (현행 low2000/high10000/max16000). '일반(normal)'은 의도적 no-override(B1)라 설정 대상이 아니다
-# (thinking_budget_for_level 이 None → specs 생성 시 제외). min/max 는 모델 예산과 동일 안전 범위.
+# thinking budget 을 관리자가 **모델별로** 조정. key = reasoning_budget:{model}:{level}.
+# 표시 기본값 = model_catalog.thinking_budget_for_level(level)(모델 무관 base: low2000/high10000/max16000).
+# '일반(normal)'은 의도적 no-override(B1)라 설정 대상이 아니다(thinking_budget_for_level 이 None → 제외).
+# 상한(maximum)은 모델별 native max output − 1024.
 GROUP_REASONING_BUDGET = "reasoning_budget"
 REASONING_BUDGET_KEY_PREFIX = "reasoning_budget:"
 _REASONING_BUDGET_MIN = 1024
-_REASONING_BUDGET_MAX = 16000
 
 
-def _reasoning_budget_key(level: str) -> str:
-    return f"{REASONING_BUDGET_KEY_PREFIX}{level}"
+def _thinking_budget_max(model: str) -> int:
+    """모델별 thinking budget 상한 = native max output − 1024(content 최소 1024 확보)."""
+    return max(_REASONING_BUDGET_MIN, int(model_catalog.model_native_max_output(model)) - 1024)
 
 
-def _reasoning_budget_specs() -> tuple[dict[str, Any], ...]:
-    """추론 강도 레벨(normal 제외)마다 예산 스펙 1개. 카탈로그 REASONING_LEVELS 순회로 자동 확장."""
-    specs: list[dict[str, Any]] = []
-    labels = {
-        str(o.get("value")): str(o.get("label") or o.get("value"))
-        for o in model_catalog.REASONING_LEVEL_OPTIONS
-    }
-    for level in model_catalog.REASONING_LEVELS:
-        default = model_catalog.thinking_budget_for_level(level)
-        if default is None:
-            continue  # normal/미상 = no-override(B1) → 설정 대상 아님
-        label = labels.get(level, level)
-        specs.append(
-            {
-                "key": _reasoning_budget_key(level),
-                "group": GROUP_REASONING_BUDGET,
-                "category": "추론 강도별 예산",
-                "level": level,
-                "label": label,
-                "description": f"대화 화면에서 추론 강도 '{label}' 선택 시 적용되는 요청 단위 thinking budget.",
-                "unit": "tokens",
-                "default": int(default),
-                "minimum": _REASONING_BUDGET_MIN,
-                "maximum": _REASONING_BUDGET_MAX,
-                "apply_mode": "live",
-                "default_known": True,
-            }
-        )
-    return tuple(specs)
+def _agent_max_output_key(model: str) -> str:
+    return f"{AGENT_MAX_OUTPUT_KEY_PREFIX}{model}"
 
 
-def _model_budget_key(model: str) -> str:
-    return f"{MODEL_BUDGET_KEY_PREFIX}{model}"
+def _reasoning_budget_key(model: str, level: str) -> str:
+    return f"{REASONING_BUDGET_KEY_PREFIX}{model}:{level}"
 
 
 def _thinking_models() -> tuple[str, ...]:
@@ -414,6 +411,75 @@ def _thinking_models() -> tuple[str, ...]:
         if value and model_catalog.model_supports_thinking(value) and value not in seen:
             seen.append(value)
     return tuple(seen)
+
+
+def _agent_max_output_specs() -> tuple[dict[str, Any], ...]:
+    """thinking 지원 모델마다 대화 총 출력(max_tokens) 스펙 1개. maximum = 모델 native."""
+    specs: list[dict[str, Any]] = []
+    for model in _thinking_models():
+        meta = model_catalog.get_api_model_meta(model) or {}
+        default = _agent_max_output_default(model)
+        native = int(model_catalog.model_native_max_output(model))
+        specs.append(
+            {
+                "key": _agent_max_output_key(model),
+                "group": GROUP_AGENT_MAX_OUTPUT,
+                "category": "모델 총 출력",
+                "model": model,
+                "label": str(meta.get("label") or model),
+                "description": (
+                    "대화 답변의 총 출력 상한(max_tokens) — 추론(thinking)+본문의 합. 크게 잡을수록 "
+                    "응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'도 함께 올려야 할 수 있습니다."
+                ),
+                "unit": "tokens",
+                "default": default,
+                "minimum": _AGENT_MAX_OUTPUT_MIN,
+                "maximum": native,
+                "apply_mode": "live",
+                "default_known": True,
+            }
+        )
+    return tuple(specs)
+
+
+def _reasoning_budget_specs() -> tuple[dict[str, Any], ...]:
+    """(모델 × 명시 레벨) 마다 예산 스펙 1개. 카탈로그 순회로 자동 확장(normal 제외)."""
+    specs: list[dict[str, Any]] = []
+    labels = {
+        str(o.get("value")): str(o.get("label") or o.get("value"))
+        for o in model_catalog.REASONING_LEVEL_OPTIONS
+    }
+    for model in _thinking_models():
+        meta = model_catalog.get_api_model_meta(model) or {}
+        model_label = str(meta.get("label") or model)
+        budget_max = _thinking_budget_max(model)
+        for level in model_catalog.REASONING_LEVELS:
+            default = model_catalog.thinking_budget_for_level(level)
+            if default is None:
+                continue  # normal/미상 = no-override(B1) → 설정 대상 아님
+            label = labels.get(level, level)
+            specs.append(
+                {
+                    "key": _reasoning_budget_key(model, level),
+                    "group": GROUP_REASONING_BUDGET,
+                    "category": "추론 강도별 예산",
+                    "model": model,
+                    "level": level,
+                    "label": f"{model_label} · {label}",
+                    "description": f"대화에서 추론 강도 '{label}' 선택 시 이 모델에 적용되는 요청 단위 thinking budget.",
+                    "unit": "tokens",
+                    "default": int(default),
+                    "minimum": _REASONING_BUDGET_MIN,
+                    "maximum": budget_max,
+                    "apply_mode": "live",
+                    "default_known": True,
+                }
+            )
+    return tuple(specs)
+
+
+def _model_budget_key(model: str) -> str:
+    return f"{MODEL_BUDGET_KEY_PREFIX}{model}"
 
 
 def _model_budget_specs() -> tuple[dict[str, Any], ...]:
@@ -433,7 +499,7 @@ def _model_budget_specs() -> tuple[dict[str, Any], ...]:
                 "unit": "tokens",
                 "default": int(default),
                 "minimum": _MODEL_BUDGET_MIN,
-                "maximum": _MODEL_BUDGET_MAX,
+                "maximum": _thinking_budget_max(model),
                 "apply_mode": "live",
                 # 표시 기본값이 litellm alias 실측값에 근거하는지 여부(false 면 UI 가 "모델 기본값" 힌트).
                 "default_known": known,
@@ -457,7 +523,12 @@ def list_specs() -> tuple[dict[str, Any], ...]:
     """전체 설정 스펙(타임아웃 + 모델 예산). 프로세스 1회 계산 후 메모이즈."""
     global _SPECS_CACHE
     if _SPECS_CACHE is None:
-        _SPECS_CACHE = _timeout_specs() + _model_budget_specs() + _reasoning_budget_specs()
+        _SPECS_CACHE = (
+            _timeout_specs()
+            + _agent_max_output_specs()
+            + _model_budget_specs()
+            + _reasoning_budget_specs()
+        )
     return _SPECS_CACHE
 
 
@@ -683,16 +754,17 @@ def model_thinking_budget_override(model: str | None) -> int | None:
     return _clamp(coerced, spec)
 
 
-def reasoning_budget_override(level: str | None) -> int | None:
-    """해당 추론 강도 레벨(low/high/max)에 관리자가 설정한 budget override(정수, clamp). 없으면 None.
+def reasoning_budget_override(model: str | None, level: str | None) -> int | None:
+    """(모델, 추론 강도 레벨)에 관리자가 설정한 budget override(정수, clamp). 없으면 None.
 
     None 이면 호출측(_call_llm)은 model_catalog 기본 budget(thinking_budget_for_level)을 그대로 쓴다.
-    'normal' 등 미등록 레벨은 spec 이 없어 항상 None(B1 — 일반은 no-override 유지).
+    'normal' 등 미등록 레벨/모델은 spec 이 없어 항상 None(B1 — 일반은 no-override 유지).
     """
-    name = str(level or "").strip().lower()
-    if not name:
+    name_m = str(model or "").strip()
+    name_l = str(level or "").strip().lower()
+    if not name_m or not name_l:
         return None
-    key = _reasoning_budget_key(name)
+    key = _reasoning_budget_key(name_m, name_l)
     spec = spec_for(key)
     if spec is None:
         return None
@@ -703,6 +775,23 @@ def reasoning_budget_override(level: str | None) -> int | None:
     if coerced is None:
         return None
     return _clamp(coerced, spec)
+
+
+def agent_max_output(model: str | None) -> int:
+    """대화(agent) 총 출력 상한(max_tokens). override 있으면 clamp 후 반환, 없으면 모델별 default.
+
+    default = _agent_max_output_default(model)(모델별 보수값, plan 등 task cap 과 분리). 등록 spec 이
+    있으면 관리자 override 를 [min, native] 로 clamp 한다. (순환 import 방지 — 조회는 여기 호출측 계층.)
+    """
+    name = str(model or "").strip()
+    if not name:
+        return int(model_catalog.max_tokens_for_model(name, "agent") or 20000)
+    default = _agent_max_output_default(name)
+    key = _agent_max_output_key(name)
+    if spec_for(key) is None:
+        return default
+    # override 있으면 [min, native] clamp, 없으면 default(모델별 보수값).
+    return _resolve_int(key, _live_overrides(), default=default)
 
 
 def effective_value(key: str) -> int:
@@ -735,6 +824,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
     """
     ov = _live_overrides() if overrides is None else {str(k): v for k, v in dict(overrides).items()}
     timeouts: list[dict[str, Any]] = []
+    agent_outputs: list[dict[str, Any]] = []
     models: list[dict[str, Any]] = []
     reasoning: list[dict[str, Any]] = []
     for spec in list_specs():
@@ -759,11 +849,16 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
             "has_override": has_override,
             "override_value": _coerce_int(ov.get(key)) if has_override else None,
         }
-        if spec.get("group") == GROUP_MODEL_BUDGET:
+        if spec.get("group") == GROUP_AGENT_MAX_OUTPUT:
+            row["model"] = spec.get("model")
+            row["default_known"] = bool(spec.get("default_known"))
+            agent_outputs.append(row)
+        elif spec.get("group") == GROUP_MODEL_BUDGET:
             row["model"] = spec.get("model")
             row["default_known"] = bool(spec.get("default_known"))
             models.append(row)
         elif spec.get("group") == GROUP_REASONING_BUDGET:
+            row["model"] = spec.get("model")
             row["level"] = spec.get("level")
             row["default_known"] = bool(spec.get("default_known"))
             reasoning.append(row)
@@ -771,6 +866,7 @@ def serialize_registry(overrides: dict[str, Any] | None = None) -> dict[str, Any
             timeouts.append(row)
     return {
         "timeouts": timeouts,
+        "agent_max_outputs": agent_outputs,
         "model_thinking_budgets": models,
         "reasoning_budgets": reasoning,
         "meta": {

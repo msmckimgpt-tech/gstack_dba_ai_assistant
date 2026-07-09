@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260709T051642-reasoning-budget-per-model [SUBAGENT:adversarial-general-5axis] (TASK-20260709-reasoning-budget-per-model — 모델별 추론 예산 상한 확대(native) + 모델→추론강도 accordion + [추론↔본문] 비율 슬라이더, Major §12.3 — shared + feature-0002 core + feature-0003 web/UI)
+- 요청: `관리 콘솔 > 시스템 > 설정 > 모델별 추론 예산` 16000 상한 상향(동반) + 모델별 native(Sonnet 128K/Haiku 64K) + 모델별 추론 수준 분리 + 종속 accordion + [추론↔본문] 비율 슬라이더.
+- 대상: `shared/model_catalog.py`(native ceiling·`model_native_max_output`), `shared/runtime_settings.py`(`agent_max_output` group·per-model `reasoning_budget:{model}:{level}`·override reader·serialize), `agent_core.py`(`_call_llm` 모델별 token_limit·reasoning override(model)), `static/{admin.js,admin.html,styles.css,release-notes-data.js}`(accordion·비율 슬라이더). 파괴적 변경·마이그·RBAC 0(순수 레지스트리 스펙 확장 + additive 그룹).
+- **적대 패널(general 5축: 백엔드 정합·agent_core clamp·backward-compat·프론트 슬라이더 배선·validate/보안) → BLOCKING 0**. 리뷰어가 모듈 직접 import·실행으로 native 값(Sonnet 128K/Haiku 64K 권위 카탈로그 일치)·무회귀·clamp·override·backward-compat·serialize·프론트 recompute 배선을 실측 확인.
+  - **Finding1 [PLAUSIBLE MEDIUM, 실피해 낮음] → FIXED**: `max_tokens_for_model(model,"agent")` default 상향이 plan 생성 경로(`llm.py llm_plan`, task="agent" 공유)까지 결합. 조치: model_catalog 의 agent task cap 을 **원복(무변경)** 하고, 대화 총 출력의 모델별 default(40000/24000)를 `runtime_settings._AGENT_MAX_OUTPUT_DEFAULT` 로 분리 — plan/insight 등 "agent" task 소비자 완전 무회귀. 재검증: `max_tokens_for_model(x,"agent")`=20000(불변), `agent_max_output`=40000/24000.
+  - **Finding2 [NIT] → FIXED**: 슬라이더 숫자 입력이 정적 상한(native−1024)으로 검증돼 (sliderMax, native−1024] 입력 시 저장 후 조용히 clamp. 조치: 동적 상한 `sliderMax()=min(native−1024, 총−1024)` 로 검증 + "총 출력 N 대비" 안내.
+  - **Finding3 [NIT] → 수용**: 총 출력을 무효값으로 바꾸면(early-return) 슬라이더 상한 표시가 다음 상호작용 전까지 stale. 백엔드 `min(budget, max_tokens−1024)` 로 데이터 손상 없음, 발생 빈도 낮음(무효 total 입력) → display-only NIT 수용.
+- 검증: py_compile(model_catalog·runtime_settings·agent_core) · node --check(admin.js·release-notes) · ruff clean · 컨테이너 `make test` feature 관련 전건 PASS(잔여 3건=env `AGENT_TIMEOUT_SEC=300`·`--no-deps` DB 아티팩트, unset 시 PASS 확인 → 무회귀). serialize 계약 실측(agent_max_outputs·reasoning row model+level·'매우 높음' max 126976 상향 여지).
+- 시각검증: 정적 자산 web baked → 라이브 PB-0008 배포 후 잔여(TEST.md §3).
+- Cross-ref: TASK-20260709-reasoning-budget-per-model / CHG-20260709T051642-reasoning-budget-per-model.
+
 ## REV-20260703T094539-aiops-stepgap [SUBAGENT:adversarial-2lens×2round] (TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격, Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI)
 - 요청: "에이전트 추론 p95 측정 단위 검토 — 지연 기준은 답변 받는 총 시간이 아니라 각 추론 단계 간 간격". 사용자 정의 확정 = **A(단계 간 간격)**.
 - 대상: `agent_core.py`(`_run_agent_core` 루프 `_prev_llm_end_ns` 추적 + 라운드 간 gap 계산 → `_call_llm(step_gap_ms=)` 전달 → `_record_llm_usage`), `llm.py`(`_record_llm_usage` step_gap_ms 파라미터 + 3단 INSERT cascade), 마이그 0033(`step_gap_ms INTEGER` additive) + 부트스트랩 DDL parity, `ai_ops.py`(KPI query#2/#3 → step_gap_ms + 다단계 요청 분모), `admin.js`(KPI "단계 간 간격 p50/p95" + per-task "간격 p95" + activity "왕복"). RBAC/파괴적 변경 0.
