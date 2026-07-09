@@ -1173,3 +1173,7 @@ source_of_truth: true
 - 사용자 재리포트(스크린샷) 2건. feature-0003: static/admin.js — 선택 노드 절대 비-dim 불변식·
   fa 선갱신 즉시 점등·busy 재시도 6s+체인 무효화·엣지 dim 전체 opacity(화살촉). admin.html 캐시버스터.
   tests: headless T12/T13.
+
+## CHG-20260709T053000-ai-root-feature-0016-hlinv-postdeploy — §57.6 POST-DEPLOY 실측 기록 (2026-07-09)
+
+- docs-only: T57.13 완수(연속 3회 전환 전 지표 클린 — 실클릭·육안).
