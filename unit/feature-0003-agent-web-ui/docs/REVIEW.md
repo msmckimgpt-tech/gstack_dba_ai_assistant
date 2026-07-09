@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260709T090722-reasoning-budget-labels [SKIPPED:text-only-label-precision] (TASK-20260709-reasoning-budget-per-model 후속 — '총 출력' 표시를 '라운드(단계)당'으로 정밀화)
+- Panel skip 사유(§18.8): 변경은 표시 문구(admin.html hint·admin.js 라벨/note·runtime_settings spec description·FUNCTION.md) + admin.js 캐시버스터뿐. 로직·상태·API·스키마·RBAC·값(default/min/max) 0 — serialize 스모크로 default 40000/max 128000 무변경 확인. 코드 적대 검증 신규 표면 없음(부모 REV-20260709T051642 가 로직 검증 완료).
+- 배경(사용자 검토 발견): `max_tokens`(agent_max_output)·thinking budget 이 **라운드당**인데 "총 출력"으로 표기돼 요청-전체로 오독 가능 + native 근처=다회차 축소 역설 미안내. 기능 정합성은 이상 없음 확인 — 표시만 정밀화.
+- 검증: node --check · py_compile · serialize 스모크. 배포 후 서빙 자산 `?v=20260709-reasoning-budget-labels` grep + 라벨 확인.
+- Cross-ref: CHG-20260709T090722-reasoning-budget-labels / 부모 REV-20260709T051642-reasoning-budget-per-model.
+
 ## REV-20260709T055431-reasoning-budget-cachebuster [SKIPPED:cache-buster-only] (TASK-20260709-reasoning-budget-per-model 후속 — admin 정적 자산 캐시버스터 bump)
 - Panel skip 사유(§18.8): 변경은 `admin.html` 의 `admin.js`/`styles.css` 캐시버스터 값 2개 뿐(`?v=…graph-toolbar`/`…hl-bake` → `…reasoning-budget`). 신규 로직·상태·API·RBAC·스키마·시각거동 0 — 이미 리뷰된(REV-20260709T051642) 신규 자산을 stale 클라이언트에 강제 로드하는 캐시버스터만. 코드 적대 검증 신규 표면 없음.
 - 검증: 배포 후 라이브 서빙 자산 `?v=20260709-reasoning-budget` grep + '모델별 추론 예산' 패널 렌더(모델 카드·비율 슬라이더).

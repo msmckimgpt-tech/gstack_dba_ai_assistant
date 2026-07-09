@@ -991,7 +991,7 @@
             <article class="admin-settings-panel" data-settings-panel="model-thinking-budgets">
               <header class="admin-settings-panel-head">
                 <h3>모델별 추론 예산</h3>
-                <p class="admin-settings-panel-hint">모델별로 대화 총 출력(max_tokens, Sonnet 128K / Haiku 64K 까지)과 추론 강도별 예산을 구성합니다. 총 출력 안에서 추론(thinking)과 본문(content)이 나뉘며, 슬라이더로 비중을 조절합니다. 총 출력을 크게 잡을수록 응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'도 함께 올려야 할 수 있습니다. 저장 즉시 반영되며, 카탈로그에 모델이 추가되면 자동으로 목록에 나타납니다.</p>
+                <p class="admin-settings-panel-hint">모델별로 추론 <strong>라운드(단계)당</strong> 출력(max_tokens, Sonnet 128K / Haiku 64K 까지)과 추론 강도별 예산을 구성합니다. 어시스턴트는 한 요청을 다회차로 처리하므로 실제 총량은 대략 라운드당 값 × 회차입니다. 라운드당 출력 안에서 추론(thinking)과 본문(content)이 나뉘며, 슬라이더로 비중을 조절합니다. native 근처로 크게 잡으면 라운드마다 느려져 '에이전트/쿼리 실행 타임아웃'을 넘거나 처리 회차가 줄 수 있으니, 보수적으로 시작하고 필요 시 타임아웃도 함께 올리세요. 저장 즉시 반영되며, 카탈로그에 모델이 추가되면 자동으로 목록에 나타납니다.</p>
               </header>
               <div class="admin-settings-panel-body" id="modelThinkingBudgetsMount">
                 <!-- mountModelThinkingBudgetsPanel() 가 마운트 -->
@@ -1040,7 +1040,7 @@
   <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>
   <script src="/static/mermaid-render.js?v=20260629-mermaid-orphan-fix"></script>
   <!-- 병합: admin.js 는 §57(하이라이트 hl-isolated) + graph-toolbar(툴바 통합·상태 오버레이) 통합본 — cache-buster 는 graph-toolbar 가 최신. -->
-  <script src="/static/admin.js?v=20260709-graph-vpack2"></script>
+  <script src="/static/admin.js?v=20260709-reasoning-budget-labels"></script>
   <script src="/static/textarea-autogrow.js?v=20260611-dblclick-autogrow"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->
   <script src="/static/release-notes-data.js?v=20260708-rn-0708"></script>

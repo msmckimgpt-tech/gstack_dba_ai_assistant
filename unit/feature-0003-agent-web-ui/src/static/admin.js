@@ -11581,13 +11581,13 @@ async function renderModelThinkingBudgets(mount) {
     body.className = "rs-budget-card-body";
 
     const sliderRows = [];
-    const updateHead = () => { hcount.textContent = `총 출력 ${currentTotal(m).toLocaleString()} tokens`; };
+    const updateHead = () => { hcount.textContent = `라운드당 ${currentTotal(m).toLocaleString()} tokens`; };
 
-    // ① 총 출력(max_tokens) — 변경 시 하위 슬라이더 상한/본문 파생 재계산.
+    // ① 라운드당 출력(max_tokens) — 변경 시 하위 슬라이더 상한/본문 파생 재계산.
     if (bucket.total) {
       const sub = document.createElement("div");
       sub.className = "rs-subgroup-title";
-      sub.textContent = "총 출력 (max_tokens · 추론+본문 합)";
+      sub.textContent = "라운드(단계)당 출력 (max_tokens · 추론+본문 · 다회차면 회차마다 적용)";
       const list = document.createElement("div");
       list.className = "rs-list";
       list.appendChild(buildRuntimeSettingRow(bucket.total, canWrite, {
@@ -11631,7 +11631,7 @@ async function renderModelThinkingBudgets(mount) {
   const note = document.createElement("div");
   note.className = "rs-readonly-note";
   note.textContent = canWrite
-    ? "모델별 총 출력(max_tokens) 안에서 추론(thinking)과 본문(content)이 나뉩니다. 슬라이더로 추론 비중을 조절하면 본문 여유가 함께 표시됩니다. 총 출력을 크게 잡을수록 응답 생성이 길어져 '에이전트/쿼리 실행 타임아웃'도 함께 올려야 할 수 있습니다. 대화 화면의 강도 선택(낮음/높음/매우 높음)이 이 예산을 요청 단위로 적용하며, '일반'은 모델 기본값을 유지합니다."
+    ? "값은 추론 한 라운드(단계)당 상한입니다 — 어시스턴트는 한 요청을 다회차로 처리하므로 실제 총량은 대략 (라운드당) × 회차입니다. 라운드당 출력 안에서 추론(thinking)과 본문(content)이 나뉘며, 슬라이더로 추론 비중을 조절하면 본문 여유가 함께 표시됩니다. native 근처로 크게 잡으면 라운드마다 느려져 '에이전트/쿼리 실행 타임아웃'을 넘거나 오히려 처리 회차가 줄 수 있으니, 보수적으로 시작하고 필요 시 타임아웃도 함께 올리세요. 대화 화면의 강도 선택(낮음/높음/매우 높음)이 이 예산을 라운드 단위로 적용하며, '일반'은 모델 기본값을 유지합니다."
     : "조회 전용 — 수정 권한(system.runtime.write)이 없습니다.";
   panel.appendChild(note);
   mount.appendChild(panel);
