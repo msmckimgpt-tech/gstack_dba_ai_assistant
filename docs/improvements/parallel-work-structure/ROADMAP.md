@@ -135,7 +135,10 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   TASK.md 기록이 검증 표본.
 
 ### ITEM-02 · alembic multi-head CI gate + re-parent 자동화
-- **status**: pending
+- **status**: done
+- **note**: 2026-07-10 완료 — migrate-lint `--heads`(head 단일성·번호중복·MAX 정합, self-test 10/10)
+  + MAX_MIGRATION.txt(의도적 충돌 파일) + alembic-reparent.sh + ci.yml Migration gate 스텝.
+  acceptance (a)(b)(c)(e) 실증(TEST.md §3), (d)=본 cycle PR checks. CHG/REV-20260710T232503.
 - **feature_id**: feature-0002-agent-core
 - **dimension**: operational
 - **risk_grade**: Minor
@@ -578,9 +581,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 1 (ITEM-01) · in-progress 0 · pending 11 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → 02 → 04 → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
-  (다음 ready: ITEM-02)
+- 총 12 항목 · done 2 (ITEM-01·02) · in-progress 0 · pending 10 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → 04 → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
+  (다음 ready: ITEM-04)
 - Major 등급(01·03·04·06·07·09·10·11·12)은 **§6.1 사전 승인(2026-07-10 사용자 지시)으로
   드레인 중 비차단** — blocked 는 §6.3 의 "진짜 이슈" 발생 시에만. (§6 이 없는 일반
   무인 드레인이라면 Major 는 자동 blocked 가 원칙 — §6 은 본 initiative 한정 특례.)

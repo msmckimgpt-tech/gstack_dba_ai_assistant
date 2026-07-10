@@ -117,3 +117,12 @@ source_of_truth: true
 - 회귀: feature-0002 전체 스위트 회귀 0(재사용 `repo-ask-worker` 이미지 + worktree 마운트 + PYTHONPATH, DB 없이 monkeypatch). py_compile(agent_core·model_catalog)·litellm YAML lint OK.
 - ⚠ **정직 기록** — feature-0003 `test_route_parity_p5b::test_route_table_matches_golden_snapshot` 는 재사용 이미지의 Starlette/FastAPI 버전이 golden 스냅샷 생성 시점과 drift 해 실패한다. **clean main(repo/) 체크아웃에서 동일 명령·동일 이미지로도 동일 실패** 확인(A/B) → 본 변경과 무관한 **환경 artifact**(내 diff 에 웹 라우터·route_snapshot 무변경). 정본 `make test`(agent 이미지 핀 deps 재빌드)에선 통과하나, worktree 에는 런타임 `.env` 부재로 compose 파싱(`invalid proto:`)이 막혀 이번 cycle 은 재사용-이미지 경로로 검증(메모리 project-pytest-worktree-pycache-gotcha 지침).
 - 라이브 실측 필요분: 코드/테스트는 "대화 답변이 edge-free alias 로만 나가고 실패 시 정직 안내" 증명 → "실제 rate-limit 시 gemma 미개입" 은 배포 후 corroboration(task='agent' resolved_model gemma 분포 0 유지) 재측정.
+
+## alembic-multihead-gate (CHG-20260710T232503, parallel-work-structure ITEM-02, 2026-07-10, session ai/claude-corp/feature-0002-agent-core)
+- `bash bin/migrate-lint.sh --self-test` **10/10 PASS** (기존 destructive 6 + 신규 head 4: 선형 체인+MAX 일치→PASS / 번호 중복 0040×2→적발 / multi-head→적발 / MAX 불일치→적발).
+- acceptance (c): 현행 0001~0039 체인 `--heads` **PASS** (head=`0039_enum_feedback` 단일 · revision 39건 · 번호 중복 0 · MAX_MIGRATION 일치).
+- acceptance (a): worktree 에 더미 `20260710_0040_dup_x/y.py` 생성 → `--heads` **FAIL rc=1** (번호 중복 + multi-head 동시 적발, reparent 안내 출력).
+- acceptance (b): `bash bin/alembic-reparent.sh 20260710_0040_dup_y.py 0041` 1회 → 파일명/revision/down_revision(→0040_dup_x)/MAX 4곳 갱신 → `--heads` **PASS 복원** 확인 후 더미 제거·MAX 원복.
+- acceptance (e): tmp 브랜치 A/B 가 같은 base 에서 각자 0040 마이그레이션 추가+MAX 갱신 → `git merge` 시 `MAX_MIGRATION.txt` **CONFLICT(UU) 재현**(fail-fast 실증) → merge --abort·브랜치 폐기.
+- acceptance (d): CI "Migration gate" 스텝 실행은 본 cycle PR checks 로그로 확인(머지 게이트 편입).
+- guard 검증: 머지된 revision(예: 0039)에 reparent 시도 시 origin/main 존재 검사로 die — 코드 경로 확인(스크립트 guard 절).

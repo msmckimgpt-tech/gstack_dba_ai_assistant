@@ -44,6 +44,13 @@ jobs:
           fi
           echo "OK: 라이브 write 경로에 raw AgentMemory* SQL 없음"
 
+      - name: Migration gate — multi-head/번호중복/MAX_MIGRATION 정합 (parallel-work-structure ITEM-02)
+        run: |
+          # 병렬 브랜치의 동번호 마이그레이션(0036 실충돌 계열)을 머지 전에 정적 적발.
+          # 라이브 DB 불필요 — versions/*.py revision 그래프 파싱만 (self-test 로 검사기 자체도 검증).
+          bash bin/migrate-lint.sh --self-test
+          bash bin/migrate-lint.sh --heads
+
       - name: Unit tests (pytest)
         env:
           # PYTHONPATH 에 repo 루트(.) 포함 — app.py 가 import 하는 최상위 `shared` 패키지 해소.
