@@ -1235,3 +1235,14 @@ TASK-0015 (plan-review):
 - [x] **진단**: `bedrock-gateway` 로그의 `claude-haiku-4-chat`/`-root` `max_tokens must be greater than thinking.budget_tokens`(400, 10:37:18) 오류를 배포 타이밍 재구성·실행 이미지 직접 확인·정적 코드 추적·게이트웨이 라이브 재현으로 근본원인 규명.
 - [x] **결론**: 코드 결함 아님 — `_call_llm`(유일 caller)은 claude-* 모델에 항상 `max_tokens=20000` 주입해 이 오류 경로에 도달 불가. FRICTION_LEDGER 의 post-deploy "live probe" 절차가 만든 1회성 아티팩트(재발 0, 실 트래픽 영향 없음). 코드 수정 불필요.
 - [x] **기록**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md` FR-edge-fallback-conversation-context-loss addendum + `unit/feature-0002-agent-core/docs/REPORT.md` 신규 절 + MODIFY.md CHG-20260707T134500 항목.
+
+## 20260710T2325-alembic-multihead-gate — 병렬 마이그레이션 번호 경합 CI 게이트 (parallel-work-structure ITEM-02)
+
+> 신규 최상위 섹션 헤더 timestamp 형식 = AGENTS.md §13.1 2026-07-10 개정(ADR-20260710T231146-parallel-id-hygiene)의 첫 적용 표본.
+
+- [x] `bin/migrate-lint.sh` — head 단일성/파일명 4자리 번호 중복/`MAX_MIGRATION.txt` 정합 정적 검사(`--heads` 모드 신설 + diff/`--all` 모드에도 상시 편입, 라이브 DB 불필요) + self-test 4 케이스 추가(총 10).
+- [x] `unit/feature-0002-agent-core/alembic/versions/MAX_MIGRATION.txt` 신설 — 의도적 충돌 파일(django-linear-migrations 패턴, RESEARCH W-005): 최신 head 1줄, 신규 마이그레이션·re-parent 시 동반 갱신(lint 강제).
+- [x] `bin/alembic-reparent.sh` 신설 — 파일명 번호·revision·down_revision(현 head) 3곳 원자 치환 + MAX 갱신 + lint 재검. guard: origin/main 미머지 자기 브랜치 파일만(머지된 revision 재번호 금지 — 라이브 stamp 파손 방지).
+- [x] `.github/workflows/ci.yml` test job "Migration gate" 스텝 추가(`--self-test` + `--heads`, 머지 게이트).
+- [x] `docs/MIGRATIONS.md` 규약 절 추가(3중 장치 + 해소 절차).
+- [x] acceptance (a)(b)(c)(e) 실증 — TEST.md §3 Run 기록 참조. (d) CI 스텝 실행은 본 cycle PR checks 로 확인.

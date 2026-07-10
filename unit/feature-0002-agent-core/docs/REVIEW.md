@@ -1320,3 +1320,11 @@ source_of_truth: true
 - 근거: 배포 타이밍 재구성(PR #600 머지 10:28:41 → gateway 재생성 10:31:02 → ask/insight 이미지 재빌드 10:32:18) + 실패 시각(10:37:18)의 실행 이미지(`634f9d6e7de7`)를 직접 열어 이미 수정 코드 보유 확인(stale-image 가설 기각) + 정적 코드 추적(`_call_llm` 유일 caller, claude-* 모델에 항상 `max_tokens=20000` 주입 — 충돌 경로 없음, 저장소 전체에서 `conversation_answer_model` 호출부 1곳뿐) + 게이트웨이 라이브 재현(`max_tokens<5000` 만 재현, `≥5000`/미지정은 정상) + 컨테이너 기동 이후 전체 로그 재발 0 확인.
 - 결론: 코드 결함 아님. FRICTION_LEDGER 의 post-deploy "live probe" 절차가 만든 1회성 프로브 아티팩트 — 실 사용자 대화 트래픽 영향 없음(연계 conversation_id 없음).
 - Cross-ref: CHG-20260707T134500-bedrock-chat-alias-probe-artifact(feature-0002 MODIFY) · FRICTION_LEDGER FR-edge-fallback-conversation-context-loss addendum.
+
+## REV-20260710T232503-alembic-multihead-gate [SKIPPED:roadmap-spec-transcription] — 병렬 마이그레이션 번호 경합 CI 게이트 + 해소 자동화 (parallel-work-structure ITEM-02)
+- Date: 2026-07-10. cycle: ai/claude-corp/feature-0002-agent-core — `/_dqa:improve_cycle parallel-work-structure` 드레인 2번째 항목(ITEM-02, Minor). **승인 근거: ROADMAP §6.1**(2026-07-10 사용자 지시 — Minor 는 드레인 자동 구현 범위).
+- SKIPPED 사유: what/entry_points/acceptance/guards 가 ROADMAP ITEM-02 에 완전 명세 — 그 명세는 improve-fit-reviewer 2-round 적대 리뷰(REV-20260710T180820, meta/REVIEW.md)가 사전 검증. 구현은 명세 전사 + 검증 주도(아래) — DB 스키마 무변경(마이그레이션 0건), 제품 런타임 코드 무변경(도구·CI 게이트만), §18.8 dispatch(auth/schema/UI/API/perf) 비해당(스키마 '변경'이 아닌 스키마 변경의 '검사기').
+- 검증(acceptance 전건 실증 — TEST.md §3 "alembic-multihead-gate"): self-test 10/10(신규 head 4 케이스 포함) · 현행 39체인 PASS · (a) 중복 0040×2 FAIL 적발 · (b) reparent 1회 PASS 복원 · (e) 병렬 브랜치 MAX_MIGRATION.txt git CONFLICT fail-fast 재현 · bash -n 2종 · (d) CI 스텝은 본 PR checks 로 확인.
+- guard: reparent 는 origin/main 미머지 파일만(스크립트 강제 die) — 라이브 alembic_version stamp 파손 방지(MIGRATIONS.md 규약 절 명문화).
+- Human Approval Needed: 아니오 — Minor·비파괴(검사기 추가)·배포 무관(CI/도구만). 전역 auto-sync + §6.1.
+- Cross-ref: CHG-20260710T232503(MODIFY) · ROADMAP ITEM-02 note · MIGRATIONS.md "병렬 브랜치 번호 경합 게이트" 절.
