@@ -1433,3 +1433,10 @@ source_of_truth: true
 - NIT(하드닝, **수정**): `_metaGraphResetModel` 이 캐시 3필드 미클리어(schemaExpanded.clear 결합 의존) → 명시 클리어 추가.
 - 근본원인(리뷰 지적): 서명이 노드 **키만** 해시하던 것 → 정렬 함수가 읽는 노드 **객체 속성+roles** 로 확장.
 - 검증: 수정 후 신규 테스트 T6(roles·cluster_id·name 변경 시 서명 상이 + roles 변경 후 rebuild stale 아님) 추가 → `test_g6build_layoutmemo.js` **19 PASS** + 회귀 150 = **169 PASS** · node --check. 캐시적중==fresh 좌표동일 불변 유지.
+
+## REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES] — §74 미니맵 전체-이미지 재사용 diff 적대 리뷰 [머지 재번호 §70→§73→§74]
+- 대상: CHG-20260710T230000-minimap-reuse (admin.js `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + 서명 배선 + minimap `key:"minimap"` + afterdraw 드래그 무효화 + 신규 test).
+- 방법: §18.8 적대 리뷰. 초기 2렌즈(정확성/UX) user-interrupt 중단·렌즈1 이 linchpin(H1) 적발. 수정본 집중 확인 리뷰(H1~H5)에서 H2 신규 BLOCK 추가 적발. 둘 다 수정·테스트 커버.
+- **BLOCK 2건→수정**: **H1(no-op)** G6 plugin 은 첫 draw 의 initRuntime 에서 lazy 생성 → init 직후 `getPluginInstance` 실패 → 패치 사멸 → `await g.draw()` 직후 이동. **H2(드래그 stale)** 드래그(`element.draw({stage:"translate"})`, `_metaG6Apply` 미경유)도 `AFTER_DRAW`(stage:"translate")를 발생 → stale 서명 skip → 미니맵 얼어붙음(원본 대비 회귀) → `afterdraw` stage 무효화. D 섹션 10 테스트 lock.
+- 클리어: H1 타이밍(draw 직후 동기 설치·첫 렌더 blank 없음), H3 서명 필드 정합, H4 멱등·안전(no-op 폴백), H5 renderMask 독립.
+- 검증: 수정 후 신규 **35 PASS** + 회귀 **150 PASS** · `node --check`. POST-DEPLOY PB-0008(feature-0003 TEST §74).

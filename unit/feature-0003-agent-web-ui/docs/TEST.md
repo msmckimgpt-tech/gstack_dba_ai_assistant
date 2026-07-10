@@ -2070,3 +2070,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   ① build 함수분해 재측정 — **캐시 적중 시 relOrderAll·simGroups ≈ 0ms·build 급감**(68~145ms→방출비용만) ② 위상 무변경
   rebuild(팬·줌·선택·컬럼토글) 노드 위치 동일(band-invariant) ③ 극단 줌인(zoom 2.5) 방출 수↓(마진 0.3) ④ pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl(`?v=20260710-layoutmemo`) + win-browser 실측 PASS append.
+
+### Run (2026-07-10) — graph-minimap-reuse: 미니맵 전체-이미지 재사용(구성 불변 시 재복제 skip) (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §74/ADR-036) — **Environment: Windows-browser**
+- 정적/문법: `node --check admin.js` PASS(머지 후 재확인). 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 서명 11·B 실build 4·C 패치 10·D 드래그 무효화 10). 회귀 **150 PASS**.
+- 적대 리뷰 2건 BLOCK→수정: H1(패치 init 시점 호출→plugin lazy-init 전 no-op)→draw 직후 이동, H2(네이티브 드래그 stale 서명→미니맵 얼어붙음)→afterdraw stage="translate" 무효화.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 재배포 선행 필요(동일 패턴). **POST-DEPLOY PB-0008 라이브 append 예정** — ① 미니맵 렌더 ② 팬/줌 뷰포트 사각형 추종 ③ 상태-only 후 안정(blank/깜빡임 없음) ④ 구성변경 반영 ⑤ **드래그 시 위치 반영(H2 실증)** ⑥ pageerror 0. 서빙 자산 curl(버스터 `20260710-mmreuse-layoutmemo` + `_metaMinimapGeomSig`/`_metaPatchMinimapReuse`) 확증.
+- **Pass/Fail: pre-commit 정적·문법·헤드리스 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족.

@@ -5581,3 +5581,9 @@ source_of_truth: true
 ## CHG-20260709T120000-graph-toolbar-postverify (graph-toolbar POST-DEPLOY PB-0008 라이브 PASS 기록 — 비-정책 doc-only)
 - 배포 ee54b1ff(soak PASS) 후 라이브 콘솔(`https://localhost/` → /admin → 그래프 뷰) PB-0008 실측 결과를 TEST.md §3 Run 에 POST-DEPLOY 갱신으로 append + TASK.md POST-DEPLOY 체크박스 [x]. 실측: toolbarKids=4·**reflow0=true**·팝오버 no-clip·pageerror 0(상세 TEST.md §3). 코드·자산 변경 0.
 - Files: `docs/{TEST,TASK,MODIFY,REVIEW}.md` (doc-only). 원천 cycle: CHG-20260709-graph-toolbar-consolidate(코드) / 배포 ee54b1ff.
+
+## CHG-20260710T230000-minimap-reuse (그래프 미니맵 전체-이미지 재사용 — web 자산, 정본 feature-0016 §70/ADR-034)
+- 대상: `src/static/admin.js`(신규 `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + `_metaG6ApplyOnce` 서명 배선 + minimap 플러그인 `key:"minimap"` + init 직후 patch) + `src/static/admin.html`(버스터 `admin.js?v=20260710-minimap-reuse`) + 신규 `tests/headless/test_g6build_minimap_reuse.js`.
+- 변경(frontend-only, cross-cut 코드 거주 — 기능 정본 feature-0016): G6 v5 minimap 플러그인의 전량 재복제 `renderMinimap()` 을 기하 서명 게이트로 감싸, 상태-only rebuild(선택/역할도착/busy)에서 미니맵 재복제를 skip(이미 그려둔 전체 이미지 재사용). 구성 변경 시엔 정상 재복제. 팬/줌은 원래도 G6 가 마스크만 갱신(무영향).
+- 적대 리뷰 2건 BLOCK 적발→수정: H1(패치 init 시점 호출→plugin lazy-init 전 no-op) → draw 직후 이동, H2(네이티브 드래그 stale 서명→미니맵 얼어붙음) → afterdraw stage="translate" 서명 무효화.
+- Verification: `node --check` OK · headless 신규 **35** + 회귀 150 PASS · 적대 패널(REVIEW). POST-DEPLOY PB-0008 라이브(deploy_scope:included, TEST §70).

@@ -1385,3 +1385,9 @@ source_of_truth: true
 - 변경: 근본원인(rebuild 마다 전체모델 배치계산 68~145ms — _metaRelOrderAll 55%+_metaSimGroups 45%) 해소. 위상(nodes/REFERENCES edges/schemaExpanded/mode) 무변경이면 순수 정렬 재사용 → 팬·줌·선택·컬럼토글·드래그 rebuild 를 방출 비용만 남김. cull 마진 축소로 고배율 방출 감축.
 - 근거: §67 배포 후 사용자 피드백 "극단 줌인·비밀집인데도 느림 — 근본원인 해소"(win-browser 실측 함수분해, ADR-035). frontend-only, 결정론 불변(캐시 적중==fresh).
 - 검증: headless 19(메모이즈)+150(회귀) = **169 PASS**·node --check. §18.8 적대 리뷰(REV §73 F1/F2 수정). POST-DEPLOY win-browser(TEST §73). 버스터 `admin.js?v=20260710-layoutmemo`.
+
+## CHG-20260710T230000-ai-claude-feature-0016-minimap-reuse — §74 미니맵 전체-이미지 재사용 (2026-07-10) [머지 재번호 §70→§73→§74·ADR→ADR-036, §13.1]
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(신규 `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + `_metaG6ApplyOnce` 서명 배선 + minimap `key:"minimap"` + `await g.draw()` 직후 patch + afterdraw 드래그 무효화) + `admin.html` 버스터 + 신규 `tests/headless/test_g6build_minimap_reuse.js`.
+- 변경: G6 v5 minimap 전량 재복제 `renderMinimap()` 을 기하 서명 게이트로 감싸 상태-only rebuild 에서 미니맵 재복제 skip(전체-이미지 재사용). 구성 변경 시 정상 재복제. 팬/줌은 G6 가 마스크만 갱신(무영향). frontend-only·마이그 0.
+- 적대 리뷰 2건 BLOCK→수정: H1(패치 init 시점 호출→plugin lazy-init 전 no-op)→draw 직후 이동, H2(드래그 stale 서명→미니맵 얼어붙음)→afterdraw stage 무효화.
+- 검증: 신규 headless **35 PASS** + 회귀 150 PASS · `node --check` · 적대 리뷰(REVIEW REV-20260710T233000). POST-DEPLOY PB-0008(feature-0003 TEST §74). 머지 후 버스터 `admin.js?v=20260710-mmreuse-layoutmemo`.

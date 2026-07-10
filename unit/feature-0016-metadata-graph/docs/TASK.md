@@ -2211,3 +2211,14 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   + 기존 6종 회귀 **150 PASS** = **169 PASS**. node --check. §18.8 적대 리뷰(REV §73: F1 roles·F2 노드속성 서명확장 수정, REVIEW.md). 캐시버스터 `admin.js?v=20260710-layoutmemo`.
 - [ ] T69.4 POST-DEPLOY win-browser 실 Windows Chrome 육안(PB-0008): 배포 후 동일 대형 scope 에서 build 함수별 재측정 →
   캐시 적중 시 relOrderAll/simGroups ≈ 0ms·build 급감, 위상 무변경 rebuild(팬·줌·선택·컬럼토글) 위치 동일, 극단 줌인 방출 수↓. TEST §73.
+
+## §74 graph-minimap-reuse — 미니맵 전체-이미지 재사용(구성 불변 시 재복제 skip) (2026-07-10, 사용자 요청 · entry persona dispatch) [머지 재번호 §70→§73→§74, §13.1]
+사용자: `그래프 뷰` 의 **미니맵 최적화** — "화면 구성이 갱신되었을 경우, 한 번 draw한 전체 이미지를 재사용하는 방식도 고려."
+진단: G6 v5 minimap 플러그인 `renderMinimap()`(vendor `g6.min.js` 클래스 `tZ`)은 매 `AFTER_DRAW` 마다 전 요소 key-shape 를 `cloneNode` 로 **전량 재복제**(`setShapes`). 이 앱은 `_metaG6Apply`(=`setData`+`draw()`)를 선택·상대하이라이트·역할도착·busy 등 **상태-only 로도 20+ 지점에서 자주** 돌아, 미니맵 기하가 동일한데도 매번 재복제한다. 팬/줌은 `AFTER_TRANSFORM → updateMask()+setCamera()` 만이라 재복제 없음(이미 최적) — 남은 낭비는 **구성-불변 draw 의 재복제**.
+- [x] T74.1 기하 서명 `_metaMinimapGeomSig(built)` — 미니맵 기하(요소 id·부모combo·위치 x/y·크기·엣지 끝점)만 FNV-1a 해시, **시각상태 제외**. 위치 0.25px 양자화·길이 프리픽스.
+- [x] T74.2 `_metaG6ApplyOnce`: `_metaG6Build()` 1회(`_built`) → `_miniGeomSig = _metaMinimapGeomSig(_built)` 후 `g.setData(_built)`.
+- [x] T74.3 `_metaPatchMinimapReuse(graph)` — minimap `renderMinimap` 멱등 래핑(`__reusePatched`). 서명 동일+캔버스 존재 skip, 아니면 render. 플러그인 `key:"minimap"`. 실패 시 no-op(정확성 보존).
+- [x] T74.3b **호출 시점=첫 draw 이후**(적대 리뷰 H1): G6 v5 는 `context.plugin` 을 첫 draw 의 initRuntime 에서 lazy 생성 → init 직후 호출은 no-op(최적화 사멸). `await g.draw()` 직후 멱등 호출로 이동.
+- [x] T74.3c **네이티브 드래그 stale 수정**(적대 리뷰 H2, BLOCK→수정): 드래그는 `_metaG6Apply` 미경유·`element.draw({stage:"translate"})` 로 직접 이동하나 이것도 `AFTER_DRAW`(stage:"translate")를 발생 → stale 서명으로 미니맵 skip(얼어붙음). `graph.on("afterdraw")` 가 `stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 재복제 폴백. apply data draw(stage 미지정)는 서명 유지.
+- [x] T74.4 검증: 신규 `test_g6build_minimap_reuse.js` **35 PASS**(A11·B4·C10·D10) + 회귀 **150 PASS** · `node --check` PASS. 머지 후 버스터 `admin.js?v=20260710-mmreuse-layoutmemo`(colnav·layoutmemo 병렬 머지와 결합).
+- [ ] T74.5 POST-DEPLOY win-browser 실 Windows 육안(feature-0003 TEST §74): ① 미니맵 렌더 ② 팬/줌 뷰포트 사각형 추종 ③ 상태-only 후 안정(blank/깜빡임 없음) ④ 구성변경 반영 ⑤ **드래그 시 위치 반영(H2 실증)** ⑥ pageerror 0.

@@ -5576,6 +5576,42 @@ function _metaRenderedAncestorFor(key) {
 //   setElementState 는 유실되는데 _stateCache 는 "적용됨"으로 남아 2.5s 폴도 영구 no-op — 사용자
 //   실측 "무너진 상태 유지"의 기전. 진행 중이면 재실행 1회로 병합(re-run 은 최신 모델을 읽으므로
 //   마지막 상태로 수렴), fit 은 OR 병합. 반환 promise 는 병합분 포함 전체 드레인 완료를 뜻한다.
+// graph-minimap-reuse(사용자 요구: "화면 구성이 갱신되었을 경우, 한 번 draw 한 전체 이미지를 재사용"):
+//   미니맵(G6 v5 minimap plugin)이 depiction 하는 **기하**만 해시한다 — 요소 id·부모combo·위치(x,y)·크기·엣지 끝점.
+//   시각 상태(states[]·fill·opacity·역할 칩 색)는 **의도적으로 제외**한다:
+//     ① 미니맵은 168×112px 에 수백~수천 노드를 그려 노드 하나가 sub-px~1px → 상태색이 시각적으로 무의미.
+//     ② 이 앱은 선택·상대하이라이트·역할 도착(2.5s 폴)·busy 등 '상태-only' 변경으로도 _metaG6Apply(setData+draw)
+//        를 20+ 지점에서 자주 돈다. 매 draw 의 AFTER_DRAW 가 minimap.renderMinimap() 을 발동 → 전 요소 key-shape 를
+//        cloneNode 로 전량 재복제(수천 노드면 매번 큰 고정비). 기하가 동일하면 그 재복제는 순수 낭비.
+//   본 서명이 직전 미니맵 렌더와 같으면 _metaPatchMinimapReuse 가 renderMinimap 을 skip → '한 번 draw 한 전체 이미지'
+//   를 재사용한다. 기하가 바뀌는 경로(펼침/접기/드래그/LOD 밴드/스코프 재적재/검색 prune)는 서명이 바뀌어 정상 재복제.
+//   위치는 0.25px 로 양자화(미소 부동소수 흔들림 무시). combo 위치는 자식 auto-fit(getContentBBox)이라 자식 노드
+//   위치가 서명에 있으면 암묵 포함 — combo 는 id 존재만 해시(추가/삭제 감지). built 미정의 시 null → 항상 재복제(안전).
+function _metaMinimapGeomSig(built) {
+  if (!built) return null;
+  let h = 0x811c9dc5 >>> 0;   // FNV-1a 32bit offset basis
+  const mix = (v) => {
+    const s = (v == null) ? "" : String(v);
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    h ^= 0x2c; h = Math.imul(h, 0x01000193) >>> 0;   // 필드 구분자(comma) — 인접 필드 경계 모호성 제거
+  };
+  const q = (n) => mix((typeof n === "number" && isFinite(n)) ? Math.round(n * 4) : "");   // 0.25px 양자화
+  const nodes = built.nodes || [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i], st = n.style || {};
+    mix(n.id); mix(n.combo || "");
+    q(st.x); q(st.y);
+    const sz = st.size;
+    if (Array.isArray(sz)) { q(sz[0]); q(sz[1]); } else q(sz);
+  }
+  const combos = built.combos || [];
+  for (let i = 0; i < combos.length; i++) mix(combos[i].id);
+  const edges = built.edges || [];
+  for (let i = 0; i < edges.length; i++) { const e = edges[i]; mix(e.source); mix(e.target); }
+  // 길이 프리픽스로 서로 다른 카디널리티가 같은 해시로 접히는 확률을 더 낮춘다.
+  return nodes.length + ":" + combos.length + ":" + edges.length + ":" + (h >>> 0);
+}
+
 async function _metaG6Apply(fit) {
   _metaGraph._applyWantFit = !!(_metaGraph._applyWantFit || fit);
   if (_metaGraph._applyLoop) { _metaGraph._applyAgain = true; return _metaGraph._applyLoop; }
@@ -5609,7 +5645,11 @@ async function _metaG6ApplyOnce(fit) {
     });
   }
   try {
-    g.setData(_metaG6Build());
+    const _built = _metaG6Build();
+    // graph-minimap-reuse: setData 에 넘긴 바로 그 데이터로 미니맵 기하 서명을 산정해 _miniGeomSig 에 싣는다.
+    //   패치된 minimap.renderMinimap 이 AFTER_DRAW(debounce) 창에서 이 값을 직전 렌더 서명과 비교 → 동일하면 재복제 skip.
+    try { _metaGraph._miniGeomSig = _metaMinimapGeomSig(_built); } catch (_) { _metaGraph._miniGeomSig = null; }
+    g.setData(_built);
     // graph-expand-perf fix(프리즈): setData 가 data.states(_metaG6Build 의 states:)로 모든 노드 상태를 이미 bake 한다.
     //   예전엔 _stateCache 를 clear 만 해서, 직후 _metaGraphRefreshStates(syncMarkers·2.5s 폴)가 cold 로 **전 노드
     //   setElementState** 를 돌렸다 — G6 v5 setElementState 는 건당 ~50ms 라 수백 노드면 수 초 메인스레드 프리즈
@@ -5618,6 +5658,11 @@ async function _metaG6ApplyOnce(fit) {
     _metaGraph._stateCache.clear();
     _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaCacheSig(n.key)); });   // node-role-viz: 역할 suffix 포함 — rebuild 가 역할 칩 색을 이미 bake 했으므로 직후 refresh 는 no-op
     await g.draw();
+    // graph-minimap-reuse: 미니맵 재사용 패치는 **첫 draw 이후** 걸어야 한다 — G6 v5 Graph 는 생성자에서 context.plugin
+    //   을 만들지 않고 initRuntime()(= 첫 draw 의 prepare() 가 lazy 실행)이 만든다. 따라서 init 시점 getPluginInstance("minimap")
+    //   는 context.plugin 부재로 실패(→ 패치 no-op, 최적화 사멸). draw 완료 후엔 plugin 인스턴스가 존재하므로 여기서 건다.
+    //   멱등(__reusePatched)이라 매 apply 호출돼도 첫 성공 래핑 1회만 유효(이후 즉시 return).
+    _metaPatchMinimapReuse(g);
     _metaGraphZAssert();   // graph-zorder h2: setData update 의 combo-hierarchy z 평탄화(comboZ+1) 를 canonical 로 재-assert
     _metaGraphMinimapAnchor();   // graph-minimap-fix: 플러그인 컨테이너 inline left/top → CSS 앵커 정규화(멱등)
     if (fit) { await _metaGraphFitClamped(true); }
@@ -5640,6 +5685,45 @@ function _metaGraphMinimapAnchor(retries) {
   }
   const r = (retries == null) ? 4 : retries;
   if (r > 0) setTimeout(() => _metaGraphMinimapAnchor(r - 1), 200);
+}
+
+// graph-minimap-reuse: G6 v5 minimap plugin.renderMinimap() 은 매 발동마다 전 요소 key-shape 를 cloneNode 로
+//   전량 재복제한다(setShapes). 이 앱의 잦은 상태-only rebuild(_metaG6Apply) 로 인해 기하가 동일한데도 반복
+//   재복제되는 것을 막기 위해, 플러그인 인스턴스의 renderMinimap 을 1회 래핑해 기하 서명 게이트를 건다.
+//   - 팬/줌은 원래도 AFTER_TRANSFORM → updateMask()+setCamera() 만(재복제 없음)이라 본 패치와 무간섭.
+//   - renderMask()(뷰포트 표시)는 onRender 에서 renderMinimap() 다음에 별도로 항상 호출되므로, 재복제를 skip 해도
+//     미니맵 뷰포트 사각형은 계속 갱신된다.
+//   - 실패(번들 API 변동·인스턴스 미발견)하면 조용히 no-op → 원본 renderMinimap 이 그대로 동작(정확성 보존, 최적화만 포기).
+//   호출 시점: **첫 draw 이후**(G6 v5 는 context.plugin 을 첫 draw 의 initRuntime() 에서 lazy 생성 — init 시점 호출은
+//   getPluginInstance 실패로 no-op). _metaG6ApplyOnce 의 `await g.draw()` 직후 매 apply 호출되나 멱등(__reusePatched)이라
+//   첫 성공 래핑 1회만 유효(이후 즉시 return).
+function _metaPatchMinimapReuse(graph) {
+  let mm = null;
+  try { mm = graph.getPluginInstance && graph.getPluginInstance("minimap"); } catch (_) { mm = null; }
+  if (!mm || typeof mm.renderMinimap !== "function" || mm.__reusePatched) return;
+  const orig = mm.renderMinimap.bind(mm);
+  mm.renderMinimap = function () {
+    try {
+      const sig = _metaGraph._miniGeomSig;
+      // 캔버스가 이미 생성돼 있고(첫 렌더 완료) 기하 서명이 직전 렌더와 동일하면 '한 번 draw 한 전체 이미지' 재사용.
+      if (sig != null && sig === mm.__lastGeomSig && mm.canvas) return;
+      mm.__lastGeomSig = sig;
+    } catch (_) { /* 서명 비교 실패 → 아래 원본 렌더로 안전 폴백 */ }
+    return orig();
+  };
+  // graph-minimap-reuse(적대 리뷰 H2 수정 — 네이티브 드래그 stale): 노드/콤보 드래그는 _metaG6Apply(setData+draw)를
+  //   거치지 않고 G6 가 요소를 직접 이동(`translateElementTo`→`element.draw({stage:"translate"})`, 콤보는 native
+  //   drag-element)한다. 이 draw 도 AFTER_DRAW 를 발생(payload `stage:"translate"`)시켜 minimap onRender→renderMinimap 을
+  //   부르는데, 이때 _miniGeomSig 는 **마지막 build 기준(stale)** 이라 게이트가 옛 배치로 skip → 미니맵이 드래그된 위치를
+  //   반영 못 하고 얼어붙는다. AFTER_DRAW 의 stage 가 "translate" 면 서명을 무효화(null)해 다음 renderMinimap 이 재복제
+  //   폴백하도록 한다. apply-driven data draw 는 `graph.draw()`→`element.draw()`(stage 미지정)라 서명 유지(게이트 정상).
+  //   이벤트 상수명 'afterdraw' 는 번들 GraphEvent.AFTER_DRAW 값(minimap 플러그인과 동일 바인딩). 멱등 블록 내 1회 바인딩.
+  try {
+    graph.on("afterdraw", (e) => {
+      if (e && e.data && e.data.stage === "translate") _metaGraph._miniGeomSig = null;
+    });
+  } catch (_) { /* on 미지원 시 최적화만 포기(정확성 무관) */ }
+  mm.__reusePatched = true;
 }
 
 // graph-initview(A1): 전체-fit 하되 판독 하한 밑으로는 줌아웃하지 않는다 — 콘텐츠가 크면 "판독 가능한
@@ -6301,13 +6385,16 @@ function _metaInitGraph() {
   // 플러그인 미지원 번들이면 그래프 자체는 살린다(minimap 없이 재생성 — 번들 교체 시 POC 재검증 전제).
   let graph = null;
   try {
-    graph = new window.G6.Graph(Object.assign({}, baseCfg, { plugins: [{ type: "minimap", size: [168, 112], position: "right-bottom" }] }));
+    graph = new window.G6.Graph(Object.assign({}, baseCfg, { plugins: [{ type: "minimap", key: "minimap", size: [168, 112], position: "right-bottom" }] }));   // graph-minimap-reuse: 명시 key → getPluginInstance("minimap") 직접 히트(by-type 폴백 경고 회피)
   } catch (_) { graph = null; }
   if (!graph) {
     try { graph = new window.G6.Graph(baseCfg); } catch (_) { graph = null; }
   }
   if (!graph) { _metaGraphStatus("그래프 초기화 실패(G6)."); return; }
   _metaGraph.graph = graph;
+  // graph-minimap-reuse: 미니맵 재사용 패치는 여기(init)서 걸지 않는다 — G6 v5 는 context.plugin 을 첫 draw 의
+  //   initRuntime() 에서 lazy 생성하므로 이 시점 getPluginInstance("minimap") 는 실패한다. _metaG6ApplyOnce 의
+  //   `await g.draw()` 직후에 멱등 호출로 건다(첫 draw 후 plugin 존재).
   // feature-0016 §45: 그래프 pane 자체 데이터소스 스코프 select — 변경 시 그 데이터소스 그래프(roots) 재로드.
   //   메타데이터 pane 의 metadataScopeSelect 와 상태(scopeKey)를 공유하되 양쪽 select 값을 동기화한다. 1회 바인딩.
   const _gsc = document.getElementById("graphScopeSelect");
