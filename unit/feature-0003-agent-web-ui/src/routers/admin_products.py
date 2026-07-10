@@ -21,6 +21,7 @@ from typing import Any
 
 import app
 
+INCLUDE_ORDER = 210  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
 
 

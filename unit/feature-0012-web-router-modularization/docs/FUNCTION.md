@@ -48,5 +48,14 @@ ITEM-P5b, Critical). 본 cycle 범위 = **분할 안전망 + 의존성 audit**(�
 - AC-002: make test 회귀 0(안전망 1건 추가).
 - AC-003: audit 가 web_context 가 노출해야 할 helper/전역을 식별.
 
+## 10. 라우터 등록 규약 (parallel-work-structure ITEM-05, 2026-07-10)
+- 라우터 등록은 `routers/__init__.py` 의 **`register_all(app)`** 단일 경로 — app.py 꼬리에서 1회 호출.
+  신규 라우터는 `routers/` 에 `router` 심볼을 가진 모듈 파일 추가만으로 등록된다(app.py 편집 불필요 —
+  병렬 배선 경합 제거, F-008).
+- 등록 순서는 각 모듈의 **`INCLUDE_ORDER: int`** 상수가 고정(2026-07-10 현행 23개 순서 스냅샷,
+  10~230/10 간격). 순서 변경 금지 — 순서가 의미를 갖는 라우터(`{var}` vs 구체경로 shadow)가 있어
+  route-parity 골든이 order diff 로 감시. INCLUDE_ORDER 미지정 신규 모듈은 맨 뒤 파일명 순.
+
 ## 13. Pre-approved Changes
 - P5b plan-eng-review(Critical) + §12 승인(2026-06-25). 단 router 추출 실행은 브라우저 QA env + 단위별 재확인.
+- 라우터 자동 등록(ITEM-05): ROADMAP parallel-work-structure §6.1 사전 승인(2026-07-10) — byte-동치 3중 게이트(스냅샷·F821·A/B pytest) 통과.

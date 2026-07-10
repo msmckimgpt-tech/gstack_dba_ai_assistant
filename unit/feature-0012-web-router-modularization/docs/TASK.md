@@ -124,6 +124,16 @@ source_of_truth: true
 - [ ] verify-completion PASS(9 checks) → Git 커밋 (Final #1)
 - [ ] Git 원격 동기화: ai/* push. PR/머지·배포는 Final 완료 후.
 
+## 20260710T2358-item05-router-autoreg — 라우터 자동 등록: app.py 꼬리 배선 경합 제거 (parallel-work-structure ITEM-05)
+
+> 신규 최상위 섹션 헤더 timestamp 형식 = AGENTS.md §13.1 2026-07-10 개정(ADR-20260710T231146) 적용.
+
+- [x] `routers/__init__.py` — `register_all(app)`: pkgutil.iter_modules 순회로 각 모듈 `router` 심볼 수집, (INCLUDE_ORDER, 모듈명) 정렬 일괄 include. 미지정 신규 모듈은 맨 뒤 파일명 순.
+- [x] 23개 라우터 모듈 전부에 `INCLUDE_ORDER = 10..230`(10 간격) — 현행 include 순서 스냅샷 고정(guards: 순서 변경 금지).
+- [x] app.py 꼬리 include 블록(19,641–19,717 — import 23 + include 23줄)을 `_register_all_routers(app)` 1줄로 대체. app.py 19,717→19,650줄. **이후 라우터 신설은 app.py diff 0**(병렬 배선 경합 원천 제거 — F-008).
+- [x] acceptance (a) 라우트 테이블 스냅샷 in-order 205 route **byte-동치**(전=후, mysql-ai-web:current 이미지 실증) (b) `ruff --select F821` routers/+app.py clean (c) A/B pytest(feature-0003 스위트, main vs worktree) 양쪽 rc=0 — route-parity 골든 포함 회귀 0 (d) 더미 라우터 파일 추가만으로 라우트 노출(app.py 무편집) 확인 후 제거.
+- [ ] 배포(§6.1 자동): 머지 후 web 재빌드(`bin/deploy-web.sh`) + healthz/스모크.
+
 ## 8b. (이전) Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
 - [x] 2 핸들러 회수(RP overview + AO insight_coverage) — DI seam byte-동치 가능 핸들러 전부 완료(누적 69)
 - [x] behavior-neutral — make test progress-chars 1238(baseline 동일)·0 fail, route-parity 179 불변, ruff clean, py_compile OK
