@@ -226,8 +226,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **notes**: 배포 무관. ITEM-06 완료 영역부터는 driver 대상에서 제거(브리지 수명 명시).
 
 ### ITEM-04 · worktree/branch stale sweep 자동화 (`bin/worktree-audit.sh`)
-- **status**: pending
-- **feature_id**: META-0025-worktree-audit   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
+- **status**: done
+- **note**: 2026-07-10 완료 — worktree-audit.sh(4분류·merged 이중확인+tip 일치·통지 후 유예 상태파일
+  ·DIRTY/IN-USE 불가침) + install-worktree-audit-cron.sh(평일 08:40 리포트 + 08:50 --apply).
+  라이브 sweep: 원격 ai/* 200→소수(미머지·ACTIVE 만 잔존)·stale worktree 정리. IN-USE 가드는
+  구현 중 실측(doc-sync 라이브 세션 SAFE_REMOVE 오분류)으로 추가. REV-20260710T234500.
+- **feature_id**: META-0025-worktree-audit   <!-- 확정 — 최대 META-0023 확인(0024 미점유), 잠정 번호 그대로 -->
 - **dimension**: operational
 - **risk_grade**: Major   <!-- 원격 브랜치 삭제 cron — §6.1 사전 승인 + 기계 가드로 드레인 중 비차단 -->
 - **depends_on**: []
@@ -581,9 +585,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 2 (ITEM-01·02) · in-progress 0 · pending 10 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → 04 → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
-  (다음 ready: ITEM-04)
+- 총 12 항목 · done 3 (ITEM-01·02·04) · in-progress 0 · pending 9 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
+  (다음 ready: ITEM-05)
 - Major 등급(01·03·04·06·07·09·10·11·12)은 **§6.1 사전 승인(2026-07-10 사용자 지시)으로
   드레인 중 비차단** — blocked 는 §6.3 의 "진짜 이슈" 발생 시에만. (§6 이 없는 일반
   무인 드레인이라면 Major 는 자동 blocked 가 원칙 — §6 은 본 initiative 한정 특례.)

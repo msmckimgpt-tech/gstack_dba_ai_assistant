@@ -12,6 +12,11 @@
 
 ## Active
 
+- [ ] **P3** worktree-audit 사람 확인 대기열 — LIKELY_ABANDON 27 + NEEDS_REVIEW 1 폐기/유지 판정 (2026-07-10, META-0025)
+  - **Why**: ITEM-04 라이브 sweep 이 merged 브랜치 181건을 제거(원격 ai/* 200→30). 잔존 27건은 ahead≥1 인 미머지 stale(29~49일 방치, behind 1200+)이라 자동 삭제 대상이 아님 — §13.2.3-A 맥락 판정(대체됨/사라진 요구/BLOCKED)은 사람 몫. NEEDS_REVIEW 1건 = feature-0012 worktree(P5b 후속, ITEM-10/11 이 소비 예정 — 유지).
+  - **Where**: 목록 재생성 = `bash bin/worktree-audit.sh` (TODOS.md 후보 블록 stdout). 정기 리포트 = 평일 08:40 cron(`../artifacts/worktree-audit/cron.log`).
+  - **Next step**: 목록 검토 후 폐기 확정분은 `git push origin --delete <branch>` (일괄이면 audit 리포트의 LIKELY_ABANDON 만 추려 수동 실행). agent-runtime/m* 시리즈(9건)는 REQ-20260526-0109 plan 의 이력 브랜치라 보존 여부 함께 결정.
+
 - [ ] **P2** feature-0006 AC-0553/AC-0556 (`:18080` web 직접 접속) deprecated 표기 (2026-06-30, feature-0014 동반)
   - **Why**: feature-0014 무중단 배포에서 `:18080` web 직접 문을 폐기(Caddy :443 단일화)했다. feature-0006 의 AC-0553/AC-0556 은 `https://<host>:18080` 체인검증·HTTP 200 을 *live* 계약으로 단언하고 있어, 폐기와 모순(거짓 통과 AC) 상태다.
   - **Where**: `unit/feature-0006-lan-proxy-access/docs/{FUNCTION,TASK,TEST}.md` (AC-0553/AC-0556), cert SAN(`bin/tls-internal-ca.sh` 의 IP:112.185.196.20 — 유지 여부 판단), `.env` `WEB_ALLOWED_ORIGINS/HOSTS` 의 `:18080` origin 정리(비파괴).
