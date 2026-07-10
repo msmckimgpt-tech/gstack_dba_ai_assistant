@@ -430,6 +430,30 @@ function check(name, cond, extra) {
   M.selected = null; M.focusAdj = null; M.graph = null;
 }
 
+// T23(§57.10 엣지 stale opacity): lit 엣지도 opacity/strokeOpacity 가 **명시**돼야 한다 — dimmed(0.12)
+//   에서 lit 로 전환될 때 setData 가 미지정 opacity 로 keyShape stale 0.12 를 덮지 못하던 버그(노드 §57.9 동형).
+//   (엣지는 테이블 키로 승격 방출 — T10 과 동일 finder. 소규모라 LOD 미발동.)
+{
+  const M = seedModel(["a"], [nk("a")]);
+  addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3"); addTable(M, "a.t4");
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });   // sel↔t2(이웃)
+  addEdge(M, nk("a.t1.c2"), nk("a.t3.c1"), "REFERENCES", { status: "trusted" });   // sel↔t3(이웃)
+  addEdge(M, nk("a.t2.c2"), nk("a.t3.c2"), "REFERENCES", { status: "trusted" });   // 이웃↔이웃(둘 다 lit)
+  addEdge(M, nk("a.t3.c3"), nk("a.t4.c1"), "REFERENCES", { status: "trusted" });   // 이웃↔비인접(dim)
+  M.selected = nk("a.t1");
+  const out = build();
+  const f = (s, t2) => out.edges.find((x) => x.source === nk(s) && x.target === nk(t2));
+  const lit1 = f("a.t1", "a.t2"), lit2 = f("a.t2", "a.t3"), dim = f("a.t3", "a.t4");
+  check("T23 lit 엣지 opacity 명시(1)", !!lit1 && lit1.style.opacity === 1, lit1 && lit1.style.opacity);
+  check("T23 lit 엣지 strokeOpacity 명시(≥0.5)", !!lit1 && lit1.style.strokeOpacity != null && lit1.style.strokeOpacity >= 0.5, lit1 && lit1.style.strokeOpacity);
+  check("T23 이웃↔이웃 lit opacity 명시(1)", !!lit2 && lit2.style.opacity === 1);
+  check("T23 dim 엣지 opacity 0.12", !!dim && dim.style.opacity <= 0.12, dim && dim.style.opacity);
+  check("T23 dim 엣지 strokeOpacity 0.12", !!dim && dim.style.strokeOpacity <= 0.12);
+  // 전 엣지 opacity 명시 불변식(하나도 undefined 아님) — stale 원천 차단
+  check("T23 전 엣지 opacity 명시", out.edges.every((e) => e.style && e.style.opacity != null),
+    out.edges.filter((e) => !e.style || e.style.opacity == null).map((e) => e.id));
+}
+
 // T18(비동기): _metaG6Apply 직렬화 — 겹침 호출은 재실행 1회로 병합(setData 경합 제거).
 (async () => {
   vm.runInContext(src.match(/async function _metaG6Apply[\s\S]*/) ? "" : "", sandbox);   // no-op(원본 복원 불가 주석)

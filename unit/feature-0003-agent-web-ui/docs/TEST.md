@@ -1969,3 +1969,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **win-browser 시각검증 가능**(실 Windows Chrome via bin/win-browser.py relay, https://localhost/admin 로그인 — 선례 §51·§57·§60 동일). 배포 후 줄별 스크린샷:
   ① 줌아웃 집계 카드 크고 읽힘·상태줄 마커 없음 ② 줌인 화면 밖 테이블 컬럼 미표시(테이블·combo 유지)·클릭/팬 경량화 ③ pageerror 0.
 - **[POST-DEPLOY 갱신 예정]** 배포 후 win-browser 육안 PASS append.
+
+### Run (2026-07-10) — edge-opacity: 관계선 stale opacity 실측 (§57.10 T57.20, 정본 feature-0016 TASK §57.10) — **Environment: Windows-browser — PRE-FIX 실측 확인**
+- 라이브 graph-perf2 에서 build 의도 스타일 vs 실 렌더 opacity 직접 대조(Ally→UnionCAInfo 재선택):
+  - **intended lit 엣지 4개(style.opacity=null)가 실제 렌더 opacity=0.12 stale** — 사용자 리포트("관계선 유사 이슈") 렌더 수준 재현. dimIf lit 브랜치 opacity 미명시로 이전 선택(Ally) dim 이 setData 로 미복원(노드 §57.9 동형). 캡처 pbes-union.
+  - dim 엣지 124개 opacity 0.12(정상). ChkRanking 시나리오는 intendedLit 0(비교 대상 없음).
+- 수정(§57.10): dimIf else 브랜치에 opacity/strokeOpacity 명시. POST-DEPLOY 실측(stale 0)은 배포 후 별도 Run.

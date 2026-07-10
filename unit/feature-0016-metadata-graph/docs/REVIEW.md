@@ -1339,3 +1339,7 @@ source_of_truth: true
 - CONFIRMED(MINOR 1, **수정**): cull-pan 분기의 early `return` 이 §57 col/edge 마커 갱신 + `_lodBand` 기준선 세팅을 건너뜀 → 줌+팬 복합 제스처가 밴드 교차 시 억제는 되나 마커 침묵·밴드 stale(다음 same-band aftertransform false-=== skip) 가능. **수정**: return 제거하고 밴드 로직으로 fall-through(순수 팬=밴드 로직 즉시 return·cull 타이머 유지, 줌+팬=밴드 로직이 타이머 대체+마커/밴드 세팅). self-healing 이었으나 근본 수정.
 - CONFIRMED(NIT 1, **수정**): 집계 카드 폰트 클램프(3.2/2.6)가 깊은 줌서 화면 폰트 과소(카드는 커도 글자 작음) → **수정**: _sc 상한 6→8(카드 확장) + 폰트 클램프 4.5/3.5 + 카드 높이 안 클램프. 최종 가독은 win-browser 육안 확인.
 - 검증: 수정 후 headless viewport-cull 6 + 회귀 134 = **140 PASS** · `node --check` PASS. win-browser 시각검증 TEST §65.
+
+## REV-20260710T090500-ai-root-feature-0016-edge-opacity [SUBAGENT: PASS] — §57.10 엣지 lit opacity 명시 적대 리뷰
+- 단일 적대 에이전트 5렌즈(lit 브랜치 stale 해소·strokeOpacity 회귀·LOD/집계 상호작용·화살촉/라벨·상수화).
+- 5/5 REFUTED(실결함 0): 5개 엣지 push 사이트 모두 dimIf 단일 통과 → 전 엣지 opacity 명시 불변식 성립; 엣지는 _metaGraph.nodes 밖이라 setElementState 경로 없음(setData 전담, 노드 ADR-028 과 동일 chokepoint); else 는 fa=null(무선택)도 처리해 deselection stale 도 부수 청소; SchemaRef strokeOpacity 0.75 보존(==null false); LOD 드롭은 push 이전 return 이라 미도달; lit 라벨/화살촉 미조작. 70+26 PASS.

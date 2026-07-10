@@ -861,3 +861,10 @@ source_of_truth: true
 - 기각/한계: 테이블 자체 컬링은 combo auto-fit(getContentBBox(children))이 카드 축소/점프를 유발해 combo-safe 아님 → 컬럼 컬링으로 한정(테이블 칩 유지). 테이블 수 자체가 지배적인 극단(단일 557T 스키마)의 클릭 floor 는 잔존 — 테이블 칩 draw 는 남음. 후속(combo 분리 필요, 시각검증 하에).
 - 검증: headless `test_g6build_viewportcull.js` **6 PASS**(컬럼 컬링·**combo-safe 테이블 유지**·band-invariant·게이트) + 회귀 134 = **140 PASS**. diff 2렌즈 적대 리뷰 + **win-browser 실 Windows Chrome 육안 검증**(집계 카드 가독·마커 없음·줌인 컬링 draw 감축·combo 유지 — TEST §65).
 - Supersedes: — (§63 집계에 크기·마커 피드백 반영 + §61 col-LOD 를 뷰포트 축으로 확장) / Superseded By: —
+
+## ADR-033 — §57.10 lit 엣지도 opacity 를 명시(엣지 stale 침강 해소)
+- 상태: 채택 (2026-07-10)
+- 맥락: ADR-028(노드 opacity base bake)로 노드 stale 은 해소했으나, 엣지 dimIf 는 dim 엣지에만 opacity 0.12 를 얹고 lit 엣지는 opacity 를 미설정(undefined). dim→lit 전환 시 setData 가 미지정 opacity 로 keyShape stale 0.12 를 덮지 못해 재선택 노드의 인접 엣지가 흐린 채 남음(실측 4엣지 io=null·렌더 0.12). 노드 §57.9 와 동일 기전.
+- 결정: dimIf 의 lit(else) 브랜치에서 opacity/strokeOpacity 를 명시(스타일 함수 지정값 보존, 미지정이면 1). 모든 엣지가 매 build 명시 opacity 를 가져 setData 가 keyShape 에 직접 기입 — dim↔lit 양방향 결정적. 노드(ADR-028 base bake)와 동일 원리를 엣지 dimIf 단일 chokepoint 에 적용.
+- 기각 대안: 노드처럼 별도 post-pass — dimIf 가 이미 전 엣지 style 의 단일 통과점이라 불필요; setElementState 로 엣지 opacity 리셋 — 엣지는 _metaGraph.nodes 밖이라 상태 폴 경로 없음(rebuild 전담).
+- Supersedes: — / Superseded By: —

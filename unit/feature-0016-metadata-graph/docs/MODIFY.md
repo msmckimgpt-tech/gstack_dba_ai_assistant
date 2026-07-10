@@ -1305,3 +1305,9 @@ source_of_truth: true
 - 변경: (1) 집계 supernode 크기 ≈1/zoom 스케일업 (2) 집계 상태 마커 제거 (3) 줌인 대형모델 화면 밖 테이블 컬럼 뷰포트 컬링(combo-safe·팬 재-emit).
 - 근거: agg-lod(§63) 배포 후 사용자 육안 피드백 + 시각검증 가능 확인(ADR-032). frontend-only·마이그 0.
 - 검증: headless 6(viewport-cull)+회귀 134 = **140 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 시각검증(TEST §65). 버스터 `admin.js?v=20260710-graph-perf2`.
+
+## CHG-20260710T090000-ai-root-feature-0016-edge-opacity — §57.10 엣지 lit stale opacity (2026-07-10)
+- 사용자 실측(노드 수정 후 관계선 유사 이슈)의 근본: dimIf lit 브랜치 opacity 미명시 → dim→lit 전환 시
+  setData 가 keyShape stale 0.12 미복원(노드 §57.9 동형, 실측 UnionCAInfo 인접 4엣지 io=null·렌더 0.12).
+- admin.js: dimIf else 브랜치에 opacity/strokeOpacity 명시, _META_EDGE_DIM_OPACITY 상수화. headless T23.
+  캐시버스터 edge-opacity. 상세 TASK §57.10 / ADR-033.

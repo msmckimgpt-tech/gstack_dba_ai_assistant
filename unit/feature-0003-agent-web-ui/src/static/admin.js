@@ -3742,6 +3742,8 @@ const _META_CULL_MIN = 400;       // 모델 노드 수가 이 미만이면 컬�
 const _META_CULL_MARGIN = 0.6;    // 뷰포트 밖 여유(뷰포트 크기 배수) — 팬 시 컬럼이 경계에서 갑자기 튀지 않게
 // §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
 const _META_DIM_OPACITY = 0.38;
+// §57.10: 엣지 침강 opacity(노드보다 강하게 — 관계선 잡음 억제). dimIf 의 dim/lit 양쪽에서 base 명시.
+const _META_EDGE_DIM_OPACITY = 0.12;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
 //   페인팅·hit-test 하므로, 전 요소에 zIndex 를 명시해 setData diff 의 생성 순서·드래그 이력(내장
 //   drag-element 의 frontElement 영구 승격)이 페인팅 순서를 결정하지 못하게 한다. 의미 계층:
@@ -5249,10 +5251,18 @@ function _metaG6Build() {
     if (fa && !hl) {
       // §57.6(사용자 실측 "화살표 첨단만 밝음"): strokeOpacity 는 path 선만 흐리고 화살촉(마커
       //   fill)은 원색 잔존 — 전체 opacity 로 화살촉·라벨까지 일괄 침강.
-      st.opacity = Math.min(st.opacity || 1, 0.12);
-      st.strokeOpacity = Math.min(st.strokeOpacity || 1, 0.12);
+      st.opacity = Math.min(st.opacity || 1, _META_EDGE_DIM_OPACITY);
+      st.strokeOpacity = Math.min(st.strokeOpacity || 1, _META_EDGE_DIM_OPACITY);
       // 패널 MINOR: count 라벨/배경은 dim 시 라벨 키 자체 제거.
       if (st.labelText !== undefined) { delete st.labelText; delete st.labelBackground; delete st.labelBackgroundFill; delete st.labelBackgroundOpacity; }
+    } else {
+      // §57.10(사용자 실측 — 엣지 stale): lit 엣지도 opacity/strokeOpacity 를 **명시**한다. 스타일
+      //   함수는 lit 엣지에 opacity 를 안 넣어(undefined) 두는데, 이전 선택에서 dim(0.12)이었던 엣지가
+      //   lit 로 전환될 때 setData 가 새 style 의 미지정 opacity 로는 keyShape 의 stale 0.12 를 덮지
+      //   못한다(노드 §57.9 와 동형 — 실측: 재선택 노드의 인접 엣지 4개가 io=null 인데 렌더 0.12).
+      //   스타일 함수가 지정한 값(SchemaRef strokeOpacity 0.75 등)은 보존, 미지정이면 1 로 명시.
+      if (st.opacity == null) st.opacity = 1;
+      if (st.strokeOpacity == null) st.strokeOpacity = 1;
     }
     return st;
   };

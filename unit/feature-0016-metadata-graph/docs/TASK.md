@@ -2042,3 +2042,14 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백: 집계 카드 작아 안
 - [x] T65.4 검증: headless `test_g6build_viewportcull.js` **6 PASS** + 회귀 134 = **140 PASS**·node --check. diff 2렌즈 적대 리뷰.
 - [ ] T65.5 win-browser 시각검증(배포 후) — 줌아웃: 집계 카드 크고 읽힘·상태줄 마커 없음 / 줌인: 화면 밖 컬럼 미표시(테이블·combo 유지)·클릭/팬 경량화. 줄별 스크린샷.
 - [ ] T65.6 잔여: 단일 초대형 스키마 테이블-칩 floor(테이블 컬링=combo 분리 필요) — 후속.
+
+### 57.10 관계선(엣지) stale opacity — lit 엣지 opacity 명시 (2026-07-10, 사용자 실측: 노드 수정 후 엣지 유사 이슈)
+- 리포트: 노드 상대 하이라이트는 정상이나 관계선에 유사 이슈 추측.
+- 근본 진단(build 의도 vs 실 렌더 대조): Ally→UnionCAInfo 재선택 시 UnionCAInfo 인접 **4개 엣지가
+  intended=lit(style.opacity 미설정)인데 실제 렌더 opacity=0.12 stale**. dimIf 의 lit 브랜치가 opacity 를
+  명시하지 않아, 이전 선택(Ally)에서 dim(0.12)이던 엣지가 lit 로 전환될 때 setData 가 미지정 opacity 로
+  keyShape stale 0.12 를 덮지 못함 — 노드 §57.9 와 완전 동형.
+- [x] T57.20 수정: dimIf 의 **else(lit) 브랜치에서 opacity/strokeOpacity 를 명시**(스타일 함수 지정값
+  보존, 미지정이면 1). dim 상수 _META_EDGE_DIM_OPACITY(0.12) 통일. headless T23 신설(lit 엣지 opacity 명시·
+  dim 0.12·전 엣지 opacity 명시 불변식) — 70+26 PASS. 캐시버스터 20260710-edge-opacity.
+- [ ] T57.21 POST-DEPLOY 실측 — Ally→UnionCAInfo 재선택 후 인접 엣지 렌더 opacity==1(stale 0 확인).
