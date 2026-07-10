@@ -114,7 +114,7 @@ Arguments: `$ARGUMENTS` (선택):
   - 로그 append(기존 로그 컨벤션 따름). hot 상당 파일 전체 덮어쓰기(≤500자) — **잔존 actionable thread 를 보존**(단일 작업 snapshot 으로 덮어 중요 thread 잃지 말 것).
 - **정책문서**:
   - `STATUS.md` — **Phase 0 판정 모델대로**:
-    - **(a) 인덱스 모델(SSOT 계약 채택 시 — MUST)**: 인덱스 행만 정합 — 머지된 feature 의 상태·최종 갱신·요지 1줄 갱신, 신규 머지 feature 행 추가, **미머지 활성 worktree 는 표 아래 note 로만**(머지 시 행 승격). **rollup/상세 blockquote 를 STATUS 에 누적하지 않는다**(SSOT 계약 위반 — 예 ADR-0031 §1; 상세는 unit docs 정본, 누적 이력은 STATUS archive 에만). frontmatter `sources:` 포인터 유지.
+    - **(a) 인덱스 모델(SSOT 계약 채택 시 — MUST)**: 인덱스 행만 정합 — 머지된 feature 의 상태·최종 갱신·요지 1줄 갱신, 신규 머지 feature 행 추가, **미머지 활성 worktree 는 표 아래 note 로만**(머지 시 행 승격). **기능현황표 autogen 채택 시(`bin/gen-status.sh` + STATUS 의 `AI-EDITABLE:STATUS-TABLE` 마커 존재 — META-0028)**: 마커 구간 안 표는 생성물이다 — ① frontmatter(`feature_status*`, `unit/<id>/docs/TASK.md`) 보유 feature 의 행은 **frontmatter 를 갱신한 뒤 `bash bin/gen-status.sh` 실행**으로 재생성(행 직접 편집 금지), ② frontmatter 미보유 feature 행만 passthrough 로 직접 갱신 가능, ③ 커밋 전 `bin/gen-status.sh --check` 로 표↔frontmatter 정합 확인(재생성 필요 시 exit 1). **rollup/상세 blockquote 를 STATUS 에 누적하지 않는다**(SSOT 계약 위반 — 예 ADR-0031 §1; 상세는 unit docs 정본, 누적 이력은 STATUS archive 에만). frontmatter `sources:` 포인터 유지.
     - **(b) 누적 모델(SSOT 계약 미채택 프로젝트만)**: 기존대로 rollup blockquote(최상단, reverse-chron) — Phase 2 확정 깊이.
     - 두 모델 모두 정본 재서술 금지(요지·링크만). 모델 불명이면 **인덱스 모델로 보수 처리**(누적이 계약 위반 위험 더 큼).
   - `ARCHITECTURE.md`: **색인/기능맵 정합 갱신에 한정**(구조 결정 변경이 아니다). 새 구조 결정·ADR 본문 작성은 §13.1 대로 feature cycle/사람이 반영하며, doc_sync 는 **이미 결정된 ADR 의 색인·참조만 정합**한다(필요 시 `DECISIONS.md` 에 기존 결정의 색인 라인 추가, 신규 결정 본문 작성 금지). §13.1 "프로젝트 수준 rewrite 문서는 동시에 하나의 AI만 수정" 경계 준수.

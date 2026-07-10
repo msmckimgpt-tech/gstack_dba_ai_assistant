@@ -396,7 +396,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   명시).
 
 ### ITEM-08 · STATUS.md 기능현황표 자동 생성
-- **status**: pending
+- **status**: done
+- **note**: 2026-07-11 완료 — bin/gen-status.sh(frontmatter feature_status* → 마커 구간 재생성,
+  passthrough·--check) + STATUS.md AI-EDITABLE:STATUS-TABLE 마커 도입 + doc_sync Phase 3 통합.
+  acceptance (a) 재현 브랜치 frontmatter 1행 재생성 (b) 마커 밖 diff 0 (c) passthrough 18행
+  (d) 연속 실행 idempotent. 규약 키 = feature_status*(기존 doc-lifecycle status: 와 충돌 회피
+  — 명세 status:/phase: 의 보수적 구체화). REV-20260711T042000.
 - **feature_id**: META-0028-status-autogen   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
 - **risk_grade**: Minor
@@ -588,9 +593,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 4 (ITEM-01·02·04·05) · in-progress 0 · pending 8 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
-  (다음 ready: ITEM-08)
+- 총 12 항목 · done 5 (ITEM-01·02·04·05·08) · in-progress 0 · pending 7 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → 03 → 06 → 07 → 12 → 09 → 10 → 11
+  (다음 ready: ITEM-03)
+- ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —
+  §6.1 deploy-backed 완료. (첫 deploy-web preflight 1회 일시 실패 후 재시도 성공 — 원인
+  미재현 transient, config 재현 검사는 정상.)
 - Major 등급(01·03·04·06·07·09·10·11·12)은 **§6.1 사전 승인(2026-07-10 사용자 지시)으로
   드레인 중 비차단** — blocked 는 §6.3 의 "진짜 이슈" 발생 시에만. (§6 이 없는 일반
   무인 드레인이라면 Major 는 자동 blocked 가 원칙 — §6 은 본 initiative 한정 특례.)
