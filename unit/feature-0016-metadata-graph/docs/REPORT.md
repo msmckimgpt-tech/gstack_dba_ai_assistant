@@ -1509,3 +1509,34 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 ### 검증
 - `node --check admin.js` PASS. inline 적대 diff 리뷰 REV-20260710T163512(순서/race·미렌더 가드·selection idempotent·캐시버스터 PASS, BLOCKING/MAJOR 0, NIT1 비가시 stale 힌트 수용). frontend-only·마이그 0·Minor(§12.3).
 - 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`(CSS 미변경 → styles.css 미bump). POST-DEPLOY PB-0008 육안(feature-0003 TEST §71).
+## 2026-07-10 · 상세 패널 관계행 단일클릭 미렌더 컬럼 카메라 이동 (§72 reltrace-colnav, 사용자 리포트)
+
+사용자 리포트: `그래프 뷰 > 상세`에서 관계 행(컬럼)을 **단일클릭**하면, 대상 컬럼의 소속 테이블이 아직 펼쳐지지
+않은 상태(컬럼 미렌더)에서 카메라가 이동하지 않고 **"대상 노드가 현재 화면에 없습니다"** 안내만 떠 사용자가
+오류로 인지. 더블클릭은 정상 이동. 사용자 결정(AskUserQuestion): ① 단일클릭도 소속 테이블로 카메라 이동(펼치진
+않음) ② **선택 상태는 컬럼**, **하이라이트는 상위 종속 객체(테이블)** (하이브리드) ③ 더블클릭은 펼쳐 컬럼 선택.
+
+### 근본 원인
+`_metaGraphPanToRelation` 이 `_metaRenderedIdFor(targetKey)`(자기 자신·접힌 스키마 카드 `SC:` 만 해소)로 null 이면
+즉시 안내-return. 미펼침 테이블의 컬럼은 렌더되지 않아(접힘 시 컬럼 제거·미펼침 시 미적재) 항상 null → 단일클릭
+카메라 이동이 죽음. 추가로 `_metaG6Build` 가 매 빌드 `_metaGraph.selected` 로 focusAdj 를 재산출(§57.5 self-healing)하는데,
+selected 가 모델 밖 컬럼이면 focusAdj=null → 선택해도 하이라이트가 사라지는 부작용(적대 리뷰 MINOR#3 적발).
+
+### 변경 (frontend-only, 마이그레이션 0)
+- (1) `_metaRenderedAncestorFor(key)` — 미렌더 대상의 화면상 가장 가까운 조상(컬럼→소속 테이블→접힌 스키마 카드) 승격.
+- (2) `_metaFocusKeyFor(selKey)` — 하이라이트 기준 키 해소: 모델 밖 컬럼이면 소속 테이블(모델의 Table 노드일 때만)로
+  폴백. `_metaGraphSetSelected`(즉시)·`_metaG6Build`(재산출) 양쪽이 공유 → **선택=컬럼·하이라이트=소속 테이블** 일치.
+  부모가 Table 아니거나 없으면 null → §57.5 F2(prune 된 선택 정리) 보존.
+- (3) `_metaGraphPanToRelation` 재작성: 조상 승격으로 카메라 팬 대상 해소, 오류 톤 메시지 제거, `(renderedSelf || !direct)`
+  게이트로 대상 컬럼 선택(접힌 스키마 카드로만 승격된 경우=스키마 대상은 기존대로 선택 없이 팬만).
+
+### 적대 리뷰(§18.8) 반영
+REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband-scale·§68 graph-rw-group 이 main 에 병렬
+머지되어 base(00871661)가 4커밋 stale — **현재 main(c0a3d70f)으로 rebase** 후 재적용·재검증(§67 테이블 뷰포트 컬링과
+정합: 화면 밖 테이블은 카드/안내로 degrade). (MINOR#3) 미렌더 컬럼 선택이 하이라이트를 소실시키는 문제 → **하이브리드
+(_metaFocusKeyFor 폴딩)** 로 해소. (테스트) 선택 게이트·하이라이트 폴딩 단언을 headless 에 추가.
+
+### 검증
+- 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5·키파싱 2·선택게이트 G1~G4 8·하이라이트폴딩 F1 4·직접렌더).
+- 회귀 0: edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = **150 PASS**·`node --check` PASS.
+- 캐시버스터 `admin.js?v=20260710-graph-colnav`. POST-DEPLOY PB-0008 사용자 육안(TEST §72 T72.5).
