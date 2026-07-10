@@ -1445,3 +1445,7 @@ source_of_truth: true
 ## REV-20260710T234500-ai-claude-feature-0016-layoutmemo-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §73 POST-DEPLOY 완수 기록
 - 대상: TEST.md/TASK.md/REPORT.md POST-DEPLOY 실측 결과 기록만 — 코드/자산 diff 0. §18.8 패널 비적용(SKIPPED).
 - 근거: 배포·구현 자체는 §73 REV-20260710T233000 [SUBAGENT: PASS-WITH-FIXES] 에서 완료 검증. 본 cycle 은 라이브 실측 결과 문서화(main e6b7b68f, MISS 59→HIT 8ms 7.4× 급감, 위치 이동 0).
+
+## REV-20260710T093000-ai-claude-feature-0016-minimap-reuse-postverify [SKIPPED: doc-only POST-DEPLOY 기록] — §74 미니맵 재사용 라이브 검증 결과 append
+- 본 cycle 은 §74 minimap-reuse 의 POST-DEPLOY PB-0008 라이브 실측 결과(PASS)를 TEST.md §74 Run·TASK.md T74.5 에 기록하는 **비-정책 doc-only** 변경이다(코드·자산 변경 0). §18.4 에 따라 리뷰 패널 SKIP.
+- 원천 코드 cycle 의 적대 리뷰는 REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES](H1·H2 2건 BLOCK 적발→수정) 참조.
