@@ -2080,3 +2080,22 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   combo-safe 완화(가시분 auto-fit)·renderEndpoint 승격·팬 재-emit·카테고리 밴드 bbox 유지. §65 컬럼→테이블 확장.
 - [x] T67.4 검증: headless viewport-cull 6(테이블 컬링·band-invariant) + agglod 8(집계비활성) + 회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰.
 - [ ] T67.5 win-browser 실 Windows Chrome 육안(배포 후): 줌아웃 클러스터 펼침·카테고리 밴드 "N DB·M 테이블"·관계선 유지 / 줌인 화면 밖 테이블·클러스터 미표시·combo 가시분 fit·클릭/팬 경량. 줄별 스크린샷.
+
+## §68 graph-rw-group — 그래프 상세 사용(참조) 관계를 읽기/쓰기 그룹으로 분리 (2026-07-10, 사용자 요청)
+사용자 요청: "`그래프 뷰 > 상세` 에서, 참조 관계를 읽기/쓰기 당 그룹으로 구분하여 목록을 출력." 상세 카드에서 읽기/쓰기
+의미(`relation_type`)를 갖는 관계는 `ROUTINE_USES`(루틴↔테이블 사용) 뿐 — REFERENCES 는 참조함(→)/참조받음(←)
+방향만 있고 read/write 개념 없음. 대상 = "사용 테이블"(Routine self)/"사용하는 함수·프로시저"(Table self) 섹션.
+- [x] T68.0 grounding: 기존은 평면 목록에 항목별 `읽기`/`쓰기` muted 꼬리표만 붙여 흐름 구분이 약함. read/write
+  의미는 `ROUTINE_USES.relation_type` 에만 존재함을 코드 확인(`_metaRoutineEdgeStyle` 4060·kindKo 7942 규약).
+- [x] T68.1 수정(frontend-only, admin.js `_metaGraphRenderDetail`): ROUTINE_USES 섹션을 `relation_type` 기준
+  **읽기 그룹/쓰기 그룹**으로 분리(각 그룹 헤더 라벨+개수, REFERENCES 방향 그룹 `dirGroup` 과 동일한
+  `amgr-dir`/`amgr-dir-head` 스타일 재사용). 섹션 헤더에 `· 읽기 N · 쓰기 M` 요약 + 안내문. 분류 규칙은 기존
+  per-item kindKo 와 동일(`"write"`=쓰기, 그 외 `"read"`·미상=읽기 — 정합). 항목 꼬리표는 그룹 헤더로 대체·제거.
+  각 그룹 30건 상한 + 초과 `… 외 N건` 명시(기존 combined 30 무음 절단 개선). `data-rtuse` 클릭 바인딩 무손상.
+- [x] T68.2 검증: `node --check admin.js` PASS · 재사용 CSS 클래스(amgr-dir/amgr-dir-head/amgr-row amgr-plain/
+  amgr-list/admin-meta-detail-note) styles.css 존재 확인 · `[data-rtuse]` 바인딩(L7983) 유지 · 데이터·거동 무변경
+  (순수 UI 재구성, REFERENCES/컬럼/용어/AI분석·관계 상세 패널 미변경). §18.8 적대 리뷰 REV(하단 REVIEW.md).
+  캐시버스터 `admin.js?v=20260710-graph-rw-group`.
+- [ ] T68.3 POST-DEPLOY 사용자 육안(PB-0008 실 Windows, 무인 도달 차단): 루틴/테이블 노드 상세에서 사용 관계가
+  읽기/쓰기 소그룹으로 나뉘어(개수 헤더 포함) 보이고, 행 클릭 시 대상 상세 이동이 정상. 자산 curl
+  (`?v=20260710-graph-rw-group`) + 육안 게이트(TEST §68). 헤드리스 세션은 실 Windows 화면 미대체(육안은 배포 후).

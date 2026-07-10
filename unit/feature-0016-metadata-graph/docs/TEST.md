@@ -969,3 +969,21 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 ### Run (예정) — win-browser 실 Windows Chrome (Environment: Windows-browser) — T67.5
 - 줌아웃: 스키마 클러스터 **펼침 유지**(집계 카드 강등 없음)·제품 카테고리 밴드 헤더 **"N DB · M 테이블"**·관계선 유지.
 - 줌인 대형(mssql-qa-idc 다스키마 펼침): 화면 밖 테이블·클러스터 **미표시**(가시분 combo auto-fit)·**클릭/팬 경량화**. 줄별 스크린샷. 배포 후 PASS append.
+
+## §68 graph-rw-group — 그래프 상세 사용(참조) 관계 읽기/쓰기 그룹 분리
+
+### 정적 검증 (headless authoring 세션) — Environment: unit/node — 2026-07-10 PASS
+- Runner: AI. `node --check src/static/admin.js` → **PASS**(문법). 순수 DOM 문자열 재구성이라 전용 headless 하네스
+  불요 — 대신 구조 불변식을 코드 대조로 확인:
+  - 분류 이분법 `relation_type==="write"`→쓰기 / 그 외("read"·""·미상)→읽기 = 기존 per-item `kindKo`(7942)와 동일 규칙 → 회귀 표면 0.
+  - 재사용 CSS 클래스(`amgr-dir`/`amgr-dir-head`/`amgr-row amgr-plain`/`amgr-list`/`admin-meta-detail-note`) 전부 styles.css 존재.
+  - `[data-rtuse]` 클릭 바인딩(L7983 `el.querySelectorAll`) 유지 → 행 클릭 대상 상세 이동 무손상. `esc()` 이스케이프 경로 동등(XSS 회귀 0).
+  - 데이터·거동 무변경(REFERENCES/컬럼/용어/AI분석·`_metaGraphShowRelations` 관계 상세 미변경).
+
+### Run (예정) — POST-DEPLOY (Environment: Windows-browser, PB-0008) — T68.3
+- 대상: 로그인 → 관리 콘솔 > 지식베이스 > 그래프 뷰 → **Routine 노드**(사용 테이블)와 **Table 노드**(사용하는 함수·프로시저) 상세.
+- 확인: ① 사용 관계가 **읽기 그룹 / 쓰기 그룹**으로 나뉘어 각 헤더에 개수 표시 ② 섹션 헤더 `· 읽기 N · 쓰기 M` 합 = 총 개수
+  ③ 30건 초과 그룹 `… 외 N건` 노출 ④ 행 클릭 시 대상 상세로 이동 ⑤ pageerror 0.
+- **무인 도달 제약**: 헤드리스 authoring 세션은 실 Windows Chrome 화면을 대체하지 못함(그래프뷰 3중벽 + 인증) →
+  서빙 admin.js 자산 curl(`rtGroup` + `?v=20260710-graph-rw-group`) + 사용자 육안 게이트
+  (visual_verification_scope=always, 브리지 불가 사유 명시 통과). 배포 후 사용자 확인 시 PASS append.

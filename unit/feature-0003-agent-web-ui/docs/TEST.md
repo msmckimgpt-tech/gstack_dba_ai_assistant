@@ -1988,3 +1988,17 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - 헤드리스: viewport-cull 6(테이블 컬링·band-invariant)·agglod 8(집계비활성)·회귀 = 150 PASS·node --check.
 - **win-browser 시각검증**(실 Windows Chrome via bin/win-browser.py relay, https://localhost/admin, switchTab('graph')). 배포 후 줄별 스크린샷: ①줌아웃 클러스터 펼침·카테고리 밴드 "N DB·M 테이블"·관계선 유지 ②줌인 화면 밖 테이블/클러스터 미표시·combo 가시분 fit·클릭/팬 경량 ③pageerror 0.
 - **[POST-DEPLOY 갱신 예정]** 배포 후 win-browser 육안 PASS append.
+
+### Run (2026-07-10) — graph-rw-group: 그래프 상세 사용(참조) 관계 읽기/쓰기 그룹 분리 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §68) — **Environment: Windows-browser**
+- 변경: `_metaGraphRenderDetail` 의 ROUTINE_USES 섹션을 `relation_type` 기준 읽기/쓰기 그룹으로 분리(`amgr-dir` 재사용,
+  그룹당 30건 상한+`… 외 N건`). 순수 DOM 문자열 재구성 — 데이터·거동 무변경.
+- **pre-commit 정적 검증 PASS**: `node --check admin.js` PASS · 재사용 CSS 클래스(amgr-dir/amgr-dir-head/amgr-list/
+  amgr-more) 존재 확인 · `[data-rtuse]` 클릭 바인딩(L7983) 유지 · §18.8 적대 리뷰 REV-20260710T160500 **[SUBAGENT: SHIP]**
+  (BLOCKER/MAJOR/MINOR 0, NIT2=초과행 박스 스타일 수정 반영). 캐시버스터 `admin.js?v=20260710-graph-rw-group`.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 web 이미지 baked → merge +
+  `deploy-web` 후에만 서빙 자산 실측 가능 ② 그래프뷰 무인 도달 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL)
+  차단, 헤드리스 authoring 세션은 실 Windows Chrome 화면 미대체 → **자산 curl(서빙 admin.js 에 `rtGroup` +
+  `?v=20260710-graph-rw-group`) + 사용자 육안**로 대체(visual_verification_scope=always, 브리지 불가 사유 명시 통과).
+- **POST-DEPLOY 사용자 육안 검증(T68.3)**: Routine/Table 노드 상세에서 ① 사용 관계가 읽기/쓰기 소그룹으로 분리
+  (각 헤더 개수) ② 섹션 헤더 `· 읽기 N · 쓰기 M` 합 = 총계 ③ 30건 초과 그룹 `… 외 N건` 노출 ④ 행 클릭 대상 상세 이동
+  ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.

@@ -1,5 +1,32 @@
 # Report
 
+## 2026-07-10 · 그래프 뷰 상세 — 사용(참조) 관계를 읽기/쓰기 그룹으로 분리 (graph-rw-group)
+
+### 요청 (사용자)
+`그래프 뷰 > 상세` 에서, 참조 관계를 읽기/쓰기 당 그룹으로 구분하여 목록을 출력.
+
+### 해석 (grounding)
+그래프 상세 카드에서 **읽기/쓰기 의미(`relation_type`)를 갖는 관계는 `ROUTINE_USES`(루틴↔테이블 사용)
+관계뿐**이다 — REFERENCES(FK/추정 참조)는 참조함(→)/참조받음(←) 방향만 있고 read/write 개념이 없다.
+따라서 "사용 테이블"(Routine 상세) / "사용하는 함수·프로시저"(Table 상세) 섹션이 대상. 기존은 **평면 목록에
+항목별 `읽기`/`쓰기` muted 꼬리표**만 붙여 흐름 구분이 눈에 안 들어왔다.
+
+### 처리 결과 (frontend-only, admin.js `_metaGraphRenderDetail`)
+[admin.js](../../feature-0003-agent-web-ui/src/static/admin.js) ROUTINE_USES 섹션을 `relation_type` 기준
+**읽기 그룹 / 쓰기 그룹**으로 분리. 각 그룹은 REFERENCES 방향 그룹(`dirGroup`)과 동일한 `amgr-dir` /
+`amgr-dir-head` 스타일을 재사용해 헤더(라벨 + 개수)로 묶는다. 섹션 헤더에 `· 읽기 N · 쓰기 M` 요약 배지 +
+안내문 추가. 분류 규칙은 기존 per-item `kindKo` 와 동일(`"write"`=쓰기=루틴→테이블, 그 외 `"read"`·미상=
+읽기=테이블→루틴 — 정합 유지). 항목별 꼬리표는 그룹 헤더로 대체돼 제거. 각 그룹 30건 상한 + 초과분
+`… 외 N건` 명시(기존 combined 30 **무음 절단** 개선). 행 `data-rtuse` 클릭→대상 상세 바인딩 무손상.
+cache-buster `admin.js?v=20260710-graph-rw-group`.
+
+### 검증
+- `node --check admin.js` PASS · 재사용 CSS 클래스(`amgr-dir`/`amgr-dir-head`/`amgr-row amgr-plain`/
+  `amgr-list`/`admin-meta-detail-note`) 전부 styles.css 존재 확인 · `[data-rtuse]` 클릭 바인딩(L7983) 유지.
+- 데이터·거동 무변경(순수 UI 재구성) — REFERENCES/컬럼/용어/AI 분석 섹션·`_metaGraphShowRelations`(관계 상세)
+  미변경. 관계 상세 패널의 방향 그룹핑은 별개 관심사(read/write 미노출)라 scope 밖.
+- 라이브 브라우저(PB-0008) 시각 검증은 배포 시 동반 권장.
+
 ## 2026-07-10 · 상대 하이라이트 시 focus 밖 관계선 제거 — 유령 관계선·성능 낭비 해소 (hl-edge-hide, TASK §66)
 
 ### 요청 (사용자 리포트)

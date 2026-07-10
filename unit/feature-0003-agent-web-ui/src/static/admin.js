@@ -7950,18 +7950,36 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     parts.push(`</ul></div>`);
   }
   // graph-funcproc(ADR-016): ROUTINE_USES — Routine 상세엔 "사용 테이블", Table 상세엔 "사용하는 함수·프로시저".
+  //   graph-rw-group(사용자 요구): 사용(참조) 관계를 읽기/쓰기(relation_type)로 **그룹 분리**한다 —
+  //   평면 목록 + 항목별 읽기/쓰기 꼬리표 대신, 읽기/쓰기 소그룹 헤더(개수)로 묶어 데이터 흐름을
+  //   한눈에 구분한다(REFERENCES 방향 그룹 dirGroup 과 동일한 amgr-dir 스타일 재사용). relation_type
+  //   "write"=루틴→테이블(씀), 그 외("read"·미상)=테이블→루틴(읽음, 기존 kindKo 기본값과 정합).
+  //   각 그룹 30건 상한 + 초과분 "… 외 N건" 명시(기존 combined 30 무음 절단 개선).
   if (routineUses.length) {
     const isRoutineSelf = self.label === "Routine";
-    parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length})</h4><ul class="amgr-list">`);
-    routineUses.slice(0, 30).forEach((e) => {
+    const rtRow = (e) => {
       const other = e.source === selfKey ? e.target : e.source;
       const on = byKey[other] || _metaGraph.nodes.get(other) || {};
       const disp = on.label === "Routine"
         ? `${_metaRoutineIcon(on.routine_type)} ${on.name || nm(other)}` : nm(other);
-      const kindKo = (e.relation_type === "write") ? "쓰기" : "읽기";
-      parts.push(`<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button> <span class="admin-meta-graph-muted">${kindKo}</span></li>`);
-    });
-    parts.push(`</ul></div>`);
+      return `<li><button type="button" class="amgr-link" data-rtuse="${esc(other)}" title="상세 보기">${esc(disp)}</button></li>`;
+    };
+    const rtGroup = (list, label) => {   // 읽기/쓰기 소그룹(개수 + 30건 상한 + 초과 명시)
+      if (!list.length) return "";
+      const rows = list.slice(0, 30).map(rtRow).join("");
+      // 초과행은 항목(amgr-link 버튼, 비-박스)과 시각 정합하도록 amgr-row 박스 없이 muted 텍스트 li (적대리뷰 NIT2).
+      const more = list.length > 30
+        ? `<li class="admin-meta-graph-muted amgr-more">… 외 ${list.length - 30}건</li>` : "";
+      return `<div class="amgr-dir"><div class="amgr-dir-head">${label} (${list.length})</div>` +
+        `<ul class="amgr-list">${rows}${more}</ul></div>`;
+    };
+    const rtWrites = routineUses.filter((e) => e.relation_type === "write");
+    const rtReads = routineUses.filter((e) => e.relation_type !== "write");
+    parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length}) <span class="admin-meta-graph-muted">· 읽기 ${rtReads.length} · 쓰기 ${rtWrites.length}</span></h4>`);
+    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다. 행 클릭 = 대상 상세.</p>`);
+    parts.push(rtGroup(rtReads, "읽기"));
+    parts.push(rtGroup(rtWrites, "쓰기"));
+    parts.push(`</div>`);
   }
   // 항목2: AI 능동 분석 섹션 — 버튼으로 트리거(백그라운드 재귀), box 에 진행/결과 렌더.
   //   graph-funcproc(ADR-017, REQ ⑤): 버튼 hover 시 지침 입력 popover(툴팁형) — 입력하면 LLM 이
