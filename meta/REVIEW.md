@@ -521,3 +521,10 @@
 - **SKIPPED 사유**: 본 개정은 2026-07-10 사용자 명시 지시("단일 세션·병렬 없이, 토큰 소진까지 작업 후 continue 반복, 특별한 이슈 없으면 blocked 되지 않게 구성")의 **전사(transcription)** — 승인 판단의 주체가 사용자 본인이라 적대 패널의 판단 대상이 아님. 직전 2-round 적대 리뷰(REV-20260710T180820)의 구조·계약 검증은 유효 유지(항목 명세·DAG 무변경, 실행 모드만 추가). 잔존 사람 게이트 2곳(2단계 브랜치 삭제·명세 밖 확장)은 §6.1 한계로 의도적 보존 — grep 정합 검사 완료.
 - **META mode 판정**: changeset = `docs/improvements/**` + `meta/REVIEW.md` — pure-meta(§18.4). 코드 무수정·배포 no-op.
 - **Human Approval Needed**: 아니오 — 본 개정 자체가 사용자 지시의 문서화. 철회 조항(§6.1) 포함.
+
+## REV-20260710T184956-drain-recursive-selfresume [SKIPPED:user-directive-transcription] — 드레인 재귀 자가 재호출 체인 (initiative: parallel-work-structure)
+
+- **scope**: `bin/drain-continue-cron.sh` 신설(arm/check/disarm/status — 버스트 시작 +5h10m 재귀 앵커, 크론 체커 fire 직전 선-재-arm 으로 버스트 실패에도 체인 유지, TTL 40 백스톱, 완주 시 disarm) + ROADMAP §6.4 개정(사용자 continue ‖ 자동 재호출 이원 경로, ScheduleWakeup 금지 유지 — 상태파일 기반 호스트 크론으로만 재귀).
+- **SKIPPED 사유**: 2026-07-10 사용자 지시 2차("continue 호출 +5시간 10분 자가 재호출, 재귀 구조") 의 전사. 헤드리스 호출 패턴은 dqa-doc-sync-cron.sh 의 2026-07-07 incident fix(BG_WAIT_CEILING_MS=0 + 외곽 timeout) 를 그대로 승계 — 신규 판단 없음. bash -n 문법 검사 + status/arm/disarm 라운드트립 검증(크론탭 설치·라이브 fire 는 운영 단계 — repo 밖, 본 cycle 산출물 아님).
+- **META mode 판정**: changeset = bin/ + docs/improvements/ + meta/REVIEW.md — pure-meta(§18.4). 배포 no-op.
+- **Human Approval Needed**: 아니오 — 사용자 지시의 구현. 체인 정지 수단(disarm·TTL) 내장.
