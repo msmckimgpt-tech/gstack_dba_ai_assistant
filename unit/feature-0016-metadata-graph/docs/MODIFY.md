@@ -1380,3 +1380,8 @@ source_of_truth: true
 - 대상: `unit/feature-0016-metadata-graph/docs/{TASK.md(T71.3 완료),REPORT.md(POST-DEPLOY 절),REVIEW.md([SKIPPED] 완수)}` + `unit/feature-0003-agent-web-ui/docs/TEST.md`(§71 Run POST-DEPLOY append). **코드/자산 변경 0**.
 - 변경: §71(PR #662 → main b7d7d871, 이후 라이브 a24415a5)의 실 Windows Chrome POST-DEPLOY 실측 결과를 정본에 기록. win-browser relay 로 mssql-web-qa `shop_pt.T_ItemInfo` 상세의 `[data-rtuse]` 행(18: 읽기 12·쓰기 6) 실클릭 → 카메라 중심 모델좌표 [3600,7092]→[2523,7871] 팬 + 상세 전환 동시, pageerror 0. 자산 curl(서빙 버스터·핸들러) 확증.
 - 근거: `visual_verification_scope: always` 완료 게이트의 POST-DEPLOY 실측 기록 마감(T71.3). 배포는 §71 cycle 에서 이미 완료(병렬 Codex 세션 commit→PR#662→merge→deploy). 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).
+## CHG-20260710T233000-ai-claude-feature-0016-layoutmemo — §73 배치-정렬 함수 위상-서명 메모이즈 (2026-07-10)
+- 대상: `admin.js`(_metaTopoSig 신규 · _metaG6Build 서명체크+relOrder/simGroups 캐시 · _META_CULL_MARGIN 0.6→0.3) + `admin.html` 버스터 + headless `test_g6build_layoutmemo.js`(신규 19).
+- 변경: 근본원인(rebuild 마다 전체모델 배치계산 68~145ms — _metaRelOrderAll 55%+_metaSimGroups 45%) 해소. 위상(nodes/REFERENCES edges/schemaExpanded/mode) 무변경이면 순수 정렬 재사용 → 팬·줌·선택·컬럼토글·드래그 rebuild 를 방출 비용만 남김. cull 마진 축소로 고배율 방출 감축.
+- 근거: §67 배포 후 사용자 피드백 "극단 줌인·비밀집인데도 느림 — 근본원인 해소"(win-browser 실측 함수분해, ADR-035). frontend-only, 결정론 불변(캐시 적중==fresh).
+- 검증: headless 19(메모이즈)+150(회귀) = **169 PASS**·node --check. §18.8 적대 리뷰(REV §73 F1/F2 수정). POST-DEPLOY win-browser(TEST §73). 버스터 `admin.js?v=20260710-layoutmemo`.

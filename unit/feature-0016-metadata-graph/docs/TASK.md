@@ -2192,3 +2192,22 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   read/write 정확 구분(DELETE→write·Get→read) + returns 투영 확인.
 - [ ] T69.5 배포 + 재생성: insight-worker+web 이미지 재빌드 배포 후 cc_data_main `only_missing=false` 재분석
   (555 전량 시드 → 전 노드 커버 + 새 계약 caveats 로 교체). 진행 폴링으로 done/failed 추적 + 표본 caveats 재확인.
+## §73 graph-layoutmemo — 배치-정렬 함수 위상-서명 메모이즈 (근본원인: 줌인해도 느림) (2026-07-10, 사용자 요청)
+사용자 요청(누적): "극단적인 줌 인 상태에서도 성능이 저하됩니다(밀집 아닌데도). 근본적인 원인을 탐색 후 해소." §67(뷰포트 컬링)은
+화면 **밖** 요소만 줄여, 화면 안 요소가 많거나 극단 줌인(소수 가시)에서도 rebuild 마다 도는 **전체 모델 대상 배치 계산**을 못 줄였다.
+- [x] T69.0 근본원인 실측(win-browser, PB-0008 relay, mssql-qa-idc 676~1442 노드): build 함수별 시간 분해 monkey-patch
+  → `_metaRelOrderAll` 38ms(barycenter 4-sweep, ~55%) + `_metaSimGroups` 32ms(affix 유사그룹, ~45%) = build 의 ~99%.
+  둘 다 **전체 모델 처리**(뷰포트·줌·선택 무관)라 극단 줌인·비밀집에서도 rebuild 당 68~145ms 고정 소모 = "줌인해도 느림"의 정체.
+  emission/setData+draw 는 방출 수 비례(별도, 마진으로 완화). 통짜 layout 캐시는 side-effect(groupOf/groupMembers clear+재구성)
+  landmine 이라 배제 → 두 함수가 **순수**(_metaRelOrderAll: slice+sort 복사본·fresh Map / _metaSimGroups: 주석 "순수·결정론·펼침비의존")
+  임을 확인하고 개별 메모이즈 채택.
+- [x] T69.1 구현(frontend-only, admin.js): `_metaTopoSig()` — 위상 서명(nodes 키 해시 + REFERENCES edges + schemaExpanded + mode).
+  `_metaG6Build` 진입 시 서명 무변경이면 `_metaGraph._relOrderCache`(최상위 relOrder) + `_metaGraph._simCache`(스키마별 simGroups)
+  재사용, 변경 시 무효화. 컬럼은 nodes(Map) 아닌 colsByTable 거주라 서명서 자연 제외 = **컬럼토글·freeplace 드래그·선택·마커·팬·줌
+  = 캐시 적중**(정렬 재계산 skip → build 를 방출 비용만 남김). relOrder 하류 안정화는 멱등, simGroups 결과는 읽기전용이라 공유 안전.
+- [x] T69.2 cull 마진 0.6→0.3 — 고배율 줌인 방출 과다(margin 0.6=방출면적 뷰포트×4.84, zoom 2.5 에서 337 방출) 완화(×2.25).
+  메모이즈로 re-emit 의 layout 비용이 사라져 더 tight 한 마진 감당 → 방출 수↓ = setData+draw↓.
+- [x] T69.3 검증: 신규 `test_g6build_layoutmemo.js`(캐시적중==fresh 좌표동일·서명무효화·컬럼/freeplace 독립·서명결정론) **19 PASS**(적대리뷰 F1/F2 수정 반영)
+  + 기존 6종 회귀 **150 PASS** = **169 PASS**. node --check. §18.8 적대 리뷰(REV §73: F1 roles·F2 노드속성 서명확장 수정, REVIEW.md). 캐시버스터 `admin.js?v=20260710-layoutmemo`.
+- [ ] T69.4 POST-DEPLOY win-browser 실 Windows Chrome 육안(PB-0008): 배포 후 동일 대형 scope 에서 build 함수별 재측정 →
+  캐시 적중 시 relOrderAll/simGroups ≈ 0ms·build 급감, 위상 무변경 rebuild(팬·줌·선택·컬럼토글) 위치 동일, 극단 줌인 방출 수↓. TEST §73.
