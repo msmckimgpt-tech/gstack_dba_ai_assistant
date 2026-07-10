@@ -51,7 +51,7 @@ title: DESIGN.md — 진입점 복구 컴포넌트 (TASK-0158)
 
 ### 4.2 공유 링크 관리 모달
 - 진입: 대화 ··· 메뉴(`makeItem`)에 "공유 관리" 항목(`conversation.read.own/any` gate).
-- 모달: `showTimeoutRecoveryDialog` 패턴 복제 — backdrop(fixed inset0, z 9999, rgba(0,0,0,.4)) + panel(`--surface`, `--r-lg`, `--shadow-lg`, max-width 560px, padding 20px).
+- 모달: `.share-mgr-backdrop` / `.share-mgr-panel` CSS-클래스 패턴 복제(예: `showTotpLoginPrompt`) — backdrop(fixed inset0, z 9999, rgba(0,0,0,.4)) + panel(`--surface`, `--r-lg`, `--shadow-lg`, max-width 560px, padding 20px). (구 `showTimeoutRecoveryDialog` 인라인-스타일 참조는 ask-timeout-nonblocking 2026-07-09 에서 함수와 함께 제거됨.)
 - 리스트 행: 토큰(앞 8자, `--mono`) · scope 배지(full/anchored) · 생성일 · 조회수 · 상태(활성=`--success` 점 / 취소=`--text-muted` 취소선) · [열기] [링크 복사] [취소(revoke, `--danger`)].
 - 빈 상태: "발급된 공유 링크가 없습니다." (`--text-muted`, 중앙).
 - revoke: 행 단위 `window.confirm` 후 `DELETE /api/share/{id}` → 행을 "취소됨"으로 갱신(낙관적). 실패 시 토스트.
@@ -107,4 +107,4 @@ title: DESIGN.md — 진입점 복구 컴포넌트 (TASK-0158)
 
 - 빠른 색 참조: 액션=`--primary`(#2563eb), 파괴=`--danger`(#dc2626), 정상=`--success`(#16a34a).
 - 신규 컨트롤 추가 시 프롬프트: "기존 `static/styles.css` 토큰만 사용. 가시성은 `.hidden` class 토글로(인라인 style 금지). 권한은 `can()`/`markAccessBlocked()`. 파괴 동작은 `--danger`+확인."
-- 모달 필요 시: app 측은 `showTimeoutRecoveryDialog` 패턴, admin 측은 `showTemporaryPasswordModal`/`.admin-modal-overlay` 패턴 복제.
+- 모달 필요 시: app 측은 `.share-mgr-backdrop`/`.share-mgr-panel` 패턴(예: `showTotpLoginPrompt`), admin 측은 `showTemporaryPasswordModal`/`.admin-modal-overlay` 패턴 복제.

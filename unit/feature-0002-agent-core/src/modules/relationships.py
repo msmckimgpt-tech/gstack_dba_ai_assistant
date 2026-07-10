@@ -24,6 +24,7 @@ feature-0016 implicit-edges (2026-07-01): FK 로 직접 확인되지 않는 **�
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from modules.utils import _normalize_scope_key, _scope_candidates
@@ -33,7 +34,7 @@ _log = logging.getLogger("relationships")
 # 출처별 기본 confidence(정적 prior) 및 초기 weight
 CONFIDENCE = {"fk_introspect": 1.0, "llm_insight": 0.6, "conversation": 0.4, "inferred": 0.3}
 # 즉시 신뢰(권위적)하는 출처 — 나머지는 candidate 로 시작해 강화·검증을 거친다.
-_TRUSTED_SOURCES = {"fk_introspect"}
+_TRUSTED_SOURCES = {"fk_introspect", "manual"}   # crossds-rel: manual=사람 큐레이션(cross-ds 후보 승격 경로 — 프로브 불가)
 
 # ── 강화(reinforcement) 파라미터 (feature-0016) ───────────────────────────
 # 비대칭 불변식: **모든 동작 구간에서 1회 음성 감쇠 > 1회 양성 상승** 이어야 틀린 관계가 확실히 끊어진다.
@@ -53,6 +54,16 @@ _INJECT_CAP = 60        # knowledge context 주입 최대 edge 수
 _READ_LIMIT = 400       # scope 당 최대 read edge 수
 _INTROSPECT_TABLE_CAP = 200  # insight cycle 1회 introspect 최대 테이블 수(과부하 방지)
 _INFER_CAP = 400        # 1회 추론 최대 후보 edge 수(8K 규모 폭주 방지)
+
+# insight-load-spread: probe transient 실패(타임아웃·연결·존재하지 않는 DB 등 — 구조오류로 negative
+# 판정되지 않는 것) 시 last_validated_at 을 미래로 밀어 재프로브를 backoff 한다. 같은 실패 대상을 매
+# cadence(REINFER_SEC)마다 재시도해 워커/소스DB CPU 를 몰아쓰던 spin(probe_edge_failed 도배)을 차단.
+# **간격은 flat**(재시도마다 now()+backoff 의 일정 상수, 누적 아님): fetch_probe_candidates 가
+# last_validated_at > now() 후보를 제외하므로 backoff 창 동안 재프로브 0회이고, 창이 만료돼 재프로브할
+# 때는 last_validated_at 이 이미 과거(<= now())라 GREATEST 가 now() 로 collapse 한다. 시간당 1회 throttle
+# 로 spin 은 완전히 차단되며, 진짜 누적(exponential)이 필요하면 별도 fail-count 컬럼이 필요(현재 미채택).
+# 성공(verdict 판정)하면 last_validated_at=now() 로 리셋 → 정상 rotation 복귀. 0 이면 backoff off(기존 동작).
+_PROBE_FAIL_BACKOFF_SEC = max(0, int(os.getenv("AGENT_RELATIONSHIP_PROBE_FAIL_BACKOFF_SEC", "3600") or "3600"))
 
 
 # ── 연결 헬퍼 (kb_metadata._ro_conn 동형) ────────────────────────────────
@@ -83,6 +94,7 @@ def _fqn(schema, table) -> str:
 # ── upsert ──────────────────────────────────────────────────────────────
 def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tgt_column,
                         source, src_schema="", tgt_schema="", datasource_key="",
+                        source_datasource_key="", target_datasource_key="",
                         constraint_name="", cardinality="", confidence=None,
                         source_run_id=None) -> bool:
     """관계 1 edge upsert. 성공 True. conn 미지정이면 RW 연결을 열어 사용(autocommit).
@@ -98,7 +110,11 @@ def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tg
     if confidence is None:
         confidence = CONFIDENCE.get(source, 0.5)
     init_weight = float(confidence)
+    # crossds-rel(ADR-019): 'manual'(사람 큐레이션)도 권위적 출처 — cross-ds 후보의 유일한 승격 경로(프로브 불가).
     init_status = "trusted" if source in _TRUSTED_SOURCES else "candidate"
+    # 엔드포인트별 datasource — 미지정 시 단일 datasource_key 로 폴백(intra-ds 하위호환).
+    src_ds = str(source_datasource_key or datasource_key or "")
+    tgt_ds = str(target_datasource_key or datasource_key or "")
     c, owned = _rw_conn(conn)
     if c is None:
         return False
@@ -107,11 +123,12 @@ def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tg
         try:
             cur.execute(
                 "INSERT INTO table_relationships "
-                "(scope_key, datasource_key, source_schema, source_table, source_column, "
+                "(scope_key, datasource_key, source_datasource_key, target_datasource_key, "
+                " source_schema, source_table, source_column, "
                 " target_schema, target_table, target_column, source_table_fqn, target_table_fqn, "
                 " constraint_name, cardinality, source, confidence, weight, status, source_run_id) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                "ON CONFLICT (scope_key, source_table_fqn, source_column, target_table_fqn, target_column) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (scope_key, source_datasource_key, source_table_fqn, source_column, target_datasource_key, target_table_fqn, target_column) "
                 "DO UPDATE SET "
                 "  constraint_name = COALESCE(NULLIF(EXCLUDED.constraint_name,''), table_relationships.constraint_name), "
                 "  cardinality = COALESCE(NULLIF(EXCLUDED.cardinality,''), table_relationships.cardinality), "
@@ -119,16 +136,17 @@ def upsert_relationship(conn, scope_key, *, src_table, src_column, tgt_table, tg
                 "  source = CASE WHEN EXCLUDED.confidence >= table_relationships.confidence "
                 "                THEN EXCLUDED.source ELSE table_relationships.source END, "
                 "  confidence = GREATEST(EXCLUDED.confidence, table_relationships.confidence), "
-                # 강화상태 보존 — 권위적 출처(FK)로 재확인될 때만 신뢰 승격 + weight 회복 + 음성카운터 리셋.
-                "  weight = CASE WHEN EXCLUDED.source = 'fk_introspect' THEN 1.0 "
+                # 강화상태 보존 — 권위적 출처(FK·manual)로 재확인될 때만 신뢰 승격 + weight 회복 + 음성카운터 리셋.
+                #   crossds-rel: 'manual'(사람 큐레이션)을 승격 경로에 포함 — cross-ds 후보는 프로브 불가라 이것이 유일 승격.
+                "  weight = CASE WHEN EXCLUDED.source IN ('fk_introspect','manual') THEN 1.0 "
                 "                ELSE table_relationships.weight END, "
-                "  status = CASE WHEN EXCLUDED.source = 'fk_introspect' THEN 'trusted' "
+                "  status = CASE WHEN EXCLUDED.source IN ('fk_introspect','manual') THEN 'trusted' "
                 "                ELSE table_relationships.status END, "
-                "  negative_signals = CASE WHEN EXCLUDED.source = 'fk_introspect' THEN 0 "
+                "  negative_signals = CASE WHEN EXCLUDED.source IN ('fk_introspect','manual') THEN 0 "
                 "                          ELSE table_relationships.negative_signals END, "
                 "  source_run_id = COALESCE(EXCLUDED.source_run_id, table_relationships.source_run_id), "
                 "  updated_at = now()",
-                (_normalize_scope_key(scope_key), str(datasource_key or ""),
+                (_normalize_scope_key(scope_key), str(datasource_key or ""), src_ds, tgt_ds,
                  str(src_schema or ""), str(src_table), str(src_column),
                  str(tgt_schema or ""), str(tgt_table), str(tgt_column),
                  _fqn(src_schema, src_table), _fqn(tgt_schema, tgt_table),
@@ -154,10 +172,14 @@ def _fetch_relationships(conn, scopes):
     cur = conn.cursor()
     try:
         # broken(파단) edge 는 주입 대상에서 제외 — 학습된 '비관계'. weight 내림차순(신뢰 우선).
+        # crossds-rel(verify MAJOR): 크로스-ds edge 는 프로브 검증이 불가라, 미검증 candidate 가 AI 컨텍스트를
+        #   오염하지 않도록 **trusted(대화 JOIN 성공/manual 승격)일 때만** 주입. intra-ds 는 종전대로 candidate 포함.
         cur.execute(
             "SELECT source_table_fqn, source_column, target_table_fqn, target_column, "
-            "       cardinality, source, confidence, weight, status "
+            "       cardinality, source, confidence, weight, status, "
+            "       source_datasource_key, target_datasource_key "
             "FROM table_relationships WHERE scope_key = ANY(%s) AND status <> 'broken' "
+            "  AND (source_datasource_key = target_datasource_key OR status = 'trusted') "
             "ORDER BY weight DESC, confidence DESC, source_table_fqn, target_table_fqn LIMIT %s",
             (list(scopes), _READ_LIMIT),
         )
@@ -225,6 +247,10 @@ def build_relationship_digest(rows, msg_lower: str = "") -> str:
             continue
         weight = r[7] if len(r) > 7 else None
         status = r[8] if len(r) > 8 else None
+        # crossds-rel: 엔드포인트 datasource(선택 컬럼) — 다르면 교차DB(프로브 미검증) 마커.
+        src_ds = r[9] if len(r) > 9 else None
+        tgt_ds = r[10] if len(r) > 10 else None
+        cross_ds = bool(src_ds is not None and tgt_ds is not None and src_ds != tgt_ds)
         if status == "broken":     # 직접 호출 방어 — 파단 관계는 주입 금지
             continue
         if msg_lower:
@@ -245,7 +271,8 @@ def build_relationship_digest(rows, msg_lower: str = "") -> str:
                     trust_s = " [추정]"
             elif status == "trusted":
                 trust_s = " [신뢰]"
-        out.append(f"- {src_fqn}.{src_col} → {tgt_fqn}.{tgt_col}{card_s}{src_tag}{trust_s}")
+        xds_s = " [교차DB]" if cross_ds else ""   # crossds-rel: 두 데이터소스 간 관계(프로브 미검증 — 신뢰 승격분만 주입됨)
+        out.append(f"- {src_fqn}.{src_col} → {tgt_fqn}.{tgt_col}{card_s}{src_tag}{trust_s}{xds_s}")
         if len(out) >= _INJECT_CAP:
             break
     if not out:
@@ -255,18 +282,25 @@ def build_relationship_digest(rows, msg_lower: str = "") -> str:
 
 # ── FK introspection (insight worker 용) ─────────────────────────────────
 def introspect_and_store(ds_conn, dialect, schema, tables, *, kb_conn=None, scope_key="common",
-                         datasource_key="", source_run_id=None, raw_execute=None) -> int:
+                         datasource_key="", source_run_id=None, raw_execute=None,
+                         store_schema=None) -> int:
     """한 schema 의 테이블들에 대해 dialect FK 쿼리를 실행해 table_relationships 에 적재.
 
     ds_conn: 데이터소스 연결. dialect: dialects.active() 류(foreign_keys_outgoing 보유).
     raw_execute(conn, sql) -> (result_sets, ...) : tools._raw_execute_sql 동형 콜백(주입 — 순환 import 회피).
     반환: upsert 한 edge 수. 예외는 삼켜서 0 또는 부분 카운트 반환(insight 루프 비차단).
+
+    store_schema(rel-selfheal): **질의 스키마와 저장 스키마-slot 분리** — FK 쿼리는 실 스키마
+    (`schema`, MSSQL='dbo' 등)로 실행하되, 저장 라벨은 store_schema(MSSQL=DB명)로 둔다. 그래프
+    Table 키(`db.table`)·column_descriptions(schema_name=DB명) 규약과 정합 — 'dbo' 리터럴 저장은
+    투영에서 고아 엣지를 만든다. None=schema 그대로(MySQL 경로 불변).
     """
     if raw_execute is None or dialect is None or not tables:
         return 0
     kc, kowned = _rw_conn(kb_conn)
     if kc is None:
         return 0
+    label = str(store_schema).strip() if store_schema is not None else schema
     n = 0
     try:
         for table in list(tables)[:_INTROSPECT_TABLE_CAP]:
@@ -274,10 +308,14 @@ def introspect_and_store(ds_conn, dialect, schema, tables, *, kb_conn=None, scop
                 sql = dialect.foreign_keys_outgoing(schema, table)
                 results, *_ = raw_execute(ds_conn, sql)
                 for edge in _rows_from_outgoing(results):
+                    tgt_sch = edge.get("tgt_schema", "")
+                    # 같은 질의 스키마를 가리키는 참조는 저장 라벨로 정규화(교차-스키마 참조는 보존).
+                    if store_schema is not None and (not tgt_sch or tgt_sch == schema):
+                        tgt_sch = label
                     if upsert_relationship(
                         kc, scope_key,
-                        src_schema=schema, src_table=table, src_column=edge["src_column"],
-                        tgt_schema=edge.get("tgt_schema", ""), tgt_table=edge["tgt_table"],
+                        src_schema=label, src_table=table, src_column=edge["src_column"],
+                        tgt_schema=tgt_sch, tgt_table=edge["tgt_table"],
                         tgt_column=edge["tgt_column"], source="fk_introspect",
                         datasource_key=datasource_key, constraint_name=edge.get("constraint_name", ""),
                         source_run_id=source_run_id,
@@ -387,22 +425,35 @@ def _from_region(sql_clean: str) -> str:
 
 
 def _alias_map(sql_clean: str) -> dict:
-    """FROM 영역에서 {alias_or_table_lower: table_leaf} 매핑 구성.
+    """FROM 영역에서 {alias_or_table_lower: (table_leaf, qualifier)} 매핑 구성.
 
-    table 은 마지막 segment(db.schema.table → table)로 leaf 화. alias 없으면 leaf 자신을 키로.
+    table 은 마지막 segment 로 leaf 화하되, SQL 이 명시한 qualifier 는 보존한다(rel-selfheal —
+    스키마 미해석('') 저장은 AGE 투영에서 고아 Column 노드를 만들어 그래프 점선이 비가시였다):
+    - 3-part `db.schema.table` → qualifier=db (MSSQL 3계층 — 저장 규약은 DB명, dbo→DB명 정규화 계열)
+    - 2-part `x.table` → qualifier=x. 단 'dbo' 는 DB 차원 소실이라 미채택('' — default 위임)
+    - 1-part `table` → '' (호출측 default_schema 로 위임)
+    alias 없으면 leaf 자신을 키로.
     """
     amap = {}
     for m in _TABLEREF_RE.finditer(_from_region(sql_clean)):
         tbl_raw = m.group(1)
         alias_raw = m.group(2)
-        leaf = _unquote(tbl_raw.split(".")[-1])
+        parts = [p for p in (_unquote(seg) for seg in tbl_raw.split(".")) if p]
+        if not parts:
+            continue
+        leaf = parts[-1]
         if not leaf or leaf.lower() in _RESERVED_ALIAS:
             continue
-        amap[leaf.lower()] = leaf
+        qual = ""
+        if len(parts) >= 3:
+            qual = parts[0]
+        elif len(parts) == 2 and parts[0].lower() != "dbo":
+            qual = parts[0]
+        amap[leaf.lower()] = (leaf, qual)
         if alias_raw:
             alias = _unquote(alias_raw)
             if alias and alias.lower() not in _RESERVED_ALIAS:
-                amap[alias.lower()] = leaf
+                amap[alias.lower()] = (leaf, qual)
     return amap
 
 
@@ -416,7 +467,9 @@ def parse_join_relationships(sql: str) -> list[dict]:
 
     'alias.col = alias.col' 형태(JOIN ON 또는 WHERE)만 추출하고, alias 를 FROM/JOIN 의 테이블로
     해석한다. 같은 테이블 self-eq·해석 실패·단일컬럼/함수 비교는 무시. 무방향 중복 제거.
-    반환: [{src_table, src_column, tgt_table, tgt_column}] (테이블=leaf 이름, 스키마 미해석).
+    반환: [{src_table, src_column, tgt_table, tgt_column, src_schema, tgt_schema}]
+    (테이블=leaf 이름. schema = SQL 이 명시한 qualifier(_alias_map 규칙) 또는 '' — 미해석은
+    호출측 default_schema 가 채운다, rel-selfheal).
     """
     if not sql or not isinstance(sql, str):
         return []
@@ -432,10 +485,12 @@ def parse_join_relationships(sql: str) -> list[dict]:
     for m in _EQ_RE.finditer(s):
         lq, lc, rq, rc = (_unquote(m.group(1)), _unquote(m.group(2)),
                           _unquote(m.group(3)), _unquote(m.group(4)))
-        lt = amap.get(lq.lower())
-        rt = amap.get(rq.lower())
-        if not lt or not rt:
+        l_ent = amap.get(lq.lower())
+        r_ent = amap.get(rq.lower())
+        if not l_ent or not r_ent:
             continue
+        lt, lqual = l_ent
+        rt, rqual = r_ent
         if lt.lower() == rt.lower():
             continue
         if not lc or not rc:
@@ -444,18 +499,31 @@ def parse_join_relationships(sql: str) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        edges.append({"src_table": lt, "src_column": lc, "tgt_table": rt, "tgt_column": rc})
+        edges.append({"src_table": lt, "src_column": lc, "tgt_table": rt, "tgt_column": rc,
+                      "src_schema": lqual, "tgt_schema": rqual})
     return edges
 
 
 def learn_relationships_from_sql(sql, scope_key=None, *, datasource_key="", source_run_id=None,
-                                 conn=None) -> int:
+                                 conn=None, default_schema=None,
+                                 normalize_schema_lower=False) -> int:
     """실행된 (성공한) SQL 의 JOIN 에서 관계를 학습해 table_relationships 에 upsert(source='conversation').
 
     confidence 낮음(0.4) — FK introspection(1.0)이 있으면 그쪽이 우선. 예외·PG 미가용 시 0(비차단).
 
     feature-0016: 성공한 JOIN 은 그 관계가 실제로 쓰였다는 **양성 신호**이므로, upsert 와 함께 동일
     (무방향) 관계의 기존 edge(특히 암묵 추론 edge)를 강화한다 — AI 사용이 곧 검증. 반환: upsert 한 edge 수.
+
+    default_schema(rel-selfheal): SQL 이 테이블을 qualify 하지 않았을 때 채울 스키마-slot
+    (대화 경로의 활성 DB — MSSQL=DB명 / MySQL=schema). '' 저장은 AGE 투영이 실 Table 노드
+    (`db.table` 키)와 연결되지 않는 고아 Column 노드를 만들어, 그래프 뷰의 추정 점선·
+    graph_navigate 이웃에서 관계가 비가시가 되는 결함의 근본원인이었다.
+
+    normalize_schema_lower(적대 패널 QA-F4): True 면 스키마-slot 을 lower() 정규화 —
+    MSSQL 경로용(식별자 case-insensitive + KB 의 DB-slot 저장 규약이 lower). 사용자가
+    `DK_Data_Release.T` 로 타이핑해도 저장 규약 `dk_data_release` 와 일치시켜 AGE 앵커링의
+    phantom(케이스 상이 중복) Table/Schema 노드를 차단한다. MySQL(case-sensitive 스키마)은
+    False 유지 — 실행 성공한 SQL 의 타이핑 케이스가 곧 실 케이스다.
     """
     edges = parse_join_relationships(sql)
     if not edges:
@@ -470,19 +538,29 @@ def learn_relationships_from_sql(sql, scope_key=None, *, datasource_key="", sour
     if c is None:
         return 0
     n = 0
+    _default = str(default_schema or "").strip()
+
+    def _slot(v):
+        s = str(v or "").strip() or _default
+        return s.lower() if (normalize_schema_lower and s) else s
+
     try:
         for e in edges:
+            _ss, _ts = _slot(e.get("src_schema")), _slot(e.get("tgt_schema"))
             if upsert_relationship(
                 c, scope_key,
                 src_table=e["src_table"], src_column=e["src_column"],
                 tgt_table=e["tgt_table"], tgt_column=e["tgt_column"],
+                src_schema=_ss, tgt_schema=_ts,
                 source="conversation", datasource_key=datasource_key, source_run_id=source_run_id,
             ):
                 n += 1
             # 사용 성공 = 양성 신호 → 동일 관계(추론 포함)의 weight 강화. 실패해도 비차단.
+            # 스키마-slot 한정(B-F2) — 교차-DB 동명 edge 오강화 차단.
             try:
                 apply_relationship_signal(c, scope_key, e["src_table"], e["src_column"],
-                                          e["tgt_table"], e["tgt_column"], True)
+                                          e["tgt_table"], e["tgt_column"], True,
+                                          a_schema=_ss, b_schema=_ts)
             except Exception:
                 pass
     except Exception as exc:
@@ -536,11 +614,17 @@ def next_reinforcement_state(weight, positive_signals, negative_signals, status,
     return w, pos, neg, st
 
 
-def apply_relationship_signal(conn, scope_key, a_table, a_col, b_table, b_col, positive) -> int:
+def apply_relationship_signal(conn, scope_key, a_table, a_col, b_table, b_col, positive,
+                              *, a_schema=None, b_schema=None) -> int:
     """(a_table.a_col ↔ b_table.b_col) 무방향 관계에 강화/감쇠 신호 1건 적용. 반환: 갱신된 row 수.
 
-    테이블은 leaf 이름으로 매칭(대화 파서는 스키마 미해석, 추론 edge 는 스키마 보유 — leaf 로 정합).
     같은 무방향 관계의 여러 저장 방향(추론 A→B + 대화 B→A)을 모두 갱신. 예외·PG 미가용 시 0(비차단).
+
+    a_schema/b_schema(rel-selfheal 적대 패널 B-F2): 지정 시 스키마-slot 까지 매칭을 한정한다 —
+    ''(미해석 레거시) slot 은 wildcard 로 계속 매칭. 미지정(None)이면 기존 leaf-only 매칭.
+    MSSQL 한 datasource 가 다수 DB 를 포괄하고 동명 테이블이 표준인 환경(23-DB dbo.T_ErrorLog)에서,
+    한 DB 의 프로브 verdict 가 leaf-only 매칭으로 **다른 DB 의 동명 edge 까지** 강화/파단시키는
+    교차-DB 오염을 차단한다(프로브 fetch 의 db_scope 격리와 짝을 이루는 write-back 격리).
     """
     if not (a_table and a_col and b_table and b_col):
         return 0
@@ -554,17 +638,35 @@ def apply_relationship_signal(conn, scope_key, a_table, a_col, b_table, b_col, p
         # **원자성**: SELECT … FOR UPDATE + UPDATE 를 한 트랜잭션으로 묶어 cross-process
         # (insight 프로브 ↔ ask-worker 대화학습) lost-update 를 제거. autocommit conn 이라
         # 명시 BEGIN/COMMIT 로 짧은 트랜잭션을 연다. 실패 시 ROLLBACK(부분 갱신 없음).
+        _slot_ab = _slot_ba = ""
+        _slot_params_ab: list = []
+        _slot_params_ba: list = []
+        if a_schema is not None or b_schema is not None:
+            _sa = str(a_schema or "").strip()
+            _sb = str(b_schema or "").strip()
+            _slot_ab = ("   AND (source_schema='' OR lower(source_schema)=lower(%s)) "
+                        "   AND (target_schema='' OR lower(target_schema)=lower(%s)) ")
+            _slot_ba = _slot_ab
+            _slot_params_ab = [_sa, _sb]
+            _slot_params_ba = [_sb, _sa]
         try:
             cur.execute("BEGIN")
             cur.execute(
                 "SELECT id, weight, positive_signals, negative_signals, status, source "
-                "FROM table_relationships WHERE scope_key = ANY(%s) AND ("
+                # crossds-rel(리뷰 MINOR): 강화 신호(대화 JOIN 양성·프로브 음성)는 intra-ds 전용 — 크로스-ds 엣지
+                #   (src_ds<>tgt_ds)는 동명 테이블/컬럼 충돌로 오염 감쇠되지 않게 제외. cross-ds 승격은 manual upsert 만.
+                "FROM table_relationships WHERE scope_key = ANY(%s) AND source_datasource_key = target_datasource_key AND ("
                 "  (lower(source_table)=lower(%s) AND lower(source_column)=lower(%s) "
-                "   AND lower(target_table)=lower(%s) AND lower(target_column)=lower(%s)) OR "
+                "   AND lower(target_table)=lower(%s) AND lower(target_column)=lower(%s) "
+                + _slot_ab +
+                "  ) OR "
                 "  (lower(source_table)=lower(%s) AND lower(source_column)=lower(%s) "
-                "   AND lower(target_table)=lower(%s) AND lower(target_column)=lower(%s))) "
+                "   AND lower(target_table)=lower(%s) AND lower(target_column)=lower(%s) "
+                + _slot_ba +
+                "  )) "
                 "FOR UPDATE",
-                (scopes, a_table, a_col, b_table, b_col, b_table, b_col, a_table, a_col),
+                tuple([scopes, a_table, a_col, b_table, b_col] + _slot_params_ab
+                      + [b_table, b_col, a_table, a_col] + _slot_params_ba),
             )
             for rid, w, pos, neg, st, src in (cur.fetchall() or []):
                 nw, npos, nneg, nst = next_reinforcement_state(w, pos, neg, st, src, positive)
@@ -605,7 +707,10 @@ _KEY_COL_RE = re.compile(r'^(.+?)_?(id|sn|no|seq|key|code|uid)$', re.I)
 # 접미 제거 뒤 base 가 이 집합이면 테이블 지시성이 약해 제외(범용 키).
 _GENERIC_BASES = {"", "p", "s", "c", "t", "the", "row", "my", "his"}
 # heuristic-2(공유 키 컬럼) 대상에서 제외할 범용 컬럼(테이블 지시성 없음).
+# 'uniqueid'/'unique_id' 는 이 게임 DB 계열의 보편 PK 라 heuristic-2 에 두면 PK≡PK
+# pairwise 쓰레기 후보가 나온다('id' 와 대칭 제외 — _pk_like 의 FK **타깃** 역할은 유지).
 _GENERIC_KEY_COLS = {"id", "no", "seq", "sn", "uid", "key", "code", "idx", "num",
+                     "uniqueid", "unique_id",
                      "rownum", "rowid", "regdate", "createdate", "updatedate"}
 _SHARED_KEY_MAX_OWNERS = 8   # 이보다 많은 테이블이 공유하는 키는 범용 차원 — pairwise 추론 제외
 
@@ -659,7 +764,10 @@ def infer_implicit_relationships(schema, tables_columns, *, cap=_INFER_CAP):
     def _pk_like(tbl, base):
         cols = tbl_cols.get(tbl, [])
         lc = {c.lower(): c for c in cols}
-        cands = [f"{base}_id", f"{base}id", "id", f"{base}_no", f"{base}no",
+        # 'uniqueid'/'unique_id' = 게임 DB 관용 PK 명(실측: dk_data_release.Achievement.UniqueID 등).
+        # 이 후보가 없으면 `<X>ID → X.UniqueID` 패턴의 name_fk 추론이 전면 불가(rel-selfheal).
+        cands = [f"{base}_id", f"{base}id", "id", "uniqueid", "unique_id",
+                 f"{base}_no", f"{base}no",
                  f"{base}_sn", f"{base}sn", f"{base}_seq", "seq", f"{base}_key"]
         for cand in cands:
             if cand.lower() in lc:
@@ -753,6 +861,200 @@ def store_inferred_relationships(conn, scope_key, schema, tables_columns, *,
     return n
 
 
+# ── 크로스-데이터소스 추론 (Phase B, ADR-019 — Phase C 시그니처 임베딩 구동) ──────────────
+#   서로 다른 datasource 의 의미-유사 테이블(시그니처 코사인 ≥ MIN_SIM) 쌍에서, 양쪽에 공통으로 존재하는
+#   join-key 성 컬럼(동명·식별자형)을 관계 후보로 발굴한다. 프로브 검증 불가(교차 엔드포인트)라 status='candidate'
+#   영구 유지(fetch_probe_candidates 가드) — 승격은 대화 JOIN 성공/manual 큐레이션(source='manual')만.
+#   **데몬 기본 OFF**(AGENT_XDS_RELATIONSHIP_INFER_AUTO=0) — Phase C 임베딩 populate 후 flip.
+_XDS_KEY_SUFFIXES = ("id", "key", "code", "no", "seq", "num")
+
+
+def _is_keyish(col: str) -> bool:
+    c = str(col or "").strip().lower()
+    return bool(c) and (c.endswith(_XDS_KEY_SUFFIXES) or c in ("id", "key"))
+
+
+def _fetch_table_columns_map(cur, scope_key, schema_name, table_name):
+    """(scope,schema,table) 의 컬럼명 set(소문자). semantic_cluster 와 동일 키 소싱."""
+    try:
+        cur.execute(
+            "SELECT column_name FROM column_descriptions "
+            "WHERE scope_key=%s AND schema_name=%s AND table_name=%s",
+            (scope_key, schema_name or "", table_name),
+        )
+        return {str(r[0]).strip().lower() for r in cur.fetchall() if r and r[0]}
+    except Exception:
+        return set()
+
+
+def infer_cross_datasource_relationships(conn=None, *, min_sim=None, batch_max=None, max_per_scope=None,
+                                          include_xds=True, include_xschema=None) -> list:
+    """Phase C 시그니처 임베딩으로 **경계 넘는** 관계 후보 발굴. 반환: [{src_*, tgt_*, confidence, ...}] (미저장).
+
+    rag_objects.signature_text_hash → texts.embedding(bge-m3 1024d) 조인. 각 table 을 pgvector 코사인
+    kNN 매칭해 유사 테이블 쌍의 양쪽 공통 join-key 컬럼을 후보 엣지로.
+
+    §55(REQ-20260706 ②) 일반화 — 두 종류의 경계를 함께 다룬다:
+      - include_xds: **크로스-데이터소스**(다른 datasource) — ADR-019 원형. 프로브 불가라 min_sim 보수
+        (AGENT_XDS_RELATIONSHIP_MIN_SIM, 기본 0.90) + trusted 승격은 manual/대화만.
+      - include_xschema: **같은 datasource 안의 다른 effective schema(DB)** — 같은 서버라 3-part 프로브로
+        검증 가능(fetch_probe_candidates·dialect §55) → min_sim 완화(AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM,
+        기본 0.86). src_ds==tgt_ds 로 저장되어 기존 강화/파단 파이프라인에 자연 편입된다.
+        None 이면 config AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO(기본 ON)를 따른다.
+    같은 effective schema(같은 DB) 내부 쌍은 제외 — per-schema 명명 추론(기존)의 영역.
+    """
+    from shared import config as _cfg
+    min_sim = float(min_sim if min_sim is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_MIN_SIM", 0.90))
+    xschema_min = float(getattr(_cfg, "AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM", 0.86) or 0.86)
+    if include_xschema is None:
+        include_xschema = bool(getattr(_cfg, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True))
+    batch_max = int(batch_max if batch_max is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_BATCH_MAX", 200))
+    max_per_scope = int(max_per_scope if max_per_scope is not None else getattr(_cfg, "AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE", 50))
+    knn_k = int(getattr(_cfg, "AGENT_XDS_RELATIONSHIP_KNN_K", 10))
+    out = []
+    if not (include_xds or include_xschema):
+        return out
+    c, owned = _ro_conn(conn)
+    if c is None:
+        return out
+    from .semantic_cluster import _effective_schema   # MSSQL DB-distinct effective schema(=graph 노드 scope 정합)
+    try:
+        cur = c.cursor()
+        try:
+            # 임베딩 보유 table 후보(배치 상한). embedding 은 pgvector — kNN 질의에 재사용. object_key → effective schema.
+            cur.execute(
+                "SELECT o.scope_key, o.datasource_key, o.schema_name, o.table_name, o.object_key, t.embedding::text "
+                "FROM rag_objects o JOIN texts t ON o.signature_text_hash = t.text_hash "
+                "WHERE o.object_type='table' AND o.signature_text_hash IS NOT NULL "
+                "AND t.embedding IS NOT NULL ORDER BY o.updated_at DESC NULLS LAST LIMIT %s",
+                (batch_max,),
+            )
+            base = cur.fetchall()
+            per_ds = {}
+            for (sc, dsk, sch, tbl, okey, emb_txt) in base:
+                if per_ds.get(dsk, 0) >= max_per_scope:   # cap 은 source datasource 기준(리뷰 MINOR — scope_key='common' 회피)
+                    continue
+                # MAJOR fix: 그래프 Table 노드는 effective schema(_rag_effective — MSSQL DB명)로 투영되고,
+                #   column_descriptions 도 그 값으로 키됨. raw schema_name('dbo')로 조회하면 MSSQL 컬럼 0건→후보 0/고아.
+                eff_a = _effective_schema(dsk, okey, sch)
+                # 의미-유사 table kNN (pgvector <=> 코사인 거리).
+                # 패널 MAJOR fix(recall): xschema 미포함이면 종전 SQL(`datasource_key <>`)을 유지해
+                #   top-k 전 슬롯이 cross-ds 임을 보장. xschema 포함이면 같은 DB 시블링(백업/파티션/
+                #   시리즈 — 임베딩 최상 유사 부류)이 top-k 를 점유해 경계 후보 recall 이 0 으로
+                #   침몰하므로 **초과-fetch(knn_k×5, cap 60)** 후 클라이언트 필터 + 경계 pair 수를
+                #   knn_k 로 캡한다(같은-DB 쌍은 슬롯을 소모하지 않음).
+                if include_xschema:
+                    fetch_k = min(60, max(knn_k * 5, knn_k))
+                    cur.execute(
+                        "SELECT o2.scope_key, o2.datasource_key, o2.schema_name, o2.table_name, o2.object_key, "
+                        "       1 - (t2.embedding <=> %s::vector) AS sim "
+                        "FROM rag_objects o2 JOIN texts t2 ON o2.signature_text_hash = t2.text_hash "
+                        "WHERE o2.object_type='table' AND NOT (o2.datasource_key = %s AND o2.object_key = %s) "
+                        "AND t2.embedding IS NOT NULL "
+                        "ORDER BY t2.embedding <=> %s::vector LIMIT %s",
+                        (emb_txt, dsk, okey, emb_txt, fetch_k),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT o2.scope_key, o2.datasource_key, o2.schema_name, o2.table_name, o2.object_key, "
+                        "       1 - (t2.embedding <=> %s::vector) AS sim "
+                        "FROM rag_objects o2 JOIN texts t2 ON o2.signature_text_hash = t2.text_hash "
+                        "WHERE o2.object_type='table' AND o2.datasource_key <> %s "
+                        "AND t2.embedding IS NOT NULL "
+                        "ORDER BY t2.embedding <=> %s::vector LIMIT %s",
+                        (emb_txt, dsk, emb_txt, knn_k),
+                    )
+                cols_a = None
+                pairs_taken = 0   # 경계(수용된) 이웃 pair 수 — knn_k 캡(같은-DB skip 은 미소모)
+                for (sc2, dsk2, sch2, tbl2, okey2, sim) in cur.fetchall():
+                    if sim is None:
+                        continue
+                    if pairs_taken >= knn_k:
+                        break
+                    eff_b = _effective_schema(dsk2, okey2, sch2)
+                    if str(dsk) == str(dsk2):
+                        # intra-DS 크로스 스키마(DB) 후보 — 같은 DB 내부는 제외(per-schema 명명 추론 영역).
+                        if not include_xschema or eff_a == eff_b:
+                            continue
+                        # reverse-dup 카논화 — 같은 ds 는 (schema, table) 사전순 작은 쪽에서만 발화.
+                        if (str(eff_a), str(tbl)) >= (str(eff_b), str(tbl2)):
+                            continue
+                        if float(sim) < xschema_min:
+                            continue
+                    else:
+                        if not include_xds:
+                            continue
+                        # reverse-dup 카논화(리뷰 MINOR): A→B·B→A 양방향 중복 방지 — 사전순 작은 ds 에서만 발화.
+                        if str(dsk) >= str(dsk2):
+                            continue
+                        if float(sim) < min_sim:
+                            continue
+                    if per_ds.get(dsk, 0) >= max_per_scope:
+                        break
+                    pairs_taken += 1
+                    if cols_a is None:
+                        cols_a = _fetch_table_columns_map(cur, sc, eff_a, tbl)
+                    cols_b = _fetch_table_columns_map(cur, sc2, eff_b, tbl2)
+                    # 공통 join-key 컬럼(동명·식별자형)만 후보. FQN 은 effective schema 로 저장(그래프 노드 정합).
+                    shared = sorted((cols_a & cols_b))
+                    for col in shared:
+                        if not _is_keyish(col):
+                            continue
+                        # scope_key = source datasource_key: 그래프 노드 scope prefix 는 rag_objects.datasource_key
+                        #   (rag_objects.scope_key 는 'common'). table_relationships.scope_key 관례와 정합.
+                        out.append({
+                            "scope_key": dsk, "src_ds": dsk, "tgt_ds": dsk2,
+                            "src_schema": eff_a, "src_table": tbl, "src_column": col,
+                            "tgt_schema": eff_b, "tgt_table": tbl2, "tgt_column": col,
+                            "confidence": round(float(sim), 4),
+                        })
+                        per_ds[dsk] = per_ds.get(dsk, 0) + 1
+                        if per_ds[dsk] >= max_per_scope:
+                            break
+        finally:
+            cur.close()
+    except Exception as exc:
+        _log.warning("infer_cross_datasource 실패: %r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return out
+
+
+def store_xds_inferred_relationships(conn=None, candidates=None) -> int:
+    """크로스-ds 후보를 table_relationships 에 upsert(source='inferred', 엔드포인트별 ds, status=candidate). 반환: upsert 수."""
+    cands = candidates if candidates is not None else infer_cross_datasource_relationships(conn=conn)
+    if not cands:
+        return 0
+    c, owned = _rw_conn(conn)
+    if c is None:
+        return 0
+    n = 0
+    try:
+        for e in cands:
+            if upsert_relationship(
+                c, e["scope_key"],
+                src_schema=e["src_schema"], src_table=e["src_table"], src_column=e["src_column"],
+                tgt_schema=e["tgt_schema"], tgt_table=e["tgt_table"], tgt_column=e["tgt_column"],
+                source="inferred", datasource_key=e["src_ds"],
+                source_datasource_key=e["src_ds"], target_datasource_key=e["tgt_ds"],
+                confidence=e.get("confidence"),
+            ):
+                n += 1
+    except Exception as exc:
+        _log.debug("store_xds_inferred_failed err=%r", exc)
+    finally:
+        if owned and c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
+    return n
+
+
 # ── 능동 프로브 (실데이터 겹침으로 candidate 검증) ─────────────────────────
 def _parse_probe_counts(results):
     """프로브 result → (sampled, matched). 첫 행 두 컬럼(COUNT, SUM(EXISTS))."""
@@ -766,10 +1068,14 @@ def _parse_probe_counts(results):
     return 0, 0
 
 
-def fetch_probe_candidates(conn, scope_key, limit):
+def fetch_probe_candidates(conn, scope_key, limit, db_scope=None):
     """검증 대상(candidate) edge 목록. 오래 검증 안 된 것·weight 낮은 것 우선.
 
     반환: [(id, src_schema, src_table, src_column, tgt_schema, tgt_table, tgt_column), ...]
+
+    db_scope(rel-selfheal): 지정 시 source/target 스키마-slot 이 ''(미해석 레거시) 또는 db_scope
+    인 후보만 반환 — MSSQL 은 DB(catalog)마다 재연결해 프로브하므로, 현재 연결 DB 밖의 후보를
+    같은 연결에서 실행하면 동명 테이블 오검증/불필요 실패가 난다. None=필터 없음(MySQL 경로).
     """
     scopes = list(_scope_candidates(_normalize_scope_key(scope_key)))
     c, owned = _ro_conn(conn)
@@ -778,14 +1084,42 @@ def fetch_probe_candidates(conn, scope_key, limit):
     try:
         cur = c.cursor()
         try:
+            db_filter = ""
+            params = [scopes]
+            if db_scope:
+                # §55(REQ-20260706 ②, 패널 BLOCKING fix): 크로스 DB 확장은 **양 slot 확정 행에만** 적용.
+                #   - 양끝 slot 확정: 한끝이 현재 DB(catalog)면 반대쪽은 다른 DB 여도 3-part qualifier
+                #     (dialects MSSQL `[db].[dbo].[table]`)로 같은 연결에서 프로브 가능 — 신규 경로.
+                #   - ''(레거시 미해석 slot) 포함 행: **종전 AND 의미론 그대로** — '' 끝은 연결 DB 로
+                #     해석되므로, 반대쪽 확정 slot 이 현재 DB 일 때만(=행이 이 catalog 에 앵커) fetch.
+                #     단순 OR 완화는 ('',DBX) 행을 모든 catalog 에 흘려 무관 DB 의 동명 테이블에서
+                #     "성공-프로브 matched=0" negative 를 먹여 실관계를 영구 오파단한다(성공 경로는
+                #     R-1 가드(missing-object 예외 한정) 밖 — 패널 BLOCKING).
+                db_filter = (
+                    "  AND ( (source_schema = '' AND target_schema = '') "
+                    "     OR (source_schema = '' AND lower(target_schema) = lower(%s)) "
+                    "     OR (target_schema = '' AND lower(source_schema) = lower(%s)) "
+                    "     OR (source_schema <> '' AND target_schema <> '' "
+                    "         AND (lower(source_schema) = lower(%s) OR lower(target_schema) = lower(%s))) ) "
+                )
+                params.extend([str(db_scope), str(db_scope), str(db_scope), str(db_scope)])
+            params.append(int(limit))
             cur.execute(
                 "SELECT id, source_schema, source_table, source_column, "
                 "       target_schema, target_table, target_column "
                 "FROM table_relationships "
                 "WHERE scope_key = ANY(%s) AND status = 'candidate' "
                 "  AND source IN ('inferred', 'conversation', 'llm_insight') "
+                # crossds-rel(verify CRITICAL): 크로스-데이터소스 edge 는 프로브 대상에서 **영구 제외**. 단일 커넥션
+                #   프로브가 다른 datasource 끝점을 조인하면 missing-object → 음성 오분류 → 2회만에 broken 파단된다.
+                #   이 가드가 cross-ds 후보를 'candidate' 로 유지(승격은 대화 JOIN 성공/manual 큐레이션만).
+                "  AND source_datasource_key = target_datasource_key "
+                # insight-load-spread: transient 실패로 backoff(미래로 밀린) 후보는 그 창 동안 제외 —
+                # 존재하지 않는 DB·timeout edge 를 매 cadence 재프로브하던 부하 spin 차단. NULL/과거는 정상 대상.
+                "  AND (last_validated_at IS NULL OR last_validated_at <= now()) "
+                + db_filter +
                 "ORDER BY last_validated_at ASC NULLS FIRST, weight ASC LIMIT %s",
-                (scopes, int(limit)),
+                tuple(params),
             )
             return cur.fetchall() or []
         finally:
@@ -821,28 +1155,104 @@ def classify_probe(sampled, matched):
     return "neutral"
 
 
+# 프로브 실행 오류 중 "대상 객체 자체가 없음" — 관계가 현 스키마에서 실행 불가라는 구조 신호
+# (잘못된 qualifier 대화 edge, drop 된 테이블). transient(타임아웃/권한/네트워크)와 구분해
+# negative 로 분류한다(적대 패널 B-F4 — 이 클래스가 영구 미파단 + 큐 head 고착의 근본).
+_PROBE_MISSING_OBJECT_RE = re.compile(
+    # MSSQL: "Invalid object name 'x'"(208/42S02) · "Invalid column name 'y'"(207/42S22)
+    # MySQL: "Table 'db.x' doesn't exist"(1146) · "Unknown column"(1054) · "Unknown database 'x'"(1049)
+    # insight-load-spread: "Unknown database"(존재하지 않는 DB — 예: dblog) 도 구조 부재로 편입 —
+    # 없는 DB 를 참조하는 관계는 실행 불가라 negative(파단) 대상. 없는 DB probe 를 매 cadence 반복하던
+    # probe_edge_failed 도배의 근본 차단(slot 확정 시). slot 미확정(레거시)은 transient→backoff 로 커버.
+    # bare 에러번호 매칭은 무관 숫자(예: "timeout after 208ms") 오탐 위험이라 텍스트/SQLSTATE 만.
+    r"invalid (object|column) name|doesn't exist|does not exist|unknown column"
+    r"|unknown database|no such (table|database)|42S02|42S22",
+    re.I,
+)
+
+
+def _touch_validated(kc, rid):
+    """last_validated_at 만 전진(가중치 불변) — 프로브 rotation 공정화. 실패 무시(비차단)."""
+    try:
+        _tc2 = kc.cursor()
+        try:
+            _tc2.execute(
+                "UPDATE table_relationships SET last_validated_at = now() "
+                "WHERE id = %s", (rid,))
+        finally:
+            _tc2.close()
+    except Exception:
+        pass
+
+
+def _backoff_validated(kc, rid, backoff_sec):
+    """insight-load-spread: transient probe 실패 시 last_validated_at 을 미래로 밀어 재프로브 backoff.
+
+    `GREATEST(now(), COALESCE(last_validated_at, now())) + backoff` — GREATEST/COALESCE 는 NULL·과거값
+    방어일 뿐 **누적이 아니다**: fetch_probe_candidates 가 `last_validated_at <= now()` 후보만 가져오므로
+    재프로브는 backoff 창이 만료된(= last_validated_at 이 과거인) 뒤에만 일어나고, 그 시점 GREATEST 는
+    now() 로 collapse → 매 재시도 간격은 **flat 상수(기본 3600s)**. 창 동안 재프로브 0회라 존재하지 않는
+    DB·timeout edge 의 매-cadence spin 은 완전히 차단된다(시간당 1회 throttle). 성공(verdict 판정)하면
+    _touch_validated 가 now() 로 리셋해 정상 rotation 복귀. backoff_sec<=0 이면 now() 전진(기존 동작)으로
+    폴백. 실패 무시(비차단)."""
+    if backoff_sec is None or int(backoff_sec) <= 0:
+        _touch_validated(kc, rid)
+        return
+    try:
+        _tc3 = kc.cursor()
+        try:
+            _tc3.execute(
+                "UPDATE table_relationships "
+                "SET last_validated_at = GREATEST(now(), COALESCE(last_validated_at, now())) "
+                "    + make_interval(secs => %s) "
+                "WHERE id = %s", (int(backoff_sec), rid))
+        finally:
+            _tc3.close()
+    except Exception:
+        pass
+
+
 def probe_and_reinforce(ds_conn, dialect, scope_key, *, kb_conn=None, raw_execute=None,
-                        sample=50, cap=40, timeout_ms=0) -> dict:
+                        sample=50, cap=40, timeout_ms=0, db_scope=None) -> dict:
     """candidate edge 를 실데이터 겹침 프로브로 검증해 강화/감쇠 (insight worker 용).
 
     각 edge: src 컬럼 표본 sample개 중 tgt 컬럼에 존재(EXISTS)하는 비율 = 겹침률(classify_probe).
     ds_conn 에서 프로브 SQL(read-only) 실행, 강화는 kb_conn(관계형 SSOT)에 기록. 전부 guarded(비차단).
     timeout_ms: 프로브 statement 시간 상한(운영 DB 폭주 차단 — MySQL MAX_EXECUTION_TIME / MSSQL LOCK_TIMEOUT).
-    반환: {"probed", "positive", "negative", "neutral"}.
+    db_scope(rel-selfheal·§55): 현재 연결의 DB(catalog)명 — MSSQL 경로. 후보는 **한쪽 끝이 이 DB 에
+    앵커**된 것(또는 미해석 레거시 '')으로 한정하고, qualifier 는 벗기지 않는다 — dialect 가 스키마-slot
+    (=DB명, ADR-007)을 3-part `[db].[dbo].[table]` 로 조립해 같은 서버의 다른 DB 끝점(크로스 DB 후보)도
+    같은 연결에서 프로브한다(REQ-20260706 ②). None=MySQL 불변(2-part `db`.`table` 로 동일 의미).
+
+    강화/파단 write-back 은 후보 row 의 스키마-slot 으로 한정(apply_relationship_signal
+    a_schema/b_schema — 교차-DB 동명 테이블 오염 차단, 적대 패널 B-F2). sample/cap/timeout 은
+    misconfig 폭주 방지를 위해 코드 상한으로 클램프(적대 패널 Sec-F2 — dialect 의 sample 클램프와 대칭).
+    반환: {"probed", "positive", "negative", "neutral", "failed"}.
     """
-    rep = {"probed": 0, "positive": 0, "negative": 0, "neutral": 0}
+    rep = {"probed": 0, "positive": 0, "negative": 0, "neutral": 0, "failed": 0}
     if (raw_execute is None or dialect is None
             or not hasattr(dialect, "probe_relationship_overlap")):
         return rep
-    cands = fetch_probe_candidates(kb_conn, scope_key, cap)
+    try:
+        sample = max(1, min(int(sample or 50), 200))
+        cap = max(1, min(int(cap or 40), 500))
+        timeout_ms = max(0, min(int(timeout_ms or 0), 60000))
+    except (TypeError, ValueError):
+        sample, cap, timeout_ms = 50, 40, 5000
+    cands = fetch_probe_candidates(kb_conn, scope_key, cap, db_scope=db_scope)
     if not cands:
         return rep
     kc, kowned = _rw_conn(kb_conn)
     if kc is None:
         return rep
+    _db = str(db_scope or "").strip().lower()
     try:
         for (rid, ssch, stbl, scol, tsch, ttbl, tcol) in cands:
             try:
+                # §55(REQ-20260706 ②): qualifier 를 벗기지 않고 그대로 전달 — MSSQL dialect 가 스키마-slot
+                # (=DB명, ADR-007)을 3-part `[db].[dbo].[table]` 로 조립해 같은 서버의 **다른 DB 끝점도
+                # 같은 연결에서** 프로브한다(크로스 DB 후보 검증). slot=='' 레거시는 종전대로 연결 DB
+                # 기본 해석. MySQL 은 2-part `db`.`table` 로 동일 의미(불변).
                 sql = dialect.probe_relationship_overlap(
                     ssch or "", stbl, scol, tsch or "", ttbl, tcol, int(sample),
                     timeout_ms=int(timeout_ms))
@@ -851,15 +1261,46 @@ def probe_and_reinforce(ds_conn, dialect, scope_key, *, kb_conn=None, raw_execut
                 rep["probed"] += 1
                 verdict = classify_probe(sampled, matched)
                 if verdict == "positive":
-                    apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, True)
+                    apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, True,
+                                              a_schema=ssch, b_schema=tsch)
                     rep["positive"] += 1
                 elif verdict == "negative":
-                    apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, False)
+                    apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, False,
+                                              a_schema=ssch, b_schema=tsch)
                     rep["negative"] += 1
                 else:
                     rep["neutral"] += 1
+                    # neutral 도 last_validated_at 을 전진(가중치 불변) — 같은 스캔/케이던스 내
+                    # 동일 후보 반복 프로브를 막고 fetch rotation 을 공정화한다(rel-selfheal).
+                    _touch_validated(kc, rid)
             except Exception as exc:
-                _log.debug("probe_edge_failed id=%s err=%r", rid, exc)
+                # B-F4: 실행 불가 후보도 신호/타임스탬프 없이 방치하면 ① 영구 미파단(자기교정
+                # 불성립) ② NULLS FIRST 정렬로 큐 head 고착(프로브 기아). 객체 부재류는
+                # negative 신호, 그 외(transient)는 타임스탬프만 전진해 rotation 을 보존한다.
+                #
+                # 재검증 R-1 가드: negative 는 후보 slot 이 **현 프로브 컨텍스트로 확정**된
+                # 경우에만. db_scope(MSSQL catalog 순회) 하에서 ''-slot 레거시 후보는 wildcard
+                # 로 모든 catalog 에 fetch 되므로, 소속 아닌 catalog 의 "Invalid object name" 을
+                # negative 로 먹이면 실관계가 오답 catalog 프로브 2회만에 broken
+                # (0.4−0.14×2=0.12≤0.15) 으로 영구 오파단된다. db_scope 필터가 non-empty slot
+                # == db_scope 를 보장하므로 양쪽 slot 이 채워진 후보만 구조적 negative 대상.
+                _slots_resolved = bool(
+                    not _db
+                    or (str(ssch or "").strip() and str(tsch or "").strip())
+                )
+                if _slots_resolved and _PROBE_MISSING_OBJECT_RE.search(str(exc)):
+                    apply_relationship_signal(kc, scope_key, stbl, scol, ttbl, tcol, False,
+                                              a_schema=ssch, b_schema=tsch)
+                    rep["negative"] += 1
+                    # 구조 부재(없는 객체·DB)는 negative 감쇠가 곧 파단 → candidate 제외. now() 로 정상 rotation.
+                    _touch_validated(kc, rid)
+                else:
+                    rep["failed"] += 1
+                    # insight-load-spread: transient(타임아웃·연결·slot 미확정 레거시)는 파단하지 않고
+                    # 미래로 밀어 backoff — 같은 대상을 매 cadence 재프로브하던 spin(probe_edge_failed
+                    # 도배 + 소스DB timeout 쿼리 반복)을 차단한다(반복 실패 누적 backoff).
+                    _backoff_validated(kc, rid, _PROBE_FAIL_BACKOFF_SEC)
+                _log.warning("probe_edge_failed id=%s err=%r", rid, exc)
                 continue
     finally:
         if kowned and kc is not None:

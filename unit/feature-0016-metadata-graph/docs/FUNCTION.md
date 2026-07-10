@@ -25,6 +25,16 @@ source_of_truth: true
   Graph DB 모델로 명시하며 (c) UI를 그래프 형태 + 검색 가능하게 하고 (d) AI가 그 메타데이터를
   통해 요청을 수행하는 부분을 정합한다. (e) KB 전용 PG 의 그래프 플러그인(Apache AGE)을
   내부 구조로 함께 도입한다.
+- REQ-20260704T210000-routine-dbanalysis: (a) 함수·프로시저 노드가 전 datasource 그래프 뷰에
+  나타나도록 한다 — insight cadence 전파를 기다리지 않는 **결정론 backfill** 수단 제공. (b) **DB(스키마)
+  단위 'AI 능동 분석'** — 스키마의 미분석 테이블 전체를 일괄 시드해 분석한다(비용 가드: only_missing +
+  `AGENT_NODE_ANALYSIS_SCHEMA_CAP` 기본 200 + UI confirm). (TASK §53)
+- REQ-20260703-graph-funcproc-uxfix: (a) **함수·프로시저 노드**를 그래프에 구성하고 분석·관계
+  (참조 테이블)를 함께 구성한다. (b) 상세 패널 리사이즈 시 미니맵 위치 미갱신을 수정한다.
+  (c) AI 능동 분석 재귀에서 참조 컬럼이 분석되면 그 **소속 테이블까지 분석**하되 앵커 연관성으로
+  재귀 심화를 억제한다. (d) 분석 완료 항목의 '재분석' 버튼을 제거한다(능동 분석 재실행으로 충분).
+  (e) 'AI 능동 분석' hover 시 프롬프트 입력 툴팁을 제공하고, 입력 지침을 LLM 이 자율 판단 하
+  분석 내용에 반영한다. (TASK §45 / ADR-016·017)
 
 ### 사용자 결정 (2026-06-30, entry persona dispatch)
 - **A3 — AGE 즉시 도입**: 게임 서비스 특성상 컨텐츠·기능 용어 기반 LLM 질의가 잦고, AI 컨텍스트
@@ -51,7 +61,11 @@ source_of_truth: true
 
 ### 4.1 노드 레이블
 - `Product` (제품) · `Datasource` (데이터소스) · `Schema` · `Table` · `Column` · `GlossaryTerm`
+  · `Routine` (함수·프로시저, graph-funcproc ADR-016 — alembic 0034)
 - 공통 속성: `scope_key`, `fqn`, `name`, `description`, `source`, `confidence`, `updated_at`.
+- `Routine` 추가 속성: `routine_type`(function|procedure) · `params`(introspect 된 시그니처).
+  key/fqn = `schema.name()` — `()` 가 동명 테이블 키와의 전역 key 충돌을 막는 네임스페이스.
+  SSOT = 관계형 `routine_objects`(INFORMATION_SCHEMA.ROUTINES/PARAMETERS introspect + 정의 파싱).
 - `Column` 추가 속성(graphux5): `ordinal` — 실제 스키마 컬럼 순서(1-based). 관계형 SSOT
   `column_descriptions.ordinal`(부트스트랩 골격 = `describe_columns` ORDINAL_POSITION 순서 캡처)의 투영.
   그래프 UI 가 이 값으로 Column 을 Table 하단에 실제 순서대로 세로 배치한다(미상 = name 순 fallback).
@@ -65,6 +79,8 @@ source_of_truth: true
   UI 는 trusted=실선 / candidate=점선 / broken=숨김. broken 은 투영에서 제외(학습된 '비관계').
 - `(GlossaryTerm)-[:RELATED_TERM {relation_type}]->(GlossaryTerm)` — synonym/similar/see_also
 - `(GlossaryTerm)-[:DESCRIBES]->(Table|Column)` — 용어↔객체 연결 (확장)
+- `(Schema)-[:HAS_ROUTINE]->(Routine)` / `(Routine)-[:ROUTINE_USES {relation_type: read|write}]->(Table)`
+  — 함수·프로시저 소속 + 정의 파싱으로 추출한 참조 테이블(graph-funcproc, ADR-016). UI 는 보라 잔점선.
 
 ### 4.2.1 암묵 관계 자기교정 (implicit-edges, 2026-07-01)
 FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 추론**(source='inferred', status='candidate')한
@@ -99,10 +115,16 @@ FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 �
 
 ## 7. Main Flow
 1. (적재) insight worker FK introspection + 대화 JOIN 학습 → `table_relationships` upsert.
+   대화 학습은 SQL 명시 qualifier 를 보존하고, 미qualify 테이블은 활성 DB 로 스키마-slot 을 채운다
+   (rel-selfheal — ''-slot 저장은 AGE 고아 엣지). 스키마-slot 규약: MySQL=schema / **MSSQL=DB명**
+   (질의는 실 스키마, 저장 라벨만 DB명 — ADR-005).
 1b. (추론) insight worker 가 FK 미선언 스키마에서 명명 규칙으로 암묵 관계를 추론(source='inferred',
     candidate) → upsert. (`AGENT_RELATIONSHIP_INFERENCE_ENABLED`)
 1c. (검증) insight worker 가 candidate 를 실데이터 겹침 프로브(EXISTS)로 검증 → 양성/음성 강화. 대화에서
     성공한 JOIN 은 상시 양성 강화. weight/status 전이(§4.2.1). (`AGENT_RELATIONSHIP_PROBE_ENABLED`)
+1d. (상시화) 1/1b/1c 는 스키마 신규/구조변경 **또는 주기 cadence**(`AGENT_RELATIONSHIP_REINFER_SEC`,
+    기본 6h — 스키마별 `relationship_infer_at` kv)로 발화한다(ADR-005). 기존 조건만으로는 이미 스캔된
+    스키마에서 영원히 미발화였다(rel-selfheal 근본수정).
 2. (동기화) `metadata-graph-sync` 가 관계형 → AGE `metadata_kb` 그래프 upsert (증분/전체). broken 제외.
 3. (조회) 투영 API 가 Cypher 로 검색·k-hop 이웃을 `{nodes,edges}`(weight/status 포함) 로 반환.
 4. (UI) 관리콘솔이 Cytoscape 로 그래프 렌더(신뢰=실선/추정=점선), 노드 클릭 → 통합 엔티티 카드(관계에
@@ -149,3 +171,66 @@ FK 미선언 데이터소스에서 **명명 규칙으로 암묵 JOIN 관계를 �
 - DB 스키마 변경은 **비파괴 추가만** (AGE 확장·그래프 생성·신규 인덱스). 관계형 SSOT 무변경.
 - deploy_scope: 전역 FIRST_REQUEST.md `included` — cycle-final 후 배포. 단 **커스텀 PG 이미지
   cutover 는 운영 DB 교체라 별도 1줄 게이트 + 롤백 플랜 표면화 후 진행** (외부영향·비가역).
+
+## 13. 그래프 뷰 렌더링 엔진 (2026-07-02, ADR-004)
+관리콘솔 그래프 뷰(코드 거주 feature-0003 `src/static/admin.js`)의 렌더러 = **AntV G6 v5.1.1(Canvas, MIT, vendored
+`vendor/g6.min.js`)**. Cytoscape.js(WebGL)에서 교체 — 사용자 관찰 5건(클릭접힘·위치점프·줌 동기화지연·클러스터
+뒤섞임·테두리 왜곡) 구조적 해소 + 점선 엣지 복원. 모델: 스키마=combo·테이블=rect 노드·컬럼=circle·"−"=접기 컨트롤.
+JS 모델 → 위치 포함 전체 데이터 재구성 → `setData()`+`draw()`(결정론 grid, 무-shuffle·제자리). 데이터 API·상세
+패널·AI 분석 계층 불변. 사용자 사전승인("바로 G6 마이그레이션"). 상세: `../g6-migration/BLUEPRINT.md`.
+
+**z-order 의미 스케일 (2026-07-04, graph-zorder, TASK §52)**: 캔버스 요소는 단일 소스 `_METZ` 의 의미 계층
+zIndex 를 build 시 bake 한다 — `COMBO(클러스터 배경 0) < GROUP_BG(그룹 배경 1) < EDGE(관계선 2) <
+COLUMN(3) < NODE(칩·카드 4) < GROUP_HD(그룹 헤더 5) < CTL(컨트롤 6)`. @antv/g 는 zIndex → 삽입순으로
+페인팅·hit-test 하므로 명시 bake 가 setData diff 생성 순서 의존을 제거한다. 드래그 중에는 대상+종속을
+`canonical+1000` 으로 결정론 부스트하고 dragend 에 canonical 복원 — G6 내장 drag-element 의
+`frontElement` 영구 승격(드래그 이력이 z-order 로 굳는 원인)을 상쇄한다.
+
+## 14. AI 능동 분석 테이블 역할 시각 표식 (2026-07-02, node-role-viz, ADR-010)
+AI 능동 분석(node_analysis)이 완료된 **Table** 노드는 역할 8종(NODE_ROLES: master 기준·정의 / account
+계정·유저 / transaction 거래·행위 / log 로그·이력 / mapping 매핑·연결 / config 설정 / stats 집계·통계 /
+etc 기타)으로 분류되어 `node_analysis_jobs.role`(alembic 0031, 비파괴 ADD)에 저장된다. 분류 = LLM 분석
+계약(NODE_ANALYSIS_PROMPT `role`, 유효값 우선) → 휴리스틱(`classify_role_heuristic` 이름 1-pass·본문
+2-pass) 폴백; 기존 분석분은 insight-worker 가 휴리스틱 백필(`backfill_roles`, LLM 재호출 없음, 멱등).
+그래프 뷰는 분석 완료 테이블 칩을 **역할색(Okabe-Ito 색약 안전 팔레트) + 라벨 앞 역할 아이콘 + 역할 범례
+행 + 상세/진행 패널 역할 칩**으로 표시한다(미분석=teal 유지, 보라 분석완료 테두리 유지). 조회 API
+(run status·scope bulk status·node analysis)가 roles 를 함께 반환한다.
+
+## 15. 전 datasource routine backfill + DB(스키마) 단위 AI 능동 분석 (2026-07-04, TASK §53)
+
+**routine backfill**: `bin/routine-backfill.sh` → 컨테이너 exec → `modules/routine_backfill.py` —
+등록된 전 datasource(또는 `--scope <key>`)를 순회해 MySQL(비시스템 ROUTINE_SCHEMA)·MSSQL(사용자 DB
+× ROUTINE_SCHEMA, store label=DB명)의 함수·프로시저를 `routines.introspect_and_store` 로 즉시 upsert
+하고 scope 별 `sync_graph` 로 AGE 투영한다. per-(ds,DB,schema) 카운트/에러 loud 리포트. 멀티 ds 플래그
+OFF 면 fail-loud(기본 DB 오라벨링 차단). 한 store-label 에 복수 ROUTINE_SCHEMA 공존 시 `prune=False`
+(§53 prune-safety — introspect_and_store 신설 파라미터, 기본 True=기존 동작). insight-worker cadence
+는 유지보수 경로로 계속.
+
+**DB(스키마) 단위 AI 능동 분석**: 그래프 뷰 스키마 카드/펼친 클러스터 우클릭 메뉴·클러스터 상세 패널의
+"✨ DB 전체 AI 능동 분석" → `POST /api/admin/metadata/graph/analyze-schema`(권한 metadata.graph.read —
+노드 분석과 동일 우산, audit `node_analysis.enqueue_schema`) → `node_analysis.enqueue_schema_analysis`:
+run(root=Schema, depth_budget=1) + 스키마 소속 Table(`metadata_graph.schema_table_keys`)을 depth=1
+시드로 pre-seed. **재귀 0 보장** — 시드 생성 시 enqueued=node_budget=planned 라 확장 게이트
+`remaining=node_budget-enqueued=0` 이 same-depth 승격(ADR-017) 포함 일체의 추가 enqueue 를 차단.
+only_missing(기본)·cap(기본 200/hard 500)·running run 재사용(reused)·dry_run(UI confirm 용 집계).
+진행은 기존 run 폴링/진행 패널 재사용.
+
+## 16. 그래프 뷰 탐색·필터·보존 + Routine 분석 통합 (2026-07-06, TASK §54)
+
+**상세 패널 뒤로/앞으로**: 방문 이력이 노드 상세뿐 아니라 클러스터 상세·관계 상세를 view-typed 로
+기억해 각 뷰 그대로 복원(+카메라 팬). 컨텍스트(datasource/제품) 전환 시 초기화.
+
+**노드 종류 필터**: 툴바 토글 3종(🔗 관계 / ƒ 함수 / ⚙ 프로시저 — 테이블·컬럼은 항상 표시). 숨김은
+빌드 입력 제외 방식이라 masonry/그룹 배치가 빈자리를 회수해 재배치되고, 관계선 토글은 테이블 배치를
+바꾸지 않는다. 설정은 localStorage 로 세션 간 유지.
+
+**검색 구성 보존**: 검색어 변경/클리어가 기존 그래프 구성(스키마 펼침·드래그 배치·이웃 확장·카메라)을
+보존한 채 하이라이트만 갱신/해제(additive overlay — 검색이 순수 추가한 카드만 회수). 초기 화면 복귀는
+'초기화' 버튼 전용.
+
+**DB 단위 분석의 Routine 포함**: 스키마 단위 능동 분석이 Table + Routine(함수·프로시저)을 함께
+시드(테이블 우선, cap 절단 시 루틴 후순위·비용 가드 불변). Routine 분석은 유형·파라미터를 LLM payload
+에 투영하고 역할 분류는 Table 전용 계약 유지(보라 완료 마커만).
+
+**파라미터 수직 배치**: 루틴 단일클릭/우클릭 메뉴로 파라미터가 칩 아래 세로 목록(컬럼 ERD 관례 동형,
+XR ctl 로 접힘)으로 펼쳐지고 아래 행이 밀려난다(겹침 0). 상세 패널 파라미터도 세로 목록.

@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260703T083758-insight-table-grouping [AGENT-TEAM:adversarial-backend-correctness-trace] — insight-worker 동일구조 테이블 그룹화 (TASK-20260703-insight-table-grouping, Major §12.3)
+- Date: 2026-07-03. §18.8 backend/qa dispatch — Major 라이브 워커 변경이라 커밋 전 적대적 correctness 트레이스(REFUTE-우선) 1패널. 대상: insight.py 그룹화·fan-out·KV 상속·`_publish_table_insight` + config knob.
+- verdict: **CHANGES-REQUESTED → 전건 흡수 → SHIP-WITH-FIXES**. 확정 버그 2 + actionable 우려 2 반영, 나머지는 refuted/documented-residual.
+- **BUG1(medium, 흡수)**: `fanned_out_groups` 가 cycle-global 인데 sig=(base_stem, fp)가 스키마-무관 → 구조·이름이 겹치는 **두 번째 스키마부터 fan-out 이 통째로 skip**(멀티 DB 가 같은 샤드 템플릿 공유 시 기능 무력화). → `fanned_out_groups` 를 **스키마별 리셋**(members_of 도 스키마별 재구성이라 dedupe 스코프 정합). `group_insight_cache`·`fanout_used` 는 cross-schema 유익이라 cycle-global 유지.
+- **BUG2(low-med, 흡수)**: artifact_missing **repair 성공 후 `continue`** 가 `processed_this_cycle` 미등록 → 같은 그룹 형제의 fan-out 이 그 테이블 고유 insight 를 그룹 일반 insight 로 **덮어쓰고 이중 카운트**. → repair `continue` 직전 `processed_this_cycle.add(table)`.
+- **P1(강한 잔여위험, 흡수)**: 대표의 **개별 샤드명**(…_20250727)을 LLM 에 보내면 summary/domain 에 특정 날짜가 박혀, 형제(_20250726)에 전파 시 "그 날짜" 오기재(fact prefix 는 실명이라 SQL 타겟은 정상이나 서술 텍스트 drift). → 대표 LLM payload 의 table 을 **family 패턴명 `base_stem + "_*"`** 로 일반화(사용자 "일반적 분류" 의도와도 정합) — 분석문이 날짜-불문 일반 분류가 됨. fact 키·prefix·참조는 실명 유지 → grounding 무회귀. 콘솔 "테이블 분석"도 `…daily_league_ranking_*` 로 family 단위 표기.
+- **P2(persistent-wedge, 흡수)**: 갓 LLM dict 를 **publish 전** KV 저장 → malformed dict(예: key_columns 비-시퀀스)가 `_format_table_insight_text` 에서 TypeError → 스키마 스캔 abort + KV 영속 → 매 cycle 재크래시. → (a) KV/cache 저장을 **`table_complete` 성공 후로 이동**(검증된 dict 만 영속), (b) `_format_table_insight_text`·`_format_schema_insight_text` 에 non-시퀀스 key_columns 방어 가드.
+- **refuted/residual**: fp 변경 시 stale KV 상속(불가능 — sig/KV 키가 현재 fp 임베드) · round-robin 커서 오염(무관 — offset 은 선-선택서 산출) · bad-insight 전파(불가 — fan-out 이 table_complete+dict 게이트) · made_progress/backoff(정상 — fan-out 포함) · 캐시 dict 변이(안전 — dict() 얕은복사) · 동시성(advisory lock 직렬). **P3(casefold 컬럼 케이싱 drift)·P4(stem over-strip)**: MySQL/MSSQL 식별자 대소문자 무관 + 분석문 구조-파생이라 저위험 — documented residual(P1 일반화로 P4 영향 무해화).
+- 테스트: 신규 `test_insight_table_grouping.py` **16**(그룹 로직 11 + KV 3 + 포매터 방어 2), 기존 insight 계열 79 회귀 0, config star-export PASS, 컨테이너 `make test` PASS(ruff clean).
+- Human Approval Needed: 없음(PLAN-APPROVED 승계 + 자동 동기화). 배포: deploy_scope:included(insight-worker 재기동, 백엔드라 PB-0008 비대상).
+
 ## REV-20260629T142624-active-interp-modality [AGENT-TEAM:conv-audit-fix-panel-3lens+adversarial-verify] — 능동해석 modality 일반화 + MySQL casing (TASK-20260629T142624-active-interp-modality, Major §12.3)
 - Date: 2026-06-29. §18.8 full 패널(프롬프트 변경 = full default): 3 독립 적대 렌즈(qa·회귀·정합성 / security·over-reach / rootcause-completeness) + 비차단 finding 적대 검증(refute-or-confirm). resume(session limit 으로 중단됐던 QA 리뷰어 재실행).
 - verdict: qa-regression **PASS-WITH-NITS**(split 정확·회귀 0 실측), security-overreach **PASS-WITH-NITS**(가드 코드 미접촉·신규 공격표면/PII 노출 없음·injection 등 보안경계 스위트 PASS), rootcause-completeness **CHANGES-REQUESTED**(BLOCKER1+MAJOR3).
@@ -1260,3 +1271,38 @@ source_of_truth: true
 - Human Approval Needed: 아니오 (Minor — 비파괴 문구 분리, BLOCKING 0).
 - Verification: §18.8 적대 패널 + py_compile + ruff + 회귀 테스트(상기).
 - Cross-ref: CHG-20260625T164701-ds-conn-circuit-msg / FUNCTION ds-conn-circuit-msg / TASK-20260625T164701-ds-conn-circuit-msg.
+
+## REV-20260703T093000-insight-load-spread [SUBAGENT:insight-load-spread-adversarial-backend-qa]
+- 대상: TASK-0308 insight/graph 부하 분산 4축 (relationships.py probe 격리 / insight.py scan skip / metadata_graph.py+CLI batched·incremental / bin·.env.example 분산).
+- Round: 8축 적대 검증 — ① probe backoff SQL 정확성, ② fetch_probe_candidates rotation 회귀, ③ regex 오탐, ④ sync_graph batching 안전성(autocommit toggle·부분커밋 멱등·pgbouncer·owned=False), ⑤ incremental 정합(dropped node·column staleness·watermark 실패), ⑥ watermark kv PK, ⑦ should_fast_fail scope_key 정합, ⑧ 테스트 충분성. 라이브 테스트 실행 + regex 13메시지/backoff 동역학 시뮬레이션 동반.
+- VERDICT: **ACCEPT-WITH-NITS** (BLOCKER 0, MAJOR 0). 4 메커니즘 기능 건전 — SQL 문법 정확(psycopg3, make_interval/GREATEST/timestamptz), scope_key 는 양측 `compute_scope_key(engine,host,port)` 동일 도출로 정합, batching 멱등·pgbouncer transaction-mode 안전(ag_catalog 완전수식), fail-open 기본값 안전(미초기화·비-DOWN·예외 → 정상 스캔), regex well-behaved(MySQL transient 문자열과 무교집합). Ship-able.
+- MINOR 반영(3건 전부 이번 cycle 처리):
+  - ① **backoff "exponential-ish" 주장 정정** → 실제는 **flat 3600s throttle**: fetch filter 가 `last_validated_at > now()` 후보를 제외하므로 창 만료 후에만 재프로브되고 그때 GREATEST 가 now()로 collapse(누적 불가). 코드 주석(`relationships.py` `_PROBE_FAIL_BACKOFF_SEC`/`_backoff_validated`)·REPORT 문구 정정(spin 차단 목적은 flat 으로 충분; 진짜 누적은 별도 fail-count 컬럼 필요 — 미채택 명시).
+  - ② **`--full` node prune 명확화**: broken 관계만 delete(status 변경→updated_at→incremental·full 반영), dropped 테이블/컬럼 **노드** prune 은 pre-existing 범위 밖(가산적 재생성 투영). `sync_graph` docstring·REPORT 정정.
+  - ③ **테스트 보강**: watermark set/get round-trip + scope 격리, exception→rollback→autocommit 복원 경로 추가(mock).
+- Verification: test_relationships **57** + metadata_graph units **10** + load_spread **6** PASS. 신규 단위 = relationships 3(unknown database regex 매칭·negative 파단, backoff-window fetch 제외) + relationships 수정 3(transient→backoff) + metadata_graph 6(since 증분 필터 유무·batched commit·owned autocommit 복원·rollback·watermark round-trip). AST/`bash -n` OK. DB 통합(psycopg 필요)은 post-deploy(코드 대조로 owned=False 경로 기존 동일 확인).
+- Human Approval Needed: 아니오(BLOCKER/MAJOR 0). 단 배포(agent 이미지 재빌드 + insight-worker/local-llm-edge 재기동 + cron 재설치)는 외부영향 — 사용자 confirm.
+- Cross-ref: CHG-20260703T093000-insight-load-spread / TASK-0308 / feature-0016 REPORT "graph sync 부하 분산" / ANCHOR 0002 §3 · 0016 §1 무충돌.
+
+## REV-20260703T104500-insight-heartbeat-liveness [SKIPPED:heartbeat-throttle-liveness]
+- 대상: insight.py `_touch_worker_heartbeat_progress`(진행-중 heartbeat throttle) + 스키마·테이블 순회 삽입.
+- SKIP 근거(§18.4 경량 cycle): (1) 로직 단순 — monotonic throttle + `save_memory_kv` 1회(기존 line 2273 갱신과 동일 KV·동일 함수), (2) **healthcheck 판정식 미변경** — 갱신 **지점**만 추가(cycle 완료 시각→진행 중에도), (3) status/hang 탐지 의미 보존(status 미변경, 생성 정지 시 stale 유지), (4) 신규 단위테스트 2(throttle 억제/경과 저장·None no-op·예외 삼킴) + insight 회귀 0(12 PASS) + AST 로 커버. 데이터손상/크래시/보안 표면 0.
+- 잔여 인지(비차단): throttle 30s + `_is_insight_worker_heartbeat_fresh` age≤30s 경계 → inline-scan gate 가 가끔 stale 판정 가능(성능 이슈지 health 아님, docker health(age≤180s)는 확실 해소). 필요 시 throttle↓ 또는 STALE_SEC 조정 후속.
+- Verification: 신규 test_insight_heartbeat_liveness.py 2 PASS + datasource_health·degraded_backoff 12 PASS + AST OK. 배포 후 docker inspect healthy 라이브 확인.
+- Cross-ref: CHG-20260703-insight-heartbeat-liveness / feature-0002 REPORT·TASK insight-heartbeat-liveness.
+
+## REV-20260707T100640-no-edge-conversation-answer [AGENT-TEAM:adversarial-2lens-refute] — 대화 답변 edge(gemma) 폴백 완전 차단 (CHG-20260707T100640, Major §12.3, conversation_audit)
+- Date: 2026-07-07. Trigger 키워드 매칭(§18.8): LLM 모델 라우팅·폴백(L6/L8) + 비결정 행동(fallback→실패)·자격 경로 → **backend+qa+회귀+security**. Major(코어 LLM 경로·가용성 정책 변경) 라 커밋 전 2렌즈 독립 적대 패널(REFUTE-우선).
+- 렌즈①(backend/correctness — 답변 경로 완전성·누수·깨끗한 실패·회귀): **C1~C5 전부 CONFIRMED, BLOCKING/MAJOR/MINOR 0**. 검증: `_call_llm` 이 유일한 task='agent' 답변 생성 경로(단일 caller agent_core.py:3748, 유일 create 2686)·다른 모든 create() 는 aux/insight/prompt_gen/node_analysis(무관)·insight/분석 무누수(각자 own model 직접 호출)·두 계정 실패 시 except(3758)→classify_llm_provider_error 친화 메시지→break(무한루프 없음, empty-retry 는 성공-빈응답만·cap 3)·sonnet/vision/thinking/max_tokens 무회귀(원본 model 키)·usage 원본 model 기록.
+- 렌즈②(security/regression/litellm-config): **S1~S5 전부 CONFIRMED, BLOCKING/MAJOR 0**. 검증: chat-root fallback 미등록 → 종단 429/401 raise(설정 주석 lines 188-191 선례로 실증, classify 가 status 429/401/5xx 전부 친화 처리 — gemma 는 구조적으로 도달 불가라 안전은 무조건 성립)·`-chat` 은 is_allowed_api_model 검증 대상 아님(user model=claude-haiku-4 만 검증, 아웃바운드는 미검증)·순수 폴백 축소(신규 자격/RBAC/PII/secret 0, 동일 두 OAuth 키 재사용)·thinking 5000 동일·budget≤16000<max20000·bind-mount 재시작 반영.
+- NIT(두 렌즈 독립 동시 지적, **수정 반영**): 봉인이 리터럴 `claude-haiku-4` 매핑 의존 → 기본 모델(API_DEFAULT_MODEL)이 다른 edge-fallback alias 로 바뀌면 봉인 silent 붕괴·기존 테스트 미포착. → **G5 가드 테스트 추가**(`test_default_conversation_model_chain_is_edge_free`): litellm_config.yaml 실제 파싱 → `conversation_answer_model(API_DEFAULT_MODEL)` 아웃바운드 alias 의 폴백 체인을 그래프 순회 → 도달 가능 모든 alias 의 실 model 이 `anthropic/*` 임을(로컬/edge/gemma 도달 불가) assert. 기본 모델 변경·체인 수정 시 자동 적발. PASS.
+- 인지(범위 밖, 사용자 결정=답변 한정): context-feeding aux(summary/topic)·prompt_gen·node_analysis 는 여전히 gemma(ctx 4096) 강등 가능 — 본 cycle 미대상(사용자가 assistant 답변 경로로 명시 한정). 필요 시 후속.
+- Verification: 신규 test **5 PASS**(G1~G4 헬퍼·_call_llm 라우팅·기록 + G5 체인 가드) + feature-0002 회귀 0. route-parity 실패=환경(clean main 동일, A/B 확인).
+- Human Approval: 방향=사용자 결정(2026-07-07 AskUserQuestion). 구현+검증+배포=PLAN-APPROVED. 배포(ask-worker+web 재빌드 + bedrock-gateway 재생성)는 외부영향 confirm(Major override 불가).
+- Cross-ref: CHG-20260707T100640-no-edge-conversation-answer(feature-0002/0007/shared MODIFY) · FRICTION_LEDGER FR-edge-fallback-conversation-context-loss · ANCHOR 0002 §1~§3 / 0007 §1~§2 무충돌(폴백 축소만).
+
+## REV-20260707T134500-bedrock-chat-alias-probe-artifact [SKIPPED:docs-only-investigation] — bedrock-gateway 400 1회성 오류 조사 (no-op, CHG-20260707T100640 후속)
+- Date: 2026-07-07. 코드/설정 변경 0(순수 조사 + 문서화) — §18.4 경량 cycle, 적대 패널 SKIPPED.
+- 근거: 배포 타이밍 재구성(PR #600 머지 10:28:41 → gateway 재생성 10:31:02 → ask/insight 이미지 재빌드 10:32:18) + 실패 시각(10:37:18)의 실행 이미지(`634f9d6e7de7`)를 직접 열어 이미 수정 코드 보유 확인(stale-image 가설 기각) + 정적 코드 추적(`_call_llm` 유일 caller, claude-* 모델에 항상 `max_tokens=20000` 주입 — 충돌 경로 없음, 저장소 전체에서 `conversation_answer_model` 호출부 1곳뿐) + 게이트웨이 라이브 재현(`max_tokens<5000` 만 재현, `≥5000`/미지정은 정상) + 컨테이너 기동 이후 전체 로그 재발 0 확인.
+- 결론: 코드 결함 아님. FRICTION_LEDGER 의 post-deploy "live probe" 절차가 만든 1회성 프로브 아티팩트 — 실 사용자 대화 트래픽 영향 없음(연계 conversation_id 없음).
+- Cross-ref: CHG-20260707T134500-bedrock-chat-alias-probe-artifact(feature-0002 MODIFY) · FRICTION_LEDGER FR-edge-fallback-conversation-context-loss addendum.

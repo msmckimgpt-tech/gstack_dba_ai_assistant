@@ -379,3 +379,24 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - Related Change: CHG-20260701-0013 (batch4 배포·라이브 검증)
 - 결정적 검증: CI PASS(31s) → blue-green soak 통과·롤백 없음 → 라이브 edge healthz b3175b6·status=ok / livez·readyz 200 / **POST /api/ask 400 `invalid json`**(cross-call `ask` 의 pre-auth json 게이트 프로덕션 byte-동치 — 인라인 DEFER 로직 정상) / system-prompts·dashboard·public-share-fork 401 verbatim. 21 router 컨테이너 로드 정상.
 - 결론: **148 route 핸들러 전량 추출 deploy-backed 완료.** app.py session −9,307줄(~33%).
+## REV-20260702-0013 [SUBAGENT:batch4 bare-name namequal 회귀 — F821 완전성·객체동일성·부작용 4축 적대검증]
+- Related Change: CHG-20260702-0013 (batch4 추출의 bare app-global/import 참조 `app.` 한정 — 라이브 500 3종 수정)
+- 검증 성격: mechanical name-qualification(bare `X` → `app.X`, 6심볼/10개소). route-preserving, 동작 무변경 주장.
+- §18.8 SUBAGENT 패널(general-purpose, 적대적 refute 지시) — **VERDICT: PASS**(BLOCKING 0, NIT 0). 4축 refute 전부 실패:
+  - (1) **정확성**: 6심볼 전부 `app` 모듈 attribute — `MEMORY_DB`(app.py:99)·`LLM_QUOTA_ENFORCE`(app.py:758) 모듈레벨 정의, `load_memory_kv`·`mark_cancel_requested`·`set_run_status`·`mark_finalize_requested`(app.py:48–59 `from modules.memory import`). 세 라우터 모두 상단 `import app`. → NameError 해소.
+  - (2) **완전성**: `ruff --select F821 routers/` → **All checks passed**(22 라우터 전체). ruff 검출력을 probe 주입으로 검증. 동적패턴(globals/getattr/star-import) 없음(유일 getattr 은 로컬 config 대상). 잔여 bare 3건은 주석/docstring(비실행). → 이 클래스 잔여 회귀 0.
+  - (3) **회귀**: `app.X` == 원본 bare `X` 동일 객체 — app.py 에서 6심볼 재대입/shadow/재정의 없음(순수 re-export). cancel/finalize/history 의미 무변경.
+  - (4) **부작용**: `git diff --check` whitespace 0, word-diff 제거10↔추가10 전부 `app.` 접두만, 문자열/들여쓰기 훼손 없음, HEAD 대비 신규 lint(F841/F401/F811) 0, py_compile PASS.
+- 사전 검증: 관련 45 테스트 PASS(quota/history/finalize/product-conn-status/usage, CI PYTHONPATH 로 실행, exit 0 100%).
+- deploy-backed: 배포 후 라이브 `GET /api/admin/databases/available`·`/api/history` 상태·`/api/cancel`·`/api/finalize` 500→200 재검증(§16.3).
+- 학습: batch1~4 의 "byte-neutral" route-parity 게이트는 **테스트 미커버 핸들러의 NameError 를 놓쳤다** — 추출 게이트에 `ruff --select F821` 추가가 이 클래스 방어선.
+
+## REV-20260702-0014 [SKIPPED:mechanical 골든 재생성 — diff 정확히 +1 legit route(#514 analyze/status), route_parity 테스트 PASS, runtime 무변경]
+- Related Change: CHG-20260702-0014 (route-parity 골든 192→193 재생성 — CI red 해소)
+- 검증 성격: test fixture(golden snapshot) 전용 재생성. 런타임 코드 무변경(web 이미지 미반영).
+- 결정적 검증(패널 불요 사유 = auditable diff 가 검증 그 자체):
+  - (1) drift 원인 정밀 식별: `_build_table()` ordered 를 (path,methods) 키로 골든과 diff → **정확히 +1**(`GET /api/admin/metadata/graph/analyze/status`), 제거 0·중복 0·재정렬 0.
+  - (2) 추가 route 정당성: `admin_metadata.py:1013` 실핸들러 + `admin.js:3974` 프론트 실사용(그래프 AI 분석 상태 폴링). `git log -S` → feature-0016 `24445e94`(#514) 추가, 골든 미동반. → stale 확정(골든이 193 이어야 함).
+  - (3) 재생성 결과 auditable: `git diff route_snapshot_p5b.json` = total_routes/api_routes 2줄 + analyze/status 블록만(9 ins/2 del). 다른 192 route 불변 → masking 없음.
+  - (4) `test_route_parity_p5b` PASS(193/192).
+- 범위 규율: 추가 route 는 feature-0016(#514) 소산이나 골든은 feature-0012 route-parity 안전망 소관 → feature-0012 유지보수 cycle 로 처리(route 출처 명기).

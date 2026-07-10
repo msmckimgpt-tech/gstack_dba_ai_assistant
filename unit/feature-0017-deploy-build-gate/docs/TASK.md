@@ -27,10 +27,11 @@ source_of_truth: true
 ## 3. Task Queue
 - [x] TASK-20260630T180100-build-gate: build_image 게이트 image-verify 로 보강
 - [x] TASK-20260630T180101-validate: positive(metadata-race 재현·양성무시) + negative(이미지 부재 ABORT) 격리 검증
-- [ ] TASK-20260630T180102-live: 머지 후 sudo -E deploy-web.sh end-to-end(롤링 swap + /readyz git_commit 전환)
+- [x] TASK-20260630T180102-live: 머지 후 sudo -E deploy-web.sh end-to-end(롤링 swap + /readyz git_commit 전환) — build 게이트 라이브 검증 완료(다수 배포에서 관측).
+- [x] TASK-20260702T160000-migrate-gate: migrate_phase 에 build 게이트와 동일 race 관용(1차 exit≠0 → backoff 후 멱등 재시도로 head 도달 판정, 재시도 실패=ABORT) 확장. bash -n + 격리 3케이스 + §18.8 SUBAGENT 패널 PASS(BLOCKING 0, NIT 2 흡수). CHG/REV-20260702T160000-deploy-migrate-gate.
 
 ## 4. In Progress
-- 문서 → verify-completion → 머지 → 라이브 end-to-end.
+- (feature-0017) build 게이트 완료 + migrate 게이트 race 관용 확장 완료. 두 게이트 모두 snap-docker `docker compose (run|build)` false-failure 방어.
 
 ## 5. Blocked
 - 없음.

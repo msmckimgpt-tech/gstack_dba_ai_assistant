@@ -9,6 +9,91 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260709T090722-reasoning-budget-labels (TASK-20260709-reasoning-budget-per-model 후속 — '총 출력' 표시 문구를 '라운드(단계)당'으로 정밀화, 비-정책 label/doc-only, 로직 무변경)
+- Date: 2026-07-09 (worktree ai/claude/reasoning-budget-labels, base cdd194d8).
+- 사유(사용자 검토): 어시스턴트가 한 요청을 다회차 루프(`_run_agent_core` while step_count<max_steps, 라운드마다 `_call_llm`)로 처리하는데, `max_tokens`(=agent_max_output)·thinking budget 은 **응답=라운드당** 상한이다. 기존 UI/문서가 "대화 답변의 총 출력"으로 표기해 요청-전체처럼 오독될 수 있고, native 근처로 크게 잡으면 라운드마다 느려져 per-call 타임아웃 초과/wall-clock 예산 소진으로 **오히려 처리 회차가 줄 수 있는** 역설을 안내하지 않았다. 기능 정합성 자체는 이상 없음(적대 검증 REV-20260709T051642 + 사용자 검토 확인) — 표시 정밀화만.
+- 변경(로직 0, 문구만):
+  - `static/admin.html`: 패널 hint 를 '라운드(단계)당 · 총량≈×회차 · native 근처=회차 축소 주의'로 갱신. admin.js 캐시버스터 `?v=20260709-graph-vpack2`→`?v=20260709-reasoning-budget-labels`(styles.css 미변경 유지).
+  - `static/admin.js`: 카드 summary "총 출력 N"→"라운드당 N", 서브그룹 제목 "총 출력…"→"라운드(단계)당 출력 (…다회차면 회차마다 적용)", 패널 note 에 라운드당·×회차·native 역설·타임아웃 동반 조정 안내 추가.
+  - `shared/runtime_settings.py`: `_agent_max_output_specs` description 문자열을 라운드당·×회차·회차 축소 주의로 정밀화(값·min/max·default 무변경).
+  - `docs/FUNCTION.md`: '총 출력' 서술을 '=추론 라운드당 max_tokens'로 정정 + 다회차/타임아웃/회차 축소/`task_budget` 미사용 명시.
+- 검증: node --check(admin.js) · py_compile(runtime_settings) · serialize 스모크(default 40000/max 128000 무변경) PASS. REV-20260709T090722 [SKIPPED:text-only-label-precision].
+
+## CHG-20260709T055431-reasoning-budget-cachebuster (TASK-20260709-reasoning-budget-per-model 후속 — admin 정적 자산 캐시버스터 bump, 비-정책 doc/asset-only)
+- Date: 2026-07-09 (worktree ai/claude/reasoning-budget-cachebuster, base fbf3b606).
+- 사유: CHG-20260709T051642-reasoning-budget-per-model 가 `static/admin.js`·`static/styles.css` 를 변경했으나 `admin.html` 의 캐시버스터를 bump 하지 않아, 기존에 관리 콘솔을 연 브라우저가 캐시된 구 자산을 써 신규 '모델별 추론 예산' 패널(accordion·비율 슬라이더)이 표시되지 않는 완결 누락. 배포 후 실측(WARN)으로 발견.
+- 변경: `static/admin.html` — `styles.css?v=20260709-graph-toolbar`→`?v=20260709-reasoning-budget`, `admin.js?v=20260709-hl-bake`→`?v=20260709-reasoning-budget`. 시각/동작 로직 0 — 이미 리뷰된 신규 자산을 stale 클라이언트에 강제 로드하는 캐시버스터만.
+- 검증: cache-buster only, 신규 JS/CSS 는 부모 PR(#641)에서 검증됨. REV-20260709T055431 [SKIPPED:cache-buster-only]. 배포 후 라이브에서 서빙 자산 `?v=20260709-reasoning-budget` grep + 패널 렌더 확인.
+
+## CHG-20260709T140000-ask-timeout-nonblocking-postverify (배포 4b6919ec POST-DEPLOY PB-0008 런타임 실측 PASS 기록, 비-정책 doc-only)
+- Date: 2026-07-09 (worktree ai/claude/ask-timeout-nonblocking-postverify).
+- 대상: CHG-20260709T000000-ask-timeout-nonblocking(PR #638, main 4b6919ec) 의 배포 후 라이브 검증 결과 기록. 코드/자산 변경 0 — TEST.md §3 POST-DEPLOY 갱신 + TASK.md 체크박스 flip 뿐.
+- 실측(win-browser Chrome/149, `https://localhost/`): 무중단 롤링 배포 4b6919ec(web-a/web-b soak PASS)·`/healthz` git_commit=4b6919ec·mysql_ok·pg_ok. 서빙 `app.js?v=20260709-ask-timeout-nonblocking`, 서빙 app.js `showTimeoutRecoveryDialog` 실참조 0. 런타임 eval: `typeof showTimeoutRecoveryDialog==="undefined"`(모달 런타임 완전 제거 → 타임아웃 경로 무관 경고창 노출 불가)·attachAndWaitForResult=function·composerFinalizeBtn/sendBtn DOM 존재·z-9999 inset0 backdrop 부재·pageerror 0.
+- 검증: 라이브 서빙 자산 grep + win-browser 런타임 assertion. 코드 적대 검증 정본 = REV-20260709T130000-ask-timeout-nonblocking(SHIP).
+
+## CHG-20260709T000000-ask-timeout-nonblocking (TASK-20260709-ask-timeout-nonblocking — 응답 지연 시 화면 전체를 덮던 타임아웃 복구 모달 제거, Minor §12.3 — feature-0003 프론트 단독)
+- Date: 2026-07-09 (worktree ai/claude/ask-timeout-nonblocking, base aa9f7a57).
+- 트리거(사용자, /_template:entry arg-given): "작업 화면에서 assistant 에 요청 후 오래 걸리면 화면 전체를 가리는 답변-지연 경고창이 떠 불편 — 삭제하거나 기존 작업을 방해하지 않는 UI로." 후속 지시: "자동 재연결은 필수 동작이며 사용자는 그 작동을 인지할 필요 없음."
+- 근본원인: `src/static/app.js sendPrompt()` 의 `/api/ask` 실패(브라우저/프록시 read-timeout·502/EOF) + `/api/ask_status` `is_processing=true` 경로가 `showTimeoutRecoveryDialog`(fixed inset0·z-index 9999 backdrop + "요청 취소/즉시 답변/계속 기다리기" 3버튼 모달)를 `await` 로 띄워 화면 전체를 가리고 사용자 진행을 강제 중단(TASK-0041 도입). 실 운영의 장시간 쿼리에서 발동.
+- 판단: 모달 3액션은 이미 컴포저 인라인 어포던스로 처리 중 상시 노출 — 취소=전송버튼 "중단" 모핑(TASK-0157, `cancelCurrentRun`→`/api/cancel`), 즉시 답변=`composerFinalizeBtn`(TASK-0158, `finalizeCurrentRun`→`/api/finalize`), 계속 대기=`attachAndWaitForResult` 기본 동작 → 모달은 중복이며 재연결만 필수.
+- 변경(`src/static/app.js`, frontend only):
+  - `is_processing` 분기(구 9134~9164)에서 모달 `await` + choice 분기(cancel/finalize/wait/dismiss) 전부 삭제 → `attachAndWaitForResult(askCid, {runId: status.run_id || ""})` 직접 호출로 교체. 모달·토스트 없이 조용히 long-poll 재연결 → 답변 유실 방지 + 화면 미가림 + 재연결 미표면화(사용자 지시 반영).
+  - dead code 된 `showTimeoutRecoveryDialog({statusText})` 함수(구 7238~7323) 제거 → tombstone 주석으로 대체(제거 사유·대체 경로 명시).
+- 변경(`src/static/index.html`): app.js 캐시버스터 `?v=20260706-reasoning-effort` → `?v=20260709-ask-timeout-nonblocking`(stale 클라이언트에 새 코드 강제).
+- 변경(`docs/DESIGN-entry-points.md`): §4.2·§9 의 "모달 패턴 예시=`showTimeoutRecoveryDialog`" 참조 2곳을 잔존 `.share-mgr-backdrop`/`.share-mgr-panel` CSS-클래스 패턴(`showTotpLoginPrompt` 예시)으로 갱신 — 제거된 함수 참조 stale 방지 + 문서 자체 "인라인 style 금지" 지침과 정합.
+- 변경(`src/static/app.js`, §18.8 R1 적발 MAJOR H1 동반수정): 모달 제거가 노출한 pre-existing 잠복 버그 — 신규 대화 첫 메시지 타임아웃(`earlyCidActivated`) 흐름에서 인라인 "중단"(취소) 버튼이 무동작(모달이 `/api/cancel` 직접 호출로 가려옴). 근본원인 = `myAskInFlight`/`busyConversations` 키가 `busyKey`(pendingSentinel)로 등록됐다가 earlyCid 활성 시 미이관(`askAbortControllers` 는 8864 에서 earlyCid 이관 — 비대칭) → `_myAskInFlightHere()` false → 전송버튼 취소 라우팅 skip. **수정**: early-cid 활성 블록(pendingSentinel=null 직후)에 `busyConversations.add(earlyCid)`/`myAskInFlight.add(earlyCid)`/`renderComposer()` 추가(abort controller 이관과 대칭) + `sendPrompt` finally 에 `busyConversations.delete(askKey)`/`myAskInFlight.delete(askKey)` 추가(기존 abort/취소flag dual-delete 패턴 동형, leak 방지).
+- 비변경: 서버 `/api/ask_status`·`/api/ask_result`(long-poll)·`attachAndWaitForResult` 루프·boot-time auto-attach·resume 경로(9410~ 이미 모달 없이 attach 직접 호출)·`ASK_ATTACH_MAX_TOTAL_SEC=1800` 상한 종료 토스트·`cancelCurrentRun`/`finalizeCurrentRun` 본체 전부 보존. RBAC/스키마/마이그/엔드포인트 0.
+- 검증: `node --check app.js` PASS(2회) · 코드 내 `showTimeoutRecoveryDialog` 실참조 0(설명 주석만 잔존) · §18.8 적대 서브에이전트 패널 2라운드(H1 적발→수정→재검 전항목 REFUTED) **VERDICT: SHIP**(REV-20260709T130000-ask-timeout-nonblocking) · PB-0008 Windows-browser 라이브 실측 = 배포 후.
+
+## CHG-20260709T051642-reasoning-budget-per-model (TASK-20260709-reasoning-budget-per-model — 모델별 추론 예산 상한 확대(native) + 모델→추론강도 accordion + [추론↔본문] 비율 슬라이더, Major §12.3 — shared + feature-0002 core + feature-0003 web/UI)
+- Date: 2026-07-09 (worktree ai/claude/reasoning-budget-per-model, base aa9f7a57).
+- 트리거(사용자): `관리 콘솔 > 시스템 > 설정 > 모델별 추론 예산` 최대값 16000 상향 검토 — '매우 높음' default=max=16000 이라 조정 의미 없음. 결정: 동반 상향 + 모델별 native(Sonnet 128K/Haiku 64K) + 모델별 추론 수준 분리 + 종속 accordion + [추론↔본문] 비율 슬라이더.
+- 근본원인: 16000 은 모델/API 한계가 아니라 제품 정책 캡. 실제 제약은 Anthropic `budget_tokens < max_tokens` + 대화 max_tokens=20000. '매우 높음' spec 의 default==maximum==16000 이라 위로 조정 불가.
+- 변경:
+  - `shared/model_catalog.py`: `_CLAUDE_MODEL_MAX_OUTPUT`(claude-sonnet-4=128000/claude-haiku-4=64000) + `model_native_max_output(model)`(총 출력 슬라이더 상한). `max_tokens_for_model` 의 task cap 은 **무변경** — 대화 총 출력의 모델별 상향은 runtime_settings 계층이 담당해 plan/insight 등 "agent" task 공유 소비자에 회귀를 주지 않음(적대 패널 Finding1 반영).
+  - `shared/runtime_settings.py`: 신규 group `agent_max_output`(key `agent_max_output:{model}`, default `_AGENT_MAX_OUTPUT_DEFAULT` sonnet 40000/haiku 24000, min 4096, max native) + `agent_max_output(model)` reader. 추론 강도별 예산 스킴 `reasoning_budget:{level}` → **`reasoning_budget:{model}:{level}`**(모델×레벨 자동생성, 상한 native−1024), `reasoning_budget_override(model,level)`. `model_thinking_budget` 상한도 native−1024 로 확대. `serialize_registry` 에 `agent_max_outputs` 리스트 + reasoning row 에 `model` 필드 추가. `__all__`+GROUP 상수 추가.
+  - `unit/feature-0002-agent-core/src/agent_core.py`: `_call_llm` token_limit = `_rts.agent_max_output(model)`(thinking 모델, 관리 콘솔 override 반영) / else `max_tokens_for_model`. 명시 레벨 override 를 `_rts.reasoning_budget_override(model, reasoning_level)` 로(model 인자 추가). `min(budget, max_tokens−1024)` clamp 유지(본문 최소 1024 확보).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`: `renderModelThinkingBudgets` 를 모델별 `permission-group` `<details>` accordion 으로 재작성(모델 그룹핑 + 총 출력 입력 + 추론강도별 슬라이더 + '일반' 선택적 override). 신규 `buildBudgetSliderRow`([추론↔본문] range 슬라이더 → 절대 thinking budget PUT, 본문=총−thinking 파생, 동적 상한 검증). `buildRuntimeSettingRow` onChange 훅(총 출력 변경 시 슬라이더 재계산). 커밋바 dirty 에 `RS_AGENT_MAX_PREFIX`.
+  - `unit/feature-0003-agent-web-ui/src/static/styles.css`: `.rs-slider`/`.rs-split-bar`/`.rs-budget-card`/`.rs-subgroup-title` 신규(accordion 은 `permission-group` 재사용).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.html`: 패널 hint 갱신(native 상한·타임아웃 경고).
+  - `unit/feature-0003-agent-web-ui/src/static/release-notes-data.js`: 07-09 블록(모델별 예산·비율 슬라이더·구 override 재설정 안내).
+- backward-compat: 구 스킴 `reasoning_budget:{level}`(모델 없음) 스냅샷 override 는 신 스킴에서 `spec_for=None` → 안전 무시(기본값 복귀). 운영자는 새 UI 에서 재설정(릴리즈노트 명시).
+- 테스트: `test_runtime_settings.py`·`test_reasoning_effort.py` 마이그레이션+신규(per-model 격리·native clamp·backward-compat·총×예산 분리), `test_runtime_settings_api.py`(agent_max_outputs 노출·native 초과 400·구 16000 초과값 통과). `test_prompt_gen_max_tokens.py` 무회귀. 컨테이너 `make test` feature 관련 전건 PASS + ruff clean. 잔여 3건은 env `AGENT_TIMEOUT_SEC=300`(복사 .env)·`--no-deps` DB(`postgres-replica`) 아티팩트로 본 변경과 무관(env unset 시 PASS 확인).
+- 적대 패널: general 5축 → BLOCKING 0. Finding1(plan 경로 결합) fixed, Finding2(슬라이더 동적 상한 검증) fixed, Finding3(display staleness) 수용-NIT. REV-20260709T051642.
+- 시각검증: 정적 자산 web 이미지 baked → 라이브 PB-0008 배포 후 잔여(TEST.md §3 기록).
+
+## CHG-20260703T094539-aiops-stepgap (TASK-20260703-aiops-ttft-latency — AI 운영 현황 지연 p95 단위 재정의: 호출 전체 왕복 → 단계 간 간격, Major §12.3 — cross-unit feature-0002 core + feature-0003 web/UI)
+- Date: 2026-07-03 (worktree ai/claude-corp/feature-0003-aiops-ttft, base 9665430c).
+- 트리거(사용자): "에이전트 추론 p95 측정 단위 검토 — 지연은 답변 받는 총 시간이 아니라 각 추론 단계 간 나타나는 간격으로." 정의 확정 = A(단계 간 간격).
+- 근본원인: 현행 KPI 는 `latency_ms`(호출 전체 왕복, 생성 포함 → 답변 길이 비례). 사용자 기준(단계 간 간격)과 불일치. 실제 계측 경로는 `agent_core._call_llm`(중앙 래퍼 `_openai_chat_completion_with_deadline`←`llm_plan` 은 dead — 1차 시도가 이를 오계측해 적대 패널 BLOCKING 적발·revert. LRN-20260703-0001).
+- 변경:
+  - `unit/feature-0002-agent-core/src/agent_core.py`: `_run_agent_core` 루프 `_prev_llm_end_ns` 추적 → 라운드 간 gap(도구·오케스트레이션) 계산해 `_call_llm(step_gap_ms=)` 전달(첫 라운드/예외→break 시 None). `_call_llm` step_gap_ms 파라미터 → `_record_llm_usage` 전달.
+  - `unit/feature-0002-agent-core/src/modules/llm.py`: `_record_llm_usage` step_gap_ms 파라미터 + 3단 INSERT cascade(target+latency+step_gap → target+latency → latency 자가치유). latency_ms(왕복) 보존.
+  - `unit/feature-0002-agent-core/alembic/versions/20260703_0033_llm_usage_step_gap.py` + `src/scripts/agent_runtime_schema.sql`: `step_gap_ms INTEGER` additive nullable(down_revision 0032, expand-only). 과거 행 NULL → KPI 자동 제외.
+  - `unit/feature-0003-agent-web-ui/src/routers/ai_ops.py`: KPI query#2(태스크별)·#3(전체) `latency_ms` → `step_gap_ms` + 다단계 요청 분모(multistep/agent_requests, F2 오인 방지).
+  - `unit/feature-0003-agent-web-ui/src/static/admin.js`+`admin.html`: KPI "지연"→"단계 간 간격 p50/p95"+서브(다단계 M/R·간격 N건), per-task "간격 p95", activity 상세 latency_ms="왕복". cache-buster `?v=20260703-aiops-stepgap`.
+  - 테스트: `test_llm_usage_record.py`(step_gap 기록/omit/음수), `test_call_llm_records_agent_task.py`(forwarding), `test_ai_ops.py`(cascade step_gap/target 부재 + params 위치).
+- 검증: make test 1430 passed/2 skipped(회귀 0) · ruff · migrate-lint 0033 expand-safe · py_compile · node --check · 적대 2렌즈×2라운드 SHIP(REV-20260703T094539-aiops-stepgap). 라이브 step_gap_ms 행 검증 + PB-0008 = 배포 후.
+
+## CHG-20260702T193000-aiops-conv-link-fix (TASK-20260702-aiops-conv-link-fix — AI 운영 현황 '최근 활동' 상세 시스템 sentinel 대화 링크 깨짐 수정, Minor §12.3 — feature-0003 프론트 단독)
+- Date: 2026-07-02 (worktree ai/claude/feature-0003-aiops-conv-link-fix, base 4ec15191). TASK-20260702-audit-nav-ux 후속.
+- 트리거: audit-nav-ux(bc2a0fa6) 배포 후 PB-0008 라이브 검증 적발 — '최근 활동' 상세 '연결 대화' 가 insight/ask 워커·자율 호출(활동 대부분)에도 `/?conversation=__insight_worker__` 등 열 수 없는 링크 렌더.
+- 근본원인: `__insight_worker__`·`__ask_worker__`·`__global__`·`__kb_manual__`(shared/config.py·kb_ingest.py) 등 예약 sentinel(전부 `__` 접두)은 실제 대화 아님인데 `conversation_id != NULL` 이라 `aiOpsActivityRowsHtml` 이 링크로 처리.
+- 변경(`src/static/admin.js`): `isSysConv = cid && cid.slice(0,2)==="__"` 가드 추가 — sentinel=안내(sentinel id 표기)·링크 없음, 실 사용자 대화(비-`__`)=`/?conversation=<id>` 링크 유지, NULL=기존 일반 안내. `src/static/admin.html` cache-buster `admin.js?v=20260702-aiops-conv-link-fix`.
+- 비변경: 백엔드(`_query_activity`·엔드포인트)·스키마·RBAC·마이그 0. conversation_id 페이로드는 audit-nav-ux 그대로.
+- 검증: node --check PASS · make test(백엔드 무변경 회귀) · PB-0008 재검증(배포 후).
+
+
+## CHG-20260702T190000-audit-nav-ux (TASK-20260702-audit-nav-ux — 감사 카테고리 순서 재구성 + 항목 툴팁 + AI 운영 현황 '최근 활동' 클릭 상세 확장, Minor §12.3 — feature-0003 프론트 UI + 읽기전용 additive 백엔드, 비파괴)
+- Date: 2026-07-02 (worktree ai/claude/feature-0003-admin-audit-ux, base 44d958cd).
+- 요청(/_template:entry arg-given): "`관리 콘솔 > AI 운영 현황`에서 (1) `감사` 카테고리 순서 재구성: 감사 로그·보관 대화·LLM 사용량·AI 운영 현황 (2) 각 항목 hover 시 상세설명 툴팁 (3) '최근 활동' 클릭 시 상세 확장 — 구조는 `프로필 > 사용 내역 > 차트`·`LLM 사용량 > 차트` 그래프 클릭→대화 목록 드릴다운 참조."
+- 변경(`src/static/admin.html`): 감사 그룹에서 `보관 대화`(archives) 버튼을 `LLM 사용량`(usage) 앞으로 이동(요청 순서). 4개 감사 탭(audits/archives/usage/ai-ops)에 네이티브 `title` 상세설명. cache-buster `admin.js?v=20260702-audit-nav-ux`. 순서·title 은 표시 계층만 — 게이팅(`ADMIN_TAB_PERMISSIONS`)·서브탭·`applyAdminTabVisibility` 그룹경계 동적계산이 `data-admin-tab` 키 기반이라 불변.
+- 변경(`src/routers/ai_ops.py` `_query_activity`): SELECT 11열 확장(model, resolved_model, run_id, conversation_id 추가) + dict additive(`req_model`·`resolved_model`·`prompt_tokens`·`completion_tokens`·`run_id`·`conversation_id`). 기존 필드 byte-동치 보존(서빙=`r[3] or r[2]`; writer 가 빈 resolved_model→None → `or`==`COALESCE`). overview feed + `/api/admin/ai-ops/activity` 페이징 공용 헬퍼라 양쪽 자동 상속(신규 엔드포인트 무).
+- 변경(`src/static/admin.js`): `aiOpsActivityRowsHtml` 를 클릭 요약 행(`role=button`/`tabindex`/`aria-expanded`/caret) + 숨김 상세 패널(인라인 아코디언)로 재구성. 상세: 작업·요청→서빙 모델·토큰(프롬프트/완료/합계)·비용·지연·run_id·연결 대화(conversation_id→`/?conversation=<id>` 새 탭, 없으면 미귀속 안내). `_toggleAiOpsActRow`(링크 클릭 제외)·`bindAiOpsActivityToggle`(컨테이너 위임, 페이징 append 상속) 신설, `renderAiOps` 배선.
+- 변경(`tests/test_ai_ops.py`): `_act_rows` 11-tuple + 신규 필드/서빙 우선순위/conv 유·무 경로 assert.
+- 비변경: RBAC enforcement·인가·스키마·마이그레이션·파괴적 데이터·신규 엔드포인트 0. conversation_id/run_id 는 기존 `console.aiops.read` 게이트 + 기존 usage 모달 동일 노출 등급.
+- 검증: `py_compile`·`node --check` PASS · `make test` exit 0(feature-0002+0003, test_ai_ops.py 15/15) · ruff PASS · §18.8 3-렌즈 VERDICT SHIP → REV-20260702T190000-audit-nav-ux.
+
 ## CHG-20260630T174000-metadata-bs-prefill (TASK-20260630T174000-metadata-bs-prefill — 스키마 골격 가져오기 시 기존 저장된 테이블/컬럼 설명 prefill, Minor §12.3 — feature-0003 프론트 단독, 비파괴)
 - Date: 2026-06-30 (worktree ai/claude/feature-0003-metadata-bs-prefill, base dcb3e02).
 - 요청: 관리콘솔 > 메타데이터 > 테이블 설명/컬럼 설명 — "스키마 골격을 가져왔을 때 기존에 입력된 정보가 확인되지 않음".
@@ -5221,3 +5306,278 @@ source_of_truth: true
 - Verification: `node --check admin.js` PASS · `py_compile` node_analysis.py/admin_metadata.py PASS · CSS brace balance OK. PB-0008 Windows-browser 라이브 실측(프리뷰 인젝션, https://localhost/admin, mssql-qa-idc 250노드/클러스터 50): ②클러스터 클릭→상세 '테이블(58)' · ③좌상단(box+10/+4px)·좌정렬·무잘림·zoom 재배치 PASS. ①백엔드 집계 실 KB PG 정합(done 335·active 183) + 프론트 배선·404 graceful — 마커 렌더 최종 확인은 실배포 후. 적대 코드리뷰 패널 REV-20260701T163000-graphview-render.
 - Files: `unit/feature-0002-agent-core/src/modules/node_analysis.py`, `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py`, `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html,styles.css}`, `unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,TEST,REVIEW}.md`.
 - 무변경: RBAC 권한 코드(기존 kb.ingest.manual 재사용)·스키마/마이그·기존 엔드포인트·ask/worker 경로. cross-cut 백엔드 변경은 feature-0002 `docs/MODIFY.md`·feature-0016-metadata-graph `docs/TASK.md` 에도 상호참조.
+
+## CHG-20260701T220000-graphview-webgl-labels (TASK-20260701T220000-graphview-webgl-labels — 클러스터명 오버레이 WebGL 렌더러 호환 수정, Minor §12.3 — feature-0003 프론트 단독, graphview-render 후속)
+- 변경: `static/admin.js` — 클러스터명 오버레이 위치 동기화 이벤트 바인딩을 `cy.on("render", …)` 단일 → 렌더러 무관 코어 이벤트 `cy.on("render viewport resize layoutstop add remove", _lblSync)` + `cy.on("position drag free", "node", _lblSync)` 로 교체. `static/admin.html` — cache-buster 2건 bump `20260701-graphview-webgl-labels`(js==css).
+- 근본원인: graphview-render(§18) 오버레이가 `render` 이벤트에 의존했는데, 병렬 머지된 graph-webgl(§17, cytoscape 3.34.0 `webgl:true`) WebGL 렌더러는 `render` 를 emit 하지 않음(실측 renderFires=0) → 오버레이 라벨 미생성/미추종. 병합 번들 배포 전 PB-0008 프리뷰에서 적발.
+- Verification: `node --check` PASS. PB-0008 Windows-browser 라이브(병합 번들 프리뷰, `webgl:true` 확인): 로드 시 labelDivs=35 · pan +120/+60 정확 추종 · 클러스터 tap 상세('테이블 130') · 좌상단 좌정렬 무잘림 — WebGL 하 전부 PASS. [SKIPPED:minor-scoped-fix] 패널(REV-20260701T220000-graphview-webgl-labels).
+- Files: `static/admin.js`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,TEST,REVIEW}.md`.
+- 무변경: 오버레이 sync 함수 로직(`_metaGraphSyncClusterLabels`)·마커·클러스터 상세·백엔드·RBAC·스키마. 이벤트 바인딩만 교체(렌더러 호환).
+
+## CHG-20260701T100738-convswitch-opacity-guard (TASK-20260701T100738-convswitch-opacity-guard — 좌측 대화 선택 시 대화창 미표시 방어 하드닝, Minor §12.3 — feature-0003 프론트 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 배경(사용자 보고 /_template:entry, 유저 admin): "작업 화면(메인 채팅)에서 좌측 대화 항목을 선택해도 대화창에 내용이 안 뜬다 — 선택이 아예 안 먹는 것처럼". 조사 결과 현재 배포본(b3175b6)은 백엔드(`/api/use_conversation`·`/api/history` 200 + 메시지 정상, curl 재현)·프론트(fresh 브라우저에서 admin 과 동일 role id3 계정 headless 10대화·race·PB-0008 Windows 모두 정상 렌더) 모두 재현 안 됨 → stale client(캐시된 구버전 app.js / 장시간 열어둔 탭) 유력. 사용자 결정: 재발 불가하도록 방어 하드닝 배포.
+- 근본 취약점(코드 근거): `static/app.js` `selectConversation` 의 conv-switch-fade 는 `_beginConversationCrossfade()` 로 messageLog 를 opacity:0 으로 숨긴 뒤 `_commitConversationCrossfade()` 로 fade-in(opacity:1) 하는데, begin 과 commit 사이의 "risk window"(pendingNewConversation 리셋·pending 스냅샷·`stopProgressPolling`)가 try 밖에 있었다. 이 구간 예외 시 commit 미실행 → messageLog 가 opacity:0 잔류 → "대화창 빈 화면(=선택 안 먹는 것처럼)".
+- 변경(`static/app.js`): risk window 를 try 안으로 이동 + 성공/catch 두 곳에 중복되던 `_commitConversationCrossfade()` 를 단일 `finally` 로 이관. 이제 begin 이 실행된 어떤 경로(정상 완료 / apiFetch·loadHistory 예외 / risk-window 예외)에서도 commit 이 정확히 1회 실행되어 opacity 복구가 구조적으로 보장. try/finally(catch 없음)라 에러는 기존 의미대로 호출부로 그대로 전파. post-processing(product hydration·jump·attachments·mark-read)은 여전히 성공 시에만 실행(구 rethrow 동형).
+- 캐시버스터: `index.html` `app.js?v=20260629g-share-joinable-confirm`→`?v=20260701-convswitch-opacity-guard`(stale 사용자에게 새 코드 강제 전달 — 본 수정 목적과 정합).
+- Verification: `node --check` PASS. §18.8 적대 코드리뷰(SUBAGENT adversarial-correctness) VERDICT PASS(commit 보장·에러 전파·_prevConvId scoping·post-processing·double-commit 불가·reduced-motion 대칭 6점). 프리뷰 인젝션(web-a/web-b `/app/web/static/`) 후 headless browse 5대화 전부 op1·렌더 + **PB-0008 Windows-browser 실측**(bootstrap_admin: 대화 A op1·msg4, A→B 전환 렌더·제목 갱신, 스크린샷 scratchpad/pb0008_convselect.png). REV-20260701T100738-convswitch-opacity-guard.
+- Files: `unit/feature-0003-agent-web-ui/src/static/{app.js,index.html}`, `unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,TEST,REVIEW,REPORT}.md`.
+- 무변경: selectConversation 외부 동작·happy-path 렌더 순서·크로스페이드 begin/commit 함수 본체·백엔드·RBAC·스키마·엔드포인트·다른 호출부(2554/9696/9777 fire-and-forget 그대로).
+## CHG-20260702-graphview-webgl-polish (TASK-20260702-graphview-webgl-polish — 그래프 뷰 WebGL 외곽선 선명화 + 테이블 단일클릭 컬럼 인라인 토글, Minor §12.3 — feature-0003 프론트 단독, graphview-webgl-labels/graph-perf2 후속. 백엔드/RBAC/스키마/엔드포인트 무변경. /_template:resume 로 재개 완수)
+- Date: 2026-07-02
+- 배경: WebGL 렌더러(§17 graph-webgl) 배포 후 사용자 육안 후속 — (1) 줌인 시 노드/ERD 박스 외곽선·텍스트가 뭉개짐(WebGL sprite atlas 셀 해상도 초과 업스케일 블러), (2) 테이블 컬럼을 보려면 더블클릭 이웃확장에 딸려 나올 뿐 컬럼만 여닫는 단독 수단이 없음. 원본 세션(cfbede21)이 두 개선을 구현·라이브 검증했으나 계정 session-limit 로 (a) 접힘→재펼침 버그 미수정 (b) 리뷰/docs/랜딩 미완 상태로 중단 → `/_template:resume "관리 콘솔 그래프 뷰 노드 렌더링 및 표시 개선"` 으로 재개.
+- Summary:
+  - (1) WebGL 외곽선 선명화: `renderer:{name:"canvas",webgl:_webglOk}` → `renderer:{...,webglTexSize:4096}` + `pixelRatio:2`(**WebGL 경로에만**). WebGL 은 노드/박스를 sprite atlas 셀(기본 texSize 2048, 셀 ~113px)로 래스터 후 스케일 → 줌인 시 셀 해상도 초과분 블러. texSize 4096(셀 ~227px) + pixelRatio 2(2× DPI 래스터)로 외곽선/텍스트 선명. GPU 합성이라 프레임 비용 낮음(graph-webgl FPS 이득 유지).
+  - (2) 단일클릭 컬럼 인라인 토글: 신규 `_metaGraphToggleColumns(key)`. 테이블 단일클릭 = 자신의 컬럼 펼침/접힘. tap 핸들러에 300ms 지연 타이머(`_colTimer`) — 더블클릭(이웃 확장 `_metaGraphExpand`)이 오면 취소(단일=컬럼 / 더블=관계 구분). 펼침: depth=1 그래프 컬럼(HAS_COLUMN) → 없으면 datasource information_schema introspect. 접힘: compound 자식 Column 제거.
+  - (3) fix(접힘→재펼침 컬럼 미출현 — 재개 시 적발·수정): introspect 로 채운 컬럼은 그래프 DB 에 HAS_COLUMN 이 없어 재펼침 시 respHasCols=false. `introspected` Set 에 key 가 남으면 재조회가 skip 되어 컬럼이 다시 안 나옴 → collapse 분기에 `_metaGraph.introspected.delete(key)` 추가(단일·더블 introspect 경로가 Set 공유 → 정합).
+  - (4) #519(graph-perf2) 정합: base 8커밋 stale — #519 가 컬럼 정렬을 fcose 제약→layoutstop 결정론 배치(`_metaGraphPlaceColumns`)로 이관. 병합 후 토글의 컬럼 seed 를 옛 3-wide grid → **부모 중심 세로 스택**(#519 방식·`_META_COL_PITCH`)으로 재정합. 컬럼 최종 배치는 `_metaGraphLayout` layoutstop 의 결정론 배치가 보장(seed 는 수렴 보험). 역할분리 주석도 정직화(#519 더블클릭도 미분석 테이블 컬럼 introspect — introspected/anchorHasCols 로 중복 회피).
+- 캐시버스터: `admin.html` `admin.js?v=20260701-graph-perf2`→`?v=20260702-graphview-webgl-polish` + `styles.css?v=…-webgl-labels`→`?v=20260702-graphview-webgl-polish`(js==css lockstep).
+- Files: `unit/feature-0003-agent-web-ui/src/static/{admin.js,admin.html}`, `unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REVIEW,REPORT}.md`.
+- Verification: `node --check admin.js` PASS. origin/main(042613eb) ff 병합 후 stash pop 재적용 — admin.html 캐시버스터 충돌·admin.js 자동병합 해소, 실제 충돌 마커 0. §18.8 적대 패널(SUBAGENT adversarial-correctness) VERDICT PASS — BLOCKING 0, 축1~6(탭 타이머 경합·introspect Set 생명주기·컬럼 배치 정합·#519 회귀·WebGL config·self 재-add) 안전. NIT 1건(canvas-2D 폴백 `pixelRatio:1` 강제 → HiDPI 흐려짐 가시 회귀) 즉시 수정 — pixelRatio 를 WebGL 경로에만 부여, 폴백은 device DPR 보존. REV-20260702T000000-graphview-webgl-polish. PB-0008 Windows-browser 라이브 — 배포 후 사용자 실화면 확인 요망(그래프 인터랙션 자동화는 PB-0008 회귀 이력, 코드정합은 리뷰·node --check 확증).
+- Impact: 프론트 전용·비파괴. 그래프 렌더 config(texSize/pixelRatio) + 입력 semantics(단일클릭 컬럼 토글) 추가. 백엔드/API(`/api/admin/metadata/graph[/columns]` 재사용)/데이터/스키마/RBAC 무변경. 배포=web 재빌드만.
+- Rollback Notes: renderer 를 `{name:"canvas",webgl:_webglOk}` 로 환원(webglTexSize/pixelRatio 제거) + `_metaGraphToggleColumns` 함수·tap 핸들러 300ms 타이머 분기 제거 + 캐시버스터 환원(graph-perf2). DB/백엔드 무관.
+
+## CHG-20260702-graph-panel-perms (TASK-20260702-graph-panel-perms — 그래프 뷰 UX 3건 + 메타데이터 탭 권한 세분화 B안, Major+Critical §12.3 — feature-0016 그래프 UX(feature-0003 코드 거주) + feature-0003 인가. /_template:entry arg-given, PLAN-APPROVED)
+- Date: 2026-07-02
+- 배경: 사용자 4건 요청(관리 콘솔 > 메타데이터). 그래프 뷰 3건(상세 패널 드래그 리사이즈·확장 테이블 접기 버튼·첫 컬럼명 미표시 버그) + 메타데이터 탭 권한 세분화. 착수 시 origin/main 이 worktree base(042613eb)보다 2커밋(#521 안 보임/#522 graphview-webgl-polish) 전진 — rebase(stash→ff to 344a5a80→pop). admin.js/admin.html 이 #522 와 겹쳤으나 다른 영역이라 git 3-way 자동병합(실 충돌 마커 0), 편집 마커 전량 잔존 확인.
+- Summary:
+  - **(Task1) 상세 패널 드래그 리사이즈**: `.admin-meta-graph-body` 를 2-col(고정 340px)→3-col(`minmax(0,1fr) 8px var(--meta-graph-detail-w,340px)`). 캔버스↔패널 사이 세로 리사이저 바(`#metadataGraphResizer`, role=separator, ←/→ 키보드). `_metaGraphInitResizer()`: pointerdown/move/up 으로 CSS var 갱신(왼쪽 드래그=패널 확대), clamp(패널 min240·캔버스 min360), localStorage `metaGraphDetailW` 영속, 놓을 때 cy.resize+fit(드래그 중엔 기존 ResizeObserver 가 debounce 처리). ≤900px(세로 스택)·detail-collapsed 시 리사이저 숨김.
+  - **(Task2) 확장 테이블 접기 버튼**: 캔버스가 canvas/WebGL 이라 노드 네이티브 버튼 불가 → 스키마 클러스터 라벨과 동일 HTML 오버레이 레이어(pointer-events:none, 버튼만 auto) 재사용. `_metaGraphSyncCollapseButtons()`: 컬럼 자식 보유 Table 박스마다 `renderedBoundingBox` 우측하단(-20,-20)에 "−" 버튼, `_lblSync` rAF 에 연동(pan/zoom/drag/layout 추종), 줌아웃(<26px) 생략, orphan 정리. 클릭→`_metaGraphCollapse(key)`: 컬럼 자식+연결엣지 remove(부모는 leaf dot 노드로 환원) + `introspected` Set delete(재확장 시 재조회 허용).
+  - **(Task3) 첫 컬럼명 미표시 버그**: `node:parent[label='Table']` 스타일 `text-margin-y:2`(박스 안쪽 최상단)→`-13`(박스 위로 띄움) + `text-background`(캔버스색 #fbfcfd chip, opacity .85). 기존엔 박스 안쪽 상단 타이틀이 최상단 컬럼 dot·라벨과 겹쳐 첫 컬럼명이 가려짐. 박스 padding·크기·fcose 간격 불변(레이아웃 회귀 없음).
+  - **(Task4) 메타데이터 탭 권한 세분화(B안, Critical 인가)**: 단일 묶음 `kb.ingest.manual`(용어사전·ENUM·테이블·컬럼 편집 + 그래프 조회 + AI 분석 전부 게이트) → 기능별 `metadata.glossary.manage`/`metadata.enum.manage`/`metadata.table.manage`/`metadata.column.manage`/`metadata.graph.read` 5권한 분리(사용자 결정 B안). 하위호환은 **비파괴·가역 함의**: `_apply_permission_overrides`(전 principal 의 permission map 을 만드는 단일 중심 빌더 — backend enforcement + client can() 공통 소스)에서 effective map 이 `kb.ingest.manual` 을 가지면 5권한을 자동 True(개별 세부권한 DENY 오버라이드는 존중). `kb.ingest.manual` 은 catalog 에 "전체 묶음" umbrella 로 유지 → 기존 역할·계정 override grant 무손실(DB 마이그레이션 0). 백엔드 28 핸들러 require_permission 전환, 부트스트랩 3 엔드포인트=table.manage(테이블 골격 도구). graph.read 는 그래프 뷰 GET + 내장 AI 분석(analyze) 포함(그래프 뷰 기능 단위 = 1 권한).
+  - **캐시버스터**: `admin.html` 의 `admin.js`/`styles.css` `?v=20260702-graphview-webgl-polish`→`?v=20260702-graph-panel-perms`(js==css lockstep, 정적 자산 전파 유일 메커니즘).
+- Files: `unit/feature-0003-agent-web-ui/src/{app.py, routers/admin_metadata.py, static/admin.js, static/styles.css, static/admin.html}`, `unit/feature-0003-agent-web-ui/tests/{test_metadata_perm_split.py(신규), test_metadata_ai_autocomplete.py}`, `unit/feature-0003-agent-web-ui/docs/{TASK,MODIFY,FUNCTION,REPORT,REVIEW,TEST}.md`.
+- Verification: `node --check admin.js` PASS · `py_compile` app.py/admin_metadata.py PASS · 신규 `test_metadata_perm_split.py` 9/9 + `test_metadata_ai_autocomplete.py`(fixture 세부권한 갱신) + `test_metadata_phase2.py`/`test_metadata_glossary_enum.py`(직접호출·console.access 음성 경로라 무회귀) + `test_permission_dependency_map.py`(group 기반 트리 — 신규 kb 권한 정합) PASS. 유일 실패 `test_route_parity_p5b`(192→193)는 **origin/main 344a5a80 기존 결함**(#520/#522 신규 route 의 golden 미갱신; 본 변경 route 무추가로 무관 — `git diff main` 에 @router/@app 데코레이터 추가 0 확인). §18.8 적대 패널 2 렌즈(authz + 그래프 프론트).
+- Impact: 프론트(그래프 UX 3) + 인가(권한 세분화). 백엔드 enforcement 권한 코드 전환 + permission map 함의 추가. 데이터/스키마 무변경(권한 catalog seed 는 startup idempotent). 기존 `kb.ingest.manual` 보유자 접근 무손실(함의). 배포=web 이미지 재빌드.
+- Rollback Notes: (Task1-3) admin.js/styles.css/admin.html 환원. (Task4) PERMISSION_DEFINITIONS 5권한 제거 + `_apply_permission_overrides` 함의 블록 제거 + admin_metadata.py 28 핸들러 kb.ingest.manual 환원 + `_METADATA_SUBTAB_PERM_SERVER`/admin.js 맵 환원. `kb.ingest.manual` catalog 유지라 기존 grant 그대로 동작(가역). DB 무변경이라 데이터 롤백 불요.
+
+## CHG-20260701T230501-doc-sync-rn-0701 (TASK-20260701T230501-doc-sync-rn-0701 — 07-01 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 신규 '2026-07-01' 블록 7항목 prepend(기존 06-30 블록 10항목 보존) — [improved admin] 관계도 더 부드럽게·선명 · [new admin] 추정 관계 점선 표시(자기교정) · [new admin] AI 능동 분석 진행 현황 실시간 · [improved admin] 컬럼 실제순서 정렬+조작 편의 · [fixed admin] 관계도 표시 수정(묶음 이름·연결선·첫 컬럼명) · [new admin] 메타데이터 관리 권한 기능별 세분화 · [fixed work] 좌측 대화 선택 시 대화창 미표시 수정. `generated` 2026-06-30→2026-07-01.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260630b-rn-0630`→`?v=20260701-rn-0701`.
+- Verification: `node --check` PASS + vm 로드 generated/07-01 블록 7항목·스키마 정합. 사용자향 평이화(내부용어 0: WebGL/Cytoscape/AGE/alembic/권한키 비노출). feature-0012 router 모듈화는 behavior-neutral 내부 리팩터라 user-facing 제외(정직 분류).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·테이블/함수명·렌더러/마이그·cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit.
+
+## CHG-20260702-metadata-perm-hier (TASK-20260702-metadata-perm-hier — 메타데이터(지식베이스) 권한 종속관계 정합화, Major §12.3 — feature-0003 프론트 단독, RBAC enforcement/스키마/백엔드/엔드포인트 무변경 · UI 표시 계층만)
+- 트리거(사용자): "다른 권한 구성과 같이 종속적인 관계가 정합하도록 구성. `지식베이스 > 메타데이터` 권한이 다른 권한 포맷과 차이가 확인됨."
+- 진단: `admin.js`의 `PERMISSION_DEPENDENCIES`(childCode→선행 parentCode, **UI progressive-disclosure 표시 계층** — authz enforcement 아님)에서, 관리 권한 다른 그룹은 전부 "그룹 게이트(read)→세부(manage)" 2단 계층(`account.read→console.access` + `account.*→account.read`; role/quota/datasource/product/audit 동형)인데 **메타데이터(kb 그룹)만 평면** — `metadata.{glossary,enum,table,column}.manage`·`metadata.graph.read` 5개가 전부 `console.access` 직속이고, 묶음 `kb.ingest.manual`은 맵에 부재해 게이트 없는 고아 root. → `_orderItemsAsTree`가 kb 그룹을 7개 flat 나열(타 그룹은 계층).
+- 변경(정합화, B안 유지):
+  - `static/admin.js` `PERMISSION_DEPENDENCIES`: `kb.ingest.manual`→`console.access`(다른 그룹 base 와 동형, 콘솔 게이트 하위) 추가 + 세부 5개 `metadata.*`→`kb.ingest.manual`(묶음 아래 nest). 결과 `console.access→kb.ingest.manual(묶음 게이트)→{용어사전·ENUM·테이블·컬럼·그래프뷰}` 2단 계층. `kb.sample.curate`는 별도 root 유지(다른 KB 기능).
+  - 근거: 백엔드 `_METADATA_MANUAL_IMPLIES`로 묶음이 이미 5개를 함의(effective) → 묶음을 게이트로 삼는 게 의미 정합. **enforcement 무변경**(맵은 표시 전용, 백엔드 authz 는 parent→child 종속 미사용).
+  - §18.8 NIT-1 흡수: `_applyPermissionDisclosure`에 `isGrantedForReach` 예측자 추가(explicit + override 상속-부여) → `_refreshGroupDisclosure`의 grantedCount·"N개 부여됨" cue 에 사용. 메타데이터를 게이트 하위로 옮기며, 역할이 개별 metadata.*를 (묶음 없이) 부여한 계정의 override 편집기 도달성 cue 회귀를 복원. checkbox(역할) 모드 무영향(inherited 비어 isExplicit 과 동일).
+  - `static/admin.html`: cache-buster `admin.js?v=20260702-graph-panel-perms`→`?v=20260702-metadata-perm-hier`.
+  - `tests/test_permission_dependency_map.py`: 신규 t5(계층 pin: metadata.*→kb.ingest.manual→console.access + 트리 depth manual=0·metadata.*=1) + t6(B안 개별부여 도달성: 게이트 OFF 시 metadata hidden 이나 묶음 root·kb.sample.curate 로 그룹 비은닉).
+- Files: `static/admin.js`, `static/admin.html`, `tests/test_permission_dependency_map.py`, `docs/{TASK,MODIFY,REVIEW,REPORT}.md`.
+- Impact: 관리 콘솔 역할/계정 권한 그리드에서 메타데이터 권한이 다른 그룹과 동일한 2단 계층으로 표시(묶음→세부). **비파괴** — authz enforcement·기존 grant·백엔드 함의 전부 불변. 개별 metadata.* 부여는 "세부 권한 더 보기"로 여전히 가능(B안 보존).
+- 검증: `node --check` PASS, `test_permission_dependency_map.py` 18개(기존 16 + t5/t6) PASS, §18.8 SUBAGENT 패널 VERDICT PASS(BLOCKING 0 — 개별부여 회귀·은닉·enforcement·implies 상호작용 4축 refute; NIT-1 수정 반영·NIT-2 테스트 추가). 배포 후 라이브 그리드 계층 확인.
+- Rollback: revert admin.js(맵 원복 + isGrantedForReach 제거) + admin.html(캐시버스터) + 테스트.
+
+## CHG-20260702-aiops-panel (TASK-20260702-aiops-panel — AI 운영 관제 패널 + LLM 계측 확장, Major §12.3 — feature-0003 web/UI·인가 + cross-unit feature-0002 core/alembic + shared. /_template:resume 재개, PLAN-APPROVED)
+- 변경(cross-unit — feature-0002 core/alembic, shared, feature-0003 web):
+  - **feature-0002** `alembic/versions/20260702_0030_llm_usage_latency.py`(신규): PG `agent_runtime.llm_usage` 에 `latency_ms INTEGER`(nullable, DEFAULT 없음) `ADD COLUMN IF NOT EXISTS`(additive·idempotent, down=DROP IF EXISTS). down_revision=0029_node_analysis_relevance.
+  - **feature-0002** `src/scripts/agent_runtime_schema.sql`: bootstrap `llm_usage` DDL 에 `latency_ms INTEGER` parity 추가(0002 resolved_model 관례).
+  - **feature-0002** `src/modules/llm.py`: `_record_llm_usage` 에 `latency_ms:int|None=None` 인자 + INSERT 컬럼 추가(미전달=NULL → agent-core 11경로 byte-동치). 중앙 래퍼 `_openai_chat_completion_with_deadline` 순수 API 왕복(submit~result) latency 측정→전달.
+  - **shared** `model_catalog.py`: `TASK_TAXONOMY`(14 task→6 category) + `taxonomy_for()`(미등록→`ai.other.unmapped` self-surface) + `ai_categories()` 추가.
+  - **feature-0003** `src/app.py`: web 4경로 계측(프롬프트 자동생성 비스트리밍 16xx executor 람다 내부·스트리밍 produce() include_usage+choices 가드 앞 usage 선포착+SENTINEL 1회·자율 sweep daemon thread conv_id=None·메타 자동완성 executor 람다 metadata_ 접두). 권한 `console.aiops.read` PERMISSION_DEFINITIONS+admin catchup. `_ask_worker_age_sec` 헬퍼(3-state). `_DASHBOARD_WIDGETS` ai_ops + `_dash_widget_ai_ops`(tab='ai-ops'). `include_router(ai_ops)`.
+  - **feature-0003** `src/routers/ai_ops.py`(신규): GET `/api/admin/ai-ops`(console.aiops.read) — 상태 축 worst-of 배너(inprocess ask-worker N/A 제외) + KPI + Attention + 카테고리 드릴다운 + 활동 feed + 커버리지. PG 부분 degrade(200, `_pg_connect_ro`).
+  - **feature-0003** `src/routers/admin_console.py`: overview 에 `_isolate("ai_ops", …)` dispatch.
+  - **feature-0003** `src/static/admin.html`: 감사 그룹 `data-admin-tab="ai-ops"` 탭 + pane(#aiOpsBody) + cache-buster css/js `?v=20260702-ai-ops`.
+  - **feature-0003** `src/static/admin.js`: `PERMISSION_DEPENDENCIES`+`ADMIN_TAB_PERMISSIONS["ai-ops"]`(fail-open 방지) + `adminState.aiOps` + switchTab lazy-load + `loadAiOps`/`renderAiOps` + 새로고침 배선.
+  - **feature-0003** `tests/test_permission_dependency_map.py`: v2 리스트에 console.aiops.read. `tests/test_ai_ops.py`(신규 10건).
+- Verification: `tests/test_ai_ops.py` **10/10 PASS** + 회귀 permission 16/dashboard 20/usage 28 PASS, 전체 collection 무오류. py_compile(app.py·llm.py·model_catalog.py·ai_ops.py·admin_console.py·마이그·test) + node --check(admin.js) PASS. 적대검증 REV-20260702T140000-aiops-panel. PB-0008 Windows-browser= TEST.md.
+- Files: `feature-0002/{alembic/versions/20260702_0030_llm_usage_latency.py, src/scripts/agent_runtime_schema.sql, src/modules/llm.py}`, `shared/model_catalog.py`, `feature-0003/{src/app.py, src/routers/ai_ops.py, src/routers/admin_console.py, src/static/admin.html, src/static/admin.js, tests/test_ai_ops.py, tests/test_permission_dependency_map.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`.
+- 계측 커버리지 정직성: 임베딩 3경로·provider probe 는 embeddings/ping 응답에 usage 부재 → 구조적 계측 불가로 '계측 커버리지' 각주에 미계측 명시('전체 비용' 오해 방지). cost 는 read-time 계산(단가표 web 전용) — DB 컬럼 미추가. 워커 프로세스 latency 는 web-only 배포로 미반영(quiet-time 워커 재빌드 후속).
+
+## CHG-20260702-aiops-scroll (TASK-20260702-aiops-scroll — AI 운영 현황 pane 세로 스크롤, Minor §12.3 — feature-0003 프론트 CSS 단독, RBAC/스키마/백엔드/엔드포인트 무변경)
+- 변경:
+  - `static/styles.css`: pane 세로 스크롤 규칙(TASK-0167) 셀렉터에 `.admin-pane[data-admin-pane="ai-ops"].is-active` 추가 — dashboard/usage/release-notes 와 동일 `overflow-y:auto; overflow-x:hidden`. AI 운영 현황 pane 은 list-detail 아닌 단순 세로 흐름이라 admin-shell(overflow:hidden+100vh)에서 하단(카테고리표·커버리지) 잘림 → pane 자체 스크롤 필요.
+  - `static/admin.html:7`: cache-buster `styles.css?v=20260702-graph-g6`→`?v=20260702-aiops-scroll`(CSS 실변경).
+- Verification: CSS brace balanced(1701/1701). ai-ops 셀렉터 적용 확인. §18.8 [SKIPPED:minor-css-scroll]. PB-0008 Windows-browser 세로 스크롤 실측 = 배포 후(TEST.md).
+- Files: `static/styles.css`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+
+## CHG-20260702T021700-attach-count-scope (TASK-20260702T021700-attach-count-scope — "+" 메뉴 첨부파일 목록 개수 배지 대화 전환 후 잔류(stale) 수정, Minor §12.3 — feature-0003 프론트 단독, /_template:entry arg-given)
+- 증상(사용자 보고): 어떤 대화에서 assistant 에 첨부 파일을 전달한 뒤 다른 대화창으로 전환해도, 요청 입력줄 "+" 메뉴의 "첨부파일 목록" 항목 우측 개수 배지(`#composerAttachCountBadge`)가 이전 대화의 첨부 개수를 그대로 표시. (오른쪽 첨부 사이드 패널은 "첨부 파일이 없습니다" 로 정상 — 배지만 stale.)
+- 근본 원인: 배지 textContent 는 오직 `_renderAttachmentPills()` (app.js:7316, `:7344` clear / `:7349` set) 에서만 mutate 된다. 기존 대화 전환 `switchConversation`(app.js:5853) 은 `_loadConversationAttachments`(:5883)→`_renderAttachmentPills` 로 배지를 새 컨텍스트 기준 재렌더하지만, **다음 컨텍스트 진입/전환 경로들이 이 재렌더 훅을 누락**해 배지가 직전 대화 값으로 잔류:
+  1. `beginPendingConversation()` (app.js:5907, "새 대화" 버튼) — activeConversationId="" + 새 pendingSentinel 부여 후 렌더하지만 배지 미갱신.
+  2. `_switchToPendingConversationContext()` (app.js:5939, 사이드바 pending 대화 항목 클릭) — 동일 결함.
+  3. **(적대검증 적발 갭)** `deleteConversation`(:6693)·`bulkDeleteConversations`(:5120)·`leaveConversation`(:6737) — 활성 대화 삭제/보관/나가기 후 `refreshWorkspace`→`loadConversations`→`loadHistory` 로 다른 대화(또는 빈 화면)에 랜딩. 이 경로는 switchConversation 을 거치지 않아 배지가 삭제된 대화 개수로 잔류(동일 stale class).
+- 변경(`static/app.js`, 배지 재렌더 훅 4개 추가 — 신규 로직/상태/API/RBAC/스키마 0):
+  - `beginPendingConversation` 의 `renderComposer()` 뒤 `_renderAttachmentPills()` 추가 → 새 대화 진입 시 빈 pendingSentinel bucket 기준 배지 비움.
+  - `_switchToPendingConversationContext` 의 `renderComposer()` 뒤 `_renderAttachmentPills()` 추가 → 해당 sentinel 컨텍스트(stage 된 첨부 있으면 그 개수, 없으면 비움) 기준 재렌더.
+  - `loadHistory()` 의 **빈 대화 early-return**(:5556-5564) 과 **정상 종료**(:5629) 두 exit 모두에 `_renderAttachmentPills()` 추가 → refreshWorkspace 계열(delete/bulk-delete/leave/empty)이 loadHistory 로 도달하는 모든 랜딩에서 배지를 현재 활성 대화 기준으로 정정. loadHistory 는 switchConversation·refreshWorkspace 공통 sink 이라 단일 지점으로 delete/leave 갭 전량 커버(switchConversation 은 직후 `_loadConversationAttachments` 가 서버 ground truth 로 재확정 — 무해한 선-렌더).
+- 미변경(범위 봉인): `_renderAttachmentPills` 본체·`_composerAttachmentKey`·bucket 스키마·업로드/제거/전송 첨부 흐름·사이드 패널 개폐 정책(패널은 사용자 "+" 클릭 시에만 open — 본 재렌더는 empty 시 hide/repopulate 만 하고 강제 open 안 함) 전부 불변. logout(:8997) 잔류 배지는 auth 오버레이 뒤 비가시 + 재로그인 시 refreshWorkspace→loadHistory 로 자동 정정이라 별도 수정 안 함(MINOR, 적대검증 확인).
+- 배포 전파: `index.html` `app.js?v=20260701-convswitch-opacity-guard`→`?v=20260702-attach-count-scope` bump(정적 자산은 `?v=` 가 유일 전파 메커니즘, baked 이미지 → web 재배포 시 반영). deploy_scope: included(FIRST_REQUEST 전역) — cycle-final 후 web 재배포.
+- Files: `static/app.js`, `static/index.html`, `docs/{TASK,MODIFY,REVIEW,REPORT,TEST}.md`.
+- 검증: `node --check app.js` PASS. §18.8 적대검증 REV-20260702T021700-attach-count-scope — VERDICT: MAJOR 1 적발(delete/leave 계열 갭) → **수정 반영 후 재검증 정합**, MINOR 1(logout, 비가시·자동정정 — 무수정 확인). PB-0008 Windows-browser = 배포 후 라이브(TEST.md §3, baked 자산·relay 라이브검증 사용자 실화면 필요 사유).
+- Rollback: revert app.js(4개 `_renderAttachmentPills()` 호출 제거) + index.html(캐시버스터 원복).
+
+## CHG-20260702-aiops-activity-paging (TASK-20260702-aiops-activity-paging — 활동 페이징 + main agent latency, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 core)
+- 변경:
+  - **feature-0002** `src/agent_core.py` `_call_llm`: create 직전 `time.perf_counter_ns()` → `_record_llm_usage(..., latency_ms=int((now-t0)//1e6))`. main agent 경로(LLM 볼륨 최대, task='agent')의 latency gap 보완. best-effort try/except 내(기존 예외격리 유지), 반환값·control flow 무변경.
+  - **feature-0003** `src/routers/ai_ops.py`: `_query_activity(cur, taxonomy_for, *, cursor, limit)` keyset 헬퍼(`WHERE id < %s ORDER BY id DESC LIMIT n+1`, has_more=len>limit → next_cursor) + 신규 `GET /api/admin/ai-ops/activity`(console.aiops.read, cursor/limit 파라미터, `_pg_connect_ro` 부분 degrade) + overview 활동을 `_query_activity` 로 리팩터(created_at DESC → id DESC 등가) + `activity_next_cursor` 반환.
+  - **feature-0003** `src/static/admin.js`: `aiOpsActivityRowsHtml`(초기+append 공용 esc row) + `loadAiOpsMoreActivity`(cursor append, insertAdjacentHTML, next_cursor 갱신/과거끝 disabled/에러 재시도) + renderAiOps '더 보기' 버튼(activity_next_cursor 있을 때) + body.innerHTML 후 배선.
+  - **feature-0003** `src/static/admin.html`: cache-buster `admin.js?v=20260702-aiops-activity-paging`.
+  - **feature-0003** `tests/route_snapshot_p5b.json`: 신규 activity 라우트로 194→195 재생성. `tests/test_ai_ops.py`: 신규 5건.
+- Verification: `test_ai_ops.py` 15/15 + 회귀 66 PASS + collection 무오류. route-parity 195 PASS. node --check(admin.js). py_compile(agent_core·ai_ops). §18.8 REV-20260702T180000-aiops-activity-paging. PB-0008= 배포 후.
+- Files: `feature-0002/src/agent_core.py`, `feature-0003/{src/routers/ai_ops.py, src/static/admin.js, src/static/admin.html, tests/route_snapshot_p5b.json, tests/test_ai_ops.py, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`.
+- keyset 선택 근거: OFFSET 은 대량 활동에서 성능·불안정(삽입 시 shift) → id BIGSERIAL 단조 keyset(`id < cursor`)로 안정 페이징. next_cursor=마지막 id(has_more 시), null=과거 끝.
+
+## CHG-20260702T230501-doc-sync-rn-0702 (TASK-20260702T230501-doc-sync-rn-0702 — 07-02 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 신규 '2026-07-02' 블록 8항목 prepend(07-01 블록 7항목 보존) — [new admin] 관계도 항목 우클릭 상세·주변 관계 · [improved admin] 초기 진입 전체 구조 가시성 · [improved admin] 스키마 카드 우클릭 메뉴+검색 강조 · [fixed admin] 두 번 눌러 펼칠 때 부드러운 이동 · [fixed admin] 추정 관계 자동 다듬기 실동작 수정 · [new admin] AI 운영 현황 화면 신설 · [improved admin] 감사 화면 메뉴 정리+설명 · [fixed work] '+' 첨부 개수 배지 대화 전환 후 정확 표시. `generated` 2026-07-01→2026-07-02.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260701-rn-0701`→`?v=20260702-rn-0702`.
+- Verification: `node --check` PASS + jsdom DOM 테스트 33 PASS(관리 62/작업 85/그룹 20 동적 카운트·XSS-safe)/1 pre-existing CSS FAIL(admin pane overflow-y, 무관). 사용자향 평이화(내부용어 0: G6/Cytoscape/WebGL/config/alembic/엔드포인트/권한키/모델명/ADR 비노출). feature-0012/0017 behavior-neutral 은 user-facing 제외(정직 분류).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·렌더러/마이그/엔드포인트/cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·SECURITY·ARCHITECTURE·RELEASE_NOTES)는 별도 commit(REV-20260702T230501-META-0019-doc-sync-0702).
+
+## CHG-20260703T085511-ds-avg-latency (TASK-20260703T085511-ds-avg-latency — 데이터소스 상세 패널 평균 연결 응답 시간, Major §12.3 — feature-0003 web/UI·API + cross-unit shared/conn_health·config)
+- 변경:
+  - **shared** `config.py`: `AGENT_CONN_AVG_WINDOW`(env, 기본 20, `max(1,...)` 클램프) 신규 + `__all__` 에 등록(`conn_health` 가 `from .config import *` 로 소비 — `__all__` 누락 시 NameError, ADR-007 교훈 반영).
+  - **shared** `conn_health.py`: 성공 background DB probe 응답시간의 이동평균 추가.
+    - `_SAMPLES: dict[scope_key→deque(maxlen=AGENT_CONN_AVG_WINDOW)]` 모듈 dict 신설 — 원시 elapsed 표본은 여기에만, `_STATE` 에는 산술평균(`avg_elapsed_ms`)만(좌표/표본 비노출 불변식 보존). 접근은 항상 `_LOCK` 안.
+    - `_sample_avg_elapsed(key, elapsed_ms)`: 표본 append + 최근 N개 산술평균(소수1) 재계산. window 크기 변경(config reload) 시 기존 표본 보존하며 deque 재생성.
+    - `_apply_result`: 성공 분기에서 `source=="probe-db" and last_elapsed_ms is not None and >0.0` 일 때만 표본화(실패 probe·foreground 0.0-coerce 제외, 느린 성공 unstable 포함) → `avg_elapsed_ms` 갱신. status 분류·gating·`last_elapsed_ms` 등 기존 거동 무변경(additive).
+    - `_ensure_entry` 신규 entry 에 `avg_elapsed_ms:None` · `snapshot()` 에 `avg_elapsed_ms`+`sample_count`(=len(_SAMPLES[k])) 추가 · `_prune_state`/`_reset_state` 에서 `_SAMPLES` lockstep 정리.
+  - **feature-0003** `routers/admin_datasources.py`: `GET /api/admin/datasources` 의 각 datasource `conn_status` 에 `avg_elapsed_ms`·`sample_count` additive(snapshot 사전계산값 재사용 — 추가 probe 없음). `_h` 부재 시 `avg_elapsed_ms:None, sample_count:0`. 좌표 비노출 유지.
+  - **feature-0003** `static/admin.js`: `_dsConnStatusLabel(status)` 헬퍼(healthy/unstable/down/unknown→한글) + `_dsRenderDetail` 에 "연결 상태" 섹션(연결 좌표 다음) — 상태·**연결 응답 시간(평균)**(`avg_elapsed_ms` + `· 최근 N회 평균`, 표본 0/None 이면 "측정 중 (연결 성공 시 집계)")·최근 응답 시간(순간값)·마지막 확인(epoch×1000). null-guard 완비(“null ms” 방지).
+  - **feature-0003** `static/admin.html`: cache-buster `admin.js?v=20260703-graph-simgroups`→`?v=20260703-ds-avg-latency`.
+  - **feature-0002** `tests/test_conn_health.py`: `test_snapshot_hides_coordinates` 키셋에 avg_elapsed_ms/sample_count 추가 + 신규 5건(평균 누적·window bound·실패/foreground 제외·느린성공 포함·prune 표본정리).
+- Verification: py_compile(config/conn_health/admin_datasources) + `node --check admin.js` PASS. 직접 pytest — test_conn_health.py 32 PASS + 대상 회귀(test_product_conn_status 등) PASS + feature-0002/0003 전량 PASS(컨테이너 전용 `test_share_redaction_invariant.py` 제외 — `import web.app` 환경 아티팩트, 본 변경 무관). §18.8 적대 리뷰 REV-20260703T085511-ds-avg-latency. PB-0008 Windows-browser= 배포 후 라이브(TEST.md §3, baked 자산·표본 누적 필요 사유).
+- Files: `shared/config.py`, `shared/conn_health.py`, `feature-0003/{src/routers/admin_datasources.py, src/static/admin.js, src/static/admin.html, docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md}`, `feature-0002/tests/test_conn_health.py`.
+- 설계 근거: 마지막값(`last_elapsed_ms`)은 순간 변동(다른 워크로드·GC blip·원거리 리전 RTT spike)에 흔들려 대표성이 약함 → 최근 N회 평균이 데이터소스별 상시 연결 품질을 더 안정적으로 반영. background 모니터 사전계산값 재사용이라 관리 콘솔 진입 시 추가 DB 부하·지연 0.
+- Rollback: revert 5개 소스 파일(config/conn_health/admin_datasources/admin.js/admin.html) + cache-buster 원복. in-memory only(스키마·마이그·영속 상태 무 — 롤백 부작용 없음).
+
+## CHG-20260703T085511-ds-avg-latency-postverify (TASK-20260703T085511-ds-avg-latency-postverify — ds-avg-latency POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- 변경: 선행 cycle(CHG-20260703T085511-ds-avg-latency, PR #575 머지 7ad4378b + web 배포)의 **배포 후 라이브 PB-0008 실측 결과**를 TASK.md(최종 체크박스 확정)·TEST.md §3(POST-DEPLOY PASS Run)에 기록. 코드/자산 무변경(doc-only).
+- 검증 결과 요지(실 Windows Chrome/149 win-browser relay, `https://localhost/admin`): 상세 패널 "연결 상태" 섹션 렌더 + `mssql-dk-dev` 평균 "11.7 ms · 최근 6회"·`mssql-qa-idc` "133.4 ms · 최근 6회"(healthy 평균 산출)·down 데이터소스 "측정 중"(성공 표본 없음 — stale 미표시). MINOR(0ms 가드) 실효. 스크린샷 증적.
+- Files: `docs/{TASK,MODIFY,TEST,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260703T085511-ds-avg-latency-postverify [SKIPPED:post-deploy-verification-record]
+
+## CHG-20260706T013532-reasoning-effort (TASK-20260706T013532-reasoning-effort — 대화 화면 사용자 지정 추론 강도(낮음/일반/높음/매우 높음) 선택기, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared/model_catalog)
+- 변경: 사용자가 대화 화면 composer 에서 추론 강도(extended thinking budget)를 4단계로 직접 선택. 상용 서비스(Claude extended thinking / ChatGPT reasoning effort)와 동형. 선택값은 대화별로 영구 저장(KV)돼 새로고침·재접속·대화 전환 후에도 복원된다. 사용자 결정(2026-07-04): 매핑="끄기 없이 4단계"(낮음도 최소 thinking 유지), 저장="대화별 영구 저장", UI="composer '+' 액션 메뉴 안"(모델 선택자 옆).
+- 흐름: 프론트 선택기 → `askBody.reasoning_level` → `POST /api/ask`(normalize 검증) → `run_agent`/`_run_agent_core` → `_call_llm` 이 thinking 지원 모델(claude-*)일 때만 요청 단위 `extra_body={"thinking":{"type":"enabled","budget_tokens":N}}` 주입 → LiteLLM 이 alias 별 고정 thinking 을 요청 단위 override. 로컬 LLM(gemma/edge) 은 미지원 → 주입 안 함(drop_params 방지) + 프론트 선택기 비활성.
+- 레벨→budget 매핑(shared/model_catalog): **낮음=2000·높음=10000·매우높음=16000** override(`_REASONING_BUDGETS`). **일반(normal)=override 없음** — 각 모델 config 기본 thinking 유지(haiku 5000/sonnet 16000). B1 회귀 방지(적대검증): '일반'에 고정 budget 을 두면 선택기 미상호작용 sonnet 이 16000→강등되므로 no-override 로 둔다. override 값 전부 Anthropic 제약(1024 ≤ budget < agent max_tokens 20000) 만족. thinking 활성 시 temperature 는 claude alias 에서 이미 미전달(supports_temperature=False)이라 정합. **B2 라이브 확증**: 게이트웨이 프로브로 request-level extra_body.thinking 이 config override 함을 실측(budget 1024→reasoning 2073자 vs 16000→6914자, 동일 프롬프트).
+- 저장: `/api/ask` 가 conv_id 확정 후 KV `reasoning_level` 저장(best-effort, in-flight 는 run_kwargs 로 캡처한 값으로 실행 — product turn-캡처 패턴과 정합). `/api/history` 가 KV 값을 payload 로 hydration → 프론트가 대화 전환 시 선택기 복원. worker 경로(app.py enqueue payload + ask.py `_payload_to_kwargs`)도 동등 전달(inproc 패리티).
+- Files: `unit/feature-0003-agent-web-ui/src/routers/conversations.py`(파싱·KV저장·run_kwargs·history hydration), `unit/feature-0003-agent-web-ui/src/app.py`(save_memory_kv import·worker payload), `unit/feature-0003-agent-web-ui/src/static/{index.html,app.js,styles.css}`(선택기 UI·askBody·localStorage·hydration·CSS), `unit/feature-0002-agent-core/src/agent_core.py`(run_agent/_run_agent_core/_call_llm 배선·주입), `unit/feature-0002-agent-core/src/modules/ask.py`(worker payload 복원), `shared/model_catalog.py`(레벨 매핑·supports_thinking·normalize)
+- Cross-feature 편집: 코드 거주 feature-0003 이 primary(대화 UI 지배). 파일 소유 feature-0002(agent_core/ask)·shared(model_catalog) 는 각 MODIFY.md 에 대응 CHG 기록. cache-buster: `index.html` `app.js?v=…`→`?v=20260706-reasoning-effort`.
+- Cross-ref: REVIEW.md REV-20260706T013532-reasoning-effort [SUBAGENT:…] · unit/feature-0002-agent-core/docs/MODIFY.md CHG-20260706T013532-reasoning-effort · shared/docs/MODIFY.md CHG-20260706T013532-reasoning-effort
+
+## CHG-20260706T013532-reasoning-effort-postverify (TASK-20260706T013532-reasoning-effort — reasoning-effort POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- 변경: 선행 cycle(CHG-20260706T013532-reasoning-effort, PR #594 머지 adad0a5e + web 무중단 롤링 재배포 + ask/insight-worker 재빌드)의 **배포 후 라이브 PB-0008 실측 결과**를 TASK.md(최종 체크박스 확정)·TEST.md §3(POST-DEPLOY PASS Run)에 기록. 코드/자산 무변경(doc-only).
+- 검증 결과 요지(실 Windows Chrome via win-browser relay @172.26.144.1:9223, `https://localhost/` 인증 세션): '+' 메뉴 "추론 강도: 일반" 렌더 → 클릭 4단계 팝업(낮음/일반/높음/매우 높음) → 높음 선택 라벨 갱신·✓·localStorage=high → 새로고침 후 "높음" 복원 → pageerror 0. 스크린샷 pb0008_reasoning.png. B2 게이트웨이 override 실증과 결합해 프론트→/api/ask→ask-worker→_call_llm 전 계층 라이브 확인.
+- Files: `docs/{TASK,MODIFY,TEST,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260706T013532-reasoning-effort-postverify [SKIPPED:post-deploy-verification-record] · 선행 CHG-20260706T013532-reasoning-effort
+
+## CHG-20260706T094937-runtime-settings (TASK-20260706T094937-runtime-settings — 관리 콘솔 `시스템 > 설정` 운영 값(실행 타임아웃·모델별 thinking budget) 조정·저장·사용, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared/{config,runtime_settings,model_catalog})
+- Date: 2026-07-06 (worktree ai/claude-corp/feature-0018-runtime-settings, base 2ec0188e). /_template:entry arg-given, 반영 방식=하이브리드(AskUserQuestion 확정).
+- 트리거(사용자): "assistant 가 작동할 때 참조하는 값들을 관리 콘솔 > 시스템 > 설정 에 추가해 조정·저장·사용. TIME_OUT(현재 구성된 값만), 모델별 thinking budget(모델 추가 시 자연 확장), 각 우측 패널은 전용 UI(레거시 정합)."
+- 신규 `shared/runtime_settings.py`: 설정 레지스트리(timeout 22 + 모델 예산 자동생성) + resolver(get_int live TTL / startup_int restart frozen) + `/shared/runtime_settings.json` 스냅샷 원자적 write + validate_value/serialize_registry. source-of-truth=MySQL `WebRuntimeSettings`, 스냅샷=런타임 소비 캐시(전 프로세스 전파). fail-open + kill-switch(RUNTIME_SETTINGS_DISABLED).
+- `shared/config.py`: restart-mode 22 timeout 상수를 `_startup_int(key, env_default)` 로 감싸 import 시 스냅샷 override 반영(다음 재배포 시 적용). override 부재/파일부재/kill-switch → env 기본값 그대로(byte-동치). CONN_PROBE BASE/MAX/TCP 는 `max()` 불변식 유지. 방어적 import(runtime_settings 실패해도 config 무손상).
+- `unit/feature-0002-agent-core/src/modules/llm.py`·`mcp_client.py`: live-mode getter 배선(AGENT_TIMEOUT_SEC·MCP_TIMEOUT_SEC → `runtime_settings.get_int`). `agent_core.py _call_llm`: 모델별 thinking budget override 주입(명시 추론강도 미지정 시, 설정된 모델만; B1 무회귀 유지) + budget<max_tokens clamp. — 상세는 feature-0002/docs/MODIFY.md CHG 동일 slug.
+- `app.py`: `WebRuntimeSettings` DDL + `_load/_save/_delete_runtime_setting_overrides`·`_reconcile_runtime_settings_snapshot` + `system.runtime.read/write` PERMISSION_DEFINITIONS(settings 그룹) + `_ensure_seed_roles` admin catchup 2건 + ensure_memory_schema 기동 reconcile.
+- 신규 `routers/admin_settings.py`: `GET/PUT/DELETE /api/admin/settings/runtime` (RBAC console.access+system.runtime.read[+write], 동일-tx audit action `system.runtime.update`/`system.runtime.reset`, 스펙 [min,max] 검증). app.py include_router 등록.
+- `static/admin.html`·`admin.js`: 설정 pane 에 "실행 타임아웃"·"모델별 추론 예산" 2행+2전용패널 + `SETTINGS_PANEL_MOUNTERS` 2 mounter(카테고리 그룹 number-input + 즉시/재배포 배지 / 카탈로그 자동확장 목록, direct-save + 초기화). cache-buster `?v=20260706-runtime-settings`.
+- 영향: RBAC 신규 권한 2(admin auto-grant + catchup). 스키마 additive(신규 테이블, 기존 무변경). override 미설정 시 전 경로 기존 동작 동치(회귀 0). 파괴적 변경 0.
+
+## CHG-20260707T110000-runtime-settings-auditfix (TASK-20260707T110000-runtime-settings-auditfix — 런타임 설정 audit action 등록, PB-0008 라이브 적발 hotfix, Minor §12.3, feature-0003 backend-only)
+- Date: 2026-07-07 (worktree ai/claude-corp/feature-0018-runtime-settings-auditfix, base main). feature-0018(CHG-20260706T094937-runtime-settings) 후속 핫픽스.
+- 근본: `build_audit_change_json`(app.py, ActionCode allowlist)이 endpoint 의 audit action `system.runtime.update`/`system.runtime.reset` 을 몰라 `raise ValueError("unknown audit action")` → 라우터의 autocommit=False save+audit+commit 이 audit 실패로 rollback → PUT/DELETE 500. 원자화(fail-closed)는 정상 작동(미감사 변경 0)했으나 write 기능이 막힘. 유닛에서 미검출(TestClient conn=None → audit 도달 前 500), **PB-0008 라이브 write-path 검증이 적발**.
+- 변경: `app.py build_audit_change_json` 에 두 action builder 추가(update=setting_key+value, reset=setting_key; masked_fields=[]). 순수 additive(기존 action·동작 불변). `test_runtime_settings_api.py` 에 회귀 가드 2건(builder 반환 shape·action 문자열 = 라우터와 일치).
+- 영향: feature-0018 write 경로(설정 저장/초기화) 복구. 읽기 경로(GET registry)는 애초 정상(PB-0008 확인). 파괴적 변경 0.
+- Cross-ref: feature-0003 TASK/REVIEW/TEST 동일 slug · 선행 CHG-20260706T094937-runtime-settings.
+
+## CHG-20260707T111500-runtime-settings-postverify (feature-0018 + audit hotfix POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 에 POST-DEPLOY PB-0008 PASS Run append + TASK 완료 체크. 배포: PR #602→a7dcc436(feature) + PR #604→8d0a4723(audit hotfix), web 무중단 롤링 ×2.
+- 검증 요지: 설정 pane 3항목 렌더, 실행 타임아웃 22입력/6카테고리/즉시·재배포 배지, **env-fallback 실증**(300/600/180=.env 값), 모델 예산 2행 no-override input 비움, write-path e2e(저장→DB override→audit→초기화→DB 정리), pageerror 0. 증적 artifacts/feature-0018-runtime-settings/pb0008-runtime-settings-timeouts.png.
+- Cross-ref: CHG-20260706T094937-runtime-settings(feature) · CHG-20260707T110000-runtime-settings-auditfix(hotfix) · TEST.md §3 Run.
+
+## CHG-20260707T110534-doc-sync-rn-0707 (TASK-20260707T110534-doc-sync-rn-0707 — 07-02→07-07 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 신규 '2026-07-03'(8항목)·'2026-07-04'(12항목)·'2026-07-06'(4항목)·'2026-07-07'(5항목) 블록 prepend(07-02 이하 블록 보존, 총 4블록 29+ 신규 항목). `generated` 2026-07-02→2026-07-07. 블록 요지: 07-03 제품 카테고리 개요·유사 테이블 영역화·역할 색/아이콘·관계 탐색·화면 조작·데이터소스 평균 연결시간·공유 참여 알림·대량분석 안정성 / 07-04 유사 항목 자동묶음·크로스-DB 연결·묶음 드래그/접기·상세 뒤로앞으로·범례 탭·ds 이름표시·분석중 안내·겹침순서·상단탭+검색·Esc fix·여기부터~여기까지 공유·☰ 메뉴·응답 안정성 / 07-06 추론 강도 선택·함수/프로시저 노드·DB 단위 분석·상세 nav·필터·검색 / 07-07 런타임 설정·카테고리 밴드+크로스-DB·관계 큐레이션·DB 분석 심화·응답 안정성.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260702-rn-0702`→`?v=20260707-rn-0707`.
+- Verification: `node --check release-notes-data.js` PASS. 블록 순서 07-07>06>04>03>02·스키마 정합·07-02 이하 보존 확인. 사용자향 평이화(내부용어 누출 0). jsdom 테스트는 이 env 미설치(컨테이너 전용).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·렌더러/마이그/엔드포인트/cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260707T110534-META-0020-doc-sync-0707).
+## CHG-20260707T120000-runtime-settings-ux (TASK-20260707T120000-runtime-settings-ux — 런타임 설정 pane UI 재설계, web/UI CSS+JS-only, Major §12.3, feature-0003)
+- Date: 2026-07-07 (worktree ai/claude-corp/feature-0018-runtime-settings-ux). 사용자 피드백("UI 세련도 부족") 대응. feature-0018 기능/동작 불변 — **표현(presentation) 계층만** 재구성.
+- `static/styles.css`: `.rs-*` 컴포넌트 세트 신규(정렬 grid 행·카테고리 섹션·focus-ring 입력·배지·dirty/override/invalid 상태·반응형). 콘솔 디자인 토큰/패턴 정합.
+- `static/admin.js`: 런타임 설정 렌더러 재작성 — `.admin-quota-editor`(미정렬·행별 버튼) 폐기 → `buildRuntimeSettingRow`(2×2 grid, 저장/초기화 버튼 제거). 편집·기본값복원을 `adminState.pending.runtimeSettings` 로 예약, 하단 commit-bar("모두 적용")로 배치 적용(`setRuntimeSettingPending`·applyAllPending 루프·cancelAllPending·refreshPendingUI 연동, nav row `.has-pending` dirty 표시). 설명 잘림 해소(ellipsis+title), 범위 인라인 경고. rsSaveValue/rsResetValue(엔드포인트) 재사용.
+- `static/admin.html`: cache-buster `?v=20260707-runtime-settings-ux`(admin.js·styles.css).
+- 영향: 백엔드/엔드포인트/RBAC/스키마 무변경. 저장 UX 가 즉시 PUT → pending+배치적용(콘솔 네이티브)로 변경. 회귀 표면=공유 commit-bar 로직(계정/역할/프롬프트) — additive 배선, 적대 리뷰로 검증.
+- Cross-ref: CHG-20260706T094937-runtime-settings(기능) · TEST/REVIEW 동일 slug.
+
+## CHG-20260707T121500-runtime-settings-ux-postverify (런타임 설정 UI 재설계 POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 에 POST-DEPLOY PB-0008 PASS(before/after) append + TASK 완료 체크. 배포 PR #607→da3f57db.
+- 검증 요지: 두 패널 정렬 grid·설명 완전노출·commit-bar 편집/적용/복원 e2e(DB override roundtrip)·pageerror 0. 사용자 "세련도 부족" 피드백 해소 확인. 증적 artifacts/feature-0018-runtime-settings/{current,after}-{timeout,model}-panel.png.
+- Cross-ref: CHG-20260707T120000-runtime-settings-ux(재설계) · TEST/REVIEW 동일 slug.
+
+## CHG-20260707T130000-reasoning-budgets (TASK-20260707T130000-reasoning-budgets — 추론 강도별 예산 설정 + UI 교훈, Major §12.3 — feature-0003 web/UI + cross-unit feature-0002·shared)
+- Date: 2026-07-07. feature-0018 후속: 모델별 예산에 이어 추론 강도(낮음/높음/매우 높음)별 요청 단위 thinking budget 을 관리 콘솔에서 조정 가능하게. '일반'은 no-override(B1)라 설정 대상 제외.
+- `shared/runtime_settings.py`: reasoning_budget 레지스트리/resolver/serialize(상세 shared/docs/MODIFY 동일 slug). `unit/feature-0002-agent-core/src/agent_core.py`: `_call_llm` precedence 확장(레벨 override→기본→모델 override; 상세 feature-0002/docs/MODIFY 동일 slug).
+- `static/admin.js`: `모델별 추론 예산` 패널을 2 섹션(모델별 + 추론 강도별)으로 확장, 추론 행은 pre-fill(기본값=적용값). nav-dirty 분류 RS_REASONING_PREFIX 추가. `static/admin.html` cache-buster admin.js bump(styles.css 무변경).
+- `docs/LEARNINGS.md`: LRN-20260707-0001(UI 가시성 개선 교훈, verified).
+- 영향: 백엔드 엔드포인트/RBAC/스키마/audit 무변경(기존 PUT/DELETE·validate·audit 재사용, 신규 키만 등록). override 미설정 시 전 경로 기존 동작 동치(B1 유지).
+- Cross-ref: CHG-20260706T094937-runtime-settings·-ux / feature-0002·shared MODIFY 동일 slug.
+
+## CHG-20260707T131500-reasoning-budgets-postverify (추론 강도별 예산 POST-DEPLOY PB-0008 라이브 검증 기록, 비-정책 doc-only)
+- Date: 2026-07-07. 코드/자산 무변경 — TEST.md §3 POST-DEPLOY PB-0008 PASS append. 배포 PR #609→767ca387(web + 워커 재빌드). 검증: 추론 강도별 예산 섹션 렌더·reasoning-key write-path e2e·사용자 MCP_TIMEOUT_SEC=60 override 보존·pageerror 0. 증적 after-model-panel-reasoning.png.
+- Cross-ref: CHG-20260707T130000-reasoning-budgets · TEST/REVIEW 동일 slug.
+## CHG-20260707-kb-candidate-adoption (TASK-20260707-kb-candidate-adoption — 지식베이스 메타데이터 채택 인박스 + ENUM 대화 자율수집, Major §12.3 — feature-0003 web/UI·API + cross-unit feature-0002 agent-core·shared/config)
+- 변경 요지: 대화에서 용어사전·ENUM 코드사전 후보를 수집하고 관리 콘솔에서 채택(승급/거부)하도록 재구성. 용어사전은 이미 구현(0021/0023)돼 있어 **ENUM 을 그 대칭으로 신설** + 두 사전 후보를 **통합 채택 인박스**(지식베이스 하위 신규 탭)로 한눈에.
+- **ENUM 백엔드(parity)**: 마이그 `0039_enum_feedback`(`enum_feedback` 검토큐 + `enum_dictionary.source` + GRANT, 비파괴·멱등, down_revision 0038_node_analysis_refine). `kb_glossary.py`: enum feedback 함수군(record/auto_promote_or_queue/list/count/promote/reject/_status/_insert_auto/infer) + enum CRUD source. `llm.py`: ENUM_SUGGEST_PROMPT+llm_enum_suggest. `config.py`: AGENT_ENUM_*(threshold 0.9). `agent_core.py`: _enum_autopropose(best-effort). `app.py`: 권한 kb.enum.curate(카탈로그, 마이그 불필요). `admin_metadata.py`: enum-feedback list/promote/reject + admin_list_enums source.
+- **UI**: `admin.html`(adoption 탭/pane + 필터 툴바 + 카드 그리드), `admin.js`(ADMIN_TAB_PERMISSIONS.adoption·switchTab 훅·loadAdoptionInbox/render/그룹 카드/개별·일괄 채택·배지·컨트롤 배선), `styles.css`(.admin-meta-tag-kind + .admin-adoption-* — 기존 .admin-meta-row/.dashboard-widget 재사용).
+- **범위 봉인**: 용어사전 후보수집·검토 큐 로직 불변(인박스가 기존 glossary-feedback 엔드포인트 재사용). 샘플 검수 큐·그래프 뷰 무변경. 편집-후-채택 미포함(as-is 채택).
+- 검증: 신규 코어 14 + web 경계 9 테스트 PASS · 기존 enum-list 계약(source)·route 골든(197→200) 갱신 · 호스트 전체 1581 passed · 컨테이너 make test 유일 실패(routine_dbanalysis, postgres-replica 미해석)는 main 격리에서도 동일 = 사전존재 env(본 변경 무관) · ruff PASS. PB-0008 Windows-browser= POST-DEPLOY(정적 baked).
+- Files: `alembic/versions/20260707_0039_enum_feedback.py`(feature-0002), `modules/kb_glossary.py`·`modules/llm.py`·`agent_core.py`(feature-0002), `shared/config.py`, `app.py`·`routers/admin_metadata.py`·`static/{admin.html,admin.js,styles.css}`(feature-0003), 테스트 `test_kb_enum_feedback.py`·`test_metadata_enum_feedback.py`·`test_metadata_glossary_enum.py`·`route_snapshot_p5b.json`, docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260707T051054-kb-candidate-adoption · TASK-20260707-kb-candidate-adoption · feature-0002 REPORT(2026-07-07)
+
+## CHG-20260707-metadata-console-redesign (TASK-20260707-metadata-console-redesign — 메타데이터 콘솔 IA 통합 + 5서브뷰 디자인 폴리시, Major §12.3 — feature-0003 web/UI 단독)
+- 변경 요지: 직전 채택 인박스 배포 후 실사용 피드백 반영 — 최상위 `채택 인박스`·`샘플 검수` 탭이 메타데이터 서브뷰와 겹쳐, **2차 보기를 서브탭 파라미터화**해 각 사전 하위로 통합하고 5서브뷰 디자인을 이전 교훈 기반으로 폴리시. **UI 단독**(admin.html/admin.js/styles.css) — 백엔드/라우터/스키마/RBAC 정의 무변경(enum-feedback·sample-feedback API·`kb.enum.curate`/`kb.sample.curate` 권한 유지).
+- **구조**: `_METADATA_REVIEW` config + `viewBySub` 상태 + `_metaSyncViews`(#metadataViews 동적 버튼) + `_metaIsReview` 로 glossary 하드코딩 2차 보기를 일반화. 채택 인박스 제거(탭/pane/JS블록/CSS/init/perm), ENUM 후보 → `ENUM 코드사전 > {목록|검토 큐}`, 샘플 검수 → `샘플쿼리 > {목록|검수 큐}`(`loadSampleReview`/`renderSampleReview` #metadataList 재타깃), 최상위 샘플검수 탭 제거. glossary+enum 큐 통합(`loadFeedbackQueue`/`renderFeedbackQueue(kind)`).
+- **디자인(감사 Top 10)**: `--surface-2` 토큰·rich empty+skeleton·enums/columns 카드 그룹핑·행 카드 기하·title↔body 위계·폼 grid+인라인검증·SQL 프리뷰·필터바·배지 semantic 토큰(자동등록=neutral)·이모지 제거+KPI. cache-buster `?v=20260707-metadata-console-redesign`.
+- **범위 봉인**: 5서브뷰 CRUD/AI 자동완성/부트스트랩 로직 보존. 그래프 뷰·대시보드 등 타 pane 무변경. 백엔드 0.
+- 검증: §18.8 3렌즈 패널(BLOCKING 1·MAJOR 1·HIGH 1·MED 3·LOW 5 FIXED, XSS clean, ACCEPT 1) · node --check OK · 제거 심볼 grep-0 · route 골든 불변 · 호스트 1637 passed(회귀 0) · CSS 균형. PB-0008 = POST-DEPLOY.
+- Files: `static/{admin.html,admin.js,styles.css}` + docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260707T064745-metadata-console-redesign · TASK-20260707-metadata-console-redesign
+
+## CHG-20260707T230501-doc-sync-rn-2305 (TASK-20260707T230501-doc-sync-rn-2305 — 07-07 후속 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: 기존 '2026-07-07' 블록 `items` 에 2항목 append(같은 날 → 새 일자 블록 미생성, `generated` 2026-07-07 유지) — ① new/admin "대화에서 모은 코드값(상태 코드 등) 뜻풀이 후보를 검토해 채택"(0beb02e3) ② improved/admin "AI 추론 예산을 강도(낮음·높음·매우 높음)별로도 설정"(d9516aee). 블록 `summary` 에 '코드값 후보 검토·채택 · 추론 강도별 예산 설정' 구 추가.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260707-rn-0707`→`?v=20260707b-rn-0707`.
+- 중복 회피: 업무 용어(glossary) 대화 자율수집은 2026-06-29 블록에 이미 있어(라인 408·414) 재announce 금지 — 신규 코드값(ENUM) 측만 반영(적대 검증 rescope). 콘솔 IA 통합(47a63b1a)·그래프 화살표·pane 재설계·OAuth cron·§56 sync 는 비-사용자/이미-커버 → 릴리즈노트 미포함.
+- Verification: `node --check release-notes-data.js` PASS · 블록 순서 07-07>06>04>03>02 · 07-06 이하 보존 · 스키마 정합. 사용자향 평이화(내부용어 누출 0). jsdom 테스트는 이 env 미설치(컨테이너 전용).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- 사용자향 평이화: 내부 구현·feature-id·렌더러/마이그/엔드포인트/권한키/cache-buster 내부 슬러그 비노출. 렌더 로직(`release-notes.js`) 무변경 — 데이터만. landing/배포는 cron wrapper 소관. META(STATUS·wiki·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260707T230501-META-0021-doc-sync-0707-2305).
+
+## CHG-20260708-metadata-console-polish (TASK-20260708-metadata-console-polish — 메타데이터 콘솔 잔여 디자인 폴리시 5건, Minor §12.3 — feature-0003 web/UI 단독)
+- 변경 요지: metadata-console-redesign 배포 후 PB-0008 실 Windows 브라우저 적대적 미적 검증에서 잡은 잔여 미세 폴리시 5건 적용. **UI 단독**(styles.css + admin.js confidence 배지 클래스 1개), 백엔드/구조/로직 무변경.
+- #1 2차 보기 필 경량화(border 제거·borderless active chip — 1차 밑줄 탭에 종속) · #2 메타 전용 list-detail 균형(목록 300~400px + empty 중앙·max-width) · #3 그룹 카드 내부 행 divider 평탄화(nesting 경감) · #4 timestamp 경량+그룹 내 숨김 · #5 신뢰도 배지 accent(`-conf`).
+- 검증: node --check OK · CSS 균형(1905/1905) · route 골든 불변 · 호스트 1662 passed(회귀 0). cache-buster `?v=20260707-metadata-console-polish`.
+- Files: `static/{admin.js,styles.css,admin.html}` + docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260708T012922-metadata-console-polish · TASK-20260708-metadata-console-polish · 선행 REV-20260707T064745-metadata-console-redesign
+
+## CHG-20260708-metadata-console-ux2 (TASK-20260708-metadata-console-ux2 — 메타데이터 콘솔 UX 4건, Major §12.3 — feature-0003 web/UI 단독)
+- 변경: #1 list 컬럼 폭 확대+행 가독성 · #2 검토/검수 큐 행 클릭→우측 read-only 상세(`_metaRenderReviewDetail`/`reviewSelected`) · #3 ENUM 그룹 "+코드 추가"(`_metaStartCreatePrefilled` pre-fill) · #4 샘플 mermaid 다이어그램 렌더(공용 `mermaid-render.js` 재사용, admin.html vendor 로드). **UI 단독**(백엔드/RBAC/스키마 0).
+- 검증: node --check OK · CSS 균형 · route 불변 · 호스트 1662 passed(회귀 0). cache-buster `?v=20260708-metadata-console-ux2`.
+- Files: `static/{admin.html,admin.js,styles.css}` + docs `{TASK,TEST,REPORT,FUNCTION,MODIFY,REVIEW}.md`
+- Cross-ref: REVIEW.md REV-20260708T033320-metadata-console-ux2 · TASK-20260708-metadata-console-ux2 · 선행 REV-20260708T012922-metadata-console-polish
+
+## CHG-20260708T230501-doc-sync-rn-0708 (TASK-20260708T230501-doc-sync-rn-0708 — 07-08 머지분 릴리즈노트 정합 + cache-buster bump, 비-정책 doc-only)
+- 변경:
+  - `static/release-notes-data.js`: releases[0] 에 `date:"2026-07-08"` 새 블록 prepend(`generated` 2026-07-08) — 3항목(전부 admin): new §59 제품 분류 AI 제안 / improved §57 그래프 접힘 카드 시각화 / improved 콘솔 검토 화면 개선(ux2 4건+폴리시 5건 통합). 07-07 이하 블록 보존.
+  - cache-buster: `index.html`·`admin.html` 의 `release-notes-data.js?v=20260707b-rn-0707`→`?v=20260708-rn-0708`.
+- 제외: §58(라벨 케이스/rekey·infra)·§56 T56.9(기출시)·내부 기록·META 도구 → 릴리즈노트 미포함. 07-07 블록과 중복 0.
+- Verification: `node --check release-notes-data.js` PASS · 블록 순서 07-08>07>06>04>03>02 · 스키마 정합 · jsdom verify_release_notes.mjs 33/34 PASS(1 FAIL=styles.css pre-existing·본 변경 무관). 사용자향 평이화(내부용어 누출 0).
+- Files: `static/release-notes-data.js`, `static/index.html`, `static/admin.html`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- landing/배포는 cron wrapper 소관. META(STATUS·wiki·ARCHITECTURE·RELEASE_NOTES·meta/REVIEW)는 별도 commit(REV-20260708T230501-META-0022-doc-sync-0708).
+
+## CHG-20260709-graph-toolbar-consolidate (TASK-20260709-graph-toolbar-consolidate — 그래프 뷰 상단 툴바 통합 + 우측 상태 텍스트 reflow 제거, Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016)
+- 문제: 그래프 뷰 툴바에 성격이 다른 컨트롤 13개(검색·깊이·스키마이동·종류필터3·초기화·제품·줌4·상세·상태)가 한 줄 flat 나열 → '지저분'. 상태 텍스트가 flex-wrap 툴바에 인라인(`margin-left:auto`)이라 내용 길이↑ → 툴바 wrap → 높이↑ → body(`flex:1`) 가 남은 높이 채워 캔버스가 위아래로 밀림(사용자 '아래 UI 지속 변형' 불만의 정확한 메커니즘).
+- 변경: ① 툴바 4존 압축 + 보기옵션 팝오버(`.amg-viewopts*`) ② 줌 → 캔버스 좌하단 오버레이(`.admin-meta-graph-zoomctl` absolute) ③ 상태 → 캔버스 좌상단 오버레이 pill(`.admin-meta-graph-status` absolute·2줄 클램프·auto-fade) — 레이아웃 흐름 밖이라 reflow 0 ④ 캔버스 `.admin-meta-graph-canvas-wrap` 위치 컨텍스트(role=img 밖 형제 오버레이) ⑤ admin.js: `_metaGraphStatus` auto-fade·`_metaGraphSyncViewOptsBadge`·팝오버 토글·LOD `is-idle` 해제.
+- behavior-neutral: 컨트롤 id 전량 보존(`getElementById` 바인딩 불변). 캐시버스터 styles.css/admin.js `20260709-graph-toolbar`.
+- Files: `static/{admin.html,admin.js,styles.css}`, `docs/{TASK,MODIFY,FUNCTION,REVIEW,TEST}.md`.
+- Verification: `node --check` OK · 실 Windows Chrome 149 harness 렌더 실측 PASS · 디자인·correctness 적대 패널(REVIEW). POST-DEPLOY PB-0008 라이브(deploy_scope:included).
+
+## CHG-20260709T120000-graph-toolbar-postverify (graph-toolbar POST-DEPLOY PB-0008 라이브 PASS 기록 — 비-정책 doc-only)
+- 배포 ee54b1ff(soak PASS) 후 라이브 콘솔(`https://localhost/` → /admin → 그래프 뷰) PB-0008 실측 결과를 TEST.md §3 Run 에 POST-DEPLOY 갱신으로 append + TASK.md POST-DEPLOY 체크박스 [x]. 실측: toolbarKids=4·**reflow0=true**·팝오버 no-clip·pageerror 0(상세 TEST.md §3). 코드·자산 변경 0.
+- Files: `docs/{TEST,TASK,MODIFY,REVIEW}.md` (doc-only). 원천 cycle: CHG-20260709-graph-toolbar-consolidate(코드) / 배포 ee54b1ff.

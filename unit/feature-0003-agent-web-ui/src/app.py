@@ -56,6 +56,7 @@ from modules.memory import (
     mark_cancel_requested,
     mark_delete_requested,
     mark_finalize_requested,
+    save_memory_kv,
     set_run_status,
 )
 from shared.model_catalog import (
@@ -67,6 +68,7 @@ from shared.model_catalog import (
     model_supports_temperature,
     model_supports_vision,
 )
+from shared import runtime_settings as _runtime_settings  # feature-0018: 런타임 설정 레지스트리·스냅샷
 from modules.render import normalize_step_result_summary
 
 # feature-0012 P5b Final: web_context 로 추출한 leaf helper 를 모듈 전역에 rebind
@@ -160,6 +162,16 @@ PERMISSION_DEFINITIONS = (
         "code": "console.usage.read",
         "label": "LLM 사용량 조회",
         "description": "LLM 토큰 사용량/비용 집계를 조회할 수 있다 (운영자 전용).",
+        "group": "console",
+    },
+    {
+        # TASK-AIOPS: AI 운영 관제 패널(관리 콘솔 > 감사 > AI 운영 현황) 조회 권한. 운영 민감
+        # 정보(워커 상태·provider 헬스·AI 활동 계측)라 admin 한정 — admin seed(=set(PERMISSION_CODES))
+        # 자동 부여 + 아래 _ensure_seed_roles catchup 으로 기존 admin row backfill.
+        # operator/sales/dba/pending 미부여 (least-privilege).
+        "code": "console.aiops.read",
+        "label": "AI 운영 현황 조회",
+        "description": "AI 운영 관제 패널(워커 상태·provider 헬스·AI 활동 계측)을 조회할 수 있다 (운영자 전용).",
         "group": "console",
     },
     {
@@ -283,8 +295,44 @@ PERMISSION_DEFINITIONS = (
         # 자동 보유 + 기존 admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여.
         # operator/sales/pending 미부여(least-privilege).
         "code": "kb.ingest.manual",
-        "label": "메타데이터 수동 등록/편집",
-        "description": "용어사전·ENUM 코드사전 항목을 수동으로 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향하므로 명시 권한 보유자(도메인 전문가/큐레이터)만 편집할 수 있다.",
+        "label": "메타데이터 관리 (전체 묶음)",
+        "description": "메타데이터 탭의 모든 세부 기능(용어사전·ENUM·테이블 설명·컬럼 설명 관리 + 그래프 뷰 조회)을 한 번에 부여하는 묶음 권한이다. 세부 기능만 선택적으로 부여하려면 아래 개별 metadata.* 권한을 사용한다(이 묶음을 보유하면 개별 권한을 모두 보유한 것과 동일하게 동작한다).",
+        "group": "kb",
+    },
+    # graph-panel-perms(task4, Critical §12.3): 메타데이터 탭 세부 권한 — 기존 단일 `kb.ingest.manual`
+    # 묶음을 기능별로 분리(B안, 사용자 결정 2026-07-01)해 용어사전/ENUM/테이블/컬럼 관리와 그래프 뷰 조회를
+    # 개별 위임 가능하게 한다. 하위호환: `kb.ingest.manual` 보유자는 _apply_permission_overrides 의
+    # 함의(_METADATA_MANUAL_IMPLIES)로 아래 5개를 effective 로 자동 보유 → 기존 배포 무손실(비파괴·가역).
+    # 모두 console.access 하위(관리 콘솔 진입 필요). admin seed(=set(PERMISSION_CODES)) 자동 보유 + 기존
+    # admin row 는 _ensure_seed_roles catchup 으로 retroactive 부여. operator/sales/pending 미부여(least-privilege).
+    {
+        "code": "metadata.glossary.manage",
+        "label": "용어사전 관리",
+        "description": "용어사전(도메인 용어↔정의) 항목과 유사어 참조를 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다(도메인 전문가/큐레이터 전용).",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.enum.manage",
+        "label": "ENUM 코드사전 관리",
+        "description": "ENUM 코드사전(컬럼 코드↔라벨) 항목을 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.table.manage",
+        "label": "테이블 설명 관리",
+        "description": "테이블 설명을 등록/수정/삭제하고 스키마 골격 가져오기(부트스트랩)를 사용할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.column.manage",
+        "label": "컬럼 설명 관리",
+        "description": "컬럼 설명을 등록/수정/삭제할 수 있다. 등록 내용은 질문/스키마 매칭 시 프롬프트에 주입되어 답변 정확도에 직접 영향한다.",
+        "group": "kb",
+    },
+    {
+        "code": "metadata.graph.read",
+        "label": "메타데이터 그래프 뷰 조회",
+        "description": "메타데이터 지식그래프 뷰(테이블/컬럼/관계/용어 탐색·검색)를 조회하고, 그래프 뷰의 내장 AI 능동 분석을 실행할 수 있다. 읽기 중심 탐색 권한으로, 개별 메타데이터 항목 편집 권한과 분리된다.",
         "group": "kb",
     },
     {
@@ -298,6 +346,19 @@ PERMISSION_DEFINITIONS = (
         "code": "kb.glossary.curate",
         "label": "용어사전 검수/승급",
         "description": "대화에서 자동 제안된 용어 후보(검토 큐)를 검토해 용어사전으로 승급하거나 거부(자동 등록분 되돌리기)할 수 있다. 승급·자동 등록은 답변 정확도에 직접 영향하므로 명시 검수만 허용된다 (도메인 전문가/검수자 전용).",
+        "group": "kb",
+    },
+    {
+        # ENUM 코드사전 대화 자율수집(0039): 대화 답변에서 LLM 이 추론한 (table.column) 코드↔라벨 후보의
+        # 검토/큐레이션 권한. 하이브리드 자동승급 — 고신뢰도는 자동 등록(source='auto', 되돌리기 가능),
+        # 저신뢰도는 검토 큐(enum_feedback.status='pending')에 적재된다. 이 권한 보유자는 큐를 검토해
+        # ENUM 코드사전(enum_dictionary)으로 승급(promote)하거나 거부(reject·되돌리기)할 수 있다. 승급/
+        # 자동등록은 검색·답변 정확도에 직접 영향(poisoning 면) → 검수자 한정. kb.glossary.curate(용어
+        # 검수)와 동급 큐레이션 권한. admin seed(=set(PERMISSION_CODES)) 자동 보유 + 기존 admin row 는
+        # _ensure_seed_roles catchup 으로 retroactive 부여. operator/sales/pending 미부여(least-privilege).
+        "code": "kb.enum.curate",
+        "label": "ENUM 코드사전 검수/승급",
+        "description": "대화에서 자동 제안된 ENUM 코드↔라벨 후보(검토 큐)를 검토해 ENUM 코드사전으로 승급하거나 거부(자동 등록분 되돌리기)할 수 있다. 승급·자동 등록은 답변 정확도에 직접 영향하므로 명시 검수만 허용된다 (도메인 전문가/검수자 전용).",
         "group": "kb",
     },
     {
@@ -558,9 +619,35 @@ PERMISSION_DEFINITIONS = (
         "description": "전역 시스템 프롬프트를 수정/삭제할 수 있다. 모든 LLM 응답에 영향이 가는 권한이므로 운영자 한정.",
         "group": "settings",
     },
+    # feature-0018 (REQ runtime-settings): 관리 콘솔 `시스템 > 설정` 의 운영 값(실행 타임아웃,
+    # 모델별 thinking budget) 조회/수정 권한. settings 그룹 정합 — admin only auto-grant,
+    # 다른 role 은 콘솔에서 explicit override. write 는 서비스 응답 지연·비용에 직접 영향.
+    {
+        "code": "system.runtime.read",
+        "label": "런타임 설정 조회",
+        "description": "실행 타임아웃·모델별 추론 예산 등 assistant 운영 값을 조회할 수 있다.",
+        "group": "settings",
+    },
+    {
+        "code": "system.runtime.write",
+        "label": "런타임 설정 수정",
+        "description": "실행 타임아웃·모델별 추론 예산을 수정/초기화할 수 있다. 서비스 응답 지연·비용에 직접 영향이 가므로 운영자 한정.",
+        "group": "settings",
+    },
 )
 PERMISSION_CODES = tuple(item["code"] for item in PERMISSION_DEFINITIONS)
 PERMISSION_DEFINITION_MAP = {item["code"]: item for item in PERMISSION_DEFINITIONS}
+
+# graph-panel-perms(task4): 레거시 묶음 권한 `kb.ingest.manual` 이 함의하는 세부 권한 집합.
+#   _apply_permission_overrides 가 effective map 에서 묶음 보유자에게 아래 5개를 자동 부여(개별 DENY 오버라이드는 존중).
+#   기존 배포 무손실(비파괴·가역) — DB 마이그레이션 없이 하위호환. 묶음 보유 principal(역할/계정 오버라이드) 전부 커버.
+_METADATA_MANUAL_IMPLIES = (
+    "metadata.glossary.manage",
+    "metadata.enum.manage",
+    "metadata.table.manage",
+    "metadata.column.manage",
+    "metadata.graph.read",
+)
 
 
 # TASK-0052 Phase 1A: RBAC catalog 를 인자로 받는 형태로 변경 (기본값은 정적 PERMISSION_DEFINITIONS).
@@ -1611,6 +1698,15 @@ def _apply_permission_overrides(
             permissions[code] = True
         elif normalized == OVERRIDE_DENY:
             permissions[code] = False
+    # graph-panel-perms(task4): 레거시 묶음 `kb.ingest.manual` 함의 — effective 로 묶음 보유 시 세부 metadata.*
+    #   권한을 자동 부여한다(비파괴 하위호환). 단 해당 세부 권한이 명시 DENY 오버라이드된 경우는 존중(least-privilege).
+    if permissions.get("kb.ingest.manual"):
+        for code in _METADATA_MANUAL_IMPLIES:
+            if code not in permissions:
+                continue
+            if _normalize_override_value((overrides or {}).get(code)) == OVERRIDE_DENY:
+                continue
+            permissions[code] = True
     return permissions
 
 
@@ -2677,6 +2773,33 @@ def _ensure_seed_roles(conn) -> None:
             # 부여되어 기존 배포 admin row 에는 retroactive 미적용. 미보정 시 콘솔에 메타데이터 탭이
             # 노출되지 않는다(kb.ingest.manual 게이트).
             "kb.ingest.manual",
+            # graph-panel-perms(task4): 메타데이터 세부 권한(B안 분리) admin catchup. **필수** — 신규 권한은
+            # role 생성 시 seed 로만 부여되어 기존 배포 admin row 에는 미적용. (묶음 함의로 effective 보유되나,
+            # grid 표시·명시 부여 정합을 위해 explicit catchup.)
+            "metadata.glossary.manage",
+            "metadata.enum.manage",
+            "metadata.table.manage",
+            "metadata.column.manage",
+            "metadata.graph.read",
+            # TASK-AIOPS: admin 의 AI 운영 현황 조회 권한 catchup. **필수** — 신규 권한은 role 생성 시
+            # seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row 에는 retroactive 미적용.
+            # 미보정 시 기존 admin 이 AI 운영 현황 탭을 못 본다(lockout, PB-0008 적발). operator/sales/dba 미부여.
+            "console.aiops.read",
+            # TASK-20260707-kb-candidate-adoption (§18.8 보안 렌즈 MEDIUM 적발): 대화 자율수집 검수 권한
+            # catchup. **필수** — 이 3건은 role 생성 seed(=set(PERMISSION_CODES))로만 부여되고 기존
+            # 배포 admin row 에는 retroactive 미적용이라, catchup 없이는 기존 admin 이 "채택 인박스"
+            # (kb.glossary.curate ∪ kb.enum.curate 게이트)·"샘플 검수"(kb.sample.curate) 탭·API 를 403 으로
+            # 잃는다(fail-closed lockout). kb.glossary.curate/kb.sample.curate 는 도입 cycle 에서 본 목록
+            # 보정이 누락됐던 잠재 gap 을 함께 해소(INSERT IGNORE 멱등이라 이미 보유 시 무해).
+            "kb.glossary.curate",
+            "kb.sample.curate",
+            "kb.enum.curate",
+            # feature-0018(런타임 설정, main 병합분): admin 의 런타임 설정(실행 타임아웃·모델 추론 예산)
+            # read/write 2건 catchup. **필수** — 신규 권한은 role 생성 시 seed=set(PERMISSION_CODES)로만
+            # 부여되어 기존 배포 admin row 에는 retroactive 미적용. 미보정 시 기존 admin 이 `시스템 > 설정`
+            # 의 신규 항목을 못 본다(lockout). operator/sales/dba 미부여(least-privilege).
+            "system.runtime.read",
+            "system.runtime.write",
         ):
             permission_id = int(permission_map.get(code) or 0)
             if permission_id <= 0:
@@ -4995,6 +5118,7 @@ def _ensure_web_conversation_shares_schema(conn) -> None:
                 Token VARCHAR(64) NOT NULL UNIQUE,
                 ScopeMode VARCHAR(16) NOT NULL DEFAULT 'full',
                 AnchorMessageId BIGINT NULL,
+                FloorMessageId BIGINT NULL,
                 CreatedBy BIGINT NOT NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 RevokedAt DATETIME NULL,
@@ -5082,6 +5206,31 @@ def _ensure_web_share_links_joinable_column(conn) -> None:
         try:
             cur.execute(
                 "ALTER TABLE WebConversationShares ADD COLUMN Joinable TINYINT(1) NOT NULL DEFAULT 1"
+            )
+        except Exception:
+            pass
+    finally:
+        cur.close()
+
+
+def _ensure_web_share_links_floor_column(conn) -> None:
+    """share-visibility-window: WebConversationShares 에 `FloorMessageId BIGINT NULL` column 추가.
+
+    "여기부터 공유"(하단 경계)를 저장한다. AnchorMessageId(상단, "여기까지 공유", inclusive
+    `Id <= AnchorMessageId`)와 짝을 이뤄 windowed share 는 [FloorMessageId, AnchorMessageId]
+    구간만 노출한다(inclusive `Id >= FloorMessageId`). 둘 다 DISPLAY id-space
+    (AgentMemoryMessages.Id / agent_runtime.messages.id), AnchorMessageId 계약과 동일.
+
+    기본 NULL = 하단 무제한 = 첫 메세지부터(기존 'full'/'anchored' share 무회귀). 익명 공유 뷰·
+    join stamp·fork 가 이 값을 읽어 가려진 pre-floor 구간을 뷰·멤버십·fork·LLM recall 전부에서 배제한다.
+
+    PolicyVersion/ExpiresAt/Joinable 헬퍼 idiom 동형 — fast/slow path 양쪽에서 호출되어 기존 배포 자동 적용.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "ALTER TABLE WebConversationShares ADD COLUMN FloorMessageId BIGINT NULL"
             )
         except Exception:
             pass
@@ -6128,6 +6277,7 @@ def _ensure_seed_catchup(conn) -> None:
     # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column ALTER.
     _ensure_web_share_links_expiry_column(conn)
     _ensure_web_share_links_joinable_column(conn)  # feature-0009: 공유 링크 참여 허용 컬럼
+    _ensure_web_share_links_floor_column(conn)  # share-visibility-window: 하단 경계("여기부터 공유")
     # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
     # derived join + provider files lifecycle 4 신규 테이블 fast-path 보정.
     _ensure_web_conversation_attachments_schema(conn)
@@ -6360,6 +6510,7 @@ def _ensure_web_tables():
         # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column (slow path).
         _ensure_web_share_links_expiry_column(conn)
         _ensure_web_share_links_joinable_column(conn)  # feature-0009: 공유 링크 참여 허용 컬럼
+        _ensure_web_share_links_floor_column(conn)  # share-visibility-window: 하단 경계("여기부터 공유")
         # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 (slow path).
         _ensure_login_lockout_schema(conn)
         # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (slow path).
@@ -6635,6 +6786,22 @@ def _ensure_web_tables():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """
         )
+        # feature-0018 (REQ runtime-settings): assistant 운영 값(실행 타임아웃·모델별 thinking
+        # budget) 관리 콘솔 override 를 KV(SettingKey 1행/키)로 영속. shared.runtime_settings 의
+        # 스펙 [min,max] 범위에서만 저장되며, 유효값은 스냅샷 파일(/shared)로 전 프로세스에 전파된다
+        # (본 테이블 = source of truth + audit, 스냅샷 = 런타임 소비 캐시). SettingValue 는 정수의
+        # 문자열 표현. WebDashboardPreferences 와 동일하게 in-code DDL(부트스트랩 MySQL 버전 무관).
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS WebRuntimeSettings (
+                SettingKey VARCHAR(128) NOT NULL PRIMARY KEY,
+                SettingValue VARCHAR(64) NOT NULL,
+                UpdatedByAccountId BIGINT NULL,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """
+        )
         cur.close()
         _ensure_permission_catalog(conn)
         _ensure_seed_roles(conn)
@@ -6659,6 +6826,10 @@ def _ensure_web_tables():
         _migrate_legacy_accounts_to_rbac(conn)
         bootstrap_admin_id = _ensure_bootstrap_admin(conn)
         _seed_legacy_conversations(conn, bootstrap_admin_id)
+        # feature-0018: DB 의 런타임 설정 override 를 공유 볼륨 스냅샷으로 reconcile — 스냅샷이
+        # 유실/부재(예: /shared 재생성)여도 web 기동 시 DB 진실원본으로 복구한다. 실패는 비치명적
+        # (best-effort) — 스냅샷 부재 시 각 소비처는 기본값으로 fail-open 한다.
+        _reconcile_runtime_settings_snapshot(conn)
         _mark_memory_runtime_ready()
     finally:
         conn.close()
@@ -9877,8 +10048,87 @@ def _attach_user_feedback(messages: list[dict[str, Any]], by_message: dict[tuple
             m["feedback"] = fb
 
 
+def _resolve_display_window(conn, conversation_id: str, account_id):
+    """share-visibility-window: 발신자의 표시(view) 가시 window 해석 (DISPLAY id-space + joined_at).
+
+    반환: None(무제한) | 'DENY'(빈 뷰, fail-closed) | {floor_id, ceiling_id, joined_at, floor_ca}.
+    _resolve_recall_visibility(agent_core, core id-space) 의 표시-측 대응. 규칙 동일:
+      비-PG/컬럼부재/미제약/owner/full/비멤버 → None; PG 오류 → 'DENY'; bounded → window dict.
+    """
+    if not _runtime_backend_is_pg():
+        return None
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT c.has_restricted_members, m.role, m.visible_floor_message_id, "
+                    "       m.visible_ceiling_message_id, m.joined_at, m.visible_floor_created_at "
+                    "FROM agent_runtime.core_conversations c "
+                    "LEFT JOIN agent_runtime.conversation_members m "
+                    "  ON m.conversation_id = c.conversation_id AND m.account_id = %s "
+                    "WHERE c.conversation_id = %s LIMIT 1",
+                    (int(account_id) if account_id is not None else None, conversation_id),
+                )
+                row = pgcur.fetchone()
+        finally:
+            pg.close()
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "sqlstate", None) == "42703":
+            return None  # pre-migration: windowed 멤버 부재 → 안전.
+        return "DENY"
+    if row is None or not bool(row[0]):
+        return None
+    role = row[1]
+    if role is None or role == "owner":
+        return None
+    floor_id, ceiling_id, joined_at, floor_ca = row[2], row[3], row[4], row[5]
+    if floor_id is None and ceiling_id is None:
+        return None
+    return {"floor_id": floor_id, "ceiling_id": ceiling_id, "joined_at": joined_at, "floor_ca": floor_ca}
+
+
+def _msg_outside_window(msg_id, created_at, meta, role, window) -> bool:
+    """이 표시 메세지가 뷰어의 가시 window 밖(숨겨야 하나)인가. share-visibility-window.
+
+    window = {floor_id, ceiling_id, joined_at, floor_ca}. 가시범위 = [floor,ceiling] ∪ [joined,∞).
+    추가로 owner-answer 누출면(display-tag, Step7): 뷰어 floor 아래 문맥을 그린 assistant 답변 은닉.
+    비교 불가/파싱 불가는 fail-closed(숨김).
+    """
+    try:
+        floor_id = window.get("floor_id")
+        ceiling_id = window.get("ceiling_id")
+        joined_at = window.get("joined_at")
+        if floor_id is not None and int(msg_id) < int(floor_id):
+            return True
+        if ceiling_id is not None and int(msg_id) > int(ceiling_id):
+            if joined_at is None:
+                return True
+            try:
+                if created_at is None or created_at < joined_at:
+                    return True
+            except TypeError:
+                return True
+        # owner-answer display-tag: assistant 답변이 뷰어 floor 아래 문맥을 그렸으면 숨김.
+        if str(role or "").lower() == "assistant" and isinstance(meta, dict):
+            vf = window.get("floor_ca")
+            if vf is not None:
+                if meta.get("recall_full"):
+                    return True
+                rfc = meta.get("recall_floor_created_at")
+                if rfc is not None:
+                    from datetime import datetime as _dt
+                    rfc_dt = _dt.fromisoformat(rfc) if isinstance(rfc, str) else rfc
+                    if rfc_dt < vf:
+                        return True
+    except Exception:
+        return True  # 어떤 비교 실패도 fail-closed(숨김).
+    return False
+
+
 def _get_history(
-    conversation_id: str, limit: int = 5, before_id: int | None = None
+    conversation_id: str, limit: int = 5, before_id: int | None = None, window=None
 ) -> tuple[list[dict[str, Any]], bool, int | None, int, int]:
     if not conversation_id:
         return [], False, None, 0, 0
@@ -9932,6 +10182,8 @@ def _get_history(
                     meta["steps"] = steps_v
                     meta["rationale"] = _summarize_rationale(steps_v)
                     meta["run_id"] = steps_v[0].get("run_id")
+            if window and _msg_outside_window(msg_id, created_at, meta, role, window):
+                continue  # share-visibility-window: 가려진 구간은 표시(view)에서도 배제.
             messages_pg.append({
                 "id": int(msg_id),
                 "id_space": "display",  # agent_runtime.messages.id(표시 store) — 피드백 고유성 키 공간
@@ -9941,7 +10193,9 @@ def _get_history(
                 "meta": meta,
             })
         needs_core_pg = not messages_pg or not any(str(i.get("role", "")).lower() == "assistant" for i in messages_pg)
-        if needs_core_pg:
+        # share-visibility-window: bounded 멤버(window 지정)는 core fallback(core_messages 직접
+        # 읽기 — window 미적용)을 건너뛴다. 표시 store 만으로 window 정합 응답을 준다(유출 방지).
+        if needs_core_pg and window is None:
             core_msgs, core_hm, core_oid, core_tc, core_uc = _get_agent_core_history(
                 conn, conversation_id, limit=limit, before_id=before_id
             )
@@ -10009,6 +10263,8 @@ LIMIT %s
                 meta["steps"] = steps
                 meta["rationale"] = _summarize_rationale(steps)
                 meta["run_id"] = steps[0].get("run_id")
+        if window and _msg_outside_window(msg_id, created_at, meta, role, window):
+            continue  # share-visibility-window: 가려진 구간은 표시(view)에서도 배제 (parity).
         messages.append(
             {
                 "id": int(msg_id),
@@ -10023,7 +10279,7 @@ LIMIT %s
     # ③ TASK-0285: assistant 말풍선 첨부 칩 영속 — assistant 생성 첨부를 message_id 로 주입 (MySQL 경로).
     _attach_assistant_attachments(messages, _load_assistant_attachments_by_message(conn, conversation_id))
     needs_core_fallback = not messages or not any(str(item.get("role", "")).lower() == "assistant" for item in messages)
-    if needs_core_fallback:
+    if needs_core_fallback and window is None:  # share-visibility-window: bounded 멤버는 core fallback skip.
         core_messages, core_has_more, core_oldest_id, core_total_count, core_user_count = _get_agent_core_history(
             conn,
             conversation_id,
@@ -11315,6 +11571,25 @@ def _ask_worker_ready(conn) -> bool:
         return False
 
 
+def _ask_worker_age_sec(conn) -> float | None:
+    """AI 운영 관제(TASK-AIOPS): ask-worker heartbeat 나이(초). 3-state(정상/저하/중단) 판정용 —
+    _ask_worker_ready 의 bool 만으로는 '저하' 중간대역을 구분할 수 없다. heartbeat 부재/파싱 실패는
+    None(→ 중단). _ask_worker_ready 와 **동일한 naive-UTC 규약**(_parse_kv_timestamp; aware now 와
+    혼용 시 TypeError → 영구 오탐, TASK-0169 함정)."""
+    try:
+        from shared.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
+        raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY)
+        if not raw:
+            return None
+        parsed = _parse_kv_timestamp(raw)
+        if parsed is None:
+            return None
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        return max(0.0, (now_naive - parsed).total_seconds())
+    except Exception:
+        return None
+
+
 async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn, request=None):
     """agent 실행을 mode 에 따라 분기. 두 경로 모두 동일 shape 의 agent_result dict 반환.
 
@@ -11361,6 +11636,7 @@ async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, reques
         "new_attachment_ids": run_kwargs.get("new_attachment_ids") or [],
         "image_inline_path": run_kwargs.get("image_inline_path"),
         "text_inline_path": run_kwargs.get("text_inline_path"),
+        "reasoning_level": run_kwargs.get("reasoning_level"),  # feature-0003: 추론 강도(worker 경로 패리티)
     }
 
     _user_message = payload.get("user_message", "")
@@ -11681,10 +11957,16 @@ def _conv_load_product(conn, conversation_id: str) -> tuple[int | None, Any]:
     return (int(row[0]) if row[0] is not None else None, row[1])
 
 
-def _conv_load_messages_raw(conn, conversation_id: str, upto_id: int | None) -> list[tuple]:
+def _conv_load_messages_raw(
+    conn, conversation_id: str, upto_id: int | None, from_id: int | None = None
+) -> list[tuple]:
     """대화의 (id, role, content, created_at, meta_json) 행 목록 (id ASC).
 
-    upto_id 가 주어지면 id <= upto_id inclusive. meta_json 은 PG(jsonb)면 dict,
+    upto_id 가 주어지면 id <= upto_id inclusive ("여기까지 공유" 상단 경계).
+    from_id 가 주어지면 id >= from_id inclusive ("여기부터 공유" 하단 경계, share-visibility-window).
+    둘 다 DISPLAY id-space (agent_runtime.messages.id / AgentMemoryMessages.Id). 이 함수는 익명
+    공유 뷰(_share_load_messages)와 fork-source 로더 양쪽을 지탱하므로 여기에 하단 경계를 두면
+    가려진 pre-floor 구간이 두 표면 모두에서 배제된다. meta_json 은 PG(jsonb)면 dict,
     MySQL(longtext)이면 str 로 올 수 있어 호출자가 _meta_json_to_dict 로 정규화한다.
     """
     if _runtime_backend_is_pg():
@@ -11692,37 +11974,38 @@ def _conv_load_messages_raw(conn, conversation_id: str, upto_id: int | None) -> 
         pg = _pg_connect()
         try:
             with pg.cursor() as pgcur:
+                clauses = ["conversation_id = %s"]
+                params: list[Any] = [conversation_id]
+                if from_id is not None:
+                    clauses.append("id >= %s")
+                    params.append(int(from_id))
                 if upto_id is not None:
-                    pgcur.execute(
-                        "SELECT id, role, content, created_at, meta_json "
-                        "FROM agent_runtime.messages "
-                        "WHERE conversation_id = %s AND id <= %s ORDER BY id ASC",
-                        (conversation_id, int(upto_id)),
-                    )
-                else:
-                    pgcur.execute(
-                        "SELECT id, role, content, created_at, meta_json "
-                        "FROM agent_runtime.messages "
-                        "WHERE conversation_id = %s ORDER BY id ASC",
-                        (conversation_id,),
-                    )
+                    clauses.append("id <= %s")
+                    params.append(int(upto_id))
+                pgcur.execute(
+                    "SELECT id, role, content, created_at, meta_json "
+                    "FROM agent_runtime.messages "
+                    "WHERE " + " AND ".join(clauses) + " ORDER BY id ASC",
+                    tuple(params),
+                )
                 return list(pgcur.fetchall() or [])
         finally:
             pg.close()
     cur = conn.cursor()
     try:
+        clauses = ["ConversationId = %s"]
+        params = [conversation_id]
+        if from_id is not None:
+            clauses.append("Id >= %s")
+            params.append(int(from_id))
         if upto_id is not None:
-            cur.execute(
-                "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
-                "WHERE ConversationId = %s AND Id <= %s ORDER BY Id ASC",
-                (conversation_id, int(upto_id)),
-            )
-        else:
-            cur.execute(
-                "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
-                "WHERE ConversationId = %s ORDER BY Id ASC",
-                (conversation_id,),
-            )
+            clauses.append("Id <= %s")
+            params.append(int(upto_id))
+        cur.execute(
+            "SELECT Id, Role, Content, CreatedAt, MetaJson FROM AgentMemoryMessages "
+            "WHERE " + " AND ".join(clauses) + " ORDER BY Id ASC",
+            tuple(params),
+        )
         return list(cur.fetchall() or [])
     finally:
         cur.close()
@@ -11754,6 +12037,113 @@ def _conv_message_exists(conn, conversation_id: str, message_id: int) -> bool:
         return cur.fetchone() is not None
     finally:
         cur.close()
+
+
+def _conv_message_created_at(conn, conversation_id: str, message_id: int):
+    """message_id(DISPLAY id-space)의 created_at 반환 (backend-aware). 없으면 None.
+
+    share-visibility-window: join stamp 시 경계 메세지(DISPLAY messages.id)의 created_at 을
+    스냅샷해 conversation_members.visible_floor/ceiling_created_at 에 비정규화한다. 이 값이
+    독립 id-space 인 core_messages(LLM recall)를 필터하는 유일한 bridge다(anchored fork 동형).
+    """
+    if _runtime_backend_is_pg():
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "SELECT created_at FROM agent_runtime.messages "
+                        "WHERE conversation_id = %s AND id = %s LIMIT 1",
+                        (conversation_id, int(message_id)),
+                    )
+                    row = pgcur.fetchone()
+                    return row[0] if row else None
+            finally:
+                pg.close()
+        except Exception:
+            return None
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT CreatedAt FROM AgentMemoryMessages WHERE ConversationId = %s AND Id = %s LIMIT 1",
+            (conversation_id, int(message_id)),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close()
+
+
+def _conversation_has_restricted_members(conn, conversation_id: str) -> bool:
+    """core_conversations.has_restricted_members 게이트 플래그 (PG 전용).
+
+    False(거의 모든 대화) → 가시성 필터 완전 우회(fast path, 무회귀). True → loader 가
+    actor window 를 해석하고 fail-closed. PG 미가용/예외 시 False(비-windowed 대화 가정 —
+    windowed 대화는 애초에 PG 런타임에서만 생성되고, 예외를 True 로 오판하면 무해한 대화까지
+    DENY 되어 가용성 회귀).
+    """
+    if not _runtime_backend_is_pg():
+        return False
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT has_restricted_members FROM agent_runtime.core_conversations "
+                    "WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+                return bool(row[0]) if row else False
+        finally:
+            pg.close()
+    except Exception:
+        return False
+
+
+def _member_visibility_window(conn, conversation_id: str, account_id: int):
+    """멤버의 가시 경계 window 조회 (share-visibility-window, DISPLAY id-space).
+
+    반환:
+      - (None, None) : 무제한(owner·floor 미설정 멤버·비-PG·비멤버). caller 의 share-token/
+        read.any grant 가 접근을 지배 — window 는 추가 제약 없음.
+      - (floor_id|None, ceil_id|None) : 멤버의 [floor, ceiling] (DISPLAY messages.id, inclusive).
+      - 'DENY' : PG 예외 등으로 window 를 확인할 수 없음 → **fail-closed**. 호출자(fork/recall)는
+        무제한 복사/전체 recall 대신 거부·은닉해야 한다. fork/recall 은 어차피 PG 를 요구하므로
+        PG 예외 시 DENY 는 실질 가용성 회귀가 아니다(가려진 구간 유출 방지 우선).
+
+    role='owner' 는 항상 (None,None) — 소유자는 본인 콘텐츠에 정당한 전체 접근.
+    """
+    if not _runtime_backend_is_pg():
+        return (None, None)
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT role, visible_floor_message_id, visible_ceiling_message_id "
+                    "FROM agent_runtime.conversation_members "
+                    "WHERE conversation_id = %s AND account_id = %s LIMIT 1",
+                    (conversation_id, int(account_id)),
+                )
+                row = pgcur.fetchone()
+        finally:
+            pg.close()
+    except Exception:
+        return "DENY"
+    if not row:
+        # 비멤버: 이 함수는 window 만 판정하고 멤버십 접근 게이트는 호출자 책임.
+        return (None, None)
+    role, floor_id, ceil_id = row[0], row[1], row[2]
+    if role == "owner":
+        return (None, None)
+    return (
+        int(floor_id) if floor_id is not None else None,
+        int(ceil_id) if ceil_id is not None else None,
+    )
 
 
 def _conv_update_topic_product(
@@ -11872,14 +12262,19 @@ VALUES (%s, %s, %s, %s, %s)
             pg.close()
 
 
-def _conv_load_core_messages_raw(conn, conversation_id: str, upto_created_at) -> list[tuple]:
+def _conv_load_core_messages_raw(
+    conn, conversation_id: str, upto_created_at, from_created_at=None
+) -> list[tuple]:
     """대화의 LLM 문맥 턴 (role, content, tool_calls, tool_call_id, name, created_at) 목록 (id ASC).
 
     TASK-0170 Phase 1 (ADR-WEB-0005 하이브리드): fork 가 LLM 문맥을 복원하도록 복사할
     소스. 어시스턴트는 `agent_runtime.core_messages` 에서 문맥을 읽으므로(agent_core.
     _load_conversation_messages) 이 테이블을 복사해야 fork 본이 이전 문맥을 인지한다.
-    upto_created_at 가 주어지면 created_at <= upto_created_at 만 (anchored fork cut).
-    tool_calls 는 PG(jsonb)면 dict/list 로 반환됨 — 호출자가 직렬화한다.
+    upto_created_at 가 주어지면 created_at <= upto_created_at 만 (anchored fork cut, 상단).
+    from_created_at 가 주어지면 created_at >= from_created_at 만 (share-visibility-window, 하단).
+    created_at 은 DISPLAY id-space 와 core id-space 를 잇는 유일한 bridge — 경계값은 호출자가
+    이미 window-clip 된 display src_rows 에서 유도하며(발명 금지), fork 가 가려진 pre-floor core
+    행을 복제하지 않도록 막는다. tool_calls 는 PG(jsonb)면 dict/list 로 반환됨 — 호출자가 직렬화한다.
 
     PG 런타임 전용: cutover 후 MySQL AgentCoreMessages 는 DROP 됐고 비-postgres 배포에는
     core_messages 개념이 없으므로 [] 반환(fork 는 표시 메시지만으로 진행).
@@ -11890,20 +12285,20 @@ def _conv_load_core_messages_raw(conn, conversation_id: str, upto_created_at) ->
     pg = _pg_connect()
     try:
         with pg.cursor() as pgcur:
+            clauses = ["conversation_id = %s"]
+            params: list[Any] = [conversation_id]
+            if from_created_at is not None:
+                clauses.append("created_at >= %s")
+                params.append(from_created_at)
             if upto_created_at is not None:
-                pgcur.execute(
-                    "SELECT role, content, tool_calls, tool_call_id, name, created_at "
-                    "FROM agent_runtime.core_messages "
-                    "WHERE conversation_id = %s AND created_at <= %s ORDER BY id ASC",
-                    (conversation_id, upto_created_at),
-                )
-            else:
-                pgcur.execute(
-                    "SELECT role, content, tool_calls, tool_call_id, name, created_at "
-                    "FROM agent_runtime.core_messages "
-                    "WHERE conversation_id = %s ORDER BY id ASC",
-                    (conversation_id,),
-                )
+                clauses.append("created_at <= %s")
+                params.append(upto_created_at)
+            pgcur.execute(
+                "SELECT role, content, tool_calls, tool_call_id, name, created_at "
+                "FROM agent_runtime.core_messages "
+                "WHERE " + " AND ".join(clauses) + " ORDER BY id ASC",
+                tuple(params),
+            )
             return list(pgcur.fetchall() or [])
     finally:
         pg.close()
@@ -11948,8 +12343,39 @@ def _conv_copy_core_messages(conn, new_cid: str, src_core_rows: list[tuple]) -> 
         pg.close()
 
 
+def _coerce_naive_dt(v):
+    """datetime|str|None → naive datetime|None. tz 정보 제거(교차 store 비교용, 근사)."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        from datetime import datetime as _dt
+        try:
+            v = _dt.fromisoformat(v)
+        except Exception:
+            return None
+    try:
+        return v.replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _attachment_outside_window(att_ca, lower_ca, upper_ca) -> bool:
+    """첨부(CreatedAt)가 fork window 밖인가. share-visibility-window. 불명확은 fail-closed(skip)."""
+    a = _coerce_naive_dt(att_ca)
+    lo = _coerce_naive_dt(lower_ca)
+    hi = _coerce_naive_dt(upper_ca)
+    if a is None:
+        return True  # 첨부 시각 불명 + window 활성 → 안전하게 skip.
+    if lo is not None and a < lo:
+        return True
+    if hi is not None and a > hi:
+        return True
+    return False
+
+
 def _copy_conversation_attachments(
-    conn, source_conversation_id: str, new_cid: str, fork_account_id: int
+    conn, source_conversation_id: str, new_cid: str, fork_account_id: int,
+    *, window_lower_ca=None, window_upper_ca=None,
 ) -> tuple[int, list[tuple[int, str, str]]]:
     """TASK-0171 Phase 2 (ADR-WEB-0005 하이브리드): 원본 대화의 활성 첨부를 fork 본으로 복사.
 
@@ -11976,7 +12402,7 @@ def _copy_conversation_attachments(
     try:
         cur.execute(
             "SELECT Id, ObjectKey, OriginalFilename, FilenameHmac, MimeType, SizeBytes, "
-            "SizeBucket, Sha256, Kind, UploadStatus, MetaJson "
+            "SizeBucket, Sha256, Kind, UploadStatus, MetaJson, CreatedAt "
             "FROM WebConversationAttachments "
             "WHERE ConversationId = %s AND DeletedAt IS NULL ORDER BY Id ASC",
             (source_conversation_id,),
@@ -11985,10 +12411,15 @@ def _copy_conversation_attachments(
     finally:
         cur.close()
 
+    _att_windowed = window_lower_ca is not None or window_upper_ca is not None
     copied = 0
     reingest: list[tuple[int, str, str]] = []
     for att in src_atts:
         old_att_id = att.get("Id")
+        # share-visibility-window: 가려진 구간(pre-floor/post-ceiling) 첨부는 fork 로 복사 안 함.
+        #   첨부는 fail-open 보조물이나, windowed fork 에서는 유출 방지를 위해 out-of-window skip(fail-closed).
+        if _att_windowed and _attachment_outside_window(att.get("CreatedAt"), window_lower_ca, window_upper_ca):
+            continue
         kind = str(att.get("Kind") or "other")
         old_key = str(att.get("ObjectKey") or "")
         filename = str(att.get("OriginalFilename") or "file")
@@ -12169,24 +12600,68 @@ LIMIT 1
         cur.close()
 
 
+def _resolve_copy_window(conn, source_id: str, account_id: int, *, share_floor_id=None, share_ceiling_id=None):
+    """fork 복사 window = INTERSECTION(share window, 요청자 멤버 window). share-visibility-window.
+
+    반환: ('ok', lower_id, upper_id) | ('deny', None, None) | ('empty', None, None). 전부 DISPLAY id-space.
+    교집합은 순수 정수 min/max (share Anchor/Floor 와 member floor/ceil 모두 DISPLAY id).
+      - 멤버 window 조회가 'DENY'(PG 오류) → ('deny') : 무제한 복사 대신 거부(fail-closed).
+      - lower > upper (빈 교집합) → ('empty').
+    bounded 멤버가 라이브룸을 직접 fork(/api/fork_conversation)해도 여기서 자동 clip 되어 가려진
+    구간이 fork 로 반출되지 않는다(REV AR-2 반전).
+    """
+    mw = _member_visibility_window(conn, source_id, int(account_id))
+    if mw == "DENY":
+        return ("deny", None, None)
+    m_floor, m_ceil = mw
+    # lower = 더 제약적(더 높은 id) — None=무제한.
+    lowers = [v for v in (share_floor_id, m_floor) if v is not None]
+    lower_id = max(int(v) for v in lowers) if lowers else None
+    uppers = [v for v in (share_ceiling_id, m_ceil) if v is not None]
+    upper_id = min(int(v) for v in uppers) if uppers else None
+    if lower_id is not None and upper_id is not None and lower_id > upper_id:
+        return ("empty", None, None)
+    return ("ok", lower_id, upper_id)
+
+
 def _fork_conversation_impl(
     conn,
     account: dict[str, Any],
     source_id: str,
     from_id: int | None,
+    share_floor_id: int | None = None,
 ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
     """REQ-20260514-0001: fork 본체 로직. 호출자가 source 접근 권한 + create 권한을 사전 검증한다.
 
+    from_id = 상단(ceiling, "여기까지"/anchor) inclusive 컷. share_floor_id = 하단("여기부터")
+    inclusive 컷(share-visibility-window). 실제 복사 window 는 요청자 멤버 window 와의 교집합.
+
     Returns: (success_dict, None) on success, (None, JSONResponse) on error.
     """
+    # share-visibility-window: 요청자 멤버 window ∩ share window 로 복사 범위 확정 (fail-closed).
+    _cw_status, lower_id, upper_id = _resolve_copy_window(
+        conn, source_id, int(account["id"]), share_floor_id=share_floor_id, share_ceiling_id=from_id
+    )
+    if _cw_status == "deny":
+        return None, _json_error("복제 처리 중 오류가 발생했습니다.", 500)
+    if _cw_status == "empty":
+        return None, _json_error("공유된 범위에 복제할 대화가 없습니다.", 400)
+
     # cutover 후 topic/메시지/product 는 PG(agent_runtime) 에서 읽는다 (backend-aware helper).
     source_topic = _conv_load_topic(conn, source_id)
 
-    # 복사 대상 메시지 조회 (내부/시스템 메시지는 _conv_copy_messages 가 제외).
+    # 복사 대상 메시지 조회 (내부/시스템 메시지는 _conv_copy_messages 가 제외). [lower_id, upper_id] clip.
     try:
-        src_rows = _conv_load_messages_raw(conn, source_id, from_id)
+        src_rows = _conv_load_messages_raw(conn, source_id, upto_id=upper_id, from_id=lower_id)
     except Exception:
         return None, _json_error("failed to load source messages", 500)
+    # share-visibility-window: window 의 core(created_at) 경계 — clip 된 src_rows 에서 유도(발명 금지).
+    # core_messages(LLM 문맥) 와 첨부(WebConversationAttachments.CreatedAt) clip 에 공유.
+    _win_lower_ca = src_rows[0][3] if (lower_id is not None and src_rows) else None
+    _win_upper_ca = src_rows[-1][3] if (upper_id is not None and src_rows) else None
+    # REVIEW m1: window(하단/상단 경계) 활성인데 표시 행이 비어 있으면(경계 안 메세지 전부 삭제 등)
+    # created_at 경계가 None 으로 떨어져 core 를 무필터 전량 복사하던 폴백 봉인 — core 도 복사 안 함.
+    _win_bounded_empty = (lower_id is not None or upper_id is not None) and not src_rows
 
     # 원본 대화의 product_id / product_mode 조회 (없으면 기본 Product).
     # TASK-0052 Phase 1C G5 (Codex Claim 4 fork product_mode 복사 fix): product_mode 도 함께 조회하여 'auto' 보존.
@@ -12222,7 +12697,7 @@ def _fork_conversation_impl(
         return None, _json_error("failed to create forked conversation", 500)
 
     try:
-        copied = _conv_copy_messages(conn, new_cid, src_rows, source_id, from_id)
+        copied = _conv_copy_messages(conn, new_cid, src_rows, source_id, upper_id)
     except Exception:
         # 중간 실패 시 새 대화 기록을 정리하고 error 반환.
         try:
@@ -12240,8 +12715,13 @@ def _fork_conversation_impl(
     # 가 정규화한다(DESIGN §15 F1).
     core_copied = 0
     try:
-        core_cutoff = src_rows[-1][3] if (from_id is not None and src_rows) else None
-        src_core_rows = _conv_load_core_messages_raw(conn, source_id, core_cutoff)
+        # share-visibility-window: core(LLM 문맥)도 [lower, upper] 로 clip (공유 created_at 경계).
+        if _win_bounded_empty:
+            src_core_rows = []  # window 활성 + 표시 행 0 → core 무필터 복사 방지(REVIEW m1).
+        else:
+            src_core_rows = _conv_load_core_messages_raw(
+                conn, source_id, _win_upper_ca, from_created_at=_win_lower_ca
+            )
         core_copied = _conv_copy_core_messages(conn, new_cid, src_core_rows)
     except Exception:
         # core_messages 복사 실패 시 fork 를 통째로 정리하고 fail-loud — 문맥 없는 반쪽
@@ -12261,7 +12741,8 @@ def _fork_conversation_impl(
     reingest_specs: list[tuple[int, str, str]] = []
     try:
         att_copied, reingest_specs = _copy_conversation_attachments(
-            conn, source_id, new_cid, int(account["id"])
+            conn, source_id, new_cid, int(account["id"]),
+            window_lower_ca=_win_lower_ca, window_upper_ca=_win_upper_ca,
         )
     except Exception:
         logging.getLogger(__name__).warning(
@@ -12572,7 +13053,7 @@ def _share_load_active(conn, token: str) -> dict[str, Any] | None:
     try:
         cur.execute(
             """
-SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId,
+SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId, FloorMessageId,
        CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion, ExpiresAt,
        Joinable
 FROM WebConversationShares
@@ -12724,8 +13205,11 @@ def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, di
     return SHARE_POLICY_REDACT_TEXT, True, meta_clean
 
 
-def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
-    """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive).
+def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, floor_message_id: int | None = None, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
+    """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive, "여기까지 공유").
+
+    share-visibility-window: floor_message_id 가 주어지면 `Id >= floor` (inclusive, "여기부터 공유").
+    익명 공유 스냅샷은 hard window — 라이브 tail 병합 없음(익명 뷰어는 라이브 멤버 아님).
 
     fork 의 `_is_internal_message` 와 동일 필터를 적용해 내부/시스템 메시지를 숨긴다.
 
@@ -12735,7 +13219,7 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
     """
     # cutover 후 메시지는 PG(agent_runtime.messages) 에서 읽는다 (backend-aware helper).
     # 반환 행은 (id, role, content, created_at, meta_json) tuple. meta_json 은 PG 면 dict.
-    rows = _conv_load_messages_raw(conn, conversation_id, anchor_message_id)
+    rows = _conv_load_messages_raw(conn, conversation_id, anchor_message_id, from_id=floor_message_id)
     visible: list[dict[str, Any]] = []
     # R-F7: 정책 version 비교 — token 발급 시 version < 현재 면 자동 redact 대상.
     redact_active = (
@@ -12750,6 +13234,18 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
             json.dumps(meta_json) if isinstance(meta_json, dict) else None
         )
         if _is_internal_message(role, content, meta_str):
+            continue
+        # feature-0009 gc-join-notice: 멤버십 이벤트(참여 알림)는 대화 내부 멤버 전용 in-room
+        # 표식이다. anonymous 공유 스냅샷에는 노출하지 않는다(멤버 username 비노출 + share.js
+        # 는 pill 렌더 분기가 없어 정합성도 깨짐). in-room /api/history 경로에서만 pill 로 보인다.
+        _ev_meta = meta_json if isinstance(meta_json, dict) else None
+        if _ev_meta is None and isinstance(meta_json, str) and meta_json:
+            try:
+                _parsed_ev = json.loads(meta_json)
+                _ev_meta = _parsed_ev if isinstance(_parsed_ev, dict) else None
+            except Exception:
+                _ev_meta = None
+        if _ev_meta and _ev_meta.get("event_type"):
             continue
         meta_obj: Any = None
         if isinstance(meta_json, dict):
@@ -12847,6 +13343,85 @@ def _save_group_chat_message_pg(
         except Exception:
             logging.getLogger(__name__).warning(
                 "group chat display mirror failed (conversation_id=%s)", conversation_id, exc_info=True
+            )
+        try:
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE agent_runtime.core_conversations SET updated_at = now() WHERE conversation_id = %s",
+                    (conversation_id,),
+                )
+            pg_conn.commit()
+        except Exception:
+            pass
+        return int(mid or 0)
+    finally:
+        try:
+            pg_conn.close()
+        except Exception:
+            pass
+
+
+def _save_group_join_event_pg(
+    conversation_id: str, joined_account_id: int, joined_username: str | None = None
+) -> int:
+    """feature-0009 gc-join-notice: 공유 링크로 **새 멤버가 참여**했을 때 대화 안에
+    '참여 알림' 이벤트 메시지를 남겨 대화 내부의 (기존) 멤버에게 참가 사실을 전파한다.
+
+    `_save_group_chat_message_pg` 와 동일한 **이중 기록** 패턴 — 두 store 의 역할이 다르다:
+      - core_messages(role=user, name=EVENT_MESSAGE_NAME, sender_account_id=가입자): unread
+        배지 집계(role IN ('user','assistant') + `sender_account_id IS DISTINCT FROM self`)에는
+        포함되나, name sentinel 로 **LLM 대화 히스토리에서는 배제**된다(agent_core
+        _normalize_history_rows). 이벤트 문장을 발신자 라벨 붙은 user 턴으로 LLM 에 주입하지
+        않기 위함(§18.8 BLOCKING). sender=가입자라 **가입자 본인은 자기 참여를 unread 로 받지
+        않고**(IS DISTINCT FROM self = false), 기존 멤버만 +1 로 집계된다.
+      - messages(표시 store, /api/history 가 primary 로 읽음): meta_json 에
+        `event_type='member_joined'` 를 담아 프론트가 좌/우 말풍선이 아닌 **가운데 정렬
+        시스템 pill** 로 렌더하게 한다.
+
+    best-effort — 이벤트 기록이 실패해도 join 자체(멤버는 이미 add_member 로 추가됨)를 무르지
+    않는다(호출부가 예외를 무시). returns core message_id(0=실패).
+    """
+    from modules.runtime_backend import (
+        _get_pg_runtime_backend,
+        _get_pg_runtime_conn,
+        EVENT_MESSAGE_NAME,
+    )
+    name = str(joined_username or "").strip() or f"계정 {int(joined_account_id)}"
+    content = f"{name}님이 대화에 참여했습니다."
+    pg_conn = _get_pg_runtime_conn()
+    if not pg_conn:
+        return 0
+    try:
+        be = _get_pg_runtime_backend()
+        # core_messages: unread 집계(role IN user/assistant)용으로 role='user' 기록. sender=가입자
+        # → 가입자 본인 제외 + 기존 멤버 +1 이 sender 규칙만으로 성립. name=EVENT_MESSAGE_NAME
+        # sentinel 로 LLM 히스토리 조립에서는 배제된다(agent_core _normalize_history_rows).
+        mid = be.save_core_message(
+            pg_conn,
+            conversation_id=conversation_id,
+            role="user",
+            content=content,
+            name=EVENT_MESSAGE_NAME,
+            sender_account_id=int(joined_account_id),
+        )
+        # 표시 store 미러 — event_type 으로 프론트 pill 렌더 유도(role='system' 은
+        # _is_internal_message 를 통과하며 표시 store 읽기에 role 필터가 없어 그대로 노출된다).
+        try:
+            meta = json.dumps(
+                {
+                    "event_type": "member_joined",
+                    "sender_account_id": int(joined_account_id),
+                    "sender_username": name,
+                    "group_chat": True,
+                },
+                ensure_ascii=False,
+            )
+            be.save_memory_message(
+                pg_conn, conversation_id=conversation_id, role="system", content=content, meta_json=meta
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "group join event display mirror failed (conversation_id=%s)", conversation_id, exc_info=True
             )
         try:
             with pg_conn.cursor() as cur:
@@ -14556,7 +15131,19 @@ def _autonomous_generate_product_prompt(product_id: int) -> dict:
 
     # 2) LLM 호출 (동기 — sweep 은 daemon thread 컨텍스트라 이벤트 루프 블로킹 없음).
     try:
+        _aiops_t0 = time.perf_counter_ns()
         resp = ctx["openai_client"].chat.completions.create(**ctx["create_kwargs"])
+        # AI 운영 관제 계측(TASK-AIOPS): daemon thread 라 그대로 기록(이벤트 루프 무영향).
+        # system actor → conversation_id=None 명시(cfg 전역 race 차단).
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                str(ctx.get("llm_model") or ""), "prompt_gen", resp,
+                conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+            )
+        except Exception:
+            pass
         choice = resp.choices[0]
         generated = (choice.message.content or "").strip()
         truncated = getattr(choice, "finish_reason", None) == "length"
@@ -16308,10 +16895,25 @@ async def _prompt_generate_json_response(ctx: dict, *, log_label: str, log_ctx: 
     """
     openai_client = ctx["openai_client"]
     create_kwargs = ctx["create_kwargs"]
+    _aiops_model = str(ctx.get("llm_model") or "")
+
+    def _aiops_create_and_record():
+        # AI 운영 관제 계측(TASK-AIOPS): create + 회계를 둘 다 executor 스레드에서 실행 →
+        # uvicorn 이벤트 루프에서 동기 PG I/O 금지. 순수 API 왕복 지연만 측정.
+        _t0 = time.perf_counter_ns()
+        r = openai_client.chat.completions.create(**create_kwargs)
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                _aiops_model, "prompt_gen", r, conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _t0) // 1_000_000),
+            )
+        except Exception:
+            pass
+        return r
+
     try:
-        resp = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: openai_client.chat.completions.create(**create_kwargs)
-        )
+        resp = await asyncio.get_event_loop().run_in_executor(None, _aiops_create_and_record)
         choice = resp.choices[0]
         generated = choice.message.content or ""
         # TASK-0232: max_tokens 도달로 본문이 잘렸는지 명시 검출 — 조용한 잘림 방지.
@@ -16359,9 +16961,29 @@ def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str)
                     loop.call_soon_threadsafe(q.put_nowait, item)
                 except Exception:
                     pass
+            # AI 운영 관제 계측(TASK-AIOPS): usage 는 choices=[] 인 마지막 청크로 오므로
+            # include_usage 로 요청하고 choices 가드 앞에서 선포착 → 스트림 완료 후 1회 기록.
+            # produce() 는 executor 스레드에서 도므로 회계 PG I/O 가 이벤트 루프를 막지 않는다.
+            _aiops_t0 = time.perf_counter_ns()
+            _aiops_usage = None
+            _aiops_served = None
             try:
-                stream = openai_client.chat.completions.create(**create_kwargs, stream=True)
+                try:
+                    stream = openai_client.chat.completions.create(
+                        **create_kwargs, stream=True, stream_options={"include_usage": True}
+                    )
+                except Exception:
+                    # AI 운영 관제 계측: stream_options(include_usage)를 거부하는 SDK/게이트웨이
+                    # (TypeError 또는 400)로부터 프롬프트 자동작성 스트리밍 기능을 보전 — 계측만 포기하고
+                    # stream_options 없이 재시도. 재시도도 실패하면 외곽 except 가 SSE error 로 전달.
+                    stream = openai_client.chat.completions.create(**create_kwargs, stream=True)
                 for chunk in stream:
+                    u = getattr(chunk, "usage", None)
+                    if u is not None:
+                        _aiops_usage = u
+                        _rm = getattr(chunk, "model", None)
+                        if _rm:
+                            _aiops_served = _rm
                     if not getattr(chunk, "choices", None):
                         continue
                     ch = chunk.choices[0]
@@ -16374,6 +16996,21 @@ def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str)
             except Exception as e:  # noqa: BLE001 — 어떤 LLM 오류든 SSE error 로 전달
                 _emit(("error", str(e)))
             finally:
+                # include_usage 미지원 provider 는 _aiops_usage=None → 기록 스킵(정직 폴백).
+                if _aiops_usage is not None:
+                    try:
+                        from modules.llm import _record_llm_usage
+                        from types import SimpleNamespace
+                        _shim = SimpleNamespace(
+                            usage=_aiops_usage,
+                            model=_aiops_served or str(llm_model or ""),
+                        )
+                        _record_llm_usage(
+                            str(llm_model or ""), "prompt_gen", _shim, conversation_id=None,
+                            latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+                        )
+                    except Exception:
+                        pass
                 _emit(("__end__", SENTINEL))
 
         # 진행 단계 표면화(수집은 이미 끝났으므로 즉시 generating 으로). 사용자에게 "멈춤 아님" 신호.
@@ -16884,6 +17521,29 @@ def build_audit_change_json(
             {
                 "method": request_ctx.get("method"),
                 "remote_addr_present": bool(request_ctx.get("remote_addr")),
+            },
+            [],
+        )
+    # feature-0018 runtime-settings: 실행 타임아웃·모델별 추론 예산 설정 변경/초기화 audit.
+    # 값은 운영 튜닝 파라미터(비민감) — masked_fields 없음. before/after(value)는 caller 가 전달하나
+    # 본 builder 는 request_ctx 기반으로 요약(선례 정합). PB-0008 라이브 검증에서 미등록 raise 로
+    # write 경로가 fail-closed(audit 실패→rollback) 된 것을 적발해 등록(Codex C6 allowlist 준수).
+    if action == "system.runtime.update":
+        # previous_value: caller 가 캡처한 직전 override 값(before)을 감사에 보존한다(포렌식 —
+        # "무엇에서 무엇으로 바뀌었나"). override 없던 상태면 None.
+        return (
+            {
+                "setting_key": request_ctx.get("key"),
+                "value": request_ctx.get("value"),
+                "previous_value": (before or {}).get("value"),
+            },
+            [],
+        )
+    if action == "system.runtime.reset":
+        return (
+            {
+                "setting_key": request_ctx.get("key"),
+                "previous_value": (before or {}).get("value"),
             },
             [],
         )
@@ -17971,6 +18631,7 @@ def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
     """
     from modules.tools import _safe_ident as _safe_ident_fn
     from modules import schema as _schema
+    from shared.config import normalize_db_label as _norm_db_label   # §58: store label lower 계약
     dialect = _dialects.active()
     sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
     real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
@@ -18013,7 +18674,13 @@ def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
                 cols = []  # 단일 테이블 introspection 실패는 건너뜀(부분 골격 허용)
             finally:
                 ccur.close()
-            out.append({"schema_name": db_name, "table_name": tname, "columns": cols})
+            # §58(테이블축 케이스 정합): MSSQL 저장 schema_name(=DB명 라벨)은 set_active_database
+            #   (TASK-0220)·routine backfill(§56 RC5)과 동일한 lower 계약 — sys.databases 원본 케이스를
+            #   무가공 저장하면 cadence(lower) 축과 케이스-변형 이중 적재(라이브 실측 'AccountDB' 33행
+            #   + AGE 중복 스키마 카드)가 생긴다. MSSQL 전용 함수라 MySQL 케이스 보존은 자동 충족.
+            #   (질의 식별자는 sql_schema/tname — db_name 은 연결 바인딩 후 질의에 미사용.)
+            out.append({"schema_name": _norm_db_label(db_name) or db_name,
+                        "table_name": tname, "columns": cols})
     return out
 
 
@@ -18048,12 +18715,12 @@ _METADATA_SUGGEST_REQUIRES = {
     "samples": ["sql"],
 }
 
-# 서버측 서브뷰별 RBAC — admin.js _METADATA_SUBTAB_PERM 과 동치. samples 만 kb.sample.curate.
+# 서버측 서브뷰별 RBAC — admin.js _METADATA_SUBTAB_PERM 과 동치. graph-panel-perms(task4): 기능별 세부 권한으로 분리.
 _METADATA_SUBTAB_PERM_SERVER = {
-    "glossary": "kb.ingest.manual",
-    "enums": "kb.ingest.manual",
-    "tables": "kb.ingest.manual",
-    "columns": "kb.ingest.manual",
+    "glossary": "metadata.glossary.manage",
+    "enums": "metadata.enum.manage",
+    "tables": "metadata.table.manage",
+    "columns": "metadata.column.manage",
     "samples": "kb.sample.curate",
 }
 
@@ -18112,12 +18779,17 @@ def _metadata_introspect_table(datasource_key: str, schema_name: str, table_name
             # 시스템 DB 제외 allowlist 로 검증 → 해당 DB 로 연결 → 비시스템 SQL 스키마에서 테이블 컬럼 탐색.
             dialect0 = _dialects.active()
             sys_db = {str(n).strip().lower() for n in dialect0.system_databases()}
-            db_units = {str(n) for n in (_db.list_server_databases(ds) or [])
-                        if str(n).strip().lower() not in sys_db}
+            # §58(적대 리뷰 MAJOR): 저장 라벨이 lower 계약(normalize_db_label)으로 바뀌었으므로
+            #   allowlist 를 lower→원본 매핑으로 case-insensitive 매치하고 **연결은 원본 케이스**로
+            #   한다(kb_metadata 의 LOWER 매칭 계약과 동형). 케이스-정확 set 이면 lower 라벨의
+            #   membership 이 항상 실패해 grounding 이 무음 파괴된다(CS collation 서버 안전 겸비).
+            db_map = {str(n).strip().lower(): str(n) for n in (_db.list_server_databases(ds) or [])
+                      if str(n).strip().lower() not in sys_db}
             safe_db = _safe_ident_fn(schema_name)
-            if safe_db not in db_units:
+            real_db = db_map.get(str(safe_db).strip().lower())
+            if not real_db:
                 return None
-            conn = _db.connect(datasource=ds, database=safe_db, autocommit=True)
+            conn = _db.connect(datasource=ds, database=real_db, autocommit=True)
             dialect = _dialects.active()
             sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
             real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
@@ -18339,10 +19011,24 @@ async def _metadata_llm_complete(messages: list, *, task: str = "summary", tempe
         create_kwargs["max_tokens"] = mt
     if model_supports_temperature(llm_model):
         create_kwargs["temperature"] = temperature
+
+    def _aiops_create_and_record():
+        # AI 운영 관제 계측(TASK-AIOPS): create + 회계를 executor 스레드에서 함께 실행(이벤트 루프 무영향).
+        # task 는 reasoning 'summary' 와 구분되게 metadata_ 접두(taxonomy: ai.metadata.autocomplete).
+        _t0 = time.perf_counter_ns()
+        r = client.chat.completions.create(**create_kwargs)
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                str(llm_model or ""), f"metadata_{task}", r, conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _t0) // 1_000_000),
+            )
+        except Exception:
+            pass
+        return r
+
     try:
-        resp = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: client.chat.completions.create(**create_kwargs)
-        )
+        resp = await asyncio.get_event_loop().run_in_executor(None, _aiops_create_and_record)
         choice = resp.choices[0]
         text = (choice.message.content or "").strip()
         truncated = getattr(choice, "finish_reason", None) == "length"
@@ -18381,6 +19067,8 @@ _DASHBOARD_WIDGETS: tuple[dict, ...] = (
     # 본인 스코프(_dash_widget_* 의 scope 인자). cross-account 는 `.any` 전용. 가시성=둘 중 하나.
     {"key": "conversations", "title": "대화·활동",    "permission": ["conversation.list.own", "conversation.list.any"], "source": "server"},
     {"key": "usage",         "title": "LLM 사용량",   "permission": "console.usage.read",               "source": "server"},
+    # TASK-AIOPS: AI 운영 상태 요약 타일 → 클릭 시 AI 운영 현황 탭(tab='ai-ops') deep-link.
+    {"key": "ai_ops",        "title": "AI 상태",      "permission": "console.aiops.read",               "source": "server"},
     {"key": "audits",        "title": "감사 활동",    "permission": ["audit.read.own", "audit.read.any"], "source": "server"},
     {"key": "grant_health",  "title": "첨부 DB 권한", "permission": "console.access",                   "source": "client"},
     {"key": "accounts",      "title": "계정",         "permission": "account.read",                     "source": "server"},
@@ -18480,6 +19168,75 @@ def _save_dashboard_pref_row(conn, account_id: int, content: dict) -> None:
             cur.close()
         except Exception:
             pass
+
+
+# ── feature-0018: 런타임 설정(WebRuntimeSettings KV) 접근 + 스냅샷 전파 ─────────
+def _load_runtime_setting_overrides(conn) -> dict[str, int]:
+    """WebRuntimeSettings 의 모든 override 를 {key: int} 로 로드. 실패/부재는 {} (fail-open).
+
+    등록 스펙에 없는 키·정수 아님·범위 밖 값은 조용히 제외한다(방어적 — 스냅샷 오염 방지)."""
+    result: dict[str, int] = {}
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT SettingKey, SettingValue FROM WebRuntimeSettings")
+        rows = cur.fetchall()
+    except Exception:
+        return {}
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    for key, raw in rows or []:
+        ok, val, _err = _runtime_settings.validate_value(str(key), raw)
+        if ok and val is not None:
+            result[str(key)] = int(val)
+    return result
+
+
+def _save_runtime_setting(conn, key: str, value: int, account_id: int | None) -> None:
+    """단일 override upsert. 값은 반드시 호출측에서 validate_value 로 검증한 정수여야 한다."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO WebRuntimeSettings (SettingKey, SettingValue, UpdatedByAccountId) "
+            "VALUES (%s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE SettingValue = VALUES(SettingValue), "
+            "UpdatedByAccountId = VALUES(UpdatedByAccountId)",
+            (str(key), str(int(value)), int(account_id) if account_id else None),
+        )
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+
+def _delete_runtime_setting(conn, key: str) -> None:
+    """override 삭제(기본값으로 초기화)."""
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM WebRuntimeSettings WHERE SettingKey = %s", (str(key),))
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+
+def _reconcile_runtime_settings_snapshot(conn) -> None:
+    """DB override 를 공유 볼륨 스냅샷으로 재작성(best-effort). endpoint PUT 후 + web 기동 시 호출.
+
+    스냅샷 쓰기 실패(공유 볼륨 부재 등)는 로깅만 하고 삼킨다 — DB 가 진실원본이며, 소비처는
+    스냅샷 부재 시 기본값으로 fail-open 한다.
+    """
+    try:
+        overrides = _load_runtime_setting_overrides(conn)
+        _runtime_settings.write_snapshot(overrides)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "runtime-settings snapshot reconcile failed", exc_info=True
+        )
 
 
 # ── 위젯별 집계 (각 함수는 예외를 던질 수 있으며 overview 호출부가 격리) ──────
@@ -18801,6 +19558,40 @@ def _dash_widget_usage(pg, days: int) -> dict:
     }
 
 
+def _dash_widget_ai_ops(conn) -> dict:
+    """TASK-AIOPS: 대시보드 'AI 상태' 요약 타일 — 상태 배너(정상/저하/중단) + 워커/provider 요약.
+    클릭 → AI 운영 현황 탭 deep-link(tab='ai-ops'). 상세(활동·비용·지연·카테고리 드릴다운)는 패널에서.
+
+    상태 축 로직은 routers.ai_ops 를 재사용한다(request 시 lazy import — app↔routers 순환 회피).
+    각 축 헬퍼가 provider/datasource PG 를 자체 RO 연결로 읽고 worker 는 conn(heartbeat)으로 읽어,
+    한 축의 실패가 타 축에 전파되지 않는다(_isolate 위젯 격리 + 축별 try/except 이중 방어)."""
+    from routers.ai_ops import (
+        _provider_axis, _ask_worker_axis, _insight_worker_axis, _datasource_axis,
+        _SEV, _SEV_LABEL,
+    )
+    axes = [_provider_axis(), _ask_worker_axis(conn), _insight_worker_axis(conn), _datasource_axis()]
+    rolled = [a for a in axes if a["state"] != "na"]
+    banner_state = "ok"
+    for a in rolled:
+        if _SEV.get(a["state"], 0) > _SEV.get(banner_state, 0):
+            banner_state = a["state"]
+    sentiment = {"ok": "good", "unknown": "warn", "degraded": "bad", "down": "bad"}.get(banner_state, "warn")
+    workers_ok = sum(1 for a in (axes[1], axes[2]) if a["state"] == "ok")
+    workers_total = sum(1 for a in (axes[1], axes[2]) if a["state"] != "na")
+    return {
+        "tab": "ai-ops",
+        "metrics": [
+            {"label": "종합 상태", "value": _SEV_LABEL.get(banner_state, banner_state),
+             "primary": True, "sentiment": sentiment},
+            {"label": "워커 정상", "value": f"{workers_ok}/{workers_total}"},
+            {"label": "LLM 제공자", "value": _SEV_LABEL.get(axes[0]["state"], axes[0]["state"])},
+        ],
+        "lists": [{"title": "상태 축", "rows": [
+            {"label": a["label"], "value": _SEV_LABEL.get(a["state"], a["state"])} for a in axes
+        ]}],
+    }
+
+
 # feature-0012 P5b Final: admin_overview 는 src/routers/admin_console.py 로 추출(맨 끝 include_router).
 
 
@@ -18915,3 +19706,11 @@ app.include_router(_auth_router)
 # feature-0012 P5b: admin_products router (맨 끝 — 순환 안전)
 from routers.admin_products import router as _admin_products_router  # noqa: E402
 app.include_router(_admin_products_router)
+
+# TASK-AIOPS: AI 운영 관제 패널 API (GET /api/admin/ai-ops, 권한 console.aiops.read).
+from routers.ai_ops import router as _ai_ops_router  # noqa: E402
+app.include_router(_ai_ops_router)
+
+# feature-0018: 런타임 설정 API (실행 타임아웃·모델 추론 예산, 권한 system.runtime.read/write).
+from routers.admin_settings import router as _admin_settings_router  # noqa: E402
+app.include_router(_admin_settings_router)

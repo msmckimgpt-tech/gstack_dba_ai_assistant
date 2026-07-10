@@ -37,6 +37,12 @@ sources:
 
 > **2026-06 확장 (§2.5)**: 관리 콘솔이 **데이터소스 CRUD + DB-단위 접근 + 대시보드 위젯/CloudWatch + LLM 사용량 대시보드 + 제품 insight 완료율**까지 포괄하도록 성장. agent 실행은 **ask-worker out-of-process 큐**로 cutover (orphan-on-redeploy 제거). 요청 중단·즉시 재요청, 프롬프트 자동작성 SSE 스트리밍 추가.
 
+> **2026-07-02 확장 (§2.6)**: **AI 운영 관제 패널**(`/api/admin/ai-ops` 신규 admin 화면 + LLM 계측 확장·main agent latency·최근 활동 cursor 페이징) 추가. 감사 화면 정리(카테고리 순서·툴팁·최근활동 상세 확장), 메타데이터(지식베이스) 권한 종속관계 그룹 게이트 계층화, 최근활동 sentinel 대화 링크·첨부 개수 배지 stale 수정.
+
+> **2026-07-03~07 확장 (§2.7)**: **대화 화면 사용자 지정 추론 강도**(낮음/일반/높음/매우 높음, composer '+' 메뉴·대화별 영구 저장) · **데이터소스 상세 평균 연결 응답 시간** · **AI 운영 현황 지연 KPI 재정의**(호출 전체 왕복 → 단계 간 간격) · **말풍선 ☰ 메뉴 통합**(액션 3종+'AI 로 고치기', 피드백 👍/👎만 외부) + share-visibility-window 공유 범위 UI(정본 feature-0009) · **(07-07)** 관리 콘솔 시스템>설정 **런타임 설정**(실행 타임아웃·모델별 추론 예산 조정·저장·live/restart 반영, feature-0018 코드 거주).
+
+> **2026-07-08 확장 (§2.8)**: **메타데이터 콘솔 UX·폴리시** — 검토/검수 큐 행 클릭→우측 read-only 상세 패널(선택 불가 해소)·ENUM 그룹 "+코드 추가" pre-fill·샘플 검수 큐 mermaid 렌더·좌측 목록 가독성 + 디자인 폴리시 5건(필 위계·nesting·배지 accent). **제품 분류 AI 제안 승인 UI**(제품 관리 "✨ AI 분류 제안" 블록·승인/거부, 정본 feature-0016 §59).
+
 ## 2. 상세
 
 ### 2.1 책임 경계
@@ -97,6 +103,38 @@ sources:
 | **제품 아이콘 편집 ✎ 오버레이** | 제품 아이콘 hover 시 편집 오버레이 (PB-0008 PASS) | TASK-0283 |
 | **fork = hybrid deep-copy** | pure git-lineage 반려(F1~F6) → `core_messages` deep-copy snapshot | ADR-WEB-0005 (TASK-0170) |
 | **진입점 없는 기능 복구** | 즉시답변·공유관리·audit.purge·내활동·facet 등 7개 발굴·구성 | TASK-0158 (DESIGN-entry-points) |
+
+### 2.6 AI 운영 관제 + 감사 UX + 권한 계층화 (2026-07-02)
+
+| 영역 | 내용 | 관련 |
+|---|---|---|
+| **AI 운영 관제 패널 (신규)** | `/api/admin/ai-ops` — LLM 계측 확장 + AI 운영 현황(관제) admin 화면. main agent latency 계측 | TASK §20 (aiops-panel) |
+| **최근 활동 cursor 페이징** | AI 운영 현황 '최근 활동' 더 보기(cursor 페이징) + pane 세로 스크롤 | aiops-activity-paging · aiops-scroll |
+| **감사 화면 정리** | 감사 카테고리 순서 재구성 + 항목 툴팁 + 최근활동 클릭 상세 확장 | audit-nav-ux |
+| **최근활동 conv 링크 fix** | 최근 활동 시스템 sentinel 대화 링크 깨짐 수정 | aiops-conv-link-fix (feature-0003) |
+| **메타데이터 권한 종속관계 계층화** | 메타데이터(지식베이스) 권한 묶음을 그룹 게이트로 계층화 — 종속관계 정합화 | metadata-perm-hier · SECURITY §19 |
+| **첨부 개수 배지 stale fix** | "+" 메뉴 첨부 개수 배지가 대화 전환 후 stale 하던 것 수정(scope) | attach-count-scope (work/chat) |
+
+### 2.7 추론 강도 · 관측 KPI · 말풍선 메뉴 · 런타임 설정 (2026-07-03~07)
+
+| 영역 | 내용 | 관련 |
+|---|---|---|
+| **사용자 지정 추론 강도** | 대화 화면 composer '+' 메뉴 "추론 강도" 4단계(낮음/일반/높음/매우 높음, 끄기 없음)·**대화별 영구 저장**(KV)·비-thinking 모델 비활성. `/api/ask` 가 명시 레벨을 요청 단위 `extra_body.thinking.budget_tokens` 로 override(일반=no-override=alias 기본), litellm_config 무변경. cross-unit(feature-0002 `_call_llm`·`shared/model_catalog`) | TASK-20260706T013532-reasoning-effort (Major) |
+| **데이터소스 상세 평균 연결 응답 시간** | 관리 콘솔 데이터소스 상세 "연결 상태" 섹션에 연결 응답 시간(평균, 최근 N회)+순간값+마지막 확인. 표본 없으면 "측정 중". cross-unit(`shared/conn_health`) | TASK-20260703T085511-ds-avg-latency (Major, PB-0008 PASS) |
+| **AI 운영 지연 KPI 재정의** | AI 운영 현황 "지연 p95" 를 호출 전체 왕복(생성 포함, 답변 길이 비례) → **추론 단계 간 간격** p50/p95 로 재정의(사용자 기준 정합). activity 상세 latency_ms="왕복" 병기. cross-unit(feature-0002 `agent_core._call_llm` 계측) | aiops-stepgap (TASK-20260703-aiops-ttft-latency, Major) |
+| **말풍선 ☰ 메뉴 통합** | 말풍선 액션(샘플 등록·여기서 분기·여기까지/여기부터 공유·'AI 로 고치기')을 kebab ☰ 메뉴로 통합, 피드백 👍/👎만 메뉴 밖 유지. share-visibility-window 공유 범위(여기부터) UI 동반 | [[feature-0009-group-conversation]] (정본, TASK-20260704-share-visibility-window) |
+| **런타임 설정 콘솔 (2026-07-07)** | 관리 콘솔 시스템>설정 pane 2 에 assistant 운영 값(실행 타임아웃·MCP 타임아웃·모델별 추론 예산) 조정·저장·live/restart 하이브리드 반영. `WebRuntimeSettings` 테이블 + `routers/admin_settings.py`(GET/PUT/DELETE, `system.runtime.read/write` RBAC+audit, autocommit=False 원자화). resolver 는 env-fallback 으로 배포 `.env` 존중(override 없으면 byte-동치). cross-unit(feature-0018 코드 거주 — `shared/runtime_settings.py`·feature-0002 live 배선) | TASK-20260706T094937-runtime-settings (feature-0018, Major, PB-0008 PASS) |
+| **지식베이스 채택 인박스 + ENUM 대화 자율수집 (2026-07-07)** | 대화 후보수집(용어사전+ENUM)을 통합 '채택 인박스'로 재구성 — 용어사전(0021/0023) 대칭 ENUM 코드사전 신설(신뢰도/상태별 그룹 카드·개별/일괄 채택·거부·되돌리기·사이드바 pending 배지), 권한 `kb.enum.curate`. cross-unit(feature-0002 `kb_glossary`·`_enum_autopropose`·`llm_enum_suggest`·alembic 0039 비파괴) | TASK-20260707-kb-candidate-adoption |
+| **메타데이터 콘솔 IA 통합 (2026-07-07)** | 채택 인박스·샘플 검수 최상위 탭을 각 사전 하위 {목록\|검토/검수 큐} 2차 보기로 통합(2차 보기 파라미터화 `_METADATA_REVIEW`/`viewBySub`/`_metaSyncViews`) + 5서브뷰 디자인 폴리시(`--surface-2` 토큰·rich empty/skeleton·테이블 카드 그룹핑·폼 grid+인라인검증·SQL 프리뷰·배지 semantic 토큰·이모지 제거+KPI). UI 단독·백엔드/RBAC 정의 0 | TASK-20260707-metadata-console-redesign |
+| **추론 강도별 예산 + 런타임 pane 재설계 (2026-07-07)** | 런타임 설정에 모델별 예산과 별개로 추론 강도(낮음/높음/매우 높음)별 `reasoning_budget` 축 추가(cross-unit feature-0002 `_call_llm` 명시레벨 override·'일반'=no-override) + pane UI 정렬 grid + commit-bar 배치 저장(기능 불변) | feature-0018 (d9516aee·a2fe4103) |
+
+### 2.8 메타데이터 콘솔 UX·폴리시 + 제품 분류 승인 UI (2026-07-08)
+
+| 영역 | 내용 | 관련 |
+|---|---|---|
+| **메타데이터 콘솔 UX 4건** | ① list 컬럼 폭 확대+행 가독성(line-height/padding) ② 검토/검수 큐 후보 행(용어·ENUM feedback·샘플)을 `role=button` 클릭→우측 `#metadataReviewDetail` **read-only 상세**(전체 정의/질문·SQL/다이어그램·신뢰도/scope/status + 승급/거부·승인/거부) — '선택 불가' 근본 해소 ③ ENUM 그룹 카드 "+코드 추가" pre-fill 생성 폼 ④ 샘플 검수 큐 `generated_sql` mermaid 를 공용 `mermaid-render.js`(strict) 다이어그램 렌더. UI 단독·백엔드 0 | TASK-20260708-metadata-console-ux2 (Major) |
+| **메타데이터 콘솔 디자인 폴리시 5건** | PB-0008 적대 미적 검증에서 도출 — 2차 보기 필 위계 역전(borderless chip)·list-detail 균형(목록 300~400px)·그룹 카드 nesting divider 평탄화·반복 timestamp 경량+그룹 내 숨김·신뢰도 배지 accent 분리. 순수 CSS+배지 클래스 1개(로직/구조 0) | TASK-20260708-metadata-console-polish (Minor) |
+| **제품 분류 AI 제안 승인 UI** | 제품 관리 접근DB 규칙 화면 "✨ AI 분류 제안" 블록 — orphan_pending(RuleId NULL·`ai_suggest:<conf>`) 신뢰도 표기 + 승인(Source='ai')/거부 즉시 실행. 승인 경로 `admin_products` ai-suggestions/approve·/reject(감사·이름/제외DB 검증 미러). 정본=feature-0016 §59/ADR-025 (분류 엔진 코드 거주 feature-0002) | TASK §59 (product-classify-suggest) |
 
 ## 3. 특징
 

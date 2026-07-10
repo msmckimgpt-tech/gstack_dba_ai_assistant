@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: plan-approved → Phase A 진입 가능
+- State: Phase K 완료 (TASK-K7 사후 관찰 대기) — 원 Phase A~J 는 완료/PR 머지 완료
 - Owner: AI (Claude)
 - Priority: medium-high (배포 전 인프라 변경)
-- Last Updated: 2026-05-21
+- Last Updated: 2026-07-07
 
 ## 2. Implementation Plan
 <!-- §7.1 Plan-Review-Execute: 비사소한 작업 (2개 이상 파일 변경) 시 작성한다.
@@ -275,22 +275,51 @@ confirm 유지. Plan 내용 수정 요청 시 본 마커를 revoke 하고 plan �
       force-recreate. 게이트웨이 토큰 == root (≠ claude-corp), health=healthy,
       root 토큰 만료 여유 ~5h (root VSCode Claude Code refresh 주체, cron 30분 재주입).
 
+### Phase K — cron-static-refresh: 라이브 probe 제거 + 정적 검사 전환 (CHG-20260707-oauth-cron-static-refresh)
+- [x] TASK-K1 `bin/refresh-claude-oauth-token.sh` 재설계 — `live_probe()` +
+      `CLAUDE_OAUTH_PROBE*` env var 전면 제거, `select_account()` 를
+      static_check() 단독 판정으로 전환. 헤더 주석 재작성.
+- [x] TASK-K2 로그 기반 관측 함수 `log_fallback_observability()` 신설 —
+      `docker compose logs --since $CLAUDE_OAUTH_OBS_WINDOW` 로 RateLimitError/
+      AuthenticationError 건수 집계(0건이면 무음).
+- [x] TASK-K3 litellm `router.py` 소스 검증 — 401/429 모두 예외 타입 무관하게
+      fallback 경로를 타는지 게이트웨이 컨테이너 내부에서 직접 확인 (PASS).
+- [x] TASK-K4 claude-corp 자동 복귀 동작 무변경 검증 — 자격증명 파일 유효한
+      한 매 실행 1순위 주입되므로 probe 여부와 무관하게 유지됨을 확인.
+- [x] TASK-K5 host `root` crontab 정리 — stale 2026-07-02 주석 블록 제거(무관한
+      backup/metadata-graph-sync 항목 사이에 방치돼 있던 것) + 이력 재작성.
+      백업 `/tmp/crontab-root-backup-20260707112835.txt`.
+- [x] TASK-K6 검증 — `bash -n` PASS, `--check` 정상 동작(라이브 호출 없음),
+      `docker` 미가용 PATH 에서도 fail-open 완주 확인, 관측 함수 합성 로그
+      단위 검증.
+- [ ] TASK-K7 (사후, 1~2일) `session-keepalive-cron.sh` 가 다시 그 날의 첫
+      실호출이 되어 세션 윈도우 앵커 역할을 하는지 실 로그로 확인 — 실 경과
+      시간 필요, 후속 세션/사용자 위임.
+
 ## 4. In Progress
-- 없음 (Phase A 진입 직전 정지 상태 — 다음 turn 의 user 지시로 시작).
+- 없음 (Phase K 코드/설정 변경 완료 — TASK-K7 사후 관찰만 대기).
 
 ## 5. Blocked
 - 없음.
 
 ## 6. Done
+- [x] **cron-static-refresh** (2026-07-07): `refresh-claude-oauth-token.sh` 의 24/7 라이브
+  probe 가 claude-corp 세션 윈도우를 오염시키던 원인 제거 — static_check() 단독 판정 전환 +
+  로그 기반 무비용 관측 신설 + stale crontab 주석 정리. litellm 401/429 fallback 을
+  router.py 코드 검증. (CHG-20260707-oauth-cron-static-refresh / REV-20260707T112800-oauth-cron-static-refresh)
 - TASK-A0: Plan 작성 + ANCHOR §1~§3 작성 + PLAN-APPROVED 마커 부여 완료
   (2026-05-21).
+- [x] **insight-llm-fallback** (2026-07-03, TASK-0308 후속): insight LLM(claude-haiku-4)의 claude-corp
+  burst 429 대응 — litellm 요청-레벨 fallback(claude-corp → root Max → edge/gemma) + refresh 병행 주입.
+  litellm_config 3-deployment + fallbacks, refresh 두 slot(ANTHROPIC_API_KEY/ANTHROPIC_API_KEY_ROOT) 주입.
+  검증: YAML/bash -n OK, --check(corp 200/root 200) PASS, 적대 패널, ANCHOR §1·§2 무충돌.
+  (CHG-20260703-insight-llm-fallback / REV-20260703T101500-insight-llm-fallback)
 
 ## 7. Next Action
-- AI: 다음 turn 의 사용자 지시 (또는 `/goal` 연장) 에 따라 Phase A1 (`litellm_config.yaml`
-  작성) 부터 순차 진행. Phase B/C 는 backend 우선 (frontend 가 backend 응답을
-  받아야 검증 가능).
-- 사용자: Plan 내용 수정 의향이 있으면 본 §2.1 변경 + PLAN-APPROVED 마커 revoke
-  지시. 그 외의 경우 다음 turn 에서 작업 개시 명령 (또는 자율 진행 위임).
+- AI: verify-completion --pre-commit 통과 후 commit + push (§16.3). PR 생성은
+  외부 영향 행동 — 사용자 confirm 후 진행.
+- 사용자: PR 생성/머지 confirm. TASK-K7 (session-keepalive 앵커 복원 확인)은
+  1~2일 후 실 로그 기반으로 후속 세션에서 확인.
 
 ## 8. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다

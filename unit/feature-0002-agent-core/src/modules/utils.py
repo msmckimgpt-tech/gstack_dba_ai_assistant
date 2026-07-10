@@ -829,6 +829,8 @@ def _format_schema_insight_text(
     domain = str(insight.get("domain") or insight.get("domain_guess") or "").strip()
     summary = str(insight.get("summary") or "").strip()
     key_cols = insight.get("key_columns") or []
+    if not isinstance(key_cols, (list, tuple)):   # 방어(리뷰 P2): non-시퀀스 key_columns 로 인한 TypeError 차단
+        key_cols = []
     ordered_cols: list[str] = []
     seen_cols: set[str] = set()
     for raw in col_names or []:
@@ -873,6 +875,11 @@ def _format_table_insight_text(
     summary = str(insight.get("summary") or "").strip()
     usage = str(insight.get("usage") or insight.get("usage_hint") or "").strip()
     key_cols = insight.get("key_columns") or []
+    # 방어(insight-table-grouping 리뷰 P2): LLM 이 key_columns 를 list/tuple 이 아닌 값(int·str 등)으로
+    #   반환하면 아래 `for raw in key_cols` 가 TypeError 로 터져 호출측(insight-worker 스키마 스캔)을
+    #   중단시킬 수 있다. 비-시퀀스는 무시(list 화). str 은 문자 단위 순회를 막기 위해 시퀀스로 인정 안 함.
+    if not isinstance(key_cols, (list, tuple)):
+        key_cols = []
     ordered_cols: list[str] = []
     seen_cols: set[str] = set()
     for raw in col_names or []:

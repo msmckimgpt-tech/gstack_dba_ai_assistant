@@ -106,6 +106,197 @@ def _compute_table_fingerprints_batch(db_conn, schema: str, tables: list[str]) -
         cur.close()
 
 
+# ── 동일구조 테이블 그룹화 (feature-0002 insight-table-grouping, 2026-07-03) ──────────
+# 날짜/번호 suffix 만 다른 동일구조 샤드(daily_league_ranking_1_20250727, _20250726 …)를
+# 한 그룹으로 묶어 대표 1개만 LLM 분석하고 나머지는 LLM 없이 인사이트를 전파한다.
+# 그룹 키 = (base_stem, column-fingerprint) — 지문이 같아 "구조 동일"을, base_stem 이 같아
+# "같은 이름-family"를 함께 요구한다(구조만 우연히 같고 도메인 다른 테이블의 오그룹 방지).
+_TABLE_STEM_BACKUP_RX = re.compile(r"[_-](?:bk|bak|backup|old|new|tmp|temp|copy|org|orig)$", re.IGNORECASE)
+_TABLE_STEM_NUM_RX = re.compile(r"[_-]?\d+$")
+
+
+def _table_base_stem(name: str) -> str:
+    """테이블명에서 후행 날짜/번호/백업 suffix 를 반복 제거한 base stem 을 반환한다.
+
+    daily_league_ranking_1_20250727 -> daily_league_ranking (날짜 8자리 → 번호 _1 순차 strip),
+    DayuPoint_20230801_bk -> DayuPoint, Stat_ActiveUser_Again_20120918 -> Stat_ActiveUser_Again.
+    최소 2글자 base 를 보존한다(start<2 인 strip 은 수행 안 함) — 전부 숫자/짧은 이름은 원본 유지.
+    날짜는 연속 숫자열이라 일반 번호 strip 이 원자적으로 제거하므로 별도 날짜 정규식은 불필요."""
+    s = str(name or "").strip()
+    if not s:
+        return s
+    prev = None
+    while s != prev:
+        prev = s
+        m = _TABLE_STEM_BACKUP_RX.search(s)
+        if m and m.start() >= 2:
+            s = s[: m.start()]
+            continue
+        m = _TABLE_STEM_NUM_RX.search(s)
+        if m and m.start() >= 2:
+            s = s[: m.start()]
+            continue
+    return s
+
+
+def _table_group_sig(table: str, table_fps: dict[str, str]):
+    """테이블의 그룹 서명 (base_stem, fingerprint). fp 부재/stem<2 면 None(그룹 제외 — pure LLM)."""
+    fp = (table_fps.get(table) or "").strip()
+    stem = _table_base_stem(table)
+    if not fp or len(stem) < 2:
+        return None
+    return (stem, fp)
+
+
+def _build_table_groups(table_names: list[str], table_fps: dict[str, str]):
+    """all_table_names 를 그룹 서명별로 묶는다.
+
+    반환 (sig_of, members_of):
+      - sig_of[table]  = (base_stem, fp)  — 그룹 서명을 가진 모든 테이블(단일 멤버 포함, KV 상속용).
+      - members_of[sig] = 정렬된 멤버 리스트 — cycle 내 fan-out 대상 후보(min_members 게이트는 호출측).
+    """
+    sig_of: dict[str, tuple] = {}
+    members_of: dict[tuple, list] = {}
+    for t in table_names:
+        sig = _table_group_sig(t, table_fps)
+        if sig is None:
+            continue
+        sig_of[t] = sig
+        members_of.setdefault(sig, []).append(t)
+    for sig in members_of:
+        members_of[sig].sort()
+    return sig_of, members_of
+
+
+def _group_insight_kv_key(sig: tuple) -> str:
+    """그룹 대표 분석 dict 의 KV 키. fp 가 구조를 인코딩하므로 fp 가 바뀌면 키가 바뀌어 자기 무효화."""
+    stem, fp = sig
+    return "table_group_insight:" + str(fp) + ":" + str(stem)[:120]
+
+
+def _load_group_insight_kv(mem_conn, sig):
+    """이전 cycle 대표가 저장한 그룹 분석 dict 를 KV 에서 로드(LLM 없이 상속). 없으면/오류 None."""
+    if sig is None or mem_conn is None:
+        return None
+    try:
+        raw = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _group_insight_kv_key(sig))
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _save_group_insight_kv(mem_conn, sig, insight) -> None:
+    """그룹 대표의 LLM 분석 dict 를 KV 에 저장 — 다음 cycle 신규 샤드가 LLM 없이 상속하게 한다."""
+    if sig is None or mem_conn is None or not isinstance(insight, dict):
+        return
+    try:
+        save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _group_insight_kv_key(sig),
+                       json.dumps(insight, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def _publish_table_insight(
+    mem_conn, run_id, schema, table, insight, table_error, col_name_list,
+    table_key, table_refs, table_reason, table_refresh_key,
+    current_tfp, stored_table_fps, table_refresh_map, report,
+    *, insight_via: str = "llm", family=None,
+) -> bool:
+    """table_insight dict 를 렌더→publish→verify→fp저장→refresh→telemetry 하고 완료 여부를 반환.
+
+    대표(LLM/KV/cache 유래) 와 fan-out(형제 전파) 공용 — 두 경로의 발행 로직을 단일화해 drift 를 막는다.
+    insight_via/family 는 관측·그룹 라벨(B)용 telemetry·source_meta 부가정보. tables_generated/
+    tables_fanout 카운트와 table_seen_map 갱신은 호출측 책임(경로별 의미 분리)."""
+    table_started = time.perf_counter()
+    insight_dict = insight if isinstance(insight, dict) else None
+    table_text = _format_table_insight_text(schema, table, insight_dict, col_names=col_name_list)
+    source_meta = None
+    if insight_dict is not None:
+        source_meta = dict(insight_dict)
+        if family is not None:
+            source_meta["table_family"] = family
+    publish_attempted = False
+    publish_skip_reason = ""
+    if (
+        not table_error
+        and table_text
+        and _should_publish_global_fact(table_key, "schema_insight", 4, table_text)
+    ):
+        _publish_fact(
+            mem_conn,
+            _insight_target_conversation_id(),
+            table_key,
+            table_text,
+            4,
+            scope_key=FACT_SCOPE_COMMON,
+            source_type="schema_insight",
+            source_run_id=run_id,
+            source_sql="",
+            source_meta=source_meta,
+        )
+        publish_attempted = True
+    elif table_error:
+        publish_skip_reason = "llm_error"
+    elif insight_dict is None:
+        publish_skip_reason = "invalid_response"
+    elif not table_text:
+        publish_skip_reason = "empty_text"
+    else:
+        publish_skip_reason = "publish_filtered"
+    verified_table_state = _load_insight_artifact_states(mem_conn, [table_key]).get(
+        table_key, _empty_insight_artifact_state(table_key)
+    )
+    table_complete = _insight_artifact_complete(verified_table_state)
+    result = "ok" if table_complete else "partial_persist"
+    if table_error:
+        result = "publish_failed"
+        report["publish_failed"] = int(report.get("publish_failed", 0)) + 1
+    _trace_insight_worker_event(
+        run_id,
+        "publish",
+        schema,
+        "table",
+        table,
+        table_reason,
+        "generate_insight",
+        referenced_objects=table_refs,
+        result=result,
+        duration_ms=(time.perf_counter() - table_started) * 1000.0,
+        error=table_error,
+        extra={
+            "missing_parts": _insight_missing_parts(verified_table_state),
+            "publish_attempted": bool(publish_attempted),
+            "publish_skip_reason": publish_skip_reason,
+            "insight_via": insight_via,
+        },
+    )
+    _trace_insight_worker_event(
+        run_id,
+        "verify",
+        schema,
+        "table",
+        table,
+        table_reason,
+        "verify_persist",
+        referenced_objects=table_refs,
+        result="ok" if table_complete else "partial_persist",
+        extra={"missing_parts": _insight_missing_parts(verified_table_state)},
+    )
+    if table_complete:
+        _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
+        tfp_key = ds_fact_key("table_fp", ds_object_suffix(schema, table))
+        if current_tfp:
+            _save_fingerprint(mem_conn, tfp_key, current_tfp)
+            stored_table_fps[tfp_key] = current_tfp
+    return table_complete
+
+
 def _load_stored_fingerprints(mem_conn, prefix: str) -> dict[str, str]:
     """KV에서 특정 prefix의 핑거프린트들을 로드한다."""
     return _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, prefix)
@@ -927,6 +1118,22 @@ def _fk_raw_execute(conn, sql):
         cur.close()
 
 
+def _instance_scan_cursor_key() -> str:
+    """instance-scan interval 커서 키 (rel-selfheal 적대 패널 B-F1).
+
+    ds-단위 단일 커서는 MSSQL multi-DB 순회에서 같은 cycle 의 첫 DB 스탬프가 나머지 DB 의
+    interval 스캔을 매번 가로채(항상 DB#1 만 획득), 정상상태의 DB#2..#N 은 rescan·관계
+    유지보수(cadence 포함)가 영원히 미발화한다 — DB(catalog) 별로 커서를 분리한다.
+    MySQL(active db 없음)은 기존 키 그대로(하위호환 — 기존 스탬프 유효).
+    """
+    key = ds_scope_name("schema_instance_scan_at")
+    try:
+        adb = get_active_database()
+    except Exception:
+        adb = None
+    return f"{key}:db:{adb}" if adb else key
+
+
 def _scan_instance_schema_insights(
     db_conn,
     mem_conn,
@@ -949,6 +1156,11 @@ def _scan_instance_schema_insights(
         "pending_table_repairs": 0,
         # TASK-0131 (#10): publish 실패(주로 LLM 호출 실패) 누적 — 사이클 status degrade 판정용.
         "publish_failed": 0,
+        # insight-table-grouping (2026-07-03): 동일구조 그룹 전파 관측.
+        #   insight_llm_calls = 실제 llm_table_insight 호출 수(대표만),
+        #   tables_fanout     = LLM 없이 형제로 전파된 테이블 수(= 절약된 LLM 호출 수).
+        "insight_llm_calls": 0,
+        "tables_fanout": 0,
     }
     if not db_conn or not mem_conn or not AGENT_SCHEMA_INSTANCE_SCAN or not AGENT_SCHEMA_INSIGHT:
         return report
@@ -997,6 +1209,9 @@ def _scan_instance_schema_insights(
     pending_repairs = _detect_pending_insight_repairs(db_conn, mem_conn, candidates)
     report["pending_schema_repairs"] = int(pending_repairs.get("pending_schema_repairs", 0) or 0)
     report["pending_table_repairs"] = int(pending_repairs.get("pending_table_repairs", 0) or 0)
+    # rel-selfheal 적대 패널 B-F1: instance-scan interval 커서를 DB(catalog) 별로 분리
+    # (_instance_scan_cursor_key docstring 참조 — MSSQL multi-DB 의 DB#1 독점 차단).
+    _scan_cursor_key = _instance_scan_cursor_key()
     # TASK-0305 (RC3): pending(미완성 artifact)만으로 트리거된 스캔인지 — 새 스키마(missing)는 항상 즉시.
     pending_only = bool(
         not missing
@@ -1013,7 +1228,7 @@ def _scan_instance_schema_insights(
         force_scan = bool(missing)  # missing 없으면 False → 아래 interval gate 로 위임
     if not force_scan:
         try:
-            last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"))
+            last_scan = load_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _scan_cursor_key)
             parsed = _parse_iso_time(str(last_scan)) if last_scan else None
             if parsed:
                 elapsed = (datetime.now(timezone.utc) - parsed).total_seconds()
@@ -1034,10 +1249,26 @@ def _scan_instance_schema_insights(
     table_refresh_sec = int(AGENT_TABLE_INSIGHT_RESCAN_SEC or 0)
     schema_refresh_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "schema_insight_refresh_at:")
     table_refresh_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "table_insight_refresh_at:")
+    # rel-selfheal: 관계 유지보수(FK introspect·암묵 추론·프로브) 주기 cadence 상태 —
+    # 스키마별 마지막 발화 시각(kv). 기존 트리거(구조변경/artifact 부재)만으로는 이미 스캔
+    # 완료된 스키마에서 영원히 미발화(라이브 inferred 0건·프로브 0회)라 주기 재발화를 보완한다.
+    rel_reinfer_sec = int(AGENT_RELATIONSHIP_REINFER_SEC or 0)
+    rel_infer_map = _load_kv_prefix_map(mem_conn, GLOBAL_CONVERSATION_ID, "relationship_infer_at:")
+    # insight-table-grouping (2026-07-03): 동일구조 그룹 상태(cycle 전역 — 스키마 간 KV/cache 공유).
+    grouping_enabled = bool(AGENT_INSIGHT_TABLE_GROUPING_ENABLED)
+    group_min = max(2, int(AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS))
+    fanout_max = max(0, int(AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX))
+    group_insight_cache: dict[tuple, dict] = {}   # sig -> 대표 분석 dict (cycle 전역 — 스키마 간 재사용 OK)
+    fanout_used = 0                               # 이번 cycle fan-out 한 테이블 수(fanout_max cycle 상한)
+    # NOTE(리뷰 BUG1): fan-out 중복 방지 집합 `fanned_out_groups` 는 **스키마마다 리셋**한다(아래 루프 내).
+    #   sig=(base_stem, fp) 가 스키마-무관이라 cycle 전역이면 구조·이름이 겹치는 두 번째 스키마의 fan-out 이
+    #   통째로 skip 돼 기능이 무력화된다(멀티 DB 가 같은 샤드 템플릿을 공유하는 흔한 경우). members_of 는
+    #   스키마별로 재구성되므로 dedupe 도 스키마 스코프여야 정합.
     try:
         for schema in candidates:
             if time.perf_counter() - scan_start > budget_sec:
                 break
+            _touch_worker_heartbeat_progress(mem_conn)  # insight-heartbeat-liveness: 스키마 진행 중 heartbeat
             try:
                 report["schemas_evaluated"] = int(report.get("schemas_evaluated", 0)) + 1
                 # 스키마 핑거프린트 계산 (테이블 목록 기반)
@@ -1090,11 +1321,38 @@ ORDER BY TABLE_NAME
                 )
                 schema_has_stored_fp = bool(stored_schema_fp)
 
-                # feature-0013 Phase 2: 스키마 구조 변경/신규 시에만 FK 관계를 introspect 해
-                # table_relationships 에 적재(source='fk_introspect'). 빈도 제한으로 8초 루프 부하 억제.
+                # feature-0013 Phase 2 + rel-selfheal: FK 관계 introspect → table_relationships
+                # (source='fk_introspect'). 발화 = 스키마 구조 변경/신규 **또는 주기 cadence 경과**
+                # (AGENT_RELATIONSHIP_REINFER_SEC — 기존 조건만으로는 이미 스캔된 스키마에서 영원히
+                # 미발화). 빈도 제한으로 8초 루프 부하 억제.
                 # 전부 guarded — 어떤 예외도 insight 스캔을 차단하지 않는다(PG 미가용 시 no-op).
+                rel_infer_key = ds_fact_key("relationship_infer_at", ds_object_suffix(schema))
+                rel_reinfer_due = bool(
+                    rel_reinfer_sec > 0
+                    and _is_refresh_due(rel_infer_map, rel_infer_key, rel_reinfer_sec)
+                )
+                rel_maintenance_due = bool(
+                    schema_structure_changed or schema_artifact_missing or rel_reinfer_due
+                )
+                # 저장용 스키마-slot: MSSQL 은 현재 순회 중인 DB(catalog)명 — 그래프 Table 키
+                # (`db.table`)·column_descriptions(schema_name=DB명) 규약과 정합. 실 스키마('dbo')
+                # 리터럴 저장은 AGE 투영에서 실 테이블과 연결되지 않는 고아 엣지를 만든다.
+                # 질의는 여전히 실 스키마(schema)로 수행한다(store/query 분리).
+                _rel_store_schema = schema
+                _rel_db_scope = None
+                # routine prune 허용 여부 — dialect 명시 플래그(§18.8 재검증 MINOR: `label==schema`
+                # 문자열 비교는 MSSQL DB명==스키마명(예: DB 'sales' 의 스키마 'sales') 충돌 시
+                # prune=True 로 오발동해 같은 label 의 타 스키마 행을 지운다).
+                _rt_prune_ok = True
+                try:
+                    if _dialects.active().name == "mssql":
+                        _rel_db_scope = get_active_database()
+                        _rel_store_schema = _rel_db_scope or schema
+                        _rt_prune_ok = False
+                except Exception:
+                    pass
                 if (AGENT_RELATIONSHIP_INTROSPECT_ENABLED
-                        and (schema_structure_changed or schema_artifact_missing)
+                        and rel_maintenance_due
                         and all_table_names):
                     try:
                         from . import relationships as _rel
@@ -1104,18 +1362,23 @@ ORDER BY TABLE_NAME
                             kb_conn=None, scope_key=_rel_scope,
                             datasource_key=str(_rel_scope or ""), source_run_id=run_id,
                             raw_execute=_fk_raw_execute,
+                            store_schema=_rel_store_schema,
                         )
                         report["relationships_introspected"] = int(
                             report.get("relationships_introspected", 0)) + int(_n_rel or 0)
                     except Exception:
-                        pass
+                        # B-F7: 이 cycle 이 고친 결함(D1b)이 "조용한 정지" 였다 — 같은 클래스의
+                        # 미래 회귀가 또 침묵하지 않도록 경고 1줄은 남긴다(스캔은 계속 비차단).
+                        logging.getLogger("insight").warning(
+                            "relationship_introspect_failed schema=%s", schema, exc_info=True)
 
                 # feature-0016 implicit-edges: FK 로 확인 안 되는 **암묵 관계**를 명명 규칙으로
                 # 추론(source='inferred', candidate)한 뒤, candidate 를 **실데이터 겹침 프로브**로
-                # 검증해 강화/감쇠한다("항상 올바른지 파악"). 스키마 구조 변경/신규 시에만(빈도 제한).
+                # 검증해 강화/감쇠한다("항상 올바른지 파악"). 발화 = 구조 변경/신규 **또는 주기
+                # cadence**(rel-selfheal — rel_maintenance_due, introspect 블록과 동일 게이트).
                 # 전부 guarded — insight 스캔을 절대 차단하지 않는다.
                 if (AGENT_RELATIONSHIP_INFERENCE_ENABLED
-                        and (schema_structure_changed or schema_artifact_missing)
+                        and rel_maintenance_due
                         and all_table_names):
                     try:
                         from . import relationships as _rel
@@ -1135,23 +1398,73 @@ ORDER BY TABLE_NAME
                         finally:
                             _ccur.close()
                         if _tc:
+                            # 저장 라벨 = _rel_store_schema (MSSQL=DB명 — 그래프 키 정합, store/query 분리)
                             _n_inf = _rel.store_inferred_relationships(
-                                None, _infer_scope, schema, _tc,
+                                None, _infer_scope, _rel_store_schema, _tc,
                                 datasource_key=str(_infer_scope or ""), source_run_id=run_id,
                                 cap=AGENT_RELATIONSHIP_INFER_CAP)
                             report["relationships_inferred"] = int(
                                 report.get("relationships_inferred", 0)) + int(_n_inf or 0)
                         # 능동 프로브(실데이터 겹침 검증) — 별 토글. 운영 DB read-only, cap+timeout 으로 부하 제한.
+                        # db_scope(MSSQL): 현재 연결 DB 의 후보만 프로브 — 다른 DB 후보를 이 연결에서
+                        # 실행하면 동명 테이블 오검증/불필요 실패(rel-selfheal).
                         if AGENT_RELATIONSHIP_PROBE_ENABLED:
                             _pr = _rel.probe_and_reinforce(
                                 db_conn, _dialects.active(), _infer_scope,
                                 kb_conn=None, raw_execute=_fk_raw_execute,
                                 sample=AGENT_RELATIONSHIP_PROBE_SAMPLE,
                                 cap=AGENT_RELATIONSHIP_PROBE_CAP,
-                                timeout_ms=AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS)
-                            for _k in ("probed", "positive", "negative"):
+                                timeout_ms=AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS,
+                                db_scope=_rel_db_scope)
+                            # neutral/failed 포함(B-F11) — neutral 위주 사이클이 telemetry 상
+                            # 무활동으로 보이지 않게.
+                            for _k in ("probed", "positive", "negative", "neutral", "failed"):
                                 _rk = "relationships_probe_" + _k
                                 report[_rk] = int(report.get(_rk, 0)) + int(_pr.get(_k, 0))
+                    except Exception:
+                        # B-F7: 조용한 정지 재발 방지 — 경고 1줄(비차단 유지).
+                        logging.getLogger("insight").warning(
+                            "relationship_infer_probe_failed schema=%s", schema, exc_info=True)
+
+                # feature-0016 graph-funcproc(ADR-016): 함수·프로시저 introspect → routine_objects.
+                # 발화 게이트 = rel_maintenance_due(관계 유지보수와 동일 cadence). 정의 파싱으로
+                # 참조 테이블(read/write)을 추출해 그래프 ROUTINE_USES 투영 입력으로 쓴다.
+                # 전부 guarded — insight 스캔을 절대 차단하지 않는다(B-F7: 실패는 경고 1줄).
+                if AGENT_ROUTINE_INTROSPECT_ENABLED and rel_maintenance_due:
+                    try:
+                        from . import routines as _routines
+                        _rt_scope = get_active_datasource()
+                        # routine-dbanalysis(§53 MAJOR): prune 은 (scope, store-label) 범위 삭제라
+                        # MSSQL(store label=DB명 ≠ 질의 schema)은 같은 label 의 **다른 스키마 행**을
+                        # 되지운다(backfill 결과가 ≤6h cadence 에 회귀) → dialect 플래그로 억제.
+                        # MSSQL stale routine 의 prune 책임은 스키마 전모를 아는 backfill 로 이관(T53.9).
+                        _n_rt = _routines.introspect_and_store(
+                            db_conn, schema, all_table_names,
+                            kb_conn=None, scope_key=_rt_scope,
+                            datasource_key=str(_rt_scope or ""), source_run_id=run_id,
+                            store_schema=_rel_store_schema,
+                            cap=AGENT_ROUTINE_INTROSPECT_CAP,
+                            prune=_rt_prune_ok)
+                        report["routines_introspected"] = int(
+                            report.get("routines_introspected", 0)) + int(_n_rt or 0)
+                    except Exception:
+                        logging.getLogger("insight").warning(
+                            "routine_introspect_failed schema=%s", schema, exc_info=True)
+
+                # rel-selfheal cadence 스탬프 — introspect/추론/routine 어느 쪽이든 이번 사이클에
+                # 유지보수를 수행했으면 기록(전부 off 면 미기록 → 활성화 시 즉시 발화).
+                # graph-funcproc(§18.8 패널 MINOR): routine 훅은 all_table_names 없이도(테이블 0·
+                # 프로시저만 있는 스키마) 발화하므로, 스탬프도 같은 조건으로 남겨야 매 cycle
+                # ROUTINES/PARAMETERS 재조회 spin 이 없다 — 게이트/스탬프 조건 정합.
+                if (rel_maintenance_due
+                        and ((AGENT_RELATIONSHIP_INTROSPECT_ENABLED
+                              or AGENT_RELATIONSHIP_INFERENCE_ENABLED)
+                             and all_table_names
+                             or AGENT_ROUTINE_INTROSPECT_ENABLED)):
+                    try:
+                        _rel_now = utc_now_iso()
+                        save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, rel_infer_key, _rel_now)
+                        rel_infer_map[rel_infer_key] = _rel_now
                     except Exception:
                         pass
 
@@ -1417,9 +1730,20 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                         table_cols.setdefault(tname, []).append(
                             (name, str(data_type or "").strip())
                         )
+                # insight-table-grouping: 스키마 내 (base_stem, fp) 그룹 서명 + 이번 cycle ready 집합.
+                if grouping_enabled:
+                    group_sig_of, members_of = _build_table_groups(all_table_names, current_table_fps)
+                else:
+                    group_sig_of, members_of = {}, {}
+                ready_all = set(artifact_missing_tables) | set(changed_tables) | set(refresh_due_tables)
+                processed_this_cycle: set = set()   # 이번 스키마에서 이미 발행(대표/전파)한 테이블
+                fanned_out_groups: set = set()      # (리뷰 BUG1) 이번 스키마에서 이미 fan-out 한 그룹 — 스키마 스코프
                 for table in selected_tables:
                     if time.perf_counter() - scan_start > budget_sec:
                         break
+                    if table in processed_this_cycle:
+                        continue                    # 앞선 그룹 대표의 fan-out 이 이미 발행함
+                    _touch_worker_heartbeat_progress(mem_conn)  # insight-heartbeat-liveness: 테이블 진행 중 heartbeat
                     col_rows = table_cols.get(table) or []
                     if not col_rows:
                         continue
@@ -1487,101 +1811,99 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                                     stored_table_fps[tfp_key] = current_tfp
                                 report["tables_repaired"] = int(report.get("tables_repaired", 0)) + 1
                                 table_seen_map.setdefault(schema, set()).add(table)
+                                # insight-table-grouping(리뷰 BUG2): repair 로 마감한 테이블도 이번 cycle
+                                #   처리 완료로 표시 — 같은 그룹 형제의 fan-out 이 이 테이블 고유 insight 를
+                                #   그룹 일반 insight 로 덮어쓰거나(clobber) 이중 카운트하지 않게 한다.
+                                processed_this_cycle.add(table)
                                 continue
+                    sig = group_sig_of.get(table)
+                    grp_members = members_of.get(sig) if sig is not None else None
+                    grp_size = len(grp_members) if grp_members else 0
+                    # insight-table-grouping(P1/리뷰): 그룹 대표는 개별 샤드명이 아니라 **family 패턴명**
+                    #   (base_stem + "_*")으로 LLM 분석한다 — 분석문(summary/domain)이 특정 날짜·번호에
+                    #   묶이지 않고 일반 분류가 되어, 형제에게 전파해도 "그 날짜" 오기재가 없다(사용자 "일반적
+                    #   분류" 의도 정합). fact 키·prefix·참조는 실제 테이블명을 유지 → grounding 무회귀.
+                    #   그룹 아님(sig None)이면 실제 이름 그대로 분석.
+                    payload_table = (str(sig[0]) + "_*") if sig is not None else table
                     table_payload = {
                         "schema": schema,
-                        "table": table,
+                        "table": payload_table,
                         "columns": cols_payload[: max(1, int(AGENT_TABLE_INSIGHT_MAX_COLS))],
                     }
-                    table_started = time.perf_counter()
                     table_refresh_key = ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, table))
+                    # 그룹 대표 분석 확보 순서 — cycle cache → KV 상속 → LLM. 동일구조(같은 fp+base_stem)
+                    #   형제는 대표 분석 dict 를 재사용해 LLM 을 태우지 않는다.
                     table_error = ""
                     table_insight = None
-                    try:
-                        table_insight = llm_table_insight(table_payload)
-                    except Exception as exc:
-                        table_error = str(exc)
-                    table_text = _format_table_insight_text(
-                        schema,
-                        table,
-                        table_insight if isinstance(table_insight, dict) else None,
-                        col_names=col_name_list,
-                    )
-                    publish_attempted = False
-                    publish_skip_reason = ""
-                    if (
-                        not table_error
-                        and table_text
-                        and _should_publish_global_fact(table_key, "schema_insight", 4, table_text)
-                    ):
-                        _publish_fact(
-                            mem_conn,
-                            _insight_target_conversation_id(),
-                            table_key,
-                            table_text,
-                            4,
-                            scope_key=FACT_SCOPE_COMMON,
-                            source_type="schema_insight",
-                            source_run_id=run_id,
-                            source_sql="",
-                            source_meta=table_insight if isinstance(table_insight, dict) else None,
-                        )
-                        publish_attempted = True
-                    elif table_error:
-                        publish_skip_reason = "llm_error"
-                    elif not isinstance(table_insight, dict):
-                        publish_skip_reason = "invalid_response"
-                    elif not table_text:
-                        publish_skip_reason = "empty_text"
+                    insight_via = "llm"
+                    if sig is not None and sig in group_insight_cache:
+                        table_insight = group_insight_cache[sig]          # 같은 cycle 대표 재사용
+                        insight_via = "group_cache"
                     else:
-                        publish_skip_reason = "publish_filtered"
-                    verified_table_state = _load_insight_artifact_states(mem_conn, [table_key]).get(
-                        table_key, _empty_insight_artifact_state(table_key)
+                        kv_insight = _load_group_insight_kv(mem_conn, sig) if sig is not None else None
+                        if isinstance(kv_insight, dict):
+                            table_insight = kv_insight                    # 이전 cycle 대표 상속(LLM 0)
+                            insight_via = "kv_inherit"
+                            if sig is not None:
+                                group_insight_cache[sig] = kv_insight
+                        else:
+                            try:
+                                table_insight = llm_table_insight(table_payload)
+                            except Exception as exc:
+                                table_error = str(exc)
+                            report["insight_llm_calls"] = int(report.get("insight_llm_calls", 0)) + 1
+                    family = None
+                    if sig is not None and grp_size >= group_min:
+                        family = {"base_stem": sig[0], "fingerprint": sig[1],
+                                  "members": grp_size, "via": insight_via}
+                    current_tfp = current_table_fps.get(table, "")
+                    table_complete = _publish_table_insight(
+                        mem_conn, run_id, schema, table, table_insight, table_error, col_name_list,
+                        table_key, table_refs, table_reason, table_refresh_key,
+                        current_tfp, stored_table_fps, table_refresh_map, report,
+                        insight_via=insight_via, family=family,
                     )
-                    table_complete = _insight_artifact_complete(verified_table_state)
-                    result = "ok" if table_complete else "partial_persist"
-                    if table_error:
-                        result = "publish_failed"
-                        report["publish_failed"] = int(report.get("publish_failed", 0)) + 1
-                    _trace_insight_worker_event(
-                        run_id,
-                        "publish",
-                        schema,
-                        "table",
-                        table,
-                        table_reason,
-                        "generate_insight",
-                        referenced_objects=table_refs,
-                        result=result,
-                        duration_ms=(time.perf_counter() - table_started) * 1000.0,
-                        error=table_error,
-                        extra={
-                            "missing_parts": _insight_missing_parts(verified_table_state),
-                            "publish_attempted": bool(publish_attempted),
-                            "publish_skip_reason": publish_skip_reason,
-                        },
-                    )
-                    _trace_insight_worker_event(
-                        run_id,
-                        "verify",
-                        schema,
-                        "table",
-                        table,
-                        table_reason,
-                        "verify_persist",
-                        referenced_objects=table_refs,
-                        result="ok" if table_complete else "partial_persist",
-                        extra={"missing_parts": _insight_missing_parts(verified_table_state)},
-                    )
+                    # insight-table-grouping(P2/리뷰): 갓 LLM 분석한 대표 dict 는 **발행이 실제로 완료된
+                    #   경우에만** cache/KV 에 저장한다 — 렌더/발행에 실패하는 malformed dict 가 KV 에 영속돼
+                    #   매 cycle 같은 스키마를 재크래시(persistent wedge)하는 것을 차단. 상속/캐시 유래는 검증됨.
+                    if (insight_via == "llm" and table_complete and sig is not None
+                            and isinstance(table_insight, dict)):
+                        group_insight_cache[sig] = table_insight
+                        _save_group_insight_kv(mem_conn, sig, table_insight)
+                    processed_this_cycle.add(table)
                     if table_complete:
-                        _mark_refresh_kv(mem_conn, table_refresh_map, table_refresh_key)
-                        tfp_key = ds_fact_key("table_fp", ds_object_suffix(schema, table))
-                        current_tfp = current_table_fps.get(table, "")
-                        if current_tfp:
-                            _save_fingerprint(mem_conn, tfp_key, current_tfp)
-                            stored_table_fps[tfp_key] = current_tfp
                         table_seen_map.setdefault(schema, set()).add(table)
                         report["tables_generated"] = int(report.get("tables_generated", 0)) + 1
+                        # ── fan-out: 같은 그룹의 나머지 ready 형제에게 LLM 없이 대표 분석 전파 ──
+                        #   같은 cycle 에 대표를 확보한 그룹만(대표 분석 dict 재사용), ready(미완/변경/refresh)
+                        #   형제에게만, fanout_max·budget_sec 이중 상한 내에서 전파한다.
+                        if (grouping_enabled and grp_members and grp_size >= group_min
+                                and isinstance(table_insight, dict) and sig not in fanned_out_groups):
+                            fanned_out_groups.add(sig)
+                            fam_fanout = {"base_stem": sig[0], "fingerprint": sig[1],
+                                          "members": grp_size, "via": "fanout"}
+                            for m in grp_members:
+                                if fanout_used >= fanout_max:
+                                    break
+                                if time.perf_counter() - scan_start > budget_sec:
+                                    break
+                                if m == table or m in processed_this_cycle or m not in ready_all:
+                                    continue
+                                processed_this_cycle.add(m)
+                                m_key = ds_fact_key("table_insight", ds_object_suffix(schema, m))
+                                m_refs = _build_insight_references(schema, table=m, col_names=col_name_list)
+                                m_refresh_key = ds_fact_key("table_insight_refresh_at", ds_object_suffix(schema, m))
+                                m_tfp = current_table_fps.get(m, "")
+                                m_complete = _publish_table_insight(
+                                    mem_conn, run_id, schema, m, table_insight, "", col_name_list,
+                                    m_key, m_refs, "grouped_fanout", m_refresh_key,
+                                    m_tfp, stored_table_fps, table_refresh_map, report,
+                                    insight_via="fanout", family=fam_fanout,
+                                )
+                                if m_complete:
+                                    table_seen_map.setdefault(schema, set()).add(m)
+                                    report["tables_fanout"] = int(report.get("tables_fanout", 0)) + 1
+                                    fanout_used += 1
                 if primary_len > 0:
                     step = primary_selected if primary_selected > 0 else 1
                     new_offset = (offset + max(1, step)) % primary_len
@@ -1602,7 +1924,7 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
         cur.close()
     try:
         if report.get("scan_started"):
-            save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, ds_scope_name("schema_instance_scan_at"), utc_now_iso())
+            save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, _scan_cursor_key, utc_now_iso())
             # TASK-0305 (RC3): 진전 기반 backoff 갱신. 생성·복구가 1건이라도 있으면(또는 missing 스캔)
             # backoff 해제 → 건강한 처리량 tick cadence 보존. pending-only 스캔이 무진전이면 backoff 설정
             # → 도달 못 하는 미완성 tail 의 매-tick spin 차단(rescan interval 동안 pending-only 억제).
@@ -1611,6 +1933,9 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
                 + int(report.get("schemas_repaired", 0) or 0)
                 + int(report.get("tables_generated", 0) or 0)
                 + int(report.get("tables_repaired", 0) or 0)
+                # insight-table-grouping: LLM 없이 형제로 전파한 것도 진전 — fan-out-only cycle 이
+                #   무진전으로 오판돼 pending-only backoff 로 억제되지 않게 한다.
+                + int(report.get("tables_fanout", 0) or 0)
             ) > 0
             if made_progress or missing:
                 _clear_repair_backoff(mem_conn)
@@ -1619,6 +1944,32 @@ ORDER BY TABLE_NAME, ORDINAL_POSITION
     except Exception:
         pass
     return report
+
+
+# insight-heartbeat-liveness(2026-07-03): 긴 cycle(대량 테이블 LLM 생성) 동안 heartbeat 를 진행-중에도
+# throttle 갱신하기 위한 monotonic 커서. healthcheck_insight_worker.py(age ≤ 180s)·_is_insight_worker_
+# heartbeat_fresh 가 insight_worker_last_cycle_at 을 cycle **완료 시각**으로만 보던 탓에, claude 로 수천
+# 테이블을 생성하는 9분+ cycle 이 heartbeat stale → **unhealthy false-negative** 로 오판되던 것을 해소.
+_LAST_WORKER_HB_MONO = [0.0]
+
+
+def _touch_worker_heartbeat_progress(mem_conn, *, min_interval_sec: float = 30.0) -> None:
+    """cycle 진행 중(스키마·테이블 순회)에 insight_worker_last_cycle_at heartbeat 를 throttle 갱신.
+
+    healthcheck 가 긴 cycle 을 죽은 것으로 오판(unhealthy)하던 false-negative 를 없앤다. **진짜 hang**
+    (생성 자체가 멈춤)이면 이 호출 경로가 함께 멈춰 heartbeat 가 stale→unhealthy 로 감지되므로 hang
+    탐지 의도(TASK-0129/0130)는 보존된다. status(insight_worker_last_status)는 미변경 — cycle 완료 시
+    run_insight_cycle finally 가 확정하고, 본 갱신은 liveness(age)만 전진시킨다. 실패는 삼킨다(비차단)."""
+    if not mem_conn:
+        return
+    try:
+        now = time.monotonic()
+        if now - _LAST_WORKER_HB_MONO[0] < max(1.0, float(min_interval_sec)):
+            return
+        _LAST_WORKER_HB_MONO[0] = now
+        save_memory_kv(mem_conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_cycle_at", utc_now_iso())
+    except Exception:
+        pass
 
 
 def _is_insight_worker_heartbeat_fresh(mem_conn) -> bool:
@@ -1968,6 +2319,11 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             _na_rep = _node_analysis.process_pending()
             if _na_rep.get("claimed"):
                 scan_report["node_analysis"] = _na_rep
+            # node-role-viz: role 도입(0031) 이전 done Table 잡 역할 휴리스틱 백필 — 잔여 0 이면
+            #   SELECT 1회 후 즉시 no-op(자기 종결). LLM 재호출 없음, 실패는 삼켜 코어 비차단.
+            _na_backfilled = _node_analysis.backfill_roles()
+            if _na_backfilled:
+                scan_report["node_analysis_role_backfill"] = _na_backfilled
         except Exception:
             logging.getLogger("insight").warning("node_analysis process_pending 실패", exc_info=True)
         if not lock_acquired:
@@ -2013,6 +2369,23 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                     _ds_scope = _ds_coords.get("scope_key") or _ds_key  # 해시 우선, 폴백 라벨(.env 레거시)
                 _ds_engine = (_ds_coords.get("engine") if _ds_coords else None)
                 _ds_default_db = (_ds_coords.get("default_db") if _ds_coords else None)
+
+                # insight-load-spread: endpoint 가 circuit-open(status=down, 연속 실패 확정)이면 이
+                # datasource 의 DB 순회를 통째로 skip 한다. 과거엔 매 tick(8s)마다 DOWN 데이터소스의 20+
+                # DB 를 connect_with_retry→즉시 DatasourceCircuitOpen→로그로 도배(워커 점유 + scan_failed
+                # 로그 노이즈)했다. should_fast_fail 은 순수 조회(부작용 없음)이고, background conn_health
+                # 모니터가 복구를 감지하면 status 가 내려가 다음 tick 부터 자동 재개된다(실질 backoff).
+                # health 는 circuit_open 으로 기록(관리콘솔 가시화 유지). MySQL 기본 DB(_ds_key is None)는 제외.
+                if _ds_key is not None and _ds_scope:
+                    try:
+                        from shared import conn_health as _conn_health
+                        if _conn_health.should_fast_fail(_ds_scope):
+                            _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, "circuit_open")
+                            scan_report["db_skipped_circuit"] = int(
+                                scan_report.get("db_skipped_circuit", 0) or 0) + 1
+                            continue
+                    except Exception:
+                        pass
 
                 # TASK-0220: MSSQL 은 database.schema.table 3계층 → 제품 등록 DB(catalog) 마다 재연결해
                 # 각각 스캔한다(fact_key 에 database 포함, set_active_database). MySQL/기본 DB 는 종전대로
@@ -2463,6 +2836,124 @@ def _start_embedding_backfill_thread() -> None:
         logging.getLogger("insight").warning("embedding_backfill 스레드 기동 실패(무시): %s", exc)
 
 
+def _semantic_cluster_loop() -> None:
+    """feature-0016 Phase C: 메타데이터 시그니처 백필 + scope 별 의미 클러스터링 백그라운드 루프.
+
+    embedding 데몬(위)과 동형 — 별도 데몬 스레드에서 돌며 tick(8s)을 블로킹하지 않는다(임베딩·유사도 계산은
+    gateway/PG 지연 bound·batchy). pass 당 signature 백필 + cadence-due scope 클러스터링. fail-soft."""
+    interval = max(60, int(AGENT_METADATA_CLUSTER_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from modules import semantic_cluster
+            rep = semantic_cluster.run_cluster_maintenance()
+            sig = (rep or {}).get("signature") or {}
+            if int(sig.get("changed") or 0) > 0 or int((rep or {}).get("updated") or 0) > 0:
+                _log.info(
+                    "semantic_cluster sig_changed=%s scopes=%s clustered=%s updated=%s",
+                    sig.get("changed"), (rep or {}).get("scopes"),
+                    (rep or {}).get("clustered"), (rep or {}).get("updated"),
+                )
+        except Exception as exc:   # 스레드 보호 — 어떤 예외도 루프를 죽이지 않음
+            _log.warning("semantic_cluster pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_semantic_cluster_thread() -> None:
+    """AUTO 켜짐 시 Phase C 클러스터링 데몬 스레드 1회 기동(embedding 백필 스레드와 동형·분리)."""
+    if not AGENT_METADATA_CLUSTER_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_semantic_cluster_loop, name="meta-semantic-cluster", daemon=True)
+        t.start()
+        logging.getLogger("insight").info(
+            "semantic_cluster 스레드 기동(interval=%ss, recompute=%ss, sig_batch=%s)",
+            AGENT_METADATA_CLUSTER_INTERVAL_SEC, AGENT_METADATA_CLUSTER_RECOMPUTE_SEC,
+            AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS,
+        )
+    except Exception as exc:
+        logging.getLogger("insight").warning("semantic_cluster 스레드 기동 실패(무시): %s", exc)
+
+
+def _xds_relationship_infer_loop() -> None:
+    """feature-0016 Phase B(ADR-019)·§55: 경계 넘는 관계 추론 백그라운드 루프(Phase C 임베딩 구동).
+
+    embedding/cluster 데몬과 동형·분리 — tick 무블로킹. pass 당 infer_cross_datasource_relationships +
+    store_xds_inferred_relationships. §55: **크로스-ds**(AGENT_XDS_RELATIONSHIP_INFER_AUTO)와 **intra-DS
+    크로스 스키마(DB)**(AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO, 기본 ON — 프로브 검증 가능) 두 모드를
+    한 루프가 나른다. 둘 중 하나라도 켜지면 기동, 각 pass 는 켜진 모드의 후보만 발굴한다. fail-soft."""
+    interval = max(300, int(AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    from shared import config as _cfg2
+    while True:
+        try:
+            from modules import relationships as _rel
+            cands = _rel.infer_cross_datasource_relationships(
+                include_xds=bool(getattr(_cfg2, "AGENT_XDS_RELATIONSHIP_INFER_AUTO", False)),
+                include_xschema=bool(getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True)))
+            n = _rel.store_xds_inferred_relationships(candidates=cands) if cands else 0
+            if n:
+                _log.info("xds_relationship_infer upserted=%s (xds+xschema)", n)
+        except Exception as exc:   # 스레드 보호
+            _log.warning("xds_relationship_infer pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_xds_relationship_infer_thread() -> None:
+    """XDS 또는 XSCHEMA AUTO 켜짐 시 경계 관계 추론 데몬 스레드 1회 기동(§55 — xschema 는 기본 ON)."""
+    from shared import config as _cfg2
+    if not (AGENT_XDS_RELATIONSHIP_INFER_AUTO
+            or bool(getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True))):
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_xds_relationship_infer_loop, name="xds-relationship-infer", daemon=True)
+        t.start()
+        logging.getLogger("insight").info(
+            "xds_relationship_infer 스레드 기동(interval=%ss, xds=%s min_sim=%s, xschema=%s min_sim=%s)",
+            AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC,
+            AGENT_XDS_RELATIONSHIP_INFER_AUTO, AGENT_XDS_RELATIONSHIP_MIN_SIM,
+            bool(getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", True)),
+            getattr(_cfg2, "AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM", 0.86),
+        )
+    except Exception as exc:
+        logging.getLogger("insight").warning("xds_relationship_infer 스레드 기동 실패(무시): %s", exc)
+
+
+
+def _product_classify_loop() -> None:
+    """feature-0016 §59: 미분류 스키마 → 제품 분류 AI 제안 백그라운드 루프(XDS 데몬과 동형·분리).
+    pass 당 BATCH_MAX 스키마 상한, 제안은 Pending(승인 대기)에만 적재. fail-soft."""
+    from shared.config import AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC
+    interval = max(600, int(AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC))
+    _log = logging.getLogger("insight")
+    while True:
+        try:
+            from modules import product_classify
+            rep = product_classify.run_classify_pass()
+            if int(rep.get("suggested_total") or 0) > 0 or rep.get("errors"):
+                _log.info("product_classify suggested=%s errors=%s",
+                          rep.get("suggested_total"), (rep.get("errors") or [])[:3])
+        except Exception as exc:   # 스레드 보호 — 어떤 예외도 루프를 죽이지 않음
+            _log.warning("product_classify pass 실패(무시): %s", exc)
+        time.sleep(interval)
+
+
+def _start_product_classify_thread() -> None:
+    """AUTO 켜짐 시 제품 분류 제안 데몬 1회 기동(기본 OFF — 접근면 인접이라 명시 opt-in)."""
+    from shared.config import AGENT_PRODUCT_CLASSIFY_AUTO
+    if not AGENT_PRODUCT_CLASSIFY_AUTO:
+        return
+    try:
+        import threading
+        t = threading.Thread(target=_product_classify_loop, name="product-classify-suggest", daemon=True)
+        t.start()
+        logging.getLogger("insight").info("product_classify 제안 데몬 기동")
+    except Exception as exc:
+        logging.getLogger("insight").warning("product_classify 데몬 기동 실패(무시): %s", exc)
+
+
 # feature-0015: SIGTERM/SIGINT → graceful. 현재 cycle 을 마저 끝내고(루프 경계에서) 종료.
 # insight 쓰기는 멱등(_upsert_fact autocommit 단일-fact + advisory lock + 다음 스캔 재유도)이라
 # SIGKILL 도 데이터 손상은 없으나, graceful 종료로 (a) 진행 cycle 의 불필요한 중단/LLM 비용 낭비,
@@ -2507,6 +2998,12 @@ def run_insight_worker_loop() -> None:
         logging.getLogger("insight").warning("insight-worker: conn_health 모니터 시작 실패(무시): %s", exc)
     # TASK-0307: embedding 백필 데몬 스레드 기동(본 tick 루프와 분리 — 블로킹 방지).
     _start_embedding_backfill_thread()
+    # feature-0016 Phase C: 메타데이터 시그니처 임베딩 + 의미 클러스터링 데몬 스레드(embedding 스레드와 분리·동형).
+    _start_semantic_cluster_thread()
+    # feature-0016 Phase B: 크로스-데이터소스 관계 추론 데몬 스레드(기본 OFF — AGENT_XDS_RELATIONSHIP_INFER_AUTO).
+    _start_xds_relationship_infer_thread()
+    # feature-0016 §59: 제품 분류 AI 제안 데몬(기본 OFF — AGENT_PRODUCT_CLASSIFY_AUTO).
+    _start_product_classify_thread()
     while not _INSIGHT_SHUTDOWN.is_set():
         result = run_insight_cycle()
         status = str((result or {}).get("status", "")).strip()

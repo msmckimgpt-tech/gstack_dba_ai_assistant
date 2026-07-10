@@ -138,6 +138,16 @@ Microsoft Copilot in Teams 패턴을 사내 RBAC·기존 자산(ask_jobs·fork·
 - AC-GC-A11: backfill 후 기존 1:1 대화·fork·share-link 가 무회귀로 동작한다.
 - AC-GC-A12: 멘션 자동완성이 방 멤버 roster 로 한정된다(전역 계정 검색 금지, F7).
 
+### share-visibility-window (TASK-20260704, [from,to] 공유창 격리 — SECURITY.md §21 정본)
+- AC-GC-A20: "여기부터 공유"(floor) + "여기까지 공유"(ceiling)로 공유가 `[from,to]` window 만 노출하고, 말풍선 액션 3종(샘플 등록/여기서 분기/여기까지·여기부터 공유)은 ☰ 메뉴로 통합되며 👍/👎 는 밖에 보존된다.
+- AC-GC-A21: windowed 공유를 join 한 멤버의 라이브 `/api/history` 뷰가 `[floor,ceiling] ∪ [joined,∞)` 로 제한되고 가려진 pre-floor/중간 구간이 노출되지 않는다.
+- AC-GC-A22: windowed 멤버의 @assistant 턴에서 LLM recall(core_messages)이 그 window 로 필터돼, 프롬프트 인젝션으로도 가려진 구간을 추출할 수 없다(물리 배제).
+- AC-GC-A23: windowed 멤버·windowed share 의 fork 가 `[from,to]` 만 복제(display+core+첨부)하고 fork 본 recall 에 가려진 구간이 부재하다(AR-2 반전).
+- AC-GC-A24: recall/뷰/fork 의 멤버 window 해석 실패는 fail-closed(빈 history / DENY / 거부)이며 unfiltered 로 폴백하지 않는다.
+- AC-GC-A25: join stamp 는 never-widen(교집합)이고 owner·기존 full 멤버를 강등하지 않으며, bounded 멤버는 본인 window 밖으로 재공유할 수 없다(widen-guard 403).
+- AC-GC-A26: has_restricted_members=false 인 대화(거의 전부)는 필터를 완전 우회해 무회귀이고, full 공유 join/fork 는 종전 전체 열람/복제 그대로다.
+- AC-GC-A27: owner/full 멤버의 무제한-recall 답변은 recall_floor 태그로 bounded 멤버 뷰에서 은닉된다("표시 태그만" 결정, display-단 의존은 §21.4 잔여리스크).
+
 ## 12. Observability
 - audit: `conversation.member.add` / `conversation.member.remove` / 기존 `conversation.ask`(actor 기록).
 - llm_usage actor 귀속(방 단위 비용 오귀속 방지).

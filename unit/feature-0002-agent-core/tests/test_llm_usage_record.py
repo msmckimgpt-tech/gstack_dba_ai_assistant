@@ -155,3 +155,35 @@ def test_record_swallows_pg_failure(monkeypatch):
     monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: BrokenConn())
     # 예외가 전파되면 메인 LLM 응답이 깨지므로 절대 raise 하면 안 됨.
     llm._record_llm_usage("auto", "agent", FakeResp(usage=FakeUsage(1, 1), model="x"))
+
+
+# ── TASK-20260703-aiops-ttft-latency (정의 A): step_gap_ms(단계 간 간격) 기록 ────────
+def test_record_includes_step_gap_ms_last(monkeypatch):
+    # step_gap_ms 는 INSERT 맨 끝(… target, latency_ms, step_gap_ms). pt=5·ct=6·tt=7 보존(회귀 0).
+    fake = FakeConn()
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: fake)
+    resp = FakeResp(usage=FakeUsage(10, 5), model="claude-haiku-4")
+    llm._record_llm_usage("core", "agent", resp, latency_ms=200, step_gap_ms=1300)
+    sql, params = fake.cursor_obj.executed[0]
+    assert "step_gap_ms" in sql
+    assert params[5] == 10 and params[6] == 5 and params[7] == 15  # pt/ct/tt 보존
+    assert params[-1] == 1300  # step_gap_ms = 마지막
+    assert params[-2] == 200   # latency_ms = 그 앞
+
+
+def test_record_step_gap_none_when_omitted(monkeypatch):
+    # step_gap 미전달(첫 라운드·단발 호출) → NULL 로 남아 KPI 통계에서 제외.
+    fake = FakeConn()
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: fake)
+    llm._record_llm_usage("edge", "classify", FakeResp(usage=FakeUsage(1, 1), model="m"))
+    _, params = fake.cursor_obj.executed[0]
+    assert params[-1] is None  # step_gap_ms 미측정
+
+
+def test_record_negative_step_gap_becomes_none(monkeypatch):
+    fake = FakeConn()
+    monkeypatch.setattr(rb, "_get_pg_runtime_conn", lambda: fake)
+    llm._record_llm_usage("core", "agent", FakeResp(usage=FakeUsage(1, 1), model="m"),
+                          latency_ms=100, step_gap_ms=-5)
+    _, params = fake.cursor_obj.executed[0]
+    assert params[-1] is None  # 음수 방어 → NULL

@@ -19,7 +19,7 @@ from fastapi import UploadFile
 import hashlib
 import secrets
 import asyncio
-from shared.model_catalog import API_DEFAULT_MODEL
+from shared.model_catalog import API_DEFAULT_MODEL, normalize_reasoning_level
 from pathlib import Path
 import json
 import threading
@@ -158,9 +158,16 @@ def history(
             create_if_missing=False,
         )
     if conv_id:
-        messages, has_more, oldest_id, total_count, user_count = app._get_history(
-            conv_id, limit=limit, before_id=before_id
-        )
+        # share-visibility-window: 발신자의 표시 가시 window(DISPLAY id-space + joined_at)를 해석해
+        # 가려진 pre-floor/중간 구간을 view 에서 배제. DENY(제약 대화인데 window 미해석) → 빈 응답.
+        _display_window = app._resolve_display_window(conn, conv_id, (account or {}).get("id"))
+        if _display_window == "DENY":
+            messages, has_more, oldest_id, total_count, user_count = [], False, None, 0, 0
+        else:
+            messages, has_more, oldest_id, total_count, user_count = app._get_history(
+                conv_id, limit=limit, before_id=before_id,
+                window=(_display_window if isinstance(_display_window, dict) else None),
+            )
         # 새로고침·대화 전환 후에도 이미 부여한 👍/👎 를 복원해 중복 부여를 막는다(고유 피드백).
         # best-effort: 피드백 상태 복원 실패는 history 응답을 막지 않는다(첨부 영속과 동형 fail-soft).
         try:
@@ -181,17 +188,21 @@ def history(
     last_status = ""
     last_run_id = ""
     last_run_started_at = ""
+    # feature-0003 reasoning-effort-selector: 이 대화에 마지막으로 저장된 추론 강도(KV) 를 함께
+    # 반환해, 대화 전환·새로고침 후 프론트 선택기가 저장값으로 복원되게 한다(hydration).
+    reasoning_level = ""
     if conv_id:
         try:
-            last_status = str(load_memory_kv(conn, conv_id, "last_status") or "").strip()
+            last_status = str(app.load_memory_kv(conn, conv_id, "last_status") or "").strip()
             if last_status == "processing":
-                last_run_id = str(load_memory_kv(conn, conv_id, "last_status_run_id") or "").strip()
+                last_run_id = str(app.load_memory_kv(conn, conv_id, "last_status_run_id") or "").strip()
                 # 새로고침 후 pending bubble 의 경과시간이 0 으로 초기화되지 않도록 run
                 # 시작 시각(last_status_at)을 함께 반환한다. set_run_status 는 'processing'
                 # 전이 시 last_status_at 을 1 회만 기록하고 terminal(done/error/canceled)
                 # 시점까지 갱신하지 않으므로, processing 상태에서의 last_status_at 은 곧
                 # run 시작 시각이다(클라이언트가 elapsed 기준점으로 사용).
-                last_run_started_at = str(load_memory_kv(conn, conv_id, "last_status_at") or "").strip()
+                last_run_started_at = str(app.load_memory_kv(conn, conv_id, "last_status_at") or "").strip()
+            reasoning_level = str(app.load_memory_kv(conn, conv_id, "reasoning_level") or "").strip()
         except Exception:
             # best-effort: 상태 bubble 복원용 KV 조회 실패는 history 응답을 막지 않는다.
             logging.getLogger(__name__).warning(
@@ -204,6 +215,7 @@ def history(
         "last_status": last_status,
         "last_run_id": last_run_id,
         "last_run_started_at": last_run_started_at,
+        "reasoning_level": reasoning_level,
         "has_more": has_more,
         "next_before_id": oldest_id,
         "total_messages": total_count,
@@ -475,9 +487,9 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
     # 은 기존대로 폐기 — 동작 무변경.
     _preserve_reasoning = bool(data.get("preserve_reasoning"))
     try:
-        run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+        run_id = str(app.load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
         # running run 은 KV cancel_requested 플래그를 run_agent 가 폴링해 처리(§2.6 무변경).
-        mark_cancel_requested(conn, conversation_id, run_id=run_id, preserve_reasoning=_preserve_reasoning)
+        app.mark_cancel_requested(conn, conversation_id, run_id=run_id, preserve_reasoning=_preserve_reasoning)
         # TASK-0169 (2g): worker mode 에서 아직 claim 안 된 pending job 은 run_id 매칭
         # 대상이 없어 KV 플래그가 유실된다. 큐 레벨로 취소(canceled)해 취소 유실 방지.
         if app._is_worker_mode():
@@ -500,7 +512,7 @@ async def cancel_request(request: Request, account=Depends(app.get_current_accou
         # write 를 건너뛰어 새 run 의 processing 을 클로버하지 않는다(취소 시점엔 run_id 가
         # 현재 run 이라 정상 기록). agent 루프의 terminal write 도 동일 가드를 쓴다(TASK-0241).
         try:
-            set_run_status(conn, conversation_id, "canceled", run_id=run_id, only_if_current_run=True)
+            app.set_run_status(conn, conversation_id, "canceled", run_id=run_id, only_if_current_run=True)
         except Exception:
             pass
     except Exception:
@@ -531,8 +543,8 @@ async def finalize_request(request: Request, account=Depends(app.get_current_acc
     ):
         return app._json_error("권한이 없습니다.", 403)
     try:
-        run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
-        mark_finalize_requested(conn, conversation_id, run_id=run_id)
+        run_id = str(app.load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+        app.mark_finalize_requested(conn, conversation_id, run_id=run_id)
     except Exception:
         return app._json_error("finalize failed", 500)
     return JSONResponse({"conversation_id": conversation_id, "run_id": run_id, "output": "즉시 답변을 요청합니다."})
@@ -728,12 +740,14 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
     except Exception:
         data = {}
     scope_mode = str(data.get("scope_mode") or "full").strip().lower()
-    if scope_mode not in ("full", "anchored"):
+    if scope_mode not in ("full", "anchored", "windowed"):
         return app._json_error("invalid scope_mode", 400)
     # feature-0009: 공유 링크 참여(join) 허용 여부. 기본 ON(사용자 결정) — 명시 false 일 때만 OFF.
     joinable = 0 if (data.get("joinable") is False) else 1
-    raw_anchor = data.get("anchor_message_id")
+    raw_anchor = data.get("anchor_message_id")  # 상단 경계("여기까지 공유"), inclusive ceiling
+    raw_floor = data.get("floor_message_id")    # 하단 경계("여기부터 공유"), inclusive floor
     anchor_id: int | None = None
+    floor_id: int | None = None
     if scope_mode == "anchored":
         if raw_anchor is None or str(raw_anchor).strip() == "":
             return app._json_error("anchor_message_id required for scope_mode=anchored", 400)
@@ -741,6 +755,22 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
             anchor_id = int(raw_anchor)
         except Exception:
             return app._json_error("invalid anchor_message_id", 400)
+    elif scope_mode == "windowed":
+        # share-visibility-window: floor/ceiling 중 최소 1개 필요. anchor(ceiling) 없으면 라이브 끝까지.
+        if raw_anchor is not None and str(raw_anchor).strip() != "":
+            try:
+                anchor_id = int(raw_anchor)
+            except Exception:
+                return app._json_error("invalid anchor_message_id", 400)
+        if raw_floor is not None and str(raw_floor).strip() != "":
+            try:
+                floor_id = int(raw_floor)
+            except Exception:
+                return app._json_error("invalid floor_message_id", 400)
+        if anchor_id is None and floor_id is None:
+            return app._json_error("windowed 공유는 floor_message_id 또는 anchor_message_id 가 필요합니다.", 400)
+        if anchor_id is not None and floor_id is not None and floor_id > anchor_id:
+            return app._json_error("여기부터 지점은 여기까지 지점 이전이어야 합니다.", 400)
     # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 만료 옵션.
     # `expires_in_seconds` 누락 / null / 0 이하 = 무기한 (NULL, 기존 동작 무회귀).
     # 상한 365 일 — 초과 시 400 (절대시각 폭주 차단).
@@ -782,6 +812,19 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
             return app._json_error("참여 허용 링크는 대화 생성자만 만들 수 있습니다.", 403)
         if anchor_id is not None and not app._share_anchor_belongs_to_conversation(conn, cid, anchor_id):
             return app._json_error("anchor_message_id 가 대화에 속하지 않습니다.", 400)
+        if floor_id is not None and not app._share_anchor_belongs_to_conversation(conn, cid, floor_id):
+            return app._json_error("floor_message_id 가 대화에 속하지 않습니다.", 400)
+        # share-visibility-window widen-guard: bounded 멤버(제한된 열람 범위)는 자기 window 밖으로
+        # 재공유할 수 없다(전이적 재공유 권한상승 차단). 요청 window ⊄ 본인 window 면 403.
+        # owner/full 멤버/비멤버는 (None,None) → 무영향. PG 오류('DENY') → 안전하게 거부.
+        _mw = app._member_visibility_window(conn, cid, int(account["id"]))
+        if _mw == "DENY":
+            return app._json_error("공유 범위를 확인할 수 없습니다.", 500)
+        _m_floor, _m_ceil = _mw
+        if _m_floor is not None and (floor_id is None or int(floor_id) < int(_m_floor)):
+            return app._json_error("공유 범위가 본인 열람 범위를 벗어납니다.", 403)
+        if _m_ceil is not None and (anchor_id is None or int(anchor_id) > int(_m_ceil)):
+            return app._json_error("공유 범위가 본인 열람 범위를 벗어납니다.", 403)
         # Token UNIQUE 충돌 retry loop (확률은 극히 낮지만 cheap).
         # 만료: expires_in_seconds 가 있으면 ExpiresAt = DATE_ADD(NOW(), INTERVAL %s SECOND)
         # (DB 시계 도메인 — view/fork 의 NOW() 비교와 정합). 무기한이면 NULL.
@@ -801,14 +844,15 @@ async def create_conversation_share(cid: str, request: Request) -> JSONResponse:
                 cur.execute(
                     f"""
 INSERT INTO WebConversationShares
-    (ConversationId, Token, ScopeMode, AnchorMessageId, CreatedBy, PolicyVersion, Joinable, ExpiresAt)
-VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
+    (ConversationId, Token, ScopeMode, AnchorMessageId, FloorMessageId, CreatedBy, PolicyVersion, Joinable, ExpiresAt)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, {expires_expr})
                     """,
                     (
                         cid,
                         token,
                         scope_mode,
                         int(anchor_id) if anchor_id is not None else None,
+                        int(floor_id) if floor_id is not None else None,
                         int(account["id"]),
                         app.SHARE_POLICY_VERSION_CURRENT,
                         int(joinable),
@@ -857,6 +901,7 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
                 "conversation_id": cid,
                 "scope_mode": scope_mode,
                 "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "floor_message_id": int(floor_id) if floor_id is not None else None,
                 "share_id": int(share_id),
                 "token_prefix": token[:8],
                 "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
@@ -869,6 +914,7 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, {expires_expr})
                 "conversation_id": cid,
                 "scope_mode": scope_mode,
                 "anchor_message_id": int(anchor_id) if anchor_id is not None else None,
+                "floor_message_id": int(floor_id) if floor_id is not None else None,
                 "url": f"/share/{token}",
                 "expires_at": expires_at_iso,
                 "expires_in_seconds": int(expires_in_seconds) if expires_in_seconds is not None else None,
@@ -1261,6 +1307,17 @@ async def post_sample_feedback(cid: str, request: Request) -> JSONResponse:
             conn, account, cid, "conversation.read.own", "conversation.read.any"
         ):
             return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+        # share-visibility-window: bounded 멤버는 가려진 pre-floor 메세지를 샘플/피드백 대상으로
+        # 지정할 수 없다(존재 probe 차단). display id-space 하단 경계만 게이트(상단은 post-join tail
+        # 모호성 때문에 표시 필터에 위임). core space 는 표시와 별공간이라 스킵.
+        if message_id is not None and message_id_space == "display":
+            _sf_win = app._resolve_display_window(conn, cid, (account or {}).get("id"))
+            if _sf_win == "DENY":
+                return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
+            if isinstance(_sf_win, dict):
+                _sf_floor = _sf_win.get("floor_id")
+                if _sf_floor is not None and int(message_id) < int(_sf_floor):
+                    return app._json_error("대화를 찾을 수 없거나 접근 권한이 없습니다.", 404)
         # REV-…-item03-security MAJOR-1: 적재 endpoint per-account rate-limit — 미적용 시
         # 열람자가 suggested 피드백을 spam 해 검수 큐를 채워 curator DoS. body-search 와 동형.
         if not app._search_rate_limit_check(int(account.get("id") or 0), max_per_min=10):
@@ -2256,6 +2313,11 @@ async def ask(request: Request) -> JSONResponse:
     # 가 단일 자격증명. 구 클라이언트가 cipher 를 보내도 silently 무시.
     model = str(data.get("model", "") or API_DEFAULT_MODEL).strip()
     request_conversation_id = str(data.get("conversation_id", "")).strip()
+    # feature-0003 reasoning-effort-selector: 사용자가 대화 화면에서 고른 추론 강도.
+    # 유효 레벨(low/normal/high/max)만 통과, 그 외(부재·미상)는 None → **override 안 함**(각 모델
+    # config 기본 thinking 유지). B1 회귀 방지(REV 적대검증): 부재 필드를 기본값으로 강제 대입하면
+    # 선택기 미상호작용·구 클라이언트의 sonnet 이 config 16000 → 강등되는 회귀 발생 → 강제 대입 금지.
+    reasoning_level = normalize_reasoning_level(data.get("reasoning_level"))
     # ── 기본 입력 검증 ──
     if not message:
         conn.close()
@@ -2762,6 +2824,20 @@ async def ask(request: Request) -> JSONResponse:
             if app._conversation_is_group(conv_id or "") else None
         )
 
+        # feature-0003 reasoning-effort-selector: 이 요청의 추론 강도를 대화별로 영구 저장(KV)해,
+        # 새로고침·재접속·대화 전환 후에도 마지막 선택이 복원되게 한다(/api/history 가 hydration).
+        # product 의 turn-단위 캡처 패턴과 정합 — 저장은 '다음 로드'용이고, 이번 run 은 run_kwargs
+        # 로 캡처한 값으로 끝까지 실행된다(in-flight 영향 0). best-effort: 저장 실패는 답변을 막지 않음.
+        # 명시 레벨(reasoning_level 이 진리값)일 때만 저장 — 부재(None)면 기존 저장값·모델 기본을 보존.
+        if conv_id and reasoning_level:
+            try:
+                app.save_memory_kv(conn, conv_id, "reasoning_level", reasoning_level)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "ask: reasoning_level KV save failed (conversation_id=%s)",
+                    conv_id, exc_info=True,
+                )
+
         # TASK-0169: 실행 dispatch — inprocess(현행 to_thread) | worker(ask_jobs enqueue +
         # 내부 attach). 두 경로 모두 동일 shape 의 agent_result dict 반환(동기 응답 계약 유지).
         agent_result = await app._dispatch_ask_run(
@@ -2788,6 +2864,7 @@ async def ask(request: Request) -> JSONResponse:
                 new_attachment_ids=new_attachment_ids_clean,
                 image_inline_path=vision_inline_path,
                 text_inline_path=text_inline_path,
+                reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
             ),
         )
         # worker mode 의 빠른 실패(readiness 503 / slot 429 / enqueue 500)는 표준 에러로 표면화.

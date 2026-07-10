@@ -113,6 +113,9 @@ const state = {
   // 사용자가 composer 의 `+` dropdown 에서 명시 선택한 모델 alias.
   // null = backend default (state.session.default_model) 사용.
   selectedModel: null,
+  // feature-0003 reasoning-effort-selector: 현재 대화에 적용할 추론 강도(low/normal/high/max).
+  // 초기값은 로컬 미러(직전 사용값) → 없으면 기본 "normal". 대화 전환 시 서버 KV 값으로 hydration.
+  reasoningLevel: null,
   progressPoller: null,
   progressPollInFlight: false,
   progressPollSeq: 0,
@@ -154,6 +157,10 @@ const state = {
   pendingBubble: null,  // null | { startedAt, runId, steps, status, displayStatus, isStale, error, userMessage }
   lastCompletedRunSteps: null,  // null | { steps, runId, convId } — 완료된 run 의 단계 목록 (단계 보기 버튼용)
   messageAttachments: {},  // { messageId: attachment[] } — refreshWorkspace 이후에도 칩 유지용 persistent 맵
+  // share-visibility-window: '여기부터 공유'(floor) arm 상태. null | { floorMessageId, floorMsgIdx }.
+  // id/index 만 보관(메시지 내용은 절대 미보관). '여기까지 공유'(ceiling) 와 결합하면 [from,to] 윈도 공유.
+  // 대화 전환 시 반드시 cancelShareRange() 로 초기화(loadConversations 재할당 지점 + renderMessages 가드).
+  shareRange: null,
   stepSidePanelConvId: null,
   // 실행 단계 패널이 현재 *라이브* run(state.pendingBubble)을 표시 중인지 여부.
   // 폴링(refreshStepSidePanel)은 라이브 패널일 때만 덮어쓴다 — 진행 중 새 요청을
@@ -229,6 +236,10 @@ function _newPendingSentinel() {
 const PRODUCT_PREF_LS_KEY = "mad.productPref.v1";
 const COLLAPSED_GROUPS_LS_KEY = "mad.collapsedGroups.v1";
 const SEND_MODE_LS_KEY = "mad.sendMode.v1";
+// feature-0003 reasoning-effort-selector: 사용자가 composer 에서 고른 추론 강도의 per-user
+// 로컬 미러(신규 대화의 기본 선택값). 대화별 값은 서버(KV)가 정본이고 /api/history 로 hydration,
+// 이 로컬 값은 "직전에 쓰던 강도"를 새 대화 첫 진입에 이어주는 편의 기본값이다(product pref 와 동형).
+const REASONING_PREF_LS_KEY = "mad.reasoningLevel.v1";
 // 대화목록 "타 계정 대화" 그룹의 접힘 키 + "처음 진입 시 접힘" 1회 seed 플래그.
 const OTHERS_GROUP_KEY = "__others__";
 const OTHERS_COLLAPSED_SEED_LS_KEY = "mad.othersCollapsedSeed.v1";
@@ -3750,63 +3761,44 @@ function _failedSqlStepFromMessage(message) {
   });
   return found;
 }
-function _buildFixWithAiControl(message) {
+// ITEM-08 / share-visibility-window: "AI 로 고치기" 액션을 모듈 레벨로 추출해 ☰ 메뉴에서 호출.
+// (사용자 요청 2026-07-04: 피드백 👍/👎 만 외부, 나머지 액션은 ☰ 내부로.) 메뉴는 선택 시 닫히므로
+// 인라인 버튼 상태(busy/라벨) 대신 toast 로 진행/결과를 안내한다.
+async function _submitFixWithAi(message) {
   const failedStep = _failedSqlStepFromMessage(message);
-  if (!failedStep) return null;
   const cid = state.activeConversationId;
-  if (!cid) return null;
-
-  const wrap = document.createElement("span");
-  wrap.className = "message-fix-with-ai";
-
-  const status = document.createElement("span");
-  status.className = "message-fix-status";
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "message-action-btn message-fix-btn";
-  btn.textContent = "AI 로 고치기";
-  btn.title = "실패한 SQL 의 오류를 AI 가 진단해 자동으로 수정·재실행합니다.";
-
-  btn.addEventListener("click", async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (wrap.dataset.busy === "1") return;  // 더블클릭 가드(요청 중 재진입 차단).
-    wrap.dataset.busy = "1";
-    btn.disabled = true;
-    const _label = btn.textContent;
-    btn.textContent = "AI 가 고치는 중…";
-    status.textContent = "";
-    try {
-      // executed_sql / error_message 는 실패 step 에서 그대로 — 서버가 데이터 인용 블록으로만 삽입.
-      const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/fix-with-ai`, {
-        method: "POST",
-        body: JSON.stringify({
-          executed_sql: String(failedStep.sql || ""),
-          error_message: String(failedStep.error || ""),
-        }),
-      });
-      // 성공 응답(= /api/ask 와 동일 result dict)이 또 error 를 담을 수 있음(정정 실패) — 안내.
-      if (payload && String(payload.error || "").trim()) {
-        showToast(`수정에 실패했습니다: ${payload.error}`, true);
-      } else {
-        showToast("AI 가 수정한 결과를 추가했습니다.");
-      }
-      // 대화를 reload → 수정된 결과(같은 cid 의 새 assistant message)가 부분 추가/갱신된다.
-      const newCid = String((payload && payload.conversation_id) || cid || "");
-      await refreshWorkspace(newCid);
-      return;  // refreshWorkspace 가 renderMessages 를 다시 그리므로 이 wrap 은 폐기됨.
-    } catch (error) {
-      showToast((error && error.message) || "수정 요청에 실패했습니다.", true);
-      btn.disabled = false;
-      btn.textContent = _label;
-      wrap.dataset.busy = "0";
+  if (!failedStep || !cid) return;
+  showToast("AI 가 고치는 중…");
+  try {
+    // executed_sql / error_message 는 실패 step 에서 그대로 — 서버가 데이터 인용 블록으로만 삽입.
+    const payload = await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/fix-with-ai`, {
+      method: "POST",
+      body: JSON.stringify({
+        executed_sql: String(failedStep.sql || ""),
+        error_message: String(failedStep.error || ""),
+      }),
+    });
+    // 성공 응답(= /api/ask 와 동일 result dict)이 또 error 를 담을 수 있음(정정 실패) — 안내.
+    if (payload && String(payload.error || "").trim()) {
+      showToast(`수정에 실패했습니다: ${payload.error}`, true);
+    } else {
+      showToast("AI 가 수정한 결과를 추가했습니다.");
     }
+    // 대화를 reload → 수정된 결과(같은 cid 의 새 assistant message)가 부분 추가/갱신된다.
+    const newCid = String((payload && payload.conversation_id) || cid || "");
+    await refreshWorkspace(newCid);
+  } catch (error) {
+    showToast((error && error.message) || "수정 요청에 실패했습니다.", true);
+  }
+}
+// ITEM-03 / share-visibility-window: sample-feedback POST 를 모듈 레벨로 추출해 재사용.
+// 투표(👍/👎) 경로와 ☰ 메뉴 '샘플 등록'(suggested=true) 이 동일 endpoint/바디로 호출한다.
+// 요청 바디는 기존 send() 인라인 호출과 byte-for-byte 동일(중복 부여 방지 uniqueness key 포함).
+function _submitSampleFeedback({ cid, vote, suggested, nlQuestion, generatedSql, messageId, messageIdSpace }) {
+  return apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
+    method: "POST",
+    body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId, message_id_space: messageIdSpace }),
   });
-
-  wrap.appendChild(btn);
-  wrap.appendChild(status);
-  return wrap;
 }
 function _buildSampleFeedbackControls(message, msgIdx) {
   const wrap = document.createElement("span");
@@ -3857,10 +3849,7 @@ function _buildSampleFeedbackControls(message, msgIdx) {
     wrap.dataset.busy = "1";
     wrap.querySelectorAll("button").forEach((b) => { b.disabled = true; });
     try {
-      await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/sample-feedback`, {
-        method: "POST",
-        body: JSON.stringify({ vote, suggested: Boolean(suggested), nl_question: nlQuestion, generated_sql: generatedSql, message_id: messageId, message_id_space: messageIdSpace }),
-      });
+      await _submitSampleFeedback({ cid, vote, suggested, nlQuestion, generatedSql, messageId, messageIdSpace });
       if (suggested) {
         status.textContent = "샘플 등록 요청됨 (검수 대기)";
       } else {
@@ -3881,23 +3870,26 @@ function _buildSampleFeedbackControls(message, msgIdx) {
   wrap.appendChild(upBtn);
   wrap.appendChild(downBtn);
 
-  // "샘플 등록" — 좋은 질문↔SQL 쌍을 KB 후보로 제출(검수 큐 경유 승급). SQL 이 있을 때만 노출.
-  // 투표 고유성과 분리(suggested=true 는 별 행) — 검수 큐 제출이므로 투표 활성표시에 영향 없음.
-  if (generatedSql) {
-    const sampleBtn = document.createElement("button");
-    sampleBtn.type = "button";
-    sampleBtn.className = "message-action-btn message-feedback-btn";
-    sampleBtn.textContent = "샘플 등록";
-    sampleBtn.title = "이 질문↔SQL 쌍을 샘플 쿼리(KB) 후보로 제출합니다. 검수 후 반영됩니다.";
-    sampleBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); send("up", true); });
-    wrap.appendChild(sampleBtn);
-  }
+  // share-visibility-window: "샘플 등록" 은 인라인에서 제거하고 말풍선 ☰ 메뉴(submitSampleFromMenu)로 이동.
+  // 본 컨트롤은 투표(👍/👎) 전용으로 남는다(behavior-neutral) — 투표 요청 바디/상태 텍스트 불변.
   wrap.appendChild(status);
   reflectVote();  // 초기 렌더에 기존 투표 반영.
   return wrap;
 }
 
 function renderMessages() {
+  // share-visibility-window: arm 된 floor 가 현재 로드된 창(state.messages)에 없으면(대화 전환·스크롤
+  // 아웃) 공유 range 를 해제한다. cancelShareRange 가 state.shareRange=null 로 만든 뒤 renderMessages 를
+  // 재호출하므로(그때는 이 가드 통과) 현재 프레임은 즉시 반환해 이중 렌더를 피한다.
+  if (state.shareRange) {
+    const _floorId = Number(state.shareRange.floorMessageId);
+    const _floorPresent = (Array.isArray(state.messages) ? state.messages : [])
+      .some((m) => m && m.id != null && Number(m.id) === _floorId);
+    if (!_floorPresent) {
+      cancelShareRange();
+      return;
+    }
+  }
   messageLogEl.innerHTML = "";
   const hasPendingBubble = Boolean(state.pendingBubble);
   if (!state.messages.length && !hasPendingBubble) {
@@ -3948,6 +3940,29 @@ function renderMessages() {
         });
         messageLogEl.appendChild(divider);
       }
+    }
+
+    // feature-0009 gc-join-notice: 참여 알림 등 이벤트 메시지는 좌/우 말풍선이 아닌
+    // 가운데 정렬 시스템 pill 로 렌더한다(Slack/Discord "X joined" 패턴). 표시 store
+    // meta_json 의 event_type 으로 식별하며, 식별되면 일반 말풍선 렌더는 건너뛴다.
+    const _eventType = message.meta && message.meta.event_type;
+    if (_eventType) {
+      const evRow = document.createElement("div");
+      evRow.className = `message-event is-event-${_eventType}`;
+      if (message.id != null) {
+        evRow.id = `message-${message.id}`;
+        evRow.dataset.messageId = String(message.id);
+      }
+      const pill = document.createElement("span");
+      pill.className = "message-event-pill";
+      pill.textContent = String(message.content || "");
+      evRow.appendChild(pill);
+      const evTime = document.createElement("time");
+      evTime.className = "message-event-time";
+      evTime.textContent = formatDateTime(message.created_at);
+      evRow.appendChild(evTime);
+      messageLogEl.appendChild(evRow);
+      return;
     }
 
     const row = document.createElement("article");
@@ -4044,56 +4059,44 @@ function renderMessages() {
       bubble.appendChild(attachRow);
     }
 
-    // 말풍선 단위 분기 / 공유 / 피드백 버튼.
+    // 말풍선 단위 액션. share-visibility-window: 샘플 등록/분기/공유 + "AI 로 고치기"는 인라인 버튼을
+    // 없애고 ☰ 드롭다운(openMessageBubbleMenu)으로 통합한다. 👍/👎 피드백만 외부에 유지(사용자 결정).
     const canShareHere = can("conversation.share.create") && message.id != null;
-    // ITEM-03 (sample-feedback-curation): assistant 답변에 👍/👎 + "샘플 등록" 피드백 버튼.
+    const canForkHere = canFork && message.id != null;
+    // '샘플 등록' 게이트 — assistant 답변 + 본문에 SQL 코드블록이 있을 때만(권한 코드 없음).
+    const canSampleHere = role === "assistant" && Boolean(_extractSqlFromContent(message.content));
+    // ITEM-03 (sample-feedback-curation): assistant 답변에 👍/👎 피드백 버튼(인라인 유지, 투표 전용).
     // 적재 endpoint 는 대화 접근자면 누구나 가능(열람자 포함) → 게이트는 활성 대화 + assistant + id.
     const canFeedbackHere = role === "assistant" && message.id != null && Boolean(state.activeConversationId);
     // ITEM-08: 실패한 execute_sql step 을 가진 assistant 답변 + 발화 권한 보유 시 "AI 로 고치기" 노출.
-    // (열람 전용 멤버는 발화 불가 → 서버도 403 으로 거부하므로 UI 도 동일 게이트.)
+    // (열람 전용 멤버는 발화 불가 → 서버도 403 으로 거부하므로 UI 도 동일 게이트.) 이제 ☰ 메뉴 항목.
     const canFixHere = role === "assistant"
       && Boolean(state.activeConversationId)
       && can("conversation.ask")
       && Boolean(_failedSqlStepFromMessage(message));
-    if ((canFork && message.id != null) || canShareHere || canFeedbackHere || canFixHere) {
+    const hasBubbleMenu = canSampleHere || canForkHere || canShareHere || canFixHere;
+    if (hasBubbleMenu || canFeedbackHere) {
       const actions = document.createElement("div");
       actions.className = "message-actions";
-      if (canFixHere) {
-        const fixCtl = _buildFixWithAiControl(message);
-        if (fixCtl) actions.appendChild(fixCtl);
-      }
       if (canFeedbackHere) {
         actions.appendChild(_buildSampleFeedbackControls(message, _msgIdx));
       }
-      if (canFork && message.id != null) {
-        const forkBtn = document.createElement("button");
-        forkBtn.type = "button";
-        forkBtn.className = "message-action-btn";
-        forkBtn.textContent = "여기서 분기";
-        forkBtn.title = "이 말풍선까지의 기록을 내 계정의 새 대화로 복제합니다.";
-        forkBtn.addEventListener("click", (event) => {
+      if (hasBubbleMenu) {
+        const menuTrigger = document.createElement("button");
+        menuTrigger.type = "button";
+        menuTrigger.className = "message-action-btn message-menu-trigger";
+        menuTrigger.setAttribute("aria-haspopup", "menu");
+        menuTrigger.setAttribute("aria-expanded", "false");
+        menuTrigger.setAttribute("aria-label", "메시지 작업 메뉴");
+        menuTrigger.title = "이 말풍선의 작업 메뉴 (샘플 등록 · 분기 · 공유 · AI 로 고치기)";
+        menuTrigger.textContent = "☰";
+        // <button> 은 Enter/Space 로 native click 을 발화하므로 click 만 배선한다(중복 토글 회피).
+        menuTrigger.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          forkConversation({ fromMessageId: message.id }).catch((error) => {
-            showToast(error.message || "대화 분기에 실패했습니다.", true);
-          });
+          openMessageBubbleMenu(message, _msgIdx, menuTrigger);
         });
-        actions.appendChild(forkBtn);
-      }
-      if (canShareHere) {
-        const shareHereBtn = document.createElement("button");
-        shareHereBtn.type = "button";
-        shareHereBtn.className = "message-action-btn";
-        shareHereBtn.textContent = "여기까지 공유";
-        shareHereBtn.title = "이 말풍선까지의 기록을 anonymous 공유 링크로 발급합니다.";
-        shareHereBtn.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          createConversationShare({ anchorMessageId: message.id }).catch((error) => {
-            showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
-          });
-        });
-        actions.appendChild(shareHereBtn);
+        actions.appendChild(menuTrigger);
       }
       bubble.appendChild(actions);
     }
@@ -4103,6 +4106,16 @@ function renderMessages() {
       row.id = `message-${message.id}`;
       row.dataset.messageId = String(message.id);
       row.dataset.messageRole = role;
+    }
+
+    // share-visibility-window: '여기부터 공유'(floor) 로 arm 된 말풍선을 시각 표시(링 + '공유 시작' 칩).
+    if (state.shareRange && message.id != null && Number(state.shareRange.floorMessageId) === Number(message.id)) {
+      row.classList.add("is-share-floor");
+      bubble.classList.add("is-share-floor");
+      const floorChip = document.createElement("span");
+      floorChip.className = "share-floor-chip";
+      floorChip.textContent = "공유 시작";
+      bubble.appendChild(floorChip);
     }
 
     // feature-0009: 발신자 프로필 아이콘(참가자 식별 용이). user=발신자 아바타, assistant=AI 배지.
@@ -5561,6 +5574,13 @@ async function loadHistory({ append = false } = {}) {
     renderMessages();
     renderProgress();
     renderComposer();
+    // attach-count-scope: 활성 대화가 없는 컨텍스트(대화 삭제/보관/나가기 후 랜딩·
+    // 마지막 대화 삭제)로 진입해도 첨부 배지를 재렌더한다. 이 경로는 switchConversation
+    // (→_loadConversationAttachments) 을 거치지 않고 refreshWorkspace→loadHistory 로만
+    // 도달하므로, 이 호출이 없으면 #composerAttachCountBadge 가 삭제된 대화의 개수를
+    // 그대로 유지한다(사용자 보고 버그와 동일 class). key 는 ""(또는 pending sentinel)
+    // 로 해소돼 빈 배지(또는 해당 pending 컨텍스트 개수)로 정정된다.
+    _renderAttachmentPills();
     return;
   }
   const params = new URLSearchParams({
@@ -5570,6 +5590,9 @@ async function loadHistory({ append = false } = {}) {
   if (append && state.nextBeforeId) {
     params.set("before_id", String(state.nextBeforeId));
   }
+  // feature-0003 (N1 적대검증): 이 로드 시작 시각. 아래 hydration 이 fetch await 동안 사용자가
+  // 새로 고른 추론 강도를 덮어쓰지 않도록, 픽 시각(state._reasoningPickedAt)과 비교하는 seq 가드.
+  const _histLoadStartedAt = Date.now();
   const payload = await apiFetch(`/api/history?${params.toString()}`);
   state.messages = append
     ? [...payload.messages, ...state.messages]
@@ -5577,6 +5600,16 @@ async function loadHistory({ append = false } = {}) {
   state.hasMoreHistory = Boolean(payload.has_more);
   state.nextBeforeId = payload.next_before_id || null;
   loadMoreBtn.classList.toggle("hidden", !state.hasMoreHistory);
+  // feature-0003 reasoning-effort-selector: 대화 로드(비-pagination) 시 서버가 내려준 이 대화의
+  // 저장된 추론 강도로 선택기를 hydration. 저장값이 없는(신규/이력 없음) 대화면 로컬 미러/기본값을
+  // 유지하도록 state 만 비운다(다음 _composerCurrentReasoningLevel 이 로컬→기본으로 폴백).
+  // N1 가드: fetch await 동안 사용자가 명시로 강도를 바꿨다면(픽 시각 > 로드 시작) hydration 을
+  // 건너뛰어 사용자의 최신 선택을 보존한다(픽은 이미 localStorage 미러에도 기록됨).
+  if (!append && !(state._reasoningPickedAt && state._reasoningPickedAt > _histLoadStartedAt)) {
+    const _rl = payload.reasoning_level;
+    state.reasoningLevel = _isValidReasoningLevel(_rl) ? _rl : null;
+    _updateComposerReasoningLabel();
+  }
   renderMessages();
   if (payload.last_status === "processing") {
     // 새 대화 전송 후 clearPendingBubble 이 먼저 호출되는 경우, 또는 페이지 새로고침 후
@@ -5627,6 +5660,12 @@ async function loadHistory({ append = false } = {}) {
     renderProgress();
   }
   renderComposer();
+  // attach-count-scope: 활성 대화 history 를 (재)로드한 컨텍스트의 첨부 배지를 그 대화
+  // 기준으로 재렌더한다. refreshWorkspace(대화 삭제/보관/나가기 후 다른 대화로 랜딩)는
+  // switchConversation 을 거치지 않아 이 지점이 아니면 배지가 직전 대화 값으로 잔류한다.
+  // switchConversation 경로는 직후 _loadConversationAttachments 가 서버 ground truth 로
+  // 다시 확정하므로 이 렌더는 무해한 선-렌더(항상 현재 활성 대화 컨텍스트 기준).
+  _renderAttachmentPills();
 }
 
 async function loadConversations(preferredConversationId = "", { allowCurrentFallback = true } = {}) {
@@ -5636,6 +5675,7 @@ async function loadConversations(preferredConversationId = "", { allowCurrentFal
   // 다른 비동기 path 가 refreshWorkspace 를 호출하면 payload.current (직전 대화 id) 로 active 가
   // 복귀해 신규 의도가 깨지던 회귀를 차단. pending 모드일 때는 사이드바 리스트만 갱신하고 active 는 보존.
   if (!state.pendingNewConversation) {
+    const _prevActiveId = state.activeConversationId;
     const preferredExists = state.conversations.some((item) => item.id === preferredConversationId);
     if (preferredExists) {
       state.activeConversationId = preferredConversationId;
@@ -5645,6 +5685,10 @@ async function loadConversations(preferredConversationId = "", { allowCurrentFal
     } else {
       // 처음 진입(initializeWorkspace) — 직전 대화를 자동 선택하지 않고 빈 화면으로 시작.
       state.activeConversationId = "";
+    }
+    // share-visibility-window: 대화가 실제로 바뀌면 arm 된 공유 range 해제(floor id/idx 는 이전 대화 기준).
+    if (state.shareRange && String(_prevActiveId) !== String(state.activeConversationId)) {
+      cancelShareRange();
     }
   }
   renderConversationList();
@@ -5819,25 +5863,33 @@ async function selectConversation(conversationId) {
     return;
   }
   // conv-switch-fade: 클릭 즉시 직전 화면 fade-out 시작(목표 로딩 전). 콘텐츠 준비 후
-  // 아래에서 _commitConversationCrossfade 로 fade-in. 실패해도 전환 흐름은 막지 않는다.
+  // 아래 finally 의 _commitConversationCrossfade 로 fade-in. 실패해도 전환 흐름은 막지 않는다.
   try { _beginConversationCrossfade(); } catch (_) {}
-  // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.
-  if (state.pendingNewConversation) {
-    state.pendingNewConversation = false;
-  }
-  // 현재 in-flight pending bubble 보존 — 전환 후 돌아올 때 복원
-  const _prevConvId = state.activeConversationId;
-  if (_prevConvId && state.pendingBubble) {
-    if (!state._savedPendingBubbles) state._savedPendingBubbles = {};
-    state._savedPendingBubbles[_prevConvId] = state.pendingBubble;
-  }
-  // 이전 대화의 진행 상태(pending 말풍선 + progress polling + elapsed timer)를 현재
-  // 컨텍스트에서 분리한다. 이 detach 가 없으면 직전 대화의 "작업 중" 말풍선이 전환된
-  // 대화 하단에 그대로 누출된다(loadHistory→renderMessages 가 잔존 state.pendingBubble 을
-  // 렌더). beginPendingConversation 이 새 대화 진입 시 쓰는 것과 동일한 패턴이며,
-  // 위에서 스냅샷을 _savedPendingBubbles 에 보존했으므로 복귀 시 복원 가능하다.
-  stopProgressPolling({ reset: true });
+  // conv-switch-fade opacity-guard (TASK-20260701-convswitch-opacity-guard):
+  // _beginConversationCrossfade 는 messageLog 를 opacity:0 으로 숨긴다. 그 이후 어떤 경로로
+  // 함수를 빠져나가더라도(정상 완료 / apiFetch·loadHistory 예외 / 그 앞 risk window —
+  // stopProgressPolling·pending 스냅샷 — 에서의 예외) fade-in(_commitConversationCrossfade)
+  // 이 반드시 1회 실행되도록 try/finally 로 단일 보장한다. 이 보장이 없으면 begin 과 commit
+  // 사이의 예외가 messageLog 를 opacity 0 으로 남겨 "좌측 대화를 선택해도 대화창에 내용이
+  // 안 뜨는(=선택이 안 먹는 것처럼 보이는)" 빈 화면을 만든다. 기존에는 begin 뒤 risk window
+  // 가 try 밖에 있고 commit 이 성공/catch 두 곳에 중복 배치돼 이 구간이 무방비였다.
   try {
+    // TASK-0048: 다른 실 대화로 전환하면 pending 모드는 자동 종료한다.
+    if (state.pendingNewConversation) {
+      state.pendingNewConversation = false;
+    }
+    // 현재 in-flight pending bubble 보존 — 전환 후 돌아올 때 복원
+    const _prevConvId = state.activeConversationId;
+    if (_prevConvId && state.pendingBubble) {
+      if (!state._savedPendingBubbles) state._savedPendingBubbles = {};
+      state._savedPendingBubbles[_prevConvId] = state.pendingBubble;
+    }
+    // 이전 대화의 진행 상태(pending 말풍선 + progress polling + elapsed timer)를 현재
+    // 컨텍스트에서 분리한다. 이 detach 가 없으면 직전 대화의 "작업 중" 말풍선이 전환된
+    // 대화 하단에 그대로 누출된다(loadHistory→renderMessages 가 잔존 state.pendingBubble 을
+    // 렌더). beginPendingConversation 이 새 대화 진입 시 쓰는 것과 동일한 패턴이며,
+    // 위에서 스냅샷을 _savedPendingBubbles 에 보존했으므로 복귀 시 복원 가능하다.
+    stopProgressPolling({ reset: true });
     await apiFetch("/api/use_conversation", {
       method: "POST",
       body: JSON.stringify({ conversation_id: conversationId }),
@@ -5852,15 +5904,11 @@ async function selectConversation(conversationId) {
       delete state._savedPendingBubbles[conversationId];
       renderMessages();
     }
-    // conv-switch-fade: 목표 대화 콘텐츠(history + 복원된 pending)가 준비됨 → 새 화면
-    // fade-in. 목표가 fade-out 보다 먼저 준비됐으면 남은 fade-out 을 가속해 크로스페이드.
+  } finally {
+    // 성공: 목표 대화 콘텐츠 준비됨 → fade-in(먼저 준비됐으면 남은 fade-out 가속).
+    // 예외: 목표를 못 불러와도 messageLog 가시성을 즉시 복원(고스트 제거 + opacity 1).
+    // finally 는 예외를 삼키지 않으므로 에러는 기존 의미대로 호출부로 그대로 전파된다.
     try { _commitConversationCrossfade(); } catch (_) {}
-  } catch (err) {
-    // conv-switch-fade 안전망: 네트워크 실패 등으로 목표 대화를 못 불러오면 messageLog 가
-    // opacity 0 으로 남아 빈 화면이 된다 — 가시성을 즉시 복원(고스트 제거 + opacity 1)하고
-    // 에러는 기존 의미대로 그대로 전파한다.
-    try { _commitConversationCrossfade(); } catch (_) {}
-    throw err;
   }
   // 대화 전환 시 새 대화의 product 컨텍스트로 chip 갱신.
   try {
@@ -5925,6 +5973,12 @@ function beginPendingConversation() {
   renderMessages();
   renderProgress();
   renderComposer();
+  // attach-count-scope: 새 대화(pending) 진입 시 첨부 배지를 새 컨텍스트(비어 있는
+  // pendingSentinel bucket)로 즉시 재렌더한다. 이 호출이 없으면 #composerAttachCountBadge
+  // 가 직전 대화의 textContent 를 그대로 유지해, "+" 목록에 이전 대화의 첨부 개수가
+  // 남아 표시된다(사용자 보고 버그). switchConversation 은 _loadConversationAttachments
+  // 를 경유해 이미 재렌더하지만 이 pending 경로에는 그 훅이 없었다.
+  _renderAttachmentPills();
   if (promptInputEl) promptInputEl.focus();
 }
 
@@ -5962,6 +6016,10 @@ function _switchToPendingConversationContext(entry) {
   renderMessages();
   renderProgress();
   renderComposer();
+  // attach-count-scope: pending 대화 컨텍스트로 swap 시 첨부 배지를 그 sentinel bucket
+  // 기준으로 재렌더(해당 컨텍스트에 stage 된 첨부가 있으면 그 개수, 없으면 비움). 이
+  // 호출이 없으면 직전 컨텍스트의 배지 값이 잔존한다(beginPendingConversation 과 동일 결함).
+  _renderAttachmentPills();
   startElapsedTimer();
   if (promptInputEl) promptInputEl.focus();
 }
@@ -6099,10 +6157,20 @@ function shareExpiryLabel(seconds) {
 // 공유 링크 발급 공통 처리: POST /share → (joinable 시) is_group 즉시 전환 + 목록 재동기화 →
 // 절대 URL 을 clipboard 에 복사 + toast. createConversationShare(앵커/만료 prompt 경로)와
 // openShareDialog(통합 팝업 폼 경로)가 공용으로 호출 — 발급 로직 단일화로 drift 방지.
-async function _issueConversationShare({ cid, scopeMode = "full", anchorMessageId = null, joinable = true, seconds = null }) {
-  const body = anchorMessageId != null
-    ? { scope_mode: "anchored", anchor_message_id: Number(anchorMessageId) }
-    : { scope_mode: scopeMode };
+async function _issueConversationShare({ cid, scopeMode = "full", anchorMessageId = null, floorMessageId = null, joinable = true, seconds = null }) {
+  // share-visibility-window: 두 경계로 scope 결정.
+  //  floor 있음 → windowed [floor, anchor?]  (anchor 생략 = 라이브 끝까지)
+  //  floor 없음 + anchor 있음 → anchored (기존 '여기까지 공유' — UNCHANGED)
+  //  둘 다 없음 → full(=scopeMode).
+  let body;
+  if (floorMessageId != null) {
+    body = { scope_mode: "windowed", floor_message_id: Number(floorMessageId) };
+    if (anchorMessageId != null) body.anchor_message_id = Number(anchorMessageId);
+  } else if (anchorMessageId != null) {
+    body = { scope_mode: "anchored", anchor_message_id: Number(anchorMessageId) };
+  } else {
+    body = { scope_mode: scopeMode };
+  }
   if (seconds != null) body.expires_in_seconds = Number(seconds);
   // feature-0009: 참여 허용 여부(기본 ON). 명시 false 일 때만 OFF 로 전달.
   body.joinable = joinable !== false;
@@ -6139,7 +6207,7 @@ async function _issueConversationShare({ cid, scopeMode = "full", anchorMessageI
   return payload;
 }
 
-async function createConversationShare({ anchorMessageId = null, conversationId = null } = {}) {
+async function createConversationShare({ anchorMessageId = null, floorMessageId = null, conversationId = null } = {}) {
   const cid = conversationId || state.activeConversationId;
   if (!cid) return null;
   if (!can("conversation.share.create")) {
@@ -6159,8 +6227,9 @@ async function createConversationShare({ anchorMessageId = null, conversationId 
   if (!choice || choice.cancelled) return null;
   return _issueConversationShare({
     cid,
-    scopeMode: "full", // 비앵커 케이스 명시(앵커면 _issueConversationShare 가 anchored 로 무시). openShareDialog 호출부와 대칭.
+    scopeMode: "full", // 비앵커/비윈도 케이스 명시(_issueConversationShare 가 경계 유무로 scope 결정). openShareDialog 호출부와 대칭.
     anchorMessageId,
+    floorMessageId,
     joinable: choice.joinable !== false,
     seconds: choice.seconds,
   });
@@ -6745,56 +6814,59 @@ async function leaveConversation(targetCid = "") {
 
 // REQ-20260518-0001: per-conversation "···" menu 의 lifecycle 관리.
 // menu 는 body 에 mount 하여 conv-item overflow 에 묶이지 않게 한다. ESC / outside click / scroll / resize 닫기.
-function closeConversationItemMenu() {
-  const existing = document.getElementById("convItemMenu");
-  if (existing) existing.remove();
-  // trigger aria-expanded 갱신
-  document.querySelectorAll(".conv-item-menu-trigger.is-open").forEach((t) => {
+// share-visibility-window: 좌측 conv-item ··· 메뉴와 말풍선 ☰ 메뉴가 공유하는 floating-menu
+// primitive 3종. 기존 openConversationItemMenu 는 openFloatingMenu 의 thin caller 로 재구현하여
+// mount/viewport-clamp/positioning + outside-click·ESC·scroll·resize teardown 로직 drift 를 없앤다.
+function closeFloatingMenus() {
+  ["convItemMenu", "bubbleMsgMenu"].forEach((id) => {
+    const existing = document.getElementById(id);
+    if (existing) existing.remove();
+  });
+  // trigger aria-expanded 갱신(conv-item ··· + 말풍선 ☰ 양쪽).
+  document.querySelectorAll(".conv-item-menu-trigger.is-open, .message-menu-trigger.is-open").forEach((t) => {
     t.classList.remove("is-open");
     t.setAttribute("aria-expanded", "false");
   });
 }
+function closeConversationItemMenu() {
+  closeFloatingMenus();
+}
 
-function openConversationItemMenu(cid, triggerEl) {
-  closeConversationItemMenu();
-  const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
-  if (!conversation) return;
+// role="menuitem" 버튼 + 권한 게이트 팩토리. action==null 이면(예: '샘플 등록' — 권한 코드 없음)
+// RBAC markAccessBlocked 게이트를 건너뛴다.
+function makeMenuItem(label, { action = null, conversation = null, danger = false, onSelect } = {}) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "conv-menu-item";
+  if (danger) item.classList.add("is-danger");
+  item.setAttribute("role", "menuitem");
+  item.textContent = label;
+  if (action != null) markAccessBlocked(item, action, conversation);
+  item.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    // 권한 부재 시 markAccessBlocked 가 aria-disabled=true 로 표시 — handler 가 한 번 더 게이트.
+    if (item.classList.contains("is-access-blocked")) {
+      showPermissionDeniedToast(action, conversation);
+      return;
+    }
+    closeFloatingMenus();
+    Promise.resolve()
+      .then(() => onSelect())
+      .catch((err) => showToast(err.message || "작업 실패", true));
+  });
+  return item;
+}
+
+function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", dataset = {}, buildItems } = {}) {
+  closeFloatingMenus();
   const menu = document.createElement("div");
-  menu.id = "convItemMenu";
-  menu.className = "conv-item-menu";
+  menu.id = id;
+  menu.className = className;
   menu.setAttribute("role", "menu");
-  menu.dataset.conversationId = String(cid);
+  Object.keys(dataset).forEach((k) => { menu.dataset[k] = dataset[k]; });
 
-  const makeItem = (label, action, handler, opts = {}) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "conv-menu-item";
-    if (opts.danger) item.classList.add("is-danger");
-    item.setAttribute("role", "menuitem");
-    item.textContent = label;
-    markAccessBlocked(item, action, conversation);
-    item.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      // 권한 부재 시 markAccessBlocked 가 aria-disabled=true 로 표시 — handler 가 한 번 더 게이트.
-      if (item.classList.contains("is-access-blocked")) {
-        showPermissionDeniedToast(action, conversation);
-        return;
-      }
-      closeConversationItemMenu();
-      Promise.resolve()
-        .then(() => handler())
-        .catch((err) => showToast(err.message || "작업 실패", true));
-    });
-    return item;
-  };
-
-  // gc-settings-archive-leave UI 정리: '보관'을 ··· 메뉴에서 제거하고 '설정' 팝업의
-  // '대화 관리' 섹션(openConversationSettings)으로 이동한다. 보관 권한이 없는 그룹 대화
-  // 참여자에게는 같은 섹션에서 보관 대신 '나가기'(self-leave)를 노출한다. '복사' 제거(메시지
-  // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 설정.
-  menu.appendChild(makeItem("공유", "conversation.share", () => openShareDialog(cid)));
-  menu.appendChild(makeItem("설정", "conversation.read", () => openConversationSettings(cid)));
+  if (typeof buildItems === "function") buildItems(menu, makeMenuItem);
 
   document.body.appendChild(menu);
 
@@ -6823,19 +6895,19 @@ function openConversationItemMenu(cid, triggerEl) {
   const onDocClick = (ev) => {
     if (menu.contains(ev.target)) return;
     if (triggerEl.contains(ev.target)) return;
-    closeConversationItemMenu();
+    closeFloatingMenus();
     detach();
   };
   const onKey = (ev) => {
     if (ev.key === "Escape") {
       ev.preventDefault();
-      closeConversationItemMenu();
+      closeFloatingMenus();
       detach();
       try { triggerEl.focus(); } catch (e) {}
     }
   };
   const onScroll = () => {
-    closeConversationItemMenu();
+    closeFloatingMenus();
     detach();
   };
   // outside-click listener 를 다음 tick 으로 늦춰 trigger 의 click 자체가 close 로 잡히지 않게 한다.
@@ -6845,6 +6917,208 @@ function openConversationItemMenu(cid, triggerEl) {
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onScroll, true);
   }, 0);
+  return menu;
+}
+
+function openConversationItemMenu(cid, triggerEl) {
+  const conversation = state.conversations.find((c) => String(c.id) === String(cid)) || null;
+  if (!conversation) return;
+  openFloatingMenu(triggerEl, {
+    id: "convItemMenu",
+    className: "conv-item-menu",
+    dataset: { conversationId: String(cid) },
+    // gc-settings-archive-leave UI 정리: '보관'을 ··· 메뉴에서 제거하고 '설정' 팝업의
+    // '대화 관리' 섹션(openConversationSettings)으로 이동한다. 보관 권한이 없는 그룹 대화
+    // 참여자에게는 같은 섹션에서 보관 대신 '나가기'(self-leave)를 노출한다. '복사' 제거(메시지
+    // '여기서 분기'가 복제 역할 대체), '공유'+'공유 관리'는 단일 팝업으로 통합. 최종 순서: 공유 | 설정.
+    buildItems: (menu, make) => {
+      menu.appendChild(make("공유", { action: "conversation.share", conversation, onSelect: () => openShareDialog(cid) }));
+      menu.appendChild(make("설정", { action: "conversation.read", conversation, onSelect: () => openConversationSettings(cid) }));
+    },
+  });
+}
+
+// share-visibility-window: 말풍선 ☰ 메뉴 — 샘플 등록 · 여기서 분기 · 여기까지/여기부터 공유.
+// conv-item ··· 토글과 대칭으로, 같은 message.id 의 메뉴가 열려 있으면 토글 close.
+function openMessageBubbleMenu(message, msgIdx, triggerEl) {
+  const existing = document.getElementById("bubbleMsgMenu");
+  if (existing && existing.dataset.messageId === String(message.id)) {
+    closeFloatingMenus();
+    return;
+  }
+  const conversation = currentConversation();
+  const role = message.role === "user" ? "user" : "assistant";
+  const canSampleHere = role === "assistant" && Boolean(_extractSqlFromContent(message.content));
+  const canForkHere = Boolean(state.activeConversationId) && can("conversation.create") && message.id != null;
+  const canShareHere = can("conversation.share.create") && message.id != null;
+  // ITEM-08 (사용자 결정 2026-07-04): "AI 로 고치기"도 ☰ 메뉴 항목. 실패한 execute_sql step 보유 +
+  // 발화 권한(conversation.ask). 열람 전용 멤버는 서버 403 → 동일 게이트.
+  const canFixHere = role === "assistant"
+    && Boolean(state.activeConversationId)
+    && can("conversation.ask")
+    && Boolean(_failedSqlStepFromMessage(message));
+  openFloatingMenu(triggerEl, {
+    id: "bubbleMsgMenu",
+    className: "conv-item-menu bubble-msg-menu",
+    dataset: { messageId: String(message.id) },
+    buildItems: (menu, make) => {
+      if (canSampleHere) {
+        menu.appendChild(make("샘플 등록", { onSelect: () => submitSampleFromMenu(message, msgIdx) }));
+      }
+      if (canFixHere) {
+        menu.appendChild(make("AI 로 고치기", {
+          action: "conversation.ask",
+          conversation,
+          onSelect: () => _submitFixWithAi(message),
+        }));
+      }
+      if (canForkHere) {
+        menu.appendChild(make("여기서 분기", {
+          action: "conversation.create",
+          conversation,
+          onSelect: () => forkConversation({ fromMessageId: message.id }),
+        }));
+      }
+      if (canShareHere) {
+        menu.appendChild(make("여기까지 공유", {
+          action: "conversation.share.create",
+          conversation,
+          onSelect: () => onShareCeiling(message, msgIdx),
+        }));
+        menu.appendChild(make("여기부터 공유", {
+          action: "conversation.share.create",
+          conversation,
+          onSelect: () => beginShareFloor(message, msgIdx),
+        }));
+      }
+    },
+  });
+}
+
+// ☰ 메뉴 '샘플 등록' — 인라인 send("up", true) 를 대체. nl_question / generated_sql 도출은 기존 방식과 동일.
+async function submitSampleFromMenu(message, msgIdx) {
+  const cid = state.activeConversationId;
+  if (!cid) return;
+  const nlQuestion = _precedingUserQuestion(msgIdx);
+  const generatedSql = _extractSqlFromContent(message.content);
+  if (!nlQuestion) {
+    showToast("이 답변에 연결된 질문을 찾지 못해 피드백을 보낼 수 없습니다.", true);
+    return;
+  }
+  const messageId = (message && message.id != null) ? message.id : null;
+  const messageIdSpace = (message && message.id_space) ? message.id_space : "display";
+  try {
+    await _submitSampleFeedback({ cid, vote: "up", suggested: true, nlQuestion, generatedSql, messageId, messageIdSpace });
+    showToast("샘플 등록 요청됨 (검수 대기)");
+  } catch (error) {
+    showToast((error && error.message) || "피드백 전송에 실패했습니다.", true);
+  }
+}
+
+// ☰ 메뉴 '여기까지 공유' — floor 가 arm 되어 있으면 [floor, this] 윈도 공유, 아니면 기존 anchored 공유.
+function onShareCeiling(message, msgIdx) {
+  if (state.shareRange) {
+    if (msgIdx >= state.shareRange.floorMsgIdx) {
+      const floor = state.shareRange.floorMessageId;
+      cancelShareRange();
+      return createConversationShare({ floorMessageId: floor, anchorMessageId: message.id }).catch((error) => {
+        showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
+      });
+    }
+    showToast("종료 지점은 시작 지점 이후의 말풍선이어야 합니다.", true);
+    return;
+  }
+  // floor 미armed — 기존 '여기까지 공유' 동작 그대로(scope_mode:'anchored').
+  return createConversationShare({ anchorMessageId: message.id }).catch((error) => {
+    showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
+  });
+}
+
+// ☰ 메뉴 '여기부터 공유' — floor(하한) 를 arm 하고 마커 + 상단 배너를 표시한다.
+function beginShareFloor(message, msgIdx) {
+  state.shareRange = { floorMessageId: message.id, floorMsgIdx: msgIdx };
+  renderMessages();          // floor 마커('공유 시작') 페인트.
+  renderShareRangeBanner();  // 상단 안내 배너.
+}
+
+function cancelShareRange() {
+  state.shareRange = null;
+  const banner = document.getElementById("shareRangeBanner");
+  if (banner) banner.remove();
+  _detachShareRangeEsc();
+  renderMessages();
+}
+
+let _shareRangeEscHandler = null;
+function _attachShareRangeEsc() {
+  if (_shareRangeEscHandler) return;
+  _shareRangeEscHandler = (ev) => {
+    if (ev.key !== "Escape") return;
+    if (!state.shareRange) return;
+    // 플로팅 메뉴가 열려 있으면 메뉴 자체 ESC 핸들러에 양보(메뉴만 닫힘).
+    if (document.getElementById("bubbleMsgMenu") || document.getElementById("convItemMenu")) return;
+    ev.preventDefault();
+    cancelShareRange();
+  };
+  document.addEventListener("keydown", _shareRangeEscHandler, true);
+}
+function _detachShareRangeEsc() {
+  if (!_shareRangeEscHandler) return;
+  document.removeEventListener("keydown", _shareRangeEscHandler, true);
+  _shareRangeEscHandler = null;
+}
+
+// 상단 배너 — messageLogEl.innerHTML='' 재렌더에도 살아남도록 .messages-wrap(외부)에 append.
+function renderShareRangeBanner() {
+  if (!state.shareRange) return;
+  const wrap = messageLogEl ? messageLogEl.closest(".messages-wrap") : null;
+  if (!wrap) return;
+  const prev = document.getElementById("shareRangeBanner");
+  if (prev) prev.remove();
+
+  const banner = document.createElement("div");
+  banner.id = "shareRangeBanner";
+  banner.className = "share-range-banner";
+  banner.setAttribute("role", "status");
+
+  const text = document.createElement("span");
+  text.className = "share-range-banner-text";
+  text.textContent = "여기부터 공유: 시작 지점을 선택했습니다. 종료 지점 말풍선의 ☰에서 «여기까지 공유»를 고르거나, 여기부터 끝까지 공유하세요.";
+  banner.appendChild(text);
+
+  const actions = document.createElement("div");
+  actions.className = "share-range-banner-actions";
+
+  const toEndBtn = document.createElement("button");
+  toEndBtn.type = "button";
+  toEndBtn.className = "share-range-banner-btn is-primary";
+  toEndBtn.textContent = "여기부터 끝까지 공유";
+  toEndBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!state.shareRange) return;
+    const f = state.shareRange.floorMessageId;
+    cancelShareRange();
+    createConversationShare({ floorMessageId: f, anchorMessageId: null }).catch((error) => {
+      showToast(error.message || "공유 링크 생성에 실패했습니다.", true);
+    });
+  });
+  actions.appendChild(toEndBtn);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "share-range-banner-btn";
+  cancelBtn.textContent = "취소";
+  cancelBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    cancelShareRange();
+  });
+  actions.appendChild(cancelBtn);
+
+  banner.appendChild(actions);
+  wrap.appendChild(banner);
+  _attachShareRangeEsc();  // ESC 로도 range 취소(idempotent).
 }
 
 async function cancelCurrentRun() {
@@ -6959,94 +7233,11 @@ async function fetchAskStatus(conversationId) {
   }
 }
 
-// TASK-0041: 장시간 작업이 여전히 진행 중일 때 사용자에게 선택지를 제공하는 모달.
-// 반환값: "wait" | "finalize" | "cancel" | "dismiss"
-function showTimeoutRecoveryDialog({ statusText = "" } = {}) {
-  return new Promise((resolve) => {
-    const backdrop = document.createElement("div");
-    backdrop.setAttribute("role", "dialog");
-    backdrop.setAttribute("aria-modal", "true");
-    backdrop.style.cssText = [
-      "position:fixed", "inset:0",
-      "background:rgba(4,10,20,0.62)",
-      "z-index:9999",
-      "display:flex", "align-items:center", "justify-content:center",
-      "padding:24px",
-    ].join(";");
-
-    const panel = document.createElement("div");
-    panel.style.cssText = [
-      "background:#0f1b2c", "color:#e5eef7",
-      "padding:24px 28px", "border-radius:14px",
-      "max-width:480px", "width:100%",
-      "box-shadow:0 24px 60px rgba(0,0,0,0.5)",
-      "font-family:inherit",
-      "border:1px solid rgba(255,255,255,0.08)",
-    ].join(";");
-
-    const title = document.createElement("h3");
-    title.textContent = "응답 대기 중입니다";
-    title.style.cssText = "margin:0 0 8px 0;font-size:1.05rem;";
-
-    const desc = document.createElement("p");
-    desc.style.cssText = "margin:0 0 18px 0;line-height:1.55;color:#9bb6d2;font-size:0.92rem;white-space:pre-line;";
-    desc.textContent = [
-      "서버는 여전히 이 대화를 처리 중입니다.",
-      "어떻게 진행할까요?",
-      statusText ? `\n현재 상태: ${statusText}` : "",
-    ].filter(Boolean).join("\n");
-
-    const btnRow = document.createElement("div");
-    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;";
-
-    const makeBtn = (label, choice, variant) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = label;
-      const base = [
-        "padding:8px 14px",
-        "border-radius:8px",
-        "border:1px solid rgba(255,255,255,0.14)",
-        "background:#1a2740",
-        "color:#e5eef7",
-        "cursor:pointer",
-        "font-size:0.88rem",
-      ];
-      if (variant === "primary") {
-        base.push("background:#2457d9", "border-color:#2457d9");
-      } else if (variant === "danger") {
-        base.push("background:#7a2121", "border-color:#7a2121");
-      }
-      btn.style.cssText = base.join(";");
-      btn.addEventListener("click", () => {
-        document.body.removeChild(backdrop);
-        document.removeEventListener("keydown", onKey);
-        resolve(choice);
-      });
-      return btn;
-    };
-
-    btnRow.appendChild(makeBtn("요청 취소", "cancel", "danger"));
-    btnRow.appendChild(makeBtn("즉시 답변", "finalize"));
-    btnRow.appendChild(makeBtn("계속 기다리기", "wait", "primary"));
-
-    panel.appendChild(title);
-    panel.appendChild(desc);
-    panel.appendChild(btnRow);
-    backdrop.appendChild(panel);
-
-    const onKey = (event) => {
-      if (event.key === "Escape") {
-        document.body.removeChild(backdrop);
-        document.removeEventListener("keydown", onKey);
-        resolve("dismiss");
-      }
-    };
-    document.addEventListener("keydown", onKey);
-
-    document.body.appendChild(backdrop);
-  });
-}
+// TASK-0041 / ask-timeout-nonblocking (2026-07-09): 구 showTimeoutRecoveryDialog 제거.
+// 클라이언트 타임아웃 시 "요청 취소/즉시 답변/계속 기다리기" 선택을 강요하던 화면 전체
+// 모달(fixed inset0, z-index 9999)이 기존 작업을 가로막는다는 불편 신고로 삭제됐다.
+// 대체 동작은 sendPrompt() 의 is_processing 분기에 인라인화 — 모달·토스트 없이 조용히
+// attachAndWaitForResult 로 재연결하고, 취소/즉시 답변은 컴포저 인라인 버튼으로 상시 노출한다.
 
 // ============================================================================
 // TASK-20260619T014034 — LLM provider 외부요인 제한(자격증명 만료 등) 명시 표면화.
@@ -8005,17 +8196,137 @@ function _composerCurrentModel() {
 function _updateComposerModelLabel() {
   const labelEl = document.getElementById("composerActionsModelLabel");
   if (labelEl) labelEl.textContent = _composerCurrentModel();
+  // 모델이 바뀌면 추론 강도 항목의 활성/라벨도 함께 최신화(thinking 미지원 모델이면 비활성).
+  _updateComposerReasoningLabel();
 }
 
 function _closeComposerActionsMenus() {
   const primary = document.getElementById("composerActionsMenu");
   const secondary = document.getElementById("composerModelMenu");
+  const reasoningMenu = document.getElementById("composerReasoningMenu");
   const trigger = document.getElementById("composerActionsBtn");
   const modelItem = document.getElementById("composerActionsModelItem");
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
   if (primary) primary.classList.add("hidden");
   if (secondary) secondary.classList.add("hidden");
+  if (reasoningMenu) reasoningMenu.classList.add("hidden");
   if (trigger) trigger.setAttribute("aria-expanded", "false");
   if (modelItem) modelItem.setAttribute("aria-expanded", "false");
+  if (reasoningItem) reasoningItem.setAttribute("aria-expanded", "false");
+}
+
+// ── feature-0003 reasoning-effort-selector ──────────────────────────────────
+// 추론 강도(extended thinking budget) 선택. 모델 선택자(_renderComposerModelMenu 등)와
+// 동형 구조. value 는 backend shared.model_catalog.REASONING_LEVELS 키와 정합해야 한다.
+const REASONING_LEVEL_OPTIONS = [
+  { value: "low", label: "낮음", desc: "가장 빠름 — 최소 추론" },
+  { value: "normal", label: "일반", desc: "균형 (기본값)" },
+  { value: "high", label: "높음", desc: "심층 추론" },
+  { value: "max", label: "매우 높음", desc: "최대 추론 (가장 느림)" },
+];
+const DEFAULT_REASONING_LEVEL = "normal";
+
+function _isValidReasoningLevel(v) {
+  return REASONING_LEVEL_OPTIONS.some((o) => o.value === v);
+}
+
+// 현재 모델이 extended thinking(요청 단위 budget)을 지원하는가 — backend model_supports_thinking
+// 과 동일 규칙(claude-* 만). 로컬 LLM 등은 미지원 → 선택기 비활성.
+function _composerModelSupportsThinking() {
+  return String(_composerCurrentModel() || "").toLowerCase().startsWith("claude-");
+}
+
+function _readReasoningPrefFromLocal() {
+  try {
+    const raw = localStorage.getItem(REASONING_PREF_LS_KEY);
+    return _isValidReasoningLevel(raw) ? raw : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function _writeReasoningPrefToLocal(value) {
+  try {
+    if (_isValidReasoningLevel(value)) localStorage.setItem(REASONING_PREF_LS_KEY, value);
+  } catch (_e) { /* localStorage 불가 환경 — 무시 */ }
+}
+
+// 현재 적용 추론 강도: state → 로컬 미러 → 기본값.
+function _composerCurrentReasoningLevel() {
+  return (
+    (_isValidReasoningLevel(state.reasoningLevel) && state.reasoningLevel)
+    || _readReasoningPrefFromLocal()
+    || DEFAULT_REASONING_LEVEL
+  );
+}
+
+function _reasoningLevelLabel(value) {
+  const opt = REASONING_LEVEL_OPTIONS.find((o) => o.value === value);
+  return opt ? opt.label : "일반";
+}
+
+function _updateComposerReasoningLabel() {
+  const labelEl = document.getElementById("composerActionsReasoningLabel");
+  const item = document.getElementById("composerActionsReasoningItem");
+  const supported = _composerModelSupportsThinking();
+  if (labelEl) {
+    labelEl.textContent = supported ? _reasoningLevelLabel(_composerCurrentReasoningLevel()) : "미지원";
+  }
+  if (item) {
+    // thinking 미지원 모델이면 선택기를 비활성(클릭·팝업 차단) — 파라미터는 어차피 무시된다.
+    item.classList.toggle("is-disabled", !supported);
+    item.setAttribute("aria-disabled", supported ? "false" : "true");
+  }
+}
+
+function _renderComposerReasoningMenu() {
+  const menu = document.getElementById("composerReasoningMenu");
+  if (!menu) return;
+  const current = _composerCurrentReasoningLevel();
+  menu.innerHTML = "";
+  REASONING_LEVEL_OPTIONS.forEach((opt) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "composer-model-item" + (opt.value === current ? " is-selected" : "");
+    item.setAttribute("role", "menuitem");
+    item.setAttribute("data-reasoning-value", opt.value);
+    item.innerHTML = `
+      <div class="composer-model-item-head">
+        <span class="composer-model-item-label">${escapeHtml(opt.label)}</span>
+        ${opt.value === current ? '<span class="composer-model-item-check" aria-label="현재 선택">✓</span>' : ""}
+      </div>
+      <div class="composer-model-item-desc">${escapeHtml(opt.desc)}</div>
+    `;
+    item.addEventListener("click", () => {
+      state.reasoningLevel = opt.value;
+      state._reasoningPickedAt = Date.now();  // N1: in-flight loadHistory hydration clobber 방지
+      _writeReasoningPrefToLocal(opt.value);
+      _updateComposerReasoningLabel();
+      _renderComposerReasoningMenu();
+      _closeComposerActionsMenus();
+    });
+    menu.appendChild(item);
+  });
+}
+
+function _openComposerReasoningMenu() {
+  const menu = document.getElementById("composerReasoningMenu");
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
+  const primary = document.getElementById("composerActionsMenu");
+  if (!menu || !reasoningItem) return;
+  // 다른 secondary(모델) 팝업은 닫는다(동시 표시 방지).
+  const modelMenu = document.getElementById("composerModelMenu");
+  const modelItem = document.getElementById("composerActionsModelItem");
+  if (modelMenu) modelMenu.classList.add("hidden");
+  if (modelItem) modelItem.setAttribute("aria-expanded", "false");
+  _renderComposerReasoningMenu();
+  if (primary) {
+    const pRect = primary.getBoundingClientRect();
+    menu.style.bottom = `${window.innerHeight - pRect.bottom}px`;
+    menu.style.left = `${pRect.right + 8}px`;
+  }
+  menu.classList.remove("hidden");
+  reasoningItem.setAttribute("aria-expanded", "true");
 }
 
 function _openComposerActionsMenu() {
@@ -8083,6 +8394,11 @@ function _openComposerModelMenu() {
   const modelItem = document.getElementById("composerActionsModelItem");
   const primary = document.getElementById("composerActionsMenu");
   if (!menu || !modelItem) return;
+  // 추론 강도 secondary 팝업은 닫는다(동시 표시 방지).
+  const reasoningMenu = document.getElementById("composerReasoningMenu");
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
+  if (reasoningMenu) reasoningMenu.classList.add("hidden");
+  if (reasoningItem) reasoningItem.setAttribute("aria-expanded", "false");
   _renderComposerModelMenu();
   // fixed 포지셔닝: primary popup 의 오른쪽에, bottom 정렬
   if (primary) {
@@ -8158,11 +8474,29 @@ function _bindComposerActionsEvents() {
       }
     });
   }
-  // outside click — primary/secondary 둘 다 닫기. menu 내부 click 은 stopPropagation.
+  // feature-0003: 추론 강도 항목 — 모델 항목과 동형. 미지원 모델이면 팝업 열지 않음.
+  const reasoningItem = document.getElementById("composerActionsReasoningItem");
+  const reasoningMenu = document.getElementById("composerReasoningMenu");
+  if (reasoningItem) {
+    reasoningItem.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (reasoningItem.getAttribute("aria-disabled") === "true") return;
+      const expanded = reasoningItem.getAttribute("aria-expanded") === "true";
+      if (expanded) {
+        reasoningMenu && reasoningMenu.classList.add("hidden");
+        reasoningItem.setAttribute("aria-expanded", "false");
+      } else {
+        _openComposerReasoningMenu();
+      }
+    });
+  }
+  // outside click — primary/secondary(모델·추론) 모두 닫기. menu 내부 click 은 stopPropagation.
   document.addEventListener("click", (ev) => {
     if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return;
     if (primary && primary.contains(ev.target)) return;
     if (secondary && secondary.contains(ev.target)) return;
+    if (reasoningMenu && reasoningMenu.contains(ev.target)) return;
     if (trigger.contains(ev.target)) return;
     _closeComposerActionsMenus();
   });
@@ -8395,6 +8729,9 @@ async function sendPrompt() {
       || state.modelCatalog?.default_model
       || state.apiVaultOptions?.default_model
       || "claude-sonnet-4",
+    // feature-0003 reasoning-effort-selector: 사용자가 고른 추론 강도. backend 가 정규화·검증하고
+    // thinking 지원 모델일 때만 요청 단위 budget 으로 주입(미지원 모델이면 무시).
+    reasoning_level: _composerCurrentReasoningLevel(),
   };
   if (isLazyCreate) {
     // TASK-0059: backend `/api/ask` 가 빈 conversation_id 를 "session 초기화 후 직전 대화 이어받기"
@@ -8482,6 +8819,15 @@ async function sendPrompt() {
           state.pendingNewConversation = false;
           state.activeConversationId = earlyCid;
           state.pendingSentinel = null;
+          // composer-nonblock-interrupt (ask-timeout-nonblocking §18.8 H1): in-flight 추적 키
+          // (myAskInFlight/busyConversations)도 sentinel→earlyCid 로 이관한다 — 아래 askKey 의
+          // askAbortControllers 이관(8864)과 대칭. 이를 빠뜨리면 _myAskInFlightHere() 가 false 로
+          // 떨어져(pendingNewConversation=false + activeConversationId=earlyCid 인데 집합엔 sentinel
+          // 만 존재) 전송버튼 "중단" 모드·즉시답변 버튼 라우팅이 죽는다 → 신규 대화 첫 메시지 타임아웃
+          // 시 인라인 취소 불능. (구 타임아웃 모달이 /api/cancel 직접 호출로 가려온 잠복 버그.)
+          state.busyConversations.add(earlyCid);
+          state.myAskInFlight.add(earlyCid);
+          renderComposer();
           // new-conv-dedup: in-flight placeholder(pendingConversationEntries[busyKey]) 를 실 cid
           // entry 로 *원자적* 교체한다. 이 정리를 /api/ask 응답(아래 8421)까지 미루면 — early-cid 발급
           // 직후부터 /api/ask 응답 도착까지(실 LLM 응답 시간) — placeholder(메시지 제목)와 아래 optimistic
@@ -8712,36 +9058,17 @@ async function sendPrompt() {
         }
       }
       if (status && status.is_processing) {
-        const statusText = status.status || "processing";
-        const choice = await showTimeoutRecoveryDialog({ statusText });
-        if (choice === "cancel") {
-          try {
-            await apiFetch("/api/cancel", {
-              method: "POST",
-              body: JSON.stringify({ conversation_id: askCid }),
-            });
-            showToast("취소 요청을 전달했습니다.");
-          } catch (cancelError) {
-            showToast(`취소 요청 실패: ${cancelError.message || cancelError}`, true);
-          }
-          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-        } else if (choice === "finalize") {
-          try {
-            await apiFetch("/api/finalize", {
-              method: "POST",
-              body: JSON.stringify({ conversation_id: askCid }),
-            });
-            showToast("즉시 답변 요청을 전달했습니다.");
-          } catch (finError) {
-            showToast(`즉시 답변 요청 실패: ${finError.message || finError}`, true);
-          }
-          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-        } else if (choice === "wait") {
-          await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
-        } else {
-          // dismiss — 진행 상태만 유지. progress polling 이 결과를 갱신할 것
-          showToast("계속 서버에서 처리 중입니다. 상태는 상단에 표시됩니다.");
-        }
+        // ask-timeout-nonblocking (2026-07-09): 클라이언트(브라우저/프록시) 읽기 타임아웃으로
+        // /api/ask 연결이 끊겼지만 서버는 여전히 이 대화를 처리 중인 상황. 예전에는 화면 전체를
+        // 덮는 모달(showTimeoutRecoveryDialog: 요청 취소/즉시 답변/계속 기다리기)로 진행을 강제
+        // 중단시켰다 — "공격적 화면 배치" 불편 신고(사용자 요청 2026-07-09)로 제거.
+        //
+        // 재연결은 필수 동작이고(끊긴 채 두면 답변이 유실됨) 사용자가 그 사실을 인지할 필요는
+        // 없다 → 모달·토스트 없이 조용히 long-poll 재연결(attachAndWaitForResult)만 이어받아
+        // 답변이 준비되면 자연히 표시되게 한다. 취소·즉시 답변은 처리 중 내내 컴포저에 상시
+        // 노출되는 인라인 버튼(전송→"중단" 모핑 TASK-0157 / "즉시 답변" TASK-0158)으로 사용자가
+        // 언제든 직접 수행할 수 있어, 화면을 가리는 별도 모달이 불필요하다.
+        await attachAndWaitForResult(askCid, { runId: status.run_id || "" });
         // composer-clear-input-on-send: 입력창은 낙관적 시점에 이미 비워짐(재클리어 안 함).
       } else {
         showToast(`요청에 실패했습니다: ${error.message || error}`, true);
@@ -8757,9 +9084,12 @@ async function sendPrompt() {
     }
   } finally {
     state.busyConversations.delete(busyKey);
+    state.busyConversations.delete(askKey);   // ask-timeout-nonblocking §18.8 H1: early-cid 이관분(askKey=earlyCid) 정리.
     // composer-nonblock-interrupt: 내 @assistant run 수명 종료 → in-flight 표시 해제(전송/중단 버튼·R2/R3).
-    // busyConversations 와 동일 키(busyKey)로만 관리 → 일관성 유지.
+    // early-cid 전환 시 myAskInFlight/busyConversations 도 sentinel→earlyCid 이관되므로(위 8821 부근)
+    // abort controller·취소 flag 와 동일하게 두 키(sentinel/earlyCid) 모두 정리해 leak 을 막는다.
     state.myAskInFlight.delete(busyKey);
+    state.myAskInFlight.delete(askKey);        // ask-timeout-nonblocking §18.8 H1: early-cid 이관분 정리.
     // TASK-0241: 이 send 의 abort controller + 취소 flag 정리(수명 종료). early-cid 전환으로 키가
     // 두 값(sentinel/earlyCid)일 수 있으므로 양쪽 모두 정리한다.
     state.askAbortControllers.delete(askKey);

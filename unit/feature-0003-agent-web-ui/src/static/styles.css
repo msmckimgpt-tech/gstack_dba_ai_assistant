@@ -8,9 +8,18 @@
   /* Surface colors — warm canvas palette (Cursor DS 참조) */
   --bg:            #f7f7f4;
   --surface:       #ffffff;
+  /* B1: 한 단계 elevated surface(--surface #fff 와 --bg #f7f7f4 사이) — hover/active/pill 구분 복원. */
+  --surface-2:     #f0efea;
   --sidebar-bg:    #fafaf7;
   --border:        #e6e5e0;
   --border-subtle: #f0efea;
+
+  /* B9: 시맨틱 태그 토큰(bg/fg/border) — provenance(info)와 attention(warn/danger) 구분. */
+  --tag-ok-bg:      rgba(22, 163, 74, 0.12);  --tag-ok-fg:      #15803d;  --tag-ok-bd:      rgba(22, 163, 74, 0.40);
+  --tag-warn-bg:    rgba(202, 138, 4, 0.12);  --tag-warn-fg:    #a16207;  --tag-warn-bd:    rgba(202, 138, 4, 0.40);
+  --tag-danger-bg:  rgba(220, 38, 38, 0.12);  --tag-danger-fg:  #b91c1c;  --tag-danger-bd:  rgba(220, 38, 38, 0.40);
+  --tag-info-bg:    rgba(37, 99, 235, 0.10);  --tag-info-fg:    #1d4ed8;  --tag-info-bd:    rgba(37, 99, 235, 0.35);
+  --tag-neutral-bg: var(--surface-2);         --tag-neutral-fg: var(--text-2);  --tag-neutral-bd: var(--border);
 
   /* Text — warm near-black ink */
   --text:          #26251e;
@@ -63,6 +72,9 @@
   --bulk-bar-bottom:   0;
   --bulk-bar-elev:     0 -2px 8px rgba(0, 0, 0, .06);
 }
+
+/* H1: 이 콘솔은 LIGHT-ONLY — 서피스/시맨틱 태그 토큰의 다크 @media override 를 두지 않는다(라이트 :root 값만 사용).
+   과거 다크 override 는 여전히 흰색인 행 위에서 태그 대비 저하·그룹/pill fill 반투명화 회귀를 유발해 제거함. */
 
 /* ─── Reset ─────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1047,6 +1059,39 @@ a { color: inherit; }
   }
 }
 
+/* feature-0009 gc-join-notice: 참여 알림 등 이벤트 메시지 — 좌/우 말풍선이 아닌
+   가운데 정렬 시스템 pill(Slack/Discord "X joined" 패턴). */
+.message-event {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0;
+  text-align: center;
+}
+.message-event-pill {
+  display: inline-block;
+  max-width: 80%;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-muted, #e2e8f0);
+  color: var(--text-muted, #475569);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.message-event-time {
+  font-size: 10px;
+  color: var(--text-muted, #475569);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .message-event-pill {
+    background: rgba(148, 163, 184, 0.18);
+    color: var(--text-muted, #94a3b8);
+  }
+}
+
 .message-meta-duration {
   font-size: 10px;
   opacity: 0.7;
@@ -1233,6 +1278,18 @@ a { color: inherit; }
 }
 .message.is-user.is-own-message .message-action-btn:hover {
   background: #fff;
+}
+/* share-visibility-window: 말풍선 액션 통합 ☰ 트리거 — .message-action-btn pill 을 재사용하고
+   ☰ 글리프 크기 + 열림(is-open) 강조만 덧붙인다. 실 <button> 이라 Enter/Space 는 native 로 동작. */
+.message-menu-trigger {
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 8px;
+}
+.message-menu-trigger.is-open {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: rgba(37,99,235,.25);
 }
 
 /* Message content markdown */
@@ -1934,6 +1991,14 @@ a { color: inherit; }
 }
 .composer-actions-item:hover {
   background: rgba(37, 99, 235, 0.06);
+}
+/* feature-0003 reasoning-effort-selector: thinking 미지원 모델 선택 시 추론 강도 항목 비활성. */
+.composer-actions-item.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.composer-actions-item.is-disabled:hover {
+  background: transparent;
 }
 .composer-actions-icon {
   color: var(--muted, #6b7280);
@@ -4231,7 +4296,11 @@ a { color: inherit; }
    pane 단일 overflow 를 남기면 list-detail 의 flex:1 fill + 컬럼 독립 스크롤과 충돌(이중 스크롤). */
 .admin-pane[data-admin-pane="dashboard"].is-active,
 .admin-pane[data-admin-pane="usage"].is-active,
+.admin-pane[data-admin-pane="ai-ops"].is-active,
 .admin-pane[data-admin-pane="release-notes"].is-active {
+  /* aiops-scroll: AI 운영 현황 pane 은 배너/축/KPI/Attention/카테고리표/활동feed/커버리지의
+     단순 세로 흐름(list-detail 아님)이라 dashboard/usage 와 동일하게 pane 자체 세로 스크롤 부여.
+     누락 시 admin-shell(overflow:hidden+100vh)에서 하단(카테고리표·커버리지)이 잘려 도달 불가. */
   overflow-y: auto;
   /* TASK-0198: 좌우 스크롤 차단 — 카드 min-width 누적/SVG 폭/표 넓이로 가로 넘침이 발생하던 회귀 차단.
      내부 요소는 min-width:min(Npx,100%) + 표는 카드 내부 스크롤로 흡수(아래). */
@@ -7371,6 +7440,130 @@ a { color: inherit; }
   gap: 10px;
 }
 
+/* ─── feature-0018 runtime-settings 재설계 (feature-0018-runtime-settings-ux) ───
+   정렬 grid 행 + 카테고리 섹션 + canonical focus-ring 입력. 저장/초기화는 하단
+   commit-bar(모두 적용)로 위임 — 행별 버튼 제거. 계정 pane 권한 그리드·usage 테이블
+   디자인 언어(8px 그리드, --border-subtle 구분선, --primary-soft dirty)와 정합. */
+.rs-panel { display: flex; flex-direction: column; gap: 24px; }
+.rs-group { display: flex; flex-direction: column; gap: 6px; }
+.rs-group-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 2px 2px;
+}
+.rs-list {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-subtle); border-radius: var(--r-md);
+  overflow: hidden; background: var(--surface);
+}
+/* 2×2 grid 행: 라벨·설명(좌) / 입력·상태(우), 열 정렬 (8px 그리드) */
+.rs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 16px; row-gap: 3px;
+  padding: 12px 16px;
+  transition: background .12s ease, box-shadow .12s ease;
+}
+.rs-row + .rs-row { border-top: 1px solid var(--border-subtle); }
+.rs-row:hover { background: var(--bg); }
+.rs-row.is-pending { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
+.rs-row-label {
+  grid-column: 1; grid-row: 1;
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.rs-row-label > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-row-desc {
+  grid-column: 1; grid-row: 2;
+  font-size: 12px; color: var(--text-2); line-height: 1.45; max-width: 100%;
+  /* 최대 2줄 노출(운영상 중요한 설명) — 초과 시 tooltip 은 보조 */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rs-row-control {
+  grid-column: 2; grid-row: 1;
+  display: flex; align-items: center; gap: 8px; justify-self: end;
+}
+.rs-row-meta {
+  grid-column: 2; grid-row: 2;
+  display: flex; align-items: center; gap: 8px; justify-self: end;
+}
+.rs-input {
+  width: 112px; text-align: right;
+  font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--bg); color: var(--text);
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.rs-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.rs-input.is-invalid { border-color: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+.rs-input:disabled { opacity: .6; cursor: not-allowed; }
+.rs-unit { font-size: 12px; color: var(--text-muted); }
+.rs-badge { flex: none; }
+/* status 12px + WCAG AA 대비 확보(darker override/pending/muted) */
+.rs-status { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.rs-status.is-override { color: var(--primary-dark); }
+.rs-status.is-pending { color: #b45309; font-weight: 600; }
+.rs-status.is-invalid { color: var(--danger); font-weight: 600; }
+.rs-reset {
+  background: none; border: none; cursor: pointer; padding: 4px 8px;
+  border-radius: var(--r-xs); font-size: 12px; color: var(--text-2);
+  transition: color .12s ease, background .12s ease;
+}
+.rs-reset:hover { color: var(--primary); background: var(--primary-soft); }
+.rs-reset[hidden] { display: none; }
+.rs-readonly-note {
+  font-size: 12px; color: var(--text-2); background: var(--bg);
+  border: 1px solid var(--border-subtle); border-radius: var(--r-sm); padding: 8px 12px;
+}
+/* 좁은 화면: 단일 열 세로 스택(라벨→설명→컨트롤→상태). 각 child 의 grid-row 를 명시 재배치. */
+@media (max-width: 560px) {
+  .rs-row:not(.rs-row--slider) { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; row-gap: 6px; }
+  .rs-row:not(.rs-row--slider) .rs-row-label  { grid-column: 1; grid-row: 1; }
+  .rs-row:not(.rs-row--slider) .rs-row-desc   { grid-column: 1; grid-row: 2; }
+  .rs-row:not(.rs-row--slider) .rs-row-control{ grid-column: 1; grid-row: 3; justify-self: start; }
+  .rs-row:not(.rs-row--slider) .rs-row-meta   { grid-column: 1; grid-row: 4; justify-self: start; }
+}
+
+/* ─── reasoning-budget-per-model: 모델별 accordion 카드 + [추론↔본문] 비율 슬라이더 ─── */
+.rs-budget-panel { gap: 16px; }
+.rs-budget-card { margin: 0; }
+.rs-budget-card-body { display: flex; flex-direction: column; gap: 16px; padding: 12px 14px 14px; }
+.rs-subgroup-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); margin: 2px 2px 0;
+}
+.rs-card-total {
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600;
+  font-size: 12px; color: var(--text-2);
+}
+/* 슬라이더 행: 라벨/상태(1행) · 설명(2행) · 슬라이더+숫자(3행 full) · 분할바(4행 full) */
+.rs-row--slider { grid-template-rows: auto auto auto auto; row-gap: 8px; }
+.rs-row--slider .rs-row-label   { grid-column: 1; grid-row: 1; }
+.rs-row--slider .rs-row-meta    { grid-column: 2; grid-row: 1; justify-self: end; }
+.rs-row--slider .rs-row-desc    { grid-column: 1 / -1; grid-row: 2; }
+.rs-row--slider .rs-slider-control { grid-column: 1 / -1; grid-row: 3; justify-self: stretch; }
+.rs-row--slider .rs-split-bar   { grid-column: 1 / -1; grid-row: 4; }
+.rs-slider-control { display: flex; align-items: center; gap: 12px; width: 100%; }
+.rs-slider {
+  flex: 1 1 auto; min-width: 0; height: 4px; cursor: pointer;
+  accent-color: var(--primary);
+}
+.rs-slider:disabled { opacity: .6; cursor: not-allowed; }
+.rs-input--compact { width: 96px; }
+.rs-split-bar {
+  display: flex; height: 22px; border-radius: var(--r-sm); overflow: hidden;
+  border: 1px solid var(--border-subtle); font-size: 10px;
+}
+.rs-split-seg {
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; letter-spacing: .04em;
+  min-width: 0; overflow: hidden; white-space: nowrap;
+  transition: flex-grow .12s ease;
+}
+.rs-split-think { background: var(--primary); }
+.rs-split-content { background: var(--text-muted); }
+
 /* ─── TASK-0262: LLM 사용량 차트 클릭 → 대화목록 모달 ─────────────────────── */
 /* 차트 요소 클릭 가능 표시(커서·hover 강조). admin·profile 공통. */
 .admin-usage-clickable, .profile-usage-clickable { cursor: pointer; }
@@ -7790,10 +7983,104 @@ a { color: inherit; }
   opacity: .5;
   pointer-events: none;
 }
+/* share-visibility-window: '여기부터 공유'(floor) arm 표시 — 시작 말풍선 링 + '공유 시작' 칩. */
+.message.is-share-floor .message-bubble,
+.message-bubble.is-share-floor {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: 2px;
+  border-radius: var(--r-md, 10px);
+}
+.share-floor-chip {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+  background: var(--primary-soft, #eff6ff);
+  border: 1px solid rgba(37,99,235,.25);
+}
+/* share-visibility-window: '여기부터 공유' 상단 안내 배너 — .messages-wrap 내 absolute 오버레이.
+   messageLogEl.innerHTML='' 재렌더에도 살아남도록 로그 element 바깥(.messages-wrap)에 부착. */
+.share-range-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--primary-soft, #eff6ff);
+  border-bottom: 1px solid rgba(37,99,235,.25);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,.08));
+}
+.share-range-banner-text {
+  flex: 1;
+  min-width: 180px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text, #26251e);
+}
+.share-range-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.share-range-banner-btn {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e6e5e0);
+  background: var(--surface, #fff);
+  color: var(--text-2, #5a5852);
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.share-range-banner-btn:hover {
+  border-color: var(--primary, #2563eb);
+  color: var(--primary, #2563eb);
+}
+.share-range-banner-btn.is-primary {
+  background: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+  color: #fff;
+}
+.share-range-banner-btn.is-primary:hover {
+  background: var(--primary-dark, #1d4ed8);
+  border-color: var(--primary-dark, #1d4ed8);
+  color: #fff;
+}
+/* 다크 모드 parity — 인접한 message-highlight 규칙(@media prefers-color-scheme: dark)과 동일 패턴.
+   반투명 브랜드 오버레이라 base 표면 색과 무관하게 자연스럽게 읽힌다. */
+@media (prefers-color-scheme: dark) {
+  .share-floor-chip {
+    background: rgba(37,99,235,.20);
+    color: #93c5fd;
+    border-color: rgba(37,99,235,.42);
+  }
+  .share-range-banner {
+    background: rgba(37,99,235,.16);
+    border-bottom-color: rgba(37,99,235,.42);
+  }
+  .share-range-banner-btn {
+    background: var(--surface, #1e1e22);
+    border-color: var(--border, rgba(255,255,255,.14));
+    color: var(--text-2, #cbd5e1);
+  }
+}
 /* 검수 큐(샘플 검수 탭) */
+/* M3: 검수 큐 행은 #metadataList 안에서 glossary/enum CARD 행과 나란히 렌더되므로 카드 geometry 로 통일 —
+   .admin-meta-row 처럼 full 1px border + radius + surface 배경(하단만 divider 이던 구 스타일 제거). 내부 head/q/sql/actions 는 유지. */
 .admin-sf-row {
   padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -7805,7 +8092,13 @@ a { color: inherit; }
   font-size: 12px;
   color: var(--text-muted);
 }
-.admin-sf-row-head .sf-vote { font-size: 15px; }
+/* L8: 이모지 대신 텍스트 태그(추천/비추천) — ok/danger 톤으로 승급 가능성 명시. */
+.admin-sf-row-head .sf-vote {
+  font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--tag-neutral-bd);
+}
+.admin-sf-row-head .sf-vote-up   { color: var(--tag-ok-fg);     background: var(--tag-ok-bg);     border-color: var(--tag-ok-bd); }
+.admin-sf-row-head .sf-vote-down { color: var(--tag-danger-fg); background: var(--tag-danger-bg); border-color: var(--tag-danger-bd); }
 .admin-sf-scope {
   font-family: var(--mono, monospace);
   font-size: 11px;
@@ -7836,6 +8129,13 @@ a { color: inherit; }
 }
 .admin-sf-nosql { font-size: 12px; font-style: italic; }
 .admin-sf-actions { display: flex; gap: 8px; }
+/* ux2 #2: 샘플 검수 행도 클릭 → 우측 read-only 상세(용어/ENUM 검토 행과 동일 affordance). */
+.admin-sf-row[role="button"] { cursor: pointer; transition: background .12s, border-color .12s; }
+.admin-sf-row[role="button"]:hover { background: var(--surface-2, var(--bg)); border-color: #d8d7d1; }
+.admin-sf-row[role="button"]:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+.admin-sf-row.is-active { background: var(--primary-soft, #eff6ff); border-color: var(--primary); }
+/* ux2 #4: 샘플 행 미리보기에서 mermaid 원문 대신 안내(상세에서 다이어그램 렌더). */
+.admin-sf-diagram-note { font-size: 12.5px; font-style: italic; }
 
 /* TASK-20260624-item11-metadata-glossary-enum (ITEM-11 MVP-1): 메타데이터 거버넌스 탭 */
 .admin-meta-scope-label { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
@@ -7863,28 +8163,51 @@ a { color: inherit; }
 }
 .admin-meta-subtab:hover { color: var(--text); }
 .admin-meta-subtab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
-/* 용어사전 2차 보기 탭(메타데이터 > 용어사전 > {용어 목록 | 용어 검토 큐}) — 메인 서브탭보다 시각적 하위(필 형태). */
-.admin-meta-glossary-views {
+/* 2차 보기 strip(secondary nav) — 메인 밑줄 서브탭보다 시각적 하위(필 형태). B8: 서브탭↔보기 strip 여백 분리. */
+.admin-meta-views {
   display: flex;
   gap: 6px;
-  margin: -4px 0 14px;
+  margin: -6px 0 12px;
 }
-.admin-meta-gview {
-  padding: 5px 12px;
+.admin-meta-view {
+  /* 폴리시 #1: 2차 보기 strip 은 1차 서브탭(밑줄)에 종속되는 경량 텍스트 토글.
+     이전엔 border+틴트 필이라 얇은 밑줄 탭보다 시각적으로 무거워 위계가 역전됐다 →
+     border 제거 + 비활성 투명, 활성만 은은한 primary chip 으로 낮춘다. */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
-  background: var(--surface-2, var(--bg));
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
-  transition: color .13s, border-color .13s, background .13s;
+  transition: color .13s, background .13s;
 }
-.admin-meta-gview:hover { color: var(--text); }
-.admin-meta-gview.is-active {
+.admin-meta-view:hover { color: var(--text); background: var(--surface-2, var(--bg)); }
+.admin-meta-view.is-active {
   color: var(--primary);
-  border-color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  background: rgba(37, 99, 235, .10);   /* borderless light chip — 밑줄 1차 탭보다 낮은 강조. */
 }
+/* review 보기 pending 배지 — 구 .admin-meta-subtab-badge 를 보기 strip 용으로 계승. */
+.admin-meta-view-badge {
+  display: inline-block; min-width: 16px; padding: 0 5px;
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  border-radius: 999px; background: var(--primary, #2563eb); color: #fff;
+}
+.admin-meta-view-badge[hidden] { display: none; }
+.admin-meta-view.is-active .admin-meta-view-badge { background: var(--primary-dark, #1d4ed8); }
+/* B8: 필터 바(스코프 + 역할) — 목록 필터 행. 서브탭(밑줄)·보기 strip(필)과 구분되는 중립 컨트롤 행. */
+.admin-meta-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+/* B10: 서브뷰 KPI 요약 라인 — 카운트 옆 muted 보조. */
+.admin-meta-kpi { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 /* metadata-list-detail: 폼은 이제 우측 .admin-detail-col(자체가 카드) 안에 살아서 자체 카드 chrome 불요.
    border/bg/padding/margin 을 제거해 detail-col 패딩 안에 자연스럽게 배치(다른 패널 상세 폼과 정합). */
 .admin-meta-form {
@@ -7896,9 +8219,16 @@ a { color: inherit; }
 .admin-meta-detail-note { font-size: 12px; color: var(--text-muted); line-height: 1.55; margin: 10px 0 0; text-align: left; }
 /* metadata-list-detail: '스키마 골격 가져오기' 진입 버튼 — 우측 상세 bootstrap 모드 활성 시 강조(토글). */
 .admin-meta-bs-open.is-active { border-color: var(--primary); color: var(--primary); }
-.admin-meta-form-grid { display: flex; flex-direction: column; gap: 10px; }
-.admin-meta-field { display: flex; flex-direction: column; gap: 4px; }
+/* B6: 진짜 2열 grid — 짧은 식별 필드(스키마/테이블/컬럼/코드)는 셀, 긴 필드(정의/설명/질문/SQL)는 전폭. */
+.admin-meta-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.admin-meta-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.admin-meta-field-wide { grid-column: 1 / -1; }
+@media (max-width: 720px) { .admin-meta-form-grid { grid-template-columns: 1fr; } }
 .admin-meta-field-label { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text-muted)); }
+/* B6: 인라인 검증 — 필수 미입력 필드는 red border + 필드 하단 메시지(토스트 병행). */
+.admin-meta-field.is-error .admin-meta-input { border-color: var(--danger, #dc2626); }
+.admin-meta-field.is-error .admin-meta-field-label { color: var(--danger, #dc2626); }
+.admin-meta-field-error { font-size: 11px; color: var(--danger, #dc2626); }
 .admin-meta-input {
   padding: 9px 11px;
   border-radius: var(--r-sm, 6px);
@@ -7914,44 +8244,202 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-form-actions { display: flex; gap: 8px; }
 
 /* feature-0016: 메타데이터 지식그래프 뷰 (Cytoscape 캔버스 + 통합 엔티티 카드) */
-.admin-meta-graph { display: flex; flex-direction: column; gap: 10px; }
+/* graphux6-responsive: 그래프 뷰가 활성 pane(=admin-shell 100vh 기반)의 남은 세로 공간을
+   flex-fill 로 채운다(고정 height 대신 가용 높이에 반응). 세로 긴/보통 화면(≈≥560px viewport, 흔한
+   768급 노트북 포함)에선 캔버스가 남은 공간을 채우며 축소돼 **스크롤 없이** 전체가 보인다(헤더·서브탭
+   유지). '빈 캔버스'(§18.8 M1) 방어는 여기 그래프 하한이 아니라 **캔버스 자체 min-height 200px** 로 한다
+   — 그래프에 440px 류 하한을 두면 흔한 노트북에서까지 pane 스크롤이 유발돼 헤더·서브탭이 스크롤아웃되는
+   회귀(§18.8 round-2 MEDIUM)가 생기기 때문. 아주 짧은 창(캔버스 200px floor 가 가용높이를 초과, ≈<560px
+   viewport)에서만 아래 graph-mode overflow-y:auto 로 스크롤(잘림 방지, 희귀). */
+.admin-meta-graph { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; }
 .admin-meta-graph-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .admin-meta-graph-search { flex: 1 1 240px; min-width: 180px; }
 .admin-meta-graph-depth-label { font-size: 12px; color: var(--text-muted); }
-.admin-meta-graph-status { font-size: 12px; color: var(--text-muted); margin-left: auto; }
-/* 범례 — 색=카테고리, 크기=관련도, 점선박스=스키마 클러스터 */
-.admin-meta-graph-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 11.5px; color: var(--text-muted); }
-.admin-meta-graph-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.admin-meta-graph-legend .lg-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
-.admin-meta-graph-legend .lg-box { width: 14px; height: 11px; border: 1px dashed #aab3c5; border-radius: 3px; background: rgba(63,75,140,.08); display: inline-block; }
-/* feature-0016: 관계 신뢰 범례 — 실선=신뢰(FK·검증됨), 점선=추정(암묵 JOIN, 검증 전). */
-.admin-meta-graph-legend .lg-line { width: 16px; height: 0; display: inline-block; }
-.admin-meta-graph-legend .lg-line-solid { border-top: 2.5px solid #7a4f10; }
-.admin-meta-graph-legend .lg-line-dashed { border-top: 2px dashed #b0872f; }
-.admin-meta-graph-legend-note { margin-left: auto; font-style: italic; }
-/* 반응형 그래프 body: clamp 높이 + 패널 접기(.detail-collapsed) */
-.admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: stretch; }
+
+/* graph-toolbar-consolidate: 보기 옵션 팝오버 — 이웃 깊이·노드 종류 필터·스키마 이동·제품 카테고리를 한 곳으로 묶음.
+   상단 바 컨트롤 수를 13→4 로 줄여 '지저분함' 해소. 버튼은 다른 btn-secondary 와 동형 크기. */
+.amg-viewopts { position: relative; flex: none; }
+.amg-viewopts-btn { display: inline-flex; align-items: center; gap: 6px; }
+.amg-viewopts-caret { font-size: 11px; line-height: 1; opacity: .7; }
+/* 활성 필터 배지 — 팝오버로 숨겨진 필터 상태(예: 관계 숨김)를 상단에서 인지할 수 있게 개수 표시. */
+.amg-viewopts-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px;
+  font-size: 10.5px; font-weight: 700; line-height: 1;
+  background: var(--primary, #3f4b8c); color: #fff;
+}
+.amg-viewopts-badge[hidden] { display: none; }
+/* 팝오버 메뉴 — 버튼 아래 카드. flex 세로 스택 + gap(숨겨진 select 는 flex 항목에서 빠져 빈 행 없음). */
+.amg-viewopts-menu {
+  /* right:0 앵커 — 버튼이 검색창 뒤(좌측 근처)라 좁은 pane(≲590px)에서 left:0 는 우측이 admin-workspace
+     overflow:hidden 에 잘림(review MINOR). 우측 정렬로 메뉴가 좌측(여유 공간)으로 펼쳐져 클리핑 회피. */
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 300px; padding: 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface, #fff); box-shadow: 0 6px 24px rgba(15, 23, 42, .16);
+}
+.amg-viewopts-menu[hidden] { display: none; }
+.amg-viewopts-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.amg-viewopts-rowlabel { font-size: 12px; font-weight: 600; color: var(--text-2, var(--text)); white-space: nowrap; }
+.amg-viewopts-row .admin-meta-scope-select { flex: 1 1 auto; min-width: 0; }
+.amg-viewopts-wide { width: 100%; }
+
+/* graph-toolbar-consolidate: 캔버스 오버레이 위치 컨텍스트. 캔버스가 이 wrapper 를 꽉 채우고,
+   줌·상태 오버레이는 wrapper 기준 절대배치되어 레이아웃 흐름에 영향을 주지 않는다(reflow 원천 차단). */
+.admin-meta-graph-canvas-wrap { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.admin-meta-graph-canvas-wrap > .admin-meta-graph-canvas { flex: 1 1 auto; }
+
+/* graph-toolbar-consolidate: 상태 텍스트를 캔버스 좌상단 오버레이 pill 로 재배치.
+   position:absolute → 텍스트 길이와 무관하게 레이아웃(툴바 높이·캔버스 높이)을 절대 바꾸지 않는다
+   (사용자 불만이던 '내용에 따라 아래 UI가 계속 변형' 문제의 근본 해소).
+   2줄 클램프+ellipsis 로 아주 긴 안내도 캔버스 밖으로 넘치지 않고, pointer-events:none 으로 그래프 조작을 가리지 않는다. */
+.admin-meta-graph-status {
+  position: absolute; top: 10px; left: 10px; z-index: 6;
+  max-width: min(60%, 560px);
+  margin: 0; padding: 5px 10px;
+  font-size: 12px; line-height: 1.35; color: var(--text-2, var(--text));
+  background: var(--surface, #fff);   /* color-mix 미지원 폴백 */
+  background: color-mix(in srgb, var(--surface, #fff) 92%, transparent);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .10);
+  pointer-events: none;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  transition: opacity .25s ease;
+}
+/* 내용 없거나 유휴(auto-fade, admin.js _metaGraphStatus 6s 타이머)면 투명 — 절대배치라 사라져도 레이아웃 불변. */
+.admin-meta-graph-status:empty,
+.admin-meta-graph-status.is-idle { opacity: 0; }
+/* role-legend-bottom: aside flex 컬럼의 자식은 압축 금지(overflow 시 컨테이너가 스크롤하도록) —
+   기본 flex-shrink:1 이면 노드 상세(detailBody)가 눌려 내용이 잘리는 뒤틀림 발생. */
+.admin-meta-graph-detail > * { flex-shrink: 0; }
+/* graphux7(#1): 상세 패널 방문 이력 뒤로/앞으로 바 — detail body 위, aside 상단. 이력 ≤1 이면 hidden. */
+.admin-meta-graph-detailnav { display: flex; align-items: center; gap: 6px; padding: 2px 2px 8px; }
+/* author display:flex 는 UA [hidden]{display:none} 를 덮으므로 명시 [hidden] 규칙 필요(권한 grid [hidden] 트랩 동형). */
+.admin-meta-graph-detailnav[hidden] { display: none; }
+.amg-detailnav-btn {
+  appearance: none; cursor: pointer; font-size: 11.5px; font-weight: 600; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface, #fff); color: var(--text-2, var(--text));
+}
+.amg-detailnav-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.amg-detailnav-btn:disabled { opacity: .4; cursor: default; }
+.amg-detailnav-label { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+/* graphux7(#3): 그래프 범례 3-탭 — 상단 flat 바 + 기존 '테이블 역할' details 를 상세 패널 하단 탭으로 통합.
+   ①노드 종류 ②관계·AI 상태 ③테이블 역할. margin-top:auto 로 패널 바닥 고정(진행 패널 앞), 노드 상세 미압박.
+   아이콘(lg-*)은 flat 바에서 이관 — 이제 .amg-legend-list 하위로 스코프. */
+.admin-meta-graph-legendtabs {
+  margin-top: auto; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface, #fff); font-size: 12px; color: var(--text-muted); overflow: hidden;
+}
+.amg-legend-tabbar { display: flex; border-bottom: 1px solid var(--border); }
+.amg-legend-tab {
+  flex: 1 1 0; appearance: none; background: transparent; border: 0; cursor: pointer;
+  padding: 7px 6px; font-size: 11.5px; font-weight: 600; color: var(--text-muted);
+  border-bottom: 2px solid transparent; white-space: nowrap;
+}
+.amg-legend-tab:hover { color: var(--primary); }
+.amg-legend-tab.is-active { color: var(--text-2, var(--text)); border-bottom-color: var(--primary); }
+.amg-legend-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.amg-legend-panel { padding: 8px 10px 10px 12px; }
+.amg-legend-panel[hidden] { display: none; }
+.amg-legend-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.amg-legend-list li { display: flex; align-items: center; gap: 7px; line-height: 1.3; }
+.amg-legend-list .lg-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex: none; }
+.amg-legend-list .lg-box { width: 14px; height: 11px; border: 1px dashed #aab3c5; border-radius: 3px; background: rgba(63,75,140,.08); display: inline-block; flex: none; }
+/* 실선=신뢰(FK·검증), 점선=추정(암묵 JOIN), 보라 잔점선=함수·프로시저의 테이블 사용. */
+.amg-legend-list .lg-line { width: 16px; height: 0; display: inline-block; flex: none; }
+.amg-legend-list .lg-line-solid { border-top: 2.5px solid #7a4f10; }
+.amg-legend-list .lg-line-dashed { border-top: 2px dashed #b0872f; }
+.amg-legend-list .lg-line-routine { border-top: 2px dashed #7b5cd6; }
+.amg-legend-list .lg-schemacard { width: 16px; height: 11px; border: 1.5px solid #3f4b8c; border-radius: 4px; background: #eef0f8; display: inline-block; flex: none; }
+.amg-legend-list .lg-simgroup { width: 14px; height: 11px; border-radius: 3px; background: rgba(124,92,214,.14); border: 1px solid rgba(124,92,214,.4); display: inline-block; flex: none; }
+/* graph-category(§55 A): 제품 카테고리 밴드 범례 아이콘 — 점선 테두리(캔버스 CAT: 배경과 동형) */
+.amg-legend-list .lg-catband { width: 16px; height: 11px; border-radius: 4px; background: rgba(138,90,31,.10); border: 1.5px dashed rgba(138,90,31,.55); display: inline-block; flex: none; }
+/* graph-category(§55 B): 관계 상세 행의 큐레이션 버튼(신뢰 승격/파단) — 행 클릭(카메라 이동)과 시각 분리 */
+.amgr-curate { margin-left: auto; display: inline-flex; gap: 4px; flex: none; }
+button.amgr-cur { font-size: 10.5px; line-height: 1; padding: 3px 7px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: transparent; }
+button.amgr-cur-trust { color: #0a6b3d; border-color: rgba(10,107,61,.45); }
+button.amgr-cur-trust:hover { background: rgba(10,107,61,.10); }
+button.amgr-cur-break { color: #9c2121; border-color: rgba(156,33,33,.4); }
+button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
+.amg-legend-note { margin: 8px 0 0; font-size: 10.5px; font-style: italic; color: var(--text-muted); }
+/* graph-dataflow: 범례 항목의 방향 부연(읽기/쓰기 화살표 흐름) — 라벨 옆 소형 muted. */
+.amg-legend-list .amg-legend-sub { font-size: 10px; color: var(--text-muted); }
+/* 테이블 역할 탭 리스트 — <li data-role> 은 _metaRoleLegendTips() 가 _META_ROLE.desc 로 hover 툴팁 주입(단일 소스).
+   밝은 dot(노랑 #F0E442·하늘 #56B4E9)의 흰 배경 시인성 위해 dot 에 얇은 border. */
+.admin-meta-graph-rolelegend-list {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+}
+.admin-meta-graph-rolelegend-list li { display: flex; align-items: center; gap: 7px; line-height: 1.3; }
+.admin-meta-graph-rolelegend-list .lg-dot {
+  width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex: none; border: 1px solid #c4cad3;
+}
+/* graph-initview(E2)+graph-toolbar-consolidate: 줌 컨트롤 — 상단 바에서 캔버스 좌하단 플로팅 카드로 이동.
+   그래프·지도 UI 관습(Figma·Miro·Maps)대로 캔버스 위에 얹고, 미니맵(우하단)과 겹치지 않는다. */
+.admin-meta-graph-zoomctl {
+  position: absolute; left: 10px; bottom: 10px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface, #fff);   /* color-mix 미지원 폴백 */
+  background: color-mix(in srgb, var(--surface, #fff) 94%, transparent);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .14);
+}
+.admin-meta-graph-zoomctl .btn-secondary {
+  min-width: 30px; padding: 4px 8px; font-weight: 700; border-color: transparent; background: transparent;
+}
+.admin-meta-graph-zoomctl .btn-secondary:hover { background: color-mix(in srgb, var(--primary, #3f4b8c) 12%, transparent); border-color: transparent; }
+/* graph-navfilter(§54②): 노드 종류 표시 필터 — is-active=표시 중(기본), 비활성=숨김(흐림+취소선) */
+.admin-meta-graph-kindctl { display: inline-flex; align-items: center; gap: 4px; }
+.admin-meta-graph-kindctl .btn-secondary { padding: 4px 8px; white-space: nowrap; }
+.admin-meta-graph-kindctl .btn-secondary:not(.is-active) { opacity: 0.45; text-decoration: line-through; }
+/* graph-initview(E1): G6 minimap 플러그인 컨테이너 — 캔버스 우하단 카드형 */
+.admin-meta-graph-canvas .g6-minimap {
+  position: absolute; right: 10px; bottom: 10px; z-index: 5;
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .12); overflow: hidden;
+}
+/* 반응형 그래프 body: 패널 접기(.detail-collapsed) + 드래그 리사이즈(--meta-graph-detail-w).
+   graphux6-responsive: 단일 행 minmax(0,1fr) = 행이 body 높이만큼 확장(캔버스·상세가 stretch 로 채움),
+   flex:1 1 auto + min-height:0 = 툴바·범례 아래 남은 세로 공간을 body 가 흡수. */
+.admin-meta-graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 8px var(--meta-graph-detail-w, 340px); grid-template-rows: minmax(0, 1fr); gap: 8px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 .admin-meta-graph.detail-collapsed .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
-.admin-meta-graph.detail-collapsed .admin-meta-graph-detail { display: none; }
+.admin-meta-graph.detail-collapsed .admin-meta-graph-detail,
+.admin-meta-graph.detail-collapsed .admin-meta-graph-resizer { display: none; }
+/* graph-panel-resize: 캔버스↔상세 패널 드래그 분리 바(세로). grip 표시 + hover/드래그 강조. */
+.admin-meta-graph-resizer {
+  align-self: stretch; width: 8px; border-radius: 4px; background: var(--border);
+  cursor: col-resize; position: relative; touch-action: none; user-select: none;
+  transition: background .15s ease;
+}
+.admin-meta-graph-resizer::before {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 2px; height: 26px; border-radius: 2px; background: var(--text-muted); opacity: .55;
+  transition: background .15s ease, opacity .15s ease;
+}
+.admin-meta-graph-resizer:hover, .admin-meta-graph-resizer:focus-visible,
+.admin-meta-graph-resizer.is-dragging { background: var(--primary); outline: none; }
+.admin-meta-graph-resizer:hover::before, .admin-meta-graph-resizer:focus-visible::before,
+.admin-meta-graph-resizer.is-dragging::before { background: #fff; opacity: .95; }
 .admin-meta-graph-canvas {
-  min-width: 0; height: clamp(420px, 64vh, 760px); border: 1px solid var(--border);
+  /* graphux6-responsive: 고정 height(clamp 420px 하한) 제거 → 그리드 행 minmax(0,1fr)이 채운다.
+     G6 는 autoResize:true(admin.js)로 컨테이너 리사이즈를 ResizeObserver 로 자동 반영하므로
+     명시 height 없이도 세로 반응형이 안전하다. min-height 200px 는 §18.8 M1 방어(그리드 행 0px
+     붕괴→G6 빈 캔버스 차단) — 상위 .admin-meta-graph min-height 440px + graph-mode pane 스크롤과
+     합쳐 캔버스가 절대 사라지지 않는다. 좁은 화면 미디어쿼리에선 명시 height 로 재부여. */
+  min-width: 0; min-height: 200px; border: 1px solid var(--border);   /* 200px = '빈 캔버스'(§18.8 M1) 방어 하한(그래프 블록엔 하한 없음 — round-2 노트북 스크롤 회귀 회피) */
   border-radius: 8px; background: #fbfcfd; overflow: hidden;
-  position: relative;   /* 항목3: 스키마 클러스터명 HTML 오버레이(.admin-meta-graph-label-layer)의 배치 기준 */
+  position: relative;   /* G6 캔버스 절대배치 컨테이너 기준(오버레이 레이어는 G6 마이그레이션으로 제거됨) */
 }
-/* 항목3: 스키마 클러스터명 오버레이 레이어 — cytoscape 캔버스 위에 얹혀 클릭은 통과(pointer-events:none). */
-.admin-meta-graph-label-layer {
-  position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 3;
-}
-/* 항목3: 각 클러스터명 — 박스 좌상단(좌측 여백)에 좌정렬, 무잘림(nowrap·max-width 없음, 길면 확장). */
-.admin-meta-graph-cluster-label {
-  position: absolute; top: 0; left: 0; transform-origin: top left;
-  white-space: nowrap; text-align: left; pointer-events: none; user-select: none;
-  font-weight: 700; color: #3f4b8c; line-height: 1.1;
-  text-shadow: 0 1px 2px rgba(251, 252, 253, .9), 0 0 2px rgba(251, 252, 253, .9);
-}
+/* feature-0016 G6 마이그레이션: 클러스터명·접기버튼 HTML 오버레이 레이어 제거(캔버스 위 rAF 동기화 지연의 근원 —
+   구버전 ③ 이슈). G6 는 클러스터명(combo 라벨)·"−" 접기 컨트롤·컬럼을 모두 네이티브 캔버스 요소로 렌더 → 오버레이 CSS 불필요. */
 .admin-meta-graph-detail {
+  /* graphux6-responsive: 고정 height 제거 → 그리드 행이 채운다. 내부 콘텐츠(노드 상세 + 하단 진행
+     패널)는 overflow-y:auto 로 상세 패널 안에서 스크롤한다(pane 를 밀거나 잘리지 않음). */
   border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0;
-  background: var(--surface, #fff); overflow-y: auto; height: clamp(420px, 64vh, 760px); font-size: 13px;
+  background: var(--surface, #fff); overflow-y: auto; min-height: 0; font-size: 13px;
+  /* role-legend-bottom(#565): flex 컬럼 — 역할 범례 카드(margin-top:auto)를 패널 바닥에 고정. 나머지 자식은 자연 흐름.
+     graphux6-responsive: 고정 height 대신 min-height:0 + 그리드 행이 detail 높이를 채우고, 내부는 이 flex 컬럼으로
+     노드 상세(자연 흐름) + progress + 역할범례(하단 고정) 를 배치. overflow-y:auto 로 내부 스크롤. */
+  display: flex; flex-direction: column;
 }
 .admin-meta-graph-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .admin-meta-graph-badge {
@@ -7969,6 +8457,31 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-sec h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--text-2, var(--text)); }
 .admin-meta-graph-sec ul { margin: 0; padding-left: 16px; }
 .admin-meta-graph-sec li { margin: 3px 0; line-height: 1.45; word-break: break-word; }
+/* role-cluster-prefix: 스키마 클러스터 상세의 테이블 목록 — 각 행에 역할 칩 접두사(분석 완료) 또는 동일 폭 빈 슬롯(미분석),
+   행 전체를 클릭 버튼으로(→ 노드 선택). 접두사 고정 폭이 라벨 좌측 정렬을 보장(뒤틀림 방지). */
+.admin-meta-graph-sec ul.amgr-cluster-tables { list-style: none; padding-left: 0; }
+.admin-meta-graph-sec ul.amgr-cluster-tables li { margin: 1px 0; }
+.amgr-ct-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  background: none; border: none; border-radius: 5px; padding: 3px 5px; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+}
+.amgr-ct-row:hover, .amgr-ct-row:focus-visible { background: var(--primary-soft, #eff6ff); outline: none; }
+/* graph-simgroups: 클러스터 상세 목록의 유사 속성 그룹 헤딩 행(캔버스 그룹 박스와 동일 구획) */
+.amgr-ct-group { display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; padding: 2px 4px; list-style: none; border-bottom: 1px solid var(--border, #e2e8f0); }
+.amgr-ct-group:first-child { margin-top: 0; }
+.amgr-ct-group-label { font-size: 11px; font-weight: 700; color: #33415c; }
+.amgr-ct-group-n { font-size: 10px; color: #7c8aa5; background: #eef2f8; border-radius: 8px; padding: 0 6px; }
+.amgr-ct-group-trunc { font-size: 10px; color: #9aa4b5; }
+.amgr-ct-row code { flex: none; }
+.amgr-ct-desc { color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* 역할 칩 — 그래프 노드 칩·상세 배지와 동일 색/아이콘. -sm(고정 18px)은 목록 접두사 정렬 슬롯. */
+.amgr-role-chip {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 4px; color: #fff; line-height: 1;
+}
+.amgr-role-chip-sm { width: 18px; height: 18px; font-size: 11px; }
+.amgr-role-none { background: transparent !important; }   /* 미분석: 폭만 유지(정렬 슬롯), 시각 표식 없음 */
 .admin-meta-graph-sec code { font-size: 11.5px; }
 /* feature-0016 graphux5: 검색 유사도(pg_trgm) 배지 + AI 능동 분석 섹션 */
 .admin-meta-graph-relbadge {
@@ -7976,9 +8489,121 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   background: rgba(15, 125, 140, .1); border: 1px solid rgba(15, 125, 140, .35);
   padding: 1px 6px; border-radius: 999px; white-space: nowrap;
 }
+/* graph-ctxmenu: 노드 우클릭 컨텍스트 메뉴 (HTML 오버레이 — G6 캔버스와 무간섭) */
+.admin-meta-graph-ctxmenu {
+  position: fixed; z-index: 10000; min-width: 216px; max-width: 300px;
+  max-height: calc(100vh - 16px); overflow-y: auto;   /* 낮은 뷰포트에서 하단 잘림 방지(review) */
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 18, 12, .18); padding: 5px; font-size: 12.5px;
+}
+.admin-meta-graph-ctxmenu .amgc-head {
+  display: flex; align-items: center; gap: 6px; padding: 7px 9px 6px;
+  border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px;
+}
+.admin-meta-graph-ctxmenu .amgc-head strong { font-size: 12.5px; word-break: break-all; line-height: 1.3; }
+.admin-meta-graph-ctxmenu .amgc-badge { flex: none; }   /* 시각은 .admin-meta-graph-badge 공용(디자인 통일) */
+.admin-meta-graph-ctxmenu .amgc-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px;
+  border: 0; background: none; border-radius: 6px; text-align: left; cursor: pointer;
+  color: var(--text); font-size: 12.5px; font-family: inherit;
+}
+.admin-meta-graph-ctxmenu .amgc-item:hover:not(:disabled),
+.admin-meta-graph-ctxmenu .amgc-item:focus-visible { background: var(--primary-soft); outline: none; }
+.admin-meta-graph-ctxmenu .amgc-item:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }   /* ↑/↓ 현재 항목 식별(review) */
+.admin-meta-graph-ctxmenu .amgc-chip-row:hover { background: none; }   /* 행 자체는 비클릭 — 허위 affordance 제거(review) */
+.admin-meta-graph-ctxmenu .amgc-item:disabled { opacity: .45; cursor: default; }
+.admin-meta-graph-ctxmenu .amgc-label { flex: 1; }
+.admin-meta-graph-ctxmenu .amgc-hint { flex: none; color: var(--text-muted); font-size: 10.5px; }
+.admin-meta-graph-ctxmenu .amgc-sep { height: 1px; background: var(--border-subtle); margin: 4px 6px; }
+.admin-meta-graph-ctxmenu .amgc-chip-row { cursor: default; }
+.admin-meta-graph-ctxmenu .amgc-chip {
+  flex: none; border: 1px solid var(--border); background: var(--surface); border-radius: 6px;
+  padding: 2px 8px; font-size: 11px; cursor: pointer; color: var(--text-2); font-family: inherit;
+}
+.admin-meta-graph-ctxmenu .amgc-chip:hover,
+.admin-meta-graph-ctxmenu .amgc-chip:focus-visible {
+  background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); outline: none;
+}
+/* graph-ctxmenu: 관계 상세 패널 — 방향별 관계 행(클릭=상대 노드 이동) */
+.admin-meta-graph-sec ul.amgr-list { list-style: none; margin: 0; padding: 0; }
+.amgr-row { padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 8px; margin: 4px 0; }
+.amgr-row[data-key], .amgr-row.amgr-trace[data-trace] { cursor: pointer; }
+.amgr-row[data-key]:hover, .amgr-row[data-key]:focus-visible,
+.amgr-row.amgr-trace[data-trace]:hover, .amgr-row.amgr-trace[data-trace]:focus-visible {
+  border-color: var(--primary); background: var(--primary-soft); outline: none;
+}
+.amgr-row.amgr-plain { border-style: dashed; }
+/* graph-reltrace ②③: 추적 행의 "🔎 추적" 힌트 — hover 시에만 또렷하게(비침습). */
+.amgr-tracehint { flex: none; margin-left: auto; font-size: 10px; color: var(--text-3, var(--text-2)); opacity: .55; white-space: nowrap; }
+.amgr-row.amgr-trace:hover .amgr-tracehint, .amgr-row.amgr-trace:focus-visible .amgr-tracehint { opacity: 1; color: var(--primary); }
+.admin-meta-graph-ai-rels { margin-top: 8px; }
+.admin-meta-graph-ai-rels > strong { display: block; font-size: 11.5px; margin-bottom: 4px; }
+/* reldetail-colexpand ①②③: 컬럼 아코디언 + 방향 그룹 + 개수 배지 */
+ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
+.amgr-col { padding: 3px 0; }
+.amgr-col-plain { padding: 4px 2px; font-size: 12px; }
+.amgr-col-plain code { font-weight: 600; }
+.amgr-col-toggle {
+  display: flex; align-items: center; gap: 5px; width: 100%; text-align: left;
+  background: none; border: none; padding: 5px 6px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; color: inherit;
+}
+.amgr-col-toggle:hover, .amgr-col-toggle:focus-visible { background: var(--primary-soft); outline: none; }
+.amgr-col-toggle code { font-weight: 600; }
+.amgr-caret { flex: none; font-size: 10px; color: var(--text-2); width: 10px; }
+.amgr-col-relcount { flex: none; margin-left: auto; font-size: 10.5px; color: var(--primary); font-weight: 600; white-space: nowrap; }
+.amgr-col-body { padding: 2px 0 4px 18px; }
+.amgr-dir { margin: 4px 0; }
+.amgr-dir-head { font-size: 11px; font-weight: 600; color: var(--text-2); margin: 3px 0 2px; display: flex; align-items: center; gap: 4px; }
+.amgr-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.amgr-main code { word-break: break-all; }   /* 장문 무공백 FQN 이 패널 행을 뚫지 않게(review) */
+.amgr-arrow { flex: none; font-weight: 700; color: var(--text-2); }
+.amgr-sub { font-size: 11px; margin-top: 2px; line-height: 1.4; word-break: break-word; }
+.amgr-actions { display: flex; gap: 6px; margin-top: 12px; }
+.amgr-actions .btn-secondary { font-size: 11.5px; padding: 3px 10px; }
+.amgr-link {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 1px 7px;
+  font-size: 10.5px; cursor: pointer; color: var(--text-2); margin-left: auto; flex: none; white-space: nowrap;
+}
+.amgr-link:hover { border-color: var(--primary); color: var(--primary-dark); background: var(--primary-soft); }
+/* graph-ctxmenu(review MAJOR-3): 중심 보기 지속 표시 칩 — 캔버스 좌상단, "✕ 전체 보기" 복귀 버튼 포함 */
+.amgr-focus-chip {
+  position: absolute; top: 10px; left: 10px; z-index: 5;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--primary); border-radius: 999px;
+  padding: 4px 10px; font-size: 11.5px; box-shadow: 0 2px 8px rgba(20, 18, 12, .12);
+}
+.amgr-focus-chip button {
+  border: 0; background: none; color: var(--primary-dark); cursor: pointer;
+  font-size: 11px; padding: 0; font-family: inherit; white-space: nowrap;
+}
+.amgr-focus-chip button:hover { text-decoration: underline; }
 .admin-meta-graph-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .admin-meta-graph-ai-head h4 { margin: 0; }
 .admin-meta-ai-btn { font-size: 11.5px; padding: 3px 10px; white-space: nowrap; }
+/* graph-dataflow(ADR-017 원래 의도 복원, UX 재요청): AI 능동 분석 hover 지침 popover — **플로팅 툴팁**(오버레이).
+   ADR-017 은 "버튼 hover 시 **툴팁형** 입력"을 명시했으나, 이후 hotfix 에서 in-flow 카드(margin-top)로 드리프트해
+   열릴 때마다 아래 결과/노드 상세를 밀어냈다("아래 내용 확인 불편" 재요청). position:fixed 플로팅 툴팁으로 복원한다.
+   좌표는 JS(_metaGraphBindAiPopover 의 position())가 버튼 rect 기준 **viewport 좌표**로 설정(top/left inline·우측 정렬·
+   하단 넘침 시 위로 flip). 상세 패널(.admin-meta-graph-detail)의 overflow-y:auto 클리핑을 피하려 absolute 가 아닌
+   fixed 사용(조상 체인 transform 부재 전제 — POST-DEPLOY 시각검증 항목). 불투명 배경 + 강한 그림자로 아래 내용과
+   시각 분리. 버튼 hover 시에만 떠서 겹치고, 미hover 시엔 아래 내용이 밀리지 않고 그대로 유지된다.
+   (이전 in-flow 카드 주석의 'ADR-014' 참조는 오기 — ADR-014 는 제품 카테고리) */
+.admin-meta-ai-pop {
+  position: fixed; z-index: 60;
+  width: min(300px, calc(100vw - 16px)); box-sizing: border-box;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: #ffffff; box-shadow: 0 8px 24px rgba(15, 23, 42, .20);
+}
+.admin-meta-ai-pop label { display: block; font-size: 11px; font-weight: 700; color: #3a4356; margin-bottom: 4px; }
+.admin-meta-ai-pop textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 44px;
+  font-size: 12px; line-height: 1.45; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; font-family: inherit;
+}
+.admin-meta-ai-pop textarea:focus { outline: none; border-color: var(--primary); }
+.admin-meta-ai-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.admin-meta-ai-pop-foot .admin-meta-graph-muted { font-size: 10.5px; line-height: 1.35; }
 .admin-meta-graph-ai-box { margin-top: 8px; line-height: 1.5; }
 .admin-meta-graph-ai-box p { margin: 0 0 7px; }
 .admin-meta-graph-ai-summary { font-weight: 600; }
@@ -7986,7 +8611,9 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 /* graphux5-panelmove: 진행 패널은 우측 상세 aside 상단에 배치(상단 full-width 바 아님) — 좁은 컬럼에 맞춰
    여백 최소화, 노드 상세와 구분되게 아래 마진. */
 .admin-meta-graph-progress {
-  margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--border);
+  /* graphux6-panelbottom: 상세 패널 '하단' 배치 — 노드 상세와의 구분 여백을 상단(margin-top)으로 둔다
+     (이전 상단 배치 때의 margin-bottom 을 대체). 마지막 자식이라 하단 여백은 불필요. */
+  margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--border);
   border-left: 3px solid #e08a1e; border-radius: 8px;
   background: var(--surface-2, rgba(224, 138, 30, .05)); font-size: 12.5px;
 }
@@ -8013,34 +8640,64 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 .admin-meta-graph-progress .ampg-running { font-weight: 600; }
 .admin-meta-graph-progress .ampg-running .ampg-lbl { background: rgba(224, 138, 30, .2); color: #a5610d; }
 .admin-meta-graph-progress .ampg-fail { color: #b23; }
+/* feature-0016 §45: 그래프 뷰가 지식베이스 **최상위 전용 pane**(data-admin-pane="graph")으로 분리되며,
+   metadata pane 내부에서 그래프 표시 상태를 가려내던 :has(> #metadataGraphView:not([display:none])) 게이트가
+   불필요해졌다(전용 pane 은 그래프만 담는다). 전용 graph pane 은 활성일 때 세로 스크롤 폴백만 허용한다 —
+   flex-fill 로 pane 을 채우다가 캔버스 min-height floor 가 짧은 창의 가용높이를 초과하면 잘림 대신 스크롤로
+   넘긴다('빈 캔버스'와 '하단 잘림' 둘 다 차단). 정상/긴 화면에선 flex-fill 이 pane 을 정확히 채워 overflow
+   미발생 → 스퓨리어스 스크롤바 없음. (graphux6-responsive §18.8 M1 의 후속 — pane 분리로 :has() 제거.) */
+.admin-pane[data-admin-pane="graph"].is-active {
+  overflow-y: auto; overflow-x: hidden;
+}
 @media (max-width: 900px) {
-  /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소 */
-  .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); }
-  .admin-meta-graph-canvas { height: clamp(360px, 56vh, 560px); }
+  /* 좁은 화면: 상세 패널을 그래프 아래로(세로 스택), 높이 축소. 세로 스택에선 가로 리사이저 숨김.
+     graphux6-responsive: 세로 스택에선 단일 행 fill(minmax(0,1fr))·flex-fill 을 해제하고 자연 높이로
+     흐르게 한다(캔버스는 아래 명시 height, 상세는 auto). dvh 로 모바일 브라우저 UI bar 변화도 반영.
+     §18.8 NIT: .admin-meta-graph 도 flex:0 1 auto 로 리셋 — 세로 스택이 pane 보다 짧을 때 그래프 블록이
+     grow 해 상세 아래 빈 공간이 생기던 것 방지(자연 높이로 흐름). */
+  .admin-meta-graph { flex: 0 1 auto; min-height: 0; }
+  .admin-meta-graph-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; flex: 0 0 auto; }
+  .admin-meta-graph-resizer { display: none; }
+  /* feature-0016 §45: 전용 pane 분리로 서브탭 바 오버헤드가 사라져 좁은 화면에서도 캔버스 높이를 더 확보한다. */
+  .admin-meta-graph-canvas { height: clamp(320px, 60dvh, 640px); }
   .admin-meta-graph-detail { height: auto; max-height: 380px; }
-  .admin-meta-graph-legend-note { margin-left: 0; flex-basis: 100%; }
 }
 
-.admin-meta-list { margin-top: 0; }
-/* metadata-list-detail: 행을 클릭 선택 가능하게(좌측 목록에서 선택 → 우측 상세 편집).
-   다른 패널 .admin-list-row.is-active 와 동형 — 투명 테두리 + 선택 시 primary 강조, hover 배경. */
+/* B4: 목록은 flex column + gap 으로 카드 사이 여백을 준다(행 이중 divider 제거). */
+.admin-meta-list { margin-top: 0; display: flex; flex-direction: column; gap: 6px; }
+/* B4: 카드 스타일 행 — border-bottom(이중 divider) 제거, 1px full border + radius. surface-2 정의로
+   hover/active 가 이제 확실히 구분된다(hover=surface-2, active=primary-soft). */
 .admin-meta-row {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-bottom: 1px solid var(--border);
+  padding: 11px 12px;
+  border: 1px solid var(--border);
   border-radius: var(--r-sm, 6px);
+  background: var(--surface);
 }
 /* 선택(편집) 가능한 행만 클릭 affordance — 검토 큐 행(자체 액션)은 제외(role 미부여). */
-.admin-meta-row[role="button"] { cursor: pointer; }
-.admin-meta-row[role="button"]:hover { background: var(--bg); }
-.admin-meta-row.is-active { background: var(--surface-2, var(--bg)); border-color: var(--primary); }
-.admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.admin-meta-row-title { font-size: 14px; font-weight: 600; color: var(--text); word-break: break-word; }
-.admin-meta-row-body { font-size: 13px; color: var(--text-2, var(--text-muted)); word-break: break-word; white-space: pre-wrap; }
-.admin-meta-row-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.admin-meta-row[role="button"] { cursor: pointer; transition: background .12s, border-color .12s; }
+.admin-meta-row[role="button"]:hover { background: var(--surface-2, var(--bg)); border-color: #d8d7d1; }
+/* L6: 클릭 가능한 카드 행의 키보드 포커스 가시화(role=button + tabindex=0). */
+.admin-meta-row[role="button"]:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+.admin-meta-row.is-active { background: var(--primary-soft, #eff6ff); border-color: var(--primary); }
+.admin-meta-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+/* B5: 제목↔본문 계층 강화 — 제목 15/700, 본문 13/muted. ux2 #1: 밀집 완화 — line-height 로 가독성. */
+.admin-meta-row-title { font-size: 15px; font-weight: 700; color: var(--text); word-break: break-word; line-height: 1.35; }
+.admin-meta-row-body { font-size: 13px; color: var(--text-muted); word-break: break-word; white-space: pre-wrap; line-height: 1.5; }
+/* B5: enum 제목의 경로(table.column)↔코드 구분 — 하드코딩 middot 대신 CSS 구분자 span. */
+.admin-meta-path { color: var(--text-2, var(--text-muted)); }
+.admin-meta-sep::before { content: "·"; color: var(--text-muted); margin: 0 6px; }
+.admin-meta-code { font-family: var(--mono, ui-monospace, monospace); color: var(--text); }
+/* B7: 샘플 SQL 은 1~2줄 truncated preview(전체는 우측 상세). 행 내부 스크롤 박스 제거. */
+.admin-meta-sql-preview {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12.5px; color: var(--text-2, var(--text-muted));
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; white-space: normal;
+}
+.admin-meta-row-meta { font-size: 10.5px; color: var(--text-muted); opacity: .72; font-variant-numeric: tabular-nums; }  /* 폴리시 #4: 반복 수정 timestamp 시각 무게 경감. */
 .admin-meta-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .admin-meta-del:hover { border-color: var(--danger, #dc2626); color: var(--danger, #dc2626); }
 
@@ -8048,18 +8705,7 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
 /* 체크박스 필드(승인됨 등) — 가로 정렬 */
 .admin-meta-field-check { flex-direction: row; align-items: center; gap: 8px; }
 .admin-meta-check { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--primary); }
-/* SQL 본문 — monospace */
-.admin-meta-row-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
-  padding: 6px 8px;
-  margin-top: 2px;
-  max-height: 160px;
-  overflow: auto;
-}
+/* (B7: 구 .admin-meta-row-code 전폭 스크롤 SQL 박스는 .admin-meta-sql-preview line-clamp 로 대체됨.) */
 /* 샘플 메타 태그(도메인/가중치/승인/status) */
 .admin-meta-row-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .admin-meta-tag {
@@ -8067,21 +8713,85 @@ textarea.admin-meta-input { min-height: 72px; resize: vertical; font-family: inh
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
-  background: var(--surface-2, var(--bg));
-  border: 1px solid var(--border);
-  color: var(--text-2, var(--text-muted));
+  background: var(--tag-neutral-bg);
+  border: 1px solid var(--tag-neutral-bd);
+  color: var(--tag-neutral-fg);
 }
-.admin-meta-tag-ok { background: rgba(22, 163, 74, 0.12); border-color: rgba(22, 163, 74, 0.4); color: #15803d; }
-.admin-meta-tag-warn { background: rgba(202, 138, 4, 0.12); border-color: rgba(202, 138, 4, 0.4); color: #a16207; }
-.admin-meta-tag-stale { background: rgba(220, 38, 38, 0.12); border-color: rgba(220, 38, 38, 0.4); color: #b91c1c; }
-/* 용어사전 역할/검토 큐/유사어 (0021) */
-.admin-meta-tag-role { background: rgba(37, 99, 235, 0.12); border-color: rgba(37, 99, 235, 0.4); color: #1d4ed8; }
-.admin-meta-subtab-badge {
-  display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px;
-  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
-  border-radius: 999px; background: var(--primary, #2563eb); color: #fff; vertical-align: middle;
-}
+/* B9: 시맨틱 토큰 기반 태그. ok=성공, warn=주의(미승인 등), danger=거부/치명, info=provenance(자동등록/자동승급), neutral=중립. */
+.admin-meta-tag-ok      { background: var(--tag-ok-bg);      border-color: var(--tag-ok-bd);      color: var(--tag-ok-fg); }
+.admin-meta-tag-warn    { background: var(--tag-warn-bg);    border-color: var(--tag-warn-bd);    color: var(--tag-warn-fg); }
+.admin-meta-tag-danger  { background: var(--tag-danger-bg);  border-color: var(--tag-danger-bd);  color: var(--tag-danger-fg); }
+.admin-meta-tag-stale   { background: var(--tag-danger-bg);  border-color: var(--tag-danger-bd);  color: var(--tag-danger-fg); }
+.admin-meta-tag-info    { background: var(--tag-info-bg);    border-color: var(--tag-info-bd);    color: var(--tag-info-fg); }
+.admin-meta-tag-neutral { background: var(--tag-neutral-bg); border-color: var(--tag-neutral-bd); color: var(--tag-neutral-fg); }
+/* 용어사전 역할 배지 — info 계열 파란 톤(role 구분). */
+.admin-meta-tag-role    { background: var(--tag-info-bg);    border-color: var(--tag-info-bd);    color: var(--tag-info-fg); }
 .admin-meta-review-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* 폴리시 #2: 메타데이터 list-detail 균형 — 목록 컬럼을 약간 넓히고 미선택 상세 empty 를 중앙·폭
+   제한해 넓은 우측 패널의 sprawl 을 줄인다. 공유 .admin-list-detail 대신 메타 전용 스코프(타 pane 무영향). */
+.admin-list-detail.admin-meta-list-detail { grid-template-columns: minmax(360px, 1fr) minmax(0, 1.05fr); }
+#metadataDetailEmpty { max-width: 560px; margin: 0 auto; padding: 52px 24px; }
+/* ux2 #2: 검토·검수 큐 후보 read-only 상세(우측 #metadataDetail 내부) — 폼과 배타적으로 노출. */
+.admin-meta-review-detail { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
+.admin-meta-review-title { margin: 0; font-size: 17px; font-weight: 700; color: var(--text); line-height: 1.35; word-break: break-word; }
+.admin-meta-review-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.admin-meta-review-tags .sf-vote {
+  font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--tag-neutral-bd);
+}
+.admin-meta-review-tags .sf-vote-up   { color: var(--tag-ok-fg);     background: var(--tag-ok-bg);     border-color: var(--tag-ok-bd); }
+.admin-meta-review-tags .sf-vote-down { color: var(--tag-danger-fg); background: var(--tag-danger-bg); border-color: var(--tag-danger-bd); }
+.admin-meta-review-section { display: flex; flex-direction: column; gap: 6px; }
+.admin-meta-review-body { font-size: 14px; line-height: 1.6; color: var(--text); word-break: break-word; white-space: pre-wrap; }
+.admin-meta-review-sql { white-space: normal; }
+.admin-meta-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+/* ux2 #3: ENUM 컬럼 그룹에 '코드 추가' 진입점(그룹 head 우측 / 단일 코드 그룹 footer). */
+.admin-meta-enum-add { padding: 3px 10px; font-size: 11.5px; line-height: 1.5; flex-shrink: 0; }
+.admin-meta-group-head .admin-meta-enum-add { margin-left: 8px; }
+.admin-meta-enum-singleton { display: flex; flex-direction: column; gap: 4px; }
+.admin-meta-enum-singleton .admin-meta-enum-add { align-self: flex-start; }
+/* 폴리시 #5: 검토 큐 신뢰도 배지 — 중립 회색 배지 무리에서 핵심 신호(신뢰도)가 튀도록 은은한 accent. */
+.admin-meta-tag-conf {
+  background: rgba(37, 99, 235, .10); border-color: rgba(37, 99, 235, .35);
+  color: var(--primary, #1d4ed8); font-variant-numeric: tabular-nums;
+}
+/* B3: enums/columns 그룹 카드(.dashboard-widget 재사용) — schema.table 헤더 + 내부 행. */
+.admin-meta-group { background: var(--surface-2, var(--bg)); padding: 12px 12px 12px; gap: 10px; }
+.admin-meta-group-head { display: flex; align-items: baseline; gap: 8px; }
+.admin-meta-group-eyebrow { margin: 0; }
+.admin-meta-group-title { font-size: 14px; font-weight: 700; color: var(--text); word-break: break-word; }
+.admin-meta-group-count {
+  margin-left: auto; font-size: 11px; font-weight: 700; color: var(--text-muted);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.admin-meta-group-rows { display: flex; flex-direction: column; gap: 0; }
+/* 폴리시 #3: 그룹 카드 내부 행은 자체 카드 테두리 대신 divider — cards-in-card nesting 경감. */
+.admin-meta-group .admin-meta-row {
+  border: none; border-bottom: 1px solid var(--border-subtle, var(--border));
+  border-radius: 0; background: transparent; padding: 8px 4px;
+}
+.admin-meta-group-rows > .admin-meta-row:last-child { border-bottom: none; }
+.admin-meta-group .admin-meta-row[role="button"]:hover { background: var(--surface, #fff); border-radius: var(--r-sm, 6px); }
+.admin-meta-group .admin-meta-row.is-active { background: var(--primary-soft, rgba(37, 99, 235, .10)); border-radius: var(--r-sm, 6px); }
+/* 폴리시 #4: 그룹 카드 내 timestamp 는 순수 노이즈(테이블당 다수 행 반복) → 숨김. */
+.admin-meta-group .admin-meta-row-meta { display: none; }
+/* B2: 리치 빈 상태 + 로딩 스켈레톤. .admin-list-empty 자체는 CSS 룰이 없던 것을 정의. */
+.admin-list-empty { padding: 32px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.admin-meta-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.admin-meta-empty-title { font-size: 14px; font-weight: 600; color: var(--text-2, var(--text-muted)); }
+.admin-meta-empty-hint { font-size: 12px; color: var(--text-muted); }
+.admin-meta-skeleton { display: flex; flex-direction: column; gap: 10px; padding: 14px 12px; }
+.admin-meta-skel-bar {
+  height: 14px; border-radius: var(--r-sm, 6px);
+  /* M2: --surface-2 == --border-subtle 라 3 stop 동색 → 셔머 무동작. base(어두움)↔highlight(밝음) 두 회색으로 이동감 확보. */
+  background: linear-gradient(90deg, #ece9e2 25%, #f5f4f0 37%, #ece9e2 63%);
+  background-size: 400% 100%;
+  animation: admin-meta-skel 1.2s ease-in-out infinite;
+}
+.admin-meta-skel-bar:nth-child(2) { width: 82%; }
+.admin-meta-skel-bar:nth-child(3) { width: 64%; }
+@keyframes admin-meta-skel { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+@media (prefers-reduced-motion: reduce) { .admin-meta-skel-bar { animation: none; } }
 .admin-meta-rel-panel {
   border: 1px dashed var(--border); border-radius: var(--r-md, 10px);
   padding: 10px 12px; margin: 2px 0 8px; background: var(--surface-2, var(--bg));

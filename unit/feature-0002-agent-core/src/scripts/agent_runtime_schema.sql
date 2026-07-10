@@ -103,6 +103,10 @@ ALTER TABLE agent_runtime.core_conversations
 -- feature-0009 gc-group-authz-flag: is_group 멱등 ALTER (alembic 0016 미적용 환경 self-heal).
 ALTER TABLE agent_runtime.core_conversations
     ADD COLUMN IF NOT EXISTS is_group boolean NOT NULL DEFAULT false;
+-- share-visibility-window (alembic 0037): windowed 멤버 존재 게이트 플래그.
+--   false(기본) → 가시성 필터 완전 우회(무회귀). true → loader 가 actor window 해석 + fail-closed.
+ALTER TABLE agent_runtime.core_conversations
+    ADD COLUMN IF NOT EXISTS has_restricted_members boolean NOT NULL DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS ix_core_conv_owner
     ON agent_runtime.core_conversations (owner_account_id);
@@ -155,6 +159,16 @@ ALTER TABLE agent_runtime.core_messages
 -- 스레드 컬럼 훅용 인덱스 (메인 타임라인 = thread_root_message_id IS NULL).
 CREATE INDEX IF NOT EXISTS ix_core_messages_thread
     ON agent_runtime.core_messages (conversation_id, thread_root_message_id);
+
+-- share-visibility-window (alembic 0037): owner-answer display-tag recall-측 봉인(REVIEW M1).
+--   assistant 답변이 그린 recall 하한. NULL=미태깅. recall_full 은 epoch sentinel 로 기록.
+ALTER TABLE agent_runtime.core_messages
+    ADD COLUMN IF NOT EXISTS recall_floor_created_at timestamptz;
+
+-- share-visibility-window (alembic 0037): LLM recall 의 created_at 범위 술어용 인덱스.
+--   windowed 멤버의 가시 경계(floor/ceiling)는 core_messages 를 created_at 으로 필터한다.
+CREATE INDEX IF NOT EXISTS ix_core_messages_conv_created
+    ON agent_runtime.core_messages (conversation_id, created_at);
 
 -- ============================================================================
 -- 2b. conversation_members — feature-0009-group-conversation (그룹 대화 멤버십)
@@ -320,6 +334,9 @@ CREATE TABLE IF NOT EXISTS agent_runtime.llm_usage (
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens      INTEGER NOT NULL DEFAULT 0,
+    latency_ms        INTEGER,        -- 0030: LLM 호출 전체 왕복(생성 포함) ms. best-effort, 미측정 NULL.
+    target            VARCHAR(200),   -- 0032: 인사이트 분석 대상(schema / schema.table / 노드 FQN). 표시 전용, 집계 무영향(task 분리).
+    step_gap_ms       INTEGER,        -- 0033: 에이전트 라운드 간 간격(도구·오케스트레이션) ms. 지연 KPI(p50/p95)의 '단계 간 간격' 축. 첫 라운드/단발 호출 NULL.
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_llm_usage_created ON agent_runtime.llm_usage (created_at DESC);

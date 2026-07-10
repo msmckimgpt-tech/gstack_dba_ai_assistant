@@ -630,19 +630,39 @@ class MSSQLDialect(Dialect):
         반환 SQL 결과 = (sampled, matched) 1행. read-only. 식별자는 대괄호 이스케이프(']' 이중화).
         timeout_ms>0 이면 `SET LOCK_TIMEOUT` 로 락 대기 상한(운영 DB blocking hang 차단 — MSSQL 은
         per-statement CPU timeout 구문이 없어 락 대기를 상한. 표본 상한 TOP {n} 이 CPU 폭주를 2차 제한).
-        """
+
+        §55(REQ-20260706 ②) 스키마-slot 해석: 본 플랫폼의 MSSQL 관계 row 스키마-slot 은 **DB(catalog)명**
+        (ADR-007 규약 — effective schema=DB명, 실제 스키마는 dbo 가정). 따라서 qualifier 는 3-part
+        `[db].[dbo].[table]` 로 조립해 **같은 서버의 다른 DB 간(cross-DB) 프로브**를 한 연결에서 실행
+        가능하게 한다(기존 2-part `[db].[table]` 은 db 를 스키마로 오해석 — probe_and_reinforce 가
+        qualifier 를 벗겨 회피하던 제약의 근본 해소). slot 비면 연결 DB 기본 스키마 해석(불변).
+        예외: slot 이 'dbo'(레거시 대화학습 행 — 2-part `dbo.T` 파싱 유래)면 실 스키마로 보고 2-part
+        유지 — `[dbo].[dbo].[T]` 오조립이 "Database 'dbo'" missing-object → 실관계 오파단을 막는다.
+        한계: dbo 외 실스키마 테이블은 관계 파이프라인 전반이 미추적(플랫폼 가정)."""
         def q(x):
             return "[" + str(x).replace("]", "]]") + "]"
+        def qual(sch, tbl):
+            s = str(sch or "").strip()
+            if not s:
+                return q(tbl)
+            if s.lower() == "dbo":
+                return f"{q(s)}.{q(tbl)}"          # 실 스키마(레거시 slot) — 2-part 유지
+            return f"{q(s)}.[dbo].{q(tbl)}"        # 스키마-slot=DB명(ADR-007) — 3-part cross-DB
         n = max(1, min(int(sample), 200))
-        src = f"{q(src_schema)}.{q(src_table)}" if src_schema else q(src_table)
-        tgt = f"{q(tgt_schema)}.{q(tgt_table)}" if tgt_schema else q(tgt_table)
+        src = qual(src_schema, src_table)
+        tgt = qual(tgt_schema, tgt_table)
         prefix = f"SET LOCK_TIMEOUT {int(timeout_ms)}; " if int(timeout_ms or 0) > 0 else ""
+        # rel-selfheal 라이브 후속(probe-mssqlfix): MSSQL 은 집계식이 서브쿼리를 포함할 수 없다
+        # (오류 130 "Cannot perform an aggregate function on an expression containing an
+        # aggregate or a subquery") — SUM(CASE WHEN EXISTS ...) 가 라이브에서 전면 실패했다
+        # (파이프라인 정지 동안 미노출이던 잠복 결함). CASE/EXISTS 를 파생 테이블 안으로
+        # 내리고 바깥에서 SUM(단순 컬럼) 집계로 재작성 — 의미(표본 n 중 겹침 수) 동일.
         return (
-            f"{prefix}SELECT COUNT(*) AS sampled, "
-            f"SUM(CASE WHEN EXISTS (SELECT 1 FROM {tgt} t WHERE t.{q(tgt_col)} = s.v) "
-            f"THEN 1 ELSE 0 END) AS matched "
-            f"FROM (SELECT TOP {n} {q(src_col)} AS v FROM {src} "
-            f"WHERE {q(src_col)} IS NOT NULL) s"
+            f"{prefix}SELECT COUNT(*) AS sampled, SUM(s.m) AS matched FROM ("
+            f"SELECT TOP {n} CASE WHEN EXISTS "
+            f"(SELECT 1 FROM {tgt} t WHERE t.{q(tgt_col)} = s0.{q(src_col)}) "
+            f"THEN 1 ELSE 0 END AS m "
+            f"FROM {src} s0 WHERE s0.{q(src_col)} IS NOT NULL) s"
         )
 
 

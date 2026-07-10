@@ -36,6 +36,7 @@ import queue
 import socket
 import threading
 import time
+from collections import deque
 from typing import Any, Callable, Optional
 
 from .config import *  # noqa: F401,F403 — AGENT_CONN_* 등
@@ -47,9 +48,13 @@ UNSTABLE = "unstable"  # 연결은 되지만 느림(elapsed >= SLOW) 또는 1회
 DOWN = "down"          # 연결 자체가 연속 실패(도달 불가) — 회색("연결 끊김")
 UNKNOWN = "unknown"    # probe 전 — 중립("상태 확인 중")
 
-# scope_key -> entry(좌표/비번 없음): {status, fails, last_elapsed_ms, last_error, checked_at,
-#                                     next_due, source, host, port, engine, label}
+# scope_key -> entry(좌표/비번 없음): {status, fails, last_elapsed_ms, avg_elapsed_ms, last_error,
+#                                     checked_at, next_due, source, host, port, engine, label}
 _STATE: dict[str, dict[str, Any]] = {}
+# scope_key -> 성공 background DB probe elapsed_ms 표본 window(deque, maxlen=AGENT_CONN_AVG_WINDOW).
+# _STATE 와 분리 — 원시 표본은 여기에만 두고 _STATE 에는 산술평균(avg_elapsed_ms)만 둔다(snapshot/
+# status 좌표·표본 비노출 불변식 보존). 접근은 항상 _LOCK 안(_apply_result / _prune_state / _reset_state).
+_SAMPLES: dict[str, "deque[float]"] = {}
 _LOCK = threading.RLock()
 
 
@@ -168,8 +173,8 @@ def _ensure_entry(key: str, ds: "dict | None") -> dict[str, Any]:
         except Exception:
             port = _default_port(engine)
         e = {
-            "status": UNKNOWN, "fails": 0, "last_elapsed_ms": None, "last_error": "",
-            "checked_at": 0.0, "next_due": 0.0, "source": "",
+            "status": UNKNOWN, "fails": 0, "last_elapsed_ms": None, "avg_elapsed_ms": None,
+            "last_error": "", "checked_at": 0.0, "next_due": 0.0, "source": "",
             "host": (ds or {}).get("host"), "port": port, "engine": engine,
             "label": str((ds or {}).get("key") or "").strip().lower() or key,
         }
@@ -190,6 +195,19 @@ def _ensure_entry(key: str, ds: "dict | None") -> dict[str, Any]:
     return e
 
 
+def _sample_avg_elapsed(key: str, elapsed_ms: float) -> "float | None":
+    """성공 probe 응답시간 표본을 window(deque, maxlen=AGENT_CONN_AVG_WINDOW)에 넣고 최근 N회의
+    산술평균(ms, 소수1)을 재계산해 반환. 반드시 _LOCK 안에서 호출(_apply_result). window 크기가
+    런타임에 달라졌으면(config reload) 기존 표본을 보존한 채 새 maxlen 으로 재생성한다."""
+    win = max(1, int(AGENT_CONN_AVG_WINDOW))
+    dq = _SAMPLES.get(key)
+    if dq is None or dq.maxlen != win:
+        dq = deque(dq or (), maxlen=win)
+        _SAMPLES[key] = dq
+    dq.append(round(float(elapsed_ms), 1))
+    return round(sum(dq) / len(dq), 1) if dq else None
+
+
 def _apply_result(key: str, ds: "dict | None", ok: bool, elapsed_ms: float,
                   err: str, source: str) -> None:
     now = _now()
@@ -204,6 +222,11 @@ def _apply_result(key: str, ds: "dict | None", ok: bool, elapsed_ms: float,
             e["fails"] = 0
             e["last_error"] = ""
             e["status"] = classify(True, e["last_elapsed_ms"], 0)
+            # 평균 연결 응답 시간: **background DB probe(연결+SELECT 1)의 성공 elapsed 만** 표본에 반영한다.
+            # foreground 성공 피드백은 elapsed 미측정(0.0 coerce)이라 대표성이 없어 제외, TCP 선검사(probe-tcp)는
+            # 실패 경로 전용이라 여기 안 옴. 느린 성공(unstable)도 응답시간은 유효하므로 status 무관하게 표본화.
+            if source == "probe-db" and e["last_elapsed_ms"] is not None and e["last_elapsed_ms"] > 0.0:
+                e["avg_elapsed_ms"] = _sample_avg_elapsed(key, e["last_elapsed_ms"])
             # 성공(느려도 연결됨)은 healthy 주기로 재확인 — 느림은 실패가 아니므로 backoff 안 함.
             e["next_due"] = now + max(1, int(AGENT_CONN_HEALTHY_RECHECK_SEC))
             if was in (UNSTABLE, DOWN) and e["status"] == HEALTHY:
@@ -226,6 +249,7 @@ def _prune_state(keep_keys: "set[str]") -> None:
     with _LOCK:
         for k in [k for k in _STATE if k not in keep_keys]:
             _STATE.pop(k, None)
+            _SAMPLES.pop(k, None)  # 삭제 datasource 의 응답시간 표본도 정리(메모리 누수 방지).
 
 
 # ── TCP liveness probe ───────────────────────────────────────────────────────
@@ -303,13 +327,19 @@ def status_for(ds: "dict | None") -> "dict | None":
 
 
 def snapshot() -> "dict[str, dict]":
-    """관리 콘솔용 — 좌표/비밀번호 비노출. status/elapsed/checked_at/error(errno)/fails 만."""
+    """관리 콘솔용 — 좌표/비밀번호 비노출. status/elapsed/avg/checked_at/error(errno)/fails 만.
+
+    avg_elapsed_ms: 최근 sample_count(≤AGENT_CONN_AVG_WINDOW)회 성공 DB probe 응답시간의 산술평균(ms).
+    표본이 아직 없으면(신규·미probe·연속 실패만) None + sample_count=0 — 소비자(admin.js)가 "측정 중"으로 표시."""
     out: dict[str, dict] = {}
     with _LOCK:
         for k, e in _STATE.items():
+            dq = _SAMPLES.get(k)
             out[k] = {
                 "label": e.get("label"), "engine": e.get("engine"), "status": e.get("status"),
-                "last_elapsed_ms": e.get("last_elapsed_ms"), "checked_at": e.get("checked_at"),
+                "last_elapsed_ms": e.get("last_elapsed_ms"), "avg_elapsed_ms": e.get("avg_elapsed_ms"),
+                "sample_count": (len(dq) if dq else 0),
+                "checked_at": e.get("checked_at"),
                 "last_error": e.get("last_error"), "fails": e.get("fails"),
             }
     return out
@@ -319,6 +349,7 @@ def _reset_state() -> None:
     """테스트 전용."""
     with _LOCK:
         _STATE.clear()
+        _SAMPLES.clear()
 
 
 # ── background monitor (daemon scheduler + daemon worker pool + queue) ────────

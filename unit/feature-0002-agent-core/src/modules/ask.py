@@ -100,6 +100,7 @@ def _payload_to_kwargs(payload: dict[str, Any], account_id: int, run_id: str) ->
         "new_attachment_ids": payload.get("new_attachment_ids") or [],
         "image_inline_path": payload.get("image_inline_path"),
         "text_inline_path": payload.get("text_inline_path"),
+        "reasoning_level": payload.get("reasoning_level"),  # feature-0003: 추론 강도(worker 경로 패리티)
         "run_id": run_id,
     }
 

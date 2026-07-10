@@ -8,6 +8,19 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260703-insight-table-grouping — insight-worker 동일구조 테이블 그룹화(대표 1회 분석 + 형제 전파) (Major §12.3, 사용자 요청, feature-0016 metadata 효율 교차) — code+unit done
+- 출처: `/_template:entry`(2026-07-03). 사용자 관측 — "AI 운영 현황"의 "테이블 분석"이 날짜/번호 suffix 만 다른 동일구조 샤드(`web_ranking.daily_league_ranking_1_20250727`, `_20250726` …, `web_statistics.DayuPoint_20260211`, `_20260210` …)를 **각각 개별 LLM(claude-haiku) 분석**해 비효율. 요청: "유사한 형식의 구조는 일반적 분류로 구분해 한 번에 처리". PLAN-APPROVED(AskUserQuestion — 접근 A+B 결합, worktree+plan).
+- 근본원인: `_scan_instance_schema_insights`(insight.py) 가 테이블마다 `llm_table_insight` 1회 호출. `table_insight:` fact 키가 테이블명별 유니크라 동일 지문(`_compute_table_fingerprint` = 컬럼명+타입 해시)이어도 각 샤드가 `artifact_missing` 로 개별 LLM. 지문은 변경감지에만 쓰이고 그룹화 미사용. 분석문(`_format_table_insight_text`)은 **구조(컬럼)에서만** 파생 → 샤드끼리 사실상 동일(테이블명은 prefix 한 줄만).
+- [x] `shared/config.py`: `AGENT_INSIGHT_TABLE_GROUPING_ENABLED`(기본 on)·`AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS`(2)·`AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX`(200) 신규 + `__all__` 등록(star-export NameError 방지 — feature-0016 config `__all__` 누락 선례 반영).
+- [x] `insight.py` 순수 헬퍼: `_table_base_stem`(후행 날짜/번호/백업 suffix 반복 strip, 최소 2글자 보존)·`_table_group_sig`·`_build_table_groups`(그룹 키=(base_stem, fingerprint) — 지문=구조 동일, base_stem=이름-family 동일 **둘 다** 요구 → 구조만 우연히 같고 도메인 다른 테이블 오합침 방지)·`_group_insight_kv_key`/`_load_group_insight_kv`/`_save_group_insight_kv`(대표 분석 dict 를 `table_group_insight:<fp>:<stem>` KV 캐시 — fp 변경 시 키 자기무효화).
+- [x] `insight.py` 발행 단일화: `_publish_table_insight`(렌더→publish→verify→fp저장→refresh→telemetry) 헬퍼로 대표·형제 경로 통합(발행 로직 drift 방지, 기존 경로 verbatim 추출).
+- [x] `_scan_instance_schema_insights` 통합: 대표 분석 확보 순서 = cycle cache → KV 상속(이전 cycle 대표, LLM 0) → LLM(대표만, KV 시드). 이어서 같은 그룹 ready(미완/변경/refresh) 형제에게 LLM 없이 fan-out(대표 분석 dict + 대표 컬럼 재사용 — 동일 지문이라 컬럼 동일). per-table `table_insight` fact 유지 → grounding(NL→SQL) 무회귀. B-라벨: `source_meta.table_family`(base_stem·members·via) + telemetry `insight_via` + report `insight_llm_calls`/`tables_fanout`. `made_progress` 에 fan-out 포함(무진전 오판 backoff 방지).
+- [x] 무회귀 게이트: grouping off → 기존 동작 그대로. 싱글턴/그룹 미형성 → 기존 per-table LLM. 지문 변경 → 새 sig → fresh LLM. 다른 도메인 동일구조 → 다른 base_stem → 미병합.
+- [x] 단위 테스트 `tests/test_insight_table_grouping.py` +16(stem strip 6·그룹 서명/구조가드/도메인가드 5·KV 상속 roundtrip/무효화 3·포매터 방어 2). 로컬 PASS. 기존 insight 계열 79 PASS(회귀 0), config star-export PASS. **컨테이너 `make test` PASS(ruff All checks passed, exit 0)** — 리뷰 수정 후 재실행 포함.
+- [x] §18.8 적대적 backend/correctness 트레이스(REV-20260703-insight-table-grouping) — CHANGES-REQUESTED → **확정버그 2(BUG1 cross-schema fan-out 무력화·BUG2 repair 이중처리) + actionable 우려 2(P1 대표 샤드명 날짜누출→family 패턴명 일반화·P2 malformed dict KV wedge→성공후 저장+포매터 방어) 전건 흡수** → SHIP-WITH-FIXES. 나머지 refuted/residual.
+- [ ] verify-completion(§16.3) → commit → cycle-final → 배포(deploy_scope: included — insight-worker 재기동, 백엔드 변경이라 PB-0008 시각검증 대상 아님).
+- Cross-ref: feature-0016-metadata-graph(8,122 테이블 컨텍스트 효율 비전 정합, node_analysis 그래프 버튼 트리거는 별도 예산 시스템이라 범위 밖). 근거: `docs/FUNCTION.md:203`(~11s/LLM 호출·3000-테이블 DB 완주 12~26h 병목).
+
 ## TASK-20260629T142624-active-interp-modality — 능동해석 지침 modality-무관 일반화 + MySQL casing (Major §12.3, conversation_audit FR-nl2sql 후속) — done
 - 출처: `/_dqa:conversation_audit` 가 라이브 1:1 conv …91655acc 를 감사해 마찰 `FR-nl2sql-schema-discovery-giveup` 적발 — assistant 가 스키마 `dbGame`→`dbgame` 소문자화→`1049 Unknown database`→8 tool 후 give-up·대량 재질문. 근본원인: (a) 능동해석 지침이 그룹대화에만 주입돼 1:1 무방비, (b) MySQL 식별자 case-sensitivity 안내 부재. PLAN-APPROVED.
 - [x] `_GROUP_CONVERSATION_GUIDANCE` 의 modality-무관 본문(능동 해석·합리적 추정·스키마 발견·데이터소스 일관성·give-up 금지)을 `_ACTIVE_INTERPRETATION_GUIDANCE` 로 분리, `_run_agent_core` 에서 그룹 조건(`if _group_sender_labels`) **밖에서 무조건 주입**(1:1·그룹 모두). 그룹 블록엔 다자-특화(발신자 라벨·사람-사람 맥락)만 잔존 + 능동 해석 절 cross-ref.
@@ -1158,3 +1171,33 @@ TASK-0015 (plan-review):
 - [x] **검증**: GPU 실효성 실측(bge-m3 1.2GB·100% GPU·warm 0.13s, GTX 1660 SUPER 6GB 충분) + 단위테스트(account_recall·sample_flywheel mock 시그니처 갱신, 통과; attachment_idor 4건은 사전존재 실패·무관) + 적대 backend 패널 **ACCEPT-WITH-NITS**(REV-20260625T035655: 캐싱·sentinel·ds-scope·timeout 정확, cosine(raw,norm)=1.000000, 전용 cold-load 3.63s<20s). chat(추론) 경로 무영향 확인.
 - [x] **배포(라이브)**: embed-ollama up + bge-m3 pull + gateway 재시작(litellm repoint) + ask-worker/insight-worker/web `--no-cache` 재빌드·재생성(새 코드 baked). 라이브 임베딩 0.13초 복귀 확인.
 - [ ] 후속(NIT·범위 밖): ① `kb_retrieval.py:458` agent-run RAG 경로는 timeout 300초 유지(준비 단계 아님 — 일관성 위해 후속 검토). ② gateway→embed-ollama `depends_on` 부재(최초 cold-boot pull 동안 grounding 일시 graceful-skip — 1회성·무해, 추가 시 gateway 기동 지연 trade-off). ③ 주석의 "AGENT_TIMEOUT_SEC(300s)" 는 `.env` 운영값(코드 기본 60s). ④ Bedrock Titan 자격 복구 시 litellm 토글 후 embed-ollama 비활성화 가능.
+
+### insight-load-spread — insight/graph 부하 분산 (TASK-0308, Major §12.3, cross-feature 0002·0016, 2026-07-03)
+- [x] **근본원인 조사**: insight.py·relationships.py·metadata_graph.py 정독 + Explore 2 fan-out + 라이브 실측(그래프 57,000+ 요소, circuit_open 38 = 네트워크 단절, probe_edge dblog/timeout/definer 반복). 4축 확정.
+- [x] **축② probe 격리**(relationships.py): `_PROBE_MISSING_OBJECT_RE`+`unknown database` → 없는 DB negative 파단; transient `_backoff_validated`(last_validated_at 미래로 누적 backoff); `fetch_probe_candidates` backoff-window(`<= now()`) 제외. env `AGENT_RELATIONSHIP_PROBE_FAIL_BACKOFF_SEC`(3600).
+- [x] **축① scan skip**(insight.py): datasource 순회 `conn_health.should_fast_fail`(DOWN 확정) skip + circuit_open health 기록. telemetry `db_skipped_circuit`.
+- [x] **축③ graph sync batched+incremental**(metadata_graph.py, sync CLI): `_SYNC_MERGE_BATCH`(500) 커밋(fsync 5.7만→~114), `since`=updated_at watermark(agent_runtime.kv), CLI `--incremental`/`--full`.
+- [x] **축④ 부하 분산**(bin, .env.example): cron 30분 `--incremental` + 04:17 `--full` 이중, wrapper 인자 pass-through, jitter/knob 문서화.
+- [x] **검증**: 신규 단위 10(relationships 6 + metadata_graph 4) + 기존 회귀 0(test_relationships 57·units 10·insight health 66) + AST/`bash -n`. 적대 backend+qa 패널(REVIEW REV-20260703T093000-insight-load-spread).
+- [ ] **배포(승인 필요)**: agent 이미지 재빌드 + insight-worker/local-llm-edge 재기동 + `sudo bin/install-metadata-graph-sync-cron.sh` 재설치. 라이브 검증 docker stats/WALSync/probe_edge 로그.
+- [ ] verify-completion → commit/push → (PR·머지·배포 confirm) → 마감.
+
+### insight-heartbeat-liveness — healthcheck false-negative 해소 (Minor §12.3, 2026-07-03)
+- [x] **진단**: "AI 운영 현황" insight-worker 중단(unhealthy) 표시 but 실제 claude 로 활발 작동 → healthcheck 가 `insight_worker_last_cycle_at`(cycle 완료 시각)만 봐 9.4분+ 긴 cycle 을 stale→unhealthy 오판(false-negative).
+- [x] **수정**(insight.py): `_touch_worker_heartbeat_progress`(30s throttle) 신규 + 스키마·테이블 순회에 삽입 → 진행 중 heartbeat 갱신. status 미변경, hang 탐지 보존.
+- [x] **검증**: 신규 test 2 + insight 회귀 0(12 PASS) + AST OK. 경량 cycle SKIPPED 리뷰.
+- [ ] **배포**: agent 이미지 재빌드 + insight-worker 재기동 → docker inspect healthy 확인.
+
+### no-edge-conversation-answer — 대화 답변 edge(gemma) 폴백 완전 차단 (Major §12.3, 2026-07-07, conversation_audit FR-edge-fallback-conversation-context-loss)
+- 진단 대상 대화: conv …9e0883bb "DB 설계 및 JSON 데이터 구성 검토"(owner admin, 1:1). content/PII 비전재.
+- [x] **진단**: turn2~4 resolved_model=`gemma4:e2b`(edge-fallback, ctx 4096)로 silent 강등 → prompt_tokens 4096 고정, ~30K 히스토리 절단 → 맥락 완전 소실("? 맥락을 잃어버렸나요?" 명시 불만 + 자기 리뷰 부재 환각 + 거짓 부인). 코드+DB(llm_usage)+전사 삼각측량 high.
+- [x] **사용자 결정**: 대화 답변에 gemma 개입 완전 차단·fallback 미구성·명백한 실패처리(2026-07-07 override).
+- [x] **수정**: `_call_llm` → `conversation_answer_model()` 로 claude-haiku-4→claude-haiku-4-chat(edge-free) 라우팅 + shared 헬퍼 + litellm_config -chat/-chat-root deployment·fallback(edge 없음). 실패 시 기존 LLM-error 핸들러가 정직 안내.
+- [x] **검증**: 신규 test 4 PASS + feature-0002 회귀 0 + py_compile·YAML OK. route-parity 실패=환경(clean main 동일) 확인.
+- [ ] **배포(승인 필요, Major override 불가)**: ask-worker+web 재빌드 + bedrock-gateway 재생성. 배포 후 healthz + corroboration(task='agent' gemma 분포 0) 라이브 재측정.
+- [ ] verify-completion → 적대 패널 → commit/push → (PR·머지·배포 confirm) → 마감.
+
+### bedrock-chat-alias-probe-artifact-investigation — post-deploy 게이트웨이 400 1회성 오류 조사 (no-op, 2026-07-07, CHG-20260707T100640 후속)
+- [x] **진단**: `bedrock-gateway` 로그의 `claude-haiku-4-chat`/`-root` `max_tokens must be greater than thinking.budget_tokens`(400, 10:37:18) 오류를 배포 타이밍 재구성·실행 이미지 직접 확인·정적 코드 추적·게이트웨이 라이브 재현으로 근본원인 규명.
+- [x] **결론**: 코드 결함 아님 — `_call_llm`(유일 caller)은 claude-* 모델에 항상 `max_tokens=20000` 주입해 이 오류 경로에 도달 불가. FRICTION_LEDGER 의 post-deploy "live probe" 절차가 만든 1회성 아티팩트(재발 0, 실 트래픽 영향 없음). 코드 수정 불필요.
+- [x] **기록**: `docs/improvements/conversation-audit/FRICTION_LEDGER.md` FR-edge-fallback-conversation-context-loss addendum + `unit/feature-0002-agent-core/docs/REPORT.md` 신규 절 + MODIFY.md CHG-20260707T134500 항목.

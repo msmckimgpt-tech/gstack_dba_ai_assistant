@@ -93,6 +93,15 @@ RETURNING conversation_id, (xmax = 0) AS pg_inserted
 
 _PG_INSERT_CORE_MESSAGE = """
 INSERT INTO agent_runtime.core_messages
+    (conversation_id, role, content, tool_calls, tool_call_id, name, sender_account_id, recall_floor_created_at)
+VALUES
+    (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s, %(sender_account_id)s, %(recall_floor_created_at)s)
+RETURNING id
+"""
+
+# deploy-gap fallback: recall_floor_created_at 컬럼(alembic 0036) 부재 시(pre-mig) 사용.
+_PG_INSERT_CORE_MESSAGE_LEGACY = """
+INSERT INTO agent_runtime.core_messages
     (conversation_id, role, content, tool_calls, tool_call_id, name, sender_account_id)
 VALUES
     (%(conversation_id)s, %(role)s, %(content)s, %(tool_calls)s::jsonb, %(tool_call_id)s, %(name)s, %(sender_account_id)s)
@@ -197,6 +206,40 @@ ORDER BY id ASC
 LIMIT %(limit)s
 """
 
+# share-visibility-window: 멤버별 가시 경계(created_at 로 bridge)를 적용한 LLM recall.
+#   floor_ca  = 하단 경계("여기부터 공유") — created_at >= floor_ca (NULL=하단 무제한).
+#   ceil_ca   = 상단 경계("여기까지 공유") — created_at <= ceil_ca (NULL=상단 무제한).
+#   joined_ca = 라이브 참여 시점 — 멤버가 자기 참여 이후 대화(post-join tail)는 계속 봐야 하므로
+#               가시범위 = [floor,ceiling] ∪ [joined,∞). 중간 갭(ceiling, joined)만 은닉.
+# 가려진 pre-floor/중간 구간의 core_messages 행은 애초에 로드되지 않아 프롬프트 인젝션으로도
+# 추출 불가(물리 배제, SECURITY.md §14 — 대화 history 는 datamark 대상 아님이라 이 배제가 유일 방어).
+_PG_LOAD_CORE_MESSAGES_WINDOWED = """
+SELECT role, content, tool_calls, tool_call_id, name, sender_account_id
+FROM agent_runtime.core_messages
+WHERE conversation_id = %(conversation_id)s
+  AND (%(floor_ca)s IS NULL OR created_at >= %(floor_ca)s)
+  AND (%(ceil_ca)s IS NULL OR created_at <= %(ceil_ca)s
+       OR (%(joined_ca)s IS NOT NULL AND created_at >= %(joined_ca)s))
+  AND NOT (recall_floor_created_at IS NOT NULL
+           AND %(floor_ca)s IS NOT NULL
+           AND recall_floor_created_at < %(floor_ca)s)
+ORDER BY id ASC
+LIMIT %(limit)s
+"""
+
+# share-visibility-window: restricted 게이트 + 발신자 멤버 window 를 1 쿼리로(LEFT JOIN).
+#   has_restricted_members=false(거의 모든 대화) → resolver 가 즉시 None(필터 우회).
+#   account_id=NULL(시스템)이면 m.* 미매칭 → role NULL(비멤버).
+_PG_LOAD_MEMBER_VISIBILITY = """
+SELECT c.has_restricted_members,
+       m.role, m.visible_floor_created_at, m.visible_ceiling_created_at, m.joined_at
+FROM agent_runtime.core_conversations c
+LEFT JOIN agent_runtime.conversation_members m
+       ON m.conversation_id = c.conversation_id AND m.account_id = %(account_id)s
+WHERE c.conversation_id = %(conversation_id)s
+LIMIT 1
+"""
+
 _PG_LIST_CONVERSATIONS = """
 SELECT conversation_id, COALESCE(topic, '(미설정)') AS topic, created_at
 FROM agent_runtime.core_conversations
@@ -215,6 +258,14 @@ WHERE conversation_id = %(conversation_id)s
 ORDER BY id ASC
 LIMIT %(limit)s
 """
+
+# feature-0009 gc-join-notice: 시스템/멤버십 이벤트(참여 알림 등) core_message 의 `name` sentinel.
+# 이런 이벤트는 unread 배지 집계(role IN ('user','assistant'))에 포함되도록 role='user' 로
+# 기록하되, LLM 대화 히스토리 조립(_normalize_history_rows)에서는 이 name 을 보고 완전히
+# 배제한다 — 안 그러면 "X님이 참여했습니다" 가 발신자 라벨 붙은 user 턴으로 LLM 에 주입돼
+# assistant 오응답·맥락 오염을 일으킨다(§18.8 적대 패널 BLOCKING). writer(feature-0003
+# app._save_group_join_event_pg)와 filter(feature-0002 agent_core)가 이 단일 상수를 공유한다.
+EVENT_MESSAGE_NAME = "__event__"
 
 
 
@@ -347,19 +398,32 @@ class PgRuntimeBackend:
         tool_call_id: Optional[str] = None,
         name: Optional[str] = None,
         sender_account_id: Optional[int] = None,
+        recall_floor_created_at=None,
     ) -> int:
         import json as _json
         tc_json = _json.dumps(tool_calls, ensure_ascii=False) if tool_calls is not None else None
+        params = {
+            "conversation_id": conversation_id,
+            "role": role,
+            "content": content,
+            "tool_calls": tc_json,
+            "tool_call_id": tool_call_id,
+            "name": name,
+            "sender_account_id": int(sender_account_id) if sender_account_id is not None else None,
+            "recall_floor_created_at": recall_floor_created_at,
+        }
         with conn.cursor() as cur:
-            cur.execute(_PG_INSERT_CORE_MESSAGE, {
-                "conversation_id": conversation_id,
-                "role": role,
-                "content": content,
-                "tool_calls": tc_json,
-                "tool_call_id": tool_call_id,
-                "name": name,
-                "sender_account_id": int(sender_account_id) if sender_account_id is not None else None,
-            })
+            try:
+                cur.execute(_PG_INSERT_CORE_MESSAGE, params)
+            except Exception as exc:  # noqa: BLE001
+                # deploy-gap: recall_floor_created_at 컬럼 부재(42703, pre-mig 0036) → 그 컬럼 없이 재삽입.
+                # (windowed 멤버는 컬럼 존재 후에만 생성되므로 이 fallback 로 답변이 유실되지 않는다.)
+                if getattr(exc, "sqlstate", None) == "42703":
+                    cur.execute(_PG_INSERT_CORE_MESSAGE_LEGACY, {
+                        k: v for k, v in params.items() if k != "recall_floor_created_at"
+                    })
+                else:
+                    raise
             row = cur.fetchone()
             return int(row[0]) if row else 0
 
@@ -487,10 +551,56 @@ class PgRuntimeBackend:
             cur.execute(_PG_LOAD_STEPS, {"conversation_id": conversation_id, "limit": limit})
             return cur.fetchall() or []
 
-    def load_core_messages(self, conn: Any, *, conversation_id: str, limit: int = 200) -> list:
+    def load_core_messages(
+        self, conn: Any, *, conversation_id: str, limit: int = 200,
+        floor_ca=None, ceil_ca=None, joined_ca=None,
+    ) -> list:
+        # share-visibility-window: floor/ceiling 이 하나라도 있으면 windowed 쿼리로 가려진 구간 배제.
+        windowed = floor_ca is not None or ceil_ca is not None
         with conn.cursor() as cur:
-            cur.execute(_PG_LOAD_CORE_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
+            if windowed:
+                cur.execute(
+                    _PG_LOAD_CORE_MESSAGES_WINDOWED,
+                    {
+                        "conversation_id": conversation_id, "limit": limit,
+                        "floor_ca": floor_ca, "ceil_ca": ceil_ca, "joined_ca": joined_ca,
+                    },
+                )
+            else:
+                cur.execute(_PG_LOAD_CORE_MESSAGES, {"conversation_id": conversation_id, "limit": limit})
             return cur.fetchall() or []
+
+    def load_member_visibility(self, conn: Any, *, conversation_id: str, account_id) -> dict:
+        """share-visibility-window: 대화의 restricted 게이트 + 발신자 멤버 window 를 1 쿼리로.
+
+        반환 dict:
+          {"schema_missing": True}                — visible_* 컬럼 부재(pre-migration, UndefinedColumn
+                                                    42703). windowed 멤버가 존재할 수 없어 안전(None 처리).
+          {"has_restricted": bool, "role": str|None,
+           "floor_ca": ts|None, "ceil_ca": ts|None, "joined_ca": ts|None}
+        account_id 가 None(시스템/CLI)이면 LEFT JOIN 미매칭 → role None(비멤버 취급).
+        컬럼부재 외 예외는 상위(_read_runtime_pg)로 전파 → None → resolver 가 fail-closed DENY.
+        """
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    _PG_LOAD_MEMBER_VISIBILITY,
+                    {"conversation_id": conversation_id, "account_id": account_id},
+                )
+                row = cur.fetchone()
+        except Exception as exc:  # noqa: BLE001
+            if getattr(exc, "sqlstate", None) == "42703":  # UndefinedColumn (pre-migration)
+                return {"schema_missing": True}
+            raise
+        if row is None:
+            return {"has_restricted": False, "role": None}
+        return {
+            "has_restricted": bool(row[0]),
+            "role": row[1],
+            "floor_ca": row[2],
+            "ceil_ca": row[3],
+            "joined_ca": row[4],
+        }
 
     def list_conversations(self, conn: Any, *, limit: int = 50) -> list:
         """(conversation_id, topic, created_at_isoformat) 튜플 리스트 반환."""

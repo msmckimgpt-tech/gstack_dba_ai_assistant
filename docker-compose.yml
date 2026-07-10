@@ -354,6 +354,11 @@ services:
       AGENT_CONVERSATION_ID: __insight_worker__
       # TASK-0130: environment override 시 anchor 의 PG_REQUIRED 가 상속 안 되므로 명시.
       AGENT_RUNTIME_PG_REQUIRED: "1"
+      # feature-0016 §55 (REQ-20260706 ②·④): Phase B 크로스-데이터소스 추론 flip — ADR-019 의
+      # "임베딩 populate 후 flip" 이행. §55 D(시그니처 백필 미처리-우선 fix)가 populate 를 가동하므로
+      # 데몬을 켠다(임베딩 없는 동안은 후보 0 = 자연 no-op, cadence 6h). intra-DS 크로스 스키마
+      # (AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO)는 config 기본 ON — 별도 지정 불요.
+      AGENT_XDS_RELATIONSHIP_INFER_AUTO: "1"
     entrypoint: ["python", "/app/agent_core.py", "--insight-worker"]
     networks: [dbnet, llm-shared, replica-net]
     restart: unless-stopped
@@ -531,7 +536,11 @@ services:
     image: ghcr.io/berriai/litellm:main-stable
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 1g
+    # §58 후속(2026-07-08 장애): litellm 이 07-07 라우팅 config 확장 후 기동 풋프린트가 1g 를
+    # 초과 — 재생성 시 무로그 SIGKILL(137) 재시작 루프(실측 111회, 3g 단독 기동 정상으로 OOM
+    # 확정). 라이브는 docker update 2g 응급 복구 — 여기 영속화. (#625 가 서비스 자체 1g 정의를
+    # x-default 상속으로 오판해 중복 키를 만들었던 것을 단일 정의로 정정 — compose parse 회귀.)
+    mem_limit: 2g
     pids_limit: 256
     # CHG-20260522-0005: .env.bedrock (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
     # bedrock-gateway 전용 least privilege) + .env.llm (BEDROCK_GATEWAY_API_KEY

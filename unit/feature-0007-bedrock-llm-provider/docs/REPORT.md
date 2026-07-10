@@ -19,6 +19,25 @@ gateway 경유) 으로 모든 LLM 호출을 라우팅하도록 provider 통합�
 완료. Phase E (실 환경 회귀 검증) 사용자 위임. 위험 등급 Major (§12.3) —
 Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한정으로 완화.
 
+**후속 (llm-routing-interactive-split, 2026-07-04, ADR-002)**: insight-worker 가
+주말/야간 내내 gemma 로 고착(refresh-oauth cron 평일한정 → 토큰 만료 방치 → litellm
+401 → edge-fallback 강등)하던 현상을 진단하고 용도별 모델 라우팅을 재구성했다.
+① litellm alias 분리 — 사람 실시간 호출(대화·AI 능동 분석)은 `claude-haiku-4-interactive`
+(+`-root`)로 항상 claude, 백그라운드 insight 배치는 시각 기반(`_effective_insight_model`,
+평일 근무 claude / 야간·주말 edge) 강등. ② fallback 체인 결함(`No fallback model group
+found for claude-haiku-4-root`) 수정 — root/interactive-root 명시 등록으로 gemma 도달 보장.
+③ 운영: `.env` 대화/분석 모델을 interactive 로 재배치 + refresh/keepalive cron 24/7 확장
+(토큰 상시 유효화). 단위 회귀 `test_insight_offhours_routing.py`(13) + `test_llm_env_naming.py`.
+
+**후속 (cron-static-refresh, 2026-07-07)**: 위 24/7 확장이 `refresh-claude-oauth-token.sh`
+의 라이브 probe(2026-06-29 도입)와 결합해, claude-corp 세션 윈도우가 30분마다 실 API
+호출로 재고정되어 `session-keepalive-cron.sh` 앵커 핑이 무력화되는 부작용을 진단하고
+제거했다. probe 는 2026-07-03 insight-llm-fallback 이후 litellm 요청-레벨 fallback 과
+구조적으로 중복이었음을 litellm 소스(`router.py`) 직접 확인으로 검증 — 401/429 모두
+예외 타입 무관하게 fallback 이 작동한다. 스크립트를 static_check() 단독 판정으로
+재설계 + bedrock-gateway 로그 기반 무비용 관측(RateLimitError/AuthenticationError
+카운트) 신설 + stale crontab 주석 정리.
+
 ## 2. Progress
 - Planned: Phase E (실 환경 + AWS 자격증명 회귀 검증), Phase F (verify-completion
   PASS + commit + PR).
@@ -45,6 +64,37 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
     작성.
 
 ## 3. Recent Changes
+- **CHG-20260707-oauth-cron-static-refresh** (2026-07-07): `refresh-claude-oauth-token.sh`
+  cron(24/7, 30분 주기)의 라이브 probe(Anthropic `/v1/messages` 실호출, 2026-06-29 도입)가
+  claude-corp 5시간 rolling 세션 윈도우를 `:00`/`:30` 격자에 계속 재고정해
+  `session-keepalive-cron.sh`(07:35/12:35 앵커) 를 무력화하던 원인을 근본 제거. 이 probe 는
+  2026-07-03 insight-llm-fallback 이후 litellm 요청-레벨 `fallbacks:` 체인과 구조적으로
+  중복이었다 — litellm 소스(`router.py` `should_retry_this_error`/
+  `async_function_with_fallbacks_common_utils`) 직접 확인 결과 AuthenticationError(401)·
+  RateLimitError(429) 모두 예외 타입 무관하게 fallback 경로를 탄다. 변경: **(1)**
+  `bin/refresh-claude-oauth-token.sh` — `live_probe()` + `CLAUDE_OAUTH_PROBE*` env var
+  전면 제거, static_check() 단독 판정(네트워크 호출 0). `log_fallback_observability()`
+  신설 — 매 실행 시 `docker compose logs` 로 최근 bedrock-gateway 로그의
+  RateLimitError/AuthenticationError 건수만 집계(로컬 읽기, 과금·네트워크 없음), 0건이면
+  무음. **(2)** host `root` crontab — 2026-07-02 stale 주석 블록 제거(실제로는 이미
+  2026-07-04 24/7 로 대체돼 무관한 backup/metadata-graph-sync 항목 사이에 방치돼 있었음)
+  + 이력 재작성. claude-corp 자동 복귀 동작은 무변경(자격증명 파일 유효한 한 매 실행
+  1순위 주입 — probe 여부와 무관하게 항상 그래왔음). 검증: `bash -n` PASS, `--check`
+  정상 동작(정적 검사만), `docker` 미가용 PATH 에서도 관측 함수 fail-open 확인.
+- **CHG-20260703-insight-llm-fallback** (2026-07-03): insight-worker LLM(`claude-haiku-4`)의 claude-corp
+  **burst rate-limit(429)** 대응 — **litellm 요청-레벨 fallback 체인** 구성. TASK-0308(insight 부하 분산)
+  후속: insight 를 `AGENT_INSIGHT_MODEL=claude-haiku-4` 로 돌리자 schema/table 생성 burst 가 claude-corp
+  OAuth 의 RPM/TPM 을 초과해 429(200 성공 0)로 완전 차단됐다(계정 자체는 probe 200 = 유효). 기존
+  refresh 스크립트의 계정-폴백은 계정 **완전 소진(probe 429)** 시만 작동해 burst 를 못 잡음 → 요청-레벨 필요.
+  변경 2건: **(1) `litellm_config.yaml`** — `claude-haiku-4`(claude-corp, api_key=ANTHROPIC_API_KEY) →
+  `claude-haiku-4-root`(root Max, api_key=ANTHROPIC_API_KEY_ROOT) → `edge-fallback`(로컬 gemma
+  `openai/gemma4:e2b` via local-llm-gateway, api_key 리터럴)의 3-deployment + `litellm_settings.fallbacks:
+  [{"claude-haiku-4":["claude-haiku-4-root","edge-fallback"]}]` + `num_retries:1`. **(2)
+  `bin/refresh-claude-oauth-token.sh`** — 기존 단일-slot 택일 폴백 → **병행 주입**: ANTHROPIC_API_KEY ←
+  우선순위($ACCOUNTS) 첫 사용가능, ANTHROPIC_API_KEY_ROOT ← root 전용. 각 slot 독립 검사(static+라이브
+  probe), 사용가능 시만 갱신, 둘 다 불가면 exit 1. 두 토큰이 각 env 에 동시 존재해야 요청-레벨 fallback
+  성립. cron(`0,30 10-18 * * 1-5`) 주기 갱신 유지. ANCHOR §1(운영자 자격 일원화)·§2(LiteLLM gateway) 정합
+  — 사용자별 키 아님(운영자 두 계정 + 로컬). 비밀정보는 `.env.bedrock`(gitignored)에만.
 - **CHG-20260625T171844** (2026-06-25): 개발 단계 LLM provider **호출 주체** 임시 전환 —
   claude-corp 회사 OAuth → **root 개인 OAuth** (`/root/.claude/.credentials.json`,
   subscriptionType `max`). 사용자 지시 (DQA LLM 게이트를 개인 계정으로 일시 우회 —
@@ -94,7 +144,7 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
 - **CHG-20260521-0001** (2026-05-21): AWS Bedrock LLM provider 통합 + API Vault
   전면 폐기. 18 파일 변경 (인프라 3 + backend 5 + frontend 3 + 정책 doc 3 +
   feature-0007 docs 4). py_compile + node --check + YAML schema PASS.
-- 총 변경 횟수: 4
+- 총 변경 횟수: 5
 
 ## 4. Open Issues
 - ~~**Claude 4.x 실 model ID 미확정**~~: **Phase E 검증으로 확정** —
@@ -122,6 +172,22 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
   - py_compile PASS: config.py, model_catalog.py, llm.py, agent_core.py, app.py
   - node --check PASS: app.js
   - YAML schema PASS: docker-compose.yml (services 10 개 — bedrock-gateway 포함)
+- **cron-static-refresh 검증 (2026-07-07)**:
+  - `bash -n bin/refresh-claude-oauth-token.sh` PASS.
+  - `--check` 모드로 claude-corp/root 두 계정 정적 검사 정상 선택 확인(실
+    `.env.bedrock`·자격증명 파일 대상, 라이브 API 호출 없음).
+  - PATH 에서 `docker` 제거 후 실행 — 관측 함수(`log_fallback_observability`)가
+    fail-open 으로 script 를 abort 시키지 않고 정상 완주(exit 0) 확인.
+  - 관측 함수의 grep-count 로직을 합성 로그 문자열로 단위 검증(RateLimitError 1건
+    + AuthenticationError 1건 입력 → 정확히 카운트).
+  - bedrock-gateway 컨테이너의 실제 최근 72h 로그를 조회해 RateLimitError/
+    AuthenticationError 미발생(0건, 무음 정상 경로) 확인.
+  - **litellm 소스 검증(라이브 API 호출 아님, 코드 리딩)**: 게이트웨이 컨테이너
+    내부 `/app/litellm/router.py` 를 직접 읽어 `should_retry_this_error` /
+    `async_function_with_fallbacks_common_utils` 확인 — AuthenticationError(401)·
+    RateLimitError(429) 모두 예외 타입 무관하게 fallback 경로를 탐(Context
+    WindowExceededError/ContentPolicyViolationError 만 별도 특별 처리). 401/429
+    둘 다 fallback 이 작동한다는 기존 주석의 주장이 코드 레벨로 확인됨.
 - **Phase E 실 환경 검증 (2026-05-21)**:
   - **TEST-0001 (gateway healthcheck): PASS** — `docker compose -p
     feature-0007-e up -d bedrock-gateway` → `Up (healthy)`, 8080
@@ -153,6 +219,17 @@ Critical 후보였던 외부 노출 / PIPA / 비용 폭주 risk 가 사내 한�
   confirm 후 진행). PR 생성 시 별 cycle 의 `/codex review` outside voice 호출
   권장 (gateway SPOF + AWS credential leak + Claude tool use schema 의 blindspot
   검증).
+- **cron-static-refresh 사후 관찰 (1~2일, 사용자/후속 세션)**: probe 제거 후
+  `session-keepalive-cron.sh`(07:35/12:35) 가 다시 그 날의 첫 실호출이 되어
+  claude-corp 5시간 윈도우의 예측 가능한 앵커 역할을 하는지, `/tmp/refresh-oauth.log`
+  및 `~/.local/bin/artifacts/session-keepalive/` 의 실제 로그로 확인 필요 — 실
+  경과 시간이 필요한 검증이라 본 cycle 내 완결 불가.
+- **(참고 발견, 본 cycle 범위 밖)** bedrock-gateway 로그 조사 중 `claude-haiku-4-chat-root`
+  alias 가 `max_tokens must be greater than thinking.budget_tokens` BadRequestError
+  로 반복 실패하는 것을 확인(요청에 `max_tokens` 미지정 추정, thinking.budget_tokens=5000
+  보다 작게 기본값이 잡히는 것으로 보임). 이 alias 는 fallback 체인 종단(edge 없음,
+  2026-07-07 사용자 결정)이라 실패가 그대로 사용자에게 노출될 수 있음 — 본 cycle 의
+  probe 제거와 무관한 별도 버그로 보이며, 별 cycle 에서 조사 권장.
 
 ## 8. Suggested Improvements
 - **per-user token quota** (배포 후 별 cycle): gateway 의 callback hook 으로

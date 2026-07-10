@@ -39,3 +39,4 @@ datasource 무권한이라 이어지는 질문은 맥락이 끊긴다(수용된 
 
 ## §4. 외부 검증 로그 (append-only)
 (엔트리 없음 — 일반 TASK cycle 완료 조건은 아님. eng-review/cso 검증 기록은 REVIEW.md)
+

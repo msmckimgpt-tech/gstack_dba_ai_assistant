@@ -460,3 +460,36 @@ source_of_truth: true
 - 핵심 판정: **SHIP. BLOCKING 0.** NIT 3(MySQL write 경로 선행부재 / 고착대화 lazy-correction 의도 / 테스트 import-path는 baked 이미지 harness 전제·정적 assertion diff 확인). 전부 수용/추적.
 - Verification: `py_compile`(app.py·test) PASS + 핸들러 소스 계약 4/4(target_id=requested 부재·body 파싱 부재·MAX core_messages·set_last_read) + 라이브 재현(cursor 3655 → unread 0). **배포 후 web 로그 read 200 + 멤버 커서 conv_max 전진 + 전환·폴링 후 미회귀 실증 필수**(deploy-backed 완료 기준).
 - Human Approval Needed: 아니오 (사용자 보고 직접 수정, 서버 버그 정정, 게이트·스키마·인가 무변경). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.
+
+## REV-20260703T182740-gc-join-notice [SUBAGENT:LLM히스토리·unread·anon-leak·meta정합·best-effort·XSS·멱등 1렌즈 §18.8]
+- Date: 2026-07-03
+- Cycle: gc-join-notice (CHG-20260703T182740-gc-join-notice) — 공유 링크 참여 시 대화 내 '참여 알림' 이벤트(pill + 기존 멤버 unread). **Major §12.3**(share/join 멤버십 경로 + 메시지 렌더 + LLM 히스토리 인접, cross-feature 0003+0002). 중단 세션 7d92a878 resume(session limit).
+- Related Change: feature-0003 `src/app.py`(`_save_group_join_event_pg` + `_share_load_messages` guard)·`src/routers/share.py`(join 핸들러 호출)·`src/static/{app.js,index.html,styles.css}`, feature-0002 `src/modules/runtime_backend.py`(`EVENT_MESSAGE_NAME`)·`src/agent_core.py`(`_normalize_history_rows` 배제), `tests/test_gc_join_event_history.py`(신규 5). cross-feature, FUNCTION.md §13 사전 승인.
+- Reason: 핵심 경로(공유 join 멤버십 + 메시지 렌더 + LLM 히스토리 소스인 core_messages 기록) → §18.8 dispatch. 적대 패널 1렌즈(general-purpose, 코드 직접 read + 주변 함수 추적)로 7개 실패 모드 결함 적발 시도.
+- 적대적 검증(general-purpose 서브에이전트 1, "결함 적발" 목적):
+  - **#1 LLM 히스토리 오염 — CONFIRMED-DEFECT (BLOCKING)**: join 이벤트가 core_messages(role=user)로 기록되고 그 store 가 `_PG_LOAD_CORE_MESSAGES`(role/event 필터 없음)→`_normalize_history_rows`(user 행 유지)→`_format_core_messages`(발신자 라벨 부착)로 LLM 히스토리에 그대로 흘러 `[Alice]: Alice님이 대화에 참여했습니다.` user 턴 주입 + `_merge_consecutive_user_messages` 로 실제 질문에 융합 → assistant 오응답/컨텍스트 낭비. 저자 docstring 이 "LLM 히스토리 포함"을 의도로 기술했으나 완화책 부재. **→ 수정: `EVENT_MESSAGE_NAME='__event__'` sentinel(name 컬럼)로 표식하고 `_normalize_history_rows` 최상단에서 배제. unread SQL 은 name 미참조라 role='user' 집계 유지. 재검증: 컨테이너 pytest 36 PASS(신규 5 — 배제·미주입·name매칭·슬롯 미잠식).**
+  - **#2 unread 집계 정확 — NO-DEFECT**: PG 쿼리 `role IN ('user','assistant')`+`tool_calls NULL`+`content<>''` 통과, `sender IS DISTINCT FROM self` 로 가입자 제외·기존 멤버 +1. add_member 가 이벤트 INSERT **전** last_read=MAX 설정 → off-by-one 없음.
+  - **#3 anonymous 공유 leak — NO-DEFECT(이벤트 한정)**: 공유뷰 `_share_load_messages` 가 event_type 파싱 가드로 join 이벤트(및 username) 억제(PG dict·MySQL str 양형 robust). ADJACENT NIT(이번 diff 무관, 선행): 일반 그룹채팅 메시지의 `meta.sender_username` 은 여전히 anonymous 공유에 노출 — 후속 티켓 권고.
+  - **#4 meta 읽기/쓰기 정합 — NO-DEFECT**: 표시 store 기록→`/api/history`(system 행이 `_is_internal_message` 통과)→`message.meta.event_type` 프론트 노출→pill 발화 end-to-end 확인. NIT: `_get_agent_core_history` 폴백(희귀)은 event_type 부재라 일반 버블로 degrade(leak 아님, 표현만).
+  - **#5 best-effort — NO-DEFECT**: add_member 선행 commit(autocommit) 후 이벤트 호출 try/except, 성공 응답은 try 밖 무조건. 이벤트 예외가 join 롤백 없음.
+  - **#6 XSS — NO-DEFECT**: `pill.textContent`/`evTime.textContent` 사용, innerHTML sink 0. className/dataset 은 DOM property 대입(마크업 파싱 아님).
+  - **#7 멱등 — NO-DEFECT(순차)**: 이벤트 호출이 `if not already:` 내부 → 재참여/기존 멤버 재호출 시 스킵(중복 알림 없음). NIT(UNCERTAIN): 락·유니크 제약 부재로 진짜 동시(더블클릭) 2요청이 둘 다 `already=False` 읽으면 이벤트 2건 가능 — 관측 시 dedupe 가드 권고.
+- 핵심 판정: **BLOCKING #1 적발 → 수정 후 재검증 통과. 최종 BLOCKING 0.** NIT 3(#3 선행 anon-leak / #4 폴백 표현 / #7 동시 double-submit) 수용·추적.
+- Verification: `py_compile`(agent_core·runtime_backend·app.py·share.py) + `node --check`(app.js) + agent 컨테이너 pytest **36 PASS**(신규 `test_gc_join_event_history` 5 + 회귀 dialect/tooluse-sanitize/group-history-merge/group-members). **배포 후 라이브 그룹 공유 join → pill 렌더 + 기존 멤버 unread +1 + @assistant 가 "참여했습니다"에 오응답 안 함 실측 필수**(PB-0008, deploy-backed 완료 기준).
+- Human Approval Needed: 아니오 (기존 의도 완수 resume, additive 기능, 인가·스키마 무변경). deploy_scope: included(FIRST_REQUEST.md 전역) → 배포 자동.
+
+## REV-20260704T130000-share-visibility-window [SUBAGENT:recall완전성·id-space·fork-exfil·필터우회·owner-answer·view·lifecycle 7렌즈 §18.8]
+- Cycle: share-visibility-window (TASK-20260704). [from,to] 공유창 격리 + 말풍선 ☰ 통합. 위험 = Critical(접근제어·프롬프트 인젝션 방어). 사용자 결정 "라이브룸 + 멤버 필터" + owner-answer "표시 태그만".
+- 검증 방식: §18.8 적대 보안 패널 1렌즈(general-purpose, 실 diff `git diff main...HEAD` 전수 read) — 7 공격 렌즈로 "가려진 구간이 bounded 참여자/프롬프트 인젝션에 도달하는가" 를 적대적으로 탐색.
+- **적발 → 봉인 (commit a1ab4b0e)**:
+  - **B1 (BLOCKER)**: `origin_request`/`thread_goal`(CONVERSATION CONTEXT)이 bounded 발신자의 system prompt 에 무필터 주입 — origin 은 대화 첫 요청(가려졌을 수 있음)에서 파생된 자유 텍스트라 window 로 못 자름 → self-service 인젝션("원래 요청이 뭐였어?")으로 유출. 봉인: `_suppress_conversation_context = (_recall_visibility is not None)` → bounded/DENY 발신자에게 CONVERSATION CONTEXT 블록 전체 스킵.
+  - **M1 (MAJOR)**: owner/wider 멤버의 full-context 답변이 bounded 멤버의 post-join tail 에 남아 recall 로 유입("표시 태그만" 이 recall 은 미커버). 봉인: display-tag 를 recall 로 확장 — `core_messages.recall_floor_created_at`(alembic 0037) 에 답변의 recall 하한 기록(`_answer_recall_floor_ca`, recall_full=epoch sentinel) + windowed recall 쿼리에 `NOT (recall_floor_created_at < 뷰어 floor_ca)` 배제. **owner 생성은 무손상**(클램프 아님 — 사용자 "표시 태그만" 결정 정합, tag 기반으로 display+recall 양쪽 은닉).
+  - **M2 (MAJOR)**: ceiling-only 멤버(floor_ca None) 답변 under-tag(`{}`) → floor-bounded 뷰어에게 노출. 봉인: ceiling-only=`recall_full`(하한 무제한).
+  - **M3 (MAJOR)**: join 이 add_member(커밋) 후 stamp 를 별 트랜잭션으로 → stamp 실패 시 멤버가 무제한 접근으로 커밋·sticky(fail-open). 봉인: `commit=False` + 단일 `pg.commit()` + rollback 으로 원자화.
+  - **m1 (MINOR)**: fork window 활성 + 표시행 0 시 core created_at 경계가 None 으로 떨어져 무필터 전량 복사 → `_win_bounded_empty` 가드(core 복사 0).
+  - **m2 (MINOR)**: windowed 익명 공유 뷰의 topic(origin 파생) 요약 누출 → "공유된 대화" genericize.
+- **SEALED (렌즈별)**: id-space bridge(created_at 항상 in-window 유도, 발명 없음, `>=` floor hide 방향), fork exfil(교집합 max/min, /fork·/duplicate 자동 clip, empty→400·PG오류→500 fail-closed, fork 는 tail 미포함이라 M1 면역), account cross-conv recall(owner-keyed + exclude-current, 구조적 격리), recall fail-closed(PG오류=DENY, windowed 는 MySQL unfiltered fall-through 금지), 8-older-user-turn trim(window-필터 후 동작이라 pre-floor 생존 불가), display 필터(PG+MySQL 양분기 + core-fallback skip + 카운트 필터 후 산출).
+- **수용 잔여(MINOR, 문서화 §21.5)**: m3(sample-feedback 상단 gap 존재 probe — 하단 floor 만 게이트, 존재 oracle·비콘텐츠), m4(`has_more` 존재 oracle — 가려진 하위 이력 존재만 노출), bounded 멤버 대화목록의 topic(익명뷰는 봉인, 로그인 멤버 목록은 잔여). m5(경계 tie): 트랜잭션-시각 distinct 로 비실현.
+- 핵심 판정: **BLOCKER 1 + MAJOR 3 적발 → 전부 봉인, 재검증 후 잔여 BLOCKER/MAJOR 0.** MINOR 존재-oracle 3 수용(콘텐츠 미노출).
+- Verification: `make test`(agent 이미지 --no-deps) **전체 PASS**(신규/수정 포함) + ruff PASS + `node --check`(app.js) + `py_compile` 전 파일. **PB-0008 미실측**(worktree WSL 무인 브리지 3중벽 — 배포 후 라이브 시각검증: ☰ 메뉴·여기부터 범위 배너·windowed 공유 뷰·bounded 멤버 recall 격리 실측 권장).
+- Human Approval Needed: 아니오 (사용자 PLAN-APPROVED Critical, 아키텍처·owner-answer 결정 사전 승인). deploy_scope: included → 배포 자동(첫 배포 1줄 표면화).

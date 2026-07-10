@@ -56,7 +56,8 @@ from modules.memory import (
     save_memory_step,
     set_run_status,
 )
-from shared.model_catalog import is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_vision
+from shared.model_catalog import conversation_answer_model, is_local_llm_model, max_tokens_for_model, model_supports_temperature, model_supports_thinking, model_supports_vision, thinking_budget_for_level
+from shared import runtime_settings as _rts  # feature-0018: 모델별 thinking budget 관리 콘솔 override
 from modules.llm import _record_llm_usage, llm_classify_origin_shift, llm_generate_topic, messages_for_provider
 from modules.domain import _derive_topic, _is_low_information_request, _should_refresh_origin_request
 from modules.render import normalize_step_result_summary, read_csv_preview
@@ -1574,7 +1575,16 @@ def _normalize_history_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         pending_tool_ids = set()
         pending_tool_rows = []
 
+    from modules.runtime_backend import EVENT_MESSAGE_NAME
+
     for row in rows:
+        # feature-0009 gc-join-notice: 시스템/멤버십 이벤트(name==EVENT_MESSAGE_NAME)는 unread
+        # 집계용으로 core_messages 에 role='user' 로 기록되지만 LLM 대화 히스토리에는 절대
+        # 포함하지 않는다 — 여기서 배제하면 윈도우·kept_users·발신자 라벨·연속 user 병합 어디에도
+        # 들어가지 않는다. 안 그러면 "X님이 참여했습니다" 가 발신자 라벨 붙은 user 턴으로 LLM 에
+        # 주입돼 assistant 오응답·맥락 오염을 일으킨다(§18.8 적대 패널 BLOCKING #1).
+        if str(row.get("name") or "") == EVENT_MESSAGE_NAME:
+            continue
         role = str(row.get("role") or "")
         raw_tool_calls = row.get("tool_calls")
         if role == "assistant" and raw_tool_calls:
@@ -1833,20 +1843,36 @@ def _assemble_core_messages(
 def _load_conversation_messages(
     conn, conversation_id: str, max_messages: int = 50,
     sender_labels: dict[int, str] | None = None,
+    visibility=None,
 ) -> list[dict]:
     """대화 메시지를 OpenAI 메시지 형식으로 로드.
 
     gc-assistant-dialect-context (RC-2): sender_labels(account_id→표시명)가 주어지면(그룹대화)
     각 user 메시지에 발신자 라벨을 부착한다(REQ-GC-R5). PG/MySQL 양 경로 모두 sender_account_id 를
     함께 로드한다.
+
+    share-visibility-window: `visibility` 가 현재 턴 발신자의 가시 경계를 결정한다.
+      - None            : 필터 없음(거의 모든 대화 — 무회귀).
+      - 'DENY'          : **fail-closed** — prior history [] 반환(가려진 구간이 모델에 전혀 안 들어감).
+      - dict(floor_ca=, ceil_ca=, joined_ca=) : core_messages 를 created_at 범위로 필터.
+    windowed recall 은 PG 전용이며 PG 읽기 실패 시 unfiltered MySQL 로 **fall-through 금지** —
+    가려진 구간 유출 방지가 가용성보다 우선(빈 history 로 fail-closed).
     """
+    if visibility == "DENY":
+        return []
+    win = visibility if isinstance(visibility, dict) else None
+
     raw_limit = max(int(max_messages or 50) * 4, 80)
 
     # M4: PG read path
     from modules.runtime_backend import _read_runtime_pg, AGENT_RUNTIME_READ_BACKEND
     if AGENT_RUNTIME_READ_BACKEND == "postgres":
-        pg_rows = _read_runtime_pg("load_core_messages",
-                                   conversation_id=conversation_id, limit=raw_limit)
+        _pg_kwargs = {"conversation_id": conversation_id, "limit": raw_limit}
+        if win is not None:
+            _pg_kwargs["floor_ca"] = win.get("floor_ca")
+            _pg_kwargs["ceil_ca"] = win.get("ceil_ca")
+            _pg_kwargs["joined_ca"] = win.get("joined_ca")
+        pg_rows = _read_runtime_pg("load_core_messages", **_pg_kwargs)
         if pg_rows is not None:
             # PG: (role, content, tool_calls, tool_call_id, name, sender_account_id) — tool_calls is
             # already a Python object (psycopg3 JSONB auto-parse). Serialize back to JSON string so
@@ -1862,6 +1888,12 @@ def _load_conversation_messages(
                 for r in pg_rows
             ]
             return _assemble_core_messages(dict_rows, max_messages, sender_labels)
+
+    # share-visibility-window: windowed recall 은 PG 전용. PG 읽기 실패(pg_rows None) 또는
+    # 비-PG 백엔드에서 window 가 지정됐다면, unfiltered MySQL 로 내려가 가려진 구간을 노출하는
+    # 대신 **빈 history 로 fail-closed**. (windowed 멤버는 PG 런타임에서만 생성됨.)
+    if win is not None:
+        return []
 
     cur = conn.cursor(dictionary=True)
     cur.execute(
@@ -1881,11 +1913,14 @@ def _save_message(conn, conversation_id: str, role: str,
                   tool_calls: list | None = None,
                   tool_call_id: str | None = None,
                   name: str | None = None,
-                  sender_account_id: int | None = None):
+                  sender_account_id: int | None = None,
+                  recall_floor_created_at=None):
     """메시지를 DB에 저장.
 
     feature-0009: sender_account_id 는 user 메시지의 발신 멤버(그룹 대화 발신자 귀속).
     assistant/tool 메시지는 None(AI/시스템). nullable 이라 기존 호출 무회귀.
+    share-visibility-window(REVIEW M1): recall_floor_created_at = 이 assistant 답변이 그린 recall
+    하한(owner-answer recall-측 봉인). None=미태깅.
     """
     from modules.runtime_backend import _get_pg_runtime_backend, _get_pg_runtime_conn
     pg_conn = _get_pg_runtime_conn()
@@ -1895,7 +1930,8 @@ def _save_message(conn, conversation_id: str, role: str,
                 conversation_id=conversation_id, role=role,
                 content=content, tool_calls=tool_calls,
                 tool_call_id=tool_call_id, name=name,
-                sender_account_id=sender_account_id)
+                sender_account_id=sender_account_id,
+                recall_floor_created_at=recall_floor_created_at)
         except Exception as _exc:
             logger.warning("_save_message PG write failed: %s", _exc)
         finally:
@@ -2000,6 +2036,53 @@ def _glossary_autopropose(conversation_id: str, user_message: str, answer: str, 
             pass
 
 
+def _enum_autopropose(conversation_id: str, user_message: str, answer: str, run_id: str) -> None:
+    """대화 답변 직후 ENUM 코드사전 자율수집(0039) — best-effort, ask 경로 차단 금지.
+
+    LLM 으로 (table.column) 코드↔라벨 후보를 추론하고, 사용자 결정(하이브리드)에 따라 confidence ≥
+    THRESHOLD 면 ENUM 코드사전(enum_dictionary)에 자동 등록(source='auto', 되돌리기 가능), 미만이면
+    검토 큐(enum_feedback pending) 에 적재한다. 저장소는 agent_kb(PG, mem_conn 아님).
+    AGENT_ENUM_AUTOPROPOSE=0 이면 비활성. 어떤 예외도 호출측(run_agent)으로 전파하지 않는다.
+    """
+    try:
+        from shared import config as _cfg
+        if not getattr(_cfg, "AGENT_ENUM_AUTOPROPOSE", False):
+            return
+        from modules import kb_glossary as _kg
+        suggestions = _kg.infer_enum_suggestions(user_message, answer)
+        if not suggestions:
+            return
+        from shared.db import _pg_available, _pg_connect
+        if not _pg_available():
+            return
+        scope_key = _cfg.get_active_datasource() or "common"
+        pg = _pg_connect(autocommit=False)
+        try:
+            for s in suggestions:
+                _kg.auto_promote_or_queue_enum(
+                    pg, scope_key, s.get("schema_name"), s.get("table_name"),
+                    s.get("column_name"), s.get("code"), s.get("label"),
+                    confidence=s.get("confidence", 0.5),
+                    source_run_id=run_id, conversation_id=conversation_id,
+                )
+            pg.commit()
+        except Exception:
+            try:
+                pg.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        try:
+            _log("enum_autopropose_failed", {"err": repr(exc)})
+        except Exception:
+            pass
+
+
 def _new_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:8]
 
@@ -2022,6 +2105,7 @@ def _mirror_message(
     content: str,
     run_id: str = "",
     meta: dict[str, Any] | None = None,
+    recall_tag: dict | None = None,
 ) -> None:
     text = str(content or "").strip()
     if not text:
@@ -2029,6 +2113,11 @@ def _mirror_message(
     payload_meta = dict(meta) if isinstance(meta, dict) else {}
     if run_id and "run_id" not in payload_meta:
         payload_meta["run_id"] = run_id
+    # share-visibility-window: assistant 답변에 recall 출처 태그 병합(display loader 가 뷰어 floor
+    # 아래 문맥을 그린 답변을 bounded 멤버에게 은닉하는 owner-answer display-tag). 표시 store 전용.
+    if recall_tag and str(role or "").lower() == "assistant":
+        for _k, _v in recall_tag.items():
+            payload_meta.setdefault(_k, _v)
     try:
         save_memory_message(conn, conversation_id, role, text, payload_meta or None)
     except Exception:
@@ -2591,7 +2680,9 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
               temperature: float | None = None,
               tools: list[dict] | None = None,
               conversation_id: str | None = None,
-              run_id: str | None = None) -> Any:
+              run_id: str | None = None,
+              step_gap_ms: int | None = None,
+              reasoning_level: str | None = None) -> Any:
     """OpenAI API를 호출한다.
 
     TASK-0094 Sprint 2 (D13): vision 가능 모델 + env ATTACHMENT_IMAGE_INLINE_PATH
@@ -2600,6 +2691,11 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
 
     LiteLLM proxy (feature-0007) 가 OpenAI image_url → Anthropic Vision spec 으로
     자동 normalize. backend 는 OpenAI Chat Completions spec 만 사용.
+
+    reasoning_level (feature-0003 reasoning-effort-selector): 사용자가 대화 화면에서 고른
+    추론 강도(low/normal/high/max). thinking 지원 모델(claude-*)일 때만 요청 단위
+    extra_body.thinking.budget_tokens 로 주입 → LiteLLM 이 alias 별 고정 thinking 값을
+    이 요청에 한해 override. 미지정/미지원 모델이면 주입 안 함(config 기본값 유지).
     """
     image_attachments = _load_attachment_inline_images()
     effective_messages: list[dict] = messages_for_provider(
@@ -2607,26 +2703,70 @@ def _call_llm(client: OpenAI, messages: list[dict], model: str,
         image_attachments=image_attachments or None,
         vision_model=model_supports_vision(model),
     )
+    # FR-edge-fallback-conversation-context-loss (2026-07-07): 이 함수는 정의상 사용자 대면 assistant
+    # 답변(task='agent') 경로다. edge(gemma) 폴백이 걸린 alias(claude-haiku-4)는 litellm 호출 시 edge-free
+    # 대화 전용 alias(claude-haiku-4-chat)로 치환해, 두 claude 계정 완전 장애 시 gemma 로 강등되지 않고
+    # 429/401 을 raise → 아래 caller(_run_agent_core)의 LLM-error 핸들러가 "명백한 실패처리"로 안내한다.
+    # 표시/저장/usage 기록·max_tokens·thinking·vision 판정은 모두 원본 `model`(claude-haiku-4)을 유지하고,
+    # 실제 서빙 모델은 resolved_model(resp.model)로 추적한다. 매핑 없는 model(claude-sonnet-4 등)은 identity.
     kwargs: dict[str, Any] = {
-        "model": model,
+        "model": conversation_answer_model(model),
         "messages": effective_messages,
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
     if tools:
         kwargs["tools"] = tools
-    # 로컬 LLM만 max_tokens 제한 (reasoning 토큰 포함 보호)
-    token_limit = max_tokens_for_model(model, "agent")
+    # 대화(agent) 총 출력 상한 — reasoning-budget-per-model: thinking 모델은 모델별 값(관리 콘솔
+    # override 반영), 그 외(로컬 LLM 등)는 기존 task cap. token_limit 이 thinking+content 총량 규정.
+    token_limit = _rts.agent_max_output(model) if model_supports_thinking(model) else max_tokens_for_model(model, "agent")
     if token_limit is not None:
         kwargs["max_tokens"] = token_limit
+    # feature-0003 reasoning-effort-selector: 사용자 지정 추론 강도를 요청 단위 thinking
+    # budget 으로 주입. thinking 지원 모델(claude-*)에만 적용 — 로컬 LLM 은 LiteLLM
+    # drop_params 가 제거하므로 애초에 넣지 않는다. budget 은 아래에서 min(budget, max_tokens-1024)
+    # 로 clamp 되므로 Anthropic 제약(budget < max_tokens) 을 항상 만족한다.
+    _think_budget = thinking_budget_for_level(reasoning_level)
+    if _think_budget is not None:
+        # reasoning-budget-per-model: 명시 추론강도(low/high/max)일 때, 관리 콘솔
+        # (`시스템 > 설정 > 모델별 추론 예산`)에서 이 (모델, 레벨)에 설정한 budget override 를 적용
+        # (없으면 model_catalog base 기본값 유지). '일반(normal)'은 thinking_budget_for_level 이 None →
+        # 이 분기 미진입 → 아래 model override 경로(B1 무회귀).
+        _lvl_override = _rts.reasoning_budget_override(model, reasoning_level)
+        if _lvl_override is not None:
+            _think_budget = _lvl_override
+    if _think_budget is None:
+        # 사용자가 요청 단위 추론강도('일반'/미지정)를 안 골랐을 때, 관리 콘솔에서 이 모델에 설정한
+        # thinking budget override 를 적용한다. override 미설정이면 None → 아래 조건 미충족 →
+        # 미주입 → 모델 config 기본 thinking 유지(B1 무회귀).
+        _think_budget = _rts.model_thinking_budget_override(model)
+    if _think_budget is not None and model_supports_thinking(model):
+        # Anthropic 제약(budget_tokens < max_tokens) 안전 보장 — 주입 budget 을 이 요청의
+        # max_tokens 미만으로 clamp(content 최소 1024 확보). reasoning-budget-per-model 이후
+        # budget 이 총 출력 근처까지 커질 수 있어 이 clamp 가 실질 안전판(본문 여유 보장).
+        _safe_budget = int(_think_budget)
+        _mt = kwargs.get("max_tokens")
+        if isinstance(_mt, int) and _mt > 0:
+            _safe_budget = min(_safe_budget, max(1024, _mt - 1024))
+        kwargs["extra_body"] = {
+            "thinking": {"type": "enabled", "budget_tokens": _safe_budget},
+        }
+    _aiops_t0 = time.perf_counter_ns()  # TASK-AIOPS: main agent 경로 순수 API 왕복 지연 측정
     response = client.chat.completions.create(**kwargs)
     # TASK-0163: 메인 agentic loop 의 LLM 호출을 토큰 회계에 기록(best-effort).
     # 이전엔 _record_llm_usage chokepoint 를 우회해 사용자 대화 메인 추론이 한 건도
     # llm_usage 에 잡히지 않았다(계정별/역할별 집계가 비던 근본 원인 RC1).
     # in-process 동시 ask 의 cfg 전역 race 를 피하려 conversation_id/run_id 를 명시 전달.
+    # TASK-AIOPS: 이 경로가 LLM 볼륨 최대인데 중앙 래퍼를 안 거쳐 latency 가 비어 있던 gap 보완 —
+    # create 직후 latency_ms 를 함께 기록(래퍼 경로와 동일한 순수 왕복 측정 규약).
+    # TASK-20260703-aiops-ttft-latency (정의 A): step_gap_ms(직전 라운드 종료→이번 호출 시작 사이의
+    #   도구·오케스트레이션 간격)를 함께 기록 — 지연 KPI 의 '단계 간 간격' 축. 호출측(_run_agent_core
+    #   루프)이 라운드 간 gap 을 계산해 전달(첫 라운드는 None → NULL).
     try:
         _record_llm_usage(model, "agent", response,
-                          conversation_id=conversation_id, run_id=run_id)
+                          conversation_id=conversation_id, run_id=run_id,
+                          latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+                          step_gap_ms=step_gap_ms)
     except Exception:
         pass
     return response.choices[0].message
@@ -2997,6 +3137,7 @@ def run_agent(
     run_id: str | None = None,
     queued_ms_seed: float | None = None,
     eval_datasource: "dict | None" = None,
+    reasoning_level: str | None = None,
 ) -> dict[str, Any]:
     """Product whitelist + 첨부 채널을 요청별 contextvar 로 설정한 뒤 실제 루프를 호출하는 얇은 래퍼.
 
@@ -3044,6 +3185,7 @@ def run_agent(
             run_id=run_id,
             queued_ms_seed=queued_ms_seed,
             eval_datasource=eval_datasource,
+            reasoning_level=reasoning_level,
         )
     finally:
         clear_active_schema_allowlist()
@@ -3055,6 +3197,91 @@ def run_agent(
         _NEW_ATTACHMENT_IDS_CTX.reset(_att_tokens[1])
         _INLINE_IMAGE_PATH_CTX.reset(_att_tokens[2])
         _INLINE_TEXT_PATH_CTX.reset(_att_tokens[3])
+
+
+# owner-answer recall/display 봉인 sentinel: recall 하한 무제한(전체 문맥) 답변을 어떤 floor 보다
+# 이른 시각으로 표기 → 모든 floor-bounded 뷰어/recall 에서 배제(REVIEW M1/M2).
+_RECALL_FULL_SENTINEL_CA = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _answer_recall_tag(visibility, has_restricted: bool) -> dict:
+    """assistant 답변에 실을 recall 출처 태그 (share-visibility-window, owner-answer display-tag).
+
+    display loader(_msg_outside_window)가 이 태그로 '뷰어 floor 아래 문맥을 그린 답변'을 은닉한다:
+      - unrestricted 대화                 : {} (bounded 뷰어 없음 — 태그 불필요).
+      - bounded 발신자(window, floor_ca=X): {recall_floor_created_at: X} — floor 가 X 초과인 뷰어에게 은닉.
+      - ceiling-only 멤버(floor_ca=None) + restricted : {recall_full: True} — recall 하한 무제한(REVIEW M2).
+      - owner/full/시스템(None) + restricted: {recall_full: True} — 전체 문맥 → 모든 bounded 뷰어에게 은닉.
+      - DENY(빈 recall)                    : {recall_empty: True} — 그린 문맥 없음(은닉 불필요, 명시).
+    """
+    if not has_restricted:
+        return {}
+    if isinstance(visibility, dict):
+        fc = visibility.get("floor_ca")
+        if fc is not None:
+            return {"recall_floor_created_at": fc.isoformat() if hasattr(fc, "isoformat") else str(fc)}
+        # ceiling-only 멤버: floor 무제한(하한 -∞) → recall 이 대화 처음까지 도달 → 모든 floor 뷰어에게 은닉.
+        return {"recall_full": True}
+    if visibility == "DENY":
+        return {"recall_empty": True}
+    return {"recall_full": True}
+
+
+def _answer_recall_floor_ca(visibility, has_restricted: bool):
+    """core_messages.recall_floor_created_at 에 기록할 값 (owner-answer recall-측 봉인, REVIEW M1).
+
+    windowed recall 쿼리가 '이 답변이 그린 recall 하한이 뷰어 floor 보다 이르면 배제'하도록 한다.
+    None=미태깅(비제약/빈 recall). bounded=floor_ca. ceiling-only/owner/full=epoch sentinel(어떤 floor 보다 이름).
+    """
+    if not has_restricted:
+        return None
+    if isinstance(visibility, dict):
+        fc = visibility.get("floor_ca")
+        if fc is not None:
+            return fc
+        return _RECALL_FULL_SENTINEL_CA  # ceiling-only 멤버 — 하한 무제한
+    if visibility == "DENY":
+        return None  # 빈 recall — 그린 문맥 없음
+    return _RECALL_FULL_SENTINEL_CA  # owner / full 멤버
+
+
+def _resolve_recall_visibility(conversation_id: str, account_id):
+    """share-visibility-window: 현재 턴 발신자(account_id)의 LLM recall 가시 경계 해석.
+
+    반환: (visibility, has_restricted). visibility = None(필터 없음) | 'DENY'(빈 history) | {floor_ca,ceil_ca,joined_ca}.
+    has_restricted = 이 대화에 windowed 멤버가 있는지(owner-answer 태깅 판정용).
+
+    fail-closed 정책 (bounded 멤버가 unfiltered recall 을 받는 일이 없도록):
+      - 비-PG 백엔드                : None(windowing PG 전용).
+      - visible_* 컬럼 부재(pre-mig): None(windowed 멤버가 존재할 수 없음 — 안전).
+      - PG 조회 실패(그 외 예외/무연결): **'DENY'** — 발신자 bounds 를 확인할 수 없으면 은닉.
+        (unrestricted 대화는 실제 PG 장애 때만 이 비용을 치르며, 그때는 recall 자체가 이미 degrade.)
+      - has_restricted=false        : None(거의 모든 대화 — fast path).
+      - 발신자 비멤버(role None)     : None(bounded 멤버 아님 — display-tag 가 bounded '뷰어'를 보호).
+      - role='owner' / floor·ceil 모두 NULL(full 멤버): None(정당한 전체 접근).
+      - floor 또는 ceiling 존재       : window dict.
+    """
+    from modules.runtime_backend import AGENT_RUNTIME_READ_BACKEND, _read_runtime_pg
+    if AGENT_RUNTIME_READ_BACKEND != "postgres":
+        return (None, False)
+    res = _read_runtime_pg(
+        "load_member_visibility",
+        conversation_id=conversation_id,
+        account_id=(int(account_id) if account_id is not None else None),
+    )
+    if res is None:
+        return ("DENY", True)  # PG 무연결/비-42703 예외 → fail-closed(restricted 로 간주).
+    if res.get("schema_missing"):
+        return (None, False)
+    if not res.get("has_restricted"):
+        return (None, False)
+    role = res.get("role")
+    if role is None or role == "owner":
+        return (None, True)  # restricted 대화의 owner/비멤버 — recall 무제한, 답변은 태깅됨.
+    floor_ca, ceil_ca = res.get("floor_ca"), res.get("ceil_ca")
+    if floor_ca is None and ceil_ca is None:
+        return (None, True)  # restricted 대화의 full 멤버.
+    return ({"floor_ca": floor_ca, "ceil_ca": ceil_ca, "joined_ca": res.get("joined_ca")}, True)
 
 
 def _run_agent_core(
@@ -3075,6 +3302,7 @@ def _run_agent_core(
     run_id: str | None = None,
     queued_ms_seed: float | None = None,
     eval_datasource: "dict | None" = None,
+    reasoning_level: str | None = None,
 ) -> dict[str, Any]:
     """에이전트 메인 루프.
 
@@ -3308,8 +3536,26 @@ def _run_agent_core(
         _group_sender_labels = _resolve_group_sender_labels(mem_conn, cid)
     except Exception:
         _group_sender_labels = None
+    # share-visibility-window: 발신자(account_id = ask 호출자, claim 시 확정·위조 불가)의 가시
+    # 경계를 해석해 windowed 멤버의 LLM recall 을 그 window 로 제한한다. 가려진 pre-floor 구간의
+    # core_messages 행은 애초에 로드되지 않아 프롬프트 인젝션으로도 추출 불가(물리 배제). owner·
+    # full 멤버·시스템은 None(전체 recall) — 그들의 답변 누출면은 display-tag 로 별도 봉인(Step7).
+    _recall_visibility, _conv_has_restricted = _resolve_recall_visibility(cid, account_id)
+    # owner-answer display-tag(share-visibility-window, 사용자 결정 "표시 태그만"): 이 답변이 그린
+    # recall 출처를 assistant 답변 meta 에 실어, display loader 가 뷰어 floor 아래 문맥을 그린
+    # 답변을 bounded 멤버에게 은닉하게 한다(무제한 recall 인 owner 답변의 누출면 봉인).
+    _answer_recall_meta = _answer_recall_tag(_recall_visibility, _conv_has_restricted)
+    # REVIEW M1: display-tag 를 recall 까지 확장 — assistant core_message 에 recall 하한을 기록해
+    # windowed recall 쿼리가 뷰어 floor 아래 문맥을 그린 답변을 배제하게 한다("표시 태그만" 을 recall 로
+    # 완성; owner 생성은 무손상 — 클램프 아님).
+    _answer_recall_floor_ca_val = _answer_recall_floor_ca(_recall_visibility, _conv_has_restricted)
+    # REVIEW B1: bounded 발신자(window/DENY)에게는 대화 origin_request/thread_goal(CONVERSATION CONTEXT)
+    # 주입을 억제한다 — origin 은 message id 에 묶이지 않은 자유 텍스트라 window 로 자를 수 없어(가려진
+    # 대화 첫 요청이 그대로 남음) self-service 인젝션으로 추출 가능하기 때문. None(비제약)만 주입 허용.
+    _suppress_conversation_context = _recall_visibility is not None
     history = _load_conversation_messages(
-        mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels
+        mem_conn, cid, max_messages=50, sender_labels=_group_sender_labels,
+        visibility=_recall_visibility,
     )
 
     # ── 사용자 메시지 저장 ──
@@ -3479,7 +3725,10 @@ def _run_agent_core(
         system_content += _GROUP_CONVERSATION_GUIDANCE
 
     # Inject conversation context (origin_request + thread_goal)
-    if prev_origin or thread_goal:
+    # REVIEW B1(share-visibility-window): bounded 발신자에게는 억제. origin/thread_goal 은 대화의
+    # (가려졌을 수 있는) 첫 요청에서 파생된 자유 텍스트라 window 로 자를 수 없어, 주입하면 self-service
+    # 프롬프트 인젝션으로 가려진 구간 요약이 유출된다. _suppress_conversation_context=True 면 전체 스킵.
+    if (prev_origin or thread_goal) and not _suppress_conversation_context:
         ctx_parts: list[str] = []
         if prev_origin:
             ctx_parts.append(f"- Original user request (origin): {prev_origin}")
@@ -3520,6 +3769,10 @@ def _run_agent_core(
     empty_retries = 0
     reflection_count = 0  # ITEM-07: run 당 SQL 자가수정 넛지 횟수(cap=AGENT_SELF_REFLECTION_MAX)
     llm_round = 0  # TASK-0289: LLM 추론 호출 회차(activity 노출용)
+    # TASK-20260703-aiops-ttft-latency (정의 A): 직전 라운드 LLM 호출 종료 시각(perf_counter_ns).
+    #   다음 라운드 호출 직전 gap(도구 실행 + 오케스트레이션 = '단계 간 간격')을 산출해 계측한다.
+    #   None = 아직 첫 라운드 전(첫 라운드는 선행 단계 없음 → step_gap_ms NULL).
+    _prev_llm_end_ns: int | None = None
 
     while step_count < max_steps:
         if _cancel_requested_for_run(mem_conn, cid, run_id):
@@ -3554,6 +3807,12 @@ def _run_agent_core(
         )
         # TASK-0228 (1:N): 멀티 datasource 면 각 도구에 `datasource` 선택 인자를 주입한 정의를 쓴다.
         use_tools = None if finalize_now else _run_tool_defs
+        # TASK-20260703-aiops-ttft-latency (정의 A): 이번 라운드 LLM 호출 시작 직전, 직전 라운드
+        #   종료로부터의 간격(도구 실행 + 오케스트레이션)을 계산. 첫 라운드는 None(선행 단계 없음).
+        _step_gap_ms = (
+            int((time.perf_counter_ns() - _prev_llm_end_ns) // 1_000_000)
+            if _prev_llm_end_ns is not None else None
+        )
         try:
             response_message = _call_llm(
                 client, messages, model,
@@ -3561,7 +3820,10 @@ def _run_agent_core(
                 tools=use_tools,
                 conversation_id=cid,  # TASK-0163: race-free 토큰 귀속 (in-process 동시 ask)
                 run_id=run_id,
+                step_gap_ms=_step_gap_ms,
+                reasoning_level=reasoning_level,  # feature-0003: 사용자 지정 추론 강도
             )
+            _prev_llm_end_ns = time.perf_counter_ns()  # 이 라운드 LLM 종료 시각 → 다음 라운드 gap 기산점
         except Exception as e:
             error_msg = f"LLM 호출 오류: {e}"
             # TASK-20260619T014034: 외부요인(자격증명 만료·인증실패·쓰로틀·서비스불가)이면
@@ -3643,9 +3905,9 @@ def _run_agent_core(
                 mirror_meta["attachment_derived"] = True
                 mirror_meta["derivation_type"] = "vision_analysis"
             if _writes_allowed(mem_conn, cid):
-                _save_message(mem_conn, cid, "assistant", content=answer)
+                _save_message(mem_conn, cid, "assistant", content=answer, recall_floor_created_at=_answer_recall_floor_ca_val)
                 _mirror_message(mem_conn, cid, "assistant", answer, run_id,
-                                meta=mirror_meta)
+                                meta=mirror_meta, recall_tag=_answer_recall_meta)
 
             # 대화 주제 자동 설정/갱신
             if answer and _writes_allowed(mem_conn, cid):
@@ -3653,6 +3915,8 @@ def _run_agent_core(
                 # 용어사전 자율등록(0021) — 답변 직후 용어 후보 추론 → 하이브리드 자동승급/검토 큐.
                 # best-effort: 어떤 실패도 ask 경로를 막지 않는다(내부 try/except 흡수).
                 _glossary_autopropose(cid, user_message, answer, run_id)
+                # ENUM 코드사전 자율수집(0039) — 답변 직후 코드↔라벨 후보 추론 → 하이브리드 자동승급/검토 큐.
+                _enum_autopropose(cid, user_message, answer, run_id)
 
             if output_mode == "console":
                 console.print()
@@ -3766,7 +4030,21 @@ def _run_agent_core(
                     and not _is_fixable_sql_error(tool_result)):
                 try:
                     from modules.relationships import learn_relationships_from_sql
-                    learn_relationships_from_sql(last_sql, source_run_id=run_id)
+                    from modules.tools import get_last_execute_sql_context
+                    # rel-selfheal: 미qualify 테이블의 스키마-slot 기본값 = 활성 DB(MSSQL=DB명 /
+                    # MySQL=schema). ''(미해석) 저장은 AGE 투영에서 실 Table 노드(`db.table` 키)와
+                    # 연결되지 않는 고아 Column 노드를 만들어 그래프 뷰 점선·graph_navigate 이웃에서
+                    # 관계가 비가시가 된다. MSSQL 은 slot lower() 정규화(적대 패널 QA-F4).
+                    #
+                    # 재검증 R-2: 컨텍스트는 **실행 시점 스냅샷**(tools.get_last_execute_sql_context)
+                    # 에서 읽는다 — 1:N 라우터가 tool 종료 시 primary 로 복원한 뒤라, 여기서
+                    # ContextVar 를 직접 읽으면 라우팅된 SQL 에 primary 의 engine/DB/scope 가
+                    # 오각인된다. 스냅샷 부재 시 default_schema 미채움(레거시 '' — 오각인보다 안전).
+                    _exec_ctx = get_last_execute_sql_context() or {}
+                    learn_relationships_from_sql(
+                        last_sql, _exec_ctx.get("scope_key"), source_run_id=run_id,
+                        default_schema=_exec_ctx.get("default_schema"),
+                        normalize_schema_lower=(_exec_ctx.get("engine") == "mssql"))
                 except Exception:
                     pass
 
@@ -3851,8 +4129,8 @@ def _run_agent_core(
         # max_steps 초과
         result["answer"] = f"최대 도구 호출 횟수({max_steps})를 초과했습니다."
         if _writes_allowed(mem_conn, cid):
-            _save_message(mem_conn, cid, "assistant", content=result["answer"])
-            _mirror_message(mem_conn, cid, "assistant", result["answer"], run_id)
+            _save_message(mem_conn, cid, "assistant", content=result["answer"], recall_floor_created_at=_answer_recall_floor_ca_val)
+            _mirror_message(mem_conn, cid, "assistant", result["answer"], run_id, recall_tag=_answer_recall_meta)
         if output_mode == "console":
             console.print(f"[yellow]{result['answer']}[/yellow]")
 
@@ -3884,8 +4162,8 @@ def _run_agent_core(
                     _partial = str(result.get("rationale") or "").strip() or str(result.get("answer") or "").strip()
                     if _partial:
                         _kept = f"(이전 요청이 중단되어, 진행된 내용까지 보존합니다.)\n\n{_partial}"
-                        _save_message(mem_conn, cid, "assistant", content=_kept)
-                        _mirror_message(mem_conn, cid, "assistant", _kept, run_id, meta={"interrupted": True})
+                        _save_message(mem_conn, cid, "assistant", content=_kept, recall_floor_created_at=_answer_recall_floor_ca_val)
+                        _mirror_message(mem_conn, cid, "assistant", _kept, run_id, meta={"interrupted": True}, recall_tag=_answer_recall_meta)
             except Exception:
                 pass
         try:
@@ -3913,8 +4191,8 @@ def _run_agent_core(
             pass
     elif result["error"]:
         error_text = f"오류: {result['error']}"
-        _save_message(mem_conn, cid, "assistant", content=error_text)
-        _mirror_message(mem_conn, cid, "assistant", error_text, run_id, meta={"internal": False})
+        _save_message(mem_conn, cid, "assistant", content=error_text, recall_floor_created_at=_answer_recall_floor_ca_val)
+        _mirror_message(mem_conn, cid, "assistant", error_text, run_id, meta={"internal": False}, recall_tag=_answer_recall_meta)
         try:
             # TASK-0241: terminal write 는 모두 supersede 가드 — lease-fencing 으로 박탈된
             # (superseded) run 이 현재 run 의 상태를 덮어쓰지 못하게 한다(canceled 와 대칭).

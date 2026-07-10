@@ -14,7 +14,15 @@ source_of_truth: true
 - Owner: AI (claude) / Human (sign-off 완료)
 - Priority: high
 - Risk: Critical (인가·cross-account·스키마 마이그레이션)
-- Last Updated: 2026-06-25 (gc-unread-badge — REQ-GC-R8 read-state 사이드바 안 읽은 메세지 배지)
+- Last Updated: 2026-07-04 (share-visibility-window — [from,to] 공유창 격리 + ☰ 통합)
+
+- **share-visibility-window (TASK-20260704, 2026-07-04, Critical)**: "여기부터 공유"(하단 경계) 신설 +
+  말풍선 액션 ☰ 통합(👍/👎 보존). 사용자 결정 "라이브룸 + 멤버 필터" — 공유 `[from,to]` 밖(민감 구간)을
+  참여자의 뷰·LLM recall·fork 전부에서 물리 배제(프롬프트 인젝션 방어). alembic 0037(conversation_members
+  visible_floor/ceiling + has_restricted_members 게이트), recall/display 양 loader 필터(fail-closed),
+  fork 3-store 교집합 clip, join stamp(never-widen)·widen-guard, owner-answer 표시태그. AR-1/AR-2 windowed
+  한정 반전 → SECURITY.md §21 + ANCHOR §4 갱신, AC-GC-A20~A27. 코드 거주 cross-cut: 0002(recall)·0003(share/
+  fork/view/FE). 잔여: 적대 보안리뷰 + PB-0008 시각검증.
 
 ## 2. Implementation Plan
 
@@ -81,6 +89,13 @@ source_of_truth: true
 - [ ] **S6 (deferred, 별도 계획)** — 풀 스레드 UI + run-status `(conversation,thread)` 재키잉
 
 ## 4. In Progress
+- **gc-join-notice** (공유 링크 참여 시 대화 내 '참여 알림' 이벤트, Major §12.3 cross-feature 0003+0002): 중단 세션 7d92a878 resume(session limit) — 새 멤버가 공유 링크로 참여하면 "X님이 대화에 참여했습니다." 를 ① core_messages(role=user, name=EVENT_MESSAGE_NAME, sender=가입자)로 기록해 기존 멤버 unread +1(가입자 제외), ② 표시 store(event_type='member_joined')로 미러해 프론트 가운데 pill 렌더. share.py join 핸들러 best-effort 호출(`if not already:` → 재참여 중복 없음). anonymous 공유뷰는 event 가드로 멤버 username 비노출. **§18.8 BLOCKING #1(join 이벤트가 LLM 히스토리에 발신자라벨 user 턴으로 주입→assistant 오응답) 적발→수정**: name sentinel + `_normalize_history_rows` 배제(unread 는 name 미참조라 유지). 컨테이너 pytest 36 PASS(신규 5). (CHG/REV-20260703T182740)
+  - [x] BE: `_save_group_join_event_pg`(이중 기록) + `_share_load_messages` event 가드 (feature-0003 app.py)
+  - [x] BE: join 핸들러 best-effort 호출 (feature-0003 routers/share.py)
+  - [x] BE: `EVENT_MESSAGE_NAME` sentinel + `_normalize_history_rows` 배제 (feature-0002 runtime_backend·agent_core) — §18.8 BLOCKING #1 수정
+  - [x] FE: renderMessages event pill(textContent) + styles.css + 캐시버스터 gc-join-notice (feature-0003 static)
+  - [x] 신규 회귀 `test_gc_join_event_history.py` 5 + 컨테이너 pytest 36 PASS + §18.8 패널 재검증 BLOCKING 0
+  - [ ] verify-completion → PR → 라이브 배포(web 재빌드, deploy_scope included) → **PB-0008 실측(pill·기존멤버 unread +1·@assistant 오응답 없음)**
 - **gc-unread-read-idspace-fix** (읽음 커서 id-space 불일치 → 읽어도 unread 배지 미감소·전환 시 회귀, Major §12.3 서버 read 핸들러): 사용자 4차 재보고(resume) — gc-unread-read-500-fix(read 200 복구) 후에도 "진입 시 배지 사라지나 다른 대화 전환 시 즉시 회귀". **최종 근본 원인**: 읽음 커서·unread 집계는 `agent_runtime.core_messages.id` 공간(대화 3369~3655)인데 FE 가 보내던 `last_read_message_id` 는 `/api/history` 가 채운 표시 store `agent_runtime.messages` id(750~845)라 두 공간이 disjoint → `set_last_read` GREATEST 가 항상 전진 거부(영구 no-op, updated=1·200 OK 이나 값 불변). 핸들러 폴백(MAX core_messages)은 requested<=0 에서만 발동 → FE 양수라 미발동. 수정=핸들러가 requested 무시하고 항상 MAX(core_messages.id) 전진 + id-space 계약 회귀 테스트. (CHG/REV-20260625T225851)
   - [x] `mark_conversation_read`: body last_read_message_id 파싱 제거 + 항상 MAX(core_messages.id) 전진 + docstring
   - [x] 회귀 가드 `test_read_handler_ignores_client_id_uses_core_messages_max` (핸들러 소스 계약 정적 보장)
@@ -147,6 +162,7 @@ source_of_truth: true
   - [x] 읽음 커서 전진 누락 보정(gc-unread-read-fix, CHG-20260625T194159/REV-20260625T194159, **Minor frontend**): 사용자 보고 — 읽은 대화의 회색 unread 배지가 안 줄어듦(배지 자체는 정상). 원인=읽음 처리(`_markActiveConversationRead`)가 `selectConversation`(첫 전환)·`_liveSyncTick`(새 메세지)에서만 호출 → `refreshWorkspace`(복원/갱신)·이미-active 재선택 경로 누락 → 서버 커서 미전진(DB cursor 3466 멈춤, conv_max 3590). 수정=refreshWorkspace `loadHistory` 후 + selectConversation 가드 시 `_markActiveConversationRead` 보강. `node --check` PASS, 패널 SKIP(frontend·로직신설 0·비핵심경로·신규표면 0). 캐시버스터 gc-unread-read-fix. **PB-0008 배포 후 실측**. 코드/문서 정본=feature-0003.
   - [x] optimistic @assistant/채팅 발신자 표시 정정(gc-optimistic-sender-attrib, CHG-20260625T104906/REV-20260625T104906, **Minor §12.3 frontend display-only**): 사용자 보고(`/_template:entry`) — 비-owner 참가자가 `@assistant` 전송 시 처리 중 동안 말풍선이 대화 owner 가 보낸 것처럼 좌측·owner 이름으로 표시되다 답변 완료(hydrate) 후 본인으로 복구되는 깜빡임. 근본=optimistic user 메시지가 `meta:{}` 라 `renderMessages` 가 발신자 부재 시 `isOwn`(owner 여부)로 폴백. 수정=신규 `_selfSenderMeta()`(현재 사용자 `{sender_account_id, sender_username}`, 결측 시 키 생략→안전 degrade)를 optimistic 2지점(`_sendGroupChatMessage`·`sendPrompt`)에 부여 → 즉시 우측·`나 (username)`·본인 아바타. 서버 권위 발신자(인증 세션) 무변경·client meta 미전송(spoofing 불가). 검증: `node --check` + 발신자 귀속 4케이스 node 하니스(BEFORE 버그재현→AFTER·hydrate 동일·owner/1:1 무회귀) + §18.8 적대 패널 1렌즈 SHIP·BLOCKING 0. 캐시버스터 gc-optimistic-sender-attrib. **PB-0008 미실측**(배포 후 비-owner 참가자 계정 실측 권장). 코드/문서 정본=feature-0003 docs.
   - [x] 공유 대화 join 불가 수정(gc-join-ambiguous-param-fix, CHG-20260625T121352-gc-join-ambiguous-param-fix/REV-20260625T121352, **Minor §12.3 backend PG bind-param**): 사용자 보고(`/_template:entry`) — 공유 대화로 다른 사용자의 대화에 참여 시 "대화 참여에 실패했습니다" 와 함께 참여 불가. 근본=`group_members._PG_ADD_MEMBER` 가 named param `%(conversation_id)s` 를 INSERT VALUES(varchar 컬럼)와 gc-unread-baseline 이 추가한 last_read 서브쿼리 `WHERE conversation_id = %(...)s`(text 추론) **양쪽에서 재사용** → psycopg3 가 같은 `$1` 로 합쳐 `AmbiguousParameter: text versus character varying` → `add_member` INSERT 실패 → join 500. `_ensure_owner_membership` 도 동반 실패(라이브 web 로그 6건 실증). 수정=서브쿼리에 별도 param `%(conversation_id_lookup)s`(값 동일, 독립 타입 추론) + `add_member` dict 키 추가 + (2차)join 핸들러 silent except 에 `exc_info` 로깅. 비파괴(SQL 의미·인가·스키마 무변경). 검증: 컨테이너 재현(수정 전 AmbiguousParameter→수정 후 INSERT 성공) + test_group_members 12/12(회귀 2 신규: distinct-param·lookup-equals-cid) + §18.8 적대 패널. **배포(이미지 재빌드) 후 라이브 join 200 + `_ensure_owner_membership failed` 로그 소거 확인**. 코드 정본=feature-0002(group_members)+feature-0003(app.py 로깅) docs.
+  - [x] [from,to] 공유창 격리 + 말풍선 ☰ 통합(share-visibility-window, CHG-20260704T130000/REV-20260704T130000, **Critical §12.3 접근제어·프롬프트 인젝션 방어**): "여기부터 공유"(하단 경계) 신설 + 말풍선 액션 3종(샘플 등록/여기서 분기/여기까지·여기부터 공유) ☰ 통합(👍/👎 보존). 사용자 결정 **"라이브룸 + 멤버 필터"** — 공유 `[from,to]` 밖(민감 구간)을 참여자의 뷰·LLM recall·fork 전부에서 물리 배제(fork/join 후 프롬프트 인젝션 방어). alembic 0037(`conversation_members` visible_floor/ceiling + `has_restricted_members` 게이트) + recall/display 양 loader 필터(fail-closed DENY) + fork 3-store 교집합 clip + join stamp(never-widen)·widen-guard(403) + owner-answer 표시태그("표시 태그만" 결정). **AR-1/AR-2 windowed 한정 반전** → SECURITY.md §21 + ANCHOR §4. 검증: `make test` 전체 PASS(신규 28) + ruff + node --check + §18.8 적대 보안패널(7렌즈, REVIEW.md). **PB-0008 미실측**(배포 후 라이브 시각검증 권장). AC-GC-A20~A27. 코드 정본=feature-0002(recall)+feature-0003(share/fork/view/FE) docs.
 
 ## 8. Completion Checklist
 - [x] 코어 REQ(R1~R7)의 AC 구현 (S1~S4 + roster + send-routing + S3c). R8 일부(read-state/cap)는 S5 이연
@@ -157,6 +173,6 @@ source_of_truth: true
 - [x] REVIEW.md에 판단 근거가 기록되었다
 - [x] REPORT.md에 최종 상태가 반영되었다
 - [x] TEST.md에 테스트 결과가 기록되었다
-- [ ] docs/SECURITY.md 에 AR-1/AR-2 수용 위험이 등재되었다 (gc-unread-baseline 무관 — 새 위험 0)
+- [x] docs/SECURITY.md 에 AR-1/AR-2 수용 위험이 등재되었다 (§18 원본 + §21 windowed 한정 반전 — share-visibility-window)
 - [x] STATUS.md에 기능 상태가 갱신되었다
 - [ ] Git 커밋·원격 동기화가 완료되었거나 보류 사유가 기록되었다

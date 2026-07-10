@@ -13,6 +13,7 @@ __all__ = [
     "AGENT_CONVO_SEARCH_AUTO",
     "AGENT_CONVO_SEARCH_LIMIT",
     "AGENT_CSV_ANALYZE_MAX_BYTES",
+    "AGENT_CONN_AVG_WINDOW",
     "AGENT_CONN_DOWN_AFTER_FAILS",
     "AGENT_CONN_HEALTH_ENABLED",
     "AGENT_CONN_HEALTH_TICK_SEC",
@@ -58,6 +59,23 @@ __all__ = [
     "AGENT_INLINE_INSIGHT_ON_ASK",
     "AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH",
     "AGENT_INSIGHT_MODEL",
+    "AGENT_INSIGHT_OFFHOURS_MODEL",
+    "AGENT_INSIGHT_BUSINESS_START_HOUR",
+    "AGENT_INSIGHT_BUSINESS_END_HOUR",
+    "AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS",
+    "AGENT_INSIGHT_TABLE_GROUPING_ENABLED",
+    "AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS",
+    "AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX",
+    "AGENT_NODE_ANALYSIS_MODEL",
+    "AGENT_NODE_ANALYSIS_SCHEMA_CAP",
+    "AGENT_NODE_ANALYSIS_SCHEMA_MAX",
+    "AGENT_NODE_ANALYSIS_SCHEMA_DEPTH",
+    "AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR",
+    "AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX",
+    "AGENT_NODE_ANALYSIS_THIN_CHARS",
+    "AGENT_NODE_ANALYSIS_REFINE_MAX",
+    "AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX",
+    "AGENT_NODE_ANALYSIS_PARENT_TABLE_REL",
     "AGENT_INSIGHT_OBJECT_DB_FETCH_LIMIT",
     "AGENT_INSIGHT_OBJECT_FASTPATH",
     "AGENT_INSIGHT_OBJECT_MAX_CANDIDATES",
@@ -80,6 +98,10 @@ __all__ = [
     "AGENT_GLOSSARY_SUGGEST_MODEL",
     "AGENT_GLOSSARY_AUTOPROMOTE_THRESHOLD",
     "AGENT_GLOSSARY_SUGGEST_MAX",
+    "AGENT_ENUM_AUTOPROPOSE",
+    "AGENT_ENUM_SUGGEST_MODEL",
+    "AGENT_ENUM_AUTOPROMOTE_THRESHOLD",
+    "AGENT_ENUM_SUGGEST_MAX",
     "AGENT_ASK_EXECUTION_MODE",
     "AGENT_ASK_WORKER_ENABLED",
     "AGENT_ASK_WORKER_TICK_SEC",
@@ -132,6 +154,23 @@ __all__ = [
     "AGENT_RAG_PRIORITY_SHORT_CIRCUIT",
     "AGENT_RAG_PRIORITY_SHORT_CIRCUIT_ALLOW_WITH_PASSTHROUGH",
     "AGENT_RAG_PRIORITY_TIMEOUT_SEC",
+    # rel-selfheal: AGENT_RELATIONSHIP_* 가 __all__ 에 누락돼 `from shared.config import *`
+    # 소비자(insight.py)에서 NameError → per-schema `except: continue` 가 삼켜 **insight 스캔의
+    # 스키마 처리 전체(인사이트 갱신 + FK introspect + 암묵 추론 + 프로브)가 3일간 조용히 정지**
+    # 했던 근본원인. star-import 소비 모듈에서 bare 로 쓰는 이름은 반드시 여기 등재한다
+    # (회귀 가드: tests/test_config_star_export.py).
+    "AGENT_RELATIONSHIP_INFERENCE_ENABLED",
+    "AGENT_RELATIONSHIP_INFER_CAP",
+    "AGENT_RELATIONSHIP_INTROSPECT_ENABLED",
+    "AGENT_RELATIONSHIP_LEARNING_ENABLED",
+    "AGENT_RELATIONSHIP_PROBE_CAP",
+    "AGENT_RELATIONSHIP_PROBE_ENABLED",
+    "AGENT_RELATIONSHIP_PROBE_SAMPLE",
+    "AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS",
+    "AGENT_RELATIONSHIP_REINFER_SEC",
+    # graph-funcproc(ADR-016): insight.py(star-import) 가 bare 로 소비 — 등재 의무(rel-selfheal 계약).
+    "AGENT_ROUTINE_INTROSPECT_CAP",
+    "AGENT_ROUTINE_INTROSPECT_ENABLED",
     "AGENT_SCHEMA_BIAS_PENALTY",
     "AGENT_SCHEMA_BIAS_STEP_WINDOW",
     "AGENT_SCHEMA_BIAS_THRESHOLD",
@@ -158,6 +197,7 @@ __all__ = [
     "AGENT_SIMILAR_RETRY_LIMIT",
     "AGENT_SIMILAR_RETRY_THRESHOLD",
     "AGENT_SQL_COMPOSE_MODEL",
+    "AGENT_SQL_FIX_MODEL",
     "AGENT_SQL_GROUNDED_BLOCK_ON_FAIL",
     "AGENT_SQL_GROUNDED_REVIEW",
     "AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC",
@@ -239,6 +279,24 @@ __all__ = [
     "AGENT_KB_EMBEDDING_AUTO",
     "AGENT_KB_EMBEDDING_BATCH_MAX_ROWS",
     "AGENT_KB_EMBEDDING_INTERVAL_SEC",
+    "AGENT_METADATA_CLUSTER_AUTO",
+    "AGENT_METADATA_CLUSTER_INTERVAL_SEC",
+    "AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS",
+    "AGENT_METADATA_CLUSTER_RECOMPUTE_SEC",
+    "AGENT_METADATA_CLUSTER_SIM_THRESHOLD",
+    "AGENT_METADATA_CLUSTER_KNN_K",
+    "AGENT_METADATA_CLUSTER_MIN_SIZE",
+    "AGENT_METADATA_CLUSTER_MAX_DEGREE",
+    "AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N",
+    "AGENT_XDS_RELATIONSHIP_INFER_AUTO",
+    "AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC",
+    "AGENT_XDS_RELATIONSHIP_MIN_SIM",
+    "AGENT_XDS_RELATIONSHIP_BATCH_MAX",
+    "AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE",
+    "AGENT_XDS_RELATIONSHIP_KNN_K",
+    "AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO",
+    "AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM",
+    "AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR",
     "FACT_SCOPE_COMMON",
     "GLOBAL_CONVERSATION_ID",
     "GLOBAL_SESSION_CONVERSATION_ID",
@@ -281,6 +339,18 @@ except Exception:  # pragma: no cover
     OpenAI = None
 
 console = Console()
+
+# feature-0018 runtime-settings: 관리 콘솔(`시스템 > 설정`)에서 저장한 restart-mode override 를
+# import 시 1회 반영한다(공유 볼륨 스냅샷 → 다음 재배포/재시작 시 적용). 방어적 import —
+# runtime_settings 가 어떤 이유로든 실패해도 config 는 절대 깨지지 않고 env 기본값을 그대로 쓴다.
+# runtime_settings 는 shared.config 를 import 하지 않으므로 순환이 없고, DB 를 만지지 않으므로
+# import-time 안전하다. override 미설정/파일부재/kill-switch 면 env_default 를 그대로 반환해
+# 기존 동작과 byte-동치가 유지된다.
+try:
+    from shared.runtime_settings import startup_int as _startup_int
+except Exception:  # pragma: no cover
+    def _startup_int(key, env_default):  # type: ignore[misc]
+        return env_default
 
 DB_HOST = os.getenv("DB_HOST", "mysql")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
@@ -421,12 +491,19 @@ def set_active_datasource(key, engine: str | None = None, default_db: str | None
     _ACTIVE_DATABASE.set(None)
 
 
+def normalize_db_label(database):
+    """MSSQL DB(catalog) store label 정규화 — **단일 계약**(§56 RC5). set_active_database 와
+    routine_backfill 등 모든 store-label writer 가 이 함수를 공유한다 — 정규화 식이 한쪽만
+    바뀌어 writer 간 케이스-변형 이중 적재가 재발하는 drift 를 차단. None=미설정."""
+    return (str(database).strip().lower() or None) if database else None
+
+
 def set_active_database(database: str | None) -> None:
     """TASK-0220: 현재 컨텍스트의 active database(catalog) 설정. MSSQL DB 별 inner-loop 가 호출.
 
     None=미설정(MySQL 또는 단일 DB) → `ds_object_suffix` 가 2계층 suffix 반환.
     """
-    _ACTIVE_DATABASE.set((str(database).strip().lower() or None) if database else None)
+    _ACTIVE_DATABASE.set(normalize_db_label(database))
 
 
 def get_active_database():
@@ -548,7 +625,7 @@ AGENT_KB_EMBEDDING_DIM = int(os.getenv("AGENT_KB_EMBEDDING_DIM", "1024") or "102
 # QUERIES 섹션을 주입 안 함 — ITEM-01 harness A/B(샘플 off/on) 측정 + 안전 롤백 스위치.
 AGENT_SAMPLE_QUERIES_ENABLED = os.getenv("AGENT_SAMPLE_QUERIES_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_KB_EMBEDDING_BATCH_SIZE = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_SIZE", "100") or "100")
-AGENT_KB_EMBEDDING_TIMEOUT_SEC = int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60")
+AGENT_KB_EMBEDDING_TIMEOUT_SEC = _startup_int("AGENT_KB_EMBEDDING_TIMEOUT_SEC", int(os.getenv("AGENT_KB_EMBEDDING_TIMEOUT_SEC", "60") or "60"))
 AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS", "3") or "3")
 # CHG-20260625: 상호작용(준비 단계) 질의 임베딩 전용 fast-fail timeout. 위
 # AGENT_KB_EMBEDDING_TIMEOUT_SEC(60s)/AGENT_TIMEOUT_SEC(300s) 는 오프라인 배치
@@ -556,7 +633,7 @@ AGENT_KB_EMBEDDING_MAX_ATTEMPTS = int(os.getenv("AGENT_KB_EMBEDDING_MAX_ATTEMPTS
 # 백엔드 지연 시 그 길이만큼 init 을 블로킹하던 회귀(준비 50s)의 한 축이었다.
 # grounding 임베딩은 실패해도 trigram 으로 graceful degrade 되므로 짧게 끊어 빠르게
 # 폴백한다(전용 embed-ollama warm 실측 0.33s — 20s 면 cold·일시지연도 충분히 흡수).
-AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "20") or "20")
+AGENT_KB_QUERY_EMBED_TIMEOUT_SEC = _startup_int("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", int(os.getenv("AGENT_KB_QUERY_EMBED_TIMEOUT_SEC", "20") or "20"))
 # ITEM-05 (하이브리드 검색 — 벡터+키워드 score fusion). gate ON 시 PG read path
 # (_load_rag_documents_for_request_pg) 가 벡터(cosine)+trigram(pg_trgm) 검색을 둘 다 수행해
 # (conversation_id, fact_key, content) union 병합 후 score = ALPHA·vec_sim + BETA·trigram_sim 으로
@@ -590,6 +667,48 @@ AGENT_KB_HYBRID_TRIGRAM_FLOOR = float(os.getenv("AGENT_KB_HYBRID_TRIGRAM_FLOOR",
 AGENT_KB_EMBEDDING_AUTO = os.getenv("AGENT_KB_EMBEDDING_AUTO", "1").strip().lower() in ("1", "true", "yes")
 AGENT_KB_EMBEDDING_BATCH_MAX_ROWS = int(os.getenv("AGENT_KB_EMBEDDING_BATCH_MAX_ROWS", "100") or "100")
 AGENT_KB_EMBEDDING_INTERVAL_SEC = int(os.getenv("AGENT_KB_EMBEDDING_INTERVAL_SEC", "60") or "60")
+# feature-0016 Phase C (ADR-013 후속, semantic-embed): 메타데이터 객체(테이블) 시그니처 임베딩 → scope 별
+# 의미 클러스터링. embedding 자체는 기존 embedding 데몬(위 AGENT_KB_EMBEDDING_*)이 texts 를 임베딩하므로
+# 신규 embedding 노브 없음 — 아래는 시그니처 백필 + 클러스터링 전용 데몬 스레드(임베딩 데몬과 분리, tick 무블로킹).
+#   AUTO=0 → Phase C 전면 비활성(kill switch, 프론트는 affix 폴백). RECOMPUTE_SEC → scope 재클러스터 cadence(6h).
+#   SIM_THRESHOLD → 코사인 τ(단일연결 컷). FULLMATRIX_MAX_N → numpy N×N 코사인 행렬 메모리 가드: 이하만
+#   클러스터링, 초과 scope 는 skip(프론트 affix 폴백 — OOM 방지). MAX_DEGREE → 노드당 이웃 상한(단일연결
+#   chaining 억제 — verify MAJOR). KNN_K → 예약(향후 대형 scope pgvector kNN 폴백용, 현재 미사용).
+#   τ=0.82 는 라이브 임베딩 코사인 분포로 재보정 대상(초기 안전값).
+AGENT_METADATA_CLUSTER_AUTO = os.getenv("AGENT_METADATA_CLUSTER_AUTO", "1").strip().lower() in ("1", "true", "yes")
+AGENT_METADATA_CLUSTER_INTERVAL_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_INTERVAL_SEC", "900") or "900")
+# §55 D: 200→500 상향 — 16k 백로그를 15분 pass 당 500 행이면 ~8h 에 소진(미처리-우선 정렬과 세트).
+AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS = int(os.getenv("AGENT_METADATA_CLUSTER_SIG_BATCH_MAX_ROWS", "500") or "500")
+AGENT_METADATA_CLUSTER_RECOMPUTE_SEC = int(os.getenv("AGENT_METADATA_CLUSTER_RECOMPUTE_SEC", "21600") or "21600")
+AGENT_METADATA_CLUSTER_SIM_THRESHOLD = float(os.getenv("AGENT_METADATA_CLUSTER_SIM_THRESHOLD", "0.82") or "0.82")
+AGENT_METADATA_CLUSTER_KNN_K = int(os.getenv("AGENT_METADATA_CLUSTER_KNN_K", "15") or "15")
+AGENT_METADATA_CLUSTER_MIN_SIZE = int(os.getenv("AGENT_METADATA_CLUSTER_MIN_SIZE", "2") or "2")
+AGENT_METADATA_CLUSTER_MAX_DEGREE = int(os.getenv("AGENT_METADATA_CLUSTER_MAX_DEGREE", "8") or "8")
+AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N = int(os.getenv("AGENT_METADATA_CLUSTER_FULLMATRIX_MAX_N", "2000") or "2000")
+# feature-0016 Phase B (ADR-019, crossds-rel): 크로스-데이터소스 관계 추론(Phase C 시그니처 임베딩 구동).
+#   AUTO=0(기본 OFF) → 스키마·UI·scope 완화만 배포되고 추론 inert. Phase C 임베딩 populate 후 1 로 flip.
+#   MIN_SIM 높게(0.90) — 프로브 검증 불가라 보수적. 프로브 skip·manual/대화JOIN 승격은 relationships.py.
+AGENT_XDS_RELATIONSHIP_INFER_AUTO = os.getenv("AGENT_XDS_RELATIONSHIP_INFER_AUTO", "0").strip().lower() in ("1", "true", "yes")
+AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC = int(os.getenv("AGENT_XDS_RELATIONSHIP_INFER_INTERVAL_SEC", "21600") or "21600")
+AGENT_XDS_RELATIONSHIP_MIN_SIM = float(os.getenv("AGENT_XDS_RELATIONSHIP_MIN_SIM", "0.90") or "0.90")
+AGENT_XDS_RELATIONSHIP_BATCH_MAX = int(os.getenv("AGENT_XDS_RELATIONSHIP_BATCH_MAX", "200") or "200")
+AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE = int(os.getenv("AGENT_XDS_RELATIONSHIP_MAX_CANDIDATES_PER_SCOPE", "50") or "50")
+
+# feature-0016 §59(ADR-025): 미분류 스키마 → 제품 분류 AI 제안(승인 대기 적재 — allowlist 비접촉).
+#   AUTO=0(기본 OFF, XDS 선례) → 모듈·승인 UI 만 배포되고 데몬 inert. 운영 확인 후 1 로 flip.
+#   MIN_CONF 미만 제안은 폐기(보수적 — 접근면 인접 파이프라인). BATCH_MAX = pass 당 스키마 상한.
+AGENT_PRODUCT_CLASSIFY_AUTO = os.getenv("AGENT_PRODUCT_CLASSIFY_AUTO", "0").strip().lower() in ("1", "true", "yes")
+AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC = int(os.getenv("AGENT_PRODUCT_CLASSIFY_INTERVAL_SEC", "21600") or "21600")
+AGENT_PRODUCT_CLASSIFY_MIN_CONF = float(os.getenv("AGENT_PRODUCT_CLASSIFY_MIN_CONF", "0.6") or "0.6")
+AGENT_PRODUCT_CLASSIFY_BATCH_MAX = int(os.getenv("AGENT_PRODUCT_CLASSIFY_BATCH_MAX", "20") or "20")
+AGENT_XDS_RELATIONSHIP_KNN_K = int(os.getenv("AGENT_XDS_RELATIONSHIP_KNN_K", "10") or "10")
+# feature-0016 §55 (REQ-20260706 ②): **같은 datasource 안의 다른 스키마(DB) 간** 관계 추론.
+#   크로스-DS 와 같은 임베딩 유사도 경로를 쓰되, src_ds==tgt_ds 라 기존 프로브(EXISTS)·강화/파단
+#   파이프라인에 자연 편입된다(검증 가능) → 기본 ON. MIN_SIM 은 XDS 보다 완화(프로브가 검증하므로).
+AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO = os.getenv("AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO", "1").strip().lower() in ("1", "true", "yes")
+AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM = float(os.getenv("AGENT_XSCHEMA_RELATIONSHIP_MIN_SIM", "0.86") or "0.86")
+# node_analysis: 의도적 교차DB REFERENCES 로 도달한 이웃의 cross-scope 감쇠 대체값(1.0=무감쇠). 우연 교차는 0.25 유지.
+AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_XDS_REFERENCES_FACTOR", "1.0") or "1.0")
 BLOCKED_DEFAULT_SCHEMAS = {
     s.strip().lower()
     for s in os.getenv(
@@ -680,6 +799,34 @@ AGENT_STEP_GRADE_MODEL = (
 AGENT_INSIGHT_MODEL = (
     os.getenv("AGENT_INSIGHT_MODEL", "").strip() or OPENAI_MODEL
 )
+# ── insight 백그라운드 배치 시간 기반 강등(2026-07-04 llm-routing-interactive-split) ──
+# insight 워커(schema/table/account)는 **평일 근무시간엔 claude, 야간·주말엔 gemma(edge)** 로
+# 작동한다(사용자 결정 2026-07-04: 사람 호출은 항상 claude, 백그라운드 배치는 비용 절감 위해
+# off-hours gemma). 사람 호출(대화·node_analysis)은 이 강등을 쓰지 않고 항상 interactive alias.
+# 강등은 litellm fallback 이 아니라 애플리케이션(llm._effective_insight_model)이 결정한다 —
+# 토큰이 24/7 유효해도 insight 만 off-hours 에 gemma 로 내려가도록. OFFHOURS_MODEL 을 빈 값 또는
+# AGENT_INSIGHT_MODEL 과 동일 값으로 두면 강등 비활성(항상 AGENT_INSIGHT_MODEL). 근무시간 경계는
+# [START, END) 시(로컬=KST 가정, TZ_OFFSET 로 UTC 보정), 주말(토·일)은 하루종일 off-hours.
+AGENT_INSIGHT_OFFHOURS_MODEL = (
+    os.getenv("AGENT_INSIGHT_OFFHOURS_MODEL", "edge").strip()
+)
+AGENT_INSIGHT_BUSINESS_START_HOUR = int(
+    os.getenv("AGENT_INSIGHT_BUSINESS_START_HOUR", "10").strip() or "10"
+)
+AGENT_INSIGHT_BUSINESS_END_HOUR = int(
+    os.getenv("AGENT_INSIGHT_BUSINESS_END_HOUR", "19").strip() or "19"
+)
+AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS = int(
+    os.getenv("AGENT_INSIGHT_BUSINESS_TZ_OFFSET_HOURS", "9").strip() or "9"
+)
+# feature-0016 node-analysis-haiku + llm-routing-interactive-split(2026-07-04): 관리콘솔 그래프뷰
+# "AI 능동 분석"(각 관계 분석, llm_node_analysis)의 전용 모델. schema/table/account insight 와
+# 공유하던 AGENT_INSIGHT_MODEL 에서 분리 + **사람 능동 호출**이므로 항상 claude 로 유지한다.
+# **기본값 = claude-haiku-4-interactive** (2026-07-04: 대화/분석은 주말·야간에도 claude — insight
+# 배치의 off-hours gemma 강등과 분리된 interactive alias 로 라우팅). 다른 모델은 .env override.
+AGENT_NODE_ANALYSIS_MODEL = (
+    os.getenv("AGENT_NODE_ANALYSIS_MODEL", "").strip() or "claude-haiku-4-interactive"
+)
 # ── 용어사전 대화 자율등록(0021) ──────────────────────────────────────────────
 # 대화 답변 직후 도메인 용어 후보를 LLM 으로 추론해 용어사전(kb_glossary)에 자율 등록한다.
 # 사용자 결정(2026-06-29): 하이브리드 자동승급 — confidence ≥ THRESHOLD 면 즉시 등록
@@ -706,6 +853,32 @@ try:
 except ValueError:
     AGENT_GLOSSARY_SUGGEST_MAX = 5
 
+# ── ENUM 코드사전 대화 자율수집(0039) — 용어사전(0021) ENUM 대칭 ────────────────────
+# 대화 답변 직후 (table.column) 코드↔라벨 후보를 LLM 으로 추론해 ENUM 코드사전(enum_dictionary)에
+# 자율 수집한다. 하이브리드 자동승급 — confidence ≥ THRESHOLD 면 즉시 등록(source='auto', 되돌리기
+# 가능), 미만이면 검토 큐(enum_feedback.status='pending'). ENUM 은 (schema/table/column/code) 구조
+# 추론이 용어보다 오탐 위험이 커 THRESHOLD 를 용어(0.85)보다 보수적인 0.9 로 둔다(대부분 검토 큐 경유).
+AGENT_ENUM_AUTOPROPOSE = (
+    os.getenv("AGENT_ENUM_AUTOPROPOSE", "1").strip().lower() in ("1", "true", "yes")
+)
+AGENT_ENUM_SUGGEST_MODEL = (
+    os.getenv("AGENT_ENUM_SUGGEST_MODEL", AGENT_SUMMARY_MODEL).strip()
+    or AGENT_SUMMARY_MODEL
+)
+try:
+    AGENT_ENUM_AUTOPROMOTE_THRESHOLD = float(
+        os.getenv("AGENT_ENUM_AUTOPROMOTE_THRESHOLD", "0.9").strip() or "0.9"
+    )
+except ValueError:
+    AGENT_ENUM_AUTOPROMOTE_THRESHOLD = 0.9
+# 한 턴에서 큐/등록으로 받아들일 최대 ENUM 후보 수 (토큰/노이즈 cap).
+try:
+    AGENT_ENUM_SUGGEST_MAX = int(
+        os.getenv("AGENT_ENUM_SUGGEST_MAX", "5").strip() or "5"
+    )
+except ValueError:
+    AGENT_ENUM_SUGGEST_MAX = 5
+
 AGENT_LOG_DIR = os.getenv("AGENT_LOG_DIR", "/shared/logs")
 # 단일 앱 로그 파일 크기 상한(bytes). 초과 시 .1 로 1회 회전. 회전 없이 append 만
 # 하던 과거엔 바쁜 날 insight_route.log 가 1GB+ 까지 자랐다. 0 이하면 비활성.
@@ -715,7 +888,7 @@ AGENT_TOP_N = int(os.getenv("AGENT_TOP_N", "200"))
 AGENT_MAX_SHOW = int(os.getenv("AGENT_MAX_SHOW", "10"))
 AGENT_TABLE_MAX_COLS = int(os.getenv("AGENT_TABLE_MAX_COLS", "12"))
 AGENT_TABLE_MAX_COL_WIDTH = int(os.getenv("AGENT_TABLE_MAX_COL_WIDTH", "24"))
-AGENT_TIMEOUT_SEC = int(os.getenv("AGENT_TIMEOUT_SEC", "60"))
+AGENT_TIMEOUT_SEC = _startup_int("AGENT_TIMEOUT_SEC", int(os.getenv("AGENT_TIMEOUT_SEC", "60")))
 
 # ── 무거운 쿼리 자가규제 (TASK-0172, DESIGN-self-interrupt §11) ──
 # execute_sql(LLM freeform 분석 SELECT) 의 사전 EXPLAIN 게이팅 + per-query 시간 cap.
@@ -758,7 +931,7 @@ AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "128"))
 AGENT_COLUMN_SCAN_LIMIT = int(os.getenv("AGENT_COLUMN_SCAN_LIMIT", "2000"))
 AGENT_GLOBAL_KB_MIN_WEIGHT = int(os.getenv("AGENT_GLOBAL_KB_MIN_WEIGHT", "4"))
 AGENT_GLOBAL_KB_MAX_ENTRIES = int(os.getenv("AGENT_GLOBAL_KB_MAX_ENTRIES", "80"))
-AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC = int(os.getenv("AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC", "3"))
+AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC = _startup_int("AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC", int(os.getenv("AGENT_GLOBAL_KB_LOCK_TIMEOUT_SEC", "3")))
 AGENT_GLOBAL_KB_FACTS = os.getenv("AGENT_GLOBAL_KB_FACTS", "1").strip().lower() in ("1", "true", "yes")
 AGENT_GLOBAL_KB_SHARE_ACROSS_SESSIONS = (
     os.getenv("AGENT_GLOBAL_KB_SHARE_ACROSS_SESSIONS", "1").strip().lower() in ("1", "true", "yes")
@@ -841,6 +1014,19 @@ AGENT_SCHEMA_INSIGHT_MAX_COLS = int(os.getenv("AGENT_SCHEMA_INSIGHT_MAX_COLS", "
 AGENT_TABLE_INSIGHT_MAX_COLS = int(os.getenv("AGENT_TABLE_INSIGHT_MAX_COLS", "15"))
 AGENT_SCHEMA_INSIGHT_RESCAN_SEC = int(os.getenv("AGENT_SCHEMA_INSIGHT_RESCAN_SEC", "3600"))
 AGENT_TABLE_INSIGHT_RESCAN_SEC = int(os.getenv("AGENT_TABLE_INSIGHT_RESCAN_SEC", "3600"))
+# feature-0002 insight-table-grouping (2026-07-03): 동일 구조(컬럼 지문) + 동일 이름-family
+# (날짜/번호 suffix 만 다른) 테이블을 한 그룹으로 묶어 대표 1개만 LLM 분석하고, 나머지 형제는
+# LLM 없이 인사이트를 전파(fan-out)한다. 날짜 샤드(daily_league_ranking_1_20250727,
+# _20250726 …) 수백 개를 개별 LLM 분석하던 낭비 제거(사용자 결정 2026-07-03). per-table
+# table_insight fact 는 그대로 유지 → grounding(NL→SQL) 무회귀. 그룹 대표의 분석 dict 는
+# table_group_insight:<fp>:<stem> KV 에 캐시되어 다음 cycle 의 신규 샤드가 LLM 없이 상속한다.
+AGENT_INSIGHT_TABLE_GROUPING_ENABLED = (
+    os.getenv("AGENT_INSIGHT_TABLE_GROUPING_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+)
+# 그룹으로 인정할 최소 멤버 수(이 미만은 기존 per-table 동작 그대로 — 무회귀 보장).
+AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS = int(os.getenv("AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS", "2"))
+# 한 cycle 에서 LLM 없이 fan-out(전파)할 테이블 상한(budget_sec 와 함께 이중 상한 — spike 방지).
+AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX = int(os.getenv("AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX", "200"))
 AGENT_SUMMARY_REFRESH = os.getenv("AGENT_SUMMARY_REFRESH", "1").strip().lower() in ("1", "true", "yes")
 AGENT_SUMMARY_REFRESH_EVERY = int(os.getenv("AGENT_SUMMARY_REFRESH_EVERY", "1"))
 AGENT_SUMMARY_MAX_RECENT = int(os.getenv("AGENT_SUMMARY_MAX_RECENT", "8"))
@@ -882,12 +1068,23 @@ AGENT_RELATIONSHIP_LEARNING_ENABLED = os.getenv("AGENT_RELATIONSHIP_LEARNING_ENA
 AGENT_RELATIONSHIP_INFERENCE_ENABLED = os.getenv("AGENT_RELATIONSHIP_INFERENCE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_RELATIONSHIP_PROBE_ENABLED = os.getenv("AGENT_RELATIONSHIP_PROBE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 AGENT_RELATIONSHIP_INFER_CAP = int(os.getenv("AGENT_RELATIONSHIP_INFER_CAP", "400") or "400")
+# rel-selfheal: 관계 유지보수(FK introspect·암묵 추론·프로브) 주기 재발화 간격(초).
+# 기존 트리거(스키마 신규/구조변경)만으로는 이미 스캔 완료된 스키마에서 영원히 미발화 —
+# 라이브 inferred 0건·프로브 0회의 설계 갭 보완. 0 이하 = cadence off(기존 트리거만).
+# 기본 21600(6h) — 프로브 cap/timeout 이 사이클당 운영 DB 부하를 상한.
+AGENT_RELATIONSHIP_REINFER_SEC = int(os.getenv("AGENT_RELATIONSHIP_REINFER_SEC", "21600") or "21600")
 AGENT_RELATIONSHIP_PROBE_CAP = int(os.getenv("AGENT_RELATIONSHIP_PROBE_CAP", "40") or "40")
 AGENT_RELATIONSHIP_PROBE_SAMPLE = int(os.getenv("AGENT_RELATIONSHIP_PROBE_SAMPLE", "50") or "50")
 # 프로브 statement 시간 상한(ms). 운영 DB 상 unindexed 키 컬럼 대상 correlated EXISTS 폭주 차단
 # (보안 패널 MINOR — _fk_raw_execute 가 _apply_query_cap 을 우회). MySQL=MAX_EXECUTION_TIME 힌트,
 # MSSQL=SET LOCK_TIMEOUT(락 대기 상한). 0 이면 미적용.
-AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = int(os.getenv("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", "5000") or "5000")
+AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS = _startup_int("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", int(os.getenv("AGENT_RELATIONSHIP_PROBE_TIMEOUT_MS", "5000") or "5000"))
+# feature-0016 graph-funcproc(ADR-016): 함수·프로시저(routine) introspection 토글·캡. 기본 ON.
+#  - insight worker 가 관계 유지보수 게이트(rel_maintenance_due)와 같은 cadence 로
+#    INFORMATION_SCHEMA.ROUTINES/PARAMETERS 를 조회해 routine_objects(SSOT)에 upsert →
+#    metadata_graph.sync_graph 가 AGE Routine 노드 + ROUTINE_USES(참조 테이블) 로 투영.
+AGENT_ROUTINE_INTROSPECT_ENABLED = os.getenv("AGENT_ROUTINE_INTROSPECT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+AGENT_ROUTINE_INTROSPECT_CAP = int(os.getenv("AGENT_ROUTINE_INTROSPECT_CAP", "300") or "300")
 # feature-0016 metadata-graph: 관계형 SSOT → Apache AGE `metadata_kb` 그래프 투영 토글.
 #  - 기본 OFF — AGE 확장 미설치(cutover 전) 상태에서 sync/projection 이 no-op 되도록.
 #  - cutover(커스텀 AGE 이미지 + shared_preload_libraries='age') 이후 .env/compose 에서 "1" 로 활성.
@@ -911,6 +1108,44 @@ AGENT_NODE_ANALYSIS_BATCH_PER_TICK = int(os.getenv("AGENT_NODE_ANALYSIS_BATCH_PE
 # stale 'running' 잡 lease(초). 워커 크래시/SIGTERM 로 running 에 갇힌 잡을 이 시간 초과 시 pending 으로
 # 되돌려 run 영구 미완료·재트리거 불가를 방지(reaper). LLM 타임아웃보다 넉넉히 크게(기본 15분).
 AGENT_NODE_ANALYSIS_LEASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_LEASE_SEC", "900"))
+# feature-0016 routine-dbanalysis: DB(스키마) 단위 능동 분석 1회 시드 상한(LLM 비용 가드).
+#   기본 200 — UI confirm 에 대상 수가 표시되고 only_missing 이 기본이라 재실행 비용은 잔여분만.
+AGENT_NODE_ANALYSIS_SCHEMA_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_CAP", "200"))
+AGENT_NODE_ANALYSIS_SCHEMA_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_MAX", "500"))
+# ── DB(스키마) 단위 분석 재귀 전개 (feature-0016 §55, REQ-20260706 ③) ─────────
+#  스키마 단위 run 도 시드(테이블·루틴)별 재귀를 전개한다 — 시드마다 자기 자신이 앵커(per-seed 앵커,
+#  jobs.anchor_key)라 게이팅은 각 테이블 기준. 비용 경계: depth 는 SCHEMA_DEPTH, 총 노드는
+#  min(SCHEMA_RUN_BUDGET_MAX, planned×SCHEMA_EXPAND_FACTOR) — 시드 자체는 항상 예산에 포함된다.
+AGENT_NODE_ANALYSIS_SCHEMA_DEPTH = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_DEPTH", "2"))
+AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR", "12"))
+AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX", "2500"))
+# ── refine-not-override + back-refine (feature-0016 §55, REQ-20260706 ③) ────
+#  모든 재분석은 이전 분석문을 payload.previous_analysis 로 받아 비교·융합(refine)한다. 빈약(thin) 분석
+#  — summary 가 THIN_CHARS 미만이거나 relationships·usage 모두 공란 — 노드는 같은 run 의 후속 재귀가
+#  인접 노드를 분석 완료할 때 재-pending(pass_no+1)되어 새 맥락으로 보충된다. run 당 REFINE_MAX 캡.
+AGENT_NODE_ANALYSIS_THIN_CHARS = int(os.getenv("AGENT_NODE_ANALYSIS_THIN_CHARS", "120"))
+AGENT_NODE_ANALYSIS_REFINE_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_REFINE_MAX", "30"))
+# LLM 분석이 컨텍스트 안에서 확신한 조인 후보(suggested_links)를 관계 저장소(source='llm_insight',
+# candidate)로 적재하는 잡당 상한. 0 이면 비활성. 끝점은 rag_objects 실재 검증을 통과해야 하며,
+# 이후 기존 프로브·자기교정 파이프라인이 강화/파단을 판정한다(ADR-002 계열).
+AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SUGGEST_LINKS_MAX", "4"))
+# ADR-017 부모 테이블 same-depth 승격 관련도(기존 getattr 폴백 0.5 의 명시 선언 — 동작 불변).
+AGENT_NODE_ANALYSIS_PARENT_TABLE_REL = float(os.getenv("AGENT_NODE_ANALYSIS_PARENT_TABLE_REL", "0.5"))
+# ── 앵커-상대 관련도 게이팅 (feature-0016 node-analysis-anchor, 사용자 결정 2026-07-01) ──
+#  문제: 기존 재귀는 방문한 모든 노드의 이웃 전부를 무차별 재큐 → 일반 허브 컬럼(예 UniqueID)이나 부모
+#  Schema 노드를 만나면 그 노드를 새 중심으로 삼아 무관한 테이블로 fan-out(원래 대상에 앵커되지 않음).
+#  해법: 후보 이웃을 **원래 루트(예 dk 제품·Achievement)와의 관련도**(0~1)로 평가해 게이트·우선순위화.
+#  - 루트 직속 컬럼(하위 컬럼)은 기본 분석(게이트 면제). 그 외는 관련도 임계 이상만 재귀.
+#  - 임계는 깊이가 깊을수록 상향(depth>=2 는 _DEEP 적용) → 허브 재탐색 억제.
+#  - 다른 제품(scope)·일반어만 일치·상위객체 무연관은 낮은 점수 → 재귀 제외(낮은 우선순위).
+AGENT_NODE_ANALYSIS_RELEVANCE_MIN = float(os.getenv("AGENT_NODE_ANALYSIS_RELEVANCE_MIN", "0.18"))
+# depth>=2(루트에서 2-hop 이상) 재귀 확장에 요구하는 더 엄격한 관련도 기준 임계. 실제 임계는 이 값에서
+# 깊이당 +0.06 씩 상향(상한 0.7) — MAX_DEPTH 를 크게 잡아도 "깊을수록 상향" 이 유지된다.
+AGENT_NODE_ANALYSIS_RELEVANCE_MIN_DEEP = float(os.getenv("AGENT_NODE_ANALYSIS_RELEVANCE_MIN_DEEP", "0.34"))
+# 다른 scope(제품) 이웃에 곱하는 감쇠 계수(0~1). 0 이면 교차-제품 확장 완전 차단.
+AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_CROSS_SCOPE_FACTOR", "0.25"))
+# Schema 노드를 재귀 확장 허브로 쓸지 여부. 기본 False — 부모 Schema 확장 시 형제 테이블 전량 fan-out 방지.
+AGENT_NODE_ANALYSIS_EXPAND_SCHEMA = os.getenv("AGENT_NODE_ANALYSIS_EXPAND_SCHEMA", "0").strip().lower() in ("1", "true", "yes")
 AGENT_DB_CONNECT_RETRIES = int(os.getenv("AGENT_DB_CONNECT_RETRIES", "3"))
 AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "0.5"))
 # ── 데이터플레인 연결 격리 (TASK: ds-connect-isolation) ────────────────────────
@@ -923,7 +1158,7 @@ AGENT_DB_CONNECT_BACKOFF_SEC = float(os.getenv("AGENT_DB_CONNECT_BACKOFF_SEC", "
 #   data-plane(원격 customer datasource) connect 에만 적용 — 로컬 control-plane(memory
 #   DB, datasource=None)은 AGENT_TIMEOUT_SEC 유지(동작 0 변경). 0/미설정이면 비활성
 #   (= AGENT_TIMEOUT_SEC 폴백, 기존 동작).
-AGENT_DB_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10"))
+AGENT_DB_CONNECT_TIMEOUT_SEC = _startup_int("AGENT_DB_CONNECT_TIMEOUT_SEC", int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10")))
 # ── control-plane 연결 격리 (TASK-0255) ───────────────────────────────────────
 # 문제: control-plane(datasource=None: MEMORY_DB/DB_CONNECT_DB/replica/data-RO) MySQL 연결은
 # connection_timeout=AGENT_TIMEOUT_SEC(운영 300s)를 그대로 써, control-plane 이 불안정하면 insight
@@ -932,7 +1167,7 @@ AGENT_DB_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONNECT_TIMEOUT_SEC", "10
 # 해결: 연결 *수립* 상한을 쿼리 예산과 분리(기본 10s). control-plane 은 로컬·신뢰 호스트라 안전.
 #   **breaker 는 적용하지 않는다**(MEMORY_DB fast-fail=전체 마비) — timeout 만 bounded.
 #   0/미설정이면 코드 폴백 10s(AGENT_TIMEOUT_SEC 300s 회귀 방지 — data-plane 폴백과 다름).
-AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC", "10"))
+AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC = _startup_int("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC", int(os.getenv("AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC", "10")))
 # ── 연결 health 모니터 (conn-health-monitor) — modules/conn_health.py ──────────
 # 백그라운드 probe(TCP 선검사 + 실제 DB connect+SELECT 1)로 per-datasource 연결 상태를
 # 미리 유지. agent/admin 은 미리 계산된 상태를 즉시 읽어, 한 datasource 불안정이 다른
@@ -940,9 +1175,16 @@ AGENT_DB_CONTROLPLANE_CONNECT_TIMEOUT_SEC = int(os.getenv("AGENT_DB_CONTROLPLANE
 # 실제 DB probe timeout=적응형 1s→×2→MAX(10s). ENABLED=0 이면 모니터 미시작 + gate
 # 비활성(기존 동작 0 변경). (구 TASK-0247 in-process breaker 는 본 모니터로 흡수·대체됨.)
 AGENT_CONN_HEALTH_ENABLED = os.getenv("AGENT_CONN_HEALTH_ENABLED", "1").strip().lower() in ("1", "true", "yes")
-AGENT_CONN_PROBE_TIMEOUT_MS_BASE = max(10, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_BASE", "100") or "100"))
+AGENT_CONN_PROBE_TIMEOUT_MS_BASE = _startup_int(
+    "AGENT_CONN_PROBE_TIMEOUT_MS_BASE",
+    max(10, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_BASE", "100") or "100")),
+)
 AGENT_CONN_PROBE_TIMEOUT_MS_MAX = max(
-    AGENT_CONN_PROBE_TIMEOUT_MS_BASE, int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_MAX", "10000") or "10000")
+    AGENT_CONN_PROBE_TIMEOUT_MS_BASE,
+    _startup_int(
+        "AGENT_CONN_PROBE_TIMEOUT_MS_MAX",
+        int(os.getenv("AGENT_CONN_PROBE_TIMEOUT_MS_MAX", "10000") or "10000"),
+    ),
 )
 # healthy 재확인 주기(초) / unstable 재probe 간격(초, base→×2→MAX backoff).
 AGENT_CONN_HEALTHY_RECHECK_SEC = max(1, int(os.getenv("AGENT_CONN_HEALTHY_RECHECK_SEC", "30") or "30"))
@@ -969,7 +1211,10 @@ AGENT_CONN_STALE_GRACE_SEC = max(5, int(os.getenv("AGENT_CONN_STALE_GRACE_SEC", 
 # 미설정 시 구 BASE 와 5000 중 큰 값으로 폴백(하위호환 안전).
 AGENT_CONN_TCP_TIMEOUT_MS = max(
     AGENT_CONN_PROBE_TIMEOUT_MS_BASE,
-    int(os.getenv("AGENT_CONN_TCP_TIMEOUT_MS", "5000") or "5000"),
+    _startup_int(
+        "AGENT_CONN_TCP_TIMEOUT_MS",
+        int(os.getenv("AGENT_CONN_TCP_TIMEOUT_MS", "5000") or "5000"),
+    ),
 )
 # 느림 임계(ms) — 연결은 성공했지만 elapsed_ms 가 이 값 이상이면 healthy 가 아니라 unstable(빨강,
 # "연결 불안정")로 분류. 다른 리전 등 느린(하지만 살아있는) datasource 를 정상(초록)과 구분한다.
@@ -977,6 +1222,12 @@ AGENT_CONN_SLOW_MS = max(1, int(os.getenv("AGENT_CONN_SLOW_MS", "1000") or "1000
 # 끊김 판정 임계 — 연속 연결 실패가 이 횟수 이상이면 unstable(빨강) 이 아니라 down(회색, "연결 끊김").
 # 1회성 blip 은 unstable 로 두고(간헐 불안정), 반복 실패해야 끊김으로 확정(flapping 방지).
 AGENT_CONN_DOWN_AFTER_FAILS = max(1, int(os.getenv("AGENT_CONN_DOWN_AFTER_FAILS", "2") or "2"))
+# 평균 연결 응답 시간 window(표본 수) — 백그라운드 모니터가 성공 probe 마다 측정한 elapsed_ms 를
+# 이 개수만큼 rolling 으로 보관해 산술평균(관리 콘솔 데이터소스 상세 패널의 "연결 응답 시간(평균)")을
+# 낸다. 마지막 1회 값(last_elapsed_ms)은 순간 변동(다른 워크로드·GC blip)에 흔들려 대표성이 약하므로
+# 최근 N회 평균이 데이터소스별 상시 연결 품질을 더 안정적으로 나타낸다. 실패 probe 는 응답시간 의미가
+# 없어 표본에서 제외. 1 이상(0/음수 입력은 1 로 클램프 — 사실상 마지막값과 동일).
+AGENT_CONN_AVG_WINDOW = max(1, int(os.getenv("AGENT_CONN_AVG_WINDOW", "20") or "20"))
 # ── MySQL 커넥션 풀 (TASK-0144, opt-in / 기본 OFF / 폴백 안전) ──────────────
 # 기본 비활성(False) → db.connect() 가 기존 connect-per-request 경로 그대로 사용
 # (동작 0 변경). True(canary 로만) 일 때만 (host,user,database) 시그니처별 풀에서
@@ -1012,9 +1263,9 @@ AGENT_INSIGHT_OBJECT_MAX_CANDIDATES = int(os.getenv("AGENT_INSIGHT_OBJECT_MAX_CA
 AGENT_INSIGHT_OBJECT_VERIFY_ONCE = (
     os.getenv("AGENT_INSIGHT_OBJECT_VERIFY_ONCE", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS = int(
+AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS = _startup_int("AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS", int(
     os.getenv("AGENT_INSIGHT_OBJECT_VERIFY_TIMEOUT_MS", "1500")
-)
+))
 AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH = (
     os.getenv("AGENT_INSIGHT_FASTPATH_ALLOW_WITH_PASSTHROUGH", "1").strip().lower()
     in ("1", "true", "yes")
@@ -1026,15 +1277,15 @@ AGENT_RAG_PRIORITY_SHORT_CIRCUIT_ALLOW_WITH_PASSTHROUGH = (
     os.getenv("AGENT_RAG_PRIORITY_SHORT_CIRCUIT_ALLOW_WITH_PASSTHROUGH", "0").strip().lower()
     in ("1", "true", "yes")
 )
-AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC = int(
+AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC = _startup_int("AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC", int(
     os.getenv("AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC", "20")
-)
+))
 AGENT_SQL_GROUNDED_REVIEW = (
     os.getenv("AGENT_SQL_GROUNDED_REVIEW", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC = int(
+AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC = _startup_int("AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC", int(
     os.getenv("AGENT_SQL_GROUNDED_REVIEW_TIMEOUT_SEC", "12")
-)
+))
 AGENT_SQL_GROUNDED_REWRITE_ON_FAIL = (
     os.getenv("AGENT_SQL_GROUNDED_REWRITE_ON_FAIL", "1").strip().lower() in ("1", "true", "yes")
 )
@@ -1044,9 +1295,9 @@ AGENT_SQL_GROUNDED_BLOCK_ON_FAIL = (
 AGENT_KNOWLEDGE_SQL_FALLBACK = (
     os.getenv("AGENT_KNOWLEDGE_SQL_FALLBACK", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC = int(
+AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC = _startup_int("AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC", int(
     os.getenv("AGENT_KNOWLEDGE_SQL_FALLBACK_TIMEOUT_SEC", "20")
-)
+))
 AGENT_KNOWLEDGE_SQL_FALLBACK_MAX_OBJECT_TRIES = int(
     os.getenv("AGENT_KNOWLEDGE_SQL_FALLBACK_MAX_OBJECT_TRIES", "2")
 )
@@ -1088,22 +1339,22 @@ AGENT_FACT_SINGLE_KEY_PREFIXES = tuple(
 AGENT_SCHEMA_BIAS_STEP_WINDOW = int(os.getenv("AGENT_SCHEMA_BIAS_STEP_WINDOW", "10"))
 AGENT_SCHEMA_BIAS_THRESHOLD = float(os.getenv("AGENT_SCHEMA_BIAS_THRESHOLD", "0.45"))
 AGENT_SCHEMA_BIAS_PENALTY = int(os.getenv("AGENT_SCHEMA_BIAS_PENALTY", "4"))
-AGENT_INSIGHT_TIMEOUT_SEC = int(os.getenv("AGENT_INSIGHT_TIMEOUT_SEC", "30"))
-AGENT_PLAN_TIMEOUT_SEC = int(os.getenv("AGENT_PLAN_TIMEOUT_SEC", "35"))
-AGENT_PLAN_TIMEOUT_RECOVERY_SEC = int(os.getenv("AGENT_PLAN_TIMEOUT_RECOVERY_SEC", "20"))
-AGENT_PLAN_TIMEOUT_MIN_SEC = int(os.getenv("AGENT_PLAN_TIMEOUT_MIN_SEC", "8"))
+AGENT_INSIGHT_TIMEOUT_SEC = _startup_int("AGENT_INSIGHT_TIMEOUT_SEC", int(os.getenv("AGENT_INSIGHT_TIMEOUT_SEC", "30")))
+AGENT_PLAN_TIMEOUT_SEC = _startup_int("AGENT_PLAN_TIMEOUT_SEC", int(os.getenv("AGENT_PLAN_TIMEOUT_SEC", "35")))
+AGENT_PLAN_TIMEOUT_RECOVERY_SEC = _startup_int("AGENT_PLAN_TIMEOUT_RECOVERY_SEC", int(os.getenv("AGENT_PLAN_TIMEOUT_RECOVERY_SEC", "20")))
+AGENT_PLAN_TIMEOUT_MIN_SEC = _startup_int("AGENT_PLAN_TIMEOUT_MIN_SEC", int(os.getenv("AGENT_PLAN_TIMEOUT_MIN_SEC", "8")))
 AGENT_AUX_SKIP_NEAR_DEADLINE_MS = int(
     os.getenv("AGENT_AUX_SKIP_NEAR_DEADLINE_MS", "15000")
 )
-AGENT_RAG_PRIORITY_TIMEOUT_SEC = int(
+AGENT_RAG_PRIORITY_TIMEOUT_SEC = _startup_int("AGENT_RAG_PRIORITY_TIMEOUT_SEC", int(
     os.getenv("AGENT_RAG_PRIORITY_TIMEOUT_SEC", "12")
-)
+))
 AGENT_RAG_PRIORITY_FIRST = (
     os.getenv("AGENT_RAG_PRIORITY_FIRST", "1").strip().lower() in ("1", "true", "yes")
 )
-AGENT_OBJECT_RESOLVE_TIMEOUT_SEC = int(
+AGENT_OBJECT_RESOLVE_TIMEOUT_SEC = _startup_int("AGENT_OBJECT_RESOLVE_TIMEOUT_SEC", int(
     os.getenv("AGENT_OBJECT_RESOLVE_TIMEOUT_SEC", "8")
-)
+))
 AGENT_OBJECT_RESOLVE_BATCH_SIZE = int(
     os.getenv("AGENT_OBJECT_RESOLVE_BATCH_SIZE", "40")
 )
@@ -1134,9 +1385,9 @@ AGENT_INSIGHT_WORKER_DEGRADED_BACKOFF_SEC = int(
 AGENT_INSIGHT_WORKER_JITTER_SEC = int(
     (os.getenv("AGENT_INSIGHT_WORKER_JITTER_SEC", "0") or "0").strip()
 )
-AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC = int(
+AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC = _startup_int("AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC", int(
     (os.getenv("AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC", "1") or "1").strip()
-)
+))
 AGENT_INSIGHT_WORKER_STALE_SEC = int(
     (os.getenv("AGENT_INSIGHT_WORKER_STALE_SEC", "15") or "15").strip()
 )
@@ -1198,7 +1449,7 @@ AGENT_ASK_WORKER_CONVERSATION_ID = "__ask_worker__"
 AGENT_ASK_WORKER_HEARTBEAT_KEY = "ask_worker_last_cycle_at"
 
 MCP_URL = os.getenv("MCP_URL", "http://mcp:5000/mcp")
-MCP_TIMEOUT_SEC = int(os.getenv("MCP_TIMEOUT_SEC", "20"))
+MCP_TIMEOUT_SEC = _startup_int("MCP_TIMEOUT_SEC", int(os.getenv("MCP_TIMEOUT_SEC", "20")))
 MCP_PROTOCOL = os.getenv("MCP_PROTOCOL", "jsonrpc").lower()
 MCP_SESSION_ID = None
 MCP_REQUEST_ID = 1

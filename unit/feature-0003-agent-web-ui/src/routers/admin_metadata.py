@@ -17,8 +17,62 @@ import app
 router = APIRouter()
 
 
+# ── graph-perf-bg: /graph/columns introspection TTL 캐시 ──────────────────────────
+#   /api/admin/metadata/graph/columns 는 그래프 투영에 Column 노드가 없는 테이블을 (더블)클릭할 때마다
+#   데이터소스 information_schema 를 **라이브 조회**했다 — 요청 스레드를 1~5초 블로킹하고 무캐시라, 펼침
+#   임계경로(그래프 fetch + columns fetch 2왕복)의 두 번째 왕복이 매번 재수행됐다. 성공한 introspection 을
+#   (scope_key, fqn) 키로 짧은 TTL(기본 300s) 동안 프로세스 내 캐시해 반복 펼침·다중 사용자·재진입 왕복을
+#   제거한다. **실패/빈 결과는 캐시하지 않는다**(일시 오류 재시도 보장). DDL 변경은 TTL 만료 후 자동 반영.
+#   프로세스별 캐시라 마이그레이션 불필요(alembic 병렬 충돌 회피). TTL<=0 이면 캐시 비활성(테스트/디버그).
+import os as _os
+import time as _time
+import threading as _threading
+
+_COLUMNS_CACHE = {}                        # (scope_key, fqn) -> (expires_at_monotonic, payload_dict)
+_COLUMNS_CACHE_LOCK = _threading.Lock()
+_COLUMNS_CACHE_MAX = 512                    # 무한 성장 방지 상한
+
+
+def _graph_columns_cache_ttl() -> float:
+    try:
+        return float(_os.environ.get("METADATA_GRAPH_COLUMNS_CACHE_TTL", "300") or 300)
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def _graph_columns_cache_get(scope_key: str, fqn: str):
+    """유효 캐시 payload 반환(없거나 만료면 None). 만료 항목은 조회 시 청소."""
+    if _graph_columns_cache_ttl() <= 0:
+        return None
+    now = _time.monotonic()
+    with _COLUMNS_CACHE_LOCK:
+        item = _COLUMNS_CACHE.get((scope_key, fqn))
+        if not item:
+            return None
+        exp, payload = item
+        if exp <= now:
+            _COLUMNS_CACHE.pop((scope_key, fqn), None)
+            return None
+        return payload
+
+
+def _graph_columns_cache_put(scope_key: str, fqn: str, payload) -> None:
+    """성공 introspection payload 를 TTL 캐시. 상한 초과 시 만료 항목 청소 후 최소-만료 항목 축출."""
+    ttl = _graph_columns_cache_ttl()
+    if ttl <= 0:
+        return
+    now = _time.monotonic()
+    with _COLUMNS_CACHE_LOCK:
+        if len(_COLUMNS_CACHE) >= _COLUMNS_CACHE_MAX:
+            for k in [k for k, (e, _p) in _COLUMNS_CACHE.items() if e <= now]:
+                _COLUMNS_CACHE.pop(k, None)
+            while len(_COLUMNS_CACHE) >= _COLUMNS_CACHE_MAX:
+                _COLUMNS_CACHE.pop(min(_COLUMNS_CACHE, key=lambda k: _COLUMNS_CACHE[k][0]), None)
+        _COLUMNS_CACHE[(scope_key, fqn)] = (now + ttl, payload)
+
+
 @router.get("/api/admin/metadata/glossary")
-def admin_list_glossary(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 목록 — 단일 scope(역할 차원 포함). 권한 kb.ingest.manual.
 
     ?scope_key= (기본 'common'). ?role_key= 지정 시 그 역할 행만(공용 '*' 미포함) 필터 — 역할별
@@ -59,7 +113,7 @@ def admin_list_glossary(request: Request, account=Depends(app.require_permission
                          "role_key": role_filter})
 
 @router.post("/api/admin/metadata/glossary")
-async def admin_create_glossary(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_glossary(request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 생성(upsert). 권한 kb.ingest.manual. body: scope_key, term, definition."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -101,7 +155,7 @@ async def admin_create_glossary(request: Request, account=Depends(app.require_pe
     return JSONResponse({"ok": True, "scope_key": scope_key, "role_key": role_key, "term": term})
 
 @router.put("/api/admin/metadata/glossary/{term_id}")
-async def admin_update_glossary(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_glossary(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, term, definition."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -153,7 +207,7 @@ async def admin_update_glossary(term_id: int, request: Request, account=Depends(
     return JSONResponse({"ok": True, "id": int(term_id)})
 
 @router.delete("/api/admin/metadata/glossary/{term_id}")
-def admin_delete_glossary(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_glossary(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """용어 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -295,7 +349,7 @@ def admin_reject_glossary_feedback(feedback_id: int, request: Request, account=D
     return JSONResponse({"ok": True, "id": int(feedback_id), "rejected": int(affected)})
 
 @router.get("/api/admin/metadata/glossary/{term_id}/relations")
-def admin_list_glossary_relations(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_glossary_relations(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """해당 용어의 인접 참조(유사어/동의어/see_also) 목록. 권한 kb.ingest.manual."""
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect_ro
@@ -323,7 +377,7 @@ def admin_list_glossary_relations(term_id: int, request: Request, account=Depend
     return JSONResponse({"items": items, "count": len(items), "term_id": int(term_id)})
 
 @router.post("/api/admin/metadata/glossary/{term_id}/relations")
-async def admin_add_glossary_relation(term_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_add_glossary_relation(term_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """유사어 참조 추가. 권한 kb.ingest.manual. body: to_id(필수), relation_type(synonym|similar|see_also)."""
     data = await app._metadata_read_json(request)
     try:
@@ -368,7 +422,7 @@ async def admin_add_glossary_relation(term_id: int, request: Request, account=De
                          "relation_type": relation_type})
 
 @router.delete("/api/admin/metadata/glossary/relations/{relation_id}")
-def admin_delete_glossary_relation(relation_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_glossary_relation(relation_id: int, request: Request, account=Depends(app.require_permission('metadata.glossary.manage'))) -> JSONResponse:
     """유사어 참조 삭제(by relation id, 멱등). 권한 kb.ingest.manual."""
     from modules import kb_glossary as _kg
     from shared.db import _pg_connect
@@ -397,7 +451,7 @@ def admin_delete_glossary_relation(relation_id: int, request: Request, account=D
     return JSONResponse({"ok": True, "id": int(relation_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/enums")
-def admin_list_enums(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_enums(request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
@@ -418,16 +472,17 @@ def admin_list_enums(request: Request, account=Depends(app.require_permission('k
             pg.close()
         except Exception:
             pass
+    # row: (id, scope_key, schema_name, table_name, column_name, code, label, source, created_at, updated_at)
     items = [{
         "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
         "table_name": str(r[3] or ""), "column_name": str(r[4] or ""),
-        "code": str(r[5] or ""), "label": str(r[6] or ""),
-        "created_at": app._metadata_iso(r[7]), "updated_at": app._metadata_iso(r[8]),
+        "code": str(r[5] or ""), "label": str(r[6] or ""), "source": str(r[7] or "manual"),
+        "created_at": app._metadata_iso(r[8]), "updated_at": app._metadata_iso(r[9]),
     } for r in rows]
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
 @router.post("/api/admin/metadata/enums")
-async def admin_create_enum(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_enum(request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, code, label, schema_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -465,7 +520,7 @@ async def admin_create_enum(request: Request, account=Depends(app.require_permis
     return JSONResponse({"ok": True, "scope_key": scope_key})
 
 @router.put("/api/admin/metadata/enums/{entry_id}")
-async def admin_update_enum(entry_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_enum(entry_id: int, request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 수정(by id, scope 가드). 권한 kb.ingest.manual. body 동일."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -510,7 +565,7 @@ async def admin_update_enum(entry_id: int, request: Request, account=Depends(app
     return JSONResponse({"ok": True, "id": int(entry_id)})
 
 @router.delete("/api/admin/metadata/enums/{entry_id}")
-def admin_delete_enum(entry_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_enum(entry_id: int, request: Request, account=Depends(app.require_permission('metadata.enum.manage'))) -> JSONResponse:
     """ENUM 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -541,8 +596,120 @@ def admin_delete_enum(entry_id: int, request: Request, account=Depends(app.requi
                         resource_id=int(entry_id), change_json={"scope_key": scope_key})
     return JSONResponse({"ok": True, "id": int(entry_id), "deleted": int(affected)})
 
+# ── ENUM 코드사전 대화 자율수집 검토 큐(0039) — 용어사전 glossary-feedback 대칭 ────────────
+@router.get("/api/admin/metadata/enum-feedback")
+def admin_list_enum_feedback(request: Request, account=Depends(app.require_permission('kb.enum.curate'))) -> JSONResponse:
+    """검토 큐 목록. 권한 kb.enum.curate. ?status=(기본 pending, 'all'=전체) &scope_key=."""
+    status = str(request.query_params.get("status") or "pending").strip().lower()
+    if status in ("all", ""):
+        status = None
+    elif status not in ("pending", "auto_promoted", "promoted", "rejected"):
+        return app._json_error("허용되지 않은 status 입니다.", 400)
+    scope_filter = None
+    sk_param = request.query_params.get("scope_key")
+    if sk_param is not None and str(sk_param).strip() != "":
+        scope_filter, serr = app._metadata_check_scope(sk_param)
+        if serr:
+            return serr
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect_ro
+    try:
+        pg = _pg_connect_ro()
+    except Exception:
+        return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        rows = _kg.list_enum_feedback(pg, status=status, scope_key=scope_filter)
+        pending_count = _kg.count_enum_feedback(pg, status="pending")
+    except Exception:
+        logging.getLogger(__name__).warning("admin_list_enum_feedback 조회 실패", exc_info=True)
+        return app._json_error("검토 큐 조회 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    # row: (id, scope_key, schema_name, table_name, column_name, code, suggested_label,
+    #       confidence, status, source_run_id, conversation_id, promoted_enum_id, approved_by,
+    #       created_at, updated_at)
+    items = [{
+        "id": int(r[0]), "scope_key": str(r[1] or ""), "schema_name": str(r[2] or ""),
+        "table_name": str(r[3] or ""), "column_name": str(r[4] or ""), "code": str(r[5] or ""),
+        "suggested_label": str(r[6] or ""),
+        "confidence": float(r[7]) if r[7] is not None else None, "status": str(r[8] or ""),
+        "source_run_id": (str(r[9]) if r[9] is not None else None),
+        "conversation_id": (str(r[10]) if r[10] is not None else None),
+        "promoted_enum_id": (int(r[11]) if r[11] is not None else None),
+        "approved_by": (str(r[12]) if r[12] is not None else None),
+        "created_at": app._metadata_iso(r[13]), "updated_at": app._metadata_iso(r[14]),
+    } for r in rows]
+    return JSONResponse({"items": items, "count": len(items),
+                         "pending_count": int(pending_count), "status": status})
+
+@router.post("/api/admin/metadata/enum-feedback/{feedback_id}/promote")
+def admin_promote_enum_feedback(feedback_id: int, request: Request, account=Depends(app.require_permission('kb.enum.curate'))) -> JSONResponse:
+    """검토 큐(pending) → ENUM 코드사전 승급. 권한 kb.enum.curate."""
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        eid = _kg.promote_enum_feedback(
+            pg, int(feedback_id), approved_by=str((account or {}).get("username") or "") or None)
+        if eid is None:
+            pg.rollback()
+            return app._json_error("해당 후보를 찾을 수 없거나 이미 처리되었습니다.", 404)
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_promote_enum_feedback 실패 id=%s", feedback_id, exc_info=True)
+        return app._json_error("ENUM 승급 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    app._metadata_audit(request, account, action="enum.feedback.promote",
+                    resource_id=int(feedback_id),
+                    change_json={"feedback_id": int(feedback_id), "enum_id": int(eid)})
+    return JSONResponse({"ok": True, "id": int(feedback_id), "enum_id": int(eid)})
+
+@router.post("/api/admin/metadata/enum-feedback/{feedback_id}/reject")
+def admin_reject_enum_feedback(feedback_id: int, request: Request, account=Depends(app.require_permission('kb.enum.curate'))) -> JSONResponse:
+    """검토 큐 거부(pending) 또는 자동등록 되돌리기(auto_promoted → source='auto' 행 회수).
+    권한 kb.enum.curate. 멱등."""
+    from modules import kb_glossary as _kg
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=False)
+    except Exception:
+        return app._json_error("메타데이터 저장소(PG) 연결 실패", 503)
+    try:
+        affected = _kg.reject_enum_feedback(pg, int(feedback_id))
+        pg.commit()
+    except Exception:
+        try:
+            pg.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("admin_reject_enum_feedback 실패 id=%s", feedback_id, exc_info=True)
+        return app._json_error("ENUM 후보 거부 실패", 500)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if affected > 0:
+        app._metadata_audit(request, account, action="enum.feedback.reject",
+                        resource_id=int(feedback_id), change_json={"feedback_id": int(feedback_id)})
+    return JSONResponse({"ok": True, "id": int(feedback_id), "rejected": int(affected)})
+
 @router.get("/api/admin/metadata/tables")
-def admin_list_table_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_table_desc(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
@@ -572,7 +739,7 @@ def admin_list_table_desc(request: Request, account=Depends(app.require_permissi
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
 @router.post("/api/admin/metadata/tables")
-async def admin_create_table_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_table_desc(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, description, schema_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -618,7 +785,7 @@ async def admin_create_table_desc(request: Request, account=Depends(app.require_
     return JSONResponse({"ok": True, "scope_key": scope_key, "table_name": table_name})
 
 @router.put("/api/admin/metadata/tables/{desc_id}")
-async def admin_update_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?, table_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -672,7 +839,7 @@ async def admin_update_table_desc(desc_id: int, request: Request, account=Depend
     return JSONResponse({"ok": True, "id": int(desc_id)})
 
 @router.delete("/api/admin/metadata/tables/{desc_id}")
-def admin_delete_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_table_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """테이블 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -704,7 +871,7 @@ def admin_delete_table_desc(desc_id: int, request: Request, account=Depends(app.
     return JSONResponse({"ok": True, "id": int(desc_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/columns")
-def admin_list_column_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_list_column_desc(request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 목록 — 단일 scope. 권한 kb.ingest.manual. ?scope_key= (기본 'common')."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "common")
     if serr:
@@ -736,7 +903,7 @@ def admin_list_column_desc(request: Request, account=Depends(app.require_permiss
     return JSONResponse({"items": items, "count": len(items), "scope_key": scope_key})
 
 @router.post("/api/admin/metadata/columns")
-async def admin_create_column_desc(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_create_column_desc(request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 생성(upsert). 권한 kb.ingest.manual. body: scope_key, table_name, column_name, description, schema_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -794,7 +961,7 @@ async def admin_create_column_desc(request: Request, account=Depends(app.require
     return JSONResponse({"ok": True, "scope_key": scope_key, "table_name": table_name, "column_name": column_name})
 
 @router.put("/api/admin/metadata/columns/{desc_id}")
-async def admin_update_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_update_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 수정(by id, scope 가드). 권한 kb.ingest.manual. body: scope_key, description, schema_name?/table_name?/column_name?."""
     data = await app._metadata_read_json(request)
     scope_key, serr = app._metadata_check_scope(data.get("scope_key") or "")
@@ -861,7 +1028,7 @@ async def admin_update_column_desc(desc_id: int, request: Request, account=Depen
     return JSONResponse({"ok": True, "id": int(desc_id)})
 
 @router.delete("/api/admin/metadata/columns/{desc_id}")
-def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app.require_permission('metadata.column.manage'))) -> JSONResponse:
     """컬럼 설명 삭제(by id, scope 가드, 멱등). 권한 kb.ingest.manual. ?scope_key= 필수."""
     scope_key, serr = app._metadata_check_scope(request.query_params.get("scope_key") or "")
     if serr:
@@ -892,20 +1059,180 @@ def admin_delete_column_desc(desc_id: int, request: Request, account=Depends(app
                         resource_id=int(desc_id), change_json={"scope_key": scope_key})
     return JSONResponse({"ok": True, "id": int(desc_id), "deleted": int(affected)})
 
+
+# ── graph-product-cat (feature-0016 §43): 제품(Products) 단위 카테고리 투영 ──────────────
+#   그래프(AGE)는 Postgres `agent_kb` 에 있고 Product↔Datasource SSOT 는 MySQL(`WebProducts`·
+#   `WebProductDatasources`)에 있다. AGE 에 Product/Datasource 노드를 물리 저장하는 대신, 투영 API 가
+#   **질의시점에 MySQL SSOT 로부터 합성**한다("projection" 원칙 정합 — 마이그레이션·이중 정합 회피).
+#   브리지: product → _list_product_datasources → datasource_key → shared.datasources.resolve → scope_key
+#   (= 그래프 scope). scope_key 는 그대로 datasource-scoped 그래프(scope_roots/schemas)의 진입 키.
+def _product_overview_graph(conn, product_id=None) -> dict:
+    """활성 제품(product_id 지정 시 단일) + 바인딩 Datasource 노드 + USES 엣지 합성.
+
+    노드: Product(key=`product:<id>`) · Datasource(key=`ds:<scope_key>`, scope_key 로 drill).
+    여러 제품이 같은 datasource 를 공유할 수 있어 Datasource 노드는 dedup(엣지는 각 제품마다)."""
+    from shared import datasources as _dsr
+    try:
+        products = app._list_products(conn)
+    except Exception:
+        products = []
+    if product_id is not None:
+        products = [p for p in products if int(p.get("id") or 0) == int(product_id)]
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ds: set[str] = set()
+    for p in products:
+        pid = int(p.get("id") or 0)
+        if pid <= 0:
+            continue
+        pkey = "product:%d" % pid
+        ds_list = p.get("datasources") or []
+        nodes.append({
+            "label": "Product", "key": pkey,
+            "name": p.get("name") or p.get("product_key") or ("제품#%d" % pid),
+            "fqn": p.get("product_key") or "", "scope_key": "",
+            "product_key": p.get("product_key") or "", "datasource_count": len(ds_list),
+        })
+        for d in ds_list:
+            dsk = d.get("datasource_key")
+            if not dsk:
+                continue
+            try:
+                ds = _dsr.resolve(conn, dsk)
+            except Exception:
+                ds = None
+            # read-axis 정렬(§43 리뷰 MAJOR): 그래프 scope 는 admin_datasources 가 노출하는 read 축
+            #   `scope_key or key`(DB-등록=엔드포인트 해시, .env 레거시=라벨)여야 drill-down 이 실 그래프와 일치한다.
+            #   `_dsr.scope_key(ds)` 는 .env 도 해시로 계산해 read 축(라벨)과 어긋나 빈 그래프를 부른다 — 금지.
+            sk = ((ds.get("scope_key") if ds else None) or str(dsk).strip().lower())
+            if not sk:
+                continue
+            dnode = "ds:%s" % sk
+            if dnode not in seen_ds:
+                seen_ds.add(dnode)
+                nodes.append({
+                    "label": "Datasource", "key": dnode,
+                    "name": (ds.get("name") if ds else None) or dsk,
+                    "fqn": sk, "scope_key": sk, "datasource_key": str(dsk).strip().lower(),
+                })
+            edges.append({
+                "id": "uses:%d:%s" % (pid, sk), "type": "USES",
+                "source": pkey, "target": dnode, "status": "",
+                "data": {"is_primary": bool(d.get("is_primary"))},
+            })
+    return {"nodes": nodes, "edges": edges}
+
+
+def _products_for_scope(conn, scope_key) -> list[dict]:
+    """그래프 scope(=datasource scope_key)를 사용하는 제품 목록(배너용). common/미지정은 []."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk or sk == "common":
+        return []
+    from shared import datasources as _dsr
+    try:
+        products = app._list_products(conn)
+    except Exception:
+        return []
+    out: list[dict] = []
+    for p in products:
+        for d in (p.get("datasources") or []):
+            dsk = d.get("datasource_key")
+            if not dsk:
+                continue
+            try:
+                ds = _dsr.resolve(conn, dsk)
+            except Exception:
+                ds = None
+            # read-axis 정렬(§43 리뷰 MAJOR): _product_overview_graph 와 동일 규약 — scope_key or 라벨.
+            rk = ((ds.get("scope_key") if ds else None) or str(dsk).strip().lower())
+            if rk == sk:
+                out.append({"id": int(p.get("id") or 0), "name": p.get("name") or "",
+                            "product_key": p.get("product_key") or ""})
+                break
+    return out
+
+
+def _schema_products_for_scope(conn, scope_key) -> dict:
+    """§55 A(REQ-20260706 ①): scope 의 스키마(DB)명 → 그 DB 를 접근DB 로 선언한 제품 목록 매핑.
+
+    그래프 뷰 스키마 클러스터의 **제품 카테고리** 데이터 원천. 브리지: scope → (read-axis 규약,
+    _products_for_scope 동형) 그 scope 를 쓰는 (product, datasource_key) 쌍 → `WebProductDatabases`
+    (ProductId, DatasourceKey, SchemaName — 제품별 접근DB SSOT) → {SchemaName: [{id,name,sort}]}.
+    SchemaName 은 effective schema(=MSSQL/MySQL DB명) 규약이라 그래프 Schema 노드 name 과 조인 가능.
+    AGE 미저장 — 질의시점 합성(ADR-014 원칙 계승). 실패·미매핑은 {}(프론트 '미분류' 폴백)."""
+    sk = str(scope_key or "").strip().lower()
+    if not sk or sk == "common":
+        return {}
+    from shared import datasources as _dsr
+    try:
+        products = app._list_products(conn)
+    except Exception:
+        return {}
+    prod_ds: list[tuple[dict, str]] = []
+    for p in products:
+        for d in (p.get("datasources") or []):
+            dsk = d.get("datasource_key")
+            if not dsk:
+                continue
+            try:
+                ds = _dsr.resolve(conn, dsk)
+            except Exception:
+                ds = None
+            rk = ((ds.get("scope_key") if ds else None) or str(dsk).strip().lower())
+            if rk == sk:
+                prod_ds.append((p, str(dsk)))
+    if not prod_ds:
+        return {}
+    out: dict[str, list[dict]] = {}
+    try:
+        cur = conn.cursor()
+        try:
+            for p, dsk in prod_ds:
+                pid = int(p.get("id") or 0)
+                if pid <= 0:
+                    continue
+                cur.execute(
+                    "SELECT SchemaName FROM WebProductDatabases "
+                    "WHERE ProductId=%s AND DatasourceKey=%s ORDER BY SortOrder, SchemaName",
+                    (pid, dsk))
+                psort = p.get("sort_order")
+                ent = {"id": pid, "name": p.get("name") or p.get("product_key") or ("제품#%d" % pid),
+                       "sort": int(psort) if isinstance(psort, (int, float)) else 100}
+                for row in cur.fetchall():
+                    sch = str(row[0] or "").strip()
+                    if not sch:
+                        continue
+                    lst = out.setdefault(sch, [])
+                    if not any(e.get("id") == pid for e in lst):
+                        lst.append(dict(ent))
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning("_schema_products_for_scope 실패", exc_info=True)
+        return {}
+    return out
+
+
 @router.get("/api/admin/metadata/graph")
-def admin_metadata_graph(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph(request: Request, account=Depends(app.require_permission('metadata.graph.read')), conn=Depends(app.get_conn)) -> JSONResponse:
     """메타데이터 지식그래프 투영(Apache AGE metadata_kb) — UI(Cytoscape)·검색 공급.
 
-    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 세 모드:
+    권한 kb.ingest.manual. 8K 노드 규모라 **전체 덤프 금지** — 모드:
+      - 제품:    ?mode=products / ?product=<id> → 제품(카테고리)→Datasource 개요 (MySQL SSOT 합성, graph-product-cat)
       - 이웃:    ?node=<key>&depth=1..3      → 해당 노드 k-hop (cap 적용)
       - 검색:    ?q=<부분일치>[&scope=<ds>]  → 이름/FQN CONTAINS (scope 지정 시 그 datasource 만)
-      - 진입:    ?scope=<ds>                 → 그 datasource 의 Schema→Table 서브그래프(초기 뷰)
+      - 스키마:  ?scope=<ds>&mode=schemas    → Schema 카드 + table_count (graph-initview 경량 진입)
+      - 단일스키마: ?scope=<ds>&schema=<key> → 그 스키마의 Table 만 (per-schema lazy, truncated 플래그)
+      - 진입:    ?scope=<ds>                 → 그 datasource 의 Schema→Table 서브그래프(하위호환 유지)
     셋 다 없으면 빈 그래프. AGE cutover 전(확장 부재)엔 모듈이 graceful no-op → 빈 결과.
     scope 는 datasource scope_key(예: mssql-06656002eda6) — 각 데이터소스별 그래프 분리.
     """
     q = (request.query_params.get("q") or "").strip()
     node = (request.query_params.get("node") or "").strip()
     scope = (request.query_params.get("scope") or "").strip() or None
+    schema = (request.query_params.get("schema") or "").strip()
+    mode_param = (request.query_params.get("mode") or "").strip()
+    product = (request.query_params.get("product") or "").strip()
     try:
         depth = int(request.query_params.get("depth") or "1")
     except (TypeError, ValueError):
@@ -915,6 +1242,22 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         limit = int(request.query_params.get("limit") or "50")
     except (TypeError, ValueError):
         limit = 50
+
+    # graph-product-cat (§43): 제품 카테고리 개요 — MySQL SSOT 합성(PG 불필요, early-return).
+    #   product 는 숫자일 때만 단일 제품 트리거(비숫자는 통과 → 일반 dispatch; 리뷰 NIT 방어).
+    if mode_param == "products" or product.isdigit():
+        pid = int(product) if product.isdigit() else None
+        try:
+            pdata = _product_overview_graph(conn, product_id=pid)
+        except Exception:
+            logging.getLogger(__name__).warning("admin_metadata_graph products 조회 실패", exc_info=True)
+            return app._json_error("제품 그래프 조회 실패", 503)
+        return JSONResponse({
+            "nodes": pdata.get("nodes", []), "edges": pdata.get("edges", []),
+            "mode": "products", "q": "", "node": "", "scope": product or "", "depth": 1,
+            "truncated": False, "products": [],
+            "node_count": len(pdata.get("nodes", [])), "edge_count": len(pdata.get("edges", [])),
+        })
 
     from modules import metadata_graph as _mg
     from shared.db import _pg_connect_ro
@@ -929,6 +1272,12 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
         elif q:
             data = {"nodes": _mg.search_nodes(q, limit=limit, scope=scope, conn=pg), "edges": []}
             mode = "search"
+        elif scope and schema:
+            data = _mg.schema_tables(scope, schema, conn=pg)
+            mode = "schema_tables"
+        elif scope and mode_param == "schemas":
+            data = _mg.scope_schemas(scope, conn=pg)
+            mode = "scope_schemas"
         elif scope:
             data = _mg.scope_roots(scope, conn=pg)
             mode = "scope_roots"
@@ -943,20 +1292,39 @@ def admin_metadata_graph(request: Request, account=Depends(app.require_permissio
             pg.close()
         except Exception:
             pass
+    # graph-product-cat (§43): 진입 모드(scope_roots/schemas)에서만 이 datasource 를 쓰는 제품 목록 첨부(배너용).
+    #   neighborhood/search/schema_tables 등 임계경로 모드는 skip(MySQL 왕복 절감).
+    scope_products = []
+    schema_products = {}
+    if scope and mode in ("scope_roots", "scope_schemas"):
+        try:
+            scope_products = _products_for_scope(conn, scope)
+        except Exception:
+            scope_products = []
+        # §55 A: 스키마(DB)별 제품 매핑 — 프론트 카테고리 그룹(CAT 계층)의 데이터 원천. 실패는 {}(미분류 폴백).
+        try:
+            schema_products = _schema_products_for_scope(conn, scope)
+        except Exception:
+            schema_products = {}
     return JSONResponse({
         "nodes": data.get("nodes", []),
         "edges": data.get("edges", []),
         "mode": mode,
         "q": q, "node": node, "scope": scope or "", "depth": depth,
+        "truncated": bool(data.get("truncated", False)),
+        "products": scope_products,
+        "schema_products": schema_products,
         "node_count": len(data.get("nodes", [])), "edge_count": len(data.get("edges", [])),
     })
 
 @router.post("/api/admin/metadata/graph/analyze")
-async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
-    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 kb.ingest.manual.
+async def admin_metadata_graph_analyze(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
+    """그래프 노드 AI 능동 분석 트리거(항목2). 권한 metadata.graph.read(우산 kb.ingest.manual 함의).
 
-    body: {node_key, scope_key?, depth?, node_budget?}. run 을 만들고 즉시 202 반환 — 실제 분석은
-    insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
+    body: {node_key, scope_key?, depth?, node_budget?, prompt?}. run 을 만들고 즉시 202 반환 — 실제
+    분석은 insight-worker 백그라운드가 선택 노드에서 관련 노드를 재귀 탐색하며 노드별 수행(부하 분산).
+    prompt(ADR-017, 선택 ≤400자): hover 툴팁으로 입력한 사용자 분석 지침 — run 에 저장돼 앵커 토큰
+    합류 + LLM user_intent 로 자율 반영된다.
     진행은 GET .../graph/analyze?run_id= 로 폴링, 노드 결과는 GET .../graph/analyze/node?node= 로 조회.
     """
     data = await app._metadata_read_json(request)
@@ -966,9 +1334,11 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
     scope_key = str(data.get("scope_key") or node_key.split(":", 1)[0] or "common").strip().lower()
     depth = data.get("depth")
     node_budget = data.get("node_budget")
+    user_prompt = str(data.get("prompt") or "").strip()[:400] or None
     from modules import node_analysis as _na
     res = _na.enqueue_analysis(scope_key, node_key, depth_budget=depth, node_budget=node_budget,
-                               requested_by=str((account or {}).get("username") or "") or None)
+                               requested_by=str((account or {}).get("username") or "") or None,
+                               user_prompt=user_prompt)
     if not res.get("ok"):
         reason = res.get("reason") or "분석 시작 실패"
         # fix: 서버측 실패(PG 미가용/disabled/enqueue 실패)는 5xx. 클라 입력 오류만 400(라우트가 이미
@@ -978,12 +1348,177 @@ async def admin_metadata_graph_analyze(request: Request, account=Depends(app.req
     app._metadata_audit(request, account, action="node_analysis.enqueue", resource_id=node_key,
                     change_json={"scope_key": scope_key, "run_id": res.get("run_id"),
                                  "depth": depth, "node_budget": node_budget,
-                                 "reused": res.get("reused", False)})
+                                 "reused": res.get("reused", False),
+                                 "prompt_len": len(user_prompt or ""),
+                                 "prompt_preview": (user_prompt or "")[:120] or None})
     return JSONResponse({"ok": True, "run_id": res.get("run_id"), "status": res.get("status"),
-                         "reused": res.get("reused", False)}, status_code=202)
+                         "reused": res.get("reused", False), "progress": res.get("progress")},
+                        status_code=202)
+
+@router.post("/api/admin/metadata/graph/analyze-schema")
+async def admin_metadata_graph_analyze_schema(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
+    """DB(스키마) 단위 AI 능동 분석(§53·§55). 권한 metadata.graph.read(노드 분석과 동일 우산).
+
+    body: {schema_key, scope_key?, prompt?, only_missing?=true, dry_run?}. 스키마 소속 Table·Routine 을
+    depth=0 시드로 일괄 enqueue — §55(REQ-20260706 ③): 시드별 직계 컬럼 + per-seed 앵커 게이팅 재귀
+    전개(depth=AGENT_NODE_ANALYSIS_SCHEMA_DEPTH, 총예산 min(SCHEMA_RUN_BUDGET_MAX, planned×EXPAND_FACTOR)).
+    비용 가드 = only_missing 기본 + AGENT_NODE_ANALYSIS_SCHEMA_CAP(기본 200) + 예산 캡 + 빈약 노드만
+    back-refine(REFINE_MAX). dry_run=true 는 run 미생성 — 대상 집계만 반환(프론트 confirm 용).
+    진행 폴링은 기존 GET .../graph/analyze?run_id= 재사용(enqueued 는 재귀 전개로 실행 중 증가)."""
+    data = await app._metadata_read_json(request)
+    schema_key = str(data.get("schema_key") or data.get("schema") or "").strip()
+    if not schema_key or ":" not in schema_key:
+        return app._json_error("schema_key(스키마 노드 키)는 필수입니다.", 400)
+    scope_key = str(data.get("scope_key") or schema_key.split(":", 1)[0] or "common").strip().lower()
+    user_prompt = str(data.get("prompt") or "").strip()[:400] or None
+    only_missing = bool(data.get("only_missing", True))
+    dry_run = bool(data.get("dry_run", False))
+    from modules import node_analysis as _na
+    res = _na.enqueue_schema_analysis(scope_key, schema_key,
+                                      requested_by=str((account or {}).get("username") or "") or None,
+                                      user_prompt=user_prompt, only_missing=only_missing,
+                                      dry_run=dry_run)
+    if not res.get("ok"):
+        reason = res.get("reason") or "분석 시작 실패"
+        code = 400 if reason == "schema_key 필수" else 503
+        return app._json_error(f"DB 단위 AI 능동 분석 시작 실패: {reason}", code)
+    if not dry_run and res.get("status") in ("running",):
+        app._metadata_audit(request, account, action="node_analysis.enqueue_schema", resource_id=schema_key,
+                        change_json={"scope_key": scope_key, "run_id": res.get("run_id"),
+                                     "planned": res.get("planned"), "total_tables": res.get("total_tables"),
+                                     "total_routines": res.get("total_routines"),
+                                     "missing": res.get("missing"), "capped": res.get("capped", False),
+                                     "only_missing": only_missing, "reused": res.get("reused", False),
+                                     "prompt_len": len(user_prompt or ""),
+                                     "prompt_preview": (user_prompt or "")[:120] or None})
+    return JSONResponse({"ok": True, "run_id": res.get("run_id"), "status": res.get("status"),
+                         "total_tables": res.get("total_tables"),
+                         "total_routines": res.get("total_routines"), "missing": res.get("missing"),
+                         "planned": res.get("planned"), "capped": res.get("capped", False),
+                         "reused": res.get("reused", False), "progress": res.get("progress"),
+                         "reason": res.get("reason")},
+                        status_code=200 if dry_run or res.get("status") == "noop" else 202)
+
+
+def _parse_graph_column_key(raw) -> dict | None:
+    """그래프 Column 노드 key `<scope>:<schema>.<table>.<column>` 파싱(§55 B curate). 실패 None."""
+    k = str(raw or "").strip()
+    if ":" not in k:
+        return None
+    scope, fqn = k.split(":", 1)
+    parts = [p for p in fqn.split(".") if p != ""]
+    if len(parts) < 2 or not scope:
+        return None
+    column, table = parts[-1], parts[-2]
+    schema = ".".join(parts[:-2])
+    return {"scope": scope.strip().lower(), "schema": schema, "table": table, "column": column,
+            "table_fqn": (f"{schema}.{table}" if schema else table)}
+
+
+@router.post("/api/admin/metadata/graph/relationship/curate")
+async def admin_metadata_graph_relationship_curate(request: Request,
+                                                   account=Depends(app.require_permission('metadata.table.manage')),
+                                                   conn=Depends(app.get_conn)) -> JSONResponse:
+    """§55 B(REQ-20260706 ②): 관계 사람 큐레이션 — trust(신뢰 승격) / break(파단).
+
+    크로스-데이터소스 후보는 프로브 검증이 불가해 source='manual' 승격이 **유일한 신뢰 경로**인데
+    (ADR-019), 그 호출자가 미배선이라 영구 candidate(AI 컨텍스트 미주입)로 남던 dead-end 를 해소한다.
+    intra-DS 관계에도 동작(운영자 확정/오탐 즉시 파단). 권한 metadata.table.manage(메타데이터 큐레이션 축).
+
+    body: {action: 'trust'|'break', src: <Column key>, tgt: <Column key>} — key 는 그래프 Column 노드
+    key(`<scope>:<schema>.<table>.<column>`). trust=upsert(source='manual'→trusted, weight 1.0) + 그래프
+    엣지 즉시 투영. break=status 'broken'·weight 0 + 그래프 엣지 즉시 회수. 관계형 SSOT(PG)와 그래프
+    (AGE) 동시 정합 — 다음 sync_graph 주기와도 멱등."""
+    data = await app._metadata_read_json(request)
+    action = str(data.get("action") or "").strip().lower()
+    if action not in ("trust", "break"):
+        return app._json_error("action 은 'trust' 또는 'break' 여야 합니다.", 400)
+    src = _parse_graph_column_key(data.get("src"))
+    tgt = _parse_graph_column_key(data.get("tgt"))
+    if not src or not tgt:
+        return app._json_error("src/tgt(그래프 Column 노드 키)는 필수입니다.", 400)
+    from modules import metadata_graph as _mg
+    from modules import relationships as _rel
+    from shared.db import _pg_connect
+    try:
+        pg = _pg_connect(autocommit=True)
+    except Exception:
+        return app._json_error("그래프 저장소(PG) 연결 실패", 503)
+    updated = 0
+    try:
+        cur = pg.cursor()
+        try:
+            # §55 패널 fix: ds-키 매칭에 ''(레거시 — scope 배선 이전 행, 라이브 실측 scope_key='common'
+            # +ds '' 797행) 허용. 정확 매칭만 쓰면 레거시 행에서 UPDATE 0건인데 AGE 엣지만 삭제/승격돼
+            # 다음 sync_graph 가 원상복구(부활/강등 flap)한다 — SSOT·그래프 동시 정합이 목적.
+            if action == "trust":
+                # 기존 행 우선 UPDATE(방향 그대로) — upsert 를 먼저 쓰면 기존 행의 UNIQUE 키(레거시 ''-ds)와
+                # 어긋날 때 **중복 행**이 생기고, 원 candidate 가 계속 프로브·파단되며 같은 그래프 엣지를
+                # 삭제/신뢰로 뒤집는 flap 이 남는다(패널 MAJOR). 매칭 0건일 때만 신규 manual 행 upsert.
+                cur.execute(
+                    "UPDATE table_relationships SET status='trusted', weight=1.0, source='manual', "
+                    "       confidence=1.0, negative_signals=0, updated_at=now() "
+                    "WHERE source_table_fqn=%s AND source_column=%s "
+                    "  AND target_table_fqn=%s AND target_column=%s "
+                    "  AND (source_datasource_key=%s OR source_datasource_key='') "
+                    "  AND (target_datasource_key=%s OR target_datasource_key='')",
+                    (src["table_fqn"], src["column"], tgt["table_fqn"], tgt["column"],
+                     src["scope"], tgt["scope"]))
+                updated = int(cur.rowcount or 0)
+                if not updated:
+                    ok = _rel.upsert_relationship(
+                        pg, src["scope"],
+                        src_schema=src["schema"], src_table=src["table"], src_column=src["column"],
+                        tgt_schema=tgt["schema"], tgt_table=tgt["table"], tgt_column=tgt["column"],
+                        source="manual", datasource_key=src["scope"],
+                        source_datasource_key=src["scope"], target_datasource_key=tgt["scope"])
+                    if not ok:
+                        return app._json_error("관계 승격 실패(관계 저장소)", 503)
+                    updated = 1
+                _mg.sync_relationship(cur, src["scope"], src["table_fqn"], src["column"],
+                                      tgt["table_fqn"], tgt["column"], source="manual",
+                                      confidence=1.0, weight=1.0, status="trusted",
+                                      tgt_scope=tgt["scope"])
+            else:
+                # break: 방향 그대로 + 역방향 행 모두 파단(추론기가 어느 방향으로 저장했든 오탐 회수).
+                cur.execute(
+                    "UPDATE table_relationships SET status='broken', weight=0.0, updated_at=now() "
+                    "WHERE (source_table_fqn=%s AND source_column=%s "
+                    "       AND target_table_fqn=%s AND target_column=%s "
+                    "       AND (source_datasource_key=%s OR source_datasource_key='') "
+                    "       AND (target_datasource_key=%s OR target_datasource_key='')) "
+                    "   OR (source_table_fqn=%s AND source_column=%s "
+                    "       AND target_table_fqn=%s AND target_column=%s "
+                    "       AND (source_datasource_key=%s OR source_datasource_key='') "
+                    "       AND (target_datasource_key=%s OR target_datasource_key=''))",
+                    (src["table_fqn"], src["column"], tgt["table_fqn"], tgt["column"],
+                     src["scope"], tgt["scope"],
+                     tgt["table_fqn"], tgt["column"], src["table_fqn"], src["column"],
+                     tgt["scope"], src["scope"]))
+                updated = int(cur.rowcount or 0)
+                _mg.delete_relationship(cur, src["scope"], src["table_fqn"], src["column"],
+                                        tgt["table_fqn"], tgt["column"], tgt_scope=tgt["scope"])
+                _mg.delete_relationship(cur, tgt["scope"], tgt["table_fqn"], tgt["column"],
+                                        src["table_fqn"], src["column"], tgt_scope=src["scope"])
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning("relationship_curate 실패", exc_info=True)
+        return app._json_error("관계 큐레이션 실패", 503)
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    app._metadata_audit(request, account, action="graph.relationship.curate",
+                    resource_id=f"{data.get('src')}->{data.get('tgt')}",
+                    change_json={"action": action, "updated": updated,
+                                 "cross_ds": src["scope"] != tgt["scope"]})
+    return JSONResponse({"ok": True, "action": action, "updated": updated,
+                         "cross_ds": src["scope"] != tgt["scope"]})
 
 @router.get("/api/admin/metadata/graph/analyze")
-def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """분석 run 진행률 폴링(항목2). 권한 kb.ingest.manual. ?run_id=<hex>.
     반환 {status, enqueued, done, failed, done_keys[...]} — 프론트가 done_keys 로 분석 마커 표시."""
     run_id = (request.query_params.get("run_id") or "").strip()
@@ -996,7 +1531,7 @@ def admin_metadata_graph_analyze_status(request: Request, account=Depends(app.re
     return JSONResponse(st)
 
 @router.get("/api/admin/metadata/graph/analyze/node")
-def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """노드의 최신 분석 상태/결과(상세 패널, 항목2). 권한 kb.ingest.manual. ?node=<key>[&scope=<ds>].
     반환 {status:'none'|'pending'|'running'|'done'|'failed', analysis:{summary,relationships,usage,caveats}}."""
     node = (request.query_params.get("node") or "").strip()
@@ -1011,21 +1546,22 @@ def admin_metadata_graph_analyze_node(request: Request, account=Depends(app.requ
     return JSONResponse(res)
 
 @router.get("/api/admin/metadata/graph/analyze/status")
-def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_analyze_status_bulk(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """스코프 내 노드들의 분석 상태 **일괄** 집계(그래프 초기 렌더 마커용, 항목1). 권한 kb.ingest.manual.
     ?scope=<ds> — 그 datasource 스코프의 완료/진행중 node_key 집합을 반환한다. 프론트는 그래프 로드/검색/확장
-    직후 이 결과로 마커(보라 '분석됨'·주황 '분석중')를 **노드 클릭 없이** 즉시 적용한다.
-    반환 {done_keys:[...], running_keys:[...]}. PG 미가용 시 빈 집합(마커 없음 — 그래프는 정상)."""
+    직후 이 결과로 마커(보라 '분석됨'·주황 '분석중')와 역할 표식(node-role-viz)을 **노드 클릭 없이** 즉시 적용한다.
+    반환 {done_keys:[...], running_keys:[...], roles:{node_key:role}}. PG 미가용 시 빈 집합(마커 없음 — 그래프는 정상)."""
     scope = (request.query_params.get("scope") or "").strip() or "common"
     from modules import node_analysis as _na
     res = _na.get_scope_analysis_status(scope)
     if res is None:
         # PG 미가용/예외 — 그래프 자체는 렌더되어야 하므로 빈 집합으로 graceful(마커만 생략).
-        return JSONResponse({"done_keys": [], "running_keys": [], "unavailable": True})
-    return JSONResponse({"done_keys": res.get("done_keys", []), "running_keys": res.get("running_keys", [])})
+        return JSONResponse({"done_keys": [], "running_keys": [], "roles": {}, "unavailable": True})
+    return JSONResponse({"done_keys": res.get("done_keys", []), "running_keys": res.get("running_keys", []),
+                         "roles": res.get("roles", {})})
 
 @router.get("/api/admin/metadata/graph/columns")
-def admin_metadata_graph_columns(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_metadata_graph_columns(request: Request, account=Depends(app.require_permission('metadata.graph.read'))) -> JSONResponse:
     """더블클릭 컬럼 즉석 introspection(항목3). 권한 kb.ingest.manual. ?node=<table key `scope:schema.table`>.
 
     그래프 투영(SSOT=column_descriptions)에 Column 노드가 없어(큐레이션/분석 미진행) 더블클릭해도
@@ -1048,6 +1584,10 @@ def admin_metadata_graph_columns(request: Request, account=Depends(app.require_p
     if not _re.match(_ident, schema) or not _re.match(_ident, table):
         return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node,
                              "reason": "식별자에 허용되지 않는 문자가 있어 조회를 건너뜁니다."})
+    # graph-perf-bg: 성공 introspection 캐시 히트면 ds 해석·라이브 DB 연결·information_schema 조회 전량 우회.
+    _cached = _graph_columns_cache_get(scope_key, fqn)
+    if _cached is not None:
+        return JSONResponse(_cached)
     ds, derr = app._graph_resolve_ds_by_scope(scope_key)
     if derr:
         return JSONResponse({"nodes": [], "edges": [], "introspected": False, "node": node, "reason": derr})
@@ -1102,8 +1642,11 @@ def admin_metadata_graph_columns(request: Request, account=Depends(app.require_p
                       "fqn": f"{fqn}.{cname}", "description": ctype, "source": "introspect", "ordinal": ord_i})
         edges.append({"source": node, "target": ckey, "type": "HAS_COLUMN",
                       "cardinality": None, "edge_source": "introspect"})
-    return JSONResponse({"nodes": nodes, "edges": edges, "introspected": True,
-                         "count": len(nodes), "engine": engine, "node": node})
+    payload = {"nodes": nodes, "edges": edges, "introspected": True,
+               "count": len(nodes), "engine": engine, "node": node}
+    if nodes:   # graph-perf-bg: 컬럼이 실제 조회된 성공만 캐시(빈/실패 결과는 재시도 보장 위해 미캐시)
+        _graph_columns_cache_put(scope_key, fqn, payload)
+    return JSONResponse(payload)
 
 @router.get("/api/admin/metadata/samples")
 def admin_list_samples(request: Request, account=Depends(app.require_permission('kb.sample.curate'))) -> JSONResponse:
@@ -1254,7 +1797,7 @@ def admin_delete_sample(sample_id: int, request: Request, account=Depends(app.re
     return JSONResponse({"ok": True, "id": int(sample_id), "deleted": int(affected)})
 
 @router.get("/api/admin/metadata/bootstrap/schemas")
-def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """선택 datasource 의 골격 단위(unit) 목록. 권한 kb.ingest.manual. ?datasource=<key>.
 
     엔진별 unit 차이(metadata-table-desc-fix):
@@ -1304,7 +1847,7 @@ def admin_bootstrap_schemas(request: Request, account=Depends(app.require_permis
     return JSONResponse({"schemas": units, "datasource": scope_key, "engine": engine, "unit_kind": unit_kind})
 
 @router.post("/api/admin/metadata/bootstrap")
-async def admin_bootstrap(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_bootstrap(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """선택 datasource+schema 의 테이블/컬럼 골격(미영속). 권한 kb.ingest.manual. body: datasource, schema.
 
     골격은 저장하지 않는다 — UI 가 설명 빈칸을 prefill, 사람이 채워 tables/columns POST(source='bootstrap')
@@ -1415,7 +1958,7 @@ async def admin_metadata_suggest(sub: str, request: Request) -> JSONResponse:
     })
 
 @router.post("/api/admin/metadata/bootstrap/describe")
-async def admin_metadata_bootstrap_describe(request: Request, account=Depends(app.require_permission('kb.ingest.manual'))) -> JSONResponse:
+async def admin_metadata_bootstrap_describe(request: Request, account=Depends(app.require_permission('metadata.table.manage'))) -> JSONResponse:
     """부트스트랩 일괄 AI 자동완성 — 골격(테이블/컬럼)의 설명을 1 LLM 호출로 생성(영속 안 함).
 
     프론트가 청크 단위(≤_METADATA_BULK_MAX_TABLES)로 호출해 진행률을 표면화한다. RBAC kb.ingest.manual.

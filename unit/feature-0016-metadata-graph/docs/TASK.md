@@ -333,3 +333,1653 @@ source_of_truth: true
 - [x] ③ 클러스터명 HTML 오버레이(`_metaGraphSyncClusterLabels`, 좌상단 좌정렬 +10/+4px 무잘림 zoom 추종, `cy.on('render')` 동기화 — 렌더러 무관이라 §17 WebGL 전환과 호환) + native 라벨 숨김. PB-0008 PASS(canvas-2D 프리뷰) → **§17 WebGL 병합 후 오버레이 정합 재확인 예정**.
 - [x] 적대 코드리뷰 SHIP(REV-20260701T163000-graphview-render, feature-0003). 정본 기록: feature-0003 TASK/MODIFY/FUNCTION/TEST/REVIEW-20260701T163000-graphview-render · feature-0002 MODIFY 동일 id. (§16 ERD tap 정합·§17 graph-webgl 렌더러와 tap/스타일 병합 완료.)
 - [ ] verify-completion → cycle-final → 배포(web 재빌드, 백엔드 포함) → 배포 후 ①마커 렌더 + WebGL 오버레이 PB-0008 최종 확인.
+## 19. graph-perf2 — 컬럼 blob·프레임 거침·느린 줌 (WebGL 후속 육안 3건) (2026-07-01)
+
+### 19.0 맥락 / 진단
+- 사용자 후속(WebGL 배포 후 육안): (1) 프레임 여전히 거침, (3) 17컬럼 테이블 더블클릭 시 컬럼이 세로 스택 아닌
+  **원형 뭉치(blob)**, (4) 휠 확대/축소 너무 느림. (2 라벨유지=OK.)
+- **진단 워크플로**(5에이전트: 3렌즈 진단 → 통합설계 → 적대검증, verify=go-with-fixes): blob·거침은 **동일 뿌리** —
+  컬럼 세로정렬을 fcose 제약(alignment/relativePlacement)에 위임 + 화면 전체 테이블 제약을 numIter 1000 동기 tick
+  마다 적용. (a) fcose 가 ring seed 다수 컬럼을 세로로 못 펼쳐 blob, (b) 제약 동기 계산(cose-base while-loop, rAF
+  yield 0)이 프레임 거침. WebGL 은 렌더만 GPU 화라 이 계산 병목과 무관(→ 거침 개선 없던 게 정합). 줌=독립(wheelSensitivity 0.3=기본 1/3).
+- 등급 **Major** (레이아웃 아키텍처 변경: 컬럼 정렬 주체 이전).
+
+### 19.1 구현 (admin.js)
+- [x] T19.1 컬럼 정렬을 fcose 제약에서 **제거**(_metaGraphColumnConstraints·_ccCfg·..._ccCfg 병합 3곳 삭제, hasCompound=newAddsBox).
+- [x] T19.2 layoutstop 결정론 배치 `_metaGraphPlaceColumns`(batched, ordinal, 무게중심 상하대칭, x통일) — fcose success
+      + cose 폴백 **모든 경로** fit 전 호출. 정렬 헬퍼 단일화(`_metaGraphColCmp`/`_metaGraphOrderedColumns`).
+- [x] T19.3 신규 컬럼 seed ring→세로(부모별, 동일 비교자). `_META_COL_PITCH` 공유(seed·배치 drift 방지).
+- [x] T19.4 `wheelSensitivity:0.3` 제거 → 기본 1(줌 3배 회복). minZoom/maxZoom 클램프 유지(과확대/축소 없음).
+- [x] T19.5 박스 겹침 상쇄: `_META_COL_PITCH` 22→18(박스 세로↓) + nodeSeparation 150→220.
+
+### 19.2 검증
+- [x] T19.6 node --check PASS. 잔존 제약 참조 0. stale 주석 정리.
+- [x] T19.7 적대 리뷰 패널(§18.8 subagent) — **BLOCKING 0·MAJOR 0·MINOR 1(박스겹침 실측)·NIT 3**. 핵심: 컬럼정렬
+      공백경로 없음(전 경로 placeColumns 수렴), 제약 '키 제거'가 fcose tile/packComponents-off 과거 취약성 오히려 제거(더 안전). REVIEW REV-20260701T220000 [SUBAGENT: PASS].
+- [x] T19.8 **실 Windows 브라우저 de-risk**(win-browser): 17컬럼 + 6이웃 ERD 렌더 → **컬럼 x-spread 0.0px(완벽 세로스택,
+      blob 소멸)** + PITCH18·nodeSep220 으로 **박스겹침 2→0** 실측(스크린샷 render3.png).
+- [ ] T19.9 verify-completion + commit + PR + main 병합 + web 배포.
+- [ ] T19.10 **사용자 실브라우저 재확인**: (1) 프레임 거침 완화(더블클릭 확장) (3) 컬럼 세로스택(blob 없음) (4) 휠 줌 속도
+      + 박스 겹침/over-zoom 없음. (실 FPS·체감은 사용자 하드웨어가 최종.)
+
+## 20. AI 능동 분석 재귀 — 앵커-상대 관련도 게이팅 (2026-07-01, node-analysis-anchor)
+
+### 20.0 맥락
+- 사용자 요청: "AI 능동 분석" 재귀 기준이 불명확 — Achievement 분석 시 컬럼 따라 depth 깊어지면 대상 노드
+  (UniqueID)를 기준으로 재탐색. 처음 분석 대상 기준으로 탐색되게, 하위 컬럼은 기본 분석, 깊은 확장은
+  "dk 제품·Achievement" 연관 높은 대상만, 단순 컬럼명 일치·상위객체 무연관은 낮은 우선순위.
+- 근본원인: `_enqueue_neighbors` 가 이웃 전부 무차별 재큐(루트 관련도 판단 부재) → 허브(일반 컬럼·Schema)에서
+  재-앵커링 fan-out.
+- 등급 **Major** (재귀 동작 변경 + 비파괴 additive 마이그레이션). 결정 근거·설계: DECISIONS ADR-003, MODIFY
+  CHG-20260701T173000.
+
+### 20.1 구현 (node_analysis.py · config · alembic)
+- [x] T20.1 config 노브: RELEVANCE_MIN(0.18)/_DEEP(0.34)/CROSS_SCOPE_FACTOR(0.25)/EXPAND_SCHEMA(off), env override.
+- [x] T20.2 토크나이저(`_split_tokens` camel/snake, `_meaningful_tokens` 일반어 stoplist) + `_build_anchor`/`_load_anchor`.
+- [x] T20.3 `_relevance(node, meta, anchor)` — scope·서브트리·토큰·용어·REFERENCES 신뢰; Schema/broken=0; 교차제품 감쇠.
+- [x] T20.4 `_fetch_context` neighbor_meta(kind/weight/status/child) + `_score_candidates` 게이팅(루트 컬럼 무조건, 그 외 임계).
+- [x] T20.5 `_enqueue_neighbors` 앵커 관련도 게이트·우선순위 재큐; enqueue 루트 relevance=1.0; process_pending claim `depth ASC, relevance DESC`.
+- [x] T20.6 alembic 0029 — `node_analysis_jobs.relevance real DEFAULT 0` + `ix_node_analysis_jobs_claim_priority`(expand-only). get_run_status relevance 노출.
+
+### 20.2 검증
+- [x] T20.7 단위 `test_node_analysis_relevance.py` **28건 PASS**(pytest) — 토큰화·anchor·관련도·게이팅 + 2라운드
+      적대 패널 반영(content-gate·한글 일반어·접두접미 부분연관·depth ramp·tiebreak·신뢰FK 트레이드오프).
+- [x] T20.8b 2라운드 적대 검증 패널(REV-20260701T173000 [AGENT-TEAM]) — R1 M1~M5 + R2 MAJOR·MINOR 전건 처리, BLOCKER 0.
+- [x] T20.8 verify-completion(--pre-commit) PASS + alembic 0029 라이브 적용(live=0029) + web-a/web-b 무중단
+      배포(7bca9b2) + insight-worker 재기동(7bca9b2). PR #518 main 병합.
+- [x] T20.9 라이브 실데이터 검증 PASS(LLM 0): `dk_data_release.Achievement` 하위 컬럼 4개 rel 1.0 통과 +
+      **부모 Schema(형제 테이블 123개) 탈락 = fan-out 지배 경로 차단 정량 확인**. AchievementReward 17컬럼 통과.
+      ANCHOR §4 는 human 외부검증 전용이라 미기입(AI 프로브는 TEST/REPORT 기록). UI 마커 시각은 PB-0008 후속.
+
+## 21. 그래프 뷰 렌더링 엔진 교체 Cytoscape(WebGL)→AntV G6 v5 (graph-g6, 2026-07-02, entry persona dispatch)
+사용자 관찰 5건(①클릭접힘 ②위치점프 ③줌 동기화지연 ④클러스터 뒤섞임 ⑤테두리 왜곡) → 엔진 단위 개선.
+등급: **Major**(cross-cut 프론트, feature-0003 admin.js 코드 거주; 데이터 API 불변·비파괴). 정본: DECISIONS ADR-004.
+
+### 21.1 리서치·검증
+- [x] T21.1 프로덕션급 렌더러 리서치(G6/Sigma/yFiles/GoJS/Ogma/Cytoscape) → **AntV G6 v5(MIT)** 채택 + 사용자 승인.
+- [x] T21.2 POC(Playwright headless) 전 요소 실증 + G6 v5 함정 확정. `g6-migration/BLUEPRINT.md`·`poc/`.
+
+### 21.2 구현
+- [x] T21.3 G6 v5.1.1 vendored(`vendor/g6.min.js`). admin.html cytoscape·fcose 4종 제거 → g6.min.js. cache-buster `?v=20260702-graph-g6`.
+- [x] T21.4 admin.js 엔진 재작성: `_metaGraph` 모델 + `_metaG6Build`(결정론 grid)·`_metaG6Apply`(setData+draw) + init/loadRoots/search/showDetail/toggleColumns(펼침전용)/collapse("−")/expand/ingest/markers(node state)/clusterDetail. 오버레이 3함수 제거. DOM/API 함수 유지.
+- [x] T21.5 styles.css 오버레이 CSS 제거. `node --check` PASS, 제거심볼 참조 0.
+
+### 21.3 검증
+- [x] T21.6 dev-loop(WSL-headless-harness, 실 admin.html 마크업 + mock apiFetch) 전 플로우 PASS·에러 0: roots·제자리펼침·재클릭무접힘(①)·접기·검색·이웃확장·클러스터상세·AI분석·마커·점선/실선 엣지. (TEST.md)
+- [x] T21.7 §18.8 적대적 코드리뷰(subagent, g6.min.js 번들 계약 교차검증) → **PASS-WITH-FIXES**(CRITICAL/MAJOR 0, MINOR 3건 수정·재검증). REV-20260702T003000 [SUBAGENT].
+- [x] T21.8 실앱 배포(무중단 롤링 web-a/b `8c45f070`, soak PASS) + **PB-0008 실 Windows 시각검증 PASS**(실데이터 236노드/36클러스터, 렌더·제자리펼침·"−"접기·엣지 확인) + verify-completion(--pre-commit) PASS.
+- [x] T21.9 commit/push/PR #528 → main 병합(충돌 해소).
+
+### 21.4 UX 개선 (graph-g6b, 사용자 요청: 기본 디자인·노드확장 가시성·UX)
+- [x] T21.10 라이브 실데이터에서 관측된 배치 문제(세로 과길이·fit 극소) 해소 — **클러스터 내 다열 masonry + 가변폭 shelf-packing**(`_metaG6Build`). WSL-headless-harness(14클러스터 확장 포함) PASS. cache-buster graph-g6b. (DECISIONS ADR-004 §Consequences 연장, MODIFY CHG-20260702-graph-g6b)
+- [ ] T21.11 graph-g6b 배포 + 라이브 PB-0008 재확인.
+
+## 22. 그래프 관계 분석 LLM = claude-haiku (node-analysis-haiku, 사용자 요청 2026-07-02)
+사용자 보고: 관리콘솔 그래프뷰 "각 관계를 분석하는 LLM" 이 로컬 gemma(edge)로 작동 — 의도하지 않은 구조. claude-haiku 로 전환. 범위 결정 = **그래프 관계 분석만**(schema/table/account insight 는 공유 `AGENT_INSIGHT_MODEL` 유지).
+
+### 22.1 구현
+- [x] T22.1 근본원인 진단 — `llm_node_analysis` 가 4개 insight 함수와 공유하는 `AGENT_INSIGHT_MODEL`(운영 `.env`=`edge`=gemma)에 묶여 있음.
+- [x] T22.2 전용 config `AGENT_NODE_ANALYSIS_MODEL`(기본 `claude-haiku-4`) 신설 + `__all__` 노출 (`shared/config.py`).
+- [x] T22.3 `llm_node_analysis` 모델 라우팅을 `AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 로 분리 (`llm.py`); insight 3함수 불변.
+- [x] T22.4 `process_pending` 저장·표시용 model 라벨을 동일 순서로 해석 (`node_analysis.py`) — 상세 패널이 실제 사용 모델 표시.
+
+### 22.2 검증
+- [x] T22.5 회귀 테스트 4건 추가(기본값 haiku·env override·공백 폴백·`__all__` 노출) + insight 분리 확인 (`test_llm_env_naming.py`). pytest 38 pass, ruff clean, import/compile OK.
+- [x] T22.6 §18.8 적대적 코드리뷰(subagent — 격리·touchpoint 완결성·haiku 정합·폴백 안전). REVIEW.md 참조.
+- [x] T22.7 **배포 완료**(2026-07-02, node-haiku-deploy, 사용자 confirm 승인): `.env` 에 `AGENT_NODE_ANALYSIS_MODEL=claude-haiku-4` 반영 + insight-worker 이미지 재빌드(새 코드 baked)·재기동(healthy). smoke 실증 — 컨테이너 env `NODE_ANALYSIS=claude-haiku-4`/`INSIGHT=edge`(분리 확인) + `config.AGENT_NODE_ANALYSIS_MODEL='claude-haiku-4'`·`__all__` 노출 + `llm_node_analysis` 라우팅 `_insight_model=AGENT_NODE_ANALYSIS_MODEL or AGENT_INSIGHT_MODEL or OPENAI_MODEL` 확인, 클린 기동(traceback 0).
+- [ ] T22.8 (사용자 실검증) 관리콘솔 그래프뷰 "AI 능동 분석" **신규 run 의 model 라벨 = claude-haiku** 육안 확인 — 현 WSL 환경은 게임 DB 망 미도달(circuit_open)이라 라이브 run 강제 불가, 실 브라우저 확인 권장(PB-0008 계열).
+
+## 23. graph-perf-bg — 테이블 노드 펼침 논블로킹 + 성능 인덱스·상태 diff·introspect TTL 캐시 (2026-07-02, entry persona dispatch → resume 인계 완수)
+사용자 관찰: 관리콘솔 > 메타데이터 > 그래프 뷰에서 **테이블 노드 선택→펼침 시 브라우저 렌더 엔진 프리즈**. 요청: 병목 구간 백그라운드화 + 별도 성능 이슈 추가 검증. 정본: DECISIONS ADR-005, MODIFY CHG-20260702-graph-perf-bg.
+등급: **Major**(cross-cut 프론트 feature-0003 admin.js + BE admin_metadata.py 라우터 캐시; 데이터 API·스키마 불변·비파괴, 마이그레이션 없음).
+
+### 23.1 진단
+- [x] T23.1 프리즈 근본원인 확정: 펼침 임계경로가 `/graph?depth=1` + (미분석 시) `/graph/columns` **라이브 information_schema 무캐시 조회(1~5s)** 2왕복 → `setData`+`draw` 를 busy 페인트 없이 동기 진행. 부수: `_metaTableHasCols` O(N) 스캔, `_metaGraphRefreshStates` 2.5s 폴 전노드 개별 setElementState.
+
+### 23.2 구현 (FE admin.js + BE admin_metadata.py)
+- [x] T23.2 [FE] 논블로킹 파이프라인 — busy(teal 점선) 페인트 후 double-rAF(`_metaYieldPaint`) 양보 → fetch·재구성. `_opSeq` stale-render 토큰(await 경계마다 대조).
+- [x] T23.3 [FE] O(1) 펼침 인덱스 `colsByTable`(`_metaTableHasCols` 단일소스, ingest/collapse/reset 3경로 갱신) — 클릭당 전노드 스캔 제거.
+- [x] T23.4 [FE] `_metaGraphRefreshStates` 변화분-only diff + `startBatch` 일괄. busy = `_busyKeys`(소유 op) + `_metaStateSig`/`_metaApplyState`(요소적용·`_stateCache` signature 항상 동기화).
+- [x] T23.5 [FE] `_metaG6Build` 레이아웃 churn 분리 — Pass1(collapsed 균등높이 열배정, 펼침-불변) / Pass2(자기 열 real push-down). 형제 열-점프 제거(setData update 집합 최소화), shelf-packer 는 real h 소비(무겹침).
+- [x] T23.6 [BE] `/api/admin/metadata/graph/columns` introspection 성공결과 `(scope_key, fqn)` 프로세스-로컬 TTL 캐시(기본 300s, env `METADATA_GRAPH_COLUMNS_CACHE_TTL`, 실패·빈결과 미캐시, 상한 512, TTL≤0 비활성). 권한 dependency 해소 후 캐시-히트.
+- [x] T23.7 [FE] cache-buster `admin.js?v=20260702-graph-perf-bg`.
+
+### 23.3 검증
+- [x] T23.8 `node --check admin.js` PASS · `py_compile admin_metadata.py` PASS. leftover 디버그 마커 0.
+- [x] T23.9 **§18.8 적대 검증** — 3렌즈 패널(race/index-drift/layout+cache) → **4건 BLOCKING 적발**(reset 경로 `_opSeq` 미증가로 stale-render·colsByTable 포이즌, seq-mismatch busy 잔류, 폴이 busy 제거+`_stateCache` 불일치). 5-agent 워크플로 재검증 → 4건 CLOSED + **신규 BLOCKING 1건**(loadRoots reset-vs-reset) 적발. loadRoots seq 가드 추가 후 최종 재검증 → **reset-vs-reset 6조합 CLOSED·신규 회귀 없음**. NIT(동시-key busy 깜빡임·후행 syncMarkers stale 텍스트·BE 캐시키 대소문자 등)은 수용 기록. REV-20260702T120000 [AGENT-TEAM].
+- [ ] T23.10 graph-perf-bg 배포(web 재빌드) + **라이브 PB-0008 실 Windows 시각검증**(대량 스키마 테이블 펼침 시 무프리즈 + busy teal 피드백 + 반복 펼침 즉시응답).
+
+## 24. graph-ctxmenu — 노드 우클릭 상세 상호작용 (2026-07-02, entry persona dispatch)
+> §13.1 재번호: 병렬 세션이 §22(node-analysis-haiku)·§23(graph-perf-bg)을 점유 — 본 섹션 22→24, T24.x→T24.x.
+
+REQ-20260702T113000-graph-ctxmenu (사용자): 관리 콘솔 > 메타데이터 > 그래프 뷰에서 각 노드의
+**우클릭 상세 상호작용** — 스키마를 모르는 사용자가 선택 노드의 연관 관계를 상세하게 파악하는
+과정을 지원. 등급: **Major**(cross-cut 프론트 3파일, feature-0003 코드 거주; 데이터 API 불변·
+비파괴·RBAC 불변 — 기존 `metadata.graph.read` 읽기 표면만 사용).
+
+### 24.1 Implementation Plan (§7.1)
+
+- **파일**: `unit/feature-0003-agent-web-ui/src/static/admin.js`(그래프 블록 §3024~),
+  `styles.css`(메뉴·관계패널 스타일), `admin.html`(빈상태 안내문 + cache-buster
+  `?v=20260702-graph-ctxmenu`).
+- **symbol**: `_metaGraphCtxShow/_metaGraphCtxHide`(HTML 컨텍스트 메뉴, 뷰포트 clamp +
+  Esc/외부클릭/스크롤 dismiss + ↑/↓/Enter 키보드), `_metaGraphCtxForNode/ForCombo/ForCanvas`
+  (kind 별 항목 구성), `_metaGraphShowRelations`(**관계 상세 패널** — depth=1 응답을
+  방향별(참조함→/참조받음←/주변 관계)로 그룹, FK/추정/신뢰 + weight + cardinality +
+  상대 노드 설명 1줄, 행 클릭 = 상대 노드 상세 이동), `_metaGraphFocus`(모델 리셋 후 앵커
+  N-hop 만 로드 — "이 노드 중심으로 보기"), `_metaInitGraph` 에 `node:contextmenu`/
+  `combo:contextmenu`/`canvas:contextmenu` 바인딩 + container capture 리스너(preventDefault
+  + 좌표 캡처).
+- **메뉴 항목**: Table=상세·관계 상세·관계 확장(1/2/3-hop chips)·중심 보기·컬럼 펼침/접기·
+  AI 능동 분석·FQN 복사. Column=상세·관계 상세·소속 테이블 상세·중심 보기·FQN 복사.
+  Term=상세·관계 상세·관계 확장·중심 보기·이름 복사. Combo=클러스터 상세·스키마명 복사.
+  Canvas=전체 맞춤·그래프 초기화. 상세 카드 head 에 "🔗 관계 상세" 링크 추가(비-우클릭 발견성).
+- **G6 v5 함정 준수**(BLUEPRINT §3): 전부 HTML 오버레이 메뉴(G6 요소 아님 — setData 재구성과
+  무간섭), 이벤트만 G6. mutation 0 (CONVENTIONS §10.7 pending 대상 아님 — 전부 읽기성 +
+  기존 analyze 트리거 재사용).
+- **AC**: (a) 노드 우클릭 시 브라우저 기본 메뉴 대신 커스텀 메뉴가 뜨고 kind 별 항목이 맞다.
+  (b) 관계 상세 패널이 방향·신뢰도·근거(edge_source)·상대 설명을 표시하고 행 클릭 시 상대
+  노드로 이동한다. (c) 중심 보기가 앵커 N-hop 만 남긴다. (d) 기존 클릭/더블클릭/접기 회귀 0.
+  (e) node --check + WSL-headless harness 전 플로우 PASS. (f) PB-0008 Windows-browser Run
+  기록(check #13 hard gate).
+
+### 24.2 구현
+- [x] T24.1 admin.js 컨텍스트 메뉴 인프라 + kind 별 메뉴 + 관계 상세 패널 + 중심 보기.
+      (패널 반영: 엣지 우클릭 메뉴 `_metaGraphCtxForEdge`·로컬 조인 컬럼 표기·중심 보기 지속
+      칩 `_metaGraphFocusChip`·hop chip 1회성 depth 인자·Column 관계 확장 파리티·복사 폴백·
+      wheel/재렌더 dismiss·Tab/포커스 복원.)
+- [x] T24.2 styles.css 메뉴·관계 패널·중심 칩 스타일 + admin.html 안내문·cache-buster bump
+      (styles `?v=20260702-graph-ctxmenu`, admin.js perf-bg 병합 후 `?v=20260702-graph-ctxmenu2`).
+
+### 24.3 검증
+- [x] T24.3 node --check + WSL-headless harness **28/28 PASS**(네이티브 우클릭 경로·엣지 메뉴·
+      중심 칩·로컬 조인 컬럼·1회성 hop·회귀·에러 0 — TEST.md).
+- [x] T24.4 §18.8 적대 패널(ux CHANGES-REQUESTED→MAJOR 3 전건 수정 / design PASS-WITH-NITS /
+      qa rate-limit 미완·한계 기록) → REV-20260702T121500-ai-claude-feature-0016-graph-ctxmenu.
+- [x] T24.5 verify-completion(--pre-commit) PASS → commit(11da6da0)+origin/main 병합(§24 재번호·perf-bg seq 통합) → PR #538 → main 병합(16fc1598) + cycle-finalize cleanup.
+- [x] T24.6 라이브 배포(deploy-web.sh 16fc1598, 무중단 soak PASS) + **PB-0008 실 Windows 시각검증 PASS**(우클릭 메뉴·관계 패널·중심 칩·클러스터 메뉴·Escape — TEST.md Run·스크린샷 4매, 겸 T21.11 G6 라이브 재확인) → TEST.md POST-DEPLOY 기록.
+
+## 25. graph-initview — 초기 진입 줌아웃 가시성 개선: 스키마-우선 진입 (2026-07-02, entry persona dispatch)
+사용자 보고: 스키마 클러스터 내 테이블·컬럼 노드가 많으면 초기 전체-fit 이 지나친 줌아웃을 만들어
+초반 가시성 붕괴. 5축(A 뷰포트/B 밀도/C 정보위계/D 큐레이션/E 내비게이션) 검토 후 사용자 결정
+**Phase 1+2 통합**(AskUserQuestion 2026-07-02). 등급 **Major**(cross-cut — 코드 거주 feature-0002/0003).
+병렬 세션 정합: 착수 base(15e0befc)가 main 대비 stale — **B축(다열·shelf-packing)은 병렬 머지된
+graph-g6b(#533) masonry 가 선점**하여 자체 구현 폐기·채택, graph-perf-bg(#537)의 `_opSeq`/busy/_stateCache
+기계와 세대 가드를 통합, graph-ctxmenu(#538)와 재정합(§13.1 재번호 §22→§24→**§25**).
+<!-- PLAN-APPROVED by user on 2026-07-02 (AskUserQuestion: "Phase 1+2 통합" 선택) -->
+
+### 25.1 구현 (원 계획 §7.1 은 초판 커밋 bafe5a71 참조 — 아래는 병합 최종본)
+- [x] T25.1 백엔드 `scope_schemas`(Schema+count(t) 집계, limit+1 truncated, 집계실패=배지없는 카드 강등)
+      /`schema_tables`(per-schema lazy, truncated) + 라우터 `?mode=schemas`/`?schema=` 분기(신규 route 0 — 골든 불변).
+- [x] T25.2 C1 스키마-우선 진입: roots = 스키마 카드(`SC:`+key, "이름 · 테이블 N" 배지) → 클릭 시 per-schema
+      lazy 펼침(combo 승격, "XS:" 접기=카드 복귀, 재펼침 무-refetch). 카드↔combo **동일-id 타입 전환의 G6
+      setData diff 자식 유실**을 SC: 네임스페이스로 차단(harness 적발). 검색/이웃 결과 스키마 자동 펼침,
+      단일 스키마 DS 자동 펼침(기존 즉시성 유지). 게이팅은 masonry layouts 선산정에 통합.
+- [x] T25.3 A 뷰포트: Graph `zoomRange [0.05,4]`(G6 전환 때 소실된 min/maxZoom 이식) + `_metaGraphFitClamped`
+      (fit 후 0.55 하한/1.0 상한, focusFirst 는 초기로드·검색만 — refit 은 현 위치 보존) + 이웃확장 전체-fit →
+      **앵커 국소 focus**. 상세토글/리사이저 refit 클램프 정합.
+- [x] T25.4 E 내비게이션: minimap 플러그인(번들 실증) + 줌 툴바(−/+/전체/1:1) + 스키마 점프 select(2개 이상 시).
+- [x] T25.5 §18.8 1차 적대 리뷰(BLOCKER 0·MAJOR 2·MINOR 7·NIT 3) 전건 반영 — dead-card 합성 복구·
+      혼합버전 loaded 미마킹·연타 가드·빈 스키마 비펼침·truncated 표면화·점프 stale 정리 등. REVIEW.md.
+- [x] T25.6 2차 적대 검증 workflow(3렌즈, 17 findings→dedup 9) 반영 — **stale-base 감지(동일 블록 병렬
+      재작성 다건)** → merge 재정합, ExpandSchema 를 `_opSeq` 세대에 편입(교차 스코프 오염 차단) +
+      scope 가드(이전 scope 카드 클릭 차단) + 상세 로컬렌더 성공-게이팅 + 빈 스키마 loaded 비고착 +
+      클러스터 상세 실총계(table_count)·절단 노트 + 집계실패 배지 강등. REVIEW.md.
+- [x] T25.7 headless harness(실 마크업+mock API, 대규모 200테이블+빈스키마+혼합버전+stale-scope fixture)
+      **31/31 PASS·에러 0**(병합 최종본) + 라이브 AGE Cypher 실증(62 스키마 scope, 0.23s). TEST.md.
+- [x] T25.8 verify-completion(--pre-commit) PASS(#13 Windows-browser 기록 게이트 포함) + REVIEW 2라운드 원장.
+- [x] T25.9 배포 완료(deploy-web.sh 95b18045, 무중단 soak PASS, deploy_scope: included) + **PB-0008 실 Windows
+      시각검증 PASS**(62 스키마 최악 케이스 라이브 실측 — 카드 진입 zoom 0.550·258 테이블 masonry 펼침·툴바/점프/
+      접기/미니맵, §21 T21.8 통합) + TEST.md Run 기록.
+
+## 26. graph-initview 후속 — 스키마 카드 우클릭 + 카드 라벨 압축 (schema-card-ctxmenu, 2026-07-02, entry persona dispatch)
+사용자 요청 2건: ① 아직 펼쳐지지 않은 스키마 카드도 우클릭이 동작하게, ② 카드의 "테이블" 문자열이
+텍스트 공간을 과점유하는 것 개선. 등급 **Minor**(frontend-only 비파괴 추가, 코드 거주 feature-0003 admin.js).
+<!-- graph-initview(§25) 의 스키마 카드는 렌더 id 가 "SC:"+key 인데 node:contextmenu 가 이 prefix 를
+     안 벗겨 _metaGraphCtxForNode 가 모델(순수 key)에서 노드를 못 찾아 우클릭이 무반응이던 결함. -->
+
+### 26.1 구현
+- [x] T26.1 `node:contextmenu` 에 `SC:`(접힌 카드)·`XS:`(펼친 스키마 접기 ctl) prefix 라우팅 추가 →
+      신규 `_metaGraphCtxForSchema(schemaKey)` — 헤더(스키마 배지+이름+개수) + 펼치기/접기(상태별) +
+      클러스터 상세(펼치지 않고 API 조회) + 스키마명 복사. 좌클릭 SC: 경로와 동일한 성공-게이팅 상세 렌더.
+- [x] T26.2 `_metaGraphCtxForCombo` 파리티 — 펼친 스키마 combo 우클릭에도 "접기 (카드로)" 항목 추가
+      (기존엔 "−" ctl 클릭만 접기 가능).
+- [x] T26.3 카드 라벨 UI 압축 — 인라인 "· 테이블 N" 제거 → **라벨=스키마명 전용**(전체 폭 확보, 긴 이름
+      truncate 완화) + **개수는 우상단 G6 badge**(작은 pill, 이름과 폭 경쟁 없음). 집계 실패(cnt=null)는
+      badge 없음 = 배지없는 카드 강등 정합(§25 V-H). 우클릭 메뉴 헤더는 폭 여유가 있어 "테이블 N" 유지.
+- [x] T26.4 cache-buster `?v=20260702-schema-card-ctxmenu` (admin.js·styles.css).
+
+### 26.2 검증
+- [x] T26.5 node --check PASS. WSL-headless harness **ctxmenu 10/10 PASS**(카드 badge=이름만+개수 pill·접힌
+      카드 우클릭 펼치기/상세/복사·펼친 스키마 접기 항목·빈 스키마 badge=0·에러 0) + **initview 회귀 31/31 PASS**.
+- [x] T26.6 verify-completion(--pre-commit) PASS + commit/push/PR #542 merge(100535f8).
+- [x] T26.7 배포(deploy-web.sh 100535f8, soak 통과) + **PB-0008 실 Windows 시각검증 PASS**(62 카드 badge·접힌 카드 우클릭 메뉴·펼치기 라이브 동작·펼친 스키마 접기) + TEST.md Run 기록.
+
+## 27. graph-initview 후속 — 검색 시 스키마 카드 badge 매칭/전체 표기 (search-badge, 2026-07-02, entry persona dispatch)
+사용자 보고: 접힌 스키마 카드는 테이블 개수 badge 가 정상 출력되나 **검색어가 포함되면 badge 가 사라짐**.
+요청 표기: 검색 없음 → `[전체 테이블 개수]`(현행 유지), 검색 필터 → `[검색 테이블 개수 / 전체 테이블 개수]`.
+등급 **Minor**(frontend-only 비파괴, 코드 거주 feature-0003 admin.js).
+<!-- 근본원인: 검색이 매칭 스키마를 combo 로 auto-expand 해 카드(badge 보유)가 사라지고, 스키마명 매칭
+     카드는 search_nodes 응답에 table_count 가 없어 badge 소실. -->
+
+### 27.1 구현
+- [x] T27.1 검색을 **스키마 카드 필터 뷰**로 재설계 — 매칭 노드를 스키마별 집계(Table→스키마, Column→소속
+      테이블의 스키마, Schema명 매칭→0매칭 카드) 후 매칭 스키마를 **카드로 유지**(auto-expand 폐기). 매칭
+      GlossaryTerm/기타는 terms 로 표시. `_metaGraph.searchMatch`(schemaKey→Set 매칭테이블)·`searchMatchTables` 저장.
+- [x] T27.2 `schemaTotals` 캐시(scope별 스키마→전체 테이블수) — roots `mode=schemas` 에서 재구축하고
+      resetModel 에서 **보존**(검색이 모델을 리셋해도 카드 badge 의 '전체 개수' 소스 유지).
+- [x] T27.3 카드 badge: 검색 없음 → `전체`(남색), 검색+매칭 → `매칭/전체`(teal 강조). cnt=null(집계 실패) →
+      matched-only 또는 badge 없음(배지없는 카드 강등 정합). 펼친 스키마 내 매칭 테이블은 rel 부스트로 강조.
+- [x] T27.4 cache-buster `?v=20260702-search-badge`.
+
+### 27.2 검증
+- [x] T27.5 node --check PASS + WSL-headless harness **initview 33/33 PASS**(검색 카드필터·badge 2/12·1/40·1/33·
+      검색 클리어→roots badge 전체(12) 복귀·stale-scope·dead-card·빈스키마·혼합버전) + **ctxmenu 회귀 10/10 PASS**.
+      라이브 badge(teal 매칭/전체) 스크린샷 확인.
+- [x] T27.6 §18.8 적대 리뷰(MAJOR 1+MINOR 3) 반영 + verify-completion PASS + PR #544 merge(8fcda59c).
+- [x] T27.7 배포(deploy-web.sh 8fcda59c, soak 통과) + **PB-0008 실 Windows 시각검증 PASS**(검색 `user` → 카드 12장 badge 매칭/전체 teal, cap `+` 표기, 검색 클리어 전체 원복) + TEST.md Run 기록.
+- [ ] T26.6 verify-completion(--pre-commit) PASS + commit/push/PR/merge.
+- [ ] T26.7 배포(deploy_scope: included) + PB-0008 실 Windows 시각검증 + TEST.md Run 기록.
+## 28. graph-expand-perf — 테이블 노드 더블클릭 프리즈 잔존 해소 (refreshStates per-node setElementState) (2026-07-02, 사용자 후속 보고)
+사용자 관찰(graph-perf-bg 배포 후): `mssql-qa-idc.dk_data_release.Achievement` 더블클릭 시 **2~3초 프리즈 잔존**. 정본: DECISIONS ADR-006, MODIFY CHG-20260702-graph-expand-perf.
+등급: **Major**(프론트 렌더 상태-갱신 계층, 데이터 API·스키마 불변·비파괴, 마이그레이션 없음).
+
+### 28.1 진단 (실측 — 헤드리스 harness + web 컨테이너 서버측 계측)
+- [x] T28.1 후보 배제: AGE 이웃 depth=2 = **135ms**(128노드/127엣지) · G6 `setData`+`draw`(200노드+127엣지) = **~200ms**(헤드리스) · introspection = Achievement analyzed 라 **SKIP**. → fetch·render·introspection 모두 병목 아님.
+- [x] T28.2 진짜 병목 특정: `_metaGraphRefreshStates` 의 **전 노드 개별 `g.setElementState`** — G6 v5 건당 ~50ms(startBatch 무효), **실측 200노드 재적용 = 10,046ms**. 더블클릭 → `_metaG6Apply` 가 `_stateCache` clear → 직후 `_metaGraphSyncAnalysisMarkers`(+2.5s 폴)가 cold 로 전 노드 재-setElementState = 프리즈.
+
+### 28.2 구현 (FE admin.js)
+- [x] T28.3 `_metaG6Apply`: setData 후 `_stateCache` 를 clear 만 하지 않고 **방금 bake 된 signature 로 populate** → rebuild 직후 refresh no-op.
+- [x] T28.4 `_metaGraphRefreshStates`: 변화분(sig≠cache)만 적용 + 변화>4 면 per-node 대신 **`_metaG6Apply(false)` 단일 rebuild** 폴백(전 상태 한 번에 bake, fit=false).
+- [x] T28.5 폴 tick 이중 refresh(markAnalyzed+markRunning) 를 **rAF coalescing**(같은 프레임 1회 실행)으로 병합 — 이중 rebuild + in-flight setData/draw 재진입 방지. 본문 `_metaGraphRefreshStatesNow`.
+- [x] T28.6 cache-buster `admin.js?v=20260702-graph-expand-perf`.
+
+### 28.3 검증
+- [x] T28.7 `node --check admin.js` PASS. setElementState 사용처 = 단일노드(_metaApplyState) + refreshStates(변화분/폴백) 둘로 한정 확인.
+- [x] T28.8 **헤드리스 harness 실측**: post-rebuild refresh(마커 무변화) = **0ms**, bulk 55마커 변화 = **rebuild 82ms**, 동일상황 구 per-node = **8,890ms**. 즉 ~9s→~0–80ms.
+- [x] T28.9 **§18.8 적대 2렌즈**(정확성/상태유실 + 프리즈재발): 상태유실 BLOCKING 0(캐시 populate ≡ setData bake, selection 유지, 재귀 없음). 프리즈재발 렌즈가 폴 tick 이중 refresh 지적 → rAF coalescing 반영. NIT(combo/schema 캐시·THRESHOLD 경계 200ms)은 수용. REV-20260702T133000 [AGENT-TEAM].
+- [ ] T28.10 graph-expand-perf 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 대량 스키마 노드(Achievement 등) 더블클릭 시 **프리즈 없이 즉시 확장** + AI 능동분석 진행 중 stutter 없음.
+
+## 29. 신뢰/추정 관계 자기교정 파이프라인 미가동 근본수정 (rel-selfheal, 2026-07-02, entry persona dispatch)
+
+### 29.0 맥락 (사용자 검증 요청 — "Achievement 신뢰/추정 관계가 실제 구축·표시·추론활용되는가")
+- 검증 실측: `table_relationships` 전체 **2행**(conversation candidate, Achievement→Quest/Reward w=0.49)
+  뿐 — **inferred 0건·trusted 0건·프로브 0회**. 그 2행도 스키마 미해석('')이라 AGE 투영에서 고아
+  Column 노드(`<ds>:Achievement.UniqueID`) — 실 Table 노드(`dk_data_release.Achievement`)와 미연결 →
+  **그래프 뷰에 추정 점선 비가시 + graph_navigate 이웃 미노출**. UI(G6 실선/점선/배지)·digest 주입은 정상.
+- 근본원인 4개:
+  - **D1b (치명)**: `AGENT_RELATIONSHIP_*` 7종이 `shared/config.py` `__all__` 미등재 → star-import 소비자
+    insight.py 에서 **NameError** → per-schema `except: continue` 가 삼켜 **insight 스캔의 스키마 처리
+    전체(인사이트 갱신+FK introspect+추론+프로브)가 06-29 13:58 부터 조용히 정지** (table_insight
+    max(updated_at) 실측). `AGENT_SQL_FIX_MODEL`(llm_fix_sql)도 동일 클래스.
+  - **D1a (설계 갭)**: 훅 발화조건이 `schema_structure_changed or schema_artifact_missing` 뿐 — 이미
+    스캔 완료된 기존 91개 스키마에서 영원히 미발화 (REPORT 06-30 "주기 re-probe 후속" 의 본체).
+  - **D2**: `_pk_like` 후보에 `uniqueid` 부재 — 이 게임 DB 관용 PK(`UniqueID`) 미인식 →
+    `<X>ID → X.UniqueID` name_fk 추론 전면 불가 (Achievement 시나리오 그 자체).
+  - **D3**: 대화 JOIN 학습이 스키마 미해석 leaf 저장(파서가 qualifier 버림 + default 부재) → 고아 엣지.
+- 등급 **Major** (여러 파일·라이브 파이프라인 복구·운영 DB 프로브 재가동). 정본: DECISIONS ADR-007,
+  MODIFY CHG-20260702T024556.
+
+### 29.1 구현
+- [x] T29.1 config: `AGENT_RELATIONSHIP_*` 7종 + `AGENT_SQL_FIX_MODEL` `__all__` 등재(D1b) +
+      신규 `AGENT_RELATIONSHIP_REINFER_SEC`(기본 21600=6h, ≤0 off).
+- [x] T29.2 insight.py: 관계 유지보수 주기 cadence — 스키마별 `relationship_infer_at` kv +
+      `_is_refresh_due` 게이트(구조변경/부재 조건에 OR), 수행 후 스탬프(D1a). 첫 사이클 = 전 스키마 백필.
+- [x] T29.3 스키마-slot 규약 통일(MSSQL=DB명): introspect/추론 저장 라벨 = 순회 중 DB명
+      (`store_schema` — 질의 스키마와 분리), 프로브 `db_scope` 필터 + 연결 DB qualifier 제거.
+- [x] T29.4 relationships.py: `_pk_like` 에 `uniqueid`/`unique_id`(D2) · `_alias_map`/parser qualifier
+      캡처(3-part=db, 2-part 비-dbo, dbo→'') + `learn_relationships_from_sql(default_schema=)`(D3) ·
+      프로브 neutral 도 `last_validated_at` 전진(동일 후보 반복 프로브 방지).
+- [x] T29.5 agent_core.py: 대화 학습 호출에 `default_schema=get_active_database() or get_active_default_db()`.
+
+### 29.2 검증
+- [x] T29.6 단위: test_relationships.py 43건 PASS(신규 5 — uniqueid PK name_fk(Achievement 실측 스키마),
+      parser qualifier 3종, alias_map tuple) + **신규 test_config_star_export.py 3건**(star-import bare
+      이름 런타임 해석 AST 가드 — 이 결함 클래스 봉인) + insight 인접 PASS + py_compile.
+- [x] T29.7 적대 리뷰(§18.8, 3렌즈 backend/security/qa — resume 세션에서 재실행) →
+      **backend FAIL(MAJOR 6)·security/qa PASS-WITH-FIXES** → 필수 발견 전량 수정 + 재검증:
+      - B-F1 instance-scan 커서 DB별 분리(`_instance_scan_cursor_key` — MSSQL multi-DB 첫-DB 독점 해소)
+      - B-F2 강화/파단 write-back 스키마-slot 한정(교차-DB 동명 오염 차단, '' wildcard)
+      - B-F3 `_GENERIC_KEY_COLS`+=uniqueid(PK≡PK shared_key 쓰레기 차단 — 실행 재현됨)
+      - B-F4 프로브 실행오류: 객체-부재=negative + 전 실패 last_validated_at 전진(영구 미파단·기아 차단)
+      - Sec-F2 프로브 cap/sample/timeout 코드 클램프(500/200/60s) · QA-F4 MSSQL slot lower() 정규화
+      - QA-F1 라이브 테스트 main() 가드(수집 안전) · B-F7 신규 except 경고 로깅 · B-F11 neutral/failed 집계
+      - 커버리지 보강(QA-F2): +7 relationships 테스트 + 신규 test_insight_rel_cadence.py 3건.
+      - **수정분 적대 재검증 라운드** → 신규 결함 2건 적발·수정: R-1(객체-부재 negative 를 slot-확정
+        후보로 한정 — ''-wildcard×오답 catalog 오파단 차단) + R-2(execute_sql 실행-시점 컨텍스트
+        스냅샷 — 라우터 primary 복원 후 학습 오각인 차단, tools.py). 회귀 테스트 +4.
+      - 최종 **61건 PASS** + ruff clean. 수용 한계는 ADR-007 Consequences ①~④(dbo-only·케이스
+        플래핑·실효 30h·프로브 결합).
+- [x] T29.7b verify-completion PASS + commit 961a2a4b + main 병합(재번호 ADR-007/§29) + PR #547 머지
+      (a619da29) + cycle-finalize.
+- [x] T29.8 배포(insight/ask-worker 재빌드 + web 롤링 soak PASS) + 데이터 정정(2행 dk_data_release
+      정규화 — source/target_schema 와 **table_fqn 컬럼 동시** 갱신 필요(1차 시도가 fqn 미갱신으로
+      고아 재생성, 재정정 완료) + AGE 고아 Column 3노드 회수 + 재sync) + 라이브 검증:
+      - inferred candidate 2,601 · fk_introspect trusted 49 · inferred broken 110(프로브 자기교정 실동작)
+      - 그래프: `dk_data_release.Achievement` 실 Table 체인에 candidate 점선 4엣지(conversation w0.49 ×2
+        + inferred name_fk w0.35 ×2) 투영, 고아 0
+      - digest: load_relationship_context 가 `[추정 w=]` 태그로 Achievement 관계 주입 확인
+- [x] T29.9 (라이브 후속 hotfix, probe-mssqlfix) **MSSQL 프로브 SQL 오류 130 전면 실패** 적발
+      (B-F7 경고 로깅이 노출한 잠복 결함) → `SUM(CASE WHEN EXISTS)` → 파생 테이블 내 CASE +
+      바깥 `SUM(s.m)` 재작성 + 회귀 테스트. CHG-20260702T100500. 실패 기간 오파단 0(R-1 가드).
+- [ ] T29.7b verify-completion + commit/PR/merge.
+- [ ] T29.8 배포(insight/ask-worker 재빌드 + web 롤링) + 데이터 정정(기존 2행 dk_data_release 정규화 +
+      AGE 고아 Column 3노드 회수 + 재sync) + 라이브 검증(inferred 적재·프로브 신호·그래프 점선·digest).
+
+## 30. graph-dblclick-cam — 더블클릭 카메라 순간이동 재배치 해소(앵커-중심 애니 팬) (2026-07-02, 사용자 후속 보고)
+사용자 관찰(프리즈 해소 후): 테이블 노드 **더블클릭 시 카메라가 순간이동 재배치되어 불편**. "카메라 [고정/애니메이션] 자율 판단하여 개선" 위임. 정본: DECISIONS ADR-008, MODIFY CHG-20260702-graph-dblclick-cam-anim.
+등급: **Minor→Major 승계**(프론트 카메라 거동 1곳, 비파괴·데이터 API 불변·마이그레이션 없음; feature-0016 cross-cut).
+
+### 30.1 조사·자율판단
+- [x] T30.1 더블클릭 카메라 거동 조사: `_metaGraphExpand`(4391, 더블클릭) 는 graph-initview(A3)로 이미 앵커-중심 국소 focus 이나 **`focusElement`/`zoomTo` 를 animation=false(즉시)** 로 호출 → 순간이동. (우클릭 "중심 보기" `_metaGraphFocus` 는 별개 함수.)
+- [x] T30.2 자율판단 = **애니메이션(앵커-중심 팬)**. 고정(무이동)은 additive 확장에서 새 이웃/앵커가 화면 밖이라 부적합 → 앵커-중심 focus 로 클릭 대상 프로미넌트 유지 + 부드러운 전환. (ADR-008)
+- [x] T30.3 G6 카메라 애니 API 헤드리스 검증: `focusElement(id,{duration,easing})`·`zoomTo(z,{duration})` 가 graph `animation:false` 에서도 per-call 애니 스펙 동작·throw 없음·카메라 실제 이동 확인.
+
+### 30.2 구현
+- [x] T30.4 `_metaGraphExpand` 카메라 블록: `focusElement(fel, false)` → `focusElement(fel, {duration:420, easing:'ease-in-out'})`. 판독 하한 clamp(zoomTo)는 즉시 유지(팬 애니 중첩 회피). seq 가드(`if (seq===_metaGraph._opSeq)`)로 연타 stale 애니 방지. 앵커는 schemaExpanded(4436-4448)로 노드 렌더 보장 + `if(fel)` 가드로 미렌더 시 throw 없이 skip.
+- [x] T30.5 cache-buster `admin.js?v=20260702-graph-dblclick-cam`. loadRoots/검색/리사이즈 fit·우클릭 중심보기는 불변.
+
+### 30.3 검증
+- [x] T30.6 `node --check admin.js` PASS. diff = `_metaGraphExpand` 카메라 블록 1곳(헬퍼 없이 인라인).
+- [x] T30.7 **§18.8 적대 리뷰**: 최초 오편집(우클릭 `_metaGraphFocus` 수정 — 라우팅 오인) + 그 함수의 `schemaExpanded.add` 누락→앵커 카드-렌더→focusElement throw→fit-to-all 폴백(BLOCKING) 적발 → **진짜 더블클릭 `_metaGraphExpand` 로 교정**(앵커 노드 렌더 보장 경로) + focus 함수 원복 + 헬퍼 제거. 카메라 op=viewport transform 만(프리즈 무관) 확인. REV-20260702T190000 [SUBAGENT].
+- [x] T30.8 배포(web 재빌드) + 라이브 PB-0008: **애니 미발생**(순간이동 잔존) 사용자 재보고 → §31 로 근본수정(no-op 원인 = graph animation:false 게이팅).
+
+## 31. graph-dblclick-cam2 — 더블클릭 카메라 애니 no-op 근본수정(manual rAF tween) (2026-07-02, 사용자 재보고)
+사용자 재보고(graph-dblclick-cam 배포 후): 더블클릭 시 **애니 없이 카메라 순간이동**. 근본원인: graph config `animation:false`(레이아웃 셔플 방지)가 per-call 카메라 애니(`focusElement`/`zoomTo` animation 인자)까지 무효화 → §30 의 `focusElement({duration:420})` 는 no-op. 정본: DECISIONS ADR-009, MODIFY CHG-20260702-graph-dblclick-cam2-manual-tween.
+등급: **Major 승계**(프론트 카메라 1곳, 비파괴·데이터 API 불변·마이그레이션 없음).
+
+### 31.1 진단(실증)
+- [x] T31.1 헤드리스 실증: 동일 그래프 `animation:false`→`focusElement({duration:400})`=**2ms(즉시)** / `animation:true`→**412ms(애니)**. 즉 전역 animation:false 가 per-call 카메라 애니 게이팅 → §30 no-op 확정.
+- [x] T31.2 대안 배제: 전역 animation ON=setData 레이아웃 셔플 재발(graph-g6 회귀); `setOptions({animation:true})` 토글=동작하나 tween 창 동시 rebuild 셔플 위험(전역상태 경합). → G6 애니 우회 필요.
+
+### 31.2 구현
+- [x] T31.3 신규 `_metaGraphAnimateFocus(key, seq)` — **manual rAF tween**: 앵커 `getElementRenderBounds` 중심(canvas) → `getViewportByCanvas` → 뷰포트 중앙(`getSize()`/2) delta(client px) 를 requestAnimationFrame 이징 누적 `translateBy`(420ms). 판독 하한 줌 clamp 즉시. setData 미사용·전역상태 무변경. seq 로 연타 중단, 미렌더/API 실패는 즉시 focus 폴백.
+- [x] T31.4 `_metaGraphExpand`: no-op `focusElement({duration})` → `await _metaGraphAnimateFocus(key, seq)`. cache-buster `admin.js?v=20260702-graph-dblclick-cam2`. 다른 카메라 경로 불변.
+
+### 31.3 검증
+- [x] T31.5 manual tween 헤드리스 실증: 앵커가 뷰포트 정중앙에 26프레임/434ms 안착. `node --check` PASS.
+- [x] T31.6 **§18.8 적대 6축**(무한루프·중앙정확·seq/동시성·폴백·줌순서·회귀): BLOCKING 0. G6 번들 소스 대조 — tween 수학=G6 자체 `focus` 공식 동일(앵커 정중앙 오차 ≤1e-13px). NIT 2건(420ms 중 2차 더블클릭+fetch실패 카메라 중간잔류 자가치유 / 동시 휠줌 정렬 어긋남) 수용. REV-20260702T230000 [SUBAGENT].
+- [x] T31.7 배포 + 라이브 PB-0008: **팬 동작 확인**(부드러운 이동). 잔여 = 팬 시작 ~350ms 텀(답답) → §34 로 개선.
+
+## 32. graph-reltrace — 접힌 상태 관계 표시 + 관계 클릭 추적 + AI 능동 분석 연동 (2026-07-03, 사용자 후속 요청)
+
+### 32.0 맥락 (사용자 요청 3건)
+- 이슈: 테이블을 **더블클릭(컬럼 펼침)하기 전까지 연결 관계가 그래프에 나타나지 않음** — REFERENCES 는
+  Column→Column 이라 두 테이블이 컬럼까지 펼쳐져야만 엣지가 렌더되던 구조(진단: `_metaG6Build` 엣지
+  조립이 양끝 노드 렌더 시에만 + `schema_tables` 가 HAS_TABLE 만 반환).
+- 요구 ①: **테이블이 접힌 상태에서도 연결 관계 표시**.
+- 요구 ②: **상세정보 패널에서 각 관계 클릭 시 대상 테이블·컬럼을 추적**(그래프에서 따라가기).
+- 요구 ③: **AI 능동 분석으로도 작동**.
+- 등급 **Major**(cross-cut 프론트 feature-0003 admin.js + 백엔드 feature-0002 metadata_graph 투영 1건 추가;
+  데이터 비파괴·마이그레이션 0). 정본: 본 TASK §32 · MODIFY CHG-20260703T · REVIEW REV-20260703T.
+
+### 32.1 구현
+- [x] T32.1 **백엔드**(metadata_graph.py `schema_tables`): 스키마 펼침 응답에 스키마 내 컬럼에서 나가는
+      **REFERENCES 엣지**(Column→Column, FK null-status 포함·broken 제외·cap)를 추가. 접힌 테이블에도
+      관계 데이터가 모델에 오도록.
+- [x] T32.2 **프론트 ①**(admin.js `_metaG6Build` 엣지 조립): REFERENCES 끝점을 **렌더된 id 로 해소** —
+      컬럼 렌더 시 컬럼-레벨, 미렌더 시 **소속 테이블로 승격**(키 문자열에서 부모 도출, 컬럼 노드 불요).
+      같은 두 렌더 끝점의 다수 컬럼-쌍은 하나로 dedupe(최강 상태 채택·count·pairs). → 접힌 테이블 간
+      관계 엣지 렌더. intra-table 자기참조 제외.
+- [x] T32.3 **프론트 ②**(신규 `_metaGraphTraceRelation`): 관계 클릭 → 대상 테이블을 이웃과 함께 화면에
+      가져오고(스키마 펼침) 컬럼 전개 + **대상 컬럼 강조 + 카메라 focus**. 상세 패널 "관계(N)" 행 +
+      기존 "관계 상세" 행이 공통 호출(showDetail→trace 통일). `_metaGraphBindTraceRows` 공용 바인더.
+- [x] T32.4 **프론트 ③**(`_metaGraphLoadNodeAnalysis` done): AI 능동 분석 결과 박스에 LLM prose 옆으로
+      **구조화된 관계를 추적 가능 행**(`_metaGraphRelTraceRowsHTML`)으로 노출 → 분석 결과에서도 대상 추적.
+      (AI 능동 분석 백엔드는 이미 REFERENCES 를 따라 이웃 재귀 — 그 관계를 UI 로 추적 가능하게 표면화.)
+- [x] T32.5 styles.css 추적 행 hover·"🔎 추적" 힌트 + admin.html 캐시버스터 `20260703-graph-reltrace`.
+
+### 32.2 검증
+- [x] T32.6 백엔드 신규 Cypher 라이브 AGE 실행: dblog 스키마에서 `account.AccountId → arenabegin.AccountId`
+      (conversation·candidate) 반환 확인.
+- [x] T32.7 프론트 엣지 집계 로직 격리 Node 검증 **11/11 PASS**(접힘=테이블승격·펼침=컬럼레벨·혼합·미렌더
+      graceful·dedupe/trusted승급·intra-table제외) + `_metaGraphRelTraceRowsHTML` 추적행 산출 검증(data-trace
+      대상 정확) + `node --check` admin.js + py_compile metadata_graph.py + 참조 심볼 전수 정의 확인.
+- [ ] T32.8 §18.8 적대 리뷰 패널(frontend/backend/qa) + verify-completion.
+- [ ] T32.9 배포(web 재빌드; 백엔드 포함이라 워커/web) + **PB-0008 실 Windows**: 접힌 상태 관계 표시 ·
+      관계 클릭 추적(대상 테이블·컬럼 강조) · AI 능동 분석 결과 추적 행 육안 확인.
+
+## 33. node-role-viz — AI 능동 분석 완료 노드 테이블 역할 시각 표식 (2026-07-02, entry persona dispatch)
+사용자 요청: 그래프 뷰 노드가 단순 사각형+글자라 가시성이 떨어짐 — **AI 능동 분석이 완료된 노드에 그 테이블이
+수행하는 역할을 명시적으로 알 수 있는 시각 표식**을 웹 리서치 기반으로 구성. 정본: DECISIONS ADR-010,
+MODIFY CHG-20260703-node-role-viz.
+등급: **Major**(다중 파일 + alembic 0031 비파괴 ADD COLUMN — FUNCTION.md §12 사전승인 범위 내).
+
+### 33.1 웹 리서치 → 설계 (ADR-010)
+- [x] T33.1 리서치: 범주 인코딩은 **색(≤8종)+아이콘 중복 인코딩+범례**가 표준(yFiles 지식그래프 가이드·
+      Tom Sawyer·CatPAW), 팔레트는 **Okabe-Ito 8색**(색약 안전 표준), 분류체계는 고전 DB 테이블 분류
+      (master/reference/transaction/history)를 게임 운영 DB 로 조정.
+- [x] T33.2 분류체계 확정 8종(NODE_ROLES): master 기준·정의📘 / account 계정·유저👤 / transaction 거래·행위💳 /
+      log 로그·이력📜 / mapping 매핑·연결🔗 / config 설정⚙️ / stats 집계·통계📊 / etc 기타◽.
+      인코딩 = 분석완료 테이블 **칩 fill=역할색 + 라벨 앞 아이콘 + 범례 행 + 상세패널 역할 칩**(미분석=teal 유지).
+
+### 33.2 구현 (BE=feature-0002 · UI=feature-0003 cross-cut)
+- [x] T33.3 alembic 0031 `node_analysis_jobs.role varchar(24)` 비파괴 ADD(GRANT 는 테이블 단위 승계).
+- [x] T33.4 LLM 계약: NODE_ANALYSIS_PROMPT 출력에 `role`(8종 enum, Table 한정) 추가. worker 가
+      `_resolve_role`(LLM 유효값 우선 → `classify_role_heuristic` 이름·본문 2-pass 폴백, Table 외 NULL)로 저장.
+- [x] T33.5 기존 done 행 백필: `backfill_roles()`(휴리스틱, LLM 재호출 없음) insight-worker 틱 배선 —
+      틱당 200행, 잔여 0 이면 즉시 no-op(자기 종결·멱등).
+- [x] T33.6 조회 확장: get_scope_analysis_status(roles 집계)·get_run_status(roles+jobs.role)·
+      get_node_analysis(role) + admin_metadata bulk status 응답 `roles` 노출.
+- [x] T33.7 FE(admin.js): `_metaGraph.roles` Map + `_META_ROLE` 상수 + `_metaTableStyle(role)` 칩 색/라벨색 +
+      `_metaG6Build` 아이콘 라벨 + 캐시 서명 `#R=` suffix(`_metaCacheSig`) → refreshStates 가 **역할 도착 시
+      rebuild 승격**(역할은 bake 스타일이라 setElementState 불가) + 마커 수신 3경로(폴·sync·상세) 배선 +
+      상세패널 역할 칩 + 진행패널 역할 병기. admin.html 역할 범례 행 + cache-buster `20260703-node-role-viz`.
+
+### 33.3 검증
+- [x] T33.8 단위: test_node_analysis_role.py 10건(분류체계 계약·휴리스틱 우선순위·LLM 우선/폴백·Table 한정) PASS
+      + 기존 relevance 28건 회귀 0 (합 38).
+- [x] T33.9 headless harness(실 admin.html/admin.js/g6.min.js + mock API): 미분석 teal 원형 / 폴 경로 role
+      bake(칩 색·아이콘·라벨색·캐시서명·analyzed state) / sync 경로 / 무효 role 방어 — ALL PASS, pageerror 0.
+      시각 스크린샷: 8종 역할 칩 + 범례 렌더 확인.
+- [x] T33.10 전체 pytest 회귀 (agent 컨테이너 worktree 마운트).
+- [x] T33.11 §18.8 적대 패널 4렌즈(backend/frontend/ux·design/qa) — MAJOR 5(마이그레이션 창 role 쿼리 폴백 B1·
+      backfill updated_at 역전 → id DESC 선택 Q1·selected 테두리 위장 U1·running 점선 불가시 U2·dark 플래그
+      오배정 U3) + MINOR 6 수정 반영, 수용 6건 근거 기록. REV-20260703T003000. 수정 후 53 단위 + harness +
+      전체 pytest 재검증 PASS.
+- [ ] T33.12 배포(web+insight-worker 재빌드+alembic 0031) + **라이브 PB-0008 실 Windows**: 분석 완료 테이블
+      칩 색/아이콘/범례 + 상세패널 역할 칩 육안 확인.
+
+
+## 33. reltrace-tabledetail — 테이블 단일클릭 상세에 관계 표시(모델 병합) (2026-07-03, graph-reltrace PB-0008 후속)
+
+### 33.0 맥락
+- graph-reltrace(§32) 배포 후 PB-0008 실측: ① 접힌 상태 관계 표시 PASS(`account─▶arenabegin` 점선).
+  그러나 **테이블 노드 단일클릭 상세 패널에 "관계(N)" 섹션이 안 뜸** — `_metaGraphShowDetail` 이
+  `?node=&depth=1` fetch 인데 테이블 기준 REFERENCES 는 (테이블→컬럼→참조) 2-hop 이라 depth=1 응답에
+  없음(컬럼 단일클릭 depth=1 엔 있음). 관계는 스키마 펼침 시 이미 모델에 로드됨.
+- 등급 Minor(프론트 전용·비파괴).
+
+### 33.1 구현·검증 (admin.js)
+- [x] T33.1 `_metaGraphRenderDetail`: refs 를 fetched edges + **모델(_metaGraph.edges)에서 self(테이블이면
+      자기 컬럼 포함)에 닿는 REFERENCES 병합**(dedup·broken 제외). `nm()` counter 노드명 모델 폴백.
+- [x] T33.2 `_metaGraphShowRelations`: 동일 모델 병합(mNodes/mEdges 보강) — "관계 상세" 도 테이블 관계 표시.
+- [x] T33.3 캐시버스터 `20260703-reltrace-tabledetail`. node --check PASS + 모델병합 로직 격리 Node 5/5 PASS.
+- [x] T33.4 §18.8 적대 리뷰 + verify-completion.
+- [x] T33.5 배포(web b14eb117 롤링) + **PB-0008 실 Windows PASS**: 테이블 단일클릭 상세 "관계(1)" 행 표시 → 클릭 추적(대상 컬럼 강조·카메라 이동) + graph-reltrace 3항목(① 접힌관계 ② 관계클릭추적 ③ AI분석추적) 통합 충족. 스크린샷 5매(feature-0003 TEST §3 POST-DEPLOY).
+## 34. graph-dblclick-latency — 더블클릭 카메라 팬 반응 지연(~350ms 텀) 제거 (2026-07-03, 사용자 후속 보고)
+사용자 관찰(graph-dblclick-cam2 배포 후): 팬은 부드러우나 더블클릭 직후가 아닌 **~350ms 텀 뒤 시작**돼 답답. 정본: DECISIONS ADR-011, MODIFY CHG-20260703-graph-dblclick-latency.
+등급: **Major 승계**(프론트 카메라 1곳, 비파괴·데이터 API 불변·마이그레이션 없음).
+
+### 34.1 진단
+- [x] T34.1 원인: 팬(`_metaGraphAnimateFocus`)이 `_metaGraphExpand` 파이프라인 맨 끝(busy→yield→`/graph?depth=2` fetch~135ms→ingest→`_metaG6Apply` setData+draw~200ms→**그제서야** 팬)에서 시작. 앵커는 이미 렌더인데 fetch·rebuild 대기 → ~350ms 텀.
+
+### 34.2 구현
+- [x] T34.2 `_metaGraphExpand`: 팬을 busy 직후 **fetch 전 fire-and-forget**(await 없이) 시작 → 즉시 반응. 파이프라인 끝 await 팬 호출 제거(중복 방지).
+- [x] T34.3 `_metaGraphAnimateFocus` 를 고정-duration → **적응형 follow** 재작성: 매 프레임 앵커 현재 뷰포트 위치 재조회 → 잔여 delta K=0.24 translateBy(ease-out). rebuild 로 앵커 이동/재생성돼도 최종 위치 수렴. 종료=수렴(<1.2px)/seq/MAXMS(1200ms) 단일 시간상한(프레임카운트 조기포기 제거). W/H 매 프레임 재조회, API 부재 시 focusElement 폴백.
+- [x] T34.4 cache-buster `admin.js?v=20260703-graph-dblclick-latency`. 다른 카메라 경로 불변.
+
+### 34.3 검증
+- [x] T34.5 헤드리스 실증: fire-and-forget 즉시 시작 + 중간 setData 로 앵커 이동(offset -500) → **24프레임에 최종 중앙 [399,250]≈[400,250] 수렴**. `node --check` PASS.
+- [x] T34.6 **§18.8 적대 7축**(종료보장·fire-and-forget 동시성·이동수렴·fetch실패/seq·미렌더/폴백·회귀·K/임계): BLOCKING 0. **MEDIUM**(missStreak 프레임카운트 조기포기 — 저사양 rAF 탈동조로 팬 조기중단 위험) 적발 → **제거**(MAXMS 단일상한). NIT(API 폴백 손실·W/H 스테일) → API 가드 + W/H 매 프레임 재조회 반영. REV-20260703T003000 [SUBAGENT].
+- [ ] T34.7 배포(web 재빌드) + **라이브 PB-0008 실 Windows**: 더블클릭 시 카메라가 **텀 없이 즉시** 앵커로 부드럽게 팬하는지 육안 확인.
+
+## 35. reldetail-colexpand — 상세 패널 관계 컬럼별 아코디언 + 방향 구분·개수 + 의미 툴팁 (2026-07-03, 사용자 요청)
+
+### 35.0 맥락 (사용자 요청 4건)
+- ① 관계는 **컬럼 클릭 시 펼쳐지며** 나타나도록(상세 패널). ② **자신을 참조/상대를 참조** 관계 구분.
+  ③ 각 관계 **개수**를 각각 구분 표기. ④ 관계 **hover 툴팁 = 관계 의미 분석**.
+- 진단: 기존 상세 패널 "관계(N)"은 →/← 혼재 평면 목록이고 컬럼과 분리, 툴팁은 "클릭하면 추적" 안내뿐.
+- 등급 **Major**(cross-cut 프론트 UX, feature-0003 admin.js/styles/html; 데이터 비파괴·마이그레이션 0·백엔드 무변경).
+  ④의 "분석한 내용"은 per-edge LLM(hover 지연·비용 비현실적) 대신 **메타데이터 조합 의미 분석**으로 구현 —
+  노드 단위 LLM 분석은 기존 "AI 능동 분석"이 담당. 정본: TASK §35 · MODIFY CHG-20260703T · REVIEW REV-20260703T.
+
+### 35.1 구현 (admin.js / styles.css)
+- [x] T35.1 관계를 **소속 self측 컬럼별로 그룹화**(`colRel` Map) + 각 컬럼 안에서 참조함(out,→)/참조받음(in,←)
+      분리. `selfColKey` 로 self측 끝점 판정(테이블 self=자기 컬럼, 컬럼 self=자신).
+- [x] T35.2 컬럼(N) 목록을 **아코디언**: 관계 있는 컬럼은 🔗 + 토글 버튼 + `→N ←M` 개수 배지, 클릭 시
+      `.amgr-col-body` 펼침/접힘(caret ▸/▾·aria-expanded). 관계 없는 컬럼은 plain. 컬럼 self 는 방향 그룹 직접 표시.
+- [x] T35.3 전체 관계 요약 배지("관계 T · 참조함 X · 참조받음 Y") — h4 옆.
+- [x] T35.4 신규 `_metaRelSemanticTip(e,dir,selfEndFqn,otherFqn)` — 방향 문장 + 근거(대화학습/FK/추정/AI/수동)
+      + 신뢰도(신뢰/추정 w%) + cardinality + 근거별 의미 해석을 조합해 native title(다중줄) 툴팁으로. 각 관계 행에 적용.
+- [x] T35.5 styles.css 아코디언·방향 그룹·개수 배지 스타일 + admin.html 캐시버스터 `20260703-reldetail-colexpand`.
+
+### 35.2 검증
+- [x] T35.6 격리 로직 Node **8/8 PASS**(방향별 개수·컬럼 그룹화·참조함/받음 대상·관계없는 컬럼 plain·컬럼 self
+      분류·툴팁 방향문장+근거+신뢰도·FK 툴팁) + `node --check` admin.js.
+- [ ] T35.7 §18.8 적대 리뷰 + verify-completion.
+- [x] T35.8 배포(web ecf84e24 롤링) + **PB-0008 실 Windows PASS**: ① 컬럼 클릭 관계 아코디언 펼침 ② 참조함(→)/참조받음(←) 그룹 구분 ③ 방향별 개수(→1 ←0 배지 + 요약) ④ hover 의미 툴팁(방향·근거 대화JOIN학습·신뢰도 49%) 전건 육안 충족. 스크린샷 04-accordion-expanded.png.
+
+## 36. role-legend-panel — 역할 범례를 우측 상세 패널 상단 세로·접힘으로 이전 (2026-07-03, 사용자 후속 요청)
+사용자 요청(그래프 뷰 노드 시각화 개선): "테이블 역할(AI 분석 완료 시 칩 색)" 범례를 **다른 위치에 세로로 구성 + 접힐 수 있도록**. node-role-viz(§33, PR #555 병합·배포 완료) 위 UI 개선. 배치 위치는 AskUserQuestion 으로 **"우측 상세 패널 상단"** 사용자 선택. 정본: MODIFY CHG-20260703-role-legend-panel. (원래 §35 로 작성했으나 reldetail-colexpand 가 §35 를 선점·선병합해 §36 으로 재번호.)
+등급: **Minor**(프론트 표현 전용 — 데이터 API·스키마·JS 로직 불변, 비파괴, 마이그레이션 없음).
+
+### 36.1 구현
+- [x] T36.1 admin.html: 툴바 아래 전폭 `.admin-meta-graph-legend-roles` 범례 행 제거.
+- [x] T36.2 admin.html: `aside#metadataGraphDetail` 최상단(progress 위)에 `<details class="admin-meta-graph-rolelegend" open>` 삽입 — summary 헤더 "테이블 역할 · AI 분석 완료 시 칩 색" + 칩 8종 `<ul><li>` 세로 스택. 네이티브 접힘(무JS). `<details>` 관용구는 기존 line 512(admin-usage-details) 재사용.
+- [x] T36.3 styles.css: `.admin-meta-graph-legend-roles` 가로 규칙 2줄 제거 → `.admin-meta-graph-rolelegend` 세로·접힘 카드 규칙(카펫 `▸`/rotate, `::-webkit-details-marker` 제거, 세로 flex, 밝은 dot border 유지) 추가.
+- [x] T36.4 cache-buster `styles.css?v=20260703-role-legend-panel`(admin.js 무변경). merge 후 reldetail-colexpand 와 합쳐 `20260703-reldetail-colexpand-role-legend-panel` 로 통합.
+
+### 36.2 검증
+- [x] T36.5 구조 정합: `.admin-meta-graph-legend-roles` 잔여 참조 0(html/css/js grep). aside 는 `d.clientWidth` 폭 조회로만 참조되고 innerHTML 교체 없음(노드 선택·능동분석 렌더는 `metadataGraphDetailBody`/`metadataGraphProgress` 만 교체) → 범례 wipe 없음 확인.
+- [x] T36.6 **§18.8 적대 리뷰 [SUBAGENT]**(회귀·잔여참조·CSS변수·접힘UX·패널접기부작용·레이아웃·시인성 7축): BLOCKING 0·NIT 2 수용. 결과 REVIEW REV-20260703T020000-ai-claude-feature-0016-role-legend-panel 참조.
+- [ ] T36.7 배포(web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 그래프 뷰에서 역할 범례가 우측 상세 패널 상단에 세로로 표시되고 summary 클릭으로 접힘/펼침 동작 육안 확인.
+
+## 37. role-legend-bottom — 역할 범례를 상세 패널 하단으로 이동 + 확장 시 밀림/뒤틀림 해소 (2026-07-03, 사용자 후속 피드백)
+사용자 후속 피드백(role-legend-panel 배포 후): ① 범례를 상세 패널 **하단**에 배치, ② 범례 **확장 시 기존 UI 를 밀어 내용이 뒤틀림**. 정본: MODIFY CHG-20260703-role-legend-bottom.
+등급: **Minor**(프론트 표현 전용 — 데이터 API·스키마·JS 로직 불변, 비파괴, 마이그레이션 없음).
+
+### 37.0 진단
+- [x] T37.0 원인: 범례가 aside 의 **첫 자식**(progress/detailBody 앞)이고 `open` 이라, 고정높이(`clamp(420px,64vh,760px)`)+`overflow-y:auto` 패널에서 범례 확장이 아래의 노드 상세를 밀어내려 상세가 뷰 밖으로 밀림 → "뒤틀림" 체감.
+
+### 37.1 구현
+- [x] T37.1 admin.html: 범례 `<details>` 블록을 aside **첫 자식 → 마지막 자식**(detailBody 뒤)으로 이동. 범례가 마지막이라 접힘/펼침이 위 콘텐츠를 밀지 않음.
+- [x] T37.2 styles.css: `.admin-meta-graph-detail` 에 `display:flex; flex-direction:column` 추가 + `.admin-meta-graph-detail > * { flex-shrink:0 }`(자식 압축 금지 → overflow 시 컨테이너 스크롤, 노드 상세 눌림/잘림 방지).
+- [x] T37.3 styles.css: `.admin-meta-graph-rolelegend` `margin-bottom:12px` → `margin-top:auto`(콘텐츠 짧을 때 패널 **바닥 고정**).
+- [x] T37.4 cache-buster `styles.css?v=20260703-role-legend-bottom`(admin.js 무변경).
+
+### 37.2 검증
+- [x] T37.5 **headless playwright 렌더 격리 실증**(실제 규칙 복제, 2시나리오): (A) 빈 상세=범례 바닥 고정(`pinnedNearBottom:true`, 위 여백 262px). (B) 긴 상세 30행=노드 상세 `firstNodeH:32`(온전·미압축)·`dbH==dbScrollH(983)`(잘림 없음)·aside `canScroll:true`(스크롤) → 상세 밀림/뒤틀림 없음. 스크린샷 육안 확인.
+- [x] T37.6 **§18.8 적대 리뷰 [SUBAGENT]**(detailBody wipe 회귀·flex 부작용·margin-top:auto+overflow·detail-collapsed 토글·반응형·잔여/버스터·접근성): 결과 REVIEW REV-20260703-role-legend-bottom 참조.
+- [ ] T37.7 배포(web 재빌드, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 그래프 뷰에서 역할 범례가 상세 패널 **하단**에 표시되고, 접힘/펼침 시 위 노드 상세가 밀리지 않는지 육안 확인.
+
+## 38. graph-rel-layout — 관계 기반 배치(엣지 교차 최소화): 스키마 seriation + 클러스터 내 관계 군집·barycenter 정렬 (2026-07-03, 사용자 요청)
+사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰): 관계 연결이 복잡해질수록 화면 가시성 저하 — 스키마 카드 내
+테이블이 단순 기준(자연정렬)으로 나열되어 악화. ① 노드 연결선이 되도록 교차하지 않게 ② 관계가 확보될수록
+각 연결·유사도 기준에 따라 노드가 배치되도록. 정본: MODIFY CHG-20260703-graph-rel-layout / DECISIONS ADR-012.
+(원래 §37 로 작성했으나 role-legend-bottom 이 §37 을 선점·선병합해 §38 로 재번호.)
+등급: **Minor**(프론트 배치 로직 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
+
+### 38.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`: 신규 `_metaRelTableKeyOf`·`_metaRelAdjacency`·
+  `_metaRelSchemaOrder`·`_metaRelTableOrder`·`_metaRelOrderAll` + `_metaG6Build` 배선(ids seriation·relOrder).
+- `unit/feature-0003-agent-web-ui/src/static/admin.html`: cache-buster `admin.js?v=20260703-graph-rel-layout`.
+- AC: (a) 관계 0 → 기존 자연정렬 배치와 완전 동일(회귀 0) (b) 관계 존재 → 스키마 seriation+군집+barycenter 로
+  교차 감소(격리 벤치 정량) (c) 결정론(같은 입력=같은 출력)·펼침-불변(ADR-004 ② 배정 불변식 유지).
+
+### 38.2 구현 (admin.js)
+- [x] T38.1 관계 인접행렬 `_metaRelAdjacency` — REFERENCES 끝점(컬럼 키)→소속 테이블 승격(`_metaRelTableKeyOf`),
+      유사도 w = trusted 2 · 그 외 1, 모델 실재 테이블 쌍만 무향 누적.
+- [x] T38.2 스키마 seriation `_metaRelSchemaOrder` — greedy attachment(총 가중 최대 seed → 배치 집합과의 가중
+      합 최대 반복 선택, 다른 연결군은 새 seed) → 관계 많은 스키마끼리 shelf 순서 인접. 무관계 스키마는
+      자연정렬 그대로 후미(관계 0 이면 전체가 기존과 동일).
+- [x] T38.3 클러스터 내 군집 `_metaRelTableOrder` — 스키마 내부 관계 연결 컴포넌트(가중 desc)별 BFS(간선 가중
+      내림차순) + 내부 무관계·외부 관계 보유는 이웃 스키마 seriation idx 순 + 완전 고립은 자연정렬.
+- [x] T38.4 barycenter 4-sweep `_metaRelOrderAll` — 각 테이블을 이웃(내부+외부) 전역 위치(gpos = schemaIdx +
+      로컬 rank, SPAN=1) 가중평균 순으로 재정렬(층별 교차 최소화 휴리스틱). 접힌 스키마 테이블도 순서 계산
+      (펼침-비의존, 렌더 여부는 기존 카드 게이팅).
+- [x] T38.5 `_metaG6Build` 배선(ids·relOrder·items) + admin.html cache-buster `20260703-graph-rel-layout`.
+
+### 38.3 검증
+- [x] T38.6 Node 격리 **10/10 PASS**(관계0 회귀·seriation·컴포넌트BFS·나란한 클러스터 상호교차 해소·결정론·
+      벌크 교차감소·펼침-비의존) + 파라미터 벤치(시드 3종 × 랜덤/허브 토폴로지: 2D 세그먼트 교차 12~30% 감소,
+      1D 층간 역전 59→52, SPAN∈{4096,30,10,1} 중 SPAN=1 이 5/6 최선) + `node --check` PASS.
+- [x] T38.7 §18.8 적대 리뷰 [SUBAGENT: PASS-WITH-FIXES] — ultracode workflow(4축 finder + 발견별 2-refuter
+      적대검증, 14 agents): findings 5 → **확정 4·기각 1**(비현실 규모 perf). 확정 전건 수정: ① [MAJOR]
+      `_metaGraphCollapse` 가 컬럼 접기 시 REFERENCES 모델 엣지까지 삭제 → 배치가 edges 순수함수가 되면서
+      접기 제스처가 전면 재셔플 유발(비가역) — **collapse 시 REFERENCES 보존**(containment 만 삭제, 렌더는
+      renderEndpoint 승격이 처리 — 접힌 테이블 간 관계 표시 소실 버그도 함께 해소) ② [MINOR] 더블클릭 이웃
+      확장 fetch >1.2s 시 follow tween 사망 후 재배치 앵커 이탈 — `_focusLive` 생존 마커 + rebuild 후 tween
+      사망 시 무애니 focusElement 1회 폴백 ③ [MINOR] itemsNat 중복 nat-sort 낭비 — relOrder 직접 소비로
+      lazy 화. 회귀 방지 구조 테스트 t8(collapse REFERENCES 보존)·t9(expand focus 폴백) 추가 → 10/10 PASS.
+      결과 정본: REVIEW REV-20260703T014113-ai-claude-corp-feature-0016-graph-rel-layout.
+- [x] T38.8 배포(web-a/b `5f439788` 무중단 롤링·soak 통과, deploy_scope: included) + **PB-0008 실 Windows 라이브
+      시각검증 PASS**: 관계쌍 평균 배치 거리 32.5→3.2(90% 감소)·군집 육안·collapse REFERENCES 145→145 보존·
+      순서 불변·이웃확장/검색 pageerror 0. 상세 TEST.md POST-DEPLOY Run.
+
+## 39. cluster-role-prefix — 클러스터 상세 테이블 목록 역할 접두사 + 행 클릭 노드 선택 + 범례 hover 툴팁 (2026-07-03, 사용자 후속 요청)
+사용자 후속 요청 3건(그래프 뷰): ① 스키마 클러스터 상세의 테이블 목록에서 AI 능동 분석 완료 테이블은 역할 칩을 **접두사**로(미분석은 동일 폭 빈 슬롯 → 라벨 정렬 유지) ② 그 목록 **각 행 클릭 → 해당 노드 선택** ③ 역할 **범례 hover 툴팁**. 정본: MODIFY CHG-20260703-cluster-role-prefix.
+등급: **Minor**(프론트 표현 + 기존 select 재사용 클릭 — 데이터 API·스키마·마이그레이션 불변, 비파괴).
+
+### 39.1 구현 (admin.js / admin.html / styles.css)
+- [x] T39.1 `_META_ROLE` 에 `desc` 필드 8종 추가(범례·접두사 툴팁 단일 소스, BE NODE_ROLES 휴리스틱 정합).
+- [x] T39.2 신규 `_metaRoleChipHTML(role, esc, small)` — 그래프 칩·상세 배지와 동일 색/아이콘 칩 조립(dark 라벨색·title=desc).
+- [x] T39.3 `_metaGraphRenderClusterDetail` 테이블 목록: 각 행 `<button class="amgr-ct-row" data-node-key>`, `_metaRoleOf(key)` 있으면 역할 칩 접두사·없으면 `amgr-role-none`(transparent, 18px 폭) → `<code>` 좌측 정렬 보존. innerHTML 직후 클릭 바인딩 → `_metaGraphShowDetail(key)`(setSelected+상세) + 렌더 시 `focusElement`.
+- [x] T39.4 신규 `_metaRoleLegendTips()` — 정적 범례 `<li data-role>` 에 `_META_ROLE.desc` 로 hover `title` 주입, 그래프 뷰 진입 함수에서 1회 호출. admin.html 범례 `<li>` 에 `data-role` 추가.
+- [x] T39.5 styles.css `.amgr-cluster-tables`/`.amgr-ct-row`(버튼·hover)/`.amgr-role-chip(-sm)`/`.amgr-role-none`/`.amgr-ct-desc` + cache-buster `admin.js`·`styles.css` `?v=20260703-cluster-role-prefix`.
+- [x] T39.6 부수: 이 cycle 이 편집한 MODIFY.md 에 graph-rel-layout §38 병합이 남긴 미해결 conflict 마커(675/687/698) 정리 — 양쪽 CHG 보존.
+
+### 39.2 검증
+- [x] T39.7 `node --check admin.js` PASS. 신규 심볼 정합.
+- [x] T39.8 **headless playwright 렌더 격리 실증**: 분석/미분석 혼합 5행 → 전 `<code>` left=45px 동일(`allCodesAligned:true`, 미분석도 슬롯 유지로 정렬 뒤틀림 없음), 칩 폭 전부 18px, 전 행 `<button>`. 스크린샷(색상 칩 접두사 + 미분석 빈 슬롯) 육안 확인.
+- [x] T39.9 **§18.8 적대 리뷰 [SUBAGENT]**(XSS/속성안전·클릭 바인딩·select semantics·범례 tips 정합·칩 헬퍼·CSS·회귀 7축): 결과 REVIEW REV-20260703-cluster-role-prefix 참조.
+- [ ] T39.10 배포(web, deploy_scope: included) + **라이브 PB-0008 실 Windows**: 클러스터 상세 목록 접두사·정렬·행 클릭 노드 선택·범례 hover 툴팁 육안 확인.
+
+## 40. graphux6-panelbottom-responsive-obs — AI 능동분석 패널 하단 이동 + 그래프 반응형 높이 + 운영현황 분석 대상 관측 (2026-07-03, 사용자 요청 3건)
+사용자 요청(3건): ① 관리콘솔>메타데이터>그래프뷰의 'AI 능동 분석' 패널을 **상세 패널 하단**에 배치(기존 상단 배치가 노드 상세를 밀어냄). ② 그래프 UI 를 **고정 높이 → 화면 반응형**(세로 좁은 뷰포트 하단 잘림). ③ 관리콘솔>AI 운영 현황 최근 활동에서 '테이블 분석'·'노드 분석'이 **어떤 대상**에 동작하는지 관측. 정본: TASK §40 · 신규 migration 0032_llm_usage_target. worktree `feature-0016-graphux6-panel-obs`. (§37~39 와 병렬 진행 — main 병합 시 §37 role-legend-bottom 과 aside 구조 통합: detailBody → 역할범례(margin-top:auto 하단고정) → 진행패널(최하단), 둘 다 바닥이라 노드 상세 안 밀림.)
+등급: **Major** — ①② 프론트(비파괴), ③ 은 `llm_usage.target` additive nullable 마이그(0032) + 백엔드 계측(feature-0002 llm.py) + 프론트(feature-0003).
+
+### 40.1 ① AI 능동 분석 패널 → 상세 패널 하단 (admin.html / styles.css)
+- [x] T40.1 admin.html: `#metadataGraphProgress` 를 aside 최하단(역할범례 다음 마지막 자식)으로 이동. JS 무변경(getElementById). §37 role-legend-bottom 병합 반영 — detailBody → rolelegend(margin-top:auto) → progress 순.
+- [x] T40.2 styles.css: `.admin-meta-graph-progress` 여백 margin-bottom→margin-top(하단 배치 구분).
+
+### 40.2 ② 그래프 UI 반응형 높이 (styles.css)
+- [x] T40.3 원인: 캔버스·상세 `height: clamp(420px,64vh,760px)` — 420px 하한이 metadata pane(admin-shell overflow:hidden+100vh) 가용높이 초과 시 하단 잘림.
+- [x] T40.4 flex-fill: `.admin-meta-graph`·`.body` `flex:1 1 auto` + body `grid-template-rows:minmax(0,1fr)` → 캔버스·상세가 pane 남은 세로 채움. 고정 height 제거. 캔버스 `min-height:200`(빈 캔버스 방어, §18.8 M1) — 그래프 블록엔 하한 없음(흔한 노트북 불필요 스크롤 회피, §18.8 round-2). G6 autoResize 로 JS 무변경. 상세는 #565 flex-column(역할범례 하단고정) 보존.
+- [x] T40.5 전너비 `:has(> #metadataGraphView:not([style*=display:none]):not([style*=display: none]))` graph-mode pane 세로 스크롤 — 캔버스 200 floor 가 가용높이 초과(≈<560px viewport)할 때만 발동해 잘림 방지(정상/노트북 미발동). 이중 :not(authored 무공백 + CSSOM 공백) 정밀 가드. 좁은화면(≤900px) 세로스택 보존(flex 리셋 + 캔버스 clamp(300px,56dvh,560px)).
+
+### 40.3 ③ 운영현황 최근 활동 분석 대상 표시 (migration 0032 / llm.py / ai_ops.py / admin.js)
+- [x] T40.6 migration 0032_llm_usage_target: `llm_usage.target VARCHAR(200)` additive nullable(`ADD COLUMN IF NOT EXISTS`, 0030 패턴) + 부트스트랩 DDL parity. task(저카디널리티 KPI 집계)와 분리 — 대상은 별도 컬럼(표시 전용).
+- [x] T40.7 llm.py `_record_llm_usage(target=)` + 자가치유 INSERT(target 실패→rollback→base 재INSERT). target 을 total_tokens·latency_ms 사이 삽입(param 위치 보존). call site: schema=스키마·table=schema.table·node=fqn/name(account 은 PII 제외).
+- [x] T40.8 ai_ops.py `_query_activity` target SELECT + 컬럼부재 폴백(rollback→base 재조회) + `len(r)>11` 가드. admin.js 최근활동 행·상세 대상 표시(esc XSS).
+
+### 40.4 검증
+- [x] T40.9 컨테이너 make test 전건 PASS(ruff clean): test_ai_ops 17/17(target 통과 + 컬럼부재 폴백 + INSERT 폴백) + test_llm_usage_record 7/7(param 순서) + test_call_llm 2/2(mock target=None). py_compile OK + alembic 단일 head=0032.
+- [x] T40.10 §18.8 적대 리뷰 2라운드 PASS-WITH-FIXES(BLOCKING 0 — 빈캔버스·노트북스크롤·가드취약·테스트NIT 전부 수정) + verify-completion --pre-commit PASS. REVIEW REV-20260703T105541-graphux6-panelbottom-responsive-obs.
+- [x] T40.11 배포 완료(PR #570 머지 → 9e1156d6): `make migrate` agent 재빌드 후 **live alembic_version 0031→0032 확인**(stale image 회피) + `make deploy-web` 무중단 롤링(web-a/b 9e1156d6, soak 90s 통과) + `make insight-up` insight-worker 재빌드(GIT_COMMIT=9e1156d6, ③ target 기록 반영). **라이브 PB-0008 실 Windows PASS(3/3)**: ① progress 최하단(progressIsLastChild=true, 노드 상세 안 밀림) ② 캔버스 flex-fill 415px=pane 바닥(잘림 0) + 제약 시 200 floor 축소·스크롤 ③ 최근활동 '테이블 분석'이 `schema.table` 대상 표시(실데이터, 계정분석은 PII 공백). 상세 feature-0003 TEST.md §3 Run.
+
+## 41. graph-drag — 중간버튼 카메라 팬 + 테이블 노드 종속 UI 동반 드래그 (2026-07-03, 사용자 요청)
+사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰): ① 마우스 중간(휠) 버튼을 통한 drag&drop 을 객체 상호작용이
+아닌 **카메라 드래그(팬)**로, ② **테이블 노드를 옮길 때 하위 종속 UI(접기 "X:" 컨트롤 + 컬럼 노드)도 같이
+드래그**. 정본: MODIFY CHG-20260703-graph-drag / TEST.md graph-drag Run / REVIEW REV-20260703T021144-graph-drag.
+등급: **Minor**(프론트 상호작용 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
+(§39=cluster-role-prefix·§40=graphux6-panelbottom-responsive-obs 가 main 선점 — 본 절은 §41 로 리넘버.)
+
+### 41.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`: `behaviors` object-form + `enable` 오버라이드
+  (`_metaCanvasDragEnable`/`_metaElementDragEnable`, `_metaEventButtons`/`_metaIsMiddleDrag`), 컨테이너
+  mousedown autoscroll 억제, `node:dragstart/drag/dragend` 핸들러(`_metaNodeDragStart`/`_metaNodeDrag`/
+  `_metaNodeDragEnd`), `_metaGraph.tableDeps` 맵 + `_metaG6Build` 배선.
+- `unit/feature-0003-agent-web-ui/src/static/admin.html`: cache-buster `admin.js?v=20260703-graph-drag`.
+- AC: (a) 중간버튼 드래그는 노드 위에서든 카메라 팬(노드 월드좌표 불변) (b) 좌클릭 빈 캔버스 팬·좌클릭 노드
+  이동·휠 줌·클릭·우클릭 메뉴 회귀 0 (c) 테이블 노드 좌클릭 드래그 시 종속(X:ctl+컬럼) 전부 동일 델타 동반 이동.
+
+### 41.2 구현·검증
+- [x] T41.1 (①) behaviors object-form + enable 오버라이드(중간버튼 팬 / 노드 이동은 좌클릭만) + buttons 비트마스크 판정.
+- [x] T41.2 (①) 컨테이너 mousedown(button===1) preventDefault — 브라우저 autoscroll(팬 커서) 억제(pointer 흐름 유지).
+- [x] T41.3 (②) `_metaGraph.tableDeps` (`_metaG6Build` 리셋·재채움) + node:drag 핸들러(offset 기록 → translateElementTo
+      절대이동 + dragend 재정합으로 1-frame lag 제거).
+- [x] T41.4 검증: `node --check` PASS + §18.8 적대 리뷰 [SUBAGENT: PASS](G6 번들 실측 4축 BLOCKING 0) + **PB-0008 실 Windows 브라우저(Chrome/149) 라이브 실측** —
+      Test A(중간버튼 팬: 노드 월드 [0,0] + 화면 팬) PASS, Test B(좌클릭 테이블: 종속 5개 동일 델타 [191.35,-131.55]) PASS.
+- [x] T41.5 배포 완료(PR #571 머지 → 29c3a07c): `make deploy-web` 무중단 롤링(web-a/b `29c3a07c`, one-at-a-time, soak 90s 통과). 마이그레이션 pending 0(0032==head, graphux6 선적용). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz `status:ok git_commit=29c3a07c mysql_ok/pg_ok:true`, 라이브 admin.js graph-drag 심볼 12·role 심볼 2(병합 보존)·admin.html 버스터 `admin.js?v=20260703-graph-drag`. 실 Windows 육안은 머지 전 PB-0008 PASS(Test A/B)로 갈음(무인 라우팅 3중벽).
+- [ ] T41.5 배포(deploy_scope: included): main 병합 → web-a/web-b 재배포(cache-buster `admin.js?v=20260703-graph-drag`).
+
+## 42. graph-simgroups — 유사 속성 그룹 블록: 스키마 클러스터 내부를 배경 박스+헤더의 가시적 영역으로 분할 (2026-07-03, 사용자 요청)
+사용자 요청(관리 콘솔 > 메타데이터 > 그래프 뷰, graph-rel-layout 후속): 관계 순서 배치만으로는 여전히 낮은
+가시성 — "각 테이블이 서로 유사한 속성끼리 배치되도록(속성 또한 범위가 가시적으로 나타나도록) 근본적인 개선".
+군집을 '순서'가 아니라 **'영역'** 으로 승격: 유사 속성 그룹을 색 배경 박스 + 헤더 칩(스템 라벨 + 개수)으로
+렌더. 정본: MODIFY CHG-20260703-graph-simgroups / DECISIONS ADR-013.
+등급: **Minor~Major**(프론트 배치·표현 전용 — 데이터 API·스키마·마이그레이션·RBAC 불변, 비파괴).
+
+### 42.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- `unit/feature-0003-agent-web-ui/src/static/admin.js`: 신규 `_metaSimFamilies`(이름 affix family, 4~16자
+  접두/접미 토큰 지원도×길이 스코어)·`_metaSimGroups`(family → 관계 attach → 역할 → 기타, 싱글턴 흡수,
+  그룹 seriation + 그룹-간 barycenter — `_metaRelSchemaOrder`/`_metaRelOrderAll` 컨테이너 재사용)·
+  `_META_GROUP_TINTS`(연틴트 8종) + `_metaG6Build` 그룹 블록 레이아웃(packGroup 2-pass masonry + 블록
+  shelf-pack, place `{it,lx,top}` 정규화) + GB:/GH: 장식 노드(클릭·ctx·드래그 무시) + 클러스터 상세 목록
+  그룹 헤딩.
+- `admin.html`(캡션 + cache-buster `20260703-graph-simgroups`) / `styles.css`(`.amgr-ct-group`).
+- AC: (a) 그룹 <2 스키마·terms = 기존 평면 masonry 그대로(회귀 0) (b) 그룹 ≥2 → 배경 박스·헤더로 영역
+  가시화, bg 무겹침·칩 소속 박스 내 포함·칩 무겹침 (c) 결정론·펼침-불변(배정 x 고정, push-down 만)
+  (d) 실측 fixture(gunzgame 68 테이블·145 관계)에서 유의미 그룹(character·item·shop·mission·clan 류).
+
+### 42.2 구현
+- [x] T42.1 `_metaSimFamilies` — 정규화(소문자·view_ 제거) 접두/접미 토큰(4~16자) 지원도 집계, per-table
+      best = 지원도×길이 최대(동률 사전순), 지원도 ≥2 만.
+- [x] T42.2 `_metaSimGroups` — ① 이름 family(≥2) ② 무family → 관계 가중 최대 family 1-pass attach
+      ③ 역할 family ④ 기타(싱글턴 흡수·항상 후미). 그룹 순서 = 크기 desc → 관계 seriation(misc 제외),
+      그룹 내 순서 = 컴포넌트 BFS + 그룹-간 barycenter(_metaRelOrderAll 재사용). 라벨 = 멤버 실명 최장
+      공통 접두/접미(자연 스템) + 방향 말줄임(`character…`/`…shop`).
+- [x] T42.3 그룹 블록 레이아웃 — packGroup(그룹 내부 1~3열, Pass1 collapsed 배정=펼침-불변 / Pass2 실높이
+      push-down) + 블록 shelf-pack(행 배정=폭만, 행 y=실높이 누적) + 클러스터 place 정규화 `{it,lx,top}`
+      (평면/그룹 공용 렌더 루프).
+- [x] T42.4 GB:(배경 박스, 틴트 8종 순환, zIndex -2)·GH:(헤더 칩 `라벨 · n`, zIndex -1) 장식 노드 +
+      클릭/ctx/드래그 핸들러 GB:/GH: 무시(비상호작용·박스-칩 분리 방지).
+- [x] T42.5 클러스터 상세 목록 그룹 헤딩(`.amgr-ct-group`, 캔버스와 동일 그룹) + 캡션 범례 문구 +
+      cache-buster admin.js/styles.css `20260703-graph-simgroups`.
+
+### 42.3 검증
+- [x] T42.6 격리 테스트(실 _metaG6Build Node 구동, 실측 gunzgame fixture) **25/25 PASS**: family 유의미성·
+      그룹 무결성(전량 1회 커버·misc 후미·싱글턴 흡수)·bg 무겹침·칩 1-bg 포함·칩 무겹침·헤더 포함·결정론·
+      펼침-불변(x 불변·무상승·펼친 후 무겹침)·평면 폴백(그룹<2 → GB: 0)·엣지 조립 보존(GB/GH 끝점 0)·
+      빌드 5.1ms. `node --check` PASS.
+- [x] T42.7 §18.8 적대 리뷰(ultracode workflow 4축 + 2-refuter) + verify-completion. 패널이 Fable 5 사용량 한도로
+      refuter 17개 조기 종료 → 미검증 findings 를 (Opus 전환 후) **직접 코드 판정**. 확정·수정 4건: ① [MAJOR]
+      GB:/GH: 그룹 박스가 펼친 클러스터 내부를 덮어 combo 배경 클릭·우클릭(클러스터 상세·스키마 메뉴)을
+      데드존화 → 박스 클릭=클러스터 상세·우클릭=스키마 메뉴로 위임(드래그는 여전히 불가). ② [MAJOR] 2차 관계
+      attach 가 갱신 중 famOf 를 읽어 입력순서 의존 연쇄 → 1차 스냅샷 `fam1` 에서만 읽어 무연쇄 보장. ③ [MINOR]
+      `view` 접두 정규화가 "viewer…"를 절단 → `view_`(구분자) 접두만 제거하는 공용 `_metaViewNorm`. ④ [NIT]
+      패널 그룹 헤딩 aria-hidden 제거 + role="group"/aria-label 노출 + 80행 캡 그룹경계 절단·(shown/n) 표식.
+      기각: 방향 말줄임 탈락(반박됨 — 의미상 정당), role 재편(ADR-012 데이터-수렴 철학·misc→role 1회 전이로
+      국한, 문서화 유지). errored geo/interact 축은 직접 검증(G6 style 키 vendored 지원·packGroup 빈배열 방어·
+      GB/GH 가 nodes/stateCache/tableDeps 미유입). 회귀 방지 t10~t12 추가 → 25/25. 정본: REVIEW
+      REV-20260703T043659-ai-claude-corp-feature-0016-graph-simgroups.
+- [x] T42.8 배포(web-a/b `abc78b00` 무중단 롤링·soak, deploy_scope: included) + **PB-0008 실 Windows 라이브
+      시각검증 PASS**: 그룹 박스 22 + 헤더 칩 22(item·21/character·17/account·6/…) 렌더·영역 가시성·GB 클릭
+      클러스터 상세 위임(데드존 수정 실증)·패널 그룹 헤딩 aria·컬럼 펼침11/접기 REFERENCES 145→145·검색 정상·
+      pageerror 0. 상세 TEST.md POST-DEPLOY Run.
+
+## 43. graph-product-cat — 제품(Products) 단위 카테고리 구분 (2026-07-03, 사용자 요청 — 3대 개선 中 A)
+
+- Related Requirement: 사용자 요청 "구분해둔 제품(Products)에 따른 카테고리 단위로 구분이 가능하도록 구성".
+  entry persona dispatch(A→C→B 순차 연속 완주, 크로스-DB=크로스-데이터소스 결정). 정본: DECISIONS ADR-014.
+- 등급: **Major** (신규 API mode + 프론트 신규 진입 경로, 비파괴·마이그레이션 없음). deploy_scope: included.
+- 배경(코드 실측): 그래프 모델은 `Product`/`Datasource` 라벨·`USES` 엣지를 **예약만** 하고 `sync_graph` 가
+  실제 생성 안 함(Schema→Table→Column+REFERENCES 만 투영). 프론트는 scope 선택이 데이터소스 단위뿐이고
+  Product 노드는 `_META_TERMS_COMBO`("용어·기타")로 흘러감. 관계형 SSOT(MySQL `WebProducts`·
+  `WebProductDatasources` N:M·`WebProductDatabases`)는 완비. 그래프는 Postgres `agent_kb` → MySQL SSOT 는
+  투영 API(web-ui, MySQL 접근) 계층에서 **질의시점 합성**(AGE 저장 불필요·마이그 회피·"projection" 원칙 정합).
+
+### 43.1 백엔드 (admin_metadata.py — 투영 API 제품 모드, MySQL 합성)
+- [x] T43.1 `admin_metadata_graph` 에 `conn=Depends(app.get_conn)` 추가 + 신규 분기:
+  `?mode=products` → 전체 활성 제품, `?product=<id>` → 단일 제품. `_pg_connect_ro()` 이전에 early-return(PG 불필요).
+- [x] T43.2 헬퍼 `_product_overview_graph(conn, product_id=None)`: `Product`(key=`product:<id>`)+`Datasource`
+  (key=`ds:<scope_key>`) 노드 + `USES` 엣지 합성. 브리지 `_list_product_datasources → datasource_key →
+  _dsr.resolve → _dsr.scope_key`. 중복 datasource dedup(여러 제품 공유 가능).
+- [x] T43.3 헬퍼 `_products_for_scope(conn, scope_key)`: 역방향 맵(scope_key→제품 목록). datasource-scoped
+  응답 meta 에 `products` 필드로 반환(그 데이터소스를 쓰는 제품 배너용).
+
+### 43.2 프론트 (admin.js + admin.html + cache-buster)
+- [x] T43.4 제품 개요 진입 = **툴바 "🗂 제품 카테고리" 버튼 + 그래프 랜딩 전환**(공유 scope select 오염 회피 —
+  select 는 datasource 전용 유지, 리뷰 근거로 optgroup 재구성 대신 채택). 랜딩(공용/미선택)이 제품 개요.
+- [x] T43.5 `_metaGraphLoadRoots` 분기: `__products__`/`product:<id>` → `?mode=products`/`?product=<id>` 로드
+  (mode="products"). 그 외 기존. datasource-scoped 응답의 `products` → 상태 배너.
+- [x] T43.6 `_metaG6Build` 상단 **제품 개요 전용 early-return**(mode==="products"): Product(좌열)·Datasource
+  (우열) rect 노드 2-열 결정론 배치 + USES 엣지, combo 미사용(기존 스키마 masonry 무간섭·저위험).
+- [x] T43.7 `_metaGraphOnNodeClick` 에 `ds:` 노드 클릭 → scopeKey=그 scope 로 drill(`_metaGraphLoadRoots`),
+  `product:` 노드 클릭 → 그 제품으로 필터. cache-buster `20260703-graph-product-cat`.
+
+### 43.3 검증
+- [x] T43.8 격리 테스트(합성 그래프 노드/엣지 무결성) + `node --check` admin.js.
+- [x] T43.9 §18.8 적대 리뷰(합성 정합·권한·XSS·회귀) + verify-completion.
+- [x] T43.10 배포(web 롤링) + **PB-0008 실 Windows 시각검증**(제품 개요 렌더·datasource drill·배너).
+
+## 44. graph-freeplace — 그래프 클러스터 자유 배치 상호작용 복원 (2026-07-03, 사용자 회귀 보고)
+
+- Related Requirement: 사용자 후속 보고 — "테이블 컨텐츠 카테고리(분류) 구성 패널 상호작용 누락: [분류 접기/펼치기]·
+  [분류 drag&drop 위치 이동]·[분류 내부 노드 이동 반응형 크기 조정]이 모두 사라짐. 데이터소스 선택 후 스키마 클러스터
+  화면." 정본: DECISIONS ADR-015 / MODIFY CHG-20260703T101622.
+- 등급: **Major** (프론트 상호작용 재구현, 검증된 G6 렌더러 코어 place-loop 편집). 비파괴·마이그레이션 없음.
+- 근본원인(조사): abc78b00(graph-simgroups, 상호작용 정상 T42.8) 이후 admin.js 변경 2건(ds-avg-latency=데이터소스 패널만·
+  graph-product-cat=제품모드만)은 클러스터 상호작용 코드 미변경 → **내 회귀 아님**. ADR-004 Cytoscape→G6 결정론 배치가
+  자유배치(드래그 위치유지·리사이즈)를 미이관한 feature gap(사용자 "재구현" 결정).
+
+### 44.1 구현 (admin.js frontend-only)
+- [x] T44.1 state: `clusterOffset`(comboId→{dx,dy}) + `nodePos`(nodeId→[x,y]) + resetModel clear.
+- [x] T44.2 drag: `_metaComboDragStart`/`_metaComboDragEnd`/`_metaClusterDragCommit`/`_metaClusterOffsetAccumulate`
+  (combo·접힌 카드 → clusterOffset 누적) + `_metaNodeDragEnd`(테이블/용어 → nodePos, 컬럼 제외) +
+  `_metaNodeDragStart` SC: 시작 기록 + combo:dragstart/dragend 바인딩.
+- [x] T44.3 build: clusterOffset → L.x0/L.y0 가산(shelf-packing 후, 클러스터 전체 이동) + place-loop nodePos
+  델타로 테이블+종속 시프트(`const`→`let`).
+- [x] T44.4 접기/펼치기(#1) 유지 · combo auto-fit 반응형 리사이즈(#3) · cache-buster `20260703-graph-freeplace`.
+
+### 44.2 검증
+- [x] T44.5 `node --check` PASS.
+- [x] T44.6 §18.8 적대 리뷰(REV-20260703T101622): 좌표프레임·offset수학·drag pairing·회귀 6축 → MAJOR 1(nodePos가
+  clusterOffset override → 클러스터 이동 시 소속 nodePos 동반 가산)·NIT 1(컬럼 dead 엔트리 제외) 반영. PASS-WITH-FIXES.
+- [x] T44.7 배포(web 롤링) + **PB-0008 실 Windows 4-상호작용 수동 검증**(접힌 카드 드래그·combo 드래그·테이블 드래그+펼침·
+  회귀 접기/펼치기).
+- [x] T44.8 **POST-DEPLOY 라이브 드래그 검증 — PASS (Environment: Windows-browser, 2026-07-04)**: 초기엔 "canvas 드래그
+  자동화 곤란"으로 육안 게이트 유보했으나, **Playwright `connect_over_cdp`(win-browser relay @172.26.144.1:9223)로
+  실 Windows Chrome 에 attach → `page.mouse.move→down→16-step move→up` 실제 마우스 드래그 자동화 성공**. 실측 결과:
+  ① **접힌 카드(클러스터) 드래그 이동**: accountdb 카드 (548,524)→(430,415) 실이동(fp-03). ② **combo 드래그 이동**:
+  펼친 클러스터 combo 헤더 드래그로 clusterOffset 누적(fp-06). ③ **테이블 노드 드래그 + combo 반응형 리사이즈**:
+  tapjoy combo 내 MessageQueue 노드 (535,505)→(470,630) 이동 시 combo 배경 박스가 이동 노드 포함하도록 아래로
+  auto-fit 리사이즈 + ROUTINE_USES 엣지 재라우팅(fp-07). ④ **접기/펼치기 회귀**: accountdb·tapjoy 펼침 시
+  masonry 재배치 + sim-group 배경 상자 정상(fp-04). ⑤ **드래그 위치 persistence(rebuild-safe)**: statsdb
+  (548,576)→(400,400) 드래그 후 tapjoy 펼침(setData+draw rebuild)에도 statsdb 오프셋 유지·snap-back 없음(fp-06).
+  ⑥ **초기화**: 리셋 시 clusterOffset·nodePos clear → accountdb 원위치 복귀(fp-05). 전 상호작용 통틀어 **pageerror 0**.
+  증적 fp-03~fp-07.png. Runner: AI(Playwright real mouse via CDP). → **초기 "실 Windows 확인 게이트" 유보 해소**.
+## 45. graph-funcproc-uxfix — 함수·프로시저 노드 + 그래프 뷰/AI 능동 분석 UX 4건 (2026-07-03, entry persona dispatch)
+
+REQ-20260703-graph-funcproc-uxfix — 사용자 요청 5건(관리 콘솔 > 메타데이터 > 그래프 뷰):
+① [추가 구조] **함수 & 프로시저 노드** 구성 + 분석·관계 구성. ② [상세 패널] 패널 리사이즈 시 **미니맵
+위치 고정** 수정. ③ [AI 능동 분석] 재귀로 참조 컬럼이 분석돼도 **그 부모 테이블이 분석되지 않는 이슈**
+개선(테이블까진 분석, 앵커 연관성으로 재귀 깊이 억제). ④ 분석 완료 항목의 **'재분석' 버튼 제거**(UX 중복).
+⑤ 'AI 능동 분석' hover 시 **프롬프트 입력 툴팁** → LLM 자율 판단 하 분석 내용에 반영.
+등급: **Major**(비파괴 마이그레이션 + BE/FE 다수 파일 — FUNCTION.md §12 사전승인 범위 내 비파괴 추가만).
+정본: DECISIONS ADR-016(함수·프로시저 구조)·ADR-017(능동 분석 정제) / MODIFY CHG-20260703-graph-funcproc-uxfix.
+
+### 45.1 계획 (§7.1 — 파일·심볼·수용 기준)
+- **① BE**: `alembic/versions/20260703_0034_routine_objects.py`(`routine_objects` SSOT + `node_analysis_runs.user_prompt`
+  + AGE vlabel `Routine`·elabel `HAS_ROUTINE`/`ROUTINE_USES` + GRANT) · `modules/routines.py` 신규
+  (`introspect_and_store` — INFORMATION_SCHEMA.ROUTINES/PARAMETERS(MySQL·MSSQL 공통) + 정의 파싱 참조테이블
+  추출) · `modules/insight.py` rel_maintenance_due 블록 훅(`AGENT_ROUTINE_INTROSPECT_ENABLED`) ·
+  `modules/metadata_graph.py`(`_VLABELS`/`_ELABELS`/`_PROP_KEYS` 확장, `sync_routine`, sync_graph 0b 단계,
+  `schema_tables` Routine 반환, search `routine_type`) · `shared/config.py`(+`__all__`, ADR-007 계약).
+- **① FE**: `admin.js` `_META_GRAPH_COLOR/_META_LABEL_KO.Routine`, `_metaRoutineStyle`, `_metaSchemaComboOf`,
+  `_metaG6Build` 클러스터 합류(kind="routine"), `ROUTINE_USES` 엣지 스타일·`_META_EDGE_TYPE_KO`.
+- **②**: `admin.js` `_metaGraphMinimapAnchor()` — G6 minimap inline left/top 제거(멱등) → CSS right/bottom 앵커,
+  `_metaG6Apply` post-draw 호출.
+- **③**: `modules/node_analysis.py` `_fetch_context`(HAS_COLUMN tgt==self → parent 메타) + `_score_candidates`
+  (parent 승격 rel=max(계산, `AGENT_NODE_ANALYSIS_PARENT_TABLE_REL` 0.5, cross-scope 감쇠)) +
+  `_enqueue_neighbors`(parent 는 same-depth enqueue — depth_budget 소진 없이 "테이블까진 분석").
+- **④**: `admin.js` `metaGraphAiBtn2`(↻ 재분석) 제거 + ctxmenu 라벨 "AI 능동 분석" 고정.
+- **⑤**: `admin.js` AI 버튼 hover popover(지침 textarea ≤400자) → `_metaGraphAnalyze(key, scope, prompt)` ·
+  `routers/admin_metadata.py` analyze POST `prompt` 수용 · `node_analysis.py` `enqueue_analysis(user_prompt=)`
+  runs 저장(마이그 창 legacy 폴백) + 앵커 토큰 합류 + payload `user_intent` · `llm.py` NODE_ANALYSIS_PROMPT
+  user_intent 지침(출력 계약 유지 가드) + Routine 라벨 반영.
+- **AC**: (a) MySQL/MSSQL 스키마의 함수·프로시저가 `routine_objects` 에 적재되고 그래프에 Routine 노드(ƒ 칩)
+  + Schema 소속 + 참조 테이블 점선 엣지로 렌더 (b) Routine 노드 상세/관계/AI 능동 분석 동작 (c) 패널
+  리사이즈·접기 후 미니맵이 캔버스 우하단 유지 (d) 참조 컬럼 분석 시 소속 테이블이 같은 run 에서 분석되고
+  그 테이블 이웃으로의 무관 fan-out 없음 (e) 분석 완료 box 에 재분석 버튼 없음(능동 분석 버튼으로 재실행 가능)
+  (f) hover 지침 입력 시 runs.user_prompt 저장 + 분석문에 지침 맥락 반영(LLM 자율).
+
+### 45.2 구현·검증
+- [x] T45.1 (①) alembic 0034 + routines.py + insight 훅 + metadata_graph 확장 + config(__all__).
+- [x] T45.2 (①) FE Routine 렌더(ƒ/⚙ 보라 칩·보라 잔점선·범례·상세 유형/파라미터/사용 목록·검색 badge).
+- [x] T45.3 (②) 미니맵 anchor 정규화(`_metaGraphMinimapAnchor`, inline left/top→CSS right/bottom).
+- [x] T45.4 (③) parent-table same-depth 승격(node_analysis, ADR-017).
+- [x] T45.5 (④) 재분석 버튼·라벨 제거. (⑤) hover 지침 popover → prompt → user_prompt → user_intent.
+- [x] T45.6 단위 테스트(신규 15 + 회귀 108 PASS) + `node --check`/`py_compile` PASS + verify-completion.
+- [x] T45.7 배포(deploy_scope: included) 완수 — PR #579 머지(main 3933d5aa) → `make migrate`(live
+      alembic **0034_routine_objects** 도달·Routine/HAS_ROUTINE/ROUTINE_USES 라벨 생성 확인) →
+      `make deploy-web`(무중단 롤링·soak 90s 통과) → `make insight-up`(routines 모듈 로드·토글 ON 확인).
+      **PB-0008 라이브 실측**: ②미니맵 anchor+리사이즈 추종 PASS(gap 11px 불변) · ④재분석 부재 PASS ·
+      ⑤popover 표시/입력 PASS + **Esc 고착 결함 적발**(→ T45.8 hotfix). ①Routine 칩은 introspect 첫
+      cadence 후 육안 확인 이월(feature-0003 TEST.md Run 정본).
+- [x] T45.8 funcproc-esc-hotfix 완수 — popover Esc 닫힘 고착(focus-show 재발화 + hide 타이머 취소)
+      수정(`escClosing` 300ms 억제) + cache-buster `20260703-funcproc-esc`. PR #580 머지(e1c71589) →
+      web 롤링 재배포(soak 통과) → **라이브 재실측 PASS**(Esc 120ms 내 닫힘·재-hover 정상, feature-0003
+      TEST.md Run). 잔여: ①Routine ƒ/⚙ 칩 육안 확인(introspect 첫 cadence 후 — 후속 확인 항목).
+
+## 46. semantic-embed — 메타데이터 객체 의미 임베딩·클러스터링 (Phase C, ADR-013 후속, ADR-018, 2026-07-03 사용자 3대 개선 中 C)
+
+- Related Requirement: 사용자 "ADR-013(의미적 데이터 임베딩에 따른 실제 분류 구분)도 정합하도록 진행". 정본: DECISIONS ADR-018.
+- 등급: **Major** (라이브 agent_kb 마이그 0035 비파괴 additive + insight-worker 신규 데몬 + 임베딩 컴퓨트).
+- 설계: ultracode 워크플로우(understand6+design2+적대검증4) → 구현 → 구현 적대리뷰 → verify 픽스 반영.
+
+### 46.1 구현
+- [x] T46.1 alembic 0035: rag_objects 에 signature_text_hash·semantic_cluster_id·semantic_cluster_label 3 nullable
+  컬럼 + 인덱스 2개(비파괴·카탈로그 전용·expand-safe, down_revision=0034_routine_objects).
+- [x] T46.2 shared/config.py: AGENT_METADATA_CLUSTER_* 9 노브(+__all__).
+- [x] T46.3 semantic_cluster.py(신규): 시그니처 빌더(DB-distinct)·백필(strip-hash 정합)·kNN(degree-cap)+union-find
+  클러스터링(N>MAX skip 가드)·commonAffix 라벨·run_cluster_maintenance(PG kv cadence).
+- [x] T46.4 insight.py: _semantic_cluster_loop/_start_semantic_cluster_thread(embedding 데몬 동형·분리) 등록.
+- [x] T46.5 metadata_graph.py: sync_table(_UNSET·None=clear)·sync_graph 투영·scope_roots/schema_tables RETURN·
+  _PROP_KEYS/_NULLABLE_PROP_KEYS/_props_set(=null clear).
+- [x] T46.6 admin.js: _metaSimGroups be: 우선(namespace 1회·≥2)·labelOf be:·ingest 보존. cache-buster.
+
+### 46.2 검증
+- [x] T46.7 node --check·py ast·migrate-lint expand-safe·순수함수 4/4·metadata_graph 회귀 10 PASS.
+- [x] T46.8 §18.8 적대검증 2단계: 설계 워크플로우(revision 충돌·MSSQL·namespace·chaining fix) + 구현 리뷰(MAJOR-1
+  sig strip·MAJOR-2 phantom clear·MINOR-3 OOM 가드 반영). 정본 REVIEW REV-20260703T160303.
+- [x] T46.9 **라이브 마이그(0035) 게이트 표면화 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·
+  affix 폴백 무회귀·pageerror 0; 클러스터 값은 데몬 cadence 후 eventual — 후속 확인).
+
+## 47. crossds-rel — 크로스-데이터소스 관계 (Phase B, ADR-019, 2026-07-04 사용자 3대 개선 中 B)
+
+- Related Requirement: 사용자 "다른 DB 간 관계가 구성될 수 있으니 그 구조를 위한 연결 구축". 정본: DECISIONS ADR-019.
+- 등급: **Major** (라이브 agent_kb 마이그 0036 비파괴 + 관계 엔진 크로스-ds 확장 + insight-worker 신규 데몬 OFF).
+- 설계: ultracode 워크플로우(understand6+design2+적대4, C 와 공동) → 구현 → 구현 적대리뷰 → flip-전 블로커 반영.
+
+### 47.1 구현
+- [x] T47.1 alembic 0036: source/target_datasource_key + 7-col UNIQUE + CHECK 'manual' + ds 인덱스 2(비파괴·backfill·migrate-lint ACK).
+- [x] T47.2 relationships.py: upsert 7-col + manual 승격 + 프로브 skip 가드 + infer_cross_datasource/store_xds(effective schema·reverse-dup·per-ds cap) + 컨텍스트 제외 + [교차DB] digest + apply_signal intra-ds 가드.
+- [x] T47.3 metadata_graph.py: sync_relationship/delete tgt_scope+cross_ds + sync_graph 관계 투영 ds→scope(intra-ds 보존) + neighborhood cross_ds emit.
+- [x] T47.4 node_analysis.py: cross_ds 완화(_relevance/parent-table) + _record 캡처 + _enqueue 자기-scope. insight.py: xds 데몬(OFF). config 7 노브. schema.sql 정합. admin.js 마젠타 점선.
+
+### 47.2 검증
+- [x] T47.5 node --check·py ast·migrate-lint ACK·pytest **67 PASS**(head-aware ON-CONFLICT==UNIQUE 불변식 포함).
+- [x] T47.6 §18.8 2단계 적대검증: 설계 워크플로우 + 구현 리뷰 **SHIP(inert)**. flip-전 블로커(MSSQL effective schema
+  MAJOR·negative-decay 가드·reverse-dup·cap) 반영. REVIEW REV-20260704T043653.
+- [x] T47.7 **라이브 마이그(0036) 게이트 → 적용 → 배포(web + insight-worker 재빌드) → PB-0008**(그래프 렌더·관계 무회귀·
+  pageerror 0; 크로스-ds 엣지는 데몬 AUTO=1 flip + 임베딩 populate 후 eventual — 후속 확인).
+
+## 48. graph-ux3fix — 3대 UX 개선: 그래프 뷰 최상위 탭 분리 · 검색 부드러운 하이라이트 · 더블클릭 재배치(후속) (2026-07-04, 사용자 요청)
+
+> 번호 주의: 본 작업은 §45 로 시작했으나, 병렬 세션이 §45(graph-funcproc-uxfix)·§46·§47 을 먼저 머지해 번호가 충돌 → §48 로 재번호(§13.1 감지-후-재번호). 코드/캐시버스터 slug 는 `graph-ux3fix` 유지.
+
+사용자 요청 3건 (`관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 개선):
+① 그래프 뷰를 `지식베이스 > 그래프 뷰` 최상위 탭으로 **분리**(메타데이터의 형제) — 화면 높이를 더 넓게 사용.
+② 노드 **더블클릭 시 전체 재배치** 이슈 수정 — 이동해둔(드래그) 노드 위치 보존, 비조작 노드가 우선 밀림(밀린 노드는 조작 노드 아님).
+③ [테이블·컬럼·용어] 검색 시 **테이블 너비 증가** → **부드러운 하이라이트**.
+
+REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 UX). frontend-only(admin.html/js/styles.css, feature-0003 거주). 현재 main(§47) 위에 병합·통합 완료(admin.js/styles 자동병합, admin.html 범례+캐시버스터 충돌 해소, funcproc 범례 항목 보존).
+
+### 48.1 ① 그래프 뷰 최상위 탭 분리 + 높이 확장 (admin.html/js + styles.css)
+- [x] T48.1 admin.html: 지식베이스 그룹에 `data-admin-tab="graph"` 탭 버튼 추가 · 메타데이터 서브탭 `data-meta-subtab="graph"` 제거 · `#metadataGraphView` 블록을 새 `<section data-admin-pane="graph">`(자체 pane-head + `#graphScopeSelect`)로 이동 · 인라인 `display:none` 제거 · 범례 glow 칩(+funcproc "함수·프로시저" 항목 병합 보존).
+- [x] T48.2 admin.js: `ADMIN_TAB_PERMISSIONS.graph` 추가 + 메타데이터 OR-배열에서 `metadata.graph.read` 제거 + `switchTab` graph 분기 + `_METADATA_SUBTAB_PERM`/`_METADATA_NO_CREATE`/`_metaBindControls` graph 배선·`_metaHideGraph` 제거 + `_metaShowGraph` 스트립 + `_metaPopulateScopeSelect` 양 select 동기화 + `#graphScopeSelect` 바인딩.
+- [x] T48.3 styles.css: 스크롤 셀렉터 `[data-admin-pane="graph"]` 전환 + 좁은화면 캔버스 높이 clamp 상향.
+- [x] T48.4 (적대리뷰 D1) 크로스탭 스코프 stale 봉인: `_metaGraph.loadedScope`·`adminState.metadata.loadedScope` 추적 → 재진입 diverge 시 재로드(양방향).
+
+### 48.2 ③ 검색 부드러운 하이라이트 (admin.js)
+- [x] T48.5 `_metaTableStyle`/`_metaTermStyle` 폭 rel-무관 고정(TW=150 / 130) + `_metaG6Build` `trel` 부스트 제거, `X:` ctl offset `_METLAY.TW`.
+- [x] T48.6 `node.state.match` soft glow(앰버 shadow) + `_metaNodeStates` match push(mode==="search" && searchMatchNodes) + `searchMatchNodes` 채움/리셋. 범례·상태문구 glow. (funcproc 함수·프로시저 노드도 동일 match 상태로 glow 가능 — 코드 정합.)
+- [x] T48.7 (적대리뷰 D1) labelMaxWidth 클램프(테이블 TW-10, 용어 118) — 폭 고정으로 라벨 박스 넘침 방지.
+
+### 48.3 ② 더블클릭 재배치 — 후속(라이브 반복 검증 필요)
+- [~] T48.8 1차 접근(클러스터 원점 sticky clusterBase) §18.8 3-렌즈 적대리뷰 2/3 회귀 확정(카드→combo 확장 이웃 겹침) → **되돌림**. 요구②의 정합 구현 = 충돌해소 레이아웃 = 라이브 반복 후속 cycle. **사용자 결정(2026-07-04): ①·③ 먼저 출하, ②는 후속.**
+
+### 48.4 검증·통합·배포
+- [x] T48.9 `node --check` admin.js PASS(clusterBase 되돌림 잔존 0). §18.8 3-렌즈 적대 리뷰(REV-20260704T014646) 확정결함 3건(겹침→②되돌림·크로스탭 stale·라벨넘침) 반영.
+- [x] T48.10 현재 main(§47, 069b8934) 병합·통합: admin.js/styles.css 자동병합(내 IA·검색 배선 무결 + funcproc/embed/crossds 요소 46 보존, 옛 서브탭 경로 접근 코드 0), admin.html 충돌 3건(캐시버스터×2·범례) 해소(범례에 funcproc 항목 병합 보존), 문서 append-only 충돌 keep-both, §45→§48 재번호.
+- [x] T48.11 **PB-0008 실 Windows 시각검증 PASS**(2026-07-04, 실 Windows Chrome/149 via bin/win-browser.py relay @172.26.144.1:9223, `https://localhost/admin` 로그인 세션, 배포 f3b60f1d 후): **①** 좌측 `지식베이스` 그룹에 `메타데이터`·`그래프 뷰` 별도 최상위 탭 렌더(그래프 뷰 클릭→전용 pane, canvas 476×617 전체높이, G6 5레이어, 데이터소스 select 20건, 스키마 카드 렌더). **③** 검색 `log`→'스키마 7개 매칭·매칭 테이블(앰버 글로우)' 상태 + 스키마 펼침 시 매칭 노드 **부드러운 앰버 글로우**(너비 불변, 미니맵에도 glow) 육안 확인. 메타 서브탭 graph 부재·범례 glow 칩·funcproc 병합 보존 확인. 증적 스크린샷 pb0008-graph-tab.png·pb0008-search-glow-expanded.png. Runner: AI(win-browser eval/screenshot, pageerror 0).
+- [x] T48.12 배포 완료(PR #581 → main f3b60f1d, gh 토큰 HTTPS push): `deploy-web.sh` 무중단 롤링(web-a/web-b f3b60f1d, one-at-a-time, soak 90s 통과, Caddy blip 0). 마이그 pending 0(0036==head, frontend-only). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz status:ok git_commit=f3b60f1d(양 replica), 캐시버스터 admin.js/styles.css?v=20260704-graph-ux3fix, 라이브 admin.js 심볼(switchTab graph·graphScopeSelect·searchMatchNodes·match glow·loadedScope, clusterBase/_metaHideGraph 제거 0), admin.html data-admin-pane/tab="graph"·graphScopeSelect 존재·메타 서브탭 graph 0. **실 Windows PB-0008 육안은 무인 3중벽으로 미수행 → 사용자 확인 대기(T48.11).**
+
+## 49. graph-dblclick-stable — 더블클릭 재배치 수정: 배치 순서 안정화 (2026-07-04, 사용자 요청 ② 후속 cycle)
+
+사용자 요청 ②(§48 에서 후속으로 미룬 것): 노드 더블클릭 시 전체 재배치 이슈 수정 — 이동해둔(드래그) 노드 위치 보존, 비조작 노드가 우선 밀림(밀린 노드는 조작 노드 아님).
+
+배경: §48 의 1차 접근(클러스터 원점 고정 clusterBase)은 적대리뷰에서 카드→combo 확장 겹침 회귀로 되돌림. 근본원인 재분석: 더블클릭(`_metaGraphExpand`)이 이웃을 ingest 후 `_metaG6Build` 재실행 → 클러스터 순서(`_metaRelSchemaOrder`)·클러스터내 테이블 순서(`_metaRelOrderAll`)를 매번 **re-seriate** → 기존 노드가 그리드를 점프. 위험도 Major(레이아웃 엔진). frontend-only(admin.js).
+
+### 49.1 구현 — 배치 순서 안정화 (admin.js)
+- [x] T49.1 `_metaStableSeq(fresh, savedKeys, keyOf)` 순수함수: 저장 순서 항목 먼저(현존만) + 신규는 fresh(seriated) 순서 append.
+- [x] T49.2 state `clusterOrder`(클러스터 순서)·`tableOrder`(flat masonry 테이블)·`groupOrder`/`groupTableOrder`(simgroups 그룹·그룹내 테이블), `_metaGraphResetModel` 에서 clear(fresh load = 순수 seriation).
+- [x] T49.3 `_metaG6Build`: ids(클러스터)·relOrder(flat 테이블) 안정화. `_metaSimGroups`: serIds(그룹)·ordered(그룹내 테이블) 안정화(적대리뷰 R1 반영).
+- [x] T49.4 효과: 기존 노드는 masonry 열/슬롯 유지(제자리), 신규만 append, 비조작 노드는 클러스터 폭 변화 시 밀림(요구③), 드래그(nodePos)는 직교 보존(요구②), packer 유지로 **겹침 없음**(clusterBase 위치고정 접근의 겹침 회귀 회피).
+
+### 49.2 검증
+- [x] T49.5 `node --check` PASS + `_metaStableSeq` 격리 단위테스트 **6/6 PASS**(순수 seriation·기존 순서 보존·신규 append·제거 drop·5회 반복 drift 0·객체 keyOf).
+- [x] T49.6 §18.8 적대 리뷰 2라운드: **핵심 로직 clean**(ids `length=0` mutation 비별칭·schemaIdx/relOrder 안정화후 계산·leak 없음(collapse 는 컬럼만·resetModel clear)·nodePos 직교(base slot 위 델타)·fresh-load 동치·클러스터 재출현 coherent). **R1**(simgroups 미커버) → `_metaSimGroups` 안정화 반영. **R2**(innerCols 임계 7/15/28 교차 시 클러스터 재열)는 반응형 레이아웃 고유 트레이드오프 — 비파괴·'공간 확보' 성격으로 문서화(범위 외). REV-20260704T151336-graph-dblclick-stable.
+- [x] T49.7 배포 완료(PR #583 → main 1df96431, gh 토큰 HTTPS push): `deploy-web.sh` 무중단 롤링(web-a/b 1df96431, one-at-a-time, soak 통과). **POST-DEPLOY 자산검증 PASS**(WSL localhost edge :443): healthz git_commit=1df96431, 캐시버스터 `admin.js?v=20260704-graph-dblclick`, 라이브 심볼 `_metaStableSeq`·clusterOrder/tableOrder·groupOrder/groupTableOrder. 그래프 탭·스키마 카드 렌더·데이터소스 로드 라이브 확인, pageerror 0.
+- [~] T49.8 **더블클릭 canvas 상호작용 라이브 육안 = 사용자 확인 필요**: G6 canvas 노드 더블클릭은 win-browser 로 자동 구동 불가(CDP 좌표 마우스 미지원 + 합성 pointer 이벤트가 @antv/g 히트테스트 미도달 — graph-drag §41 등 직전 cycle 과 동일 canvas 한계). 코드-레벨(격리테스트·적대리뷰 6축)·배포·자산·렌더링은 검증됨. 사용자 실 마우스로 (a) 스키마 2개 펼침 → 한 테이블 더블클릭 → 기존 노드 제자리·신규 이웃만 추가·겹침 0, (b) 노드 드래그 후 더블클릭 → 드래그 위치 보존 확인 요망. (참고: freeplace liveverify(§44 T44.8)에서 Playwright `connect_over_cdp` real mouse 로 G6 canvas 드래그 자동 구동이 실증됨 — 후속 PB-0008 은 이 방법 사용 가능.)
+
+## 50. group-interact — 카테고리 그룹(sim-group) 상호작용: 드래그·접기·반응형 리사이즈 (2026-07-04, 사용자 회귀 재보고)
+
+사용자 재보고: "스키마 클러스터 내 각 테이블을 그룹 단위로 묶어둔 구조(카테고리 그룹)가 드래그 및 접기, 그 외 UI 조작이 진행되지 않는다. 첫 의도는 카테고리 그룹에 대한 작업이었는데 현재는 테이블 노드 단위로 진행됐다." → freeplace(ADR-015)가 combo·테이블 노드 레벨에만 상호작용을 복원했고, 그 사이 계층인 **카테고리 그룹**(= 유사 속성 그룹 / sim-group, ADR-013 의 GB 배경박스/GH 헤더칩)은 비상호작용 장식으로 남아 있던 것이 근본원인. 등급 **Major**(프론트 상호작용·다수 상태/build/wiring). 정본 ADR-020 / frontend-only(admin.js, 코드 거주 feature-0003). PLAN-APPROVED(사용자 플랜 승인 2026-07-04).
+
+### 50.1 구현 (admin.js frontend-only)
+- [x] T50.1 state: `groupOffset`(groupKey→{dx,dy})·`groupCollapsed`(Set)·`groupMembers`(groupKey→[테이블id])·`groupOf`(테이블id→groupKey) + `_metaGraphResetModel` 에서 groupOffset/groupCollapsed/groupMembers/groupOf clear + build 초입 groupMembers/groupOf 재초기화.
+- [x] T50.2 build sim-group 분기: 접기(`isCollapsed` — groupCollapsed & 검색 매칭 시 강제 펼침; `hEff`=헤더만 → shelf-pack reflow; 멤버 place 미방출) + groupOffset 3계층 가산(블록 위치·멤버 place lx/top) + place 에 `group` 태그.
+- [x] T50.3 build emission: pre-pass 로 그룹별 멤버 최종 bbox(nodePos 적용) 산출 + groupMembers/groupOf 채움 → GB 박스를 **멤버 bbox+패딩**에서 파생(#3 반응형; 무-offset 시 packGroup 기하와 정확 일치) + GH 헤더 + **GX 접기 컨트롤**("−"/"+") 방출.
+- [x] T50.4 wiring: `_metaElementDragEnable`(GX 만 드래그 차단, GB/GH 허용) + `_metaNodeDragStart` 그룹 리지드 드래그 분기(`_drag={id,offs,group}`) + `_metaNodeDragEnd` groupOffset 누적 + 멤버 nodePos 델타 시프트 + 그룹소속 테이블 단독 드래그 시 rebuild(박스 재파생) + `_metaGraphOnNodeClick` GX 접기 토글(GB/GH 클릭=스키마 상세 위임 보존).
+- [x] T50.5 admin.html: cache-buster `?v=20260704-group-interact`(admin.js·styles.css) + 범례 문구(헤더 드래그 이동·−/+ 접기).
+
+### 50.2 검증
+- [x] T50.6 `node --check` PASS + headless `_metaG6Build` 격리 단위검증 **22/22 PASS**(그룹당 GB/GH/GX 방출·멤버 박스 포함·접기 멤버 미방출·박스 헤더높이·GX '+'·타그룹 불변·groupOffset 3계층 시프트·nodePos 반응형 확장·평면 폴백 회귀 0·검색 자동펼침+의도 보존).
+- [ ] T50.7 §18.8 적대 리뷰(좌표수학·상호작용 wiring·회귀·통합 3~4렌즈) + 수정.
+- [x] T50.8 배포(web 롤링 fb88b19e) + **PB-0008 실 Windows 라이브 검증**(Playwright `connect_over_cdp` real mouse, mssql-dk-dev accountdb 34그룹): (b) **GX 클릭 접기 ✅**(collapsed·멤버 미렌더·GB 높이 36 헤더급·GX '+'), **GX 펼치기 ✅**(멤버 3 재렌더·GX '−'), (c) **그룹 내부 테이블 드래그 반응형 ✅**(L_Notice 이동 시 GB [248×174]→[299×227] 확장·멤버 박스 내 포함, gi-05), 전 구간 pageerror 0. **(a) 그룹 드래그 = 배포본 결함 발견**: GH 헤더 zIndex −1 이 combo 배경(z0) 뒤라 hit-test 에서 가려져 combo:dragstart(클러스터 이동, clusterOffset 설정)로 발화 — 라이브 GH zIndex 패치 시 정상(groupOffset 설정·타 그룹 불변 실증) → T50.9 hotfix.
+
+### 50.3 hotfix — GH 헤더 hit-test (PB-0008 라이브 실측 결함)
+- [x] T50.9 **GH 헤더 zIndex −1 → 5(양수)** + `cursor:move`: combo 배경 위로 렌더해 헤더가 그룹 드래그 핸들로 hit-test 되게(헤더 스트립엔 멤버 없어 시각 회귀 0). GB 배경은 z−2 유지(combo 에 가려 미-grab — 헤더가 유일 핸들, 범례 "헤더 칩 드래그로 그룹 이동"·박스 body 드래그는 클러스터 이동으로 폴백). admin.html cache-buster `?v=20260704-group-drag-hotfix`. 검증: node --check + headless **29/29 PASS**(T8: GH zIndex 양수·cursor move·GB 음수·GX 양수 잠금). 재배포 후 그룹 드래그 라이브 재검증(패치 없이).
+- [x] T50.10 **POST-DEPLOY 그룹 드래그 라이브 재검증 — PASS (Environment: Windows-browser, 2026-07-04, 배포 a9492afe)**: 재배포(admin.js `?v=20260704-group-drag-hotfix`, GH zIndex 5 서빙 확인) 후 **라이브 패치 없이** 실 Windows Chrome(Playwright real mouse)로 notice 그룹 헤더 드래그 (453,448)→(650,340) → **groupOffset={dx:141,dy:−77} 설정·accountdb clusterOffset=null**(그룹 드래그 발화, combo 드래그 아님)·notice 그룹만 이동(552,552→749,444)·**t_account(같은 클러스터) 불변**(866,882 유지)·pageerror 0. 증적 gi-06-groupdrag-fixed.png(notice 우상단 이동·t_account 제자리). → **세 요구(접기/펼치기·drag&drop 위치이동·내부노드 반응형 리사이즈) 전부 배포본 라이브 동작 확정**.
+## 51. graphux7 — 그래프 뷰 UX 7건 (2026-07-04, entry persona dispatch)
+
+> **§50 정합 메모**: 사용자 #6(카테고리 범위 드래그)·#7(전용 접기)의 "카테고리 범위"는 §50(group-interact,
+> ADR-020) 의 사용자 재보고로 **sim-group(유사 속성 그룹)** 임이 확정됐고, §50 이 그룹 드래그·접기(GX)·반응형
+> 리사이즈를 배포 완료했다. 본 §51 의 고유 산출물은 **#1~#5**; #6 은 §50 이 실질 해결(본 cycle 무변경),
+> #7 은 §50 의 그룹 접기와 별개인 **스키마 클러스터 전용 접기 버튼**(다른 granularity, 보너스)로 유지.
+
+- Related Requirement: 사용자 요청 7건 (관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰):
+  ① 상세 패널 뒤로/앞으로 ② 관계 클릭=카메라만·더블=상세 전환 ③ 범례 탭화(+pg_trgm 문구 제거)
+  ④ AI 능동 분석 중복 큐잉 방어 ⑤ 데이터소스 해시→사용자 식별자 라벨 ⑥ 카테고리 범위 드래그(→§50) ⑦ 접기 버튼(스키마 클러스터).
+- 등급: **Major** (다파일 프론트 UX 다건 + 백엔드 reused-progress passthrough, 비파괴·마이그 없음·인가 무변경). 코드 거주 cross-cut 0003(admin)·0002(node_analysis).
+- 절차: entry persona arg-given → 5개 병렬 매핑(Explore) → 구현 → main rebase(7facb804→a9492afe=§48~§50 흡수) → win-browser 라이브 관측(⑥⑦ root-cause) → 적대 리뷰 → PB-0008.
+
+### 51.1 구현
+- [x] T51.1 (#1) `_metaGraph.detailHist/detailHistIdx/_histNav` 방문 이력 스택 — `_metaGraphShowDetail` 기록(네비 중 no-op),
+  `_metaGraphHistoryGo/Record/Reset/UpdateUI`, 상세 패널 상단 nav 바(`#metadataGraphDetailNav`, 이력≤1 숨김[`[hidden]` 규칙], 끝단 disabled),
+  loadRoots/Products 에서 컨텍스트 전환 시 reset.
+- [x] T51.2 (#2) 관계 행 단일=카메라 팬만(`_metaGraphPanToRelation`, 상세 유지)·더블=상세 전환(`_metaGraphTraceRelation`) —
+  `_metaGraphBindRelRow`(260ms 타이머 단/더블 구분, 키보드 Enter=전환) → `_metaGraphBindTraceRows`·관계뷰 `.amgr-row` 공통 적용. 행 title 갱신.
+- [x] T51.3 (#3) 범례 3탭(노드 종류/관계·AI 상태/테이블 역할) — 상단 flat 바 + `<details>` 역할범례를 상세 패널 하단 탭 컴포넌트로 통합
+  (admin.html+styles.css), `_metaGraphBindLegendTabs()`(←/→ roving), `크기·라벨%=검색 유사도(pg_trgm)…` note 제거. 역할 `<li data-role>` 보존(_metaRoleLegendTips). 검색 매칭(앰버 글로우) 칩 + §50 그룹 드래그·접기 안내 parity.
+- [x] T51.4 (#4) 중복 큐잉 방어 — 프론트 in-flight 가드 `_metaGraph._analyzePending`(Set, 노드별 독립 연타 동시 POST 차단) + `res.reused` 분기 가시 메시지
+  ("이미 진행 중(진행 N/M)"). 백엔드 `enqueue_analysis` reused 분기 `progress:{enqueued,done,failed}` 반환 + 엔드포인트 passthrough.
+- [x] T51.5 (#5) `_metaDatasourceLabelOf(scope_key)` 역매핑 헬퍼(해시→라벨, common→공용, 미매칭 원문) — sample-feedback 스코프칩·용어 관계 태그 2곳 적용.
+- [x] T51.6 (#7) `_metaGraphRenderClusterDetail(...,comboId)` — 펼쳐진 스키마면 상세 패널(항상 화면 내 aside)에 전용 "▦ 접기" 버튼
+  (`_metaGraphCollapseSchema`). 캔버스 combo 우상단 "−" 컨트롤이 큰 스키마에서 뷰포트 밖으로 벗어나 접근 불가하던 문제 해소(§50 의 sim-group 접기와 별개 granularity). body 클릭 접힘 경로는 원래 없음(유지).
+- [x] T51.7 (#6) **라이브 관측 후 무변경 결정** — win-browser 실 Chrome 로 `getElementPosition`=world 좌표 검증(viewport=world×zoom).
+  클러스터 offset 누적은 줌-독립적 정합, combo/카드 드래그는 G6 v5.1.1 네이티브. 앱 좌표 결함 없음 → 근거 없는 `÷zoom` 회귀 위험이라 무변경.
+  사용자 #6 의 실대상(sim-group 드래그)은 §50 이 groupOffset 로 해결(본 cycle 중 landing).
+
+### 51.2 검증
+- [x] T51.8 node --check(admin.js) PASS · py_compile(node_analysis.py·admin_metadata.py) PASS · funcproc 테스트 19 PASS(신규 reused-progress).
+- [x] T51.9 §18.8 적대 리뷰 — REVIEW REV-20260704T071838-graphux7(BLOCKING 0, MAJOR 1[nav `[hidden]`]·MINOR 1[_analyzePending Set] 수정).
+- [x] T51.10 **배포 + POST-DEPLOY PB-0008 — PASS** (Environment: Windows-browser, 2026-07-04). PR #587 병합(325f5de4) → `make deploy-web` 무중단 롤링(web-a/b→325f5de4, soak 90s 통과) → 실 Windows Chrome/149(win-browser relay). 서빙 `admin.js?v=20260704-graphux7`·healthz git_commit=325f5de4. 라이브 실측: **#1** 노드 2개 조회 후 상세 패널 nav 바 출현(navHidden:true→false, 뒤로 활성, 라벨 "2/2"; 이력 0~1 시 `[hidden]` 숨김) · **#3** 3탭(노드 종류/관계·AI 상태/테이블 역할) 렌더+탭 전환(hidden 토글)·pg_trgm 문구 제거·검색매칭+§50 그룹힌트 parity · **#7** 스키마 펼침→상세 패널 "▦ 접기" 버튼 클릭→카드 접힘 · **#4** `_analyzePending instanceof Set`=true 라이브 · **#5** `_metaDatasourceLabelOf` 라이브. pageerror 0. 마이그 없음. 증적 scratchpad/postdeploy_graphux7.png. (#2 단/더블 카메라 동작은 바인딩 라이브 확인, 실 마우스 육안은 후속.)
+
+## 52. graph-zorder — 그래프 뷰 요소 z-order 의미 정합 (2026-07-04, entry persona dispatch)
+
+- Related Requirement: REQ-20260704T120000-graph-zorder — `관리 콘솔 > 지식베이스 > 그래프 뷰` 의 각 요소가
+  의미(계층)와 정합하는 z-order 로 구성되어야 한다. 현재 ① 상호작용(드래그·펼침·접기·검색)에 따라
+  순서가 의미와 무관하게 뒤바뀌고 ② 요소 성질 변경(카드↔클러스터, 그룹 접힘↔펼침, 컬럼 펼침) 시
+  z-order 자체가 뒤틀린다 (사용자 보고).
+- 근본 원인 (조사 확정):
+  1. **G6 v5 내장 drag-element 가 dragstart 마다 `graph.frontElement(대상)` 을 호출** — 대상 zIndex 를
+     전역 max+1 로 **영구** 승격(복원 없음, 단조 증가). 노드 드래그는 종속(컬럼·"X:" ctl)이 함께 오르지
+     않아 계층이 찢어지고, combo(클러스터) 드래그는 클러스터 전체가 다른 클러스터 위로 영구 상승.
+     상호작용 이력이 곧 z-order 가 됨.
+  2. **캔버스 요소 대부분 zIndex 미지정(z0)** — @antv/g 는 zIndex → 삽입순(renderOrder) 정렬이라,
+     setData diff 로 나중에 추가/재생성되는 요소(펼친 컬럼, 카드→combo 전환, 그룹 재펼침 멤버, 신규
+     엣지)가 항상 기존 요소 위로 append → 성질 변경마다 순서 재편.
+  3. **GB(그룹 배경) zIndex -2 가 combo(0) 아래** — hit-test 에서 combo 에 삼켜져 §50 그룹 상호작용
+     (배경 드래그=그룹 이동·클릭·우클릭)이 사실상 dead, 그룹 배경을 잡으면 클러스터 전체가 이동(의미
+     불일치). GH 헤더만 z5 hotfix 로 생존한 상태.
+  4. 엣지 zIndex 미지정 — 이웃 확장/추적으로 나중에 추가된 엣지가 기존 칩 위를 지나감.
+  5. HTML 오버레이(미니맵 z5·focus chip z5·ctxmenu z10000·ai-pop/progress in-flow)는 정합 — 변경 불요.
+- 접근: **의미 z-스케일 단일 소스 `_METZ`** 를 도입해 build 가 전 요소에 zIndex 를 bake —
+  `COMBO(0) < GROUP_BG(1) < EDGE(2) < COLUMN(3) < NODE(칩·카드 4) < GROUP_HD(5) < CTL(6)`.
+  드래그 중에는 대상+종속을 `canonical+DRAG_BOOST(1000)` 로 결정론 승격, dragend 에 canonical 복원
+  (combo 드래그는 내장 frontElement 가 하위 전체를 델타 승격하므로 dragend 복원만). rebuild 는 항상
+  canonical 을 재-bake 하므로 잔존 승격도 자가 치유.
+- 영향 파일/심볼: `unit/feature-0003-agent-web-ui/src/static/admin.js`
+  (`_METZ`·`_metaZFor`·`_metaDragZBoost/Restore`·`_metaComboMemberIds` 신설; `_metaTableStyle`·
+  `_metaTermStyle`·`_metaColStyle`·`_metaRoutineStyle`·`_metaCtlStyle`·`_metaSchemaCardStyle`·
+  `_metaSchemaCtlStyle`·`_metaComboStyleFor`·`_metaEdgeStyleFor`·`_metaRoutineEdgeStyle`·
+  `_metaG6Build`(GB/GH/GX)·`_metaG6BuildProducts`·`_metaNodeDragStart/End`·`_metaComboDragEnd` 수정),
+  `admin.html` (cache-buster bump). frontend-only·비파괴·마이그 0·인가 무변경.
+- 완료 판정 (AC):
+  - AC-1: 모든 캔버스 요소가 의미 계층 zIndex 를 갖는다(build 산출물 검사) — 삽입순 의존 제거.
+  - AC-2: 드래그 후(dragend) 요소 z 가 canonical 로 복원된다 — 드래그 이력이 z-order 로 잔존하지 않음.
+  - AC-3: 드래그 중 대상+종속(테이블+컬럼+ctl / 그룹 묶음)이 함께 최상층으로 떠서 계층이 찢어지지 않는다.
+  - AC-4: 그룹 배경(GB) 드래그가 클러스터가 아닌 **그룹**을 이동시킨다(hit-test 회복, §50 의미 정합).
+  - AC-5: 펼침/접기/검색/역할 도착(rebuild) 후에도 계층 불변. pageerror 0.
+- 위험도: **Minor** (§12.3 — 비파괴 frontend 표시 계층 정리, 스키마·인가 무관). §7.1 다파일(2)이라 본 계획 문서화.
+
+### 52.1 구현
+- [x] T52.1 `_METZ` 의미 z-스케일 + `_metaZFor(id)` canonical 해석기 + 스타일 함수 전체에 zIndex bake.
+- [x] T52.2 GB -2→GROUP_BG(1)·GX 1→CTL(6)·GH 5=GROUP_HD 정합(주석 갱신), 엣지 EDGE(2)+신뢰 강도 소수
+  오프셋(trusted +0.2 > candidate/교차DB +0.1 — 패널 design MINOR), products 경로 NODE/EDGE.
+  흐름 내 per-table "X:" ctl 은 NODE 밴드(허위 소속 어포던스 방지 — 패널 ux MINOR; GX/XS 는 CTL 유지).
+- [x] T52.3 드래그 transient: dragstart boost(대상+종속·그룹 묶음, renderedIds 필터로 부분실패 방지) +
+  dragend canonical 복원. **콤보 드래그는 내장 frontElement 가 내부 엣지까지 델타 승격**(번들 실측) —
+  dragend 에 노드+콤보(_metaComboMemberIds) + 엣지(_metaComboEdgesRestore, `_metaEdgeZFor` bake-1:1) 복원
+  (패널 ux BLOCKING 해소). `__terms__` 합성 combo 는 `_metaZFor` 명시 분기(패널 ux MAJOR 해소).
+  GB 에 cursor:move + 범례 문구로 "배경 드래그=그룹 이동 / 클러스터 이동=여백·이름·카드" 어포던스
+  (패널 ux MAJOR 완화).
+- [x] T52.4 admin.html cache-buster bump (`v=20260704-graph-zorder`) + 범례 그룹 안내 문구 갱신.
+
+### 52.2 검증
+- [x] T52.5 node --check(admin.js) PASS + build 산출물 zIndex 전수 검사(정적 — bake↔_metaZFor/_metaEdgeZFor
+  1:1 정합 표 대조, 누락 0). vendored 번들 API 실측: setElementZIndex(id→z 맵)·getEdgeData·frontElement
+  의 combo 내부엣지 승격.
+- [x] T52.6 §18.8 적대 리뷰(ux·design·frontend 3-렌즈) — design PASS(MINOR 2 반영·NIT 2 수용),
+  ux FAIL→전건 해소(BLOCKING 1: 콤보 내부엣지 미복원 · MAJOR 2: __terms__ 오판/GB 어포던스 ·
+  MINOR 2: 드롭 동률-z 가라앉음+샌드위치[known trade-off 수용]/X: ctl 밴드 · NIT 1: 드래그 중 엣지
+  비부스트[기존 동작 동등 — 수용]). frontend 리뷰어는 세션 한도 조기종료 → 잔여 포인트(맵 API·diff
+  merge·레이스·복원 대칭·TDZ) 메인 세션 직접 검증. REVIEW.md REV entry 참조.
+- [x] T52.7 **배포 + POST-DEPLOY PB-0008 — PASS** (Environment: Windows-browser, 2026-07-04). PR #589 병합
+  (3b20e77c) → `make deploy-web` 무중단 롤링(soak 통과) → 실 Windows Chrome/149(relay @172.26.144.1:9223,
+  real-mouse) 1차 실측 12/14 PASS + **rebuild z 평탄화 신규 적발**(→ §52.4 h2) → PR #590 병합(e76642e9) 재배포
+  후 **강화판 15/15 전 항목 PASS**: S1 bake 전수(카드4/XS6/GB1/GH5/GX6/Routine·Table4/combo0·edges 2.x 위반 0)
+  · S2 테이블 드래그 중 {칩1005·컬럼1003·ctl1004} 드롭 후 {4/3/4} canonical 복원 · S3 콤보 드래그 후 combo z0
+  ·내부 엣지 13개 위반 0·잔존부스트 0(BLOCKING 회귀 없음) · S4 GB 드래그 groupOffset 0→1(그룹 이동, GB z1)
+  · S5 재펼침·S5b 순수 update-rebuild 후 canonical 위반 0 · S6 pageerror 0. 증적
+  artifacts/feature-0016-metadata-graph/20260704-graph-zorder/zorder-01~06.png.
+
+### 52.4 h2 hotfix — setData update 의 combo-hierarchy z 평탄화 재-assert (PB-0008 라이브 실측 결함)
+- 적발(1차 POST-DEPLOY PB-0008, 2026-07-04): 그룹 멤버 테이블 드래그 → dragend rebuild 직후 칩/컬럼/ctl
+  z 가 전부 **1** 로 평탄화 (S2-drag-after FAIL). 번들 실측 근본 원인: G6 v5 `computeZIndex` 가 setData
+  diff 의 **update** 에서 datum 에 `combo` 키가 있으면(본 build 는 항상 포함) 제공된 style.zIndex 를
+  무시하고 comboZ+1(=1) 로 강제 재산정 — add 는 명시 zIndex 존중(그래서 첫 렌더·재펼침은 canonical).
+  엣지는 명시 zIndex 정의 시 항상 skip(무영향 — 실측 정합). 기존(z-미지정) 코드에서는 add 조차 1 로
+  산정되어 전 요소가 z1 평탄이었음 — "성질 변경 시 z-order 뒤틀림"의 마지막 축.
+- [x] T52.8 `_metaGraphZAssert()` — `_metaG6Apply` 의 draw 직후, 현재 z ≠ canonical(_metaZFor/_metaEdgeZFor)
+  인 요소만 골라 `setElementZIndex(맵)` 일괄 재-assert (이 경로는 datum 에 combo 키가 없어 재산정 우회,
+  sticky). diff-필터라 정상 상태 no-op. cache-buster `v=20260704-graph-zorder-h2`.
+- [x] T52.9 h2 배포(e76642e9) + PB-0008 강화판 재실측 — **15/15 PASS** (상세 T52.7 통합 기록).
+
+### 52.3 Known trade-offs (패널 수용 항목)
+- 드롭 순간 동률-z(같은 밴드) 겹침은 삽입순 tie-break — 자유배치로 칩을 칩 위에 겹친 경우 놓는 순간
+  아래로 갈 수 있음(의미-계층 우선 설계의 의도적 결과). 클러스터 겹침 샌드위치(타 클러스터 헤더·컨트롤이
+  칩 위) 동일 — 사용자가 만든 겹침 상태 한정.
+- 드래그 중 연결 엣지는 비부스트(z2 유지) — 기존(내장 frontElement) 동작과 동등, 회귀 아님.
+- combo 라벨은 combo 요소(z0)와 일체라 엣지(2) 아래 — G6 구조 한계, 수정 전과 동일(회귀 아님).
+
+## 53. routine-dbanalysis — 함수·프로시저 전 datasource 가시화 + DB(스키마) 단위 AI 능동 분석 (2026-07-04, entry persona dispatch)
+
+- Related Requirement: REQ-20260704T210000-routine-dbanalysis — ① 함수/프로시저 노드가 그래프 뷰에
+  나타나지 않는 datasource 해소 ② DB 단위 'AI 능동 분석' 제공 (사용자 요청 2건).
+- ① 조사 확정 (라이브 재현 + 데이터 검증):
+  - 백엔드(SSOT·AGE 투영·schema_tables/search/neighborhood API)·프론트(ingest·build·렌더) 전 경로 정상 —
+    mysql-gz-qa-global 의 gunzgame 에서 **routine 300개 라이브 렌더 실측**.
+  - 근본 원인 = **datasource 커버리지**: routine_objects 는 20 개 ds 중 4개(+공용 twin '')만 적재.
+    예: mysql-gz-qa-kr 은 같은 gunzgame 테이블 121개는 있으나 routine 0행 → 그 ds 화면에서 ƒ/⚙ 전무.
+    insight-worker cadence(6h)+rotation 이 funcproc 배포(07-03) 후 아직 전파 중 — 결정론 수단 부재.
+  - 해소: **routine backfill 드라이버** (`modules/routine_backfill.py` + `bin/routine-backfill.sh`) —
+    등록된 전 datasource × (MSSQL: 사용자 DB × ROUTINE_SCHEMA / MySQL: 비시스템 ROUTINE_SCHEMA) 를
+    즉시 introspect(routines.introspect_and_store 재사용, 스키마-slot 규약 유지) + scope 별 sync_graph.
+    per-(ds,DB,schema) 카운트/에러 loud 리포트. 워커 cadence 는 유지보수로 계속.
+  - prune-safety: 한 store-label(MSSQL=DB명) 에 복수 ROUTINE_SCHEMA 가 공존하면 두 번째 introspect 의
+    prune 이 첫 스키마 행을 삭제 — `introspect_and_store(prune=)` 파라미터 신설(기본 True=기존 동작),
+    backfill 은 label 당 복수 스키마 시 prune=False (worker 경로 잠재 동일 결함은 REVIEW 기록).
+- ② DB(스키마) 단위 AI 능동 분석:
+  - `node_analysis.enqueue_schema_analysis(scope, schema_key, only_missing=True, table_cap, dry_run)` —
+    run(root=Schema, depth_budget=1) 생성 + 스키마 소속 Table 을 **depth=1 시드로 일괄 pre-seed**
+    (process_pending 확장 조건 `depth > depth_budget`·`node_budget-enqueued` 이중 캡으로 재귀 0 —
+    앵커-상대 게이팅과 직교). 이미 분석된 노드는 기본 제외(only_missing), LLM 비용 가드 =
+    `AGENT_NODE_ANALYSIS_SCHEMA_CAP`(기본 200)·hard max 500 + UI 사전 confirm(대상 수 표시).
+  - `metadata_graph.schema_table_keys(scope, schema_key)` 시드 열거 헬퍼 신설.
+  - 엔드포인트 `POST /api/admin/metadata/graph/analyze-schema` (권한 metadata.graph.read 우산 —
+    기존 노드 분석과 동일, audit `node_analysis.enqueue_schema`, dry_run 지원).
+  - 프론트: 스키마 카드/클러스터 컨텍스트 메뉴 + 클러스터 상세 패널 "✨ DB 전체 AI 능동 분석" —
+    dry_run 으로 대상 수 조회 → window.confirm(기존 패턴) → 실행 → 기존 진행 패널(run 폴링) 연동,
+    reused/noop 메시지 parity.
+- 영향 파일: `unit/feature-0002-agent-core/src/modules/{routines,node_analysis,metadata_graph,routine_backfill}.py` ·
+  `shared/config.py`(SCHEMA_CAP + __all__ — ADR-007 교훈) · `bin/routine-backfill.sh` ·
+  `unit/feature-0003-agent-web-ui/src/routers/admin_metadata.py` · `src/static/{admin.js,admin.html}` ·
+  tests. 마이그 0(기존 테이블 재사용).
+- 위험도: **Major** (§12.3 외부 비용 — DB 단위 분석은 LLM 호출 대량 유발 가능. 사용자 명시 요청이 승인
+  근거이며, cap 기본 200 + only_missing + UI confirm + audit 로 통제. backfill 은 read-only introspect
+  + PG upsert 라 비파괴). 배포: web 재빌드 + **insight-worker 재빌드**(deploy-web WARN 권장 이행 —
+  node_analysis 모듈 정합·graceful SIGTERM 있음).
+- AC:
+  - AC-1: backfill 실행 후 routine 을 보유한 전 datasource 의 그래프 뷰에서 ƒ/⚙ 노드가 렌더된다
+    (이전 0행 ds 에서 라이브 확인). 실패 ds 는 리포트에 loud.
+  - AC-2: 스키마 카드/클러스터에서 'DB 전체 AI 능동 분석' 실행 시 미분석 테이블만 cap 이내로 시드되어
+    진행 패널에 진행률이 표시되고, 완료 후 노드들이 분석완료(보라/역할 칩) 마커를 얻는다.
+  - AC-3: 재실행 시 진행 중이면 reused(진행률 안내), 전부 분석됨이면 noop 안내 — 중복 run 0
+    (순차 재트리거 기준 — 동시 POST 경합은 T53.8 후속의 partial unique index 로 하드닝, §18.8 security MINOR).
+  - AC-4: 재귀 없음 — 시드 외 노드가 enqueue 되지 않는다(잡 수 == planned).
+
+### 53.1 구현
+- [x] T53.1 routines.introspect_and_store `prune=` 파라미터 + routine_backfill.py + bin/routine-backfill.sh.
+- [x] T53.2 metadata_graph.schema_table_keys + node_analysis.enqueue_schema_analysis + config SCHEMA_CAP.
+- [x] T53.3 analyze-schema 엔드포인트(audit·dry_run) + admin.js UI(메뉴·상세 버튼·confirm·진행 연동) + buster.
+- [x] T53.4 테스트 (enqueue_schema_analysis 시드/캡/reused/noop·backfill prune-safety·순수 로직)
+  + §18.8 회귀 잠금 6종(레지스트리 MEMORY_DB·disabled skip·dry-run reused·집계 fail-loud·uprompt 폴백·워커 재귀0).
+- [x] T53.4a §18.8 패널 적발 반영 (세션 이월 후 완결, 2026-07-06) — BLOCKING: backfill 레지스트리 조회
+  `connect(database=MEMORY_DB)`(DB 등록 ds silent 누락 해소) · MAJOR: worker routine introspect
+  `prune=(store label==schema)`(MSSQL 복수 스키마 backfill 결과를 cadence 가 되지우는 회귀 차단) ·
+  MAJOR(ux): 스키마 run 진행 패널 dismissed 해제(reveal parity) · MINOR: dry_run running-run 감지
+  (confirm 허위 승인 차단)·집계 실패 fail-loud·disabled ds skip·대기 카피 분기(root_label)·연타 피드백 ·
+  NIT: 라벨 통일·confirm 문안·docstring 정확화·schema_table_keys limit 5000.
+
+### 53.2 검증
+- [x] T53.5 node --check + pytest(16+57 PASS) + §18.8 적대 패널 3-렌즈(backend+qa·security·ux) + 수정분
+  적대 재검증(mutation 테스트 비공허성 실증) — REV-20260706T102814 (BLOCKING 1·MAJOR 2·MINOR·NIT 전건
+  반영 또는 근거 수용, 후속 T53.8/T53.9).
+- [x] T53.6 PR #593 머지 → deploy-web 롤링(d1951b7e soak 통과)+insight/ask-worker 재빌드 → **라이브
+  backfill 2,201 routines/도달가능 4 ds/18 슬롯**(accountdb 등 3 스키마 07-06 최초 적재, graph_synced
+  전건, SSOT==AGE 카운트 정합). 미도달 14 ds 는 loud 리포트(게이트망 — 도달 시 재실행/cadence 수렴,
+  mysql-gz-qa-kr 포함; 결정론 수단 확보로 AC-1 충족).
+- [x] T53.7 POST-DEPLOY PB-0008 PASS — 이전 0행 스키마(accountdb 198행) ƒ/⚙ 전수 렌더(z=4) + DB 단위
+  분석 e2e(confirm→진행 패널 시드 카피→done 2/2·예약 고정=재귀 0→보라 마커·역할 칩) + reused(confirm
+  생략·dismissed 복구)/noop parity + pageerror 0. 증적 artifacts/...20260706-routine-dbanalysis/.
+- [ ] T53.8 [후속·비차단] 스키마 run 동시성 하드닝 — `node_analysis_runs (scope_key, root_key) WHERE
+  status='running'` partial unique index + INSERT 충돌 시 reused 반환 (§18.8 security MINOR: reuse
+  SELECT→INSERT TOCTOU 로 동시 confirm 시 run 2개·최대 2×cap 시드. 기존 enqueue_analysis 와 공유하는
+  파리티 패턴이라 함께 하드닝 — 별도 마이그레이션 cycle).
+- [ ] T53.9 [후속·비차단, known-limitation] MSSQL 복수 ROUTINE_SCHEMA label 의 stale routine prune 소유
+  공백 — worker 는 MSSQL prune=False(§53 MAJOR 봉인의 의도적 결과), backfill 도 복수 스키마 label 은
+  prune=False → drop 된 routine 이 SSOT·그래프에 잔존(ƒ/⚙ 고스트, 기능 영향은 표시 잔존뿐). 해소안:
+  backfill 이 label 전체 스키마의 routine 이름 union 으로 label-단위 prune 1회 수행(cap-절단 시 skip).
+  단일 스키마 label(현행 대부분)은 backfill prune=True 로 이미 회수.
+
+## 54. graph-navfilter-routine — 그래프 뷰 개선 5건: 상세 nav·kind 필터·검색 보존·Routine 분석·파라미터 수직 (2026-07-06, 사용자 요청)
+
+- Related Requirement: REQ-20260706T113000-graph-navfilter-routine — 사용자 요청 5건:
+  ① '상세 정보' 패널 뒤로/앞으로(이전 선택 노드 되짚기) ② 그래프 노드 종류 필터(테이블·컬럼 항상,
+  관계·함수·프로시저 토글 — 토글에 반응해 재배치) ③ 검색 변경/클리어 시 그래프 구성(노드 확장·배치)
+  보존 ④ DB 단위 AI 능동 분석에 함수/프로시저 노드 포함(pcbang_dkonline 실측 gap) ⑤ 프로시저 노드
+  파라미터 수직 배치(수평 나열 가시성 저하).
+- 설계 요지 (Workflow 5-렌즈 정찰 스펙 기반):
+  - ① 기존 노드-전용 히스토리(graphux7 #1)를 **view-typed 엔트리** {v:"node"|"cluster"|"rel", k} 로
+    확장 — Go 가 뷰별 함수(ShowDetail/ShowClusterDetailById/ShowRelations)로 디스패치 + 카메라 재현
+    (_metaGraphAnimateFocus, 미렌더 skip). 기록은 사용자-의도 진입 함수에서만(렌더 함수 금지), Go 가
+    부르는 함수는 첫 await 이전 동기 구간(=_histNav 창), Expand/Focus 는 seq 가드 뒤 성공-기반.
+  - ② hiddenKinds Set — **빌드 입력 제외**(스타일 숨김 금지: masonry/simgroups/shelf-pack 이 자리
+    자동 회수 = "적절히 배치"). Routine 은 그룹핑 편입 시점(분류식 _metaRoutineIcon 동일), 엣지는
+    방출 시점(모델 유지 — _metaRelAdjacency 가 모델을 읽어 배치 불변). 툴바 토글 3버튼 + localStorage
+    영속, resetModel 비-clear(scope-독립 preference — 검색이 resetModel 을 경유).
+  - ③ 검색/클리어를 resetModel 풀리셋 대신 **additive overlay** 로: preserve 판정(비-products &&
+    loadedScope 일치 && 모델 비어있지 않음) 시 searchAdded(pristine 추적)만 회수(_metaSearchPrunePristine
+    — 펼침·로드·드래그·엣지참조·컬럼보유는 보존)하고 매칭 카드/terms additive ingest + rel 은 매칭
+    한정 + _metaG6Apply(false)(카메라 유지). _opSeq 무-bump(in-flight 펼침 병존). 풀리셋 탈출구는
+    '초기화' 버튼 유지.
+  - ④ metadata_graph.schema_routine_keys 신설(HAS_ROUTINE, 실패/0034 미적용 [] 저하) → 스키마 시드에
+    Routine 혼합(테이블 우선, cap 절단 시 루틴 후순위, node_label 파라미터화). 워커 경로는 기존에
+    라벨 무가정(Routine-safe — process_pending/_fetch_context/역할 Table-only NULL/마커·done_keys
+    무가정)이라 시드만이 결손이었음. _build_payload 에 routine_type/params 투영(프롬프트 계약 충족),
+    응답/audit 에 total_routines, confirm 카피 갱신. 재귀 0 불변식 = node_budget=len(targets) 그대로.
+  - ⑤ routineExpanded Set + 컬럼(ERD ordinal)과 동형의 **파라미터 서브노드 수직 방출**(XR: ctl /
+    RP:key:i 행 — 합성 id, params 는 모델에 이미 로드라 fetch 없는 동기 토글). realH 만 확장(assignH
+    펼침-불변 계약 유지), zIndex bake↔_metaZFor 1:1(XR=NODE, RP=COLUMN), _metaComboOwnerOf 귀속,
+    dragend regex 제외(nodePos 오염 방지), tableDeps 리지드 드래그 재사용. 상세 패널 파라미터도
+    amgr-collist 수직 목록으로.
+- 위험도: **Major** (§12.3 — ④ 는 LLM 외부 비용 표면 확장이나 기존 cap 200/hard 500·only_missing·
+  confirm·audit 통제 불변(run 당 비용 증가 없음, 스키마 드레인 총량만 +routine 수). ①②③⑤ 는
+  frontend-only 비파괴). 마이그 0. cache-buster admin.js/styles.css `?v=20260706-graph-navfilter-routine`.
+- AC:
+  - AC-1: 노드A→클러스터S→관계R→노드B 순회 후 뒤로×3 이 R→S(클러스터 카드)→A 로 각 뷰 그대로 복원
+    (+카메라 팬), 앞으로×3 복귀. 새 선택 시 forward 분기 절단.
+  - AC-2: ⚙/ƒ/🔗 토글 각각이 해당 요소만 제외하고 빈자리를 회수해 재배치(엣지 토글은 테이블 위치
+    불변). 재토글 시 복원(루틴은 열 말미 append — §49 순서 안정화의 의도적 동작). 새로고침 후 유지.
+  - AC-3: 검색 → 스키마 펼침·노드 드래그·이웃 확장 → 검색어 변경/클리어 시 펼침·배치·확장·카메라
+    유지(하이라이트만 갱신/해제). '초기화' 버튼만 풀리셋.
+  - AC-4: DB 단위 분석 confirm 에 함수/프로시저 수 표기, 실행 시 Routine 잡 시드·분석문 생성·보라
+    마커, 재귀 0(예약=상한 고정) 불변.
+  - AC-5: 파라미터 있는 루틴 단일클릭(또는 우클릭 메뉴) → 파라미터가 칩 아래 세로 목록으로 펼쳐지고
+    아래 행이 밀려나며(겹침 0), XR ctl 로 접힘. 상세 패널 파라미터도 세로 목록.
+
+### 54.1 구현
+- [x] T54.1 ① 히스토리 view-typed 확장(Record view 인자·Go 디스패치·카메라·기록 지점 5곳).
+- [x] T54.2 ② hiddenKinds + 빌드 필터 2곳 + 툴바 토글 + 바인딩/영속 + CSS.
+- [x] T54.3 ③ searchAdded/_metaSearchPrunePristine + 검색/클리어 preserve 경로 + rel 매칭 한정.
+- [x] T54.4 ④ schema_routine_keys + 혼합 시드(label 파라미터화·total_routines) + _build_payload
+  routine 필드 + 라우터/audit/confirm 카피 + 프롬프트 Input JSON 병기.
+- [x] T54.5 ⑤ routineExpanded + realH + XR:/RP: 방출 + 클릭/우클릭/드래그 라우팅 + zIndex·combo 귀속
+  + 상세 패널 수직 목록.
+- [x] T54.6 테스트 — 기존 시드 단언 파라미터화 + §54④ 신규 5종(혼합 집계/루틴 라벨 시드/cap 테이블
+  우선/[]저하/payload 필드) = test_routine_dbanalysis 21 PASS + 관련 회귀 57 PASS.
+
+### 54.2 검증
+- [x] T54.7 §18.8 적대 패널(3-렌즈 find → MAJOR 적대 verify → 수정분 2차 재검증 Workflow) — 확정
+  MAJOR 3 근본원인(products 클리어 미복원/ingest added 미반환 dead-code/Focus 위장) + MINOR·NIT 12
+  반영, 수용 1(열 말미 append=AC-2 명세). 재검증 PASS(신규 BLOCKING/MAJOR 0). REVIEW.md REV entry.
+- [x] T54.8 PR #597 머지(842b9ecf) → deploy-web 롤링 soak + insight/ask-worker 재빌드 → POST-DEPLOY
+  PB-0008 **AC-1~AC-5 전 항목 라이브 PASS** + pageerror 0 (§54 Run 2026-07-06 POST-DEPLOY 참조 —
+  Routine 잡 7 done·⚙ 마커·분석문, products 검색→클리어 복귀, 엣지 토글 배치 불변 등 실측).
+
+## 55. graph-category-recursive-refine — 제품/DB 카테고리 + 크로스-DB 관계 + 재귀 분석 정합(refine) (2026-07-06, entry persona dispatch)
+
+- Related Requirement: REQ-20260706-graph-category-recursive-refine — 사용자 4대 요구:
+  ① 데이터소스 선택 시 스키마 클러스터가 명칭순 평면 나열 → **제품(Products)·DB 매핑 기반 카테고리 단위**로
+    구분·배치 (하위 '유사 속성 그룹'과 같은 가시적 구분).
+  ② 스키마 클러스터 내부에만 갇힌 'AI 능동 분석'·관계 → **다른 DB 간(intra-DS 크로스 스키마 + 크로스 DS)
+    관계 분석/구축** 개선.
+  ③ 큰 단위(DB) 'AI 능동 분석' 시: 하위 전 노드(테이블·컬럼·함수·프로시저) 분석 + 관련 노드 **재귀 분석**
+    + 빈약 노드의 **후속 back-refine** + 모든 분석의 **override 아닌 refine** 동작.
+  ④ ADR-013 후속(ADR-018 Phase C)의 실동작 정합 검토 + 잔여 후속 진행.
+- 등급: **Major** (라이브 agent_kb 마이그 0038 비파괴 additive + 분석 엔진 확장 + 관계 엔진 경계 확장 +
+  admin UI 카테고리 계층. 인증/인가·파괴적 변경 없음). §7.1 계획 본 절. deploy_scope: included(전역).
+- 실측 근거(2026-07-06 라이브): rag_objects 16,023 中 signature_text_hash 497(3%)·semantic_cluster_id 203(1.3%)
+  — 백필 정체(ORDER BY updated_at DESC LIMIT 200 이 미처리 행 비우선·no-op 재스캔, semantic_cluster.py:119).
+  table_relationships 11,056행 中 크로스-DS 0·같은 DS 크로스 스키마 0 — 추론 per-schema 고정(relationships.py:790-792),
+  MSSQL 3-part 프로브 미지원(dialects.py:350,637), 크로스-DS manual 승격 호출자 0(영구 candidate→AI 미주입).
+  enqueue_schema_analysis 재귀 0(node_budget==planned, node_analysis.py:536-538)·컬럼 미시드·분석 저장 override
+  (이전 분석 프롬프트 미참조)·back-refine 부재.
+
+### 55.0 계획 (영향 파일·심볼·AC)
+
+**C. 재귀 분석 정합 (engine — feature-0002)**
+- `alembic/versions/20260706_0038_node_analysis_refine.py`: node_analysis_jobs 에 `anchor_key TEXT NOT NULL DEFAULT ''`
+  + `pass_no INT NOT NULL DEFAULT 0` 추가, UNIQUE(run_id,node_key) → UNIQUE(run_id,node_key,pass_no) 진화(비파괴).
+- `modules/node_analysis.py`:
+  - `enqueue_schema_analysis`: 시드 depth 1→0(직계 컬럼 gate-exempt 편입), run depth_budget=AGENT_NODE_ANALYSIS_SCHEMA_DEPTH(2),
+    node_budget=min(SCHEMA_RUN_BUDGET_MAX, planned×SCHEMA_EXPAND_FACTOR) — 재귀 전개 활성. 시드별 anchor_key=자기 key
+    (per-seed 앵커 — ADR-003 게이팅이 시드 기준으로 동작).
+  - `_enqueue_neighbors`: anchor_key 상속. only_missing 스키마런: done+rich 노드 skip / done+thin 은 refine pass 로 승급.
+  - `_load_anchor`: (run, anchor_key) 단위 캐시로 확장.
+  - **back-refine**: 잡 완료 시 같은 run 의 선행 done 노드 중 현재 잡과 그래프 인접 + 분석 빈약(THIN_CHARS 미만 또는
+    relationships·usage 공란) → pass_no+1 refine 잡 enqueue(REFINE_MAX cap). refine 잡 payload 에 previous_analysis
+    + 같은 run 인접 done 분석 요약(≤6) 동봉.
+  - **refine-not-override(전역)**: process_pending 이 노드 최신 done 분석을 payload.previous_analysis 로 동봉 —
+    모든 재분석이 융합(refine) 계약으로 동작.
+  - **관계 보충**: LLM 출력 계약에 optional `suggested_links`(컨텍스트 내 테이블 한정, ≤SUGGEST_LINKS_MAX) 추가 →
+    끝점 rag_objects 실재 검증 후 upsert_relationship(source='llm_insight', candidate) — 기존 프로브/자기교정
+    파이프라인이 검증(fetch_probe_candidates 가 llm_insight 이미 포함).
+- `modules/llm.py`: NODE_ANALYSIS_PROMPT 에 refine 계약(기존과 비교·올바른 쪽 채택·다른-but-not-틀린 융합·유효 사실
+  폐기 금지) + suggested_links 계약.
+- config: AGENT_NODE_ANALYSIS_SCHEMA_DEPTH(2)·SCHEMA_EXPAND_FACTOR(12)·SCHEMA_RUN_BUDGET_MAX(2500)·THIN_CHARS(120)·
+  REFINE_MAX(30)·SUGGEST_LINKS_MAX(4).
+
+**B. 크로스-DB 관계 (engine — feature-0002)**
+- `modules/relationships.py`: `infer_cross_datasource_relationships` 일반화 — 후보 WHERE 를 "다른 datasource OR
+  (같은 ds AND 다른 effective schema)" 로 확장(intra-DS 크로스 스키마는 src_ds==tgt_ds 로 저장 → 기존 프로브·강화
+  경로 자연 편입). `fetch_probe_candidates` db_scope 필터를 양끝 OR-매칭으로 완화. `probe_and_reinforce` MSSQL
+  qualifier 유지(활성 DB 와 달라도 strip 안 함 — 3-part 위임).
+- `modules/dialects.py`: MSSQL probe 이름 3-part `[db].[dbo].[table]` 지원(스키마-slot=DB 규약), MySQL 은 기존 2-part 로 충분.
+- `modules/insight.py`: xds 데몬 가드 (XDS_AUTO or XSCHEMA_AUTO) — intra-DS 크로스 스키마 추론은
+  AGENT_XSCHEMA_RELATIONSHIP_INFER_AUTO(기본 1, 프로브 검증 가능해 안전) / 크로스 DS 는 기존 XDS_AUTO 유지.
+- **manual 승격 배선**: admin 라우터 `POST /api/admin/metadata/graph/relationship/curate`(trust|break, 권한
+  metadata.table.manage) → upsert_relationship(source='manual') + sync_relationship — 크로스-DS 영구 candidate
+  dead-end 해소. admin.js 관계 상세 패널에 승격/파단 버튼(cross-ds candidate 시).
+- compose: insight-worker `AGENT_XDS_RELATIONSHIP_INFER_AUTO=1` flip(ADR-019 의 "임베딩 populate 후 flip" — D 로 populate 가동).
+
+**A. 제품/DB 카테고리 (feature-0003)**
+- `routers/admin_metadata.py`: scope_roots/scope_schemas 응답에 `schema_products` 부착 — scope→datasource 해석
+  (read-axis, _products_for_scope 로직 재사용) → WebProductDatasources(+legacy) 제품 → WebProductDatabases
+  (DatasourceKey, SchemaName) → {schema: [{id,name,sort}]} 합성(AGE 미저장 — ADR-014 원칙 계승).
+- `static/admin.js`: `_metaGraph.schemaProducts` ingest → 빌드 [6] shelf-pack 을 카테고리(제품) 단위 분할 —
+  카테고리 순서(제품 SortOrder·미분류 후미)·§49 catOrder 안정화, CAT:(배경, z 신설 CAT_BG)·CATH:(헤더 칩, GROUP_HD)·
+  CATX:(접기, CTL) 방출(GB/GH/GX 패턴 재사용). CATH 드래그=멤버 클러스터 clusterOffset 일괄 시프트(리지드),
+  CATX 접기=멤버 클러스터 미방출+헤더 유지, catCollapsed/catOrder resetModel clear. 클릭/우클릭/드래그 라우팅 분기.
+  단일 카테고리(전부 미분류)면 카테고리 계층 미방출(회귀 0).
+- `admin.html`: cache-buster bump + 범례 카테고리 항목.
+
+**D. Phase C 정합 후속 (feature-0002)**
+- `modules/semantic_cluster.py` `run_signature_backfill_pass`: 미처리(hash NULL/'') 우선 정렬
+  `ORDER BY (signature_text_hash IS NULL OR ='') DESC, updated_at DESC` + remaining 카운트 + pass 결과 info 로그 1줄(관측성).
+- config: SIG_BATCH_MAX_ROWS 기본 200→500(16k 백로그 ~8h 소진).
+
+**AC**
+- AC-1(A): 다제품 매핑 datasource 진입 시 스키마 카드가 제품 카테고리 박스(배경+헤더 `제품명 · n`)로 묶여 배치,
+  미매핑 스키마는 '미분류' 후미. 헤더 드래그=카테고리 일괄 이동, CATX 접기/펼치기. 전부 미분류면 기존 배치 그대로.
+- AC-2(B): 같은 DS 다른 스키마(DB) 간 후보 관계가 임베딩 유사도로 발굴·저장되고(src_ds==tgt_ds, 스키마 상이)
+  MSSQL 3-part 프로브가 강화/파단 신호를 만든다. 크로스-DS 관계 승격 API·UI 로 trusted 화 시 AI 컨텍스트 주입.
+- AC-3(C): DB 단위 분석이 테이블·루틴 시드 + 직계 컬럼 + 앵커-게이팅 재귀(예산 내)로 전개. 이미 분석(rich)된
+  노드 skip, thin 노드는 refine. 잡 완료 시 선행 thin 인접 노드 back-refine 잡 생성(cap). 모든 재분석 payload 에
+  previous_analysis 동봉 + 프롬프트 refine 계약. suggested_links 가 검증 후 candidate 관계로 적재.
+- AC-4(D): 백필이 미처리 행부터 소진(remaining 단조 감소 로그), 클러스터 populate 진행. XDS 데몬 가동 로그.
+- AC-5: 기존 단위테스트 회귀 0 + 신규 테스트(스키마런 재귀·refine payload·back-refine·xschema 후보·3-part 프로브·
+  schema_products 합성·백필 우선순위) PASS. PB-0008 라이브 시각검증(카테고리 렌더·관계 UI).
+
+### 55.1 구현
+- [x] T55.1 alembic 0038(ADD anchor_key·pass_no — UNIQUE 불변 mixed-version 안전) + node_analysis.py 스키마런 재귀(시드 depth0·per-seed 앵커·예산 planned×12 cap 2500) + refine-not-override(previous_analysis 전역 동봉) + back-refine(_backrefine_neighbors, thin 재-pending pass_no+1, REFINE_MAX 30) + suggested_links 적재(_ingest_suggested_links, 3중 가드) + llm.py refine·suggested_links 계약 + config 노브 9종(+__all__). 전 지점 0038 미적용 legacy 폴백(_refine_cols_ok).
+- [x] T55.2 infer_cross_datasource_relationships 일반화(include_xds/include_xschema — intra-DS 크로스 스키마 후보 src_ds==tgt_ds 로 프로브 파이프라인 자연 편입, per-mode min_sim 0.90/0.86, 같은-DB 쌍 제외·reverse-dup 카논화) + MSSQL 3-part `[db].[dbo].[t]` 프로브(dbo slot 가드) + fetch_probe_candidates 한끝 OR-완화 + probe_and_reinforce qualifier 보존 + insight 데몬 (XDS OR XSCHEMA) 가드 + curate API(POST /graph/relationship/curate, trust=manual 승격·break=파단+AGE 즉시 정합, 권한 metadata.table.manage) + 관계 상세 패널 ✓신뢰/✕파단 버튼 + compose insight-worker AGENT_XDS_RELATIONSHIP_INFER_AUTO=1 flip.
+- [x] T55.3 _schema_products_for_scope(WebProductDatabases 질의시점 합성, ADR-014 계승) + scope_roots/schemas 응답 schema_products 부착 + admin.js _metaCatAssign(카테고리 배정·catOrder §49 안정화·검색 강제펼침) + 밴드별 shelf-pack 분할 + CAT:(z 신설 CAT_BG=-1)/CATH:/CATX: 방출(bbox 반응형 파생) + CATH 리지드 드래그(멤버 clusterOffset 일괄 누적) + 접기/클릭/우클릭 라우팅 + 카테고리 상세 패널 + resetModel/ingest 배선 + admin.html 범례·cache-buster 20260706-graph-cat-refine + styles.css.
+- [x] T55.4 run_signature_backfill_pass 미처리(hash NULL/'') 우선 정렬 + remaining 카운트·info 로그(관측성) + SIG_BATCH_MAX_ROWS 기본 200→500 (실측 정체 497/16,023 = 3% 해소 경로).
+
+### 55.2 검증
+- [x] T55.5 신규 테스트: test_graph_category_recursive_refine.py 23(thin/refine 헬퍼·back-refine 캡·anchor 상속·per-seed 앵커·suggested_links 가드·xschema 추론 5축·3-part/dbo 가드·fetch OR·백필 정렬) + test_routine_dbanalysis 계약 갱신(depth0/legacy 폴백 2건) + test_graph_relationship_curate.py 4 + 프론트 헤드리스 카테고리 17/17. 전체 스위트 컨테이너 pytest EXIT=0(전건 PASS — route parity golden 은 §53 누락분+curate 라우트 반영 재생성 197). node --check·py_compile PASS.
+- [x] T55.6 §18.8 적대 리뷰 패널 — ultracode Workflow 4렌즈(engine/relationships/frontend/crosscut) 발굴 + 2-refuter 적대 검증(세션 한도 중단분 9건은 main 세션 코드 직접 재검증·crosscut self-review 대체). 확정 BLOCKING 2·MAJOR 4·MINOR 3 전건 수정 + 수용 1(멀티워커 finalize 경합 cosmetic — 근거 기록). 회귀 잠금 6건+헤드리스 T7~T9 추가, 전체 스위트 EXIT=0 재확인. REVIEW REV-20260707T100744 정본.
+- [x] T55.7 verify-completion PASS → PR #599 머지(main 0bd73169) → 배포 완수(0038 마이그 라이브 head·web 무중단 롤링 soak 통과·insight/ask-worker 재빌드 + XDS flip 활성) → **PB-0008 POST-DEPLOY 전 AC 라이브 PASS**(카테고리 밴드 6종·접기/z canonical·큐레이션 왕복·재귀+back-refine 실증 8/8·백필 소진 가동 — TEST.md §55 Run 2026-07-07). 후속 관측: 백필 완주(~8h) 후 be: 클러스터·xschema/xds 후보 발굴 가동.
+
+## 56. graph-dataflow-tooltip — 노드 관계 화살표 데이터흐름 정합 + AI 능동 분석 지침 툴팁 (2026-07-07, 사용자 요청 · entry persona dispatch)
+
+- 사용자 요청(관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰): ① 노드 간 관계 방향을 데이터 흐름(읽기/쓰기)과 정합하도록 화살표 구성 ② 'AI 능동 분석' 지침 UI 가 버튼 외 UI hover 에도 뜨는 이슈 + 패널 내부 확장으로 아래 UI 를 밀어내는 이슈(툴팁 의도) 개선.
+- [x] T56.1 **이슈1 — ROUTINE_USES 데이터흐름 화살표**: AGE 모델은 항상 Routine(source)→Table(target) 이고 relation_type 만 read/write. 프론트 `_metaRoutineEdgeStyle(relationType)` 를 방향-인식화 — write=`endArrow`(루틴→테이블, 데이터 씀), read=`startArrow`(테이블→루틴, 데이터 읽음). 호출부(`_metaG6Build` ROUTINE_USES 분기)에 `e.relation_type` 전달. relation_type 미상 시 endArrow 안전 폴백. G6 arrow false 키 미설정(크래시 회피). 범례 '관계·AI 상태' 탭에 방향 부연(`.amg-legend-sub`). REFERENCES(FK)는 표준 ER 규약이라 불변.
+- [x] T56.2 **이슈2A — 지침 툴팁 트리거 버튼 한정**: `_metaGraphBindAiPopover` 에서 섹션 전체 hover(`sec.mouseenter→show`) 제거 → 버튼(+툴팁 자체) hover/버튼 focus 로만 트리거. 버튼→툴팁 이동은 250ms 지연 hide 로 흡수.
+- [x] T56.3 **이슈2B — in-flow 카드→플로팅 툴팁**: ADR-017 원래 의도("버튼 hover 시 툴팁형 입력")로 복원. 이후 hotfix 에서 in-flow 카드(margin-top)로 드리프트해 열릴 때마다 아래 결과/노드 상세를 밀어내던 것을 `position:fixed` 뷰포트 앵커 툴팁으로 전환. JS `position()` 가 버튼 rect 기준 viewport 좌표 산정(우측 정렬·하단 넘침 시 위로 flip·스크롤/리사이즈 재배치·pop DOM 이탈 시 self-cleanup). 상세 패널 `.admin-meta-graph-detail` 의 overflow-y:auto 클리핑을 피하려 absolute 아닌 fixed. 미hover 시 아래 내용 밀림 0. (CSS 주석의 'ADR-014' 참조는 오기였음 — ADR-014 는 제품 카테고리 — 교정.)
+- [x] T56.4 정적·격리 검증: `node --check admin.js` PASS · CSS↔JS 정합(fixed↔viewport 좌표, absolute 잔존 0) · 중복 로직 0 · cache-buster `?v=20260707-graph-dataflow-tooltip` bump. 세션 컨텍스트 압축으로 issue-2B 를 이중 접근(초기 fixed JS 편집이 활성 컨텍스트에서 유실 후 absolute CSS 재접근)했던 것을 fixed 로 정합화(REPORT/RETRO 참조).
+- [ ] T56.5 배포 + POST-DEPLOY PB-0008 — 정적 자산 baked → merge + `make deploy-web` 재배포 후 실 Windows 브라우저 시각검증(TEST.md §3 Run 2026-07-07 검증항목 ①~⑥). deploy_scope: included.
+- [x] T56.6 배포 완료 — PR #611 main 병합(15e4e23a) → `make deploy-web` 무중단 롤링(web-a/b recreate, Caddyfile 무변경). **자산·health 검증 PASS**(엣지 readyz git_commit=15e4e23a·RestartCount 0·서빙 3 시그니처 라이브). soak 은 세션 경계로 조기 종료됐으나 RestartCount 0+안정 프로브로 확증. §55 collision→§56 재번호(merge e79688f6). **실 Windows 브라우저 PB-0008 시각검증(①~⑥)만 사용자 육안 대기.**
+
+## 56. routine-sync-crossdb — fhgame1 실측 이슈: 루틴 투영 붕괴·크로스-DB 참조 폐기·재귀 보충 부실 (2026-07-07, 사용자 보고)
+
+- Related Requirement: REQ-20260707-routine-sync-crossdb — 사용자 실측(mssql-qa-idc/fhgame1 DB 능동 분석):
+  ① 함수·프로시저 노드가 그래프에 없음 ② 크로스-DB 관계 미확인 ③ 대부분 테이블에 '보충설명 필요' —
+  재귀 분석 부실 추정. 프로시저 중심 DB 라 능동 분석 효과가 현저히 저하.
+- 등급: **Major**(그래프 투영 엔진·파싱 계약 변경, 마이그 0·비파괴). 정본 ADR-022.
+- 근본원인(라이브 진단 확정):
+  - **RC1 (routine 노드 부재)**: routine_objects SSOT 는 완비(qa-idc 11,973·fhgame1 300, 07-06 적재)이나
+    AGE 투영이 9행 뿐. sync_graph 의 batched 트랜잭션에서 **한 행 실패가 트랜잭션을 오염시켜 이후 전 행이
+    InFailedSqlTransaction 연쇄 실패 + 배치 커밋이 롤백으로 성공분까지 소실**(라이브 full sync errors
+    18,698 — 단건 재현 전행 성공 = 불량 행 0, 전부 연쇄). 부작용: errors>0 이 워터마크를 07-06 07:30 에
+    영구 고착 → 증분 sync 가 매 30분 전량 재스캔(+백필의 updated_at 전진으로 창 팽창).
+  - **RC2 (크로스-DB 관계 부재·오귀속)**: parse_referenced_tables 가 qualified 참조([db].[dbo].[T])를
+    leaf 정규화 후 **같은 스키마 실재 테이블만** 채택 — 크로스-DB 참조 전부 폐기 + 동명 로컬 테이블 존재
+    시 **오귀속**. 프로시저가 DB 동작을 제어하는 환경에서 관계 substrate 의 대부분이 소실.
+  - **RC3 (보충설명 필요·재귀 부실)**: substrate 부재(루틴·관계 없음)로 1-hop 컨텍스트가 빈약 →
+    thin 판정이 "연결 정보 없음" 문구를 공란으로 안 봐 back-refine 미발화.
+- 조치:
+  - 데이터 회수(즉시, 라이브): qa-idc 루틴 11,973행 전수 autocommit 투영 완료(fhgame1 300/300 AGE 확인).
+  - RC1: `_sync_row_guard`(SAVEPOINT 행 격리 — 실패 행만 롤백, 연쇄·소실 차단) + step_failures(커버리지
+    구멍) 분리 + 실패 첫 5건 샘플 warning(관측성) + 워터마크 전진 게이트를 errors→step_failures 로 교체.
+  - RC2: qualifier 해석 4규칙(①dbo/자기라벨=로컬 ②(qual,leaf)∈external=크로스-DB 채택 ③알려진 타 스키마
+    미실재=폐기(오귀속 차단) ④미상=레거시 로컬 폴백) + external_tables(rag_objects effective 스키마 집합,
+    TTL 600s 캐시) + refs_fqn `타스키마.T`(+cross 플래그) — sync_routine 이 그대로 크로스 클러스터
+    ROUTINE_USES 앵커(코드 불변).
+  - RC3: thin 판정에 "연결 정보 없음"=공란 동치(usage 있으면 비-thin — 과잉 재분석 방지).
+  - **RC4 (추가 발견 — backfill 키 불일치)**: routine_backfill 이 registry **라벨 키**('mssql-dk-dev')를
+    scope_key/datasource_key/sync_graph 에 사용 — insight cadence(해시 scope)와 SSOT **이중 적재**(라이브
+    실측 dk-dev 1,449행×2키 등 4쌍), label 스코프 그래프 고아 투영, RC2 external 검증(rag 해시 키) 무력화.
+    → read-axis 정규화(`ds.scope_key or 라벨lower`, ADR-014 규약) + --scope 필터 양키 매칭.
+
+### 56.1 구현
+- [x] T56.1 metadata_graph.py `_sync_row_guard`+step_failures+샘플 로그, scripts/metadata_graph_sync.py 워터마크 게이트.
+- [x] T56.2 routines.py parse_referenced_tables qualifier 4규칙+external_tables+`_external_tables_for` TTL 캐시+refs_fqn cross.
+- [x] T56.3 node_analysis.py `_analysis_is_thin` 무관계 문구 동치.
+- [x] T56.3b routine_backfill.py read-axis scope 정규화(RC4) + report 에 scope 표기.
+
+### 56.2 검증
+- [x] T56.4 신규 test_routine_sync_crossdb.py 19(RC4 read-axis/레거시 폴백/양키 필터 3건 포함, 크로스 채택/오귀속 차단/미실재 폐기/dbo·라벨 로컬/db..T·2-part/
+  write 우선/introspect 배선·TTL 캐시·soft 실패/row_guard 4종/thin) + 기존 계약 주석 갱신 — 영향 4파일 84 PASS.
+- [x] T56.5 §18.8 적대 리뷰(ultracode workflow, 3렌즈·2-refuter·27 에이전트) — 확정 8건(4계열: step 오염/소실·워터마크 catastrophic 구멍·row-guard 무결성/서브트랜잭션·ext 실패 캐시) 전건 수정 + 기각 4건(만장). _run_step 통일 가드 도입, 0036-폴백 잠복결함 동반수정. REVIEW REV 정본.
+- [x] T56.6 verify(재개 세션 재확인 포함 2회 PASS) → commit fe05d6f8 → base 병합(#613 등 6건, 충돌 0,
+  영향 6파일 127 PASS) → **PR #615 머지(6c59927d)** → cycle-finalize → 배포(web 롤링 soak PASS +
+  insight/ask-worker 재빌드·RC1 가드 라이브 실증 + alembic 0039 ✓ + healthz/smoke 전건 PASS) →
+  **RC4 라이브 정리**(SSOT 라벨 이중행 2,201 전건 twin-검증 삭제 — dk-dev 651 비대칭은 schema 케이스였고
+  lower 매칭 시 1,449/1,449 · AGE 라벨 고아 2,814v/4,955e DETACH DELETE · 워터마크 잔여 0) →
+  재-introspect(stored 6,910, 오류 2건=소스 DB 환경) → **RC2 라이브 실증**: refs `"cross":1` 채택
+  (fhgame 86·qa-idc 758 루틴).
+
+### 56.3 RC5 — backfill MSSQL store label 케이스 정규화 (2026-07-07, e2e 중 적발)
+- 증상: 재-introspect 후 fhgame1 300→600행 — `fhgame1`(07-06 cadence, lower) vs `FHGame1`(backfill,
+  sys.databases 원본 케이스) 케이스-변형 이중행. qa-idc 전체 1,912쌍·mixed 6,320행, 그래프 중복
+  Schema/Routine 클러스터. RC4 의 scope 통일이 잠복 불일치를 표면화(회귀 아님 — 구 backfill 도 무가공).
+- 근본원인: store label 의 시스템 계약은 `set_active_database`(TASK-0220, shared/config.py)가 **lower 로
+  고정** — cadence(routine·relationship·table 전 경로)는 준수, backfill 만 원본 케이스 무가공 store.
+- [x] T56.7 routine_backfill.py mssql 분기 store label lower 정규화 — 공유 계약 `normalize_db_label`
+  (shared/config, set_active_database 와 단일화 + parity 잠금). store/query 분리(connect 는 원본
+  dbname). MySQL 분기 케이스 보존 불변. insight.py 는 계약 준수 확인으로 무수정.
+- [x] T56.7b §18.8 패널(3렌즈+2-refuter, 9 에이전트) 확정 MAJOR 1 반영: `purge_case_variant_labels`
+  — introspect 성공 직후 케이스-변형 label 행 멱등 자동 회수(수동 runbook 코드화·재발 자기치유,
+  리포트 case_purged). MINOR 반영: CS-collation label 충돌 시 prune 강등(교차-삭제 진동 차단)·
+  store_labels 리포트·dry-run slot 잠금. 테스트 6건(RC5 계열) — 컨테이너 66 PASS·ruff PASS.
+  REVIEW REV-20260707T173500 정본.
+- [ ] T56.7c (후속, 패널 수용 2건) routine_name·refs 테이블명 축 케이스 플래핑(pre-existing,
+  TASK-0305 RC2 계열) + backfill(DB 전체)·cadence(스키마 단위) refs 입력 발산 churn — 별도 cycle.
+- [x] T56.8 POST-DEPLOY 완수 — PR #617 머지(fbae6f56)·워커 재빌드(purge/normalize 라이브 grep 실증)·
+  web 롤링 soak PASS. 라이브 정리: 재-backfill 이 **case_purged 6,320 전량 자동 회수**(패널 MAJOR
+  수정의 라이브 실증, SSOT mixed 잔여 0·fhgame1 600→300) + AGE mixed-key 고아 DETACH DELETE(잔여 0).
+  **e2e 전건 PASS**: ① RC1 — full sync routines 16,410 전량 투영·errors 0·step_failures 0·ok true,
+  워터마크 mssql-06656002eda6 → 07-07 19:01 전진(07-06 07:30 고착 해소, cadence __all__ 19:30 도 전진)
+  ② RC2 — 크로스-클러스터 ROUTINE_USES 1,041/26,535(fhgame1→fhdef 실측: FHSP_BuyItem_V4→FH_ITEM 등;
+  cross 플래그는 SSOT refs 전용, 엣지는 fqn 앵커로 성립 — ADR-022 설계 그대로) ③ 케이스 중복 0
+  (fhgame1 Routine 정확히 300) ④ RC3 — 스키마 능동 분석 run 6c33317d 기동(시드 361·missing 300·
+  cap 200, insight-worker 소화 중). PB-0008: 백엔드 전용 변경(웹 자산 불변)이라 실측 축은 DB/API
+  레벨로 대체 완료 → **PB-0008 시각검증 AI 직접 수행 완료(2026-07-08, 실 Windows Chrome)**: fhgame1
+  ƒ/⚙ 렌더·fhdef 크로스 연결선(FH_ITEM 유입 49)·능동 분석 보충 전건 PASS + 디자인 수용성 검토
+  (개선 후보 3건 — 엣지 스파게티·크로스 엣지 스타일 미구분·AccountDB 테이블축 케이스 중복 rekey).
+  TEST.md Run(2026-07-08) 정본.
+- [x] T56.9 PB-0008 시각검증 완수(AI 직접, 실 Windows Chrome/149) — AC-① fhgame1 ƒ/⚙ 렌더·중복 0 ·
+  AC-② fhdef 크로스 연결선(양방향 상세 포함) · AC-③ 능동 분석 보충(run 538/538) 전건 PASS +
+  디자인 수용성 검토(개선 후보 3건 후속 위임). 잔여 한계(비차단): 그래프 Routine 정점 21,992 > SSOT 21,160 — drop 된 루틴의 정점 잔존은
+  ADR-016 알려진 한계(vertex prune 투영 범위 외).
+
+## 57. graph-edge-visibility — 접힘 카드 연결선·상대 하이라이트·크로스 시각 구분·중간 줌 LOD (2026-07-08, 사용자 요청)
+
+- Related Requirement: REQ-20260708-graph-edge-visibility — PB-0008 시각검증(§56 T56.9) 후 사용자 개선 요청:
+  ① DB(스키마 카드) 접힘 상태에서 연결선 부재 → 연결 구조 파악 불가 ② 선택 노드 관련 선 외 나머지
+  흐리게(상대 하이라이트) ③ (검토 발견) 크로스-DB ROUTINE_USES 시각 미구분 ④ 중간 줌 엣지 스파게티.
+- 등급: **Major**(그래프 렌더 엔진·백엔드 집계 API, 마이그 0·비파괴). 정본 ADR-024.
+- 진단(정찰 4-agent workflow): 접힘 연결선 부재는 2중 근본원인 — (a) 데이터: scope_schemas(초기 카드
+  뷰)가 edges 를 아예 반환하지 않음 (b) 빌드: renderEndpoint 에 스키마 카드(SC:) 승격 폴백 부재로
+  접힘 스키마행 엣지 전부 드롭. §32 의 '접힌 상태 관계'는 테이블-레벨 한정이었음.
+
+### 57.1 구현
+- [x] T57.1 백엔드: sync_routine cross_ds='1' 투영(SSOT refs.cross → AGE, ADR-019 키 관례) +
+  schema_tables RETURN u.cross_ds + scope_schemas **SCHEMA_REF 스키마-쌍 집계**(1-hop 전량 스캔
+  0.2s 실측 — 멀티-hop cypher 82s 기각 — 후 키 세그먼트 Python 무향 집계, cap 400·truncated).
+- [x] T57.2 프론트: renderEndpoint 컬럼→테이블→SC: 카드 3단 승격(원본 키 세그먼트 기준) + SCHEMA_REF
+  카드간 렌더(양쪽 접힘일 때만, count 라벨·로그 굵기) + ROUTINE_USES 승격 집계(::RU 분리 키).
+- [x] T57.3 크로스 ROUTINE_USES 마젠타(#a855c7 — REFERENCES cross 색 어휘 공유, 잔점선·화살표 방향
+  유지): AGE cross_ds 속성 우선 + 키 세그먼트 비교 폴백(배포 직후 기존 엣지 속성 부재 창 커버).
+- [x] T57.4 상대 하이라이트: _metaFocusAdjacency(1-hop, 모델 밖 컬럼 키 파싱) + node.state 'dimmed'
+  (opacity .15, _metaNodeStates 경유 — §33 상태 폴 정합) + 비인접 엣지 strokeOpacity .12 bake +
+  canvas:click 해제 + 선택 변화 시 busy 가드 하 rebuild(_metaG6Apply — setElementState 전역 금지 §33).
+- [x] T57.5 중간 줌 LOD: 줌<0.35 ∧ 모델 엣지>120 시 무상태 FK·비크로스 단건 축약(trusted/candidate/
+  크로스/집계/SCHEMA_REF/하이라이트 인접 보존 — 우선순위: 사용자 숨김 > 하이라이트 > LOD),
+  viewportchange 밴드 전이+300ms 디바운스 rebuild, _lodDropped 집계. 캐시버스터 20260708-graph-edge-visibility.
+
+### 57.2 검증
+- [x] T57.6 headless 신규 test_g6build_edge_visibility.js **22 PASS**(SCHEMA_REF 방출/한쪽 펼침 미방출·
+  SC: 승격 집계·크로스 마젠타/로컬 보존·dimmed 인접 판정·LOD 축약/보존/정상줌 + 패널 회귀 T6 이중렌더
+  억제/T7 kind 누출/T8 컬럼 부모) + 기존 category 26 PASS. 백엔드 test_graph_funcproc_uxfix.py
+  +2(cross_ds 투영·SCHEMA_REF 집계) 21 PASS.
+- [x] T57.6b §18.8 패널 반영 — BLOCKING 1(viewportchange 부재→aftertransform)·MAJOR 1(SC:↔SC: 이중
+  렌더 억제)·MINOR 7 수정, 수용 2 기록. REVIEW REV-20260708T150000 정본.
+- [ ] T57.7 §18.8 패널 → verify → PR → 머지 → 배포(web) → PB-0008 육안(카드 연결선·하이라이트·
+  마젠타 크로스·LOD).
+
+## 58. tableaxis-case — 스키마 골격 가져오기 MSSQL 라벨 케이스 정합 + AccountDB 잔재 회수 (2026-07-08)
+
+- Related Requirement: REQ-20260708-graph-edge-visibility 후속 — PB-0008 검토 발견 ③(AccountDB/accountdb
+  중복 카드). 근원: '스키마 골격 가져오기' MSSQL 분기(app.py _bootstrap_collect_skeleton_mssql)가
+  sys.databases 원본 케이스를 table_descriptions.schema_name 으로 저장 — §56 RC5(루틴 축)와 동일
+  결함 클래스의 **테이블 축**. 라이브 잔재: 'AccountDB' 33행(06-30 일회성, lower twin 0 → rekey 대상).
+- 등급: **Minor**(1점 정규화 + 운영 rekey, 비파괴). §56 RC5·ADR-023 계약의 테이블 축 확장.
+- [x] T58.1 app.py 골격 수집 MSSQL 분기 schema_name=normalize_db_label(db_name) (단일 계약 —
+  테이블명 케이스 보존·MySQL 분기 무변경) + **적대 리뷰 MAJOR 동반수정**: 단건 자동완성 grounding
+  allowlist 를 lower→원본 매핑 case-insensitive 로(연결은 원본 케이스 — 무음 ungrounded 회귀 차단).
+  테스트 2건(혼합 케이스 질의 잠금·grounding 회귀). REVIEW REV-20260708T153000 정본.
+- [ ] T58.2 운영 rekey(배포 후): table_descriptions 'AccountDB' 33행 → 'accountdb'(twin-가드 tx) +
+  node_analysis 1run/1job key 치환 + AGE 'AccountDB' 축 34정점 DETACH DELETE(정점-필터 한정 —
+  비앵커 edge 스캔 금지, 라이브 6분+ 실측) + full sync 재투영 + 잔재 0 검증.
+- 후속 위임(별도 cycle): mysql-42371f8d92bc routine 케이스 변형 5쌍(120행) — MySQL 은 케이스 유의미,
+  실서버 SHOW DATABASES 실존 확인 전 rekey 금지(T56.7c 계열).
+
+### 57.3/58.2 POST-DEPLOY 완수 (2026-07-08, 재개 세션)
+- [x] T57.7 §57 배포·PB-0008 완수 — PR #623 머지 → main 화해(외부 세션 report_deck 커밋 2건 보존
+  merge·push) → deploy-web(c1d7cac8, soak PASS) + 워커 재빌드(cross_ds 라이브 grep 11). 실 Windows
+  Chrome 검증: ① 접힘 카드 간 SCHEMA_REF 연결선 + count 라벨(fh_ods—5—fhdef—44—fhetl 육안,
+  모델 73엣지) ② 상대 하이라이트(선택 시 358/361 비인접 dim — 유령화 육안) ③ 크로스 마젠타 51엣지
+  ④ LOD(band=lod·dropped 520·상태줄 "줌아웃 — 관계선 일부 축약" — aftertransform 실동작). 전건 PASS.
+- [x] T58.2 rekey 완수 — SSOT 'AccountDB' 33행 → 'accountdb'(twin-가드 tx, 설명 33/33 보존) +
+  node_analysis 1run/1job key 치환 + AGE AccountDB 축 34정점 DETACH DELETE + full sync(errors 0·
+  step_failures 0·ok) → 점프 목록 accountdb 단일(육안). 잔여: 'account' 동일-키 Schema vertex 중복
+  2개(동시 sync MERGE race 흔적 — UI 는 key-Map dedupe 로 무해, 후속: sync advisory lock).
+- [x] T58.3b (후속 정정) #625 compose 수정이 서비스 자체 mem_limit:1g 와 중복 키를 만들어 전
+  compose parse 실패(배포 차단) — 단일 2g 정의로 정정(gwmem-dupkey cycle). 교훈: compose 서비스
+  블록의 기존 키 존재를 grep 으로 확인 후 추가할 것(x-default 상속 가정 금지).
+- [x] T58.3 (동반 장애 복구) bedrock-gateway OOM 재시작 루프 — 07-07 라우팅 config 확장으로 litellm
+  기동 풋프린트 >1g(x-default), 워커 up 의 재생성이 표면화(무로그 137×111회). docker update 2g 응급
+  복구(healthy) + docker-compose.yml bedrock-gateway mem_limit 2g 영속화(본 cycle).
+
+## 59. product-classify-suggest — 제품 카테고리 밴드: 이름 기반 → 분석 기반 분류 '제안' 파이프라인 (2026-07-08, 사용자 요청)
+
+- Related Requirement: REQ-20260708-graph-edge-visibility 동반 요청 ③ — "제품 카테고리 밴드가 실제
+  파악된 기능이 아니라 이름으로 분류됨". 사실 확인: 매핑 원천(WebProductDatabases)이 정규식 이름
+  규칙(WebProductDatasourceDbRules reconcile) + 수동 입력뿐 — 기능/분석 신호 미개입.
+- 등급: **Major**(LLM 신규 파이프라인·admin 엔드포인트 2종, 마이그 0 — Pending 테이블 기존 스키마
+  재사용). 정본 ADR-025.
+- **보안 설계 결정**: WebProductDatabases 는 카테고리 밴드 소스이자 **에이전트 데이터 접근
+  allowlist** — LLM 산출의 직접 기록은 접근 권한 자동 부여와 동일하므로 금지. 제안은
+  WebProductDatabasePending(RuleId NULL, Reason 'ai_suggest:<conf>')에만 적재하고 사람이 제품
+  관리 화면에서 승인(Source='ai')/거부한다.
+- [x] T59.1 modules/product_classify.py — 미분류 스키마 산출(scope_schemas − 매핑 − 대기) →
+  근거 수집(테이블명 표본 ≤12·node_analysis 요약 ≤400자) → llm_product_classify(JSON-only·
+  untrusted-data 가드) → **환각 차단 3중 게이트**(입력 스키마 실재·datasource 연결 제품
+  화이트리스트·MIN_CONF 0.6) → Pending INSERT IGNORE(멱등). CLI `python -m modules.product_classify
+  [--dry-run]`.
+- [x] T59.2 데몬: insight-worker XDS 동형(AGENT_PRODUCT_CLASSIFY_AUTO **기본 OFF**·INTERVAL 21600·
+  BATCH_MAX 20) — 접근면 인접이라 명시 opt-in.
+- [x] T59.3 승인 경로: admin_products ai-suggestions/approve(Source='ai'·RuleId NULL, 기존
+  approve-pending 의 제외 DB·이름 검증 미러 + 감사)·/reject(멱등 삭제 + 감사). 기존 rule 승인
+  엔드포인트는 RuleId NULL 행을 조용히 no-op 하던 갭(orphan_pending 미소비)을 해소.
+- [x] T59.4 UI: 제품 관리 접근DB 규칙 화면에 "✨ AI 분류 제안" 블록(orphan_pending·신뢰도 표기·
+  승인/거부 즉시 실행). 캐시버스터 20260708-product-classify-suggest.
+- [x] T59.5 테스트 4건(Pending-only 계약·환각 게이트·dry-run 무쓰기·LLM 실패 soft) — 컨테이너 PASS.
+- [x] T59.6a §18.8 패널 완료 — BLOCKING 1(라우트 골든)·MAJOR 4(NaN 게이트 우회·감사 원자화·batch
+  기아·Source='ai' 수동저장 충돌) 전건 수정 + MINOR/NIT 반영. REVIEW REV-20260708T220000 정본.
+  분류 테스트 6 + route parity PASS.
+- [x] T59.6b POST-DEPLOY 완수 — PR #626 머지 → 배포(web c2d5796d 롤링 soak PASS + 워커 재빌드,
+  #627 compose 중복 키 긴급 정정 포함) → **라이브 실증**: dry-run 제안 후보 11(오류 0, 보수 게이트
+  정상) → 실 pass 10건 Pending 적재 — 근거 기반 분류 확인(예: account/characteritem→건즈 QA 0.98·
+  PayShopPurchase/InAppBilling→로그 DB 0.95·근거 문자열 Reason 동봉). 제품 관리 화면 "AI 분류 제안"
+  블록에 승인 대기 노출(사람 승인/거부가 다음 단계 — PB-0008 육안은 사용자 검토 흐름과 병행).
+  데몬은 기본 OFF 유지 — 운영 활성화는 AGENT_PRODUCT_CLASSIFY_AUTO=1 flip(별도 결정).
+
+### 57.4 PB-0008 상호작용 실측 확정 (2026-07-09, 사용자 요청 — AI 직접)
+- [x] T57.8 z-order(밴드<선<카드<컨트롤·미러 0 위반·실드래그 후 복원) + 상대 하이라이트(dim 358/361·
+  팬 보존·빈 캔버스 클릭 해제 프로브 1회 발화 실증·dim 라벨 잔존 0) + LOD 상태줄 안내 실화면 —
+  전건 PASS. feature-0003 TEST.md POST-DEPLOY 갱신 정본.
+
+### 57.5 상대 하이라이트 UX 재구성 (2026-07-09, 사용자 버그/UX 리포트 3건)
+- 리포트: ① 다른 노드 클릭 시 하이라이트 미전환 ② 관계선 흐림 기준 체감 무작위 ③ dim 프로시저
+  명칭 판독 불가.
+- 진단: ①의 근본원인 = focusAdj 가 **선택 시점 스냅샷** — 클릭 직후 ShowDetail/컬럼 펼침의 늦은
+  ingest(이웃 적재)가 반영되지 않아 빈/구식 인접으로 굳고 모든 rebuild 가 그것을 bake. ②는 '선택에
+  닿는 광선만 선명(OR)' 규칙이 밝은 이웃 사이 선을 흐려 사람 눈에 무작위로 읽힘. ③ opacity 0.15.
+- [x] T57.9 수정: ① 인접 집합 **빌드 시점 재산출**(모든 rebuild 자가치유, 6k 모델 ~10ms≈빌드 3%
+  실측) + selected 소실(접기·prune) 시 정리 ② 엣지 규칙 단일화 — **양끝이 모두 밝을 때만 선명**
+  (밝은 부분그래프) + 컬럼은 소속 테이블 밝기 승계(노드·엣지 규칙 일치 — 리뷰 F1) ③ dimmed
+  opacity 0.38(침강 유지·라벨 판독). 캐시버스터 20260709-highlight-ux.
+- [x] T57.10 검증: 적대 리뷰(프로브 실증 — MAJOR 1 colLevel 불일치·MINOR 2·NIT 2) 전건 반영,
+  headless 31+26 PASS(T9 재산출/음성대조·T10 양끝규칙·T11 컬럼승계/소실정리). REVIEW REV 정본.
+- [x] T57.11 POST-DEPLOY 실클릭 재검증 PASS — 배포(44f55229·soak PASS·신 자산 20260709-highlight-ux)
+  후 실 Windows Chrome 실클릭: ① A(BuyItem_V4) 선택 → dim 노드 B(Char_DIffLV_Open) 실클릭 →
+  **하이라이트 즉시 재구성**(selected·focusAdj·상세 패널·AI 분석 전환 일관) ② 양끝-밝음 규칙 라이브
+  정합 — 밝은쌍 엣지 흐림 0/3·혼합쌍 선명 0(위반 제로) ③ dim 0.38 — 프로시저 명칭 판독 가능하며
+  선택 경로와 명확 구분(육안, pbf-01/02). 사용자 리포트 3건 전건 해소 확인.
+
+### 57.6 하이라이트 불변식 강화 (2026-07-09, 사용자 재리포트 — 스크린샷 실측)
+- 재리포트: Person_Ranking 선택 상태에서 ① 이전 선택의 하이라이트 잔존(화살촉만 밝음) ② 선택
+  노드가 dim 유지·비점등.
+- 진단: ① '화살촉 잔존' = 엣지 dim 이 strokeOpacity 만 낮춰 **화살촉(마커 fill)이 원색 유지** —
+  렌더 결함 확정 ② '선택 노드 dim' = SetSelected 가 즉시 setElementState 를 **구 fa 로** 계산
+  (dimmed+selected 동시 적용) + busy 지속 시 재시도 2s 포기로 rebuild 미도달 창.
+- [x] T57.12 수정(불변식화): ① 선택 노드는 fa stale 여부와 무관하게 **절대 dim 금지**(_metaNodeStates
+  최종 방어선) ② fa 를 setElementState **이전** 갱신 — 클릭 노드 즉시 점등(rebuild 대기 무관)
+  ③ busy 재시도 2s→6s + 선택 변경 시 구 체인 폐기 ④ 엣지 dim 전체 opacity(화살촉·라벨 포함).
+  캐시버스터 20260709-hl-invariant. headless T12(불변식)/T13(화살촉) 추가 — 34+26 PASS.
+- [x] T57.13 POST-DEPLOY 실검증 PASS — 배포(4564dc8e·soak PASS·자산 20260709-hl-invariant) 후
+  사용자 조건 그대로(dk-dev·검색 'ranking' 활성·dk_game_integrate 펼침) **연속 3회 실클릭 전환**
+  (ConnectInfo→ConsignmentHistory→Peerage): 매 클릭 선택 즉시 전환·점등(selDim=false),
+  이전 하이라이트 잔존 엣지 0, 화살촉 잔존 0(전체 opacity 침강). 육안: 선택+이웃 부분그래프
+  선명·나머지 0.38 침강에 명칭 판독(pbi-final). 사용자 재리포트 2건 해소 확인.
+
+### 57.7 고립 노드 하이라이트 미발동 (2026-07-09, 사용자 3차 리포트 — "비연관 노드 클릭 시 UI 무너짐")
+- 3차 리포트: 연관 노드(Chk_Person_Ranking→Peerage→Chk_Ranking) 클릭은 정상이나 비연관 노드
+  (Person_Ranking) 클릭 즉시 UI 구성이 무너지고, 이후 기존 노드 클릭에도 복원되지 않음.
+- 진단(qa-idc mssql-06656002eda6 동일 레시피 실좌표 클릭 재현, pageerror 0): 현 자산에서 전환·복원
+  전부 정상 — "복원 불가"는 **배포 전 SPA 잔존 자산**(§57.6 미적용, 탭 새로고침 필요). "무너짐"의
+  실체 = 관계 0 **고립 노드** 선택 시 전체 침강(lit=1) — 규칙상 정확하나 정보 이득 0 + 파괴로 인지.
+- [x] T57.14 수정(ADR-026): `_metaFocusAdjacency` 가 **바깥에 닿는 관계 0** 이면 null 반환 —
+  하이라이트 모드 미발동(선택 테두리·상세만), 관계 늦은 ingest 시 build 재산출이 자동 점화.
+  적대 리뷰 적발 반영: self-FK 단독 테이블(렌더러 rs===rt 드롭 → 보이는 선 0)도 고립 동일 취급,
+  T9/T8 비-null stale 스냅샷 전제 복원(공허화 방지). headless 39+26 PASS. 캐시버스터 20260709-hl-isolated.
+- [x] T57.15 POST-DEPLOY 실검증 PASS — 배포(eb631372·soak 통과·자산 20260709-hl-isolated) 후
+  사용자 레시피 그대로(qa-idc·검색 'ranking'·dk_game_integrate 펼침) 5연속 실클릭:
+  ①Chk_Person_Ranking(fa10/lit5/dim71) ②Peerage(fa13/lit9) ③Chk_Ranking(fa10/lit5)
+  ④**Person_Ranking(고립): focusAdj null·dim 0 — 전역 침강 미발동, 선택·상세 정상**(pbc-4 육안:
+  화면 전체 정상 밝기 유지) ⑤Chk_Ranking 복귀: fa10/lit5/dim71 — 하이라이트 정상 복원(pbc-5 육안).
+  pageerror 0. 사용자 3차 리포트 해소 — 단 "복원 불가" 재발 방지엔 **탭 새로고침** 필요(SPA 잔존 자산).
+
+### 57.8 하이라이트 신뢰성 재설계 — bake 단일 진실 (2026-07-09, 사용자 4차 리포트)
+- 4차 리포트: ① 고립 노드(Person_Ranking) 클릭 시 화면 밝기 미복원 ② 기존 1~3 외 연결 있는 노드
+  클릭 시 **선택한 노드도 흐린 채 유지**. 지시: "규칙에 매몰되지 말고 의도를 파악 — 사용자가 자신이
+  무엇을 선택하고 있는지 시각적으로 편안하게 확인하는 방향이 최우선."
+- 근본 진단(코드 경로 전수 추적): 시각 상태 적용이 3계층 패치워크(즉시 setElementState + 조건부
+  bake + 2.5s 폴)였고, **세 겹의 busy fail-closed 게이트**(SetSelected 재시도 체인 12×500ms 포기 ·
+  폴 승격 busy 유예 · (had||fa) 게이트)가 stale busy 하나로 전부 막힘 → 엣지 dim 은 bake 전용이라
+  영구 고착. 추가로 setData/draw 겹침 경합 시 명령형 setElementState 유실 + _stateCache 는 "적용됨"
+  으로 남아 폴도 영구 no-op — "무너진 상태 유지"의 기전.
+- [x] T57.16 재설계(ADR-027): ① _metaG6Apply **직렬화**(진행 중이면 재실행 1회 병합, fit OR) —
+  경합 원천 제거 ② busy 를 build states 로 **bake**(_metaStateSig) + _busyKeys.clear() 제거(소유
+  op 해제) + stale busy TTL 30s ③ rebuild-의존 busy 해제 3개 op 명시 해제 ④ 선택 전환 = **무조건
+  1회 bake**(게이트·재시도 체인 폐지) ⑤ 폴 승격 busy 게이트 제거. headless 47+26 PASS(T15 busy
+  bake·T16 폴 승격·T17 무조건 bake·T18 직렬화). 캐시버스터 20260709-hl-bake.
+  §18.8 패널 반영: bake 누락 3곳(컬럼·제품·데이터소스) _metaStateSig 통일 + LOD busy 게이트 제거
+  + T19(소유 op 해제)·T20(TTL sweep) 보강 — headless 54+26 PASS.
+- [x] T57.17 POST-DEPLOY 렌더 수준 실검증 PASS — 배포(23322c0e·soak 통과·라이브 자산 graph-vpack2 =
+  §57.8 포함, 병렬 §60 레이아웃 커밋이 캐시버스터 재-bump). 실 G6 getElementState vs _metaNodeStates
+  76노드 전수 대조: ①사용자 레시피 5연속(연관3→고립 Person_Ranking→복귀) **매 단계 mismatch 0·선택
+  노드 selLit=true**, 고립 클릭 시 dimRender 0(전역 침강 없음, 육안 pbk-A4 화면 전체 정상 밝기)·복귀
+  시 dimRender 71 복원(육안 pbk-A5 상대 하이라이트 정상) ②연타 4클릭(150ms) 최종 정상 ③타 그룹
+  ConsignmentHistory 점등 정상 ④fetch 중(400ms) 전환 정상. pageerror 0·applyLoop 잔류 0. 사용자 4차
+  리포트 2건(고립 밝기 미복원·선택 노드 흐림 유지) 렌더 수준 해소 확인.
+
+## §60 graph-vpack — 스키마 펼침 세로 폭주 해소 (2026-07-09, 사용자 리포트)
+- 리포트: 관리콘솔 > 지식베이스 > 그래프 뷰에서 스키마 노드를 펼치면 "스키마 클러스터가 너무 세로로
+  펼쳐지고", 여러 개 펼치면 알아보기 힘든 극단적 세로 띠(실측 aspect 0.19)가 된다. 지시: 원인 상세 파악 +
+  높은 가시성 확보. 추가 제약: **성질이 다른 노드·클러스터가 겹치지 않아야 한다.** 사용자 선택 범위:
+  전체(적응형 폭 + 열 스케일업 + 컬럼 재분배).
+- 근본 진단(코드 전수): 레이아웃이 "폭=고정 상한, 높이=무한 증가". ① 전역 shelf 폭 `MAXROWW=2400` 고정
+  ② 클러스터 내부 열 `innerColsFor` 최대 4열 캡 ③ 열 배정을 collapsed 높이로 고정 → 펼친 테이블 열만
+  홀로 세로 폭주. `fitView` 는 콘텐츠 종횡비를 그대로 두고 축소만 해 세로 콘텐츠는 얇은 슬라이버가 됨.
+- [x] T60.1 적응형 shelf 폭(ADR-028 ①): `MAXROWW=max(2400, maxClusterW, round(sqrt(총면적×2.0)))` —
+      3개 shelf-pack 경로(비카테고리·카테고리 밴드·미분류) 공통. floor 2400 으로 소량 펼침 배치 보존.
+- [x] T60.2 실높이 기반 열 수(ADR-028 ②): `colsForHeights(arr, realH, cap)=clamp(round(sqrt(ΣrealH/100)),1,cap)` —
+      flat masonry(cap 10)·packGroup(cap 4) 공통. 구 innerColsFor/gInnerColsFor/assignH 폐지.
+- [x] T60.3 실높이 balance 재분배(ADR-028 ③, ADR-004 ② 재선회): 열 배정을 realH 최단 열 단일 패스로 —
+      펼친 테이블 열이 형제를 덜 받아 넓고 낮게. 겹침 불변식(COLW 간격·realH push-down·(w,h)=실bbox) 보존.
+- [x] T60.4 검증: §60 headless `test_g6build_vpack.js` **16 PASS**(열 스케일업>4·작은스키마 1열 보존·컬럼펼침
+      재분배·적응형 폭 W>2400·노드 겹침0·클러스터 겹침0·극단 1T×100컬럼 겹침0·카테고리 밴드 세로분리+겹침0·
+      routine 파라미터 펼침 겹침0) + 기존 headless 54+26 회귀 0. 실 _metaG6Build before/after: 24스키마×60T
+      높이 9380→3800(59%↓, aspect 0.19→1.22).
+- [x] T60.6 §18.8 적대 리뷰 패널(ux/layout 렌즈, SUBAGENT): PASS-WITH-FIXES — R1·R2 구조적 충족·BLOCKING 0.
+      반영: MINOR(colsForHeights 에 arr.length 캡 — 빈 열 폭 방지)·MAJOR 주석 정직화(churn 실측 43~100%)·
+      NIT(T7 카테고리 밴드·T8 routine 경로 테스트 흡수). 상세 REVIEW.md.
+- [x] T60.5 POST-DEPLOY 실브라우저(PB-0008) 1차 — 배포 d5cf0fec 후 라이브 실측(win-browser, mssql-qa-idc,
+      스키마 5개 펼침). **노드 겹침0·클러스터 겹침0(2618 노드)** 확인. 단 per-cluster 실측에서 **simGroups 경로
+      스키마(cc_*, 557T)가 여전히 822×10272 aspect 0.08 세로폭주** 포착 → T60.7 로 근본 수정(라이브 검증이
+      flat 만 고친 gap 을 잡아냄).
+- [x] T60.7 §60.2 simGroups 경로 세로폭주 해소(PB-0008 회귀): ① 그룹 블록 행 목표 폭 `TRW` 를 **총 블록
+      면적 기반 적응**(`max(TRW, round(sqrt(ΣblockArea×2.0)))`) — 고정 4열-상당 폭이 그룹 행을 세로 스택하던
+      근본원인 ② packGroup 열 상한 4→6(멤버 많은 그룹 완화). headless T9(simGroups landscape) 추가 — §60
+      **19 PASS** + 회귀 54+26. 실측 대조: 557T/20그룹 822×7406(0.11)→2690×2544(**1.06**, 66%↓)·557T/4그룹
+      0.13→1.18. 캐시버스터 20260709-graph-vpack2.
+- [x] T60.8 POST-DEPLOY 실브라우저(PB-0008) 2차 — 배포 ec74a16b·서빙 graph-vpack2. mssql-qa-idc 5스키마
+      펼침 실측: cc_bonedragon 557T **822×10272(0.08)→3590×3320(1.08)**(높이 68%↓)·전 클러스터 landscape·
+      전역 aspect 0.57→**0.99**·노드/클러스터 겹침 0·pageerror 0. **사용자 리포트 라이브 해소 확인**
+      (Run·스크린샷 feature-0003 TEST.md).
+
+### 57.9 재선택 노드 침강 잔존 — opacity base bake (2026-07-09, 사용자 5차 실측)
+- 5차 리포트: `계정·유저` simGroup 내 Castle→Ally→UnionCAInfo 선택 시 **마지막 선택 UnionCAInfo 가
+  흐린 채 유지**. "선택표시(테두리)는 정상이나 노드가 상대 하이라이트 외 대상처럼 침강 — 재선택 대상의
+  비선택(dimmed) 상태 해제가 핵심."
+- 근본 진단(실 렌더 opacity 측정): 선택 노드 getElementState=["analyzed","selected"](dimmed 없음)인데
+  **실제 keyShape opacity=0.38 로 stale**. G6 v5 는 어떤 상태(dimmed)가 제거될 때 그 상태가 세팅한
+  속성(opacity)을 base 에 값이 없으면 되돌리지 못한다 — dimmed→selected 전환 후 0.38 잔존.
+- [x] T57.18 수정: 침강 opacity 를 G6 상태가 아니라 **base style 에 직접 bake**(_metaBakeBaseOpacity,
+  매 build; dim=_META_DIM_OPACITY 0.38 / lit=1). setData 가 매번 keyShape 에 직접 기입해 dim↔lit
+  양방향 결정적. dimmed G6 상태 config 제거(이중 적용·곱셈 침강 위험 차단), 'dimmed' 문자열은 서명·bake
+  입력으로 유지. headless T21 신설(전 노드 opacity 명시·dim=0.38·lit=1) — 60+26 PASS. 캐시버스터 sel-prominence.
+- [x] T57.19 POST-DEPLOY 실측 PASS — 배포(2c8fb7d2·soak 통과·라이브 자산 sel-prominence, _metaBakeBaseOpacity
+  포함) 후 Castle→Ally→UnionCAInfo 선택: **UnionCAInfo keyShape/attr opacity=1(이전 0.38에서 복원)**,
+  states=["analyzed","selected"]. dimmed 이웃 Ally/Castle opacity 0.38 유지(침강 정상). 육안: 선택 노드
+  파란 fill+전체 밝기로 도드라지고 이웃 침강(pbom-final). 사용자 5차 리포트("재선택 노드 흐림 유지") 해소.
+
+## §61 col-lod — 노드-레벨 LOD 로 대규모 노드 성능 개선 (2026-07-09, 사용자 리포트)
+사용자 리포트: "그래프 뷰에서 노드 개수가 많아질수록 부하가 늘고 지연이 발생. 많은 오브젝트를 2D 화면에서
+처리하기 위한 최적화 + 유사 서비스 방식 웹 리서치하며 진행." (ADR-029)
+- [x] T61.0 진단(read-only) + 웹 리서치 + 19개 후보 적대적 검증: 병목 top3(전체 rebuild draw / 노드 LOD 부재
+  / 레이아웃 재계산) 확정. WebGL·optimize-viewport-transform drop-in·뷰포트 컬링·topology-diff 증분(ADR-004
+  재검토)은 번들·코드 실측으로 반증(ADR-029 기각 대안) → **노드-레벨 컬럼 LOD** 로 수렴(사용자 결정).
+- [x] T61.1 상수(ADR-029): `_META_COL_LOD_ZOOM=0.5`, `_META_COL_LOD_MIN=200`(엣지 LOD 옆 병치).
+- [x] T61.2 emission 억제: `_metaG6Build` 에서 `colLodActive` 산정(getZoom + 전체 펼친 컬럼 수 O(1) 합) →
+  Column circle(admin.js 컬럼 push)·Routine 파라미터 circle(param push)·per-table "X:" 접기 ctl 방출 억제.
+  `realH`(공간 예약)는 **불변** → 테이블 좌표 band-invariant(reflow 0). 억제 테이블 라벨에 `▤N` 컬럼수 배지.
+- [x] T61.3 tiered 밴드: `_lodBand` 2단→3단(full/collod/lod), 임계(0.5·0.35) 교차 시 300ms 디바운스 rebuild +
+  상태줄 밴드별 축약 안내(컬럼/관계선).
+- [x] T61.4 검증: headless `test_g6build_collod.js` **신설 18 PASS** — 억제 0방출(컬럼·param·X:ctl)·**좌표
+  band-invariant(이동 0)**·▤N 배지(수치=컬럼수)·엣지 re-anchor(dangling 0·테이블 승격)·줌 게이트(≥0.5 유지)·
+  컬럼 게이트(≤200 유지)·루틴 파라미터 억제+좌표 불변. 기존 `test_g6build_vpack/category/edge_visibility`
+  **105 PASS 회귀 0**. `node --check` PASS. 캐시버스터 `admin.js?v=20260709-col-lod`.
+- [ ] T61.5 POST-DEPLOY 실 Windows 브라우저(PB-0008) — 대형 그래프(예: cc_* 557T 또는 다스키마 펼침) 줌아웃
+  before/after: 억제 밴드에서 컬럼 circle 미표시·테이블 위치 불변(reflow 0)·▤N 배지 가독·확대 시 컬럼 복원.
+  (그래프뷰 무인 도달은 인증/라우팅 3중벽으로 차단 — 자산 curl 검증 + 사용자 육안 게이트, TEST.md §61.)

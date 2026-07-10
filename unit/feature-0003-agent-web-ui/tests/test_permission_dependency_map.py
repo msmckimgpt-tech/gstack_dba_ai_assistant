@@ -178,7 +178,7 @@ def test_v2_master_gate_off_collapses_manage_section():
     # TASK-0288: datasource.read/manage·product.read/manage·system_prompt.manage.role.any 추가 —
     #   데이터소스/제품 관리 그룹이 관리 권한 section 으로 이동, console.access 마스터 게이트 하위로 종속.
     for code in (
-        "console.manage", "console.usage.read", "insight.reset",
+        "console.manage", "console.usage.read", "console.aiops.read", "insight.reset",
         "account.read", "account.update", "account.delete",
         "role.read", "role.create", "role.permission.manage",
         "datasource.read", "datasource.manage",
@@ -397,3 +397,36 @@ def test_t4_grid_list_is_single_column_not_grid():
     assert "flex" in body and "column" in body, ".permission-grid-list 가 flex column(단일 열) 아님 — 뒤틀림 회귀"
     assert "grid-template-columns" not in body, ".permission-grid-list 가 여전히 2열 grid(뒤틀림 원인)"
     assert '[data-perm-depth="1"]' in css, "depth 1 들여쓰기 규칙 부재 — 트리 위계 미표현"
+
+
+def test_t5_metadata_group_gate_hierarchy():
+    """metadata-perm-hier: 메타데이터(kb 그룹) 종속 정합화 pin. 다른 관리 그룹(account.read→account.*,
+    quota.read→quota.manage)처럼 "그룹 게이트 → 세부" 2단 계층이어야 한다. 묶음 `kb.ingest.manual` 이
+    게이트(→console.access), 세부 5개 metadata.* 는 묶음 아래(→kb.ingest.manual). flat 회귀 방지."""
+    _META5 = (
+        "metadata.glossary.manage", "metadata.enum.manage", "metadata.table.manage",
+        "metadata.column.manage", "metadata.graph.read",
+    )
+    assert DEPS.get("kb.ingest.manual") == "console.access", "묶음 kb.ingest.manual 게이트가 console.access 아님"
+    for m in _META5:
+        assert DEPS.get(m) == "kb.ingest.manual", f"{m} 부모가 kb.ingest.manual 아님(평면 회귀)"
+    # kb 그룹 트리 depth: 묶음=0(그룹 루트), 세부 metadata.*=1(묶음 자식)
+    kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
+    tree = dict(_order_items_as_tree(kb_codes))
+    assert tree.get("kb.ingest.manual") == 0, "kb.ingest.manual 이 그룹 루트(depth 0) 아님"
+    for m in _META5:
+        assert tree.get(m) == 1, f"{m} 이 묶음 아래(depth 1) 아님 — 계층 회귀"
+
+
+def test_t6_metadata_reachable_when_gate_off():
+    """B안 개별 부여 보존: 게이트(kb.ingest.manual) OFF 여도 개별 metadata.* 는 도달 가능해야 한다.
+    console.access ON·kb.ingest.manual OFF → metadata.* 는 hidden(progressive disclosure 정상)이지만,
+    kb 그룹은 루트 권한(kb.ingest.manual 게이트 자체 + kb.sample.curate 등)이 항상 보여 '더 보기' 탈출구가
+    보장 → 통째 숨지 않는다(unreachable 아님)."""
+    all_codes = set(app.PERMISSION_CODES)
+    vis = compute_visibility({"console.access"}, all_codes)  # 묶음 미체크
+    assert vis["metadata.glossary.manage"] is False, "게이트 OFF 인데 metadata 노출됨(계층 미작동)"
+    assert vis["kb.ingest.manual"] is True, "그룹 게이트(묶음)가 루트인데 hidden — 도달 레버 소실"
+    kb_codes = [c for c in app.PERMISSION_CODES if _group_of(c) == "kb"]
+    kb_roots = [c for c in kb_codes if DEPS.get(c) not in set(kb_codes)]
+    assert kb_roots, "kb 그룹에 루트 권한 없음 — '더 보기' 탈출구 부재 위험"

@@ -1298,9 +1298,11 @@ async def admin_update_product_databases(product_id: int, request: Request) -> J
                 "AND COALESCE(Source,'manual') = 'manual'",
                 (int(product_id), _dskey))
             for item in cleaned:
+                # §59: 'ai'(승인된 AI 제안)도 rule 과 동일하게 — 제출 스키마와 충돌하면 manual 승격
+                #   우선 규약으로 정리(잔존 시 평문 INSERT 가 PK 1062 로 저장 전체 500, 패널 MAJOR).
                 cur.execute(
                     "DELETE FROM WebProductDatabases WHERE ProductId = %s AND LOWER(DatasourceKey) = %s "
-                    "AND LOWER(SchemaName) = %s AND COALESCE(Source,'manual') = 'rule'",
+                    "AND LOWER(SchemaName) = %s AND COALESCE(Source,'manual') IN ('rule','ai')",
                     (int(product_id), _dskey, str(item["schema_name"]).strip().lower()))
         else:
             # 이 datasource 차원의 행만 삭제(다른 datasource 행 보존).
@@ -1661,6 +1663,144 @@ async def admin_approve_product_db_rule_pending(product_id: int, key: str, rule_
             conn.rollback()
             return app._json_error(f"audit write failed: {audit_exc}", 500)
         return JSONResponse({"ok": True, "approved": approved})
+    finally:
+        conn.close()
+
+
+@router.post("/api/admin/products/{product_id}/datasources/{key}/ai-suggestions/approve")
+async def admin_approve_product_ai_suggestions(product_id: int, key: str, request: Request) -> JSONResponse:
+    """§59: AI 분류 제안(pending RuleId NULL·Reason 'ai_suggest:*')을 allowlist 로 승격(Source='ai').
+
+    rule 귀속 승인(approve-pending)과 동일 게이트·검증(제외 DB·이름 길이/주입) 미러 — 규칙이 없는
+    제안 행은 기존 엔드포인트가 조용히 no-op 라 별도 경로가 필요하다(ADR-025). product.manage."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    conn, account, dsk, error = app._db_rule_gate(request, product_id, key)
+    if error:
+        return error
+    try:
+        # 패널 MINOR: default-all 금지 — AI 제안 승인은 **명시 스키마 목록 필수**(사람의 개별 검토가
+        #   ADR-025 핵심 통제. 기존 rule 승인의 1-click 전체는 rule 1개 귀속이라 범위가 다름).
+        want = data.get("schemas") if isinstance(data, dict) else None
+        if not isinstance(want, list) or not want:
+            return app._json_error("schemas 목록이 필요합니다", 400)
+        pending = [p for p in app._list_db_rule_pending(conn, int(product_id), dsk)
+                   if not int(p.get("rule_id") or 0)
+                   and str(p.get("reason") or "").startswith("ai_suggest")]
+        pend_names = {p["schema_name"] for p in pending}
+        targets = [s for s in want if str(s) in pend_names]
+        if not targets:
+            return JSONResponse({"ok": True, "approved": []})
+        try:
+            from shared import datasources as _dsr
+            _ds = _dsr.resolve(conn, dsk)
+            engine = str((_ds or {}).get("engine") or "mysql").strip().lower()
+            excluded = app._db_rule_excluded_lower(engine)
+        except Exception:
+            # 패널 MINOR: resolve 실패 시 mysql 강등이 MSSQL 시스템 DB 창을 연다 — 합집합으로 방어.
+            excluded = app._db_rule_excluded_lower("mysql") | app._db_rule_excluded_lower("mssql")
+        # 패널 MAJOR: allowlist 변이 + 감사는 원자화 — autocommit 커넥션이면 audit 실패 rollback 이
+        #   no-op 라 감사 없는 접근면 확장이 확정된다(admin_settings/admin_datasources 정본 패턴 미러).
+        _prev_ac = getattr(conn, "autocommit", True)
+        try:
+            conn.autocommit = False
+        except Exception:
+            pass
+        cur = conn.cursor()
+        cur.execute("SELECT LOWER(SchemaName), COALESCE(SortOrder,0) FROM WebProductDatabases "
+                    "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s", (int(product_id), dsk))
+        rows = cur.fetchall() or []
+        existing = {str(r[0]).strip().lower() for r in rows}
+        max_sort = max([int(r[1] or 0) for r in rows], default=0)
+        approved: list[str] = []
+        for name in targets:
+            low = str(name).strip().lower()
+            if not low or low in existing or low in excluded:
+                continue
+            if len(str(name)) > app._DB_RULE_NAME_MAX or app._DB_RULE_NAME_INJECT_RE.search(str(name)):
+                continue
+            max_sort += 10
+            cur.execute(
+                "INSERT IGNORE INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, DatasourceKey, Source, RuleId) "
+                "VALUES (%s,%s,%s,%s,%s,'ai',NULL)",
+                (int(product_id), str(name), "", max_sort, dsk))
+            cur.execute("DELETE FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s AND SchemaName=%s AND RuleId IS NULL",
+                        (int(product_id), dsk, str(name)))
+            approved.append(str(name))
+        cur.close()
+        try:
+            app.record_audit_event(
+                conn, actor=app._db_rule_audit_actor(account), action="admin.product.ai_suggest.approve",
+                resource_type="product", resource_id=str(product_id),
+                change_json={"datasource_key": dsk, "names": approved})
+            conn.commit()
+        except Exception as audit_exc:
+            conn.rollback()
+            return app._json_error(f"audit write failed: {audit_exc}", 500)
+        finally:
+            try:
+                conn.autocommit = _prev_ac
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "approved": approved})
+    finally:
+        conn.close()
+
+
+@router.post("/api/admin/products/{product_id}/datasources/{key}/ai-suggestions/reject")
+async def admin_reject_product_ai_suggestions(product_id: int, key: str, request: Request) -> JSONResponse:
+    """§59: AI 분류 제안 거부 — pending(RuleId NULL·ai_suggest) 행 삭제(멱등). product.manage.
+
+    거부된 스키마는 다음 pass 의 taken(pending) 제외에서 빠져 재제안될 수 있다 — 반복 거부가
+    소음이면 운영이 규칙/수동 매핑으로 확정하는 것이 정본 경로(ADR-025 한계)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    conn, account, dsk, error = app._db_rule_gate(request, product_id, key)
+    if error:
+        return error
+    try:
+        want = data.get("schemas") if isinstance(data, dict) else None
+        if not isinstance(want, list) or not want:
+            return app._json_error("schemas 목록이 필요합니다", 400)
+        pending = [p for p in app._list_db_rule_pending(conn, int(product_id), dsk)
+                   if not int(p.get("rule_id") or 0)
+                   and str(p.get("reason") or "").startswith("ai_suggest")]
+        pend_names = {p["schema_name"] for p in pending}
+        targets = [s for s in want if str(s) in pend_names]
+        if not targets:
+            return JSONResponse({"ok": True, "rejected": []})
+        rejected: list[str] = []
+        _prev_ac = getattr(conn, "autocommit", True)
+        try:
+            conn.autocommit = False
+        except Exception:
+            pass
+        cur = conn.cursor()
+        for name in targets:
+            cur.execute("DELETE FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s AND SchemaName=%s AND RuleId IS NULL",
+                        (int(product_id), dsk, str(name)))
+            if getattr(cur, "rowcount", 0):
+                rejected.append(str(name))
+        cur.close()
+        try:
+            app.record_audit_event(
+                conn, actor=app._db_rule_audit_actor(account), action="admin.product.ai_suggest.reject",
+                resource_type="product", resource_id=str(product_id),
+                change_json={"datasource_key": dsk, "names": rejected})
+            conn.commit()
+        except Exception as audit_exc:
+            conn.rollback()
+            return app._json_error(f"audit write failed: {audit_exc}", 500)
+        finally:
+            try:
+                conn.autocommit = _prev_ac
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "rejected": rejected})
     finally:
         conn.close()
 
