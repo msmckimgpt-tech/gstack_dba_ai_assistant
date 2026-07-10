@@ -885,3 +885,24 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   도달 불가(기록된 blocker). → **자산 검증(WSL localhost curl 로 admin.js?v=20260709-col-lod 서빙·col-lod
   코드 포함 확인) + 사용자 육안 게이트**로 대체(FIRST_REQUEST visual_verification_scope: 브리지 불가 시 사유
   명시 통과). 사용자 확인 후 PASS append.
+
+
+## §63 agg-lod — 극단 줌아웃 클러스터 집계 (2026-07-10, ADR-030)
+
+### 단위 (headless, AGE/라이브 불요) — Environment: unit/node
+- **`test_g6build_agglod.js` 신설: 9 PASS / 0 FAIL** (`node test_g6build_agglod.js ../../src/static/admin.js`).
+  - T1 agg 밴드(zoom 0.1·대형): 확장 스키마 3개 → SC: 카드 3개 / 테이블·컬럼·combo 방출 0.
+  - **T2 draw 방출 급감** — agg nodes < full/10.
+  - **T3 reflow-free** — 집계 카드가 해당 스키마의 full 클러스터 bbox 안에 위치(이탈 0).
+  - T4 zoom 0.3(비-agg): 테이블 방출 유지(집계 안 함). T5 소형 모델(<60 노드): 극단 줌아웃도 집계 안 함(게이트).
+- 회귀: collod 20 · vpack 19 · category 26 · edge_visibility 60 = **125 PASS 회귀 0**(agg 임계 0.15 로 edge-LOD
+  테스트 0.2 와 비겹침). `node --check` PASS.
+- 적대 리뷰(REV-...-agg-lod, SUBAGENT PASS-WITH-FIXES): BLOCKING/MAJOR 0, MINOR 1 수정(마커 플래그 게이트), NIT 1 수용. REVIEW.md.
+
+### Run (예정) — POST-DEPLOY (Environment: Windows-browser, PB-0008) — T63.5
+- 대상: 대형 그래프(cc_* 557T 또는 다스키마) 로그인 → 여러 스키마 펼침 → **극단 줌아웃(<0.15)**.
+- 확인: ① 클러스터가 단일 집계 카드로 묶임(개별 테이블·컬럼 미표시) ② **확대 시 다시 펼쳐짐**(원 위치, reflow 0)
+  ③ 개요에서 팬/클릭 경량화 체감 ④ 상태줄 "개요 — 클러스터 집계" ⑤ pageerror 0.
+- **무인 도달 제약**: 그래프뷰 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL 라우팅) → 자산 curl(서빙
+  admin.js 에 `_META_AGG_ZOOM`·`aggActive` + `?v=20260710-agg-lod`) + 사용자 육안 게이트(visual_verification_scope=always,
+  브리지 불가 시 사유 명시 통과). 사용자 확인 후 PASS append.

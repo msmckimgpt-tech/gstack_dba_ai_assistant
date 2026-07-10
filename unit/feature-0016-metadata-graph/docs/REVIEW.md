@@ -1310,3 +1310,10 @@ source_of_truth: true
 - 결함/회귀: **BLOCKING·HIGH·MODERATE 0건**. F1(근본원인·무회귀 확증)·F2(스타일 clobber 없음+To() 크래시 불가: 전 엣지 스타일 경로 어느 것도 `draggable` 미세팅·`animation:false`)·F5(엣지-기점 팬의 dropzone 스캔 perf=노드-기점과 동일·`dropEffect:"move"` 무해) 모두 NON-ISSUE. 커버리지: `edge.style` 는 단일 그래프 config(6046, minimap/fallback 양경로 baseCfg 공유), `setOptions`/엣지 config mutation 부재 → 전 엣지 생성경로 `getDefaultStyle` 로 draggable 상속, bypass 없음.
 - 반영한 LOW 하드닝: **F3** — 본 fix 가 6053 계약("config=상태스타일만·기본스타일 per-element 인라인")에 넣는 첫 base-style 이므로, baseCfg 주석에 "정적 boolean 만 허용·매퍼/애니메이션 프롭 금지(To() 크래시 재현)" 교차참조 1줄 추가(admin.js). 미반영 LOW: **F4**(baseCfg.edge.style.draggable 가드 테스트) — 실 팬은 headless 불가·baseCfg 는 G6 인스턴스 필요라 데이터-빌드 하니스로 검증 불가, 배포 후 PB-0008 실측이 최종 게이트(선택 사항, 비-blocker).
 - 미결(정상): 실 중간버튼 real-mouse 팬은 win-browser CDP 좌표마우스+인증 게이트 그래프뷰 필요 → 배포 후 사용자 육안 게이트(TEST §3·T62.3).
+
+## REV-20260710T120000-ai-claude-feature-0016-agg-lod [SUBAGENT: PASS-WITH-FIXES] — §63 클러스터 집계 LOD diff 적대 리뷰
+- 2렌즈 적대 패널(정확성/reflow · 상호작용/시각회귀), 코드 실측으로 반증 시도.
+- **BLOCKING/MAJOR 0** — reflow-free 전 경로 검증(layouts 미변경 → 집계 카드 슬롯 좌상단, agg↔full 점프 0, flat/simGroups/카테고리 모두)·카드/엣지 정합(SC:id↔combo add/remove·renderEndpoint 승격·양끝 SC: skip)·클릭(ExpandSchema already no-op, 접힘 없음)·드래그(clusterOffset)·firstElementId·_aggActive 동기산정/리셋 건전.
+- CONFIRMED(MINOR 1, **수정**): 4단 밴드 도입이 상태줄 마커를 밴드 문자열로 게이트해, `band=agg` + `aggActive=false`(nodes≤60) + 엣지 실제 축약(edges>120, "테이블만 로드+REFERENCES 다수" 모델서 도달) 구간에서 "관계선 축약" 안내가 사라져 §57 '관계 없음' 오독-가드 부분 재발. **수정**: 마커를 밴드가 아니라 실제 억제 플래그(`_aggActive`/`_lodDropped`/`_colLodActive`)로 게이트(aggCut 우선). 데이터/reflow 무영향(안내만 누락이었음).
+- 수용/후속(NIT): agg 줌에서 접힌 카드 펼침 → ingest 로 재집계되면 ExpandSchema 성공 status("테이블 클릭=컬럼, − 접기")가 존재 않는 UI 를 지시(cosmetic). 니치 상호작용(agg 줌에서 카드 클릭)·정보접근은 상세 패널로 가능 → 후속. agg 뷰 sparse(대형 슬롯에 소형 카드)는 reflow-0 의 수용된 트레이드오프.
+- 검증: 수정 후 headless `test_g6build_agglod.js` 9 + 회귀 125 = **134 PASS** · `node --check` PASS.

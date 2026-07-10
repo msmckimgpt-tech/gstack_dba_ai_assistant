@@ -2003,3 +2003,21 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [ ] T62.3 POST-DEPLOY 실 Windows 브라우저(PB-0008) — 그래프 뷰 진입 → **관계선 위에서 중간버튼 누른 채 드래그 →
   카메라 팬 동작** 확인. 대조: 관계선 좌드래그=팬 안 됨·우클릭 메뉴 정상·클릭(무이동) 정상. (그래프뷰 무인 도달은
   인증/라우팅 3중벽 차단 — 사용자 육안 게이트, feature-0003 TEST.md §3.)
+
+## §63 agg-lod — 극단 줌아웃 클러스터 집계 (2026-07-10, 사용자 후속 요청)
+사용자: "줌아웃으로 개별 객체 식별이 무의미해질 정도면, 객체들을 상위(집계) 객체로 묶어 draw 횟수를 줄여라."
+- [x] T63.0 근원 실측(헤드리스 `_metaG6Build` 타이밍): JS 빌드 18–50ms(대형 모델도) — 레이아웃 재계산은
+  병목 아님. 병목=브라우저 setData+draw(방출 노드 수 비례, ADR-006 ~1ms/node). col-LOD 후에도 테이블 floor
+  (cc_* 557T) 잔존 → 근본해결=방출 요소 감축(ADR-030).
+- [x] T63.1 상수: `_META_AGG_ZOOM=0.15`(보수적·튜닝 가능), `_META_AGG_MIN=60`.
+- [x] T63.2 집계 emission: `aggActive = getZoom()<0.15 && nodes.size>60`. layouts.forEach 에서 확장 클러스터를
+  기존 카드 경로(SC:id, table_count 배지)로 강등 + return(tables/columns/combo 미방출). **layouts 미변경 →
+  reflow-free**(카드=슬롯 좌상단). `_aggActive` 는 products·resetModel 리셋.
+- [x] T63.3 4단 밴드(_lodBand: full/collod/lod/agg) + 상태줄 "개요 — 클러스터 집계". 마커는 밴드 아닌 실제
+  억제 플래그로 게이트(리뷰 MINOR 수정 — §57 오독-가드 코너 재발 차단).
+- [x] T63.4 검증: headless `test_g6build_agglod.js` **9 PASS**(카드방출·draw급감>10x·reflow-free·비-agg
+  유지·게이트) + 회귀 125 = **134 PASS** · `node --check` PASS. diff 2렌즈 적대 리뷰 PASS(MINOR 1 수정,
+  NIT 1 수용). 캐시버스터 `admin.js?v=20260710-agg-lod`.
+- [ ] T63.5 POST-DEPLOY 사용자 육안(PB-0008 무인 도달 차단) — 대형 그래프 극단 줌아웃(<0.15): 클러스터가
+  집계 카드로 묶임·확대 시 다시 펼침·위치 불변(reflow 0)·개요 팬/클릭 경량화 체감. 자산 curl + 육안 게이트(TEST §63).
+- [ ] T63.6 잔여(별도): 줌인 대형모델 팬/클릭 — 뷰포트 컬링(테이블, combo auto-fit 해결 필요)·optimize-viewport-transform. 사용자 피드백 후 평가.
