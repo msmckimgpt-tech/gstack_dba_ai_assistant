@@ -823,3 +823,15 @@ source_of_truth: true
 - 게이트 근거: 줌 ≥ 0.5(판독 가능 배율)에서는 억제 안 함(정보 유지) — `_META_MIN_READ_ZOOM 0.55` 클램프 하에서 초기 fit 은 억제 밴드 밖. 컬럼 ≤ 200 이면 draw 저렴 → 억제 안 함(불필요 정보손실 방지, headless T5/T6).
 - 검증: headless `test_g6build_collod.js` **18 PASS**(억제 0방출·좌표 band-invariant·▤N 배지·엣지 re-anchor·줌/컬럼 게이트·루틴 파라미터) + 기존 `test_g6build_vpack/category/edge_visibility` **105 PASS 회귀 0**. 실 Windows 브라우저(PB-0008) 대형 그래프 줌아웃 before/after 는 TEST.md §61.
 - Supersedes: — (§57 엣지 LOD 를 노드 축으로 확장·병존) / Superseded By: —
+
+## ADR-030 — §63 agg-lod: 극단 줌아웃에서 클러스터를 단일 집계 카드로 강등 (semantic zoom)
+- 상태: 채택 (2026-07-10)
+- 맥락: 사용자 후속 요청 — "줌아웃으로 개별 객체 식별이 무의미해질 정도면, 객체들을 일반화한 상위(집계) 객체로 묶어 draw 횟수를 줄여라." + 실측: 헤드리스로 `_metaG6Build` **JS 실행은 18–50ms**(대형 모델도) → **레이아웃 재계산은 병목 아님**. 병목은 브라우저 `setData`+`draw`(Canvas)이고 **방출 노드 수에 비례**(ADR-006 ~1ms/node). col-LOD(§61)는 컬럼만 줄여 대형 스키마의 **테이블 수 floor**(cc_* 557T)가 남아 사용자 "여전히 느림" 체감. 근본 해결 = 방출 요소 수 자체 감축.
+- 결정: **줌 < `_META_AGG_ZOOM`(0.15) + 모델 노드 > `_META_AGG_MIN`(60)** 이면 확장 클러스터를 **단일 집계 카드(SC:id)로 강등** — 수천 노드 방출을 클러스터 수(~수십)로 축약. 기존 접힌-카드 emission(schema-card, table_count 배지) 재사용.
+  - **reflow-free(핵심)**: `layouts` 산정(gatedTables·masonry·shelf-pack·슬롯 좌표)은 **불변** — 집계는 emission 에서만 카드로 대체(슬롯 좌상단 배치). 다른 클러스터 위치 불변, agg↔full 전이 점프 0(headless T3). 사용자 위치-민감성 존중.
+  - **타입 안전**: `SC:id`↔combo `id` 는 다른 네임스페이스 → setData add/remove(타입전환·자식유실 회피, 카드 계약 admin.js:4976).
+  - **엣지**: 집계 시 테이블 미방출 → REFERENCES 끝점 `renderEndpoint` SC: 카드 승격, 양끝 SC: skip(SCHEMA_REF 중복 방지, 기존) → 카드-카드 aggregate 관계만.
+  - **계층**: agg(0.15) < edge-LOD(0.35) < col-LOD(0.5) < full. 4단 밴드(`_lodBand`) 300ms 디바운스. 상태줄 "개요 — 클러스터 집계".
+- 기각/대안: (a) 뷰포트 컬링으로 테이블까지 줌인에서 감축 — combo auto-fit(`getComboPosition=getContentBBox(children).center`)이 테이블 컬링 시 카드 축소/점프 → combo-safe 아님, 별도 검토(잔여). (b) compact 카드-그리드 재배치 — 위치 점프(사용자 민감) → reflow-free 슬롯 유지 채택(대가: agg 뷰 다소 sparse).
+- 검증: headless `test_g6build_agglod.js` **9 PASS**(카드 방출·draw 급감>10x·reflow-free·비-agg 유지·게이트) + 회귀 125 = **134 PASS**. diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0, MINOR 1 수정: 상태줄 마커를 밴드→실제 억제 플래그 게이트해 §57 오독-가드 코너 재발 차단). PB-0008 극단 줌아웃 before/after 는 TEST §63.
+- Supersedes: — (§57 엣지·§61 컬럼 LOD 를 클러스터 축으로 확장·병존) / Superseded By: —

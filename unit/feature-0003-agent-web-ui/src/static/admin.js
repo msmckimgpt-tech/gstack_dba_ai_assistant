@@ -3727,6 +3727,14 @@ const _META_EDGE_LOD_MIN = 120;
 //   renderEndpoint 가 소속 테이블로 자동 승격(접힌 스키마와 동일 경로). 밴드 전이는 _lodBand 300ms 디바운스.
 const _META_COL_LOD_ZOOM = 0.5;   // 이 배율 밑 + 아래 임계 초과 컬럼이면 억제(엣지 LOD 0.35 보다 넓은 밴드)
 const _META_COL_LOD_MIN = 200;    // 전체 펼친 컬럼 수가 이 미만이면 draw 저렴 — 억제 안 함(정보 손실만 유발 방지)
+// agg-lod(§63): 극단 줌아웃(개별 노드 식별이 무의미한 배율)에서 **확장 클러스터를 단일 집계 카드로 강등**한다.
+//   수천 개 테이블/컬럼 노드 방출을 클러스터 수(~수십)로 축약 → draw 요소 급감(병목 = setData/draw 요소 수).
+//   레이아웃 슬롯은 그대로 유지(집계 카드를 슬롯 좌상단에 배치)해 **reflow 0** — 확대하면 다시 펼쳐진다.
+//   카드(SC:id)↔combo(id)는 서로 다른 id 라 setData 가 add/remove 로 처리(노드↔combo 타입전환·자식유실 회피,
+//   기존 카드 게이팅과 동일 계약, admin.js:4961 주석). 밴드 전이는 _lodBand 300ms 디바운스.
+const _META_AGG_ZOOM = 0.15;      // 이 배율 밑 + 대형 모델이면 클러스터 집계(개별 노드가 사실상 점 — 식별 무의미).
+                                  //   보수적 값(정말 zoom-out 됐을 때만). 필요 시 상향해 더 이르게 집계 가능.
+const _META_AGG_MIN = 60;         // 전체 모델 노드 수가 이 미만이면 집계 안 함(소형 모델은 그대로 열람)
 // §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
 const _META_DIM_OPACITY = 0.38;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
@@ -4761,6 +4769,9 @@ function _metaG6Build() {
   });
   const colLodActive = _colLodZoom < _META_COL_LOD_ZOOM && _expandedColTotal > _META_COL_LOD_MIN;
   _metaGraph._colLodActive = colLodActive;   // 상태줄 마커(밴드 훅)가 참조
+  // agg-lod(§63): 극단 줌아웃 + 대형 모델이면 확장 클러스터를 집계 카드로 강등(아래 emission 분기가 소비).
+  const aggActive = _colLodZoom < _META_AGG_ZOOM && _metaGraph.nodes.size > _META_AGG_MIN;
+  _metaGraph._aggActive = aggActive;
   // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 절대 오프셋 배치).
   //   place 항목은 {it, lx(열 좌측 x — 클러스터 상대), top(항목 상단 y — 클러스터 상대)} 로 정규화 —
   //   평면/그룹 두 경로가 같은 렌더 루프를 공유한다.
@@ -4956,8 +4967,12 @@ function _metaG6Build() {
   layouts.forEach((L) => {
     const { id, g } = L;
     if (L.catHidden) return;   // graph-category(§55 A): 접힌 카테고리 멤버 — 클러스터 전체 미방출
-    if (!_metaGraph.firstElementId) _metaGraph.firstElementId = (L.kind === "card") ? ("SC:" + id) : id;
-    if (L.kind === "card") {
+    // agg-lod(§63): 극단 줌아웃에서 확장 클러스터도 집계 카드로 강등 — 카드 경로 재사용. 슬롯(L.x0/L.y0)은
+    //   유지하고 카드를 슬롯 좌상단에 두므로 reflow 0. combos/tables/columns 전체 방출을 카드 1개로 대체.
+    const _aggCard = aggActive && !g.isTerms && _metaGraph.schemaExpanded.has(id);
+    const _asCard = (L.kind === "card") || _aggCard;
+    if (!_metaGraph.firstElementId) _metaGraph.firstElementId = _asCard ? ("SC:" + id) : id;
+    if (_asCard) {
       // id 는 "SC:" 네임스페이스 — 같은 스키마 key 가 펼침 시 combo id 로 쓰이므로, 동일 id 의
       // 노드↔combo 타입 전환을 G6 setData diff 가 처리하지 못하는 문제(자식 유실)를 원천 차단.
       const cn = _metaGraph.nodes.get(id);
@@ -5310,6 +5325,7 @@ function _metaG6BuildProducts() {
   _metaGraph.tableDeps = new Map();
   _metaGraph.firstElementId = null;
   _metaGraph._colLodActive = false;   // col-lod(§61): products 뷰는 컬럼/LOD 없음 — 스키마 빌드가 남긴 stale 플래그 소거(상태줄 거짓 마커 방지). _metaG6Build 는 products 모드에서 여기로 조기 return 하므로 스키마 빌드의 산정을 못 거친다.
+  _metaGraph._aggActive = false;      // agg-lod(§63): products 뷰는 집계 없음 — stale 플래그 소거.
   const prods = [], dss = [];
   _metaGraph.nodes.forEach((n) => {
     if (n.label === "Product") prods.push(n);
@@ -5590,6 +5606,7 @@ function _metaGraphResetModel() {
   _metaGraph.focusAdj = null;   // §57: 상대 하이라이트 집합도 모델과 함께 초기화.
   _metaGraph._lodBand = null;   // §57 패널 NIT: LOD 밴드 기준선도 초기화(스코프 전환 스퓨리어스 rebuild 방지).
   _metaGraph._colLodActive = false;   // col-lod(§61): 스코프/뷰 전환 시 억제 플래그 초기화(상태줄 stale 마커 방지).
+  _metaGraph._aggActive = false;      // agg-lod(§63): 스코프/뷰 전환 시 집계 플래그 초기화.
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
@@ -6134,9 +6151,9 @@ function _metaInitGraph() {
   graph.on("aftertransform", () => {
     let z = 1;
     try { z = graph.getZoom() || 1; } catch (_) { return; }
-    // col-lod(§61): 3단 밴드 — full(≥0.5) / collod(0.35~0.5: 컬럼만 억제) / lod(<0.35: 컬럼+엣지 억제).
-    //   어느 임계(0.5·0.35)를 교차해도 밴드가 바뀌어 디바운스 rebuild 로 억제 상태를 반영한다.
-    const band = z < _META_EDGE_LOD_ZOOM ? "lod" : (z < _META_COL_LOD_ZOOM ? "collod" : "full");
+    // col-lod(§61)+agg-lod(§63): 4단 밴드 — full(≥0.5) / collod(0.35~0.5: 컬럼억제) / lod(0.15~0.35: 컬럼+엣지억제)
+    //   / agg(<0.15: 클러스터 집계). 어느 임계(0.5·0.35·0.15)를 교차해도 밴드가 바뀌어 디바운스 rebuild 로 반영한다.
+    const band = z < _META_AGG_ZOOM ? "agg" : (z < _META_EDGE_LOD_ZOOM ? "lod" : (z < _META_COL_LOD_ZOOM ? "collod" : "full"));
     if (band === _metaGraph._lodBand) return;
     const prev = _metaGraph._lodBand;
     _metaGraph._lodBand = band;
@@ -6152,11 +6169,16 @@ function _metaInitGraph() {
       try {
         const st = document.getElementById("metadataGraphStatus");
         if (st) {
-          // col-lod(§61): 밴드별 정확한 축약 안내(컬럼/관계선). 과거 변형 마커도 정규식으로 회수 후 재부착.
-          const base = String(st.innerText || "").replace(/ · 줌아웃 —[^\n]*?\(확대 시 전체 표시\)/g, "");
-          const edgeCut = (band === "lod") && ((_metaGraph._lodDropped || 0) > 0);
-          const colCut = (band === "lod" || band === "collod") && _metaGraph._colLodActive;
-          const marker = (edgeCut && colCut) ? " · 줌아웃 — 컬럼·관계선 일부 축약(확대 시 전체 표시)"
+          // col-lod(§61)+agg-lod(§63): 안내는 **밴드 문자열이 아니라 실제 억제 플래그**로 게이트한다 — 억제
+          //   (lodActive/colLodActive)는 원시 줌 임계(0.35/0.5)로 산정돼 밴드(agg/lod/collod)와 독립이라,
+          //   밴드로 게이트하면 band=agg·aggActive=false(nodes≤60·edges>120) 구간에서 실제 관계선 축약이
+          //   일어나는데 마커만 침묵해 §57 '관계 없음' 오독-가드가 재발한다(리뷰 MINOR). 과거 변형 마커도 회수.
+          const base = String(st.innerText || "").replace(/ · (줌아웃|개요)[^\n]*?\(확대 시[^)]*\)/g, "");
+          const aggCut = !!_metaGraph._aggActive;              // 집계 실제 활성(클러스터 강등)
+          const edgeCut = (_metaGraph._lodDropped || 0) > 0;   // 관계선 실제 드롭(lodActive 결과)
+          const colCut = !!_metaGraph._colLodActive;           // 컬럼 실제 억제
+          const marker = aggCut ? " · 개요 — 클러스터 집계(확대 시 펼침)"
+            : (edgeCut && colCut) ? " · 줌아웃 — 컬럼·관계선 일부 축약(확대 시 전체 표시)"
             : colCut ? " · 줌아웃 — 컬럼 표시 축약(확대 시 전체 표시)"
             : edgeCut ? " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)" : "";
           const showMarker = !!marker;

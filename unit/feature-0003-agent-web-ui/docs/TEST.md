@@ -1939,3 +1939,14 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   컬럼 펼침 → 줌아웃(<0.5): ① Column circle 미표시(테이블 칩·관계선 유지) ② **테이블 위치 불변(reflow 0)**
   ③ `▤N` 배지 라벨 앞 가독(긴 이름에서도) ④ 확대(≥0.5) 시 컬럼 전량 복원 ⑤ 상태줄 "컬럼 표시 축약" 안내
   ⑥ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
+
+
+### Run (2026-07-10) — agg-lod: 극단 줌아웃 클러스터 집계 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §63/ADR-030) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_agglod.js` **9 PASS** — 집계 카드 방출·draw 급감(>10x)·
+  **T3 reflow-free**(집계 카드가 클러스터 슬롯 위치, 확대 시 원위치 복원)·게이트. 회귀 125 = 134 PASS·`node --check` PASS.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 baked → merge + `deploy-web`
+  재배포 선행(§51·§57·§60·§61 동일). ② agg 발동 = 대형 라이브 그래프 + 극단 줌아웃(<0.15)이라 무인 재현 복잡 +
+  그래프뷰 무인 도달 3중벽 차단 → **자산 curl(서빙 admin.js 에 `_META_AGG_ZOOM`·`aggActive`) + 사용자 육안**로 대체.
+- **POST-DEPLOY 사용자 육안 검증(T63.5)**: 대형 스키마 여러 개 펼침 → 극단 줌아웃: ① 클러스터가 집계 카드로 묶임
+  ② 확대 시 재-펼침(원 위치·reflow 0) ③ 개요 팬/클릭 경량화 ④ 상태줄 "개요 — 클러스터 집계" ⑤ pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.

@@ -1322,3 +1322,27 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
   엣지 re-anchor·줌/컬럼 게이트·루틴 파라미터. 기존 headless **105 PASS 회귀 0**·`node --check` PASS.
 - 캐시버스터 `admin.js?v=20260709-col-lod`. POST-DEPLOY PB-0008(대형 그래프 줌아웃 before/after)는 TEST §61
   (그래프뷰 무인 도달 차단 — 자산 curl + 사용자 육안 게이트).
+
+
+## 2026-07-10 · 극단 줌아웃 클러스터 집계 (agg-lod, TASK §63, ADR-030)
+사용자 후속: "줌아웃으로 개별 식별 무의미하면 상위 집계 객체로 묶어 draw 감축."
+
+### 근원 실측 (추측 제거)
+헤드리스로 `_metaG6Build` JS 실행시간 측정 — 대형 모델(557T/1200~9000컬럼) **18–50ms**. 즉 JS 레이아웃
+재계산은 병목이 아니고, 병목은 브라우저 `setData`+`draw`(Canvas 렌더)로 **방출 노드 수에 비례**(ADR-006
+~1ms/node). col-LOD(§61)는 컬럼만 줄여 대형 스키마의 **테이블 수 floor** 가 남음 → 사용자 "여전히 느림" 정합.
+(Playwright 브라우저 하니스로 실제 draw ms 측정을 시도했으나 샌드박스 Chromium 리소스 제약으로 포기 — node
+빌드 타이밍 + ADR-006 + 사용자 피드백으로 근거 확립.)
+
+### 구현 (frontend-only, 마이그레이션 0)
+극단 줌아웃(zoom<`_META_AGG_ZOOM`=0.15) + 대형 모델(nodes>`_META_AGG_MIN`=60)에서 확장 클러스터를 **단일
+집계 카드(SC:)로 강등** — 기존 접힌-카드 경로 재사용. `layouts` 미변경 → 집계 카드를 슬롯 좌상단에 배치해
+**reflow 0**. SC:id↔combo id 다른 네임스페이스로 setData add/remove(타입전환 회피). 4단 밴드·상태줄 집계 안내.
+
+### 검증
+- headless `test_g6build_agglod.js` **9 PASS**(카드방출·draw급감>10x·reflow-free 위치·비-agg 유지·소형 게이트)
+  + 회귀 125 = **134 PASS** · `node --check` PASS.
+- diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0). MINOR 1 수정(상태줄 마커를 밴드→실제 억제 플래그 게이트).
+  NIT 1 수용(agg 중 카드펼침 재집계 시 안내문구 부정합 — 니치). 상세 REVIEW.md.
+- 캐시버스터 `admin.js?v=20260710-agg-lod`. POST-DEPLOY 사용자 육안(TEST §63).
+- **잔여**: 줌인 대형모델 팬/클릭은 뷰포트 컬링(테이블)이 필요하나 combo auto-fit 이 combo-safe 를 막음 — 별도 검토.

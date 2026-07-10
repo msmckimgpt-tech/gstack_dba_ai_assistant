@@ -1276,3 +1276,11 @@ source_of_truth: true
 - 검증: headless `test_g6build_{vpack,category,edge_visibility,collod}` **125 PASS 회귀 0** · `node --check` PASS.
   POST-DEPLOY 실 Windows PB-0008(관계선 위 중간드래그 팬 육안)는 배포 후 잔여(사용자 게이트, TEST §3·T62.3).
 - 캐시버스터: `admin.js?v=20260710-graph-edge-midpan`.
+
+## CHG-20260710T120000-ai-claude-feature-0016-agg-lod — §63 극단 줌아웃 클러스터 집계 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaG6Build layouts.forEach·밴드 훅·resetModel·products) + `admin.html` cache-buster + headless `test_g6build_agglod.js`(신설).
+- 변경: 줌<0.15 + 노드>60 이면 확장 클러스터를 집계 카드(SC:)로 강등(카드 경로 재사용) → draw 방출 급감.
+  layouts 미변경 → reflow-free. 4단 밴드 + 상태줄 집계 안내(마커는 실제 억제 플래그 게이트).
+- 근거: 사용자 후속 요청(집계) + 실측(JS 빌드 18-50ms 빠름 → 병목=draw 방출 수, ADR-030). frontend-only·마이그 0.
+- 검증: headless 9(agg)+회귀 125 = **134 PASS** · `node --check` PASS · diff 2렌즈 적대 리뷰 PASS(MINOR 1 수정).
+  POST-DEPLOY 사용자 육안(TEST §63). 캐시버스터 `admin.js?v=20260710-agg-lod`.
