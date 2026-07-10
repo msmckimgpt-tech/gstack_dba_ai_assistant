@@ -2057,3 +2057,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   ① "대상 노드가 현재 화면에 없습니다" **오류 메시지 미노출**(사용자 불편 해소 실증) ② 카메라가 소속 테이블(또는 접힌
   스키마 카드)로 부드럽게 이동(테이블 **펼치지 않음**) ③ 소속 테이블이 하이라이트(주변 dim)로 강조 ④ 상세 패널 유지 →
   같은 행 **더블클릭** → 테이블 펼침 + 해당 컬럼 선택 ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
+### Run (2026-07-10) — layoutmemo: 배치-정렬 함수 위상-서명 메모이즈 (Major §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §73/ADR-035) — **Environment: Windows-browser**
+- 변경: `_metaTopoSig` 신규 + `_metaG6Build` 서명체크로 `_metaRelOrderAll`(build 지배 ~55%)·`_metaSimGroups`(~45%)
+  위상 무변경 시 재사용 → 극단 줌인·비밀집 rebuild 경량화(근본원인 해소). cull 마진 0.6→0.3. 결정론 불변(캐시 적중==fresh).
+- **pre-commit 정적/실측 검증 PASS**: `node --check admin.js` PASS · headless `test_g6build_layoutmemo.js` **19 PASS**
+  (캐시적중==fresh 좌표완전동일·서명무효화·컬럼/freeplace 독립·적대리뷰 F1 roles/F2 노드속성 서명무효화) + 회귀 150 = **169 PASS** ·
+  §18.8 적대 리뷰 REV-20260710T233000 **[SUBAGENT: PASS-WITH-FIXES]**(BLOCKING/MAJOR 0, F1 HIGH·F2 MEDIUM·NIT 수정) ·
+  **근본원인 win-browser 실측(배포 전 라이브 baseline)**: build 함수분해 monkey-patch 로 relOrderAll 38ms+simGroups 32ms=build 의 99% 확인. 캐시버스터 `admin.js?v=20260710-layoutmemo`.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 신규 코드는 정적 자산 web 이미지 baked → merge +
+  `deploy-web` 후에만 서빙 자산 실측 가능(배포 전 라이브는 구 코드). win-browser relay 시각검증은 가능(PB-0008 갱신) → POST-DEPLOY 재측정.
+- **POST-DEPLOY win-browser 실 Windows Chrome 검증(T69.4)**: 배포 후 동일 대형 scope(mssql-qa-idc)에서
+  ① build 함수분해 재측정 — **캐시 적중 시 relOrderAll·simGroups ≈ 0ms·build 급감**(68~145ms→방출비용만) ② 위상 무변경
+  rebuild(팬·줌·선택·컬럼토글) 노드 위치 동일(band-invariant) ③ 극단 줌인(zoom 2.5) 방출 수↓(마진 0.3) ④ pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl(`?v=20260710-layoutmemo`) + win-browser 실측 PASS append.

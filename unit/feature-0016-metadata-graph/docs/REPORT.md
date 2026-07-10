@@ -1576,3 +1576,9 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
 - **독립 적대 리뷰(subagent, 동일 코드)**: VERDICT PASS — BLOCKING/MAJOR 0. "showDetail 이 `_opSeq` bump → 예약 팬 취소" 가설 반증(showDetail 무-bump·카메라 미조작 → 더블 팬/되감기 없음). MINOR 2(미렌더 안내 비가시 stale 카피·클릭당 bake 2회) 가시 회귀 아님 → 수용.
 - **POST-DEPLOY win-browser 실측(라이브 a24415a5)**: mssql-web-qa `shop_pt.T_ItemInfo` 상세의 `[data-rtuse]` 18행(읽기 12·쓰기 6) 실클릭 → 카메라 중심 [3600,7092]→[2523,7871] 팬 + 상세가 대상 ROUTINE(MSP_ADMIN_ITEM_LIST)으로 전환 동시, pageerror 0. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. 자산 curl(서빙 버스터·핸들러) 확증. 스크린샷 before/after.
 - 원격 브랜치 `ai/claude/feature-0016-graph-rtuse-camera` 는 병합 후 origin 에서 정리 완료.
+## §73 graph-layoutmemo — 배치-정렬 함수 위상-서명 메모이즈 (줌인 성능 근본원인) (2026-07-10)
+- 사용자 요청(누적): "극단적인 줌 인 상태에서도(밀집 아닌데도) 성능 저하 — 근본 원인을 탐색 후 해소."
+- 근본원인(win-browser 실측 함수분해): `_metaG6Build` 의 ~99% 가 `_metaRelOrderAll`(barycenter, ~55%·38ms) + `_metaSimGroups`(affix 유사그룹, ~45%·32ms). 둘 다 **전체 모델 처리**(뷰포트·줌·선택 무관) → 극단 줌인·비밀집에서도 rebuild 당 68~145ms 고정 = "줌인해도 느림"의 정체. §65/§67 컬링(화면 밖만)으론 못 줄이는 축.
+- 해소: 두 순수 함수를 **위상-서명(_metaTopoSig: nodes/REFERENCES edges/schemaExpanded/mode) 메모이즈**. 서명 무변경(팬·줌·선택·마커·컬럼토글·드래그) rebuild 는 정렬 재사용 → build 를 방출 비용만 남김. 통짜 layout 캐시는 groupOf/groupMembers side-effect landmine 이라 배제. cull 마진 0.6→0.3(고배율 방출 감축).
+- 검증: headless 메모이즈 19 + 회귀 150 = **169 PASS**·node --check. 캐시적중==fresh 좌표완전동일(메모이즈가 출력 불변) 증명. §18.8 적대 리뷰(REV §73: BLOCKING/MAJOR 0 · F1 roles·F2 노드속성 stale 캐시 잡아 서명 확장 수정). POST-DEPLOY win-browser 실측.
+- 캐시버스터 `admin.js?v=20260710-layoutmemo`. ADR-035. §65/§67 컬링과 상보(컬링=방출 수↓, 메모이즈=배치 계산↓).
