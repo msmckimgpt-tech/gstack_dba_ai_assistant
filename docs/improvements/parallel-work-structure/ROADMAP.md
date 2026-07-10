@@ -96,8 +96,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 ## 3. 항목 (각 1 cycle)
 
 ### ITEM-01 · TASK.md § 섹션·ADR·archive 순번의 timestamp 전환 (id 위생 완결)
-- **status**: pending
-- **feature_id**: META-0023-parallel-id-hygiene   <!-- 잠정 — 착수 시 최대 META 번호 재확인(§13.1 감지-후-재번호) -->
+- **status**: done
+- **note**: 2026-07-10 완료 (PR #677) — AGENTS.md §13.1/§5.5/§6 개정 + ADR-20260710T231146-parallel-id-hygiene
+  + REV-20260710T231146(meta/REVIEW.md). acceptance (a)(b)(c) 전부 충족 — 기준선 grep 39줄/md5
+  0a223f9a 불변(소급 재번호 0). META-0023 최대번호(0022) 재확인 후 확정(재번호 불요).
+- **feature_id**: META-0023-parallel-id-hygiene   <!-- 확정 — 착수 시 최대 META-0022 확인, 잠정 번호 그대로 -->
+
 - **dimension**: operational
 - **risk_grade**: Major   <!-- 거버넌스 정본(rewrite) 개정 — §6.1 사전 승인으로 드레인 중 비차단 -->
 - **depends_on**: []
@@ -574,8 +578,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 0 · in-progress 0 · pending 12 · blocked 0
-- **실행 순서(§6.2 선형)**: 01 → 02 → 04 → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
+- 총 12 항목 · done 1 (ITEM-01) · in-progress 0 · pending 11 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → 02 → 04 → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
+  (다음 ready: ITEM-02)
 - Major 등급(01·03·04·06·07·09·10·11·12)은 **§6.1 사전 승인(2026-07-10 사용자 지시)으로
   드레인 중 비차단** — blocked 는 §6.3 의 "진짜 이슈" 발생 시에만. (§6 이 없는 일반
   무인 드레인이라면 Major 는 자동 blocked 가 원칙 — §6 은 본 initiative 한정 특례.)

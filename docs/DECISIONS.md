@@ -789,3 +789,28 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
     되살아나지 않는다(ON CONFLICT WHERE status='pending', curator 결정 존중).
   - trade-off: 매 답변 턴마다 경량 LLM 추론 1회 추가(요약 티어 모델·cap 5). 사용자 응답은 이미 전송된
     뒤 실행되어 사용자 체감 지연 없음(워커 시간만 소폭 증가). 후속(미구현): insight-worker 비동기 이관 옵션.
+
+## ADR-20260710T231146-parallel-id-hygiene
+
+- Status: 승인 (2026-07-10 — 제안·승인 근거: `docs/improvements/parallel-work-structure/ROADMAP.md`
+  §6.1 사전 승인(2026-07-10 사용자 지시, PLAN-APPROVED 상당) · ITEM-01. 적대 리뷰
+  REV-20260710T180820-improve-parallel-structure 2-round 가 항목 명세를 사전 검증.)
+- Context: 대량 병렬 생성 식별자(`TASK-`/`REV-`/`CHG-`/`LRN-`)와 spec 앵커(`REQ-`/`AC-`/`ADR-`/
+  `TEST-`)는 timestamp 전환(§13.1 v3.32.0 / §6 v3.34.x)으로 순번 점유-경합이 제거됐으나, 3곳이
+  규약 밖에 잔존해 병렬 세션 간 충돌·재번호가 계속 실측됐다 (RESEARCH F-002): ① TASK.md 등
+  사이클-append 문서의 최상위 섹션 헤더 `## N.` (`## 33.`/`## 56.` 중복, 재번호 정정 커밋
+  e79688f6·0f692942), ② 신규 ADR 의 순번 fallback (`ADR-XXXX`), ③ 아카이브 파일 순번
+  (`_archive/<DOC>-archive-NNNN.md` — 날짜 단위면 같은 날 병렬 아카이빙이 재충돌).
+- Decision (기존 timestamp 규약의 자연 확장 — 아키텍처·제약·보안 무영향):
+  1. **§13.1**: 사이클-append 문서의 신규 최상위 섹션 헤더는 `## <YYYYMMDDTHHMM>-<slug>` 형식.
+     순번 `## N.` 신규 사용 금지, 기존 번호 헤더는 불변.
+  2. **§5.5**: 아카이브 파일명을 `_archive/<DOC>-archive-<YYYYMMDDTHHMMSS>.md` (초 단위) 로 개정.
+     기존 아카이브 파일명 불변.
+  3. **§6**: 신규 ADR 은 timestamp-slug 형식만 유효 — 순번 fallback 폐지 (기존 순번 ADR 유효).
+- Consequences:
+  - 소급 재번호는 하지 않는다 (참조 파손 방지 — 신규 항목부터 적용). 기존 `## N.` 헤더·순번
+    ADR·순번 아카이브 파일은 전부 유효하며 `§N` 상호 참조도 그대로 성립한다.
+  - AGENTS.md 는 template 계보(v3.37.2) 문서 — 본 개정은 소비자 선행 개정으로, template base
+    전파(inbox) 계획은 META-0023 REVIEW 엔트리(meta/REVIEW.md) 에 기록한다 (§13.2.3-A 선례).
+  - 후행 관측 (done 판정식 아님): 이후 사이클들의 TASK.md 신규 섹션이 timestamp 헤더로 기록되는지
+    — parallel-work-structure 로드맵 후속 항목들이 검증 표본.

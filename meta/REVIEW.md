@@ -528,3 +528,12 @@
 - **SKIPPED 사유**: 2026-07-10 사용자 지시 2차("continue 호출 +5시간 10분 자가 재호출, 재귀 구조") 의 전사. 헤드리스 호출 패턴은 dqa-doc-sync-cron.sh 의 2026-07-07 incident fix(BG_WAIT_CEILING_MS=0 + 외곽 timeout) 를 그대로 승계 — 신규 판단 없음. bash -n 문법 검사 + status/arm/disarm 라운드트립 검증(크론탭 설치·라이브 fire 는 운영 단계 — repo 밖, 본 cycle 산출물 아님).
 - **META mode 판정**: changeset = bin/ + docs/improvements/ + meta/REVIEW.md — pure-meta(§18.4). 배포 no-op.
 - **Human Approval Needed**: 아니오 — 사용자 지시의 구현. 체인 정지 수단(disarm·TTL) 내장.
+
+## REV-20260710T231146-META-0023-parallel-id-hygiene [SKIPPED:roadmap-spec-transcription] — TASK.md § 섹션·ADR·archive 순번의 timestamp 전환 (id 위생 완결, ITEM-01)
+
+- **cycle**: ai/claude-corp/META-0023-parallel-id-hygiene — `/_dqa:improve_cycle parallel-work-structure` 드레인 1번째 항목 (ITEM-01). **승인 근거: ROADMAP §6.1** (2026-07-10 사용자 지시, Major 사전 승인 — PLAN-APPROVED 상당).
+- **changeset (pure-meta — AGENTS.md·docs/**·meta/** = META path, verify META mode check #9 게이트)**: `AGENTS.md` 3개 절 개정 — §13.1(사이클-append 문서 신규 최상위 섹션 헤더 `## <YYYYMMDDTHHMM>-<slug>`, 순번 `## N.` 신규 금지·기존 불변) · §5.5(아카이브 파일명 `_archive/<DOC>-archive-<YYYYMMDDTHHMMSS>.md` 초 단위 전환) · §6(신규 ADR timestamp-slug 만 유효 — 순번 fallback 폐지, 표+prose 2곳). `docs/DECISIONS.md`(ADR-20260710T231146-parallel-id-hygiene append — timestamp-slug 형식 자기 적용). `docs/improvements/parallel-work-structure/ROADMAP.md`(ITEM-01 status done + §5 재집계 — feature cycle 커밋 동봉, M3 규약). `meta/REVIEW.md`(본 entry).
+- **SKIPPED 사유**: 본 개정의 what/entry_points/acceptance/guards 는 ROADMAP ITEM-01 에 완전 명세돼 있고, 그 명세는 improve-fit-reviewer **2-round 적대 리뷰**(REV-20260710T180820-improve-parallel-structure — 1차 NOT-SHIP → 전건 반영 → 2차 SHIP-WITH-FIXES)가 이미 검증했다. 구현은 그 명세의 전사(transcription)로 신규 판단 없음 — 기존 timestamp 규약(v3.32.0/v3.34.x)의 자연 확장, 아키텍처·제약·보안 무영향. §18.8 dispatch(auth/schema/UI/API/perf) 비해당.
+- **acceptance 검증**: (a) AGENTS.md 3개 절 개정 diff 존재 ✓ (b) ADR 1건 append — 제안·승인 근거(§6.1) 기록 포함 ✓ (c) 기존 § 참조 무파손 — `grep -rn '## 5[0-9]' unit/*/docs/TASK.md` 39줄·md5 0a223f9a 개정 전후 불변 ✓ (소급 재번호 0 — guards 준수).
+- **template base 전파(inbox) 계획** (§0 공통 규약 ii, §13.2.3-A 선례): 본 §13.1/§5.5/§6 개정 3종은 template 계보(v3.37.2) 후속 버전에 반영 후보 — ai-delegated-dev 템플릿 base 저장소 inbox 에 "사이클-append 문서 섹션 헤더·아카이브 파일명·ADR fallback 폐지의 timestamp 전환(소비자 mysql_ai_delegated_dev 선행 실증)" 1건으로 제출 예정. 전파 전까지 본 repo 한정 유효.
+- **Human Approval Needed**: 아니오 — §6.1 사전 승인 소진(명세 내 범위). doc-only·비파괴·소급 재번호 없음. 배포 무관.

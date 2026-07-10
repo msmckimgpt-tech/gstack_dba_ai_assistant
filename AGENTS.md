@@ -159,11 +159,14 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 ### §5.5 아카이빙
 
 - append-only 문서의 항목이 **20건을 초과**하면 아카이빙한다.
-- 오래된 항목을 `_archive/<DOC>-archive-NNNN.md`로 이동한다.
+- 오래된 항목을 `_archive/<DOC>-archive-<YYYYMMDDTHHMMSS>.md`로 이동한다 — timestamp 는 아카이빙
+  수행 시각(초 단위: 같은 날 병렬 아카이빙도 충돌하지 않게 날짜가 아닌 초 해상도).
+  순번 `_archive/<DOC>-archive-NNNN.md` 의 신규 사용은 금지하며, **기존 아카이브 파일명은
+  불변**(참조 파손 방지 — ADR-20260710T231146-parallel-id-hygiene).
 - 현행 파일에는 최근 항목만 유지하되, 파일 상단에 아카이브 참조 링크를 남긴다.
 
 ```md
-> 이전 기록: [MODIFY-archive-0001.md](./_archive/MODIFY-archive-0001.md)
+> 이전 기록: [MODIFY-archive-20260710T231146.md](./_archive/MODIFY-archive-20260710T231146.md)
 ```
 
 - `REPORT.md`에 "총 변경 횟수: N, 최근 변경 요약" 형태의 압축 정보를 유지한다.
@@ -193,7 +196,7 @@ append-only / 현재상태 문서가 무한 성장하면 §10.1 priming read-set
 | `AC-<id>` | 수용 기준 | **timestamp+slug 권장** `AC-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` / 순번 `AC-XXXX` fallback |
 | `CHG-<id>` | 변경 | timestamp+branch 권장 / 날짜+순번 fallback |
 | `REV-<id>` | 리뷰 | timestamp+branch 권장 / 날짜+순번 fallback |
-| `ADR-<id>` | 결정 | **timestamp+slug 권장** `ADR-<YYYYMMDDTHHMMSS>-<slug>` / 순번 `ADR-XXXX` fallback |
+| `ADR-<id>` | 결정 | **timestamp+slug 필수(신규)** `ADR-<YYYYMMDDTHHMMSS>-<slug>` — 순번 fallback 폐지(기존 순번 ADR 은 유효, ADR-20260710T231146-parallel-id-hygiene) |
 | `TEST-<id>` | 테스트 | **timestamp+slug 권장** `TEST-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` / 순번 `TEST-XXXX` fallback |
 | `LRN-<id>` | 학습 | timestamp+branch 권장 / 날짜+순번 fallback |
 
@@ -226,7 +229,9 @@ ADR-20260625T023049-spec-anchor-timestamp-id — 본 §6/§13.1 의 기존 "spec
   REQ 당 **AC 2개 이상이면 `-<n>`(1-based) 필수, 단일이면 생략 가능**(또는 `-1`). REQ 가 날짜형이어도 AC 는
   cycle 의 초 timestamp 를 쓴다 (예: `REQ-20260625-gc-member-kick-ban` →
   `AC-20260625T020410-gc-member-kick-ban-1`,`-2`…).
-- `ADR-<YYYYMMDDTHHMMSS>-<slug>` (본 ADR 이 첫 적용 예시이다).
+- `ADR-<YYYYMMDDTHHMMSS>-<slug>` (본 ADR 이 첫 적용 예시이다). **신규 ADR 은 이 timestamp-slug 형식만
+  유효하다** — 순번 `ADR-XXXX` fallback 은 폐지(ADR-20260710T231146-parallel-id-hygiene; 기존 순번
+  ADR 은 불변·유효, 소급 재번호 없음).
 - `TEST-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` (다수면 `-<n>` 필수, 단일 생략 가능).
 
 timestamp(초) + slug 가 cycle 별 자연 분기를 만들어, 여러 세션이 같은 순번(`AC-0625` 등)을 병렬
@@ -650,6 +655,14 @@ feature 단위)을 쓰되, 사전 승인이 아니라 **완료 판정 기준(§1
   않는다 — reservation registry / timestamp 식별자 전환은 `docs/DECISIONS.md` ADR-0022
   에서 검토 후 보류(불필요한 인프라 복잡도). 고병렬 위임으로 충돌 빈도가 높으면 doc-only
   편집도 worktree-first(§13.2.1)로 격리해 race 표면을 줄인다.
+- **사이클-append 문서의 신규 최상위 섹션 헤더 — timestamp+slug (2026-07-10 프로젝트 개정,
+  ADR-20260710T231146-parallel-id-hygiene — template base 전파 예정)**: TASK.md 처럼 사이클마다
+  최상위 섹션을 append 하는 문서의 **신규 섹션 헤더는 `## <YYYYMMDDTHHMM>-<slug>` 형식**
+  (예: `## 20260710T2311-graph-lod-fix`) 으로 한다. 순번 헤더 `## N.` 의 신규 사용은 금지한다 —
+  여러 세션이 같은 "다음 번호"를 병렬 점유해 머지 후 중복이 실측됐다 (TASK.md `## 33.`·`## 56.`
+  중복, 재번호 정정 커밋 e79688f6·0f692942). **기존 번호 헤더는 불변**(소급 재번호 금지 —
+  STATUS/REPORT/REVIEW 등의 `§N` 상호 참조 파손 방지). timestamp+branch 식별자(v3.32.0)와 동일
+  계열의 자연 분기 — 점유 확인·재번호가 불필요해진다.
 - **Feature-bound REPORT.md 충돌 방지** (v3.11.0+): `unit/<feature-id>/meta/REPORT.md`
   는 해당 feature 의 단일 worktree mutator 에 의해서만 mutation 된다 (F2 정책의
   feature-scoped 확장). 다른 worktree 가 동일 path 의 read 는 허용. 충돌 발생
