@@ -407,6 +407,29 @@ function check(name, cond, extra) {
     out.nodes.filter((n) => !n.style || n.style.opacity == null).map((n) => n.id));
 }
 
+// T22(lod-hl-declutter, 사용자 결정 2026-07-10): 상대 하이라이트 상태에서도 줌아웃 LOD 축약이 작동한다.
+//   LOD 축약 예외는 **선택 노드에 직접 닿는 선(self-incident)** 만 — 이웃↔이웃 클러터는 정상 축약된다.
+//   (버그: 예전엔 lit=양끝밝음(dim 규칙)을 LOD 예외에 재사용해, 허브 선택 시 이웃 부분그래프 전체가
+//    예외가 돼 줌아웃 간소화가 통째로 무력화됐다. keepLodFor 로 dim 과 분리해 해소.)
+{
+  const M = seedModel(["a"], [nk("a")]);
+  for (let i = 0; i <= 60; i++) addTable(M, `a.t${i}`);                                  // t0 = 허브, t1..t60 = 이웃
+  for (let i = 1; i <= 60; i++) addEdge(M, nk(`a.t0.c${i}`), nk(`a.t${i}.k`), "REFERENCES", { status: "" });   // 허브 직접선(무상태 FK)
+  for (let i = 1; i + 1 <= 60; i += 2) addEdge(M, nk(`a.t${i}.m`), nk(`a.t${i + 1}.m`), "REFERENCES", { status: "" });   // 이웃↔이웃(무상태 FK, 허브 미접촉)
+  addTable(M, "a.f1"); addTable(M, "a.f2");
+  for (let i = 0; i < 80; i++) addEdge(M, nk(`a.f1.c${i}`), nk(`a.f2.c${i}`), "REFERENCES", { status: "" });   // 필러 — edges.size > 120(LOD 발동) 보장
+  M.selected = nk("a.t0");
+  M.graph = { getZoom: () => 0.2 };   // 줌 0.2 < 0.35 → lodActive
+  const out = build();
+  const fa = M.focusAdj;
+  const findE = (s, t) => out.edges.find((x) => (x.source === nk(s) && x.target === nk(t)) || (x.source === nk(t) && x.target === nk(s)));
+  check("T22 사전: 허브 하이라이트 발동(이웃 다수)", !!fa && fa.nodes.has(nk("a.t2")), fa && fa.nodes.size);
+  check("T22 선택 노드 직접선 유지(t0↔t1)", !!findE("a.t0", "a.t1"), out.edges.filter((x) => String(x.source).includes("t0")).map((x) => [x.source, x.target]));
+  check("T22 이웃↔이웃 클러터 축약(t1↔t2 드롭)", !findE("a.t1", "a.t2"), (() => { const e = findE("a.t1", "a.t2"); return e && [e.source, e.target]; })());
+  check("T22 하이라이트 상태에서도 _lodDropped>0", M._lodDropped > 0, M._lodDropped);
+  M.selected = null; M.focusAdj = null; M.graph = null;
+}
+
 // T18(비동기): _metaG6Apply 직렬화 — 겹침 호출은 재실행 1회로 병합(setData 경합 제거).
 (async () => {
   vm.runInContext(src.match(/async function _metaG6Apply[\s\S]*/) ? "" : "", sandbox);   // no-op(원본 복원 불가 주석)

@@ -2021,3 +2021,11 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [ ] T63.5 POST-DEPLOY 사용자 육안(PB-0008 무인 도달 차단) — 대형 그래프 극단 줌아웃(<0.15): 클러스터가
   집계 카드로 묶임·확대 시 다시 펼침·위치 불변(reflow 0)·개요 팬/클릭 경량화 체감. 자산 curl + 육안 게이트(TEST §63).
 - [ ] T63.6 잔여(별도): 줌인 대형모델 팬/클릭 — 뷰포트 컬링(테이블, combo auto-fit 해결 필요)·optimize-viewport-transform. 사용자 피드백 후 평가.
+
+## §64 lod-hl-declutter — 하이라이트 상태 줌아웃 LOD 축약 정상화 (2026-07-10, §57 후속 · 사용자 리포트)
+사용자: "그래프 뷰에서 줌아웃 시 관계선이 간소화되던 최적화가 '상대적 하이라이트'(특정 노드 클릭) 상태에서는 작동하지 않는 것으로 추측 — 정상 작동 여부 검토 및 수정."
+- [x] T64.0 근본원인 확정(코드 추적): 노드 클릭은 `_metaGraphSetSelected`→`_metaG6Apply(false)`(fit=false)로 full rebuild → LOD 자체는 재실행되고 줌도 불변(즉 "LOD 미실행"·"선택이 줌 리셋" 아님). 진짜 원인 = LOD 드롭 예외 술어 `keep = lit(rs) && lit(rt)` 가 dim(§57.5 "양끝 밝음") 규칙을 **재사용**. `lit` 의 밝은 부분그래프 = 선택 노드 + **1-hop 이웃 전체 + 컨테이너**(`_metaFocusAdjacency`) → 선택 노드에 직접 닿지 않는 **이웃↔이웃 엣지까지 전부 LOD 예외**. 허브 노드 선택 시 대부분 관계선 보존 → 체감상 간소화 무력화(적대검증 실측: 허브 선택 시 `_lodDropped=0`).
+- [x] T64.1 결정: **A — 선택 노드 직접선만 LOD 예외 보존, 이웃↔이웃 클러터는 정상 간소화**(AskUserQuestion 2026-07-10). dim(밝기)은 유도 부분그래프 전체 유지(불변).
+- [x] T64.2 수정(admin.js `_metaG6Build`): dim(`lit`/`selTouch`)과 LOD-keep 을 **분리**. 신설 `litSelf(rid)`(끝점이 `fa.self` 자체인지 — 이웃 `fa.nodes` 제외, SC:·컬럼→소속테이블 접기는 lit 과 동일) + `keepLodFor(a,b)=litSelf(a)||litSelf(b)`. LOD 드롭 4경로(ROUTINE_USES 직접·집계, 비-REFERENCES 직접, REFERENCES colLevel·집계, aggMap.forEach)를 `keep`→`keepLod`/`agg.keepLod` 로 교체. `keep` 은 `dimIf` 에만 잔존(dim 동작 불변). SCHEMA_REF(LOD 비대상)·무선택(fa=null) 경로 불변.
+- [x] T64.3 검증: headless `test_g6build_edge_visibility.js` **T22 신설 4 PASS**(허브 하이라이트 발동·선택 직접선 유지·이웃↔이웃 축약·`_lodDropped>0`) + 회귀 전량 = **edge 64·collod 20·agglod 9·category 26·vpack 19 = 138 PASS 회귀 0** · `node --check` PASS. **적대검증**: 수정 되돌린 OLD 동작에서 T22 정확히 FAIL(t1↔t2 유지·`_lodDropped=0`) → 테스트가 회귀를 실제 포착함 확인. diff 적대 리뷰(§18.8) REV 별도. 캐시버스터 `admin.js?v=20260710-lod-hl-declutter`.
+- [ ] T64.4 POST-DEPLOY 실 Windows 브라우저(PB-0008) — 그래프 뷰 진입 → 대형 모델 줌아웃(<0.35)에서 관계선 축약 확인 → **노드 클릭(상대 하이라이트) 상태에서도 줌아웃 축약 유지**(선택 노드 직접선은 보임, 주변 이웃↔이웃 클러터는 정리) + 상태줄 "줌아웃 — 관계선 일부 축약" 마커. (그래프뷰 무인 도달은 인증/라우팅 차단 — 사용자 육안 게이트, feature-0003 TEST.md §3.)
