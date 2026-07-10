@@ -835,3 +835,15 @@ source_of_truth: true
 - 기각/대안: (a) 뷰포트 컬링으로 테이블까지 줌인에서 감축 — combo auto-fit(`getComboPosition=getContentBBox(children).center`)이 테이블 컬링 시 카드 축소/점프 → combo-safe 아님, 별도 검토(잔여). (b) compact 카드-그리드 재배치 — 위치 점프(사용자 민감) → reflow-free 슬롯 유지 채택(대가: agg 뷰 다소 sparse).
 - 검증: headless `test_g6build_agglod.js` **9 PASS**(카드 방출·draw 급감>10x·reflow-free·비-agg 유지·게이트) + 회귀 125 = **134 PASS**. diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0, MINOR 1 수정: 상태줄 마커를 밴드→실제 억제 플래그 게이트해 §57 오독-가드 코너 재발 차단). PB-0008 극단 줌아웃 before/after 는 TEST §63.
 - Supersedes: — (§57 엣지·§61 컬럼 LOD 를 클러스터 축으로 확장·병존) / Superseded By: —
+
+## ADR-031 — §64 lod-hl-declutter: 하이라이트 상태의 줌아웃 LOD 축약 예외를 "선택 노드 직접선"으로 축소 (dim 과 분리)
+- 상태: 채택 (2026-07-10)
+- 맥락: 사용자 리포트 — "줌아웃 시 관계선이 간소화되던 최적화가 상대적 하이라이트(특정 노드 클릭) 상태에서는 작동하지 않는 것으로 추측." 코드 추적으로 근본원인 확정: 노드 클릭은 `_metaGraphSetSelected`→`_metaG6Apply(false)`(fit=false)로 full rebuild → §57 edge-LOD 자체는 재실행되고 줌도 불변(즉 "LOD 미실행"·"선택이 줌 리셋" 아님). 진짜 원인은 LOD 드롭 예외 술어 `keep = lit(rs) && lit(rt)` 가 **dim(§57.5 "양끝 밝음") 규칙을 그대로 재사용**한 점. `lit` 의 "밝은 부분그래프" = 선택 노드 + **1-hop 이웃 전체 + 컨테이너**(`_metaFocusAdjacency`)이므로, 선택 노드에 직접 닿지 않는 **이웃↔이웃 엣지까지 전부 LOD 예외**가 된다. 허브 테이블(이웃 다수·상호연결) 선택 시 사실상 전량 보존 → 간소화 무력화(적대검증 실측: 허브 선택 시 `_lodDropped=0`).
+- 결정: **dim(밝기)과 LOD-keep(축약 예외)을 분리**한다.
+  - `dimIf` 인자 `keep = lit && lit`(양끝 밝음) — **불변**. 유도 부분그래프(선택+이웃)는 계속 선명(§57.5 규칙 보존).
+  - LOD 드롭 예외는 신설 `keepLodFor(a,b) = litSelf(a) || litSelf(b)` — 끝점 하나라도 **선택 노드 자체**(`fa.self`; 테이블이면 자기 컬럼 포함)면 보존. 이웃(`fa.nodes`)은 제외. SC: 접두 벗김·컬럼→소속테이블 접기는 `lit` 과 동일.
+  - 적용: LOD 드롭 4경로(ROUTINE_USES 직접·집계, 비-REFERENCES 직접, REFERENCES colLevel·집계, aggMap.forEach)를 `keep`→`keepLod`/`agg.keepLod`. 집계 엣지는 멤버 중 하나라도 self-incident 면 보존(`agg.keepLod ||=`).
+  - 효과: 하이라이트 상태에서도 줌아웃 축약이 정상 작동(이웃↔이웃 클러터 정리) + 선택 노드의 관계선은 항상 보임 + 밝기 대비는 유지.
+- 기각/대안: (a) 하이라이트와 무관하게 완전 축약 — 선택 노드의 단건 FK 도 줌아웃 시 사라져 "선택한 것의 관계를 못 봄"(사용자 A안 선택으로 기각). (b) 현행 유지 — 사용자가 오작동으로 인지(기각). (c) 이웃 hop 수 파라미터화 — 과설계, 현 요구엔 self-직접선으로 충분.
+- Supersedes: §57(TASK §57.5)의 "하이라이트 인접 보존"의 **LOD 예외 범위**를 "인접 전체 부분그래프"→"self-직접선"으로 개정(dim 은 §57.5 그대로 보존) / Superseded By: —
+- 검증: headless `test_g6build_edge_visibility.js` **T22 신설 4 PASS** + 회귀 = **138 PASS(edge 64·collod 20·agglod 9·category 26·vpack 19) 회귀 0** · `node --check` PASS · **적대검증**(수정 되돌린 OLD 동작에서 T22 정확히 FAIL 재현). diff 적대 리뷰(REV-…lod-hl-declutter). PB-0008 하이라이트+줌아웃 실측은 TEST §64.

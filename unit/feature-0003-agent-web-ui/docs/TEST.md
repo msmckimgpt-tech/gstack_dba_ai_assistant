@@ -1950,3 +1950,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **POST-DEPLOY 사용자 육안 검증(T63.5)**: 대형 스키마 여러 개 펼침 → 극단 줌아웃: ① 클러스터가 집계 카드로 묶임
   ② 확대 시 재-펼침(원 위치·reflow 0) ③ 개요 팬/클릭 경량화 ④ 상태줄 "개요 — 클러스터 집계" ⑤ pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
+
+### Run (2026-07-10) — lod-hl-declutter: 하이라이트 상태 줌아웃 LOD 축약 정상화 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §64/ADR-031) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_edge_visibility.js` **T22 신설 4 PASS** — 허브 하이라이트
+  발동·**선택 노드 직접선 유지**·**이웃↔이웃 클러터 축약(드롭)**·하이라이트 상태에서도 `_lodDropped>0`. 회귀 전량
+  edge 64·collod 20·agglod 9·category 26·vpack 19 = **138 PASS 회귀 0** · `node --check` PASS.
+  **적대검증**: 수정 되돌린 OLD 동작에서 T22 정확히 FAIL 재현(t1↔t2 유지·`_lodDropped=0`) → 테스트가 회귀를 실제 포착.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 baked → merge + `deploy-web`
+  재배포 선행(§51·§57·§61·§63 동일). ② LOD 발동 = 대형 라이브 그래프(엣지>120) + 줌아웃(<0.35) + 노드 클릭 상태라
+  무인 재현 복잡 + 그래프뷰 무인 도달 3중벽 차단 → **자산 curl(서빙 admin.js 에 `litSelf`·`keepLodFor` + `?v=20260710-lod-hl-declutter`) + 사용자 육안**로 대체.
+- **POST-DEPLOY 사용자 육안 검증(T64.4)**: 대형 그래프 로그인 → 여러 스키마 펼침 → 줌아웃(<0.35)에서 관계선 축약 확인
+  → **노드 클릭(상대 하이라이트) 상태에서도 줌아웃 축약 유지**: 선택 노드에 직접 닿는 관계선은 보이고, 주변 이웃↔이웃
+  단건 FK 클러터는 정리됨 + 상태줄 "줌아웃 — 관계선 일부 축약" 마커 + pageerror 0. (대조: 선택 노드 관계선은 사라지지 않음.)
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.

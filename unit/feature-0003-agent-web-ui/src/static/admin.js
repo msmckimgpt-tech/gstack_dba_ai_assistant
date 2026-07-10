@@ -5158,10 +5158,15 @@ function _metaG6Build() {
     const sk = _metaCatParent(nodeKey, gn && gn.fqn);
     return (sk && present.has("SC:" + sk)) ? ("SC:" + sk) : null;
   };
-  // §57.5(사용자 피드백 "흐림 기준 체감 무작위"): 엣지 흐림은 단일 규칙 — **양끝이 모두 밝으면
+  // §57.5(사용자 피드백 "흐림 기준 체감 무작위"): 엣지 흐림(dim)은 단일 규칙 — **양끝이 모두 밝으면
   //   선도 밝다**(밝은 부분그래프 = 선택+1-hop 인접의 폐포). 예전 '선택에 직접 닿는 선만 선명'은
-  //   밝은 이웃 노드 사이의 선이 흐려져 사람 눈에 무작위로 읽혔다. lit() 은 dim 과 LOD-keep 양쪽에
-  //   쓰이며 무선택(fa=null)이면 false — dim 은 fa 존재 시에만 발동(의미 분리).
+  //   밝은 이웃 노드 사이의 선이 흐려져 사람 눈에 무작위로 읽혔다. 무선택(fa=null)이면 false —
+  //   dim 은 fa 존재 시에만 발동(의미 분리).
+  // lod-hl-declutter(사용자 결정 2026-07-10): dim(lit, 유도 부분그래프 전체)과 LOD-keep(litSelf,
+  //   선택 노드 직접선만)을 **분리**한다. 예전엔 lit() 을 LOD 축약 예외에도 재사용해, 허브 노드를
+  //   선택하면 이웃↔이웃 간 엣지까지 전부 예외가 돼 줌아웃 간소화가 통째로 무력화됐다(사용자 실측).
+  //   이제 줌아웃 축약 예외는 **선택 노드에 직접 닿는 선(양끝 중 하나가 self)** 만 — 이웃 클러터는
+  //   하이라이트 상태에서도 정상 간소화되고, 선택 노드의 관계는 계속 보존된다. dim(밝기)은 불변.
   const fa = _metaGraph.focusAdj;
   const lit = (rid) => {
     if (!fa) return false;
@@ -5176,7 +5181,23 @@ function _metaG6Build() {
     }
     return false;
   };
-  const selTouch = lit;   // 호출부 명칭 호환(의미: 밝은 부분그래프 소속 여부)
+  const selTouch = lit;   // 호출부 명칭 호환(의미: 밝은 부분그래프 소속 여부 — dim 용)
+  // lod-hl-declutter: 끝점이 **선택 노드 자체**(self, 테이블이면 자기 컬럼 포함)인지 — LOD 축약 예외 전용.
+  //   lit 과 달리 1-hop 이웃(fa.nodes)은 제외한다. SC: 접두·컬럼→소속테이블 접기는 lit 과 동일 규칙.
+  const litSelf = (rid) => {
+    if (!fa) return false;
+    const r = String(rid || "");
+    const mk = r.startsWith("SC:") ? r.slice(3) : r;
+    if (fa.self.has(mk)) return true;
+    const gn = _metaGraph.nodes.get(mk);
+    if (!gn || gn.label === "Column") {
+      const pk = _metaColParent(mk, gn && gn.fqn);
+      if (pk && fa.self.has(pk)) return true;
+    }
+    return false;
+  };
+  // LOD 축약 예외: 선택 노드에 직접 닿는 선(양끝 중 하나가 self)만 보존.
+  const keepLodFor = (a, b) => litSelf(a) || litSelf(b);
   const dimIf = (st, hl) => {
     if (fa && !hl) {
       // §57.6(사용자 실측 "화살표 첨단만 밝음"): strokeOpacity 는 path 선만 흐리고 화살촉(마커
@@ -5189,8 +5210,9 @@ function _metaG6Build() {
     return st;
   };
   // §57(사용자 검토 ①·declutter): 중간 줌 LOD — 임계 미만 줌 + 대형 모델에서 무상태(FK)·비크로스
-  //   단건 선을 축약하고 의미 신호(trusted/candidate/교차DB/집계/SCHEMA_REF/하이라이트 인접)만 남긴다.
-  //   우선순위: 사용자 명시 숨김(hiddenKinds) > 하이라이트 인접 보존 > LOD 축약.
+  //   단건 선을 축약하고 의미 신호(trusted/candidate/교차DB/집계/SCHEMA_REF/선택 노드 직접선)만 남긴다.
+  //   우선순위: 사용자 명시 숨김(hiddenKinds) > 선택 노드 직접선 보존(keepLodFor) > LOD 축약.
+  //   (lod-hl-declutter: 예전 '하이라이트 인접 보존'은 이웃 부분그래프 전체를 예외로 둬 간소화를 무력화 → self-직접선만.)
   let zoomNow = 1;
   try { if (_metaGraph.graph) zoomNow = _metaGraph.graph.getZoom() || 1; } catch (_) {}
   const lodActive = zoomNow < _META_EDGE_LOD_ZOOM && _metaGraph.edges.size > _META_EDGE_LOD_MIN;
@@ -5232,8 +5254,9 @@ function _metaG6Build() {
         const ss = _metaCatParent(e.source, srcN && srcN.fqn), ts = _metaCatParent(e.target, tgtN && tgtN.fqn);
         const xr = !!e.cross_ds || (!!ss && !!ts && ss !== ts);
         const keep = selTouch(rs) && selTouch(rt);
+        const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter: 축약 예외는 self-직접선만
         if (rs === e.source && rt === e.target) {
-          if (lodActive && !keep && !xr) { lodDropped += 1; return; }
+          if (lodActive && !keepLod && !xr) { lodDropped += 1; return; }
           edges.push({ id: e.id, source: rs, target: rt,
             data: { label: e.type, status: e.status, cross_ds: xr ? 1 : 0, relation_type: e.relation_type },
             style: dimIf(_metaRoutineEdgeStyle(e.relation_type, xr), keep) });
@@ -5241,16 +5264,17 @@ function _metaG6Build() {
         }
         const ak = rs + "::" + rt + "::RU";
         let agg = aggMap.get(ak);
-        if (!agg) { agg = { id: "agg:" + ak, kind: "ROUTINE_USES", source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false }; aggMap.set(ak, agg); }
+        if (!agg) { agg = { id: "agg:" + ak, kind: "ROUTINE_USES", source: rs, target: rt, status: "", count: 0, pairs: [], crossDs: false, keep: false, keepLod: false }; aggMap.set(ak, agg); }
         agg.count += 1;
         agg.crossDs = agg.crossDs || xr;
         agg.keep = agg.keep || keep;
+        agg.keepLod = agg.keepLod || keepLod;   // lod-hl-declutter
         if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.relation_type || "read" });
         return;
       }
       if (present.has(e.source) && present.has(e.target)) {
         const keep = selTouch(e.source) && selTouch(e.target);
-        if (lodActive && !keep) { lodDropped += 1; return; }
+        if (lodActive && !keepLodFor(e.source, e.target)) { lodDropped += 1; return; }   // lod-hl-declutter: 축약 예외는 self-직접선만
         edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status },
           style: dimIf(_metaEdgeStyleFor(e.status), keep) });
       }
@@ -5263,25 +5287,27 @@ function _metaG6Build() {
     //   그려지는 것을 차단한다.
     if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;
     const keep = selTouch(rs) && selTouch(rt);
+    const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter: 축약 예외는 self-직접선만
     const colLevel = (rs === e.source && rt === e.target);
     if (colLevel) {
       // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지). crossds-rel: cross_ds 면 마젠타 점선.
-      if (lodActive && !keep && !e.cross_ds && e.status !== "trusted" && e.status !== "candidate") { lodDropped += 1; return; }
+      if (lodActive && !keepLod && !e.cross_ds && e.status !== "trusted" && e.status !== "candidate") { lodDropped += 1; return; }
       edges.push({ id: e.id, source: rs, target: rt, data: { label: e.type, status: e.status, colEdge: true, cross_ds: e.cross_ds || 0 }, style: dimIf(_metaEdgeStyleFor(e.status, e.cross_ds), keep) });
       return;
     }
     // 한쪽 이상이 테이블/카드로 승격 — 집계 엣지에 병합(dedupe + 상태 승급 + pairs 누적).
     const ak = rs + "::" + rt;
     let agg = aggMap.get(ak);
-    if (!agg) { agg = { id: "agg:" + ak, kind: "REFERENCES", source: rs, target: rt, status: e.status || "", count: 0, pairs: [], crossDs: false, keep: false }; aggMap.set(ak, agg); }
+    if (!agg) { agg = { id: "agg:" + ak, kind: "REFERENCES", source: rs, target: rt, status: e.status || "", count: 0, pairs: [], crossDs: false, keep: false, keepLod: false }; aggMap.set(ak, agg); }
     agg.count += 1;
     agg.crossDs = agg.crossDs || !!e.cross_ds;   // crossds-rel: 집계 쌍 중 하나라도 교차DB 면 교차DB 로 표식
     agg.keep = agg.keep || keep;
+    agg.keepLod = agg.keepLod || keepLod;   // lod-hl-declutter
     if (agg.pairs.length < 8) agg.pairs.push({ s: e.source, t: e.target, status: e.status });
     if (e.status === "trusted" || (e.status === "candidate" && agg.status !== "trusted")) agg.status = e.status;   // 최강 상태 채택
   });
   aggMap.forEach((agg) => {
-    if (lodActive && !agg.keep && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
+    if (lodActive && !agg.keepLod && !agg.crossDs && agg.count <= 1 && agg.status !== "trusted" && agg.status !== "candidate") { lodDropped += 1; return; }
     // 집계 엣지는 여러 컬럼/루틴-쌍을 대표하므로 살짝 굵게(count>1) — style 미지원 키는 넣지 않음(G6 안전).
     const st = (agg.kind === "ROUTINE_USES")
       ? (() => { const s = _metaRoutineEdgeStyle("", agg.crossDs); delete s.startArrow; return s; })()

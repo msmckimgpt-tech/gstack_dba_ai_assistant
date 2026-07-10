@@ -1317,3 +1317,18 @@ source_of_truth: true
 - CONFIRMED(MINOR 1, **수정**): 4단 밴드 도입이 상태줄 마커를 밴드 문자열로 게이트해, `band=agg` + `aggActive=false`(nodes≤60) + 엣지 실제 축약(edges>120, "테이블만 로드+REFERENCES 다수" 모델서 도달) 구간에서 "관계선 축약" 안내가 사라져 §57 '관계 없음' 오독-가드 부분 재발. **수정**: 마커를 밴드가 아니라 실제 억제 플래그(`_aggActive`/`_lodDropped`/`_colLodActive`)로 게이트(aggCut 우선). 데이터/reflow 무영향(안내만 누락이었음).
 - 수용/후속(NIT): agg 줌에서 접힌 카드 펼침 → ingest 로 재집계되면 ExpandSchema 성공 status("테이블 클릭=컬럼, − 접기")가 존재 않는 UI 를 지시(cosmetic). 니치 상호작용(agg 줌에서 카드 클릭)·정보접근은 상세 패널로 가능 → 후속. agg 뷰 sparse(대형 슬롯에 소형 카드)는 reflow-0 의 수용된 트레이드오프.
 - 검증: 수정 후 headless `test_g6build_agglod.js` 9 + 회귀 125 = **134 PASS** · `node --check` PASS.
+
+## REV-20260710T170000-ai-claude-feature-0016-lod-hl-declutter [SUBAGENT: PASS] — §64 하이라이트 상태 줌아웃 LOD 축약 정상화 diff 적대 리뷰
+- 대상: CHG-20260710T170000-lod-hl-declutter (admin.js `_metaG6Build` — `litSelf`/`keepLodFor` 신설 + LOD 드롭 4경로 `keep`→`keepLod`/`agg.keepLod` 교체, dim 은 `keep` 잔존 + admin.html 캐시버스터 + test T22 신설).
+- 방법: §18.8 적대 리뷰(general-purpose, 통과 아닌 결함 적발 목적). 8개 결함 가설을 코드 실측(파일:라인)·능동 반증 시도 + pre-fix 실행 대조.
+- 판정: **PASS** — BLOCKING/MAJOR/MINOR 0. 8개 항목 전부 CONFIRMED:
+  ① dim 회귀 없음: `dimIf` 5곳(SCHEMA_REF·RU직접·비-REF직접·REF-colLevel·agg) 2번째 인자 전부 `keep`/`agg.keep`(양끝 밝음) 불변, `grep dimIf(.*keepLod`=0 → 이웃↔이웃 dim 선명 규칙(§57.5) 그대로.
+  ② 정의-사용 순서/스코프: `keepLodFor` 선언 후 사용, 블록 지역 `keepLod` 는 각 사용처 전 선언(TDZ 없음), 비-REF-직접은 present 가드 하 원본 키(승격 불요·`keep` 도 동일 키).
+  ③ 집계 keepLod: 두 agg 리터럴 `keepLod:false` 초기화 + `||=` 누적 + forEach `!agg.keepLod` 판독. (NIT: ak=rs::rt 라 agg 내 멤버 keepLod 동일값→OR idempotent·무해, 기존 agg.keep 과 동일 성질, 본 diff 결함 아님.)
+  ④ litSelf 폴딩: `lit` 에서 `fa.nodes` 검사만 제거 — SC: 벗김·컬럼→테이블 접기 동일. Table 선택 시 자기 컬럼이 `fa.self` 적재(_metaFocusAdjacency)라 self 컬럼 끝점 true.
+  ⑤ SCHEMA_REF: LOD 드롭 없음(lodActive 미검사)·`keep`(dim)만 사용 — 스코프 크립 0.
+  ⑥ 오염 없음: 드롭 조건에 `keep` 잔존 0(`grep !keep`=0), dimIf 에 keepLod 오용 0.
+  ⑦ 무선택(fa=null): litSelf/keepLodFor 전량 false → LOD 전량 축약(기존 동일), dimIf `if(fa&&!hl)` 무동작.
+  ⑧ T22 타당성(허위 가드 아님): **pre-fix admin.js 에 T22 실행 → 2 FAIL**(t1↔t2 유지·`_lodDropped=0`=간소화 통째 무력화) = 사용자 버그 재현, 수정본 64/64 PASS.
+- 결함/회귀: 없음. 검증: 5개 헤드리스 스위트 전부 PASS(edge 64·collod 20·agglod 9·category 26·vpack 19=138) · `node --check` OK.
+- 미결(정상): 실 하이라이트+줌아웃 육안은 그래프뷰 인증/라우팅 3중벽으로 무인 도달 불가 → POST-DEPLOY 사용자 육안 게이트(TEST §64·T64.4).

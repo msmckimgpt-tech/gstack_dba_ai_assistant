@@ -906,3 +906,27 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - **무인 도달 제약**: 그래프뷰 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL 라우팅) → 자산 curl(서빙
   admin.js 에 `_META_AGG_ZOOM`·`aggActive` + `?v=20260710-agg-lod`) + 사용자 육안 게이트(visual_verification_scope=always,
   브리지 불가 시 사유 명시 통과). 사용자 확인 후 PASS append.
+
+
+## §64 lod-hl-declutter — 하이라이트 상태 줌아웃 LOD 축약 정상화 (2026-07-10, ADR-031)
+
+### 단위 (headless, AGE/라이브 불요) — Environment: unit/node
+- **`test_g6build_edge_visibility.js` T22 신설: 4 PASS** (`node test_g6build_edge_visibility.js ../../src/static/admin.js`).
+  - T22 사전: 허브 노드(t0, 이웃 다수) 선택 시 하이라이트 발동(`focusAdj` 비-null).
+  - **T22 선택 노드 직접선 유지** — 줌 0.2(lodActive) + 허브 선택에서 t0↔t1(무상태 FK) 렌더 유지.
+  - **T22 이웃↔이웃 클러터 축약** — t1↔t2(무상태 FK, 허브 미접촉)는 드롭(예전엔 lit=양끝밝음으로 보존됨).
+  - **T22 하이라이트 상태에서도 `_lodDropped>0`** — 간소화 재작동 확인.
+- **적대검증**: 수정 되돌린 OLD 동작(`keep` 재사용)에서 T22 정확히 FAIL(t1↔t2 유지·`_lodDropped=0` = 간소화 완전
+  무력화) → 테스트가 회귀를 실제 포착함 확인 + 사용자 리포트 버그 재현.
+- 회귀: edge_visibility 64(T22 포함) · collod 20 · agglod 9 · category 26 · vpack 19 = **138 PASS 회귀 0**.
+  `node --check` PASS. dim(§57.5 양끝밝음) 규칙 불변(edge_visibility T10 PASS 유지).
+- 적대 리뷰(REV-...-lod-hl-declutter): REVIEW.md.
+
+### Run (예정) — POST-DEPLOY (Environment: Windows-browser, PB-0008) — T64.4
+- 대상: 대형 그래프(다스키마·엣지>120) 로그인 → 여러 스키마 펼침 → **줌아웃(<0.35)** → **특정 노드 클릭(상대 하이라이트)**.
+- 확인: ① 노드 클릭 전 줌아웃에서 단건 FK 관계선 축약(기존 동작) ② **노드 클릭(하이라이트) 상태에서도 축약 유지** —
+  선택 노드에 직접 닿는 관계선은 보이고 주변 이웃↔이웃 클러터는 정리됨 ③ 선택 노드의 관계선은 사라지지 않음 ④ 상태줄
+  "줌아웃 — 관계선 일부 축약" 마커 ⑤ pageerror 0.
+- **무인 도달 제약**: 그래프뷰 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL 라우팅) → 자산 curl(서빙 admin.js 에
+  `litSelf`·`keepLodFor` + `?v=20260710-lod-hl-declutter`) + 사용자 육안 게이트(visual_verification_scope=always,
+  브리지 불가 시 사유 명시 통과). 사용자 확인 후 PASS append.

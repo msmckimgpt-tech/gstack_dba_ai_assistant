@@ -1284,3 +1284,18 @@ source_of_truth: true
 - 근거: 사용자 후속 요청(집계) + 실측(JS 빌드 18-50ms 빠름 → 병목=draw 방출 수, ADR-030). frontend-only·마이그 0.
 - 검증: headless 9(agg)+회귀 125 = **134 PASS** · `node --check` PASS · diff 2렌즈 적대 리뷰 PASS(MINOR 1 수정).
   POST-DEPLOY 사용자 육안(TEST §63). 캐시버스터 `admin.js?v=20260710-agg-lod`.
+
+## CHG-20260710T170000-ai-claude-feature-0016-lod-hl-declutter — §64 하이라이트 상태 줌아웃 LOD 축약 정상화 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(`_metaG6Build` LOD 방출 루프) + `admin.html` cache-buster + headless `test_g6build_edge_visibility.js`(T22 신설).
+- 변경: 줌아웃 관계선 간소화(§57 edge-LOD)가 상대 하이라이트(노드 클릭) 상태에서 무력화되던 버그 수정.
+  근본원인 = LOD 드롭 예외 `keep = lit(rs)&&lit(rt)` 가 dim(§57.5 양끝 밝음) 규칙을 재사용 → `lit` 의 밝은
+  부분그래프(선택 + 1-hop 이웃 전체)에 이웃↔이웃 엣지까지 포함돼 전부 축약 예외. 허브 선택 시 사실상 전량 보존
+  (적대검증 `_lodDropped=0`). **수정**: `litSelf`(끝점이 `fa.self` 자체인지, 이웃 제외) + `keepLodFor(a,b)=
+  litSelf(a)||litSelf(b)` 신설 → LOD 드롭 4경로(RU 직접·집계, 비-REFERENCES 직접, REFERENCES colLevel·집계,
+  aggMap.forEach)를 `keep`→`keepLod`/`agg.keepLod` 로 교체. dim(`dimIf` 의 `keep`)·SCHEMA_REF·무선택 경로 불변.
+- 결정: A(선택 노드 직접선만 예외, 이웃 클러터는 정상 축약) — AskUserQuestion 2026-07-10. §57 "하이라이트 인접 보존"의
+  범위를 "인접 전체 부분그래프"→"self-직접선"으로 좁힘(ADR-031). dim 밝기는 유도 부분그래프 전체 유지.
+- 근거: 사용자 리포트(하이라이트 상태에서 간소화 미작동). frontend-only·마이그 0·behavior: dim 불변, LOD 예외만 축소.
+- 검증: headless T22 신설 4 + 회귀 = **edge 64·collod 20·agglod 9·category 26·vpack 19 = 138 PASS 회귀 0** ·
+  `node --check` PASS · **적대검증**(수정 되돌린 OLD 동작에서 T22 FAIL 재현) · diff 적대 리뷰(REV 별도).
+  POST-DEPLOY PB-0008 사용자 육안(TEST §64). 캐시버스터 `admin.js?v=20260710-lod-hl-declutter`.
