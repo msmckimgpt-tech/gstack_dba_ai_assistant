@@ -161,6 +161,32 @@ log_info "dry-run:        $([ "$DRY_RUN" -eq 1 ] && echo yes || echo no)"
 # Capture pre-cleanup HEAD for end-report.
 MAIN_HEAD_BEFORE="$(git -C "$MAIN_WORKTREE_PATH" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 
+# ── Step 0b: host-local merge mutex (META-0027, parallel-work-structure ITEM-07) ──
+# 전 worktree 가 공유하는 git 공용 디렉터리(.git) 안의 락으로 머지 구간(Step 1~2)을
+# 직렬화한다 — 두 세션이 동시에 finalize 해도 순차 머지되고, 두 번째는 락 대기 후
+# 최신 main 기준으로 재검증(신선도 게이트+CLEAN 재폴링)한다. 락 파일이 working tree
+# 밖(공용 .git)이라 clean 검증·gitignore 와 무간섭·전 worktree 공유. host-local 이므로
+# 원격/CI 발 머지는 보호하지 못한다(문서화된 한계 — 본 호스트는 전 작업자 동일 호스트).
+# gh 구버전(<2.57)엔 `gh pr update-branch` 미존재(2026-07-11 라이브 실증) — REST API 폴백.
+gh_update_branch() {  # $1=PR번호. 성공 0 / 실패 비0(호출부가 WARN 처리)
+  gh pr update-branch "$1" 2>/dev/null \
+    || gh api --method PUT "repos/{owner}/{repo}/pulls/$1/update-branch" >/dev/null 2>&1
+}
+
+MERGE_LOCK_TIMEOUT_SEC="${MERGE_LOCK_TIMEOUT_SEC:-900}"
+MERGE_LOCK_FILE="$(git rev-parse --path-format=absolute --git-common-dir)/.merge.lock"
+log_step "Step 0b: merge mutex 획득 (flock, 최대 ${MERGE_LOCK_TIMEOUT_SEC}s)"
+exec 9>"$MERGE_LOCK_FILE" || die "merge lock 파일 열기 실패: $MERGE_LOCK_FILE"
+if ! flock -n 9 2>/dev/null; then
+  log_info "다른 세션이 머지 진행 중 — 락 대기 (최대 ${MERGE_LOCK_TIMEOUT_SEC}s)…"
+  flock -w "$MERGE_LOCK_TIMEOUT_SEC" 9 \
+    || die "merge mutex 획득 실패 (${MERGE_LOCK_TIMEOUT_SEC}s 초과) — 다른 finalize 가 장기 점유 중. 그 세션 종료/이상 여부 확인 후 재시도 (락: $MERGE_LOCK_FILE)"
+fi
+log_info "merge mutex 획득 — 머지 구간(Step 1~2) 직렬화"
+# 모든 die/exit 경로에서 락 확정 해제 — detached auto-gc 가 fd 9 OFD 사본을 물고
+# 장수해도 flock -u 는 OFD 락을 즉시 푼다 (패널 MINOR-1).
+trap 'flock -u 9 2>/dev/null || true' EXIT
+
 # ── Step 1: PR 상태 검증 + gh pr merge (idempotent) ───────────────────────
 log_step "Step 1: PR 상태 검증"
 
@@ -181,13 +207,65 @@ case "$PR_STATE" in
     if [ "$PR_MERGEABLE" != "MERGEABLE" ]; then
       die "PR #$PR_NUMBER not MERGEABLE (state=$PR_STATE, mergeable=$PR_MERGEABLE). Resolve conflicts first."
     fi
+
+    # ── Step 1a-0: 신선도 hard gate + mergeStateStatus CLEAN 재폴링 (META-0027) ──
+    # 락 안에서 최신 main 기준 재검증: behind >= MERGE_BEHIND_GATE(기본 20) 이면 자동
+    # update-branch 후 CI 재확인을 강제(§13.2.5 의 '권유'를 게이트로 격상). 어떤 경우든
+    # CLEAN 확인 후에만 머지(낡은 base 로 통과한 테스트로 머지하는 semantic drift 차단
+    # — Not Rocket Science Rule, RESEARCH W-002). abnormal(BLOCKED/DIRTY)은 §16.3
+    # Step 6 대로 자동 중단. textual clean != semantic safe — 기존 diff/테스트 게이트는
+    # 그대로 유지되며 본 게이트는 그 위의 추가 방어선이다(W-008).
+    MERGE_BEHIND_GATE="${MERGE_BEHIND_GATE:-20}"
+    MERGE_CLEAN_TIMEOUT_SEC="${MERGE_CLEAN_TIMEOUT_SEC:-600}"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      printf "[dry-run] 신선도 게이트: behind>=%s 이면 gh pr update-branch %s → CLEAN 재폴링(최대 %ss) 후 merge\n" \
+        "$MERGE_BEHIND_GATE" "$PR_NUMBER" "$MERGE_CLEAN_TIMEOUT_SEC" >&2
+    else
+      git fetch origin >/dev/null 2>&1 || log_warn "git fetch 실패 — behind 계산이 stale 일 수 있음"
+      if ! _behind=$(git rev-list --count "refs/remotes/origin/${PR_HEAD_REF}..origin/main" 2>/dev/null); then
+        _behind=0
+        log_warn "behind 계산 실패(ref 부재/fork PR?) — 신선도 게이트 skip, CLEAN 폴링만 적용 (fail-open 명시)"
+      fi
+      if [ "${_behind:-0}" -ge "$MERGE_BEHIND_GATE" ]; then
+        log_info "신선도 게이트: branch 가 origin/main 대비 behind=${_behind} (>= ${MERGE_BEHIND_GATE}) — gh pr update-branch 강제"
+        gh_update_branch "$PR_NUMBER" || log_warn "update-branch 실패/불필요 — CLEAN 폴링으로 계속"
+      elif [ "${_behind:-0}" -gt 0 ]; then
+        log_info "branch behind=${_behind} (< ${MERGE_BEHIND_GATE}) — update 없이 CLEAN 폴링"
+      fi
+      _deadline=$(( $(date +%s) + MERGE_CLEAN_TIMEOUT_SEC ))
+      while :; do
+        _mss=$(gh pr view "$PR_NUMBER" --json state,mergeStateStatus --jq '"\(.state):\(.mergeStateStatus)"' 2>/dev/null || echo "VIEWFAIL:UNKNOWN")
+        case "$_mss" in
+          MERGED:*) log_info "폴링 중 PR 이 외부에서 머지됨 — idempotent 합류 (패널 MINOR-2)"; break ;;
+          *:CLEAN) log_info "mergeStateStatus=CLEAN — 머지 진행"; break ;;
+          # GHE pre-receive 환경은 CLEAN 대신 HAS_HOOKS 가 정상 mergeable 상태 (패널 NIT)
+          *:HAS_HOOKS) log_info "mergeStateStatus=HAS_HOOKS — mergeable, 진행"; break ;;
+          *:BEHIND)
+            log_info "mergeStateStatus=BEHIND — update-branch 후 재폴링"
+            gh_update_branch "$PR_NUMBER" || log_warn "update-branch 실패 — 재폴링 계속" ;;
+          *:BLOCKED|*:DIRTY)
+            die "PR #$PR_NUMBER mergeStateStatus=${_mss#*:} — abnormal, 자동 중단 (§16.3 Step 6; draft PR 이면 ready-for-review 전환 필요). 원인 해소 후 재시도." ;;
+          VIEWFAIL:*)
+            log_warn "gh pr view 실패(네트워크/인증?) — 재폴링" ;;
+          *) : ;;  # UNSTABLE/UNKNOWN 등 — CI 진행 중, 대기
+        esac
+        [ "$(date +%s)" -lt "$_deadline" ] || die "PR #$PR_NUMBER CLEAN 대기 timeout(${MERGE_CLEAN_TIMEOUT_SEC}s, 마지막 상태=$_mss) — CI 지연/실패 확인 후 재시도."
+        sleep 15
+      done
+    fi
     # --delete-branch 미사용 (worktree-first 호환): gh 는 --delete-branch 시 기본
     # 브랜치로 로컬 체크아웃 전환 + 로컬/원격 브랜치 삭제를 시도하는데, 머지 대상
     # 브랜치가 worktree 에 checkout 된 상태(§13.2 worktree-first)면 전환/삭제가
     # 거부돼 매 cycle 실패한다. 로컬 브랜치는 Step 5b(git branch -d), 원격 브랜치는
     # Step 5c(best-effort push --delete)가 분리 처리한다.
-    log_step "Step 1a: gh pr merge --$MERGE_STRATEGY (no --delete-branch — worktree-first 호환)"
-    run_or_dryrun "gh pr merge $PR_NUMBER --$MERGE_STRATEGY"
+    # 폴링 중 외부 머지 합류 케이스 — merge 호출 전 최종 재확인 (idempotent)
+    _final_state=$(gh pr view "$PR_NUMBER" --json state --jq .state 2>/dev/null || echo OPEN)
+    if [ "$_final_state" = "MERGED" ]; then
+      log_info "PR #$PR_NUMBER 이미 MERGED — merge 호출 skip (idempotent)."
+    else
+      log_step "Step 1a: gh pr merge --$MERGE_STRATEGY (no --delete-branch — worktree-first 호환)"
+      run_or_dryrun "gh pr merge $PR_NUMBER --$MERGE_STRATEGY"
+    fi
     ;;
   CLOSED)
     die "PR #$PR_NUMBER is CLOSED (not merged). Cycle-finalize aborted."
@@ -220,6 +298,10 @@ fi
 
 MAIN_HEAD_AFTER="$(git -C "$MAIN_WORKTREE_PATH" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 log_info "main HEAD: $MAIN_HEAD_BEFORE → $MAIN_HEAD_AFTER"
+
+# merge mutex 해제 — 머지 구간(Step 1~2)만 직렬화, worktree 정리(Step 3~)는 병렬 허용 (META-0027)
+flock -u 9 2>/dev/null || true
+log_info "merge mutex 해제 — 이후 단계는 락 밖"
 
 # ── Step 3: 자기 worktree clean 검증 ─────────────────────────────────────
 log_step "Step 3: 자기 worktree working tree clean 검증"
