@@ -518,3 +518,12 @@ source_of_truth: true
 - 검증: 재생성 후 `test_route_parity_p5b` PASS(총 193/api 192). git diff 가 count 2줄 + analyze/status 블록만 변경(9 ins/2 del) 임을 확인 — 다른 route 미변경(오갱신·masking 없음).
 - 학습: 의도적 route 추가 시 골든 갱신은 **route 추가 feature 의 책임**(여기선 #514 누락). route-parity 게이트가 이를 잡았으나, 추출-batch 들이 골든을 set-neutral 로 유지하는 사이 타 feature 의 route 추가와 겹쳐 blame 이 흐려졌다. 향후 route 추가 PR 은 골든 동반 갱신 필수(CI 가 강제).
 - Rollback: revert route_snapshot_p5b.json(192 복원 — CI red 재발).
+
+## CHG-20260710T235820-item05-router-autoreg (라우터 자동 등록 — app.py 꼬리 배선 경합 제거, parallel-work-structure ITEM-05)
+- Date: 2026-07-10
+- Related Requirement: ROADMAP parallel-work-structure ITEM-05 (F-008 — include_router 23개가 app.py 꼬리 19,641–19,717 에 밀집, 라우터 신설마다 같은 블록 편집 → 병렬 배선 경합).
+- Summary: `routers/__init__.py` 에 `register_all(app)` 구현(pkgutil.iter_modules 순회 → 각 모듈 `router` 심볼 수집 → (INCLUDE_ORDER, 모듈명) 정렬 일괄 include). 23개 라우터 모듈 전부에 `INCLUDE_ORDER = 10..230`(현행 include 순서 스냅샷 고정, 10 간격). app.py 꼬리 블록(import 23+include 23+개별 주석, 3,846 bytes)을 `_register_all_routers(app)` 1줄 호출로 대체 — app.py 19,717→19,650줄. 이후 라우터 신설은 `routers/` 파일 추가만으로 등록(app.py diff 0).
+- Files: `unit/feature-0003-agent-web-ui/src/routers/__init__.py`(register_all) · 23개 라우터 모듈(INCLUDE_ORDER 1줄씩) · `unit/feature-0003-agent-web-ui/src/app.py`(꼬리 치환). cross-feature: 코드 거주 feature-0003, 정본 docs 는 본 feature-0012(§0 primary 규약).
+- Impact: 라우팅 표면 무변경(byte-동치 검증 아래). 배포 scope: web 이미지 재빌드(코드 baked) — §6.1 자동 배포.
+- 검증: (a) 라우트 테이블 in-order 스냅샷 205 route **byte-동치**(전=후, mysql-ai-web:current, `_walk_routes` 식 재귀 열거) (b) `ruff --select F821` routers/ 22모듈+app.py clean (c) A/B pytest(main vs worktree, feature-0003 전 스위트) 양쪽 rc=0 — route-parity 골든 포함 회귀 0 (d) 더미 라우터(`zz_dummy_probe.py`, INCLUDE_ORDER=990) 추가만으로 라우트 노출 확인 후 제거.
+- Rollback: app.py 꼬리를 명시 import/include 23쌍으로 복원 + INCLUDE_ORDER 제거(단일 커밋 revert).
