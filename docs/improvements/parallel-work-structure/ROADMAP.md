@@ -626,12 +626,32 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 blocked 발생 시: 해당 ITEM 의 status 를 `blocked`+사유로 갱신하고 **다음 ready 항목으로
 진행**(전체 드레인은 멈추지 않음). 전 항목 blocked 일 때만 세션 종료 보고.
 
-### 6.4 재개 프로토콜 (`continue`)
+### 6.4 재개 프로토콜 (`continue` + 재귀 자가 재호출)
 
-- 토큰 소진 후 사용자의 `continue` 로 재개한다. 재개 시 첫 행동: 본 문서 **§5 진행
-  현황**과 활성 worktree(`git worktree list`)·미커밋 diff·마지막 커밋을 교차확인해
-  중단 지점을 복원하고, in-progress 항목부터 이어간다(§5 를 항목 전환 시마다 갱신해
-  두는 것이 재개 정확도의 전제).
-- **ScheduleWakeup/자기 재호출 예약 금지** — 재개는 사용자 `continue` 로만(사용량 한도
-  리셋 후 stale 자동 발화 사고 이력, 2026-07 관측).
+토큰 소진 후 재개 경로는 두 갈래이며 **어느 쪽이든 동일한 재귀 체인을 이어간다**
+(2026-07-10 사용자 지시 2차: "사용자가 미처 continue 를 못 칠 수 있으니 continue 호출
++5시간 10분에 자가 재호출, 구조는 재귀적으로"):
+
+1. **사용자 `continue`** (우선 경로 — 도착 시 자동 체인은 뒤로 밀림).
+2. **자동 재호출** — `bin/drain-continue-cron.sh` (정본 구현):
+   - **arm (재귀 앵커)**: 모든 버스트 시작 시(최초 스킬 호출·사용자 continue·자동 재호출
+     모두) **첫 행동으로 `bash bin/drain-continue-cron.sh arm`** 실행 →
+     `next_fire = 버스트 시작 +5h10m`(토큰 재할당 시점 +10분 여유)를 상태파일에 기록.
+   - **fire**: 호스트 크론 체커(*/5분, root·claude-corp 양 계정 크론탭)가 `next_fire`
+     도달 시 ① **먼저 재-arm**(`next_fire = now+5h10m`, TTL−1 — 버스트가 실패해도
+     체인이 끊기지 않는 재귀 보장) ② `claude --continue -p "continue"` 헤드리스로
+     project cwd 의 최신 드레인 대화를 재개(`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`
+     + 외곽 timeout 300m — doc-sync cron 의 검증 패턴 승계).
+   - **재귀 종결 조건**: 전 ITEM done/blocked(드레인 완주) 시 세션이
+     `drain-continue-cron.sh disarm` 실행. 백스톱 = TTL 40 fire(재-arm 없이 약 8.6일)
+     소진 시 자동 disarm. 사용자 지시로 언제든 disarm 가능.
+- 재개(어느 경로든) 시 첫 행동: **arm** → 본 문서 **§5 진행 현황**과 활성 worktree
+  (`git worktree list`)·미커밋 diff·마지막 커밋을 교차확인해 중단 지점을 복원하고,
+  in-progress 항목부터 이어간다(§5 를 항목 전환 시마다 갱신해 두는 것이 재개 정확도의
+  전제).
+- **ScheduleWakeup(하네스 내부 예약)은 여전히 금지** — 사용량 한도 리셋 후 stale 발화
+  사고 이력(2026-07). 재귀는 상태파일 기반 호스트 크론으로만(발화 시각을 상태파일이
+  단일 결정 — pending 큐가 쌓이지 않음).
+- 주의: 자동 버스트 실행 중(상태 `status` 가 lock 점유 표시) 사용자 `continue` 는 같은
+  대화에 대한 동시 접근이 되므로 자제 — `bash bin/drain-continue-cron.sh status` 로 확인.
 - 세션 rollover(context 요약) 후에도 §5 + worktree 상태가 복원 기준점이다.
