@@ -1375,3 +1375,8 @@ source_of_truth: true
 - 근거: 사용자 전수 피드백(§69, ADR-034) — 주의가 "불명확" 자기-불평 대부분 + DB 단위 분석 미커버 tail.
 - 검증: pytest PYTEST_RC=0(회귀 0) · 라이브 LLM(주의 자기-불평 전멸) · 라이브 payload(touches/returns). POST-DEPLOY cc_data_main 재생성(T69.5).
 - §18.8 적대 리뷰(REV-20260710T165030 PASS-WITH-FIXES) 반영 2건: (a) `llm.py` NODE_ANALYSIS_PROMPT untrusted-data 규칙에 신설 top-level `touches`/`returns` 추가(DB 인트로스펙션 유래 식별자 프롬프트 인젝션 표면 봉인) (b) `unit/feature-0002-agent-core/tests/test_routine_dbanalysis.py` 에 `test_build_payload_routine_touches_returns` 신설(P2 투영·dedup·Table 미투영 회귀 가드) → 파일 23 PASS.
+
+## CHG-20260710T175412-ai-claude-feature-0016-rtuse-camera-pd — §71 graph-rtuse-camera POST-DEPLOY 완수 기록 (docs-only, 코드 변경 0) (2026-07-10)
+- 대상: `unit/feature-0016-metadata-graph/docs/{TASK.md(T71.3 완료),REPORT.md(POST-DEPLOY 절),REVIEW.md([SKIPPED] 완수)}` + `unit/feature-0003-agent-web-ui/docs/TEST.md`(§71 Run POST-DEPLOY append). **코드/자산 변경 0**.
+- 변경: §71(PR #662 → main b7d7d871, 이후 라이브 a24415a5)의 실 Windows Chrome POST-DEPLOY 실측 결과를 정본에 기록. win-browser relay 로 mssql-web-qa `shop_pt.T_ItemInfo` 상세의 `[data-rtuse]` 행(18: 읽기 12·쓰기 6) 실클릭 → 카메라 중심 모델좌표 [3600,7092]→[2523,7871] 팬 + 상세 전환 동시, pageerror 0. 자산 curl(서빙 버스터·핸들러) 확증.
+- 근거: `visual_verification_scope: always` 완료 게이트의 POST-DEPLOY 실측 기록 마감(T71.3). 배포는 §71 cycle 에서 이미 완료(병렬 Codex 세션 commit→PR#662→merge→deploy). 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).

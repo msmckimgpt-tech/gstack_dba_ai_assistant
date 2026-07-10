@@ -2033,7 +2033,13 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **POST-DEPLOY win-browser 육안 검증(예정)**: 그래프 로그인(https://localhost/admin, switchTab('graph')) → 스키마 펼침 →
   Routine/Table 노드 상세에서 "사용 테이블/사용 함수·프로시저" 행 클릭 → **대상 노드로 카메라 팬 + 선택 강조 + 상세 패널 대상 전환**
   동시 발생 확인. 미렌더 대상(접힌 스키마/컬링) 행 클릭 → 상태줄 안내만·팬 skip·상세는 전환. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. pageerror 0.
-  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(`admin.js?v=20260710-graph-rtuse-camera` 서빙 + 핸들러 내 `_metaGraphPanToRelation(k)` 존재) + win-browser 육안 PASS append.
+  **[POST-DEPLOY 갱신 2026-07-10] 라이브 PASS (Environment: Windows-browser, AI 직접 — 실 Windows Chrome/149 via bin/win-browser.py relay @ 172.26.144.1:9223, 라이브 a24415a5)**:
+  **자산 curl 확증**(https://localhost/admin → `admin.js?v=20260710-graph-rtuse-camera` 서빙 · 서빙 JS 내 `_metaGraphPanToRelation(k)   // + 카메라 이동(신규)` 1건).
+  **win-browser 실화면**: mssql-web-qa scope, 스키마 펼침(Table 215·Routine 140), Table `shop_pt.T_ItemInfo` 상세 → "사용하는 함수·프로시저 (18) · 읽기 12 · 쓰기 6" 섹션에
+  `[data-rtuse]` 행 18개 렌더 + 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. 읽기 행 `MSP_ADMIN_ITEM_LIST` 버튼 실클릭 →
+  **카메라 뷰포트 중심 모델좌표 [3600,7092]→[2523,7871] 실이동(팬, 그래프 화면 shift·대상 루틴 노드 화면 등장)** + 상세 패널이 해당 ROUTINE
+  (MSP_ADMIN_ITEM_LIST, "사용 테이블 (1) · 읽기 1 · 쓰기 0" → shop_pt.T_ItemInfo)으로 전환 **동시 발생**, pageerror 0. 스크린샷 scratchpad/rtuse_before.png·rtuse_after.png.
+  (canvas 자동 실클릭·드래그는 신뢰 경로 아님(Chrome UtilityScript 회귀 이력) → DOM `[data-rtuse]` 버튼 실클릭 + 카메라 상태 eval + 스크린샷 육안이 신뢰 경로. §71 은 DOM 버튼이라 실클릭 유효.)
 ### Run (2026-07-10) — reltrace-colnav: 상세 패널 관계행 단일클릭 시 미렌더 컬럼 카메라 이동 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §72) — **Environment: Windows-browser**
 - **헤드리스 결정론 실증**: 신규 `test_graph_colnav.js` **22 PASS** — ① 조상 승격(`_metaRenderedAncestorFor`) 5케이스:
   컬럼 직접렌더(T1)·컬럼 미렌더→소속 테이블(T2, 사용자 시나리오 핵심)·테이블도 미렌더→접힌 스키마 카드 SC:(T3)·

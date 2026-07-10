@@ -1570,3 +1570,9 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
   sp_DeleteItemAttributeResist(Delete) → "비가역 DELETE 데이터 손실"(양질 유지) — 자기-불평 전멸.
 - **라이브 payload**: touches read/write 정확 구분(DELETE→write·Get→read) + returns 투영.
 - POST-DEPLOY(T69.5): cc_data_main 재생성(only_missing=false) → 커버리지 555 + 표본 caveats 재확인.
+
+## 2026-07-10 · §71 graph-rtuse-camera POST-DEPLOY 완수 (docs-only, resume 세션)
+§71(상세 패널 사용(참조)관계 행 클릭 → 대상 노드 카메라 팬)은 병렬 Codex 세션이 commit(1356717c)→push→PR #662→main 병합(b7d7d871)→web 재배포까지 완주했고, 본 resume 세션이 독립 검증 후 POST-DEPLOY 육안을 마감했다.
+- **독립 적대 리뷰(subagent, 동일 코드)**: VERDICT PASS — BLOCKING/MAJOR 0. "showDetail 이 `_opSeq` bump → 예약 팬 취소" 가설 반증(showDetail 무-bump·카메라 미조작 → 더블 팬/되감기 없음). MINOR 2(미렌더 안내 비가시 stale 카피·클릭당 bake 2회) 가시 회귀 아님 → 수용.
+- **POST-DEPLOY win-browser 실측(라이브 a24415a5)**: mssql-web-qa `shop_pt.T_ItemInfo` 상세의 `[data-rtuse]` 18행(읽기 12·쓰기 6) 실클릭 → 카메라 중심 [3600,7092]→[2523,7871] 팬 + 상세가 대상 ROUTINE(MSP_ADMIN_ITEM_LIST)으로 전환 동시, pageerror 0. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. 자산 curl(서빙 버스터·핸들러) 확증. 스크린샷 before/after.
+- 원격 브랜치 `ai/claude/feature-0016-graph-rtuse-camera` 는 병합 후 origin 에서 정리 완료.

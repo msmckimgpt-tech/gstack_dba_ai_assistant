@@ -2127,8 +2127,10 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T71.2 검증: `node --check admin.js` PASS · inline 적대 diff 리뷰(REV-20260710T163512): 순서(동기 pan→async detail,
   ShowDetail 동기 상태 덮어쓰기)·미렌더 가드·selection idempotent(양쪽 동일 key)·캐시버스터(js만, CSS 미변경) PASS.
   BLOCKING/MAJOR 0, NIT1(pan 힌트 비가시 stale) 수용. frontend-only·마이그 0·Minor(§12.3).
-- [ ] T71.3 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 상세에서 사용 테이블/루틴 행 클릭 → 대상 노드로 카메라
-  팬 + 선택 강조 + 상세 패널 대상 전환 동시, 미렌더 대상은 안내만·상세는 전환, pageerror 0. TEST §71 append.
+- [x] T71.3 POST-DEPLOY win-browser 실 Windows 육안(PB-0008, 2026-07-10 라이브 a24415a5): **PASS**. mssql-web-qa scope,
+  Table `shop_pt.T_ItemInfo` 상세 = "사용하는 함수·프로시저 (18) · 읽기 12 · 쓰기 6" `[data-rtuse]` 행 18개 렌더 + 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출.
+  읽기 행 `MSP_ADMIN_ITEM_LIST` 클릭 → 카메라 중심 모델좌표 [3600,7092]→[2523,7871] 실이동(팬) + 상세가 해당 ROUTINE 으로 전환 동시, pageerror 0.
+  자산 curl 확증(서빙 `admin.js?v=20260710-graph-rtuse-camera` + 핸들러 `_metaGraphPanToRelation(k)`). before/after 스크린샷. TEST §71 POST-DEPLOY append.
 ## §72 reltrace-colnav — 상세 패널 관계행 단일클릭 시 미렌더 컬럼 카메라 이동 (2026-07-10, 사용자 리포트)
 
 - **결함(사용자 리포트)**: `그래프 뷰 > 상세`에서 관계 행(컬럼)을 **단일클릭**했을 때, 대상 컬럼의 소속
