@@ -1983,3 +1983,23 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [ ] T61.5 POST-DEPLOY 실 Windows 브라우저(PB-0008) — 대형 그래프(예: cc_* 557T 또는 다스키마 펼침) 줌아웃
   before/after: 억제 밴드에서 컬럼 circle 미표시·테이블 위치 불변(reflow 0)·▤N 배지 가독·확대 시 컬럼 복원.
   (그래프뷰 무인 도달은 인증/라우팅 3중벽으로 차단 — 자산 curl 검증 + 사용자 육안 게이트, TEST.md §61.)
+
+## §62 edge-midpan — 관계선(엣지) 위 중간버튼 드래그 카메라 팬 무반응 수정 (2026-07-10, 사용자 리포트)
+사용자 리포트: "그래프 뷰에서 마우스 중간 드래그를 통한 카메라 이동을 진행할 때, 관계선 객체 위에서 중간 드래그를
+시작할 경우 해당 기능이 작동되지 않는 이슈." (graph-drag §3d12fb08 중간버튼 팬의 엣지 갭 후속)
+- [x] T62.0 근본원인 진단(read-only, vendor 번들 실증): 카메라 팬은 `drag-canvas` behavior(global `dragstart` 에서
+  발동)가 담당. 그 `dragstart` 는 `@antv/g-plugin-dragndrop` 이 pointerdown 대상의 `closest("[draggable=true]")` 로
+  드래그 소스를 해소해야 합성된다. **노드(`Nw`)·콤보(`Wb`) 는 `draggable:!0` 기본값이지만 엣지 base defaultStyleProps
+  에는 `draggable` 부재** → 관계선 위 pointerdown 은 소스=null → `dragstart` 미합성 → drag-canvas 미발동(노드·빈
+  캔버스는 정상이던 이유). 대안(container-level 수동 팬)은 working 경로 재작성이라 기각.
+- [x] T62.1 수정: 그래프 config 에 `edge: { style: { draggable: true } }` 추가(admin.js `_metaGraphEnsure` baseCfg).
+  `getElementComputedStyle` 병합 순서상 `options.edge.style` 가 datum.style **뒤**라 항상 반영, `draggable` 은
+  root-container 프롭이라 엣지 루트 그룹에 적용(=`closest` 가 관계선 hit 에서 발견). 캐시버스터
+  `admin.js?v=20260710-graph-edge-midpan`.
+- [x] T62.2 무회귀 근거: drag-element(`uE`) 는 `enableElements=["node","combo"]` 로 `edge:dragstart` 를 아예
+  바인딩하지 않음 → 엣지는 드래그 소스가 돼도 **이동되지 않음**. 좌드래그 관계선은 `_metaCanvasDragEnable` 이
+  `targetType!=="canvas"` → false(팬 안 됨, 기존 보존). 클릭/우클릭 메뉴는 dragndrop 10px 임계 미만 → 미영향.
+  headless `test_g6build_{vpack,category,edge_visibility,collod}` **125 PASS 회귀 0** · `node --check` PASS.
+- [ ] T62.3 POST-DEPLOY 실 Windows 브라우저(PB-0008) — 그래프 뷰 진입 → **관계선 위에서 중간버튼 누른 채 드래그 →
+  카메라 팬 동작** 확인. 대조: 관계선 좌드래그=팬 안 됨·우클릭 메뉴 정상·클릭(무이동) 정상. (그래프뷰 무인 도달은
+  인증/라우팅 3중벽 차단 — 사용자 육안 게이트, feature-0003 TEST.md §3.)

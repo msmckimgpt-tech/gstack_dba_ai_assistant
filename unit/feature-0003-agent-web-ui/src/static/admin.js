@@ -6070,6 +6070,18 @@ function _metaInitGraph() {
       //   두면 dimmed 제거 시 G6 가 base 로 복원하지 못해 선택 노드가 0.38 로 stale 하게 남았다(실측).
       //   'dimmed' 문자열은 상태 배열에 계속 실려 서명 비교(rebuild 감지)·base bake 입력으로 쓰인다.
     } },
+    // graph-drag(edge-midpan fix): 엣지(관계선)를 드래그 소스로 등록(draggable). @antv/g-plugin-dragndrop 는
+    //   pointerdown 대상의 closest("[draggable=true]") 를 드래그 소스로 삼아 drag 이벤트를 합성하는데, 노드/콤보만
+    //   draggable 기본값(true)이고 엣지는 아니라, 관계선 위에서 시작한 드래그는 dragstart 자체가 발화하지 않아
+    //   drag-canvas(중간버튼 카메라 팬)가 발동하지 않았다(관계선 위 중간드래그 무반응 버그). 엣지 draggable=true 로
+    //   드래그가 합성되면 global dragstart → drag-canvas.enable(_metaCanvasDragEnable) 이 중간버튼 팬을 허용한다.
+    //   엣지가 실제로 "이동"되지는 않는다 — drag-element 는 enableElements=["node","combo"] 라 edge:dragstart 를
+    //   아예 바인딩하지 않으므로(_metaElementDragEnable 도달 전에 미발동), 관계선은 위치가 바뀌지 않는다. 좌드래그는
+    //   targetType!=="canvas" 라 _metaCanvasDragEnable 이 false → 팬 안 됨(기존 동작 보존, 클릭/우클릭 메뉴 정상).
+    //   ⚠ 위 6053 계약("기본 스타일은 config 아닌 per-element 인라인 — 매퍼 undefined→To() 크래시 회피")의 유일한
+    //   예외: draggable 은 정적 boolean(매퍼·애니메이션 대상 아님)이라 안전. 여기에 함수 매퍼/애니메이션 수치
+    //   프롭을 추가하지 말 것 — 그 순간 6053 이 경고한 To() 크래시가 재현된다(정적 boolean 만 허용).
+    edge: { style: { draggable: true } },
     // graph-drag: 중간 버튼 드래그 = 카메라 팬(어디서든), 좌클릭 = 기존대로(빈 캔버스 팬 / 노드 이동).
     behaviors: [
       { type: "drag-canvas", key: "drag-canvas", enable: _metaCanvasDragEnable },
