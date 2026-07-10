@@ -1103,22 +1103,32 @@ AGENT_NODE_ANALYSIS_DEFAULT_BUDGET = int(os.getenv("AGENT_NODE_ANALYSIS_DEFAULT_
 # 요청이 지정할 수 있는 하드 상한(사용자 지정 depth/budget 도 이 값으로 캡).
 AGENT_NODE_ANALYSIS_MAX_DEPTH = int(os.getenv("AGENT_NODE_ANALYSIS_MAX_DEPTH", "5"))
 AGENT_NODE_ANALYSIS_MAX_BUDGET = int(os.getenv("AGENT_NODE_ANALYSIS_MAX_BUDGET", "1000"))
-# insight-worker 틱 1회에 처리할 노드 수(부하 분산 — 작게 잡아 워커/LLM 을 점유하지 않게).
-AGENT_NODE_ANALYSIS_BATCH_PER_TICK = int(os.getenv("AGENT_NODE_ANALYSIS_BATCH_PER_TICK", "4"))
+# insight-worker 틱 1회에 처리할 노드 수(부하 분산). 워커는 틱 안에서 노드를 **순차** 처리하므로
+#   이 값은 동시성이 아니라 **처리량**을 결정한다 — 4 는 수백 노드 스키마 분석이 수 시간 걸려
+#   "중단된 것처럼" 보이는 원인이었다(node-analysis-coverage). 10 으로 상향해 체감 완료 시간을 단축
+#   (LLM 은 여전히 틱당 순차 호출이라 동시 부하 급증 없음).
+AGENT_NODE_ANALYSIS_BATCH_PER_TICK = int(os.getenv("AGENT_NODE_ANALYSIS_BATCH_PER_TICK", "10"))
 # stale 'running' 잡 lease(초). 워커 크래시/SIGTERM 로 running 에 갇힌 잡을 이 시간 초과 시 pending 으로
 # 되돌려 run 영구 미완료·재트리거 불가를 방지(reaper). LLM 타임아웃보다 넉넉히 크게(기본 15분).
 AGENT_NODE_ANALYSIS_LEASE_SEC = int(os.getenv("AGENT_NODE_ANALYSIS_LEASE_SEC", "900"))
 # feature-0016 routine-dbanalysis: DB(스키마) 단위 능동 분석 1회 시드 상한(LLM 비용 가드).
-#   기본 200 — UI confirm 에 대상 수가 표시되고 only_missing 이 기본이라 재실행 비용은 잔여분만.
-AGENT_NODE_ANALYSIS_SCHEMA_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_CAP", "200"))
-AGENT_NODE_ANALYSIS_SCHEMA_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_MAX", "500"))
+#   node-analysis-coverage(2026-07-10): 기본 200 은 수백 객체 스키마(예: cc_data_main = 테이블 255 +
+#   루틴 300 = 555)에서 시드가 200 으로 잘리고, 나머지는 depth-2 재귀 도달성에 의존해 tail 이 조용히
+#   미분석으로 남는 원인이었다(§55 목표 "DB 하위 전 노드 분석" 과 배치). 1000 으로 상향해 현실적 게임
+#   스키마를 1회 run 으로 전량 시드한다 — 비용은 UI dry_run confirm 이 대상 수를 표시해 게이트하고,
+#   only_missing 기본 + node_budget 이 재귀 폭증을 캡한다. 초대형(>SCHEMA_MAX) 스키마는 여전히
+#   capped=True 로 표시되고 재실행이 잔여분을 드레인한다.
+AGENT_NODE_ANALYSIS_SCHEMA_CAP = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_CAP", "1000"))
+AGENT_NODE_ANALYSIS_SCHEMA_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_MAX", "2000"))
 # ── DB(스키마) 단위 분석 재귀 전개 (feature-0016 §55, REQ-20260706 ③) ─────────
 #  스키마 단위 run 도 시드(테이블·루틴)별 재귀를 전개한다 — 시드마다 자기 자신이 앵커(per-seed 앵커,
 #  jobs.anchor_key)라 게이팅은 각 테이블 기준. 비용 경계: depth 는 SCHEMA_DEPTH, 총 노드는
 #  min(SCHEMA_RUN_BUDGET_MAX, planned×SCHEMA_EXPAND_FACTOR) — 시드 자체는 항상 예산에 포함된다.
 AGENT_NODE_ANALYSIS_SCHEMA_DEPTH = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_DEPTH", "2"))
 AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR = float(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_EXPAND_FACTOR", "12"))
-AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX", "2500"))
+# node-analysis-coverage: SCHEMA_CAP 상향(1000)에 맞춰 재귀 전개 총량 상한도 상향 — 시드는 항상
+#   예산에 포함되므로(코드가 max(len(targets), …) 하한 고정) 이 값은 시드 위에 얹히는 재귀 여유분.
+AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX = int(os.getenv("AGENT_NODE_ANALYSIS_SCHEMA_RUN_BUDGET_MAX", "4000"))
 # ── refine-not-override + back-refine (feature-0016 §55, REQ-20260706 ③) ────
 #  모든 재분석은 이전 분석문을 payload.previous_analysis 로 받아 비교·융합(refine)한다. 빈약(thin) 분석
 #  — summary 가 THIN_CHARS 미만이거나 relationships·usage 모두 공란 — 노드는 같은 run 의 후속 재귀가

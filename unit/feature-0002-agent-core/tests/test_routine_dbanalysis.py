@@ -197,6 +197,29 @@ def test_build_payload_routine_fields():
     assert "routine_type" not in pt and "params" not in pt
 
 
+def test_build_payload_routine_touches_returns():
+    """§69 P2: Routine payload 에 touches(read/write, 테이블명 dedup)+returns 투영.
+    ctx 의 routine_touches/routine_returns 를 프롬프트 계약 필드로 옮긴다 — Table 은 미포함."""
+    node_r = {"label": "Routine", "key": "ds1:app.spX()", "name": "spX", "fqn": "app.spX()",
+              "routine_type": "procedure"}
+    ctx = {"routine_returns": "int",
+           "routine_touches": [{"table": "Orders", "access": "write"},
+                               {"table": "Users", "access": "read"},
+                               {"table": "Orders", "access": "read"},  # 중복 테이블 — dedup(첫 access 유지)
+                               {"table": "", "access": "read"}]}       # 빈 테이블명 — skip
+    p = na._build_payload(node_r, ctx)
+    assert p["returns"] == "int"
+    assert p["touches"] == [{"table": "Orders", "access": "write"},
+                            {"table": "Users", "access": "read"}]
+    # returns/touches 는 Routine 전용 — Table 은 동일 ctx 라도 미투영.
+    node_t = {"label": "Table", "key": "ds1:app.T", "name": "T", "fqn": "app.T"}
+    pt = na._build_payload(node_t, ctx)
+    assert "returns" not in pt and "touches" not in pt
+    # 빈 returns 는 키 자체 생략(비차단 부가정보).
+    p2 = na._build_payload(node_r, {"routine_returns": "  ", "routine_touches": []})
+    assert "returns" not in p2 and "touches" not in p2
+
+
 def test_schema_analysis_dry_run_detects_running(monkeypatch):
     """§18.8 MINOR 회귀 잠금: 진행 중 run 이 있으면 dry_run 도 reused 를 반환해
     프론트 confirm(허위 승인)을 건너뛰게 한다."""
