@@ -677,6 +677,22 @@ feature 단위)을 쓰되, 사전 승인이 아니라 **완료 판정 기준(§1
   driver(`.gitattributes` 의 path 한정 `merge=<driver>`)를 둔다. **전체 파일 `merge=union`
   은 금지** — 진짜 충돌(다른 코드 변경)에 양쪽 라인을 모두 남겨 중복을 만든다.
   (timestamp+branch(v3.32.0)·감지-후-재번호(v3.25.0)와 동일 계열의 공유-라인 충돌 회피.)
+- **append-only 문서 말미 블록 병합 driver + rerere (2026-07-11 프로젝트 개정,
+  ADR-20260711T042631-append-doc-merge-driver — template base 전파 예정)**: path-scoped
+  custom merge driver 의 허용 범위를 위 "단일-라인 stamp" 에서 **append-only 문서의 말미
+  블록 병합**까지 확대한다 — fragment 전환(근본 해법) 전 과도기 브리지. 조건: ① 대상은
+  append-only 3종(`unit/*/docs/MODIFY.md`·`unit/*/docs/REVIEW.md`·`docs/RELEASE_NOTES.md`)에
+  `.gitattributes` 로 path-scoped 한정(LEARNINGS.md 는 섹션-내부 삽입 구조라 대상 아님), ② driver
+  (`bin/merge-append-doc.sh`)는 **양측이 base 의 끝에 append 만 한 경우**에 한해 `## `
+  블록 단위 ours→theirs 연접·dedup 으로 병존시키고, **그 외 전부 `git merge-file` 위임**
+  (default 3-way 동일 — 겹치지 않으면 clean, 진짜 충돌만 표준 marker; 자동 오병합 금지), ③ 전체 파일 `merge=union` 금지는 그대로 유지.
+  driver 등록은 clone-로컬이므로 **세션/클론 시작 시 `bash bin/setup-git-parallel.sh` 1회
+  실행**(멱등 — 작업자 계정 git 전역 `rerere.enabled`+`rerere.autoUpdate` 활성화 포함:
+  동일 충돌 재발 시 기록된 해소를 자동 재적용. 단 **rerere 는 custom driver 경로의 충돌엔
+  개입하지 않는다**(rr-cache 미기록 실측) — driver 대상 문서 밖 일반 파일이 rerere 커버리지).
+  driver 미충족 케이스(본문 중간 변경 등)는 `git merge-file` 위임으로 **default 3-way 와
+  동일 동작**(겹치지 않으면 clean, 충돌 시 표준 marker). fragment 전환(META-0026)이 완료된
+  문서는 driver 대상에서 제거한다(브리지 수명 명시).
 - **명시 비활성화 블록 = 운영자 의도 보존 (v3.36.0)**: 주석 처리되었거나 `# DISABLED` 등으로
   명시 비활성화된 설정·코드 블록(crontab 라인, config 항목, feature flag 등)은 운영자의 의도된
   상태로 간주한다 — 인접 작업의 부수효과로 재활성화(uncomment)하지 않는다. 재활성화가 필요하면

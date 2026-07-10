@@ -1,0 +1,11 @@
+# append-only 문서 말미 블록 병합 driver (parallel-work-structure ITEM-03, META-0024).
+# AGENTS.md §13.1 (2026-07-11 개정, ADR-20260711T042631-append-doc-merge-driver):
+# 병렬 세션이 파일 끝에 각자 블록을 append 하는 문서 3종에 한정 — driver 는
+# 말미-append 케이스만 자동 병존시키고, 본문 중간 변경은 표준 충돌로 폴백한다.
+# driver 등록은 clone-로컬: bash bin/setup-git-parallel.sh (세션/클론 시작 시 1회, 멱등).
+# fragment 전환(META-0026) 완료 문서는 여기서 제거한다(과도기 브리지 수명).
+unit/*/docs/MODIFY.md merge=append-doc
+unit/*/docs/REVIEW.md merge=append-doc
+docs/RELEASE_NOTES.md merge=append-doc
+# docs/LEARNINGS.md 제외(패널 M-3): 고정 Category 4섹션 내부(### LRN-) 삽입 구조라
+# 말미-append 케이스가 성립하지 않음 — driver 혜택 0. default text merge 가 정본 경로.

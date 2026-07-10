@@ -176,7 +176,13 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   필수. 배포 무관.
 
 ### ITEM-03 · rerere 활성 + append-only 문서 path-scoped merge driver (과도기 브리지)
-- **status**: pending
+- **status**: done
+- **note**: 2026-07-11 완료 — §13.1 개정(ADR-20260711T042631) + setup-git-parallel.sh(rerere
+  2계정+driver 등록, 'claude' 계정은 호스트 부재 skip) + merge-append-doc.sh(말미 append 병존
+  ·그 외 merge-file 위임=default 동등) + .gitattributes 3종(LEARNINGS 는 구조상 제외) + verify
+  check #14(conflict-marker, merge-commit 1st-parent 대응). §18.8 패널 2-round: NOT-SHIP
+  (BLOCKING 2·MAJOR 3) → 전건 반영 → SHIP-WITH-FIXES → 잔존 텍스트 반영. acceptance (a)(b)(c)
+  재현 + 매트릭스 5종. REV-20260711T042631.
 - **feature_id**: META-0024-merge-hygiene   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
 - **risk_grade**: Major   <!-- 3계정 git 전역 config + 머지 자동화 driver + AGENTS.md 개정 — §6.1 사전 승인으로 드레인 중 비차단 -->
@@ -593,9 +599,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 5 (ITEM-01·02·04·05·08) · in-progress 0 · pending 7 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → 03 → 06 → 07 → 12 → 09 → 10 → 11
-  (다음 ready: ITEM-03)
+- 총 12 항목 · done 6 (ITEM-01·02·04·05·08·03) · in-progress 0 · pending 6 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → 06 → 07 → 12 → 09 → 10 → 11
+  (다음 ready: ITEM-06)
 - ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —
   §6.1 deploy-backed 완료. (첫 deploy-web preflight 1회 일시 실패 후 재시도 성공 — 원인
   미재현 transient, config 재현 검사는 정상.)
