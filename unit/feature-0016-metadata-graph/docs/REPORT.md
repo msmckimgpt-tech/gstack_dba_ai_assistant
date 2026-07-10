@@ -1540,3 +1540,33 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
 - 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5·키파싱 2·선택게이트 G1~G4 8·하이라이트폴딩 F1 4·직접렌더).
 - 회귀 0: edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = **150 PASS**·`node --check` PASS.
 - 캐시버스터 `admin.js?v=20260710-graph-colnav`. POST-DEPLOY PB-0008 사용자 육안(TEST §72 T72.5).
+
+## 2026-07-10 · AI 능동 분석 "주의" 자기-불평 제거 + 루틴 payload 보강 + 시드 커버리지 (§69, ADR-034, 사용자 전수 피드백)
+사용자 보고: mssql-qa-idc/cc_data_main 능동 분석 결과 대부분 노드의 '주의' 가 "불명확" 계열. 전수 파악 + 근본 개선 요청
+(+ "DB 단위 분석 중단으로 미분석 노드 잔존" 검토). PG 전수 조사로 근본원인 3종 확정.
+
+### 근본원인 (전수 근거)
+- **caveats 자기-불평(주 원인)**: done 536 중 Table 71%(150/211)·Routine 56%(99/177) 가 "메타데이터 불완전·직접
+  검토 필요·불명확" 계열. Table/Routine 빈 caveats 0건. params/참조테이블이 payload 에 정상 도달한 루틴조차 불평 —
+  LLM 이 도메인적으로 할 말이 적을 때 caveats 를 "입력 부족" 자기-불평 dumping ground 로 사용(프롬프트 계약 결함).
+- **루틴 under-projection**: `returns` 미투영 + 참조테이블이 무구분 `other` 로만 흘러 read/write 소실.
+- **시드 커버리지**: cc_data_main 555객체 중 399만 분석 — SCHEMA_CAP=200 + depth-2 재귀 도달성 한계로 156 미커버
+  (run 은 done 표시 → "중단" 오인). 실패 11건은 haiku 일시 빈응답(재생성 시 재시도).
+- (상류·범위밖) cc_data_main 은 column_descriptions·table_descriptions 0행 — 컬럼/설명 큐레이션 미적재라 테이블이
+  FK 컬럼만 노출. 프롬프트 수정으로 불평은 멈추나 실질 풍부화는 후속 큐레이션 필요.
+
+### 변경
+- **P1** [`llm.py` NODE_ANALYSIS_PROMPT]: "Analyze-from-what-is-visible" + "Caveats rule" 규칙 신설 — caveats 를
+  운영자 대상 데이터/도메인 리스크로 한정, 입력 불완전 언급·"직접 확인 필요"·"불명확" 금지, 위험 없으면 빈 문자열.
+  caveats 필드 설명문 + Input JSON(returns/touches) 문서 갱신.
+- **P2** [`node_analysis.py`]: Routine `touches:[{table,access}]`(ROUTINE_USES relation_type) + `returns`
+  (routine_objects SSOT) payload 투영. 신규 `_fetch_routine_returns` 헬퍼(비차단).
+- **P3** [`shared/config.py`]: SCHEMA_CAP 200→1000·SCHEMA_MAX 500→2000·RUN_BUDGET_MAX 2500→4000·BATCH_PER_TICK 4→10.
+
+### 검증
+- `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체, 회귀 0)·py_compile 3파일 PASS.
+- **라이브 LLM**(container shadow-load, 새 프롬프트 monkeypatch): CT_Theatrics(희소Table) 주의 `''`(이전 "정의서
+  확인 필수"), sp_GetCashPoint(Get) → "민감 결제·통화 데이터 권한제어·감사로깅"(이전 "확인 불가"),
+  sp_DeleteItemAttributeResist(Delete) → "비가역 DELETE 데이터 손실"(양질 유지) — 자기-불평 전멸.
+- **라이브 payload**: touches read/write 정확 구분(DELETE→write·Get→read) + returns 투영.
+- POST-DEPLOY(T69.5): cc_data_main 재생성(only_missing=false) → 커버리지 555 + 표본 caveats 재확인.

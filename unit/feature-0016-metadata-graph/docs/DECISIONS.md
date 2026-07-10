@@ -873,3 +873,16 @@ source_of_truth: true
 - 트레이드오프: 클러스터 펼침 유지로 극단 줌아웃(전체 in-view)은 집계보다 무거움(사용자가 구조·규모 이해를 우선). 완화: 카테고리 접기(기존 §55) + 줌인은 컬링으로 경량. 부분 가시 클러스터의 combo auto-fit 축소는 시각 트레이드오프(육안 확인).
 - 검증: headless `test_g6build_viewportcull.js` **6 PASS**(테이블 컬링·band-invariant·게이트) + `test_g6build_agglod.js` **8 PASS**(집계 비활성 잠금) + 회귀 = **150 PASS**. diff 2렌즈 적대 리뷰 + **win-browser 실 Windows Chrome 육안**(집계off·밴드 카운트·테이블 컬링 perf·combo — TEST §67).
 - Supersedes: **§63 ADR-030 집계-카드 + §65 ADR-032 supernode(비활성)** / Superseded By: —
+
+
+## ADR-034 — §69 AI 능동 분석 "주의" 계약 재설계 + 루틴 payload 보강 + 시드 커버리지 (사용자 전수 피드백)
+- 상태: 채택 (2026-07-10)
+- 맥락: 사용자가 그래프뷰에서 mssql-qa-idc/cc_data_main 능동 분석(run 1519cf95) 결과 "대부분 노드의 '주의' 항목이 불명확하다는 내용"이라 보고. PG 전수 조사(done 536): caveats 가 **Table 71%·Routine 56%** 가 "메타데이터 불완전·직접 검토 필요·불명확" 계열 자기-불평이며 Table/Routine 빈 caveats 0건. params·참조테이블이 payload 에 정상 도달한 루틴조차 불평 — 도메인 위험이 명확한 DELETE 프로시저 등만 양질 주의 생성. 근본원인: **caveats 프롬프트 계약이 모호해("데이터 품질/민감정보/주의점, 없으면 빈 문자열") LLM 이 도메인적으로 할 말이 적을 때 "내가 받은 입력이 불완전하다"는 자기-불평으로 필드를 채우고, "메타데이터 불완전"은 항상 참이라 절대 비지 않음.** 증폭요인 ① 루틴 `returns` 미투영 + 참조테이블이 무구분 `other` 로만 흘러 read/write 소실(프롬프트 "the tables it touches" 약하게만 뒷받침) ② `SCHEMA_CAP=200` 시드 캡이 cc_data_main(555객체) 등 대형 스키마에서 156객체를 조용히 미커버(run 은 done 표시 — "중단" 오인). 원천 데이터 공백(cc_data_main 은 column_descriptions·table_descriptions 0행 — 큐레이션 미적재)은 별개 상류 이슈로 후속 분리.
+- 위험등급: Major(다중파일 백엔드 + 출하 기능 + 재생성 LLM 외부비용). 사용자 결정(AskUserQuestion 2026-07-10): 코드 P1+P2, 재생성 cc_data_main.
+- 결정:
+  - **(P1) caveats 프롬프트 계약 재설계** [`llm.py` NODE_ANALYSIS_PROMPT]: caveats 를 **운영자 대상 데이터/도메인 리스크**(민감·개인·현금성 데이터, 파괴적/비가역 작업, 입력에서 가시적인 데이터품질 위험, 핫패스·대용량)로 엄격 한정. **입력 메타데이터의 불완전/누락/공백 언급, "스키마·정의·소스 직접 확인/검토 필요", "불명확·판단 불가" 류 자기-불평 절대 금지.** 진짜 위험 없으면 빈 문자열(대부분 평범한 노드는 빈 값이 정답·filler 문장보다 강하게 선호). 병행 "Analyze-from-what-is-visible" 규칙 — 희소 컬럼/파라미터/빈 설명은 큐레이션 subset 의 정상 상태이지 결함 아님, 명명 관례로 도메인 의미 추론.
+  - **(P2) 루틴 payload 보강** [`node_analysis.py`]: Routine focus 에 대해 ROUTINE_USES `relation_type` 로 `touches:[{table, access:read|write}]` 구조화 투영 + `returns`(routine_objects SSOT 1회 조회 — 그래프 Routine 노드는 returns 미투영). 프롬프트가 약속한 "name, parameters and the tables it touches" 를 실제로 뒷받침해 루틴 분석이 이름만으로 굶주리지 않게 함.
+  - **(P3) 시드 커버리지** [`shared/config.py`]: `AGENT_NODE_ANALYSIS_SCHEMA_CAP` 200→1000, `SCHEMA_MAX` 500→2000, `SCHEMA_RUN_BUDGET_MAX` 2500→4000, `BATCH_PER_TICK` 4→10. 현실적 게임 스키마(수백 객체)를 1회 run 으로 전량 시드(§55 "DB 하위 전 노드 분석" 목표 정합). 비용 가드는 UI dry_run confirm(대상 수 표시) + node_budget(재귀 폭증 캡) 이 유지. BATCH 상향은 순차 처리량 개선(워커는 틱 내 순차 호출 — 동시 LLM 부하 무증가).
+- 트레이드오프/한계: caveats 를 빈 값 허용으로 바꾸면 "정보 없음" 신호가 줄지만, 그 신호는 원래 운영자에게 무가치한 노이즈였음(자기-불평). 원천 데이터 공백(컬럼·테이블 설명 미적재)은 이 변경 범위 밖 — 프롬프트가 불평을 멈출 뿐 실질 풍부화는 상류 큐레이션/인트로스펙션 후속 필요. 초대형(>SCHEMA_MAX=2000) 스키마는 여전히 capped 표시 + 재실행 드레인. 기존 저장된 나쁜 caveats 는 재분석(only_missing=false) 으로만 교체됨.
+- 검증: `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체 회귀 0). **라이브 LLM**(container shadow-load + 프롬프트 monkeypatch): 희소 Table 주의 `''`, Get 루틴 → 민감데이터 권한/감사 주의, Delete 루틴 → 비가역 손실 주의(양질 유지) — 자기-불평 전멸. **라이브 payload**: touches read/write 정확 구분 + returns 투영. POST-DEPLOY: cc_data_main 재생성 후 표본 caveats + 커버리지(555) 재확인(T69.5).
+- Supersedes: — / Superseded By: —

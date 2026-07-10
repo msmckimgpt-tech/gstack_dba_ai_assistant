@@ -1368,3 +1368,10 @@ source_of_truth: true
 - 검증: 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5·키파싱 2·선택게이트 8·하이라이트폴딩 4·직접렌더) + 회귀 0
   (edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·`node --check` PASS. §18.8 적대 리뷰
   REV-20260710T065500(stale base 적발→rebase, MINOR#3→하이브리드 반영). POST-DEPLOY PB-0008 사용자 육안(TEST §72). 버스터 `admin.js?v=20260710-graph-colnav`.
+## CHG-20260710T155200-ai-claude-feature-0016-nodeanalysis-caveats — §69 능동 분석 주의 계약 + 루틴 payload + 시드 커버리지 (2026-07-10)
+- 대상(backend): `unit/feature-0002-agent-core/src/modules/llm.py`(NODE_ANALYSIS_PROMPT — caveats 계약/analyze-from-visible 규칙/Input JSON) · `unit/feature-0002-agent-core/src/modules/node_analysis.py`(_fetch_context routine_touches 수집 + 신규 `_fetch_routine_returns` + _build_payload touches/returns 투영) · **`shared/config.py`**(SCHEMA_CAP 200→1000·SCHEMA_MAX 500→2000·RUN_BUDGET_MAX 2500→4000·BATCH_PER_TICK 4→10).
+- shared/ 단일 mutator(§13.2.2 F2): 본 cycle(브랜치 ai/claude/feature-0016-nodeanalysis-caveats)이 `shared/config.py` 의 AGENT_NODE_ANALYSIS_* 기본값 4건만 변경(다른 shared 심볼·타 세션 경합 없음). 순수 기본값 상향 — env 오버라이드 부재 소비자에만 영향.
+- 변경: P1 caveats 자기-불평 제거(프롬프트) · P2 루틴 touches(read/write)+returns 투영 · P3 시드 캡 상향(대형 스키마 전량 시드).
+- 근거: 사용자 전수 피드백(§69, ADR-034) — 주의가 "불명확" 자기-불평 대부분 + DB 단위 분석 미커버 tail.
+- 검증: pytest PYTEST_RC=0(회귀 0) · 라이브 LLM(주의 자기-불평 전멸) · 라이브 payload(touches/returns). POST-DEPLOY cc_data_main 재생성(T69.5).
+- §18.8 적대 리뷰(REV-20260710T165030 PASS-WITH-FIXES) 반영 2건: (a) `llm.py` NODE_ANALYSIS_PROMPT untrusted-data 규칙에 신설 top-level `touches`/`returns` 추가(DB 인트로스펙션 유래 식별자 프롬프트 인젝션 표면 봉인) (b) `unit/feature-0002-agent-core/tests/test_routine_dbanalysis.py` 에 `test_build_payload_routine_touches_returns` 신설(P2 투영·dedup·Table 미투영 회귀 가드) → 파일 23 PASS.

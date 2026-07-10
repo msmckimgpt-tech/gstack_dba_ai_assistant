@@ -2157,3 +2157,36 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   → (a) "…화면에 없습니다" 오류 메시지 없음 (b) 카메라가 소속 테이블로 부드럽게 이동(테이블 **펼치지 않음**)
   (c) 소속 테이블이 하이라이트(주변 dim)로 강조 (d) 상세 패널 유지 → **더블클릭** → 테이블 펼침 + 해당 컬럼 선택.
   자산 curl(`?v=20260710-graph-colnav`) + 육안 게이트(TEST §72). 카메라 팬/하이라이트 최종 확증은 라이브만(WSL headless 미대체).
+## §69 node-analysis-caveats — AI 능동 분석 "주의" 자기-불평 제거 + 루틴 payload 보강 + 시드 커버리지 (2026-07-10, 사용자 요청)
+사용자: "그래프 뷰 > mssql-qa-idc/cc_data_main 능동 분석 결과, 대부분 노드의 '주의' 항목이 '불명확하다'는 내용.
+실제 분석 내용을 (샘플 아닌) 전수 파악하고 근본 단위에서 개선." + "DB 단위 분석이 중단되어 미분석 노드가 남는 이슈도 검토."
+전수 조사(run 1519cf95, done 536): 주의(caveats)가 **Table 71%(150/211)·Routine 56%(99/177)** 가
+"메타데이터 불완전/누락·직접 검토 필요·불명확" 계열 **자기-불평**. Table/Routine 빈 caveats 0건(프롬프트가
+"없으면 빈 문자열" 지시했음에도). params·참조테이블이 payload 에 정상 도달한 루틴조차 불평 — DELETE 등 도메인
+위험 명확한 노드만 양질 주의 생성. 즉 **LLM 이 도메인적으로 할 말이 적을 때 caveats 를 "입력이 부족하다"는
+자기-불평 dumping ground 로 사용**(프롬프트 계약 결함). 증폭요인: 루틴 `returns` 미투영 + 참조테이블이 무구분
+`other` 로만 흘러 read/write 소실. 커버리지: cc_data_main 555객체(테이블255+루틴300) 중 399만 분석 —
+`SCHEMA_CAP=200` 시드 캡 + depth-2 재귀 도달성 한계로 **156객체 조용히 미커버**(크래시 아님, run 은 done).
+- [x] T69.0 grounding: PG `node_analysis_jobs` 전수 조사(scope=mssql-06656002eda6)·payload 재현(container
+  shadow-load)로 근본원인 3종 확정(자기-불평 / 루틴 under-projection / 시드 cap). 위험등급 Major(다중파일+
+  출하기능+재생성 LLM 비용). 사용자 결정(AskUserQuestion): P1+P2 수정 + cc_data_main 재생성. (ADR-034)
+- [x] T69.1 P1 caveats 프롬프트 계약 재설계 [`llm.py` NODE_ANALYSIS_PROMPT]: (a) "Analyze-from-what-is-visible"
+  규칙 신설 — 희소 컬럼/파라미터/빈 설명은 정상(결함 아님), 보이는 것으로 분석하고 "직접 확인 필요"·"불명확" 금지.
+  (b) "Caveats rule" 신설 — caveats 는 **운영자 대상 데이터/도메인 리스크**(민감·현금성·파괴적/비가역·가시적
+  데이터품질·핫패스)로 엄격 한정, **입력 메타데이터 불완전/누락 언급·"직접 검토 필요"·"불명확" 절대 금지**,
+  진짜 위험 없으면 빈 문자열(대부분 노드는 빈 값이 정답). caveats 필드 설명문 + Input JSON 문서 갱신.
+- [x] T69.2 P2 루틴 payload 보강 [`node_analysis.py` _fetch_context/_build_payload]: Routine 에 대해
+  ROUTINE_USES `relation_type` 기반 `touches:[{table, access:read|write}]` 구조화 + `returns`(routine_objects
+  SSOT 1회 조회, 그래프 노드 미투영분) 투영. 프롬프트 "the tables it touches" 를 실제로 뒷받침(신규
+  `_fetch_routine_returns` 헬퍼, conn 없음·부재 시 빈값 비차단).
+- [x] T69.3 P3 시드 커버리지 [`shared/config.py`]: `SCHEMA_CAP` 200→1000·`SCHEMA_MAX` 500→2000·
+  `SCHEMA_RUN_BUDGET_MAX` 2500→4000·`BATCH_PER_TICK` 4→10. 현실적 게임 스키마(수백 객체)를 1회 run 으로 전량
+  시드(§55 "DB 하위 전 노드 분석" 목표 정합). 비용은 UI dry_run confirm 이 대상 수 표시로 게이트, node_budget
+  이 재귀 폭증 캡. 초대형(>MAX)은 capped=True 표시 + 재실행 드레인. BATCH 상향은 순차 처리량↑(동시부하 무변).
+- [x] T69.4 검증: `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체, 회귀 0)·py_compile 3파일.
+  **라이브 LLM 검증**(container shadow-load, 새 프롬프트 monkeypatch): CT_Theatrics(희소Table) 주의 `''`
+  (이전 "정의서 확인 필수"), sp_GetCashPoint(Get) → "민감 결제·통화 데이터 권한제어·감사로깅"(이전 "확인 불가"),
+  sp_DeleteItemAttributeResist(Delete) → "비가역 DELETE 데이터 손실"(양질 유지). **라이브 payload**: touches
+  read/write 정확 구분(DELETE→write·Get→read) + returns 투영 확인.
+- [ ] T69.5 배포 + 재생성: insight-worker+web 이미지 재빌드 배포 후 cc_data_main `only_missing=false` 재분석
+  (555 전량 시드 → 전 노드 커버 + 새 계약 caveats 로 교체). 진행 폴링으로 done/failed 추적 + 표본 caveats 재확인.
