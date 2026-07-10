@@ -7284,32 +7284,9 @@ function _metaGraphBindTraceRows(el) {
   });
 }
 
-// graph-reltrace ②③: 노드(테이블이면 자기 컬럼 포함)에 닿는 REFERENCES 관계를 추적 행 HTML 로.
-//   edges 미지정 시 모델(_metaGraph.edges)에서 수집(AI 박스용). broken 제외. 반환: {html, count}.
-function _metaGraphRelTraceRowsHTML(nodeKey, edges) {
-  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const nmOf = (k) => { const n = _metaGraph.nodes.get(k); return (n && (n.fqn || n.name)) || String(k).split(".").pop(); };
-  const isSelf = (k) => k === nodeKey || _metaColParent(k, (_metaGraph.nodes.get(k) || {}).fqn) === nodeKey;
-  const src = edges || Array.from(_metaGraph.edges.values());
-  const seen = new Set();
-  const rows = [];
-  src.forEach((e) => {
-    if (!e || e.type !== "REFERENCES" || e.status === "broken") return;
-    const sSelf = isSelf(e.source), tSelf = isSelf(e.target);
-    if (!sSelf && !tSelf) return;      // self 무관 엣지 제외
-    const other = sSelf ? e.target : e.source;
-    if (!other || seen.has(other)) return;
-    seen.add(other);
-    const arrow = sSelf ? "→" : "←";
-    rows.push(
-      `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
-      `title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환(대상 테이블·컬럼 추적)">` +
-      `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(nmOf(other))}</code>` +
-      `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`
-    );
-  });
-  return { html: rows.join(""), count: rows.length };
-}
+// reldedup(graph-detail): _metaGraphRelTraceRowsHTML 제거 — 유일 소비처였던 AI 박스 '연결 관계 추적'
+//   flat 목록이 상단 컬럼 섹션과 중복이라 삭제되면서 이 헬퍼도 orphan 이 됐다. 컬럼별·방향별 추적 행은
+//   _metaGraphRenderDetail 의 relRow/dirGroup 이 담당한다(더 풍부: 방향 그룹·의미 툴팁).
 
 // 테이블 단일 클릭 = **자신의 컬럼 인라인 펼침(펼침 전용)**. 이미 펼쳐졌으면 no-op(버그① — 클릭으론 안 접힘).
 //   접힘: "−" 컨트롤(_metaGraphCollapse). 그래프 컬럼(HAS_COLUMN) 없으면 information_schema 즉석조회(introspect).
@@ -7835,7 +7812,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   }
 
   // graph-reltrace(review MAJOR): 관계 행 data-trace 속성값(노드 키)에 쓰이므로 따옴표까지 이스케이프
-  //   (DB 식별자에 인용부호 가능 — 속성 탈출 방어. sibling _metaGraphRelTraceRowsHTML 와 parity).
+  //   (DB 식별자에 인용부호 가능 — 속성 탈출 방어).
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
@@ -8760,17 +8737,13 @@ async function _metaGraphLoadNodeAnalysis(key) {
     if (a.relationships) rows.push(`<p><strong>관계</strong> — ${esc(a.relationships)}</p>`);
     if (a.usage) rows.push(`<p><strong>활용</strong> — ${esc(a.usage)}</p>`);
     if (a.caveats) rows.push(`<p class="admin-meta-graph-muted"><strong>주의</strong> — ${esc(a.caveats)}</p>`);
-    // graph-reltrace ③: AI 능동 분석은 REFERENCES 를 따라 이웃을 재귀 분석한다(백엔드 node_analysis).
-    //   그 분석이 따라간 **구조화된 관계**를 추적 가능한 행으로 노출 — LLM prose(위)는 서술이라
-    //   클릭 대상이 없으므로, 분석 결과에서도 대상 테이블·컬럼을 직접 추적하게 한다(사용자 요청 ③).
-    const trace = _metaGraphRelTraceRowsHTML(key, null);
-    if (trace.count) {
-      rows.push(`<div class="admin-meta-graph-ai-rels"><strong>연결 관계 추적 (${trace.count})</strong>` +
-        `<ul class="amgr-list">${trace.html}</ul></div>`);
-    }
+    // reldedup(graph-detail): 'AI 능동 분석' 박스의 '연결 관계 추적' flat 목록을 제거했다.
+    //   그 목록은 상단 '컬럼 > 참조함/참조받음' 섹션(_metaGraphRenderDetail)과 **동일한 모델
+    //   REFERENCES 를 동일한 추적 행·신뢰 배지·클릭 동작**으로 재렌더해 역할·작동이 완전히 중복됐다
+    //   (사용자 확인). 추적 가능한 관계는 컬럼별·방향별로 더 풍부한 상단 섹션에 일원화하고, AI 박스는
+    //   고유 가치인 역할 칩 + prose(요약·관계·활용·주의)만 유지한다.
     // graph-funcproc(REQ ④): '↻ 재분석' 버튼 제거 — 섹션 헤더의 '✨ 능동 분석' 재실행으로 충분(UX 중복).
     box.innerHTML = rows.join("") || '<span class="admin-meta-graph-muted">분석 결과 없음.</span>';
-    _metaGraphBindTraceRows(box);   // graph-reltrace ③: AI 결과의 관계 행도 추적
   } else if (res.status === "pending" || res.status === "running") {
     box.innerHTML = '<span class="admin-meta-graph-muted">분석 진행 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
     // graphux5 fix(세션 독립): 이 노드가 (다른 탭/세션·새로고침으로) 활성 폴이 없는 진행 중 run 에 속하면

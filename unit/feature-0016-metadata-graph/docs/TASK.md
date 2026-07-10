@@ -2099,3 +2099,12 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [ ] T68.3 POST-DEPLOY 사용자 육안(PB-0008 실 Windows, 무인 도달 차단): 루틴/테이블 노드 상세에서 사용 관계가
   읽기/쓰기 소그룹으로 나뉘어(개수 헤더 포함) 보이고, 행 클릭 시 대상 상세 이동이 정상. 자산 curl
   (`?v=20260710-graph-rw-group`) + 육안 게이트(TEST §68). 헤드리스 세션은 실 Windows 화면 미대체(육안은 배포 후).
+
+## §69 graph-reldedup — 상세 패널 관계 중복 병합: AI 박스 '연결 관계 추적' 제거 (2026-07-10, 사용자 요청 · entry persona dispatch)
+사용자: `그래프 뷰 > 상세` 에서 관계 항목 출력이 **역할·작동 겹침** → 확인 후 병합.
+확인: 상세 패널의 두 인라인 섹션이 같은 노드의 REFERENCES 를 중복 렌더 — ①`컬럼 > 참조함/참조받음`(컬럼별·방향별·의미 툴팁) ②`AI 능동 분석 > 연결 관계 추적`(flat, `_metaGraphRelTraceRowsHTML(key,null)` = 모델 전체 REFERENCES 재나열). ②는 ①과 동일 데이터·추적 행·신뢰 배지·클릭 동작 → 순수 중복.
+- [x] T69.1 ②(AI 박스 flat 목록) 제거 — `_metaGraphLoadNodeAnalysis` 의 trace 블록 + no-op `_metaGraphBindTraceRows(box)` 삭제. AI 박스는 역할 칩 + prose(요약·관계·활용·주의) 고유 가치만 유지.
+- [x] T69.2 orphan 정리 — 유일 소비처가 사라진 `_metaGraphRelTraceRowsHTML` 함수 삭제·stale 주석(sibling parity) 정정·dead CSS `.admin-meta-graph-ai-rels` 제거. (`_metaGraphBindTraceRows` 는 컬럼 섹션이 계속 사용 → 유지)
+- [x] T69.3 병합 방향 = ①로 일원화(AskUserQuestion 2026-07-10, 사용자 승인). 우클릭 '관계 상세' 팝업(`_metaGraphShowRelations`)은 별도 on-demand 모달로 인라인 중복 아님 → 유지.
+- [x] T69.4 검증: `node --check` PASS. cache-buster admin.js/styles.css bump. diff 13삽입/40삭제·3파일.
+- [ ] T69.5 win-browser 실 Windows Chrome 육안(배포 후): 테이블/컬럼 노드 상세 AI 능동 분석 완료 시 '연결 관계 추적' **미표시**(중복 제거) · 컬럼 섹션 참조함/참조받음 추적 정상 · AI 박스 prose·역할 칩 유지 · pageerror 0.
