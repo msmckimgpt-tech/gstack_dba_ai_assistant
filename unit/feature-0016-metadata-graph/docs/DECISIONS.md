@@ -873,3 +873,19 @@ source_of_truth: true
 - 트레이드오프: 클러스터 펼침 유지로 극단 줌아웃(전체 in-view)은 집계보다 무거움(사용자가 구조·규모 이해를 우선). 완화: 카테고리 접기(기존 §55) + 줌인은 컬링으로 경량. 부분 가시 클러스터의 combo auto-fit 축소는 시각 트레이드오프(육안 확인).
 - 검증: headless `test_g6build_viewportcull.js` **6 PASS**(테이블 컬링·band-invariant·게이트) + `test_g6build_agglod.js` **8 PASS**(집계 비활성 잠금) + 회귀 = **150 PASS**. diff 2렌즈 적대 리뷰 + **win-browser 실 Windows Chrome 육안**(집계off·밴드 카운트·테이블 컬링 perf·combo — TEST §67).
 - Supersedes: **§63 ADR-030 집계-카드 + §65 ADR-032 supernode(비활성)** / Superseded By: —
+
+## ADR-034 — §70 graph-minimap-reuse: 미니맵은 기하 서명 게이트로 '구성 불변 시 재복제 skip'(전체-이미지 재사용)
+- 상태: 채택 (2026-07-10)
+- 맥락: 사용자 요청 — 그래프 뷰 미니맵 최적화, "화면 구성이 갱신되었을 경우 한 번 draw한 전체 이미지를 재사용." G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)은 `bindEvents` 에서 `AFTER_DRAW`/`AFTER_RENDER`/`AFTER_ANIMATE → renderMinimap()`(전 요소 key-shape `cloneNode` 전량 재복제 = `setShapes`) 와 `AFTER_TRANSFORM → onTransform`(updateMask()+setCamera() 만, 재복제 없음)을 분리 바인딩한다. 즉 **팬/줌은 이미 최적**(전체 이미지 재사용). 남은 낭비는 이 앱의 잦은 **상태-only `_metaG6Apply`(setData+draw)** 가 매번 발동하는 `AFTER_DRAW → renderMinimap` 전량 재복제 — 선택·상대하이라이트·역할도착(2.5s 폴 승격, AI 분석 중 지속)·busy 등은 미니맵이 그리는 **기하를 안 바꾸는데도** 수백~수천 노드를 재복제한다.
+- 결정:
+  - **(A) 기하 서명 게이트**: `_metaMinimapGeomSig(built)` — 미니맵이 depiction 하는 기하만 해시(요소 id·부모combo·위치 x/y·크기·엣지 source/target). **시각상태(states[]/fill/opacity/역할 칩 색)는 제외** — 미니맵 168×112px 에서 노드는 sub-px~1px 라 상태색이 무의미하고, 사용자 요구가 곧 "구성(기하) 불변이면 재사용." 위치는 0.25px 양자화(`Math.round(x*4)`)로 부동소수 noise 무시, `nodes:combos:edges:hash` 길이 프리픽스로 충돌 완화.
+  - **(B) 플러그인 인스턴스 래핑**: `_metaPatchMinimapReuse(graph)` 가 `graph.getPluginInstance("minimap").renderMinimap` 을 1회 래핑(멱등 `__reusePatched`). 서명이 직전 렌더(`__lastGeomSig`)와 같고 캔버스 존재면 skip(재사용), 다르거나 null 이면 원본 render. `_metaG6ApplyOnce` 가 `setData` 직전 같은 built 로 `_metaGraph._miniGeomSig` 을 싣는다. 디바운스 `onRender=pe(()=>this.renderMinimap()…)` 가 호출 시점에 래퍼를 조회(레퍼런스 캡처 아님)라 게이트가 발효. renderMask()(뷰포트 사각형)는 renderMinimap 다음 별도 호출이라 skip 해도 계속 갱신.
+  - **(B-timing) 첫 draw 이후 래핑(적대 리뷰 H1)**: G6 v5 는 `context.plugin` 을 생성자가 아니라 **첫 `draw()` 의 `prepare()→initRuntime()`** 에서 lazy 생성한다(번들 실측). init 시점(`_metaGraph.graph=graph` 직후) 호출은 `getPluginInstance` 실패 → 패치 no-op(최적화 사멸)이므로, 래핑을 `_metaG6ApplyOnce` 의 `await g.draw()` 직후 멱등 호출로 배치한다.
+  - **(C) 네이티브 드래그 서명 무효화(적대 리뷰 H2, BLOCK→수정)**: 노드/콤보 드래그는 `_metaG6Apply` 를 안 거치고 G6 가 요소를 직접 이동(`translateElementTo`→`element.draw({stage:"translate"})`)한다. 이 draw 도 `AFTER_DRAW`(payload `stage:"translate"`)를 발생시켜 renderMinimap 을 부르는데 `_miniGeomSig`(마지막 build 기준)가 stale → 게이트가 옛 배치로 skip → 미니맵이 드래그를 반영 못 하고 얼어붙는다(초기 구현 회귀 — 원본 minimap 은 드래그마다 재복제했음). 수정: `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 로 무효화 → 다음 renderMinimap 재복제 폴백. apply-driven data draw(`graph.draw()`→`element.draw()`, stage 미지정)는 서명 유지. 단일 지점으로 node·combo·기타 translate 전부 커버. (드래그는 transient 라 재복제 허용 — 정착 후 다음 apply 가 실 서명 재계산해 최적화 재개.)
+- 대안 기각:
+  - **커스텀 미니맵 자체 구현**: 번들 미니맵 폐기 후 offscreen bitmap 캐시 재구현 — 재-vendoring·품질 회귀 위험(ADR-004 계열), G6 가 이미 팬/줌 재사용을 하고 있어 과설계. 인스턴스 래핑이 최소 표면.
+  - **서명에 역할/상태 포함(미니맵 완전 동기)**: 역할 도착이 잦아 최적화 이득 대부분 소멸 + 미니맵 스케일서 색 무의미 → 순수-기하 서명 채택(트레이드오프: 상태색은 다음 기하 변경 때 반영).
+  - **플러그인 delay 증대(디바운스)**: 재복제 **비용 자체**를 안 줄임(호출 횟수만 병합) → 기각.
+- 트레이드오프: 역할 칩 색·선택 하이라이트·dim 은 미니맵에 즉시 안 뜨고 다음 기하 변경(펼침/드래그/LOD/스코프전환/검색) 때 반영. 미니맵 스케일서 시각적으로 무의미하며 사용자 요구(전체-이미지 재사용)와 정합. 실패 시 원본 renderMinimap 폴백 — 정확성 항상 보존, 최적화만 포기.
+- 검증: 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 서명 11·B 실build 4·C 패치 10·D 드래그무효화 10) + 회귀 **150 PASS** · `node --check` PASS · 적대 리뷰(H1 lazy-init no-op·H2 드래그 stale 2건 BLOCK 적발→수정, REVIEW REV-…-minimap-reuse). POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §70).
+- Supersedes: — / Superseded By: —

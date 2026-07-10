@@ -1336,3 +1336,10 @@ source_of_truth: true
 - 변경: 상세 패널의 두 인라인 관계 섹션(#1 컬럼>참조함/참조받음, #2 AI 박스 '연결 관계 추적') 중 **#2 제거 → #1 로 일원화**. AI 박스는 역할 칩+prose 고유 가치만 유지.
 - 근거: 사용자 요청("역할·작동 겹침 → 확인 후 병합") + 병합 방향 승인(AskUserQuestion 2026-07-10). #2 는 #1 과 동일 모델 REFERENCES 를 동일 동작으로 재렌더한 순수 중복. frontend-only·마이그 0·behavior: #2 제거 외 불변(우클릭 '관계 상세' 팝업 유지).
 - 검증: `node --check` PASS · diff 13삽입/40삭제. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69). 버스터 `admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup`.
+
+## CHG-20260710T230000-ai-claude-feature-0016-minimap-reuse — §70 미니맵 전체-이미지 재사용 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(신규 `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + `_metaG6ApplyOnce` 서명 배선 + minimap 플러그인 `key:"minimap"` + init 직후 patch 호출) + `admin.html` 버스터 + 신규 `tests/headless/test_g6build_minimap_reuse.js`.
+- 변경: G6 v5 minimap 플러그인의 `renderMinimap()`(전 요소 key-shape `cloneNode` 전량 재복제)을, 미니맵이 그리는 **기하 서명**(요소 id·부모combo·위치·크기·엣지 끝점; 시각상태 제외)이 직전 렌더와 같으면 skip 하도록 인스턴스 메서드 1회 래핑. 상태-only rebuild(선택/역할도착/busy)에서 미니맵을 재복제하지 않고 이미 그려둔 이미지를 재사용. 팬/줌은 원래도 마스크만 갱신(G6 기본)이라 무영향.
+- 근거: 사용자 요청("화면 구성이 갱신되었을 경우 한 번 draw한 전체 이미지를 재사용"). 팬/줌은 G6 가 이미 재사용(번들 역공학 실측) — 남은 낭비는 구성-불변 draw 의 전량 재복제. frontend-only·마이그 0·behavior: 미니맵 상태색 즉시반영만 이연(다음 기하변경 때 반영), 정확성 폴백 보장.
+- 적대 리뷰 2건 BLOCK 적발→수정: **H1** 패치를 init 시점 호출(G6 plugin 은 첫 draw 의 initRuntime 에서 lazy 생성 → getPluginInstance 실패 → no-op·최적화 사멸) → `await g.draw()` 직후 멱등 호출로 이동. **H2** 네이티브 드래그(`element.draw({stage:"translate"})`, `_metaG6Apply` 미경유)가 stale 서명으로 미니맵 재복제 skip → 드래그 반영 못 하고 얼어붙음 → `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 무효화(재복제 폴백, node·combo 단일 지점).
+- 검증: 신규 headless **35 PASS**(A11·B4·C10·D10) + 회귀 150 PASS · `node --check` PASS · 적대 리뷰(REVIEW REV-…-minimap-reuse). POST-DEPLOY PB-0008 육안(feature-0003 TEST §70). 버스터 `admin.js?v=20260710-minimap-reuse`.

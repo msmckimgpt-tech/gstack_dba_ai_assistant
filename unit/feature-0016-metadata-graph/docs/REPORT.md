@@ -1,5 +1,33 @@
 # Report
 
+## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §70/ADR-034)
+
+### 요청 (사용자)
+`그래프 뷰` 의 **미니맵 최적화** — "화면 구성이 갱신되었을 경우, 한 번 draw한 전체 이미지를 재사용하는 방식도 고려."
+
+### 진단
+G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)의 이벤트 바인딩을 번들 역공학으로 실측:
+- **팬/줌** → `AFTER_TRANSFORM → onTransform`(throttle 32ms) → `updateMask()`+`setCamera()` **만** — 전체 이미지 재복제 **없음**(이미 최적, 사용자 요구의 팬/줌 부분은 G6 가 이미 충족).
+- **draw/render** → `AFTER_DRAW`/`AFTER_RENDER`/`AFTER_ANIMATE → renderMinimap()` → `setShapes` 가 **전 요소 key-shape 를 `cloneNode` 로 전량 재복제**.
+
+낭비 지점: 이 앱은 `_metaG6Apply`(=`setData`+`draw()`)를 **선택·상대하이라이트·역할도착(2.5s 폴 승격, AI 분석 중 지속)·busy 등 상태-only 변경으로도 20+ 지점에서 자주** 돈다. 매 `draw()` 의 `AFTER_DRAW` 가 미니맵을 전량 재복제 — 미니맵이 그리는 **기하가 동일한데도** 수백~수천 노드를 매번 clone. 이게 유일한 남은 재복제 낭비.
+
+### 처리 결과 (frontend-only, admin.js)
+- **기하 서명** `_metaMinimapGeomSig(built)` — 미니맵이 depiction 하는 기하(요소 id·부모combo·위치 x/y·크기·엣지 끝점)만 FNV-1a 해시. **시각상태(states/fill/opacity/역할 칩 색) 제외** — 미니맵 스케일서 색은 무의미하고, 사용자 요구가 곧 "구성(기하) 불변이면 재사용." 위치 0.25px 양자화 + `nodes:combos:edges:hash` 프리픽스.
+- **플러그인 래핑** `_metaPatchMinimapReuse(graph)` — minimap 인스턴스의 `renderMinimap` 을 1회 래핑(멱등). 서명이 직전 렌더와 같고 캔버스 존재면 skip(이미 그려둔 이미지 재사용), 다르면 원본 render. `_metaG6ApplyOnce` 가 `setData` 직전 같은 built 로 `_miniGeomSig` 세팅. 플러그인에 `key:"minimap"` 부여. 실패 시 no-op → 원본 동작(정확성 보존).
+- **호출 시점 = 첫 draw 이후**(적대 리뷰 H1 발견·수정): G6 v5 는 `context.plugin` 을 생성자가 아니라 첫 `draw()` 의 `initRuntime()` 에서 lazy 생성 → init 직후 호출은 patch no-op(최적화 사멸)였다. `await g.draw()` 직후 멱등 호출로 이동해 plugin 존재 시점에 래핑.
+- **네이티브 드래그 stale 수정**(적대 리뷰 H2, BLOCK→수정): 노드/콤보 드래그는 `_metaG6Apply` 를 안 거치고 `element.draw({stage:"translate"})` 로 요소를 직접 이동하는데 이것도 `AFTER_DRAW`(stage:"translate")를 발생시켜 renderMinimap 을 부른다 → stale 서명으로 skip → 미니맵이 드래그를 반영 못 하고 얼어붙던 회귀. `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 재복제 폴백으로 해소(node·combo 단일 지점 커버).
+- **효과**: 상태-only rebuild(선택/역할도착/busy)는 미니맵 재복제 skip → 이미 그려둔 전체 이미지 재사용. 구성 변경(펼침/접기/드래그/LOD/스코프전환/검색)은 서명 변경 → 정상 재복제. 팬/줌은 원래대로 마스크만 갱신.
+- cache-buster `admin.js?v=20260710-minimap-reuse`.
+
+### 검증
+- 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 기하 서명 11 + B 실 build 4 + C 패치 10 + **D 드래그 무효화 10**).
+- 회귀 **150 PASS**(collod 20·agglod 8·category 26·edge 71·viewportcull 6·vpack 19) · `node --check admin.js` PASS.
+- 적대 리뷰가 2건 BLOCK 결함 적발 → 수정: **H1** 패치를 init 시점 호출해 plugin lazy-init 전이라 no-op(최적화 사멸), **H2** 네이티브 드래그가 stale 서명으로 미니맵 재복제 skip(드래그 반영 못 함). 둘 다 수정·테스트 커버. POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §70 — 미니맵 렌더·뷰포트 추종·상태변경 후 안정·**드래그 반영**·구성변경 반영·pageerror 0).
+
+### 트레이드오프 (사용자 요구와 정합)
+역할 칩 색·선택 하이라이트·dim 은 미니맵에 즉시 안 뜨고 **다음 기하 변경 때** 반영 — 미니맵 168×112px 스케일서 색은 시각적으로 무의미하며, 사용자가 명시 요청한 "구성 불변 시 전체-이미지 재사용" 의 본질.
+
 ## 2026-07-10 · 그래프 뷰 상세 — 사용(참조) 관계를 읽기/쓰기 그룹으로 분리 (graph-rw-group)
 
 ### 요청 (사용자)
