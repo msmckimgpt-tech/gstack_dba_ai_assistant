@@ -1329,3 +1329,10 @@ source_of_truth: true
 - 변경: (A1) 집계-카드 폐기(클러스터 펼침 유지) (A2) 카테고리 밴드 헤더 "N DB · M 테이블" (B) 화면 밖 테이블/클러스터 뷰포트 컬링.
 - 근거: §65 배포 후 사용자 육안 피드백(집계=규모파악 어려움·줌인 perf 잔존, ADR-033). frontend-only.
 - 검증: headless 6+8+회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 육안(TEST §67). 버스터 `admin.js?v=20260710-catband-cull`.
+
+
+## CHG-20260710T210000-ai-claude-corp-feature-0016-reldedup — §69 상세 패널 관계 중복 병합 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaGraphLoadNodeAnalysis: '연결 관계 추적' 블록+no-op bind 제거 · _metaGraphRelTraceRowsHTML 함수 삭제 · esc 주석 정정) + `styles.css`(dead `.admin-meta-graph-ai-rels` 제거) + `admin.html` 버스터(js+css).
+- 변경: 상세 패널의 두 인라인 관계 섹션(#1 컬럼>참조함/참조받음, #2 AI 박스 '연결 관계 추적') 중 **#2 제거 → #1 로 일원화**. AI 박스는 역할 칩+prose 고유 가치만 유지.
+- 근거: 사용자 요청("역할·작동 겹침 → 확인 후 병합") + 병합 방향 승인(AskUserQuestion 2026-07-10). #2 는 #1 과 동일 모델 REFERENCES 를 동일 동작으로 재렌더한 순수 중복. frontend-only·마이그 0·behavior: #2 제거 외 불변(우클릭 '관계 상세' 팝업 유지).
+- 검증: `node --check` PASS · diff 13삽입/40삭제. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69). 버스터 `admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup`.

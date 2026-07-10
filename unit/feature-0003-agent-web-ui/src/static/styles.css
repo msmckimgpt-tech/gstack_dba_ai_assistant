@@ -8536,8 +8536,8 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 /* graph-reltrace ②③: 추적 행의 "🔎 추적" 힌트 — hover 시에만 또렷하게(비침습). */
 .amgr-tracehint { flex: none; margin-left: auto; font-size: 10px; color: var(--text-3, var(--text-2)); opacity: .55; white-space: nowrap; }
 .amgr-row.amgr-trace:hover .amgr-tracehint, .amgr-row.amgr-trace:focus-visible .amgr-tracehint { opacity: 1; color: var(--primary); }
-.admin-meta-graph-ai-rels { margin-top: 8px; }
-.admin-meta-graph-ai-rels > strong { display: block; font-size: 11.5px; margin-bottom: 4px; }
+/* reldedup(graph-detail): .admin-meta-graph-ai-rels 규칙 제거 — AI 박스 '연결 관계 추적' 목록이
+   상단 컬럼 섹션과 중복이라 삭제되며 이 클래스의 유일 producer 가 사라졌다. */
 /* reldetail-colexpand ①②③: 컬럼 아코디언 + 방향 그룹 + 개수 배지 */
 ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .amgr-col { padding: 3px 0; }

@@ -2002,3 +2002,8 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **POST-DEPLOY 사용자 육안 검증(T68.3)**: Routine/Table 노드 상세에서 ① 사용 관계가 읽기/쓰기 소그룹으로 분리
   (각 헤더 개수) ② 섹션 헤더 `· 읽기 N · 쓰기 M` 합 = 총계 ③ 30건 초과 그룹 `… 외 N건` 노출 ④ 행 클릭 대상 상세 이동
   ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
+
+### Run (2026-07-10) — graph-reldedup: 상세 패널 관계 중복 병합 (AI 박스 '연결 관계 추적' 제거) (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §69) — **Environment: Windows-browser**
+- 정적/문법: `node --check admin.js` PASS. diff 13삽입/40삭제·3파일(admin.js/admin.html/styles.css). 잔여 참조 grep 0(제거된 `_metaGraphRelTraceRowsHTML`·`.admin-meta-graph-ai-rels` producer 소멸, `_metaGraphBindTraceRows` 는 컬럼 섹션이 계속 사용→유지).
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 재배포 선행 필요(§57·§65·§67 등 동일 패턴). **POST-DEPLOY PB-0008 라이브 append 예정** — 검증 항목: ① 테이블/컬럼 노드 상세에서 AI 능동 분석 완료(또는 기존 결과 로드) 시 AI 박스에 '연결 관계 추적' 목록 **미표시**(중복 제거 실증) ② AI 박스 prose(요약/관계/활용/주의)·역할 칩 정상 유지 ③ 상단 '컬럼 > 참조함/참조받음' 추적 행 클릭 → 대상 추적 정상 동작 ④ pageerror 0.
+- **Pass/Fail: pre-commit 정적·문법 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·POST-DEPLOY 계획·미수행 사유 기록).

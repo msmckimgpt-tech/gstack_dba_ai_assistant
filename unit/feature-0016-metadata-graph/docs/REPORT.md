@@ -1449,3 +1449,20 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 - headless viewport-cull 6·agglod 8(집계비활성 잠금)·회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 육안(TEST §67).
 - 캐시버스터 `admin.js?v=20260710-catband-cull`.
 - 트레이드오프: 극단 줌아웃(전체 in-view)은 집계보다 무거움(구조·규모 이해 우선). 줌인은 컬링으로 경량, 카테고리 접기로 완화.
+
+## 2026-07-10 · 상세 패널 관계 중복 병합 (graph-reldedup, TASK §69, 사용자 요청)
+`그래프 뷰 > 상세` 에서 같은 노드의 REFERENCES 관계가 두 인라인 섹션에 중복 출력 → 사용자 "확인 후 병합" 요청.
+
+### 확인 (중복 진단)
+- #1 `컬럼 (N) > 참조함(→)/참조받음(←)` — 컬럼별·방향별 그룹 + 의미 툴팁(`_metaRelSemanticTip`) + 🔎추적 (relRow/dirGroup, `_metaGraphRenderDetail`).
+- #2 `AI 능동 분석 > 연결 관계 추적 (N)` — flat list, `_metaGraphRelTraceRowsHTML(key, null)` 로 모델 전체 REFERENCES 재나열. #1 과 동일 데이터·추적 행·신뢰 배지·클릭 동작 → 순수 중복. (주석의 원래 의도 "AI가 따라간 관계 노출"과 달리 실제로는 모델 전체를 재렌더)
+- #3 우클릭 '관계 상세' 팝업(`_metaGraphShowRelations`)은 별도 on-demand 모달 → 인라인 중복 아님, 유지.
+
+### 변경 (frontend-only, 마이그레이션 0)
+- #2(AI 박스 flat 목록) 제거 → 추적 관계는 더 풍부한 #1 로 일원화. AI 박스 = 역할 칩 + prose(요약/관계/활용/주의) 고유 가치만.
+- orphan `_metaGraphRelTraceRowsHTML` 함수 삭제, no-op `_metaGraphBindTraceRows(box)` 제거, dead CSS `.admin-meta-graph-ai-rels` 제거, stale 주석 정정.
+- 병합 방향 사용자 승인(AskUserQuestion 2026-07-10).
+
+### 검증
+- `node --check` PASS. diff 13삽입/40삭제·3파일(admin.js/admin.html/styles.css). 캐시버스터 `admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup`.
+- 손실 없음: 테이블/컬럼 상세엔 #1 항상 렌더, Routine 노드는 REFERENCES 없어 #2 원래 미표시. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69).
