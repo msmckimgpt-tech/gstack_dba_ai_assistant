@@ -957,3 +957,15 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - **무인 도달 제약**: 그래프뷰 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL 라우팅) + dirty-rect 는 실 canvas
   paint 아티팩트라 WSL headless 미재현 → 서빙 admin.js 자산 curl(`hlHide` + `?v=20260710-hl-edge-hide`) + 사용자
   육안 게이트(visual_verification_scope=always, 브리지 불가 시 사유 명시 통과). 사용자 확인 후 PASS append.
+
+
+## §67 집계폐기 + 카테고리 밴드 규모 + 테이블 뷰포트 컬링 (2026-07-10, ADR-033)
+
+### 단위 (headless) — Environment: unit/node
+- **`test_g6build_viewportcull.js` 6 PASS** — 작은 뷰포트에서 화면 밖 테이블 칩 컬링(full 30 / cull <30)·좌표 band-invariant·게이트(<400 미컬링).
+- **`test_g6build_agglod.js` 8 PASS** — §63/§65 집계-카드 폐기 잠금(줌아웃 0.1 에서도 확장 스키마 테이블·combo 방출·SC 카드 0·_aggActive false).
+- 회귀: collod 20·edge 71·vpack 19·category 26 = **회귀 0**. `node --check` PASS.
+
+### Run (예정) — win-browser 실 Windows Chrome (Environment: Windows-browser) — T67.5
+- 줌아웃: 스키마 클러스터 **펼침 유지**(집계 카드 강등 없음)·제품 카테고리 밴드 헤더 **"N DB · M 테이블"**·관계선 유지.
+- 줌인 대형(mssql-qa-idc 다스키마 펼침): 화면 밖 테이블·클러스터 **미표시**(가시분 combo auto-fit)·**클릭/팬 경량화**. 줄별 스크린샷. 배포 후 PASS append.

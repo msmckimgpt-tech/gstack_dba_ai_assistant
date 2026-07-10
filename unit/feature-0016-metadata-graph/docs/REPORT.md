@@ -1407,3 +1407,18 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 - diff 2렌즈 적대 리뷰. **win-browser 실 Windows Chrome 육안 검증**(TEST §65).
 - 캐시버스터 `admin.js?v=20260710-graph-perf2`.
 - 한계: 테이블 자체 컬링은 combo auto-fit 으로 combo-safe 아님 → 컬럼 컬링 한정. 단일 초대형 스키마 테이블-칩 floor 잔존(후속).
+
+
+## 2026-07-10 · 집계폐기 + 카테고리 밴드 규모 + 테이블 뷰포트 컬링 (§67, ADR-033, 사용자 육안 피드백)
+§65 배포 후 사용자 실화면 피드백 반영. win-browser relay 로 combo 거동 육안 확인하며 구현.
+
+### 변경 (frontend-only)
+- (A1) 집계-카드(§63/§65) 폐기 — 규모/구조 파악 어렵다는 피드백. aggActive 상시 false(코드 보존). 클러스터 펼침 유지.
+- (A2) 제품 카테고리 밴드 헤더에 규모 명시: "N DB" → "N DB · M 테이블"(멤버 schemaTotals 합).
+- (B) 테이블/클러스터 뷰포트 컬링(§65 컬럼→테이블 확장): 화면 밖 테이블 칩·전체 화면 밖 클러스터(combo) 미방출로
+  줌인 draw 급감. 부분 가시 클러스터는 combo 가시분 auto-fit. 카테고리 밴드 bbox 는 선산정 유지. 팬 재-emit.
+
+### 검증
+- headless viewport-cull 6·agglod 8(집계비활성 잠금)·회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 육안(TEST §67).
+- 캐시버스터 `admin.js?v=20260710-catband-cull`.
+- 트레이드오프: 극단 줌아웃(전체 in-view)은 집계보다 무거움(구조·규모 이해 우선). 줌인은 컬링으로 경량, 카테고리 접기로 완화.

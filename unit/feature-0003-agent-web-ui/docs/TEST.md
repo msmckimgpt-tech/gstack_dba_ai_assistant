@@ -1982,3 +1982,9 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   (희미하게 남지 않음) ② **마우스 이동해도** 유령 관계선 잔상/깜빡임 없음 ③ focus(선택+1-hop) 관계선 선명 유지
   ④ 빈 캔버스 클릭 해제 시 전량 복원 ⑤ pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
+
+
+### Run (2026-07-10) — catband-cull: 집계폐기+카테고리밴드규모+테이블뷰포트컬링 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §67/ADR-033) — **Environment: Windows-browser**
+- 헤드리스: viewport-cull 6(테이블 컬링·band-invariant)·agglod 8(집계비활성)·회귀 = 150 PASS·node --check.
+- **win-browser 시각검증**(실 Windows Chrome via bin/win-browser.py relay, https://localhost/admin, switchTab('graph')). 배포 후 줄별 스크린샷: ①줌아웃 클러스터 펼침·카테고리 밴드 "N DB·M 테이블"·관계선 유지 ②줌인 화면 밖 테이블/클러스터 미표시·combo 가시분 fit·클릭/팬 경량 ③pageerror 0.
+- **[POST-DEPLOY 갱신 예정]** 배포 후 win-browser 육안 PASS append.

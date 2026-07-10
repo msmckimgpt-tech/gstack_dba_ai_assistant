@@ -1354,3 +1354,11 @@ source_of_truth: true
 - CONFIRMED(MINOR 1, **수정**): cull-pan 분기의 early `return` 이 §57 col/edge 마커 갱신 + `_lodBand` 기준선 세팅을 건너뜀 → 줌+팬 복합 제스처가 밴드 교차 시 억제는 되나 마커 침묵·밴드 stale(다음 same-band aftertransform false-=== skip) 가능. **수정**: return 제거하고 밴드 로직으로 fall-through(순수 팬=밴드 로직 즉시 return·cull 타이머 유지, 줌+팬=밴드 로직이 타이머 대체+마커/밴드 세팅). self-healing 이었으나 근본 수정.
 - CONFIRMED(NIT 1, **수정**): 집계 카드 폰트 클램프(3.2/2.6)가 깊은 줌서 화면 폰트 과소(카드는 커도 글자 작음) → **수정**: _sc 상한 6→8(카드 확장) + 폰트 클램프 4.5/3.5 + 카드 높이 안 클램프. 최종 가독은 win-browser 육안 확인.
 - 검증: 수정 후 headless viewport-cull 6 + 회귀 134 = **140 PASS** · `node --check` PASS. win-browser 시각검증 TEST §65.
+
+
+## REV-20260710T200000-ai-claude-feature-0016-catband-cull [SUBAGENT: PASS-WITH-FIXES] — §67 집계폐기+카테고리밴드규모+테이블/클러스터 뷰포트컬링 diff 적대 리뷰
+- 2렌즈 적대 패널(컬링 정확성/combo/엣지 · 집계off/밴드/시각), G6 번들+코드 실측(1렌즈 StructuredOutput 에러, 남은 렌즈가 양축 커버).
+- **BLOCKING/MAJOR 0** — 핵심 3축 검증: (A1) aggActive=false 상시화 잔여참조 무해(agg 밴드는 rebuild 구동하나 aggCut=false 로 마커 억제, _aggCard=false 로 supernode 완전 죽은코드) (A2) 카테고리 밴드 카운트 정합(cat.members=comboId=Schema key=schemaTotals key, 카드 badge 동일소스, 누락 ||0+>0 graceful) (B) 컬링 좌표 정확(clusterOffset 은 L.x0/y0 folded, per-table/routine 은 nodePos 반영 좌표). 줌아웃 col-LOD/edge-LOD 는 aggActive 독립(원시 줌 임계)이라 클러스터 펼침 유지에도 관계선 축약 정상.
+- CONFIRMED(MINOR 1, **수정**): 전체-클러스터 컬링이 L.w/L.h(pre-offset masonry)로 판정해, free-place 드래그(nodePos/groupOffset)로 클러스터 bbox 밖 나간 가시 멤버를 오컬링 가능(per-table 경로는 정확). **수정**: free-place 존재 시 전체-클러스터 컬링 skip → per-table 컬링(정확)에만 위임.
+- CONFIRMED(NIT 1, **수정**): CATH 헤더에 labelMaxWidth 부재 → '· M 테이블' 추가로 좁은 단일-DB 밴드에서 라벨 넘침 가능(한글 실폭>추정). **수정**: labelMaxWidth=hdW-8 로 ellipsis 흡수.
+- 검증: 수정 후 headless viewport-cull 6 + agglod 8 + 회귀 = **150 PASS** · node --check. win-browser 육안 TEST §67.
