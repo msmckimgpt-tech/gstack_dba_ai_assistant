@@ -7816,7 +7816,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button></div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button> <button type="button" class="amgr-link" id="metaGraphFocusSelBtn" style="margin-left:0" title="선택한 이 노드로 그래프 카메라를 이동합니다(구조·선택 유지, 팬만).">🎯 이 노드로 이동</button></div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
@@ -7974,6 +7974,19 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   el.innerHTML = parts.join("");
   // 버튼 바인딩(+hover 지침 popover) + 기존 분석 결과가 있으면 즉시 로드.
   _metaGraphBindAiPopover(self.key, selfScopeKey);
+  // graph-focus-selected: 상세 패널의 선택 노드로 카메라만 팬한다(그래프 구조·선택 상태 불변 —
+  //   _metaGraphPanToRelation 패턴 재사용). 렌더 안 된 노드(접힌 스키마 등)면 안내만 하고 팬 skip.
+  const focusSelBtn = document.getElementById("metaGraphFocusSelBtn");
+  if (focusSelBtn) focusSelBtn.addEventListener("click", () => {
+    const key = self.key;
+    if (!_metaGraph.graph || !key) return;
+    const rel = _metaRenderedIdFor(key);   // 렌더 노드, 접힌 스키마면 카드(SC:)
+    if (!rel) { _metaGraphStatus("이 노드가 현재 화면에 없습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
+    const seq = _metaGraph._opSeq;
+    _metaGraphAnimateFocus(key, seq);       // key→렌더 요소 내부 해소 후 카메라 팬(+판독 줌 클램프)
+    const nm = (_metaGraph.nodes.get(key) || {}).name || self.name || key;
+    _metaGraphStatus(`→ ${nm} 로 카메라 이동.`);
+  });
   const relBtn = document.getElementById("metaGraphRelBtn");
   if (relBtn) relBtn.addEventListener("click", () => _metaGraphShowRelations(self.key));
   // graph-funcproc: 사용 테이블/사용 루틴 행 클릭 → 대상 상세로 이동.
