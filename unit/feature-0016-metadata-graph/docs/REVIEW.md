@@ -1440,3 +1440,8 @@ source_of_truth: true
 - **BLOCK 2건→수정**: **H1(no-op)** G6 plugin 은 첫 draw 의 initRuntime 에서 lazy 생성 → init 직후 `getPluginInstance` 실패 → 패치 사멸 → `await g.draw()` 직후 이동. **H2(드래그 stale)** 드래그(`element.draw({stage:"translate"})`, `_metaG6Apply` 미경유)도 `AFTER_DRAW`(stage:"translate")를 발생 → stale 서명 skip → 미니맵 얼어붙음(원본 대비 회귀) → `afterdraw` stage 무효화. D 섹션 10 테스트 lock.
 - 클리어: H1 타이밍(draw 직후 동기 설치·첫 렌더 blank 없음), H3 서명 필드 정합, H4 멱등·안전(no-op 폴백), H5 renderMask 독립.
 - 검증: 수정 후 신규 **35 PASS** + 회귀 **150 PASS** · `node --check`. POST-DEPLOY PB-0008(feature-0003 TEST §74).
+
+
+## REV-20260710T234500-ai-claude-feature-0016-layoutmemo-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §73 POST-DEPLOY 완수 기록
+- 대상: TEST.md/TASK.md/REPORT.md POST-DEPLOY 실측 결과 기록만 — 코드/자산 diff 0. §18.8 패널 비적용(SKIPPED).
+- 근거: 배포·구현 자체는 §73 REV-20260710T233000 [SUBAGENT: PASS-WITH-FIXES] 에서 완료 검증. 본 cycle 은 라이브 실측 결과 문서화(main e6b7b68f, MISS 59→HIT 8ms 7.4× 급감, 위치 이동 0).

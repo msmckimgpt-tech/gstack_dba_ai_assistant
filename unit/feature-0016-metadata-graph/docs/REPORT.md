@@ -1610,3 +1610,6 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
 - 해소: 두 순수 함수를 **위상-서명(_metaTopoSig: nodes/REFERENCES edges/schemaExpanded/mode) 메모이즈**. 서명 무변경(팬·줌·선택·마커·컬럼토글·드래그) rebuild 는 정렬 재사용 → build 를 방출 비용만 남김. 통짜 layout 캐시는 groupOf/groupMembers side-effect landmine 이라 배제. cull 마진 0.6→0.3(고배율 방출 감축).
 - 검증: headless 메모이즈 19 + 회귀 150 = **169 PASS**·node --check. 캐시적중==fresh 좌표완전동일(메모이즈가 출력 불변) 증명. §18.8 적대 리뷰(REV §73: BLOCKING/MAJOR 0 · F1 roles·F2 노드속성 stale 캐시 잡아 서명 확장 수정). POST-DEPLOY win-browser 실측.
 - 캐시버스터 `admin.js?v=20260710-layoutmemo`. ADR-035. §65/§67 컬링과 상보(컬링=방출 수↓, 메모이즈=배치 계산↓).
+
+### §73 layoutmemo POST-DEPLOY 실측 (2026-07-10, main e6b7b68f)
+win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검증: 동일 위상 연속 build 함수분해 — **MISS 59ms(relOrderAll 27+simGroups 29) → HIT 8ms(둘 다 0) = 7.4× 급감**(지배 함수 완전 skip), MISS↔HIT 방출 좌표 이동 **0**(band-invariant)·방출 수 동일. 극단 줌인(2.5)도 HIT 8ms·마진 0.3·pageerror 0. 캐시 정상(_simCache 4·_relOrderCache set). "극단 줌인·비밀집인데도 느림" 근본원인이 캐시 적중 시 8ms 로 상시 경량화 — 사용자 요청 근본해소 실증. TEST §73.
