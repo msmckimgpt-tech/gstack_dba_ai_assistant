@@ -127,6 +127,8 @@ is_meta_path() {
     # but classified as META for verify-completion check #9 attribution).
     _template_maintainer/*) return 0 ;;
     TEMPLATE_CHANGELOG.md|CONTRIBUTING.md|README.md|FIRST_REQUEST.md|TODOS.md|VERSION) return 0 ;;
+    # META-0024 — repo 루트 git 설정 파일(merge driver path-scope 등)은 META 계층.
+    .gitattributes) return 0 ;;
     # AGENTS.md §18.10 — meta/** and unit/<feature>/meta/** are META paths.
     meta/*) return 0 ;;
     unit/*/meta/*) return 0 ;;
@@ -757,6 +759,31 @@ check_9_review_entry() {
 
 # Check #8: unstaged residual — everything intended must be staged (pre-commit).
 # Post-commit mode: check that working tree is clean after HEAD commit.
+# -----------------------------------------------------------------------------
+# Check #14 (META-0024, parallel-work-structure ITEM-03): conflict-marker 잔존 검사.
+# 병렬 머지 해소 중 marker(`<<<<<<<`/`>>>>>>>`) 가 커밋에 섞여 들어간 사고(a77180ca)
+# 재발 방지 — 추가된(+) 라인만 검사(기존 문서에 이미 있는 marker 인용은 무관).
+# `=======` 단독은 마크다운 구분선 등 정상 용례가 많아 대상에서 제외(오탐 방지).
+# 무조건 실행(META/shared 모드 포함) — marker 잔존은 changeset 종류와 무관한 결함.
+# -----------------------------------------------------------------------------
+check_14_conflict_markers() {
+  local mode="$1" diff_added
+  case "$mode" in
+    # merge commit(부모 2)에서 git show 는 combined diff(++ prefix)라 marker 를 못 본다(패널 M-1)
+    # — 1st-parent diff 로 검사(root commit 은 git show 폴백).
+    post-commit) diff_added=$( (git diff --unified=0 HEAD^ HEAD 2>/dev/null || git show --format= --unified=0 HEAD 2>/dev/null) | grep -E '^\+' | grep -vE '^\+\+\+' || true) ;;
+    *)           diff_added=$(git diff --cached --unified=0 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true) ;;
+  esac
+  local hits
+  hits=$(printf '%s\n' "$diff_added" | grep -cE '^\+(<<<<<<<|>>>>>>>)( |$)' || true)
+  if [ "${hits:-0}" -eq 0 ]; then
+    log_check 14 PASS "conflict markers"
+    return 0
+  fi
+  log_check 14 FAIL "conflict markers" "staged/HEAD diff 에 conflict marker 잔존 ${hits}건 (<<<<<<< / >>>>>>>) — 머지 해소 미완 커밋(a77180ca 클래스). 정당한 인용이면 들여쓰기/코드펜스 내 들여쓰기로 column-0 을 피할 것"
+  return 1
+}
+
 check_8_unstaged_residual() {
   local mode="$1"
   local residual
@@ -1265,6 +1292,12 @@ main() {
     check13_status=1
   fi
 
+  # Check #14 (META-0024) — unconditional: conflict-marker 잔존은 changeset 종류 무관.
+  local check14_status=0
+  if ! check_14_conflict_markers "$mode"; then
+    check14_status=1
+  fi
+
   # META short-circuit: pure-meta changesets skip verify entirely.
   # (Mixed commits — meta + operational — still get full operational gate.)
   local changed_files
@@ -1287,24 +1320,24 @@ main() {
   fi
 
   if [ "$meta_mode" = "1" ]; then
-    printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). checks #10, #11, #13 always run.\n' >&2
-    local failed=$((check10_status + check11_status + check13_status))
+    printf 'META mode: pure-meta changeset detected. checks #1-#8 skipped (§18.4). checks #10, #11, #13, #14 always run.\n' >&2
+    local failed=$((check10_status + check11_status + check13_status + check14_status))
     case "$mode" in
       post-commit) check_9_review_entry post-commit "" || failed=$((failed + 1)) ;;
       *) check_9_review_entry pre-commit "" || failed=$((failed + 1)) ;;
     esac
     if [ "$failed" -eq 0 ]; then
-      printf '\nverify-completion: PASS (META mode: checks #9, #10, #11, #13 ran)\n' >&2
+      printf '\nverify-completion: PASS (META mode: checks #9, #10, #11, #13, #14 ran)\n' >&2
       exit 0
     else
-      printf '\nverify-completion: FAIL (META mode: %d of #9, #10, #11, #13 failed)\n' "$failed" >&2
+      printf '\nverify-completion: FAIL (META mode: %d of #9, #10, #11, #13, #14 failed)\n' "$failed" >&2
       exit 1
     fi
   fi
 
   # Shared mode uses its own minimal check set + check #9 + check #10 + check #11 + check #13.
   if [ "$mode" = "shared-pre-commit" ]; then
-    local failed=$((check10_status + check11_status + check13_status))
+    local failed=$((check10_status + check11_status + check13_status + check14_status))
     check_shared_modify pre-commit || failed=$((failed + 1))
     check_8_unstaged_residual pre-commit || failed=$((failed + 1))
     check_9_review_entry shared-pre-commit "" || failed=$((failed + 1))
@@ -1315,8 +1348,8 @@ main() {
   local fdir
   fdir=$(feature_dir "$feature_id")
 
-  # check13_status: check #13 (visual verification) 은 META short-circuit 앞에서 이미 실행됨(M3).
-  local failed=$((check10_status + check11_status + check13_status))
+  # check13/14_status: #13(visual)·#14(conflict-marker) 는 META short-circuit 앞에서 이미 실행됨.
+  local failed=$((check10_status + check11_status + check13_status + check14_status))
   local effective_mode
   effective_mode="${mode}"
 

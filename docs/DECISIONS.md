@@ -814,3 +814,28 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
     전파(inbox) 계획은 META-0023 REVIEW 엔트리(meta/REVIEW.md) 에 기록한다 (§13.2.3-A 선례).
   - 후행 관측 (done 판정식 아님): 이후 사이클들의 TASK.md 신규 섹션이 timestamp 헤더로 기록되는지
     — parallel-work-structure 로드맵 후속 항목들이 검증 표본.
+## ADR-20260711T042631-append-doc-merge-driver
+
+- Status: 승인 (2026-07-11 — 제안·승인 근거: `docs/improvements/parallel-work-structure/ROADMAP.md`
+  §6.1 사전 승인 · ITEM-03. 적대 리뷰 REV-20260710T180820 2-round 가 항목 명세를 사전 검증 —
+  특히 B-2 지적(§13.1 v3.35.1 의 driver 허용은 단일-라인 stamp 한정 → 본 확대는 정식 개정 필요)의 이행.)
+- Context: append-only 문서(unit MODIFY/REVIEW·LEARNINGS·RELEASE_NOTES)의 말미 블록 append 가
+  병렬 브랜치 간 반복 수동 해소되고(7c653ea8), conflict marker 잔존 커밋(a77180ca)까지 발생
+  (RESEARCH F-004·F-009). fragment 전환(ITEM-06/META-0026)이 근본 해법이나 전 문서 전환 전
+  과도기에 비용 ≈ 0 git 장치로 해소를 자동화한다.
+- Decision:
+  1. **§13.1 개정**: path-scoped custom merge driver 허용 범위를 "단일-라인 monotonic stamp"
+     에서 "append-only 문서의 말미 블록 병합"까지 확대. 조건 — 3종 문서 한정(.gitattributes
+     path-scope; LEARNINGS.md 는 섹션-내부 삽입 구조라 제외)·말미-append 케이스만 자동 병존
+     (`## ` 블록 단위, ours→theirs 연접·dedup — timestamp 재정렬은 무 ts 블록 재배열 리스크로
+     비채택)·그 외 전부 `git merge-file` 위임(default 3-way 동일 — 겹치지 않으면 clean, 충돌은
+     표준 marker; 자동 오병합 금지)·전체 파일 merge=union 금지 유지.
+  2. **rerere**: 작업자 계정 git 전역 rerere.enabled+autoUpdate 활성화(`bin/setup-git-parallel.sh`,
+     멱등). 실측 한계 명기: custom driver 폴백 충돌엔 rerere 가 개입하지 않음(rr-cache 미기록)
+     — driver 3종 밖 일반 파일의 반복 충돌이 rerere 커버리지 (단 merge-file 위임 후엔 driver 경로 충돌에도 preimage 기록 실측 — 보수 서술).
+  3. **conflict-marker 잔존 게이트**: verify-completion check #14(무조건 실행) — staged/HEAD
+     추가 라인의 `<<<<<<< / >>>>>>>` 적발(a77180ca 재발 방지). `=======` 단독은 오탐 잦아 제외.
+  4. `.gitattributes` 는 repo 루트 신규 파일 — verify-completion META-경로 인식에 추가.
+- Consequences: driver 등록은 clone-로컬 — 세션/클론 시작 시 `bash bin/setup-git-parallel.sh`
+  1회(멱등). fragment 전환 완료 문서는 driver 대상에서 제거(브리지 수명). template base 전파
+  (inbox) 계획은 META-0024 REVIEW 엔트리에 기록.
