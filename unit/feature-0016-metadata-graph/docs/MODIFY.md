@@ -1299,3 +1299,9 @@ source_of_truth: true
 - 검증: headless T22 신설 4 + 회귀 = **edge 64·collod 20·agglod 9·category 26·vpack 19 = 138 PASS 회귀 0** ·
   `node --check` PASS · **적대검증**(수정 되돌린 OLD 동작에서 T22 FAIL 재현) · diff 적대 리뷰(REV 별도).
   POST-DEPLOY PB-0008 사용자 육안(TEST §64). 캐시버스터 `admin.js?v=20260710-lod-hl-declutter`.
+
+## CHG-20260710T160000-ai-claude-feature-0016-graph-perf2 — §65 뷰포트 컬링 + 집계 supernode + 마커 제거 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaG6Build cullActive/집계카드/컬럼·루틴 emission·aftertransform 팬훅·마커·resetModel·products) + `admin.html` 버스터 + headless `test_g6build_viewportcull.js`(신설).
+- 변경: (1) 집계 supernode 크기 ≈1/zoom 스케일업 (2) 집계 상태 마커 제거 (3) 줌인 대형모델 화면 밖 테이블 컬럼 뷰포트 컬링(combo-safe·팬 재-emit).
+- 근거: agg-lod(§63) 배포 후 사용자 육안 피드백 + 시각검증 가능 확인(ADR-032). frontend-only·마이그 0.
+- 검증: headless 6(viewport-cull)+회귀 134 = **140 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 시각검증(TEST §65). 버스터 `admin.js?v=20260710-graph-perf2`.

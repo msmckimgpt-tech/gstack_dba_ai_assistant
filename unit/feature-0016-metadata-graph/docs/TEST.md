@@ -930,3 +930,14 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - **무인 도달 제약**: 그래프뷰 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL 라우팅) → 자산 curl(서빙 admin.js 에
   `litSelf`·`keepLodFor` + `?v=20260710-lod-hl-declutter`) + 사용자 육안 게이트(visual_verification_scope=always,
   브리지 불가 시 사유 명시 통과). 사용자 확인 후 PASS append.
+## §65 viewport-cull + 집계 supernode + 마커 제거 (2026-07-10, ADR-032)
+
+### 단위 (headless) — Environment: unit/node
+- **`test_g6build_viewportcull.js` 신설: 6 PASS / 0 FAIL** — 작은 뷰포트에서 화면 밖 테이블 컬럼 컬링(방출 급감)·
+  **combo-safe(테이블 칩 항상 유지)**·좌표 band-invariant·소형 모델(<400) 게이트.
+- 회귀: agglod 9·collod 20·edge 60·vpack 19·category 26 = **134 PASS 회귀 0**. `node --check` PASS.
+
+### Run (예정) — win-browser 실 Windows Chrome 시각검증 (Environment: Windows-browser) — T65.5
+- 줌아웃: 집계 supernode 카드가 **크고 읽힘**(이전 작던 것 해소)·상태줄 "클러스터 집계" 마커 **없음**.
+- 줌인 대형모델(mssql-qa-idc 등 스키마 여러 개 펼침): 화면 밖 테이블 컬럼 **미표시**(테이블 칩·클러스터 카드 combo
+  유지)·**클릭/팬 경량화**·팬 시 새로 보이는 테이블 컬럼 재표시(디바운스). 줄별 스크린샷. 배포 후 PASS append.
