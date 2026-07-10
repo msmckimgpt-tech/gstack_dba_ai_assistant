@@ -4107,6 +4107,20 @@ function _metaNodeStates(key) {
   return st;
 }
 
+// reltrace-colnav(사용자 결정 2026-07-10): 하이라이트(focusAdj) 산출 기준 키 해소. 선택 키가 모델에
+//   있으면 그대로. 모델에 없는 컬럼(미펼침 테이블의 컬럼 — 접힘 시 제거·미펼침 시 미적재)이면
+//   **소속 테이블이 모델의 Table 노드일 때만** 그 테이블로 폴백한다 — 선택 상태는 컬럼 그대로 두되,
+//   화면 하이라이트(dim/lit focus)는 상위 종속 객체(테이블)가 선택된 것처럼 구성. 부모가 Table 이 아니거나
+//   없으면 null — 테이블 접기·검색 prune 로 사라진 선택(§57.5 F2)의 '앵커 없는 전역 흐림 정리'(null)를 보존.
+//   _metaGraphSetSelected(즉시)·_metaG6Build(매 빌드 재산출) 양쪽이 공유해 두 경로의 하이라이트를 일치시킨다.
+function _metaFocusKeyFor(selKey) {
+  if (!selKey) return null;
+  if (_metaGraph.nodes.has(selKey)) return selKey;
+  const ptk = _metaColParent(selKey, null);
+  const pnode = ptk && _metaGraph.nodes.get(ptk);
+  return (pnode && pnode.label === "Table") ? ptk : null;
+}
+
 // §57: 선택 노드의 1-hop 인접 집합 — self(자신+자기 컬럼) / nodes(인접 노드+컬럼의 소속 테이블+상대
 //   스키마). 모델 1회 순회 — §57.5부터 **매 빌드 재산출**(선택 존재 시, 6k 모델 실측 ~10ms ≈ 빌드의
 //   3% — stale 스냅샷 제거 비용으로 수용).
@@ -4627,13 +4641,11 @@ function _metaG6Build() {
   //   클릭 직후 ShowDetail/컬럼 펼침의 늦은 ingest(이웃 적재)를 반영 못 해 빈/구식 인접으로 굳고,
   //   이후 모든 rebuild 가 그 스냅샷을 bake 해 "다른 노드를 클릭해도 하이라이트가 안 바뀌는" 증상이
   //   된다. 여기서 재산출하면 어떤 경로의 rebuild 든 현재 selected 기준으로 자가 치유된다.
-  if (_metaGraph.selected && _metaGraph.nodes.has(_metaGraph.selected)) {
-    _metaGraph.focusAdj = _metaFocusAdjacency(_metaGraph.selected);
-  } else {
-    // §57.5(리뷰 F2): 선택 노드가 모델에서 사라진 경우(테이블 접기·검색 prune)도 정리 —
-    //   앵커 없는 전역 흐림 잔존 방지(모델 교체 경로는 resetModel 이 별도 정리).
-    _metaGraph.focusAdj = null;
-  }
+  // §57.5(사용자 버그 리포트) + reltrace-colnav: 기준 키를 _metaFocusKeyFor 로 해소 — 모델 밖 컬럼
+  //   선택 시 소속 테이블로 폴백(미펼침 컬럼 하이라이트). 부모가 Table 아니거나 없으면 null:
+  //   §57.5 F2(테이블 접기·검색 prune 로 사라진 선택 정리 — 앵커 없는 전역 흐림 방지)를 그대로 보존.
+  const _faKey = _metaFocusKeyFor(_metaGraph.selected);
+  _metaGraph.focusAdj = _faKey ? _metaFocusAdjacency(_faKey) : null;
   _metaGraph.tableDeps = new Map();   // graph-drag(REQ ②): 전체 재구성마다 종속 UI 맵 리셋(Table key -> 종속 노드 id[]).
   _metaGraph.groupMembers = new Map();   // group-interact(§50): 매 build 그룹→멤버 인덱스 재구성(펼친 그룹만 emission 에서 채움).
   _metaGraph.groupOf = new Map();        // group-interact(§50): 매 build 테이블→groupKey 역인덱스 재구성.
@@ -5488,6 +5500,21 @@ function _metaRenderedIdFor(key) {
   if (!r || !key) return null;
   if (r.has(key)) return key;
   if (r.has("SC:" + key)) return "SC:" + key;
+  return null;
+}
+
+// reltrace-colnav(2026-07-10): 대상 키가 직접 렌더돼 있지 않을 때 **화면에 있는 가장 가까운 조상**의
+//   렌더 id 를 찾는다 — 컬럼(테이블 미펼침) → 소속 테이블 → 접힌 스키마 카드(SC:) 순 승격.
+//   _metaG6Build 의 renderEndpoint 승격 규칙과 동형이되, 여기선 실제 렌더 집합(renderedIds) 기준으로
+//   해소한다. 단일클릭 카메라 팬이 미렌더 컬럼에서 "화면에 없음"으로 죽지 않고 소속 테이블/카드로
+//   시선을 옮기게 하는 것이 목적. 조상도 미렌더(스키마 미로드·§67 뷰포트 컬링 등)면 null.
+function _metaRenderedAncestorFor(key) {
+  if (!key) return null;
+  const gn = _metaGraph.nodes.get(key);
+  const pk = _metaColParent(key, gn && gn.fqn);   // 컬럼 → 소속 테이블 키
+  if (pk) { const r = _metaRenderedIdFor(pk); if (r) return r; }
+  const sk = _metaCatParent(key, gn && gn.fqn);    // → 소속 스키마 키(접힘 시 SC: 카드)
+  if (sk) { const r = _metaRenderedIdFor(sk); if (r) return r; }
   return null;
 }
 
@@ -7119,8 +7146,11 @@ function _metaGraphSetSelected(key) {
   // §57.6: 인접 집합을 **setElementState 이전에** 갱신 — 새 선택 노드의 즉시 상태(sig)가 구 fa 로
   //   계산돼 'dimmed+selected' 로 밝혀지지 않는 창(사용자 실측: 선택했는데 흐림)을 제거. rebuild 가
   //   busy 로 밀려도 클릭한 노드와 이전 노드의 상태 전환은 setElementState 로 즉시 반영된다.
-  _metaGraph.focusAdj = (_metaGraph.selected && _metaGraph.nodes.has(_metaGraph.selected))
-    ? _metaFocusAdjacency(_metaGraph.selected) : null;
+  // reltrace-colnav(사용자 결정 2026-07-10): 하이라이트 기준 키는 _metaFocusKeyFor 로 해소 —
+  //   모델 밖 컬럼(미펼침 테이블의 컬럼) 선택 시 소속 테이블로 폴백(상위 종속 객체 하이라이트).
+  //   선택 상태(_metaGraph.selected)는 원 키(컬럼) 그대로. _metaG6Build 재산출과 동일 규칙(양쪽 일치).
+  const _faKey = _metaFocusKeyFor(_metaGraph.selected);
+  _metaGraph.focusAdj = _faKey ? _metaFocusAdjacency(_faKey) : null;
   // graph-perf-bg fix: _metaApplyState 경유 — busy 보존 + _stateCache signature 동기화(명령형 writer 가 캐시를 stale 로 남기지 않음).
   if (prev && prev !== key && _metaGraph.nodes.has(prev)) _metaApplyState(prev);
   if (key && _metaGraph.nodes.has(key)) _metaApplyState(key);
@@ -7246,15 +7276,27 @@ async function _metaGraphTraceRelation(targetKey) {
 
 // graphux7(#2): 관계 행 단일 클릭 = 카메라 이동만(상세 패널 유지). 대상이 렌더돼 있으면 그 노드로,
 //   접힌 스키마면 그 스키마 카드로 카메라를 팬(+렌더된 경우 선택 강조). 상세 패널은 바꾸지 않는다 — 전환은 더블클릭.
+// reltrace-colnav(사용자 요청 2026-07-10): 대상 컬럼이 **소속 테이블이 아직 펼쳐지지 않아 미렌더**여도
+//   "화면에 없음" 오류로 죽지 않는다 — 소속 테이블(또는 접힌 스키마 카드)로 승격해 카메라가 그 위치를
+//   바라보게 하고(펼치진 않음 — 펼침은 더블클릭), 선택 상태는 **대상 컬럼 키**로 둔다(펼쳐 렌더돼 있으면 컬럼
+//   하이라이트, 미렌더면 _metaGraphSetSelected 가 하이라이트를 소속 테이블로 폴백 → 더블클릭 펼침 시 그 컬럼이
+//   이어서 선택). 조상조차 미렌더(스키마 미로드·§67 뷰포트 컬링)일 때만 안내 메시지(오류 톤 아님 — 더블클릭 유도).
 function _metaGraphPanToRelation(targetKey) {
   if (!_metaGraph.graph || !targetKey) return;
-  const el = _metaRenderedIdFor(targetKey);   // 렌더 노드, 접힌 스키마면 카드(SC:)
-  if (!el) { _metaGraphStatus("대상 노드가 현재 화면에 없습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
-  if (_metaGraph.renderedIds && _metaGraph.renderedIds.has(targetKey)) _metaGraphSetSelected(targetKey);
+  const direct = _metaRenderedIdFor(targetKey);            // 렌더 노드, 접힌 스키마면 카드(SC:)
+  const focusEl = direct || _metaRenderedAncestorFor(targetKey);   // 컬럼 미렌더 시 소속 테이블/스키마 카드로 승격
+  if (!focusEl) { _metaGraphStatus("대상이 아직 화면에 로드되지 않았습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
+  // 선택은 대상(컬럼/테이블) 키 기준. (a) 자기 자신이 렌더됐거나 (b) 미렌더 컬럼이 소속 테이블/카드로 승격된 경우
+  //   대상 키를 선택 — 펼쳐 렌더돼 있으면 노드 하이라이트, 미렌더면 선택 상태만 기록 + 하이라이트는 소속 테이블
+  //   폴백(_metaGraphSetSelected). 접힌 스키마 카드(SC:)로만 승격된 경우(대상=스키마)는 기존대로 선택 없이 팬만.
+  const renderedSelf = _metaGraph.renderedIds && _metaGraph.renderedIds.has(targetKey);
+  if (renderedSelf || !direct) _metaGraphSetSelected(targetKey);
   const seq = _metaGraph._opSeq;
-  _metaGraphAnimateFocus(targetKey, seq);   // key→렌더 요소(노드/카드) 내부 해소 후 카메라 팬
-  const nm = (_metaGraph.nodes.get(targetKey) || {}).name || targetKey;
-  _metaGraphStatus(`→ ${nm} 로 카메라 이동 (더블클릭 = 상세 패널 전환).`);
+  _metaGraphAnimateFocus(focusEl, seq);   // 승격된 렌더 요소(노드/카드) 내부 해소 후 카메라 팬
+  const nm = (_metaGraph.nodes.get(targetKey) || {}).name || _metaKeyDisplayNode(targetKey).name || targetKey;
+  _metaGraphStatus(direct
+    ? `→ ${nm} 로 카메라 이동 (더블클릭 = 상세 패널 전환).`
+    : `→ ${nm} 소속 테이블로 카메라 이동 · 선택됨 (더블클릭 = 펼쳐 상세 전환).`);
 }
 // graphux7(#2): 관계 행 클릭 라우팅 — 단일=카메라 이동만, 더블=상세 전환(+대상을 화면에 가져오기).
 //   짧은 타이머(260ms)로 단일/더블 구분: 더블클릭이면 예약된 단일(카메라) 취소 후 전환만 실행.
@@ -7284,32 +7326,9 @@ function _metaGraphBindTraceRows(el) {
   });
 }
 
-// graph-reltrace ②③: 노드(테이블이면 자기 컬럼 포함)에 닿는 REFERENCES 관계를 추적 행 HTML 로.
-//   edges 미지정 시 모델(_metaGraph.edges)에서 수집(AI 박스용). broken 제외. 반환: {html, count}.
-function _metaGraphRelTraceRowsHTML(nodeKey, edges) {
-  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const nmOf = (k) => { const n = _metaGraph.nodes.get(k); return (n && (n.fqn || n.name)) || String(k).split(".").pop(); };
-  const isSelf = (k) => k === nodeKey || _metaColParent(k, (_metaGraph.nodes.get(k) || {}).fqn) === nodeKey;
-  const src = edges || Array.from(_metaGraph.edges.values());
-  const seen = new Set();
-  const rows = [];
-  src.forEach((e) => {
-    if (!e || e.type !== "REFERENCES" || e.status === "broken") return;
-    const sSelf = isSelf(e.source), tSelf = isSelf(e.target);
-    if (!sSelf && !tSelf) return;      // self 무관 엣지 제외
-    const other = sSelf ? e.target : e.source;
-    if (!other || seen.has(other)) return;
-    seen.add(other);
-    const arrow = sSelf ? "→" : "←";
-    rows.push(
-      `<li class="amgr-row amgr-trace" data-trace="${esc(other)}" role="button" tabindex="0" ` +
-      `title="클릭 = 카메라 이동 · 더블클릭 = 상세 전환(대상 테이블·컬럼 추적)">` +
-      `<div class="amgr-main"><span class="amgr-arrow">${arrow}</span> <code>${esc(nmOf(other))}</code>` +
-      `${_metaEdgeTrustBadge(e)} <span class="amgr-tracehint">🔎 추적</span></div></li>`
-    );
-  });
-  return { html: rows.join(""), count: rows.length };
-}
+// reldedup(graph-detail): _metaGraphRelTraceRowsHTML 제거 — 유일 소비처였던 AI 박스 '연결 관계 추적'
+//   flat 목록이 상단 컬럼 섹션과 중복이라 삭제되면서 이 헬퍼도 orphan 이 됐다. 컬럼별·방향별 추적 행은
+//   _metaGraphRenderDetail 의 relRow/dirGroup 이 담당한다(더 풍부: 방향 그룹·의미 툴팁).
 
 // 테이블 단일 클릭 = **자신의 컬럼 인라인 펼침(펼침 전용)**. 이미 펼쳐졌으면 no-op(버그① — 클릭으론 안 접힘).
 //   접힘: "−" 컨트롤(_metaGraphCollapse). 그래프 컬럼(HAS_COLUMN) 없으면 information_schema 즉석조회(introspect).
@@ -7835,11 +7854,11 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   }
 
   // graph-reltrace(review MAJOR): 관계 행 data-trace 속성값(노드 키)에 쓰이므로 따옴표까지 이스케이프
-  //   (DB 식별자에 인용부호 가능 — 속성 탈출 방어. sibling _metaGraphRelTraceRowsHTML 와 parity).
+  //   (DB 식별자에 인용부호 가능 — 속성 탈출 방어).
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const parts = [];
   parts.push(`<div class="admin-meta-graph-card">`);
-  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button></div>`);
+  parts.push(`<div class="admin-meta-graph-card-head"><span class="admin-meta-graph-badge" style="background:${_META_GRAPH_COLOR[self.label] || "#5c6773"}">${esc(self.label || "")}</span><strong>${esc(self.name || self.fqn || self.key)}</strong>${relPct != null ? ` <span class="admin-meta-graph-relbadge" title="검색어 유사도(pg_trgm)">유사도 ${relPct}%</span>` : ""} <button type="button" class="amgr-link" id="metaGraphRelBtn" title="이 노드의 관계를 방향·신뢰도·근거별로 자세히 봅니다 (노드 우클릭 메뉴에서도 열림)">🔗 관계 상세</button> <button type="button" class="amgr-link" id="metaGraphFocusSelBtn" style="margin-left:0" title="선택한 이 노드로 그래프 카메라를 이동합니다(구조·선택 유지, 팬만).">🎯 이 노드로 이동</button></div>`);
   if (self.fqn) parts.push(`<div class="admin-meta-graph-fqn">${esc(self.fqn)}</div>`);
   if (self.description) parts.push(`<p class="admin-meta-graph-desc">${esc(self.description)}</p>`);
   else parts.push(`<p class="admin-meta-graph-desc admin-meta-graph-muted">(설명 없음 — 해당 서브탭에서 추가)</p>`);
@@ -7976,7 +7995,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     const rtWrites = routineUses.filter((e) => e.relation_type === "write");
     const rtReads = routineUses.filter((e) => e.relation_type !== "write");
     parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length}) <span class="admin-meta-graph-muted">· 읽기 ${rtReads.length} · 쓰기 ${rtWrites.length}</span></h4>`);
-    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다. 행 클릭 = 대상 상세.</p>`);
+    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다. 행 클릭 = 대상 상세 + 카메라 이동.</p>`);
     parts.push(rtGroup(rtReads, "읽기"));
     parts.push(rtGroup(rtWrites, "쓰기"));
     parts.push(`</div>`);
@@ -7997,11 +8016,33 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   el.innerHTML = parts.join("");
   // 버튼 바인딩(+hover 지침 popover) + 기존 분석 결과가 있으면 즉시 로드.
   _metaGraphBindAiPopover(self.key, selfScopeKey);
+  // graph-focus-selected: 상세 패널의 선택 노드로 카메라만 팬한다(그래프 구조·선택 상태 불변 —
+  //   _metaGraphPanToRelation 패턴 재사용). 렌더 안 된 노드(접힌 스키마 등)면 안내만 하고 팬 skip.
+  const focusSelBtn = document.getElementById("metaGraphFocusSelBtn");
+  if (focusSelBtn) focusSelBtn.addEventListener("click", () => {
+    const key = self.key;
+    if (!_metaGraph.graph || !key) return;
+    const rel = _metaRenderedIdFor(key);   // 렌더 노드, 접힌 스키마면 카드(SC:)
+    if (!rel) { _metaGraphStatus("이 노드가 현재 화면에 없습니다 — 더블클릭하면 펼쳐 상세로 전환합니다."); return; }
+    const seq = _metaGraph._opSeq;
+    _metaGraphAnimateFocus(key, seq);       // key→렌더 요소 내부 해소 후 카메라 팬(+판독 줌 클램프)
+    const nm = (_metaGraph.nodes.get(key) || {}).name || self.name || key;
+    _metaGraphStatus(`→ ${nm} 로 카메라 이동.`);
+  });
   const relBtn = document.getElementById("metaGraphRelBtn");
   if (relBtn) relBtn.addEventListener("click", () => _metaGraphShowRelations(self.key));
   // graph-funcproc: 사용 테이블/사용 루틴 행 클릭 → 대상 상세로 이동.
+  // graph-rtuse-camera(사용자 요구): 클릭 시 상세 전환에 더해 **카메라도 대상 노드로 이동**한다
+  //   (REFERENCES 관계 행의 _metaGraphPanToRelation 재사용). 대상이 렌더돼 있으면 그 노드로 팬+선택,
+  //   접힌 스키마 등 미렌더면 팬 없이 안내만(graceful). pan 을 먼저(동기 카메라·선택) 호출하고 상세
+  //   전환(async)을 이어 호출 — 상세 재렌더가 이 버튼을 교체하기 전에 카메라 이동이 예약된다.
   el.querySelectorAll("[data-rtuse]").forEach((btn) => {
-    btn.addEventListener("click", () => { const k = btn.getAttribute("data-rtuse"); if (k) _metaGraphShowDetail(k); });
+    btn.addEventListener("click", () => {
+      const k = btn.getAttribute("data-rtuse");
+      if (!k) return;
+      _metaGraphPanToRelation(k);   // + 카메라 이동(신규)
+      _metaGraphShowDetail(k);      // 상세 패널 전환(기존)
+    });
   });
   _metaGraphBindTraceRows(el);   // graph-reltrace ②: 관계 행 클릭 → 대상 추적
   // reldetail-colexpand ①: 컬럼 아코디언 토글 — 클릭 시 그 컬럼의 관계 펼침/접힘.
@@ -8760,17 +8801,13 @@ async function _metaGraphLoadNodeAnalysis(key) {
     if (a.relationships) rows.push(`<p><strong>관계</strong> — ${esc(a.relationships)}</p>`);
     if (a.usage) rows.push(`<p><strong>활용</strong> — ${esc(a.usage)}</p>`);
     if (a.caveats) rows.push(`<p class="admin-meta-graph-muted"><strong>주의</strong> — ${esc(a.caveats)}</p>`);
-    // graph-reltrace ③: AI 능동 분석은 REFERENCES 를 따라 이웃을 재귀 분석한다(백엔드 node_analysis).
-    //   그 분석이 따라간 **구조화된 관계**를 추적 가능한 행으로 노출 — LLM prose(위)는 서술이라
-    //   클릭 대상이 없으므로, 분석 결과에서도 대상 테이블·컬럼을 직접 추적하게 한다(사용자 요청 ③).
-    const trace = _metaGraphRelTraceRowsHTML(key, null);
-    if (trace.count) {
-      rows.push(`<div class="admin-meta-graph-ai-rels"><strong>연결 관계 추적 (${trace.count})</strong>` +
-        `<ul class="amgr-list">${trace.html}</ul></div>`);
-    }
+    // reldedup(graph-detail): 'AI 능동 분석' 박스의 '연결 관계 추적' flat 목록을 제거했다.
+    //   그 목록은 상단 '컬럼 > 참조함/참조받음' 섹션(_metaGraphRenderDetail)과 **동일한 모델
+    //   REFERENCES 를 동일한 추적 행·신뢰 배지·클릭 동작**으로 재렌더해 역할·작동이 완전히 중복됐다
+    //   (사용자 확인). 추적 가능한 관계는 컬럼별·방향별로 더 풍부한 상단 섹션에 일원화하고, AI 박스는
+    //   고유 가치인 역할 칩 + prose(요약·관계·활용·주의)만 유지한다.
     // graph-funcproc(REQ ④): '↻ 재분석' 버튼 제거 — 섹션 헤더의 '✨ 능동 분석' 재실행으로 충분(UX 중복).
     box.innerHTML = rows.join("") || '<span class="admin-meta-graph-muted">분석 결과 없음.</span>';
-    _metaGraphBindTraceRows(box);   // graph-reltrace ③: AI 결과의 관계 행도 추적
   } else if (res.status === "pending" || res.status === "running") {
     box.innerHTML = '<span class="admin-meta-graph-muted">분석 진행 중(백그라운드)… 진행 현황은 위 진행 패널에서 확인하세요.</span>';
     // graphux5 fix(세션 독립): 이 노드가 (다른 탭/세션·새로고침으로) 활성 폴이 없는 진행 중 run 에 속하면

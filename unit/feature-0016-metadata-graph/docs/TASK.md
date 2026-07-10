@@ -2100,6 +2100,63 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   읽기/쓰기 소그룹으로 나뉘어(개수 헤더 포함) 보이고, 행 클릭 시 대상 상세 이동이 정상. 자산 curl
   (`?v=20260710-graph-rw-group`) + 육안 게이트(TEST §68). 헤드리스 세션은 실 Windows 화면 미대체(육안은 배포 후).
 
+## §69 graph-reldedup — 상세 패널 관계 중복 병합: AI 박스 '연결 관계 추적' 제거 (2026-07-10, 사용자 요청 · entry persona dispatch)
+사용자: `그래프 뷰 > 상세` 에서 관계 항목 출력이 **역할·작동 겹침** → 확인 후 병합.
+확인: 상세 패널의 두 인라인 섹션이 같은 노드의 REFERENCES 를 중복 렌더 — ①`컬럼 > 참조함/참조받음`(컬럼별·방향별·의미 툴팁) ②`AI 능동 분석 > 연결 관계 추적`(flat, `_metaGraphRelTraceRowsHTML(key,null)` = 모델 전체 REFERENCES 재나열). ②는 ①과 동일 데이터·추적 행·신뢰 배지·클릭 동작 → 순수 중복.
+- [x] T69.1 ②(AI 박스 flat 목록) 제거 — `_metaGraphLoadNodeAnalysis` 의 trace 블록 + no-op `_metaGraphBindTraceRows(box)` 삭제. AI 박스는 역할 칩 + prose(요약·관계·활용·주의) 고유 가치만 유지.
+- [x] T69.2 orphan 정리 — 유일 소비처가 사라진 `_metaGraphRelTraceRowsHTML` 함수 삭제·stale 주석(sibling parity) 정정·dead CSS `.admin-meta-graph-ai-rels` 제거. (`_metaGraphBindTraceRows` 는 컬럼 섹션이 계속 사용 → 유지)
+- [x] T69.3 병합 방향 = ①로 일원화(AskUserQuestion 2026-07-10, 사용자 승인). 우클릭 '관계 상세' 팝업(`_metaGraphShowRelations`)은 별도 on-demand 모달로 인라인 중복 아님 → 유지.
+- [x] T69.4 검증: `node --check` PASS. cache-buster admin.js/styles.css bump. diff 13삽입/40삭제·3파일.
+- [x] T69.5 win-browser 실 Windows Chrome POST-DEPLOY 검증(배포 5e235953): 서빙 자산 실측 + 런타임 assertion PASS — `_metaGraphRelTraceRowsHTML` 런타임 undefined(제거)·`_metaGraphRenderDetail`/`_metaGraphBindTraceRows`/`_metaGraphLoadNodeAnalysis` function(보존)·`.admin-meta-graph-ai-rels` DOM 0·버스터 20260710-reldedup·pageerror 0. 중복 섹션 #2 구조적 부재 실증(feature-0003 TEST §69 POST-DEPLOY). 완전 대화형 육안(AI 분석 트리거 시점)은 인증 세션+LLM run 필요로 사용자 최종 육안 권장.
+## §70 graph-focus-selected — 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (2026-07-10, 사용자 요청)
+- [x] T70.0 진단: 노드 단일클릭이 상세 패널만 갱신하고 카메라 미이동(`_metaGraphShowDetail` → focus/pan 없음) → 큰 그래프에서 선택 노드 재탐색 어려운 빈틈. 카메라-전용 팬 기계장치(`_metaGraphAnimateFocus`, 래퍼 선례 `_metaGraphPanToRelation`)는 이미 완비.
+- [x] T70.1 구현: 상세 카드 헤더(`_metaGraphRenderDetail`)에 `🎯 이 노드로 이동`(`metaGraphFocusSelBtn`) 추가 + 렌더 직후 바인딩 → 클릭 시 `_metaGraphAnimateFocus(self.key, _metaGraph._opSeq)`(구조·선택 불변, 뷰포트 중앙 팬 + 판독 줌 클램프). 미렌더 노드는 `_metaRenderedIdFor` null 가드로 안내만.
+- [x] T70.2 UI 파손 방지: `.admin-meta-graph-card-head`(flex,gap:8px)에 `.amgr-link`(margin-left:auto) 2개 → auto-마진 분할을 신규 버튼 `style="margin-left:0"`로 회피(기존 관계 상세만 우측 정렬, 신규는 gap:8px로 그 옆 그룹). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
+- [x] T70.3 검증: `node --check admin.js` PASS · diff 적대 리뷰(REV-20260710T063659). frontend-only·마이그 0·Minor(§12.3).
+- [ ] T70.4 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 클릭 → 상세 패널에 버튼 노출 → 클릭 시 선택 노드가 뷰포트 중앙으로 팬 + 상태줄 "→ <노드명> 로 카메라 이동" + 헤더 레이아웃 무붕괴 + pageerror 0. TEST §3 append.
+
+## §71 graph-rtuse-camera — 상세 패널 사용(참조)관계 행 클릭 시 대상 노드로 카메라 이동 (2026-07-10, 사용자 요청)
+사용자 요청: "그래프 뷰 상세에 카메라 이동 버튼 추가". 상세 패널의 "사용 테이블/사용 함수·프로시저" 행(`[data-rtuse]` 버튼)
+클릭이 상세 패널만 전환하고 카메라는 그대로여서 큰 그래프에서 대상 노드를 화면에서 다시 찾기 어려웠음. §70(선택 노드 헤더
+버튼)과 별개로 **관계 행 대상**을 카메라로 가져온다. 기존 카메라-전용 팬 래퍼 `_metaGraphPanToRelation`(graphux7#2) 재사용.
+- [x] T71.0 진단: `[data-rtuse]` 클릭 핸들러(`_metaGraphRenderDetail`)가 `_metaGraphShowDetail(k)`(상세 전환)만 호출 →
+  카메라 미이동. 관계 추적 행은 이미 `_metaGraphPanToRelation`(동기 팬+선택+상태, `_metaRenderedIdFor` null 가드) 보유.
+- [x] T71.1 구현(frontend-only, admin.js): `[data-rtuse]` 클릭 시 `_metaGraphPanToRelation(k)`(동기 카메라+선택) 먼저,
+  이어 `_metaGraphShowDetail(k)`(async 상세 전환) 호출. 미렌더 대상은 pan 이 null 가드로 안내만·팬 skip, 상세 전환은 정상.
+  섹션 안내문 "행 클릭 = 대상 상세." → "행 클릭 = 대상 상세 + 카메라 이동." 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`.
+- [x] T71.2 검증: `node --check admin.js` PASS · inline 적대 diff 리뷰(REV-20260710T163512): 순서(동기 pan→async detail,
+  ShowDetail 동기 상태 덮어쓰기)·미렌더 가드·selection idempotent(양쪽 동일 key)·캐시버스터(js만, CSS 미변경) PASS.
+  BLOCKING/MAJOR 0, NIT1(pan 힌트 비가시 stale) 수용. frontend-only·마이그 0·Minor(§12.3).
+- [ ] T71.3 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 상세에서 사용 테이블/루틴 행 클릭 → 대상 노드로 카메라
+  팬 + 선택 강조 + 상세 패널 대상 전환 동시, 미렌더 대상은 안내만·상세는 전환, pageerror 0. TEST §71 append.
+## §72 reltrace-colnav — 상세 패널 관계행 단일클릭 시 미렌더 컬럼 카메라 이동 (2026-07-10, 사용자 리포트)
+
+- **결함(사용자 리포트)**: `그래프 뷰 > 상세`에서 관계 행(컬럼)을 **단일클릭**했을 때, 대상 컬럼의 소속
+  테이블이 아직 펼쳐지지 않아(컬럼 미렌더) 카메라가 이동하지 않고 **"대상 노드가 현재 화면에 없습니다"**
+  메시지만 출력 → 사용자가 오류로 인지. (더블클릭은 정상 이동.) 근본: `_metaGraphPanToRelation` 이
+  `_metaRenderedIdFor(targetKey)`(자기 자신 또는 접힌 스키마 카드만 해소)로 null 이면 즉시 안내-return.
+- **사용자 요구/결정(2026-07-10 AskUserQuestion)**: ① 단일클릭도 대상 **테이블**을 카메라가 바라보게 하되
+  **펼치진 않은 상태**에서 진행 ② **선택 상태는 컬럼**으로 두되 **하이라이트는 상위 종속 객체(소속 테이블)가
+  선택된 것처럼 구성**(하이브리드) ③ 더블클릭 시 테이블 펼쳐 해당 컬럼 선택(기존 `_metaGraphTraceRelation` 충족).
+- [x] T72.1 `_metaRenderedAncestorFor(key)` 신규 — 미렌더 대상의 **화면상 가장 가까운 조상** 렌더 id 해소:
+  컬럼→소속 테이블(`_metaColParent`)→접힌 스키마 카드(`_metaCatParent`→`SC:`) 순. `_metaG6Build` 의
+  `renderEndpoint` 승격 규칙과 동형이되 실제 렌더 집합(`renderedIds`) 기준. 조상도 미렌더(§67 뷰포트 컬링 포함)면 null.
+- [x] T72.2 `_metaFocusKeyFor(selKey)` 신규(하이라이트 기준 키 해소) — 선택 키가 모델에 있으면 그대로, 모델 밖
+  컬럼이면 **소속 테이블이 모델의 Table 노드일 때만** 그 테이블로 폴백(부모가 Table 아니거나 없으면 null →
+  §57.5 F2 'prune 된 선택 정리=null' 보존). `_metaGraphSetSelected`(즉시) + `_metaG6Build`(매 빌드 재산출) 양쪽이
+  공유 → 두 경로 하이라이트 일치. 이로써 **선택=컬럼**이어도 **하이라이트=소속 테이블 중심**(사용자 결정 구현).
+- [x] T72.3 `_metaGraphPanToRelation` 재작성: `focusEl = direct || _metaRenderedAncestorFor(targetKey)` 로 카메라 팬
+  대상 승격. focusEl 없을 때만 안내 메시지(오류 톤 제거). 선택은 `(renderedSelf || !direct)` 시 대상 컬럼 키로
+  `_metaGraphSetSelected`. 접힌 스키마 카드로만 승격된 경우(대상=스키마)는 기존대로 선택 없이 팬만(기존 동작 보존).
+- [x] T72.4 검증: 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5 + 키파싱 2 + 선택게이트 G1~G4 8 + 하이라이트
+  폴딩 F1 4 + 직접렌더). 회귀 0(edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·
+  `node --check` PASS. §18.8 적대 리뷰 REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES] — stale base(§67/§68 병렬 머지)
+  적발 → **현재 main rebase**, MINOR#3(미렌더 컬럼 선택이 하이라이트 소실) → **하이브리드(_metaFocusKeyFor 폴딩)** 반영,
+  테스트에 선택 게이트/폴딩 단언 추가. 캐시버스터 `admin.js?v=20260710-graph-colnav`.
+- [ ] T72.5 POST-DEPLOY 사용자 육안(PB-0008 실 Windows): 상세 패널에서 **미펼침 테이블의 컬럼 관계행 단일클릭**
+  → (a) "…화면에 없습니다" 오류 메시지 없음 (b) 카메라가 소속 테이블로 부드럽게 이동(테이블 **펼치지 않음**)
+  (c) 소속 테이블이 하이라이트(주변 dim)로 강조 (d) 상세 패널 유지 → **더블클릭** → 테이블 펼침 + 해당 컬럼 선택.
+  자산 curl(`?v=20260710-graph-colnav`) + 육안 게이트(TEST §72). 카메라 팬/하이라이트 최종 확증은 라이브만(WSL headless 미대체).
 ## §69 node-analysis-caveats — AI 능동 분석 "주의" 자기-불평 제거 + 루틴 payload 보강 + 시드 커버리지 (2026-07-10, 사용자 요청)
 사용자: "그래프 뷰 > mssql-qa-idc/cc_data_main 능동 분석 결과, 대부분 노드의 '주의' 항목이 '불명확하다'는 내용.
 실제 분석 내용을 (샘플 아닌) 전수 파악하고 근본 단위에서 개선." + "DB 단위 분석이 중단되어 미분석 노드가 남는 이슈도 검토."

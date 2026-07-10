@@ -1377,6 +1377,39 @@ source_of_truth: true
 - CONFIRMED(NIT 1, **수정**): CATH 헤더에 labelMaxWidth 부재 → '· M 테이블' 추가로 좁은 단일-DB 밴드에서 라벨 넘침 가능(한글 실폭>추정). **수정**: labelMaxWidth=hdW-8 로 ellipsis 흡수.
 - 검증: 수정 후 headless viewport-cull 6 + agglod 8 + 회귀 = **150 PASS** · node --check. win-browser 육안 TEST §67.
 
+## REV-20260710T210000-ai-claude-corp-feature-0016-reldedup [SUBAGENT: PASS] — §69 상세 패널 관계 중복 병합(AI 박스 '연결 관계 추적' 제거) diff 적대 리뷰
+- 대상: CHG-20260710T210000-reldedup (admin.js `_metaGraphLoadNodeAnalysis` 의 '연결 관계 추적' flat 블록+no-op `_metaGraphBindTraceRows(box)` 제거·orphan `_metaGraphRelTraceRowsHTML` 삭제·esc 주석 정정 + styles.css dead `.admin-meta-graph-ai-rels` 제거 + admin.html 버스터 js/css).
+- 방법: §18.8 적대 리뷰(general-purpose, 결함 적발 목적). 6개 결함 가설(dangling ref·behavior loss·syntax/dead code·CSS 안전·버스터 정합·AI 박스 잔여 렌더)을 코드 실측(file:line)·능동 반증으로 검증.
+- 판정: **PASS** — BLOCKING/MAJOR/MINOR 0, 수정 불필요. 핵심: (H1) 제거 후 `_metaGraphRelTraceRowsHTML` 라이브 호출 0(주석/docs 만), `_metaGraphBindTraceRows` 는 컬럼 섹션(admin.js:7965)이 계속 사용 — 오제거 아님. (H2) **behavior loss 없음** — #1(컬럼 섹션)은 #2 의 strict superset. 게이트 `if(columns.length||selfIsColumn)` 가 false 인 경우(Routine·컬럼無 테이블)는 REFERENCES 끝점이 항상 Column 이라 #2 도 원래 count 0 → "#1 미렌더인데 #2 관계 표시" 시나리오 부재. (H3) `node --check` PASS·제거 함수 내부 심볼(`_metaEdgeTrustBadge`·`_metaColParent` 등) 타처 사용 유지. (H4) `.admin-meta-graph-ai-rels` 진짜 dead·형제 클래스(`.amgr-tracehint`·`.amgr-row.amgr-trace`) 컬럼 섹션이 계속 생산·미훼손. (H5) admin.html js+css 버스터 양쪽 bump. (H6) AI 박스 역할 칩+prose+빈-rows 폴백 정상.
+- 비차단 관찰 2건(수정 불요·기록): ① index.html 의 독립 `styles.css` 버스터(20260706)는 stale 하나 무해 — 제거된 규칙이 admin-graph 전용이라 task/chat 화면 무영향. ② **기존** #1 의 `columns.slice(0,80)` 아코디언 cap → >80컬럼 분석 테이블의 81번째+ 컬럼 FK 는 #1 인라인 추적행 부재(요약 배지엔 계상). #2 는 무제한이었으나 flat·저정보였고, 해당 관계는 유지된 '🔗 관계 상세' 모달(`_metaGraphShowRelations`)로 도달 가능 → 정보 손실 아님. 본 diff 가 만든 결함 아닌 pre-existing #1 한계(트레이드오프로 수용).
+- 검증: headless edge 71·collod 20·agglod 8·category 26·vpack 19·viewport-cull 6 = **150 PASS** 회귀 0 · `node --check` PASS. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69).
+
+## REV-20260710T063659-ai-claude-feature-0016-graph-focus-selected [SUBAGENT: PASS-WITH-FIXES] — 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 diff 적대 리뷰
+- 적대 diff 리뷰(레이아웃 파손 최우선 + 핸들러 정확성 + 회귀 + node --check), styles.css/admin.js/admin.html 코드 실측.
+- **BLOCKING/MAJOR 0**. 핸들러 PASS: (1) `self.key` 3개 렌더 호출부(showDetail/expand/center) 모두 보장, empty 카드엔 헤더 없음, 핸들러 `!graph||!key` 재방어. (2) `_metaRenderedIdFor` null 가드가 접힌 스키마/미렌더에서 정확 → 안내만 후 return(`_metaGraphPanToRelation` 동일 가드). (3) `seq=_metaGraph._opSeq`(bump 없이 읽기 → 후속 op 가 팬 폐기) 기존 팬 래퍼와 바이트 동일 패턴. (4) id `metaGraphFocusSelBtn` 충돌 0. 회귀 PASS: 기존 `metaGraphRelBtn` 바인딩·동작 불변, `el.innerHTML` 교체가 구 리스너 GC → 리스너 누수 0.
+- CONFIRMED(MINOR 1, **수정**): 카드 헤더 `.admin-meta-graph-card-head` 가 `flex-wrap` 미지정(nowrap) + `.amgr-link` 는 `flex:none;white-space:nowrap`. 버튼 2개가 되며 좁은 패널 폭(최소 240px)·유사도 배지 동시 존재 시 헤더가 가로 초과 → 페이지 구조는 detail 패널 overflow-x 로 **격리(세로 폭발·겹침·z-index 파손 없음)**되나, 맨 오른쪽 신규 버튼이 가로 스크롤 없이 안 보일 수 있음(diff 이전 1버튼은 최소폭에 맞았음). **수정**: `.admin-meta-graph-card-head { flex-wrap: wrap; }` 부여(sibling `.cov-db-rule-card-head` 동일 패턴) → 폭 부족 시 버튼이 다음 줄로 래핑, 가림·가로스크롤 해소. styles.css 캐시버스터 동반 bump.
+- NIT(정보): `strong`(노드명) min-width:0/ellipsis 미처리는 기존 성질(diff 이전부터) — 이번 수정 범위 밖, flex-wrap 로 실질 완화. 
+- 검증: 수정 후 `node --check admin.js` PASS. win-browser 시각검증은 POST-DEPLOY(정적 baked, TEST §3 / TASK T70.4).
+
+## REV-20260710T223000-ai-claude-corp-feature-0016-reldedup-pd [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §69 완수 기록
+- 대상: feature-0003 TEST §69 POST-DEPLOY append + feature-0016 TASK T69.5 완료 + REPORT POST-DEPLOY 절. 코드/자산 변경 0(순수 문서).
+- 근거: §69 병합(PR #659, main 5e235953)의 실 Windows Chrome POST-DEPLOY 실측(서빙 자산 curl + 런타임 assertion `typeof _metaGraphRelTraceRowsHTML==="undefined"`·`.admin-meta-graph-ai-rels` DOM 0·pageerror 0) 결과를 정본에 기록. 코드 diff 부재 → §18.8 적대 패널 불요(SKIPPED). 배포는 §69 cycle 에서 이미 완료(무중단 롤링·soak PASS).
+
+## REV-20260710T163512-ai-claude-feature-0016-graph-rtuse-camera [SKIPPED: Minor frontend-only 2줄 핸들러 — shipped _metaGraphPanToRelation(graphux7#2) 재사용·신규 기계장치 0; §18.8 subagent 패널 사용자 중단 → inline 적대 검토 수행] — 상세 패널 사용관계 행 클릭 카메라 이동
+- inline 적대 diff 리뷰(순서/race·미렌더 가드·selection·회귀·캐시버스터), admin.js `_metaGraphPanToRelation`(L7249)·`_metaGraphShowDetail`(L7197)·`[data-rtuse]` 핸들러(L7997) 실측.
+- **BLOCKING/MAJOR 0**. PASS: (1) 순서 — pan 은 완전 동기(팬+선택+상태), 반환 후 ShowDetail(async)이 첫 await 전 동기로 `_metaGraphStatus("상세 조회 중…")` 세팅 → 캔버스 카메라 애니메이션은 상세 패널 재렌더와 독립, 팬 취소·race 없음. (2) 미렌더 대상 — pan 이 `_metaRenderedIdFor` null 가드로 안내 후 return(무throw), ShowDetail 은 key 로 fetch·전환 정상 → 기존 거동 보존. (3) selection — pan·ShowDetail 양쪽 동일 key `k` 로 `_metaGraphSetSelected` → idempotent, 대상 불일치 없음. (4) 캐시버스터 — admin.js 만 bump, CSS 미변경이라 styles.css 미bump 정확. (5) 회귀 — 상세 전환은 pan 성패 무관 항상 실행(순수 추가).
+- NIT(수용): pan 의 transient 상태힌트 "(더블클릭 = 상세 패널 전환)" 가 rtuse 경로선 부정확(단일 클릭이 이미 전환)하나 ShowDetail 의 동기 "상세 조회 중…" 이 즉시 덮어써 **화면 미노출** → user-facing 회귀 0. 2줄 변경에 pan param 추가는 과설계 → 미수정.
+- 검증: `node --check admin.js` PASS. win-browser 시각검증 POST-DEPLOY(정적 baked, feature-0003 TEST §71 / TASK T71.3).
+## REV-20260710T065500-ai-claude-corp-feature-0016-graph-colnav [SUBAGENT: PASS-WITH-FIXES] — §72 상세 패널 관계행 단일클릭 미렌더 컬럼 카메라 이동 diff 적대 리뷰
+- 대상: CHG-20260710T065500-graph-colnav (admin.js `_metaRenderedAncestorFor`·`_metaFocusKeyFor` 신설 + `_metaGraphPanToRelation` 재작성 + `_metaGraphSetSelected`/`_metaG6Build` focusAdj 산출 중앙화 + admin.html 버스터 + test_graph_colnav.js 신설).
+- 방법: §18.8 적대 리뷰(general-purpose, 통과 아닌 결함 적발). BLOCKING/MAJOR/MINOR 가설을 코드 실측(파일:라인)·per-frame 재해소·`_opSeq` 레이스·엣지케이스로 반증 시도 + 테스트 타당성 평가.
+- 판정: **PASS-WITH-FIXES** — BLOCKING 0. 크래시/dim-lock 없음(모든 selected/nodes 접근 `nodes.has` 가드). CONFIRMED PASS: `animateFocus(SC:…)` 재해소 안전(SC:SC: 이중접두 없음), `_opSeq` 레이스 없음(_metaG6Apply 는 seq 미증가), 기존 경로 보존(직접렌더 컬럼/테이블·접힌 스키마 카드 pan-only·오류 문자열 제거·260ms 단/더블 라우팅), 엣지케이스(no-`:`·2세그·self-FK·displayNode 폴백) 모두 graceful.
+- 적발/반영:
+  - **MAJOR(stale base) → 수정**: 리뷰 중 §67 catband-scale·§68 graph-rw-group 이 main 병렬 머지되어 base(00871661) 4커밋 stale. `git diff main` 이 §67 revert 로 오독될 위험 + admin.html:1043 버스터 3-way 충돌 확정. **현재 main(c0a3d70f)으로 rebase** 후 전량 재적용·재검증. §67 테이블 뷰포트 컬링과 정합 확인(화면 밖 대상 테이블은 SC:카드/안내로 graceful degrade — `_metaRenderedAncestorFor` 가 renderedIds 기준이라 구조적 정합).
+  - **MINOR#3(미렌더 컬럼 선택 시 하이라이트 소실) → 수정**: 미펼침 컬럼은 사실상 항상 모델 밖이라 `_metaGraphSetSelected(column)`+`_metaG6Build` 재산출이 focusAdj=null → 전역 dim 해제·직전 하이라이트 소실·선택 링 없음. **사용자 결정(AskUserQuestion): 선택=컬럼·하이라이트=상위 종속 객체**. `_metaFocusKeyFor` 로 focusAdj 를 소속 테이블(모델의 Table 노드일 때만)로 폴백 — 두 경로(즉시/빌드) 중앙화로 일치. §57.5 F2(prune 선택=null) 는 부모-Table 가드로 보존.
+  - **테스트 갭 → 보강**: 리뷰가 "선택 게이트(renderedSelf||!direct)·폴딩이 순수 해소 테스트에서 미검증" 지적 → stub 기반 선택게이트(G1~G4)·실호출 하이라이트폴딩(F1) 단언 추가(22 PASS).
+- 검증: 최종 headless test_graph_colnav 22 + 회귀(edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6) = **172 PASS** · `node --check` OK.
+- 미결(정상): 실 G6 카메라 팬·canvas 하이라이트 육안은 그래프뷰 인증/라우팅 무인 도달 차단 → POST-DEPLOY 사용자 육안 게이트(TEST §72 T72.5, 배포 후 자산 curl+육안).
 
 ## REV-20260710T165030-ai-claude-feature-0016-nodeanalysis-caveats [SUBAGENT: PASS-WITH-FIXES] — §69/ADR-034 AI 능동 분석 "주의" 계약 재설계 + 루틴 payload + 시드 커버리지 diff 적대 리뷰
 - 대상: CHG-20260710T155200 (P1 `llm.py` NODE_ANALYSIS_PROMPT caveats 계약·analyze-from-visible·Input JSON returns/touches · P2 `node_analysis.py` _fetch_context routine_touches + 신규 `_fetch_routine_returns` + _build_payload touches/returns 투영 · P3 `shared/config.py` SCHEMA_CAP 200→1000·MAX 500→2000·RUN_BUDGET_MAX 2500→4000·BATCH 4→10).

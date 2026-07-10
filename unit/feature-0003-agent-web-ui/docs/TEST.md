@@ -2002,3 +2002,52 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **POST-DEPLOY 사용자 육안 검증(T68.3)**: Routine/Table 노드 상세에서 ① 사용 관계가 읽기/쓰기 소그룹으로 분리
   (각 헤더 개수) ② 섹션 헤더 `· 읽기 N · 쓰기 M` 합 = 총계 ③ 30건 초과 그룹 `… 외 N건` 노출 ④ 행 클릭 대상 상세 이동
   ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
+
+### Run (2026-07-10) — graph-reldedup: 상세 패널 관계 중복 병합 (AI 박스 '연결 관계 추적' 제거) (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §69) — **Environment: Windows-browser**
+- 정적/문법: `node --check admin.js` PASS. diff 13삽입/40삭제·3파일(admin.js/admin.html/styles.css). 잔여 참조 grep 0(제거된 `_metaGraphRelTraceRowsHTML`·`.admin-meta-graph-ai-rels` producer 소멸, `_metaGraphBindTraceRows` 는 컬럼 섹션이 계속 사용→유지).
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 재배포 선행 필요(§57·§65·§67 등 동일 패턴). **POST-DEPLOY PB-0008 라이브 append 예정** — 검증 항목: ① 테이블/컬럼 노드 상세에서 AI 능동 분석 완료(또는 기존 결과 로드) 시 AI 박스에 '연결 관계 추적' 목록 **미표시**(중복 제거 실증) ② AI 박스 prose(요약/관계/활용/주의)·역할 칩 정상 유지 ③ 상단 '컬럼 > 참조함/참조받음' 추적 행 클릭 → 대상 추적 정상 동작 ④ pageerror 0.
+- **Pass/Fail: pre-commit 정적·문법 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족(웹 자산 변경에 이번 cycle Windows-browser Run·POST-DEPLOY 계획·미수행 사유 기록).
+- **[POST-DEPLOY 갱신 2026-07-10] 라이브 PASS (Environment: Windows-browser, AI 직접 — 실 Windows Chrome/149 via bin/win-browser.py relay @ 172.26.144.1:9223)**: PR #659 머지 → main 5e235953 → `make deploy-web` 무중단 롤링(web-a/web-b 순차 recreate·90s soak PASS·마이그 0). `/healthz` git_commit=5e235953·mysql_ok·pg_ok. **서빙 자산 실측(curl, https://localhost/)**: admin.html→`admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup` 서빙 / 서빙 admin.js 내 실제 render producer `<strong>연결 관계 추적`=**0**(2건은 설명 주석)·`function _metaGraphRelTraceRowsHTML`=**0**(제거) / 서빙 styles.css 내 실제 규칙 `.admin-meta-graph-ai-rels {`=**0**(1건은 주석). **런타임 assertion(win-browser eval, https://localhost/admin, title 정상 로드)**: `typeof _metaGraphRelTraceRowsHTML==="undefined"`(제거 함수 런타임 완전 소멸 → AI 박스 '연결 관계 추적' 재생성 불가) · `typeof _metaGraphRenderDetail==="function"`·`typeof _metaGraphBindTraceRows==="function"`(컬럼 섹션 #1 추적 경로 보존)·`typeof _metaGraphLoadNodeAnalysis==="function"`(AI 박스 prose 렌더 보존) · `document.querySelectorAll(".admin-meta-graph-ai-rels").length===0` · DOM admin.js 버스터=20260710-reldedup · body 렌더 정상 · pageerror 0. 중복 섹션 #2 구조적 제거 확인. 스크린샷 scratchpad/reldedup-postdeploy.png. (완전 대화형 육안 — 그래프 탭 노드 선택 후 AI 능동 분석 트리거 시점 시각 확인 — 은 인증 세션+LLM run 필요로 사용자 최종 육안 권장이나, 제거 변경 특성상 런타임 assertion 이 구조적 부재를 결정적으로 실증.)
+### Run (2026-07-10) — graph-focus-selected: 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 MODIFY/REPORT graph-focus-selected) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증**: `node --check admin.js` PASS. 신규 버튼 핸들러는 기존 검증된 카메라-전용 팬 경로
+  `_metaGraphAnimateFocus`(§graphux7 `_metaGraphPanToRelation` 과 동일 패턴 — seq=`_metaGraph._opSeq`, `_metaRenderedIdFor` null 가드)를
+  재사용해 신규 그래프-모델 로직 0. diff 적대 리뷰(REV-20260710T063659) 별도.
+- **UI 파손 방지 실측**: 카드 헤더 `.admin-meta-graph-card-head`(flex, gap:8px)에 `.amgr-link`(margin-left:auto) 버튼 2개 →
+  auto-마진 2개 분할 파손을 신규 버튼 `style="margin-left:0"`로 회피(기존 `관계 상세`만 우측 정렬, 신규는 그 옆 gap:8px 그룹).
+  `flex:none; white-space:nowrap` 유지 → 버튼 미절단. 기존 `metaGraphRelBtn` 바인딩·동작 불변.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산이 web 이미지에 baked → 서빙 admin.js 에
+  변경 반영하려면 merge + `deploy-web` 재배포 선행(§65·§66·§67 동일). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
+- **POST-DEPLOY win-browser 육안 검증(예정)**: 그래프 로그인(https://localhost/admin, switchTab('graph')) → 스키마 펼침 →
+  노드 단일클릭 → 상세 패널 카드 헤더에 `🎯 이 노드로 이동` 노출 확인 → 클릭 → **선택 노드가 뷰포트 중앙으로 팬**
+  (그래프 구조·선택 강조 불변) + 상태줄 "→ <노드명> 로 카메라 이동" + pageerror 0. 헤더 레이아웃 무붕괴(버튼 2개 우측 그룹, 줄바꿈/절단 없음) 스크린샷.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(`metaGraphFocusSelBtn` 서빙) + win-browser 육안 PASS append.
+
+### Run (2026-07-10) — graph-rtuse-camera: 상세 패널 사용(참조)관계 행 클릭 시 대상 노드로 카메라 이동 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §71) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증**: `node --check admin.js` PASS. `[data-rtuse]` 클릭 핸들러가 기존 검증된 카메라-전용 팬 래퍼
+  `_metaGraphPanToRelation`(graphux7#2 — seq=`_metaGraph._opSeq`, `_metaRenderedIdFor` null 가드, 동기 팬+선택+상태)를 재사용해
+  신규 그래프-모델 로직 0. inline 적대 diff 리뷰(REV-20260710T163512): 순서(동기 pan→async detail)·미렌더 가드·selection idempotent PASS.
+- **거동 순서 실측**: pan(동기, 카메라+선택) 먼저 → `_metaGraphShowDetail(k)`(async, 첫 await 전 동기로 "상세 조회 중…" 상태 세팅)
+  → 캔버스 카메라 애니메이션은 상세 패널 재렌더와 독립, race 없음. 상세 전환은 pan 성패 무관 항상 실행(기존 거동 보존).
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산이 web 이미지에 baked → 서빙 admin.js 에
+  변경 반영하려면 merge + `deploy-web` 재배포 선행(§65·§66·§67·§70 동일). 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`.
+- **POST-DEPLOY win-browser 육안 검증(예정)**: 그래프 로그인(https://localhost/admin, switchTab('graph')) → 스키마 펼침 →
+  Routine/Table 노드 상세에서 "사용 테이블/사용 함수·프로시저" 행 클릭 → **대상 노드로 카메라 팬 + 선택 강조 + 상세 패널 대상 전환**
+  동시 발생 확인. 미렌더 대상(접힌 스키마/컬링) 행 클릭 → 상태줄 안내만·팬 skip·상세는 전환. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(`admin.js?v=20260710-graph-rtuse-camera` 서빙 + 핸들러 내 `_metaGraphPanToRelation(k)` 존재) + win-browser 육안 PASS append.
+### Run (2026-07-10) — reltrace-colnav: 상세 패널 관계행 단일클릭 시 미렌더 컬럼 카메라 이동 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §72) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증**: 신규 `test_graph_colnav.js` **22 PASS** — ① 조상 승격(`_metaRenderedAncestorFor`) 5케이스:
+  컬럼 직접렌더(T1)·컬럼 미렌더→소속 테이블(T2, 사용자 시나리오 핵심)·테이블도 미렌더→접힌 스키마 카드 SC:(T3)·
+  아무것도 미렌더→guard(T4)·테이블 승격(T5) ② 선택 게이트(G1~G4, stub 기반): 미렌더 컬럼→선택=컬럼·팬=테이블·오류無,
+  렌더 컬럼→선택·팬=컬럼, 스키마 카드 대상→선택 안 함·팬만, 미로드→안내(오류 톤 아님) ③ 하이라이트 폴딩(F1, 실호출):
+  미렌더 컬럼 선택 시 selected=컬럼 유지 + focusAdj 가 소속 테이블 인접으로 폴백(self=테이블·nodes=관계 상대).
+  회귀 0(edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·`node --check` PASS.
+- **§18.8 적대 리뷰 REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]**: stale base(§67/§68 병렬 머지) 적발 → 현재 main
+  rebase, MINOR#3(미렌더 컬럼 선택 하이라이트 소실) → 하이브리드(`_metaFocusKeyFor` 폴딩)로 해소, 테스트에 선택게이트·폴딩 단언 보강.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 web 이미지 baked → merge + `deploy-web`
+  재배포 선행(§57·§67·§68 동일 패턴) ② 실 카메라 팬·canvas 하이라이트는 G6 인스턴스(`_metaGraph.graph`) 의존이라 WSL
+  headless 미재현(승격/게이트/폴딩 로직만 격리검증), 그래프뷰 무인 도달 3중벽 차단 → **자산 curl(서빙 admin.js 에
+  `_metaRenderedAncestorFor`·`_metaFocusKeyFor` + `?v=20260710-graph-colnav`) + 사용자 육안**로 대체(visual_verification_scope=always).
+- **POST-DEPLOY 사용자 육안 검증(T72.5)**: `그래프 뷰 > 상세`에서 **아직 펼치지 않은 테이블의 컬럼 관계행 단일클릭**:
+  ① "대상 노드가 현재 화면에 없습니다" **오류 메시지 미노출**(사용자 불편 해소 실증) ② 카메라가 소속 테이블(또는 접힌
+  스키마 카드)로 부드럽게 이동(테이블 **펼치지 않음**) ③ 소속 테이블이 하이라이트(주변 dim)로 강조 ④ 상세 패널 유지 →
+  같은 행 **더블클릭** → 테이블 펼침 + 해당 컬럼 선택 ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.

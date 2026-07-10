@@ -1330,6 +1330,44 @@ source_of_truth: true
 - 근거: §65 배포 후 사용자 육안 피드백(집계=규모파악 어려움·줌인 perf 잔존, ADR-033). frontend-only.
 - 검증: headless 6+8+회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 육안(TEST §67). 버스터 `admin.js?v=20260710-catband-cull`.
 
+
+## CHG-20260710T210000-ai-claude-corp-feature-0016-reldedup — §69 상세 패널 관계 중복 병합 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(_metaGraphLoadNodeAnalysis: '연결 관계 추적' 블록+no-op bind 제거 · _metaGraphRelTraceRowsHTML 함수 삭제 · esc 주석 정정) + `styles.css`(dead `.admin-meta-graph-ai-rels` 제거) + `admin.html` 버스터(js+css).
+- 변경: 상세 패널의 두 인라인 관계 섹션(#1 컬럼>참조함/참조받음, #2 AI 박스 '연결 관계 추적') 중 **#2 제거 → #1 로 일원화**. AI 박스는 역할 칩+prose 고유 가치만 유지.
+- 근거: 사용자 요청("역할·작동 겹침 → 확인 후 병합") + 병합 방향 승인(AskUserQuestion 2026-07-10). #2 는 #1 과 동일 모델 REFERENCES 를 동일 동작으로 재렌더한 순수 중복. frontend-only·마이그 0·behavior: #2 제거 외 불변(우클릭 '관계 상세' 팝업 유지).
+- 검증: `node --check` PASS · diff 13삽입/40삭제. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69). 버스터 `admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup`.
+## CHG-20260710T063659-ai-claude-feature-0016-graph-focus-selected — 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(`_metaGraphRenderDetail` 상세 카드 헤더 마크업 + 렌더 직후 바인딩 블록) + `styles.css`(`.admin-meta-graph-card-head` `flex-wrap:wrap` — 리뷰 MINOR 반영) + `admin.html` 캐시버스터(admin.js·styles.css 2건).
+- 변경: 상세 패널 카드 헤더의 `🔗 관계 상세` 옆에 `🎯 이 노드로 이동`(`id=metaGraphFocusSelBtn`) 버튼 추가. 클릭 시 현재 상세 노드(`self.key`)로 `_metaGraphAnimateFocus(key, _metaGraph._opSeq)` 호출 → 그래프 구조·선택 상태 불변, 카메라만 뷰포트 중앙으로 부드럽게 팬(+판독 줌 클램프). 미렌더 노드(접힌 스키마 등)면 `_metaRenderedIdFor` null 가드로 안내만 하고 팬 skip.
+- 근거: 노드 단일클릭은 상세 패널만 갱신하고 카메라는 이동하지 않아(`_metaGraphShowDetail`), 큰 그래프에서 선택 노드를 화면에서 다시 찾기 어려웠음(빈틈). 기존 카메라-전용 팬 경로(`_metaGraphPanToRelation` §graphux7#2)를 재사용해 신규 기계장치 0. frontend-only·마이그 0·behavior 순수 추가(기존 관계 상세 버튼·동작 불변). 위험도 Minor(§12.3).
+- UI 안전: 헤더 `.admin-meta-graph-card-head`(flex, gap:8px)에 `.amgr-link`(margin-left:auto) 버튼이 2개가 되어 auto 마진 2개가 여유공간을 분할하는 것을 방지 — 기존 `관계 상세`를 앞에 두어 그것만 우측 정렬시키고 신규 버튼은 `style="margin-left:0"`로 그 옆에 gap:8px 그룹화. **추가(리뷰 MINOR 반영)**: `.admin-meta-graph-card-head` 에 `flex-wrap:wrap` 부여(sibling `.cov-db-rule-card-head` 와 동일 패턴) — 좁은 패널 폭 + 유사도 배지 동시 존재 시 헤더가 가로로 넘쳐 신규 버튼이 가려지던 리스크를, 버튼이 다음 줄로 우아하게 래핑되도록 해소. `flex:none; white-space:nowrap` 유지로 버튼 자체는 잘리지 않음.
+- 검증: `node --check admin.js` PASS · **diff 적대 리뷰 REV-20260710T063659 [SUBAGENT: PASS-WITH-FIXES]**(BLOCKING/MAJOR 0, MINOR 1=헤더 가로 넘침 → `flex-wrap:wrap` 로 수정, 핸들러·회귀 PASS) · **PB-0008 win-browser 시각검증은 POST-DEPLOY**(정적 자산 baked → merge + deploy-web 재배포 선행, §65·§66·§67 동일). 캐시버스터 `admin.js?v=20260710-graph-focus-selected` · `styles.css?v=20260710-graph-focus-selected`.
+
+
+## CHG-20260710T223000-ai-claude-corp-feature-0016-reldedup-pd — §69 POST-DEPLOY 완수 기록 (docs-only, 코드 변경 0) (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/docs/TEST.md`(§69 Run POST-DEPLOY append) + `unit/feature-0016-metadata-graph/docs/{TASK.md(T69.5 완료),REPORT.md(POST-DEPLOY 절),REVIEW.md([SKIPPED] 완수)}`. **코드/자산 변경 0**.
+- 변경: §69 병합(PR #659 → main 5e235953)의 실 Windows Chrome POST-DEPLOY 실측 결과를 정본에 기록. 서빙 자산 curl(admin.js 실제 render producer 0·styles.css 실제 규칙 0) + 런타임 assertion(`typeof _metaGraphRelTraceRowsHTML==="undefined"`·유지 함수 3종 function·`.admin-meta-graph-ai-rels` DOM 0·버스터 20260710-reldedup·pageerror 0).
+- 근거: `visual_verification_scope: always` 완료 게이트의 POST-DEPLOY 실측 기록 마감. 배포는 §69 cycle 에서 이미 완료(무중단 롤링·soak PASS). 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).
+
+
+## CHG-20260710T163512-ai-claude-feature-0016-graph-rtuse-camera — 상세 패널 사용관계 행 클릭 시 카메라 이동 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(`_metaGraphRenderDetail` 의 `[data-rtuse]` 클릭 핸들러 + 섹션 안내문) + `admin.html` 캐시버스터(admin.js 1건).
+- 변경: 상세 패널 "사용 테이블/사용 함수·프로시저" 행(`[data-rtuse]` 버튼) 클릭 시 기존 `_metaGraphShowDetail(k)`(async 상세 전환)에 더해 `_metaGraphPanToRelation(k)`(동기 카메라 팬 + 대상 선택)를 **먼저** 호출. 안내문 "행 클릭 = 대상 상세." → "행 클릭 = 대상 상세 + 카메라 이동."
+- 근거: §70(선택 노드 헤더 버튼)과 별개로, 관계 행 클릭이 상세만 바꾸고 카메라는 안 움직여 큰 그래프에서 대상 재탐색이 어려웠음. 기존 shipped 팬 래퍼(`_metaGraphPanToRelation`, graphux7#2) 재사용 → 신규 기계장치 0. frontend-only·마이그 0·behavior 순수 추가(상세 전환 불변, 미렌더 대상은 pan null 가드로 안내만·graceful). Minor(§12.3).
+- 검증: `node --check admin.js` PASS · inline 적대 diff 리뷰 **REV-20260710T163512 [SKIPPED-panel/inline PASS]**(순서/race·미렌더 가드·selection idempotent·캐시버스터 확인, BLOCKING/MAJOR 0, NIT1 비가시 stale 힌트 수용) · **PB-0008 win-browser 시각검증은 POST-DEPLOY**(정적 자산 baked → merge + deploy-web 재배포 선행). 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`(CSS 미변경 → styles.css 미bump).
+## CHG-20260710T065500-ai-claude-corp-feature-0016-graph-colnav — §72 상세 패널 관계행 단일클릭 미렌더 컬럼 카메라 이동 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(`_metaRenderedAncestorFor`·`_metaFocusKeyFor` 신설 + `_metaGraphPanToRelation` 재작성 + `_metaGraphSetSelected`·`_metaG6Build` 의 focusAdj 산출을 `_metaFocusKeyFor` 로 중앙화) + `admin.html` 캐시버스터 + headless `test_graph_colnav.js`(신설).
+- 변경: `그래프 뷰 > 상세` 관계 행(컬럼) **단일클릭** 시, 소속 테이블 미펼침(컬럼 미렌더)이면 카메라가 이동하지 않고
+  "대상 노드가 현재 화면에 없습니다" 안내만 떠 오류로 오인되던 결함 수정. (1) `_metaGraphPanToRelation` 이 대상을
+  **화면상 가장 가까운 조상**(컬럼→소속 테이블→접힌 스키마 카드 `SC:`)으로 승격해 카메라 팬(펼치진 않음). (2) 선택 상태는
+  대상 컬럼 키로 두되, **하이라이트 기준은 `_metaFocusKeyFor` 로 소속 테이블에 폴백**(선택=컬럼·하이라이트=상위 종속
+  객체 — 사용자 결정 2026-07-10 AskUserQuestion). 폴딩은 부모가 모델의 Table 노드일 때만(§57.5 F2 'prune 선택 정리=null' 보존).
+  더블클릭(`_metaGraphTraceRelation`=펼침+컬럼 선택) 불변. 접힌 스키마 카드로만 승격된 경우(대상=스키마)는 기존대로 팬만.
+- 근거: 사용자 리포트(2026-07-10) — 단일클릭 시 미펼침 컬럼으로 이동 불가·오류성 메시지. frontend-only·마이그 0·behavior:
+  미렌더 대상 승격 + 오류 톤 제거 + 하이라이트 폴딩만(렌더된 대상·스키마 카드 팬·일반 노드 선택 경로 불변).
+- 검증: 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5·키파싱 2·선택게이트 8·하이라이트폴딩 4·직접렌더) + 회귀 0
+  (edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·`node --check` PASS. §18.8 적대 리뷰
+  REV-20260710T065500(stale base 적발→rebase, MINOR#3→하이브리드 반영). POST-DEPLOY PB-0008 사용자 육안(TEST §72). 버스터 `admin.js?v=20260710-graph-colnav`.
 ## CHG-20260710T155200-ai-claude-feature-0016-nodeanalysis-caveats — §69 능동 분석 주의 계약 + 루틴 payload + 시드 커버리지 (2026-07-10)
 - 대상(backend): `unit/feature-0002-agent-core/src/modules/llm.py`(NODE_ANALYSIS_PROMPT — caveats 계약/analyze-from-visible 규칙/Input JSON) · `unit/feature-0002-agent-core/src/modules/node_analysis.py`(_fetch_context routine_touches 수집 + 신규 `_fetch_routine_returns` + _build_payload touches/returns 투영) · **`shared/config.py`**(SCHEMA_CAP 200→1000·SCHEMA_MAX 500→2000·RUN_BUDGET_MAX 2500→4000·BATCH_PER_TICK 4→10).
 - shared/ 단일 mutator(§13.2.2 F2): 본 cycle(브랜치 ai/claude/feature-0016-nodeanalysis-caveats)이 `shared/config.py` 의 AGENT_NODE_ANALYSIS_* 기본값 4건만 변경(다른 shared 심볼·타 세션 경합 없음). 순수 기본값 상향 — env 오버라이드 부재 소비자에만 영향.
