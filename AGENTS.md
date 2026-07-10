@@ -978,8 +978,18 @@ SAFE_REMOVE가 아닌 branch에만 적용 (ahead = 0 AND Open PR 없는 경우).
   --count HEAD..origin/main` 검사. behind > 0 일 때만 사용자 화면에 1줄 표면화.
   fetch 실패 = WARN ("remote unavailable") + 계속 진행 (D11A — 네트워크 가용성
   ≠ correctness). TTL cache 없음.
-- 동시 push race 는 wedge B (manual parallel) 하 이론적 가능성. 발생 시 **사용자
-  수동 직렬화** 가 권장 해결. 자동 재시도 알고리즘은 본 사이클 외.
+- **동시 머지/push race — host-local merge mutex 로 자동 직렬화 (2026-07-11 프로젝트
+  개정, META-0027 — template base 전파 예정)**: `bin/cycle-finalize.sh` 의 머지 구간
+  (PR 검증→merge→main pull)은 `flock $(git rev-parse --git-common-dir)/.merge.lock`
+  critical section 으로 직렬화된다(timeout 기본 15분, 초과 시 명시 실패 — 무한 대기
+  금지). 락 안에서 최신 base 재검증: **branch 가 origin/main 대비 behind ≥ 20 이면
+  자동 `gh pr update-branch` 후 CI 재확인을 강제**(기존 rebase '권유'를 머지 시점
+  hard gate 로 격상)하고, 어떤 경우든 `mergeStateStatus=CLEAN` 재폴링 후에만 머지한다
+  (낡은 base 로 통과한 테스트로 머지하는 semantic drift 차단 — "최신 base 합산 green
+  만 main"). abnormal(BLOCKED/DIRTY)은 §16.3 Step 6 대로 자동 중단. 락 파일은 working
+  tree 밖(공용 .git)이라 clean 검증·gitignore 무간섭·전 worktree 공유. **한계**:
+  host-local — 원격/CI 발 머지는 보호하지 못한다(본 배치는 전 작업자 동일 호스트).
+  verify-completion 은 behind ≥ 10 에서 비차단 WARN(조기 신호).
 - **ai/\* worktree 의 main drift 검출** (actor: ai/\* worktree 의 다음 turn
   진입자, v3.11.0+): ai/\* worktree 의 entry preamble 에서 다음을 수행한다.
 

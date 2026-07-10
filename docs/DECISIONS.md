@@ -839,3 +839,39 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - Consequences: driver 등록은 clone-로컬 — 세션/클론 시작 시 `bash bin/setup-git-parallel.sh`
   1회(멱등). fragment 전환 완료 문서는 driver 대상에서 제거(브리지 수명). template base 전파
   (inbox) 계획은 META-0024 REVIEW 엔트리에 기록.
+## ADR-20260711T053000-test-runs-fragment
+
+- Status: 승인 (2026-07-10 ROADMAP parallel-work-structure §6.1 사전 승인 · ITEM-06.
+  **기록 시점 주의**: 본 개정은 PR #683(2026-07-11)으로 이미 반영·머지됐고, §0 "AGENTS.md
+  개정 공통 규약"(i) 의 DECISIONS 제안 기록이 그 cycle 에서 누락돼 **본 엔트리로 사후
+  완결**한다 — 투명 기록.)
+- Context: TEST.md §3 Run 기록 append 가 병렬 세션 최다 충돌 지점(30일 229회 변경, F-004).
+- Decision: **§5.3 개정** — 신규 Run 기록은 `unit/<feature>/docs/test-runs.d/<TASK-또는-REV-id>.md`
+  항목당 1파일(frontmatter run_at(ISO8601)·session·scope·verdict). verify check #13 은
+  TEST.md 추가 라인 **또는** fragment 인정(OR 하위호환 — 일괄 강제 없음, 소급 이동 없음).
+  90일 컴팩션은 doc_sync 소관(§5.5 아카이브 + TEST.md 상단 참조 링크).
+- Consequences: 병렬 Run 기록 원천 무충돌(towncrier 계열). §18.8 패널 SHIP-WITH-FIXES
+  (우회면 없음·honor 모델 등가). template base 전파 후보.
+
+## ADR-20260711T053001-merge-mutex-freshness-gate
+
+- Status: 승인 (2026-07-10 ROADMAP parallel-work-structure §6.1 사전 승인 · ITEM-07)
+- Context: 일 18.6 PR 페이스에서 머지 직렬화 장치 부재 — ① 동시 finalize push race 가
+  "사용자 수동 직렬화"에 위임(§13.2.5 구판) ② 낡은 base 로 통과한 테스트로 머지되는
+  semantic drift 상존(F-005) ③ 실측: mergeStateStatus=UNSTABLE(CI 진행 중) 상태 머지
+  가능(PR #682 — 사후 SUCCESS 였으나 적색 머지 가능성). GitHub merge queue 는 Free
+  private 불가(W-003) — 전 작업자 동일 호스트라 flock 등가 구현.
+- Decision (**§13.2.5 개정** + cycle-finalize/verify 구현):
+  1. cycle-finalize 머지 구간(PR 검증→merge→main pull)을
+     `flock <git-common-dir>/.merge.lock` critical section 으로 직렬화(timeout 15분
+     명시 실패 — 무한 대기 금지, EXIT trap 으로 전 die 경로 락 해제 확정).
+  2. 락 안 신선도 hard gate: behind ≥ 20 이면 자동 update-branch + CI 재확인 강제
+     (gh 2.57+ `gh pr update-branch`, 구버전은 `gh api PUT pulls/N/update-branch` 폴백
+     — 라이브 실증(PR #684)이 이 호스트 gh 2.45 unknown-command 실결함을 적발해 추가,
+     폴백 유효성은 probe2 PR #685 로 tip 갱신·behind→0 실증).
+  3. mergeStateStatus=CLEAN 재폴링 후에만 머지(UNSTABLE 대기·BEHIND→update·MERGED
+     외부 머지 합류·HAS_HOOKS 진행·BLOCKED/DIRTY §16.3 자동 중단·600s 명시 timeout).
+  4. verify-completion: behind ≥ 10 비차단 WARN(조기 신호, 로컬 ref — fetch 무).
+- Consequences: "최신 base 합산 green 만 main"(W-002) 불변식을 단일 머지 경로에 이식.
+  한계: host-local — 원격/CI 발 머지 미보호(문서화). env: MERGE_LOCK_TIMEOUT_SEC·
+  MERGE_BEHIND_GATE·MERGE_CLEAN_TIMEOUT_SEC. template base 전파 후보.

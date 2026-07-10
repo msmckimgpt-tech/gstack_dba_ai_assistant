@@ -359,7 +359,14 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   명시한 표준 패턴(RESEARCH W-004).
 
 ### ITEM-07 · host-local merge mutex + 신선도 hard gate
-- **status**: pending
+- **status**: done
+- **note**: 2026-07-11 완료 — cycle-finalize Step 0b flock mutex(.git/.merge.lock, 900s timeout)
+  + 신선도 게이트(behind≥20 → gh_update_branch: gh 2.57+ 명령/gh api PUT 폴백 — 라이브 실증이
+  구버전 gh unknown-command 실결함 적발해 폴백 추가) + CLEAN 재폴링(600s, BLOCKED/DIRTY 자동중단)
+  + verify behind≥10 WARN + §13.2.5 개정(수동 직렬화 문구 대체) + ADR-20260711T053001.
+  acceptance (a) 락 대기 순차 (b) probe PR#684 behind=48 게이트 발동·머지 + probe2 PR#685
+  api 폴백 tip 갱신 실증(close·정리) (c) timeout 명시 실패 (d) dry-run 기존 흐름 보존.
+  REV-20260711T053001.
 - **feature_id**: META-0027-merge-serialization   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
 - **risk_grade**: Major
@@ -604,9 +611,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 7 (ITEM-01·02·04·05·08·03·06) · in-progress 0 · pending 5 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → 07 → 12 → 09 → 10 → 11
-  (다음 ready: ITEM-07)
+- 총 12 항목 · done 8 (ITEM-01·02·04·05·08·03·06·07) · in-progress 0 · pending 4 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → 12 → 09 → 10 → 11
+  (다음 ready: ITEM-12)
 - ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —
   §6.1 deploy-backed 완료. (첫 deploy-web preflight 1회 일시 실패 후 재시도 성공 — 원인
   미재현 transient, config 재현 검사는 정상.)

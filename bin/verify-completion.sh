@@ -1304,6 +1304,18 @@ main() {
     check14_status=1
   fi
 
+  # META-0027 (ITEM-07): main 대비 behind 조기 신호 — 비차단 WARN (fetch 없이 로컬
+  # origin/main ref 기준: 약간 stale 할 수 있으나 경고 목적으론 충분, 매 verify 마다
+  # 네트워크 왕복을 만들지 않는다. hard gate 는 cycle-finalize 신선도 게이트가 담당).
+  if [ "$mode" = "pre-commit" ]; then
+    local _behind_main
+    _behind_main=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+    if [ "${_behind_main:-0}" -ge 10 ]; then
+      printf 'WARN: 현재 브랜치가 origin/main 대비 %s commit behind — 머지 전 rebase/update 권장 (cycle-finalize 가 behind>=%s 이면 자동 update-branch 후 CLEAN 재검증, META-0027)\n' \
+        "$_behind_main" "${MERGE_BEHIND_GATE:-20}" >&2
+    fi
+  fi
+
   # META short-circuit: pure-meta changesets skip verify entirely.
   # (Mixed commits — meta + operational — still get full operational gate.)
   local changed_files

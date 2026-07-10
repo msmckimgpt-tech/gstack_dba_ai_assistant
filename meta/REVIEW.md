@@ -569,3 +569,12 @@
 - **acceptance**: (a) 재현 브랜치 — web asset+fragment 만 stage → check #13 PASS 후 폐기 (b) 기존 TEST.md-추가 방식 PASS(하위호환) + 음성 대조(둘 다 없음 → FAIL — 게이트 보존) (c) 병렬 두 브랜치 각자 fragment → merge 무충돌 (d) AGENTS.md·doc_sync 규약 diff.
 - **template base 전파(inbox) 계획**(§0 규약 ii): §5.3 fragment 규약 + check #13 OR 개정을 template 후속 반영 후보로 inbox 제출 예정.
 - **Human Approval Needed**: 아니오 — §6.1(명세 내). 하위호환 OR(일괄 강제 없음)·배포 무관.
+## REV-20260711T053001-META-0027-merge-serialization [SUBAGENT:improve-fit-reviewer(§18.8)] — host-local merge mutex + 신선도 hard gate (parallel-work-structure ITEM-07)
+
+- **cycle**: ai/claude-corp/META-0027-merge-serialization — 드레인 8번째 항목(ITEM-07, Major). 승인: ROADMAP §6.1 + §0 공통 규약(AGENTS.md §13.2.5 개정 — ADR-20260711T053001 동봉).
+- **changeset (pure-meta)**: `bin/cycle-finalize.sh`(Step 0b flock mutex .git/.merge.lock 900s·EXIT trap 락 확정 해제·신선도 게이트 behind≥20 → gh_update_branch(gh 2.57+/gh api PUT 폴백)·CLEAN 재폴링 600s(MERGED 외부 머지 합류·HAS_HOOKS 진행·BLOCKED/DIRTY 자동 중단·VIEWFAIL 구분)·merge 직전 MERGED 재확인·Step 2 후 락 해제 — 머지 구간만 직렬화) · `bin/verify-completion.sh`(behind≥10 비차단 WARN) · `AGENTS.md` §13.2.5("사용자 수동 직렬화" → mutex+게이트 대체) · `docs/DECISIONS.md`(ADR-20260711T053001 + ITEM-06 §0 기록 사후완결 ADR-20260711T053000) · ROADMAP ITEM-07 done · 본 entry.
+- **§18.8 패널 (2-round)**: 1차 VERDICT SHIP-WITH-FIXES — **MAJOR-1: 인용 ADR 2건·REV 부재**(본 세션이 ADR 을 임시 probe worktree 에 잘못 기록 → 정리 때 소실 — 정본 위치 재기입으로 해소. ITEM-03 M-2→06→07 **같은 클래스 3연속 재발**: "커밋 전 인용 무결성 체크" 를 아래 재발 방지에 기록) + MINOR 3(EXIT trap — detached auto-gc fd 상속 대비 / 폴링 중 외부 머지 MERGED 합류 / behind 계산 실패 fail-open 명시 WARN) + NIT(HAS_HOOKS 진행 취급·VIEWFAIL 구분·draft 안내) 전건 반영.
+- **재발 방지(패널 권고 수용)**: 커밋 전 "ROADMAP note·REVIEW 가 인용하는 ADR/REV id 가 staged diff 에 실재하는지 grep 확인"을 사이클 마감 체크로 수행한다(이번 cycle 부터 적용 — 아래 검증에 포함).
+- **acceptance**: (a) 락 홀더 존재 시 두 번째 finalize 대기 후 진행(flock 8s 홀드 재현) (b) **라이브**: probe PR #684(main~25 분기, behind=48)에서 게이트 발동 — 구버전 gh `update-branch` unknown-command **실결함 적발** → gh api PUT 폴백 구현 → probe2 PR #685 로 tip 갱신·behind→0 실증(머지 없이 close·브랜치/worktree 정리) — #684 는 CLEAN 폴링 경유 머지(probe 파일 = 증거 artifact 로 main 잔존) (c) MERGE_LOCK_TIMEOUT_SEC=3 명시 die (d) dry-run 게이트 print 우회 — 기존 흐름 보존.
+- **인용 무결성 확인**: ADR-20260711T053000/053001 · REV-20260711T053001(본 entry) 전부 staged 실재 grep 확인.
+- **Human Approval Needed**: 아니오 — §6.1(명세 내). 머지 안전장치 추가(비파괴·fail-safe 방향). 배포 무관.
