@@ -92,5 +92,34 @@ const vpA = [pa[0]-260, pa[1]-160, pa[0]+260, pa[1]+160];
   check("T3 nodePosAll 전체 포함(컬링돼도 — 미니맵용)", g.__M.nodePosAll && g.__M.nodePosAll.size >= 420, g.__M.nodePosAll ? g.__M.nodePosAll.size : 0);
 }
 
+// T4 (§76 적대 리뷰 M2): **dense off-view 서브그래프는 컬링 유지** — 엣지 예외(_edgeExempt)는 in-view 노드에
+//   닿는 엣지의 상대 끝점만 방출한다. 뷰포트 밖 노드끼리만 연결된 대량 엣지(창 밖 B-B 사슬)는 in-view(A 창) 에
+//   안 닿으므로 예외에 포함되지 않고 계속 컬링 → 예외 팽창이 §65/§67 컬링을 무력화하지 않음(원 draw 폭발 회귀
+//   재발 방지). T1/T3 는 엣지 1개라 자명 통과였던 갭을 dense 케이스로 보강.
+//   주의: 이 빌더는 **관계-인지 레이아웃**이라 엣지 세트가 좌표를 바꾼다 → 뷰포트를 dense 구성의 full 빌드에서
+//   재계산해야 한다(base vpA 재사용 금지).
+{
+  seed(210);
+  const M = g.__M;
+  const BMID = `${SCOPE}:b.t20`;   // off-view B-B 사슬 소속이나 A(in-view) 무연결 → 컬링 대상
+  let dense = 0;
+  for (let i = 5; i < 40; i++) {   // b.t5↔..↔b.t40 사슬(컬럼-레벨, 전부 A 무관 — 같은 스키마 B 내부)
+    M.edges.set("d" + i, { id: "d" + i, source: `${SCOPE}:b.t${i}.c0`, target: `${SCOPE}:b.t${i + 1}.c0`, type: "REFERENCES", status: "trusted" });
+    dense++;
+  }
+  // dense 레이아웃에서 A.t0 위치를 재취득해 그 위에 창을 세운다(엣지가 좌표를 바꾸므로).
+  //   posOf 는 base `full` 에 고정돼 있어 dense 빌드(fullD)에서 직접 조회한다.
+  const fullD = buildWith(null, null);
+  const _anD = fullD.nodes.find((x) => x.id === A0);
+  const paD = _anD && _anD.style ? [_anD.style.x, _anD.style.y] : null;
+  const vpAD = paD ? [paD[0] - 260, paD[1] - 160, paD[0] + 260, paD[1] + 160] : vpA;
+  const out = buildWith(vpAD, null);
+  check("T4 dense off-view B-B 엣지 대량 추가(seed 확인)", dense >= 30, dense);
+  check("T4 A.t0 방출(창 안) + A.t0 연결 B.t0 예외 방출(in-view 연결 상대 보존)", hasTbl(out, A0) && hasTbl(out, B0), { a: hasTbl(out, A0), b0: hasTbl(out, B0) });
+  check("T4 off-view-only 서브그래프 노드 컬링 유지(b.t20 미방출)", !hasTbl(out, BMID), null);
+  check("T4 _edgeExempt 가 in-view 무연결 끝점 미포함(b.t20)", !(g.__M._edgeExempt && g.__M._edgeExempt.has(BMID)), null);
+  check("T4 예외 팽창 없이 컬링 유효(방출 << 전체, dense 후에도)", tbl(out).length < 100 && tbl(out).length > 0, tbl(out).length);
+}
+
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);
 process.exit(fail?1:0);
