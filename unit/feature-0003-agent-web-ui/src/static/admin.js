@@ -7953,7 +7953,7 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     const rtWrites = routineUses.filter((e) => e.relation_type === "write");
     const rtReads = routineUses.filter((e) => e.relation_type !== "write");
     parts.push(`<div class="admin-meta-graph-sec"><h4>${isRoutineSelf ? "사용 테이블" : "사용하는 함수·프로시저"} (${routineUses.length}) <span class="admin-meta-graph-muted">· 읽기 ${rtReads.length} · 쓰기 ${rtWrites.length}</span></h4>`);
-    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다. 행 클릭 = 대상 상세.</p>`);
+    parts.push(`<p class="admin-meta-detail-note">${isRoutineSelf ? "이 함수·프로시저가 사용하는 테이블을" : "이 테이블을 사용하는 함수·프로시저를"} 읽기/쓰기로 나눠 표시합니다. 행 클릭 = 대상 상세 + 카메라 이동.</p>`);
     parts.push(rtGroup(rtReads, "읽기"));
     parts.push(rtGroup(rtWrites, "쓰기"));
     parts.push(`</div>`);
@@ -7990,8 +7990,17 @@ function _metaGraphRenderDetail(self, nodes, edges) {
   const relBtn = document.getElementById("metaGraphRelBtn");
   if (relBtn) relBtn.addEventListener("click", () => _metaGraphShowRelations(self.key));
   // graph-funcproc: 사용 테이블/사용 루틴 행 클릭 → 대상 상세로 이동.
+  // graph-rtuse-camera(사용자 요구): 클릭 시 상세 전환에 더해 **카메라도 대상 노드로 이동**한다
+  //   (REFERENCES 관계 행의 _metaGraphPanToRelation 재사용). 대상이 렌더돼 있으면 그 노드로 팬+선택,
+  //   접힌 스키마 등 미렌더면 팬 없이 안내만(graceful). pan 을 먼저(동기 카메라·선택) 호출하고 상세
+  //   전환(async)을 이어 호출 — 상세 재렌더가 이 버튼을 교체하기 전에 카메라 이동이 예약된다.
   el.querySelectorAll("[data-rtuse]").forEach((btn) => {
-    btn.addEventListener("click", () => { const k = btn.getAttribute("data-rtuse"); if (k) _metaGraphShowDetail(k); });
+    btn.addEventListener("click", () => {
+      const k = btn.getAttribute("data-rtuse");
+      if (!k) return;
+      _metaGraphPanToRelation(k);   // + 카메라 이동(신규)
+      _metaGraphShowDetail(k);      // 상세 패널 전환(기존)
+    });
   });
   _metaGraphBindTraceRows(el);   // graph-reltrace ②: 관계 행 클릭 → 대상 추적
   // reldetail-colexpand ①: 컬럼 아코디언 토글 — 클릭 시 그 컬럼의 관계 펼침/접힘.

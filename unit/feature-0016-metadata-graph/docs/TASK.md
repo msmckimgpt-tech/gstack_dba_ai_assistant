@@ -2114,3 +2114,18 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T70.2 UI 파손 방지: `.admin-meta-graph-card-head`(flex,gap:8px)에 `.amgr-link`(margin-left:auto) 2개 → auto-마진 분할을 신규 버튼 `style="margin-left:0"`로 회피(기존 관계 상세만 우측 정렬, 신규는 gap:8px로 그 옆 그룹). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
 - [x] T70.3 검증: `node --check admin.js` PASS · diff 적대 리뷰(REV-20260710T063659). frontend-only·마이그 0·Minor(§12.3).
 - [ ] T70.4 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 클릭 → 상세 패널에 버튼 노출 → 클릭 시 선택 노드가 뷰포트 중앙으로 팬 + 상태줄 "→ <노드명> 로 카메라 이동" + 헤더 레이아웃 무붕괴 + pageerror 0. TEST §3 append.
+
+## §71 graph-rtuse-camera — 상세 패널 사용(참조)관계 행 클릭 시 대상 노드로 카메라 이동 (2026-07-10, 사용자 요청)
+사용자 요청: "그래프 뷰 상세에 카메라 이동 버튼 추가". 상세 패널의 "사용 테이블/사용 함수·프로시저" 행(`[data-rtuse]` 버튼)
+클릭이 상세 패널만 전환하고 카메라는 그대로여서 큰 그래프에서 대상 노드를 화면에서 다시 찾기 어려웠음. §70(선택 노드 헤더
+버튼)과 별개로 **관계 행 대상**을 카메라로 가져온다. 기존 카메라-전용 팬 래퍼 `_metaGraphPanToRelation`(graphux7#2) 재사용.
+- [x] T71.0 진단: `[data-rtuse]` 클릭 핸들러(`_metaGraphRenderDetail`)가 `_metaGraphShowDetail(k)`(상세 전환)만 호출 →
+  카메라 미이동. 관계 추적 행은 이미 `_metaGraphPanToRelation`(동기 팬+선택+상태, `_metaRenderedIdFor` null 가드) 보유.
+- [x] T71.1 구현(frontend-only, admin.js): `[data-rtuse]` 클릭 시 `_metaGraphPanToRelation(k)`(동기 카메라+선택) 먼저,
+  이어 `_metaGraphShowDetail(k)`(async 상세 전환) 호출. 미렌더 대상은 pan 이 null 가드로 안내만·팬 skip, 상세 전환은 정상.
+  섹션 안내문 "행 클릭 = 대상 상세." → "행 클릭 = 대상 상세 + 카메라 이동." 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`.
+- [x] T71.2 검증: `node --check admin.js` PASS · inline 적대 diff 리뷰(REV-20260710T163512): 순서(동기 pan→async detail,
+  ShowDetail 동기 상태 덮어쓰기)·미렌더 가드·selection idempotent(양쪽 동일 key)·캐시버스터(js만, CSS 미변경) PASS.
+  BLOCKING/MAJOR 0, NIT1(pan 힌트 비가시 stale) 수용. frontend-only·마이그 0·Minor(§12.3).
+- [ ] T71.3 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 상세에서 사용 테이블/루틴 행 클릭 → 대상 노드로 카메라
+  팬 + 선택 강조 + 상세 패널 대상 전환 동시, 미렌더 대상은 안내만·상세는 전환, pageerror 0. TEST §71 append.

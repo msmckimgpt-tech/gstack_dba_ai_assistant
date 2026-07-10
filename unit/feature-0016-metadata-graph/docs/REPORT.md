@@ -1498,3 +1498,14 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 - `make deploy-web` 무중단 롤링(web-a/web-b 순차 recreate·90s soak PASS·마이그 0). `/healthz` git_commit=5e235953·mysql_ok·pg_ok.
 - 병렬 세션 PR #658(§68 graph-rw-group ROUTINE_USES 읽기/쓰기 분리)가 worktree 생성 후 머지 → origin/main rebase·§68→§69 재지정·admin.js 영역 비겹침 병합(양 변경 라이브 공존).
 - **실 Windows Chrome(Chrome/149) POST-DEPLOY 실측**: 서빙 admin.js 실제 render producer `<strong>연결 관계 추적`=0·`function _metaGraphRelTraceRowsHTML`=0 / styles.css 실제 규칙 `.admin-meta-graph-ai-rels {`=0 / 런타임 `typeof _metaGraphRelTraceRowsHTML==="undefined"`·유지 함수 3종 function·`.admin-meta-graph-ai-rels` DOM 0·pageerror 0. 중복 #2 구조적 제거 결정적 실증(feature-0003 TEST §69 POST-DEPLOY).
+
+## 2026-07-10 · 상세 패널 사용관계 행 클릭 시 카메라 이동 (graph-rtuse-camera, TASK §71, 사용자 요청)
+사용자 요청 "그래프 뷰 상세에 카메라 이동 버튼 추가" — 상세 패널의 "사용 테이블/사용 함수·프로시저" 행 클릭이 상세 패널만 전환하고 카메라는 안 움직여 큰 그래프에서 대상 노드 재탐색이 어려웠음. §70 은 '선택 노드' 헤더 버튼, 본 작업은 **관계 행 대상**을 카메라로 가져온다.
+
+### 변경 (frontend-only, 마이그레이션 0)
+- admin.js `_metaGraphRenderDetail` 의 `[data-rtuse]` 클릭 핸들러: `_metaGraphPanToRelation(k)`(동기 카메라 팬 + 대상 선택) 먼저 → `_metaGraphShowDetail(k)`(async 상세 전환). 기존 shipped 팬 래퍼(graphux7#2) 재사용, 신규 기계장치 0.
+- 미렌더 대상(접힌 스키마·컬링)은 pan 이 `_metaRenderedIdFor` null 가드로 안내만·팬 skip, 상세 전환은 정상(graceful). 섹션 안내문 "행 클릭 = 대상 상세." → "+ 카메라 이동".
+
+### 검증
+- `node --check admin.js` PASS. inline 적대 diff 리뷰 REV-20260710T163512(순서/race·미렌더 가드·selection idempotent·캐시버스터 PASS, BLOCKING/MAJOR 0, NIT1 비가시 stale 힌트 수용). frontend-only·마이그 0·Minor(§12.3).
+- 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`(CSS 미변경 → styles.css 미bump). POST-DEPLOY PB-0008 육안(feature-0003 TEST §71).

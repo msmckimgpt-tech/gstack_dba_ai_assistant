@@ -1348,3 +1348,10 @@ source_of_truth: true
 - 대상: `unit/feature-0003-agent-web-ui/docs/TEST.md`(§69 Run POST-DEPLOY append) + `unit/feature-0016-metadata-graph/docs/{TASK.md(T69.5 완료),REPORT.md(POST-DEPLOY 절),REVIEW.md([SKIPPED] 완수)}`. **코드/자산 변경 0**.
 - 변경: §69 병합(PR #659 → main 5e235953)의 실 Windows Chrome POST-DEPLOY 실측 결과를 정본에 기록. 서빙 자산 curl(admin.js 실제 render producer 0·styles.css 실제 규칙 0) + 런타임 assertion(`typeof _metaGraphRelTraceRowsHTML==="undefined"`·유지 함수 3종 function·`.admin-meta-graph-ai-rels` DOM 0·버스터 20260710-reldedup·pageerror 0).
 - 근거: `visual_verification_scope: always` 완료 게이트의 POST-DEPLOY 실측 기록 마감. 배포는 §69 cycle 에서 이미 완료(무중단 롤링·soak PASS). 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).
+
+
+## CHG-20260710T163512-ai-claude-feature-0016-graph-rtuse-camera — 상세 패널 사용관계 행 클릭 시 카메라 이동 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(`_metaGraphRenderDetail` 의 `[data-rtuse]` 클릭 핸들러 + 섹션 안내문) + `admin.html` 캐시버스터(admin.js 1건).
+- 변경: 상세 패널 "사용 테이블/사용 함수·프로시저" 행(`[data-rtuse]` 버튼) 클릭 시 기존 `_metaGraphShowDetail(k)`(async 상세 전환)에 더해 `_metaGraphPanToRelation(k)`(동기 카메라 팬 + 대상 선택)를 **먼저** 호출. 안내문 "행 클릭 = 대상 상세." → "행 클릭 = 대상 상세 + 카메라 이동."
+- 근거: §70(선택 노드 헤더 버튼)과 별개로, 관계 행 클릭이 상세만 바꾸고 카메라는 안 움직여 큰 그래프에서 대상 재탐색이 어려웠음. 기존 shipped 팬 래퍼(`_metaGraphPanToRelation`, graphux7#2) 재사용 → 신규 기계장치 0. frontend-only·마이그 0·behavior 순수 추가(상세 전환 불변, 미렌더 대상은 pan null 가드로 안내만·graceful). Minor(§12.3).
+- 검증: `node --check admin.js` PASS · inline 적대 diff 리뷰 **REV-20260710T163512 [SKIPPED-panel/inline PASS]**(순서/race·미렌더 가드·selection idempotent·캐시버스터 확인, BLOCKING/MAJOR 0, NIT1 비가시 stale 힌트 수용) · **PB-0008 win-browser 시각검증은 POST-DEPLOY**(정적 자산 baked → merge + deploy-web 재배포 선행). 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`(CSS 미변경 → styles.css 미bump).
