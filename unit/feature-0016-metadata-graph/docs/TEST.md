@@ -987,3 +987,26 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - **무인 도달 제약**: 헤드리스 authoring 세션은 실 Windows Chrome 화면을 대체하지 못함(그래프뷰 3중벽 + 인증) →
   서빙 admin.js 자산 curl(`rtGroup` + `?v=20260710-graph-rw-group`) + 사용자 육안 게이트
   (visual_verification_scope=always, 브리지 불가 사유 명시 통과). 배포 후 사용자 확인 시 PASS append.
+
+## §73 graph-layoutmemo — 배치-정렬 함수 위상-서명 메모이즈 (2026-07-10, ADR-035)
+불변식: ① 캐시 적중 build == fresh build(node id·좌표 완전 동일 — 메모이즈가 출력 불변) ② 위상 변경 → 서명 변경 → 무효화 → 신규 반영
+③ 컬럼토글·freeplace 드래그·선택·마커·팬·줌 = 서명 무변경 → 정렬 캐시 재사용(정렬 재계산 skip) ④ 극단 줌인·비밀집 rebuild 경량화(근본원인).
+
+### Run — headless 격리검증 (Environment: node vm) — T69.3
+- `test_g6build_layoutmemo.js` **19 PASS / 0 FAIL** — T1~T5(캐시적중==fresh 좌표완전동일·서명무효화·컬럼/freeplace 독립·서명결정론) + T6(적대리뷰 F1 roles·F2 cluster_id/name 변경 시 서명 상이 + roles 변경 후 rebuild stale 아님).
+- 기존 회귀 6종(agglod 8·category 26·collod 20·edge_visibility 71·viewportcull 6·vpack 19) = **150 PASS**. 합 **169 PASS**. `node --check` PASS.
+
+### Run (예정) — POST-DEPLOY win-browser 실 Windows Chrome (Environment: Windows-browser, PB-0008) — T69.4
+- 배포 후 동일 대형 scope(mssql-qa-idc)에서 build 함수별 재측정(monkey-patch): 캐시 적중 시 _metaRelOrderAll·_metaSimGroups ≈ 0ms·build 급감(68~145ms→방출비용만).
+- 위상 무변경 rebuild(팬·줌·선택·컬럼토글) 노드 위치 동일(band-invariant). 극단 줌인(zoom 2.5) 방출 수↓(마진 0.3). pageErr 0.
+- 헤드리스 세션은 실 Windows 화면 미대체 — 육안은 배포 후.
+
+## §76 graph-cull-refkeep — 컬링 참조·상호작용 보존 (2026-07-10, ADR-037)
+불변식: ① 무선택 시 화면 밖 테이블 컬링(§67 유지) ② 선택 시 관계 상대(focusAdj) 화면 밖이어도 방출 → 관계선 렌더 + 네비 동작 ③ 무선택 성능 무손실.
+
+### Run — headless 격리검증 (Environment: node vm) — T76.2
+- `test_g6build_cullrefkeep.js` **10 PASS / 0 FAIL** — 컬링 활성(420 노드): **뷰포트 내 노드 엣지 컬링무효** 실증 — 무선택에도 in-view A.t0 에 연결된 화면 밖 B.t0 방출·A↔B 관계선 렌더(엣지 예외) / 무연결 화면 밖 B.t5 는 컬링 / A.t0 선택 시 focusAdj 예외 중복 커버 / nodePosAll 전체 포함(미니맵용 enabler).
+- 회귀 8종(agglod 8·category 26·collod 20·edge_visibility 71·viewportcull 6·vpack 19·layoutmemo 19·cullrefkeep 10) = **179 PASS**. node --check.
+
+### Run (예정) — POST-DEPLOY win-browser 실 Windows Chrome (Environment: Windows-browser, PB-0008) — T76.3
+- 배포 후 대형 그래프 줌인 → 노드 선택 → ① 화면 밖 관계 노드로 관계선 유지 ② 상세 패널 관계행 클릭 → 화면 밖 대상 카메라 팬 ③ 무선택 컬링·성능 유지 ④ pageerror 0. 헤드리스는 실 화면 미대체 — 육안 배포 후.

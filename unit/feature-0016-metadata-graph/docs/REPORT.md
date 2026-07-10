@@ -1,5 +1,33 @@
 # Report
 
+## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §74/ADR-036, 머지 재번호 §70→§73→§74·ADR-034→ADR-036 §13.1)
+
+### 요청 (사용자)
+`그래프 뷰` 의 **미니맵 최적화** — "화면 구성이 갱신되었을 경우, 한 번 draw한 전체 이미지를 재사용하는 방식도 고려."
+
+### 진단
+G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)의 이벤트 바인딩을 번들 역공학으로 실측:
+- **팬/줌** → `AFTER_TRANSFORM → onTransform`(throttle 32ms) → `updateMask()`+`setCamera()` **만** — 전체 이미지 재복제 **없음**(이미 최적, 사용자 요구의 팬/줌 부분은 G6 가 이미 충족).
+- **draw/render** → `AFTER_DRAW`/`AFTER_RENDER`/`AFTER_ANIMATE → renderMinimap()` → `setShapes` 가 **전 요소 key-shape 를 `cloneNode` 로 전량 재복제**.
+
+낭비 지점: 이 앱은 `_metaG6Apply`(=`setData`+`draw()`)를 **선택·상대하이라이트·역할도착(2.5s 폴 승격, AI 분석 중 지속)·busy 등 상태-only 변경으로도 20+ 지점에서 자주** 돈다. 매 `draw()` 의 `AFTER_DRAW` 가 미니맵을 전량 재복제 — 미니맵이 그리는 **기하가 동일한데도** 수백~수천 노드를 매번 clone. 이게 유일한 남은 재복제 낭비.
+
+### 처리 결과 (frontend-only, admin.js)
+- **기하 서명** `_metaMinimapGeomSig(built)` — 미니맵이 depiction 하는 기하(요소 id·부모combo·위치 x/y·크기·엣지 끝점)만 FNV-1a 해시. **시각상태(states/fill/opacity/역할 칩 색) 제외** — 미니맵 스케일서 색은 무의미하고, 사용자 요구가 곧 "구성(기하) 불변이면 재사용." 위치 0.25px 양자화 + `nodes:combos:edges:hash` 프리픽스.
+- **플러그인 래핑** `_metaPatchMinimapReuse(graph)` — minimap 인스턴스의 `renderMinimap` 을 1회 래핑(멱등). 서명이 직전 렌더와 같고 캔버스 존재면 skip(이미 그려둔 이미지 재사용), 다르면 원본 render. `_metaG6ApplyOnce` 가 `setData` 직전 같은 built 로 `_miniGeomSig` 세팅. 플러그인에 `key:"minimap"` 부여. 실패 시 no-op → 원본 동작(정확성 보존).
+- **호출 시점 = 첫 draw 이후**(적대 리뷰 H1 발견·수정): G6 v5 는 `context.plugin` 을 생성자가 아니라 첫 `draw()` 의 `initRuntime()` 에서 lazy 생성 → init 직후 호출은 patch no-op(최적화 사멸)였다. `await g.draw()` 직후 멱등 호출로 이동해 plugin 존재 시점에 래핑.
+- **네이티브 드래그 stale 수정**(적대 리뷰 H2, BLOCK→수정): 노드/콤보 드래그는 `_metaG6Apply` 를 안 거치고 `element.draw({stage:"translate"})` 로 요소를 직접 이동하는데 이것도 `AFTER_DRAW`(stage:"translate")를 발생시켜 renderMinimap 을 부른다 → stale 서명으로 skip → 미니맵이 드래그를 반영 못 하고 얼어붙던 회귀. `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 재복제 폴백으로 해소(node·combo 단일 지점 커버).
+- **효과**: 상태-only rebuild(선택/역할도착/busy)는 미니맵 재복제 skip → 이미 그려둔 전체 이미지 재사용. 구성 변경(펼침/접기/드래그/LOD/스코프전환/검색)은 서명 변경 → 정상 재복제. 팬/줌은 원래대로 마스크만 갱신.
+- cache-buster (머지 후) `admin.js?v=20260710-mmreuse-layoutmemo`(graph-colnav·layoutmemo 병렬 머지와 결합).
+
+### 검증
+- 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 기하 서명 11 + B 실 build 4 + C 패치 10 + **D 드래그 무효화 10**).
+- 회귀 **150 PASS**(collod 20·agglod 8·category 26·edge 71·viewportcull 6·vpack 19) · `node --check admin.js` PASS.
+- 적대 리뷰가 2건 BLOCK 결함 적발 → 수정: **H1** 패치를 init 시점 호출해 plugin lazy-init 전이라 no-op(최적화 사멸), **H2** 네이티브 드래그가 stale 서명으로 미니맵 재복제 skip(드래그 반영 못 함). 둘 다 수정·테스트 커버. POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §74 — 미니맵 렌더·뷰포트 추종·상태변경 후 안정·**드래그 반영**·구성변경 반영·pageerror 0).
+
+### 트레이드오프 (사용자 요구와 정합)
+역할 칩 색·선택 하이라이트·dim 은 미니맵에 즉시 안 뜨고 **다음 기하 변경 때** 반영 — 미니맵 168×112px 스케일서 색은 시각적으로 무의미하며, 사용자가 명시 요청한 "구성 불변 시 전체-이미지 재사용" 의 본질.
+
 ## 2026-07-10 · 그래프 뷰 상세 — 사용(참조) 관계를 읽기/쓰기 그룹으로 분리 (graph-rw-group)
 
 ### 요청 (사용자)
@@ -1438,7 +1466,7 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
 **reflow 0**. SC:id↔combo id 다른 네임스페이스로 setData add/remove(타입전환 회피). 4단 밴드·상태줄 집계 안내.
 
 ### 검증
-- headless `test_g6build_agglod.js` **9 PASS**(카드방출·draw급감>10x·reflow-free 위치·비-agg 유지·소형 게이트)
+- headless `test_g6build_agglod.js` **10 PASS**(카드방출·draw급감>10x·reflow-free 위치·비-agg 유지·소형 게이트)
   + 회귀 125 = **134 PASS** · `node --check` PASS.
 - diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0). MINOR 1 수정(상태줄 마커를 밴드→실제 억제 플래그 게이트).
   NIT 1 수용(agg 중 카드펼침 재집계 시 안내문구 부정합 — 니치). 상세 REVIEW.md.
@@ -1576,3 +1604,24 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
 - **독립 적대 리뷰(subagent, 동일 코드)**: VERDICT PASS — BLOCKING/MAJOR 0. "showDetail 이 `_opSeq` bump → 예약 팬 취소" 가설 반증(showDetail 무-bump·카메라 미조작 → 더블 팬/되감기 없음). MINOR 2(미렌더 안내 비가시 stale 카피·클릭당 bake 2회) 가시 회귀 아님 → 수용.
 - **POST-DEPLOY win-browser 실측(라이브 a24415a5)**: mssql-web-qa `shop_pt.T_ItemInfo` 상세의 `[data-rtuse]` 18행(읽기 12·쓰기 6) 실클릭 → 카메라 중심 [3600,7092]→[2523,7871] 팬 + 상세가 대상 ROUTINE(MSP_ADMIN_ITEM_LIST)으로 전환 동시, pageerror 0. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. 자산 curl(서빙 버스터·핸들러) 확증. 스크린샷 before/after.
 - 원격 브랜치 `ai/claude/feature-0016-graph-rtuse-camera` 는 병합 후 origin 에서 정리 완료.
+## §73 graph-layoutmemo — 배치-정렬 함수 위상-서명 메모이즈 (줌인 성능 근본원인) (2026-07-10)
+- 사용자 요청(누적): "극단적인 줌 인 상태에서도(밀집 아닌데도) 성능 저하 — 근본 원인을 탐색 후 해소."
+- 근본원인(win-browser 실측 함수분해): `_metaG6Build` 의 ~99% 가 `_metaRelOrderAll`(barycenter, ~55%·38ms) + `_metaSimGroups`(affix 유사그룹, ~45%·32ms). 둘 다 **전체 모델 처리**(뷰포트·줌·선택 무관) → 극단 줌인·비밀집에서도 rebuild 당 68~145ms 고정 = "줌인해도 느림"의 정체. §65/§67 컬링(화면 밖만)으론 못 줄이는 축.
+- 해소: 두 순수 함수를 **위상-서명(_metaTopoSig: nodes/REFERENCES edges/schemaExpanded/mode) 메모이즈**. 서명 무변경(팬·줌·선택·마커·컬럼토글·드래그) rebuild 는 정렬 재사용 → build 를 방출 비용만 남김. 통짜 layout 캐시는 groupOf/groupMembers side-effect landmine 이라 배제. cull 마진 0.6→0.3(고배율 방출 감축).
+- 검증: headless 메모이즈 19 + 회귀 150 = **169 PASS**·node --check. 캐시적중==fresh 좌표완전동일(메모이즈가 출력 불변) 증명. §18.8 적대 리뷰(REV §73: BLOCKING/MAJOR 0 · F1 roles·F2 노드속성 stale 캐시 잡아 서명 확장 수정). POST-DEPLOY win-browser 실측.
+- 캐시버스터 `admin.js?v=20260710-layoutmemo`. ADR-035. §65/§67 컬링과 상보(컬링=방출 수↓, 메모이즈=배치 계산↓).
+
+### §73 layoutmemo POST-DEPLOY 실측 (2026-07-10, main e6b7b68f)
+win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검증: 동일 위상 연속 build 함수분해 — **MISS 59ms(relOrderAll 27+simGroups 29) → HIT 8ms(둘 다 0) = 7.4× 급감**(지배 함수 완전 skip), MISS↔HIT 방출 좌표 이동 **0**(band-invariant)·방출 수 동일. 극단 줌인(2.5)도 HIT 8ms·마진 0.3·pageerror 0. 캐시 정상(_simCache 4·_relOrderCache set). "극단 줌인·비밀집인데도 느림" 근본원인이 캐시 적중 시 8ms 로 상시 경량화 — 사용자 요청 근본해소 실증. TEST §73.
+## 2026-07-10 · 상세 패널에서도 테이블 노드 내 컬럼 선택 (graph-detail-colsel, TASK §75, 사용자 요청)
+- 요청: ``그래프 뷰 > 상세` 패널에서도 테이블 노드 내 컬럼을 선택할 수 있도록 구성`. 캔버스(컬럼 노드 클릭)에서는 선택되나 상세 패널 컬럼 목록에서는 불가하던 빈틈 보완("~에서도"). §71 rtuse-camera(사용관계 행)·§72 reltrace-colnav(관계행→미렌더 컬럼 카메라)와 별개 — 본 항목은 컬럼 목록 자체의 선택 배선.
+- 진단(Explore 코드 매핑): 컬럼은 개별 G6 노드이고 선택 상태 `_metaGraph.selected` 는 캔버스·컬럼 공용 단일 변수. 캔버스 컬럼 노드 클릭은 `_metaGraphShowDetail(colKey)` 로 선택(강조+상세전환). 상세 패널(`_metaGraphRenderDetail`)의 컬럼 행만 배선 부재 — plain=정적 텍스트(DOM에 키 없음)·관계=아코디언 토글(`.amgr-col-toggle[data-colrel]`)만.
+- 구현: plain 컬럼 → `.amgr-col-select[data-col]` 버튼. 관계 컬럼 → `.amgr-col-head`(flex) 안에서 캐럿(`.amgr-col-caret[data-coltoggle]`, 인플레이스 아코디언 보존)과 선택 버튼(`.amgr-col-select[data-col]`) 분리(캐럿=펼침·이름=선택, VSCode 트리 패턴). 바인딩: `.amgr-col-select[data-col]` → `_metaGraphShowDetail(data-col)`(캔버스·`data-rtuse` 와 동일 선택 경로 재사용) → **새 상태변수 0**, 선택 의미론(history + 캔버스 강조 재베이크 + 상세 컬럼뷰 전환) 무상속. CSS `.amgr-col-select`(plain=block/관계=flex relcount 우측정렬)·`.amgr-col-head`·`.amgr-col-caret`. a11y: 캐럿 `aria-controls`+상태중립 `aria-label`, 선택 버튼 간결 `aria-label`. 캐시버스터 admin.js/styles.css `20260710-graph-detail-colsel`.
+- 검증: `node --check` PASS · 신규 헤드리스 격리 렌더 테스트(`test_detail_colsel.js`, vm+`_metaGraph` 주입) 8/8 PASS · 기존 g6build 6종 무회귀 · 적대 diff 리뷰 [SUBAGENT: PASS](REV-20260710T230000, Critical/Major/Minor 0 + a11y nit 2건 반영). main rebase(§71/§72/§73 병렬 머지 후 admin.js 자동병합·재검증). frontend-only·마이그 0·Minor(§12.3).
+- 미완(배포 후): T75.4 POST-DEPLOY 실 Windows 육안(PB-0008) — 상세 패널 컬럼 클릭→선택/강조/아코디언 독립 동작.
+
+## §76 graph-cull-refkeep — 컬링 참조·상호작용 보존 (2026-07-10)
+- 사용자 요청: "cull 처리된 노드들에 대해서 연결선 또한 사라지는 + 상세 패널에서 상호작용 불가. draw는 하지 않되 참조·상호작용은 가능하도록."
+- 진단: 컬링이 화면 밖 노드 미방출 → (a) renderEndpoint 가 앵커 못 찾아 엣지 드롭 (b) _metaRenderedIdFor null 로 상세 네비 팬 skip.
+- 수정: (a) focusAdj 예외(선택 노드 1-hop 관계 상대) + **뷰포트 내 노드 엣지 컬링무효**(in-view 노드에 연결된 상대 끝점 _edgeExempt 방출 예외) → 관계선 렌더 + 네비 팬 복원. (b) 팬 재-emit rAF 스로틀(실시간 드래그 컬링). **무선택·무연결 시 예외 0**(컬링 무손실); in-view 연결 상대는 선택 무관 예외(§76 적대리뷰 M1 정정 — 종전 "무선택 예외 0" 은 focusAdj-only 시점 기술). ADR-037.
+- 검증: headless cullrefkeep 15(§76 리뷰 M2 dense off-view 컬링유지 보강) + 그래프 회귀 = **249 PASS**(11 스위트)·node --check. §18.8 적대 리뷰 [SUBAGENT: PASS-WITH-FIXES](BLOCKING/MAJOR 0). POST-DEPLOY win-browser. 버스터 `admin.js?v=20260710-cullrefkeep`.

@@ -146,6 +146,28 @@ baseline 이 이제 full-schema 라 두 경로가 같은 객체를 만들 수 �
 `IF NOT EXISTS`/`CREATE OR REPLACE` 기반 idempotent 라 어느 쪽이 먼저 돌아도 안전하다.
 부트스트랩 **완전 제거는 후속 위험 단계**로 미룬다(이번 범위 밖).
 
+## 병렬 브랜치 번호 경합 게이트 (parallel-work-structure ITEM-02, 2026-07-10)
+
+병렬 worktree 브랜치들이 같은 "다음 번호"(예: 0040)로 마이그레이션을 만들면 머지 후에야
+multi-head 로 발각되던 문제(0036 실충돌 — `6263e641` 수동 re-parent)를 3중 장치로 막는다:
+
+1. **정적 head 검사** — `bin/migrate-lint.sh --heads`: versions/*.py 의
+   `revision`/`down_revision` 그래프를 AST 파싱해 (a) head 2개 이상 (b) 파일명 4자리
+   번호 중복 (c) `MAX_MIGRATION.txt` ↔ 실제 head 불일치를 exit 1 로 적발. 라이브 DB
+   불필요(폐쇄망 CI 안전). 기본 diff/`--all` 모드에서도 항상 함께 실행된다.
+2. **CI 머지 게이트** — `.github/workflows/ci.yml` `test` job 의 "Migration gate" 스텝이
+   PR 마다 `--self-test` + `--heads` 실행.
+3. **의도적 충돌 파일** — `versions/MAX_MIGRATION.txt` 에 최신 head revision id 를 1줄
+   기록(django-linear-migrations 의 `max_migration.txt` 패턴). **신규 마이그레이션 작성
+   시 이 파일도 함께 갱신**해야 한다(lint (c) 가 강제). 병렬 두 브랜치가 각자 head 를
+   만들면 git 머지 시점에 이 파일에서 반드시 텍스트 충돌 → CI 도달 전 fail-fast.
+
+**경합 해소**: 나중에 머지되는 브랜치에서
+`bin/alembic-reparent.sh <versions/파일.py> <새번호>` 1회 — 파일명 번호·`revision`·
+`down_revision`(현 head 로) 3곳 원자 치환 + MAX_MIGRATION.txt 갱신 + lint 재실행.
+**guard**: 아직 origin/main 에 머지되지 않은 자기 브랜치 파일만 대상(스크립트가 강제) —
+머지된 revision 재번호는 라이브 `alembic_version` stamp 를 파손하므로 금지.
+
 ## 후속 작업 (이번 범위 밖)
 
 - **부트스트랩 DDL 이관**: `_ensure_pg_schema()`/`agent_kb_schema.sql` 의 CREATE/ALTER

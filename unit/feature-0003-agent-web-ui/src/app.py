@@ -19638,79 +19638,13 @@ def _audit_export_filter_hash(params: dict) -> str:
 
 
 # =============================================================================
-# feature-0012 P5b Final — 도메인 APIRouter 분할 (include_router)
+# feature-0012 Final — 라우터 자동 등록 (parallel-work-structure ITEM-05)
 # 모든 정의(get_conn/get_current_account/require_permission/_json_error 등) 이후 맨 끝에서
-# import·include 하므로 순환 import 안전(router 의 `from app import ...` 가 부분 적재된 app 의
-# 이미-정의된 심볼을 읽음). route 경로/메서드/순서는 보존(키워드 router 는 종전과 동일하게 맨 끝 등록).
+# 호출하므로 순환 import 안전(각 router 의 `from app import ...` 가 부분 적재된 app 의
+# 이미-정의된 심볼을 읽음). 신규 라우터는 routers/ 에 `router` 심볼 모듈 추가만으로 등록
+# — 본 파일 편집 불필요(병렬 배선 경합 제거). 등록 순서는 각 모듈 INCLUDE_ORDER 가 고정
+# (2026-07-10 현행 23개 include 순서 스냅샷 — routers/__init__.py 참조).
 # =============================================================================
-from routers.static_pages import router as _static_pages_router  # noqa: E402
-from routers.admin_conversations import router as _admin_conversations_router  # noqa: E402
-from routers.admin_usage import router as _admin_usage_router  # noqa: E402
-from routers.admin_console import router as _admin_console_router  # noqa: E402
-from routers.share import router as _share_router  # noqa: E402
-from routers.system import router as _system_router  # noqa: E402
-from routers.admin_quotas import router as _admin_quotas_router  # noqa: E402
-from routers.admin_sample_feedback import router as _admin_sample_feedback_router  # noqa: E402
-from routers.conversations import router as _conversations_router  # noqa: E402
-from routers.media import router as _media_router  # noqa: E402
-from routers.keywords import router as _keywords_router  # noqa: E402
+from routers import register_all as _register_all_routers  # noqa: E402
 
-app.include_router(_static_pages_router)
-app.include_router(_admin_conversations_router)
-app.include_router(_admin_usage_router)
-app.include_router(_admin_console_router)
-app.include_router(_share_router)
-app.include_router(_system_router)
-app.include_router(_admin_quotas_router)
-app.include_router(_admin_sample_feedback_router)
-app.include_router(_conversations_router)
-app.include_router(_media_router)
-app.include_router(_keywords_router)
-
-# feature-0012 P5b: admin_metadata router (맨 끝 — 순환 안전)
-from routers.admin_metadata import router as _admin_metadata_router  # noqa: E402
-app.include_router(_admin_metadata_router)
-
-# feature-0012 P5b: profile router (맨 끝 — 순환 안전)
-from routers.profile import router as _profile_router  # noqa: E402
-app.include_router(_profile_router)
-
-# feature-0012 P5b: integrations router (맨 끝 — 순환 안전)
-from routers.integrations import router as _integrations_router  # noqa: E402
-app.include_router(_integrations_router)
-
-# feature-0012 P5b: attachments router (맨 끝 — 순환 안전)
-from routers.attachments import router as _attachments_router  # noqa: E402
-app.include_router(_attachments_router)
-
-# feature-0012 P5b: admin_audits router (맨 끝 — 순환 안전)
-from routers.admin_audits import router as _admin_audits_router  # noqa: E402
-app.include_router(_admin_audits_router)
-
-# feature-0012 P5b: admin_accounts router (맨 끝 — 순환 안전)
-from routers.admin_accounts import router as _admin_accounts_router  # noqa: E402
-app.include_router(_admin_accounts_router)
-
-# feature-0012 P5b: admin_roles router (맨 끝 — 순환 안전)
-from routers.admin_roles import router as _admin_roles_router  # noqa: E402
-app.include_router(_admin_roles_router)
-
-# feature-0012 P5b: admin_datasources router (맨 끝 — 순환 안전)
-from routers.admin_datasources import router as _admin_datasources_router  # noqa: E402
-app.include_router(_admin_datasources_router)
-
-# feature-0012 P5b: auth router (맨 끝 — 순환 안전)
-from routers.auth import router as _auth_router  # noqa: E402
-app.include_router(_auth_router)
-
-# feature-0012 P5b: admin_products router (맨 끝 — 순환 안전)
-from routers.admin_products import router as _admin_products_router  # noqa: E402
-app.include_router(_admin_products_router)
-
-# TASK-AIOPS: AI 운영 관제 패널 API (GET /api/admin/ai-ops, 권한 console.aiops.read).
-from routers.ai_ops import router as _ai_ops_router  # noqa: E402
-app.include_router(_ai_ops_router)
-
-# feature-0018: 런타임 설정 API (실행 타임아웃·모델 추론 예산, 권한 system.runtime.read/write).
-from routers.admin_settings import router as _admin_settings_router  # noqa: E402
-app.include_router(_admin_settings_router)
+_register_all_routers(app)

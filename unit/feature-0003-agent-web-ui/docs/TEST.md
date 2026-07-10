@@ -1942,7 +1942,7 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 
 
 ### Run (2026-07-10) — agg-lod: 극단 줌아웃 클러스터 집계 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §63/ADR-030) — **Environment: Windows-browser**
-- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_agglod.js` **9 PASS** — 집계 카드 방출·draw 급감(>10x)·
+- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_agglod.js` **10 PASS** — 집계 카드 방출·draw 급감(>10x)·
   **T3 reflow-free**(집계 카드가 클러스터 슬롯 위치, 확대 시 원위치 복원)·게이트. 회귀 125 = 134 PASS·`node --check` PASS.
 - **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 baked → merge + `deploy-web`
   재배포 선행(§51·§57·§60·§61 동일). ② agg 발동 = 대형 라이브 그래프 + 극단 줌아웃(<0.15)이라 무인 재현 복잡 +
@@ -2057,3 +2057,46 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   ① "대상 노드가 현재 화면에 없습니다" **오류 메시지 미노출**(사용자 불편 해소 실증) ② 카메라가 소속 테이블(또는 접힌
   스키마 카드)로 부드럽게 이동(테이블 **펼치지 않음**) ③ 소속 테이블이 하이라이트(주변 dim)로 강조 ④ 상세 패널 유지 →
   같은 행 **더블클릭** → 테이블 펼침 + 해당 컬럼 선택 ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.
+### Run (2026-07-10) — layoutmemo: 배치-정렬 함수 위상-서명 메모이즈 (Major §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §73/ADR-035) — **Environment: Windows-browser**
+- 변경: `_metaTopoSig` 신규 + `_metaG6Build` 서명체크로 `_metaRelOrderAll`(build 지배 ~55%)·`_metaSimGroups`(~45%)
+  위상 무변경 시 재사용 → 극단 줌인·비밀집 rebuild 경량화(근본원인 해소). cull 마진 0.6→0.3. 결정론 불변(캐시 적중==fresh).
+- **pre-commit 정적/실측 검증 PASS**: `node --check admin.js` PASS · headless `test_g6build_layoutmemo.js` **19 PASS**
+  (캐시적중==fresh 좌표완전동일·서명무효화·컬럼/freeplace 독립·적대리뷰 F1 roles/F2 노드속성 서명무효화) + 회귀 150 = **169 PASS** ·
+  §18.8 적대 리뷰 REV-20260710T233000 **[SUBAGENT: PASS-WITH-FIXES]**(BLOCKING/MAJOR 0, F1 HIGH·F2 MEDIUM·NIT 수정) ·
+  **근본원인 win-browser 실측(배포 전 라이브 baseline)**: build 함수분해 monkey-patch 로 relOrderAll 38ms+simGroups 32ms=build 의 99% 확인. 캐시버스터 `admin.js?v=20260710-layoutmemo`.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 신규 코드는 정적 자산 web 이미지 baked → merge +
+  `deploy-web` 후에만 서빙 자산 실측 가능(배포 전 라이브는 구 코드). win-browser relay 시각검증은 가능(PB-0008 갱신) → POST-DEPLOY 재측정.
+- **POST-DEPLOY win-browser 실 Windows Chrome 검증(T69.4)**: 배포 후 동일 대형 scope(mssql-qa-idc)에서
+  ① build 함수분해 재측정 — **캐시 적중 시 relOrderAll·simGroups ≈ 0ms·build 급감**(68~145ms→방출비용만) ② 위상 무변경
+  rebuild(팬·줌·선택·컬럼토글) 노드 위치 동일(band-invariant) ③ 극단 줌인(zoom 2.5) 방출 수↓(마진 0.3) ④ pageerror 0.
+  **[POST-DEPLOY 갱신 2026-07-10] 라이브 PASS (Environment: Windows-browser, AI 직접 — 실 Windows Chrome via bin/win-browser.py relay @ 172.26.144.1:9223)**: PR #667 머지 → main **e6b7b68f** → `make deploy-web` 무중단 롤링(web-a/web-b 순차 recreate·90s soak PASS·마이그 0). `/healthz` git_commit=e6b7b68f·mysql_ok·pg_ok. **서빙 자산 실측(curl, https://localhost/)**: admin.html→`admin.js?v=20260710-layoutmemo` 서빙 · 서빙 admin.js 내 `_metaTopoSig`=7건. **런타임 실측(win-browser eval, mssql-qa-idc 882 노드·5스키마 펼침)**: 동일 위상 연속 build 2회 함수분해 monkey-patch — **MISS(캐시 무효화 후) build 59ms(relOrderAll 27+simGroups 29=56=95%)** → **HIT(위상 무변경 재빌드) build 8ms(relOrderAll 0·simGroups 0)** = **7.4× 급감, 지배 함수 완전 skip 실증**. **위치 동일성**: MISS vs HIT 방출 노드 좌표 이동 **0건**·방출 수 동일(530=530) → 메모이즈가 출력 불변 실증(band-invariant). 극단 줌인(zoom 2.5)도 HIT build **8ms**(relOrder/sim 0)·방출 338(마진 0.3)·pageerror 0. 캐시 상태 `_layoutSig`=string·`_simCache`.size=4·`_relOrderCache`=set. 렌더 무결(루틴 칩·관계선·선택 하이라이트 정상, 스크린샷 scratchpad/layoutmemo_z25.png). **결론: "극단 줌인·비밀집인데도 느림"의 근본원인(뷰포트 무관 전체모델 배치계산)이 캐시 적중 시 8ms 로 상시 경량화 — 사용자 요청 근본해소 실증.**
+
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl(`?v=20260710-layoutmemo`) + win-browser 실측 PASS append.
+### Run (2026-07-10) — graph-minimap-reuse: 미니맵 전체-이미지 재사용(구성 불변 시 재복제 skip) (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §74/ADR-036) — **Environment: Windows-browser**
+- 정적/문법: `node --check admin.js` PASS(머지 후 재확인). 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 서명 11·B 실build 4·C 패치 10·D 드래그 무효화 10). 회귀 **150 PASS**.
+- 적대 리뷰 2건 BLOCK→수정: H1(패치 init 시점 호출→plugin lazy-init 전 no-op)→draw 직후 이동, H2(네이티브 드래그 stale 서명→미니맵 얼어붙음)→afterdraw stage="translate" 무효화.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 재배포 선행 필요(동일 패턴). **POST-DEPLOY PB-0008 라이브 append 예정** — ① 미니맵 렌더 ② 팬/줌 뷰포트 사각형 추종 ③ 상태-only 후 안정(blank/깜빡임 없음) ④ 구성변경 반영 ⑤ **드래그 시 위치 반영(H2 실증)** ⑥ pageerror 0. 서빙 자산 curl(버스터 `20260710-mmreuse-layoutmemo` + `_metaMinimapGeomSig`/`_metaPatchMinimapReuse`) 확증.
+- **Pass/Fail: pre-commit 정적·문법·헤드리스 PASS · 라이브 = POST-DEPLOY**. CHECK#13 충족.
+- **POST-DEPLOY PB-0008 라이브 (2026-07-10, 배포 508fae50 web-a/web-b soak PASS) — PASS**: win-browser.py relay(실 Windows Chrome 149, `https://localhost/admin` 로그인 세션) 그래프 뷰 실측. ① 미니맵 우하단 정상 렌더 — `.g6-minimap canvas` **168×112**(플러그인 config 일치) + 뷰포트 마스크 div 존재. ② 줌인(+2회) 후 미니맵 유지. ③ **스코프 전환 mssql-dk-dev(DK온라인 461테이블)→mysql-gz-dev(건즈 173테이블 3스키마) 시 미니맵이 새 그래프 레이아웃(gunzgame/gunzlog/gunzlogin 3카드)으로 재렌더** — 구성 변경 반영·얼어붙지 않음 실증. ④ 로드·줌·클릭·스코프전환 전반 **pageerror 0**(주입 error/unhandledrejection 수집기). ⑤ 서빙 자산 curl: 버스터 `admin.js?v=20260710-mmreuse-layoutmemo` + `_metaMinimapGeomSig`·`_metaPatchMinimapReuse`·`graph.on("afterdraw")`·`key:"minimap"`·`_miniGeomSig` 배선 서빙 확인. 상태-only rebuild 재복제 skip·per-frame 드래그 추종(H2)은 G6 @antv/g canvas 가 합성 DOM 포인터이벤트를 hit-test 에 미등록해 육안 트리거 불가 → headless `test_g6build_minimap_reuse.js` D섹션 10테스트(afterdraw stage="translate" 무효화·apply draw 서명 유지)로 lock. 스크린샷 evidence 01~05.
+### Run (2026-07-10) — graph-detail-colsel: 상세 패널에서도 테이블 노드 내 컬럼 선택 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §75) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증**: `node --check admin.js` PASS. 신규 헤드리스 격리 렌더 테스트 `tests/headless/test_detail_colsel.js`
+  (collod 하네스 패턴 — vm 로 admin.js 로드 + `_metaGraph` 참조 주입 + `_metaGraphRenderDetail` 실 데이터 렌더 캡처) **8/8 PASS**:
+  ① plain 컬럼 `.amgr-col-select[data-col]` ② 관계 컬럼 `.amgr-col-head`(캐럿 `.amgr-col-caret[data-coltoggle]` + 선택버튼)
+  ③ relcount(→N)·아코디언 body 보존 ④ 구 `.amgr-col-toggle`/`data-colrel` 완전 제거 ⑤ 안내 문구 갱신. 기존 g6build headless 6종
+  (agglod/category/collod/edge_visibility/viewportcull/vpack) 무회귀.
+- **선택 경로 재사용 실증**: 상세 패널 컬럼 클릭 핸들러는 캔버스 컬럼 노드 클릭·`[data-rtuse]` 행과 **동일한** `_metaGraphShowDetail(colKey)`
+  경로 호출 → 새 그래프-모델/선택 상태 로직 0(`_metaGraph.selected` 공유). 캐럿(아코디언)과 선택 버튼은 형제·`stopPropagation` 양쪽 → 이중발화 0.
+  diff 적대 리뷰(REV-20260710T230000) **[SUBAGENT: PASS]** — Critical/Major/Minor 0 + a11y nit 2건(캐럿 `aria-controls`+상태중립 label, 선택 버튼 간결 label) 반영.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산이 web 이미지에 baked → 서빙 admin.js/styles.css 에
+  변경 반영하려면 merge + `deploy-web` 재배포 선행(§65·§66·§67·graph-focus-selected 동일). 캐시버스터 admin.js/styles.css `?v=20260710-graph-detail-colsel`.
+- **POST-DEPLOY win-browser 육안 검증(예정, T75.4)**: 그래프 로그인(https://localhost/admin, switchTab('graph')) → 스키마·테이블 펼침 →
+  테이블 노드 클릭 → 상세 패널 컬럼 목록에서 컬럼(plain/관계 모두) 클릭 → **상세가 그 컬럼 뷰로 전환** + 그래프에서 해당 컬럼 강조(렌더된 경우)
+  + 관계 컬럼 캐럿(▸)은 여전히 인플레이스 아코디언 펼침(선택과 독립) + 레이아웃 무붕괴 + pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(서빙 admin.js 에 `.amgr-col-select`·버스터 `20260710-graph-detail-colsel`) + win-browser 육안 PASS append.
+
+### Run (2026-07-10) — cull-refkeep: 뷰포트 컬링 참조·상호작용 보존 (Major §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §76/ADR-037) — **Environment: Windows-browser**
+- 변경: `_faKeep`/`_clusterHasFocus` 헬퍼 + 3 컬 지점(클러스터·루틴·테이블) 예외 가드. 선택 노드의 관계 상대(focusAdj)를 화면 밖이어도 방출 → 관계선 렌더 + 상세 네비 팬 복원. 무선택 시 예외 0(컬링 무손실).
+- **pre-commit 정적/실측 검증 PASS**: `node --check admin.js` PASS · headless `test_g6build_cullrefkeep.js` **10 PASS**(뷰포트 내 노드 엣지 컬링무효 — 무선택 in-view 연결 상대 방출·무연결 컬링 + focusAdj 중복커버 + nodePosAll) + 회귀 169 = **179 PASS** · §18.8 적대 리뷰(REVIEW.md). 캐시버스터 `admin.js?v=20260710-cullrefkeep`.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 후에만 서빙 자산 실측 가능. win-browser relay 시각검증 가능(PB-0008) → POST-DEPLOY.
+- **POST-DEPLOY win-browser 실 Windows Chrome 검증(T76.3)**: 대형 그래프 줌인 → 노드 선택 → ① 화면 밖 관계 노드로 **관계선 유지**(참조) ② 상세 패널 관계행 클릭 → **화면 밖 대상으로 카메라 팬**(상호작용) ③ 무선택 시 컬링·성능 유지 ④ pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl(`?v=20260710-cullrefkeep` + `_faKeep`/`_clusterHasFocus`) + win-browser 실측 PASS append.

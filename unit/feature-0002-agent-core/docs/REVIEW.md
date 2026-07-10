@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260710T191159-mssql-auth-cooldown [SUBAGENT:adversarial-backend-correctness-trace] — MSSQL insight 순회 로그인실패 조기 skip + cooldown (TASK-20260710-mssql-auth-cooldown, Minor §12.3)
+- Date: 2026-07-10. §18.8 backend/correctness dispatch — 제품 워커(insight-worker) 순회 로직 변경이라 커밋 전 적대적 리뷰(REFUTE-우선, 결함적발 목적) 1패널. 대상: insight.py cooldown 상태/헬퍼·datasource 루프 gate·DB 순회 break·config knob.
+- verdict: **CHANGES-REQUESTED → HIGH 2 + MEDIUM 2 + LOW 2 전건 흡수 + 후속 발견 1 → SHIP-WITH-FIXES**. 리뷰어가 6결함을 probe 로 **실증**(재현 스크립트 동봉).
+- **HIGH-1(실증, 흡수)**: cooldown 을 `_ds_scope`(=scope_key=engine:host:port 해시, **login 제외**)로 키잉 → 같은 host:port 에 다른 계정으로 등록된 두 datasource 가 동일 scope_key 공유 → 잘못된 계정 A 의 18456 이 **정상 계정 B 를 연쇄 차단**. 이는 shared/db.py `_is_connect_breaker_failure` 가 auth 를 network breaker 에서 의도적 제외한 바로 그 anti-contamination 불변식("한 계정 자격오류가 같은 서버 다른 계정 게이트를 열지 않게")을 되돌림 — 이 변경의 설계 전제와 자기모순. → **cooldown 키를 datasource label(`_ds_key`)로 변경**(계정과 1:1). label rename 은 600s 휘발 상태라 손실돼도 다음 cycle 재평가(무해). 회귀 테스트 `test_different_login_same_endpoint_not_chained`.
+- **HIGH-2(실증, 흡수)**: per-DB 권한오류(916 "Cannot open database"·229·297 객체별)를 endpoint-wide 로 오취급 → 첫 db0 가 916 이면 접근 가능한 db1~db9 를 **통째 skip**(커버리지 회귀, 이전 "다음 대상 계속" 대비 명백한 회귀). 916 은 remediation 모델(DB별 개별 GRANT)의 정상 부분상태. → **scope-wide skip/cooldown 트리거를 `_is_login_failure`(로그인 자체 실패)로 한정**, 916/229/297 은 해당 DB 만 실패로 기록하고 순회 계속. 회귀 테스트 `test_per_db_916_does_not_skip_other_dbs`.
+- **후속 발견(테스트 작성 중 자체 적발, 흡수)**: MSSQL 916 실제 메시지가 "Cannot open database … requested by the login. **The login failed** for user …" 로 "login failed" 텍스트를 포함 → 첫 `_is_login_failure` 판정("login failed" in msg)이 916 을 로그인실패로 오분류해 **HIGH-2 가 재발**. → `_is_login_failure` 를 **error number 18456 우선**(`\b18456\b`)으로 정밀화 + 번호 없는 순수 텍스트는 "login failed for user" AND NOT "cannot open database" 로 916 과 구분. 테스트의 916 fixture 를 실제 메시지(“login failed” 포함)로 구성해 회귀 고정.
+- **MEDIUM-3(흡수·문서정정)**: "운영자 GRANT 수정 시 즉시 복구" 서술이 성립 불가 — cooldown 활성 중 진입 gate 가 continue 하므로 성공 `else`(clear) 도달 불가, 복구는 오직 TTL 만료. → clear docstring·주석을 "복구 권위는 TTL 만료, clear 는 만료 후 재시도 성공 시 재-set 방지" 로 정정(기능상 자동복구는 TTL 로 성립).
+- **MEDIUM-4(완화)**: transient perm-유사(failover 중 18456 state 38/40, DB RESTORING 916)의 blast radius. HIGH-2 흡수로 916 계열은 이제 break 안 함(대폭 완화). 18456 계열은 TTL(600s) 후 자동 회복 — documented residual.
+- **LOW-5(흡수)**: `_DS_AUTH_COOLDOWN` 이 삭제/rename datasource 항목 누수(만료 자동 pop 은 재조회 전제) → `_prune_auth_cooldown(live_ds_keys)` 를 cycle 끝에 호출(`_LAST_DS_SCAN_STATUS` prune 과 대칭). 회귀 테스트 `test_prune_auth_cooldown_removes_stale`.
+- **LOW-6(흡수)**: cooldown gate 를 **discovery 뒤로 이동** → `db_targets` 정상 집계 + `db_skipped_auth` 를 실제 skip DB 수(`len(_db_targets)`)로 정확 계상(관측성 왜곡 제거).
+- **결함 없음 확인**: break 위치(finally 후 for-body 레벨 — conn.close·telemetry·health·edge-log 모두 실행 후 break) · base DB(`_ds_key is None`) 모든 gate 제외+re-raise · circuit_open 우선판정 · flag OFF/ttl=0 무회귀.
+- 테스트: 신규 `test_mssql_auth_cooldown.py` **11**(헬퍼/prune 6 + 순회 통합 5: AC1 connect 1회·AC2 cooldown skip·AC4 ttl=0 재시도·HIGH-1 다른계정 독립·HIGH-2 916 계속) + insight/mssql/datasource 8파일 **87 회귀 0**(합계 98 PASS) + py_compile PASS.
+- Human Approval Needed: 없음(사용자 요청 착수 Minor + 자동 동기화). 배포: insight-worker 재기동(백엔드, PB-0008 비대상). 운영 조치(계정/GRANT/InsightEnabled)는 저장소 범위 밖(REPORT 검토항목).
+
 ## REV-20260703T083758-insight-table-grouping [AGENT-TEAM:adversarial-backend-correctness-trace] — insight-worker 동일구조 테이블 그룹화 (TASK-20260703-insight-table-grouping, Major §12.3)
 - Date: 2026-07-03. §18.8 backend/qa dispatch — Major 라이브 워커 변경이라 커밋 전 적대적 correctness 트레이스(REFUTE-우선) 1패널. 대상: insight.py 그룹화·fan-out·KV 상속·`_publish_table_insight` + config knob.
 - verdict: **CHANGES-REQUESTED → 전건 흡수 → SHIP-WITH-FIXES**. 확정 버그 2 + actionable 우려 2 반영, 나머지는 refuted/documented-residual.
@@ -1306,3 +1320,11 @@ source_of_truth: true
 - 근거: 배포 타이밍 재구성(PR #600 머지 10:28:41 → gateway 재생성 10:31:02 → ask/insight 이미지 재빌드 10:32:18) + 실패 시각(10:37:18)의 실행 이미지(`634f9d6e7de7`)를 직접 열어 이미 수정 코드 보유 확인(stale-image 가설 기각) + 정적 코드 추적(`_call_llm` 유일 caller, claude-* 모델에 항상 `max_tokens=20000` 주입 — 충돌 경로 없음, 저장소 전체에서 `conversation_answer_model` 호출부 1곳뿐) + 게이트웨이 라이브 재현(`max_tokens<5000` 만 재현, `≥5000`/미지정은 정상) + 컨테이너 기동 이후 전체 로그 재발 0 확인.
 - 결론: 코드 결함 아님. FRICTION_LEDGER 의 post-deploy "live probe" 절차가 만든 1회성 프로브 아티팩트 — 실 사용자 대화 트래픽 영향 없음(연계 conversation_id 없음).
 - Cross-ref: CHG-20260707T134500-bedrock-chat-alias-probe-artifact(feature-0002 MODIFY) · FRICTION_LEDGER FR-edge-fallback-conversation-context-loss addendum.
+
+## REV-20260710T232503-alembic-multihead-gate [SKIPPED:roadmap-spec-transcription] — 병렬 마이그레이션 번호 경합 CI 게이트 + 해소 자동화 (parallel-work-structure ITEM-02)
+- Date: 2026-07-10. cycle: ai/claude-corp/feature-0002-agent-core — `/_dqa:improve_cycle parallel-work-structure` 드레인 2번째 항목(ITEM-02, Minor). **승인 근거: ROADMAP §6.1**(2026-07-10 사용자 지시 — Minor 는 드레인 자동 구현 범위).
+- SKIPPED 사유: what/entry_points/acceptance/guards 가 ROADMAP ITEM-02 에 완전 명세 — 그 명세는 improve-fit-reviewer 2-round 적대 리뷰(REV-20260710T180820, meta/REVIEW.md)가 사전 검증. 구현은 명세 전사 + 검증 주도(아래) — DB 스키마 무변경(마이그레이션 0건), 제품 런타임 코드 무변경(도구·CI 게이트만), §18.8 dispatch(auth/schema/UI/API/perf) 비해당(스키마 '변경'이 아닌 스키마 변경의 '검사기').
+- 검증(acceptance 전건 실증 — TEST.md §3 "alembic-multihead-gate"): self-test 10/10(신규 head 4 케이스 포함) · 현행 39체인 PASS · (a) 중복 0040×2 FAIL 적발 · (b) reparent 1회 PASS 복원 · (e) 병렬 브랜치 MAX_MIGRATION.txt git CONFLICT fail-fast 재현 · bash -n 2종 · (d) CI 스텝은 본 PR checks 로 확인.
+- guard: reparent 는 origin/main 미머지 파일만(스크립트 강제 die) — 라이브 alembic_version stamp 파손 방지(MIGRATIONS.md 규약 절 명문화).
+- Human Approval Needed: 아니오 — Minor·비파괴(검사기 추가)·배포 무관(CI/도구만). 전역 auto-sync + §6.1.
+- Cross-ref: CHG-20260710T232503(MODIFY) · ROADMAP ITEM-02 note · MIGRATIONS.md "병렬 브랜치 번호 경합 게이트" 절.

@@ -3739,7 +3739,10 @@ const _META_AGG_MIN = 60;         // 전체 모델 노드 수가 이 미만이�
 //   병목=draw 방출 요소 수라, 보이지 않는 컬럼을 안 그리면 줌인 클릭/팬이 가벼워진다. 뷰포트를 덮는 개요에선
 //   모든 테이블이 in-view 라 자동 무효(집계·col-LOD 가 담당). combo-safe: 테이블 칩은 항상 유지 → combo extent 불변.
 const _META_CULL_MIN = 400;       // 모델 노드 수가 이 미만이면 컬링 안 함(작은 모델은 전체가 화면에 근접)
-const _META_CULL_MARGIN = 0.6;    // 뷰포트 밖 여유(뷰포트 크기 배수) — 팬 시 컬럼이 경계에서 갑자기 튀지 않게
+const _META_CULL_MARGIN = 0.3;    // 뷰포트 밖 여유(뷰포트 크기 배수) — 팬 시 컬럼이 경계에서 갑자기 튀지 않게.
+//   graph-layoutmemo(§73): 0.6→0.3 — 고배율 줌인에서 방출 영역이 과대(margin 0.6 이면 방출면적=뷰포트×4.84,
+//   zoom 2.5 에서 337 방출)해 setData+draw 를 키웠다. 메모이즈로 re-emit 의 layout 비용이 사라져 더 tight 한
+//   마진(방출면적 ×2.25)이 감당 가능 — 방출 수↓ = draw↓. 팬 재-emit 은 §65 debounce 로 경계 pop 흡수.
 // §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
 const _META_DIM_OPACITY = 0.38;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
@@ -4633,6 +4636,32 @@ function _metaCatAssign(ids) {
   return res;
 }
 
+// ── graph-layoutmemo(§73): 순수 배치-정렬 함수 메모이즈용 위상 서명 ──
+//   실측(win-browser, PB-0008): _metaG6Build 의 ~99% 는 _metaRelOrderAll(barycenter 4-sweep)+
+//   _metaSimGroups(affix 유사그룹)이 지배하고, 둘 다 **전체 모델**을 처리(뷰포트·줌 무관)해 극단 줌인·
+//   비밀집 상태에서도 rebuild 마다 68~145ms 를 태운다("줌인해도 느림"의 근본원인). 두 함수는 순수 —
+//   결과는 (로드된 테이블/루틴 = nodes + 정렬이 읽는 객체 속성, REFERENCES 관계 = edges, 역할 = roles,
+//   펼친 스키마 = schemaExpanded, mode)에만 의존하고 **컬럼(colsByTable)·freeplace(clusterOffset/nodePos/
+//   groupOffset)·선택·뷰포트와 무관**. → 서명 무변경이면(팬·줌·선택·마커·컬럼토글·드래그) 정렬 재사용 →
+//   rebuild 를 방출 비용만 남긴다. 컬럼은 nodes(Map) 아닌 colsByTable 거주라 서명서 자연 제외 = 컬럼토글도 적중.
+//   ⚠ 적대리뷰(§73) F1/F2 반영: simGroups/relOrder 는 노드 **키**뿐 아니라 **객체 속성**(name·fqn·cluster_id·
+//   cluster_label — affix·be:클러스터·정렬)과 **roles**(Phase-3 역할 폴백 _metaRoleOf)도 읽으므로 서명에 포함.
+//   키만 해시하면 AI 분석 완료(roles 변경·nodes 무변경) 또는 재-ingest(속성 변경·키 무변경)에서 stale 캐시 발생.
+function _metaTopoSig() {
+  const hs = (str, h) => { for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h; };
+  let nh = 0; _metaGraph.nodes.forEach((v, k) => {
+    nh = hs(k + "|" + (v.name || "") + "|" + (v.fqn || "") + "|" + (v.cluster_id != null ? v.cluster_id : "") + "|" + (v.cluster_label || ""), nh);
+  });
+  let rh = 0, rn = 0; _metaGraph.roles.forEach((role, k) => { rn++; rh = hs(k + "=" + String(role), rh); });   // F1: 역할 폴백 그룹핑
+  let eh = 0, en = 0;
+  _metaGraph.edges.forEach((e) => {
+    if (e.type !== "REFERENCES") return;   // relAdj 는 REFERENCES 만 소비 — 서명도 동일 범위(다른 엣지 변화는 정렬 무영향)
+    en++; eh = hs((e.source || "") + ">" + (e.target || "") + ":" + (e.status || ""), eh);
+  });
+  return _metaGraph.nodes.size + "|" + en + "|" + rn + "|" + nh + "|" + eh + "|" + rh + "|"
+    + [..._metaGraph.schemaExpanded].sort().join(",") + "|" + _metaGraph.mode;
+}
+
 function _metaG6Build() {
   // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
   //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
@@ -4674,6 +4703,15 @@ function _metaG6Build() {
     }
     ensureG(_META_TERMS_COMBO).terms.push(n);   // GlossaryTerm/Datasource/Product/기타
   });
+  // graph-layoutmemo(§73): 위상 서명이 바뀌면 순수 정렬 캐시(relOrder/simGroups) 무효화. 무변경이면
+  //   아래 _metaRelOrderAll·_metaSimGroups 호출이 캐시를 재사용해 rebuild 의 지배 비용(68~145ms)을 제거.
+  //   서명 계산 자체는 ~1-2ms(nodes/edges 1-pass) — 적중 시 순이득 크다.
+  const _topoSig = _metaTopoSig();
+  if (_metaGraph._layoutSig !== _topoSig) {
+    _metaGraph._layoutSig = _topoSig;
+    _metaGraph._relOrderCache = null;
+    _metaGraph._simCache = new Map();
+  }
   // 클러스터 순서: 관계 seriation(graph-rel-layout, 무관계 시 자연정렬 유지), terms 클러스터는 항상 마지막.
   const relAdj = _metaRelAdjacency(tableByKey);
   const relSchemaOf = (tk) => { const n = tableByKey.get(tk); return n ? _metaSchemaComboOf(n) : null; };
@@ -4696,7 +4734,11 @@ function _metaG6Build() {
     ids.length = 0; catInfo.ids.forEach((id) => ids.push(id)); if (_hasTerms2) ids.push(_META_TERMS_COMBO);
   }
   const schemaIdx = new Map(ids.map((s, i) => [s, i]));   // 테이블 순서의 외부-관계 앵커(이웃 스키마 방향) 조회용
-  const relOrder = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf);   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
+  // graph-layoutmemo(§73): barycenter 정렬(build 지배 비용 ~55%)은 위상 무변경이면 재사용. 아래 안정화
+  //   루프(_metaStableSeq)가 relOrder Map 을 in-place 갱신하지만 멱등(이미 안정화된 배열 재안정화=동일)이라
+  //   캐시 재사용이 안전. ids 순서도 위상 파생(clusterOrder 안정화)이라 서명 무변경이면 동일.
+  const relOrder = _metaGraph._relOrderCache
+    || (_metaGraph._relOrderCache = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf));   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
   // feature-0016 §49(요구②): 클러스터 내 테이블 순서 안정화(flat masonry 경로) — 신규 테이블/루틴만 append → 기존
   //   테이블이 masonry 열/슬롯을 유지(이웃확장 시 형제 점프 제거). simgroups(구조화 스키마) 경로는 _metaSimGroups
   //   내부에서 그룹 순서·그룹내 테이블 순서를 동일 방식으로 안정화(적대리뷰 R1 반영). 잔여(R2): innerCols 임계
@@ -4816,6 +4858,13 @@ function _metaG6Build() {
     ? { cx: (_vx0 + _vx1) / 2, cy: (_vy0 + _vy1) / 2, hw: (_vx1 - _vx0) / 2, hh: (_vy1 - _vy0) / 2 }
     : null;
   const _offView = (x0, y0, x1, y1) => _cullActive && (x1 < _vx0 || x0 > _vx1 || y1 < _vy0 || y0 > _vy1);
+  // graph-cull-refkeep(§76, 사용자 피드백): 컬링은 draw(방출)만 줄여야 하고 **참조(엣지)·상호작용(상세 네비)** 은
+  //   보존해야 한다. 선택 노드의 관계 상대(focusAdj = 상세 패널이 보여주는 관계)는 화면 밖이어도 방출 예외 —
+  //   그래야 (a) renderEndpoint 가 끝점을 찾아 관계선이 렌더되고 (b) _metaRenderedIdFor 가 찾아 관계행 클릭 팬이
+  //   동작한다. 무선택(fa 없음)이면 예외 0 = 컬링 전량 유지(성능 무손실). 예외 범위는 선택 노드 degree 로 유계.
+  const _faCull = _metaGraph.focusAdj;
+  const _faKeep = (k) => !!(_faCull && k && (_faCull.self.has(k) || _faCull.nodes.has(k)));
+  const _clusterHasFocus = (g) => !!(_faCull && g && !g.isTerms && g.tables && g.tables.some((t) => _faKeep(t.key)));
   // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 절대 오프셋 배치).
   //   place 항목은 {it, lx(열 좌측 x — 클러스터 상대), top(항목 상단 y — 클러스터 상대)} 로 정규화 —
   //   평면/그룹 두 경로가 같은 렌더 루프를 공유한다.
@@ -4828,7 +4877,13 @@ function _metaG6Build() {
       return { id, g, kind: "card", w: _METLAY.CARDW, h: _METLAY.CARDH, x0: 0, y0: 0 };
     }
     // graph-simgroups: 유사 속성 그룹 분할 — 2개 이상일 때만 그룹 블록 렌더(1개면 기존 평면 masonry 유지).
-    const simGroups = (!g.isTerms && gatedTables.length) ? _metaSimGroups(id, gatedTables, relAdj) : null;
+    // graph-layoutmemo(§73): affix 유사그룹(build 지배 비용 ~45%)은 순수·위상파생 — 스키마별 캐시(_simCache,
+    //   서명 무변경 시 재사용). 결과는 하류에서 읽기 전용(packGroup·groupOf 채움 모두 read)이라 공유 안전.
+    let simGroups = null;
+    if (!g.isTerms && gatedTables.length) {
+      if (_metaGraph._simCache.has(id)) simGroups = _metaGraph._simCache.get(id);
+      else { simGroups = _metaSimGroups(id, gatedTables, relAdj); _metaGraph._simCache.set(id, simGroups); }
+    }
     if (simGroups && simGroups.length >= 2) {
       // 그룹 블록 shelf-pack: 행 배정은 블록 폭(펼침-불변)만 소비, 행 y 는 실 높이 누적(push-down —
       //   펼친 컬럼이 자기 블록 높이를 키우면 아래 "행"만 밀리고 좌우 이웃 블록 x 는 불변).
@@ -4966,6 +5021,38 @@ function _metaG6Build() {
     const off = _metaGraph.clusterOffset.get(L.id);
     if (off) { L.x0 += off.dx; L.y0 += off.dy; }
   });
+  // graph-cull-refkeep(§76, 사용자 요구): 전체 노드 위치 맵(nodePosAll — 컬링돼도 포함, 커스텀 미니맵·엣지 앵커
+  //   공용) + **뷰포트 내 노드 엣지 컬링무효**. layouts 의 place(최종 배치 위치)로 1-pass 산정: 각 테이블/루틴 center 를
+  //   nodePosAll 에 적재 + in-view(뷰포트+마진 내 = 미컬링) 집합을 만든 뒤, in-view 노드에 연결된 엣지의 상대 끝점
+  //   테이블을 _edgeExempt 에 넣어 컬 예외 → 관계선이 화면 밖 상대까지 이어진다("뷰포트 내 노드들 연결선 컬링무효").
+  _metaGraph.nodePosAll = new Map();
+  const _inView = new Set();
+  const _edgeExempt = new Set();
+  const _foldTbl = (k) => { const n = _metaGraph.nodes.get(k); if (n && n.label !== "Column") return k; return _metaColParent(k, n && n.fqn) || k; };
+  layouts.forEach((L) => {
+    if (L.catHidden) return;
+    const lg = L.g;
+    if (L.kind === "card") { _metaGraph.nodePosAll.set("SC:" + L.id, { x: L.x0 + _METLAY.CARDW / 2, y: L.y0 + _METLAY.CARDH / 2, w: _METLAY.CARDW, h: _METLAY.CARDH, card: true }); return; }
+    (L.place || []).forEach(({ it, lx, top }) => {
+      let colLeftX = L.x0 + lx, ty = L.y0 + top + _METLAY.TROW / 2;
+      const _fp = _metaGraph.nodePos.get(it.key);
+      if (_fp && isFinite(_fp[0]) && isFinite(_fp[1])) { const ddx = _fp[0] - (colLeftX + TXOFF), ddy = _fp[1] - ty; colLeftX += ddx; ty += ddy; }
+      const _rh = realH(lg, it);
+      _metaGraph.nodePosAll.set(it.key, { x: colLeftX + TXOFF, y: ty, w: COLW, h: _rh });
+      if (_cullActive && !_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + _rh)) _inView.add(it.key);
+    });
+  });
+  if (_cullActive && _inView.size) {
+    _metaGraph.edges.forEach((e) => {
+      if (e.type !== "REFERENCES" && e.type !== "ROUTINE_USES") return;   // 관계선(참조·사용) 대상 — containment(HAS_*)·용어는 제외
+      const a = _foldTbl(e.source), b = _foldTbl(e.target);
+      if (a && b && a !== b && (_inView.has(a) || _inView.has(b))) { _edgeExempt.add(a); _edgeExempt.add(b); }
+    });
+  }
+  _metaGraph._edgeExempt = _edgeExempt;   // (디버그/테스트 노출)
+  // §76: 컬 예외 통합 판정 — focus(선택 노드 관계) OR edge(뷰포트 내 노드 연결 상대). 테이블·클러스터 컬 지점 공용.
+  const _keepFromCull = (k) => _faKeep(k) || _edgeExempt.has(k);
+  const _clusterKeep = (g) => _clusterHasFocus(g) || !!(g && !g.isTerms && g.tables && g.tables.some((t) => _edgeExempt.has(t.key)));
   const combos = [], nodes = [], edges = [];
   _metaGraph.firstElementId = null;
   // graph-category(§55 A): 카테고리 밴드(CAT: 배경 + CATH: 헤더 칩 + CATX: 접기) 방출 — 박스 기하는
@@ -5070,7 +5157,9 @@ function _metaG6Build() {
     //   bbox 밖에 나간 가시 멤버를 오컬링할 수 있다 → free-place 존재 시 전체-클러스터 컬링을 건너뛰고 per-table
     //   컬링(nodePos 반영 좌표)에만 맡긴다(정확·안전, free-place 는 드문 경로).
     const _freePlaced = _metaGraph.nodePos.size > 0 || _metaGraph.groupOffset.size > 0;
-    if (_cullActive && !g.isTerms && !_freePlaced && _offView(L.x0, L.y0, L.x0 + L.w, L.y0 + L.h)) return;
+    // §76: 클러스터가 선택 노드의 관계 상대를 하나라도 품으면 통째 컬링 금지 → combo + 그 관계 테이블이 방출돼
+    //   관계선·상호작용이 보존된다(per-table 컬링이 나머지 화면 밖 테이블은 계속 억제).
+    if (_cullActive && !g.isTerms && !_freePlaced && !_clusterKeep(g) && _offView(L.x0, L.y0, L.x0 + L.w, L.y0 + L.h)) return;
     combos.push({ id, type: _METtype, data: { label: _metaComboName(id), kind: "schema" }, style: Object.assign({ labelText: _metaComboName(id) }, _metaComboStyleFor(g.isTerms)) });
     if (!g.isTerms && _metaGraph.schemaExpanded.has(id)) {
       // graph-initview: "−" 접기 컨트롤(combo 우상단) — 카드로 복귀.
@@ -5143,8 +5232,8 @@ function _metaG6Build() {
         colLeftX += ddx; tx += ddx; ty += ddy;
       }
       if (it.label === "Routine") {
-        // viewport-cull(§67): 화면 밖 루틴 칩도 미방출(테이블과 동형).
-        if (_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;
+        // viewport-cull(§67): 화면 밖 루틴 칩도 미방출(테이블과 동형). §76: 단 선택 노드의 관계 상대는 예외(엣지·상호작용 보존).
+        if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;
         // graph-funcproc(ADR-016): 함수(ƒ)/프로시저(⚙) 칩 — 검색 매칭 강조는 테이블과 동일 룰.
         //   §18.8 패널(NIT): isTerms 분기보다 먼저 — 스키마 세그먼트 없는 flat-scope Routine 이
         //   terms 클러스터로 강등돼도 용어 칩이 아닌 ƒ/⚙ 보라 칩으로 렌더된다.
@@ -5191,7 +5280,7 @@ function _metaG6Build() {
       // viewport-cull(§67): 화면(+마진) 밖 테이블은 **테이블 칩 자체를 미방출**(줌인 대형모델 draw 급감 — 병목
       //   =setData/draw 방출 요소 수). 화면 밖이라 시각 손실 0. 엣지 끝점은 renderEndpoint 가 승격/드롭. combo 는
       //   가시 테이블에 auto-fit. 전체가 화면 밖인 클러스터는 상위에서 통째 컬링(combo 포함). §65 컬럼→테이블 확장.
-      if (_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;   // 화면 밖 테이블 컬링
+      if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;   // 화면 밖 테이블 컬링(§76: 선택 관계 상대는 예외 — 엣지·상호작용 보존)
       const _colSuppressed = colLodActive && cols && cols.length;   // (in-view 테이블) 개요 col-lod 컬럼 억제만
       // col-lod: 억제 시 '▤N' 컬럼수 배지를 라벨 **앞**에 둔다 — _metaTableStyle labelMaxWidth(140) 후미
       //   ellipsis 로 긴 테이블명(예: cc_user_subscription)이 잘려도 배지가 살아남아 '컬럼 억제됨'
@@ -5528,6 +5617,42 @@ function _metaRenderedAncestorFor(key) {
 //   setElementState 는 유실되는데 _stateCache 는 "적용됨"으로 남아 2.5s 폴도 영구 no-op — 사용자
 //   실측 "무너진 상태 유지"의 기전. 진행 중이면 재실행 1회로 병합(re-run 은 최신 모델을 읽으므로
 //   마지막 상태로 수렴), fit 은 OR 병합. 반환 promise 는 병합분 포함 전체 드레인 완료를 뜻한다.
+// graph-minimap-reuse(사용자 요구: "화면 구성이 갱신되었을 경우, 한 번 draw 한 전체 이미지를 재사용"):
+//   미니맵(G6 v5 minimap plugin)이 depiction 하는 **기하**만 해시한다 — 요소 id·부모combo·위치(x,y)·크기·엣지 끝점.
+//   시각 상태(states[]·fill·opacity·역할 칩 색)는 **의도적으로 제외**한다:
+//     ① 미니맵은 168×112px 에 수백~수천 노드를 그려 노드 하나가 sub-px~1px → 상태색이 시각적으로 무의미.
+//     ② 이 앱은 선택·상대하이라이트·역할 도착(2.5s 폴)·busy 등 '상태-only' 변경으로도 _metaG6Apply(setData+draw)
+//        를 20+ 지점에서 자주 돈다. 매 draw 의 AFTER_DRAW 가 minimap.renderMinimap() 을 발동 → 전 요소 key-shape 를
+//        cloneNode 로 전량 재복제(수천 노드면 매번 큰 고정비). 기하가 동일하면 그 재복제는 순수 낭비.
+//   본 서명이 직전 미니맵 렌더와 같으면 _metaPatchMinimapReuse 가 renderMinimap 을 skip → '한 번 draw 한 전체 이미지'
+//   를 재사용한다. 기하가 바뀌는 경로(펼침/접기/드래그/LOD 밴드/스코프 재적재/검색 prune)는 서명이 바뀌어 정상 재복제.
+//   위치는 0.25px 로 양자화(미소 부동소수 흔들림 무시). combo 위치는 자식 auto-fit(getContentBBox)이라 자식 노드
+//   위치가 서명에 있으면 암묵 포함 — combo 는 id 존재만 해시(추가/삭제 감지). built 미정의 시 null → 항상 재복제(안전).
+function _metaMinimapGeomSig(built) {
+  if (!built) return null;
+  let h = 0x811c9dc5 >>> 0;   // FNV-1a 32bit offset basis
+  const mix = (v) => {
+    const s = (v == null) ? "" : String(v);
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    h ^= 0x2c; h = Math.imul(h, 0x01000193) >>> 0;   // 필드 구분자(comma) — 인접 필드 경계 모호성 제거
+  };
+  const q = (n) => mix((typeof n === "number" && isFinite(n)) ? Math.round(n * 4) : "");   // 0.25px 양자화
+  const nodes = built.nodes || [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i], st = n.style || {};
+    mix(n.id); mix(n.combo || "");
+    q(st.x); q(st.y);
+    const sz = st.size;
+    if (Array.isArray(sz)) { q(sz[0]); q(sz[1]); } else q(sz);
+  }
+  const combos = built.combos || [];
+  for (let i = 0; i < combos.length; i++) mix(combos[i].id);
+  const edges = built.edges || [];
+  for (let i = 0; i < edges.length; i++) { const e = edges[i]; mix(e.source); mix(e.target); }
+  // 길이 프리픽스로 서로 다른 카디널리티가 같은 해시로 접히는 확률을 더 낮춘다.
+  return nodes.length + ":" + combos.length + ":" + edges.length + ":" + (h >>> 0);
+}
+
 async function _metaG6Apply(fit) {
   _metaGraph._applyWantFit = !!(_metaGraph._applyWantFit || fit);
   if (_metaGraph._applyLoop) { _metaGraph._applyAgain = true; return _metaGraph._applyLoop; }
@@ -5561,7 +5686,11 @@ async function _metaG6ApplyOnce(fit) {
     });
   }
   try {
-    g.setData(_metaG6Build());
+    const _built = _metaG6Build();
+    // graph-minimap-reuse: setData 에 넘긴 바로 그 데이터로 미니맵 기하 서명을 산정해 _miniGeomSig 에 싣는다.
+    //   패치된 minimap.renderMinimap 이 AFTER_DRAW(debounce) 창에서 이 값을 직전 렌더 서명과 비교 → 동일하면 재복제 skip.
+    try { _metaGraph._miniGeomSig = _metaMinimapGeomSig(_built); } catch (_) { _metaGraph._miniGeomSig = null; }
+    g.setData(_built);
     // graph-expand-perf fix(프리즈): setData 가 data.states(_metaG6Build 의 states:)로 모든 노드 상태를 이미 bake 한다.
     //   예전엔 _stateCache 를 clear 만 해서, 직후 _metaGraphRefreshStates(syncMarkers·2.5s 폴)가 cold 로 **전 노드
     //   setElementState** 를 돌렸다 — G6 v5 setElementState 는 건당 ~50ms 라 수백 노드면 수 초 메인스레드 프리즈
@@ -5570,6 +5699,11 @@ async function _metaG6ApplyOnce(fit) {
     _metaGraph._stateCache.clear();
     _metaGraph.nodes.forEach((n) => { _metaGraph._stateCache.set(n.key, _metaCacheSig(n.key)); });   // node-role-viz: 역할 suffix 포함 — rebuild 가 역할 칩 색을 이미 bake 했으므로 직후 refresh 는 no-op
     await g.draw();
+    // graph-minimap-reuse: 미니맵 재사용 패치는 **첫 draw 이후** 걸어야 한다 — G6 v5 Graph 는 생성자에서 context.plugin
+    //   을 만들지 않고 initRuntime()(= 첫 draw 의 prepare() 가 lazy 실행)이 만든다. 따라서 init 시점 getPluginInstance("minimap")
+    //   는 context.plugin 부재로 실패(→ 패치 no-op, 최적화 사멸). draw 완료 후엔 plugin 인스턴스가 존재하므로 여기서 건다.
+    //   멱등(__reusePatched)이라 매 apply 호출돼도 첫 성공 래핑 1회만 유효(이후 즉시 return).
+    _metaPatchMinimapReuse(g);
     _metaGraphZAssert();   // graph-zorder h2: setData update 의 combo-hierarchy z 평탄화(comboZ+1) 를 canonical 로 재-assert
     _metaGraphMinimapAnchor();   // graph-minimap-fix: 플러그인 컨테이너 inline left/top → CSS 앵커 정규화(멱등)
     if (fit) { await _metaGraphFitClamped(true); }
@@ -5592,6 +5726,45 @@ function _metaGraphMinimapAnchor(retries) {
   }
   const r = (retries == null) ? 4 : retries;
   if (r > 0) setTimeout(() => _metaGraphMinimapAnchor(r - 1), 200);
+}
+
+// graph-minimap-reuse: G6 v5 minimap plugin.renderMinimap() 은 매 발동마다 전 요소 key-shape 를 cloneNode 로
+//   전량 재복제한다(setShapes). 이 앱의 잦은 상태-only rebuild(_metaG6Apply) 로 인해 기하가 동일한데도 반복
+//   재복제되는 것을 막기 위해, 플러그인 인스턴스의 renderMinimap 을 1회 래핑해 기하 서명 게이트를 건다.
+//   - 팬/줌은 원래도 AFTER_TRANSFORM → updateMask()+setCamera() 만(재복제 없음)이라 본 패치와 무간섭.
+//   - renderMask()(뷰포트 표시)는 onRender 에서 renderMinimap() 다음에 별도로 항상 호출되므로, 재복제를 skip 해도
+//     미니맵 뷰포트 사각형은 계속 갱신된다.
+//   - 실패(번들 API 변동·인스턴스 미발견)하면 조용히 no-op → 원본 renderMinimap 이 그대로 동작(정확성 보존, 최적화만 포기).
+//   호출 시점: **첫 draw 이후**(G6 v5 는 context.plugin 을 첫 draw 의 initRuntime() 에서 lazy 생성 — init 시점 호출은
+//   getPluginInstance 실패로 no-op). _metaG6ApplyOnce 의 `await g.draw()` 직후 매 apply 호출되나 멱등(__reusePatched)이라
+//   첫 성공 래핑 1회만 유효(이후 즉시 return).
+function _metaPatchMinimapReuse(graph) {
+  let mm = null;
+  try { mm = graph.getPluginInstance && graph.getPluginInstance("minimap"); } catch (_) { mm = null; }
+  if (!mm || typeof mm.renderMinimap !== "function" || mm.__reusePatched) return;
+  const orig = mm.renderMinimap.bind(mm);
+  mm.renderMinimap = function () {
+    try {
+      const sig = _metaGraph._miniGeomSig;
+      // 캔버스가 이미 생성돼 있고(첫 렌더 완료) 기하 서명이 직전 렌더와 동일하면 '한 번 draw 한 전체 이미지' 재사용.
+      if (sig != null && sig === mm.__lastGeomSig && mm.canvas) return;
+      mm.__lastGeomSig = sig;
+    } catch (_) { /* 서명 비교 실패 → 아래 원본 렌더로 안전 폴백 */ }
+    return orig();
+  };
+  // graph-minimap-reuse(적대 리뷰 H2 수정 — 네이티브 드래그 stale): 노드/콤보 드래그는 _metaG6Apply(setData+draw)를
+  //   거치지 않고 G6 가 요소를 직접 이동(`translateElementTo`→`element.draw({stage:"translate"})`, 콤보는 native
+  //   drag-element)한다. 이 draw 도 AFTER_DRAW 를 발생(payload `stage:"translate"`)시켜 minimap onRender→renderMinimap 을
+  //   부르는데, 이때 _miniGeomSig 는 **마지막 build 기준(stale)** 이라 게이트가 옛 배치로 skip → 미니맵이 드래그된 위치를
+  //   반영 못 하고 얼어붙는다. AFTER_DRAW 의 stage 가 "translate" 면 서명을 무효화(null)해 다음 renderMinimap 이 재복제
+  //   폴백하도록 한다. apply-driven data draw 는 `graph.draw()`→`element.draw()`(stage 미지정)라 서명 유지(게이트 정상).
+  //   이벤트 상수명 'afterdraw' 는 번들 GraphEvent.AFTER_DRAW 값(minimap 플러그인과 동일 바인딩). 멱등 블록 내 1회 바인딩.
+  try {
+    graph.on("afterdraw", (e) => {
+      if (e && e.data && e.data.stage === "translate") _metaGraph._miniGeomSig = null;
+    });
+  } catch (_) { /* on 미지원 시 최적화만 포기(정확성 무관) */ }
+  mm.__reusePatched = true;
 }
 
 // graph-initview(A1): 전체-fit 하되 판독 하한 밑으로는 줌아웃하지 않는다 — 콘텐츠가 크면 "판독 가능한
@@ -5746,6 +5919,7 @@ function _metaGraphResetModel() {
   _metaGraph._colLodActive = false;   // col-lod(§61): 스코프/뷰 전환 시 억제 플래그 초기화(상태줄 stale 마커 방지).
   _metaGraph._aggActive = false;      // agg-lod(§63): 스코프/뷰 전환 시 집계 플래그 초기화.
   _metaGraph._cullActive = false; _metaGraph._cullVp = null;   // viewport-cull(§65): 스코프/뷰 전환 시 초기화.
+  if (_metaGraph._cullRaf) { try { (typeof window !== "undefined" && window.cancelAnimationFrame ? window.cancelAnimationFrame : clearTimeout)(_metaGraph._cullRaf); } catch (_) {} _metaGraph._cullRaf = null; }   // §76 실시간 컬링 rAF 정리(스코프 전환 stale 방지)
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
@@ -5783,6 +5957,9 @@ function _metaGraphResetModel() {
   _metaGraph.tableOrder.clear();
   _metaGraph.groupOrder.clear();       // feature-0016 §49(R1): simgroups 순서 안정화도 fresh load 시 리셋.
   _metaGraph.groupTableOrder.clear();
+  // graph-layoutmemo(§73, 적대리뷰 하드닝): 배치-정렬 캐시도 fresh load 시 명시 리셋. 실제로는 schemaExpanded.clear()
+  //   가 다음 build 서명을 바꿔 무효화되나, 그 결합에 의존하지 않도록 직접 클리어(견고성).
+  _metaGraph._layoutSig = undefined; _metaGraph._relOrderCache = null; _metaGraph._simCache = new Map();
   // graph-category(§55 A): 카테고리 순서·접기·인덱스 리셋(다른 스코프 = 다른 카테고리).
   //   schemaProducts 는 schemaTotals 동형의 scope 캐시라 보존 — loadRoots 가 재구축.
   _metaGraph.catOrder = [];
@@ -6250,13 +6427,16 @@ function _metaInitGraph() {
   // 플러그인 미지원 번들이면 그래프 자체는 살린다(minimap 없이 재생성 — 번들 교체 시 POC 재검증 전제).
   let graph = null;
   try {
-    graph = new window.G6.Graph(Object.assign({}, baseCfg, { plugins: [{ type: "minimap", size: [168, 112], position: "right-bottom" }] }));
+    graph = new window.G6.Graph(Object.assign({}, baseCfg, { plugins: [{ type: "minimap", key: "minimap", size: [168, 112], position: "right-bottom" }] }));   // graph-minimap-reuse: 명시 key → getPluginInstance("minimap") 직접 히트(by-type 폴백 경고 회피)
   } catch (_) { graph = null; }
   if (!graph) {
     try { graph = new window.G6.Graph(baseCfg); } catch (_) { graph = null; }
   }
   if (!graph) { _metaGraphStatus("그래프 초기화 실패(G6)."); return; }
   _metaGraph.graph = graph;
+  // graph-minimap-reuse: 미니맵 재사용 패치는 여기(init)서 걸지 않는다 — G6 v5 는 context.plugin 을 첫 draw 의
+  //   initRuntime() 에서 lazy 생성하므로 이 시점 getPluginInstance("minimap") 는 실패한다. _metaG6ApplyOnce 의
+  //   `await g.draw()` 직후에 멱등 호출로 건다(첫 draw 후 plugin 존재).
   // feature-0016 §45: 그래프 pane 자체 데이터소스 스코프 select — 변경 시 그 데이터소스 그래프(roots) 재로드.
   //   메타데이터 pane 의 metadataScopeSelect 와 상태(scopeKey)를 공유하되 양쪽 select 값을 동기화한다. 1회 바인딩.
   const _gsc = document.getElementById("graphScopeSelect");
@@ -6291,17 +6471,21 @@ function _metaInitGraph() {
     let z = 1;
     try { z = graph.getZoom() || 1; } catch (_) { return; }
     // viewport-cull(§65): 컬링 활성 중 팬으로 뷰포트 중심이 build 커버 범위를 크게 벗어나면(마진 소진) 새로
-    //   보이는 테이블의 컬럼을 위해 디바운스 rebuild(컬링으로 방출 적어 rebuild 저렴). 밴드 전이와 동일 타이머 공유.
+    //   보이는 테이블의 컬럼을 위해 rebuild. graph-cull-realtime(§76, 사용자 요구 "드래그 도중 실시간 컬링 재계산"):
+    //   과거 260ms 디바운스는 드래그 **정착 후**에만 반영해 드래그 중 새 노드가 늦게 튀어나왔다(pop). 메모이즈(§73)로
+    //   rebuild layout 비용이 사라져(8ms) 이제 **rAF 스로틀**로 드래그 매 프레임 재-emit 가능 — _metaG6Apply 는 직렬화
+    //   (진행 중이면 1회 병합)라 rebuild 코스트가 크면 자연히 프레임 스킵돼 파일업 없이 코스트에 적응한다. 순수 팬은
+    //   아래 밴드 로직이 `band===_lodBand` 로 즉시 return(rAF 유지), 줌+팬은 밴드 debounce 가 마커·기준선을 별도 갱신.
     if (_metaGraph._cullActive && _metaGraph._cullVp) {
       try {
         const _s = graph.getSize(), _a = graph.getCanvasByViewport([0, 0]), _b = graph.getCanvasByViewport([_s[0], _s[1]]);
         const _cx = (_a[0] + _b[0]) / 2, _cy = (_a[1] + _b[1]) / 2, _V = _metaGraph._cullVp;
-        if (Math.abs(_cx - _V.cx) > _V.hw * 0.5 || Math.abs(_cy - _V.cy) > _V.hh * 0.5) {
-          if (_metaGraph._lodTimer) clearTimeout(_metaGraph._lodTimer);
-          _metaGraph._lodTimer = setTimeout(() => { _metaGraph._lodTimer = null; try { _metaG6Apply(false); } catch (_) {} }, 260);
-          // 리뷰 MINOR: early return 하지 않고 **아래 밴드 로직으로 fall-through** — 순수 팬(밴드 무변경)은 밴드
-          //   로직이 `band===_lodBand` 로 즉시 return(cull 타이머 유지), 줌+팬(밴드 변경)이면 밴드 로직이 이 타이머를
-          //   대체하며 _lodBand 기준선·§57 col/edge 마커를 갱신한다(마커 침묵·밴드 stale 회귀 방지).
+        // 임계 0.35(구 0.5) — rAF 로 자주 재산정하므로 더 이른 예측 재-emit 로 경계 pop 을 마진 소진 전 흡수.
+        if (Math.abs(_cx - _V.cx) > _V.hw * 0.35 || Math.abs(_cy - _V.cy) > _V.hh * 0.35) {
+          if (!_metaGraph._cullRaf) {
+            const _raf = (typeof window !== "undefined" && window.requestAnimationFrame) ? window.requestAnimationFrame.bind(window) : (f) => setTimeout(f, 16);
+            _metaGraph._cullRaf = _raf(() => { _metaGraph._cullRaf = null; try { _metaG6Apply(false); } catch (_) {} });
+          }
         }
       } catch (_) {}
     }
@@ -7943,20 +8127,23 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     } else {
       // 테이블 상세: 컬럼 목록 — 관계 있는 컬럼은 아코디언(클릭 펼침).
       parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})${relSummary}</h4>`);
-      parts.push(`<p class="admin-meta-detail-note">관계가 있는 컬럼(🔗)을 클릭하면 참조함/참조받음 관계가 펼쳐집니다. 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
+      parts.push(`<p class="admin-meta-detail-note">컬럼을 클릭하면 선택되어 상세로 전환되고 그래프에서 강조됩니다. 관계가 있는 컬럼(🔗)은 캐럿(▸)으로 참조함/참조받음 관계를 그 자리에서 펼칠 수 있습니다. 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
       columns.slice(0, 80).forEach((c) => {
         const cr = colRel.get(c.key);
         const nOut = cr ? cr.out.length : 0, nIn = cr ? cr.in.length : 0;
         if (!cr || (nOut + nIn) === 0) {
-          parts.push(`<li class="amgr-col amgr-col-plain"><code>${esc(c.name)}</code>${c.description ? " <span class=\"admin-meta-graph-muted\">— " + esc(c.description) + "</span>" : ""}</li>`);
+          parts.push(`<li class="amgr-col amgr-col-plain"><button type="button" class="amgr-col-select" data-col="${esc(c.key)}" aria-label="${esc(c.name)} 컬럼 선택" title="컬럼 선택 — 상세로 전환하고 그래프에서 강조"><code>${esc(c.name)}</code>${c.description ? " <span class=\"admin-meta-graph-muted\">— " + esc(c.description) + "</span>" : ""}</button></li>`);
           return;
         }
         parts.push(
           `<li class="amgr-col amgr-col-rel">` +
-          `<button type="button" class="amgr-col-toggle" aria-expanded="false" data-colrel="${esc(c.key)}">` +
-          `<span class="amgr-caret">▸</span> 🔗 <code>${esc(c.name)}</code>` +
+          `<div class="amgr-col-head">` +
+          `<button type="button" class="amgr-col-caret" aria-expanded="false" data-coltoggle="${esc(c.key)}" aria-controls="amgr-colbody-${esc(c.key)}" title="참조 관계 토글" aria-label="참조 관계 토글"><span class="amgr-caret">▸</span></button>` +
+          `<button type="button" class="amgr-col-select" data-col="${esc(c.key)}" aria-label="${esc(c.name)} 컬럼 선택" title="컬럼 선택 — 상세로 전환하고 그래프에서 강조">` +
+          `🔗 <code>${esc(c.name)}</code>` +
           `<span class="amgr-col-relcount" title="참조함 ${nOut} · 참조받음 ${nIn}">→${nOut} ←${nIn}</span></button>` +
-          `<div class="amgr-col-body" data-colbody="${esc(c.key)}" hidden>${dirGroup(cr.out, "out")}${dirGroup(cr.in, "in")}</div>` +
+          `</div>` +
+          `<div class="amgr-col-body" id="amgr-colbody-${esc(c.key)}" data-colbody="${esc(c.key)}" hidden>${dirGroup(cr.out, "out")}${dirGroup(cr.in, "in")}</div>` +
           `</li>`
         );
       });
@@ -8045,9 +8232,19 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     });
   });
   _metaGraphBindTraceRows(el);   // graph-reltrace ②: 관계 행 클릭 → 대상 추적
-  // reldetail-colexpand ①: 컬럼 아코디언 토글 — 클릭 시 그 컬럼의 관계 펼침/접힘.
-  //   body 는 버튼의 형제(같은 li 내 .amgr-col-body)로 찾는다(키의 CSS 특수문자 셀렉터 이스케이프 회피).
-  el.querySelectorAll(".amgr-col-toggle[data-colrel]").forEach((btn) => {
+  // graph-detail-colsel: 상세 패널 컬럼 클릭 → 캔버스의 컬럼 노드 클릭과 동일한 선택.
+  //   _metaGraphShowDetail 재사용 — 선택 상태(_metaGraph.selected) 세팅 + 그래프 강조 재베이크 +
+  //   상세를 그 컬럼 뷰로 전환. plain·관계 컬럼 공통. data-col = 컬럼 노드 키.
+  el.querySelectorAll(".amgr-col-select[data-col]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const k = btn.getAttribute("data-col");
+      if (k) _metaGraphShowDetail(k);
+    });
+  });
+  // reldetail-colexpand ①: 컬럼 아코디언 토글 — 캐럿 클릭 시 그 컬럼의 관계 펼침/접힘(선택과 분리).
+  //   body 는 캐럿의 조상 li 내 .amgr-col-body 로 찾는다(키의 CSS 특수문자 셀렉터 이스케이프 회피).
+  el.querySelectorAll(".amgr-col-caret[data-coltoggle]").forEach((btn) => {
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const li = btn.closest(".amgr-col-rel");

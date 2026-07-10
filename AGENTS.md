@@ -149,7 +149,15 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 
 ### §5.3 품질 문서 (혼합)
 
-- `TEST.md`: 케이스 정의(§1, §2)는 rewrite, 실행 결과(§3)는 append-only
+- `TEST.md`: 케이스 정의(§1, §2)는 rewrite.
+- **테스트 실행 결과(Run 기록) — fragment 전환 (2026-07-11 프로젝트 개정, META-0026 —
+  template base 전파 예정)**: 신규 Run 기록은 TEST.md 말미 append 대신
+  **`unit/<feature>/docs/test-runs.d/<TASK-또는-REV-id>.md` 항목당 1파일**로 작성한다
+  (frontmatter: `run_at`(ISO8601, 예 `2026-07-11T05:00:00+09:00` — 컴팩션 90일 판정 기준)·`session`·`scope`·`verdict`). 파일 단위 분리라 병렬 세션의 Run
+  기록이 git 에서 원천 무충돌(towncrier/reno 계열 표준 패턴 — TEST.md §3 append 는 30일
+  229회 변경의 최다 충돌 지점이었다). **기존 TEST.md §3 append 방식도 당분간 유효**
+  (하위호환 — verify check #13 이 양쪽 인정, 소급 이동 없음·이력 보존). 90일 경과
+  fragment 는 doc_sync 가 feature 별 아카이브로 병합(컴팩션)할 수 있다.
 
 ### §5.4 수정 규칙
 
@@ -159,11 +167,14 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 ### §5.5 아카이빙
 
 - append-only 문서의 항목이 **20건을 초과**하면 아카이빙한다.
-- 오래된 항목을 `_archive/<DOC>-archive-NNNN.md`로 이동한다.
+- 오래된 항목을 `_archive/<DOC>-archive-<YYYYMMDDTHHMMSS>.md`로 이동한다 — timestamp 는 아카이빙
+  수행 시각(초 단위: 같은 날 병렬 아카이빙도 충돌하지 않게 날짜가 아닌 초 해상도).
+  순번 `_archive/<DOC>-archive-NNNN.md` 의 신규 사용은 금지하며, **기존 아카이브 파일명은
+  불변**(참조 파손 방지 — ADR-20260710T231146-parallel-id-hygiene).
 - 현행 파일에는 최근 항목만 유지하되, 파일 상단에 아카이브 참조 링크를 남긴다.
 
 ```md
-> 이전 기록: [MODIFY-archive-0001.md](./_archive/MODIFY-archive-0001.md)
+> 이전 기록: [MODIFY-archive-20260710T231146.md](./_archive/MODIFY-archive-20260710T231146.md)
 ```
 
 - `REPORT.md`에 "총 변경 횟수: N, 최근 변경 요약" 형태의 압축 정보를 유지한다.
@@ -193,7 +204,7 @@ append-only / 현재상태 문서가 무한 성장하면 §10.1 priming read-set
 | `AC-<id>` | 수용 기준 | **timestamp+slug 권장** `AC-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` / 순번 `AC-XXXX` fallback |
 | `CHG-<id>` | 변경 | timestamp+branch 권장 / 날짜+순번 fallback |
 | `REV-<id>` | 리뷰 | timestamp+branch 권장 / 날짜+순번 fallback |
-| `ADR-<id>` | 결정 | **timestamp+slug 권장** `ADR-<YYYYMMDDTHHMMSS>-<slug>` / 순번 `ADR-XXXX` fallback |
+| `ADR-<id>` | 결정 | **timestamp+slug 필수(신규)** `ADR-<YYYYMMDDTHHMMSS>-<slug>` — 순번 fallback 폐지(기존 순번 ADR 은 유효, ADR-20260710T231146-parallel-id-hygiene) |
 | `TEST-<id>` | 테스트 | **timestamp+slug 권장** `TEST-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` / 순번 `TEST-XXXX` fallback |
 | `LRN-<id>` | 학습 | timestamp+branch 권장 / 날짜+순번 fallback |
 
@@ -226,7 +237,9 @@ ADR-20260625T023049-spec-anchor-timestamp-id — 본 §6/§13.1 의 기존 "spec
   REQ 당 **AC 2개 이상이면 `-<n>`(1-based) 필수, 단일이면 생략 가능**(또는 `-1`). REQ 가 날짜형이어도 AC 는
   cycle 의 초 timestamp 를 쓴다 (예: `REQ-20260625-gc-member-kick-ban` →
   `AC-20260625T020410-gc-member-kick-ban-1`,`-2`…).
-- `ADR-<YYYYMMDDTHHMMSS>-<slug>` (본 ADR 이 첫 적용 예시이다).
+- `ADR-<YYYYMMDDTHHMMSS>-<slug>` (본 ADR 이 첫 적용 예시이다). **신규 ADR 은 이 timestamp-slug 형식만
+  유효하다** — 순번 `ADR-XXXX` fallback 은 폐지(ADR-20260710T231146-parallel-id-hygiene; 기존 순번
+  ADR 은 불변·유효, 소급 재번호 없음).
 - `TEST-<YYYYMMDDTHHMMSS>-<slug>[-<n>]` (다수면 `-<n>` 필수, 단일 생략 가능).
 
 timestamp(초) + slug 가 cycle 별 자연 분기를 만들어, 여러 세션이 같은 순번(`AC-0625` 등)을 병렬
@@ -385,7 +398,7 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 
 | 파일 패턴 | 추가 참조 문서 | 비고 |
 |-----------|--------------|------|
-| `unit/feature-0003-agent-web-ui/**`, `**/*.html`, `**/templates/**`, `**/static/**` | AGENTS.md §15.4.1 + `playbooks/PB-0008-windows-browser-verification.md` | 웹/UI 변경 — 완료 검증은 실제 Windows 브라우저(`bin/win-browser.py`)로 수행, `TEST.md` §3 에 `Environment: Windows-browser` Run 기록 |
+| `unit/feature-0003-agent-web-ui/**`, `**/*.html`, `**/templates/**`, `**/static/**` | AGENTS.md §15.4.1 + `playbooks/PB-0008-windows-browser-verification.md` | 웹/UI 변경 — 완료 검증은 실제 Windows 브라우저(`bin/win-browser.py`)로 수행, `TEST.md` §3 또는 `docs/test-runs.d/` fragment(§5.3) 에 `Environment: Windows-browser` Run 기록 |
 | `unit/feature-0002-agent-core/alembic/versions/**` | `docs/CONVENTIONS.md §12` (expand/contract) | 마이그레이션 — 무중단 롤링 배포의 mixed-version 안전을 위해 expand/contract 필수. `bin/migrate-lint.sh` 통과 의무. contract(DROP/RENAME/타입변경/NOT NULL)는 2-phase 또는 서명 annotation. (feature-0014) |
 <!-- 프로젝트 초기화 시 도메인에 맞게 최소 3~5개 이상을 채운다. 예시는 아래 주석 참조. -->
 <!-- | *.sql | docs/SECURITY.md §3 | SQL 인젝션 방지 규칙 확인 | -->
@@ -650,6 +663,14 @@ feature 단위)을 쓰되, 사전 승인이 아니라 **완료 판정 기준(§1
   않는다 — reservation registry / timestamp 식별자 전환은 `docs/DECISIONS.md` ADR-0022
   에서 검토 후 보류(불필요한 인프라 복잡도). 고병렬 위임으로 충돌 빈도가 높으면 doc-only
   편집도 worktree-first(§13.2.1)로 격리해 race 표면을 줄인다.
+- **사이클-append 문서의 신규 최상위 섹션 헤더 — timestamp+slug (2026-07-10 프로젝트 개정,
+  ADR-20260710T231146-parallel-id-hygiene — template base 전파 예정)**: TASK.md 처럼 사이클마다
+  최상위 섹션을 append 하는 문서의 **신규 섹션 헤더는 `## <YYYYMMDDTHHMM>-<slug>` 형식**
+  (예: `## 20260710T2311-graph-lod-fix`) 으로 한다. 순번 헤더 `## N.` 의 신규 사용은 금지한다 —
+  여러 세션이 같은 "다음 번호"를 병렬 점유해 머지 후 중복이 실측됐다 (TASK.md `## 33.`·`## 56.`
+  중복, 재번호 정정 커밋 e79688f6·0f692942). **기존 번호 헤더는 불변**(소급 재번호 금지 —
+  STATUS/REPORT/REVIEW 등의 `§N` 상호 참조 파손 방지). timestamp+branch 식별자(v3.32.0)와 동일
+  계열의 자연 분기 — 점유 확인·재번호가 불필요해진다.
 - **Feature-bound REPORT.md 충돌 방지** (v3.11.0+): `unit/<feature-id>/meta/REPORT.md`
   는 해당 feature 의 단일 worktree mutator 에 의해서만 mutation 된다 (F2 정책의
   feature-scoped 확장). 다른 worktree 가 동일 path 의 read 는 허용. 충돌 발생
@@ -664,6 +685,22 @@ feature 단위)을 쓰되, 사전 승인이 아니라 **완료 판정 기준(§1
   driver(`.gitattributes` 의 path 한정 `merge=<driver>`)를 둔다. **전체 파일 `merge=union`
   은 금지** — 진짜 충돌(다른 코드 변경)에 양쪽 라인을 모두 남겨 중복을 만든다.
   (timestamp+branch(v3.32.0)·감지-후-재번호(v3.25.0)와 동일 계열의 공유-라인 충돌 회피.)
+- **append-only 문서 말미 블록 병합 driver + rerere (2026-07-11 프로젝트 개정,
+  ADR-20260711T042631-append-doc-merge-driver — template base 전파 예정)**: path-scoped
+  custom merge driver 의 허용 범위를 위 "단일-라인 stamp" 에서 **append-only 문서의 말미
+  블록 병합**까지 확대한다 — fragment 전환(근본 해법) 전 과도기 브리지. 조건: ① 대상은
+  append-only 3종(`unit/*/docs/MODIFY.md`·`unit/*/docs/REVIEW.md`·`docs/RELEASE_NOTES.md`)에
+  `.gitattributes` 로 path-scoped 한정(LEARNINGS.md 는 섹션-내부 삽입 구조라 대상 아님), ② driver
+  (`bin/merge-append-doc.sh`)는 **양측이 base 의 끝에 append 만 한 경우**에 한해 `## `
+  블록 단위 ours→theirs 연접·dedup 으로 병존시키고, **그 외 전부 `git merge-file` 위임**
+  (default 3-way 동일 — 겹치지 않으면 clean, 진짜 충돌만 표준 marker; 자동 오병합 금지), ③ 전체 파일 `merge=union` 금지는 그대로 유지.
+  driver 등록은 clone-로컬이므로 **세션/클론 시작 시 `bash bin/setup-git-parallel.sh` 1회
+  실행**(멱등 — 작업자 계정 git 전역 `rerere.enabled`+`rerere.autoUpdate` 활성화 포함:
+  동일 충돌 재발 시 기록된 해소를 자동 재적용. 단 **rerere 는 custom driver 경로의 충돌엔
+  개입하지 않는다**(rr-cache 미기록 실측) — driver 대상 문서 밖 일반 파일이 rerere 커버리지).
+  driver 미충족 케이스(본문 중간 변경 등)는 `git merge-file` 위임으로 **default 3-way 와
+  동일 동작**(겹치지 않으면 clean, 충돌 시 표준 marker). fragment 전환(META-0026)이 완료된
+  문서는 driver 대상에서 제거한다(브리지 수명 명시).
 - **명시 비활성화 블록 = 운영자 의도 보존 (v3.36.0)**: 주석 처리되었거나 `# DISABLED` 등으로
   명시 비활성화된 설정·코드 블록(crontab 라인, config 항목, feature flag 등)은 운영자의 의도된
   상태로 간주한다 — 인접 작업의 부수효과로 재활성화(uncomment)하지 않는다. 재활성화가 필요하면
@@ -1186,7 +1223,7 @@ push / PR merge 는 코드 완료이지 배포 완료가 아니다.
 |---------|------|----------|----------|
 | **계획** | FUNCTION.md, TASK.md §2.1 작성 | FUNCTION.md, TASK.md, REPORT.md | 코드 파일 |
 | **실행** | 승인된 계획에 따라 코드 구현 | src/, tests/, MODIFY.md, REVIEW.md | FUNCTION.md, TASK.md |
-| **검증** | TEST.md 케이스 실행·기록 | TEST.md §3 | src/, tests/ |
+| **검증** | TEST.md 케이스 실행·기록 | TEST.md §3 또는 test-runs.d/ fragment(§5.3) | src/, tests/ |
 
 이 패턴은 선택 사항이며, 단일 AI 운용 시에는 §13.1의 기본 규칙만 따르면 된다.
 
@@ -1251,7 +1288,7 @@ AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실�
   | `WSL-headless` (feature-0004 browser service, gstack /browse) | ✗ — 화면 검증 불가 |
   | `Windows-browser` (`bin/win-browser.py` CDP 자동 구동) | ✓ |
 
-- **웹/UI 변경은 `TEST.md` §3 에 `Environment: Windows-browser` Run 이 1건 이상 없으면
+- **웹/UI 변경은 `TEST.md` §3 또는 `docs/test-runs.d/` fragment(§5.3) 에 `Environment: Windows-browser` Run 이 1건 이상 없으면
   "완료" 로 선언하지 않는다.** CLI·WSL-headless 결과만으로 "검증함"을 주장하지 않는다.
 - 1회 브리지 setup 은 `bin/WIN-BROWSER-SETUP.md` (NAT+portproxy relay 또는 mirrored).
   `python3 bin/win-browser.py doctor` 가 준비 상태를 게이팅한다.
@@ -1259,7 +1296,7 @@ AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실�
   그 사유를 `TEST.md` §3 또는 `REPORT.md` 에 명시한다 — 누락을 "검증함"으로 오인 금지.
 - **enforcement (staged, v3.x+ 격상)**: `bin/verify-completion.sh` check #13 이 웹 대상
   파일(`**/src/static/**`·`**/static/**`·`**/templates/**`·`*.html`) 변경 cycle 에서 해당
-  feature `docs/TEST.md` 에 `Windows-browser` Run(또는 미수행 사유) 이 **이번 changeset 에
+  feature `docs/TEST.md` 또는 `docs/test-runs.d/` fragment 에 `Windows-browser` Run(또는 미수행 사유) 이 **이번 changeset 에
   staged 되어 있는지**를 검사한다. 강제 수준은 wrapper `FIRST_REQUEST.md` 의
   `visual_verification_scope` 로 결정한다:
   - `visual_verification_scope: always` → 누락 시 **FAIL (hard gate, --pre-commit)**.
@@ -1280,7 +1317,7 @@ AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실�
 - 기능 동작이 구현되었다.
 - `FUNCTION.md`가 현재 동작과 일치한다.
 - `TASK.md`, `MODIFY.md`, `REVIEW.md`, `REPORT.md`, `TEST.md`가 필요한 수준으로 갱신되었다.
-- **웹/UI 변경인 경우** `TEST.md` §3 에 `Environment: Windows-browser` Run 이 1건 이상 기록되었다 (§15.4.1 · PB-0008). UI 표면이 없거나 브리지 setup 불가 시 사유가 명시되었다.
+- **웹/UI 변경인 경우** `TEST.md` §3 또는 `docs/test-runs.d/` fragment(§5.3) 에 `Environment: Windows-browser` Run 이 1건 이상 기록되었다 (§15.4.1 · PB-0008). UI 표면이 없거나 브리지 setup 불가 시 사유가 명시되었다.
 - `ANCHOR.md` §1~§3이 작성되었다 (24h bootstrap grace 이후).
 - `ANCHOR.md` §4 human 검증 로그는 일반 TASK cycle 완료 조건이 아니며, release/milestone 검토 또는 방향 전환 검증이 필요할 때만 요구된다 (§18 참조).
 - 남은 리스크와 후속 작업이 `REPORT.md`에 정리되었다.
@@ -1295,7 +1332,7 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 ## 7. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
 - [ ] 자동 테스트가 통과한다
-- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 TEST.md §3에 `Environment: Windows-browser` Run을 기록했다 (§15.4.1 · PB-0008) — 또는 UI 표면 없음/브리지 불가 사유 명시
+- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 TEST.md §3 또는 test-runs.d/ fragment(§5.3)에 `Environment: Windows-browser` Run을 기록했다 (§15.4.1 · PB-0008) — 또는 UI 표면 없음/브리지 불가 사유 명시
 - [ ] FUNCTION.md가 현재 동작과 일치한다
 - [ ] MODIFY.md에 변경 이력이 기록되었다
 - [ ] REVIEW.md에 판단 근거가 기록되었다

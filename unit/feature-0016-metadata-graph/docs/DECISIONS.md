@@ -833,7 +833,7 @@ source_of_truth: true
   - **엣지**: 집계 시 테이블 미방출 → REFERENCES 끝점 `renderEndpoint` SC: 카드 승격, 양끝 SC: skip(SCHEMA_REF 중복 방지, 기존) → 카드-카드 aggregate 관계만.
   - **계층**: agg(0.15) < edge-LOD(0.35) < col-LOD(0.5) < full. 4단 밴드(`_lodBand`) 300ms 디바운스. 상태줄 "개요 — 클러스터 집계".
 - 기각/대안: (a) 뷰포트 컬링으로 테이블까지 줌인에서 감축 — combo auto-fit(`getComboPosition=getContentBBox(children).center`)이 테이블 컬링 시 카드 축소/점프 → combo-safe 아님, 별도 검토(잔여). (b) compact 카드-그리드 재배치 — 위치 점프(사용자 민감) → reflow-free 슬롯 유지 채택(대가: agg 뷰 다소 sparse).
-- 검증: headless `test_g6build_agglod.js` **9 PASS**(카드 방출·draw 급감>10x·reflow-free·비-agg 유지·게이트) + 회귀 125 = **134 PASS**. diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0, MINOR 1 수정: 상태줄 마커를 밴드→실제 억제 플래그 게이트해 §57 오독-가드 코너 재발 차단). PB-0008 극단 줌아웃 before/after 는 TEST §63.
+- 검증: headless `test_g6build_agglod.js` **10 PASS**(카드 방출·draw 급감>10x·reflow-free·비-agg 유지·게이트) + 회귀 125 = **134 PASS**. diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0, MINOR 1 수정: 상태줄 마커를 밴드→실제 억제 플래그 게이트해 §57 오독-가드 코너 재발 차단). PB-0008 극단 줌아웃 before/after 는 TEST §63.
 - Supersedes: — (§57 엣지·§61 컬럼 LOD 를 클러스터 축으로 확장·병존) / Superseded By: —
 
 ## ADR-031 — §64 lod-hl-declutter: 하이라이트 상태의 줌아웃 LOD 축약 예외를 "선택 노드 직접선"으로 축소 (dim 과 분리)
@@ -886,3 +886,32 @@ source_of_truth: true
 - 트레이드오프/한계: caveats 를 빈 값 허용으로 바꾸면 "정보 없음" 신호가 줄지만, 그 신호는 원래 운영자에게 무가치한 노이즈였음(자기-불평). 원천 데이터 공백(컬럼·테이블 설명 미적재)은 이 변경 범위 밖 — 프롬프트가 불평을 멈출 뿐 실질 풍부화는 상류 큐레이션/인트로스펙션 후속 필요. 초대형(>SCHEMA_MAX=2000) 스키마는 여전히 capped 표시 + 재실행 드레인. 기존 저장된 나쁜 caveats 는 재분석(only_missing=false) 으로만 교체됨.
 - 검증: `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체 회귀 0). **라이브 LLM**(container shadow-load + 프롬프트 monkeypatch): 희소 Table 주의 `''`, Get 루틴 → 민감데이터 권한/감사 주의, Delete 루틴 → 비가역 손실 주의(양질 유지) — 자기-불평 전멸. **라이브 payload**: touches read/write 정확 구분 + returns 투영. POST-DEPLOY: cc_data_main 재생성 후 표본 caveats + 커버리지(555) 재확인(T69.5).
 - Supersedes: — / Superseded By: —
+## ADR-035 — §73 배치-정렬 함수 위상-서명 메모이즈 (줌인 성능 근본원인) (사용자 요청)
+- 상태: 채택 (2026-07-10)
+- 맥락: §67 배포 후 사용자 피드백 — "극단적인 줌 인 상태에서도(밀집 아닌데도) 성능 저하. 근본 원인을 탐색 후 해소." §65/§67 뷰포트 컬링은 화면 **밖** 요소만 줄여, 화면 안 요소가 많거나 극단 줌인(소수 가시)에서도 rebuild 마다 도는 **전체 모델 배치 계산**을 못 줄인다. win-browser(PB-0008 relay) 실측 함수분해로 근본원인 규명: `_metaG6Build` build time 의 ~99% 가 `_metaRelOrderAll`(barycenter 4-sweep, ~55%·측정 38ms) + `_metaSimGroups`(affix 유사그룹, ~45%·측정 32ms)이며, **둘 다 전체 모델을 처리(뷰포트·줌·선택 무관)** → 극단 줌인·비밀집에서도 rebuild 당 68~145ms 고정. 이것이 "줌인해도 느림"의 정체.
+- 결정:
+  - **순수 함수 개별 메모이즈**(통짜 layout 캐시 배제 — layout 은 groupOf/groupMembers 를 build 마다 clear+재구성하는 side-effect 라 skip 시 group 드래그·collapse 파손 landmine). `_metaRelOrderAll`(slice+sort 복사본·fresh Map 반환)·`_metaSimGroups`(주석 명시 "순수·결정론·펼침비의존")는 부작용 없어 안전.
+  - **`_metaTopoSig()`**: 위상 서명 = nodes 키 롤링해시 + REFERENCES edges(source/target/status) + schemaExpanded(정렬) + mode. relOrder/simGroups 가 의존하는 입력 전량 포착. `_metaG6Build` 진입 시 서명 무변경이면 `_metaGraph._relOrderCache`(최상위 relOrder 1개) + `_metaGraph._simCache`(스키마별 simGroups Map) 재사용, 변경 시 무효화. 컬럼(colsByTable)·freeplace(clusterOffset/nodePos/groupOffset)·선택·마커·뷰포트는 서명 무관 = 캐시 적중(정렬은 이들과 독립 → 재계산 skip). 컬럼이 nodes(Map) 아닌 colsByTable 거주라 서명서 자연 제외 = 컬럼토글도 적중.
+  - **cull 마진 0.6→0.3**: 고배율 방출 과다(margin 0.6=방출면적 뷰포트×4.84, zoom 2.5 337 방출) 완화(×2.25). 메모이즈로 re-emit 의 layout 비용 소거 → tight 마진 감당.
+- 트레이드오프: 서명 계산 자체 ~1-2ms(nodes/edges 1-pass) 상시 비용 — 적중(대다수 상호작용) 시 -68~145ms 순이득, miss(펼침/접기/ingest/검색) 시 +2ms. relOrder 하류 안정화(_metaStableSeq)가 캐시 Map in-place 갱신하나 멱등(이미 안정화 재안정화=동일). simGroups 는 groupOrder/groupTableOrder 를 갱신하나 이는 위상 파생 안정화 누적이라 적중 시 skip 해도 유효(위상 무변경). group collapse/drag 는 guard B(매 build)서 적용 → 캐시와 직교.
+- 검증: headless `test_g6build_layoutmemo.js` **15 PASS**(캐시적중==fresh 좌표완전동일·서명무효화·컬럼/freeplace 독립·서명결정론) + 회귀 **150 PASS** = 165 → 적대리뷰 F1(roles)/F2(노드 속성) 서명 확장 후 T6 추가 **169 PASS**. node --check. §18.8 적대 리뷰(REV §73: BLOCKING/MAJOR 0, F1 HIGH·F2 MEDIUM·NIT 수정). POST-DEPLOY win-browser 실측(build 함수분해 재측정 — TEST §73).
+- Supersedes: — / Superseded By: — (§65 ADR-032·§67 ADR-033 뷰포트 컬링과 **상보** — 컬링=방출 요소 수↓, 메모이즈=배치 계산↓)
+
+## ADR-036 — §74 graph-minimap-reuse: 미니맵 기하 서명 게이트로 '구성 불변 시 재복제 skip'(전체-이미지 재사용) [머지 재번호 ADR-034→ADR-035→ADR-036, §13.1]
+- 상태: 채택 (2026-07-10)
+- 맥락: 사용자 요청 — 미니맵 최적화, "화면 구성이 갱신되었을 경우 한 번 draw한 전체 이미지를 재사용." G6 v5 minimap(`tZ`)은 `AFTER_DRAW/RENDER/ANIMATE → renderMinimap()`(전 요소 cloneNode 재복제) 와 `AFTER_TRANSFORM → onTransform`(마스크만) 분리 바인딩 → 팬/줌은 이미 최적. 남은 낭비=상태-only `_metaG6Apply` 의 `AFTER_DRAW → renderMinimap` 전량 재복제(기하 불변인데도).
+- 결정: (A) 기하 서명 `_metaMinimapGeomSig`(id·부모combo·위치·크기·엣지 끝점만; 시각상태 제외·0.25px 양자화). (B) `_metaPatchMinimapReuse` 가 `renderMinimap` 멱등 래핑(서명 동일 skip). (B-timing) 첫 draw 이후 래핑(H1 — plugin lazy-init). (C) `graph.on("afterdraw")` 가 `stage==="translate"`(드래그) 시 `_miniGeomSig=null` 무효화(H2 — 드래그 stale 방지, apply data draw 는 stage 미지정이라 서명 유지).
+- 대안 기각: 커스텀 미니맵 재구현(과설계·재-vendoring 위험) / 서명에 상태 포함(이득 소멸·색 무의미) / delay 증대(재복제 비용 자체 안 줄임).
+- 트레이드오프: 역할색·하이라이트·dim 은 다음 기하변경 때 미니맵 반영(스케일서 무의미, 사용자 요구와 정합). 실패 시 원본 폴백.
+- 검증: 신규 headless **35 PASS**(A11·B4·C10·D10) + 회귀 **150 PASS** · `node --check` · 적대 리뷰(H1·H2 2건 BLOCK→수정, REVIEW REV-20260710T233000). POST-DEPLOY 육안(feature-0003 TEST §74).
+- Supersedes: — / Superseded By: —
+
+## ADR-037 — §76 뷰포트 컬링 참조·상호작용 보존(focusAdj 예외) (사용자 피드백)
+- 상태: 채택 (2026-07-10)
+- 맥락: §65/§67 뷰포트 컬링(화면 밖 노드 미방출)이 draw 를 줄였으나, 사용자 피드백 — 컬링된 노드로의 **관계선이 사라지고**(renderEndpoint 가 미렌더 끝점을 승격 못 하면 `!rs||!rt` 로 엣지 드롭) **상세 패널에서 상호작용 불가**(`_metaGraphPanToRelation` 이 `_metaRenderedIdFor` null 시 팬 skip). 요청: "draw 는 하지 않되 참조 및 상호작용은 가능하도록."
+- 결정: **focusAdj 예외** — 노드 선택 시 그 노드의 관계 상대(`focusAdj.self`/`.nodes` = _metaFocusAdjacency 가 1-hop 엣지로 산출, 상세 패널이 보여주는 관계와 동일 집합)를 화면 밖이어도 컬링 예외로 방출한다. `_faKeep(k)`=fa 멤버십, `_clusterHasFocus(g)`=클러스터가 focus 멤버를 품으면 통째-클러스터 컬링 금지(combo 앵커 보존 → 그 안 focus 테이블이 참조할 combo 존재). 3 컬 지점(클러스터·루틴·테이블)에 가드. 방출된 관계 상대는 (a) renderEndpoint 가 `present` 에서 찾아 관계선 렌더, (b) `_metaRenderedIdFor` 가 찾아 관계행 클릭 카메라 팬 — 참조·상호작용 복원. 컬럼-레벨 REFERENCES 끝점은 renderEndpoint/renderedIdFor 가 소속 테이블로 접어 해소(테이블만 방출해도 충분). 접힌 스키마(SC 카드)는 원래 컬링 대상 아님(항상 방출)이라 무관.
+- 트레이드오프: 선택 노드의 관계 상대를 화면 밖이어도 방출 → 허브 노드(degree 큰) 선택 시 방출 수가 degree 만큼 증가(draw 비용). 유계(선택 컨텍스트에만·degree 상한)이고, 무선택/일반 팬에서는 예외 0 = 컬링·성능 무손실(§67 그대로). 사용자가 관계를 보려 선택한 시점에만 발동하므로 의도와 정합. 화면 밖 방출분은 사용자에 미가시(관계선만 뷰포트 밖으로 뻗음). **[정정 — 아래 '방향 갱신 (a)' in-view 확장 이후 갱신됨: 이 "무선택 예외 0" 은 focusAdj-only 시점 기술이며, 최종 동작은 아래 참조.]**
+- 검증: headless `test_g6build_cullrefkeep.js` **10 PASS**(뷰포트 내 노드 엣지 컬링무효 — 무선택 in-view 연결 상대 방출·무연결 컬링 + focusAdj 중복 + nodePosAll) + 회귀 = **179 PASS**. node --check. §18.8 적대 리뷰. POST-DEPLOY win-browser 육안(TEST §76).
+- 방향 갱신(사용자 2026-07-10, 2차): (a) **뷰포트 내 노드 엣지 컬링무효** — focusAdj(선택) 예외를 **in-view 전반**으로 확장. layouts.place 1-pass 로 `nodePosAll`(전체 위치, 컬링 무관 — 커스텀 미니맵·엣지 앵커 enabler) + in-view 집합 → in-view 노드에 연결된 REFERENCES/ROUTINE_USES 상대 끝점을 `_edgeExempt` 로 컬 예외. `_keepFromCull`=focus∪edge. 무연결 화면 밖 노드는 계속 컬링(성능 유지). ROUTINE_USES 서버-only 엣지 갭(§76 리뷰 F1)은 클라 모델 엣지 기반이라 잔존하나, in-view 확장으로 커버 범위 대폭 증가. (b) **실시간 드래그 컬링** — 팬 재-emit 260ms 디바운스→rAF 스로틀(메모이즈로 rebuild 저렴·_metaG6Apply 직렬화로 코스트 적응). (c) 미니맵 전체그래프 별도렌더는 §77 후속(nodePosAll 소비).
+- **트레이드오프 정정(§76 적대리뷰 M1)**: in-view 확장(a) 이후 위 913 의 "무선택 예외 0" 은 **더 이상 성립하지 않는다** — `_edgeExempt` 는 `_cullActive && _inView.size` 만으로 발동(선택 무관)해, 무선택이라도 in-view 노드에 연결된 화면 밖 상대는 방출된다. **최종 특성: 예외 0 은 "무선택 *그리고* in-view 무연결" 일 때만 성립**하며, 무선택 시 예외 규모는 in-view edge density 에 비례(유계)한다. 컬링의 draw 절감 자체는 in-view 무연결 노드에 계속 적용돼 유효(§76 리뷰 M2 dense off-view 테스트로 실증 — 뷰포트 밖 노드끼리만 연결된 대량 엣지는 예외에 안 들어가 계속 컬링). nodePosAll/_edgeExempt pre-pass 는 매 build O(N)+O(E) 상시 비용(§76 리뷰 M3 수용 — 현재 nodePosAll 소비처는 §77 도래 예정, 비용 sub-ms).
+- 관계: §65 ADR-032·§67 ADR-033(컬링)에 **예외 계층 추가** — 컬링의 draw 절감은 유지하되 focus 컨텍스트의 참조·상호작용을 보존. §73 ADR-035 메모이즈와 직교(예외는 emission, 메모이즈는 layout).

@@ -17,16 +17,19 @@
 #     # migrate-lint: allow <op> — <사유> (서명: <name> <YYYY-MM-DD>)
 #
 # 사용:
-#   bin/migrate-lint.sh                 # origin/main 대비 added/modified revision 린트
+#   bin/migrate-lint.sh                 # origin/main 대비 added/modified revision 린트 (+head 검사)
 #   bin/migrate-lint.sh --base <ref>    # 다른 base 대비
-#   bin/migrate-lint.sh --all           # 전체 revision 감사
+#   bin/migrate-lint.sh --all           # 전체 revision 감사 (+head 검사)
 #   bin/migrate-lint.sh --files a.py b.py
+#   bin/migrate-lint.sh --heads         # head 단일성·번호 중복·MAX_MIGRATION 정합만 검사
+#                                       #   (라이브 DB 불필요 — 정적 파싱, CI 머지 게이트용.
+#                                       #    parallel-work-structure ITEM-02)
 #   bin/migrate-lint.sh --self-test     # 내장 양성/음성 케이스 자가 검증 (CI 용)
 #   bin/migrate-lint.sh --help
 #
 # Exit codes:
-#   0 — 모든 대상이 expand-safe 또는 서명 annotation 으로 acknowledged
-#   1 — 비가산 DDL 발견(서명 annotation 없음) → 배포/머지 차단
+#   0 — 모든 대상이 expand-safe 또는 서명 annotation 으로 acknowledged (+head 단일)
+#   1 — 비가산 DDL 발견(서명 annotation 없음) 또는 multi-head/번호중복/MAX_MIGRATION 불일치 → 배포/머지 차단
 #   2 — usage error
 #
 # Requires: bash >= 4, awk, grep, git.
@@ -54,6 +57,7 @@ while [ $# -gt 0 ]; do
     --base)  BASE_REF="${2:?--base 인자 필요}"; shift 2 ;;
     --all)   MODE="all"; shift ;;
     --files) MODE="files"; shift; while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do FILES+=("$1"); shift; done ;;
+    --heads) MODE="heads"; shift ;;
     --self-test) MODE="self-test"; shift ;;
     --help|-h) usage 0 ;;
     *) die "알 수 없는 인자: $1" ;;
@@ -157,6 +161,87 @@ for f in out:
     print("  - " + f)
 sys.exit(1 if out else 0)
 '
+
+# ── head 단일성/번호 중복/MAX_MIGRATION 정합 검사 (parallel-work-structure ITEM-02) ──
+# 병렬 브랜치가 같은 번호(예: 0040)로 마이그레이션을 만들면 머지 후에야 multi-head 로
+# 발각되던 것(0036 실충돌, 6263e641 수동 re-parent)을 머지 전(CI)에 정적 적발한다.
+# 라이브 DB 불필요 — versions/*.py 의 revision/down_revision 만 AST 파싱.
+# MAX_MIGRATION.txt(의도적 충돌 파일, django-linear-migrations 패턴 — RESEARCH W-005):
+# 최신 head revision id 1줄. 병렬 브랜치가 각자 head 를 만들면 git 머지 시점에 이 파일에서
+# 반드시 충돌 → CI 도달 전 fail-fast. lint 는 파일↔실제 head 일치도 검사.
+HEAD_CHECK_PY='
+import ast, os, re, sys
+vdir = sys.argv[1]
+maxfile = os.path.join(vdir, "MAX_MIGRATION.txt")
+revs, downs, numbers, errs = {}, {}, {}, []
+for fn in sorted(os.listdir(vdir)):
+    if not fn.endswith(".py"):
+        continue
+    m = re.match(r"^(\d{8})_(\d{4})_.+\.py$", fn)
+    if m:
+        numbers.setdefault(m.group(2), []).append(fn)
+    else:
+        errs.append("파일명 규약(YYYYMMDD_NNNN_slug.py) 위반: %s" % fn)
+    try:
+        tree = ast.parse(open(os.path.join(vdir, fn), encoding="utf-8").read())
+    except SyntaxError as e:
+        errs.append("파싱 실패 %s: %s" % (fn, e)); continue
+    rev = down = None
+    for n in tree.body:
+        tgt = val = None
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+            tgt, val = n.target.id, n.value
+        elif isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            tgt, val = n.targets[0].id, n.value
+        if tgt == "revision" and isinstance(val, ast.Constant) and isinstance(val.value, str):
+            rev = val.value
+        elif tgt == "down_revision" and isinstance(val, ast.Constant):
+            down = val.value  # str 또는 None(baseline)
+    if rev is None:
+        errs.append("revision 식별자 없음: %s" % fn); continue
+    if rev in revs:
+        errs.append("revision id 중복: %r (%s ↔ %s)" % (rev, revs[rev], fn))
+        continue
+    revs[rev] = fn
+    downs[rev] = down
+for num, fns in sorted(numbers.items()):
+    if len(fns) > 1:
+        errs.append("revision 번호 %s 중복: %s (병렬 브랜치 번호 경합 — bin/alembic-reparent.sh 로 재번호)" % (num, ", ".join(fns)))
+for rev, d in sorted(downs.items()):
+    if d and d not in revs:
+        errs.append("down_revision %r (%s) 가 존재하지 않는 revision 을 가리킴" % (d, revs[rev]))
+referenced = {d for d in downs.values() if d}
+heads = sorted(r for r in revs if r not in referenced)
+if revs and not heads:
+    errs.append("head 없음 — down_revision 그래프에 순환 존재")
+elif len(heads) > 1:
+    errs.append("multi-head: head %d개 — %s (병렬 마이그레이션 경합; 나중 브랜치를 bin/alembic-reparent.sh 로 re-parent)" % (len(heads), ", ".join(heads)))
+if not os.path.isfile(maxfile):
+    errs.append("MAX_MIGRATION.txt 없음 — 최신 head revision id 1줄로 생성 필요 (%s)" % maxfile)
+elif len(heads) == 1:
+    recorded = open(maxfile, encoding="utf-8").read().strip()
+    if recorded != heads[0]:
+        errs.append("MAX_MIGRATION.txt(%r) != 실제 head(%r) — 신규 마이그레이션/re-parent 시 함께 갱신" % (recorded, heads[0]))
+for e in errs:
+    print("  - " + e)
+if not errs and heads:
+    print("  head = %s (단일) · revision %d건 · 번호 중복 0 · MAX_MIGRATION 일치" % (heads[0], len(revs)))
+sys.exit(1 if errs else 0)
+'
+
+# $1(옵션) = versions 디렉터리 (기본 $REPO_ROOT/$VERSIONS_DIR — self-test 가 임시 디렉터리 주입)
+check_heads() {
+  local dir="${1:-$REPO_ROOT/$VERSIONS_DIR}" out rc=0
+  out="$(python3 -c "$HEAD_CHECK_PY" "$dir")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "✗ FAIL head 단일성/번호 중복/MAX_MIGRATION 검사:"
+    printf '%s\n' "$out" >&2
+    return 1
+  fi
+  log "✓ PASS head 단일성 검사:"
+  printf '%s\n' "$out" >&2
+  return 0
+}
 
 # ── 비가산 DDL 검사. stdout=발견 목록, 반환=0 발견 / 1 없음(self-test 규약) ───
 scan_destructive() {
@@ -277,6 +362,66 @@ PY
     log "self-test FAIL: f-string 동적 DDL 미적발"; rc=1
   fi
 
+  # ── head 단일성 검사 self-test (ITEM-02) ──────────────────────────────────
+  _mk_rev() {  # $1=dir $2=filename $3=revision $4=down_revision("None"이면 None)
+    local down="$4"
+    [ "$down" = "None" ] && down="None" || down="\"$down\""
+    cat >"$1/$2" <<PY
+revision = "$3"
+down_revision = $down
+def upgrade():
+    pass
+def downgrade():
+    pass
+PY
+  }
+
+  # (7) 정상 선형 체인 + MAX 일치 → PASS 기대
+  mkdir -p "$tmp/h-good"
+  _mk_rev "$tmp/h-good" "20260701_0001_a.py" "0001_a" "None"
+  _mk_rev "$tmp/h-good" "20260702_0002_b.py" "0002_b" "0001_a"
+  printf '0002_b\n' >"$tmp/h-good/MAX_MIGRATION.txt"
+  if check_heads "$tmp/h-good" >/dev/null 2>&1; then
+    log "self-test ok: 선형 체인+MAX 일치 → PASS"
+  else
+    log "self-test FAIL: 정상 체인이 head 검사 오탐"; rc=1
+  fi
+
+  # (8) 번호 중복(0040 x2) → FAIL 기대
+  mkdir -p "$tmp/h-dup"
+  _mk_rev "$tmp/h-dup" "20260701_0001_a.py" "0001_a" "None"
+  _mk_rev "$tmp/h-dup" "20260710_0040_x.py" "0040_x" "0001_a"
+  _mk_rev "$tmp/h-dup" "20260710_0040_y.py" "0040_y" "0001_a"
+  printf '0040_x\n' >"$tmp/h-dup/MAX_MIGRATION.txt"
+  if check_heads "$tmp/h-dup" >/dev/null 2>&1; then
+    log "self-test FAIL: 번호 중복(0040 x2) 미적발"; rc=1
+  else
+    log "self-test ok: 번호 중복(0040 x2) → 적발"
+  fi
+
+  # (9) multi-head (분기 후 미수렴) → FAIL 기대
+  mkdir -p "$tmp/h-multi"
+  _mk_rev "$tmp/h-multi" "20260701_0001_a.py" "0001_a" "None"
+  _mk_rev "$tmp/h-multi" "20260710_0002_x.py" "0002_x" "0001_a"
+  _mk_rev "$tmp/h-multi" "20260710_0003_y.py" "0003_y" "0001_a"
+  printf '0002_x\n' >"$tmp/h-multi/MAX_MIGRATION.txt"
+  if check_heads "$tmp/h-multi" >/dev/null 2>&1; then
+    log "self-test FAIL: multi-head 미적발"; rc=1
+  else
+    log "self-test ok: multi-head → 적발"
+  fi
+
+  # (10) MAX_MIGRATION.txt ↔ head 불일치 → FAIL 기대
+  mkdir -p "$tmp/h-max"
+  _mk_rev "$tmp/h-max" "20260701_0001_a.py" "0001_a" "None"
+  _mk_rev "$tmp/h-max" "20260702_0002_b.py" "0002_b" "0001_a"
+  printf '0001_a\n' >"$tmp/h-max/MAX_MIGRATION.txt"
+  if check_heads "$tmp/h-max" >/dev/null 2>&1; then
+    log "self-test FAIL: MAX_MIGRATION 불일치 미적발"; rc=1
+  else
+    log "self-test ok: MAX_MIGRATION 불일치 → 적발"
+  fi
+
   [ "$rc" -eq 0 ] && log "self-test 전체 PASS" || log "self-test FAIL"
   return "$rc"
 }
@@ -286,19 +431,30 @@ if [ "$MODE" = "self-test" ]; then
   run_self_test; exit $?
 fi
 
+if [ "$MODE" = "heads" ]; then
+  check_heads; exit $?
+fi
+
 mapfile -t targets < <(collect_targets)
 # 빈 줄 제거
 filtered=()
 for f in "${targets[@]}"; do [ -n "$f" ] && filtered+=("$f"); done
 targets=("${filtered[@]}")
 
+overall=0
+# head 단일성/번호 중복/MAX_MIGRATION 정합 — 변경 유무와 무관한 전역 속성 (ITEM-02)
+check_heads || overall=1
+
 if [ "${#targets[@]}" -eq 0 ]; then
+  if [ "$overall" -ne 0 ]; then
+    log "변경 revision 0건이나 head 검사 FAIL — 위 항목 해소 필요"
+    exit 1
+  fi
   log "검사 대상 revision 없음 (변경된 alembic revision 0건) → PASS"
   exit 0
 fi
 
 log "검사 대상 revision ${#targets[@]}건:"
-overall=0
 for rel in "${targets[@]}"; do
   # diff 모드의 path 는 repo 루트 상대. files 모드는 그대로.
   if [ -f "$REPO_ROOT/$rel" ]; then path="$REPO_ROOT/$rel"; else path="$rel"; fi

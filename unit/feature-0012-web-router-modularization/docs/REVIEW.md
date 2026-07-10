@@ -396,3 +396,10 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
   - (3) 재생성 결과 auditable: `git diff route_snapshot_p5b.json` = total_routes/api_routes 2줄 + analyze/status 블록만(9 ins/2 del). 다른 192 route 불변 → masking 없음.
   - (4) `test_route_parity_p5b` PASS(193/192).
 - 범위 규율: 추가 route 는 feature-0016(#514) 소산이나 골든은 feature-0012 route-parity 안전망 소관 → feature-0012 유지보수 cycle 로 처리(route 출처 명기).
+
+## REV-20260710T235820-item05-router-autoreg [SKIPPED:roadmap-spec-transcription] — 라우터 자동 등록 (parallel-work-structure ITEM-05)
+- Related Change: CHG-20260710T235820-item05-router-autoreg. cycle: ai/claude-corp/feature-0012-item05-router-autoreg — `/_dqa:improve_cycle` 드레인 4번째 항목(ITEM-05, Minor). 승인: ROADMAP §6.1.
+- SKIPPED 사유: what/acceptance/guards 는 ROADMAP ITEM-05 완전 명세(improve-fit-reviewer 2-round 기검증)의 전사. 인증·권한 로직 무접촉(등록 배선만) — auth 는 각 라우터 내부 Depends 불변, 등록 순서는 INCLUDE_ORDER 스냅샷으로 고정(shadow 역전 없음을 byte-동치 스냅샷이 기계 증명). §18.8 dispatch 비해당(API 표면 무변경 — 205 route in-order byte-동치).
+- 검증(acceptance 전건): (a) 라우트 테이블 byte-동치 205 (b) ruff F821 clean (c) A/B pytest rc=0(route-parity 골든 포함) (d) 더미 라우터 app.py 무편집 등록 실증. batch4 교훈(F821 게이트) 선제 적용.
+- 잔여 위험·완화: pkgutil 동적 import 는 모듈 import 부작용 순서를 파일명 순으로 바꿀 수 있으나, 全 라우터 모듈은 import 시점에 `from app import ...`/`import app` + APIRouter 선언만 수행(부작용 없음 — 기존에도 전량 import 됐음). INCLUDE_ORDER 누락 신규 모듈은 맨 뒤(기존 등록에 shadow 영향 없는 위치) 파일명 순.
+- Human Approval Needed: 아니오 — Minor·byte-동치 기계 증명·§6.1. 배포는 §6.1 자동(web 재빌드+healthz/스모크, 실패 시 롤백+blocked).

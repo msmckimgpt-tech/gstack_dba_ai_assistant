@@ -1425,3 +1425,44 @@ source_of_truth: true
 - 대상: feature-0003 TEST §71 POST-DEPLOY append + feature-0016 TASK T71.3 완료 + REPORT POST-DEPLOY 절 + MODIFY CHG. 코드/자산 변경 0(순수 문서).
 - 근거: §71(PR #662, main b7d7d871→라이브 a24415a5)의 실 Windows Chrome POST-DEPLOY 실측(win-browser relay, `shop_pt.T_ItemInfo` 상세 `[data-rtuse]` 18행 실클릭 → 카메라 팬 [3600,7092]→[2523,7871] + 상세 전환 동시, pageerror 0, 자산 curl 확증)을 정본에 기록. 코드 diff 부재 → §18.8 적대 패널 불요(SKIPPED). §71 코드 diff 의 적대 리뷰는 원 cycle inline REV-20260710T163512 + 본 세션 독립 subagent 리뷰(VERDICT PASS, BLOCKING/MAJOR 0)에서 완료.
 - 배포: §71 cycle 에서 이미 완료(무중단 롤링·healthz PASS). 본 cycle 은 배포 없음(docs-only).
+## REV-20260710T233000-ai-claude-feature-0016-layoutmemo [SUBAGENT: PASS-WITH-FIXES] — §73 배치-정렬 함수 위상-서명 메모이즈 캐시 staleness 적대 리뷰
+- 단일 목적 적대 패널: "정렬 함수(_metaRelOrderAll·_metaSimGroups) 출력이 바뀌는데 `_metaTopoSig()`는 안 바뀌는 경로" = stale 캐시 버그류만 전수 탐색. 코드 실측(호출부·읽는 상태 전수 grep).
+- **BLOCKING 0, MAJOR 0.** 리뷰가 확인한 **안전 항목**: ① simGroups side-effect(groupOrder/groupTableOrder) 는 simGroups 내부에서만 read/write·외부 소비자 0(drag/collapse/emission 무참조)·resetModel 만 clear → 적중 시 skip 안전 ② relOrder in-place 안정화 멱등 ③ category collapse 는 schemaIdx 불변(catInfo.ids 는 collapsed 무관 전량 push)이라 relOrder 캐시 유효 ④ 비-REFERENCES edges·weight·cardinality 는 relAdj 범위 밖이라 서명 제외 정당 ⑤ analyzed 는 state 마커(emission)라 layout 무관 ⑥ 노드 iteration order 무영향(name 정렬·key 배정).
+- CONFIRMED **F1 [HIGH, 라이브 자동 트리거] — 수정**: `_metaSimGroups` Phase-3 역할 폴백 `roleFam=_metaRoleOf(t.key)`(→`_metaGraph.roles`)가 서명 밖. AI 분석 완료(2.5s 폴 `_metaGraphMarkAnalyzed`→`roles.set`+roleChanged rebuild)는 nodes/edges/schemaExpanded/mode 무변경 → 서명 무변경 → simGroups stale → 역할 블록 재그룹핑 미반영(칩 색만 갱신, 블록 구조 동결). **수정**: `_metaTopoSig` 에 `roles` Map 해시(rn+rh) 포함.
+- CONFIRMED **F2 [MEDIUM, latent] — 수정**: 재-ingest(`_metaGraphIngest`)가 기존 키의 `name`/`fqn`/`cluster_id`/`cluster_label` 변경 — simGroups(be:클러스터 4437·cluster_label 4493·affix)·relOrder(name 정렬·fqn 스키마귀속) 소비. 키만 해시라 stale. 라이브 재현 경로 미확인이나 계약 결함. **수정**: 서명 노드 루프가 키+name+fqn+cluster_id+cluster_label 해시.
+- NIT(하드닝, **수정**): `_metaGraphResetModel` 이 캐시 3필드 미클리어(schemaExpanded.clear 결합 의존) → 명시 클리어 추가.
+- 근본원인(리뷰 지적): 서명이 노드 **키만** 해시하던 것 → 정렬 함수가 읽는 노드 **객체 속성+roles** 로 확장.
+- 검증: 수정 후 신규 테스트 T6(roles·cluster_id·name 변경 시 서명 상이 + roles 변경 후 rebuild stale 아님) 추가 → `test_g6build_layoutmemo.js` **19 PASS** + 회귀 150 = **169 PASS** · node --check. 캐시적중==fresh 좌표동일 불변 유지.
+## REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES] — §74 미니맵 전체-이미지 재사용 diff 적대 리뷰 [머지 재번호 §70→§73→§74]
+- 대상: CHG-20260710T230000-minimap-reuse (admin.js `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + 서명 배선 + minimap `key:"minimap"` + afterdraw 드래그 무효화 + 신규 test).
+- 방법: §18.8 적대 리뷰. 초기 2렌즈(정확성/UX) user-interrupt 중단·렌즈1 이 linchpin(H1) 적발. 수정본 집중 확인 리뷰(H1~H5)에서 H2 신규 BLOCK 추가 적발. 둘 다 수정·테스트 커버.
+- **BLOCK 2건→수정**: **H1(no-op)** G6 plugin 은 첫 draw 의 initRuntime 에서 lazy 생성 → init 직후 `getPluginInstance` 실패 → 패치 사멸 → `await g.draw()` 직후 이동. **H2(드래그 stale)** 드래그(`element.draw({stage:"translate"})`, `_metaG6Apply` 미경유)도 `AFTER_DRAW`(stage:"translate")를 발생 → stale 서명 skip → 미니맵 얼어붙음(원본 대비 회귀) → `afterdraw` stage 무효화. D 섹션 10 테스트 lock.
+- 클리어: H1 타이밍(draw 직후 동기 설치·첫 렌더 blank 없음), H3 서명 필드 정합, H4 멱등·안전(no-op 폴백), H5 renderMask 독립.
+- 검증: 수정 후 신규 **35 PASS** + 회귀 **150 PASS** · `node --check`. POST-DEPLOY PB-0008(feature-0003 TEST §74).
+
+
+## REV-20260710T234500-ai-claude-feature-0016-layoutmemo-postdeploy [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §73 POST-DEPLOY 완수 기록
+- 대상: TEST.md/TASK.md/REPORT.md POST-DEPLOY 실측 결과 기록만 — 코드/자산 diff 0. §18.8 패널 비적용(SKIPPED).
+- 근거: 배포·구현 자체는 §73 REV-20260710T233000 [SUBAGENT: PASS-WITH-FIXES] 에서 완료 검증. 본 cycle 은 라이브 실측 결과 문서화(main e6b7b68f, MISS 59→HIT 8ms 7.4× 급감, 위치 이동 0).
+
+## REV-20260710T093000-ai-claude-feature-0016-minimap-reuse-postverify [SKIPPED: doc-only POST-DEPLOY 기록] — §74 미니맵 재사용 라이브 검증 결과 append
+- 본 cycle 은 §74 minimap-reuse 의 POST-DEPLOY PB-0008 라이브 실측 결과(PASS)를 TEST.md §74 Run·TASK.md T74.5 에 기록하는 **비-정책 doc-only** 변경이다(코드·자산 변경 0). §18.4 에 따라 리뷰 패널 SKIP.
+- 원천 코드 cycle 의 적대 리뷰는 REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES](H1·H2 2건 BLOCK 적발→수정) 참조.
+## REV-20260710T230000-ai-claude-corp-feature-0016-graph-detail-colsel [SUBAGENT: PASS] — §75 상세 패널에서도 컬럼 선택 배선 diff 적대 리뷰
+- 대상: `unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}` (41삽입/10삭제·3파일) + 신규 헤드리스 테스트 `tests/headless/test_detail_colsel.js`. frontend-only·마이그 0·Minor(§12.3).
+- 판정: general-purpose 적대 리뷰어 6축(정확성/회귀/이벤트/CSS/a11y/엣지케이스) 전수 검토 → **Critical/Major/Minor 결함 0, PASS**. 확인된 non-issue: ①`data-col`=`c.key`(컬럼 노드 키) 정확·`esc()` 이스케이프·getAttribute 라운드트립 무손실·`_metaGraphShowDetail` 은 캔버스 컬럼클릭과 동일 경로 → 오선택·인젝션 0. ②캐럿 restructure 후에도 `closest(".amgr-col-rel")` → `.amgr-col-body` 정상 해소·repo 전역 `data-colrel` 잔존 0·`.amgr-col-toggle` 은 의도적 legacy CSS만(JS 바인딩 0). ③캐럿·선택 버튼은 (중첩 아님) 형제 → 이중발화 0·`stopPropagation` 양쪽·셀렉터 disjoint. ④`.amgr-col-relcount margin-left:auto` 가 `.amgr-col-rel .amgr-col-select`(flex) 안 → 우측정렬 유지·specificity(block↔flex) 정합·plain padding 정합. ⑥컬럼 키 항상 존재·80컬럼 cap 보존·긴 설명 자연 줄바꿈 무회귀.
+- 적용한 a11y nit 2건(리뷰 반영): ①캐럿 `aria-controls="amgr-colbody-<key>"`(body에 `id` 부여) + 상태중립 `aria-label="참조 관계 토글"`. ②선택 버튼 `aria-label="<name> 컬럼 선택"`(설명이 접근성 이름 오염 방지). 반영 후 `node --check` PASS + 격리 렌더 테스트 8/8 재확인.
+- 근거: 코드 diff 존재(순수 프론트 추가) → §18.8 적대 패널 수행·PASS. main rebase(§71/§72/§73/§74 병렬 머지) 후 admin.js 자동병합·재검증 완료. POST-DEPLOY 실 Windows 육안은 T75.4(배포 후, `visual_verification_scope`).
+
+## REV-20260710T222000-ai-claude-corp-feature-0016-cullrefkeep [SUBAGENT: PASS-WITH-FIXES] — §76 컬링 참조·상호작용 보존 + 뷰포트 내 노드 엣지 컬링무효 + rAF 실시간 드래그 컬링 diff 적대 리뷰
+- 대상: 커밋 `82885c5d` — `admin.js`(_faKeep/_clusterHasFocus + nodePosAll/_inView/_edgeExempt pre-pass + 3 컬 지점 _keepFromCull/_clusterKeep 가드 + rAF 실시간 드래그 컬링, 68줄) + `admin.html` 버스터 + headless `test_g6build_cullrefkeep.js` + feature docs. frontend-only·마이그 0. **cross-session resume** — 원본 세션(ff7fb347, 세션 한도 중단)의 in_progress 적대 리뷰를 이어받아 완수.
+- 패널: general-purpose 적대 리뷰어 5축(pre-pass 위치수학 / edgeExempt 정확성 / rAF 실시간 드래그 안전 / 성능 / 회귀) 전수 검토 + `node --check`·cullrefkeep 10/10·회귀 244 실측. **판정 PASS-WITH-FIXES — BLOCKING/MAJOR 0, MINOR 3 + NIT 1.**
+- 실증된 PASS 축: ①위치수학 — pre-pass(5037)와 렌더 컬 판정(5223/5283)의 free-place 보정이 대수적 동일(`colLeftX=_fp[0]-TXOFF, ty=_fp[1]`), `_offView` bbox 3 컬 지점 일관, clusterOffset/groupOffset 양측 동일 소스. ②edgeExempt — `_foldTbl`(컬럼→부모테이블 폴딩)이 컬럼-끝점을 _inView(테이블 key) 기준과 정합, `a!==b` 자기루프 배제·HAS_*/SCHEMA_REF/용어 제외 타당, 오펀 방지(_clusterKeep combo 앵커). ③rAF 안전 — `if(!_cullRaf)` 재진입 가드 + 콜백 동기 null 리셋 + `_metaG6Apply` 직렬화(5656) + **피드백 루프 없음**(`_metaG6Apply(false)`→fit 미호출→카메라 transform 없음→aftertransform 재발화 없음, 무한루프 불가) + 밴드 로직 fall-through 유지. ④성능 — 레이아웃 메모이즈(§73) 재사용, 직렬화가 느린 프레임 자연 스킵.
+- 결함 원장 및 처리:
+  - **M1 [MINOR/문서] — 반영(수정)**: "무선택 시 예외 0 = 성능 무손실" 주장이 T76.4 in-view 확장(`_edgeExempt` 는 `_cullActive && _inView.size` 만으로 발동·선택 무관) 이후 거짓. DECISIONS ADR-037(트레이드오프 정정 단락 추가)·MODIFY CHG·REPORT §76 을 "무선택·무연결 시에만 예외 0; in-view 연결 상대는 선택 무관 예외(규모=in-view edge density 비례·유계)" 로 정정.
+  - **M2 [MINOR/테스트] — 부분 반영(핵심 추가)**: 엣지 1개 seed 라 "컬링 유효(<100)" 가 자명 통과였던 갭에 **T4 dense off-view 케이스 추가**(신규 5 check) — 뷰포트 밖 노드끼리만 연결된 대량 B-B 엣지(35개)가 in-view 에 안 닿아 `_edgeExempt` 에 안 들어가고 계속 컬링됨을 실증(예외 팽창이 컬링 무력화 안 함 = 원 draw 폭발 회귀 재발 방지). cullrefkeep 10→**15 PASS**. 주의: 이 빌더는 관계-인지 레이아웃이라 dense 구성의 뷰포트를 재계산해야 정합. **수용(후속)**: rAF 드래그 경로·스코프 전환 `_cullRaf` 정리·free-place 좌표·ROUTINE_USES 예외의 헤드리스 커버리지는 코드 정독으로 확증됨(테스트 미구동) → §77/후속 사이클에서 보강.
+  - **M3 [MINOR/성능] — 수용(기록)**: nodePosAll/_inView/_edgeExempt pre-pass 가 매 build O(N)+O(E) 상시 실행되고 nodePosAll 은 현재 소비처 없음(순수 forward-provisioning). **미수정 근거**: 소비처(§77 커스텀 미니맵)가 사용자 이미 요청한 즉시 후속이라 dead-code 아닌 provisioning 이고, 리뷰어 추정 비용 sub-ms(수백 노드), 드래그 성능 목적에 유의 회귀 미관측. 배포 직전 hot-path 변경은 재-리뷰 리스크 → §77 착수 시 nodePosAll 소비와 함께 게이팅 재검토. DECISIONS ADR-037 에 기록.
+  - **N1 [NIT] — 수용**: rAF 스케줄러(`.bind(window)`) vs 캔슬러(언바운드 cAF) 페어링 비대칭. 리뷰어 분석대로 비-strict sloppy 모드 `this`→window 폴백 + 브라우저 rAF/cAF 상시 쌍존재 + try/catch fail-soft 로 **실무 무해**(유일 파손조건 rAF존재·cAF부재는 현실 미발생, no-op 시에도 리셋 모델 대상 잉여 1회 재빌드로 크래시 없음). 가시 회귀 아님 → 미수정.
+- 반영 후 재검증: `node --check` PASS · cullrefkeep **15/15** · 그래프 회귀 11 스위트 **249 PASS / 0 FAIL**(agglod 8·category 26·collod 20·cullrefkeep 15·edge_visibility 71·layoutmemo 19·minimap_reuse 35·viewportcull 6·vpack 19·colnav 22·detail_colsel 8).
+- **deploy_scope: included 근거 기록(§12.2/§16.3)**: FIRST_REQUEST.md 전역 `deploy_scope: included`(프로젝트 standing 값) + FUNCTION.md feature-level 정합 → cycle 종료 시 confirm 없이 자동 배포 승인. frontend 자산 baked(admin.js/admin.html) — 배포 후 실 Windows 브라우저 육안(PB-0008, T76.3)이 완료 게이트. 첫 배포 직전 "deploy_scope: included 활성" 1줄 표면화.
+- 근거: 코드 diff 존재(핵심 렌더·컬 경로) → §18.8 적대 패널 수행. BLOCKING/MAJOR 0 → 랜딩 차단 없음. M1(문서)·M2(핵심 테스트) 반영·M3/N1 수용 기록 완료.
