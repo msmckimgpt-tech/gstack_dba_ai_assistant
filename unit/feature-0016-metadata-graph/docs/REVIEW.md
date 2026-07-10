@@ -1420,3 +1420,8 @@ source_of_truth: true
 - CONFIRMED(MINOR, **수정**): P2(touches/returns 투영·dedup·access 매핑) 회귀 무방비(기존 `test_build_payload_routine_fields` 는 ctx={}) — 555노드 재생성 직전 조용한 파손 위험. **수정**: `test_build_payload_routine_touches_returns` 신설(dedup·빈테이블 skip·Table 미투영·빈 returns 키생략) → PASS.
 - 수용(코드변경 없음): (MINOR) BATCH 4→10 은 틱당 순차 LLM ~2.5배→틱 지속↑, 설계 경계 내(clamp 64, lease 900s)+heartbeat(PR#567) 완화 — 인지. (NIT) schema 없는 루틴 returns skip(비차단)·returns 쿼리 routine_type 미필터 LIMIT 1(동명 fn/proc 희귀)·relationships '연결 정보 없음' vs analyze-from-visible 경미 긴장(사실진술, 실모순 아님).
 - 검증: 수정 후 py_compile 3파일 PASS · `test_routine_dbanalysis.py` **23 PASS**(신규 2 포함) · 원 세션 make test PYTEST_RC=0 + 라이브 LLM(자기-불평 전멸)·라이브 payload(touches/returns) 유효. POST-DEPLOY cc_data_main 재생성 후 표본 caveats + 커버리지(555) 재확인(T69.5).
+
+## REV-20260710T175412-ai-claude-feature-0016-rtuse-camera-pd [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §71 완수 기록
+- 대상: feature-0003 TEST §71 POST-DEPLOY append + feature-0016 TASK T71.3 완료 + REPORT POST-DEPLOY 절 + MODIFY CHG. 코드/자산 변경 0(순수 문서).
+- 근거: §71(PR #662, main b7d7d871→라이브 a24415a5)의 실 Windows Chrome POST-DEPLOY 실측(win-browser relay, `shop_pt.T_ItemInfo` 상세 `[data-rtuse]` 18행 실클릭 → 카메라 팬 [3600,7092]→[2523,7871] + 상세 전환 동시, pageerror 0, 자산 curl 확증)을 정본에 기록. 코드 diff 부재 → §18.8 적대 패널 불요(SKIPPED). §71 코드 diff 의 적대 리뷰는 원 cycle inline REV-20260710T163512 + 본 세션 독립 subagent 리뷰(VERDICT PASS, BLOCKING/MAJOR 0)에서 완료.
+- 배포: §71 cycle 에서 이미 완료(무중단 롤링·healthz PASS). 본 cycle 은 배포 없음(docs-only).
