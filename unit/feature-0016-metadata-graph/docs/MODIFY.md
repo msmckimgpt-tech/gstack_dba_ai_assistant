@@ -1355,3 +1355,16 @@ source_of_truth: true
 - 변경: 상세 패널 "사용 테이블/사용 함수·프로시저" 행(`[data-rtuse]` 버튼) 클릭 시 기존 `_metaGraphShowDetail(k)`(async 상세 전환)에 더해 `_metaGraphPanToRelation(k)`(동기 카메라 팬 + 대상 선택)를 **먼저** 호출. 안내문 "행 클릭 = 대상 상세." → "행 클릭 = 대상 상세 + 카메라 이동."
 - 근거: §70(선택 노드 헤더 버튼)과 별개로, 관계 행 클릭이 상세만 바꾸고 카메라는 안 움직여 큰 그래프에서 대상 재탐색이 어려웠음. 기존 shipped 팬 래퍼(`_metaGraphPanToRelation`, graphux7#2) 재사용 → 신규 기계장치 0. frontend-only·마이그 0·behavior 순수 추가(상세 전환 불변, 미렌더 대상은 pan null 가드로 안내만·graceful). Minor(§12.3).
 - 검증: `node --check admin.js` PASS · inline 적대 diff 리뷰 **REV-20260710T163512 [SKIPPED-panel/inline PASS]**(순서/race·미렌더 가드·selection idempotent·캐시버스터 확인, BLOCKING/MAJOR 0, NIT1 비가시 stale 힌트 수용) · **PB-0008 win-browser 시각검증은 POST-DEPLOY**(정적 자산 baked → merge + deploy-web 재배포 선행). 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`(CSS 미변경 → styles.css 미bump).
+## CHG-20260710T065500-ai-claude-corp-feature-0016-graph-colnav — §72 상세 패널 관계행 단일클릭 미렌더 컬럼 카메라 이동 (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/src/static/admin.js`(`_metaRenderedAncestorFor`·`_metaFocusKeyFor` 신설 + `_metaGraphPanToRelation` 재작성 + `_metaGraphSetSelected`·`_metaG6Build` 의 focusAdj 산출을 `_metaFocusKeyFor` 로 중앙화) + `admin.html` 캐시버스터 + headless `test_graph_colnav.js`(신설).
+- 변경: `그래프 뷰 > 상세` 관계 행(컬럼) **단일클릭** 시, 소속 테이블 미펼침(컬럼 미렌더)이면 카메라가 이동하지 않고
+  "대상 노드가 현재 화면에 없습니다" 안내만 떠 오류로 오인되던 결함 수정. (1) `_metaGraphPanToRelation` 이 대상을
+  **화면상 가장 가까운 조상**(컬럼→소속 테이블→접힌 스키마 카드 `SC:`)으로 승격해 카메라 팬(펼치진 않음). (2) 선택 상태는
+  대상 컬럼 키로 두되, **하이라이트 기준은 `_metaFocusKeyFor` 로 소속 테이블에 폴백**(선택=컬럼·하이라이트=상위 종속
+  객체 — 사용자 결정 2026-07-10 AskUserQuestion). 폴딩은 부모가 모델의 Table 노드일 때만(§57.5 F2 'prune 선택 정리=null' 보존).
+  더블클릭(`_metaGraphTraceRelation`=펼침+컬럼 선택) 불변. 접힌 스키마 카드로만 승격된 경우(대상=스키마)는 기존대로 팬만.
+- 근거: 사용자 리포트(2026-07-10) — 단일클릭 시 미펼침 컬럼으로 이동 불가·오류성 메시지. frontend-only·마이그 0·behavior:
+  미렌더 대상 승격 + 오류 톤 제거 + 하이라이트 폴딩만(렌더된 대상·스키마 카드 팬·일반 노드 선택 경로 불변).
+- 검증: 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5·키파싱 2·선택게이트 8·하이라이트폴딩 4·직접렌더) + 회귀 0
+  (edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·`node --check` PASS. §18.8 적대 리뷰
+  REV-20260710T065500(stale base 적발→rebase, MINOR#3→하이브리드 반영). POST-DEPLOY PB-0008 사용자 육안(TEST §72). 버스터 `admin.js?v=20260710-graph-colnav`.

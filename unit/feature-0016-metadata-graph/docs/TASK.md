@@ -2129,3 +2129,31 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   BLOCKING/MAJOR 0, NIT1(pan 힌트 비가시 stale) 수용. frontend-only·마이그 0·Minor(§12.3).
 - [ ] T71.3 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 상세에서 사용 테이블/루틴 행 클릭 → 대상 노드로 카메라
   팬 + 선택 강조 + 상세 패널 대상 전환 동시, 미렌더 대상은 안내만·상세는 전환, pageerror 0. TEST §71 append.
+## §72 reltrace-colnav — 상세 패널 관계행 단일클릭 시 미렌더 컬럼 카메라 이동 (2026-07-10, 사용자 리포트)
+
+- **결함(사용자 리포트)**: `그래프 뷰 > 상세`에서 관계 행(컬럼)을 **단일클릭**했을 때, 대상 컬럼의 소속
+  테이블이 아직 펼쳐지지 않아(컬럼 미렌더) 카메라가 이동하지 않고 **"대상 노드가 현재 화면에 없습니다"**
+  메시지만 출력 → 사용자가 오류로 인지. (더블클릭은 정상 이동.) 근본: `_metaGraphPanToRelation` 이
+  `_metaRenderedIdFor(targetKey)`(자기 자신 또는 접힌 스키마 카드만 해소)로 null 이면 즉시 안내-return.
+- **사용자 요구/결정(2026-07-10 AskUserQuestion)**: ① 단일클릭도 대상 **테이블**을 카메라가 바라보게 하되
+  **펼치진 않은 상태**에서 진행 ② **선택 상태는 컬럼**으로 두되 **하이라이트는 상위 종속 객체(소속 테이블)가
+  선택된 것처럼 구성**(하이브리드) ③ 더블클릭 시 테이블 펼쳐 해당 컬럼 선택(기존 `_metaGraphTraceRelation` 충족).
+- [x] T72.1 `_metaRenderedAncestorFor(key)` 신규 — 미렌더 대상의 **화면상 가장 가까운 조상** 렌더 id 해소:
+  컬럼→소속 테이블(`_metaColParent`)→접힌 스키마 카드(`_metaCatParent`→`SC:`) 순. `_metaG6Build` 의
+  `renderEndpoint` 승격 규칙과 동형이되 실제 렌더 집합(`renderedIds`) 기준. 조상도 미렌더(§67 뷰포트 컬링 포함)면 null.
+- [x] T72.2 `_metaFocusKeyFor(selKey)` 신규(하이라이트 기준 키 해소) — 선택 키가 모델에 있으면 그대로, 모델 밖
+  컬럼이면 **소속 테이블이 모델의 Table 노드일 때만** 그 테이블로 폴백(부모가 Table 아니거나 없으면 null →
+  §57.5 F2 'prune 된 선택 정리=null' 보존). `_metaGraphSetSelected`(즉시) + `_metaG6Build`(매 빌드 재산출) 양쪽이
+  공유 → 두 경로 하이라이트 일치. 이로써 **선택=컬럼**이어도 **하이라이트=소속 테이블 중심**(사용자 결정 구현).
+- [x] T72.3 `_metaGraphPanToRelation` 재작성: `focusEl = direct || _metaRenderedAncestorFor(targetKey)` 로 카메라 팬
+  대상 승격. focusEl 없을 때만 안내 메시지(오류 톤 제거). 선택은 `(renderedSelf || !direct)` 시 대상 컬럼 키로
+  `_metaGraphSetSelected`. 접힌 스키마 카드로만 승격된 경우(대상=스키마)는 기존대로 선택 없이 팬만(기존 동작 보존).
+- [x] T72.4 검증: 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5 + 키파싱 2 + 선택게이트 G1~G4 8 + 하이라이트
+  폴딩 F1 4 + 직접렌더). 회귀 0(edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·
+  `node --check` PASS. §18.8 적대 리뷰 REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES] — stale base(§67/§68 병렬 머지)
+  적발 → **현재 main rebase**, MINOR#3(미렌더 컬럼 선택이 하이라이트 소실) → **하이브리드(_metaFocusKeyFor 폴딩)** 반영,
+  테스트에 선택 게이트/폴딩 단언 추가. 캐시버스터 `admin.js?v=20260710-graph-colnav`.
+- [ ] T72.5 POST-DEPLOY 사용자 육안(PB-0008 실 Windows): 상세 패널에서 **미펼침 테이블의 컬럼 관계행 단일클릭**
+  → (a) "…화면에 없습니다" 오류 메시지 없음 (b) 카메라가 소속 테이블로 부드럽게 이동(테이블 **펼치지 않음**)
+  (c) 소속 테이블이 하이라이트(주변 dim)로 강조 (d) 상세 패널 유지 → **더블클릭** → 테이블 펼침 + 해당 컬럼 선택.
+  자산 curl(`?v=20260710-graph-colnav`) + 육안 게이트(TEST §72). 카메라 팬/하이라이트 최종 확증은 라이브만(WSL headless 미대체).

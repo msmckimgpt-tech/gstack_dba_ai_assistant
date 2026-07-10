@@ -2034,3 +2034,20 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   Routine/Table 노드 상세에서 "사용 테이블/사용 함수·프로시저" 행 클릭 → **대상 노드로 카메라 팬 + 선택 강조 + 상세 패널 대상 전환**
   동시 발생 확인. 미렌더 대상(접힌 스키마/컬링) 행 클릭 → 상태줄 안내만·팬 skip·상세는 전환. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(`admin.js?v=20260710-graph-rtuse-camera` 서빙 + 핸들러 내 `_metaGraphPanToRelation(k)` 존재) + win-browser 육안 PASS append.
+### Run (2026-07-10) — reltrace-colnav: 상세 패널 관계행 단일클릭 시 미렌더 컬럼 카메라 이동 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §72) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증**: 신규 `test_graph_colnav.js` **22 PASS** — ① 조상 승격(`_metaRenderedAncestorFor`) 5케이스:
+  컬럼 직접렌더(T1)·컬럼 미렌더→소속 테이블(T2, 사용자 시나리오 핵심)·테이블도 미렌더→접힌 스키마 카드 SC:(T3)·
+  아무것도 미렌더→guard(T4)·테이블 승격(T5) ② 선택 게이트(G1~G4, stub 기반): 미렌더 컬럼→선택=컬럼·팬=테이블·오류無,
+  렌더 컬럼→선택·팬=컬럼, 스키마 카드 대상→선택 안 함·팬만, 미로드→안내(오류 톤 아님) ③ 하이라이트 폴딩(F1, 실호출):
+  미렌더 컬럼 선택 시 selected=컬럼 유지 + focusAdj 가 소속 테이블 인접으로 폴백(self=테이블·nodes=관계 상대).
+  회귀 0(edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·`node --check` PASS.
+- **§18.8 적대 리뷰 REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]**: stale base(§67/§68 병렬 머지) 적발 → 현재 main
+  rebase, MINOR#3(미렌더 컬럼 선택 하이라이트 소실) → 하이브리드(`_metaFocusKeyFor` 폴딩)로 해소, 테스트에 선택게이트·폴딩 단언 보강.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 web 이미지 baked → merge + `deploy-web`
+  재배포 선행(§57·§67·§68 동일 패턴) ② 실 카메라 팬·canvas 하이라이트는 G6 인스턴스(`_metaGraph.graph`) 의존이라 WSL
+  headless 미재현(승격/게이트/폴딩 로직만 격리검증), 그래프뷰 무인 도달 3중벽 차단 → **자산 curl(서빙 admin.js 에
+  `_metaRenderedAncestorFor`·`_metaFocusKeyFor` + `?v=20260710-graph-colnav`) + 사용자 육안**로 대체(visual_verification_scope=always).
+- **POST-DEPLOY 사용자 육안 검증(T72.5)**: `그래프 뷰 > 상세`에서 **아직 펼치지 않은 테이블의 컬럼 관계행 단일클릭**:
+  ① "대상 노드가 현재 화면에 없습니다" **오류 메시지 미노출**(사용자 불편 해소 실증) ② 카메라가 소속 테이블(또는 접힌
+  스키마 카드)로 부드럽게 이동(테이블 **펼치지 않음**) ③ 소속 테이블이 하이라이트(주변 dim)로 강조 ④ 상세 패널 유지 →
+  같은 행 **더블클릭** → 테이블 펼침 + 해당 컬럼 선택 ⑤ pageerror 0. **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.

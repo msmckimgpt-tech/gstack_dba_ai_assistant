@@ -1400,3 +1400,13 @@ source_of_truth: true
 - **BLOCKING/MAJOR 0**. PASS: (1) 순서 — pan 은 완전 동기(팬+선택+상태), 반환 후 ShowDetail(async)이 첫 await 전 동기로 `_metaGraphStatus("상세 조회 중…")` 세팅 → 캔버스 카메라 애니메이션은 상세 패널 재렌더와 독립, 팬 취소·race 없음. (2) 미렌더 대상 — pan 이 `_metaRenderedIdFor` null 가드로 안내 후 return(무throw), ShowDetail 은 key 로 fetch·전환 정상 → 기존 거동 보존. (3) selection — pan·ShowDetail 양쪽 동일 key `k` 로 `_metaGraphSetSelected` → idempotent, 대상 불일치 없음. (4) 캐시버스터 — admin.js 만 bump, CSS 미변경이라 styles.css 미bump 정확. (5) 회귀 — 상세 전환은 pan 성패 무관 항상 실행(순수 추가).
 - NIT(수용): pan 의 transient 상태힌트 "(더블클릭 = 상세 패널 전환)" 가 rtuse 경로선 부정확(단일 클릭이 이미 전환)하나 ShowDetail 의 동기 "상세 조회 중…" 이 즉시 덮어써 **화면 미노출** → user-facing 회귀 0. 2줄 변경에 pan param 추가는 과설계 → 미수정.
 - 검증: `node --check admin.js` PASS. win-browser 시각검증 POST-DEPLOY(정적 baked, feature-0003 TEST §71 / TASK T71.3).
+## REV-20260710T065500-ai-claude-corp-feature-0016-graph-colnav [SUBAGENT: PASS-WITH-FIXES] — §72 상세 패널 관계행 단일클릭 미렌더 컬럼 카메라 이동 diff 적대 리뷰
+- 대상: CHG-20260710T065500-graph-colnav (admin.js `_metaRenderedAncestorFor`·`_metaFocusKeyFor` 신설 + `_metaGraphPanToRelation` 재작성 + `_metaGraphSetSelected`/`_metaG6Build` focusAdj 산출 중앙화 + admin.html 버스터 + test_graph_colnav.js 신설).
+- 방법: §18.8 적대 리뷰(general-purpose, 통과 아닌 결함 적발). BLOCKING/MAJOR/MINOR 가설을 코드 실측(파일:라인)·per-frame 재해소·`_opSeq` 레이스·엣지케이스로 반증 시도 + 테스트 타당성 평가.
+- 판정: **PASS-WITH-FIXES** — BLOCKING 0. 크래시/dim-lock 없음(모든 selected/nodes 접근 `nodes.has` 가드). CONFIRMED PASS: `animateFocus(SC:…)` 재해소 안전(SC:SC: 이중접두 없음), `_opSeq` 레이스 없음(_metaG6Apply 는 seq 미증가), 기존 경로 보존(직접렌더 컬럼/테이블·접힌 스키마 카드 pan-only·오류 문자열 제거·260ms 단/더블 라우팅), 엣지케이스(no-`:`·2세그·self-FK·displayNode 폴백) 모두 graceful.
+- 적발/반영:
+  - **MAJOR(stale base) → 수정**: 리뷰 중 §67 catband-scale·§68 graph-rw-group 이 main 병렬 머지되어 base(00871661) 4커밋 stale. `git diff main` 이 §67 revert 로 오독될 위험 + admin.html:1043 버스터 3-way 충돌 확정. **현재 main(c0a3d70f)으로 rebase** 후 전량 재적용·재검증. §67 테이블 뷰포트 컬링과 정합 확인(화면 밖 대상 테이블은 SC:카드/안내로 graceful degrade — `_metaRenderedAncestorFor` 가 renderedIds 기준이라 구조적 정합).
+  - **MINOR#3(미렌더 컬럼 선택 시 하이라이트 소실) → 수정**: 미펼침 컬럼은 사실상 항상 모델 밖이라 `_metaGraphSetSelected(column)`+`_metaG6Build` 재산출이 focusAdj=null → 전역 dim 해제·직전 하이라이트 소실·선택 링 없음. **사용자 결정(AskUserQuestion): 선택=컬럼·하이라이트=상위 종속 객체**. `_metaFocusKeyFor` 로 focusAdj 를 소속 테이블(모델의 Table 노드일 때만)로 폴백 — 두 경로(즉시/빌드) 중앙화로 일치. §57.5 F2(prune 선택=null) 는 부모-Table 가드로 보존.
+  - **테스트 갭 → 보강**: 리뷰가 "선택 게이트(renderedSelf||!direct)·폴딩이 순수 해소 테스트에서 미검증" 지적 → stub 기반 선택게이트(G1~G4)·실호출 하이라이트폴딩(F1) 단언 추가(22 PASS).
+- 검증: 최종 headless test_graph_colnav 22 + 회귀(edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6) = **172 PASS** · `node --check` OK.
+- 미결(정상): 실 G6 카메라 팬·canvas 하이라이트 육안은 그래프뷰 인증/라우팅 무인 도달 차단 → POST-DEPLOY 사용자 육안 게이트(TEST §72 T72.5, 배포 후 자산 curl+육안).
