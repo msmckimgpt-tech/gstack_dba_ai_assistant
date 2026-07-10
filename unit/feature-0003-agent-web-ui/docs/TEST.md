@@ -1969,3 +1969,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 - **win-browser 시각검증 가능**(실 Windows Chrome via bin/win-browser.py relay, https://localhost/admin 로그인 — 선례 §51·§57·§60 동일). 배포 후 줄별 스크린샷:
   ① 줌아웃 집계 카드 크고 읽힘·상태줄 마커 없음 ② 줌인 화면 밖 테이블 컬럼 미표시(테이블·combo 유지)·클릭/팬 경량화 ③ pageerror 0.
 - **[POST-DEPLOY 갱신 예정]** 배포 후 win-browser 육안 PASS append.
+
+### Run (2026-07-10) — hl-edge-hide: 상대 하이라이트 focus 밖 관계선 제거 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §66) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_edge_visibility.js` **67 PASS** — T4/T10/T13 focus 밖 엣지
+  '제거' 단언 전환 + §66 불변식(focus 밖 전제거·lit 방출·무선택 대조군) + **T13B**(130T/129 FK/zoom 0.2 로
+  lodActive 실발동, hlHide 가 LOD 선행 = lodDropped 미증가 회귀 방어). §64 T22 공존. 회귀 0(agglod 9·category 26·collod 20·vpack 19·viewportcull 6)·`node --check` PASS.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 baked → merge + `deploy-web`
+  재배포 선행(§51·§57·§60·§61·§63·§65 동일). ② 대상 결함(dirty-rectangle canvas 잔상)은 실 브라우저 GPU/canvas paint
+  아티팩트라 **WSL headless 미재현**, 그래프뷰 무인 도달 3중벽 차단 → **자산 curl(서빙 admin.js 에 `hlHide` +
+  `?v=20260710-hl-edge-hide`) + 사용자 육안**로 대체.
+- **POST-DEPLOY 사용자 육안 검증(T66.4)**: 대형 그래프 노드 클릭 → 상대 하이라이트: ① focus 밖 관계선 **완전 소거**
+  (희미하게 남지 않음) ② **마우스 이동해도** 유령 관계선 잔상/깜빡임 없음 ③ focus(선택+1-hop) 관계선 선명 유지
+  ④ 빈 캔버스 클릭 해제 시 전량 복원 ⑤ pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증 + 사용자 육안 PASS append.

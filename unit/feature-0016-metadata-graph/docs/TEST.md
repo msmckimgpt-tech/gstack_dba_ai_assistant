@@ -907,7 +907,6 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
   admin.js 에 `_META_AGG_ZOOM`·`aggActive` + `?v=20260710-agg-lod`) + 사용자 육안 게이트(visual_verification_scope=always,
   브리지 불가 시 사유 명시 통과). 사용자 확인 후 PASS append.
 
-
 ## §64 lod-hl-declutter — 하이라이트 상태 줌아웃 LOD 축약 정상화 (2026-07-10, ADR-031)
 
 ### 단위 (headless, AGE/라이브 불요) — Environment: unit/node
@@ -941,3 +940,20 @@ insight-worker routine introspect 첫 cadence 이후에만 라이브에 존재 �
 - 줌아웃: 집계 supernode 카드가 **크고 읽힘**(이전 작던 것 해소)·상태줄 "클러스터 집계" 마커 **없음**.
 - 줌인 대형모델(mssql-qa-idc 등 스키마 여러 개 펼침): 화면 밖 테이블 컬럼 **미표시**(테이블 칩·클러스터 카드 combo
   유지)·**클릭/팬 경량화**·팬 시 새로 보이는 테이블 컬럼 재표시(디바운스). 줄별 스크린샷. 배포 후 PASS append.
+## §66 hl-edge-hide — 상대 하이라이트 시 focus 밖 관계선 제거
+
+### 단위 (headless, AGE/라이브 불요) — Environment: unit/node — 2026-07-10 PASS
+- Runner: AI. `node tests/headless/test_g6build_edge_visibility.js src/static/admin.js` → **67 PASS / 0 FAIL**.
+  - T4/T10/T13: 상대 하이라이트 시 focus 밖 엣지가 dim(0.12)이 아니라 build 에서 **제거**됨을 단언(제거-단언 전환).
+  - T13 §66 불변식: focus 밖 전제거 · lit 부분그래프 방출 · 무선택 전량 방출 대조군 · 하이라이트-hide lodDropped 미증가.
+  - **T13B(적대 리뷰 M1)**: 130T/129 무상태 FK/zoom 0.2 로 lodActive 실발동 — (무선택 LOD 축약>0) vs (선택 시 focus 밖 전제거 + lodDropped=0) 대조로 hlHide 가 LOD 경로 **선행**함을 회귀 방어(§64 keepLod 와 병존).
+- 회귀 0: agglod 9 · category 26 · collod 20 · vpack 19 · viewportcull 6 · §64 T22 공존 · `node --check` PASS.
+
+### Run (예정) — POST-DEPLOY (Environment: Windows-browser, PB-0008) — T66.4
+- 대상: 대형 그래프(다스키마/대형 스키마) 로그인 → 특정 노드 클릭 → **상대 하이라이트 진입**.
+- 확인: ① focus 밖 관계선이 희미하게 남지 않고 **완전 소거** ② **마우스 이동해도** 유령 관계선 잔상/깜빡임 없음
+  (dirty-rect 잔상 해소) ③ focus 부분그래프(선택+1-hop) 관계선은 **선명 유지** ④ 빈 캔버스 클릭으로 해제 시 전량 복원
+  ⑤ pageerror 0.
+- **무인 도달 제약**: 그래프뷰 3중벽(TrustedHostMiddleware·인증세션·Windows→WSL 라우팅) + dirty-rect 는 실 canvas
+  paint 아티팩트라 WSL headless 미재현 → 서빙 admin.js 자산 curl(`hlHide` + `?v=20260710-hl-edge-hide`) + 사용자
+  육안 게이트(visual_verification_scope=always, 브리지 불가 시 사유 명시 통과). 사용자 확인 후 PASS append.

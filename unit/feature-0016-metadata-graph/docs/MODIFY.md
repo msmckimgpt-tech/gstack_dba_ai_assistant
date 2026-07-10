@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260710T000000-ai-claude-feature-0016-hl-edge-hide
+- 요청(사용자 리포트, 2026-07-10): 그래프 뷰에서 노드 클릭 → 상대 하이라이트 진입 시 '출력되지 않아야 할 관계선'이 투명하게 렌더되고 마우스 이동에 따라 잔상처럼 상태가 바뀜. 성능 손해 검토 후 대응.
+- **진단**: ① non-focus 엣지가 `dimIf` 로 제거가 아닌 opacity 0.12 dim 유지(§57.6 의도) = 사용자가 본 '투명한 관계선'. ② stale 위치+마우스 깜빡임 = G6 v5 기본 `enableDirtyRectangleRendering:true`(vendor 번들 실측·admin.js override 없음)의 dirty-rect 잔상(dim 전환 시 이전 원색 픽셀 미소거). 단일 클릭 구조 불변 → 렌더 아티팩트 확정.
+- **성능**: 손해 있음 — non-focus 엣지 전량(0.12) 유지로 path·hit-test·페인트 지속(대형 스코프 수백~수천 엣지 순수 낭비).
+- **수정 (frontend-only, 사용자 결정=제거(hide), TASK §66)** [admin.js](../../feature-0003-agent-web-ui/src/static/admin.js): `_metaG6Build` 에 `hlHide=(hl)=>!!(fa&&!hl)` + 4개 keep 판정 지점(SCHEMA_REF·ROUTINE_USES·기타·REFERENCES)에서 상대 하이라이트 활성 시 non-focus 엣지 build 제외(colLevel·집계 agg 공통). 노드 dim(0.38) 유지 → focus 효과 보존. lodDropped 미증가. dimIf 는 방어적 안전망으로 잔존. **§64(lod-hl-declutter) keepLod/litSelf 인프라와 병존** — hlHide 가 LOD 가드 선행(줌아웃 declutter 는 §64 담당).
+- **테스트** [test_g6build_edge_visibility.js](../../feature-0003-agent-web-ui/tests/headless/test_g6build_edge_visibility.js): T4/T10/T13 을 '제거' 단언으로 전환 + §66 불변식(focus 밖 전제거·lit 방출·무선택 대조군·lodDropped 미증가) + T13B(highlight×LOD 회귀 방어) → **71 PASS**(§64 T22 병존). 회귀 0(agglod 9·category 26·collod 20·vpack 19·viewportcull 6). `node --check` PASS. §18.8 적대 리뷰 REV-20260710T052502 [SUBAGENT: PASS-WITH-FIXES].
+- cache-buster: [admin.html](../../feature-0003-agent-web-ui/src/static/admin.html) `admin.js?v=20260710-hl-edge-hide`.
+- 잔여: POST-DEPLOY PB-0008 실 Windows 육안(focus 밖 완전 소거·유령 잔상 없음·focus 관계선 선명) + web 배포(deploy_scope: included).
+
 ## CHG-20260704T014646-ai-claude-feature-0016-graph-ux3fix
 - 요청(사용자, 2026-07-04): `관리 콘솔 > 지식베이스 > 메타데이터 > 그래프 뷰` 3대 개선 — ① 최상위 탭 분리+높이 ② 더블클릭 재배치 수정 ③ 검색 부드러운 하이라이트.
 - **① 그래프 뷰 최상위 탭 분리 (admin.html/js + styles.css)**:
