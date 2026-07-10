@@ -8541,8 +8541,26 @@ button.amgr-cur-break:hover { background: rgba(156,33,33,.10); }
 /* reldetail-colexpand ①②③: 컬럼 아코디언 + 방향 그룹 + 개수 배지 */
 ul.amgr-collist { list-style: none; margin: 0; padding: 0; }
 .amgr-col { padding: 3px 0; }
-.amgr-col-plain { padding: 4px 2px; font-size: 12px; }
+.amgr-col-plain { padding: 0; font-size: 12px; }
 .amgr-col-plain code { font-weight: 600; }
+/* graph-detail-colsel: 컬럼 선택 버튼 — 캔버스 컬럼 노드 클릭과 동일한 선택. amgr-col-toggle 시각 언어 재사용.
+   plain 컬럼=block(설명 자연 줄바꿈), 관계 컬럼=flex(relcount 우측 정렬). */
+.amgr-col-select {
+  display: block; width: 100%; text-align: left;
+  background: none; border: none; padding: 5px 6px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; color: inherit;
+}
+.amgr-col-select:hover, .amgr-col-select:focus-visible { background: var(--primary-soft); outline: none; }
+.amgr-col-select code { font-weight: 600; }
+.amgr-col-rel .amgr-col-select { display: flex; align-items: center; gap: 5px; }
+.amgr-col-head { display: flex; align-items: center; gap: 2px; }
+.amgr-col-head .amgr-col-select { flex: 1 1 auto; min-width: 0; }
+.amgr-col-caret {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; padding: 4px 3px; border-radius: 6px; cursor: pointer; color: inherit;
+}
+.amgr-col-caret:hover, .amgr-col-caret:focus-visible { background: var(--primary-soft); outline: none; }
+/* legacy(.amgr-col-toggle) — graph-detail-colsel 이후 미사용이나 하위호환 위해 유지 */
 .amgr-col-toggle {
   display: flex; align-items: center; gap: 5px; width: 100%; text-align: left;
   background: none; border: none; padding: 5px 6px; border-radius: 7px; cursor: pointer;
