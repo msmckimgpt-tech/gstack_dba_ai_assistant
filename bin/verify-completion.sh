@@ -1214,11 +1214,17 @@ check_13_visual_verification() {
 
   # 각 대상 TEST.md 가 '이번 staged diff 에 추가된' Windows-browser Run(또는 미수행 사유)
   # 라인을 담는가(M1: whole-file substring 아닌 추가 라인만 — stale/재-stage/주석 우회 차단).
-  local missing="" tmd added
+  local missing="" tmd added frag_dir frag_added
   while IFS= read -r tmd; do
     [ -z "$tmd" ] && continue
     added=$(git diff --cached -- "$tmd" 2>/dev/null | grep -E '^\+' | grep -iE 'windows-browser' || true)
-    [ -z "$added" ] && missing+="${tmd} "
+    # META-0026 (ITEM-06): TEST.md 추가 라인 **또는** test-runs.d/ fragment 신규 파일 인정
+    # (하위호환 OR — 병렬 Run 기록 append 충돌 제거, §5.3 fragment 규약).
+    if [ -z "$added" ]; then
+      frag_dir="${tmd%/TEST.md}/test-runs.d"
+      frag_added=$(git diff --cached -- "$frag_dir" 2>/dev/null | grep -E '^\+' | grep -iE 'windows-browser' || true)
+      [ -z "$frag_added" ] && missing+="${tmd} "
+    fi
   done <<<"$targets"
   [ -n "$unattributed" ] && missing+="(unattributed: ${unattributed})"
 
@@ -1229,7 +1235,7 @@ check_13_visual_verification() {
 
   if [ "$scope" = "always" ]; then
     log_check 13 FAIL "visual verification" \
-      "웹/UI 자산 변경인데 이번 cycle 'Windows-browser' Run(PB-0008) 추가가 없는 대상: ${missing}. bin/win-browser.py 로 시각검증 후 해당 feature docs/TEST.md §3 에 'Environment: Windows-browser' Run 을 추가·stage(브리지 불가 시 그 라인에 미수행 사유 명시)하세요 (AGENTS.md §15.4.1 · PB-0008 · visual_verification_scope=always). 긴급: GSTACK_SKIP_VISUAL_VERIFICATION=1"
+      "웹/UI 자산 변경인데 이번 cycle 'Windows-browser' Run(PB-0008) 추가가 없는 대상: ${missing}. bin/win-browser.py 로 시각검증 후 해당 feature docs/test-runs.d/<TASK-또는-REV-id>.md fragment(권장, §5.3) 또는 docs/TEST.md §3 에 'Environment: Windows-browser' Run 을 추가·stage(브리지 불가 시 그 라인에 미수행 사유 명시)하세요 (AGENTS.md §15.4.1 · PB-0008 · visual_verification_scope=always). 긴급: GSTACK_SKIP_VISUAL_VERIFICATION=1"
     return 1
   fi
 

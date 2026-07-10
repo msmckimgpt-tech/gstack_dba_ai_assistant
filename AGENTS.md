@@ -149,7 +149,15 @@ PR #12 가 본 repo (template base) 에 소비자 cleanup checklist 를 잘못 �
 
 ### §5.3 품질 문서 (혼합)
 
-- `TEST.md`: 케이스 정의(§1, §2)는 rewrite, 실행 결과(§3)는 append-only
+- `TEST.md`: 케이스 정의(§1, §2)는 rewrite.
+- **테스트 실행 결과(Run 기록) — fragment 전환 (2026-07-11 프로젝트 개정, META-0026 —
+  template base 전파 예정)**: 신규 Run 기록은 TEST.md 말미 append 대신
+  **`unit/<feature>/docs/test-runs.d/<TASK-또는-REV-id>.md` 항목당 1파일**로 작성한다
+  (frontmatter: `run_at`(ISO8601, 예 `2026-07-11T05:00:00+09:00` — 컴팩션 90일 판정 기준)·`session`·`scope`·`verdict`). 파일 단위 분리라 병렬 세션의 Run
+  기록이 git 에서 원천 무충돌(towncrier/reno 계열 표준 패턴 — TEST.md §3 append 는 30일
+  229회 변경의 최다 충돌 지점이었다). **기존 TEST.md §3 append 방식도 당분간 유효**
+  (하위호환 — verify check #13 이 양쪽 인정, 소급 이동 없음·이력 보존). 90일 경과
+  fragment 는 doc_sync 가 feature 별 아카이브로 병합(컴팩션)할 수 있다.
 
 ### §5.4 수정 규칙
 
@@ -390,7 +398,7 @@ AI는 작업 대상 파일의 패턴을 확인하고, 매칭되는 규칙을 추
 
 | 파일 패턴 | 추가 참조 문서 | 비고 |
 |-----------|--------------|------|
-| `unit/feature-0003-agent-web-ui/**`, `**/*.html`, `**/templates/**`, `**/static/**` | AGENTS.md §15.4.1 + `playbooks/PB-0008-windows-browser-verification.md` | 웹/UI 변경 — 완료 검증은 실제 Windows 브라우저(`bin/win-browser.py`)로 수행, `TEST.md` §3 에 `Environment: Windows-browser` Run 기록 |
+| `unit/feature-0003-agent-web-ui/**`, `**/*.html`, `**/templates/**`, `**/static/**` | AGENTS.md §15.4.1 + `playbooks/PB-0008-windows-browser-verification.md` | 웹/UI 변경 — 완료 검증은 실제 Windows 브라우저(`bin/win-browser.py`)로 수행, `TEST.md` §3 또는 `docs/test-runs.d/` fragment(§5.3) 에 `Environment: Windows-browser` Run 기록 |
 | `unit/feature-0002-agent-core/alembic/versions/**` | `docs/CONVENTIONS.md §12` (expand/contract) | 마이그레이션 — 무중단 롤링 배포의 mixed-version 안전을 위해 expand/contract 필수. `bin/migrate-lint.sh` 통과 의무. contract(DROP/RENAME/타입변경/NOT NULL)는 2-phase 또는 서명 annotation. (feature-0014) |
 <!-- 프로젝트 초기화 시 도메인에 맞게 최소 3~5개 이상을 채운다. 예시는 아래 주석 참조. -->
 <!-- | *.sql | docs/SECURITY.md §3 | SQL 인젝션 방지 규칙 확인 | -->
@@ -1215,7 +1223,7 @@ push / PR merge 는 코드 완료이지 배포 완료가 아니다.
 |---------|------|----------|----------|
 | **계획** | FUNCTION.md, TASK.md §2.1 작성 | FUNCTION.md, TASK.md, REPORT.md | 코드 파일 |
 | **실행** | 승인된 계획에 따라 코드 구현 | src/, tests/, MODIFY.md, REVIEW.md | FUNCTION.md, TASK.md |
-| **검증** | TEST.md 케이스 실행·기록 | TEST.md §3 | src/, tests/ |
+| **검증** | TEST.md 케이스 실행·기록 | TEST.md §3 또는 test-runs.d/ fragment(§5.3) | src/, tests/ |
 
 이 패턴은 선택 사항이며, 단일 AI 운용 시에는 §13.1의 기본 규칙만 따르면 된다.
 
@@ -1280,7 +1288,7 @@ AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실�
   | `WSL-headless` (feature-0004 browser service, gstack /browse) | ✗ — 화면 검증 불가 |
   | `Windows-browser` (`bin/win-browser.py` CDP 자동 구동) | ✓ |
 
-- **웹/UI 변경은 `TEST.md` §3 에 `Environment: Windows-browser` Run 이 1건 이상 없으면
+- **웹/UI 변경은 `TEST.md` §3 또는 `docs/test-runs.d/` fragment(§5.3) 에 `Environment: Windows-browser` Run 이 1건 이상 없으면
   "완료" 로 선언하지 않는다.** CLI·WSL-headless 결과만으로 "검증함"을 주장하지 않는다.
 - 1회 브리지 setup 은 `bin/WIN-BROWSER-SETUP.md` (NAT+portproxy relay 또는 mirrored).
   `python3 bin/win-browser.py doctor` 가 준비 상태를 게이팅한다.
@@ -1288,7 +1296,7 @@ AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실�
   그 사유를 `TEST.md` §3 또는 `REPORT.md` 에 명시한다 — 누락을 "검증함"으로 오인 금지.
 - **enforcement (staged, v3.x+ 격상)**: `bin/verify-completion.sh` check #13 이 웹 대상
   파일(`**/src/static/**`·`**/static/**`·`**/templates/**`·`*.html`) 변경 cycle 에서 해당
-  feature `docs/TEST.md` 에 `Windows-browser` Run(또는 미수행 사유) 이 **이번 changeset 에
+  feature `docs/TEST.md` 또는 `docs/test-runs.d/` fragment 에 `Windows-browser` Run(또는 미수행 사유) 이 **이번 changeset 에
   staged 되어 있는지**를 검사한다. 강제 수준은 wrapper `FIRST_REQUEST.md` 의
   `visual_verification_scope` 로 결정한다:
   - `visual_verification_scope: always` → 누락 시 **FAIL (hard gate, --pre-commit)**.
@@ -1309,7 +1317,7 @@ AI 가 CLI(curl) 또는 WSL 내부 headless 브라우저로만 검증하면 실�
 - 기능 동작이 구현되었다.
 - `FUNCTION.md`가 현재 동작과 일치한다.
 - `TASK.md`, `MODIFY.md`, `REVIEW.md`, `REPORT.md`, `TEST.md`가 필요한 수준으로 갱신되었다.
-- **웹/UI 변경인 경우** `TEST.md` §3 에 `Environment: Windows-browser` Run 이 1건 이상 기록되었다 (§15.4.1 · PB-0008). UI 표면이 없거나 브리지 setup 불가 시 사유가 명시되었다.
+- **웹/UI 변경인 경우** `TEST.md` §3 또는 `docs/test-runs.d/` fragment(§5.3) 에 `Environment: Windows-browser` Run 이 1건 이상 기록되었다 (§15.4.1 · PB-0008). UI 표면이 없거나 브리지 setup 불가 시 사유가 명시되었다.
 - `ANCHOR.md` §1~§3이 작성되었다 (24h bootstrap grace 이후).
 - `ANCHOR.md` §4 human 검증 로그는 일반 TASK cycle 완료 조건이 아니며, release/milestone 검토 또는 방향 전환 검증이 필요할 때만 요구된다 (§18 참조).
 - 남은 리스크와 후속 작업이 `REPORT.md`에 정리되었다.
@@ -1324,7 +1332,7 @@ AI가 작업 완료를 선언할 때는 `TASK.md`의 Completion Checklist를 명
 ## 7. Completion Checklist
 - [ ] 모든 REQ의 AC가 구현되었다
 - [ ] 자동 테스트가 통과한다
-- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 TEST.md §3에 `Environment: Windows-browser` Run을 기록했다 (§15.4.1 · PB-0008) — 또는 UI 표면 없음/브리지 불가 사유 명시
+- [ ] 웹/UI 변경 시 실제 Windows 브라우저 검증을 수행하고 TEST.md §3 또는 test-runs.d/ fragment(§5.3)에 `Environment: Windows-browser` Run을 기록했다 (§15.4.1 · PB-0008) — 또는 UI 표면 없음/브리지 불가 사유 명시
 - [ ] FUNCTION.md가 현재 동작과 일치한다
 - [ ] MODIFY.md에 변경 이력이 기록되었다
 - [ ] REVIEW.md에 판단 근거가 기록되었다

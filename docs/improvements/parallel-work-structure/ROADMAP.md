@@ -311,7 +311,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   스모크 수준.
 
 ### ITEM-06 · append 문서 fragment 전환 1차 — TEST.md Run 기록
-- **status**: pending
+- **status**: done
+- **note**: 2026-07-11 완료 — §5.3 fragment 규약(test-runs.d/<id>.md, run_at ISO8601) + check #13
+  OR 하위호환 개정 + doc_sync 90일 컴팩션 절 + §15.4.1/라우팅표/DoD 등 stale 참조 6곳 정합.
+  acceptance (a) fragment-only PASS (b) 기존 방식 PASS + 음성 FAIL 보존 (c) 병렬 fragment
+  머지 무충돌 (d) 규약 diff. §18.8 패널: SHIP-WITH-FIXES(우회면 없음·게이트 등가) → 잔존
+  텍스트 반영. REV-20260711T051500.
 - **feature_id**: META-0026-doc-fragments   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
 - **risk_grade**: Major
@@ -599,9 +604,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 6 (ITEM-01·02·04·05·08·03) · in-progress 0 · pending 6 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → 06 → 07 → 12 → 09 → 10 → 11
-  (다음 ready: ITEM-06)
+- 총 12 항목 · done 7 (ITEM-01·02·04·05·08·03·06) · in-progress 0 · pending 5 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → 07 → 12 → 09 → 10 → 11
+  (다음 ready: ITEM-07)
 - ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —
   §6.1 deploy-backed 완료. (첫 deploy-web preflight 1회 일시 실패 후 재시도 성공 — 원인
   미재현 transient, config 재현 검사는 정상.)

@@ -119,6 +119,12 @@ Arguments: `$ARGUMENTS` (선택):
     - 두 모델 모두 정본 재서술 금지(요지·링크만). 모델 불명이면 **인덱스 모델로 보수 처리**(누적이 계약 위반 위험 더 큼).
   - `ARCHITECTURE.md`: **색인/기능맵 정합 갱신에 한정**(구조 결정 변경이 아니다). 새 구조 결정·ADR 본문 작성은 §13.1 대로 feature cycle/사람이 반영하며, doc_sync 는 **이미 결정된 ADR 의 색인·참조만 정합**한다(필요 시 `DECISIONS.md` 에 기존 결정의 색인 라인 추가, 신규 결정 본문 작성 금지). §13.1 "프로젝트 수준 rewrite 문서는 동시에 하나의 AI만 수정" 경계 준수.
   - 이미 최신인 문서(예 SECURITY)는 **무변경**(정직 보고). 억지 편집 금지.
+  - **test-runs.d fragment 컴팩션(META-0026, 선택 스텝)**: `unit/<feature>/docs/test-runs.d/`
+    의 Run fragment 중 `run_at` 기준 **90일 경과**분은 해당 feature 의
+    `docs/_archive/TEST-runs-archive-<YYYYMMDDTHHMMSS>.md` 로 병합(verbatim 이어붙임 + 원본
+    삭제, §5.5 아카이브 규약)할 수 있다. 아카이브 참조 링크는 해당 feature `docs/TEST.md` 상단에
+    남긴다(§5.5 발견성 요건 — fragment 는 삭제되므로 TEST.md 가 현행 파일 역할). 90일 이내
+    fragment·TEST.md §1/§2 는 불가침. 컴팩션은 delta 정합이 끝난 뒤 별도 커밋으로.
 
 > **edge 처리(발견 시 — 항상 적용 아님)**: ACL mask drift 는 **쓰기 실패(EACCES)가 실제로 났을 때만** 대응한다. wiki 하위 dir 편집이 EACCES 로 실패하면 먼저 `getfacl <dir>` 로 `mask::r-x`(쓰기 무력화)인지 확인하고, 맞으면 `sudo setfacl -m m::rwx <dir>` 로 이미 부여된 user ACL 을 effective 화(가역적·로컬) 후 **변경 사실을 사용자에게 표면화**. 블라인드로 setfacl 돌리지 말 것(평상시엔 mask 가 정상일 수 있다). 무관 untracked(`.env*.bak*` 등)는 stage 제외. docker socket permission denied → `sudo`. 모두 surgical·가역적으로, 표면화 후 진행.
 
