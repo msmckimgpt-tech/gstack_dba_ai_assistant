@@ -1391,3 +1391,8 @@ source_of_truth: true
 - 변경: G6 v5 minimap 전량 재복제 `renderMinimap()` 을 기하 서명 게이트로 감싸 상태-only rebuild 에서 미니맵 재복제 skip(전체-이미지 재사용). 구성 변경 시 정상 재복제. 팬/줌은 G6 가 마스크만 갱신(무영향). frontend-only·마이그 0.
 - 적대 리뷰 2건 BLOCK→수정: H1(패치 init 시점 호출→plugin lazy-init 전 no-op)→draw 직후 이동, H2(드래그 stale 서명→미니맵 얼어붙음)→afterdraw stage 무효화.
 - 검증: 신규 headless **35 PASS** + 회귀 150 PASS · `node --check` · 적대 리뷰(REVIEW REV-20260710T233000). POST-DEPLOY PB-0008(feature-0003 TEST §74). 머지 후 버스터 `admin.js?v=20260710-mmreuse-layoutmemo`.
+
+## CHG-20260710T234500-ai-claude-feature-0016-layoutmemo-postdeploy — §73 layoutmemo POST-DEPLOY 완수 기록 (docs-only, 코드 변경 0) (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/docs/TEST.md`(§73 Run POST-DEPLOY 라이브 PASS append) + `unit/feature-0016-metadata-graph/docs/{TASK.md(T69.4 완료),REPORT.md(POST-DEPLOY 절)}`. **코드/자산 변경 0**.
+- 변경: §73(PR #667 → main e6b7b68f) 메모이즈의 실 Windows Chrome POST-DEPLOY 실측 결과를 정본에 기록. win-browser relay 로 mssql-qa-idc 882 노드 동일 위상 연속 build 함수분해 — MISS 59ms → HIT 8ms(relOrderAll/simGroups 0) 7.4× 급감, MISS↔HIT 좌표 이동 0(band-invariant), pageerror 0.
+- 근거: `visual_verification_scope: always` 완료 게이트의 POST-DEPLOY 실측 기록 마감(T69.4). 배포는 §73 cycle 에서 완료. 코드 diff 부재 → §18.8 패널 SKIPPED.

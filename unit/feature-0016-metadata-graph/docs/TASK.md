@@ -2209,8 +2209,9 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   메모이즈로 re-emit 의 layout 비용이 사라져 더 tight 한 마진 감당 → 방출 수↓ = setData+draw↓.
 - [x] T69.3 검증: 신규 `test_g6build_layoutmemo.js`(캐시적중==fresh 좌표동일·서명무효화·컬럼/freeplace 독립·서명결정론) **19 PASS**(적대리뷰 F1/F2 수정 반영)
   + 기존 6종 회귀 **150 PASS** = **169 PASS**. node --check. §18.8 적대 리뷰(REV §73: F1 roles·F2 노드속성 서명확장 수정, REVIEW.md). 캐시버스터 `admin.js?v=20260710-layoutmemo`.
-- [ ] T69.4 POST-DEPLOY win-browser 실 Windows Chrome 육안(PB-0008): 배포 후 동일 대형 scope 에서 build 함수별 재측정 →
-  캐시 적중 시 relOrderAll/simGroups ≈ 0ms·build 급감, 위상 무변경 rebuild(팬·줌·선택·컬럼토글) 위치 동일, 극단 줌인 방출 수↓. TEST §73.
+- [x] T69.4 POST-DEPLOY win-browser 실 Windows Chrome 실측(PB-0008) **완료** (main e6b7b68f 배포·soak PASS): mssql-qa-idc
+  882 노드에서 동일 위상 연속 build — **MISS 59ms(relOrderAll 27+simGroups 29) → HIT 8ms(둘 다 0) = 7.4× 급감**, MISS↔HIT
+  방출 좌표 이동 **0**(band-invariant)·방출 수 동일. 극단 줌인(2.5)도 HIT 8ms·마진 0.3·pageerror 0. 근본해소 실증(TEST §73).
 
 ## §74 graph-minimap-reuse — 미니맵 전체-이미지 재사용(구성 불변 시 재복제 skip) (2026-07-10, 사용자 요청 · entry persona dispatch) [머지 재번호 §70→§73→§74, §13.1]
 사용자: `그래프 뷰` 의 **미니맵 최적화** — "화면 구성이 갱신되었을 경우, 한 번 draw한 전체 이미지를 재사용하는 방식도 고려."
