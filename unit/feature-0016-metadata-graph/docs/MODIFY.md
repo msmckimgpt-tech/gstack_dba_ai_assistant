@@ -1261,3 +1261,18 @@ source_of_truth: true
 - 검증: headless 20(collod, band-invariant·엣지 re-anchor 증명)+회귀 105 = **125 PASS** · `node --check` PASS.
   POST-DEPLOY PB-0008(대형 그래프 줌아웃 before/after)는 자산 curl + 사용자 육안 게이트(TEST §61·T61.5).
 - 캐시버스터: `admin.js?v=20260709-col-lod`.
+
+## CHG-20260710T013315-ai-claude-feature-0016-graph-edge-midpan — §62 관계선(엣지) 위 중간버튼 카메라 팬 무반응 수정 (2026-07-10)
+- 요청(사용자, 2026-07-10): 그래프 뷰에서 마우스 중간 드래그 카메라 이동 시, 관계선(엣지) 객체 위에서 중간 드래그를 시작하면 기능이 작동하지 않음.
+- 변경(admin.js `_metaGraphEnsure` baseCfg): G6 그래프 config 에 `edge: { style: { draggable: true } }` 1줄 추가.
+- 근본원인: 카메라 팬 = `drag-canvas` behavior(global `dragstart` 발동). 그 `dragstart` 는 `@antv/g-plugin-dragndrop`
+  이 pointerdown 대상의 `closest("[draggable=true]")` 로 드래그 소스를 해소해야 합성됨. vendor 번들 실증 — 노드(`Nw`)·
+  콤보(`Wb`) defaultStyleProps 는 `draggable:!0` 이나 **엣지 base 는 `draggable` 부재** → 관계선 위 pointerdown 은
+  소스=null → `dragstart` 미합성 → drag-canvas 미발동(빈 캔버스·노드는 정상이던 이유).
+- 무회귀: drag-element(`uE`) `enableElements=["node","combo"]` — `edge:dragstart` 미바인딩 → 엣지는 소스가 돼도
+  이동 안 됨. 좌드래그 관계선 = `_metaCanvasDragEnable` targetType!=="canvas" → false(팬 안 됨, 보존). 클릭/우클릭
+  메뉴 = dragndrop 10px 임계 미만 → 미영향. `getElementComputedStyle` 병합 순서상 `options.edge.style` 가 datum
+  뒤라 항상 반영, per-edge stroke/lineWidth 등은 불변.
+- 검증: headless `test_g6build_{vpack,category,edge_visibility,collod}` **125 PASS 회귀 0** · `node --check` PASS.
+  POST-DEPLOY 실 Windows PB-0008(관계선 위 중간드래그 팬 육안)는 배포 후 잔여(사용자 게이트, TEST §3·T62.3).
+- 캐시버스터: `admin.js?v=20260710-graph-edge-midpan`.
