@@ -9,10 +9,10 @@ source_of_truth: true
 # Task
 
 ## 1. Current Status
-- State: in_progress (DI seam Phase 2 진행 — cat-A 단순 require 클러스터 마이그. batch 1: 19 핸들러 byte-동치 전환 완료; batch 2+ 후속)
+- State: **route-handler 추출 완주·배포·라이브 검증 완료**(148 route 핸들러 전량 23 router 추출, app.py 28,224→~19.7k, 4회 배포). origin/main 359-커밋 동기화 완료·F821 감사 clean. **잔여는 별건 workstream(프론트 분할=feature-0016 churn 으로 blocked / web_context 헬퍼 이동=DI seam 선행 별건).**
 - Owner: AI / Human
 - Priority: high (Critical 등급 — 라이브 web app 모놀리스 분할)
-- Last Updated: 2026-06-29
+- Last Updated: 2026-07-10
 
 ## 2. Implementation Plan
 
@@ -82,7 +82,8 @@ source_of_truth: true
   - [x] **route-handler 모듈화 완주** — app.py = 헬퍼 라이브러리 + DI seam + include_router. (완전 thin-app: web_context 헬퍼 추출 = 별도 workstream, 원래 블로커.)
   - [x] **batch4 배포·라이브 검증**(main b3175b6, PR #516, CHG/REV-20260701-0013): CI PASS → blue-green soak 통과 → 라이브(livez/readyz 200·ask 400 invalid-json·system-prompts 401 verbatim). **route 핸들러 전량 추출 deploy-backed 완료. app.py 28,224→18,917(session −9,307, ~33%), 21 router.**
       - [ ] (향후 정제) DEFER preauth 핸들러 byte-동치 DI-rework(pre-auth gate → pre-auth dependency).
-- [ ] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건]
+- [~] TASK-0012-10 프론트(admin.js/app.js/styles.css) 분할 + CONVENTIONS code-modularity 규약 [별건] — **현시점 BLOCKED**: admin.js 17,508줄·최근 30일 237 커밋(feature-0016 그래프 §57~61 집중)·활성 feature-0016 브랜치 ~10개 병렬. 지금 분할 시 대규모 충돌+병렬 워커 파괴 → feature-0016 그래프 UI 안정화까지 후순위(2026-07-10 재확인).
+- [x] TASK-0012-12 (2026-07-10) origin/main 359-커밋 동기화 + 추출 건전성 F821 감사(23 routers `All checks passed`) + 잔여 workstream 준비(CHG/REV-20260710-0015).
 
 ## 4. In Progress
 - TASK-0012-7 DI seam Phase 2 batch 1 완료(cat A 단순 require 19/~95). batch 2 진행 예정: SQL-heredoc 핸들러(list_conversation_shares) 수작업 dedent, 동반 테스트 직접호출(profile_usage_conversations) TestClient 전환, 적대검증 보류 3건 orphan-try edit 수정 후 재마이그, cat-A 잔여 클러스터.

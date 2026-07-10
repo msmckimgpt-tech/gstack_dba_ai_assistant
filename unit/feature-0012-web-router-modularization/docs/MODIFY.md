@@ -525,3 +525,18 @@ source_of_truth: true
 - 검증: 재생성 후 `test_route_parity_p5b` PASS(총 193/api 192). git diff 가 count 2줄 + analyze/status 블록만 변경(9 ins/2 del) 임을 확인 — 다른 route 미변경(오갱신·masking 없음).
 - 학습: 의도적 route 추가 시 골든 갱신은 **route 추가 feature 의 책임**(여기선 #514 누락). route-parity 게이트가 이를 잡았으나, 추출-batch 들이 골든을 set-neutral 로 유지하는 사이 타 feature 의 route 추가와 겹쳐 blame 이 흐려졌다. 향후 route 추가 PR 은 골든 동반 갱신 필수(CI 가 강제).
 - Rollback: revert route_snapshot_p5b.json(192 복원 — CI red 재발).
+
+## CHG-20260710-0015
+- Date: 2026-07-10
+- Related Requirement: 세션 재개 — origin/main 대량 동기화(359 커밋) + 추출 건전성 F821 감사 + 잔여 workstream 준비.
+- Summary:
+  타 워커 359 커밋(feature-0016 그래프 §57~61·WebGL·feature-0018 런타임설정·reasoning-budget 등)을 feature-0012 브랜치에 병합. **코드(app.py·22→23 routers·tests) clean 병합**(타 워커가 추출 아키텍처 보존 — app.py @app 라우트 0 유지, admin_settings·ai_ops 라우터 신규). 충돌은 feature-0012 docs 3(MODIFY/REPORT/REVIEW)뿐 → union 해소(내 배포기록 CHG-20260701-0013 + 타 워커 07-02 fix 병존).
+  - **타 워커 회귀 수정 수용 확인**: CHG-20260702-0013(batch4 bare-name 회귀 — 추출 핸들러가 `MEMORY_DB`·`load_memory_kv` 등 app-전역을 `app.` 미한정 → 라이브 500 3종, ruff F821 감사로 6심볼/10개소 수정) + CHG-20260702-0014(route-parity 골든 192→193, feature-0016 #514 analyze/status route stale). **본 세션 batch4 의 "byte-neutral" 주장이 name-resolution 관점에서 불완전했음을 인정** — 추출 게이트에 `ruff --select F821` 추가가 방어선.
+  - **추출 건전성 F821 감사(전 23 routers)**: `ruff check --select F821 routers/` → **All checks passed** — bare-name 잔여 0(타 워커 수정 + 신규 admin_settings/ai_ops 포함 전량 clean). 148 route 핸들러 추출 최종 건전.
+- Files: docs(union 해소 + 상태 갱신). 코드 무변경(병합만).
+- Impact: worktree 최신 main 동기화 완료. **feature-0012 route-handler 추출 완주 상태 유지**(app.py @app 0, 23 routers). 잔여 3 test 실패(runtime_settings·dbanalysis)는 feature-0018/dbanalysis 소관·main-상속·postgres-replica DNS(--no-deps 환경) — feature-0012 무관.
+- 잔여 workstream(별건):
+  1. **프론트 분할 [TASK-0012-10] — 현시점 진행 불가(blocked)**: admin.js 17,508줄에 최근 30일 **237 커밋**(feature-0016 그래프 집중) + 활성 feature-0016 브랜치 ~10개 병렬. 지금 분할 시 대규모 충돌 + 병렬 워커 파괴 → feature-0016 그래프 UI 안정화까지 후순위.
+  2. **완전 thin-app**: app.py ~19.7k = 헬퍼 라이브러리. web_context 로 헬퍼 이동 = 원래 monkeypatch 블로커(DI seam 선행) 별도 workstream.
+  3. DEFER 핸들러 byte-동치 DI-rework(pre-auth gate → pre-auth dependency).
+- Rollback: 병합 revert(불요 — 동기화).

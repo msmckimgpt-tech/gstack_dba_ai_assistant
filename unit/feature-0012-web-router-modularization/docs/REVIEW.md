@@ -400,3 +400,10 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
   - (3) 재생성 결과 auditable: `git diff route_snapshot_p5b.json` = total_routes/api_routes 2줄 + analyze/status 블록만(9 ins/2 del). 다른 192 route 불변 → masking 없음.
   - (4) `test_route_parity_p5b` PASS(193/192).
 - 범위 규율: 추가 route 는 feature-0016(#514) 소산이나 골든은 feature-0012 route-parity 안전망 소관 → feature-0012 유지보수 cycle 로 처리(route 출처 명기).
+
+## REV-20260710-0015 [SKIPPED:sync+audit — 코드 무변경(병합만), F821 감사가 검증]
+- Related Change: CHG-20260710-0015 (origin/main 359 커밋 동기화 + F821 감사 + 잔여 workstream 준비)
+- 검증 성격: 병합 동기화(코드 clean auto-merge, docs union 해소만). 새 코드 로직 0.
+- 결정적 검증: (1) 병합 후 app.py **@app 라우트 0**(AST) — 추출 아키텍처 보존. (2) **F821 감사 전 23 routers `All checks passed`** — 타 워커의 bare-name 회귀 수정(CHG-0702-0013) + 신규 admin_settings/ai_ops 포함 전량 bare-name 0(추출 최종 건전). (3) 미해결 충돌 0(docs 3 union, 마커 잔여 0). (4) make test — feature-0012 route-추출 테스트 전량 GREEN; 잔여 3 실패(runtime_settings/dbanalysis)는 feature-0018/dbanalysis·main-상속(origin/main 파일 동일)·postgres-replica DNS(--no-deps) → feature-0012 무관·범위 밖.
+- 프론트 분할 blocked 근거(측정): admin.js 17,508줄·30일 237 커밋·활성 feature-0016 브랜치 ~10. 분할 시점 = feature-0016 그래프 UI 안정 후.
+- 학습: 타 워커가 batch4 "byte-neutral" 의 name-resolution 갭(bare app-global)을 프로덕션에서 적발·수정 → **추출 게이트에 `ruff --select F821` 필수**(make test/route-parity 는 미-hit 핸들러 NameError 미포착). append 시 기존 파일도 F821 재감사(batch3 "NEW 블록만 검사"가 기존 conversations.py 잔여 bare 를 넘긴 것이 원인).
