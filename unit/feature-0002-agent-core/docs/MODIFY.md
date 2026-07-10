@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260710-mssql-auth-cooldown (TASK-20260710-mssql-auth-cooldown — MSSQL insight 순회 인증실패 조기 skip + cooldown, Minor §12.3)
+- Date: 2026-07-10. codex 디스크 I/O 장애조사 트랙 B — MSSQL datasource `mssql-qa-idc`(scope `mssql-06656002eda6`) 로그인 `mckim` 18456 인증실패가 `WebProductDatabases` 등록 DB 수만큼 반복 재연결·로그·후속 I/O 유발(WSL VHDX 18~37MB/s 장애). conn_health network breaker 가 auth 를 의도적 제외(`_is_connect_breaker_failure`)해 첫 DB 실패 뒤에도 나머지 DB 계속 시도하던 것을 억제.
+- `shared/config.py`: `AGENT_INSIGHT_AUTH_COOLDOWN_SEC`(기본 600s=10분) 신규 + `__all__` 등록.
+- `src/modules/insight.py`: module-level `_DS_AUTH_COOLDOWN` + 헬퍼(`_ds_auth_cooldown_active/set/clear` + `_prune_auth_cooldown` — monotonic·자동만료, `_LAST_DS_SCAN_STATUS` 대칭). **cooldown 키 = datasource label(`_ds_key`)**, scope_key 아님(REV HIGH-1: scope_key 는 engine:host:port 해시라 login 제외 → 같은 host:port 다른 계정이 연쇄 차단됨). datasource 루프 **discovery 뒤** cooldown gate(active label `continue` + health perm_failed + `db_skipped_auth += len(_db_targets)`; REV LOW-6: db_targets 정상 집계 + skip 수 정확). DB 순회(`for _db_name`→`enumerate`) except **첫 로그인실패**(`_is_login_failure`: error# `\b18456\b` 우선, 텍스트는 "login failed for user" AND NOT "cannot open database" — 916 실제 메시지가 "login failed" 포함하므로 번호 우선) 시 cooldown set + `_auth_break` 로 나머지 등록 DB `break`. **916("Cannot open database" DB별)·229·297(객체별)은 로그인 성공 상태라 해당 DB 만 실패로 계속**(REV HIGH-2: 정상 DB 커버리지 보존). 성공(else) 시 `_ds_auth_cooldown_clear`(복구 권위는 TTL 만료 — REV MEDIUM-3). cycle 끝 `_prune_auth_cooldown(live_labels)`(REV LOW-5 누수 차단). scan_report `db_skipped_auth` + heartbeat KV `insight_worker_last_db_skipped_auth`. 진단 힌트 stale 정정(-bootstrap.sql → -bootstrap-multidb.sql 병기).
+- 설계: conn_health 미변경(auth 제외 설계 의도 보존) — network backoff(AGENT_CONN_UNSTABLE_RECHECK_SEC 계열)와 분리된 별도 cooldown 을 insight 레벨에. `auth_failed` 를 PG/관리콘솔 status 로 도입하지 않고 scan_outcome=perm_failed 재사용 + telemetry 카운터로 관측(파급 최소).
+- 무회귀: `AGENT_INSIGHT_AUTH_COOLDOWN_SEC=0`(cooldown off, cycle 내 skip 은 유지)·MySQL 단일 datasource·정상 auth·`_ds_key is None`(기본 DB) 무영향. 916 등 DB별 권한 실패도 기존처럼 해당 DB 만 실패 후 계속(HIGH-2 로 회귀 없음). grounding·insight fact 미변경.
+- 검증: `tests/test_mssql_auth_cooldown.py` **11**(헬퍼/prune 6 + 순회 통합 5: AC1 connect 1회 / AC2 cooldown skip / AC4 ttl=0 재시도 / HIGH-1 다른계정 독립 / HIGH-2 916 계속) + 기존 insight/mssql/datasource 8파일 87 회귀 0(합계 98 PASS) + py_compile PASS. §18.8 적대 리뷰 REV-20260710T191159-mssql-auth-cooldown(HIGH2+MED2+LOW2 실증 전건 흡수).
+- 배포: insight-worker 재기동(백엔드 변경, PB-0008 시각검증 비대상). 운영 조치(계정/GRANT/InsightEnabled=0/registry UI 갱신)는 프로덕션 DB·암호화 registry 접근 필요라 저장소 세션 범위 밖(별도 검토항목, REPORT 참조).
+
 ## CHG-20260703T083758-insight-table-grouping (TASK-20260703-insight-table-grouping — insight-worker 동일구조 테이블 그룹화, Major §12.3)
 - Date: 2026-07-03. insight-worker 가 날짜/번호 suffix 만 다른 동일구조 샤드를 각각 개별 LLM 분석하던 낭비 제거(사용자 요청).
 - `shared/config.py`: `AGENT_INSIGHT_TABLE_GROUPING_ENABLED`(기본 on)·`AGENT_INSIGHT_TABLE_GROUP_MIN_MEMBERS`(2)·`AGENT_INSIGHT_TABLE_GROUP_FANOUT_MAX`(200) + `__all__` 등록.
