@@ -85,6 +85,7 @@ __all__ = [
     "AGENT_INSIGHT_ROUTE_LOG",
     "AGENT_INSIGHT_ROUTE_LOG_MAX_CANDIDATES",
     "AGENT_INSIGHT_SQL_COMPOSE_TIMEOUT_SEC",
+    "AGENT_INSIGHT_AUTH_COOLDOWN_SEC",
     "AGENT_INSIGHT_TIMEOUT_SEC",
     "AGENT_INSIGHT_WORKER_CONVERSATION_ID",
     "AGENT_INSIGHT_WORKER_ENABLED",
@@ -1400,6 +1401,16 @@ AGENT_INSIGHT_WORKER_LOCK_TIMEOUT_SEC = _startup_int("AGENT_INSIGHT_WORKER_LOCK_
 ))
 AGENT_INSIGHT_WORKER_STALE_SEC = int(
     (os.getenv("AGENT_INSIGHT_WORKER_STALE_SEC", "15") or "15").strip()
+)
+# mssql-auth-cooldown: MSSQL datasource 의 인증/권한 실패(18456/916/229/297)로 insight 순회가
+# 확정 실패한 endpoint(scope)를 다음 재시도까지 억제하는 cooldown(초). auth 는 conn_health 의
+# network circuit-breaker 에서 의도적으로 제외(shared/db.py _is_connect_breaker_failure)되므로,
+# 그 network backoff(AGENT_CONN_UNSTABLE_RECHECK_SEC 계열, 초 단위)와 분리된 긴 cooldown 을 둔다.
+# auth 실패는 운영자 개입(계정/GRANT 수정 — bin/datasource-mssql-ro-bootstrap-multidb.sql) 전까지
+# 불변이라 짧게 재시도해봐야 DB 수만큼 반복 연결·로그·I/O 만 유발한다. 0 이면 cooldown 비활성
+# (cycle 내 나머지 DB skip 은 유지되나 다음 cycle 은 재시도). 기본 600s(=10분).
+AGENT_INSIGHT_AUTH_COOLDOWN_SEC = max(
+    0, int((os.getenv("AGENT_INSIGHT_AUTH_COOLDOWN_SEC", "600") or "600").strip())
 )
 _inline_insight_on_ask_raw = os.getenv("AGENT_INLINE_INSIGHT_ON_ASK", "0").strip() or "0"
 AGENT_INLINE_INSIGHT_ON_ASK = _inline_insight_on_ask_raw.lower() in ("1", "true", "yes")

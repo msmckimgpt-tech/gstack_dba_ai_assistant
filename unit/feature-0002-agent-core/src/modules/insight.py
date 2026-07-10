@@ -2136,6 +2136,72 @@ def _ds_scan_status_changed(scope_key, db_name, curr: str) -> bool:
     _LAST_DS_SCAN_STATUS[key] = curr
     return prev != curr
 
+
+# ── mssql-auth-cooldown (2026-07-10, codex 디스크 I/O 장애조사 트랙 B) ────────────────────
+# MSSQL datasource 의 **로그인 자체 실패**(18456 "Login failed for user")는 계정·비밀번호·잠금 문제라
+# 운영자 개입(계정 수정 / bin/datasource-mssql-ro-bootstrap-multidb.sql) 전까지 불변이다. 한 datasource
+# 의 등록 DB(WebProductDatabases)를 모두 같은 로그인으로 붙으므로 로그인이 실패하면 나머지 DB 도 실패가
+# 확정적 → cycle 내 나머지 DB 순회를 중단(break)하고, 그 datasource 를 cooldown 에 넣어 다음 cycle 부터
+# 진입 자체를 통째 skip 한다(반복 재연결·로그·후속 I/O 폭발 차단).
+#
+# **cooldown 키 = datasource label(_ds_key), scope_key 아님 (REV-20260710 HIGH-1 흡수)**: scope_key 는
+# compute_scope_key 가 engine+host+port 만 해시하고 **login 을 제외**하므로, 같은 host:port 에 서로 다른
+# 계정으로 등록된 두 datasource 가 동일 scope_key 를 공유한다. cooldown 을 scope_key 로 키잉하면 잘못된
+# 계정 A 의 18456 이 정상 계정 B 까지 연쇄 차단해, shared/db.py _is_connect_breaker_failure 가 auth 를
+# network breaker 에서 의도적으로 제외한 바로 그 anti-contamination 불변식("한 계정 자격오류가 같은 서버
+# 다른 계정 게이트를 열지 않게")을 되돌린다. datasource label 은 계정과 1:1 이므로 계정별로 격리된다
+# (label rename 은 600s 휘발 상태라 손실돼도 다음 cycle 재평가 — 무해).
+#
+# **로그인 실패에만 적용 (REV-20260710 HIGH-2 흡수)**: 916("Cannot open database" — DB별 접근권)·229·297
+# (객체별 권한)은 로그인은 성공한 상태라 같은 datasource 의 다른 DB 는 정상 접근 가능하다. 이들엔 scope-wide
+# skip 을 적용하지 않고 해당 DB 만 실패로 기록하고 순회를 계속한다(_is_login_failure 만 break+cooldown 트리거).
+#
+# conn_health 의 network circuit-breaker 는 auth 를 의도적으로 제외하므로, auth 억제는 network backoff 와
+# 분리된 별도 cooldown 을 여기 insight 레벨에 둔다. 단일 insight-worker 프로세스가 cycle 을 직렬로 도므로
+# 모듈-레벨 dict 로 충분(_LAST_DS_SCAN_STATUS 와 동형). key=datasource label → cooldown_until(monotonic).
+_DS_AUTH_COOLDOWN: dict[str, float] = {}
+
+
+def _ds_auth_cooldown_active(ds_key) -> bool:
+    """해당 datasource 가 로그인실패 cooldown 중이면 True. 만료됐으면 False + 자동 정리.
+    monotonic 시계 사용(wall-clock 조정 무관). ds_key 없으면 False."""
+    if not ds_key:
+        return False
+    until = _DS_AUTH_COOLDOWN.get(ds_key)
+    if until is None:
+        return False
+    if time.monotonic() >= until:
+        _DS_AUTH_COOLDOWN.pop(ds_key, None)  # 만료 — 다음 cycle 재시도 1회 허용(자동 복구 경로)
+        return False
+    return True
+
+
+def _ds_auth_cooldown_set(ds_key) -> None:
+    """로그인 실패가 확정된 datasource 를 cooldown 에 넣는다(AGENT_INSIGHT_AUTH_COOLDOWN_SEC 초).
+    0 이면 no-op(cooldown 비활성 — cycle 내 skip 만 유효, 다음 cycle 은 재시도)."""
+    if not ds_key:
+        return
+    ttl = int(AGENT_INSIGHT_AUTH_COOLDOWN_SEC or 0)
+    if ttl <= 0:
+        return
+    _DS_AUTH_COOLDOWN[ds_key] = time.monotonic() + ttl
+
+
+def _ds_auth_cooldown_clear(ds_key) -> None:
+    """스캔 성공 시 cooldown 해제. 복구 경로는 두 가지: (1) cooldown 만료(TTL) 후 재시도가 성공하면 이
+    clear 가 재-set 을 막아 정상 유지, (2) cooldown 비활성(ttl=0)일 땐 매 cycle 성공이 바로 정상. cooldown
+    **활성** 중에는 진입 gate 가 continue 하므로 이 성공 경로에 도달하지 않는다(복구는 TTL 만료가 담당)."""
+    if ds_key:
+        _DS_AUTH_COOLDOWN.pop(ds_key, None)
+
+
+def _prune_auth_cooldown(live_ds_keys: "set") -> None:
+    """등록 해제/rename 된 datasource 의 cooldown 항목을 정리(_LAST_DS_SCAN_STATUS prune 과 대칭).
+    만료 자동 pop 은 그 키가 다시 조회돼야 발동하는데, 삭제/rename 시엔 재조회되지 않아 영영 잔존하므로
+    매 cycle 현재 등록 datasource label 집합으로 prune 한다(누수 차단)."""
+    for _k in [k for k in _DS_AUTH_COOLDOWN if k not in live_ds_keys]:
+        _DS_AUTH_COOLDOWN.pop(_k, None)
+
 # ── TASK-0255 R2: datasource 연결 health PG 영속 (agent_runtime.datasource_health) ──
 # 관리콘솔이 "연결 불안정으로 미커버"(status=unstable/circuit_open)를 "권한 실패"(perm_failed)와
 # 구분해 표면화할 수 있게, datasource 별 연결 상태를 PG 정본에 upsert 한다. 자격증명 비영속.
@@ -2287,6 +2353,10 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
         "db_failed_perm": 0,     # 권한/인증 거부 (login failed 18456 / cannot open database 916 등) — GRANT 로 해결
         "db_failed_circuit": 0,  # 서킷 open (엔드포인트 도달 불가 확정) — 네트워크/호스트 다운
         "db_failed_other": 0,    # 그 외 (드라이버/쿼리 시점 오류 등)
+        # mssql-auth-cooldown: 인증/권한 실패 확정 후 재시도 억제로 **실제 연결 시도 없이** skip 한 DB 수.
+        # (cycle 내: 첫 perm_failed 뒤 같은 scope 의 나머지 DB / cycle 간: cooldown 중 datasource 통째 skip).
+        # db_failed_perm(실제 시도해 실패)과 분리 — 이 값이 클수록 반복 재연결·I/O 를 성공적으로 억제한 것.
+        "db_skipped_auth": 0,
     }
     timing = _timing_breakdown_template(
         cycle_run_id, AGENT_INSIGHT_WORKER_CONVERSATION_ID, "__insight_worker__"
@@ -2413,8 +2483,22 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                     if _ds_key is not None:
                         scan_report["db_targets"] = int(scan_report.get("db_targets", 0) or 0) + 1
 
-                for _db_name in _db_targets:
+                # mssql-auth-cooldown: 직전 cycle 에서 이 datasource 의 **로그인 자체**가 실패(18456)해
+                # cooldown 중이면 등록 DB 순회를 **연결 시도 없이** 통째로 skip 한다(운영자 계정 수정 전까지
+                # 재시도해도 DB 수만큼 동일 로그인 실패 반복 — 반복 재연결·I/O 폭발). conn_health network
+                # breaker 는 auth 를 의도적으로 제외하므로 위 circuit 게이트로는 안 걸린다 — 별도 auth cooldown
+                # 게이트가 필요하다. **키는 datasource label(_ds_key)** — 같은 host:port 다른 계정 연쇄차단 방지
+                # (HIGH-1). discovery 뒤에 두어 db_targets 는 정상 집계하고 db_skipped_auth 를 실제 skip DB 수
+                # (len(_db_targets))로 정확히 계상한다(LOW-6). health 는 perm_failed 기록. 만료 시 자동 재개.
+                if _ds_key is not None and _ds_auth_cooldown_active(_ds_key):
+                    _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, "perm_failed")
+                    scan_report["db_skipped_auth"] = int(
+                        scan_report.get("db_skipped_auth", 0) or 0) + len(_db_targets)
+                    continue
+
+                for _db_idx, _db_name in enumerate(_db_targets):
                     _ds_conn = None
+                    _auth_break = False  # mssql-auth-cooldown: perm/auth 실패 확정 시 나머지 DB 순회 중단 신호
                     try:
                         # P7: datasource engine + TASK-0205 B1 effective default_db 주입.
                         # TASK-0220: MSSQL 은 순회 중인 catalog 를 default_db/active_database 로 함께 set.
@@ -2477,16 +2561,30 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         if isinstance(_ds_exc, _db.DatasourceCircuitOpen):
                             _curr = "circuit_open"
                             _is_perm = False
+                            _is_login_failure = False
                         else:
                             # 권한 거부(login failed / cannot open database / SELECT denied)는 가장 흔한 원인이라
-                            # 진단 힌트를 덧붙인다 — bin/datasource-mssql-ro-bootstrap.sql 의 멀티 DB GRANT 미적용
-                            # 신호. MSSQL 에러번호(18456/916/229/297)는 짧은 숫자라 무관 메시지(행수 등)에 우연
+                            # 진단 힌트를 덧붙인다 — 다중 DB 는 bin/datasource-mssql-ro-bootstrap-multidb.sql 의
+                            # DB별 USER+db_datareader GRANT 미적용 신호(스키마 격리는 -bootstrap.sql). MSSQL 에러번호
+                            # (18456/916/229/297)는 짧은 숫자라 무관 메시지(행수 등)에 우연
                             # 매칭될 수 있어 정규식 단어경계로 매칭한다(REV-20260611-0226 — 가짜 힌트 방지).
                             _err_s = str(_ds_exc).lower()
                             _is_perm = (
                                 any(t in _err_s for t in
                                     ("login failed", "cannot open database", "permission", "denied"))
                                 or bool(re.search(r"\b(18456|916|229|297)\b", _err_s))
+                            )
+                            # mssql-auth-cooldown (REV-20260710 HIGH-2): scope-wide skip/cooldown 은 **로그인 자체
+                            # 실패**(18456 — 계정/비밀번호/잠금)에만 적용한다. 916("Cannot open database" — DB별
+                            # 접근권)·229·297(객체별 권한)은 로그인은 성공한 상태라 같은 datasource 의 다른 DB 는
+                            # 정상 접근 가능 → 해당 DB 만 실패로 기록하고 순회를 계속한다.
+                            # ⚠ 916 실제 메시지는 "Cannot open database … requested by the login. The login failed …"
+                            # 로 "login failed" 텍스트를 포함한다 → 텍스트만으론 916 을 로그인실패로 오분류(HIGH-2
+                            # 재발). error number 18456 을 우선하고, 번호 없는 순수 텍스트는 "login failed for user"
+                            # + "cannot open database" 부재로 916 과 구분한다.
+                            _is_login_failure = (
+                                bool(re.search(r"\b18456\b", _err_s))
+                                or ("login failed for user" in _err_s and "cannot open database" not in _err_s)
                             )
                             _curr = "perm_failed" if _is_perm else "other_failed"
                         # TASK-0305 (RC5): 사유별 분포 카운터를 cycle summary 로 표면화 — GRANT 로 풀리는
@@ -2500,7 +2598,8 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, _curr)
                         # TASK-0255 R1: edge-trigger — 상태 전이(직전 cycle 대비) 시에만 WARNING, 지속은 DEBUG.
                         # 매 8s cycle 마다 불안정 DS 전부를 WARNING 으로 재기록하던 도배(2일 ~20만 줄) 제거.
-                        _hint = (" (RO 로그인이 이 DB 에 USER/GRANT 됐는지 확인 — "
+                        _hint = (" (RO 로그인이 이 DB 에 USER/GRANT 됐는지 확인 — 다중 DB 는 "
+                                 "bin/datasource-mssql-ro-bootstrap-multidb.sql, 스키마 격리는 "
                                  "bin/datasource-mssql-ro-bootstrap.sql 을 DB 마다 실행)") if _is_perm else ""
                         _log = logging.getLogger("insight")
                         _seen_scan_keys.add((_ds_scope, _db_name))  # M-1: stale prune 용 이번 cycle 관측 키
@@ -2509,9 +2608,18 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                         # str()[:160] 으로 절단(conn_health last_error 80자 정책과 동형). 진단은 perm_suspect+status 로.
                         (_log.warning if _changed else _log.debug)(
                             "insight_datasource_scan_failed ds=%s db=%s status=%s perm_suspect=%s err=%s — "
-                            "다음 대상 계속%s",
-                            _ds_key, _db_name, _curr, _is_perm, str(_ds_exc)[:160], _hint,
+                            "%s%s",
+                            _ds_key, _db_name, _curr, _is_perm, str(_ds_exc)[:160],
+                            ("이 datasource 나머지 DB skip(로그인 실패)" if _is_login_failure else "다음 대상 계속"), _hint,
                         )
+                        # mssql-auth-cooldown: **로그인 자체 실패**가 확정되면 이 datasource 를 cooldown 에 넣어
+                        # 다음 cycle 부터 진입부에서 통째 skip 하고, 이번 cycle 의 나머지 등록 DB 순회는 아래 finally
+                        # 직후 _auth_break 로 중단한다(같은 로그인이라 나머지도 실패 확정 — 재연결 억제). 키는
+                        # datasource label(_ds_key) — 같은 host:port 다른 계정 연쇄차단 방지(HIGH-1). 916/229/297
+                        # (DB/객체별 권한)은 _is_login_failure=False 라 여기 안 걸리고 해당 DB 만 실패로 계속(HIGH-2).
+                        if _is_login_failure and _ds_key:
+                            _ds_auth_cooldown_set(_ds_key)
+                            _auth_break = True
                     else:
                         # TASK-0255: 예외 없이 스캔 완료 — R1 상태 캐시 healthy 갱신(직전 실패면 INFO recovered),
                         # R2 health 행 ok 기록. **try 밖(else)이라 여기서 난 예외는 미스캔으로 오분류 안 됨**.
@@ -2526,6 +2634,10 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                                     )
                                 _LAST_DS_SCAN_STATUS[_skey_ok] = "healthy"
                                 _record_ds_health(ds_health_rows, _ds_scope, _ds_coords, "ok")
+                                # mssql-auth-cooldown: 스캔 성공 = 로그인 정상 → cooldown 해제(재-set 방지). cooldown
+                                # 활성 중엔 진입 gate 가 continue 하므로 이 경로 도달은 만료(TTL) 후 재시도 성공 시점
+                                # 또는 cooldown 비활성(ttl=0) 때다 — 복구 권위는 TTL 만료가 담당(REV-20260710 MEDIUM-3).
+                                _ds_auth_cooldown_clear(_ds_key)
                             except Exception:  # pragma: no cover — soft telemetry, cycle 절대 안 깨뜨림
                                 pass
                     finally:
@@ -2535,6 +2647,16 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                                 _ds_conn.close()
                             except Exception:
                                 pass
+                    # mssql-auth-cooldown: 인증/권한 실패가 확정된 endpoint 는 이번 cycle 의 나머지 등록 DB
+                    # 순회를 중단한다(같은 로그인이라 나머지도 실패 확정 — 반복 재연결·로그·I/O 폭발 차단).
+                    # 남은 DB 는 **연결 시도 없이** db_skipped_auth 로 집계(관측성). 다음 cycle 은 진입부
+                    # cooldown gate 가 이 scope 를 통째 skip 한다.
+                    if _auth_break:
+                        _remaining = len(_db_targets) - _db_idx - 1
+                        if _remaining > 0:
+                            scan_report["db_skipped_auth"] = int(
+                                scan_report.get("db_skipped_auth", 0) or 0) + _remaining
+                        break
             _timing_breakdown_add(timing, "plan_ms", (time.perf_counter() - plan_start) * 1000.0)
             # TASK-0255 R2: datasource 연결 health 를 PG 정본에 영속(soft telemetry — 실패해도 cycle 계속).
             _persist_datasource_health(ds_health_rows, cycle_run_id)
@@ -2542,6 +2664,10 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
             # 관측 안 된 (scope_key, db_name) = 삭제·rename·비활성된 datasource/DB → stale key 제거(메모리 누수 차단).
             for _k in [_k for _k in _LAST_DS_SCAN_STATUS if _k not in _seen_scan_keys]:
                 _LAST_DS_SCAN_STATUS.pop(_k, None)
+            # mssql-auth-cooldown (REV-20260710 LOW-5): auth cooldown 도 현재 등록 datasource label 집합으로
+            # prune. 만료 자동 pop 은 그 키가 재조회돼야 발동하는데, 삭제/rename 된 datasource 는 재조회되지
+            # 않아 영영 잔존하므로 여기서 stale 항목을 정리(_LAST_DS_SCAN_STATUS prune 과 대칭).
+            _prune_auth_cooldown({k for k, _ in ds_targets if k})
     except Exception as exc:
         status = "error"
         err_text = str(exc).strip()[:500]
@@ -2568,6 +2694,12 @@ def run_insight_cycle(run_id: str | None = None) -> dict[str, Any]:
                 save_memory_kv(
                     mem_conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_db_failed",
                     str(int(scan_report.get("db_failed", 0) or 0)),
+                )
+                # mssql-auth-cooldown: 인증/권한 실패 확정으로 **연결 시도 없이** skip 한 DB 수(cycle 내 나머지
+                # + cooldown 통째 skip). 0 보다 크면 반복 재연결·I/O 를 성공적으로 억제 중이라는 신호.
+                save_memory_kv(
+                    mem_conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_db_skipped_auth",
+                    str(int(scan_report.get("db_skipped_auth", 0) or 0)),
                 )
             except Exception:
                 pass

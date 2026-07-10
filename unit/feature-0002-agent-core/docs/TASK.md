@@ -8,6 +8,40 @@ source_of_truth: true
 
 # Task
 
+## TASK-20260710-mssql-auth-cooldown (current cycle) — MSSQL insight 순회 인증실패 조기 skip + cooldown (Minor §12.3, feature-0002 주관, codex 디스크 I/O 장애조사 트랙 B)
+- 출처: `/_template:entry`(2026-07-10). codex 가 감지한 WSL 디스크 I/O 장애(F: VHDX 쓰기 18~37MB/s 지속, insight-worker 중단 시 0.13~0.38MB/s 로 정상화) 조사. **근본 원인**: MSSQL datasource `mssql-qa-idc`(scope=`mssql-06656002eda6` = engine+host+port 해시, DB별 아님)의 로그인 `mckim` 인증/권한 실패(MSSQL 18456 "Login failed")가 `WebProductDatabases` 등록 DB(cc_test_20260625, dk_game_release_235~242_20260625, dk_game_release_luanna_20260625) 수만큼 반복 재연결·로그·후속 I/O 유발. conn_health network circuit-breaker 는 auth 를 **의도적으로 제외**(shared/db.py `_is_connect_breaker_failure` — 한 계정 자격오류가 datasource 를 unstable 로 오판하지 않게)해, 첫 DB 18456 뒤에도 나머지 DB 를 계속 시도한다.
+- **운영 조치 분리(저장소 세션 범위 밖, 검토항목)**: WebDatasources `mssql-qa-idc` InsightEnabled=0, SQL Server login `mckim` 존재/잠금/기본DB 확인, 대상 DB 별 `mckim` USER+db_datareader GRANT(bin/datasource-mssql-ro-bootstrap-multidb.sql), registry 연결정보 UI/API 갱신 — 프로덕션 DB·암호화 registry 접근 필요라 운영자 수행. 본 cycle 은 코드 개선(재시도 억제)만 담당.
+
+### §2.1 Implementation Plan
+- **파일 경로 + symbol:**
+  - `shared/config.py`: `AGENT_INSIGHT_AUTH_COOLDOWN_SEC` 신규(`__all__` 등록 + 정의, 기본 600s=10분).
+  - `unit/feature-0002-agent-core/src/modules/insight.py`:
+    - module-level `_DS_AUTH_COOLDOWN: dict[str,float]` + 헬퍼 `_ds_auth_cooldown_active/_set/_clear` (`_LAST_DS_SCAN_STATUS` 대칭).
+    - `run_insight_cycle` datasource 루프(`for _ds_key,_ds_coords`) 진입부: cooldown active scope 통째 skip(`continue`) + health `perm_failed` 기록 + `db_skipped_auth` telemetry.
+    - DB 순회 루프(`for _db_name` → `enumerate`) except: 첫 perm_failed(`_is_perm`) 시 cooldown set + 나머지 DB `break`(cycle 내 skip) + 남은 수 `db_skipped_auth` 집계.
+    - else(성공) 블록: `_ds_auth_cooldown_clear`(정상 복귀 시 즉시 해제 — 운영자 GRANT 수정 후 자동 복구).
+    - scan_report 템플릿 `db_skipped_auth: 0` + heartbeat KV `insight_worker_last_db_skipped_auth` 노출.
+    - 진단 힌트(2483/2504 stale) 정정: 단일 `-bootstrap.sql` → 다중 DB `-bootstrap-multidb.sql` 병기.
+  - `unit/feature-0002-agent-core/tests/test_mssql_auth_cooldown.py`: 회귀 테스트 신규.
+- **접근:** conn_health 는 미변경(auth 제외 설계 의도 보존) — network backoff 와 분리된 별도 cooldown 을 insight 레벨에 둔다. auth_failed 를 PG/관리콘솔 status 로 도입하지 않고 scan_outcome=perm_failed 재사용 + telemetry 카운터로 관측성 확보(파급 최소).
+- **완료 판정 기준(acceptance):**
+  - AC1: 같은 scope 10 DB 중 첫 DB 18456 발생 시 실제 connect 시도는 1회만(나머지 9 DB skip).
+  - AC2: 다음 cycle 에서 cooldown 만료 전까지 그 scope 는 connect 0회(진입부 통째 skip).
+  - AC3: cooldown 만료 후 재시도 1회 허용(자동 복구). 스캔 성공 시 cooldown 즉시 해제.
+  - AC4: `AGENT_INSIGHT_AUTH_COOLDOWN_SEC=0` 이면 cooldown 비활성(기존 동작), cycle 내 skip(break)은 유지.
+  - AC5: `py_compile` 통과 + 회귀 테스트 pass + 기존 insight 테스트 회귀 0.
+- **위험도:** Minor(내부 워커 순회 로직, 비파괴, 외부 I/O 비용 감소 방향). 사용자 요청으로 진행.
+
+### 완료 체크리스트
+- [x] `shared/config.py`: `AGENT_INSIGHT_AUTH_COOLDOWN_SEC`(기본 600s) 신규 + `__all__` 등록.
+- [x] `insight.py`: module-level `_DS_AUTH_COOLDOWN` + 헬퍼(`_ds_auth_cooldown_active/set/clear`) — monotonic·자동만료, `_LAST_DS_SCAN_STATUS` 대칭.
+- [x] `insight.py`: datasource 루프 진입부 cooldown gate(active scope `continue` + health perm_failed + `db_skipped_auth`).
+- [x] `insight.py`: DB 순회(`for _db_name`→`enumerate`) except 첫 perm_failed 시 cooldown set + `_auth_break` 로 나머지 DB `break`(남은 수 `db_skipped_auth`).
+- [x] `insight.py`: 성공(else) 시 `_ds_auth_cooldown_clear` + heartbeat KV `insight_worker_last_db_skipped_auth` + 진단 힌트 stale 정정(-bootstrap.sql → -bootstrap-multidb.sql 병기).
+- [x] 회귀 테스트 `tests/test_mssql_auth_cooldown.py` + 기존 insight/mssql/datasource 8파일 회귀 0 + py_compile PASS.
+- [x] §18.8 적대 리뷰(SUBAGENT adversarial-backend-correctness) — HIGH 2 + MEDIUM 2 + LOW 2 **실증** 전건 흡수: **HIGH-1** cooldown 키 scope_key(host:port 해시, login 제외)→**datasource label** 로 변경(같은 host:port 다른 계정 연쇄차단 방지 — anti-contamination 불변식 복원). **HIGH-2** break/cooldown 트리거를 `_is_login_failure`(18456)로 한정(916/229/297 은 해당 DB 만 실패로 계속 — 커버리지 회귀 방지). 후속: 916 실제 메시지가 "login failed" 텍스트 포함 → `_is_login_failure` 를 **error number 18456 우선**으로 정밀화. MEDIUM-3(복구 문서정정)·LOW-5(cooldown prune)·LOW-6(gate discovery 뒤 이동, telemetry 정확화) 흡수. REV-20260710T191159-mssql-auth-cooldown. 테스트 8→**11**(HIGH-1/HIGH-2/prune 추가), 합계 **98 PASS 회귀 0**.
+- [ ] verify-completion → commit → 배포(insight-worker 재기동, 백엔드라 PB-0008 비대상).
+
 ## TASK-20260703-insight-table-grouping — insight-worker 동일구조 테이블 그룹화(대표 1회 분석 + 형제 전파) (Major §12.3, 사용자 요청, feature-0016 metadata 효율 교차) — code+unit done
 - 출처: `/_template:entry`(2026-07-03). 사용자 관측 — "AI 운영 현황"의 "테이블 분석"이 날짜/번호 suffix 만 다른 동일구조 샤드(`web_ranking.daily_league_ranking_1_20250727`, `_20250726` …, `web_statistics.DayuPoint_20260211`, `_20260210` …)를 **각각 개별 LLM(claude-haiku) 분석**해 비효율. 요청: "유사한 형식의 구조는 일반적 분류로 구분해 한 번에 처리". PLAN-APPROVED(AskUserQuestion — 접근 A+B 결합, worktree+plan).
 - 근본원인: `_scan_instance_schema_insights`(insight.py) 가 테이블마다 `llm_table_insight` 1회 호출. `table_insight:` fact 키가 테이블명별 유니크라 동일 지문(`_compute_table_fingerprint` = 컬럼명+타입 해시)이어도 각 샤드가 `artifact_missing` 로 개별 LLM. 지문은 변경감지에만 쓰이고 그룹화 미사용. 분석문(`_format_table_insight_text`)은 **구조(컬럼)에서만** 파생 → 샤드끼리 사실상 동일(테이블명은 prefix 한 줄만).
