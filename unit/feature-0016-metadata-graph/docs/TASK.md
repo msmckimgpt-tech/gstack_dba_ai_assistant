@@ -2029,3 +2029,16 @@ REQ-20260704-graph-ux3fix. 위험도 Major(다중 파일 UI 재구성 + 검색 U
 - [x] T64.2 수정(admin.js `_metaG6Build`): dim(`lit`/`selTouch`)과 LOD-keep 을 **분리**. 신설 `litSelf(rid)`(끝점이 `fa.self` 자체인지 — 이웃 `fa.nodes` 제외, SC:·컬럼→소속테이블 접기는 lit 과 동일) + `keepLodFor(a,b)=litSelf(a)||litSelf(b)`. LOD 드롭 4경로(ROUTINE_USES 직접·집계, 비-REFERENCES 직접, REFERENCES colLevel·집계, aggMap.forEach)를 `keep`→`keepLod`/`agg.keepLod` 로 교체. `keep` 은 `dimIf` 에만 잔존(dim 동작 불변). SCHEMA_REF(LOD 비대상)·무선택(fa=null) 경로 불변.
 - [x] T64.3 검증: headless `test_g6build_edge_visibility.js` **T22 신설 4 PASS**(허브 하이라이트 발동·선택 직접선 유지·이웃↔이웃 축약·`_lodDropped>0`) + 회귀 전량 = **edge 64·collod 20·agglod 9·category 26·vpack 19 = 138 PASS 회귀 0** · `node --check` PASS. **적대검증**: 수정 되돌린 OLD 동작에서 T22 정확히 FAIL(t1↔t2 유지·`_lodDropped=0`) → 테스트가 회귀를 실제 포착함 확인. diff 적대 리뷰(§18.8) REV 별도. 캐시버스터 `admin.js?v=20260710-lod-hl-declutter`.
 - [ ] T64.4 POST-DEPLOY 실 Windows 브라우저(PB-0008) — 그래프 뷰 진입 → 대형 모델 줌아웃(<0.35)에서 관계선 축약 확인 → **노드 클릭(상대 하이라이트) 상태에서도 줌아웃 축약 유지**(선택 노드 직접선은 보임, 주변 이웃↔이웃 클러터는 정리) + 상태줄 "줌아웃 — 관계선 일부 축약" 마커. (그래프뷰 무인 도달은 인증/라우팅 차단 — 사용자 육안 게이트, feature-0003 TEST.md §3.)
+
+## §65 viewport-cull + 집계 supernode 크기 + 마커 제거 (2026-07-10, 사용자 육안 피드백)
+agg-lod(§63) 배포 후 사용자 실화면 피드백: 집계 카드 작아 안 보임 / 성능은 확연 상승 / 상태줄 안내 노이즈 /
+남은 줌인 작업 검토 / **시각검증 가능(선례)**. (ADR-032)
+- [x] T65.0 win-browser.py relay 로 그래프뷰 시각검증 가능 확인(실 Windows Chrome, https://localhost/admin 로그인,
+  scope mssql-qa-idc 134 스키마 렌더). 메모리 무인-blocker outdated.
+- [x] T65.1 집계 supernode 크기: _aggCard 카드 ≈1/zoom([1.6,6]) 스케일업 + 슬롯 중앙 + 슬롯 클램프 + 폰트 확대.
+- [x] T65.2 집계 상태 마커 제거(aggCut ? ""). col/edge 마커 유지.
+- [x] T65.3 viewport-cull: 줌인 대형(nodes>400·!agg·뷰포트 API)에서 화면+마진(0.6) 밖 테이블 컬럼/파라미터 억제.
+  combo-safe(테이블 유지)·band-invariant·▤N 배지·renderEndpoint 승격. 팬 재-emit(_cullVp 대비 중심이동>hw/hh*0.5 → 260ms 디바운스).
+- [x] T65.4 검증: headless `test_g6build_viewportcull.js` **6 PASS** + 회귀 134 = **140 PASS**·node --check. diff 2렌즈 적대 리뷰.
+- [ ] T65.5 win-browser 시각검증(배포 후) — 줌아웃: 집계 카드 크고 읽힘·상태줄 마커 없음 / 줌인: 화면 밖 컬럼 미표시(테이블·combo 유지)·클릭/팬 경량화. 줄별 스크린샷.
+- [ ] T65.6 잔여: 단일 초대형 스키마 테이블-칩 floor(테이블 컬링=combo 분리 필요) — 후속.

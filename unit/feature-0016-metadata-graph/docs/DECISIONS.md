@@ -847,3 +847,17 @@ source_of_truth: true
 - 기각/대안: (a) 하이라이트와 무관하게 완전 축약 — 선택 노드의 단건 FK 도 줌아웃 시 사라져 "선택한 것의 관계를 못 봄"(사용자 A안 선택으로 기각). (b) 현행 유지 — 사용자가 오작동으로 인지(기각). (c) 이웃 hop 수 파라미터화 — 과설계, 현 요구엔 self-직접선으로 충분.
 - Supersedes: §57(TASK §57.5)의 "하이라이트 인접 보존"의 **LOD 예외 범위**를 "인접 전체 부분그래프"→"self-직접선"으로 개정(dim 은 §57.5 그대로 보존) / Superseded By: —
 - 검증: headless `test_g6build_edge_visibility.js` **T22 신설 4 PASS** + 회귀 = **138 PASS(edge 64·collod 20·agglod 9·category 26·vpack 19) 회귀 0** · `node --check` PASS · **적대검증**(수정 되돌린 OLD 동작에서 T22 정확히 FAIL 재현). diff 적대 리뷰(REV-…lod-hl-declutter). PB-0008 하이라이트+줌아웃 실측은 TEST §64.
+
+## ADR-032 — §65 viewport-cull + 집계 supernode 크기 + 집계 마커 제거 (사용자 육안 피드백 반영)
+- 상태: 채택 (2026-07-10)
+- 맥락: agg-lod(§63, ADR-030) 배포 후 사용자 실화면 피드백 — ① 집계 카드가 줌아웃 크기라 작아 읽기 힘듦 ② 펼침 정상 ③ **집계 상태 성능 확연 상승**(집계 접근 유효 확인) ④ 상태줄 "클러스터 집계" 안내는 그래프 사용에 무의미(노이즈). + "남은 작업(줌인 대형모델) 검토" + **"시각 검증 가능(선례 참조)"**. → win-browser.py relay(실 Windows Chrome, `https://localhost/admin` 로그인)로 그래프뷰 시각검증이 가능함을 확인(메모리의 무인-blocker 는 outdated) → 줌인 컬링을 combo 거동까지 육안 확인하며 구현 가능.
+- 결정:
+  - **(1) 집계 supernode 크기**: 집계 카드를 ≈1/zoom(목표 화면폭 ~120px, [1.6,6] 클램프)로 스케일업 + 슬롯 중앙 배치 + 슬롯 안으로 클램프(겹침 억제) + 라벨/배지 폰트 동반 확대. 줌아웃에서도 읽히는 supernode.
+  - **(2) 집계 상태 마커 제거**: aftertransform 마커에서 `aggCut ? ""`(집계는 카드로 자명 — 노이즈 제거). col/edge LOD 마커는 §57 오독-가드 목적이라 유지(비-집계 밴드).
+  - **(3) viewport-cull(§65)**: 줌인 대형모델(nodes>`_META_CULL_MIN`=400, !aggActive, 뷰포트 API 존재)에서 **화면(뷰포트+마진 `_META_CULL_MARGIN`=0.6) 밖 테이블의 컬럼/파라미터 방출 억제**. 병목=setData/draw 방출 요소 수라, 보이지 않는 컬럼을 안 그리면 줌인 클릭/팬이 가벼워진다. col-LOD(개요 전체 컬럼억제)와 동일 억제 메커니즘(realH 예약·▤N 배지·**테이블 칩 항상 유지**)을 뷰포트 축으로 확장, OR 결합.
+    - **combo-safe**: 테이블 칩은 화면 안팎 무관하게 항상 방출 → combo extent 불변(테이블이 combo 범위 정의, col-LOD 와 동일 계약). 좌표 band-invariant(realH 유지).
+    - **엣지**: 미방출 컬럼 끝점은 renderEndpoint 가 소속 테이블(항상 방출)로 승격 → dangling 0.
+    - **팬 재-emit**: 컬링 활성 중 팬으로 뷰포트 중심이 build 커버(_cullVp) 를 크게 벗어나면 260ms 디바운스 rebuild(컬링으로 방출 적어 저렴)로 새로 보이는 컬럼 표시. 마진 0.6 이 소폭 팬을 버퍼.
+- 기각/한계: 테이블 자체 컬링은 combo auto-fit(getContentBBox(children))이 카드 축소/점프를 유발해 combo-safe 아님 → 컬럼 컬링으로 한정(테이블 칩 유지). 테이블 수 자체가 지배적인 극단(단일 557T 스키마)의 클릭 floor 는 잔존 — 테이블 칩 draw 는 남음. 후속(combo 분리 필요, 시각검증 하에).
+- 검증: headless `test_g6build_viewportcull.js` **6 PASS**(컬럼 컬링·**combo-safe 테이블 유지**·band-invariant·게이트) + 회귀 134 = **140 PASS**. diff 2렌즈 적대 리뷰 + **win-browser 실 Windows Chrome 육안 검증**(집계 카드 가독·마커 없음·줌인 컬링 draw 감축·combo 유지 — TEST §65).
+- Supersedes: — (§63 집계에 크기·마커 피드백 반영 + §61 col-LOD 를 뷰포트 축으로 확장) / Superseded By: —

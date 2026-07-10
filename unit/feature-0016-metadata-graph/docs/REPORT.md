@@ -1346,3 +1346,20 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
   NIT 1 수용(agg 중 카드펼침 재집계 시 안내문구 부정합 — 니치). 상세 REVIEW.md.
 - 캐시버스터 `admin.js?v=20260710-agg-lod`. POST-DEPLOY 사용자 육안(TEST §63).
 - **잔여**: 줌인 대형모델 팬/클릭은 뷰포트 컬링(테이블)이 필요하나 combo auto-fit 이 combo-safe 를 막음 — 별도 검토.
+
+
+## 2026-07-10 · 뷰포트 컬링 + 집계 supernode + 마커 제거 (§65, ADR-032, 사용자 육안 피드백)
+agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 가능 확인**(win-browser.py relay 실 Windows Chrome).
+
+### 변경 (frontend-only)
+- (1) 집계 카드가 줌아웃 크기라 작던 문제 → ≈1/zoom supernode 스케일업(슬롯 중앙·클램프·폰트 확대).
+- (2) 집계 상태줄 "클러스터 집계" 안내 제거(사용자 "노이즈"). col/edge LOD 마커는 오독-가드로 유지.
+- (3) **viewport-cull(§65)**: 줌인 대형모델에서 화면(+마진 0.6) 밖 테이블의 컬럼/파라미터 방출 억제(테이블 칩·combo
+  유지 = combo-safe). 병목=draw 방출 수라 보이지 않는 컬럼 미방출로 줌인 클릭/팬 경량화. col-LOD 와 동일 억제
+  메커니즘(realH 예약·배지·테이블 유지)을 뷰포트 축으로 확장·OR 결합. renderEndpoint 승격(dangling 0). 팬 재-emit 디바운스.
+
+### 검증
+- headless `test_g6build_viewportcull.js` **6 PASS**(컬럼 컬링·combo-safe·band-invariant·게이트) + 회귀 134 = **140 PASS**·node --check.
+- diff 2렌즈 적대 리뷰. **win-browser 실 Windows Chrome 육안 검증**(TEST §65).
+- 캐시버스터 `admin.js?v=20260710-graph-perf2`.
+- 한계: 테이블 자체 컬링은 combo auto-fit 으로 combo-safe 아님 → 컬럼 컬링 한정. 단일 초대형 스키마 테이블-칩 floor 잔존(후속).

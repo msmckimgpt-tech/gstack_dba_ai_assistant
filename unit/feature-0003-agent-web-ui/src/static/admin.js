@@ -3735,6 +3735,11 @@ const _META_COL_LOD_MIN = 200;    // 전체 펼친 컬럼 수가 이 미만이�
 const _META_AGG_ZOOM = 0.15;      // 이 배율 밑 + 대형 모델이면 클러스터 집계(개별 노드가 사실상 점 — 식별 무의미).
                                   //   보수적 값(정말 zoom-out 됐을 때만). 필요 시 상향해 더 이르게 집계 가능.
 const _META_AGG_MIN = 60;         // 전체 모델 노드 수가 이 미만이면 집계 안 함(소형 모델은 그대로 열람)
+// viewport-cull(§65): 줌인 대형모델에서 **화면(뷰포트+마진) 밖 테이블의 컬럼/파라미터 방출을 억제**한다 —
+//   병목=draw 방출 요소 수라, 보이지 않는 컬럼을 안 그리면 줌인 클릭/팬이 가벼워진다. 뷰포트를 덮는 개요에선
+//   모든 테이블이 in-view 라 자동 무효(집계·col-LOD 가 담당). combo-safe: 테이블 칩은 항상 유지 → combo extent 불변.
+const _META_CULL_MIN = 400;       // 모델 노드 수가 이 미만이면 컬링 안 함(작은 모델은 전체가 화면에 근접)
+const _META_CULL_MARGIN = 0.6;    // 뷰포트 밖 여유(뷰포트 크기 배수) — 팬 시 컬럼이 경계에서 갑자기 튀지 않게
 // §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
 const _META_DIM_OPACITY = 0.38;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
@@ -4772,6 +4777,30 @@ function _metaG6Build() {
   // agg-lod(§63): 극단 줌아웃 + 대형 모델이면 확장 클러스터를 집계 카드로 강등(아래 emission 분기가 소비).
   const aggActive = _colLodZoom < _META_AGG_ZOOM && _metaGraph.nodes.size > _META_AGG_MIN;
   _metaGraph._aggActive = aggActive;
+  // viewport-cull(§65): 화면(+마진) 밖 판정용 model-space 가시 rect 를 1회 산정. 집계 중이 아니고 대형 모델일 때만.
+  //   getCanvasByViewport(screen→model) 로 좌상/우하 model 좌표를 얻어 마진 확장. API 부재/개요면 비활성.
+  let _cullActive = false, _vx0 = 0, _vy0 = 0, _vx1 = 0, _vy1 = 0;
+  if (!aggActive && _metaGraph.nodes.size > _META_CULL_MIN) {
+    try {
+      const _gg = _metaGraph.graph;
+      if (_gg && typeof _gg.getCanvasByViewport === "function" && typeof _gg.getSize === "function") {
+        const _sz = _gg.getSize();
+        const _a = _gg.getCanvasByViewport([0, 0]), _b = _gg.getCanvasByViewport([_sz[0], _sz[1]]);
+        if (_a && _b && isFinite(_a[0]) && isFinite(_b[0]) && isFinite(_a[1]) && isFinite(_b[1])) {
+          const _mx = Math.abs(_b[0] - _a[0]) * _META_CULL_MARGIN, _my = Math.abs(_b[1] - _a[1]) * _META_CULL_MARGIN;
+          _vx0 = Math.min(_a[0], _b[0]) - _mx; _vx1 = Math.max(_a[0], _b[0]) + _mx;
+          _vy0 = Math.min(_a[1], _b[1]) - _my; _vy1 = Math.max(_a[1], _b[1]) + _my;
+          _cullActive = true;
+        }
+      }
+    } catch (_) { _cullActive = false; }
+  }
+  _metaGraph._cullActive = _cullActive;   // 상태(디버그/후속). 테이블 bbox 가 가시 rect 와 안 겹치면 off-view.
+  // viewport-cull(§65): 이 build 가 커버한 뷰포트 중심·반경(마진 제외 실 뷰포트) — 팬 후 재-emit 판정용(aftertransform).
+  _metaGraph._cullVp = _cullActive
+    ? { cx: (_vx0 + _vx1) / 2, cy: (_vy0 + _vy1) / 2, hw: (_vx1 - _vx0) / 2, hh: (_vy1 - _vy0) / 2 }
+    : null;
+  const _offView = (x0, y0, x1, y1) => _cullActive && (x1 < _vx0 || x0 > _vx1 || y1 < _vy0 || y0 > _vy1);
   // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 절대 오프셋 배치).
   //   place 항목은 {it, lx(열 좌측 x — 클러스터 상대), top(항목 상단 y — 클러스터 상대)} 로 정규화 —
   //   평면/그룹 두 경로가 같은 렌더 루프를 공유한다.
@@ -4989,11 +5018,25 @@ function _metaG6Build() {
         badgeText = (cnt != null) ? `${matched}${plus}/${cnt}` : `${matched}${plus}`;
         badgeBg = "#0a5b66";   // 검색 필터 badge 는 teal 강조(전체 카운트 남색과 구분)
       }
-      const cardStyle = Object.assign(_metaSchemaCardStyle(L.x0 + _METLAY.CARDW / 2, L.y0 + _METLAY.CARDH / 2), {
-        labelText: nmc,
+      // agg-lod(§63) supernode: 집계 카드는 줌아웃으로 작아져 읽기 힘든 문제(사용자 피드백) 해소 —
+      //   화면 목표폭(~120px)을 유지하도록 ≈1/zoom 스케일업 + 슬롯 중앙 배치 + 슬롯 안으로 클램프(겹침 억제) +
+      //   라벨/배지 폰트 동반 확대. 비-집계(접힌 roots) 카드는 기존 그대로(스케일 1).
+      let _cardCx = L.x0 + _METLAY.CARDW / 2, _cardCy = L.y0 + _METLAY.CARDH / 2;
+      let _cardW = _METLAY.CARDW, _cardH = _METLAY.CARDH, _cardLF = 13, _cardBF = 10;
+      if (_aggCard) {
+        const _sc = Math.max(1.6, Math.min(8, 120 / Math.max(0.04, _colLodZoom) / _METLAY.CARDW));   // 상한 8(깊은 줌 카드 크기 확장, 리뷰 NIT)
+        _cardW = Math.min(Math.round(_METLAY.CARDW * _sc), Math.max(_METLAY.CARDW, Math.round(L.w * 0.94)));
+        _cardH = Math.min(Math.round(_METLAY.CARDH * _sc), Math.max(_METLAY.CARDH, Math.round(L.h * 0.7)));
+        _cardCx = L.x0 + L.w / 2; _cardCy = L.y0 + L.h / 2;
+        // 폰트도 카드 스케일을 따라가되 카드 높이 안에 맞게 클램프(리뷰 NIT — 이전 3.2/2.6 은 깊은 줌서 화면 폰트 과소).
+        _cardLF = Math.min(Math.round(13 * Math.min(_sc, 4.5)), Math.round(_cardH * 0.5));
+        _cardBF = Math.min(Math.round(10 * Math.min(_sc, 3.5)), Math.round(_cardH * 0.34));
+      }
+      const cardStyle = Object.assign(_metaSchemaCardStyle(_cardCx, _cardCy), {
+        size: [_cardW, _cardH], labelText: nmc, labelFontSize: _cardLF, labelMaxWidth: _cardW - 16,
         // review MINOR: offset 은 per-item 에 둬야 실제 transform 에 반영(node-level badgeOffsetX/Y 는 무시됨).
         badges: badgeText != null ? [{ text: badgeText, placement: "right-top", offsetX: -2, offsetY: 2 }] : [],
-        badgeFontSize: 10, badgeFill: "#ffffff", badgeBackgroundFill: badgeBg, badgePadding: [1, 5],
+        badgeFontSize: _cardBF, badgeFill: "#ffffff", badgeBackgroundFill: badgeBg, badgePadding: [1, 5],
       });
       nodes.push({ id: "SC:" + id, type: _METtype, states: _metaStateSig(id),
         data: { label: nmc, kind: "schema-card", schema: id, fqn: (cn && cn.fqn) || nmc, table_count: cnt },
@@ -5088,7 +5131,8 @@ function _metaG6Build() {
         //   패널 MINOR: terms 클러스터(flat-scope 루틴)는 레이아웃 높이 진행이 TROW 고정이라 파라미터
         //   방출 시 아래 항목과 겹침 — terms 에서는 펼침 미지원(상세 패널 세로 목록으로 열람).
         const plist = (!g.isTerms && _metaGraph.routineExpanded.has(it.key)) ? _metaRoutineParamList(it) : [];
-        if (plist.length && !colLodActive) {   // col-lod: 개요 줌에서 파라미터 circle·XR ctl 방출 억제(realH 로 높이는 예약됨)
+        const _rtOff = plist.length ? _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it)) : false;   // viewport-cull(§65)
+        if (plist.length && !colLodActive && !_rtOff) {   // col-lod(개요) 또는 viewport-cull(줌인 화면 밖) 시 파라미터 억제(realH 로 높이는 예약됨)
           // routine 칩 폭은 rel-가변(_metaRoutineStyle 과 동일식) — ctl 을 TW/2 고정으로 두면 넓은 칩과 겹침.
           const rw = Math.min(190, _METLAY.TW + (typeof rrel === "number" ? Math.round(rrel * 40) : 0));
           const depIds = ["XR:" + it.key];
@@ -5114,14 +5158,17 @@ function _metaG6Build() {
       // node-role-viz: 분석 완료 테이블 역할 표식 — 칩 색 = 역할색(Okabe-Ito) + 라벨 앞 역할 아이콘(색약·흑백 중복 인코딩).
       const role = _metaRoleOf(it.key);
       const cols = g.colsByTable.get(it.key);
-      const _colSuppressed = colLodActive && cols && cols.length;   // col-lod: 개요 줌에서 컬럼 방출 억제
+      // viewport-cull(§65): 이 테이블 bbox 가 화면(+마진) 밖이면 컬럼 억제(줌인 대형모델 draw 감축). col-lod(개요
+      //   전체 억제)와 OR 로 결합 — 둘 다 realH 예약·▤N 배지·테이블 유지(combo extent 불변)로 동형이라 안전.
+      const _tblOff = (cols && cols.length) ? _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it)) : false;
+      const _colSuppressed = (colLodActive || _tblOff) && cols && cols.length;   // col-lod(개요) 또는 viewport-cull(줌인 화면 밖)
       // col-lod: 억제 시 '▤N' 컬럼수 배지를 라벨 **앞**에 둔다 — _metaTableStyle labelMaxWidth(140) 후미
       //   ellipsis 로 긴 테이블명(예: cc_user_subscription)이 잘려도 배지가 살아남아 '컬럼 억제됨'
       //   affordance 를 보존(리뷰 MINOR — 후미 append 는 배지가 먼저 잘림). realH 예약 gap 도 '펼침' 신호.
       const tLabel = (_colSuppressed ? "▤" + cols.length + " " : "")
         + (role ? _META_ROLE[role].icon + " " : "") + (it.name || it.key);
       nodes.push({ id: it.key, type: _METtype, combo: id, states: _metaStateSig(it.key), data: { label: it.name || it.key, kind: "table", fqn: it.fqn, role: role || null }, style: Object.assign(_metaTableStyle(tx, ty, it.rel, role), { labelText: tLabel }) });
-      if (cols && cols.length && !colLodActive) {
+      if (cols && cols.length && !_colSuppressed) {
         const depIds = ["X:" + it.key];   // graph-drag(REQ ②): 종속 UI = 접기 ctl + 컬럼 노드들
         nodes.push({ id: "X:" + it.key, type: _METtype, combo: id, data: { label: "−", kind: "ctl", table: it.key },
           // graph-zorder(§52, 패널 ux MINOR): 흐름 내 per-table ctl 은 NODE 밴드 — CTL(6) 전역 최상층이면
@@ -5352,6 +5399,7 @@ function _metaG6BuildProducts() {
   _metaGraph.firstElementId = null;
   _metaGraph._colLodActive = false;   // col-lod(§61): products 뷰는 컬럼/LOD 없음 — 스키마 빌드가 남긴 stale 플래그 소거(상태줄 거짓 마커 방지). _metaG6Build 는 products 모드에서 여기로 조기 return 하므로 스키마 빌드의 산정을 못 거친다.
   _metaGraph._aggActive = false;      // agg-lod(§63): products 뷰는 집계 없음 — stale 플래그 소거.
+  _metaGraph._cullActive = false; _metaGraph._cullVp = null;   // viewport-cull(§65): products 뷰 stale 소거.
   const prods = [], dss = [];
   _metaGraph.nodes.forEach((n) => {
     if (n.label === "Product") prods.push(n);
@@ -5633,6 +5681,7 @@ function _metaGraphResetModel() {
   _metaGraph._lodBand = null;   // §57 패널 NIT: LOD 밴드 기준선도 초기화(스코프 전환 스퓨리어스 rebuild 방지).
   _metaGraph._colLodActive = false;   // col-lod(§61): 스코프/뷰 전환 시 억제 플래그 초기화(상태줄 stale 마커 방지).
   _metaGraph._aggActive = false;      // agg-lod(§63): 스코프/뷰 전환 시 집계 플래그 초기화.
+  _metaGraph._cullActive = false; _metaGraph._cullVp = null;   // viewport-cull(§65): 스코프/뷰 전환 시 초기화.
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
@@ -6177,6 +6226,21 @@ function _metaInitGraph() {
   graph.on("aftertransform", () => {
     let z = 1;
     try { z = graph.getZoom() || 1; } catch (_) { return; }
+    // viewport-cull(§65): 컬링 활성 중 팬으로 뷰포트 중심이 build 커버 범위를 크게 벗어나면(마진 소진) 새로
+    //   보이는 테이블의 컬럼을 위해 디바운스 rebuild(컬링으로 방출 적어 rebuild 저렴). 밴드 전이와 동일 타이머 공유.
+    if (_metaGraph._cullActive && _metaGraph._cullVp) {
+      try {
+        const _s = graph.getSize(), _a = graph.getCanvasByViewport([0, 0]), _b = graph.getCanvasByViewport([_s[0], _s[1]]);
+        const _cx = (_a[0] + _b[0]) / 2, _cy = (_a[1] + _b[1]) / 2, _V = _metaGraph._cullVp;
+        if (Math.abs(_cx - _V.cx) > _V.hw * 0.5 || Math.abs(_cy - _V.cy) > _V.hh * 0.5) {
+          if (_metaGraph._lodTimer) clearTimeout(_metaGraph._lodTimer);
+          _metaGraph._lodTimer = setTimeout(() => { _metaGraph._lodTimer = null; try { _metaG6Apply(false); } catch (_) {} }, 260);
+          // 리뷰 MINOR: early return 하지 않고 **아래 밴드 로직으로 fall-through** — 순수 팬(밴드 무변경)은 밴드
+          //   로직이 `band===_lodBand` 로 즉시 return(cull 타이머 유지), 줌+팬(밴드 변경)이면 밴드 로직이 이 타이머를
+          //   대체하며 _lodBand 기준선·§57 col/edge 마커를 갱신한다(마커 침묵·밴드 stale 회귀 방지).
+        }
+      } catch (_) {}
+    }
     // col-lod(§61)+agg-lod(§63): 4단 밴드 — full(≥0.5) / collod(0.35~0.5: 컬럼억제) / lod(0.15~0.35: 컬럼+엣지억제)
     //   / agg(<0.15: 클러스터 집계). 어느 임계(0.5·0.35·0.15)를 교차해도 밴드가 바뀌어 디바운스 rebuild 로 반영한다.
     const band = z < _META_AGG_ZOOM ? "agg" : (z < _META_EDGE_LOD_ZOOM ? "lod" : (z < _META_COL_LOD_ZOOM ? "collod" : "full"));
@@ -6203,7 +6267,9 @@ function _metaInitGraph() {
           const aggCut = !!_metaGraph._aggActive;              // 집계 실제 활성(클러스터 강등)
           const edgeCut = (_metaGraph._lodDropped || 0) > 0;   // 관계선 실제 드롭(lodActive 결과)
           const colCut = !!_metaGraph._colLodActive;           // 컬럼 실제 억제
-          const marker = aggCut ? " · 개요 — 클러스터 집계(확대 시 펼침)"
+          // agg-lod(§63): 집계 상태 안내는 제거(사용자 피드백 "그래서 뭐?" — 그래프 사용에 무의미·노이즈).
+          //   집계는 카드로 자명하다. col/edge LOD 안내는 §57 오독-가드 목적이라 유지(비-집계 밴드에서만).
+          const marker = aggCut ? ""
             : (edgeCut && colCut) ? " · 줌아웃 — 컬럼·관계선 일부 축약(확대 시 전체 표시)"
             : colCut ? " · 줌아웃 — 컬럼 표시 축약(확대 시 전체 표시)"
             : edgeCut ? " · 줌아웃 — 관계선 일부 축약(확대 시 전체 표시)" : "";

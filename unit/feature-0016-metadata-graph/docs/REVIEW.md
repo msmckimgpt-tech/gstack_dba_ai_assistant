@@ -1332,3 +1332,10 @@ source_of_truth: true
   ⑧ T22 타당성(허위 가드 아님): **pre-fix admin.js 에 T22 실행 → 2 FAIL**(t1↔t2 유지·`_lodDropped=0`=간소화 통째 무력화) = 사용자 버그 재현, 수정본 64/64 PASS.
 - 결함/회귀: 없음. 검증: 5개 헤드리스 스위트 전부 PASS(edge 64·collod 20·agglod 9·category 26·vpack 19=138) · `node --check` OK.
 - 미결(정상): 실 하이라이트+줌아웃 육안은 그래프뷰 인증/라우팅 3중벽으로 무인 도달 불가 → POST-DEPLOY 사용자 육안 게이트(TEST §64·T64.4).
+
+## REV-20260710T160000-ai-claude-feature-0016-graph-perf2 [SUBAGENT: PASS-WITH-FIXES] — §65 뷰포트 컬링 + 집계 supernode + 마커 제거 diff 적대 리뷰
+- 2렌즈 적대 패널(컬링 정확성/엣지·팬 · combo/시각/스케일), G6 번들 역공학 + 코드 실측으로 반증 시도.
+- **BLOCKING/MAJOR 0** — 핵심 주장 검증: (1) **combo-safe**: 테이블/루틴 칩은 화면 안팎 무관 항상 방출(realH 예약·band-invariant), 컬럼/파라미터만 게이트 → combo extent 는 col-LOD 와 동일 거동. renderEndpoint 가 미방출 컬럼 끝점을 항상-방출 테이블로 승격 → **dangling 0**. (2) 좌표계 정합(getCanvasByViewport=screen→world, style.x/y=world). (3) tableDeps 매 build 리셋 → stale 드래그 없음. (4) 팬 재-emit 무한루프 불가(fit=false→self-transform 없음, 260ms 디바운스, rebuild 가 _cullVp 재중심). (5) 집계 supernode 스케일은 L.w*0.94×L.h*0.7 클램프+슬롯 중앙 → 인접 카드 겹침·슬롯 넘침·폰트 넘침 없음(확장 슬롯 ≥256 > CARDW 210). (6) null/API 부재·products·resetModel 리셋 커버.
+- CONFIRMED(MINOR 1, **수정**): cull-pan 분기의 early `return` 이 §57 col/edge 마커 갱신 + `_lodBand` 기준선 세팅을 건너뜀 → 줌+팬 복합 제스처가 밴드 교차 시 억제는 되나 마커 침묵·밴드 stale(다음 same-band aftertransform false-=== skip) 가능. **수정**: return 제거하고 밴드 로직으로 fall-through(순수 팬=밴드 로직 즉시 return·cull 타이머 유지, 줌+팬=밴드 로직이 타이머 대체+마커/밴드 세팅). self-healing 이었으나 근본 수정.
+- CONFIRMED(NIT 1, **수정**): 집계 카드 폰트 클램프(3.2/2.6)가 깊은 줌서 화면 폰트 과소(카드는 커도 글자 작음) → **수정**: _sc 상한 6→8(카드 확장) + 폰트 클램프 4.5/3.5 + 카드 높이 안 클램프. 최종 가독은 win-browser 육안 확인.
+- 검증: 수정 후 headless viewport-cull 6 + 회귀 134 = **140 PASS** · `node --check` PASS. win-browser 시각검증 TEST §65.
