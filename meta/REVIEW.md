@@ -561,3 +561,11 @@
 - **acceptance**: (a) 두 브랜치 MODIFY.md 말미 각자 CHG 블록 append → merge 무충돌 병존(2/2 블록 보존) (b) 본문 중간 동일라인 충돌 → 표준 marker 충돌(비겹침 mid+append 는 clean — default 동등 실증) (c) rerere 동일 충돌 재발 자동 해소("Staged ... using previous resolution" 실증; **한계 실측**: 구 exit-1 driver 경로 충돌엔 rr-cache 미기록 — merge-file 위임 후엔 기록됨을 패널이 재실측, ADR 에 보수 서술로 기록).
 - **template base 전파(inbox) 계획**(§0 규약 ii): §13.1 driver 확대 개정 + check #14 + setup/driver 스크립트 3종을 template 후속 버전 반영 후보로 inbox 제출 예정(소비자 선행 실증).
 - **Human Approval Needed**: 아니오 — §6.1(명세 내). driver 는 3종 문서 한정·오병합 금지 원칙 하 merge-file 동등 폴백. 배포 무관.
+## REV-20260711T051500-META-0026-doc-fragments [SUBAGENT:improve-fit-reviewer(§18.8)] — TEST Run 기록 fragment 전환 1차 (parallel-work-structure ITEM-06)
+
+- **cycle**: ai/claude-corp/META-0026-doc-fragments — 드레인 7번째 항목(ITEM-06, Major). 승인: ROADMAP §6.1.
+- **changeset (pure-meta)**: `AGENTS.md` §5.3(Run 기록 fragment 규약 — `unit/<feature>/docs/test-runs.d/<TASK-또는-REV-id>.md`, frontmatter run_at(ISO8601)·session·scope·verdict, 기존 TEST.md §3 append 하위호환·소급 이동 없음) + §15.4.1/라우팅표/산출물표/DoD 체크리스트 stale 참조 6곳 정합 · `bin/verify-completion.sh` check #13(TEST.md 추가 라인 **또는** test-runs.d/ staged 추가 라인 인정 — OR 하위호환, FAIL 메시지 fragment 안내) · `.claude/commands/_dqa/doc_sync.md`(90일 컴팩션 절 — §5.5 아카이브·TEST.md 상단 참조 링크·불가침 경계) · ROADMAP ITEM-06 done · 본 entry. **changeset 분리 guard 준수** — 실제 feature 의 fragment 파일럿 적용은 각 feature 다음 정규 사이클(£0 규약).
+- **§18.8 패널 (게이트 스크립트 변경 guards 의무)**: VERDICT **SHIP-WITH-FIXES** — ① OR 경로 우회면 없음(껍데기 fragment 는 기존 TEST.md 라인과 동일 honor 모델 — 등가, 약화 아님; 음성 케이스 FAIL 보존 재현) ② 경로 조작·교차-feature vouch 재유입 없음(tmd 파생 frag_dir = 자산 경로 기반 fid 귀속 유지, pathspec 컴포넌트 매칭) ③ 명세 정합(what-2 "신규 파일" vs 구현 "디렉토리 추가 라인" 편차는 실질 등가 — NIT 기록) ④ §5.5 timestamp 명명 정합. 잔존 MINOR-1(stale 참조 6곳)+NIT 3 전부 동일 커밋 반영.
+- **acceptance**: (a) 재현 브랜치 — web asset+fragment 만 stage → check #13 PASS 후 폐기 (b) 기존 TEST.md-추가 방식 PASS(하위호환) + 음성 대조(둘 다 없음 → FAIL — 게이트 보존) (c) 병렬 두 브랜치 각자 fragment → merge 무충돌 (d) AGENTS.md·doc_sync 규약 diff.
+- **template base 전파(inbox) 계획**(§0 규약 ii): §5.3 fragment 규약 + check #13 OR 개정을 template 후속 반영 후보로 inbox 제출 예정.
+- **Human Approval Needed**: 아니오 — §6.1(명세 내). 하위호환 OR(일괄 강제 없음)·배포 무관.
