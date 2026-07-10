@@ -833,7 +833,7 @@ source_of_truth: true
   - **엣지**: 집계 시 테이블 미방출 → REFERENCES 끝점 `renderEndpoint` SC: 카드 승격, 양끝 SC: skip(SCHEMA_REF 중복 방지, 기존) → 카드-카드 aggregate 관계만.
   - **계층**: agg(0.15) < edge-LOD(0.35) < col-LOD(0.5) < full. 4단 밴드(`_lodBand`) 300ms 디바운스. 상태줄 "개요 — 클러스터 집계".
 - 기각/대안: (a) 뷰포트 컬링으로 테이블까지 줌인에서 감축 — combo auto-fit(`getComboPosition=getContentBBox(children).center`)이 테이블 컬링 시 카드 축소/점프 → combo-safe 아님, 별도 검토(잔여). (b) compact 카드-그리드 재배치 — 위치 점프(사용자 민감) → reflow-free 슬롯 유지 채택(대가: agg 뷰 다소 sparse).
-- 검증: headless `test_g6build_agglod.js` **9 PASS**(카드 방출·draw 급감>10x·reflow-free·비-agg 유지·게이트) + 회귀 125 = **134 PASS**. diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0, MINOR 1 수정: 상태줄 마커를 밴드→실제 억제 플래그 게이트해 §57 오독-가드 코너 재발 차단). PB-0008 극단 줌아웃 before/after 는 TEST §63.
+- 검증: headless `test_g6build_agglod.js` **10 PASS**(카드 방출·draw 급감>10x·reflow-free·비-agg 유지·게이트) + 회귀 125 = **134 PASS**. diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0, MINOR 1 수정: 상태줄 마커를 밴드→실제 억제 플래그 게이트해 §57 오독-가드 코너 재발 차단). PB-0008 극단 줌아웃 before/after 는 TEST §63.
 - Supersedes: — (§57 엣지·§61 컬럼 LOD 를 클러스터 축으로 확장·병존) / Superseded By: —
 
 ## ADR-031 — §64 lod-hl-declutter: 하이라이트 상태의 줌아웃 LOD 축약 예외를 "선택 노드 직접선"으로 축소 (dim 과 분리)
@@ -905,3 +905,12 @@ source_of_truth: true
 - 트레이드오프: 역할색·하이라이트·dim 은 다음 기하변경 때 미니맵 반영(스케일서 무의미, 사용자 요구와 정합). 실패 시 원본 폴백.
 - 검증: 신규 headless **35 PASS**(A11·B4·C10·D10) + 회귀 **150 PASS** · `node --check` · 적대 리뷰(H1·H2 2건 BLOCK→수정, REVIEW REV-20260710T233000). POST-DEPLOY 육안(feature-0003 TEST §74).
 - Supersedes: — / Superseded By: —
+
+## ADR-037 — §76 뷰포트 컬링 참조·상호작용 보존(focusAdj 예외) (사용자 피드백)
+- 상태: 채택 (2026-07-10)
+- 맥락: §65/§67 뷰포트 컬링(화면 밖 노드 미방출)이 draw 를 줄였으나, 사용자 피드백 — 컬링된 노드로의 **관계선이 사라지고**(renderEndpoint 가 미렌더 끝점을 승격 못 하면 `!rs||!rt` 로 엣지 드롭) **상세 패널에서 상호작용 불가**(`_metaGraphPanToRelation` 이 `_metaRenderedIdFor` null 시 팬 skip). 요청: "draw 는 하지 않되 참조 및 상호작용은 가능하도록."
+- 결정: **focusAdj 예외** — 노드 선택 시 그 노드의 관계 상대(`focusAdj.self`/`.nodes` = _metaFocusAdjacency 가 1-hop 엣지로 산출, 상세 패널이 보여주는 관계와 동일 집합)를 화면 밖이어도 컬링 예외로 방출한다. `_faKeep(k)`=fa 멤버십, `_clusterHasFocus(g)`=클러스터가 focus 멤버를 품으면 통째-클러스터 컬링 금지(combo 앵커 보존 → 그 안 focus 테이블이 참조할 combo 존재). 3 컬 지점(클러스터·루틴·테이블)에 가드. 방출된 관계 상대는 (a) renderEndpoint 가 `present` 에서 찾아 관계선 렌더, (b) `_metaRenderedIdFor` 가 찾아 관계행 클릭 카메라 팬 — 참조·상호작용 복원. 컬럼-레벨 REFERENCES 끝점은 renderEndpoint/renderedIdFor 가 소속 테이블로 접어 해소(테이블만 방출해도 충분). 접힌 스키마(SC 카드)는 원래 컬링 대상 아님(항상 방출)이라 무관.
+- 트레이드오프: 선택 노드의 관계 상대를 화면 밖이어도 방출 → 허브 노드(degree 큰) 선택 시 방출 수가 degree 만큼 증가(draw 비용). 유계(선택 컨텍스트에만·degree 상한)이고, 무선택/일반 팬에서는 예외 0 = 컬링·성능 무손실(§67 그대로). 사용자가 관계를 보려 선택한 시점에만 발동하므로 의도와 정합. 화면 밖 방출분은 사용자에 미가시(관계선만 뷰포트 밖으로 뻗음).
+- 검증: headless `test_g6build_cullrefkeep.js` **10 PASS**(뷰포트 내 노드 엣지 컬링무효 — 무선택 in-view 연결 상대 방출·무연결 컬링 + focusAdj 중복 + nodePosAll) + 회귀 = **179 PASS**. node --check. §18.8 적대 리뷰. POST-DEPLOY win-browser 육안(TEST §76).
+- 방향 갱신(사용자 2026-07-10, 2차): (a) **뷰포트 내 노드 엣지 컬링무효** — focusAdj(선택) 예외를 **in-view 전반**으로 확장. layouts.place 1-pass 로 `nodePosAll`(전체 위치, 컬링 무관 — 커스텀 미니맵·엣지 앵커 enabler) + in-view 집합 → in-view 노드에 연결된 REFERENCES/ROUTINE_USES 상대 끝점을 `_edgeExempt` 로 컬 예외. `_keepFromCull`=focus∪edge. 무연결 화면 밖 노드는 계속 컬링(성능 유지). ROUTINE_USES 서버-only 엣지 갭(§76 리뷰 F1)은 클라 모델 엣지 기반이라 잔존하나, in-view 확장으로 커버 범위 대폭 증가. (b) **실시간 드래그 컬링** — 팬 재-emit 260ms 디바운스→rAF 스로틀(메모이즈로 rebuild 저렴·_metaG6Apply 직렬화로 코스트 적응). (c) 미니맵 전체그래프 별도렌더는 §77 후속(nodePosAll 소비).
+- 관계: §65 ADR-032·§67 ADR-033(컬링)에 **예외 계층 추가** — 컬링의 draw 절감은 유지하되 focus 컨텍스트의 참조·상호작용을 보존. §73 ADR-035 메모이즈와 직교(예외는 emission, 메모이즈는 layout).

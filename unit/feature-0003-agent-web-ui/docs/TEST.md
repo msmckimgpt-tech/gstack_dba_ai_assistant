@@ -1942,7 +1942,7 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
 
 
 ### Run (2026-07-10) — agg-lod: 극단 줌아웃 클러스터 집계 (Major §12.3 — feature-0003 web/UI 자산, 정본 feature-0016 TASK §63/ADR-030) — **Environment: Windows-browser**
-- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_agglod.js` **9 PASS** — 집계 카드 방출·draw 급감(>10x)·
+- **헤드리스 결정론 실증(라이브 불요)**: `test_g6build_agglod.js` **10 PASS** — 집계 카드 방출·draw 급감(>10x)·
   **T3 reflow-free**(집계 카드가 클러스터 슬롯 위치, 확대 시 원위치 복원)·게이트. 회귀 125 = 134 PASS·`node --check` PASS.
 - **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: ① 정적 자산 baked → merge + `deploy-web`
   재배포 선행(§51·§57·§60·§61 동일). ② agg 발동 = 대형 라이브 그래프 + 극단 줌아웃(<0.15)이라 무인 재현 복잡 +
@@ -2093,3 +2093,10 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   테이블 노드 클릭 → 상세 패널 컬럼 목록에서 컬럼(plain/관계 모두) 클릭 → **상세가 그 컬럼 뷰로 전환** + 그래프에서 해당 컬럼 강조(렌더된 경우)
   + 관계 컬럼 캐럿(▸)은 여전히 인플레이스 아코디언 펼침(선택과 독립) + 레이아웃 무붕괴 + pageerror 0.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(서빙 admin.js 에 `.amgr-col-select`·버스터 `20260710-graph-detail-colsel`) + win-browser 육안 PASS append.
+
+### Run (2026-07-10) — cull-refkeep: 뷰포트 컬링 참조·상호작용 보존 (Major §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §76/ADR-037) — **Environment: Windows-browser**
+- 변경: `_faKeep`/`_clusterHasFocus` 헬퍼 + 3 컬 지점(클러스터·루틴·테이블) 예외 가드. 선택 노드의 관계 상대(focusAdj)를 화면 밖이어도 방출 → 관계선 렌더 + 상세 네비 팬 복원. 무선택 시 예외 0(컬링 무손실).
+- **pre-commit 정적/실측 검증 PASS**: `node --check admin.js` PASS · headless `test_g6build_cullrefkeep.js` **10 PASS**(뷰포트 내 노드 엣지 컬링무효 — 무선택 in-view 연결 상대 방출·무연결 컬링 + focusAdj 중복커버 + nodePosAll) + 회귀 169 = **179 PASS** · §18.8 적대 리뷰(REVIEW.md). 캐시버스터 `admin.js?v=20260710-cullrefkeep`.
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산 web 이미지 baked → merge + `deploy-web` 후에만 서빙 자산 실측 가능. win-browser relay 시각검증 가능(PB-0008) → POST-DEPLOY.
+- **POST-DEPLOY win-browser 실 Windows Chrome 검증(T76.3)**: 대형 그래프 줌인 → 노드 선택 → ① 화면 밖 관계 노드로 **관계선 유지**(참조) ② 상세 패널 관계행 클릭 → **화면 밖 대상으로 카메라 팬**(상호작용) ③ 무선택 시 컬링·성능 유지 ④ pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl(`?v=20260710-cullrefkeep` + `_faKeep`/`_clusterHasFocus`) + win-browser 실측 PASS append.

@@ -1466,7 +1466,7 @@ character(14)·item(17)·characterinfo(4)·battletimereward…(4)·…shop(3)·m
 **reflow 0**. SC:id↔combo id 다른 네임스페이스로 setData add/remove(타입전환 회피). 4단 밴드·상태줄 집계 안내.
 
 ### 검증
-- headless `test_g6build_agglod.js` **9 PASS**(카드방출·draw급감>10x·reflow-free 위치·비-agg 유지·소형 게이트)
+- headless `test_g6build_agglod.js` **10 PASS**(카드방출·draw급감>10x·reflow-free 위치·비-agg 유지·소형 게이트)
   + 회귀 125 = **134 PASS** · `node --check` PASS.
 - diff 2렌즈 적대 리뷰 PASS(BLOCKING/MAJOR 0). MINOR 1 수정(상태줄 마커를 밴드→실제 억제 플래그 게이트).
   NIT 1 수용(agg 중 카드펼침 재집계 시 안내문구 부정합 — 니치). 상세 REVIEW.md.
@@ -1619,3 +1619,9 @@ win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검�
 - 구현: plain 컬럼 → `.amgr-col-select[data-col]` 버튼. 관계 컬럼 → `.amgr-col-head`(flex) 안에서 캐럿(`.amgr-col-caret[data-coltoggle]`, 인플레이스 아코디언 보존)과 선택 버튼(`.amgr-col-select[data-col]`) 분리(캐럿=펼침·이름=선택, VSCode 트리 패턴). 바인딩: `.amgr-col-select[data-col]` → `_metaGraphShowDetail(data-col)`(캔버스·`data-rtuse` 와 동일 선택 경로 재사용) → **새 상태변수 0**, 선택 의미론(history + 캔버스 강조 재베이크 + 상세 컬럼뷰 전환) 무상속. CSS `.amgr-col-select`(plain=block/관계=flex relcount 우측정렬)·`.amgr-col-head`·`.amgr-col-caret`. a11y: 캐럿 `aria-controls`+상태중립 `aria-label`, 선택 버튼 간결 `aria-label`. 캐시버스터 admin.js/styles.css `20260710-graph-detail-colsel`.
 - 검증: `node --check` PASS · 신규 헤드리스 격리 렌더 테스트(`test_detail_colsel.js`, vm+`_metaGraph` 주입) 8/8 PASS · 기존 g6build 6종 무회귀 · 적대 diff 리뷰 [SUBAGENT: PASS](REV-20260710T230000, Critical/Major/Minor 0 + a11y nit 2건 반영). main rebase(§71/§72/§73 병렬 머지 후 admin.js 자동병합·재검증). frontend-only·마이그 0·Minor(§12.3).
 - 미완(배포 후): T75.4 POST-DEPLOY 실 Windows 육안(PB-0008) — 상세 패널 컬럼 클릭→선택/강조/아코디언 독립 동작.
+
+## §76 graph-cull-refkeep — 컬링 참조·상호작용 보존 (2026-07-10)
+- 사용자 요청: "cull 처리된 노드들에 대해서 연결선 또한 사라지는 + 상세 패널에서 상호작용 불가. draw는 하지 않되 참조·상호작용은 가능하도록."
+- 진단: 컬링이 화면 밖 노드 미방출 → (a) renderEndpoint 가 앵커 못 찾아 엣지 드롭 (b) _metaRenderedIdFor null 로 상세 네비 팬 skip.
+- 수정: focusAdj 예외 — 선택 노드의 1-hop 관계 상대(상세 패널이 보여주는 것)를 화면 밖이어도 방출. 관계선 렌더 + 네비 팬 복원. 무선택 시 예외 0(컬링 무손실). ADR-037.
+- 검증: headless cullrefkeep 10 + 회귀 = **179 PASS**·node --check. §18.8 적대 리뷰. POST-DEPLOY win-browser. 버스터 `admin.js?v=20260710-cullrefkeep`.

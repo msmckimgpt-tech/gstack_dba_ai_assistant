@@ -4858,6 +4858,13 @@ function _metaG6Build() {
     ? { cx: (_vx0 + _vx1) / 2, cy: (_vy0 + _vy1) / 2, hw: (_vx1 - _vx0) / 2, hh: (_vy1 - _vy0) / 2 }
     : null;
   const _offView = (x0, y0, x1, y1) => _cullActive && (x1 < _vx0 || x0 > _vx1 || y1 < _vy0 || y0 > _vy1);
+  // graph-cull-refkeep(§76, 사용자 피드백): 컬링은 draw(방출)만 줄여야 하고 **참조(엣지)·상호작용(상세 네비)** 은
+  //   보존해야 한다. 선택 노드의 관계 상대(focusAdj = 상세 패널이 보여주는 관계)는 화면 밖이어도 방출 예외 —
+  //   그래야 (a) renderEndpoint 가 끝점을 찾아 관계선이 렌더되고 (b) _metaRenderedIdFor 가 찾아 관계행 클릭 팬이
+  //   동작한다. 무선택(fa 없음)이면 예외 0 = 컬링 전량 유지(성능 무손실). 예외 범위는 선택 노드 degree 로 유계.
+  const _faCull = _metaGraph.focusAdj;
+  const _faKeep = (k) => !!(_faCull && k && (_faCull.self.has(k) || _faCull.nodes.has(k)));
+  const _clusterHasFocus = (g) => !!(_faCull && g && !g.isTerms && g.tables && g.tables.some((t) => _faKeep(t.key)));
   // 각 클러스터 레이아웃 선산정(폭·높이 + 항목 절대 오프셋 배치).
   //   place 항목은 {it, lx(열 좌측 x — 클러스터 상대), top(항목 상단 y — 클러스터 상대)} 로 정규화 —
   //   평면/그룹 두 경로가 같은 렌더 루프를 공유한다.
@@ -5014,6 +5021,38 @@ function _metaG6Build() {
     const off = _metaGraph.clusterOffset.get(L.id);
     if (off) { L.x0 += off.dx; L.y0 += off.dy; }
   });
+  // graph-cull-refkeep(§76, 사용자 요구): 전체 노드 위치 맵(nodePosAll — 컬링돼도 포함, 커스텀 미니맵·엣지 앵커
+  //   공용) + **뷰포트 내 노드 엣지 컬링무효**. layouts 의 place(최종 배치 위치)로 1-pass 산정: 각 테이블/루틴 center 를
+  //   nodePosAll 에 적재 + in-view(뷰포트+마진 내 = 미컬링) 집합을 만든 뒤, in-view 노드에 연결된 엣지의 상대 끝점
+  //   테이블을 _edgeExempt 에 넣어 컬 예외 → 관계선이 화면 밖 상대까지 이어진다("뷰포트 내 노드들 연결선 컬링무효").
+  _metaGraph.nodePosAll = new Map();
+  const _inView = new Set();
+  const _edgeExempt = new Set();
+  const _foldTbl = (k) => { const n = _metaGraph.nodes.get(k); if (n && n.label !== "Column") return k; return _metaColParent(k, n && n.fqn) || k; };
+  layouts.forEach((L) => {
+    if (L.catHidden) return;
+    const lg = L.g;
+    if (L.kind === "card") { _metaGraph.nodePosAll.set("SC:" + L.id, { x: L.x0 + _METLAY.CARDW / 2, y: L.y0 + _METLAY.CARDH / 2, w: _METLAY.CARDW, h: _METLAY.CARDH, card: true }); return; }
+    (L.place || []).forEach(({ it, lx, top }) => {
+      let colLeftX = L.x0 + lx, ty = L.y0 + top + _METLAY.TROW / 2;
+      const _fp = _metaGraph.nodePos.get(it.key);
+      if (_fp && isFinite(_fp[0]) && isFinite(_fp[1])) { const ddx = _fp[0] - (colLeftX + TXOFF), ddy = _fp[1] - ty; colLeftX += ddx; ty += ddy; }
+      const _rh = realH(lg, it);
+      _metaGraph.nodePosAll.set(it.key, { x: colLeftX + TXOFF, y: ty, w: COLW, h: _rh });
+      if (_cullActive && !_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + _rh)) _inView.add(it.key);
+    });
+  });
+  if (_cullActive && _inView.size) {
+    _metaGraph.edges.forEach((e) => {
+      if (e.type !== "REFERENCES" && e.type !== "ROUTINE_USES") return;   // 관계선(참조·사용) 대상 — containment(HAS_*)·용어는 제외
+      const a = _foldTbl(e.source), b = _foldTbl(e.target);
+      if (a && b && a !== b && (_inView.has(a) || _inView.has(b))) { _edgeExempt.add(a); _edgeExempt.add(b); }
+    });
+  }
+  _metaGraph._edgeExempt = _edgeExempt;   // (디버그/테스트 노출)
+  // §76: 컬 예외 통합 판정 — focus(선택 노드 관계) OR edge(뷰포트 내 노드 연결 상대). 테이블·클러스터 컬 지점 공용.
+  const _keepFromCull = (k) => _faKeep(k) || _edgeExempt.has(k);
+  const _clusterKeep = (g) => _clusterHasFocus(g) || !!(g && !g.isTerms && g.tables && g.tables.some((t) => _edgeExempt.has(t.key)));
   const combos = [], nodes = [], edges = [];
   _metaGraph.firstElementId = null;
   // graph-category(§55 A): 카테고리 밴드(CAT: 배경 + CATH: 헤더 칩 + CATX: 접기) 방출 — 박스 기하는
@@ -5118,7 +5157,9 @@ function _metaG6Build() {
     //   bbox 밖에 나간 가시 멤버를 오컬링할 수 있다 → free-place 존재 시 전체-클러스터 컬링을 건너뛰고 per-table
     //   컬링(nodePos 반영 좌표)에만 맡긴다(정확·안전, free-place 는 드문 경로).
     const _freePlaced = _metaGraph.nodePos.size > 0 || _metaGraph.groupOffset.size > 0;
-    if (_cullActive && !g.isTerms && !_freePlaced && _offView(L.x0, L.y0, L.x0 + L.w, L.y0 + L.h)) return;
+    // §76: 클러스터가 선택 노드의 관계 상대를 하나라도 품으면 통째 컬링 금지 → combo + 그 관계 테이블이 방출돼
+    //   관계선·상호작용이 보존된다(per-table 컬링이 나머지 화면 밖 테이블은 계속 억제).
+    if (_cullActive && !g.isTerms && !_freePlaced && !_clusterKeep(g) && _offView(L.x0, L.y0, L.x0 + L.w, L.y0 + L.h)) return;
     combos.push({ id, type: _METtype, data: { label: _metaComboName(id), kind: "schema" }, style: Object.assign({ labelText: _metaComboName(id) }, _metaComboStyleFor(g.isTerms)) });
     if (!g.isTerms && _metaGraph.schemaExpanded.has(id)) {
       // graph-initview: "−" 접기 컨트롤(combo 우상단) — 카드로 복귀.
@@ -5191,8 +5232,8 @@ function _metaG6Build() {
         colLeftX += ddx; tx += ddx; ty += ddy;
       }
       if (it.label === "Routine") {
-        // viewport-cull(§67): 화면 밖 루틴 칩도 미방출(테이블과 동형).
-        if (_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;
+        // viewport-cull(§67): 화면 밖 루틴 칩도 미방출(테이블과 동형). §76: 단 선택 노드의 관계 상대는 예외(엣지·상호작용 보존).
+        if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;
         // graph-funcproc(ADR-016): 함수(ƒ)/프로시저(⚙) 칩 — 검색 매칭 강조는 테이블과 동일 룰.
         //   §18.8 패널(NIT): isTerms 분기보다 먼저 — 스키마 세그먼트 없는 flat-scope Routine 이
         //   terms 클러스터로 강등돼도 용어 칩이 아닌 ƒ/⚙ 보라 칩으로 렌더된다.
@@ -5239,7 +5280,7 @@ function _metaG6Build() {
       // viewport-cull(§67): 화면(+마진) 밖 테이블은 **테이블 칩 자체를 미방출**(줌인 대형모델 draw 급감 — 병목
       //   =setData/draw 방출 요소 수). 화면 밖이라 시각 손실 0. 엣지 끝점은 renderEndpoint 가 승격/드롭. combo 는
       //   가시 테이블에 auto-fit. 전체가 화면 밖인 클러스터는 상위에서 통째 컬링(combo 포함). §65 컬럼→테이블 확장.
-      if (_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;   // 화면 밖 테이블 컬링
+      if (!_keepFromCull(it.key) && _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;   // 화면 밖 테이블 컬링(§76: 선택 관계 상대는 예외 — 엣지·상호작용 보존)
       const _colSuppressed = colLodActive && cols && cols.length;   // (in-view 테이블) 개요 col-lod 컬럼 억제만
       // col-lod: 억제 시 '▤N' 컬럼수 배지를 라벨 **앞**에 둔다 — _metaTableStyle labelMaxWidth(140) 후미
       //   ellipsis 로 긴 테이블명(예: cc_user_subscription)이 잘려도 배지가 살아남아 '컬럼 억제됨'
@@ -5878,6 +5919,7 @@ function _metaGraphResetModel() {
   _metaGraph._colLodActive = false;   // col-lod(§61): 스코프/뷰 전환 시 억제 플래그 초기화(상태줄 stale 마커 방지).
   _metaGraph._aggActive = false;      // agg-lod(§63): 스코프/뷰 전환 시 집계 플래그 초기화.
   _metaGraph._cullActive = false; _metaGraph._cullVp = null;   // viewport-cull(§65): 스코프/뷰 전환 시 초기화.
+  if (_metaGraph._cullRaf) { try { (typeof window !== "undefined" && window.cancelAnimationFrame ? window.cancelAnimationFrame : clearTimeout)(_metaGraph._cullRaf); } catch (_) {} _metaGraph._cullRaf = null; }   // §76 실시간 컬링 rAF 정리(스코프 전환 stale 방지)
   _metaGraph.colsByTable.clear();   // graph-perf-bg: 펼침 인덱스 초기화(모델 교체와 정합).
   _metaGraph._stateCache.clear();   // graph-perf-bg: state 캐시 무효화(다음 refresh 가 전량 재적용).
   _metaGraph._busyKeys.clear();     // graph-perf-bg fix: 모델 교체 → 명령형 busy 정리.
@@ -6429,17 +6471,21 @@ function _metaInitGraph() {
     let z = 1;
     try { z = graph.getZoom() || 1; } catch (_) { return; }
     // viewport-cull(§65): 컬링 활성 중 팬으로 뷰포트 중심이 build 커버 범위를 크게 벗어나면(마진 소진) 새로
-    //   보이는 테이블의 컬럼을 위해 디바운스 rebuild(컬링으로 방출 적어 rebuild 저렴). 밴드 전이와 동일 타이머 공유.
+    //   보이는 테이블의 컬럼을 위해 rebuild. graph-cull-realtime(§76, 사용자 요구 "드래그 도중 실시간 컬링 재계산"):
+    //   과거 260ms 디바운스는 드래그 **정착 후**에만 반영해 드래그 중 새 노드가 늦게 튀어나왔다(pop). 메모이즈(§73)로
+    //   rebuild layout 비용이 사라져(8ms) 이제 **rAF 스로틀**로 드래그 매 프레임 재-emit 가능 — _metaG6Apply 는 직렬화
+    //   (진행 중이면 1회 병합)라 rebuild 코스트가 크면 자연히 프레임 스킵돼 파일업 없이 코스트에 적응한다. 순수 팬은
+    //   아래 밴드 로직이 `band===_lodBand` 로 즉시 return(rAF 유지), 줌+팬은 밴드 debounce 가 마커·기준선을 별도 갱신.
     if (_metaGraph._cullActive && _metaGraph._cullVp) {
       try {
         const _s = graph.getSize(), _a = graph.getCanvasByViewport([0, 0]), _b = graph.getCanvasByViewport([_s[0], _s[1]]);
         const _cx = (_a[0] + _b[0]) / 2, _cy = (_a[1] + _b[1]) / 2, _V = _metaGraph._cullVp;
-        if (Math.abs(_cx - _V.cx) > _V.hw * 0.5 || Math.abs(_cy - _V.cy) > _V.hh * 0.5) {
-          if (_metaGraph._lodTimer) clearTimeout(_metaGraph._lodTimer);
-          _metaGraph._lodTimer = setTimeout(() => { _metaGraph._lodTimer = null; try { _metaG6Apply(false); } catch (_) {} }, 260);
-          // 리뷰 MINOR: early return 하지 않고 **아래 밴드 로직으로 fall-through** — 순수 팬(밴드 무변경)은 밴드
-          //   로직이 `band===_lodBand` 로 즉시 return(cull 타이머 유지), 줌+팬(밴드 변경)이면 밴드 로직이 이 타이머를
-          //   대체하며 _lodBand 기준선·§57 col/edge 마커를 갱신한다(마커 침묵·밴드 stale 회귀 방지).
+        // 임계 0.35(구 0.5) — rAF 로 자주 재산정하므로 더 이른 예측 재-emit 로 경계 pop 을 마진 소진 전 흡수.
+        if (Math.abs(_cx - _V.cx) > _V.hw * 0.35 || Math.abs(_cy - _V.cy) > _V.hh * 0.35) {
+          if (!_metaGraph._cullRaf) {
+            const _raf = (typeof window !== "undefined" && window.requestAnimationFrame) ? window.requestAnimationFrame.bind(window) : (f) => setTimeout(f, 16);
+            _metaGraph._cullRaf = _raf(() => { _metaGraph._cullRaf = null; try { _metaG6Apply(false); } catch (_) {} });
+          }
         }
       } catch (_) {}
     }
