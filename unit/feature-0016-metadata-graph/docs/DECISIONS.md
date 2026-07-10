@@ -861,3 +861,15 @@ source_of_truth: true
 - 기각/한계: 테이블 자체 컬링은 combo auto-fit(getContentBBox(children))이 카드 축소/점프를 유발해 combo-safe 아님 → 컬럼 컬링으로 한정(테이블 칩 유지). 테이블 수 자체가 지배적인 극단(단일 557T 스키마)의 클릭 floor 는 잔존 — 테이블 칩 draw 는 남음. 후속(combo 분리 필요, 시각검증 하에).
 - 검증: headless `test_g6build_viewportcull.js` **6 PASS**(컬럼 컬링·**combo-safe 테이블 유지**·band-invariant·게이트) + 회귀 134 = **140 PASS**. diff 2렌즈 적대 리뷰 + **win-browser 실 Windows Chrome 육안 검증**(집계 카드 가독·마커 없음·줌인 컬링 draw 감축·combo 유지 — TEST §65).
 - Supersedes: — (§63 집계에 크기·마커 피드백 반영 + §61 col-LOD 를 뷰포트 축으로 확장) / Superseded By: —
+
+
+## ADR-033 — §67 집계-카드 폐기 + 카테고리 밴드 규모표시 + 테이블/클러스터 뷰포트 컬링 (사용자 육안 피드백)
+- 상태: 채택 (2026-07-10)
+- 맥락: §65 배포 후 사용자 실화면 피드백 — 집계-카드(§63/§65)가 클러스터를 작은 카드로 강등해 **규모·구조 파악을 어렵게** 한다("사람이 알아보기 힘들며 기존 규모를 알기 어렵다"). 요청: **스키마 클러스터는 펼친 상태 유지 + 제품 카테고리 밴드에 각 요소 개수 표시(규모 명시) + 관계선 유지**. 또한 '줌인 성능 저하'는 여전히 잔존(§65 컬럼 컬링은 테이블 칩 floor 를 못 줄임). **시각검증 가능**(win-browser relay) 확인 → combo 거동 육안 확인하며 테이블 컬링 구현.
+- 결정:
+  - **(A1) 집계-카드 폐기**: `aggActive` 상시 false(§63/§65 집계 강등·supernode 경로 비활성화, 코드 보존·가역). 클러스터는 극단 줌아웃에서도 펼침 유지.
+  - **(A2) 카테고리 밴드 규모표시**: 제품 카테고리 밴드 헤더(CATH)를 "🗂 label · N DB" → "🗂 label · N DB · M 테이블"(M=멤버 schemaTotals 합, 천단위). 규모를 상위 밴드 카운트로 전달.
+  - **(B) 테이블/클러스터 뷰포트 컬링(§65 컬럼→테이블 확장)**: `_cullActive`(nodes>400·!agg·뷰포트 API) 시 화면(뷰포트+마진 0.6) 밖 **테이블 칩 자체**(+컬럼·ctl)와 **전체 화면 밖 클러스터 통째**(combo 포함)를 미방출 → 줌인 대형모델 draw 급감(병목=방출 요소 수). 화면 밖이라 시각 손실 0. 엣지 끝점은 renderEndpoint 로 승격/드롭. 부분 가시 클러스터는 combo 방출 + 가시 테이블만(combo auto-fit). 카테고리 밴드 bbox 는 선산정이라 컬링 무관(규모 밴드 유지). 팬 재-emit(_cullVp, 260ms 디바운스).
+- 트레이드오프: 클러스터 펼침 유지로 극단 줌아웃(전체 in-view)은 집계보다 무거움(사용자가 구조·규모 이해를 우선). 완화: 카테고리 접기(기존 §55) + 줌인은 컬링으로 경량. 부분 가시 클러스터의 combo auto-fit 축소는 시각 트레이드오프(육안 확인).
+- 검증: headless `test_g6build_viewportcull.js` **6 PASS**(테이블 컬링·band-invariant·게이트) + `test_g6build_agglod.js` **8 PASS**(집계 비활성 잠금) + 회귀 = **150 PASS**. diff 2렌즈 적대 리뷰 + **win-browser 실 Windows Chrome 육안**(집계off·밴드 카운트·테이블 컬링 perf·combo — TEST §67).
+- Supersedes: **§63 ADR-030 집계-카드 + §65 ADR-032 supernode(비활성)** / Superseded By: —

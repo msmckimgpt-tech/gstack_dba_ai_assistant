@@ -2069,3 +2069,14 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
   focus 밖 관계선이 (a) 희미하게 남지 않고 완전 소거 (b) 마우스 이동해도 유령 관계선 잔상/깜빡임 없음
   (c) focus 부분그래프(선택+1-hop) 관계선은 선명 유지. 자산 curl(`?v=20260710-hl-edge-hide`) + 육안 게이트(TEST §66).
   픽셀 레벨 dirty-rect 잔상 최종 확증은 라이브에서만(WSL headless 는 canvas paint 아티팩트 미재현).
+
+
+## §67 집계폐기 + 카테고리 밴드 규모 + 테이블 뷰포트 컬링 (2026-07-10, 사용자 육안 피드백)
+사용자: 집계-카드가 규모/구조 파악 어렵게 함 → 클러스터 펼침 유지 + 카테고리 밴드에 개수 표시 + 관계선 유지.
++ 줌인 perf 잔존. (ADR-033)
+- [x] T67.1 집계-카드 폐기: aggActive 상시 false(§63/§65 비활성·코드 보존). 클러스터 펼침 유지.
+- [x] T67.2 카테고리 밴드 헤더 규모: "N DB" → "N DB · M 테이블"(schemaTotals 멤버 합·천단위).
+- [x] T67.3 테이블/클러스터 뷰포트 컬링: 화면(+마진 0.6) 밖 테이블 칩·전체 화면 밖 클러스터(combo) 미방출.
+  combo-safe 완화(가시분 auto-fit)·renderEndpoint 승격·팬 재-emit·카테고리 밴드 bbox 유지. §65 컬럼→테이블 확장.
+- [x] T67.4 검증: headless viewport-cull 6(테이블 컬링·band-invariant) + agglod 8(집계비활성) + 회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰.
+- [ ] T67.5 win-browser 실 Windows Chrome 육안(배포 후): 줌아웃 클러스터 펼침·카테고리 밴드 "N DB·M 테이블"·관계선 유지 / 줌인 화면 밖 테이블·클러스터 미표시·combo 가시분 fit·클릭/팬 경량. 줄별 스크린샷.

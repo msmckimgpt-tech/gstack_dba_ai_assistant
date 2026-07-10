@@ -89,68 +89,26 @@ const bigSchemas = () => ([
   { name: "log", nTables: 30 },
 ]);
 
-// T1: agg 밴드(0.15) — 확장 스키마 3개가 각각 SC: 카드 1개로, 테이블·컬럼·combo 0
-{
-  seedModel(bigSchemas());
-  const full = buildAt(1.0);
-  seedModel(bigSchemas());
-  const agg = buildAt(0.1);
-  check("T1 full 은 테이블 방출(>0)", nodesOf(full, "table").length > 0, nodesOf(full, "table").length);
-  check("T1 agg 는 테이블 방출 0", nodesOf(agg, "table").length === 0, nodesOf(agg, "table").length);
-  check("T1 agg 는 컬럼 방출 0", nodesOf(agg, "column").length === 0, nodesOf(agg, "column").length);
-  check("T1 agg 는 combo 0", (agg.combos || []).length === 0, (agg.combos || []).length);
-  check("T1 agg 는 SC: 카드 3개(스키마 수)", cards(agg).length === 3, cards(agg).length);
-}
+// §67(사용자 피드백): 집계-카드 방식 폐기 — 클러스터는 극단 줌아웃에서도 **펼친 상태 유지**(집계 카드로 강등 안 함).
+//   규모는 카테고리 밴드 헤더 카운트로 전달. 아래 테스트는 aggActive 상시 false(집계 비활성) 를 잠근다.
 
-// T2: 방출 요소 급감 — agg 총 방출 노드 << full
+// T1: 극단 줌아웃(0.1)에서도 확장 스키마는 **테이블·combo 로 방출**(집계 카드 강등 없음)
 {
   seedModel(bigSchemas());
-  const full = buildAt(1.0);
-  seedModel(bigSchemas());
-  const agg = buildAt(0.1);
-  check("T2 draw 방출 급감(agg nodes < full/10)", agg.nodes.length < full.nodes.length / 10, [agg.nodes.length, full.nodes.length]);
-}
-
-// T3: reflow-free — 집계 카드는 해당 스키마의 full 클러스터 bbox 안에 위치
-{
-  seedModel(bigSchemas());
-  const full = buildAt(1.0);
-  // full 에서 스키마별 테이블 bbox
-  const bbox = {};
-  nodesOf(full, "table").forEach((n) => {
-    const seg = String(n.id).split(":")[1].split(".")[0];   // 스키마명
-    const b = bbox[seg] || (bbox[seg] = { minx: Infinity, maxx: -Infinity, miny: Infinity, maxy: -Infinity });
-    b.minx = Math.min(b.minx, n.style.x); b.maxx = Math.max(b.maxx, n.style.x);
-    b.miny = Math.min(b.miny, n.style.y); b.maxy = Math.max(b.maxy, n.style.y);
-  });
-  seedModel(bigSchemas());
-  const agg = buildAt(0.1);
-  let outside = 0, ex = null;
-  cards(agg).forEach((c) => {
-    const seg = String(c.id).slice(3).split(":")[1] ? String(c.id).slice(3).split(":")[1].split(".")[0] : String(c.id).slice(3).split(".").pop();
-    // SC:mssql-x:cc → seg 도출
-    const s = String(c.id).slice(3);   // "mssql-x:cc"
-    const nm = s.split(":")[1] || s;
-    const b = bbox[nm];
-    if (!b) return;
-    const M = 120;   // 카드는 슬롯 좌상단 → 클러스터 최소좌표 근처(여유 마진)
-    if (c.style.x < b.minx - M || c.style.x > b.maxx + M || c.style.y < b.miny - M || c.style.y > b.maxy + M) { outside++; if (!ex) ex = { id: c.id, card: [c.style.x, c.style.y], bbox: b }; }
-  });
-  check("T3 reflow-free — 집계 카드가 클러스터 위치 안(이탈 0)", outside === 0, ex);
-}
-
-// T4: 비-agg 배율(0.3) — 정상 테이블 방출(집계 안 함)
-{
-  seedModel(bigSchemas());
-  const out = buildAt(0.3);
-  check("T4 zoom 0.3 — 테이블 방출 유지(집계 안 함)", nodesOf(out, "table").length > 0, nodesOf(out, "table").length);
-}
-
-// T5: 게이트 — 소형 모델(< _META_AGG_MIN 60 노드)은 극단 줌아웃이어도 집계 안 함
-{
-  seedModel([{ name: "sm", nTables: 8 }]);   // 8 테이블 + 스키마노드 = 9 노드 (<60)
   const out = buildAt(0.1);
-  check("T5 소형 모델 — 집계 안 함(테이블 방출)", nodesOf(out, "table").length === 8, nodesOf(out, "table").length);
+  check("T1 줌아웃 0.1 — 확장 스키마 테이블 방출 유지(>0)", nodesOf(out, "table").length > 0, nodesOf(out, "table").length);
+  check("T1 줌아웃 0.1 — combo 방출 유지(>0)", (out.combos || []).length > 0, (out.combos || []).length);
+  check("T1 확장 스키마는 SC: 집계 카드로 강등 안 됨(0)", cards(out).length === 0, cards(out).length);
+  check("T1 _aggActive 상시 false(집계 비활성)", g.__metaGraphRef._aggActive === false, g.__metaGraphRef._aggActive);
+}
+
+// T2: 여러 배율에서 일관 — 0.3/0.5/1.0 모두 테이블 방출 유지(집계 안 함)
+{
+  [1.0, 0.5, 0.3, 0.1].forEach((z) => {
+    seedModel(bigSchemas());
+    const out = buildAt(z);
+    check("T2 zoom " + z + " 테이블 방출 유지", nodesOf(out, "table").length > 0, nodesOf(out, "table").length);
+  });
 }
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL`);

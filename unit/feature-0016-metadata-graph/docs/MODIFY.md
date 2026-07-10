@@ -1314,3 +1314,10 @@ source_of_truth: true
 - 변경: (1) 집계 supernode 크기 ≈1/zoom 스케일업 (2) 집계 상태 마커 제거 (3) 줌인 대형모델 화면 밖 테이블 컬럼 뷰포트 컬링(combo-safe·팬 재-emit).
 - 근거: agg-lod(§63) 배포 후 사용자 육안 피드백 + 시각검증 가능 확인(ADR-032). frontend-only·마이그 0.
 - 검증: headless 6(viewport-cull)+회귀 134 = **140 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 시각검증(TEST §65). 버스터 `admin.js?v=20260710-graph-perf2`.
+
+
+## CHG-20260710T200000-ai-claude-feature-0016-catband-cull — §67 집계폐기+카테고리밴드규모+테이블뷰포트컬링 (2026-07-10)
+- 대상: `admin.js`(_metaG6Build: aggActive 비활성·CATH 헤더·테이블/루틴/클러스터 컬링·팬훅) + `admin.html` 버스터 + headless `test_g6build_viewportcull.js`(테이블 컬링 반영)·`test_g6build_agglod.js`(집계비활성 잠금).
+- 변경: (A1) 집계-카드 폐기(클러스터 펼침 유지) (A2) 카테고리 밴드 헤더 "N DB · M 테이블" (B) 화면 밖 테이블/클러스터 뷰포트 컬링.
+- 근거: §65 배포 후 사용자 육안 피드백(집계=규모파악 어려움·줌인 perf 잔존, ADR-033). frontend-only.
+- 검증: headless 6+8+회귀 = **150 PASS**·node --check. diff 2렌즈 적대 리뷰. win-browser 육안(TEST §67). 버스터 `admin.js?v=20260710-catband-cull`.

@@ -4775,7 +4775,10 @@ function _metaG6Build() {
   const colLodActive = _colLodZoom < _META_COL_LOD_ZOOM && _expandedColTotal > _META_COL_LOD_MIN;
   _metaGraph._colLodActive = colLodActive;   // 상태줄 마커(밴드 훅)가 참조
   // agg-lod(§63): 극단 줌아웃 + 대형 모델이면 확장 클러스터를 집계 카드로 강등(아래 emission 분기가 소비).
-  const aggActive = _colLodZoom < _META_AGG_ZOOM && _metaGraph.nodes.size > _META_AGG_MIN;
+  // §67(사용자 피드백): 클러스터→단일 카드 집계(§63/§65)는 **규모·구조 파악을 어렵게** 해 폐기한다 —
+  //   스키마 클러스터는 펼친 상태를 유지하고, 규모는 상위 **제품 카테고리 밴드 헤더의 요소 개수**로 명시한다.
+  //   aggActive 를 상시 false 로 두어 _aggCard(집계 카드 강등)·supernode 스케일 경로를 비활성화(코드는 보존).
+  const aggActive = false;
   _metaGraph._aggActive = aggActive;
   // viewport-cull(§65): 화면(+마진) 밖 판정용 model-space 가시 rect 를 1회 산정. 집계 중이 아니고 대형 모델일 때만.
   //   getCanvasByViewport(screen→model) 로 좌상/우하 model 좌표를 얻어 마진 확장. API 부재/개요면 비활성.
@@ -4979,14 +4982,19 @@ function _metaG6Build() {
         style: { x: bl + bw / 2, y: bt + bh / 2, size: [bw, bh], radius: 14,
           fill: tint.bg, fillOpacity: 0.38, stroke: tint.bd, lineWidth: 1.6, lineDash: [7, 4],
           zIndex: _METZ.CAT_BG, cursor: "move" } });
-      const hdText = `🗂 ${cat.label} · ${cat.members.length} DB`;
+      // §67(사용자 피드백): 카테고리 밴드 헤더에 **규모(요소 개수)를 명시** — 스키마(DB) 수 + 총 테이블 수.
+      //   테이블 수는 schemaTotals(스키마→전체 테이블 수, 카드 badge 와 동일 소스)를 멤버 합산. 대형은 천단위 구분.
+      const _catTbl = cat.members.reduce((s, m) => s + ((_metaGraph.schemaTotals && _metaGraph.schemaTotals.get(m)) || 0), 0);
+      const hdText = `🗂 ${cat.label} · ${cat.members.length} DB` + (_catTbl > 0 ? ` · ${_catTbl.toLocaleString()} 테이블` : "");
       const hdW = Math.min(Math.max(80, Math.round(hdText.length * 8.2) + 22), Math.max(120, bw - 46));
       nodes.push({ id: "CATH:" + cat.key, type: _METtype,
         data: { kind: "cat-hd", cat: cat.key, label: cat.label },
         style: { x: bl + 12 + hdW / 2, y: bt + 16, size: [hdW, 22], radius: 11,
           fill: tint.hd, stroke: tint.bd, lineWidth: 1.2, zIndex: _METZ.GROUP_HD, cursor: "move",
           labelText: hdText, labelFill: "#1d2635", labelFontSize: 12, labelFontWeight: 700,
-          labelPlacement: "center" } });
+          // 리뷰 NIT: '· M 테이블' 추가로 라벨이 길어져 좁은 밴드에서 넘칠 수 있어 labelMaxWidth 로 ellipsis 흡수
+          //   (한글 실폭 > hdText.length*8.2 추정이라 hdW 캡만으론 부족).
+          labelMaxWidth: hdW - 8, labelPlacement: "center" } });
       nodes.push({ id: "CATX:" + cat.key, type: _METtype,
         data: { label: cat.collapsed ? "+" : "−", kind: "cat-ctl", cat: cat.key },
         style: Object.assign(_metaCtlStyle(bl + bw - 16, bt + 16), { size: [18, 18],
@@ -5043,6 +5051,14 @@ function _metaG6Build() {
         style: cardStyle });
       return;
     }
+    // viewport-cull(§67): 클러스터 전체 bbox 가 화면(+마진) 밖이면 combo·테이블·장식 전부 미방출(줌인 시 화면
+    //   밖 클러스터 draw 비용 0 — 가장 큰 절감). 부분 가시 클러스터는 combo 방출 + 가시 테이블만(per-table 컬링),
+    //   combo 는 가시분에 auto-fit. 카테고리 밴드 bbox 는 별도 선산정이라 컬링과 무관(규모 밴드 유지).
+    //   리뷰 MINOR: L.w/L.h 는 free-place(nodePos·groupOffset) 드래그 변위 미반영(pre-offset masonry)이라 드래그로
+    //   bbox 밖에 나간 가시 멤버를 오컬링할 수 있다 → free-place 존재 시 전체-클러스터 컬링을 건너뛰고 per-table
+    //   컬링(nodePos 반영 좌표)에만 맡긴다(정확·안전, free-place 는 드문 경로).
+    const _freePlaced = _metaGraph.nodePos.size > 0 || _metaGraph.groupOffset.size > 0;
+    if (_cullActive && !g.isTerms && !_freePlaced && _offView(L.x0, L.y0, L.x0 + L.w, L.y0 + L.h)) return;
     combos.push({ id, type: _METtype, data: { label: _metaComboName(id), kind: "schema" }, style: Object.assign({ labelText: _metaComboName(id) }, _metaComboStyleFor(g.isTerms)) });
     if (!g.isTerms && _metaGraph.schemaExpanded.has(id)) {
       // graph-initview: "−" 접기 컨트롤(combo 우상단) — 카드로 복귀.
@@ -5115,6 +5131,8 @@ function _metaG6Build() {
         colLeftX += ddx; tx += ddx; ty += ddy;
       }
       if (it.label === "Routine") {
+        // viewport-cull(§67): 화면 밖 루틴 칩도 미방출(테이블과 동형).
+        if (_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;
         // graph-funcproc(ADR-016): 함수(ƒ)/프로시저(⚙) 칩 — 검색 매칭 강조는 테이블과 동일 룰.
         //   §18.8 패널(NIT): isTerms 분기보다 먼저 — 스키마 세그먼트 없는 flat-scope Routine 이
         //   terms 클러스터로 강등돼도 용어 칩이 아닌 ƒ/⚙ 보라 칩으로 렌더된다.
@@ -5158,10 +5176,11 @@ function _metaG6Build() {
       // node-role-viz: 분석 완료 테이블 역할 표식 — 칩 색 = 역할색(Okabe-Ito) + 라벨 앞 역할 아이콘(색약·흑백 중복 인코딩).
       const role = _metaRoleOf(it.key);
       const cols = g.colsByTable.get(it.key);
-      // viewport-cull(§65): 이 테이블 bbox 가 화면(+마진) 밖이면 컬럼 억제(줌인 대형모델 draw 감축). col-lod(개요
-      //   전체 억제)와 OR 로 결합 — 둘 다 realH 예약·▤N 배지·테이블 유지(combo extent 불변)로 동형이라 안전.
-      const _tblOff = (cols && cols.length) ? _offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it)) : false;
-      const _colSuppressed = (colLodActive || _tblOff) && cols && cols.length;   // col-lod(개요) 또는 viewport-cull(줌인 화면 밖)
+      // viewport-cull(§67): 화면(+마진) 밖 테이블은 **테이블 칩 자체를 미방출**(줌인 대형모델 draw 급감 — 병목
+      //   =setData/draw 방출 요소 수). 화면 밖이라 시각 손실 0. 엣지 끝점은 renderEndpoint 가 승격/드롭. combo 는
+      //   가시 테이블에 auto-fit. 전체가 화면 밖인 클러스터는 상위에서 통째 컬링(combo 포함). §65 컬럼→테이블 확장.
+      if (_offView(colLeftX, ty - _METLAY.TROW / 2, colLeftX + COLW, ty - _METLAY.TROW / 2 + realH(g, it))) return;   // 화면 밖 테이블 컬링
+      const _colSuppressed = colLodActive && cols && cols.length;   // (in-view 테이블) 개요 col-lod 컬럼 억제만
       // col-lod: 억제 시 '▤N' 컬럼수 배지를 라벨 **앞**에 둔다 — _metaTableStyle labelMaxWidth(140) 후미
       //   ellipsis 로 긴 테이블명(예: cc_user_subscription)이 잘려도 배지가 살아남아 '컬럼 억제됨'
       //   affordance 를 보존(리뷰 MINOR — 후미 append 는 배지가 먼저 잘림). realH 예약 gap 도 '펼침' 신호.
@@ -5245,7 +5264,7 @@ function _metaG6Build() {
   };
   // LOD 축약 예외: 선택 노드에 직접 닿는 선(양끝 중 하나가 self)만 보존.
   const keepLodFor = (a, b) => litSelf(a) || litSelf(b);
-  // §66 이후: focus 밖 엣지는 아래 hlHide 로 build 에서 제거되므로 dimIf 의 dim 분기(fa && !hl)는
+  // §67 이후: focus 밖 엣지는 아래 hlHide 로 build 에서 제거되므로 dimIf 의 dim 분기(fa && !hl)는
   //   엣지 경로에서 정상적으로 도달하지 않는다. dimIf 는 방어적 안전망으로 남겨둔다 — 향후 hlHide
   //   가드 없이 push site 가 추가되면 최소한 dim(전량 원색 노출 방지)으로 fail-soft 한다.
   const dimIf = (st, hl) => {
@@ -5259,7 +5278,7 @@ function _metaG6Build() {
     }
     return st;
   };
-  // §66(hl-edge-hide, 사용자 리포트): 상대 하이라이트 활성(fa) 시 focus 부분그래프 밖 엣지는
+  // §67(hl-edge-hide, 사용자 리포트): 상대 하이라이트 활성(fa) 시 focus 부분그래프 밖 엣지는
   //   dim(0.12)이 아니라 **build 에서 제거**한다. dim(0.12) 유지의 폐해 두 가지 — (a) 거의 비가시인데
   //   non-focus 엣지가 전량 살아 있어 G6 가 path 지오메트리·hit-test·매 페인트를 계속 수행(대형 스코프
   //   수백~수천 엣지에서 순수 낭비) (b) G6 v5 기본 dirty-rectangle 렌더가 opacity 1→0.12 dim 전환 시
@@ -5291,7 +5310,7 @@ function _metaG6Build() {
       const b = present.has("SC:" + e.target) ? ("SC:" + e.target) : null;
       if (!a || !b) return;
       const keep = selTouch(a) && selTouch(b);
-      if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 카드간 관계선 제거(dim 대신)
+      if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 카드간 관계선 제거(dim 대신)
       edges.push({ id: e.id, source: a, target: b,
         data: { label: "SCHEMA_REF", count: e.count || 1, ref_count: e.ref_count, use_count: e.use_count },
         style: dimIf(_metaSchemaRefEdgeStyle(e.count), keep) });
@@ -5317,7 +5336,7 @@ function _metaG6Build() {
         const xr = !!e.cross_ds || (!!ss && !!ts && ss !== ts);
         const keep = selTouch(rs) && selTouch(rt);
         const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
-        if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 루틴 사용선 제거(colLevel·agg 공통 — LOD 도달 전)
+        if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 루틴 사용선 제거(colLevel·agg 공통 — LOD 도달 전)
         if (rs === e.source && rt === e.target) {
           if (lodActive && !keepLod && !xr) { lodDropped += 1; return; }
           edges.push({ id: e.id, source: rs, target: rt,
@@ -5337,7 +5356,7 @@ function _metaG6Build() {
       }
       if (present.has(e.source) && present.has(e.target)) {
         const keep = selTouch(e.source) && selTouch(e.target);
-        if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 기타 관계선(DESCRIBES/RELATED_TERM 등) 제거(LOD 도달 전)
+        if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 기타 관계선(DESCRIBES/RELATED_TERM 등) 제거(LOD 도달 전)
         if (lodActive && !keepLodFor(e.source, e.target)) { lodDropped += 1; return; }   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
         edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status },
           style: dimIf(_metaEdgeStyleFor(e.status), keep) });
@@ -5352,7 +5371,7 @@ function _metaG6Build() {
     if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;
     const keep = selTouch(rs) && selTouch(rt);
     const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
-    if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 REFERENCES(컬럼-레벨·카드 승격 agg) 제거(LOD 도달 전)
+    if (hlHide(keep)) return;   // §67: 하이라이트 시 focus 밖 REFERENCES(컬럼-레벨·카드 승격 agg) 제거(LOD 도달 전)
     const colLevel = (rs === e.source && rt === e.target);
     if (colLevel) {
       // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지). crossds-rel: cross_ds 면 마젠타 점선.

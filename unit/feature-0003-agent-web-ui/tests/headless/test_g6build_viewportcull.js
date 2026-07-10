@@ -53,8 +53,8 @@ const check=(n,c,e)=>{ if(c){pass++;console.log("PASS",n);}else{fail++;console.l
   check("T1 full 뷰포트 컬럼 전량 방출", colNodes(full) === 600, colNodes(full));
   check("T1 작은 뷰포트 컬럼 방출 급감(< full)", colNodes(cull) < colNodes(full), [colNodes(cull), colNodes(full)]);
   check("T1 화면 안 일부 컬럼은 방출(>0)", colNodes(cull) > 0, colNodes(cull));
-  // combo-safe: 테이블 칩은 양쪽 동수(항상 방출)
-  check("T1 combo-safe — 테이블 칩 양쪽 30 동수", tblNodes(full).length === 30 && tblNodes(cull).length === 30, [tblNodes(full).length, tblNodes(cull).length]);
+  // §67: 테이블 컬링 — 작은 뷰포트는 화면 밖 테이블 칩도 미방출(< full 30, in-view 만). full 은 30 전량.
+  check("T1 테이블 컬링 — full 30 / 작은 뷰포트 < 30(>0)", tblNodes(full).length === 30 && tblNodes(cull).length < 30 && tblNodes(cull).length > 0, [tblNodes(full).length, tblNodes(cull).length]);
 }
 
 // T2: 좌표 band-invariant — 컬링 여부와 무관하게 테이블 위치 동일(reflow 0)
