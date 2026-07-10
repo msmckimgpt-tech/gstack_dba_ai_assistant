@@ -1,6 +1,6 @@
 # Report
 
-## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §73/ADR-035, 머지 재번호 §70→§73·ADR-034→ADR-035 §13.1)
+## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §74/ADR-036, 머지 재번호 §70→§73→§74·ADR-034→ADR-036 §13.1)
 
 ### 요청 (사용자)
 `그래프 뷰` 의 **미니맵 최적화** — "화면 구성이 갱신되었을 경우, 한 번 draw한 전체 이미지를 재사용하는 방식도 고려."
@@ -18,12 +18,12 @@ G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)의 이벤트 바�
 - **호출 시점 = 첫 draw 이후**(적대 리뷰 H1 발견·수정): G6 v5 는 `context.plugin` 을 생성자가 아니라 첫 `draw()` 의 `initRuntime()` 에서 lazy 생성 → init 직후 호출은 patch no-op(최적화 사멸)였다. `await g.draw()` 직후 멱등 호출로 이동해 plugin 존재 시점에 래핑.
 - **네이티브 드래그 stale 수정**(적대 리뷰 H2, BLOCK→수정): 노드/콤보 드래그는 `_metaG6Apply` 를 안 거치고 `element.draw({stage:"translate"})` 로 요소를 직접 이동하는데 이것도 `AFTER_DRAW`(stage:"translate")를 발생시켜 renderMinimap 을 부른다 → stale 서명으로 skip → 미니맵이 드래그를 반영 못 하고 얼어붙던 회귀. `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 재복제 폴백으로 해소(node·combo 단일 지점 커버).
 - **효과**: 상태-only rebuild(선택/역할도착/busy)는 미니맵 재복제 skip → 이미 그려둔 전체 이미지 재사용. 구성 변경(펼침/접기/드래그/LOD/스코프전환/검색)은 서명 변경 → 정상 재복제. 팬/줌은 원래대로 마스크만 갱신.
-- cache-buster (머지 후) `admin.js?v=20260710-mmreuse-colnav`(graph-colnav 병렬 머지와 결합).
+- cache-buster (머지 후) `admin.js?v=20260710-mmreuse-layoutmemo`(graph-colnav·layoutmemo 병렬 머지와 결합).
 
 ### 검증
 - 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 기하 서명 11 + B 실 build 4 + C 패치 10 + **D 드래그 무효화 10**).
 - 회귀 **150 PASS**(collod 20·agglod 8·category 26·edge 71·viewportcull 6·vpack 19) · `node --check admin.js` PASS.
-- 적대 리뷰가 2건 BLOCK 결함 적발 → 수정: **H1** 패치를 init 시점 호출해 plugin lazy-init 전이라 no-op(최적화 사멸), **H2** 네이티브 드래그가 stale 서명으로 미니맵 재복제 skip(드래그 반영 못 함). 둘 다 수정·테스트 커버. POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §73 — 미니맵 렌더·뷰포트 추종·상태변경 후 안정·**드래그 반영**·구성변경 반영·pageerror 0).
+- 적대 리뷰가 2건 BLOCK 결함 적발 → 수정: **H1** 패치를 init 시점 호출해 plugin lazy-init 전이라 no-op(최적화 사멸), **H2** 네이티브 드래그가 stale 서명으로 미니맵 재복제 skip(드래그 반영 못 함). 둘 다 수정·테스트 커버. POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §74 — 미니맵 렌더·뷰포트 추종·상태변경 후 안정·**드래그 반영**·구성변경 반영·pageerror 0).
 
 ### 트레이드오프 (사용자 요구와 정합)
 역할 칩 색·선택 하이라이트·dim 은 미니맵에 즉시 안 뜨고 **다음 기하 변경 때** 반영 — 미니맵 168×112px 스케일서 색은 시각적으로 무의미하며, 사용자가 명시 요청한 "구성 불변 시 전체-이미지 재사용" 의 본질.
@@ -1604,3 +1604,9 @@ REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband
 - **독립 적대 리뷰(subagent, 동일 코드)**: VERDICT PASS — BLOCKING/MAJOR 0. "showDetail 이 `_opSeq` bump → 예약 팬 취소" 가설 반증(showDetail 무-bump·카메라 미조작 → 더블 팬/되감기 없음). MINOR 2(미렌더 안내 비가시 stale 카피·클릭당 bake 2회) 가시 회귀 아님 → 수용.
 - **POST-DEPLOY win-browser 실측(라이브 a24415a5)**: mssql-web-qa `shop_pt.T_ItemInfo` 상세의 `[data-rtuse]` 18행(읽기 12·쓰기 6) 실클릭 → 카메라 중심 [3600,7092]→[2523,7871] 팬 + 상세가 대상 ROUTINE(MSP_ADMIN_ITEM_LIST)으로 전환 동시, pageerror 0. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. 자산 curl(서빙 버스터·핸들러) 확증. 스크린샷 before/after.
 - 원격 브랜치 `ai/claude/feature-0016-graph-rtuse-camera` 는 병합 후 origin 에서 정리 완료.
+## §73 graph-layoutmemo — 배치-정렬 함수 위상-서명 메모이즈 (줌인 성능 근본원인) (2026-07-10)
+- 사용자 요청(누적): "극단적인 줌 인 상태에서도(밀집 아닌데도) 성능 저하 — 근본 원인을 탐색 후 해소."
+- 근본원인(win-browser 실측 함수분해): `_metaG6Build` 의 ~99% 가 `_metaRelOrderAll`(barycenter, ~55%·38ms) + `_metaSimGroups`(affix 유사그룹, ~45%·32ms). 둘 다 **전체 모델 처리**(뷰포트·줌·선택 무관) → 극단 줌인·비밀집에서도 rebuild 당 68~145ms 고정 = "줌인해도 느림"의 정체. §65/§67 컬링(화면 밖만)으론 못 줄이는 축.
+- 해소: 두 순수 함수를 **위상-서명(_metaTopoSig: nodes/REFERENCES edges/schemaExpanded/mode) 메모이즈**. 서명 무변경(팬·줌·선택·마커·컬럼토글·드래그) rebuild 는 정렬 재사용 → build 를 방출 비용만 남김. 통짜 layout 캐시는 groupOf/groupMembers side-effect landmine 이라 배제. cull 마진 0.6→0.3(고배율 방출 감축).
+- 검증: headless 메모이즈 19 + 회귀 150 = **169 PASS**·node --check. 캐시적중==fresh 좌표완전동일(메모이즈가 출력 불변) 증명. §18.8 적대 리뷰(REV §73: BLOCKING/MAJOR 0 · F1 roles·F2 노드속성 stale 캐시 잡아 서명 확장 수정). POST-DEPLOY win-browser 실측.
+- 캐시버스터 `admin.js?v=20260710-layoutmemo`. ADR-035. §65/§67 컬링과 상보(컬링=방출 수↓, 메모이즈=배치 계산↓).

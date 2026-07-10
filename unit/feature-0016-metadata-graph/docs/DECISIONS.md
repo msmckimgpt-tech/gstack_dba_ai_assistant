@@ -886,16 +886,22 @@ source_of_truth: true
 - 트레이드오프/한계: caveats 를 빈 값 허용으로 바꾸면 "정보 없음" 신호가 줄지만, 그 신호는 원래 운영자에게 무가치한 노이즈였음(자기-불평). 원천 데이터 공백(컬럼·테이블 설명 미적재)은 이 변경 범위 밖 — 프롬프트가 불평을 멈출 뿐 실질 풍부화는 상류 큐레이션/인트로스펙션 후속 필요. 초대형(>SCHEMA_MAX=2000) 스키마는 여전히 capped 표시 + 재실행 드레인. 기존 저장된 나쁜 caveats 는 재분석(only_missing=false) 으로만 교체됨.
 - 검증: `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체 회귀 0). **라이브 LLM**(container shadow-load + 프롬프트 monkeypatch): 희소 Table 주의 `''`, Get 루틴 → 민감데이터 권한/감사 주의, Delete 루틴 → 비가역 손실 주의(양질 유지) — 자기-불평 전멸. **라이브 payload**: touches read/write 정확 구분 + returns 투영. POST-DEPLOY: cc_data_main 재생성 후 표본 caveats + 커버리지(555) 재확인(T69.5).
 - Supersedes: — / Superseded By: —
-
-## ADR-035 — §73 graph-minimap-reuse: 미니맵은 기하 서명 게이트로 '구성 불변 시 재복제 skip'(전체-이미지 재사용) [머지 재번호 ADR-034→ADR-035, §13.1]
+## ADR-035 — §73 배치-정렬 함수 위상-서명 메모이즈 (줌인 성능 근본원인) (사용자 요청)
 - 상태: 채택 (2026-07-10)
-- 맥락: 사용자 요청 — 그래프 뷰 미니맵 최적화, "화면 구성이 갱신되었을 경우 한 번 draw한 전체 이미지를 재사용." G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)은 `AFTER_DRAW`/`AFTER_RENDER`/`AFTER_ANIMATE → renderMinimap()`(전 요소 key-shape `cloneNode` 전량 재복제) 와 `AFTER_TRANSFORM → onTransform`(updateMask+setCamera 만, 재복제 없음)을 분리 바인딩. 즉 **팬/줌은 이미 최적**. 남은 낭비는 이 앱의 잦은 **상태-only `_metaG6Apply`(setData+draw)** 가 발동하는 `AFTER_DRAW → renderMinimap` 전량 재복제 — 선택·상대하이라이트·역할도착·busy 는 미니맵 기하를 안 바꾸는데도 수백~수천 노드 재복제.
+- 맥락: §67 배포 후 사용자 피드백 — "극단적인 줌 인 상태에서도(밀집 아닌데도) 성능 저하. 근본 원인을 탐색 후 해소." §65/§67 뷰포트 컬링은 화면 **밖** 요소만 줄여, 화면 안 요소가 많거나 극단 줌인(소수 가시)에서도 rebuild 마다 도는 **전체 모델 배치 계산**을 못 줄인다. win-browser(PB-0008 relay) 실측 함수분해로 근본원인 규명: `_metaG6Build` build time 의 ~99% 가 `_metaRelOrderAll`(barycenter 4-sweep, ~55%·측정 38ms) + `_metaSimGroups`(affix 유사그룹, ~45%·측정 32ms)이며, **둘 다 전체 모델을 처리(뷰포트·줌·선택 무관)** → 극단 줌인·비밀집에서도 rebuild 당 68~145ms 고정. 이것이 "줌인해도 느림"의 정체.
 - 결정:
-  - **(A) 기하 서명 게이트**: `_metaMinimapGeomSig(built)` — 미니맵 기하만 해시(요소 id·부모combo·위치 x/y·크기·엣지 source/target). **시각상태(states/fill/opacity/역할색) 제외**(미니맵 168×112px 서 무의미, 사용자 요구=구성 불변이면 재사용). 위치 0.25px 양자화, `nodes:combos:edges:hash` 프리픽스.
-  - **(B) 플러그인 래핑**: `_metaPatchMinimapReuse(graph)` 가 `getPluginInstance("minimap").renderMinimap` 을 멱등 래핑. 서명 동일+캔버스 존재면 skip, 아니면 render. `_metaG6ApplyOnce` 가 setData 직전 같은 built 로 `_miniGeomSig` 세팅. renderMask(뷰포트 사각형)는 별도 호출이라 skip 해도 갱신.
-  - **(B-timing) 첫 draw 이후 래핑(적대 리뷰 H1)**: G6 v5 는 `context.plugin` 을 첫 `draw()` 의 initRuntime 에서 lazy 생성 → init 직후 호출은 no-op(최적화 사멸). `await g.draw()` 직후 멱등 호출로 배치.
-  - **(C) 네이티브 드래그 서명 무효화(적대 리뷰 H2, BLOCK→수정)**: 드래그는 `_metaG6Apply` 미경유·`element.draw({stage:"translate"})` 로 직접 이동하나 이것도 `AFTER_DRAW`(stage:"translate")를 발생 → stale 서명으로 미니맵 skip(얼어붙음, 원본 대비 회귀). `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 재복제 폴백. apply data draw(stage 미지정)는 서명 유지. node·combo 단일 지점(드래그는 transient 라 재복제 허용, 정착 후 다음 apply 가 최적화 재개).
-- 대안 기각: 커스텀 미니맵 재구현(재-vendoring·품질 회귀, 과설계) / 서명에 역할·상태 포함(이득 소멸+색 무의미) / delay 증대(재복제 비용 자체 안 줄임).
-- 트레이드오프: 역할 칩 색·하이라이트·dim 은 다음 기하 변경 때 미니맵 반영(스케일서 무의미, 사용자 요구와 정합). 실패 시 원본 폴백(정확성 보존).
-- 검증: 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A11·B4·C10·D10) + 회귀 **150 PASS** · `node --check` PASS · 적대 리뷰(H1·H2 2건 BLOCK 적발→수정, REVIEW REV-20260710T233000). POST-DEPLOY win-browser 육안(feature-0003 TEST §73).
+  - **순수 함수 개별 메모이즈**(통짜 layout 캐시 배제 — layout 은 groupOf/groupMembers 를 build 마다 clear+재구성하는 side-effect 라 skip 시 group 드래그·collapse 파손 landmine). `_metaRelOrderAll`(slice+sort 복사본·fresh Map 반환)·`_metaSimGroups`(주석 명시 "순수·결정론·펼침비의존")는 부작용 없어 안전.
+  - **`_metaTopoSig()`**: 위상 서명 = nodes 키 롤링해시 + REFERENCES edges(source/target/status) + schemaExpanded(정렬) + mode. relOrder/simGroups 가 의존하는 입력 전량 포착. `_metaG6Build` 진입 시 서명 무변경이면 `_metaGraph._relOrderCache`(최상위 relOrder 1개) + `_metaGraph._simCache`(스키마별 simGroups Map) 재사용, 변경 시 무효화. 컬럼(colsByTable)·freeplace(clusterOffset/nodePos/groupOffset)·선택·마커·뷰포트는 서명 무관 = 캐시 적중(정렬은 이들과 독립 → 재계산 skip). 컬럼이 nodes(Map) 아닌 colsByTable 거주라 서명서 자연 제외 = 컬럼토글도 적중.
+  - **cull 마진 0.6→0.3**: 고배율 방출 과다(margin 0.6=방출면적 뷰포트×4.84, zoom 2.5 337 방출) 완화(×2.25). 메모이즈로 re-emit 의 layout 비용 소거 → tight 마진 감당.
+- 트레이드오프: 서명 계산 자체 ~1-2ms(nodes/edges 1-pass) 상시 비용 — 적중(대다수 상호작용) 시 -68~145ms 순이득, miss(펼침/접기/ingest/검색) 시 +2ms. relOrder 하류 안정화(_metaStableSeq)가 캐시 Map in-place 갱신하나 멱등(이미 안정화 재안정화=동일). simGroups 는 groupOrder/groupTableOrder 를 갱신하나 이는 위상 파생 안정화 누적이라 적중 시 skip 해도 유효(위상 무변경). group collapse/drag 는 guard B(매 build)서 적용 → 캐시와 직교.
+- 검증: headless `test_g6build_layoutmemo.js` **15 PASS**(캐시적중==fresh 좌표완전동일·서명무효화·컬럼/freeplace 독립·서명결정론) + 회귀 **150 PASS** = 165 → 적대리뷰 F1(roles)/F2(노드 속성) 서명 확장 후 T6 추가 **169 PASS**. node --check. §18.8 적대 리뷰(REV §73: BLOCKING/MAJOR 0, F1 HIGH·F2 MEDIUM·NIT 수정). POST-DEPLOY win-browser 실측(build 함수분해 재측정 — TEST §73).
+- Supersedes: — / Superseded By: — (§65 ADR-032·§67 ADR-033 뷰포트 컬링과 **상보** — 컬링=방출 요소 수↓, 메모이즈=배치 계산↓)
+
+## ADR-036 — §74 graph-minimap-reuse: 미니맵 기하 서명 게이트로 '구성 불변 시 재복제 skip'(전체-이미지 재사용) [머지 재번호 ADR-034→ADR-035→ADR-036, §13.1]
+- 상태: 채택 (2026-07-10)
+- 맥락: 사용자 요청 — 미니맵 최적화, "화면 구성이 갱신되었을 경우 한 번 draw한 전체 이미지를 재사용." G6 v5 minimap(`tZ`)은 `AFTER_DRAW/RENDER/ANIMATE → renderMinimap()`(전 요소 cloneNode 재복제) 와 `AFTER_TRANSFORM → onTransform`(마스크만) 분리 바인딩 → 팬/줌은 이미 최적. 남은 낭비=상태-only `_metaG6Apply` 의 `AFTER_DRAW → renderMinimap` 전량 재복제(기하 불변인데도).
+- 결정: (A) 기하 서명 `_metaMinimapGeomSig`(id·부모combo·위치·크기·엣지 끝점만; 시각상태 제외·0.25px 양자화). (B) `_metaPatchMinimapReuse` 가 `renderMinimap` 멱등 래핑(서명 동일 skip). (B-timing) 첫 draw 이후 래핑(H1 — plugin lazy-init). (C) `graph.on("afterdraw")` 가 `stage==="translate"`(드래그) 시 `_miniGeomSig=null` 무효화(H2 — 드래그 stale 방지, apply data draw 는 stage 미지정이라 서명 유지).
+- 대안 기각: 커스텀 미니맵 재구현(과설계·재-vendoring 위험) / 서명에 상태 포함(이득 소멸·색 무의미) / delay 증대(재복제 비용 자체 안 줄임).
+- 트레이드오프: 역할색·하이라이트·dim 은 다음 기하변경 때 미니맵 반영(스케일서 무의미, 사용자 요구와 정합). 실패 시 원본 폴백.
+- 검증: 신규 headless **35 PASS**(A11·B4·C10·D10) + 회귀 **150 PASS** · `node --check` · 적대 리뷰(H1·H2 2건 BLOCK→수정, REVIEW REV-20260710T233000). POST-DEPLOY 육안(feature-0003 TEST §74).
 - Supersedes: — / Superseded By: —

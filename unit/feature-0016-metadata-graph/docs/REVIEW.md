@@ -1425,12 +1425,18 @@ source_of_truth: true
 - 대상: feature-0003 TEST §71 POST-DEPLOY append + feature-0016 TASK T71.3 완료 + REPORT POST-DEPLOY 절 + MODIFY CHG. 코드/자산 변경 0(순수 문서).
 - 근거: §71(PR #662, main b7d7d871→라이브 a24415a5)의 실 Windows Chrome POST-DEPLOY 실측(win-browser relay, `shop_pt.T_ItemInfo` 상세 `[data-rtuse]` 18행 실클릭 → 카메라 팬 [3600,7092]→[2523,7871] + 상세 전환 동시, pageerror 0, 자산 curl 확증)을 정본에 기록. 코드 diff 부재 → §18.8 적대 패널 불요(SKIPPED). §71 코드 diff 의 적대 리뷰는 원 cycle inline REV-20260710T163512 + 본 세션 독립 subagent 리뷰(VERDICT PASS, BLOCKING/MAJOR 0)에서 완료.
 - 배포: §71 cycle 에서 이미 완료(무중단 롤링·healthz PASS). 본 cycle 은 배포 없음(docs-only).
+## REV-20260710T233000-ai-claude-feature-0016-layoutmemo [SUBAGENT: PASS-WITH-FIXES] — §73 배치-정렬 함수 위상-서명 메모이즈 캐시 staleness 적대 리뷰
+- 단일 목적 적대 패널: "정렬 함수(_metaRelOrderAll·_metaSimGroups) 출력이 바뀌는데 `_metaTopoSig()`는 안 바뀌는 경로" = stale 캐시 버그류만 전수 탐색. 코드 실측(호출부·읽는 상태 전수 grep).
+- **BLOCKING 0, MAJOR 0.** 리뷰가 확인한 **안전 항목**: ① simGroups side-effect(groupOrder/groupTableOrder) 는 simGroups 내부에서만 read/write·외부 소비자 0(drag/collapse/emission 무참조)·resetModel 만 clear → 적중 시 skip 안전 ② relOrder in-place 안정화 멱등 ③ category collapse 는 schemaIdx 불변(catInfo.ids 는 collapsed 무관 전량 push)이라 relOrder 캐시 유효 ④ 비-REFERENCES edges·weight·cardinality 는 relAdj 범위 밖이라 서명 제외 정당 ⑤ analyzed 는 state 마커(emission)라 layout 무관 ⑥ 노드 iteration order 무영향(name 정렬·key 배정).
+- CONFIRMED **F1 [HIGH, 라이브 자동 트리거] — 수정**: `_metaSimGroups` Phase-3 역할 폴백 `roleFam=_metaRoleOf(t.key)`(→`_metaGraph.roles`)가 서명 밖. AI 분석 완료(2.5s 폴 `_metaGraphMarkAnalyzed`→`roles.set`+roleChanged rebuild)는 nodes/edges/schemaExpanded/mode 무변경 → 서명 무변경 → simGroups stale → 역할 블록 재그룹핑 미반영(칩 색만 갱신, 블록 구조 동결). **수정**: `_metaTopoSig` 에 `roles` Map 해시(rn+rh) 포함.
+- CONFIRMED **F2 [MEDIUM, latent] — 수정**: 재-ingest(`_metaGraphIngest`)가 기존 키의 `name`/`fqn`/`cluster_id`/`cluster_label` 변경 — simGroups(be:클러스터 4437·cluster_label 4493·affix)·relOrder(name 정렬·fqn 스키마귀속) 소비. 키만 해시라 stale. 라이브 재현 경로 미확인이나 계약 결함. **수정**: 서명 노드 루프가 키+name+fqn+cluster_id+cluster_label 해시.
+- NIT(하드닝, **수정**): `_metaGraphResetModel` 이 캐시 3필드 미클리어(schemaExpanded.clear 결합 의존) → 명시 클리어 추가.
+- 근본원인(리뷰 지적): 서명이 노드 **키만** 해시하던 것 → 정렬 함수가 읽는 노드 **객체 속성+roles** 로 확장.
+- 검증: 수정 후 신규 테스트 T6(roles·cluster_id·name 변경 시 서명 상이 + roles 변경 후 rebuild stale 아님) 추가 → `test_g6build_layoutmemo.js` **19 PASS** + 회귀 150 = **169 PASS** · node --check. 캐시적중==fresh 좌표동일 불변 유지.
 
-## REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES] — §73 미니맵 전체-이미지 재사용 diff 적대 리뷰 [머지 재번호 §70→§73]
-- 대상: CHG-20260710T230000-minimap-reuse (admin.js `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + `_metaG6ApplyOnce` 서명 배선 + minimap `key:"minimap"` + afterdraw 드래그 무효화 + admin.html 버스터 + 신규 test).
-- 방법: §18.8 적대 리뷰(general-purpose). 초기 2렌즈(정확성/UX)는 user-interrupt 로 중단됐으나 렌즈1 이 linchpin 결함(H1) 을 번들 역공학으로 적발. 수정본에 집중 확인 리뷰(H1~H5, 번들 사실 주입) 재수행 → H2 신규 BLOCK 추가 적발. 두 결함 수정·테스트 커버 후 잔여 클리어.
-- **BLOCK 2건 적발→전부 수정**:
-  - **H1(patch no-op)**: G6 v5 Graph 는 `context.plugin` 을 첫 `draw()` 의 `prepare()→initRuntime()` 에서 lazy 생성. init 직후 `_metaPatchMinimapReuse` 호출 → `getPluginInstance("minimap")` throw → catch → no-op → 패치 영영 안 걸려 최적화 사멸. **수정**: `await g.draw()` 직후 멱등 호출로 이동.
-  - **H2(네이티브 드래그 stale)**: 노드/콤보 드래그는 `_metaG6Apply` 미경유·`translateElementTo`→`element.draw({stage:"translate"})` 로 요소 직접 이동하나 이것도 `AFTER_DRAW`(payload `stage:"translate"`, 번들 emit 실측)를 발생 → renderMinimap 호출 시 `_miniGeomSig`(마지막 build 기준 stale)===`__lastGeomSig` → skip → 미니맵이 드래그 반영 못 하고 얼어붙음(원본 대비 회귀). **수정**: `graph.on("afterdraw")` 가 `stage==="translate"` 시 `_miniGeomSig=null` 무효화. apply data draw(stage 미지정)는 서명 유지. D 섹션 10 테스트로 lock.
-- 클리어: H1 타이밍(draw 직후 동기 설치→debounce 발화 전 발효·첫 렌더 blank 없음), H3 서명 필드 정합(build `{id,combo,style:{x,y,size}}` rect/circle 분기·엣지·combo.id), H4 멱등·안전(throw/null/비함수 no-op), H5 renderMask 독립(skip 시에도 뷰포트 사각형 갱신).
-- 검증: 수정 후 신규 **35 PASS**(A11·B4·C10·D10) + 회귀 **150 PASS** · `node --check` PASS. POST-DEPLOY PB-0008 육안(feature-0003 TEST §73 — 드래그 반영 실증 포함).
+## REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES] — §74 미니맵 전체-이미지 재사용 diff 적대 리뷰 [머지 재번호 §70→§73→§74]
+- 대상: CHG-20260710T230000-minimap-reuse (admin.js `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + 서명 배선 + minimap `key:"minimap"` + afterdraw 드래그 무효화 + 신규 test).
+- 방법: §18.8 적대 리뷰. 초기 2렌즈(정확성/UX) user-interrupt 중단·렌즈1 이 linchpin(H1) 적발. 수정본 집중 확인 리뷰(H1~H5)에서 H2 신규 BLOCK 추가 적발. 둘 다 수정·테스트 커버.
+- **BLOCK 2건→수정**: **H1(no-op)** G6 plugin 은 첫 draw 의 initRuntime 에서 lazy 생성 → init 직후 `getPluginInstance` 실패 → 패치 사멸 → `await g.draw()` 직후 이동. **H2(드래그 stale)** 드래그(`element.draw({stage:"translate"})`, `_metaG6Apply` 미경유)도 `AFTER_DRAW`(stage:"translate")를 발생 → stale 서명 skip → 미니맵 얼어붙음(원본 대비 회귀) → `afterdraw` stage 무효화. D 섹션 10 테스트 lock.
+- 클리어: H1 타이밍(draw 직후 동기 설치·첫 렌더 blank 없음), H3 서명 필드 정합, H4 멱등·안전(no-op 폴백), H5 renderMask 독립.
+- 검증: 수정 후 신규 **35 PASS** + 회귀 **150 PASS** · `node --check`. POST-DEPLOY PB-0008(feature-0003 TEST §74).

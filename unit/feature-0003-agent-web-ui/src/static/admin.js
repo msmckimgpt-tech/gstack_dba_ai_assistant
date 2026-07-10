@@ -3739,7 +3739,10 @@ const _META_AGG_MIN = 60;         // 전체 모델 노드 수가 이 미만이�
 //   병목=draw 방출 요소 수라, 보이지 않는 컬럼을 안 그리면 줌인 클릭/팬이 가벼워진다. 뷰포트를 덮는 개요에선
 //   모든 테이블이 in-view 라 자동 무효(집계·col-LOD 가 담당). combo-safe: 테이블 칩은 항상 유지 → combo extent 불변.
 const _META_CULL_MIN = 400;       // 모델 노드 수가 이 미만이면 컬링 안 함(작은 모델은 전체가 화면에 근접)
-const _META_CULL_MARGIN = 0.6;    // 뷰포트 밖 여유(뷰포트 크기 배수) — 팬 시 컬럼이 경계에서 갑자기 튀지 않게
+const _META_CULL_MARGIN = 0.3;    // 뷰포트 밖 여유(뷰포트 크기 배수) — 팬 시 컬럼이 경계에서 갑자기 튀지 않게.
+//   graph-layoutmemo(§73): 0.6→0.3 — 고배율 줌인에서 방출 영역이 과대(margin 0.6 이면 방출면적=뷰포트×4.84,
+//   zoom 2.5 에서 337 방출)해 setData+draw 를 키웠다. 메모이즈로 re-emit 의 layout 비용이 사라져 더 tight 한
+//   마진(방출면적 ×2.25)이 감당 가능 — 방출 수↓ = draw↓. 팬 재-emit 은 §65 debounce 로 경계 pop 흡수.
 // §57.9: 상대 하이라이트 침강 opacity — base style bake(_metaBakeBaseOpacity)와 dimmed G6 상태가 공유.
 const _META_DIM_OPACITY = 0.38;
 // graph-zorder(§52): 캔버스 요소 의미 z-스케일 — **단일 소스**. @antv/g 는 (zIndex → 삽입순 renderOrder)로
@@ -4633,6 +4636,32 @@ function _metaCatAssign(ids) {
   return res;
 }
 
+// ── graph-layoutmemo(§73): 순수 배치-정렬 함수 메모이즈용 위상 서명 ──
+//   실측(win-browser, PB-0008): _metaG6Build 의 ~99% 는 _metaRelOrderAll(barycenter 4-sweep)+
+//   _metaSimGroups(affix 유사그룹)이 지배하고, 둘 다 **전체 모델**을 처리(뷰포트·줌 무관)해 극단 줌인·
+//   비밀집 상태에서도 rebuild 마다 68~145ms 를 태운다("줌인해도 느림"의 근본원인). 두 함수는 순수 —
+//   결과는 (로드된 테이블/루틴 = nodes + 정렬이 읽는 객체 속성, REFERENCES 관계 = edges, 역할 = roles,
+//   펼친 스키마 = schemaExpanded, mode)에만 의존하고 **컬럼(colsByTable)·freeplace(clusterOffset/nodePos/
+//   groupOffset)·선택·뷰포트와 무관**. → 서명 무변경이면(팬·줌·선택·마커·컬럼토글·드래그) 정렬 재사용 →
+//   rebuild 를 방출 비용만 남긴다. 컬럼은 nodes(Map) 아닌 colsByTable 거주라 서명서 자연 제외 = 컬럼토글도 적중.
+//   ⚠ 적대리뷰(§73) F1/F2 반영: simGroups/relOrder 는 노드 **키**뿐 아니라 **객체 속성**(name·fqn·cluster_id·
+//   cluster_label — affix·be:클러스터·정렬)과 **roles**(Phase-3 역할 폴백 _metaRoleOf)도 읽으므로 서명에 포함.
+//   키만 해시하면 AI 분석 완료(roles 변경·nodes 무변경) 또는 재-ingest(속성 변경·키 무변경)에서 stale 캐시 발생.
+function _metaTopoSig() {
+  const hs = (str, h) => { for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h; };
+  let nh = 0; _metaGraph.nodes.forEach((v, k) => {
+    nh = hs(k + "|" + (v.name || "") + "|" + (v.fqn || "") + "|" + (v.cluster_id != null ? v.cluster_id : "") + "|" + (v.cluster_label || ""), nh);
+  });
+  let rh = 0, rn = 0; _metaGraph.roles.forEach((role, k) => { rn++; rh = hs(k + "=" + String(role), rh); });   // F1: 역할 폴백 그룹핑
+  let eh = 0, en = 0;
+  _metaGraph.edges.forEach((e) => {
+    if (e.type !== "REFERENCES") return;   // relAdj 는 REFERENCES 만 소비 — 서명도 동일 범위(다른 엣지 변화는 정렬 무영향)
+    en++; eh = hs((e.source || "") + ">" + (e.target || "") + ":" + (e.status || ""), eh);
+  });
+  return _metaGraph.nodes.size + "|" + en + "|" + rn + "|" + nh + "|" + eh + "|" + rh + "|"
+    + [..._metaGraph.schemaExpanded].sort().join(",") + "|" + _metaGraph.mode;
+}
+
 function _metaG6Build() {
   // graph-product-cat(§43): 제품 카테고리 개요는 전용 경로(Product→Datasource 2-열, combo 미사용) —
   //   기존 스키마 masonry 무간섭·저위험(ADR-014). mode 가 "products" 일 때만 발동.
@@ -4674,6 +4703,15 @@ function _metaG6Build() {
     }
     ensureG(_META_TERMS_COMBO).terms.push(n);   // GlossaryTerm/Datasource/Product/기타
   });
+  // graph-layoutmemo(§73): 위상 서명이 바뀌면 순수 정렬 캐시(relOrder/simGroups) 무효화. 무변경이면
+  //   아래 _metaRelOrderAll·_metaSimGroups 호출이 캐시를 재사용해 rebuild 의 지배 비용(68~145ms)을 제거.
+  //   서명 계산 자체는 ~1-2ms(nodes/edges 1-pass) — 적중 시 순이득 크다.
+  const _topoSig = _metaTopoSig();
+  if (_metaGraph._layoutSig !== _topoSig) {
+    _metaGraph._layoutSig = _topoSig;
+    _metaGraph._relOrderCache = null;
+    _metaGraph._simCache = new Map();
+  }
   // 클러스터 순서: 관계 seriation(graph-rel-layout, 무관계 시 자연정렬 유지), terms 클러스터는 항상 마지막.
   const relAdj = _metaRelAdjacency(tableByKey);
   const relSchemaOf = (tk) => { const n = tableByKey.get(tk); return n ? _metaSchemaComboOf(n) : null; };
@@ -4696,7 +4734,11 @@ function _metaG6Build() {
     ids.length = 0; catInfo.ids.forEach((id) => ids.push(id)); if (_hasTerms2) ids.push(_META_TERMS_COMBO);
   }
   const schemaIdx = new Map(ids.map((s, i) => [s, i]));   // 테이블 순서의 외부-관계 앵커(이웃 스키마 방향) 조회용
-  const relOrder = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf);   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
+  // graph-layoutmemo(§73): barycenter 정렬(build 지배 비용 ~55%)은 위상 무변경이면 재사용. 아래 안정화
+  //   루프(_metaStableSeq)가 relOrder Map 을 in-place 갱신하지만 멱등(이미 안정화된 배열 재안정화=동일)이라
+  //   캐시 재사용이 안전. ids 순서도 위상 파생(clusterOrder 안정화)이라 서명 무변경이면 동일.
+  const relOrder = _metaGraph._relOrderCache
+    || (_metaGraph._relOrderCache = _metaRelOrderAll(groups, ids, relAdj, schemaIdx, relSchemaOf));   // 스키마별 테이블 순서(군집 + barycenter 4-sweep)
   // feature-0016 §49(요구②): 클러스터 내 테이블 순서 안정화(flat masonry 경로) — 신규 테이블/루틴만 append → 기존
   //   테이블이 masonry 열/슬롯을 유지(이웃확장 시 형제 점프 제거). simgroups(구조화 스키마) 경로는 _metaSimGroups
   //   내부에서 그룹 순서·그룹내 테이블 순서를 동일 방식으로 안정화(적대리뷰 R1 반영). 잔여(R2): innerCols 임계
@@ -4828,7 +4870,13 @@ function _metaG6Build() {
       return { id, g, kind: "card", w: _METLAY.CARDW, h: _METLAY.CARDH, x0: 0, y0: 0 };
     }
     // graph-simgroups: 유사 속성 그룹 분할 — 2개 이상일 때만 그룹 블록 렌더(1개면 기존 평면 masonry 유지).
-    const simGroups = (!g.isTerms && gatedTables.length) ? _metaSimGroups(id, gatedTables, relAdj) : null;
+    // graph-layoutmemo(§73): affix 유사그룹(build 지배 비용 ~45%)은 순수·위상파생 — 스키마별 캐시(_simCache,
+    //   서명 무변경 시 재사용). 결과는 하류에서 읽기 전용(packGroup·groupOf 채움 모두 read)이라 공유 안전.
+    let simGroups = null;
+    if (!g.isTerms && gatedTables.length) {
+      if (_metaGraph._simCache.has(id)) simGroups = _metaGraph._simCache.get(id);
+      else { simGroups = _metaSimGroups(id, gatedTables, relAdj); _metaGraph._simCache.set(id, simGroups); }
+    }
     if (simGroups && simGroups.length >= 2) {
       // 그룹 블록 shelf-pack: 행 배정은 블록 폭(펼침-불변)만 소비, 행 y 는 실 높이 누적(push-down —
       //   펼친 컬럼이 자기 블록 높이를 키우면 아래 "행"만 밀리고 좌우 이웃 블록 x 는 불변).
@@ -5867,6 +5915,9 @@ function _metaGraphResetModel() {
   _metaGraph.tableOrder.clear();
   _metaGraph.groupOrder.clear();       // feature-0016 §49(R1): simgroups 순서 안정화도 fresh load 시 리셋.
   _metaGraph.groupTableOrder.clear();
+  // graph-layoutmemo(§73, 적대리뷰 하드닝): 배치-정렬 캐시도 fresh load 시 명시 리셋. 실제로는 schemaExpanded.clear()
+  //   가 다음 build 서명을 바꿔 무효화되나, 그 결합에 의존하지 않도록 직접 클리어(견고성).
+  _metaGraph._layoutSig = undefined; _metaGraph._relOrderCache = null; _metaGraph._simCache = new Map();
   // graph-category(§55 A): 카테고리 순서·접기·인덱스 리셋(다른 스코프 = 다른 카테고리).
   //   schemaProducts 는 schemaTotals 동형의 scope 캐시라 보존 — loadRoots 가 재구축.
   _metaGraph.catOrder = [];
