@@ -8081,20 +8081,23 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     } else {
       // 테이블 상세: 컬럼 목록 — 관계 있는 컬럼은 아코디언(클릭 펼침).
       parts.push(`<div class="admin-meta-graph-sec"><h4>컬럼 (${columns.length})${relSummary}</h4>`);
-      parts.push(`<p class="admin-meta-detail-note">관계가 있는 컬럼(🔗)을 클릭하면 참조함/참조받음 관계가 펼쳐집니다. 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
+      parts.push(`<p class="admin-meta-detail-note">컬럼을 클릭하면 선택되어 상세로 전환되고 그래프에서 강조됩니다. 관계가 있는 컬럼(🔗)은 캐럿(▸)으로 참조함/참조받음 관계를 그 자리에서 펼칠 수 있습니다. 관계 hover=의미, 클릭=대상 추적.</p><ul class="amgr-collist">`);
       columns.slice(0, 80).forEach((c) => {
         const cr = colRel.get(c.key);
         const nOut = cr ? cr.out.length : 0, nIn = cr ? cr.in.length : 0;
         if (!cr || (nOut + nIn) === 0) {
-          parts.push(`<li class="amgr-col amgr-col-plain"><code>${esc(c.name)}</code>${c.description ? " <span class=\"admin-meta-graph-muted\">— " + esc(c.description) + "</span>" : ""}</li>`);
+          parts.push(`<li class="amgr-col amgr-col-plain"><button type="button" class="amgr-col-select" data-col="${esc(c.key)}" aria-label="${esc(c.name)} 컬럼 선택" title="컬럼 선택 — 상세로 전환하고 그래프에서 강조"><code>${esc(c.name)}</code>${c.description ? " <span class=\"admin-meta-graph-muted\">— " + esc(c.description) + "</span>" : ""}</button></li>`);
           return;
         }
         parts.push(
           `<li class="amgr-col amgr-col-rel">` +
-          `<button type="button" class="amgr-col-toggle" aria-expanded="false" data-colrel="${esc(c.key)}">` +
-          `<span class="amgr-caret">▸</span> 🔗 <code>${esc(c.name)}</code>` +
+          `<div class="amgr-col-head">` +
+          `<button type="button" class="amgr-col-caret" aria-expanded="false" data-coltoggle="${esc(c.key)}" aria-controls="amgr-colbody-${esc(c.key)}" title="참조 관계 토글" aria-label="참조 관계 토글"><span class="amgr-caret">▸</span></button>` +
+          `<button type="button" class="amgr-col-select" data-col="${esc(c.key)}" aria-label="${esc(c.name)} 컬럼 선택" title="컬럼 선택 — 상세로 전환하고 그래프에서 강조">` +
+          `🔗 <code>${esc(c.name)}</code>` +
           `<span class="amgr-col-relcount" title="참조함 ${nOut} · 참조받음 ${nIn}">→${nOut} ←${nIn}</span></button>` +
-          `<div class="amgr-col-body" data-colbody="${esc(c.key)}" hidden>${dirGroup(cr.out, "out")}${dirGroup(cr.in, "in")}</div>` +
+          `</div>` +
+          `<div class="amgr-col-body" id="amgr-colbody-${esc(c.key)}" data-colbody="${esc(c.key)}" hidden>${dirGroup(cr.out, "out")}${dirGroup(cr.in, "in")}</div>` +
           `</li>`
         );
       });
@@ -8183,9 +8186,19 @@ function _metaGraphRenderDetail(self, nodes, edges) {
     });
   });
   _metaGraphBindTraceRows(el);   // graph-reltrace ②: 관계 행 클릭 → 대상 추적
-  // reldetail-colexpand ①: 컬럼 아코디언 토글 — 클릭 시 그 컬럼의 관계 펼침/접힘.
-  //   body 는 버튼의 형제(같은 li 내 .amgr-col-body)로 찾는다(키의 CSS 특수문자 셀렉터 이스케이프 회피).
-  el.querySelectorAll(".amgr-col-toggle[data-colrel]").forEach((btn) => {
+  // graph-detail-colsel: 상세 패널 컬럼 클릭 → 캔버스의 컬럼 노드 클릭과 동일한 선택.
+  //   _metaGraphShowDetail 재사용 — 선택 상태(_metaGraph.selected) 세팅 + 그래프 강조 재베이크 +
+  //   상세를 그 컬럼 뷰로 전환. plain·관계 컬럼 공통. data-col = 컬럼 노드 키.
+  el.querySelectorAll(".amgr-col-select[data-col]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const k = btn.getAttribute("data-col");
+      if (k) _metaGraphShowDetail(k);
+    });
+  });
+  // reldetail-colexpand ①: 컬럼 아코디언 토글 — 캐럿 클릭 시 그 컬럼의 관계 펼침/접힘(선택과 분리).
+  //   body 는 캐럿의 조상 li 내 .amgr-col-body 로 찾는다(키의 CSS 특수문자 셀렉터 이스케이프 회피).
+  el.querySelectorAll(".amgr-col-caret[data-coltoggle]").forEach((btn) => {
     btn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const li = btn.closest(".amgr-col-rel");

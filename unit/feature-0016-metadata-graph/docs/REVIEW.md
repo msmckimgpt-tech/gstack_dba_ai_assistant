@@ -1433,7 +1433,6 @@ source_of_truth: true
 - NIT(하드닝, **수정**): `_metaGraphResetModel` 이 캐시 3필드 미클리어(schemaExpanded.clear 결합 의존) → 명시 클리어 추가.
 - 근본원인(리뷰 지적): 서명이 노드 **키만** 해시하던 것 → 정렬 함수가 읽는 노드 **객체 속성+roles** 로 확장.
 - 검증: 수정 후 신규 테스트 T6(roles·cluster_id·name 변경 시 서명 상이 + roles 변경 후 rebuild stale 아님) 추가 → `test_g6build_layoutmemo.js` **19 PASS** + 회귀 150 = **169 PASS** · node --check. 캐시적중==fresh 좌표동일 불변 유지.
-
 ## REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES] — §74 미니맵 전체-이미지 재사용 diff 적대 리뷰 [머지 재번호 §70→§73→§74]
 - 대상: CHG-20260710T230000-minimap-reuse (admin.js `_metaMinimapGeomSig`·`_metaPatchMinimapReuse` + 서명 배선 + minimap `key:"minimap"` + afterdraw 드래그 무효화 + 신규 test).
 - 방법: §18.8 적대 리뷰. 초기 2렌즈(정확성/UX) user-interrupt 중단·렌즈1 이 linchpin(H1) 적발. 수정본 집중 확인 리뷰(H1~H5)에서 H2 신규 BLOCK 추가 적발. 둘 다 수정·테스트 커버.
@@ -1449,3 +1448,8 @@ source_of_truth: true
 ## REV-20260710T093000-ai-claude-feature-0016-minimap-reuse-postverify [SKIPPED: doc-only POST-DEPLOY 기록] — §74 미니맵 재사용 라이브 검증 결과 append
 - 본 cycle 은 §74 minimap-reuse 의 POST-DEPLOY PB-0008 라이브 실측 결과(PASS)를 TEST.md §74 Run·TASK.md T74.5 에 기록하는 **비-정책 doc-only** 변경이다(코드·자산 변경 0). §18.4 에 따라 리뷰 패널 SKIP.
 - 원천 코드 cycle 의 적대 리뷰는 REV-20260710T233000-ai-claude-feature-0016-minimap-reuse [SUBAGENT: PASS-WITH-FIXES](H1·H2 2건 BLOCK 적발→수정) 참조.
+## REV-20260710T230000-ai-claude-corp-feature-0016-graph-detail-colsel [SUBAGENT: PASS] — §75 상세 패널에서도 컬럼 선택 배선 diff 적대 리뷰
+- 대상: `unit/feature-0003-agent-web-ui/src/static/{admin.js,styles.css,admin.html}` (41삽입/10삭제·3파일) + 신규 헤드리스 테스트 `tests/headless/test_detail_colsel.js`. frontend-only·마이그 0·Minor(§12.3).
+- 판정: general-purpose 적대 리뷰어 6축(정확성/회귀/이벤트/CSS/a11y/엣지케이스) 전수 검토 → **Critical/Major/Minor 결함 0, PASS**. 확인된 non-issue: ①`data-col`=`c.key`(컬럼 노드 키) 정확·`esc()` 이스케이프·getAttribute 라운드트립 무손실·`_metaGraphShowDetail` 은 캔버스 컬럼클릭과 동일 경로 → 오선택·인젝션 0. ②캐럿 restructure 후에도 `closest(".amgr-col-rel")` → `.amgr-col-body` 정상 해소·repo 전역 `data-colrel` 잔존 0·`.amgr-col-toggle` 은 의도적 legacy CSS만(JS 바인딩 0). ③캐럿·선택 버튼은 (중첩 아님) 형제 → 이중발화 0·`stopPropagation` 양쪽·셀렉터 disjoint. ④`.amgr-col-relcount margin-left:auto` 가 `.amgr-col-rel .amgr-col-select`(flex) 안 → 우측정렬 유지·specificity(block↔flex) 정합·plain padding 정합. ⑥컬럼 키 항상 존재·80컬럼 cap 보존·긴 설명 자연 줄바꿈 무회귀.
+- 적용한 a11y nit 2건(리뷰 반영): ①캐럿 `aria-controls="amgr-colbody-<key>"`(body에 `id` 부여) + 상태중립 `aria-label="참조 관계 토글"`. ②선택 버튼 `aria-label="<name> 컬럼 선택"`(설명이 접근성 이름 오염 방지). 반영 후 `node --check` PASS + 격리 렌더 테스트 8/8 재확인.
+- 근거: 코드 diff 존재(순수 프론트 추가) → §18.8 적대 패널 수행·PASS. main rebase(§71/§72/§73/§74 병렬 머지) 후 admin.js 자동병합·재검증 완료. POST-DEPLOY 실 Windows 육안은 T75.4(배포 후, `visual_verification_scope`).
