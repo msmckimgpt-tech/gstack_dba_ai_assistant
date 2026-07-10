@@ -1396,3 +1396,8 @@ source_of_truth: true
 - 대상: `unit/feature-0003-agent-web-ui/docs/TEST.md`(§73 Run POST-DEPLOY 라이브 PASS append) + `unit/feature-0016-metadata-graph/docs/{TASK.md(T69.4 완료),REPORT.md(POST-DEPLOY 절)}`. **코드/자산 변경 0**.
 - 변경: §73(PR #667 → main e6b7b68f) 메모이즈의 실 Windows Chrome POST-DEPLOY 실측 결과를 정본에 기록. win-browser relay 로 mssql-qa-idc 882 노드 동일 위상 연속 build 함수분해 — MISS 59ms → HIT 8ms(relOrderAll/simGroups 0) 7.4× 급감, MISS↔HIT 좌표 이동 0(band-invariant), pageerror 0.
 - 근거: `visual_verification_scope: always` 완료 게이트의 POST-DEPLOY 실측 기록 마감(T69.4). 배포는 §73 cycle 에서 완료. 코드 diff 부재 → §18.8 패널 SKIPPED.
+
+## CHG-20260710T093000-minimap-reuse-postverify — §74 미니맵 재사용 POST-DEPLOY PB-0008 라이브 PASS 기록 (2026-07-10, 비-정책 doc-only)
+- 배포 508fae50(web-a/web-b soak PASS) 후 win-browser.py relay(실 Windows Chrome 149, `https://localhost/admin` 로그인) 그래프 뷰 실측 결과를 TEST.md §74 Run + TASK.md T74.5 [x] 에 POST-DEPLOY 갱신.
+- 실측 PASS: 미니맵 canvas 168×112+마스크 정상 렌더 · 줌 유지 · 스코프 전환(DK온라인 461테이블→건즈 173테이블) 시 미니맵 새 그래프로 재렌더(구성 변경 반영·얼어붙지 않음) · pageerror 0 · 서빙 자산 curl(버스터+함수) 확증. 상태-only skip·per-frame 드래그는 G6 canvas 합성이벤트 미등록으로 headless D 10테스트로 lock.
+- Files: `feature-0016/docs/{TASK,MODIFY,REVIEW}.md` + `feature-0003/docs/TEST.md` (doc-only). 코드·자산 변경 0. 원천 cycle: CHG-20260710T230000-minimap-reuse(코드) / 배포 508fae50.
