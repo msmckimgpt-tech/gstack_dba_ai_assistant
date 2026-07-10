@@ -507,3 +507,10 @@
 - **검증**: verify-completion META mode — CHECK#10 PASS(worktree binding)·#11 PASS(ai/* worktree F0 외)·#13 PASS(web/UI 자산 무변경 skip)·#1~#8 skip(pure-meta §18.4)·**#9 는 본 entry 로 충족**. 문서-only 변경(스킬 정의)이라 런타임 코드·테스트 무영향, 배포 no-op(META path — 서빙 산출물 없음). 스킬 내부 자가수리 ①②③④·Phase 0.4/1.0/5/6 cross-ref 정합 자체검토.
 - **[SUBAGENT] 사유**: governance persona 의 **동작 semantics 변경**(early-exit 계약·배포 소유권·자가수리 트리거)이라 trivial-SKIPPED 부적합 — 선례상 substantive 변경은 적대 검증. improve-fit-reviewer 2-round(결함 적발→반영→SHIP)로 MAJOR 5 포함 전건 적발·해소. `.claude/commands/*` = 서빙 산출물 아님 → META mode(#9/#10/#11/#13)만.
 - **Human Approval Needed**: 아니오 (스킬 정의 문서 변경, 제품 런타임 동작 0, pure-meta, 비파괴). 사용자가 self-repair "전체 구현" 을 명시 승인. 전역 auto-sync 정책 하 commit/push/main-ff 자동(외부 알림·PR 아님 — 직접 ff-push, 배포 no-op).
+
+## REV-20260710T180820-improve-parallel-structure [SUBAGENT:improve-fit-reviewer] — 병렬 AI 작업 충돌 구조 개선 로드맵 (initiative: parallel-work-structure)
+
+- **scope**: `docs/improvements/parallel-work-structure/{RESEARCH,ROADMAP}.md` 신설 — `/_dqa:improve_listup` 산출. 병렬충돌 3방향 내부 조사(거버넌스·git 이력·핫스팟) + feature-0012 중단 세션 복원(`/_template:resume`) + 웹 리서치 2건(다중 AI 세션 사례 / 고속 머지 인프라, W-001~W-010)을 융합해 12개 ITEM·4 Phase·DAG 로드맵 구축.
+- **검증**: improve-fit-reviewer **2-round 적대 리뷰**. 1차 NOT-SHIP — BLOCKING 2(B-1 feature_id 가 verify 정규식과 계약 파손 → META-NNNN 전환·혼합 changeset 분리 규약 신설 / B-2 §13.1 v3.35.1 merge-driver 허용 범위 왜곡 → 정식 개정을 선행 스텝으로 격상), MAJOR 5(AGENTS.md 개정 공통 규약 신설·편집 항목 01→03→06→07→12 완전 직렬화·REGISTRY 부트스트랩·ADR 인용 네임스페이스 정정·Major 등급 상향), NIT 12 전건 반영. 2차 SHIP-WITH-FIXES — 잔여 5곳(ADR bare 인용 3·.merge.lock 경로 전제 오류 2) 반영 완료(락 위치는 `git rev-parse --git-common-dir` 하위로 확정 — working tree 밖·전 worktree 공유). DAG 비순환·enables 역참조·§5 ready 목록·수치(23 include·236/198 변경횟수·META-0022 최대번호) 리뷰어 실측 대조 PASS.
+- **META mode 판정**: changeset = `docs/improvements/**` + `meta/REVIEW.md` — pure-meta(§18.4), check #9 는 본 entry 로 충족. 런타임 코드·테스트 무영향, 배포 no-op.
+- **Human Approval Needed**: 아니오 (로드맵 문서 신설 — 비파괴·코드 무수정). 단 **각 ITEM 의 구현은 별도 cycle 게이트**: Major 9종(01·03·04·06·07·09·10·11·12)은 착수 시 사람 승인 필수(§12.3, 무인 improve_cycle 자동 blocked), AGENTS.md 개정 5종은 DECISIONS 제안+사람 승인+template 전파 계획(§0 공통 규약).
