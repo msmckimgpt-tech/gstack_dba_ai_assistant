@@ -130,7 +130,7 @@ function check(name, cond, extra) {
   check("T3 RU 카드 승격 집계", !!agg && agg.target === "SC:" + nk("b"), agg && { s: agg.source, t: agg.target });
 }
 
-// T4: 상대 하이라이트 — 인접 밖 dimmed state + 비인접 엣지 strokeOpacity 저하
+// T4: 상대 하이라이트 — 인접 밖 노드 dimmed state 유지 + 비인접 엣지는 build 에서 제거(§66 hide, dim 아님)
 {
   const M = seedModel(["a"], [nk("a")]);
   addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3");
@@ -146,7 +146,7 @@ function check(name, cond, extra) {
   const own = out.edges.find((x) => x.source === nk("a.t1") || x.target === nk("a.t1"));
   const far = out.edges.find((x) => x.source === nk("a.t2") && x.target === nk("a.t3"));
   check("T4 자기 엣지 선명", !!own && (own.style.strokeOpacity === undefined || own.style.strokeOpacity > 0.5), own && own.style.strokeOpacity);
-  check("T4 비인접 엣지 흐림", !!far && far.style.strokeOpacity <= 0.12, far && far.style.strokeOpacity);
+  check("T4 비인접 엣지 제거(§66 hide)", !far, far && { s: far.source, t: far.target });   // §66: dim(0.12) 유지 대신 build 에서 제거(잔상·낭비 원천 해소)
 }
 
 // T5: LOD — 줌 임계 미만 + 대형 모델에서 무상태 FK 축약, trusted/크로스 유지. 줌 1 은 전량 방출.
@@ -219,7 +219,7 @@ function check(name, cond, extra) {
   check("T9 선택 해제 시 focusAdj 자동 정리", (() => { M.selected = null; build(); return !M.focusAdj; })());
 }
 
-// T10(§57.5 규칙 단일화): 엣지는 '양끝 밝음'일 때만 선명 — 이웃↔이웃 선명, 이웃↔비인접 흐림.
+// T10(§57.5 규칙 단일화 + §66 hide): 엣지는 '양끝 밝음'일 때만 방출 — 이웃↔이웃 선명, 이웃↔비인접 제거.
 {
   const M = seedModel(["a"], [nk("a")]);
   addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3"); addTable(M, "a.t4");
@@ -232,7 +232,7 @@ function check(name, cond, extra) {
   const f = (s, t2) => out.edges.find((x) => x.source === nk(s) && x.target === nk(t2));
   const nn = f("a.t2", "a.t3"), nf = f("a.t3", "a.t4");
   check("T10 이웃↔이웃 선명", !!nn && (nn.style.strokeOpacity === undefined || nn.style.strokeOpacity > 0.5), nn && nn.style.strokeOpacity);
-  check("T10 이웃↔비인접 흐림", !!nf && nf.style.strokeOpacity <= 0.12, nf && nf.style.strokeOpacity);
+  check("T10 이웃↔비인접 제거(§66 hide)", !nf, nf && { s: nf.source, t: nf.target });   // §66: dim 대신 build 에서 제거
 }
 
 // T11(리뷰 F1): 밝은 테이블의 '컬럼 노드'도 점등(엣지 lit 폴딩과 규칙 일치) — 밝은 선이 흐린 컬럼에
@@ -264,17 +264,47 @@ function check(name, cond, extra) {
   check("T12 비선택·비인접은 dim 유지", g.__nodeStates(nk("a.t2")).includes("dimmed") === false && !!M.focusAdj);
 }
 
-// T13(§57.6 화살촉): dim 엣지는 전체 opacity 침강(strokeOpacity 단독 아님 — 화살촉 잔존 방지).
+// T13(§66 hide, 사용자 리포트): 상대 하이라이트 시 focus 밖 관계선은 dim(0.12)이 아니라 build 에서
+//   **제거**된다(구 §57.6 '화살촉 dim' 케이스 대체 — 하이라이트 하에 dim 엣지 자체가 없음).
+//   ① 음성 대조군: 무선택이면 전량 방출 ② lit 부분그래프 엣지는 방출 유지 ③ focus 밖 엣지 전부 제거
+//   ④ 하이라이트-hide 는 lodDropped(줌아웃 축약 전용 지표)를 증가시키지 않는다(‘줌아웃 축약’ 오안내 방지).
 {
   const M = seedModel(["a"], [nk("a")]);
   addTable(M, "a.t1"); addTable(M, "a.t2"); addTable(M, "a.t3"); addTable(M, "a.t4");
-  addEdge(M, nk("a.t1.c1"), nk("a.t4.c1"), "REFERENCES", { status: "trusted" });   // §57.7: 하이라이트 발동용 자체 인접
-  addEdge(M, nk("a.t2.c1"), nk("a.t3.c1"), "REFERENCES", { status: "trusted" });
-  M.selected = nk("a.t1");
+  addEdge(M, nk("a.t1.c1"), nk("a.t2.c1"), "REFERENCES", { status: "trusted" });   // sel↔이웃 (lit)
+  addEdge(M, nk("a.t2.c2"), nk("a.t3.c1"), "REFERENCES", { status: "trusted" });   // 이웃↔비인접 (non-lit)
+  addEdge(M, nk("a.t3.c2"), nk("a.t4.c1"), "REFERENCES", { status: "trusted" });   // 비인접↔비인접 (non-lit)
+  const base = build();   // 무선택 기준선
+  const baseRef = base.edges.filter((x) => x.data && x.data.label === "REFERENCES");
+  check("T13 음성 대조군: 무선택 전량 방출", baseRef.length === 3, baseRef.length);
+  M.selected = nk("a.t1");   // 하이라이트 진입(build 가 focusAdj 재산출)
   const out = build();
-  const far = out.edges.find((x) => x.source === nk("a.t2.c1") || x.source === nk("a.t2"));
-  check("T13 dim 엣지 opacity 전체 침강", !!far && far.style.opacity <= 0.12 && far.style.strokeOpacity <= 0.12,
-    far && { o: far.style.opacity, so: far.style.strokeOpacity });
+  const litE = out.edges.find((x) => x.source === nk("a.t1") && x.target === nk("a.t2"));
+  const far1 = out.edges.find((x) => x.source === nk("a.t2") && x.target === nk("a.t3"));
+  const far2 = out.edges.find((x) => x.source === nk("a.t3") && x.target === nk("a.t4"));
+  check("T13 lit 부분그래프 엣지 방출", !!litE, out.edges.map((x) => x.source + "→" + x.target));
+  check("T13 focus 밖 엣지 전부 제거", !far1 && !far2, { far1: !!far1, far2: !!far2 });
+  check("T13 하이라이트-hide 는 lodDropped 미증가", (M._lodDropped || 0) === 0, M._lodDropped);
+}
+
+// T13B(§66 × LOD 상호작용, 적대 리뷰 M1): 하이라이트 활성 시 focus 밖 엣지는 LOD 경로 도달 **전에**
+//   hlHide 로 제거되어야 lodDropped(줌아웃 축약 전용 지표)가 부풀지 않는다. lodActive 가 실제 발동하는
+//   대형 모델(>120 엣지)+줌아웃(<0.35)에서 검증 — hlHide 가드를 lodActive 증가문 뒤로 옮긴 회귀면 실패.
+{
+  const M = seedModel(["a"], [nk("a")]);
+  for (let i = 0; i < 130; i++) addTable(M, "a.t" + i);
+  for (let i = 0; i < 129; i++) addEdge(M, nk(`a.t${i}.c`), nk(`a.t${i + 1}.c`), "REFERENCES", { status: "" });   // 무상태 FK(LOD 축약 대상)
+  M.graph = { getZoom: () => 0.2 };   // zoom<0.35 & edges>120 → lodActive
+  const base = build();   // 무선택: 순수 LOD 로 무상태 FK 대량 축약
+  check("T13B 무선택 LOD 축약 발동", (M._lodDropped || 0) > 0, M._lodDropped);
+  M.selected = nk("a.t0");   // 하이라이트: focus={t0,t1} 밖은 hlHide 로 LOD 도달 전 제거
+  const out = build();
+  const litE = out.edges.find((x) => x.source === nk("a.t0") && x.target === nk("a.t1"));
+  const refN = out.edges.filter((x) => x.data && x.data.label === "REFERENCES").length;
+  check("T13B 하이라이트 focus 엣지 유지", !!litE);
+  check("T13B 하이라이트 focus 밖 엣지 전부 제거", refN === 1, refN);
+  check("T13B 하이라이트-hide 시 lodDropped 0(LOD 도달 전 제거)", (M._lodDropped || 0) === 0, M._lodDropped);
+  M.graph = null; M.selected = null;
 }
 
 // T14(§57.7 고립 노드): 1-hop 관계가 없는 노드 선택은 하이라이트 모드 미발동(전역 침강 없음).

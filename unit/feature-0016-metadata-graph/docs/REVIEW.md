@@ -8,6 +8,21 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260710T052502-ai-claude-feature-0016-hl-edge-hide [SUBAGENT: PASS-WITH-FIXES] — 상대 하이라이트 focus 밖 관계선 제거(§66) 적대 리뷰
+- 대상: CHG-20260710T000000-hl-edge-hide (admin.js `_metaG6Build` 에 `hlHide=(hl)=>!!(fa&&!hl)` + 4개 keep 판정 지점 non-focus 엣지 build 제외 / test_g6build_edge_visibility.js T4·T10·T13 제거-단언 전환 + §66 불변식). 리뷰는 rebase 전 단독 코드 대상 — rebase 후 §64(lod-hl-declutter) keepLod 병존 상태로 전 headless 71 PASS 재검증(T22 병존, 회귀 0) 완료.
+- 방법: §18.8 적대 리뷰(general-purpose, 결함 적발 목적). 8개 결함 클래스 능동 프로브 — 누락 push site·집계 정합·selected 자기엣지·half-lit·다운스트림 소비자·LOD 상호작용·fa=null 회귀·테스트 정합. 리뷰어가 headless 직접 실행 + 대형 모델(200T/199 FK/zoom 0.2/선택) probe 로 highlight×LOD 실증.
+- **판정: PASS-WITH-FIXES** — 코드 결함(BLOCKING/MAJOR) 0. 8개 클래스 전부 clean:
+  - 누락 push site 0(`edges.push` 5곳 — 앞 4곳 직전 hlHide 가드, agg push 는 누적 전 keep 판정 지점이 가드하므로 non-lit agg 진입 불가).
+  - 집계 정합: `keep=selTouch(rs)&&selTouch(rt)` 는 aggMap 키 (rs,rt)에만 의존 → 버킷 내 동일. hlHide 가 누적 이전에 걸러 fa 활성 시 non-lit pair 는 aggMap 진입 자체 불가(probe far1/far2 승격 agg 둘 다 제거 실증).
+  - selected 자기엣지 유지(selected∈self·1-hop∈nodes → 양끝 lit → keep=true), half-lit 제거는 §57.5 양끝-밝음 규칙 정합, 다운스트림(renderedIds=nodes+combos only·상태줄/관계패널/툴팁=모델 data.edges 참조) 무영향, LOD 상호작용(hlHide 가 모든 lodActive 증가문 선행 → highlight-hide 시 lodDropped 미증가, probe lodDropped=0 실증), fa=null 회귀 0(단락 false → 전량 표시 보존).
+  - dimIf dormancy clean(모든 push 시점 fa=null 이거나 hl=true → dim 분기 도달 불가·이중 dim 위험 0, 방어적 안전망으로 의도적 잔존).
+- **확정 결함 반영**:
+  - **M1 (MINOR, test-integrity → 수정)**: T13 ④ lodDropped 단언이 vacuous — 해당 테스트는 3엣지·zoom 1 이라 lodActive=false, hlHide 위치와 무관하게 lodDropped 항상 0(회귀 은폐). **수정**: `T13B` 추가 — 130T/129 무상태 FK/zoom 0.2 로 lodActive 실발동시켜 (무선택 LOD 축약>0) vs (선택 시 focus 밖 전제거 + lodDropped=0) 대조 검증. hlHide 가드를 lodActive 증가문 뒤로 옮긴 회귀면 실패. headless **67 PASS/0 FAIL**.
+- **수용(수정 안 함)**:
+  - **N1 (NIT, by-design)**: highlight+줌아웃 동시 시 "관계선 축약" 마커 침묵(edgeCut=lodDropped>0 인데 highlight 중 0). T13 의도('줌아웃 축약 오안내 방지')와 정합 — colLod/agg 마커는 독립 발화라 수용.
+  - **N2 (NIT, pre-existing·out-of-scope)**: products 뷰(`_metaG6BuildProducts`)는 USES 엣지에 dim/hide 미적용(노드만 dim) — 본 변경 이전에도 동일, 본 변경(`_metaG6Build` 스키마 경로 한정)이 유발한 회귀 아님.
+- 미결: focus 밖 관계선 완전 소거·유령 잔상 부재·focus 관계선 선명 유지의 픽셀 레벨 확증은 PB-0008 실 Windows 라이브(WSL headless 는 dirty-rect canvas paint 아티팩트 미재현) — POST-DEPLOY 게이트(TEST §66).
+
 ## REV-20260704T075100-ai-claude-feature-0016-graphux7-postdeploy [SKIPPED:doc-only-postdeploy] — graphux7 POST-DEPLOY PB-0008 결과 기록 (코드 무변경)
 - 근거: PR #587 병합(325f5de4) → `make deploy-web` 무중단 롤링(web-a/b·soak 90s 통과) 후 실 Windows Chrome PB-0008 라이브 PASS(#1 nav "2/2"·#3 3탭+pg_trgm 제거·#7 "▦ 접기"·#4 Set·#5 라벨·pageerror 0)를 TASK §51.10 [x]·TEST(graphux7 Run POST-DEPLOY)·MODIFY(CHG-…-postdeploy)에 기록. 코드 품질 검증은 원 cycle REV-20260704T071838-graphux7 [SUBAGENT: PASS-WITH-FIXES]에서 완료. 본 커밋은 doc-only.
 

@@ -2042,3 +2042,30 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백: 집계 카드 작아 안
 - [x] T65.4 검증: headless `test_g6build_viewportcull.js` **6 PASS** + 회귀 134 = **140 PASS**·node --check. diff 2렌즈 적대 리뷰.
 - [ ] T65.5 win-browser 시각검증(배포 후) — 줌아웃: 집계 카드 크고 읽힘·상태줄 마커 없음 / 줌인: 화면 밖 컬럼 미표시(테이블·combo 유지)·클릭/팬 경량화. 줄별 스크린샷.
 - [ ] T65.6 잔여: 단일 초대형 스키마 테이블-칩 floor(테이블 컬링=combo 분리 필요) — 후속.
+## §66 hl-edge-hide — 상대 하이라이트 시 focus 밖 관계선 제거 (2026-07-10, 사용자 리포트)
+사용자 리포트: "특정 노드 클릭 → 상대 하이라이트 진입 시 '출력되지 않아야 할 관계선'이 투명하게 렌더되고,
+마우스 이동에 따라 상태가 바뀜(하이라이트 미적용 시점의 관계선 위치 잔상으로 추정). 성능 손해 검토 후 대응."
+(§64 lod-hl-declutter 와 상보: §64 는 **줌아웃 전용** LOD 축약을 self-직접선으로 좁힘, 본 §66 은 **전 줌 레벨**에서
+focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정상 줌 클릭)를 커버. 결합 시 정상 줌엔 §66 hide,
+줌아웃엔 §64 declutter 가 focus 내부까지 추가 정리.)
+- [x] T66.0 근원 진단(코드 전수 + G6 번들 실측): ① '투명한 관계선' = non-focus 엣지를 `dimIf` 가 제거가 아니라
+  opacity/strokeOpacity 0.12 dim 유지(§57.6 의도) — 코드 레벨 실재 확인, 설계 동작. ② 'stale 위치+마우스
+  깜빡임' = G6 v5 기본 `enableDirtyRectangleRendering:true`(vendor 번들 실측, admin.js override 없음)의 dirty-rect
+  잔상 — dim 전환+엣지 라벨 제거 시 이전 원색 픽셀 미소거, pointer 재도색으로 flicker. 단일 클릭은 구조 불변
+  (위치 동일)이라 잔상은 레이아웃 아닌 canvas 렌더 아티팩트로 확정.
+- [x] T66.1 성능 판정: 손해 있음 — non-focus 엣지가 거의 비가시(0.12)인데 전량 유지되어 path 지오메트리·
+  hit-test·매 페인트 지속(대형 스코프 수백~수천 엣지) + 잔상 재도색 churn. 대상이 비가시+미희망이라 순수 낭비.
+- [x] T66.2 수정(사용자 결정=제거): `_metaG6Build` 에 `hlHide=(hl)=>!!(fa&&!hl)` + 4개 keep 판정 지점
+  (SCHEMA_REF·ROUTINE_USES·기타·REFERENCES)에서 non-focus 엣지 build 제외(colLevel·집계 agg 공통 — 같은
+  (rs,rt) 승격 쌍은 동일 keep). §64 의 keepLod/litSelf 인프라와 병존 — hlHide 가 LOD 가드 **선행**(줌아웃 시
+  focus 내부 declutter 는 §64 keepLod 가 그대로 담당). 노드 dim(0.38) 유지 → focus 효과 보존. lodDropped
+  미증가(줌아웃 축약 오안내 방지). dimIf 는 방어적 안전망으로 잔존(향후 push site 누락 시 fail-soft).
+- [x] T66.3 검증: headless `test_g6build_edge_visibility.js` **67 PASS**(T4/T10/T13 을 '제거' 단언으로 전환 +
+  §66 불변식: focus 밖 전제거·lit 부분그래프 방출·무선택 전량 방출 대조군 + T13B highlight×LOD 회귀 방어
+  = hlHide 가 LOD 선행이라 lodDropped 미증가) + §64 의 T22 공존 + 회귀 0(agglod 9·category 26·collod 20·vpack
+  19·viewportcull 6) · `node --check` PASS. §18.8 적대 리뷰 REV-20260710T052502 [SUBAGENT: PASS-WITH-FIXES]
+  (BLOCKING/MAJOR 0, MINOR M1=T13B 반영). 캐시버스터 `admin.js?v=20260710-hl-edge-hide`.
+- [ ] T66.4 POST-DEPLOY 사용자 육안(PB-0008 실 Windows, 무인 도달 차단): 노드 클릭 → 상대 하이라이트 진입 시
+  focus 밖 관계선이 (a) 희미하게 남지 않고 완전 소거 (b) 마우스 이동해도 유령 관계선 잔상/깜빡임 없음
+  (c) focus 부분그래프(선택+1-hop) 관계선은 선명 유지. 자산 curl(`?v=20260710-hl-edge-hide`) + 육안 게이트(TEST §66).
+  픽셀 레벨 dirty-rect 잔상 최종 확증은 라이브에서만(WSL headless 는 canvas paint 아티팩트 미재현).

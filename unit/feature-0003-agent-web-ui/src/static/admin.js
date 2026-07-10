@@ -5229,7 +5229,7 @@ function _metaG6Build() {
     return false;
   };
   const selTouch = lit;   // 호출부 명칭 호환(의미: 밝은 부분그래프 소속 여부 — dim 용)
-  // lod-hl-declutter: 끝점이 **선택 노드 자체**(self, 테이블이면 자기 컬럼 포함)인지 — LOD 축약 예외 전용.
+  // lod-hl-declutter(§64): 끝점이 **선택 노드 자체**(self, 테이블이면 자기 컬럼 포함)인지 — LOD 축약 예외 전용.
   //   lit 과 달리 1-hop 이웃(fa.nodes)은 제외한다. SC: 접두·컬럼→소속테이블 접기는 lit 과 동일 규칙.
   const litSelf = (rid) => {
     if (!fa) return false;
@@ -5245,6 +5245,9 @@ function _metaG6Build() {
   };
   // LOD 축약 예외: 선택 노드에 직접 닿는 선(양끝 중 하나가 self)만 보존.
   const keepLodFor = (a, b) => litSelf(a) || litSelf(b);
+  // §66 이후: focus 밖 엣지는 아래 hlHide 로 build 에서 제거되므로 dimIf 의 dim 분기(fa && !hl)는
+  //   엣지 경로에서 정상적으로 도달하지 않는다. dimIf 는 방어적 안전망으로 남겨둔다 — 향후 hlHide
+  //   가드 없이 push site 가 추가되면 최소한 dim(전량 원색 노출 방지)으로 fail-soft 한다.
   const dimIf = (st, hl) => {
     if (fa && !hl) {
       // §57.6(사용자 실측 "화살표 첨단만 밝음"): strokeOpacity 는 path 선만 흐리고 화살촉(마커
@@ -5256,6 +5259,17 @@ function _metaG6Build() {
     }
     return st;
   };
+  // §66(hl-edge-hide, 사용자 리포트): 상대 하이라이트 활성(fa) 시 focus 부분그래프 밖 엣지는
+  //   dim(0.12)이 아니라 **build 에서 제거**한다. dim(0.12) 유지의 폐해 두 가지 — (a) 거의 비가시인데
+  //   non-focus 엣지가 전량 살아 있어 G6 가 path 지오메트리·hit-test·매 페인트를 계속 수행(대형 스코프
+  //   수백~수천 엣지에서 순수 낭비) (b) G6 v5 기본 dirty-rectangle 렌더가 opacity 1→0.12 dim 전환 시
+  //   이전 원색 엣지 픽셀을 캔버스에 잔류시켜 "커서 이동에 따라 깜빡이는 유령 관계선"(사용자 관측)을
+  //   만든다. non-focus 엣지를 아예 방출하지 않으면 둘 다 원천 해소되고, 노드 dim(0.38,
+  //   _metaBakeBaseOpacity)은 그대로라 focus 부분그래프 강조 효과는 유지된다. 집계 엣지는 같은 (rs,rt)로
+  //   승격된 모든 컬럼-쌍이 동일 keep 이므로 keep 판정 지점에서 걸러 colLevel·agg 누적을 함께 차단한다.
+  //   무선택(fa=null)이면 항상 false(제거 안 함) → 기존 전체 표시 동작 보존. lodDropped 는 줌아웃 축약
+  //   전용 지표라 여기선 증가시키지 않는다(‘줌아웃 축약’ 오안내 방지). LOD-drop 과 동일 계열의 build 제외.
+  const hlHide = (hl) => !!(fa && !hl);
   // §57(사용자 검토 ①·declutter): 중간 줌 LOD — 임계 미만 줌 + 대형 모델에서 무상태(FK)·비크로스
   //   단건 선을 축약하고 의미 신호(trusted/candidate/교차DB/집계/SCHEMA_REF/선택 노드 직접선)만 남긴다.
   //   우선순위: 사용자 명시 숨김(hiddenKinds) > 선택 노드 직접선 보존(keepLodFor) > LOD 축약.
@@ -5277,6 +5291,7 @@ function _metaG6Build() {
       const b = present.has("SC:" + e.target) ? ("SC:" + e.target) : null;
       if (!a || !b) return;
       const keep = selTouch(a) && selTouch(b);
+      if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 카드간 관계선 제거(dim 대신)
       edges.push({ id: e.id, source: a, target: b,
         data: { label: "SCHEMA_REF", count: e.count || 1, ref_count: e.ref_count, use_count: e.use_count },
         style: dimIf(_metaSchemaRefEdgeStyle(e.count), keep) });
@@ -5301,7 +5316,8 @@ function _metaG6Build() {
         const ss = _metaCatParent(e.source, srcN && srcN.fqn), ts = _metaCatParent(e.target, tgtN && tgtN.fqn);
         const xr = !!e.cross_ds || (!!ss && !!ts && ss !== ts);
         const keep = selTouch(rs) && selTouch(rt);
-        const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter: 축약 예외는 self-직접선만
+        const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
+        if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 루틴 사용선 제거(colLevel·agg 공통 — LOD 도달 전)
         if (rs === e.source && rt === e.target) {
           if (lodActive && !keepLod && !xr) { lodDropped += 1; return; }
           edges.push({ id: e.id, source: rs, target: rt,
@@ -5321,7 +5337,8 @@ function _metaG6Build() {
       }
       if (present.has(e.source) && present.has(e.target)) {
         const keep = selTouch(e.source) && selTouch(e.target);
-        if (lodActive && !keepLodFor(e.source, e.target)) { lodDropped += 1; return; }   // lod-hl-declutter: 축약 예외는 self-직접선만
+        if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 기타 관계선(DESCRIBES/RELATED_TERM 등) 제거(LOD 도달 전)
+        if (lodActive && !keepLodFor(e.source, e.target)) { lodDropped += 1; return; }   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
         edges.push({ id: e.id, source: e.source, target: e.target, data: { label: e.type, status: e.status },
           style: dimIf(_metaEdgeStyleFor(e.status), keep) });
       }
@@ -5334,7 +5351,8 @@ function _metaG6Build() {
     //   그려지는 것을 차단한다.
     if (String(rs).startsWith("SC:") && String(rt).startsWith("SC:")) return;
     const keep = selTouch(rs) && selTouch(rt);
-    const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter: 축약 예외는 self-직접선만
+    const keepLod = keepLodFor(rs, rt);   // lod-hl-declutter(§64): 축약 예외는 self-직접선만
+    if (hlHide(keep)) return;   // §66: 하이라이트 시 focus 밖 REFERENCES(컬럼-레벨·카드 승격 agg) 제거(LOD 도달 전)
     const colLevel = (rs === e.source && rt === e.target);
     if (colLevel) {
       // 양끝 컬럼 렌더 — 정밀 컬럼-레벨 엣지(기존 동작 유지). crossds-rel: cross_ds 면 마젠타 점선.

@@ -1,5 +1,49 @@
 # Report
 
+## 2026-07-10 · 상대 하이라이트 시 focus 밖 관계선 제거 — 유령 관계선·성능 낭비 해소 (hl-edge-hide, TASK §66)
+
+### 요청 (사용자 리포트)
+그래프 뷰에서 특정 노드 클릭 → 상대 하이라이트 진입 시 '출력되지 않아야 할 관계선'이 투명하게 렌더되고,
+마우스 이동에 따라 상태가 바뀜(하이라이트 미적용 시점의 관계선 위치 잔상으로 추정). 성능 손해 검토 후 대응.
+
+### 진단 (코드 전수 + G6 vendor 번들 실측)
+- **'투명한 관계선'**: 상대 하이라이트 시 non-focus 엣지를 `dimIf` 가 **제거하지 않고 opacity/strokeOpacity
+  0.12 로 침강만** 시킴(§57.6 의도된 dim). 코드 레벨에서 실재 확인 — 버그가 아닌 설계 동작.
+- **'stale 위치 + 마우스 이동 시 변화'**: G6 v5 기본 `enableDirtyRectangleRendering:true`(vendor 번들 실측,
+  admin.js 어디에도 override 없음)의 dirty-rectangle 잔상. dim 전환(opacity 1→0.12) + 엣지 라벨 제거 시 이전
+  원색 엣지 픽셀이 부분 재도색으로 미소거 → 마우스 pointer 이벤트가 영역 재도색 시 flicker. 단일 클릭은 그래프
+  구조 불변(노드/엣지 위치 동일)이라 잔상은 레이아웃 변화가 아닌 canvas 렌더 아티팩트로 확정. LEARNINGS/git 이력에
+  선행 진단 없던 신규 이슈(§57.7~57.9 하이라이트 작업은 전부 dim 상태 정합만 다룸).
+
+### 성능 판정 (사용자 핵심 질문) — 손해 있음
+non-focus 엣지가 거의 비가시(0.12)인데 전량 살아 있어 G6 가 path 지오메트리·quadtree hit-test·매 재도색
+페인트를 지속(대형 스코프 수백~수천 엣지에서 순수 낭비) + 잔상 재도색 churn. 대상이 비가시 + 사용자 미희망이라
+낭비 성격이 명확.
+
+### 처리 결과 (frontend-only, admin.js — 사용자 결정: 제거(hide))
+[admin.js](../../feature-0003-agent-web-ui/src/static/admin.js) `_metaG6Build` 에 `hlHide=(hl)=>!!(fa&&!hl)`
+도입 + 4개 keep 판정 지점(SCHEMA_REF·ROUTINE_USES·기타 관계·REFERENCES)에서 상대 하이라이트 활성 시 non-focus
+엣지를 build 에서 제외(colLevel·집계 agg 공통 — 같은 (rs,rt)로 승격된 쌍은 동일 keep 이라 keep 판정 지점에서
+colLevel push·agg 누적 동시 차단). 잔상 원천 제거 + hit-test/페인트 비용 감축 + 사용자 기대 일치. 노드
+dim(0.38, `_metaBakeBaseOpacity`)은 유지 → focus 부분그래프 강조 효과 보존. lodDropped(줌아웃 축약 전용)는
+미증가('줌아웃 축약' 오안내 방지). dimIf 의 dim 분기는 방어적 안전망으로 잔존(향후 push site 누락 시 fail-soft).
+cache-buster `admin.js?v=20260710-hl-edge-hide`.
+
+### 검증
+- headless `test_g6build_edge_visibility.js` **71 PASS**(T4/T10/T13 을 '제거' 단언으로 전환 + §66 불변식:
+  focus 밖 엣지 전제거·lit 부분그래프 방출·무선택 전량 방출 대조군·하이라이트-hide lodDropped 미증가 + T13B
+  highlight×LOD; **§64 lod-hl-declutter 의 T22 도 병존 PASS** — hlHide 가 LOD 선행이라 줌아웃 declutter 와 정합)
+  + 회귀 0(agglod 9·category 26·collod 20·vpack 19·viewportcull 6) · `node --check` PASS.
+- fa=null(무선택) 경로는 hlHide 항상 false → 기존 전체 표시·LOD 동작 완전 보존(회귀 표면 없음).
+- **§64(lod-hl-declutter)·§65(viewport-cull) 병렬 머지와 rebase 합류**: §64 는 줌아웃 전용 LOD 예외를 self-직접선으로
+  좁히고(keepLod/litSelf), 본 §66 은 전 줌 레벨에서 focus 밖 엣지를 build 제외 — 상보. 결합 코드로 전 headless 재검증(위 회귀 0).
+
+### 잔여
+- **POST-DEPLOY 사용자 육안 (PB-0008 실 Windows, visual — 무인 도달 차단)**: 노드 클릭 → focus 밖 관계선 완전
+  소거·마우스 이동 시 유령 관계선/깜빡임 없음·focus(선택+1-hop) 관계선 선명 유지. 배포(web 정적 자산 baked,
+  deploy_scope: included).
+- 픽셀 레벨 dirty-rect 잔상 최종 확증은 PB-0008 라이브에서만(WSL headless 는 canvas paint 아티팩트 미재현).
+
 ## 2026-07-09 · 스키마 펼침 세로 폭주 해소 (graph-vpack, TASK §60, ADR-028)
 
 ### 요청 (사용자 리포트)
