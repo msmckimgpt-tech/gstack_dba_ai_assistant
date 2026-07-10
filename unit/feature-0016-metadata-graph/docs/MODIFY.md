@@ -1342,3 +1342,9 @@ source_of_truth: true
 - 근거: 노드 단일클릭은 상세 패널만 갱신하고 카메라는 이동하지 않아(`_metaGraphShowDetail`), 큰 그래프에서 선택 노드를 화면에서 다시 찾기 어려웠음(빈틈). 기존 카메라-전용 팬 경로(`_metaGraphPanToRelation` §graphux7#2)를 재사용해 신규 기계장치 0. frontend-only·마이그 0·behavior 순수 추가(기존 관계 상세 버튼·동작 불변). 위험도 Minor(§12.3).
 - UI 안전: 헤더 `.admin-meta-graph-card-head`(flex, gap:8px)에 `.amgr-link`(margin-left:auto) 버튼이 2개가 되어 auto 마진 2개가 여유공간을 분할하는 것을 방지 — 기존 `관계 상세`를 앞에 두어 그것만 우측 정렬시키고 신규 버튼은 `style="margin-left:0"`로 그 옆에 gap:8px 그룹화. **추가(리뷰 MINOR 반영)**: `.admin-meta-graph-card-head` 에 `flex-wrap:wrap` 부여(sibling `.cov-db-rule-card-head` 와 동일 패턴) — 좁은 패널 폭 + 유사도 배지 동시 존재 시 헤더가 가로로 넘쳐 신규 버튼이 가려지던 리스크를, 버튼이 다음 줄로 우아하게 래핑되도록 해소. `flex:none; white-space:nowrap` 유지로 버튼 자체는 잘리지 않음.
 - 검증: `node --check admin.js` PASS · **diff 적대 리뷰 REV-20260710T063659 [SUBAGENT: PASS-WITH-FIXES]**(BLOCKING/MAJOR 0, MINOR 1=헤더 가로 넘침 → `flex-wrap:wrap` 로 수정, 핸들러·회귀 PASS) · **PB-0008 win-browser 시각검증은 POST-DEPLOY**(정적 자산 baked → merge + deploy-web 재배포 선행, §65·§66·§67 동일). 캐시버스터 `admin.js?v=20260710-graph-focus-selected` · `styles.css?v=20260710-graph-focus-selected`.
+
+
+## CHG-20260710T223000-ai-claude-corp-feature-0016-reldedup-pd — §69 POST-DEPLOY 완수 기록 (docs-only, 코드 변경 0) (2026-07-10)
+- 대상: `unit/feature-0003-agent-web-ui/docs/TEST.md`(§69 Run POST-DEPLOY append) + `unit/feature-0016-metadata-graph/docs/{TASK.md(T69.5 완료),REPORT.md(POST-DEPLOY 절),REVIEW.md([SKIPPED] 완수)}`. **코드/자산 변경 0**.
+- 변경: §69 병합(PR #659 → main 5e235953)의 실 Windows Chrome POST-DEPLOY 실측 결과를 정본에 기록. 서빙 자산 curl(admin.js 실제 render producer 0·styles.css 실제 규칙 0) + 런타임 assertion(`typeof _metaGraphRelTraceRowsHTML==="undefined"`·유지 함수 3종 function·`.admin-meta-graph-ai-rels` DOM 0·버스터 20260710-reldedup·pageerror 0).
+- 근거: `visual_verification_scope: always` 완료 게이트의 POST-DEPLOY 실측 기록 마감. 배포는 §69 cycle 에서 이미 완료(무중단 롤링·soak PASS). 코드 diff 부재 → §18.8 패널 SKIPPED(REVIEW 동일 기록).

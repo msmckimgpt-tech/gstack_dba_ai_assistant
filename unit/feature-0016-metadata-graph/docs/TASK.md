@@ -2107,7 +2107,7 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T69.2 orphan 정리 — 유일 소비처가 사라진 `_metaGraphRelTraceRowsHTML` 함수 삭제·stale 주석(sibling parity) 정정·dead CSS `.admin-meta-graph-ai-rels` 제거. (`_metaGraphBindTraceRows` 는 컬럼 섹션이 계속 사용 → 유지)
 - [x] T69.3 병합 방향 = ①로 일원화(AskUserQuestion 2026-07-10, 사용자 승인). 우클릭 '관계 상세' 팝업(`_metaGraphShowRelations`)은 별도 on-demand 모달로 인라인 중복 아님 → 유지.
 - [x] T69.4 검증: `node --check` PASS. cache-buster admin.js/styles.css bump. diff 13삽입/40삭제·3파일.
-- [ ] T69.5 win-browser 실 Windows Chrome 육안(배포 후): 테이블/컬럼 노드 상세 AI 능동 분석 완료 시 '연결 관계 추적' **미표시**(중복 제거) · 컬럼 섹션 참조함/참조받음 추적 정상 · AI 박스 prose·역할 칩 유지 · pageerror 0.
+- [x] T69.5 win-browser 실 Windows Chrome POST-DEPLOY 검증(배포 5e235953): 서빙 자산 실측 + 런타임 assertion PASS — `_metaGraphRelTraceRowsHTML` 런타임 undefined(제거)·`_metaGraphRenderDetail`/`_metaGraphBindTraceRows`/`_metaGraphLoadNodeAnalysis` function(보존)·`.admin-meta-graph-ai-rels` DOM 0·버스터 20260710-reldedup·pageerror 0. 중복 섹션 #2 구조적 부재 실증(feature-0003 TEST §69 POST-DEPLOY). 완전 대화형 육안(AI 분석 트리거 시점)은 인증 세션+LLM run 필요로 사용자 최종 육안 권장.
 ## §70 graph-focus-selected — 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (2026-07-10, 사용자 요청)
 - [x] T70.0 진단: 노드 단일클릭이 상세 패널만 갱신하고 카메라 미이동(`_metaGraphShowDetail` → focus/pan 없음) → 큰 그래프에서 선택 노드 재탐색 어려운 빈틈. 카메라-전용 팬 기계장치(`_metaGraphAnimateFocus`, 래퍼 선례 `_metaGraphPanToRelation`)는 이미 완비.
 - [x] T70.1 구현: 상세 카드 헤더(`_metaGraphRenderDetail`)에 `🎯 이 노드로 이동`(`metaGraphFocusSelBtn`) 추가 + 렌더 직후 바인딩 → 클릭 시 `_metaGraphAnimateFocus(self.key, _metaGraph._opSeq)`(구조·선택 불변, 뷰포트 중앙 팬 + 판독 줌 클램프). 미렌더 노드는 `_metaRenderedIdFor` null 가드로 안내만.

@@ -1390,3 +1390,7 @@ source_of_truth: true
 - CONFIRMED(MINOR 1, **수정**): 카드 헤더 `.admin-meta-graph-card-head` 가 `flex-wrap` 미지정(nowrap) + `.amgr-link` 는 `flex:none;white-space:nowrap`. 버튼 2개가 되며 좁은 패널 폭(최소 240px)·유사도 배지 동시 존재 시 헤더가 가로 초과 → 페이지 구조는 detail 패널 overflow-x 로 **격리(세로 폭발·겹침·z-index 파손 없음)**되나, 맨 오른쪽 신규 버튼이 가로 스크롤 없이 안 보일 수 있음(diff 이전 1버튼은 최소폭에 맞았음). **수정**: `.admin-meta-graph-card-head { flex-wrap: wrap; }` 부여(sibling `.cov-db-rule-card-head` 동일 패턴) → 폭 부족 시 버튼이 다음 줄로 래핑, 가림·가로스크롤 해소. styles.css 캐시버스터 동반 bump.
 - NIT(정보): `strong`(노드명) min-width:0/ellipsis 미처리는 기존 성질(diff 이전부터) — 이번 수정 범위 밖, flex-wrap 로 실질 완화. 
 - 검증: 수정 후 `node --check admin.js` PASS. win-browser 시각검증은 POST-DEPLOY(정적 baked, TEST §3 / TASK T70.4).
+
+## REV-20260710T223000-ai-claude-corp-feature-0016-reldedup-pd [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §69 완수 기록
+- 대상: feature-0003 TEST §69 POST-DEPLOY append + feature-0016 TASK T69.5 완료 + REPORT POST-DEPLOY 절. 코드/자산 변경 0(순수 문서).
+- 근거: §69 병합(PR #659, main 5e235953)의 실 Windows Chrome POST-DEPLOY 실측(서빙 자산 curl + 런타임 assertion `typeof _metaGraphRelTraceRowsHTML==="undefined"`·`.admin-meta-graph-ai-rels` DOM 0·pageerror 0) 결과를 정본에 기록. 코드 diff 부재 → §18.8 적대 패널 불요(SKIPPED). 배포는 §69 cycle 에서 이미 완료(무중단 롤링·soak PASS).

@@ -1493,3 +1493,8 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 ### 검증
 - `node --check` PASS. diff 13삽입/40삭제·3파일(admin.js/admin.html/styles.css). 캐시버스터 `admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup`.
 - 손실 없음: 테이블/컬럼 상세엔 #1 항상 렌더, Routine 노드는 REFERENCES 없어 #2 원래 미표시. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69).
+
+### POST-DEPLOY (2026-07-10, PR #659 → main 5e235953)
+- `make deploy-web` 무중단 롤링(web-a/web-b 순차 recreate·90s soak PASS·마이그 0). `/healthz` git_commit=5e235953·mysql_ok·pg_ok.
+- 병렬 세션 PR #658(§68 graph-rw-group ROUTINE_USES 읽기/쓰기 분리)가 worktree 생성 후 머지 → origin/main rebase·§68→§69 재지정·admin.js 영역 비겹침 병합(양 변경 라이브 공존).
+- **실 Windows Chrome(Chrome/149) POST-DEPLOY 실측**: 서빙 admin.js 실제 render producer `<strong>연결 관계 추적`=0·`function _metaGraphRelTraceRowsHTML`=0 / styles.css 실제 규칙 `.admin-meta-graph-ai-rels {`=0 / 런타임 `typeof _metaGraphRelTraceRowsHTML==="undefined"`·유지 함수 3종 function·`.admin-meta-graph-ai-rels` DOM 0·pageerror 0. 중복 #2 구조적 제거 결정적 실증(feature-0003 TEST §69 POST-DEPLOY).
