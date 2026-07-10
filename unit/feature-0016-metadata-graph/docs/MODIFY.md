@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260710T160000-ai-claude-feature-0016-graph-rw-group
+- 요청(사용자, 2026-07-10): `그래프 뷰 > 상세` 에서, 참조 관계를 읽기/쓰기 당 그룹으로 구분하여 목록을 출력.
+- **grounding**: 상세 카드에서 읽기/쓰기 의미(`relation_type`)를 갖는 관계는 `ROUTINE_USES`(루틴↔테이블 사용) 뿐. REFERENCES(FK/추정 참조)는 참조함(→)/참조받음(←) 방향만 있고 read/write 개념 없음 → 대상 = "사용 테이블"(Routine self)/"사용하는 함수·프로시저"(Table self) 섹션. 기존은 평면 목록에 항목별 `읽기`/`쓰기` muted 꼬리표만.
+- **수정 (frontend-only, TASK §68)** [admin.js](../../feature-0003-agent-web-ui/src/static/admin.js) `_metaGraphRenderDetail`: ROUTINE_USES 섹션을 `relation_type` 기준 **읽기 그룹 / 쓰기 그룹**으로 분리(그룹 헤더 라벨+개수, REFERENCES 방향 그룹 `dirGroup` 과 동일한 `amgr-dir`/`amgr-dir-head` 스타일 재사용). 섹션 헤더에 `· 읽기 N · 쓰기 M` 요약 + 안내문. 분류 규칙은 기존 per-item `kindKo` 와 동일(`"write"`=쓰기=루틴→테이블, 그 외 `"read"`·미상=읽기=테이블→루틴). 항목 꼬리표는 그룹 헤더로 대체·제거. 각 그룹 30건 상한 + 초과 `… 외 N건` 명시(기존 combined 30 무음 절단 개선). 행 `data-rtuse` 클릭→대상 상세 바인딩 무손상.
+- **검증**: `node --check admin.js` PASS · 재사용 CSS 클래스 전부 styles.css 존재 확인 · `[data-rtuse]` 바인딩(L7983) 유지 · 데이터·거동 무변경(순수 UI 재구성 — REFERENCES/컬럼/용어/AI분석·`_metaGraphShowRelations`(관계 상세) 미변경). §18.8 적대 리뷰 REV-20260710T160500 [SUBAGENT].
+- cache-buster: [admin.html](../../feature-0003-agent-web-ui/src/static/admin.html) `admin.js?v=20260710-graph-rw-group`.
+- 잔여: POST-DEPLOY PB-0008 실 Windows 육안(읽기/쓰기 소그룹 렌더·개수·행 클릭 이동) + web 배포(deploy_scope 확인).
+
 ## CHG-20260710T000000-ai-claude-feature-0016-hl-edge-hide
 - 요청(사용자 리포트, 2026-07-10): 그래프 뷰에서 노드 클릭 → 상대 하이라이트 진입 시 '출력되지 않아야 할 관계선'이 투명하게 렌더되고 마우스 이동에 따라 잔상처럼 상태가 바뀜. 성능 손해 검토 후 대응.
 - **진단**: ① non-focus 엣지가 `dimIf` 로 제거가 아닌 opacity 0.12 dim 유지(§57.6 의도) = 사용자가 본 '투명한 관계선'. ② stale 위치+마우스 깜빡임 = G6 v5 기본 `enableDirtyRectangleRendering:true`(vendor 번들 실측·admin.js override 없음)의 dirty-rect 잔상(dim 전환 시 이전 원색 픽셀 미소거). 단일 클릭 구조 불변 → 렌더 아티팩트 확정.

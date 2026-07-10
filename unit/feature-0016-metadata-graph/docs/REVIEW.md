@@ -8,6 +8,20 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260710T160500-ai-claude-feature-0016-graph-rw-group [SUBAGENT: PASS/SHIP] — 그래프 상세 사용(참조) 관계 읽기/쓰기 그룹 분리(§68) 적대 리뷰
+- 대상: CHG-20260710T160000-graph-rw-group (admin.js `_metaGraphRenderDetail` 의 ROUTINE_USES 섹션을 `relation_type` 기준 읽기/쓰기 그룹으로 분리, `dirGroup` 과 동일 `amgr-dir` 스타일 재사용, 그룹당 30건 상한+초과 명시).
+- 방법: §18.8 적대 리뷰(general-purpose, 결함 적발 목적). 6개 관점 능동 프로브 — 분류 정확성·누락/중복·엣지케이스·상호작용 보존·동일대상 read+write 중복·UX 명확성. 리뷰어가 문맥 라인(routineUses 채움 7800·edge 규약 4067·data-rtuse 바인딩 7983·`_metaGraphBindTraceRows` 선택자·CSS 클래스) 직접 교차검증.
+- **판정: SHIP** — BLOCKER/MAJOR/MINOR 0.
+  - 분류 정확성: 술어 `relation_type==="write"` 가 기존 per-item `kindKo`(7942)와 **글자 그대로 동일** → "read"·""·null·미상 모두 기존과 동일하게 읽기로 분류, 회귀 0. 4067-4068 엣지 스타일 규약과도 정합.
+  - 완전·상호배타 분할: `rtReads.length + rtWrites.length === routineUses.length` 항상 성립(누락/중복 불가). 헤더 `· 읽기 N · 쓰기 M` 합 = 총계 항상 일치.
+  - 엣지케이스: 빈 그룹은 `rtGroup` 이 "" 반환(orphan div 없음), `if(routineUses.length)`+완전분할로 빈 헤더 불가. 30건 초과는 그룹당 slice+`… 외 N건`(combined-30 무음 절단 개선).
+  - 상호작용/이스케이프: `data-rtuse`·`amgr-link` 구조 동일 → 7983 바인딩 그대로 매칭, `_metaGraphBindTraceRows` 는 `.amgr-trace[data-trace]` 만 바인딩(이중 네비 없음). `esc()` 이스케이프 경로 동등(XSS 회귀 0).
+  - 동일 대상 read+write 엣지가 양 그룹에 각각 표시 = 의미적으로 옳고 기존 동작과 정합(dedup 부재는 7800 기존 그대로, 본 변경 무관).
+- **NIT (2건)**:
+  - N1 (UX, by-note): Table self 에서 "쓰기" 라벨 주어 모호 여지 — 추가 안내문("이 테이블을 사용하는 함수·프로시저를 읽기/쓰기로 나눠 표시")이 프레이밍 잡아 완화. 수용(수정 안 함).
+  - N2 (cosmetic → **수정**): `… 외 N건` 초과행이 `amgr-row amgr-plain`(대시 박스)이라 비-박스 `amgr-link` 항목들 사이에서 튐. → `amgr-more` muted 텍스트 li 로 전환(박스 제거, 항목과 시각 정합). `node --check` 재PASS.
+- 미결: 읽기/쓰기 소그룹 렌더·개수 헤더·행 클릭 이동의 실 Windows 육안은 PB-0008 POST-DEPLOY 게이트(TEST §68, 헤드리스 미대체).
+
 ## REV-20260710T052502-ai-claude-feature-0016-hl-edge-hide [SUBAGENT: PASS-WITH-FIXES] — 상대 하이라이트 focus 밖 관계선 제거(§66) 적대 리뷰
 - 대상: CHG-20260710T000000-hl-edge-hide (admin.js `_metaG6Build` 에 `hlHide=(hl)=>!!(fa&&!hl)` + 4개 keep 판정 지점 non-focus 엣지 build 제외 / test_g6build_edge_visibility.js T4·T10·T13 제거-단언 전환 + §66 불변식). 리뷰는 rebase 전 단독 코드 대상 — rebase 후 §64(lod-hl-declutter) keepLod 병존 상태로 전 headless 71 PASS 재검증(T22 병존, 회귀 0) 완료.
 - 방법: §18.8 적대 리뷰(general-purpose, 결함 적발 목적). 8개 결함 클래스 능동 프로브 — 누락 push site·집계 정합·selected 자기엣지·half-lit·다운스트림 소비자·LOD 상호작용·fa=null 회귀·테스트 정합. 리뷰어가 headless 직접 실행 + 대형 모델(200T/199 FK/zoom 0.2/선택) probe 로 highlight×LOD 실증.
