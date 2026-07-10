@@ -2108,3 +2108,9 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T69.3 병합 방향 = ①로 일원화(AskUserQuestion 2026-07-10, 사용자 승인). 우클릭 '관계 상세' 팝업(`_metaGraphShowRelations`)은 별도 on-demand 모달로 인라인 중복 아님 → 유지.
 - [x] T69.4 검증: `node --check` PASS. cache-buster admin.js/styles.css bump. diff 13삽입/40삭제·3파일.
 - [ ] T69.5 win-browser 실 Windows Chrome 육안(배포 후): 테이블/컬럼 노드 상세 AI 능동 분석 완료 시 '연결 관계 추적' **미표시**(중복 제거) · 컬럼 섹션 참조함/참조받음 추적 정상 · AI 박스 prose·역할 칩 유지 · pageerror 0.
+## §70 graph-focus-selected — 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (2026-07-10, 사용자 요청)
+- [x] T70.0 진단: 노드 단일클릭이 상세 패널만 갱신하고 카메라 미이동(`_metaGraphShowDetail` → focus/pan 없음) → 큰 그래프에서 선택 노드 재탐색 어려운 빈틈. 카메라-전용 팬 기계장치(`_metaGraphAnimateFocus`, 래퍼 선례 `_metaGraphPanToRelation`)는 이미 완비.
+- [x] T70.1 구현: 상세 카드 헤더(`_metaGraphRenderDetail`)에 `🎯 이 노드로 이동`(`metaGraphFocusSelBtn`) 추가 + 렌더 직후 바인딩 → 클릭 시 `_metaGraphAnimateFocus(self.key, _metaGraph._opSeq)`(구조·선택 불변, 뷰포트 중앙 팬 + 판독 줌 클램프). 미렌더 노드는 `_metaRenderedIdFor` null 가드로 안내만.
+- [x] T70.2 UI 파손 방지: `.admin-meta-graph-card-head`(flex,gap:8px)에 `.amgr-link`(margin-left:auto) 2개 → auto-마진 분할을 신규 버튼 `style="margin-left:0"`로 회피(기존 관계 상세만 우측 정렬, 신규는 gap:8px로 그 옆 그룹). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
+- [x] T70.3 검증: `node --check admin.js` PASS · diff 적대 리뷰(REV-20260710T063659). frontend-only·마이그 0·Minor(§12.3).
+- [ ] T70.4 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 클릭 → 상세 패널에 버튼 노출 → 클릭 시 선택 노드가 뷰포트 중앙으로 팬 + 상태줄 "→ <노드명> 로 카메라 이동" + 헤더 레이아웃 무붕괴 + pageerror 0. TEST §3 append.

@@ -26,6 +26,33 @@ cache-buster `admin.js?v=20260710-graph-rw-group`.
 - 데이터·거동 무변경(순수 UI 재구성) — REFERENCES/컬럼/용어/AI 분석 섹션·`_metaGraphShowRelations`(관계 상세)
   미변경. 관계 상세 패널의 방향 그룹핑은 별개 관심사(read/write 미노출)라 scope 밖.
 - 라이브 브라우저(PB-0008) 시각 검증은 배포 시 동반 권장.
+## 2026-07-10 · 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (graph-focus-selected)
+
+### 요청 (사용자)
+`그래프 뷰 > 상세`에서, 선택한 노드로 카메라를 이동시키는 버튼을 구성. **UI 구성이 망가지면 안 됨.**
+
+### 진단 (코드 실측)
+노드 단일클릭 → 상세 패널(`<aside id=metadataGraphDetail>`)은 갱신되나 카메라는 이동하지 않음
+(`_metaGraphShowDetail` → `_metaGraphSetSelected`, focus/pan 호출 없음). 큰 그래프에서 선택 노드를 화면에서
+다시 찾기 어려운 빈틈. 반면 카메라-전용 팬 기계장치는 이미 완비(`_metaGraphAnimateFocus` — 구조·선택 불변,
+뷰포트 중앙 tween + 판독 줌 클램프; 관계 행 클릭용 래퍼 `_metaGraphPanToRelation` 이 선례).
+
+### 처리 결과 (frontend-only, admin.js + admin.html)
+상세 카드 헤더(`_metaGraphRenderDetail`) `🔗 관계 상세` 옆에 `🎯 이 노드로 이동`(`metaGraphFocusSelBtn`) 추가.
+클릭 → `_metaGraphAnimateFocus(self.key, _metaGraph._opSeq)`. 미렌더 노드는 `_metaRenderedIdFor` null 가드로
+안내만. **"상세"는 이 UI에서 유일하게 `상세 ⇆` 토글 + 상세 패널로 명명된 표면**이라 요청("상세에서 선택 노드로")에
+가장 정합. UI 안전: `.amgr-link`(margin-left:auto)가 2개 될 때의 auto-마진 분할을 신규 버튼 `margin-left:0`로 회피
+(기존 관계 상세 버튼만 우측 정렬, 신규는 gap:8px로 그 옆 그룹화). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
+
+### 검증
+`node --check admin.js` PASS · diff 적대 리뷰(REV-20260710T063659) · **PB-0008 win-browser 는 POST-DEPLOY**
+(정적 자산 baked → merge + deploy-web 선행). 배포 후: 그래프 로그인 → 노드 클릭 → 상세 패널에 버튼 노출 →
+클릭 시 선택 노드가 뷰포트 중앙으로 팬 + 상태줄 "→ … 로 카메라 이동" + pageerror 0 육안 확인 예정.
+
+### 남은 리스크·후속
+없음(순수 추가). 후속: POST-DEPLOY win-browser 육안 PASS 를 TEST §3 에 append.
+
+---
 
 ## 2026-07-10 · 상대 하이라이트 시 focus 밖 관계선 제거 — 유령 관계선·성능 낭비 해소 (hl-edge-hide, TASK §66)
 
