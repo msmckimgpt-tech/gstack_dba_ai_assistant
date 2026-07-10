@@ -1394,3 +1394,9 @@ source_of_truth: true
 ## REV-20260710T223000-ai-claude-corp-feature-0016-reldedup-pd [SKIPPED: docs-only POST-DEPLOY 실측 기록 — 코드 변경 0] — §69 완수 기록
 - 대상: feature-0003 TEST §69 POST-DEPLOY append + feature-0016 TASK T69.5 완료 + REPORT POST-DEPLOY 절. 코드/자산 변경 0(순수 문서).
 - 근거: §69 병합(PR #659, main 5e235953)의 실 Windows Chrome POST-DEPLOY 실측(서빙 자산 curl + 런타임 assertion `typeof _metaGraphRelTraceRowsHTML==="undefined"`·`.admin-meta-graph-ai-rels` DOM 0·pageerror 0) 결과를 정본에 기록. 코드 diff 부재 → §18.8 적대 패널 불요(SKIPPED). 배포는 §69 cycle 에서 이미 완료(무중단 롤링·soak PASS).
+
+## REV-20260710T163512-ai-claude-feature-0016-graph-rtuse-camera [SKIPPED: Minor frontend-only 2줄 핸들러 — shipped _metaGraphPanToRelation(graphux7#2) 재사용·신규 기계장치 0; §18.8 subagent 패널 사용자 중단 → inline 적대 검토 수행] — 상세 패널 사용관계 행 클릭 카메라 이동
+- inline 적대 diff 리뷰(순서/race·미렌더 가드·selection·회귀·캐시버스터), admin.js `_metaGraphPanToRelation`(L7249)·`_metaGraphShowDetail`(L7197)·`[data-rtuse]` 핸들러(L7997) 실측.
+- **BLOCKING/MAJOR 0**. PASS: (1) 순서 — pan 은 완전 동기(팬+선택+상태), 반환 후 ShowDetail(async)이 첫 await 전 동기로 `_metaGraphStatus("상세 조회 중…")` 세팅 → 캔버스 카메라 애니메이션은 상세 패널 재렌더와 독립, 팬 취소·race 없음. (2) 미렌더 대상 — pan 이 `_metaRenderedIdFor` null 가드로 안내 후 return(무throw), ShowDetail 은 key 로 fetch·전환 정상 → 기존 거동 보존. (3) selection — pan·ShowDetail 양쪽 동일 key `k` 로 `_metaGraphSetSelected` → idempotent, 대상 불일치 없음. (4) 캐시버스터 — admin.js 만 bump, CSS 미변경이라 styles.css 미bump 정확. (5) 회귀 — 상세 전환은 pan 성패 무관 항상 실행(순수 추가).
+- NIT(수용): pan 의 transient 상태힌트 "(더블클릭 = 상세 패널 전환)" 가 rtuse 경로선 부정확(단일 클릭이 이미 전환)하나 ShowDetail 의 동기 "상세 조회 중…" 이 즉시 덮어써 **화면 미노출** → user-facing 회귀 0. 2줄 변경에 pan param 추가는 과설계 → 미수정.
+- 검증: `node --check admin.js` PASS. win-browser 시각검증 POST-DEPLOY(정적 baked, feature-0003 TEST §71 / TASK T71.3).

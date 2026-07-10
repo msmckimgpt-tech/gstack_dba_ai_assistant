@@ -2021,3 +2021,16 @@ python3 repo/unit/feature-0003-agent-web-ui/tests/test_search_rbac.py \
   노드 단일클릭 → 상세 패널 카드 헤더에 `🎯 이 노드로 이동` 노출 확인 → 클릭 → **선택 노드가 뷰포트 중앙으로 팬**
   (그래프 구조·선택 강조 불변) + 상태줄 "→ <노드명> 로 카메라 이동" + pageerror 0. 헤더 레이아웃 무붕괴(버튼 2개 우측 그룹, 줄바꿈/절단 없음) 스크린샷.
   **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(`metaGraphFocusSelBtn` 서빙) + win-browser 육안 PASS append.
+
+### Run (2026-07-10) — graph-rtuse-camera: 상세 패널 사용(참조)관계 행 클릭 시 대상 노드로 카메라 이동 (Minor §12.3 — feature-0003 web/UI 자산, frontend-only, 정본 feature-0016 TASK §71) — **Environment: Windows-browser**
+- **헤드리스 결정론 실증**: `node --check admin.js` PASS. `[data-rtuse]` 클릭 핸들러가 기존 검증된 카메라-전용 팬 래퍼
+  `_metaGraphPanToRelation`(graphux7#2 — seq=`_metaGraph._opSeq`, `_metaRenderedIdFor` null 가드, 동기 팬+선택+상태)를 재사용해
+  신규 그래프-모델 로직 0. inline 적대 diff 리뷰(REV-20260710T163512): 순서(동기 pan→async detail)·미렌더 가드·selection idempotent PASS.
+- **거동 순서 실측**: pan(동기, 카메라+선택) 먼저 → `_metaGraphShowDetail(k)`(async, 첫 await 전 동기로 "상세 조회 중…" 상태 세팅)
+  → 캔버스 카메라 애니메이션은 상세 패널 재렌더와 독립, race 없음. 상세 전환은 pan 성패 무관 항상 실행(기존 거동 보존).
+- **Environment: Windows-browser — pre-commit 라이브 미수행 사유**: 정적 자산이 web 이미지에 baked → 서빙 admin.js 에
+  변경 반영하려면 merge + `deploy-web` 재배포 선행(§65·§66·§67·§70 동일). 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`.
+- **POST-DEPLOY win-browser 육안 검증(예정)**: 그래프 로그인(https://localhost/admin, switchTab('graph')) → 스키마 펼침 →
+  Routine/Table 노드 상세에서 "사용 테이블/사용 함수·프로시저" 행 클릭 → **대상 노드로 카메라 팬 + 선택 강조 + 상세 패널 대상 전환**
+  동시 발생 확인. 미렌더 대상(접힌 스키마/컬링) 행 클릭 → 상태줄 안내만·팬 skip·상세는 전환. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. pageerror 0.
+  **[POST-DEPLOY 갱신 예정]** 배포 후 자산 curl 확증(`admin.js?v=20260710-graph-rtuse-camera` 서빙 + 핸들러 내 `_metaGraphPanToRelation(k)` 존재) + win-browser 육안 PASS append.
