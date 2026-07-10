@@ -46,11 +46,15 @@ workstream(web_context 추출·프론트 분할·DEFER DI-rework — 2026-07-10 
   해당 feature 의 별도 사이클로 분리한다(각 항목 guards 에 명시).
 - **AGENTS.md 개정 공통 규약** (ITEM-01·03·06·07·12 해당): AGENTS.md 는 프로젝트 수준
   rewrite 문서이자 template 계보(v3.x) 문서다. 개정 항목은 (i) 개정안을
-  `docs/DECISIONS.md` 에 제안으로 기록하고 **사람 승인 후 반영**(§13.1 — 구조 변경은
-  사람이 반영), (ii) template base 전파(inbox) 계획 1줄을 REPORT 에 남기며(§13.2.3-A 가
-  선례), (iii) AGENTS.md·`bin/verify-completion.sh` 를 편집하는 항목들끼리는 DAG 로
-  **완전 직렬화**되어 있다(01→03→06→07→12) — 본 로드맵이 스스로 착지점 경합을 만들지
-  않기 위함.
+  `docs/DECISIONS.md` 에 제안으로 기록하고 승인 후 반영 — **본 로드맵에 명세된 개정
+  범위는 §6 드레인 모드 사전 승인(2026-07-10)으로 승인 충족**, 명세 밖으로 확장되는
+  개정만 blocked(§6.3), (ii) template base 전파(inbox) 계획 1줄을 REPORT 에 남기며
+  (§13.2.3-A 가 선례), (iii) AGENTS.md·`bin/verify-completion.sh` 를 편집하는 항목들
+  끼리는 DAG 로 **완전 직렬화**되어 있다(01→03→06→07→12) — 본 로드맵이 스스로 착지점
+  경합을 만들지 않기 위함.
+- **실행 모드**: 본 로드맵은 **§6 연속 드레인 운영 모드**(단일 세션 직렬 — 2026-07-10
+  사용자 지시)로 실행한다. Major 사전 승인·blocked 축소·재개 프로토콜은 §6 이 정본이며,
+  §2 의 "병렬 가능" 표기는 DAG 상 허용일 뿐 실제 실행은 §6.2 선형 순서를 따른다.
 
 ## 1. 종속성 그래프 (requires = 실선)
 
@@ -86,8 +90,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 |---|---|---|---|---|
 | P0 | ITEM-01·02·04·08 | 4개 전부 병렬(편집 파일 무겹침) | (없음) | 즉효·저위험 — 현재 진행 중인 병렬 작업의 충돌률을 먼저 낮춰 이후 Phase 자체를 안전하게 만든다 |
 | P1 | ITEM-05 ‖ (03→06→07→12 직렬) | 05 는 병렬, meta 4종은 직렬 체인 | 03 은 01 완료 후, 이후 06→07→12 순차 | AGENTS.md·verify-completion.sh 공유 편집을 직렬화(로드맵 스스로 착지점을 만들지 않음) + 파이프라인 장치 완성 |
-| P2 | ITEM-09·10 | 상호 병렬 가능(다른 파일: admin.js vs app.py) | ITEM-09: 04·07 완료 + feature-0016 그래프 활성 PR 0 윈도우 + 사용자 confirm. ITEM-10: 05 완료 | 대형 리팩터는 보호 장치(P0·P1) 가동 후에만 — F-007 의 BLOCKED 사유 해제 |
-| P3 | ITEM-11 | — | ITEM-10 완료 + 사람 승인(인증 인접) | 인증 인접 재편은 DI seam 확보 후 (원본 세션 명시 순서) |
+| P2 | ITEM-09·10 | DAG 상 병렬 가능 — §6 드레인 모드에선 직렬 | ITEM-09: 04·07 완료 + 그래프 활성 PR 0 **기계 확인**(§6.3 — 사전 승인 대체). ITEM-10: 05 완료 | 대형 리팩터는 보호 장치(P0·P1) 가동 후에만 — F-007 의 BLOCKED 사유 해제 |
+| P3 | ITEM-11 | — | ITEM-10 완료 (§6.1 사전 승인 + 기계 게이트: 스냅샷·§18.8 패널) | 인증 인접 재편은 DI seam 확보 후 (원본 세션 명시 순서) |
 
 ## 3. 항목 (각 1 cycle)
 
@@ -95,7 +99,7 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **status**: pending
 - **feature_id**: META-0023-parallel-id-hygiene   <!-- 잠정 — 착수 시 최대 META 번호 재확인(§13.1 감지-후-재번호) -->
 - **dimension**: operational
-- **risk_grade**: Major   <!-- 거버넌스 정본(rewrite) 개정 — 무인 cycle 자동 진행 금지, 사람 승인 게이트 -->
+- **risk_grade**: Major   <!-- 거버넌스 정본(rewrite) 개정 — §6.1 사전 승인으로 드레인 중 비차단 -->
 - **depends_on**: []
 - **enables**: [ITEM-03]
 - **why**: F-002 — `TASK-`/`REV-` 등은 timestamp 전환(§13.1 v3.32.0/v3.34.x)으로 경합이
@@ -114,11 +118,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   3. 기존 문서의 소급 재번호는 **하지 않는다**(참조 파손 방지) — 신규 항목부터 적용.
 - **entry_points**: `AGENTS.md` §13.1·§5.5·§6 (rewrite 문서 — §13.1 "동시 1 AI" 규칙 준수,
   본 cycle 이 단독 mutator), `docs/DECISIONS.md`(append).
-- **acceptance**: (a) AGENTS.md 3개 절 개정 diff 존재 (b) ADR(제안→사람 승인 기록 포함)
-  1건 추가 (c) 기존 § 참조 무파손(`grep -rn '## 5[0-9]' unit/*/docs/TASK.md` 결과 불변).
+- **acceptance**: (a) AGENTS.md 3개 절 개정 diff 존재 (b) ADR(제안→승인 근거 §6.1 기록
+  포함) 1건 추가 (c) 기존 § 참조 무파손(`grep -rn '## 5[0-9]' unit/*/docs/TASK.md` 결과
+  불변).
 - **guards**: 소급 재번호 금지. §0 "AGENTS.md 개정 공통 규약" 적용 — DECISIONS.md 제안
-  기록 + **사람 승인 후 반영** + template base 전파(inbox) 계획 1줄. 이 cycle 이 AGENTS.md
-  단독 mutator.
+  기록(승인은 §6.1 사전 승인으로 충족) + template base 전파(inbox) 계획 1줄. 이 cycle 이
+  AGENTS.md 단독 mutator.
 - **effort**: 小
 - **notes**: verify-completion META mode 진입(#9·#10·#11·#13 실행, #9 이 핵심) —
   `meta/REVIEW.md` 에 REV 인식 태그 필수. 배포 무관(doc-only). **후행 관측**(done 판정식
@@ -167,7 +172,7 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **status**: pending
 - **feature_id**: META-0024-merge-hygiene   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
-- **risk_grade**: Major   <!-- 3계정 git 전역 config + 머지 자동화 driver + AGENTS.md 개정 — 사람 승인 게이트 -->
+- **risk_grade**: Major   <!-- 3계정 git 전역 config + 머지 자동화 driver + AGENTS.md 개정 — §6.1 사전 승인으로 드레인 중 비차단 -->
 - **depends_on**: [ITEM-01]
 - **enables**: [ITEM-06]
 - **why**: F-004·F-009 — append 문서 텍스트 충돌이 반복 수동 해소되고 있고(7c653ea8),
@@ -178,13 +183,13 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   §13.1 의 driver 허용 범위를 확대하는 **정식 개정을 선행 스텝으로 포함**해야 성립한다
   (개정 없이는 정책 위반 — 적대 리뷰 B-2 지적 반영).
 - **fit_verdict**: adopt-with-guard (guard: ① §13.1 개정이 1급 선행 스텝 — §0 공통 규약
-  (DECISIONS 제안 + 사람 승인) 적용, ② 전체파일 union 금지 유지 — 항목 경계 인식 driver
-  만, ③ driver 실패 시 표준 충돌로 폴백해 사람/AI 해소)
+  적용(승인은 §6.1 사전 승인으로 충족), ② 전체파일 union 금지 유지 — 항목 경계 인식
+  driver 만, ③ driver 실패 시 표준 충돌로 폴백해 사람/AI 해소)
 - **what**:
   1. **선행: AGENTS.md §13.1(v3.35.1) 개정** — path-scoped custom merge driver 허용
      범위를 "단일-라인 stamp" 에서 "append-only 문서의 말미 블록 병합(항목 경계 인식,
-     실패 시 표준 충돌 폴백)" 까지 확대. §0 공통 규약(DECISIONS 제안 + 사람 승인 +
-     template 전파 계획) 적용.
+     실패 시 표준 충돌 폴백)" 까지 확대. §0 공통 규약(DECISIONS 제안 기록 + §6.1 사전
+     승인 + template 전파 계획) 적용.
   2. 작업자 3계열 계정(root·claude·claude-corp) git 전역에 `rerere.enabled=true` +
      `rerere.autoUpdate=true` 설정(설정 스크립트 `bin/setup-git-parallel.sh` 신설, 계정
      추가 시 재실행 가능하게 idempotent).
@@ -207,9 +212,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   블록 append → `git merge` 무충돌 병존, 양 블록 모두 보존 (b) 본문 중간을 고친 케이스는
   표준 충돌 발생(폴백 확인) (c) rerere 가 동일 충돌 재발 시 자동 해소하는 것 1회 실증.
 - **guards**: driver 는 append-only 문서 4종에만 path-scoped. 실패 시 무조건 표준 충돌
-  폴백(자동 오병합 금지). §13.1 개정(what-1)이 사람 승인을 통과하지 못하면 driver
-  스텝(3·4)은 폐기하고 rerere(2)+marker 검사(5)만 축소 출하. verify-completion 변경분
-  (what-4·5)은 §18.8 패널 검증 대상.
+  폴백(자동 오병합 금지). §13.1 개정(what-1)이 본 항목 명세를 벗어나는 확대로 판정되면
+  (§6.3) driver 스텝(3·4)은 폐기하고 rerere(2)+marker 검사(5)만 축소 출하.
+  verify-completion 변경분(what-4·5)은 §18.8 패널 검증 대상.
 - **effort**: 中
 - **notes**: 배포 무관. ITEM-06 완료 영역부터는 driver 대상에서 제거(브리지 수명 명시).
 
@@ -217,7 +222,7 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **status**: pending
 - **feature_id**: META-0025-worktree-audit   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
-- **risk_grade**: Major   <!-- 원격 브랜치 삭제 cron — --apply 활성화는 사람 confirm 후 -->
+- **risk_grade**: Major   <!-- 원격 브랜치 삭제 cron — §6.1 사전 승인 + 기계 가드로 드레인 중 비차단 -->
 - **depends_on**: []
 - **enables**: [ITEM-09]
 - **why**: F-006 — 원격 ai/* 223개(미머지 73), 41~129 behind 브랜치 방치 = 예약된 충돌.
@@ -236,8 +241,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
      `__pycache__`/root-소유 파일을 `sudo rm` 후 재시도(F-006 quirk), `git worktree prune`
      마무리.
   3. cron 등록(평일 1회, 기존 doc-sync cron 패턴 재사용): 기본 리포트 모드. **cron 의
-     `--apply`(SAFE_REMOVE 자동 삭제) 활성화는 리포트 모드 1주 관찰 후 사람 confirm 을
-     받아 별도로 켠다** — 켜기 전까지는 보고 전용.
+     `--apply`(SAFE_REMOVE 자동 삭제) 활성화는 §6.1 사전 승인으로 충족** — 단 기계 조건
+     선행: 첫 리포트 1회 생성 → 리포트의 SAFE_REMOVE 판정을 acceptance (b)(c) 재현으로
+     검증 → 이상 없으면 같은 드레인 내 활성화(오판정 발견 시 blocked, §6.3).
 - **entry_points**: `bin/worktree-audit.sh`(신설), crontab(운영 — repo 밖, `bin/` 에 설치
   스크립트 동봉). AGENTS.md 는 편집하지 않는다(직렬 체인 밖 유지 — §13.2.3-A 구현 존재
   표기는 ITEM-12 의 AGENTS.md 편집에 1줄 편승).
@@ -440,11 +446,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   클릭·우클릭 메뉴·드래그·줌 LOD·검색·패널 각 1회 이상 실증(§15.4.1 완료 게이트)
   (b) `admin.js` 라인 수 ≥ 3,000 감소 (c) console 에러 0 · 성능 회귀 없음(그래프 로드
   시간 동급).
-- **guards**: **착수 윈도우 게이트** — 시작 전 `gh pr list --state open` + REGISTRY +
-  `git branch -r --no-merged` 로 admin.js 그래프 구간을 만지는 활성 브랜치가 **0** 임을
-  확인하고, 사용자에게 그래프 작업 프리즈 윈도우(1~2일)를 confirm 받은 후에만 진행.
-  기능 변경 절대 금지(이동만) — diff 는 이동+import/export 만. 완료 즉시 머지(장수 브랜치
-  금지 — 본 항목이야말로 신선도 민감).
+- **guards**: **착수 윈도우 게이트(기계 판정, §6.3)** — 시작 전 `gh pr list --state open`
+  + REGISTRY + `git branch -r --no-merged` 로 admin.js 그래프 구간을 만지는 활성 브랜치가
+  **0** 임을 확인. §6 드레인 모드(단일 세션 직렬)에서는 이 조건이 자연 충족되며 프리즈
+  confirm 은 §6.1 사전 승인으로 대체 — **활성 브랜치/PR 이 발견되면 그때만 blocked**
+  (진짜 이슈). 기능 변경 절대 금지(이동만) — diff 는 이동+import/export 만. 완료 즉시
+  머지(장수 브랜치 금지 — 본 항목이야말로 신선도 민감).
 - **effort**: 大
 - **notes**: TASK-0012-10 승계(원본 feature-0012 태스크지만 파일 소유 feature-0003 에
   귀속 — cross-feature docs 홈 규칙). 배포 scope: web(자산 baked — 이미지 재빌드).
@@ -505,8 +512,10 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **acceptance**: (a) 401/403 응답이 전 대상 핸들러에서 상태코드+본문 byte-동치(스냅샷
   테스트) (b) long-poll 타임아웃·재연결 시나리오 라이브 1회 (c) `ruff F821` + `make test`
   baseline (d) §18.8 적대 검증 패널 PASS(인증 인접 필수) (e) DEFER 분류 잔여 0.
-- **guards**: **인증·인가 인접 — 무인 cycle 금지**(사람 승인 후 착수, §12.3). 403 메시지
-  verbatim. 실패 batch 는 즉시 revert(batch 원자성).
+- **guards**: **인증·인가 인접** — 착수 승인은 §6.1 사전 승인으로 충족하되, 사람 게이트를
+  대체하는 **기계 게이트를 강제**: 401/403 byte-동치 스냅샷 테스트 선작성(acceptance a)
+  + §18.8 적대 패널 PASS(acceptance d) 없이는 어떤 batch 도 머지 금지 — 어느 하나 FAIL
+  지속이면 blocked(§6.3). 403 메시지 verbatim. 실패 batch 는 즉시 revert(batch 원자성).
 - **effort**: 大
 - **notes**: 배포 scope: web. 완료 시 feature-0012 종결 선언(REPORT.md Final 기록).
 
@@ -514,7 +523,7 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **status**: pending
 - **feature_id**: META-0029-wip-hotspot-policy   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
-- **risk_grade**: Major   <!-- cycle-init 게이트 스크립트 + AGENTS.md 개정 — 사람 승인 게이트, §18.8 패널 대상 -->
+- **risk_grade**: Major   <!-- cycle-init 게이트 스크립트 + AGENTS.md 개정 — §6.1 사전 승인, §18.8 패널 대상 -->
 - **depends_on**: [ITEM-07]   <!-- 논리 의존 아님 — AGENTS.md 편집 직렬 체인 말단(§0 공통 규약) -->
 - **enables**: []
 - **why**: 당초 defer(C-13) 였으나 웹 리서치로 **채택 승격** — 충돌 확률의 근본 변수는
@@ -545,8 +554,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   (스키마 additive).
 - **guards**: **hard 차단 금지** — 경고·가시화까지만(처리량 보존, 판단은 세션/사용자).
   REGISTRY 자체가 공유 문서이므로 entry 는 세션당 자기 블록만 수정(기존 규약 유지 —
-  조정 파일이 새 충돌원이 되지 않게, W-008 부수 관측 반영). §0 공통 규약(사람 승인 +
-  template 전파) 적용, cycle-init 변경분은 §18.8 패널 검증 대상.
+  조정 파일이 새 충돌원이 되지 않게, W-008 부수 관측 반영). §0 공통 규약(§6.1 사전 승인
+  + template 전파) 적용, cycle-init 변경분은 §18.8 패널 검증 대상.
 - **effort**: 小
 - **notes**: AGENTS.md 직렬 체인(01→03→06→07→12)의 말단. REGISTRY 경로는 §13.2.8 정본
   (`<project_root>/worktrees/REGISTRY.md`)을 따르되, **본 배치처럼 project_root 가 git
@@ -566,9 +575,63 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
 - 총 12 항목 · done 0 · in-progress 0 · pending 12 · blocked 0
-- 다음 ready 항목(deps 충족 + pending): **ITEM-01, ITEM-02, ITEM-04, ITEM-05, ITEM-08**
-  (P0 4개 + 독립 코드 항목 05). meta 직렬 체인(03→06→07→12)은 01 완료 후 순차 진입.
-- 주의: Major 등급(01·03·04·06·07·09·10·11·12)은 무인 improve_cycle 드레인에서 자동
-  blocked — 사람 승인 후 진행(Minor 는 02·05·08 뿐).
-- 주의: ITEM-09 는 deps 충족 후에도 **착수 윈도우 게이트**(feature-0016 활성 그래프 PR 0
-  + 사용자 프리즈 confirm) 필요. ITEM-11 은 사람 승인 필수(인증 인접).
+- **실행 순서(§6.2 선형)**: 01 → 02 → 04 → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
+- Major 등급(01·03·04·06·07·09·10·11·12)은 **§6.1 사전 승인(2026-07-10 사용자 지시)으로
+  드레인 중 비차단** — blocked 는 §6.3 의 "진짜 이슈" 발생 시에만. (§6 이 없는 일반
+  무인 드레인이라면 Major 는 자동 blocked 가 원칙 — §6 은 본 initiative 한정 특례.)
+- ITEM-09 착수 윈도우·ITEM-11 인증 인접 게이트는 §6.3 의 기계 판정으로 대체됨.
+
+## 6. 연속 드레인 운영 모드 (2026-07-10 사용자 지시 — 본 initiative 한정)
+
+> 사용자 지시(2026-07-10, verbatim 요지): 본 로드맵은 규모가 크므로 **단일 세션에서
+> 병렬 없이** 진행하고, [모든 토큰을 소비할 때까지 작업 → 사용량 재할당 시 `continue`]
+> 를 반복하며 근본 수정을 완수한다. **특별한 이슈가 없는 한 blocked 되지 않아야 한다.**
+
+### 6.1 사전 승인 (standing approval)
+
+- 본 로드맵 **12개 ITEM 의 명세된 범위**(what/entry_points/acceptance/guards)에 대해
+  Major 위험등급의 착수 승인·AGENTS.md 개정 승인·ITEM-04 `--apply` 활성화·ITEM-09
+  프리즈·ITEM-11 인증 인접 착수를 **2026-07-10 사용자 지시로 일괄 사전 승인**한다
+  (PLAN-APPROVED 상당). 각 cycle 의 REVIEW.md 에 "승인 근거: ROADMAP §6.1" 1줄을 남긴다.
+- **배포**: 코드 항목(05·09·10·11) 완료 시 web(필요 시 ask-worker) 재빌드·재배포 +
+  healthz/스모크 검증까지 자동 진행(§16.3 deploy-backed 완료 기준). 배포 실패·스모크
+  FAIL 시 즉시 롤백 후 blocked(§6.3).
+- 사전 승인의 **한계**: 명세 밖 scope 확장, 새로운 파괴적 작업(데이터 삭제·스키마
+  파괴 변경), 로드맵에 없는 신규 항목 추가는 포함하지 않는다 — 이 경우 사용자 확인.
+- 철회: 사용자가 언제든 지시로 철회 가능. 철회 시 §5 의 일반 원칙(Major 자동 blocked)
+  으로 복귀.
+
+### 6.2 실행 방식 (단일 세션 직렬)
+
+- **선형 순서**: 01 → 02 → 04 → 05 → 08 → 03 → 06 → 07 → 12 → 09 → 10 → 11
+  (deps 위상순 + 저비용 quick-win 선행 + AGENTS.md/verify 직렬 체인 준수 + 대형 리팩터
+  후반. 09 를 12 직후에 두는 이유: 드레인 중에는 그래프 활성 PR 0 이 보장되는 조용한
+  윈도우라 최대 충돌원 해체의 적기).
+- 항목당 기존 worktree cycle 절차(cycle-init → 구현 → verify → cycle-finalize) 유지 —
+  단 **한 번에 1개 cycle 만** 활성(직렬). 병렬 worktree 금지(사용자 지시).
+- **작은 착지 단위**: 토큰 소진이 언제든 올 수 있으므로 batch/스텝 단위로 커밋·push 를
+  자주 남긴다. 각 ITEM 의 중간 상태도 "머지 가능(테스트 GREEN)" 을 유지해, 소진 시점의
+  미완 잔여가 최소화되게 한다.
+
+### 6.3 blocked 조건 (진짜 이슈만 — 이 목록 외에는 멈추지 않는다)
+
+1. acceptance/기계 게이트 FAIL 이 2회 연속 해소 실패(스냅샷 불일치·§18.8 패널 BLOCKING
+   미해소·make test baseline 회귀 지속).
+2. 배포 후 healthz/스모크 FAIL → 롤백까지 수행한 경우.
+3. ITEM-09 착수 시 그래프 구간 활성 브랜치/PR 발견(외부 세션 개입 신호).
+4. FOREIGN_CHANGE_ALERT / 타 세션 동시 변경 감지(단일 세션 전제 파손).
+5. ANCHOR §1~§3 명백 상충(§18.3), 또는 명세 밖 scope 확장이 필요하다는 판단.
+6. 파괴적 작업의 가드가 판정 불능(예: ITEM-04 SAFE_REMOVE 오판정 발견).
+
+blocked 발생 시: 해당 ITEM 의 status 를 `blocked`+사유로 갱신하고 **다음 ready 항목으로
+진행**(전체 드레인은 멈추지 않음). 전 항목 blocked 일 때만 세션 종료 보고.
+
+### 6.4 재개 프로토콜 (`continue`)
+
+- 토큰 소진 후 사용자의 `continue` 로 재개한다. 재개 시 첫 행동: 본 문서 **§5 진행
+  현황**과 활성 worktree(`git worktree list`)·미커밋 diff·마지막 커밋을 교차확인해
+  중단 지점을 복원하고, in-progress 항목부터 이어간다(§5 를 항목 전환 시마다 갱신해
+  두는 것이 재개 정확도의 전제).
+- **ScheduleWakeup/자기 재호출 예약 금지** — 재개는 사용자 `continue` 로만(사용량 한도
+  리셋 후 stale 자동 발화 사고 이력, 2026-07 관측).
+- 세션 rollover(context 요약) 후에도 §5 + worktree 상태가 복원 기준점이다.

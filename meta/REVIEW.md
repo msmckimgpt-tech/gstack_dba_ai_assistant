@@ -514,3 +514,10 @@
 - **검증**: improve-fit-reviewer **2-round 적대 리뷰**. 1차 NOT-SHIP — BLOCKING 2(B-1 feature_id 가 verify 정규식과 계약 파손 → META-NNNN 전환·혼합 changeset 분리 규약 신설 / B-2 §13.1 v3.35.1 merge-driver 허용 범위 왜곡 → 정식 개정을 선행 스텝으로 격상), MAJOR 5(AGENTS.md 개정 공통 규약 신설·편집 항목 01→03→06→07→12 완전 직렬화·REGISTRY 부트스트랩·ADR 인용 네임스페이스 정정·Major 등급 상향), NIT 12 전건 반영. 2차 SHIP-WITH-FIXES — 잔여 5곳(ADR bare 인용 3·.merge.lock 경로 전제 오류 2) 반영 완료(락 위치는 `git rev-parse --git-common-dir` 하위로 확정 — working tree 밖·전 worktree 공유). DAG 비순환·enables 역참조·§5 ready 목록·수치(23 include·236/198 변경횟수·META-0022 최대번호) 리뷰어 실측 대조 PASS.
 - **META mode 판정**: changeset = `docs/improvements/**` + `meta/REVIEW.md` — pure-meta(§18.4), check #9 는 본 entry 로 충족. 런타임 코드·테스트 무영향, 배포 no-op.
 - **Human Approval Needed**: 아니오 (로드맵 문서 신설 — 비파괴·코드 무수정). 단 **각 ITEM 의 구현은 별도 cycle 게이트**: Major 9종(01·03·04·06·07·09·10·11·12)은 착수 시 사람 승인 필수(§12.3, 무인 improve_cycle 자동 blocked), AGENTS.md 개정 5종은 DECISIONS 제안+사람 승인+template 전파 계획(§0 공통 규약).
+
+## REV-20260710T182248-parallel-structure-drain-mode [SKIPPED:user-directive-transcription] — ROADMAP 연속 드레인 운영 모드 개정 (initiative: parallel-work-structure)
+
+- **scope**: `docs/improvements/parallel-work-structure/ROADMAP.md` 개정 — §6 "연속 드레인 운영 모드" 신설(단일 세션 직렬·토큰 소진→continue 반복·§6.2 선형 실행 순서·§6.3 blocked 축소·§6.4 재개 프로토콜), Major 9종 사전 승인(§6.1, PLAN-APPROVED 상당) 및 ITEM-04/09/11 의 사람 게이트를 기계 게이트로 대체, §0/§2/§5/각 항목 guards 정합 갱신.
+- **SKIPPED 사유**: 본 개정은 2026-07-10 사용자 명시 지시("단일 세션·병렬 없이, 토큰 소진까지 작업 후 continue 반복, 특별한 이슈 없으면 blocked 되지 않게 구성")의 **전사(transcription)** — 승인 판단의 주체가 사용자 본인이라 적대 패널의 판단 대상이 아님. 직전 2-round 적대 리뷰(REV-20260710T180820)의 구조·계약 검증은 유효 유지(항목 명세·DAG 무변경, 실행 모드만 추가). 잔존 사람 게이트 2곳(2단계 브랜치 삭제·명세 밖 확장)은 §6.1 한계로 의도적 보존 — grep 정합 검사 완료.
+- **META mode 판정**: changeset = `docs/improvements/**` + `meta/REVIEW.md` — pure-meta(§18.4). 코드 무수정·배포 no-op.
+- **Human Approval Needed**: 아니오 — 본 개정 자체가 사용자 지시의 문서화. 철회 조항(§6.1) 포함.
