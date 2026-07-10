@@ -374,6 +374,11 @@ def _fetch_context(node_key: str, conn):
             break
     by_key = {n.get("key"): n for n in nodes if n.get("key")}
     columns, references, related_terms, other = [], [], [], []
+    # graph-funcproc(node-analysis-routine-touch): 현재 노드가 Routine 일 때, 이 루틴이
+    #   읽고/쓰는 테이블을 read/write 구분과 함께 구조화해 payload 의 `touches` 로 투영한다
+    #   (그간 참조 테이블이 무구분 `other` 로만 흘러 프롬프트의 "the tables it touches" 가 약하게만
+    #    뒷받침되던 gap — routine 분석 caveats 가 "참조 테이블 미상"으로 흐르던 원인 중 하나).
+    routine_touches: list = []
     # 이웃별 엣지 메타(관련도 채점용): {key: {kind, weight, status, child}}.
     #   child=True → node_key(현재 노드)의 직속 HAS_COLUMN 자식(=하위 컬럼). 우선순위: 신뢰 REFERENCES > child > 그 외.
     neighbor_meta: dict = {}
@@ -410,6 +415,9 @@ def _fetch_context(node_key: str, conn):
         elif et == "ROUTINE_USES":
             # graph-funcproc(ADR-016): 함수·프로시저 ↔ 테이블 사용 관계 — 도메인 연관 신호로 채점.
             _record(tgt if src == node_key else src, "routine_use")
+            # 현재 노드가 이 루틴(src==node_key)이면 target 테이블을 read/write 와 함께 touches 로 수집.
+            if src == node_key:
+                routine_touches.append({"key": tgt, "access": (e.get("relation_type") or "read")})
         elif et == "REFERENCES":
             references.append({"from": src, "to": tgt, "cardinality": e.get("cardinality"),
                                "weight": e.get("weight"), "status": e.get("status"),
@@ -432,9 +440,45 @@ def _fetch_context(node_key: str, conn):
         elif n not in columns:
             other.append(n)
             neighbor_meta.setdefault(k, {"kind": "other", "weight": None, "status": None, "child": False})
+    # Routine 이면 touches 에 테이블명(그래프 노드에서 해소) + returns(routine_objects) 보강.
+    routine_returns = ""
+    if (root or {}).get("label") == "Routine":
+        for t in routine_touches:
+            tn = by_key.get(t.get("key")) or {}
+            t["table"] = tn.get("name") or (t.get("key") or "").rsplit(".", 1)[-1] or t.get("key")
+        routine_returns = _fetch_routine_returns(node_key, (root or {}).get("fqn") or "", conn)
     return {"root": root, "neighbors": [n for n in nodes if n.get("key") != node_key],
             "columns": columns, "references": references, "related_terms": related_terms,
-            "other": other, "neighbor_meta": neighbor_meta}
+            "other": other, "neighbor_meta": neighbor_meta,
+            "routine_touches": routine_touches, "routine_returns": routine_returns}
+
+
+def _fetch_routine_returns(node_key: str, fqn: str, conn) -> str:
+    """Routine 의 선언 반환형(routine_objects.returns) — payload `returns` 보강용.
+
+    그래프 Routine 노드는 returns 를 싣지 않으므로(sync_routine 미투영) SSOT 인 routine_objects 에서
+    1회 조회한다. 실패·부재·conn 없음 시 빈 문자열(비차단 — returns 는 부가정보). fqn = `schema.name()`.
+    """
+    if conn is None:
+        return ""
+    base = fqn[:-2] if fqn.endswith("()") else fqn
+    if "." not in base:
+        return ""
+    schema, name = base.rsplit(".", 1)
+    scope = (node_key or "").split(":", 1)[0] or "common"
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT returns FROM routine_objects "
+                        "WHERE scope_key=%s AND schema_name=%s AND routine_name=%s LIMIT 1",
+                        (scope[:96], schema[:256], name[:256]))
+            r = cur.fetchone()
+        finally:
+            cur.close()
+        return (str(r[0]).strip()[:200] if r and r[0] else "")
+    except Exception as exc:
+        _log.debug("fetch_routine_returns_failed key=%s err=%r", node_key, exc)
+        return ""
 
 
 def _build_payload(node: dict, ctx: dict) -> dict:
@@ -466,6 +510,22 @@ def _build_payload(node: dict, ctx: dict) -> dict:
             payload["routine_type"] = str(node.get("routine_type"))[:32]
         if node.get("params"):
             payload["params"] = str(node.get("params"))[:500]
+        # node-analysis-routine-touch: 반환형 + 읽고/쓰는 테이블(read/write) 구조화 투영.
+        #   프롬프트의 "the tables it touches" 를 실제로 뒷받침 — 루틴 분석이 이름만으로 굶주려
+        #   caveats 를 "참조 테이블 미상"으로 채우던 원인 완화.
+        rr = (ctx.get("routine_returns") or "").strip()
+        if rr:
+            payload["returns"] = rr[:200]
+        touches = []
+        seen_t = set()
+        for t in (ctx.get("routine_touches") or [])[:40]:
+            tbl = (t.get("table") or "").strip()
+            if not tbl or tbl in seen_t:
+                continue
+            seen_t.add(tbl)
+            touches.append({"table": tbl, "access": t.get("access") or "read"})
+        if touches:
+            payload["touches"] = touches
     return payload
 
 

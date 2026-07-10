@@ -1,6 +1,6 @@
 # Report
 
-## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §70/ADR-034)
+## 2026-07-10 · 그래프 뷰 미니맵 — 구성 불변 시 전체-이미지 재사용 (graph-minimap-reuse, §73/ADR-035, 머지 재번호 §70→§73·ADR-034→ADR-035 §13.1)
 
 ### 요청 (사용자)
 `그래프 뷰` 의 **미니맵 최적화** — "화면 구성이 갱신되었을 경우, 한 번 draw한 전체 이미지를 재사용하는 방식도 고려."
@@ -18,12 +18,12 @@ G6 v5 minimap 플러그인(vendor `g6.min.js` 클래스 `tZ`)의 이벤트 바�
 - **호출 시점 = 첫 draw 이후**(적대 리뷰 H1 발견·수정): G6 v5 는 `context.plugin` 을 생성자가 아니라 첫 `draw()` 의 `initRuntime()` 에서 lazy 생성 → init 직후 호출은 patch no-op(최적화 사멸)였다. `await g.draw()` 직후 멱등 호출로 이동해 plugin 존재 시점에 래핑.
 - **네이티브 드래그 stale 수정**(적대 리뷰 H2, BLOCK→수정): 노드/콤보 드래그는 `_metaG6Apply` 를 안 거치고 `element.draw({stage:"translate"})` 로 요소를 직접 이동하는데 이것도 `AFTER_DRAW`(stage:"translate")를 발생시켜 renderMinimap 을 부른다 → stale 서명으로 skip → 미니맵이 드래그를 반영 못 하고 얼어붙던 회귀. `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 재복제 폴백으로 해소(node·combo 단일 지점 커버).
 - **효과**: 상태-only rebuild(선택/역할도착/busy)는 미니맵 재복제 skip → 이미 그려둔 전체 이미지 재사용. 구성 변경(펼침/접기/드래그/LOD/스코프전환/검색)은 서명 변경 → 정상 재복제. 팬/줌은 원래대로 마스크만 갱신.
-- cache-buster `admin.js?v=20260710-minimap-reuse`.
+- cache-buster (머지 후) `admin.js?v=20260710-mmreuse-colnav`(graph-colnav 병렬 머지와 결합).
 
 ### 검증
 - 신규 headless `test_g6build_minimap_reuse.js` **35 PASS**(A 기하 서명 11 + B 실 build 4 + C 패치 10 + **D 드래그 무효화 10**).
 - 회귀 **150 PASS**(collod 20·agglod 8·category 26·edge 71·viewportcull 6·vpack 19) · `node --check admin.js` PASS.
-- 적대 리뷰가 2건 BLOCK 결함 적발 → 수정: **H1** 패치를 init 시점 호출해 plugin lazy-init 전이라 no-op(최적화 사멸), **H2** 네이티브 드래그가 stale 서명으로 미니맵 재복제 skip(드래그 반영 못 함). 둘 다 수정·테스트 커버. POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §70 — 미니맵 렌더·뷰포트 추종·상태변경 후 안정·**드래그 반영**·구성변경 반영·pageerror 0).
+- 적대 리뷰가 2건 BLOCK 결함 적발 → 수정: **H1** 패치를 init 시점 호출해 plugin lazy-init 전이라 no-op(최적화 사멸), **H2** 네이티브 드래그가 stale 서명으로 미니맵 재복제 skip(드래그 반영 못 함). 둘 다 수정·테스트 커버. POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §73 — 미니맵 렌더·뷰포트 추종·상태변경 후 안정·**드래그 반영**·구성변경 반영·pageerror 0).
 
 ### 트레이드오프 (사용자 요구와 정합)
 역할 칩 색·선택 하이라이트·dim 은 미니맵에 즉시 안 뜨고 **다음 기하 변경 때** 반영 — 미니맵 168×112px 스케일서 색은 시각적으로 무의미하며, 사용자가 명시 요청한 "구성 불변 시 전체-이미지 재사용" 의 본질.
@@ -54,6 +54,33 @@ cache-buster `admin.js?v=20260710-graph-rw-group`.
 - 데이터·거동 무변경(순수 UI 재구성) — REFERENCES/컬럼/용어/AI 분석 섹션·`_metaGraphShowRelations`(관계 상세)
   미변경. 관계 상세 패널의 방향 그룹핑은 별개 관심사(read/write 미노출)라 scope 밖.
 - 라이브 브라우저(PB-0008) 시각 검증은 배포 시 동반 권장.
+## 2026-07-10 · 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (graph-focus-selected)
+
+### 요청 (사용자)
+`그래프 뷰 > 상세`에서, 선택한 노드로 카메라를 이동시키는 버튼을 구성. **UI 구성이 망가지면 안 됨.**
+
+### 진단 (코드 실측)
+노드 단일클릭 → 상세 패널(`<aside id=metadataGraphDetail>`)은 갱신되나 카메라는 이동하지 않음
+(`_metaGraphShowDetail` → `_metaGraphSetSelected`, focus/pan 호출 없음). 큰 그래프에서 선택 노드를 화면에서
+다시 찾기 어려운 빈틈. 반면 카메라-전용 팬 기계장치는 이미 완비(`_metaGraphAnimateFocus` — 구조·선택 불변,
+뷰포트 중앙 tween + 판독 줌 클램프; 관계 행 클릭용 래퍼 `_metaGraphPanToRelation` 이 선례).
+
+### 처리 결과 (frontend-only, admin.js + admin.html)
+상세 카드 헤더(`_metaGraphRenderDetail`) `🔗 관계 상세` 옆에 `🎯 이 노드로 이동`(`metaGraphFocusSelBtn`) 추가.
+클릭 → `_metaGraphAnimateFocus(self.key, _metaGraph._opSeq)`. 미렌더 노드는 `_metaRenderedIdFor` null 가드로
+안내만. **"상세"는 이 UI에서 유일하게 `상세 ⇆` 토글 + 상세 패널로 명명된 표면**이라 요청("상세에서 선택 노드로")에
+가장 정합. UI 안전: `.amgr-link`(margin-left:auto)가 2개 될 때의 auto-마진 분할을 신규 버튼 `margin-left:0`로 회피
+(기존 관계 상세 버튼만 우측 정렬, 신규는 gap:8px로 그 옆 그룹화). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
+
+### 검증
+`node --check admin.js` PASS · diff 적대 리뷰(REV-20260710T063659) · **PB-0008 win-browser 는 POST-DEPLOY**
+(정적 자산 baked → merge + deploy-web 선행). 배포 후: 그래프 로그인 → 노드 클릭 → 상세 패널에 버튼 노출 →
+클릭 시 선택 노드가 뷰포트 중앙으로 팬 + 상태줄 "→ … 로 카메라 이동" + pageerror 0 육안 확인 예정.
+
+### 남은 리스크·후속
+없음(순수 추가). 후속: POST-DEPLOY win-browser 육안 PASS 를 TEST §3 에 append.
+
+---
 
 ## 2026-07-10 · 상대 하이라이트 시 focus 밖 관계선 제거 — 유령 관계선·성능 낭비 해소 (hl-edge-hide, TASK §66)
 
@@ -1494,3 +1521,86 @@ agg-lod(§63) 배포 후 사용자 실화면 피드백 반영. **시각검증 �
 ### 검증
 - `node --check` PASS. diff 13삽입/40삭제·3파일(admin.js/admin.html/styles.css). 캐시버스터 `admin.js?v=20260710-reldedup`·`styles.css?v=20260710-reldedup`.
 - 손실 없음: 테이블/컬럼 상세엔 #1 항상 렌더, Routine 노드는 REFERENCES 없어 #2 원래 미표시. POST-DEPLOY PB-0008 육안(feature-0003 TEST §69).
+
+### POST-DEPLOY (2026-07-10, PR #659 → main 5e235953)
+- `make deploy-web` 무중단 롤링(web-a/web-b 순차 recreate·90s soak PASS·마이그 0). `/healthz` git_commit=5e235953·mysql_ok·pg_ok.
+- 병렬 세션 PR #658(§68 graph-rw-group ROUTINE_USES 읽기/쓰기 분리)가 worktree 생성 후 머지 → origin/main rebase·§68→§69 재지정·admin.js 영역 비겹침 병합(양 변경 라이브 공존).
+- **실 Windows Chrome(Chrome/149) POST-DEPLOY 실측**: 서빙 admin.js 실제 render producer `<strong>연결 관계 추적`=0·`function _metaGraphRelTraceRowsHTML`=0 / styles.css 실제 규칙 `.admin-meta-graph-ai-rels {`=0 / 런타임 `typeof _metaGraphRelTraceRowsHTML==="undefined"`·유지 함수 3종 function·`.admin-meta-graph-ai-rels` DOM 0·pageerror 0. 중복 #2 구조적 제거 결정적 실증(feature-0003 TEST §69 POST-DEPLOY).
+
+## 2026-07-10 · 상세 패널 사용관계 행 클릭 시 카메라 이동 (graph-rtuse-camera, TASK §71, 사용자 요청)
+사용자 요청 "그래프 뷰 상세에 카메라 이동 버튼 추가" — 상세 패널의 "사용 테이블/사용 함수·프로시저" 행 클릭이 상세 패널만 전환하고 카메라는 안 움직여 큰 그래프에서 대상 노드 재탐색이 어려웠음. §70 은 '선택 노드' 헤더 버튼, 본 작업은 **관계 행 대상**을 카메라로 가져온다.
+
+### 변경 (frontend-only, 마이그레이션 0)
+- admin.js `_metaGraphRenderDetail` 의 `[data-rtuse]` 클릭 핸들러: `_metaGraphPanToRelation(k)`(동기 카메라 팬 + 대상 선택) 먼저 → `_metaGraphShowDetail(k)`(async 상세 전환). 기존 shipped 팬 래퍼(graphux7#2) 재사용, 신규 기계장치 0.
+- 미렌더 대상(접힌 스키마·컬링)은 pan 이 `_metaRenderedIdFor` null 가드로 안내만·팬 skip, 상세 전환은 정상(graceful). 섹션 안내문 "행 클릭 = 대상 상세." → "+ 카메라 이동".
+
+### 검증
+- `node --check admin.js` PASS. inline 적대 diff 리뷰 REV-20260710T163512(순서/race·미렌더 가드·selection idempotent·캐시버스터 PASS, BLOCKING/MAJOR 0, NIT1 비가시 stale 힌트 수용). frontend-only·마이그 0·Minor(§12.3).
+- 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`(CSS 미변경 → styles.css 미bump). POST-DEPLOY PB-0008 육안(feature-0003 TEST §71).
+## 2026-07-10 · 상세 패널 관계행 단일클릭 미렌더 컬럼 카메라 이동 (§72 reltrace-colnav, 사용자 리포트)
+
+사용자 리포트: `그래프 뷰 > 상세`에서 관계 행(컬럼)을 **단일클릭**하면, 대상 컬럼의 소속 테이블이 아직 펼쳐지지
+않은 상태(컬럼 미렌더)에서 카메라가 이동하지 않고 **"대상 노드가 현재 화면에 없습니다"** 안내만 떠 사용자가
+오류로 인지. 더블클릭은 정상 이동. 사용자 결정(AskUserQuestion): ① 단일클릭도 소속 테이블로 카메라 이동(펼치진
+않음) ② **선택 상태는 컬럼**, **하이라이트는 상위 종속 객체(테이블)** (하이브리드) ③ 더블클릭은 펼쳐 컬럼 선택.
+
+### 근본 원인
+`_metaGraphPanToRelation` 이 `_metaRenderedIdFor(targetKey)`(자기 자신·접힌 스키마 카드 `SC:` 만 해소)로 null 이면
+즉시 안내-return. 미펼침 테이블의 컬럼은 렌더되지 않아(접힘 시 컬럼 제거·미펼침 시 미적재) 항상 null → 단일클릭
+카메라 이동이 죽음. 추가로 `_metaG6Build` 가 매 빌드 `_metaGraph.selected` 로 focusAdj 를 재산출(§57.5 self-healing)하는데,
+selected 가 모델 밖 컬럼이면 focusAdj=null → 선택해도 하이라이트가 사라지는 부작용(적대 리뷰 MINOR#3 적발).
+
+### 변경 (frontend-only, 마이그레이션 0)
+- (1) `_metaRenderedAncestorFor(key)` — 미렌더 대상의 화면상 가장 가까운 조상(컬럼→소속 테이블→접힌 스키마 카드) 승격.
+- (2) `_metaFocusKeyFor(selKey)` — 하이라이트 기준 키 해소: 모델 밖 컬럼이면 소속 테이블(모델의 Table 노드일 때만)로
+  폴백. `_metaGraphSetSelected`(즉시)·`_metaG6Build`(재산출) 양쪽이 공유 → **선택=컬럼·하이라이트=소속 테이블** 일치.
+  부모가 Table 아니거나 없으면 null → §57.5 F2(prune 된 선택 정리) 보존.
+- (3) `_metaGraphPanToRelation` 재작성: 조상 승격으로 카메라 팬 대상 해소, 오류 톤 메시지 제거, `(renderedSelf || !direct)`
+  게이트로 대상 컬럼 선택(접힌 스키마 카드로만 승격된 경우=스키마 대상은 기존대로 선택 없이 팬만).
+
+### 적대 리뷰(§18.8) 반영
+REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES]: (MAJOR) 리뷰 중 §67 catband-scale·§68 graph-rw-group 이 main 에 병렬
+머지되어 base(00871661)가 4커밋 stale — **현재 main(c0a3d70f)으로 rebase** 후 재적용·재검증(§67 테이블 뷰포트 컬링과
+정합: 화면 밖 테이블은 카드/안내로 degrade). (MINOR#3) 미렌더 컬럼 선택이 하이라이트를 소실시키는 문제 → **하이브리드
+(_metaFocusKeyFor 폴딩)** 로 해소. (테스트) 선택 게이트·하이라이트 폴딩 단언을 headless 에 추가.
+
+### 검증
+- 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5·키파싱 2·선택게이트 G1~G4 8·하이라이트폴딩 F1 4·직접렌더).
+- 회귀 0: edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = **150 PASS**·`node --check` PASS.
+- 캐시버스터 `admin.js?v=20260710-graph-colnav`. POST-DEPLOY PB-0008 사용자 육안(TEST §72 T72.5).
+
+## 2026-07-10 · AI 능동 분석 "주의" 자기-불평 제거 + 루틴 payload 보강 + 시드 커버리지 (§69, ADR-034, 사용자 전수 피드백)
+사용자 보고: mssql-qa-idc/cc_data_main 능동 분석 결과 대부분 노드의 '주의' 가 "불명확" 계열. 전수 파악 + 근본 개선 요청
+(+ "DB 단위 분석 중단으로 미분석 노드 잔존" 검토). PG 전수 조사로 근본원인 3종 확정.
+
+### 근본원인 (전수 근거)
+- **caveats 자기-불평(주 원인)**: done 536 중 Table 71%(150/211)·Routine 56%(99/177) 가 "메타데이터 불완전·직접
+  검토 필요·불명확" 계열. Table/Routine 빈 caveats 0건. params/참조테이블이 payload 에 정상 도달한 루틴조차 불평 —
+  LLM 이 도메인적으로 할 말이 적을 때 caveats 를 "입력 부족" 자기-불평 dumping ground 로 사용(프롬프트 계약 결함).
+- **루틴 under-projection**: `returns` 미투영 + 참조테이블이 무구분 `other` 로만 흘러 read/write 소실.
+- **시드 커버리지**: cc_data_main 555객체 중 399만 분석 — SCHEMA_CAP=200 + depth-2 재귀 도달성 한계로 156 미커버
+  (run 은 done 표시 → "중단" 오인). 실패 11건은 haiku 일시 빈응답(재생성 시 재시도).
+- (상류·범위밖) cc_data_main 은 column_descriptions·table_descriptions 0행 — 컬럼/설명 큐레이션 미적재라 테이블이
+  FK 컬럼만 노출. 프롬프트 수정으로 불평은 멈추나 실질 풍부화는 후속 큐레이션 필요.
+
+### 변경
+- **P1** [`llm.py` NODE_ANALYSIS_PROMPT]: "Analyze-from-what-is-visible" + "Caveats rule" 규칙 신설 — caveats 를
+  운영자 대상 데이터/도메인 리스크로 한정, 입력 불완전 언급·"직접 확인 필요"·"불명확" 금지, 위험 없으면 빈 문자열.
+  caveats 필드 설명문 + Input JSON(returns/touches) 문서 갱신.
+- **P2** [`node_analysis.py`]: Routine `touches:[{table,access}]`(ROUTINE_USES relation_type) + `returns`
+  (routine_objects SSOT) payload 투영. 신규 `_fetch_routine_returns` 헬퍼(비차단).
+- **P3** [`shared/config.py`]: SCHEMA_CAP 200→1000·SCHEMA_MAX 500→2000·RUN_BUDGET_MAX 2500→4000·BATCH_PER_TICK 4→10.
+
+### 검증
+- `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체, 회귀 0)·py_compile 3파일 PASS.
+- **라이브 LLM**(container shadow-load, 새 프롬프트 monkeypatch): CT_Theatrics(희소Table) 주의 `''`(이전 "정의서
+  확인 필수"), sp_GetCashPoint(Get) → "민감 결제·통화 데이터 권한제어·감사로깅"(이전 "확인 불가"),
+  sp_DeleteItemAttributeResist(Delete) → "비가역 DELETE 데이터 손실"(양질 유지) — 자기-불평 전멸.
+- **라이브 payload**: touches read/write 정확 구분(DELETE→write·Get→read) + returns 투영.
+- POST-DEPLOY(T69.5): cc_data_main 재생성(only_missing=false) → 커버리지 555 + 표본 caveats 재확인.
+
+## 2026-07-10 · §71 graph-rtuse-camera POST-DEPLOY 완수 (docs-only, resume 세션)
+§71(상세 패널 사용(참조)관계 행 클릭 → 대상 노드 카메라 팬)은 병렬 Codex 세션이 commit(1356717c)→push→PR #662→main 병합(b7d7d871)→web 재배포까지 완주했고, 본 resume 세션이 독립 검증 후 POST-DEPLOY 육안을 마감했다.
+- **독립 적대 리뷰(subagent, 동일 코드)**: VERDICT PASS — BLOCKING/MAJOR 0. "showDetail 이 `_opSeq` bump → 예약 팬 취소" 가설 반증(showDetail 무-bump·카메라 미조작 → 더블 팬/되감기 없음). MINOR 2(미렌더 안내 비가시 stale 카피·클릭당 bake 2회) 가시 회귀 아님 → 수용.
+- **POST-DEPLOY win-browser 실측(라이브 a24415a5)**: mssql-web-qa `shop_pt.T_ItemInfo` 상세의 `[data-rtuse]` 18행(읽기 12·쓰기 6) 실클릭 → 카메라 중심 [3600,7092]→[2523,7871] 팬 + 상세가 대상 ROUTINE(MSP_ADMIN_ITEM_LIST)으로 전환 동시, pageerror 0. 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출. 자산 curl(서빙 버스터·핸들러) 확증. 스크린샷 before/after.
+- 원격 브랜치 `ai/claude/feature-0016-graph-rtuse-camera` 는 병합 후 origin 에서 정리 완료.

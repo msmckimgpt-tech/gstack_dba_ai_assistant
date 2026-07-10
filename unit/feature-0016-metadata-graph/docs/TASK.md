@@ -2107,15 +2107,99 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T69.2 orphan 정리 — 유일 소비처가 사라진 `_metaGraphRelTraceRowsHTML` 함수 삭제·stale 주석(sibling parity) 정정·dead CSS `.admin-meta-graph-ai-rels` 제거. (`_metaGraphBindTraceRows` 는 컬럼 섹션이 계속 사용 → 유지)
 - [x] T69.3 병합 방향 = ①로 일원화(AskUserQuestion 2026-07-10, 사용자 승인). 우클릭 '관계 상세' 팝업(`_metaGraphShowRelations`)은 별도 on-demand 모달로 인라인 중복 아님 → 유지.
 - [x] T69.4 검증: `node --check` PASS. cache-buster admin.js/styles.css bump. diff 13삽입/40삭제·3파일.
-- [ ] T69.5 win-browser 실 Windows Chrome 육안(배포 후): 테이블/컬럼 노드 상세 AI 능동 분석 완료 시 '연결 관계 추적' **미표시**(중복 제거) · 컬럼 섹션 참조함/참조받음 추적 정상 · AI 박스 prose·역할 칩 유지 · pageerror 0.
+- [x] T69.5 win-browser 실 Windows Chrome POST-DEPLOY 검증(배포 5e235953): 서빙 자산 실측 + 런타임 assertion PASS — `_metaGraphRelTraceRowsHTML` 런타임 undefined(제거)·`_metaGraphRenderDetail`/`_metaGraphBindTraceRows`/`_metaGraphLoadNodeAnalysis` function(보존)·`.admin-meta-graph-ai-rels` DOM 0·버스터 20260710-reldedup·pageerror 0. 중복 섹션 #2 구조적 부재 실증(feature-0003 TEST §69 POST-DEPLOY). 완전 대화형 육안(AI 분석 트리거 시점)은 인증 세션+LLM run 필요로 사용자 최종 육안 권장.
+## §70 graph-focus-selected — 상세 패널 "🎯 이 노드로 이동" 카메라 버튼 (2026-07-10, 사용자 요청)
+- [x] T70.0 진단: 노드 단일클릭이 상세 패널만 갱신하고 카메라 미이동(`_metaGraphShowDetail` → focus/pan 없음) → 큰 그래프에서 선택 노드 재탐색 어려운 빈틈. 카메라-전용 팬 기계장치(`_metaGraphAnimateFocus`, 래퍼 선례 `_metaGraphPanToRelation`)는 이미 완비.
+- [x] T70.1 구현: 상세 카드 헤더(`_metaGraphRenderDetail`)에 `🎯 이 노드로 이동`(`metaGraphFocusSelBtn`) 추가 + 렌더 직후 바인딩 → 클릭 시 `_metaGraphAnimateFocus(self.key, _metaGraph._opSeq)`(구조·선택 불변, 뷰포트 중앙 팬 + 판독 줌 클램프). 미렌더 노드는 `_metaRenderedIdFor` null 가드로 안내만.
+- [x] T70.2 UI 파손 방지: `.admin-meta-graph-card-head`(flex,gap:8px)에 `.amgr-link`(margin-left:auto) 2개 → auto-마진 분할을 신규 버튼 `style="margin-left:0"`로 회피(기존 관계 상세만 우측 정렬, 신규는 gap:8px로 그 옆 그룹). 캐시버스터 `admin.js?v=20260710-graph-focus-selected`.
+- [x] T70.3 검증: `node --check admin.js` PASS · diff 적대 리뷰(REV-20260710T063659). frontend-only·마이그 0·Minor(§12.3).
+- [ ] T70.4 POST-DEPLOY win-browser 실 Windows 육안(PB-0008): 노드 클릭 → 상세 패널에 버튼 노출 → 클릭 시 선택 노드가 뷰포트 중앙으로 팬 + 상태줄 "→ <노드명> 로 카메라 이동" + 헤더 레이아웃 무붕괴 + pageerror 0. TEST §3 append.
 
-## §70 graph-minimap-reuse — 미니맵 전체-이미지 재사용(구성 불변 시 재복제 skip) (2026-07-10, 사용자 요청 · entry persona dispatch)
+## §71 graph-rtuse-camera — 상세 패널 사용(참조)관계 행 클릭 시 대상 노드로 카메라 이동 (2026-07-10, 사용자 요청)
+사용자 요청: "그래프 뷰 상세에 카메라 이동 버튼 추가". 상세 패널의 "사용 테이블/사용 함수·프로시저" 행(`[data-rtuse]` 버튼)
+클릭이 상세 패널만 전환하고 카메라는 그대로여서 큰 그래프에서 대상 노드를 화면에서 다시 찾기 어려웠음. §70(선택 노드 헤더
+버튼)과 별개로 **관계 행 대상**을 카메라로 가져온다. 기존 카메라-전용 팬 래퍼 `_metaGraphPanToRelation`(graphux7#2) 재사용.
+- [x] T71.0 진단: `[data-rtuse]` 클릭 핸들러(`_metaGraphRenderDetail`)가 `_metaGraphShowDetail(k)`(상세 전환)만 호출 →
+  카메라 미이동. 관계 추적 행은 이미 `_metaGraphPanToRelation`(동기 팬+선택+상태, `_metaRenderedIdFor` null 가드) 보유.
+- [x] T71.1 구현(frontend-only, admin.js): `[data-rtuse]` 클릭 시 `_metaGraphPanToRelation(k)`(동기 카메라+선택) 먼저,
+  이어 `_metaGraphShowDetail(k)`(async 상세 전환) 호출. 미렌더 대상은 pan 이 null 가드로 안내만·팬 skip, 상세 전환은 정상.
+  섹션 안내문 "행 클릭 = 대상 상세." → "행 클릭 = 대상 상세 + 카메라 이동." 캐시버스터 `admin.js?v=20260710-graph-rtuse-camera`.
+- [x] T71.2 검증: `node --check admin.js` PASS · inline 적대 diff 리뷰(REV-20260710T163512): 순서(동기 pan→async detail,
+  ShowDetail 동기 상태 덮어쓰기)·미렌더 가드·selection idempotent(양쪽 동일 key)·캐시버스터(js만, CSS 미변경) PASS.
+  BLOCKING/MAJOR 0, NIT1(pan 힌트 비가시 stale) 수용. frontend-only·마이그 0·Minor(§12.3).
+- [x] T71.3 POST-DEPLOY win-browser 실 Windows 육안(PB-0008, 2026-07-10 라이브 a24415a5): **PASS**. mssql-web-qa scope,
+  Table `shop_pt.T_ItemInfo` 상세 = "사용하는 함수·프로시저 (18) · 읽기 12 · 쓰기 6" `[data-rtuse]` 행 18개 렌더 + 안내문 "행 클릭 = 대상 상세 + 카메라 이동" 노출.
+  읽기 행 `MSP_ADMIN_ITEM_LIST` 클릭 → 카메라 중심 모델좌표 [3600,7092]→[2523,7871] 실이동(팬) + 상세가 해당 ROUTINE 으로 전환 동시, pageerror 0.
+  자산 curl 확증(서빙 `admin.js?v=20260710-graph-rtuse-camera` + 핸들러 `_metaGraphPanToRelation(k)`). before/after 스크린샷. TEST §71 POST-DEPLOY append.
+## §72 reltrace-colnav — 상세 패널 관계행 단일클릭 시 미렌더 컬럼 카메라 이동 (2026-07-10, 사용자 리포트)
+
+- **결함(사용자 리포트)**: `그래프 뷰 > 상세`에서 관계 행(컬럼)을 **단일클릭**했을 때, 대상 컬럼의 소속
+  테이블이 아직 펼쳐지지 않아(컬럼 미렌더) 카메라가 이동하지 않고 **"대상 노드가 현재 화면에 없습니다"**
+  메시지만 출력 → 사용자가 오류로 인지. (더블클릭은 정상 이동.) 근본: `_metaGraphPanToRelation` 이
+  `_metaRenderedIdFor(targetKey)`(자기 자신 또는 접힌 스키마 카드만 해소)로 null 이면 즉시 안내-return.
+- **사용자 요구/결정(2026-07-10 AskUserQuestion)**: ① 단일클릭도 대상 **테이블**을 카메라가 바라보게 하되
+  **펼치진 않은 상태**에서 진행 ② **선택 상태는 컬럼**으로 두되 **하이라이트는 상위 종속 객체(소속 테이블)가
+  선택된 것처럼 구성**(하이브리드) ③ 더블클릭 시 테이블 펼쳐 해당 컬럼 선택(기존 `_metaGraphTraceRelation` 충족).
+- [x] T72.1 `_metaRenderedAncestorFor(key)` 신규 — 미렌더 대상의 **화면상 가장 가까운 조상** 렌더 id 해소:
+  컬럼→소속 테이블(`_metaColParent`)→접힌 스키마 카드(`_metaCatParent`→`SC:`) 순. `_metaG6Build` 의
+  `renderEndpoint` 승격 규칙과 동형이되 실제 렌더 집합(`renderedIds`) 기준. 조상도 미렌더(§67 뷰포트 컬링 포함)면 null.
+- [x] T72.2 `_metaFocusKeyFor(selKey)` 신규(하이라이트 기준 키 해소) — 선택 키가 모델에 있으면 그대로, 모델 밖
+  컬럼이면 **소속 테이블이 모델의 Table 노드일 때만** 그 테이블로 폴백(부모가 Table 아니거나 없으면 null →
+  §57.5 F2 'prune 된 선택 정리=null' 보존). `_metaGraphSetSelected`(즉시) + `_metaG6Build`(매 빌드 재산출) 양쪽이
+  공유 → 두 경로 하이라이트 일치. 이로써 **선택=컬럼**이어도 **하이라이트=소속 테이블 중심**(사용자 결정 구현).
+- [x] T72.3 `_metaGraphPanToRelation` 재작성: `focusEl = direct || _metaRenderedAncestorFor(targetKey)` 로 카메라 팬
+  대상 승격. focusEl 없을 때만 안내 메시지(오류 톤 제거). 선택은 `(renderedSelf || !direct)` 시 대상 컬럼 키로
+  `_metaGraphSetSelected`. 접힌 스키마 카드로만 승격된 경우(대상=스키마)는 기존대로 선택 없이 팬만(기존 동작 보존).
+- [x] T72.4 검증: 신규 headless `test_graph_colnav.js` **22 PASS**(승격 5 + 키파싱 2 + 선택게이트 G1~G4 8 + 하이라이트
+  폴딩 F1 4 + 직접렌더). 회귀 0(edge_visibility 71·agglod 8·category 26·collod 20·vpack 19·viewportcull 6 = 150 PASS)·
+  `node --check` PASS. §18.8 적대 리뷰 REV-20260710T065500 [SUBAGENT: PASS-WITH-FIXES] — stale base(§67/§68 병렬 머지)
+  적발 → **현재 main rebase**, MINOR#3(미렌더 컬럼 선택이 하이라이트 소실) → **하이브리드(_metaFocusKeyFor 폴딩)** 반영,
+  테스트에 선택 게이트/폴딩 단언 추가. 캐시버스터 `admin.js?v=20260710-graph-colnav`.
+- [ ] T72.5 POST-DEPLOY 사용자 육안(PB-0008 실 Windows): 상세 패널에서 **미펼침 테이블의 컬럼 관계행 단일클릭**
+  → (a) "…화면에 없습니다" 오류 메시지 없음 (b) 카메라가 소속 테이블로 부드럽게 이동(테이블 **펼치지 않음**)
+  (c) 소속 테이블이 하이라이트(주변 dim)로 강조 (d) 상세 패널 유지 → **더블클릭** → 테이블 펼침 + 해당 컬럼 선택.
+  자산 curl(`?v=20260710-graph-colnav`) + 육안 게이트(TEST §72). 카메라 팬/하이라이트 최종 확증은 라이브만(WSL headless 미대체).
+## §69 node-analysis-caveats — AI 능동 분석 "주의" 자기-불평 제거 + 루틴 payload 보강 + 시드 커버리지 (2026-07-10, 사용자 요청)
+사용자: "그래프 뷰 > mssql-qa-idc/cc_data_main 능동 분석 결과, 대부분 노드의 '주의' 항목이 '불명확하다'는 내용.
+실제 분석 내용을 (샘플 아닌) 전수 파악하고 근본 단위에서 개선." + "DB 단위 분석이 중단되어 미분석 노드가 남는 이슈도 검토."
+전수 조사(run 1519cf95, done 536): 주의(caveats)가 **Table 71%(150/211)·Routine 56%(99/177)** 가
+"메타데이터 불완전/누락·직접 검토 필요·불명확" 계열 **자기-불평**. Table/Routine 빈 caveats 0건(프롬프트가
+"없으면 빈 문자열" 지시했음에도). params·참조테이블이 payload 에 정상 도달한 루틴조차 불평 — DELETE 등 도메인
+위험 명확한 노드만 양질 주의 생성. 즉 **LLM 이 도메인적으로 할 말이 적을 때 caveats 를 "입력이 부족하다"는
+자기-불평 dumping ground 로 사용**(프롬프트 계약 결함). 증폭요인: 루틴 `returns` 미투영 + 참조테이블이 무구분
+`other` 로만 흘러 read/write 소실. 커버리지: cc_data_main 555객체(테이블255+루틴300) 중 399만 분석 —
+`SCHEMA_CAP=200` 시드 캡 + depth-2 재귀 도달성 한계로 **156객체 조용히 미커버**(크래시 아님, run 은 done).
+- [x] T69.0 grounding: PG `node_analysis_jobs` 전수 조사(scope=mssql-06656002eda6)·payload 재현(container
+  shadow-load)로 근본원인 3종 확정(자기-불평 / 루틴 under-projection / 시드 cap). 위험등급 Major(다중파일+
+  출하기능+재생성 LLM 비용). 사용자 결정(AskUserQuestion): P1+P2 수정 + cc_data_main 재생성. (ADR-034)
+- [x] T69.1 P1 caveats 프롬프트 계약 재설계 [`llm.py` NODE_ANALYSIS_PROMPT]: (a) "Analyze-from-what-is-visible"
+  규칙 신설 — 희소 컬럼/파라미터/빈 설명은 정상(결함 아님), 보이는 것으로 분석하고 "직접 확인 필요"·"불명확" 금지.
+  (b) "Caveats rule" 신설 — caveats 는 **운영자 대상 데이터/도메인 리스크**(민감·현금성·파괴적/비가역·가시적
+  데이터품질·핫패스)로 엄격 한정, **입력 메타데이터 불완전/누락 언급·"직접 검토 필요"·"불명확" 절대 금지**,
+  진짜 위험 없으면 빈 문자열(대부분 노드는 빈 값이 정답). caveats 필드 설명문 + Input JSON 문서 갱신.
+- [x] T69.2 P2 루틴 payload 보강 [`node_analysis.py` _fetch_context/_build_payload]: Routine 에 대해
+  ROUTINE_USES `relation_type` 기반 `touches:[{table, access:read|write}]` 구조화 + `returns`(routine_objects
+  SSOT 1회 조회, 그래프 노드 미투영분) 투영. 프롬프트 "the tables it touches" 를 실제로 뒷받침(신규
+  `_fetch_routine_returns` 헬퍼, conn 없음·부재 시 빈값 비차단).
+- [x] T69.3 P3 시드 커버리지 [`shared/config.py`]: `SCHEMA_CAP` 200→1000·`SCHEMA_MAX` 500→2000·
+  `SCHEMA_RUN_BUDGET_MAX` 2500→4000·`BATCH_PER_TICK` 4→10. 현실적 게임 스키마(수백 객체)를 1회 run 으로 전량
+  시드(§55 "DB 하위 전 노드 분석" 목표 정합). 비용은 UI dry_run confirm 이 대상 수 표시로 게이트, node_budget
+  이 재귀 폭증 캡. 초대형(>MAX)은 capped=True 표시 + 재실행 드레인. BATCH 상향은 순차 처리량↑(동시부하 무변).
+- [x] T69.4 검증: `make test`/직접 pytest **PYTEST_RC=0**(feature-0002+0003 전체, 회귀 0)·py_compile 3파일.
+  **라이브 LLM 검증**(container shadow-load, 새 프롬프트 monkeypatch): CT_Theatrics(희소Table) 주의 `''`
+  (이전 "정의서 확인 필수"), sp_GetCashPoint(Get) → "민감 결제·통화 데이터 권한제어·감사로깅"(이전 "확인 불가"),
+  sp_DeleteItemAttributeResist(Delete) → "비가역 DELETE 데이터 손실"(양질 유지). **라이브 payload**: touches
+  read/write 정확 구분(DELETE→write·Get→read) + returns 투영 확인.
+- [ ] T69.5 배포 + 재생성: insight-worker+web 이미지 재빌드 배포 후 cc_data_main `only_missing=false` 재분석
+  (555 전량 시드 → 전 노드 커버 + 새 계약 caveats 로 교체). 진행 폴링으로 done/failed 추적 + 표본 caveats 재확인.
+
+## §73 graph-minimap-reuse — 미니맵 전체-이미지 재사용(구성 불변 시 재복제 skip) (2026-07-10, 사용자 요청 · entry persona dispatch) [머지 재번호 §70→§73, §13.1]
 사용자: `그래프 뷰` 의 **미니맵 최적화** — "화면 구성이 갱신되었을 경우, 한 번 draw한 전체 이미지를 재사용하는 방식도 고려."
 진단: G6 v5 minimap 플러그인의 `renderMinimap()`(vendor `g6.min.js`, 클래스 `tZ`)은 매 `AFTER_DRAW` 마다 전 요소 key-shape 를 `cloneNode` 로 **전량 재복제**(`setShapes`)한다. 이 앱은 `_metaG6Apply`(=`setData`+`draw()`)를 선택·상대하이라이트·역할도착(2.5s 폴 승격)·busy 등 **상태-only 변경으로도 20+ 지점에서 자주** 돌아, 미니맵이 그리는 **기하가 동일한데도** 매번 수백~수천 노드를 재복제한다. 팬/줌은 원래도 `AFTER_TRANSFORM → updateMask()+setCamera()` 만이라 재복제 없음(이미 최적) — 남은 낭비는 **구성-불변 draw 의 재복제**다.
-- [x] T70.1 기하 서명 `_metaMinimapGeomSig(built)` 신설(admin.js) — 미니맵이 depiction 하는 기하(요소 id·부모combo·위치 x/y·크기·엣지 끝점)만 FNV-1a 해시, **시각상태(states/fill/opacity/역할색)는 제외**. 위치 0.25px 양자화(부동소수 noise 무시), 길이 프리픽스로 충돌 완화.
-- [x] T70.2 `_metaG6ApplyOnce`: `_metaG6Build()` 를 1회 계산(`_built`) → `_metaGraph._miniGeomSig = _metaMinimapGeomSig(_built)` 세팅 후 `g.setData(_built)`(setData 에 넘긴 바로 그 데이터로 서명).
-- [x] T70.3 `_metaPatchMinimapReuse(graph)` — minimap 플러그인 인스턴스의 `renderMinimap` 을 1회 래핑(멱등 `__reusePatched`). 서명이 직전 렌더(`__lastGeomSig`)와 동일 + 캔버스 존재면 skip(재사용), 다르면/null 이면 원본 render(안전 폴백). 실패(API 변동·인스턴스 미발견)시 no-op → 원본 동작(정확성 보존). 플러그인 config 에 `key:"minimap"` 부여(getPluginInstance 직접 히트).
-- [x] T70.3b **호출 시점 = 첫 draw 이후**(리뷰 렌즈1 발견 수정): G6 v5 는 `context.plugin` 을 생성자가 아니라 첫 `draw()` 의 `prepare()→initRuntime()` 에서 lazy 생성한다(번들 실측 `getPluginInstance(t){return this.context.plugin.getPluginInstance(t)}`·`initRuntime(){…this.context.plugin||(this.context.plugin=new dJ(...))}`·`prepare(){…yield initCanvas(),initRuntime()}`·`draw(){…yield prepare()}`). 따라서 init(`_metaGraph.graph=graph`) 직후 호출은 `getPluginInstance("minimap")` 실패로 **패치 no-op → 최적화 사멸**. `_metaG6ApplyOnce` 의 `await g.draw()` **직후** 멱등 호출로 이동해 첫 draw 후 plugin 존재 시점에 래핑.
-- [x] T70.3c **네이티브 드래그 stale 수정(적대 리뷰 H2, BLOCK→수정)**: 노드/콤보 드래그는 `_metaG6Apply` 를 안 거치고 G6 가 요소를 직접 이동(`translateElementTo`→`element.draw({stage:"translate"})`, 콤보는 native drag-element)한다. 이 draw 도 `AFTER_DRAW`(payload `stage:"translate"`)를 발생시켜 minimap onRender→renderMinimap 을 부르는데, 이때 `_miniGeomSig` 는 **마지막 build 기준(stale)** === `__lastGeomSig` → 게이트가 옛 배치로 skip → **미니맵이 드래그된 위치를 반영 못 하고 얼어붙는다**(문서화한 "드래그→서명 변경" 불변식 위반). 수정: `_metaPatchMinimapReuse` 가 `graph.on("afterdraw")` 로 `e.data.stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 다음 renderMinimap 이 재복제 폴백(드래그 위치 반영). apply-driven data draw 는 `graph.draw()`→`element.draw()`(stage 미지정)라 서명 유지(게이트 정상). node·combo·기타 translate 전부 단일 지점 커버.
-- [x] T70.4 검증: 신규 `test_g6build_minimap_reuse.js` **35 PASS**(A 기하 서명 11: 위치/크기/집합 민감·상태/fill 제외·양자화 · B 실 build 4: 역할/busy 불변·펼침/추가 변경 · C 패치 10: skip/render/첫렌더/멱등/안전폴백 · **D 드래그 무효화 10: translate stage→서명 null·apply draw 유지·비정상 payload 방어**) + 기존 회귀 **150 PASS**(collod 20·agglod 8·category 26·edge 71·viewportcull 6·vpack 19) · `node --check` PASS. cache-buster `admin.js?v=20260710-minimap-reuse`.
-- [ ] T70.5 POST-DEPLOY win-browser 실 Windows Chrome 육안(배포 후, feature-0003 TEST §70): 대형 그래프에서 ① 미니맵 정상 렌더(전체 지도+뷰포트 사각형) ② 팬/줌 시 뷰포트 사각형 계속 추종 ③ 노드 클릭/역할 도착(상태-only) 후에도 미니맵 안정(깜빡임·blank 없음) ④ 컬럼 펼침/접기·스코프 전환(구성 변경) 시 미니맵 갱신 반영 ⑤ 상태-only rebuild 시 미니맵 재복제 skip 로 체감 경량 ⑥ pageerror 0.
+- [x] T73.1 기하 서명 `_metaMinimapGeomSig(built)` 신설(admin.js) — 미니맵이 depiction 하는 기하(요소 id·부모combo·위치 x/y·크기·엣지 끝점)만 FNV-1a 해시, **시각상태(states/fill/opacity/역할색)는 제외**. 위치 0.25px 양자화(부동소수 noise 무시), 길이 프리픽스로 충돌 완화.
+- [x] T73.2 `_metaG6ApplyOnce`: `_metaG6Build()` 를 1회 계산(`_built`) → `_metaGraph._miniGeomSig = _metaMinimapGeomSig(_built)` 세팅 후 `g.setData(_built)`(setData 에 넘긴 바로 그 데이터로 서명).
+- [x] T73.3 `_metaPatchMinimapReuse(graph)` — minimap 플러그인 인스턴스의 `renderMinimap` 을 1회 래핑(멱등 `__reusePatched`). 서명이 직전 렌더(`__lastGeomSig`)와 동일 + 캔버스 존재면 skip(재사용), 다르면/null 이면 원본 render(안전 폴백). 실패 시 no-op → 원본 동작(정확성 보존). 플러그인 config 에 `key:"minimap"` 부여.
+- [x] T73.3b **호출 시점 = 첫 draw 이후**(적대 리뷰 H1): G6 v5 는 `context.plugin` 을 생성자가 아니라 첫 `draw()` 의 `prepare()→initRuntime()` 에서 lazy 생성(번들 실측). init 직후 호출은 `getPluginInstance("minimap")` 실패로 **패치 no-op → 최적화 사멸**. `_metaG6ApplyOnce` 의 `await g.draw()` **직후** 멱등 호출로 이동.
+- [x] T73.3c **네이티브 드래그 stale 수정**(적대 리뷰 H2, BLOCK→수정): 노드/콤보 드래그는 `_metaG6Apply` 미경유·`translateElementTo`→`element.draw({stage:"translate"})` 로 요소 직접 이동하나 이것도 `AFTER_DRAW`(payload `stage:"translate"`)를 발생 → stale `_miniGeomSig` 로 미니맵 skip(얼어붙음). 수정: `graph.on("afterdraw")` 에서 `stage==="translate"` 시 `_miniGeomSig=null` 무효화 → 재복제 폴백. apply data draw(stage 미지정)는 서명 유지. node·combo 단일 지점.
+- [x] T73.4 검증: 신규 `test_g6build_minimap_reuse.js` **35 PASS**(A 서명 11·B 실build 4·C 패치 10·D 드래그무효화 10) + 회귀 **150 PASS**(collod 20·agglod 8·category 26·edge 71·viewportcull 6·vpack 19) · `node --check` PASS. 머지 후 cache-buster `admin.js?v=20260710-mmreuse-colnav`(graph-colnav 병렬 머지와 결합).
+- [ ] T73.5 POST-DEPLOY win-browser 실 Windows Chrome 육안(feature-0003 TEST §73): 대형 그래프에서 ① 미니맵 정상 렌더 ② 팬/줌 시 뷰포트 사각형 추종 ③ 상태-only 변경 후 미니맵 안정(blank/깜빡임 없음) ④ 구성 변경(펼침/스코프전환) 반영 ⑤ **드래그 시 미니맵 위치 반영(H2 실증)** ⑥ pageerror 0.
