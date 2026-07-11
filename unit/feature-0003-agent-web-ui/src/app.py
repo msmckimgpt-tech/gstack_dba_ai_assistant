@@ -16228,168 +16228,34 @@ _METADATA_FIELD_CAPS = {
 _METADATA_AI_RATE_PER_MIN = 20
 
 
-def _metadata_resolve_account(request: Request):
-    """RBAC(kb.ingest.manual) 게이트. (account, None) 또는 (None, JSONResponse[401/403/500])."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return None, _json_error("db connection failed", 500)
-    try:
-        account, error = _require_permission(request, conn, "kb.ingest.manual")
-        if error:
-            return None, error
-        return account, None
-    finally:
-        conn.close()
+# ITEM-10 routers-p2: _metadata_resolve_account 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_valid_scope_keys() -> set[str]:
-    """허용 scope_key 집합 — 등록된 datasource 의 **질의 시점 read 와 동일한 scope 해소값** ∪ {'common'}.
-
-    scope-key-unify(死data 수정): 메타데이터/샘플 admin write 의 scope_key 축을 **질의 시점 read 와
-    똑같은 식**으로 통일한다. read 는 `agent_core` 가 `cfg.set_active_datasource(_ds.get('scope_key') or
-    _ds.get('key'))` 로 활성 scope 를 잡고(= **scope_key 필드 우선, 없으면 라벨**), tools/insight 도 동일
-    규약(`ds.get('scope_key') or ds.get('key')`)이다. 즉 DB-등록 ds 는 `scope_key` 필드(compute_scope_key
-    해시), .env 레거시 ds 는 그 필드가 없어 **라벨**로 해소된다.
-
-    ⚠️ 주의(BLOCKER 회피): write 를 `_dsr.scope_key(ds)` 로 잡으면 안 된다 — 그 헬퍼는 .env ds(host 필수)에서
-    해시를 *계산*하지만 read 는 필드 부재 시 라벨로 떨어지므로, .env ds 에서 write(해시)≠read(라벨) 死data 가
-    역으로 재발한다. 그래서 read 와 **동일한 식** `ds.get('scope_key') or ds.get('key')` 를 그대로 쓴다.
-    과거엔 admin write 가 datasource **라벨**(all_datasources dict 키)만 저장해 DB-등록 ds 에서 라벨 ≠ 해시
-    死data 였다. 'common' 은 항상 허용(공용 사전). 조회 실패 시 'common' 만 허용(보수적).
-    """
-    keys = {"common"}
-    conn = None
-    try:
-        from shared import datasources as _dsr
-        try:
-            conn = _connect_memory()
-        except Exception:
-            conn = None
-        for k, ds in (_dsr.all_datasources(conn) or {}).items():
-            # read(agent_core.set_active_datasource)와 동일 해소: scope_key 필드(DB ds=해시) 우선, 없으면 라벨.
-            sk = str((ds.get("scope_key") or ds.get("key") or k) or "").strip().lower()
-            if sk:
-                keys.add(sk)
-    except Exception:
-        pass
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-    # 폴백: 활성 datasource(ContextVar) 도 허용에 포함(요청 컨텍스트 한정).
-    try:
-        from shared import config as _cfg
-        active = str(_cfg.get_active_datasource() or "").strip().lower()
-        if active:
-            keys.add(active)
-    except Exception:
-        pass
-    return keys
+# ITEM-10 routers-p2: _metadata_valid_scope_keys 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_check_scope(scope_key: str):
-    """scope_key 검증 → (normalized, None) 또는 (None, JSONResponse[400]). 빈값/미허용 거부."""
-    sk = str(scope_key or "").strip().lower()
-    if not sk:
-        return None, _json_error("scope_key 는 필수입니다.", 400)
-    if len(sk) > _METADATA_FIELD_CAPS["scope_key"]:
-        return None, _json_error("scope_key 가 너무 깁니다.", 400)
-    allowed = _metadata_valid_scope_keys()
-    if sk not in allowed:
-        return None, _json_error("허용되지 않은 scope_key 입니다 (등록된 datasource 또는 'common').", 400)
-    return sk, None
+# ITEM-10 routers-p2: _metadata_check_scope 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
 _GLOSSARY_COMMON_ROLE = "*"  # 역할 비특정(공용) 용어 — modules.kb_glossary.COMMON_ROLE 와 동일.
 
 
-def _metadata_valid_role_keys() -> set[str]:
-    """허용 role_key 집합 — 등록된 WebRoles.RoleKey ∪ {'*'(공용)}. 조회 실패 시 {'*'}만(보수적).
-
-    용어사전 역할 차원(0021): role_key 는 WebRoles.RoleKey(admin/operator/sales/…) 또는 '*'(공용).
-    역할별 비중복 namespace 를 위해 write 시 검증한다(임의 문자열 저장 방지).
-    """
-    keys = {_GLOSSARY_COMMON_ROLE}
-    conn = None
-    try:
-        conn = _connect_memory()
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT RoleKey FROM WebRoles")
-            for row in (cur.fetchall() or []):
-                rk = str((row[0] if not isinstance(row, dict) else row.get("RoleKey")) or "").strip().lower()
-                if rk:
-                    keys.add(rk)
-        finally:
-            cur.close()
-    except Exception:
-        pass
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-    return keys
+# ITEM-10 routers-p2: _metadata_valid_role_keys 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_check_role_key(role_key, *, default=_GLOSSARY_COMMON_ROLE):
-    """role_key 검증 → (normalized, None) 또는 (None, JSONResponse[400]). 빈값 → default('*')."""
-    rk = str(role_key or "").strip().lower()
-    if not rk:
-        rk = default
-    if len(rk) > _METADATA_FIELD_CAPS["role_key"]:
-        return None, _json_error("role_key 가 너무 깁니다.", 400)
-    if rk not in _metadata_valid_role_keys():
-        return None, _json_error("허용되지 않은 role_key 입니다 (등록된 역할 또는 '*' 공용).", 400)
-    return rk, None
+# ITEM-10 routers-p2: _metadata_check_role_key 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_str_field(data: dict, key: str, *, required: bool = True):
-    """문자열 필드 추출+trim+cap 검증 → (value, None) 또는 (None, JSONResponse[400])."""
-    val = str((data or {}).get(key) or "").strip()
-    if required and not val:
-        return None, _json_error(f"{key} 는 필수입니다.", 400)
-    cap = _METADATA_FIELD_CAPS.get(key)
-    if cap is not None and len(val) > cap:
-        return None, _json_error(f"{key} 가 너무 깁니다 (최대 {cap}자).", 400)
-    return val, None
+# ITEM-10 routers-p2: _metadata_str_field 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-async def _metadata_read_json(request: Request) -> dict:
-    try:
-        body_raw = await request.body()
-        data = (await request.json()) if body_raw else {}
-    except Exception:
-        data = {}
-    return data if isinstance(data, dict) else {}
+# ITEM-10 routers-p2: _metadata_read_json 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_audit(request, account, *, action, resource_id, change_json):
-    """audit(memory conn, 별도) — CRUD 는 PG, audit 은 MySQL(cross-DB 분리). best-effort."""
-    try:
-        mconn = _connect_memory()
-        try:
-            record_audit_event(
-                mconn,
-                actor=_build_actor_from_request(request, account, actor_type="account"),
-                action=action,
-                resource_type="kb_metadata",
-                resource_id=(str(resource_id) if resource_id is not None else None),
-                change_json=change_json,
-            )
-            mconn.commit()
-        finally:
-            mconn.close()
-    except Exception:
-        logging.getLogger(__name__).warning("metadata audit 실패 action=%s id=%s", action, resource_id, exc_info=True)
+# ITEM-10 routers-p2: _metadata_audit 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_iso(v):
-    return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v is not None else None)
+# ITEM-10 routers-p2: _metadata_iso 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
 # ── 용어사전(kb_glossary) ─────────────────────────────────────────────────────
@@ -16430,28 +16296,7 @@ def _glossary_feedback_iso(v):
 
 
 
-def _metadata_enum_fields(data: dict):
-    """ENUM 공통 필드 추출/검증 → (dict, None) 또는 (None, JSONResponse[400]).
-
-    schema_name 은 선택(빈 문자열 허용 — 단일 스키마 DB), 나머지는 필수.
-    """
-    table_name, e = _metadata_str_field(data, "table_name")
-    if e:
-        return None, e
-    column_name, e = _metadata_str_field(data, "column_name")
-    if e:
-        return None, e
-    code, e = _metadata_str_field(data, "code")
-    if e:
-        return None, e
-    label, e = _metadata_str_field(data, "label")
-    if e:
-        return None, e
-    schema_name, e = _metadata_str_field(data, "schema_name", required=False)
-    if e:
-        return None, e
-    return {"table_name": table_name, "column_name": column_name, "code": code,
-            "label": label, "schema_name": schema_name}, None
+# ITEM-10 routers-p2: _metadata_enum_fields 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
 
@@ -16779,312 +16624,34 @@ _METADATA_SUBTAB_PERM_SERVER = {
 _METADATA_BULK_MAX_TABLES = 20
 
 
-def _metadata_resolve_account_perm(request: Request, perm: str):
-    """서브뷰별 RBAC 게이트 — (account, None) 또는 (None, JSONResponse[401/403/500]).
-    _metadata_resolve_account(kb.ingest.manual 고정)의 perm 가변 버전(samples=kb.sample.curate)."""
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return None, _json_error("db connection failed", 500)
-    try:
-        account, error = _require_permission(request, conn, perm)
-        if error:
-            return None, error
-        return account, None
-    finally:
-        conn.close()
+# ITEM-10 routers-p2: _metadata_resolve_account_perm 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_qualname(schema_name, table_name) -> str:
-    return ".".join([p for p in [str(schema_name or "").strip(), str(table_name or "").strip()] if p])
+# ITEM-10 routers-p2: _metadata_qualname 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_introspect_table(datasource_key: str, schema_name: str, table_name: str):
-    """tables/columns 자동완성 grounding — 대상 테이블의 실제 컬럼 목록을 best-effort 조회.
-
-    부트스트랩 introspection 경로 재사용(RO 유저·dialect-aware·schema allowlist). datasource 미지정
-    /'common'/schema 미지정/조회 실패 시 None(=ungrounded — 일반 설명으로 진행). 식별자는
-    _safe_ident + load_known_schemas 멤버십으로만 통과(부트스트랩 SQLi 방어와 동일).
-    """
-    key = str(datasource_key or "").strip().lower()
-    schema_name = str(schema_name or "").strip()
-    table_name = str(table_name or "").strip()
-    if not key or key == "common" or not table_name or not schema_name:
-        return None
-    ds, scope_key, derr = _bootstrap_resolve_datasource(key)
-    if derr or not ds:
-        return None
-    from shared import config as _cfg
-    from shared import db as _db
-    from modules import dialects as _dialects
-    from modules import schema as _schema
-    from modules.tools import _safe_ident as _safe_ident_fn
-    conn = None
-    try:
-        engine = _bootstrap_activate_dialect(ds, scope_key)
-        safe_table = _safe_ident_fn(table_name)
-        cols: list = []
-        if engine == "mssql":
-            # metadata-table-desc-fix: MSSQL 은 schema_name 이 **database**(부트스트랩 저장 규약과 동일).
-            # 시스템 DB 제외 allowlist 로 검증 → 해당 DB 로 연결 → 비시스템 SQL 스키마에서 테이블 컬럼 탐색.
-            dialect0 = _dialects.active()
-            sys_db = {str(n).strip().lower() for n in dialect0.system_databases()}
-            # §58(적대 리뷰 MAJOR): 저장 라벨이 lower 계약(normalize_db_label)으로 바뀌었으므로
-            #   allowlist 를 lower→원본 매핑으로 case-insensitive 매치하고 **연결은 원본 케이스**로
-            #   한다(kb_metadata 의 LOWER 매칭 계약과 동형). 케이스-정확 set 이면 lower 라벨의
-            #   membership 이 항상 실패해 grounding 이 무음 파괴된다(CS collation 서버 안전 겸비).
-            db_map = {str(n).strip().lower(): str(n) for n in (_db.list_server_databases(ds) or [])
-                      if str(n).strip().lower() not in sys_db}
-            safe_db = _safe_ident_fn(schema_name)
-            real_db = db_map.get(str(safe_db).strip().lower())
-            if not real_db:
-                return None
-            conn = _db.connect(datasource=ds, database=real_db, autocommit=True)
-            dialect = _dialects.active()
-            sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
-            real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
-                            if str(s).strip().lower() not in sys_schema]
-            for sql_schema in real_schemas:
-                ss = _safe_ident_fn(sql_schema)
-                cur = conn.cursor()
-                try:
-                    cur.execute(dialect.describe_columns(ss, safe_table))
-                    for crow in (cur.fetchall() or []):
-                        if crow and crow[0]:
-                            cols.append({"column_name": str(crow[0]), "data_type": str(crow[1] or "").lower()})
-                        if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
-                            break
-                except Exception:
-                    cols = []
-                finally:
-                    cur.close()
-                if cols:
-                    break  # 테이블을 담은 첫 SQL 스키마에서 종료(DB명 평탄화와 정합)
-        else:
-            conn = _db.connect(datasource=ds, autocommit=True)
-            known = set(_schema.load_known_schemas(conn) or [])
-            safe_schema = _safe_ident_fn(schema_name)
-            if safe_schema not in known:
-                return None
-            dialect = _dialects.active()
-            cur = conn.cursor()
-            try:
-                cur.execute(dialect.describe_columns(safe_schema, safe_table))
-                for crow in (cur.fetchall() or []):
-                    if crow and crow[0]:
-                        cols.append({"column_name": str(crow[0]), "data_type": str(crow[1] or "").lower()})
-                    if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
-                        break
-            finally:
-                cur.close()
-        return {"schema_name": schema_name, "table_name": table_name, "columns": cols} if cols else None
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "metadata suggest introspection 실패 ds=%s schema=%s table=%s", key, schema_name, table_name, exc_info=True
-        )
-        return None
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-        try:
-            _cfg.set_active_datasource(None)
-        except Exception:
-            pass
+# ITEM-10 routers-p2: _metadata_introspect_table 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_grounding_cols_line(grounding) -> str:
-    if not grounding or not grounding.get("columns"):
-        return ""
-    cols = grounding["columns"][:60]
-    names = ", ".join(
-        (f"{c['column_name']}({c['data_type']})" if c.get("data_type") else c["column_name"]) for c in cols
-    )
-    return f"이 테이블의 실제 컬럼: {names}\n"
+# ITEM-10 routers-p2: _metadata_grounding_cols_line 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_grounding_coltype(grounding, column_name) -> str:
-    if not grounding or not column_name:
-        return ""
-    target = str(column_name).strip().lower()
-    for c in (grounding.get("columns") or []):
-        if str(c.get("column_name") or "").strip().lower() == target:
-            return c.get("data_type") or ""
-    return ""
+# ITEM-10 routers-p2: _metadata_grounding_coltype 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_suggest_messages(sub: str, fields: dict, grounding) -> list:
-    """서브뷰별 자동완성 프롬프트 — 식별 필드 → 설명/정의/라벨/질문 1건. 본문만 출력하도록 지시."""
-    f = fields
-    if sub == "glossary":
-        body = (
-            "당신은 사내 데이터 분석 용어사전을 작성하는 전문가입니다.\n"
-            f"다음 도메인 용어의 '정의'를 한국어 1~3문장으로 간결하게 작성하세요.\n"
-            f"용어: {f.get('term', '')}\n"
-            "판정 기준·계산 방식이 있으면 한 줄로 포함하세요. 정의 본문만 출력하고 따옴표·머리말을 붙이지 마세요."
-        )
-    elif sub == "enums":
-        body = (
-            "당신은 데이터베이스 코드값의 의미 라벨을 다는 전문가입니다.\n"
-            f"테이블 {f.get('table_name', '')}, 컬럼 {f.get('column_name', '')} 의 코드 값 "
-            f"'{f.get('code', '')}' 가 의미하는 한국어 라벨(짧은 명사구)을 출력하세요.\n"
-            "라벨 텍스트만 출력하고 설명·따옴표·머리말을 붙이지 마세요."
-        )
-    elif sub == "tables":
-        cols_line = _metadata_grounding_cols_line(grounding)
-        body = (
-            "당신은 데이터베이스 테이블 카탈로그를 작성하는 전문가입니다.\n"
-            f"테이블 {_metadata_qualname(f.get('schema_name'), f.get('table_name'))} 가 담는 데이터와 용도를 "
-            "한국어 1~3문장으로 설명하세요.\n"
-            f"{cols_line}"
-            "설명 본문만 출력하고 머리말·따옴표를 붙이지 마세요. 실제 컬럼이 주어졌으면 그에 근거하고, "
-            "없으면 일반적이되 단정적이지 않게 작성하세요."
-        )
-    elif sub == "columns":
-        dtype = _metadata_grounding_coltype(grounding, f.get("column_name"))
-        body = (
-            "당신은 데이터베이스 컬럼 사전을 작성하는 전문가입니다.\n"
-            f"컬럼 {_metadata_qualname(f.get('schema_name'), f.get('table_name'))}.{f.get('column_name', '')}"
-            f"{(' (' + dtype + ')') if dtype else ''} 이 담는 값과 의미를 한국어 1~2문장으로 설명하세요.\n"
-            "설명 본문만 출력하고 머리말·따옴표를 붙이지 마세요."
-        )
-    else:  # samples
-        body = (
-            "당신은 SQL 의 의도를 자연어 질문으로 옮기는 전문가입니다.\n"
-            "다음 SQL 이 답하는 자연어 질문을 한국어 1문장으로 작성하세요.\n"
-            f"SQL:\n{f.get('sql', '')}\n"
-            "질문 문장만 출력하고 머리말·따옴표·SQL 재출력을 하지 마세요."
-        )
-    return [{"role": "user", "content": body}]
+# ITEM-10 routers-p2: _metadata_suggest_messages 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_bulk_describe_messages(mode: str, tables: list) -> list:
-    """골격 일괄 자동완성 프롬프트 — JSON 객체로만 응답하도록 강하게 지시."""
-    lines = []
-    for t in tables:
-        q = _metadata_qualname(t.get("schema_name"), t.get("table_name"))
-        if mode == "columns":
-            cols = ", ".join(
-                (f"{c['column_name']}({c['data_type']})" if c.get("data_type") else c["column_name"])
-                for c in (t.get("columns") or [])
-            )
-            lines.append(f"- {q}: {cols or '(컬럼 정보 없음)'}")
-        else:
-            cols = ", ".join(c["column_name"] for c in (t.get("columns") or [])[:40])
-            lines.append(f"- {q} (컬럼: {cols or '없음'})")
-    skeleton = "\n".join(lines)
-    if mode == "tables":
-        instruction = (
-            "각 테이블이 담는 데이터/용도를 한국어 1~2문장으로 설명하세요.\n"
-            "반드시 아래 JSON 객체로만 출력하세요(키=테이블 이름, 값=설명 문자열). 코드펜스·다른 텍스트 금지:\n"
-            '{"테이블이름": "설명", ...}'
-        )
-    else:
-        instruction = (
-            "각 컬럼이 담는 값/의미를 한국어 1문장으로 설명하세요.\n"
-            "반드시 아래 중첩 JSON 객체로만 출력하세요(키=테이블 이름, 값={컬럼 이름: 설명}). 코드펜스·다른 텍스트 금지:\n"
-            '{"테이블이름": {"컬럼이름": "설명", ...}, ...}'
-        )
-    body = (
-        "당신은 데이터베이스 카탈로그를 작성하는 전문가입니다. 아래 스키마 골격에 설명을 작성합니다.\n\n"
-        f"=== 골격 ===\n{skeleton}\n\n{instruction}"
-    )
-    return [{"role": "user", "content": body}]
+# ITEM-10 routers-p2: _metadata_bulk_describe_messages 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_parse_json_object(text):
-    """LLM 출력에서 JSON 객체 추출 — 코드펜스/전후 텍스트 허용. 실패 시 None."""
-    if not text:
-        return None
-    s = str(text).strip()
-    if s.startswith("```"):
-        # ```json ... ``` 또는 ``` ... ``` 펜스 제거.
-        parts = s.split("```")
-        if len(parts) >= 2:
-            s = parts[1]
-            if s.lstrip()[:4].lower() == "json":
-                s = s.lstrip()[4:]
-    s = s.strip()
-    try:
-        obj = json.loads(s)
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        pass
-    try:
-        i = s.index("{")
-        j = s.rindex("}")
-        obj = json.loads(s[i:j + 1])
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
+# ITEM-10 routers-p2: _metadata_parse_json_object 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-def _metadata_bulk_shape_results(mode: str, tables: list, parsed: dict) -> list:
-    """LLM JSON 응답을 프론트가 입력란에 매칭할 수 있는 리스트로 정형(대소문자/공백 무시 매칭)."""
-    out: list = []
-    pidx = {str(k).strip().lower(): v for k, v in parsed.items()} if isinstance(parsed, dict) else {}
-    cap = _METADATA_FIELD_CAPS["description"]
-    for t in tables:
-        tname = t["table_name"]
-        pv = pidx.get(tname.strip().lower())
-        if mode == "tables":
-            if isinstance(pv, str) and pv.strip():
-                out.append({"schema_name": t.get("schema_name", ""), "table_name": tname,
-                            "description": pv.strip()[:cap]})
-        else:
-            if isinstance(pv, dict):
-                cidx = {str(k).strip().lower(): v for k, v in pv.items()}
-                for c in (t.get("columns") or []):
-                    cv = cidx.get(c["column_name"].strip().lower())
-                    if isinstance(cv, str) and cv.strip():
-                        out.append({"schema_name": t.get("schema_name", ""), "table_name": tname,
-                                    "column_name": c["column_name"], "description": cv.strip()[:cap]})
-    return out
+# ITEM-10 routers-p2: _metadata_bulk_shape_results 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
-async def _metadata_llm_complete(messages: list, *, task: str = "summary", temperature: float = 0.3):
-    """메타데이터 AI 자동완성 공용 LLM 호출(비스트리밍). (text, meta, None) 또는 (None, None, JSONResponse).
-
-    admin_generate_product_prompt 비스트리밍 경로와 동일 패턴 — 단일 uvicorn 루프를 막지 않도록
-    run_in_executor 로 동기 호출을 오프로드. task = max_tokens cap 키('summary'=단건, 'prompt_gen'=일괄).
-    """
-    from modules.llm import _get_llm_client
-    llm_model = _resolve_session_default_model()
-    client = _get_llm_client(model=llm_model)
-    if client is None:
-        return None, None, _json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503)
-    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 60}
-    mt = max_tokens_for_model(llm_model, task)
-    if mt is not None:
-        create_kwargs["max_tokens"] = mt
-    if model_supports_temperature(llm_model):
-        create_kwargs["temperature"] = temperature
-
-    def _aiops_create_and_record():
-        # AI 운영 관제 계측(TASK-AIOPS): create + 회계를 executor 스레드에서 함께 실행(이벤트 루프 무영향).
-        # task 는 reasoning 'summary' 와 구분되게 metadata_ 접두(taxonomy: ai.metadata.autocomplete).
-        _t0 = time.perf_counter_ns()
-        r = client.chat.completions.create(**create_kwargs)
-        try:
-            from modules.llm import _record_llm_usage
-            _record_llm_usage(
-                str(llm_model or ""), f"metadata_{task}", r, conversation_id=None,
-                latency_ms=int((time.perf_counter_ns() - _t0) // 1_000_000),
-            )
-        except Exception:
-            pass
-        return r
-
-    try:
-        resp = await asyncio.get_event_loop().run_in_executor(None, _aiops_create_and_record)
-        choice = resp.choices[0]
-        text = (choice.message.content or "").strip()
-        truncated = getattr(choice, "finish_reason", None) == "length"
-    except Exception as exc:  # noqa: BLE001 — 어떤 LLM 오류든 502 로 변환
-        return None, None, _json_error(f"LLM 생성 실패: {exc}", 502)
-    return text, {"model": llm_model, "truncated": truncated}, None
+# ITEM-10 routers-p2: _metadata_llm_complete 는 routers/admin_metadata.py 로 이동(app.X 동적 참조 — 패치-단일점 보존).
 
 
 
@@ -17702,3 +17269,26 @@ _register_all_routers(app)
 # ITEM-10 routers-p1: 직접호출 테스트(test_datasource_delete)의 app._ds_write_common 참조 보존 —
 # register_all 이후라 routers.admin_datasources 는 이미 적재됨(순환 안전).
 from routers.admin_datasources import _ds_write_common  # noqa: E402
+# ITEM-10 routers-p2: 테스트 app._metadata_* 직접 참조 + app 내부 잔존 호출(_glossary_feedback_iso) 보존.
+from routers.admin_metadata import (  # noqa: E402
+    _metadata_resolve_account,
+    _metadata_valid_scope_keys,
+    _metadata_check_scope,
+    _metadata_valid_role_keys,
+    _metadata_check_role_key,
+    _metadata_str_field,
+    _metadata_read_json,
+    _metadata_audit,
+    _metadata_iso,
+    _metadata_enum_fields,
+    _metadata_resolve_account_perm,
+    _metadata_qualname,
+    _metadata_introspect_table,
+    _metadata_grounding_cols_line,
+    _metadata_grounding_coltype,
+    _metadata_suggest_messages,
+    _metadata_bulk_describe_messages,
+    _metadata_parse_json_object,
+    _metadata_bulk_shape_results,
+    _metadata_llm_complete,
+)

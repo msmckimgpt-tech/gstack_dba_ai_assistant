@@ -134,3 +134,6 @@ source_of_truth: true
 
 ## REV-20260711T121500-item10-routers-p1 [SKIPPED:pattern-pilot-mechanical] — routers/ 이동 파일럿
 - Related Change: CHG-20260711T121500-item10-routers-p1. 승인: ROADMAP §6.1(ITEM-10) + 판정표 §4 권장 경로. 26줄 단건·기계 게이트 4종 GREEN·직접호출 테스트가 패치-단일점 보존을 실증(적대 판정표가 이 경로를 사전 검증). 대형 클러스터 적용 시(다음 배치)는 규모에 따라 §18.8 패널 재소집.
+
+## REV-20260711T151943-item10-routers-p2 [SKIPPED:pattern-transcription] — _metadata_* routers 이동
+- Related Change: CHG-20260711T151943-item10-routers-p2. 승인: ROADMAP §6.1. 파일럿(REV-20260711T121500, 판정표 §4 사전 적대검증 경로)의 확립 패턴 전사 — 신규 판단은 census 기반 선별 예외 1건(_metadata_llm_complete 호출부 app.X 유지)뿐이며 그 목적 자체가 패치-단일점 보존. 기계 게이트 4종 + 해당 패치 테스트 통과가 관통 보존을 직접 증명.
