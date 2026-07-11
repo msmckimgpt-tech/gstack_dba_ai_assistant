@@ -375,3 +375,26 @@ async def admin_put_dashboard_prefs(request: Request) -> JSONResponse:
             conn.close()
         except Exception:
             pass
+
+
+# ==== feature-0012 ITEM-10 p13 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _load_dashboard_pref_row(conn, account_id: int) -> dict | None:
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT Content FROM WebDashboardPreferences WHERE AccountId = %s", (int(account_id),))
+        row = cur.fetchone()
+    except Exception:
+        return None
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    if not row or not row[0]:
+        return None
+    try:
+        parsed = app.json.loads(row[0])
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None

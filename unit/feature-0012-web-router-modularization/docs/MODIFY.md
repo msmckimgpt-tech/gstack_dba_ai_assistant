@@ -197,3 +197,6 @@ source_of_truth: true
 
 ## CHG-20260711T203718-item10-routers-p12 (share/gdrive 16종 이동)
 - Date: 2026-07-11. 확립 패턴(AnnAssign 보강판). app.py 10,132→9,824.
+
+## CHG-20260711T205600-item10-routers-p13 (_load_/_resolve_/_parse_/_db_rule_ 32종 이동)
+- Date: 2026-07-11. 확립 패턴 + 데코레이터 가드 신설(@app.on_event 류 lifecycle 함수 이동 금지). app.py 9,824→8,723.

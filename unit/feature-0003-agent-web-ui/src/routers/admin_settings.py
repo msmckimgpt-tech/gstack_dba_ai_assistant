@@ -133,3 +133,42 @@ def admin_reset_runtime_setting(
             pass
     app._reconcile_runtime_settings_snapshot(conn)
     return JSONResponse({"ok": True, "key": key, "reset": True})
+
+
+# ==== feature-0012 ITEM-10 p13 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
+
+def _load_runtime_setting_overrides(conn) -> dict[str, int]:
+    """WebRuntimeSettings 의 모든 override 를 {key: int} 로 로드. 실패/부재는 {} (fail-open).
+
+    등록 스펙에 없는 키·정수 아님·범위 밖 값은 조용히 제외한다(방어적 — 스냅샷 오염 방지)."""
+    result: dict[str, int] = {}
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT SettingKey, SettingValue FROM WebRuntimeSettings")
+        rows = cur.fetchall()
+    except Exception:
+        return {}
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    for key, raw in rows or []:
+        ok, val, _err = app._runtime_settings.validate_value(str(key), raw)
+        if ok and val is not None:
+            result[str(key)] = int(val)
+    return result
+
+def _reconcile_runtime_settings_snapshot(conn) -> None:
+    """DB override 를 공유 볼륨 스냅샷으로 재작성(best-effort). endpoint PUT 후 + web 기동 시 호출.
+
+    스냅샷 쓰기 실패(공유 볼륨 부재 등)는 로깅만 하고 삼킨다 — DB 가 진실원본이며, 소비처는
+    스냅샷 부재 시 기본값으로 fail-open 한다.
+    """
+    try:
+        overrides = app._load_runtime_setting_overrides(conn)
+        app._runtime_settings.write_snapshot(overrides)
+    except Exception:
+        app.logging.getLogger(__name__).warning(
+            "runtime-settings snapshot reconcile failed", exc_info=True
+        )
