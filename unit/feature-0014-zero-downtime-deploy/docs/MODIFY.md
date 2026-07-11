@@ -39,3 +39,7 @@ source_of_truth: true
 - 실측 근거: 07-11 배포 6회 중 preflight flake 3회 — stderr 유실로 **프로덕션 간헐 원인은 미확정**(비원자 env 재작성 창·snap confinement blip 등 후보). 본 변경은 원인 수정이 아니라 **진단 계측(stderr 포획) + transient 재시도** — worktree 검증은 계측 경로가 원인 문자열(env_file 부재)을 정확히 드러냄을 확인한 것(결정적 worktree 아티팩트이며 프로덕션 간헐성의 재현은 아님·env 복사 후 happy-path 도달) + 12:05 soak 단발 edge 실패로 정상 이미지(5a42b6e1, 단독 서빙 검증) 롤백 + 롤백 직후 조기 판정 오보.
 - Files: bin/deploy-web.sh (+50/-6).
 - Rollback: 단일 커밋 revert.
+
+## CHG-20260711T201156-preflight-sigpipe-rootfix (preflight 검사 파이프 제거 — flake 근본 수정)
+- Date: 2026-07-11. 직전 하드닝(CHG-20260711T113717)의 진단 계측이 원인을 특정: pipefail+grep -q 조기종료 SIGPIPE race. 검사 3곳을 bash `[[ == *...* ]]` 매칭으로 교체(의미 동일 — `\n  web-a:` 부분문자열 = `^  web-a:` 앵커 등가, cfg 는 config 출력이라 첫 줄이 서비스일 수 없음).
+- Files: bin/deploy-web.sh (검사 3곳).

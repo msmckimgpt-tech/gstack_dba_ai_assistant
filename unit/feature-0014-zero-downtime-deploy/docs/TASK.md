@@ -78,3 +78,9 @@ source_of_truth: true
 - [x] auto_rollback + 수동 --rollback 경로 양쪽: 롤백 직후 단발 edge 판정 → **60s(3s 간격) 회복 대기** 후 판정 (워밍업 창 오판 해소, 경로 일관성 — 패널 지적)
 - [x] 검증: bash -n · worktree dry-run 재현 — 실패 경로(env_file 부재가 stderr 에 원인 파일명까지 표시, 3회 재시도 후 정직 die) + happy path("OK — 두 replica 정의 확인" 도달) 양쪽 실증
 - [x] §18.8 적대 패널: 아래 REVIEW 참조
+
+## 20260711T2011-preflight-sigpipe-rootfix — preflight flake 근본 원인 수정 (SIGPIPE race)
+
+- [x] **근본 원인 확정**(하드닝 진단 덤프가 특정): `printf 145KB | grep -q` — grep -q 조기 종료가 printf 에 SIGPIPE → `set -o pipefail` 하에서 파이프라인 rc=141 → **출력이 완전(rc=0·bytes=145,878·서비스 29)해도 "미검출" 오판**. 타이밍 race 라 부하 의존 = 간헐성(6회 중 3회)의 정체.
+- [x] 수정: 검사 3곳(재시도 루프·최종 검사·published)을 파이프 없는 **bash 부분문자열 매칭**으로 교체 — SIGPIPE 표면 원천 제거.
+- [x] 검증: worktree dry-run — 실패 경로(env 부재 시 3회 재시도+정직 die) + **happy path "OK — 두 replica 정의 확인" 도달**(대형 cfg 에서 재현). bash -n. 라이브 실증 = 머지 직후 배포.
