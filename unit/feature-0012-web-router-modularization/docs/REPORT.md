@@ -94,3 +94,11 @@ DI(Depends) 도입은 보류(별건). admin(92)은 추출 최후, sub-domain(use
 
 ## 문서 아카이빙 압축 정보 (§5.5, 20260711T120729)
 - MODIFY 총 46건=아카이브 30+현행 16 · REVIEW 총 47건=아카이브 31+현행 16. verbatim·무손실 md5·timestamp 아카이브명.
+
+## 8. ITEM-10 (라우터 모듈화) 완료 판정 — 2026-07-12
+- app.py **19,650 → 3,722줄(-81%)**, p1~p17 (17 배치). 모든 이동 가능 핸들러·헬퍼·대형 도메인 상수 → 도메인 모듈(routers/*.py, `_` 접두 공용 모듈 포함) 분리.
+- **thin-app 실질 달성**: rebind 제외 실질 코드 857줄(목표 ≤1,000 충족). 잔여 top-level fn 22개 = 아키텍처상 app.py 거주 필수 — KEEP 12(DI seam get_conn/require_permission/get_current/get_optional·보안 게이트 _ssrf_check_host/_enforce_audit_prod_gate·감사 record_audit_event·메모리 _connect_memory/_require_account/_account_can_access_conversation/_json_error/_require_permission) + DEC 10(lifecycle 훅 _start_*·startup/shutdown reconcile).
+- 물리 3,722 잔여 = rebind 계약 632(명시 app.X 접근점, F821 정적분석 보존) + 주석 783 + 공백 1,450 → 모듈화 산물 아닌 형식. 추가 감소는 코드 청소(별건, 미채택).
+- 배포 live=a5ac1690(soak 통과). 게이트 매 배치 GREEN: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0.
+- 신설 자산: 결정적 AST mover(end_lineno+AnnAssign+ast.Global+Store-ctx 필터+byte-offset 편집+app-데코레이터/module-load 게이트/직수입 충돌 가드), 상수 전용 mover(self-contained 판정+직속주석 동반), route_snap.py(_walk_routes 재귀 205 route).
+- **다음**: ITEM-11(DEFER ~46 핸들러 byte-동치 DI-rework) → 완료 시 feature-0012 종결(REPORT Final).

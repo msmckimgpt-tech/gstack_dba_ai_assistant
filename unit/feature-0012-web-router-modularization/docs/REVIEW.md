@@ -182,3 +182,6 @@ source_of_truth: true
 
 ## REV-20260712T010000-item10-routers-p17 [SKIPPED:pattern-transcription] — 도메인 상수 이동
 - Related Change: CHG-20260712T010000-item10-routers-p17. 승인: ROADMAP §6.1. self-contained 판정+재할당 없음+top-level 미참조를 census+mover 이중 게이트로 확정(가변 공유상태 이동 회피). 게이트 4종 GREEN.
+
+## REV-20260712T013000-item10-done-mark [SKIPPED:doc-only] — ITEM-10 done 마킹
+- Related Change: CHG-20260712T013000-item10-완료판정. 승인: ROADMAP §6.1. 완료 판정 근거=실질 857줄+잔여 fn 전수 이동금지 census. 코드 무변경.
