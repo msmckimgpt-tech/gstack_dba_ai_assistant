@@ -506,7 +506,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **note**: 2026-07-11 batch 진행 — batch1: inc3(권한 카탈로그, -562)+inc4(권한빌더 폐포,
   -167) PR #688 머지. batch2: 검증 정규식·인증 파라미터·SEED_ROLE(-77, PR #689). batch3: 세션쿠키·패스워드
   ·TOTP(-285, PR #690 — §18.8 패널 SHIP)+배포 14b7d876·스모크 green. batch4: 세션 경로·출력
-  정규화·미디어 URL(-94): app.py 19,650→18,475. 게이트(배치마다): route snapshot byte-동치·F821·py_compile·전 스위트 pytest.
+  정규화·미디어 URL(-94, PR #691). batch5: 계정 로더·id 맵·RBAC seed 16블록(-466, AST
+  경계 전환): app.py 19,650→18,009. 게이트(배치마다): route snapshot byte-동치·F821·py_compile·전 스위트 pytest.
   목표 ≤1,000줄까지 배치 계속(다음: 도메인 클러스터 위상순·23-테스트 retarget 영역은 적대검증 후).
 - **feature_id**: feature-0012-web-router-modularization
 - **dimension**: structural

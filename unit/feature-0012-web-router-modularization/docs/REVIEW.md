@@ -431,3 +431,8 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - Related Change: CHG-20260711T111000-item10-webctx-batch4. cycle: ai/claude-corp/feature-0012-item10-webctx-b4. 승인: ROADMAP §6.1.
 - SKIPPED 사유: batch1/2 와 동일 계보의 비인증 순수 leaf(출력 정규화·경로/URL 빌더·상수) — auth dispatch 비해당(b3 와 달리 인증 semantics 무접촉). 기계 게이트 4종 전건 GREEN + monkeypatch census 0. 내부 호출쌍(_normalize_output→_strip_ansi, _is_internal_message→_should_mark_internal_message)은 동반 이동으로 패치-관통 이슈 원천 배제(어느 쪽도 테스트 패치 대상 아님을 census 로 확인).
 - Human Approval Needed: 아니오 — §6.1.
+
+## REV-20260711T112500-item10-webctx-batch5 [SKIPPED:roadmap-spec-transcription] — web_context 추출 batch5 (parallel-work-structure ITEM-10)
+- Related Change: CHG-20260711T112500-item10-webctx-batch5. cycle: ai/claude-corp/feature-0012-item10-webctx-b5. 승인: ROADMAP §6.1.
+- SKIPPED 사유: leaf 계보 계속 — 이동 전 AST 폐포 스캔(미해석 이름 0 인 13 + 의존 보강 2)과 패치 census(전 후보 0 — 관통 위험 쌍은 제외)로 경계를 기계 확정. RBAC seed 는 부트스트랩-시점 함수(요청 경로 아님)라 auth dispatch 의 라이브 인가 판정 표면 비해당. 기계 게이트 4종 GREEN. 1차 시도 절단 사고는 게이트가 설계대로 차단(정직 기록: MODIFY 참조) — 출하물은 AST 재작업본.
+- Human Approval Needed: 아니오 — §6.1.

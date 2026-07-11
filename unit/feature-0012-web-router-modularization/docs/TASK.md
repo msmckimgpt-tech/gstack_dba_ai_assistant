@@ -170,6 +170,15 @@ source_of_truth: true
 - [x] 게이트: 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
 - [ ] batch5+: retarget 영역(_connect_memory 68×·_require_account 52× 등) — 적대 분석 subagent 진행 중, 판정표 기반 진행
 
+## 20260711T1125-item10-webctx-batch5 — web_context 추출 batch5: 계정 로더·id 맵·RBAC seed 부트스트랩 (parallel-work-structure ITEM-10)
+
+- [x] 대화 id IO(_read/_write_conversation_id) · 권한/역할 id 맵(_permission_id_map/_role_id_map) · 계정 로더(_load_account_by_id/_load_account_by_username — 폐포가 wc 내 _fetch/_decorate 로 닫힘) · _issue_auth_session · _is_safe_model_name → web_context.py
+- [x] RBAC seed 부트스트랩 7함수(_create_role_with_permissions·_ensure_permission_catalog·_ensure_default_signup_role·_ensure_seed_roles·_cleanup_deprecated_role_permissions·_prune_orphaned_permission_catalog·_ensure_seed_products) + SEED_PRODUCT_DEFINITIONS → web_context.py
+- [x] 제외(경계 확정): _product_permission_code+_ensure_product_access_permissions(패치 1×+내부 호출 쌍 — 관통 위험), _is_allowed_api_model/_model_supports_temperature(shared.model_catalog 래퍼), 프롬프트-seed 쌍(_load/_upsert_system_prompt 의존)
+- [x] app.py 18,475 → 18,009줄 (web_context 1,418→1,938). 누적 19,650→18,009(-1,641).
+- [x] **교훈**: 라인-휴리스틱 경계(block_range)가 flush-left SQL heredoc 에서 함수를 절단(전 스위트 5,733 F821 로 즉발) → **AST end_lineno 가 이동 경계의 정본**(이동 텍스트·잔여 파일 각각 ast.parse 게이트 동반). 이후 batch 는 AST 추출기 고정.
+- [x] 게이트: 스냅샷 byte-동치 · F821 clean(datetime import 1건 보강) · py_compile · 전 스위트 pytest rc=0
+
 ## 8b. (이전) Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
 - [x] 2 핸들러 회수(RP overview + AO insight_coverage) — DI seam byte-동치 가능 핸들러 전부 완료(누적 69)
 - [x] behavior-neutral — make test progress-chars 1238(baseline 동일)·0 fail, route-parity 179 불변, ruff clean, py_compile OK
