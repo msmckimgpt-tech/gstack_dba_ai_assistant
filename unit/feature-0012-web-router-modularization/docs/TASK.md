@@ -238,3 +238,7 @@ source_of_truth: true
 - [x] _ensure_web_tables(오케스트레이터 436)·_seed_main_mysql_datasource(239)·_ensure_web_product_datasources_schema(147) → _bootstrap_schema.py 신설. census 패치/getsource 0. `global _WEB_TABLES_READY` 는 app 속성 대입으로 등가 변환(신규 패턴 — global-쓰기 결합 해소). 호출 기계(_bootstrap_memory_runtime 계열)는 app 잔류(KEEP). app.py 13,531→12,718(누적 **-6,932 / -35%**).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821 · py_compile · 전 스위트 pytest rc=0
 - [x] 사고 기록: 1차 실행이 cwd 오인으로 repo 메인 체크아웃을 변형(F0) → 즉시 git checkout 원복 후 worktree 재실행(잔여 오염 0 — git status 대조).
+
+## 20260711T1957-item10-routers-p9 — 제품 인사이트 2종 + 첨부 백그라운드 2종(608줄) 이동 (parallel-work-structure ITEM-10)
+- [x] _compute_product_db_insights·_compute_product_insight_coverage → admin_products.py(단일 도메인 소유 — coverage 는 setattr 1× 이나 클러스터 내부 호출 0 = 관통 표면 없음, app 내부 호출자 _auto_prompt_sweep_once 는 rebind) · _ingest_attachment_background·_prepare_vision_inline_images → _conv_store.py. app.py 12,718→12,123(누적 **-7,527 / -38%**).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821(uuid 보강) · py_compile · 전 스위트 pytest rc=0

@@ -25,6 +25,351 @@ INCLUDE_ORDER = 210  # 등록 순서 고정 — 2026-07-10 현행 include 순서
 router = APIRouter()
 
 
+# ITEM-10 routers-p9: 제품 인사이트 계산 헬퍼 이동(app.X 동적 — coverage 는 setattr 1× 패치 대상이나 클러스터 내부 호출 0 = 관통 표면 없음).
+def _compute_product_db_insights(conn, product: dict, datasource_key=None) -> dict:
+    """제품의 한 datasource scope 에서 insight-worker 가 DB(catalog)별로 파악한 내용을 모은다 (TASK-0242).
+
+    반환: {ok, reason, scope, engine, datasource_key, worker{alive,age_sec,status}, by_db{<db_lower>:{...}}}.
+    by_db[<db_lower>] = {db, domain, description, detail_text, analyzed_schema, analyzed_tables, analyzed_objects}.
+    """
+    pid = int(product.get("id") or 0)
+    out = {
+        "ok": False, "reason": "", "scope": None, "engine": "mysql",
+        "datasource_key": None, "worker": app._insight_worker_liveness(conn), "by_db": {},
+    }
+    # 편집 대상(펼친) datasource 로 scope 해석 (멀티 datasource). 미지정=primary/legacy.
+    chosen = (str(datasource_key).strip().lower() if datasource_key else "") or (product.get("datasource_key") or None)
+    resolved = app._resolve_product_insight_scope(conn, {"id": pid, "datasource_key": chosen})
+    if not resolved["ok"]:
+        out["reason"] = resolved["reason"]
+        return out
+    scope = resolved["scope"]
+    allow_null = resolved["allow_null"]
+    engine = (resolved.get("engine") or "mysql").strip().lower()
+    out["scope"] = scope
+    out["engine"] = engine
+    out["datasource_key"] = chosen or None
+
+    # REV-20260612-0242 MINOR: PG 연결을 try/finally 로 닫아 예외 경로 누수 차단(기존 coverage 패턴 개선).
+    #  방어적 LIMIT — 한 datasource scope 의 schema+table 통찰은 현실적으로 수백 단위. ORDER BY 로 결정적 절단
+    #  (schema 가 table 보다 먼저 와 DB 노드 통찰이 우선 보존).
+    pg = None
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        pgc = pg.cursor()
+        cond = "(o.datasource_key = %s" + (" OR o.datasource_key IS NULL" if allow_null else "") + ")"
+        pgc.execute(
+            f"""
+            SELECT o.object_type, o.schema_name, o.table_name,
+                   o.category_domain, COALESCE(t.text_content, ''), o.object_key
+            FROM public.rag_objects o
+            LEFT JOIN public.texts t ON t.text_hash = o.text_hash
+            WHERE o.conversation_id = %s AND o.scope_key = %s
+              AND o.object_type IN ('schema','table')
+              AND {cond}
+            ORDER BY o.object_type, o.schema_name, o.table_name
+            LIMIT 5000
+            """,
+            ["__global__", "common", scope],
+        )
+        rows = pgc.fetchall() or []
+    except Exception as exc:
+        out["reason"] = "PG 통찰 조회 실패"
+        logging.getLogger("app").warning("db_insights pg fail pid=%s err=%r", pid, exc)
+        return out
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+    # DB(catalog) 단위 집계. TASK-0243: 키를 schema_name 이 아니라 object_key 에서 파싱한 catalog 로 —
+    #  MSSQL 은 schema_name=dbo(SQL스키마)라 등록 DB(catalog)와 차원이 달라 schema_name 으로 묶으면
+    #  전부 'dbo' 한 바구니가 되어 등록 DB 행/picker 매칭이 빗나간다. MySQL 은 catalog==schema_name(무변경).
+    by: dict = {}
+    for otype, sname, tname, cat_domain, text, okey in rows:
+        # 그룹핑 키 결정: MSSQL 만 object_key 의 catalog 파싱(schema_name=dbo 차원 문제), MySQL/기타는
+        # schema_name 직접 사용 — db==schema==catalog 라 TASK-0242 와 byte-identical(무회귀 보장, object_key
+        # 파싱을 MySQL 에 적용해 생길 수 있는 이론적 엣지[DB명 내 '.']까지 원천 차단).
+        if engine == "mssql":
+            cat = app._db_catalog_from_object_key(okey, engine, otype)
+            if cat is None:
+                # bare(default_db, catalog 미인코딩) MSSQL 통찰 — 등록 catalog 에 귀속 불가 → 표시 대상 아님.
+                continue
+        else:
+            cat = str(sname or "").strip()
+        db = str(cat).strip()
+        dbl = db.lower()
+        if not dbl:
+            continue
+        ent = by.setdefault(dbl, {
+            "db": db, "domain": None, "schema_text": None,
+            "tables": [], "analyzed_schema": False, "analyzed_tables": 0,
+        })
+        dom = (str(cat_domain).strip() if cat_domain else "") or None
+        txt = str(text or "").strip()
+        if otype == "schema":
+            ent["analyzed_schema"] = True
+            if dom and not ent["domain"]:
+                ent["domain"] = dom
+            if txt:
+                ent["schema_text"] = txt
+        elif otype == "table" and tname:
+            ent["analyzed_tables"] += 1
+            ent["tables"].append({"table": str(tname).strip(), "domain": dom, "text": txt})
+            if dom and not ent["domain"]:
+                ent["domain"] = dom
+
+    by_db: dict = {}
+    for dbl, ent in by.items():
+        desc, detail = app._compose_db_insight_text(ent)
+        by_db[dbl] = {
+            "db": ent["db"],
+            "domain": ent["domain"],
+            "description": desc,
+            "detail_text": detail,
+            "analyzed_schema": ent["analyzed_schema"],
+            "analyzed_tables": ent["analyzed_tables"],
+            "analyzed_objects": ent["analyzed_tables"] + (1 if ent["analyzed_schema"] else 0),
+        }
+    out["ok"] = True
+    out["by_db"] = by_db
+    return out
+
+def _compute_product_insight_coverage(conn, product: dict) -> dict:
+    """한 제품의 insight-worker 객체 분석 완료율 산출 (TASK-0223).
+
+    반환: {product_id, pct, analyzed_objects, total_objects, per_db[], measurable, reason, engine}.
+    measurable=False 는 측정 불가(데이터소스 해석/연결 실패 등) — UI 가 "측정 불가" 로 graceful 표시.
+    """
+    pid = int(product.get("id") or 0)
+    base = {
+        "product_id": pid, "pct": None, "analyzed_objects": 0, "total_objects": 0,
+        "per_db": [], "measurable": False, "reason": "", "engine": "mysql",
+    }
+    db_rows = [r for r in app._list_product_databases(conn, pid) if r.get("schema_name")]
+    if not db_rows:
+        base["reason"] = "접근 가능 데이터베이스 없음(미바인딩)"
+        base["measurable"] = True  # 측정됨 — 객체 0
+        return base
+
+    from shared import db as _db
+    from shared.db import _pg_connect
+
+    # ── TASK-0249: 멀티 datasource(1:N) 인식 ──
+    # 각 접근 DB 는 자기 datasource(WebProductDatabases.DatasourceKey, 미설정 시 제품 primary)에 산다.
+    # 이전 구현은 제품 primary 하나로 모든 DB 를 질의해, 타 서버에 사는 DB 가 0 테이블(0/0)로 잘못
+    # 표기됐다(예: 제품의 dbgame 이 player 서버에 있는데 auth 서버에 질의). datasource_key 별로
+    # 그룹핑해 각 그룹을 자기 좌표로 질의하고 결과를 합산한다. (분자 scope·분모 라이브 카탈로그를
+    # 그룹마다 일치시켜 db-insights 와 같은 datasource 차원을 본다.)
+    primary_dskey = product.get("datasource_key")
+    order = [r["schema_name"] for r in db_rows]   # 노출 순서 보존(프런트 1:1 매칭)
+    groups: dict = {}   # effective datasource_key -> [db_name,...]
+    for r in db_rows:
+        eff = r.get("datasource_key") or primary_dskey
+        groups.setdefault(eff, []).append(r["schema_name"])
+
+    # PG 통찰 연결은 그룹 간 재사용(그룹마다 scope 만 바꿔 조회). 실패 시 전역 측정 불가.
+    try:
+        pg = _pg_connect()
+    except Exception as exc:
+        base["reason"] = "PG 통찰 조회 실패"
+        logging.getLogger("app").warning("insight_coverage pg connect fail pid=%s err=%r", pid, exc)
+        return base
+
+    def _analyzed_sets_for_scope(scope: str, allow_null: bool):
+        """rag_objects 통찰 보유 객체 집합 (해당 datasource scope). 반환 (tables:set, schemas:set)."""
+        analyzed_tables = set()   # {(schema_lower, table_lower)}
+        analyzed_schemas = set()  # {schema_lower}
+        pgc = pg.cursor()
+        cond = "(datasource_key = %s" + (" OR datasource_key IS NULL" if allow_null else "") + ")"
+        # insight-worker 의 schema/table 통찰은 전역 fact 라 conversation_id=GLOBAL_CONVERSATION_ID(`__global__`)
+        # 로 저장된다(워커 런타임 conv `__insight_worker__` 가 아니라). scope_key='common' 은 rag scope.
+        pgc.execute(
+            f"""
+            SELECT object_type, schema_name, table_name
+            FROM public.rag_objects
+            WHERE conversation_id = %s AND scope_key = %s
+              AND object_type IN ('schema','table')
+              AND {cond}
+            """,
+            ["__global__", "common", scope],
+        )
+        for otype, sname, tname in (pgc.fetchall() or []):
+            s = str(sname or "").strip().lower()
+            if not s:
+                continue
+            if otype == "table" and tname:
+                analyzed_tables.add((s, str(tname).strip().lower()))
+            elif otype == "schema":
+                analyzed_schemas.add(s)
+        pgc.close()
+        return analyzed_tables, analyzed_schemas
+
+    per_db_by_name: dict = {}   # db -> per_db row
+    engines_seen: list = []
+    default_db_seen = None
+    resolved_any = False
+    pg_failed = False
+    try:
+        for dskey, dbs in groups.items():
+            resolved = app._resolve_product_insight_scope(conn, {"id": pid, "datasource_key": dskey})
+            if not resolved["ok"]:
+                # 이 datasource 만 해석 불가 — 해당 DB 들만 연결 불가로 표기(타 그룹 무영향).
+                for db in dbs:
+                    per_db_by_name[db] = {
+                        "db": db, "connected": False, "schema_analyzed": False,
+                        "tables_total": 0, "tables_analyzed": 0,
+                        "note": resolved.get("reason") or "데이터소스 해석 불가",
+                    }
+                continue
+            resolved_any = True
+            coords = resolved["coords"]
+            engine = resolved["engine"]
+            scope = resolved["scope"]
+            allow_null = resolved["allow_null"]
+            engines_seen.append(engine)
+            if default_db_seen is None:
+                default_db_seen = resolved.get("default_db")
+
+            okssrf, _ssrf_reason, pin = app._ssrf_check_host(coords.get("host"))
+            if not okssrf:
+                for db in dbs:
+                    per_db_by_name[db] = {
+                        "db": db, "connected": False, "schema_analyzed": False,
+                        "tables_total": 0, "tables_analyzed": 0,
+                        "note": "데이터소스 호스트 차단(SSRF)",
+                    }
+                continue
+            coords_pinned = {**coords, "host": pin}
+
+            # ── 분모: 라이브 카탈로그 (schema, table) — 이 그룹의 datasource 좌표로 ──
+            db_tables: dict = {}
+            if engine == "mssql":
+                # MSSQL: 접근DB=catalog(database) 마다 별도 연결(DB 컨텍스트가 DB별로 다름).
+                # per-DB 연결 격리 — RO 로그인이 일부 DB 에만 GRANT 된 경우, 한 DB 연결 실패가
+                # 전체를 오염시키지 않도록 실패 DB 만 connected=False + note 로 표기한다.
+                for db in dbs:
+                    try:
+                        pairs = set(_db.list_information_schema_tables(coords_pinned, database=db, timeout=5))
+                        db_tables[db] = {"pairs": pairs, "connected": True, "note": ""}
+                    except Exception as exc:
+                        db_tables[db] = {
+                            "pairs": set(), "connected": False,
+                            "note": "연결 불가(RO 권한/도달 — 데이터소스 자격증명·DB GRANT 확인)",
+                        }
+                        logging.getLogger("app").info(
+                            "insight_coverage mssql db conn fail pid=%s db=%s err=%r", pid, db, exc)
+            else:
+                # MySQL: DB==스키마, 한 연결이 그룹의 모든 DB 를 본다. 연결 실패=이 datasource 도달 불가
+                # → 그룹 DB 만 연결 불가(타 datasource 그룹 무영향). [대소문자 매칭은 db.py LOWER() 가 처리]
+                try:
+                    rows = _db.list_information_schema_tables(coords_pinned, schemas=dbs, timeout=5)
+                    by_schema: dict = {}
+                    for s, t in rows:
+                        by_schema.setdefault(str(s).strip().lower(), set()).add((str(s), str(t)))
+                    for db in dbs:
+                        db_tables[db] = {
+                            "pairs": by_schema.get(str(db).strip().lower(), set()),
+                            "connected": True, "note": "",
+                        }
+                except Exception as exc:
+                    logging.getLogger("app").warning(
+                        "insight_coverage catalog fail pid=%s ds=%s err=%r", pid, dskey, exc)
+                    for db in dbs:
+                        db_tables[db] = {
+                            "pairs": set(), "connected": False,
+                            "note": "데이터소스 카탈로그 조회 실패(연결/권한)",
+                        }
+
+            # ── 분자: PG rag_objects 통찰 (이 그룹 scope) ──
+            try:
+                analyzed_tables, analyzed_schemas = _analyzed_sets_for_scope(scope, allow_null)
+            except Exception as exc:
+                pg_failed = True
+                logging.getLogger("app").warning("insight_coverage pg fail pid=%s err=%r", pid, exc)
+                break
+
+            for db in dbs:
+                info = db_tables.get(db) or {"pairs": set(), "connected": False, "note": ""}
+                if not info.get("connected"):
+                    per_db_by_name[db] = {
+                        "db": db, "connected": False, "schema_analyzed": False,
+                        "tables_total": 0, "tables_analyzed": 0,
+                        "note": info.get("note") or "연결 불가",
+                    }
+                    continue
+                pairs = info["pairs"]
+                tables_total = len(pairs)
+                tables_analyzed = sum(
+                    1 for (s, t) in pairs
+                    if (s.strip().lower(), t.strip().lower()) in analyzed_tables
+                )
+                live_schemas = {s.strip().lower() for (s, _t) in pairs}
+                db_schema_analyzed = 1 if (
+                    (live_schemas & analyzed_schemas) or (str(db).strip().lower() in analyzed_schemas)
+                ) else 0
+                per_db_by_name[db] = {
+                    "db": db, "connected": True,
+                    "schema_analyzed": bool(db_schema_analyzed),
+                    "tables_total": tables_total,
+                    "tables_analyzed": tables_analyzed,
+                    "note": "",
+                }
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+
+    if pg_failed:
+        base["reason"] = "PG 통찰 조회 실패"
+        return base
+
+    # ── 합산 (원래 노출 순서) : 각 connected DB = 1 DB노드 + N table노드. 비연결 DB 는 분모 제외. ──
+    # 동명 DB 가 서로 다른 datasource 그룹에 등록될 수 있어(멀티 datasource 의 정상 시나리오 — 같은
+    # 'dbCommon' 이 여러 서버에 존재) per_db_by_name 은 dict(이름 1키)다. order 는 중복을 포함할 수
+    # 있으므로 seen 가드로 한 번만 집계·노출한다(이중 카운트 방지 → pct 왜곡 차단). TASK-0249.
+    total_obj = 0
+    analyzed_obj = 0
+    connected_count = 0
+    per_db = []
+    seen_dbs: set = set()
+    for db in order:
+        if db in seen_dbs:
+            continue
+        seen_dbs.add(db)
+        row = per_db_by_name.get(db) or {
+            "db": db, "connected": False, "schema_analyzed": False,
+            "tables_total": 0, "tables_analyzed": 0, "note": "연결 불가",
+        }
+        per_db.append(row)
+        if row.get("connected"):
+            connected_count += 1
+            db_total = row["tables_total"] + 1   # +1 = DB(schema) 노드
+            db_analyzed = row["tables_analyzed"] + (1 if row["schema_analyzed"] else 0)
+            total_obj += db_total
+            analyzed_obj += db_analyzed
+
+    base["engine"] = engines_seen[0] if engines_seen else "mysql"
+    base["default_db"] = default_db_seen
+    base["total_objects"] = total_obj
+    base["analyzed_objects"] = analyzed_obj
+    base["per_db"] = per_db
+    base["pct"] = (round(100.0 * analyzed_obj / total_obj, 1) if total_obj > 0 else None)
+    # 측정 가능한 DB 가 하나라도 있으면 measurable. 전부 연결 불가(또는 datasource 미해석)이면
+    # "측정 불가" badge 로 graceful 표시(0% 로 오인 방지).
+    base["measurable"] = connected_count > 0
+    if connected_count == 0:
+        base["reason"] = (
+            "데이터소스를 해석할 수 없습니다(미바인딩/삭제 확인)." if not resolved_any
+            else "접근 가능 데이터베이스에 연결할 수 없습니다(RO 권한/도달 확인)."
+        )
+    return base
+
+
 @router.patch("/api/admin/products/{product_id}/datasource")
 async def admin_set_product_datasource(product_id: int, request: Request) -> JSONResponse:
     """product → datasource 키 바인딩 설정 (멀티 datasource P1).
