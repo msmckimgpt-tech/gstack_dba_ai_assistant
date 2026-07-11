@@ -100,6 +100,16 @@ from web_context import (
     _load_role_permission_codes,
     _load_account_override_values,
     _decorate_account_rows,
+    ANSI_RE,
+    CONTROL_RE,
+    MODEL_RE,
+    USERNAME_RE,
+    ROLE_KEY_RE,
+    SEED_ROLE_DEFINITIONS,
+    PASSWORD_HASH_ITERATIONS,
+    AUTH_SESSION_DAYS,
+    _seed_role_definition,
+    _seed_role_codes,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -146,11 +156,7 @@ def _enforce_audit_prod_gate() -> None:
 
 _enforce_audit_prod_gate()
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
-MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,64}$")
-USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$")
-ROLE_KEY_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,63}$")
+# ITEM-10 b2: ANSI_RE/CONTROL_RE/MODEL_RE/USERNAME_RE/ROLE_KEY_RE 는 web_context.py 로 추출(상단 rebind).
 
 INTERNAL_MEMORY_PREFIXES = (
     "파일 탐색 완료",
@@ -162,84 +168,9 @@ PLACEHOLDER_TOPICS = {"", "(미설정)", "새 대화"}
 # feature-0012 Final(ITEM-10 inc3): PERMISSION_DEFINITIONS/CODES/DEFINITION_MAP ·
 # _METADATA_MANUAL_IMPLIES · _resolve_permission_catalog 는 src/web_context.py 로 추출
 # (상단 from web_context import 로 rebind — app 내 호출부·routers app.X 동적참조·테스트 monkeypatch 보존).
-SEED_ROLE_DEFINITIONS = (
-    {
-        "key": "pending",
-        "name": "Pending",
-        "description": "승인 전 조회 전용 계정",
-        "is_default_signup": True,
-        "permissions": {
-            "conversation.list.own",
-            "conversation.read.own",
-            # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant
-            # (self filter — 본인이 actor 인 이벤트 조회, TASK-0293 Actor-only).
-            "audit.read.own",
-            # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 read.own 만.
-            # upload 거부 + bytes download 는 application-level (Phase 5 endpoint) 차단.
-            "conversation.attachment.read.own",
-        },
-    },
-    {
-        "key": "operator",
-        "name": "Operator",
-        "description": "일반 작업 계정",
-        "is_default_signup": False,
-        "permissions": {
-            "conversation.create",
-            "conversation.ask",
-            "conversation.list.own",
-            "conversation.read.own",
-            "conversation.file.read.own",
-            "conversation.rename.own",
-            "conversation.delete.own",
-            "conversation.cancel.own",
-            "conversation.finalize.own",
-            "conversation.share.create",
-            "conversation.duplicate.own",
-            # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
-            "audit.read.own",
-            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
-            "conversation.attachment.upload.own",
-            "conversation.attachment.read.own",
-            # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤 — 실제 게이트는 allowlist+attachment_reader+sql_guard).
-        },
-    },
-    {
-        "key": "sales",
-        "name": "사업팀",
-        "description": "게임 사업팀 pilot 계정 — 단순 조회/집계 자가서비스. ad-hoc 심층 분석은 DBA 팀으로 이관",
-        "is_default_signup": False,
-        "permissions": {
-            "conversation.create",
-            "conversation.ask",
-            "conversation.list.own",
-            "conversation.read.own",
-            "conversation.file.read.own",
-            "conversation.rename.own",
-            "conversation.delete.own",
-            "conversation.cancel.own",
-            "conversation.finalize.own",
-            "conversation.share.create",
-            "conversation.duplicate.own",
-            # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
-            "audit.read.own",
-            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
-            "conversation.attachment.upload.own",
-            "conversation.attachment.read.own",
-            # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤).
-        },
-    },
-    {
-        "key": "admin",
-        "name": "Admin",
-        "description": "관리 콘솔과 전체 대화 관리 권한을 가진 계정",
-        "is_default_signup": False,
-        "permissions": set(PERMISSION_CODES),
-    },
-)
+# ITEM-10 b2: SEED_ROLE_DEFINITIONS 는 web_context.py 로 추출(상단 rebind).
 # ITEM-10 inc4: OVERRIDE_ALLOW/DENY/INHERIT 는 web_context.py 로 추출(상단 rebind).
-PASSWORD_HASH_ITERATIONS = max(100_000, int(os.getenv("WEB_PASSWORD_HASH_ITERATIONS", "310000")))
-AUTH_SESSION_DAYS = max(1, int(os.getenv("WEB_AUTH_SESSION_DAYS", "14")))
+# ITEM-10 b2: PASSWORD_HASH_ITERATIONS/AUTH_SESSION_DAYS 는 web_context.py 로 추출(상단 rebind).
 # TASK-20260619T021356-login-attempt-limit (보안 보강 ②): 로그인 시도 제한 (계정 잠금 + IP throttle).
 # 전부 env 설정 가능. 사용자 결정(2026-06-19): 계정+IP 둘 다, 보수적 프로파일.
 # 계정: MAX_FAILED 회 비밀번호 실패 → LOCKOUT_MINUTES 분 잠금(자동 해제). IP: WINDOW_SEC 내
@@ -1108,18 +1039,10 @@ def _totp_verify_pending_token(conn, token: str) -> "int | None":
 
 # ITEM-10 inc4: _empty_permission_map 은 web_context.py 로 추출(상단 rebind).
 
-def _seed_role_definition(role_key: str) -> dict[str, Any] | None:
-    for item in SEED_ROLE_DEFINITIONS:
-        if item["key"] == role_key:
-            return item
-    return None
+# ITEM-10 b2: _seed_role_definition 는 web_context.py 로 추출(상단 rebind).
 
 
-def _seed_role_codes(role_key: str) -> set[str]:
-    item = _seed_role_definition(role_key)
-    if not item:
-        return set()
-    return set(item["permissions"])
+# ITEM-10 b2: _seed_role_codes 는 web_context.py 로 추출(상단 rebind).
 
 
 # ITEM-10 inc4: _normalize_override_value 는 web_context.py 로 추출(상단 rebind).

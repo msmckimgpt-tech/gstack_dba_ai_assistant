@@ -503,11 +503,10 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ### ITEM-10 · web_context 헬퍼 추출 — app.py 완전 thin-app (feature-0012 Final)
 - **status**: in-progress
-- **note**: 2026-07-11 batch 착수 — inc3(SESSION_COOKIE+PERMISSION 카탈로그 클러스터, -562줄)
-  + inc4(OVERRIDE/권한빌더/_fetch·_decorate_account_rows 폐포, -167줄): app.py 19,650→18,931.
-  게이트: route snapshot 205 byte-동치·F821 clean·py_compile·pytest(아래 커밋 참조). 목표
-  ≤1,000줄까지 배치 계속(다음: SEED_ROLE_DEFINITIONS·_seed_role_*·23-테스트 retarget 영역은
-  적대검증 후).
+- **note**: 2026-07-11 batch 진행 — batch1: inc3(권한 카탈로그, -562)+inc4(권한빌더 폐포,
+  -167) PR #688 머지. batch2: 검증 정규식·인증 파라미터·SEED_ROLE 클러스터(-77): app.py
+  19,650→18,854. 게이트(배치마다): route snapshot byte-동치·F821·py_compile·전 스위트 pytest.
+  목표 ≤1,000줄까지 배치 계속(다음: 도메인 클러스터 위상순·23-테스트 retarget 영역은 적대검증 후).
 - **feature_id**: feature-0012-web-router-modularization
 - **dimension**: structural
 - **risk_grade**: Major

@@ -409,3 +409,8 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - SKIPPED 사유: TASK-0012-8 이 명시한 "안전 영역(테스트 0변경)" inc3/inc4 의 전사 — 이동 대상·순서가 이전 세션의 ultracode 적대검증(Strategy B leaf-first, REV-0015/0016)으로 이미 확정된 경로. 인증·인가 semantics 무변경(순수 데이터/빌더 이동, 호출부 rebind — 403/401 메시지·권한 판정 로직 byte-동치). 기계 게이트 4종이 동치를 직접 증명: 스냅샷 byte-동치·F821·py_compile·전 스위트 pytest. 실측 1건(소스-계약 테스트 위치)은 계약 내용 무변경 위치 갱신(선례 batch4 ROUTERS 포함).
 - 잔여 위험·완화: monkeypatch 되는 심볼 없음(사전 grep — 호출/상수 읽기만) · inspect.getsource 는 함수 객체 기준이라 이동 무관(web_context 소스 반환) · _legacy_permission_codes_from_row 등 잔류 심볼은 rebind 된 PERMISSION_CODES 를 그대로 참조.
 - Human Approval Needed: 아니오 — §6.1. behavior-neutral 이동, 배포는 item 완료 시(§6.1 자동).
+
+## REV-20260711T103000-item10-webctx-batch2 [SKIPPED:roadmap-spec-transcription] — web_context 추출 batch2 (parallel-work-structure ITEM-10)
+- Related Change: CHG-20260711T103000-item10-webctx-batch2. cycle: ai/claude-corp/feature-0012-item10-webctx-b2. 승인: ROADMAP §6.1.
+- SKIPPED 사유: batch1 과 동일 계보(leaf-first byte-동치 이동 + rebind) — 인증·인가 semantics 무변경(상수·seed 데이터·조회 함수만). 기계 게이트 4종(스냅샷 byte-동치·F821·py_compile·전 스위트 pytest rc=0)이 동치 직접 증명. 이동 전 monkeypatch 소비 grep 0 확인.
+- Human Approval Needed: 아니오 — §6.1.

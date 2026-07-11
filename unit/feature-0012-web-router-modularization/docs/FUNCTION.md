@@ -58,7 +58,7 @@ ITEM-P5b, Critical). 본 cycle 범위 = **분할 안전망 + 의존성 audit**(�
 
 ## 11. web_context 추출 현황 (ITEM-10, 진행 중)
 - `src/web_context.py` = app.py 헬퍼의 단방향 추출 모듈(INVARIANT: `from app import` 금지 — app → web_context edge 만).
-- 완료 증분: inc1(session id/token leaf) · inc2(proxy/client-IP) · **inc3(SESSION_COOKIE+RBAC 권한 카탈로그)** · **inc4(권한 오버라이드·계정 행 빌더 폐포)** — app.py 19,650→18,931줄(2026-07-11).
+- 완료 증분: inc1(session id/token leaf) · inc2(proxy/client-IP) · **inc3(SESSION_COOKIE+RBAC 권한 카탈로그)** · **inc4(권한 오버라이드·계정 행 빌더 폐포)** · **b2(검증 정규식·인증 파라미터·seed 롤)** — app.py 19,650→18,854줄(2026-07-11).
 - 소비 규약: app.py 상단 `from web_context import (...)` rebind — app 내 호출부·routers `app.X` 동적참조·테스트 monkeypatch 보존.
 
 ## 13. Pre-approved Changes

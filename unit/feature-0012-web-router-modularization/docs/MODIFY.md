@@ -535,3 +535,10 @@ source_of_truth: true
 - Files: `unit/feature-0003-agent-web-ui/src/app.py`(블록 제거+rebind import) · `src/web_context.py`(+768줄) · `tests/test_group_conversation_s2.py`(APP_ALL 에 web_context.py 포함 — 소스-계약 위치 무관 고정).
 - 검증: 라우트 스냅샷 205 in-order byte-동치(main 대비, _walk_routes 재귀) · ruff F821 clean(src 전체) · py_compile · feature-0003 전 스위트 pytest rc=0(소스-계약 1건 위치 갱신 후 전건 GREEN). 배포 scope: web 재빌드(item 완료 시 §6.1 — 중간 batch 도 머지-가능 유지).
 - Rollback: 단일 커밋 revert(이동+rebind 원자).
+
+## CHG-20260711T103000-item10-webctx-batch2 (web_context 추출 batch2 — 검증 정규식·인증 파라미터·seed 롤, parallel-work-structure ITEM-10)
+- Date: 2026-07-11
+- Summary: batch1(CHG-20260711T100116) 계속 — 검증 정규식 5종(ANSI/CONTROL/MODEL/USERNAME/ROLE_KEY_RE) + SEED_ROLE_DEFINITIONS/_seed_role_definition/_seed_role_codes(RBAC seed) + PASSWORD_HASH_ITERATIONS/AUTH_SESSION_DAYS(인증 파라미터)를 web_context.py 로 byte-동치 이동(상단 rebind). 전부 순수 leaf(monkeypatch 소비 0 — 사전 grep). app.py 18,931→18,854줄.
+- Files: src/app.py · src/web_context.py.
+- 검증: 라우트 스냅샷 byte-동치 · ruff F821 clean · py_compile · feature-0003 전 스위트 rc=0(테스트 무변경 — app.SEED_ROLE_DEFINITIONS 등 읽기 소비는 rebind 보존).
+- Rollback: 단일 커밋 revert.
