@@ -1936,3 +1936,346 @@ VALUES (%s, %s, %s, %s)
                 ),
             )
         cur.close()
+
+
+# ── ITEM-10 b6-A: 계정/권한 read-model (적대 분석 판정표 Batch A — retarget 0 검증) ──
+# 규칙(판정표 명문화): 테스트가 app-패치하는 심볼을 본 모듈 내부에서 bare-name 호출하는
+# 함수를 새로 들여올 때는 패치-관통(우회) 여부를 반드시 사전 census 로 확인한다.
+# _account_has_permission(app-패치 11×)의 현행 패치 경로는 직렬화/quota-strip 을 통과하지
+# 않음을 전수 확인 — co-move 안전.
+
+def _legacy_permission_codes_from_row(row: dict[str, Any] | None) -> set[str]:
+    if not row:
+        return set()
+    role_key = str(row.get("legacy_role") or row.get("role") or "").strip().lower()
+    if role_key == "admin":
+        return set(PERMISSION_CODES)
+    codes = {
+        "conversation.list.own",
+        "conversation.read.own",
+        "conversation.file.read.own",
+    }
+    if role_key == "operator":
+        if bool(row.get("legacy_can_send_request")):
+            codes.update({"conversation.create", "conversation.ask"})
+        if bool(row.get("legacy_can_cancel_request")):
+            codes.add("conversation.cancel.own")
+        if bool(row.get("legacy_can_finalize_request")):
+            codes.add("conversation.finalize.own")
+        if bool(row.get("legacy_can_delete_conversation")):
+            codes.add("conversation.delete.own")
+    return codes
+
+def _account_permissions(account: dict[str, Any] | None) -> dict[str, bool]:
+    if not account:
+        return _empty_permission_map()
+    cached = account.get("permissions")
+    if isinstance(cached, dict):
+        # TASK-0052 Phase 1B: cached map 은 _decorate_account_rows 에서 dynamic catalog 로 빌드됐으므로
+        # 그대로 dict() 복사해 dynamic codes (e.g. product.access.<key>) 도 보존한다.
+        # 기존엔 `for code in PERMISSION_CODES` 로 iterate 해 dynamic codes 가 silently drop 됐다.
+        return {str(code): bool(value) for code, value in cached.items()}
+    return _empty_permission_map()
+
+def _account_has_permission(account: dict[str, Any] | None, permission: str) -> bool:
+    permissions = _account_permissions(account)
+    return bool(permissions.get(permission))
+
+def _account_has_any_permission(account: dict[str, Any] | None, *permissions: str) -> bool:
+    """주어진 권한 중 하나라도 보유하면 True. read/manage superset 게이팅에 사용
+    (TASK-0288: GET 조회는 `.read` 또는 `.manage` 보유 시 허용 — manage ⊇ read)."""
+    perms = _account_permissions(account)
+    return any(bool(perms.get(code)) for code in permissions)
+
+def _role_payload(account: dict[str, Any] | None) -> dict[str, Any] | None:
+    role_id = int(account.get("role_id") or 0) if account else 0
+    if role_id <= 0:
+        return None
+    return {
+        "id": role_id,
+        "key": str(account.get("role_key") or ""),
+        "name": str(account.get("role_name") or ""),
+        "description": str(account.get("role_description") or ""),
+        "is_active": bool(account.get("role_is_active", True)),
+        "is_default_signup": bool(account.get("role_is_default_signup")),
+    }
+
+def _serialize_account(
+    account: dict[str, Any] | None,
+    *,
+    include_permissions: bool = False,
+) -> dict[str, Any] | None:
+    """계정 정보를 응답 payload 로 직렬화한다.
+
+    TASK-0098 (REQ-20260522-0002, Critical §12.3): default `False` — 7 self callsite
+    (bootstrap, signup, login, GET `/api/auth/me`, PATCH `/api/auth/me` 2 곳) 가
+    default 호출 → raw permission map 노출 차단. admin-context 3 callsite
+    (`_list_accounts_for_admin`, admin account update, 신규 `/api/admin/me`) 는
+    `include_permissions=True` 명시. `role` 객체는 self 응답에도 유지.
+
+    `console_access` 플래그: TASK-0098 단순화로 인해 frontend can() 가 항상 true
+    를 반환하게 되어 관리 콘솔 버튼이 모든 사용자에게 노출되는 이슈 수정.
+    permissions 전체 노출 없이 UI gate 에 필요한 최소 정보만 제공한다.
+    """
+    if not account:
+        return None
+    payload: dict[str, Any] = {
+        "id": int(account.get("id") or 0),
+        "username": str(account.get("username") or ""),
+        "role": _role_payload(account),
+        "is_active": bool(account.get("is_active")),
+        "deleted_at": str(account.get("deleted_at") or "") or None,
+        "deleted_by_account_id": int(account.get("deleted_by_account_id") or 0) or None,
+        "created_at": str(account.get("created_at") or "") or None,
+        "approved_at": str(account.get("approved_at") or "") or None,
+        "last_login_at": str(account.get("last_login_at") or "") or None,
+        "last_conversation_id": str(account.get("last_conversation_id") or ""),
+        # TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0095): 다음 로그인 시 비밀번호 강제 변경.
+        "must_change_password": bool(account.get("must_change_password")),
+        # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 상태(DB NOW() 기준 is_locked).
+        # admin UI 가 잠금 배지/해제 버튼 노출에 사용. locked_until=자동 해제 시각.
+        "is_locked": bool(account.get("is_locked")),
+        "locked_until": str(account.get("locked_until_at") or "") or None,
+        # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA 활성 여부(프로필 토글 + admin 배지/해제).
+        "totp_enabled": bool(account.get("totp_enabled")),
+        # UI gate 전용 최소 플래그 — permissions 전체 노출 없이 관리 콘솔 접근 여부만 전달.
+        "console_access": _account_has_permission(account, "console.access"),
+        # TASK-0268: 아바타 이미지 URL. 설정 시 /api/avatars/<id>(같은 출처 bytes 서빙) +
+        # object key 해시 캐시버스터. NULL=미설정 → 프론트가 Identicon 렌더.
+        "avatar_url": _avatar_url_for(int(account.get("id") or 0), account.get("avatar_object_key")),
+        # TASK-20260619T034522-oauth-google-foundation: OAuth 편입 식별. email(연동 시 채워짐, 없으면 None)
+        # 과 auth_provider("google" 등, 없으면 None — 로컬 계정). 민감 토큰/secret 은 비노출.
+        "email": str(account.get("email") or "") or None,
+        "auth_provider": str(account.get("auth_provider") or "") or None,
+    }
+    if include_permissions:
+        payload["permissions"] = _account_permissions(account)
+        # 실패 횟수는 admin-context 에만 노출(자기 세션 /api/auth/me 비노출 — outside-voice NIT 흡수).
+        payload["failed_login_attempts"] = int(account.get("failed_login_attempts") or 0)
+        # TASK-20260623T014626-quota-ui-relocate: 계정 특수 LLM 토큰 한도(override, null=역할 기본 상속). admin 계정 상세 편집용.
+        # TASK-20260623T030418-quota-rbac-permission: 노출은 actor 의 quota.read 가 있을 때만
+        #   (_strip_quota_fields_if_unpermitted 가 엔드포인트에서 strip). 직렬화는 값을 싣되, 게이트는 호출측.
+        payload["quota_daily"] = int(account["quota_daily"]) if account.get("quota_daily") is not None else None
+        payload["quota_monthly"] = int(account["quota_monthly"]) if account.get("quota_monthly") is not None else None
+    return payload
+
+def _strip_quota_fields_if_unpermitted(payload, actor):
+    """TASK-20260623T030418-quota-rbac-permission: actor 가 quota.read 미보유 시
+    직렬화에서 LLM 한도 필드(quota_daily/quota_monthly)를 제거한다(노출 차단, defense-in-depth).
+    payload 는 dict(단건) 또는 list[dict]. quota.read 보유 시 무변경 후 그대로 반환."""
+    if _account_has_permission(actor, "quota.read"):
+        return payload
+    items = payload if isinstance(payload, list) else [payload]
+    for item in items:
+        if isinstance(item, dict):
+            item.pop("quota_daily", None)
+            item.pop("quota_monthly", None)
+    return payload
+
+
+# ── ITEM-10 b6-B: 제품 접근 클러스터 (판정표 Batch B — retarget 0 검증) ──
+# _product_permission_code 의 app-패치 1×(test_auto_role_prompt:180) 인터셉트 지점은
+# app-잔류 함수(_assemble_role_prompt_llm_request) 내부 — 관통 무영향 전수 확인.
+
+def _account_has_product_access(
+    account: dict[str, Any] | None,
+    product_id_or_key,
+    *,
+    conn=None,
+) -> bool:
+    """TASK-0052 Phase 1B: 계정이 특정 제품에 접근 가능한지 검사.
+
+    `product_id_or_key`:
+        - int / int 문자열  → WebProducts.Id. conn 가 주어지면 WebProducts 에서 ProductKey 조회 후 판단.
+                              conn 가 None 인데 int 만 주어진 경우 False (안전한 fallback).
+        - str (대문자 ProductKey) → 그대로 lowercase 변환 후 권한 코드 lookup.
+    `account` 가 None 이거나 permissions cache 에 동적 코드가 없으면 False.
+
+    이 헬퍼는 G1-G8 가드 (briefing §3.4) 의 단일 진입점이며, 모든 mutation 경로에서 호출된다.
+    """
+    if not account:
+        return False
+    permissions = _account_permissions(account)
+    raw = product_id_or_key
+    product_key: str = ""
+    # int 입력 처리
+    try:
+        product_id_int = int(raw)  # type: ignore[arg-type]
+    except Exception:
+        product_id_int = 0
+    if product_id_int > 0 and not isinstance(raw, str):
+        # int 가 들어왔으면 conn 으로 ProductKey 조회.
+        if conn is None:
+            return False
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT ProductKey FROM WebProducts WHERE Id = %s LIMIT 1", (product_id_int,))
+            row = cur.fetchone()
+            cur.close()
+        except Exception:
+            return False
+        if not row or not row[0]:
+            return False
+        product_key = str(row[0])
+    else:
+        # 문자열 입력 (ProductKey 직접) 또는 str 형태의 숫자
+        if isinstance(raw, str) and raw.strip():
+            stripped = raw.strip()
+            if stripped.isdigit():
+                # str(숫자) 케이스 — int 로 처리
+                if conn is None:
+                    return False
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT ProductKey FROM WebProducts WHERE Id = %s LIMIT 1",
+                        (int(stripped),),
+                    )
+                    row = cur.fetchone()
+                    cur.close()
+                except Exception:
+                    return False
+                if not row or not row[0]:
+                    return False
+                product_key = str(row[0])
+            else:
+                product_key = stripped
+        else:
+            return False
+    code = _product_permission_code(product_key)
+    return bool(permissions.get(code))
+
+def _filter_products_for_account_access(
+    account: dict[str, Any] | None,
+    products: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """TASK-0295: 작업 화면 제품 목록을 계정의 `product.access.<key>` 권한으로 필터.
+
+    역할(role)에 특정 제품 접근 권한이 없으면 작업 화면 대화창 picker 에서 해당 제품을
+    제외한다. 기존에는 `/api/ask`·`/api/new_conversation` 등 mutation 경로 8곳이 이미
+    `_account_has_product_access` 로 403 게이트하지만 목록 표시만 게이트가 빠져 있어,
+    요청이 차단되는 제품이 picker 에는 그대로 노출됐다 (표시-enforcement 불일치).
+
+    - product_key 기반 lookup 이라 conn 불필요 (account.permissions 캐시만 사용).
+    - 작업 화면 경로(`/api/session`, `/api/auth/me`) 전용. 관리 콘솔 제품 목록
+      (`_list_products(include_inactive=True)`)에는 적용하지 않는다 — 관리 권한은
+      product.read/manage 축으로 별도 게이트된다 (TASK-0288 2축 분리).
+    """
+    if not account:
+        return []
+    out: list[dict[str, Any]] = []
+    for p in products:
+        product_key = p.get("product_key")
+        if product_key and _account_has_product_access(account, product_key):
+            out.append(p)
+    return out
+
+def _coerce_default_product_id(default_pid, products: list[dict[str, Any]]) -> int:
+    """TASK-0295: default_product_id 가 접근 가능 목록 밖이면 첫 접근 가능 제품으로 보정.
+
+    작업 화면 제품 목록이 권한으로 필터된 뒤, 시스템 기본 제품(IsDefault)이 해당 계정의
+    접근 가능 목록에 없을 수 있다 (default 제품 접근 권한도 회수된 경우). 그 경우 프론트가
+    존재하지 않는 제품을 자동 선택하지 않도록 첫 접근 가능 제품으로 보정하고, 접근 가능한
+    제품이 하나도 없으면 0(없음)을 반환한다.
+    """
+    try:
+        pid = int(default_pid or 0)
+    except Exception:
+        pid = 0
+    accessible_ids = {int(p.get("id") or 0) for p in products}
+    if pid and pid in accessible_ids:
+        return pid
+    if products:
+        return int(products[0].get("id") or 0)
+    return 0
+
+def _product_permission_code(product_key: str) -> str:
+    """TASK-0052 Phase 1B: product_key 를 lowercase 권한 코드 namespace 로 변환.
+
+    `product_key` 는 `^[A-Z][A-Z0-9_]{0,31}$` 정규식. permission code 는 lowercase + dot.
+    e.g. "KR" → "product.access.kr" / "MY_NEW" → "product.access.my_new".
+    """
+    return f"product.access.{str(product_key or '').strip().lower()}"
+
+
+# ── ITEM-10 b6-C: 인증 read·감사 actor 조립 (판정표 Batch C) ──
+# **이동 영구 금지 목록**(판정표 — 어기면 app-패치가 무증상 우회): _require_account ·
+# _optional_account · get_current_account · get_optional_account · _audit_admin_mutation ·
+# _audit_user_action · _metadata_audit · _connect_memory · _account_can_access_conversation.
+# 이들은 app.py 의 종국 역할(runtime hub·DI seam·패치-단일점)의 일부로 영구 잔류한다.
+
+def _get_authenticated_account(conn, request: Request) -> dict[str, Any] | None:
+    token = _sanitize_session_id(request.cookies.get(SESSION_COOKIE, ""))
+    if not token:
+        return None
+    rows = _fetch_account_rows(
+        conn,
+        """
+a.Id = (
+    SELECT s.AccountId
+    FROM WebAuthSessions s
+    WHERE s.SessionTokenHash = %s
+      AND s.IsRevoked = 0
+      AND s.ExpiresAt > CURRENT_TIMESTAMP
+    LIMIT 1
+)
+AND a.IsActive = 1
+AND a.DeletedAt IS NULL
+        """,
+        (_hash_session_token(token),),
+        include_password=False,
+        limit_sql="LIMIT 1",
+    )
+    rows = _decorate_account_rows(conn, rows)
+    row = rows[0] if rows else None
+    if row:
+        cur = conn.cursor()
+        cur.execute(
+            """
+UPDATE WebAuthSessions
+SET LastSeenAt = CURRENT_TIMESTAMP,
+    RemoteAddr = %s,
+    UserAgent = %s
+WHERE SessionTokenHash = %s
+            """,
+            (
+                _get_client_ip(request),
+                str(request.headers.get("user-agent", "") or "")[:255],
+                _hash_session_token(token),
+            ),
+        )
+        cur.close()
+    return row
+
+def _build_actor_from_request(
+    request: Request | None,
+    account: dict | None,
+    *,
+    actor_type: str = "account",
+) -> dict:
+    """Phase A1 helper: actor dict 조립 (caller 가 record_audit_event 에 전달).
+
+    actor_type='anonymous' 시 account NULL 허용. request None 시 remote_addr/user_agent NULL.
+    TASK-0072 `_log_search_activity` 의 호출 패턴 답습 — caller 가 직접 조립.
+    """
+    actor: dict[str, Any] = {"actor_type": actor_type}
+    if account:
+        actor["account_id"] = account.get("Id") or account.get("id")
+        actor["role_id"] = account.get("RoleId") or account.get("role_id")
+        actor["username"] = account.get("Username") or account.get("username")
+    if request is not None:
+        try:
+            actor["remote_addr"] = _get_client_ip(request)
+        except Exception:
+            actor["remote_addr"] = None
+        try:
+            actor["user_agent"] = request.headers.get("user-agent", "")
+        except Exception:
+            actor["user_agent"] = None
+        try:
+            actor["session_id"] = _sanitize_session_id(
+                request.cookies.get(SESSION_COOKIE, "")
+            )
+        except Exception:
+            actor["session_id"] = None
+    return actor
