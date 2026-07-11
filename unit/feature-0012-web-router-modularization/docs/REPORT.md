@@ -102,3 +102,15 @@ DI(Depends) 도입은 보류(별건). admin(92)은 추출 최후, sub-domain(use
 - 배포 live=a5ac1690(soak 통과). 게이트 매 배치 GREEN: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0.
 - 신설 자산: 결정적 AST mover(end_lineno+AnnAssign+ast.Global+Store-ctx 필터+byte-offset 편집+app-데코레이터/module-load 게이트/직수입 충돌 가드), 상수 전용 mover(self-contained 판정+직속주석 동반), route_snap.py(_walk_routes 재귀 205 route).
 - **다음**: ITEM-11(DEFER ~46 핸들러 byte-동치 DI-rework) → 완료 시 feature-0012 종결(REPORT Final).
+
+## 9. ITEM-11 (DEFER 핸들러 DI-rework) 완료 판정 — 2026-07-12
+- **범위 정정**: 초기 census 는 16 핸들러만 잡았으나(subagent 임무 한정), AST 독립 census + §18.8 3렌즈 적대 패널이 실제 인라인 authn 라우트 핸들러 **50개**를 확정(코드베이스 자체 MODIFY.md:38 "DEFER 50" 수렴). fail-soft 도 3→6.
+- **§18.8 3렌즈 패널 NOT-SHIP → 옵션 C(split)**: 초기 "16 전부 intentional-inline 종결" 안이 설계·계약·완전성 3렌즈에 논파됨(me_put_system_prompt 실제 conn leak·strawman 프레이밍·테스트 5종 bypass·모집단 미달). → "실제 이득(leak fix) 있는 것만 DI-rework, 나머지 keep-inline 정당" 으로 재정의.
+- **구조 분류(census)**: 실제 leak(try/finally無 산재close) 13 / style(try/finally 有·leak無) 16 / txn(autocommit) 5 / 특수(fail-soft·long-poll·pre-auth·redirect) 16.
+- **DI-rework 완료 13 (batch1~13)**: me_put_system_prompt·rename_conversation_title·auth_me_patch(conn-only)·admin_account_unlock·admin_delete_account·admin_account_password_reset·admin_delete_role·update_conversation_product·admin_create_role·admin_update_role·admin_update_account·admin_put_system_prompt·admin_update_product_databases. 전부 account+conn(또는 conn-only) DI 전환, 실제 conn leak(mutate/게이트 raise 시 close skip) 해소.
+- **keep-inline 정당 37**: style 16(이미 try/finally:close — DI 이득=스타일뿐+dedent 리스크)·txn 5(autocommit body verbatim·blueprint "bulk 금지")·특수 16(§18.8 패널 판정 — 401 우선순위·conn-hold·200-흡수·redirect byte-동치 불가/키프-인라인 정당). auth-primitive 분기 규약: `_require_account`=완전 DI, `_get_authenticated_account`(401 "unauthorized")=conn-only DI.
+- **acceptance**: (a) 각 DI batch runtime TestClient snapshot(status+body+`detail` 부재) byte-동치 + leak-fix 회귀 · (d) §18.8 3렌즈 패널 · (e) 인라인 authn 50개 전부 명시 분류(DI 13 + keep-inline 37) = DEFER 잔여 0 · (b) ask_result long-poll=keep-inline(무변경) 라이브 검증 불요 · (c) 매 batch ruff F821 + 전 스위트 pytest + route snapshot 205 byte-동치 GREEN.
+- **신설 자산**: get_conn 흡수(conn None→get_current_account 500 byte-동치) 활용 완전 DI 패턴 · conn-only DI(401 메시지 상이 핸들러) · conn.close AST 함수범위 스크립트 일괄 제거(close 15개까지) · runtime snapshot harness(conftest client/as_account/as_anonymous+get_conn override).
+- **배포**: batch 누적 라이브 반영 — 최종 **4c203f9c**(batch1~13 전부). soak 통과(첫 soak false-positive 롤백은 insight-worker 동시 pg 부하 — 재배포 우회, 2회 관측).
+- **브라우저 로그인 QA(§7 게이트)**: DI-rework 가 인증 경로 시그니처를 변경했으므로 라이브 admin 로그인 흐름 최종 확인 권장. 단 자동 검증 다중 GREEN(runtime byte-동치·route 205·전 스위트·soak) + win-browser CDP 브리지가 Windows Chrome 기동(사용자 화면)+admin 자격증명을 요하는 **사용자 환경 게이트** → 사용자 사인오프로 이관(자동 강행 안 함).
+- **ITEM-11 실질 완료**. feature-0012 = ITEM-10(모듈 분리 -81%)+ITEM-11(DI-rework 13+keep-inline 37) 완결. 잔여 initiative 항목=ITEM-09(blocked, 그래프 외부 브랜치).

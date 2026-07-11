@@ -340,3 +340,7 @@ source_of_truth: true
   - **txn 5**: admin_create/update/delete_product·admin_product_insight_reset·post_sample_feedback → autocommit 토글+commit body verbatim 보존(blueprint "bulk 금지·개별 마이그") → 유지.
   - **특수 16**: get_audit_event·attachments(metadata/download/versions)·auth_me·post_group_chat_message·upload_conversation_attachment·progress·ask_result·suggestions·ask·gdrive_connect/callback·public_share_view·get_llm_health·get_session → §18.8 패널 판정(pre-auth gate·long-poll·fail-soft·redirect byte-동치 불가/키프-인라인 정당) → 유지.
 - [x] **acceptance (e) DEFER 잔여 0 달성**: 인라인 authn 라우트 핸들러 50개 전부 명시 분류(DI-rework 13 + keep-inline 37). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER(rework 대상)=0.
+
+## 20260712T0610-item11-완료판정 — ITEM-11 done + feature-0012 완결 (parallel-work-structure §5)
+- [x] ITEM-11 완료 확정: DEFER 핸들러 DI-rework — 실제 leak 13개 전부 DI-rework(batch1~13) + keep-inline 정당 37(style 16·txn 5·특수 16, §18.8 원칙). 인라인 authn 50개 전부 명시 분류=acceptance (e). (a)=runtime snapshot·(d)=3렌즈 패널·(b)=ask_result 무변경·(c)=매 batch 게이트 GREEN. ROADMAP §5 done 11·ITEM-11 status done·note·REPORT §9. 라이브 4c203f9c.
+- [x] feature-0012 완결: ITEM-10(모듈 분리 -81%)+ITEM-11(DI-rework). 브라우저 로그인 QA(§7)=자동 검증 다중 GREEN+사용자 환경 게이트(Chrome 기동+admin 자격증명)로 사용자 사인오프 이관. 잔여 initiative=ITEM-09(blocked, 그래프 외부 브랜치).
