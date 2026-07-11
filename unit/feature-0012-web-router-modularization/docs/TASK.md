@@ -225,3 +225,7 @@ source_of_truth: true
 ## 20260711T1537-item10-routers-p5 — 대화 조회 4종(1,010줄) → routers/_conv_store (parallel-work-structure ITEM-10)
 - [x] _list_conversations(_pg)·_get_history·_get_agent_core_history → _conv_store.py append(도메인 응집). census: 패치 0·직접참조 2(rebind)·내부 호출자 2(rebind)·app-전역 21종 app.X(KEEP 계열 포함 — 관통 보존). app.py 16,005→15,003(누적 **-4,647**).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821(os import 1건 보강) · py_compile · 전 스위트 pytest rc=0(소스-계약 1건 APP→APP_ALL 위치 갱신 — batch1/membership 계보, 계약 내용 무변경)
+
+## 20260711T1607-item10-routers-p6 — fork·steps·첨부편집 6종(824줄) → routers/_conv_store (parallel-work-structure ITEM-10)
+- [x] _fork_conversation_impl·_copy_conversation_attachments·_load_steps_for_run/_message·_load_step_meta·_materialize_assistant_attachment_edits → _conv_store append. census 패치 0·app-전역 34종 app.X·꼬리 rebind. app.py 15,003→14,191(누적 **-5,459**).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821(Request/hashlib import 보강) · py_compile · 전 스위트 pytest rc=0

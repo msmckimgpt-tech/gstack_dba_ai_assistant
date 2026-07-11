@@ -146,3 +146,6 @@ source_of_truth: true
 
 ## REV-20260711T153747-item10-routers-p5 [SKIPPED:pattern-transcription] — 대화 조회 이동
 - Related Change: CHG-20260711T153747-item10-routers-p5. 승인: ROADMAP §6.1. 확립 패턴 전사(패치 0). 기계 게이트 4종 GREEN.
+
+## REV-20260711T160724-item10-routers-p6 [SKIPPED:pattern-transcription] — fork·steps·첨부편집 이동
+- Related Change: CHG-20260711T160724-item10-routers-p6. 승인: ROADMAP §6.1. 패턴 전사(패치 0). 게이트 4종 GREEN.
