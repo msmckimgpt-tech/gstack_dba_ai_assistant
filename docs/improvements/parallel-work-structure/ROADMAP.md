@@ -512,7 +512,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   신설 — register_all 제외 공용 모듈): app.py 19,650→16,449(-3,201).
   → p4: _conv_* 11종(-444, routers/_conv_store): app.py 16,005(-3,645 누적)
   → p5: 대화 조회 4종(-1,002, _conv_store append): app.py 15,003(-4,647 누적)
-  → p6: fork·steps·첨부편집 6종(-812): app.py 14,191(-5,459 누적).
+  → p6: fork·steps·첨부편집 6종(-812): app.py 14,191(-5,459 누적)
+  → p7: 감사 인프라 17종(-660, _audit_infra 신설·record_audit_event 잔류): app.py 13,531(-6,119 누적).
   배포: batch1~3=14b7d876 라이브 ✓ · batch4~6 배포는 deploy-web preflight flake(간헐)로 보류
   (이미지 정상 실증·라이브 healthy — 스파인 하드닝은 명세 밖, 사용자 승인 대기). 게이트(배치마다): route snapshot byte-동치·F821·py_compile·전 스위트 pytest.
   목표 ≤1,000줄까지 배치 계속(다음: 도메인 클러스터 위상순·23-테스트 retarget 영역은 적대검증 후).

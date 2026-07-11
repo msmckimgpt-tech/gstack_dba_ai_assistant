@@ -229,3 +229,7 @@ source_of_truth: true
 ## 20260711T1607-item10-routers-p6 — fork·steps·첨부편집 6종(824줄) → routers/_conv_store (parallel-work-structure ITEM-10)
 - [x] _fork_conversation_impl·_copy_conversation_attachments·_load_steps_for_run/_message·_load_step_meta·_materialize_assistant_attachment_edits → _conv_store append. census 패치 0·app-전역 34종 app.X·꼬리 rebind. app.py 15,003→14,191(누적 **-5,459**).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821(Request/hashlib import 보강) · py_compile · 전 스위트 pytest rc=0
+
+## 20260711T1618-item10-routers-p7 — 감사 인프라 17종(697줄) → routers/_audit_infra (parallel-work-structure ITEM-10)
+- [x] _audit_* 16 + build_audit_change_json → _audit_infra.py 신설(전 라우터 공용 — register_all 제외). **record_audit_event 는 app 잔류**(setattr 12× 패치-단일점) — 이동분의 호출은 전부 app.record_audit_event 동적. census 패치 0(이동분). app.py 14,191→13,531(누적 **-6,119 / -31%**).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 · py_compile · 전 스위트 pytest rc=0

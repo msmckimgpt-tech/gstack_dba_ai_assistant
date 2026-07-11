@@ -149,3 +149,6 @@ source_of_truth: true
 
 ## REV-20260711T160724-item10-routers-p6 [SKIPPED:pattern-transcription] — fork·steps·첨부편집 이동
 - Related Change: CHG-20260711T160724-item10-routers-p6. 승인: ROADMAP §6.1. 패턴 전사(패치 0). 게이트 4종 GREEN.
+
+## REV-20260711T161858-item10-routers-p7 [SKIPPED:pattern-transcription] — 감사 인프라 이동
+- Related Change: CHG-20260711T161858-item10-routers-p7. 승인: ROADMAP §6.1. 패턴 전사 + record_audit_event KEEP(판정표 KEEP 3종과 동일 논거 — 12× 패치-단일점). 게이트 4종 GREEN.
