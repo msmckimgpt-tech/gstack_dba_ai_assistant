@@ -311,3 +311,6 @@ source_of_truth: true
 
 ## 20260712T0400-item11-batch5 — admin_delete_account 완전 DI-rework (parallel-work-structure ITEM-11)
 - [x] _require_account 기반 → account+conn 완전 DI(batch4 패턴). perm(console AND account.delete) 본문 유지(per-perm 403 메시지). conn.close×8 제거→get_conn finally(_load_account_by_id·survivor·mutate raise 시 leak 해소). runtime snapshot 10종(401·500·400·403×2·404·400(already-deleted)·400(survivor)·200·leak-fix). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 46→45.
+
+## 20260712T0415-item11-batch6 — admin_account_password_reset 완전 DI-rework (parallel-work-structure ITEM-11)
+- [x] _require_account 기반 → account+conn 완전 DI(batch4/5 패턴). perm(console AND account.update)+self-reset 400 본문 유지. conn.close×9 제거→get_conn finally(_load_account_by_id·UPDATE·audit raise 시 leak 해소). runtime snapshot 11종(401·500·400(invalid id)·403×2·400(self-reset)·404·400(deleted)·500(update)·200·leak-fix). admin_accounts 그룹(unlock/delete/password_reset) 완결. 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 45→44.
