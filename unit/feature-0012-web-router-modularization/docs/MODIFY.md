@@ -176,3 +176,6 @@ source_of_truth: true
 
 ## CHG-20260711T153747-item10-routers-p5 (대화 조회 4종 이동)
 - Date: 2026-07-11. p4 모듈에 read 계층 append — 최대 잔여 함수군(354+306+184+166줄). app.py 16,005→15,003.
+
+## CHG-20260711T160724-item10-routers-p6 (fork·steps·첨부편집 6종 이동)
+- Date: 2026-07-11. 확립 패턴 — conversations 도메인 write/render 계층 응집. app.py 15,003→14,191.
