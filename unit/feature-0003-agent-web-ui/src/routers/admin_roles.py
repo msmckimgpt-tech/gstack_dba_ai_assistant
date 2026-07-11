@@ -519,3 +519,72 @@ def _enforce_role_permission_self_scope(
         if code not in editable:
             merged.add(code)
     return merged
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (6종). app 전역은 app.X 동적 참조. ====
+
+def _sanitize_role_key(value: str) -> str:
+    return app.re.sub(r"[^a-z0-9_.-]", "", str(value or "").strip().lower())[:64]
+
+def _is_valid_role_key(value: str) -> bool:
+    return bool(app.ROLE_KEY_RE.match(str(value or "").strip().lower()))
+
+def _validate_permission_codes(
+    codes: list[str] | set[str] | tuple[str, ...],
+    *,
+    catalog_codes: Iterable[str] | None = None,
+) -> set[str]:
+    """TASK-0052 Phase 1A: catalog_codes 가 주어지면 그 catalog 에 포함된 code 만 허용."""
+    allowed = set(catalog_codes) if catalog_codes is not None else set(app.PERMISSION_CODES)
+    normalized = {str(code or "").strip() for code in codes if str(code or "").strip()}
+    invalid = sorted(code for code in normalized if code not in allowed)
+    if invalid:
+        raise ValueError(f"unknown permissions: {', '.join(invalid)}")
+    return normalized
+
+def _set_role_permissions(conn, role_id: int, permission_codes: set[str]) -> None:
+    permission_ids = app._permission_id_map(conn)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM WebRolePermissions WHERE RoleId = %s", (int(role_id),))
+    for code in sorted(permission_codes):
+        permission_id = int(permission_ids.get(code) or 0)
+        if permission_id <= 0:
+            continue
+        cur.execute(
+            """
+INSERT INTO WebRolePermissions (RoleId, PermissionId)
+VALUES (%s, %s)
+            """,
+            (int(role_id), permission_id),
+        )
+    cur.close()
+
+def _ensure_management_survivor_for_role_change(
+    conn,
+    role_id: int,
+    next_role_permission_codes: set[str],
+) -> None:
+    accounts = app._list_active_accounts(conn)
+    # TASK-0052 Phase 1B: catalog 1 회 조회 후 loop 에서 재사용.
+    _catalog_defs, catalog_codes, _catalog_map = app._resolve_permission_catalog(conn)
+    survivors = 0
+    for account in accounts:
+        account_role_id = int(account.get("role_id") or 0)
+        if account_role_id == int(role_id):
+            permissions = app._apply_permission_overrides(
+                next_role_permission_codes,
+                dict(account.get("permission_overrides") or {}),
+                catalog_codes=catalog_codes,
+            )
+        else:
+            permissions = app._account_permissions(account)
+        if app._is_management_permission_set(permissions):
+            survivors += 1
+    if survivors <= 0:
+        raise ValueError("관리 가능한 활성 계정은 최소 1개 이상 유지되어야 합니다.")
+
+def _assign_default_signup_role(conn, role_id: int) -> None:
+    cur = conn.cursor()
+    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 0 WHERE Id <> %s", (int(role_id),))
+    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 1 WHERE Id = %s", (int(role_id),))
+    cur.close()

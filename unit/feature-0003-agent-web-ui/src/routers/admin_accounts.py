@@ -14,6 +14,8 @@ from fastapi import Request
 from fastapi import UploadFile
 from fastapi.responses import JSONResponse
 
+from collections.abc import Iterable
+
 import app
 
 INCLUDE_ORDER = 170  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
@@ -651,3 +653,138 @@ def _enforce_override_self_scope(
     }
     merged.update(submitted)
     return merged
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (8종). app 전역은 app.X 동적 참조. ====
+
+def _actor_editable_permission_codes(actor: dict[str, app.Any] | None) -> set[str]:
+    """TASK-0300: actor(편집 주체)가 실제로 보유한(effective=True) 권한 code 집합.
+    관리 콘솔에서 actor 가 타 계정/역할에 부여·설정할 수 있는 권한의 상한(self-scope)이다."""
+    return {code for code, granted in app._account_permissions(actor).items() if granted}
+
+def _role_grant_excess_for_actor(
+    actor: dict[str, app.Any] | None,
+    role_permission_codes: "Iterable[str] | None",
+) -> list[str]:
+    """TASK-0300 (REQ-0287, 사용자 결정 2026-06-17): 역할 *배정* 경유 escalation 차단용 —
+    주어진 역할의 권한 중 actor 가 보유하지 않은 code 목록(정렬). 빈 list 면 배정 가능.
+
+    역할 편집(권한 부여) 차단을 우회해 "사전 정의된 고권한 역할을 골라 배정" 하는 경로를 막는다.
+    """
+    editable = app._actor_editable_permission_codes(actor)
+    return sorted({str(c) for c in (role_permission_codes or [])} - editable)
+
+def _normalize_override_payload(
+    payload: dict[str, app.Any] | None,
+    *,
+    catalog_codes: app.Iterable[str] | None = None,
+    catalog_map: dict[str, dict[str, app.Any]] | None = None,
+) -> dict[str, str]:
+    """TASK-0052 Phase 1A: catalog_codes / catalog_map 을 명시적으로 받음.
+
+    Phase 1B 에서 product 권한 override 가 들어오면 caller 가 conn-resolved catalog 를 전달.
+    None 이면 정적 PERMISSION_CODES / PERMISSION_DEFINITION_MAP 사용 (기존 동작).
+    """
+    codes = list(catalog_codes) if catalog_codes is not None else list(app.PERMISSION_CODES)
+    cmap = catalog_map if catalog_map is not None else app.PERMISSION_DEFINITION_MAP
+    result: dict[str, str] = {}
+    for code in codes:
+        normalized = app._normalize_override_value((payload or {}).get(code))
+        if normalized == app.OVERRIDE_INHERIT:
+            continue
+        result[code] = normalized
+    invalid_keys = sorted(
+        key for key in (payload or {}).keys() if str(key) not in cmap
+    )
+    if invalid_keys:
+        raise ValueError(f"unknown override permissions: {', '.join(map(str, invalid_keys))}")
+    return result
+
+def _set_account_overrides(conn, account_id: int, override_values: dict[str, str]) -> None:
+    permission_ids = app._permission_id_map(conn)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM WebAccountPermissionOverrides WHERE AccountId = %s", (int(account_id),))
+    for code, value in sorted(override_values.items()):
+        permission_id = int(permission_ids.get(code) or 0)
+        if permission_id <= 0:
+            continue
+        cur.execute(
+            """
+INSERT INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+VALUES (%s, %s, %s)
+            """,
+            (int(account_id), permission_id, value),
+        )
+    cur.close()
+
+def _is_management_permission_set(permissions: dict[str, bool] | None) -> bool:
+    payload = permissions or {}
+    return bool(
+        payload.get("console.manage")
+        and payload.get("account.role.assign")
+        and payload.get("role.permission.manage")
+    )
+
+def _ensure_management_survivor_for_account_change(
+    conn,
+    target_account_id: int,
+    *,
+    next_is_active: bool,
+    next_permissions: dict[str, bool],
+    deleting: bool = False,
+) -> None:
+    accounts = app._list_active_accounts(conn)
+    survivors = 0
+    seen_target = False
+    for account in accounts:
+        account_id = int(account.get("id") or 0)
+        if account_id == int(target_account_id):
+            seen_target = True
+            if deleting or not next_is_active:
+                continue
+            permissions = next_permissions
+        else:
+            permissions = app._account_permissions(account)
+        if app._is_management_permission_set(permissions):
+            survivors += 1
+    if not seen_target and not deleting and next_is_active and app._is_management_permission_set(next_permissions):
+        survivors += 1
+    if survivors <= 0:
+        raise ValueError("관리 가능한 활성 계정은 최소 1개 이상 유지되어야 합니다.")
+
+def _store_image_upload(body: bytes, *, prefix: str, owner_id: int, max_bytes: int,
+                        mime_hint: str) -> "tuple[str, str] | tuple[None, str]":
+    """이미지 bytes 검증 + MinIO 저장. 반환 (object_key, content_type) 또는 (None, error_msg).
+
+    prefix='avatars'|'product-icons'. object key = `<prefix>/<owner_id>/<uuid>.<ext>`.
+    """
+    if not body:
+        return (None, "빈 파일입니다.")
+    if len(body) > max_bytes:
+        return (None, f"이미지가 너무 큽니다(최대 {max_bytes // (1024 * 1024)}MB).")
+    sniffed = app._sniff_image(body, mime_hint)
+    if not sniffed:
+        return (None, "지원하지 않는 이미지 형식입니다(PNG·JPG·WEBP만 허용).")
+    ext, content_type = sniffed
+    try:
+        from web.modules import storage_minio
+        import uuid as _uuid
+        object_key = f"{prefix}/{int(owner_id)}/{_uuid.uuid4().hex}.{ext}"
+        storage_minio.put_object_bytes(
+            object_key, body, content_type=content_type,
+            metadata={"kind": prefix, "owner_id": str(owner_id)},
+        )
+        return (object_key, content_type)
+    except Exception as exc:
+        app.logging.getLogger(__name__).warning("image upload store failed", exc_info=True)
+        return (None, f"이미지 저장 실패: {exc}")
+
+def _account_role_key(account: dict[str, app.Any] | None) -> str:
+    """role 객체에서 RoleKey 추출. account 에 role row join 결과가 있으면 사용,
+    없으면 빈 문자열."""
+    if not account:
+        return ""
+    role = account.get("role")
+    if isinstance(role, dict):
+        return str(role.get("key") or role.get("RoleKey") or "").strip()
+    return str(account.get("role_key") or "").strip()

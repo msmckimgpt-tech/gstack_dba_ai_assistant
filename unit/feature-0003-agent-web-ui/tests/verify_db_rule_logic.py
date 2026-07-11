@@ -7,19 +7,50 @@
 #   reconcile/엔드포인트/백그라운드(DB·네트워크 의존)는 라이브 + PB-0008 + outside-voice 재리뷰로 검증.
 #
 # 실행: python3 verify_db_rule_logic.py
+import ast
 import os
 import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP = os.path.join(HERE, "..", "src", "app.py")
-src = open(APP, encoding="utf-8").read()
+SRC_DIR = os.path.join(HERE, "..", "src")
 
-# ── app.py 에서 [constants … _match_db_rule 끝] 연속 블록 추출(전체 import 회피) ──
-start = src.index("_DB_RULE_PATTERN_MAX = ")
-end_marker = "def _db_rule_audit_actor("
-end = src.index(end_marker, start)
-block = src[start:end]
+# ── ITEM-10 p13/p15: db_rule 순수 로직은 routers/admin_products.py 로 이동 —
+#    AST 로 상수(app.py)+대상 함수(다중 파일)를 추출해 격리 exec (전체 import 회피). ──
+_TARGETS = ("_validate_db_rule_pattern", "_db_rule_excluded_lower", "_match_db_rule")
+_CONST_PREFIXES = ("_DB_RULE_",)  # app.py 잔류 상수 (_DB_RULE_PATTERN_MAX·_DB_RULE_BACKREF_RE 등)
+
+wanted: dict = {}
+consts: list = []
+for path in (os.path.join(SRC_DIR, "app.py"), os.path.join(SRC_DIR, "routers", "admin_products.py")):
+    file_src = open(path, encoding="utf-8").read()
+    tree = ast.parse(file_src)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in _TARGETS:
+            wanted.setdefault(node.name, ast.get_source_segment(file_src, node))
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            tgt = node.targets[0] if isinstance(node, ast.Assign) else node.target
+            if isinstance(tgt, ast.Name) and tgt.id.startswith(_CONST_PREFIXES):
+                consts.append(ast.get_source_segment(file_src, node))
+missing = [n for n in _TARGETS if n not in wanted]
+if missing:
+    raise AssertionError(f"src 에서 db_rule 대상을 찾지 못함: {missing}")
+
+block = "\n\n".join(consts + [wanted[n] for n in _TARGETS])
+
+
+class _AppProxy:
+    """이동된 함수의 `app.X` 동적 참조를 검증 ns 로 위임하는 최소 shim."""
+
+    def __init__(self, ns):
+        self._ns = ns
+
+    def __getattr__(self, name):
+        try:
+            return self._ns[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
 
 # 순수 함수가 참조하는 모듈 상수 주입(실제 app.py 정의값과 동일).
 ns = {
@@ -29,6 +60,7 @@ ns = {
     "_DATABASES_AVAILABLE_INTERNAL": ("agent_memory",),
     "_DATABASES_AVAILABLE_SYSTEM_MSSQL": ("master", "model", "msdb", "tempdb"),
 }
+ns["app"] = _AppProxy(ns)
 exec(compile(block, "app_db_rule_block", "exec"), ns)
 validate = ns["_validate_db_rule_pattern"]
 excluded = ns["_db_rule_excluded_lower"]
@@ -102,9 +134,11 @@ ok("match: 빈/None include 안전",
 
 # ── 4. audit action 등록(PB-0008 적발 회귀 가드): build_audit_change_json 이 5종 action 을
 #       'unknown audit action' raise 이전에 처리해야 _audit_admin_mutation 경로(db_rule.set 등)가 깨지지 않는다.
-_bi = src.index("def build_audit_change_json(")
-_bj = src.index('raise ValueError(f"unknown audit action')
-_bbody = src[_bi:_bj]
+# ITEM-10 p7: build_audit_change_json 은 routers/_audit_infra.py 로 이동.
+_audit_src = open(os.path.join(SRC_DIR, "routers", "_audit_infra.py"), encoding="utf-8").read()
+_bi = _audit_src.index("def build_audit_change_json(")
+_bj = _audit_src.index('raise ValueError(f"unknown audit action')
+_bbody = _audit_src[_bi:_bj]
 for _act in ("admin.product.db_rule.set", "admin.product.db_rule.delete",
              "admin.product.db_rule.approve", "admin.product.db.autoadd", "admin.product.db.staged"):
     ok(f"audit: '{_act}' build_audit_change_json 등록", _act in _bbody)

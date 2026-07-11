@@ -4695,3 +4695,672 @@ def _save_group_join_event_pg(
             pg_conn.close()
         except Exception:
             pass
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (38종). app 전역은 app.X 동적 참조. ====
+
+def _normalize_product_mode(value: Any, default: str = "pinned") -> str:
+    text = str(value or "").strip().lower()
+    return text if text in app._VALID_PRODUCT_MODES else default
+
+def _compute_display_status(
+    conn,
+    conversation_id: str,
+    last_status: str,
+    last_status_at: str,
+    last_status_run_id: str,
+) -> tuple[str, bool]:
+    """processing 대화가 만료 시간 동안 step/status 갱신이 없으면 (display_status, is_stale) = (stale_error, True) 를 반환.
+    그 외에는 (last_status, False)."""
+    raw_status = str(last_status or "").strip().lower()
+    if raw_status != "processing":
+        return raw_status, False
+    status_dt = app._parse_kv_timestamp(last_status_at)
+    step_dt = app._last_step_at_for_run(conn, conversation_id, last_status_run_id)
+    last_active = max(filter(None, [status_dt, step_dt]), default=None)
+    if last_active is None:
+        # 시각 정보 자체가 없으면 보수적으로 stale 처리하지 않는다 — 첫 step 등록 전 race 가능성.
+        return raw_status, False
+    elapsed = (app.datetime.utcnow() - last_active).total_seconds()
+    if elapsed > app.WEB_PROGRESS_STALE_TIMEOUT_SECONDS:
+        return "stale_error", True
+    return raw_status, False
+
+def _escape_like_for_search(s: str) -> str:
+    """REQ-20260518-0010 (TASK-0072): LIKE escape paired with `ESCAPE '!'`.
+    Order matters: ! must be escaped first (otherwise % / _ replacements would
+    inject unescaped !). Escapes !, %, _."""
+    return s.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+def _mention_count_regex(username: str | None) -> str | None:
+    try:
+        from modules import mentions as _mentions
+        return _mentions.sql_mention_regex(username)
+    except Exception:
+        return None
+
+def _hmac_filename(filename: str) -> str:
+    """D12 tenant-keyed HMAC. `ATTACHMENT_AUDIT_HMAC_KEY` 가 비어 있으면 일관된
+    fallback (`_FALLBACK_AUDIT_HMAC_KEY`) — dev 환경에서 audit row 가 생성 가능
+    하도록 graceful. 운영 환경은 .env 필수.
+    """
+    key = (os.getenv("ATTACHMENT_AUDIT_HMAC_KEY") or "").strip()
+    if not key:
+        key = "_FALLBACK_AUDIT_HMAC_KEY__set_via_env_for_prod"
+    name = (filename or "").strip().encode("utf-8")
+    return app.hmac.new(key.encode("utf-8"), name, hashlib.sha256).hexdigest()
+
+def _extension_bucket(filename: str) -> str:
+    """D12 — `.csv` / `.xlsx` / `.pdf` / `.png` / ... 만 audit 에 노출."""
+    name = (filename or "").strip().lower()
+    if "." not in name:
+        return ".unknown"
+    ext = name.rsplit(".", 1)[1]
+    safe_ext = app.re.sub(r"[^a-z0-9]", "", ext)[:8]
+    return f".{safe_ext}" if safe_ext else ".unknown"
+
+def _size_bucket(size_bytes: int) -> str:
+    """D12 — coarse bucket (audit 노출용)."""
+    n = int(size_bytes or 0)
+    if n < 1_024:
+        return "<1KB"
+    if n < 10_240:
+        return "1-10KB"
+    if n < 102_400:
+        return "10-100KB"
+    if n < 1_048_576:
+        return "100KB-1MB"
+    if n < 10_485_760:
+        return "1-10MB"
+    if n < 26_214_400:
+        return "10-25MB"
+    return ">25MB"
+
+def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
+    """답변에서 attachment-edit 블록들의 (open_idx, close_idx, header_line, body) 를 라인 기반으로
+    추출한다(TASK-0286 보안리뷰 MAJOR 수정).
+
+    기존 lazy 정규식 ```` ```attachment-edit\\n(.*?)\\n``` ```` 은 **편집 대상 파일 본문에 ``` 라인이
+    포함**되면(markdown/텍스트 등) 거기서 조기 종료해 본문을 절단 저장하고, strip 시 잔여 본문이
+    평문으로 노출됐다. 라인 기반으로 바꿔, 여는 ```` ```attachment-edit ```` 다음 줄을 JSON 헤더로,
+    그 이후 (다음 여는 펜스 직전까지의) **마지막 단독 ``` 줄**을 닫는 펜스로 본다 → 본문 내부의
+    ``` 코드펜스를 허용한다(닫는 펜스는 항상 블록의 가장 마지막 ``` 이므로).
+    """
+    text = answer or ""
+    if "attachment-edit" not in text:
+        return []
+    lines = text.split("\n")
+    n = len(lines)
+    opens = [i for i, ln in enumerate(lines) if ln.strip().startswith("```attachment-edit")]
+    spans: list[tuple[int, int, str, str]] = []
+    for k, oi in enumerate(opens):
+        next_open = opens[k + 1] if k + 1 < len(opens) else n
+        if oi + 1 >= n:
+            continue
+        header_line = lines[oi + 1]
+        # 닫는 펜스: (헤더 다음 .. 다음 블록 직전) 중 정확히 "```" 인 **마지막** 줄.
+        close_idx = -1
+        for j in range(min(next_open, n) - 1, oi + 1, -1):
+            if lines[j].strip() == "```":
+                close_idx = j
+                break
+        if close_idx < 0:
+            continue
+        body = "\n".join(lines[oi + 2:close_idx])
+        spans.append((oi, close_idx, header_line, body))
+    return spans
+
+def _next_version_filename(original: str, version_number: int) -> str:
+    """원본 파일명에서 버전 접미사를 붙인 기본 파일명 생성(LLM 이 filename 미지정 시).
+    `report.csv` + v2 → `report_v2.csv`."""
+    name = (original or "edited.txt").strip() or "edited.txt"
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        return f"{stem}_v{version_number}.{ext}"
+    return f"{name}_v{version_number}"
+
+def _extract_intent_from_content(content: str) -> str:
+    text = (content or "").strip()
+    for prefix in ("실행 완료:", "완료:"):
+        if text.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return ""
+
+def _normalize_topic(value: Any, fallback: str = "(미설정)") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    return text
+
+def _normalize_step_text(value: Any, max_len: int = 500) -> str:
+    text = app.re.sub(r"\s+", " ", str(value or "").strip())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
+
+def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: str = "") -> str:
+    payload = args if isinstance(args, dict) else {}
+    tool_name = str(tool or "").strip().lower()
+    if tool_name == "list_schemas":
+        return "사용자 스키마 목록을 확인한다"
+    if tool_name == "describe_schema":
+        schema = str(payload.get("schema_name") or "").strip()
+        return f"`{schema}` 스키마의 테이블 목록을 확인한다" if schema else "스키마의 테이블 목록을 확인한다"
+    if tool_name == "describe_table":
+        schema = str(payload.get("schema_name") or "").strip()
+        table = str(payload.get("table_name") or "").strip()
+        if schema and table:
+            return f"`{schema}`.`{table}` 구조를 확인한다"
+        if table:
+            return f"`{table}` 테이블 구조를 확인한다"
+        return "테이블 구조를 확인한다"
+    if tool_name == "search_tables":
+        keyword = str(payload.get("keyword") or "").strip()
+        schema = str(payload.get("schema_name") or "").strip()
+        if schema and keyword:
+            return f"`{schema}`에서 `{keyword}` 관련 테이블을 찾는다"
+        if keyword:
+            return f"`{keyword}` 관련 테이블을 찾는다"
+        return "관련 테이블을 찾는다"
+    if tool_name == "get_sample_rows":
+        schema = str(payload.get("schema_name") or "").strip()
+        table = str(payload.get("table_name") or "").strip()
+        try:
+            limit = int(payload.get("limit") or 5)
+        except Exception:
+            limit = 5
+        if schema and table:
+            return f"`{schema}`.`{table}` 샘플 {limit}행을 확인한다"
+        if table:
+            return f"`{table}` 샘플 {limit}행을 확인한다"
+        return "샘플 데이터를 확인한다"
+    if tool_name == "get_table_indexes":
+        schema = str(payload.get("schema_name") or "").strip()
+        table = str(payload.get("table_name") or "").strip()
+        if schema and table:
+            return f"`{schema}`.`{table}` 인덱스를 확인한다"
+        return "테이블 인덱스를 확인한다"
+    if tool_name == "get_foreign_keys":
+        schema = str(payload.get("schema_name") or "").strip()
+        table = str(payload.get("table_name") or "").strip()
+        if schema and table:
+            return f"`{schema}`.`{table}` 외래키 관계를 확인한다"
+        return "테이블 외래키 관계를 확인한다"
+    if tool_name == "explain_query":
+        return "SQL 실행 계획을 확인한다"
+    if tool_name == "execute_sql":
+        sql = sql_text or str(payload.get("sql", "") or "")
+        tables = app._extract_sql_tables(sql)
+        target = ", ".join(tables[:2]) if tables else ""
+        aggregate = bool(app.re.search(r"\b(COUNT|SUM|AVG|MIN|MAX)\s*\(|\bGROUP\s+BY\b", sql, app.re.IGNORECASE))
+        if target and aggregate:
+            return f"`{target}` 데이터를 집계한다"
+        if target:
+            return f"`{target}` 데이터를 조회한다"
+        return "SQL을 실행한다"
+    if tool_name:
+        return f"`{tool_name}` 도구를 실행한다"
+    return "단계를 수행한다"
+
+def _summarize_rationale(steps: list[dict[str, Any]]) -> str:
+    if not steps:
+        return ""
+    reasons: list[str] = []
+    works: list[str] = []
+    tables: set[str] = set()
+    table_re = app.re.compile(r"(?:FROM|JOIN)\s+`?([A-Za-z0-9_]+)`?\.`?([A-Za-z0-9_]+)`?", app.re.IGNORECASE)
+    for step in steps:
+        reason = str(step.get("reason") or "").strip()
+        if reason and reason not in reasons:
+            reasons.append(reason)
+        work = str(step.get("work") or "").strip()
+        if work and work not in works:
+            works.append(work)
+        sql = str(step.get("sql") or "")
+        if sql:
+            for match in table_re.findall(sql):
+                if match and match[0] and match[1]:
+                    tables.add(f"{match[0]}.{match[1]}")
+    lines: list[str] = []
+    if reasons:
+        lines.append("단계별 근거:")
+        for idx, reason in enumerate(reasons, 1):
+            lines.append(f"{idx}. {reason}")
+    elif works:
+        lines.append("수행 단계:")
+        for idx, work in enumerate(works, 1):
+            lines.append(f"{idx}. {work}")
+    if tables:
+        lines.append("")
+        lines.append("참고 테이블:")
+        lines.append(", ".join(sorted(tables)))
+    if not lines:
+        return app._extract_rationale(steps)
+    return "\n".join(lines).strip()
+
+def _msg_outside_window(msg_id, created_at, meta, role, window) -> bool:
+    """이 표시 메세지가 뷰어의 가시 window 밖(숨겨야 하나)인가. share-visibility-window.
+
+    window = {floor_id, ceiling_id, joined_at, floor_ca}. 가시범위 = [floor,ceiling] ∪ [joined,∞).
+    추가로 owner-answer 누출면(display-tag, Step7): 뷰어 floor 아래 문맥을 그린 assistant 답변 은닉.
+    비교 불가/파싱 불가는 fail-closed(숨김).
+    """
+    try:
+        floor_id = window.get("floor_id")
+        ceiling_id = window.get("ceiling_id")
+        joined_at = window.get("joined_at")
+        if floor_id is not None and int(msg_id) < int(floor_id):
+            return True
+        if ceiling_id is not None and int(msg_id) > int(ceiling_id):
+            if joined_at is None:
+                return True
+            try:
+                if created_at is None or created_at < joined_at:
+                    return True
+            except TypeError:
+                return True
+        # owner-answer display-tag: assistant 답변이 뷰어 floor 아래 문맥을 그렸으면 숨김.
+        if str(role or "").lower() == "assistant" and isinstance(meta, dict):
+            vf = window.get("floor_ca")
+            if vf is not None:
+                if meta.get("recall_full"):
+                    return True
+                rfc = meta.get("recall_floor_created_at")
+                if rfc is not None:
+                    from datetime import datetime as _dt
+                    rfc_dt = _dt.fromisoformat(rfc) if isinstance(rfc, str) else rfc
+                    if rfc_dt < vf:
+                        return True
+    except Exception:
+        return True  # 어떤 비교 실패도 fail-closed(숨김).
+    return False
+
+def _inline_tmp_dir() -> str:
+    """첨부 inline temp 파일 디렉토리(TASK-0169 M6).
+
+    worker mode: /shared/ask-inline (web 이 쓰고 worker 가 읽어야 하므로 공통 볼륨).
+    inprocess(기본): 현행 /tmp (프로세스 로컬).
+    """
+    if app._is_worker_mode():
+        try:
+            os.makedirs(app._ASK_SHARED_INLINE_DIR, exist_ok=True)
+            return app._ASK_SHARED_INLINE_DIR
+        except OSError:
+            return app._VISION_INLINE_TMP_DIR
+    return app._VISION_INLINE_TMP_DIR
+
+def _ask_worker_ready(conn) -> bool:
+    """ask-worker 생존 여부 — KV ask_worker_last_cycle_at heartbeat 신선도.
+
+    worker mode 인데 worker 가 죽어 있으면 enqueue 한 job 을 아무도 claim 안 해
+    /api/ask 가 무한 대기(timeout)한다. enqueue 전에 gate 로 차단(503)해 빠른 실패 +
+    명확한 안내를 준다(adversarial review M7 — no-worker hang)."""
+    try:
+        from shared.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
+        raw = app.load_memory_kv(conn, GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY)
+        if not raw:
+            return False
+        parsed = app._parse_kv_timestamp(raw)
+        if parsed is None:
+            return False
+        # _parse_kv_timestamp 는 tzinfo 를 strip 한 naive UTC datetime 을 반환하므로
+        # naive UTC now 와 비교한다(aware now() 와 빼면 TypeError → except → 항상 False
+        # = readiness 영구 실패. TASK-0169 라이브 cutover 에서 포착·수정. project_task0159
+        # 의 KV tz stale 함정과 동형).
+        now_naive = app.datetime.now(app.timezone.utc).replace(tzinfo=None)
+        age = (now_naive - parsed).total_seconds()
+        return age <= app._ASK_WORKER_READY_MAX_AGE_SEC
+    except Exception:
+        return False
+
+def _get_ask_job_status(job_id: int) -> str | None:
+    """worker job 의 현재 status 만 조회(attach 종료 판정용 — TASK-0241). 실패 시 None.
+
+    KV last_status 가 새 run 에 인계돼도 attach 가 자기 job 의 terminal 을 직접 보게 한다.
+    """
+    from shared.db import _pg_connect
+    from modules import ask_jobs as _aj
+    pg = None
+    try:
+        pg = _pg_connect()
+        job = _aj.get_ask_job(pg, job_id)
+        return str(job.get("status")) if job else None
+    except Exception:
+        return None
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+def _runtime_backend_is_pg() -> bool:
+    return os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres"
+
+def _meta_json_to_dict(meta_json: Any) -> dict[str, Any]:
+    """PG(jsonb→dict) / MySQL(longtext→str) 양쪽 meta_json 을 dict 로 정규화."""
+    if isinstance(meta_json, dict):
+        return dict(meta_json)
+    if meta_json:
+        try:
+            parsed = json.loads(meta_json)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+def _member_visibility_window(conn, conversation_id: str, account_id: int):
+    """멤버의 가시 경계 window 조회 (share-visibility-window, DISPLAY id-space).
+
+    반환:
+      - (None, None) : 무제한(owner·floor 미설정 멤버·비-PG·비멤버). caller 의 share-token/
+        read.any grant 가 접근을 지배 — window 는 추가 제약 없음.
+      - (floor_id|None, ceil_id|None) : 멤버의 [floor, ceiling] (DISPLAY messages.id, inclusive).
+      - 'DENY' : PG 예외 등으로 window 를 확인할 수 없음 → **fail-closed**. 호출자(fork/recall)는
+        무제한 복사/전체 recall 대신 거부·은닉해야 한다. fork/recall 은 어차피 PG 를 요구하므로
+        PG 예외 시 DENY 는 실질 가용성 회귀가 아니다(가려진 구간 유출 방지 우선).
+
+    role='owner' 는 항상 (None,None) — 소유자는 본인 콘텐츠에 정당한 전체 접근.
+    """
+    if not app._runtime_backend_is_pg():
+        return (None, None)
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT role, visible_floor_message_id, visible_ceiling_message_id "
+                    "FROM agent_runtime.conversation_members "
+                    "WHERE conversation_id = %s AND account_id = %s LIMIT 1",
+                    (conversation_id, int(account_id)),
+                )
+                row = pgcur.fetchone()
+        finally:
+            pg.close()
+    except Exception:
+        return "DENY"
+    if not row:
+        # 비멤버: 이 함수는 window 만 판정하고 멤버십 접근 게이트는 호출자 책임.
+        return (None, None)
+    role, floor_id, ceil_id = row[0], row[1], row[2]
+    if role == "owner":
+        return (None, None)
+    return (
+        int(floor_id) if floor_id is not None else None,
+        int(ceil_id) if ceil_id is not None else None,
+    )
+
+def _attachment_outside_window(att_ca, lower_ca, upper_ca) -> bool:
+    """첨부(CreatedAt)가 fork window 밖인가. share-visibility-window. 불명확은 fail-closed(skip)."""
+    a = app._coerce_naive_dt(att_ca)
+    lo = app._coerce_naive_dt(lower_ca)
+    hi = app._coerce_naive_dt(upper_ca)
+    if a is None:
+        return True  # 첨부 시각 불명 + window 활성 → 안전하게 skip.
+    if lo is not None and a < lo:
+        return True
+    if hi is not None and a > hi:
+        return True
+    return False
+
+def _meta_has_attachment_derived(meta_obj) -> bool:
+    """D9 attachment_derived flag 검사. MetaJson 안의 `attachment_derived: true`."""
+    if not isinstance(meta_obj, dict):
+        return False
+    if meta_obj.get("attachment_derived"):
+        return True
+    # 향후 Phase 11 / Cycle 2 / 3 / 4 에서 추가될 derived type 도 catch.
+    return False
+
+def _sanitize_fix_with_ai_fragment(value: str, *, cap: int, seal: str) -> str:
+    """client 가 보낸 SQL/오류 텍스트를 정정 지시문에 **데이터로만** 끼워 넣기 위해 정제.
+
+    프롬프트 인젝션(데이터 블록 탈출) 방어 — REV M1:
+    - 데이터 블록을 감싸는 **봉인 구분자 문자 «·»** 를 입력에서 제거 → client 는 블록을 닫는 마커를
+      애초에 만들 수 없다. 개행+가짜 라벨/지시문으로 데이터 블록 밖으로 빠져나가는 경로를 차단(주 방어).
+    - 서버가 매 요청 생성하는 **추측 불가 nonce(seal)** 가 봉인 마커에 포함되므로, «·» lookalike 를
+      쓰더라도 닫는 마커를 위조할 수 없다(belt-and-suspenders). 입력에 seal 이 우연히 들어오면 제거.
+    - 백틱 무력화(코드펜스 인식 차단, 보조 방어) + 제어문자 제거(개행/탭 보존) + 길이 cap.
+    여기서 만든 문자열은 LLM 에게 '사용자 지시가 아닌 진단 데이터' 로 명시된 봉인 블록 안에만 들어간다.
+    """
+    s = str(value or "")
+    # 코드펜스 분해 방지(보조): 백틱을 U+02CB(MODIFIER LETTER GRAVE ACCENT, 가시 문자) 로 치환 — 펜스 인식 안 됨.
+    s = s.replace("`", "ˋ")
+    # 봉인 구분자 문자 제거(주 방어): client 가 «...»·«/...» 닫는 마커를 만들 수 없게 함.
+    s = s.replace("«", "").replace("»", "")
+    # nonce 제거(belt-and-suspenders): 추측 불가하지만 우연/유출 대비.
+    if seal:
+        s = s.replace(seal, "")
+    # 제어문자 제거(개행 \n·탭 \t 는 유지) — 인용 블록 무결성/터미널 인젝션 방어.
+    s = "".join(ch for ch in s if ch == "\n" or ch == "\t" or ord(ch) >= 0x20)
+    if len(s) > cap:
+        s = s[:cap] + "\n…(이하 생략)"
+    return s
+
+def _active_ask_job_conversation_ids() -> set[str]:
+    """worker mode 에서 활성(pending/running) ask_jobs 를 가진 conversation_id 집합.
+
+    TASK-0169 (B1): backstop(boot reconcile / SIGTERM finalizer)은 'processing' KV 만
+    보고 orphan 을 판정하는데, worker mode 에선 실행이 web 밖에서 도므로 web 재배포가
+    worker run 을 끊지 않는다. 그런데 backstop 이 그 run 을 'processing' 이라는 이유로
+    error 마킹하면 살아있는 worker run 을 오염시킨다. 활성 ask_jobs 를 가진 conversation
+    은 worker-owned 이므로 backstop 에서 제외한다. 비-worker mode / 조회 실패 시 빈 집합
+    (= 현행 동작 보존)."""
+    if not app._is_worker_mode():
+        return set()
+    pg = None
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT conversation_id FROM agent_runtime.ask_jobs "
+                "WHERE status IN ('pending','running')"
+            )
+            return {str(r[0]) for r in cur.fetchall() if r and r[0]}
+    except Exception:
+        return set()
+    finally:
+        if pg is not None:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+def _ensure_conversation_row(conn, conversation_id: str) -> None:
+    if not conversation_id:
+        return
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "INSERT INTO agent_runtime.core_conversations (conversation_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                    (conversation_id,),
+                )
+            pg.close()
+        except Exception:
+            # fail-open: PG core_conversations 보장 실패는 호출자 흐름을 막지 않으나,
+            # 조용한 쓰기 실패(cutover 회귀) 탐지를 위해 가시화한다.
+            logging.getLogger(__name__).warning(
+                "_ensure_conversation_row: PG upsert failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+        return
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT IGNORE INTO AgentCoreConversations (conversation_id, topic) VALUES (%s, '')",
+        (conversation_id,),
+    )
+    cur.close()
+
+def _run_agent(args: list[str], session_id: str, env_overrides: dict[str, str] | None = None) -> dict[str, Any]:
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
+    env["AGENT_CONVERSATION_ID_FILE"] = app._conv_file(session_id)
+    start = time.perf_counter()
+    proc = app.subprocess.run(
+        ["python", "/app/agent_core.py", *args],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    duration_ms = (time.perf_counter() - start) * 1000.0
+    output = (proc.stdout or "") + (proc.stderr or "")
+    return {
+        "output": app._normalize_output(output),
+        "exit_code": proc.returncode,
+        "duration_ms": round(duration_ms, 2),
+        "conversation_id": app._read_conversation_id(app._conv_file(session_id)),
+    }
+
+def _extract_sql_tables(sql_text: str) -> list[str]:
+    sql = str(sql_text or "")
+    if not sql:
+        return []
+    seen: set[str] = set()
+    tables: list[str] = []
+    for schema, table in app.re.findall(r"(?:FROM|JOIN|UPDATE|INTO)\s+`?([A-Za-z0-9_]+)`?\.`?([A-Za-z0-9_]+)`?", sql, app.re.IGNORECASE):
+        ref = f"{schema}.{table}"
+        if ref in seen:
+            continue
+        seen.add(ref)
+        tables.append(ref)
+    return tables
+
+def _sort_dt_key(value: Any) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        parsed = app.datetime.fromisoformat(text)
+    except Exception:
+        try:
+            parsed = app.datetime.strptime(text, "%Y-%m-%d %H:%M:%S.%f")
+        except Exception:
+            try:
+                parsed = app.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=app.timezone.utc)
+    return parsed.timestamp()
+
+def _stringify_summary(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return str(value)
+
+def _extract_rationale(steps: list[dict[str, Any]]) -> str:
+    if not steps:
+        return ""
+    for step in reversed(steps):
+        summary = step.get("result_summary")
+        if summary:
+            return app._stringify_summary(summary)
+        err = step.get("error")
+        if err:
+            return str(err)
+    return ""
+
+def _summarize_answer(steps: list[dict[str, Any]], csv_paths: list[str] | None = None) -> str:
+    if not steps:
+        return ""
+    last_step = steps[-1]
+    work = str(last_step.get("work") or "").strip()
+    intent = str(last_step.get("intent") or "").strip()
+    summary = last_step.get("result_summary")
+    rows = None
+    cols = None
+    if isinstance(summary, dict):
+        rows = summary.get("rows")
+        cols = summary.get("cols")
+    parts: list[str] = []
+    if work:
+        parts.append(f"실행 완료: {work}")
+    elif intent:
+        parts.append(f"실행 완료: {intent}")
+    if rows is not None:
+        if cols is not None:
+            parts.append(f"결과: {rows}행, {cols}열")
+        else:
+            parts.append(f"결과: {rows}행")
+    if csv_paths:
+        parts.append(f"결과셋: {len(csv_paths)}개 (CSV 미리보기에서 확인)")
+    return "\n".join(parts).strip()
+
+def _find_latest_log(suffix: str, since_ts: float) -> app.Path | None:
+    if not app.LOG_DIR.exists():
+        return None
+    latest: tuple[float, app.Path] | None = None
+    for item in app.LOG_DIR.glob(f"*_{suffix}.log"):
+        try:
+            mtime = item.stat().st_mtime
+        except Exception:
+            continue
+        if mtime < since_ts:
+            continue
+        if latest is None or mtime > latest[0]:
+            latest = (mtime, item)
+    return latest[1] if latest else None
+
+def _read_executed_sql(path: app.Path | None) -> str:
+    if not path or not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    if "SQL:" not in text:
+        return text.strip()
+    sql_part = text.split("SQL:", 1)[1]
+    return sql_part.strip()
+
+def _extract_csv_paths(output: str) -> list[str]:
+    if not output:
+        return []
+    paths: list[str] = []
+    for match in app.re.finditer(r"CSV 저장:\s*(/[^\s]+\.csv)", output):
+        paths.append(match.group(1))
+    return paths
+
+def _is_question_text(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered:
+        return False
+    if "?" in text:
+        return True
+    cues = ("알려주세요", "하시겠습니까", "될까요", "가능할까요", "확인해", "선택", "여부", "필요", "입력")
+    return any(cue in lowered for cue in cues)
+
+def _ask_execution_mode() -> str:
+    """AGENT_ASK_EXECUTION_MODE — 'worker' 면 ask_jobs enqueue, 그 외(기본)는 inprocess."""
+    try:
+        from shared.config import AGENT_ASK_EXECUTION_MODE
+        return str(AGENT_ASK_EXECUTION_MODE or "inprocess").strip().lower()
+    except Exception:
+        return "inprocess"
+
+def _coerce_naive_dt(v):
+    """datetime|str|None → naive datetime|None. tz 정보 제거(교차 store 비교용, 근사)."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        from datetime import datetime as _dt
+        try:
+            v = _dt.fromisoformat(v)
+        except Exception:
+            return None
+    try:
+        return v.replace(tzinfo=None)
+    except Exception:
+        return None

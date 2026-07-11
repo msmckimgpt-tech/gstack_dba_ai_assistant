@@ -3095,3 +3095,496 @@ async def ask(request: Request) -> JSONResponse:
                 app._cleanup_text_inline(locals().get("text_inline_path"))
             except Exception:
                 pass
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (19종). app 전역은 app.X 동적 참조. ====
+
+def _set_account_current_conversation(conn, account_id: int, conversation_id: str) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE WebAccounts SET LastConversationId = %s WHERE Id = %s",
+        (str(conversation_id or "").strip() or None, int(account_id)),
+    )
+    cur.close()
+
+def _assign_conversation_owner(conn, conversation_id: str, account_id: int, *, force: bool = False) -> None:
+    if not conversation_id:
+        return
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        app._ensure_conversation_row(conn, conversation_id)
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                if force:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations "
+                        "SET owner_account_id = %s, owner_assigned_at = COALESCE(owner_assigned_at, NOW()) "
+                        "WHERE conversation_id = %s",
+                        (int(account_id), conversation_id),
+                    )
+                else:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations "
+                        "SET owner_account_id = %s, owner_assigned_at = COALESCE(owner_assigned_at, NOW()) "
+                        "WHERE conversation_id = %s AND owner_account_id IS NULL",
+                        (int(account_id), conversation_id),
+                    )
+            pg.close()
+        except Exception:
+            # fail-open: 소유자 지정 실패는 흐름을 막지 않으나 조용한 PG 쓰기 실패를 가시화.
+            logging.getLogger(__name__).warning(
+                "_assign_conversation_owner: PG owner update failed "
+                "(conversation_id=%s account_id=%s force=%s)",
+                conversation_id, account_id, force, exc_info=True,
+            )
+        return
+    app._ensure_conversation_row(conn, conversation_id)
+    cur = conn.cursor()
+    if force:
+        cur.execute(
+            """
+UPDATE AgentCoreConversations
+SET owner_account_id = %s,
+    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
+WHERE conversation_id = %s
+            """,
+            (int(account_id), conversation_id),
+        )
+    else:
+        cur.execute(
+            """
+UPDATE AgentCoreConversations
+SET owner_account_id = %s,
+    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
+WHERE conversation_id = %s
+  AND owner_account_id IS NULL
+            """,
+            (int(account_id), conversation_id),
+        )
+    cur.close()
+
+def _repair_current_conversation(
+    conn,
+    account: dict[str, Any],
+    items: list[dict[str, Any]] | None = None,
+    *,
+    create_if_missing: bool = True,
+    force_new: bool = False,
+) -> str:
+    current_id = str(account.get("last_conversation_id") or "").strip()
+    visible_items = items if items is not None else app._list_conversations(limit=200, account=account, conn=conn)
+    visible_ids = {str(item.get("id") or "") for item in visible_items if str(item.get("id") or "").strip()}
+    if not force_new and current_id and current_id in visible_ids:
+        return current_id
+    next_id = ""
+    if not force_new:
+        next_id = next((str(item.get("id") or "").strip() for item in visible_items if str(item.get("id") or "").strip()), "")
+    if not next_id and create_if_missing and app._account_has_permission(account, "conversation.create"):
+        from agent_core import create_new_conversation as _create_conv
+
+        next_id = _create_conv(conv_file=app._account_conv_file(int(account["id"])))
+        app._assign_conversation_owner(conn, next_id, int(account["id"]), force=True)
+    app._set_account_current_conversation(conn, int(account["id"]), next_id)
+    account["last_conversation_id"] = next_id
+    return next_id
+
+def _model_supports_temperature(value: str) -> bool:
+    return app.model_supports_temperature(value)
+
+def _acquire_request_slot(session_id: str) -> bool:
+    with app._ACTIVE_REQUESTS_LOCK:
+        current = app._ACTIVE_REQUESTS.get(session_id, 0)
+        if current >= app.WEB_PARALLEL_LIMIT:
+            return False
+        app._ACTIVE_REQUESTS[session_id] = current + 1
+        return True
+
+def _release_request_slot(session_id: str) -> None:
+    with app._ACTIVE_REQUESTS_LOCK:
+        current = app._ACTIVE_REQUESTS.get(session_id, 0) - 1
+        if current <= 0:
+            app._ACTIVE_REQUESTS.pop(session_id, None)
+        else:
+            app._ACTIVE_REQUESTS[session_id] = current
+
+def _get_default_product_id(conn) -> int:
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT Id FROM WebProducts
+WHERE IsActive = 1
+ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
+LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    cur.close()
+    return int((row or (0,))[0] or 0)
+
+def _product_allowed_schemas(conn, product_id: int) -> list[str]:
+    if product_id <= 0:
+        return []
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder, SchemaName",
+        (int(product_id),),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    return [str(r[0]) for r in rows if r and r[0]]
+
+def _product_has_datasource(conn, product_id: int) -> bool:
+    """TASK-0206 re-gate(5차): 제품에 datasource 가 바인딩(WebProducts.DatasourceKey 비-NULL)되어 있는지.
+
+    DB-단위 모델에서 데이터는 데이터소스에 종속된다 — 미바인딩 제품은 접근 0(allowed=[]). 조회 실패 시
+    보수적으로 False(미바인딩 취급, fail-closed).
+
+    TASK-0228 (1:N): primary(WebProducts.DatasourceKey) 가 NULL 이어도 join 테이블(WebProductDatasources)에
+    바인딩이 있으면 True. 단일 바인딩(레거시) 제품은 종전과 동일하게 primary 만으로 True."""
+    if product_id <= 0:
+        return False
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id = %s LIMIT 1", (int(product_id),))
+        r = cur.fetchone()
+        if r and r[0] and str(r[0]).strip():
+            return True
+        # 1:N: primary 미설정이어도 join 바인딩이 있으면 datasource 보유로 본다.
+        try:
+            cur.execute(
+                "SELECT 1 FROM WebProductDatasources WHERE ProductId = %s LIMIT 1", (int(product_id),)
+            )
+            return bool(cur.fetchone())
+        except Exception:
+            return False
+    except Exception:
+        return False
+    finally:
+        cur.close()
+
+def _log_search_activity(
+    conn,
+    account_id: int,
+    action: str,
+    target_owner_id: int | None,
+    query: str | None,
+    matched_count: int,
+) -> None:
+    """REQ-20260518-0010 (TASK-0072): cross-account body search audit. PIPA §29.
+
+    TASK-0086 (2026-05-20): legacy `WebAccountActivity` INSERT 제거 — TASK-0073
+    Phase A2 의 dual write 종료. dispatcher mirror (`record_audit_event` →
+    WebAuditEvents) 가 단일 source-of-truth. signature transparent 보존 (caller
+    변경 0). dispatcher fail 시 stderr log 만 + main flow 진행 (user endpoint
+    fail-open 패턴 TASK-0072 답습).
+
+    query 평문 저장 금지 — SHA-256 hex 만 저장.
+    `ChangeJson._legacy_source="WebAccountActivity"` 표식은 TASK-0086 backup
+    (`artifacts/mysql-backup/WebAccountActivity-*.sql`) cross-reference 위해 보존.
+    """
+    import hashlib
+    query_hash: str | None = None
+    if query:
+        normalized = query.strip()
+        if normalized:
+            query_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    # TASK-0086 (2026-05-20): dispatcher only — WebAccountActivity legacy table DROP 완료.
+    try:
+        app.record_audit_event(
+            conn,
+            actor={
+                "account_id": int(account_id),
+                "actor_type": "account",
+            },
+            action=str(action)[:64],
+            resource_type="conversation",
+            resource_id=str(target_owner_id) if target_owner_id is not None else None,
+            change_json={
+                "query_hash": query_hash,
+                "matched_count": int(matched_count),
+                "_legacy_source": "WebAccountActivity",
+            },
+            target_account_id=int(target_owner_id) if target_owner_id is not None else None,
+        )
+        try:
+            conn.commit()
+        except Exception:
+            pass
+    except Exception as exc:
+        try:
+            import sys as _sys
+            _sys.stderr.write(
+                f"[TASK-0086] _log_search_activity dispatcher failed: {exc}\n"
+            )
+        except Exception:
+            pass
+
+def _normalize_search_query(q: str | None) -> str | None:
+    """Returns sanitized q (strip + length 2-200) or None if it fails the gate.
+    None signals 'no body search'. REQ-20260519-0005 (TASK-0077): min char gate
+    3 → 2 (사용자 결정 — 한국어 grapheme 2 char 도 의미 있는 검색어). adversarial
+    risk 4: gate is applied to the *raw* user input before escape so `q="%%"`
+    (post-escape len 4 but 0 literal chars) is rejected for falling under the
+    raw-len-2 minimum."""
+    if not q:
+        return None
+    s = str(q).strip()
+    if len(s) < 2:
+        return None
+    if len(s) > 200:
+        s = s[:200]
+    return s
+
+def _infer_kind(filename: str, mime_type: str) -> str:
+    """서비스 자체 kind 추론. 확장자 우선 → MIME 힌트 → text/* 패턴 → 'other'.
+    클라이언트 MIME 을 신뢰하지 않으므로 확장자가 일치하면 확장자 결과를 사용한다."""
+    name = (filename or "").strip().lower()
+    ext = name.rsplit(".", 1)[1] if "." in name else ""
+    if ext:
+        kind = app._EXTENSION_KIND_MAP.get(ext)
+        if kind:
+            return kind
+    mime_lower = (mime_type or "").lower().strip()
+    kind = app._MIME_KIND_HINTS.get(mime_lower)
+    if kind:
+        return kind
+    if mime_lower.startswith("text/"):
+        return "text"
+    return "other"
+
+def _strip_attachment_edit_blocks(answer: str, materialized: list[dict[str, Any]]) -> str:
+    """답변에서 ```attachment-edit``` 블록을 제거하고 "📎 수정본 전달" 명시 문구로 치환(TASK-0286).
+
+    사용자에게 전체 수정본 본문이 텍스트로 노출되는 것을 막는다 — 변경점은 diff 블록으로, 전체
+    수정본은 다운로드 가능한 첨부 새 버전(materialize)으로 전달한다. materialize 가 실패(파싱은
+    됐으나 가드 거부 등)한 블록도 제거해 본문 노출을 막는다(fail-open 일관). 전부 제거돼 본문이
+    비면(블록만 있고 materialize 실패한 드문 경우) 원문을 유지해 빈 답변을 방지한다.
+    """
+    spans = app._attachment_edit_block_spans(answer)
+    if not spans:
+        return answer
+    lines = (answer or "").split("\n")
+    # 각 블록의 (open..close) 라인 전체를 제거 — 본문 내 ``` 가 있어도 절단/잔여 노출이 없다.
+    remove: set[int] = set()
+    for _oi, _ci, _h, _b in spans:
+        remove.update(range(_oi, _ci + 1))
+    stripped = "\n".join(ln for i, ln in enumerate(lines) if i not in remove)
+    # 블록 제거로 생긴 과도한 빈 줄 정리.
+    stripped = app.re.sub(r"\n{3,}", "\n\n", stripped).strip()
+    if materialized:
+        notes = "\n".join(
+            f"📎 수정본 **{a.get('original_filename') or '파일'}** (v{a.get('version_number') or 2}) 을(를) "
+            f"첨부 파일로 전달했습니다. 위 변경점을 확인하고 첨부에서 다운로드하세요."
+            for a in materialized
+        )
+        stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
+    return stripped or answer
+
+def _update_assistant_message_content(conn, conversation_id: str, message_id: int, content: str) -> None:
+    """assistant 메시지 content 갱신(TASK-0286 attachment-edit strip 반영을 DB 에도 영속).
+
+    `_load_latest_assistant_message` 와 동일 라우팅(PG 우선·MySQL fallback)을 따른다 — message_id 는
+    그 backend 의 id 이므로 정합. history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다.
+    best-effort: 실패해도 사용자 응답을 막지 않는다(render_output 은 이미 strip 됨).
+    """
+    if not message_id or not conversation_id:
+        return
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "UPDATE agent_runtime.messages SET content = %s WHERE id = %s AND conversation_id = %s",
+                    (content, int(message_id), conversation_id),
+                )
+            pg.commit()
+        finally:
+            pg.close()
+        return
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_update_assistant_message_content: PG update failed (msg=%s) — MySQL fallback", message_id, exc_info=True)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE AgentMemoryMessages SET Content = %s WHERE Id = %s AND ConversationId = %s",
+                (content, int(message_id), conversation_id),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_update_assistant_message_content: MySQL update failed (msg=%s)", message_id, exc_info=True)
+
+def _model_to_llm_provider(model: str | None) -> str | None:
+    """vision invoke 모델 → LLM provider 식별자 매핑 (audit 용).
+
+    feature-0007 (bedrock) 머지 후 catalog 는 claude-* 만 → 'anthropic'. backward
+    -compat: gpt-* → 'openai'. Local LLM (auto/edge/core/code) 은 supports_vision
+    =False 라 본 매핑이 호출되기 전 차단되지만 안전하게 'local' 매핑. catalog
+    미등록 alias → None (vision 진입 안 함).
+    """
+    if not model:
+        return None
+    m = str(model).strip().lower()
+    if m.startswith("claude-"):
+        return "anthropic"
+    if m.startswith("gpt-"):
+        return "openai"
+    if m in ("auto", "edge", "core", "code"):
+        return "local"
+    return None
+
+async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn, request=None):
+    """agent 실행을 mode 에 따라 분기. 두 경로 모두 동일 shape 의 agent_result dict 반환.
+
+    - inprocess(기본): 현행 asyncio.to_thread(run_agent, …). 동작 무변경.
+    - worker: ask_jobs enqueue 후 KV last_status 를 내부 long-poll attach 해 동기 응답
+      계약 유지(클라 무변경). 결과 shape 는 ask_jobs.result_json 으로 패리티.
+    """
+    if not app._is_worker_mode():
+        return await asyncio.to_thread(inproc_fn, **run_kwargs)
+    return await app._dispatch_ask_run_worker(conn=conn, account=account,
+                                          conv_id=conv_id, run_kwargs=run_kwargs,
+                                          request=request)
+
+def _make_internal_ask_request(request: Request, body: dict[str, Any]) -> Request:
+    """원본 request 의 scope(쿠키/헤더/클라이언트 IP 포함)를 복제하고, body 만 새 JSON 으로 교체한
+    내부 재dispatch 용 Starlette Request 를 만든다. `ask()` 가 `await request.json()` 으로 읽는다.
+
+    auth(_get_authenticated_account)·audit(_build_actor_from_request) 는 scope 의 headers 에서
+    세션 쿠키·UA·IP 를 읽으므로, scope 복제만으로 동일 인증 컨텍스트가 유지된다(별도 토큰 전달 불필요).
+    """
+    from starlette.requests import Request as _StarletteRequest
+
+    raw = json.dumps(body).encode("utf-8")
+    # scope 의 path/route 는 ask 의 본문 로직과 무관(핸들러를 직접 호출). headers 만 보존되면 충분.
+    new_scope = dict(request.scope)
+    new_scope["type"] = "http"
+
+    _orig_receive = request._receive  # 원본 client 의 ASGI receive(연결 상태 진실).
+    _sent = {"done": False}
+
+    async def _receive():
+        # 1) 첫 호출: 정정 메시지 body 를 1회 공급(ask 의 await request.json()).
+        if not _sent["done"]:
+            _sent["done"] = True
+            return {"type": "http.request", "body": raw, "more_body": False}
+        # 2) 이후 호출(worker mode attach 루프의 is_disconnected 폴링): 원본 client 의 receive 로
+        #    위임 → 실제 브라우저가 fix-with-ai fetch 를 끊으면 그대로 disconnect 가 전파된다.
+        #    (synthetic 이 즉시 http.disconnect 를 돌려주면 run 이 조기 중단되는 버그 방지.)
+        return await _orig_receive()
+
+    return _StarletteRequest(new_scope, _receive)
+
+def _delete_conversation_impl(
+    conn,
+    account: dict[str, Any],
+    conversation_id: str,
+    *,
+    force: bool = False,
+    confirm_text: str = "",
+) -> dict[str, Any]:
+    """TASK-0273: "삭제" 를 soft-archive(보관)로 전환. 데이터·첨부 hard-delete 안 함.
+
+    보관 = (1) 소유자 목록 숨김(_list_conversations archived_at IS NULL) + (2) 진행 차단
+    (_conversation_block_info) + (3) 데이터 보존(admin 조회·fork 참조 가능). 진행 중 대화는
+    force+confirm 시 run 취소 후 보관(첨부는 보존 — cascade soft-delete 안 함).
+    반환 status: 'archived' | 'archived_pending' | 'failed'(기존 호환 위해 'deleted*' 도 매핑).
+    """
+    conversation_id = str(conversation_id or "").strip()
+    if not conversation_id:
+        return {"status": "failed", "reason": "empty_conversation_id"}
+    if not app._account_can_access_conversation(
+        conn,
+        account,
+        conversation_id,
+        "conversation.delete.own",
+        "conversation.delete.any",
+    ):
+        return {"status": "failed", "reason": "forbidden"}
+    # feature-0009 gc-group-authz-flag (#1): 보관(archive)은 대화 보유자(owner) 전용. 위 게이트는
+    # 그룹 대화 '열람' 경계(멤버 포함, '열람 ≠ 발화')라 conversation.delete.own 권한 멤버도 통과하므로,
+    # 소유 메타 변경(보관)에는 2차 owner 게이트를 둔다. admin(.any)은 오용 방지 관리 일관성으로 우회 허용.
+    # owner_account_id 가 *확정된* 대화에서 actor 가 그 owner 가 아닐 때만 차단 — owner 미기록(NULL)
+    # 레거시 대화는 1차 게이트(소유/멤버) 판정을 존중해 fail-open(실소유자 lockout 방지).
+    _archive_owner_id = app._conversation_owner_account_id(conn, conversation_id)
+    if (
+        not app._account_has_permission(account, "conversation.delete.any")
+        and _archive_owner_id is not None
+        and _archive_owner_id != int(account.get("id") or 0)
+    ):
+        return {"status": "failed", "reason": "forbidden"}
+    try:
+        app.cleanup_pending_delete_conversations(conn)
+        acct_id = int(account.get("id") or 0)
+        if app.is_processing_conversation(conn, conversation_id):
+            if not force:
+                return {"status": "failed", "reason": "processing"}
+            if confirm_text not in ("삭제", "보관"):
+                return {"status": "failed", "reason": "confirm_text_mismatch"}
+            # 진행 중 run 은 취소하되, 데이터는 hard-delete 하지 않고 보관으로 동결.
+            run_id = str(app.load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
+            app.mark_cancel_requested(conn, conversation_id, run_id=run_id)
+            app._archive_conversation(conn, conversation_id, acct_id)
+            app._clear_accounts_current_conversation(conn, conversation_id)
+            return {"status": "archived_pending"}
+        # TASK-0273: 정상 대화 → 보관(UPDATE archived_at). 첨부 cascade soft-delete 안 함
+        # (admin 조회·fork 참조 위해 데이터 보존). hard-delete(delete_conversation_records) 폐기.
+        ok = app._archive_conversation(conn, conversation_id, acct_id)
+        if not ok:
+            return {"status": "failed", "reason": "db_error"}
+        app._clear_accounts_current_conversation(conn, conversation_id)
+        return {"status": "archived"}
+    except Exception:
+        return {"status": "failed", "reason": "db_error"}
+
+def _archive_conversation(conn, conversation_id: str, account_id: int) -> bool:
+    """TASK-0273: 대화를 soft-archive(보관)로 전환 — hard-delete 대신 archived_at 마킹.
+
+    데이터·첨부는 **보존**한다(오용 방지 admin 조회·맥락 참조 fork 위해). backend-aware:
+    PG 정본(agent_runtime.core_conversations) + MySQL 폴백(AgentCoreConversations).
+    이미 보관된 대화는 시각·수행자 보존(archived_at IS NULL 일 때만 set). 반환 성공 여부.
+    """
+    ok = False
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    pgcur.execute(
+                        "UPDATE agent_runtime.core_conversations "
+                        "SET archived_at = now(), archived_by_account_id = %s "
+                        "WHERE conversation_id = %s AND archived_at IS NULL",
+                        (int(account_id) if account_id else None, conversation_id),
+                    )
+                pg.commit()
+                ok = True
+            finally:
+                pg.close()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "_archive_conversation: PG archive failed (conversation_id=%s)",
+                conversation_id, exc_info=True,
+            )
+            ok = False
+    # MySQL 폴백 parity(production 은 PG 라 보통 미경유, 비-PG 환경 대비).
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE AgentCoreConversations "
+            "SET archived_at = NOW(), archived_by_account_id = %s "
+            "WHERE conversation_id = %s AND archived_at IS NULL",
+            (int(account_id) if account_id else None, conversation_id),
+        )
+        conn.commit()
+        ok = ok or True
+    except Exception:
+        # PG 가 정본이면 MySQL 폴백 실패는 무해(테이블 부재 등).
+        pass
+    return ok

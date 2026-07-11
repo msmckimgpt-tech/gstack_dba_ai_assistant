@@ -470,3 +470,68 @@ def public_share_fork(token: str, request: Request, account=Depends(app.require_
         },
     )
     return JSONResponse(payload)
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
+
+def _account_is_conversation_member(conversation_id: str, account_id: int) -> bool:
+    """feature-0009: account 가 그룹 대화의 멤버인지 (PG agent_runtime.conversation_members 정본).
+
+    "열람 ≠ 발화"(FUNCTION.md §2 REQ-GC-R7): 멤버면 datasource 권한이 없어도 대화를
+    열람한다. 멤버십은 PG-native 개념이라 READ_BACKEND 무관하게 PG 를 조회한다. 조회 실패는
+    멤버 아님으로 폴백(owner 경로는 _conversation_owned_by_account 가 별도 보장).
+    """
+    if not conversation_id or not account_id:
+        return False
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            return group_members.is_member(pg, conversation_id, int(account_id))
+        finally:
+            pg.close()
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "_account_is_conversation_member: lookup failed", exc_info=True,
+        )
+        return False
+
+def _ensure_owner_membership(conversation_id: str) -> None:
+    """대화 owner 를 conversation_members 에 멱등 보장 (role='owner'). 공유 생성·join 시 호출.
+    owner 가 멤버 테이블에 누락되면 member_count under-count → 공유 직후 비멘션 메시지가 assistant 로
+    오라우팅되는 버그(#2)가 발생하므로, 그룹 전환 시점에 owner 행을 자가치유한다. best-effort."""
+    if not conversation_id:
+        return
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT owner_account_id FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
+                    (conversation_id,),
+                )
+                row = cur.fetchone()
+            owner_id = int(row[0]) if row and row[0] else 0
+            if owner_id:
+                # role='owner' 고정 — ON CONFLICT DO UPDATE 가 기존 owner 를 member 로 강등하지 않도록.
+                group_members.add_member(
+                    pg, conversation_id, owner_id, role="owner", invited_by_account_id=owner_id,
+                )
+        finally:
+            pg.close()
+    except Exception:
+        logging.getLogger(__name__).warning("_ensure_owner_membership failed", exc_info=True)
+
+def _optional_account(request: Request, conn) -> dict[str, app.Any] | None:
+    """REQ-20260514-0001: anonymous endpoint 용 — 쿠키 부재/오류 시 None 반환 (401 raise 없음).
+
+    `/api/public/share/{token}` 처럼 미로그인 접근이 허용되지만 로그인 상태라면 fork 같은
+    추가 액션을 안내해야 하는 경로에서 사용한다.
+    """
+    try:
+        return app._get_authenticated_account(conn, request)
+    except Exception:
+        return None

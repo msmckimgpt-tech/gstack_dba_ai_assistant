@@ -298,3 +298,41 @@ def delete_attachment(attachment_id: int, request: Request, account=Depends(app.
         )
 
     return JSONResponse({"ok": True, "delete_reason": "user"})
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
+
+def _account_is_pending(account: dict[str, Any] | None) -> bool:
+    """D21 / R-F14 — pending role 식별. application-level bytes deny 사용."""
+    return app._account_role_key(account) == "pending"
+
+def _account_can_access_attachment(
+    conn,
+    account: dict[str, Any] | None,
+    attachment_row: dict[str, Any] | None,
+    own_permission: str,
+    any_permission: str | None = None,
+) -> bool:
+    """`_account_can_access_conversation` 의 attachment-specific 변종.
+
+    attachment 존재 + 본인 소유 conv 인지 확인 후 own_permission 검사. any_permission
+    이 있으면 conv 소유 무관 통과. soft-deleted 첨부 (DeletedAt NOT NULL) 는 거부 —
+    조회는 reconciliation worker 등 운영 path 만 (이 helper 미사용).
+    """
+    if not account or not attachment_row:
+        return False
+    if attachment_row.get("DeletedAt"):
+        return False
+    if any_permission and app._account_has_permission(account, any_permission):
+        return True
+    if not app._account_has_permission(account, own_permission):
+        return False
+    conversation_id = str(attachment_row.get("ConversationId") or "")
+    if not conversation_id:
+        return False
+    acct_id = int(account["id"])
+    if app._conversation_owned_by_account(conn, conversation_id, acct_id):
+        return True
+    # feature-0009: 그룹 대화 멤버도 첨부 접근 가능 (첨부는 전원 공유, REQ-GC-R6). LLM 맥락
+    # 주입은 발신자-한정(CSO F1, S3) 으로 별도 제한 — 여기는 열람/공유 경계.
+    return app._account_is_conversation_member(conversation_id, acct_id)

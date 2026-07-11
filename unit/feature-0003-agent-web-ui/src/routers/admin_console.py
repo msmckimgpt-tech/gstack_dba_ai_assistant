@@ -628,3 +628,65 @@ def _save_dashboard_pref_row(conn, account_id: int, content: dict) -> None:
             cur.close()
         except Exception:
             pass
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (5종). app 전역은 app.X 동적 참조. ====
+
+def _permission_catalog_payload(
+    *,
+    catalog: list[dict[str, app.Any]] | None = None,
+) -> list[dict[str, app.Any]]:
+    """TASK-0052 Phase 1A: catalog 가 주어지면 그 list 를, None 이면 정적 PERMISSION_DEFINITIONS 를 반환.
+
+    Phase 1B 에서 `_resolve_permission_catalog(conn)` 결과를 caller 가 전달.
+    """
+    source = catalog if catalog is not None else app.PERMISSION_DEFINITIONS
+    return [dict(item) for item in source]
+
+def _actor_can_see_widget(actor: dict, widget: dict) -> bool:
+    """위젯 표시/데이터 권한 검사. `permission` 이 리스트면 하나라도 보유 시 True
+    (TASK-0293: product/datasource 의 read|manage superset 게이팅 — _account_has_any_permission)."""
+    perm = widget.get("permission")
+    perms = perm if isinstance(perm, (list, tuple)) else (perm,)
+    return app._account_has_any_permission(actor, *[str(p) for p in perms if p])
+
+def _widget_data_scope(actor: dict, any_permission: str) -> str:
+    """TASK-0294: 위젯 데이터 스코프 — `.any` 권한 보유 시 'any'(cross-account), 아니면 'own'(본인).
+
+    audits/conversations 위젯은 `.own`/`.any` 짝을 가져, `.own` 만 보유한 사용자에게는
+    본인 데이터로 스코프된 집계를 보여주고 cross-account(타 계정 username·소유자 집계)는
+    `.any` 보유자에게만 노출한다. 위젯 가시성(_actor_can_see_widget)과 별개로 데이터 출력 경계."""
+    return "any" if app._account_has_permission(actor, any_permission) else "own"
+
+def _dashboard_default_prefs(actor: dict) -> dict:
+    """actor 가 권한을 보유한 위젯만 기본 표시(카탈로그 순서)."""
+    keys = [w["key"] for w in app._DASHBOARD_WIDGETS if app._actor_can_see_widget(actor, w)]
+    return {
+        "version": app._DASHBOARD_PREF_VERSION,
+        "widgets": [{"key": k, "visible": True, "order": i} for i, k in enumerate(keys)],
+    }
+
+def _sanitize_dashboard_prefs(raw: dict) -> dict:
+    """클라이언트 입력 prefs 를 알려진 위젯 키·boolean·int 로만 정규화.
+
+    미지 키/중복/과대 입력을 거부한다. 권한 검증은 하지 않는다 — overview 가 권한
+    없는 위젯 데이터를 애초에 반환하지 않으므로 prefs 에 그 키가 남아도 노출 위험이
+    없고, 권한이 회복되면 그때 표시되도록 보존하는 편이 사용자 친화적이다.
+    """
+    widgets: list[dict] = []
+    seen: set[str] = set()
+    items = raw.get("widgets") if isinstance(raw, dict) else None
+    if isinstance(items, list):
+        for it in items[:64]:  # 과대 입력 상한
+            if not isinstance(it, dict):
+                continue
+            key = str(it.get("key") or "")
+            if key not in app._DASHBOARD_WIDGET_KEYS or key in seen:
+                continue
+            seen.add(key)
+            try:
+                order = int(it.get("order"))
+            except Exception:
+                order = len(widgets)
+            widgets.append({"key": key, "visible": bool(it.get("visible", True)), "order": order})
+    return {"version": app._DASHBOARD_PREF_VERSION, "widgets": widgets}

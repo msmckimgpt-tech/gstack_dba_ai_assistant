@@ -336,35 +336,6 @@ def _start_attachment_recon_worker() -> None:
         logging.getLogger(__name__).warning("attachment_recon worker start failed: %s", exc)
 
 
-def _active_ask_job_conversation_ids() -> set[str]:
-    """worker mode 에서 활성(pending/running) ask_jobs 를 가진 conversation_id 집합.
-
-    TASK-0169 (B1): backstop(boot reconcile / SIGTERM finalizer)은 'processing' KV 만
-    보고 orphan 을 판정하는데, worker mode 에선 실행이 web 밖에서 도므로 web 재배포가
-    worker run 을 끊지 않는다. 그런데 backstop 이 그 run 을 'processing' 이라는 이유로
-    error 마킹하면 살아있는 worker run 을 오염시킨다. 활성 ask_jobs 를 가진 conversation
-    은 worker-owned 이므로 backstop 에서 제외한다. 비-worker mode / 조회 실패 시 빈 집합
-    (= 현행 동작 보존)."""
-    if not _is_worker_mode():
-        return set()
-    pg = None
-    try:
-        from shared.db import _pg_connect
-        pg = _pg_connect()
-        with pg.cursor() as cur:
-            cur.execute(
-                "SELECT DISTINCT conversation_id FROM agent_runtime.ask_jobs "
-                "WHERE status IN ('pending','running')"
-            )
-            return {str(r[0]) for r in cur.fetchall() if r and r[0]}
-    except Exception:
-        return set()
-    finally:
-        if pg is not None:
-            try:
-                pg.close()
-            except Exception:
-                pass
 
 
 @app.on_event("startup")
@@ -619,35 +590,10 @@ _ACTIVE_STREAMS = 0
 _ACTIVE_STREAMS_LOCK = threading.Lock()
 
 
-def _active_stream_count() -> int:
-    with _ACTIVE_STREAMS_LOCK:
-        return _ACTIVE_STREAMS
 
 
-async def _counted_stream(agen):
-    """async generator 를 감싸 진행 중 스트림 수를 카운트한다(SSE event_stream 용)."""
-    global _ACTIVE_STREAMS
-    with _ACTIVE_STREAMS_LOCK:
-        _ACTIVE_STREAMS += 1
-    try:
-        async for chunk in agen:
-            yield chunk
-    finally:
-        with _ACTIVE_STREAMS_LOCK:
-            _ACTIVE_STREAMS = max(0, _ACTIVE_STREAMS - 1)
 
 
-def _counted_stream_sync(gen):
-    """sync generator 를 감싸 카운트한다(CSV export 용 — async 로 감싸면 event loop 블로킹)."""
-    global _ACTIVE_STREAMS
-    with _ACTIVE_STREAMS_LOCK:
-        _ACTIVE_STREAMS += 1
-    try:
-        for chunk in gen:
-            yield chunk
-    finally:
-        with _ACTIVE_STREAMS_LOCK:
-            _ACTIVE_STREAMS = max(0, _ACTIVE_STREAMS - 1)
 
 
 _MEMORY_SCHEMA_READY = False
@@ -752,27 +698,12 @@ if not WEB_TRUSTED_PROXIES and os.getenv("ENABLE_WEB_TLS_PROXY", "").strip() == 
 # ITEM-10 b6: _account_has_any_permission 는 web_context.py 로 추출(상단 rebind).
 
 
-def _actor_editable_permission_codes(actor: dict[str, Any] | None) -> set[str]:
-    """TASK-0300: actor(편집 주체)가 실제로 보유한(effective=True) 권한 code 집합.
-    관리 콘솔에서 actor 가 타 계정/역할에 부여·설정할 수 있는 권한의 상한(self-scope)이다."""
-    return {code for code, granted in _account_permissions(actor).items() if granted}
 
 
 
 
 
 
-def _role_grant_excess_for_actor(
-    actor: dict[str, Any] | None,
-    role_permission_codes: "Iterable[str] | None",
-) -> list[str]:
-    """TASK-0300 (REQ-0287, 사용자 결정 2026-06-17): 역할 *배정* 경유 escalation 차단용 —
-    주어진 역할의 권한 중 actor 가 보유하지 않은 code 목록(정렬). 빈 list 면 배정 가능.
-
-    역할 편집(권한 부여) 차단을 우회해 "사전 정의된 고권한 역할을 골라 배정" 하는 경로를 막는다.
-    """
-    editable = _actor_editable_permission_codes(actor)
-    return sorted({str(c) for c in (role_permission_codes or [])} - editable)
 
 
 # ITEM-10 b6: _account_has_product_access 는 web_context.py 로 추출(상단 rebind).
@@ -829,128 +760,14 @@ def _role_grant_excess_for_actor(
 # ITEM-10 b6: _get_authenticated_account 는 web_context.py 로 추출(상단 rebind).
 
 
-def _set_account_current_conversation(conn, account_id: int, conversation_id: str) -> None:
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE WebAccounts SET LastConversationId = %s WHERE Id = %s",
-        (str(conversation_id or "").strip() or None, int(account_id)),
-    )
-    cur.close()
-
-
-def _ensure_conversation_row(conn, conversation_id: str) -> None:
-    if not conversation_id:
-        return
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-            with pg.cursor() as pgcur:
-                pgcur.execute(
-                    "INSERT INTO agent_runtime.core_conversations (conversation_id) VALUES (%s) ON CONFLICT DO NOTHING",
-                    (conversation_id,),
-                )
-            pg.close()
-        except Exception:
-            # fail-open: PG core_conversations 보장 실패는 호출자 흐름을 막지 않으나,
-            # 조용한 쓰기 실패(cutover 회귀) 탐지를 위해 가시화한다.
-            logging.getLogger(__name__).warning(
-                "_ensure_conversation_row: PG upsert failed (conversation_id=%s)",
-                conversation_id, exc_info=True,
-            )
-        return
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT IGNORE INTO AgentCoreConversations (conversation_id, topic) VALUES (%s, '')",
-        (conversation_id,),
-    )
-    cur.close()
-
-
-def _assign_conversation_owner(conn, conversation_id: str, account_id: int, *, force: bool = False) -> None:
-    if not conversation_id:
-        return
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        _ensure_conversation_row(conn, conversation_id)
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-            with pg.cursor() as pgcur:
-                if force:
-                    pgcur.execute(
-                        "UPDATE agent_runtime.core_conversations "
-                        "SET owner_account_id = %s, owner_assigned_at = COALESCE(owner_assigned_at, NOW()) "
-                        "WHERE conversation_id = %s",
-                        (int(account_id), conversation_id),
-                    )
-                else:
-                    pgcur.execute(
-                        "UPDATE agent_runtime.core_conversations "
-                        "SET owner_account_id = %s, owner_assigned_at = COALESCE(owner_assigned_at, NOW()) "
-                        "WHERE conversation_id = %s AND owner_account_id IS NULL",
-                        (int(account_id), conversation_id),
-                    )
-            pg.close()
-        except Exception:
-            # fail-open: 소유자 지정 실패는 흐름을 막지 않으나 조용한 PG 쓰기 실패를 가시화.
-            logging.getLogger(__name__).warning(
-                "_assign_conversation_owner: PG owner update failed "
-                "(conversation_id=%s account_id=%s force=%s)",
-                conversation_id, account_id, force, exc_info=True,
-            )
-        return
-    _ensure_conversation_row(conn, conversation_id)
-    cur = conn.cursor()
-    if force:
-        cur.execute(
-            """
-UPDATE AgentCoreConversations
-SET owner_account_id = %s,
-    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
-WHERE conversation_id = %s
-            """,
-            (int(account_id), conversation_id),
-        )
-    else:
-        cur.execute(
-            """
-UPDATE AgentCoreConversations
-SET owner_account_id = %s,
-    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
-WHERE conversation_id = %s
-  AND owner_account_id IS NULL
-            """,
-            (int(account_id), conversation_id),
-        )
-    cur.close()
 
 
 
 
-def _repair_current_conversation(
-    conn,
-    account: dict[str, Any],
-    items: list[dict[str, Any]] | None = None,
-    *,
-    create_if_missing: bool = True,
-    force_new: bool = False,
-) -> str:
-    current_id = str(account.get("last_conversation_id") or "").strip()
-    visible_items = items if items is not None else _list_conversations(limit=200, account=account, conn=conn)
-    visible_ids = {str(item.get("id") or "") for item in visible_items if str(item.get("id") or "").strip()}
-    if not force_new and current_id and current_id in visible_ids:
-        return current_id
-    next_id = ""
-    if not force_new:
-        next_id = next((str(item.get("id") or "").strip() for item in visible_items if str(item.get("id") or "").strip()), "")
-    if not next_id and create_if_missing and _account_has_permission(account, "conversation.create"):
-        from agent_core import create_new_conversation as _create_conv
 
-        next_id = _create_conv(conv_file=_account_conv_file(int(account["id"])))
-        _assign_conversation_owner(conn, next_id, int(account["id"]), force=True)
-    _set_account_current_conversation(conn, int(account["id"]), next_id)
-    account["last_conversation_id"] = next_id
-    return next_id
+
+
+
 
 
 # ITEM-10 b3: _b64decode 는 web_context.py 로 추출(상단 rebind).
@@ -973,8 +790,6 @@ def _is_allowed_api_model(value: str) -> bool:
     return is_allowed_api_model(value)
 
 
-def _model_supports_temperature(value: str) -> bool:
-    return model_supports_temperature(value)
 
 
 # feature-0007 (REQ-20260521-0001): `_is_safe_api_key` / `_is_safe_passphrase`
@@ -982,66 +797,12 @@ def _model_supports_temperature(value: str) -> bool:
 # 않으므로 본 검증 표면 자체가 사라졌다.
 
 
-def _acquire_request_slot(session_id: str) -> bool:
-    with _ACTIVE_REQUESTS_LOCK:
-        current = _ACTIVE_REQUESTS.get(session_id, 0)
-        if current >= WEB_PARALLEL_LIMIT:
-            return False
-        _ACTIVE_REQUESTS[session_id] = current + 1
-        return True
 
 
-def _release_request_slot(session_id: str) -> None:
-    with _ACTIVE_REQUESTS_LOCK:
-        current = _ACTIVE_REQUESTS.get(session_id, 0) - 1
-        if current <= 0:
-            _ACTIVE_REQUESTS.pop(session_id, None)
-        else:
-            _ACTIVE_REQUESTS[session_id] = current
 
 
-def _is_local_llm_available() -> bool:
-    base_url = str(os.getenv("LOCAL_LLM_API_BASE", "") or "").strip()
-    if not base_url:
-        return False
-    now = time.time()
-    if now - float(_LOCAL_LLM_STATUS.get("checked_at") or 0.0) < 30:
-        return bool(_LOCAL_LLM_STATUS.get("value"))
-    parsed = urlparse(base_url)
-    host = str(parsed.hostname or "").strip()
-    port = int(parsed.port or (443 if parsed.scheme == "https" else 80))
-    available = False
-    if host:
-        try:
-            with socket.create_connection((host, port), timeout=1.5):
-                available = True
-        except OSError:
-            available = False
-    _LOCAL_LLM_STATUS["checked_at"] = now
-    _LOCAL_LLM_STATUS["value"] = available
-    return available
 
 
-def _run_agent(args: list[str], session_id: str, env_overrides: dict[str, str] | None = None) -> dict[str, Any]:
-    env = os.environ.copy()
-    if env_overrides:
-        env.update(env_overrides)
-    env["AGENT_CONVERSATION_ID_FILE"] = _conv_file(session_id)
-    start = time.perf_counter()
-    proc = subprocess.run(
-        ["python", "/app/agent_core.py", *args],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    duration_ms = (time.perf_counter() - start) * 1000.0
-    output = (proc.stdout or "") + (proc.stderr or "")
-    return {
-        "output": _normalize_output(output),
-        "exit_code": proc.returncode,
-        "duration_ms": round(duration_ms, 2),
-        "conversation_id": _read_conversation_id(_conv_file(session_id)),
-    }
 
 
 _WEB_TABLES_READY = False
@@ -1099,19 +860,6 @@ SEED_ROLE_SYSTEM_PROMPTS = (
 # ITEM-10 b5: _ensure_seed_products 는 web_context.py 로 추출(상단 rebind).
 
 
-def _get_default_product_id(conn) -> int:
-    cur = conn.cursor()
-    cur.execute(
-        """
-SELECT Id FROM WebProducts
-WHERE IsActive = 1
-ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
-LIMIT 1
-        """
-    )
-    row = cur.fetchone()
-    cur.close()
-    return int((row or (0,))[0] or 0)
 
 
 def _list_products(conn, *, include_inactive: bool = False) -> list[dict[str, Any]]:
@@ -1204,77 +952,12 @@ ORDER BY SortOrder ASC, SchemaName ASC
     ]
 
 
-def _product_allowed_schemas(conn, product_id: int) -> list[str]:
-    if product_id <= 0:
-        return []
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder, SchemaName",
-        (int(product_id),),
-    )
-    rows = cur.fetchall() or []
-    cur.close()
-    return [str(r[0]) for r in rows if r and r[0]]
-
-
-def _product_has_datasource(conn, product_id: int) -> bool:
-    """TASK-0206 re-gate(5차): 제품에 datasource 가 바인딩(WebProducts.DatasourceKey 비-NULL)되어 있는지.
-
-    DB-단위 모델에서 데이터는 데이터소스에 종속된다 — 미바인딩 제품은 접근 0(allowed=[]). 조회 실패 시
-    보수적으로 False(미바인딩 취급, fail-closed).
-
-    TASK-0228 (1:N): primary(WebProducts.DatasourceKey) 가 NULL 이어도 join 테이블(WebProductDatasources)에
-    바인딩이 있으면 True. 단일 바인딩(레거시) 제품은 종전과 동일하게 primary 만으로 True."""
-    if product_id <= 0:
-        return False
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id = %s LIMIT 1", (int(product_id),))
-        r = cur.fetchone()
-        if r and r[0] and str(r[0]).strip():
-            return True
-        # 1:N: primary 미설정이어도 join 바인딩이 있으면 datasource 보유로 본다.
-        try:
-            cur.execute(
-                "SELECT 1 FROM WebProductDatasources WHERE ProductId = %s LIMIT 1", (int(product_id),)
-            )
-            return bool(cur.fetchone())
-        except Exception:
-            return False
-    except Exception:
-        return False
-    finally:
-        cur.close()
 
 
 
 
-def _product_allowed_schemas_for_datasource(conn, product_id: int, datasource_key: str | None) -> list[str]:
-    """TASK-0228 (1:N): 특정 (product, datasource) 의 접근가능 스키마(DB) 목록 — datasource 차원 격리.
 
-    datasource_key=None/'' 은 레거시(단일 MySQL/미차원화) 행 — DatasourceKey='' 으로 저장된 backfill
-    이전 행 또는 미바인딩 제품. 매칭은 소문자 비교."""
-    if product_id <= 0:
-        return []
-    dsk = (str(datasource_key).strip().lower() if datasource_key else "")
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute(
-                "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s AND LOWER(DatasourceKey) = %s "
-                "ORDER BY SortOrder, SchemaName",
-                (int(product_id), dsk),
-            )
-            return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0]]
-        except Exception:
-            # DatasourceKey 컬럼 부재(미이전) → 차원 없는 레거시 조회로 폴백.
-            cur.execute(
-                "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder, SchemaName",
-                (int(product_id),),
-            )
-            return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0]]
-    finally:
-        cur.close()
+
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -1283,9 +966,6 @@ def _product_allowed_schemas_for_datasource(conn, product_id: int, datasource_ke
 _VALID_PRODUCT_MODES: frozenset[str] = frozenset({"auto", "pinned"})
 
 
-def _normalize_product_mode(value: Any, default: str = "pinned") -> str:
-    text = str(value or "").strip().lower()
-    return text if text in _VALID_PRODUCT_MODES else default
 
 
 
@@ -1421,28 +1101,6 @@ def _last_step_at_for_run(conn, conversation_id: str, run_id: str) -> datetime |
     return _parse_kv_timestamp(str(raw))
 
 
-def _compute_display_status(
-    conn,
-    conversation_id: str,
-    last_status: str,
-    last_status_at: str,
-    last_status_run_id: str,
-) -> tuple[str, bool]:
-    """processing 대화가 만료 시간 동안 step/status 갱신이 없으면 (display_status, is_stale) = (stale_error, True) 를 반환.
-    그 외에는 (last_status, False)."""
-    raw_status = str(last_status or "").strip().lower()
-    if raw_status != "processing":
-        return raw_status, False
-    status_dt = _parse_kv_timestamp(last_status_at)
-    step_dt = _last_step_at_for_run(conn, conversation_id, last_status_run_id)
-    last_active = max(filter(None, [status_dt, step_dt]), default=None)
-    if last_active is None:
-        # 시각 정보 자체가 없으면 보수적으로 stale 처리하지 않는다 — 첫 step 등록 전 race 가능성.
-        return raw_status, False
-    elapsed = (datetime.utcnow() - last_active).total_seconds()
-    if elapsed > WEB_PROGRESS_STALE_TIMEOUT_SECONDS:
-        return "stale_error", True
-    return raw_status, False
 
 
 
@@ -1501,21 +1159,6 @@ VALUES (%s, %s, %s, %s, %s, %s)
     return new_id
 
 
-def _default_signup_role_id(conn) -> int:
-    cur = conn.cursor()
-    cur.execute(
-        """
-SELECT Id
-FROM WebRoles
-WHERE IsDefaultSignup = 1
-  AND IsActive = 1
-ORDER BY Id ASC
-LIMIT 1
-        """
-    )
-    row = cur.fetchone()
-    cur.close()
-    return int((row or (0,))[0] or 0)
 
 
 # ITEM-10 routers-p10: _migrate_legacy_accounts_to_rbac 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
@@ -1523,15 +1166,6 @@ LIMIT 1
 
 
 
-def _management_accounts(conn) -> list[dict[str, Any]]:
-    rows = _list_active_accounts(conn)
-    return [
-        row
-        for row in rows
-        if _account_has_permission(row, "console.manage")
-        and _account_has_permission(row, "account.role.assign")
-        and _account_has_permission(row, "role.permission.manage")
-    ]
 
 
 # ITEM-10 routers-p10: _ensure_bootstrap_admin 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
@@ -1567,94 +1201,6 @@ def _open_memory_connection(*, database: str | None = MEMORY_DB):
     return conn
 
 
-def _runtime_tables_available() -> bool:
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        try:
-            conn = _open_memory_connection()
-        except mysql.connector.Error as exc:
-            if int(getattr(exc, "errno", 0) or 0) == 1049:
-                return False
-            raise
-        try:
-            cur = conn.cursor()
-            try:
-                for table_name in ("WebAccounts", "WebRoles", "WebAuthSessions",
-                                   "WebProducts", "WebProductDatabases", "WebSystemPrompts",
-                                   "WebDashboardPreferences"):
-                    cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
-                    cur.fetchall()
-                for column_check in (
-                    "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
-                    "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
-                    # TASK-0277: 제품 바인딩 stable surrogate(DatasourceId) 컬럼 — 누락 시 1054 → full 마이그레이션.
-                    "SELECT `DatasourceId` FROM `WebProducts` LIMIT 1",
-                    "SELECT `DatasourceId` FROM `WebProductDatasources` LIMIT 1",
-                    "SELECT `DatasourceId` FROM `WebProductDatabases` LIMIT 1",
-                    # TASK-20260618T044318: DB allowlist rule/manual 구분 컬럼 — 누락 시 1054 → full 마이그레이션
-                    #   (rule 테이블/pending 도 같은 slow path 에서 생성됨).
-                    "SELECT `Source` FROM `WebProductDatabases` LIMIT 1",
-                    # TASK-20260618T061703: 다중 규칙 — SortOrder 누락 시 1054 → slow path 가 UNIQUE 제거 + SortOrder 추가.
-                    "SELECT `SortOrder` FROM `WebProductDatasourceDbRules` LIMIT 1",
-                ):
-                    cur.execute(column_check)
-                    cur.fetchall()
-            finally:
-                cur.close()
-        except mysql.connector.Error as exc:
-            if int(getattr(exc, "errno", 0) or 0) in (1146, 1054):
-                return False
-            raise
-        finally:
-            conn.close()
-        return True
-    try:
-        conn = _open_memory_connection()
-    except mysql.connector.Error as exc:
-        if int(getattr(exc, "errno", 0) or 0) == 1049:
-            return False
-        raise
-    try:
-        cur = conn.cursor()
-        try:
-            for table_name in (
-                "AgentMemoryKv",
-                "AgentMemoryMessages",
-                "AgentMemorySteps",
-                "WebAccounts",
-                "WebRoles",
-                "WebAuthSessions",
-                "AgentCoreConversations",
-                "WebProducts",
-                "WebProductDatabases",
-                "WebSystemPrompts",
-                "WebDashboardPreferences",
-            ):
-                cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
-                cur.fetchall()
-            # TASK-0047: 신규 컬럼 존재까지 검증해 신규 배포가 fast-path 를 우회하고
-            # `_ensure_web_tables` 의 idempotent ALTER 들을 한 번 더 실행하도록 한다.
-            # 컬럼 누락 시 errno 1054(Unknown column)가 발생 → False 반환 → full 마이그레이션 트리거.
-            for column_check in (
-                "SELECT `product_mode` FROM `AgentCoreConversations` LIMIT 1",
-                "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
-                "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
-                # TASK-0277: 제품 바인딩 stable surrogate(DatasourceId) 컬럼 — 누락 시 1054 → full 마이그레이션 트리거.
-                "SELECT `DatasourceId` FROM `WebProducts` LIMIT 1",
-                "SELECT `DatasourceId` FROM `WebProductDatasources` LIMIT 1",
-                "SELECT `DatasourceId` FROM `WebProductDatabases` LIMIT 1",
-            ):
-                cur.execute(column_check)
-                cur.fetchall()
-        finally:
-            cur.close()
-    except mysql.connector.Error as exc:
-        # 1146=Unknown table, 1054=Unknown column — 둘 다 신규 마이그레이션이 필요함을 의미.
-        if int(getattr(exc, "errno", 0) or 0) in (1146, 1054):
-            return False
-        raise
-    finally:
-        conn.close()
-    return True
 
 
 # ITEM-10 routers-p10: _ensure_dynamic_permissions_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
@@ -1705,62 +1251,6 @@ def _runtime_tables_available() -> bool:
 # ITEM-10 routers-p10: _ensure_web_conversation_attachment_provider_files_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _log_search_activity(
-    conn,
-    account_id: int,
-    action: str,
-    target_owner_id: int | None,
-    query: str | None,
-    matched_count: int,
-) -> None:
-    """REQ-20260518-0010 (TASK-0072): cross-account body search audit. PIPA §29.
-
-    TASK-0086 (2026-05-20): legacy `WebAccountActivity` INSERT 제거 — TASK-0073
-    Phase A2 의 dual write 종료. dispatcher mirror (`record_audit_event` →
-    WebAuditEvents) 가 단일 source-of-truth. signature transparent 보존 (caller
-    변경 0). dispatcher fail 시 stderr log 만 + main flow 진행 (user endpoint
-    fail-open 패턴 TASK-0072 답습).
-
-    query 평문 저장 금지 — SHA-256 hex 만 저장.
-    `ChangeJson._legacy_source="WebAccountActivity"` 표식은 TASK-0086 backup
-    (`artifacts/mysql-backup/WebAccountActivity-*.sql`) cross-reference 위해 보존.
-    """
-    import hashlib
-    query_hash: str | None = None
-    if query:
-        normalized = query.strip()
-        if normalized:
-            query_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    # TASK-0086 (2026-05-20): dispatcher only — WebAccountActivity legacy table DROP 완료.
-    try:
-        record_audit_event(
-            conn,
-            actor={
-                "account_id": int(account_id),
-                "actor_type": "account",
-            },
-            action=str(action)[:64],
-            resource_type="conversation",
-            resource_id=str(target_owner_id) if target_owner_id is not None else None,
-            change_json={
-                "query_hash": query_hash,
-                "matched_count": int(matched_count),
-                "_legacy_source": "WebAccountActivity",
-            },
-            target_account_id=int(target_owner_id) if target_owner_id is not None else None,
-        )
-        try:
-            conn.commit()
-        except Exception:
-            pass
-    except Exception as exc:
-        try:
-            import sys as _sys
-            _sys.stderr.write(
-                f"[TASK-0086] _log_search_activity dispatcher failed: {exc}\n"
-            )
-        except Exception:
-            pass
 
 
 # ITEM-10 routers-p10: _ensure_web_audit_events_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
@@ -1927,57 +1417,8 @@ def record_audit_event(
 # ITEM-10 routers-p10: _ensure_llm_quota_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _account_effective_quota(conn, account_id: int, role_id: int, quota_type: str) -> "int | None":
-    """계정 override → 역할 기본 → None(무제한) 순 유효 한도. 0=무제한(명시). (보안 ④)"""
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT TokenLimit FROM WebAccountTokenQuotas WHERE AccountId = %s AND QuotaType = %s LIMIT 1",
-            (int(account_id), str(quota_type)),
-        )
-        r = cur.fetchone()
-        if r is not None:
-            return int(r[0] or 0)
-        if role_id:
-            cur.execute(
-                "SELECT TokenLimit FROM WebRoleTokenQuotas WHERE RoleId = %s AND QuotaType = %s LIMIT 1",
-                (int(role_id), str(quota_type)),
-            )
-            rr = cur.fetchone()
-            if rr is not None:
-                return int(rr[0] or 0)
-        return None
-    finally:
-        cur.close()
 
 
-def _account_period_usage_tokens(account_id: int, quota_type: str) -> int:
-    """PG agent_runtime.llm_usage 에서 본인 소유 대화의 토큰 합 — 'daily'=달력 당일,
-    'monthly'=달력 당월(date_trunc). best-effort(실패 시 0=무제한 취급, fail-open)."""
-    trunc = "day" if quota_type == "daily" else "month"
-    try:
-        from shared.db import _pg_connect
-        pg = _pg_connect()
-    except Exception:
-        return 0
-    try:
-        with pg.cursor() as cur:
-            cur.execute(
-                "SELECT COALESCE(sum(u.total_tokens), 0) "
-                "FROM agent_runtime.llm_usage u "
-                "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
-                f"WHERE c.owner_account_id = %s AND u.created_at >= date_trunc('{trunc}', now())",
-                (int(account_id),),
-            )
-            row = cur.fetchone()
-            return int((row[0] if row else 0) or 0)
-    except Exception:
-        return 0
-    finally:
-        try:
-            pg.close()
-        except Exception:
-            pass
 
 
 def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
@@ -2027,74 +1468,8 @@ def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
 _GROUP_MEMBERS_BACKFILL_DONE = False
 
 
-def _backfill_group_conversation_members_once() -> None:
-    """feature-0009: 기존 단일소유 대화 → owner member backfill (멱등, 프로세스당 1회, best-effort).
-
-    멤버십 정본은 PG `agent_runtime.conversation_members`. READ_BACKEND != postgres 또는 PG
-    미가용 시 skip(레거시/테스트 환경). ON CONFLICT DO NOTHING 이라 재실행 안전(이미 멤버는 skip).
-    실패는 startup 흐름을 막지 않는다(다음 startup 에 재시도).
-    """
-    global _GROUP_MEMBERS_BACKFILL_DONE
-    if _GROUP_MEMBERS_BACKFILL_DONE:
-        return
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
-        _GROUP_MEMBERS_BACKFILL_DONE = True
-        return
-    try:
-        from shared.db import _pg_connect
-        from modules import group_members
-        pg = _pg_connect()
-        try:
-            inserted = group_members.backfill_conversation_members(pg)
-            print(f"[web.startup] group_members backfill: inserted={inserted}")
-        finally:
-            pg.close()
-        _GROUP_MEMBERS_BACKFILL_DONE = True
-    except Exception as exc:
-        print(f"[web.startup] group_members backfill skipped: {exc}")
 
 
-def _schedule_memory_runtime_bootstrap() -> None:
-    global _MEMORY_BOOTSTRAP_RUNNING
-    if _MEMORY_SCHEMA_READY:
-        return
-    try:
-        if _runtime_tables_available():
-            try:
-                catchup_conn = _open_memory_connection()
-                try:
-                    _ensure_seed_catchup(catchup_conn)
-                finally:
-                    catchup_conn.close()
-            except Exception as exc:
-                print(f"[web.startup] seed catchup skipped: {exc}")
-            _backfill_group_conversation_members_once()
-            _mark_memory_runtime_ready()
-            return
-    except Exception as exc:
-        print(f"[web.startup] memory probe failed: {exc}")
-        return
-    with _MEMORY_SCHEMA_INIT_LOCK:
-        if _MEMORY_SCHEMA_READY or _MEMORY_BOOTSTRAP_RUNNING:
-            return
-        _MEMORY_BOOTSTRAP_RUNNING = True
-
-    def _run_bootstrap() -> None:
-        global _MEMORY_BOOTSTRAP_RUNNING
-        try:
-            _ensure_memory_runtime_ready()
-            _backfill_group_conversation_members_once()
-        except Exception as exc:
-            print(f"[web.startup] memory bootstrap failed: {exc}")
-        finally:
-            with _MEMORY_SCHEMA_INIT_LOCK:
-                _MEMORY_BOOTSTRAP_RUNNING = False
-
-    threading.Thread(
-        target=_run_bootstrap,
-        name="web-memory-bootstrap",
-        daemon=True,
-    ).start()
 
 
 # ITEM-10 routers-p8: _ensure_web_tables 는 routers/_bootstrap_schema.py 로 이동(app.X 동적 — _WEB_TABLES_READY 는 app 속성 대입).
@@ -2109,15 +1484,6 @@ def _connect_memory():
         raise
 
 
-def _ensure_memory_runtime_ready() -> None:
-    if _MEMORY_SCHEMA_READY:
-        return
-    with _MEMORY_SCHEMA_INIT_LOCK:
-        if _MEMORY_SCHEMA_READY:
-            return
-        ensure_memory_schema()
-        _ensure_web_tables()
-        _mark_memory_runtime_ready()
 
 
 # REQ-20260518-0010 (TASK-0072) — body search safety net helpers.
@@ -2129,28 +1495,8 @@ _RATE_LIMIT_LOCK = threading.Lock()
 _COLLATION_AUDIT_DONE = False
 
 
-def _escape_like_for_search(s: str) -> str:
-    """REQ-20260518-0010 (TASK-0072): LIKE escape paired with `ESCAPE '!'`.
-    Order matters: ! must be escaped first (otherwise % / _ replacements would
-    inject unescaped !). Escapes !, %, _."""
-    return s.replace("!", "!!").replace("%", "!%").replace("_", "!_")
 
 
-def _normalize_search_query(q: str | None) -> str | None:
-    """Returns sanitized q (strip + length 2-200) or None if it fails the gate.
-    None signals 'no body search'. REQ-20260519-0005 (TASK-0077): min char gate
-    3 → 2 (사용자 결정 — 한국어 grapheme 2 char 도 의미 있는 검색어). adversarial
-    risk 4: gate is applied to the *raw* user input before escape so `q="%%"`
-    (post-escape len 4 but 0 literal chars) is rejected for falling under the
-    raw-len-2 minimum."""
-    if not q:
-        return None
-    s = str(q).strip()
-    if len(s) < 2:
-        return None
-    if len(s) > 200:
-        s = s[:200]
-    return s
 
 
 def _search_rate_limit_check(account_id: int, max_per_min: int = 10) -> bool:
@@ -2206,12 +1552,6 @@ _LOGIN_IP_BUCKETS_MAX_KEYS = 4096
 # feature-0009 gc-unread-badge: 사이드바 "안 읽은 @멘션" 카운트용 SQL regex.
 # 정본은 canonical 멘션 모듈(modules/mentions.sql_mention_regex) — 파서·FE·SQL 카운트가 한
 # 문법을 공유하도록 그쪽에 두고 본 래퍼는 lazy import 로 위임한다(app.py import 스타일 일치).
-def _mention_count_regex(username: str | None) -> str | None:
-    try:
-        from modules import mentions as _mentions
-        return _mentions.sql_mention_regex(username)
-    except Exception:
-        return None
 
 
 # ITEM-10 routers-p5: _list_conversations_pg 는 routers/_conv_store.py 로 이동(app.X 동적).
@@ -2271,57 +1611,6 @@ _ARCHIVED_CONVERSATION_REASON = "이 대화는 보관되어 더 이상 진행할
 
 
 
-def _block_conversations_for_product(
-    product_id: int,
-    reason: str,
-    *,
-    conn=None,
-) -> int:
-    """제품 삭제 시 그 제품을 pinned 한 대화를 일괄 차단한다. Returns 차단된 행 수.
-
-    이미 차단된 대화(blocked_at IS NOT NULL)는 재차단하지 않는다(reason/시각 보존).
-    backend-aware. production(PG) 경로가 정본. 호출자가 차단 실패를 loud 하게 처리할
-    수 있도록 예외는 전파한다(삭제 핸들러가 catch + 경고 로깅).
-    """
-    if not product_id or int(product_id) <= 0:
-        return 0
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        from shared.db import _pg_connect
-        pg = _pg_connect()
-        try:
-            with pg.cursor() as pgcur:
-                pgcur.execute(
-                    "UPDATE agent_runtime.core_conversations "
-                    "SET blocked_at = now(), blocked_reason = %s "
-                    "WHERE product_id = %s AND blocked_at IS NULL",
-                    (reason, int(product_id)),
-                )
-                affected = int(pgcur.rowcount or 0)
-            pg.commit()
-            return affected
-        finally:
-            pg.close()
-    own_conn = conn is None
-    if own_conn:
-        conn = _connect_memory()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE AgentCoreConversations "
-            "SET blocked_at = NOW(), blocked_reason = %s "
-            "WHERE product_id = %s AND blocked_at IS NULL",
-            (reason, int(product_id)),
-        )
-        affected = int(cur.rowcount or 0)
-        cur.close()
-        try:
-            conn.commit()
-        except Exception:
-            pass
-        return affected
-    finally:
-        if own_conn and conn is not None:
-            conn.close()
 
 
 
@@ -2331,28 +1620,6 @@ def _conversation_owned_by_account(conn, conversation_id: str, account_id: int) 
     return owner_account_id is not None and owner_account_id == int(account_id)
 
 
-def _account_is_conversation_member(conversation_id: str, account_id: int) -> bool:
-    """feature-0009: account 가 그룹 대화의 멤버인지 (PG agent_runtime.conversation_members 정본).
-
-    "열람 ≠ 발화"(FUNCTION.md §2 REQ-GC-R7): 멤버면 datasource 권한이 없어도 대화를
-    열람한다. 멤버십은 PG-native 개념이라 READ_BACKEND 무관하게 PG 를 조회한다. 조회 실패는
-    멤버 아님으로 폴백(owner 경로는 _conversation_owned_by_account 가 별도 보장).
-    """
-    if not conversation_id or not account_id:
-        return False
-    try:
-        from shared.db import _pg_connect
-        from modules import group_members
-        pg = _pg_connect()
-        try:
-            return group_members.is_member(pg, conversation_id, int(account_id))
-        finally:
-            pg.close()
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "_account_is_conversation_member: lookup failed", exc_info=True,
-        )
-        return False
 
 
 def _account_can_access_conversation(
@@ -2382,33 +1649,6 @@ def _account_can_access_conversation(
 
 
 
-def _ensure_owner_membership(conversation_id: str) -> None:
-    """대화 owner 를 conversation_members 에 멱등 보장 (role='owner'). 공유 생성·join 시 호출.
-    owner 가 멤버 테이블에 누락되면 member_count under-count → 공유 직후 비멘션 메시지가 assistant 로
-    오라우팅되는 버그(#2)가 발생하므로, 그룹 전환 시점에 owner 행을 자가치유한다. best-effort."""
-    if not conversation_id:
-        return
-    try:
-        from shared.db import _pg_connect
-        from modules import group_members
-        pg = _pg_connect()
-        try:
-            with pg.cursor() as cur:
-                cur.execute(
-                    "SELECT owner_account_id FROM agent_runtime.core_conversations WHERE conversation_id = %s LIMIT 1",
-                    (conversation_id,),
-                )
-                row = cur.fetchone()
-            owner_id = int(row[0]) if row and row[0] else 0
-            if owner_id:
-                # role='owner' 고정 — ON CONFLICT DO UPDATE 가 기존 owner 를 member 로 강등하지 않도록.
-                group_members.add_member(
-                    pg, conversation_id, owner_id, role="owner", invited_by_account_id=owner_id,
-                )
-        finally:
-            pg.close()
-    except Exception:
-        logging.getLogger(__name__).warning("_ensure_owner_membership failed", exc_info=True)
 
 
 
@@ -2508,110 +1748,18 @@ def _attachment_size_caps() -> tuple[int, int, int]:
     )
 
 
-def _hmac_filename(filename: str) -> str:
-    """D12 tenant-keyed HMAC. `ATTACHMENT_AUDIT_HMAC_KEY` 가 비어 있으면 일관된
-    fallback (`_FALLBACK_AUDIT_HMAC_KEY`) — dev 환경에서 audit row 가 생성 가능
-    하도록 graceful. 운영 환경은 .env 필수.
-    """
-    key = (os.getenv("ATTACHMENT_AUDIT_HMAC_KEY") or "").strip()
-    if not key:
-        key = "_FALLBACK_AUDIT_HMAC_KEY__set_via_env_for_prod"
-    name = (filename or "").strip().encode("utf-8")
-    return hmac.new(key.encode("utf-8"), name, hashlib.sha256).hexdigest()
 
 
-def _extension_bucket(filename: str) -> str:
-    """D12 — `.csv` / `.xlsx` / `.pdf` / `.png` / ... 만 audit 에 노출."""
-    name = (filename or "").strip().lower()
-    if "." not in name:
-        return ".unknown"
-    ext = name.rsplit(".", 1)[1]
-    safe_ext = re.sub(r"[^a-z0-9]", "", ext)[:8]
-    return f".{safe_ext}" if safe_ext else ".unknown"
 
 
-def _size_bucket(size_bytes: int) -> str:
-    """D12 — coarse bucket (audit 노출용)."""
-    n = int(size_bytes or 0)
-    if n < 1_024:
-        return "<1KB"
-    if n < 10_240:
-        return "1-10KB"
-    if n < 102_400:
-        return "10-100KB"
-    if n < 1_048_576:
-        return "100KB-1MB"
-    if n < 10_485_760:
-        return "1-10MB"
-    if n < 26_214_400:
-        return "10-25MB"
-    return ">25MB"
 
 
-def _infer_kind(filename: str, mime_type: str) -> str:
-    """서비스 자체 kind 추론. 확장자 우선 → MIME 힌트 → text/* 패턴 → 'other'.
-    클라이언트 MIME 을 신뢰하지 않으므로 확장자가 일치하면 확장자 결과를 사용한다."""
-    name = (filename or "").strip().lower()
-    ext = name.rsplit(".", 1)[1] if "." in name else ""
-    if ext:
-        kind = _EXTENSION_KIND_MAP.get(ext)
-        if kind:
-            return kind
-    mime_lower = (mime_type or "").lower().strip()
-    kind = _MIME_KIND_HINTS.get(mime_lower)
-    if kind:
-        return kind
-    if mime_lower.startswith("text/"):
-        return "text"
-    return "other"
 
 
-def _account_role_key(account: dict[str, Any] | None) -> str:
-    """role 객체에서 RoleKey 추출. account 에 role row join 결과가 있으면 사용,
-    없으면 빈 문자열."""
-    if not account:
-        return ""
-    role = account.get("role")
-    if isinstance(role, dict):
-        return str(role.get("key") or role.get("RoleKey") or "").strip()
-    return str(account.get("role_key") or "").strip()
 
 
-def _account_is_pending(account: dict[str, Any] | None) -> bool:
-    """D21 / R-F14 — pending role 식별. application-level bytes deny 사용."""
-    return _account_role_key(account) == "pending"
 
 
-def _account_can_access_attachment(
-    conn,
-    account: dict[str, Any] | None,
-    attachment_row: dict[str, Any] | None,
-    own_permission: str,
-    any_permission: str | None = None,
-) -> bool:
-    """`_account_can_access_conversation` 의 attachment-specific 변종.
-
-    attachment 존재 + 본인 소유 conv 인지 확인 후 own_permission 검사. any_permission
-    이 있으면 conv 소유 무관 통과. soft-deleted 첨부 (DeletedAt NOT NULL) 는 거부 —
-    조회는 reconciliation worker 등 운영 path 만 (이 helper 미사용).
-    """
-    if not account or not attachment_row:
-        return False
-    if attachment_row.get("DeletedAt"):
-        return False
-    if any_permission and _account_has_permission(account, any_permission):
-        return True
-    if not _account_has_permission(account, own_permission):
-        return False
-    conversation_id = str(attachment_row.get("ConversationId") or "")
-    if not conversation_id:
-        return False
-    acct_id = int(account["id"])
-    if _conversation_owned_by_account(conn, conversation_id, acct_id):
-        return True
-    # feature-0009: 그룹 대화 멤버도 첨부 접근 가능 (첨부는 전원 공유, REQ-GC-R6). LLM 맥락
-    # 주입은 발신자-한정(CSO F1, S3) 으로 별도 제한 — 여기는 열람/공유 경계.
-    return _account_is_conversation_member(conversation_id, acct_id)
 
 
 def _check_attachment_size_caps(
@@ -2739,260 +1887,36 @@ def _load_attachment_row(conn, attachment_id: int) -> dict[str, Any] | None:
 #      직전 최신 버전을 SupersededAt=NOW() 로 마킹(목록엔 최신만 노출).
 _ASSISTANT_EDIT_COUNT_CAP = 5          # turn 당 최대 materialize 첨부 수
 _ASSISTANT_EDIT_SIZE_CAP_BYTES = 1024 * 1024   # 단일 materialize 내용 1MB (텍스트 계열)
-def _attachment_edit_block_spans(answer: str) -> list[tuple[int, int, str, str]]:
-    """답변에서 attachment-edit 블록들의 (open_idx, close_idx, header_line, body) 를 라인 기반으로
-    추출한다(TASK-0286 보안리뷰 MAJOR 수정).
-
-    기존 lazy 정규식 ```` ```attachment-edit\\n(.*?)\\n``` ```` 은 **편집 대상 파일 본문에 ``` 라인이
-    포함**되면(markdown/텍스트 등) 거기서 조기 종료해 본문을 절단 저장하고, strip 시 잔여 본문이
-    평문으로 노출됐다. 라인 기반으로 바꿔, 여는 ```` ```attachment-edit ```` 다음 줄을 JSON 헤더로,
-    그 이후 (다음 여는 펜스 직전까지의) **마지막 단독 ``` 줄**을 닫는 펜스로 본다 → 본문 내부의
-    ``` 코드펜스를 허용한다(닫는 펜스는 항상 블록의 가장 마지막 ``` 이므로).
-    """
-    text = answer or ""
-    if "attachment-edit" not in text:
-        return []
-    lines = text.split("\n")
-    n = len(lines)
-    opens = [i for i, ln in enumerate(lines) if ln.strip().startswith("```attachment-edit")]
-    spans: list[tuple[int, int, str, str]] = []
-    for k, oi in enumerate(opens):
-        next_open = opens[k + 1] if k + 1 < len(opens) else n
-        if oi + 1 >= n:
-            continue
-        header_line = lines[oi + 1]
-        # 닫는 펜스: (헤더 다음 .. 다음 블록 직전) 중 정확히 "```" 인 **마지막** 줄.
-        close_idx = -1
-        for j in range(min(next_open, n) - 1, oi + 1, -1):
-            if lines[j].strip() == "```":
-                close_idx = j
-                break
-        if close_idx < 0:
-            continue
-        body = "\n".join(lines[oi + 2:close_idx])
-        spans.append((oi, close_idx, header_line, body))
-    return spans
 
 
 
 
-def _next_version_filename(original: str, version_number: int) -> str:
-    """원본 파일명에서 버전 접미사를 붙인 기본 파일명 생성(LLM 이 filename 미지정 시).
-    `report.csv` + v2 → `report_v2.csv`."""
-    name = (original or "edited.txt").strip() or "edited.txt"
-    if "." in name:
-        stem, ext = name.rsplit(".", 1)
-        return f"{stem}_v{version_number}.{ext}"
-    return f"{name}_v{version_number}"
 
 
 # ITEM-10 routers-p6: _materialize_assistant_attachment_edits 는 routers/_conv_store.py 로 이동(app.X 동적).
 
 
-def _strip_attachment_edit_blocks(answer: str, materialized: list[dict[str, Any]]) -> str:
-    """답변에서 ```attachment-edit``` 블록을 제거하고 "📎 수정본 전달" 명시 문구로 치환(TASK-0286).
-
-    사용자에게 전체 수정본 본문이 텍스트로 노출되는 것을 막는다 — 변경점은 diff 블록으로, 전체
-    수정본은 다운로드 가능한 첨부 새 버전(materialize)으로 전달한다. materialize 가 실패(파싱은
-    됐으나 가드 거부 등)한 블록도 제거해 본문 노출을 막는다(fail-open 일관). 전부 제거돼 본문이
-    비면(블록만 있고 materialize 실패한 드문 경우) 원문을 유지해 빈 답변을 방지한다.
-    """
-    spans = _attachment_edit_block_spans(answer)
-    if not spans:
-        return answer
-    lines = (answer or "").split("\n")
-    # 각 블록의 (open..close) 라인 전체를 제거 — 본문 내 ``` 가 있어도 절단/잔여 노출이 없다.
-    remove: set[int] = set()
-    for _oi, _ci, _h, _b in spans:
-        remove.update(range(_oi, _ci + 1))
-    stripped = "\n".join(ln for i, ln in enumerate(lines) if i not in remove)
-    # 블록 제거로 생긴 과도한 빈 줄 정리.
-    stripped = re.sub(r"\n{3,}", "\n\n", stripped).strip()
-    if materialized:
-        notes = "\n".join(
-            f"📎 수정본 **{a.get('original_filename') or '파일'}** (v{a.get('version_number') or 2}) 을(를) "
-            f"첨부 파일로 전달했습니다. 위 변경점을 확인하고 첨부에서 다운로드하세요."
-            for a in materialized
-        )
-        stripped = (stripped + ("\n\n" if stripped else "") + notes).strip()
-    return stripped or answer
-
-
-def _update_assistant_message_content(conn, conversation_id: str, message_id: int, content: str) -> None:
-    """assistant 메시지 content 갱신(TASK-0286 attachment-edit strip 반영을 DB 에도 영속).
-
-    `_load_latest_assistant_message` 와 동일 라우팅(PG 우선·MySQL fallback)을 따른다 — message_id 는
-    그 backend 의 id 이므로 정합. history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다.
-    best-effort: 실패해도 사용자 응답을 막지 않는다(render_output 은 이미 strip 됨).
-    """
-    if not message_id or not conversation_id:
-        return
-    try:
-        from shared.db import _pg_connect
-        pg = _pg_connect()
-        try:
-            with pg.cursor() as pgcur:
-                pgcur.execute(
-                    "UPDATE agent_runtime.messages SET content = %s WHERE id = %s AND conversation_id = %s",
-                    (content, int(message_id), conversation_id),
-                )
-            pg.commit()
-        finally:
-            pg.close()
-        return
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "_update_assistant_message_content: PG update failed (msg=%s) — MySQL fallback", message_id, exc_info=True)
-    try:
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "UPDATE AgentMemoryMessages SET Content = %s WHERE Id = %s AND ConversationId = %s",
-                (content, int(message_id), conversation_id),
-            )
-            conn.commit()
-        finally:
-            cur.close()
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "_update_assistant_message_content: MySQL update failed (msg=%s)", message_id, exc_info=True)
-
-
-def _extract_intent_from_content(content: str) -> str:
-    text = (content or "").strip()
-    for prefix in ("실행 완료:", "완료:"):
-        if text.startswith(prefix):
-            return text[len(prefix) :].strip()
-    return ""
-
-
-def _normalize_topic(value: Any, fallback: str = "(미설정)") -> str:
-    text = str(value or "").strip()
-    if not text:
-        return fallback
-    return text
-
-
-def _normalize_step_text(value: Any, max_len: int = 500) -> str:
-    text = re.sub(r"\s+", " ", str(value or "").strip())
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 1].rstrip() + "…"
-
-
-def _extract_sql_tables(sql_text: str) -> list[str]:
-    sql = str(sql_text or "")
-    if not sql:
-        return []
-    seen: set[str] = set()
-    tables: list[str] = []
-    for schema, table in re.findall(r"(?:FROM|JOIN|UPDATE|INTO)\s+`?([A-Za-z0-9_]+)`?\.`?([A-Za-z0-9_]+)`?", sql, re.IGNORECASE):
-        ref = f"{schema}.{table}"
-        if ref in seen:
-            continue
-        seen.add(ref)
-        tables.append(ref)
-    return tables
-
-
-def _derive_step_work(tool: str, args: dict[str, Any] | None = None, sql_text: str = "") -> str:
-    payload = args if isinstance(args, dict) else {}
-    tool_name = str(tool or "").strip().lower()
-    if tool_name == "list_schemas":
-        return "사용자 스키마 목록을 확인한다"
-    if tool_name == "describe_schema":
-        schema = str(payload.get("schema_name") or "").strip()
-        return f"`{schema}` 스키마의 테이블 목록을 확인한다" if schema else "스키마의 테이블 목록을 확인한다"
-    if tool_name == "describe_table":
-        schema = str(payload.get("schema_name") or "").strip()
-        table = str(payload.get("table_name") or "").strip()
-        if schema and table:
-            return f"`{schema}`.`{table}` 구조를 확인한다"
-        if table:
-            return f"`{table}` 테이블 구조를 확인한다"
-        return "테이블 구조를 확인한다"
-    if tool_name == "search_tables":
-        keyword = str(payload.get("keyword") or "").strip()
-        schema = str(payload.get("schema_name") or "").strip()
-        if schema and keyword:
-            return f"`{schema}`에서 `{keyword}` 관련 테이블을 찾는다"
-        if keyword:
-            return f"`{keyword}` 관련 테이블을 찾는다"
-        return "관련 테이블을 찾는다"
-    if tool_name == "get_sample_rows":
-        schema = str(payload.get("schema_name") or "").strip()
-        table = str(payload.get("table_name") or "").strip()
-        try:
-            limit = int(payload.get("limit") or 5)
-        except Exception:
-            limit = 5
-        if schema and table:
-            return f"`{schema}`.`{table}` 샘플 {limit}행을 확인한다"
-        if table:
-            return f"`{table}` 샘플 {limit}행을 확인한다"
-        return "샘플 데이터를 확인한다"
-    if tool_name == "get_table_indexes":
-        schema = str(payload.get("schema_name") or "").strip()
-        table = str(payload.get("table_name") or "").strip()
-        if schema and table:
-            return f"`{schema}`.`{table}` 인덱스를 확인한다"
-        return "테이블 인덱스를 확인한다"
-    if tool_name == "get_foreign_keys":
-        schema = str(payload.get("schema_name") or "").strip()
-        table = str(payload.get("table_name") or "").strip()
-        if schema and table:
-            return f"`{schema}`.`{table}` 외래키 관계를 확인한다"
-        return "테이블 외래키 관계를 확인한다"
-    if tool_name == "explain_query":
-        return "SQL 실행 계획을 확인한다"
-    if tool_name == "execute_sql":
-        sql = sql_text or str(payload.get("sql", "") or "")
-        tables = _extract_sql_tables(sql)
-        target = ", ".join(tables[:2]) if tables else ""
-        aggregate = bool(re.search(r"\b(COUNT|SUM|AVG|MIN|MAX)\s*\(|\bGROUP\s+BY\b", sql, re.IGNORECASE))
-        if target and aggregate:
-            return f"`{target}` 데이터를 집계한다"
-        if target:
-            return f"`{target}` 데이터를 조회한다"
-        return "SQL을 실행한다"
-    if tool_name:
-        return f"`{tool_name}` 도구를 실행한다"
-    return "단계를 수행한다"
 
 
 
 
-def _sort_dt_key(value: Any) -> float:
-    text = str(value or "").strip()
-    if not text:
-        return 0.0
-    try:
-        parsed = datetime.fromisoformat(text)
-    except Exception:
-        try:
-            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S.%f")
-        except Exception:
-            try:
-                parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
-            except Exception:
-                return 0.0
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.timestamp()
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ITEM-10 routers-p6: _load_step_meta 는 routers/_conv_store.py 로 이동(app.X 동적).
 
 
-def _stringify_summary(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, ensure_ascii=False)
-    except Exception:
-        return str(value)
 
 
 
@@ -3015,81 +1939,10 @@ _ASK_SUCCESS_STATUSES = frozenset({"done", "canceled"})
 # ITEM-10 routers-p6: _load_steps_for_message 는 routers/_conv_store.py 로 이동(app.X 동적).
 
 
-def _extract_rationale(steps: list[dict[str, Any]]) -> str:
-    if not steps:
-        return ""
-    for step in reversed(steps):
-        summary = step.get("result_summary")
-        if summary:
-            return _stringify_summary(summary)
-        err = step.get("error")
-        if err:
-            return str(err)
-    return ""
 
 
-def _summarize_rationale(steps: list[dict[str, Any]]) -> str:
-    if not steps:
-        return ""
-    reasons: list[str] = []
-    works: list[str] = []
-    tables: set[str] = set()
-    table_re = re.compile(r"(?:FROM|JOIN)\s+`?([A-Za-z0-9_]+)`?\.`?([A-Za-z0-9_]+)`?", re.IGNORECASE)
-    for step in steps:
-        reason = str(step.get("reason") or "").strip()
-        if reason and reason not in reasons:
-            reasons.append(reason)
-        work = str(step.get("work") or "").strip()
-        if work and work not in works:
-            works.append(work)
-        sql = str(step.get("sql") or "")
-        if sql:
-            for match in table_re.findall(sql):
-                if match and match[0] and match[1]:
-                    tables.add(f"{match[0]}.{match[1]}")
-    lines: list[str] = []
-    if reasons:
-        lines.append("단계별 근거:")
-        for idx, reason in enumerate(reasons, 1):
-            lines.append(f"{idx}. {reason}")
-    elif works:
-        lines.append("수행 단계:")
-        for idx, work in enumerate(works, 1):
-            lines.append(f"{idx}. {work}")
-    if tables:
-        lines.append("")
-        lines.append("참고 테이블:")
-        lines.append(", ".join(sorted(tables)))
-    if not lines:
-        return _extract_rationale(steps)
-    return "\n".join(lines).strip()
 
 
-def _summarize_answer(steps: list[dict[str, Any]], csv_paths: list[str] | None = None) -> str:
-    if not steps:
-        return ""
-    last_step = steps[-1]
-    work = str(last_step.get("work") or "").strip()
-    intent = str(last_step.get("intent") or "").strip()
-    summary = last_step.get("result_summary")
-    rows = None
-    cols = None
-    if isinstance(summary, dict):
-        rows = summary.get("rows")
-        cols = summary.get("cols")
-    parts: list[str] = []
-    if work:
-        parts.append(f"실행 완료: {work}")
-    elif intent:
-        parts.append(f"실행 완료: {intent}")
-    if rows is not None:
-        if cols is not None:
-            parts.append(f"결과: {rows}행, {cols}열")
-        else:
-            parts.append(f"결과: {rows}행")
-    if csv_paths:
-        parts.append(f"결과셋: {len(csv_paths)}개 (CSV 미리보기에서 확인)")
-    return "\n".join(parts).strip()
 
 
 # ITEM-10 routers-p5: _get_agent_core_history 는 routers/_conv_store.py 로 이동(app.X 동적).
@@ -3105,109 +1958,23 @@ def _summarize_answer(steps: list[dict[str, Any]], csv_paths: list[str] | None =
 
 
 
-def _msg_outside_window(msg_id, created_at, meta, role, window) -> bool:
-    """이 표시 메세지가 뷰어의 가시 window 밖(숨겨야 하나)인가. share-visibility-window.
-
-    window = {floor_id, ceiling_id, joined_at, floor_ca}. 가시범위 = [floor,ceiling] ∪ [joined,∞).
-    추가로 owner-answer 누출면(display-tag, Step7): 뷰어 floor 아래 문맥을 그린 assistant 답변 은닉.
-    비교 불가/파싱 불가는 fail-closed(숨김).
-    """
-    try:
-        floor_id = window.get("floor_id")
-        ceiling_id = window.get("ceiling_id")
-        joined_at = window.get("joined_at")
-        if floor_id is not None and int(msg_id) < int(floor_id):
-            return True
-        if ceiling_id is not None and int(msg_id) > int(ceiling_id):
-            if joined_at is None:
-                return True
-            try:
-                if created_at is None or created_at < joined_at:
-                    return True
-            except TypeError:
-                return True
-        # owner-answer display-tag: assistant 답변이 뷰어 floor 아래 문맥을 그렸으면 숨김.
-        if str(role or "").lower() == "assistant" and isinstance(meta, dict):
-            vf = window.get("floor_ca")
-            if vf is not None:
-                if meta.get("recall_full"):
-                    return True
-                rfc = meta.get("recall_floor_created_at")
-                if rfc is not None:
-                    from datetime import datetime as _dt
-                    rfc_dt = _dt.fromisoformat(rfc) if isinstance(rfc, str) else rfc
-                    if rfc_dt < vf:
-                        return True
-    except Exception:
-        return True  # 어떤 비교 실패도 fail-closed(숨김).
-    return False
 
 
 # ITEM-10 routers-p5: _get_history 는 routers/_conv_store.py 로 이동(app.X 동적).
 
 
-def _safe_shared_path(path: str) -> Path | None:
-    if not path:
-        return None
-    try:
-        resolved = Path(path).expanduser().resolve()
-    except Exception:
-        return None
-    if resolved == SHARED_ROOT or SHARED_ROOT in resolved.parents:
-        return resolved
-    return None
-
-
-def _find_latest_log(suffix: str, since_ts: float) -> Path | None:
-    if not LOG_DIR.exists():
-        return None
-    latest: tuple[float, Path] | None = None
-    for item in LOG_DIR.glob(f"*_{suffix}.log"):
-        try:
-            mtime = item.stat().st_mtime
-        except Exception:
-            continue
-        if mtime < since_ts:
-            continue
-        if latest is None or mtime > latest[0]:
-            latest = (mtime, item)
-    return latest[1] if latest else None
-
-
-def _read_executed_sql(path: Path | None) -> str:
-    if not path or not path.exists():
-        return ""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-    if "SQL:" not in text:
-        return text.strip()
-    sql_part = text.split("SQL:", 1)[1]
-    return sql_part.strip()
-
-
-def _extract_csv_paths(output: str) -> list[str]:
-    if not output:
-        return []
-    paths: list[str] = []
-    for match in re.finditer(r"CSV 저장:\s*(/[^\s]+\.csv)", output):
-        paths.append(match.group(1))
-    return paths
 
 
 
 
 
 
-def _is_question_text(text: str) -> bool:
-    lowered = (text or "").lower()
-    if not lowered:
-        return False
-    if "?" in text:
-        return True
-    cues = ("알려주세요", "하시겠습니까", "될까요", "가능할까요", "확인해", "선택", "여부", "필요", "입력")
-    return any(cue in lowered for cue in cues)
+
+
+
+
+
+
 
 
 def _json_error(message: str, status_code: int = 400) -> JSONResponse:
@@ -3221,16 +1988,6 @@ def _require_account(request: Request, conn) -> tuple[dict[str, Any] | None, JSO
     return account, None
 
 
-def _optional_account(request: Request, conn) -> dict[str, Any] | None:
-    """REQ-20260514-0001: anonymous endpoint 용 — 쿠키 부재/오류 시 None 반환 (401 raise 없음).
-
-    `/api/public/share/{token}` 처럼 미로그인 접근이 허용되지만 로그인 상태라면 fork 같은
-    추가 액션을 안내해야 하는 경로에서 사용한다.
-    """
-    try:
-        return _get_authenticated_account(conn, request)
-    except Exception:
-        return None
 
 
 def _require_permission(
@@ -3373,24 +2130,10 @@ def _clear_accounts_current_conversation(conn, conversation_id: str) -> None:
 
 
 
-def _permission_catalog_payload(
-    *,
-    catalog: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    """TASK-0052 Phase 1A: catalog 가 주어지면 그 list 를, None 이면 정적 PERMISSION_DEFINITIONS 를 반환.
-
-    Phase 1B 에서 `_resolve_permission_catalog(conn)` 결과를 caller 가 전달.
-    """
-    source = catalog if catalog is not None else PERMISSION_DEFINITIONS
-    return [dict(item) for item in source]
 
 
-def _sanitize_role_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9_.-]", "", str(value or "").strip().lower())[:64]
 
 
-def _is_valid_role_key(value: str) -> bool:
-    return bool(ROLE_KEY_RE.match(str(value or "").strip().lower()))
 
 
 def _load_role_by_id(conn, role_id: int) -> dict[str, Any] | None:
@@ -3436,150 +2179,20 @@ LIMIT 1
     }
 
 
-def _validate_permission_codes(
-    codes: list[str] | set[str] | tuple[str, ...],
-    *,
-    catalog_codes: Iterable[str] | None = None,
-) -> set[str]:
-    """TASK-0052 Phase 1A: catalog_codes 가 주어지면 그 catalog 에 포함된 code 만 허용."""
-    allowed = set(catalog_codes) if catalog_codes is not None else set(PERMISSION_CODES)
-    normalized = {str(code or "").strip() for code in codes if str(code or "").strip()}
-    invalid = sorted(code for code in normalized if code not in allowed)
-    if invalid:
-        raise ValueError(f"unknown permissions: {', '.join(invalid)}")
-    return normalized
 
 
-def _normalize_override_payload(
-    payload: dict[str, Any] | None,
-    *,
-    catalog_codes: Iterable[str] | None = None,
-    catalog_map: dict[str, dict[str, Any]] | None = None,
-) -> dict[str, str]:
-    """TASK-0052 Phase 1A: catalog_codes / catalog_map 을 명시적으로 받음.
-
-    Phase 1B 에서 product 권한 override 가 들어오면 caller 가 conn-resolved catalog 를 전달.
-    None 이면 정적 PERMISSION_CODES / PERMISSION_DEFINITION_MAP 사용 (기존 동작).
-    """
-    codes = list(catalog_codes) if catalog_codes is not None else list(PERMISSION_CODES)
-    cmap = catalog_map if catalog_map is not None else PERMISSION_DEFINITION_MAP
-    result: dict[str, str] = {}
-    for code in codes:
-        normalized = _normalize_override_value((payload or {}).get(code))
-        if normalized == OVERRIDE_INHERIT:
-            continue
-        result[code] = normalized
-    invalid_keys = sorted(
-        key for key in (payload or {}).keys() if str(key) not in cmap
-    )
-    if invalid_keys:
-        raise ValueError(f"unknown override permissions: {', '.join(map(str, invalid_keys))}")
-    return result
 
 
-def _set_role_permissions(conn, role_id: int, permission_codes: set[str]) -> None:
-    permission_ids = _permission_id_map(conn)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM WebRolePermissions WHERE RoleId = %s", (int(role_id),))
-    for code in sorted(permission_codes):
-        permission_id = int(permission_ids.get(code) or 0)
-        if permission_id <= 0:
-            continue
-        cur.execute(
-            """
-INSERT INTO WebRolePermissions (RoleId, PermissionId)
-VALUES (%s, %s)
-            """,
-            (int(role_id), permission_id),
-        )
-    cur.close()
 
 
-def _set_account_overrides(conn, account_id: int, override_values: dict[str, str]) -> None:
-    permission_ids = _permission_id_map(conn)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM WebAccountPermissionOverrides WHERE AccountId = %s", (int(account_id),))
-    for code, value in sorted(override_values.items()):
-        permission_id = int(permission_ids.get(code) or 0)
-        if permission_id <= 0:
-            continue
-        cur.execute(
-            """
-INSERT INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
-VALUES (%s, %s, %s)
-            """,
-            (int(account_id), permission_id, value),
-        )
-    cur.close()
 
 
-def _is_management_permission_set(permissions: dict[str, bool] | None) -> bool:
-    payload = permissions or {}
-    return bool(
-        payload.get("console.manage")
-        and payload.get("account.role.assign")
-        and payload.get("role.permission.manage")
-    )
 
 
-def _ensure_management_survivor_for_account_change(
-    conn,
-    target_account_id: int,
-    *,
-    next_is_active: bool,
-    next_permissions: dict[str, bool],
-    deleting: bool = False,
-) -> None:
-    accounts = _list_active_accounts(conn)
-    survivors = 0
-    seen_target = False
-    for account in accounts:
-        account_id = int(account.get("id") or 0)
-        if account_id == int(target_account_id):
-            seen_target = True
-            if deleting or not next_is_active:
-                continue
-            permissions = next_permissions
-        else:
-            permissions = _account_permissions(account)
-        if _is_management_permission_set(permissions):
-            survivors += 1
-    if not seen_target and not deleting and next_is_active and _is_management_permission_set(next_permissions):
-        survivors += 1
-    if survivors <= 0:
-        raise ValueError("관리 가능한 활성 계정은 최소 1개 이상 유지되어야 합니다.")
 
 
-def _ensure_management_survivor_for_role_change(
-    conn,
-    role_id: int,
-    next_role_permission_codes: set[str],
-) -> None:
-    accounts = _list_active_accounts(conn)
-    # TASK-0052 Phase 1B: catalog 1 회 조회 후 loop 에서 재사용.
-    _catalog_defs, catalog_codes, _catalog_map = _resolve_permission_catalog(conn)
-    survivors = 0
-    for account in accounts:
-        account_role_id = int(account.get("role_id") or 0)
-        if account_role_id == int(role_id):
-            permissions = _apply_permission_overrides(
-                next_role_permission_codes,
-                dict(account.get("permission_overrides") or {}),
-                catalog_codes=catalog_codes,
-            )
-        else:
-            permissions = _account_permissions(account)
-        if _is_management_permission_set(permissions):
-            survivors += 1
-    if survivors <= 0:
-        raise ValueError("관리 가능한 활성 계정은 최소 1개 이상 유지되어야 합니다.")
 
 
-def _assign_default_signup_role(conn, role_id: int) -> None:
-    cur = conn.cursor()
-    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 0 WHERE Id <> %s", (int(role_id),))
-    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 1 WHERE Id = %s", (int(role_id),))
-    cur.close()
 
 
 # HTML 엔트리포인트는 항상 재검증한다(no-cache). 정적 자산(app.js/styles.css 등)은
@@ -3661,39 +2274,8 @@ _VISION_INLINE_TMP_DIR = os.getenv("WEB_VISION_INLINE_TMP_DIR", "/tmp").rstrip("
 _ASK_SHARED_INLINE_DIR = os.getenv("ASK_SHARED_INLINE_DIR", "/shared/ask-inline").rstrip("/")
 
 
-def _inline_tmp_dir() -> str:
-    """첨부 inline temp 파일 디렉토리(TASK-0169 M6).
-
-    worker mode: /shared/ask-inline (web 이 쓰고 worker 가 읽어야 하므로 공통 볼륨).
-    inprocess(기본): 현행 /tmp (프로세스 로컬).
-    """
-    if _is_worker_mode():
-        try:
-            os.makedirs(_ASK_SHARED_INLINE_DIR, exist_ok=True)
-            return _ASK_SHARED_INLINE_DIR
-        except OSError:
-            return _VISION_INLINE_TMP_DIR
-    return _VISION_INLINE_TMP_DIR
 
 
-def _model_to_llm_provider(model: str | None) -> str | None:
-    """vision invoke 모델 → LLM provider 식별자 매핑 (audit 용).
-
-    feature-0007 (bedrock) 머지 후 catalog 는 claude-* 만 → 'anthropic'. backward
-    -compat: gpt-* → 'openai'. Local LLM (auto/edge/core/code) 은 supports_vision
-    =False 라 본 매핑이 호출되기 전 차단되지만 안전하게 'local' 매핑. catalog
-    미등록 alias → None (vision 진입 안 함).
-    """
-    if not model:
-        return None
-    m = str(model).strip().lower()
-    if m.startswith("claude-"):
-        return "anthropic"
-    if m.startswith("gpt-"):
-        return "openai"
-    if m in ("auto", "edge", "core", "code"):
-        return "local"
-    return None
 
 
 # ITEM-10 routers-p9: _prepare_vision_inline_images 이동(app.X 동적).
@@ -3717,13 +2299,6 @@ _TEXT_INLINE_COUNT_CAP = 20               # turn 당 최대 text 파일 수
 # ──────────────────────────────────────────────────────────────────────────
 # ask 실행 dispatch — inprocess(현행) | worker(out-of-process, TASK-0169)
 # ──────────────────────────────────────────────────────────────────────────
-def _ask_execution_mode() -> str:
-    """AGENT_ASK_EXECUTION_MODE — 'worker' 면 ask_jobs enqueue, 그 외(기본)는 inprocess."""
-    try:
-        from shared.config import AGENT_ASK_EXECUTION_MODE
-        return str(AGENT_ASK_EXECUTION_MODE or "inprocess").strip().lower()
-    except Exception:
-        return "inprocess"
 
 
 def _is_worker_mode() -> bool:
@@ -3734,29 +2309,6 @@ def _is_worker_mode() -> bool:
 _ASK_WORKER_READY_MAX_AGE_SEC = int(os.getenv("WEB_ASK_WORKER_READY_MAX_AGE_SEC", "60"))
 
 
-def _ask_worker_ready(conn) -> bool:
-    """ask-worker 생존 여부 — KV ask_worker_last_cycle_at heartbeat 신선도.
-
-    worker mode 인데 worker 가 죽어 있으면 enqueue 한 job 을 아무도 claim 안 해
-    /api/ask 가 무한 대기(timeout)한다. enqueue 전에 gate 로 차단(503)해 빠른 실패 +
-    명확한 안내를 준다(adversarial review M7 — no-worker hang)."""
-    try:
-        from shared.config import GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY
-        raw = load_memory_kv(conn, GLOBAL_CONVERSATION_ID, AGENT_ASK_WORKER_HEARTBEAT_KEY)
-        if not raw:
-            return False
-        parsed = _parse_kv_timestamp(raw)
-        if parsed is None:
-            return False
-        # _parse_kv_timestamp 는 tzinfo 를 strip 한 naive UTC datetime 을 반환하므로
-        # naive UTC now 와 비교한다(aware now() 와 빼면 TypeError → except → 항상 False
-        # = readiness 영구 실패. TASK-0169 라이브 cutover 에서 포착·수정. project_task0159
-        # 의 KV tz stale 함정과 동형).
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        age = (now_naive - parsed).total_seconds()
-        return age <= _ASK_WORKER_READY_MAX_AGE_SEC
-    except Exception:
-        return False
 
 
 def _ask_worker_age_sec(conn) -> float | None:
@@ -3778,43 +2330,11 @@ def _ask_worker_age_sec(conn) -> float | None:
         return None
 
 
-async def _dispatch_ask_run(*, conn, account, conv_id, run_kwargs, inproc_fn, request=None):
-    """agent 실행을 mode 에 따라 분기. 두 경로 모두 동일 shape 의 agent_result dict 반환.
-
-    - inprocess(기본): 현행 asyncio.to_thread(run_agent, …). 동작 무변경.
-    - worker: ask_jobs enqueue 후 KV last_status 를 내부 long-poll attach 해 동기 응답
-      계약 유지(클라 무변경). 결과 shape 는 ask_jobs.result_json 으로 패리티.
-    """
-    if not _is_worker_mode():
-        return await asyncio.to_thread(inproc_fn, **run_kwargs)
-    return await _dispatch_ask_run_worker(conn=conn, account=account,
-                                          conv_id=conv_id, run_kwargs=run_kwargs,
-                                          request=request)
 
 
 # ITEM-10 routers-p11: _dispatch_ask_run_worker 이동(app.X 동적).
 
 
-def _get_ask_job_status(job_id: int) -> str | None:
-    """worker job 의 현재 status 만 조회(attach 종료 판정용 — TASK-0241). 실패 시 None.
-
-    KV last_status 가 새 run 에 인계돼도 attach 가 자기 job 의 terminal 을 직접 보게 한다.
-    """
-    from shared.db import _pg_connect
-    from modules import ask_jobs as _aj
-    pg = None
-    try:
-        pg = _pg_connect()
-        job = _aj.get_ask_job(pg, job_id)
-        return str(job.get("status")) if job else None
-    except Exception:
-        return None
-    finally:
-        if pg is not None:
-            try:
-                pg.close()
-            except Exception:
-                pass
 
 
 
@@ -3844,22 +2364,8 @@ def _get_ask_job_status(job_id: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _runtime_backend_is_pg() -> bool:
-    return os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres"
 
 
-def _meta_json_to_dict(meta_json: Any) -> dict[str, Any]:
-    """PG(jsonb→dict) / MySQL(longtext→str) 양쪽 meta_json 을 dict 로 정규화."""
-    if isinstance(meta_json, dict):
-        return dict(meta_json)
-    if meta_json:
-        try:
-            parsed = json.loads(meta_json)
-            if isinstance(parsed, dict):
-                return parsed
-        except Exception:
-            return {}
-    return {}
 
 
 # ITEM-10 routers-p4: _conv_load_topic 는 routers/_conv_store.py 로 이동(app.X 동적).
@@ -3879,47 +2385,6 @@ def _meta_json_to_dict(meta_json: Any) -> dict[str, Any]:
 
 
 
-def _member_visibility_window(conn, conversation_id: str, account_id: int):
-    """멤버의 가시 경계 window 조회 (share-visibility-window, DISPLAY id-space).
-
-    반환:
-      - (None, None) : 무제한(owner·floor 미설정 멤버·비-PG·비멤버). caller 의 share-token/
-        read.any grant 가 접근을 지배 — window 는 추가 제약 없음.
-      - (floor_id|None, ceil_id|None) : 멤버의 [floor, ceiling] (DISPLAY messages.id, inclusive).
-      - 'DENY' : PG 예외 등으로 window 를 확인할 수 없음 → **fail-closed**. 호출자(fork/recall)는
-        무제한 복사/전체 recall 대신 거부·은닉해야 한다. fork/recall 은 어차피 PG 를 요구하므로
-        PG 예외 시 DENY 는 실질 가용성 회귀가 아니다(가려진 구간 유출 방지 우선).
-
-    role='owner' 는 항상 (None,None) — 소유자는 본인 콘텐츠에 정당한 전체 접근.
-    """
-    if not _runtime_backend_is_pg():
-        return (None, None)
-    try:
-        from shared.db import _pg_connect
-        pg = _pg_connect()
-        try:
-            with pg.cursor() as pgcur:
-                pgcur.execute(
-                    "SELECT role, visible_floor_message_id, visible_ceiling_message_id "
-                    "FROM agent_runtime.conversation_members "
-                    "WHERE conversation_id = %s AND account_id = %s LIMIT 1",
-                    (conversation_id, int(account_id)),
-                )
-                row = pgcur.fetchone()
-        finally:
-            pg.close()
-    except Exception:
-        return "DENY"
-    if not row:
-        # 비멤버: 이 함수는 window 만 판정하고 멤버십 접근 게이트는 호출자 책임.
-        return (None, None)
-    role, floor_id, ceil_id = row[0], row[1], row[2]
-    if role == "owner":
-        return (None, None)
-    return (
-        int(floor_id) if floor_id is not None else None,
-        int(ceil_id) if ceil_id is not None else None,
-    )
 
 
 # ITEM-10 routers-p4: _conv_update_topic_product 는 routers/_conv_store.py 로 이동(app.X 동적).
@@ -3937,34 +2402,8 @@ def _member_visibility_window(conn, conversation_id: str, account_id: int):
 # ITEM-10 routers-p4: _conv_copy_core_messages 는 routers/_conv_store.py 로 이동(app.X 동적).
 
 
-def _coerce_naive_dt(v):
-    """datetime|str|None → naive datetime|None. tz 정보 제거(교차 store 비교용, 근사)."""
-    if v is None:
-        return None
-    if isinstance(v, str):
-        from datetime import datetime as _dt
-        try:
-            v = _dt.fromisoformat(v)
-        except Exception:
-            return None
-    try:
-        return v.replace(tzinfo=None)
-    except Exception:
-        return None
 
 
-def _attachment_outside_window(att_ca, lower_ca, upper_ca) -> bool:
-    """첨부(CreatedAt)가 fork window 밖인가. share-visibility-window. 불명확은 fail-closed(skip)."""
-    a = _coerce_naive_dt(att_ca)
-    lo = _coerce_naive_dt(lower_ca)
-    hi = _coerce_naive_dt(upper_ca)
-    if a is None:
-        return True  # 첨부 시각 불명 + window 활성 → 안전하게 skip.
-    if lo is not None and a < lo:
-        return True
-    if hi is not None and a > hi:
-        return True
-    return False
 
 
 # ITEM-10 routers-p6: _copy_conversation_attachments 는 routers/_conv_store.py 로 이동(app.X 동적).
@@ -4039,25 +2478,6 @@ def _read_insight_datasource_health() -> dict:
 
 
 # ── TASK-0205: datasource CRUD (자격증명 DB 암호화 저장) + SSRF 차단 ────────────────
-def _ssrf_private_guard_enabled() -> bool:
-    """사설/링크로컬 IP 차단(SSRF 경계)의 활성 여부. 기본 활성(secure-by-default).
-
-    TASK-0228: 사내 환경은 대부분 사설망 IP(예: `10.200.50.80`, RFC1918)로 DB 연결정보를
-    구성·운영한다. 이 경우 datasource 생성·연결테스트가 `_ssrf_check_host` 의 사설망 차단에
-    걸린다(설계상 SSRF 방어). 운영자가 `AGENT_DATASOURCE_SSRF_GUARD_ENABLED=0` 으로 **사설망
-    경계만 의도적으로 비활성화**할 수 있게 한다(`.env.secret` 1줄). 기본값(미설정/그 외 값)은
-    `1`=활성이라 코드 기본 동작은 secure-by-default 로 유지된다 — 즉 "방어 구성은 코드에 보존"
-    하고 운영 설정으로만 끈다(복원 시 env 값을 `1` 로 되돌리면 즉시 재활성).
-
-    **이 토글이 끄는 것은 RFC1918 사설망(`is_private`) 차단뿐**이다 (사용자 승인 범위 = 사내 사설망 DB).
-    다음은 토글과 무관하게 항상 유지된다 (REV-20260611-0228 Finding A/B/C): 클라우드 메타데이터 IP
-    하드차단(169.254.169.254·100.100.100.200, IPv4-mapped IPv6 형 포함), loopback(127.x/::1)·
-    link-local(169.254.x/fe80::)·reserved·multicast 차단, DNS rebinding pin. 끄면 순수 위험만
-    추가되는 경계라 토글 범위에서 제외한다.
-    """
-    import os as _os
-    raw = str(_os.getenv("AGENT_DATASOURCE_SSRF_GUARD_ENABLED", "1")).strip().lower()
-    return raw not in ("0", "false", "no", "off")
 
 
 def _ssrf_check_host(host) -> "tuple[bool, str, str]":
@@ -4142,45 +2562,14 @@ def _ssrf_check_host(host) -> "tuple[bool, str, str]":
     return True, "", (pinned or h)
 
 
-def _ds_valid_key(key: str) -> "str | None":
-    """datasource 키 정규화·검증. 부적합 시 None. 소문자 영숫자·_·- 만, `ds` 구분자 금지."""
-    import re as _re
-    k = str(key or "").strip().lower()
-    if not k or len(k) > 64:
-        return None
-    if not _re.match(r"^[a-z0-9_-]+$", k):
-        return None
-    if ":" in k or k.startswith("ds"):  # fact-key `:ds:` 구분자 충돌 회피(보수적)
-        return None
-    return k
 
 
-def _generate_datasource_key(engine: str, host: str, port: int) -> str:
-    """엔진 + 호스트 + 포트 의 SHA-256 해시 앞 12자를 키로 반환.
-
-    형식: `{engine}-{hash12}` (예: mysql-3f2a1b9c7e41).
-    fact-key `:ds:` 구분자와 충돌 없고, `ds` 로 시작하지 않으며(기존 `_ds_valid_key` 제약 통과),
-    엔드포인트 좌표가 바뀌어도 목적지 변경을 즉시 키에 반영한다.
-    """
-    import hashlib as _hl
-    raw = f"{(engine or 'mysql').strip().lower()}:{(host or '').strip().lower()}:{int(port or 0)}"
-    digest = _hl.sha256(raw.encode()).hexdigest()[:12]
-    eng_tag = (engine or "mysql").strip().lower()[:10]  # 최대 10자로 잘라 가독성 보존
-    return f"{eng_tag}-{digest}"
 
 
 # ITEM-10 routers-p1: _ds_write_common 는 routers/admin_datasources.py 로 이동
 # (app 전역은 app.X 동적 참조 — 패치-단일점 보존. app._ds_write_common 는 꼬리 rebind 로 유지).
 
 
-def _ds_audit_fields(data: dict) -> dict:
-    """B2: audit 화이트리스트 — **password 는 절대 포함 안 함**(평문 ChangeJson 누출 차단)."""
-    out = {}
-    for f in ("key", "engine", "host", "port", "user", "default_db", "is_active"):
-        if f in data:
-            out[f] = data[f]
-    out["password_set"] = bool(data.get("password"))  # 설정 여부만(값 아님)
-    return out
 
 
 
@@ -4228,14 +2617,6 @@ SHARE_POLICY_VERSION_CURRENT = 2
 SHARE_POLICY_REDACT_TEXT = "[첨부 파일 분석 본문 — 보안 정책에 따라 공유 시 가려짐]"
 
 
-def _meta_has_attachment_derived(meta_obj) -> bool:
-    """D9 attachment_derived flag 검사. MetaJson 안의 `attachment_derived: true`."""
-    if not isinstance(meta_obj, dict):
-        return False
-    if meta_obj.get("attachment_derived"):
-        return True
-    # 향후 Phase 11 / Cycle 2 / 3 / 4 에서 추가될 derived type 도 catch.
-    return False
 
 
 # share view 에서 attachment_derived 메시지 redact 시 제거할 meta 키.
@@ -4353,62 +2734,10 @@ _FIX_WITH_AI_ERR_CAP = 4000
 _FIX_WITH_AI_RATE_PER_MIN = 5
 
 
-def _sanitize_fix_with_ai_fragment(value: str, *, cap: int, seal: str) -> str:
-    """client 가 보낸 SQL/오류 텍스트를 정정 지시문에 **데이터로만** 끼워 넣기 위해 정제.
-
-    프롬프트 인젝션(데이터 블록 탈출) 방어 — REV M1:
-    - 데이터 블록을 감싸는 **봉인 구분자 문자 «·»** 를 입력에서 제거 → client 는 블록을 닫는 마커를
-      애초에 만들 수 없다. 개행+가짜 라벨/지시문으로 데이터 블록 밖으로 빠져나가는 경로를 차단(주 방어).
-    - 서버가 매 요청 생성하는 **추측 불가 nonce(seal)** 가 봉인 마커에 포함되므로, «·» lookalike 를
-      쓰더라도 닫는 마커를 위조할 수 없다(belt-and-suspenders). 입력에 seal 이 우연히 들어오면 제거.
-    - 백틱 무력화(코드펜스 인식 차단, 보조 방어) + 제어문자 제거(개행/탭 보존) + 길이 cap.
-    여기서 만든 문자열은 LLM 에게 '사용자 지시가 아닌 진단 데이터' 로 명시된 봉인 블록 안에만 들어간다.
-    """
-    s = str(value or "")
-    # 코드펜스 분해 방지(보조): 백틱을 U+02CB(MODIFIER LETTER GRAVE ACCENT, 가시 문자) 로 치환 — 펜스 인식 안 됨.
-    s = s.replace("`", "ˋ")
-    # 봉인 구분자 문자 제거(주 방어): client 가 «...»·«/...» 닫는 마커를 만들 수 없게 함.
-    s = s.replace("«", "").replace("»", "")
-    # nonce 제거(belt-and-suspenders): 추측 불가하지만 우연/유출 대비.
-    if seal:
-        s = s.replace(seal, "")
-    # 제어문자 제거(개행 \n·탭 \t 는 유지) — 인용 블록 무결성/터미널 인젝션 방어.
-    s = "".join(ch for ch in s if ch == "\n" or ch == "\t" or ord(ch) >= 0x20)
-    if len(s) > cap:
-        s = s[:cap] + "\n…(이하 생략)"
-    return s
 
 
 
 
-def _make_internal_ask_request(request: Request, body: dict[str, Any]) -> Request:
-    """원본 request 의 scope(쿠키/헤더/클라이언트 IP 포함)를 복제하고, body 만 새 JSON 으로 교체한
-    내부 재dispatch 용 Starlette Request 를 만든다. `ask()` 가 `await request.json()` 으로 읽는다.
-
-    auth(_get_authenticated_account)·audit(_build_actor_from_request) 는 scope 의 headers 에서
-    세션 쿠키·UA·IP 를 읽으므로, scope 복제만으로 동일 인증 컨텍스트가 유지된다(별도 토큰 전달 불필요).
-    """
-    from starlette.requests import Request as _StarletteRequest
-
-    raw = json.dumps(body).encode("utf-8")
-    # scope 의 path/route 는 ask 의 본문 로직과 무관(핸들러를 직접 호출). headers 만 보존되면 충분.
-    new_scope = dict(request.scope)
-    new_scope["type"] = "http"
-
-    _orig_receive = request._receive  # 원본 client 의 ASGI receive(연결 상태 진실).
-    _sent = {"done": False}
-
-    async def _receive():
-        # 1) 첫 호출: 정정 메시지 body 를 1회 공급(ask 의 await request.json()).
-        if not _sent["done"]:
-            _sent["done"] = True
-            return {"type": "http.request", "body": raw, "more_body": False}
-        # 2) 이후 호출(worker mode attach 루프의 is_disconnected 폴링): 원본 client 의 receive 로
-        #    위임 → 실제 브라우저가 fix-with-ai fetch 를 끊으면 그대로 disconnect 가 전파된다.
-        #    (synthetic 이 즉시 http.disconnect 를 돌려주면 run 이 조기 중단되는 버그 방지.)
-        return await _orig_receive()
-
-    return _StarletteRequest(new_scope, _receive)
 
 
 
@@ -4451,73 +2780,10 @@ _AVATAR_MAX_BYTES = 2 * 1024 * 1024   # 2MB
 _ICON_MAX_BYTES = 5 * 1024 * 1024     # 5MB
 
 
-def _sniff_image(body: bytes, mime_type: str) -> "tuple[str, str] | None":
-    """매직바이트로 이미지 종류 판별(클라이언트 MIME 불신). 반환 (ext, content_type) 또는 None.
-
-    png/jpeg/webp 만 허용. svg(XSS)·gif 등은 거부. mime_type 은 힌트일 뿐, 실제 바이트로 결정.
-    """
-    if not body or len(body) < 12:
-        return None
-    if body[:8] == b"\x89PNG\r\n\x1a\n":
-        return ("png", "image/png")
-    if body[:3] == b"\xff\xd8\xff":
-        return ("jpg", "image/jpeg")
-    if body[:4] == b"RIFF" and body[8:12] == b"WEBP":
-        return ("webp", "image/webp")
-    return None
 
 
-def _store_image_upload(body: bytes, *, prefix: str, owner_id: int, max_bytes: int,
-                        mime_hint: str) -> "tuple[str, str] | tuple[None, str]":
-    """이미지 bytes 검증 + MinIO 저장. 반환 (object_key, content_type) 또는 (None, error_msg).
-
-    prefix='avatars'|'product-icons'. object key = `<prefix>/<owner_id>/<uuid>.<ext>`.
-    """
-    if not body:
-        return (None, "빈 파일입니다.")
-    if len(body) > max_bytes:
-        return (None, f"이미지가 너무 큽니다(최대 {max_bytes // (1024 * 1024)}MB).")
-    sniffed = _sniff_image(body, mime_hint)
-    if not sniffed:
-        return (None, "지원하지 않는 이미지 형식입니다(PNG·JPG·WEBP만 허용).")
-    ext, content_type = sniffed
-    try:
-        from web.modules import storage_minio
-        import uuid as _uuid
-        object_key = f"{prefix}/{int(owner_id)}/{_uuid.uuid4().hex}.{ext}"
-        storage_minio.put_object_bytes(
-            object_key, body, content_type=content_type,
-            metadata={"kind": prefix, "owner_id": str(owner_id)},
-        )
-        return (object_key, content_type)
-    except Exception as exc:
-        logging.getLogger(__name__).warning("image upload store failed", exc_info=True)
-        return (None, f"이미지 저장 실패: {exc}")
 
 
-def _serve_image_object(object_key: "str | None", *, fallback_404: str = "이미지 없음"):
-    """MinIO object_key 의 이미지 bytes 를 같은 출처로 서빙(StreamingResponse 대신 Response).
-
-    캐시: 1일(immutable — URL 에 object key 해시 캐시버스터 동반). 미설정/실패 404.
-    """
-    if not object_key:
-        return _json_error(fallback_404, 404)
-    try:
-        from web.modules import storage_minio
-        data = storage_minio.get_object_bytes(str(object_key))
-    except Exception:
-        return _json_error(fallback_404, 404)
-    # content type 은 확장자에서 역추론(저장 시 검증된 png/jpg/webp 만).
-    ext = str(object_key).rsplit(".", 1)[-1].lower()
-    ctype = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "application/octet-stream")
-    from starlette.responses import Response as _Resp
-    # TASK-0268 보안: nosniff(MIME 스니핑 XSS 방어심층) + inline disposition. content-type 은
-    # 저장 시 매직바이트로 검증된 image/* 만 — 브라우저가 HTML 로 스니핑하지 못하게 못박는다.
-    return _Resp(content=data, media_type=ctype, headers={
-        "Cache-Control": "private, max-age=86400",
-        "X-Content-Type-Options": "nosniff",
-        "Content-Disposition": "inline",
-    })
 
 
 
@@ -4586,114 +2852,8 @@ def _serve_image_object(object_key: "str | None", *, fallback_404: str = "이미
 
 # TASK-0061 Phase 8 (REQ-20260515-0010 / AC-0103): 단건/일괄 공용 helper. 결과는
 # {"status": "deleted"|"deleted_pending"|"failed", "reason": "..." (failed 시)}.
-def _archive_conversation(conn, conversation_id: str, account_id: int) -> bool:
-    """TASK-0273: 대화를 soft-archive(보관)로 전환 — hard-delete 대신 archived_at 마킹.
-
-    데이터·첨부는 **보존**한다(오용 방지 admin 조회·맥락 참조 fork 위해). backend-aware:
-    PG 정본(agent_runtime.core_conversations) + MySQL 폴백(AgentCoreConversations).
-    이미 보관된 대화는 시각·수행자 보존(archived_at IS NULL 일 때만 set). 반환 성공 여부.
-    """
-    ok = False
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        try:
-            from shared.db import _pg_connect
-            pg = _pg_connect()
-            try:
-                with pg.cursor() as pgcur:
-                    pgcur.execute(
-                        "UPDATE agent_runtime.core_conversations "
-                        "SET archived_at = now(), archived_by_account_id = %s "
-                        "WHERE conversation_id = %s AND archived_at IS NULL",
-                        (int(account_id) if account_id else None, conversation_id),
-                    )
-                pg.commit()
-                ok = True
-            finally:
-                pg.close()
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "_archive_conversation: PG archive failed (conversation_id=%s)",
-                conversation_id, exc_info=True,
-            )
-            ok = False
-    # MySQL 폴백 parity(production 은 PG 라 보통 미경유, 비-PG 환경 대비).
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE AgentCoreConversations "
-            "SET archived_at = NOW(), archived_by_account_id = %s "
-            "WHERE conversation_id = %s AND archived_at IS NULL",
-            (int(account_id) if account_id else None, conversation_id),
-        )
-        conn.commit()
-        ok = ok or True
-    except Exception:
-        # PG 가 정본이면 MySQL 폴백 실패는 무해(테이블 부재 등).
-        pass
-    return ok
 
 
-def _delete_conversation_impl(
-    conn,
-    account: dict[str, Any],
-    conversation_id: str,
-    *,
-    force: bool = False,
-    confirm_text: str = "",
-) -> dict[str, Any]:
-    """TASK-0273: "삭제" 를 soft-archive(보관)로 전환. 데이터·첨부 hard-delete 안 함.
-
-    보관 = (1) 소유자 목록 숨김(_list_conversations archived_at IS NULL) + (2) 진행 차단
-    (_conversation_block_info) + (3) 데이터 보존(admin 조회·fork 참조 가능). 진행 중 대화는
-    force+confirm 시 run 취소 후 보관(첨부는 보존 — cascade soft-delete 안 함).
-    반환 status: 'archived' | 'archived_pending' | 'failed'(기존 호환 위해 'deleted*' 도 매핑).
-    """
-    conversation_id = str(conversation_id or "").strip()
-    if not conversation_id:
-        return {"status": "failed", "reason": "empty_conversation_id"}
-    if not _account_can_access_conversation(
-        conn,
-        account,
-        conversation_id,
-        "conversation.delete.own",
-        "conversation.delete.any",
-    ):
-        return {"status": "failed", "reason": "forbidden"}
-    # feature-0009 gc-group-authz-flag (#1): 보관(archive)은 대화 보유자(owner) 전용. 위 게이트는
-    # 그룹 대화 '열람' 경계(멤버 포함, '열람 ≠ 발화')라 conversation.delete.own 권한 멤버도 통과하므로,
-    # 소유 메타 변경(보관)에는 2차 owner 게이트를 둔다. admin(.any)은 오용 방지 관리 일관성으로 우회 허용.
-    # owner_account_id 가 *확정된* 대화에서 actor 가 그 owner 가 아닐 때만 차단 — owner 미기록(NULL)
-    # 레거시 대화는 1차 게이트(소유/멤버) 판정을 존중해 fail-open(실소유자 lockout 방지).
-    _archive_owner_id = _conversation_owner_account_id(conn, conversation_id)
-    if (
-        not _account_has_permission(account, "conversation.delete.any")
-        and _archive_owner_id is not None
-        and _archive_owner_id != int(account.get("id") or 0)
-    ):
-        return {"status": "failed", "reason": "forbidden"}
-    try:
-        cleanup_pending_delete_conversations(conn)
-        acct_id = int(account.get("id") or 0)
-        if is_processing_conversation(conn, conversation_id):
-            if not force:
-                return {"status": "failed", "reason": "processing"}
-            if confirm_text not in ("삭제", "보관"):
-                return {"status": "failed", "reason": "confirm_text_mismatch"}
-            # 진행 중 run 은 취소하되, 데이터는 hard-delete 하지 않고 보관으로 동결.
-            run_id = str(load_memory_kv(conn, conversation_id, "last_status_run_id") or "").strip()
-            mark_cancel_requested(conn, conversation_id, run_id=run_id)
-            _archive_conversation(conn, conversation_id, acct_id)
-            _clear_accounts_current_conversation(conn, conversation_id)
-            return {"status": "archived_pending"}
-        # TASK-0273: 정상 대화 → 보관(UPDATE archived_at). 첨부 cascade soft-delete 안 함
-        # (admin 조회·fork 참조 위해 데이터 보존). hard-delete(delete_conversation_records) 폐기.
-        ok = _archive_conversation(conn, conversation_id, acct_id)
-        if not ok:
-            return {"status": "failed", "reason": "db_error"}
-        _clear_accounts_current_conversation(conn, conversation_id)
-        return {"status": "archived"}
-    except Exception:
-        return {"status": "failed", "reason": "db_error"}
 
 
 # feature-0012 P5b Final: delete_conversation 는 src/routers/conversations.py 로 추출(맨 끝 include_router).
@@ -5046,10 +3206,6 @@ _AUTO_PROMPT_FAIL_UNTIL: dict[int, float] = {}   # pid -> monotonic ts(이전까
 _AUTO_PROMPT_FAIL_LOCK = threading.Lock()
 
 
-def _product_prompt_present(conn, product_id: int) -> bool:
-    """제품 시스템 프롬프트(Scope='product')가 비어있지 않게 입력돼 있는지."""
-    sp = _load_system_prompt(conn, scope="product", product_id=int(product_id))
-    return bool(sp and str(sp.get("content") or "").strip())
 
 
 
@@ -5096,53 +3252,8 @@ def _start_auto_prompt_sweep_loop() -> None:
 # coverage(_compute_product_insight_coverage)가 '얼마나(완료율)'를 본다면, 아래는 '무엇을(역할/도메인)'을
 # rag_objects ⋈ texts 에서 DB(schema_name) 단위로 끌어와 각 DB 행에 한 줄 설명 + 추가 picker 상태로 표시한다.
 # read-only — 스키마/권한/암호화 무변경. scope 식별은 coverage 와 동일 _resolve_product_insight_scope.
-def _clean_insight_segment(text: str) -> str:
-    """insight text_content('schema domain: X / summary / usage / key columns: ...')에서 사람용 본문만 추출.
-    '... domain: ...' 선두 라벨과 'key columns: ...' 꼬리를 떼어 summary/usage 만 ' · ' 로 잇는다."""
-    segs = [s.strip() for s in str(text or "").split(" / ") if s.strip()]
-    body = []
-    for s in segs:
-        low = s.lower()
-        if low.startswith("key columns"):
-            continue
-        if " domain:" in low or low.startswith("domain:"):
-            continue
-        body.append(s)
-    return " · ".join(body)
 
 
-def _compose_db_insight_text(ent: dict) -> tuple:
-    """by_db 누적 항목(ent) → (한 줄 description, 멀티라인 detail_text[hover title용]).
-
-    description = 도메인 + (schema summary | table 도메인 요약). detail_text = schema 전문 + 테이블별 정제 본문.
-    """
-    domain = ent.get("domain")
-    summary = _clean_insight_segment(ent.get("schema_text") or "")
-    if not summary and ent.get("tables"):
-        # schema insight 없으면 table 도메인들로 합성.
-        tdoms = []
-        for t in ent["tables"]:
-            d = t.get("domain")
-            if d and d not in tdoms:
-                tdoms.append(d)
-        if tdoms:
-            summary = "주요 테이블 도메인: " + ", ".join(tdoms[:4])
-    parts = []
-    if domain:
-        parts.append(str(domain))
-    if summary:
-        parts.append(summary)
-    description = " — ".join(parts) if parts else None
-
-    lines = []
-    if ent.get("schema_text"):
-        lines.append("· " + str(ent["schema_text"]))
-    for t in ent.get("tables", [])[:12]:
-        tname = t.get("table") or ""
-        tdesc = _clean_insight_segment(t.get("text") or "") or (t.get("domain") or "")
-        lines.append(f"· {tname}: {tdesc}" if tdesc else f"· {tname}")
-    detail_text = "\n".join(lines) if lines else None
-    return description, detail_text
 
 
 def _insight_worker_liveness(conn) -> dict:
@@ -5175,31 +3286,6 @@ def _insight_worker_liveness(conn) -> dict:
     return out
 
 
-def _db_catalog_from_object_key(object_key: str, engine: str, object_type: str):
-    """rag_objects.object_key 에서 DB(catalog) 키를 추출 (TASK-0243 — MSSQL 차원 수정).
-
-    object_key = `{ds_prefix}:{path}` (ds_prefix = datasource_key 라벨/해시 — `_ds_valid_key` 가 ':' 를
-    금지하므로 첫 ':' 로 안전 분리, 접두값 자체는 버린다). **MSSQL 은 schema_name 컬럼이 SQL 스키마(dbo)**
-    라 등록 DB(catalog, 예: GameLog_100)와 차원이 달라 schema_name 으로 by_db 를 묶으면 매칭이 빗나가
-    'dbo' 한 바구니로 뭉친다. catalog 는 object_key path 에 인코딩돼 있으므로 거기서 파싱한다.
-      - MySQL(db==schema): path = `{db}`(schema) | `{db}.{table}`(table) → catalog = 첫 segment.
-      - MSSQL: path = `{catalog}.{sqlschema}`(schema, per-DB scan) | `{catalog}.{sqlschema}.{table}`(table)
-        | `{sqlschema}`(bare default_db schema) | `{sqlschema}.{table}`(bare default_db table)
-        → 충분한 segment 면 첫 segment 가 catalog, 부족(=bare default_db)하면 None(등록 catalog 미귀속).
-    반환: catalog(str) 또는 None(귀속 불가 — 호출부에서 MSSQL 은 skip, MySQL 은 schema_name 폴백).
-    """
-    ok = str(object_key or "")
-    path = ok.split(":", 1)[1] if ":" in ok else ok
-    path = path.strip()
-    if not path:
-        return None
-    segs = path.split(".")
-    if str(engine or "").lower() == "mssql":
-        # table = catalog.sqlschema.table(3) / schema = catalog.sqlschema(2). 그 미만이면 bare(catalog 없음).
-        need = 3 if object_type == "table" else 2
-        return segs[0] if len(segs) >= need and segs[0] else None
-    # MySQL: db == catalog == 첫 segment (schema=`db`, table=`db.table`).
-    return segs[0] if segs and segs[0] else None
 
 
 # ITEM-10 routers-p9: _compute_product_db_insights 이동(app.X 동적).
@@ -5216,10 +3302,6 @@ def _db_catalog_from_object_key(object_key: str, engine: str, object_type: str):
 # 삭제 대상: PG fact_entries(source_type schema_insight/table_insight) + rag_documents(동일 fact_key)
 #   + rag_objects(object_type schema/table, datasource_key=scope|NULL) + KV fingerprint/refresh_at/scan offset.
 # **fingerprint 까지 지워야** worker 가 다음 cycle 에 "변경 없음" 으로 오판하지 않고 재분석한다(핵심).
-def _like_escape(value: str) -> str:
-    r"""PG LIKE 패턴의 메타문자(\, %, _)를 ESCAPE '\' 기준으로 이스케이프한다 (인젝션/오매칭 차단)."""
-    s = str(value or "")
-    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 
@@ -5256,69 +3338,10 @@ _DB_RULE_BACKREF_RE = re.compile(r"\\[1-9]")
 _DB_RULE_MAX_UNBOUNDED_QUANT = 8                     # `*`/`+` 개수 상한(.*.*… 다항 폭주 차수 제한).
 
 
-def _validate_db_rule_pattern(pattern: str) -> "tuple[bool, str]":
-    """B2(강화): 저장 전 정규식 검증 — 길이·compile·backref·그룹수량자·중첩수량자·무한수량자 개수.
-    catastrophic backtracking 의 구조적 벡터(그룹에 붙은 수량자 `)[*+?{]`, alternation+quantifier,
-    counted repetition of groups)를 차단해 백그라운드/요청 스레드 hang(ReDoS)을 막는다. (ok, error)."""
-    p = str(pattern or "").strip()
-    if not p:
-        return (False, "패턴이 비어 있습니다.")
-    if len(p) > _DB_RULE_PATTERN_MAX:
-        return (False, f"패턴이 너무 깁니다(최대 {_DB_RULE_PATTERN_MAX}자).")
-    if _DB_RULE_BACKREF_RE.search(p):
-        return (False, "역참조(backreference)는 허용되지 않습니다.")
-    if _DB_RULE_NESTED_QUANT_RE.search(p) or _DB_RULE_GROUP_QUANT_RE.search(p):
-        return (False, "그룹에 붙은 수량자/중첩 수량자는 ReDoS 위험으로 허용되지 않습니다(예: (a|a)*, (.*a){20}).")
-    if len(re.findall(r"[*+]", p)) > _DB_RULE_MAX_UNBOUNDED_QUANT:
-        return (False, f"무한 수량자(*,+)가 너무 많습니다(최대 {_DB_RULE_MAX_UNBOUNDED_QUANT}).")
-    try:
-        re.compile(p)
-    except re.error as exc:
-        return (False, f"정규식 오류: {exc}")
-    return (True, "")
 
 
 
 
-def _match_db_rule(user_names: "list[str]", include_pattern: str, exclude_pattern: "str | None",
-                   engine: str, excluded_lower: "set[str]") -> "list[str]":
-    """B5: 엔진별 case-folding(MySQL=IGNORECASE/이름 소문자, MSSQL=대소문자 구분) 으로 일치 DB 반환.
-    Exclude 우선(M1: 모호하면 제외). 잘못된 exclude 는 over-grant 방지 위해 전체 매칭 무효([])."""
-    flags = 0 if str(engine or "").strip().lower() == "mssql" else re.IGNORECASE
-    inc_pat = str(include_pattern or "").strip()
-    if not inc_pat:
-        return []  # 빈 include 는 '전부 일치'가 아니라 '매치 없음'(over-grant 방지, B1).
-    # 방어 심층(B2): 저장 검증을 재적용 — 백그라운드가 저장된 패턴을 돌릴 때도 ReDoS 벡터 차단.
-    if not _validate_db_rule_pattern(inc_pat)[0]:
-        return []
-    if exclude_pattern and not _validate_db_rule_pattern(str(exclude_pattern))[0]:
-        return []  # 안전하지 않은 exclude → 전체 무효(over-grant 금지).
-    try:
-        inc = re.compile(inc_pat, flags)
-    except re.error:
-        return []
-    exc = None
-    if exclude_pattern:
-        try:
-            exc = re.compile(str(exclude_pattern), flags)
-        except re.error:
-            return []  # exclude 컴파일 실패 → 안전하게 전체 무효(over-grant 금지).
-    out: list[str] = []
-    for nm in (user_names or [])[:_DB_RULE_MATCH_BOUND]:
-        name = str(nm or "").strip()
-        if not name:
-            continue
-        low = name.lower()
-        if low in excluded_lower:
-            continue
-        if len(name) > _DB_RULE_NAME_MAX or _DB_RULE_NAME_INJECT_RE.search(name):
-            continue
-        if not inc.search(name):
-            continue
-        if exc is not None and exc.search(name):
-            continue  # exclude wins (M1)
-        out.append(name)
-    return out
 
 
 
@@ -5330,62 +3353,12 @@ _DB_RULE_SELECT_COLS = (
 )
 
 
-def _normalize_db_rule_row(row: "dict | None") -> "dict | None":
-    if not row:
-        return None
-    row["is_enabled"] = bool(row.get("is_enabled"))
-    row["cap"] = int(row.get("cap") or 3)
-    return row
 
 
-def _get_product_db_rules(conn, product_id: int, ds_key: str) -> "list[dict]":
-    """(product, datasource) 의 **모든** 규칙(SortOrder, Id 순). 테이블 미존재 graceful → []."""
-    if product_id <= 0 or not ds_key:
-        return []
-    cur = conn.cursor(dictionary=True)
-    try:
-        try:
-            cur.execute(
-                f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules "
-                "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s ORDER BY SortOrder ASC, Id ASC",
-                (int(product_id), str(ds_key).strip().lower()))
-        except Exception:
-            # SortOrder 컬럼 부재(마이그레이션 전) → Id 순.
-            cur.execute(
-                f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules "
-                "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s ORDER BY Id ASC",
-                (int(product_id), str(ds_key).strip().lower()))
-        rows = cur.fetchall() or []
-    except Exception:
-        return []
-    finally:
-        cur.close()
-    return [_normalize_db_rule_row(r) for r in rows]
 
 
-def _get_db_rule_by_id(conn, rule_id: int) -> "dict | None":
-    """규칙 1건 Id 조회(엔드포인트 per-rule 동작용). 테이블 미존재 graceful → None."""
-    if int(rule_id or 0) <= 0:
-        return None
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(f"SELECT {_DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules WHERE Id=%s LIMIT 1",
-                    (int(rule_id),))
-        row = cur.fetchone()
-    except Exception:
-        return None
-    finally:
-        cur.close()
-    return _normalize_db_rule_row(row)
 
 
-def _touch_db_rule_sync(conn, rule_id: int) -> None:
-    try:
-        cur = conn.cursor()
-        cur.execute("UPDATE WebProductDatasourceDbRules SET LastSyncAt=CURRENT_TIMESTAMP WHERE Id=%s", (int(rule_id),))
-        cur.close()
-    except Exception:
-        pass
 
 
 
@@ -5404,15 +3377,6 @@ def _touch_db_rule_sync(conn, rule_id: int) -> None:
 
 
 
-def _rule_to_public(rule: dict) -> dict:
-    return {
-        "id": int(rule.get("id") or 0),
-        "include_pattern": str(rule.get("include_pattern") or ""),
-        "exclude_pattern": (str(rule["exclude_pattern"]) if rule.get("exclude_pattern") else ""),
-        "cap": int(rule.get("cap") or 3),
-        "is_enabled": bool(rule.get("is_enabled")),
-        "last_sync_at": str(rule.get("last_sync_at") or ""),
-    }
 
 
 
@@ -5466,18 +3430,6 @@ _ROLE_CAPABILITY_HINTS: "list[tuple[str, str]]" = [
 ]
 
 
-def _describe_role_character(role: "dict[str, Any]") -> str:
-    """역할 dict(`_load_role_by_id` 산출)의 권한 특성을 LLM 이 이해할 성격 서술로 변환."""
-    codes = set(role.get("permission_codes") or [])
-    traits = [phrase for code, phrase in _ROLE_CAPABILITY_HINTS if code in codes]
-    if "conversation.ask" not in codes:
-        traits.insert(0, "질의 권한 없음 — 조회 전용 성격")
-    lines: list[str] = []
-    if role.get("description"):
-        lines.append(f"역할 설명: {role['description']}")
-    if traits:
-        lines.append("주요 권한 특성: " + ", ".join(traits))
-    return "\n".join(lines)
 
 
 # ITEM-10 routers-p3: _assemble_role_prompt_llm_request 는 routers/_prompt_context.py 로 이동(app.X 동적 — 패치-단일점 보존).
@@ -5489,53 +3441,8 @@ def _describe_role_character(role: "dict[str, Any]") -> str:
 # ITEM-10 routers-p3: _collect_product_prompt_context 는 routers/_prompt_context.py 로 이동(app.X 동적 — 패치-단일점 보존).
 
 
-def _sse_pack(event: str, payload: dict) -> str:
-    """SSE 프레임 직렬화 — `event: <type>\\ndata: <json>\\n\\n`. 한국어 위해 ensure_ascii=False."""
-    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-async def _prompt_generate_json_response(ctx: dict, *, log_label: str, log_ctx: str) -> JSONResponse:
-    """자동작성 비스트리밍 코어 — ctx(create_kwargs 등)로 LLM 1회 호출 후 {prompt, meta} 반환.
-
-    product/role/account 엔드포인트가 공유한다. log_label/log_ctx 는 잘림 경고 로그 식별용
-    (예: log_label='admin_generate_role_prompt_stream', log_ctx='role_id=3').
-    """
-    openai_client = ctx["openai_client"]
-    create_kwargs = ctx["create_kwargs"]
-    _aiops_model = str(ctx.get("llm_model") or "")
-
-    def _aiops_create_and_record():
-        # AI 운영 관제 계측(TASK-AIOPS): create + 회계를 둘 다 executor 스레드에서 실행 →
-        # uvicorn 이벤트 루프에서 동기 PG I/O 금지. 순수 API 왕복 지연만 측정.
-        _t0 = time.perf_counter_ns()
-        r = openai_client.chat.completions.create(**create_kwargs)
-        try:
-            from modules.llm import _record_llm_usage
-            _record_llm_usage(
-                _aiops_model, "prompt_gen", r, conversation_id=None,
-                latency_ms=int((time.perf_counter_ns() - _t0) // 1_000_000),
-            )
-        except Exception:
-            pass
-        return r
-
-    try:
-        resp = await asyncio.get_event_loop().run_in_executor(None, _aiops_create_and_record)
-        choice = resp.choices[0]
-        generated = choice.message.content or ""
-        # TASK-0232: max_tokens 도달로 본문이 잘렸는지 명시 검출 — 조용한 잘림 방지.
-        finish_reason = getattr(choice, "finish_reason", None)
-        truncated = finish_reason == "length"
-        if truncated:
-            logging.getLogger(__name__).warning(
-                "%s truncated (finish_reason=length, model=%s, max_tokens=%s, %s)",
-                log_label, ctx["llm_model"], ctx["max_tokens"], log_ctx,
-            )
-    except Exception as llm_exc:
-        return _json_error(f"LLM 생성 실패: {llm_exc}", 502)
-    return JSONResponse(
-        {"prompt": generated.strip(), "meta": {**ctx["meta_base"], "truncated": truncated}}
-    )
 
 
 
@@ -5691,83 +3598,15 @@ _USAGE_GRAN = {
 }
 
 
-def _estimate_llm_cost_usd(model: str | None, prompt_tokens: int, completion_tokens: int) -> float:
-    """TASK-0166: 모델 토큰 → 추정 비용(USD). 단가 미상(로컬 등)은 0."""
-    p = _LLM_PRICE_USD_PER_1M.get(str(model or "").strip())
-    if not p:
-        return 0.0
-    return round((prompt_tokens or 0) / 1e6 * p["in"] + (completion_tokens or 0) / 1e6 * p["out"], 4)
 
 
-def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
-    """TASK-0163: 계정별 LLM usage 를 역할별로 폴딩.
-
-    account_id 가 None(insight 워커 등 owner 없는 시스템 호출) → "(시스템)" 버킷,
-    계정은 있으나 역할 미지정(role NULL) → "(역할 없음)" 버킷. total_tokens desc 정렬.
-    PG(usage)·MySQL(역할) cross-DB 라 SQL join 불가 → enrich 된 by_account 를 Python 집계.
-    """
-    buckets: dict[str, dict] = {}
-    for row in by_account:
-        if row.get("account_id") is None:
-            key = "(시스템)"
-        else:
-            key = row.get("role") or "(역할 없음)"
-        b = buckets.setdefault(key, {"role": key, "calls": 0, "requests": 0,
-                                     "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
-        b["calls"] += int(row.get("calls") or 0)
-        b["requests"] += int(row.get("requests") or 0)  # TASK-0181: 요청 수(distinct run_id) 합산
-        b["total_tokens"] += int(row.get("total_tokens") or 0)
-        b["cost_usd"] += float(row.get("cost_usd") or 0)  # TASK-0176: 역할별 추정 비용 합산
-        # TASK-0181: 역할별 모델 분해(stacked 막대용) — 계정의 models[] 를 역할로 합산.
-        for m in (row.get("models") or []):
-            mm = b["_models"].setdefault(m["model"], {"model": m["model"], "total_tokens": 0, "cost_usd": 0.0})
-            mm["total_tokens"] += int(m.get("total_tokens") or 0)
-            mm["cost_usd"] += float(m.get("cost_usd") or 0)
-    out = []
-    for b in buckets.values():
-        b["cost_usd"] = round(b["cost_usd"], 4)
-        b["models"] = sorted(b.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
-        for m in b["models"]:
-            m["cost_usd"] = round(m["cost_usd"], 4)
-        out.append(b)
-    return sorted(out, key=lambda x: x["total_tokens"], reverse=True)
 
 
 # =============================================================================
 # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 관리 (역할 기본 + 계정 특수).
 # =============================================================================
-def _quota_upsert(conn, table: str, key_col: str, key_id: int, daily, monthly) -> None:
-    """role/account 한도 upsert. 값이 None 이면 해당 QuotaType 행 삭제(상속으로 복귀).
-    table/key_col 은 코드 상수만(엔드포인트가 고정 전달) — SQL injection 무관."""
-    cur = conn.cursor()
-    try:
-        for qtype, val in (("daily", daily), ("monthly", monthly)):
-            if val is None:
-                cur.execute(
-                    f"DELETE FROM {table} WHERE {key_col} = %s AND QuotaType = %s",
-                    (int(key_id), qtype),
-                )
-            else:
-                cur.execute(
-                    f"INSERT INTO {table} ({key_col}, QuotaType, TokenLimit) VALUES (%s, %s, %s) "
-                    "ON DUPLICATE KEY UPDATE TokenLimit = VALUES(TokenLimit)",
-                    (int(key_id), qtype, max(0, int(val))),
-                )
-    finally:
-        cur.close()
 
 
-def _quota_parse_limit(raw) -> "int | None":
-    """body 값 → 한도 int. None/빈값/음수 = None(상속/해제). 0 = 무제한(명시)."""
-    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
-        return None
-    try:
-        v = int(raw)
-    except Exception:
-        return None
-    if v < 0:
-        return None  # 음수 = 무효 → 상속/해제 취급
-    return min(v, 9_000_000_000_000_000)  # BIGINT 안전 상한 clamp (overflow 500 방지, outside-voice MINOR)
 
 
 # feature-0012 P5b Final: admin_list_quotas 는 src/routers/admin_quotas.py 로 추출.
@@ -5796,16 +3635,6 @@ def _quota_parse_limit(raw) -> "int | None":
 _USAGE_CONV_LIMIT = 200  # 모달 대화목록 상한(과대 응답 방지). 초과분은 truncated 플래그.
 
 
-def _usage_bucket_match_sql(gran: str) -> "tuple[str, str]":
-    """day 필터용 bucket 표현식 + 화이트리스트 검증된 to_char 포맷.
-
-    admin_llm_usage 의 _USAGE_GRAN[gran]['fmt'] 와 동일 — 클릭한 일자 라벨(차트의 by_day[].day)이
-    그 포맷 문자열이므로, 동일 to_char(date_trunc(...)) 로 매칭하면 차트 막대 ↔ 대화 정합.
-    반환: (bucket_expr, fmt). gran 미허용 시 day 폴백.
-    """
-    g = gran if gran in _USAGE_GRAN else "day"
-    fmt = _USAGE_GRAN[g]["fmt"]
-    return (f"to_char(date_trunc('{g}', u.created_at), '{fmt}')", fmt)
 
 
 # ITEM-10 routers-p11: _query_usage_conversations 이동(app.X 동적).
@@ -5840,32 +3669,6 @@ def _usage_account_ids_for_role(conn, role_key: str) -> "list[int] | None":
 
 
 
-def _enrich_usage_conv_owner_meta(conn, items: list[dict]) -> None:
-    """대화 owner_account_id → 사용자명/역할 enrich(MySQL, 모달 표시용). in-place."""
-    ids = sorted({e["owner_account_id"] for e in items if e.get("owner_account_id") is not None})
-    if not ids:
-        return
-    meta: dict[int, dict] = {}
-    try:
-        ph = ",".join(["%s"] * len(ids))
-        cur = conn.cursor(dictionary=True)
-        try:
-            cur.execute(
-                f"SELECT a.Id AS id, a.Username AS username, r.Name AS role "
-                f"FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId WHERE a.Id IN ({ph})",
-                tuple(ids),
-            )
-            for m in (cur.fetchall() or []):
-                meta[int(m["id"])] = {"username": m.get("username"), "role": m.get("role")}
-        finally:
-            cur.close()
-    except Exception:
-        logging.getLogger(__name__).warning("usage_conversations: owner meta enrich failed", exc_info=True)
-        return
-    for e in items:
-        mm = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
-        e["owner_username"] = (mm or {}).get("username")
-        e["owner_role"] = (mm or {}).get("role")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -5982,8 +3785,6 @@ _GLOSSARY_COMMON_ROLE = "*"  # 역할 비특정(공용) 용어 — modules.kb_gl
 # 저신뢰도는 pending. 권한 kb.glossary.curate(검수자) 가 promote(승급)/reject(거부·되돌리기) 한다.
 # 적재/승급/거부 정본 = feature-0002 modules.kb_glossary (PG/agent_kb). web 은 RBAC/audit 경계만.
 
-def _glossary_feedback_iso(v):
-    return _metadata_iso(v)
 
 
 
@@ -6071,55 +3872,12 @@ _BOOTSTRAP_MYSQL_SYS_SCHEMAS = frozenset({
 
 
 
-def _graph_resolve_ds_by_scope(scope_key: str):
-    """scope_key → datasource dict. read(agent_core.set_active_datasource)와 동일 해소:
-    ds.get('scope_key') or ds.get('key') or 라벨. 반환 (ds, None) 또는 (None, reason:str)."""
-    sk = str(scope_key or "").strip().lower()
-    if not sk or sk == "common":
-        return None, "데이터소스 스코프가 아닙니다(common)."
-    from shared import datasources as _dsr
-    mem = None
-    try:
-        mem = _connect_memory()
-    except Exception:
-        mem = None
-    try:
-        ds_map = _dsr.all_datasources(mem) or {}
-    except Exception:
-        ds_map = {}
-    finally:
-        if mem is not None:
-            try:
-                mem.close()
-            except Exception:
-                pass
-    for label, ds in ds_map.items():
-        cand = str((ds.get("scope_key") or ds.get("key") or label) or "").strip().lower()
-        if cand == sk:
-            return ds, None
-    return None, "해당 스코프의 데이터소스를 찾을 수 없습니다."
 
 
 
 
 # ── 샘플 admin(sample_queries) — RBAC kb.sample.curate ─────────────────────────
 
-def _samples_resolve_account(request: Request):
-    """RBAC(kb.sample.curate) 게이트. (account, None) 또는 (None, JSONResponse[401/403/500]).
-
-    _metadata_resolve_account 와 동형이되 권한 코드만 kb.sample.curate(샘플 큐레이션 권한).
-    """
-    try:
-        conn = _connect_memory()
-    except Exception:
-        return None, _json_error("db connection failed", 500)
-    try:
-        account, error = _require_permission(request, conn, "kb.sample.curate")
-        if error:
-            return None, error
-        return account, None
-    finally:
-        conn.close()
 
 
 
@@ -6224,68 +3982,6 @@ def _bootstrap_collect_skeleton(conn, _dialects, schema_name: str) -> list:
     return out
 
 
-def _bootstrap_collect_skeleton_mssql(conn, _dialects, db_name: str) -> list:
-    """MSSQL 골격 — 연결된 database 의 비시스템 SQL 스키마(dbo 등) 테이블을 평탄 수집(metadata-table-desc-fix).
-
-    server > database > schema > table 4계층을 테이블 설명 모델의 (scope_key=datasource, schema_name,
-    table_name) 3-키에 매핑한다 — **저장 schema_name = database(db_name)** (사용자 결정). describe_columns 는
-    실제 SQL 스키마로 introspect 하되 산출 schema_name 은 db_name 으로 통일한다. 동일 table_name 이 복수 SQL
-    스키마에 있으면 최초 1건만 남긴다(DB명 평탄화 한계 — 대부분 dbo 단일). 시스템 SQL 스키마(db_datareader 등
-    고정 역할 + sys/information_schema)는 dialect.system_schemas() 로 제외. cap: 테이블 500 / 컬럼 200.
-    """
-    from modules.tools import _safe_ident as _safe_ident_fn
-    from modules import schema as _schema
-    from shared.config import normalize_db_label as _norm_db_label   # §58: store label lower 계약
-    dialect = _dialects.active()
-    sys_schema = {str(n).strip().lower() for n in dialect.system_schemas()}
-    real_schemas = [s for s in (_schema.load_known_schemas(conn) or [])
-                    if str(s).strip().lower() not in sys_schema]
-    out: list = []
-    seen: set = set()
-    for sql_schema in real_schemas:
-        if len(out) >= _BOOTSTRAP_MAX_TABLES:
-            break
-        safe_sql_schema = _safe_ident_fn(sql_schema)
-        tnames: list = []
-        cur = conn.cursor()
-        try:
-            cur.execute(dialect.describe_schema_tables(safe_sql_schema))
-            for row in (cur.fetchall() or []):
-                if row and row[0]:
-                    tnames.append(str(row[0]))
-        finally:
-            cur.close()
-        for tname in tnames:
-            if len(out) >= _BOOTSTRAP_MAX_TABLES:
-                break
-            key = tname.strip().lower()
-            if key in seen:
-                continue  # DB명 평탄화: 동명 테이블(타 SQL 스키마)은 최초 1건만
-            seen.add(key)
-            safe_tname = _safe_ident_fn(tname)
-            cols: list = []
-            ccur = conn.cursor()
-            try:
-                ccur.execute(dialect.describe_columns(safe_sql_schema, safe_tname))
-                for crow in (ccur.fetchall() or []):
-                    if not crow or not crow[0]:
-                        continue
-                    cols.append({"column_name": str(crow[0]),
-                                 "data_type": str(crow[1] or "").lower()})
-                    if len(cols) >= _BOOTSTRAP_MAX_COLS_PER_TABLE:
-                        break
-            except Exception:
-                cols = []  # 단일 테이블 introspection 실패는 건너뜀(부분 골격 허용)
-            finally:
-                ccur.close()
-            # §58(테이블축 케이스 정합): MSSQL 저장 schema_name(=DB명 라벨)은 set_active_database
-            #   (TASK-0220)·routine backfill(§56 RC5)과 동일한 lower 계약 — sys.databases 원본 케이스를
-            #   무가공 저장하면 cadence(lower) 축과 케이스-변형 이중 적재(라이브 실측 'AccountDB' 33행
-            #   + AGE 중복 스키마 카드)가 생긴다. MSSQL 전용 함수라 MySQL 케이스 보존은 자동 충족.
-            #   (질의 식별자는 sql_schema/tname — db_name 은 연결 바인딩 후 질의에 미사용.)
-            out.append({"schema_name": _norm_db_label(db_name) or db_name,
-                        "table_name": tname, "columns": cols})
-    return out
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -6407,56 +4103,12 @@ _DASHBOARD_WIDGET_KEYS: frozenset = frozenset(w["key"] for w in _DASHBOARD_WIDGE
 _DASHBOARD_PREF_VERSION = 1
 
 
-def _actor_can_see_widget(actor: dict, widget: dict) -> bool:
-    """위젯 표시/데이터 권한 검사. `permission` 이 리스트면 하나라도 보유 시 True
-    (TASK-0293: product/datasource 의 read|manage superset 게이팅 — _account_has_any_permission)."""
-    perm = widget.get("permission")
-    perms = perm if isinstance(perm, (list, tuple)) else (perm,)
-    return _account_has_any_permission(actor, *[str(p) for p in perms if p])
 
 
-def _widget_data_scope(actor: dict, any_permission: str) -> str:
-    """TASK-0294: 위젯 데이터 스코프 — `.any` 권한 보유 시 'any'(cross-account), 아니면 'own'(본인).
-
-    audits/conversations 위젯은 `.own`/`.any` 짝을 가져, `.own` 만 보유한 사용자에게는
-    본인 데이터로 스코프된 집계를 보여주고 cross-account(타 계정 username·소유자 집계)는
-    `.any` 보유자에게만 노출한다. 위젯 가시성(_actor_can_see_widget)과 별개로 데이터 출력 경계."""
-    return "any" if _account_has_permission(actor, any_permission) else "own"
 
 
-def _dashboard_default_prefs(actor: dict) -> dict:
-    """actor 가 권한을 보유한 위젯만 기본 표시(카탈로그 순서)."""
-    keys = [w["key"] for w in _DASHBOARD_WIDGETS if _actor_can_see_widget(actor, w)]
-    return {
-        "version": _DASHBOARD_PREF_VERSION,
-        "widgets": [{"key": k, "visible": True, "order": i} for i, k in enumerate(keys)],
-    }
 
 
-def _sanitize_dashboard_prefs(raw: dict) -> dict:
-    """클라이언트 입력 prefs 를 알려진 위젯 키·boolean·int 로만 정규화.
-
-    미지 키/중복/과대 입력을 거부한다. 권한 검증은 하지 않는다 — overview 가 권한
-    없는 위젯 데이터를 애초에 반환하지 않으므로 prefs 에 그 키가 남아도 노출 위험이
-    없고, 권한이 회복되면 그때 표시되도록 보존하는 편이 사용자 친화적이다.
-    """
-    widgets: list[dict] = []
-    seen: set[str] = set()
-    items = raw.get("widgets") if isinstance(raw, dict) else None
-    if isinstance(items, list):
-        for it in items[:64]:  # 과대 입력 상한
-            if not isinstance(it, dict):
-                continue
-            key = str(it.get("key") or "")
-            if key not in _DASHBOARD_WIDGET_KEYS or key in seen:
-                continue
-            seen.add(key)
-            try:
-                order = int(it.get("order"))
-            except Exception:
-                order = len(widgets)
-            widgets.append({"key": key, "visible": bool(it.get("visible", True)), "order": order})
-    return {"version": _DASHBOARD_PREF_VERSION, "widgets": widgets}
 
 
 
@@ -6468,16 +4120,6 @@ def _sanitize_dashboard_prefs(raw: dict) -> dict:
 
 
 
-def _delete_runtime_setting(conn, key: str) -> None:
-    """override 삭제(기본값으로 초기화)."""
-    cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM WebRuntimeSettings WHERE SettingKey = %s", (str(key),))
-    finally:
-        try:
-            cur.close()
-        except Exception:
-            pass
 
 
 
@@ -6971,4 +4613,174 @@ from routers._bootstrap_schema import (  # noqa: E402
 from routers._prompt_context import (  # noqa: E402
     _auto_prompt_eligible_product_ids,
     _auto_prompt_sweep_once,
+)
+
+# ---- feature-0012 ITEM-10 p15 rebind: 이동 심볼의 app.<name> 보존 ----
+from routers._conv_store import (  # noqa: E402
+    _normalize_product_mode,
+    _compute_display_status,
+    _escape_like_for_search,
+    _mention_count_regex,
+    _hmac_filename,
+    _extension_bucket,
+    _size_bucket,
+    _attachment_edit_block_spans,
+    _next_version_filename,
+    _extract_intent_from_content,
+    _normalize_topic,
+    _normalize_step_text,
+    _derive_step_work,
+    _summarize_rationale,
+    _msg_outside_window,
+    _inline_tmp_dir,
+    _ask_worker_ready,
+    _get_ask_job_status,
+    _runtime_backend_is_pg,
+    _meta_json_to_dict,
+    _member_visibility_window,
+    _attachment_outside_window,
+    _meta_has_attachment_derived,
+    _sanitize_fix_with_ai_fragment,
+    _active_ask_job_conversation_ids,
+    _ensure_conversation_row,
+    _run_agent,
+    _extract_sql_tables,
+    _sort_dt_key,
+    _stringify_summary,
+    _extract_rationale,
+    _summarize_answer,
+    _find_latest_log,
+    _read_executed_sql,
+    _extract_csv_paths,
+    _is_question_text,
+    _ask_execution_mode,
+    _coerce_naive_dt,
+)
+from routers.conversations import (  # noqa: E402
+    _set_account_current_conversation,
+    _assign_conversation_owner,
+    _repair_current_conversation,
+    _model_supports_temperature,
+    _acquire_request_slot,
+    _release_request_slot,
+    _get_default_product_id,
+    _product_allowed_schemas,
+    _product_has_datasource,
+    _log_search_activity,
+    _normalize_search_query,
+    _infer_kind,
+    _strip_attachment_edit_blocks,
+    _update_assistant_message_content,
+    _model_to_llm_provider,
+    _dispatch_ask_run,
+    _make_internal_ask_request,
+    _delete_conversation_impl,
+    _archive_conversation,
+)
+from routers.admin_products import (  # noqa: E402
+    _block_conversations_for_product,
+    _compose_db_insight_text,
+    _db_catalog_from_object_key,
+    _like_escape,
+    _validate_db_rule_pattern,
+    _match_db_rule,
+    _normalize_db_rule_row,
+    _get_product_db_rules,
+    _get_db_rule_by_id,
+    _touch_db_rule_sync,
+    _rule_to_public,
+    _prompt_generate_json_response,
+    _clean_insight_segment,
+)
+from routers.admin_accounts import (  # noqa: E402
+    _actor_editable_permission_codes,
+    _role_grant_excess_for_actor,
+    _normalize_override_payload,
+    _set_account_overrides,
+    _is_management_permission_set,
+    _ensure_management_survivor_for_account_change,
+    _store_image_upload,
+    _account_role_key,
+)
+from routers.admin_roles import (  # noqa: E402
+    _sanitize_role_key,
+    _is_valid_role_key,
+    _validate_permission_codes,
+    _set_role_permissions,
+    _ensure_management_survivor_for_role_change,
+    _assign_default_signup_role,
+)
+from routers._bootstrap_schema import (  # noqa: E402
+    _management_accounts,
+    _generate_datasource_key,
+    _runtime_tables_available,
+    _backfill_group_conversation_members_once,
+    _schedule_memory_runtime_bootstrap,
+    _ensure_memory_runtime_ready,
+)
+from routers._prompt_context import (  # noqa: E402
+    _counted_stream,
+    _product_allowed_schemas_for_datasource,
+    _product_prompt_present,
+    _describe_role_character,
+    _sse_pack,
+)
+from routers.admin_metadata import (  # noqa: E402
+    _glossary_feedback_iso,
+    _graph_resolve_ds_by_scope,
+    _bootstrap_collect_skeleton_mssql,
+)
+from routers.admin_console import (  # noqa: E402
+    _permission_catalog_payload,
+    _actor_can_see_widget,
+    _widget_data_scope,
+    _dashboard_default_prefs,
+    _sanitize_dashboard_prefs,
+)
+from routers.admin_usage import (  # noqa: E402
+    _estimate_llm_cost_usd,
+    _aggregate_usage_by_role,
+    _usage_bucket_match_sql,
+    _enrich_usage_conv_owner_meta,
+)
+from routers.admin_quotas import (  # noqa: E402
+    _quota_upsert,
+    _quota_parse_limit,
+    _account_effective_quota,
+    _account_period_usage_tokens,
+)
+from routers.admin_datasources import (  # noqa: E402
+    _ssrf_private_guard_enabled,
+    _ds_valid_key,
+    _ds_audit_fields,
+)
+from routers.system import (  # noqa: E402
+    _active_stream_count,
+    _is_local_llm_available,
+    _safe_shared_path,
+)
+from routers.share import (  # noqa: E402
+    _account_is_conversation_member,
+    _ensure_owner_membership,
+    _optional_account,
+)
+from routers.attachments import (  # noqa: E402
+    _account_is_pending,
+    _account_can_access_attachment,
+)
+from routers.media import (  # noqa: E402
+    _sniff_image,
+    _serve_image_object,
+)
+from routers.auth import (  # noqa: E402
+    _default_signup_role_id,
+)
+from routers.admin_audits import (  # noqa: E402
+    _counted_stream_sync,
+)
+from routers.admin_settings import (  # noqa: E402
+    _delete_runtime_setting,
+)
+from routers.admin_sample_feedback import (  # noqa: E402
+    _samples_resolve_account,
 )

@@ -2348,3 +2348,193 @@ def _ensure_web_gdrive_tokens_schema(conn) -> None:
 def _mark_memory_runtime_ready() -> None:
     app._MEMORY_SCHEMA_READY = True
     app._WEB_TABLES_READY = True
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (6종). app 전역은 app.X 동적 참조. ====
+
+def _management_accounts(conn) -> list[dict[str, app.Any]]:
+    rows = app._list_active_accounts(conn)
+    return [
+        row
+        for row in rows
+        if app._account_has_permission(row, "console.manage")
+        and app._account_has_permission(row, "account.role.assign")
+        and app._account_has_permission(row, "role.permission.manage")
+    ]
+
+def _generate_datasource_key(engine: str, host: str, port: int) -> str:
+    """엔진 + 호스트 + 포트 의 SHA-256 해시 앞 12자를 키로 반환.
+
+    형식: `{engine}-{hash12}` (예: mysql-3f2a1b9c7e41).
+    fact-key `:ds:` 구분자와 충돌 없고, `ds` 로 시작하지 않으며(기존 `_ds_valid_key` 제약 통과),
+    엔드포인트 좌표가 바뀌어도 목적지 변경을 즉시 키에 반영한다.
+    """
+    import hashlib as _hl
+    raw = f"{(engine or 'mysql').strip().lower()}:{(host or '').strip().lower()}:{int(port or 0)}"
+    digest = _hl.sha256(raw.encode()).hexdigest()[:12]
+    eng_tag = (engine or "mysql").strip().lower()[:10]  # 최대 10자로 잘라 가독성 보존
+    return f"{eng_tag}-{digest}"
+
+def _runtime_tables_available() -> bool:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            conn = app._open_memory_connection()
+        except app.mysql.connector.Error as exc:
+            if int(getattr(exc, "errno", 0) or 0) == 1049:
+                return False
+            raise
+        try:
+            cur = conn.cursor()
+            try:
+                for table_name in ("WebAccounts", "WebRoles", "WebAuthSessions",
+                                   "WebProducts", "WebProductDatabases", "WebSystemPrompts",
+                                   "WebDashboardPreferences"):
+                    cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
+                    cur.fetchall()
+                for column_check in (
+                    "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
+                    "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
+                    # TASK-0277: 제품 바인딩 stable surrogate(DatasourceId) 컬럼 — 누락 시 1054 → full 마이그레이션.
+                    "SELECT `DatasourceId` FROM `WebProducts` LIMIT 1",
+                    "SELECT `DatasourceId` FROM `WebProductDatasources` LIMIT 1",
+                    "SELECT `DatasourceId` FROM `WebProductDatabases` LIMIT 1",
+                    # TASK-20260618T044318: DB allowlist rule/manual 구분 컬럼 — 누락 시 1054 → full 마이그레이션
+                    #   (rule 테이블/pending 도 같은 slow path 에서 생성됨).
+                    "SELECT `Source` FROM `WebProductDatabases` LIMIT 1",
+                    # TASK-20260618T061703: 다중 규칙 — SortOrder 누락 시 1054 → slow path 가 UNIQUE 제거 + SortOrder 추가.
+                    "SELECT `SortOrder` FROM `WebProductDatasourceDbRules` LIMIT 1",
+                ):
+                    cur.execute(column_check)
+                    cur.fetchall()
+            finally:
+                cur.close()
+        except app.mysql.connector.Error as exc:
+            if int(getattr(exc, "errno", 0) or 0) in (1146, 1054):
+                return False
+            raise
+        finally:
+            conn.close()
+        return True
+    try:
+        conn = app._open_memory_connection()
+    except app.mysql.connector.Error as exc:
+        if int(getattr(exc, "errno", 0) or 0) == 1049:
+            return False
+        raise
+    try:
+        cur = conn.cursor()
+        try:
+            for table_name in (
+                "AgentMemoryKv",
+                "AgentMemoryMessages",
+                "AgentMemorySteps",
+                "WebAccounts",
+                "WebRoles",
+                "WebAuthSessions",
+                "AgentCoreConversations",
+                "WebProducts",
+                "WebProductDatabases",
+                "WebSystemPrompts",
+                "WebDashboardPreferences",
+            ):
+                cur.execute(f"SELECT 1 FROM `{table_name}` LIMIT 1")
+                cur.fetchall()
+            # TASK-0047: 신규 컬럼 존재까지 검증해 신규 배포가 fast-path 를 우회하고
+            # `_ensure_web_tables` 의 idempotent ALTER 들을 한 번 더 실행하도록 한다.
+            # 컬럼 누락 시 errno 1054(Unknown column)가 발생 → False 반환 → full 마이그레이션 트리거.
+            for column_check in (
+                "SELECT `product_mode` FROM `AgentCoreConversations` LIMIT 1",
+                "SELECT `ProductPrefMode` FROM `WebAccounts` LIMIT 1",
+                "SELECT `ProductPrefPinnedId` FROM `WebAccounts` LIMIT 1",
+                # TASK-0277: 제품 바인딩 stable surrogate(DatasourceId) 컬럼 — 누락 시 1054 → full 마이그레이션 트리거.
+                "SELECT `DatasourceId` FROM `WebProducts` LIMIT 1",
+                "SELECT `DatasourceId` FROM `WebProductDatasources` LIMIT 1",
+                "SELECT `DatasourceId` FROM `WebProductDatabases` LIMIT 1",
+            ):
+                cur.execute(column_check)
+                cur.fetchall()
+        finally:
+            cur.close()
+    except app.mysql.connector.Error as exc:
+        # 1146=Unknown table, 1054=Unknown column — 둘 다 신규 마이그레이션이 필요함을 의미.
+        if int(getattr(exc, "errno", 0) or 0) in (1146, 1054):
+            return False
+        raise
+    finally:
+        conn.close()
+    return True
+
+def _backfill_group_conversation_members_once() -> None:
+    """feature-0009: 기존 단일소유 대화 → owner member backfill (멱등, 프로세스당 1회, best-effort).
+
+    멤버십 정본은 PG `agent_runtime.conversation_members`. READ_BACKEND != postgres 또는 PG
+    미가용 시 skip(레거시/테스트 환경). ON CONFLICT DO NOTHING 이라 재실행 안전(이미 멤버는 skip).
+    실패는 startup 흐름을 막지 않는다(다음 startup 에 재시도).
+    """
+    if app._GROUP_MEMBERS_BACKFILL_DONE:
+        return
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+        app._GROUP_MEMBERS_BACKFILL_DONE = True
+        return
+    try:
+        from shared.db import _pg_connect
+        from modules import group_members
+        pg = _pg_connect()
+        try:
+            inserted = group_members.backfill_conversation_members(pg)
+            print(f"[web.startup] group_members backfill: inserted={inserted}")
+        finally:
+            pg.close()
+        app._GROUP_MEMBERS_BACKFILL_DONE = True
+    except Exception as exc:
+        print(f"[web.startup] group_members backfill skipped: {exc}")
+
+def _schedule_memory_runtime_bootstrap() -> None:
+    if app._MEMORY_SCHEMA_READY:
+        return
+    try:
+        if app._runtime_tables_available():
+            try:
+                catchup_conn = app._open_memory_connection()
+                try:
+                    app._ensure_seed_catchup(catchup_conn)
+                finally:
+                    catchup_conn.close()
+            except Exception as exc:
+                print(f"[web.startup] seed catchup skipped: {exc}")
+            app._backfill_group_conversation_members_once()
+            app._mark_memory_runtime_ready()
+            return
+    except Exception as exc:
+        print(f"[web.startup] memory probe failed: {exc}")
+        return
+    with app._MEMORY_SCHEMA_INIT_LOCK:
+        if app._MEMORY_SCHEMA_READY or app._MEMORY_BOOTSTRAP_RUNNING:
+            return
+        app._MEMORY_BOOTSTRAP_RUNNING = True
+
+    def _run_bootstrap() -> None:
+        try:
+            app._ensure_memory_runtime_ready()
+            app._backfill_group_conversation_members_once()
+        except Exception as exc:
+            print(f"[web.startup] memory bootstrap failed: {exc}")
+        finally:
+            with app._MEMORY_SCHEMA_INIT_LOCK:
+                app._MEMORY_BOOTSTRAP_RUNNING = False
+
+    app.threading.Thread(
+        target=_run_bootstrap,
+        name="web-memory-bootstrap",
+        daemon=True,
+    ).start()
+
+def _ensure_memory_runtime_ready() -> None:
+    if app._MEMORY_SCHEMA_READY:
+        return
+    with app._MEMORY_SCHEMA_INIT_LOCK:
+        if app._MEMORY_SCHEMA_READY:
+            return
+        app.ensure_memory_schema()
+        app._ensure_web_tables()
+        app._mark_memory_runtime_ready()

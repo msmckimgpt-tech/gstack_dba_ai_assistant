@@ -126,3 +126,89 @@ async def admin_set_account_quota(account_id: int, request: Request, actor=Depen
             pass
         return app._json_error(f"audit write failed: {audit_exc}", 500)
     return JSONResponse({"ok": True, "account_id": int(account_id), "daily": daily, "monthly": monthly})
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (4종). app 전역은 app.X 동적 참조. ====
+
+def _quota_upsert(conn, table: str, key_col: str, key_id: int, daily, monthly) -> None:
+    """role/account 한도 upsert. 값이 None 이면 해당 QuotaType 행 삭제(상속으로 복귀).
+    table/key_col 은 코드 상수만(엔드포인트가 고정 전달) — SQL injection 무관."""
+    cur = conn.cursor()
+    try:
+        for qtype, val in (("daily", daily), ("monthly", monthly)):
+            if val is None:
+                cur.execute(
+                    f"DELETE FROM {table} WHERE {key_col} = %s AND QuotaType = %s",
+                    (int(key_id), qtype),
+                )
+            else:
+                cur.execute(
+                    f"INSERT INTO {table} ({key_col}, QuotaType, TokenLimit) VALUES (%s, %s, %s) "
+                    "ON DUPLICATE KEY UPDATE TokenLimit = VALUES(TokenLimit)",
+                    (int(key_id), qtype, max(0, int(val))),
+                )
+    finally:
+        cur.close()
+
+def _quota_parse_limit(raw) -> "int | None":
+    """body 값 → 한도 int. None/빈값/음수 = None(상속/해제). 0 = 무제한(명시)."""
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        return None
+    try:
+        v = int(raw)
+    except Exception:
+        return None
+    if v < 0:
+        return None  # 음수 = 무효 → 상속/해제 취급
+    return min(v, 9_000_000_000_000_000)  # BIGINT 안전 상한 clamp (overflow 500 방지, outside-voice MINOR)
+
+def _account_effective_quota(conn, account_id: int, role_id: int, quota_type: str) -> "int | None":
+    """계정 override → 역할 기본 → None(무제한) 순 유효 한도. 0=무제한(명시). (보안 ④)"""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT TokenLimit FROM WebAccountTokenQuotas WHERE AccountId = %s AND QuotaType = %s LIMIT 1",
+            (int(account_id), str(quota_type)),
+        )
+        r = cur.fetchone()
+        if r is not None:
+            return int(r[0] or 0)
+        if role_id:
+            cur.execute(
+                "SELECT TokenLimit FROM WebRoleTokenQuotas WHERE RoleId = %s AND QuotaType = %s LIMIT 1",
+                (int(role_id), str(quota_type)),
+            )
+            rr = cur.fetchone()
+            if rr is not None:
+                return int(rr[0] or 0)
+        return None
+    finally:
+        cur.close()
+
+def _account_period_usage_tokens(account_id: int, quota_type: str) -> int:
+    """PG agent_runtime.llm_usage 에서 본인 소유 대화의 토큰 합 — 'daily'=달력 당일,
+    'monthly'=달력 당월(date_trunc). best-effort(실패 시 0=무제한 취급, fail-open)."""
+    trunc = "day" if quota_type == "daily" else "month"
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return 0
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(sum(u.total_tokens), 0) "
+                "FROM agent_runtime.llm_usage u "
+                "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+                f"WHERE c.owner_account_id = %s AND u.created_at >= date_trunc('{trunc}', now())",
+                (int(account_id),),
+            )
+            row = cur.fetchone()
+            return int((row[0] if row else 0) or 0)
+    except Exception:
+        return 0
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass

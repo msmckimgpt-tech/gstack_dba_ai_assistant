@@ -33,8 +33,9 @@ def test_membership_or_in_both_list_paths():
 
 def test_access_helpers_include_membership():
     # 중앙 게이트 + 첨부 게이트가 멤버십을 OR 로 포함해야 IDOR 없이 멤버 열람 가능(F6).
-    assert "def _account_is_conversation_member(" in APP
-    assert APP.count("_account_is_conversation_member(") >= 3  # 정의 + 대화게이트 + 첨부게이트
+    # ITEM-10 p15: _account_is_conversation_member 가 routers/share.py 로 이동 — 계약은 위치 무관(APP_ALL).
+    assert "def _account_is_conversation_member(" in APP_ALL
+    assert APP_ALL.count("_account_is_conversation_member(") >= 3  # 정의 + 대화게이트 + 첨부게이트
 
 
 def test_member_endpoints_registered():

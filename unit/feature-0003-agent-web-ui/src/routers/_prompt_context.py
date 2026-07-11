@@ -1160,3 +1160,66 @@ def _auto_prompt_sweep_once() -> dict:
     if stats["generated"] or stats["errors"]:
         log.info("auto_prompt sweep 완료: %s", stats)
     return stats
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (5종). app 전역은 app.X 동적 참조. ====
+
+async def _counted_stream(agen):
+    """async generator 를 감싸 진행 중 스트림 수를 카운트한다(SSE event_stream 용)."""
+    with app._ACTIVE_STREAMS_LOCK:
+        app._ACTIVE_STREAMS += 1
+    try:
+        async for chunk in agen:
+            yield chunk
+    finally:
+        with app._ACTIVE_STREAMS_LOCK:
+            app._ACTIVE_STREAMS = max(0, app._ACTIVE_STREAMS - 1)
+
+def _product_allowed_schemas_for_datasource(conn, product_id: int, datasource_key: str | None) -> list[str]:
+    """TASK-0228 (1:N): 특정 (product, datasource) 의 접근가능 스키마(DB) 목록 — datasource 차원 격리.
+
+    datasource_key=None/'' 은 레거시(단일 MySQL/미차원화) 행 — DatasourceKey='' 으로 저장된 backfill
+    이전 행 또는 미바인딩 제품. 매칭은 소문자 비교."""
+    if product_id <= 0:
+        return []
+    dsk = (str(datasource_key).strip().lower() if datasource_key else "")
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s AND LOWER(DatasourceKey) = %s "
+                "ORDER BY SortOrder, SchemaName",
+                (int(product_id), dsk),
+            )
+            return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0]]
+        except Exception:
+            # DatasourceKey 컬럼 부재(미이전) → 차원 없는 레거시 조회로 폴백.
+            cur.execute(
+                "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s ORDER BY SortOrder, SchemaName",
+                (int(product_id),),
+            )
+            return [str(r[0]) for r in (cur.fetchall() or []) if r and r[0]]
+    finally:
+        cur.close()
+
+def _product_prompt_present(conn, product_id: int) -> bool:
+    """제품 시스템 프롬프트(Scope='product')가 비어있지 않게 입력돼 있는지."""
+    sp = app._load_system_prompt(conn, scope="product", product_id=int(product_id))
+    return bool(sp and str(sp.get("content") or "").strip())
+
+def _describe_role_character(role: "dict[str, Any]") -> str:
+    """역할 dict(`_load_role_by_id` 산출)의 권한 특성을 LLM 이 이해할 성격 서술로 변환."""
+    codes = set(role.get("permission_codes") or [])
+    traits = [phrase for code, phrase in app._ROLE_CAPABILITY_HINTS if code in codes]
+    if "conversation.ask" not in codes:
+        traits.insert(0, "질의 권한 없음 — 조회 전용 성격")
+    lines: list[str] = []
+    if role.get("description"):
+        lines.append(f"역할 설명: {role['description']}")
+    if traits:
+        lines.append("주요 권한 특성: " + ", ".join(traits))
+    return "\n".join(lines)
+
+def _sse_pack(event: str, payload: dict) -> str:
+    """SSE 프레임 직렬화 — `event: <type>\\ndata: <json>\\n\\n`. 한국어 위해 ensure_ascii=False."""
+    return f"event: {event}\ndata: {app.json.dumps(payload, ensure_ascii=False)}\n\n"

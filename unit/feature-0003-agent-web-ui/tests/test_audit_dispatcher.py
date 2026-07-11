@@ -177,6 +177,11 @@ def scenario_D7_verify_completion_symbol_check() -> bool:
         return _expect("D7 app.py present", False, f"missing: {app_py}")
     with open(app_py, "r", encoding="utf-8") as f:
         src = f.read()
+    # ITEM-10 p7: build_audit_change_json 은 routers/_audit_infra.py 로 이동 — 병합 스캔.
+    audit_infra = os.path.join(os.path.dirname(app_py), "routers", "_audit_infra.py")
+    if os.path.isfile(audit_infra):
+        with open(audit_infra, "r", encoding="utf-8") as f:
+            src += f.read()
     ok = ("def record_audit_event(" in src
           and "AGENT_AUDIT_ENABLED" in src
           and "_enforce_audit_prod_gate" in src

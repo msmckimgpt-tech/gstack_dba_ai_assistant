@@ -203,3 +203,6 @@ source_of_truth: true
 
 ## CHG-20260711T211500-item10-routers-p14 (oauth/login/dash 등 65종 대형 sweep)
 - Date: 2026-07-11. 확립 패턴 + Store-ctx 필터·top-level 게이트 가드·문자열 annotation import 주입. app.py 8,723→6,974.
+
+## CHG-20260711T214000-item10-routers-p15 (전수 census 128종 최대 sweep + 검증기 수리)
+- Date: 2026-07-11. 직수입 가드·byte-offset 편집 신설, p13/p14 재생성 감사 mismatch 0. app.py 6,974→4,786.

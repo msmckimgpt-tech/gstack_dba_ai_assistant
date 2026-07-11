@@ -737,3 +737,17 @@ def _seal_audit_chain_drain(conn, *, max_iters: int = 10000) -> int:
         if int(n or 0) < app._AUDIT_SEAL_BATCH:
             break
     return total
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _counted_stream_sync(gen):
+    """sync generator 를 감싸 카운트한다(CSV export 용 — async 로 감싸면 event loop 블로킹)."""
+    with app._ACTIVE_STREAMS_LOCK:
+        app._ACTIVE_STREAMS += 1
+    try:
+        for chunk in gen:
+            yield chunk
+    finally:
+        with app._ACTIVE_STREAMS_LOCK:
+            app._ACTIVE_STREAMS = max(0, app._ACTIVE_STREAMS - 1)

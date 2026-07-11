@@ -331,3 +331,84 @@ def admin_usage_conversations(request: Request, account=Depends(app.get_current_
     # 계정 메타(사용자명/역할) enrich — 모달 표시용(cross-DB, MySQL).
     app._enrich_usage_conv_owner_meta(conn, items)
     return JSONResponse({"items": items, "truncated": truncated, "filter": p, "scope": "admin"})
+
+
+# ==== feature-0012 ITEM-10 p15 — app.py 에서 이동 (4종). app 전역은 app.X 동적 참조. ====
+
+def _estimate_llm_cost_usd(model: str | None, prompt_tokens: int, completion_tokens: int) -> float:
+    """TASK-0166: 모델 토큰 → 추정 비용(USD). 단가 미상(로컬 등)은 0."""
+    p = app._LLM_PRICE_USD_PER_1M.get(str(model or "").strip())
+    if not p:
+        return 0.0
+    return round((prompt_tokens or 0) / 1e6 * p["in"] + (completion_tokens or 0) / 1e6 * p["out"], 4)
+
+def _aggregate_usage_by_role(by_account: list[dict]) -> list[dict]:
+    """TASK-0163: 계정별 LLM usage 를 역할별로 폴딩.
+
+    account_id 가 None(insight 워커 등 owner 없는 시스템 호출) → "(시스템)" 버킷,
+    계정은 있으나 역할 미지정(role NULL) → "(역할 없음)" 버킷. total_tokens desc 정렬.
+    PG(usage)·MySQL(역할) cross-DB 라 SQL join 불가 → enrich 된 by_account 를 Python 집계.
+    """
+    buckets: dict[str, dict] = {}
+    for row in by_account:
+        if row.get("account_id") is None:
+            key = "(시스템)"
+        else:
+            key = row.get("role") or "(역할 없음)"
+        b = buckets.setdefault(key, {"role": key, "calls": 0, "requests": 0,
+                                     "total_tokens": 0, "cost_usd": 0.0, "_models": {}})
+        b["calls"] += int(row.get("calls") or 0)
+        b["requests"] += int(row.get("requests") or 0)  # TASK-0181: 요청 수(distinct run_id) 합산
+        b["total_tokens"] += int(row.get("total_tokens") or 0)
+        b["cost_usd"] += float(row.get("cost_usd") or 0)  # TASK-0176: 역할별 추정 비용 합산
+        # TASK-0181: 역할별 모델 분해(stacked 막대용) — 계정의 models[] 를 역할로 합산.
+        for m in (row.get("models") or []):
+            mm = b["_models"].setdefault(m["model"], {"model": m["model"], "total_tokens": 0, "cost_usd": 0.0})
+            mm["total_tokens"] += int(m.get("total_tokens") or 0)
+            mm["cost_usd"] += float(m.get("cost_usd") or 0)
+    out = []
+    for b in buckets.values():
+        b["cost_usd"] = round(b["cost_usd"], 4)
+        b["models"] = sorted(b.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
+        for m in b["models"]:
+            m["cost_usd"] = round(m["cost_usd"], 4)
+        out.append(b)
+    return sorted(out, key=lambda x: x["total_tokens"], reverse=True)
+
+def _usage_bucket_match_sql(gran: str) -> "tuple[str, str]":
+    """day 필터용 bucket 표현식 + 화이트리스트 검증된 to_char 포맷.
+
+    admin_llm_usage 의 _USAGE_GRAN[gran]['fmt'] 와 동일 — 클릭한 일자 라벨(차트의 by_day[].day)이
+    그 포맷 문자열이므로, 동일 to_char(date_trunc(...)) 로 매칭하면 차트 막대 ↔ 대화 정합.
+    반환: (bucket_expr, fmt). gran 미허용 시 day 폴백.
+    """
+    g = gran if gran in app._USAGE_GRAN else "day"
+    fmt = app._USAGE_GRAN[g]["fmt"]
+    return (f"to_char(date_trunc('{g}', u.created_at), '{fmt}')", fmt)
+
+def _enrich_usage_conv_owner_meta(conn, items: list[dict]) -> None:
+    """대화 owner_account_id → 사용자명/역할 enrich(MySQL, 모달 표시용). in-place."""
+    ids = sorted({e["owner_account_id"] for e in items if e.get("owner_account_id") is not None})
+    if not ids:
+        return
+    meta: dict[int, dict] = {}
+    try:
+        ph = ",".join(["%s"] * len(ids))
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                f"SELECT a.Id AS id, a.Username AS username, r.Name AS role "
+                f"FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId WHERE a.Id IN ({ph})",
+                tuple(ids),
+            )
+            for m in (cur.fetchall() or []):
+                meta[int(m["id"])] = {"username": m.get("username"), "role": m.get("role")}
+        finally:
+            cur.close()
+    except Exception:
+        logging.getLogger(__name__).warning("usage_conversations: owner meta enrich failed", exc_info=True)
+        return
+    for e in items:
+        mm = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
+        e["owner_username"] = (mm or {}).get("username")
+        e["owner_role"] = (mm or {}).get("role")
