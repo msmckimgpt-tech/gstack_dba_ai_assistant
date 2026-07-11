@@ -196,3 +196,6 @@ source_of_truth: true
 
 ## REV-20260712T024500-item11-batch1 [SKIPPED:panel-precleared] — me_put_system_prompt DI-rework
 - Related: CHG-20260712T024500-item11-batch1. 승인: ROADMAP §6.1 + §6.3(§18.8 패널 REV-20260712T023000 이 batch1 을 BLOCKER 해소 대상으로 사전 판정). runtime byte-동치 7종+leak-fix 회귀가 acceptance (a) 이행. 게이트 4종 GREEN.
+
+## REV-20260712T030000-item11-batch2 [SKIPPED:panel-precleared] — rename_conversation_title DI-rework
+- Related: CHG-20260712T030000-item11-batch2. 승인: ROADMAP §6.1 + §6.3(§18.8 패널 REV-20260712T023000 방법론). admin_products 이연=txn 복잡·버그 없음 판정(패널 "verbatim 보존" 정합). runtime byte-동치 10종+leak-fix. 게이트 4종 GREEN.

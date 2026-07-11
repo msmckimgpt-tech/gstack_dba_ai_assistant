@@ -1944,7 +1944,16 @@ def conversations(
     return JSONResponse(payload)
 
 @router.patch("/api/conversations/{conversation_id}/title")
-async def rename_conversation_title(conversation_id: str, request: Request) -> JSONResponse:
+async def rename_conversation_title(
+    conversation_id: str,
+    request: Request,
+    account=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch2: 인라인 auth → DI(get_current_account/get_conn). get_conn finally:close 가
+    # 게이트 헬퍼(_account_can_access_conversation 등) raise 시에도 conn 을 닫아 leak 을 해소.
+    # byte-동치: get_conn 흡수→get_current_account "db connection failed" 500·unauth 401 인라인 동일.
+    # 유일 차이=malformed/empty-title body+unauth 400→401 선행(§18.8 "benign"; 401/403/404 자체 불변).
     try:
         data = await request.json()
     except Exception:
@@ -1954,14 +1963,6 @@ async def rename_conversation_title(conversation_id: str, request: Request) -> J
         return app._json_error("empty title", 400)
     if len(title) > 256:
         return app._json_error("title too long", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    account, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_can_access_conversation(
         conn,
         account,
@@ -1969,7 +1970,6 @@ async def rename_conversation_title(conversation_id: str, request: Request) -> J
         "conversation.rename.own",
         "conversation.rename.any",
     ):
-        conn.close()
         return app._json_error("권한이 없거나 대화를 찾을 수 없습니다.", 404)
     # feature-0009 gc-group-authz-flag (#1): 제목 변경은 대화 보유자(owner) 전용. 위 게이트는 그룹
     # 대화 '열람' 경계(멤버 포함)라 conversation.rename.own 권한 멤버도 통과하므로, 소유 메타 변경(제목)
@@ -1981,16 +1981,13 @@ async def rename_conversation_title(conversation_id: str, request: Request) -> J
         and _rename_owner_id is not None
         and _rename_owner_id != int(account.get("id") or 0)
     ):
-        conn.close()
         return app._json_error("소유자만 대화 제목을 변경할 수 있습니다.", 403)
     # AR-M5 cutover: AgentCoreConversations MySQL 테이블이 DROP 됨. raw UPDATE 는 500 →
     # 이미 PG 라우팅된 게이트 헬퍼 _conv_update_topic 재사용(PG agent_runtime.core_conversations).
     try:
         app._conv_update_topic(conn, conversation_id, title)
     except Exception:
-        conn.close()
         return app._json_error("제목 변경에 실패했습니다.", 500)
-    conn.close()
     return JSONResponse({"ok": True, "conversation_id": conversation_id, "title": title})
 
 

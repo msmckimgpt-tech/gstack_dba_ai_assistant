@@ -221,3 +221,6 @@ source_of_truth: true
 
 ## CHG-20260712T024500-item11-batch1 (me_put_system_prompt DI-rework conn leak fix)
 - Date: 2026-07-12. 인라인 auth→DI(get_current_account/get_conn), try/finally 부재 leak 해소. runtime snapshot 7종 byte-동치. 잔여 DEFER 50→49.
+
+## CHG-20260712T030000-item11-batch2 (rename_conversation_title DI-rework + admin_products 이연)
+- Date: 2026-07-12. rename DI(leak fix, runtime snapshot 10종). admin_products txn 3 이연(버그 없음·리스크>이득). leak 후보 12 재선정. DEFER 49→48.
