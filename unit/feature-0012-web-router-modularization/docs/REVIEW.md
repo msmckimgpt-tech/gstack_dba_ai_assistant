@@ -232,3 +232,6 @@ source_of_truth: true
 
 ## REV-20260712T055500-item11-batch13 [SKIPPED:panel-precleared] — 마지막 leak DI + keep-inline 37 판정
 - Related: CHG-20260712T055500-item11-batch13. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). 구조 분류 census 로 실제 leak 13개 전부 DI 완료 확인, 나머지 37 keep-inline 정당(§18.8 원칙 일관). runtime 8종+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T061000-item11-done-mark [SKIPPED:doc-only] — ITEM-11 done 마킹
+- Related: CHG-20260712T061000-item11-완료판정. 승인: ROADMAP §6.1. acceptance a/d/e 자동 검증 GREEN 근거. 코드 무변경. 브라우저 QA 사용자 게이트 명시.

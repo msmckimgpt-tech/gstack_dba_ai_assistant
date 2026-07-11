@@ -569,7 +569,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   docs append 는 fragment(ITEM-06 완료 시) 또는 merge driver(ITEM-03)에 의존.
 
 ### ITEM-11 · DEFER 핸들러 byte-동치 DI-rework (pre-auth gate·long-poll·txn ~46)
-- **status**: in-progress
+- **status**: done   <!-- 2026-07-12: DI-rework 13 + keep-inline 정당 37, acceptance a/d/e 충족. REPORT §9 -->
+- **status(이전)**: in-progress
 - **note(2026-07-12 착수·census 정정·§18.8 3렌즈 패널)**: **DEFER 모집단 = 인라인 authn 라우트
   핸들러 50개**(AST 독립 census 확정 — 코드베이스 자체 MODIFY.md:38 "DEFER 50"·ROADMAP ~46·
   DI-seam ~46 수렴). 초기 census 는 16(DI-seam cat-A subset)만 잡는 gap 이 있었고, ITEM-10 은
@@ -671,7 +672,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 10 (ITEM-01·02·04·05·08·03·06·07·12·**10**) · in-progress 1 (ITEM-11) · blocked 1 (ITEM-09)
+- 총 12 항목 · done 11 (ITEM-01·02·04·05·08·03·06·07·12·10·**11**) · blocked 1 (ITEM-09)
+- **ITEM-11 완료(2026-07-12)**: DEFER 핸들러 DI-rework — 실제 leak 13 DI-rework + keep-inline 정당 37(§18.8 원칙). 인라인 authn 50 전부 분류. feature-0012 = ITEM-10(모듈 -81%)+ITEM-11 완결. 잔여=ITEM-09(blocked).
 - **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → **09=blocked**(그래프 활성 브랜치 — note 참조) → ~~10~~(2026-07-12 완료, p1~p17 -81%·thin-app 실질 857줄) → **11=in-progress**(DEFER 핸들러 DI-rework)
 - ITEM-09 blocked 는 §6.3-3(그래프 구간 활성 브랜치/PR 발견 — edge-opacity 미머지 + simcombo
   미커밋 diff). 해제되면 드레인 재편입.

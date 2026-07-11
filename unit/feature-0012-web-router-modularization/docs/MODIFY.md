@@ -257,3 +257,6 @@ source_of_truth: true
 
 ## CHG-20260712T055500-item11-batch13 (admin_update_product_databases DI + keep-inline 37 판정)
 - Date: 2026-07-12. 마지막 산재-close leak DI-rework. 잔여 37 keep-inline 정당 판정(style 16+txn 5+특수 16). DI-rework 누적 13, acceptance(e) 달성.
+
+## CHG-20260712T061000-item11-완료판정 (ITEM-11 done + feature-0012 완결)
+- Date: 2026-07-12. 정본 갱신(코드 무변경). ROADMAP §5 done 11·ITEM-11 done·REPORT §9. 브라우저 QA=사용자 사인오프 이관.
