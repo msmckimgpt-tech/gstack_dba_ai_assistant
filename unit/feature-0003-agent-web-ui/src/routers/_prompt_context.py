@@ -1,0 +1,890 @@
+"""feature-0012 ITEM-10 p3 — 프롬프트 컨텍스트 조립 공용 헬퍼 (비-라우트 모듈).
+
+app.py 에서 이동. 소비처가 4개 도메인 라우터(admin_roles/admin_products/auth/conversations)에
+분산된 공용 조립 계층이라 특정 도메인 파일이 아닌 본 모듈에 둔다. 모듈명이 `_` 로 시작해
+routers/__init__.register_all 의 자동 등록에서 제외된다(라우트 없음).
+
+패치-단일점 규약(판정표 §4): app 전역·패치 대상(setattr 4종)의 호출은 전부 `app.X` 동적 참조 —
+테스트의 app-패치가 본 모듈 경유 경로에서도 관통한다. app.py 꼬리 rebind 가 기존
+`app._collect_*`/`app._assemble_*` 참조(라우터·테스트·app 내부)를 보존한다.
+"""
+
+import logging
+from typing import Any
+
+from fastapi import Request
+
+import app  # noqa: F401 — app.X 동적 참조(순환: app 이 본 모듈을 꼬리에서 import — register_all 이후라 안전)
+
+
+def _collect_matched_excerpts(conn, conv_ids: list[str], q: str) -> dict[str, str]:
+    """REQ-20260519-0005 (TASK-0077) + REQ-20260519-0008 (TASK-0080):
+    for each matched conversation, return the most-recent matching message body
+    excerpt as a line-based clip. Empty dict if no body-search active or no rows.
+    Skips on error (snippet is best-effort UX, not a security boundary).
+
+    REQ-20260519-0008 (TASK-0080): scope expanded from AgentMemoryMessages-only
+    to UNION (AgentMemoryMessages + AgentCoreMessages). TASK-0072 의
+    `_list_conversations` search EXISTS subquery 는 두 table 모두 검사하나,
+    TASK-0077 의 excerpt 는 AgentMemoryMessages 한정이라 core-only conv 의
+    snippet 이 비어 있던 회귀 차단. UNION 내 ROW_NUMBER OVER (PARTITION BY cid
+    ORDER BY created_at DESC) 로 conv 별 더 최근 매칭 1건 선택. (TASK-0200: 두
+    table 의 id 가 독립 IDENTITY 시퀀스라 cross-table msg_id 비교가 시간순과
+    어긋날 수 있어, 두 table 공통 created_at 기준으로 교정.) ConversationId 의
+    (MySQL) collation mismatch 회피 위해 `COLLATE utf8mb4_unicode_ci` 통일.
+    """
+    if not conv_ids or not q:
+        return {}
+    escaped = app._escape_like_for_search(q)
+    pattern = f"%{escaped}%"
+    placeholders = ",".join(["%s"] * len(conv_ids))
+    rows: list[Any] = []
+    params = (
+        *[str(c) for c in conv_ids],
+        pattern,
+        *[str(c) for c in conv_ids],
+        pattern,
+    )
+    # AR-M5 cutover: AgentMemoryMessages/AgentCoreMessages MySQL 테이블이 DROP 됨 →
+    # PG agent_runtime.messages/core_messages 로 라우팅(미라우팅 시 except→{} 로 검색
+    # 발췌 스니펫이 항상 빈칸). 후처리(발췌 클리핑)는 DB 무관 — rows(cid, content)만 동일.
+    # PG 는 case-insensitive 매칭을 위해 ILIKE 사용(MySQL utf8mb4_unicode_ci 패리티).
+    if app._runtime_backend_is_pg():
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            try:
+                with pg.cursor() as pgcur:
+                    # TASK-0200 MINOR: conv 별 "가장 최근 매칭" 선택을 두 테이블 공통
+                    # created_at(timestamptz) 기준으로 정렬. 이전 msg_id 기준은
+                    # messages.id 와 core_messages.id 가 독립 IDENTITY 시퀀스라
+                    # cross-table 비교가 시간순과 어긋날 수 있었다(발췌 스니펫만 영향).
+                    pgcur.execute(
+                        f"""
+SELECT t.cid, t.content
+FROM (
+  SELECT cid, content,
+         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY created_at DESC) AS rn
+  FROM (
+    SELECT m.conversation_id AS cid, m.content AS content, m.created_at AS created_at
+    FROM agent_runtime.messages m
+    WHERE m.conversation_id IN ({placeholders})
+      AND m.content ILIKE %s ESCAPE '!'
+    UNION ALL
+    SELECT cm.conversation_id AS cid, cm.content AS content, cm.created_at AS created_at
+    FROM agent_runtime.core_messages cm
+    WHERE cm.conversation_id IN ({placeholders})
+      AND cm.content ILIKE %s ESCAPE '!'
+  ) AS u
+) AS t
+WHERE t.rn = 1
+                        """,
+                        params,
+                    )
+                    rows = pgcur.fetchall() or []
+            finally:
+                pg.close()
+        except Exception:
+            return {}
+    else:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
+SELECT t.cid, t.content
+FROM (
+  SELECT cid, content,
+         ROW_NUMBER() OVER (PARTITION BY cid ORDER BY created_at DESC) AS rn
+  FROM (
+    SELECT m.ConversationId COLLATE utf8mb4_unicode_ci AS cid,
+           m.Content AS content,
+           m.CreatedAt AS created_at
+    FROM AgentMemoryMessages m
+    WHERE m.ConversationId IN ({placeholders})
+      AND m.Content LIKE %s ESCAPE '!'
+    UNION ALL
+    SELECT cm.conversation_id COLLATE utf8mb4_unicode_ci AS cid,
+           cm.content AS content,
+           cm.created_at AS created_at
+    FROM AgentCoreMessages cm
+    WHERE cm.conversation_id IN ({placeholders})
+      AND cm.content LIKE %s ESCAPE '!'
+  ) AS u
+) AS t
+WHERE t.rn = 1
+                """,
+                params,
+            )
+            rows = cur.fetchall() or []
+        except Exception:
+            return {}
+        finally:
+            cur.close()
+    # REQ-20260519-0006 (TASK-0078): excerpt 를 line-based 로 변환. 매칭 위치가 속한
+    # line 전체 (이전 \n 직후 ~ 다음 \n 직전) 를 반환해 사용자가 의미 있는 문장 단위로
+    # 발췌를 보게 한다. 그 line 이 매우 길 경우 매칭 위치 ±60 char clip + "…".
+    result: dict[str, str] = {}
+    q_lower = q.lower()
+    LINE_MAX = 220  # 한 line 의 최대 길이 — 초과 시 매칭 위치 기준 ±60 char clip
+    HALF_WINDOW = 60
+    for cid, content in rows:
+        text = str(content or "")
+        if not text:
+            continue
+        idx = text.lower().find(q_lower)
+        if idx < 0:
+            # LIKE 매칭이나 case-insensitive find 실패 (escape edge) — 첫 line 사용.
+            first_line = text.split("\n", 1)[0]
+            excerpt = first_line if len(first_line) <= LINE_MAX else (first_line[:LINE_MAX] + "…")
+        else:
+            # 매칭 위치가 속한 line 의 경계 찾기.
+            line_start = text.rfind("\n", 0, idx)
+            line_start = 0 if line_start == -1 else line_start + 1
+            line_end = text.find("\n", idx)
+            line_end = len(text) if line_end == -1 else line_end
+            line = text[line_start:line_end]
+            if len(line) <= LINE_MAX:
+                excerpt = line
+            else:
+                rel = idx - line_start
+                start = max(0, rel - HALF_WINDOW)
+                end = min(len(line), rel + len(q) + HALF_WINDOW)
+                excerpt = line[start:end]
+                if start > 0:
+                    excerpt = "…" + excerpt
+                if end < len(line):
+                    excerpt = excerpt + "…"
+        result[str(cid)] = excerpt
+    return result
+
+def _assemble_product_prompt_llm_request(product_id: int):
+    """TASK-0309: 제품 프롬프트 LLM 요청 조립 (request-less, 인증 비포함).
+
+    TASK-0237 의 수집·조립을 인증에서 분리한 코어. 인증 게이트 경로
+    (`_collect_product_prompt_context`) 와 무인 자동완성 sweep
+    (`_autonomous_generate_product_prompt`) 양쪽이 동일한 ①MySQL 제품/스키마 조회 →
+    ②PG 인사이트 수집 → ③knowledge_block 구성 → ④messages/create_kwargs 조립을 공유한다.
+
+    반환: (error_response, context)
+      - 제품부재(404)/LLM 클라이언트 부재(503) 시 (JSONResponse, None).
+      - 성공 시 (None, dict) — keys: openai_client, create_kwargs, llm_model, max_tokens, meta_base.
+        meta_base 는 truncated 를 제외한 meta 전부(LLM 호출 후 truncated 만 덧붙임).
+    """
+    conn = app._connect_memory()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id, ProductKey, Name, Description, DatasourceKey FROM WebProducts WHERE Id = %s",
+            (product_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return app._json_error("제품을 찾을 수 없습니다.", 404), None
+
+    prod_id, prod_key, prod_name, prod_desc, prod_ds_key = row
+
+    conn2 = app._connect_memory()
+    try:
+        cur2 = conn2.cursor()
+        cur2.execute(
+            "SELECT SchemaName FROM WebProductDatabases WHERE ProductId = %s",
+            (product_id,),
+        )
+        db_rows = cur2.fetchall()
+        # TASK-0228 (1:N): 제품에 바인딩된 **모든** datasource 의 ds 식별자 집합을 모은다 — fact_key
+        # 교차노출 차단(아래 매칭). 마이그레이션 진행 중 PG 에 라벨·scope_key 혼재 → 양쪽 다 허용.
+        # 단일 바인딩(레거시)이면 primary 1건만(app._list_product_datasources 폴백).
+        _bound = app._list_product_datasources(conn2, int(product_id))
+        _bound_keys = [b["datasource_key"] for b in _bound if b.get("datasource_key")]
+        if not _bound_keys and prod_ds_key:
+            _bound_keys = [str(prod_ds_key).strip().lower()]
+        ds_keys_allowed: list[str] = []
+        for _bk in _bound_keys:
+            ds_keys_allowed.append(str(_bk).strip().lower())
+            try:
+                cur2.execute(
+                    "SELECT Engine, Host, Port FROM WebDatasources WHERE DatasourceKey = %s",
+                    (_bk,),
+                )
+                ds_row = cur2.fetchone()
+                if ds_row:
+                    _eng, _host, _port = ds_row
+                    scope_key = app._generate_datasource_key(_eng or "mysql", _host or "", int(_port or 0))
+                    if scope_key:
+                        ds_keys_allowed.append(scope_key.strip().lower())
+            except Exception:
+                pass
+        # dedup(순서 보존)
+        _seen_dsk: set[str] = set()
+        ds_keys_allowed = [k for k in ds_keys_allowed if k and not (k in _seen_dsk or _seen_dsk.add(k))]
+    finally:
+        conn2.close()
+
+    schema_names = [r[0] for r in db_rows]
+
+    # PG 인사이트 수집.
+    #
+    # fact_key 형식 두 가지 (TASK-0218 datasource-스코프 마이그레이션 진행 중 혼재):
+    #   - 구형식:  `{source}:{schema[.table]}`              (예: `table_insight:dbgame.item`)
+    #   - 신형식:  `{source}:ds:{ds_key}:{schema[.table]}`  (예: `table_insight:ds:main_mysql:dbgame.item`)
+    # `_infer_rag_object_from_fact`(utils.py) 와 동형으로, ds 접두를 제거해 정규화한 뒤
+    # 제품이 실제 접근 가능한 스키마명으로 **정확히** 매칭한다. (과거 버그: `source_type` 컬럼은
+    # 전부 'schema_insight' 로 들어가 신뢰 불가하고, `scope_key` 는 전부 'common' 이라 ILIKE
+    # 매칭이 0건 → 인사이트가 통째로 누락된 채 LLM 이 테이블/컬럼을 날조했음.)
+    #
+    # source_type 은 fact_key 접두(`schema_insight:` / `table_insight:`)로 판별한다.
+    schema_insights: dict[str, str] = {}          # schema -> 스키마 수준 요약 (최고 weight 1건)
+    table_insights: dict[str, list[str]] = {}     # schema -> ["table: 설명", ...]
+    topic_lines: list[str] = []                   # 대화 topic (최신 50개)
+    summary_lines: list[str] = []                 # 대화 summary 샘플 (최신 5개)
+    try:
+        from shared.db import _pg_connect
+        pg_conn = _pg_connect()
+        pg_cur = pg_conn.cursor()
+
+        if schema_names:
+            # 정규화 키 = ds 접두 제거. `regexp_replace` 로 `{src}:ds:{key}:` → `{src}:`.
+            # 매칭은 정규화 키가 `{schema}` 또는 `{schema}.` 로 시작하는지로 판정 (substring ILIKE
+            # 가 아니라 boundary 매칭 — `dbgame` 가 `dbgamelog` 를 오탐하지 않게).
+            schema_lc = [s.lower() for s in schema_names if s]
+            # datasource 교차노출 차단: 제품에 datasource 가 지정돼 있으면 그 datasource 의 ds 세그먼트
+            # (라벨 또는 scope_key) 이거나 무접두(레거시 단일 MySQL) fact 만 매칭. 미지정 제품은 종전대로
+            # 전체 매칭(하위호환). fact_key 의 ds 세그먼트 = `:ds:{key}:` 의 key, 없으면 빈 문자열.
+            pg_cur.execute(
+                """
+                WITH norm AS (
+                    SELECT
+                        fe.fact_key,
+                        fe.weight,
+                        fe.updated_at,
+                        t.text_content,
+                        split_part(fe.fact_key, ':', 1) AS src_prefix,
+                        CASE
+                            WHEN fe.fact_key ~ '^(schema_insight|table_insight):ds:'
+                            THEN split_part(fe.fact_key, ':', 3)
+                            ELSE ''
+                        END AS ds_seg,
+                        regexp_replace(
+                            fe.fact_key,
+                            '^(schema_insight|table_insight):ds:[^:]+:',
+                            '\\1:'
+                        ) AS norm_key
+                    FROM public.fact_entries fe
+                    JOIN public.texts t ON fe.text_hash = t.text_hash
+                ),
+                parsed AS (
+                    SELECT
+                        src_prefix,
+                        weight,
+                        updated_at,
+                        text_content,
+                        ds_seg,
+                        -- norm_key = `{src}:{schema[.table]}` → 접두 제거 후 object 부분만
+                        regexp_replace(norm_key, '^(schema_insight|table_insight):', '') AS obj,
+                        norm_key
+                    FROM norm
+                    WHERE src_prefix IN ('schema_insight', 'table_insight')
+                )
+                SELECT
+                    src_prefix,
+                    obj,
+                    text_content,
+                    weight
+                FROM parsed
+                WHERE lower(split_part(obj, '.', 1)) = ANY(%s)
+                  AND (
+                    %s = 0                       -- 제품 datasource 미지정 → 전체 매칭(하위호환)
+                    OR ds_seg = ''               -- 무접두 레거시(단일 MySQL) 허용
+                    OR lower(ds_seg) = ANY(%s)   -- 제품 datasource 의 ds 세그먼트만
+                  )
+                ORDER BY weight DESC, updated_at DESC
+                """,
+                (schema_lc, len(ds_keys_allowed), ds_keys_allowed),
+            )
+            for src_prefix, obj, text_content, _weight in pg_cur.fetchall():
+                if not text_content:
+                    continue
+                # obj 의 계층 분해 — 제품 접근 단위(WebProductDatabases.SchemaName)는 항상 최상위 segment.
+                #   - MySQL(2계층): `{schema}.{table}`        → group=schema, table=table
+                #   - MSSQL(3계층): `{database}.{schema}.{table}` → group=database, table=`{schema}.{table}`
+                # group(obj_top)이 제품 접근 단위와 매칭된 값이므로 그대로 그룹 키로 쓴다.
+                parts = obj.split(".")
+                # 그룹 키는 소문자로 통일 — fact_key segment 는 소문자 저장이지만(MSSQL),
+                # MySQL schema 명은 대소문자 보존될 수 있어 렌더 lookup(sch.lower())과 정합되게 강제.
+                obj_top = parts[0].lower()
+                if len(parts) >= 3:
+                    table_label = ".".join(parts[1:])  # `dbo.QuestInfo` (스키마.테이블)
+                elif len(parts) == 2:
+                    table_label = parts[1]
+                else:
+                    table_label = obj
+                if src_prefix == "schema_insight":
+                    # 스키마/DB 수준: 최고 weight 1건만 (ORDER BY weight DESC → 첫 등장 보존)
+                    if obj_top not in schema_insights:
+                        schema_insights[obj_top] = text_content.strip()
+                elif src_prefix == "table_insight":
+                    # 테이블 수준: 접근 단위별로 묶어 누적 (단위당 상한은 아래 렌더에서 적용)
+                    table_insights.setdefault(obj_top, [])
+                    if len(table_insights[obj_top]) < 60:
+                        table_insights[obj_top].append(
+                            f"- `{table_label}`: {text_content.strip()[:300]}"
+                        )
+
+        # topic 집계: 이 제품의 대화 제목 최신 50개
+        pg_cur.execute(
+            """
+            SELECT COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) AS t
+            FROM agent_runtime.core_conversations c
+            LEFT JOIN agent_runtime.kv kv
+              ON kv.conversation_id = c.conversation_id AND kv.key = 'topic'
+            WHERE c.product_id = %s
+              AND COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) IS NOT NULL
+            ORDER BY c.updated_at DESC
+            LIMIT 50
+            """,
+            (product_id,),
+        )
+        for (t,) in pg_cur.fetchall():
+            if t:
+                topic_lines.append(t)
+
+        # summary 샘플: 이 제품의 대화 요약 최신 5개
+        pg_cur.execute(
+            """
+            SELECT s.summary
+            FROM agent_runtime.summary s
+            JOIN agent_runtime.core_conversations c
+              ON c.conversation_id = s.conversation_id
+            WHERE c.product_id = %s
+              AND s.summary IS NOT NULL AND TRIM(s.summary) <> ''
+            ORDER BY s.updated_at DESC
+            LIMIT 5
+            """,
+            (product_id,),
+        )
+        for (sm,) in pg_cur.fetchall():
+            if sm:
+                summary_lines.append(sm[:600])
+
+        pg_conn.close()
+    except Exception as pg_exc:
+        logging.getLogger(__name__).warning("admin_generate_product_prompt PG error: %s", pg_exc)
+
+    # 지식 블록 구성 — 스키마별로 schema_insight + table_insight 를 묶어 구조화.
+    sections: list[str] = []
+    sections.append(f"제품명: {prod_name}")
+    if prod_desc:
+        sections.append(f"제품 설명: {prod_desc}")
+    # TASK-0228 (1:N): 여러 datasource 에 바인딩됐으면 datasource 별로 접근 가능 DB 를 그룹핑해
+    # 보여준다 — 생성될 시스템 프롬프트가 "어느 데이터소스에 어떤 DB 가 있는지" 인지하도록.
+    _conn_dsg = app._connect_memory()
+    try:
+        _ds_groups: list[str] = []
+        if len(_bound_keys) >= 2:
+            for _bk in _bound_keys:
+                _dbs = app._product_allowed_schemas_for_datasource(_conn_dsg, int(product_id), _bk)
+                if _dbs:
+                    _ds_groups.append(f"- 데이터소스 `{_bk}`: " + ", ".join(_dbs))
+                else:
+                    _ds_groups.append(f"- 데이터소스 `{_bk}`: (접근 가능 DB 미설정)")
+    except Exception:
+        _ds_groups = []
+    finally:
+        _conn_dsg.close()
+    if _ds_groups:
+        sections.append(
+            "이 제품은 **여러 데이터소스**에 연결돼 있습니다. 각 데이터소스의 접근 가능 데이터베이스:\n"
+            + "\n".join(_ds_groups)
+            + "\n어시스턴트는 질문에 따라 적절한 데이터소스를 선택해 조회하며, 한 질문이 여러 데이터소스를 "
+            "참조하면 각각 조회 후 결과를 합쳐 분석합니다. 데이터소스 간 직접 JOIN 은 불가합니다."
+        )
+    elif schema_names:
+        sections.append("접근 가능 데이터베이스(스키마): " + ", ".join(schema_names))
+
+    # 실제 인사이트 데이터 유무 — 지시문 분기 + 응답 메타에 사용.
+    total_tables = sum(len(v) for v in table_insights.values())
+    has_insights = bool(schema_insights or table_insights)
+
+    if has_insights:
+        db_sections: list[str] = []
+        for sch in schema_names:
+            # fact_key 의 DB/스키마 segment 는 소문자로 저장되므로(set_active_database 가 소문자화),
+            # 수집 dict 는 소문자 키. 표시는 제품 등록 원본 대소문자(sch), lookup 은 소문자로.
+            sch_lc = str(sch or "").strip().lower()
+            sch_block: list[str] = [f"### 스키마 `{sch}`"]
+            sch_summary = schema_insights.get(sch_lc)
+            if sch_summary:
+                sch_block.append(sch_summary)
+            tbls = table_insights.get(sch_lc, [])
+            if tbls:
+                sch_block.append(f"\n**주요 테이블 ({len(tbls)}개):**")
+                sch_block.extend(tbls)
+            if sch_summary or tbls:
+                db_sections.append("\n".join(sch_block))
+        if db_sections:
+            sections.append(
+                "\n## 데이터베이스 구조 (insight-worker 가 실제 스키마를 분석해 축적한 정본)\n\n"
+                + "\n\n".join(db_sections)
+            )
+
+    if topic_lines:
+        sections.append(
+            "\n## 사용자가 실제로 요청한 분석 주제 (최근 대화 기준)\n"
+            + "\n".join(f"- {t}" for t in topic_lines[:40])
+        )
+
+    if summary_lines:
+        sections.append(
+            "\n## 실제 분석 사례 요약 (과거 대화 결과)\n"
+            + "\n\n---\n".join(summary_lines)
+        )
+
+    knowledge_block = "\n\n".join(sections)
+
+    # LLM 지시문 — 제공된 실제 인사이트에만 근거하도록 강하게 제약(테이블/컬럼명 날조 금지).
+    if has_insights:
+        grounding_rule = (
+            "절대 규칙:\n"
+            "1. 테이블명·컬럼명·스키마명은 아래 '데이터베이스 구조' 섹션에 명시된 것만 사용하세요. "
+            "거기 없는 테이블/컬럼을 추측하거나 예시로 지어내지 마세요.\n"
+            "2. '데이터베이스 구조'에 없는 정보가 필요하면, 어시스턴트가 런타임에 "
+            "`SHOW TABLES` / `DESCRIBE` / `information_schema` 조회로 확인하도록 지시하는 문장을 넣으세요 "
+            "(가짜 스키마를 적지 마세요).\n"
+            "3. '사용자가 실제로 요청한 분석 주제'를 반영해, 그 유형의 질문에 어떻게 대응할지 "
+            "구체적 가이드를 포함하세요.\n"
+            "4. 실제 컬럼명이 제공된 테이블은 그 컬럼을 인용해 분석 예시를 들어도 됩니다."
+        )
+    else:
+        # 인사이트가 비었을 때(insight-worker 미실행/마이그레이션 중) — 날조 방지가 더 중요.
+        grounding_rule = (
+            "주의: 이 제품의 데이터베이스 구조 인사이트가 아직 수집되지 않았습니다. "
+            "따라서 구체적인 테이블명·컬럼명을 지어내지 마세요. "
+            "대신 어시스턴트가 분석 전 반드시 `SHOW TABLES` / `DESCRIBE` / `information_schema` 로 "
+            "실제 스키마를 먼저 탐색하도록 지시하는, 스키마-비의존적인 시스템 프롬프트를 작성하세요."
+        )
+
+    llm_model = app._resolve_session_default_model()
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "당신은 사내 DB 분석 AI 어시스턴트의 '시스템 프롬프트'를 작성하는 전문가입니다.\n"
+                "아래 제품 정보를 바탕으로, 이 제품 전용 어시스턴트가 따라야 할 한국어 시스템 프롬프트를 작성하세요.\n\n"
+                "시스템 프롬프트에는 다음을 포함하세요:\n"
+                "- 어시스턴트의 역할과 분석 대상 (이 제품의 데이터베이스)\n"
+                "- 접근 가능한 각 스키마의 용도와 실제 주요 테이블 설명\n"
+                "- 사용자가 자주 요청하는 분석 유형과 대응 방법\n"
+                "- SQL 작성·결과 제시 시 주의사항\n\n"
+                f"{grounding_rule}\n\n"
+                "실무에서 바로 적용 가능한, 구체적이고 완성된 시스템 프롬프트를 작성하세요. "
+                "메타 설명 없이 시스템 프롬프트 본문만 출력하세요.\n\n"
+                f"=== 제품 정보 ===\n{knowledge_block}"
+            ),
+        }
+    ]
+
+    from modules.llm import _get_llm_client
+    openai_client = _get_llm_client(model=llm_model)
+    if openai_client is None:
+        return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
+
+    # TASK-0232: 자동작성은 "완성된 시스템 프롬프트 본문" 을 생성하므로 짧은 요약용
+    # "summary" cap(Claude 7000 / 로컬 512) 으로는 본문이 중간에 잘렸다. 긴 본문 전용
+    # "prompt_gen" cap(Claude 20000 / 로컬 3072) 을 사용한다.
+    _mt = app.max_tokens_for_model(llm_model, "prompt_gen")
+    create_kwargs: dict = {
+        "model": llm_model,
+        "messages": messages,
+        "timeout": 90,
+    }
+    if _mt is not None:
+        create_kwargs["max_tokens"] = _mt
+    if app.model_supports_temperature(llm_model):
+        create_kwargs["temperature"] = 0.3
+
+    meta_base = {
+        "schema_count": len(schema_names),
+        "schema_insight_count": len(schema_insights),
+        "table_insight_count": total_tables,
+        "topic_count": len(topic_lines),
+        "summary_count": len(summary_lines),
+        "grounded": has_insights,
+    }
+    return None, {
+        "openai_client": openai_client,
+        "create_kwargs": create_kwargs,
+        "llm_model": llm_model,
+        "max_tokens": _mt,
+        "meta_base": meta_base,
+    }
+
+def _collect_conversation_signals_pg(
+    *,
+    product_id: "int | None" = None,
+    account_ids: "list[int] | None" = None,
+    topic_limit: int = 40,
+    summary_limit: int = 5,
+):
+    """대화 패턴 집계 — topic(제목) 목록 + summary(요약) 샘플.
+
+    `_assemble_product_prompt_llm_request` 가 product_id 로 인라인 수집하던 것과 동형이되
+    역할/계정 scope 를 위해 필터를 일반화한다:
+      - product_id: 그 제품의 대화만 (None = 제품 무관).
+      - account_ids: 그 계정들이 **소유**(owner_account_id)한 대화만.
+    둘 다 주면 AND. account_ids 가 **빈 list** 면 (대상 계정 없음) 빈 결과를 반환한다 —
+    전체 대화로 fallback 하지 않는다(cross-scope 누출 방지). account_ids 가 None 이면
+    계정 필터 없음(제품 scope 처럼 전체).
+
+    원문 메시지가 아닌 집계 메타(제목·요약)만 반환한다 — 제품 경로와 동일 privacy 경계.
+    반환: (topic_lines, summary_lines).
+    """
+    topic_lines: list[str] = []
+    summary_lines: list[str] = []
+    # account_ids 가 명시(빈 list)됐는데 대상이 없으면 — 조회 자체를 생략(전체 누출 방지).
+    if account_ids is not None and len(account_ids) == 0:
+        return topic_lines, summary_lines
+
+    filters: list[str] = []
+    params: list[Any] = []
+    if product_id:
+        filters.append("c.product_id = %s")
+        params.append(int(product_id))
+    if account_ids:
+        placeholders = ",".join(["%s"] * len(account_ids))
+        filters.append(f"c.owner_account_id IN ({placeholders})")
+        params.extend(int(a) for a in account_ids)
+    filter_sql = "".join(f" AND {f}" for f in filters)
+
+    try:
+        from shared.db import _pg_connect
+        pg_conn = _pg_connect()
+        pg_cur = pg_conn.cursor()
+        # topic 집계: 대화 제목 최신순.
+        pg_cur.execute(
+            f"""
+            SELECT COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) AS t
+            FROM agent_runtime.core_conversations c
+            LEFT JOIN agent_runtime.kv kv
+              ON kv.conversation_id = c.conversation_id AND kv.key = 'topic'
+            WHERE COALESCE(NULLIF(TRIM(c.topic), ''), NULLIF(TRIM(kv.value), '')) IS NOT NULL
+              {filter_sql}
+            ORDER BY c.updated_at DESC
+            LIMIT %s
+            """,
+            (*params, int(topic_limit)),
+        )
+        for (t,) in pg_cur.fetchall():
+            if t:
+                topic_lines.append(t)
+        # summary 샘플: 대화 요약 최신순.
+        pg_cur.execute(
+            f"""
+            SELECT s.summary
+            FROM agent_runtime.summary s
+            JOIN agent_runtime.core_conversations c
+              ON c.conversation_id = s.conversation_id
+            WHERE s.summary IS NOT NULL AND TRIM(s.summary) <> ''
+              {filter_sql}
+            ORDER BY s.updated_at DESC
+            LIMIT %s
+            """,
+            (*params, int(summary_limit)),
+        )
+        for (sm,) in pg_cur.fetchall():
+            if sm:
+                summary_lines.append(sm[:600])
+        pg_conn.close()
+    except Exception as pg_exc:
+        logging.getLogger(__name__).warning("_collect_conversation_signals_pg PG error: %s", pg_exc)
+    return topic_lines, summary_lines
+
+def _assemble_role_prompt_llm_request(role_id: int):
+    """역할 '전체 제품 프롬프트'(role scope, ProductId NULL) LLM 요청 조립 (request-less).
+
+    제품 프롬프트 자동작성과 동형 계약((error, ctx) 반환). 컨텍스트는 **역할 성격**
+    (정의·설명·권한 특성) + **그 역할 소속 사용자들의 실제 대화 패턴**(집계 topic·summary).
+    생성물은 모든 제품에 공통 누적되는 role-scope 가이드 프롬프트 본문.
+    """
+    conn = app._connect_memory()
+    try:
+        role = app._load_role_by_id(conn, int(role_id))
+        if not role:
+            return app._json_error("역할을 찾을 수 없습니다.", 404), None
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT Id FROM WebAccounts WHERE RoleId = %s AND DeletedAt IS NULL",
+            (int(role_id),),
+        )
+        account_ids = [int(r[0]) for r in (cur.fetchall() or [])]
+        cur.close()
+        # 이 역할이 접근 가능한 제품(product.access.<key> 권한 보유분) — "전체 제품" 맥락.
+        role_codes = set(role.get("permission_codes") or [])
+        accessible_products: list[str] = []
+        for prod in app._list_products(conn):
+            code = app._product_permission_code(str(prod.get("product_key") or ""))
+            if code in role_codes:
+                accessible_products.append(f"({prod.get('product_key')}) {prod.get('name')}")
+    finally:
+        conn.close()
+
+    member_count = len(account_ids)
+    topic_lines, summary_lines = app._collect_conversation_signals_pg(account_ids=account_ids)
+
+    sections: list[str] = []
+    sections.append(f"역할 키: {role.get('key')}")
+    sections.append(f"역할 이름: {role.get('name')}")
+    role_character = app._describe_role_character(role)
+    if role_character:
+        sections.append(role_character)
+    sections.append(f"이 역할에 속한 사용자 수: {member_count}명")
+    if accessible_products:
+        sections.append("이 역할이 접근 가능한 제품: " + ", ".join(accessible_products))
+    if topic_lines:
+        sections.append(
+            "\n## 이 역할 사용자가 실제로 요청한 주제 (최근 대화 기준)\n"
+            + "\n".join(f"- {t}" for t in topic_lines)
+        )
+    if summary_lines:
+        sections.append(
+            "\n## 이 역할 사용자의 실제 분석 사례 요약 (과거 대화 결과)\n"
+            + "\n\n---\n".join(summary_lines)
+        )
+    knowledge_block = "\n\n".join(sections)
+
+    has_signals = bool(topic_lines or summary_lines)
+    if has_signals:
+        grounding_rule = (
+            "절대 규칙:\n"
+            "1. 위 '실제로 요청한 주제'·'분석 사례 요약'에 드러난 이 역할 사용자의 실제 사용 패턴을 "
+            "반영해, 그 유형의 요청에 어떻게 응대할지 구체적 가이드를 포함하세요.\n"
+            "2. 특정 제품의 테이블/컬럼명을 지어내지 마세요 — 이 프롬프트는 모든 제품에 공통 적용되므로 "
+            "제품 비의존적이어야 합니다(스키마 세부는 제품별 프롬프트가 담당).\n"
+            "3. 역할 권한 특성(조회 전용/질의 가능/관리 등)에 어긋나는 동작을 지시하지 마세요."
+        )
+    else:
+        grounding_rule = (
+            "주의: 이 역할의 대화 이력이 아직 충분하지 않습니다. 역할 정의와 권한 특성에 근거해 이 역할 "
+            "사용자에게 적용할 공통 응대 원칙을 작성하되, 특정 제품의 테이블/컬럼명이나 구체 데이터를 "
+            "지어내지 마세요."
+        )
+
+    llm_model = app._resolve_session_default_model()
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "당신은 사내 DB 분석 AI 어시스턴트의 '역할(role) 공통 시스템 프롬프트'를 작성하는 전문가입니다.\n"
+                "아래 역할 정보와 이 역할 사용자들의 실제 대화 패턴을 바탕으로, 이 역할에 속한 모든 사용자에게 "
+                "(제품과 무관하게) 공통 적용할 한국어 시스템 프롬프트를 작성하세요.\n\n"
+                "시스템 프롬프트에는 다음을 포함하세요:\n"
+                "- 이 역할 사용자의 성격과 어시스턴트가 취할 기본 응대 태도\n"
+                "- 이 역할에서 자주 나오는 요청 유형과 그에 대한 응대 방침\n"
+                "- 역할 권한 특성에 맞는 경계(예: 조회 전용 역할이면 쓰기/심층분석 이관 안내 방침)\n"
+                "- 답변 형식·톤·주의사항\n\n"
+                f"{grounding_rule}\n\n"
+                "실무에서 바로 적용 가능한, 구체적이고 완성된 시스템 프롬프트를 작성하세요. "
+                "메타 설명 없이 시스템 프롬프트 본문만 출력하세요.\n\n"
+                f"=== 역할 정보 ===\n{knowledge_block}"
+            ),
+        }
+    ]
+
+    from modules.llm import _get_llm_client
+    openai_client = _get_llm_client(model=llm_model)
+    if openai_client is None:
+        return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
+
+    _mt = app.max_tokens_for_model(llm_model, "prompt_gen")
+    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 90}
+    if _mt is not None:
+        create_kwargs["max_tokens"] = _mt
+    if app.model_supports_temperature(llm_model):
+        create_kwargs["temperature"] = 0.3
+
+    meta_base = {
+        "member_count": member_count,
+        "product_count": len(accessible_products),
+        "topic_count": len(topic_lines),
+        "summary_count": len(summary_lines),
+        "grounded": has_signals,
+    }
+    return None, {
+        "openai_client": openai_client,
+        "create_kwargs": create_kwargs,
+        "llm_model": llm_model,
+        "max_tokens": _mt,
+        "meta_base": meta_base,
+    }
+
+def _assemble_account_prompt_llm_request(account_id: int, role_id: int, product_id: "int | None"):
+    """프로필 '제품별 개인 프롬프트'(account scope) LLM 요청 조립 (request-less).
+
+    계정의 역할 성격 + (선택 제품의 이름·용도) + **본인의 실제 대화 패턴**(집계 topic·summary,
+    제품 지정 시 그 제품으로 필터) → 이 사용자가 이 제품을 쓸 때 적용할 개인 프롬프트.
+    개인 프롬프트는 제품/역할 프롬프트 위에 얹히는 **개인 선호·스타일 레이어**이므로 제품 스키마
+    세부를 중복 서술하지 않는다(그건 제품 프롬프트 담당). 동형 계약((error, ctx) 반환).
+    """
+    conn = app._connect_memory()
+    try:
+        role = app._load_role_by_id(conn, int(role_id)) if role_id else None
+        prod_key = prod_name = prod_desc = None
+        if product_id:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT ProductKey, Name, Description FROM WebProducts WHERE Id = %s",
+                (int(product_id),),
+            )
+            prow = cur.fetchone()
+            cur.close()
+            if prow:
+                prod_key, prod_name, prod_desc = prow
+    finally:
+        conn.close()
+
+    topic_lines, summary_lines = app._collect_conversation_signals_pg(
+        account_ids=[int(account_id)],
+        product_id=int(product_id) if product_id else None,
+    )
+
+    sections: list[str] = []
+    if role:
+        sections.append(f"사용자 역할: ({role.get('key')}) {role.get('name')}")
+        role_character = app._describe_role_character(role)
+        if role_character:
+            sections.append(role_character)
+    if product_id and prod_name:
+        line = f"대상 제품: ({prod_key}) {prod_name}"
+        if prod_desc:
+            line += f" — {prod_desc}"
+        sections.append(line)
+    else:
+        sections.append("대상 제품: 제품 무관 — 모든 제품에 공통 적용되는 개인 프롬프트")
+    if topic_lines:
+        sections.append(
+            "\n## 내가 실제로 자주 요청한 주제 (최근 대화 기준)\n"
+            + "\n".join(f"- {t}" for t in topic_lines)
+        )
+    if summary_lines:
+        sections.append(
+            "\n## 내 과거 분석 사례 요약\n"
+            + "\n\n---\n".join(summary_lines)
+        )
+    knowledge_block = "\n\n".join(sections)
+
+    has_signals = bool(topic_lines or summary_lines)
+    grounding_rule = (
+        "절대 규칙:\n"
+        "1. 이것은 제품/역할 프롬프트 위에 얹히는 **개인 선호 레이어**입니다. 제품의 테이블/컬럼 "
+        "구조나 분석 방법론을 중복 서술하지 마세요 — 그건 제품 프롬프트가 담당합니다.\n"
+        "2. 위 '내가 자주 요청한 주제'에 드러난 이 사용자의 관심사·반복 패턴을 반영해, 답변 형식·"
+        "기본 가정·자주 보는 지표 등 개인화된 선호를 간결히 기술하세요.\n"
+        "3. 대화 이력이 부족하면 역할 성격에 맞는 일반적 개인 선호(형식·톤·단위 등)만 제안하세요."
+    )
+
+    llm_model = app._resolve_session_default_model()
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "당신은 사내 DB 분석 AI 어시스턴트 사용자의 '개인 프롬프트'를 작성하는 전문가입니다.\n"
+                "개인 프롬프트는 그 사용자의 답변 선호·스타일·기본 가정을 어시스턴트에게 알려주는, "
+                "제품/역할 프롬프트 위에 누적되는 개인 레이어입니다.\n"
+                "아래 사용자 정보와 실제 대화 패턴을 바탕으로, 이 사용자에게 맞는 한국어 개인 프롬프트를 작성하세요.\n\n"
+                "개인 프롬프트에는 다음을 포함하세요:\n"
+                "- 이 사용자가 자주 다루는 주제·관심 지표\n"
+                "- 선호하는 답변 형식·톤·상세도(예: 표/요약/단위 표기)\n"
+                "- 반복적으로 전제하면 좋은 기본 가정\n\n"
+                f"{grounding_rule}\n\n"
+                "간결하고 바로 적용 가능한 개인 프롬프트 본문만 출력하세요. 메타 설명은 넣지 마세요.\n\n"
+                f"=== 사용자 정보 ===\n{knowledge_block}"
+            ),
+        }
+    ]
+
+    from modules.llm import _get_llm_client
+    openai_client = _get_llm_client(model=llm_model)
+    if openai_client is None:
+        return app._json_error("LLM 클라이언트를 초기화할 수 없습니다.", 503), None
+
+    _mt = app.max_tokens_for_model(llm_model, "prompt_gen")
+    create_kwargs: dict = {"model": llm_model, "messages": messages, "timeout": 90}
+    if _mt is not None:
+        create_kwargs["max_tokens"] = _mt
+    if app.model_supports_temperature(llm_model):
+        create_kwargs["temperature"] = 0.3
+
+    meta_base = {
+        "topic_count": len(topic_lines),
+        "summary_count": len(summary_lines),
+        "product_scoped": bool(product_id),
+        "grounded": has_signals,
+    }
+    return None, {
+        "openai_client": openai_client,
+        "create_kwargs": create_kwargs,
+        "llm_model": llm_model,
+        "max_tokens": _mt,
+        "meta_base": meta_base,
+    }
+
+async def _collect_product_prompt_context(product_id: int, request: Request):
+    """TASK-0237: 제품 프롬프트 자동작성 수집·조립의 **인증 게이트** 래퍼.
+
+    인증/`product.manage` 권한을 확인한 뒤 request-less 코어
+    (`_assemble_product_prompt_llm_request`) 에 위임한다. 비스트리밍
+    (POST /prompt/generate)·스트리밍(GET /prompt/generate/stream) 엔드포인트가
+    본 함수를 await 한다(시그니처·반환계약 불변).
+
+    반환: (error_response, context) — 인증/권한 실패 시 (JSONResponse, None),
+    그 외는 코어 반환을 그대로 전달.
+    """
+    conn = app._connect_memory()
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error, None
+        if not app._account_has_permission(account, "product.manage"):
+            return app._json_error("제품 관리 권한이 필요합니다.", 403), None
+    finally:
+        conn.close()
+    return app._assemble_product_prompt_llm_request(product_id)
+
+async def _collect_role_prompt_context(role_id: int, request: Request):
+    """역할 프롬프트 자동작성의 **인증 게이트** 래퍼 — `system_prompt.manage.role.any` 확인 후
+    request-less 코어(`_assemble_role_prompt_llm_request`)에 위임. 반환: (error, ctx)."""
+    conn = app._connect_memory()
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error, None
+        if not app._account_has_permission(account, "system_prompt.manage.role.any"):
+            return app._json_error("역할 시스템 프롬프트 관리 권한이 필요합니다.", 403), None
+    finally:
+        conn.close()
+    return app._assemble_role_prompt_llm_request(int(role_id))
+
+async def _collect_account_prompt_context(product_id: "int | None", request: Request):
+    """프로필 개인 프롬프트 자동작성의 **인증 게이트** 래퍼 — 본인 인증 + (제품 지정 시) 제품
+    접근 권한 확인 + LLM 토큰 quota 게이트 후 request-less 코어
+    (`_assemble_account_prompt_llm_request`)에 위임."""
+    conn = app._connect_memory()
+    try:
+        account, error = app._require_account(request, conn)
+        if error:
+            return error, None
+        if product_id is not None and int(product_id) > 0:
+            if not app._account_has_product_access(account, int(product_id), conn=conn):
+                return app._json_error("요청을 수행할 수 없습니다.", 403), None
+        # 자동작성은 LLM 토큰을 직접 소비(에이전트 경로 우회)하므로, self-service 남용 방지를 위해
+        # /api/ask 와 동일한 계정 토큰 quota 게이트를 적용한다(REV 적대리뷰 MAJOR 흡수).
+        _q_ok, _q_msg = app._check_account_token_quota(conn, account)
+        if not _q_ok:
+            return app._json_error(_q_msg, 429), None
+        acc_id = int(account["id"])
+        role_id = int(account.get("role_id") or 0)
+    finally:
+        conn.close()
+    return app._assemble_account_prompt_llm_request(acc_id, role_id, int(product_id) if product_id else None)
