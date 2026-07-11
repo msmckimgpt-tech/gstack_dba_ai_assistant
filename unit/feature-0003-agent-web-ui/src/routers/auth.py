@@ -345,19 +345,21 @@ def auth_me(request: Request) -> JSONResponse:
     })
 
 @router.patch("/api/auth/me")
-async def auth_me_patch(request: Request) -> JSONResponse:
+async def auth_me_patch(request: Request, conn=Depends(app.get_conn)) -> JSONResponse:
     """자신의 계정 프로필을 수정한다. role/비밀번호 변경 지원."""
+    # ITEM-11 batch3: conn-only DI(get_conn). auth 는 인라인 _get_authenticated_account 유지 —
+    # 이 핸들러의 401 body 는 "unauthorized"(get_current_account 의 "로그인이 필요합니다."와 상이)라
+    # get_current_account 로 대체하면 byte-동치 위반. get_conn finally:close 가 UPDATE/commit raise
+    # 시 conn leak(try/finally 부재)을 해소. conn None 체크를 json parse 뒤에 둬 현재 ordering
+    # (invalid json 400 → db fail 500) + 500 body byte-동치 보존.
     try:
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
+    if conn is None:
         return app._json_error("db connection failed", 500)
     account = app._get_authenticated_account(conn, request)
     if not account:
-        conn.close()
         return app._json_error("unauthorized", 401)
 
     updates: list[str] = []
@@ -368,10 +370,8 @@ async def auth_me_patch(request: Request) -> JSONResponse:
     new_password = str(data.get("new_password", "") or "").strip()
     if new_password:
         if not current_password:
-            conn.close()
             return app._json_error("현재 비밀번호를 입력하세요.", 400)
         if not app._is_valid_password(new_password):
-            conn.close()
             return app._json_error("새 비밀번호는 10자 이상이어야 합니다.", 400)
         # 현재 비밀번호 검증
         cur = conn.cursor()
@@ -379,7 +379,6 @@ async def auth_me_patch(request: Request) -> JSONResponse:
         row = cur.fetchone()
         cur.close()
         if not row or not app._verify_password(current_password, str(row[0])):
-            conn.close()
             return app._json_error("현재 비밀번호가 올바르지 않습니다.", 400)
         updates.append("PasswordHash = %s")
         params.append(app._hash_password(new_password))
@@ -387,7 +386,6 @@ async def auth_me_patch(request: Request) -> JSONResponse:
         updates.append("MustChangePassword = 0")
 
     if not updates:
-        conn.close()
         # 변경 내용 없음 — 현재 프로필 반환
         return JSONResponse({"ok": True, "user": app._serialize_account(account)})
 
@@ -401,7 +399,6 @@ async def auth_me_patch(request: Request) -> JSONResponse:
     cur.close()
 
     updated_account = app._load_account_by_id(conn, int(account["id"]))
-    conn.close()
     if not updated_account:
         return app._json_error("account not found", 404)
     return JSONResponse({"ok": True, "user": app._serialize_account(updated_account)})

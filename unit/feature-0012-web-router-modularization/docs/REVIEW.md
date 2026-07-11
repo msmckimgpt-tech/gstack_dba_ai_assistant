@@ -199,3 +199,6 @@ source_of_truth: true
 
 ## REV-20260712T030000-item11-batch2 [SKIPPED:panel-precleared] — rename_conversation_title DI-rework
 - Related: CHG-20260712T030000-item11-batch2. 승인: ROADMAP §6.1 + §6.3(§18.8 패널 REV-20260712T023000 방법론). admin_products 이연=txn 복잡·버그 없음 판정(패널 "verbatim 보존" 정합). runtime byte-동치 10종+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T032000-item11-batch3 [SKIPPED:panel-precleared] — auth_me_patch conn-only DI
+- Related: CHG-20260712T032000-item11-batch3. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _get_authenticated_account 401 "unauthorized" byte-동치 보존 위해 conn-only DI 채택. runtime 6종+leak-fix. 게이트 4종 GREEN.

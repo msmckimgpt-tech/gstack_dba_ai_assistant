@@ -584,7 +584,7 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   (60s long-poll)·gdrive_connect/callback(redirect)·progress(401 surface)·public_share_view(3 mid-body).
   테스트=runtime snapshot(status+body+detail 부재, conftest client/as_account)+AST 계약+동적 스캔
   완전성(50==분류 테이블). acceptance (a)runtime 미작성·(d)패널 완료·(e)잔여 50→0 여정. **다음 버스트:
-  batch1(me_put)·batch2(rename_conversation_title) DI 완료(DEFER 48). admin_products txn 3=이연(버그 없음·리스크>이득). 다음=leak 후보 12(admin_update_account 15·admin_update_role 14·admin_create_role 12·admin_put_system_prompt 10 등) 순차 DI-rework**.
+  batch1(me_put)·batch2(rename_conversation_title) DI 완료(DEFER 48). admin_products txn 3=이연(버그 없음·리스크>이득). batch3(auth_me_patch conn-only DI, _get_authenticated_account 401 "unauthorized" 보존) 완료(DEFER 47). 우선순위=단순도순. 다음=leak 후보 중 단순 것(admin_account_unlock 등) 순차. `_get_authenticated_account` 기반=conn-only DI·`_require_account` 기반=완전 DI**.
 - **feature_id**: feature-0012-web-router-modularization
 - **dimension**: structural
 - **risk_grade**: Major
