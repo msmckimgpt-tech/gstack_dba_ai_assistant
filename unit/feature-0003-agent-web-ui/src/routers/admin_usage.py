@@ -23,6 +23,105 @@ INCLUDE_ORDER = 30  # 등록 순서 고정 — 2026-07-10 현행 include 순서 
 router = APIRouter()
 
 
+# ITEM-10 routers-p11 이동분.
+def _query_usage_conversations(pg, *, days: int, model: "str | None", account_ids: "list[int] | None",
+                               day_label: "str | None", gran: str, owner_account_id: "int | None",
+                               owner_is_null_ok: bool) -> "tuple[list[dict], bool]":
+    """llm_usage ⋈ core_conversations 로 차원 필터된 대화 목록 + 대화별 기간내 usage 집계.
+
+    필터(모두 AND, None=무시):
+      - model: COALESCE(u.resolved_model, u.model) = model (차트 by_model 규칙과 동일)
+      - account_ids: c.owner_account_id IN (...) — 역할 클릭은 그 역할 계정 집합을 호출측이 산출해 전달.
+      - day_label: to_char(date_trunc(gran, u.created_at), fmt) = day_label (by_day 규칙과 동일)
+      - owner_account_id: 본인 범위 강제(profile) — c.owner_account_id = owner_account_id.
+    owner_is_null_ok=False 면 owner NULL(시스템) 대화 제외(profile·계정 클릭). True 면 "(시스템)" 역할
+    클릭처럼 owner NULL 도 포함(account_ids 가 [None] 신호일 때 호출측이 별도 처리).
+
+    반환: (items[{conversation_id, topic, owner_account_id, created_at, updated_at, blocked_at,
+                  calls, total_tokens, prompt_tokens, completion_tokens, cost_usd, models[]}], truncated)
+    conversation_id NOT NULL 강제(INNER JOIN) — insight/시스템 비대화 usage 제외.
+    """
+    # PG 는 `interval $1`(파라미터) 문법을 불허 → `%s::interval` 캐스트로 days 를 바인드한다
+    # (admin_llm_usage 는 int 보간 `interval '{days} days'`; 여기선 캐스트로 파라미터화 유지).
+    win = "now() - %s::interval"
+    where = ["u.conversation_id IS NOT NULL", "u.created_at >= " + win]
+    params: list = [f"{int(days)} days"]
+    if model:
+        where.append("COALESCE(u.resolved_model, u.model) = %s")
+        params.append(model)
+    if account_ids is not None:
+        # 빈 집합이면 결과 0 (역할에 계정이 없음).
+        if not account_ids:
+            return ([], False)
+        ph = ",".join(["%s"] * len(account_ids))
+        where.append(f"c.owner_account_id IN ({ph})")
+        params.extend([int(a) for a in account_ids])
+    if owner_account_id is not None:
+        where.append("c.owner_account_id = %s")
+        params.append(int(owner_account_id))
+    elif not owner_is_null_ok:
+        where.append("c.owner_account_id IS NOT NULL")
+    if day_label:
+        bucket_expr, _fmt = app._usage_bucket_match_sql(gran)
+        where.append(f"{bucket_expr} = %s")
+        params.append(day_label)
+    where_sql = " AND ".join(where)
+    # 대화별 × 모델 분해(모델 stacked·비용용) → Python fold. LIMIT 은 대화 수 기준(+1 로 truncated 감지).
+    sql = (
+        "SELECT u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, "
+        "c.blocked_at, COALESCE(u.resolved_model, u.model) AS m, count(*) AS calls, "
+        "sum(u.total_tokens) AS tok, sum(u.prompt_tokens) AS pt, sum(u.completion_tokens) AS ct, "
+        "max(u.created_at) AS last_used "
+        "FROM agent_runtime.llm_usage u "
+        "JOIN agent_runtime.core_conversations c ON c.conversation_id = u.conversation_id "
+        f"WHERE {where_sql} "
+        "GROUP BY u.conversation_id, c.topic, c.owner_account_id, c.created_at, c.updated_at, c.blocked_at, "
+        "COALESCE(u.resolved_model, u.model)"
+    )
+    fold: dict = {}
+    with pg.cursor() as cur:
+        cur.execute(sql, tuple(params))
+        for r in (cur.fetchall() or []):
+            cid = r[0]
+            e = fold.get(cid)
+            if e is None:
+                e = {
+                    "conversation_id": cid, "topic": (r[1] or ""),
+                    "owner_account_id": (int(r[2]) if r[2] is not None else None),
+                    "created_at": (r[3].isoformat() if r[3] else None),
+                    "updated_at": (r[4].isoformat() if r[4] else None),
+                    "blocked": bool(r[5] is not None),
+                    "calls": 0, "total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                    "cost_usd": 0.0, "_models": {}, "_last_used": r[11],
+                }
+                fold[cid] = e
+            mk, calls_r = r[6], int(r[7] or 0)
+            tok_r, pt_r, ct_r = int(r[8] or 0), int(r[9] or 0), int(r[10] or 0)
+            e["calls"] += calls_r
+            e["total_tokens"] += tok_r
+            e["prompt_tokens"] += pt_r
+            e["completion_tokens"] += ct_r
+            mc = app._estimate_llm_cost_usd(mk, pt_r, ct_r)
+            e["cost_usd"] += mc
+            mm = e["_models"].setdefault(mk, {"model": mk, "total_tokens": 0, "cost_usd": 0.0})
+            mm["total_tokens"] += tok_r
+            mm["cost_usd"] += mc
+            if r[11] and (e["_last_used"] is None or r[11] > e["_last_used"]):
+                e["_last_used"] = r[11]
+    items = list(fold.values())
+    # 기간내 사용량(토큰) 큰 순 → 같은 집계에 가장 많이 기여한 대화 먼저.
+    items.sort(key=lambda x: x["total_tokens"], reverse=True)
+    truncated = len(items) > app._USAGE_CONV_LIMIT
+    items = items[:app._USAGE_CONV_LIMIT]
+    for e in items:
+        e["cost_usd"] = round(e["cost_usd"], 4)
+        e["models"] = sorted(e.pop("_models").values(), key=lambda x: x["total_tokens"], reverse=True)
+        for m in e["models"]:
+            m["cost_usd"] = round(m["cost_usd"], 4)
+        e["last_used_at"] = (e.pop("_last_used").isoformat() if e.get("_last_used") else None)
+    return (items, truncated)
+
+
 @router.get("/api/admin/usage")
 def admin_llm_usage(request: Request, account=Depends(app.require_permission("console.usage.read", message="LLM 사용량 조회 권한이 필요합니다 (운영자 전용).")), conn=Depends(app.get_conn)) -> JSONResponse:
     """TASK-0136 (#11): LLM 토큰 사용량/비용 집계 — admin 한정(console.usage.read).

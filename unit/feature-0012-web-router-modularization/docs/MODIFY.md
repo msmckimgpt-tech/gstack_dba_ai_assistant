@@ -191,3 +191,6 @@ source_of_truth: true
 
 ## CHG-20260711T202222-item10-routers-p10 (스키마/마이그레이션/시드 32종 일괄 이동)
 - Date: 2026-07-11. 확립 패턴 프리픽스-일괄 — 부트스트랩 계층 완전 이관(_bootstrap_schema 총 35종). app.py 12,123→10,716.
+
+## CHG-20260711T202708-item10-routers-p11 (ask/prompt/usage 5종 이동)
+- Date: 2026-07-11. 4-타깃 분산 이동. 학습: AST 전역 수집기에 AnnAssign 미포함 → 상수 프리픽스 누락(F821 이 적발) — 후속 추출기에 AnnAssign 추가 필요. app.py 10,716→10,132.
