@@ -140,13 +140,25 @@ from web_context import (
     _totp_pending_token,
     _totp_verify_pending_token,
     _b64decode,
+    SESSION_DIR,
+    INTERNAL_MEMORY_PREFIXES,
+    PLACEHOLDER_TOPICS,
+    _strip_ansi,
+    _normalize_output,
+    _should_mark_internal_message,
+    _is_internal_message,
+    _unwrap_followup_user_request,
+    _avatar_url_for,
+    _product_icon_url_for,
+    _role_icon_url_for,
+    _account_conv_file,
+    _conv_file,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 # feature-0012 Final(ITEM-10 inc3): SESSION_COOKIE 는 src/web_context.py 로 추출(상단 from web_context import 로 rebind).
-SESSION_DIR = Path(os.getenv("WEB_SESSION_DIR", "/shared/web_sessions"))
-SESSION_DIR.mkdir(parents=True, exist_ok=True)
+# ITEM-10 b4: SESSION_DIR(+mkdir) 는 web_context.py 로 추출(상단 rebind — import 시점 mkdir 동일 보장).
 SHARED_ROOT = Path(os.getenv("WEB_SHARED_ROOT", "/shared")).resolve()
 LOG_DIR = Path(os.getenv("AGENT_LOG_DIR", "/shared/logs")).resolve()
 OUT_DIR = Path(os.getenv("AGENT_OUT_DIR", "/shared/out")).resolve()
@@ -188,13 +200,7 @@ _enforce_audit_prod_gate()
 
 # ITEM-10 b2: ANSI_RE/CONTROL_RE/MODEL_RE/USERNAME_RE/ROLE_KEY_RE 는 web_context.py 로 추출(상단 rebind).
 
-INTERNAL_MEMORY_PREFIXES = (
-    "파일 탐색 완료",
-    "대화 검색 완료",
-    "파일 읽기 완료",
-    "자동 탐색 완료",
-)
-PLACEHOLDER_TOPICS = {"", "(미설정)", "새 대화"}
+# ITEM-10 b4: INTERNAL_MEMORY_PREFIXES·PLACEHOLDER_TOPICS 는 web_context.py 로 추출(상단 rebind).
 # feature-0012 Final(ITEM-10 inc3): PERMISSION_DEFINITIONS/CODES/DEFINITION_MAP ·
 # _METADATA_MANUAL_IMPLIES · _resolve_permission_catalog 는 src/web_context.py 로 추출
 # (상단 from web_context import 로 rebind — app 내 호출부·routers app.X 동적참조·테스트 monkeypatch 보존).
@@ -653,73 +659,8 @@ else:
     )
 
 
-def _strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text or "")
-
-
-def _normalize_output(text: str) -> str:
-    cleaned = _strip_ansi(text or "")
-    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
-    cleaned = CONTROL_RE.sub("", cleaned)
-    return cleaned
-
-
-def _should_mark_internal_message(content: str) -> bool:
-    if not content:
-        return False
-    stripped = content.strip()
-    for prefix in INTERNAL_MEMORY_PREFIXES:
-        if stripped.startswith(prefix):
-            return True
-    # tool_notes JSON (LLM 도구 호출 시 생성) 필터링
-    if stripped.startswith("{") and stripped.endswith("}"):
-        try:
-            payload = json.loads(stripped)
-            if isinstance(payload, dict) and "tool_notes" in payload:
-                return True
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return False
-
-
-def _is_internal_message(role: str, content: str, meta_json: str | None) -> bool:
-    if str(role or "").lower() != "assistant":
-        return False
-    if meta_json:
-        try:
-            meta = json.loads(meta_json)
-            if isinstance(meta, dict) and meta.get("internal"):
-                return True
-        except Exception:
-            pass
-    return _should_mark_internal_message(content)
-
-
-def _unwrap_followup_user_request(text: str) -> str:
-    current = str(text or "").strip()
-    if not current:
-        return ""
-    for _ in range(4):
-        if "[이어받기 컨텍스트]" not in current:
-            break
-        marker = current.find("[이어받기 컨텍스트]")
-        if marker >= 0:
-            current = current[marker:].strip()
-        if not current.startswith("[이어받기 컨텍스트]"):
-            break
-        match = re.search(r"\[사용자 요청\]\s*(.+)$", current, flags=re.IGNORECASE | re.DOTALL)
-        if not match:
-            break
-        next_value = str(match.group(1) or "").strip()
-        if not next_value:
-            break
-        current = next_value
-    current = re.sub(r"\[이어받기 컨텍스트\]", " ", current, flags=re.IGNORECASE)
-    current = re.sub(r"\[사용자 요청\]", " ", current, flags=re.IGNORECASE)
-    current = re.sub(r"\b의도\s*:", " ", current, flags=re.IGNORECASE)
-    current = re.sub(r"\b제약\s*:", " ", current, flags=re.IGNORECASE)
-    current = re.sub(r"\s+", " ", current).strip()
-    return current
+# ITEM-10 b4: _strip_ansi·_normalize_output·_should_mark_internal_message·_is_internal_message·
+# _unwrap_followup_user_request 는 web_context.py 로 추출(상단 rebind).
 
 
 # feature-0012 P5b Final: _sanitize_session_id 는 src/web_context.py 로 추출(상단 from web_context import 로 rebind).
@@ -1102,43 +1043,8 @@ def _strip_quota_fields_if_unpermitted(payload, actor):
     return payload
 
 
-def _avatar_url_for(account_id: int, object_key: "str | None") -> "str | None":
-    """아바타 이미지 API URL(같은 출처 bytes 서빙) + 캐시버스터. 미설정 시 None(프론트 Identicon)."""
-    if not object_key or account_id <= 0:
-        return None
-    import hashlib as _hl
-    v = _hl.sha256(str(object_key).encode("utf-8")).hexdigest()[:12]
-    return f"/api/avatars/{account_id}?v={v}"
-
-
-def _product_icon_url_for(product_id: int, object_key: "str | None") -> "str | None":
-    """제품 아이콘 이미지 API URL + 캐시버스터. 미설정 시 None(프론트 Identicon/기본)."""
-    if not object_key or product_id <= 0:
-        return None
-    import hashlib as _hl
-    v = _hl.sha256(str(object_key).encode("utf-8")).hexdigest()[:12]
-    return f"/api/products/{product_id}/icon?v={v}"
-
-
-def _role_icon_url_for(role_id: int, object_key: "str | None") -> "str | None":
-    """TASK-0293: 역할 아이콘 이미지 API URL + 캐시버스터. 미설정 시 None(프론트 Identicon).
-
-    제품/아바타(_product_icon_url_for / _avatar_url_for) 와 동형 — object key 해시를
-    캐시버스터로 붙여 같은 출처 bytes 서빙 URL 을 만든다.
-    """
-    if not object_key or role_id <= 0:
-        return None
-    import hashlib as _hl
-    v = _hl.sha256(str(object_key).encode("utf-8")).hexdigest()[:12]
-    return f"/api/roles/{role_id}/icon?v={v}"
-
-
-def _account_conv_file(account_id: int) -> str:
-    return str(SESSION_DIR / f"conversation_id.account-{int(account_id)}")
-
-
-def _conv_file(session_id: str) -> str:
-    return str(SESSION_DIR / f"conversation_id.{session_id}")
+# ITEM-10 b4: _avatar/_product_icon/_role_icon_url_for·_account_conv_file·_conv_file 는
+# web_context.py 로 추출(상단 rebind).
 
 
 def _read_conversation_id(path: str) -> str:

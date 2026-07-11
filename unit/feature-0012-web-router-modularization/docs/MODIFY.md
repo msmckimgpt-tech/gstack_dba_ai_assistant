@@ -549,3 +549,9 @@ source_of_truth: true
 - Files: src/app.py · src/web_context.py.
 - 검증: 스냅샷 byte-동치 · ruff F821 clean(중간 스캔이 14건 적발 → import 보강+_b64decode 동반 이동으로 해소 — F821 게이트가 name-resolution 회귀를 실제 차단한 사례) · py_compile · 전 스위트 pytest rc=0(test_two_factor_auth 포함) · monkeypatch 소비 0(사전 census: 상위는 _connect_memory 68·_require_account 52 등 — 본 batch 비대상).
 - Rollback: 단일 커밋 revert.
+
+## CHG-20260711T111000-item10-webctx-batch4 (web_context 추출 batch4 — 세션 경로·출력 정규화·미디어 URL, parallel-work-structure ITEM-10)
+- Date: 2026-07-11
+- Summary: 순수 leaf 3군 이동 — ① SESSION_DIR(+mkdir)·INTERNAL_MEMORY_PREFIXES·PLACEHOLDER_TOPICS ② 출력 정규화/내부메시지 판정 5함수(_strip_ansi/_normalize_output/_should_mark_internal_message/_is_internal_message/_unwrap_followup_user_request — 내부 호출쌍 동반 이동) ③ 미디어 URL·대화파일 경로 5함수(_avatar/_product_icon/_role_icon_url_for·_account_conv_file·_conv_file). web_context 에 pathlib.Path 추가. app.py 18,569→18,475줄(누적 -1,175).
+- 검증: 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0 · monkeypatch 0(사전 census — SESSION_DIR 테스트 참조 0, routers _conv_file 소비 4 는 app.X 동적).
+- Rollback: 단일 커밋 revert.

@@ -426,3 +426,8 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
   - NIT(이동 부산물 stale 자기지시 주석) → 본 커밋에서 정리.
 - 게이트: 스냅샷 byte-동치 · F821 clean(중간 14건 적발 → import 보강+_b64decode 동반 이동 — 게이트 실효 사례) · py_compile · 전 스위트 pytest rc=0.
 - Human Approval Needed: 아니오 — §6.1. behavior-neutral(패널 기계 증명), 배포는 item 완료 시.
+
+## REV-20260711T111000-item10-webctx-batch4 [SKIPPED:roadmap-spec-transcription] — web_context 추출 batch4 (parallel-work-structure ITEM-10)
+- Related Change: CHG-20260711T111000-item10-webctx-batch4. cycle: ai/claude-corp/feature-0012-item10-webctx-b4. 승인: ROADMAP §6.1.
+- SKIPPED 사유: batch1/2 와 동일 계보의 비인증 순수 leaf(출력 정규화·경로/URL 빌더·상수) — auth dispatch 비해당(b3 와 달리 인증 semantics 무접촉). 기계 게이트 4종 전건 GREEN + monkeypatch census 0. 내부 호출쌍(_normalize_output→_strip_ansi, _is_internal_message→_should_mark_internal_message)은 동반 이동으로 패치-관통 이슈 원천 배제(어느 쪽도 테스트 패치 대상 아님을 census 로 확인).
+- Human Approval Needed: 아니오 — §6.1.
