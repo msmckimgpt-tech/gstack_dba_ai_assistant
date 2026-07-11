@@ -1625,3 +1625,6 @@ win-browser 실 Windows Chrome relay 로 배포본(mssql-qa-idc 882 노드) 검�
 - 진단: 컬링이 화면 밖 노드 미방출 → (a) renderEndpoint 가 앵커 못 찾아 엣지 드롭 (b) _metaRenderedIdFor null 로 상세 네비 팬 skip.
 - 수정: (a) focusAdj 예외(선택 노드 1-hop 관계 상대) + **뷰포트 내 노드 엣지 컬링무효**(in-view 노드에 연결된 상대 끝점 _edgeExempt 방출 예외) → 관계선 렌더 + 네비 팬 복원. (b) 팬 재-emit rAF 스로틀(실시간 드래그 컬링). **무선택·무연결 시 예외 0**(컬링 무손실); in-view 연결 상대는 선택 무관 예외(§76 적대리뷰 M1 정정 — 종전 "무선택 예외 0" 은 focusAdj-only 시점 기술). ADR-037.
 - 검증: headless cullrefkeep 15(§76 리뷰 M2 dense off-view 컬링유지 보강) + 그래프 회귀 = **249 PASS**(11 스위트)·node --check. §18.8 적대 리뷰 [SUBAGENT: PASS-WITH-FIXES](BLOCKING/MAJOR 0). POST-DEPLOY win-browser. 버스터 `admin.js?v=20260710-cullrefkeep`.
+
+## 문서 아카이빙 압축 정보 (§5.5, 20260711T120531)
+- MODIFY 총 118건=아카이브 102+현행 16 · REVIEW 총 118건=아카이브 102+현행 16. verbatim·무손실 md5·timestamp 아카이브명.

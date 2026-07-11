@@ -2243,3 +2243,6 @@ focus 밖 엣지를 build 제외 — 사용자 리포트의 실제 케이스(정
 - [x] T76.4 (사용자 방향 갱신) **뷰포트 내 노드 엣지 컬링무효** — "연결/관계선은 뷰포트 내 노드들에 대해서 컬링 무효". focusAdj(선택) 예외를 in-view 로 확장: layouts.place 1-pass 로 전체 위치 맵(`nodePosAll` — 컬링돼도 포함) + in-view(미컬링) 집합 산정 → in-view 노드에 연결된 REFERENCES/ROUTINE_USES 엣지의 상대 끝점 테이블을 `_edgeExempt` 에 넣어 컬 예외. 무연결 화면 밖 노드는 계속 컬링(성능 유지). `_keepFromCull`=focus∪edge, `_clusterKeep`=클러스터가 focus/edge 멤버 품으면 통째 컬 금지(combo 앵커). T1 실증(무선택에도 A.t0 연결 B.t0 방출·관계선 렌더 / 무연결 B.t5 컬링).
 - [x] T76.5 (사용자 요구) **실시간 드래그 컬링** — "뷰포트를 드래그하는 도중에도 실시간으로 컬링 재계산". 팬 재-emit 을 260ms 디바운스(정착 후)에서 **rAF 스로틀**(aftertransform, `_cullRaf`)로 — 메모이즈(§73)로 rebuild layout 비용 소거(8ms) + `_metaG6Apply` 직렬화(병합)라 rebuild 코스트에 자연 적응(파일업 없음). 임계 0.5→0.35(더 이른 예측). 스코프 전환 시 `_cullRaf` cancelAnimationFrame 정리.
 - [ ] T76.3 POST-DEPLOY win-browser 실 Windows Chrome 육안(PB-0008): 대형 그래프 줌인 → 노드 선택 → ① 화면 밖 관계 노드로 관계선 유지(참조) ② 상세 패널 관계행 클릭 → 화면 밖 대상으로 카메라 팬(상호작용) ③ 무선택 시 컬링·성능 유지 ④ pageerror 0. TEST §76.
+
+## 20260711T1205-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11)
+- [x] MODIFY 117→15건·REVIEW 117→15건 이관, 무손실 md5, 링크+REPORT 압축(§5.5). 선례 CHG-20260711T115053/T120311 동일 계보.
