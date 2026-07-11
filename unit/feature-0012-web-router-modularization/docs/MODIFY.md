@@ -227,3 +227,6 @@ source_of_truth: true
 
 ## CHG-20260712T032000-item11-batch3 (auth_me_patch conn-only DI-rework)
 - Date: 2026-07-12. _get_authenticated_account 기반(401 "unauthorized")→conn-only DI(leak fix). runtime snapshot 6종. DEFER 48→47.
+
+## CHG-20260712T034000-item11-batch4 (admin_account_unlock 완전 DI-rework)
+- Date: 2026-07-12. account+conn DI(perm 본문 유지). runtime snapshot 9종. DEFER 47→46.

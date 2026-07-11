@@ -202,3 +202,6 @@ source_of_truth: true
 
 ## REV-20260712T032000-item11-batch3 [SKIPPED:panel-precleared] — auth_me_patch conn-only DI
 - Related: CHG-20260712T032000-item11-batch3. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _get_authenticated_account 401 "unauthorized" byte-동치 보존 위해 conn-only DI 채택. runtime 6종+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T034000-item11-batch4 [SKIPPED:panel-precleared] — admin_account_unlock 완전 DI
+- Related: CHG-20260712T034000-item11-batch4. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _require_account 기반 완전 DI, perm 본문 유지(per-perm 403 메시지 보존). runtime 9종+leak-fix. 게이트 4종 GREEN.
