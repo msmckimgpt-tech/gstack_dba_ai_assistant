@@ -569,7 +569,22 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   docs append 는 fragment(ITEM-06 완료 시) 또는 merge driver(ITEM-03)에 의존.
 
 ### ITEM-11 · DEFER 핸들러 byte-동치 DI-rework (pre-auth gate·long-poll·txn ~46)
-- **status**: pending
+- **status**: in-progress
+- **note(2026-07-12 착수·census 정정·§18.8 3렌즈 패널)**: **DEFER 모집단 = 인라인 authn 라우트
+  핸들러 50개**(AST 독립 census 확정 — 코드베이스 자체 MODIFY.md:38 "DEFER 50"·ROADMAP ~46·
+  DI-seam ~46 수렴). 초기 census 는 16(DI-seam cat-A subset)만 잡는 gap 이 있었고, ITEM-10 은
+  DEFER 를 인라인 유지로 추출만 했으므로(REPORT.md:52) 모집단 불변. fail-soft 도 3→6.
+  §18.8 3렌즈 적대 패널(설계·계약강건성·census완전성) 전원 결함 반환 → 옵션 B(16 intentional-inline
+  종결) **NOT-SHIP**. me_put_system_prompt 는 try/finally 부재 실제 conn leak 이라 DI 가 더 안전이며,
+  blueprint §1.3 get_optional_account 가 fail-soft/redirect risk 를 byte-동치로 해결(strawman 프레이밍
+  기각). → **옵션 C(split)**: 50 핸들러 개별 판정 다-batch. (A)DI-rework 대상(안전+이득, runtime
+  TestClient snapshot 필수·403 메시지 verbatim 주의): me_put_system_prompt·admin_products CRUD 3
+  (형제 upload_product_icon 이미 DI)·suggestions(get_optional_account)·34 미열거 중 평범한
+  auth-then-body 다수. (B)keep-inline 정당(패널 인정, "defer/router-extraction" 레이블): ask_result
+  (60s long-poll)·gdrive_connect/callback(redirect)·progress(401 surface)·public_share_view(3 mid-body).
+  테스트=runtime snapshot(status+body+detail 부재, conftest client/as_account)+AST 계약+동적 스캔
+  완전성(50==분류 테이블). acceptance (a)runtime 미작성·(d)패널 완료·(e)잔여 50→0 여정. **다음 버스트:
+  batch1=me_put_system_prompt conn leak fix(runtime snapshot 선작성)**.
 - **feature_id**: feature-0012-web-router-modularization
 - **dimension**: structural
 - **risk_grade**: Major

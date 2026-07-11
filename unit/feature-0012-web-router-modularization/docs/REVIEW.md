@@ -185,3 +185,11 @@ source_of_truth: true
 
 ## REV-20260712T013000-item10-done-mark [SKIPPED:doc-only] — ITEM-10 done 마킹
 - Related Change: CHG-20260712T013000-item10-완료판정. 승인: ROADMAP §6.1. 완료 판정 근거=실질 857줄+잔여 fn 전수 이동금지 census. 코드 무변경.
+
+## REV-20260712T023000-item11-panel-3lens [AGENT-TEAM:NOT-SHIP] — ITEM-11 옵션 B 적대 검증 3렌즈
+- Related: TASK 20260712T0230-item11-census-정정. 승인: ROADMAP §6.1(착수) + §6.3(인증 인접 기계 게이트). 패널 = §18.8 acceptance(d) 이행.
+- 3렌즈 독립 병렬(improve-fit-reviewer 설계판정 + general-purpose 계약강건성 + census완전성) 전원 결함 반환 → 옵션 B(16 intentional-inline 종결) **NOT-SHIP** 합의:
+  1. 설계: me_put_system_prompt try/finally 부재 실제 conn leak(DI 더 안전) · "6 regressions" strawman(blueprint get_optional_account 이 4종 byte-동치 해결) · acceptance (a)(d)(e) 미충족.
+  2. 계약: AST/string 테스트 5종 bypass(Depends 시그니처 추가·status 미검증·app.접두 substring 회피·fail-soft return error·하드코딩 16).
+  3. 완전성: 모집단 16 아닌 50(34 누락, 코드베이스 자체 census 수렴), fail-soft 3→6.
+- 처분: 약한 계약 테스트 폐기 · 옵션 C(split) 전환 · 50 핸들러 개별 판정 다-batch(runtime snapshot+동적 완전성). ship-blocking 반영=전건(census 정정·테스트 폐기·방향 전환).
