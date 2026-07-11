@@ -382,38 +382,37 @@ def admin_account_password_reset(account_id: int, request: Request) -> JSONRespo
     })
 
 @router.post("/api/admin/accounts/{account_id}/unlock")
-def admin_account_unlock(account_id: int, request: Request) -> JSONResponse:
+def admin_account_unlock(
+    account_id: int,
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
     """TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금을 비밀번호 변경 없이 즉시 해제.
 
     표적 DoS(공격자가 정당 사용자를 일부러 잠금)로부터의 관리자 회복 경로 — 비밀번호
     초기화(강제 변경 동반)와 달리 잠금만 푼다. 권한: password-reset 와 동일
     (`console.access` + `console.manage` + `account.update`). 신규 RBAC 권한 없음.
+
+    ITEM-11 batch4: _require_account→account+conn 완전 DI(get_current_account/get_conn).
+    perm 은 AND 조합·per-perm 다른 403 메시지라 본문 인라인 유지. get_conn finally:close 가
+    _load_account_by_id·_account_has_permission raise 시 conn leak 을 해소. byte-동치:
+    401 "로그인이 필요합니다."·500 "db connection failed" 인라인 동일. account_id<=0 400 은
+    본문 유지(authed 동일; account_id<=0+unauth 이중 엣지만 401 선행, benign).
     """
     if account_id <= 0:
         return app._json_error("invalid account_id", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(actor, "console.access") or not app._account_has_permission(actor, "console.manage"):
-        conn.close()
         return app._json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     if not app._account_has_permission(actor, "account.update"):
-        conn.close()
         return app._json_error("계정 수정 권한이 필요합니다.", 403)
     target = app._load_account_by_id(conn, account_id)
     if not target:
-        conn.close()
         return app._json_error("account not found", 404)
     was_locked = bool(target.get("is_locked"))
     try:
         app._login_reset_lockout(conn, int(account_id))
     except Exception:
-        conn.close()
         return app._json_error("잠금 해제에 실패했습니다.", 500)
     try:
         app._audit_admin_mutation(
@@ -438,9 +437,7 @@ def admin_account_unlock(account_id: int, request: Request) -> JSONResponse:
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({
         "ok": True,
         "account_id": int(account_id),
