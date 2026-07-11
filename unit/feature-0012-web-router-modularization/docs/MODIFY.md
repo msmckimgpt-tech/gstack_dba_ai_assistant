@@ -188,3 +188,6 @@ source_of_truth: true
 
 ## CHG-20260711T195739-item10-routers-p9 (제품 인사이트·첨부 백그라운드 4종 이동)
 - Date: 2026-07-11. 확립 패턴 — 도메인별 2-타깃 이동(admin_products/_conv_store). app.py 12,718→12,123.
+
+## CHG-20260711T202222-item10-routers-p10 (스키마/마이그레이션/시드 32종 일괄 이동)
+- Date: 2026-07-11. 확립 패턴 프리픽스-일괄 — 부트스트랩 계층 완전 이관(_bootstrap_schema 총 35종). app.py 12,123→10,716.

@@ -1169,69 +1169,10 @@ SEED_ROLE_SYSTEM_PROMPTS = (
 )
 
 
-def _ensure_seed_role_system_prompts(conn) -> None:
-    """사업팀 등 seed role 의 기본 role-scope system prompt 를 1회만 upsert 한다.
-
-    이미 같은 scope/role/product 조합으로 prompt 가 존재하면 덮어쓰지 않는다(관리 콘솔 수정 존중).
-    """
-    role_map = _role_id_map(conn)
-    for seed in SEED_ROLE_SYSTEM_PROMPTS:
-        role_id = int(role_map.get(str(seed.get("role_key") or "")) or 0)
-        if role_id <= 0:
-            continue
-        existing = _load_system_prompt(
-            conn,
-            scope="role",
-            product_id=seed.get("product_id"),
-            role_id=role_id,
-            account_id=None,
-        )
-        if existing:
-            continue
-        _upsert_system_prompt(
-            conn,
-            scope="role",
-            content=str(seed.get("content") or ""),
-            product_id=seed.get("product_id"),
-            role_id=role_id,
-            account_id=None,
-            updated_by_account_id=None,
-        )
+# ITEM-10 routers-p10: _ensure_seed_role_system_prompts 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_seed_global_system_prompt(conn) -> None:
-    """TASK-0095 (Major §12.3): GLOBAL scope system prompt 1행 idempotent seed.
-
-    `agent_core.SYSTEM_PROMPT` 상수 본문을 `WebSystemPrompts(scope='global', Product/Role/Account NULL)`
-    로 1회만 INSERT. 이미 row 가 있으면 건드리지 않는다 (관리 콘솔 수정 존중).
-    agent_core import 가 실패하면 silent skip — bootstrap-time 의존성 약화는
-    `compose_system_prompt()` 의 fallback 로직이 흡수.
-    """
-    existing = _load_system_prompt(
-        conn,
-        scope="global",
-        product_id=None,
-        role_id=None,
-        account_id=None,
-    )
-    if existing:
-        return
-    try:
-        from agent_core import SYSTEM_PROMPT as _AGENT_SYSTEM_PROMPT  # type: ignore
-        seed_content = str(_AGENT_SYSTEM_PROMPT or "").strip()
-    except Exception:
-        seed_content = ""
-    if not seed_content:
-        return
-    _upsert_system_prompt(
-        conn,
-        scope="global",
-        content=seed_content,
-        product_id=None,
-        role_id=None,
-        account_id=None,
-        updated_by_account_id=None,
-    )
+# ITEM-10 routers-p10: _ensure_seed_global_system_prompt 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 # ITEM-10 b5: SEED_PRODUCT_DEFINITIONS 는 web_context.py 로 추출(상단 rebind).
@@ -1240,86 +1181,7 @@ def _ensure_seed_global_system_prompt(conn) -> None:
 # ITEM-10 b6: _product_permission_code 는 web_context.py 로 추출(상단 rebind).
 
 
-def _ensure_product_access_permissions(conn) -> int:
-    """TASK-0052 Phase 1B: 각 WebProducts 에 대응하는 동적 권한 row + role grant 를 idempotent backfill.
-
-    동작:
-    1. 모든 WebProducts row 에 대해 `product.access.<key>` 권한이 WebPermissions 에 없으면 INSERT.
-       IsDynamic=1, ProductId=<product_id>, GroupName='product_access' (TASK-0288).
-    2. D2-A backfill: 신규 추가된 권한을 모든 WebRoles row 에 INSERT IGNORE WebRolePermissions.
-       기존 운영 호환성 유지 (briefing §4 Phase 1B 단계).
-    Returns: backfill 로 인해 추가된 (permission row + role-permission row) 합계 — 운영 transparency 용 카운트.
-    """
-    added_total = 0
-    # TASK-0288: 기존 배포의 동적 제품 접근 권한을 'product'(제품 관리) → 'product_access'(제품 사용)
-    # 그룹으로 멱등 이전. enforce 무관(group=UI 메타) — 권한 편집기에서 작업 화면 사용 vs 관리 콘솔
-    # 구성 권한을 분리 표시하기 위함. IsDynamic=1 로 정적 product.read/manage 와 구분.
-    _mig_cur = conn.cursor()
-    _mig_cur.execute(
-        "UPDATE WebPermissions SET GroupName = 'product_access' "
-        "WHERE IsDynamic = 1 AND Code LIKE 'product.access.%' AND GroupName <> 'product_access'"
-    )
-    _mig_cur.close()
-    cur = conn.cursor(dictionary=True)
-    # TASK-0053: product 자체가 DefaultRoleAccess 정책의 주체. 1=모든 role 자동 grant, 0=명시 grant 만.
-    cur.execute("SELECT Id, ProductKey, Name, DefaultRoleAccess FROM WebProducts ORDER BY Id")
-    products = cur.fetchall() or []
-    cur.close()
-    if not products:
-        return 0
-    for product in products:
-        product_id = int(product.get("Id") or 0)
-        product_key = str(product.get("ProductKey") or "")
-        product_name = str(product.get("Name") or product_key)
-        default_role_access = bool(product.get("DefaultRoleAccess", True))
-        if not product_id or not product_key:
-            continue
-        code = _product_permission_code(product_key)
-        # 1. 권한 row 보장
-        cur = conn.cursor()
-        cur.execute(
-            """
-INSERT IGNORE INTO WebPermissions (Code, Label, Description, GroupName, IsDynamic, ProductId)
-VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                code,
-                f"제품 접근 — {product_name}",
-                f"이 계정은 {product_key} 제품에 접근할 수 있습니다 (대화 생성·pin·system prompt 읽기).",
-                # TASK-0288: 작업 화면 제품 사용 권한은 별도 그룹(product_access)으로 분리.
-                # 관리 콘솔 제품 구성 권한(product.read/manage, group='product')과 구분.
-                "product_access",
-                1,
-                product_id,
-            ),
-        )
-        if int(cur.rowcount or 0) > 0:
-            added_total += 1
-        cur.close()
-        # 2. 권한 id 조회 (INSERT IGNORE 했으니 fetch)
-        cur = conn.cursor()
-        cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (code,))
-        row = cur.fetchone()
-        cur.close()
-        if not row:
-            continue
-        permission_id = int(row[0] or 0)
-        if permission_id <= 0:
-            continue
-        # 3. product.DefaultRoleAccess=1 일 때만 모든 role 에 grant backfill (TASK-0053 정책 — product 주체).
-        # DEFAULT 1 이라 기존 운영 데이터는 D2-A 와 동일 동작 유지.
-        if default_role_access:
-            cur = conn.cursor()
-            cur.execute(
-                """
-INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
-SELECT r.Id, %s FROM WebRoles r
-                """,
-                (permission_id,),
-            )
-            added_total += int(cur.rowcount or 0)
-            cur.close()
-    return added_total
+# ITEM-10 routers-p10: _ensure_product_access_permissions 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 # ITEM-10 b5: _ensure_seed_products 는 web_context.py 로 추출(상단 rebind).
@@ -2076,67 +1938,7 @@ LIMIT 1
     return int((row or (0,))[0] or 0)
 
 
-def _migrate_legacy_accounts_to_rbac(conn) -> None:
-    role_map = _role_id_map(conn)
-    rows = _fetch_account_rows(conn, "a.RoleId IS NULL", include_password=False, include_legacy=True)
-    if not rows:
-        return
-    permission_map = _permission_id_map(conn)
-    cur = conn.cursor()
-    for row in rows:
-        account_id = int(row.get("id") or 0)
-        if account_id <= 0:
-            continue
-        legacy_role = str(row.get("legacy_role") or "").strip().lower() or "pending"
-        if legacy_role not in role_map:
-            seed = _seed_role_definition(legacy_role)
-            role_map[legacy_role] = _create_role_with_permissions(
-                conn,
-                legacy_role,
-                name=str(seed["name"] if seed else legacy_role.title()),
-                description=str(seed["description"] if seed else ""),
-                is_active=True,
-                is_default_signup=bool(seed["is_default_signup"]) if seed else False,
-                permission_codes=_seed_role_codes(legacy_role),
-            )
-        role_id = int(role_map[legacy_role])
-        desired_codes = _legacy_permission_codes_from_row(row)
-        seed_codes = _seed_role_codes(legacy_role)
-        cur.execute(
-            """
-UPDATE WebAccounts
-SET RoleId = %s
-WHERE Id = %s
-            """,
-            (role_id, account_id),
-        )
-        cur.execute("DELETE FROM WebAccountPermissionOverrides WHERE AccountId = %s", (account_id,))
-        for code in PERMISSION_CODES:
-            if (code in desired_codes) == (code in seed_codes):
-                continue
-            permission_id = int(permission_map.get(code) or 0)
-            if permission_id <= 0:
-                continue
-            cur.execute(
-                """
-INSERT INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
-VALUES (%s, %s, %s)
-                """,
-                (
-                    account_id,
-                    permission_id,
-                    OVERRIDE_ALLOW if code in desired_codes else OVERRIDE_DENY,
-                ),
-            )
-        if not row.get("approved_at") and (
-            "conversation.ask" in desired_codes or "console.access" in desired_codes
-        ):
-            cur.execute(
-                "UPDATE WebAccounts SET ApprovedAt = CURRENT_TIMESTAMP WHERE Id = %s AND ApprovedAt IS NULL",
-                (account_id,),
-            )
-    cur.close()
-    _ensure_default_signup_role(conn)
+# ITEM-10 routers-p10: _migrate_legacy_accounts_to_rbac 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 def _list_active_accounts(conn) -> list[dict[str, Any]]:
@@ -2159,105 +1961,10 @@ def _management_accounts(conn) -> list[dict[str, Any]]:
     ]
 
 
-def _ensure_bootstrap_admin(conn) -> int:
-    managers = _management_accounts(conn)
-    if managers:
-        return int(managers[0]["id"])
-
-    username = _sanitize_username(BOOTSTRAP_ADMIN_USERNAME)
-    password = BOOTSTRAP_ADMIN_PASSWORD
-    if not _is_valid_username(username) or not _is_valid_password(password):
-        raise RuntimeError(
-            "관리 가능 계정이 없습니다. WEB_BOOTSTRAP_ADMIN_USERNAME 및 "
-            "WEB_BOOTSTRAP_ADMIN_PASSWORD를 설정해야 합니다."
-        )
-
-    role_map = _role_id_map(conn)
-    admin_role_id = int(role_map.get("admin") or 0)
-    if admin_role_id <= 0:
-        admin_role_id = _create_role_with_permissions(
-            conn,
-            "admin",
-            name="Admin",
-            description="관리 콘솔과 전체 대화 관리 권한을 가진 계정",
-            is_active=True,
-            is_default_signup=False,
-            permission_codes=set(PERMISSION_CODES),
-        )
-    password_hash = _hash_password(password)
-    cur = conn.cursor()
-    cur.execute("SELECT Id FROM WebAccounts WHERE Username = %s LIMIT 1", (username,))
-    existing = cur.fetchone()
-    if existing:
-        admin_id = int(existing[0] or 0)
-        cur.execute(
-            """
-UPDATE WebAccounts
-SET PasswordHash = %s,
-    RoleId = %s,
-    IsActive = 1,
-    DeletedAt = NULL,
-    DeletedByAccountId = NULL,
-    ApprovedAt = COALESCE(ApprovedAt, CURRENT_TIMESTAMP)
-WHERE Id = %s
-            """,
-            (password_hash, admin_role_id, admin_id),
-        )
-        cur.execute("DELETE FROM WebAccountPermissionOverrides WHERE AccountId = %s", (admin_id,))
-        cur.close()
-        return admin_id
-
-    cur.execute(
-        """
-INSERT INTO WebAccounts (
-    Username,
-    PasswordHash,
-    RoleId,
-    ApprovedAt,
-    IsActive
-) VALUES (%s, %s, %s, CURRENT_TIMESTAMP, 1)
-        """,
-        (username, password_hash, admin_role_id),
-    )
-    admin_id = int(cur.lastrowid or 0)
-    cur.close()
-    return admin_id
+# ITEM-10 routers-p10: _ensure_bootstrap_admin 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _seed_legacy_conversations(conn, bootstrap_admin_id: int) -> None:
-    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
-        return
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-SELECT ConversationId COLLATE utf8mb4_unicode_ci AS conversation_id FROM AgentMemoryKv
-UNION
-SELECT ConversationId COLLATE utf8mb4_unicode_ci FROM AgentMemoryMessages
-UNION
-SELECT conversation_id COLLATE utf8mb4_unicode_ci FROM AgentCoreConversations
-            """
-        )
-        rows = cur.fetchall() or []
-        for (conversation_id_raw,) in rows:
-            conversation_id = str(conversation_id_raw or "").strip()
-            if not conversation_id:
-                continue
-            cur.execute(
-                "INSERT IGNORE INTO AgentCoreConversations (conversation_id, topic) VALUES (%s, '')",
-                (conversation_id,),
-            )
-        cur.execute(
-            """
-UPDATE AgentCoreConversations
-SET owner_account_id = %s,
-    owner_assigned_at = COALESCE(owner_assigned_at, CURRENT_TIMESTAMP)
-WHERE owner_account_id IS NULL
-            """,
-            (int(bootstrap_admin_id),),
-        )
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _seed_legacy_conversations 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 def _mark_memory_runtime_ready() -> None:
@@ -2381,132 +2088,10 @@ def _runtime_tables_available() -> bool:
     return True
 
 
-def _ensure_dynamic_permissions_schema(conn) -> None:
-    """TASK-0052 Phase 1B + TASK-0053: WebPermissions/WebProducts 의 동적 권한·정책 컬럼을 idempotent ALTER.
-
-    - WebPermissions.IsDynamic / ProductId : 동적 권한 row 식별 (TASK-0052).
-    - WebProducts.DefaultRoleAccess : product 생성 시 모든 role 자동 grant 여부 정책 (TASK-0053).
-      DEFAULT 1 = 기존 D2-A 호환 (모든 신규 product 가 모든 role 에 자동 grant). 운영자가 product
-      생성 시 0 으로 설정하면 그 product 는 명시적 grant 가 있어야만 role 이 접근 가능.
-      정책의 주체는 product 자체 — role 은 어떤 product 든 자기 grant 만으로 결정 (role-side default
-      toggle 은 별도로 두지 않음, 본 cycle 에서 사용자 의도 반영).
-
-    `WebRoles.DefaultProductAccess` (이전 설계) 는 **deprecated** — 컬럼 자체는 destructive DROP
-    회피 차원에서 남기되 어떤 SQL 도 참조하지 않음. 다음 cleanup cycle 에서 DROP COLUMN.
-
-    _ensure_web_tables (slow path) 와 _ensure_seed_catchup (fast path) 양쪽에서 호출되어
-    기존 배포 (table 이미 존재) 에서도 신규 컬럼이 추가되도록 한다. 컬럼이 이미 있으면
-    `try/except pass` 로 graceful no-op.
-    """
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute("ALTER TABLE WebPermissions ADD COLUMN IsDynamic TINYINT(1) NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE WebPermissions ADD COLUMN ProductId BIGINT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE WebPermissions ADD INDEX IX_WebPermissions_ProductId (ProductId)")
-        except Exception:
-            pass
-        # TASK-0053: WebProducts 에 DefaultRoleAccess 컬럼 — product 가 자체 정책의 주체.
-        try:
-            cur.execute("ALTER TABLE WebProducts ADD COLUMN DefaultRoleAccess TINYINT(1) NOT NULL DEFAULT 1")
-        except Exception:
-            pass
-        # 멀티 datasource (P1, DESIGN Stage 1): product → datasource 바인딩.
-        # NULL = 기본 단일 MySQL(DB_HOST). 값 = config.DATASOURCES 의 키 (agent_core 가 해석).
-        # 좌표/비밀번호는 DB 에 저장하지 않는다 — .env named credential 만 (security-first).
-        try:
-            cur.execute("ALTER TABLE WebProducts ADD COLUMN DatasourceKey VARCHAR(64) NULL")
-        except Exception:
-            pass
-        # TASK-0205 §2.4: 제품별 MSSQL 참조 DB(같은 서버 데이터소스의 어느 DB 를 볼지). NULL=데이터소스 기본.
-        try:
-            cur.execute("ALTER TABLE WebProducts ADD COLUMN DatasourceDatabase VARCHAR(128) NULL")
-        except Exception:
-            pass
-        # TASK-0268: 제품 아이콘 이미지 — MinIO object key (NULL=미설정 → 프론트 Identicon 폴백).
-        try:
-            cur.execute("ALTER TABLE WebProducts ADD COLUMN IconObjectKey VARCHAR(512) NULL")
-        except Exception:
-            pass
-        # TASK-0309: 제품 프롬프트 무인 자동완성 1회성 마커. insight 분석률이 임계(기본 95%)에
-        # 도달해 자동완성·저장이 1회 수행된 시각을 기록한다(NULL=미수행). insight 초기화
-        # (admin_product_insight_reset)는 PG insight 만 삭제하고 본 MySQL 컬럼은 보존하므로,
-        # reset 으로 분석률이 내려갔다 재상승해도 본 마커가 있으면 재실행하지 않는다(1회성 보장).
-        try:
-            cur.execute("ALTER TABLE WebProducts ADD COLUMN AutoPromptGeneratedAt DATETIME NULL")
-        except Exception:
-            pass
-        # WebRoles.DefaultProductAccess (deprecated, 이전 설계 잔재) 의 ALTER 는 더 이상 추가하지 않는다.
-        # 기존 deploy 에 컬럼이 이미 있다면 그대로 보존 (다음 cleanup cycle 의 DROP 대상).
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_dynamic_permissions_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_datasources_schema(conn) -> None:
-    """TASK-0205: DB 기반 datasource 레지스트리 테이블 (자격증명 암호화 저장). 멱등 CREATE.
-
-    - WebDatasourceKeys: envelope DEK(KEK 로 wrap 해 저장 — 마스터키의 DB 암호화 저장).
-    - WebDatasources: datasource 좌표 + 암호화 password. password 만 암호화(host/user 는 노출 경계 밖).
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebDatasourceKeys (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                KeyVersion INT NOT NULL UNIQUE,
-                DekWrapped TEXT NOT NULL,
-                KekVersion INT NOT NULL,
-                IsActive TINYINT(1) NOT NULL DEFAULT 1,
-                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebDatasources (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                DatasourceKey VARCHAR(64) NOT NULL UNIQUE,
-                Engine VARCHAR(16) NOT NULL DEFAULT 'mysql',
-                Host VARCHAR(255) NOT NULL,
-                Port INT NOT NULL,
-                DbUser VARCHAR(128) NOT NULL,
-                PasswordEnc TEXT NULL,
-                DefaultDb VARCHAR(128) NULL,
-                EncryptionVersion INT NOT NULL DEFAULT 1,
-                IsActive TINYINT(1) NOT NULL DEFAULT 1,
-                InsightEnabled TINYINT(1) NOT NULL DEFAULT 1,
-                Description TEXT NULL,
-                DomainTags VARCHAR(512) NULL,
-                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UpdatedByAccountId BIGINT NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-        # TASK-0215: insight-worker 가 이 데이터소스를 탐색할지 토글(기존 deploy idempotent ALTER, default 1=탐색).
-        try:
-            cur.execute("ALTER TABLE WebDatasources ADD COLUMN InsightEnabled TINYINT(1) NOT NULL DEFAULT 1")
-        except Exception:
-            pass
-        # ITEM-04: datasource 비즈니스 컨텍스트(멀티DS 그라운딩·DS picker 주입용). plaintext(비밀 아님).
-        # 멱등 ALTER — feature-0002 datasources._db_datasource 가 이 컬럼을 읽어 _row_to_ds 로 전달.
-        for _ddl in (
-            "ALTER TABLE WebDatasources ADD COLUMN Description TEXT NULL",
-            "ALTER TABLE WebDatasources ADD COLUMN DomainTags VARCHAR(512) NULL",
-        ):
-            try:
-                cur.execute(_ddl)
-            except Exception:
-                pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_datasources_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 # ITEM-10 routers-p8: _ensure_web_product_datasources_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적 — _WEB_TABLES_READY 는 app 속성 대입).
@@ -2515,568 +2100,40 @@ def _ensure_web_datasources_schema(conn) -> None:
 # ITEM-10 routers-p8: _seed_main_mysql_datasource 는 routers/_bootstrap_schema.py 로 이동(app.X 동적 — _WEB_TABLES_READY 는 app 속성 대입).
 
 
-def _migrate_mssql_products_to_db_level(conn) -> None:
-    """TASK-0206 일회성 마이그레이션: 구 MSSQL 제품을 DB-단위 접근목록(`WebProductDatabases`)으로 이전.
-
-    배경: 구 모델(TASK-0205, schema-allowlist)에서 MSSQL 제품의 WebProductDatabases 는 **스키마명**(dbo 등)이고,
-    실제 접근 DB 는 (a) `WebProducts.DatasourceDatabase`(per-product 참조 DB) 또는 (b) 그게 없으면 **데이터소스의
-    default_db**(연결 기본 DB)였다. DB-단위 모델에선 WebProductDatabases 가 **DB명(catalog)** 을 의미하므로 구
-    schema-name 항목은 DB명으로 오해석돼 제품이 접근 불가가 된다.
-
-    이전 규칙: MSSQL 제품의 **유효 DB**(= DatasourceDatabase 또는 데이터소스 default_db)가 현재 접근목록에
-    없으면(=구 schema-name 구성) 접근목록을 유효 DB 단일 항목으로 치환하고 DatasourceDatabase 를 비운다.
-    유효 DB 가 이미 접근목록에 있으면(=신규 UI 구성) 건드리지 않는다(멱등 + 운영자 구성 보존).
-    """
-    try:
-        from shared import config as _cfg2
-        _env_ds = getattr(_cfg2, "DATASOURCES", {}) or {}
-    except Exception:
-        _env_ds = {}
-    cur = conn.cursor()
-    try:
-        # WebDatasources(엔진·default_db) 매핑.
-        db_ds: dict[str, tuple[str, str]] = {}
-        try:
-            cur.execute("SELECT DatasourceKey, Engine, DefaultDb FROM WebDatasources")
-            for r in (cur.fetchall() or []):
-                if r and r[0]:
-                    db_ds[str(r[0]).strip().lower()] = (
-                        (str(r[1]).strip().lower() if len(r) > 1 and r[1] else "mysql"),
-                        (str(r[2]).strip() if len(r) > 2 and r[2] else ""),
-                    )
-        except Exception:
-            db_ds = {}
-        cur.execute(
-            "SELECT Id, DatasourceKey, DatasourceDatabase FROM WebProducts "
-            "WHERE DatasourceKey IS NOT NULL AND DatasourceKey <> ''"
-        )
-        prows = cur.fetchall() or []
-        migrated = 0
-        for r in prows:
-            pid = r[0]
-            dskey = (str(r[1]).strip().lower() if len(r) > 1 and r[1] else "")
-            pdb = (str(r[2]).strip() if len(r) > 2 and r[2] else "")
-            if not pid or not dskey:
-                continue
-            # 데이터소스 엔진 + default_db 해석 (WebDatasources 우선, .env 폴백).
-            engine, ds_default = db_ds.get(dskey, ("", ""))
-            if not engine:
-                _ed = _env_ds.get(dskey) or {}
-                engine = str(_ed.get("engine") or "mysql").strip().lower()
-                ds_default = str(_ed.get("default_db") or "").strip()
-            if engine != "mssql":
-                continue  # MySQL 제품은 schema==DB 라 무변경
-            effective_db = pdb or ds_default
-            if not effective_db:
-                continue  # 유효 DB 불명 — 운영자 수동 구성 필요
-            # 현재 접근목록 조회.
-            cur.execute("SELECT SchemaName FROM WebProductDatabases WHERE ProductId=%s", (int(pid),))
-            cur_names = {str(x[0]).strip().lower() for x in (cur.fetchall() or []) if x and x[0]}
-            if effective_db.lower() in cur_names:
-                continue  # 이미 DB-단위 구성(신규 UI) — 멱등, 보존
-            # 구 schema-name 구성 → 유효 DB 단일 항목으로 치환.
-            cur.execute("DELETE FROM WebProductDatabases WHERE ProductId=%s", (int(pid),))
-            cur.execute(
-                "INSERT INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder) "
-                "VALUES (%s, %s, %s, 10)",
-                (int(pid), effective_db, "TASK-0206 마이그레이션(참조 DB→접근 가능 DB)"),
-            )
-            cur.execute("UPDATE WebProducts SET DatasourceDatabase=NULL WHERE Id=%s", (int(pid),))
-            migrated += 1
-        if migrated:
-            try:
-                logging.getLogger(__name__).info(
-                    "[ds-migrate] MSSQL 제품 %d개를 DB-단위 접근목록으로 이전(유효 DB→접근 DB)", migrated,
-                )
-            except Exception:
-                pass
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _migrate_mssql_products_to_db_level 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _migrate_env_datasources_to_db(conn) -> None:
-    """TASK-0211: `.env`(config.DATASOURCES, `DS_<KEY>_*`) 분석 데이터소스를 **DB 레지스트리**(WebDatasources,
-    암호화)로 이전. 이제 데이터소스는 **관리 콘솔(DB)에서 일원 관리**한다 — `.env` 는 앱 인프라('Database Query
-    Assistant' = 데이터 MySQL `AGENT_DATA_DB_*`(.env.mysql) / `agent_memory` / KEK(.env.secret))만 둔다.
-
-    멱등: 이미 DB 에 동일 키가 있으면 skip(운영자가 콘솔에서 편집한 값을 .env 가 덮어쓰지 않는다). KEK
-    미설정/불완전 좌표 시 skip. 이전 후 운영자가 `.env` 의 `DS_*` 를 제거하면 DB 사본이 단일 소스가 된다.
-    """
-    try:
-        from modules import cred_crypto as _cc
-        from shared import datasources as _dsr
-        from shared import config as _cfg2
-    except Exception:
-        return
-    if not _cc.enc_available():
-        return  # KEK 미설정 — 암호화 불가, 보류
-    env_ds = getattr(_cfg2, "DATASOURCES", {}) or {}
-    if not env_ds:
-        return
-    cur = conn.cursor()
-    try:
-        for key, ds in env_ds.items():
-            k = str(key).strip().lower()
-            if not k:
-                continue
-            cur.execute("SELECT 1 FROM WebDatasources WHERE DatasourceKey=%s LIMIT 1", (k,))
-            if cur.fetchone():
-                continue  # 이미 DB 관리 — 멱등 skip(콘솔 편집값 보존)
-            engine = str(ds.get("engine") or "mysql").strip().lower()
-            host = str(ds.get("host") or "").strip()
-            try:
-                port = int(ds.get("port") or (1433 if engine == "mssql" else 3306))
-            except Exception:
-                port = 1433 if engine == "mssql" else 3306
-            duser = str(ds.get("user") or "").strip()
-            password = ds.get("password") or ""
-            default_db = (str(ds.get("default_db")).strip() or None) if ds.get("default_db") else None
-            if not host or not duser:
-                continue  # 불완전 좌표 — skip
-            got = _dsr.ensure_dek(conn)
-            if got is None:
-                continue
-            ver, dek = got
-            try:
-                pw_enc = _cc.encrypt_password(dek, password, k) if password else None
-            except Exception:
-                continue
-            cur.execute(
-                "INSERT INTO WebDatasources (DatasourceKey,Engine,Host,Port,DbUser,PasswordEnc,DefaultDb,"
-                "EncryptionVersion,IsActive,UpdatedByAccountId) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,NULL)",
-                (k, engine, host, port, duser, pw_enc, default_db, int(ver)),
-            )
-            try:
-                logging.getLogger(__name__).info(
-                    "[ds-migrate] .env 데이터소스 '%s'(%s @ %s:%s) → DB 레지스트리 이전(암호화)", k, engine, host, port,
-                )
-            except Exception:
-                pass
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _migrate_env_datasources_to_db 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_product_db_rules_schema(conn) -> None:
-    """TASK-20260618T044318 (REQ-20260618-0321): 제품×데이터소스 DB allowlist 정규식 규칙 + pending +
-    WebProductDatabases.Source/RuleId 차원. 모두 멱등 CREATE/ALTER — 기존 행은 Source='manual' 로 backfill
-    (B4: manual 우선 불변식). 비파괴: 신규 컬럼/테이블만 추가, 기존 동작 불변.
-    """
-    cur = conn.cursor()
-    try:
-        # 1) 규칙 테이블: (product, datasource) 당 정규식 규칙 **여러 개**(TASK-20260618T061703).
-        #    신규 설치는 UNIQUE 없이 생성. 기존(단일 규칙 시절 UNIQUE) 테이블은 아래 마이그레이션이 DROP.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebProductDatasourceDbRules (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ProductId BIGINT NOT NULL,
-                DatasourceKey VARCHAR(64) NOT NULL,
-                IncludePattern VARCHAR(255) NOT NULL,
-                ExcludePattern VARCHAR(255) NULL,
-                Cap INT NOT NULL DEFAULT 3,
-                IsEnabled TINYINT(1) NOT NULL DEFAULT 1,
-                SortOrder INT NOT NULL DEFAULT 100,
-                CreatedByAccountId BIGINT NULL,
-                LastSyncAt DATETIME NULL,
-                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX IX_WebProductDsDbRule_PD (ProductId, DatasourceKey),
-                INDEX IX_WebProductDsDbRule_Ds (DatasourceKey)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-        # 1b) 다중 규칙 마이그레이션: 단일 규칙 시절의 UNIQUE(ProductId,DatasourceKey) 제거 + SortOrder 추가.
-        try:
-            cur.execute(
-                "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() "
-                "AND TABLE_NAME='WebProductDatasourceDbRules' AND INDEX_NAME='UQ_WebProductDsDbRule'")
-            if int((cur.fetchone() or [0])[0]) > 0:
-                cur.execute("ALTER TABLE WebProductDatasourceDbRules DROP INDEX UQ_WebProductDsDbRule")
-                # UNIQUE 자리에 비-UNIQUE 조회 인덱스 보강(부재 시).
-                cur.execute(
-                    "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() "
-                    "AND TABLE_NAME='WebProductDatasourceDbRules' AND INDEX_NAME='IX_WebProductDsDbRule_PD'")
-                if int((cur.fetchone() or [0])[0]) == 0:
-                    cur.execute("ALTER TABLE WebProductDatasourceDbRules ADD INDEX IX_WebProductDsDbRule_PD (ProductId, DatasourceKey)")
-        except Exception as _exc:
-            logging.getLogger(__name__).error("[db-rule] 다중규칙 UNIQUE 제거 실패: %r", _exc)
-        try:
-            cur.execute(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
-                "AND TABLE_NAME='WebProductDatasourceDbRules' AND COLUMN_NAME='SortOrder'")
-            if int((cur.fetchone() or [0])[0]) == 0:
-                cur.execute("ALTER TABLE WebProductDatasourceDbRules ADD COLUMN SortOrder INT NOT NULL DEFAULT 100")
-        except Exception as _exc:
-            logging.getLogger(__name__).error("[db-rule] SortOrder 추가 실패: %r", _exc)
-        # 2) pending: 자동적용 보류분(Cap 초과/모호 — 승인 대기). B1.
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebProductDatabasePending (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ProductId BIGINT NOT NULL,
-                DatasourceKey VARCHAR(64) NOT NULL,
-                SchemaName VARCHAR(128) NOT NULL,
-                RuleId BIGINT NULL,
-                Reason VARCHAR(64) NOT NULL DEFAULT '',
-                DetectedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY UQ_WebProductDbPending (ProductId, DatasourceKey, SchemaName),
-                INDEX IX_WebProductDbPending_Product (ProductId)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-        # 3) WebProductDatabases.Source — manual/rule 구분(B4). 기존 행은 manual default.
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
-            "AND TABLE_NAME='WebProductDatabases' AND COLUMN_NAME='Source'"
-        )
-        if int((cur.fetchone() or [0])[0]) == 0:
-            try:
-                cur.execute(
-                    "ALTER TABLE WebProductDatabases ADD COLUMN Source VARCHAR(8) NOT NULL DEFAULT 'manual'"
-                )
-            except Exception as _exc:
-                logging.getLogger(__name__).error(
-                    "[db-rule] WebProductDatabases.Source 컬럼 추가 실패 — rule/manual 구분 비활성: %r", _exc)
-        # 4) WebProductDatabases.RuleId — 어느 규칙이 추가했는지 추적(감사·strip).
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
-            "AND TABLE_NAME='WebProductDatabases' AND COLUMN_NAME='RuleId'"
-        )
-        if int((cur.fetchone() or [0])[0]) == 0:
-            try:
-                cur.execute("ALTER TABLE WebProductDatabases ADD COLUMN RuleId BIGINT NULL")
-            except Exception as _exc:
-                logging.getLogger(__name__).error(
-                    "[db-rule] WebProductDatabases.RuleId 컬럼 추가 실패: %r", _exc)
-        conn.commit()
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_product_db_rules_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_conversation_shares_schema(conn) -> None:
-    """REQ-20260514-0001: WebConversationShares 테이블을 idempotent CREATE.
-
-    대화 공유 링크 (anonymous 접근 가능) 저장소. 한 ConversationId 에 여러 share 발급 가능
-    (ScopeMode='full' 또는 'anchored' + AnchorMessageId 조합으로 구분).
-
-    AnchorMessageId 는 `AgentMemoryMessages.Id` 와 동일 식별자를 사용한다
-    (`fork_conversation` 의 `from_message_id` 와 정합). 의미: inclusive — 해당 메시지
-    까지 (`Id <= AnchorMessageId`) 공유 view 에 노출.
-
-    Token 은 `secrets.token_urlsafe(32)` (256-bit entropy) 가 생성하며 UNIQUE.
-    RevokedAt NULL = 활성, NOT NULL = revoked → public GET 은 410 Gone 반환.
-
-    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서
-    호출되어 기존 배포에도 자동 적용된다.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebConversationShares (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ConversationId VARCHAR(128) NOT NULL,
-                Token VARCHAR(64) NOT NULL UNIQUE,
-                ScopeMode VARCHAR(16) NOT NULL DEFAULT 'full',
-                AnchorMessageId BIGINT NULL,
-                FloorMessageId BIGINT NULL,
-                CreatedBy BIGINT NOT NULL,
-                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                RevokedAt DATETIME NULL,
-                RevokedBy BIGINT NULL,
-                ViewCount BIGINT NOT NULL DEFAULT 0,
-                LastViewedAt DATETIME NULL,
-                INDEX IX_WCS_Conversation (ConversationId),
-                INDEX IX_WCS_Token (Token),
-                INDEX IX_WCS_CreatedBy (CreatedBy),
-                INDEX IX_WCS_RevokedAt (RevokedAt)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_conversation_shares_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_share_links_policy_version_column(conn) -> None:
-    """TASK-0094 Sprint 1 Phase 2 (R-F7): WebConversationShares 에 PolicyVersion column 추가.
-
-    BRIEFING Revision 2 D9 갱신 — 기존 share token 의 backward-compat 문제 해소를
-    위해 share 발급 시점의 share-policy version 을 row 에 기록한다. 배포된 정책 변경
-    (예: attachment_derived redact 강화) 시 PolicyVersion < 현재 정책 version 의 token
-    이 자동 redact 대상이 되며, audit `share.policy.redact_applied` 이벤트가 기록된다.
-
-    Phase 2 본 단계는 column ALTER 만 추가 — 실제 PolicyVersion 값 채움 / redact 로직 /
-    audit 이벤트 dispatch 는 Phase 8 (share redact) 에서 ship. 기존 row 에는 NULL 또는
-    DEFAULT 1 ('initial-pre-attachment' 의미) 적용.
-    """
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute(
-                "ALTER TABLE WebConversationShares ADD COLUMN PolicyVersion INT NOT NULL DEFAULT 1"
-            )
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_share_links_policy_version_column 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_share_links_expiry_column(conn) -> None:
-    """TASK-20260619T012028-share-link-expiry (REQ-20260619-0324, SECURITY.md §7.2):
-    WebConversationShares 에 `ExpiresAt DATETIME NULL` column 추가.
-
-    시간 기반 공유 링크 만료. 기본 NULL = 무기한 (기존 share 동작 무회귀 — 명시 revoke
-    그대로). 생성 시 `expires_in_seconds` 옵션 → `DATE_ADD(NOW(), INTERVAL ... SECOND)`.
-    public GET / fork 시 `ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()` → 410 Gone
-    (revoke 의 410 과 구분된 만료 메시지). 만료 판정은 **DB 시계 기준** (Python clock
-    skew 차단) — view 의 ViewCount UPDATE predicate 와 `_share_row_expired` 헬퍼 모두 DB
-    NOW() 사용.
-
-    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서
-    호출되어 기존 배포에도 자동 적용된다 (PolicyVersion 헬퍼 idiom 동형).
-    """
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute(
-                "ALTER TABLE WebConversationShares ADD COLUMN ExpiresAt DATETIME NULL"
-            )
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                "CREATE INDEX IX_WCS_ExpiresAt ON WebConversationShares (ExpiresAt)"
-            )
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_share_links_expiry_column 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_share_links_joinable_column(conn) -> None:
-    """feature-0009-group-conversation: WebConversationShares 에 `Joinable TINYINT(1)` column 추가.
-
-    공유 링크를 통한 그룹 대화 **참여(join)** 허용 여부. 기본 1(ON, 사용자 결정) — 링크를 가진
-    로그인 사용자가 '참여' 로 해당 대화의 멤버가 될 수 있다(열람 ≠ 발화, AR-1: 멤버는 대화 전체를
-    열람). owner 가 링크별로 OFF 가능. 기존 share row 는 DEFAULT 1 로 채워져 참여 가능해진다.
-
-    PolicyVersion/ExpiresAt 헬퍼 idiom 동형 — fast/slow path 양쪽에서 호출되어 기존 배포 자동 적용.
-    """
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute(
-                "ALTER TABLE WebConversationShares ADD COLUMN Joinable TINYINT(1) NOT NULL DEFAULT 1"
-            )
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_share_links_joinable_column 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_share_links_floor_column(conn) -> None:
-    """share-visibility-window: WebConversationShares 에 `FloorMessageId BIGINT NULL` column 추가.
-
-    "여기부터 공유"(하단 경계)를 저장한다. AnchorMessageId(상단, "여기까지 공유", inclusive
-    `Id <= AnchorMessageId`)와 짝을 이뤄 windowed share 는 [FloorMessageId, AnchorMessageId]
-    구간만 노출한다(inclusive `Id >= FloorMessageId`). 둘 다 DISPLAY id-space
-    (AgentMemoryMessages.Id / agent_runtime.messages.id), AnchorMessageId 계약과 동일.
-
-    기본 NULL = 하단 무제한 = 첫 메세지부터(기존 'full'/'anchored' share 무회귀). 익명 공유 뷰·
-    join stamp·fork 가 이 값을 읽어 가려진 pre-floor 구간을 뷰·멤버십·fork·LLM recall 전부에서 배제한다.
-
-    PolicyVersion/ExpiresAt/Joinable 헬퍼 idiom 동형 — fast/slow path 양쪽에서 호출되어 기존 배포 자동 적용.
-    """
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute(
-                "ALTER TABLE WebConversationShares ADD COLUMN FloorMessageId BIGINT NULL"
-            )
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_share_links_floor_column 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_conversation_attachments_schema(conn) -> None:
-    """TASK-0094 Sprint 1 Phase 2: WebConversationAttachments 테이블 idempotent CREATE.
-
-    BRIEFING §5.1 정본 — 첨부 객체의 metadata source-of-truth. MinIO ObjectKey (D1) +
-    HMAC filename (D12) + size bucket (D12) + Kind/UploadStatus enum (D17 7 값) +
-    DeletePending/DeleteReason taxonomy (D6 4 종) + MetaJson kind-별 부가 (sheet
-    names, page count, degraded_reason, ingest_summary).
-
-    BRIEFING Revision 2 R-Claim6 흡수 — ConversationId 는 nullable 로 두지 않고 NOT
-    NULL 유지하되, conversation hard-delete 시 application-level tombstone 처리
-    (DELETE 가 아닌 DeletePending=1 + DeleteReason='conv_soft'). reconciliation worker
-    (Phase 9) 가 SLA 따라 hard-delete.
-
-    R-F11 흡수 — derived message 목록은 본 row 의 AttachmentDerivedMessages JSON 이
-    아닌 별도 join table (`WebAttachmentDerivedMessages`) 가 source-of-truth. 본 column
-    은 deprecated 로 두며 Phase 8 (share redact) 에서 join table 로 마이그레이션.
-
-    _ensure_web_tables (slow path) 와 _ensure_seed_catchup (fast path) 양쪽에서 호출.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebConversationAttachments (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ConversationId VARCHAR(128) NOT NULL,
-                AccountId BIGINT NOT NULL,
-                ObjectKey VARCHAR(512) NOT NULL,
-                OriginalFilename VARCHAR(255) NOT NULL,
-                FilenameHmac CHAR(64) NOT NULL,
-                MimeType VARCHAR(128) NOT NULL,
-                SizeBytes BIGINT NOT NULL,
-                SizeBucket VARCHAR(16) NOT NULL,
-                Sha256 CHAR(64) NOT NULL,
-                Kind VARCHAR(16) NOT NULL,
-                UploadStatus VARCHAR(24) NOT NULL DEFAULT 'uploaded',
-                AttachmentDerivedMessages JSON NULL,
-                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-                DeletedAt DATETIME(6) NULL,
-                DeletePending TINYINT NOT NULL DEFAULT 0,
-                DeleteReason VARCHAR(16) NULL,
-                MetaJson JSON NULL,
-                RootAttachmentId BIGINT NULL,
-                VersionNumber INT NOT NULL DEFAULT 1,
-                CreatedByRole VARCHAR(16) NOT NULL DEFAULT 'user',
-                SupersededAt DATETIME(6) NULL,
-                INDEX IX_WCA_Conversation (ConversationId, DeletedAt),
-                INDEX IX_WCA_Account (AccountId, CreatedAt),
-                INDEX IX_WCA_Status (UploadStatus, DeletePending),
-                -- TASK-0274: 버전 체인 내 (root, version) 유일성 강제(동시 materialize race 방지).
-                -- RootAttachmentId NULL(=원본, 버전체인 미생성)은 MySQL UNIQUE 에서 중복 허용되어
-                -- 기존 단일 첨부(NULL,1 다수)와 충돌하지 않는다.
-                UNIQUE KEY UQ_WCA_VersionChain (RootAttachmentId, VersionNumber)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_conversation_attachments_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_conversation_attachments_sandbox_schemas_schema(conn) -> None:
-    """TASK-0094 Sprint 1 Phase 2 (D2/D15/R-F4): sandbox schema mapping table.
-
-    BRIEFING §5.1 — 1 conversation = 1 sandbox schema 의 mapping. schema name 은
-    `agent_attachment_<sha256(conversation_id)[:32]>` 로 D15 R-Claim4 maintenance path
-    가 결정. 본 table 은 lifecycle 추적 (CreatedAt / DroppedAt / DeletePending) + R-F4
-    drift detection 의 expected grants source.
-
-    Phase 2 는 schema CREATE 만 — 실제 schema 생성 path (D15 maintenance) + grant 부여
-    + drift detection worker 는 Phase 10 (sandbox + MySQL users) 에서 ship.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebConversationAttachmentsSandboxSchemas (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ConversationId VARCHAR(128) NOT NULL UNIQUE,
-                SchemaName VARCHAR(64) NOT NULL UNIQUE,
-                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-                DroppedAt DATETIME(6) NULL,
-                DeletePending TINYINT NOT NULL DEFAULT 0,
-                INDEX IX_WCASS_DeletePending (DeletePending, DroppedAt)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_conversation_attachments_sandbox_schemas_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_attachment_derived_messages_schema(conn) -> None:
-    """TASK-0094 Sprint 1 Phase 2 (D19, R-F11): derived message join table.
-
-    BRIEFING Revision 2 D19 신규 — many-to-many 정규화. 한 assistant message 가 여러
-    attachment 에서 파생될 수 있고, 한 attachment 가 여러 message 에 파생 데이터를
-    제공할 수 있다. DerivationType enum:
-      - csv_sample            : CSV/XLSX의 sample row 출력
-      - csv_query_result      : sandbox SQL 실행 결과
-      - vision_analysis       : Cycle 2 vision 분석 결과
-      - pdf_excerpt           : Cycle 4 PDF excerpt 인용
-      - rag_citation          : Cycle 4 RAG retrieval citation
-
-    Share redact (D9) / audit (D12) / fork 시 derivation 보존 / message hard-delete
-    cascade 가 모두 본 join 기준. 본 row 자체에는 PII 가 없어야 함 — 실제 derived
-    content 는 message body 에 있고, 본 join 은 관계만 보존.
-
-    Phase 2 는 schema 만 — 실제 INSERT 는 Phase 5 (upload API + audit) / Phase 8 (share
-    redact) / Phase 11 (ingest pipeline) / Phase 12 (SQL guard) 에서 ship.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebAttachmentDerivedMessages (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                AttachmentId BIGINT NOT NULL,
-                MessageId BIGINT NOT NULL,
-                DerivationType VARCHAR(24) NOT NULL,
-                CreatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-                INDEX IX_WADM_Attachment (AttachmentId),
-                INDEX IX_WADM_Message (MessageId),
-                INDEX IX_WADM_Type (DerivationType, CreatedAt)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_attachment_derived_messages_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_conversation_attachment_provider_files_schema(conn) -> None:
-    """TASK-0094 Sprint 1 Phase 2 (D13, R-F13): provider Files API lifecycle table.
-
-    BRIEFING Revision 2 R-F13 흡수 — OpenAI Files API / Anthropic Files API 를 사용
-    하여 inference 시 attachment bytes 를 provider 에 업로드할 때, provider 측에
-    잔존하는 file object 의 lifecycle 추적. inference 직후 delete API 호출 + 실패 시
-    `reconcile_provider_files` worker 의 TTL 기반 재시도.
-
-    DeletedAt NULL = provider 측에 잔존, NOT NULL = 삭제 확인. Phase 2 는 schema 만 —
-    실제 INSERT + delete 호출 + worker 는 Phase 5 (upload API base) / Phase 4 (storage
-    wrapper) + 후속 cycle 의 provider integration 에서 ship.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebConversationAttachmentProviderFiles (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                AttachmentId BIGINT NOT NULL,
-                Provider VARCHAR(32) NOT NULL,
-                ProviderFileId VARCHAR(255) NOT NULL,
-                UploadedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-                DeletedAt DATETIME(6) NULL,
-                LastDeleteAttemptAt DATETIME(6) NULL,
-                DeleteAttemptCount INT NOT NULL DEFAULT 0,
-                LastError VARCHAR(512) NULL,
-                INDEX IX_WCAPF_Attachment (AttachmentId),
-                INDEX IX_WCAPF_Provider (Provider, ProviderFileId),
-                INDEX IX_WCAPF_Pending (DeletedAt, LastDeleteAttemptAt)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_conversation_attachment_provider_files_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 def _log_search_activity(
@@ -3137,117 +2194,10 @@ def _log_search_activity(
             pass
 
 
-def _ensure_web_audit_events_schema(conn) -> None:
-    """REQ-20260519-0001 (TASK-0073, Critical §12.3): 전체 계정 행위 audit log.
-
-    Approach B (admin 13 endpoint + user 4 endpoint = `/api/ask` / share create
-    / share revoke / public share view) 의 모든 mutation 을 기록한다. CEO review
-    9 decision + Codex outside voice 14 findings + Eng review 9 lock-in (E1-E9)
-    의 최종 schema 다.
-
-    핵심 column:
-    - ActorAccountId (NULL = anonymous), ActorRoleId (snapshot),
-      ActorType (`account` / `anonymous` / `system`)  -- E4 결정
-    - TargetAccountId (NULL = no target) -- E1 self filter 의 OR 분기
-    - ActionCode (`admin.account.update` / `conversation.ask` / `share.public.view` 등)
-    - ChangeJson (allowlist builder 산출), MaskedFields (sensitive field 목록)
-    - RemoteAddr, UserAgent, RequestId, SessionId
-
-    Hook 정책 (Eng review E5):
-    - admin endpoint 13 = direct dispatcher Same tx (fail-safe, audit 실패 = rollback)
-    - user endpoint 4 = best-effort delegate (fail-open, TASK-0072 `_log_search_activity` 패턴)
-
-    Index 정책 (E2 hybrid schema):
-    - (ActorAccountId, OccurredAt) — admin `.any` filter + actor 검색
-    - (TargetAccountId, OccurredAt) — E1 self OR branch
-    - (ActionCode, OccurredAt) — action 별 filter
-    - (ResourceType, ResourceId) — resource 별 추적
-    - (ActorType, OccurredAt) — anonymous / system 분리 조회 (E4)
-
-    `_ensure_web_tables` (slow path) 와 `_ensure_seed_catchup` (fast path) 양쪽에서
-    호출되어 idempotent 보장. (TASK-0086 에서 WebAccountActivity schema helper 는
-    legacy table DROP 과 함께 제거됨 — 본 함수의 idempotent 호출 패턴은 동일.)
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebAuditEvents (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ActorAccountId BIGINT NULL,
-                ActorRoleId BIGINT NULL,
-                ActorType VARCHAR(16) NOT NULL DEFAULT 'account',
-                TargetAccountId BIGINT NULL,
-                SessionId VARCHAR(64) NULL,
-                ActionCode VARCHAR(64) NOT NULL,
-                ResourceType VARCHAR(32) NOT NULL,
-                ResourceId VARCHAR(64) NULL,
-                ChangeJson JSON NULL,
-                MaskedFields JSON NULL,
-                RemoteAddr VARCHAR(64) NULL,
-                UserAgent VARCHAR(255) NULL,
-                RequestId VARCHAR(64) NULL,
-                OccurredAt TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-                INDEX IX_WAE_Actor (ActorAccountId, OccurredAt),
-                INDEX IX_WAE_Target (TargetAccountId, OccurredAt),
-                INDEX IX_WAE_Action (ActionCode, OccurredAt),
-                INDEX IX_WAE_Resource (ResourceType, ResourceId),
-                INDEX IX_WAE_ActorType (ActorType, OccurredAt)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_audit_events_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_audit_chain_schema(conn) -> None:
-    """TASK-20260619T023922-audit-tamper-evidence (보안 ③, Critical §12.3): 감사 로그 변조방지 해시 체인.
-
-    `WebAuditEvents` 에 `EventHash`/`PrevHash CHAR(64)` 멱등 ALTER + `WebAuditChainCheckpoint`
-    (purge 경계 재앵커) 신설. `EventHash = SHA256(PrevHash | 정규화행)` 해시 체인.
-
-    **위협모델(정직)**: 본 체인은 *tamper-EVIDENCE* 다 — 체인을 인지하지 못한 수정/삭제/삽입
-    (SQL injection 버그·잘못된 마이그레이션·우발적 손상·내용 컬럼만 쓸 수 있는 부분권한 공격자)
-    을 검증에서 탐지한다. 그러나 `WebAuditEvents` 전체 write 권한을 가진 공격자는 행을 고치고
-    EventHash/PrevHash 를 재계산해 후속 행까지 re-chain 하거나(2a), tail 을 truncate 하거나(2b),
-    checkpoint 를 위조해(5) 검증을 통과시킬 수 있다 — in-DB 체인 단독의 본질적 한계.
-    이를 보완하려고 백그라운드 sealer 가 체인 head 해시를 **app 로그로 앵커**(off-DB)하며,
-    로그를 외부 WORM/SIEM 으로 선적하면 외부 대조로 위 공격을 탐지할 수 있다. 강한 보장이
-    필요하면 별 cycle 에서 head 해시의 주기적 외부 notarization(object-lock 버킷 등)을 추가한다
-    (SECURITY.md §13).
-
-    봉인(seal)은 `_seal_audit_chain` 이 GET_LOCK 직렬화 하에 미봉인 커밋행을 Id 순 일괄 처리
-    (fork 방지, `EventHash IS NULL` 가드). 기존 행 NULL=미봉인(다음 seal 이 backfill).
-    fast(`_ensure_seed_catchup`)+slow(`_ensure_web_tables`) 양 경로 — 기존 배포 자동 적용.
-    """
-    cur = conn.cursor()
-    try:
-        for ddl in (
-            "ALTER TABLE WebAuditEvents ADD COLUMN EventHash CHAR(64) NULL",
-            "ALTER TABLE WebAuditEvents ADD COLUMN PrevHash CHAR(64) NULL",
-            "CREATE INDEX IX_WAE_EventHash ON WebAuditEvents (EventHash)",
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
-        try:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS WebAuditChainCheckpoint (
-                    Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    ThroughEventId BIGINT NOT NULL,
-                    CheckpointHash CHAR(64) NOT NULL,
-                    Reason VARCHAR(32) NOT NULL DEFAULT 'purge',
-                    CreatedAt TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-                    INDEX IX_WACC_Through (ThroughEventId)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                """
-            )
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_audit_chain_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 # TASK-20260619T023922-audit-tamper-evidence (보안 ③): 해시 체인 정규화 + 봉인.
@@ -3488,183 +2438,16 @@ def record_audit_event(
 # ITEM-10 b6: _build_actor_from_request 는 web_context.py 로 추출(상단 rebind).
 
 
-def _migrate_web_account_activity_to_audit(conn) -> int:
-    """REQ-20260519-0001 (TASK-0073 Phase A2): WebAccountActivity 기존 row 흡수.
-
-    TASK-0072 의 cross-account body search audit row 를 신규 `WebAuditEvents` 로
-    transform 한다. idempotent — `RequestId = CONCAT('account-activity:', waa.Id)`
-    marker 로 두 번째 호출 시 NOT EXISTS subquery 가 skip.
-
-    ChangeJson 에 `_migrated_from='WebAccountActivity'` + `_original_id=<id>` +
-    `query_hash` + `matched_count` 보존. RemoteAddr / UserAgent NULL (TASK-0072
-    schema 에는 부재). OccurredAt = waa.CreatedAt (시간 정합).
-
-    **TASK-0086 (2026-05-20)**: WebAccountActivity 테이블 DROP 완료. 본 helper 는
-    rollback 1~2 cycle window 동안 보존 (Codex outside voice C5 — code revert +
-    DB restore 시나리오) — line 2813 의 `SHOW TABLES LIKE 'WebAccountActivity'`
-    check 가 table-absent 시 silent return 0. rollback window 종료 후 별 cycle
-    에서 helper 제거.
-
-    `_ensure_seed_catchup` (fast path) 와 `_ensure_web_tables` (slow path) 양쪽
-    호출 → 신규 / 기존 배포 모두 자동 흡수. 실패는 stderr only (main flow 차단 X).
-
-    Returns: 새로 INSERT 된 row 수 (기존 marker 있는 row 는 skip, 또는 table
-    부재 시 0).
-    """
-    cur = conn.cursor()
-    try:
-        # Pre-check: legacy table 존재 여부 (신규 배포에 부재해도 graceful skip).
-        cur.execute("SHOW TABLES LIKE 'WebAccountActivity'")
-        if not cur.fetchone():
-            return 0
-    except Exception:
-        return 0
-    finally:
-        cur.close()
-
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO WebAuditEvents
-              (ActorAccountId, ActorRoleId, ActorType, TargetAccountId, SessionId,
-               ActionCode, ResourceType, ResourceId, ChangeJson, MaskedFields,
-               RemoteAddr, UserAgent, RequestId, OccurredAt)
-            SELECT
-              waa.AccountId,
-              NULL,
-              'account',
-              waa.TargetOwnerId,
-              NULL,
-              waa.Action,
-              'conversation',
-              CASE WHEN waa.TargetOwnerId IS NULL THEN NULL
-                   ELSE CAST(waa.TargetOwnerId AS CHAR) END,
-              JSON_OBJECT(
-                'query_hash', waa.QueryHash,
-                'matched_count', waa.MatchedCount,
-                '_migrated_from', 'WebAccountActivity',
-                '_original_id', waa.Id
-              ),
-              NULL,
-              NULL,
-              NULL,
-              CONCAT('account-activity:', waa.Id),
-              waa.CreatedAt
-            FROM WebAccountActivity waa
-            WHERE NOT EXISTS (
-              SELECT 1 FROM WebAuditEvents wae
-              WHERE wae.RequestId = CONCAT('account-activity:', waa.Id)
-            )
-            """
-        )
-        inserted = cur.rowcount or 0
-        try:
-            conn.commit()
-        except Exception:
-            pass
-        if inserted > 0:
-            try:
-                import sys as _sys
-                _sys.stderr.write(
-                    f"[TASK-0073 Phase A2] migrated {inserted} WebAccountActivity row(s) → WebAuditEvents\n"
-                )
-            except Exception:
-                pass
-        return int(inserted)
-    except Exception as exc:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        try:
-            import sys as _sys
-            _sys.stderr.write(
-                f"[TASK-0073 Phase A2] migration failed (legacy table preserved): {exc}\n"
-            )
-        except Exception:
-            pass
-        return 0
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _migrate_web_account_activity_to_audit 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_must_change_password_schema(conn) -> None:
-    """TASK-0061 Phase 6 (REQ-20260515-0008 / AC-0092): fast-path 재기동에서도
-    MustChangePassword 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 와 동일 SQL."""
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute(
-                "ALTER TABLE WebAccounts ADD COLUMN MustChangePassword TINYINT(1) NOT NULL DEFAULT 0"
-            )
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_must_change_password_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_login_lockout_schema(conn) -> None:
-    """TASK-20260619T021356-login-attempt-limit (보안 ②): WebAccounts 에 로그인 실패 제한 컬럼 (멱등 ALTER).
-
-    `FailedLoginAttempts`(연속 실패 누적, 성공/잠금 시 0 리셋)·`LockedUntilAt`(잠금 자동 해제
-    시각, NULL=미잠금)·`LastFailedLoginAt`(관측용). 기존 행은 DEFAULT 0/NULL → 무회귀.
-    fast-path(`_ensure_seed_catchup`)+slow-path(`_ensure_web_tables`) 양쪽 호출
-    (`_ensure_must_change_password_schema` idiom 동형) — 기존 배포 자동 적용.
-    """
-    cur = conn.cursor()
-    try:
-        for ddl in (
-            "ALTER TABLE WebAccounts ADD COLUMN FailedLoginAttempts INT NOT NULL DEFAULT 0",
-            "ALTER TABLE WebAccounts ADD COLUMN LockedUntilAt DATETIME NULL",
-            "ALTER TABLE WebAccounts ADD COLUMN LastFailedLoginAt DATETIME NULL",
-            "CREATE INDEX IX_WebAccounts_LockedUntil ON WebAccounts (LockedUntilAt)",
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_login_lockout_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_llm_quota_schema(conn) -> None:
-    """TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 토큰 사용량 한도 테이블 (멱등 CREATE).
-
-    `WebRoleTokenQuotas`(역할별 기본)·`WebAccountTokenQuotas`(계정별 특수/override). QuotaType=
-    'daily'|'monthly', TokenLimit BIGINT(0=무제한 명시). 미존재 행=상속(계정→역할→무제한).
-    RBAC override 패턴(WebRolePermissions+WebAccountPermissionOverrides) 미러. fast+slow 양 경로.
-    """
-    cur = conn.cursor()
-    try:
-        for ddl in (
-            """
-            CREATE TABLE IF NOT EXISTS WebRoleTokenQuotas (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                RoleId BIGINT NOT NULL,
-                QuotaType VARCHAR(16) NOT NULL,
-                TokenLimit BIGINT NOT NULL,
-                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY UQ_WRTQ (RoleId, QuotaType)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS WebAccountTokenQuotas (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                AccountId BIGINT NOT NULL,
-                QuotaType VARCHAR(16) NOT NULL,
-                TokenLimit BIGINT NOT NULL,
-                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY UQ_WATQ (AccountId, QuotaType)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """,
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_llm_quota_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 def _account_effective_quota(conn, account_id: int, role_id: int, quota_type: str) -> "int | None":
@@ -3749,206 +2532,19 @@ def _check_account_token_quota(conn, account: dict) -> "tuple[bool, str]":
     return (True, "")
 
 
-def _ensure_oauth_identity_schema(conn) -> None:
-    """TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328, SECURITY.md §15):
-    WebAccounts 에 외부 IdP(Google OAuth) 신원 매핑 컬럼 idempotent ALTER.
-
-    - `Email VARCHAR(320) NULL`: OAuth 신원 또는 향후 이메일 식별용. 기존 행 NULL = 무회귀.
-      (RFC 5321 local 64 + @ + domain 255 = 320.)
-    - `AuthProvider VARCHAR(32) NULL`: 'google' 등. NULL = 로컬(비번) 계정.
-    - `OAuthSubject VARCHAR(255) NULL`: IdP 의 안정적 사용자 식별자(Google `sub`).
-    - UNIQUE (AuthProvider, OAuthSubject): 동일 IdP 신원 중복 계정 차단(부분 NULL 은 MySQL
-      에서 UNIQUE 제약 면제 → 로컬 계정 다수 공존 가능).
-    - UNIQUE (Email): 이메일 기준 계정 link 일관성(NULL 다수 허용).
-
-    기본 비활성 토대 — 컬럼만 추가하고 런타임 인증 경로는 OAUTH_GOOGLE_ENABLED OFF 면 무영향.
-    `_ensure_login_lockout_schema` idiom 동형 — fast-path(_ensure_seed_catchup) +
-    slow-path(_ensure_web_tables) 양쪽 호출로 기존 배포 자동 적용.
-    """
-    cur = conn.cursor()
-    try:
-        for ddl in (
-            "ALTER TABLE WebAccounts ADD COLUMN Email VARCHAR(320) NULL",
-            "ALTER TABLE WebAccounts ADD COLUMN AuthProvider VARCHAR(32) NULL",
-            "ALTER TABLE WebAccounts ADD COLUMN OAuthSubject VARCHAR(255) NULL",
-            "CREATE UNIQUE INDEX UX_WebAccounts_OAuth ON WebAccounts (AuthProvider, OAuthSubject)",
-            "CREATE UNIQUE INDEX UX_WebAccounts_Email ON WebAccounts (Email)",
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_oauth_identity_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_web_account_totp_schema(conn) -> None:
-    """TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 저장 테이블 (멱등 CREATE).
-
-    `WebAccountTotp`: AccountId PK·SecretEnc(cred_crypto AESGCM 암호문)·EncryptionVersion(DEK 버전)·
-    Enabled(0=등록 미확인, 1=활성)·BackupCodesJson(백업코드 sha256 해시 1회용)·ConfirmedAt.
-    미존재 행 = 2FA 미사용(무회귀). fast+slow 양 경로.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebAccountTotp (
-                AccountId BIGINT PRIMARY KEY,
-                SecretEnc TEXT NOT NULL,
-                EncryptionVersion INT NOT NULL,
-                Enabled TINYINT(1) NOT NULL DEFAULT 0,
-                BackupCodesJson TEXT NULL,
-                ConfirmedAt DATETIME NULL,
-                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    except Exception:
-        pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_account_totp_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_avatar_icon_schema(conn) -> None:
-    """TASK-0268/0293: fast-path 재기동에서도 WebAccounts.AvatarObjectKey / WebProducts.IconObjectKey
-    / WebRoles.IconObjectKey 컬럼이 존재하도록 idempotent ALTER. _ensure_web_tables 의 CREATE 와 동일
-    의미 — 운영 재기동은 slow path (_ensure_web_tables) 를 안 타고 _ensure_seed_catchup 만 타므로, 계정
-    SELECT(a.AvatarObjectKey)·제품 SELECT(IconObjectKey)·역할 SELECT(r.IconObjectKey) 가
-    'Unknown column' 으로 깨지지 않게 양쪽 경로에 ALTER 를 둔다."""
-    cur = conn.cursor()
-    try:
-        try:
-            cur.execute("ALTER TABLE WebAccounts ADD COLUMN AvatarObjectKey VARCHAR(512) NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE WebProducts ADD COLUMN IconObjectKey VARCHAR(512) NULL")
-        except Exception:
-            pass
-        # TASK-0293: 역할 아이콘 이미지 — MinIO object key (NULL=미설정 → 프론트 Identicon 폴백).
-        try:
-            cur.execute("ALTER TABLE WebRoles ADD COLUMN IconObjectKey VARCHAR(512) NULL")
-        except Exception:
-            pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_avatar_icon_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_attachment_version_schema(conn) -> None:
-    """TASK-0274: WebConversationAttachments 의 버전 관리 컬럼 idempotent ALTER.
-
-    assistant 가 전달받은 첨부를 수정해 새 버전으로 materialize 하는 기능(Task⑥)의
-    스키마 토대. 첨부는 MySQL(agent_memory) 전용 테이블이라 PG/alembic 무관 — avatar
-    선례(_ensure_avatar_icon_schema)와 동형으로 fast-path(_ensure_seed_catchup)·
-    slow-path(_ensure_web_tables) 양쪽에서 호출해 'Unknown column' 회귀를 막는다.
-
-    컬럼:
-      - RootAttachmentId  : 버전 체인 루트(원본) 첨부 Id. NULL = 자기 자신이 루트.
-      - VersionNumber     : 1부터 증가. 같은 RootAttachmentId 내 단조 증가.
-      - CreatedByRole      : 'user'(사용자 업로드) | 'assistant'(LLM materialize).
-      - SupersededAt       : 이 버전이 더 새로운 버전으로 대체된 시각. NULL = 최신.
-    """
-    cur = conn.cursor()
-    try:
-        for ddl in (
-            "ALTER TABLE WebConversationAttachments ADD COLUMN RootAttachmentId BIGINT NULL",
-            "ALTER TABLE WebConversationAttachments ADD COLUMN VersionNumber INT NOT NULL DEFAULT 1",
-            "ALTER TABLE WebConversationAttachments ADD COLUMN CreatedByRole VARCHAR(16) NOT NULL DEFAULT 'user'",
-            "ALTER TABLE WebConversationAttachments ADD COLUMN SupersededAt DATETIME(6) NULL",
-            # 버전 체인 (root, version) 유일성. NULL root(원본)는 중복 허용 — 기존 데이터 무충돌.
-            "ALTER TABLE WebConversationAttachments ADD UNIQUE KEY UQ_WCA_VersionChain (RootAttachmentId, VersionNumber)",
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_attachment_version_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _ensure_seed_catchup(conn) -> None:
-    """기존 배포에 신규 seed role/prompt 가 있으면 상태를 맞춘다.
-
-    `_schedule_memory_runtime_bootstrap` 의 fast path 에서 호출한다. 모든 seed
-    ensure 함수는 존재 여부를 먼저 확인해 건드리지 않으므로 매 재기동마다 호출
-    해도 안전하다. TASK-0044 에서 sales role + role-scope system prompt 를 기존
-    배포에 합류시키기 위해 도입.
-    """
-    # REQ-20260518-0001: catalog hydrate 를 seed_roles 앞으로 옮긴다.
-    # _ensure_seed_roles 의 admin/operator/sales catchup 이 _permission_id_map(conn) 으로
-    # PermissionId 를 lookup 하므로, 신규 권한이 catalog 에 먼저 INSERT 되어 있어야
-    # 기존 배포에 grant 가 보정된다 (Codex review risk 3 변형).
-    _ensure_permission_catalog(conn)
-    _ensure_seed_roles(conn)
-    _ensure_seed_products(conn)
-    _ensure_seed_role_system_prompts(conn)
-    # TASK-0095: 기존 배포는 fast-path 만 타기 때문에 GLOBAL scope row 가 부재한 채로 남는다.
-    # idempotent — row 가 이미 있으면 건드리지 않으며, agent_core import 실패 시 silent skip 한다.
-    _ensure_seed_global_system_prompt(conn)
-    # TASK-0052 Phase 1B: fast-path 재기동에서도 신규 dynamic permission 컬럼 + product 권한 backfill 실행.
-    _ensure_dynamic_permissions_schema(conn)
-    # TASK-0205: DB 기반 datasource 레지스트리 테이블 fast-path 보정.
-    _ensure_web_datasources_schema(conn)
-    # TASK-0206: 데이터 MySQL 데이터소스 시드 + NULL 바인딩 마이그레이션 (fast-path).
-    _seed_main_mysql_datasource(conn)
-    # TASK-0206: 구 MSSQL 제품(참조 DB)을 DB-단위 접근목록으로 일회성 이전 (fast-path).
-    _migrate_mssql_products_to_db_level(conn)
-    # TASK-0211: .env 분석 데이터소스(DS_*)를 DB 레지스트리로 이전 (fast-path).
-    _migrate_env_datasources_to_db(conn)
-    # REQ-20260514-0001: 공유 링크 테이블 fast-path 보정.
-    _ensure_web_conversation_shares_schema(conn)
-    # TASK-0094 Sprint 1 Phase 2 (R-F7): share-policy version column ALTER.
-    _ensure_web_share_links_policy_version_column(conn)
-    # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 column ALTER.
-    _ensure_web_share_links_expiry_column(conn)
-    _ensure_web_share_links_joinable_column(conn)  # feature-0009: 공유 링크 참여 허용 컬럼
-    _ensure_web_share_links_floor_column(conn)  # share-visibility-window: 하단 경계("여기부터 공유")
-    # TASK-0094 Sprint 1 Phase 2: 첨부 metadata + sandbox mapping +
-    # derived join + provider files lifecycle 4 신규 테이블 fast-path 보정.
-    _ensure_web_conversation_attachments_schema(conn)
-    _ensure_web_conversation_attachments_sandbox_schemas_schema(conn)
-    _ensure_web_attachment_derived_messages_schema(conn)
-    _ensure_web_conversation_attachment_provider_files_schema(conn)
-    # TASK-0061 Phase 6: 기존 배포에 MustChangePassword 컬럼 backfill.
-    _ensure_must_change_password_schema(conn)
-    # TASK-20260619T021356-login-attempt-limit (보안 ②): 로그인 실패 잠금 컬럼 fast-path 보정.
-    _ensure_login_lockout_schema(conn)
-    # TASK-20260619T030500-llm-usage-quota (보안 ④): LLM 사용량 한도 테이블 (fast path).
-    _ensure_llm_quota_schema(conn)
-    # TASK-20260619T034522-oauth-google-foundation (REQ-20260619-0328): Google OAuth 신원 매핑 컬럼 fast-path 보정.
-    _ensure_oauth_identity_schema(conn)
-    # TASK-20260619T040000-two-factor-auth (보안 ⑥): 2FA TOTP 테이블 (fast path).
-    _ensure_web_account_totp_schema(conn)
-    # TASK-20260623T190000-gdrive-foundation (feature-0010): 계정별 Google Drive 토큰 테이블 (fast path).
-    _ensure_web_gdrive_tokens_schema(conn)
-    # TASK-0268: 아바타/아이콘 object key 컬럼 fast-path 보정(slow path _ensure_web_tables 미경유 재기동 대비).
-    _ensure_avatar_icon_schema(conn)
-    # TASK-0274: 첨부 버전 관리 컬럼(RootAttachmentId/VersionNumber/CreatedByRole/SupersededAt) fast-path 보정.
-    _ensure_attachment_version_schema(conn)
-    # TASK-20260618T044318/061703: DB allowlist 규칙 테이블 + Source/RuleId + 다중규칙(UNIQUE 제거·SortOrder)
-    #   fast-path 보정 — slow path 안 타는 재기동에서도 다중규칙 마이그레이션이 반영되도록(MAJOR#2 재리뷰).
-    _ensure_web_product_db_rules_schema(conn)
-    # REQ-20260519-0001 (TASK-0073, Phase A0): 전체 행위 audit log 테이블 fast-path 보정.
-    _ensure_web_audit_events_schema(conn)
-    # TASK-20260619T023922-audit-tamper-evidence (보안 ③): 감사 해시 체인 컬럼/체크포인트 (fast path).
-    _ensure_web_audit_chain_schema(conn)
-    # REQ-20260520-0001 (TASK-0086): WebAccountActivity DROP 완료. migration helper 는
-    # rollback 1~2 cycle window 동안 보존 — table 부재 시 SHOW TABLES check 로 silent skip.
-    try:
-        _migrate_web_account_activity_to_audit(conn)
-    except Exception:
-        pass
-    _migration_added = _ensure_product_access_permissions(conn)
-    if _migration_added > 0:
-        try:
-            import sys as _sys
-            _sys.stderr.write(
-                f"[TASK-0052 Phase 1B catchup] product access backfill: {_migration_added} permission/role-permission rows added\n"
-            )
-        except Exception:
-            pass
+# ITEM-10 routers-p10: _ensure_seed_catchup 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 _GROUP_MEMBERS_BACKFILL_DONE = False
@@ -8896,42 +7492,7 @@ GDRIVE_PROVIDER = "google_drive"
 GDRIVE_AAD_PREFIX = "gdrive:"
 
 
-def _ensure_web_gdrive_tokens_schema(conn) -> None:
-    """feature-0010 (TASK-20260623T190000-gdrive-foundation): 계정별 Google Drive OAuth 토큰
-    저장 테이블 (멱등 CREATE). fast+slow 양 경로 호출(_ensure_web_account_totp_schema 동형).
-
-    `WebGoogleDriveTokens`: 계정별 암호화된 access/refresh 토큰 + 만료/scope/연결상태.
-    AccessTokenEnc/RefreshTokenEnc 는 cred_crypto AESGCM 암호문(AAD=gdrive:{AccountId}).
-    UNIQUE(AccountId, Provider) — 계정×provider 1행(향후 다른 provider 확장 여지). 미존재 행 =
-    미연동(무회귀). 평문 토큰은 어떤 컬럼에도 저장하지 않는다.
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS WebGoogleDriveTokens (
-                Id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                AccountId BIGINT NOT NULL,
-                Provider VARCHAR(32) NOT NULL DEFAULT 'google_drive',
-                AccessTokenEnc TEXT NULL,
-                RefreshTokenEnc TEXT NULL,
-                TokenExpiresAt DATETIME NULL,
-                GrantedScopes VARCHAR(1024) NULL,
-                EncryptionVersion INT NOT NULL,
-                IsConnected TINYINT(1) NOT NULL DEFAULT 0,
-                FirstConnectedAt DATETIME NULL,
-                RevokedAt DATETIME NULL,
-                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY UX_WebGoogleDriveTokens_Account_Provider (AccountId, Provider),
-                INDEX IX_WebGoogleDriveTokens_Expires (TokenExpiresAt)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """
-        )
-    except Exception:
-        pass
-    finally:
-        cur.close()
+# ITEM-10 routers-p10: _ensure_web_gdrive_tokens_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
 def _gdrive_configured() -> bool:
@@ -12111,6 +10672,38 @@ from routers._bootstrap_schema import (  # noqa: E402
     _ensure_web_tables,
     _seed_main_mysql_datasource,
     _ensure_web_product_datasources_schema,
+    _ensure_attachment_version_schema,
+    _ensure_avatar_icon_schema,
+    _ensure_bootstrap_admin,
+    _ensure_dynamic_permissions_schema,
+    _ensure_llm_quota_schema,
+    _ensure_login_lockout_schema,
+    _ensure_must_change_password_schema,
+    _ensure_oauth_identity_schema,
+    _ensure_product_access_permissions,
+    _ensure_seed_catchup,
+    _ensure_seed_global_system_prompt,
+    _ensure_seed_role_system_prompts,
+    _ensure_web_account_totp_schema,
+    _ensure_web_attachment_derived_messages_schema,
+    _ensure_web_audit_chain_schema,
+    _ensure_web_audit_events_schema,
+    _ensure_web_conversation_attachment_provider_files_schema,
+    _ensure_web_conversation_attachments_sandbox_schemas_schema,
+    _ensure_web_conversation_attachments_schema,
+    _ensure_web_conversation_shares_schema,
+    _ensure_web_datasources_schema,
+    _ensure_web_gdrive_tokens_schema,
+    _ensure_web_product_db_rules_schema,
+    _ensure_web_share_links_expiry_column,
+    _ensure_web_share_links_floor_column,
+    _ensure_web_share_links_joinable_column,
+    _ensure_web_share_links_policy_version_column,
+    _migrate_env_datasources_to_db,
+    _migrate_legacy_accounts_to_rbac,
+    _migrate_mssql_products_to_db_level,
+    _migrate_web_account_activity_to_audit,
+    _seed_legacy_conversations,
 )
 # ITEM-10 routers-p9: 테스트·app 내부 호출자(_auto_prompt_sweep_once 등) 참조 보존.
 from routers.admin_products import (  # noqa: E402
