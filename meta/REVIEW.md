@@ -594,3 +594,27 @@
 - **guards 준수**: hard 차단 금지(전부 경고·가시화 — 실패 유도 테스트로 비차단 재확인) · REGISTRY entry 세션당 자기 블록만(타 블록 보존 패널 확인) · cycle-init 변경분 §18.8 패널 검증 완료(위).
 - **인용 무결성 확인**: ADR-20260711T051835·REV-20260711T051835 staged 실재 grep(재발 방지 체크 — ITEM-07 M-1 계보).
 - **Human Approval Needed**: 아니오 — §6.1(명세 내). soft 게이트만(비차단)·배포 무관.
+
+## REV-20260711T142055-META-0030-drain-continuity [SUBAGENT:improve-fit-reviewer(§18.8, 4-round)] — 연속 드레인 "한 cycle 후 자발 중단" 해소 (parallel-work-structure 툴링)
+
+- **cycle**: ai/claude-corp/parallel-drain-continuity-fix. **승인 근거: 사용자 명시 지시(2026-07-11)** — "실제 작업자 드레인의 메커니즘 개선이 필요하다". (12 ITEM 명세 밖 신규 툴링 수정이라 §6.1 표준범위가 아니라 직접 지시로 인가.)
+- **근본원인**: 실 작업자 세션(`/_dqa:improve_cycle` 드레인, aiTitle "…병렬 작업 구조 개선")이 usage-limit 이 아니라 "이번 버스트 정리 → 다음 체인(+5h10m 크론)이 이어감"으로 **토큰 남은 채 자발 중단** → 12:14~14:27 유휴 관측. 원인 3중: (a) `drain-continue-cron.sh` 가 버스트 종료 사유 불문 **무조건 +5h10m 재발사** (자연/자발 종료도 5시간 잠), (b) `claude --continue`(cwd 최신 대화)라 무관 세션 **하이재킹**, (c) 컨텍스트 소진 핸드오프 부재. (Codex 는 실작업자 아님 — 사용자 확인.)
+- **changeset (pure-meta)**: `bin/drain-continue-cron.sh`(재설계) · `docs/improvements/parallel-work-structure/ROADMAP.md`(§6.4 fire 개정 + §6.5 하드-스톱 연속성 규약 신설) · 본 entry. §5(워커 소유) 미접촉.
+- **핵심 변경**:
+  1. **always-fresh**: 세션 pin·`--continue`·`--resume`·`__FRESH__` 전부 폐기 → 매 fire `claude -p "<재앵커>"` 새 세션, §5+worktree(미커밋 diff 포함)에서 복원. 하이재킹·orphan·컨텍스트 누적사 원천 제거.
+  2. **종료사유별 재발사**: usage-limit → `+5h10m`(TTL−1); **진전 → `+2m` 신속 재개**(구버전 무조건 +5h10m 유휴 해소); 무진전 `MAX_NOPROG`(6) 연속 → `+5h10m` 백오프. `*/5`+flock 이 폭주 자연 상한.
+  3. **진전 판정 = 서명 커밋 창**: `git rev-list --branches --count --since=@start --grep=parallel-work-structure` — `--since` 로 pull 유입 과거커밋 제외 + `--grep` 로 동시 sibling worktree/cron 커밋(서명 없음) 제외 → 이 드레인이 만든 커밋만 계수.
+  4. **usage-limit = 비-서술 3조건 AND**: 진전0 ∧ dur<90s ∧ 종단(최근 3 비공백줄) 한도문구. free-text 서술 오탐(→5h 유휴)을 차단. 한도 CLI 원문은 문서/스크립트에서 제거.
+  5. **§6.5 연속성 규약**: 하드-스톱 4조건(usage-limit·context 소진·전-ready blocked·완주) 외 **자발 종료 금지** 명문화 — "다음 체인이 이어감" 선제 인계 서술을 실패모드로 규정.
+- **§18.8 적대 패널 (SUBAGENT: improve-fit-reviewer, 4 라운드 — 각 라운드 findng 을 다음 라운드에서 반영)**:
+  - **R1 = BLOCK**: B1(종료판정 grep 이 버스트 출력을 훑는데 문서가 트리거문자열 인용 → 오분류로 유휴 재발), B2/B3(세션 하이재킹·`__FRESH__` orphan 무한양산), M4(스핀가드 기간의존), M5(TTL).
+  - **R2 = SHIP-WITH-FIXES**: B2/B3 해소(always-fresh) 확인. **N1**(진전=전역 커밋수 델타가 `git fetch`/외부 커밋을 진전 오인 → 스핀가드 무력) must-fix.
+  - **R3 = SHIP-WITH-FIXES**: N2(usage-limit tail-3 미탐) 해소. **N1**(`--branches` 가 동시 sibling 커밋 계수)·**N3**(whole-log 2-grep 이 드레인의 한도/리셋 서술에 오탐 — N2 fix 로 악화) still-open.
+  - **R4 = SHIP-WITH-FIXES**: 실 repo 검증(275커밋/7d 중 서명 21개만 계수, sibling 254 배제) — **N1·N3 CLOSED, 새 BLOCKER/MAJOR 없음**. 잔여 MINOR 2 + 권장 하드닝(N3 last-3 적용함).
+- **accepted trade-off / 잔여 (패널 수용)**:
+  - **N4(always-fresh 비용)**: 매 fire cold-start 재오리엔테이션 비용 + 미커밋 작업 세션간 비가시 — 하이재킹/컨텍스트死 제거를 위한 불가피 비용. 재앵커 프롬프트가 "미커밋 diff" 명시 확인 → 디스크상 미완작업은 다음 fresh 세션이 인지. §6.2 잦은커밋이 완화. **수용**.
+  - **N1 잔여(MINOR, LOW)**: 서명 없는 순수-머지 버스트만 있는 경우 미탐 가능 — 단 6연속 필요하고 ITEM 커밋은 규약상 서명(관측 c2e6d995) → 실질 무위험. 향후 하드닝: 드레인 own-worktree HEAD 전진도 진전신호로. **문서화·수용**.
+  - **오탐<미탐 설계선택**: usage-limit·진전 판정 모두 **미탐 편향**(미탐→무진전 백오프 +5h10m 로 수렴, 저위험 / 오탐→5h 유휴=원래 버그, 고위험). 의도적.
+- **검증**: `bash -n` OK. git-backed stub dry-run 전수 PASS — 실 usage-limit(+310m/TTL−1)·N1 sibling 배제(newcommits=0)·N3 서술오탐0(진전/긴dur/종단요약)·last-3 epilogue 미탐 해소·무진전 백오프·always-fresh `-p`·continue-fallback. 라이브 깨진 구형 체인(claude-corp) **disarm 완료**, root 체인 미-arm(state 부재) 확인.
+- **인용 무결성 확인**: REV-20260711T142055(본 entry) staged 실재.
+- **Human Approval Needed**: 아니오(착수는 사용자 직접 지시). auto-exec 인프라 변경이나 **비파괴·fail-safe 방향**(오탐<미탐·스핀 백오프·TTL 백스톱·flock·*/5 상한). 배포 무관(호스트 크론 툴링). **PR 생성만 confirm 유지**.
