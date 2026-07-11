@@ -227,22 +227,19 @@ def admin_get_system_prompt(
     return JSONResponse({"prompt": row, "scope": scope})
 
 @router.put("/api/admin/system-prompts")
-async def admin_put_system_prompt(request: Request) -> JSONResponse:
+async def admin_put_system_prompt(
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch12: _require_account→account+conn 완전 DI. scope별 조건부 perm/403 은 본문 유지.
+    # get_conn finally:close 가 _load_system_prompt·_upsert_system_prompt·audit raise 시 leak 해소.
     try:
         data = await request.json()
     except Exception:
         return app._json_error("invalid json", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     scope = str(data.get("scope") or "").strip().lower()
     if scope not in ("global", "product", "role", "account"):
-        conn.close()
         return app._json_error("scope 은 global/product/role/account 중 하나여야 합니다.", 400)
     content = str(data.get("content") or "")
     product_id = int(data.get("product_id") or 0) or None
@@ -251,32 +248,26 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
     if scope == "global":
         # TASK-0095: GLOBAL 은 product/role/account ids 무시 (force NULL).
         if not app._account_has_permission(actor, "system_prompt.global.write"):
-            conn.close()
             return app._json_error("전역 시스템 프롬프트 관리 권한이 없습니다.", 403)
         product_id = None
         role_id = None
         account_id = None
     elif scope == "product":
         if not app._account_has_permission(actor, "product.manage"):
-            conn.close()
             return app._json_error("제품 시스템 프롬프트 관리 권한이 없습니다.", 403)
         if not product_id:
-            conn.close()
             return app._json_error("product_id 가 필요합니다.", 400)
         role_id = None
         account_id = None
     elif scope == "role":
         if not app._account_has_permission(actor, "system_prompt.manage.role.any"):
-            conn.close()
             return app._json_error("역할 시스템 프롬프트 관리 권한이 없습니다.", 403)
         if not role_id:
-            conn.close()
             return app._json_error("role_id 가 필요합니다.", 400)
         account_id = None
     else:  # account
         target_account = account_id or int(actor["id"])
         if target_account != int(actor["id"]) and not app._account_has_permission(actor, "system_prompt.manage.role.any"):
-            conn.close()
             return app._json_error("타 계정 프롬프트 관리 권한이 없습니다.", 403)
         account_id = target_account
         role_id = None
@@ -318,9 +309,7 @@ async def admin_put_system_prompt(request: Request) -> JSONResponse:
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({"ok": True, "id": new_id, "scope": scope, "deleted": new_id == 0})
 
 @router.get("/api/admin/dashboard/preferences")
