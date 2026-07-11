@@ -17,7 +17,9 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 APP = (_SRC / "app.py").read_text(encoding="utf-8")
 # feature-0012 P5b: 추출된 도메인 router 텍스트도 포함(핸들러 이동 대응).
 ROUTERS = "".join(p.read_text(encoding="utf-8") for p in sorted((_SRC / "routers").glob("*.py")))
-APP_ALL = APP + ROUTERS
+# feature-0012 Final(ITEM-10): web_context 로 추출된 헬퍼/권한 카탈로그 텍스트도 포함(계약 위치 무관 고정).
+WEB_CONTEXT = (_SRC / "web_context.py").read_text(encoding="utf-8")
+APP_ALL = APP + ROUTERS + WEB_CONTEXT
 ADMIN_JS = (_SRC / "static" / "admin.js").read_text(encoding="utf-8")
 
 

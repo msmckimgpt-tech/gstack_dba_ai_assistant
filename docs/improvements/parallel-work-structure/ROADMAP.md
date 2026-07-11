@@ -452,7 +452,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **notes**: 배포 무관.
 
 ### ITEM-09 · admin.js 그래프 모듈 분리 (TASK-0012-10 해제)
-- **status**: pending
+- **status**: blocked
+- **note**: 2026-07-11 착수 윈도우 게이트 FAIL(§6.3-3 — 진짜 이슈): 기계 판정 결과 그래프 구간
+  활성 브랜치 발견 — ① `ai/root/feature-0016-edge-opacity` 미머지·admin.js 그래프 diff(+14),
+  마지막 커밋 2026-07-10 15:00(ADR-033 관계선 opacity) ② worktree `feature-0016-graph-simcombo`
+  에 미커밋 admin.js diff(+116/-43). 외부 세션 개입 신호 → 분리 착수 보류. 해제 조건: 두 흐름이
+  머지/폐기되어 그래프 활성 0 재확인(worktree-audit 리포트로 기계 판정) 후 재개.
 - **feature_id**: feature-0003-agent-web-ui
 - **dimension**: structural
 - **risk_grade**: Major
@@ -497,7 +502,12 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   재측정에 포함.
 
 ### ITEM-10 · web_context 헬퍼 추출 — app.py 완전 thin-app (feature-0012 Final)
-- **status**: pending
+- **status**: in-progress
+- **note**: 2026-07-11 batch 착수 — inc3(SESSION_COOKIE+PERMISSION 카탈로그 클러스터, -562줄)
+  + inc4(OVERRIDE/권한빌더/_fetch·_decorate_account_rows 폐포, -167줄): app.py 19,650→18,931.
+  게이트: route snapshot 205 byte-동치·F821 clean·py_compile·pytest(아래 커밋 참조). 목표
+  ≤1,000줄까지 배치 계속(다음: SEED_ROLE_DEFINITIONS·_seed_role_*·23-테스트 retarget 영역은
+  적대검증 후).
 - **feature_id**: feature-0012-web-router-modularization
 - **dimension**: structural
 - **risk_grade**: Major
@@ -618,9 +628,10 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 9 (ITEM-01·02·04·05·08·03·06·07·12) · in-progress 0 · pending 3 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → 09 → 10 → 11
-  (다음 ready: ITEM-09 — 그래프 구간 활성 브랜치/PR 0 기계 확인 후 착수)
+- 총 12 항목 · done 9 (ITEM-01·02·04·05·08·03·06·07·12) · in-progress 1 (ITEM-10) · pending 1 (ITEM-11) · blocked 1 (ITEM-09)
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → **09=blocked**(그래프 활성 브랜치 — note 참조) → **10=in-progress**(batch) → 11
+- ITEM-09 blocked 는 §6.3-3(그래프 구간 활성 브랜치/PR 발견 — edge-opacity 미머지 + simcombo
+  미커밋 diff). 해제되면 드레인 재편입.
 - ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —
   §6.1 deploy-backed 완료. (첫 deploy-web preflight 1회 일시 실패 후 재시도 성공 — 원인
   미재현 transient, config 재현 검사는 정상.)

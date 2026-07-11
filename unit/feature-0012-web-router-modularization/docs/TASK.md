@@ -54,7 +54,7 @@ source_of_truth: true
   - [x] **router 추출 #5 (admin_usage, MIXED 2 핸들러)**: admin_llm_usage(`GET /api/admin/usage` RP ~164줄) + admin_usage_conversations(`GET /api/admin/usage/conversations` AO 2-perm) → src/routers/admin_usage.py. **대형 핸들러 verbatim 스크립트 추출(라인슬라이스+화이트리스트 정규식 rewrite) + uniform `import app`+`app.X` 동적참조**(helper-monkeypatch `_query_usage_conversations`·`_usage_account_ids_for_role` 보존). test 직접호출 3 전환(헬퍼 단위테스트·profile 무변). 골든 끝-이동. make test 전체 통과·route drift 0(CHG/REV-0014).
   - [x] **web_context.py 추출 시작 — 증분 #1 (leaf-first)**: ultracode workflow(10 agents, 3 전략 적대판정) → Strategy B 확정. `_sanitize_session_id`+`_hash_session_token`(stdlib-only leaf) → src/web_context.py(신규, from app import 금지=단방향 edge). app.py 상단 re-import rebind(8 호출부+monkeypatch 보존). make test 전체 통과·route drift 0·byte-동치(CHG/REV-0015). A(re-export shim)·C(full-move) 는 적대 stress `broken`(순환import/추출가치0)으로 기각.
   - [x] **web_context 추출 증분 #2 (proxy/client-IP cluster)**: `_TrustedNetwork`·`_parse_trusted_proxies`·`WEB_TRUSTED_PROXIES`·`_is_trusted_proxy`·`_get_client_ip` → web_context.py. AGENT_MODE 결합은 동일 env-read mirror 로 app-free 유지(시그니처 불변), startup-validation 블록 app 잔류, WEB_TRUSTED_PROXIES 계산 위치 이동(둘 다 startup-time fail-loud 보존). make test 전체 통과·route drift 0·byte-동치. docker rebind-identity 7/7·순환 없음(CHG/REV-0016).
-  - [ ] web_context 추출 후속(안전 영역, 테스트 0변경): inc3 SESSION_COOKIE+`_resolve_permission_catalog`+PERMISSION_* → inc4 `_fetch/_decorate_account_rows`. 그 후 `_account_has_permission`(11×)·`_require_account`(51×)·`_connect_memory`(62×) = **23-테스트 retarget 영역**(workflow 적대검증 후 진행 권장).
+  - [x] web_context 추출 후속: **inc3**(SESSION_COOKIE+`_resolve_permission_catalog`+PERMISSION_*/`_METADATA_MANUAL_IMPLIES`, -562줄) + **inc4**(`OVERRIDE_*`·`_empty_permission_map`·`_normalize_override_value`·`_apply_permission_overrides`·`_fetch_account_rows`·`_load_role_permission_codes`·`_load_account_override_values`·`_decorate_account_rows` 폐포, -167줄) — ITEM-10 batch1(2026-07-11). 이동 폐포가 web_context 안에서 닫힘(app 의존 0). 그 후 `_account_has_permission`(11×)·`_require_account`(51×)·`_connect_memory`(62×) = **23-테스트 retarget 영역**(workflow 적대검증 후 진행 권장).
   - [ ] router 추출 잔여: conversations(MIXED, 엔탱글먼트 경계 — AO 10 + INLINE 7, web_context 와 함께 처리 권장). **추출 전 grep `app.<handler>` 직접참조 + `app.<global>` monkeypatch + concrete-route 면 var-매처 선행 점검(0012/0013/0014 학습).** 이연 핸들러 ~46 router 화.
 - [~] TASK-0012-9 ship: 브라우저 로그인 QA(win-browser.py) + §18.8 패널 + 배포
   - [x] **origin/main 100-commit 통합 머지**(배포 선결): main app.py +720 additive 신규 9 라우트, auth helper 무변(auth-orthogonal) → app.py auto-merge, route_snapshot 만 충돌→골든 재생성(179→188). make test 전체 통과·route-parity 188(CHG/REV-0017).
@@ -133,6 +133,15 @@ source_of_truth: true
 - [x] app.py 꼬리 include 블록(19,641–19,717 — import 23 + include 23줄)을 `_register_all_routers(app)` 1줄로 대체. app.py 19,717→19,650줄. **이후 라우터 신설은 app.py diff 0**(병렬 배선 경합 원천 제거 — F-008).
 - [x] acceptance (a) 라우트 테이블 스냅샷 in-order 205 route **byte-동치**(전=후, mysql-ai-web:current 이미지 실증) (b) `ruff --select F821` routers/+app.py clean (c) A/B pytest(feature-0003 스위트, main vs worktree) 양쪽 rc=0 — route-parity 골든 포함 회귀 0 (d) 더미 라우터 파일 추가만으로 라우트 노출(app.py 무편집) 확인 후 제거.
 - [ ] 배포(§6.1 자동): 머지 후 web 재빌드(`bin/deploy-web.sh`) + healthz/스모크.
+
+## 20260711T1001-item10-webctx-batch1 — web_context 추출 batch1: inc3 권한 카탈로그 + inc4 계정 행 빌더 (parallel-work-structure ITEM-10)
+
+- [x] inc3: SESSION_COOKIE · PERMISSION_DEFINITIONS/CODES/DEFINITION_MAP · _METADATA_MANUAL_IMPLIES · _resolve_permission_catalog → web_context.py (-562줄, byte-동치 이동 + 상단 rebind)
+- [x] inc4: OVERRIDE_ALLOW/DENY/INHERIT · _empty_permission_map · _normalize_override_value · _apply_permission_overrides · _fetch_account_rows · _load_role_permission_codes · _load_account_override_values · _decorate_account_rows → web_context.py (-167줄, 폐포 완결)
+- [x] app.py 19,650 → 18,931줄 (web_context 90→858). INVARIANT 유지: web_context 는 `from app import` 0(단방향).
+- [x] 게이트: 라우트 스냅샷 205 in-order **byte-동치**(main 대비) · ruff F821 clean · py_compile · feature-0003 전 스위트 pytest rc=0
+- [x] 소스-계약 테스트 1건 위치 갱신(test_group_conversation_s2 APP_ALL 에 web_context.py 포함 — batch4 ROUTERS 포함과 동일 계보)
+- [ ] 후속 batch: SEED_ROLE_DEFINITIONS·_seed_role_* → 도메인 클러스터 위상순 → 23-테스트 retarget 영역(_account_has_permission·_require_account·_connect_memory)은 적대검증 후
 
 ## 8b. (이전) Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
 - [x] 2 핸들러 회수(RP overview + AO insight_coverage) — DI seam byte-동치 가능 핸들러 전부 완료(누적 69)

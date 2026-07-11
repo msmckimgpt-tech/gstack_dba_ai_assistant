@@ -56,6 +56,11 @@ ITEM-P5b, Critical). 본 cycle 범위 = **분할 안전망 + 의존성 audit**(�
   10~230/10 간격). 순서 변경 금지 — 순서가 의미를 갖는 라우터(`{var}` vs 구체경로 shadow)가 있어
   route-parity 골든이 order diff 로 감시. INCLUDE_ORDER 미지정 신규 모듈은 맨 뒤 파일명 순.
 
+## 11. web_context 추출 현황 (ITEM-10, 진행 중)
+- `src/web_context.py` = app.py 헬퍼의 단방향 추출 모듈(INVARIANT: `from app import` 금지 — app → web_context edge 만).
+- 완료 증분: inc1(session id/token leaf) · inc2(proxy/client-IP) · **inc3(SESSION_COOKIE+RBAC 권한 카탈로그)** · **inc4(권한 오버라이드·계정 행 빌더 폐포)** — app.py 19,650→18,931줄(2026-07-11).
+- 소비 규약: app.py 상단 `from web_context import (...)` rebind — app 내 호출부·routers `app.X` 동적참조·테스트 monkeypatch 보존.
+
 ## 13. Pre-approved Changes
 - P5b plan-eng-review(Critical) + §12 승인(2026-06-25). 단 router 추출 실행은 브라우저 QA env + 단위별 재확인.
 - 라우터 자동 등록(ITEM-05): ROADMAP parallel-work-structure §6.1 사전 승인(2026-07-10) — byte-동치 3중 게이트(스냅샷·F821·A/B pytest) 통과.
