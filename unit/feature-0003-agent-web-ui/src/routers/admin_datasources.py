@@ -18,6 +18,36 @@ INCLUDE_ORDER = 190  # 등록 순서 고정 — 2026-07-10 현행 include 순서
 router = APIRouter()
 
 
+# ITEM-10 routers-p1: app.py 에서 이동(도메인 소유 정상화 — 판정표 §4 routers 경로).
+async def _ds_write_common(request, require_manage=True):
+    """CRUD 공통: conn + actor + 권한 + body. 반환 (conn, actor, data, None) 또는 (None,None,None, error)."""
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return None, None, None, app._json_error("db connection failed", 500)
+    actor, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return None, None, None, error
+    # TASK-0288: datasource CRUD 는 datasource.manage 전용 권한. 기존 console.access+console.manage
+    # 게이트에 datasource.manage 를 추가(require_manage 경로). 미보유 시 403.
+    need = ["console.access"] + (["console.manage", "datasource.manage"] if require_manage else [])
+    if not all(app._account_has_permission(actor, p) for p in need):
+        conn.close()
+        return None, None, None, app._json_error("데이터소스 관리 권한(datasource.manage)이 필요합니다.", 403)
+    try:
+        body_raw = await request.body()
+        data = (await request.json()) if body_raw else {}
+    except Exception:
+        conn.close()
+        return None, None, None, app._json_error("invalid json", 400)
+    if not isinstance(data, dict):
+        conn.close()
+        return None, None, None, app._json_error("invalid body", 400)
+    return conn, actor, data, None
+
+
+
 @router.get("/api/admin/datasources")
 async def admin_list_datasources(request: Request, actor=Depends(app.get_current_account), conn=Depends(app.get_conn)) -> JSONResponse:
     """등록된 datasource 키 목록 + product 바인딩 현황 (멀티 datasource P1, DESIGN Stage 1).
@@ -157,7 +187,7 @@ async def admin_create_datasource(request: Request) -> JSONResponse:
     """datasource 생성 (자격증명 DB 암호화 저장, TASK-0205). console.manage. password 는 응답 비노출."""
     from modules import cred_crypto as _cc
     from shared import datasources as _dsr
-    conn, actor, data, error = await app._ds_write_common(request)
+    conn, actor, data, error = await _ds_write_common(request)
     if error:
         return error
     try:
@@ -215,7 +245,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
     """datasource 수정 (TASK-0205). password 미입력 시 미변경. console.manage. 응답 password 비노출."""
     from modules import cred_crypto as _cc
     from shared import datasources as _dsr
-    conn, actor, data, error = await app._ds_write_common(request)
+    conn, actor, data, error = await _ds_write_common(request)
     if error:
         return error
     # TASK-0277 (REV BLOCKER2): _connect_memory 는 autocommit=True 라 다단계 rename+cascade 가 비원자적이었다.
@@ -373,7 +403,7 @@ async def admin_update_datasource(key: str, request: Request) -> JSONResponse:
 @router.delete("/api/admin/datasources/{key}")
 async def admin_delete_datasource(key: str, request: Request) -> JSONResponse:
     """datasource 삭제 (TASK-0205). 바인딩된 product 있으면 거부(?force=1 로 강제). console.manage."""
-    conn, actor, _data, error = await app._ds_write_common(request)
+    conn, actor, _data, error = await _ds_write_common(request)
     if error:
         return error
     try:
