@@ -618,3 +618,23 @@
 - **검증**: `bash -n` OK. git-backed stub dry-run 전수 PASS — 실 usage-limit(+310m/TTL−1)·N1 sibling 배제(newcommits=0)·N3 서술오탐0(진전/긴dur/종단요약)·last-3 epilogue 미탐 해소·무진전 백오프·always-fresh `-p`·continue-fallback. 라이브 깨진 구형 체인(claude-corp) **disarm 완료**, root 체인 미-arm(state 부재) 확인.
 - **인용 무결성 확인**: REV-20260711T142055(본 entry) staged 실재.
 - **Human Approval Needed**: 아니오(착수는 사용자 직접 지시). auto-exec 인프라 변경이나 **비파괴·fail-safe 방향**(오탐<미탐·스핀 백오프·TTL 백스톱·flock·*/5 상한). 배포 무관(호스트 크론 툴링). **PR 생성만 confirm 유지**.
+
+## REV-20260711T150440-META-0031-drain-resume-continuity [SUBAGENT:improve-fit-reviewer(§18.8, 3-round: R4→R6)] — 드레인 재개를 always-fresh → **세션 재개 연속성** 으로 정정 (META-0030 supersede)
+
+- **cycle**: ai/claude-corp/drain-resume-continuity. **승인 근거: 사용자 명시 지시(2026-07-11)** — "always-fresh(META-0030)는 매 fire 신규 세션이라 사용량 만료마다 직전 세션 컨텍스트/미완작업이 누락된다. 현 개발환경(Claude Code for VSCode)의 그 세션을 컨텍스트 보존한 채 재개하라(크론이 같은 세션 자동 재개)."
+- **배경(오정합 정정)**: META-0030(e82c3118)은 §18.8 패널의 "세션 하이재킹" 지적에 always-fresh 로 **과교정**하며 사용자가 요구한 **연속성**을 버렸다 — 사용자 지적으로 발견. 본 cycle 이 이를 supersede.
+- **changeset (pure-meta)**: `bin/drain-continue-cron.sh`(재설계 v3.1) · `docs/improvements/parallel-work-structure/ROADMAP.md`(§6.4 fire 재작성 + §6.5#2 정합) · 본 entry. §5(워커 소유) 미접촉.
+- **핵심 변경 (always-fresh → 재개 연속성)**:
+  1. **pin 된 워커 세션 `--resume` 재개**(연속성) — 사용량 만료해도 같은 세션이 컨텍스트 보존한 채 이어감. `RESUME_PROMPT` 로 §6.5 상기 + 맥락 옅으면 §5 복원 폴백.
+  2. **하이재킹(B2) 결정론 회피**: arm 은 **자동탐지 금지**(명시 `--session-id`/기존 pin 보존만). 새 세션은 **미리 만든 UUID 로 `claude --session-id <uuid>`** 시작 → 그 uuid 그대로 재-pin(mtime "최신 jsonl" 추측 폐기 — 공유 slug 무관 세션 오-pin 방지).
+  3. **컨텍스트死(B3) 처리**: 비-서술 3조건(진전0 ∧ dur<90 ∧ 종단3줄 "Prompt is too long") 감지 시에만 pin 해제 → 새 세션 재부트스트랩(무한 orphan 방지).
+  4. **v2.2 유지**: 종료사유별 재발사(진전→+2m·usage-limit→+5h10m/pin 유지·무진전→백오프) · 진전=서명 커밋 창(`--since=@start --grep=parallel-work-structure`, N1) · 판정=비-서술 3조건(N3).
+  5. **2단계 백오프(MINOR-1)**: 무진전 백오프가 "죽음"과 "놓친 usage-limit"을 구분 못 하므로, resume 세션의 1차 백오프는 **pin 유지**(+5h10m 리셋 대기 — 건강한 세션 성급히 안 버림), 리셋 후에도 무진전(streak≥2)이거나 fresh 실패면 그때 pin 해제. 사용자 핵심의도(컨텍스트 보존) 보호.
+- **§18.8 적대 패널 (SUBAGENT: improve-fit-reviewer)** — META-0030 의 R1~R4 에 이어 본 정정의 R5·R6:
+  - **R5 = BLOCK**: 세션 재개 복원 후 (a) 재-pin `newest_session_since`(mtime 최신 jsonl)가 공유 slug 의 orchestrator/사용자 세션을 오-pin → 하이재킹 **라이브 재현**, (b) context-death 미탐 시 죽은 세션 영원히 `--resume` 하는 영구 스톨.
+  - **R6 = SHIP-WITH-FIXES**: 두 must-fix **CLOSED** 검증(newest_session_since 삭제·`--session-id` UUID 결정론 재-pin / NOPROG 백오프 pin 해제), 새 BLOCKER/MAJOR 0. 잔여 MINOR 2(놓친-usage-limit 시 pin 상실 → **2단계 백오프로 해소**; 미탐-context-death 회복 ~5h → 드묾·bounded 수용).
+- **linchpin 스모크 (라이브)**: `claude 2.1.204 --session-id <새 uuid> -p` 가 정확히 `<uuid>.jsonl` 생성 실측(13466 bytes) → 다음 fire `[ -f <uuid>.jsonl ]` 매치 → `--resume` 연속성 성립 확인.
+- **동시접근(수용된 trade-off)**: pin 된 세션이 VSCode 에 열린 채 cron 이 headless `--resume` 하면 한 대화 두 클라이언트. flock 은 cron 측만. §6.4 에 경고 명시, 사용자 승인(2026-07-11 "크론이 같은 세션 자동 재개").
+- **검증**: `bash -n` OK. git-backed stub dry-run 전수 PASS — #B2(더 최신 DECOY 존재해도 pin==`--session-id` UUID)·usage-limit(pin 유지 +310m/TTL−1)·context-death(pin 해제)·2단계 백오프(1차 pin 유지·2차 해제)·resume/fresh 모드·pin jsonl 부재→fresh 폴백. newest_session_since 코드참조 0.
+- **인용 무결성 확인**: REV-20260711T150440(본 entry) staged 실재.
+- **Human Approval Needed**: 아니오(착수는 사용자 직접 지시·의도 정정). 비파괴·fail-safe(오탐<미탐, 2단계 백오프로 컨텍스트 보존 우선, TTL·flock·*/5 상한). 배포 무관(호스트 크론). **PR 생성만 confirm 유지**.

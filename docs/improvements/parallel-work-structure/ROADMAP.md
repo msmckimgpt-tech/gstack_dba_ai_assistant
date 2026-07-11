@@ -697,35 +697,42 @@ blocked 발생 시: 해당 ITEM 의 status 를 `blocked`+사유로 갱신하고 
 
 1. **사용자 `continue`** (우선 경로 — 도착 시 자동 체인은 뒤로 밀림).
 2. **자동 재호출** — `bin/drain-continue-cron.sh` (정본 구현):
-   - **arm (재귀 앵커)**: 드레인 시작 시(최초 스킬 호출·사용자 continue·자동 재호출 모두)
-     **첫 행동으로 `bash bin/drain-continue-cron.sh arm`** 실행 → `next_fire = 시작 +5h10m`
-     (토큰 재할당 시점 +10분 여유)와 현재 커밋수(진전 기준선)를 상태파일에 기록하고 TTL 재충전.
-   - **fire (v2, 2026-07-11 개정 — always-fresh + 종료사유별 신속 재발사)**: 호스트 크론
-     체커(*/5분, root·claude-corp 양 계정 크론탭)가 `next_fire` 도달 시(flock 로 단일 버스트):
-     ① **실패-내성 앵커**(`next_fire = now+5h10m` 를 버스트 전 기록 — check 가 죽어도 체인
-     유지) ② **항상 새 세션**을 `claude -p "<재앵커 프롬프트>"` 로 헤드리스 시작
-     (`--dangerously-skip-permissions` + `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` + 외곽
-     timeout 300m). 재앵커 세션이 §5·worktree·마지막 커밋에서 중단 지점을 복원해 이어간다
-     ③ **버스트 종료 사유로 다음 발사 간격 결정**:
-       - `usage-limit` — free-text 서술은 오탐(→5h 유휴, 원래 버그)을 일으키므로 **비-서술 3조건
-         AND** 로만 인정: (i) 진전 0 ∧ (ii) dur < 90s(즉시 abort) ∧ (iii) **마지막 비어있지 않은
-         줄**이 “hit your (session|usage) limit”. 실 CLI 한도 abort 는 한도문구를 종단 출력으로
-         남기고 즉시 끝난다; 모델이 본문에서 한도/리셋을 서술해도 그 버스트는 대개 커밋을 남기거나
-         (진전>0)·길거나(dur≥90)·종단이 요약문이라 오탐되지 않는다(§18.8 N3). → **`+5h10m` 리셋
-         대기**(TTL−1). 미탐 시엔 아래 무진전 백오프가 +5h10m 로 받아낸다(오탐보다 미탐을 택함).
-       - **진전 있음** — **버스트 시작 이후 committer-date 로 새로 커밋된 이니셔티브 커밋 수 > 0**
-         (`git rev-list --branches --count --since=@start --grep=parallel-work-structure`). 두 겹
-         격리로 (a) pull 유입 과거 커밋(--since 창 밖)과 (b) 동시 sibling worktree·cron 커밋
-         (메시지 서명 없음)을 모두 제외해 이 드레인이 만든 커밋만 계수(전역 카운트가 외부 커밋을
-         진전으로 오인하던 §18.8 N1 해소) → **`+2m` 신속 재개**(다음 */5 틱; TTL 미소모). ← 구버전
-         “무조건 +5h10m” 유휴(“한 cycle 후 스스로 중단”)를 해소하는 핵심 변경.
-       - **진전 없음**(새 커밋 0)이 `MAX_NOPROG`(기본 6)회 연속 → 스핀으로 보고 **`+5h10m`
-         백오프**(TTL−1). 커밋수 측정 불능 시에만 기간(<90s) 휴리스틱 폴백. `*/5` 크론 주기
-         + flock 이 재발사 폭주의 자연 상한.
-     > **왜 always-fresh(세션 pin/`--continue`/`--resume` 폐기)인가**: 프로젝트 slug 이 다수
-     > 세션에 공유돼 “최신 대화 재개”는 무관 세션 하이재킹·orphan 양산·컨텍스트 누적사(死)로
-     > 이어졌다(§18.8 B2·B3). 매 fire 를 새 세션으로 시작하고 §5+worktree 에서 복원하는 것이
-     > 본 문서의 “§5+worktree 가 복원 기준점” 계약과 정합하며 가장 견고하다.
+   - **arm (재귀 앵커 + 세션 pin)**: 드레인 시작 시 **첫 행동으로 `bash bin/drain-continue-cron.sh
+     arm [--session-id <워커세션 UUID>]`** → `next_fire = 시작 +5h10m`·TTL 재충전, 그리고 재개할
+     **워커 세션을 `DRAIN_SESSION_ID` 로 pin**. **arm 은 절대 자동탐지하지 않는다**(명시 지정, 또는
+     기존 pin 보존만) — "최신 세션 자동탐지"가 무관 세션 하이재킹의 원인이었기 때문(§18.8 B2).
+   - **fire (v3, 2026-07-11 — 세션 재개 연속성)**: 호스트 크론 체커(*/5분, root·claude-corp 양
+     계정)가 `next_fire` 도달 시(flock 로 단일 버스트): ① **실패-내성 앵커**(`next_fire=now+5h10m`
+     를 버스트 전 기록) ② **pin 된 워커 세션을 `claude --resume <id> -p "continue…"`** 로 헤드리스
+     재개 — **컨텍스트를 보존한 채 직전 작업을 이어감**(사용자 의도: 사용량 만료마다 세션 컨텍스트·
+     미완 작업 누락 방지). pin 이 없으면(부트스트랩/컨텍스트死 복구) **미리 생성한 UUID 로
+     `claude --session-id <uuid> -p "<재앵커>"` 새 세션**을 시작하고 **그 uuid 를 그대로 재-pin**.
+     (재-pin 을 "slug 최신 jsonl" mtime 추측으로 하면 공유 slug 의 무관 세션(사용자 VSCode·
+     orchestrator·타 cron)을 잡아 하이재킹된다 — §18.8 B2 라이브 재현; `--session-id` 결정론으로
+     회피.) (`--dangerously-skip-permissions` + `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` + 외곽
+     timeout 300m.) ③ **종료사유별 다음 발사**:
+       - `usage-limit` — 비-서술 3조건 AND(진전0 ∧ dur<90s ∧ 종단3줄이 “hit your (session|usage)
+         limit”)로만 인정(서술 오탐 차단, §18.8 N3). → **pin 유지** + **`+5h10m` 리셋 대기**(TTL−1).
+         리셋 후 **같은 세션을 이어서** 재개 = 연속성 핵심.
+       - `context 소진` — 같은 3조건에서 종단이 “Prompt is too long”. → **pin 해제** → 다음 fire
+         **새 세션** 재앵커(+재-pin). 세션 수명의 자연 종점에서만 갈아탄다(무한 orphan 방지, B3).
+       - **진전 있음** — 버스트 시작 이후 committer-date 서명 커밋 > 0
+         (`rev-list --branches --count --since=@start --grep=parallel-work-structure`; pull 유입·
+         동시 sibling 커밋 배제, §18.8 N1) → **`+2m` 신속 재개**(TTL 미소모). ← “무조건 +5h10m”
+         유휴(“한 cycle 후 중단”) 해소.
+       - **진전 없음** N회 연속(`MAX_NOPROG`=6) → 백오프(TTL−1), 단 **2단계**(§18.8 MINOR-1 —
+         핵심의도 '컨텍스트 보존' 보호): resume 세션의 **1차 백오프는 pin 유지 + `+5h10m` 리셋
+         대기**(놓친 usage-limit 이면 리셋 후 같은 세션이 진전 → 컨텍스트 보존, 건강한 세션을
+         성급히 버리지 않음). **리셋 뒤에도 무진전(streak≥2)이거나 fresh 부트스트랩이 실패**하면
+         그때 **pin 해제 재부트스트랩**(context-death 미탐 영구 스톨 방지 — §18.8 MAJOR). `*/5`+flock
+         이 재발사 폭주의 자연 상한.
+     > **왜 세션 재개(v2 always-fresh 폐기)인가**: always-fresh 는 매 fire 신규 세션이라 사용량
+     > 만료마다 직전 세션 컨텍스트/미완 작업이 누락됐다(사용자 지적, 2026-07-11). v3 은 pin 된
+     > 세션을 `--resume` 해 연속성을 보존한다. 하이재킹(B2)은 pin 을 **명시 지정만**(자동탐지 금지)
+     > 으로, 컨텍스트死(B3)는 **실제 “Prompt is too long” 감지 시에만** 새 세션으로 넘어가 막는다.
+     > ⚠ **동시접근**: pin 된 세션이 VSCode 에 열린 채 cron 이 headless `--resume` 하면 한 대화에
+     > 두 클라이언트가 붙는다. flock 은 cron 측만 보장하므로 **자동 버스트 중 수동 continue 자제**
+     > (`status` 로 lock 확인). 사용자 승인 하 채택한 trade-off.
    - **재귀 종결 조건**: 전 ITEM done/blocked(드레인 완주) 시 세션이
      `drain-continue-cron.sh disarm` 실행. 백스톱 = TTL 40 fire(재-arm 없이 약 8.6일)
      소진 시 자동 disarm. 사용자 지시로 언제든 disarm 가능.
@@ -756,9 +763,10 @@ blocked 발생 시: 해당 ITEM 의 status 를 `blocked`+사유로 갱신하고 
   1. **usage-limit 도달** — 사용량 한도(session/usage limit)에 실제로 막혀 남은 토큰으로 더
      진행 불가. → 크론이 비-서술 3조건(진전0 ∧ 짧은 dur ∧ 종단 줄이 한도문구)으로 감지해
      `+5h10m` 리셋 대기(§6.4). (한도 CLI 문구 원문은 이 문서에 남기지 않는다 — 판정 오탐 방지.)
-  2. **context 소진** — 현 세션 컨텍스트 초과("Prompt is too long")로 더 못 이어감. → 현
-     세션은 종료하되, 크론의 다음 fire 가 **어차피 새 세션**(§6.4 v2 always-fresh)이라
-     §5+worktree 에서 복원해 즉시 이어간다(별도 핸드오프 플래그 불요).
+  2. **context 소진** — 현 세션 컨텍스트 초과(context-overflow abort)로 더 못 이어감. → 이때만
+     크론이 pin 을 해제하고 **다음 fire 를 새 세션**으로 시작(§6.4 v3), §5+worktree 에서 복원해
+     이어간 뒤 그 세션을 재-pin. (그 외 재개는 pin 된 같은 세션을 `--resume` 해 컨텍스트 보존.
+     감지 CLI 원문은 이 문서에 남기지 않는다 — 판정 오탐 방지.)
   3. **전 ready 항목 blocked** — §6.3 조건으로 남은 모든 항목이 blocked(진행 가능한 ready
      0). → blocked 사유 요약 후 종료(다음 fire 가 언블록/외부변화를 재확인).
   4. **드레인 완주** — 전 ITEM done/blocked. → `disarm` 실행, 체인 종결.
