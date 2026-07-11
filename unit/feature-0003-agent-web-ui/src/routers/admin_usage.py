@@ -412,3 +412,27 @@ def _enrich_usage_conv_owner_meta(conn, items: list[dict]) -> None:
         mm = meta.get(e.get("owner_account_id")) if e.get("owner_account_id") is not None else None
         e["owner_username"] = (mm or {}).get("username")
         e["owner_role"] = (mm or {}).get("role")
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _usage_account_ids_for_role(conn, role_key: str) -> "list[int] | None":
+    """역할 클릭(by_role 의 role 키) → 그 역할에 속한 account_id 집합(MySQL).
+
+    by_role 규칙(_aggregate_usage_by_role)과 동일:
+      "(시스템)"   → None (owner NULL 대화 = 비대화 usage. 대화목록에선 빈 집합 — 시스템 호출엔 대화 없음)
+      "(역할 없음)" → RoleId NULL(또는 역할 매핑 실패) 계정들
+      그 외        → WebRoles.Name == role_key 인 계정들
+    반환: account_id 리스트(빈 리스트 가능) 또는 None(시스템 — 대화 없음).
+    """
+    if role_key == "(시스템)":
+        return None
+    cur = conn.cursor()
+    try:
+        if role_key == "(역할 없음)":
+            cur.execute("SELECT a.Id FROM WebAccounts a LEFT JOIN WebRoles r ON r.Id = a.RoleId WHERE r.Name IS NULL")
+        else:
+            cur.execute("SELECT a.Id FROM WebAccounts a JOIN WebRoles r ON r.Id = a.RoleId WHERE r.Name = %s", (role_key,))
+        return [int(row[0]) for row in (cur.fetchall() or [])]
+    finally:
+        cur.close()

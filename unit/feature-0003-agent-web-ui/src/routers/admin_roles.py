@@ -588,3 +588,48 @@ def _assign_default_signup_role(conn, role_id: int) -> None:
     cur.execute("UPDATE WebRoles SET IsDefaultSignup = 0 WHERE Id <> %s", (int(role_id),))
     cur.execute("UPDATE WebRoles SET IsDefaultSignup = 1 WHERE Id = %s", (int(role_id),))
     cur.close()
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _load_role_by_id(conn, role_id: int) -> dict[str, app.Any] | None:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT
+    Id AS id,
+    RoleKey AS role_key,
+    Name AS role_name,
+    Description AS role_description,
+    IsActive AS is_active,
+    IsDefaultSignup AS is_default_signup,
+    IconObjectKey AS icon_object_key,
+    CreatedAt AS created_at,
+    UpdatedAt AS updated_at
+FROM WebRoles
+WHERE Id = %s
+LIMIT 1
+        """,
+        (int(role_id),),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return None
+    granted_codes = app._load_role_permission_codes(conn, [int(role_id)]).get(int(role_id), set())
+    # TASK-0052 Phase 1B: dynamic codes 포함된 catalog 로 permissions 맵 build.
+    _catalog_defs, catalog_codes, _catalog_map = app._resolve_permission_catalog(conn)
+    return {
+        "id": int(row.get("id") or 0),
+        "key": str(row.get("role_key") or ""),
+        "name": str(row.get("role_name") or ""),
+        "description": str(row.get("role_description") or ""),
+        "is_active": bool(row.get("is_active")),
+        "is_default_signup": bool(row.get("is_default_signup")),
+        # TASK-0293: 역할 아이콘 URL (미설정 시 None → 프론트 role_key 시드 Identicon).
+        "icon_url": app._role_icon_url_for(int(row.get("id") or 0), row.get("icon_object_key")),
+        "created_at": str(row.get("created_at") or "") or None,
+        "updated_at": str(row.get("updated_at") or "") or None,
+        "permission_codes": sorted(granted_codes),
+        "permissions": {code: code in granted_codes for code in catalog_codes},
+    }

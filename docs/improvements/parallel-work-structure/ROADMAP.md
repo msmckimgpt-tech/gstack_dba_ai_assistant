@@ -521,7 +521,8 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
   → p12: share/gdrive 16종(-308): app.py 9,824(-9,826 누적 / **-50%**)
   → p13: _load_/_resolve_/_parse_/_db_rule_ 32종(-1,101, 패치 2종 KEEP·@app.on_event 가드 신설): app.py 8,723(-10,927 누적 / -56%)
   → p14: oauth/login/dash/conversation 등 65종(-1,749, 패치 12종 KEEP·module-load 게이트 가드·perm-self-scope 테스트 다중파일 retarget): app.py 6,974(-12,676 누적 / -65%)
-  → p15: 전수 census 128종(-2,188, 직수입·byte-offset 가드 신설·standalone 검증기 2건 수리·DI-seam KEEP): app.py 4,786(-14,864 누적 / **-76%**).
+  → p15: 전수 census 128종(-2,188, 직수입·byte-offset 가드 신설·standalone 검증기 2건 수리·DI-seam KEEP): app.py 4,786(-14,864 누적 / **-76%**)
+  → p16: PATCH 32종(-919, setattr=모듈 전역 rebind 판정으로 패치-fn 이동 해금): app.py 3,867(-15,783 누적 / **-80%**). fn sweep 종료 — 잔여 KEEP 12+DEC 10, 다음 p17=상수/모듈-레벨.
   배포: batch1~3=14b7d876 라이브 ✓ · batch4~6 배포는 deploy-web preflight flake(간헐)로 보류
   (이미지 정상 실증·라이브 healthy — 스파인 하드닝은 명세 밖, 사용자 승인 대기). 게이트(배치마다): route snapshot byte-동치·F821·py_compile·전 스위트 pytest.
   목표 ≤1,000줄까지 배치 계속(다음: 도메인 클러스터 위상순·23-테스트 retarget 영역은 적대검증 후).

@@ -3062,3 +3062,263 @@ def _clean_insight_segment(text: str) -> str:
             continue
         body.append(s)
     return " · ".join(body)
+
+
+# ==== feature-0012 ITEM-10 p16 — app.py 에서 이동 (7종). app 전역은 app.X 동적 참조. ====
+
+def _resolve_product_insight_scope(conn, product: dict) -> dict:
+    """제품의 datasource scope 식별자를 해석한다 (TASK-0223 완료율 / TASK-0228 초기화 공용).
+
+    완료율 분자 조회와 초기화 삭제가 **동일한 scope/allow_null/engine** 을 쓰도록 단일 출처로 분리한다
+    (키 불일치로 인한 "지웠는데 완료율 그대로" / "엉뚱한 DB 삭제" 방지).
+
+    반환: {ok: bool, reason: str, scope: str|None, allow_null: bool, engine: str,
+           default_db: str|None, coords: dict|None}. ok=False 면 reason 만 의미 있음.
+    """
+    from shared import datasources as _dsr
+    label = product.get("datasource_key")  # 라벨(소문자) 또는 None
+    default_endpoint_scope = _dsr.compute_scope_key("mysql", app.DB_HOST, int(app.DB_PORT))
+    out = {
+        "ok": False, "reason": "", "scope": None, "allow_null": False,
+        "engine": "mysql", "default_db": None, "coords": None,
+    }
+    coords = None
+    engine = "mysql"
+    scope = None
+    default_db = None
+    if label:
+        try:
+            coords = _dsr.resolve(conn, str(label).strip().lower())
+        except Exception:
+            coords = None
+        if not coords:
+            out["reason"] = "데이터소스 해석 불가(미등록/복호 실패)"
+            return out
+        engine = (coords.get("engine") or "mysql").strip().lower()
+        scope = _dsr.scope_key(coords)  # 해시(또는 .env 레거시 라벨 폴백) — insight write 와 동일 식별자
+        default_db = (str(coords.get("default_db") or "").strip() or None)
+    else:
+        # 라벨 NULL = 레거시 기본 MySQL. 같은 엔드포인트 등록 datasource 가 있으면 그 좌표 사용.
+        try:
+            for _k, _v in (_dsr.all_datasources(conn) or {}).items():
+                if _v and _dsr.scope_key(_v) == default_endpoint_scope:
+                    coords = _v
+                    engine = (coords.get("engine") or "mysql").strip().lower()
+                    scope = default_endpoint_scope
+                    default_db = (str(coords.get("default_db") or "").strip() or None)
+                    break
+        except Exception:
+            coords = None
+        if not coords:
+            out["reason"] = "기본(미바인딩) 제품 — 데이터소스 좌표 없음"
+            return out
+
+    # TASK-0230 (M2): 같은 엔드포인트가 시기별로 다른 scope 식별자로 기록될 수 있다(hash vs .env 레거시
+    # label vs NULL). 완료율은 단일 scope 만 보지만, **초기화(fingerprint 삭제)는 모든 alias 를 지워야**
+    # worker 가 다른 alias 의 잔존 fingerprint 로 재분석을 skip 하지 않는다. coords 의 host/port 로
+    # compute_scope_key(hash) 와 .env label(있으면) 을 둘 다 alias 후보로 모은다.
+    scope_aliases: list[str] = []
+    if scope:
+        scope_aliases.append(str(scope).strip().lower())
+    try:
+        _h = coords.get("host")
+        _p = int(coords.get("port") or 0)
+        if _h and _p:
+            _hash_alias = _dsr.compute_scope_key(engine, _h, _p)
+            if _hash_alias and _hash_alias.strip().lower() not in scope_aliases:
+                scope_aliases.append(_hash_alias.strip().lower())
+    except Exception:
+        pass
+    # .env 레거시 label (datasource 키 자체가 scope 로 쓰였던 경우 — 예: main_mysql)
+    if label and str(label).strip().lower() not in scope_aliases:
+        scope_aliases.append(str(label).strip().lower())
+
+    out.update({
+        "ok": True, "scope": scope,
+        # scope == 기본 엔드포인트면 ds=None 스캔의 NULL 행도 같은 DB → 허용(완료율 set dedup·초기화 OR NULL).
+        "allow_null": (scope == default_endpoint_scope),
+        "scope_aliases": scope_aliases,  # 초기화 전용 — 완료율은 단일 scope 사용
+        "engine": engine, "default_db": default_db, "coords": coords,
+    })
+    return out
+
+def _list_products(conn, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+    cur = conn.cursor(dictionary=True)
+    where = "" if include_inactive else " WHERE IsActive = 1"
+    # TASK-0053: DefaultRoleAccess (product 가 자체 정책의 주체) 컬럼도 함께 SELECT.
+    cur.execute(
+        f"""
+SELECT Id AS id, ProductKey AS product_key, Name AS name, Description AS description,
+       IsActive AS is_active, IsDefault AS is_default, SortOrder AS sort_order,
+       DefaultRoleAccess AS default_role_access, DatasourceKey AS datasource_key,
+       IconObjectKey AS icon_object_key,
+       CreatedAt AS created_at, UpdatedAt AS updated_at
+FROM WebProducts
+{where}
+ORDER BY IsDefault DESC, SortOrder ASC, Id ASC
+        """
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        _dsk = row.get("datasource_key")
+        _pid = int(row.get("id") or 0)
+        # TASK-0228 (1:N): 제품에 바인딩된 전체 datasource 목록(primary 포함). 단일 바인딩 제품은 1건.
+        _ds_list = app._list_product_datasources(conn, _pid) if _pid else []
+        out.append({
+            "id": _pid,
+            "product_key": str(row.get("product_key") or ""),
+            "name": str(row.get("name") or ""),
+            "description": str(row.get("description") or ""),
+            "is_active": bool(row.get("is_active")),
+            "is_default": bool(row.get("is_default")),
+            "sort_order": int(row.get("sort_order") or 0),
+            "default_role_access": bool(row.get("default_role_access", True)),
+            # 멀티 datasource (P2): primary datasource 키 (None=기본 단일 MySQL). 하위호환 단일 필드.
+            "datasource_key": (str(_dsk).lower() if _dsk else None),
+            # TASK-0228 (1:N): 전체 바인딩 목록 [{datasource_key, is_primary, sort_order}].
+            "datasources": _ds_list,
+            # TASK-0268: 제품 아이콘 이미지 URL(설정 시) — 미설정 시 None → 프론트 Identicon/기본.
+            "icon_url": app._product_icon_url_for(_pid, row.get("icon_object_key")),
+            "created_at": str(row.get("created_at") or ""),
+            "updated_at": str(row.get("updated_at") or ""),
+        })
+    return out
+
+def _list_product_databases(conn, product_id: int) -> list[dict[str, Any]]:
+    cur = conn.cursor(dictionary=True)
+    # TASK-0228 (1:N): DatasourceKey 차원 포함(미이전 스키마는 컬럼 부재 → 폴백). UI 가 datasource 별 그룹핑.
+    try:
+        cur.execute(
+            """
+SELECT SchemaName AS schema_name, Description AS description, SortOrder AS sort_order,
+       LOWER(DatasourceKey) AS datasource_key, COALESCE(Source,'manual') AS source, RuleId AS rule_id
+FROM WebProductDatabases
+WHERE ProductId = %s
+ORDER BY DatasourceKey ASC, SortOrder ASC, SchemaName ASC
+            """,
+            (int(product_id),),
+        )
+        rows = cur.fetchall() or []
+    except Exception:
+        cur.execute(
+            """
+SELECT SchemaName AS schema_name, Description AS description, SortOrder AS sort_order
+FROM WebProductDatabases
+WHERE ProductId = %s
+ORDER BY SortOrder ASC, SchemaName ASC
+            """,
+            (int(product_id),),
+        )
+        rows = cur.fetchall() or []
+    cur.close()
+    return [
+        {
+            "schema_name": str(r.get("schema_name") or ""),
+            "description": str(r.get("description") or ""),
+            "sort_order": int(r.get("sort_order") or 0),
+            # 미이전 행은 datasource_key 키 부재 → 빈 문자열(레거시 단일 차원).
+            "datasource_key": (str(r.get("datasource_key") or "") or None),
+            # TASK-20260618T044318: manual(수동) / rule(규칙 자동) 구분 — 미이전 행은 manual.
+            "source": (str(r.get("source") or "manual") if "source" in r else "manual"),
+            # TASK-20260618T061703: 다중 규칙 — 어느 규칙이 추가했는지(UI 가 규칙 카드에 종속 표시).
+            "rule_id": (int(r["rule_id"]) if r.get("rule_id") is not None else None),
+        }
+        for r in rows
+    ]
+
+def _insight_worker_liveness(conn) -> dict:
+    """insight-worker 생존 신호 (heartbeat KV) — db-insights 의 '분석중' 상태 판정용.
+
+    반환: {"alive": bool, "age_sec": int|None, "status": str}.
+    alive = last_status ∈ {ok, skip_locked} AND age ≤ max(30, STALE_SEC) (insight._is_*_heartbeat_fresh 와 정합).
+    """
+    from shared.config import GLOBAL_CONVERSATION_ID
+    try:
+        from shared.config import AGENT_INSIGHT_WORKER_STALE_SEC as _stale
+    except Exception:
+        _stale = 15
+    out = {"alive": False, "age_sec": None, "status": ""}
+    try:
+        raw = app.load_memory_kv(conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_cycle_at")
+        status = (app.load_memory_kv(conn, GLOBAL_CONVERSATION_ID, "insight_worker_last_status") or "").strip().lower()
+        out["status"] = status
+        if raw:
+            ts = str(raw).strip().replace("Z", "+00:00")
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+            out["age_sec"] = age
+            if status in {"ok", "skip_locked"} and age <= max(30, int(_stale)):
+                out["alive"] = True
+    except Exception:
+        pass
+    return out
+
+def _insight_cov_cache_get(key):
+    import time as _time
+    with app._INSIGHT_COVERAGE_CACHE_LOCK:
+        ent = app._INSIGHT_COVERAGE_CACHE.get(key)
+        if not ent:
+            return None
+        ts, val = ent
+        if (_time.time() - ts) > app._INSIGHT_COVERAGE_TTL_SEC:
+            app._INSIGHT_COVERAGE_CACHE.pop(key, None)
+            return None
+        return val
+
+def _insight_cov_cache_put(key, val):
+    import time as _time
+    with app._INSIGHT_COVERAGE_CACHE_LOCK:
+        if len(app._INSIGHT_COVERAGE_CACHE) > 500:  # 단순 상한(누수 방지)
+            app._INSIGHT_COVERAGE_CACHE.clear()
+        app._INSIGHT_COVERAGE_CACHE[key] = (_time.time(), val)
+
+def _read_insight_datasource_health() -> dict:
+    """TASK-0255 R2: insight-worker 가 PG(agent_runtime.datasource_health)에 영속한 datasource 연결 health 를
+    scope_key→dict 로 읽는다. 관리콘솔이 web 의 live conn_health(conn_status)와 **별개로** insight 스캔 관점의
+    상태 — "연결 불안정으로 미커버"(status=unstable / scan_outcome=circuit_open) vs "권한 실패"(perm_failed) —
+    를 구분 표시하기 위함. graceful: PG 미가용/테이블 부재(fresh deploy 마이그 전)/조회 실패는 {} 반환(목록 무영향).
+    RO 연결(least-privilege). 자격증명 비포함(테이블에 애초 비영속)."""
+    try:
+        from shared.db import _pg_available, _pg_connect_ro
+    except Exception:
+        return {}
+    if not _pg_available():
+        return {}
+    out: dict = {}
+    conn = None
+    try:
+        conn = _pg_connect_ro()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT scope_key, status, last_scan_outcome, fail_count, last_error_tag, "
+                "last_checked_at, last_scan_at, last_transition_at "
+                "FROM agent_runtime.datasource_health"
+            )
+            for r in (cur.fetchall() or []):
+                out[str(r[0])] = {
+                    "status": r[1],
+                    "scan_outcome": r[2],
+                    "fail_count": int(r[3] or 0),
+                    "last_error_tag": r[4],
+                    "last_checked_at": (r[5].isoformat() if r[5] else None),
+                    "last_scan_at": (r[6].isoformat() if r[6] else None),
+                    "last_transition_at": (r[7].isoformat() if r[7] else None),
+                }
+        finally:
+            cur.close()
+    except Exception as exc:
+        # 테이블 부재(마이그 전)/권한/PG down — soft, datasource 목록은 그대로. 진단용 debug 1줄(자격증명 비포함).
+        logging.getLogger(__name__).debug("insight_datasource_health_query_failed: %s", type(exc).__name__)
+        return {}
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return out

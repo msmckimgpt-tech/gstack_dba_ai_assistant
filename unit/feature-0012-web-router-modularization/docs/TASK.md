@@ -269,3 +269,7 @@ source_of_truth: true
 - [x] 신규 가드 2종: ①`from app import` 직수입 충돌 기계 검출(keywords/admin_conversations/media 적발) — require_permission·_require_permission(import-time DI seam)·_json_error KEEP, media.py 는 헤더 수정으로 _serve_image_object 자기 모듈 흡수 ②byte-offset 편집(ast col_offset=utf-8 byte — 한글 f-string 라인 오염 방지). p13/p14 산출물 재생성 대조 감사 = mismatch 0 실증.
 - [x] standalone 검증기 수리(pytest 미수집이라 조용히 파손됐던 것): verify_db_rule_logic.py(p13 이동으로 블록 추출 파손 → AST 다중파일 추출+_AppProxy, 30 passed) · test_audit_dispatcher.py D7(p7 이동 build_audit_change_json → _audit_infra 병합 스캔, PASS). 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
 - [x] 계약 테스트 retarget 2건 추가(위치-무관 계약): test_group_conversation_s2 membership 게이트 APP→APP_ALL(선례 4번째) · test_task0286 test_a1 getsource(app)+routers.conversations 병합.
+
+## 20260711T2205-item10-routers-p16 — PATCH 32종(919줄) 이동: setattr 패치 관통 규약 실증 (parallel-work-structure ITEM-10)
+- [x] 판정: `setattr(app, X, stub)` 은 app.py 모듈 전역 X 를 rebind → app.py bare 호출·routers `app.X`·이동 모듈 `app.X` 모두 패치 관통. 종전 "패치 fn KEEP" 보수 규칙을 rebind+app.X 규약 하 이동 가능으로 갱신(전 스위트 pytest 가 패치 시나리오 자체를 실행하여 실증). _conv_store 11·admin_products 7·_prompt_context 3·admin_metadata 3(bootstrap 계열)·admin_console 2·conversations 2·admin_roles/quotas/usage/system 각 1. app.py 4,786→3,867(-919 / 누적 -80%).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 clean(문자열 annotation `Any` → typing import 주입 일반화) · py_compile · 전 스위트 pytest rc=0. 잔여 22종 = KEEP 12(DI seam·보안 게이트·감사) + DEC 10(lifecycle) — fn sweep 종료 지점, 다음은 상수/모듈-레벨 블록(p17).

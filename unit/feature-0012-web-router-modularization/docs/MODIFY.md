@@ -206,3 +206,6 @@ source_of_truth: true
 
 ## CHG-20260711T214000-item10-routers-p15 (전수 census 128종 최대 sweep + 검증기 수리)
 - Date: 2026-07-11. 직수입 가드·byte-offset 편집 신설, p13/p14 재생성 감사 mismatch 0. app.py 6,974→4,786.
+
+## CHG-20260711T220500-item10-routers-p16 (PATCH 32종 이동 — 패치 관통 규약 실증)
+- Date: 2026-07-11. setattr=모듈 전역 rebind 판정으로 보수 규칙 갱신. app.py 4,786→3,867.
