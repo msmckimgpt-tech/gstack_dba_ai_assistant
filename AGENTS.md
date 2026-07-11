@@ -922,6 +922,10 @@ SAFE_REMOVE가 아닌 branch에만 적용 (ahead = 0 AND Open PR 없는 경우).
 | main에 대형 PR 병합 직후 | 해당 도메인 worktree 즉시 점검 |
 
 **bin/worktree-audit.sh 구조 (권장 구현)**:
+> **본 repo 구현 완료(META-0025, 2026-07-10)**: `bin/worktree-audit.sh`(4분류·merged 이중확인
+> ·통지 후 유예 apply·DIRTY/IN-USE 불가침) + `bin/install-worktree-audit-cron.sh`(평일
+> 08:40 리포트/08:50 apply). 아래는 template 권장 구조 원문.
+
 각 worktree를 위 4단계로 분류해 출력하는 감사 스크립트 — 실제 구현은 소비자 프로젝트 repo/bin/ 에 추가 권장:
 1. `git branch --merged main` → SAFE_REMOVE 후보
 2. `gh pr list --state merged --head <branch>` → SAFE_REMOVE 후보 (squash 대응)
@@ -1008,6 +1012,25 @@ SAFE_REMOVE가 아닌 branch에만 적용 (ahead = 0 AND Open PR 없는 경우).
   correctness). TTL cache 없음 — 매 turn 의 first action.
 
   본 gate 는 §16.3 의 main worktree pull 룰의 ai/\* 미러.
+
+#### §13.2.5-A 핫스팟 WIP 상한 + 순차 머지 규약 (2026-07-11 프로젝트 개정, META-0029 — template base 전파 예정)
+
+충돌 확률의 근본 변수는 인프라가 아니라 **동시 진행량 × 브랜치 수명**이다(Uber 실측:
+동시 변경 16건 ≈ 충돌 확률 40% · DORA 고성과 = 활성 브랜치 ≤3 + 당일 병합 — RESEARCH
+W-006/W-008). 큐·fragment·driver 는 완화책이고, 진행량 자체의 규율이 1차 대책이다:
+
+- **(a) 핫스팟 WIP 상한(권고)**: 동일 핫스팟(같은 파일 또는 같은 모듈 구간)을 건드리는
+  in-flight ai/* 브랜치는 **동시 2개 이하**를 권고한다. cycle-init 의 `--hot-paths` soft
+  게이트가 REGISTRY 활성 세션과 대조해 겹침 ≥ 2 면 **경고**한다(차단 아님 — 처리량 보존,
+  판단은 세션/사용자).
+- **(b) REGISTRY hot_paths 선언**: `<project_root>/worktrees/REGISTRY.md`(§13.2.8) 활성
+  entry 에 `hot_paths:`(주요 편집 예정 경로 1~5개) 필드를 기록한다 — cycle-init 이 자동
+  기록(entry 는 세션당 자기 블록만 수정: 조정 파일이 새 충돌원이 되지 않게).
+- **(c) 순차 머지 원칙**: 같은 핫스팟의 복수 브랜치는 머지 순서를 REGISTRY `merge_order:`
+  에 사전 선언하고, **한 번에 1브랜치 머지 → 잔여는 rebase 후 진행**한다(§13.2.5 merge
+  mutex·신선도 게이트와 결합 — Augment 검증 규율, W-008).
+- **(d) 당일 랜딩 원칙**: 사이클은 **24h 내 머지**를 목표로 분할한다. 초과가 예상되면
+  작업을 더 작은 머지 가능 단위로 재분할을 검토한다(장수 브랜치 = 예약된 충돌).
 
 #### §13.2.6 샌드박스 실행
 

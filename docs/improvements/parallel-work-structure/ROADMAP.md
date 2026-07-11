@@ -557,7 +557,14 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 - **notes**: 배포 scope: web. 완료 시 feature-0012 종결 선언(REPORT.md Final 기록).
 
 ### ITEM-12 · 핫스팟 WIP 상한 + 순차 머지 규약 (REGISTRY hot-path 선언)
-- **status**: pending
+- **status**: done
+- **note**: 2026-07-11 완료 — §13.2.5-A 신설((a)WIP≤2 권고 (b)hot_paths (c)순차 머지
+  (d)당일 랜딩) + REGISTRY 부트스트랩(worktrees/REGISTRY.md — repo 밖, cycle-init 자동
+  entry·자기 블록만) + cycle-init --hot-paths soft 게이트(겹침≥2 경고·비차단) + §13.2.3-A
+  META-0025 표기 편승 + ADR-20260711T051835. acceptance (a)diff (b)겹침 경고+정상 진행(2회 실증)
+  (c)REGISTRY 신설·entry 기록 (d)§13.2.8 정합(스키마 additive). §18.8 패널 SHIP-WITH-FIXES
+  (MAJOR 4·MINOR 5) **전건 반영**: flock+단일패스 원자화·실패 정직성(rc 캡처)·finalize Step 6
+  자동 이동(Active→Closed) 구현·distinct 겹침 지표·session_id PID fallback. REV-20260711T051835.
 - **feature_id**: META-0029-wip-hotspot-policy   <!-- 잠정 — 착수 시 최대 META 번호 재확인 -->
 - **dimension**: operational
 - **risk_grade**: Major   <!-- cycle-init 게이트 스크립트 + AGENTS.md 개정 — §6.1 사전 승인, §18.8 패널 대상 -->
@@ -611,9 +618,9 @@ DAG 비순환 확인: 간선 8개, 전부 단방향(01→03→06→07→12 직�
 
 ## 5. 진행 현황 (improve_cycle 가 갱신)
 
-- 총 12 항목 · done 8 (ITEM-01·02·04·05·08·03·06·07) · in-progress 0 · pending 4 · blocked 0
-- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → 12 → 09 → 10 → 11
-  (다음 ready: ITEM-12)
+- 총 12 항목 · done 9 (ITEM-01·02·04·05·08·03·06·07·12) · in-progress 0 · pending 3 · blocked 0
+- **실행 순서(§6.2 선형)**: ~~01~~ → ~~02~~ → ~~04~~ → ~~05~~ → ~~08~~ → ~~03~~ → ~~06~~ → ~~07~~ → ~~12~~ → 09 → 10 → 11
+  (다음 ready: ITEM-09 — 그래프 구간 활성 브랜치/PR 0 기계 확인 후 착수)
 - ITEM-05 배포 검증(2026-07-11 04:20): web-a/b 모두 GIT_COMMIT=ff522cda·healthy 4h 유지 —
   §6.1 deploy-backed 완료. (첫 deploy-web preflight 1회 일시 실패 후 재시도 성공 — 원인
   미재현 transient, config 재현 검사는 정상.)

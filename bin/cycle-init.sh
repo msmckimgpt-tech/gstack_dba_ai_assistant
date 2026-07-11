@@ -26,6 +26,8 @@
 #   bash bin/cycle-init.sh --feature <feature-id>
 #     [--agent <agent-name>]      (default: $USER 또는 'ai')
 #     [--base <branch>]           (default: main)
+#     [--hot-paths <p1,p2,...>]   (선택 — 주요 편집 예정 경로 1~5개. META-0029 WIP 규약:
+#                                  REGISTRY 활성 세션과 겹침 >= 2 면 경고(차단 아님))
 #     [--dry-run]                 (모든 mutation 명령 출력만)
 #     [--print-only]              (main 최신화도 안 함, 명령만 출력 — 기존 수동 패턴 호환)
 #     [--help]
@@ -45,6 +47,7 @@ AGENT_NAME=""
 BASE_BRANCH="main"
 DRY_RUN=0
 PRINT_ONLY=0
+HOT_PATHS=""   # META-0029: 주요 편집 예정 경로(콤마 구분, 선택) — WIP 핫스팟 soft 게이트
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 log_info()  { printf "[cycle-init] %s\n"           "$*" >&2; }
@@ -64,7 +67,7 @@ run_or_dryrun() {
 }
 
 show_help() {
-  sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────
@@ -76,6 +79,8 @@ while [ $# -gt 0 ]; do
     --agent=*)      AGENT_NAME="${1#--agent=}"; shift ;;
     --base)         BASE_BRANCH="${2:-}"; shift 2 ;;
     --base=*)       BASE_BRANCH="${1#--base=}"; shift ;;
+    --hot-paths)    HOT_PATHS="${2:-}"; shift 2 ;;
+    --hot-paths=*)  HOT_PATHS="${1#--hot-paths=}"; shift ;;
     --dry-run)      DRY_RUN=1; shift ;;
     --print-only)   PRINT_ONLY=1; shift ;;
     --help|-h)      show_help; exit 0 ;;
@@ -200,6 +205,118 @@ else
     # 신규 branch 작성 — -b + base branch.
     run_or_dryrun "git -C $MAIN_WORKTREE_PATH worktree add $NEW_WORKTREE_PATH -b $NEW_BRANCH $BASE_BRANCH"
   fi
+fi
+
+# ── §13.2.8/META-0029: worktree 세션 REGISTRY 기록 + 핫스팟 soft 게이트 ─────
+# REGISTRY 는 <project_root>/worktrees/REGISTRY.md — repo working tree 밖 운영 파일
+# (§13.2.8 정본 경로). 부재 시 스키마와 함께 부트스트랩. entry 는 자기 블록만 추가
+# (공유 문서가 새 충돌원이 되지 않게 — §13.2 규약). 실패는 경고만(cycle 진행 비차단).
+# §18.8 패널(REV-20260711T051835) 반영: flock 직렬화(MAJOR-4) · 제거+삽입 단일-패스
+# 원자 rewrite + 삽입 검증 후 mv(MAJOR-2) · 명시 rc 캡처로 거짓 성공 로그 제거(MAJOR-1)
+# · 자기 블록 제거는 Active 구간 한정 — Closed 이력 보존(MINOR-8) · 겹침은 브랜치(entry)
+# distinct 집계(MINOR-5) · session_id fallback = claude-session-<PID>(MINOR-7, §13.2.8).
+REGISTRY_FILE="$PROJECT_ROOT/worktrees/REGISTRY.md"
+
+registry_record() {
+  mkdir -p "$PROJECT_ROOT/worktrees" || return 1
+  # N-12: project_root 가 git working tree 인 배치만 .gitignore 등록(본 배치 wrapper 는 git 밖 — 비적용)
+  if git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    grep -qxF 'worktrees/' "$PROJECT_ROOT/.gitignore" 2>/dev/null \
+      || printf 'worktrees/\n' >>"$PROJECT_ROOT/.gitignore" || return 1
+  fi
+  # 병렬 cycle-init 직렬화 — REGISTRY 가 다중 세션 조정 파일인 만큼 lost-update 차단
+  exec 9>"$REGISTRY_FILE.lock" || return 1
+  flock -w 10 9 || { log_warn "REGISTRY lock 획득 실패(10s) — 기록 생략"; return 1; }
+
+  if [ ! -f "$REGISTRY_FILE" ]; then
+    cat >"$REGISTRY_FILE" <<'REG' || return 1
+# Worktree Session REGISTRY (AGENTS.md §13.2.8 / §13.2.5-A WIP 규약 — META-0029)
+
+> cycle-init 이 활성 세션 entry 를 자동 기록한다. 각 세션은 **자기 블록만** 수정.
+> 같은 핫스팟의 복수 브랜치는 `merge_order:` 로 머지 순서를 사전 선언(순차 머지 원칙).
+> cycle-finalize Step 6 이 종료 entry 를 `## Closed` 로 자동 이동(수동 보조 허용).
+
+## Active
+
+## Closed
+REG
+  fi
+
+  # 핫스팟 겹침 soft 게이트 — 지표 = 내 hot_paths 와 겹치는 **활성 브랜치(entry) distinct 수**
+  # (경로쌍 수 아님 — 정책 준수 상태 오탐 방지). 나 외 ≥2 = 동일 핫스팟 in-flight 3개째부터 경고.
+  if [ -n "$HOT_PATHS" ]; then
+    local entry_paths overlap_n overlap_list ebr epaths m a hit
+    entry_paths="$(awk '
+      /^## Active$/ {act=1; next}
+      /^## Closed$/ {act=0}
+      !act {next}
+      /^### / {cur=substr($0,5); next}
+      /^- hot_paths:/ && cur != "" {
+        line=$0; sub(/^- hot_paths:[ ]*/,"",line); print cur "\t" line
+      }
+    ' "$REGISTRY_FILE")"
+    overlap_n=0; overlap_list=""
+    while IFS=$'\t' read -r ebr epaths; do
+      [ -n "$ebr" ] || continue
+      [ "$ebr" = "$NEW_BRANCH" ] && continue
+      hit=""
+      IFS=',' read -ra _mine <<<"$HOT_PATHS"
+      for m in "${_mine[@]}"; do
+        m="$(printf '%s' "$m" | sed 's/^[ \t]*//; s/[ \t]*$//')"; [ -n "$m" ] || continue
+        [ -n "$hit" ] && break
+        IFS=',' read -ra _theirs <<<"$epaths"
+        for a in "${_theirs[@]}"; do
+          a="$(printf '%s' "$a" | sed 's/^[ \t]*//; s/[ \t]*$//')"; [ -n "$a" ] || continue
+          case "$a" in '<'*) continue ;; esac   # <미선언> placeholder 제외
+          case "$m" in "$a"|"$a"/*) hit="$m~$a"; break ;; esac
+          case "$a" in "$m"/*) hit="$m~$a"; break ;; esac
+        done
+      done
+      if [ -n "$hit" ]; then overlap_n=$((overlap_n+1)); overlap_list="$overlap_list ${ebr}(${hit})"; fi
+    done <<<"$entry_paths"
+    if [ "$overlap_n" -ge 2 ]; then
+      log_warn "핫스팟 WIP 경고 (차단 아님, META-0029): 같은 핫스팟을 편집 중인 활성 브랜치 ${overlap_n}개 —${overlap_list} (나 포함 $((overlap_n+1))개 → 동시 ≤ 2 권고 초과)"
+      log_warn "  §13.2.5-A: 머지 순서를 REGISTRY merge_order 에 사전 선언(순차 머지) · 당일 랜딩 분할 검토"
+    fi
+  fi
+
+  # 제거(Active 구간의 자기 블록만 — 재실행 멱등) + 삽입을 **단일 awk 패스**로 원자 rewrite.
+  # 동일 디렉터리 mktemp → 삽입 성공 검증 → mv (중간 실패 시 원본 무손상 — MAJOR-2).
+  local tmp
+  tmp="$(mktemp "$REGISTRY_FILE.XXXXXX")" || return 1
+  awk -v br="### $NEW_BRANCH" \
+      -v sid="${CLAUDE_SESSION_ID:-claude-session-$PPID}" \
+      -v ts="$(date +%Y-%m-%dT%H:%M:%S%z)" \
+      -v wt="$NEW_WORKTREE_PATH" \
+      -v hp="${HOT_PATHS:-<미선언>}" '
+    /^## Active$/ {
+      print; print ""
+      print br
+      print "- session_id: " sid
+      print "- opened_at: " ts
+      print "- worktree: " wt
+      print "- hot_paths: " hp
+      print "- merge_order: <미선언>"
+      act=1; next
+    }
+    skip && (/^### / || /^## /) {skip=0}
+    /^## Closed$/ {act=0}
+    act && $0 == br {skip=1; next}
+    skip {next}
+    {print}
+  ' "$REGISTRY_FILE" >"$tmp" || { rm -f "$tmp"; return 1; }
+  grep -qxF "### $NEW_BRANCH" "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$REGISTRY_FILE" || { rm -f "$tmp"; return 1; }
+  return 0
+}
+
+if [ "$DRY_RUN" -eq 0 ] && [ "$PRINT_ONLY" -eq 0 ]; then
+  if registry_record; then
+    log_info "REGISTRY entry 기록: $NEW_BRANCH ($REGISTRY_FILE)"
+  else
+    log_warn "REGISTRY 기록 실패 — cycle 진행에는 영향 없음 (수동 기록 가능: $REGISTRY_FILE)"
+  fi
+  exec 9>&- 2>/dev/null || true
 fi
 
 # ── 종료 보고 ─────────────────────────────────────────────────────────────
