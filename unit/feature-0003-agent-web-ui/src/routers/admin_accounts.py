@@ -295,35 +295,29 @@ WHERE Id = %s
     return JSONResponse({"ok": True, "account": payload})
 
 @router.post("/api/admin/accounts/{account_id}/password-reset")
-def admin_account_password_reset(account_id: int, request: Request) -> JSONResponse:
+def admin_account_password_reset(
+    account_id: int,
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch6: _require_account→account+conn 완전 DI. perm·self-reset 은 본문 유지.
+    # get_conn finally:close 가 _load_account_by_id·UPDATE·audit raise 시 conn leak 을 해소.
     if account_id <= 0:
         return app._json_error("invalid account_id", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(actor, "console.access") or not app._account_has_permission(actor, "console.manage"):
-        conn.close()
         return app._json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     if not app._account_has_permission(actor, "account.update"):
-        conn.close()
         return app._json_error("계정 수정 권한이 필요합니다.", 403)
     if int(actor["id"]) == int(account_id):
-        conn.close()
         return app._json_error(
             "자기 자신의 비밀번호는 이 흐름으로 초기화할 수 없습니다. 프로필 드로어의 비밀번호 변경을 사용하세요.",
             400,
         )
     target = app._load_account_by_id(conn, account_id)
     if not target:
-        conn.close()
         return app._json_error("account not found", 404)
     if target.get("deleted_at"):
-        conn.close()
         return app._json_error("삭제된 계정의 비밀번호는 초기화할 수 없습니다.", 400)
     # 12 byte URL-safe = 16 글자 이상의 임시 비밀번호 — _is_valid_password (10~128 자) 통과.
     while True:
@@ -347,7 +341,6 @@ def admin_account_password_reset(account_id: int, request: Request) -> JSONRespo
         )
     except Exception:
         cur.close()
-        conn.close()
         return app._json_error("비밀번호 초기화에 실패했습니다.", 500)
     cur.close()
     # TASK-0073 Phase A5: same-tx audit hook (PasswordHash / temporary_password 명시 redact).
@@ -370,9 +363,7 @@ def admin_account_password_reset(account_id: int, request: Request) -> JSONRespo
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({
         "ok": True,
         "account_id": int(account_id),

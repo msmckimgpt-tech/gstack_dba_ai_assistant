@@ -208,3 +208,6 @@ source_of_truth: true
 
 ## REV-20260712T040000-item11-batch5 [SKIPPED:panel-precleared] — admin_delete_account 완전 DI
 - Related: CHG-20260712T040000-item11-batch5. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _require_account 완전 DI, perm 본문 유지. runtime 10종+leak-fix. 게이트 4종 GREEN.
+
+## REV-20260712T041500-item11-batch6 [SKIPPED:panel-precleared] — admin_account_password_reset 완전 DI
+- Related: CHG-20260712T041500-item11-batch6. 승인: ROADMAP §6.1 + §6.3(§18.8 방법론). _require_account 완전 DI, perm·self-reset 본문 유지. runtime 11종+leak-fix. 게이트 4종 GREEN.
