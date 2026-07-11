@@ -2536,3 +2536,228 @@ def _db_rule_gate(request: Request, product_id: int, key: str):
         conn.close()
         return (None, None, None, app._json_error(f"datasource '{dsk}' 는 이 제품에 바인딩되지 않았습니다.", 400))
     return (conn, account, dsk, None)
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (6종). app 전역은 app.X 동적 참조. ====
+
+def _list_product_datasources(conn, product_id: int) -> list[dict[str, Any]]:
+    """TASK-0228 (1:N): 제품에 바인딩된 datasource 키 목록(primary 우선). 미이전/테이블 부재 시
+    레거시 단일 바인딩(WebProducts.DatasourceKey)으로 폴백 — 단일 바인딩 제품은 항상 1건 반환.
+
+    반환: [{"datasource_key": str, "is_primary": bool, "sort_order": int}, ...]
+    """
+    if product_id <= 0:
+        return []
+    out: list[dict[str, Any]] = []
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "SELECT LOWER(DatasourceKey), IsPrimary, SortOrder FROM WebProductDatasources "
+                "WHERE ProductId = %s ORDER BY IsPrimary DESC, SortOrder ASC, DatasourceKey ASC",
+                (int(product_id),),
+            )
+            for r in cur.fetchall() or []:
+                if r and r[0]:
+                    out.append({
+                        "datasource_key": str(r[0]).strip().lower(),
+                        "is_primary": bool(r[1]),
+                        "sort_order": int(r[2] or 0),
+                    })
+        except Exception:
+            out = []
+        if not out:
+            # 폴백: 레거시 단일 바인딩(join 미이전 또는 테이블 부재).
+            cur.execute("SELECT DatasourceKey FROM WebProducts WHERE Id = %s LIMIT 1", (int(product_id),))
+            r = cur.fetchone()
+            if r and r[0] and str(r[0]).strip():
+                out.append({"datasource_key": str(r[0]).strip().lower(), "is_primary": True, "sort_order": 0})
+    finally:
+        cur.close()
+    return out
+
+def _list_db_rule_pending(conn, product_id: int, ds_key: str) -> "list[dict]":
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT SchemaName AS schema_name, Reason AS reason, RuleId AS rule_id, DetectedAt AS detected_at "
+            "FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s ORDER BY SchemaName",
+            (int(product_id), str(ds_key).strip().lower()))
+        return [
+            {"schema_name": str(r.get("schema_name") or ""), "reason": str(r.get("reason") or ""),
+             "rule_id": (int(r["rule_id"]) if r.get("rule_id") is not None else None),
+             "detected_at": str(r.get("detected_at") or "")}
+            for r in (cur.fetchall() or [])
+        ]
+    except Exception:
+        return []
+    finally:
+        cur.close()
+
+def _insight_reset_ds_heads(scope_aliases, allow_null: bool) -> list[str]:
+    """ds_fact_key 접두 목록. scope alias 마다 `ds:{alias}:`, allow_null 이면 무접두("")도 포함.
+
+    TASK-0230 (M2): 단일 scope 가 아니라 alias 집합(hash/.env label) 전체를 처리해야 fingerprint 가
+    어느 세대 키로 쓰였든 모두 삭제된다(잔존 fingerprint → 재분석 skip 방지).
+    """
+    heads: list[str] = []
+    for alias in (scope_aliases or []):
+        a = str(alias or "").strip().lower()
+        if a:
+            heads.append(f"ds:{app._like_escape(a)}:")
+    if allow_null or not scope_aliases:
+        heads.append("")  # 무접두 (ds=None 레거시 기록)
+    # dedup, 순서 보존
+    seen: set[str] = set()
+    out: list[str] = []
+    for h in heads:
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out
+
+def _insight_reset_fact_key_patterns(db, scope_aliases=None, allow_null: bool = False, live_schemas=None) -> list[str]:
+    """DB `{db}` 의 insight fact_key 를 매칭하는 LIKE 패턴 목록 (ESCAPE '\\').
+
+    저장 키 suffix(config.ds_object_suffix):
+      - MySQL(db==schema):       `{db}`,  `{db}.{table}`
+      - MSSQL 3-tier:            `{db}.{schema}`,  `{db}.{schema}.{table}`
+      - MSSQL 2-tier(레거시):     `{schema}`,  `{schema}.{table}`  (catalog 없음 — live_schemas 로 보강)
+    TASK-0230 (M1/M2): scope alias 전체 + 라이브 schema 목록(MSSQL 2-tier 레거시 catalog-less 키 포함)을
+    커버한다. live_schemas 가 None/빈 경우 db 자체만(MySQL·3-tier) 패턴 생성(하위호환).
+
+    하위호환: scope_aliases 가 문자열(단일 scope)로 들어오면 list 로 승격.
+    """
+    if isinstance(scope_aliases, str):
+        scope_aliases = [scope_aliases]
+    db_l = str(db or "").strip().lower()
+    eq = app._like_escape(db_l)
+    pre = eq + "."
+    ds_heads = app._insight_reset_ds_heads(scope_aliases, allow_null)
+    # db 자체 토큰(MySQL schema == db, MSSQL 3-tier catalog == db) + MSSQL 2-tier 레거시 schema 토큰.
+    tokens: list[tuple[str, bool]] = [(eq, True)]  # (escaped, include_exact)
+    for s in (live_schemas or []):
+        s_l = str(s or "").strip().lower()
+        if s_l and s_l != db_l:
+            tokens.append((app._like_escape(s_l), True))
+    patterns: list[str] = []
+    for source in ("schema_insight", "table_insight"):
+        for head in ds_heads:
+            for tok, _exact in tokens:
+                patterns.append(f"{source}:{head}{tok}")       # 정확히 토큰 (schema 노드)
+                patterns.append(f"{source}:{head}{tok}.%")      # 토큰.<하위>
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in patterns:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+def _insight_reset_kv_key_patterns(db, scope_aliases=None, allow_null: bool = False, live_schemas=None) -> list[str]:
+    """DB `{db}` 의 insight KV(fingerprint/refresh_at/scan offset) 키 LIKE 패턴 목록.
+
+    저장 키(config.ds_scope_name / ds_fact_key):
+      - `{source}:{suffix}` 또는 `{source}:ds:{alias}:{suffix}` — schema_fp/table_fp/*_refresh_at (접두)
+      - `schema_instance_scan_offset:{schema}[:ds:{alias}]` (ds_scope_name 은 **접미** `:ds:{alias}`)
+    TASK-0230 (M1/M2): scope alias 전체 + 라이브 schema(MSSQL 2-tier 레거시) 커버.
+    """
+    if isinstance(scope_aliases, str):
+        scope_aliases = [scope_aliases]
+    db_l = str(db or "").strip().lower()
+    eq = app._like_escape(db_l)
+    ds_heads = app._insight_reset_ds_heads(scope_aliases, allow_null)
+    tokens: list[str] = [eq]
+    for s in (live_schemas or []):
+        s_l = str(s or "").strip().lower()
+        if s_l and s_l != db_l:
+            tokens.append(app._like_escape(s_l))
+    patterns: list[str] = []
+    # ds_fact_key 형식 (접두): schema_fp / table_fp / schema_insight_refresh_at / table_insight_refresh_at
+    for source in ("schema_fp", "table_fp", "schema_insight_refresh_at", "table_insight_refresh_at"):
+        for head in ds_heads:
+            for tok in tokens:
+                patterns.append(f"{source}:{head}{tok}")
+                patterns.append(f"{source}:{head}{tok}.%")
+    # ds_scope_name 형식 (접미): schema_instance_scan_offset:{schema}[:ds:{alias}]
+    ds_suffixes: list[str] = []
+    for alias in (scope_aliases or []):
+        a = str(alias or "").strip().lower()
+        if a:
+            ds_suffixes.append(f":ds:{app._like_escape(a)}")
+    if allow_null or not scope_aliases:
+        ds_suffixes.append("")  # 접미 없음 (ds=None)
+    for tail in ds_suffixes:
+        for tok in tokens:
+            patterns.append(f"schema_instance_scan_offset:{tok}{tail}")
+            patterns.append(f"schema_instance_scan_offset:{tok}.%{tail}")
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in patterns:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+def _attach_product_conn_status(conn, products: list[dict[str, Any]]) -> None:
+    """TASK-0261: 대화 화면 제품 목록에 datasource 연결(네트워크) 상태를 첨부한다(in-place).
+
+    conn-health-monitor(TASK-0250)가 백그라운드로 미리 계산한 per-datasource 상태를
+    재사용해 추가 probe 없이 즉시 표시한다. admin_list_datasources 와 동일 소스
+    (`conn_health.snapshot()` × `datasources.scope_key`).
+
+    각 product 의 `datasources[]` 항목마다 `conn_status`({status, elapsed_ms, checked_at})를
+    붙이고, product 레벨 `conn_status_overall` 에 바인딩들의 **최악 상태**를 집계한다
+    (conn-tristate 심각도: down > unstable > unknown > healthy — 하나라도 down→down,
+    하나라도 unstable→unstable, 모두 healthy→healthy). 좌표/비밀번호는 노출하지 않는다
+    (status/elapsed/checked_at 만 — datasource_public 마스킹과 동일).
+
+    conn_health 미가용·datasource 미해석 등은 graceful — status=unknown 으로 둔다.
+    바인딩이 없는 기본 단일 MySQL 제품은 status 무첨부(드롭업 dot 가 모드색 유지).
+    """
+    if not products:
+        return
+    try:
+        from shared import conn_health as _ch
+        _health = _ch.snapshot()
+    except Exception:
+        _health = {}
+    try:
+        from shared import datasources as _dsr
+    except Exception:
+        _dsr = None
+    # datasource_key(소문자) → scope_key 캐시(제품 간 동일 키 재해석 방지).
+    _sk_cache: dict[str, "str | None"] = {}
+
+    def _status_for_key(dskey: "str | None") -> "dict[str, Any]":
+        if not dskey or _dsr is None:
+            return {"status": "unknown", "elapsed_ms": None, "checked_at": None}
+        k = str(dskey).strip().lower()
+        if k not in _sk_cache:
+            try:
+                _ds = _dsr.resolve(conn, k)
+                _sk_cache[k] = _dsr.scope_key(_ds) if _ds else None
+            except Exception:
+                _sk_cache[k] = None
+        sk = _sk_cache[k]
+        h = _health.get(sk) if sk else None
+        if not h:
+            return {"status": "unknown", "elapsed_ms": None, "checked_at": None}
+        return {
+            "status": h.get("status") or "unknown",
+            "elapsed_ms": h.get("last_elapsed_ms"),
+            "checked_at": h.get("checked_at"),
+        }
+
+    _RANK = {"down": 4, "unstable": 3, "unknown": 2, "healthy": 1}
+    for p in products:
+        binds = p.get("datasources") if isinstance(p.get("datasources"), list) else []
+        worst = None  # (rank, status)
+        for b in binds:
+            st = _status_for_key(b.get("datasource_key"))
+            b["conn_status"] = st
+            r = _RANK.get(st["status"], 2)
+            if worst is None or r > worst[0]:
+                worst = (r, st["status"])
+        # 바인딩 없는 제품(기본 단일 MySQL)은 overall 무첨부 → 프론트가 모드색 유지.
+        p["conn_status_overall"] = (worst[1] if worst else None)

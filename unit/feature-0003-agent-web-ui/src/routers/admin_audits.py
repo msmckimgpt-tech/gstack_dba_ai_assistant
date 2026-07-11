@@ -640,3 +640,100 @@ def get_audit_event(event_id: int, request: Request) -> JSONResponse:
         return JSONResponse({"item": app._audit_row_to_dict(row), "scope": scope})
     finally:
         conn.close()
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
+
+def _seal_audit_chain(conn, *, batch: int = app._AUDIT_SEAL_BATCH) -> int:
+    """미봉인 커밋행을 Id 순으로 일괄 봉인(GET_LOCK 직렬화 → fork 방지). 봉인 행수 반환.
+
+    autocommit 연결 가정 — 모든 감사 INSERT 가 즉시 커밋되므로 별 연결에서 즉시 가시.
+    best-effort: 실패는 감사 write/응답을 막지 않는다(다음 seal 이 catch-up). 보유 GET_LOCK
+    은 finally 에서 RELEASE.
+    """
+    if not app.AGENT_AUDIT_ENABLED:
+        return 0
+    lock_cur = conn.cursor()
+    locked = False
+    sealed = 0
+    try:
+        lock_cur.execute("SELECT GET_LOCK(%s, %s)", (app._AUDIT_SEAL_LOCK_NAME, 5))
+        got = lock_cur.fetchone()
+        locked = bool(got and got[0] == 1)
+        if not locked:
+            return 0
+        dcur = conn.cursor(dictionary=True)
+        try:
+            # 체인 head = 마지막 봉인 EventHash. 없으면 최신 checkpoint, 그것도 없으면 genesis "".
+            dcur.execute(
+                "SELECT EventHash FROM WebAuditEvents WHERE EventHash IS NOT NULL ORDER BY Id DESC LIMIT 1"
+            )
+            r = dcur.fetchone()
+            prev_hash = str(r["EventHash"]) if r and r.get("EventHash") else ""
+            if not prev_hash:
+                dcur.execute(
+                    "SELECT CheckpointHash FROM WebAuditChainCheckpoint ORDER BY Id DESC LIMIT 1"
+                )
+                cp = dcur.fetchone()
+                prev_hash = str(cp["CheckpointHash"]) if cp and cp.get("CheckpointHash") else ""
+            dcur.execute(
+                f"SELECT {app._AUDIT_CHAIN_SELECT} FROM WebAuditEvents "
+                "WHERE EventHash IS NULL ORDER BY Id ASC LIMIT %s",
+                (int(batch),),
+            )
+            rows = dcur.fetchall() or []
+        finally:
+            dcur.close()
+        ucur = conn.cursor()
+        try:
+            for row in rows:
+                canonical = app._audit_canonical_string(row)
+                event_hash = app._audit_compute_hash(prev_hash, canonical)
+                # AND EventHash IS NULL 가드 (outside-voice MAJOR-1 흡수): 다른 연결이 이미 봉인한
+                # 행은 덮어쓰지 않는다(locking read 가 최신 커밋 버전 평가 → double-seal/fork 차단).
+                ucur.execute(
+                    "UPDATE WebAuditEvents SET EventHash = %s, PrevHash = %s "
+                    "WHERE Id = %s AND EventHash IS NULL",
+                    (event_hash, (prev_hash or None), int(row["Id"])),
+                )
+                if int(ucur.rowcount or 0) == 0:
+                    # 경쟁 연결이 먼저 봉인 — 그 행의 실제 EventHash 를 head 로 재동기화 후 계속.
+                    rcur = conn.cursor()
+                    try:
+                        rcur.execute("SELECT EventHash FROM WebAuditEvents WHERE Id = %s", (int(row["Id"]),))
+                        rr = rcur.fetchone()
+                        if rr and rr[0]:
+                            prev_hash = str(rr[0])
+                    finally:
+                        rcur.close()
+                    continue
+                prev_hash = event_hash
+                sealed += 1
+        finally:
+            ucur.close()
+        return sealed
+    except Exception:
+        return sealed
+    finally:
+        if locked:
+            try:
+                lock_cur.execute("SELECT RELEASE_LOCK(%s)", (app._AUDIT_SEAL_LOCK_NAME,))
+                lock_cur.fetchone()
+            except Exception:
+                pass
+        lock_cur.close()
+
+def _seal_audit_chain_drain(conn, *, max_iters: int = 10000) -> int:
+    """미봉인 backlog 전체를 봉인 — 단, 매 호출이 GET_LOCK 을 짧게(배치당) 잡았다 놓도록
+    `_seal_audit_chain(batch=_AUDIT_SEAL_BATCH)` 를 반복 호출(outside-voice MAJOR-4 흡수).
+
+    1회 거대 batch(=락 장기 점유 + 대량 fetchall)를 피해 verify/purge 의 lock starvation·메모리
+    폭증을 막는다. 배치보다 적게 봉인되면 drained 로 간주 종료. max_iters 안전 상한.
+    """
+    total = 0
+    for _ in range(max_iters):
+        n = app._seal_audit_chain(conn, batch=app._AUDIT_SEAL_BATCH)
+        total += int(n or 0)
+        if int(n or 0) < app._AUDIT_SEAL_BATCH:
+            break
+    return total

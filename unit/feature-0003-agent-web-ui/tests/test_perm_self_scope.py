@@ -19,7 +19,13 @@ import os
 import sys
 from typing import Any, Iterable
 
-_SRC = os.path.join(os.path.dirname(__file__), "..", "src", "app.py")
+# ITEM-10 p14: _enforce_* 2종은 routers/(admin_accounts·admin_roles) 로 이동 — 다중 파일 스캔.
+_SRC_DIR = os.path.join(os.path.dirname(__file__), "..", "src")
+_SRC_FILES = (
+    os.path.join(_SRC_DIR, "app.py"),
+    os.path.join(_SRC_DIR, "routers", "admin_accounts.py"),
+    os.path.join(_SRC_DIR, "routers", "admin_roles.py"),
+)
 _TARGETS = (
     "_actor_editable_permission_codes",
     "_enforce_override_self_scope",
@@ -28,26 +34,40 @@ _TARGETS = (
 )
 
 
+class _AppProxy:
+    """이동된 helper 의 `app.X` 동적 참조를 테스트 ns 로 위임하는 최소 shim."""
+
+    def __init__(self, ns: dict[str, Any]) -> None:
+        self._ns = ns
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._ns[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
 def _load_targets() -> dict[str, Any]:
-    """app.py 에서 대상 helper 함수의 실제 소스를 추출해 최소 namespace 에서 exec."""
-    tree = ast.parse(open(_SRC, encoding="utf-8").read())
-    wanted = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in _TARGETS
-    }
+    """src 에서 대상 helper 함수의 실제 소스를 추출해 최소 namespace 에서 exec."""
+    wanted: dict[str, ast.FunctionDef] = {}
+    for path in _SRC_FILES:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name in _TARGETS:
+                wanted.setdefault(node.name, node)
     missing = [name for name in _TARGETS if name not in wanted]
     if missing:
-        raise AssertionError(f"app.py 에서 helper 를 찾지 못함: {missing}")
+        raise AssertionError(f"src 에서 helper 를 찾지 못함: {missing}")
     module = ast.Module(body=[wanted[name] for name in _TARGETS], type_ignores=[])
     ast.fix_missing_locations(module)
-    # `_account_permissions` 는 cached `permissions` map 을 그대로 반환 (app.py:1197 cached branch).
+    # `_account_permissions` 는 cached `permissions` map 을 그대로 반환 (app.py cached branch).
     ns: dict[str, Any] = {
         "Any": Any,
         "Iterable": Iterable,
         "_account_permissions": lambda account: dict((account or {}).get("permissions") or {}),
     }
-    exec(compile(module, _SRC, "exec"), ns)  # noqa: S102 — 정본 소스 실행(테스트 격리)
+    ns["app"] = _AppProxy(ns)
+    exec(compile(module, _SRC_FILES[0], "exec"), ns)  # noqa: S102 — 정본 소스 실행(테스트 격리)
     return ns
 
 

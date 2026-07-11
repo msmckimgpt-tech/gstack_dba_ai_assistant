@@ -567,3 +567,87 @@ WHERE Id = %s
         return app._json_error(f"audit write failed: {audit_exc}", 500)
     conn.close()
     return JSONResponse({"ok": True, "account_id": int(account_id)})
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (3종). app 전역은 app.X 동적 참조. ====
+
+def _list_admin_accounts(conn) -> list[dict[str, app.Any]]:
+    rows = app._fetch_account_rows(
+        conn,
+        "1=1",
+        include_password=False,
+        order_sql="ORDER BY (a.DeletedAt IS NULL) DESC, a.IsActive DESC, a.CreatedAt DESC",
+    )
+    rows = app._decorate_account_rows(conn, rows)
+    if app.os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT owner_account_id, COUNT(*) FROM agent_runtime.core_conversations "
+                    "WHERE owner_account_id IS NOT NULL GROUP BY owner_account_id"
+                )
+                count_rows = pgcur.fetchall() or []
+            pg.close()
+        except Exception:
+            count_rows = []
+        conversation_counts = {int(oid): int(cnt or 0) for oid, cnt in count_rows if int(oid or 0) > 0}
+    else:
+        cur = conn.cursor()
+        cur.execute(
+            """
+SELECT owner_account_id, COUNT(*)
+FROM AgentCoreConversations
+WHERE owner_account_id IS NOT NULL
+GROUP BY owner_account_id
+            """
+        )
+        count_rows2 = cur.fetchall() or []
+        cur.close()
+        conversation_counts = {int(owner_id): int(count or 0) for owner_id, count in count_rows2 if int(owner_id or 0) > 0}
+    items: list[dict[str, app.Any]] = []
+    for row in rows:
+        # TASK-0098: admin context — 권한 정보 명시 포함.
+        payload = app._serialize_account(row, include_permissions=True) or {}
+        payload["conversation_count"] = conversation_counts.get(int(row.get("id") or 0), 0)
+        payload["permission_overrides"] = dict(row.get("permission_overrides") or {})
+        items.append(payload)
+    return items
+
+def _list_active_accounts(conn) -> list[dict[str, app.Any]]:
+    rows = app._fetch_account_rows(
+        conn,
+        "a.IsActive = 1 AND a.DeletedAt IS NULL",
+        include_password=False,
+    )
+    return app._decorate_account_rows(conn, rows)
+
+def _enforce_override_self_scope(
+    actor: dict[str, app.Any] | None,
+    submitted_overrides: dict[str, str] | None,
+    existing_overrides: dict[str, str] | None,
+) -> dict[str, str]:
+    """TASK-0300 (REQ-0287, 인가 §12.3): 관리자는 본인이 보유한 권한 범위 안에서만 계정
+    permission override 를 설정할 수 있다 — privilege escalation(자기 권한 초과 부여) 방지.
+
+    - ``submitted_overrides`` 는 ``_normalize_override_payload`` 결과(allow/deny 만, inherit 제거됨).
+    - 본인 미보유 권한에 allow/deny 를 설정하려 하면 ``ValueError`` → caller 가 403.
+      (요구사항 "숨김 처리 + 설정 불가": 미보유 권한은 allow·deny 모두 불가.)
+    - 본인 범위 **밖** 권한의 기존 override 는 보존(merge)한다. UI 가 그 권한 행을 숨겨
+      payload 에서 누락돼도 ``_set_account_overrides`` 의 delete-all-then-insert 로 삭제되지
+      않게 하는 데이터 무결성 가드다.
+    """
+    editable = app._actor_editable_permission_codes(actor)
+    submitted = dict(submitted_overrides or {})
+    existing = dict(existing_overrides or {})
+    escalating = sorted(code for code in submitted if code not in editable)
+    if escalating:
+        raise ValueError(
+            "본인이 보유하지 않은 권한은 설정할 수 없습니다: " + ", ".join(escalating)
+        )
+    merged: dict[str, str] = {
+        code: value for code, value in existing.items() if code not in editable
+    }
+    merged.update(submitted)
+    return merged

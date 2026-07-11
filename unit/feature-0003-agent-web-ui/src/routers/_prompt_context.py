@@ -1058,3 +1058,105 @@ LIMIT 1
         "updated_at": str(row.get("updated_at") or ""),
         "updated_by_account_id": int(row.get("updated_by_account_id") or 0) or None,
     }
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
+
+def _auto_prompt_eligible_product_ids(conn) -> list[int]:
+    """자동완성 후보 = 1회성 마커 미설정(AutoPromptGeneratedAt IS NULL) 제품 id.
+
+    프롬프트 입력 여부·분석률은 라이브 조회라 무거우므로 호출부(sweep)가 제품별로 추가 검사한다.
+    이미 자동완성된 제품(마커 보유)은 본 단계에서 영구 제외 — insight reset 후 분석률이 재상승해도
+    재실행되지 않는 1회성의 핵심 게이트.
+    """
+    cur = conn.cursor()
+    try:
+        try:
+            cur.execute(
+                "SELECT Id FROM WebProducts WHERE AutoPromptGeneratedAt IS NULL ORDER BY Id"
+            )
+        except Exception:
+            # 컬럼 부재(부트스트랩 직전) — _ensure_web_tables 의 멱등 ALTER 이후엔 항상 존재.
+            return []
+        return [int(r[0]) for r in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+
+def _auto_prompt_sweep_once() -> dict:
+    """후보 제품을 1회 sweep — 프롬프트 미입력 + 분석률>=임계 + 마커 미설정 → 자동완성.
+
+    반환: {scanned, generated, skipped, errors}. 라이브 DB/LLM 조회라 호출부(루프)가 간격을 둔다.
+    프롬프트 미입력 검사를 분석률(라이브 카탈로그 조회, 무거움)보다 **먼저** 수행해, 이미
+    프롬프트가 있는 제품의 불필요한 coverage 계산을 피한다.
+    """
+    log = logging.getLogger(__name__)
+    stats = {"scanned": 0, "generated": 0, "skipped": 0, "errors": 0}
+    try:
+        conn = app._connect_memory()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("auto_prompt sweep: memory 연결 실패 — skip cycle: %r", exc)
+        return stats
+    try:
+        try:
+            candidate_ids = app._auto_prompt_eligible_product_ids(conn)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("auto_prompt sweep: 후보 조회 실패: %r", exc)
+            return stats
+        if not candidate_ids:
+            return stats
+        import time as _t
+        now = _t.monotonic()
+        generated_this_cycle = 0
+        products = {int(p["id"]): p for p in app._list_products(conn, include_inactive=True)}
+        for pid in candidate_ids:
+            product = products.get(pid)
+            if not product:
+                continue
+            stats["scanned"] += 1
+            # 1) 프롬프트 미입력만 대상 (이미 있으면 자동완성 안 함).
+            if app._product_prompt_present(conn, pid):
+                stats["skipped"] += 1
+                continue
+            # 2) 실패 backoff — 직전 실패 제품은 backoff 창 동안 LLM 재호출 안 함(M1 비용 누수 차단).
+            with app._AUTO_PROMPT_FAIL_LOCK:
+                fail_until = app._AUTO_PROMPT_FAIL_UNTIL.get(pid, 0.0)
+            if fail_until > now:
+                stats["skipped"] += 1
+                continue
+            # 3) 분석률 — coverage API 와 동일 캐시(있으면 재사용, TTL 만료/부재 시 계산).
+            cache_key = (pid, product.get("datasource_key") or "")
+            cov = app._insight_cov_cache_get(cache_key)
+            if cov is None:
+                cov = app._compute_product_insight_coverage(conn, product)
+                app._insight_cov_cache_put(cache_key, cov)
+            pct = cov.get("pct")
+            if pct is None or float(pct) < app._AUTO_PROMPT_COVERAGE_THRESHOLD:
+                stats["skipped"] += 1
+                continue
+            # 4) cycle 당 생성 상한 — 비용 버스트 분산(M2). 남은 적격 제품은 다음 cycle 처리.
+            if app._AUTO_PROMPT_MAX_PER_CYCLE > 0 and generated_this_cycle >= app._AUTO_PROMPT_MAX_PER_CYCLE:
+                break
+            # 5) 자동완성·저장·마커.
+            res = app._autonomous_generate_product_prompt(pid)
+            status = res.get("status")
+            if status == "ok":
+                stats["generated"] += 1
+                generated_this_cycle += 1
+                with app._AUTO_PROMPT_FAIL_LOCK:
+                    app._AUTO_PROMPT_FAIL_UNTIL.pop(pid, None)
+            elif status in ("skip_present", "skip_marked"):
+                stats["skipped"] += 1
+                with app._AUTO_PROMPT_FAIL_LOCK:
+                    app._AUTO_PROMPT_FAIL_UNTIL.pop(pid, None)
+            else:  # no_llm / no_body / error — 매 cycle 재호출 방지 backoff (M1).
+                stats["errors"] += 1
+                with app._AUTO_PROMPT_FAIL_LOCK:
+                    app._AUTO_PROMPT_FAIL_UNTIL[pid] = now + app._AUTO_PROMPT_FAIL_BACKOFF_SEC
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    if stats["generated"] or stats["errors"]:
+        log.info("auto_prompt sweep 완료: %s", stats)
+    return stats

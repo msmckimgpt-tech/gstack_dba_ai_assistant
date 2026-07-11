@@ -12,6 +12,8 @@ from fastapi import Request
 from fastapi import UploadFile
 from fastapi.responses import JSONResponse
 
+from collections.abc import Iterable
+
 import app
 
 INCLUDE_ORDER = 180  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
@@ -411,3 +413,109 @@ async def admin_generate_role_prompt_stream(role_id: int, request: Request):
     return app._prompt_generate_stream_response(
         ctx, log_label="admin_generate_role_prompt_stream", log_ctx=f"role_id={role_id}"
     )
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (2종). app 전역은 app.X 동적 참조. ====
+
+def _list_roles(conn) -> list[dict[str, app.Any]]:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT
+    r.Id AS id,
+    r.RoleKey AS role_key,
+    r.Name AS role_name,
+    r.Description AS role_description,
+    r.IsActive AS is_active,
+    r.IsDefaultSignup AS is_default_signup,
+    r.IconObjectKey AS icon_object_key,
+    r.CreatedAt AS created_at,
+    r.UpdatedAt AS updated_at,
+    COUNT(CASE WHEN a.DeletedAt IS NULL THEN 1 END) AS member_count,
+    -- TASK-20260623T014626-quota-ui-relocate: 역할 기본 LLM 토큰 한도(역할 상세 화면 편집용).
+    (SELECT q.TokenLimit FROM WebRoleTokenQuotas q WHERE q.RoleId = r.Id AND q.QuotaType='daily' LIMIT 1) AS quota_daily,
+    (SELECT q.TokenLimit FROM WebRoleTokenQuotas q WHERE q.RoleId = r.Id AND q.QuotaType='monthly' LIMIT 1) AS quota_monthly
+FROM WebRoles r
+LEFT JOIN WebAccounts a
+  ON a.RoleId = r.Id
+GROUP BY
+    r.Id,
+    r.RoleKey,
+    r.Name,
+    r.Description,
+    r.IsActive,
+    r.IsDefaultSignup,
+    r.IconObjectKey,
+    r.CreatedAt,
+    r.UpdatedAt
+ORDER BY
+    r.IsDefaultSignup DESC,
+    r.CreatedAt ASC
+        """
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    role_permission_map = app._load_role_permission_codes(
+        conn,
+        [int(row.get("id") or 0) for row in rows if int(row.get("id") or 0) > 0],
+    )
+    # TASK-0052 Phase 1B: catalog 1 회 조회 후 모든 role row 에 dynamic codes 까지 포함된 permissions 맵 build.
+    _catalog_defs, catalog_codes, _catalog_map = app._resolve_permission_catalog(conn)
+    items: list[dict[str, app.Any]] = []
+    for row in rows:
+        role_id = int(row.get("id") or 0)
+        granted_codes = role_permission_map.get(role_id, set())
+        items.append(
+            {
+                "id": role_id,
+                "key": str(row.get("role_key") or ""),
+                "name": str(row.get("role_name") or ""),
+                "description": str(row.get("role_description") or ""),
+                "is_active": bool(row.get("is_active")),
+                "is_default_signup": bool(row.get("is_default_signup")),
+                # TASK-0293: 역할 아이콘 URL. 설정 시 /api/roles/<id>/icon + 캐시버스터.
+                # NULL=미설정 → 프론트가 role_key 시드 Identicon 렌더.
+                "icon_url": app._role_icon_url_for(role_id, row.get("icon_object_key")),
+                "created_at": str(row.get("created_at") or "") or None,
+                "updated_at": str(row.get("updated_at") or "") or None,
+                "member_count": int(row.get("member_count") or 0),
+                "permission_codes": sorted(granted_codes),
+                "permissions": {code: code in granted_codes for code in catalog_codes},
+                # TASK-20260623T014626-quota-ui-relocate: 역할 기본 LLM 토큰 한도(null=미설정 무제한).
+                "quota_daily": int(row["quota_daily"]) if row.get("quota_daily") is not None else None,
+                "quota_monthly": int(row["quota_monthly"]) if row.get("quota_monthly") is not None else None,
+            }
+        )
+    return items
+
+def _enforce_role_permission_self_scope(
+    actor: dict[str, app.Any] | None,
+    submitted_codes: "Iterable[str] | None",
+    current_codes: "Iterable[str] | None",
+) -> set[str]:
+    """TASK-0300 (REQ-0287): 역할 permission_codes 편집의 self-scope 가드 — privilege
+    escalation 방지(역할 경유 우회 차단).
+
+    - 본인 미보유 권한을 역할에 **신규 부여**(added = submitted − current)하면 ``ValueError`` → 403.
+    - 본인 범위 밖의 기존 역할 권한은 보존(merge): UI 가 숨겨 payload 에서 누락돼도
+      ``_set_role_permissions`` 의 delete-all-then-insert 로 제거되지 않게 한다. 즉 이미 부여돼
+      있던 고권한을 "본인이 보유하지 않는다"는 이유로 임의 회수하지도 못한다(보존만).
+
+    NOTE(의도된 비대칭 — 계정 override 의 ``_enforce_override_self_scope`` 와 다름): 역할은
+    permission_codes 가 flat set 이라 이미 부여된 미보유 code 를 다시 제출해도 added 가 아니므로
+    무해한 no-op (차단 X). 반면 계정 override 는 allow/deny **값**을 실어 미보유 code 제출 자체가
+    의심 신호라 `submitted` 전체를 검사한다. 두 가드를 함부로 "통일" 하지 말 것.
+    """
+    editable = app._actor_editable_permission_codes(actor)
+    submitted = {str(c) for c in (submitted_codes or set())}
+    current = {str(c) for c in (current_codes or set())}
+    illegal = sorted(code for code in (submitted - current) if code not in editable)
+    if illegal:
+        raise ValueError(
+            "본인이 보유하지 않은 권한은 역할에 부여할 수 없습니다: " + ", ".join(illegal)
+        )
+    merged = set(submitted)
+    for code in current:
+        if code not in editable:
+            merged.add(code)
+    return merged

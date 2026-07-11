@@ -258,3 +258,8 @@ source_of_truth: true
 ## 20260711T2056-item10-routers-p13 — _load_/_resolve_/_parse_/_db_rule_ 32종(1,101줄) 도메인 이동 (parallel-work-structure ITEM-10)
 - [x] _conv_store 22종(run/steps/attachment/parse 공용 데이터층) · admin_products 6종(db_rule 클러스터) · admin_settings 2종 · admin_console 1종 · _prompt_context 1종. 패치 2종(_resolve_product_insight_scope 3×·_resolve_session_default_model 2×) KEEP. app.py 9,824→8,723.
 - [x] 학습: @app.on_event 데코레이터 함수(_reconcile_orphaned_runs_on_startup)는 lifecycle 등록 시점이 바뀌므로 이동 금지 — 추출기에 app-참조 데코레이터 가드 추가, 해당 1종 KEEP. 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
+
+## 20260711T2115-item10-routers-p14 — oauth/login/dash/conversation/list/build 등 65종(1,749줄) 대형 sweep (parallel-work-structure ITEM-10)
+- [x] auth 18종(_oauth_ 12+_login_ 6) · _conv_store 21종(conversation/mark/cleanup/build/attach/save) · admin_console 9종(_dash_ 8+pref) · admin_products 6종 · admin_accounts 3 · admin_audits 2(_seal_) · admin_roles 2 · admin_settings 1 · _bootstrap_schema 1 · _prompt_context 2(auto-prompt). 패치 12종 KEEP. app.py 8,723→6,974(-1,749 / 누적 -65%).
+- [x] 학습: ①module-load 시점 보안 게이트(_enforce_audit_prod_gate, top-level 호출)는 이동 금지 — top-level 참조 가드가 사전 적발·KEEP ②Assign 타깃 walk 의 Load-ctx Name(`X[k]=v` 의 X) local 오분류 수정(Store-ctx 필터) ③문자열 annotation("Iterable[...]")은 AST 재작성 불가 → 타깃 모듈 import 주입. 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
+- [x] source-contract 테스트 retarget(확립 선례 3번째): test_perm_self_scope 를 다중 파일 스캔(app.py+admin_accounts+admin_roles)+_AppProxy(app.X→ns 위임) 로 전환 — 정본 소스 exec 방식 유지.
