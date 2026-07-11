@@ -19,10 +19,140 @@ from fastapi import UploadFile
 from fastapi.responses import JSONResponse
 from typing import Any
 
+import time
 import app
 
 INCLUDE_ORDER = 210  # 등록 순서 고정 — 2026-07-10 현행 include 순서 스냅샷 (ITEM-05, 순서 변경 금지)
 router = APIRouter()
+
+
+# ITEM-10 routers-p11 이동분.
+def _autonomous_generate_product_prompt(product_id: int) -> dict:
+    """제품 1건의 프롬프트를 무인 자동완성·저장하고 1회성 마커를 기록한다.
+
+    호출 전 조건(프롬프트 미입력 + 분석률>=임계 + 마커 미설정)은 sweep 이 검사하지만, 저장
+    직전 마커 행을 `SELECT ... FOR UPDATE` 로 잠그고 '마커 미설정 + 프롬프트 미입력'을 재검사한다
+    (LLM 호출(수십초) 중 수동 입력/경합 보호 — TOCTOU). `app._connect_memory` 는 autocommit=True 라
+    부분 commit 위험이 있어, 저장 동안만 `autocommit=False` 로 전환해 upsert+마커+audit 를 **단일
+    tx** 로 commit 한다(부분 실패 시 rollback → 마커/프롬프트 정합 = 1회성 불변식 보호), finally 환원.
+
+    반환: {status, product_id, ...}.
+      status ∈ {ok, skip_present, skip_marked, no_llm, no_body, error}.
+    """
+    log = logging.getLogger(__name__)
+
+    # 1) 조립 (request-less). 제품 부재/LLM 클라이언트 부재면 skip(마커 미설정 → 다음 cycle 재시도).
+    error, ctx = app._assemble_product_prompt_llm_request(int(product_id))
+    if error is not None:
+        code = int(getattr(error, "status_code", 0) or 0)
+        return {
+            "status": "no_llm" if code == 503 else "error",
+            "product_id": product_id,
+            "reason": f"assemble:{code}",
+        }
+
+    # 2) LLM 호출 (동기 — sweep 은 daemon thread 컨텍스트라 이벤트 루프 블로킹 없음).
+    try:
+        _aiops_t0 = time.perf_counter_ns()
+        resp = ctx["openai_client"].chat.completions.create(**ctx["create_kwargs"])
+        # AI 운영 관제 계측(TASK-AIOPS): daemon thread 라 그대로 기록(이벤트 루프 무영향).
+        # system actor → conversation_id=None 명시(cfg 전역 race 차단).
+        try:
+            from modules.llm import _record_llm_usage
+            _record_llm_usage(
+                str(ctx.get("llm_model") or ""), "prompt_gen", resp,
+                conversation_id=None,
+                latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+            )
+        except Exception:
+            pass
+        choice = resp.choices[0]
+        generated = (choice.message.content or "").strip()
+        truncated = getattr(choice, "finish_reason", None) == "length"
+    except Exception as exc:  # noqa: BLE001 — 어떤 LLM 오류든 skip(다음 cycle 재시도)
+        log.warning("auto_prompt LLM 생성 실패 product_id=%s err=%r", product_id, exc)
+        return {"status": "error", "product_id": product_id, "reason": "llm_failed"}
+
+    if not generated:
+        return {"status": "no_body", "product_id": product_id, "reason": "empty"}
+    if truncated:
+        log.warning(
+            "auto_prompt 본문 잘림(finish_reason=length) product_id=%s model=%s — 그대로 저장",
+            product_id, ctx.get("llm_model"),
+        )
+
+    # 3) 저장 — 마커 행 FOR UPDATE 잠금 + 재검사 후 upsert+마커+audit 를 단일 명시 tx 로.
+    conn = app._connect_memory()
+    try:
+        conn.autocommit = False  # app._connect_memory 기본 autocommit=True → 부분 commit 방지(B1).
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT AutoPromptGeneratedAt FROM WebProducts WHERE Id = %s FOR UPDATE",
+            (int(product_id),),
+        )
+        mrow = cur.fetchone()
+        cur.close()
+        if mrow is None:
+            conn.rollback()
+            return {"status": "error", "product_id": product_id, "reason": "product_gone"}
+        if mrow[0] is not None:
+            conn.rollback()
+            return {"status": "skip_marked", "product_id": product_id}
+        if app._product_prompt_present(conn, product_id):
+            conn.rollback()
+            return {"status": "skip_present", "product_id": product_id}
+
+        app._upsert_system_prompt(
+            conn,
+            scope="product",
+            content=generated,
+            product_id=int(product_id),
+            updated_by_account_id=None,  # system 주체
+        )
+        cur2 = conn.cursor()
+        cur2.execute(
+            "UPDATE WebProducts SET AutoPromptGeneratedAt = UTC_TIMESTAMP() WHERE Id = %s",
+            (int(product_id),),
+        )
+        cur2.close()
+        # audit (system actor) — 같은 tx, commit 시 함께 기록. 실패해도 본 흐름 유지.
+        try:
+            app.record_audit_event(
+                conn,
+                actor={"actor_type": "system"},
+                action="admin.product.prompt.autogenerate",
+                resource_type="product",
+                resource_id=str(product_id),
+                change_json={
+                    "trigger": "insight_coverage_threshold",
+                    "threshold": app._AUTO_PROMPT_COVERAGE_THRESHOLD,
+                    "content_len": len(generated),
+                    "truncated": truncated,
+                    "grounded": bool(ctx.get("meta_base", {}).get("grounded")),
+                },
+            )
+        except Exception as aexc:  # noqa: BLE001
+            log.warning("auto_prompt audit 기록 실패(무시) product_id=%s err=%r", product_id, aexc)
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        log.warning("auto_prompt 저장 실패 product_id=%s err=%r", product_id, exc)
+        return {"status": "error", "product_id": product_id, "reason": "save_failed"}
+    finally:
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
+        conn.close()
+
+    log.info(
+        "auto_prompt 자동완성 저장 완료 product_id=%s content_len=%s (threshold=%s%%)",
+        product_id, len(generated), app._AUTO_PROMPT_COVERAGE_THRESHOLD,
+    )
+    return {"status": "ok", "product_id": product_id, "content_len": len(generated)}
 
 
 # ITEM-10 routers-p9: 제품 인사이트 계산 헬퍼 이동(app.X 동적 — coverage 는 setattr 1× 패치 대상이나 클러스터 내부 호출 0 = 관통 표면 없음).

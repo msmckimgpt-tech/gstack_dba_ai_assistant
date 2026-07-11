@@ -9,7 +9,9 @@ routers/__init__.register_all 의 자동 등록에서 제외된다(라우트 없
 `app._collect_*`/`app._assemble_*` 참조(라우터·테스트·app 내부)를 보존한다.
 """
 
+import asyncio
 import logging
+import time
 from typing import Any
 
 from fastapi import Request
@@ -888,3 +890,126 @@ async def _collect_account_prompt_context(product_id: "int | None", request: Req
     finally:
         conn.close()
     return app._assemble_account_prompt_llm_request(acc_id, role_id, int(product_id) if product_id else None)
+
+
+# ── ITEM-10 p11 ──
+
+def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str):
+    """자동작성 LLM 토큰 스트리밍(SSE) 코어 — product/role/account 엔드포인트 공유.
+
+    LLM stream(동기 generator)은 단일 uvicorn 이벤트 루프를 막지 않도록 **별 스레드 +
+    asyncio.Queue 브릿지**로 소비한다. 인증·수집은 호출부에서 이 함수 진입 **전**에 완료
+    (실패 시 JSON 403/404/503, SSE 미진입).
+
+    SSE event: progress(stage/label) → token(text 증분, 다수) → done(prompt+meta) | error.
+    """
+    openai_client = ctx["openai_client"]
+    create_kwargs = ctx["create_kwargs"]
+    meta_base = ctx["meta_base"]
+    llm_model = ctx["llm_model"]
+    _mt = ctx["max_tokens"]
+
+    async def event_stream():
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        SENTINEL = object()
+
+        def produce():
+            # 별 스레드: 동기 LLM stream 을 iterate 하며 call_soon_threadsafe 로 큐 적재.
+            # loop 가 닫혔거나 client 가 끊긴 경우 call_soon_threadsafe 가 예외 → 무시(누수 방지).
+            def _emit(item):
+                try:
+                    loop.call_soon_threadsafe(q.put_nowait, item)
+                except Exception:
+                    pass
+            # AI 운영 관제 계측(TASK-AIOPS): usage 는 choices=[] 인 마지막 청크로 오므로
+            # include_usage 로 요청하고 choices 가드 앞에서 선포착 → 스트림 완료 후 1회 기록.
+            # produce() 는 executor 스레드에서 도므로 회계 PG I/O 가 이벤트 루프를 막지 않는다.
+            _aiops_t0 = time.perf_counter_ns()
+            _aiops_usage = None
+            _aiops_served = None
+            try:
+                try:
+                    stream = openai_client.chat.completions.create(
+                        **create_kwargs, stream=True, stream_options={"include_usage": True}
+                    )
+                except Exception:
+                    # AI 운영 관제 계측: stream_options(include_usage)를 거부하는 SDK/게이트웨이
+                    # (TypeError 또는 400)로부터 프롬프트 자동작성 스트리밍 기능을 보전 — 계측만 포기하고
+                    # stream_options 없이 재시도. 재시도도 실패하면 외곽 except 가 SSE error 로 전달.
+                    stream = openai_client.chat.completions.create(**create_kwargs, stream=True)
+                for chunk in stream:
+                    u = getattr(chunk, "usage", None)
+                    if u is not None:
+                        _aiops_usage = u
+                        _rm = getattr(chunk, "model", None)
+                        if _rm:
+                            _aiops_served = _rm
+                    if not getattr(chunk, "choices", None):
+                        continue
+                    ch = chunk.choices[0]
+                    delta = getattr(getattr(ch, "delta", None), "content", None)
+                    if delta:
+                        _emit(("token", delta))
+                    fr = getattr(ch, "finish_reason", None)
+                    if fr is not None:
+                        _emit(("finish", fr))
+            except Exception as e:  # noqa: BLE001 — 어떤 LLM 오류든 SSE error 로 전달
+                _emit(("error", str(e)))
+            finally:
+                # include_usage 미지원 provider 는 _aiops_usage=None → 기록 스킵(정직 폴백).
+                if _aiops_usage is not None:
+                    try:
+                        from modules.llm import _record_llm_usage
+                        from types import SimpleNamespace
+                        _shim = SimpleNamespace(
+                            usage=_aiops_usage,
+                            model=_aiops_served or str(llm_model or ""),
+                        )
+                        _record_llm_usage(
+                            str(llm_model or ""), "prompt_gen", _shim, conversation_id=None,
+                            latency_ms=int((time.perf_counter_ns() - _aiops_t0) // 1_000_000),
+                        )
+                    except Exception:
+                        pass
+                _emit(("__end__", SENTINEL))
+
+        # 진행 단계 표면화(수집은 이미 끝났으므로 즉시 generating 으로). 사용자에게 "멈춤 아님" 신호.
+        yield app._sse_pack("progress", {"stage": "generating", "label": "AI가 프롬프트 작성 중…"})
+
+        loop.run_in_executor(None, produce)
+
+        accumulated: list[str] = []
+        truncated = False
+        error_msg = None
+        while True:
+            kind, val = await q.get()
+            if kind == "token":
+                accumulated.append(val)
+                yield app._sse_pack("token", {"text": val})
+            elif kind == "finish":
+                truncated = (val == "length")
+            elif kind == "error":
+                error_msg = val
+            elif val is SENTINEL:
+                break
+
+        if error_msg is not None:
+            yield app._sse_pack("error", {"error": f"LLM 생성 실패: {error_msg}"})
+            return
+
+        if truncated:
+            logging.getLogger(__name__).warning(
+                "%s truncated (finish_reason=length, model=%s, max_tokens=%s, %s)",
+                log_label, llm_model, _mt, log_ctx,
+            )
+        yield app._sse_pack("done", {
+            "prompt": "".join(accumulated).strip(),
+            "meta": {**meta_base, "truncated": truncated},
+        })
+
+    return app.StreamingResponse(
+        app._counted_stream(event_stream()),  # feature-0014: 무중단 배포 pre-drain 용 스트림 카운트
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

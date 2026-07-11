@@ -246,3 +246,7 @@ source_of_truth: true
 ## 20260711T2022-item10-routers-p10 — 스키마/마이그레이션/시드 32종(1,471줄) → _bootstrap_schema (parallel-work-structure ITEM-10)
 - [x] _ensure_*/_migrate_*/_seed_* 잔여 일괄(런타임 성격 5종 제외: _ensure_conversation_row·_ensure_memory_runtime_ready·_ensure_owner_membership·_ensure_management_survivor_* — 후속 도메인 배치). setattr 0 sweep · getsource 6종은 함수객체 기준이라 rebind 생존(b3 패널 실증 계보). app.py 12,123→10,716(누적 **-8,934 / -45%**).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821 · py_compile · 전 스위트 pytest rc=0
+
+## 20260711T2027-item10-routers-p11 — ask 디스패치·프롬프트 생성·usage 5종(597줄) 도메인 분산 이동 (parallel-work-structure ITEM-10)
+- [x] _dispatch_ask_run_worker·_prepare_text_inline_attachments→_conv_store · _prompt_generate_stream_response→_prompt_context · _autonomous_generate_product_prompt→admin_products · _query_usage_conversations→admin_usage(setattr 1× — 단독 이동·rebind 관통 ✓). AnnAssign 상수 누락 1건(_AUTO_PROMPT_COVERAGE_THRESHOLD) 수기 프리픽스 — 추출기 개선 노트. app.py 10,716→10,132(누적 **-9,518 / -48%**).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821(stdlib 3모듈 보강) · py_compile · 전 스위트 pytest rc=0

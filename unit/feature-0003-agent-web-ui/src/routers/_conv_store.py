@@ -5,10 +5,12 @@ routers.register_all 자동 등록에서 제외. app 전역은 `app.X` 동적 �
 app.py 꼬리 rebind 가 기존 `app._conv_*`·app 내부 bare 호출을 보존한다.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
+import time
 import uuid
 from typing import Any
 
@@ -2618,3 +2620,264 @@ def _prepare_vision_inline_images(
         return (None, 0, [])
 
     return (path, len(inline_entries), audit_attachments)
+
+
+# ── ITEM-10 p11 ──
+
+async def _dispatch_ask_run_worker(*, conn, account, conv_id, run_kwargs, request=None) -> dict[str, Any]:
+    from shared.db import _pg_connect
+    from modules import ask_jobs as _aj
+    from shared.config import AGENT_ASK_WORKER_STALE_SEC
+
+    account_id = int(account["id"])
+    if not conv_id:
+        return {"error": "대화 컨텍스트를 확인할 수 없습니다.", "conversation_id": "",
+                "_http_status": 400}
+
+    # readiness gate (M7) — 살아있는 worker 없으면 무한 대기 대신 즉시 503.
+    if not app._ask_worker_ready(conn):
+        return {"error": "요청 처리 워커가 일시적으로 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.",
+                "conversation_id": conv_id, "_http_status": 503}
+
+    # enqueue payload = run_agent kwargs 13개 (conv_file/temperature/api_key/output_mode 제외).
+    # gc-ask-sender-attrib: sender_username(그룹 발신자 귀속)도 worker 경로로 동등 전달 — 미포함 시
+    # worker mode 에서만 발신자 미러 meta 가 누락돼 inproc 와 동작이 갈린다(_payload_to_kwargs 복원).
+    payload = {
+        "user_message": run_kwargs.get("user_message", ""),
+        "conversation_id": conv_id,
+        "model": run_kwargs.get("model"),
+        "product_id": run_kwargs.get("product_id"),
+        "role_id": run_kwargs.get("role_id"),
+        "account_id": account_id,
+        "sender_username": run_kwargs.get("sender_username"),
+        "allowed_schemas": run_kwargs.get("allowed_schemas"),
+        "product_mode": run_kwargs.get("product_mode", "pinned"),
+        "attachment_ids": run_kwargs.get("attachment_ids") or [],
+        "new_attachment_ids": run_kwargs.get("new_attachment_ids") or [],
+        "image_inline_path": run_kwargs.get("image_inline_path"),
+        "text_inline_path": run_kwargs.get("text_inline_path"),
+        "reasoning_level": run_kwargs.get("reasoning_level"),  # feature-0003: 추론 강도(worker 경로 패리티)
+    }
+
+    _user_message = payload.get("user_message", "")
+
+    def _enqueue() -> int | None:
+        pg = _pg_connect()
+        try:
+            # 멱등성(ask-dedup-idempotency): 워커 모드 /api/ask 는 long-poll 로 연결을 수십
+            # 초~분 잡으므로, web 재배포/프록시 EOF 로 그 연결이 끊겨 사용자가 같은 메시지를
+            # 재전송하면 두 번째 run 이 떠 요청·답변이 2회 처리되던 결함이 있었다(중복 전송).
+            # 같은 (conv, account, user_message) 로 활성(pending/running) job 이 이미 있으면
+            # 새 job 을 만들지 않고 그 job_id 를 반환 → 아래 attach 루프가 기존 run 에 붙어
+            # 동일 결과를 동기 응답한다. 사전 검사가 흔한 순차 재전송(끊김→재전송, 수백 ms~수십 s
+            # 간격, 첫 job 이미 commit)을 조기 흡수하고, enqueue 의 dedup_message NOT EXISTS 가
+            # *commit 된 중복* 에 대한 atomic backstop 이다(완전 동시 sub-ms 충돌까지 막으려면
+            # partial unique index 가 필요 — 관측된 결함은 순차라 현 범위로 충분).
+            try:
+                _dup = _aj.find_active_dup_ask_job(
+                    pg, conversation_id=conv_id, account_id=account_id,
+                    user_message=_user_message,
+                    stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                )
+            except Exception:
+                _dup = None
+            if _dup is not None:
+                logging.getLogger(__name__).info(
+                    "ask-dedup: 활성 중복 ask_job 재사용 conv=%s job=%s (새 run 미생성)",
+                    conv_id, _dup,
+                )
+                # 기존 run 의 KV 상태/run_id 를 보존 — 새 sentinel 로 덮어쓰지 않는다.
+                return _dup
+            # enqueue~claim 갭에도 프런트가 '처리중' 을 보도록 last_status 선기록(현행 race
+            # 가드와 동등). worker 가 claim 시 run_id 와 함께 다시 processing 기록.
+            # TASK-0241: 선기록의 last_status_run_id 를 직전 run(취소된 run 포함)이 아닌 *새 sentinel*
+            # 으로 박는다. run_id 없이 쓰면 KV 의 run_id 가 직전(취소된) run 으로 남아, orphan 의
+            # terminal canceled write 가 app.set_run_status(only_if_current_run) 가드를 우회해 이 새 요청의
+            # processing 을 canceled 로 클로버한다(BLOCKER). sentinel(≠직전 run_id, 비어있지 않음)이면
+            # 가드가 정확히 skip 한다. worker 가 claim 후 실제 run_id 로 (R_new, processing) 를 무조건
+            # 덮어쓴다(agent_core 2472) — sentinel 은 갭 동안만 존재하는 가교다.
+            try:
+                _enq_sentinel = "enqpre-" + uuid.uuid4().hex
+                app.set_run_status(conn, conv_id, "processing", run_id=_enq_sentinel)
+            except Exception:
+                pass
+            _jid = _aj.enqueue_ask_job(
+                pg, conversation_id=conv_id, run_id=None, account_id=account_id,
+                payload=payload, account_limit=app.WEB_PARALLEL_LIMIT,
+                stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                dedup_message=_user_message,
+            )
+            if _jid is not None:
+                return _jid
+            # INSERT 억제됨 — 슬롯 가득(429) vs dedup race(기존 attach) 구분. 사전 검사~enqueue
+            # 사이에 동시 요청이 막 commit 한 중복일 수 있으므로 한 번 더 조회한다.
+            try:
+                return _aj.find_active_dup_ask_job(
+                    pg, conversation_id=conv_id, account_id=account_id,
+                    user_message=_user_message,
+                    stale_seconds=int(AGENT_ASK_WORKER_STALE_SEC),
+                )
+            except Exception:
+                return None
+        finally:
+            try:
+                pg.close()
+            except Exception:
+                pass
+
+    try:
+        job_id = await asyncio.to_thread(_enqueue)
+    except Exception as exc:
+        return {"error": f"요청 큐 등록에 실패했습니다: {exc}", "conversation_id": conv_id,
+                "_http_status": 500}
+    if job_id is None:
+        return {"error": "동시 요청 제한에 도달했습니다. 잠시 후 다시 시도해주세요.",
+                "conversation_id": conv_id, "_http_status": 429}
+
+    # 내부 attach: KV last_status 가 terminal 될 때까지 long-poll. run budget 보다 길게
+    # 대기(stale + margin) — to_thread 가 full run 을 await 하던 것과 동일하게 동기 블록.
+    max_wait = int(AGENT_ASK_WORKER_STALE_SEC) + 30
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + max_wait
+    while loop.time() < deadline:
+        # TASK-0241: 클라이언트가 "중단" 으로 이 /api/ask fetch 를 abort 하면 attach 를 즉시 끝내
+        # per-account 웹 슬롯(_acquire_request_slot)을 곧바로 반납한다 → 취소 직후 재요청이 슬롯에
+        # 막히지 않는다. is_disconnected 미지원/예외 환경은 best-effort(아래 job/KV terminal 이 backstop).
+        if request is not None:
+            try:
+                if await request.is_disconnected():
+                    break
+            except Exception:
+                pass
+        try:
+            snap = await asyncio.to_thread(app._build_ask_status_snapshot, conn, conv_id)
+        except Exception:
+            snap = None
+        if snap and (str(snap.get("raw_status") or "") in app._ASK_TERMINAL_STATUSES
+                     or snap.get("is_stale")):
+            break
+        # TASK-0241: KV last_status 외에 *이 job 자체* 의 terminal 도 종료 조건으로 둔다. 사용자가
+        # 취소 후 같은 대화에 즉시 재요청하면 KV last_status 는 새 run 이 인계(processing)하고
+        # orphan 의 canceled write 는 supersede 가드로 건너뛰어져, 이 attach 가 자기 job 의 종료를
+        # 영영 못 보고 max_wait 까지 슬롯을 점유할 수 있다. job_id 로 직접 terminal 을 확인해 attach
+        # 수명을 자기 job 수명에 정확히 묶는다(슬롯 누수 차단).
+        try:
+            _job_status = await asyncio.to_thread(app._get_ask_job_status, job_id)
+        except Exception:
+            _job_status = None
+        if _job_status in app._ASK_TERMINAL_STATUSES:
+            break
+        await asyncio.sleep(0.5)
+
+    return await asyncio.to_thread(app._build_worker_agent_result, job_id, conv_id)
+
+def _prepare_text_inline_attachments(
+    conn,
+    account_id: int,
+    attachment_ids: list[int],
+    *,
+    conversation_id: str | None = None,
+) -> str | None:
+    """text kind 첨부파일의 raw content 를 MinIO 에서 읽어 임시 JSON file 저장.
+
+    Returns: 임시 file path (env 로 전달) 또는 None (text 파일 없음 / 오류).
+    성공 시 caller 는 env["ATTACHMENT_TEXT_INLINE_PATH"] 를 설정하고,
+    LLM 호출 완료 후 _cleanup_text_inline(path) 로 정리해야 한다.
+    """
+    if not attachment_ids:
+        return None
+    try:
+        from web.modules import storage_minio
+    except (ImportError, Exception):
+        return None
+
+    # TASK-0277: read cutover — PG 우선(IDOR AccountId 가드 동형), 실패 시 MySQL 폴백.
+    rows = None
+    try:
+        from web.modules import attachment_pg_mirror as _apm
+        if _apm.read_pg_enabled():
+            rows = _apm.pg_select_text_inline(conversation_id, int(account_id), attachment_ids, app._TEXT_INLINE_COUNT_CAP)
+    except Exception:
+        rows = None
+        logging.getLogger(__name__).warning(
+            "_prepare_text_inline_attachments: PG read failed → MySQL fallback", exc_info=True)
+    if rows is None:
+        try:
+            cur = conn.cursor(dictionary=True)
+            placeholders = ", ".join(["%s"] * len(attachment_ids))
+            # TASK-0284: ConversationId 스코프(대화 접근권은 ask 핸들러가 게이트), 미전달 시 AccountId 폴백.
+            if conversation_id:
+                _sc_col, _sc_val = "ConversationId", str(conversation_id)
+            else:
+                _sc_col, _sc_val = "AccountId", int(account_id)
+            cur.execute(
+                f"SELECT Id, OriginalFilename, ObjectKey, Kind, SizeBytes, AccountId "
+                f"FROM WebConversationAttachments "
+                f"WHERE Id IN ({placeholders}) AND {_sc_col} = %s AND Kind = 'text' "
+                f"AND UploadStatus = 'uploaded' AND DeletedAt IS NULL AND DeletePending = 0 "
+                # count cap 초과 시 가장 최근(=방금 첨부한) 파일을 보존하도록 DESC. 이전엔 ASC 라
+                # 한 대화에 cap(20) 초과 첨부 시 방금 올린 파일이 조용히 누락됐다(사용자 불만).
+                f"ORDER BY Id DESC LIMIT %s",
+                # TASK-0284: 타 대화 text 첨부 inject 차단(ConversationId), TASK-0132 의 계정 단위 가드를 대화 단위로 일반화.
+                tuple(int(i) for i in attachment_ids) + (_sc_val, app._TEXT_INLINE_COUNT_CAP),
+            )
+            rows = cur.fetchall() or []
+            cur.close()
+        except Exception:
+            return None
+
+    if not rows:
+        return None
+
+    inline_entries: list[dict] = []
+    for row in rows:
+        aid = int(row.get("Id") or 0)
+        filename = str(row.get("OriginalFilename") or "")
+        object_key = str(row.get("ObjectKey") or "").strip()
+        size_bytes = int(row.get("SizeBytes") or 0)
+        if not object_key:
+            continue
+        # TASK-0284: account 폴백 경로에서만 AccountId 재검증(D16). conversation 스코프(기본)는 SQL
+        # WHERE ConversationId 가 이미 보장하므로, 같은 대화에 타 계정이 올린 첨부도 정상 주입한다.
+        if not conversation_id:
+            row_account_id = int(row.get("AccountId") or 0)
+            if row_account_id != account_id:
+                continue
+        # size cap — 큰 파일은 skip (prompt overflow 방지)
+        if size_bytes > app._TEXT_INLINE_SIZE_CAP_BYTES:
+            # 용량 초과 파일은 잘려서 주입 (앞 64KB 만)
+            cap_note = True
+        else:
+            cap_note = False
+        try:
+            data_bytes = storage_minio.get_object_bytes(object_key)
+        except (storage_minio.StorageConfigError, storage_minio.StorageOperationError):
+            continue
+        try:
+            text_content = data_bytes[:app._TEXT_INLINE_SIZE_CAP_BYTES].decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        if not text_content.strip():
+            continue
+        inline_entries.append({
+            "attachment_id": aid,
+            "filename": filename,
+            "content": text_content,
+            "truncated": cap_note or (len(data_bytes) > app._TEXT_INLINE_SIZE_CAP_BYTES),
+        })
+
+    if not inline_entries:
+        return None
+
+    # DESC 로 최신 우선 선별했으므로, 표시는 시간순(오래된→최신)으로 되돌린다.
+    inline_entries.reverse()
+
+    suffix = uuid.uuid4().hex[:12]
+    cid_seg = str(conversation_id or "no-cid")[:24].replace("/", "_")
+    path = f"{app._inline_tmp_dir()}/mysql_ai_text_{cid_seg}_{suffix}.json"
+    try:
+        with open(path, "w", encoding="utf-8") as _tf:
+            json.dump(inline_entries, _tf, ensure_ascii=False)
+    except OSError:
+        return None
+    return path
