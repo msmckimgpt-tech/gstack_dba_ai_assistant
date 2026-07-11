@@ -1013,3 +1013,48 @@ def _prompt_generate_stream_response(ctx: dict, *, log_label: str, log_ctx: str)
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ==== feature-0012 ITEM-10 p13 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _load_system_prompt(
+    conn,
+    *,
+    scope: str,
+    product_id: int | None = None,
+    role_id: int | None = None,
+    account_id: int | None = None,
+) -> dict[str, Any] | None:
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+SELECT Id AS id, Scope AS scope, ProductId AS product_id, RoleId AS role_id, AccountId AS account_id,
+       Content AS content, UpdatedAt AS updated_at, UpdatedByAccountId AS updated_by_account_id
+FROM WebSystemPrompts
+WHERE Scope = %s
+  AND ((ProductId IS NULL AND %s IS NULL) OR ProductId = %s)
+  AND ((RoleId IS NULL AND %s IS NULL) OR RoleId = %s)
+  AND ((AccountId IS NULL AND %s IS NULL) OR AccountId = %s)
+LIMIT 1
+        """,
+        (
+            scope,
+            product_id, product_id,
+            role_id, role_id,
+            account_id, account_id,
+        ),
+    )
+    row = cur.fetchone()
+    cur.close()
+    if not row:
+        return None
+    return {
+        "id": int(row.get("id") or 0),
+        "scope": str(row.get("scope") or ""),
+        "product_id": int(row.get("product_id") or 0) or None,
+        "role_id": int(row.get("role_id") or 0) or None,
+        "account_id": int(row.get("account_id") or 0) or None,
+        "content": str(row.get("content") or ""),
+        "updated_at": str(row.get("updated_at") or ""),
+        "updated_by_account_id": int(row.get("updated_by_account_id") or 0) or None,
+    }

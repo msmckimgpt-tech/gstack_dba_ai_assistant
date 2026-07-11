@@ -2302,3 +2302,237 @@ async def admin_generate_product_prompt_stream(product_id: int, request: Request
     return app._prompt_generate_stream_response(
         ctx, log_label="admin_generate_product_prompt_stream", log_ctx=f"product_id={product_id}"
     )
+
+
+# ==== feature-0012 ITEM-10 p13 — app.py 에서 이동 (6종). app 전역은 app.X 동적 참조. ====
+
+def _db_rule_excluded_lower(engine: str) -> "set[str]":
+    """M2: 시스템/내부 제외 집합(소문자) — 분산된 상수 union 을 단일 consult. 엔진별 시스템 DB."""
+    eng = str(engine or "mysql").strip().lower()
+    ex = {x.lower() for x in app._DATABASES_AVAILABLE_INTERNAL}
+    try:
+        ex.add(str(app.MEMORY_DB).lower())
+    except Exception:
+        pass
+    if eng == "mssql":
+        ex |= {x.lower() for x in app._DATABASES_AVAILABLE_SYSTEM_MSSQL}
+    else:
+        ex |= {x.lower() for x in app._DATABASES_AVAILABLE_METADATA}
+    return ex
+
+def _db_rule_audit_actor(account: "dict | None") -> "dict | None":
+    """B3: 감사 귀속용 actor — 규칙 생성자(또는 요청 계정) 계정으로 ActorAccountId 기록(system NULL 회피)."""
+    if not account:
+        return None
+    return {
+        "account_id": account.get("id"),
+        "role_id": account.get("role_id"),
+        "username": account.get("username"),
+        "actor_type": "account",
+        "session_id": None,
+        "remote_addr": None,
+        "user_agent": None,
+        "request_id": None,
+    }
+
+def _reconcile_one_db_rule(conn, rule: dict, *,
+                           actor_account: "dict | None", can_manage: bool, trigger: str) -> dict:
+    """단일 규칙 reconcile — 라이브 DB 와 대조해 신규 일치 DB 를 자동적용(cap 이하·can_manage) 또는
+    pending(초과·미보유) 으로 스테이징. **기존 행(manual ∪ 전 규칙)** 전체로 dedup → 다중 규칙에서 한
+    DB 는 먼저 추가한 규칙이 소유(RuleId). manual 행 절대 미변경(B4). 열거 실패=no-op(M4). 자동행 SortOrder
+    말미(M5). 감사는 규칙 생성자 귀속(B3)."""
+    result = {"status": "ok", "auto_added": [], "pending": [], "rule_id": int(rule.get("id") or 0)}
+    pid = int(rule.get("product_id") or 0)
+    dsk = str(rule.get("datasource_key") or "").strip().lower()
+    rid = int(rule.get("id") or 0)
+    if pid <= 0 or not dsk or rid <= 0:
+        result["status"] = "bad-args"
+        return result
+    if not rule.get("is_enabled"):
+        result["status"] = "disabled"
+        return result
+    # 라이브 DB 열거 (M4: 모든 실패 = no-op — 빈 목록을 '전부 제거'로 해석 금지).
+    try:
+        from shared import datasources as _dsr
+        from shared import db as _db
+        ds = _dsr.resolve(conn, dsk)
+        if not ds:
+            result["status"] = "ds-unresolved"
+            return result
+        okssrf, _reason, _pin = app._ssrf_check_host(ds.get("host"))
+        if not okssrf:
+            result["status"] = "ssrf-blocked"
+            return result
+        classified = _db.list_server_databases_classified({**ds, "host": _pin})
+    except Exception:
+        result["status"] = "enumerate-failed"
+        return result
+    if not isinstance(classified, list):
+        result["status"] = "enumerate-failed"
+        return result
+    engine = str(ds.get("engine") or "mysql").strip().lower()
+    user_names = [d["name"] for d in classified
+                  if isinstance(d, dict) and not d.get("system") and d.get("name")]
+    excluded = app._db_rule_excluded_lower(engine)
+    matched = app._match_db_rule(user_names, rule["include_pattern"], rule.get("exclude_pattern"), engine, excluded)
+    # 기존 행(manual ∪ 전 규칙) — dedup(소문자) + SortOrder max(M5: 자동행은 말미). 다중 규칙 cross-dedup.
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT SchemaName, COALESCE(SortOrder,0) FROM WebProductDatabases "
+            "WHERE ProductId=%s AND LOWER(DatasourceKey)=%s", (pid, dsk))
+        rows = cur.fetchall() or []
+    finally:
+        cur.close()
+    existing_lower = {str(r[0]).strip().lower() for r in rows}
+    max_sort = max([int(r[1] or 0) for r in rows], default=0)
+    new = [m for m in matched if str(m).strip().lower() not in existing_lower]
+    if not new:
+        app._touch_db_rule_sync(conn, rid)
+        conn.commit()
+        result["status"] = "no-change"
+        return result
+    auto = bool(can_manage) and len(new) <= int(rule.get("cap") or 3)
+    cur = conn.cursor()
+    try:
+        if auto:
+            for i, name in enumerate(new):
+                # MAJOR#1(재리뷰): INSERT IGNORE — 동시 reconcile 경쟁/PK 미마이그 시에도 중복 allowlist 행 방지.
+                cur.execute(
+                    "INSERT IGNORE INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder, "
+                    "DatasourceKey, Source, RuleId) VALUES (%s,%s,%s,%s,%s,'rule',%s)",
+                    (pid, name, "", max_sort + (i + 1) * 10, dsk, rid))
+                # 자동 추가된 schema 의 잔여 pending(다른 규칙이 보류해 둔 것) 정리(phantom 제거).
+                cur.execute(
+                    "DELETE FROM WebProductDatabasePending WHERE ProductId=%s AND LOWER(DatasourceKey)=%s AND SchemaName=%s",
+                    (pid, dsk, name))
+            result["auto_added"] = list(new)
+        else:
+            for name in new:
+                cur.execute(
+                    "INSERT IGNORE INTO WebProductDatabasePending (ProductId, DatasourceKey, SchemaName, "
+                    "RuleId, Reason) VALUES (%s,%s,%s,%s,%s)",
+                    (pid, dsk, name, rid, ("cap_exceeded" if can_manage else "no_manage")))
+            result["pending"] = list(new)
+    finally:
+        cur.close()
+    try:
+        app.record_audit_event(
+            conn, actor=app._db_rule_audit_actor(actor_account),
+            action=("admin.product.db.autoadd" if auto else "admin.product.db.staged"),
+            resource_type="product", resource_id=str(pid),
+            change_json={"datasource_key": dsk, "rule_id": rid, "trigger": str(trigger),
+                         "names": list(new), "auto": auto, "cap": int(rule.get("cap") or 3),
+                         "creator_account_id": rule.get("created_by_account_id")},
+        )
+    except Exception as _aexc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        result["status"] = f"audit-failed: {_aexc}"
+        return result
+    app._touch_db_rule_sync(conn, rid)
+    conn.commit()
+    return result
+
+def _reconcile_product_db_rules(conn, product_id: int, ds_key: str, *,
+                                actor_account: "dict | None", can_manage: bool, trigger: str) -> dict:
+    """(product, datasource) 의 **모든** enabled 규칙을 순차 reconcile(SortOrder 순 — 앞 규칙이 DB 우선 소유).
+    각 규칙은 직전 규칙의 커밋된 행까지 dedup 대상으로 본다(cross-rule 이중 추가 방지)."""
+    agg = {"status": "ok", "auto_added": [], "pending": [], "per_rule": []}
+    rules = app._get_product_db_rules(conn, int(product_id or 0), str(ds_key or "").strip().lower())
+    if not rules:
+        agg["status"] = "no-rule"
+        return agg
+    for rule in rules:
+        if not rule.get("is_enabled"):
+            continue
+        r = app._reconcile_one_db_rule(conn, rule, actor_account=actor_account, can_manage=can_manage, trigger=trigger)
+        agg["auto_added"].extend(r.get("auto_added") or [])
+        agg["pending"].extend(r.get("pending") or [])
+        agg["per_rule"].append({"rule_id": rule.get("id"), "status": r.get("status"),
+                                "auto_added": r.get("auto_added") or [], "pending": r.get("pending") or []})
+    return agg
+
+def _reconcile_all_db_rules_once() -> None:
+    """백그라운드 1 cycle: 모든 enabled 규칙을 creator 권한 재검증(M3) 후 규칙별 reconcile."""
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return
+    try:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(f"SELECT {app._DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules WHERE IsEnabled=1 "
+                        "ORDER BY ProductId, DatasourceKey, SortOrder, Id")
+            rules = [app._normalize_db_rule_row(r) for r in (cur.fetchall() or [])]
+        except Exception:
+            try:
+                cur.execute(f"SELECT {app._DB_RULE_SELECT_COLS} FROM WebProductDatasourceDbRules WHERE IsEnabled=1")
+                rules = [app._normalize_db_rule_row(r) for r in (cur.fetchall() or [])]
+            except Exception:
+                rules = []
+        finally:
+            cur.close()
+        for rule in rules:
+            try:
+                creator_id = int(rule.get("created_by_account_id") or 0)
+                creator = app._load_account_by_id(conn, creator_id) if creator_id > 0 else None
+                # M3: creator 가 현재도 **활성·비삭제 + product.manage** 일 때만 자동 GRANT — 아니면 pending.
+                creator_ok = bool(creator and creator.get("is_active") and not creator.get("deleted_at"))
+                can_manage = bool(creator_ok and app._account_has_permission(creator, "product.manage"))
+                app._reconcile_one_db_rule(conn, rule, actor_account=creator, can_manage=can_manage, trigger="background")
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                continue
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _db_rule_gate(request: Request, product_id: int, key: str):
+    """(conn, account, ds_key, error) — product.manage + 제품 존재 + datasource 바인딩 검증(임의 키 차단)."""
+    if int(product_id or 0) <= 0:
+        return (None, None, None, app._json_error("invalid product_id", 400))
+    dsk = str(key or "").strip().lower()
+    if not dsk:
+        return (None, None, None, app._json_error("invalid datasource key", 400))
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return (None, None, None, app._json_error("db connection failed", 500))
+    account, error = app._require_account(request, conn)
+    if error:
+        conn.close()
+        return (None, None, None, error)
+    if not app._account_has_permission(account, "product.manage"):
+        conn.close()
+        return (None, None, None, app._json_error("제품 관리 권한이 필요합니다.", 403))
+    cur = conn.cursor()
+    cur.execute("SELECT Id, DatasourceKey FROM WebProducts WHERE Id = %s", (int(product_id),))
+    prow = cur.fetchone()
+    if not prow:
+        cur.close()
+        conn.close()
+        return (None, None, None, app._json_error("product not found", 404))
+    primary = (str(prow[1]).strip().lower() if len(prow) > 1 and prow[1] else "")
+    bound = False
+    try:
+        cur.execute(
+            "SELECT 1 FROM WebProductDatasources WHERE ProductId=%s AND LOWER(DatasourceKey)=%s LIMIT 1",
+            (int(product_id), dsk))
+        bound = bool(cur.fetchone())
+    except Exception:
+        bound = (dsk == primary)
+    if not bound and primary and dsk == primary:
+        bound = True
+    cur.close()
+    if not bound:
+        conn.close()
+        return (None, None, None, app._json_error(f"datasource '{dsk}' 는 이 제품에 바인딩되지 않았습니다.", 400))
+    return (conn, account, dsk, None)

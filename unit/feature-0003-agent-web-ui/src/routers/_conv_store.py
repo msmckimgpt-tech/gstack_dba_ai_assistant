@@ -3075,3 +3075,854 @@ def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | No
             }
         )
     return visible
+
+
+# ==== feature-0012 ITEM-10 p13 — app.py 에서 이동 (22종). app 전역은 app.X 동적 참조. ====
+
+def _parse_kv_timestamp(value: str) -> app.datetime | None:
+    """AgentMemoryKv 의 ISO timestamp (`YYYY-MM-DD HH:MM:SS[.f]`) 를 datetime 으로 변환.
+    실패 시 None 반환. UTC naive 로 가정 (KV 작성 시 동일 가정)."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if "T" in text:
+            return app.datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        return app.datetime.fromisoformat(text)
+    except Exception:
+        try:
+            return app.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+def _parse_search_cursor(cursor: str | None) -> tuple[str, str] | None:
+    """Parse 'updated_at|conversation_id' cursor; return (updated_at, conv_id) or None."""
+    if not cursor:
+        return None
+    s = str(cursor).strip()
+    if not s or "|" not in s:
+        return None
+    parts = s.split("|", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+def _serialize_attachment_for_audit(row: dict[str, Any] | None) -> dict[str, Any]:
+    """audit ChangeJson 의 categorical 메타만 추출. raw filename / bytes 절대 노출 X."""
+    if not row:
+        return {}
+    return {
+        "id": int(row.get("Id") or 0),
+        "conversation_id": str(row.get("ConversationId") or ""),
+        "filename_hmac": str(row.get("FilenameHmac") or ""),
+        "extension_bucket": app._extension_bucket(str(row.get("OriginalFilename") or "")),
+        "size_bucket": str(row.get("SizeBucket") or "") or app._size_bucket(int(row.get("SizeBytes") or 0)),
+        "kind": str(row.get("Kind") or ""),
+        "mime_type": str(row.get("MimeType") or ""),
+        "sha256": str(row.get("Sha256") or ""),
+        "upload_status": str(row.get("UploadStatus") or ""),
+        "delete_reason": str(row.get("DeleteReason") or "") or None,
+    }
+
+def _serialize_attachment_for_api(row: dict[str, Any] | None, *, include_signed_url: bool = False, signed_url: str | None = None) -> dict[str, Any]:
+    """API 응답용 dict. pending role 은 caller 가 include_signed_url=False 강제 (D21)."""
+    if not row:
+        return {}
+    payload: dict[str, Any] = {
+        "id": int(row.get("Id") or 0),
+        "conversation_id": str(row.get("ConversationId") or ""),
+        "kind": str(row.get("Kind") or ""),
+        "mime_type": str(row.get("MimeType") or ""),
+        "original_filename": str(row.get("OriginalFilename") or ""),
+        "size": int(row.get("SizeBytes") or 0),
+        "size_bucket": str(row.get("SizeBucket") or ""),
+        "sha256": str(row.get("Sha256") or ""),
+        "status": str(row.get("UploadStatus") or ""),
+        "created_at": row.get("CreatedAt").isoformat() if hasattr(row.get("CreatedAt"), "isoformat") else None,
+        "delete_pending": bool(row.get("DeletePending") or 0),
+        "delete_reason": str(row.get("DeleteReason") or "") or None,
+    }
+    # TASK-0274: 버전 관리 필드. RootAttachmentId NULL = 이 row 자체가 루트(원본).
+    _att_id = int(row.get("Id") or 0)
+    _root_id = row.get("RootAttachmentId")
+    payload["version_number"] = int(row.get("VersionNumber") or 1)
+    payload["root_attachment_id"] = int(_root_id) if _root_id else _att_id
+    payload["created_by_role"] = str(row.get("CreatedByRole") or "user")
+    payload["is_assistant_generated"] = (str(row.get("CreatedByRole") or "user") == "assistant")
+    payload["superseded"] = bool(row.get("SupersededAt"))
+    meta = row.get("MetaJson")
+    if isinstance(meta, dict):
+        # degraded_reason (D17 partial_indexed) 만 표면화.
+        if meta.get("degraded_reason"):
+            payload["degraded_reason"] = str(meta["degraded_reason"])
+    # TASK-0094 Sprint 1 Phase 9 (F1): delete UX 4 state.
+    # active / delete_pending / restorable_until / purge_in_progress / erased
+    deleted_at = row.get("DeletedAt")
+    delete_pending = bool(row.get("DeletePending") or 0)
+    reason = str(row.get("DeleteReason") or "").lower()
+    if not delete_pending and not deleted_at:
+        payload["lifecycle_state"] = "active"
+    elif reason in ("admin_purge", "legal"):
+        payload["lifecycle_state"] = "purge_in_progress" if delete_pending else "erased"
+    else:
+        payload["lifecycle_state"] = "delete_pending"
+        # restorable_until = DeletedAt + RECON_RETENTION_DAYS (env default 30)
+        try:
+            import datetime as _dt
+            retention_days = max(1, int(os.getenv("ATTACHMENT_RECON_RETENTION_DAYS") or "30"))
+            if deleted_at:
+                deadline = (
+                    deleted_at if isinstance(deleted_at, _dt.datetime)
+                    else _dt.datetime.fromisoformat(str(deleted_at))
+                ) + _dt.timedelta(days=retention_days)
+                payload["restorable_until"] = deadline.isoformat()
+        except Exception:
+            # best-effort: restorable_until 계산 실패는 직렬화를 막지 않는다 (optional 필드 생략).
+            logging.getLogger(__name__).warning(
+                "_serialize_attachment_for_api: restorable_until compute failed", exc_info=True,
+            )
+    if include_signed_url and signed_url:
+        payload["signed_url"] = signed_url
+    return payload
+
+def _parse_attachment_edit_blocks(answer: str) -> list[dict[str, Any]]:
+    """assistant 답변에서 ```attachment-edit``` 블록을 파싱.
+
+    각 블록의 첫 줄은 JSON 헤더({source_attachment_id, filename?}), 나머지는 파일 내용.
+    Returns: [{"source_attachment_id": int, "filename": str|None, "content": str}, ...]
+    파싱 불가/형식 오류 블록은 조용히 skip(LLM 출력 잡음에 견고).
+    """
+    out: list[dict[str, Any]] = []
+    for _oi, _ci, header_line, content in app._attachment_edit_block_spans(answer):
+        try:
+            header = json.loads(header_line.strip())
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(header, dict):
+            continue
+        try:
+            src_id = int(header.get("source_attachment_id") or 0)
+        except (ValueError, TypeError):
+            continue
+        if src_id <= 0:
+            continue
+        fname = header.get("filename")
+        out.append({
+            "source_attachment_id": src_id,
+            "filename": str(fname).strip() if fname else None,
+            "content": content,
+        })
+    return out
+
+def _resolve_step_display(step: dict[str, Any]) -> dict[str, Any]:
+    item = dict(step or {})
+    stored_work = app._normalize_step_text(item.get("work"), 255)
+    stored_reason = app._normalize_step_text(item.get("reason"), 500)
+    work_source = str(item.get("work_source") or "").strip()
+    reason_source = str(item.get("reason_source") or "").strip()
+    if stored_work:
+        item["work"] = stored_work
+        item["work_source"] = work_source or "llm"
+    else:
+        item["work"] = app._derive_step_work(
+            str(item.get("tool") or ""),
+            item.get("args") if isinstance(item.get("args"), dict) else {},
+            str(item.get("sql") or ""),
+        )
+        item["work_source"] = "legacy"
+    if stored_reason:
+        item["reason"] = stored_reason
+        item["reason_source"] = reason_source or "llm"
+    else:
+        item["reason"] = ""
+        item["reason_source"] = "missing"
+    return item
+
+def _load_last_run_id(conn, conversation_id: str) -> str:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT value FROM agent_runtime.kv WHERE conversation_id = %s AND key = 'last_run_id' LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+            return str(row[0]) if row else ""
+        except Exception:
+            return ""
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s AND `Key` = 'last_run_id'
+LIMIT 1
+        """,
+        (conversation_id,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    return str(row[0]) if row else ""
+
+def _load_progress_status(conn, conversation_id: str) -> tuple[str, str, str]:
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT key, value FROM agent_runtime.kv "
+                    "WHERE conversation_id = %s AND key IN ('last_status', 'last_status_at', 'last_status_run_id')",
+                    (conversation_id,),
+                )
+                rows = pgcur.fetchall() or []
+            pg.close()
+            kv = {str(k or ""): str(v or "") for k, v in rows}
+            return (
+                str(kv.get("last_status") or "").strip(),
+                str(kv.get("last_status_at") or "").strip(),
+                str(kv.get("last_status_run_id") or "").strip(),
+            )
+        except Exception:
+            return "", "", ""
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Key`, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s
+  AND `Key` IN ('last_status', 'last_status_at', 'last_status_run_id')
+        """,
+        (conversation_id,),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    kv = {str(key or ""): str(value or "") for key, value in rows}
+    return (
+        str(kv.get("last_status") or "").strip(),
+        str(kv.get("last_status_at") or "").strip(),
+        str(kv.get("last_status_run_id") or "").strip(),
+    )
+
+def _load_run_terminal_marker(conn, conversation_id: str, run_id: str) -> tuple[str, str]:
+    """feature-0009 그룹대화 동시 run: 대화 상태 슬롯을 다른 run 이 점유해 terminal write 가 유실된
+    run 의 per-run 종료 상태를 반환. (status, status_at) — 없으면 ("", "").
+    agent_core set_run_status 의 충돌 skip 경로가 기록한 run_term_status:{rid} / run_term_at:{rid} 를
+    읽는다(_load_progress_status 와 동일한 PG-우선·MySQL-폴백 패턴)."""
+    rid = str(run_id or "").strip()
+    if not rid:
+        return "", ""
+    skey = f"run_term_status:{rid}"
+    akey = f"run_term_at:{rid}"
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT key, value FROM agent_runtime.kv "
+                    "WHERE conversation_id = %s AND key IN (%s, %s)",
+                    (conversation_id, skey, akey),
+                )
+                rows = pgcur.fetchall() or []
+            pg.close()
+            kv = {str(k or ""): str(v or "") for k, v in rows}
+            return str(kv.get(skey) or "").strip(), str(kv.get(akey) or "").strip()
+        except Exception:
+            return "", ""
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Key`, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s
+  AND `Key` IN (%s, %s)
+        """,
+        (conversation_id, skey, akey),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    kv = {str(k or ""): str(v or "") for k, v in rows}
+    return str(kv.get(skey) or "").strip(), str(kv.get(akey) or "").strip()
+
+def _load_run_meta_kv(conn, conversation_id: str) -> dict[str, str]:
+    """status/duration/error 관련 KV 키를 단일 쿼리로 조회."""
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT key, value FROM agent_runtime.kv "
+                    "WHERE conversation_id = %s AND key IN "
+                    "('last_status','last_status_at','last_status_run_id','last_duration_ms','last_error')",
+                    (conversation_id,),
+                )
+                rows = pgcur.fetchall() or []
+            pg.close()
+            return {str(k or ""): str(v or "") for k, v in rows}
+        except Exception:
+            return {}
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Key`, `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s
+  AND `Key` IN (
+    'last_status', 'last_status_at', 'last_status_run_id',
+    'last_duration_ms', 'last_error'
+  )
+        """,
+        (conversation_id,),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    return {str(key or ""): str(value or "") for key, value in rows}
+
+def _load_step_count_for_run(conn, conversation_id: str, run_id: str) -> int:
+    if not conversation_id or not run_id:
+        return 0
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT COUNT(*) FROM agent_runtime.steps WHERE conversation_id = %s AND run_id = %s",
+                    (conversation_id, run_id),
+                )
+                row = pgcur.fetchone()
+            pg.close()
+            return int(row[0] or 0) if row else 0
+        except Exception:
+            return 0
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT COUNT(*)
+FROM AgentMemorySteps
+WHERE ConversationId = %s AND RunId = %s
+        """,
+        (conversation_id, run_id),
+    )
+    row = cur.fetchone()
+    cur.close()
+    try:
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+
+def _load_assistant_attachments_by_message(conn, conversation_id: str) -> dict[tuple, list[dict[str, Any]]]:
+    """③ TASK-0285: 대화의 assistant 생성 첨부(미삭제)를 (message_id, id_space) 별로 그룹핑.
+
+    history 직렬화에서 assistant 말풍선에 첨부 칩을 영속 표시하기 위함(사용자 말풍선이 첨부를
+    보여주는 것과 대칭). materialize 가 새 버전 row 의 MetaJson 에 message_id 를 저장하므로
+    그 키로 그룹핑한다. supersede 여부와 무관 — "그 메시지가 만든 버전"은 이후 더 새 버전이
+    나와도 그 시점 history 사실로서 칩에 남는다(다운로드는 /download 프록시가 항상 가능).
+
+    **id_space 키 포함(H5(b) 후속 — 피드백 영속 `_load_user_feedback_by_message` 와 대칭)**:
+    message_id 는 표시 store(`agent_runtime.messages.id`)와 core fallback(`core_messages.id`) 두
+    독립 IDENTITY 공간서 올 수 있어 숫자만 같아도 다른 답변이다. materialize 가 저장하는
+    message_id 는 항상 display 공간(`_load_latest_assistant_message`)이지만, history 가 core
+    fallback 으로 그려질 때 core 공간 메시지의 같은 숫자 id 가 display 첨부를 잘못 집어가는
+    wrong-bubble 를 막기 위해 (message_id, message_id_space) 복합 키로 그룹핑한다. MetaJson 에
+    message_id_space 키가 없는 기존 행은 'display'(materialize 불변식)로 간주한다(하위호환).
+
+    첨부 정본은 MySQL(dual-write, TASK-0279) 이므로 conn(MySQL)로 조회. fail-soft — 실패 시
+    빈 dict 를 반환해 history 를 막지 않는다. 권한은 caller(_get_history → /api/history)가 대화
+    접근권으로 이미 게이트했고, 본 조회는 그 conversation_id 로만 스코프된다(IDOR 안전망).
+    """
+    if not conversation_id:
+        return {}
+    out: dict[tuple, list[dict[str, Any]]] = {}
+    try:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT Id, ConversationId, AccountId, ObjectKey, OriginalFilename,
+                       MimeType, SizeBytes, SizeBucket, Sha256, Kind, UploadStatus,
+                       CreatedAt, DeletedAt, DeletePending, DeleteReason, MetaJson,
+                       RootAttachmentId, VersionNumber, CreatedByRole, SupersededAt
+                FROM WebConversationAttachments
+                WHERE ConversationId = %s AND CreatedByRole = 'assistant' AND DeletedAt IS NULL
+                ORDER BY Id ASC
+                """,
+                (conversation_id,),
+            )
+            rows = cur.fetchall() or []
+        finally:
+            cur.close()
+    except Exception:
+        return {}
+    for row in rows:
+        meta = row.get("MetaJson")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        mid = 0
+        space = "display"
+        if isinstance(meta, dict):
+            try:
+                mid = int(meta.get("message_id") or 0)
+            except Exception:
+                mid = 0
+            space = "core" if str(meta.get("message_id_space") or "display").strip().lower() == "core" else "display"
+        if mid <= 0:
+            continue
+        out.setdefault((mid, space), []).append(app._serialize_attachment_for_api(dict(row)))
+    return out
+
+def _load_user_feedback_by_message(conversation_id: str, created_by: "str | None") -> dict[tuple, dict[str, Any]]:
+    """대화의 현재 사용자 투표 피드백(👍/👎, suggested=false)을 (message_id, id_space) 별로 그룹핑.
+
+    새로고침·대화 전환으로 history 를 다시 그릴 때, 이미 부여한 투표를 복원해 중복 부여를 막기
+    위함(assistant 첨부 영속 `_load_assistant_attachments_by_message` 와 대칭). "샘플 등록"
+    (suggested=true)은 투표 고유성과 분리되므로 제외한다.
+
+    **id_space 키 포함(H5(b) 해소)**: message_id 는 표시 store(`agent_runtime.messages.id`)와
+    core fallback(`core_messages.id`) 두 독립 IDENTITY 공간서 올 수 있어 숫자만 같아도 다른
+    답변이다. (message_id, message_id_space) 복합 키로 매칭해 fork·마이그 경로전환 시 wrong-bubble
+    복원을 차단한다.
+
+    피드백 정본은 PG(agent_kb)의 sample_feedback. fail-soft — 실패 시 빈 dict 를 반환해 이력
+    표시를 막지 않는다. created_by(=로그인 username)로 스코프되어 타 사용자 피드백은 노출 안 됨.
+    """
+    out: dict[tuple, dict[str, Any]] = {}
+    if not conversation_id or not created_by:
+        return out
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+    except Exception:
+        return out
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "SELECT message_id, message_id_space, vote FROM sample_feedback "
+                "WHERE conversation_id = %s AND created_by = %s "
+                "AND suggested = false AND message_id IS NOT NULL",
+                (conversation_id, created_by),
+            )
+            for row in cur.fetchall() or []:
+                mid_v, space_v, vote_v = row
+                try:
+                    space_n = str(space_v) if space_v else "display"
+                    out[(int(mid_v), space_n)] = {"vote": "down" if str(vote_v) == "down" else "up"}
+                except (TypeError, ValueError):
+                    continue
+    except Exception:
+        return {}
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    return out
+
+def _resolve_display_window(conn, conversation_id: str, account_id):
+    """share-visibility-window: 발신자의 표시(view) 가시 window 해석 (DISPLAY id-space + joined_at).
+
+    반환: None(무제한) | 'DENY'(빈 뷰, fail-closed) | {floor_id, ceiling_id, joined_at, floor_ca}.
+    _resolve_recall_visibility(agent_core, core id-space) 의 표시-측 대응. 규칙 동일:
+      비-PG/컬럼부재/미제약/owner/full/비멤버 → None; PG 오류 → 'DENY'; bounded → window dict.
+    """
+    if not app._runtime_backend_is_pg():
+        return None
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        try:
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT c.has_restricted_members, m.role, m.visible_floor_message_id, "
+                    "       m.visible_ceiling_message_id, m.joined_at, m.visible_floor_created_at "
+                    "FROM agent_runtime.core_conversations c "
+                    "LEFT JOIN agent_runtime.conversation_members m "
+                    "  ON m.conversation_id = c.conversation_id AND m.account_id = %s "
+                    "WHERE c.conversation_id = %s LIMIT 1",
+                    (int(account_id) if account_id is not None else None, conversation_id),
+                )
+                row = pgcur.fetchone()
+        finally:
+            pg.close()
+    except Exception as exc:  # noqa: BLE001
+        if getattr(exc, "sqlstate", None) == "42703":
+            return None  # pre-migration: windowed 멤버 부재 → 안전.
+        return "DENY"
+    if row is None or not bool(row[0]):
+        return None
+    role = row[1]
+    if role is None or role == "owner":
+        return None
+    floor_id, ceiling_id, joined_at, floor_ca = row[2], row[3], row[4], row[5]
+    if floor_id is None and ceiling_id is None:
+        return None
+    return {"floor_id": floor_id, "ceiling_id": ceiling_id, "joined_at": joined_at, "floor_ca": floor_ca}
+
+def _load_last_step_meta(conversation_id: str) -> dict[str, Any]:
+    if not conversation_id:
+        return {}
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") == "postgres":
+        try:
+            from shared.db import _pg_connect
+            pg = _pg_connect()
+            with pg.cursor() as pgcur:
+                pgcur.execute(
+                    "SELECT value FROM agent_runtime.kv WHERE conversation_id = %s AND key = 'last_run_id' LIMIT 1",
+                    (conversation_id,),
+                )
+                row = pgcur.fetchone()
+                run_id_pg = str(row[0]) if row else ""
+                if run_id_pg:
+                    pgcur.execute(
+                        "SELECT sql_text, result_summary_json FROM agent_runtime.steps "
+                        "WHERE conversation_id = %s AND run_id = %s "
+                        "ORDER BY step_index DESC, created_at DESC LIMIT 1",
+                        (conversation_id, run_id_pg),
+                    )
+                else:
+                    pgcur.execute(
+                        "SELECT sql_text, result_summary_json FROM agent_runtime.steps "
+                        "WHERE conversation_id = %s ORDER BY created_at DESC LIMIT 1",
+                        (conversation_id,),
+                    )
+                step_row = pgcur.fetchone()
+            pg.close()
+        except Exception:
+            return {}
+        if not step_row:
+            return {}
+        sql_text_pg, result_json_pg = step_row
+        meta_pg: dict[str, Any] = {}
+        if sql_text_pg:
+            meta_pg["sql"] = str(sql_text_pg)
+        if result_json_pg:
+            try:
+                parsed_pg = json.loads(result_json_pg) if isinstance(result_json_pg, str) else (result_json_pg or {})
+            except Exception:
+                parsed_pg = {}
+            if isinstance(parsed_pg, dict):
+                parsed_pg = app.normalize_step_result_summary("execute_sql" if sql_text_pg else "", parsed_pg)
+                csv_paths_pg = parsed_pg.get("csv_paths")
+                if isinstance(csv_paths_pg, list) and csv_paths_pg:
+                    meta_pg["csv_paths"] = csv_paths_pg
+        return meta_pg
+    try:
+        conn = app._connect_memory()
+    except Exception:
+        return {}
+    cur = conn.cursor()
+    cur.execute(
+        """
+SELECT `Value`
+FROM AgentMemoryKv
+WHERE ConversationId = %s AND `Key` = 'last_run_id'
+LIMIT 1
+        """,
+        (conversation_id,),
+    )
+    row = cur.fetchone()
+    run_id = str(row[0]) if row else ""
+    if run_id:
+        cur.execute(
+            """
+SELECT SqlText, ResultSummaryJson
+FROM AgentMemorySteps
+WHERE ConversationId = %s AND RunId = %s
+ORDER BY StepIndex DESC, CreatedAt DESC
+LIMIT 1
+            """,
+            (conversation_id, run_id),
+        )
+    else:
+        cur.execute(
+            """
+SELECT SqlText, ResultSummaryJson
+FROM AgentMemorySteps
+WHERE ConversationId = %s
+ORDER BY CreatedAt DESC
+LIMIT 1
+            """,
+            (conversation_id,),
+        )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return {}
+    sql_text, result_json = row
+    meta: dict[str, Any] = {}
+    if sql_text:
+        meta["sql"] = str(sql_text)
+    if result_json:
+        try:
+            parsed = json.loads(result_json)
+        except Exception:
+            parsed = {}
+        if isinstance(parsed, dict):
+            parsed = app.normalize_step_result_summary("execute_sql" if sql_text else "", parsed)
+            csv_paths = parsed.get("csv_paths")
+            if isinstance(csv_paths, list) and csv_paths:
+                meta["csv_paths"] = csv_paths
+    return meta
+
+def _load_latest_assistant_message(conn, conversation_id: str) -> dict[str, Any]:
+    # PG routing (AR-M5: AgentMemoryMessages MySQL 테이블 삭제됨)
+    rows: list = []
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        with pg.cursor() as pgcur:
+            pgcur.execute(
+                """
+SELECT id, role, content, created_at, meta_json
+FROM agent_runtime.messages
+WHERE conversation_id = %s AND role = 'assistant'
+ORDER BY id DESC
+LIMIT 50
+                """,
+                (conversation_id,),
+            )
+            pg_rows = pgcur.fetchall() or []
+        pg.close()
+        # meta_json은 JSONB (dict) — 기존 json.loads() 로직 호환을 위해 직렬화
+        for msg_id, role, content, created_at, meta_json in pg_rows:
+            meta_str = json.dumps(meta_json) if isinstance(meta_json, dict) else (meta_json or None)
+            rows.append((msg_id, role, content, created_at, meta_str))
+    except Exception:
+        cur = conn.cursor()
+        cur.execute(
+            """
+SELECT Id, Role, Content, CreatedAt, MetaJson
+FROM AgentMemoryMessages
+WHERE ConversationId = %s AND Role = 'assistant'
+ORDER BY Id DESC
+LIMIT 50
+            """,
+            (conversation_id,),
+        )
+        rows = cur.fetchall() or []
+        cur.close()
+    for msg_id, role, content, created_at, meta_json in rows:
+        if app._is_internal_message(role, content, meta_json):
+            continue
+        meta = {}
+        if meta_json:
+            try:
+                meta = json.loads(meta_json)
+            except Exception:
+                meta = {}
+        if str(role or "").lower() == "assistant":
+            if not meta:
+                intent = app._extract_intent_from_content(str(content or ""))
+                meta = app._load_step_meta(conn, conversation_id, intent, created_at) or meta
+            steps = app._load_steps_for_message(conn, conversation_id, created_at, meta)
+            if steps:
+                meta = dict(meta) if isinstance(meta, dict) else {}
+                meta["steps"] = steps
+                meta["rationale"] = app._summarize_rationale(steps)
+                meta["run_id"] = steps[0].get("run_id")
+        return {
+            "id": int(msg_id),
+            "role": str(role),
+            "content": app._normalize_output(str(content or "")),
+            "created_at": str(created_at),
+            "meta": meta,
+        }
+    return {}
+
+def _resolve_conversation_for_account(
+    conn,
+    account: dict[str, Any],
+    requested_id: str = "",
+    *,
+    create_if_missing: bool = False,
+    force_new: bool = False,
+) -> str:
+    # TASK-0059: `force_new=True` 는 빈 `requested_id` 경로에서만 의미를 가진다. 명시된 cid 가 들어오면
+    # 그 cid 의 접근 권한만 검사하고 그대로 반환 (frontend 의 신규 의도와 명시 cid 의도는 상호 배타).
+    conversation_id = str(requested_id or "").strip()
+    if conversation_id:
+        if app._account_can_access_conversation(
+            conn,
+            account,
+            conversation_id,
+            "conversation.read.own",
+            "conversation.read.any",
+        ):
+            return conversation_id
+        return ""
+    return app._repair_current_conversation(
+        conn,
+        account,
+        create_if_missing=create_if_missing,
+        force_new=force_new,
+    )
+
+def _resolve_copy_window(conn, source_id: str, account_id: int, *, share_floor_id=None, share_ceiling_id=None):
+    """fork 복사 window = INTERSECTION(share window, 요청자 멤버 window). share-visibility-window.
+
+    반환: ('ok', lower_id, upper_id) | ('deny', None, None) | ('empty', None, None). 전부 DISPLAY id-space.
+    교집합은 순수 정수 min/max (share Anchor/Floor 와 member floor/ceil 모두 DISPLAY id).
+      - 멤버 window 조회가 'DENY'(PG 오류) → ('deny') : 무제한 복사 대신 거부(fail-closed).
+      - lower > upper (빈 교집합) → ('empty').
+    bounded 멤버가 라이브룸을 직접 fork(/api/fork_conversation)해도 여기서 자동 clip 되어 가려진
+    구간이 fork 로 반출되지 않는다(REV AR-2 반전).
+    """
+    mw = app._member_visibility_window(conn, source_id, int(account_id))
+    if mw == "DENY":
+        return ("deny", None, None)
+    m_floor, m_ceil = mw
+    # lower = 더 제약적(더 높은 id) — None=무제한.
+    lowers = [v for v in (share_floor_id, m_floor) if v is not None]
+    lower_id = max(int(v) for v in lowers) if lowers else None
+    uppers = [v for v in (share_ceiling_id, m_ceil) if v is not None]
+    upper_id = min(int(v) for v in uppers) if uppers else None
+    if lower_id is not None and upper_id is not None and lower_id > upper_id:
+        return ("empty", None, None)
+    return ("ok", lower_id, upper_id)
+
+def _load_latest_run_id_from_steps(conversation_id: str) -> tuple[str, bool]:
+    """agent_runtime.steps 에서 가장 최근 run_id 와 활성 여부를 반환.
+    KV 에 status 가 없을 때 fallback 으로 사용. (최근 3분 내 step 이 있으면 processing)
+    Returns (run_id, is_recent) — run_id 없으면 ("", False).
+    """
+    if os.environ.get("AGENT_RUNTIME_READ_BACKEND") != "postgres":
+        return "", False
+    try:
+        from shared.db import _pg_connect
+        pg = _pg_connect()
+        with pg.cursor() as pgcur:
+            pgcur.execute(
+                """
+SELECT run_id, MAX(created_at) AS last_step_at
+FROM agent_runtime.steps
+WHERE conversation_id = %s
+GROUP BY run_id
+ORDER BY last_step_at DESC
+LIMIT 1
+                """,
+                (conversation_id,),
+            )
+            row = pgcur.fetchone()
+        pg.close()
+        if not row:
+            return "", False
+        run_id = str(row[0] or "")
+        last_step_at = row[1]
+        import datetime
+        if last_step_at:
+            if hasattr(last_step_at, "tzinfo") and last_step_at.tzinfo is None:
+                last_step_at = last_step_at.replace(tzinfo=datetime.timezone.utc)
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            age_seconds = (now_utc - last_step_at).total_seconds()
+            is_recent = age_seconds < 180
+        else:
+            is_recent = False
+        return run_id, is_recent
+    except Exception:
+        return "", False
+
+def _load_account_product_pref(
+    conn, account_id: int, products: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """WebAccounts 의 직전 ProductPref 를 읽어 클라이언트가 hydrate 가능한 형태로 반환.
+
+    pinned_id 가 (a) 비활성/삭제되었거나 (b) 현재 active products 에 없으면 자동으로 auto 로 강등한다.
+    이는 Codex 검토 의견(차후 리스크: pinned 가 inactive 가 된 경우 silent 잘못된 선택) 대응의 1차 가드.
+    """
+    if account_id <= 0:
+        return {"mode": "auto", "pinned_id": None, "fallback_reason": ""}
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT ProductPrefMode AS mode, ProductPrefPinnedId AS pinned_id "
+            "FROM WebAccounts WHERE Id = %s LIMIT 1",
+            (int(account_id),),
+        )
+        row = cur.fetchone() or {}
+        cur.close()
+    except Exception:
+        return {"mode": "auto", "pinned_id": None, "fallback_reason": ""}
+    raw_mode = app._normalize_product_mode(row.get("mode"), default="auto")
+    raw_pid = row.get("pinned_id")
+    pinned_id = int(raw_pid) if raw_pid not in (None, "") else None
+    fallback_reason = ""
+    if raw_mode == "pinned":
+        active_ids = {int(p.get("id") or 0) for p in (products or []) if p.get("is_active")}
+        if not pinned_id or pinned_id not in active_ids:
+            raw_mode = "auto"
+            pinned_id = None
+            fallback_reason = "pinned_inactive"
+    return {"mode": raw_mode, "pinned_id": pinned_id, "fallback_reason": fallback_reason}
+
+def _parse_participant_product_override(
+    conn, account: dict[str, Any], data: Any
+) -> dict[str, Any] | None:
+    """feature-0009 gc-participant-product-select: 공유 대화 참가자(비-owner 멤버)가 보낸
+    요청 body 의 제품 override(`product_id`/`product_mode`)를 파싱·검증한다.
+
+    참가자는 자기 `@assistant` 요청에 한해 제품을 per-message 로 바꿀 수 있다(대화 공통
+    바인딩 비파괴 — owner 전용 `PATCH /api/conversations/{cid}/product` 와 분리). 선택 제품은
+    **발신자 본인** `_account_has_product_access` 통과분만 허용하므로 ANCHOR §1("발화는 본인
+    권한으로만 게이트")을 보존한다 — 생성자 권한 상속 없음.
+
+    반환:
+      - ``None``: body 에 override 의도 없음(기존 동작: 대화 공통 product 사용).
+      - ``{"ok": True, "mode": "auto"|"pinned", "product_id": int|None}``: 유효한 override.
+      - ``{"ok": False, "error": "<메시지>"}``: 무권한 제품 override → 호출부가 403.
+    """
+    if not isinstance(data, dict):
+        return None
+    raw_mode = data.get("product_mode")
+    raw_pid = data.get("product_id")
+    if raw_mode is None and raw_pid is None:
+        return None
+    mode = app._normalize_product_mode(raw_mode, default="pinned")
+    if mode == "auto":
+        return {"ok": True, "mode": "auto", "product_id": None}
+    pid: int | None = None
+    if raw_pid is not None and str(raw_pid).strip() != "":
+        try:
+            pid = int(raw_pid)
+        except Exception:
+            pid = None
+    if not pid:
+        # pinned 의도지만 product_id 부재/파싱 실패 → override 미적용(대화 product 유지).
+        return None
+    if not app._account_has_product_access(account, int(pid), conn=conn):
+        return {
+            "ok": False,
+            "error": "선택한 제품에 발화(질의) 권한이 없습니다. 본인에게 권한이 있는 제품만 사용할 수 있습니다.",
+        }
+    return {"ok": True, "mode": "pinned", "product_id": int(pid)}
+
+def _parse_usage_conv_params(request: Request) -> dict:
+    """공통 query 파싱: days(1~365), gran, model, account_id, role, day(라벨)."""
+    try:
+        days = int(request.query_params.get("days", "30"))
+    except Exception:
+        days = 30
+    days = max(1, min(365, days))
+    gran = request.query_params.get("gran", "day").lower()
+    if gran not in app._USAGE_GRAN:
+        gran = "day"
+    model = (request.query_params.get("model") or "").strip() or None
+    role = (request.query_params.get("role") or "").strip() or None
+    day_label = (request.query_params.get("day") or "").strip() or None
+    acct_raw = (request.query_params.get("account_id") or "").strip()
+    account_id = None
+    if acct_raw:
+        try:
+            account_id = int(acct_raw)
+        except Exception:
+            account_id = None
+    return {"days": days, "gran": gran, "model": model, "role": role,
+            "day_label": day_label, "account_id": account_id}

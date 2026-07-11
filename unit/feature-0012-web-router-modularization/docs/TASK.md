@@ -254,3 +254,7 @@ source_of_truth: true
 ## 20260711T2037-item10-routers-p12 — share 8 + gdrive 8(345줄) 도메인 이동 (parallel-work-structure ITEM-10)
 - [x] _share_* → _conv_store(2 라우터 공용) · _gdrive_* → integrations.py(단일 도메인). 패치 0 sweep · 추출기 AnnAssign 수집 보강(p11 학습 반영). **app.py 10,132→9,824 — 1만 줄 돌파**(누적 -9,826 / -50%).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821(json 1건) · py_compile · 전 스위트 pytest rc=0
+
+## 20260711T2056-item10-routers-p13 — _load_/_resolve_/_parse_/_db_rule_ 32종(1,101줄) 도메인 이동 (parallel-work-structure ITEM-10)
+- [x] _conv_store 22종(run/steps/attachment/parse 공용 데이터층) · admin_products 6종(db_rule 클러스터) · admin_settings 2종 · admin_console 1종 · _prompt_context 1종. 패치 2종(_resolve_product_insight_scope 3×·_resolve_session_default_model 2×) KEEP. app.py 9,824→8,723.
+- [x] 학습: @app.on_event 데코레이터 함수(_reconcile_orphaned_runs_on_startup)는 lifecycle 등록 시점이 바뀌므로 이동 금지 — 추출기에 app-참조 데코레이터 가드 추가, 해당 1종 KEEP. 게이트: 스냅샷 205 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
