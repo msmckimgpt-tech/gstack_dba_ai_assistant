@@ -5404,3 +5404,10 @@ Phase 1~5, 7, 8 (Major) 진행 승인 시 본 plan 의 PLAN-APPROVED 마커는 �
 - [x] 캐시버스터 bump: styles.css `20260708-metadata-console-ux2`→`20260709-graph-toolbar`, admin.js `20260709-highlight-ux`→`20260709-graph-toolbar`.
 - [x] 검증: `node --check admin.js` OK · 실 Windows Chrome 149(win-browser relay) 격리 harness 렌더 실측(toolbar 자식 4·zoom/status `position:absolute`·status 2줄클램프 494px·팝오버 4행·종류 3버튼 단일행·배지). 스크린샷 harness-closed/open2.
 - [x] §18.8 디자인·correctness 적대 패널(SHIP-WITH-FIXES, MINOR 2+NIT 1 FIXED) → REVIEW.md · verify-completion PASS → commit faf1fb2f → PR#635(rebase 로 병렬 §57.6/§57.7 충돌 해소) → 병합 → web 무중단 롤링 배포 ee54b1ff(soak PASS) → **POST-DEPLOY PB-0008 라이브 PASS**(상단 4컨트롤·팝오버 no-clip·줌 오버레이·**상태 pill reflow0=true**·pageerror 0 — TEST.md §3 POST-DEPLOY 갱신).
+
+## 20260711T1150-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11 "정책문서 분리/세분화")
+
+- [x] MODIFY.md 423건 → 최근 15 유지 + 408 이관(`_archive/MODIFY-archive-20260711T115053.md`) · REVIEW.md 404건 → 최근 15 유지 + 389 이관
+- [x] 무손실 증명: head+archive+kept 재구성 md5 == 원본 md5 (양 문서)
+- [x] 상단 아카이브 참조 링크 + REPORT.md 압축 정보(§5.5) + 아카이브 파일명 timestamp 규약(ITEM-01) 첫 실적용
+- [ ] 후속(별 사이클): feature-0002(124/109건)·feature-0016(117/117건)·feature-0012(46/45건) 동일 아카이빙
