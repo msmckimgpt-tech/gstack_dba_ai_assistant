@@ -242,3 +242,7 @@ source_of_truth: true
 ## 20260711T1957-item10-routers-p9 — 제품 인사이트 2종 + 첨부 백그라운드 2종(608줄) 이동 (parallel-work-structure ITEM-10)
 - [x] _compute_product_db_insights·_compute_product_insight_coverage → admin_products.py(단일 도메인 소유 — coverage 는 setattr 1× 이나 클러스터 내부 호출 0 = 관통 표면 없음, app 내부 호출자 _auto_prompt_sweep_once 는 rebind) · _ingest_attachment_background·_prepare_vision_inline_images → _conv_store.py. app.py 12,718→12,123(누적 **-7,527 / -38%**).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821(uuid 보강) · py_compile · 전 스위트 pytest rc=0
+
+## 20260711T2022-item10-routers-p10 — 스키마/마이그레이션/시드 32종(1,471줄) → _bootstrap_schema (parallel-work-structure ITEM-10)
+- [x] _ensure_*/_migrate_*/_seed_* 잔여 일괄(런타임 성격 5종 제외: _ensure_conversation_row·_ensure_memory_runtime_ready·_ensure_owner_membership·_ensure_management_survivor_* — 후속 도메인 배치). setattr 0 sweep · getsource 6종은 함수객체 기준이라 rebind 생존(b3 패널 실증 계보). app.py 12,123→10,716(누적 **-8,934 / -45%**).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 · py_compile · 전 스위트 pytest rc=0
