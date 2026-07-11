@@ -131,8 +131,11 @@ preflight_fileset() {
   cfg_err="$(mktemp)"
   for attempt in 1 2 3; do
     cfg="$("${DC[@]}" config 2>"$cfg_err")" && rc=0 || rc=$?
-    if [ "$rc" -eq 0 ] && printf '%s\n' "$cfg" | grep -qE '^  web-a:' \
-       && printf '%s\n' "$cfg" | grep -qE '^  web-b:'; then
+    # 근본수정(2026-07-11 flake 진단 확정): `printf 145KB | grep -q` 는 grep 조기 종료가
+    # printf 에 SIGPIPE 를 보내 pipefail 하에서 파이프라인이 141 로 실패 — 출력이 완전해도
+    # "미검출"로 오판되는 타이밍 race(부하 의존 = 간헐성의 정체, 하드닝 진단 덤프
+    # bytes=145878·서비스 29개 실측으로 특정). 파이프 대신 bash 부분문자열 매칭 사용.
+    if [ "$rc" -eq 0 ] && [[ "$cfg" == *$'\n'"  web-a:"* ]] && [[ "$cfg" == *$'\n'"  web-b:"* ]]; then
       break
     fi
     if [ "$attempt" -lt 3 ]; then
@@ -148,10 +151,10 @@ preflight_fileset() {
   # web-a/web-b 섹션에 published 포트가 있으면 --scale/replica 충돌 → 차단.
   local web_block
   web_block="$(printf '%s\n' "$cfg" | awk '/^  web-[ab]:/{f=1} /^  [a-z]/&&!/web-[ab]/{if(f&&!/^  web-[ab]/)f=0} f{print}')"
-  if printf '%s\n' "$web_block" | grep -qE 'published:'; then
+  if [[ "$web_block" == *"published:"* ]]; then
     die "web-a/web-b 에 호스트 포트(published)가 있습니다. 프로덕션은 Caddy :443 단일 진입이어야 합니다 (dev override 가 머지되었는지 확인). :18080 직접 문은 폐기되었습니다."
   fi
-  if ! printf '%s\n' "$cfg" | grep -qE '^  web-a:' || ! printf '%s\n' "$cfg" | grep -qE '^  web-b:'; then
+  if [[ "$cfg" != *$'\n'"  web-a:"* ]] || [[ "$cfg" != *$'\n'"  web-b:"* ]]; then
     err "config 출력 진단: bytes=${#cfg} head=[$(printf '%s' "$cfg" | head -3 | tr '\n' '|')] 서비스라인=$(printf '%s\n' "$cfg" | grep -c '^  [a-z][a-z-]*:' || true) stderr(3차)=$(head -c 200 "$cfg_err" | tr '\n' ' ')"
     rm -f "$cfg_err"
     die "web-a/web-b 서비스가 base compose 에 없습니다 (토폴로지 미적용 — 3회 재시도 후에도 미검출)."

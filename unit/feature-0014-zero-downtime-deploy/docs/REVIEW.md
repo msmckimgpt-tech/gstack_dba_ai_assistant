@@ -81,3 +81,8 @@ source_of_truth: true
 - **패널 2차 VERDICT = SHIP** — 7개 반영 전건 코드 실증 확인: soak 신규 분기 exhaustive(edge_fail 종단값 0|3 증명) · deadline 감시 공백 봉인 · rc 캡처 쌍/mktemp 정리/encounter-지역 변수 무오염 · exit code 계약 보존 · dry-run 무 hang. 잔여 MINOR-1(flap 임계 decay 없음 — env 튜너블로 반영)·NIT-1(3차 stderr 덤프 — 반영) 비차단 2건도 머지 전 반영 완료.
 - 검증: bash -n · worktree dry-run — 실패 경로(3회 재시도 + stderr 원인 문자열 + 정직 die)와 happy path(전 env 존재 시 "OK — 두 replica 정의 확인") 양쪽 실증. 라이브 검증 = 머지 후 본 스크립트로 batch4~6 실배포(soak·edge 경로 통과가 곧 실증).
 - Human Approval Needed: 아니오 — 사용자 지시로 착수. fail-safe 방향(감지 지연 없이 오탐만 제거), exit 계약 보존, 비파괴.
+
+## REV-20260711T201156-preflight-sigpipe-rootfix [SKIPPED:root-cause-fix-deterministic] — preflight SIGPIPE race 수정
+- Related Change: CHG-20260711T201156-preflight-sigpipe-rootfix. 승인: 사용자 잔여작업 재개 지시 + 직전 하드닝 사이클(§18.8 2-round SHIP)의 연장선.
+- SKIPPED 사유: 원인이 진단 덤프로 **결정적으로 특정**(bytes=145,878 완전 출력 + rc=0 + 미검출 = SIGPIPE race 외 설명 불가)되고, 수정은 의미-동일 매칭 대체(파이프 제거)뿐. dry-run 양 경로 실증 + 머지 직후 라이브 배포가 최종 검증.
+- Human Approval Needed: 아니오 — 게이트 스크립트 결함 수정(fail-safe 방향 불변).
