@@ -152,3 +152,6 @@ source_of_truth: true
 
 ## REV-20260711T161858-item10-routers-p7 [SKIPPED:pattern-transcription] — 감사 인프라 이동
 - Related Change: CHG-20260711T161858-item10-routers-p7. 승인: ROADMAP §6.1. 패턴 전사 + record_audit_event KEEP(판정표 KEEP 3종과 동일 논거 — 12× 패치-단일점). 게이트 4종 GREEN.
+
+## REV-20260711T195338-item10-routers-p8 [SKIPPED:pattern-transcription] — 부트스트랩 스키마 이동
+- Related Change: CHG-20260711T195338-item10-routers-p8. 승인: ROADMAP §6.1. 패턴 전사 + global-쓰기 등가 변환(ast.Global 스캔으로 기계 검출). F0 접촉 사고는 원복 완료·정직 기록(TASK). 게이트 4종 GREEN.
