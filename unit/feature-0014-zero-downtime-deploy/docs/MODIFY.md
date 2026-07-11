@@ -32,3 +32,10 @@ source_of_truth: true
 - Rollback Notes: PR revert + `docker compose up -d --no-deps web`(단일 web 복귀, base 에 web 서비스
   재존재 필요). 라이브 롤백(이미지)은 `make web-rollback`(last-good). DB 는 expand/contract 라
   down-migration 불필요.
+
+## CHG-20260711T113717-deploy-flake-hardening (bin/deploy-web.sh — preflight/soak/rollback 판정 하드닝)
+- Date: 2026-07-11. 사용자 지시(잔여 작업 재개)로 승인 — parallel-work-structure ITEM-10 배포 게이트가 3회 연속 flake 로 차단된 인시던트의 근본 대응.
+- Summary: ① preflight config 재시도(3×2s)+stderr 포획+진단 덤프 ② soak edge 실패 연속-3회 확증(단발 blip 롤백 방지) ③ 롤백 후 edge 판정 60s backoff. 전부 fail-safe 방향 — 진짜 결함(크래시루프·토폴로지 미적용)의 die/rollback 경로는 보존.
+- 실측 근거: 07-11 배포 6회 중 preflight flake 3회 — stderr 유실로 **프로덕션 간헐 원인은 미확정**(비원자 env 재작성 창·snap confinement blip 등 후보). 본 변경은 원인 수정이 아니라 **진단 계측(stderr 포획) + transient 재시도** — worktree 검증은 계측 경로가 원인 문자열(env_file 부재)을 정확히 드러냄을 확인한 것(결정적 worktree 아티팩트이며 프로덕션 간헐성의 재현은 아님·env 복사 후 happy-path 도달) + 12:05 soak 단발 edge 실패로 정상 이미지(5a42b6e1, 단독 서빙 검증) 롤백 + 롤백 직후 조기 판정 오보.
+- Files: bin/deploy-web.sh (+50/-6).
+- Rollback: 단일 커밋 revert.

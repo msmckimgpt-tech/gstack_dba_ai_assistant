@@ -70,3 +70,11 @@ source_of_truth: true
 - [ ] LEARNINGS.md에 발견된 교훈이 기록되었다 (해당 시)
 - [ ] Git 커밋이 완료되었다
 - [ ] Git 원격 동기화가 완료되었거나 보류 사유가 기록되었다
+
+## 20260711T1137-deploy-flake-hardening — 배포 스파인 flake 하드닝 (사용자 지시 2026-07-11 "나머지 작업 재개")
+
+- [x] preflight_fileset: `docker compose config` stderr 포획 + rc≠0/web-a·b 미검출 시 2s backoff 3회 재시도 + 최종 실패 시 stderr·출력헤더 진단 덤프 (배경: 07-11 배포 6회 중 3회 간헐 실패 — 구코드는 stderr 유실로 진단 불가. 프로덕션 원인은 미확정 — 본 변경은 계측+재시도)
+- [x] soak: 단발 edge 실패 → 2s 간격 **연속 3회 확증** 후에만 롤백 + **blip 회복 시 continue 전 RestartCount 재검**(패널: crash-loop 감시 공백) + **누적 4회(비연속) flapping 기준 병행**(패널: 교대 200/503 무감 해소); dependency_down 분기는 확증 이후(예산 보존)
+- [x] auto_rollback + 수동 --rollback 경로 양쪽: 롤백 직후 단발 edge 판정 → **60s(3s 간격) 회복 대기** 후 판정 (워밍업 창 오판 해소, 경로 일관성 — 패널 지적)
+- [x] 검증: bash -n · worktree dry-run 재현 — 실패 경로(env_file 부재가 stderr 에 원인 파일명까지 표시, 3회 재시도 후 정직 die) + happy path("OK — 두 replica 정의 확인" 도달) 양쪽 실증
+- [x] §18.8 적대 패널: 아래 REVIEW 참조

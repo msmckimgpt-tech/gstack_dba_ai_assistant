@@ -73,3 +73,11 @@ source_of_truth: true
   try/finally 균형(disconnect 시 aclose 로 해제), /livez(no-DB)·/readyz(DB) 의도대로, flock 전체 직렬화,
   stop_grace 30s 적정(8s finalize + drain).
 - Human Approval Needed: 아니오(코드 정합). 단 라이브 컷오버는 RUNBOOK 운영자 게이트.
+
+## REV-20260711T113717-deploy-flake-hardening [SUBAGENT:improve-fit-reviewer(§18.8, 2-round)] — 배포 스파인 flake 하드닝 (preflight 재시도·soak 확증·rollback 회복 대기)
+- Related Change: CHG-20260711T113717-deploy-flake-hardening. cycle: ai/claude-corp/feature-0014-deploy-hardening. 승인: 사용자 지시(2026-07-11 "나머지 작업 재개" — 07-11 배포 인시던트 보고에 대한 진행 지시).
+- **패널 1차 VERDICT = NOT-SHIP** — 정직 기록: 검증 도중 세션 자신의 사고(`.env*` 임시 복사 정리의 `rm .env.*` 가 tracked 백업까지 삭제 → 복원에 `git checkout -- .` 사용 → 미커밋 하드닝 diff 동반 소실)로 패널이 "대상 소실 + scope 오염(tracked .env* 12종 삭제 동반)"을 적발. 동시에 **MAJOR-2**: worktree dry-run 재현은 결정적 아티팩트(gitignored env 부재)이지 프로덕션 간헐 원인의 재현이 아님 — "원인 식별" 서술은 범주 오류.
+- **재구성 + 패널 노트 전건 반영**: ① diff 를 bin/deploy-web.sh 단일 파일로 재구성(scope 오염 해소) ② blip 회복 시 continue 전 RestartCount 재검(crash-loop 감시 공백 봉인) ③ edge_fail_total 누적 카운터(비연속 flapping 무감 해소, env 튜너블 DEPLOY_WEB_EDGE_FLAP_MAX) ④ dependency_down 은 확증 이후 1회 ⑤ 수동 --rollback 경로에도 60s 회복 대기(경로 일관성) ⑥ 문서 서술을 "진단 계측+transient 재시도·원인 미확정"으로 정정 ⑦ cfg_err 3차 stderr 를 미검출 진단에 포함(NIT).
+- **패널 2차 VERDICT = SHIP** — 7개 반영 전건 코드 실증 확인: soak 신규 분기 exhaustive(edge_fail 종단값 0|3 증명) · deadline 감시 공백 봉인 · rc 캡처 쌍/mktemp 정리/encounter-지역 변수 무오염 · exit code 계약 보존 · dry-run 무 hang. 잔여 MINOR-1(flap 임계 decay 없음 — env 튜너블로 반영)·NIT-1(3차 stderr 덤프 — 반영) 비차단 2건도 머지 전 반영 완료.
+- 검증: bash -n · worktree dry-run — 실패 경로(3회 재시도 + stderr 원인 문자열 + 정직 die)와 happy path(전 env 존재 시 "OK — 두 replica 정의 확인") 양쪽 실증. 라이브 검증 = 머지 후 본 스크립트로 batch4~6 실배포(soak·edge 경로 통과가 곧 실증).
+- Human Approval Needed: 아니오 — 사용자 지시로 착수. fail-safe 방향(감지 지연 없이 오탐만 제거), exit 계약 보존, 비파괴.
