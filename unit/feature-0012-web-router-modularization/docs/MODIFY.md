@@ -236,3 +236,6 @@ source_of_truth: true
 
 ## CHG-20260712T041500-item11-batch6 (admin_account_password_reset 완전 DI-rework)
 - Date: 2026-07-12. account+conn DI(perm·self-reset 본문). runtime snapshot 11종. admin_accounts 그룹 완결. DEFER 45→44.
+
+## CHG-20260712T043000-item11-batch7 (admin_delete_role 완전 DI-rework)
+- Date: 2026-07-12. account+conn DI(perm 본문). runtime snapshot 10종. DEFER 44→43.

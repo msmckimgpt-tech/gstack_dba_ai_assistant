@@ -329,29 +329,24 @@ WHERE Id = %s
     return JSONResponse({"ok": True, "role": role})
 
 @router.delete("/api/admin/roles/{role_id}")
-def admin_delete_role(role_id: int, request: Request) -> JSONResponse:
+def admin_delete_role(
+    role_id: int,
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch7: _require_account→account+conn 완전 DI. perm 은 per-perm 다른 403 메시지라
+    # 본문 유지. get_conn finally:close 가 _load_role_by_id·DELETE·audit raise 시 conn leak 을 해소.
     if role_id <= 0:
         return app._json_error("invalid role_id", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(actor, "console.access") or not app._account_has_permission(actor, "console.manage"):
-        conn.close()
         return app._json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     if not app._account_has_permission(actor, "role.delete"):
-        conn.close()
         return app._json_error("역할 삭제 권한이 필요합니다.", 403)
     role = app._load_role_by_id(conn, int(role_id))
     if not role:
-        conn.close()
         return app._json_error("role not found", 404)
     if role.get("is_default_signup"):
-        conn.close()
         return app._json_error("기본 가입 역할은 삭제할 수 없습니다.", 400)
     cur = conn.cursor()
     cur.execute(
@@ -366,7 +361,6 @@ WHERE RoleId = %s
     in_use = int((cur.fetchone() or (0,))[0] or 0)
     if in_use > 0:
         cur.close()
-        conn.close()
         return app._json_error("미삭제 계정이 참조 중인 역할은 삭제할 수 없습니다.", 400)
     cur.execute("DELETE FROM WebRolePermissions WHERE RoleId = %s", (int(role_id),))
     cur.execute("DELETE FROM WebRoles WHERE Id = %s", (int(role_id),))
@@ -389,9 +383,7 @@ WHERE RoleId = %s
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({"ok": True, "role_id": int(role_id)})
 
 @router.post("/api/admin/roles/{role_id}/prompt/generate")
