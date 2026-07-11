@@ -143,6 +143,15 @@ source_of_truth: true
 - [x] 소스-계약 테스트 1건 위치 갱신(test_group_conversation_s2 APP_ALL 에 web_context.py 포함 — batch4 ROUTERS 포함과 동일 계보)
 - [ ] 후속 batch: SEED_ROLE_DEFINITIONS·_seed_role_* → 도메인 클러스터 위상순 → 23-테스트 retarget 영역(_account_has_permission·_require_account·_connect_memory)은 적대검증 후
 
+## 20260711T1030-item10-webctx-batch2 — web_context 추출 batch2: 검증 정규식·인증 파라미터·seed 롤 (parallel-work-structure ITEM-10)
+
+- [x] ANSI_RE·CONTROL_RE·MODEL_RE·USERNAME_RE·ROLE_KEY_RE(검증 정규식 leaf) → web_context.py
+- [x] SEED_ROLE_DEFINITIONS(-75줄) · _seed_role_definition · _seed_role_codes(RBAC seed 클러스터) → web_context.py
+- [x] PASSWORD_HASH_ITERATIONS · AUTH_SESSION_DAYS(인증 파라미터) → web_context.py
+- [x] app.py 18,931 → 18,854줄 (web_context 858→961). INVARIANT 유지.
+- [x] 게이트: 라우트 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
+- [ ] 후속 batch: 도메인 클러스터 위상순 + 23-테스트 retarget 영역(적대검증 후)
+
 ## 8b. (이전) Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
 - [x] 2 핸들러 회수(RP overview + AO insight_coverage) — DI seam byte-동치 가능 핸들러 전부 완료(누적 69)
 - [x] behavior-neutral — make test progress-chars 1238(baseline 동일)·0 fail, route-parity 179 불변, ruff clean, py_compile OK

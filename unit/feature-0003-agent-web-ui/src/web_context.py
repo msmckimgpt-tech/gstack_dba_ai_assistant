@@ -856,3 +856,106 @@ def _decorate_account_rows(conn, rows: list[dict[str, Any]]) -> list[dict[str, A
         row["permission_overrides"] = overrides
         row["permissions"] = permissions
     return rows
+
+
+# ── ITEM-10 b2: 검증 정규식·인증 파라미터·RBAC seed 롤 (순수 leaf) ──
+# app.py 에서 byte-동치 이동(상단 rebind 소비 — INVARIANT 동일).
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,64}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$")
+ROLE_KEY_RE = re.compile(r"^[a-z][a-z0-9_.-]{2,63}$")
+
+SEED_ROLE_DEFINITIONS = (
+    {
+        "key": "pending",
+        "name": "Pending",
+        "description": "승인 전 조회 전용 계정",
+        "is_default_signup": True,
+        "permissions": {
+            "conversation.list.own",
+            "conversation.read.own",
+            # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant
+            # (self filter — 본인이 actor 인 이벤트 조회, TASK-0293 Actor-only).
+            "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 read.own 만.
+            # upload 거부 + bytes download 는 application-level (Phase 5 endpoint) 차단.
+            "conversation.attachment.read.own",
+        },
+    },
+    {
+        "key": "operator",
+        "name": "Operator",
+        "description": "일반 작업 계정",
+        "is_default_signup": False,
+        "permissions": {
+            "conversation.create",
+            "conversation.ask",
+            "conversation.list.own",
+            "conversation.read.own",
+            "conversation.file.read.own",
+            "conversation.rename.own",
+            "conversation.delete.own",
+            "conversation.cancel.own",
+            "conversation.finalize.own",
+            "conversation.share.create",
+            "conversation.duplicate.own",
+            # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
+            "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
+            # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤 — 실제 게이트는 allowlist+attachment_reader+sql_guard).
+        },
+    },
+    {
+        "key": "sales",
+        "name": "사업팀",
+        "description": "게임 사업팀 pilot 계정 — 단순 조회/집계 자가서비스. ad-hoc 심층 분석은 DBA 팀으로 이관",
+        "is_default_signup": False,
+        "permissions": {
+            "conversation.create",
+            "conversation.ask",
+            "conversation.list.own",
+            "conversation.read.own",
+            "conversation.file.read.own",
+            "conversation.rename.own",
+            "conversation.delete.own",
+            "conversation.cancel.own",
+            "conversation.finalize.own",
+            "conversation.share.create",
+            "conversation.duplicate.own",
+            # TASK-0073 Phase A3: 모든 role audit.read.own auto-grant.
+            "audit.read.own",
+            # TASK-0094 Sprint 1 Phase 3: 첨부 upload/read own.
+            "conversation.attachment.upload.own",
+            "conversation.attachment.read.own",
+            # TASK-0161: attachment.execute_sql_on.own 시드 제거 (거짓 컨트롤).
+        },
+    },
+    {
+        "key": "admin",
+        "name": "Admin",
+        "description": "관리 콘솔과 전체 대화 관리 권한을 가진 계정",
+        "is_default_signup": False,
+        "permissions": set(PERMISSION_CODES),
+    },
+)
+
+PASSWORD_HASH_ITERATIONS = max(100_000, int(os.getenv("WEB_PASSWORD_HASH_ITERATIONS", "310000")))
+AUTH_SESSION_DAYS = max(1, int(os.getenv("WEB_AUTH_SESSION_DAYS", "14")))
+
+
+def _seed_role_definition(role_key: str) -> dict[str, Any] | None:
+    for item in SEED_ROLE_DEFINITIONS:
+        if item["key"] == role_key:
+            return item
+    return None
+
+
+def _seed_role_codes(role_key: str) -> set[str]:
+    item = _seed_role_definition(role_key)
+    if not item:
+        return set()
+    return set(item["permissions"])
