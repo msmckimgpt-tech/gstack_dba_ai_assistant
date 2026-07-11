@@ -198,3 +198,6 @@ source_of_truth: true
 - [x] TASK/REPORT/MODIFY/REVIEW 반영, BLOCKED 없음
 - [ ] verify-completion PASS(9 checks) → Git 커밋
 - [ ] Git 원격 동기화: ai/* push (§16.3). PR/머지·라우터 추출·배포는 Final.
+
+## 20260711T1207-docs-archive — MODIFY/REVIEW §5.5 아카이빙 (사용자 지시 2026-07-11)
+- [x] MODIFY 45→15건·REVIEW 46→15건 이관, 무손실 md5, 링크+REPORT 압축(§5.5). 선례 3건 동일 계보 — 이로써 §5.5 20건-초과 문서 전량 해소.
