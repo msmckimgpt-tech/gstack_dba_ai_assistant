@@ -233,3 +233,8 @@ source_of_truth: true
 ## 20260711T1618-item10-routers-p7 — 감사 인프라 17종(697줄) → routers/_audit_infra (parallel-work-structure ITEM-10)
 - [x] _audit_* 16 + build_audit_change_json → _audit_infra.py 신설(전 라우터 공용 — register_all 제외). **record_audit_event 는 app 잔류**(setattr 12× 패치-단일점) — 이동분의 호출은 전부 app.record_audit_event 동적. census 패치 0(이동분). app.py 14,191→13,531(누적 **-6,119 / -31%**).
 - [x] 게이트: 스냅샷 205 byte-동치 · F821 · py_compile · 전 스위트 pytest rc=0
+
+## 20260711T1953-item10-routers-p8 — 부트스트랩 스키마 3종(822줄) → routers/_bootstrap_schema (parallel-work-structure ITEM-10)
+- [x] _ensure_web_tables(오케스트레이터 436)·_seed_main_mysql_datasource(239)·_ensure_web_product_datasources_schema(147) → _bootstrap_schema.py 신설. census 패치/getsource 0. `global _WEB_TABLES_READY` 는 app 속성 대입으로 등가 변환(신규 패턴 — global-쓰기 결합 해소). 호출 기계(_bootstrap_memory_runtime 계열)는 app 잔류(KEEP). app.py 13,531→12,718(누적 **-6,932 / -35%**).
+- [x] 게이트: 스냅샷 205 byte-동치 · F821 · py_compile · 전 스위트 pytest rc=0
+- [x] 사고 기록: 1차 실행이 cwd 오인으로 repo 메인 체크아웃을 변형(F0) → 즉시 git checkout 원복 후 worktree 재실행(잔여 오염 0 — git status 대조).

@@ -182,3 +182,6 @@ source_of_truth: true
 
 ## CHG-20260711T161858-item10-routers-p7 (감사 인프라 17종 이동 — record_audit_event 는 패치-단일점 잔류)
 - Date: 2026-07-11. 확립 패턴 + KEEP 판단 1(record_audit_event — _connect_memory 계열과 동일 사유). app.py 14,191→13,531.
+
+## CHG-20260711T195338-item10-routers-p8 (부트스트랩 스키마 3종 이동 + global-쓰기 등가 변환)
+- Date: 2026-07-11. 확립 패턴 + 신규 처리 1: 이동 함수의 `global X` 모듈-전역 쓰기를 `app.X = ...` 속성 대입으로 변환(등가 — app 잔류 독자가 동일 플래그 관찰). app.py 13,531→12,718.
