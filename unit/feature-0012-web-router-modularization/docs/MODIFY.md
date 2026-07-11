@@ -562,3 +562,10 @@ source_of_truth: true
 - 사고·교훈: 1차 시도의 라인-휴리스틱 경계가 flush-left SQL heredoc(seed 함수 다수)에서 함수를 절단 — py_compile/F821(5,733)이 즉발 차단, git checkout 후 **AST end_lineno 추출기로 재작업**(이동 텍스트·잔여 app.py·신규 wc 3중 ast.parse 게이트 내장). 이동 경계는 이후 batch 부터 AST 가 정본.
 - 검증: 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0.
 - Rollback: 단일 커밋 revert.
+
+## CHG-20260711T124000-item10-webctx-batch6 (web_context 추출 batch6 A+B+C — retarget 영역 판정표 기반, parallel-work-structure ITEM-10)
+- Date: 2026-07-11
+- Summary: 적대 분석 판정표(아래 REV)의 SAFE-MOVE 13함수 311줄 3단 이동(A: 계정/권한 read-model 7 · B: 제품 접근 4 · C: 인증 read/감사 actor 2). KEEP 3종(_connect_memory·_require_account·_account_can_access_conversation)은 패치-단일점 보존을 위해 app 영구 잔류 — 이동 영구 금지 목록 9종을 web_context 헤더에 명문화. app.py 18,009→17,724줄(누적 -1,926).
+- 검증: 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0(판정표의 "현행 테스트 0건 파손" 예측 실증).
+- 배포 인시던트(별건 기록): batch4/5 배포가 preflight `docker compose config` 간헐 실패(6회 중 3회) + 롤백-직후 edge 재검 조기 판정으로 3회 실패 — 5a42b6e1 이미지 자체는 단독 서빙 정상 실증, 라이브는 last-good(14b7d876) healthy. deploy-web.sh 하드닝(stderr 포획·config 재시도·롤백 후 edge backoff)은 feature-0014 소유 명세 밖 → 사용자 승인 대기.
+- Rollback: 단일 커밋 revert.

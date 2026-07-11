@@ -179,6 +179,16 @@ source_of_truth: true
 - [x] **교훈**: 라인-휴리스틱 경계(block_range)가 flush-left SQL heredoc 에서 함수를 절단(전 스위트 5,733 F821 로 즉발) → **AST end_lineno 가 이동 경계의 정본**(이동 텍스트·잔여 파일 각각 ast.parse 게이트 동반). 이후 batch 는 AST 추출기 고정.
 - [x] 게이트: 스냅샷 byte-동치 · F821 clean(datetime import 1건 보강) · py_compile · 전 스위트 pytest rc=0
 
+## 20260711T1240-item10-webctx-batch6 — web_context 추출 batch6(A+B+C): retarget 영역 적대 분석 기반 (parallel-work-structure ITEM-10)
+
+- [x] **적대 분석(improve-fit-reviewer, AST 호출그래프+패치 census 전수)**: 심볼별 SAFE-MOVE/KEEP 판정표 확보 — **KEEP 3종 확정**(_connect_memory 68×·_require_account 52×·_account_can_access_conversation 8× — 패치-단일점 보존, app.py 종국 역할=runtime hub·DI seam) + **이동 영구 금지 목록 9종** web_context 헤더 명문화.
+- [x] Batch A(121줄): 계정/권한 read-model 7함수(_legacy_permission_codes_from_row·_account_permissions·_account_has_permission·_account_has_any_permission·_role_payload·_serialize_account·_strip_quota_fields_if_unpermitted) — retarget 0 전수 검증.
+- [x] Batch B(116줄): 제품 접근 4함수(_account_has_product_access·_filter_products_for_account_access·_product_permission_code·_coerce_default_product_id).
+- [x] Batch C(74줄): _get_authenticated_account·_build_actor_from_request(폐포 전부 wc 기이동분).
+- [x] app.py 18,009 → 17,724줄 (web_context 1,938→2,281). 누적 19,650→17,724(-1,926).
+- [x] 게이트: 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0
+- [ ] **후속 지렛대(판정표 §4)**: web_context 추가 이동은 한계(-350줄 규모) — ≤1,000 목표의 실질 경로는 **대형 호출자(_ds_write_common·_collect_*_prompt_context·_metadata_* 등 수천 줄)의 routers/ 도메인 모듈 이동**(app.X 동적참조 = 패치-단일점 자동 보존, ITEM-05 자동 등록 완비).
+
 ## 8b. (이전) Completion Checklist (DI seam Phase 3 final migratable = admin_overview + admin_products_insight_coverage)
 - [x] 2 핸들러 회수(RP overview + AO insight_coverage) — DI seam byte-동치 가능 핸들러 전부 완료(누적 69)
 - [x] behavior-neutral — make test progress-chars 1238(baseline 동일)·0 fail, route-parity 179 불변, ruff clean, py_compile OK

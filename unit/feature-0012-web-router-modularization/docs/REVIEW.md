@@ -436,3 +436,13 @@ conn실패/auth-raise) / get_conn None-yield 안전 / 테스트 헛통과 / 신�
 - Related Change: CHG-20260711T112500-item10-webctx-batch5. cycle: ai/claude-corp/feature-0012-item10-webctx-b5. 승인: ROADMAP §6.1.
 - SKIPPED 사유: leaf 계보 계속 — 이동 전 AST 폐포 스캔(미해석 이름 0 인 13 + 의존 보강 2)과 패치 census(전 후보 0 — 관통 위험 쌍은 제외)로 경계를 기계 확정. RBAC seed 는 부트스트랩-시점 함수(요청 경로 아님)라 auth dispatch 의 라이브 인가 판정 표면 비해당. 기계 게이트 4종 GREEN. 1차 시도 절단 사고는 게이트가 설계대로 차단(정직 기록: MODIFY 참조) — 출하물은 AST 재작업본.
 - Human Approval Needed: 아니오 — §6.1.
+
+## REV-20260711T124000-item10-webctx-batch6 [SUBAGENT:improve-fit-reviewer(적대 이동성 분석)] — web_context 추출 batch6 A+B+C (parallel-work-structure ITEM-10)
+- Related Change: CHG-20260711T124000-item10-webctx-batch6. cycle: ai/claude-corp/feature-0012-item10-webctx-b6. 승인: ROADMAP §6.1.
+- **적대 분석(사전, AST 호출그래프 + 테스트/라우터 전수 grep — auth 인접이라 SKIPPED 아닌 실검증)**:
+  - 핵심 규칙 실측 확립: X 단독 이동은 항상 패치-안전(인터셉트 지점=호출자 측) — 파손은 "패치되는 X 의 호출자 Y 를 co-move" 할 때만. 파손 실례 3건(파일:라인) 문서화(_ds_write_common·_collect_role_prompt_context·_delete_conversation_impl co-move 시나리오 — 전부 본 batch 범위 밖).
+  - 판정표: SAFE-MOVE 13(본 batch) / MOVE-WITH-RETARGET 1(_account_has_permission — 현행 재타깃 필요 0건 확인 후 이동) / **KEEP-IN-APP 3**(_connect_memory: 부트스트랩 기계+app 설정 전역 결합·shared/db 부적합 사유 포함, _require_account: 5줄에 12+건 패치 우회 트랩, _account_can_access_conversation: DB-접촉 폐포+폐포원 개별 패치).
+  - 숨은 계약 적발: test_perm_self_scope 가 app.py AST 에서 4개 self-scope 가드 소스를 추출 — 이동 금지 확인(본 batch 비포함).
+  - retarget 필요 테스트: **0건**(패치사이트 ~162건 전수 — dual-patch 세금 회피, retarget 전략 기각).
+- 검증: 4중 게이트 GREEN(스냅샷 byte-동치·F821·py_compile·전 스위트 pytest rc=0) — 판정표 예측(0 파손) 실증. 이동 영구 금지 목록 9종 web_context 헤더 등재(미래 batch 의 가드레일).
+- Human Approval Needed: 아니오 — §6.1. (별건: deploy-web.sh flake 하드닝은 명세 밖 — 사용자 보고)
