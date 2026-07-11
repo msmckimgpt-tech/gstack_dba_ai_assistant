@@ -308,3 +308,6 @@ source_of_truth: true
 ## 20260712T0340-item11-batch4 — admin_account_unlock 완전 DI-rework (parallel-work-structure ITEM-11)
 - [x] _require_account 기반 → account=Depends(get_current_account)+conn=Depends(get_conn) 완전 DI(batch1 패턴). perm(console.access+console.manage AND account.update)은 per-perm 다른 403 메시지라 본문 인라인 유지. conn.close×7 제거→get_conn finally(_load_account_by_id·_account_has_permission raise 시 leak 해소). byte-동치: 401 "로그인이 필요합니다."·500 "db connection failed"·403×2·404·500(reset)·200. account_id<=0 400 본문 유지(authed 동일, +unauth 이중엣지만 401 benign).
 - [x] runtime snapshot 9종(401·500·400·403×2·404·500·200·leak-fix). 학습: conn-fail 500 테스트는 as_account override 금지(get_current_account 로직 우회) — get_conn None 만 override 해 실제 get_current_account 가 500 내게. 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 47→46.
+
+## 20260712T0400-item11-batch5 — admin_delete_account 완전 DI-rework (parallel-work-structure ITEM-11)
+- [x] _require_account 기반 → account+conn 완전 DI(batch4 패턴). perm(console AND account.delete) 본문 유지(per-perm 403 메시지). conn.close×8 제거→get_conn finally(_load_account_by_id·survivor·mutate raise 시 leak 해소). runtime snapshot 10종(401·500·400·403×2·404·400(already-deleted)·400(survivor)·200·leak-fix). 게이트: route snapshot 205 byte-동치·F821·py_compile·전 스위트 pytest rc=0. DEFER 46→45.

@@ -495,29 +495,24 @@ def admin_account_totp_disable(account_id: int, request: Request) -> JSONRespons
         conn.close()
 
 @router.delete("/api/admin/accounts/{account_id}")
-def admin_delete_account(account_id: int, request: Request) -> JSONResponse:
+def admin_delete_account(
+    account_id: int,
+    request: Request,
+    actor=Depends(app.get_current_account),
+    conn=Depends(app.get_conn),
+) -> JSONResponse:
+    # ITEM-11 batch5: _require_account→account+conn 완전 DI. perm 은 per-perm 다른 403 메시지라
+    # 본문 유지. get_conn finally:close 가 _load_account_by_id·survivor·mutate raise 시 leak 해소.
     if account_id <= 0:
         return app._json_error("invalid account_id", 400)
-    try:
-        conn = app._connect_memory()
-    except Exception:
-        return app._json_error("db connection failed", 500)
-    actor, error = app._require_account(request, conn)
-    if error:
-        conn.close()
-        return error
     if not app._account_has_permission(actor, "console.access") or not app._account_has_permission(actor, "console.manage"):
-        conn.close()
         return app._json_error("관리 콘솔 수정 권한이 필요합니다.", 403)
     if not app._account_has_permission(actor, "account.delete"):
-        conn.close()
         return app._json_error("계정 삭제 권한이 필요합니다.", 403)
     target = app._load_account_by_id(conn, account_id)
     if not target:
-        conn.close()
         return app._json_error("account not found", 404)
     if target.get("deleted_at"):
-        conn.close()
         return app._json_error("이미 삭제된 계정입니다.", 400)
     try:
         app._ensure_management_survivor_for_account_change(
@@ -528,7 +523,6 @@ def admin_delete_account(account_id: int, request: Request) -> JSONResponse:
             deleting=True,
         )
     except ValueError as exc:
-        conn.close()
         return app._json_error(str(exc), 400)
     cur = conn.cursor()
     cur.execute(
@@ -562,9 +556,7 @@ WHERE Id = %s
             conn.rollback()
         except Exception:
             pass
-        conn.close()
         return app._json_error(f"audit write failed: {audit_exc}", 500)
-    conn.close()
     return JSONResponse({"ok": True, "account_id": int(account_id)})
 
 
