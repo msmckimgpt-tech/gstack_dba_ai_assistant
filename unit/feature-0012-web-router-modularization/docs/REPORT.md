@@ -91,3 +91,6 @@ DI(Depends) 도입은 보류(별건). admin(92)은 추출 최후, sub-domain(use
 
 ## 7. Human Attention Needed
 - 다-cycle Critical 라이브-인증 리팩터. helper→web_context 이동/라우터 추출(Final) 머지 전 브라우저 로그인 QA 필수. 클러스터 마이그는 각 게이트(make test+route-parity) 통과 시 자동 진행.
+
+## 문서 아카이빙 압축 정보 (§5.5, 20260711T120729)
+- MODIFY 총 46건=아카이브 30+현행 16 · REVIEW 총 47건=아카이브 31+현행 16. verbatim·무손실 md5·timestamp 아카이브명.
