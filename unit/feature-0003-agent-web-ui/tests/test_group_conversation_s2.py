@@ -24,10 +24,11 @@ ADMIN_JS = (_SRC / "static" / "admin.js").read_text(encoding="utf-8")
 
 
 def test_membership_or_in_both_list_paths():
+    # ITEM-10 p5: _list_conversations(_pg) 가 routers/_conv_store.py 로 이동 — 계약은 위치 무관(APP_ALL).
     # PG 경로: agent_runtime.conversation_members 서브쿼리 OR.
-    assert "SELECT conversation_id FROM agent_runtime.conversation_members" in APP
+    assert "SELECT conversation_id FROM agent_runtime.conversation_members" in APP_ALL
     # MySQL parity 경로: AgentCoreConversationMembers 서브쿼리 OR.
-    assert "SELECT conversation_id FROM AgentCoreConversationMembers" in APP
+    assert "SELECT conversation_id FROM AgentCoreConversationMembers" in APP_ALL
 
 
 def test_access_helpers_include_membership():

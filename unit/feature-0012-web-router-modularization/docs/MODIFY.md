@@ -173,3 +173,6 @@ source_of_truth: true
 
 ## CHG-20260711T153043-item10-routers-p4 (_conv_* 11종 이동)
 - Date: 2026-07-11. p1~p3 확립 패턴 — 공용(2 도메인) 비-라우트 모듈 _conv_store.py 신설. 패치 0·직접참조 1·app 내부 호출자 8(전부 rebind 보존). app.py 16,449→16,005.
+
+## CHG-20260711T153747-item10-routers-p5 (대화 조회 4종 이동)
+- Date: 2026-07-11. p4 모듈에 read 계층 append — 최대 잔여 함수군(354+306+184+166줄). app.py 16,005→15,003.
