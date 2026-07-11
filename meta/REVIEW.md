@@ -650,3 +650,22 @@
 - **검증**: `bash -n` OK. dry-run — 미래리셋 "9:19pm"→next=21:24(리셋+300s, +310m 아님)·시각없음→+310m 폴백·과거→다음날→6h초과→폴백. **즉시 remediation**: 19:20 이미 지나 `arm --minutes 0` 재-arm → 19:50 `--resume 57d96d41` 재개 실측(드레인 라이브 복귀).
 - **인용 무결성 확인**: REV-20260711T195353(본 entry) staged 실재.
 - **Human Approval Needed**: 아니오(사용자 지시). 비파괴·fail-safe(파싱 실패 시 기존 +310m 폴백, 6h 가드). 배포 무관(호스트 크론 툴링). **PR 생성만 confirm 유지**.
+
+## REV-20260712T012055-META-0033-drain-model-fallback [SUBAGENT:improve-fit-reviewer(§18.8, R8~R10)] — 모델별 한도 자동 opus 전환 + 무한핑퐁 flap 가드 (parallel-work-structure 툴링)
+
+- **cycle**: ai/claude-corp/drain-model-fallback. **승인 근거: 사용자 명시 지시(2026-07-12)** — "세션이 쓰던 모델(Fable)의 한도가 소진됨, 다른 모델(Opus)로 전환하여 재개하도록 구성해달라".
+- **라이브 버그(관측)**: 21:35 usage-limit → 00:40 정확히 리셋(META-0032 실증) 후 00:45~00:55 **매 fire 즉시 실패**(dur 2~78s, newcommits=0) — 로그 원문 `"You've reached your Fable 5 limit. /model to switch models."`. 계정 5h usage-limit 과 다른 **모델별** 한도라 기존 `usage_limit` 정규식에 안 잡히고 일반 무진전(noprog 3/6)으로 오분류.
+- **즉시 remediation**: 크론 disarm(동시접근 방지) 후 `claude --resume 57d96d41 --model opus -p continue` 수동 실행 → **라이브 진전 실증**(main 이 PR #719 ITEM-10-p17, 이어서 `docs(item10): ITEM-10 라우터 모듈화 완료 판정` 커밋까지 진행, jsonl 지속 갱신).
+- **changeset (pure-meta)**: `bin/drain-continue-cron.sh`(모델 감지·전환·flap 가드) · `docs/improvements/parallel-work-structure/ROADMAP.md`(§6.4 신규 bullet 2개) · 본 entry.
+- **핵심 변경**:
+  1. **`DRAIN_MODEL` state + `arm --model <alias>`**: 미지정시 기존값 보존(세션 pin 과 동일 패턴). fire 양쪽 경로(resume/fresh)에 `model_opts=(--model "$DRAIN_MODEL")` 조건부 배열 주입.
+  2. **모델별 한도 감지**(`model_limit`, 비-서술 3조건 동일): `reached your .+ limit` AND `/model` → 현재 모델이 opus 아니면 **자동 opus 전환**+`+2m` 신속재시도(무진전/백오프 미카운트). 이미 opus 면 대안 없어 pin유지+고정`+5h10m`.
+  3. **모델 접근불가 자동복귀**(`model_invalid`): `"may not exist or you may not have access to it"` 감지 → **즉시 계정 기본값(빈값)으로 복귀**+`+2m` 재시도. (미대응 시 깨진 모델값이 영구 고정돼 TTL 소진까지 무증상 정지 — §18.8 최초 MAJOR.)
+  4. **`MODEL_FLAP` 핑퐁 가드**(§18.8 재검토 MAJOR): `model_limit`↔`model_invalid` 두 신속-재시도 경로가 서로 TTL/NOPROG 어느 것도 안 건드려 오갈 수 있음(opus 진짜 미보유 + 기본모델 한도 지속 시) — 3회 연속 시 **그 즉시 백오프로 전환**(TTL−1, model="", `+5h10m`, flap 리셋). progressed/usage_limit/context_dead/opus-already-limited 는 모두 flap 을 0 으로 리셋(정당한 반복은 핑퐁으로 오인 안 됨).
+- **§18.8 적대 패널 (SUBAGENT: improve-fit-reviewer, 3라운드 — R8~R10, 앞선 세션의 R1~R7 에 이어)**:
+  - **R8 = SHIP-WITH-FIXES**: 모델 감지·전환 로직 정확(정규식 교차오염 없음, `--model` 실제 전달 linchpin 확인, bash 5.2.21 `set -u` 빈배열 안전). **새 MAJOR**: opus 가 계정에 없으면(`"...may not exist or you may not have access to it"`) 감지 못 해 `DRAIN_MODEL="opus"` 가 영구 고정 → 매 fire 즉시실패가 일반 무진전으로 위장 → **TTL 소진까지(~8.6일) 무증상 정지** — 패널이 라이브 CLI 로 직접 재현.
+  - **R9 = SHIP-WITH-FIXES**: `model_invalid` 자동복귀로 R8 MAJOR 닫힘 확인. **새 MAJOR**: 두 신속-재시도 분기(model_limit 자동전환 / model_invalid 복귀)가 서로 TTL/NOPROG 을 안 건드려 **무한 핑퐁**(opus 진짜 미보유+기본모델 한도 지속 시) — 상태기계 시뮬레이션으로 확인, "status 가 noprog=0 으로 영구 건강하게 보이며 2분마다 헤드리스 프로세스만 재기동" 지적.
+  - **R10 = SHIP**: `MODEL_FLAP` 가드로 R9 MAJOR 닫힘 확인 — 3회마다 정확히 TTL−1 소모(시뮬 40 fire 전수 추적), 정상적 반복 한도(둘 다 유효 모델)는 flap 이 구조적으로 못 쌓임을 코드 경로 전수로 증명. MINOR 1(로그 문구 "비활성화"가 일회성 리셋인데 영구처럼 읽힘) → **반영**("이번 백오프 동안 중지…재발 시 재시도"로 정정).
+- **검증**: `bash -n` OK. dry-run 전수 — model_limit→opus전환(+2m,flap1) · `--model opus` 실제 전달(echo-args linchpin) · opus도한도→pin유지+310m/TTL-1 · 진전경로 회귀없음(model값 유지) · usage-limit/context-death 오검출 없음 · model_invalid 즉시복귀 · 6회 교대 핑퐁 시뮬(TTL 40→39→38 유계) · 로그문구 정정판 재확인(1초 간격 격리 재현). **라이브**: 수동 opus 재개가 ITEM-10 완료 판정까지 실제 진전 실증(main 커밋 다수).
+- **인용 무결성 확인**: REV-20260712T012055(본 entry) staged 실재.
+- **Human Approval Needed**: 아니오(사용자 지시). 비파괴·fail-safe(모든 신규 경로가 TTL/NOPROG/MODEL_FLAP 중 하나로 유계 — 3라운드 패널이 반복 검증). 배포 무관(호스트 크론 툴링). **PR 생성만 confirm 유지**.

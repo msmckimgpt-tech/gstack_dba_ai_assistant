@@ -711,10 +711,24 @@ blocked 발생 시: 해당 ITEM 의 status 를 `blocked`+사유로 갱신하고 
 
 1. **사용자 `continue`** (우선 경로 — 도착 시 자동 체인은 뒤로 밀림).
 2. **자동 재호출** — `bin/drain-continue-cron.sh` (정본 구현):
-   - **arm (재귀 앵커 + 세션 pin)**: 드레인 시작 시 **첫 행동으로 `bash bin/drain-continue-cron.sh
-     arm [--session-id <워커세션 UUID>]`** → `next_fire = 시작 +5h10m`·TTL 재충전, 그리고 재개할
-     **워커 세션을 `DRAIN_SESSION_ID` 로 pin**. **arm 은 절대 자동탐지하지 않는다**(명시 지정, 또는
-     기존 pin 보존만) — "최신 세션 자동탐지"가 무관 세션 하이재킹의 원인이었기 때문(§18.8 B2).
+   - **arm (재귀 앵커 + 세션 pin + 모델 pin)**: 드레인 시작 시 **첫 행동으로
+     `bash bin/drain-continue-cron.sh arm [--session-id <워커세션 UUID>] [--model <alias>]`** →
+     `next_fire = 시작 +5h10m`·TTL 재충전, 재개할 **워커 세션을 `DRAIN_SESSION_ID` 로 pin**, 사용할
+     모델을 `DRAIN_MODEL` 로 pin(미지정=계정 기본 모델). **arm 은 절대 자동탐지하지 않는다**(명시
+     지정, 또는 기존 pin 보존만) — "최신 세션 자동탐지"가 무관 세션 하이재킹의 원인이었기
+     때문(§18.8 B2).
+   - **모델별 한도 자동 전환(2026-07-12)**: 계정 5h 윈도우 한도(usage-limit)와 별개로 **특정 모델의
+     한도**("You've reached your Fable 5 limit. /model to switch models.")를 별도 감지(비-서술
+     3조건 동일 적용)한다. 현재 `DRAIN_MODEL` 이 opus 가 아니면 **자동으로 opus 로 전환**(사용자
+     지시 2026-07-12) 후 `+2m` 신속 재시도(무진전/백오프 미카운트 — 대기가 아닌 즉시 조치로 해결).
+     이미 opus 인데도 모델 한도면(대안 없음) pin 유지 + 고정 `+5h10m` 폴백(이 문구는 리셋 시각을
+     포함하지 않아 §6.4 리셋-파싱 미적용).
+   - **모델 접근불가 자동 복귀(§18.8 MAJOR 해소)**: 전환한(또는 `arm --model` 로 명시한) 모델이 이
+     계정에 없거나 오타/폐기됐으면("… may not exist or you may not have access to it.") 그 값을
+     pin 해 두면 매 fire 가 즉시 재실패하며 **일반 무진전으로 위장돼 TTL 소진까지(~8.6일) 무증상
+     정지**한다(라이브 재현). 이를 별도 감지해 **즉시 `DRAIN_MODEL` 을 계정 기본값(빈값)으로 되돌리고**
+     `+2m` 재시도(무진전/백오프 미카운트). 최악의 사이클(모델한도→opus전환→opus접근불가→복귀)도
+     TTL 소모 없이 2 fire(~4분) 내 자기수렴 실증.
    - **fire (v3, 2026-07-11 — 세션 재개 연속성)**: 호스트 크론 체커(*/5분, root·claude-corp 양
      계정)가 `next_fire` 도달 시(flock 로 단일 버스트): ① **실패-내성 앵커**(`next_fire=now+5h10m`
      를 버스트 전 기록) ② **pin 된 워커 세션을 `claude --resume <id> -p "continue…"`** 로 헤드리스
