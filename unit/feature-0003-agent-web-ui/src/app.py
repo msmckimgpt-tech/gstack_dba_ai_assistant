@@ -153,6 +153,22 @@ from web_context import (
     _role_icon_url_for,
     _account_conv_file,
     _conv_file,
+    _read_conversation_id,
+    _write_conversation_id,
+    _permission_id_map,
+    _role_id_map,
+    _load_account_by_id,
+    _load_account_by_username,
+    _issue_auth_session,
+    _is_safe_model_name,
+    _create_role_with_permissions,
+    _ensure_permission_catalog,
+    _ensure_default_signup_role,
+    _ensure_seed_roles,
+    _cleanup_deprecated_role_permissions,
+    _prune_orphaned_permission_catalog,
+    _ensure_seed_products,
+    SEED_PRODUCT_DEFINITIONS,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -1047,38 +1063,16 @@ def _strip_quota_fields_if_unpermitted(payload, actor):
 # web_context.py 로 추출(상단 rebind).
 
 
-def _read_conversation_id(path: str) -> str:
-    try:
-        return Path(path).read_text(encoding="utf-8").strip()
-    except Exception:
-        return ""
+# ITEM-10 b5: _read_conversation_id 는 web_context.py 로 추출(상단 rebind).
 
 
-def _write_conversation_id(path: str, conversation_id: str) -> None:
-    try:
-        Path(path).write_text(str(conversation_id or "").strip(), encoding="utf-8")
-    except Exception:
-        # best-effort: 현재 대화 포인터 파일 기록 실패는 동작을 막지 않는다 (fail-open).
-        logging.getLogger(__name__).warning(
-            "_write_conversation_id: persist failed (conversation_id=%s)",
-            conversation_id, exc_info=True,
-        )
+# ITEM-10 b5: _write_conversation_id 는 web_context.py 로 추출(상단 rebind).
 
 
-def _permission_id_map(conn) -> dict[str, int]:
-    cur = conn.cursor()
-    cur.execute("SELECT Id, Code FROM WebPermissions")
-    rows = cur.fetchall() or []
-    cur.close()
-    return {str(code): int(permission_id) for permission_id, code in rows}
+# ITEM-10 b5: _permission_id_map 는 web_context.py 로 추출(상단 rebind).
 
 
-def _role_id_map(conn) -> dict[str, int]:
-    cur = conn.cursor()
-    cur.execute("SELECT Id, RoleKey FROM WebRoles")
-    rows = cur.fetchall() or []
-    cur.close()
-    return {str(role_key): int(role_id) for role_id, role_key in rows}
+# ITEM-10 b5: _role_id_map 는 web_context.py 로 추출(상단 rebind).
 
 
 # ITEM-10 inc4: _fetch_account_rows 는 web_context.py 로 추출(상단 rebind).
@@ -1089,60 +1083,13 @@ def _role_id_map(conn) -> dict[str, int]:
 
 # ITEM-10 inc4: _decorate_account_rows 는 web_context.py 로 추출(상단 rebind).
 
-def _load_account_by_id(conn, account_id: int) -> dict[str, Any] | None:
-    rows = _fetch_account_rows(
-        conn,
-        "a.Id = %s",
-        (int(account_id),),
-        include_password=False,
-        limit_sql="LIMIT 1",
-    )
-    rows = _decorate_account_rows(conn, rows)
-    return rows[0] if rows else None
+# ITEM-10 b5: _load_account_by_id 는 web_context.py 로 추출(상단 rebind).
 
 
-def _load_account_by_username(conn, username: str) -> dict[str, Any] | None:
-    rows = _fetch_account_rows(
-        conn,
-        "a.Username = %s",
-        (username,),
-        include_password=True,
-        limit_sql="LIMIT 1",
-    )
-    rows = _decorate_account_rows(conn, rows)
-    return rows[0] if rows else None
+# ITEM-10 b5: _load_account_by_username 는 web_context.py 로 추출(상단 rebind).
 
 
-def _issue_auth_session(conn, account_id: int, request: Request) -> str:
-    token = secrets.token_hex(32)
-    client_ip = _get_client_ip(request)
-    user_agent = str(request.headers.get("user-agent", "") or "")[:255]
-    expires_at = datetime.now(timezone.utc) + timedelta(days=AUTH_SESSION_DAYS)
-    cur = conn.cursor()
-    cur.execute(
-        """
-INSERT INTO WebAuthSessions (
-    AccountId,
-    SessionTokenHash,
-    RemoteAddr,
-    UserAgent,
-    ExpiresAt
-) VALUES (%s, %s, %s, %s, %s)
-        """,
-        (
-            int(account_id),
-            _hash_session_token(token),
-            client_ip,
-            user_agent,
-            expires_at.strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-    cur.execute(
-        "UPDATE WebAccounts SET LastLoginAt = CURRENT_TIMESTAMP WHERE Id = %s",
-        (int(account_id),),
-    )
-    cur.close()
-    return token
+# ITEM-10 b5: _issue_auth_session 는 web_context.py 로 추출(상단 rebind).
 
 
 def _get_authenticated_account(conn, request: Request) -> dict[str, Any] | None:
@@ -1351,15 +1298,7 @@ def _repair_current_conversation(
 # 본 위치에 있던 PBKDF2HMAC / AESGCM 복호화 로직은 더 이상 호출되지 않는다.
 
 
-def _is_safe_model_name(value: str) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return False
-    if len(text) > 64:
-        return False
-    if not MODEL_RE.match(text):
-        return False
-    return True
+# ITEM-10 b5: _is_safe_model_name 는 web_context.py 로 추출(상단 rebind).
 
 
 def _is_allowed_api_model(value: str) -> bool:
@@ -1444,370 +1383,22 @@ def _run_agent(args: list[str], session_id: str, env_overrides: dict[str, str] |
 _WEB_TABLES_READY = False
 
 
-def _create_role_with_permissions(
-    conn,
-    role_key: str,
-    *,
-    name: str,
-    description: str,
-    is_active: bool,
-    is_default_signup: bool,
-    permission_codes: set[str] | None = None,
-) -> int:
-    cur = conn.cursor()
-    cur.execute(
-        """
-INSERT INTO WebRoles (RoleKey, Name, Description, IsActive, IsDefaultSignup)
-VALUES (%s, %s, %s, %s, %s)
-        """,
-        (
-            role_key,
-            name,
-            description,
-            int(is_active),
-            int(is_default_signup),
-        ),
-    )
-    role_id = int(cur.lastrowid or 0)
-    permission_map = _permission_id_map(conn)
-    for code in sorted(permission_codes or set()):
-        permission_id = int(permission_map.get(code) or 0)
-        if permission_id <= 0:
-            continue
-        cur.execute(
-            """
-INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
-VALUES (%s, %s)
-            """,
-            (role_id, permission_id),
-        )
-    cur.close()
-    return role_id
+# ITEM-10 b5: _create_role_with_permissions 는 web_context.py 로 추출(상단 rebind).
 
 
-def _ensure_permission_catalog(conn) -> None:
-    cur = conn.cursor()
-    for item in PERMISSION_DEFINITIONS:
-        cur.execute(
-            """
-INSERT INTO WebPermissions (Code, Label, Description, GroupName)
-VALUES (%s, %s, %s, %s)
-ON DUPLICATE KEY UPDATE
-    Label = VALUES(Label),
-    Description = VALUES(Description),
-    GroupName = VALUES(GroupName)
-            """,
-            (
-                item["code"],
-                item["label"],
-                item["description"],
-                item["group"],
-            ),
-        )
-    cur.close()
+# ITEM-10 b5: _ensure_permission_catalog 는 web_context.py 로 추출(상단 rebind).
 
 
-def _ensure_default_signup_role(conn) -> None:
-    cur = conn.cursor()
-    cur.execute(
-        """
-SELECT Id, RoleKey
-FROM WebRoles
-WHERE IsActive = 1
-ORDER BY IsDefaultSignup DESC, Id ASC
-        """
-    )
-    rows = cur.fetchall() or []
-    if not rows:
-        cur.close()
-        return
-    default_row = next((row for row in rows if int(row[0] or 0) > 0 and str(row[1] or "")), None)
-    chosen_id = int(default_row[0]) if default_row else int(rows[0][0] or 0)
-    pending_id = next((int(role_id) for role_id, role_key in rows if str(role_key) == "pending"), 0)
-    if pending_id > 0:
-        chosen_id = pending_id
-    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 0 WHERE Id <> %s", (chosen_id,))
-    cur.execute("UPDATE WebRoles SET IsDefaultSignup = 1 WHERE Id = %s", (chosen_id,))
-    cur.close()
+# ITEM-10 b5: _ensure_default_signup_role 는 web_context.py 로 추출(상단 rebind).
 
 
-def _ensure_seed_roles(conn) -> None:
-    role_map = _role_id_map(conn)
-    for seed in SEED_ROLE_DEFINITIONS:
-        if seed["key"] in role_map:
-            continue
-        _create_role_with_permissions(
-            conn,
-            seed["key"],
-            name=seed["name"],
-            description=seed["description"],
-            is_active=True,
-            is_default_signup=bool(seed["is_default_signup"]),
-            permission_codes=set(seed["permissions"]),
-        )
-    _ensure_default_signup_role(conn)
-    # 기존 admin role 에 신규 권한(product.manage, system_prompt.manage.role.any) 보정
-    cur = conn.cursor()
-    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = %s LIMIT 1", ("admin",))
-    admin_row = cur.fetchone()
-    cur.close()
-    if admin_row:
-        admin_role_id = int(admin_row[0] or 0)
-        permission_map = _permission_id_map(conn)
-        cur = conn.cursor()
-        for code in (
-            "product.manage",
-            "system_prompt.manage.role.any",
-            "conversation.share.create",
-            "conversation.duplicate.own",
-            "conversation.duplicate.any",
-            # TASK-0073 Phase A3: admin 의 audit 권한 4건 catchup (모든 audit 권한 grant).
-            "audit.read.own",
-            "audit.read.any",
-            "audit.export",
-            "audit.purge",
-            # TASK-0095: admin 의 전역 시스템 프롬프트 read/write 2건 catchup.
-            "system_prompt.global.read",
-            "system_prompt.global.write",
-            # TASK-0094 Sprint 1 Phase 3: admin 의 첨부 4건 catchup (upload/read × own/any).
-            "conversation.attachment.upload.own",
-            "conversation.attachment.upload.any",
-            "conversation.attachment.read.own",
-            "conversation.attachment.read.any",
-            # TASK-0161: admin 의 attachment.execute_sql_on.own/.any catchup 제거 (거짓 컨트롤).
-            # TASK-0136 (#11): admin 의 LLM 사용량 조회 권한 catchup (운영자 전용 비용 가시성).
-            "console.usage.read",
-            # TASK-0228: admin 의 insight 분석 초기화 권한 catchup (파괴적 — 운영자 전용).
-            "insight.reset",
-            # TASK-0273: admin 의 보관 대화 조회 권한 catchup (오용 방지 감사 — 운영자 전용).
-            "conversation.archive.read.any",
-            # TASK-0288: admin 의 데이터소스 read/manage + 제품 read catchup. **필수** —
-            # 미보정 시 신규 게이트 적용 후 기존 admin 역할이 datasource 관리권/제품 조회권을
-            # 잃는다(lockout). product.manage 는 기존 catchup 에 이미 포함됨.
-            "datasource.read",
-            "datasource.manage",
-            "product.read",
-            # TASK-20260623T030418-quota-rbac-permission: admin 의 LLM 사용 한도 조회/조절 catchup. **필수** —
-            # 한도 게이트를 console.manage→quota.read/manage 로 전환했으므로, 기존 배포 admin 역할이
-            # 본 catchup 없이는 한도 조회·조절권을 잃는다(lockout, PB-0008 적발). 신규 권한은 role 생성
-            # 시 seed=set(PERMISSION_CODES)로만 부여되어 기존 admin row 에는 retroactive 미적용.
-            "quota.read",
-            "quota.manage",
-            # TASK-20260624-item11-metadata-glossary-enum (ITEM-11 MVP-1): admin 의 메타데이터 수동
-            # 등록/편집 권한 catchup. **필수** — 신규 권한은 role 생성 시 seed=set(PERMISSION_CODES)로만
-            # 부여되어 기존 배포 admin row 에는 retroactive 미적용. 미보정 시 콘솔에 메타데이터 탭이
-            # 노출되지 않는다(kb.ingest.manual 게이트).
-            "kb.ingest.manual",
-            # graph-panel-perms(task4): 메타데이터 세부 권한(B안 분리) admin catchup. **필수** — 신규 권한은
-            # role 생성 시 seed 로만 부여되어 기존 배포 admin row 에는 미적용. (묶음 함의로 effective 보유되나,
-            # grid 표시·명시 부여 정합을 위해 explicit catchup.)
-            "metadata.glossary.manage",
-            "metadata.enum.manage",
-            "metadata.table.manage",
-            "metadata.column.manage",
-            "metadata.graph.read",
-            # TASK-AIOPS: admin 의 AI 운영 현황 조회 권한 catchup. **필수** — 신규 권한은 role 생성 시
-            # seed=set(PERMISSION_CODES)로만 부여되어 기존 배포 admin row 에는 retroactive 미적용.
-            # 미보정 시 기존 admin 이 AI 운영 현황 탭을 못 본다(lockout, PB-0008 적발). operator/sales/dba 미부여.
-            "console.aiops.read",
-            # TASK-20260707-kb-candidate-adoption (§18.8 보안 렌즈 MEDIUM 적발): 대화 자율수집 검수 권한
-            # catchup. **필수** — 이 3건은 role 생성 seed(=set(PERMISSION_CODES))로만 부여되고 기존
-            # 배포 admin row 에는 retroactive 미적용이라, catchup 없이는 기존 admin 이 "채택 인박스"
-            # (kb.glossary.curate ∪ kb.enum.curate 게이트)·"샘플 검수"(kb.sample.curate) 탭·API 를 403 으로
-            # 잃는다(fail-closed lockout). kb.glossary.curate/kb.sample.curate 는 도입 cycle 에서 본 목록
-            # 보정이 누락됐던 잠재 gap 을 함께 해소(INSERT IGNORE 멱등이라 이미 보유 시 무해).
-            "kb.glossary.curate",
-            "kb.sample.curate",
-            "kb.enum.curate",
-            # feature-0018(런타임 설정, main 병합분): admin 의 런타임 설정(실행 타임아웃·모델 추론 예산)
-            # read/write 2건 catchup. **필수** — 신규 권한은 role 생성 시 seed=set(PERMISSION_CODES)로만
-            # 부여되어 기존 배포 admin row 에는 retroactive 미적용. 미보정 시 기존 admin 이 `시스템 > 설정`
-            # 의 신규 항목을 못 본다(lockout). operator/sales/dba 미부여(least-privilege).
-            "system.runtime.read",
-            "system.runtime.write",
-        ):
-            permission_id = int(permission_map.get(code) or 0)
-            if permission_id <= 0:
-                continue
-            cur.execute(
-                """
-INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId)
-VALUES (%s, %s)
-                """,
-                (admin_role_id, permission_id),
-            )
-        cur.close()
-    # REQ-20260514-0001 / REQ-20260518-0001 / TASK-0073 Phase A3: operator/sales role 에 신규 권한 catchup.
-    # sales 권한 정합 (대화 생성·실행 가능한 role 은 자기 대화 삭제도 가능해야 한다):
-    #   conversation.delete.own 을 sales catchup 에 추가 (기존 operator 는 이미 보유, INSERT IGNORE 로 안전).
-    cur = conn.cursor()
-    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey IN ('operator', 'sales')")
-    role_rows = cur.fetchall() or []
-    cur.close()
-    if role_rows:
-        permission_map = _permission_id_map(conn)
-        catchup_codes = (
-            "conversation.share.create",
-            "conversation.duplicate.own",
-            # 대화 생성·실행 role 의 자기 대화 삭제 권한 (sales 정합 fix).
-            "conversation.delete.own",
-            # TASK-0073 Phase A3: 모든 role 에 audit.read.own auto-grant.
-            "audit.read.own",
-            # TASK-0094 Sprint 1 Phase 3: operator/sales 의 첨부 upload/read own.
-            "conversation.attachment.upload.own",
-            "conversation.attachment.read.own",
-            # TASK-0161: operator/sales 의 attachment.execute_sql_on.own catchup 제거 (거짓 컨트롤).
-        )
-        catchup_pids = [
-            int(permission_map.get(code) or 0)
-            for code in catchup_codes
-        ]
-        cur = conn.cursor()
-        for row in role_rows:
-            role_id = int((row[0] if isinstance(row, (list, tuple)) else row.get("Id")) or 0)
-            if role_id <= 0:
-                continue
-            for pid in catchup_pids:
-                if pid <= 0:
-                    continue
-                cur.execute(
-                    "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
-                    (role_id, pid),
-                )
-        cur.close()
-    # TASK-0073 Phase A3 (Eng review E9): dba role catchup. SEED_ROLE_DEFINITIONS 에는
-    # 부재하나 DB 에 수동 INSERT 된 경우가 존재 (TASK-0060 5 role list 참조). dba 가
-    # 있으면 audit.read.own + .any + .export 3 code grant (.purge 는 admin only).
-    cur = conn.cursor()
-    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = 'dba' LIMIT 1")
-    dba_row = cur.fetchone()
-    cur.close()
-    if dba_row:
-        dba_role_id = int(dba_row[0] or 0)
-        if dba_role_id > 0:
-            permission_map = _permission_id_map(conn)
-            cur = conn.cursor()
-            for code in (
-                "audit.read.own",
-                "audit.read.any",
-                "audit.export",
-                # TASK-0094 Sprint 1 Phase 3: dba 도 첨부 read.own catchup (운영 모니터링 자격).
-                "conversation.attachment.read.own",
-            ):
-                pid = int(permission_map.get(code) or 0)
-                if pid <= 0:
-                    continue
-                cur.execute(
-                    "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
-                    (dba_role_id, pid),
-                )
-            cur.close()
-    # TASK-0073 Phase A3: pending role 에도 audit.read.own catchup.
-    cur = conn.cursor()
-    cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = 'pending' LIMIT 1")
-    pending_row = cur.fetchone()
-    cur.close()
-    if pending_row:
-        pending_role_id = int(pending_row[0] or 0)
-        if pending_role_id > 0:
-            permission_map = _permission_id_map(conn)
-            cur = conn.cursor()
-            # TASK-0094 Sprint 1 Phase 3 (D21, R-F14): pending 은 audit.read.own +
-            # conversation.attachment.read.own (metadata only — bytes download 는 Phase 5
-            # endpoint 의 application-level deny). upload 권한 없음.
-            for code in ("audit.read.own", "conversation.attachment.read.own"):
-                pid = int(permission_map.get(code) or 0)
-                if pid <= 0:
-                    continue
-                cur.execute(
-                    "INSERT IGNORE INTO WebRolePermissions (RoleId, PermissionId) VALUES (%s, %s)",
-                    (pending_role_id, pid),
-                )
-            cur.close()
-    # 폐기 권한 정리 catchup (기존 DB 에 남아 있는 레코드 제거 — idempotent DELETE IGNORE 패턴).
-    # 1) conversation.suggestions.read: PERMISSION_DEFINITIONS 에서 제거됨 (conversation.ask 에 내포).
-    #    모든 롤에서 WebRolePermissions 행 삭제.
-    # 2) conversation.file.read.own: pending 롤은 조회 전용(read-only) 의도 — 결과 파일 다운로드 불필요.
-    #    pending 롤에서만 WebRolePermissions 행 삭제.
-    _cleanup_deprecated_role_permissions(conn)
-    # TASK-0164: 위에서 링크가 제거된 완전-폐기 권한의 고아 WebPermissions catalog 행도 정리.
-    _prune_orphaned_permission_catalog(conn)
+# ITEM-10 b5: _ensure_seed_roles 는 web_context.py 로 추출(상단 rebind).
 
 
-def _cleanup_deprecated_role_permissions(conn) -> None:
-    """폐기/정리된 권한을 기존 WebRolePermissions 에서 제거한다 (idempotent)."""
-    cur = conn.cursor()
-    # 삭제 대상 (code, role_key | None=전체 롤) 쌍 목록.
-    removals = [
-        ("conversation.suggestions.read", None),         # 전체 롤에서 제거
-        ("conversation.file.read.own",    "pending"),    # pending 롤에서만 제거
-        # TASK-0161: 거짓 컨트롤 권한 — enforce 미배선(실제 게이트는 allowlist+attachment_reader+sql_guard).
-        ("attachment.execute_sql_on.own", None),         # 전체 롤에서 제거
-        ("attachment.execute_sql_on.any", None),         # 전체 롤에서 제거
-    ]
-    for perm_code, role_key in removals:
-        cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (perm_code,))
-        perm_row = cur.fetchone()
-        if not perm_row:
-            continue
-        perm_id = int(perm_row[0] or 0)
-        if perm_id <= 0:
-            continue
-        if role_key is None:
-            cur.execute(
-                "DELETE FROM WebRolePermissions WHERE PermissionId = %s",
-                (perm_id,),
-            )
-        else:
-            cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = %s LIMIT 1", (role_key,))
-            role_row = cur.fetchone()
-            if not role_row:
-                continue
-            role_id = int(role_row[0] or 0)
-            if role_id <= 0:
-                continue
-            cur.execute(
-                "DELETE FROM WebRolePermissions WHERE RoleId = %s AND PermissionId = %s",
-                (role_id, perm_id),
-            )
-    cur.close()
+# ITEM-10 b5: _cleanup_deprecated_role_permissions 는 web_context.py 로 추출(상단 rebind).
 
 
-def _prune_orphaned_permission_catalog(conn) -> None:
-    """TASK-0164: 완전 폐기된(코드가 PERMISSION_DEFINITIONS 에서 사라진) 권한의 고아
-    WebPermissions catalog 행을 제거한다 (idempotent, 가드).
-
-    `_cleanup_deprecated_role_permissions` 가 WebRolePermissions 링크를 먼저 지운 뒤
-    호출된다. 어떤 롤/계정도 참조하지 않을 때만 catalog 행을 삭제한다(WebRolePermissions
-    + WebAccountPermissionOverrides 둘 다 0 참조 가드). FK 제약은 없으나 논리적 순서
-    (링크 먼저 → catalog) + 가드로 고아만 제거. 그리드는 PERMISSION_DEFINITIONS 기반이라
-    행 잔존도 무해하지만 카탈로그 정합을 위해 정리한다. (역할별 부분 제거 권한
-    `conversation.file.read.own` 은 다른 롤에 live 라 prune 대상 아님.)
-    """
-    prune_codes = [
-        "conversation.suggestions.read",   # TASK-0124 폐기
-        "attachment.execute_sql_on.own",   # TASK-0161 폐기 (거짓 컨트롤)
-        "attachment.execute_sql_on.any",   # TASK-0161 폐기 (거짓 컨트롤)
-    ]
-    cur = conn.cursor()
-    try:
-        for perm_code in prune_codes:
-            cur.execute("SELECT Id FROM WebPermissions WHERE Code = %s LIMIT 1", (perm_code,))
-            row = cur.fetchone()
-            if not row:
-                continue
-            perm_id = int(row[0] or 0)
-            if perm_id <= 0:
-                continue
-            cur.execute("SELECT COUNT(*) FROM WebRolePermissions WHERE PermissionId = %s", (perm_id,))
-            if int((cur.fetchone() or [0])[0] or 0) > 0:
-                continue  # 아직 롤이 참조 — catalog 보존
-            cur.execute("SELECT COUNT(*) FROM WebAccountPermissionOverrides WHERE PermissionId = %s", (perm_id,))
-            if int((cur.fetchone() or [0])[0] or 0) > 0:
-                continue  # 계정 override 가 참조 — catalog 보존
-            cur.execute("DELETE FROM WebPermissions WHERE Id = %s", (perm_id,))
-    finally:
-        cur.close()
+# ITEM-10 b5: _prune_orphaned_permission_catalog 는 web_context.py 로 추출(상단 rebind).
 
 
 SEED_ROLE_SYSTEM_PROMPTS = (
@@ -1891,21 +1482,7 @@ def _ensure_seed_global_system_prompt(conn) -> None:
     )
 
 
-SEED_PRODUCT_DEFINITIONS = (
-    {
-        "product_key": "KR",
-        "name": "Korea",
-        "description": "국내 서비스 DB 묶음 (dbgame, dblog, dbauth).",
-        "is_default": True,
-        "is_active": True,
-        "sort_order": 10,
-        "databases": [
-            {"schema_name": "dbgame", "description": "게임 메타 데이터", "sort_order": 10},
-            {"schema_name": "dblog", "description": "전투/이벤트 로그", "sort_order": 20},
-            {"schema_name": "dbauth", "description": "계정/인증", "sort_order": 30},
-        ],
-    },
-)
+# ITEM-10 b5: SEED_PRODUCT_DEFINITIONS 는 web_context.py 로 추출(상단 rebind).
 
 
 def _product_permission_code(product_key: str) -> str:
@@ -1999,50 +1576,7 @@ SELECT r.Id, %s FROM WebRoles r
     return added_total
 
 
-def _ensure_seed_products(conn) -> None:
-    cur = conn.cursor()
-    cur.execute("SELECT ProductKey FROM WebProducts")
-    existing_keys = {str(row[0]) for row in cur.fetchall() or []}
-    cur.close()
-    if any(seed["product_key"] in existing_keys for seed in SEED_PRODUCT_DEFINITIONS):
-        return
-    for seed in SEED_PRODUCT_DEFINITIONS:
-        if seed["product_key"] in existing_keys:
-            continue
-        cur = conn.cursor()
-        cur.execute(
-            """
-INSERT INTO WebProducts (ProductKey, Name, Description, IsActive, IsDefault, SortOrder)
-VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                seed["product_key"],
-                seed["name"],
-                seed.get("description", ""),
-                1 if seed.get("is_active", True) else 0,
-                1 if seed.get("is_default", False) else 0,
-                int(seed.get("sort_order", 100)),
-            ),
-        )
-        product_id = int(cur.lastrowid or 0)
-        cur.close()
-        if product_id <= 0:
-            continue
-        cur = conn.cursor()
-        for db in seed.get("databases", []):
-            cur.execute(
-                """
-INSERT IGNORE INTO WebProductDatabases (ProductId, SchemaName, Description, SortOrder)
-VALUES (%s, %s, %s, %s)
-                """,
-                (
-                    product_id,
-                    str(db["schema_name"]),
-                    str(db.get("description", "")),
-                    int(db.get("sort_order", 100)),
-                ),
-            )
-        cur.close()
+# ITEM-10 b5: _ensure_seed_products 는 web_context.py 로 추출(상단 rebind).
 
 
 def _get_default_product_id(conn) -> int:

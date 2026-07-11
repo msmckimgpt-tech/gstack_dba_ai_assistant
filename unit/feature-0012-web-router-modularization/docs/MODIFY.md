@@ -555,3 +555,10 @@ source_of_truth: true
 - Summary: 순수 leaf 3군 이동 — ① SESSION_DIR(+mkdir)·INTERNAL_MEMORY_PREFIXES·PLACEHOLDER_TOPICS ② 출력 정규화/내부메시지 판정 5함수(_strip_ansi/_normalize_output/_should_mark_internal_message/_is_internal_message/_unwrap_followup_user_request — 내부 호출쌍 동반 이동) ③ 미디어 URL·대화파일 경로 5함수(_avatar/_product_icon/_role_icon_url_for·_account_conv_file·_conv_file). web_context 에 pathlib.Path 추가. app.py 18,569→18,475줄(누적 -1,175).
 - 검증: 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0 · monkeypatch 0(사전 census — SESSION_DIR 테스트 참조 0, routers _conv_file 소비 4 는 app.X 동적).
 - Rollback: 단일 커밋 revert.
+
+## CHG-20260711T112500-item10-webctx-batch5 (web_context 추출 batch5 — 계정 로더·id 맵·RBAC seed, parallel-work-structure ITEM-10)
+- Date: 2026-07-11
+- Summary: 16블록 513줄 이동 — 대화 id IO 2·권한/역할 id 맵 2·계정 로더 2·_issue_auth_session·_is_safe_model_name + RBAC seed 부트스트랩 7함수+SEED_PRODUCT_DEFINITIONS. 패치-관통 위험 쌍(_product_permission_code/_ensure_product_access_permissions)·shared 래퍼 2종·프롬프트-seed 쌍은 의도 제외(AST 폐포 스캔+패치 census 로 경계 확정). app.py 18,475→18,009줄(누적 -1,641). web_context 에 logging·datetime 계열 import 보강.
+- 사고·교훈: 1차 시도의 라인-휴리스틱 경계가 flush-left SQL heredoc(seed 함수 다수)에서 함수를 절단 — py_compile/F821(5,733)이 즉발 차단, git checkout 후 **AST end_lineno 추출기로 재작업**(이동 텍스트·잔여 app.py·신규 wc 3중 ast.parse 게이트 내장). 이동 경계는 이후 batch 부터 AST 가 정본.
+- 검증: 스냅샷 byte-동치 · F821 clean · py_compile · 전 스위트 pytest rc=0.
+- Rollback: 단일 커밋 revert.
