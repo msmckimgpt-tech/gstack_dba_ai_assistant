@@ -398,3 +398,233 @@ def _load_dashboard_pref_row(conn, account_id: int) -> dict | None:
         return parsed if isinstance(parsed, dict) else None
     except Exception:
         return None
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (9종). app 전역은 app.X 동적 참조. ====
+
+def _dash_pct_delta(current, prior):
+    """전기간(직전 동일 윈도우) 대비 변화율(%). prior 가 0/None 이면 None(기준선 없음)."""
+    try:
+        p = float(prior)
+        if p <= 0:
+            return None
+        return round((float(current) - p) / p * 100.0, 1)
+    except Exception:
+        return None
+
+def _dash_fill_daily(rows, days: int) -> list:
+    """[(day, count)] (day=date/datetime/str) → 윈도우 일자별 정수 배열(오래된→최신, 결측=0).
+
+    sparkline 용. 점 과밀 방지 위해 최대 60일. UTC 일자 기준 gap-fill(트렌드 근사이므로
+    DB tz 미세차는 허용). days<2 면 단일 점이라 프런트가 sparkline 을 생략한다.
+    """
+    span = max(1, min(int(days), 60))
+    counts: dict[str, int] = {}
+    for r in (rows or []):
+        d = r[0]
+        if d is None:
+            continue
+        key = d.isoformat()[:10] if hasattr(d, "isoformat") else str(d)[:10]
+        try:
+            counts[key] = int(r[1] or 0)
+        except Exception:
+            counts[key] = 0
+    today = datetime.now(app.timezone.utc).date()
+    return [counts.get((today - app.timedelta(days=i)).isoformat(), 0) for i in range(span - 1, -1, -1)]
+
+def _dash_widget_accounts(conn, days: int = 7) -> dict:
+    d = int(days)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT "
+            " SUM(CASE WHEN IsActive=1 AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN IsActive=0 AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN DeletedAt IS NOT NULL THEN 1 ELSE 0 END), "
+            f" SUM(CASE WHEN LastLoginAt >= (NOW() - INTERVAL {d} DAY) AND DeletedAt IS NULL THEN 1 ELSE 0 END), "
+            " COUNT(*) FROM WebAccounts"
+        )
+        r = cur.fetchone() or (0, 0, 0, 0, 0)
+        active, inactive, deleted, recent, total = (int(x or 0) for x in r)
+        cur.execute(
+            "SELECT COALESCE(rr.Name, '(역할 없음)'), COUNT(*) "
+            "FROM WebAccounts a LEFT JOIN WebRoles rr ON rr.Id = a.RoleId "
+            "WHERE a.DeletedAt IS NULL GROUP BY a.RoleId, rr.Name ORDER BY 2 DESC LIMIT 8"
+        )
+        by_role = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    return {
+        "tab": "accounts",
+        "metrics": [
+            {"label": "활성 계정", "value": active, "primary": True, "accent": "ok"},
+            {"label": "비활성", "value": inactive},
+            {"label": "삭제됨", "value": deleted, "accent": "muted"},
+            {"label": f"최근 {d}일 로그인", "value": recent},
+            {"label": "전체", "value": total},
+        ],
+        "lists": ([{"title": "역할별 계정", "rows": by_role}] if by_role else []),
+    }
+
+def _dash_widget_roles(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM WebRoles")
+        role_count = int((cur.fetchone() or (0,))[0] or 0)
+        cur.execute(
+            "SELECT rr.Name, COUNT(rp.PermissionId) "
+            "FROM WebRoles rr LEFT JOIN WebRolePermissions rp ON rp.RoleId = rr.Id "
+            "GROUP BY rr.Id, rr.Name ORDER BY 2 DESC LIMIT 8"
+        )
+        by_perm = [{"label": str(x[0]), "value": int(x[1] or 0)} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    return {
+        "tab": "roles",
+        "metrics": [{"label": "역할 수", "value": role_count, "primary": True}],
+        "lists": ([{"title": "역할별 권한 수", "rows": by_perm}] if by_perm else []),
+    }
+
+def _dash_widget_products(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT SUM(CASE WHEN IsActive=1 THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN IsActive=0 THEN 1 ELSE 0 END), "
+            " SUM(CASE WHEN DatasourceKey IS NOT NULL AND DatasourceKey <> '' THEN 1 ELSE 0 END), "
+            " COUNT(*) FROM WebProducts"
+        )
+        r = cur.fetchone() or (0, 0, 0, 0)
+        active, inactive, bound, total = (int(x or 0) for x in r)
+    finally:
+        cur.close()
+    return {
+        "tab": "products",
+        "metrics": [
+            {"label": "활성 제품", "value": active, "primary": True, "accent": "ok"},
+            {"label": "비활성", "value": inactive, "accent": "muted"},
+            {"label": "datasource 바인딩", "value": bound},
+            {"label": "전체", "value": total},
+        ],
+        "lists": [],
+    }
+
+def _dash_widget_datasources(conn) -> dict:
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT SUM(CASE WHEN IsActive=1 THEN 1 ELSE 0 END), COUNT(*) FROM WebDatasources")
+        r = cur.fetchone() or (0, 0)
+        active, total = int(r[0] or 0), int(r[1] or 0)
+        cur.execute("SELECT COALESCE(Engine,'mysql'), COUNT(*) FROM WebDatasources GROUP BY Engine ORDER BY 2 DESC LIMIT 8")
+        by_engine = [{"label": str(x[0]), "value": int(x[1])} for x in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+    return {
+        "tab": "datasources",
+        "metrics": [
+            {"label": "활성 데이터소스", "value": active, "primary": True, "accent": "ok"},
+            {"label": "전체 등록", "value": total},
+        ],
+        "lists": ([{"title": "엔진별", "rows": by_engine}] if by_engine else []),
+    }
+
+def _dash_widget_usage(pg, days: int) -> dict:
+    d = int(days)  # 호출부에서 [1,365] clamp → f-string 삽입 인젝션 불가
+    cur_win = f"now() - interval '{d} days'"
+    prior_lo = f"now() - interval '{2 * d} days'"
+
+    def _cost_tok_for(cur, where):
+        cur.execute(
+            f"SELECT COALESCE(resolved_model, model), sum(total_tokens), sum(prompt_tokens), sum(completion_tokens) "
+            f"FROM agent_runtime.llm_usage WHERE {where} GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT 50"
+        )
+        rows = cur.fetchall() or []
+        c = 0.0
+        tk = 0
+        models = []
+        for x in rows:
+            m = str(x[0] or "?")
+            mt = int(x[1] or 0)
+            c += app._estimate_llm_cost_usd(m, int(x[2] or 0), int(x[3] or 0))
+            tk += mt
+            models.append({"label": m, "value": mt})
+        return round(c, 2), tk, models
+
+    with pg.cursor() as cur:
+        cur.execute(
+            f"SELECT COALESCE(count(*),0), COALESCE(count(distinct run_id),0) "
+            f"FROM agent_runtime.llm_usage WHERE created_at >= {cur_win}"
+        )
+        t = cur.fetchone() or (0, 0)
+        calls, reqs = int(t[0] or 0), int(t[1] or 0)
+        cost, tok, by_model = _cost_tok_for(cur, f"created_at >= {cur_win}")
+        prior_cost, _ptok, _pm = _cost_tok_for(cur, f"created_at >= {prior_lo} AND created_at < {cur_win}")
+        cur.execute(
+            f"SELECT date_trunc('day', created_at)::date, sum(total_tokens) FROM agent_runtime.llm_usage "
+            f"WHERE created_at >= {cur_win} GROUP BY 1 ORDER BY 1"
+        )
+        spark = app._dash_fill_daily(cur.fetchall(), d)
+    primary = {"label": f"추정 비용 ({d}일)", "value": cost, "fmt": "usd", "primary": True, "spark": spark}
+    dp = app._dash_pct_delta(cost, prior_cost)
+    if dp is not None:
+        primary["delta_pct"] = dp
+        primary["delta_sentiment"] = "bad"  # 비용 증가는 부정 신호
+    return {
+        "tab": "usage",
+        "metrics": [
+            primary,
+            {"label": "토큰", "value": tok},
+            {"label": "요청", "value": reqs},
+            {"label": "호출", "value": calls},
+        ],
+        "lists": ([{"title": "모델별 토큰", "rows": by_model[:8]}] if by_model else []),
+        "window_days": d,
+    }
+
+def _dash_widget_ai_ops(conn) -> dict:
+    """TASK-AIOPS: 대시보드 'AI 상태' 요약 타일 — 상태 배너(정상/저하/중단) + 워커/provider 요약.
+    클릭 → AI 운영 현황 탭 deep-link(tab='ai-ops'). 상세(활동·비용·지연·카테고리 드릴다운)는 패널에서.
+
+    상태 축 로직은 routers.ai_ops 를 재사용한다(request 시 lazy import — app↔routers 순환 회피).
+    각 축 헬퍼가 provider/datasource PG 를 자체 RO 연결로 읽고 worker 는 conn(heartbeat)으로 읽어,
+    한 축의 실패가 타 축에 전파되지 않는다(_isolate 위젯 격리 + 축별 try/except 이중 방어)."""
+    from routers.ai_ops import (
+        _provider_axis, _ask_worker_axis, _insight_worker_axis, _datasource_axis,
+        _SEV, _SEV_LABEL,
+    )
+    axes = [_provider_axis(), _ask_worker_axis(conn), _insight_worker_axis(conn), _datasource_axis()]
+    rolled = [a for a in axes if a["state"] != "na"]
+    banner_state = "ok"
+    for a in rolled:
+        if _SEV.get(a["state"], 0) > _SEV.get(banner_state, 0):
+            banner_state = a["state"]
+    sentiment = {"ok": "good", "unknown": "warn", "degraded": "bad", "down": "bad"}.get(banner_state, "warn")
+    workers_ok = sum(1 for a in (axes[1], axes[2]) if a["state"] == "ok")
+    workers_total = sum(1 for a in (axes[1], axes[2]) if a["state"] != "na")
+    return {
+        "tab": "ai-ops",
+        "metrics": [
+            {"label": "종합 상태", "value": _SEV_LABEL.get(banner_state, banner_state),
+             "primary": True, "sentiment": sentiment},
+            {"label": "워커 정상", "value": f"{workers_ok}/{workers_total}"},
+            {"label": "LLM 제공자", "value": _SEV_LABEL.get(axes[0]["state"], axes[0]["state"])},
+        ],
+        "lists": [{"title": "상태 축", "rows": [
+            {"label": a["label"], "value": _SEV_LABEL.get(a["state"], a["state"])} for a in axes
+        ]}],
+    }
+
+def _save_dashboard_pref_row(conn, account_id: int, content: dict) -> None:
+    payload = app.json.dumps(content, ensure_ascii=False)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO WebDashboardPreferences (AccountId, Content) VALUES (%s, %s) "
+            "ON DUPLICATE KEY UPDATE Content = VALUES(Content)",
+            (int(account_id), payload),
+        )
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass

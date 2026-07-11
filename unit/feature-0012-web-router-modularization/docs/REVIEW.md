@@ -170,3 +170,6 @@ source_of_truth: true
 
 ## REV-20260711T205600-item10-routers-p13 [SKIPPED:pattern-transcription] — _load_/_resolve_/_parse_/_db_rule_ 이동
 - Related Change: CHG-20260711T205600-item10-routers-p13. 승인: ROADMAP §6.1. 패턴 전사(app-데코레이터 가드가 startup 훅 이동을 사전 적발 — 게이트 실효 재확인). 게이트 4종 GREEN.
+
+## REV-20260711T211500-item10-routers-p14 [SKIPPED:pattern-transcription] — oauth/login/dash 등 대형 sweep
+- Related Change: CHG-20260711T211500-item10-routers-p14. 승인: ROADMAP §6.1. 패턴 전사(가드 2건이 이동 금지 대상을 기계 적발 — module-load 게이트·Subscript 오분류). 게이트 4종 GREEN.

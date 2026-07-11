@@ -2341,3 +2341,10 @@ def _ensure_web_gdrive_tokens_schema(conn) -> None:
         pass
     finally:
         cur.close()
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _mark_memory_runtime_ready() -> None:
+    app._MEMORY_SCHEMA_READY = True
+    app._WEB_TABLES_READY = True

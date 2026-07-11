@@ -693,3 +693,293 @@ async def me_put_system_prompt(request: Request) -> JSONResponse:
     )
     conn.close()
     return JSONResponse({"ok": True, "id": new_id, "deleted": new_id == 0})
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (18종). app 전역은 app.X 동적 참조. ====
+
+def _oauth_google_configured() -> bool:
+    """OAuth 활성 조건: flag ON + client_id/secret/redirect_uri 모두 설정. 하나라도 빠지면 비활성."""
+    return bool(
+        app.OAUTH_GOOGLE_ENABLED
+        and app.OAUTH_GOOGLE_CLIENT_ID
+        and app.OAUTH_GOOGLE_CLIENT_SECRET
+        and app.OAUTH_GOOGLE_REDIRECT_URI
+    )
+
+def _oauth_b64url(data: bytes) -> str:
+    return app.base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+def _oauth_b64url_decode(text: str) -> bytes:
+    pad = "=" * (-len(str(text or "")) % 4)
+    return app.base64.urlsafe_b64decode(str(text or "") + pad)
+
+def _oauth_pkce_pair() -> tuple[str, str]:
+    """PKCE(RFC 7636) verifier + S256 challenge."""
+    verifier = app._oauth_b64url(secrets.token_bytes(32))
+    challenge = app._oauth_b64url(app.hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge
+
+def _oauth_state_encode(payload: dict[str, Any]) -> str:
+    """state = base64url(json).HMAC-SHA256. 서버 비밀로 위변조 차단(CSRF 방어)."""
+    body = app._oauth_b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = app._oauth_b64url(
+        hmac.new(app.OAUTH_STATE_SECRET.encode("utf-8"), body.encode("ascii"), app.hashlib.sha256).digest()
+    )
+    return f"{body}.{sig}"
+
+def _oauth_state_decode(token: str) -> dict[str, Any] | None:
+    """state 서명 검증(constant-time) + TTL 확인. 실패 시 None."""
+    try:
+        body, sig = str(token or "").split(".", 1)
+    except ValueError:
+        return None
+    expected = app._oauth_b64url(
+        hmac.new(app.OAUTH_STATE_SECRET.encode("utf-8"), body.encode("ascii"), app.hashlib.sha256).digest()
+    )
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        payload = json.loads(app._oauth_b64url_decode(body).decode("utf-8"))
+    except Exception:
+        return None
+    issued = int(payload.get("ts") or 0)
+    now = int(datetime.now(timezone.utc).timestamp())
+    if issued <= 0 or (now - issued) > app.OAUTH_STATE_TTL_SEC or (issued - now) > 60:
+        return None
+    return payload
+
+def _oauth_google_exchange_code(code: str, code_verifier: str) -> dict[str, Any]:
+    """authorization code → token. 백채널 POST(client_secret over TLS). stdlib urllib(외부 의존 0)."""
+    import urllib.request
+    import urllib.parse
+    data = urllib.parse.urlencode(
+        {
+            "code": code,
+            "client_id": app.OAUTH_GOOGLE_CLIENT_ID,
+            "client_secret": app.OAUTH_GOOGLE_CLIENT_SECRET,
+            "redirect_uri": app.OAUTH_GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+            "code_verifier": code_verifier,
+        }
+    ).encode("ascii")
+    req = urllib.request.Request(
+        app.OAUTH_GOOGLE_TOKEN_ENDPOINT,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 (고정 https endpoint)
+        return json.loads(resp.read().decode("utf-8"))
+
+def _oauth_decode_id_token_claims(id_token: str) -> dict[str, Any] | None:
+    """ID token(JWT) payload claim 디코드.
+
+    백채널 TLS + client_secret 으로 받은 토큰이라 토대 단계에서는 서명 검증을 생략한다
+    (SECURITY.md §15.3 — 활성화/외부배포 전 JWKS RS256 서명 검증 강화 TODO). claim 자체의
+    유효성(iss/aud/exp/nonce/email_verified)은 _oauth_validate_claims 가 enforce 한다.
+    """
+    try:
+        parts = str(id_token or "").split(".")
+        if len(parts) != 3:
+            return None
+        return json.loads(app._oauth_b64url_decode(parts[1]).decode("utf-8"))
+    except Exception:
+        return None
+
+def _oauth_validate_claims(claims: dict[str, Any], expected_nonce: str) -> tuple[bool, str]:
+    """ID token claim 검증 — issuer/audience/expiry/nonce/email_verified/도메인. (ok, reason)."""
+    if not isinstance(claims, dict):
+        return False, "claims"
+    if str(claims.get("iss") or "") not in app.OAUTH_GOOGLE_VALID_ISSUERS:
+        return False, "issuer"
+    # audience: OIDC `aud` 는 문자열 또는 배열 — 둘 다 처리(outside-voice MINOR-2). client_id 미포함 거부.
+    aud_raw = claims.get("aud")
+    aud_list = aud_raw if isinstance(aud_raw, list) else [aud_raw]
+    if app.OAUTH_GOOGLE_CLIENT_ID not in [str(a or "") for a in aud_list]:
+        return False, "audience"
+    now = int(datetime.now(timezone.utc).timestamp())
+    if int(claims.get("exp") or 0) <= now:
+        return False, "expired"
+    # nonce: replay 방어 핵심 — 무조건 enforce(outside-voice MINOR-1). expected_nonce 는 /start 가 항상 생성.
+    if str(claims.get("nonce") or "") != str(expected_nonce or ""):
+        return False, "nonce"
+    if not str(claims.get("email") or "").strip():
+        return False, "email-missing"
+    ev = claims.get("email_verified")
+    if not (ev is True or str(ev).strip().lower() == "true"):
+        return False, "email-unverified"
+    # 도메인 화이트리스트(빈=모든 도메인 허용 — 사용자 결정 2026-06-19).
+    if app.OAUTH_GOOGLE_ALLOWED_DOMAINS:
+        hd = str(claims.get("hd") or "").strip().lower()
+        email_domain = str(claims.get("email") or "").rsplit("@", 1)[-1].strip().lower()
+        if hd not in app.OAUTH_GOOGLE_ALLOWED_DOMAINS and email_domain not in app.OAUTH_GOOGLE_ALLOWED_DOMAINS:
+            return False, "domain"
+    return True, "ok"
+
+def _oauth_provision_username(conn, email: str, sub: str) -> str:
+    """OAuth 신규 계정의 내부 username 파생. email local-part sanitize → 충돌 시 숫자 suffix.
+
+    기존 _sanitize_username 규칙(영문/숫자/._-, 최대 64)을 준수. 빈/충돌 폴백은 'g_<랜덤>'.
+    """
+    base = app._sanitize_username(str(email or "").split("@", 1)[0])
+    base = (base[:48] or f"g_{app._sanitize_username(sub)[:24]}" or f"g_{secrets.token_hex(4)}")[:48]
+    candidate = base
+    cur = conn.cursor()
+    try:
+        for i in range(0, 1000):
+            cur.execute("SELECT 1 FROM WebAccounts WHERE Username = %s LIMIT 1", (candidate,))
+            if not cur.fetchone():
+                return candidate
+            candidate = f"{base}{i + 1}"[:64]
+    finally:
+        cur.close()
+    return f"g_{secrets.token_hex(8)}"
+
+def _oauth_resolve_or_provision_account(
+    conn, *, provider: str, sub: str, email: str
+) -> tuple[int, str]:
+    """OAuth 신원 → 내부 계정 매핑. (account_id, mode) 반환.
+
+    mode = linked-subject | linked-email | created | email-conflict(account_id=0).
+    1) (provider, sub) 기존 OAuth 계정이 있으면 그대로 사용.
+    2) email 일치 기존 계정이 **아직 OAuth 미연결(OAuthSubject NULL)** 이면 OAuth 신원을 link
+       (기존 비번 로그인 보존 — 둘 다 유지). 이미 *다른* sub 에 묶인 email 이면 재할당 인계로 보고
+       link 거부 → (0,"email-conflict") 반환(관리자 개입, outside-voice MAJOR-2).
+    3) 그 외에는 pending 역할(승인 대기)로 자동 생성(사용자 결정 2026-06-19). 비번 로그인 불가 sentinel.
+    autocommit 연결 가정(_connect_memory) — signup 패턴과 동일.
+    """
+    email_norm = str(email or "").strip().lower()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT Id FROM WebAccounts WHERE AuthProvider = %s AND OAuthSubject = %s AND DeletedAt IS NULL LIMIT 1",
+            (provider, sub),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row[0]), "linked-subject"
+        if email_norm:
+            cur.execute(
+                "SELECT Id, OAuthSubject FROM WebAccounts WHERE Email = %s AND DeletedAt IS NULL LIMIT 1",
+                (email_norm,),
+            )
+            row = cur.fetchone()
+            if row:
+                account_id = int(row[0])
+                existing_sub = str(row[1] or "")
+                # 안정 식별자(sub)가 이미 다른 값이면 email 재할당(퇴사자→신규입사자)으로 보고 인계 차단.
+                if existing_sub and existing_sub != sub:
+                    return 0, "email-conflict"
+                cur.execute(
+                    "UPDATE WebAccounts SET AuthProvider = %s, OAuthSubject = %s WHERE Id = %s",
+                    (provider, sub, account_id),
+                )
+                return account_id, "linked-email"
+        username = app._oauth_provision_username(conn, email_norm, sub)
+        cur.execute("SELECT Id FROM WebRoles WHERE RoleKey = 'pending' AND IsActive = 1 LIMIT 1")
+        prow = cur.fetchone()
+        role_id = int((prow or (0,))[0] or 0) or app._default_signup_role_id(conn)
+        cur.execute(
+            """
+INSERT INTO WebAccounts (Username, Email, AuthProvider, OAuthSubject, PasswordHash, RoleId, ApprovedAt, IsActive)
+VALUES (%s, %s, %s, %s, %s, %s, NULL, 1)
+            """,
+            (username, email_norm or None, provider, sub, app.OAUTH_NO_PASSWORD_SENTINEL, role_id),
+        )
+        return int(cur.lastrowid or 0), "created"
+    finally:
+        cur.close()
+
+def _oauth_callback_redirect(request: Request, location: str) -> Any:
+    """callback redirect — 단명 OAuth 바인딩 쿠키를 항상 정리(1회용, MAJOR-1)."""
+    resp = RedirectResponse(location, status_code=302)
+    resp.delete_cookie(
+        app.OAUTH_BIND_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=app._request_is_https(request),
+    )
+    return resp
+
+def _login_ip_sweep_locked(window_start: float) -> None:
+    """_LOGIN_IP_LOCK 보유 상태에서 호출 — 빈/완전 만료 버킷 제거(메모리 가드)."""
+    if len(app._LOGIN_IP_BUCKETS) <= app._LOGIN_IP_BUCKETS_MAX_KEYS:
+        return
+    stale = [k for k, b in app._LOGIN_IP_BUCKETS.items() if (not b) or b[-1] < window_start]
+    for k in stale:
+        app._LOGIN_IP_BUCKETS.pop(k, None)
+
+def _login_ip_throttled(ip: str) -> bool:
+    """이 IP 가 WINDOW 내 LOGIN_IP_MAX_ATTEMPTS 실패에 도달했으면 True(추가 시도 차단)."""
+    import time as _time
+    now = _time.time()
+    window_start = now - float(app.LOGIN_IP_WINDOW_SEC)
+    key = str(ip or "")
+    with app._LOGIN_IP_LOCK:
+        bucket = app._LOGIN_IP_BUCKETS.get(key)
+        if not bucket:
+            return False
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        if not bucket:
+            app._LOGIN_IP_BUCKETS.pop(key, None)  # 만료 후 빈 버킷 정리.
+            return False
+        return len(bucket) >= app.LOGIN_IP_MAX_ATTEMPTS
+
+def _login_ip_record_failure(ip: str) -> None:
+    """이 IP 의 로그인 실패 1건 기록(sliding window). 무차별 대입 IP 차단용."""
+    import time as _time
+    now = _time.time()
+    key = str(ip or "")
+    window_start = now - float(app.LOGIN_IP_WINDOW_SEC)
+    with app._LOGIN_IP_LOCK:
+        bucket = app._LOGIN_IP_BUCKETS.setdefault(key, [])
+        while bucket and bucket[0] < window_start:
+            bucket.pop(0)
+        bucket.append(now)
+        app._login_ip_sweep_locked(window_start)
+
+def _login_ip_clear(ip: str) -> None:
+    """성공 로그인 시 해당 IP 버킷 정리(정상 사용자 즉시 회복)."""
+    key = str(ip or "")
+    with app._LOGIN_IP_LOCK:
+        app._LOGIN_IP_BUCKETS.pop(key, None)
+
+def _login_record_failure(conn, account_id: int) -> bool:
+    """비밀번호 실패 1회 DB 누적. 임계(LOGIN_MAX_FAILED_ATTEMPTS) 도달 시 LockedUntilAt 설정
+    + 카운터 0 리셋. 잠금이 새로 발생했으면 True 반환. (autocommit 연결 가정.)"""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAccounts SET FailedLoginAttempts = FailedLoginAttempts + 1, "
+            "LastFailedLoginAt = NOW() WHERE Id = %s",
+            (int(account_id),),
+        )
+        cur.execute(
+            "SELECT FailedLoginAttempts FROM WebAccounts WHERE Id = %s LIMIT 1",
+            (int(account_id),),
+        )
+        row = cur.fetchone()
+        attempts = int((row[0] if row else 0) or 0)
+        if attempts >= app.LOGIN_MAX_FAILED_ATTEMPTS:
+            # 임계 도달 → 잠금(DB 시계 기준 자동 해제 시각) + 카운터 리셋.
+            cur.execute(
+                "UPDATE WebAccounts SET LockedUntilAt = DATE_ADD(NOW(), INTERVAL %s MINUTE), "
+                "FailedLoginAttempts = 0 WHERE Id = %s",
+                (int(app.LOGIN_LOCKOUT_MINUTES), int(account_id)),
+            )
+            return True
+        return False
+    finally:
+        cur.close()
+
+def _login_reset_lockout(conn, account_id: int) -> None:
+    """로그인 성공 또는 관리자 해제 시 실패 카운터 + 잠금 초기화."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE WebAccounts SET FailedLoginAttempts = 0, LockedUntilAt = NULL WHERE Id = %s",
+            (int(account_id),),
+        )
+    finally:
+        cur.close()

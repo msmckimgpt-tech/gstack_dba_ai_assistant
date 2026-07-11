@@ -172,3 +172,23 @@ def _reconcile_runtime_settings_snapshot(conn) -> None:
         app.logging.getLogger(__name__).warning(
             "runtime-settings snapshot reconcile failed", exc_info=True
         )
+
+
+# ==== feature-0012 ITEM-10 p14 — app.py 에서 이동 (1종). app 전역은 app.X 동적 참조. ====
+
+def _save_runtime_setting(conn, key: str, value: int, account_id: int | None) -> None:
+    """단일 override upsert. 값은 반드시 호출측에서 validate_value 로 검증한 정수여야 한다."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO WebRuntimeSettings (SettingKey, SettingValue, UpdatedByAccountId) "
+            "VALUES (%s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE SettingValue = VALUES(SettingValue), "
+            "UpdatedByAccountId = VALUES(UpdatedByAccountId)",
+            (str(key), str(int(value)), int(account_id) if account_id else None),
+        )
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
