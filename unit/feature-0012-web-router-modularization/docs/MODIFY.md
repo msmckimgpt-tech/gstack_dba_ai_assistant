@@ -527,3 +527,11 @@ source_of_truth: true
 - Impact: 라우팅 표면 무변경(byte-동치 검증 아래). 배포 scope: web 이미지 재빌드(코드 baked) — §6.1 자동 배포.
 - 검증: (a) 라우트 테이블 in-order 스냅샷 205 route **byte-동치**(전=후, mysql-ai-web:current, `_walk_routes` 식 재귀 열거) (b) `ruff --select F821` routers/ 22모듈+app.py clean (c) A/B pytest(main vs worktree, feature-0003 전 스위트) 양쪽 rc=0 — route-parity 골든 포함 회귀 0 (d) 더미 라우터(`zz_dummy_probe.py`, INCLUDE_ORDER=990) 추가만으로 라우트 노출 확인 후 제거.
 - Rollback: app.py 꼬리를 명시 import/include 23쌍으로 복원 + INCLUDE_ORDER 제거(단일 커밋 revert).
+
+## CHG-20260711T100116-item10-webctx-batch1 (web_context 추출 batch1 — inc3 권한 카탈로그 + inc4 계정 행 빌더, parallel-work-structure ITEM-10)
+- Date: 2026-07-11
+- Related Requirement: ROADMAP parallel-work-structure ITEM-10 (F-007-2 — app.py ~19.6k 헬퍼·전역이 전 웹 작업의 공유 착지점).
+- Summary: leaf-first 증분(inc1/inc2 계보) 계속 — inc3(SESSION_COOKIE + PERMISSION_DEFINITIONS/CODES/DEFINITION_MAP + _METADATA_MANUAL_IMPLIES + _resolve_permission_catalog, 562줄) · inc4(OVERRIDE_* 상수 + _empty_permission_map + _normalize_override_value + _apply_permission_overrides + _fetch_account_rows + _load_role_permission_codes + _load_account_override_values + _decorate_account_rows, 167줄)를 web_context.py 로 byte-동치 이동. 호출 폐포가 web_context 안에서 닫힘(app 의존 0 — INVARIANT `from app import` 금지 유지). app.py 상단 re-import rebind 로 app 내 호출부·routers `app.X` 동적참조·테스트 monkeypatch/getsource 전부 보존. app.py 19,650→18,931줄.
+- Files: `unit/feature-0003-agent-web-ui/src/app.py`(블록 제거+rebind import) · `src/web_context.py`(+768줄) · `tests/test_group_conversation_s2.py`(APP_ALL 에 web_context.py 포함 — 소스-계약 위치 무관 고정).
+- 검증: 라우트 스냅샷 205 in-order byte-동치(main 대비, _walk_routes 재귀) · ruff F821 clean(src 전체) · py_compile · feature-0003 전 스위트 pytest rc=0(소스-계약 1건 위치 갱신 후 전건 GREEN). 배포 scope: web 재빌드(item 완료 시 §6.1 — 중간 batch 도 머지-가능 유지).
+- Rollback: 단일 커밋 revert(이동+rebind 원자).
