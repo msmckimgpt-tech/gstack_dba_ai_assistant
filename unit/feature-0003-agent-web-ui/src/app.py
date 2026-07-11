@@ -5972,34 +5972,10 @@ def _ds_audit_fields(data: dict) -> dict:
 import secrets as _share_secrets  # noqa: E402  (REQ-20260514-0001 한정 import)
 
 
-def _share_generate_token() -> str:
-    """256-bit URL-safe token. UNIQUE 충돌 시 호출자가 retry."""
-    return _share_secrets.token_urlsafe(32)
+# ITEM-10 routers-p12: _share_generate_token 이동(app.X 동적).
 
 
-def _share_load_active(conn, token: str) -> dict[str, Any] | None:
-    """Token 으로 share row 조회 (revoked/expired 도 row 반환 — 호출자가 상태 판정).
-
-    이름은 historical (`active`) 이나 실제로는 token 일치 row 를 그대로 반환한다.
-    RevokedAt / ExpiresAt 판정은 호출자(public view / fork)가 수행한다.
-    """
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            """
-SELECT Id, ConversationId, Token, ScopeMode, AnchorMessageId, FloorMessageId,
-       CreatedBy, CreatedAt, RevokedAt, ViewCount, LastViewedAt, PolicyVersion, ExpiresAt,
-       Joinable
-FROM WebConversationShares
-WHERE Token = %s
-LIMIT 1
-            """,
-            (token,),
-        )
-        row = cur.fetchone()
-        return row
-    finally:
-        cur.close()
+# ITEM-10 routers-p12: _share_load_active 이동(app.X 동적).
 
 
 # TASK-20260619T012028-share-link-expiry (SECURITY.md §7.2): 공유 링크 만료 상수/헬퍼.
@@ -6007,31 +5983,10 @@ LIMIT 1
 _SHARE_EXPIRY_MAX_SECONDS = 365 * 24 * 60 * 60
 
 
-def _share_row_expired(conn, share_id: int) -> bool:
-    """DB 시계 기준 share 만료 여부 (`ExpiresAt IS NOT NULL AND ExpiresAt <= NOW()`).
-
-    만료 판정을 항상 DB NOW() 로 평가해 web 프로세스 ↔ DB 간 clock skew 를 차단한다
-    (생성 시 `DATE_ADD(NOW(), ...)` 와 동일 시계 도메인). 무기한(NULL) share 는 False.
-    """
-    try:
-        sid = int(share_id)
-    except Exception:
-        return False
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT 1 FROM WebConversationShares "
-            "WHERE Id = %s AND ExpiresAt IS NOT NULL AND ExpiresAt <= NOW() LIMIT 1",
-            (sid,),
-        )
-        return cur.fetchone() is not None
-    finally:
-        cur.close()
+# ITEM-10 routers-p12: _share_row_expired 이동(app.X 동적).
 
 
-def _share_anchor_belongs_to_conversation(conn, conversation_id: str, anchor_message_id: int) -> bool:
-    """AnchorMessageId 가 해당 ConversationId 의 메시지인지 검증 (backend-aware)."""
-    return _conv_message_exists(conn, conversation_id, int(anchor_message_id))
+# ITEM-10 routers-p12: _share_anchor_belongs_to_conversation 이동(app.X 동적).
 
 
 # TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share-policy version 상수.
@@ -6068,146 +6023,16 @@ _SHARE_STEP_ALLOWED_KEYS = ("tool", "sql", "reason", "intent", "work", "result_s
 _SHARE_RESULT_SUMMARY_ALLOWED_KEYS = ("preview_table",)
 
 
-def _share_sanitize_step(step: Any) -> dict[str, Any]:
-    """단일 step 을 share 익명 노출용 화이트리스트로 재구성.
-
-    - step: {tool, sql, reason, intent, work, result_summary} 만 통과.
-    - result_summary: {preview_table} 만 통과 — csv_paths(서버 경로)·preview(결과 전문)·
-      기타 키 제거. preview_table 자체는 columns/rows/truncated 의 표 데이터로 share.js 가
-      이미 표로 렌더하는 (공유 의도된) 결과 미리보기다.
-    - step 의 args(원본 tool 인자)·error(원본 오류 본문)·csv_paths 등은 통과 목록에 없어 제거.
-    """
-    if not isinstance(step, dict):
-        return {}
-    clean: dict[str, Any] = {k: step[k] for k in _SHARE_STEP_ALLOWED_KEYS if k in step}
-    rs = clean.get("result_summary")
-    if isinstance(rs, dict):
-        rs_clean = {k: rs[k] for k in _SHARE_RESULT_SUMMARY_ALLOWED_KEYS if k in rs}
-        if rs_clean:
-            clean["result_summary"] = rs_clean
-        else:
-            clean.pop("result_summary", None)
-    elif "result_summary" in clean:
-        # dict 아닌 result_summary 는 통째 제거 (예측 못한 형태의 raw payload 누출 차단).
-        clean.pop("result_summary", None)
-    return clean
+# ITEM-10 routers-p12: _share_sanitize_step 이동(app.X 동적).
 
 
-def _share_attach_sanitized_steps(conn, conversation_id: str, created_at, meta_obj: Any) -> Any:
-    """assistant 메시지 meta 에 share 익명 노출용으로 sanitize 한 steps 를 주입 후 meta 반환.
-
-    share API 는 저장 meta_json(보통 {run_id, duration_ms})만 읽어 steps 가 비어 있다.
-    실행 단계(쿼리/결과)는 일반 대화 로드 경로처럼 agent_runtime.steps 에서 동적 조립해야
-    "결과셋에 따라 실행된 쿼리 전환" navigator 가 공유 페이지에서도 동작한다. 단, 익명 노출이므로
-    각 step 을 _share_sanitize_step 으로 화이트리스트 통과시킨다 (csv_paths/preview/args/error 제거).
-
-    meta_obj 가 None 이면 steps 가 실제로 조립될 때만 새 dict 를 만들어 반환(없으면 None 유지).
-    """
-    try:
-        raw_steps = _load_steps_for_message(conn, conversation_id, created_at, meta_obj if isinstance(meta_obj, dict) else None)
-    except Exception:
-        # steps 조립 실패는 공유 뷰 렌더를 막지 않는다 — 본문/폴백만 표시.
-        logging.getLogger(__name__).warning(
-            "_share_attach_sanitized_steps: steps 조립 실패 (conversation_id=%s)",
-            conversation_id, exc_info=True,
-        )
-        return meta_obj
-    sanitized = [_share_sanitize_step(s) for s in (raw_steps or []) if isinstance(s, dict)]
-    sanitized = [s for s in sanitized if s]
-    if not sanitized:
-        return meta_obj
-    if not isinstance(meta_obj, dict):
-        meta_obj = {}
-    meta_obj["steps"] = sanitized
-    return meta_obj
+# ITEM-10 routers-p12: _share_attach_sanitized_steps 이동(app.X 동적).
 
 
-def _share_redact_message_content(content: str, meta_obj) -> tuple[str, bool, dict | None]:
-    """attachment_derived 메시지 본문을 redact. 반환: (redacted_content, was_redacted, meta_obj_clean).
-
-    raw attachment payload (CSV sample / vision 분석 결과 / PDF excerpt) 가 share view
-    에 노출되지 않도록 본문을 가림. meta 의 sensitive 필드도 함께 redact (final_sql /
-    result_rows / steps 등은 D12 정합으로 별도 categorical 메타만 유지).
-    """
-    if not _meta_has_attachment_derived(meta_obj):
-        return content, False, meta_obj
-    meta_clean = None
-    if isinstance(meta_obj, dict):
-        meta_clean = {k: v for k, v in meta_obj.items() if k not in _SHARE_REDACTED_META_KEYS}
-        meta_clean["attachment_derived"] = True
-        meta_clean["redacted_by_share_policy"] = True
-    return SHARE_POLICY_REDACT_TEXT, True, meta_clean
+# ITEM-10 routers-p12: _share_redact_message_content 이동(app.X 동적).
 
 
-def _share_load_messages(conn, conversation_id: str, anchor_message_id: int | None, *, floor_message_id: int | None = None, share_token_policy_version: int | None = None) -> list[dict[str, Any]]:
-    """공유 view 용 메시지 목록. anchor 가 주어지면 `Id <= anchor` (inclusive, "여기까지 공유").
-
-    share-visibility-window: floor_message_id 가 주어지면 `Id >= floor` (inclusive, "여기부터 공유").
-    익명 공유 스냅샷은 hard window — 라이브 tail 병합 없음(익명 뷰어는 라이브 멤버 아님).
-
-    fork 의 `_is_internal_message` 와 동일 필터를 적용해 내부/시스템 메시지를 숨긴다.
-
-    TASK-0094 Sprint 1 Phase 8 (D9 + R-F7): share_token_policy_version 이 NULL 또는
-    SHARE_POLICY_VERSION_CURRENT 보다 작으면 attachment_derived 메시지 본문 자동 redact.
-    기존 token (PolicyVersion=1 또는 NULL) 도 배포 즉시 새 정책 적용.
-    """
-    # cutover 후 메시지는 PG(agent_runtime.messages) 에서 읽는다 (backend-aware helper).
-    # 반환 행은 (id, role, content, created_at, meta_json) tuple. meta_json 은 PG 면 dict.
-    rows = _conv_load_messages_raw(conn, conversation_id, anchor_message_id, from_id=floor_message_id)
-    visible: list[dict[str, Any]] = []
-    # R-F7: 정책 version 비교 — token 발급 시 version < 현재 면 자동 redact 대상.
-    redact_active = (
-        share_token_policy_version is None
-        or int(share_token_policy_version or 0) < SHARE_POLICY_VERSION_CURRENT
-    )
-    for row in rows:
-        msg_id, role_raw, content_raw, created_at, meta_json = row
-        role = str(role_raw or "")
-        content = str(content_raw or "")
-        meta_str = meta_json if isinstance(meta_json, str) else (
-            json.dumps(meta_json) if isinstance(meta_json, dict) else None
-        )
-        if _is_internal_message(role, content, meta_str):
-            continue
-        # feature-0009 gc-join-notice: 멤버십 이벤트(참여 알림)는 대화 내부 멤버 전용 in-room
-        # 표식이다. anonymous 공유 스냅샷에는 노출하지 않는다(멤버 username 비노출 + share.js
-        # 는 pill 렌더 분기가 없어 정합성도 깨짐). in-room /api/history 경로에서만 pill 로 보인다.
-        _ev_meta = meta_json if isinstance(meta_json, dict) else None
-        if _ev_meta is None and isinstance(meta_json, str) and meta_json:
-            try:
-                _parsed_ev = json.loads(meta_json)
-                _ev_meta = _parsed_ev if isinstance(_parsed_ev, dict) else None
-            except Exception:
-                _ev_meta = None
-        if _ev_meta and _ev_meta.get("event_type"):
-            continue
-        meta_obj: Any = None
-        if isinstance(meta_json, dict):
-            meta_obj = dict(meta_json)
-        elif meta_json:
-            try:
-                meta_obj = json.loads(meta_json)
-            except Exception:
-                meta_obj = None
-        # D9 + R-F7: attachment_derived 메시지 redact (token PolicyVersion 무관, 현 정책 v2 부터 활성).
-        was_redacted = False
-        if redact_active:
-            content, was_redacted, meta_obj = _share_redact_message_content(content, meta_obj)
-        # 실행된 쿼리 전환 navigator 데이터: assistant 메시지에 한해 agent_runtime.steps 에서
-        # sanitize 한 steps 를 동적 조립한다. redact 된 attachment_derived 메시지는 제외(steps 까지
-        # 가려야 하므로 — _share_redact_message_content 가 이미 steps 키를 제거했고 재조립도 안 함).
-        if role == "assistant" and not was_redacted:
-            meta_obj = _share_attach_sanitized_steps(conn, conversation_id, created_at, meta_obj)
-        visible.append(
-            {
-                "id": int(msg_id or 0),
-                "role": role,
-                "content": content,
-                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else None),
-                "meta": meta_obj,
-            }
-        )
-    return visible
+# ITEM-10 routers-p12: _share_load_messages 이동(app.X 동적).
 
 
 
@@ -7241,182 +7066,28 @@ GDRIVE_AAD_PREFIX = "gdrive:"
 # ITEM-10 routers-p10: _ensure_web_gdrive_tokens_schema 는 routers/_bootstrap_schema.py 로 이동(app.X 동적).
 
 
-def _gdrive_configured() -> bool:
-    """Drive 연동 활성 조건: flag ON + client_id/secret/redirect_uri 모두 설정. 하나라도 빠지면 404."""
-    return bool(GDRIVE_ENABLED and GDRIVE_CLIENT_ID and GDRIVE_CLIENT_SECRET and GDRIVE_REDIRECT_URI)
+# ITEM-10 routers-p12: _gdrive_configured 이동(app.X 동적).
 
 
-def _gdrive_dek(conn):
-    """(_cc, ver, dek) 또는 None. _totp_dek 동형 — KEK 미설정/DEK 부재 시 None(토큰 저장 불가)."""
-    try:
-        from modules import cred_crypto as _cc
-        from shared import datasources as _dsr
-    except Exception:
-        return None
-    if not _cc.enc_available():
-        return None
-    try:
-        got = _dsr.ensure_dek(conn)
-    except Exception:
-        return None
-    if not got:
-        return None
-    ver, dek = got
-    return (_cc, int(ver), dek)
+# ITEM-10 routers-p12: _gdrive_dek 이동(app.X 동적).
 
 
-def _gdrive_store_tokens(conn, account_id: int, *, access_token: str, refresh_token: "str | None",
-                         expires_in: int, scopes: str) -> bool:
-    """계정별 Drive 토큰 암호화 upsert. AAD=gdrive:{account_id}. DEK 미가용 시 False.
-
-    refresh_token 은 Google 이 최초 동의(prompt=consent + access_type=offline)에서만 발급될 수
-    있어 None 허용 — None 이면 기존 RefreshTokenEnc 보존(COALESCE). access_token 은 매번 갱신.
-    """
-    d = _gdrive_dek(conn)
-    if not d:
-        return False
-    _cc, ver, dek = d
-    aad = f"{GDRIVE_AAD_PREFIX}{int(account_id)}"
-    try:
-        access_enc = _cc.encrypt_password(dek, str(access_token), aad) if access_token else None
-        refresh_enc = _cc.encrypt_password(dek, str(refresh_token), aad) if refresh_token else None
-    except Exception:
-        return False
-    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))).replace(tzinfo=None) \
-        if int(expires_in or 0) > 0 else None
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO WebGoogleDriveTokens
-                (AccountId, Provider, AccessTokenEnc, RefreshTokenEnc, TokenExpiresAt,
-                 GrantedScopes, EncryptionVersion, IsConnected, FirstConnectedAt, RevokedAt)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 1, CURRENT_TIMESTAMP, NULL)
-            ON DUPLICATE KEY UPDATE
-                AccessTokenEnc = VALUES(AccessTokenEnc),
-                RefreshTokenEnc = COALESCE(VALUES(RefreshTokenEnc), RefreshTokenEnc),
-                TokenExpiresAt = VALUES(TokenExpiresAt),
-                GrantedScopes = VALUES(GrantedScopes),
-                EncryptionVersion = VALUES(EncryptionVersion),
-                IsConnected = 1,
-                RevokedAt = NULL,
-                FirstConnectedAt = COALESCE(FirstConnectedAt, CURRENT_TIMESTAMP)
-            """,
-            (int(account_id), GDRIVE_PROVIDER, access_enc, refresh_enc, expires_at,
-             str(scopes or ""), int(ver)),
-        )
-        conn.commit()
-        return True
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return False
-    finally:
-        cur.close()
+# ITEM-10 routers-p12: _gdrive_store_tokens 이동(app.X 동적).
 
 
-def _gdrive_connection_status(conn, account_id: int) -> dict:
-    """계정의 Drive 연결 상태(메타데이터만 — 평문/암호문 토큰 절대 미노출)."""
-    cur = conn.cursor(dictionary=True)
-    row = None
-    try:
-        cur.execute(
-            "SELECT IsConnected, TokenExpiresAt, GrantedScopes, FirstConnectedAt, RevokedAt "
-            "FROM WebGoogleDriveTokens WHERE AccountId = %s AND Provider = %s LIMIT 1",
-            (int(account_id), GDRIVE_PROVIDER),
-        )
-        row = cur.fetchone()
-    except Exception:
-        row = None
-    finally:
-        cur.close()
-    connected = bool(row and int(row.get("IsConnected") or 0) == 1 and not row.get("RevokedAt"))
-    exp = row.get("TokenExpiresAt") if row else None
-    first = row.get("FirstConnectedAt") if row else None
-    return {
-        "provider": GDRIVE_PROVIDER,
-        "configured": _gdrive_configured(),
-        "connected": connected,
-        "scopes": (str(row.get("GrantedScopes")) if row and row.get("GrantedScopes") else None),
-        "token_expires_at": (exp.isoformat() if hasattr(exp, "isoformat") else None),
-        "first_connected_at": (first.isoformat() if hasattr(first, "isoformat") else None),
-    }
+# ITEM-10 routers-p12: _gdrive_connection_status 이동(app.X 동적).
 
 
-def _gdrive_delete_tokens(conn, account_id: int) -> bool:
-    """계정 Drive 토큰 삭제(연결 해제) — 저장 암호문 제거.
-
-    보안 강화 TODO(§16): 활성화 시 삭제 전 Google revoke endpoint 백채널 호출로 refresh_token 을
-    무효화해야 한다(현 토대는 로컬 삭제만 — 외부 토큰은 Google 측 만료까지 유효).
-    """
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "DELETE FROM WebGoogleDriveTokens WHERE AccountId = %s AND Provider = %s",
-            (int(account_id), GDRIVE_PROVIDER),
-        )
-        conn.commit()
-        return True
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return False
-    finally:
-        cur.close()
+# ITEM-10 routers-p12: _gdrive_delete_tokens 이동(app.X 동적).
 
 
-def _gdrive_authorize_url(state: str, challenge: str) -> str:
-    """Google authz redirect URL. access_type=offline + prompt=consent 로 refresh_token 발급 보장."""
-    import urllib.parse
-    params = urllib.parse.urlencode({
-        "client_id": GDRIVE_CLIENT_ID,
-        "redirect_uri": GDRIVE_REDIRECT_URI,
-        "response_type": "code",
-        "scope": GDRIVE_SCOPES,
-        "state": state,
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
-        "access_type": "offline",
-        "prompt": "consent",
-        "include_granted_scopes": "true",
-    })
-    return f"{OAUTH_GOOGLE_AUTH_ENDPOINT}?{params}"
+# ITEM-10 routers-p12: _gdrive_authorize_url 이동(app.X 동적).
 
 
-def _gdrive_exchange_code(code: str, code_verifier: str) -> dict:
-    """authorization code → token (백채널 POST, client_secret over TLS). 로그인 토대 동형(stdlib urllib).
-
-    _gdrive_configured()=False 면 라우트가 호출 전 404 로 차단하므로, 미활성 토대 상태에서는
-    본 함수의 외부 네트워크 호출이 발생하지 않는다(연동 미수행 보장).
-    """
-    import urllib.request
-    import urllib.parse
-    data = urllib.parse.urlencode({
-        "code": code,
-        "client_id": GDRIVE_CLIENT_ID,
-        "client_secret": GDRIVE_CLIENT_SECRET,
-        "redirect_uri": GDRIVE_REDIRECT_URI,
-        "grant_type": "authorization_code",
-        "code_verifier": code_verifier,
-    }).encode("ascii")
-    req = urllib.request.Request(
-        OAUTH_GOOGLE_TOKEN_ENDPOINT, data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 (고정 https endpoint)
-        return json.loads(resp.read().decode("utf-8"))
+# ITEM-10 routers-p12: _gdrive_exchange_code 이동(app.X 동적).
 
 
-def _gdrive_callback_redirect(request: Request, location: str) -> Any:
-    """Drive callback redirect — 단명 OAuth 바인딩 쿠키를 항상 정리(1회용, 로그인 토대 동형)."""
-    resp = RedirectResponse(location, status_code=302)
-    resp.delete_cookie(OAUTH_BIND_COOKIE, httponly=True, samesite="lax", secure=_request_is_https(request))
-    return resp
+# ITEM-10 routers-p12: _gdrive_callback_redirect 이동(app.X 동적).
 
 
 
@@ -10112,6 +9783,27 @@ from routers._bootstrap_schema import (  # noqa: E402
     _migrate_mssql_products_to_db_level,
     _migrate_web_account_activity_to_audit,
     _seed_legacy_conversations,
+)
+# ITEM-10 routers-p12: 라우터·테스트·app 내부 호출자 참조 보존.
+from routers._conv_store import (  # noqa: E402
+    _share_anchor_belongs_to_conversation,
+    _share_attach_sanitized_steps,
+    _share_generate_token,
+    _share_load_active,
+    _share_load_messages,
+    _share_redact_message_content,
+    _share_row_expired,
+    _share_sanitize_step,
+)
+from routers.integrations import (  # noqa: E402
+    _gdrive_authorize_url,
+    _gdrive_callback_redirect,
+    _gdrive_configured,
+    _gdrive_connection_status,
+    _gdrive_dek,
+    _gdrive_delete_tokens,
+    _gdrive_exchange_code,
+    _gdrive_store_tokens,
 )
 # ITEM-10 routers-p11: 테스트·app 내부 호출자 참조 보존.
 from routers._conv_store import (  # noqa: E402
