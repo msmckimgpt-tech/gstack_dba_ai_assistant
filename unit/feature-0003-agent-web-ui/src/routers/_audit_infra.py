@@ -730,3 +730,28 @@ def _audit_export_filter_hash(params: dict) -> str:
     import hashlib as _h
     serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, default=str)
     return _h.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
+# ==== feature-0012 ITEM-10 p17 — app.py 에서 이동한 도메인 상수 (2종). ====
+
+# TASK-20260619T023922-audit-tamper-evidence (보안 ③): 해시 체인 정규화 + 봉인.
+# 정규화 행 필드는 INSERT 시 불변 컬럼만 — EventHash/PrevHash 자신은 제외(봉인 UPDATE 가
+# 해시를 무효화하지 않도록). OccurredAt 은 ISO 문자열로 안정 직렬화.
+_AUDIT_CHAIN_FIELDS = (
+    "Id", "ActorAccountId", "ActorRoleId", "ActorType", "TargetAccountId",
+    "SessionId", "ActionCode", "ResourceType", "ResourceId",
+    "ChangeJson", "MaskedFields", "RemoteAddr", "UserAgent", "RequestId", "OccurredAt",
+)
+
+# TASK-0091 (REQ-20260520-0006, Codex outside voice C1+C4): allowlist 정정.
+# - `is_default` + `sort_order` 추가 (Codex C4 — endpoint 가 갱신 가능한데 누락이던 결함).
+# - `system_prompt_summary` 신설 (Codex C1 + SECURITY.md §9.2 — full content 금지,
+#   `{present, content_len, updated_at}` summary 만).
+# - `databases` 제거 (Codex C3 — 별 endpoint `admin.product.databases.update` 의
+#   audit 으로 분리, admin.product.update 의 ChangeJson 에서 noise + state mismatch).
+# - `system_prompt` 제거 (Codex C1 — full content 금지). admin.system_prompt.update
+#   는 별 builder branch (line 8990~) 가 `system_prompt.content_full` masked 처리.
+_AUDIT_BUILDER_PRODUCT_FIELDS = (
+    "product_key", "name", "description", "is_active", "is_default", "sort_order",
+    "default_role_access", "system_prompt_summary",
+)

@@ -2666,3 +2666,44 @@ def _bootstrap_activate_dialect(ds: dict, scope_key: str):
     default_db = (ds or {}).get("default_db")
     _cfg.set_active_datasource(scope_key, engine=engine, default_db=default_db)
     return engine
+
+
+# ==== feature-0012 ITEM-10 p17 — app.py 에서 이동한 도메인 상수 (4종). ====
+
+_METADATA_FIELD_CAPS = {
+    # 입력 길이 cap — KB 본문 비대화/UI 깨짐/저장소 남용 방어. PG 컬럼은 text 라 DB 강제는 없으니 web 가 cap.
+    "scope_key": 64, "role_key": 64, "term": 200, "definition": 4000,
+    "schema_name": 128, "table_name": 128, "column_name": 128, "code": 256, "label": 1000,
+    # ITEM-11 Phase 2: 테이블/컬럼 설명·샘플 필드 cap. description 은 definition 과 동일(4000).
+    "description": 4000, "nl_question": 2000, "domain": 64,
+    # samples 자동완성 입력 — SQL 본문은 _metadata_suggest_messages 에서 프롬프트에 raw 삽입되므로
+    # 입력 cap 으로 거대 프롬프트/토큰·비용 폭주를 차단(다른 식별 필드와 동일하게 _metadata_str_field 가 강제).
+    "sql": 8000,
+}
+
+# 자동완성 대상 필드(서브뷰 → 생성할 설명 필드) — 프론트가 이 키에 결과를 채운다.
+_METADATA_SUGGEST_TARGET = {
+    "glossary": "definition",
+    "enums": "label",
+    "tables": "description",
+    "columns": "description",
+    "samples": "nl_question",
+}
+
+# 자동완성에 필요한 최소 식별 입력(없으면 400) — 빈 식별자로 날조 생성 방지.
+_METADATA_SUGGEST_REQUIRES = {
+    "glossary": ["term"],
+    "enums": ["table_name", "column_name", "code"],
+    "tables": ["table_name"],
+    "columns": ["table_name", "column_name"],
+    "samples": ["sql"],
+}
+
+# 서버측 서브뷰별 RBAC — admin.js _METADATA_SUBTAB_PERM 과 동치. graph-panel-perms(task4): 기능별 세부 권한으로 분리.
+_METADATA_SUBTAB_PERM_SERVER = {
+    "glossary": "metadata.glossary.manage",
+    "enums": "metadata.enum.manage",
+    "tables": "metadata.table.manage",
+    "columns": "metadata.column.manage",
+    "samples": "kb.sample.curate",
+}

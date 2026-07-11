@@ -209,3 +209,6 @@ source_of_truth: true
 
 ## CHG-20260711T220500-item10-routers-p16 (PATCH 32종 이동 — 패치 관통 규약 실증)
 - Date: 2026-07-11. setattr=모듈 전역 rebind 판정으로 보수 규칙 갱신. app.py 4,786→3,867.
+
+## CHG-20260712T010000-item10-routers-p17 (도메인 상수 14종 이동)
+- Date: 2026-07-12. 상수 전용 mover(self-contained 게이트+직속주석 동반). app.py 3,867→3,722.

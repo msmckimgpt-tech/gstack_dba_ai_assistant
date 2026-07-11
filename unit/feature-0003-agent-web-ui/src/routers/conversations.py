@@ -3615,3 +3615,79 @@ def _clear_accounts_current_conversation(conn, conversation_id: str) -> None:
         (conversation_id,),
     )
     cur.close()
+
+
+# ==== feature-0012 ITEM-10 p17 — app.py 에서 이동한 도메인 상수 (2종). ====
+
+# D7 — 확장자 우선 kind 추론 (클라이언트 MIME 보다 신뢰도 높음).
+# MIME 은 클라이언트가 잘못 보내는 경우가 많으므로 fallback 역할만 한다.
+_EXTENSION_KIND_MAP: dict[str, str] = {
+    "csv": "csv",
+    "xlsx": "xlsx",
+    "xls": "xlsx",
+    "pdf": "pdf",
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "webp": "image",
+    "gif": "image",
+    "bmp": "image",
+    "tiff": "image",
+    "tif": "image",
+    "svg": "image",
+    # 텍스트 계열 — SQL, 소스코드, 설정, 마크업 포함.
+    "txt": "text",
+    "md": "text",
+    "markdown": "text",
+    "sql": "text",
+    "json": "text",
+    "yaml": "text",
+    "yml": "text",
+    "xml": "text",
+    "log": "text",
+    "sh": "text",
+    "bash": "text",
+    "py": "text",
+    "js": "text",
+    "ts": "text",
+    "jsx": "text",
+    "tsx": "text",
+    "html": "text",
+    "htm": "text",
+    "css": "text",
+    "java": "text",
+    "go": "text",
+    "rb": "text",
+    "php": "text",
+    "c": "text",
+    "cpp": "text",
+    "h": "text",
+    "ini": "text",
+    "toml": "text",
+    "conf": "text",
+    "cfg": "text",
+    "env": "text",
+}
+
+# MIME 힌트 테이블 — 확장자 판별 실패 시 fallback.
+_MIME_KIND_HINTS: dict[str, str] = {
+    "text/csv": "csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xlsx",
+    "application/pdf": "pdf",
+    "image/png": "image",
+    "image/jpeg": "image",
+    "image/webp": "image",
+    "image/gif": "image",
+    "image/bmp": "image",
+    "image/svg+xml": "image",
+    "text/plain": "text",
+    "text/markdown": "text",
+    "text/html": "text",
+    "application/json": "text",
+    "application/xml": "text",
+    "text/xml": "text",
+    "text/x-sql": "text",
+    "application/sql": "text",
+    "text/sql": "text",
+}

@@ -179,3 +179,6 @@ source_of_truth: true
 
 ## REV-20260711T220500-item10-routers-p16 [SKIPPED:pattern-transcription] — PATCH 32종 이동
 - Related Change: CHG-20260711T220500-item10-routers-p16. 승인: ROADMAP §6.1. setattr 패치 관통은 전 스위트 pytest(패치 시나리오 포함 1,200+)로 실증. 게이트 4종 GREEN.
+
+## REV-20260712T010000-item10-routers-p17 [SKIPPED:pattern-transcription] — 도메인 상수 이동
+- Related Change: CHG-20260712T010000-item10-routers-p17. 승인: ROADMAP §6.1. self-contained 판정+재할당 없음+top-level 미참조를 census+mover 이중 게이트로 확정(가변 공유상태 이동 회피). 게이트 4종 GREEN.
